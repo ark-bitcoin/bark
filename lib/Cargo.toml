@@ -39,6 +39,6 @@ version = "0.32.0-beta.2"
 features = [ "serde" ]
 
 [dev-dependencies]
-bitcoinconsensus = "0.106.0+26.0"
 rand = { version = "0.9.0", features = [ "small_rng" ] }
 serde_json = { workspace = true }
+bitcoinkernel = "0.0.24"

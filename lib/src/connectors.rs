@@ -312,10 +312,11 @@ pub struct InvalidSigningKeyError;
 
 #[cfg(test)]
 mod test {
-	use super::*;
 	use bitcoin::Txid;
 	use bitcoin::hashes::Hash;
 	use bitcoin_ext::TransactionExt;
+	use crate::test::verify_tx;
+	use super::*;
 
 	#[test]
 	fn test_budget() {
@@ -372,19 +373,12 @@ mod test {
 
 		let chain = ConnectorChain::new(10, utxo, key.public_key());
 		for (i, tx) in chain.iter_signed_txs(&key).unwrap().enumerate() {
-			let amount = ConnectorChain::required_budget(chain.len - i).to_sat();
-			let inputs = vec![bitcoinconsensus::Utxo {
-				script_pubkey: spk.as_bytes().as_ptr(),
-				script_pubkey_len: spk.len() as u32,
-				value: amount as i64,
-			}];
-			bitcoinconsensus::verify(
-				spk.as_bytes(),
-				amount,
-				&bitcoin::consensus::serialize(&tx),
-				Some(&inputs),
-				0,
-			).expect("verification failed");
+			let amount = ConnectorChain::required_budget(chain.len - i);
+			let input = TxOut {
+				script_pubkey: spk.clone(),
+				value: amount,
+			};
+			verify_tx(&[input], 0, &tx).expect(&format!("invalid connector tx idx {}", i));
 		}
 	}
 }

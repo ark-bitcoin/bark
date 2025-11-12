@@ -14,3 +14,26 @@ impl Vtxo {
 		}
 	}
 }
+
+/// Verify a tx using bitcoinkernel
+#[cfg(test)]
+pub fn verify_tx(
+	inputs: &[bitcoin::TxOut],
+	input_idx: usize,
+	tx: &bitcoin::Transaction,
+) -> Result<(), bitcoinkernel::KernelError> {
+	use bitcoinkernel as krn;
+	use bitcoin::consensus::encode::serialize;
+
+	krn::verify(
+		&krn::ScriptPubkey::new(inputs[input_idx].script_pubkey.as_bytes()).unwrap(),
+		Some(inputs[input_idx].value.to_sat() as i64),
+		&krn::Transaction::new(&serialize(tx)).unwrap(),
+		input_idx,
+		Some(krn::VERIFY_ALL),
+		&inputs.iter().map(|i| krn::TxOut::new(
+			&krn::ScriptPubkey::new(i.script_pubkey.as_bytes()).unwrap(),
+			i.value.to_sat() as i64,
+		)).collect::<Vec<_>>(),
+	)
+}
