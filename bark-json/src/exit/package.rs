@@ -1,8 +1,8 @@
-use bitcoin::{Transaction, Txid};
 #[cfg(feature = "utoipa")]
 use utoipa::ToSchema;
 
 use crate::exit::states::ExitTxOrigin;
+use crate::primitives::TransactionInfo;
 
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[cfg_attr(feature = "utoipa", derive(ToSchema))]
@@ -19,24 +19,6 @@ impl From<bark::exit::models::ExitTransactionPackage> for ExitTransactionPackage
 			exit: v.exit.into(),
 			child: v.child.map(|x| x.into()),
 		}
-	}
-}
-
-/// An information struct used to pair the ID of a transaction with the full transaction for ease
-/// of use and readability for the user
-#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
-#[cfg_attr(feature = "utoipa", derive(ToSchema))]
-pub struct TransactionInfo {
-	#[cfg_attr(feature = "utoipa", schema(value_type = String))]
-	pub txid: Txid,
-	#[serde(with = "bitcoin::consensus::serde::With::<bitcoin::consensus::serde::Hex>")]
-	#[cfg_attr(feature = "utoipa", schema(value_type = String))]
-	pub tx: Transaction,
-}
-
-impl From<bark::exit::models::TransactionInfo> for TransactionInfo {
-	fn from(v: bark::exit::models::TransactionInfo) -> Self {
-		TransactionInfo { txid: v.txid, tx: v.tx }
 	}
 }
 /// Represents a child transaction for an exit transaction package with information about the origin

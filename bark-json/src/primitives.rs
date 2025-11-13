@@ -1,7 +1,8 @@
 
 use std::ops::Deref;
+use std::sync::Arc;
 
-use bitcoin::{Amount, OutPoint};
+use bitcoin::{Amount, OutPoint, Transaction, Txid};
 use bitcoin::secp256k1::PublicKey;
 #[cfg(feature = "utoipa")]
 use utoipa::ToSchema;
@@ -151,5 +152,35 @@ impl From<bark::movement::MovementRecipient> for RecipientInfo {
 			recipient: v.recipient,
 			amount: v.amount,
 		}
+	}
+}
+
+/// An information struct used to pair the ID of a transaction with the full transaction for ease
+/// of use and readability for the user
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(feature = "utoipa", derive(ToSchema))]
+pub struct TransactionInfo {
+	#[cfg_attr(feature = "utoipa", schema(value_type = String))]
+	pub txid: Txid,
+	#[serde(with = "bitcoin::consensus::serde::With::<bitcoin::consensus::serde::Hex>")]
+	#[cfg_attr(feature = "utoipa", schema(value_type = String))]
+	pub tx: Transaction,
+}
+
+impl From<bark::exit::models::TransactionInfo> for TransactionInfo {
+	fn from(v: bark::exit::models::TransactionInfo) -> Self {
+		TransactionInfo { txid: v.txid, tx: v.tx }
+	}
+}
+
+impl From<Transaction> for TransactionInfo {
+	fn from(v: Transaction) -> Self {
+		TransactionInfo { txid: v.compute_txid(), tx: v }
+	}
+}
+
+impl From<Arc<Transaction>> for TransactionInfo {
+	fn from(v: Arc<Transaction>) -> Self {
+		TransactionInfo { txid: v.compute_txid(), tx: (*v).clone() }
 	}
 }
