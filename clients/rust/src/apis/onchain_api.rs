@@ -265,7 +265,7 @@ pub async fn onchain_send_many(configuration: &configuration::Configuration, onc
 pub async fn onchain_sync(configuration: &configuration::Configuration, ) -> Result<(), Error<OnchainSyncError>> {
 
     let uri_str = format!("{}/api/v1/onchain/sync", configuration.base_path);
-    let mut req_builder = configuration.client.request(reqwest::Method::PUT, &uri_str);
+    let mut req_builder = configuration.client.request(reqwest::Method::POST, &uri_str);
 
     if let Some(ref user_agent) = configuration.user_agent {
         req_builder = req_builder.header(reqwest::header::USER_AGENT, user_agent.clone());

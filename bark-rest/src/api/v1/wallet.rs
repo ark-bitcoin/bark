@@ -311,7 +311,7 @@ pub async fn send(
 
 #[utoipa::path(
 	post,
-	path = "/api/v1/refresh/vtxos",
+	path = "/refresh/vtxos",
 	request_body = bark_json::web::RefreshRequest,
 	responses(
 		(status = 200, description = "Returns the refresh result", body = bark_json::web::PendingRoundInfo),

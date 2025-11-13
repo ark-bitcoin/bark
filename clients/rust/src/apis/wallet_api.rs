@@ -542,7 +542,7 @@ pub async fn refresh_vtxos(configuration: &configuration::Configuration, refresh
     // add a prefix to parameters to efficiently prevent name collisions
     let p_refresh_request = refresh_request;
 
-    let uri_str = format!("{}/api/v1/wallet/api/v1/refresh/vtxos", configuration.base_path);
+    let uri_str = format!("{}/api/v1/wallet/refresh/vtxos", configuration.base_path);
     let mut req_builder = configuration.client.request(reqwest::Method::POST, &uri_str);
 
     if let Some(ref user_agent) = configuration.user_agent {

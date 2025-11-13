@@ -614,7 +614,7 @@
       }
     },
     "/api/v1/onchain/sync": {
-      "put": {
+      "post": {
         "tags": [
           "onchain"
         ],
@@ -733,42 +733,6 @@
                 }
               }
             }
-          },
-          "500": {
-            "description": "Internal server error"
-          }
-        }
-      }
-    },
-    "/api/v1/wallet/api/v1/refresh/vtxos": {
-      "post": {
-        "tags": [
-          "wallet"
-        ],
-        "operationId": "refresh_vtxos",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/RefreshRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Returns the refresh result",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/PendingRoundInfo"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Bad request - exactly one parameter must be provided"
           },
           "500": {
             "description": "Internal server error"
@@ -982,6 +946,42 @@
           "wallet"
         ],
         "operationId": "refresh_counterparty",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RefreshRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Returns the refresh result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PendingRoundInfo"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request - exactly one parameter must be provided"
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      }
+    },
+    "/api/v1/wallet/refresh/vtxos": {
+      "post": {
+        "tags": [
+          "wallet"
+        ],
+        "operationId": "refresh_vtxos",
         "requestBody": {
           "content": {
             "application/json": {

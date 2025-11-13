@@ -15,7 +15,7 @@ Method | HTTP request | Description
 [**pending_rounds**](WalletApi.md#pending_rounds) | **GET** /api/v1/wallet/rounds | 
 [**refresh_all**](WalletApi.md#refresh_all) | **POST** /api/v1/wallet/refresh/all | 
 [**refresh_counterparty**](WalletApi.md#refresh_counterparty) | **POST** /api/v1/wallet/refresh/counterparty | 
-[**refresh_vtxos**](WalletApi.md#refresh_vtxos) | **POST** /api/v1/wallet/api/v1/refresh/vtxos | 
+[**refresh_vtxos**](WalletApi.md#refresh_vtxos) | **POST** /api/v1/wallet/refresh/vtxos | 
 [**send**](WalletApi.md#send) | **POST** /api/v1/wallet/send | 
 [**send_onchain**](WalletApi.md#send_onchain) | **POST** /api/v1/wallet/send-onchain | 
 [**sync**](WalletApi.md#sync) | **POST** /api/v1/wallet/sync | 

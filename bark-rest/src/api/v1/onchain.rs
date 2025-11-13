@@ -271,7 +271,7 @@ pub async fn onchain_transactions(
 }
 
 #[utoipa::path(
-	put,
+	post,
 	path = "/sync",
 	responses(
 		(status = 200, description = "Synced onchain wallet"),

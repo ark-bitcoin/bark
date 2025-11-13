@@ -45,7 +45,7 @@ Class | Method | HTTP request | Description
 *OnchainApi* | [**onchain_drain**](docs/OnchainApi.md#onchain_drain) | **POST** /api/v1/onchain/drain | 
 *OnchainApi* | [**onchain_send**](docs/OnchainApi.md#onchain_send) | **POST** /api/v1/onchain/send | 
 *OnchainApi* | [**onchain_send_many**](docs/OnchainApi.md#onchain_send_many) | **POST** /api/v1/onchain/send-many | 
-*OnchainApi* | [**onchain_sync**](docs/OnchainApi.md#onchain_sync) | **PUT** /api/v1/onchain/sync | 
+*OnchainApi* | [**onchain_sync**](docs/OnchainApi.md#onchain_sync) | **POST** /api/v1/onchain/sync | 
 *OnchainApi* | [**onchain_transactions**](docs/OnchainApi.md#onchain_transactions) | **GET** /api/v1/onchain/transactions | 
 *OnchainApi* | [**onchain_utxos**](docs/OnchainApi.md#onchain_utxos) | **GET** /api/v1/onchain/utxos | 
 *WalletApi* | [**address**](docs/WalletApi.md#address) | **PUT** /api/v1/wallet/addresses/next | 
@@ -59,7 +59,7 @@ Class | Method | HTTP request | Description
 *WalletApi* | [**pending_rounds**](docs/WalletApi.md#pending_rounds) | **GET** /api/v1/wallet/rounds | 
 *WalletApi* | [**refresh_all**](docs/WalletApi.md#refresh_all) | **POST** /api/v1/wallet/refresh/all | 
 *WalletApi* | [**refresh_counterparty**](docs/WalletApi.md#refresh_counterparty) | **POST** /api/v1/wallet/refresh/counterparty | 
-*WalletApi* | [**refresh_vtxos**](docs/WalletApi.md#refresh_vtxos) | **POST** /api/v1/wallet/api/v1/refresh/vtxos | 
+*WalletApi* | [**refresh_vtxos**](docs/WalletApi.md#refresh_vtxos) | **POST** /api/v1/wallet/refresh/vtxos | 
 *WalletApi* | [**send**](docs/WalletApi.md#send) | **POST** /api/v1/wallet/send | 
 *WalletApi* | [**send_onchain**](docs/WalletApi.md#send_onchain) | **POST** /api/v1/wallet/send-onchain | 
 *WalletApi* | [**sync**](docs/WalletApi.md#sync) | **POST** /api/v1/wallet/sync | 
