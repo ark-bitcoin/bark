@@ -21,7 +21,7 @@ cp -r "${SOURCE_FOLDER}" "${DEST_FOLDER_ORIGINAL}"
 echo "Test data -> https://ci.2nd.dev/testdata/${CI_COMMIT_SHA}/"
 
 # New folder with commit hash and datetime
-FOLDER_NAME="${CI_COMMIT_SHA}_${DATETIME}"
+FOLDER_NAME="${CI_COMMIT_SHA}_${RUN_DATETIME}"
 DEST_FOLDER_TIMESTAMPED="/host/data/test/${FOLDER_NAME}/"
 mkdir -p "${DEST_FOLDER_TIMESTAMPED}"
 cp -r "${SOURCE_FOLDER}" "${DEST_FOLDER_TIMESTAMPED}"
