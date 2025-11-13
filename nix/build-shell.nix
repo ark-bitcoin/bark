@@ -11,10 +11,11 @@ let
 			postgresql.lib
 		];
 
+		RUST_SRC_PATH = "${rustToolchain.rust-src}/lib/rustlib/src/rust/library";
 		RUSTDOCS_STDLIB = "${rustToolchain.rust-docs}/share/doc/rust/html/std/index.html";
 	};
 in {
-	inherit env;
+	inherit env rustToolchain;
 
 	shell = pkgs.mkShell (env // {
 		packages = [
