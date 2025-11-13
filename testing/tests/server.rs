@@ -1982,15 +1982,12 @@ async fn server_can_use_multi_input_from_vtxo_pool() {
 		];
 	}).await;
 	ctx.fund_captaind(&srv, btc(10)).await;
+	srv.wait_for_vtxopool(&ctx).await;
 
 	// Start a bark and create a VTXO to be able to board
 	let bark = Arc::new(ctx.new_bark_with_funds("bark", &srv, btc(3)).await);
 	let board_amount = btc(2);
-	bark.board(board_amount).await;
-	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
-	// Triggers maintenance under the hood
-	// Needed to register and transition confirmed boards to `Spendable`.
-	bark.spendable_balance().await;
+	bark.board_and_confirm_and_register(&ctx, board_amount).await;
 
 	let pay_amount = sat(200_000);
 	let invoice_info = bark.bolt11_invoice(pay_amount).await;
@@ -2002,12 +1999,8 @@ async fn server_can_use_multi_input_from_vtxo_pool() {
 		lightning.sender.pay_bolt11(cloned_invoice_info.invoice).await
 	});
 
-	srv.wait_for_vtxopool(&ctx).await;
-
 	bark.lightning_receive(invoice_info.invoice.clone()).wait(10_000).await;
 
-	// Wait for the onboarding round to be deeply enough confirmed
-	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
 	// We use that to sync and get onboarded vtxos
 	let balance = bark.spendable_balance().await;
 
@@ -2015,4 +2008,68 @@ async fn server_can_use_multi_input_from_vtxo_pool() {
 	res1.ready().await.unwrap();
 
 	assert_eq!(balance, pay_amount + board_amount);
+}
+
+#[tokio::test]
+async fn server_can_use_vtxo_pool_change_for_next_receive() {
+	let ctx = TestContext::new("server/server_can_use_vtxo_pool_change_for_next_receive").await;
+
+	let lightning = ctx.new_lightning_setup("lightningd").await;
+
+	// Start a server and link it to our cln installation
+	let srv = ctx.new_captaind_with_cfg("server", Some(&lightning.receiver), |cfg| {
+		cfg.vtxopool.vtxo_targets = vec![
+			VtxoTarget { count: 1, amount: sat(100_000) },
+		];
+	}).await;
+	ctx.fund_captaind(&srv, btc(10)).await;
+	srv.wait_for_vtxopool(&ctx).await;
+	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
+
+	// Start a bark and create a VTXO to be able to board
+	let bark = Arc::new(ctx.new_bark_with_funds("bark", &srv, btc(3)).await);
+	let board_amount = btc(2);
+	bark.board_and_confirm_and_register(&ctx, board_amount).await;
+
+	let first_pay_amount = sat(50_000);
+	let second_pay_amount = sat(25_000);
+
+	let sender = Arc::new(lightning.sender);
+
+	// First block consumes only vtxo of the pool
+	{
+		let invoice_info = bark.bolt11_invoice(first_pay_amount).await;
+
+		let cloned_invoice_info = invoice_info.clone();
+		let cloned_sender = sender.clone();
+		let res1 = tokio::spawn(async move {
+			cloned_sender.pay_bolt11(cloned_invoice_info.invoice).await
+		});
+
+
+		bark.lightning_receive(invoice_info.invoice.clone()).wait(10_000).await;
+		// HTLC settlement on lightning side
+		res1.ready().await.unwrap();
+	}
+
+	// Second block consumes change from the first block
+	{
+		let invoice_info = bark.bolt11_invoice(second_pay_amount).await;
+
+		let cloned_invoice_info = invoice_info.clone();
+		let cloned_sender = sender.clone();
+		let res1 = tokio::spawn(async move {
+			cloned_sender.pay_bolt11(cloned_invoice_info.invoice).await
+		});
+
+
+		bark.lightning_receive(invoice_info.invoice.clone()).wait(10_000).await;
+		// HTLC settlement on lightning side
+		res1.ready().await.unwrap();
+	}
+
+	// We use that to sync and get onboarded vtxos
+	let balance = bark.spendable_balance().await;
+
+	assert_eq!(balance, first_pay_amount + second_pay_amount + board_amount);
 }
