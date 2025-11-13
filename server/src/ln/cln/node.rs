@@ -418,7 +418,7 @@ impl ClnNodeMonitorProcess {
 		let mut hodl_client = match &self.hold_rpc {
 			Some(client) => client.clone(),
 			None => {
-				info!("No hold rpc client, skipping incoming htlc subscriptions");
+				warn!("No hold rpc client, skipping incoming htlc subscriptions");
 				return Ok(());
 			},
 		};
@@ -494,7 +494,7 @@ impl ClnNodeMonitorProcess {
 			}
 
 			if htlc_subscription.created_at < Local::now() - self.config.htlc_subscription_timeout {
-				info!("Lightning htlc subscription ({}) timed out.",
+				debug!("Lightning htlc subscription ({}) timed out.",
 					htlc_subscription.id,
 				);
 
@@ -512,7 +512,9 @@ impl ClnNodeMonitorProcess {
 				let payment_attempt = self.db
 					.get_open_lightning_payment_attempt_by_payment_hash(&payment_hash).await?;
 				if let Some(payment_attempt) = payment_attempt {
-					trace!("HTLC subscription timed out with ongoing payment attempt: {}. Marking as failed.", payment_attempt.id);
+					debug!("HTLC subscription timed out with ongoing payment attempt, \
+						marking as failed: {}", payment_attempt.id,
+					);
 					self.db.update_lightning_payment_attempt_status(
 						&payment_attempt,
 						LightningPaymentStatus::Failed,
