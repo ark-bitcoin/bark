@@ -471,13 +471,15 @@ impl ClnNodeMonitorProcess {
 				// NB: We subtract 1 to give some buffer for the lightning payment to be sent.
 				let required_min_htlc_expiry = tip + invoice.min_final_cltv_expiry_delta() as BlockHeight - 1;
 				if lowest_incoming_htlc_expiry >= required_min_htlc_expiry {
-					debug!("Lightning htlc subscription ({}) was accepted.", htlc_subscription.id);
+					if htlc_subscription.status == LightningHtlcSubscriptionStatus::Created {
+						debug!("Lightning htlc subscription ({}) was accepted.", htlc_subscription.id);
 
-					self.db.store_lightning_htlc_subscription_status(
-						htlc_subscription.id,
-						LightningHtlcSubscriptionStatus::Accepted,
-						Some(lowest_incoming_htlc_expiry),
-					).await?;
+						self.db.store_lightning_htlc_subscription_status(
+							htlc_subscription.id,
+							LightningHtlcSubscriptionStatus::Accepted,
+							Some(lowest_incoming_htlc_expiry),
+						).await?;
+					}
 				} else {
 					debug!("Incoming HTLC expiry height ({}) for subscription doesn't fit. required {}, actual {}",
 						htlc_subscription.id, required_min_htlc_expiry, lowest_incoming_htlc_expiry
