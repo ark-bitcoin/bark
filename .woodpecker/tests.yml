@@ -17,6 +17,7 @@ steps:
     image: registry.2nd.dev/build:25
     commands:
       - sudo chown -R nixuser:nixbld /woodpecker
+      - date +"%Y%m%d-%H%M%S" > RUN_DATETIME
       - git log --oneline | head -n 1
       - |
         if [ "${CI_PIPELINE_EVENT}" != "tag" ]; then
@@ -130,6 +131,7 @@ steps:
     privileged: true
     commands:
       - git log --oneline | head -n 1
+      - export RUN_DATETIME=$(cat RUN_DATETIME)
       - export CAPTAIND_EXEC=${CI_WORKSPACE}/target/debug/captaind
       - export BARK_EXEC=${CI_WORKSPACE}/target/debug/bark
       - bash ./contrib/ci-run-test.sh test-integration
@@ -149,6 +151,7 @@ steps:
     privileged: true
     commands:
       - git log --oneline | head -n 1
+      - export RUN_DATETIME=$(cat RUN_DATETIME)
       - export CAPTAIND_EXEC=${CI_WORKSPACE}/target/debug/captaind
       - export BARK_EXEC=${CI_WORKSPACE}/target/debug/bark
       - bash ./contrib/ci-run-test.sh test-integration
@@ -167,6 +170,7 @@ steps:
     privileged: true
     commands:
       - git log --oneline | head -n 1
+      - export RUN_DATETIME=$(cat RUN_DATETIME)
       - export CAPTAIND_EXEC=${CI_WORKSPACE}/target/debug/captaind
       - export BARK_EXEC=${CI_WORKSPACE}/target/debug/bark
       - bash ./contrib/ci-run-test.sh test-integration
