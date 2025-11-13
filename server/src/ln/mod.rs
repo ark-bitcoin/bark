@@ -341,7 +341,7 @@ impl Server {
 			}
 
 			if !wait {
-				bail!("payment not yet initiated by sender");
+				return badarg!("payment not yet initiated by sender");
 			}
 
 			tokio::time::sleep(self.config.invoice_check_interval).await;
@@ -505,7 +505,7 @@ impl Server {
 		let package = ArkoorPackageBuilder::new(input, &user_nonces, vtxo_req, None)
 			.badarg("incorrect VTXO request data")?;
 
-		self.cln.settle_invoice(sub.id, payment_preimage).await?
+		self.cln.settle_invoice(sub.id, payment_preimage).await
 			.context("could not settle invoice")?;
 
 		Ok(self.cosign_oor_package_with_builder(&package).await?)

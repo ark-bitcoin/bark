@@ -282,7 +282,7 @@ impl ClnManager {
 		&self,
 		subscription_id: i64,
 		preimage: Preimage,
-	) -> anyhow::Result<anyhow::Result<()>> {
+	) -> anyhow::Result<()> {
 		let payment_hash = preimage.compute_payment_hash();
 
 		// If an open payment attempt exists for the payment hash, it is an
@@ -300,16 +300,24 @@ impl ClnManager {
 			// to get the confirmation, since no notification will ever come from CLN hook
 			self.payment_update_tx.send(payment_hash)
 				.context("payment update channel broken")?;
+		} else {
+			let (tx, rx) = oneshot::channel();
+			self.invoice_settle_tx
+				.send(((subscription_id, preimage.to_owned()), tx))
+				.context("invoice settle channel broken")?;
 
-			return Ok(Ok(()));
+			rx.await.context("invoice settle return channel broken")??;
 		}
 
-		let (tx, rx) = oneshot::channel();
-		self.invoice_settle_tx
-			.send(((subscription_id, preimage.to_owned()), tx))
-			.context("invoice settle channel broken")?;
+		// Update the subscription status to settled
+		self.db.store_lightning_htlc_subscription_status(
+			subscription_id,
+			LightningHtlcSubscriptionStatus::Settled,
+			None
+		).await?;
 
-		rx.await.context("invoice settle return channel broken")
+		Ok(())
+
 	}
 
 	/// Fetches and parse an invoice from a bolt-12 offer
@@ -820,9 +828,6 @@ impl ClnManagerProcess {
 		hold_client.settle(hold::SettleRequest {
 			payment_preimage: preimage.to_vec(),
 		}).await?;
-
-		self.db.store_lightning_htlc_subscription_status(
-			subscription_id, LightningHtlcSubscriptionStatus::Settled, None).await?;
 
 		Ok(())
 	}

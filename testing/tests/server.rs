@@ -1469,6 +1469,38 @@ async fn server_should_refuse_claim_twice() {
 }
 
 #[tokio::test]
+async fn server_should_refuse_claim_twice_intra_ark_ln_receive() {
+	let ctx = TestContext::new("server/server_should_refuse_claim_twice_intra_ark_ln_receive").await;
+
+	trace!("Start lightningd-1");
+	let lightning = ctx.new_lightning_setup("lightningd").await;
+
+	let srv = ctx.new_captaind_with_funds("server", Some(&lightning.receiver), btc(10)).await;
+	srv.wait_for_vtxopool(&ctx).await;
+
+	let bark1 = ctx.new_bark_with_funds("bark1", &srv, sat(1_000_000)).await;
+	let bark2 = ctx.new_bark_with_funds("bark2", &srv, sat(1_000_000)).await;
+
+	bark1.board_and_confirm_and_register(&ctx, sat(400_000)).await;
+	bark2.board_and_confirm_and_register(&ctx, sat(400_000)).await;
+
+	let invoice_info = bark1.bolt11_invoice(sat(30_000)).await;
+
+	let cloned_invoice_info = invoice_info.clone();
+	let res1 = tokio::spawn(async move {
+		bark2.pay_lightning(cloned_invoice_info.invoice, None).wait(10_000).await;
+	});
+
+	bark1.lightning_receive(invoice_info.invoice.clone()).wait(10_000).await;
+
+	// HTLC settlement on lightning side
+	res1.ready().await.unwrap();
+
+	let err = bark1.try_lightning_receive(invoice_info.invoice).await.unwrap_err();
+	assert!(err.to_string().contains("invoice already settled"), "err: {err}");
+}
+
+#[tokio::test]
 async fn server_refuse_too_deep_arkoor_input() {
 	let ctx = TestContext::new("server/server_refuse_too_deep_arkoor_input").await;
 	let srv = ctx.new_captaind_with_funds("server", None, btc(1)).await;
