@@ -77,15 +77,6 @@ pub struct ClnManager {
 	/// This channel is to manage individual CLN integrations.
 	ctrl_tx: mpsc::UnboundedSender<Ctrl>,
 
-	/// This channel sends payment requests to the process.
-	payment_tx: mpsc::UnboundedSender<(Invoice, Option<Amount>, BlockHeight)>,
-
-	/// This channel sends invoice generation requests to the process.
-	invoice_gen_tx: mpsc::UnboundedSender<((PaymentHash, Amount, BlockDelta), oneshot::Sender<Bolt11Invoice>)>,
-
-	/// This channel sends invoice settle requests to the process.
-	invoice_settle_tx: mpsc::UnboundedSender<((i64, Preimage), oneshot::Sender<anyhow::Result<()>>)>,
-
 	/// We also keep a handle of the update channel to update from
 	/// payment request that fail before the hit the sendpay stream.
 	//TODO(stevenroose) consider changing this to hold some update info
@@ -93,9 +84,6 @@ pub struct ClnManager {
 	// If all receivers are dropped the channel will close and the payment might fail
 	// The only purpose of this field is to ensure we will always keep at least one receiver alive
 	payment_update_rx: broadcast::Receiver<PaymentHash>,
-
-	/// This channel sends bolt12 offer to the process and wait for a bolt 12 invoice in return.
-	bolt12_tx: mpsc::UnboundedSender<(Offer, Amount, oneshot::Sender<Bolt12Invoice>)>,
 }
 
 impl ClnManager {
@@ -106,11 +94,7 @@ impl ClnManager {
 		db: database::Db,
 	) -> anyhow::Result<ClnManager> {
 		let (ctrl_tx, ctrl_rx) = mpsc::unbounded_channel();
-		let (payment_tx, payment_rx) = mpsc::unbounded_channel();
-		let (invoice_gen_tx, invoice_gen_rx) = mpsc::unbounded_channel();
-		let (invoice_settle_tx, invoice_settle_rx) = mpsc::unbounded_channel();
 		let (payment_update_tx, payment_update_rx) = broadcast::channel(256);
-		let (bolt12_tx, bolt12_rx) = mpsc::unbounded_channel();
 
 		let node_monitor_config = ClnNodeMonitorConfig {
 			invoice_check_interval: config.invoice_check_interval,
@@ -125,11 +109,7 @@ impl ClnManager {
 			waker: Arc::new(Notify::new()),
 
 			ctrl_rx,
-			payment_rx,
-			bolt12_rx,
 			node_monitor_config,
-			invoice_gen_rx,
-			invoice_settle_rx,
 
 			payment_update_tx: payment_update_tx.clone(),
 
@@ -149,14 +129,15 @@ impl ClnManager {
 		Ok(ClnManager {
 			db,
 			ctrl_tx,
-			payment_tx,
 			payment_update_tx,
 			payment_update_rx,
-			invoice_gen_tx,
-			invoice_settle_tx,
-			bolt12_tx,
 			invoice_poll_interval: config.invoice_poll_interval,
 		})
+	}
+
+	/// Send a control message to the process
+	fn send_ctrl(&self, ctrl: Ctrl) {
+		self.ctrl_tx.send(ctrl).expect("called ClnManager after shutting down");
 	}
 
 	/// Pays a bolt-11 invoice and returns the pre-image
@@ -180,7 +161,11 @@ impl ClnManager {
 		};
 
 		let update_rx = self.payment_update_rx.resubscribe();
-		self.payment_tx.send((invoice.clone(), user_amount, htlc_send_expiry_height)).context("payment channel broken")?;
+		self.send_ctrl(Ctrl::PaymentRequest {
+			invoice: Box::new(invoice.clone()),
+			user_amount,
+			htlc_expiry_height: htlc_send_expiry_height,
+		});
 
 		debug!("Bolt11 invoice sent for payment, waiting for maintenance task CLN updates...");
 
@@ -273,9 +258,9 @@ impl ClnManager {
 		amount: Amount,
 		cltv_delta: BlockDelta,
 	) -> anyhow::Result<Bolt11Invoice> {
-		let (tx, rx) = oneshot::channel();
-		self.invoice_gen_tx.send(((payment_hash, amount, cltv_delta), tx)).context("invoice channel broken")?;
-		rx.await.context("invoice return channel broken")
+		let (invoice_tx, invoice_rx) = oneshot::channel();
+		self.send_ctrl(Ctrl::GenerateInvoice { payment_hash, amount, cltv_delta, invoice_tx });
+		invoice_rx.await.context("an error occurred requesting a BOLT-11 invoice")
 	}
 
 	pub async fn settle_invoice(
@@ -301,12 +286,9 @@ impl ClnManager {
 			self.payment_update_tx.send(payment_hash)
 				.context("payment update channel broken")?;
 		} else {
-			let (tx, rx) = oneshot::channel();
-			self.invoice_settle_tx
-				.send(((subscription_id, preimage.to_owned()), tx))
-				.context("invoice settle channel broken")?;
-
-			rx.await.context("invoice settle return channel broken")??;
+			let (result_tx, result_rx) = oneshot::channel();
+			self.send_ctrl(Ctrl::SettleInvoice { subscription_id, preimage, result_tx });
+			result_rx.await.context("an error occurred settling invoice")??;
 		}
 
 		// Update the subscription status to settled
@@ -327,18 +309,16 @@ impl ClnManager {
 		amount: Amount,
 	) -> anyhow::Result<Bolt12Invoice> {
 		let (invoice_tx, invoice_rx) = oneshot::channel();
-		self.bolt12_tx.send((offer, amount, invoice_tx)).context("bolt12 channel broken")?;
-		invoice_rx.await.context("bolt12 return channel broken")
+		self.send_ctrl(Ctrl::RequestBolt12 { offer: Box::new(offer), amount, invoice_tx });
+		invoice_rx.await.context("an error occurred requesting BOLT-12 invoice")
 	}
 
-	pub async fn activate(&self, uri: Uri) -> anyhow::Result<()> {
-		self.ctrl_tx.send(Ctrl::ActivateCln(uri)).context("ClnManager down")?;
-		Ok(())
+	pub fn activate(&self, uri: Uri) {
+		self.send_ctrl(Ctrl::ActivateCln(uri));
 	}
 
-	pub async fn disable(&self, uri: Uri) -> anyhow::Result<()> {
-		self.ctrl_tx.send(Ctrl::DisableCln(uri)).context("ClnManager down")?;
-		Ok(())
+	pub fn disable(&self, uri: Uri) {
+		self.send_ctrl(Ctrl::DisableCln(uri));
 	}
 }
 
@@ -513,6 +493,27 @@ impl ClnNodeInfo {
 enum Ctrl {
 	ActivateCln(Uri),
 	DisableCln(Uri),
+	PaymentRequest {
+		invoice: Box<Invoice>,
+		user_amount: Option<Amount>,
+		htlc_expiry_height: BlockHeight,
+	},
+	GenerateInvoice {
+		payment_hash: PaymentHash,
+		amount: Amount,
+		cltv_delta: BlockDelta,
+		invoice_tx: oneshot::Sender<Bolt11Invoice>,
+	},
+	SettleInvoice {
+		subscription_id: i64,
+		preimage: Preimage,
+		result_tx: oneshot::Sender<anyhow::Result<()>>,
+	},
+	RequestBolt12 {
+		offer: Box<Offer>,
+		amount: Amount,
+		invoice_tx: oneshot::Sender<Bolt12Invoice>,
+	},
 }
 
 struct ClnManagerProcess {
@@ -521,10 +522,6 @@ struct ClnManagerProcess {
 	waker: Arc<Notify>,
 
 	ctrl_rx: mpsc::UnboundedReceiver<Ctrl>,
-	payment_rx: mpsc::UnboundedReceiver<(Invoice, Option<Amount>, BlockHeight)>,
-	invoice_gen_rx: mpsc::UnboundedReceiver<((PaymentHash, Amount, BlockDelta), oneshot::Sender<Bolt11Invoice>)>,
-	invoice_settle_rx: mpsc::UnboundedReceiver<((i64, Preimage), oneshot::Sender<anyhow::Result<()>>)>,
-	bolt12_rx: mpsc::UnboundedReceiver<(Offer, Amount, oneshot::Sender<Bolt12Invoice>)>,
 
 	payment_update_tx: broadcast::Sender<PaymentHash>,
 
@@ -739,7 +736,7 @@ impl ClnManagerProcess {
 
 	async fn start_payment(
 		&self,
-		invoice: Invoice,
+		invoice: Box<Invoice>,
 		user_amount: Option<Amount>,
 		htlc_send_expiry_height: BlockHeight,
 	) -> anyhow::Result<()> {
@@ -886,7 +883,11 @@ impl ClnManagerProcess {
 		Ok(())
 	}
 
-	async fn fetch_bolt12_invoice(&self, offer: Offer, amount: Amount, channel: oneshot::Sender<Bolt12Invoice>) -> anyhow::Result<()> {
+	async fn fetch_bolt12_invoice(
+		&self,
+		offer: &Offer,
+		amount: Amount,
+	) -> anyhow::Result<Bolt12Invoice> {
 		let node = self.get_active_node().context("no active cln node")?;
 
 		let resp = node.rpc.clone().fetch_invoice(cln_rpc::FetchinvoiceRequest {
@@ -902,11 +903,8 @@ impl ClnManagerProcess {
 			bip353: None,
 		}).await?.into_inner();
 
-		let invoice = Bolt12Invoice::from_str(&resp.invoice)
-			.map_err(|e| anyhow!("Invalid bolt12 invoice: {:?}", e))?;
-
-		channel.send(invoice).map_err(|_| anyhow!("broken channel"))?;
-		Ok(())
+		Ok(Bolt12Invoice::from_str(&resp.invoice)
+			.map_err(|e| anyhow!("Invalid bolt12 invoice: {:?}", e))?)
 	}
 
 	async fn run(mut self, reconnect_interval: Duration) {
@@ -937,63 +935,57 @@ impl ClnManagerProcess {
 						},
 						Ctrl::DisableCln(uri) => {
 							self.disable_node(&uri).await;
-						}
+						},
+						Ctrl::PaymentRequest { invoice, user_amount, htlc_expiry_height } => {
+							trace!("Payment request received: payment_hash={}",
+								invoice.payment_hash(),
+							);
+							if let Err(e) = self.start_payment(
+								invoice,
+								user_amount,
+								htlc_expiry_height,
+							).await {
+								error!("Error sending bolt11 payment for invoice: {:#}", e);
+							}
+						},
+						Ctrl::GenerateInvoice { payment_hash, amount, cltv_delta, invoice_tx } => {
+							trace!("Invoice generation received: payment_hash={:?}", payment_hash);
+							match self.generate_invoice(payment_hash, amount, cltv_delta).await {
+								Ok(invoice) => {
+									trace!("Invoice generation successful: payment_hash={}",
+										payment_hash,
+									);
+									let _ = invoice_tx.send(invoice);
+								},
+								Err(e) => error!("Error generating invoice: {:#}", e),
+							}
+						},
+						Ctrl::SettleInvoice { subscription_id, preimage, result_tx } => {
+							match self.settle_invoice(subscription_id, preimage).await {
+								Ok(()) => {
+									trace!("Invoice settled successfully: payment_hash={}",
+										preimage.compute_payment_hash(),
+									);
+									let _ = result_tx.send(Ok(()));
+								},
+								Err(e) => {
+									debug!("Error settling invoice: {:#}", e);
+									let _ = result_tx.send(Err(e));
+								},
+							}
+						},
+						Ctrl::RequestBolt12 { offer, amount, invoice_tx } => {
+							trace!("Fetch bolt12 invoice received: offer={:?}", offer);
+							match self.fetch_bolt12_invoice(&offer, amount).await {
+								Ok(invoice) => {
+									let _ = invoice_tx.send(invoice);
+								},
+								Err(e) => error!("Error fetching bolt12 invoice: {:#}", e),
+							}
+						},
 					}
 				} else {
 					warn!("control channel closed, shutting down ClnManager");
-					break;
-				},
-
-				msg = self.payment_rx.recv() => if let Some((invoice, amount, htlc_send_expiry_height)) = msg {
-					trace!("Payment request received: payment_hash={:?}", invoice.payment_hash());
-					if let Err(e) = self.start_payment(invoice, amount, htlc_send_expiry_height).await {
-						error!("Error sending bolt11 payment for invoice: {}", e);
-					}
-				} else {
-					warn!("payment channel closed, shutting down ClnManager");
-					break;
-				},
-
-				msg = self.invoice_gen_rx.recv() => if let Some(((payment_hash, amount, cltv_delta), sender)) = msg {
-					trace!("Invoice generation received: payment_hash={:?}", payment_hash);
-					match self.generate_invoice(payment_hash, amount, cltv_delta).await {
-						Ok(invoice) => {
-							trace!("Invoice generation successful: payment_hash={:?}", payment_hash);
-							sender.send(invoice).unwrap();
-						},
-						Err(e) => {
-							error!("Error generating invoice: {}", e);
-						},
-					}
-				} else {
-					warn!("invoice channel closed, shutting down ClnManager");
-					break;
-				},
-
-				msg = self.invoice_settle_rx.recv() => if let Some(((subscription_id, preimage), sender)) = msg {
-					trace!("Invoice settle request received: payment_preimage={:?}", preimage);
-					match self.settle_invoice(subscription_id, preimage).await {
-						Ok(_) => {
-							trace!("Invoice settled successfully: payment_preimage={:?}", preimage);
-							sender.send(Ok(())).unwrap();
-						},
-						Err(e) => {
-							debug!("Error settling invoice: {}", e);
-							sender.send(Err(e)).unwrap();
-						},
-					}
-				} else {
-					warn!("invoice settle channel closed, shutting down ClnManager");
-					break;
-				},
-
-				msg = self.bolt12_rx.recv() => if let Some((offer, amount, channel)) = msg {
-					trace!("Fetch bolt12 invoice received: offer={:?}", offer);
-					if let Err(e) = self.fetch_bolt12_invoice(offer, amount, channel).await {
-						error!("Error fetching bolt12 invoice: {}", e);
-					}
-				} else {
-					warn!("bolt12 channel closed, shutting down ClnManager");
 					break;
 				},
 			};
@@ -1006,7 +998,7 @@ async fn handle_pay_bolt11(
 	db: database::Db,
 	payment_update_tx: broadcast::Sender<PaymentHash>,
 	mut rpc: ClnGrpcClient,
-	invoice: Invoice,
+	invoice: Box<Invoice>,
 	amount: Option<Amount>,
 	max_cltv_expiry_delta: BlockDelta,
 ) {
@@ -1130,5 +1122,20 @@ impl database::Db {
 		);
 
 		Ok(updated_at.is_some())
+	}
+}
+
+#[cfg(test)]
+mod test {
+	use super::*;
+
+	#[test]
+	fn guard_ctrl_size() {
+		// NB our invoice types are huge (thanks LDK), so we box them
+		// to reduce the size of our control message
+		assert_eq!(std::mem::size_of::<Invoice>(), 1392);
+		assert_eq!(std::mem::size_of::<Bolt11Invoice>(), 168);
+		assert_eq!(std::mem::size_of::<Bolt12Invoice>(), 1392);
+		assert_eq!(std::mem::size_of::<Ctrl>(), 96, "Ctrl type size changed");
 	}
 }
