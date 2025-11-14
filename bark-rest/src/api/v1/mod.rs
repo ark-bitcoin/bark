@@ -5,6 +5,7 @@ pub mod onchain;
 pub mod boards;
 pub mod wallet;
 pub mod bitcoin;
+pub mod notifications;
 
 use axum::Router;
 
@@ -20,4 +21,5 @@ pub fn router(state: &ServerState) -> Router<ServerState> {
 		.nest("/fees", authed_router(state, fees::router()))
 		.nest("/wallet", authed_router(state, wallet::router()))
 		.nest("/bitcoin", authed_router(state, bitcoin::router()))
+		.nest("/notifications", notifications::router())
 }

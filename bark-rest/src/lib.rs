@@ -6,18 +6,19 @@ pub mod api;
 pub mod auth;
 pub mod config;
 pub mod error;
-pub use axum::http;
 
 use crate::auth::AuthToken;
 pub use crate::config::Config;
+pub use axum::http;
+use chrono::{DateTime, Utc};
 
 
+use std::collections::{HashMap};
 use std::pin::Pin;
 use std::sync::Arc;
 
 use anyhow::Context;
 use axum::routing::get;
-use bark_json::web::CreateWalletRequest;
 use log::{error, warn, info};
 use tokio::sync::RwLock;
 use tokio::task::JoinHandle;
@@ -31,6 +32,7 @@ use utoipa_swagger_ui::SwaggerUi;
 
 use bark::Wallet;
 use bark::onchain::OnchainWallet;
+use bark_json::web::CreateWalletRequest;
 
 type BoxFuture<T> =
 	Pin<Box<dyn Future<Output = T> + Send + 'static>>;
@@ -64,6 +66,7 @@ All endpoints return JSON. Amounts are denominated in satoshis.";
 		(path = "/api/v1/onchain", api = api::v1::onchain::OnchainApiDoc),
 		(path = "/api/v1/wallet", api = api::v1::wallet::WalletApiDoc),
 		(path = "/api/v1/bitcoin", api = api::v1::bitcoin::BitcoinApiDoc),
+		(path = "/api/v1/notifications", api = api::v1::notifications::NotificationApiDoc),
 	),
 	info(
 		title = "barkd REST API",
@@ -140,6 +143,12 @@ pub struct ServerState {
 	on_wallet_create: Option<Arc<OnWalletCreate>>,
 	auth_token: Option<AuthToken>,
 	on_wallet_delete: Option<Arc<OnWalletDelete>>,
+
+	/// A map of websocket tickets to their expiration time
+	///
+	/// Note: this map is only stored in memory and not persisted
+	/// to the database, any server restart will clear the map.
+	websocket_tickets: Arc<RwLock<HashMap<String, DateTime<Utc>>>>,
 }
 
 impl ServerState {
@@ -154,6 +163,8 @@ impl ServerState {
 			on_wallet_create,
 			auth_token,
 			on_wallet_delete,
+
+			websocket_tickets: Arc::new(RwLock::new(HashMap::new())),
 		}
 	}
 

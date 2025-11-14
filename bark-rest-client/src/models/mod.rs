@@ -6,3 +6,4 @@ pub use bark_json::movements::*;
 pub use bark_json::primitives::*;
 pub use bark_json::web::*;
 pub use bark_rest::error::*;
+pub use bark_rest::api::v1::notifications::*;

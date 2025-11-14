@@ -153,7 +153,10 @@ pub(crate) async fn guard_auth(
 
 #[cfg(test)]
 mod tests {
+	use std::collections::HashMap;
 	use std::sync::Arc;
+
+	use tokio::sync::RwLock;
 
 	use super::*;
 
@@ -167,6 +170,8 @@ mod tests {
 			on_wallet_create: None,
 			auth_token: Some(token),
 			on_wallet_delete: None,
+
+			websocket_tickets: Arc::new(RwLock::new(HashMap::new())),
 		})
 	}
 

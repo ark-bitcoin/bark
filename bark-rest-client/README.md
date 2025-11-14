@@ -53,6 +53,7 @@ Class | Method | HTTP request | Description
 *LightningApi* | [**get_receive_status**](docs/LightningApi.md#get_receive_status) | **GET** /api/v1/lightning/receives/{identifier} | Get receive status
 *LightningApi* | [**list_receive_statuses**](docs/LightningApi.md#list_receive_statuses) | **GET** /api/v1/lightning/receives | List all pending receive statuses
 *LightningApi* | [**pay**](docs/LightningApi.md#pay) | **POST** /api/v1/lightning/pay | Send a Lightning payment
+*NotificationsApi* | [**websocket_ticket**](docs/NotificationsApi.md#websocket_ticket) | **GET** /api/v1/notifications/ws/ticket | Create a new websocket ticket. You can call then `ws://<host>/api/v1/notifications/ws?ticket=<ticket>` to subscribe to notifications
 *OnchainApi* | [**onchain_address**](docs/OnchainApi.md#onchain_address) | **POST** /api/v1/onchain/addresses/next | Generate on-chain address
 *OnchainApi* | [**onchain_balance**](docs/OnchainApi.md#onchain_balance) | **GET** /api/v1/onchain/balance | Get on-chain balance
 *OnchainApi* | [**onchain_drain**](docs/OnchainApi.md#onchain_drain) | **POST** /api/v1/onchain/drain | Drain on-chain wallet
@@ -238,6 +239,10 @@ Class | Method | HTTP request | Description
  - [WalletDeleteRequest](docs/WalletDeleteRequest.md)
  - [WalletDeleteResponse](docs/WalletDeleteResponse.md)
  - [WalletExistsResponse](docs/WalletExistsResponse.md)
+ - [WalletNotification](docs/WalletNotification.md)
+ - [WalletNotificationOneOf](docs/WalletNotificationOneOf.md)
+ - [WalletNotificationOneOf1](docs/WalletNotificationOneOf1.md)
+ - [WalletNotificationOneOf2](docs/WalletNotificationOneOf2.md)
  - [WalletVtxoInfo](docs/WalletVtxoInfo.md)
 
 
