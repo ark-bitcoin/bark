@@ -37,7 +37,7 @@ use crate::{SECP, Wallet};
 use crate::movement::{MovementDestination, MovementId, MovementStatus};
 use crate::movement::update::MovementUpdate;
 use crate::onchain::{ChainSource, ChainSourceClient};
-use crate::persist::StoredRoundState;
+use crate::persist::{RoundStateId, StoredRoundState};
 use crate::subsystem::{BarkSubsystem, RoundMovement};
 
 /// Bitcoin's block time of 10 minutes.
@@ -178,6 +178,33 @@ impl RoundState {
 			RoundFlowState::Failed { .. } => false,
 			RoundFlowState::Canceled => false,
 		}
+	}
+
+	/// Tries to cancel the round and returns whether it was succesfully canceled
+	/// or if it was already canceled or failed
+	pub async fn try_cancel(&mut self, wallet: &Wallet) -> anyhow::Result<bool> {
+		let ret = match self.flow {
+			RoundFlowState::Canceled => true,
+			RoundFlowState::Success => false,
+			RoundFlowState::WaitingToStart => {
+				self.flow = RoundFlowState::Canceled;
+				true
+			},
+			RoundFlowState::Failed { .. } => self.unconfirmed_rounds().is_empty(),
+			RoundFlowState::Ongoing { .. } => {
+				if self.unconfirmed_rounds().is_empty() {
+					self.flow = RoundFlowState::Canceled;
+					true
+				} else {
+					false
+				}
+			},
+		};
+		if ret {
+			persist_round_failure(wallet, &self.participation, self.movement_id).await
+				.context("failed to persist round failure for cancelation")?;
+		}
+		Ok(ret)
 	}
 
 	async fn try_start_attempt(&mut self, wallet: &Wallet, attempt: &RoundAttempt) {
@@ -375,22 +402,19 @@ impl RoundState {
 					RoundStatus::Pending { unsigned_funding_txids: vec![] }
 				}
 				RoundFlowState::Success => {
-					persist_round_failure(wallet, &self.participation, self.movement_id)
-						.await
+					persist_round_failure(wallet, &self.participation, self.movement_id).await
 						.context("failed to persist round failure")?;
 					RoundStatus::Failed {
 						error: "all pending round funding transactions have been double spent".into(),
 					}
 				},
 				RoundFlowState::Failed { ref error } => {
-					persist_round_failure(wallet, &self.participation, self.movement_id)
-						.await
+					persist_round_failure(wallet, &self.participation, self.movement_id).await
 						.context("failed to persist round failure")?;
 					RoundStatus::Failed { error: error.clone() }
 				},
 				RoundFlowState::Canceled => {
-					persist_round_failure(wallet, &self.participation, self.movement_id)
-						.await
+					persist_round_failure(wallet, &self.participation, self.movement_id).await
 						.context("failed to persist round failure")?;
 					RoundStatus::Canceled
 				},
@@ -1422,6 +1446,45 @@ impl Wallet {
 				return Ok(());
 			}
 		}
+	}
+
+	/// Will cancel all pending rounds that can safely be canceled
+	///
+	/// All rounds that have not started yet can safely be canceled,
+	/// as well as rounds where we have not yet signed any forfeit txs.
+	pub async fn cancel_all_pending_rounds(&self) -> anyhow::Result<()> {
+		let states = self.db.load_round_states()?;
+		for mut state in states {
+			match state.state.try_cancel(self).await {
+				Ok(true) => {
+					if let Err(e) = self.db.remove_round_state(&state) {
+						warn!("Error removing canceled round state from db: {:#}", e);
+					}
+				},
+				Ok(false) => {},
+				Err(e) => warn!("Error trying to cancel round #{}: {:#}", state.id, e),
+			}
+		}
+		Ok(())
+	}
+
+	/// Try to cancel the given round
+	pub async fn cancel_pending_round(&self, id: RoundStateId) -> anyhow::Result<()> {
+		let states = self.db.load_round_states()?;
+		for mut state in states {
+			if state.id != id {
+				continue;
+			}
+
+			if state.state.try_cancel(self).await.context("failed to cancel round")? {
+				self.db.remove_round_state(&state)
+					.context("error removing canceled round state from db")?;
+			} else {
+				bail!("failed to cancel round");
+			}
+			return Ok(());
+		}
+		bail!("round not found")
 	}
 
 	/// Participate in a round

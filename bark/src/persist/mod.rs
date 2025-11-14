@@ -263,7 +263,7 @@ pub trait BarkPersister: Send + Sync + 'static {
 	/// - returns an error of the existing round state could not be found or updated
 	fn update_round_state(&self, round_state: &StoredRoundState) -> anyhow::Result<()>;
 
-	/// Remove a pending round state from the db and releases the locked VTXOs
+	/// Remove a pending round state from the db
 	///
 	/// Parameters:
 	/// - `round_state`: the round state to remove
