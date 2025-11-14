@@ -4,6 +4,7 @@ mod dev;
 mod exit;
 mod lightning;
 mod onchain;
+mod round;
 mod util;
 mod wallet;
 
@@ -376,9 +377,9 @@ enum Command {
 	#[command(subcommand, visible_alias = "ln")]
 	Lightning(lightning::LightningCommand),
 
-	/// developer commands
+	/// round-related commands
 	#[command(subcommand)]
-	Dev(dev::DevCommand),
+	Round(round::RoundCommand),
 
 	/// Run wallet maintenence
 	///
@@ -386,6 +387,10 @@ enum Command {
 	/// syncing Lightning VTXOs, syncing exits, and refreshing soon-to-expire VTXOs
 	#[command()]
 	Maintain,
+
+	/// developer commands
+	#[command(subcommand)]
+	Dev(dev::DevCommand),
 }
 
 
@@ -656,6 +661,9 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 		},
 		Command::Lightning(cmd) => {
 			lightning::execute_lightning_command(cmd, &mut wallet).await?;
+		},
+		Command::Round(cmd) => {
+			round::execute_round_command(cmd, &mut wallet).await?;
 		},
 		Command::Maintain => {
 			wallet.maintenance_with_onchain(&mut onchain).await?;
