@@ -294,7 +294,6 @@ pub trait BarkPersister: Send + Sync + 'static {
 	fn store_vtxos(
 		&self,
 		vtxos: &[(&Vtxo, &VtxoState)],
-		movement_id: Option<MovementId>,
 	) -> anyhow::Result<()>;
 
 	/// Fetch a wallet [Vtxo] with its current state by ID.
@@ -578,17 +577,4 @@ pub trait BarkPersister: Send + Sync + 'static {
 		new_state: VtxoState,
 		allowed_old_states: &[VtxoStateKind],
 	) -> anyhow::Result<WalletVtxo>;
-
-	/// Links a spent [Vtxo] to a specific [Movement]. Establishing this link helps in tracking the
-	/// flow of funds.
-	///
-	/// # Parameters
-	///
-	/// * `vtxo_id` - The unique identifier of the [Vtxo] that has been spent.
-	/// * `movement_id` - The unique identifier of the [Movement] which spent the [Vtxo].
-	fn link_spent_vtxo_to_movement(
-		&self,
-		vtxo_id: VtxoId,
-		movement_id: MovementId,
-	) -> anyhow::Result<()>;
 }

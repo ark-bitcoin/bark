@@ -293,12 +293,7 @@ impl BarkPersister for Dummy {
 	fn store_vtxos(
 		&self,
 		_vtxos: &[(&Vtxo, &VtxoState)],
-		_movement_id: Option<MovementId>,
 	) -> anyhow::Result<()> {
-		Ok(())
-	}
-
-	fn link_spent_vtxo_to_movement(&self, _v: VtxoId, _m: MovementId) -> anyhow::Result<()> {
 		Ok(())
 	}
 }

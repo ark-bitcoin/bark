@@ -338,7 +338,7 @@ impl Exit {
 				Address::from_script(&vtxo.output_script_pubkey(), &params)?.to_string(),
 				vtxo.amount(),
 			);
-			let movement_id = self.movement_manager.new_finished_movement(
+			self.movement_manager.new_finished_movement(
 				self.subsystem_id,
 				ExitMovement::Exit.to_string(),
 				MovementStatus::Finished,
@@ -346,8 +346,7 @@ impl Exit {
 					.intended_and_effective_balance(balance)
 					.consumed_vtxo(vtxo.id())
 					.sent_to([destination]),
-			).await.map_err(|e| format_err!("Failed to register movement: {}", e))?;
-			self.persister.link_spent_vtxo_to_movement(vtxo_id, movement_id)?;
+			).await.map_err(|e| format_err!("Failed to register movement: {:#}", e))?;
 		}
 		Ok(())
 	}

@@ -887,8 +887,8 @@ async fn persist_round_success(
 		new_vtxos.len(), participation.offboards.len(), movement_id,
 	);
 
-	let store_result = wallet.store_spendable_vtxos(new_vtxos, movement_id);
-	let spent_result = wallet.mark_vtxos_as_spent(&participation.inputs, movement_id);
+	let store_result = wallet.store_spendable_vtxos(new_vtxos);
+	let spent_result = wallet.mark_vtxos_as_spent(&participation.inputs);
 	let update_result = if let Some(movement_id) = movement_id {
 		wallet.movements.update_movement(movement_id, MovementUpdate::new()
 			.produced_vtxos(new_vtxos)

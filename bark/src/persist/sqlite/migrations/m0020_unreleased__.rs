@@ -123,9 +123,7 @@ impl Migration for Migration0020 {
 				expiry_height INTEGER,
 				amount_sat INTEGER,
 				raw_vtxo BLOB,
-				created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now')),
-				received_in TEXT REFERENCES bark_movements(id),
-				spent_in TEXT REFERENCES bark_movements(id)
+				created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now'))
 			);",
 			"ALTER TABLE bark_pending_board ADD COLUMN movement_id INTEGER NOT NULL;",
 			"ALTER TABLE bark_pending_lightning_send ADD COLUMN movement_id INTEGER NOT NULL;",

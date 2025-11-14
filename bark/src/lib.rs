@@ -1528,9 +1528,8 @@ impl Wallet {
 					vtxos.push(vtxo);
 				}
 
-				// TODO: Consider whether we should try to create a single movement for the entire
-				//       sync process instead of on a per-mailbox-package basis.
-				let movement_id = self.movements.new_finished_movement(
+				self.store_spendable_vtxos(&vtxos)?;
+				self.movements.new_finished_movement(
 					self.subsystem_ids[&BarkSubsystem::Arkoor],
 					ArkoorMovement::Receive.to_string(),
 					MovementStatus::Finished,
@@ -1543,7 +1542,6 @@ impl Wallet {
 							.to_signed()?,
 						),
 				).await?;
-				self.store_spendable_vtxos(&vtxos, Some(movement_id))?;
 			}
 		}
 
@@ -1962,9 +1960,9 @@ impl Wallet {
 			error!("Failed to post the arkoor vtxo to the recipients mailbox: '{}'", e);
 			//NB we will continue to at least not lose our own change
 		}
-		self.mark_vtxos_as_spent(&arkoor.input, Some(movement.id()))?;
+		self.mark_vtxos_as_spent(&arkoor.input)?;
 		if let Some(change) = arkoor.change {
-			self.store_spendable_vtxos(&[change], Some(movement.id()))?;
+			self.store_spendable_vtxos(&[change])?;
 		}
 		movement.finish(MovementStatus::Finished).await?;
 		Ok(arkoor.created)
@@ -2017,9 +2015,9 @@ impl Wallet {
 				.effective_balance(payment.amount.to_signed()? - revoked)
 				.produced_vtxos(&vtxos)
 		).await?;
-		self.store_spendable_vtxos(&vtxos, Some(payment.movement_id))?;
-		self.mark_vtxos_as_spent(&htlc_vtxos, Some(payment.movement_id))?;
-		self.movements.finish_movement(payment.movement_id, MovementStatus::Finished).await?;
+		self.store_spendable_vtxos(&vtxos)?;
+		self.mark_vtxos_as_spent(&htlc_vtxos)?;
+		self.movements.finish_movement(payment.movement_id, MovementStatus::Failed).await?;
 
 		self.db.remove_pending_lightning_send(payment.invoice.payment_hash())?;
 
@@ -2135,7 +2133,7 @@ impl Wallet {
 			self.validate_vtxo(vtxo).await?;
 		}
 		self.store_locked_vtxos(&htlc_vtxos, Some(movement.id()))?;
-		self.mark_vtxos_as_spent(&input_ids, Some(movement.id()))?;
+		self.mark_vtxos_as_spent(&input_ids)?;
 
 		// Validate the change vtxo. It has the same chain anchor as the last input.
 		if let Some(ref change) = change_vtxo {
@@ -2145,7 +2143,7 @@ impl Wallet {
 				format!("input vtxo chain anchor not found for lightning change vtxo: {}", last_input.chain_anchor().txid)
 			})?;
 			change.validate(&tx).context("invalid lightning change vtxo")?;
-			self.store_spendable_vtxos([change], Some(movement.id()))?;
+			self.store_spendable_vtxos([change])?;
 		}
 
 		movement.apply_update(
@@ -2172,7 +2170,7 @@ impl Wallet {
 			info!("Payment succeeded! Preimage: {}", preimage.as_hex());
 
 			self.db.remove_pending_lightning_send(payment.invoice.payment_hash())?;
-			self.mark_vtxos_as_spent(&htlc_vtxos, Some(movement.id()))?;
+			self.mark_vtxos_as_spent(&htlc_vtxos)?;
 			movement.finish(MovementStatus::Finished).await?;
 			Ok(preimage)
 		} else {
@@ -2480,7 +2478,7 @@ impl Wallet {
 		let mut effective_balance = Amount::ZERO;
 		for vtxo in &outputs {
 			// TODO: bailing here results in vtxos not being registered despite preimage being revealed
-			// should we make `srv.client.claim_lightning_receive` indempotent, so that bark can at
+			// should we make `srv.client.claim_lightning_receive` idempotent, so that bark can at
 			// least retry some times before giving up and exiting?
 			if let Err(e) = self.validate_vtxo(vtxo).await {
 				bail!("invalid arkoor from lightning receive: {e}");
@@ -2488,7 +2486,7 @@ impl Wallet {
 			effective_balance += vtxo.amount();
 		}
 
-		self.store_spendable_vtxos(&outputs, Some(lightning_receive.movement_id))?;
+		self.store_spendable_vtxos(&outputs)?;
 		self.movements.update_movement(
 			lightning_receive.movement_id,
 			MovementUpdate::new()
@@ -2787,6 +2785,7 @@ impl Wallet {
 						).await?;
 					} else {
 						warn!("HTLC-recv VTXOs are about to expire, but preimage has not been disclosed yet, mark htlc as cancelled");
+						self.mark_vtxos_as_spent(vtxos)?;
 						self.movements.finish_movement(
 							lightning_receive.movement_id, MovementStatus::Cancelled,
 						).await?;

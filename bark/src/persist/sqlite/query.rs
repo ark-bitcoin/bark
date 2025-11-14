@@ -247,18 +247,16 @@ pub fn store_vtxo_with_initial_state(
 	tx: &Transaction,
 	vtxo: &Vtxo,
 	state: &VtxoState,
-	movement_id: Option<MovementId>,
 ) -> anyhow::Result<()> {
 	// Store the vtxo
 	let q1 =
-		"INSERT INTO bark_vtxo (id, expiry_height, amount_sat, received_in, raw_vtxo)
-		VALUES (:vtxo_id, :expiry_height, :amount_sat, :received_in, :raw_vtxo);";
+		"INSERT INTO bark_vtxo (id, expiry_height, amount_sat, raw_vtxo)
+		VALUES (:vtxo_id, :expiry_height, :amount_sat, :raw_vtxo);";
 	let mut statement = tx.prepare(q1)?;
 	statement.execute(named_params! {
 		":vtxo_id" : vtxo.id().to_string(),
 		":expiry_height": vtxo.expiry_height(),
 		":amount_sat": vtxo.amount().to_sat(),
-		":received_in": movement_id.map(|m| m.inner()),
 		":raw_vtxo": vtxo.serialize(),
 	})?;
 
@@ -541,21 +539,6 @@ pub fn get_vtxo_state(
 	} else {
 		Ok(None)
 	}
-}
-
-pub fn link_spent_vtxo_to_movement(
-	conn: &Connection,
-	id: VtxoId,
-	movement_id: MovementId
-) -> anyhow::Result<()> {
-	let query = "UPDATE bark_vtxo SET spent_in = :spent_in WHERE id = :vtxo_id";
-	let mut statement = conn.prepare(query)?;
-	statement.execute(named_params! {
-		":vtxo_id": id.to_string(),
-		":spent_in": movement_id.inner()
-	})?;
-
-	Ok(())
 }
 
 /// Updates the state of a VTXO from one of the
@@ -884,9 +867,9 @@ mod test {
 		let vtxo_3 = &VTXO_VECTORS.round2_vtxo;
 
 		let locked = VtxoState::Locked { movement_id: None };
-		store_vtxo_with_initial_state(&tx, &vtxo_1, &locked, None).unwrap();
-		store_vtxo_with_initial_state(&tx, &vtxo_2, &locked, None).unwrap();
-		store_vtxo_with_initial_state(&tx, &vtxo_3, &locked, None).unwrap();
+		store_vtxo_with_initial_state(&tx, &vtxo_1, &locked).unwrap();
+		store_vtxo_with_initial_state(&tx, &vtxo_2, &locked).unwrap();
+		store_vtxo_with_initial_state(&tx, &vtxo_3, &locked).unwrap();
 
 		// This update will fail because the current state is Locked
 		// We only allow the state to switch from VtxoState::Spendable

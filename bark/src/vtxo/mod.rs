@@ -22,7 +22,7 @@ impl Wallet {
 		vtxos: impl IntoIterator<Item = impl VtxoRef>,
 		movement_id: Option<MovementId>,
 	) -> anyhow::Result<()> {
-		self.set_vtxo_states(vtxos, &VtxoState::Locked { movement_id }, &UNSPENT_STATES, None)
+		self.set_vtxo_states(vtxos, &VtxoState::Locked { movement_id }, &UNSPENT_STATES)
 	}
 
 	/// Attempts to mark VTXOs as [VtxoState::Spent], given that each [VtxoId] is currently a state
@@ -35,9 +35,8 @@ impl Wallet {
 	pub fn mark_vtxos_as_spent(
 		&self,
 		vtxos: impl IntoIterator<Item = impl VtxoRef>,
-		movement_id: Option<MovementId>,
 	) -> anyhow::Result<()> {
-		self.set_vtxo_states(vtxos, &VtxoState::Spent, &UNSPENT_STATES, movement_id)
+		self.set_vtxo_states(vtxos, &VtxoState::Spent, &UNSPENT_STATES)
 	}
 
 	/// Updates the state set the [VtxoState] of VTXOs corresponding to each given [VtxoId]while
@@ -48,8 +47,6 @@ impl Wallet {
 	/// - `state`: A reference to the new [VtxoState] that the VTXOs should be transitioned to.
 	/// - `allowed_states`: A slice of [VtxoStateKind] representing the permissible current states
 	///   from which the VTXOs are allowed to transition to the given `state`.
-	/// - `movement_id`: A [MovementId] used to track certain state transitions, e.g. from
-	///   unspent -> spent.
 	///
 	/// # Errors
 	/// - The database operation to update the states fails.
@@ -59,7 +56,6 @@ impl Wallet {
 		vtxos: impl IntoIterator<Item = impl VtxoRef>,
 		state: &VtxoState,
 		allowed_states: &[VtxoStateKind],
-		movement_id: Option<MovementId>,
 	) -> anyhow::Result<()> {
 		let mut problematic_vtxos = Vec::new();
 		for vtxo in vtxos {
@@ -74,14 +70,6 @@ impl Wallet {
 					state.kind(), allowed_states, id, e,
 				);
 				problematic_vtxos.push(id);
-			}
-			match (state.kind(), movement_id) {
-				(VtxoStateKind::Spent, Some(movement_id)) => {
-					if let Err(e) = self.db.link_spent_vtxo_to_movement(id, movement_id) {
-						error!("Failed to link VTXO {} to movement {}: {:#}", id, movement_id, e);
-					}
-				},
-				_ => {}
 			}
 		}
 		if problematic_vtxos.is_empty() {
@@ -101,13 +89,12 @@ impl Wallet {
 	///
 	/// # Parameters
 	/// - `vtxos`: The VTXOs to store in the wallet.
-	/// - `movement_id`: The ID of the [Movement] to indicate how the [Vtxo] was received initially.
 	pub fn store_locked_vtxos<'a>(
 		&self,
 		vtxos: impl IntoIterator<Item = &'a Vtxo>,
 		movement_id: Option<MovementId>,
 	) -> anyhow::Result<()> {
-		self.store_vtxos(vtxos, &VtxoState::Locked { movement_id }, movement_id)
+		self.store_vtxos(vtxos, &VtxoState::Locked { movement_id })
 	}
 
 	/// Stores the given collection of VTXOs in the wallet with an initial state of
@@ -115,13 +102,11 @@ impl Wallet {
 	///
 	/// # Parameters
 	/// - `vtxos`: The VTXOs to store in the wallet.
-	/// - `movement_id`: The ID of the [Movement] to indicate how the [Vtxo] was received initially.
 	pub fn store_spendable_vtxos<'a>(
 		&self,
 		vtxos: impl IntoIterator<Item = &'a Vtxo>,
-		movement_id: Option<MovementId>,
 	) -> anyhow::Result<()> {
-		self.store_vtxos(vtxos, &VtxoState::Spendable, movement_id)
+		self.store_vtxos(vtxos, &VtxoState::Spendable)
 	}
 
 	/// Stores the given collection of VTXOs in the wallet with an initial state of
@@ -129,13 +114,11 @@ impl Wallet {
 	///
 	/// # Parameters
 	/// - `vtxos`: The VTXOs to store in the wallet.
-	/// - `movement_id`: The ID of the [Movement] to indicate how the [Vtxo] was received initially.
 	pub fn store_spent_vtxos<'a>(
 		&self,
 		vtxos: impl IntoIterator<Item = &'a Vtxo>,
-		movement_id: Option<MovementId>,
 	) -> anyhow::Result<()> {
-		self.store_vtxos(vtxos, &VtxoState::Spent, movement_id)
+		self.store_vtxos(vtxos, &VtxoState::Spent)
 	}
 
 	/// Stores the given collection of VTXOs in the wallet with the given initial state.
@@ -143,15 +126,13 @@ impl Wallet {
 	/// # Parameters
 	/// - `vtxos`: The VTXOs to store in the wallet.
 	/// - `state`: The initial state of the VTXOs.
-	/// - `movement_id`: The ID of the [Movement] to indicate how the [Vtxo] was received initially.
 	pub fn store_vtxos<'a>(
 		&self,
 		vtxos: impl IntoIterator<Item = &'a Vtxo>,
 		state: &VtxoState,
-		movement_id: Option<MovementId>,
 	) -> anyhow::Result<()> {
 		let vtxos = vtxos.into_iter().map(|v| (v, state)).collect::<Vec<_>>();
-		if let Err(e) = self.db.store_vtxos(&vtxos, movement_id) {
+		if let Err(e) = self.db.store_vtxos(&vtxos) {
 			error!("An error occurred while storing {} VTXOs: {:#}", vtxos.len(), e);
 			error!("Raw VTXOs for debugging:");
 			for (vtxo, _) in vtxos {
@@ -176,6 +157,6 @@ impl Wallet {
 		&self,
 		vtxos: impl IntoIterator<Item = impl VtxoRef>,
 	) -> anyhow::Result<()> {
-		self.set_vtxo_states(vtxos, &VtxoState::Spendable, &[VtxoStateKind::Locked], None)
+		self.set_vtxo_states(vtxos, &VtxoState::Spendable, &[VtxoStateKind::Locked])
 	}
 }
