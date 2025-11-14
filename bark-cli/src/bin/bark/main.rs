@@ -66,6 +66,7 @@ fn round_status_to_json(status: &RoundStatus) -> json::RoundStatus {
 		RoundStatus::Failed { error } => {
 			json::RoundStatus::Failed { error: error.clone() }
 		},
+		RoundStatus::Canceled => json::RoundStatus::Canceled,
 	}
 }
 

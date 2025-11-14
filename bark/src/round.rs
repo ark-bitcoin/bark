@@ -96,6 +96,7 @@ pub enum RoundStatus {
 	Failed {
 		error: String,
 	},
+	Canceled,
 }
 
 impl RoundStatus {
@@ -106,6 +107,7 @@ impl RoundStatus {
 			Self::Unconfirmed { .. } => false,
 			Self::Pending { .. } => false,
 			Self::Failed { .. } => true,
+			Self::Canceled => true,
 		}
 	}
 
@@ -116,6 +118,7 @@ impl RoundStatus {
 			Self::Unconfirmed { .. } => true,
 			Self::Pending { .. } => false,
 			Self::Failed { .. } => false,
+			Self::Canceled => false,
 		}
 	}
 }
@@ -173,6 +176,7 @@ impl RoundState {
 			RoundFlowState::Ongoing { .. } => true,
 			RoundFlowState::Success => false,
 			RoundFlowState::Failed { .. } => false,
+			RoundFlowState::Canceled => false,
 		}
 	}
 
@@ -287,7 +291,9 @@ impl RoundState {
 				}
 				return updated;
 			},
-			RoundFlowState::Success { .. } | RoundFlowState::Failed { .. } => return false,
+			RoundFlowState::Success { .. }
+				| RoundFlowState::Failed { .. }
+				| RoundFlowState::Canceled => return false,
 		};
 	}
 
@@ -382,6 +388,12 @@ impl RoundState {
 						.context("failed to persist round failure")?;
 					RoundStatus::Failed { error: error.clone() }
 				},
+				RoundFlowState::Canceled => {
+					persist_round_failure(wallet, &self.participation, self.movement_id)
+						.await
+						.context("failed to persist round failure")?;
+					RoundStatus::Canceled
+				},
 			}
 		} else if let Some(signed) = self.unconfirmed_rounds.iter().find(|r| r.is_tx_signed()) {
 			let funding_txid = signed.funding_txid();
@@ -426,7 +438,7 @@ impl RoundState {
 			{
 				&self.participation.inputs
 			},
-			RoundFlowState::Failed { .. } => {
+			RoundFlowState::Failed { .. } | RoundFlowState::Canceled => {
 				// inputs already unlocked
 				&[]
 			},
@@ -449,6 +461,7 @@ pub enum RoundFlowState {
 	Failed {
 		error: String,
 	},
+	Canceled,
 }
 
 /// The state of a single round attempt
@@ -1212,7 +1225,7 @@ impl Wallet {
 					Ok(RoundStatus::Confirmed { funding_txid }) => {
 						info!("Round confirmed. Funding tx {}", funding_txid);
 						if let Err(e) = self.db.remove_round_state(&state) {
-							warn!("Error removing finished round state from db: {:#}", e);
+							warn!("Error removing confirmed round state from db: {:#}", e);
 						}
 					},
 					Ok(RoundStatus::Unconfirmed { funding_txid }) => {
@@ -1230,13 +1243,16 @@ impl Wallet {
 					Ok(RoundStatus::Failed { error }) => {
 						error!("Round failed: {}", error);
 						if let Err(e) = self.db.remove_round_state(&state) {
-							warn!("Error removing finished round state from db: {:#}", e);
+							warn!("Error removing failed round state from db: {:#}", e);
 						}
 					},
-					Err(e) => {
-						warn!("Error syncing round: {:#}", e);
-						return;
+					Ok(RoundStatus::Canceled) => {
+						error!("Round canceled");
+						if let Err(e) = self.db.remove_round_state(&state) {
+							warn!("Error removing canceled round state from db: {:#}", e);
+						}
 					},
+					Err(e) => warn!("Error syncing round: {:#}", e),
 				}
 			}).await;
 		}
