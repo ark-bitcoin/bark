@@ -20,6 +20,7 @@ use std::ops::Deref;
 use ark::vtxo::VtxoRef;
 
 use ark::Vtxo;
+use crate::movement::MovementId;
 
 const SPENDABLE: &'static str = "Spendable";
 const LOCKED: &'static str = "Locked";
@@ -70,20 +71,24 @@ lazy_static::lazy_static! {
 
 /// Rich [Vtxo] state carrying additional context needed at runtime.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "kebab-case")]
 pub enum VtxoState {
 	/// The [Vtxo] is available and can be spent in a future round.
 	Spendable,
 	/// The [Vtxo] has been consumed.
 	Spent,
 	/// The [Vtxo] is currently locked in an action.
-	Locked,
+	Locked {
+		/// The ID of the associated [Movement] that locked this VTXO.
+		movement_id: Option<MovementId>,
+	},
 }
 
 impl VtxoState {
 	/// Returns the compact [VtxoStateKind] discriminator for this rich state.
 	pub fn kind(&self) -> VtxoStateKind {
 		match self {
-			VtxoState::Locked => VtxoStateKind::Locked,
+			VtxoState::Locked { .. } => VtxoStateKind::Locked,
 			VtxoState::Spendable => VtxoStateKind::Spendable,
 			VtxoState::Spent => VtxoStateKind::Spent,
 		}
@@ -139,7 +144,7 @@ mod test {
 		match VtxoState::Spent {
 			VtxoState::Spendable => {},
 			VtxoState::Spent => {},
-			VtxoState::Locked => {},
+			VtxoState::Locked { .. } => {},
 		}
 	}
 }

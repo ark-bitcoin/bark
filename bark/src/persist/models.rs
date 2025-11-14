@@ -25,6 +25,7 @@ use bitcoin_ext::BlockDelta;
 use crate::WalletVtxo;
 use crate::exit::ExitVtxo;
 use crate::exit::models::ExitState;
+use crate::movement::MovementId;
 use crate::round::{AttemptState, RoundFlowState, RoundParticipation, RoundState, UnconfirmedRound};
 
 /// Persisted representation of a pending lightning send.
@@ -37,6 +38,7 @@ pub struct PendingLightningSend {
 	pub invoice: Invoice,
 	pub amount: Amount,
 	pub htlc_vtxos: Vec<WalletVtxo>,
+	pub movement_id: MovementId,
 }
 
 /// Persisted representation of an incoming Lightning payment.
@@ -53,6 +55,7 @@ pub struct LightningReceive {
 	pub preimage_revealed_at: Option<u64>,
 	pub htlc_vtxos: Option<Vec<WalletVtxo>>,
 	pub htlc_recv_cltv_delta: BlockDelta,
+	pub movement_id: MovementId,
 }
 
 /// Persistable view of an [ExitVtxo].
@@ -329,6 +332,7 @@ impl<'a> From<SerdeRoundFlowState<'a>> for RoundFlowState {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SerdeRoundState<'a> {
 	participation: SerdeRoundParticipation<'a>,
+	movement_id: Option<MovementId>,
 	flow: SerdeRoundFlowState<'a>,
 	unconfirmed_rounds: Vec<SerdeUnconfirmedRound<'a>>,
 }
@@ -337,6 +341,7 @@ impl<'a> From<&'a RoundState> for SerdeRoundState<'a> {
 	fn from(state: &'a RoundState) -> Self {
 		Self {
 			participation: (&state.participation).into(),
+			movement_id: state.movement_id,
 			flow: (&state.flow).into(),
 			unconfirmed_rounds: state.unconfirmed_rounds.iter().map(|r| r.into()).collect(),
 		}
@@ -347,6 +352,7 @@ impl<'a> From<SerdeRoundState<'a>> for RoundState {
 	fn from(state: SerdeRoundState<'a>) -> Self {
 		Self {
 			participation: state.participation.into(),
+			movement_id: state.movement_id,
 			flow: state.flow.into(),
 			unconfirmed_rounds: state.unconfirmed_rounds.into_iter().map(|r| r.into()).collect(),
 		}
@@ -356,8 +362,7 @@ impl<'a> From<SerdeRoundState<'a>> for RoundState {
 #[cfg(test)]
 mod test {
 	use crate::exit::models::{ExitState, ExitTxOrigin};
-	use crate::movement::MovementRecipient;
-	use crate::vtxo_state::VtxoState;
+	use crate::vtxo::state::VtxoState;
 
 	#[test]
 	/// Each struct stored as JSON in the database should have test to check for backwards compatibility
@@ -387,16 +392,12 @@ mod test {
 		let serialized = r#"{"type":"block","confirmed_in": "134:71fe28f4c803a4c46a3a93d0a9937507d7c20b4bd9586ba317d1109e1aebaac9"}"#;
 		serde_json::from_str::<ExitTxOrigin>(serialized).unwrap();
 
-		// Movement recipient
-		let serialised = r#"{"recipient":"03a4a6443868dbba406d03e43d7baf00d66809d57fba911616ccf90a4685de2bc1","amount_sat":150000}"#;
-		serde_json::from_str::<MovementRecipient>(serialised).unwrap();
-
 		// Vtxo state
-		let serialised = r#""Spendable""#;
+		let serialised = r#"{"type": "spendable"}"#;
 		serde_json::from_str::<VtxoState>(serialised).unwrap();
-		let serialised = r#""Spent""#;
+		let serialised = r#"{"type": "spent"}"#;
 		serde_json::from_str::<VtxoState>(serialised).unwrap();
-		let serialised = r#""Locked""#;
+		let serialised = r#"{"type": "locked", "movement_id": null}"#;
 		serde_json::from_str::<VtxoState>(serialised).unwrap();
 	}
 }

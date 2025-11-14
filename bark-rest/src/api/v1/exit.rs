@@ -8,7 +8,7 @@ use bitcoin::FeeRate;
 use tracing::info;
 use utoipa::OpenApi;
 
-use bark::vtxo_selection::FilterVtxos;
+use bark::vtxo::selection::{FilterVtxos, VtxoFilter};
 use bitcoin_ext::FeeRateExt;
 
 use crate::{error::HandlerResult, RestServer};
@@ -147,7 +147,7 @@ pub async fn exit_start_vtxos(
 		.map(|s| ark::VtxoId::from_str(&s).context("Invalid VTXO ID"))
 		.collect::<anyhow::Result<Vec<_>>>()?;
 
-	let filter = bark::vtxo_selection::VtxoFilter::new(&state.wallet).include_many(vtxo_ids);
+	let filter = VtxoFilter::new(&state.wallet).include_many(vtxo_ids);
 
 	let spendable = state.wallet.spendable_vtxos_with(&filter)
 		.context("Error parsing vtxos")?;

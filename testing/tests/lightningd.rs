@@ -403,27 +403,23 @@ async fn bark_can_receive_lightning() {
 	assert!(vtxos.iter().any(|v| v.amount == pay_amount), "should have received lightning amount");
 	assert!(vtxos.iter().any(|v| v.amount == board_amount));
 
-	let [board_mvt, ln_round_mvt, ln_claim_mvt] = bark.list_movements().await
-		.try_into().expect("should have 4 movements");
+	let [board_mvt, ln_receive_mvt] = bark.list_movements().await
+		.try_into().expect("should have 2 movements");
 	assert!(
-		board_mvt.spends.is_empty() &&
-		board_mvt.fees == Amount::ZERO &&
-		board_mvt.receives[0].amount == board_amount &&
-		board_mvt.recipients.is_empty()
+		board_mvt.input_vtxos.is_empty() &&
+		board_mvt.output_vtxos.len() == 1 &&
+		board_mvt.offchain_fee == Amount::ZERO &&
+		board_mvt.effective_balance == board_amount.to_signed().unwrap() &&
+		board_mvt.sent_to.is_empty()
 	);
 
 	assert!(
-		ln_round_mvt.spends.is_empty() &&
-		ln_round_mvt.fees == Amount::ZERO &&
-		ln_round_mvt.receives[0].amount == pay_amount &&
-		ln_round_mvt.recipients.is_empty()
-	);
-
-	assert!(
-		ln_claim_mvt.spends[0].amount == pay_amount &&
-		ln_claim_mvt.fees == Amount::ZERO &&
-		ln_claim_mvt.receives[0].amount == pay_amount &&
-		ln_claim_mvt.recipients.is_empty()
+		ln_receive_mvt.effective_balance == pay_amount.to_signed().unwrap() &&
+		ln_receive_mvt.offchain_fee == Amount::ZERO &&
+		ln_receive_mvt.sent_to.is_empty() &&
+		ln_receive_mvt.received_on[0].destination == invoice.to_string() &&
+		ln_receive_mvt.received_on[0].amount == pay_amount &&
+		ln_receive_mvt.received_on.len() == 1
 	);
 
 	assert_eq!(bark.spendable_balance().await, board_amount + pay_amount);

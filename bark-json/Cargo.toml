@@ -12,6 +12,9 @@ bark-wallet = { version = "0.1.0-beta.2", path = "../bark" }
 ark-lib = { version = "0.1.0-beta.2", path = "../lib" }
 bark-bitcoin-ext = { version = "0.1.0-beta.2", path = "../bitcoin-ext", default-features = false }
 
+# INTERNAL
+serde_json.workspace = true
+
 # EXPORTED
 bitcoin.workspace = true
 serde.workspace = true

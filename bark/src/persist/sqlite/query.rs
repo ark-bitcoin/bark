@@ -2,31 +2,30 @@ use std::str::FromStr;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::Context;
-use bitcoin::{Amount, Network, Txid};
+use bitcoin::{Amount, Network, SignedAmount, Txid};
 use bitcoin::consensus;
 use bitcoin::bip32::Fingerprint;
 use bitcoin::hashes::hex::DisplayHex;
 use bitcoin::secp256k1::PublicKey;
-use bitcoin_ext::BlockDelta;
+use chrono::DateTime;
 use lightning_invoice::Bolt11Invoice;
-use rusqlite::{self, named_params, Connection, Row, ToSql, Transaction};
+use rusqlite::{self, named_params, params, Connection, Row, ToSql, Transaction};
 
 use ark::ProtocolEncoding;
 use ark::lightning::{Invoice, PaymentHash, Preimage};
 use ark::vtxo::VtxoRef;
+use bitcoin_ext::BlockDelta;
 
 use crate::{Vtxo, VtxoId, VtxoState, WalletProperties};
 use crate::exit::models::{ExitState, ExitTxOrigin};
-use crate::movement::{Movement, MovementKind};
+use crate::movement::{Movement, MovementId, MovementStatus, MovementSubsystem};
 use crate::persist::{RoundStateId, StoredRoundState};
 use crate::persist::models::{
 	LightningReceive, PendingLightningSend, SerdeRoundState, SerdeUnconfirmedRound, StoredExit,
 };
-use crate::persist::sqlite::convert::{row_to_wallet_vtxo, rows_to_wallet_vtxos};
+use crate::persist::sqlite::convert::{row_to_movement, row_to_wallet_vtxo, rows_to_wallet_vtxos};
 use crate::round::{RoundState, UnconfirmedRound};
-use crate::vtxo_state::{VtxoStateKind, WalletVtxo};
-
-use super::convert::row_to_movement;
+use crate::vtxo::state::{VtxoStateKind, WalletVtxo};
 
 /// Set read-only properties for the wallet
 ///
@@ -69,69 +68,127 @@ pub (crate) fn fetch_properties(conn: &Connection) -> anyhow::Result<Option<Wall
 	}
 }
 
-pub fn create_movement(conn: &Connection, kind: MovementKind, fees_sat: Option<Amount>) -> anyhow::Result<i32> {
-	// Store the vtxo
-	let query = "INSERT INTO bark_movement (kind, fees_sat) VALUES (:kind, :fees_sat) RETURNING *;";
-	let mut statement = conn.prepare(query)?;
-	let movement_id = statement.query_row(named_params! {
-		":kind" : kind.as_str(),
-		":fees_sat" : fees_sat.unwrap_or(Amount::ZERO).to_sat()
-	}, |row| row.get::<_, i32>(0))?;
-
-	Ok(movement_id)
-}
-
-pub fn create_recipient(
-	conn: &Connection,
-	movement: i32,
-	recipient: &str,
-	amount: Amount,
-) -> anyhow::Result<i32> {
-	// Store the vtxo
-	let query = "
-		INSERT INTO bark_recipient (movement, recipient, amount_sat)
-		VALUES (:movement, :recipient, :amount_sat) RETURNING *;";
-
-	let mut statement = conn.prepare(query)?;
-	let recipient_id = statement.query_row(named_params! {
-		":movement": movement,
-		":recipient" : recipient,
-		":amount_sat": amount.to_sat()
-	}, |row| row.get::<_, i32>(0))?;
-
-	Ok(recipient_id)
-}
-
 pub fn check_recipient_exists(conn: &Connection, recipient: &str) -> anyhow::Result<bool> {
-	let query = "SELECT COUNT(*) FROM bark_recipient WHERE recipient = :recipient";
-
-	let mut statement = conn.prepare(query)?;
-	let exists = statement.query_row(named_params! {
-		":recipient" : recipient,
-	}, |row| Ok(row.get::<_, i32>(0)? > 0))?;
+	let exists: bool = conn.query_row(
+		"SELECT EXISTS(
+			SELECT 1
+			FROM bark_movements m
+			INNER JOIN bark_movements_sent_to st ON m.id = st.movement_id
+			WHERE m.status = ?1 AND st.destination = ?2
+		)",
+		params!(MovementStatus::Finished.as_str(), recipient),
+		|row| row.get(0)
+	)?;
 
 	Ok(exists)
 }
 
-pub fn get_movements(conn: &Connection) -> anyhow::Result<Vec<Movement>> {
-	let query = "
-		SELECT * FROM movement_view
-		ORDER BY movement_view.created_at DESC
-	";
+pub fn create_new_movement(
+	tx: &Transaction,
+	status: MovementStatus,
+	subsystem: &MovementSubsystem,
+	time: DateTime<chrono::Utc>,
+) -> anyhow::Result<MovementId> {
+	let mut statement = tx.prepare("
+		INSERT INTO bark_movements (status, subsystem_name, movement_kind, intended_balance,
+			effective_balance, offchain_fee, created_at, updated_at)
+		VALUES (:status, :name, :kind, :intended_balance, :effective_balance, :offchain_fee,
+			:created_at, :updated_at)
+		RETURNING id"
+	)?;
+	let time = time.timestamp();
+	let id = statement.query_row(named_params! {
+		":status": status.as_str(),
+		":name": subsystem.name,
+		":kind": subsystem.kind,
+		":intended_balance": SignedAmount::ZERO.to_sat(),
+		":effective_balance": SignedAmount::ZERO.to_sat(),
+		":offchain_fee": Amount::ZERO.to_sat(),
+		":created_at": time,
+		":updated_at": time,
+	}, |row| row.get::<_, u32>(0))?;
 
-	let mut statement = conn.prepare(query)?;
-	let mut rows = statement.query([])?;
-
-	let mut movements = Vec::new();
-	while let Some(row) = rows.next()? {
-		movements.push(row_to_movement(row)?);
-	}
-
-	Ok(movements)
+	Ok(MovementId::new(id))
 }
 
-pub fn get_all_pending_boards(conn: &rusqlite::Connection) -> anyhow::Result<Vec<VtxoId>> {
-	let q = "SELECT vtxo_id, funding_tx FROM bark_pending_board;";
+pub fn update_movement(tx: &Transaction, movement: &Movement) -> anyhow::Result<()> {
+	let id = movement.id.inner();
+	tx.execute(
+		"UPDATE bark_movements
+		SET status = :status, metadata = :metadata, intended_balance = :intended,
+			effective_balance = :effective, offchain_fee = :offchain_fee, updated_at = :updated_at,
+			completed_at = :completed_at
+		WHERE id = :id",
+		named_params! {
+			":id": id,
+			":status": movement.status.as_str(),
+			":metadata": serde_json::to_string(&movement.metadata)?,
+			":intended": movement.intended_balance.to_sat(),
+			":effective": movement.effective_balance.to_sat(),
+			":offchain_fee": movement.offchain_fee.to_sat(),
+			":updated_at": movement.time.updated_at.timestamp(),
+			":completed_at": movement.time.completed_at.map(|t| t.timestamp()),
+		},
+	)?;
+	// Update the recipient tables
+	let recipient_updates = [
+		("bark_movements_sent_to", &movement.sent_to),
+		("bark_movements_received_on", &movement.received_on),
+	];
+	for (table, vec) in recipient_updates {
+		tx.execute(&format!("DELETE FROM {} WHERE movement_id = ?1", table), params![id])?;
+		for dest in vec {
+			tx.execute(
+				&format!(
+					"INSERT INTO {} (movement_id, destination, amount) VALUES (?1, ?2, ?3)",
+					table,
+				),
+				params![id, dest.destination.to_string(), dest.amount.to_sat()],
+			)?;
+		}
+	}
+	// Update the VTXO tables
+	let vtxo_updates = [
+		("bark_movements_input_vtxos", &movement.input_vtxos),
+		("bark_movements_output_vtxos", &movement.output_vtxos),
+		("bark_movements_exited_vtxos", &movement.exited_vtxos),
+	];
+	for (table, vec) in vtxo_updates {
+		tx.execute(&format!("DELETE FROM {} WHERE movement_id = ?1", table), params![id])?;
+		for vtxo_id in vec {
+			tx.execute(
+				&format!("INSERT INTO {} (movement_id, vtxo_id) VALUES (?1, ?2)", table),
+				params![id, vtxo_id.to_string()],
+			)?;
+		}
+	}
+	Ok(())
+}
+
+pub fn get_movements(conn: &Connection) -> anyhow::Result<Vec<Movement>> {
+	let mut statement = conn.prepare("SELECT * FROM bark_movements_view ORDER BY created_at DESC")?;
+	let mut rows = statement.query([])?;
+	let mut results = Vec::new();
+	while let Some(row) = rows.next()? {
+		results.push(row_to_movement(row)?);
+	}
+	Ok(results)
+}
+
+pub fn get_movement(conn: &Connection, id: MovementId) -> anyhow::Result<Movement> {
+	let mut statement = conn.prepare(
+		"SELECT * FROM bark_movements_view WHERE id = ?1 ORDER BY created_at DESC"
+	)?;
+	let mut rows = statement.query([id.to_string()])?;
+	if let Some(row) = rows.next()? {
+		Ok(row_to_movement(row)?)
+	} else {
+		Err(anyhow::anyhow!("Movement {} not found", id))
+	}
+}
+
+pub fn get_all_pending_boards_ids(conn: &Connection) -> anyhow::Result<Vec<VtxoId>> {
+	let q = "SELECT vtxo_id FROM bark_pending_board;";
 	let mut statement = conn.prepare(q)?;
 	let mut rows = statement.query([])?;
 	let mut pending_boards = Vec::new();
@@ -143,17 +200,33 @@ pub fn get_all_pending_boards(conn: &rusqlite::Connection) -> anyhow::Result<Vec
 	Ok(pending_boards)
 }
 
+pub fn get_pending_board_movement_id(
+	conn: &Connection,
+	vtxo_id: VtxoId,
+) -> anyhow::Result<MovementId> {
+	Ok(conn.prepare(
+		"SELECT movement_id FROM bark_pending_board WHERE vtxo_id = ?1",
+	)?.query_row(
+		params![vtxo_id.to_string()],
+		|row| Ok(MovementId::new(row.get(0)?)),
+	)?)
+}
+
 pub fn store_new_pending_board(
 	tx: &Transaction,
-	vtxo: &Vtxo,
+	vtxo_id: VtxoId,
 	funding_tx: &bitcoin::Transaction,
+	movement_id: MovementId,
 ) -> anyhow::Result<()> {
-	let q = "INSERT INTO bark_pending_board (vtxo_id, funding_tx) VALUES (:vtxo_id, :funding_tx);";
-	let mut statement = tx.prepare(q)?;
+	let mut statement = tx.prepare("
+		INSERT INTO bark_pending_board (vtxo_id, funding_tx, movement_id)
+		VALUES (:vtxo_id, :funding_tx, :movement_id);"
+	)?;
 
 	statement.execute(named_params! {
-		":vtxo_id": vtxo.id().to_string(),
+		":vtxo_id": vtxo_id.to_string(),
 		":funding_tx": bitcoin::consensus::encode::serialize_hex(&funding_tx),
+		":movement_id": movement_id.inner(),
 	})?;
 	Ok(())
 }
@@ -173,10 +246,10 @@ pub fn remove_pending_board(
 pub fn store_vtxo_with_initial_state(
 	tx: &Transaction,
 	vtxo: &Vtxo,
-	movement_id: i32,
 	state: &VtxoState,
+	movement_id: Option<MovementId>,
 ) -> anyhow::Result<()> {
-	// Store the ftxo
+	// Store the vtxo
 	let q1 =
 		"INSERT INTO bark_vtxo (id, expiry_height, amount_sat, received_in, raw_vtxo)
 		VALUES (:vtxo_id, :expiry_height, :amount_sat, :received_in, :raw_vtxo);";
@@ -185,7 +258,7 @@ pub fn store_vtxo_with_initial_state(
 		":vtxo_id" : vtxo.id().to_string(),
 		":expiry_height": vtxo.expiry_height(),
 		":amount_sat": vtxo.amount().to_sat(),
-		":received_in": movement_id,
+		":received_in": movement_id.map(|m| m.inner()),
 		":raw_vtxo": vtxo.serialize(),
 	})?;
 
@@ -306,8 +379,9 @@ pub fn load_recovered_past_rounds(
 }
 
 pub fn get_all_pending_lightning_send(conn: &Connection) -> anyhow::Result<Vec<PendingLightningSend>> {
-	let query = "SELECT htlc_vtxo_ids, invoice, amount_sats FROM bark_pending_lightning_send";
-	let mut statement = conn.prepare(query)?;
+	let mut statement = conn.prepare("
+		SELECT htlc_vtxo_ids, invoice, amount_sats, movement_id FROM bark_pending_lightning_send
+	")?;
 	let mut rows = statement.query(())?;
 
 	let mut pending_lightning_sends = Vec::new();
@@ -315,6 +389,7 @@ pub fn get_all_pending_lightning_send(conn: &Connection) -> anyhow::Result<Vec<P
 		let invoice = row.get::<_, String>("invoice")?;
 		let htlc_vtxo_ids = serde_json::from_str::<Vec<VtxoId>>(&row.get::<_, String>(0)?)?;
 		let amount_sats = row.get::<_, i64>("amount_sats")?;
+		let movement_id = MovementId::new(row.get::<_, u32>("movement_id")?);
 
 		let mut htlc_vtxos = Vec::new();
 		for htlc_vtxo_id in htlc_vtxo_ids {
@@ -324,7 +399,8 @@ pub fn get_all_pending_lightning_send(conn: &Connection) -> anyhow::Result<Vec<P
 		pending_lightning_sends.push(PendingLightningSend {
 			invoice: Invoice::from_str(&invoice)?,
 			amount: Amount::from_sat(amount_sats as u64),
-			htlc_vtxos: htlc_vtxos,
+			htlc_vtxos,
+			movement_id,
 		});
 	}
 
@@ -336,10 +412,11 @@ pub fn store_new_pending_lightning_send<V: VtxoRef>(
 	invoice: &Invoice,
 	amount: &Amount,
 	htlc_vtxo_ids: &[V],
+	movement_id: MovementId,
 ) -> anyhow::Result<PendingLightningSend> {
 	let query = "
-		INSERT INTO bark_pending_lightning_send (invoice, payment_hash, amount_sats, htlc_vtxo_ids)
-		VALUES (:invoice, :payment_hash, :amount_sats, :htlc_vtxo_ids)
+		INSERT INTO bark_pending_lightning_send (invoice, payment_hash, amount_sats, htlc_vtxo_ids, movement_id)
+		VALUES (:invoice, :payment_hash, :amount_sats, :htlc_vtxo_ids, :movement_id)
 	";
 
 	let mut statement = conn.prepare(query)?;
@@ -356,12 +433,14 @@ pub fn store_new_pending_lightning_send<V: VtxoRef>(
 		":payment_hash": invoice.payment_hash().as_hex().to_string(),
 		":amount_sats": amount.to_sat(),
 		":htlc_vtxo_ids": serde_json::to_string(&vtxo_ids)?,
+		":movement_id": movement_id.inner(),
 	})?;
 
 	Ok(PendingLightningSend {
 		invoice: invoice.clone(),
 		amount: *amount,
-		htlc_vtxos: htlc_vtxos,
+		htlc_vtxos,
+		movement_id,
 	})
 }
 
@@ -467,13 +546,13 @@ pub fn get_vtxo_state(
 pub fn link_spent_vtxo_to_movement(
 	conn: &Connection,
 	id: VtxoId,
-	movement_id: i32
+	movement_id: MovementId
 ) -> anyhow::Result<()> {
 	let query = "UPDATE bark_vtxo SET spent_in = :spent_in WHERE id = :vtxo_id";
 	let mut statement = conn.prepare(query)?;
 	statement.execute(named_params! {
 		":vtxo_id": id.to_string(),
-		":spent_in": movement_id
+		":spent_in": movement_id.inner()
 	})?;
 
 	Ok(())
@@ -556,10 +635,12 @@ pub fn store_lightning_receive(
 	preimage: Preimage,
 	invoice: &Bolt11Invoice,
 	htlc_recv_cltv_delta: BlockDelta,
+	movement_id: MovementId,
 ) -> anyhow::Result<()> {
 	let query = "
-		INSERT INTO bark_pending_lightning_receive (payment_hash, preimage, invoice, htlc_recv_cltv_delta)
-		VALUES (:payment_hash, :preimage, :invoice, :htlc_recv_cltv_delta);
+		INSERT INTO bark_pending_lightning_receive (payment_hash, preimage, invoice,
+			htlc_recv_cltv_delta, movement_id)
+		VALUES (:payment_hash, :preimage, :invoice, :htlc_recv_cltv_delta, :movement_id);
 	";
 	let mut statement = conn.prepare(query)?;
 
@@ -568,6 +649,7 @@ pub fn store_lightning_receive(
 		":preimage": preimage.as_hex().to_string(),
 		":invoice": invoice.to_string(),
 		":htlc_recv_cltv_delta": htlc_recv_cltv_delta,
+		":movement_id": movement_id.inner(),
 	})?;
 
 	Ok(())
@@ -592,7 +674,7 @@ pub fn get_all_pending_lightning_receives<'a>(
 ) -> anyhow::Result<Vec<LightningReceive>> {
 	let query = "
 		SELECT payment_hash, preimage, invoice, htlc_vtxo_ids,
-			preimage_revealed_at, htlc_recv_cltv_delta
+			preimage_revealed_at, htlc_recv_cltv_delta, movement_id
 		FROM bark_pending_lightning_receive
 		ORDER BY created_at DESC";
 	let mut statement = conn.prepare(query)?;
@@ -607,6 +689,7 @@ pub fn get_all_pending_lightning_receives<'a>(
 			invoice: Bolt11Invoice::from_str(&row.get::<_, String>("invoice")?)?,
 			htlc_recv_cltv_delta: row.get::<_, BlockDelta>("htlc_recv_cltv_delta")?,
 			htlc_vtxos: get_htlc_vtxos(conn, &row)?,
+			movement_id: MovementId::new(row.get::<_, u32>("movement_id")?),
 		});
 	}
 
@@ -681,6 +764,7 @@ pub fn fetch_lightning_receive_by_payment_hash(
 		invoice: Bolt11Invoice::from_str(&row.get::<_, String>("invoice")?)?,
 		htlc_recv_cltv_delta: row.get::<_, BlockDelta>("htlc_recv_cltv_delta")?,
 		htlc_vtxos: get_htlc_vtxos(conn, &row)?,
+		movement_id: MovementId::new(row.get::<_, u32>("movement_id")?),
 	}))
 }
 
@@ -799,10 +883,10 @@ mod test {
 		let vtxo_2 = &VTXO_VECTORS.arkoor_htlc_out_vtxo;
 		let vtxo_3 = &VTXO_VECTORS.round2_vtxo;
 
-		let movement_id = create_movement(&tx, MovementKind::Board, None).unwrap();
-		store_vtxo_with_initial_state(&tx, &vtxo_1, movement_id, &VtxoState::Locked).unwrap();
-		store_vtxo_with_initial_state(&tx, &vtxo_2, movement_id, &VtxoState::Locked).unwrap();
-		store_vtxo_with_initial_state(&tx, &vtxo_3, movement_id, &VtxoState::Locked).unwrap();
+		let locked = VtxoState::Locked { movement_id: None };
+		store_vtxo_with_initial_state(&tx, &vtxo_1, &locked, None).unwrap();
+		store_vtxo_with_initial_state(&tx, &vtxo_2, &locked, None).unwrap();
+		store_vtxo_with_initial_state(&tx, &vtxo_3, &locked, None).unwrap();
 
 		// This update will fail because the current state is Locked
 		// We only allow the state to switch from VtxoState::Spendable
@@ -817,8 +901,8 @@ mod test {
 
 		// Ensure the state of vtxo_2 and vtxo_3 isn't modified
 		let state_2 = get_vtxo_state(&tx, vtxo_2.id()).unwrap().unwrap();
-		assert_eq!(state_2, VtxoState::Locked);
+		assert_eq!(state_2, locked);
 		let state_2 = get_vtxo_state(&tx, vtxo_3.id()).unwrap().unwrap();
-		assert_eq!(state_2, VtxoState::Locked);
+		assert_eq!(state_2, locked);
 	}
 }

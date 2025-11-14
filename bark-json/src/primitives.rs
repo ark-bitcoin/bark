@@ -9,6 +9,7 @@ use utoipa::ToSchema;
 
 use ark::{Vtxo, VtxoId};
 use ark::vtxo::VtxoPolicyKind;
+use bark::vtxo::state::VtxoState;
 use bitcoin_ext::{BlockDelta, BlockHeight};
 
 /// Struct representing information about an Unspent Transaction Output (UTXO).
@@ -116,14 +117,14 @@ impl From<Vtxo> for VtxoInfo {
 pub struct WalletVtxoInfo {
 	#[serde(flatten)]
 	pub vtxo: VtxoInfo,
-	pub state: String,
+	pub state: VtxoStateInfo,
 }
 
 impl From<bark::WalletVtxo> for WalletVtxoInfo {
 	fn from(v: bark::WalletVtxo) -> Self {
 		WalletVtxoInfo {
 			vtxo: v.vtxo.into(),
-			state: v.state.kind().as_str().to_string(),
+			state: v.state.into(),
 		}
 	}
 }
@@ -136,21 +137,27 @@ impl Deref for WalletVtxoInfo {
 	}
 }
 
+/// Describe the state of a [Vtxo] with additional context.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[cfg_attr(feature = "utoipa", derive(ToSchema))]
-pub struct RecipientInfo {
-	/// Can either be a publickey, spk or a bolt11 invoice
-	pub recipient: String,
-	#[serde(rename = "amount_sat", with = "bitcoin::amount::serde::as_sat")]
-	#[cfg_attr(feature = "utoipa", schema(value_type = u64))]
-	pub amount: Amount
+#[serde(tag = "type", rename_all = "kebab-case")]
+pub enum VtxoStateInfo {
+	Spendable,
+	Spent,
+	Locked {
+		#[serde(skip_serializing_if = "Option::is_none")]
+		movement_id: Option<String>,
+	},
 }
 
-impl From<bark::movement::MovementRecipient> for RecipientInfo {
-	fn from(v: bark::movement::MovementRecipient) -> Self {
-		RecipientInfo {
-			recipient: v.recipient,
-			amount: v.amount,
+impl From<VtxoState> for VtxoStateInfo {
+	fn from(state: VtxoState) -> Self {
+		match state {
+			VtxoState::Spendable => VtxoStateInfo::Spendable,
+			VtxoState::Spent => VtxoStateInfo::Spent,
+			VtxoState::Locked { movement_id } => VtxoStateInfo::Locked {
+				movement_id: movement_id.map(|id| id.to_string()),
+			},
 		}
 	}
 }

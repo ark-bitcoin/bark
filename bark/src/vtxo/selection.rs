@@ -18,7 +18,7 @@
 //! use anyhow::Result;
 //! use bitcoin::Amount;
 //! use bark::WalletVtxo;
-//! use bark::vtxo_selection::FilterVtxos;
+//! use bark::vtxo::selection::FilterVtxos;
 //!
 //! fn is_large(v: &WalletVtxo) -> Result<bool> {
 //!     Ok(v.amount() >= Amount::from_sat(50_000))
@@ -32,7 +32,7 @@
 //! Builder style with [VtxoFilter]:
 //! ```rust
 //! use bitcoin_ext::BlockHeight;
-//! use bark::vtxo_selection::{FilterVtxos, VtxoFilter};
+//! use bark::vtxo::selection::{FilterVtxos, VtxoFilter};
 //!
 //! # fn example(wallet: &bark::Wallet, mut vtxos: Vec<bark::WalletVtxo>) -> anyhow::Result<Vec<bark::WalletVtxo>> {
 //! let tip: BlockHeight = 1_000;
@@ -66,7 +66,9 @@ use bitcoin_ext::BlockHeight;
 use ark::VtxoId;
 use log::warn;
 
-use crate::{exit::progress::util::estimate_exit_cost, vtxo_state::VtxoStateKind, Wallet, WalletVtxo};
+use crate::Wallet;
+use crate::exit::progress::util::estimate_exit_cost;
+use crate::vtxo::state::{VtxoStateKind, WalletVtxo};
 
 /// Trait needed to be implemented to filter wallet VTXOs.
 ///
@@ -127,7 +129,7 @@ impl<'a> VtxoFilter<'a> {
 	/// Examples
 	/// ```
 	/// # fn demo(wallet: &bark::Wallet) -> anyhow::Result<Vec<bark::WalletVtxo>> {
-	/// use bark::vtxo_selection::{VtxoFilter, FilterVtxos};
+	/// use bark::vtxo::selection::{VtxoFilter, FilterVtxos};
 	/// use bitcoin_ext::BlockHeight;
 	///
 	/// let tip: BlockHeight = 1_000;
@@ -152,7 +154,7 @@ impl<'a> VtxoFilter<'a> {
 	/// Examples
 	/// ```
 	/// # fn demo(wallet: &bark::Wallet) -> anyhow::Result<Vec<bark::WalletVtxo>> {
-	/// use bark::vtxo_selection::{VtxoFilter, FilterVtxos};
+	/// use bark::vtxo::selection::{VtxoFilter, FilterVtxos};
 	/// use bitcoin_ext::BlockHeight;
 	///
 	/// let h: BlockHeight = 10_000;
@@ -274,7 +276,7 @@ impl<'a> RefreshStrategy<'a> {
 	/// Examples
 	/// ```
 	/// # fn demo(wallet: &bark::Wallet, mut vtxos: Vec<bark::WalletVtxo>) -> anyhow::Result<Vec<bark::WalletVtxo>> {
-	/// use bark::vtxo_selection::{FilterVtxos, RefreshStrategy};
+	/// use bark::vtxo::selection::{FilterVtxos, RefreshStrategy};
 	/// use bitcoin::FeeRate;
 	/// use bitcoin_ext::BlockHeight;
 	///
@@ -315,7 +317,7 @@ impl<'a> RefreshStrategy<'a> {
 	/// Examples
 	/// ```
 	/// # fn demo(wallet: &bark::Wallet, mut vtxos: Vec<bark::WalletVtxo>) -> anyhow::Result<Vec<bark::WalletVtxo>> {
-	/// use bark::vtxo_selection::{FilterVtxos, RefreshStrategy};
+	/// use bark::vtxo::selection::{FilterVtxos, RefreshStrategy};
 	/// use bitcoin::FeeRate;
 	/// use bitcoin_ext::BlockHeight;
 	///

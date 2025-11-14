@@ -18,20 +18,21 @@ use std::path::{Path, PathBuf};
 use anyhow::Context;
 use bitcoin::{Amount, Txid};
 use bitcoin::secp256k1::PublicKey;
+use chrono::DateTime;
 use lightning_invoice::Bolt11Invoice;
 use log::debug;
-use rusqlite::{Connection, Transaction};
+use rusqlite::Connection;
 
 use ark::lightning::{Invoice, PaymentHash, Preimage};
 use bitcoin_ext::BlockDelta;
 
 use crate::{Vtxo, VtxoId, VtxoState, WalletProperties};
 use crate::exit::models::ExitTxOrigin;
-use crate::movement::{Movement, MovementArgs, MovementKind};
-use crate::persist::models::{PendingLightningSend, LightningReceive, StoredExit};
+use crate::movement::{Movement, MovementId, MovementStatus, MovementSubsystem};
 use crate::persist::{BarkPersister, RoundStateId, StoredRoundState};
+use crate::persist::models::{PendingLightningSend, LightningReceive, StoredExit};
 use crate::round::{RoundState, UnconfirmedRound};
-use crate::vtxo_state::{VtxoStateKind, WalletVtxo, UNSPENT_STATES};
+use crate::vtxo::state::{VtxoStateKind, WalletVtxo};
 
 /// An implementation of the BarkPersister using rusqlite. Changes are persisted using the given
 /// [PathBuf].
@@ -58,32 +59,6 @@ impl SqliteClient {
 	fn connect(&self) -> anyhow::Result<Connection> {
 		rusqlite::Connection::open(&self.connection_string)
 			.with_context(|| format!("Error connecting to database {}", self.connection_string.display()))
-	}
-
-	/// Create a movement to link VTXOs to it
-	fn create_movement(&self, tx: &Transaction, kind: MovementKind, fees: Option<Amount>) -> anyhow::Result<i32> {
-		let movement_id = query::create_movement(&tx, kind, fees)?;
-
-		Ok(movement_id)
-	}
-
-	/// Stores a movement recipient
-	fn create_recipient(
-		&self,
-		tx: &Transaction,
-		movement: i32,
-		recipient: &str,
-		amount: Amount,
-	) -> anyhow::Result<()> {
-		query::create_recipient(&tx, movement, recipient, amount)?;
-		Ok(())
-	}
-
-	/// Links a VTXO to a movement and marks it as spent, so its not used for a future send
-	fn mark_vtxo_as_spent(&self, tx: &Transaction, id: VtxoId, movement_id: i32) -> anyhow::Result<()> {
-		query::update_vtxo_state_checked(&tx, id, VtxoState::Spent, &UNSPENT_STATES)?;
-		query::link_spent_vtxo_to_movement(&tx, id, movement_id)?;
-		Ok(())
 	}
 }
 
@@ -121,38 +96,45 @@ impl BarkPersister for SqliteClient {
 		query::check_recipient_exists(&conn, recipient)
 	}
 
+	fn create_new_movement(&self,
+		status: MovementStatus,
+		subsystem: &MovementSubsystem,
+		time: DateTime<chrono::Utc>,
+	) -> anyhow::Result<MovementId> {
+		let mut conn = self.connect()?;
+		let tx = conn.transaction()?;
+		let movement_id = query::create_new_movement(&tx, status, subsystem, time)?;
+		tx.commit()?;
+		Ok(movement_id)
+	}
+
+	fn update_movement(&self, movement: &Movement) -> anyhow::Result<()> {
+		let mut conn = self.connect()?;
+		let tx = conn.transaction()?;
+		query::update_movement(&tx, movement)?;
+		tx.commit()?;
+		Ok(())
+	}
+
+	fn get_movement(&self, movement_id: MovementId) -> anyhow::Result<Movement> {
+		let conn = self.connect()?;
+		query::get_movement(&conn, movement_id)
+	}
+
 	fn get_movements(&self) -> anyhow::Result<Vec<Movement>> {
 		let conn = self.connect()?;
 		query::get_movements(&conn)
 	}
 
-	fn register_movement(&self, movement: MovementArgs) -> anyhow::Result<()> {
+	fn store_pending_board(
+		&self,
+		vtxo_id: VtxoId,
+		funding_tx: &bitcoin::Transaction,
+		movement_id: MovementId,
+	) -> anyhow::Result<()> {
 		let mut conn = self.connect()?;
 		let tx = conn.transaction()?;
-
-		let movement_id = self.create_movement(&tx, movement.kind, movement.fees)?;
-
-		for v in movement.spends {
-			self.mark_vtxo_as_spent(&tx, v.id(), movement_id)
-				.context("Failed to mark vtxo as spent")?;
-		}
-
-		for (v, s) in movement.receives {
-			query::store_vtxo_with_initial_state(&tx, v, movement_id, s)?;
-		}
-
-		for (recipient, amount) in movement.recipients {
-			self.create_recipient(&tx, movement_id, recipient, *amount)
-				.context("Failed to store change VTXOs")?
-		}
-		tx.commit()?;
-		Ok(())
-	}
-
-	fn store_pending_board(&self, vtxo: &Vtxo, funding_tx: &bitcoin::Transaction) -> anyhow::Result<()> {
-		let mut conn = self.connect()?;
-		let tx = conn.transaction()?;
-		query::store_new_pending_board(&tx, vtxo, funding_tx)?;
+		query::store_new_pending_board(&tx, vtxo_id, funding_tx, movement_id)?;
 		tx.commit()?;
 		Ok(())
 	}
@@ -165,9 +147,14 @@ impl BarkPersister for SqliteClient {
 		Ok(())
 	}
 
-	fn get_all_pending_boards(&self) -> anyhow::Result<Vec<VtxoId>> {
+	fn get_all_pending_board_ids(&self) -> anyhow::Result<Vec<VtxoId>> {
 		let conn = self.connect()?;
-		query::get_all_pending_boards(&conn)
+		query::get_all_pending_boards_ids(&conn)
+	}
+
+	fn get_pending_board_movement_id(&self, vtxo_id: VtxoId) -> anyhow::Result<MovementId> {
+		let conn = self.connect()?;
+		query::get_pending_board_movement_id(&conn, vtxo_id)
 	}
 
 	fn store_round_state_lock_vtxos(&self, round_state: &RoundState) -> anyhow::Result<RoundStateId> {
@@ -177,7 +164,7 @@ impl BarkPersister for SqliteClient {
 			query::update_vtxo_state_checked(
 				&*tx,
 				vtxo.id(),
-				VtxoState::Locked,
+				VtxoState::Locked { movement_id: round_state.movement_id },
 				&[VtxoStateKind::Spendable],
 			)?;
 		}
@@ -216,6 +203,21 @@ impl BarkPersister for SqliteClient {
 	fn load_recovered_rounds(&self) -> anyhow::Result<Vec<UnconfirmedRound>> {
 		let conn = self.connect()?;
 		query::load_recovered_past_rounds(&conn)
+	}
+
+	fn store_vtxos(
+		&self,
+		vtxos: &[(&Vtxo, &VtxoState)],
+		movement_id: Option<MovementId>,
+	) -> anyhow::Result<()> {
+		let mut conn = self.connect()?;
+		let tx = conn.transaction()?;
+
+		for (vtxo, state) in vtxos {
+			query::store_vtxo_with_initial_state(&tx, vtxo, state, movement_id)?;
+		}
+		tx.commit()?;
+		Ok(())
 	}
 
 	fn get_wallet_vtxo(&self, id: VtxoId) -> anyhow::Result<Option<WalletVtxo>> {
@@ -271,15 +273,24 @@ impl BarkPersister for SqliteClient {
 		preimage: Preimage,
 		invoice: &Bolt11Invoice,
 		htlc_recv_cltv_delta: BlockDelta,
+		movement_id: MovementId,
 	) -> anyhow::Result<()> {
 		let conn = self.connect()?;
-		query::store_lightning_receive(&conn, payment_hash, preimage, invoice, htlc_recv_cltv_delta)?;
+		query::store_lightning_receive(
+			&conn, payment_hash, preimage, invoice, htlc_recv_cltv_delta, movement_id,
+		)?;
 		Ok(())
 	}
 
-	fn store_new_pending_lightning_send(&self, invoice: &Invoice, amount: &Amount, vtxos: &[VtxoId]) -> anyhow::Result<PendingLightningSend> {
+	fn store_new_pending_lightning_send(
+		&self,
+		invoice: &Invoice,
+		amount: &Amount,
+		vtxos: &[VtxoId],
+		movement_id: MovementId,
+	) -> anyhow::Result<PendingLightningSend> {
 		let conn = self.connect()?;
-		query::store_new_pending_lightning_send(&conn, invoice, amount, vtxos)
+		query::store_new_pending_lightning_send(&conn, invoice, amount, vtxos, movement_id)
 	}
 
 	fn get_all_pending_lightning_send(&self) -> anyhow::Result<Vec<PendingLightningSend>> {
@@ -376,6 +387,15 @@ impl BarkPersister for SqliteClient {
 		let conn = self.connect()?;
 		query::update_vtxo_state_checked(&conn, vtxo_id, new_state, allowed_old_states)
 	}
+
+	fn link_spent_vtxo_to_movement(
+		&self,
+		vtxo_id: VtxoId,
+		movement_id: MovementId,
+	) -> anyhow::Result<()> {
+		let conn = self.connect()?;
+		query::link_spent_vtxo_to_movement(&conn, vtxo_id, movement_id)
+	}
 }
 
 #[cfg(any(test, doc))]
@@ -414,20 +434,18 @@ pub mod helpers {
 
 #[cfg(test)]
 mod test {
-
 	use bdk_wallet::chain::DescriptorExt;
 	use bitcoin::bip32;
 
 	use ark::vtxo::test::VTXO_VECTORS;
 
 	use crate::persist::sqlite::helpers::in_memory_db;
+	use crate::vtxo::state::UNSPENT_STATES;
 
 	use super::*;
 
 	#[test]
-	fn test_add_and_retreive_vtxos() {
-		let pk: PublicKey = "024b859e37a3a4b22731c9c452b1b55e17e580fb95dac53472613390b600e1e3f0".parse().unwrap();
-
+	fn test_add_and_retrieve_vtxos() {
 		let vtxo_1 = &VTXO_VECTORS.board_vtxo;
 		let vtxo_2 = &VTXO_VECTORS.arkoor_htlc_out_vtxo;
 		let vtxo_3 = &VTXO_VECTORS.round2_vtxo;
@@ -435,21 +453,9 @@ mod test {
 		let (cs, conn) = in_memory_db();
 		let db = SqliteClient::open(cs).unwrap();
 
-		db.register_movement(MovementArgs {
-			kind: MovementKind::Board,
-			spends: &[],
-			receives: &[(&vtxo_1, VtxoState::Spendable)],
-			recipients: &[],
-			fees: None,
-		}).unwrap();
-
-		db.register_movement(MovementArgs {
-			kind: MovementKind::Board,
-			spends: &[],
-			receives: &[(&vtxo_2, VtxoState::Spendable)],
-			recipients: &[],
-			fees: None,
-		}).unwrap();
+		db.store_vtxos(&[
+			(vtxo_1, &VtxoState::Spendable), (vtxo_2, &VtxoState::Spendable)
+		], None).unwrap();
 
 		// Check that vtxo-1 can be retrieved from the database
 		let vtxo_1_db = db.get_wallet_vtxo(vtxo_1.id()).expect("No error").expect("A vtxo was found");
@@ -466,27 +472,15 @@ mod test {
 		assert!(!vtxos.iter().any(|v| v.vtxo == *vtxo_3));
 
 		// Verify that we can mark a vtxo as spent
-		db.register_movement(MovementArgs {
-			kind: MovementKind::Board,
-			spends: &[&vtxo_1],
-			receives: &[],
-			recipients: &[
-				(&pk.to_string(), Amount::from_sat(501))
-			],
-			fees: None
-		}).unwrap();
+		db.update_vtxo_state_checked(
+			vtxo_1.id(), VtxoState::Spent, &UNSPENT_STATES,
+		).unwrap();
 
 		let vtxos = db.get_vtxos_by_state(&[VtxoStateKind::Spendable]).unwrap();
 		assert_eq!(vtxos.len(), 1);
 
 		// Add the third entry to the database
-		db.register_movement(MovementArgs {
-			kind: MovementKind::Board,
-			spends: &[],
-			receives: &[(&vtxo_3, VtxoState::Spendable)],
-			recipients: &[],
-			fees: None,
-		}).unwrap();
+		db.store_vtxos(&[(vtxo_3, &VtxoState::Spendable)], None).unwrap();
 
 		let vtxos = db.get_vtxos_by_state(&[VtxoStateKind::Spendable]).unwrap();
 		assert_eq!(vtxos.len(), 2);

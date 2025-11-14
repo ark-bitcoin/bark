@@ -25,19 +25,21 @@ use std::fmt;
 
 use bitcoin::{Amount, Transaction, Txid};
 use bitcoin::secp256k1::PublicKey;
-use bitcoin_ext::BlockDelta;
+use chrono::DateTime;
 use lightning_invoice::Bolt11Invoice;
 #[cfg(feature = "onchain_bdk")]
 use bdk_wallet::ChangeSet;
 
 use ark::{Vtxo, VtxoId};
 use ark::lightning::{Invoice, PaymentHash, Preimage};
+use bitcoin_ext::BlockDelta;
 
-use crate::{Movement, MovementArgs, WalletProperties};
+use crate::WalletProperties;
 use crate::exit::models::ExitTxOrigin;
+use crate::movement::{Movement, MovementId, MovementStatus, MovementSubsystem};
 use crate::persist::models::{PendingLightningSend, LightningReceive, StoredExit};
 use crate::round::{RoundState, UnconfirmedRound};
-use crate::vtxo_state::{VtxoState, VtxoStateKind, WalletVtxo};
+use crate::vtxo::state::{VtxoState, VtxoStateKind, WalletVtxo};
 
 /// Identifier for a stored [RoundState].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -147,39 +149,70 @@ pub trait BarkPersister: Send + Sync + 'static {
 	/// - Returns an error if the lookup fails.
 	fn check_recipient_exists(&self, recipient: &str) -> anyhow::Result<bool>;
 
-	/// Return a list of movements, see [Movement].
-	///
-	/// Returns:
-	/// - `Ok(Vec<Movement>)` possibly empty.
-	///
-	/// Errors:
-	/// - Returns an error if the query fails.
-	fn get_movements(&self) -> anyhow::Result<Vec<Movement>>;
-
-	/// Register a movement of VTXOs atomically.
-	///
-	/// Side effects:
-	/// - Creates new VTXOs in `receives`.
-	/// - Marks VTXOs in `spends` as spent (with state checks).
-	/// - Optionally stores recipients and fees.
+	/// Creates a new movement in the given state, ready to be updated.
 	///
 	/// Parameters:
-	/// - movement: [MovementArgs] including spends, receives, recipients and fees.
+	/// - status: The desired status for the new movement.
+	/// - subsystem: The subsystem that created the movement.
+	/// - time: The time the movement should be marked as created.
+	///
+	/// Returns:
+	/// - `Ok(MovementId)` of the newly created movement.
 	///
 	/// Errors:
-	/// - Returns an error if any part of the operation fails; no partial state should be
-	///   committed in that case.
-	fn register_movement(&self, movement: MovementArgs) -> anyhow::Result<()>;
+	/// - Returns an error if the movement is unable to be created.
+	fn create_new_movement(&self,
+		status: MovementStatus,
+		subsystem: &MovementSubsystem,
+		time: DateTime<chrono::Utc>,
+	) -> anyhow::Result<MovementId>;
+
+	/// Persists the given movement state.
+	///
+	/// Parameters:
+	/// - movement: The movement and its associated data to be persisted.
+	///
+	/// Errors:
+	/// - Returns an error if updating the movement fails for any reason.
+	fn update_movement(&self, movement: &Movement) -> anyhow::Result<()>;
+
+	/// Gets the movement with the given [MovementId].
+	///
+	/// Parameters:
+	/// - movement_id: The ID of the movement to retrieve.
+	///
+	/// Returns:
+	/// - `Ok(Movement)` if the movement exists.
+	///
+	/// Errors:
+	/// - If the movement does not exist.
+	/// - If retrieving the movement fails.
+	fn get_movement(&self, movement_id: MovementId) -> anyhow::Result<Movement>;
+
+	/// Gets every stored movement.
+	///
+	/// Returns:
+	/// - `Ok(Vec<Movement>)` containing all movements, empty if none exist.
+	///
+	/// Errors:
+	/// - If retrieving the movements fails.
+	fn get_movements(&self) -> anyhow::Result<Vec<Movement>>;
 
 	/// Store a pending board.
 	///
 	/// Parameters:
 	/// - vtxo: The [Vtxo] to store.
-	/// - funding_txid: The funding transaction ID.
+	/// - funding_txid: The funding [Txid].
+	/// - movement_id: The [MovementId] associated with this board.
 	///
 	/// Errors:
 	/// - Returns an error if the board cannot be stored.
-	fn store_pending_board(&self, vtxo: &Vtxo, funding_tx: &Transaction) -> anyhow::Result<()>;
+	fn store_pending_board(
+		&self,
+		vtxo_id: VtxoId,
+		funding_tx: &Transaction,
+		movement_id: MovementId,
+	) -> anyhow::Result<()>;
 
 	/// Remove a pending board.
 	///
@@ -190,14 +223,23 @@ pub trait BarkPersister: Send + Sync + 'static {
 	/// - Returns an error if the board cannot be removed.
 	fn remove_pending_board(&self, vtxo_id: &VtxoId) -> anyhow::Result<()>;
 
-	/// Get all pending boards.
+	/// Get the [VtxoId] for each pending board.
 	///
 	/// Returns:
 	/// - `Ok(Vec<VtxoId>)` possibly empty.
 	///
 	/// Errors:
 	/// - Returns an error if the query fails.
-	fn get_all_pending_boards(&self) -> anyhow::Result<Vec<VtxoId>>;
+	fn get_all_pending_board_ids(&self) -> anyhow::Result<Vec<VtxoId>>;
+
+	/// Get the [MovementId] associated with the pending board corresponding to the given [VtxoId].
+	///
+	/// Returns:
+	/// - `Ok(MovementId)` if a matching board exists
+	///
+	/// Errors:
+	/// - Returns an error if the query fails.
+	fn get_pending_board_movement_id(&self, vtxo_id: VtxoId) -> anyhow::Result<MovementId>;
 
 	/// Store a new ongoing round state and lock the VTXOs in round
 	///
@@ -247,6 +289,13 @@ pub trait BarkPersister: Send + Sync + 'static {
 
 	/// Load the recovered past rounds
 	fn load_recovered_rounds(&self) -> anyhow::Result<Vec<UnconfirmedRound>>;
+
+	/// Stores the given VTXOs in the given [VtxoState].
+	fn store_vtxos(
+		&self,
+		vtxos: &[(&Vtxo, &VtxoState)],
+		movement_id: Option<MovementId>,
+	) -> anyhow::Result<()>;
 
 	/// Fetch a wallet [Vtxo] with its current state by ID.
 	///
@@ -347,8 +396,13 @@ pub trait BarkPersister: Send + Sync + 'static {
 	///
 	/// Errors:
 	/// - Returns an error if the pending lightning send cannot be stored.
-	fn store_new_pending_lightning_send(&self, invoice: &Invoice, amount: &Amount, vtxos: &[VtxoId])
-		-> anyhow::Result<PendingLightningSend>;
+	fn store_new_pending_lightning_send(
+		&self,
+		invoice: &Invoice,
+		amount: &Amount,
+		vtxos: &[VtxoId],
+		movement_id: MovementId,
+	) -> anyhow::Result<PendingLightningSend>;
 
 	/// Get all pending lightning sends.
 	///
@@ -375,6 +429,7 @@ pub trait BarkPersister: Send + Sync + 'static {
 	/// - preimage: Payment preimage (kept until disclosure).
 	/// - invoice: The associated BOLT11 invoice.
 	/// - htlc_recv_cltv_delta: The CLTV delta for the HTLC VTXO.
+	/// - movement_id: The movement ID associated with the invoice.
 	///
 	/// Errors:
 	/// - Returns an error if the receive cannot be stored.
@@ -384,6 +439,7 @@ pub trait BarkPersister: Send + Sync + 'static {
 		preimage: Preimage,
 		invoice: &Bolt11Invoice,
 		htlc_recv_cltv_delta: BlockDelta,
+		movement_id: MovementId,
 	) -> anyhow::Result<()>;
 
 	/// Returns a list of all pending lightning receives
@@ -499,10 +555,40 @@ pub trait BarkPersister: Send + Sync + 'static {
 		exit_txid: Txid,
 	) -> anyhow::Result<Option<(Transaction, ExitTxOrigin)>>;
 
+	/// Updates the state of the VTXO corresponding to the given [VtxoId], provided that their
+	/// current state is one of the given `allowed_states`.
+	///
+	/// # Parameters
+	/// - `vtxo_id`: The ID of the [Vtxo] to update.
+	/// - `state`: The new state to be set for the specified [Vtxo].
+	/// - `allowed_states`: An iterable collection of allowed states ([VtxoStateKind]) that the
+	///   [Vtxo] must currently be in for their state to be updated to the new `state`.
+	///
+	/// # Returns
+	/// - `Ok(WalletVtxo)` if the state update is successful.
+	/// - `Err(anyhow::Error)` if the VTXO fails to meet the required conditions,
+	///    or if another error occurs during the operation.
+	///
+	/// # Errors
+	/// - Returns an error if the current state is not within the `allowed_states`.
+	/// - Returns an error for any other issues encountered during the operation.
 	fn update_vtxo_state_checked(
 		&self,
 		vtxo_id: VtxoId,
 		new_state: VtxoState,
 		allowed_old_states: &[VtxoStateKind],
 	) -> anyhow::Result<WalletVtxo>;
+
+	/// Links a spent [Vtxo] to a specific [Movement]. Establishing this link helps in tracking the
+	/// flow of funds.
+	///
+	/// # Parameters
+	///
+	/// * `vtxo_id` - The unique identifier of the [Vtxo] that has been spent.
+	/// * `movement_id` - The unique identifier of the [Movement] which spent the [Vtxo].
+	fn link_spent_vtxo_to_movement(
+		&self,
+		vtxo_id: VtxoId,
+		movement_id: MovementId,
+	) -> anyhow::Result<()>;
 }

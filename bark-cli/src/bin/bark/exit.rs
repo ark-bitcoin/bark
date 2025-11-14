@@ -11,7 +11,7 @@ use log::{warn, info};
 use ark::VtxoId;
 use bark::Wallet;
 use bark::onchain::OnchainWallet;
-use bark::vtxo_selection::{FilterVtxos, VtxoFilter};
+use bark::vtxo::selection::{FilterVtxos, VtxoFilter};
 use bitcoin_ext::FeeRateExt;
 
 use crate::util::output_json;
