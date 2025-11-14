@@ -53,6 +53,8 @@ transaction_rebroadcast_interval = "1m"
 #otel_collector_endpoint = "http://127.0.0.1:4000"
 # Probability of enabling OpenTelemetry tracing
 #otel_tracing_sampler = "0.5"
+# The name of your deployment used by OpenTelemetry
+otel_deployment_name = "my_regtest"
 
 
 ##########

@@ -300,6 +300,7 @@ pub struct Config {
 	/// 0.5 -> Tracing enabled 50% of the time, and
 	/// \>= 1 -> Tracing always active.
 	pub otel_tracing_sampler: Option<f64>,
+	pub otel_deployment_name: String,
 
 	/// Config for the VtxoSweeper process.
 	pub vtxo_sweeper: OptionalService<sweeps::Config>,
@@ -462,6 +463,7 @@ pub mod watchman {
 		/// 0.5 -> Tracing enabled 50% of the time, and
 		/// >=1 -> Tracing always active.
 		pub otel_tracing_sampler: Option<f64>,
+		pub otel_deployment_name: String,
 
 		/// Config for the VtxoSweeper process.
 		pub vtxo_sweeper: sweeps::Config,

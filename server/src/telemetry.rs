@@ -2,6 +2,7 @@ use std::cmp::PartialEq;
 use std::fmt;
 use std::time::Duration;
 
+use smallvec::SmallVec;
 use ark::rounds::RoundSeq;
 use bdk_wallet::Balance;
 use bitcoin::secp256k1::PublicKey;
@@ -224,14 +225,21 @@ static TELEMETRY: OnceCell<Metrics> = OnceCell::const_new();
 /// MUST be called (only once) before registering or updating metrics.
 pub fn init_telemetry<S: MetricsService>(
 	endpoint: &str,
-	tracing_sampler: Option<f64>,
+	otel_tracing_sampler: Option<f64>,
+	otel_deployment_name: &str,
 	network: Network,
 	round_interval: Duration,
 	max_vtxo_amount: Option<Amount>,
 	server_pubkey: PublicKey,
 ) {
 	TELEMETRY.set(Metrics::init::<S>(
-		endpoint, tracing_sampler, network, round_interval, max_vtxo_amount, server_pubkey,
+		endpoint,
+		otel_tracing_sampler,
+		otel_deployment_name,
+		network,
+		round_interval,
+		max_vtxo_amount,
+		server_pubkey,
 	)).expect("Telemetry already initialized");
 }
 
@@ -274,12 +282,14 @@ struct Metrics {
 	postgres_get_timed_out: Gauge<u64>,
 	postgres_get_waited: Gauge<u64>,
 	postgres_get_wait_time: Gauge<u64>,
+	global_labels: Vec<KeyValue>,
 }
 
 impl Metrics {
 	fn init<S: MetricsService>(
 		endpoint: &str,
-		tracing_sampler: Option<f64>,
+		otel_tracing_sampler: Option<f64>,
+		otel_deployment_name: &str,
 		network: Network,
 		round_interval: Duration,
 		max_vtxo_amount: Option<Amount>,
@@ -306,6 +316,10 @@ impl Metrics {
 				network.to_string(),
 			))
 			.with_attribute(KeyValue::new(
+				format!("{}.otel_deployment_name", S::NAME),
+				otel_deployment_name.to_string(),
+			))
+			.with_attribute(KeyValue::new(
 				format!("{}.round_interval", S::NAME),
 				round_interval.as_secs().to_string(),
 			))
@@ -315,7 +329,7 @@ impl Metrics {
 			))
 			.build();
 
-		let tracer_sampler = tracing_sampler.map(Sampler::TraceIdRatioBased)
+		let tracer_sampler = otel_tracing_sampler.map(Sampler::TraceIdRatioBased)
 			.unwrap_or(Sampler::AlwaysOff);
 
 		let tracer_provider = opentelemetry_sdk::trace::SdkTracerProvider::builder()
@@ -400,8 +414,17 @@ impl Metrics {
 
 		// log the current server version
 		meter.u64_counter("server_version_counter").build().add(
-			1u64, &[KeyValue::new(ATTRIBUTE_SERVER_VERSION, env!("CARGO_PKG_VERSION"))],
+			1u64, &[
+				KeyValue::new(ATTRIBUTE_SERVER_VERSION, env!("CARGO_PKG_VERSION")),
+				KeyValue::new("otel_deployment_name", otel_deployment_name.to_string()),
+				KeyValue::new("network", network.to_string()),
+			],
 		);
+
+		let global_labels = vec![
+			KeyValue::new("otel_deployment_name", otel_deployment_name.to_string()),
+			KeyValue::new("network", network.to_string()),
+		];
 
 		Metrics {
 			spawn_counter,
@@ -441,89 +464,140 @@ impl Metrics {
 			postgres_get_timed_out,
 			postgres_get_waited,
 			postgres_get_wait_time,
+			global_labels,
 		}
+	}
+
+	fn global_labels(&self) -> &[KeyValue] {
+		&self.global_labels
+	}
+
+	fn with_global_labels<I>(&self, additional: I) -> SmallVec<[KeyValue; 10]> 
+	where
+		I: IntoIterator<Item = KeyValue>,
+	{
+		// Using SmallVec to avoid heap allocations for up to 10 attributes.
+		// Maximum observed: 2 global labels + 8 additional = 10 total
+		// This stores everything on the stack for <= 10 attributes!
+		let mut attrs = SmallVec::<[KeyValue; 10]>::new();
+
+		// Copy global labels to stack buffer
+		for kv in &self.global_labels {
+			attrs.push(kv.clone());
+		}
+
+		// Copy additional attributes
+		for kv in additional {
+			attrs.push(kv);
+		}
+
+		// Warn if we're causing heap allocation (more than 10 total attributes)
+		if attrs.len() > 10 {
+			log::warn!(
+				"Telemetry attributes exceeded stack allocation limit: {} attributes will cause heap allocation",
+				attrs.len()
+			);
+		}
+
+		attrs
 	}
 }
 
 pub fn worker_spawned(worker: &str) {
 	if let Some(m) = TELEMETRY.get() {
-		m.spawn_counter.add(1, &[KeyValue::new(ATTRIBUTE_WORKER, worker.to_owned())]);
+		let attrs = m.with_global_labels([KeyValue::new(ATTRIBUTE_WORKER, worker.to_owned())]);
+		m.spawn_counter.add(1, &attrs);
 	}
 }
 
 pub fn worker_dropped(worker: &str) {
 	if let Some(m) = TELEMETRY.get() {
-		m.spawn_counter.add(-1, &[KeyValue::new(ATTRIBUTE_WORKER, worker.to_owned())]);
+		let attrs = m.with_global_labels([KeyValue::new(ATTRIBUTE_WORKER, worker.to_owned())]);
+		m.spawn_counter.add(-1, &attrs);
 	}
 }
 
 pub fn count_bark_version(client: Option<String>) {
 	if let Some(m) = TELEMETRY.get() {
-		let client = client.unwrap_or_else(|| format!("UNKNOWN"));
-		m.bark_version_counter.add(1, &[KeyValue::new(ATTRIBUTE_BARK_VERSION, client)]);
+		let client = client.unwrap_or_else(|| "UNKNOWN".to_string());
+		let attrs = m.with_global_labels([KeyValue::new(ATTRIBUTE_BARK_VERSION, client)]);
+		m.bark_version_counter.add(1, &attrs);
 	}
 }
 
 pub fn count_protocol_version(pver: u64) {
 	if let Some(m) = TELEMETRY.get() {
-		m.protocol_version_counter.add(1, &[KeyValue::new(ATTRIBUTE_PROTOCOL_VERSION, Value::I64(pver as i64))]);
+		let attrs = m.with_global_labels([
+			KeyValue::new(ATTRIBUTE_PROTOCOL_VERSION, Value::I64(pver as i64))
+		]);
+		m.protocol_version_counter.add(1, &attrs);
 	}
 }
 
 pub fn set_wallet_balance(wallet_kind: WalletKind, wallet_balance: Balance) {
 	if let Some(m) = TELEMETRY.get() {
-		m.wallet_balance_gauge.record(wallet_balance.confirmed.to_sat(), &[
+		let confirmed_attrs = m.with_global_labels([
 			KeyValue::new(ATTRIBUTE_KIND, wallet_kind.to_string()),
 			KeyValue::new(ATTRIBUTE_TYPE, "confirmed"),
 		]);
-		m.wallet_balance_gauge.record(wallet_balance.immature.to_sat(), &[
+		m.wallet_balance_gauge.record(wallet_balance.confirmed.to_sat(), &confirmed_attrs);
+
+		let immature_attrs = m.with_global_labels([
 			KeyValue::new(ATTRIBUTE_KIND, wallet_kind.to_string()),
 			KeyValue::new(ATTRIBUTE_TYPE, "immature"),
 		]);
-		m.wallet_balance_gauge.record(wallet_balance.trusted_pending.to_sat(), &[
+		m.wallet_balance_gauge.record(wallet_balance.immature.to_sat(), &immature_attrs);
+
+		let trusted_attrs = m.with_global_labels([
 			KeyValue::new(ATTRIBUTE_KIND, wallet_kind.to_string()),
 			KeyValue::new(ATTRIBUTE_TYPE, "trusted_pending"),
 		]);
-		m.wallet_balance_gauge.record(wallet_balance.untrusted_pending.to_sat(), &[
+		m.wallet_balance_gauge.record(wallet_balance.trusted_pending.to_sat(), &trusted_attrs);
+
+		let untrusted_attrs = m.with_global_labels([
 			KeyValue::new(ATTRIBUTE_KIND, wallet_kind.to_string()),
 			KeyValue::new(ATTRIBUTE_TYPE, "untrusted_pending"),
 		]);
+		m.wallet_balance_gauge.record(wallet_balance.untrusted_pending.to_sat(), &untrusted_attrs);
 	}
 }
 
 pub fn set_block_height(block_height: BlockHeight) {
 	if let Some(m) = TELEMETRY.get() {
-		m.block_height_gauge.record(block_height as u64, &[]);
+		m.block_height_gauge.record(block_height as u64, m.global_labels());
 	}
 }
 
 // Initialize a new round and clear out the old data.
 pub fn set_round_seq(round_seq: RoundSeq) {
 	if let Some(m) = TELEMETRY.get() {
-		m.round_seq_gauge.record(round_seq.inner(), &[]);
-		m.round_attempt_gauge.record(0, &[]);
-		m.round_input_volume_gauge.record(0, &[]);
-		m.round_input_count_gauge.record(0, &[]);
-		m.round_output_count_gauge.record(0, &[]);
-		m.round_offboard_count_gauge.record(0, &[]);
+		let global_attrs = m.global_labels();
+		m.round_seq_gauge.record(round_seq.inner(), global_attrs);
+		m.round_attempt_gauge.record(0, global_attrs);
+		m.round_input_volume_gauge.record(0, global_attrs);
+		m.round_input_count_gauge.record(0, global_attrs);
+		m.round_output_count_gauge.record(0, global_attrs);
+		m.round_offboard_count_gauge.record(0, global_attrs);
 
 		for s in RoundStep::get_all() {
-			m.round_step_duration_gauge.record(0, &[
+			let attrs = m.with_global_labels([
 				KeyValue::new(ATTRIBUTE_ROUND_STEP, s.as_str()),
 			]);
+			m.round_step_duration_gauge.record(0, &attrs);
 		}
 
 		for s in RoundStateKind::get_all() {
-			m.round_state_gauge.record(0, &[
+			let attrs = m.with_global_labels([
 				KeyValue::new(ATTRIBUTE_STATUS, s.as_str()),
 			]);
+			m.round_state_gauge.record(0, &attrs);
 		}
 	}
 }
 
 pub fn set_round_attempt(attempt: usize) {
 	if let Some(m) = TELEMETRY.get() {
-		m.round_attempt_gauge.record(attempt as u64, &[]);
+		m.round_attempt_gauge.record(attempt as u64, m.global_labels());
 	}
 }
 
@@ -536,18 +610,20 @@ pub fn set_round_state(state: RoundStateKind) {
 				0
 			};
 
-			m.round_state_gauge.record(value, &[
+			let attrs = m.with_global_labels([
 				KeyValue::new(ATTRIBUTE_STATUS, s.as_str()),
 			]);
+			m.round_state_gauge.record(value, &attrs);
 		}
 	}
 }
 
 pub fn set_round_step_duration(round_step: TimedRoundStep) {
 	if let Some(m) = TELEMETRY.get() {
-		m.round_step_duration_gauge.record(round_step.duration().as_millis() as u64, &[
+		let attrs = m.with_global_labels([
 			KeyValue::new(ATTRIBUTE_ROUND_STEP, round_step.as_str()),
 		]);
+		m.round_step_duration_gauge.record(round_step.duration().as_millis() as u64, &attrs);
 	}
 }
 
@@ -558,26 +634,29 @@ pub fn set_round_metrics(
 	offboard_count: usize,
 ) {
 	if let Some(m) = TELEMETRY.get() {
-		m.round_input_volume_gauge.record(input_volume.to_sat(), &[]);
-		m.round_input_count_gauge.record(input_count as u64, &[]);
-		m.round_output_count_gauge.record(output_count as u64, &[]);
-		m.round_offboard_count_gauge.record(offboard_count as u64, &[]);
+		let global_labels = m.global_labels();
+		m.round_input_volume_gauge.record(input_volume.to_sat(), global_labels);
+		m.round_input_count_gauge.record(input_count as u64, global_labels);
+		m.round_output_count_gauge.record(output_count as u64, global_labels);
+		m.round_offboard_count_gauge.record(offboard_count as u64, global_labels);
 	}
 }
 
 pub fn set_pending_expired_rounds_count(pending_expired_rounds_count: usize) {
 	if let Some(m) = TELEMETRY.get() {
-		m.pending_expired_operation_gauge.record(pending_expired_rounds_count as u64, &[
+		let attrs = m.with_global_labels([
 			KeyValue::new(ATTRIBUTE_TYPE, "rounds"),
 		]);
+		m.pending_expired_operation_gauge.record(pending_expired_rounds_count as u64, &attrs);
 	}
 }
 
 pub fn set_pending_expired_boards_count(pending_expired_boards_count: usize) {
 	if let Some(m) = TELEMETRY.get() {
-		m.pending_expired_operation_gauge.record(pending_expired_boards_count as u64, &[
+		let attrs = m.with_global_labels([
 			KeyValue::new(ATTRIBUTE_TYPE, "boards"),
 		]);
+		m.pending_expired_operation_gauge.record(pending_expired_boards_count as u64, &attrs);
 	}
 }
 
@@ -587,15 +666,20 @@ pub fn set_pending_sweeper_stats(
 	pending_utxo_count: usize,
 ) {
 	if let Some(m) = TELEMETRY.get() {
-		m.pending_sweeper_gauge.record(pending_tx_count as u64, &[
+		let tx_attrs = m.with_global_labels([
 			KeyValue::new(ATTRIBUTE_TYPE, "transaction_count"),
 		]);
-		m.pending_sweeper_gauge.record(pending_tx_volume, &[
+		m.pending_sweeper_gauge.record(pending_tx_count as u64, &tx_attrs);
+
+		let volume_attrs = m.with_global_labels([
 			KeyValue::new(ATTRIBUTE_TYPE, "transaction_volume"),
 		]);
-		m.pending_sweeper_gauge.record(pending_utxo_count as u64, &[
+		m.pending_sweeper_gauge.record(pending_tx_volume, &volume_attrs);
+
+		let utxo_attrs = m.with_global_labels([
 			KeyValue::new(ATTRIBUTE_TYPE, "utxo_count"),
 		]);
+		m.pending_sweeper_gauge.record(pending_utxo_count as u64, &utxo_attrs);
 	}
 }
 
@@ -606,18 +690,25 @@ pub fn set_forfeit_metrics(
 	pending_claim_volume: u64,
 ) {
 	if let Some(ref m) = TELEMETRY.get() {
-		m.pending_forfeit_gauge.record(pending_exit_tx_count as u64, &[
+		let exit_tx_attrs = m.with_global_labels([
 			KeyValue::new(ATTRIBUTE_TYPE, "pending_exit_transaction_count"),
 		]);
-		m.pending_forfeit_gauge.record(pending_exit_volume as u64, &[
+		m.pending_forfeit_gauge.record(pending_exit_tx_count as u64, &exit_tx_attrs);
+
+		let exit_volume_attrs = m.with_global_labels([
 			KeyValue::new(ATTRIBUTE_TYPE, "pending_exit_transaction_volume"),
 		]);
-		m.pending_forfeit_gauge.record(pending_claim_count as u64, &[
+		m.pending_forfeit_gauge.record(pending_exit_volume as u64, &exit_volume_attrs);
+
+		let claim_count_attrs = m.with_global_labels([
 			KeyValue::new(ATTRIBUTE_TYPE, "pending_claim_count"),
 		]);
-		m.pending_forfeit_gauge.record(pending_claim_volume as u64, &[
+		m.pending_forfeit_gauge.record(pending_claim_count as u64, &claim_count_attrs);
+
+		let claim_volume_attrs = m.with_global_labels([
 			KeyValue::new(ATTRIBUTE_TYPE, "pending_claim_volume"),
-		])
+		]);
+		m.pending_forfeit_gauge.record(pending_claim_volume as u64, &claim_volume_attrs)
 	}
 }
 
@@ -640,77 +731,86 @@ pub fn set_lightning_node_state(
 				0
 			};
 
-			m.lightning_node_gauge.record(value, &[
+			let attrs = m.with_global_labels([
 				KeyValue::new(ATTRIBUTE_URI, lightning_node_uri.to_string()),
 				KeyValue::new(ATTRIBUTE_LIGHTNING_NODE_ID, lightning_node_id.unwrap_or(0).to_string()),
 				KeyValue::new(ATTRIBUTE_PUBKEY, pubkey_string.clone()),
 				KeyValue::new(ATTRIBUTE_STATUS, s.as_str()),
 			]);
+			m.lightning_node_gauge.record(value, &attrs);
 		}
 
 		if state == ClnNodeStateKind::Online {
-			m.lightning_node_boot_counter.add(1, &[
+			let boot_attrs = m.with_global_labels([
 				KeyValue::new(ATTRIBUTE_URI, lightning_node_uri.to_string()),
 				KeyValue::new(ATTRIBUTE_LIGHTNING_NODE_ID, lightning_node_id.unwrap_or(0).to_string()),
 				KeyValue::new(ATTRIBUTE_PUBKEY, pubkey_string),
 			]);
+			m.lightning_node_boot_counter.add(1, &boot_attrs);
 		}
 	}
 }
 
-pub fn add_lightning_payment(lightning_node_id: i64, amount_msat: u64, status: LightningPaymentStatus) {
+pub fn add_lightning_payment(
+	lightning_node_id: i64,
+	amount_msat: u64,
+	status: LightningPaymentStatus,
+) {
 	if let Some(m) = TELEMETRY.get() {
-		m.lightning_payment_counter.add(1, &[
+		let attrs = m.with_global_labels([
 			KeyValue::new(ATTRIBUTE_LIGHTNING_NODE_ID, lightning_node_id.to_string()),
 			KeyValue::new(ATTRIBUTE_STATUS, status.to_string()),
 		]);
-
-		m.lightning_payment_volume.add(amount_msat / 1000, &[
-			KeyValue::new(ATTRIBUTE_LIGHTNING_NODE_ID, lightning_node_id.to_string()),
-			KeyValue::new(ATTRIBUTE_STATUS, status.to_string()),
-		]);
+		m.lightning_payment_counter.add(1, &attrs);
+		m.lightning_payment_volume.add(amount_msat / 1000, &attrs);
 	}
 }
 
 pub fn add_invoice_verification(lightning_node_id: i64, status: LightningPaymentStatus) {
 	if let Some(m) = TELEMETRY.get() {
-		m.lightning_invoice_verification_counter.add(1, &[
+		let attrs = m.with_global_labels([
 			KeyValue::new(ATTRIBUTE_LIGHTNING_NODE_ID, lightning_node_id.to_string()),
 			KeyValue::new(ATTRIBUTE_STATUS, status.to_string()),
 		]);
+		m.lightning_invoice_verification_counter.add(1, &attrs);
 	}
 }
 
 pub fn set_pending_invoice_verifications(lightning_node_id: i64, count: usize) {
 	if let Some(m) = TELEMETRY.get() {
-		m.lightning_invoice_verification_queue_gauge.record(count as u64, &[
+		let attrs = m.with_global_labels([
 			KeyValue::new(ATTRIBUTE_LIGHTNING_NODE_ID, lightning_node_id.to_string()),
-		])
+		]);
+		m.lightning_invoice_verification_queue_gauge.record(count as u64, &attrs)
 	}
 }
 
 pub fn add_grpc_in_progress(attributes: &[KeyValue]) {
 	if let Some(m) = TELEMETRY.get() {
-		m.grpc_request_counter.add(1, attributes);
-		m.grpc_in_progress_counter.add(1, attributes);
+		let attrs = m.with_global_labels(attributes.iter().cloned());
+		m.grpc_request_counter.add(1, &attrs);
+		m.grpc_in_progress_counter.add(1, &attrs);
 	}
 }
 
 pub fn record_grpc_latency(duration: Duration, attributes: &[KeyValue]) {
 	if let Some(m) = TELEMETRY.get() {
-		m.grpc_latency_histogram.record(duration.as_millis() as u64, attributes);
+		let attrs = m.with_global_labels(attributes.iter().cloned());
+		m.grpc_latency_histogram.record(duration.as_millis() as u64, &attrs);
 	}
 }
 
 pub fn add_grpc_error(attributes: &[KeyValue]) {
 	if let Some(m) = TELEMETRY.get() {
-		m.grpc_error_counter.add(1, attributes);
+		let attrs = m.with_global_labels(attributes.iter().cloned());
+		m.grpc_error_counter.add(1, &attrs);
 	}
 }
 
 pub fn drop_grpc_in_progress(attributes: &[KeyValue]) {
 	if let Some(m) = TELEMETRY.get() {
-		m.grpc_in_progress_counter.add(-1, attributes);
+		let attrs = m.with_global_labels(attributes.iter().cloned());
+		m.grpc_in_progress_counter.add(-1, &attrs);
 	}
 }
 
@@ -718,18 +818,19 @@ pub fn set_postgres_connection_pool_metrics(state: bb8::State) {
 	if let Some(m) = TELEMETRY.get() {
 		let connections = state.connections;
 		let idle_connections = state.idle_connections;
-		m.postgres_connections.record(connections as u64, &[]);
-		m.postgres_idle_connections.record(idle_connections as u64, &[]);
+		let global_labels = m.global_labels();
+		m.postgres_connections.record(connections as u64, global_labels);
+		m.postgres_idle_connections.record(idle_connections as u64, global_labels);
 		let stats = state.statistics;
-		m.postgres_connections_created.record(stats.connections_created, &[]);
-		m.postgres_connections_closed_broken.record(stats.connections_closed_broken, &[]);
-		m.postgres_connections_closed_idle_timeout.record(stats.connections_closed_idle_timeout, &[]);
-		m.postgres_connections_closed_invalid.record(stats.connections_closed_invalid, &[]);
-		m.postgres_connections_closed_max_lifetime.record(stats.connections_closed_max_lifetime, &[]);
-		m.postgres_get_direct.record(stats.get_direct, &[]);
-		m.postgres_get_timed_out.record(stats.get_timed_out, &[]);
-		m.postgres_get_waited.record(stats.get_waited, &[]);
-		m.postgres_get_wait_time.record(stats.get_wait_time.as_millis() as u64, &[]);
+		m.postgres_connections_created.record(stats.connections_created, global_labels);
+		m.postgres_connections_closed_broken.record(stats.connections_closed_broken, global_labels);
+		m.postgres_connections_closed_idle_timeout.record(stats.connections_closed_idle_timeout, global_labels);
+		m.postgres_connections_closed_invalid.record(stats.connections_closed_invalid, global_labels);
+		m.postgres_connections_closed_max_lifetime.record(stats.connections_closed_max_lifetime, global_labels);
+		m.postgres_get_direct.record(stats.get_direct, global_labels);
+		m.postgres_get_timed_out.record(stats.get_timed_out, global_labels);
+		m.postgres_get_waited.record(stats.get_waited, global_labels);
+		m.postgres_get_wait_time.record(stats.get_wait_time.as_millis() as u64, global_labels);
 	}
 }
 

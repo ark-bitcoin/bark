@@ -16,6 +16,9 @@ txindex_check_interval = "30s"
 # The interval to rebroadcast transactions
 transaction_rebroadcast_interval = "1m"
 
+# The name of your deployment used by OpenTelemetry
+otel_deployment_name = "my_regtest"
+
 
 ################
 # VTXO SWEEPER #
