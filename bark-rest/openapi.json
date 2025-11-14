@@ -946,16 +946,6 @@
           "wallet"
         ],
         "operationId": "refresh_all",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/RefreshRequest"
-              }
-            }
-          },
-          "required": true
-        },
         "responses": {
           "200": {
             "description": "Returns the refresh result",
@@ -966,9 +956,6 @@
                 }
               }
             }
-          },
-          "400": {
-            "description": "Bad request - exactly one parameter must be provided"
           },
           "500": {
             "description": "Internal server error"

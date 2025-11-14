@@ -88,6 +88,9 @@ docs/LightningReceiveInfo.md
 docs/LightningStatusRequest.md
 docs/LightningStatusResponse.md
 docs/Movement.md
+docs/MovementDestination.md
+docs/MovementSubsystem.md
+docs/MovementTimestamp.md
 docs/OffboardAllRequest.md
 docs/OffboardVtxosRequest.md
 docs/OnchainApi.md
@@ -97,7 +100,6 @@ docs/OnchainSendManyRequest.md
 docs/OnchainSendRequest.md
 docs/PeakAddressRequest.md
 docs/PendingRoundInfo.md
-docs/RecipientInfo.md
 docs/RefreshRequest.md
 docs/RoundStatus.md
 docs/RoundStatusOneOf.md
@@ -112,6 +114,10 @@ docs/TipResponse.md
 docs/TransactionInfo.md
 docs/UtxoInfo.md
 docs/VtxoInfo.md
+docs/VtxoStateInfo.md
+docs/VtxoStateInfoOneOf.md
+docs/VtxoStateInfoOneOf1.md
+docs/VtxoStateInfoOneOf2.md
 docs/VtxosQuery.md
 docs/WalletApi.md
 docs/WalletVtxoInfo.md
@@ -207,6 +213,9 @@ src/models/lightning_status_request.rs
 src/models/lightning_status_response.rs
 src/models/mod.rs
 src/models/movement.rs
+src/models/movement_destination.rs
+src/models/movement_subsystem.rs
+src/models/movement_timestamp.rs
 src/models/offboard_all_request.rs
 src/models/offboard_vtxos_request.rs
 src/models/onchain_balance.rs
@@ -215,7 +224,6 @@ src/models/onchain_send_many_request.rs
 src/models/onchain_send_request.rs
 src/models/peak_address_request.rs
 src/models/pending_round_info.rs
-src/models/recipient_info.rs
 src/models/refresh_request.rs
 src/models/round_status.rs
 src/models/round_status_one_of.rs
@@ -230,5 +238,9 @@ src/models/tip_response.rs
 src/models/transaction_info.rs
 src/models/utxo_info.rs
 src/models/vtxo_info.rs
+src/models/vtxo_state_info.rs
+src/models/vtxo_state_info_one_of.rs
+src/models/vtxo_state_info_one_of_1.rs
+src/models/vtxo_state_info_one_of_2.rs
 src/models/vtxos_query.rs
 src/models/wallet_vtxo_info.rs

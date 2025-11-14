@@ -92,7 +92,6 @@ pub enum PendingRoundsError {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum RefreshAllError {
-    Status400(),
     Status500(),
     UnknownValue(serde_json::Value),
 }
@@ -464,9 +463,7 @@ pub async fn pending_rounds(configuration: &configuration::Configuration, ) -> R
     }
 }
 
-pub async fn refresh_all(configuration: &configuration::Configuration, refresh_request: models::RefreshRequest) -> Result<models::PendingRoundInfo, Error<RefreshAllError>> {
-    // add a prefix to parameters to efficiently prevent name collisions
-    let p_refresh_request = refresh_request;
+pub async fn refresh_all(configuration: &configuration::Configuration, ) -> Result<models::PendingRoundInfo, Error<RefreshAllError>> {
 
     let uri_str = format!("{}/api/v1/wallet/refresh/all", configuration.base_path);
     let mut req_builder = configuration.client.request(reqwest::Method::POST, &uri_str);
@@ -474,7 +471,6 @@ pub async fn refresh_all(configuration: &configuration::Configuration, refresh_r
     if let Some(ref user_agent) = configuration.user_agent {
         req_builder = req_builder.header(reqwest::header::USER_AGENT, user_agent.clone());
     }
-    req_builder = req_builder.json(&p_refresh_request);
 
     let req = req_builder.build()?;
     let resp = configuration.client.execute(req).await?;
