@@ -1268,10 +1268,14 @@ impl Wallet {
 		Ok(())
 	}
 
+	pub fn pending_lightning_sends(&self) -> anyhow::Result<Vec<PendingLightningSend>> {
+		Ok(self.db.get_all_pending_lightning_send()?)
+	}
+
 	/// Syncs pending lightning payments, verifying whether the payment status has changed and
 	/// creating a revocation VTXO if necessary.
 	pub async fn sync_pending_lightning_send_vtxos(&self) -> anyhow::Result<()> {
-		let pending_payments = self.db.get_all_pending_lightning_send()?;
+		let pending_payments = self.pending_lightning_sends()?;
 
 		if pending_payments.is_empty() {
 			return Ok(());
