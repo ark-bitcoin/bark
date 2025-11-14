@@ -93,17 +93,53 @@
         }
       }
     },
-    "/api/v1/exit/claim": {
+    "/api/v1/exit/claim/all": {
       "post": {
         "tags": [
           "exit"
         ],
-        "operationId": "exit_claim",
+        "operationId": "exit_claim_all",
         "requestBody": {
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/ExitClaimRequest"
+                "$ref": "#/components/schemas/ExitClaimAllRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Exit claimed successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExitClaimResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request - invalid parameters"
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      }
+    },
+    "/api/v1/exit/claim/vtxos": {
+      "post": {
+        "tags": [
+          "exit"
+        ],
+        "operationId": "exit_claim_vtxos",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExitClaimVtxosRequest"
               }
             }
           },
@@ -1415,6 +1451,27 @@
           }
         }
       },
+      "ExitClaimAllRequest": {
+        "type": "object",
+        "required": [
+          "destination"
+        ],
+        "properties": {
+          "destination": {
+            "type": "string",
+            "description": "The destination Bitcoin address"
+          },
+          "fee_rate": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Sets the desired fee-rate in sats/kvB to use broadcasting exit transactions",
+            "minimum": 0
+          }
+        }
+      },
       "ExitClaimInProgressState": {
         "type": "object",
         "required": [
@@ -1434,35 +1491,6 @@
           }
         }
       },
-      "ExitClaimRequest": {
-        "type": "object",
-        "required": [
-          "destination"
-        ],
-        "properties": {
-          "all": {
-            "type": [
-              "boolean",
-              "null"
-            ],
-            "description": "Claim all exited VTXOs"
-          },
-          "destination": {
-            "type": "string",
-            "description": "The destination Bitcoin address"
-          },
-          "vtxos": {
-            "type": [
-              "array",
-              "null"
-            ],
-            "items": {
-              "type": "string"
-            },
-            "description": "The ID of an exited VTXO to be claimed"
-          }
-        }
-      },
       "ExitClaimResponse": {
         "type": "object",
         "required": [
@@ -1471,6 +1499,35 @@
         "properties": {
           "message": {
             "type": "string"
+          }
+        }
+      },
+      "ExitClaimVtxosRequest": {
+        "type": "object",
+        "required": [
+          "destination",
+          "vtxos"
+        ],
+        "properties": {
+          "destination": {
+            "type": "string",
+            "description": "The destination Bitcoin address"
+          },
+          "fee_rate": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Sets the desired fee-rate in sats/kvB to use broadcasting exit transactions",
+            "minimum": 0
+          },
+          "vtxos": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The ID of an exited VTXO to be claimed"
           }
         }
       },
@@ -2615,88 +2672,6 @@
           }
         ]
       },
-      "InputInfo": {
-        "type": "object",
-        "required": [
-          "txid"
-        ],
-        "properties": {
-          "prevout": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "script_sig": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/InputScriptInfo"
-              }
-            ]
-          },
-          "sequence": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "int32",
-            "minimum": 0
-          },
-          "txid": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "vout": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "int32",
-            "minimum": 0
-          },
-          "witness": {
-            "type": [
-              "array",
-              "null"
-            ],
-            "items": {
-              "type": "array",
-              "items": {
-                "type": "integer",
-                "format": "int32",
-                "minimum": 0
-              }
-            }
-          }
-        }
-      },
-      "InputScriptInfo": {
-        "type": "object",
-        "properties": {
-          "asm": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "hex": {
-            "type": [
-              "array",
-              "null"
-            ],
-            "items": {
-              "type": "integer",
-              "format": "int32",
-              "minimum": 0
-            }
-          }
-        }
-      },
       "InvoiceInfo": {
         "type": "object",
         "required": [
@@ -3059,66 +3034,6 @@
           "destination": {
             "type": "string",
             "description": "The destination Bitcoin address"
-          }
-        }
-      },
-      "OutputInfo": {
-        "type": "object",
-        "required": [
-          "value"
-        ],
-        "properties": {
-          "script_pub_key": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/OutputScriptInfo"
-              }
-            ]
-          },
-          "value": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "int64",
-            "minimum": 0
-          }
-        }
-      },
-      "OutputScriptInfo": {
-        "type": "object",
-        "properties": {
-          "address": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "asm": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "hex": {
-            "type": [
-              "array",
-              "null"
-            ],
-            "items": {
-              "type": "integer",
-              "format": "int32",
-              "minimum": 0
-            }
-          },
-          "type": {
-            "type": [
-              "string",
-              "null"
-            ]
           }
         }
       },

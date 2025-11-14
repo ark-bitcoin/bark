@@ -4,6 +4,7 @@ use axum::extract::{Query, State};
 use axum::routing::{get, post};
 use axum::{debug_handler, Json, Router};
 use anyhow::Context;
+use bitcoin::FeeRate;
 use tracing::info;
 use utoipa::OpenApi;
 
@@ -20,7 +21,8 @@ use crate::{error::HandlerResult, RestServer};
 		exit_start_vtxos,
 		exit_start_all,
 		exit_progress,
-		exit_claim,
+		exit_claim_all,
+		exit_claim_vtxos,
 	),
 	components(schemas(
 		bark_json::web::ExitStatusRequest,
@@ -30,7 +32,8 @@ use crate::{error::HandlerResult, RestServer};
 		bark_json::web::ExitStartResponse,
 		bark_json::web::ExitProgressRequest,
 		bark_json::cli::ExitProgressResponse,
-		bark_json::web::ExitClaimRequest,
+		bark_json::web::ExitClaimAllRequest,
+		bark_json::web::ExitClaimVtxosRequest,
 		bark_json::web::ExitClaimResponse,
 	)),
 	tags((name = "exit", description = "Exit-related endpoints"))
@@ -44,7 +47,8 @@ pub fn router() -> Router<RestServer> {
 		.route("/start/vtxos", post(exit_start_vtxos))
 		.route("/start/all", post(exit_start_all))
 		.route("/progress", post(exit_progress))
-		.route("/claim", post(exit_claim))
+		.route("/claim/all", post(exit_claim_all))
+		.route("/claim/vtxos", post(exit_claim_vtxos))
 }
 
 #[utoipa::path(
@@ -207,96 +211,40 @@ pub async fn exit_progress(
 ) -> HandlerResult<Json<bark_json::cli::ExitProgressResponse>> {
 	let mut onchain_lock = state.onchain.write().await;
 
-	let fee_rate = params.fee_rate.map(|rate| bitcoin::FeeRate::from_sat_per_kvb_ceil(rate));
+	let fee_rate = params.fee_rate.map(FeeRate::from_sat_per_kvb_ceil);
 
-	let exit_status = if params.wait.unwrap_or(false) {
-		loop {
-			let exit_status = progress_exit_once(&state.wallet, &mut onchain_lock, fee_rate).await?;
-			if exit_status.done {
-				break exit_status
-			} else {
-				info!("Sleeping for a minute, then will continue...");
-				tokio::time::sleep(std::time::Duration::from_secs(60)).await;
-			}
-		}
-	} else {
-		progress_exit_once(&state.wallet, &mut onchain_lock, fee_rate).await?
-	};
-
-	Ok(axum::Json(exit_status))
-}
-
-async fn progress_exit_once(
-	wallet: &bark::Wallet,
-	onchain: &mut bark::onchain::OnchainWallet,
-	fee_rate: Option<bitcoin::FeeRate>,
-) -> anyhow::Result<bark_json::cli::ExitProgressResponse> {
-	let mut exit = wallet.exit.write().await;
-	let result = exit.progress_exits(onchain, fee_rate).await
+	let mut exit = state.wallet.exit.write().await;
+	let result = exit.progress_exits(&mut *onchain_lock, fee_rate).await
 		.context("error making progress on exit process")?;
 
 	let done = !exit.has_pending_exits();
 	let claimable_height = exit.all_claimable_at_height().await;
 	let exits = result.unwrap_or_default();
 
-	Ok(bark_json::cli::ExitProgressResponse {
+	Ok(axum::Json(bark_json::cli::ExitProgressResponse {
 		done,
 		claimable_height,
 		exits: exits.into_iter().map(|e| e.into()).collect::<Vec<_>>()
-	})
+	}))
 }
 
-#[utoipa::path(
-	post,
-	path = "/claim",
-	request_body = bark_json::web::ExitClaimRequest,
-	responses(
-		(status = 200, description = "Exit claimed successfully", body = bark_json::web::ExitClaimResponse),
-		(status = 400, description = "Bad request - invalid parameters"),
-		(status = 500, description = "Internal server error")
-	),
-	tag = "exit"
-)]
-#[debug_handler]
-pub async fn exit_claim(
-	State(state): State<RestServer>,
-	Json(params): Json<bark_json::web::ExitClaimRequest>,
+async fn inner_claim_vtxos(
+	state: &RestServer,
+	exit: &bark::exit::Exit,
+	address: bitcoin::Address,
+	vtxos: &[&bark::exit::ExitVtxo],
+	fee_rate: Option<FeeRate>,
 ) -> HandlerResult<Json<bark_json::web::ExitClaimResponse>> {
-	let mut onchain_lock = state.onchain.write().await;
-
-	let network = state.wallet.properties()?.network;
-	let address = bitcoin::Address::from_str(&params.destination)
-		.context("Invalid destination address")?
-		.require_network(network)
-		.context("Address is not valid for configured network")?;
-
-	let exit = state.wallet.exit.read().await;
-	let vtxos = match (params.vtxos, params.all.unwrap_or(false)) {
-		(Some(vtxo_ids), false) => {
-			let mut vtxo_ids = vtxo_ids.iter().map(|s| {
-				ark::VtxoId::from_str(s).context("invalid vtxo id")
-			}).collect::<anyhow::Result<std::collections::HashSet<_>>>()?;
-			let vtxos = exit.list_claimable().into_iter()
-				.filter(|v| vtxo_ids.remove(&v.id()))
-				.collect::<Vec<_>>();
-			for id in vtxo_ids {
-				return Err(anyhow::anyhow!("Unspendable VTXO provided: {}", id).into());
-			}
-			vtxos
-		},
-		(None, true) => exit.list_claimable(),
-		(None, false) => return Err(anyhow::anyhow!("Either vtxos or all must be specified").into()),
-		(Some(_), true) => return Err(anyhow::anyhow!("Cannot specify both vtxos and all").into()),
-	};
-
 	let address_spk = address.script_pubkey();
-	let psbt = exit.drain_exits(&vtxos, &state.wallet, address, None).await
+	let psbt = exit.drain_exits(vtxos, &state.wallet, address, fee_rate).await
 		.context("Failed to drain exits")?;
 	let tx = psbt.extract_tx()
 		.context("Failed to extract transaction")?;
 	state.wallet.chain.broadcast_tx(&tx).await
 		.context("Failed to broadcast transaction")?;
 	info!("Drain transaction broadcasted: {}", tx.compute_txid());
+
+	let mut onchain_lock = state.onchain.write().await;
 
 	// Commit the transaction to the wallet if the claim destination is ours
 	if onchain_lock.is_mine(address_spk) {
@@ -309,4 +257,76 @@ pub async fn exit_claim(
 	Ok(axum::Json(bark_json::web::ExitClaimResponse {
 		message: "Exit claimed successfully".to_string(),
 	}))
+}
+
+#[utoipa::path(
+	post,
+	path = "/claim/all",
+	request_body = bark_json::web::ExitClaimAllRequest,
+	responses(
+		(status = 200, description = "Exit claimed successfully", body = bark_json::web::ExitClaimResponse),
+		(status = 400, description = "Bad request - invalid parameters"),
+		(status = 500, description = "Internal server error")
+	),
+	tag = "exit"
+)]
+#[debug_handler]
+pub async fn exit_claim_all(
+	State(state): State<RestServer>,
+	Json(params): Json<bark_json::web::ExitClaimAllRequest>,
+) -> HandlerResult<Json<bark_json::web::ExitClaimResponse>> {
+
+	let network = state.wallet.properties()?.network;
+	let address = bitcoin::Address::from_str(&params.destination)
+		.context("Invalid destination address")?
+		.require_network(network)
+		.context("Address is not valid for configured network")?;
+
+	let exit = state.wallet.exit.read().await;
+	let vtxos = exit.list_claimable();
+
+	let fee_rate = params.fee_rate.map(FeeRate::from_sat_per_kvb_ceil);
+
+	inner_claim_vtxos(&state, &*exit, address, &vtxos, fee_rate).await
+}
+
+#[utoipa::path(
+	post,
+	path = "/claim/vtxos",
+	request_body = bark_json::web::ExitClaimVtxosRequest,
+	responses(
+		(status = 200, description = "Exit claimed successfully", body = bark_json::web::ExitClaimResponse),
+		(status = 400, description = "Bad request - invalid parameters"),
+		(status = 500, description = "Internal server error")
+	),
+	tag = "exit"
+)]
+#[debug_handler]
+pub async fn exit_claim_vtxos(
+	State(state): State<RestServer>,
+	Json(params): Json<bark_json::web::ExitClaimVtxosRequest>,
+) -> HandlerResult<Json<bark_json::web::ExitClaimResponse>> {
+	let network = state.wallet.properties()?.network;
+	let address = bitcoin::Address::from_str(&params.destination)
+		.context("Invalid destination address")?
+		.require_network(network)
+		.context("Address is not valid for configured network")?;
+
+	let exit = state.wallet.exit.read().await;
+	let vtxos = {
+		let mut vtxo_ids = params.vtxos.iter().map(|s| {
+			ark::VtxoId::from_str(s).context("invalid vtxo id")
+		}).collect::<anyhow::Result<std::collections::HashSet<_>>>()?;
+		let vtxos = exit.list_claimable().into_iter()
+			.filter(|v| vtxo_ids.remove(&v.id()))
+			.collect::<Vec<_>>();
+		for id in vtxo_ids {
+			return Err(anyhow::anyhow!("Unspendable VTXO provided: {}", id).into());
+		}
+		vtxos
+	};
+
+	let fee_rate = params.fee_rate.map(FeeRate::from_sat_per_kvb_ceil);
+
+	inner_claim_vtxos(&state, &*exit, address, &vtxos, fee_rate).await
 }

@@ -215,13 +215,22 @@ pub struct ExitProgressRequest {
 
 #[derive(Serialize, Deserialize)]
 #[cfg_attr(feature = "utoipa", derive(ToSchema))]
-pub struct ExitClaimRequest {
+pub struct ExitClaimAllRequest {
+	/// The destination Bitcoin address
+	pub destination: String,
+	/// Sets the desired fee-rate in sats/kvB to use broadcasting exit transactions
+	pub fee_rate: Option<u64>,
+}
+
+#[derive(Serialize, Deserialize)]
+#[cfg_attr(feature = "utoipa", derive(ToSchema))]
+pub struct ExitClaimVtxosRequest {
 	/// The destination Bitcoin address
 	pub destination: String,
 	/// The ID of an exited VTXO to be claimed
-	pub vtxos: Option<Vec<String>>,
-	/// Claim all exited VTXOs
-	pub all: Option<bool>,
+	pub vtxos: Vec<String>,
+	/// Sets the desired fee-rate in sats/kvB to use broadcasting exit transactions
+	pub fee_rate: Option<u64>,
 }
 
 #[derive(Serialize, Deserialize)]

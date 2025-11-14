@@ -30,7 +30,8 @@ Class | Method | HTTP request | Description
 *BoardApi* | [**board**](docs/BoardApi.md#board) | **POST** /api/v1/board/board | 
 *BoardApi* | [**board_all**](docs/BoardApi.md#board_all) | **POST** /api/v1/board/board/all | 
 *DefaultApi* | [**ping**](docs/DefaultApi.md#ping) | **GET** /ping | 
-*ExitApi* | [**exit_claim**](docs/ExitApi.md#exit_claim) | **POST** /api/v1/exit/claim | 
+*ExitApi* | [**exit_claim_all**](docs/ExitApi.md#exit_claim_all) | **POST** /api/v1/exit/claim/all | 
+*ExitApi* | [**exit_claim_vtxos**](docs/ExitApi.md#exit_claim_vtxos) | **POST** /api/v1/exit/claim/vtxos | 
 *ExitApi* | [**exit_list**](docs/ExitApi.md#exit_list) | **GET** /api/v1/exit/list | 
 *ExitApi* | [**exit_progress**](docs/ExitApi.md#exit_progress) | **POST** /api/v1/exit/progress | 
 *ExitApi* | [**exit_start_all**](docs/ExitApi.md#exit_start_all) | **POST** /api/v1/exit/start/all | 
@@ -77,9 +78,10 @@ Class | Method | HTTP request | Description
  - [ChildTransactionInfo](docs/ChildTransactionInfo.md)
  - [ConnectedResponse](docs/ConnectedResponse.md)
  - [ExitAwaitingDeltaState](docs/ExitAwaitingDeltaState.md)
+ - [ExitClaimAllRequest](docs/ExitClaimAllRequest.md)
  - [ExitClaimInProgressState](docs/ExitClaimInProgressState.md)
- - [ExitClaimRequest](docs/ExitClaimRequest.md)
  - [ExitClaimResponse](docs/ExitClaimResponse.md)
+ - [ExitClaimVtxosRequest](docs/ExitClaimVtxosRequest.md)
  - [ExitClaimableState](docs/ExitClaimableState.md)
  - [ExitClaimedState](docs/ExitClaimedState.md)
  - [ExitError](docs/ExitError.md)
@@ -138,8 +140,6 @@ Class | Method | HTTP request | Description
  - [ExitTxStatusOneOf4](docs/ExitTxStatusOneOf4.md)
  - [ExitTxStatusOneOf5](docs/ExitTxStatusOneOf5.md)
  - [ExitTxStatusOneOf6](docs/ExitTxStatusOneOf6.md)
- - [InputInfo](docs/InputInfo.md)
- - [InputScriptInfo](docs/InputScriptInfo.md)
  - [InvoiceInfo](docs/InvoiceInfo.md)
  - [LightningInvoiceRequest](docs/LightningInvoiceRequest.md)
  - [LightningPayRequest](docs/LightningPayRequest.md)
@@ -155,8 +155,6 @@ Class | Method | HTTP request | Description
  - [OnchainDrainRequest](docs/OnchainDrainRequest.md)
  - [OnchainSendManyRequest](docs/OnchainSendManyRequest.md)
  - [OnchainSendRequest](docs/OnchainSendRequest.md)
- - [OutputInfo](docs/OutputInfo.md)
- - [OutputScriptInfo](docs/OutputScriptInfo.md)
  - [PeakAddressRequest](docs/PeakAddressRequest.md)
  - [PendingRoundInfo](docs/PendingRoundInfo.md)
  - [RecipientInfo](docs/RecipientInfo.md)

@@ -15,10 +15,19 @@ use crate::{apis::ResponseContent, models};
 use super::{Error, configuration, ContentType};
 
 
-/// struct for typed errors of method [`exit_claim`]
+/// struct for typed errors of method [`exit_claim_all`]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
-pub enum ExitClaimError {
+pub enum ExitClaimAllError {
+    Status400(),
+    Status500(),
+    UnknownValue(serde_json::Value),
+}
+
+/// struct for typed errors of method [`exit_claim_vtxos`]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum ExitClaimVtxosError {
     Status400(),
     Status500(),
     UnknownValue(serde_json::Value),
@@ -68,17 +77,17 @@ pub enum ExitStatusError {
 }
 
 
-pub async fn exit_claim(configuration: &configuration::Configuration, exit_claim_request: models::ExitClaimRequest) -> Result<models::ExitClaimResponse, Error<ExitClaimError>> {
+pub async fn exit_claim_all(configuration: &configuration::Configuration, exit_claim_all_request: models::ExitClaimAllRequest) -> Result<models::ExitClaimResponse, Error<ExitClaimAllError>> {
     // add a prefix to parameters to efficiently prevent name collisions
-    let p_exit_claim_request = exit_claim_request;
+    let p_exit_claim_all_request = exit_claim_all_request;
 
-    let uri_str = format!("{}/api/v1/exit/claim", configuration.base_path);
+    let uri_str = format!("{}/api/v1/exit/claim/all", configuration.base_path);
     let mut req_builder = configuration.client.request(reqwest::Method::POST, &uri_str);
 
     if let Some(ref user_agent) = configuration.user_agent {
         req_builder = req_builder.header(reqwest::header::USER_AGENT, user_agent.clone());
     }
-    req_builder = req_builder.json(&p_exit_claim_request);
+    req_builder = req_builder.json(&p_exit_claim_all_request);
 
     let req = req_builder.build()?;
     let resp = configuration.client.execute(req).await?;
@@ -100,7 +109,44 @@ pub async fn exit_claim(configuration: &configuration::Configuration, exit_claim
         }
     } else {
         let content = resp.text().await?;
-        let entity: Option<ExitClaimError> = serde_json::from_str(&content).ok();
+        let entity: Option<ExitClaimAllError> = serde_json::from_str(&content).ok();
+        Err(Error::ResponseError(ResponseContent { status, content, entity }))
+    }
+}
+
+pub async fn exit_claim_vtxos(configuration: &configuration::Configuration, exit_claim_vtxos_request: models::ExitClaimVtxosRequest) -> Result<models::ExitClaimResponse, Error<ExitClaimVtxosError>> {
+    // add a prefix to parameters to efficiently prevent name collisions
+    let p_exit_claim_vtxos_request = exit_claim_vtxos_request;
+
+    let uri_str = format!("{}/api/v1/exit/claim/vtxos", configuration.base_path);
+    let mut req_builder = configuration.client.request(reqwest::Method::POST, &uri_str);
+
+    if let Some(ref user_agent) = configuration.user_agent {
+        req_builder = req_builder.header(reqwest::header::USER_AGENT, user_agent.clone());
+    }
+    req_builder = req_builder.json(&p_exit_claim_vtxos_request);
+
+    let req = req_builder.build()?;
+    let resp = configuration.client.execute(req).await?;
+
+    let status = resp.status();
+    let content_type = resp
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("application/octet-stream");
+    let content_type = super::ContentType::from(content_type);
+
+    if !status.is_client_error() && !status.is_server_error() {
+        let content = resp.text().await?;
+        match content_type {
+            ContentType::Json => serde_json::from_str(&content).map_err(Error::from),
+            ContentType::Text => return Err(Error::from(serde_json::Error::custom("Received `text/plain` content type response that cannot be converted to `models::ExitClaimResponse`"))),
+            ContentType::Unsupported(unknown_type) => return Err(Error::from(serde_json::Error::custom(format!("Received `{unknown_type}` content type response that cannot be converted to `models::ExitClaimResponse`")))),
+        }
+    } else {
+        let content = resp.text().await?;
+        let entity: Option<ExitClaimVtxosError> = serde_json::from_str(&content).ok();
         Err(Error::ResponseError(ResponseContent { status, content, entity }))
     }
 }
