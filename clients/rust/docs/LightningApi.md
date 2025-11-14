@@ -94,7 +94,7 @@ No authorization required
 
 ## lightning_status
 
-> models::LightningStatusResponse lightning_status(lightning_status_request)
+> models::LightningStatusResponse lightning_status(filter, preimage)
 
 
 ### Parameters
@@ -102,7 +102,8 @@ No authorization required
 
 Name | Type | Description  | Required | Notes
 ------------- | ------------- | ------------- | ------------- | -------------
-**lightning_status_request** | [**LightningStatusRequest**](LightningStatusRequest.md) |  | [required] |
+**filter** | Option<**String**> | Payment hash or invoice string |  |
+**preimage** | Option<**String**> | Filter by preimage |  |
 
 ### Return type
 
@@ -114,7 +115,7 @@ No authorization required
 
 ### HTTP request headers
 
-- **Content-Type**: application/json
+- **Content-Type**: Not defined
 - **Accept**: application/json
 
 [[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)

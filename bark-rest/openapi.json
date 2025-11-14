@@ -465,16 +465,26 @@
           "lightning"
         ],
         "operationId": "lightning_status",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/LightningStatusRequest"
-              }
+        "parameters": [
+          {
+            "name": "filter",
+            "in": "query",
+            "description": "Payment hash or invoice string",
+            "required": false,
+            "schema": {
+              "type": "string"
             }
           },
-          "required": true
-        },
+          {
+            "name": "preimage",
+            "in": "query",
+            "description": "Filter by preimage",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "Returns the lightning receive status",
@@ -485,9 +495,6 @@
                 }
               }
             }
-          },
-          "400": {
-            "description": "Bad request - invalid parameters"
           },
           "500": {
             "description": "Internal server error"
