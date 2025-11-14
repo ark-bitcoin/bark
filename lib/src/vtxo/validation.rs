@@ -14,9 +14,10 @@ use crate::vtxo::{GenesisTransition, Vtxo, VtxoPolicyKind};
 pub enum VtxoValidationError {
 	#[error("the VTXO is invalid: {0}")]
 	Invalid(&'static str),
-	#[error("the chain anchor output doesn't match the VTXO; expected: {expected:?}")]
+	#[error("the chain anchor output doesn't match the VTXO; expected: {expected:?}, got: {got:?}")]
 	IncorrectChainAnchor {
 		expected: TxOut,
+		got: TxOut,
 	},
 	#[error("Cosigned genesis transitions don't have any common pubkeys")]
 	InconsistentCosignPubkeys,
@@ -153,7 +154,7 @@ pub fn validate(
 		onchain_amount, vtxo.server_pubkey(), vtxo.expiry_height(), vtxo.exit_delta(),
 	);
 	if *anchor_txout != expected_anchor_txout {
-		return Err(VtxoValidationError::IncorrectChainAnchor { expected: expected_anchor_txout });
+		return Err(VtxoValidationError::IncorrectChainAnchor { expected: expected_anchor_txout, got: anchor_txout.clone() });
 	}
 
 	// Then let's go over each transition.
