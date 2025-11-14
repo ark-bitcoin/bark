@@ -166,13 +166,13 @@ impl RoundState {
 		&self.unconfirmed_rounds
 	}
 
-	/// Whether the interactive part of the round has finished
-	pub fn round_has_finished(&self) -> bool {
+	/// Whether the interactive part of the round is still ongoing
+	pub fn ongoing_participation(&self) -> bool {
 		match self.flow {
-			RoundFlowState::WaitingToStart => false,
-			RoundFlowState::Ongoing { .. } => false,
-			RoundFlowState::Success => true,
-			RoundFlowState::Failed { .. } => true,
+			RoundFlowState::WaitingToStart => true,
+			RoundFlowState::Ongoing { .. } => true,
+			RoundFlowState::Success => false,
+			RoundFlowState::Failed { .. } => false,
 		}
 	}
 
@@ -1204,7 +1204,7 @@ impl Wallet {
 
 			tokio_stream::iter(states).for_each_concurrent(10, |mut state| async move {
 				// not processing events here
-				if !state.state.round_has_finished() {
+				if state.state.ongoing_participation() {
 					return;
 				}
 
@@ -1296,7 +1296,7 @@ impl Wallet {
 
 		// First pass the event in all the rounds, then sync them
 		for state in states.iter_mut() {
-			if !state.state.round_has_finished() {
+			if state.state.ongoing_participation() {
 				let event = match last_round_event {
 					Some(ref e) => e,
 					None => match self.get_last_round_event().await {
@@ -1358,7 +1358,7 @@ impl Wallet {
 	/// Returns only once a round has happened on the server.
 	pub async fn participate_ongoing_rounds(&self) -> anyhow::Result<()> {
 		let mut states = self.db.load_round_states()?;
-		states.retain(|s| !s.state.round_has_finished());
+		states.retain(|s| s.state.ongoing_participation());
 
 		if states.is_empty() {
 			info!("No pending round states");
@@ -1376,7 +1376,7 @@ impl Wallet {
 
 			// First pass the event in all the rounds, then sync them
 			for state in states.iter_mut() {
-				if !state.state.round_has_finished() {
+				if state.state.ongoing_participation() {
 					let updated = state.state.process_event(self, &event).await;
 					if updated {
 						if let Err(e) = self.db.update_round_state(&state) {
@@ -1400,7 +1400,7 @@ impl Wallet {
 				}
 			}
 
-			states.retain(|s| !s.state.round_has_finished());
+			states.retain(|s| s.state.ongoing_participation());
 			if states.is_empty() {
 				info!("All rounds handled");
 				return Ok(());
@@ -1425,7 +1425,7 @@ impl Wallet {
 		let mut events = self.subscribe_round_events().await?;
 
 		loop {
-			if state.state.round_has_finished() {
+			if !state.state.ongoing_participation() {
 				return Ok(state.state.sync(self).await?);
 			}
 

@@ -1246,7 +1246,7 @@ async fn stepwise_round() {
 
 		let states = print_pending_rounds(&bark);
 		if let Some(ours) = states.into_iter().find(|s| s.id == state_id) {
-			if ours.state.round_has_finished() {
+			if !ours.state.ongoing_participation() {
 				info!("Round finished");
 				break;
 			}
