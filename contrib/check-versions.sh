@@ -22,7 +22,7 @@ check_version() {
     REF_VERSION="${TAG_NAME#"${prefix}"}"
     PROJECT_VERSION=$(nix develop .#default --command bash -c "cargo pkgid | cut -d '@' -f2 | cut -d ' ' -f1")
 
-    if [ "$REF_VERSION" != "$PROJECT_VERSION" ]; then
+    if [ "$REF_VERSION" = "$PROJECT_VERSION" ] || printf '%s\n' "$REF_VERSION" | grep -q "^$PROJECT_VERSION"; then
         log_error "ERROR: COMMIT ($REF_VERSION) does not match ${project} ($PROJECT_VERSION)"
     else
         log_info "Version check passed: COMMIT matches ${project} ($REF_VERSION)"
