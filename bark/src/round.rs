@@ -939,7 +939,7 @@ async fn update_funding_txid(
 		movement_id,
 		MovementUpdate::new()
 			.metadata([("funding_txid".into(), serde_json::to_value(&funding_txid)?)])
-	).await.map_err(|e| format_err!("Unable to update funding txid: {:#}", e))
+	).await.context("Unable to update funding txid of round")
 }
 
 /// Track any round for which we signed forfeit txs

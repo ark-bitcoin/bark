@@ -346,7 +346,7 @@ impl Exit {
 					.intended_and_effective_balance(balance)
 					.consumed_vtxo(vtxo.id())
 					.sent_to([destination]),
-			).await.map_err(|e| format_err!("Failed to register movement: {:#}", e))?;
+			).await.context("Failed to register exit movement")?;
 		}
 		Ok(())
 	}

@@ -1215,9 +1215,7 @@ impl Wallet {
 	/// to [Wallet::maintenance] as it will not refresh VTXOs or sync the onchain wallet.
 	///
 	/// Notes:
-	///   - even when onchain wallet is provided, the onchain wallet will not be sync, but
-	///     - [Wallet::sync_pending_lightning_send_vtxos] will be called
-	///   - [Wallet::sync_exits] will not be called
+	/// - The exit system will not be synced as doing so requires the onchain wallet.
 	pub async fn sync(&self) {
 		tokio::join!(
 			async {
@@ -1957,7 +1955,7 @@ impl Wallet {
 		// TODO: Figure out how to better handle this error. Technically the payment fails but our
 		//       funds are considered spent anyway? Maybe add the failure reason to the metadata?
 		if let Err(e) = srv.client.post_arkoor_package_mailbox(req).await {
-			error!("Failed to post the arkoor vtxo to the recipients mailbox: '{}'", e);
+			error!("Failed to post the arkoor vtxo to the recipients mailbox: '{:#}'", e);
 			//NB we will continue to at least not lose our own change
 		}
 		self.mark_vtxos_as_spent(&arkoor.input)?;
@@ -2662,7 +2660,7 @@ impl Wallet {
 			.into_iter()
 			.map(|v| self.db
 				.get_wallet_vtxo(v.id())
-				.and_then(|op| op.ok_or_else(|| format_err!("Failed to get wallet VTXO: {}", v.id())))
+				.and_then(|op| op.context("Failed to get wallet VTXO for lightning receive"))
 			).collect::<Result<Vec<_>, _>>()?;
 
 		let vtxo_ids = vtxos.iter().map(|v| v.id()).collect::<Vec<_>>();

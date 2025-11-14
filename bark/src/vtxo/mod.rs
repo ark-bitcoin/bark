@@ -141,7 +141,7 @@ impl Wallet {
 			Err(e)
 		} else {
 			debug!("Stored {} VTXOs", vtxos.len());
-			trace!("New VTXO IDs: {:?}", vtxos.into_iter().map(|(v, _)| v.id()));
+			trace!("New VTXO IDs: {:?}", vtxos.into_iter().map(|(v, _)| v.id()).collect::<Vec<_>>());
 			Ok(())
 		}
 	}

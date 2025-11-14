@@ -1,6 +1,6 @@
 use std::str::FromStr;
 
-use anyhow::{anyhow, Context};
+use anyhow::Context;
 use axum::extract::{Query, State};
 use axum::routing::{get, post, put};
 use axum::{Json, Router, debug_handler};
@@ -228,8 +228,8 @@ pub async fn movements(State(state): State<RestServer>) -> HandlerResult<Json<Ve
 	let json_movements = movements
 		.into_iter()
 		.map(|m| bark_json::cli::Movement::try_from(m)
-			.map_err(|e| anyhow!("Failed to convert movement to JSON: {}", e)))
-		.collect::<Result<Vec<_>, _>>()?;
+			.context("Failed to convert movement to JSON")
+		).collect::<Result<Vec<_>, _>>()?;
 
 	Ok(axum::Json(json_movements))
 }
