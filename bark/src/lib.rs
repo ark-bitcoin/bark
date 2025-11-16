@@ -1201,7 +1201,7 @@ impl Wallet {
 	/// VTXOs within the expiry threshold ([Config::vtxo_refresh_expiry_threshold]) or those which
 	/// are uneconomical to exit due to onchain network conditions.
 	///
-	/// Returns a [RoundId] if a refresh occurs.
+	/// Returns a [RoundStatus] if a refresh occurs.
 	pub async fn maintenance_refresh(&self) -> anyhow::Result<Option<RoundStatus>> {
 		let vtxos = self.get_vtxos_to_refresh().await?.into_iter()
 			.map(|v| v.id())
@@ -1707,7 +1707,7 @@ impl Wallet {
 	/// This will refresh all provided VTXOs. Note that attempting to refresh a board VTXO which
 	/// has not yet confirmed will result in an error.
 	///
-	/// Returns the [RoundId] of the round if a successful refresh occurred.
+	/// Returns the [RoundStatus] of the round if a successful refresh occurred.
 	/// It will return [None] if no [Vtxo] needed to be refreshed.
 	pub async fn refresh_vtxos<V: VtxoRef>(
 		&self,
