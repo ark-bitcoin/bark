@@ -259,15 +259,12 @@ No authorization required
 
 ## refresh_all
 
-> models::PendingRoundInfo refresh_all(refresh_request)
+> models::PendingRoundInfo refresh_all()
 
 
 ### Parameters
 
-
-Name | Type | Description  | Required | Notes
-------------- | ------------- | ------------- | ------------- | -------------
-**refresh_request** | [**RefreshRequest**](RefreshRequest.md) |  | [required] |
+This endpoint does not need any parameter.
 
 ### Return type
 
@@ -279,7 +276,7 @@ No authorization required
 
 ### HTTP request headers
 
-- **Content-Type**: application/json
+- **Content-Type**: Not defined
 - **Accept**: application/json
 
 [[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)

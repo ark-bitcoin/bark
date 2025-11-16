@@ -35,12 +35,12 @@ pub struct WalletVtxoInfo {
     #[serde(rename = "user_pubkey")]
     pub user_pubkey: String,
     #[serde(rename = "state")]
-    pub state: String,
+    pub state: Box<models::VtxoStateInfo>,
 }
 
 impl WalletVtxoInfo {
     /// Same as [VtxoInfo], but with the current VTXO state.
-    pub fn new(amount_sat: i64, arkoor_depth: i32, chain_anchor: String, exit_delta: i32, exit_depth: i32, expiry_height: i32, id: String, policy_type: String, server_pubkey: String, user_pubkey: String, state: String) -> WalletVtxoInfo {
+    pub fn new(amount_sat: i64, arkoor_depth: i32, chain_anchor: String, exit_delta: i32, exit_depth: i32, expiry_height: i32, id: String, policy_type: String, server_pubkey: String, user_pubkey: String, state: models::VtxoStateInfo) -> WalletVtxoInfo {
         WalletVtxoInfo {
             amount_sat,
             arkoor_depth,
@@ -52,7 +52,7 @@ impl WalletVtxoInfo {
             policy_type,
             server_pubkey,
             user_pubkey,
-            state,
+            state: Box::new(state),
         }
     }
 }

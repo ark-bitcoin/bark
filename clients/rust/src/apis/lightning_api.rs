@@ -45,7 +45,6 @@ pub enum LightningPayError {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum LightningStatusError {
-    Status400(),
     Status500(),
     UnknownValue(serde_json::Value),
 }
@@ -159,17 +158,23 @@ pub async fn lightning_pay(configuration: &configuration::Configuration, lightni
     }
 }
 
-pub async fn lightning_status(configuration: &configuration::Configuration, lightning_status_request: models::LightningStatusRequest) -> Result<models::LightningStatusResponse, Error<LightningStatusError>> {
+pub async fn lightning_status(configuration: &configuration::Configuration, filter: Option<&str>, preimage: Option<&str>) -> Result<models::LightningStatusResponse, Error<LightningStatusError>> {
     // add a prefix to parameters to efficiently prevent name collisions
-    let p_lightning_status_request = lightning_status_request;
+    let p_filter = filter;
+    let p_preimage = preimage;
 
     let uri_str = format!("{}/api/v1/lightning/receive/status", configuration.base_path);
     let mut req_builder = configuration.client.request(reqwest::Method::GET, &uri_str);
 
+    if let Some(ref param_value) = p_filter {
+        req_builder = req_builder.query(&[("filter", &param_value.to_string())]);
+    }
+    if let Some(ref param_value) = p_preimage {
+        req_builder = req_builder.query(&[("preimage", &param_value.to_string())]);
+    }
     if let Some(ref user_agent) = configuration.user_agent {
         req_builder = req_builder.header(reqwest::header::USER_AGENT, user_agent.clone());
     }
-    req_builder = req_builder.json(&p_lightning_status_request);
 
     let req = req_builder.build()?;
     let resp = configuration.client.execute(req).await?;

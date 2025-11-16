@@ -72,10 +72,12 @@ pub async fn lightning_invoice(
 #[utoipa::path(
 	get,
 	path = "/receive/status",
-	request_body = bark_json::web::LightningStatusRequest,
+	params(
+		("filter" = Option<String>, Query, description = "Payment hash or invoice string"),
+		("preimage" = Option<String>, Query, description = "Filter by preimage")
+	),
 	responses(
 		(status = 200, description = "Returns the lightning receive status", body = bark_json::web::LightningStatusResponse),
-		(status = 400, description = "Bad request - invalid parameters"),
 		(status = 500, description = "Internal server error")
 	),
 	tag = "lightning"

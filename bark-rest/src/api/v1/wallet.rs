@@ -365,10 +365,8 @@ pub async fn refresh_vtxos(
 #[utoipa::path(
 	post,
 	path = "/refresh/all",
-	request_body = bark_json::web::RefreshRequest,
 	responses(
 		(status = 200, description = "Returns the refresh result", body = bark_json::web::PendingRoundInfo),
-		(status = 400, description = "Bad request - exactly one parameter must be provided"),
 		(status = 500, description = "Internal server error")
 	),
 	tag = "wallet"
