@@ -1,0 +1,4 @@
+- Use the new `get_final_amount` from `ark::lightning::Invoice` to check
+  and get the final amount to use for payment
+  [#1331](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1331)
+
