@@ -227,12 +227,25 @@ async fn main() {
 
 async fn inner_main() -> anyhow::Result<()> {
 	let cli = Cli::parse();
+	let config_path: Option<&PathBuf> = cli.config.as_ref();
+
 
 	if let Command::Rpc { cmd, addr } = cli.command {
-		return run_rpc(&addr, cmd).await;
+		let rpc_addr = match config_path {
+			Some(cfg) => {
+				let cfg = Config::load(cfg)
+					.context("Error loading config file")?;
+				cfg.rpc.admin_address
+					.with_context(|| format!("No config for rpc.admin_address in {:?}", cfg))?
+					.to_string()
+			},
+			None => addr,
+		};
+
+		return run_rpc(&rpc_addr, cmd).await;
 	}
 
-	let cfg = Config::load(cli.config.as_ref().context("no config file path provided")?)
+	let cfg = Config::load(config_path.context("no config file path provided")?)
 		.context("error loading config file")?;
 	cfg.validate().expect("invalid configuration");
 
@@ -453,6 +466,8 @@ async fn run_rpc(addr: &str, cmd: RpcCommand) -> anyhow::Result<()> {
 		format!("http://{}", addr)
 	};
 	let endpoint = Uri::from_str(&addr).context("invalid rpc addr")?;
+
+	log::debug!("Query admin rpc-endpoint at {}", endpoint);
 
 	match cmd {
 		RpcCommand::Wallet => {
