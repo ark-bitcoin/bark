@@ -2053,13 +2053,7 @@ impl Wallet {
 
 		invoice.check_signature()?;
 
-		let inv_amount = invoice.amount_msat().map(|v| Amount::from_msat_ceil(v));
-		if let (Some(_), Some(inv)) = (user_amount, inv_amount) {
-			bail!("Invoice has amount of {} encoded. Please omit user amount argument", inv);
-		}
-
-		let amount = user_amount.or(inv_amount)
-			.context("amount required on invoice without amount")?;
+		let amount = invoice.get_final_amount(user_amount)?;
 		if amount < P2TR_DUST {
 			bail!("Sent amount must be at least {}", P2TR_DUST);
 		}
