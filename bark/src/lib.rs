@@ -2574,7 +2574,9 @@ impl Wallet {
 			// this is the good case
 			protos::LightningReceiveStatus::Accepted
 				| protos::LightningReceiveStatus::HtlcsReady => {},
-			protos::LightningReceiveStatus::Created => bail!("sender didn't initiate payment yet"),
+			protos::LightningReceiveStatus::Created => {
+				return Ok(receive);
+			},
 			protos::LightningReceiveStatus::Settled => bail!("payment already settled"),
 			protos::LightningReceiveStatus::Cancelled => bail!("payment was canceled"),
 		}
@@ -2686,8 +2688,8 @@ impl Wallet {
 	///
 	/// # Returns
 	///
-	/// Returns an `anyhow::Result<()>`, which is:
-	/// * `Ok(())` if the process completes successfully.
+	/// * `Ok(true)` if the process completes successfully
+	/// * `Ok(false)` if the payment was unavailable for claiming
 	/// * `Err` if an error occurs at any stage of the operation.
 	///
 	/// # Remarks
@@ -2699,17 +2701,18 @@ impl Wallet {
 		payment_hash: PaymentHash,
 		wait: bool,
 		token: Option<&str>,
-	) -> anyhow::Result<()> {
+	) -> anyhow::Result<bool> {
 		let srv = self.require_server()?;
 
 		let receive = self.check_lightning_receive(payment_hash, wait, token).await?;
+		let vtxos = match receive.htlc_vtxos {
+			// payment still not available
+			None => return Ok(false),
+			Some(ref vtxos) => vtxos,
+		};
 
 		if let Err(e) = self.claim_lightning_receive(&receive).await {
 			error!("Failed to claim pubkey vtxo from htlc vtxo: {}", e);
-			let vtxos = match &receive.htlc_vtxos {
-				None => return Ok(()),
-				Some(vtxos) => vtxos,
-			};
 			let tip = self.chain.tip().await?;
 
 			let first_vtxo = &vtxos.first().unwrap().vtxo;
@@ -2752,8 +2755,11 @@ impl Wallet {
 					}
 				}
 			}
+
+			Err(e)
+		} else {
+			Ok(true)
 		}
-		Ok(())
 	}
 
 	/// Check and claim all opened Lightning receive
