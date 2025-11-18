@@ -5,7 +5,7 @@ edition = "2024"
 authors = ["Second Team <hello@second.tech>"]
 repository = "https://gitlab.com/ark-bitcoin/bark"
 license = "CC0-1.0"
-
+description = "a REST server built on top of the bark-wallet crate"
 
 [dependencies]
 anyhow.workspace = true
