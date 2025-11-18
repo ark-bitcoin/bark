@@ -1,4 +1,0 @@
-- Refresh, offboard and all other commands that participate in
-  a round are now returning `RoundStatus`.
-  Previously, they only returned the `funding_txid`.
-  [#1070](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1070)

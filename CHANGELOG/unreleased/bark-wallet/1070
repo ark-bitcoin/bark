@@ -1,9 +1,0 @@
-- A full rewrite occured on how state is managed internally.
-  - increased stability
-  - can sign up to a round and make round progress asynchronously
-  - input VTXOs are locked at signup to the round
-  - output VTXOs are made available as soon as we have signed funding tx
-  - round state is only fully cleared when the funding tx deeply confirms or all failed rounds
-	are unlikely to ever confirm
-  - round state is only fully cleared when the funding tx deeply confirms or all failed rounds are unlikely to ever confirm
-  [#1070](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1070)

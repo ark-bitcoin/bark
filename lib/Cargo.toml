@@ -1,6 +1,6 @@
 [package]
 name = "ark-lib"
-version = "0.1.0-beta.2"
+version = "0.1.0-beta.3"
 license = "CC0-1.0"
 authors = [ "Team Second <hello@second.tech>" ]
 edition = "2021"
@@ -17,7 +17,7 @@ test-util = [ "serde_json" ]
 
 # * EXPORTED DEPS
 bitcoin = { version = "0.32", features = [ "serde", "rand", "rand-std" ] }
-bark-bitcoin-ext = { version = "0.1.0-beta.2", path = "../bitcoin-ext", default-features = false }
+bark-bitcoin-ext = { version = "0.1.0-beta.3", path = "../bitcoin-ext", default-features = false }
 serde = "1.0.219"
 chrono = "0.4"
 

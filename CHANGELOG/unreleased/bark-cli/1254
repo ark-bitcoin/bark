@@ -1,8 +1,0 @@
-
-- no longer all bark config variables are required, default values will be filled for missing
-  values
-  [PR 1254](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1254)
-- `bark create` command now works if an existing config.toml file is in place in the datadir
-  [PR 1254](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1254)
-- removed some config options from `bark create` command, use config file instead
-  [PR 1254](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1254)
