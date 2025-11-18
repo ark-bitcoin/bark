@@ -177,7 +177,7 @@ pub async fn onchain_send_many(
 	}
 
 	let fee_rate = state.wallet.chain.fee_rates().await.regular;
-	let txid = onchain_lock.send_many(&state.wallet.chain, outputs, fee_rate).await
+	let txid = onchain_lock.send_many(&state.wallet.chain, &outputs, fee_rate).await
 		.context("Failed to send many onchain payments")?;
 
 	Ok(axum::Json(bark_json::cli::onchain::Send { txid }))

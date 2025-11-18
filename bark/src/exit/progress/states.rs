@@ -16,7 +16,7 @@ impl ExitStateProgress for ExitState {
 	async fn progress(
 		self,
 		ctx: &mut ProgressContext<'_>,
-		onchain: &mut impl ExitUnilaterally,
+		onchain: &mut dyn ExitUnilaterally,
 	) -> anyhow::Result<ExitState, ExitProgressError> {
 		match self {
 			ExitState::Start(s) => s.progress(ctx, onchain).await,
@@ -34,7 +34,7 @@ impl ExitStateProgress for ExitStartState {
 	async fn progress(
 		self,
 		ctx: &mut ProgressContext<'_>,
-		onchain: &mut impl ExitUnilaterally,
+		onchain: &mut dyn ExitUnilaterally,
 	) -> anyhow::Result<ExitState, ExitProgressError> {
 		let id = ctx.vtxo.id();
 		info!("Checking if VTXO can be exited: {}", id);
@@ -68,7 +68,7 @@ impl ExitStateProgress for ExitProcessingState {
 	async fn progress(
 		self,
 		ctx: &mut ProgressContext<'_>,
-		onchain: &mut impl ExitUnilaterally,
+		onchain: &mut dyn ExitUnilaterally,
 	) -> anyhow::Result<ExitState, ExitProgressError> {
 		assert_eq!(self.transactions.len(), ctx.exit_txids.len());
 
@@ -140,10 +140,10 @@ impl ExitStateProgress for ExitProcessingState {
 	}
 }
 
-async fn progress_exit_tx<W: ExitUnilaterally>(
+async fn progress_exit_tx(
 	exit: &ExitTx,
 	ctx: &mut ProgressContext<'_>,
-	onchain: &mut W,
+	onchain: &mut dyn ExitUnilaterally,
 ) -> anyhow::Result<ExitTxStatus, ExitError> {
 	match &exit.status {
 		ExitTxStatus::VerifyInputs => {
@@ -292,7 +292,7 @@ impl ExitStateProgress for ExitAwaitingDeltaState {
 	async fn progress(
 		self,
 		ctx: &mut ProgressContext<'_>,
-		_onchain: &mut impl ExitUnilaterally,
+		_onchain: &mut dyn ExitUnilaterally,
 	) -> anyhow::Result<ExitState, ExitProgressError> {
 		let tip = ctx.tip_height().await?;
 
@@ -325,7 +325,7 @@ impl ExitStateProgress for ExitClaimableState {
 	async fn progress(
 		self,
 		ctx: &mut ProgressContext<'_>,
-		_onchain: &mut impl ExitUnilaterally,
+		_onchain: &mut dyn ExitUnilaterally,
 	) -> anyhow::Result<ExitState, ExitProgressError> {
 		let tip = ctx.tip_height().await?;
 
@@ -385,7 +385,7 @@ impl ExitStateProgress for ExitClaimInProgressState {
 	async fn progress(
 		self,
 		ctx: &mut ProgressContext<'_>,
-		_onchain: &mut impl ExitUnilaterally,
+		_onchain: &mut dyn ExitUnilaterally,
 	) -> anyhow::Result<ExitState, ExitProgressError> {
 		// Wait for confirmation of the spending transaction
 		let tip = ctx.tip_height().await?;
@@ -413,7 +413,7 @@ impl ExitStateProgress for ExitClaimedState {
 	async fn progress(
 		self,
 		ctx: &mut ProgressContext<'_>,
-		_onchain: &mut impl ExitUnilaterally,
+		_onchain: &mut dyn ExitUnilaterally,
 	) -> anyhow::Result<ExitState, ExitProgressError> {
 		trace!("Exit for VTXO {} is spent!", ctx.vtxo.id());
 		Ok(self.into())

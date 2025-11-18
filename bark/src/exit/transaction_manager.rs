@@ -38,10 +38,10 @@ impl ExitTransactionManager {
 		self.chain_source.network()
 	}
 
-	pub async fn track_vtxo_exits<W: ExitUnilaterally>(
+	pub async fn track_vtxo_exits(
 		&mut self,
 		vtxo: &Vtxo,
-		onchain: &W,
+		onchain: &dyn ExitUnilaterally,
 	) -> anyhow::Result<Vec<Txid>, ExitError> {
 		let exit_txs = vtxo.transactions();
 		let mut txids = Vec::with_capacity(exit_txs.len());
@@ -51,10 +51,10 @@ impl ExitTransactionManager {
 		Ok(txids)
 	}
 
-	pub async fn track_exit_tx<W: ExitUnilaterally>(
+	pub async fn track_exit_tx(
 		&mut self,
 		tx: Transaction,
-		onchain: &W,
+		onchain: &dyn ExitUnilaterally,
 	) -> anyhow::Result<Txid, ExitError> {
 		let txid = tx.compute_txid();
 		if self.index.contains_key(&txid) {
@@ -264,10 +264,10 @@ impl ExitTransactionManager {
 			.map_err(|e| ExitError::TransactionRetrievalFailure { txid, error: e.to_string() })
 	}
 
-	async fn find_child_locally<W: ExitUnilaterally>(
+	async fn find_child_locally(
 		&self,
 		exit_info: &TransactionInfo,
-		onchain: &W,
+		onchain: &dyn ExitUnilaterally,
 	) -> anyhow::Result<Option<ChildTransactionInfo>, ExitError> {
 		let wallet = self.find_child_in_wallet(exit_info, onchain).await?;
 		if wallet.is_some() {
@@ -277,10 +277,10 @@ impl ExitTransactionManager {
 		}
 	}
 
-	async fn find_child_in_wallet<W: ExitUnilaterally>(
+	async fn find_child_in_wallet(
 		&self,
 		exit_info: &TransactionInfo,
-		onchain: &W,
+		onchain: &dyn ExitUnilaterally,
 	) -> anyhow::Result<Option<ChildTransactionInfo>, ExitError> {
 		// Check if we have a CPFP tx in our wallet
 		let (outpoint, _) = exit_info.tx.fee_anchor()

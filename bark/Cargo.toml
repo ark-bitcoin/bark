@@ -36,6 +36,7 @@ anyhow.workspace = true
 thiserror.workspace = true
 log.workspace = true
 serde.workspace = true
+tokio-util.workspace = true
 
 # INTERNAL
 rand.workspace = true

@@ -332,7 +332,9 @@ dependencies = [
  "chrono",
  "clap",
  "env_logger",
+ "futures",
  "home",
+ "lazy_static",
  "lightning",
  "lightning-invoice",
  "lnurl-rs",
@@ -399,6 +401,7 @@ dependencies = [
  "bark-wallet",
  "bitcoin",
  "chrono",
+ "log",
  "serde",
  "serde_json",
  "tokio",
@@ -531,6 +534,7 @@ dependencies = [
  "thiserror 2.0.17",
  "tokio",
  "tokio-stream",
+ "tokio-util",
  "tonic",
 ]
 

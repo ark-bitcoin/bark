@@ -9,6 +9,7 @@ use std::sync::Arc;
 
 use anyhow;
 use axum::routing::get;
+use bark::daemon::CancellationToken;
 use tokio::sync::RwLock;
 use tower_http::cors::CorsLayer;
 use utoipa::OpenApi;
@@ -46,25 +47,35 @@ pub struct ApiDoc;
 /// A server that serves a REST API for the bark [Wallet]
 #[derive(Clone)]
 pub struct RestServer {
+	shutdown: CancellationToken,
+
 	config: Config,
 	wallet: Arc<Wallet>,
 	onchain: Arc<RwLock<OnchainWallet>>,
 }
 
+async fn shutdown_signal(shutdown: CancellationToken) {
+	shutdown.cancelled().await;
+}
+
 impl RestServer {
 	/// Create a new [RestServer] for the given bark [Wallet] and [OnchainWallet]
 	pub fn new(
+		shutdown: CancellationToken,
+
 		config: Config,
 		wallet: Arc<Wallet>,
 		onchain: Arc<RwLock<OnchainWallet>>,
 	) -> Self {
-		Self { config, wallet, onchain }
+		Self { shutdown, config, wallet, onchain }
 	}
 
 	/// Serve the REST server
 	///
 	/// This function blocks while the API is being served.
 	pub async fn serve(self: RestServer) -> anyhow::Result<()> {
+		let shutdown = self.shutdown.clone();
+
 		let (router, api) = OpenApiRouter::with_openapi(ApiDoc::openapi())
 			.split_for_parts();
 
@@ -80,10 +91,11 @@ impl RestServer {
 			.fallback(error::not_found);
 
 		// Run the server
-		tracing::info!("Server running on http://{}", socket_addr);
+		log::info!("Server running on http://{}", socket_addr);
 
 		let listener = tokio::net::TcpListener::bind(socket_addr).await.expect("Failed to bind to address");
-		axum::serve(listener, router.into_make_service()).await.expect("Failed to serve");
+		axum::serve(listener, router.into_make_service()).with_graceful_shutdown(shutdown_signal(shutdown)).await?;
+		log::info!("Server stopped running");
 
 		Ok(())
 	}

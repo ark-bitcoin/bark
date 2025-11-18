@@ -182,9 +182,9 @@ impl Exit {
 		})
 	}
 
-	pub (crate) async fn load<W: ExitUnilaterally>(
+	pub (crate) async fn load(
 		&mut self,
-		onchain: &W,
+		onchain: &dyn ExitUnilaterally,
 	) -> anyhow::Result<()> {
 		let exit_vtxo_entries = self.persister.get_exit_vtxo_entries()?;
 		for entry in exit_vtxo_entries {
@@ -282,9 +282,9 @@ impl Exit {
 	///
 	/// It's recommended to sync the wallet, by using something like [Wallet::maintenance] being
 	/// doing this.
-	pub async fn start_exit_for_entire_wallet<W: ExitUnilaterally>(
+	pub async fn start_exit_for_entire_wallet(
 		&mut self,
-		onchain: &W,
+		onchain: &dyn ExitUnilaterally,
 	) -> anyhow::Result<()> {
 		let vtxos: Vec<Vtxo> = self.persister.get_vtxos_by_state(&UNSPENT_STATES)?.into_iter()
 			.map(|v| v.vtxo).collect();
@@ -299,10 +299,10 @@ impl Exit {
 	///
 	/// It's recommended to sync the wallet, by using something like [Wallet::maintenance] being
 	/// doing this.
-	pub async fn start_exit_for_vtxos<W: ExitUnilaterally>(
+	pub async fn start_exit_for_vtxos(
 		&mut self,
 		vtxos: &[Vtxo],
-		onchain: &W,
+		onchain: &dyn ExitUnilaterally,
 	) -> anyhow::Result<()> {
 		self.mark_vtxos_for_exit(vtxos).await?;
 		self.start_vtxo_exits(onchain).await?;
@@ -354,7 +354,7 @@ impl Exit {
 	/// Starts the unilateral exit process for any VTXOs marked for exit.
 	///
 	/// This is a lower level primitive to be used in conjunction with [Exit::mark_vtxos_for_exit].
-	pub async fn start_vtxo_exits(&mut self, onchain: &impl ExitUnilaterally) -> anyhow::Result<()> {
+	pub async fn start_vtxo_exits(&mut self, onchain: &dyn ExitUnilaterally) -> anyhow::Result<()> {
 		if self.vtxos_to_exit.is_empty() {
 			return Ok(());
 		}
@@ -377,7 +377,7 @@ impl Exit {
 			} else {
 				// The idea is to convert all our vtxos into an exit process structure
 				// that we then store in the database, and we can gradually proceed on.
-				let txids = self.tx_manager.track_vtxo_exits(&vtxo, onchain).await?;
+				let txids = self.tx_manager.track_vtxo_exits(&vtxo, &*onchain).await?;
 				let exit = ExitVtxo::new(vtxo.clone(), txids, tip);
 				self.persister.store_exit_vtxo_entry(&StoredExit::new(&exit))?;
 				self.exit_vtxos.push(exit);
@@ -415,9 +415,9 @@ impl Exit {
 	/// ### Return
 	///
 	/// The exit status of each VTXO being exited which has also not yet been spent
-	pub async fn progress_exits<W: ExitUnilaterally>(
+	pub async fn progress_exits(
 		&mut self,
-		onchain: &mut W,
+		onchain: &mut dyn ExitUnilaterally,
 		fee_rate_override: Option<FeeRate>,
 	) -> anyhow::Result<Option<Vec<ExitProgressStatus>>> {
 		self.tx_manager.sync().await?;
@@ -457,9 +457,9 @@ impl Exit {
 
 	/// For use when syncing. This progresses any unilateral exit in a state that needs updating
 	/// such as a when claimable exit may have been spent onchain.
-	pub async fn sync_exit<W: ExitUnilaterally>(
+	pub async fn sync_exit(
 		&mut self,
-		onchain: &mut W,
+		onchain: &mut dyn ExitUnilaterally,
 	) -> anyhow::Result<()> {
 		self.tx_manager.sync().await?;
 		self.start_vtxo_exits(onchain).await?;

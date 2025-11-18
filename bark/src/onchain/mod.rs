@@ -115,9 +115,9 @@ pub trait GetWalletTx {
 /// These methods are used to build transactions for boarding, exits, and fee bumping.
 pub trait PreparePsbt {
 	/// Prepare a [Transaction] which will send to the given destinations.
-	fn prepare_tx<T: IntoIterator<Item = (Address, Amount)>>(
+	fn prepare_tx(
 		&mut self,
-		destinations: T,
+		destinations: &[(Address, Amount)],
 		fee_rate: FeeRate,
 	) -> anyhow::Result<Psbt>;
 
@@ -172,6 +172,20 @@ pub trait MakeCpfp {
 	/// Persist the signed CPFP transaction so it can be rebroadcast or retrieved as needed.
 	fn store_signed_p2a_cpfp(&mut self, tx: &Transaction) -> anyhow::Result<(), CpfpError>;
 }
+
+/// Trait alias for wallets that support boarding.
+///
+/// Any wallet type implementing these component traits automatically implements
+/// `Board`. The trait requires Send + Sync because boarding flows may be
+/// executed from async tasks and across threads.
+///
+/// Required capabilities:
+/// - [SignPsbt]: to finalize transactions
+/// - [GetWalletTx]: to query related transactions and their confirmations
+/// - [PreparePsbt]: to prepare transactions for boarding
+pub trait Board: PreparePsbt + SignPsbt + GetWalletTx + Send + Sync {}
+
+impl <W: PreparePsbt + SignPsbt + GetWalletTx + Send + Sync> Board for W {}
 
 /// Trait alias for wallets that support unilateral exit end-to-end.
 ///
