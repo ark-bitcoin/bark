@@ -2001,16 +2001,17 @@ impl Wallet {
 		);
 
 		let (vtxos, _) = revocation.build_vtxos(&cosign_resp, &keypairs, secs)?;
+		let mut revoked = Amount::ZERO;
 		for vtxo in &vtxos {
 			info!("Got revocation VTXO: {}: {}", vtxo.id(), vtxo.amount());
+			revoked += vtxo.amount();
 		}
 
 		let count = vtxos.len();
-		let revoked = vtxos.iter().map(|v| v.amount()).sum::<Amount>().to_signed()?;
 		self.movements.update_movement(
 			payment.movement_id,
 			MovementUpdate::new()
-				.effective_balance(payment.amount.to_signed()? - revoked)
+				.effective_balance(-payment.amount.to_signed()? + revoked.to_signed()?)
 				.produced_vtxos(&vtxos)
 		).await?;
 		self.store_spendable_vtxos(&vtxos)?;
@@ -2086,19 +2087,6 @@ impl Wallet {
 			user_pubkey: change_keypair.public_key().serialize().to_vec(),
 		};
 
-		let mut movement = MovementGuard::new_movement(
-			self.movements.clone(),
-			self.subsystem_ids[&BarkSubsystem::LightningSend],
-			LightningSendMovement::Send.to_string(),
-		).await?;
-		movement.apply_update(
-			MovementUpdate::new()
-				.intended_and_effective_balance(-amount.to_signed()?)
-				.consumed_vtxos(&inputs)
-				.sent_to([MovementDestination::new(invoice.to_string(), amount)])
-		).await?;
-		self.lock_vtxos(&input_ids, Some(movement.id()))?;
-
 		let resp = srv.client.start_lightning_payment(req).await
 			.context("htlc request failed")?.into_inner();
 
@@ -2127,10 +2115,25 @@ impl Wallet {
 		let (htlc_vtxos, change_vtxo) = builder.build_vtxos(&cosign_resp, &keypairs, secs)?;
 
 		// Validate the new vtxos. They have the same chain anchor.
+		let mut effective_balance = Amount::ZERO;
 		for vtxo in &htlc_vtxos {
 			self.validate_vtxo(vtxo).await?;
+			effective_balance += vtxo.amount();
 		}
-		self.store_locked_vtxos(&htlc_vtxos, Some(movement.id()))?;
+
+		let movement_id = self.movements.new_movement(
+			self.subsystem_ids[&BarkSubsystem::LightningSend],
+			LightningSendMovement::Send.to_string(),
+		).await?;
+		self.movements.update_movement(
+			movement_id,
+			MovementUpdate::new()
+				.intended_balance(-amount.to_signed()?)
+				.effective_balance(-effective_balance.to_signed()?)
+				.consumed_vtxos(&inputs)
+				.sent_to([MovementDestination::new(invoice.to_string(), amount)])
+		).await?;
+		self.store_locked_vtxos(&htlc_vtxos, Some(movement_id))?;
 		self.mark_vtxos_as_spent(&input_ids)?;
 
 		// Validate the change vtxo. It has the same chain anchor as the last input.
@@ -2144,14 +2147,15 @@ impl Wallet {
 			self.store_spendable_vtxos([change])?;
 		}
 
-		movement.apply_update(
+		self.movements.update_movement(
+			movement_id,
 			MovementUpdate::new()
 				.produced_vtxo_if_some(change_vtxo)
 				.metadata(LightningMovement::htlc_metadata(&htlc_vtxos)?)
 		).await?;
 
 		let payment = self.db.store_new_pending_lightning_send(
-			&invoice, &amount, &htlc_vtxos.iter().map(|v| v.id()).collect::<Vec<_>>(), movement.id()
+			&invoice, &amount, &htlc_vtxos.iter().map(|v| v.id()).collect::<Vec<_>>(), movement_id,
 		)?;
 
 		let req = protos::SignedLightningPaymentDetails {
@@ -2169,10 +2173,9 @@ impl Wallet {
 
 			self.db.remove_pending_lightning_send(payment.invoice.payment_hash())?;
 			self.mark_vtxos_as_spent(&htlc_vtxos)?;
-			movement.finish(MovementStatus::Finished).await?;
+			self.movements.finish_movement(movement_id, MovementStatus::Finished).await?;
 			Ok(preimage)
 		} else {
-			movement.stop();
 			self.process_lightning_revocation(&payment).await?;
 			bail!("No preimage, payment failed: {}", res.progress_message);
 		}
@@ -2283,14 +2286,11 @@ impl Wallet {
 					self.movements.update_movement(
 						payment.movement_id,
 						MovementUpdate::new()
-							.effective_balance(-exited.to_signed()?)
+							.effective_balance(-payment.amount.to_signed()? + exited.to_signed()?)
 							.exited_vtxos(&vtxos)
 					).await?;
 					self.movements.finish_movement(
-						// TODO: How best to handle this? The payment "finished" but it wasn't
-						//       successful by any means. It's not "failed" because it resulted in
-						//       balance and VTXO changes.
-						payment.movement_id, MovementStatus::Finished,
+						payment.movement_id, MovementStatus::Failed,
 					).await?;
 					self.db.remove_pending_lightning_send(payment_hash)?;
 				}
