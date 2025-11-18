@@ -46,8 +46,6 @@ impl Cli {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()>{
-	configure_tracing();
-
 	let cli = Cli::parse();
 
 	let datadir = PathBuf::from_str(&cli.datadir).unwrap();
@@ -60,13 +58,4 @@ async fn main() -> anyhow::Result<()>{
 	server.serve().await?;
 
 	Ok(())
-}
-
-/// Configures the tracing for the applicatoin
-pub fn configure_tracing() {
-	// Ensures all logs of trace or higher are printed to the console
-	let subscriber = tracing_subscriber::fmt::Subscriber::builder()
-		.with_env_filter("trace,h2=info,tower=info,tonic=info,hyper_util=info")
-		.finish();
-	tracing::subscriber::set_global_default(subscriber).expect("Failed to set tracing subscriber");
 }
