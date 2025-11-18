@@ -887,8 +887,8 @@ async fn persist_round_success(
 		new_vtxos.len(), participation.offboards.len(), movement_id,
 	);
 
-	let store_result = wallet.store_spendable_vtxos(new_vtxos, movement_id);
-	let spent_result = wallet.mark_vtxos_as_spent(&participation.inputs, movement_id);
+	let store_result = wallet.store_spendable_vtxos(new_vtxos);
+	let spent_result = wallet.mark_vtxos_as_spent(&participation.inputs);
 	let update_result = if let Some(movement_id) = movement_id {
 		wallet.movements.update_movement(movement_id, MovementUpdate::new()
 			.produced_vtxos(new_vtxos)
@@ -939,7 +939,7 @@ async fn update_funding_txid(
 		movement_id,
 		MovementUpdate::new()
 			.metadata([("funding_txid".into(), serde_json::to_value(&funding_txid)?)])
-	).await.map_err(|e| format_err!("Unable to update funding txid: {:#}", e))
+	).await.context("Unable to update funding txid of round")
 }
 
 /// Track any round for which we signed forfeit txs

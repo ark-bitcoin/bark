@@ -208,13 +208,12 @@ impl BarkPersister for SqliteClient {
 	fn store_vtxos(
 		&self,
 		vtxos: &[(&Vtxo, &VtxoState)],
-		movement_id: Option<MovementId>,
 	) -> anyhow::Result<()> {
 		let mut conn = self.connect()?;
 		let tx = conn.transaction()?;
 
 		for (vtxo, state) in vtxos {
-			query::store_vtxo_with_initial_state(&tx, vtxo, state, movement_id)?;
+			query::store_vtxo_with_initial_state(&tx, vtxo, state)?;
 		}
 		tx.commit()?;
 		Ok(())
@@ -273,11 +272,10 @@ impl BarkPersister for SqliteClient {
 		preimage: Preimage,
 		invoice: &Bolt11Invoice,
 		htlc_recv_cltv_delta: BlockDelta,
-		movement_id: MovementId,
 	) -> anyhow::Result<()> {
 		let conn = self.connect()?;
 		query::store_lightning_receive(
-			&conn, payment_hash, preimage, invoice, htlc_recv_cltv_delta, movement_id,
+			&conn, payment_hash, preimage, invoice, htlc_recv_cltv_delta,
 		)?;
 		Ok(())
 	}
@@ -315,9 +313,14 @@ impl BarkPersister for SqliteClient {
 		Ok(())
 	}
 
-	fn set_lightning_receive_vtxos(&self, payment_hash: PaymentHash, htlc_vtxo_ids: &[VtxoId]) -> anyhow::Result<()> {
+	fn update_lightning_receive(
+		&self,
+		payment_hash: PaymentHash,
+		htlc_vtxo_ids: &[VtxoId],
+		movement_id: MovementId,
+	) -> anyhow::Result<()> {
 		let conn = self.connect()?;
-		query::set_lightning_receive_vtxos(&conn, payment_hash, htlc_vtxo_ids)?;
+		query::update_lightning_receive(&conn, payment_hash, htlc_vtxo_ids, movement_id)?;
 		Ok(())
 	}
 
@@ -387,15 +390,6 @@ impl BarkPersister for SqliteClient {
 		let conn = self.connect()?;
 		query::update_vtxo_state_checked(&conn, vtxo_id, new_state, allowed_old_states)
 	}
-
-	fn link_spent_vtxo_to_movement(
-		&self,
-		vtxo_id: VtxoId,
-		movement_id: MovementId,
-	) -> anyhow::Result<()> {
-		let conn = self.connect()?;
-		query::link_spent_vtxo_to_movement(&conn, vtxo_id, movement_id)
-	}
 }
 
 #[cfg(any(test, doc))]
@@ -455,7 +449,7 @@ mod test {
 
 		db.store_vtxos(&[
 			(vtxo_1, &VtxoState::Spendable), (vtxo_2, &VtxoState::Spendable)
-		], None).unwrap();
+		]).unwrap();
 
 		// Check that vtxo-1 can be retrieved from the database
 		let vtxo_1_db = db.get_wallet_vtxo(vtxo_1.id()).expect("No error").expect("A vtxo was found");
@@ -480,7 +474,7 @@ mod test {
 		assert_eq!(vtxos.len(), 1);
 
 		// Add the third entry to the database
-		db.store_vtxos(&[(vtxo_3, &VtxoState::Spendable)], None).unwrap();
+		db.store_vtxos(&[(vtxo_3, &VtxoState::Spendable)]).unwrap();
 
 		let vtxos = db.get_vtxos_by_state(&[VtxoStateKind::Spendable]).unwrap();
 		assert_eq!(vtxos.len(), 2);

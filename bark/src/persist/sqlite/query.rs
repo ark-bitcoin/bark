@@ -247,18 +247,16 @@ pub fn store_vtxo_with_initial_state(
 	tx: &Transaction,
 	vtxo: &Vtxo,
 	state: &VtxoState,
-	movement_id: Option<MovementId>,
 ) -> anyhow::Result<()> {
 	// Store the vtxo
 	let q1 =
-		"INSERT INTO bark_vtxo (id, expiry_height, amount_sat, received_in, raw_vtxo)
-		VALUES (:vtxo_id, :expiry_height, :amount_sat, :received_in, :raw_vtxo);";
+		"INSERT INTO bark_vtxo (id, expiry_height, amount_sat, raw_vtxo)
+		VALUES (:vtxo_id, :expiry_height, :amount_sat, :raw_vtxo);";
 	let mut statement = tx.prepare(q1)?;
 	statement.execute(named_params! {
 		":vtxo_id" : vtxo.id().to_string(),
 		":expiry_height": vtxo.expiry_height(),
 		":amount_sat": vtxo.amount().to_sat(),
-		":received_in": movement_id.map(|m| m.inner()),
 		":raw_vtxo": vtxo.serialize(),
 	})?;
 
@@ -543,21 +541,6 @@ pub fn get_vtxo_state(
 	}
 }
 
-pub fn link_spent_vtxo_to_movement(
-	conn: &Connection,
-	id: VtxoId,
-	movement_id: MovementId
-) -> anyhow::Result<()> {
-	let query = "UPDATE bark_vtxo SET spent_in = :spent_in WHERE id = :vtxo_id";
-	let mut statement = conn.prepare(query)?;
-	statement.execute(named_params! {
-		":vtxo_id": id.to_string(),
-		":spent_in": movement_id.inner()
-	})?;
-
-	Ok(())
-}
-
 /// Updates the state of a VTXO from one of the
 /// values in `old_state` to `new_state`.
 ///
@@ -635,12 +618,11 @@ pub fn store_lightning_receive(
 	preimage: Preimage,
 	invoice: &Bolt11Invoice,
 	htlc_recv_cltv_delta: BlockDelta,
-	movement_id: MovementId,
 ) -> anyhow::Result<()> {
 	let query = "
 		INSERT INTO bark_pending_lightning_receive (payment_hash, preimage, invoice,
-			htlc_recv_cltv_delta, movement_id)
-		VALUES (:payment_hash, :preimage, :invoice, :htlc_recv_cltv_delta, :movement_id);
+			htlc_recv_cltv_delta)
+		VALUES (:payment_hash, :preimage, :invoice, :htlc_recv_cltv_delta);
 	";
 	let mut statement = conn.prepare(query)?;
 
@@ -649,7 +631,6 @@ pub fn store_lightning_receive(
 		":preimage": preimage.as_hex().to_string(),
 		":invoice": invoice.to_string(),
 		":htlc_recv_cltv_delta": htlc_recv_cltv_delta,
-		":movement_id": movement_id.inner(),
 	})?;
 
 	Ok(())
@@ -689,7 +670,7 @@ pub fn get_all_pending_lightning_receives<'a>(
 			invoice: Bolt11Invoice::from_str(&row.get::<_, String>("invoice")?)?,
 			htlc_recv_cltv_delta: row.get::<_, BlockDelta>("htlc_recv_cltv_delta")?,
 			htlc_vtxos: get_htlc_vtxos(conn, &row)?,
-			movement_id: MovementId::new(row.get::<_, u32>("movement_id")?),
+			movement_id: row.get::<_, Option<u32>>("movement_id")?.map(MovementId::new),
 		});
 	}
 
@@ -707,12 +688,15 @@ pub fn set_preimage_revealed(conn: &Connection, payment_hash: PaymentHash) -> an
 	Ok(())
 }
 
-pub fn set_lightning_receive_vtxos(
+pub fn update_lightning_receive(
 	conn: &Connection,
 	payment_hash: PaymentHash,
 	htlc_vtxo_ids: &[VtxoId],
+	movement_id: MovementId,
 ) -> anyhow::Result<()> {
-	let query = "UPDATE bark_pending_lightning_receive SET htlc_vtxo_ids = :htlc_vtxo_ids \
+	let query = "
+		UPDATE bark_pending_lightning_receive
+		SET htlc_vtxo_ids = :htlc_vtxo_ids, movement_id = :movement_id
 		WHERE payment_hash = :payment_hash";
 
 	let mut statement = conn.prepare(query)?;
@@ -725,7 +709,8 @@ pub fn set_lightning_receive_vtxos(
 
 	statement.execute(named_params! {
 		":payment_hash": payment_hash.as_hex().to_string(),
-		":htlc_vtxo_ids": serde_json::to_string(&vtxo_ids)?
+		":htlc_vtxo_ids": serde_json::to_string(&vtxo_ids)?,
+		":movement_id": Some(movement_id.inner()),
 	})?;
 
 	Ok(())
@@ -764,7 +749,7 @@ pub fn fetch_lightning_receive_by_payment_hash(
 		invoice: Bolt11Invoice::from_str(&row.get::<_, String>("invoice")?)?,
 		htlc_recv_cltv_delta: row.get::<_, BlockDelta>("htlc_recv_cltv_delta")?,
 		htlc_vtxos: get_htlc_vtxos(conn, &row)?,
-		movement_id: MovementId::new(row.get::<_, u32>("movement_id")?),
+		movement_id: row.get::<_, Option<u32>>("movement_id")?.map(MovementId::new),
 	}))
 }
 
@@ -884,9 +869,9 @@ mod test {
 		let vtxo_3 = &VTXO_VECTORS.round2_vtxo;
 
 		let locked = VtxoState::Locked { movement_id: None };
-		store_vtxo_with_initial_state(&tx, &vtxo_1, &locked, None).unwrap();
-		store_vtxo_with_initial_state(&tx, &vtxo_2, &locked, None).unwrap();
-		store_vtxo_with_initial_state(&tx, &vtxo_3, &locked, None).unwrap();
+		store_vtxo_with_initial_state(&tx, &vtxo_1, &locked).unwrap();
+		store_vtxo_with_initial_state(&tx, &vtxo_2, &locked).unwrap();
+		store_vtxo_with_initial_state(&tx, &vtxo_3, &locked).unwrap();
 
 		// This update will fail because the current state is Locked
 		// We only allow the state to switch from VtxoState::Spendable

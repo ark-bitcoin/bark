@@ -315,7 +315,7 @@ use std::sync::Arc;
 
 use anyhow::{bail, Context};
 use bip39::Mnemonic;
-use bitcoin::{Amount, Network, OutPoint, ScriptBuf};
+use bitcoin::{Amount, Network, OutPoint, ScriptBuf, SignedAmount};
 use bitcoin::bip32::{self, Fingerprint};
 use bitcoin::hex::DisplayHex;
 use bitcoin::secp256k1::{self, Keypair, PublicKey};
@@ -1215,9 +1215,7 @@ impl Wallet {
 	/// to [Wallet::maintenance] as it will not refresh VTXOs or sync the onchain wallet.
 	///
 	/// Notes:
-	///   - even when onchain wallet is provided, the onchain wallet will not be sync, but
-	///     - [Wallet::sync_pending_lightning_send_vtxos] will be called
-	///   - [Wallet::sync_exits] will not be called
+	/// - The exit system will not be synced as doing so requires the onchain wallet.
 	pub async fn sync(&self) {
 		tokio::join!(
 			async {
@@ -1528,9 +1526,8 @@ impl Wallet {
 					vtxos.push(vtxo);
 				}
 
-				// TODO: Consider whether we should try to create a single movement for the entire
-				//       sync process instead of on a per-mailbox-package basis.
-				let movement_id = self.movements.new_finished_movement(
+				self.store_spendable_vtxos(&vtxos)?;
+				self.movements.new_finished_movement(
 					self.subsystem_ids[&BarkSubsystem::Arkoor],
 					ArkoorMovement::Receive.to_string(),
 					MovementStatus::Finished,
@@ -1543,7 +1540,6 @@ impl Wallet {
 							.to_signed()?,
 						),
 				).await?;
-				self.store_spendable_vtxos(&vtxos, Some(movement_id))?;
 			}
 		}
 
@@ -1959,12 +1955,12 @@ impl Wallet {
 		// TODO: Figure out how to better handle this error. Technically the payment fails but our
 		//       funds are considered spent anyway? Maybe add the failure reason to the metadata?
 		if let Err(e) = srv.client.post_arkoor_package_mailbox(req).await {
-			error!("Failed to post the arkoor vtxo to the recipients mailbox: '{}'", e);
+			error!("Failed to post the arkoor vtxo to the recipients mailbox: '{:#}'", e);
 			//NB we will continue to at least not lose our own change
 		}
-		self.mark_vtxos_as_spent(&arkoor.input, Some(movement.id()))?;
+		self.mark_vtxos_as_spent(&arkoor.input)?;
 		if let Some(change) = arkoor.change {
-			self.store_spendable_vtxos(&[change], Some(movement.id()))?;
+			self.store_spendable_vtxos(&[change])?;
 		}
 		movement.finish(MovementStatus::Finished).await?;
 		Ok(arkoor.created)
@@ -2005,21 +2001,22 @@ impl Wallet {
 		);
 
 		let (vtxos, _) = revocation.build_vtxos(&cosign_resp, &keypairs, secs)?;
+		let mut revoked = Amount::ZERO;
 		for vtxo in &vtxos {
 			info!("Got revocation VTXO: {}: {}", vtxo.id(), vtxo.amount());
+			revoked += vtxo.amount();
 		}
 
 		let count = vtxos.len();
-		let revoked = vtxos.iter().map(|v| v.amount()).sum::<Amount>().to_signed()?;
 		self.movements.update_movement(
 			payment.movement_id,
 			MovementUpdate::new()
-				.effective_balance(payment.amount.to_signed()? - revoked)
+				.effective_balance(-payment.amount.to_signed()? + revoked.to_signed()?)
 				.produced_vtxos(&vtxos)
 		).await?;
-		self.store_spendable_vtxos(&vtxos, Some(payment.movement_id))?;
-		self.mark_vtxos_as_spent(&htlc_vtxos, Some(payment.movement_id))?;
-		self.movements.finish_movement(payment.movement_id, MovementStatus::Finished).await?;
+		self.store_spendable_vtxos(&vtxos)?;
+		self.mark_vtxos_as_spent(&htlc_vtxos)?;
+		self.movements.finish_movement(payment.movement_id, MovementStatus::Failed).await?;
 
 		self.db.remove_pending_lightning_send(payment.invoice.payment_hash())?;
 
@@ -2090,19 +2087,6 @@ impl Wallet {
 			user_pubkey: change_keypair.public_key().serialize().to_vec(),
 		};
 
-		let mut movement = MovementGuard::new_movement(
-			self.movements.clone(),
-			self.subsystem_ids[&BarkSubsystem::LightningSend],
-			LightningSendMovement::Send.to_string(),
-		).await?;
-		movement.apply_update(
-			MovementUpdate::new()
-				.intended_and_effective_balance(-amount.to_signed()?)
-				.consumed_vtxos(&inputs)
-				.sent_to([MovementDestination::new(invoice.to_string(), amount)])
-		).await?;
-		self.lock_vtxos(&input_ids, Some(movement.id()))?;
-
 		let resp = srv.client.start_lightning_payment(req).await
 			.context("htlc request failed")?.into_inner();
 
@@ -2131,11 +2115,26 @@ impl Wallet {
 		let (htlc_vtxos, change_vtxo) = builder.build_vtxos(&cosign_resp, &keypairs, secs)?;
 
 		// Validate the new vtxos. They have the same chain anchor.
+		let mut effective_balance = Amount::ZERO;
 		for vtxo in &htlc_vtxos {
 			self.validate_vtxo(vtxo).await?;
+			effective_balance += vtxo.amount();
 		}
-		self.store_locked_vtxos(&htlc_vtxos, Some(movement.id()))?;
-		self.mark_vtxos_as_spent(&input_ids, Some(movement.id()))?;
+
+		let movement_id = self.movements.new_movement(
+			self.subsystem_ids[&BarkSubsystem::LightningSend],
+			LightningSendMovement::Send.to_string(),
+		).await?;
+		self.movements.update_movement(
+			movement_id,
+			MovementUpdate::new()
+				.intended_balance(-amount.to_signed()?)
+				.effective_balance(-effective_balance.to_signed()?)
+				.consumed_vtxos(&inputs)
+				.sent_to([MovementDestination::new(invoice.to_string(), amount)])
+		).await?;
+		self.store_locked_vtxos(&htlc_vtxos, Some(movement_id))?;
+		self.mark_vtxos_as_spent(&input_ids)?;
 
 		// Validate the change vtxo. It has the same chain anchor as the last input.
 		if let Some(ref change) = change_vtxo {
@@ -2145,17 +2144,18 @@ impl Wallet {
 				format!("input vtxo chain anchor not found for lightning change vtxo: {}", last_input.chain_anchor().txid)
 			})?;
 			change.validate(&tx).context("invalid lightning change vtxo")?;
-			self.store_spendable_vtxos([change], Some(movement.id()))?;
+			self.store_spendable_vtxos([change])?;
 		}
 
-		movement.apply_update(
+		self.movements.update_movement(
+			movement_id,
 			MovementUpdate::new()
 				.produced_vtxo_if_some(change_vtxo)
 				.metadata(LightningMovement::htlc_metadata(&htlc_vtxos)?)
 		).await?;
 
 		let payment = self.db.store_new_pending_lightning_send(
-			&invoice, &amount, &htlc_vtxos.iter().map(|v| v.id()).collect::<Vec<_>>(), movement.id()
+			&invoice, &amount, &htlc_vtxos.iter().map(|v| v.id()).collect::<Vec<_>>(), movement_id,
 		)?;
 
 		let req = protos::SignedLightningPaymentDetails {
@@ -2172,11 +2172,10 @@ impl Wallet {
 			info!("Payment succeeded! Preimage: {}", preimage.as_hex());
 
 			self.db.remove_pending_lightning_send(payment.invoice.payment_hash())?;
-			self.mark_vtxos_as_spent(&htlc_vtxos, Some(movement.id()))?;
-			movement.finish(MovementStatus::Finished).await?;
+			self.mark_vtxos_as_spent(&htlc_vtxos)?;
+			self.movements.finish_movement(movement_id, MovementStatus::Finished).await?;
 			Ok(preimage)
 		} else {
-			movement.stop();
 			self.process_lightning_revocation(&payment).await?;
 			bail!("No preimage, payment failed: {}", res.progress_message);
 		}
@@ -2287,14 +2286,11 @@ impl Wallet {
 					self.movements.update_movement(
 						payment.movement_id,
 						MovementUpdate::new()
-							.effective_balance(-exited.to_signed()?)
+							.effective_balance(-payment.amount.to_signed()? + exited.to_signed()?)
 							.exited_vtxos(&vtxos)
 					).await?;
 					self.movements.finish_movement(
-						// TODO: How best to handle this? The payment "finished" but it wasn't
-						//       successful by any means. It's not "failed" because it resulted in
-						//       balance and VTXO changes.
-						payment.movement_id, MovementStatus::Finished,
+						payment.movement_id, MovementStatus::Failed,
 					).await?;
 					self.db.remove_pending_lightning_send(payment_hash)?;
 				}
@@ -2343,25 +2339,11 @@ impl Wallet {
 		let invoice = Bolt11Invoice::from_str(&resp.bolt11)
 			.context("invalid bolt11 invoice returned by Ark server")?;
 
-		let movement_id = {
-			let id = self.movements.new_movement(
-				self.subsystem_ids[&BarkSubsystem::LightningReceive],
-				LightningReceiveMovement::Receive.to_string(),
-			).await?;
-			self.movements.update_movement(
-				id,
-				MovementUpdate::new()
-					.intended_and_effective_balance(amount.to_signed()?)
-			).await?;
-			id
-		};
-
 		self.db.store_lightning_receive(
 			payment_hash,
 			preimage,
 			&invoice,
 			requested_min_cltv_delta,
-			movement_id,
 		)?;
 
 		Ok(invoice)
@@ -2426,6 +2408,8 @@ impl Wallet {
 		&self,
 		lightning_receive: &LightningReceive,
 	) -> anyhow::Result<()> {
+		let movement_id = lightning_receive.movement_id
+			.context("No movement created for lightning receive")?;
 		let mut srv = self.require_server()?;
 
 		// order inputs by vtxoid before we generate nonces
@@ -2480,7 +2464,7 @@ impl Wallet {
 		let mut effective_balance = Amount::ZERO;
 		for vtxo in &outputs {
 			// TODO: bailing here results in vtxos not being registered despite preimage being revealed
-			// should we make `srv.client.claim_lightning_receive` indempotent, so that bark can at
+			// should we make `srv.client.claim_lightning_receive` idempotent, so that bark can at
 			// least retry some times before giving up and exiting?
 			if let Err(e) = self.validate_vtxo(vtxo).await {
 				bail!("invalid arkoor from lightning receive: {e}");
@@ -2488,18 +2472,19 @@ impl Wallet {
 			effective_balance += vtxo.amount();
 		}
 
-		self.store_spendable_vtxos(&outputs, Some(lightning_receive.movement_id))?;
+		self.store_spendable_vtxos(&outputs)?;
+		info!("Got arkoors from lightning: {}",
+			outputs.iter().map(|v| v.id().to_string()).collect::<Vec<_>>().join(", ")
+		);
+
 		self.movements.update_movement(
-			lightning_receive.movement_id,
+			movement_id,
 			MovementUpdate::new()
 				.effective_balance(effective_balance.to_signed()?)
 				.produced_vtxos(&outputs)
 		).await?;
-
-		info!("Got arkoors from lightning: {}",
-			outputs.iter().map(|v| v.id().to_string()).collect::<Vec<_>>().join(", "));
 		self.movements.finish_movement(
-			lightning_receive.movement_id, MovementStatus::Finished,
+			movement_id, MovementStatus::Finished,
 		).await?;
 
 		self.db.remove_pending_lightning_receive(lightning_receive.payment_hash)?;
@@ -2588,12 +2573,7 @@ impl Wallet {
 				| protos::LightningReceiveStatus::HtlcsReady => {},
 			protos::LightningReceiveStatus::Created => bail!("sender didn't initiate payment yet"),
 			protos::LightningReceiveStatus::Settled => bail!("payment already settled"),
-			protos::LightningReceiveStatus::Cancelled => {
-				self.movements.finish_movement(
-					lightning_receive.movement_id, MovementStatus::Cancelled,
-				).await?;
-				bail!("payment was canceled")
-			},
+			protos::LightningReceiveStatus::Cancelled => bail!("payment was canceled"),
 		}
 
 		let lightning_receive_anti_dos = match self.compute_lightning_receive_anti_dos(payment_hash, token).await {
@@ -2649,10 +2629,23 @@ impl Wallet {
 			"Server didn't return enough VTXOs to cover invoice amount"
 		);
 
-		self.store_locked_vtxos(&vtxos, Some(lightning_receive.movement_id))?;
+		let movement_id = if let Some(movement_id) = lightning_receive.movement_id {
+			movement_id
+		} else {
+			self.movements.new_movement(
+				self.subsystem_ids[&BarkSubsystem::LightningReceive],
+				LightningReceiveMovement::Receive.to_string(),
+			).await?
+		};
+		self.store_locked_vtxos(&vtxos, Some(movement_id))?;
+
+		let vtxo_ids = vtxos.iter().map(|v| v.id()).collect::<Vec<_>>();
+		self.db.update_lightning_receive(payment_hash, &vtxo_ids, movement_id)?;
+
 		self.movements.update_movement(
-			lightning_receive.movement_id,
+			movement_id,
 			MovementUpdate::new()
+				.intended_balance(invoice_amount.to_signed()?)
 				.effective_balance(htlc_amount.to_signed()?)
 				.metadata(LightningMovement::htlc_metadata(&vtxos)?)
 				.received_on(
@@ -2664,13 +2657,11 @@ impl Wallet {
 			.into_iter()
 			.map(|v| self.db
 				.get_wallet_vtxo(v.id())
-				.and_then(|op| op.ok_or_else(|| format_err!("Failed to get wallet VTXO: {}", v.id())))
+				.and_then(|op| op.context("Failed to get wallet VTXO for lightning receive"))
 			).collect::<Result<Vec<_>, _>>()?;
 
-		let vtxo_ids = vtxos.iter().map(|v| v.id()).collect::<Vec<_>>();
-		self.db.set_lightning_receive_vtxos(payment_hash, &vtxo_ids)?;
-
 		lightning_receive.htlc_vtxos = Some(vtxos);
+		lightning_receive.movement_id = Some(movement_id);
 
 		Ok(lightning_receive)
 	}
@@ -2751,9 +2742,15 @@ impl Wallet {
 		info!("Syncing {} pending lightning receives", lightning_receives.len());
 
 		for lightning_receive in lightning_receives {
-			let vtxos = match &lightning_receive.htlc_vtxos {
-				Some(vtxos) => vtxos,
-				None => continue,
+			let (vtxos, movement_id) = match (
+				&lightning_receive.htlc_vtxos, lightning_receive.movement_id
+			) {
+				(Some(vtxos), Some(movement_id)) => (vtxos, movement_id),
+				(Some(_), None) => {
+					error!("Movement missing for lightning receive: {}", lightning_receive.payment_hash);
+					continue;
+				}
+				(None, _) => continue,
 			};
 
 			if let Err(e) = self.claim_lightning_receive(&lightning_receive).await {
@@ -2778,17 +2775,21 @@ impl Wallet {
 							&vtxos.iter().map(|v| v.vtxo.clone()).collect::<Vec<_>>(),
 						).await?;
 						self.movements.update_movement(
-							lightning_receive.movement_id,
+							movement_id,
 							MovementUpdate::new()
 								.exited_vtxos(vtxos)
 						).await?;
-						self.movements.finish_movement(
-							lightning_receive.movement_id, MovementStatus::Finished,
-						).await?;
+						self.movements.finish_movement(movement_id, MovementStatus::Failed).await?;
 					} else {
 						warn!("HTLC-recv VTXOs are about to expire, but preimage has not been disclosed yet, mark htlc as cancelled");
+						self.mark_vtxos_as_spent(vtxos)?;
+						self.movements.update_movement(
+							movement_id,
+							MovementUpdate::new()
+								.effective_balance(SignedAmount::ZERO)
+						).await?;
 						self.movements.finish_movement(
-							lightning_receive.movement_id, MovementStatus::Cancelled,
+							movement_id, MovementStatus::Cancelled,
 						).await?;
 					}
 				}
