@@ -428,7 +428,6 @@ pub trait BarkPersister: Send + Sync + 'static {
 	/// - preimage: Payment preimage (kept until disclosure).
 	/// - invoice: The associated BOLT11 invoice.
 	/// - htlc_recv_cltv_delta: The CLTV delta for the HTLC VTXO.
-	/// - movement_id: The movement ID associated with the invoice.
 	///
 	/// Errors:
 	/// - Returns an error if the receive cannot be stored.
@@ -438,7 +437,6 @@ pub trait BarkPersister: Send + Sync + 'static {
 		preimage: Preimage,
 		invoice: &Bolt11Invoice,
 		htlc_recv_cltv_delta: BlockDelta,
-		movement_id: MovementId,
 	) -> anyhow::Result<()>;
 
 	/// Returns a list of all pending lightning receives
@@ -459,16 +457,21 @@ pub trait BarkPersister: Send + Sync + 'static {
 	/// - Returns an error if the update fails or the receive does not exist.
 	fn set_preimage_revealed(&self, payment_hash: PaymentHash) -> anyhow::Result<()>;
 
-	/// Set the VTXO IDs for a Lightning receive.
+	/// Set the VTXO IDs and [MovementId] for a [LightningReceive].
 	///
 	/// Parameters:
 	/// - payment_hash: The payment hash identifying the receive.
 	/// - htlc_vtxo_ids: The VTXO IDs to set.
+	/// - movement_id: The movement ID associated with the invoice.
 	///
 	/// Errors:
 	/// - Returns an error if the update fails or the receive does not exist.
-	fn set_lightning_receive_vtxos(&self, payment_hash: PaymentHash, htlc_vtxo_ids: &[VtxoId])
-		-> anyhow::Result<()>;
+	fn update_lightning_receive(
+		&self,
+		payment_hash: PaymentHash,
+		htlc_vtxo_ids: &[VtxoId],
+		movement_id: MovementId,
+	) -> anyhow::Result<()>;
 
 	/// Fetch a Lightning receive by its payment hash.
 	///

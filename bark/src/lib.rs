@@ -315,7 +315,7 @@ use std::sync::Arc;
 
 use anyhow::{bail, Context};
 use bip39::Mnemonic;
-use bitcoin::{Amount, Network, OutPoint, ScriptBuf};
+use bitcoin::{Amount, Network, OutPoint, ScriptBuf, SignedAmount};
 use bitcoin::bip32::{self, Fingerprint};
 use bitcoin::hex::DisplayHex;
 use bitcoin::secp256k1::{self, Keypair, PublicKey};
@@ -2339,25 +2339,11 @@ impl Wallet {
 		let invoice = Bolt11Invoice::from_str(&resp.bolt11)
 			.context("invalid bolt11 invoice returned by Ark server")?;
 
-		let movement_id = {
-			let id = self.movements.new_movement(
-				self.subsystem_ids[&BarkSubsystem::LightningReceive],
-				LightningReceiveMovement::Receive.to_string(),
-			).await?;
-			self.movements.update_movement(
-				id,
-				MovementUpdate::new()
-					.intended_and_effective_balance(amount.to_signed()?)
-			).await?;
-			id
-		};
-
 		self.db.store_lightning_receive(
 			payment_hash,
 			preimage,
 			&invoice,
 			requested_min_cltv_delta,
-			movement_id,
 		)?;
 
 		Ok(invoice)
@@ -2422,6 +2408,8 @@ impl Wallet {
 		&self,
 		lightning_receive: &LightningReceive,
 	) -> anyhow::Result<()> {
+		let movement_id = lightning_receive.movement_id
+			.context("No movement created for lightning receive")?;
 		let mut srv = self.require_server()?;
 
 		// order inputs by vtxoid before we generate nonces
@@ -2485,17 +2473,18 @@ impl Wallet {
 		}
 
 		self.store_spendable_vtxos(&outputs)?;
+		info!("Got arkoors from lightning: {}",
+			outputs.iter().map(|v| v.id().to_string()).collect::<Vec<_>>().join(", ")
+		);
+
 		self.movements.update_movement(
-			lightning_receive.movement_id,
+			movement_id,
 			MovementUpdate::new()
 				.effective_balance(effective_balance.to_signed()?)
 				.produced_vtxos(&outputs)
 		).await?;
-
-		info!("Got arkoors from lightning: {}",
-			outputs.iter().map(|v| v.id().to_string()).collect::<Vec<_>>().join(", "));
 		self.movements.finish_movement(
-			lightning_receive.movement_id, MovementStatus::Finished,
+			movement_id, MovementStatus::Finished,
 		).await?;
 
 		self.db.remove_pending_lightning_receive(lightning_receive.payment_hash)?;
@@ -2584,12 +2573,7 @@ impl Wallet {
 				| protos::LightningReceiveStatus::HtlcsReady => {},
 			protos::LightningReceiveStatus::Created => bail!("sender didn't initiate payment yet"),
 			protos::LightningReceiveStatus::Settled => bail!("payment already settled"),
-			protos::LightningReceiveStatus::Cancelled => {
-				self.movements.finish_movement(
-					lightning_receive.movement_id, MovementStatus::Cancelled,
-				).await?;
-				bail!("payment was canceled")
-			},
+			protos::LightningReceiveStatus::Cancelled => bail!("payment was canceled"),
 		}
 
 		let lightning_receive_anti_dos = match self.compute_lightning_receive_anti_dos(payment_hash, token).await {
@@ -2645,10 +2629,23 @@ impl Wallet {
 			"Server didn't return enough VTXOs to cover invoice amount"
 		);
 
-		self.store_locked_vtxos(&vtxos, Some(lightning_receive.movement_id))?;
+		let movement_id = if let Some(movement_id) = lightning_receive.movement_id {
+			movement_id
+		} else {
+			self.movements.new_movement(
+				self.subsystem_ids[&BarkSubsystem::LightningReceive],
+				LightningReceiveMovement::Receive.to_string(),
+			).await?
+		};
+		self.store_locked_vtxos(&vtxos, Some(movement_id))?;
+
+		let vtxo_ids = vtxos.iter().map(|v| v.id()).collect::<Vec<_>>();
+		self.db.update_lightning_receive(payment_hash, &vtxo_ids, movement_id)?;
+
 		self.movements.update_movement(
-			lightning_receive.movement_id,
+			movement_id,
 			MovementUpdate::new()
+				.intended_balance(invoice_amount.to_signed()?)
 				.effective_balance(htlc_amount.to_signed()?)
 				.metadata(LightningMovement::htlc_metadata(&vtxos)?)
 				.received_on(
@@ -2663,10 +2660,8 @@ impl Wallet {
 				.and_then(|op| op.context("Failed to get wallet VTXO for lightning receive"))
 			).collect::<Result<Vec<_>, _>>()?;
 
-		let vtxo_ids = vtxos.iter().map(|v| v.id()).collect::<Vec<_>>();
-		self.db.set_lightning_receive_vtxos(payment_hash, &vtxo_ids)?;
-
 		lightning_receive.htlc_vtxos = Some(vtxos);
+		lightning_receive.movement_id = Some(movement_id);
 
 		Ok(lightning_receive)
 	}
@@ -2747,9 +2742,15 @@ impl Wallet {
 		info!("Syncing {} pending lightning receives", lightning_receives.len());
 
 		for lightning_receive in lightning_receives {
-			let vtxos = match &lightning_receive.htlc_vtxos {
-				Some(vtxos) => vtxos,
-				None => continue,
+			let (vtxos, movement_id) = match (
+				&lightning_receive.htlc_vtxos, lightning_receive.movement_id
+			) {
+				(Some(vtxos), Some(movement_id)) => (vtxos, movement_id),
+				(Some(_), None) => {
+					error!("Movement missing for lightning receive: {}", lightning_receive.payment_hash);
+					continue;
+				}
+				(None, _) => continue,
 			};
 
 			if let Err(e) = self.claim_lightning_receive(&lightning_receive).await {
@@ -2774,18 +2775,21 @@ impl Wallet {
 							&vtxos.iter().map(|v| v.vtxo.clone()).collect::<Vec<_>>(),
 						).await?;
 						self.movements.update_movement(
-							lightning_receive.movement_id,
+							movement_id,
 							MovementUpdate::new()
 								.exited_vtxos(vtxos)
 						).await?;
-						self.movements.finish_movement(
-							lightning_receive.movement_id, MovementStatus::Finished,
-						).await?;
+						self.movements.finish_movement(movement_id, MovementStatus::Failed).await?;
 					} else {
 						warn!("HTLC-recv VTXOs are about to expire, but preimage has not been disclosed yet, mark htlc as cancelled");
 						self.mark_vtxos_as_spent(vtxos)?;
+						self.movements.update_movement(
+							movement_id,
+							MovementUpdate::new()
+								.effective_balance(SignedAmount::ZERO)
+						).await?;
 						self.movements.finish_movement(
-							lightning_receive.movement_id, MovementStatus::Cancelled,
+							movement_id, MovementStatus::Cancelled,
 						).await?;
 					}
 				}

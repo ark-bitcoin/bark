@@ -144,7 +144,6 @@ impl BarkPersister for Dummy {
 		_preimage: Preimage,
 		_invoice: &Bolt11Invoice,
 		_htlc_recv_cltv_delta: BlockDelta,
-		_movement_id: MovementId,
 	) -> anyhow::Result<()> {
 		Ok(())
 	}
@@ -159,7 +158,12 @@ impl BarkPersister for Dummy {
 		Ok(())
 	}
 
-	fn set_lightning_receive_vtxos(&self, _payment_hash: PaymentHash, _vtxo_ids: &[VtxoId]) -> anyhow::Result<()> {
+	fn update_lightning_receive(
+		&self,
+		_payment_hash: PaymentHash,
+		_vtxo_ids: &[VtxoId],
+		_movement_id: MovementId,
+	) -> anyhow::Result<()> {
 		Ok(())
 	}
 
@@ -306,7 +310,7 @@ fn dummy_lightning_receive() -> LightningReceive {
 		preimage_revealed_at:Some(0),
 		htlc_vtxos: None,
 		htlc_recv_cltv_delta: 0,
-		movement_id: MovementId::new(0),
+		movement_id: Some(MovementId::new(0)),
 	}
 }
 

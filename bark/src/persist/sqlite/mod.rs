@@ -272,11 +272,10 @@ impl BarkPersister for SqliteClient {
 		preimage: Preimage,
 		invoice: &Bolt11Invoice,
 		htlc_recv_cltv_delta: BlockDelta,
-		movement_id: MovementId,
 	) -> anyhow::Result<()> {
 		let conn = self.connect()?;
 		query::store_lightning_receive(
-			&conn, payment_hash, preimage, invoice, htlc_recv_cltv_delta, movement_id,
+			&conn, payment_hash, preimage, invoice, htlc_recv_cltv_delta,
 		)?;
 		Ok(())
 	}
@@ -314,9 +313,14 @@ impl BarkPersister for SqliteClient {
 		Ok(())
 	}
 
-	fn set_lightning_receive_vtxos(&self, payment_hash: PaymentHash, htlc_vtxo_ids: &[VtxoId]) -> anyhow::Result<()> {
+	fn update_lightning_receive(
+		&self,
+		payment_hash: PaymentHash,
+		htlc_vtxo_ids: &[VtxoId],
+		movement_id: MovementId,
+	) -> anyhow::Result<()> {
 		let conn = self.connect()?;
-		query::set_lightning_receive_vtxos(&conn, payment_hash, htlc_vtxo_ids)?;
+		query::update_lightning_receive(&conn, payment_hash, htlc_vtxo_ids, movement_id)?;
 		Ok(())
 	}
 

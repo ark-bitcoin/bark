@@ -55,7 +55,7 @@ pub struct LightningReceive {
 	pub preimage_revealed_at: Option<u64>,
 	pub htlc_vtxos: Option<Vec<WalletVtxo>>,
 	pub htlc_recv_cltv_delta: BlockDelta,
-	pub movement_id: MovementId,
+	pub movement_id: Option<MovementId>,
 }
 
 /// Persistable view of an [ExitVtxo].

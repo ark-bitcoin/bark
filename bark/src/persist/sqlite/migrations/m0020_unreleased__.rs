@@ -22,7 +22,7 @@ impl Migration for Migration0020 {
 				htlc_recv_cltv_delta INTEGER NOT NULL,
 				htlc_vtxo_ids TEXT,
 				preimage_revealed_at DATETIME,
-				movement_id INTEGER NOT NULL,
+				movement_id INTEGER,
 				created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now'))
 			)",
 
