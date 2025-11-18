@@ -1244,7 +1244,7 @@ impl Wallet {
 				}
 			},
 			async {
-				if let Err(e) = self.claim_all_pending_htlc_receives().await {
+				if let Err(e) = self.try_claim_all_lightning_receives(false).await {
 					warn!("Error claiming pending lightning receives: {:#}", e);
 				}
 			},
@@ -2698,8 +2698,60 @@ impl Wallet {
 		wait: bool,
 		token: Option<&str>,
 	) -> anyhow::Result<()> {
+		let srv = self.require_server()?;
+
 		let receive = self.check_lightning_receive(payment_hash, wait, token).await?;
-		self.claim_lightning_receive(&receive).await
+
+		if let Err(e) = self.claim_lightning_receive(&receive).await {
+			error!("Failed to claim pubkey vtxo from htlc vtxo: {}", e);
+			let vtxos = match &receive.htlc_vtxos {
+				None => return Ok(()),
+				Some(vtxos) => vtxos,
+			};
+			let tip = self.chain.tip().await?;
+
+			let first_vtxo = &vtxos.first().unwrap().vtxo;
+			debug_assert!(vtxos.iter().all(|v| {
+				v.vtxo.policy() == first_vtxo.policy() && v.vtxo.exit_delta() == first_vtxo.exit_delta()
+			}), "all htlc vtxos for the same payment hash should have the same policy and exit delta");
+
+			let vtxo_htlc_expiry = first_vtxo.policy().as_server_htlc_recv()
+				.expect("only server htlc recv vtxos can be pending lightning recv").htlc_expiry;
+
+			let safe_exit_margin = first_vtxo.exit_delta() +
+				srv.info.htlc_expiry_delta +
+				self.config.vtxo_exit_margin;
+
+			if tip > vtxo_htlc_expiry.saturating_sub(safe_exit_margin as BlockHeight) {
+				if receive.preimage_revealed_at.is_some() {
+					warn!("HTLC-recv VTXOs are about to expire and preimage has been disclosed, \
+						must exit",);
+					self.exit.write().await.mark_vtxos_for_exit(
+						&vtxos.iter().map(|v| v.vtxo.clone()).collect::<Vec<_>>(),
+					).await?;
+					if let Some(id) = receive.movement_id {
+						self.movements.update_movement(
+							id,
+							MovementUpdate::new()
+								.exited_vtxos(vtxos)
+						).await?;
+						self.movements.finish_movement(id, MovementStatus::Failed).await?;
+					}
+				} else {
+					warn!("HTLC-recv VTXOs are about to expire, but preimage has not been disclosed yet, mark htlc as cancelled");
+					self.mark_vtxos_as_spent(vtxos)?;
+					if let Some(id) = receive.movement_id {
+						self.movements.update_movement(
+							id,
+							MovementUpdate::new()
+								.effective_balance(SignedAmount::ZERO)
+						).await?;
+						self.movements.finish_movement(id, MovementStatus::Cancelled).await?;
+					}
+				}
+			}
+		}
+		Ok(())
 	}
 
 	/// Check and claim all opened Lightning receive
@@ -2724,80 +2776,6 @@ impl Wallet {
 					error!("Error claiming lightning receive: {}", e);
 				}
 			}).await;
-
-		Ok(())
-	}
-
-	/// Claim all pending lightning receives
-	///
-	/// This is different from [Wallet::try_claim_all_lightning_receives] in
-	/// that it only affect pending lightning receives whose HTLC VTXOs
-	/// have already been issued.
-	///
-	/// Note:
-	///   - If an HTLC VTXO cannot be claimed and the htlc expiry is too close,
-	///   it will either mark the htlc as cancelled (preimage not revealed) or
-	///   mark the vtxo for exit (preimage revealed).
-	async fn claim_all_pending_htlc_receives(&self) -> anyhow::Result<()> {
-		let srv = self.require_server()?;
-		let tip = self.chain.tip().await?;
-		let lightning_receives = self.db.get_all_pending_lightning_receives()?;
-		info!("Syncing {} pending lightning receives", lightning_receives.len());
-
-		for lightning_receive in lightning_receives {
-			let (vtxos, movement_id) = match (
-				&lightning_receive.htlc_vtxos, lightning_receive.movement_id
-			) {
-				(Some(vtxos), Some(movement_id)) => (vtxos, movement_id),
-				(Some(_), None) => {
-					error!("Movement missing for lightning receive: {}", lightning_receive.payment_hash);
-					continue;
-				}
-				(None, _) => continue,
-			};
-
-			if let Err(e) = self.claim_lightning_receive(&lightning_receive).await {
-				error!("Failed to claim pubkey vtxo from htlc vtxo: {}", e);
-
-				let first_vtxo = &vtxos.first().unwrap().vtxo;
-				debug_assert!(vtxos.iter().all(|v| {
-					v.vtxo.policy() == first_vtxo.policy() && v.vtxo.exit_delta() == first_vtxo.exit_delta()
-				}), "all htlc vtxos for the same payment hash should have the same policy and exit delta");
-
-				let vtxo_htlc_expiry = first_vtxo.policy().as_server_htlc_recv()
-					.expect("only server htlc recv vtxos can be pending lightning recv").htlc_expiry;
-
-				let safe_exit_margin = first_vtxo.exit_delta() +
-					srv.info.htlc_expiry_delta +
-					self.config.vtxo_exit_margin;
-
-				if tip > vtxo_htlc_expiry.saturating_sub(safe_exit_margin as BlockHeight) {
-					if lightning_receive.preimage_revealed_at.is_some() {
-						warn!("HTLC-recv VTXOs are about to expire and preimage has been disclosed, must exit");
-						self.exit.write().await.mark_vtxos_for_exit(
-							&vtxos.iter().map(|v| v.vtxo.clone()).collect::<Vec<_>>(),
-						).await?;
-						self.movements.update_movement(
-							movement_id,
-							MovementUpdate::new()
-								.exited_vtxos(vtxos)
-						).await?;
-						self.movements.finish_movement(movement_id, MovementStatus::Failed).await?;
-					} else {
-						warn!("HTLC-recv VTXOs are about to expire, but preimage has not been disclosed yet, mark htlc as cancelled");
-						self.mark_vtxos_as_spent(vtxos)?;
-						self.movements.update_movement(
-							movement_id,
-							MovementUpdate::new()
-								.effective_balance(SignedAmount::ZERO)
-						).await?;
-						self.movements.finish_movement(
-							movement_id, MovementStatus::Cancelled,
-						).await?;
-					}
-				}
-			}
-		}
 
 		Ok(())
 	}
