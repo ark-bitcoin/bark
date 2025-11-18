@@ -1,6 +1,6 @@
 [package]
 name = "bark-cli"
-version = "0.1.0-beta.2"
+version = "0.1.0-beta.3"
 edition = "2024"
 license = "CC0-1.0"
 description = "CLI for the bitcoin Ark protocol built by Second"
@@ -15,12 +15,12 @@ name = "barkd"
 path = "src/bin/barkd/main.rs"
 
 [dependencies]
-ark-lib = { version = "0.1.0-beta.2", path = "../lib" }
-bark-json = { version = "0.1.0-beta.2", path = "../bark-json" }
-bark-wallet = { version = "0.1.0-beta.2", path = "../bark", features = ["onchain_bdk"] }
-bark-bitcoin-ext = { version = "0.1.0-beta.2", path = "../bitcoin-ext" }
-bark-server-rpc = { version = "0.1.0-beta.2", path = "../server-rpc" }
-bark-rest = { version = "0.1.0-beta.2", path = "../bark-rest" }
+ark-lib = { version = "0.1.0-beta.3", path = "../lib" }
+bark-json = { version = "0.1.0-beta.3", path = "../bark-json" }
+bark-wallet = { version = "0.1.0-beta.3", path = "../bark", features = [ "onchain_bdk" ] }
+bark-bitcoin-ext = { version = "0.1.0-beta.3", path = "../bitcoin-ext" }
+bark-server-rpc = { version = "0.1.0-beta.3", path = "../server-rpc" }
+bark-rest = { version = "0.1.0-beta.3", path = "../bark-rest" }
 
 anyhow.workspace = true
 bitcoin.workspace = true
@@ -41,7 +41,6 @@ toml.workspace = true
 tonic.workspace = true
 futures.workspace = true
 tokio = { workspace = true, features = ["macros"] }
-
 
 home = "=0.5.9"
 
