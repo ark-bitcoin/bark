@@ -1,4 +1,0 @@
-- A new configuration variable, `ln_receive_anti_dos_required`, was added which indicates whether
-  the server requires clients to either provide a VTXO ownership proof, or a Lightning receive
-  token when preparing a Lightning claim.
-  [#1183](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1183)
