@@ -124,15 +124,15 @@ impl <W: Deref<Target = BdkWallet>> GetWalletTx for W {
 }
 
 impl <W: DerefMut<Target = BdkWallet>> PreparePsbt for W {
-	fn prepare_tx<T: IntoIterator<Item = (Address, Amount)>>(
+	fn prepare_tx(
 		&mut self,
-		destinations: T,
+		destinations: &[(Address, Amount)],
 		fee_rate: FeeRate,
 	) -> anyhow::Result<Psbt> {
 		let mut b = self.deref_mut().build_tx();
 		b.ordering(TxOrdering::Untouched);
 		for (dest, amount) in destinations {
-			b.add_recipient(dest.script_pubkey(), amount);
+			b.add_recipient(dest.script_pubkey(), *amount);
 		}
 		b.fee_rate(fee_rate);
 		b.finish().context("error building tx")
@@ -294,16 +294,16 @@ impl OnchainWallet {
 
 	pub async fn send(&mut self, chain: &ChainSource, dest: Address, amount: Amount, fee_rate: FeeRate
 	)	-> anyhow::Result<Txid> {
-		let psbt = self.prepare_tx([(dest, amount)], fee_rate)?;
+		let psbt = self.prepare_tx(&[(dest, amount)], fee_rate)?;
 		let tx = self.finish_tx(psbt)?;
 		chain.broadcast_tx(&tx).await?;
 		Ok(tx.compute_txid())
 	}
 
-	pub async fn send_many<T: IntoIterator<Item = (Address, Amount)>>(
+	pub async fn send_many(
 		&mut self,
 		chain: &ChainSource,
-		destinations: T,
+		destinations: &[(Address, Amount)],
 		fee_rate: FeeRate,
 	) -> anyhow::Result<Txid> {
 		let pbst = self.prepare_tx(destinations, fee_rate)?;

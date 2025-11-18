@@ -190,7 +190,7 @@ pub async fn execute_onchain_command(onchain_command: OnchainCommand, wallet: &m
 			}
 
 			let fee_rate = wallet.chain.fee_rates().await.regular;
-			let txid = onchain.send_many(&wallet.chain, outputs, fee_rate).await?;
+			let txid = onchain.send_many(&wallet.chain, &outputs, fee_rate).await?;
 
 			let output = json::onchain::Send { txid };
 			output_json(&output);

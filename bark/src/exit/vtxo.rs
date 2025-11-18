@@ -117,12 +117,12 @@ impl ExitVtxo {
 	///
 	/// Notes:
 	/// - If `fee_rate_override` is `None`, a suitable fee rate will be calculated.
-	pub async fn progress<W: ExitUnilaterally>(
+	pub async fn progress(
 		&mut self,
 		chain_source: &ChainSource,
 		tx_manager: &mut ExitTransactionManager,
 		persister: &dyn BarkPersister,
-		onchain: &mut W,
+		onchain: &mut dyn ExitUnilaterally,
 		fee_rate_override: Option<FeeRate>,
 	) -> anyhow::Result<(), ExitError> {
 		const MAX_ITERATIONS: usize = 100;

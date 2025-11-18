@@ -24,7 +24,7 @@ pub(crate) trait ExitStateProgress {
 	async fn progress(
 		self,
 		ctx: &mut ProgressContext<'_>,
-		onchain: &mut impl ExitUnilaterally,
+		onchain: &mut dyn ExitUnilaterally,
 	) -> anyhow::Result<ExitState, ExitProgressError>;
 }
 
@@ -116,10 +116,10 @@ impl<'a> ProgressContext<'a> {
 		}
 	}
 
-	pub fn create_exit_cpfp_tx<W: ExitUnilaterally>(
+	pub fn create_exit_cpfp_tx(
 		&mut self,
 		exit_tx: &Transaction,
-		onchain: &mut W,
+		onchain: &mut dyn ExitUnilaterally,
 		min_rbf_fees: Option<(FeeRate, Amount)>,
 	) -> anyhow::Result<Transaction, ExitError> {
 		let fees = if let Some((min_fee_rate, min_fee)) = min_rbf_fees {

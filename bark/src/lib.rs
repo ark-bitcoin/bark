@@ -342,7 +342,7 @@ use crate::exit::Exit;
 use crate::movement::{Movement, MovementDestination, MovementStatus};
 use crate::movement::manager::{MovementGuard, MovementManager};
 use crate::movement::update::MovementUpdate;
-use crate::onchain::{ChainSource, PreparePsbt, ExitUnilaterally, Utxo, GetWalletTx, SignPsbt};
+use crate::onchain::{ChainSource, PreparePsbt, ExitUnilaterally, Utxo, SignPsbt};
 use crate::persist::BarkPersister;
 use crate::persist::models::{PendingLightningSend, LightningReceive};
 use crate::round::{RoundParticipation, RoundStatus};
@@ -662,7 +662,7 @@ pub struct Wallet {
 impl Wallet {
 	/// Creates a [onchain::ChainSource] instance to communicate with an onchain backend from the
 	/// given [Config].
-	pub fn chain_source<P: BarkPersister>(
+	pub fn chain_source(
 		config: &Config,
 	) -> anyhow::Result<onchain::ChainSourceSpec> {
 		if let Some(ref url) = config.esplora_address {
@@ -813,11 +813,11 @@ impl Wallet {
 	///
 	/// The `force` flag will allow you to create the wallet even if a connection to the Ark server
 	/// cannot be established, it will not overwrite a wallet which has already been created.
-	pub async fn create<P: BarkPersister>(
+	pub async fn create(
 		mnemonic: &Mnemonic,
 		network: Network,
 		config: Config,
-		db: Arc<P>,
+		db: Arc<dyn BarkPersister>,
 		force: bool,
 	) -> anyhow::Result<Wallet> {
 		trace!("Config: {:?}", config);
@@ -856,12 +856,12 @@ impl Wallet {
 	///
 	/// The `force` flag will allow you to create the wallet even if a connection to the Ark server
 	/// cannot be established, it will not overwrite a wallet which has already been created.
-	pub async fn create_with_onchain<P: BarkPersister, W: ExitUnilaterally>(
+	pub async fn create_with_onchain(
 		mnemonic: &Mnemonic,
 		network: Network,
 		config: Config,
-		db: Arc<P>,
-		onchain: &W,
+		db: Arc<dyn BarkPersister>,
+		onchain: &dyn ExitUnilaterally,
 		force: bool,
 	) -> anyhow::Result<Wallet> {
 		let mut wallet = Wallet::create(mnemonic, network, config, db, force).await?;
@@ -870,9 +870,9 @@ impl Wallet {
 	}
 
 	/// Loads the bark wallet from the given database ensuring the fingerprint remains consistent.
-	pub async fn open<P: BarkPersister>(
+	pub async fn open(
 		mnemonic: &Mnemonic,
-		db: Arc<P>,
+		db: Arc<dyn BarkPersister>,
 		config: Config,
 	) -> anyhow::Result<Wallet> {
 		let properties = db.read_properties()?.context("Wallet is not initialised")?;
@@ -939,10 +939,10 @@ impl Wallet {
 
 	/// Similar to [Wallet::open] however this also unilateral exits using the provided onchain
 	/// wallet.
-	pub async fn open_with_onchain<P: BarkPersister, W: ExitUnilaterally>(
+	pub async fn open_with_onchain(
 		mnemonic: &Mnemonic,
-		db: Arc<P>,
-		onchain: &W,
+		db: Arc<dyn BarkPersister>,
+		onchain: &dyn ExitUnilaterally,
 		cfg: Config,
 	) -> anyhow::Result<Wallet> {
 		let mut wallet = Wallet::open(mnemonic, db, cfg).await?;
@@ -1260,9 +1260,9 @@ impl Wallet {
 	/// This will not progress the unilateral exits in any way, it will merely check the
 	/// transaction status of each transaction as well as check whether any exits have become
 	/// claimable or have been claimed.
-	pub async fn sync_exits<W: ExitUnilaterally>(
+	pub async fn sync_exits(
 		&self,
-		onchain: &mut W,
+		onchain: &mut dyn ExitUnilaterally,
 	) -> anyhow::Result<()> {
 		self.exit.write().await.sync_exit(onchain).await?;
 		Ok(())
@@ -1313,9 +1313,9 @@ impl Wallet {
 	/// Board a [Vtxo] with the given amount.
 	///
 	/// NB we will spend a little more onchain to cover fees.
-	pub async fn board_amount<W: PreparePsbt + SignPsbt + GetWalletTx>(
+	pub async fn board_amount(
 		&self,
-		onchain: &mut W,
+		onchain: &mut dyn onchain::Board,
 		amount: Amount,
 	) -> anyhow::Result<Board> {
 		let (user_keypair, _) = self.derive_store_next_keypair()?;
@@ -1323,17 +1323,17 @@ impl Wallet {
 	}
 
 	/// Board a [Vtxo] with all the funds in your onchain wallet.
-	pub async fn board_all<W: PreparePsbt + SignPsbt + GetWalletTx>(
+	pub async fn board_all(
 		&self,
-		onchain: &mut W,
+		onchain: &mut dyn onchain::Board,
 	) -> anyhow::Result<Board> {
 		let (user_keypair, _) = self.derive_store_next_keypair()?;
 		self.board(onchain, None, user_keypair).await
 	}
 
-	async fn board<W: PreparePsbt + SignPsbt + GetWalletTx>(
+	async fn board(
 		&self,
-		wallet: &mut W,
+		wallet: &mut dyn onchain::Board,
 		amount: Option<Amount>,
 		user_keypair: Keypair,
 	) -> anyhow::Result<Board> {
@@ -1357,7 +1357,7 @@ impl Wallet {
 		// We create the board tx template, but don't sign it yet.
 		let fee_rate = self.chain.fee_rates().await.regular;
 		let (board_psbt, amount) = if let Some(amount) = amount {
-			let psbt = wallet.prepare_tx([(addr, amount)], fee_rate)?;
+			let psbt = wallet.prepare_tx(&[(addr, amount)], fee_rate)?;
 			(psbt, amount)
 		} else {
 			let psbt = wallet.prepare_drain_tx(addr, fee_rate)?;
