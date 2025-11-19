@@ -88,7 +88,8 @@ pub enum ConnectError {
 /// After the handshake determines the mutually supported protocol version, this
 /// interceptor injects it into the outgoing request metadata so the server can
 /// process calls according to the agreed wire format and semantics.
-struct ProtocolVersionInterceptor {
+#[derive(Clone)]
+pub struct ProtocolVersionInterceptor {
 	pver: u64,
 }
 
@@ -115,7 +116,7 @@ pub struct ServerConnection {
 	/// Server-side configuration and network parameters returned after connection.
 	pub info: ArkInfo,
 	/// The gRPC client to call Ark RPCs.
-	pub client: ArkServiceClient<tonic::transport::Channel>,
+	pub client: ArkServiceClient<tonic::service::interceptor::InterceptedService<tonic::transport::Channel, ProtocolVersionInterceptor>>,
 }
 
 impl ServerConnection {
@@ -212,6 +213,6 @@ impl ServerConnection {
 			return Err(ConnectError::NetworkMismatch { expected: network, got: info.network });
 		}
 
-		Ok(ServerConnection { pver, info, client: handshake_client })
+		Ok(ServerConnection { pver, info, client })
 	}
 }
