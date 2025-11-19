@@ -6,6 +6,10 @@ authors = [ "Team Second <hello@second.tech>" ]
 description = "JSON definitions for the bark APIs"
 edition = "2024"
 
+[features]
+default = ["onchain_bdk"]
+onchain_bdk = ["bark-wallet/onchain_bdk", "bark-bitcoin-ext/bdk"]
+
 [dependencies]
 # OWN
 bark-wallet = { version = "0.1.0-beta.3", path = "../bark" }

@@ -400,6 +400,7 @@ impl From<bark::movement::MovementTimestamp> for MovementTimestamp {
 	}
 }
 
+#[cfg(feature = "onchain_bdk")]
 pub mod onchain {
 	use super::*;
 
@@ -447,6 +448,19 @@ pub mod onchain {
 		#[serde(rename="confirmed_sat", with="bitcoin::amount::serde::as_sat")]
 		#[cfg_attr(feature = "utoipa", schema(value_type = u64))]
 		pub confirmed: Amount,
+	}
+
+	impl From<bark::onchain::bdk_wallet::Balance> for OnchainBalance {
+		fn from(b: bark::onchain::bdk_wallet::Balance) -> Self {
+			OnchainBalance {
+				total: b.total(),
+				trusted_spendable: b.trusted_pending,
+				immature: b.immature,
+				trusted_pending: b.trusted_pending,
+				untrusted_pending: b.untrusted_pending,
+				confirmed: b.confirmed,
+			}
+		}
 	}
 }
 
