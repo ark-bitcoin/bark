@@ -1242,7 +1242,7 @@ async fn stepwise_round() {
 	while let Some(item) = events.next().await {
 		let event = RoundEvent::try_from(item.unwrap()).unwrap();
 		info!("Received round event of type: {}", event.kind());
-		bark.progress_ongoing_rounds(Some(&event)).await.unwrap();
+		bark.progress_pending_rounds(Some(&event)).await.unwrap();
 
 		let states = print_pending_rounds(&bark);
 		if let Some(ours) = states.into_iter().find(|s| s.id == state_id) {

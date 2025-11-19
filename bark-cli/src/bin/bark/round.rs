@@ -43,7 +43,7 @@ pub async fn execute_round_command(
 			if cont {
 				wallet.participate_ongoing_rounds().await?;
 			} else {
-				wallet.progress_ongoing_rounds(None).await?;
+				wallet.progress_pending_rounds(None).await?;
 			}
 			//TODO(stevenroose) consider printing statuses afterwards
 		},

@@ -1320,59 +1320,63 @@ impl Wallet {
 		Ok(RoundEvent::try_from(e).context("invalid event format from server")?)
 	}
 
+	async fn inner_process_event(
+		&self,
+		states: impl IntoIterator<Item = &mut StoredRoundState>,
+		event: Option<&RoundEvent>,
+	) {
+		tokio_stream::iter(states).for_each_concurrent(3, |state| async move {
+			if let Some(event) = event && state.state.ongoing_participation() {
+				let updated = state.state.process_event(self, &event).await;
+				if updated {
+					if let Err(e) = self.db.update_round_state(&state) {
+						error!("Error storing round state #{} after progress: {:#}", state.id, e);
+					}
+				}
+			}
+
+			match state.state.sync(self).await {
+				Err(e) => warn!("Error syncing round #{}: {:#}", state.id, e),
+				Ok(s) if s.is_final() => {
+					info!("Round #{} finished with result: {:?}", state.id, s);
+					if let Err(e) = self.db.remove_round_state(&state) {
+						warn!("Failed to remove finished round #{} from db: {:#}", state.id, e);
+					}
+				},
+				Ok(s) => {
+					trace!("Round state #{} is now in state {:?}", state.id, s);
+					if let Err(e) = self.db.update_round_state(&state) {
+						warn!("Error storing round state #{}: {:#}", state.id, e);
+					}
+				},
+			}
+		}).await;
+	}
+
 	/// Try to make incremental progress on all pending round states
 	///
 	/// If the `last_round_event` argument is not provided, it will be fetched
 	/// from the server.
-	pub async fn progress_ongoing_rounds(
+	pub async fn progress_pending_rounds(
 		&self,
 		last_round_event: Option<&RoundEvent>,
 	) -> anyhow::Result<()> {
 		let mut states = self.db.load_round_states()?;
 		info!("Processing {} rounds...", states.len());
 
-		// so we can fill an owned one in case we lazily fetch one
 		let mut last_round_event = last_round_event.map(|e| Cow::Borrowed(e));
-
-		// First pass the event in all the rounds, then sync them
-		for state in states.iter_mut() {
-			if state.state.ongoing_participation() {
-				let event = match last_round_event {
-					Some(ref e) => e,
-					None => match self.get_last_round_event().await {
-						Ok(e) => {
-							last_round_event = Some(Cow::Owned(e));
-							last_round_event.as_ref().unwrap()
-						},
-						Err(e) => {
-							warn!("Couldn't make progress on an ongoing round: {:#}", e);
-							continue;
-						},
-					},
-				};
-
-				let updated = state.state.process_event(self, event.as_ref()).await;
-				if updated {
-					if let Err(e) = self.db.update_round_state(&state) {
-						error!("Error storing round state after progress: {:#}", e);
-					}
-				}
+		if states.iter().any(|s| s.state.ongoing_participation()) && last_round_event.is_none() {
+			match self.get_last_round_event().await {
+				Ok(e) => last_round_event = Some(Cow::Owned(e)),
+				Err(e) => {
+					warn!("Error fetching round event, \
+						failed to progress ongoing rounds: {:#}", e);
+				},
 			}
 		}
 
-		for mut state in states {
-			let status = state.state.sync(self).await?;
-			if status.is_final() {
-				info!("Round finished with result: {:?}", status);
-				if let Err(e) = self.db.remove_round_state(&state) {
-					warn!("Failed to remove finished round from db: {:#}", e);
-				}
-			} else {
-				if let Err(e) = self.db.update_round_state(&state) {
-					warn!("Error storing round state: {:#}", e);
-				}
-			}
-		}
+		let event = last_round_event.as_ref().map(|c| c.as_ref());
+		self.inner_process_event(states.iter_mut(), event).await;
 
 		Ok(())
 	}
@@ -1414,31 +1418,7 @@ impl Wallet {
 				.context("events stream broke")?
 				.context("error on event stream")?;
 
-			// First pass the event in all the rounds, then sync them
-			for state in states.iter_mut() {
-				if state.state.ongoing_participation() {
-					let updated = state.state.process_event(self, &event).await;
-					if updated {
-						if let Err(e) = self.db.update_round_state(&state) {
-							error!("Error storing round state after progress: {:#}", e);
-						}
-					}
-				}
-			}
-
-			for state in states.iter_mut() {
-				let status = state.state.sync(self).await?;
-				if status.is_final() {
-					info!("Round finished with result: {:?}", status);
-					if let Err(e) = self.db.remove_round_state(&state) {
-						warn!("Failed to remove finished round from db: {:#}", e);
-					}
-				} else {
-					if let Err(e) = self.db.update_round_state(&state) {
-						warn!("Error storing round state: {:#}", e);
-					}
-				}
-			}
+			self.inner_process_event(states.iter_mut(), Some(&event)).await;
 
 			states.retain(|s| s.state.ongoing_participation());
 			if states.is_empty() {
