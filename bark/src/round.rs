@@ -1376,7 +1376,7 @@ impl Wallet {
 
 	/// Look for past rounds that might contain some of our VTXOs
 	///
-	/// Afterwards, call [Wallet::sync_pending_rounds_states] to make progress on these.
+	/// Afterwards, call [Wallet::sync_pending_rounds] to make progress on these.
 	pub async fn start_sync_past_rounds(&self) -> anyhow::Result<()> {
 		let mut srv = self.require_server()?;
 
