@@ -8,6 +8,9 @@ impl Vtxo {
 		let item = self.genesis.last_mut().unwrap();
 		match item.transition {
 			GenesisTransition::Cosigned { ref mut signature, .. } => *signature = fake,
+			GenesisTransition::HashLockedCosigned { ref mut signature, .. } => {
+				*signature = fake;
+			},
 			GenesisTransition::Arkoor { ref mut signature, .. } => {
 				signature.replace(fake).expect("didn't have arkoor signature");
 			},

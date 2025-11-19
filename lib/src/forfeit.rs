@@ -14,7 +14,7 @@ use crate::connectors::ConnectorChain;
 //TODO(stevenroose) fix
 pub const SIGNED_FORFEIT_TX_WEIGHT: Weight = Weight::from_vb_unchecked(0);
 
-pub fn create_forfeit_tx(
+pub fn create_connector_forfeit_tx(
 	vtxo: &Vtxo,
 	connector: OutPoint,
 	forfeit_sig: Option<&schnorr::Signature>,
@@ -49,7 +49,7 @@ pub fn create_forfeit_tx(
 	}
 }
 
-fn forfeit_input_sighash(
+fn connector_forfeit_input_sighash(
 	vtxo: &Vtxo,
 	connector: OutPoint,
 	connector_pk: PublicKey,
@@ -60,7 +60,7 @@ fn forfeit_input_sighash(
 		script_pubkey: ConnectorChain::output_script(connector_pk),
 		value: P2TR_DUST,
 	};
-	let tx = create_forfeit_tx(vtxo, connector, None, None);
+	let tx = create_connector_forfeit_tx(vtxo, connector, None, None);
 	let sighash = SighashCache::new(&tx).taproot_key_spend_signature_hash(
 		input_idx,
 		&sighash::Prevouts::All(&[exit_prevout, connector_prevout]),
@@ -70,19 +70,19 @@ fn forfeit_input_sighash(
 }
 
 /// The sighash of the exit tx input of a forfeit tx.
-pub fn forfeit_sighash_exit(
+pub fn connector_forfeit_sighash_exit(
 	vtxo: &Vtxo,
 	connector: OutPoint,
 	connector_pk: PublicKey,
 ) -> (TapSighash, Transaction) {
-	forfeit_input_sighash(vtxo, connector, connector_pk, 0)
+	connector_forfeit_input_sighash(vtxo, connector, connector_pk, 0)
 }
 
 /// The sighash of the connector input of a forfeit tx.
-pub fn forfeit_sighash_connector(
+pub fn connector_forfeit_sighash_connector(
 	vtxo: &Vtxo,
 	connector: OutPoint,
 	connector_pk: PublicKey,
 ) -> (TapSighash, Transaction) {
-	forfeit_input_sighash(vtxo, connector, connector_pk, 1)
+	connector_forfeit_input_sighash(vtxo, connector, connector_pk, 1)
 }

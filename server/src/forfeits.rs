@@ -56,7 +56,7 @@ fn finalize_forfeit_tx(
 ) -> Transaction {
 	// First sign the forfeit input and combine with user part sig.
 	let forfeit_sig = {
-		let (sighash, _tx) = ark::forfeit::forfeit_sighash_exit(
+		let (sighash, _tx) = ark::forfeit::connector_forfeit_sighash_exit(
 			&vtxo, conn, conn_key.public_key(),
 		);
 		let agg_nonce = musig::nonce_agg(&[
@@ -102,13 +102,13 @@ fn finalize_forfeit_tx(
 
 	// Then sign the connector input
 	let conn_sig = {
-		let (sighash, _tx) = ark::forfeit::forfeit_sighash_connector(
+		let (sighash, _tx) = ark::forfeit::connector_forfeit_sighash_connector(
 			&vtxo, conn, conn_key.public_key(),
 		);
 		SECP.sign_schnorr(&sighash.into(), &conn_key.for_keyspend(&*SECP))
 	};
 
-	ark::forfeit::create_forfeit_tx(
+	ark::forfeit::create_connector_forfeit_tx(
 		&vtxo,
 		conn,
 		Some(&forfeit_sig),

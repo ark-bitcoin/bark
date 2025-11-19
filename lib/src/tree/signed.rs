@@ -3,7 +3,7 @@
 use std::{cmp, fmt, io, iter};
 use std::collections::{HashMap, VecDeque};
 
-use bitcoin::hashes::Hash;
+use bitcoin::hashes::{sha256, Hash};
 use bitcoin::{
 	taproot, Amount, OutPoint, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Weight, Witness,
 };
@@ -20,6 +20,12 @@ use crate::tree::{self, Tree};
 use crate::vtxo::{self, GenesisItem, GenesisTransition};
 
 
+/// Hash to lock hArk VTXOs from users before forfeits
+pub type UnlockHash = sha256::Hash;
+
+/// Preimage to unlock hArk VTXOs
+pub type UnlockPreimage = [u8; 32];
+
 /// The upper bound witness weight to spend a node transaction.
 pub const NODE_SPEND_WEIGHT: Weight = Weight::from_wu(140);
 
@@ -27,6 +33,24 @@ pub const NODE_SPEND_WEIGHT: Weight = Weight::from_wu(140);
 pub fn expiry_clause(server_pubkey: PublicKey, expiry_height: BlockHeight) -> ScriptBuf {
 	let pk = server_pubkey.x_only_public_key().0;
 	scripts::timelock_sign(expiry_height, pk)
+}
+
+/// The hash-based unlock clause hidden in the node taproot as only script.
+pub fn unlock_clause(pubkey: XOnlyPublicKey, unlock_hash: UnlockHash) -> ScriptBuf {
+	scripts::hash_and_sign(unlock_hash, pubkey)
+}
+
+/// The taproot of the leaf policy, i.e. of the output that is spent by the leaf tx
+pub fn leaf_cosign_taproot(
+	agg_pk: XOnlyPublicKey,
+	server_pubkey: PublicKey,
+	expiry_height: BlockHeight,
+	unlock_hash: UnlockHash,
+) -> taproot::TaprootSpendInfo {
+	taproot::TaprootBuilder::new()
+		.add_leaf(1, expiry_clause(server_pubkey, expiry_height)).unwrap()
+		.add_leaf(1, unlock_clause(agg_pk, unlock_hash)).unwrap()
+		.finalize(&SECP, agg_pk).unwrap()
 }
 
 pub fn cosign_taproot(
