@@ -627,14 +627,6 @@ impl GenesisTransition {
 		}
 	}
 
-	/// Whether this transition is spending a policy that also contains an exit clause.
-	fn has_exit(&self) -> bool {
-		match self {
-			Self::Cosigned { .. } => false,
-			Self::HashLockedCosigned { .. } => false,
-			Self::Arkoor { .. } => true,
-		}
-	}
 
 	/// Whether this transition is an out-of-round transition
 	fn is_arkoor(&self) -> bool {
@@ -705,8 +697,6 @@ impl GenesisItem {
 pub struct VtxoTxIterItem {
 	/// The actual transaction.
 	pub tx: Transaction,
-	/// Whether this tx is an exit tx, meaning that it contains exit outputs.
-	pub is_exit: bool,
 }
 
 /// Iterator returned by [Vtxo::transactions].
@@ -716,9 +706,6 @@ pub struct VtxoTxIter<'a> {
 	prev: OutPoint,
 	genesis_idx: usize,
 	current_amount: Amount,
-	/// We're in the end part of the chain where txs are exit txs.
-	/// This can only go from false to true, not back to false.
-	exit: bool,
 	done: bool,
 }
 
@@ -733,18 +720,8 @@ impl<'a> VtxoTxIter<'a> {
 			vtxo: vtxo,
 			genesis_idx: 0,
 			current_amount: onchain_amount,
-			exit: false,
 			done: false,
 		}
-	}
-
-	pub fn first_exit(mut self) -> Option<Transaction> {
-		let mut current = self.next();
-		while !self.exit {
-			current = self.next();
-		}
-
-		current.map(|c| c.tx)
 	}
 }
 
@@ -762,7 +739,6 @@ impl<'a> Iterator for VtxoTxIter<'a> {
 		).expect("we calculated this amount beforehand");
 
 		let next_output = if let Some(item) = self.vtxo.genesis.get(self.genesis_idx + 1) {
-			self.exit = self.exit || item.transition.has_exit();
 			item.transition.input_txout(
 				next_amount,
 				self.vtxo.server_pubkey,
@@ -772,7 +748,6 @@ impl<'a> Iterator for VtxoTxIter<'a> {
 		} else {
 			// when we reach the end of the chain, we take the eventual output of the vtxo
 			self.done = true;
-			self.exit = true;
 			self.vtxo.policy.txout(self.vtxo.amount, self.vtxo.server_pubkey, self.vtxo.exit_delta)
 		};
 
@@ -780,7 +755,7 @@ impl<'a> Iterator for VtxoTxIter<'a> {
 		self.prev = OutPoint::new(tx.compute_txid(), item.output_idx as u32);
 		self.genesis_idx += 1;
 		self.current_amount = next_amount;
-		Some(VtxoTxIterItem { tx, is_exit: self.exit })
+		Some(VtxoTxIterItem { tx })
 	}
 
 	fn size_hint(&self) -> (usize, Option<usize>) {
@@ -977,12 +952,6 @@ impl Vtxo {
 	/// The transaction output (eventual UTXO) of this [Vtxo].
 	pub fn txout(&self) -> TxOut {
 		self.policy.txout(self.amount, self.server_pubkey, self.exit_delta)
-	}
-
-	/// Whether this VTXO contains our-of-round parts. This is true for both
-	/// arkoor and lightning vtxos.
-	pub fn is_arkoor(&self) -> bool {
-		self.genesis.iter().any(|t| t.transition.has_exit())
 	}
 
 	/// Whether this VTXO is fully signed
