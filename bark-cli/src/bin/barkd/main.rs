@@ -74,11 +74,37 @@ fn run_shutdown_signal_listener() -> CancellationToken {
 
 	let cloned = shutdown.clone();
 	tokio::spawn(async move {
-		let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-			.expect("Failed to listen for SIGTERM");
+		async fn signal_recv() {
+			#[cfg(unix)]
+			{
+				let mut sigterm = tokio::signal::unix::signal(
+					tokio::signal::unix::SignalKind::terminate()
+				).expect("Failed to listen for SIGTERM");
+
+				sigterm.recv().await;
+				info!("SIGTERM received! Sending shutdown signal...");
+				return;
+			}
+
+			#[cfg(windows)]
+			{
+				let mut ctrl_break = tokio::signal::windows::ctrl_break()
+					.expect("Failed to listen for CTRL+BREAK");
+
+				ctrl_break.recv().await;
+				info!("CTRL+BREAK received! Sending shutdown signal...");
+				return
+			}
+
+			#[cfg(not(any(unix, windows)))]
+			{
+				log::warn!("Unknown platform, not listening for shutdown signals");
+				std::future::pending().await
+			}
+		}
 
 		tokio::select! {
-			_ = sigterm.recv() => info!("SIGTERM received! Sending shutdown signal..."),
+			_ = signal_recv() => {},
 			r = tokio::signal::ctrl_c() => match r {
 				Ok(()) => info!("Ctrl+C received! Sending shutdown signal..."),
 				Err(e) => panic!("failed to listen to ctrl-c signal: {e}"),
