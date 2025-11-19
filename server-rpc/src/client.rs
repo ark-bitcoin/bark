@@ -28,11 +28,14 @@
 
 use std::cmp;
 use std::convert::TryFrom;
+use std::ops::Deref;
 use std::str::FromStr;
-use std::time::Duration;
+use std::sync::Arc;
+use std::time::{Duration, SystemTime};
 
 use bitcoin::Network;
 use log::{info, warn};
+use tokio::sync::RwLock;
 use tonic::service::interceptor::InterceptedService;
 use tonic::transport::Channel;
 
@@ -50,6 +53,11 @@ pub const MIN_PROTOCOL_VERSION: u64 = 1;
 ///
 /// For info on protocol versions, see [server_rpc](crate) module documentation.
 pub const MAX_PROTOCOL_VERSION: u64 = 1;
+
+/// The time to live for the Ark info.
+///
+/// The Ark info is refreshed every 10 minutes.
+pub const ARK_INFO_TTL: u32 = 10 * 60;
 
 #[derive(Debug, thiserror::Error)]
 #[error("failed to create gRPC endpoint: {msg}")]
@@ -83,6 +91,8 @@ pub enum ConnectError {
 	InvalidArkInfo(#[from] ConvertError),
 	#[error("network mismatch. Expected: {expected}, Got: {got}")]
 	NetworkMismatch { expected: Network, got: Network },
+	#[error("tokio channel error: {0}")]
+	Tokio(#[from] tokio::sync::oneshot::error::RecvError),
 }
 
 /// A gRPC interceptor that attaches the negotiated protocol version to each request.
@@ -102,7 +112,57 @@ impl tonic::service::Interceptor for ProtocolVersionInterceptor {
 	}
 }
 
+/// A handle to the Ark info.
+///
+/// This handle is used to wait for the Ark info to be updated, if needed.
+pub struct ArkInfoHandle {
+	pub info: ArkInfo,
+	pub waiter: Option<tokio::sync::oneshot::Receiver<Result<ArkInfo, ConnectError>>>,
+}
+
+impl Deref for ArkInfoHandle {
+	type Target = ArkInfo;
+
+	fn deref(&self) -> &Self::Target {
+		&self.info
+	}
+}
+
+pub struct ServerInfo {
+	/// Protocol version used for rpc protocol.
+	///
+	/// For info on protocol versions, see [server_rpc](crate) module documentation.
+	pub pver: u64,
+	/// Server-side configuration and network parameters returned after connection.
+	pub info: ArkInfo,
+	/// Informations contained in this struct will be considered outdated after this time.
+	pub refresh_at: SystemTime,
+}
+
+impl ServerInfo {
+	/// Compute the time at which the Ark info will be considered outdated.
+	fn ttl() -> SystemTime {
+		SystemTime::now() + Duration::from_secs(ARK_INFO_TTL as u64)
+	}
+
+	pub fn new(pver: u64, info: ArkInfo) -> Self {
+		Self { pver, info, refresh_at: Self::ttl() }
+	}
+
+	pub fn update(&mut self, info: ArkInfo) {
+		self.info = info;
+		self.refresh_at = Self::ttl();
+	}
+
+	/// Checks if the information contained in this struct is outdated.
+	pub fn is_outdated(&self) -> bool {
+		SystemTime::now() > self.refresh_at
+	}
+}
+
 /// A managed connection to the Ark server.
+///
+/// Note: it is not clonable on purpose, to avoid keeping an outdated connection.
 ///
 /// This type encapsulates:
 /// - `pver`: The negotiated protocol version for the current session.
@@ -110,24 +170,18 @@ impl tonic::service::Interceptor for ProtocolVersionInterceptor {
 /// - `client`: A ready-to-use gRPC client bound to the same channel used for the handshake.
 #[derive(Clone)]
 pub struct ServerConnection {
-	/// Protocol version used for rpc protocol.
-	///
-	/// For info on protocol versions, see [server_rpc](crate) module documentation.
-	#[allow(unused)]
-	pub pver: u64,
-	/// Server-side configuration and network parameters returned after connection.
-	pub info: ArkInfo,
+	info: Arc<RwLock<ServerInfo>>,
 	/// The gRPC client to call Ark RPCs.
 	pub client: ArkServiceClient<InterceptedService<Channel, ProtocolVersionInterceptor>>,
 }
 
 impl ServerConnection {
-
 	fn handshake_req() -> protos::HandshakeRequest {
 		protos::HandshakeRequest {
 			bark_version: Some(env!("CARGO_PKG_VERSION").into()),
 		}
 	}
+
 	/// Build a tonic endpoint from a server address, configuring timeouts and TLS if required.
 	///
 	/// - Supports `http` and `https` URIs. Any other scheme results in an error.
@@ -195,8 +249,10 @@ impl ServerConnection {
 		let mut client = ArkServiceClient::with_interceptor(channel, interceptor);
 
 		let info = client.ark_info(network).await?;
+		info!("Ark info: {:?}", info);
 
-		Ok(ServerConnection { pver, info, client })
+		let info = Arc::new(RwLock::new(ServerInfo::new(pver, info)));
+		Ok(ServerConnection { info, client })
 	}
 
 	/// Checks the connection to the Ark server by performing an handshake request.
@@ -207,8 +263,26 @@ impl ServerConnection {
 		check_handshake(handshake)?;
 		Ok(())
 	}
-}
 
+	/// Returns a [ArkInfoHandle]
+	///
+	/// If the Ark info is outdated, a new request will be sent to
+	/// the Ark server to refresh it asynchronously.
+	///
+	/// The handle also contains a receiver that will be signalled
+	/// when the Ark info is successfully refreshed.
+	pub async fn ark_info(&self) -> Result<ArkInfo, ConnectError> {
+		let mut current = self.info.write().await;
+
+		let new_info = self.client.clone().ark_info(current.info.network).await?;
+		if current.is_outdated() {
+			current.update(new_info);
+			return Ok(new_info);
+		}
+
+		Ok(current.info)
+	}
+}
 trait ArkServiceClientExt {
 	async fn ark_info(&mut self, network: Network) -> Result<ArkInfo, ConnectError>;
 }

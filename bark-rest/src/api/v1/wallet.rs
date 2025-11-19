@@ -96,7 +96,7 @@ pub struct WalletApiDoc;
 #[debug_handler]
 pub async fn connected(State(state): State<RestServer>) -> HandlerResult<Json<bark_json::web::ConnectedResponse>> {
 	Ok(axum::Json(bark_json::web::ConnectedResponse {
-		connected: state.wallet.ark_info().is_some(),
+		connected: state.wallet.ark_info().await?.is_some(),
 	}))
 }
 
@@ -113,7 +113,7 @@ pub async fn connected(State(state): State<RestServer>) -> HandlerResult<Json<ba
 )]
 #[debug_handler]
 pub async fn ark_info(State(state): State<RestServer>) -> HandlerResult<Json<bark_json::cli::ArkInfo>> {
-	let ark_info = state.wallet.ark_info();
+	let ark_info = state.wallet.ark_info().await?;
 
 	match ark_info {
 		Some(ark_info) => Ok(axum::Json(ark_info.into())),
@@ -135,7 +135,7 @@ pub async fn ark_info(State(state): State<RestServer>) -> HandlerResult<Json<bar
 pub async fn address(
 	State(state): State<RestServer>,
 ) -> HandlerResult<Json<bark_json::web::ArkAddressResponse>> {
-	let ark_address = state.wallet.new_address()
+	let ark_address = state.wallet.new_address().await
 		.context("Failed to generate new address")?;
 
 	Ok(axum::Json(bark_json::web::ArkAddressResponse {
@@ -162,7 +162,7 @@ pub async fn peak_address(
 	State(state): State<RestServer>,
 	Path(index): Path<u32>,
 ) -> HandlerResult<Json<bark_json::web::ArkAddressResponse>> {
-	let ark_address = state.wallet.peak_address(index)
+	let ark_address = state.wallet.peak_address(index).await
 		.with_context(|| format!("Failed to get address at index {}", index))?;
 
 	Ok(axum::Json(bark_json::web::ArkAddressResponse {
@@ -490,7 +490,7 @@ pub async fn offboard_vtxos(
 	}
 
 	let participation = state.wallet
-		.build_offboard_participation(vtxo_ids, address.script_pubkey())
+		.build_offboard_participation(vtxo_ids, address.script_pubkey()).await
 		.context("Failed to build round participation")?;
 
 	let round = state.wallet.join_next_round(participation, Some(RoundMovement::Offboard))
@@ -531,7 +531,7 @@ pub async fn offboard_all(
 	let input_vtxos = state.wallet.spendable_vtxos()?;
 
 	let participation = state.wallet
-		.build_offboard_participation(input_vtxos, address.script_pubkey())
+		.build_offboard_participation(input_vtxos, address.script_pubkey()).await
 		.context("Failed to build round participation")?;
 
 	let round = state.wallet.join_next_round(participation, Some(RoundMovement::Offboard))
@@ -565,7 +565,7 @@ pub async fn send_onchain(
 	let amount = Amount::from_sat(body.amount_sat);
 
 	let participation = state.wallet
-		.build_round_onchain_payment_participation(addr, amount)
+		.build_round_onchain_payment_participation(addr, amount).await
 		.context("Failed to build round participation")?;
 
 	let round = state.wallet.join_next_round(participation, Some(RoundMovement::SendOnchain))

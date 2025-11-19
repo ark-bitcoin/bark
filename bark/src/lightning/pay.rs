@@ -265,6 +265,7 @@ impl Wallet {
 		T::Error: std::error::Error + fmt::Display + Send + Sync + 'static,
 	{
 		let mut srv = self.require_server()?;
+
 		let properties = self.db.read_properties()?.context("Missing config")?;
 
 		let invoice = invoice.try_into().context("failed to parse invoice")?;

@@ -167,7 +167,7 @@
 //! #[tokio::main]
 //! async fn main() -> anyhow::Result<()> {
 //! 	let wallet = get_wallet().await;
-//! 	let address: ark::Address = wallet.new_address()?;
+//! 	let address: ark::Address = wallet.new_address().await?;
 //! 	Ok(())
 //! }
 //! ```
@@ -606,7 +606,7 @@ impl VtxoSeed {
 /// wallet.maintenance_refresh().await?;
 ///
 /// // Generate a new Ark address to receive funds via arkoor
-/// let addr = wallet.new_address()?;
+/// let addr = wallet.new_address().await?;
 ///
 /// // Query balance and VTXOs
 /// let balance = wallet.balance()?;
@@ -750,14 +750,14 @@ impl Wallet {
 	}
 
 	/// Generate a new [ark::Address].
-	pub fn new_address(&self) -> anyhow::Result<ark::Address> {
-		let ark = &self.require_server()?;
+	pub async fn new_address(&self) -> anyhow::Result<ark::Address> {
+		let srv = &self.require_server()?;
 		let network = self.properties()?.network;
 		let pubkey = self.derive_store_next_keypair()?.0.public_key();
 
 		Ok(ark::Address::builder()
 			.testnet(network != bitcoin::Network::Bitcoin)
-			.server_pubkey(ark.info.server_pubkey)
+			.server_pubkey(srv.ark_info().await?.server_pubkey)
 			.pubkey_policy(pubkey)
 			.into_address().unwrap())
 	}
@@ -765,14 +765,14 @@ impl Wallet {
 	/// Peak for an [ark::Address] at the given key index.
 	///
 	/// May return an error if the address at the given index has not been derived yet.
-	pub fn peak_address(&self, index: u32) -> anyhow::Result<ark::Address> {
-		let ark = &self.require_server()?;
+	pub async fn peak_address(&self, index: u32) -> anyhow::Result<ark::Address> {
+		let srv = &self.require_server()?;
 		let network = self.properties()?.network;
 		let pubkey = self.peak_keypair(index)?.public_key();
 
 		Ok(ark::Address::builder()
 			.testnet(network != Network::Bitcoin)
-			.server_pubkey(ark.info.server_pubkey)
+			.server_pubkey(srv.ark_info().await?.server_pubkey)
 			.pubkey_policy(pubkey)
 			.into_address().unwrap())
 	}
@@ -780,14 +780,14 @@ impl Wallet {
 	/// Generate a new [ark::Address] and returns the index of the key used to create it.
 	///
 	/// This derives and stores the keypair directly after currently last revealed one.
-	pub fn new_address_with_index(&self) -> anyhow::Result<(ark::Address, u32)> {
-		let ark = &self.require_server()?;
+	pub async fn new_address_with_index(&self) -> anyhow::Result<(ark::Address, u32)> {
+		let srv = &self.require_server()?;
 		let network = self.properties()?.network;
 		let (keypair, index) = self.derive_store_next_keypair()?;
 		let pubkey = keypair.public_key();
 		let addr = ark::Address::builder()
 			.testnet(network != bitcoin::Network::Bitcoin)
-			.server_pubkey(ark.info.server_pubkey)
+			.server_pubkey(srv.ark_info().await?.server_pubkey)
 			.pubkey_policy(pubkey)
 			.into_address()?;
 		Ok((addr, index))
@@ -960,8 +960,11 @@ impl Wallet {
 	}
 
 	/// Return [ArkInfo] fetched on last handshake with the Ark server
-	pub fn ark_info(&self) -> Option<&ArkInfo> {
-		self.server.as_ref().map(|a| &a.info)
+	pub async fn ark_info(&self) -> anyhow::Result<Option<ArkInfo>> {
+		match self.server.as_ref() {
+			Some(srv) => Ok(Some(srv.ark_info().await?)),
+			_ => Ok(None),
+		}
 	}
 
 	/// Return the [Balance] of the wallet.
@@ -1111,7 +1114,7 @@ impl Wallet {
 	/// sufficient confirmations before it will be registered. For more details see
 	/// [ArkInfo::required_board_confirmations].
 	pub async fn sync_pending_boards(&self) -> anyhow::Result<()> {
-		let ark_info = self.require_server()?.info;
+		let ark_info = self.require_server()?.ark_info().await?;
 		let current_height = self.chain.tip().await?;
 		let unregistered_boards = self.pending_board_vtxos()?;
 		let mut registered_boards = 0;
@@ -1351,15 +1354,17 @@ impl Wallet {
 		user_keypair: Keypair,
 	) -> anyhow::Result<Board> {
 		let mut srv = self.require_server()?;
+		let ark_info = srv.ark_info().await?;
+
 		let properties = self.db.read_properties()?.context("Missing config")?;
 		let current_height = self.chain.tip().await?;
 
-		let expiry_height = current_height + srv.info.vtxo_expiry_delta as BlockHeight;
+		let expiry_height = current_height + ark_info.vtxo_expiry_delta as BlockHeight;
 		let builder = BoardBuilder::new(
 			user_keypair.public_key(),
 			expiry_height,
-			srv.info.server_pubkey,
-			srv.info.vtxo_exit_delta,
+			ark_info.server_pubkey,
+			ark_info.vtxo_exit_delta,
 		);
 
 		let addr = bitcoin::Address::from_script(
@@ -1379,9 +1384,9 @@ impl Wallet {
 			(psbt, amount)
 		};
 
-		ensure!(amount >= srv.info.min_board_amount,
+		ensure!(amount >= ark_info.min_board_amount,
 			"board amount of {amount} is less than minimum board amount required by server ({})",
-			srv.info.min_board_amount,
+			ark_info.min_board_amount,
 		);
 
 		let utxo = OutPoint::new(board_psbt.unsigned_tx.compute_txid(), BOARD_FUNDING_TX_VTXO_VOUT);
@@ -1592,12 +1597,13 @@ impl Wallet {
 		Ok(())
 	}
 
-	pub fn build_offboard_participation<V: VtxoRef>(
+	pub async fn build_offboard_participation<V: VtxoRef>(
 		&self,
 		vtxos: impl IntoIterator<Item = V>,
 		destination: ScriptBuf,
 	) -> anyhow::Result<RoundParticipation> {
 		let srv = self.require_server()?;
+		let ark_info = srv.ark_info().await?;
 
 		let vtxos = {
 			let vtxos = vtxos.into_iter();
@@ -1616,7 +1622,7 @@ impl Wallet {
 			bail!("no VTXO to offboard");
 		}
 
-		let fee = OffboardRequest::calculate_fee(&destination, srv.info.offboard_feerate)
+		let fee = OffboardRequest::calculate_fee(&destination, ark_info.offboard_feerate)
 			.expect("bdk created invalid scriptPubkey");
 
 		let vtxo_sum = vtxos.iter().map(|v| v.amount()).sum::<Amount>();
@@ -1637,12 +1643,12 @@ impl Wallet {
 		})
 	}
 
-	async fn offboard<V: VtxoRef>(
+	pub async fn offboard<V: VtxoRef>(
 		&self,
 		vtxos: impl IntoIterator<Item = V>,
 		destination: ScriptBuf,
 	) -> anyhow::Result<RoundStatus> {
-		let mut participation = self.build_offboard_participation(vtxos, destination.clone())?;
+		let mut participation = self.build_offboard_participation(vtxos, destination.clone()).await?;
 
 		if let Err(e) = self.add_should_refresh_vtxos(&mut participation).await {
 			warn!("Error trying to add additional VTXOs that should be refreshed: {:#}", e);
@@ -1827,6 +1833,7 @@ impl Wallet {
 		amount: Amount,
 	) -> anyhow::Result<ArkoorCreateResult> {
 		let mut srv = self.require_server()?;
+
 		let change_pubkey = self.derive_store_next_keypair()?.0.public_key();
 
 		let req = VtxoRequest {
@@ -1879,10 +1886,10 @@ impl Wallet {
 	/// Validate if we can send arkoor payments to the given [ark::Address], for example an error
 	/// will be returned if the given [ark::Address] belongs to a different server (see
 	/// [ark::address::ArkId]).
-	pub fn validate_arkoor_address(&self, address: &ark::Address) -> anyhow::Result<()> {
-		let asp = self.require_server()?;
+	pub async fn validate_arkoor_address(&self, address: &ark::Address) -> anyhow::Result<()> {
+		let srv = self.require_server()?;
 
-		if !address.ark_id().is_for_server(asp.info.server_pubkey) {
+		if !address.ark_id().is_for_server(srv.ark_info().await?.server_pubkey) {
 			bail!("Ark address is for different server");
 		}
 
@@ -1931,7 +1938,7 @@ impl Wallet {
 	) -> anyhow::Result<Vec<Vtxo>> {
 		let mut srv = self.require_server()?;
 
-		self.validate_arkoor_address(&destination).context("cannot send to address")?;
+		self.validate_arkoor_address(&destination).await.context("cannot send to address")?;
 
 		if amount < P2TR_DUST {
 			bail!("Sent amount must be at least {}", P2TR_DUST);
@@ -1988,18 +1995,18 @@ impl Wallet {
 		Ok(total)
 	}
 
-	pub fn build_round_onchain_payment_participation(
+	pub async fn build_round_onchain_payment_participation(
 		&self,
 		addr: bitcoin::Address,
 		amount: Amount,
 	) -> anyhow::Result<RoundParticipation> {
-		let srv = self.require_server()?;
+		let ark_info = self.require_server()?.ark_info().await?;
 
 		let offb = OffboardRequest {
 			script_pubkey: addr.script_pubkey(),
 			amount: amount,
 		};
-		let required_amount = offb.amount + offb.fee(srv.info.offboard_feerate)?;
+		let required_amount = offb.amount + offb.fee(ark_info.offboard_feerate)?;
 
 		let inputs = self.select_vtxos_to_cover(required_amount, None)?;
 
@@ -2037,7 +2044,7 @@ impl Wallet {
 		addr: bitcoin::Address,
 		amount: Amount,
 	) -> anyhow::Result<RoundStatus> {
-		let mut participation = self.build_round_onchain_payment_participation(addr, amount)?;
+		let mut participation = self.build_round_onchain_payment_participation(addr, amount).await?;
 
 		if let Err(e) = self.add_should_refresh_vtxos(&mut participation).await {
 			warn!("Error trying to add additional VTXOs that should be refreshed: {:#}", e);
