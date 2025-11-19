@@ -638,7 +638,7 @@ pub struct Wallet {
 	vtxo_seed: VtxoSeed,
 
 	/// Optional live connection to an Ark server for round participation and synchronization.
-	server: Option<ServerConnection>,
+	server: parking_lot::RwLock<Option<ServerConnection>>,
 
 	/// TODO: Replace this when we move to a modular subsystem architecture
 	subsystem_ids: HashMap<BarkSubsystem, SubsystemId>,
@@ -901,6 +901,7 @@ impl Wallet {
 				None
 			}
 		};
+		let server = parking_lot::RwLock::new(server);
 
 		let movements = Arc::new(MovementManager::new(db.clone()));
 		let exit = RwLock::new(Exit::new(db.clone(), chain.clone(), movements.clone()).await?);
@@ -947,21 +948,33 @@ impl Wallet {
 	}
 
 	fn require_server(&self) -> anyhow::Result<ServerConnection> {
-		self.server.clone().context("You should be connected to Ark server to perform this action")
+		self.server.read().clone()
+			.context("You should be connected to Ark server to perform this action")
 	}
 
-	pub async fn check_connection(&self) -> anyhow::Result<()> {
-		let mut server = self.require_server()?;
-		server.client.handshake(protos::HandshakeRequest {
-			bark_version: Some(env!("CARGO_PKG_VERSION").into()),
-		}).await?;
+	pub async fn refresh_server(&self) -> anyhow::Result<()> {
+		let server = self.server.read().clone();
+
+		let srv = if let Some(srv) = server {
+			srv.check_connection().await?;
+			srv.ark_info().await?;
+			srv
+		} else {
+			let srv_address = &self.config.server_address;
+			let network = self.properties()?.network;
+
+			ServerConnection::connect(srv_address, network).await?
+		};
+
+		let _ = self.server.write().insert(srv);
 
 		Ok(())
 	}
 
 	/// Return [ArkInfo] fetched on last handshake with the Ark server
 	pub async fn ark_info(&self) -> anyhow::Result<Option<ArkInfo>> {
-		match self.server.as_ref() {
+		let server = self.server.read().clone();
+		match server.as_ref() {
 			Some(srv) => Ok(Some(srv.ark_info().await?)),
 			_ => Ok(None),
 		}
@@ -2066,7 +2079,7 @@ impl Wallet {
 		let daemon = Daemon::new(shutdown, self.clone(), onchain)?;
 
 		tokio::spawn(async move {
-			let _ = daemon.run().await;
+			daemon.run().await;
 		});
 
 		Ok(())

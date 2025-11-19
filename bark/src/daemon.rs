@@ -154,13 +154,6 @@ impl Daemon {
 		}
 	}
 
-	/// Run a single connection check and return whether the server is
-	/// connected or not
-	async fn run_server_connection_check(&self) -> bool {
-		self.wallet.check_connection().await
-			.inspect_err(|e| warn!("Server connection lost: {:#}", e)).is_ok()
-	}
-
 	/// Run a process that will recursively check the server connection
 	async fn run_server_connection_check_process(&self) {
 		loop {
@@ -172,7 +165,7 @@ impl Daemon {
 				},
 			}
 
-			let connected = self.run_server_connection_check().await;
+			let connected = self.wallet.refresh_server().await.is_ok();
 			self.connected.store(connected, Ordering::Relaxed);
 		}
 	}
@@ -221,7 +214,7 @@ impl Daemon {
 	}
 
 	pub async fn run(self) {
-		let connected = self.run_server_connection_check().await;
+		let connected = self.wallet.server.read().is_some();
 		self.connected.store(connected, Ordering::Relaxed);
 
 		let _ = tokio::join!(
