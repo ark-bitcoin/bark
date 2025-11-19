@@ -25,6 +25,7 @@ use ark::{
 };
 use ark::challenges::RoundAttemptChallenge;
 use ark::tree::signed::builder::SignedTreeBuilder;
+use ark::tree::signed::UnlockPreimage;
 use bark::Wallet;
 use bark::lightning_invoice::Bolt11Invoice;
 use bark_json::cli::RoundStatus;
@@ -779,7 +780,8 @@ async fn bad_round_input() {
 			amount: Amount::from_sat(1000),
 			policy: VtxoPolicy::new_pubkey(key.public_key()),
 		},
-		cosign_pubkey: Some(key2.public_key()),
+		cosign_pubkey: key2.public_key(),
+		nonces: vec![],
 	};
 	let offb_req = OffboardRequest {
 		amount: Amount::from_sat(1000),
@@ -788,9 +790,9 @@ async fn bad_round_input() {
 
 	let input = protos::InputVtxo {
 		vtxo_id: vtxo.id().to_bytes().to_vec(),
-		ownership_proof: challenge.sign_with(
-			vtxo.id(), &[vtxo_req.clone()], &[offb_req.clone()], &key,
-		).serialize().to_vec(),
+		ownership_proof: challenge
+			.sign_with(vtxo.id(), &[vtxo_req.clone()], &[offb_req.clone()], &key)
+			.serialize().to_vec(),
 	};
 
 	// let's fire some bad attempts
@@ -1198,13 +1200,13 @@ async fn reject_dust_vtxo_request() {
 		) -> Result<protos::Empty, tonic::Status> {
 			req.vtxo_requests[0].vtxo.as_mut().unwrap().amount = P2TR_DUST_SAT - 1;
 
-			let mut vtxo_requests = Vec::with_capacity(req.vtxo_requests.len());
-			for r in &req.vtxo_requests {
-				vtxo_requests.push(ark::SignedVtxoRequest {
+			let vtxo_requests = req.vtxo_requests.iter().map(|r| {
+				SignedVtxoRequest {
 					vtxo: r.vtxo.clone().unwrap().try_into().unwrap(),
-					cosign_pubkey: Some(PublicKey::from_slice(&r.cosign_pubkey).unwrap()),
-				});
-			}
+					cosign_pubkey: PublicKey::from_slice(&r.cosign_pubkey).unwrap(),
+					nonces: vec![],
+				}
+			}).collect::<Vec<_>>();
 
 			// Spending input boarded with first derivation
 			let (_, keypair) = self.wallet.pubkey_keypair(&self.vtxo.user_pubkey).unwrap().unwrap();
@@ -1910,13 +1912,15 @@ async fn test_cosign_vtxo_tree() {
 
 	let user_cosign_key = Keypair::from_str("5255d132d6ec7d4fc2a41c8f0018bb14343489ddd0344025cc60c7aa2b3fda6a").unwrap();
 	let user_cosign_pubkey = user_cosign_key.public_key();
+	let unlock_preimge = rand::random::<UnlockPreimage>();
 
 	let server_pubkey = srv.server_pubkey();
 	let server_cosign_pubkey = srv.generate_ephemeral_cosign_key(secs(60)).await.unwrap().public_key();
 
 	let builder = SignedTreeBuilder::new(
-		vtxos.iter().cloned(), user_cosign_pubkey, expiry, server_pubkey, server_cosign_pubkey, exit_delta,
-	);
+		vtxos.iter().cloned(), user_cosign_pubkey, unlock_preimge, expiry, server_pubkey,
+		server_cosign_pubkey, exit_delta,
+	).unwrap();
 
 	let funding_tx = Transaction {
 		version: transaction::Version::TWO,
@@ -1929,14 +1933,16 @@ async fn test_cosign_vtxo_tree() {
 	let user_pub_nonces = builder.user_pub_nonces().to_vec();
 
 	let cosign = srv.cosign_vtxo_tree(
-		vtxos.iter().cloned(), user_cosign_pubkey, server_cosign_pubkey, expiry, utxo, user_pub_nonces,
+		vtxos.iter().cloned(), user_cosign_pubkey, unlock_preimge, server_cosign_pubkey, expiry,
+		utxo, user_pub_nonces,
 	).await.unwrap();
 
 	builder.verify_cosign_response(&cosign).unwrap();
 	let tree = builder.build_tree(&cosign, &user_cosign_key).unwrap();
 
 	srv.register_cosigned_vtxo_tree(
-		vtxos.iter().cloned(), user_cosign_pubkey, server_cosign_pubkey, expiry, utxo, tree.cosign_sigs,
+		vtxos.iter().cloned(), user_cosign_pubkey, unlock_preimge, server_cosign_pubkey,
+		expiry, utxo, tree.cosign_sigs,
 	).await.unwrap();
 
 	assert!(db.fetch_ephemeral_tweak(server_cosign_pubkey).await.unwrap().is_none());
@@ -2092,13 +2098,13 @@ async fn should_refuse_round_input_vtxo_that_is_being_exited() {
 			// Spending input boarded with first derivation
 			let (_, keypair) = self.wallet.pubkey_keypair(&self.vtxo.user_pubkey).unwrap().unwrap();
 
-			let mut vtxo_requests = Vec::with_capacity(req.vtxo_requests.len());
-			for r in &req.vtxo_requests {
-				vtxo_requests.push(ark::SignedVtxoRequest {
+			let vtxo_requests = req.vtxo_requests.iter().map(|r| {
+				SignedVtxoRequest {
 					vtxo: r.vtxo.clone().unwrap().try_into().unwrap(),
-					cosign_pubkey: Some(PublicKey::from_slice(&r.cosign_pubkey).unwrap()),
-				});
-			}
+					cosign_pubkey: PublicKey::from_slice(&r.cosign_pubkey).unwrap(),
+					nonces: vec![],
+				}
+			}).collect::<Vec<_>>();
 
 			let sig = self.challenge.lock().await.as_ref().unwrap()
 				.sign_with(self.vtxo.id, &vtxo_requests, &[], &keypair);

@@ -40,7 +40,7 @@ pub enum VtxoValidationError {
 	InvalidArkoorPolicy {
 		policy: VtxoPolicyKind,
 		msg: &'static str,
-	}
+	},
 }
 
 impl VtxoValidationError {
@@ -98,15 +98,24 @@ fn verify_transition(
 	};
 
 	let pubkey = {
-		let transition_taproot = item.transition.input_taproot(
+		let taproot = item.transition.input_taproot(
 			vtxo.server_pubkey(), vtxo.expiry_height(), vtxo.exit_delta(),
 		);
-		transition_taproot.output_key().to_x_only_public_key()
+		match item.transition {
+			GenesisTransition::Cosigned { .. } | GenesisTransition::Arkoor { .. } => {
+				taproot.output_key().to_x_only_public_key()
+			},
+			// hark transition is script-spend that uses internal key
+			GenesisTransition::HashLockedCosigned { .. } => taproot.internal_key(),
+		}
 	};
 
 	let signature = match item.transition {
 		GenesisTransition::Cosigned { signature, .. } => signature,
-		GenesisTransition::HashLockedCosigned { signature, .. } => signature,
+		GenesisTransition::HashLockedCosigned { signature: Some(sig), .. } => sig,
+		GenesisTransition::HashLockedCosigned { signature: None, .. } => {
+			return Err("missing signature of hash-locked cosign leaf");
+		},
 		GenesisTransition::Arkoor { signature: Some(signature), .. } => signature,
 		GenesisTransition::Arkoor { signature: None, .. } => {
 			return Err("missing arkoor signature");
@@ -119,7 +128,9 @@ fn verify_transition(
 	#[cfg(test)]
 	{
 		if let Err(e) = crate::test::verify_tx(&[prev_txout.clone()], 0, &tx) {
-			panic!("invalid tx in genesis of vtxo {}: idx={}: {:#}", vtxo.id(), genesis_idx, e);
+			// just print error because this is unit test context
+			println!("TX VALIDATION FAILED: invalid tx in genesis of vtxo {}: idx={}: {}", vtxo.id(), genesis_idx, e);
+			return Err("transaction validation failed");
 		}
 	}
 

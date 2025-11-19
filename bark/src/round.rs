@@ -21,7 +21,7 @@ use futures::future::try_join_all;
 use futures::{Stream, StreamExt};
 use log::{debug, error, info, trace, warn};
 
-use ark::{OffboardRequest, ProtocolEncoding, SignedVtxoRequest, Vtxo, VtxoId, VtxoRequest};
+use ark::{OffboardRequest, SignedVtxoRequest, Vtxo, VtxoId, VtxoRequest};
 use ark::connectors::ConnectorChain;
 use ark::musig::{self, DangerousSecretNonce, PublicNonce, SecretNonce};
 use ark::rounds::{
@@ -558,9 +558,6 @@ async fn start_attempt(
 	let cosign_keys = iter::repeat_with(|| Keypair::new(&SECP, &mut rand::thread_rng()))
 		.take(participation.outputs.len())
 		.collect::<Vec<_>>();
-	let vtxo_reqs = participation.outputs.iter().zip(cosign_keys.iter()).map(|(p, ck)| {
-		SignedVtxoRequest { vtxo: p.clone(), cosign_pubkey: Some(ck.public_key()) }
-	}).collect::<Vec<_>>();
 
 	// Prepare round participation info.
 	// For each of our requested vtxo output, we need a set of public and secret nonces.
@@ -575,13 +572,26 @@ async fn start_attempt(
 			}
 			(secs, pubs)
 		})
-		.take(vtxo_reqs.len())
+		.take(participation.outputs.len())
 		.collect::<Vec<(Vec<SecretNonce>, Vec<PublicNonce>)>>();
+
 
 	// The round has now started. We can submit our payment.
 	debug!("Submitting payment request with {} inputs, {} vtxo outputs and {} offboard outputs",
-		participation.inputs.len(), vtxo_reqs.len(), participation.offboards.len(),
+		participation.inputs.len(), participation.outputs.len(), participation.offboards.len(),
 	);
+
+	let signed_reqs = participation.outputs.iter()
+		.zip(cosign_keys.iter())
+		.zip(cosign_nonces.iter())
+		.map(|((req, cosign_key), (_sec, pub_nonces))| {
+			SignedVtxoRequest {
+				vtxo: req.clone(),
+				cosign_pubkey: cosign_key.public_key(),
+				nonces: pub_nonces.clone(),
+			}
+		})
+		.collect::<Vec<_>>();
 
 	srv.client.submit_payment(protos::SubmitPaymentRequest {
 		input_vtxos: participation.inputs.iter().map(|vtxo| {
@@ -591,23 +601,13 @@ async fn start_attempt(
 			protos::InputVtxo {
 				vtxo_id: vtxo.id().to_bytes().to_vec(),
 				ownership_proof: {
-					let sig = event.challenge.sign_with(
-						vtxo.id(), &vtxo_reqs, &participation.offboards, &keypair,
-					);
+					let sig = event.challenge
+						.sign_with(vtxo.id(), &signed_reqs, &participation.offboards, &keypair);
 					sig.serialize().to_vec()
 				},
 			}
 		}).collect(),
-		vtxo_requests: vtxo_reqs.iter().zip(cosign_nonces.iter()).map(|(r, n)| {
-			protos::SignedVtxoRequest {
-				vtxo: Some(protos::VtxoRequest {
-					amount: r.vtxo.amount.to_sat(),
-					policy: r.vtxo.policy.serialize(),
-				}),
-				cosign_pubkey: r.cosign_pubkey.expect("just set").serialize().to_vec(),
-				public_nonces: n.1.iter().map(|n| n.serialize().to_vec()).collect(),
-			}
-		}).collect(),
+		vtxo_requests: signed_reqs.into_iter().map(Into::into).collect(),
 		offboard_requests: participation.offboards.iter().map(|r| {
 			protos::OffboardRequest {
 				amount: r.amount.to_sat(),
@@ -738,13 +738,6 @@ async fn sign_vtxo_tree(
 
 	let vtxos_utxo = OutPoint::new(unsigned_round_tx.compute_txid(), ROUND_TX_VTXO_TREE_VOUT);
 
-	let my_vtxos = participation.outputs.iter().zip(cosign_keys.iter())
-		.map(|(r, k)| SignedVtxoRequest {
-			vtxo: r.clone(),
-			cosign_pubkey: Some(k.public_key()),
-		})
-		.collect::<Vec<_>>();
-
 	// Check that the proposal contains our inputs.
 	{
 		let mut my_vtxos = participation.outputs.iter().collect::<Vec<_>>();
@@ -772,9 +765,9 @@ async fn sign_vtxo_tree(
 
 	// Make vtxo signatures from top to bottom, just like sighashes are returned.
 	let unsigned_vtxos = vtxo_tree.clone().into_unsigned_tree(vtxos_utxo);
-	let iter = my_vtxos.iter().zip(cosign_keys).zip(secret_nonces);
+	let iter = participation.outputs.iter().zip(cosign_keys).zip(secret_nonces);
 	let _ = try_join_all(iter.map(|((req, key), sec)| async {
-		let leaf_idx = unsigned_vtxos.spec.leaf_idx_of(req).expect("req included");
+		let leaf_idx = unsigned_vtxos.spec.leaf_idx_of_req(req).expect("req included");
 		let secret_nonces = sec.as_ref().iter().map(|s| s.to_sec_nonce()).collect();
 		let part_sigs = unsigned_vtxos.cosign_branch(
 			&cosign_agg_nonces, leaf_idx, key, secret_nonces,
@@ -873,7 +866,7 @@ async fn sign_forfeits(
 	let mut new_vtxos = vec![];
 	for (idx, req) in signed_vtxos.spec.spec.vtxos.iter().enumerate() {
 		if let Some(expected_idx) = expected_vtxos.iter().position(|r| **r == req.vtxo) {
-			let vtxo = signed_vtxos.build_vtxo(idx).expect("correct leaf idx");
+			let vtxo = signed_vtxos.build_vtxo(idx);
 
 			// validate the received vtxos
 			// This is more like a sanity check since we crafted them ourselves.

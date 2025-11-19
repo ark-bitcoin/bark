@@ -7,7 +7,7 @@ use bitcoin::hashes::sha256;
 use bitcoin::secp256k1::{schnorr, PublicKey};
 use bitcoin::{self, Amount, FeeRate, OutPoint, Transaction};
 
-use ark::{musig, ProtocolEncoding, Vtxo, VtxoId, VtxoPolicy, VtxoRequest};
+use ark::{musig, ProtocolEncoding, SignedVtxoRequest, Vtxo, VtxoId, VtxoPolicy, VtxoRequest};
 use ark::arkoor::{ArkoorBuilder, ArkoorCosignResponse};
 use ark::board::BoardCosignResponse;
 use ark::challenges::RoundAttemptChallenge;
@@ -348,6 +348,36 @@ impl TryFrom<protos::VtxoRequest> for VtxoRequest {
 		Ok(Self {
 			amount: Amount::from_sat(v.amount),
 			policy: VtxoPolicy::deserialize(&v.policy).map_err(|_| "invalid policy")?,
+		})
+	}
+}
+
+impl From<SignedVtxoRequest> for protos::SignedVtxoRequest {
+	fn from(v: SignedVtxoRequest) -> Self {
+		protos::SignedVtxoRequest {
+			vtxo: Some(protos::VtxoRequest {
+				amount: v.vtxo.amount.to_sat(),
+				policy: v.vtxo.policy.serialize(),
+			}),
+			cosign_pubkey: v.cosign_pubkey.serialize().to_vec(),
+			public_nonces: v.nonces.iter().map(|n| n.serialize().to_vec()).collect(),
+		}
+	}
+}
+
+impl TryFrom<protos::SignedVtxoRequest> for SignedVtxoRequest {
+	type Error = ConvertError;
+	fn try_from(v: protos::SignedVtxoRequest) -> Result<Self, Self::Error> {
+		let vtxo = v.vtxo.unwrap();
+		Ok(SignedVtxoRequest {
+			vtxo: VtxoRequest {
+				amount: Amount::from_sat(vtxo.amount),
+				policy: VtxoPolicy::from_bytes(&vtxo.policy)?,
+			},
+			cosign_pubkey: PublicKey::from_bytes(&v.cosign_pubkey)?,
+			nonces: v.public_nonces.into_iter()
+				.map(|n| musig::PublicNonce::from_bytes(n))
+				.collect::<Result<_, _>>()?,
 		})
 	}
 }

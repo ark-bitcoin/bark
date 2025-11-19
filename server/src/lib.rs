@@ -45,6 +45,8 @@ use std::task::Poll;
 use std::time::Duration;
 
 use anyhow::Context;
+use ark::tree::signed::UnlockPreimage;
+use bitcoin::hashes::{sha256, Hash};
 use bitcoin::{bip32, Address, Amount, OutPoint};
 use bitcoin::secp256k1::{self, rand, schnorr, Keypair, PublicKey};
 use futures::Stream;
@@ -780,6 +782,7 @@ impl Server {
 		&self,
 		vtxos: impl IntoIterator<Item = VtxoRequest>,
 		cosign_pubkey: PublicKey,
+		unlock_preimage: UnlockPreimage,
 		server_cosign_pubkey: PublicKey,
 		expiry_height: BlockHeight,
 		utxo: OutPoint,
@@ -792,13 +795,14 @@ impl Server {
 		let builder = SignedTreeBuilder::new_for_cosign(
 			vtxos,
 			cosign_pubkey,
+			unlock_preimage,
 			expiry_height,
 			self.server_key.leak_ref().public_key(),
 			server_cosign_pubkey,
 			self.config.vtxo_exit_delta,
 			utxo,
 			pub_nonces,
-		);
+		)?;
 		Ok(builder.server_cosign(&cosign_key))
 	}
 
@@ -810,6 +814,7 @@ impl Server {
 		&self,
 		vtxos: impl IntoIterator<Item = VtxoRequest>,
 		cosign_pubkey: PublicKey,
+		unlock_preimage: UnlockPreimage,
 		server_cosign_pubkey: PublicKey,
 		expiry_height: BlockHeight,
 		utxo: OutPoint,
@@ -818,11 +823,12 @@ impl Server {
 		let tree = SignedTreeBuilder::construct_tree_spec(
 			vtxos,
 			cosign_pubkey,
+			sha256::Hash::hash(&unlock_preimage),
 			expiry_height,
 			self.server_key.leak_ref().public_key(),
 			server_cosign_pubkey,
 			self.config.vtxo_exit_delta,
-		).into_unsigned_tree(utxo);
+		).badarg("invalid VTXO tree spec")?.into_unsigned_tree(utxo);
 
 		if let Err(pk) = tree.verify_cosign_sigs(&signatures) {
 			bail!("invalid cosign signatures for xonly pk {}", pk);

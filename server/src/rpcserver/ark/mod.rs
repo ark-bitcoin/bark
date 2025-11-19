@@ -12,7 +12,10 @@ use log::info;
 use opentelemetry::KeyValue;
 use tokio::sync::oneshot;
 use tokio_stream::{Stream, StreamExt};
-use ark::{musig, OffboardRequest, ProtocolEncoding, Vtxo, VtxoId, VtxoIdInput, VtxoPolicy, VtxoRequest};
+
+use ark::{
+	musig, OffboardRequest, ProtocolEncoding, Vtxo, VtxoId, VtxoIdInput, VtxoPolicy, VtxoRequest,
+};
 use ark::lightning::{Bolt12InvoiceExt, Invoice, Offer, OfferAmount, PaymentHash, Preimage};
 use ark::arkoor::checkpointed_package::PackageCosignRequest;
 use ark::rounds::RoundId;
@@ -586,7 +589,7 @@ impl rpc::server::ArkService for Server {
 			if r.public_nonces.len() != self.config.nb_round_nonces {
 				macros::badarg!("need exactly {} public nonces", self.config.nb_round_nonces);
 			}
-			vtxo_requests.push(r.try_into().badarg("invalid vtxo request")?);
+			vtxo_requests.push(r.try_into().badarg("invalid signed vtxo request")?);
 		}
 
 		let offboards = req.offboard_requests.iter().map(|r| {

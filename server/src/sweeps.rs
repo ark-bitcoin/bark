@@ -164,7 +164,7 @@ impl<'a> RoundSweepInput<'a> {
 
 	fn psbt(&self) -> psbt::Input {
 		let round_cosign_pk = self.round.round.signed_tree.spec.funding_tx_cosign_pubkey();
-		let taproot = self.round.round.signed_tree.spec.cosign_taproot(round_cosign_pk);
+		let taproot = self.round.round.signed_tree.spec.internal_taproot(round_cosign_pk);
 		let mut ret = psbt::Input{
 			witness_utxo: Some(self.utxo.clone()),
 			sighash_type: Some(sighash::TapSighashType::Default.into()),
@@ -191,7 +191,7 @@ struct ExpiredRound {
 impl ExpiredRound {
 	fn new(id: RoundId, round: StoredRound) -> Self {
 		Self {
-			vtxo_txs: round.signed_tree.all_signed_txs(),
+			vtxo_txs: round.signed_tree.all_final_txs(),
 			connectors: ConnectorChain::new(
 				round.nb_input_vtxos,
 				OutPoint::new(id.as_round_txid(), 1),
@@ -376,7 +376,7 @@ impl<'a> SweepBuilder<'a> {
 		//     - if not, we add the spend info to the set
 
 		let mut ret = Some(0);
-		let signed_txs = round.round.signed_tree.all_signed_txs();
+		let signed_txs = round.round.signed_tree.all_final_txs();
 		let agg_pkgs = round.round.signed_tree.spec.cosign_agg_pks();
 		for (signed_tx, agg_pk) in signed_txs.into_iter().zip(agg_pkgs).rev() {
 			let txid = signed_tx.compute_txid();
@@ -616,7 +616,7 @@ impl Process {
 		self.pending_tx_by_utxo.remove(&OutPoint::new(round.id.as_round_txid(), ROUND_TX_CONNECTOR_VOUT));
 
 		// vtxo tree txs
-		let vtxo_txs = round.round.signed_tree.all_signed_txs();
+		let vtxo_txs = round.round.signed_tree.all_final_txs();
 		trace!("Removing vtxo txs from internal pending...");
 		for tx in &vtxo_txs {
 			for i in 0..tx.output.len() {

@@ -6,6 +6,7 @@ use std::sync::atomic::{self, AtomicBool};
 use std::time::Duration;
 
 use anyhow::Context;
+use ark::tree::signed::UnlockPreimage;
 use bitcoin::secp256k1::{rand, Keypair};
 use bitcoin::{Amount, FeeRate, OutPoint};
 use bitcoin_ext::{BlockDelta, BlockHeight};
@@ -373,15 +374,17 @@ impl Process {
 
 		let cosign_key = Keypair::new(&*SECP, &mut rand::thread_rng());
 		let server_cosign_key = self.srv.generate_ephemeral_cosign_key(Duration::from_secs(600)).await?;
+		let unlock_preimage = rand::random::<UnlockPreimage>();
 
 		let builder = SignedTreeBuilder::new(
 			requests.iter().cloned(),
 			cosign_key.public_key(),
+			unlock_preimage,
 			expiry,
 			self.srv.server_pubkey,
 			server_cosign_key.public_key(),
 			self.srv.config.vtxo_exit_delta,
-		);
+		).context("builder error")?;
 
 		//TODO(stevenroose) use actual feerate
 		let fee_rate = self.config.issue_tx_fallback_feerate;
@@ -415,6 +418,7 @@ impl Process {
 		let cosign = self.srv.cosign_vtxo_tree(
 			requests.iter().cloned(),
 			cosign_key.public_key(),
+			unlock_preimage,
 			server_cosign_key.public_key(),
 			expiry,
 			utxo,
@@ -428,6 +432,7 @@ impl Process {
 		self.srv.register_cosigned_vtxo_tree(
 			requests.iter().cloned(),
 			cosign_key.public_key(),
+			unlock_preimage,
 			server_cosign_key.public_key(),
 			expiry,
 			utxo,

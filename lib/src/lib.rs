@@ -104,20 +104,27 @@ pub struct VtxoRequest {
 	pub policy: VtxoPolicy,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+/// Request for the creation of an vtxo in a signed round
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize, Serialize)]
 pub struct SignedVtxoRequest {
 	/// The actual VTXO request.
 	pub vtxo: VtxoRequest,
 	/// The public key used by the client to cosign the transaction tree
 	/// The client SHOULD forget this key after signing it
-	pub cosign_pubkey: Option<PublicKey>,
+	pub cosign_pubkey: PublicKey,
+	/// The public cosign nonces for the cosign pubkey
+	pub nonces: Vec<musig::PublicNonce>,
 }
 
+impl AsRef<VtxoRequest> for SignedVtxoRequest {
+	fn as_ref(&self) -> &VtxoRequest {
+	    &self.vtxo
+	}
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, thiserror::Error)]
 #[error("invalid offboard request: {0}")]
 pub struct InvalidOffboardRequestError(&'static str);
-
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize, Serialize)]
 pub struct OffboardRequest {
@@ -242,6 +249,11 @@ pub mod scripts {
 			.into_script()
 	}
 
+	/// Contract that requires revealing the preimage to the given hash
+	/// and a signature using the given (aggregate) pubkey
+	///
+	/// The expected spending script witness is the preimage followed by
+	/// the signature.
 	pub fn hash_and_sign(hash: sha256::Hash, pubkey: XOnlyPublicKey) -> ScriptBuf {
 		let hash_160 = ripemd160::Hash::hash(&hash[..]);
 
