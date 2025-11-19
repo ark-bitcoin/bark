@@ -497,6 +497,17 @@ impl RoundStatus {
 	}
 }
 
+impl From<bark::round::RoundStatus> for RoundStatus {
+	fn from(s: bark::round::RoundStatus) -> Self {
+		match s {
+			bark::round::RoundStatus::Confirmed { funding_txid } => Self::Confirmed { funding_txid },
+			bark::round::RoundStatus::Unconfirmed { funding_txid } => Self::Unconfirmed { funding_txid },
+			bark::round::RoundStatus::Pending { unsigned_funding_txids } => Self::Pending { unsigned_funding_txids },
+			bark::round::RoundStatus::Failed { error } => Self::Failed { error },
+		}
+	}
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[cfg_attr(feature = "utoipa", derive(ToSchema))]
 pub struct InvoiceInfo {
