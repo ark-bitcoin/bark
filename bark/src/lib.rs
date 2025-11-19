@@ -2556,7 +2556,7 @@ impl Wallet {
 		let current_height = self.chain.tip().await?;
 
 		let mut receive = self.db.fetch_lightning_receive_by_payment_hash(payment_hash)?
-			.context("no lightning receive found")?;
+			.context("no pending lightning receive found for payment hash, might already be claimed")?;
 
 		// If we have already HTLC VTXOs stored, we can return them without asking the server
 		if receive.htlc_vtxos.is_some() {
@@ -2781,7 +2781,7 @@ impl Wallet {
 		tokio_stream::iter(self.pending_lightning_receives()?)
 			.for_each_concurrent(3, |rcv| async move {
 				if let Err(e) = self.try_claim_lightning_receive(rcv.invoice.into(), wait, None).await {
-					error!("Error claiming lightning receive: {}", e);
+					error!("Error claiming lightning receive: {:#}", e);
 				}
 			}).await;
 

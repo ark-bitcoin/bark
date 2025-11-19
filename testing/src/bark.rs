@@ -379,7 +379,7 @@ impl Bark {
 	}
 
 	pub async fn try_lightning_receive(&self, invoice: String) -> anyhow::Result<()> {
-		self.try_run(["lightning", "claim", &invoice, "--wait", "--verbose"]).await?;
+		self.try_run(["lightning", "claim", &invoice, "--wait", "--verbose", "--no-sync"]).await?;
 		Ok(())
 	}
 
@@ -388,17 +388,21 @@ impl Bark {
 	}
 
 	pub async fn try_lightning_receive_with_token(&self, invoice: String, token: String) -> anyhow::Result<()> {
-		self.try_run(["lightning", "claim", &invoice, "--token", &token, "--wait", "--verbose"]).await?;
+		self.try_run([
+			"lightning", "claim", &invoice, "--token", &token, "--wait", "--verbose", "--no-sync",
+		]).await?;
 		Ok(())
 	}
 
 	pub async fn try_lightning_receive_no_wait(&self, invoice: String) -> anyhow::Result<()> {
-		self.try_run(["lightning", "claim", &invoice, "--verbose"]).await?;
+		self.try_run(["lightning", "claim", &invoice, "--verbose", "--no-sync"]).await?;
 		Ok(())
 	}
 
 	pub async fn try_lightning_receive_with_token_no_wait(&self, invoice: String, token: String) -> anyhow::Result<()> {
-		self.try_run(["lightning", "claim", &invoice, "--token", &token, "--verbose"]).await?;
+		self.try_run([
+			"lightning", "claim", &invoice, "--token", &token, "--verbose", "--no-sync",
+		]).await?;
 		Ok(())
 	}
 
@@ -407,7 +411,7 @@ impl Bark {
 	}
 
 	pub async fn try_lightning_receive_all(&self) -> anyhow::Result<()> {
-		self.try_run(["lightning", "claim", "--wait", "--verbose"]).await?;
+		self.try_run(["lightning", "claim", "--no-sync", "--wait", "--verbose"]).await?;
 		Ok(())
 	}
 
