@@ -1,3 +1,4 @@
+pub mod dummy;
 
 use crate::Vtxo;
 use crate::vtxo::GenesisTransition;

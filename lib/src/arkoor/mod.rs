@@ -1,4 +1,5 @@
 pub mod package;
+pub mod checkpoint;
 
 use std::borrow::{Borrow, Cow};
 
@@ -30,12 +31,11 @@ pub enum ArkoorError {
 	TooManyOutputs,
 }
 
-pub fn arkoor_sighash(input_vtxo: &Vtxo, arkoor_tx: &Transaction) -> TapSighash {
-	let prev = input_vtxo.txout();
+pub fn arkoor_sighash(prevout: &TxOut, arkoor_tx: &Transaction) -> TapSighash {
 	let mut shc = SighashCache::new(arkoor_tx);
 
 	shc.taproot_key_spend_signature_hash(
-		0, &sighash::Prevouts::All(&[prev]), TapSighashType::Default,
+		0, &sighash::Prevouts::All(&[prevout]), TapSighashType::Default,
 	).expect("sighash error")
 }
 
@@ -114,8 +114,8 @@ pub struct ArkoorCosignResponse {
 /// and the desired outputs.
 ///
 /// The flow works as follows:
-/// - sender uses the constructor to check the request for validity
-/// - server uses the contructor to check the request for validity
+/// - sender uses the [ArkoorBuilder::new] to check the request for validity
+/// - server uses the [ArkoorBuilder::new] to check the request for validity
 /// - server uses [ArkoorBuilder::server_cosign] to construct a
 ///   [ArkoorCosignResponse] to send back to the sender
 /// - sender passes the response into [ArkoorBuilder::build_vtxos] to construct
@@ -173,7 +173,7 @@ impl<'a, T: Borrow<VtxoRequest> + Clone> ArkoorBuilder<'a, T> {
 	}
 
 	pub fn sighash(&self) -> TapSighash {
-		arkoor_sighash(&self.input, &self.unsigned_transaction())
+		arkoor_sighash(&self.input.txout(), &self.unsigned_transaction())
 	}
 
 	pub fn total_weight(&self) -> Weight {
@@ -234,7 +234,7 @@ impl<'a, T: Borrow<VtxoRequest> + Clone> ArkoorBuilder<'a, T> {
 
 		let txouts = self.txouts();
 		let tx = unsigned_arkoor_tx(&self.input, &txouts);
-		let sighash = arkoor_sighash(&self.input, &tx);
+		let sighash = arkoor_sighash(&self.input.txout(), &tx);
 		let taptweak = self.input.output_taproot().tap_tweak();
 
 		let agg_nonce = musig::nonce_agg(&[&self.user_nonce, &cosign_resp.pub_nonce]);
