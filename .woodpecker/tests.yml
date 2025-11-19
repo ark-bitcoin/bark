@@ -2,6 +2,9 @@ when:
   - event: pull_request
   - event: manual
   - event: tag
+    ref: refs/tags/bark-*
+  - event: tag
+    ref: refs/tags/server-*
   - evaluate: 'CI_PIPELINE_EVENT == "push" && CI_COMMIT_BRANCH == "master" && CI_REPO_URL == "https://gitlab.com/ark-bitcoin/bark"'
 
 clone:
