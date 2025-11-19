@@ -100,14 +100,7 @@ pub async fn execute_onchain_command(onchain_command: OnchainCommand, wallet: &m
 			}
 
 			let balance = onchain.balance();
-			let onchain_balance  = json::onchain::OnchainBalance {
-				total: balance.total(),
-				trusted_spendable: balance.trusted_spendable(),
-				immature: balance.immature,
-				trusted_pending: balance.trusted_pending,
-				untrusted_pending: balance.untrusted_pending,
-				confirmed: balance.confirmed,
-			};
+			let onchain_balance = json::onchain::OnchainBalance::from(balance);
 			output_json(&onchain_balance);
 		},
 		OnchainCommand::Address => {

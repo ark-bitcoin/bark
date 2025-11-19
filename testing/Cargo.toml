@@ -12,7 +12,7 @@ bark-server = { path = "../server" }
 bark-server-log = { path = "../server-log" }
 bark-server-rpc = { path = "../server-rpc", features = ["server"] }
 bark-cln-rpc = { path = "../cln-rpc"}
-bark-json = { path = "../bark-json"}
+bark-json = { path = "../bark-json", features = ["onchain_bdk"] }
 bark-wallet = { path = "../bark" }
 bark-bitcoin-ext = { path = "../bitcoin-ext" }
 
