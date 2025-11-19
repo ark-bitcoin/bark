@@ -96,7 +96,7 @@ pub struct WalletApiDoc;
 #[debug_handler]
 pub async fn connected(State(state): State<RestServer>) -> HandlerResult<Json<bark_json::web::ConnectedResponse>> {
 	Ok(axum::Json(bark_json::web::ConnectedResponse {
-		connected: state.wallet.check_connection().await.is_ok(),
+		connected: state.wallet.ark_info().is_some(),
 	}))
 }
 
