@@ -709,6 +709,8 @@ impl GenesisItem {
 pub struct VtxoTxIterItem {
 	/// The actual transaction.
 	pub tx: Transaction,
+	/// The index of the relevant output of this tx
+	pub output_idx: usize,
 }
 
 /// Iterator returned by [Vtxo::transactions].
@@ -767,7 +769,8 @@ impl<'a> Iterator for VtxoTxIter<'a> {
 		self.prev = OutPoint::new(tx.compute_txid(), item.output_idx as u32);
 		self.genesis_idx += 1;
 		self.current_amount = next_amount;
-		Some(VtxoTxIterItem { tx })
+		let output_idx = item.output_idx as usize;
+		Some(VtxoTxIterItem { tx, output_idx })
 	}
 
 	fn size_hint(&self) -> (usize, Option<usize>) {
