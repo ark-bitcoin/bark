@@ -19,6 +19,7 @@ mod m0018_htlc_recv_cltv_delta;
 mod m0019_round_state;
 mod m0020_new_movements_api;
 mod m0021_fix_lightning_movements;
+mod m0022_unreleased;
 
 use anyhow::Context;
 use log::debug;
@@ -45,6 +46,7 @@ use m0018_htlc_recv_cltv_delta::Migration0018;
 use m0019_round_state::Migration0019;
 use m0020_new_movements_api::Migration0020;
 use m0021_fix_lightning_movements::Migration0021;
+use m0022_unreleased::Migration0022;
 
 pub struct MigrationContext {}
 
@@ -83,6 +85,7 @@ impl MigrationContext {
 		self.try_migration(conn, &Migration0019{})?;
 		self.try_migration(conn, &Migration0020{})?;
 		self.try_migration(conn, &Migration0021{})?;
+		self.try_migration(conn, &Migration0022{})?;
 
 		Ok(())
 	}
@@ -237,7 +240,7 @@ mod test {
 
 		// Perform the migrations and confirm it took effect
 		migs.do_all_migrations(&mut conn).unwrap();
-		assert_current_version(&conn, 21).unwrap();
+		assert_current_version(&conn, 22).unwrap();
 
 		assert!(table_exists(&conn, "bark_vtxo").unwrap());
 		assert!(table_exists(&conn, "bark_vtxo_state").unwrap());

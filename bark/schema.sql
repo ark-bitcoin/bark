@@ -99,95 +99,6 @@ CREATE TABLE bark_pending_lightning_receive (
 				movement_id INTEGER,
 				created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now'))
 			);
-CREATE TABLE bark_movements (
-				id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL UNIQUE,
-				status TEXT NOT NULL,
-				subsystem_name TEXT NOT NULL,
-				movement_kind TEXT NOT NULL,
-				metadata TEXT,
-				intended_balance INTEGER NOT NULL,
-				effective_balance INTEGER NOT NULL,
-				offchain_fee INTEGER NOT NULL,
-				created_at INTEGER NOT NULL,
-				updated_at INTEGER NOT NULL,
-				completed_at INTEGER
-			);
-CREATE TABLE bark_movements_sent_to (
-				movement_id INTEGER NOT NULL,
-				destination TEXT NOT NULL,
-				amount INTEGER NOT NULL,
-				FOREIGN KEY (movement_id) REFERENCES bark_movements(id) ON DELETE CASCADE
-			);
-CREATE TABLE bark_movements_received_on (
-				movement_id INTEGER NOT NULL,
-				destination TEXT NOT NULL,
-				amount INTEGER NOT NULL,
-				FOREIGN KEY (movement_id) REFERENCES bark_movements(id) ON DELETE CASCADE
-			);
-CREATE TABLE bark_movements_input_vtxos (
-				movement_id INTEGER NOT NULL,
-				vtxo_id TEXT NOT NULL,
-				FOREIGN KEY (movement_id) REFERENCES bark_movements(id) ON DELETE CASCADE,
-				UNIQUE(movement_id, vtxo_id)
-			);
-CREATE TABLE bark_movements_output_vtxos (
-				movement_id INTEGER NOT NULL,
-				vtxo_id TEXT NOT NULL,
-				FOREIGN KEY (movement_id) REFERENCES bark_movements(id) ON DELETE CASCADE,
-				UNIQUE(movement_id, vtxo_id)
-			);
-CREATE TABLE bark_movements_exited_vtxos (
-				movement_id INTEGER NOT NULL,
-				vtxo_id TEXT NOT NULL,
-				FOREIGN KEY (movement_id) REFERENCES bark_movements(id) ON DELETE CASCADE,
-				UNIQUE(movement_id, vtxo_id)
-			);
-CREATE VIEW bark_movements_view AS
-			SELECT
-				m.id,
-				m.status,
-				m.subsystem_name,
-				m.movement_kind,
-				m.metadata,
-				m.intended_balance,
-				m.effective_balance,
-				m.offchain_fee,
-				m.created_at,
-				m.updated_at,
-				m.completed_at,
-				(
-					SELECT JSON_GROUP_ARRAY(JSON_OBJECT(
-						'destination', destination,
-						'amount', amount
-					))
-					FROM bark_movements_sent_to
-					WHERE movement_id = m.id
-				) AS sent_to,
-				(
-					SELECT JSON_GROUP_ARRAY(JSON_OBJECT(
-						'destination', destination,
-						'amount', amount
-					))
-					FROM bark_movements_received_on
-					WHERE movement_id = m.id
-				) AS received_on,
-				(
-					SELECT JSON_GROUP_ARRAY(vtxo_id)
-					FROM bark_movements_input_vtxos
-					WHERE movement_id = m.id
-				) AS input_vtxos,
-				(
-					SELECT JSON_GROUP_ARRAY(vtxo_id)
-					FROM bark_movements_output_vtxos
-					WHERE movement_id = m.id
-				) AS output_vtxos,
-				(
-					SELECT JSON_GROUP_ARRAY(vtxo_id)
-					FROM bark_movements_exited_vtxos
-					WHERE movement_id = m.id
-				) AS exited_vtxos
-			FROM bark_movements m
-/* bark_movements_view(id,status,subsystem_name,movement_kind,metadata,intended_balance,effective_balance,offchain_fee,created_at,updated_at,completed_at,sent_to,received_on,input_vtxos,output_vtxos,exited_vtxos) */;
 CREATE TABLE bark_vtxo (
 				id TEXT PRIMARY KEY,
 				expiry_height INTEGER,
@@ -195,3 +106,87 @@ CREATE TABLE bark_vtxo (
 				raw_vtxo BLOB,
 				created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now'))
 			);
+CREATE TABLE IF NOT EXISTS "bark_movements" (
+					id                INTEGER  PRIMARY KEY AUTOINCREMENT NOT NULL UNIQUE,
+					status            TEXT     NOT NULL,
+					subsystem_name    TEXT     NOT NULL,
+					movement_kind     TEXT     NOT NULL,
+					metadata          TEXT,
+					intended_balance  INTEGER  NOT NULL,
+					effective_balance INTEGER  NOT NULL,
+					offchain_fee      INTEGER  NOT NULL,
+					created_at        DATETIME NOT NULL,
+					updated_at        DATETIME NOT NULL,
+					completed_at      DATETIME
+				);
+CREATE TABLE bark_movements_sent_to (
+					movement_id INTEGER NOT NULL REFERENCES bark_movements(id),
+					destination TEXT    NOT NULL,
+					amount      INTEGER NOT NULL
+				);
+CREATE TABLE bark_movements_received_on (
+					movement_id INTEGER NOT NULL REFERENCES bark_movements(id),
+					destination TEXT    NOT NULL,
+					amount      INTEGER NOT NULL
+				);
+CREATE TABLE bark_movements_input_vtxos (
+					movement_id INTEGER NOT NULL REFERENCES bark_movements(id),
+					vtxo_id     TEXT    NOT NULL,
+					UNIQUE(movement_id, vtxo_id)
+				);
+CREATE TABLE bark_movements_output_vtxos (
+					movement_id INTEGER NOT NULL REFERENCES bark_movements(id),
+					vtxo_id     TEXT    NOT NULL,
+					UNIQUE(movement_id, vtxo_id)
+				);
+CREATE TABLE bark_movements_exited_vtxos (
+					movement_id INTEGER NOT NULL REFERENCES bark_movements(id),
+					vtxo_id     TEXT    NOT NULL,
+					UNIQUE(movement_id, vtxo_id)
+				);
+CREATE VIEW bark_movements_view AS
+					SELECT
+						m.id,
+						m.status,
+						m.subsystem_name,
+						m.movement_kind,
+						m.metadata,
+						m.intended_balance,
+						m.effective_balance,
+						m.offchain_fee,
+						m.created_at,
+						m.updated_at,
+						m.completed_at,
+						(
+							SELECT JSON_GROUP_ARRAY(JSON_OBJECT(
+								'destination', destination,
+								'amount', amount
+							))
+							FROM bark_movements_sent_to
+							WHERE movement_id = m.id
+						) AS sent_to,
+						(
+							SELECT JSON_GROUP_ARRAY(JSON_OBJECT(
+								'destination', destination,
+								'amount', amount
+							))
+							FROM bark_movements_received_on
+							WHERE movement_id = m.id
+						) AS received_on,
+						(
+							SELECT JSON_GROUP_ARRAY(vtxo_id)
+							FROM bark_movements_input_vtxos
+							WHERE movement_id = m.id
+						) AS input_vtxos,
+						(
+							SELECT JSON_GROUP_ARRAY(vtxo_id)
+							FROM bark_movements_output_vtxos
+							WHERE movement_id = m.id
+						) AS output_vtxos,
+						(
+							SELECT JSON_GROUP_ARRAY(vtxo_id)
+							FROM bark_movements_exited_vtxos
+							WHERE movement_id = m.id
+						) AS exited_vtxos
+					FROM bark_movements m
+/* bark_movements_view(id,status,subsystem_name,movement_kind,metadata,intended_balance,effective_balance,offchain_fee,created_at,updated_at,completed_at,sent_to,received_on,input_vtxos,output_vtxos,exited_vtxos) */;
