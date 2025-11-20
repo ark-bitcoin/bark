@@ -18,7 +18,7 @@ use bitcoin::taproot::TaprootSpendInfo;
 use lightning::offers::parse::Bolt12ParseError;
 use lightning::util::ser::Writeable;
 
-use bitcoin_ext::{BlockDelta, BlockHeight, P2TR_DUST};
+use bitcoin_ext::{AmountExt, BlockDelta, BlockHeight, P2TR_DUST};
 
 use crate::{musig, scripts, Vtxo, VtxoId, SECP};
 
@@ -301,6 +301,18 @@ impl<'de> serde::Deserialize<'de> for Invoice {
 	}
 }
 
+
+#[derive(Debug, thiserror::Error)]
+#[error("invoice amount mismatch: invoice={invoice}, user={user}")]
+pub enum CheckAmountError {
+	#[error("invalid user amount: invoice={invoice}, user={user}")]
+	InvalidUserAmount { invoice: Amount, user: Amount },
+	#[error("offer currency is not supported: {amount:?}")]
+	UnsupportedCurrency { amount: OfferAmount },
+	#[error("user amount required")]
+	UserAmountRequired,
+}
+
 #[derive(Debug, thiserror::Error)]
 #[error("invalid invoice signature: {0}")]
 pub struct CheckSignatureError(pub String);
@@ -331,6 +343,14 @@ impl Invoice {
 				ChainHash::REGTEST => Network::Regtest,
 				_ => panic!("unsupported network"),
 			},
+		}
+	}
+
+	/// See [get_invoice_final_amount] for more details.
+	pub fn get_final_amount(&self, user_amount: Option<Amount>) -> Result<Amount, CheckAmountError> {
+		match self {
+			Invoice::Bolt11(invoice) => invoice.get_final_amount(user_amount),
+			Invoice::Bolt12(invoice) => invoice.get_final_amount(user_amount),
 		}
 	}
 
@@ -368,8 +388,54 @@ impl fmt::Display for Invoice {
 	}
 }
 
+/// Get the amount to be paid. It checks both user and invoice
+/// equality if both are provided, else it tries to return one
+/// of them, or returns an error if neither are provided.
+fn get_invoice_final_amount(invoice_amount: Option<Amount>, user_amount: Option<Amount>) -> Result<Amount, CheckAmountError> {
+	match (invoice_amount, user_amount) {
+		(Some(invoice_amount), Some(user_amount)) => {
+			// NB: If provided, the user amount must be at least the invoice amount
+			// and we allow up to 2x the invoice amount, as specified in BOLT 4
+			if user_amount >= invoice_amount && user_amount <= invoice_amount * 2 {
+				return Ok(user_amount);
+			}
+
+			return Err(CheckAmountError::InvalidUserAmount {
+				invoice: invoice_amount,
+				user: user_amount,
+			});
+		}
+		(Some(invoice_amount), None) => {
+			return Ok(invoice_amount);
+		}
+		(None, Some(user_amount)) => {
+			return Ok(user_amount);
+		}
+		(None, None) => {
+			return Err(CheckAmountError::UserAmountRequired);
+		}
+	}
+}
+pub trait Bolt11InvoiceExt: Borrow<Bolt11Invoice> {
+	/// See [get_invoice_final_amount] for more details.
+	fn get_final_amount(&self, user_amount: Option<Amount>) -> Result<Amount, CheckAmountError> {
+		let invoice_amount = self.borrow().amount_milli_satoshis()
+			.map(Amount::from_msat_ceil);
+
+		get_invoice_final_amount(invoice_amount, user_amount)
+	}
+}
+
+impl Bolt11InvoiceExt for Bolt11Invoice {}
+
 pub trait Bolt12InvoiceExt: Borrow<Bolt12Invoice> {
 	fn payment_hash(&self) -> PaymentHash { PaymentHash::from(self.borrow().payment_hash()) }
+
+	/// See [get_invoice_final_amount] for more details.
+	fn get_final_amount(&self, user_amount: Option<Amount>) -> Result<Amount, CheckAmountError> {
+		let invoice_amount = Amount::from_msat_ceil(self.borrow().amount_msats());
+		get_invoice_final_amount(Some(invoice_amount), user_amount)
+	}
 
 	fn check_signature(&self) -> Result<(), CheckSignatureError> {
 		let message = Message::from_digest(self.borrow().signable_hash());

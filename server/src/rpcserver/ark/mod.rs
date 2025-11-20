@@ -273,15 +273,9 @@ impl rpc::server::ArkService for Server {
 		let invoice = Invoice::from_str(&req.invoice).badarg("invalid invoice")?;
 		invoice.check_signature().badarg("invalid invoice signature")?;
 
-		let inv_amount = invoice.amount_msat()
-			.map(|v| Amount::from_sat(v.div_ceil(1000)));
-
-		if let (Some(_), Some(inv)) = (req.user_amount_sat, inv_amount) {
-			badarg!("Invoice has amount of {} encoded. Please omit amount field", inv);
-		}
-
-		let amount = req.user_amount_sat.map(|v| Amount::from_sat(v)).or(inv_amount)
-			.badarg("amount field required for invoice without amount")?;
+		let user_amount = req.user_amount_sat.map(|v| Amount::from_sat(v));
+		let amount = invoice.get_final_amount(user_amount)
+			.badarg("missing or invalid user amount")?;
 
 		let input_ids = req.input_vtxo_ids.iter()
 			.map(VtxoId::from_bytes)

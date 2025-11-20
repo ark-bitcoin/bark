@@ -6,7 +6,7 @@ use lightning_invoice::Bolt11Invoice;
 use lnurllib::lightning_address::LightningAddress;
 use log::info;
 
-use ark::lightning::{Offer, Preimage};
+use ark::lightning::{Bolt11InvoiceExt, Offer, Preimage};
 
 use crate::Wallet;
 
@@ -18,13 +18,7 @@ pub async fn pay_invoice(
 	no_sync: bool,
 	wallet: &Wallet,
 ) -> anyhow::Result<Preimage> {
-	let inv_amount = invoice.amount_milli_satoshis()
-		.map(|v| Amount::from_sat(v.div_ceil(1000)));
-	if let (Some(_), Some(inv)) = (amount, inv_amount) {
-		bail!("Invoice has amount of {} encoded. Please omit amount argument", inv);
-	}
-	let final_amount = amount.or(inv_amount)
-		.context("amount required on invoice without amount")?;
+	let amount = invoice.get_final_amount(amount)?;
 	if comment.is_some() {
 		bail!("comment not supported for bolt11 invoice");
 	}
@@ -33,8 +27,8 @@ pub async fn pay_invoice(
 		info!("Syncing wallet...");
 		wallet.sync().await;
 	}
-	info!("Sending bolt11 payment of {} to invoice {}", final_amount, invoice);
-	let preimage = wallet.pay_lightning_invoice(invoice, amount).await?;
+	info!("Sending bolt11 payment of {} to invoice {}", amount, invoice);
+	let preimage = wallet.pay_lightning_invoice(invoice, Some(amount)).await?;
 	info!("Payment preimage received: {}", preimage.as_hex());
 
 	Ok(preimage)
