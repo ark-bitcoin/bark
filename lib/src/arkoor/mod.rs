@@ -1,5 +1,6 @@
 pub mod package;
 pub mod checkpoint;
+pub mod checkpointed_package;
 
 use std::borrow::{Borrow, Cow};
 
