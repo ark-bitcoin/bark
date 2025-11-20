@@ -2174,9 +2174,9 @@ impl Wallet {
 		if let Some(preimage) = payment_preimage {
 			info!("Payment succeeded! Preimage: {}", preimage.as_hex());
 
-			self.db.remove_pending_lightning_send(payment.invoice.payment_hash())?;
 			self.mark_vtxos_as_spent(&htlc_vtxos)?;
 			self.movements.finish_movement(movement_id, MovementStatus::Finished).await?;
+			self.db.remove_pending_lightning_send(payment.invoice.payment_hash())?;
 			Ok(preimage)
 		} else {
 			self.process_lightning_revocation(&payment).await?;
@@ -2259,8 +2259,8 @@ impl Wallet {
 					.try_into().map_err(|_| anyhow!("preimage is not 32 bytes"))?;
 				info!("Payment is complete, preimage, {}", preimage.as_hex());
 
+				self.mark_vtxos_as_spent(&payment.htlc_vtxos)?;
 				self.movements.finish_movement(payment.movement_id, MovementStatus::Finished).await?;
-
 				self.db.remove_pending_lightning_send(payment_hash)?;
 
 				return Ok(Some(preimage));
@@ -2476,6 +2476,7 @@ impl Wallet {
 		}
 
 		self.store_spendable_vtxos(&outputs)?;
+		self.mark_vtxos_as_spent(inputs)?;
 		info!("Got arkoors from lightning: {}",
 			outputs.iter().map(|v| v.id().to_string()).collect::<Vec<_>>().join(", ")
 		);
