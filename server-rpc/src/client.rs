@@ -70,13 +70,13 @@ pub enum ConnectError {
 	#[error(transparent)]
 	Connect(#[from] tonic::transport::Error),
 	#[error("handshake request failed: {0}")]
-	Handshake(String),
+	Handshake(tonic::Status),
 	#[error("version mismatch. Client max is: {client_max}, server min is: {server_min}")]
 	ProtocolVersionMismatchClientTooOld { client_max: u64, server_min: u64 },
 	#[error("version mismatch. Client min is: {client_min}, server max is: {server_max}")]
 	ProtocolVersionMismatchServerTooOld { client_min: u64, server_max: u64 },
 	#[error("error getting ark info: {0}")]
-	GetArkInfo(#[from] tonic::Status),
+	GetArkInfo(tonic::Status),
 	#[error("invalid ark info from ark server: {0}")]
 	InvalidArkInfo(#[from] ConvertError),
 	#[error("network mismatch. Expected: {expected}, Got: {got}")]
@@ -120,6 +120,12 @@ pub struct ServerConnection {
 }
 
 impl ServerConnection {
+
+	fn handshake_req() -> protos::HandshakeRequest {
+		protos::HandshakeRequest {
+			bark_version: Some(env!("CARGO_PKG_VERSION").into()),
+		}
+	}
 	/// Build a tonic endpoint from a server address, configuring timeouts and TLS if required.
 	///
 	/// - Supports `http` and `https` URIs. Any other scheme results in an error.
@@ -178,29 +184,10 @@ impl ServerConnection {
 		let channel = endpoint.connect().await?;
 
 		let mut handshake_client = ArkServiceClient::new(channel.clone());
-		let handshake = handshake_client.handshake(protos::HandshakeRequest {
-			bark_version: Some(env!("CARGO_PKG_VERSION").into()),
-		}).await.map_err(|e| ConnectError::Handshake(e.to_string()))?.into_inner();
+		let handshake = handshake_client.handshake(Self::handshake_req()).await
+			.map_err(ConnectError::Handshake)?.into_inner();
 
-
-		if let Some(ref msg) = handshake.psa {
-			warn!("Message from Ark server: \"{}\"", msg);
-		}
-
-		if MAX_PROTOCOL_VERSION < handshake.min_protocol_version {
-			return Err(ConnectError::ProtocolVersionMismatchClientTooOld {
-				client_max: MAX_PROTOCOL_VERSION, server_min: handshake.min_protocol_version
-			});
-		}
-		if MIN_PROTOCOL_VERSION > handshake.max_protocol_version {
-			return Err(ConnectError::ProtocolVersionMismatchServerTooOld {
-				client_min: MIN_PROTOCOL_VERSION, server_max: handshake.max_protocol_version
-			});
-		}
-
-		let pver = cmp::min(MAX_PROTOCOL_VERSION, handshake.max_protocol_version);
-		assert!((MIN_PROTOCOL_VERSION..=MAX_PROTOCOL_VERSION).contains(&pver));
-		assert!((handshake.min_protocol_version..=handshake.max_protocol_version).contains(&pver));
+		let pver = check_handshake(handshake)?;
 
 		let interceptor = ProtocolVersionInterceptor { pver };
 		let mut client = ArkServiceClient::with_interceptor(channel, interceptor);
@@ -215,4 +202,36 @@ impl ServerConnection {
 
 		Ok(ServerConnection { pver, info, client })
 	}
+
+	/// Checks the connection to the Ark server by performing an handshake request.
+	pub async fn check_connection(&self) -> Result<(), ConnectError> {
+		let mut client = self.client.clone();
+		let handshake = client.handshake(Self::handshake_req()).await
+			.map_err(ConnectError::Handshake)?.into_inner();
+		check_handshake(handshake)?;
+		Ok(())
+	}
+}
+
+fn check_handshake(handshake: protos::HandshakeResponse) -> Result<u64, ConnectError> {
+	if let Some(ref msg) = handshake.psa {
+		warn!("Message from Ark server: \"{}\"", msg);
+	}
+
+	if MAX_PROTOCOL_VERSION < handshake.min_protocol_version {
+		return Err(ConnectError::ProtocolVersionMismatchClientTooOld {
+			client_max: MAX_PROTOCOL_VERSION, server_min: handshake.min_protocol_version
+		});
+	}
+	if MIN_PROTOCOL_VERSION > handshake.max_protocol_version {
+		return Err(ConnectError::ProtocolVersionMismatchServerTooOld {
+			client_min: MIN_PROTOCOL_VERSION, server_max: handshake.max_protocol_version
+		});
+	}
+
+	let pver = cmp::min(MAX_PROTOCOL_VERSION, handshake.max_protocol_version);
+	assert!((MIN_PROTOCOL_VERSION..=MAX_PROTOCOL_VERSION).contains(&pver));
+	assert!((handshake.min_protocol_version..=handshake.max_protocol_version).contains(&pver));
+
+	Ok(pver)
 }
