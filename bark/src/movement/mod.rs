@@ -63,15 +63,11 @@ pub struct Movement {
 
 /// A unique identifier for a movement.
 #[derive(Debug, Clone, Copy, Eq, Hash, PartialEq, Deserialize, Serialize)]
-pub struct MovementId(u32);
+pub struct MovementId(pub u32);
 
 impl MovementId {
 	pub fn new(id: u32) -> Self {
 		Self(id)
-	}
-
-	pub fn inner(&self) -> u32 {
-		self.0
 	}
 }
 

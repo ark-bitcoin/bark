@@ -112,7 +112,7 @@ pub fn create_new_movement(
 }
 
 pub fn update_movement(tx: &Transaction, movement: &Movement) -> anyhow::Result<()> {
-	let id = movement.id.inner();
+	let id = movement.id.0;
 	tx.execute(
 		"UPDATE bark_movements
 		SET status = :status, metadata = :metadata, intended_balance = :intended,
@@ -228,7 +228,7 @@ pub fn store_new_pending_board(
 	statement.execute(named_params! {
 		":vtxo_id": vtxo_id.to_string(),
 		":funding_tx": bitcoin::consensus::encode::serialize_hex(&funding_tx),
-		":movement_id": movement_id.inner(),
+		":movement_id": movement_id.0,
 	})?;
 	Ok(())
 }
@@ -433,7 +433,7 @@ pub fn store_new_pending_lightning_send<V: VtxoRef>(
 		":payment_hash": invoice.payment_hash().as_hex().to_string(),
 		":amount_sats": amount.to_sat(),
 		":htlc_vtxo_ids": serde_json::to_string(&vtxo_ids)?,
-		":movement_id": movement_id.inner(),
+		":movement_id": movement_id.0,
 	})?;
 
 	Ok(PendingLightningSend {
@@ -712,7 +712,7 @@ pub fn update_lightning_receive(
 	statement.execute(named_params! {
 		":payment_hash": payment_hash.as_hex().to_string(),
 		":htlc_vtxo_ids": serde_json::to_string(&vtxo_ids)?,
-		":movement_id": Some(movement_id.inner()),
+		":movement_id": Some(movement_id.0),
 	})?;
 
 	Ok(())
