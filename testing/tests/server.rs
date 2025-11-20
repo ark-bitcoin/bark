@@ -662,7 +662,7 @@ async fn spend_unregistered_board() {
 		let _ = bark.refresh_all().await;
 		// we don't care that that call fails
 	});
-	l.recv().wait_millis(4500).await;
+	l.recv().wait(srv.max_round_delay()).await;
 }
 
 #[tokio::test]
