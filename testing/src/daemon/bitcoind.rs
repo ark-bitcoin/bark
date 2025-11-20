@@ -261,7 +261,7 @@ impl BitcoindHelper {
 		// Without this time-out there is a race-condition which can prevent
 		// this method from returning
 		check_init
-			.try_wait(500)
+			.try_wait_millis(500)
 			.await
 			.unwrap_or(Ok(false)) // Not initialized if the task fails
 			.unwrap_or(false)

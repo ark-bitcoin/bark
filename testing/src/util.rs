@@ -164,14 +164,14 @@ pub fn get_tx_propagation_timeout_millis() -> u64 {
 pub trait FutureExt: Future {
 	/// Add a timeout of the given number of milliseconds.
 	#[track_caller]
-	fn try_wait(self, milliseconds: u64) -> tokio::time::Timeout<Self> where Self: Sized {
+	fn try_wait_millis(self, milliseconds: u64) -> tokio::time::Timeout<Self> where Self: Sized {
 		tokio::time::timeout(Duration::from_millis(milliseconds), self)
 	}
 
 	/// Add a timeout of the given number of milliseconds.
 	#[track_caller]
-	async fn wait(self, milliseconds: u64) -> Self::Output where Self: Sized {
-		match self.try_wait(milliseconds).await {
+	async fn wait_millis(self, milliseconds: u64) -> Self::Output where Self: Sized {
+		match self.try_wait_millis(milliseconds).await {
 			Ok(v) => v,
 			Err(_) => {
 				error!("future timed out");
@@ -183,7 +183,7 @@ pub trait FutureExt: Future {
 	/// Add a short timeout.
 	#[track_caller]
 	fn try_fast(self) -> tokio::time::Timeout<Self> where Self: Sized {
-		self.try_wait(500)
+		self.try_wait_millis(500)
 	}
 
 	/// Awaits a future for a short period. Using this assumes that the future is already complete,
