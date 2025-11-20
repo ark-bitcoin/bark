@@ -36,11 +36,11 @@ pub enum RoundMovement {
 
 impl fmt::Display for RoundMovement {
 	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-		write!(f, "{}", match self {
-			RoundMovement::Offboard => "offboard",
-			RoundMovement::Refresh => "refresh",
-			RoundMovement::SendOnchain => "send_onchain",
-		})
+		match self {
+			RoundMovement::Offboard => f.write_str("offboard"),
+			RoundMovement::Refresh => f.write_str("refresh"),
+			RoundMovement::SendOnchain => f.write_str("send_onchain"),
+		}
 	}
 }
 
@@ -75,10 +75,10 @@ pub(crate) enum ArkoorMovement {
 
 impl fmt::Display for ArkoorMovement {
 	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-		write!(f, "{}", match self {
-			ArkoorMovement::Receive => "receive",
-			ArkoorMovement::Send => "send",
-		})
+		match self {
+			ArkoorMovement::Receive => f.write_str("receive"),
+			ArkoorMovement::Send => f.write_str("send"),
+		}
 	}
 }
 
@@ -101,9 +101,9 @@ impl BoardMovement {
 
 impl fmt::Display for BoardMovement {
 	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-		write!(f, "{}", match self {
-			BoardMovement::Board => "board",
-		})
+		match self {
+			BoardMovement::Board => f.write_str("board"),
+		}
 	}
 }
 
@@ -114,9 +114,9 @@ pub(crate) enum ExitMovement {
 
 impl fmt::Display for ExitMovement {
 	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-		write!(f, "{}", match self {
-			ExitMovement::Exit => "start",
-		})
+		match self {
+			ExitMovement::Exit => f.write_str("start"),
+		}
 	}
 }
 
@@ -139,9 +139,9 @@ pub(crate) enum LightningReceiveMovement {
 
 impl fmt::Display for LightningReceiveMovement {
 	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-		write!(f, "{}", match self {
-			LightningReceiveMovement::Receive => "receive",
-		})
+		match self {
+			LightningReceiveMovement::Receive => f.write_str("receive"),
+		}
 	}
 }
 
@@ -152,8 +152,8 @@ pub(crate) enum LightningSendMovement {
 
 impl fmt::Display for LightningSendMovement {
 	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-		write!(f, "{}", match self {
-			LightningSendMovement::Send => "send",
-		})
+		match self {
+			LightningSendMovement::Send => f.write_str("send"),
+		}
 	}
 }
