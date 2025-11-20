@@ -9,6 +9,7 @@ use utoipa::ToSchema;
 
 use ark::{Vtxo, VtxoId};
 use ark::vtxo::VtxoPolicyKind;
+use bark::movement::MovementId;
 use bark::vtxo::state::VtxoState;
 use bitcoin_ext::{BlockDelta, BlockHeight};
 
@@ -146,7 +147,8 @@ pub enum VtxoStateInfo {
 	Spent,
 	Locked {
 		#[serde(skip_serializing_if = "Option::is_none")]
-		movement_id: Option<String>,
+		#[cfg_attr(feature = "utoipa", schema(value_type = u32))]
+		movement_id: Option<MovementId>,
 	},
 }
 
@@ -156,7 +158,7 @@ impl From<VtxoState> for VtxoStateInfo {
 			VtxoState::Spendable => VtxoStateInfo::Spendable,
 			VtxoState::Spent => VtxoStateInfo::Spent,
 			VtxoState::Locked { movement_id } => VtxoStateInfo::Locked {
-				movement_id: movement_id.map(|id| id.to_string()),
+				movement_id,
 			},
 		}
 	}

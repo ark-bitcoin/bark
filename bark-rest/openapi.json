@@ -3522,10 +3522,9 @@
             ],
             "properties": {
               "movement_id": {
-                "type": [
-                  "string",
-                  "null"
-                ]
+                "type": "integer",
+                "format": "int32",
+                "minimum": 0
               },
               "type": {
                 "type": "string",
