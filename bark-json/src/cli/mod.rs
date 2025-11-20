@@ -2,6 +2,7 @@
 pub mod onchain;
 
 use std::borrow::Borrow;
+use std::collections::HashMap;
 use std::time::Duration;
 
 use bitcoin::secp256k1::PublicKey;
@@ -272,7 +273,7 @@ pub struct Movement {
 	/// Miscellaneous metadata for the movement. This is JSON containing arbitrary information as
 	/// defined by the subsystem that created the movement.
 	#[serde(default, skip_serializing_if = "Option::is_none")]
-	pub metadata: Option<String>,
+	pub metadata: Option<HashMap<String, serde_json::Value>>,
 	/// How much the movement was expected to increase or decrease the balance by. This is always an
 	/// estimate and often discounts any applicable fees.
 	#[serde(rename="intended_balance_sat", with="bitcoin::amount::serde::as_sat")]
@@ -313,17 +314,13 @@ pub struct Movement {
 	pub time: MovementTimestamp,
 }
 
-impl TryFrom<bark::movement::Movement> for Movement {
-	type Error = serde_json::Error;
-
-	fn try_from(m: bark::movement::Movement) -> Result<Self, Self::Error> {
-		Ok(Movement {
+impl From<bark::movement::Movement> for Movement {
+	fn from(m: bark::movement::Movement) -> Self {
+		Movement {
 			id: m.id,
 			status: m.status,
 			subsystem: MovementSubsystem::from(m.subsystem),
-			metadata: if m.metadata.is_empty() { None } else {
-				Some(serde_json::to_string(&m.metadata)?)
-			},
+			metadata: if m.metadata.is_empty() { None } else { Some(m.metadata) },
 			intended_balance: m.intended_balance,
 			effective_balance: m.effective_balance,
 			offchain_fee: m.offchain_fee,
@@ -333,7 +330,7 @@ impl TryFrom<bark::movement::Movement> for Movement {
 			output_vtxos: m.output_vtxos,
 			exited_vtxos: m.exited_vtxos,
 			time: MovementTimestamp::from(m.time),
-		})
+		}
 	}
 }
 

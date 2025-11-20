@@ -11,7 +11,7 @@
       "name": "CC0-1.0",
       "identifier": "CC0-1.0"
     },
-    "version": "0.1.0-beta.2"
+    "version": "0.1.0-beta.4"
   },
   "paths": {
     "/api/v1/bitcoin/tip": {
@@ -2896,10 +2896,14 @@
           },
           "metadata": {
             "type": [
-              "string",
+              "object",
               "null"
             ],
-            "description": "Miscellaneous metadata for the movement. This is JSON containing arbitrary information as\ndefined by the subsystem that created the movement."
+            "description": "Miscellaneous metadata for the movement. This is JSON containing arbitrary information as\ndefined by the subsystem that created the movement.",
+            "additionalProperties": {},
+            "propertyNames": {
+              "type": "string"
+            }
           },
           "offchain_fee_sat": {
             "type": "integer",
