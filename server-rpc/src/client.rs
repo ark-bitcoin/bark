@@ -33,6 +33,8 @@ use std::time::Duration;
 
 use bitcoin::Network;
 use log::{info, warn};
+use tonic::service::interceptor::InterceptedService;
+use tonic::transport::Channel;
 
 use ark::ArkInfo;
 
@@ -116,7 +118,7 @@ pub struct ServerConnection {
 	/// Server-side configuration and network parameters returned after connection.
 	pub info: ArkInfo,
 	/// The gRPC client to call Ark RPCs.
-	pub client: ArkServiceClient<tonic::service::interceptor::InterceptedService<tonic::transport::Channel, ProtocolVersionInterceptor>>,
+	pub client: ArkServiceClient<InterceptedService<Channel, ProtocolVersionInterceptor>>,
 }
 
 impl ServerConnection {
@@ -192,13 +194,7 @@ impl ServerConnection {
 		let interceptor = ProtocolVersionInterceptor { pver };
 		let mut client = ArkServiceClient::with_interceptor(channel, interceptor);
 
-		let res = client.get_ark_info(protos::Empty {}).await
-			.map_err(ConnectError::GetArkInfo)?;
-		let info = ArkInfo::try_from(res.into_inner())
-			.map_err(ConnectError::InvalidArkInfo)?;
-		if network != info.network {
-			return Err(ConnectError::NetworkMismatch { expected: network, got: info.network });
-		}
+		let info = client.ark_info(network).await?;
 
 		Ok(ServerConnection { pver, info, client })
 	}
@@ -210,6 +206,24 @@ impl ServerConnection {
 			.map_err(ConnectError::Handshake)?.into_inner();
 		check_handshake(handshake)?;
 		Ok(())
+	}
+}
+
+trait ArkServiceClientExt {
+	async fn ark_info(&mut self, network: Network) -> Result<ArkInfo, ConnectError>;
+}
+
+impl ArkServiceClientExt for ArkServiceClient<InterceptedService<Channel, ProtocolVersionInterceptor>> {
+	async fn ark_info(&mut self, network: Network) -> Result<ArkInfo, ConnectError> {
+		let res = self.get_ark_info(protos::Empty {}).await
+			.map_err(ConnectError::GetArkInfo)?;
+		let info = ArkInfo::try_from(res.into_inner())
+			.map_err(ConnectError::InvalidArkInfo)?;
+		if network != info.network {
+			return Err(ConnectError::NetworkMismatch { expected: network, got: info.network });
+		}
+
+		Ok(info)
 	}
 }
 
