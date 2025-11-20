@@ -1,5 +1,6 @@
 use std::iter;
 
+use bark_json::primitives::VtxoStateInfo;
 use bitcoin::{Address, Amount, FeeRate};
 use bitcoin::params::Params;
 use futures::FutureExt;
@@ -567,6 +568,8 @@ async fn bark_should_exit_a_pending_htlc_out_that_server_refuse_to_revoke() {
 	complete_exit(&ctx, &bark_1).await;
 
 	assert_eq!(bark_1.offchain_balance().await.pending_lightning_send, btc(0));
+	let vtxos = bark_1.vtxos().await;
+	assert!(!vtxos.iter().any(|v| matches!(v.state, VtxoStateInfo::Locked { .. })), "should not be any locked vtxo left");
 
 	// TODO: Drain exit outputs then check balance in onchain wallet
 }
