@@ -6,6 +6,7 @@ use std::time::Duration;
 use ark::vtxo::VtxoPolicyKind;
 use bark::lightning_invoice::Bolt11Invoice;
 use ark_testing::constants::ROUND_CONFIRMATIONS;
+use bark_json::primitives::VtxoStateInfo;
 use bitcoin::Amount;
 use cln_rpc as rpc;
 
@@ -123,6 +124,8 @@ async fn bark_pay_ln_succeeds() {
 	}
 
 	assert_eq!(bark_1.offchain_balance().await.pending_lightning_send, btc(0), "pending lightning send should be reset after payment");
+	let vtxos = bark_1.vtxos().await;
+	assert!(!vtxos.iter().any(|v| matches!(v.state, VtxoStateInfo::Locked { .. })), "should not be any locked vtxo left");
 }
 
 #[tokio::test]
@@ -156,6 +159,8 @@ async fn bark_pay_ln_with_multiple_inputs() {
 	bark_1.pay_lightning(invoice.clone(), None).await;
 
 	assert_eq!(bark_1.offchain_balance().await.pending_lightning_send, btc(0), "pending lightning send should be reset after payment");
+	let vtxos = bark_1.vtxos().await;
+	assert!(!vtxos.iter().any(|v| matches!(v.state, VtxoStateInfo::Locked { .. })), "should not be any locked vtxo left");
 }
 
 
@@ -185,6 +190,8 @@ async fn bark_pay_invoice_twice() {
 	assert!(res.unwrap_err().to_string().contains("Invoice has already been paid"));
 
 	assert_eq!(bark_1.offchain_balance().await.pending_lightning_send, btc(0), "pending lightning send should be reset after payment");
+	let vtxos = bark_1.vtxos().await;
+	assert!(!vtxos.iter().any(|v| matches!(v.state, VtxoStateInfo::Locked { .. })), "should not be any locked vtxo left");
 }
 
 
@@ -231,6 +238,8 @@ async fn bark_pay_ln_fails() {
 	);
 
 	assert_eq!(bark.offchain_balance().await.pending_lightning_send, btc(0), "pending lightning send should be reset after payment");
+	let vtxos = bark.vtxos().await;
+	assert!(!vtxos.iter().any(|v| matches!(v.state, VtxoStateInfo::Locked { .. })), "should not be any locked vtxo left");
 }
 
 #[tokio::test]
@@ -267,6 +276,8 @@ async fn bark_refresh_ln_change_vtxo() {
 	assert_eq!(vtxos[0].amount, btc(3));
 
 	assert_eq!(bark_1.offchain_balance().await.pending_lightning_send, btc(0), "pending lightning send should be reset after payment");
+	let vtxos = bark_1.vtxos().await;
+	assert!(!vtxos.iter().any(|v| matches!(v.state, VtxoStateInfo::Locked { .. })), "should not be any locked vtxo left");
 }
 
 #[tokio::test]
@@ -302,6 +313,8 @@ async fn bark_refresh_payment_revocation() {
 	assert_eq!(vtxos[0].amount, btc(2));
 
 	assert_eq!(bark_1.offchain_balance().await.pending_lightning_send, btc(0), "pending lightning send should be reset after payment");
+	let vtxos = bark_1.vtxos().await;
+	assert!(!vtxos.iter().any(|v| matches!(v.state, VtxoStateInfo::Locked { .. })), "should not be any locked vtxo left");
 }
 
 #[tokio::test]
@@ -335,6 +348,8 @@ async fn bark_rejects_sending_subdust_bolt11_payment() {
 	}
 
 	assert_eq!(bark_1.offchain_balance().await.pending_lightning_send, btc(0), "pending lightning send should be reset after payment");
+	let vtxos = bark_1.vtxos().await;
+	assert!(!vtxos.iter().any(|v| matches!(v.state, VtxoStateInfo::Locked { .. })), "should not be any locked vtxo left");
 }
 
 #[tokio::test]
@@ -361,6 +376,8 @@ async fn bark_can_send_full_balance_on_lightning() {
 	let balance = bark_1.offchain_balance().await;
 	assert_eq!(balance.spendable, btc(0));
 	assert_eq!(balance.pending_lightning_send, btc(0), "pending lightning send should be reset after payment");
+	let vtxos = bark_1.vtxos().await;
+	assert!(!vtxos.iter().any(|v| matches!(v.state, VtxoStateInfo::Locked { .. })), "should not be any locked vtxo left");
 }
 
 #[tokio::test]
@@ -431,6 +448,8 @@ async fn bark_can_receive_lightning() {
 		"pending lightning receive should be reset after payment");
 	assert_eq!(bark.offchain_balance().await.pending_lightning_receive.claimable, btc(0),
 		"pending lightning receive should be reset after payment");
+	let vtxos = bark.vtxos().await;
+	assert!(!vtxos.iter().any(|v| matches!(v.state, VtxoStateInfo::Locked { .. })), "should not be any locked vtxo left");
 }
 
 #[tokio::test]
@@ -481,6 +500,8 @@ async fn bark_check_lightning_receive_no_wait() {
 		"pending lightning receive should be reset after payment");
 	assert_eq!(bark.offchain_balance().await.pending_lightning_receive.claimable, btc(0),
 		"pending lightning receive should be reset after payment");
+	let vtxos = bark.vtxos().await;
+	assert!(!vtxos.iter().any(|v| matches!(v.state, VtxoStateInfo::Locked { .. })), "should not be any locked vtxo left");
 }
 
 #[tokio::test]
@@ -520,6 +541,8 @@ async fn bark_can_pay_intra_ark_invoice() {
 
 		assert_eq!(bark_2.offchain_balance().await.pending_lightning_send, btc(0),
 			"pending lightning send should be reset after payment");
+		let vtxos = bark_2.vtxos().await;
+		assert!(!vtxos.iter().any(|v| matches!(v.state, VtxoStateInfo::Locked { .. })), "should not be any locked vtxo left");
 	});
 
 	res1.await.unwrap();
@@ -534,6 +557,8 @@ async fn bark_can_pay_intra_ark_invoice() {
 		"pending lightning receive should be reset after payment");
 	assert_eq!(bark_1.offchain_balance().await.pending_lightning_receive.claimable, btc(0),
 		"pending lightning receive should be reset after payment");
+	let vtxos = bark_1.vtxos().await;
+	assert!(!vtxos.iter().any(|v| matches!(v.state, VtxoStateInfo::Locked { .. })), "should not be any locked vtxo left");
 }
 
 #[tokio::test]
@@ -583,6 +608,8 @@ async fn bark_can_revoke_on_intra_ark_timeout_invoice_pay_failure() {
 	}), "user should get a revocation arkoor of payment_amount + forwarding fee");
 
 	assert_eq!(bark_2.offchain_balance().await.pending_lightning_send, btc(0), "pending lightning send should be reset after payment");
+	let vtxos = bark_1.vtxos().await;
+	assert!(!vtxos.iter().any(|v| matches!(v.state, VtxoStateInfo::Locked { .. })), "should not be any locked vtxo left");
 }
 
 #[tokio::test]
@@ -634,6 +661,8 @@ async fn bark_can_revoke_on_intra_ark_send_when_receiver_leaves() {
 	}), "user should get a revocation arkoor of payment_amount + forwarding fee");
 
 	assert_eq!(bark_2.offchain_balance().await.pending_lightning_send, btc(0), "pending lightning send should be reset after payment");
+	let vtxos = bark_1.vtxos().await;
+	assert!(!vtxos.iter().any(|v| matches!(v.state, VtxoStateInfo::Locked { .. })), "should not be any locked vtxo left");
 }
 
 #[tokio::test]
@@ -711,6 +740,8 @@ async fn bark_revoke_expired_pending_ln_payment() {
 		"user should get a revocation arkoor of payment_amount + forwarding fee");
 
 	assert_eq!(bark_1.offchain_balance().await.pending_lightning_send, btc(0), "pending lightning send should be reset after payment");
+	let vtxos = bark_1.vtxos().await;
+	assert!(!vtxos.iter().any(|v| matches!(v.state, VtxoStateInfo::Locked { .. })), "should not be any locked vtxo left");
 }
 
 
@@ -740,6 +771,8 @@ async fn bark_pay_ln_offer() {
 		let balance = bark_1.offchain_balance().await;
 		assert_eq!(balance.spendable, btc(4));
 		assert_eq!(balance.pending_lightning_send, btc(0), "pending lightning send should be reset after payment");
+		let vtxos = bark_1.vtxos().await;
+		assert!(!vtxos.iter().any(|v| matches!(v.state, VtxoStateInfo::Locked { .. })), "should not be any locked vtxo left");
 	}
 
 	// Pay invoice with amount specified
@@ -750,6 +783,8 @@ async fn bark_pay_ln_offer() {
 		let balance = bark_1.offchain_balance().await;
 		assert_eq!(balance.spendable, btc(3));
 		assert_eq!(balance.pending_lightning_send, btc(0), "pending lightning send should be reset after payment");
+		let vtxos = bark_1.vtxos_no_sync().await;
+		assert!(!vtxos.iter().any(|v| matches!(v.state, VtxoStateInfo::Locked { .. })), "should not be any locked vtxo left");
 	}
 }
 
@@ -781,6 +816,8 @@ async fn bark_pay_twice_ln_offer() {
 	let balance = bark_1.offchain_balance().await;
 	assert_eq!(balance.spendable, btc(2));
 	assert_eq!(balance.pending_lightning_send, btc(0), "pending lightning send should be reset after payment");
+	let vtxos = bark_1.vtxos().await;
+	assert!(!vtxos.iter().any(|v| matches!(v.state, VtxoStateInfo::Locked { .. })), "should not be any locked vtxo left");
 }
 
 #[tokio::test]
