@@ -166,7 +166,9 @@ pub fn update_movement(tx: &Transaction, movement: &Movement) -> anyhow::Result<
 }
 
 pub fn get_all_movements(conn: &Connection) -> anyhow::Result<Vec<Movement>> {
-	let mut statement = conn.prepare("SELECT * FROM bark_movements_view ORDER BY created_at DESC")?;
+	let mut statement = conn.prepare(
+		"SELECT * FROM bark_movements_view ORDER BY created_at DESC, id DESC",
+	)?;
 	let mut rows = statement.query([])?;
 	let mut results = Vec::new();
 	while let Some(row) = rows.next()? {

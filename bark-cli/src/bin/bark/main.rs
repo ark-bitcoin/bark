@@ -495,16 +495,8 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 				.collect::<Result<Vec<_>, _>>()?;
 
 			// Movements are ordered from newest to oldest, so we reverse them to ensure the last
-			// item in the terminal is the newest. To reduce flaky tests, we should fall back to
-			// sorting by ID.
-			movements.sort_by(|l, r| {
-				let time = l.time.created_at.cmp(&r.time.created_at);
-				if time == Ordering::Equal {
-					l.id.inner().cmp(&r.id.inner())
-				} else {
-					time
-				}
-			});
+			// item in the terminal is the newest.
+			movements.reverse();
 
 			output_json(&movements);
 		},
