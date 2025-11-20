@@ -17,7 +17,7 @@ mod m0016_config;
 mod m0017_great_state_cleanup;
 mod m0018_htlc_recv_cltv_delta;
 mod m0019_round_state;
-mod m0020_unreleased__;
+mod m0020_new_movements_api;
 
 use anyhow::Context;
 use log::debug;
@@ -42,7 +42,7 @@ use m0016_config::Migration0016;
 use m0017_great_state_cleanup::Migration0017;
 use m0018_htlc_recv_cltv_delta::Migration0018;
 use m0019_round_state::Migration0019;
-use m0020_unreleased__::Migration0020;
+use m0020_new_movements_api::Migration0020;
 
 pub struct MigrationContext {}
 
