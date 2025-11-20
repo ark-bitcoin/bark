@@ -1,6 +1,6 @@
 [package]
 name = "bark-server-rpc"
-version = "0.1.0-beta.3"
+version = "0.1.0-beta.4"
 license = "CC0-1.0"
 authors = [ "Team Second <hello@second.tech>" ]
 repository = "https://gitlab.com/ark-bitcoin/bark"
@@ -16,7 +16,7 @@ intman = []
 
 [dependencies]
 # OWN
-ark-lib = { version = "0.1.0-beta.3", path = "../lib" }
+ark-lib = { version = "0.1.0-beta.4", path = "../lib" }
 bitcoin.workspace = true
 
 # EXPORTED

@@ -1,6 +1,6 @@
 [package]
 name = "bark-json"
-version = "0.1.0-beta.3" # lock to bark-wallet version
+version = "0.1.0-beta.4" # lock to bark-wallet version
 license = "CC0-1.0"
 authors = [ "Team Second <hello@second.tech>" ]
 description = "JSON definitions for the bark APIs"
@@ -12,9 +12,9 @@ onchain_bdk = ["bark-wallet/onchain_bdk", "bark-bitcoin-ext/bdk"]
 
 [dependencies]
 # OWN
-bark-wallet = { version = "0.1.0-beta.3", path = "../bark" }
-ark-lib = { version = "0.1.0-beta.3", path = "../lib" }
-bark-bitcoin-ext = { version = "0.1.0-beta.3", path = "../bitcoin-ext", default-features = false }
+bark-wallet = { version = "0.1.0-beta.4", path = "../bark" }
+ark-lib = { version = "0.1.0-beta.4", path = "../lib" }
+bark-bitcoin-ext = { version = "0.1.0-beta.4", path = "../bitcoin-ext", default-features = false }
 
 # INTERNAL
 serde_json.workspace = true

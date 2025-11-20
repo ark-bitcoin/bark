@@ -6,6 +6,11 @@ https://docs.second.tech/changelog/changelog/
 
 Below is a more concise summary for each version.
 
+# v0.1.0-beta.4
+
+- `barkwallet`
+  - Fixed a bug in which HTLC vtxo's weren't properly marked as spent
+	[#1345](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1345)
 
 # v0.1.0-beta.3
 
