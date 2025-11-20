@@ -62,7 +62,7 @@ pub struct Movement {
 }
 
 /// A unique identifier for a movement.
-#[derive(Debug, Clone, Copy, Eq, Hash, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Copy, Eq, Hash, PartialEq, Deserialize, Serialize)]
 pub struct MovementId(pub u32);
 
 impl MovementId {
@@ -73,12 +73,18 @@ impl MovementId {
 
 impl fmt::Display for MovementId {
 	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-		write!(f, "{}", self.0.to_string())
+		fmt::Display::fmt(&self.0, f)
+	}
+}
+
+impl fmt::Debug for MovementId {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		fmt::Display::fmt(&self, f)
 	}
 }
 
 /// Represents the current status of a [Movement].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum MovementStatus {
 	/// The default status of a new [Movement]. Should be treated as in-progress.
 	Pending,
@@ -105,6 +111,18 @@ impl MovementStatus {
 			Self::Failed => MOVEMENT_FAILED,
 			Self::Cancelled => MOVEMENT_CANCELLED,
 		}
+	}
+}
+
+impl fmt::Display for MovementStatus {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		f.write_str(self.as_str())
+	}
+}
+
+impl fmt::Debug for MovementStatus {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		fmt::Display::fmt(&self, f)
 	}
 }
 
