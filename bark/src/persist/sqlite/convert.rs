@@ -50,13 +50,14 @@ pub(crate) fn row_to_movement(row: &Row) -> anyhow::Result<Movement> {
 	}
 	Ok(Movement {
 		id: MovementId::new(row.get("id")?),
-		status: MovementStatus::from_str(&row.get::<&str, String>("status")?)?,
+		status: MovementStatus::from_str(&row.get::<_, String>("status")?)?,
 		subsystem: MovementSubsystem {
 			name: row.get("subsystem_name")?,
 			kind: row.get("movement_kind")?,
 		},
-		metadata: row.get::<&str, Option<String>>("metadata")?
-			.map(|s| from_json_text(&s)).unwrap_or_else(|| Ok(HashMap::new()))?,
+		metadata: row.get::<_, Option<String>>("metadata")?
+			.map(|s| from_json_text(&s))
+			.unwrap_or_else(|| Ok(HashMap::new()))?,
 		intended_balance: SignedAmount::from_sat(row.get("intended_balance")?),
 		effective_balance: SignedAmount::from_sat(row.get("effective_balance")?),
 		offchain_fee: Amount::from_sat(row.get("offchain_fee")?),
@@ -66,12 +67,12 @@ pub(crate) fn row_to_movement(row: &Row) -> anyhow::Result<Movement> {
 		output_vtxos: from_json_text_to_vec(row.get("output_vtxos")?)?,
 		exited_vtxos: from_json_text_to_vec(row.get("exited_vtxos")?)?,
 		time: MovementTimestamp {
-			created_at: DateTime::from_timestamp(row.get("created_at")?, 0)
-				.ok_or_else(|| rusqlite::Error::InvalidQuery)?,
-			updated_at: DateTime::from_timestamp(row.get("updated_at")?, 0)
-				.ok_or_else(|| rusqlite::Error::InvalidQuery)?,
-			completed_at: row.get::<&str, Option<i64>>("completed_at")?
-				.and_then(|ts| DateTime::from_timestamp(ts, 0)),
+			created_at: row.get::<_, DateTime<chrono::Utc>>("created_at")?
+				.with_timezone(&chrono::Local),
+			updated_at: row.get::<_, DateTime<chrono::Utc>>("updated_at")?
+				.with_timezone(&chrono::Local),
+			completed_at: row.get::<_, Option<DateTime<chrono::Utc>>>("completed_at")?
+				.map(|ts| ts.with_timezone(&chrono::Local)),
 		},
 	})
 }

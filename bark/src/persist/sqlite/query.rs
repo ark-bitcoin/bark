@@ -87,7 +87,7 @@ pub fn create_new_movement(
 	tx: &Transaction,
 	status: MovementStatus,
 	subsystem: &MovementSubsystem,
-	time: DateTime<chrono::Utc>,
+	time: DateTime<chrono::Local>,
 ) -> anyhow::Result<MovementId> {
 	let mut statement = tx.prepare("
 		INSERT INTO bark_movements (status, subsystem_name, movement_kind, intended_balance,
@@ -96,7 +96,7 @@ pub fn create_new_movement(
 			:created_at, :updated_at)
 		RETURNING id"
 	)?;
-	let time = time.timestamp();
+	let time = time.with_timezone(&chrono::Utc);
 	let id = statement.query_row(named_params! {
 		":status": status.as_str(),
 		":name": subsystem.name,
@@ -126,8 +126,8 @@ pub fn update_movement(tx: &Transaction, movement: &Movement) -> anyhow::Result<
 			":intended": movement.intended_balance.to_sat(),
 			":effective": movement.effective_balance.to_sat(),
 			":offchain_fee": movement.offchain_fee.to_sat(),
-			":updated_at": movement.time.updated_at.timestamp(),
-			":completed_at": movement.time.completed_at.map(|t| t.timestamp()),
+			":updated_at": movement.time.updated_at.with_timezone(&chrono::Utc),
+			":completed_at": movement.time.completed_at.map(|t| t.with_timezone(&chrono::Utc)),
 		},
 	)?;
 	// Update the recipient tables

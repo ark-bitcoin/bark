@@ -99,7 +99,7 @@ impl BarkPersister for SqliteClient {
 	fn create_new_movement(&self,
 		status: MovementStatus,
 		subsystem: &MovementSubsystem,
-		time: DateTime<chrono::Utc>,
+		time: DateTime<chrono::Local>,
 	) -> anyhow::Result<MovementId> {
 		let mut conn = self.connect()?;
 		let tx = conn.transaction()?;

@@ -39,7 +39,7 @@ serde.workspace = true
 tokio-util.workspace = true
 
 # INTERNAL
-rusqlite =  "0.31.0"
+rusqlite = { version = "0.31.0", features = ["chrono"] }
 
 lazy_static.workspace = true
 chrono.workspace = true

@@ -164,7 +164,7 @@ pub trait BarkPersister: Send + Sync + 'static {
 	fn create_new_movement(&self,
 		status: MovementStatus,
 		subsystem: &MovementSubsystem,
-		time: DateTime<chrono::Utc>,
+		time: DateTime<chrono::Local>,
 	) -> anyhow::Result<MovementId>;
 
 	/// Persists the given movement state.

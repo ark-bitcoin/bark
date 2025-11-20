@@ -10,7 +10,7 @@ use bitcoin::{Amount, BlockHash, Network, SignedAmount, Transaction, Txid};
 use bitcoin::bip32::Fingerprint;
 use bitcoin::hashes::Hash;
 use bitcoin::secp256k1::PublicKey;
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Local};
 use lightning_invoice::Bolt11Invoice;
 
 use ark::{Vtxo, VtxoId};
@@ -273,7 +273,7 @@ impl BarkPersister for Dummy {
 		&self,
 		_status: MovementStatus,
 		_subsystem: &MovementSubsystem,
-		_time: DateTime<Utc>,
+		_time: DateTime<Local>,
 	) -> anyhow::Result<MovementId> {
 		Ok(MovementId::new(0))
 	}
@@ -335,9 +335,9 @@ fn dummy_movement(status: MovementStatus) -> Movement {
 		output_vtxos: vec![],
 		exited_vtxos: vec![],
 		time: MovementTimestamp {
-			created_at: Utc::now(),
-			updated_at: Utc::now(),
-			completed_at: Some(Utc::now()),
+			created_at: Local::now(),
+			updated_at: Local::now(),
+			completed_at: Some(Local::now()),
 		},
 	}
 }

@@ -190,9 +190,9 @@ pub struct MovementSubsystem {
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct MovementTimestamp {
 	/// When the movement was first created.
-	pub created_at: DateTime<chrono::Utc>,
+	pub created_at: DateTime<chrono::Local>,
 	/// When the movement was last updated.
-	pub updated_at: DateTime<chrono::Utc>,
+	pub updated_at: DateTime<chrono::Local>,
 	/// The action responsible for registering the movement.
-	pub completed_at: Option<DateTime<chrono::Utc>>,
+	pub completed_at: Option<DateTime<chrono::Local>>,
 }
