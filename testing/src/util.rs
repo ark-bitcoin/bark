@@ -162,22 +162,35 @@ pub fn get_tx_propagation_timeout_millis() -> u64 {
 /// Extension trait for futures.
 #[async_trait]
 pub trait FutureExt: Future {
-	/// Add a timeout of the given number of milliseconds.
+
+	/// Add a timeout of the given [Duration]
 	#[track_caller]
-	fn try_wait_millis(self, milliseconds: u64) -> tokio::time::Timeout<Self> where Self: Sized {
-		tokio::time::timeout(Duration::from_millis(milliseconds), self)
+	fn try_wait(self, duration: Duration) -> tokio::time::Timeout<Self> where Self: Sized {
+		tokio::time::timeout(duration, self)
 	}
 
-	/// Add a timeout of the given number of milliseconds.
+	/// Add a timeout of the given [Duration]
 	#[track_caller]
-	async fn wait_millis(self, milliseconds: u64) -> Self::Output where Self: Sized {
-		match self.try_wait_millis(milliseconds).await {
+	async fn wait(self, duration: Duration) -> Self::Output where Self: Sized {
+		match self.try_wait(duration).await {
 			Ok(v) => v,
 			Err(_) => {
 				error!("future timed out");
 				panic!("future timed out");
 			},
 		}
+	}
+
+	/// Add a timeout of the given number of milliseconds.
+	#[track_caller]
+	fn try_wait_millis(self, milliseconds: u64) -> tokio::time::Timeout<Self> where Self: Sized {
+		self.try_wait(Duration::from_millis(milliseconds))
+	}
+
+	/// Add a timeout of the given number of milliseconds.
+	#[track_caller]
+	async fn wait_millis(self, milliseconds: u64) -> Self::Output where Self: Sized {
+		self.wait(Duration::from_millis(milliseconds)).await
 	}
 
 	/// Add a short timeout.
