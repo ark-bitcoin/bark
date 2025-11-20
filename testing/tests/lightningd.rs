@@ -977,13 +977,13 @@ async fn server_allows_claim_receive_for_valid_token_but_not_for_invalid_or_used
 	// First try claim with invalid token
 	let res = bark.try_lightning_receive_with_token(invoice_info_1.invoice.clone(), "badtoken".to_string()).await;
 	assert!(res.is_err());
-	assert_eq!(bark.spendable_balance().await, btc(0));
+	assert_eq!(bark.spendable_balance_no_sync().await, btc(0));
 	// Then claim with valid token
 	let res = bark.try_lightning_receive_with_token(invoice_info_1.invoice, token.clone()).await;
 	assert!(res.is_ok());
-	assert_eq!(bark.spendable_balance().await, btc(1));
+	assert_eq!(bark.spendable_balance_no_sync().await, btc(1));
 	// Claiming with token that has already been used should fail
 	let res = bark.try_lightning_receive_with_token(invoice_info_2.invoice, token).await;
 	assert!(res.is_err());
-	assert_eq!(bark.spendable_balance().await, btc(1));
+	assert_eq!(bark.spendable_balance_no_sync().await, btc(1));
 }
