@@ -7,7 +7,7 @@ pub struct Migration0020 {}
 
 impl Migration for Migration0020 {
 	fn name(&self) -> &str {
-		"No config in database"
+		"New movements API"
 	}
 
 	fn to_version(&self) -> i64 { 20 }
