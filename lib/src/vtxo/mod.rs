@@ -55,7 +55,7 @@
 
 
 mod validation;
-pub use self::validation::{ValidationResult, VtxoValidationError};
+pub use self::validation::VtxoValidationError;
 
 use std::collections::HashSet;
 use std::iter::FusedIterator;
@@ -627,14 +627,6 @@ impl GenesisTransition {
 		}
 	}
 
-	/// Whether this transition is spending a policy that also contains an exit clause.
-	fn has_exit(&self) -> bool {
-		match self {
-			Self::Cosigned { .. } => false,
-			Self::HashLockedCosigned { .. } => false,
-			Self::Arkoor { .. } => true,
-		}
-	}
 
 	/// Whether this transition is an out-of-round transition
 	fn is_arkoor(&self) -> bool {
@@ -705,8 +697,6 @@ impl GenesisItem {
 pub struct VtxoTxIterItem {
 	/// The actual transaction.
 	pub tx: Transaction,
-	/// Whether this tx is an exit tx, meaning that it contains exit outputs.
-	pub is_exit: bool,
 }
 
 /// Iterator returned by [Vtxo::transactions].
@@ -716,9 +706,6 @@ pub struct VtxoTxIter<'a> {
 	prev: OutPoint,
 	genesis_idx: usize,
 	current_amount: Amount,
-	/// We're in the end part of the chain where txs are exit txs.
-	/// This can only go from false to true, not back to false.
-	exit: bool,
 	done: bool,
 }
 
@@ -733,18 +720,8 @@ impl<'a> VtxoTxIter<'a> {
 			vtxo: vtxo,
 			genesis_idx: 0,
 			current_amount: onchain_amount,
-			exit: false,
 			done: false,
 		}
-	}
-
-	pub fn first_exit(mut self) -> Option<Transaction> {
-		let mut current = self.next();
-		while !self.exit {
-			current = self.next();
-		}
-
-		current.map(|c| c.tx)
 	}
 }
 
@@ -762,7 +739,6 @@ impl<'a> Iterator for VtxoTxIter<'a> {
 		).expect("we calculated this amount beforehand");
 
 		let next_output = if let Some(item) = self.vtxo.genesis.get(self.genesis_idx + 1) {
-			self.exit = self.exit || item.transition.has_exit();
 			item.transition.input_txout(
 				next_amount,
 				self.vtxo.server_pubkey,
@@ -772,7 +748,6 @@ impl<'a> Iterator for VtxoTxIter<'a> {
 		} else {
 			// when we reach the end of the chain, we take the eventual output of the vtxo
 			self.done = true;
-			self.exit = true;
 			self.vtxo.policy.txout(self.vtxo.amount, self.vtxo.server_pubkey, self.vtxo.exit_delta)
 		};
 
@@ -780,7 +755,7 @@ impl<'a> Iterator for VtxoTxIter<'a> {
 		self.prev = OutPoint::new(tx.compute_txid(), item.output_idx as u32);
 		self.genesis_idx += 1;
 		self.current_amount = next_amount;
-		Some(VtxoTxIterItem { tx, is_exit: self.exit })
+		Some(VtxoTxIterItem { tx })
 	}
 
 	fn size_hint(&self) -> (usize, Option<usize>) {
@@ -938,15 +913,6 @@ impl Vtxo {
 		}
 	}
 
-	/// Whether this [Vtxo] can be spent in an arkoor tx.
-	pub fn is_arkoor_compatible(&self) -> bool {
-		self.genesis.iter().all(|i| match i.transition {
-			GenesisTransition::Cosigned { .. } => true,
-			GenesisTransition::HashLockedCosigned { .. } => true,
-			GenesisTransition::Arkoor { ref policy, .. } => policy.is_arkoor_compatible(),
-		}) && self.policy.is_arkoor_compatible()
-	}
-
 	/// The public key used to cosign arkoor txs spending this [Vtxo].
 	/// This will return [None] if [Vtxo::is_arkoor_compatible] returns false.
 	pub fn arkoor_pubkey(&self) -> Option<PublicKey> {
@@ -988,12 +954,6 @@ impl Vtxo {
 		self.policy.txout(self.amount, self.server_pubkey, self.exit_delta)
 	}
 
-	/// Whether this VTXO contains our-of-round parts. This is true for both
-	/// arkoor and lightning vtxos.
-	pub fn is_arkoor(&self) -> bool {
-		self.genesis.iter().any(|t| t.transition.has_exit())
-	}
-
 	/// Whether this VTXO is fully signed
 	///
 	/// It is possible to represent unsigned VTXOs, for which this method
@@ -1020,35 +980,6 @@ impl Vtxo {
 		}
 	}
 
-	/// The set of cosign pubkeys that is present in all of the exit nodes of the
-	/// non-arkoor part of the exit path.
-	pub fn round_cosign_pubkeys(&self) -> Vec<PublicKey> {
-		let mut ret = Option::<Vec<PublicKey>>::None;
-
-		// We want to gather the cosign pubkeys that are present in all cosigned
-		// transitions. We expect the last transition to have the fewest number of
-		// cosign pubkeys so we go backwards.
-		for item in self.genesis.iter().rev() {
-			match &item.transition {
-				GenesisTransition::Cosigned { pubkeys, .. } => {
-					if let Some(ref mut keys) = ret {
-						keys.retain(|p| pubkeys.contains(p));
-						if keys.is_empty() {
-							break;
-						}
-					} else {
-						// first cosigned transition
-						ret = Some(pubkeys.clone());
-					}
-				},
-				GenesisTransition::HashLockedCosigned { .. } => {},
-				GenesisTransition::Arkoor { .. } => {},
-			}
-		}
-
-		ret.unwrap_or_default()
-	}
-
 	/// The set of all arkoor pubkeys present in the arkoor part
 	/// of the VTXO exit path.
 	pub fn arkoor_pubkeys(&self) -> HashSet<PublicKey> {
@@ -1066,7 +997,7 @@ impl Vtxo {
 	pub fn validate(
 		&self,
 		chain_anchor_tx: &Transaction,
-	) -> Result<ValidationResult, VtxoValidationError> {
+	) -> Result<(), VtxoValidationError> {
 		self::validation::validate(&self, chain_anchor_tx)
 	}
 }

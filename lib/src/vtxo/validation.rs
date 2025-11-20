@@ -48,20 +48,6 @@ impl VtxoValidationError {
 	}
 }
 
-/// Result of VTXO validation
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum ValidationResult {
-	/// The VTXO is safe as long as one of the given cosign pubkeys
-	/// is trusted to not create a double spend.
-	Cosigned,
-	/// The VTXO is safe as long as
-	/// - one of the cosign pubkeys does not create a double spend, and
-	/// - none of the arkoor pubkeys colludes with the server to create a
-	///   double spend.
-	CosignedArkoor,
-}
-
-
 #[inline]
 fn verify_transition(
 	vtxo: &Vtxo,
@@ -138,7 +124,7 @@ fn verify_transition(
 pub fn validate(
 	vtxo: &Vtxo,
 	chain_anchor_tx: &Transaction,
-) -> Result<ValidationResult, VtxoValidationError> {
+) -> Result<(), VtxoValidationError> {
 	// We start by validating the chain anchor output.
 	let anchor_txout = chain_anchor_tx.output.get(vtxo.chain_anchor().vout as usize)
 		.ok_or(VtxoValidationError::Invalid("chain anchor vout out of range"))?;
@@ -158,12 +144,6 @@ pub fn validate(
 		return Err(VtxoValidationError::Invalid("no genesis items"));
 	}
 
-	let cosign_pubkeys = vtxo.round_cosign_pubkeys();
-	if cosign_pubkeys.is_empty() {
-		return Err(VtxoValidationError::InconsistentCosignPubkeys);
-	}
-
-	let mut has_arkoor = false;
 	let mut prev = (Cow::Borrowed(chain_anchor_tx), vtxo.chain_anchor().vout as usize, onchain_amount);
 	let mut iter = vtxo.genesis.iter().enumerate().peekable();
 	while let Some((idx, item)) = iter.next() {
@@ -186,7 +166,6 @@ pub fn validate(
 				}
 			},
 			GenesisTransition::Arkoor { policy, .. } => {
-				has_arkoor = true;
 				if policy.arkoor_pubkey().is_none() {
 					return Err(VtxoValidationError::InvalidArkoorPolicy {
 						policy: policy.policy_type(),
@@ -225,7 +204,7 @@ pub fn validate(
 		prev = (Cow::Owned(next_tx), item.output_idx as usize, next_amount);
 	}
 
-	Ok(if has_arkoor { ValidationResult::CosignedArkoor } else { ValidationResult::Cosigned })
+	Ok(())
 }
 
 #[cfg(test)]
