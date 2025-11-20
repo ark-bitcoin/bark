@@ -3,12 +3,12 @@ use std::str::FromStr;
 use axum::extract::{Query, State};
 use axum::routing::{get, post};
 use axum::{debug_handler, Json, Router};
-use bark::lightning_utils::{pay_invoice, pay_lnaddr, pay_offer};
 use bitcoin::Amount;
 use anyhow::Context;
 use utoipa::OpenApi;
 
 use ark::lightning::Offer;
+use bark::lightning::{pay_invoice, pay_lnaddr, pay_offer};
 use bark::lightning_invoice::Bolt11Invoice;
 use bark::lnurllib::lightning_address::LightningAddress;
 

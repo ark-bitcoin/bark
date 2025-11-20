@@ -10,7 +10,7 @@ use tracing::info;
 use utoipa::OpenApi;
 
 use ark::lightning::{Bolt11Invoice, Offer};
-use bark::lightning_utils::{pay_invoice, pay_lnaddr, pay_offer};
+use bark::lightning::{pay_invoice, pay_lnaddr, pay_offer};
 use bark::lnurllib::lightning_address::LightningAddress;
 use bark::subsystem::RoundMovement;
 use bark::vtxo::selection::VtxoFilter;

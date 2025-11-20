@@ -1,6 +1,5 @@
 use std::str::FromStr;
 
-use bark::lightning_utils::{pay_invoice, pay_lnaddr, pay_offer};
 use bitcoin::Amount;
 use clap;
 use lightning::offers::offer::Offer;
@@ -9,6 +8,7 @@ use lnurl::lightning_address::LightningAddress;
 use log::info;
 
 use ark::lightning::{PaymentHash, Preimage};
+use bark::lightning::{pay_invoice, pay_lnaddr, pay_offer};
 use bark::Wallet;
 use bark_json::cli::{InvoiceInfo, LightningReceiveInfo};
 
