@@ -1,0 +1,6 @@
+- The notion of arkoor-depth has been removed.
+  Clients can now send their vtxos irregardless of their depth
+  - the `max_arkoor_depth` has been removed from `ArkInfo`
+  - `Vtxo::is_arkoor` is removed
+  - `Vtxo::arkoor_depth` is removed
+  [#1342](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1342)
