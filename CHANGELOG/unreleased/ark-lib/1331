@@ -1,0 +1,5 @@
+- Added `get_final_amount` to `lightning::Invoice`, allowing an explicit
+  user-provided amount for payment, if it is at least the invoice amount
+  and at most double, per BOLT 4.
+  [#1331](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1331)
+
