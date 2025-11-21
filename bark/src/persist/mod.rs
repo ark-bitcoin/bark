@@ -187,7 +187,7 @@ pub trait BarkPersister: Send + Sync + 'static {
 	/// Errors:
 	/// - If the movement does not exist.
 	/// - If retrieving the movement fails.
-	fn get_movement(&self, movement_id: MovementId) -> anyhow::Result<Movement>;
+	fn get_movement_by_id(&self, movement_id: MovementId) -> anyhow::Result<Movement>;
 
 	/// Gets every stored movement.
 	///

@@ -282,7 +282,7 @@ impl BarkPersister for Dummy {
 		Ok(())
 	}
 
-	fn get_movement(&self, _movement_id: MovementId) -> anyhow::Result<Movement> {
+	fn get_movement_by_id(&self, _movement_id: MovementId) -> anyhow::Result<Movement> {
 		Ok(dummy_movement(MovementStatus::Pending))
 	}
 

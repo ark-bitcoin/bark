@@ -131,7 +131,7 @@ impl MovementManager {
 			return Err(MovementError::IncorrectStatus { status: status.as_str().into() });
 		}
 		let id = self.new_movement_at(subsystem_id, movement_kind, at).await?;
-		let mut movement = self.db.get_movement(id)
+		let mut movement = self.db.get_movement_by_id(id)
 			.map_err(|e| MovementError::LoadError { id, e })?;
 		details.apply_to(&mut movement, at);
 		movement.status = status;
@@ -267,7 +267,7 @@ impl MovementManager {
 		if movements.contains_key(&id) {
 			return Ok(());
 		}
-		let movement = self.db.get_movement(id)
+		let movement = self.db.get_movement_by_id(id)
 			.map_err(|e| MovementError::LoadError { id, e })?;
 		movements.insert(id, Arc::new(RwLock::new(movement)));
 		Ok(())

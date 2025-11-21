@@ -177,7 +177,7 @@ pub fn get_all_movements(conn: &Connection) -> anyhow::Result<Vec<Movement>> {
 	Ok(results)
 }
 
-pub fn get_movement(conn: &Connection, id: MovementId) -> anyhow::Result<Movement> {
+pub fn get_movement_by_id(conn: &Connection, id: MovementId) -> anyhow::Result<Movement> {
 	let mut statement = conn.prepare(
 		"SELECT * FROM bark_movements_view WHERE id = ?1"
 	)?;
