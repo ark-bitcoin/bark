@@ -2057,6 +2057,53 @@ impl Wallet {
 		Ok(())
 	}
 
+	/// Processes the result of a lightning payment by checking the preimage sent by the server and
+	/// completing the payment if successful.
+	///
+	/// Note:
+	/// - That function cannot return an Error if the server provides a valid preimage, meaning
+	/// that if some occur, it is useless to ask for revocation as server wouldn't accept it.
+	/// In that case, it is better to keep the payment pending and try again later
+	///
+	/// # Returns
+	///
+	/// Returns `Ok(Some(Preimage))` if the payment is successfully completed and a preimage is
+	/// received.
+	/// Returns `Ok(None)` if preimage is missing, invalid or does not match the payment hash.
+	/// Returns an `Err` if an error occurs during the payment completion.
+	async fn process_lightning_send_server_preimage(
+		&self,
+		preimage: Option<Vec<u8>>,
+		payment: &PendingLightningSend,
+	) -> anyhow::Result<Option<Preimage>> {
+		let payment_hash = payment.invoice.payment_hash();
+		let preimage_res = preimage
+			.context("preimage is missing")
+			.map(|p| Ok(Preimage::try_from(p)?))
+			.flatten();
+
+		match preimage_res {
+			Ok(preimage) if preimage.compute_payment_hash() == payment_hash => {
+				info!("Lightning payment succeeded! Preimage: {}. Payment hash: {}",
+					preimage.as_hex(), payment.invoice.payment_hash().as_hex());
+
+				// Complete the payment
+				self.db.remove_pending_lightning_send(payment.invoice.payment_hash())?;
+				self.mark_vtxos_as_spent(&payment.htlc_vtxos)?;
+				self.movements.finish_movement(payment.movement_id,
+					MovementStatus::Finished).await?;
+
+				Ok(Some(preimage))
+			},
+			_ => {
+				error!("Server failed to provide a valid preimage. \
+					Payment hash: {}. Preimage result: {:#?}", payment_hash, preimage_res
+				);
+				Ok(None)
+			}
+		}
+	}
+
 	/// Pays a Lightning [Invoice] using Ark VTXOs. This is also an out-of-round payment
 	/// so the same [Wallet::send_arkoor_payment] rules apply.
 	pub async fn pay_lightning_invoice<T>(
@@ -2192,18 +2239,16 @@ impl Wallet {
 
 		let res = srv.client.finish_lightning_payment(req).await?.into_inner();
 		debug!("Progress update: {}", res.progress_message);
-		let payment_preimage = Preimage::try_from(res.payment_preimage()).ok();
 
-		if let Some(preimage) = payment_preimage {
-			info!("Payment succeeded! Preimage: {}", preimage.as_hex());
+		let preimage_opt = self.process_lightning_send_server_preimage(
+			res.payment_preimage, &payment,
+		).await?;
 
-			self.mark_vtxos_as_spent(&htlc_vtxos)?;
-			self.movements.finish_movement(movement_id, MovementStatus::Finished).await?;
-			self.db.remove_pending_lightning_send(payment.invoice.payment_hash())?;
-			Ok(preimage)
+		if let Some(preimage) = preimage_opt {
+			return Ok(preimage);
 		} else {
 			self.process_lightning_revocation(&payment).await?;
-			bail!("No preimage, payment failed: {}", res.progress_message);
+			bail!("Payment failed, but got revocation vtxos: {}", res.progress_message);
 		}
 	}
 
@@ -2264,29 +2309,34 @@ impl Wallet {
 				true
 			},
 			protos::PaymentStatus::Pending => {
-				trace!("Payment is still pending, HTLC expiry: {}, tip: {}",
-					policy.htlc_expiry, tip);
 				if tip > policy.htlc_expiry {
-					info!("Payment is still pending, but HTLC is expired: revoking VTXO");
+					trace!("Payment is still pending, but HTLC is expired (tip: {}, \
+						expiry: {}): revoking VTXO", tip, policy.htlc_expiry);
 					true
 				} else {
-					info!("Payment is still pending and HTLC is not expired ({}): \
-						doing nothing for now", policy.htlc_expiry,
-					);
+					trace!("Payment is still pending and HTLC is not expired (tip: {}, \
+						expiry: {}): doing nothing for now", tip, policy.htlc_expiry);
 					false
 				}
 			},
 			protos::PaymentStatus::Complete => {
-				let preimage: Preimage = res.payment_preimage
-					.context("payment completed but no preimage")?
-					.try_into().map_err(|_| anyhow!("preimage is not 32 bytes"))?;
-				info!("Payment is complete, preimage, {}", preimage.as_hex());
+				let preimage_opt = self.process_lightning_send_server_preimage(
+					res.payment_preimage, &payment,
+				).await?;
 
-				self.mark_vtxos_as_spent(&payment.htlc_vtxos)?;
-				self.movements.finish_movement(payment.movement_id, MovementStatus::Finished).await?;
-				self.db.remove_pending_lightning_send(payment_hash)?;
-
-				return Ok(Some(preimage));
+				if let Some(preimage) = preimage_opt {
+					return Ok(Some(preimage));
+				} else {
+					if tip > policy.htlc_expiry {
+						trace!("Completed payment has no valid preimage and HTLC is \
+							expired (tip: {}, expiry: {}): revoking VTXO", tip, policy.htlc_expiry);
+						true
+					} else {
+						trace!("Completed payment has no valid preimage, but HTLC is \
+							not expired (tip: {}, expiry: {}): doing nothing for now", tip, policy.htlc_expiry);
+						false
+					}
+				}
 			},
 		};
 

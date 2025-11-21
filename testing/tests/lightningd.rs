@@ -304,7 +304,10 @@ async fn bark_refresh_payment_revocation() {
 
 	// Try send coins through lightning
 	assert_eq!(bark_1.spendable_balance().await, board_amount);
-	bark_1.try_pay_lightning(invoice, None).await.expect_err("The payment fails");
+	let err = bark_1.try_pay_lightning(invoice, None).await
+		.expect_err("The payment fails");
+	assert!(err.to_string().contains("Payment failed, but got revocation vtxos"),
+		"should have received error. received: {}", err);
 
 	bark_1.refresh_all().await;
 	ctx.generate_blocks(srv.config().htlc_send_expiry_delta as u32 + 6).await;
@@ -596,7 +599,8 @@ async fn bark_can_revoke_on_intra_ark_timeout_invoice_pay_failure() {
 	});
 
 	let err = bark_2.try_pay_lightning(invoice_info.invoice, None).await.unwrap_err();
-	assert!(err.to_string().contains("payment failed"), "should have received error. received: {}", err);
+	assert!(err.to_string().contains("Payment failed, but got revocation vtxos"),
+		"should have received error. received: {}", err);
 
 	let vtxos = bark_2.vtxos().await;
 	assert_eq!(vtxos.len(), 2, "user should get 2 VTXOs, change and revocation one");
@@ -649,7 +653,8 @@ async fn bark_can_revoke_on_intra_ark_send_when_receiver_leaves() {
 	// receiver never show up so invoice will eventually fail
 
 	let err = handle.wait_millis(10_000).await.unwrap();
-	assert!(err.to_string().contains("payment failed"), "should have received error. received: {}", err);
+	assert!(err.to_string().contains("Payment failed, but got revocation vtxos"),
+		"should have received error. received: {}", err);
 
 	let vtxos = bark_2.vtxos().await;
 	assert_eq!(vtxos.len(), 2, "user should get 2 VTXOs, change and revocation one");
