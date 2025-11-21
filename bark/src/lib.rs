@@ -1039,7 +1039,7 @@ impl Wallet {
 
 	/// Fetches all wallet fund movements ordered from newest to oldest.
 	pub fn movements(&self) -> anyhow::Result<Vec<Movement>> {
-		Ok(self.db.get_movements()?)
+		Ok(self.db.get_all_movements()?)
 	}
 
 	/// Returns all VTXOs from the database.

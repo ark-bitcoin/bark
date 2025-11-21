@@ -196,7 +196,7 @@ pub trait BarkPersister: Send + Sync + 'static {
 	///
 	/// Errors:
 	/// - If retrieving the movements fails.
-	fn get_movements(&self) -> anyhow::Result<Vec<Movement>>;
+	fn get_all_movements(&self) -> anyhow::Result<Vec<Movement>>;
 
 	/// Store a pending board.
 	///
