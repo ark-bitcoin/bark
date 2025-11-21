@@ -123,7 +123,7 @@ impl Daemon {
 					let event = res.context("events stream broke")?
 						.context("error on event stream")?;
 
-					self.wallet.progress_ongoing_rounds(Some(&event)).await?;
+					self.wallet.progress_pending_rounds(Some(&event)).await?;
 				},
 				_ = self.shutdown.cancelled() => {
 					info!("Shutdown signal received! Shutting round events process...");

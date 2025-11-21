@@ -425,6 +425,8 @@ pub enum RoundStatus {
 	Failed {
 		error: String,
 	},
+	/// The round canceled
+	Canceled,
 }
 
 impl RoundStatus {
@@ -435,6 +437,7 @@ impl RoundStatus {
 			Self::Unconfirmed { .. } => false,
 			Self::Pending { .. } => false,
 			Self::Failed { .. } => true,
+			Self::Canceled => true,
 		}
 	}
 
@@ -445,6 +448,7 @@ impl RoundStatus {
 			Self::Unconfirmed { .. } => true,
 			Self::Pending { .. } => false,
 			Self::Failed { .. } => false,
+			Self::Canceled => false,
 		}
 	}
 }
@@ -456,6 +460,7 @@ impl From<bark::round::RoundStatus> for RoundStatus {
 			bark::round::RoundStatus::Unconfirmed { funding_txid } => Self::Unconfirmed { funding_txid },
 			bark::round::RoundStatus::Pending { unsigned_funding_txids } => Self::Pending { unsigned_funding_txids },
 			bark::round::RoundStatus::Failed { error } => Self::Failed { error },
+			bark::round::RoundStatus::Canceled => Self::Canceled,
 		}
 	}
 }

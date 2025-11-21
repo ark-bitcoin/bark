@@ -346,7 +346,7 @@ use crate::movement::{Movement, MovementDestination, MovementStatus};
 use crate::movement::manager::{MovementGuard, MovementManager};
 use crate::movement::update::MovementUpdate;
 use crate::onchain::{ChainSource, PreparePsbt, ExitUnilaterally, Utxo, SignPsbt};
-use crate::persist::BarkPersister;
+use crate::persist::{BarkPersister, RoundStateId};
 use crate::persist::models::{PendingLightningSend, LightningReceive};
 use crate::round::{RoundParticipation, RoundStatus};
 use crate::subsystem::{
@@ -1197,11 +1197,40 @@ impl Wallet {
 		Ok(())
 	}
 
+	/// Checks VTXOs that are due to be refreshed, and schedules a refresh if any
+	///
+	/// This will include any VTXOs within the expiry threshold
+	/// ([Config::vtxo_refresh_expiry_threshold]) or those which
+	/// are uneconomical to exit due to onchain network conditions.
+	///
+	/// Returns a [RoundStateId] if a refresh is scheduled.
+	pub async fn maybe_schedule_maintenance_refresh(&self) -> anyhow::Result<Option<RoundStateId>> {
+		let vtxos = self.get_vtxos_to_refresh().await?.into_iter()
+			.map(|v| v.id())
+			.collect::<Vec<_>>();
+		if vtxos.len() == 0 {
+			return Ok(None);
+		}
+
+		info!("Scheduling maintenance refresh");
+		let mut participation = match self.build_refresh_participation(vtxos)? {
+			Some(participation) => participation,
+			None => return Ok(None),
+		};
+
+		if let Err(e) = self.add_should_refresh_vtxos(&mut participation).await {
+			warn!("Error trying to add additional VTXOs that should be refreshed: {:#}", e);
+		}
+
+		let state = self.join_next_round(participation, Some(RoundMovement::Refresh)).await?;
+		Ok(Some(state.id))
+	}
+
 	/// Performs a refresh of all VTXOs that are due to be refreshed, if any. This will include any
 	/// VTXOs within the expiry threshold ([Config::vtxo_refresh_expiry_threshold]) or those which
 	/// are uneconomical to exit due to onchain network conditions.
 	///
-	/// Returns a [RoundId] if a refresh occurs.
+	/// Returns a [RoundStatus] if a refresh occurs.
 	pub async fn maintenance_refresh(&self) -> anyhow::Result<Option<RoundStatus>> {
 		let vtxos = self.get_vtxos_to_refresh().await?.into_iter()
 			.map(|v| v.id())
@@ -1707,7 +1736,7 @@ impl Wallet {
 	/// This will refresh all provided VTXOs. Note that attempting to refresh a board VTXO which
 	/// has not yet confirmed will result in an error.
 	///
-	/// Returns the [RoundId] of the round if a successful refresh occurred.
+	/// Returns the [RoundStatus] of the round if a successful refresh occurred.
 	/// It will return [None] if no [Vtxo] needed to be refreshed.
 	pub async fn refresh_vtxos<V: VtxoRef>(
 		&self,

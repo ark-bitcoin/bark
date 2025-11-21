@@ -284,6 +284,7 @@ enum SerdeRoundFlowState<'a> {
 	Failed {
 		error: Cow<'a, str>,
 	},
+	Canceled
 }
 
 impl<'a> From<&'a RoundFlowState> for SerdeRoundFlowState<'a> {
@@ -296,13 +297,14 @@ impl<'a> From<&'a RoundFlowState> for SerdeRoundFlowState<'a> {
 					attempt_seq: *attempt_seq,
 					state: state.into(),
 				}
-			}
+			},
 			RoundFlowState::Success => SerdeRoundFlowState::Finished,
 			RoundFlowState::Failed { error } => {
 				SerdeRoundFlowState::Failed {
 					error: Cow::Borrowed(error),
 				}
-			}
+			},
+			RoundFlowState::Canceled => SerdeRoundFlowState::Canceled,
 		}
 	}
 }
@@ -317,13 +319,14 @@ impl<'a> From<SerdeRoundFlowState<'a>> for RoundFlowState {
 					attempt_seq,
 					state: state.into(),
 				}
-			}
+			},
 			SerdeRoundFlowState::Finished => RoundFlowState::Success,
 			SerdeRoundFlowState::Failed { error } => {
 				RoundFlowState::Failed {
 					error: error.into_owned(),
 				}
-			}
+			},
+			SerdeRoundFlowState::Canceled => RoundFlowState::Canceled,
 		}
 	}
 }

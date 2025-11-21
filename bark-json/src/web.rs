@@ -314,28 +314,25 @@ impl From<bark::persist::StoredRoundState> for PendingRoundInfo {
 				}
 			},
 			bark::round::RoundFlowState::Failed { .. } => {
-				// If we have unconfirmed rounds, it might be cancelled
-				// Otherwise it's abandoned
-				if !state.state.unconfirmed_rounds().is_empty() {
-					let round_txid = state.state.unconfirmed_rounds().first()
-						.map(|r| r.funding_txid())
-						.map(|txid| ark::rounds::RoundId::from(txid));
+				let round_txid = state.state.unconfirmed_rounds().first()
+					.map(|r| r.funding_txid())
+					.map(|txid| ark::rounds::RoundId::from(txid));
 
-					PendingRoundInfo {
-						id: state.id.0,
-						kind: "RoundCancelled".to_string(),
-						round_seq: None,
-						attempt_seq: None,
-						round_txid: round_txid,
-					}
-				} else {
-					PendingRoundInfo {
-						id: state.id.0,
-						kind: "RoundAbandoned".to_string(),
-						round_seq: None,
-						attempt_seq: None,
-						round_txid: None,
-					}
+				PendingRoundInfo {
+					id: state.id.0,
+					kind: "RoundFailed".to_string(),
+					round_seq: None,
+					attempt_seq: None,
+					round_txid: round_txid,
+				}
+			},
+			bark::round::RoundFlowState::Canceled => {
+				PendingRoundInfo {
+					id: state.id.0,
+					kind: "RoundCanceled".to_string(),
+					round_seq: None,
+					attempt_seq: None,
+					round_txid: None,
 				}
 			},
 		}

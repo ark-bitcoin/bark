@@ -37,7 +37,7 @@ use crate::{SECP, Wallet};
 use crate::movement::{MovementDestination, MovementId, MovementStatus};
 use crate::movement::update::MovementUpdate;
 use crate::onchain::{ChainSource, ChainSourceClient};
-use crate::persist::StoredRoundState;
+use crate::persist::{RoundStateId, StoredRoundState};
 use crate::subsystem::{BarkSubsystem, RoundMovement};
 
 /// Bitcoin's block time of 10 minutes.
@@ -96,6 +96,7 @@ pub enum RoundStatus {
 	Failed {
 		error: String,
 	},
+	Canceled,
 }
 
 impl RoundStatus {
@@ -106,6 +107,7 @@ impl RoundStatus {
 			Self::Unconfirmed { .. } => false,
 			Self::Pending { .. } => false,
 			Self::Failed { .. } => true,
+			Self::Canceled => true,
 		}
 	}
 
@@ -116,6 +118,7 @@ impl RoundStatus {
 			Self::Unconfirmed { .. } => true,
 			Self::Pending { .. } => false,
 			Self::Failed { .. } => false,
+			Self::Canceled => false,
 		}
 	}
 }
@@ -166,14 +169,42 @@ impl RoundState {
 		&self.unconfirmed_rounds
 	}
 
-	/// Whether the interactive part of the round has finished
-	pub fn round_has_finished(&self) -> bool {
+	/// Whether the interactive part of the round is still ongoing
+	pub fn ongoing_participation(&self) -> bool {
 		match self.flow {
-			RoundFlowState::WaitingToStart => false,
-			RoundFlowState::Ongoing { .. } => false,
-			RoundFlowState::Success => true,
-			RoundFlowState::Failed { .. } => true,
+			RoundFlowState::WaitingToStart => true,
+			RoundFlowState::Ongoing { .. } => true,
+			RoundFlowState::Success => false,
+			RoundFlowState::Failed { .. } => false,
+			RoundFlowState::Canceled => false,
 		}
+	}
+
+	/// Tries to cancel the round and returns whether it was succesfully canceled
+	/// or if it was already canceled or failed
+	pub async fn try_cancel(&mut self, wallet: &Wallet) -> anyhow::Result<bool> {
+		let ret = match self.flow {
+			RoundFlowState::Canceled => true,
+			RoundFlowState::Success => false,
+			RoundFlowState::WaitingToStart => {
+				self.flow = RoundFlowState::Canceled;
+				true
+			},
+			RoundFlowState::Failed { .. } => self.unconfirmed_rounds().is_empty(),
+			RoundFlowState::Ongoing { .. } => {
+				if self.unconfirmed_rounds().is_empty() {
+					self.flow = RoundFlowState::Canceled;
+					true
+				} else {
+					false
+				}
+			},
+		};
+		if ret {
+			persist_round_failure(wallet, &self.participation, self.movement_id).await
+				.context("failed to persist round failure for cancelation")?;
+		}
+		Ok(ret)
 	}
 
 	async fn try_start_attempt(&mut self, wallet: &Wallet, attempt: &RoundAttempt) {
@@ -287,7 +318,9 @@ impl RoundState {
 				}
 				return updated;
 			},
-			RoundFlowState::Success { .. } | RoundFlowState::Failed { .. } => return false,
+			RoundFlowState::Success { .. }
+				| RoundFlowState::Failed { .. }
+				| RoundFlowState::Canceled => return false,
 		};
 	}
 
@@ -369,18 +402,21 @@ impl RoundState {
 					RoundStatus::Pending { unsigned_funding_txids: vec![] }
 				}
 				RoundFlowState::Success => {
-					persist_round_failure(wallet, &self.participation, self.movement_id)
-						.await
+					persist_round_failure(wallet, &self.participation, self.movement_id).await
 						.context("failed to persist round failure")?;
 					RoundStatus::Failed {
 						error: "all pending round funding transactions have been double spent".into(),
 					}
 				},
 				RoundFlowState::Failed { ref error } => {
-					persist_round_failure(wallet, &self.participation, self.movement_id)
-						.await
+					persist_round_failure(wallet, &self.participation, self.movement_id).await
 						.context("failed to persist round failure")?;
 					RoundStatus::Failed { error: error.clone() }
+				},
+				RoundFlowState::Canceled => {
+					persist_round_failure(wallet, &self.participation, self.movement_id).await
+						.context("failed to persist round failure")?;
+					RoundStatus::Canceled
 				},
 			}
 		} else if let Some(signed) = self.unconfirmed_rounds.iter().find(|r| r.is_tx_signed()) {
@@ -426,7 +462,7 @@ impl RoundState {
 			{
 				&self.participation.inputs
 			},
-			RoundFlowState::Failed { .. } => {
+			RoundFlowState::Failed { .. } | RoundFlowState::Canceled => {
 				// inputs already unlocked
 				&[]
 			},
@@ -449,6 +485,7 @@ pub enum RoundFlowState {
 	Failed {
 		error: String,
 	},
+	Canceled,
 }
 
 /// The state of a single round attempt
@@ -1204,7 +1241,7 @@ impl Wallet {
 
 			tokio_stream::iter(states).for_each_concurrent(10, |mut state| async move {
 				// not processing events here
-				if !state.state.round_has_finished() {
+				if state.state.ongoing_participation() {
 					return;
 				}
 
@@ -1212,7 +1249,7 @@ impl Wallet {
 					Ok(RoundStatus::Confirmed { funding_txid }) => {
 						info!("Round confirmed. Funding tx {}", funding_txid);
 						if let Err(e) = self.db.remove_round_state(&state) {
-							warn!("Error removing finished round state from db: {:#}", e);
+							warn!("Error removing confirmed round state from db: {:#}", e);
 						}
 					},
 					Ok(RoundStatus::Unconfirmed { funding_txid }) => {
@@ -1230,13 +1267,16 @@ impl Wallet {
 					Ok(RoundStatus::Failed { error }) => {
 						error!("Round failed: {}", error);
 						if let Err(e) = self.db.remove_round_state(&state) {
-							warn!("Error removing finished round state from db: {:#}", e);
+							warn!("Error removing failed round state from db: {:#}", e);
 						}
 					},
-					Err(e) => {
-						warn!("Error syncing round: {:#}", e);
-						return;
+					Ok(RoundStatus::Canceled) => {
+						error!("Round canceled");
+						if let Err(e) = self.db.remove_round_state(&state) {
+							warn!("Error removing canceled round state from db: {:#}", e);
+						}
 					},
+					Err(e) => warn!("Error syncing round: {:#}", e),
 				}
 			}).await;
 		}
@@ -1280,51 +1320,63 @@ impl Wallet {
 		Ok(RoundEvent::try_from(e).context("invalid event format from server")?)
 	}
 
-	/// Try to make incrimental progress on all pending round states
+	async fn inner_process_event(
+		&self,
+		states: impl IntoIterator<Item = &mut StoredRoundState>,
+		event: Option<&RoundEvent>,
+	) {
+		tokio_stream::iter(states).for_each_concurrent(3, |state| async move {
+			if let Some(event) = event && state.state.ongoing_participation() {
+				let updated = state.state.process_event(self, &event).await;
+				if updated {
+					if let Err(e) = self.db.update_round_state(&state) {
+						error!("Error storing round state #{} after progress: {:#}", state.id, e);
+					}
+				}
+			}
+
+			match state.state.sync(self).await {
+				Err(e) => warn!("Error syncing round #{}: {:#}", state.id, e),
+				Ok(s) if s.is_final() => {
+					info!("Round #{} finished with result: {:?}", state.id, s);
+					if let Err(e) = self.db.remove_round_state(&state) {
+						warn!("Failed to remove finished round #{} from db: {:#}", state.id, e);
+					}
+				},
+				Ok(s) => {
+					trace!("Round state #{} is now in state {:?}", state.id, s);
+					if let Err(e) = self.db.update_round_state(&state) {
+						warn!("Error storing round state #{}: {:#}", state.id, e);
+					}
+				},
+			}
+		}).await;
+	}
+
+	/// Try to make incremental progress on all pending round states
 	///
 	/// If the `last_round_event` argument is not provided, it will be fetched
 	/// from the server.
-	pub async fn progress_ongoing_rounds(
+	pub async fn progress_pending_rounds(
 		&self,
 		last_round_event: Option<&RoundEvent>,
 	) -> anyhow::Result<()> {
-		let states = self.db.load_round_states()?;
+		let mut states = self.db.load_round_states()?;
+		info!("Processing {} rounds...", states.len());
 
-		// so we can fill an owned one in case we lazily fetch one
 		let mut last_round_event = last_round_event.map(|e| Cow::Borrowed(e));
-
-		// NB we want to try make progress on all states,
-		// so we shouldn't error/abort early
-		for mut state in states {
-			if !state.state.round_has_finished() {
-				let event = match last_round_event {
-					Some(ref e) => e,
-					None => match self.get_last_round_event().await {
-						Ok(e) => {
-							last_round_event = Some(Cow::Owned(e));
-							last_round_event.as_ref().unwrap()
-						},
-						Err(e) => {
-							warn!("Couldn't make progress on an ongoing round: {:#}", e);
-							continue;
-						},
-					},
-				};
-
-				let updated = state.state.process_event(self, event.as_ref()).await;
-				if updated {
-					self.db.update_round_state(&state)?;
-				}
-			}
-
-			let status = state.state.sync(self).await?;
-			if status.is_final() {
-				info!("Round finished with result: {:?}", status);
-				if let Err(e) = self.db.remove_round_state(&state) {
-					warn!("Failed to remove finished round from db: {:#}", e);
-				}
+		if states.iter().any(|s| s.state.ongoing_participation()) && last_round_event.is_none() {
+			match self.get_last_round_event().await {
+				Ok(e) => last_round_event = Some(Cow::Owned(e)),
+				Err(e) => {
+					warn!("Error fetching round event, \
+						failed to progress ongoing rounds: {:#}", e);
+				},
 			}
 		}
+
+		let event = last_round_event.as_ref().map(|c| c.as_ref());
+		self.inner_process_event(states.iter_mut(), event).await;
 
 		Ok(())
 	}
@@ -1344,6 +1396,77 @@ impl Wallet {
 		Ok(events)
 	}
 
+	/// A blocking call that will try to perform a full round participation
+	/// for all ongoing rounds
+	///
+	/// Returns only once a round has happened on the server.
+	pub async fn participate_ongoing_rounds(&self) -> anyhow::Result<()> {
+		let mut states = self.db.load_round_states()?;
+		states.retain(|s| s.state.ongoing_participation());
+
+		if states.is_empty() {
+			info!("No pending round states");
+			return Ok(());
+		}
+
+		let mut events = self.subscribe_round_events().await?;
+
+		info!("Participating with {} round states...", states.len());
+
+		loop {
+			let event = events.next().await
+				.context("events stream broke")?
+				.context("error on event stream")?;
+
+			self.inner_process_event(states.iter_mut(), Some(&event)).await;
+
+			states.retain(|s| s.state.ongoing_participation());
+			if states.is_empty() {
+				info!("All rounds handled");
+				return Ok(());
+			}
+		}
+	}
+
+	/// Will cancel all pending rounds that can safely be canceled
+	///
+	/// All rounds that have not started yet can safely be canceled,
+	/// as well as rounds where we have not yet signed any forfeit txs.
+	pub async fn cancel_all_pending_rounds(&self) -> anyhow::Result<()> {
+		let states = self.db.load_round_states()?;
+		for mut state in states {
+			match state.state.try_cancel(self).await {
+				Ok(true) => {
+					if let Err(e) = self.db.remove_round_state(&state) {
+						warn!("Error removing canceled round state from db: {:#}", e);
+					}
+				},
+				Ok(false) => {},
+				Err(e) => warn!("Error trying to cancel round #{}: {:#}", state.id, e),
+			}
+		}
+		Ok(())
+	}
+
+	/// Try to cancel the given round
+	pub async fn cancel_pending_round(&self, id: RoundStateId) -> anyhow::Result<()> {
+		let states = self.db.load_round_states()?;
+		for mut state in states {
+			if state.id != id {
+				continue;
+			}
+
+			if state.state.try_cancel(self).await.context("failed to cancel round")? {
+				self.db.remove_round_state(&state)
+					.context("error removing canceled round state from db")?;
+			} else {
+				bail!("failed to cancel round");
+			}
+			return Ok(());
+		}
+		bail!("round not found")
+	}
+
 	/// Participate in a round
 	///
 	/// This function will start a new round participation and block until
@@ -1361,7 +1484,7 @@ impl Wallet {
 		let mut events = self.subscribe_round_events().await?;
 
 		loop {
-			if state.state.round_has_finished() {
+			if !state.state.ongoing_participation() {
 				return Ok(state.state.sync(self).await?);
 			}
 
