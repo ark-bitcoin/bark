@@ -2542,9 +2542,11 @@ impl Wallet {
 			// TODO: bailing here results in vtxos not being registered despite preimage being revealed
 			// should we make `srv.client.claim_lightning_receive` idempotent, so that bark can at
 			// least retry some times before giving up and exiting?
-			if let Err(e) = self.validate_vtxo(vtxo).await {
-				bail!("invalid arkoor from lightning receive: {e}");
-			}
+			trace!("Validating Lightning receive claim VTXO {}: {}",
+				vtxo.id(), vtxo.serialize_hex(),
+			);
+			self.validate_vtxo(vtxo).await
+				.context("invalid arkoor from lightning receive")?;
 			effective_balance += vtxo.amount();
 		}
 
@@ -2683,7 +2685,9 @@ impl Wallet {
 
 		// sanity check the vtxos
 		for vtxo in &vtxos {
-			self.validate_vtxo(vtxo).await?;
+			trace!("Received HTLC VTXO {} from server: {}", vtxo.id(), vtxo.serialize_hex());
+			self.validate_vtxo(vtxo).await
+				.context("received invalid HTLC VTXO from server")?;
 
 			if let VtxoPolicy::ServerHtlcRecv(p) = vtxo.policy() {
 				if p.payment_hash != receive.payment_hash {
@@ -2830,7 +2834,7 @@ impl Wallet {
 				}
 			}
 
-			Err(e)
+			Err(e).context("failed to claim lightning receive")
 		} else {
 			Ok(true)
 		}
