@@ -1,3 +1,5 @@
+use std::str::FromStr;
+
 use anyhow::Context;
 use rusqlite::Transaction;
 
@@ -29,13 +31,22 @@ impl Migration for Migration0021 {
 			};
 			match (is_htlc, wallet_vtxo.state.clone()) {
 				(true, VtxoState::Locked { movement_id: Some(movement_id) }) => {
-					// Get the movement, if it's finished, mark this VTXO as spent. This issue was
-					// caused by a bug in lightning code where HTLCs were not marked as spent after
-					// being swapped.
-					let movement = query::get_movement(conn, movement_id)
-						.context("failed to get movement")?;
+					// Get the movement status, if it's finished, mark this VTXO as spent. This
+					// issue was caused by a bug in lightning code where HTLCs were not marked as
+					// spent after being swapped.
+					let movement_status = {
+						let mut statement = conn.prepare(
+							"SELECT status FROM bark_movements_view WHERE id = ?1",
+						)?;
+						let mut rows = statement.query([movement_id.0])?;
+						if let Some(row) = rows.next()? {
+							MovementStatus::from_str(&row.get::<_, String>("status")?)
+						} else {
+							Err(anyhow!("Movement {} not found", movement_id))
+						}
+					}?;
 
-					if movement.status == MovementStatus::Finished {
+					if movement_status == MovementStatus::Finished {
 						query::update_vtxo_state_checked(
 							conn, wallet_vtxo.id(), VtxoState::Spent, &[VtxoStateKind::Locked],
 						).context("failed to update vtxo state")?;

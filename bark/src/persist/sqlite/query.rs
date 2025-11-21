@@ -179,13 +179,13 @@ pub fn get_all_movements(conn: &Connection) -> anyhow::Result<Vec<Movement>> {
 
 pub fn get_movement(conn: &Connection, id: MovementId) -> anyhow::Result<Movement> {
 	let mut statement = conn.prepare(
-		"SELECT * FROM bark_movements_view WHERE id = ?1 ORDER BY created_at DESC"
+		"SELECT * FROM bark_movements_view WHERE id = ?1"
 	)?;
-	let mut rows = statement.query([id.to_string()])?;
+	let mut rows = statement.query([id.0])?;
 	if let Some(row) = rows.next()? {
 		Ok(row_to_movement(row)?)
 	} else {
-		Err(anyhow::anyhow!("Movement {} not found", id))
+		Err(anyhow!("Movement {} not found", id))
 	}
 }
 
