@@ -118,7 +118,9 @@ pub struct Balance {
 	#[serde(rename = "pending_lightning_send_sat", with = "bitcoin::amount::serde::as_sat")]
 	#[cfg_attr(feature = "utoipa", schema(value_type = u64))]
 	pub pending_lightning_send: Amount,
-	pub pending_lightning_receive: LightningReceiveBalance,
+	#[serde(rename = "claimable_lightning_receive_sat", with = "bitcoin::amount::serde::as_sat")]
+	#[cfg_attr(feature = "utoipa", schema(value_type = u64))]
+	pub claimable_lightning_receive: Amount,
 	#[serde(rename = "pending_in_round_sat", with = "bitcoin::amount::serde::as_sat")]
 	#[cfg_attr(feature = "utoipa", schema(value_type = u64))]
 	pub pending_in_round: Amount,
@@ -141,7 +143,7 @@ impl From<bark::Balance> for Balance {
 			spendable: v.spendable,
 			pending_in_round: v.pending_in_round,
 			pending_lightning_send: v.pending_lightning_send,
-			pending_lightning_receive: v.pending_lightning_receive.into(),
+			claimable_lightning_receive: v.claimable_lightning_receive,
 			pending_exit: v.pending_exit,
 			pending_board: v.pending_board,
 		}
