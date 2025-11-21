@@ -411,7 +411,7 @@ async fn bark_can_receive_lightning() {
 
 	srv.wait_for_vtxopool(&ctx).await;
 
-	bark.lightning_receive(invoice_info.invoice.clone()).wait(10_000).await;
+	bark.lightning_receive(invoice_info.invoice.clone()).wait_millis(10_000).await;
 
 	// HTLC settlement on lightning side
 	res1.ready().await.unwrap();
@@ -531,13 +531,13 @@ async fn bark_can_pay_intra_ark_invoice() {
 	let cloned = bark_1.clone();
 	let cloned_invoice_info = invoice_info.clone();
 	let res1 = tokio::spawn(async move {
-		cloned.lightning_receive(cloned_invoice_info.invoice).wait(10_000).await;
+		cloned.lightning_receive(cloned_invoice_info.invoice).wait_millis(10_000).await;
 	});
 
 	let max_delay = srv.config().invoice_check_interval.as_millis() + 1_000;
 	tokio::spawn(async move {
 		// Payment settlement should not take more than receiver invoice check interval
-		bark_2.pay_lightning(invoice_info.invoice, None).wait(max_delay as u64).await;
+		bark_2.pay_lightning(invoice_info.invoice, None).wait_millis(max_delay as u64).await;
 
 		assert_eq!(bark_2.offchain_balance().await.pending_lightning_send, btc(0),
 			"pending lightning send should be reset after payment");
@@ -592,7 +592,7 @@ async fn bark_can_revoke_on_intra_ark_timeout_invoice_pay_failure() {
 	let cloned = bark_1.clone();
 	let cloned_invoice_info = invoice_info.clone();
 	tokio::spawn(async move {
-		cloned.lightning_receive(cloned_invoice_info.invoice).wait(10_000).await;
+		cloned.lightning_receive(cloned_invoice_info.invoice).wait_millis(10_000).await;
 	});
 
 	let err = bark_2.try_pay_lightning(invoice_info.invoice, None).await.unwrap_err();
@@ -648,7 +648,7 @@ async fn bark_can_revoke_on_intra_ark_send_when_receiver_leaves() {
 
 	// receiver never show up so invoice will eventually fail
 
-	let err = handle.wait(10_000).await.unwrap();
+	let err = handle.wait_millis(10_000).await.unwrap();
 	assert!(err.to_string().contains("payment failed"), "should have received error. received: {}", err);
 
 	let vtxos = bark_2.vtxos().await;
@@ -723,7 +723,7 @@ async fn bark_revoke_expired_pending_ln_payment() {
 
 	// Try send coins through lightning
 	assert_eq!(bark_1.spendable_balance().await, board_amount);
-	bark_1.try_pay_lightning(invoice, None).try_wait(1000).await.expect_err("the payment is held");
+	bark_1.try_pay_lightning(invoice, None).try_wait_millis(1000).await.expect_err("the payment is held");
 
 	// htlc expiry is 6 ahead of current block
 	ctx.generate_blocks(srv.config().htlc_send_expiry_delta as u32 + 6).await;
@@ -866,7 +866,7 @@ async fn bark_sends_on_lightning_after_receiving_from_lightning() {
 
 	srv.wait_for_vtxopool(&ctx).await;
 
-	bark.lightning_receive(invoice_recv_info.invoice.clone()).wait(10_000).await;
+	bark.lightning_receive(invoice_recv_info.invoice.clone()).wait_millis(10_000).await;
 
 	// HTLC settlement on lightning side
 	res1.ready().await.unwrap();
@@ -903,7 +903,7 @@ async fn server_allows_claim_receive_with_vtxo_proof() {
 
 	srv.wait_for_vtxopool(&ctx).await;
 
-	bark.lightning_receive_all().wait(20_000).await;
+	bark.lightning_receive_all().wait_millis(20_000).await;
 
 	// HTLC settlement on lightning side
 	res.ready().await.unwrap();

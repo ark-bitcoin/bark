@@ -449,7 +449,7 @@ impl TestContext {
 					tokio::time::sleep(Duration::from_millis(200)).await;
 				}
 			}
-		}.wait(5000).await;
+		}.wait_millis(5000).await;
 		ret
 	}
 

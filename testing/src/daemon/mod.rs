@@ -211,7 +211,7 @@ impl<T> Daemon<T>
 			signal::kill(pid, signal::Signal::SIGTERM).expect("sending SIGTERM failed");
 		}
 
-		match child.wait().try_wait(30_000).await {
+		match child.wait().try_wait_millis(30_000).await {
 			Ok(Ok(s)) => if s.success() {
 				info!("Daemon {} succesfully shut down gracefully", self.name);
 			} else {

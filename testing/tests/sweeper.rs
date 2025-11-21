@@ -44,10 +44,10 @@ async fn sweep_board_and_oor() {
 	let mut log_sweeping = srv.subscribe_log::<SweepBroadcast>();
 	let mut log_sweeps = srv.subscribe_log::<SweepingOutput>();
 
-	srv.wait_for_log::<TxIndexUpdateFinished>().wait(6_000).await;
+	srv.wait_for_log::<TxIndexUpdateFinished>().wait_millis(6_000).await;
 	srv.trigger_sweep().await;
 
-	log_sweeping.recv().wait(15_000).await;
+	log_sweeping.recv().wait_millis(15_000).await;
 	let sweeps = log_sweeps.collect();
 	assert_eq!(1, sweeps.len(), "sweeps: {:?}", sweeps);
 	assert_eq!(sweeps[0].sweep_type, "board");
@@ -88,7 +88,7 @@ async fn sweep_vtxos() {
 	// before either expires not sweeping yet because nothing available
 	srv.wait_for_log::<TxIndexUpdateFinished>().await;
 	srv.trigger_sweep().await;
-	assert_eq!(sat(0), log_not_sweeping.recv().wait(15_000).await.unwrap().available_surplus);
+	assert_eq!(sat(0), log_not_sweeping.recv().wait_millis(15_000).await.unwrap().available_surplus);
 
 	// we can't make vtxos expire, so we have to refresh them
 	let b = bark.clone();
@@ -97,19 +97,19 @@ async fn sweep_vtxos() {
 	});
 	srv.trigger_round().await;
 
-	let _ = srv.wait_for_log::<RoundFinished>().try_wait(5_000).await;
+	let _ = srv.wait_for_log::<RoundFinished>().try_wait_millis(5_000).await;
 	ctx.generate_blocks(vtxo_lifetime as u32 - board_height_difference - BOARD_CONFIRMATIONS).await;
 
 	// now we expire the first one, still not sweeping because not enough surplus
-	srv.wait_for_log::<TxIndexUpdateFinished>().wait(6_000).await;
+	srv.wait_for_log::<TxIndexUpdateFinished>().wait_millis(6_000).await;
 	srv.trigger_sweep().await;
-	assert_eq!(sat(73_760), log_not_sweeping.recv().wait(15_000).await.unwrap().available_surplus);
+	assert_eq!(sat(73_760), log_not_sweeping.recv().wait_millis(15_000).await.unwrap().available_surplus);
 
 	// now we expire the second, but the amount is not enough to sweep
 	ctx.generate_blocks(board_height_difference).await;
-	srv.wait_for_log::<TxIndexUpdateFinished>().wait(6_000).await;
+	srv.wait_for_log::<TxIndexUpdateFinished>().wait_millis(6_000).await;
 	srv.trigger_sweep().await;
-	let surplus = log_sweeping.recv().wait(15_000).await.unwrap().surplus;
+	let surplus = log_sweeping.recv().wait_millis(15_000).await.unwrap().surplus;
 	let sweeps = log_sweeps.collect();
 	assert_eq!(2, sweeps.len(), "sweeps: {:?}", sweeps);
 	assert_eq!(sweeps[0].sweep_type, "board");
@@ -120,7 +120,7 @@ async fn sweep_vtxos() {
 	ctx.generate_blocks(30).await;
 	srv.wait_for_log::<TxIndexUpdateFinished>().await;
 	srv.trigger_sweep().await;
-	let surplus = log_sweeping.recv().wait(15_000).await.unwrap().surplus;
+	let surplus = log_sweeping.recv().wait_millis(15_000).await.unwrap().surplus;
 	let sweeps = log_sweeps.collect();
 	assert_eq!(1, sweeps.len(), "sweeps: {:?}", sweeps);
 	assert_eq!(sweeps[0].sweep_type, "vtxo");
@@ -144,7 +144,7 @@ async fn sweep_vtxos() {
 
 	srv.wait_for_log::<TxIndexUpdateFinished>().await;
 	srv.trigger_sweep().await;
-	let surplus = log_sweeping.recv().wait(15_000).await.unwrap().surplus;
+	let surplus = log_sweeping.recv().wait_millis(15_000).await.unwrap().surplus;
 	let sweeps = log_sweeps.collect();
 	assert_eq!(2, sweeps.len(), "sweeps: {:?}", sweeps);
 	assert_eq!(sweeps[0].sweep_type, "connector");
@@ -157,9 +157,9 @@ async fn sweep_vtxos() {
 	srv.trigger_sweep().await;
 
 	// and eventually the round should be finished
-	log_board_done.recv().wait(10_000).await.unwrap();
+	log_board_done.recv().wait_millis(10_000).await.unwrap();
 	info!("board done signal received");
-	log_round_done.recv().wait(10_000).await.unwrap();
+	log_round_done.recv().wait_millis(10_000).await.unwrap();
 	info!("Round done signal received");
 	let stats = log_stats.recv().ready().await.unwrap();
 	assert_eq!(0, stats.nb_pending_utxos);

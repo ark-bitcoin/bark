@@ -225,7 +225,7 @@ async fn cant_spend_untrusted() {
 	});
 
 	// this will at first produce an error
-	let err = log_round_err.recv().wait(15_000).await.unwrap().error;
+	let err = log_round_err.recv().wait_millis(15_000).await.unwrap().error;
 	assert!(err.contains("Insufficient funds"), "err: {err}");
 
 	attempt_handle.await.unwrap();
@@ -457,7 +457,7 @@ async fn full_round() {
 	});
 
 	// then we wait for the error to happen
-	let err = rx.recv().wait(30_000).await.unwrap();
+	let err = rx.recv().wait_millis(30_000).await.unwrap();
 	assert!(err.to_string().contains("Message arrived late or round was full"), "err: {err}");
 }
 
@@ -557,7 +557,7 @@ async fn double_spend_round() {
 
 	let mut l = srv.subscribe_log::<RoundUserVtxoAlreadyRegistered>();
 	bark.refresh_all().await;
-	l.recv().wait(2500).await;
+	l.recv().wait_millis(2500).await;
 }
 
 #[tokio::test]
@@ -662,7 +662,7 @@ async fn spend_unregistered_board() {
 		let _ = bark.refresh_all().await;
 		// we don't care that that call fails
 	});
-	l.recv().wait(4500).await;
+	l.recv().wait(srv.max_round_delay()).await;
 }
 
 #[tokio::test]
@@ -899,8 +899,8 @@ async fn claim_forfeit_connector_chain() {
 	// start the exit process
 	let mut log_detected = srv.subscribe_log::<ForfeitedExitInMempool>();
 	bark.start_exit_vtxos([vtxo.id]).await;
-	progress_exit_to_broadcast(&bark).try_wait(10_000).await.expect("time-out");
-	assert_eq!(log_detected.recv().try_wait(10_000).await.expect("time-out").unwrap().vtxo, vtxo.id);
+	progress_exit_to_broadcast(&bark).try_wait_millis(10_000).await.expect("time-out");
+	assert_eq!(log_detected.recv().try_wait_millis(10_000).await.expect("time-out").unwrap().vtxo, vtxo.id);
 
 	// confirm the exit
 	let mut log_confirmed = srv.subscribe_log::<ForfeitedExitConfirmed>();
@@ -920,7 +920,7 @@ async fn claim_forfeit_connector_chain() {
 				break m.forfeit_txid;
 			}
 		}
-	}.wait(15_000).await;
+	}.wait_millis(15_000).await;
 
 	// and then wait for the forfeit to confirm
 	info!("Waiting for tx {} to confirm", txid);
@@ -935,7 +935,7 @@ async fn claim_forfeit_connector_chain() {
 			}
 			tokio::time::sleep(Duration::from_millis(500)).await;
 		}
-	}.wait(20_000).await;
+	}.wait_millis(20_000).await;
 }
 
 #[tokio::test]
@@ -960,17 +960,17 @@ async fn claim_forfeit_round_connector() {
 	// start the exit process
 	let mut log_detected = srv.subscribe_log::<ForfeitedExitInMempool>();
 	bark.start_exit_vtxos([vtxo.id]).await;
-	progress_exit_to_broadcast(&bark).try_wait(10_000).await.expect("time-out");
-	assert_eq!(log_detected.recv().try_wait(10_000).await.expect("time-out").unwrap().vtxo, vtxo.id);
+	progress_exit_to_broadcast(&bark).try_wait_millis(10_000).await.expect("time-out");
+	assert_eq!(log_detected.recv().try_wait_millis(10_000).await.expect("time-out").unwrap().vtxo, vtxo.id);
 
 	// confirm the exit
 	let mut log_forfeit_broadcasted = srv.subscribe_log::<ForfeitBroadcasted>();
 	let mut log_confirmed = srv.subscribe_log::<ForfeitedExitConfirmed>();
 	ctx.generate_blocks(1).await;
-	assert_eq!(log_confirmed.recv().try_wait(10_000).await.expect("time-out").unwrap().vtxo, vtxo.id);
+	assert_eq!(log_confirmed.recv().try_wait_millis(10_000).await.expect("time-out").unwrap().vtxo, vtxo.id);
 
 	// wait until forfeit watcher broadcasts forfeit tx
-	let txid = log_forfeit_broadcasted.recv().try_wait(10_000).await.expect("time-out").unwrap().forfeit_txid;
+	let txid = log_forfeit_broadcasted.recv().try_wait_millis(10_000).await.expect("time-out").unwrap().forfeit_txid;
 
 	// and then wait for it to confirm
 	info!("Waiting for tx {} to confirm", txid);
@@ -985,7 +985,7 @@ async fn claim_forfeit_round_connector() {
 				}
 			}
 		}
-	}.wait(10_000).await;
+	}.wait_millis(10_000).await;
 }
 
 #[tokio::test]
@@ -1057,7 +1057,7 @@ async fn register_unconfirmed_board() {
 		bark.maintain().await;
 		// we don't care that that call fails
 	});
-	l.recv().wait(2500).await;
+	l.recv().wait_millis(2500).await;
 }
 
 #[tokio::test]
@@ -1440,7 +1440,7 @@ async fn server_should_refuse_claim_twice() {
 		lightning.sender.pay_bolt11(cloned_invoice_info.invoice).await
 	});
 
-	bark.lightning_receive(invoice_info.invoice.clone()).wait(10_000).await;
+	bark.lightning_receive(invoice_info.invoice.clone()).wait_millis(10_000).await;
 
 	// Wait for the onboarding round to be deeply enough confirmed
 	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
@@ -1489,10 +1489,10 @@ async fn server_should_refuse_claim_twice_intra_ark_ln_receive() {
 
 	let cloned_invoice_info = invoice_info.clone();
 	let res1 = tokio::spawn(async move {
-		bark2.pay_lightning(cloned_invoice_info.invoice, None).wait(10_000).await;
+		bark2.pay_lightning(cloned_invoice_info.invoice, None).wait_millis(10_000).await;
 	});
 
-	bark1.lightning_receive(invoice_info.invoice.clone()).wait(10_000).await;
+	bark1.lightning_receive(invoice_info.invoice.clone()).wait_millis(10_000).await;
 
 	// HTLC settlement on lightning side
 	res1.ready().await.unwrap();
@@ -2044,7 +2044,7 @@ async fn server_can_use_multi_input_from_vtxo_pool() {
 		lightning.sender.pay_bolt11(cloned_invoice_info.invoice).await
 	});
 
-	bark.lightning_receive(invoice_info.invoice.clone()).wait(10_000).await;
+	bark.lightning_receive(invoice_info.invoice.clone()).wait_millis(10_000).await;
 
 	// We use that to sync and get onboarded vtxos
 	let balance = bark.spendable_balance().await;
@@ -2092,7 +2092,7 @@ async fn server_can_use_vtxo_pool_change_for_next_receive() {
 		});
 
 
-		bark.lightning_receive(invoice_info.invoice.clone()).wait(10_000).await;
+		bark.lightning_receive(invoice_info.invoice.clone()).wait_millis(10_000).await;
 		// HTLC settlement on lightning side
 		res1.ready().await.unwrap();
 	}
@@ -2108,7 +2108,7 @@ async fn server_can_use_vtxo_pool_change_for_next_receive() {
 		});
 
 
-		bark.lightning_receive(invoice_info.invoice.clone()).wait(10_000).await;
+		bark.lightning_receive(invoice_info.invoice.clone()).wait_millis(10_000).await;
 		// HTLC settlement on lightning side
 		res1.ready().await.unwrap();
 	}
