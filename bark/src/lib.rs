@@ -931,7 +931,7 @@ impl Wallet {
 				BarkSubsystem::LightningSend,
 				BarkSubsystem::Round,
 			];
-			for subsystem in subsystems.into_iter() {
+			for subsystem in subsystems {
 				let id = movements.register_subsystem(subsystem.as_str().into()).await?;
 				subsystem_ids.insert(subsystem, id);
 			}
