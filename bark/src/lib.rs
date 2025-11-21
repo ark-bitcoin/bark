@@ -272,7 +272,7 @@
 //!
 //! 	let vtxos = wallet.spendable_vtxos_with(&strategy)?
 //! 		.into_iter().map(|v| v.vtxo).collect::<Vec<_>>();
-//!    wallet.refresh_vtxos(vtxos).await?;
+//!		wallet.refresh_vtxos(vtxos).await?;
 //! 	Ok(())
 //! }
 //! ```
