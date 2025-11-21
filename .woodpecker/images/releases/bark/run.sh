@@ -41,4 +41,23 @@ else
   sleep 2s
 fi
 
-/usr/local/bin/bark "$@"
+# If the first argument is exactly "bark" or "barkd", treat it as the binary name
+# and shift it away so the rest of the command line goes directly to that binary.
+if [ "${1:-}" = "bark" ] || [ "${1:-}" = "barkd" ]; then
+  BINARY="/usr/local/bin/$1"
+  shift  # remove the "bark" or "barkd"
+  exec "$BINARY" "$@"
+else
+  # No explicit binary name given → default behaviour:
+  #   - when starting the service normally no argument at all
+  #   	=> start the daemon (barkd)
+  #   - when running a one-off command that doesn't start with bark/barkd
+  #     => assume it's a bark subcommand
+  if [ $# -eq 0 ]; then
+    # No arguments at all → this is "docker compose up bark" → start daemon
+    exec /usr/local/bin/barkd start
+  else
+    # Something was passed but not "bark"/"barkd" → treat as bark subcommand
+    exec /usr/local/bin/bark "$@"
+  fi
+fi
