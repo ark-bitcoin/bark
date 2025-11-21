@@ -272,7 +272,7 @@
 //!
 //! 	let vtxos = wallet.spendable_vtxos_with(&strategy)?
 //! 		.into_iter().map(|v| v.vtxo).collect::<Vec<_>>();
-//!    wallet.refresh_vtxos(vtxos).await?;
+//!		wallet.refresh_vtxos(vtxos).await?;
 //! 	Ok(())
 //! }
 //! ```
@@ -289,7 +289,6 @@ pub extern crate lnurl as lnurllib;
 #[macro_use] extern crate serde;
 
 pub mod daemon;
-pub mod error;
 pub mod exit;
 pub mod lightning_utils;
 pub mod movement;
@@ -931,7 +930,7 @@ impl Wallet {
 				BarkSubsystem::LightningSend,
 				BarkSubsystem::Round,
 			];
-			for subsystem in subsystems.into_iter() {
+			for subsystem in subsystems {
 				let id = movements.register_subsystem(subsystem.as_str().into()).await?;
 				subsystem_ids.insert(subsystem, id);
 			}
@@ -1039,7 +1038,7 @@ impl Wallet {
 
 	/// Fetches all wallet fund movements ordered from newest to oldest.
 	pub fn movements(&self) -> anyhow::Result<Vec<Movement>> {
-		Ok(self.db.get_movements()?)
+		Ok(self.db.get_all_movements()?)
 	}
 
 	/// Returns all VTXOs from the database.

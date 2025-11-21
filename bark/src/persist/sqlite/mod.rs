@@ -121,9 +121,9 @@ impl BarkPersister for SqliteClient {
 		query::get_movement(&conn, movement_id)
 	}
 
-	fn get_movements(&self) -> anyhow::Result<Vec<Movement>> {
+	fn get_all_movements(&self) -> anyhow::Result<Vec<Movement>> {
 		let conn = self.connect()?;
-		query::get_movements(&conn)
+		query::get_all_movements(&conn)
 	}
 
 	fn store_pending_board(

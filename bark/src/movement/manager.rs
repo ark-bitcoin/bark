@@ -3,11 +3,10 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use chrono::DateTime;
-use rand::random;
 use tokio::sync::RwLock;
 
-use crate::error::movement::MovementError;
 use crate::movement::{Movement, MovementId, MovementStatus, MovementSubsystem};
+use crate::movement::error::MovementError;
 use crate::movement::update::MovementUpdate;
 use crate::persist::BarkPersister;
 use crate::subsystem::SubsystemId;
@@ -41,17 +40,10 @@ impl MovementManager {
 			})
 		} else {
 			let mut ids = self.subsystem_ids.write().await;
-			for _ in 0..10 {
-				let result = SubsystemId::new(random::<u32>());
-				if !ids.keys().any(|id| *id == result) {
-					ids.insert(result, name);
-					return Ok(result);
-				}
+			let id = SubsystemId::new(ids.len() as u32);
+				ids.insert(id, name);
+				Ok(id)
 			}
-			Err(MovementError::SubsystemError {
-				name, error: "Failed to generate unique ID after 10 attempts".into(),
-			})
-		}
 	}
 
 	/// Similar to [MovementManager::new_movement_at] but it sets the [Movement::created_at] field

@@ -286,7 +286,7 @@ impl BarkPersister for Dummy {
 		Ok(dummy_movement(MovementStatus::Pending))
 	}
 
-	fn get_movements(&self) -> anyhow::Result<Vec<Movement>> {
+	fn get_all_movements(&self) -> anyhow::Result<Vec<Movement>> {
 		Ok(vec![dummy_movement(MovementStatus::Failed)])
 	}
 

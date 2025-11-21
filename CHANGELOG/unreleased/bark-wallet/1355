@@ -1,0 +1,4 @@
+[PR 1355](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1355)
+- `crate::error::movement` is now `crate::movement::error`
+- `BarkPersister::get_movements` is renamed to `get_all_movements`
+- Make rand module optional
