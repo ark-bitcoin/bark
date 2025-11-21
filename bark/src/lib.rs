@@ -289,7 +289,6 @@ pub extern crate lnurl as lnurllib;
 #[macro_use] extern crate serde;
 
 pub mod daemon;
-pub mod error;
 pub mod exit;
 pub mod lightning_utils;
 pub mod movement;

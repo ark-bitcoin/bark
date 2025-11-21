@@ -6,8 +6,8 @@ use chrono::DateTime;
 use rand::random;
 use tokio::sync::RwLock;
 
-use crate::error::movement::MovementError;
 use crate::movement::{Movement, MovementId, MovementStatus, MovementSubsystem};
+use crate::movement::error::MovementError;
 use crate::movement::update::MovementUpdate;
 use crate::persist::BarkPersister;
 use crate::subsystem::SubsystemId;
