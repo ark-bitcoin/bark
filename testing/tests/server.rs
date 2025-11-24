@@ -19,8 +19,8 @@ use log::{debug, error, info, trace};
 use tokio::sync::{mpsc, Mutex};
 
 use ark::{
-	musig, OffboardRequest, ProtocolEncoding, SignedVtxoRequest, VtxoId, VtxoPolicy, VtxoRequest,
-	SECP,
+	OffboardRequest, ProtocolEncoding, SECP, SignedVtxoRequest,
+	Vtxo, VtxoId, VtxoPolicy, VtxoRequest, musig
 };
 use ark::rounds::VtxoOwnershipChallenge;
 use ark::tree::signed::builder::SignedTreeBuilder;
@@ -1466,6 +1466,136 @@ async fn server_should_refuse_claim_twice() {
 	}).await.unwrap_err();
 
 	assert!(err.to_string().contains("payment status in incorrect state: settled"), "err: {err}");
+}
+
+#[tokio::test]
+async fn server_returned_htlc_recv_vtxos_should_be_identical_cln() {
+	let ctx = TestContext::new("server/server_returned_htlc_recv_vtxos_should_be_identical_cln").await;
+
+	let lightning = ctx.new_lightning_setup("lightningd").await;
+
+	// Start a server and link it to our cln installation
+	let srv = ctx.new_captaind_with_funds("server", Some(&lightning.receiver), btc(10)).await;
+
+	// Start a bark and create a VTXO to be able to board
+	let bark = ctx.new_bark_with_funds("bark-1", &srv, btc(3)).await;
+	bark.board_and_confirm_and_register(&ctx, btc(2)).await;
+
+	let invoice_info = bark.bolt11_invoice(btc(1)).await;
+	let receive = bark.lightning_receive_status(&invoice_info.invoice).await.unwrap();
+
+	let cloned_invoice_info = invoice_info.clone();
+
+	let mut client = srv.get_public_rpc().await;
+
+	// Need to initiate payment for server to return htlc vtxos
+	tokio::spawn(async move {
+		lightning.sender.pay_bolt11(cloned_invoice_info.invoice).await
+	});
+
+	// Wait for the payment to be received
+	client.check_lightning_receive(protos::CheckLightningReceiveRequest {
+		hash: receive.payment_hash.to_vec(),
+		wait: true,
+	}).wait_millis(10_000).await.unwrap().into_inner();
+
+	let keypair = Keypair::new(&SECP, &mut bip39::rand::thread_rng());
+	let req_1 = protos::PrepareLightningReceiveClaimRequest {
+		payment_hash: receive.payment_hash.to_vec(),
+		user_pubkey: keypair.public_key().serialize().to_vec(),
+		htlc_recv_expiry: 180,
+		lightning_receive_anti_dos: None,
+	};
+	let vtxos_1 = client.prepare_lightning_receive_claim(req_1.clone()).await.unwrap()
+		.into_inner().htlc_vtxos.into_iter().map(|b| Vtxo::deserialize(&b))
+		.collect::<Result<Vec<_>, _>>().unwrap();
+
+	// We test once again with the same request
+	let vtxos_2 = client.prepare_lightning_receive_claim(req_1).await.unwrap()
+		.into_inner().htlc_vtxos.into_iter().map(|b| Vtxo::deserialize(&b))
+		.collect::<Result<Vec<_>, _>>().unwrap();
+
+	// we change keypair to make sure server don't use it on second request
+	let keypair = Keypair::new(&SECP, &mut bip39::rand::thread_rng());
+	let req_2 = protos::PrepareLightningReceiveClaimRequest {
+		payment_hash: receive.payment_hash.to_vec(),
+		user_pubkey: keypair.public_key().serialize().to_vec(),
+		htlc_recv_expiry: 180,
+		lightning_receive_anti_dos: None,
+	};
+
+	let vtxos_3 = client.prepare_lightning_receive_claim(req_2).await.unwrap()
+		.into_inner().htlc_vtxos.into_iter().map(|b| Vtxo::deserialize(&b))
+		.collect::<Result<Vec<_>, _>>().unwrap();
+
+	assert_eq!(vtxos_1, vtxos_2, "should have the same VTXOs");
+	assert_eq!(vtxos_1, vtxos_3, "should have the same VTXOs");
+}
+
+#[tokio::test]
+async fn server_returned_htlc_recv_vtxos_should_be_identical_intra_ark() {
+	let ctx = TestContext::new("server/server_returned_htlc_recv_vtxos_should_be_identical_intra_ark").await;
+
+	let lightning = ctx.new_lightning_setup("lightningd").await;
+
+	// Start a server and link it to our cln installation
+	let srv = ctx.new_captaind_with_funds("server", Some(&lightning.receiver), btc(10)).await;
+
+	// Start a bark and create a VTXO to be able to board
+	let bark = ctx.new_bark_with_funds("bark-1", &srv, btc(3)).await;
+	let bark2 = Arc::new(ctx.new_bark_with_funds("bark-2", &srv, btc(3)).await);
+	bark.board_and_confirm_and_register(&ctx, btc(2)).await;
+	bark2.board_and_confirm_and_register(&ctx, btc(2)).await;
+
+	let invoice_info = bark.bolt11_invoice(btc(1)).await;
+	let receive = bark.lightning_receive_status(&invoice_info.invoice).await.unwrap();
+
+	let cloned_invoice_info = invoice_info.clone();
+
+	let mut client = srv.get_public_rpc().await;
+
+	// Need to initiate payment for server to return htlc vtxos
+	tokio::spawn(async move {
+		bark2.pay_lightning(cloned_invoice_info.invoice, None).wait_millis(10_000).await;
+	});
+
+	// Wait for the payment to be received
+	client.check_lightning_receive(protos::CheckLightningReceiveRequest {
+		hash: receive.payment_hash.to_vec(),
+		wait: true,
+	}).wait_millis(10_000).await.unwrap().into_inner();
+
+	let keypair = Keypair::new(&SECP, &mut bip39::rand::thread_rng());
+	let req_1 = protos::PrepareLightningReceiveClaimRequest {
+		payment_hash: receive.payment_hash.to_vec(),
+		user_pubkey: keypair.public_key().serialize().to_vec(),
+		htlc_recv_expiry: 180,
+		lightning_receive_anti_dos: None,
+	};
+	let vtxos_1 = client.prepare_lightning_receive_claim(req_1.clone()).await.unwrap()
+		.into_inner().htlc_vtxos.into_iter().map(|b| Vtxo::deserialize(&b))
+		.collect::<Result<Vec<_>, _>>().unwrap();
+
+	// We test once again with the same request
+	let vtxos_2 = client.prepare_lightning_receive_claim(req_1).await.unwrap()
+		.into_inner().htlc_vtxos.into_iter().map(|b| Vtxo::deserialize(&b))
+		.collect::<Result<Vec<_>, _>>().unwrap();
+
+	// we change keypair to make sure server don't use it on second request
+	let keypair = Keypair::new(&SECP, &mut bip39::rand::thread_rng());
+	let req_2 = protos::PrepareLightningReceiveClaimRequest {
+		payment_hash: receive.payment_hash.to_vec(),
+		user_pubkey: keypair.public_key().serialize().to_vec(),
+		htlc_recv_expiry: 180,
+		lightning_receive_anti_dos: None,
+	};
+
+	let vtxos_3 = client.prepare_lightning_receive_claim(req_2).await.unwrap()
+		.into_inner().htlc_vtxos.into_iter().map(|b| Vtxo::deserialize(&b))
+		.collect::<Result<Vec<_>, _>>().unwrap();
+
+	assert_eq!(vtxos_1, vtxos_2, "should have the same VTXOs");
+	assert_eq!(vtxos_1, vtxos_3, "should have the same VTXOs");
 }
 
 #[tokio::test]
