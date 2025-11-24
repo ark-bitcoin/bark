@@ -273,21 +273,21 @@ impl Db {
 
 		let new_vtxos = builder.new_vtxos().into_iter().flatten().collect::<Vec<_>>();
 
+		let statement = tx.prepare_typed("
+			UPDATE vtxo SET oor_spent_txid = $2, updated_at = NOW()
+			WHERE
+				vtxo_id = $1 AND
+				forfeit_state IS NULL AND
+				oor_spent_txid IS NULL;
+		", &[Type::TEXT, Type::TEXT]).await?;
+
 		for input in builder.inputs() {
 			let txid = builder.spending_tx(input.id())
 				.expect("spending tx should be present").compute_txid();
 
-			let statement = tx.prepare_typed("
-				UPDATE vtxo SET oor_spent_txid = $2, updated_at = NOW() WHERE vtxo_id = $1;
-			", &[Type::TEXT, Type::TEXT]).await?;
-
-			let vtxos = query::get_vtxos_by_id(&tx, &[input.id()]).await?;
-			for vtxo in vtxos {
-				if !vtxo.is_spendable() {
-					return Ok(Some(vtxo.vtxo_id));
-				}
-
-				tx.execute(&statement, &[&vtxo.vtxo_id.to_string(), &txid.to_string()]).await?;
+			let rows_affected = tx.execute(&statement, &[&input.id().to_string(), &txid.to_string()]).await?;
+			if rows_affected == 0 {
+				return Ok(Some(input.id()));
 			}
 		}
 
