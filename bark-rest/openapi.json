@@ -2896,10 +2896,14 @@
           },
           "metadata": {
             "type": [
-              "string",
+              "object",
               "null"
             ],
-            "description": "Miscellaneous metadata for the movement. This is JSON containing arbitrary information as\ndefined by the subsystem that created the movement."
+            "description": "Miscellaneous metadata for the movement. This is JSON containing arbitrary information as\ndefined by the subsystem that created the movement.",
+            "additionalProperties": {},
+            "propertyNames": {
+              "type": "string"
+            }
           },
           "offchain_fee_sat": {
             "type": "integer",
@@ -3533,10 +3537,9 @@
             ],
             "properties": {
               "movement_id": {
-                "type": [
-                  "string",
-                  "null"
-                ]
+                "type": "integer",
+                "format": "int32",
+                "minimum": 0
               },
               "type": {
                 "type": "string",

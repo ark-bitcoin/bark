@@ -217,7 +217,7 @@ impl MovementUpdate {
 		self
 	}
 
-	pub fn apply_to(self, movement: &mut Movement, at: DateTime<chrono::Utc>) {
+	pub fn apply_to(self, movement: &mut Movement, at: DateTime<chrono::Local>) {
 		movement.time.updated_at = at;
 		if let Some(metadata) = self.metadata {
 			metadata.apply_to(&mut movement.metadata);

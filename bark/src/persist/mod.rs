@@ -164,7 +164,7 @@ pub trait BarkPersister: Send + Sync + 'static {
 	fn create_new_movement(&self,
 		status: MovementStatus,
 		subsystem: &MovementSubsystem,
-		time: DateTime<chrono::Utc>,
+		time: DateTime<chrono::Local>,
 	) -> anyhow::Result<MovementId>;
 
 	/// Persists the given movement state.
@@ -187,7 +187,7 @@ pub trait BarkPersister: Send + Sync + 'static {
 	/// Errors:
 	/// - If the movement does not exist.
 	/// - If retrieving the movement fails.
-	fn get_movement(&self, movement_id: MovementId) -> anyhow::Result<Movement>;
+	fn get_movement_by_id(&self, movement_id: MovementId) -> anyhow::Result<Movement>;
 
 	/// Gets every stored movement.
 	///

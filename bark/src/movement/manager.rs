@@ -53,7 +53,7 @@ impl MovementManager {
 		subsystem_id: SubsystemId,
 		movement_kind: String,
 	) -> anyhow::Result<MovementId, MovementError> {
-		self.new_movement_at(subsystem_id, movement_kind, chrono::Utc::now()).await
+		self.new_movement_at(subsystem_id, movement_kind, chrono::Local::now()).await
 	}
 
 	/// Begins the process of creating a new movement. This newly created movement will be defaulted
@@ -76,7 +76,7 @@ impl MovementManager {
 		&self,
 		subsystem_id: SubsystemId,
 		movement_kind: String,
-		at: DateTime<chrono::Utc>,
+		at: DateTime<chrono::Local>,
 	) -> anyhow::Result<MovementId, MovementError> {
 		self.db.create_new_movement(
 			MovementStatus::Pending,
@@ -98,7 +98,7 @@ impl MovementManager {
 		details: MovementUpdate,
 	) -> anyhow::Result<MovementId, MovementError> {
 		self.new_finished_movement_at(
-			subsystem_id, movement_kind, status, details, chrono::Utc::now(),
+			subsystem_id, movement_kind, status, details, chrono::Local::now(),
 		).await
 	}
 
@@ -125,13 +125,13 @@ impl MovementManager {
 		movement_kind: String,
 		status: MovementStatus,
 		details: MovementUpdate,
-		at: DateTime<chrono::Utc>,
+		at: DateTime<chrono::Local>,
 	) -> anyhow::Result<MovementId, MovementError> {
 		if status == MovementStatus::Pending {
 			return Err(MovementError::IncorrectStatus { status: status.as_str().into() });
 		}
 		let id = self.new_movement_at(subsystem_id, movement_kind, at).await?;
-		let mut movement = self.db.get_movement(id)
+		let mut movement = self.db.get_movement_by_id(id)
 			.map_err(|e| MovementError::LoadError { id, e })?;
 		details.apply_to(&mut movement, at);
 		movement.status = status;
@@ -148,7 +148,7 @@ impl MovementManager {
 		id: MovementId,
 		update: MovementUpdate,
 	) -> anyhow::Result<(), MovementError> {
-		self.update_movement_at(id, update, chrono::Utc::now()).await
+		self.update_movement_at(id, update, chrono::Local::now()).await
 	}
 
 	/// Updates a movement with the given parameters.
@@ -169,7 +169,7 @@ impl MovementManager {
 		&self,
 		id: MovementId,
 		update: MovementUpdate,
-		at: DateTime<chrono::Utc>,
+		at: DateTime<chrono::Local>,
 	) -> anyhow::Result<(), MovementError> {
 
 		// Ensure the movement is loaded.
@@ -198,7 +198,7 @@ impl MovementManager {
 		id: MovementId,
 		new_status: MovementStatus,
 	) -> anyhow::Result<(), MovementError> {
-		self.finish_movement_at(id, new_status, chrono::Utc::now()).await
+		self.finish_movement_at(id, new_status, chrono::Local::now()).await
 	}
 
 	/// Finalizes a movement, setting it to the given [MovementStatus].
@@ -218,7 +218,7 @@ impl MovementManager {
 		&self,
 		id: MovementId,
 		new_status: MovementStatus,
-		at: DateTime<chrono::Utc>,
+		at: DateTime<chrono::Local>,
 	) -> anyhow::Result<(), MovementError> {
 		if new_status == MovementStatus::Pending {
 			return Err(MovementError::IncorrectStatus { status: new_status.as_str().into() });
@@ -267,7 +267,7 @@ impl MovementManager {
 		if movements.contains_key(&id) {
 			return Ok(());
 		}
-		let movement = self.db.get_movement(id)
+		let movement = self.db.get_movement_by_id(id)
 			.map_err(|e| MovementError::LoadError { id, e })?;
 		movements.insert(id, Arc::new(RwLock::new(movement)));
 		Ok(())
@@ -367,7 +367,7 @@ impl<'a> MovementGuard {
 		manager: Arc<MovementManager>,
 		subsystem_id: SubsystemId,
 		movement_kind: String,
-		at: DateTime<chrono::Utc>,
+		at: DateTime<chrono::Local>,
 	) -> anyhow::Result<Self, MovementError> {
 		let id = manager.new_movement_at(subsystem_id, movement_kind, at).await?;
 		Ok(Self {
@@ -414,7 +414,7 @@ impl<'a> MovementGuard {
 	pub async fn apply_update_at(
 		&self,
 		update: MovementUpdate,
-		at: DateTime<chrono::Utc>,
+		at: DateTime<chrono::Local>,
 	) -> anyhow::Result<(), MovementError> {
 		self.manager.update_movement_at(self.id, update, at).await
 	}
@@ -446,7 +446,7 @@ impl<'a> MovementGuard {
 	pub async fn finish_at(
 		&mut self,
 		status: MovementStatus,
-		at: DateTime<chrono::Utc>,
+		at: DateTime<chrono::Local>,
 	) -> anyhow::Result<(), MovementError> {
 		self.manager.finish_movement_at(self.id, status, at).await?;
 		self.has_finished = true;

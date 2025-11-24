@@ -62,27 +62,29 @@ pub struct Movement {
 }
 
 /// A unique identifier for a movement.
-#[derive(Debug, Clone, Copy, Eq, Hash, PartialEq, Deserialize, Serialize)]
-pub struct MovementId(u32);
+#[derive(Clone, Copy, Eq, Hash, PartialEq, Deserialize, Serialize)]
+pub struct MovementId(pub u32);
 
 impl MovementId {
 	pub fn new(id: u32) -> Self {
 		Self(id)
 	}
-
-	pub fn inner(&self) -> u32 {
-		self.0
-	}
 }
 
 impl fmt::Display for MovementId {
 	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-		write!(f, "{}", self.0.to_string())
+		fmt::Display::fmt(&self.0, f)
+	}
+}
+
+impl fmt::Debug for MovementId {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		fmt::Display::fmt(&self, f)
 	}
 }
 
 /// Represents the current status of a [Movement].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum MovementStatus {
 	/// The default status of a new [Movement]. Should be treated as in-progress.
 	Pending,
@@ -109,6 +111,18 @@ impl MovementStatus {
 			Self::Failed => MOVEMENT_FAILED,
 			Self::Cancelled => MOVEMENT_CANCELLED,
 		}
+	}
+}
+
+impl fmt::Display for MovementStatus {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		f.write_str(self.as_str())
+	}
+}
+
+impl fmt::Debug for MovementStatus {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		fmt::Display::fmt(&self, f)
 	}
 }
 
@@ -176,9 +190,9 @@ pub struct MovementSubsystem {
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct MovementTimestamp {
 	/// When the movement was first created.
-	pub created_at: DateTime<chrono::Utc>,
+	pub created_at: DateTime<chrono::Local>,
 	/// When the movement was last updated.
-	pub updated_at: DateTime<chrono::Utc>,
+	pub updated_at: DateTime<chrono::Local>,
 	/// The action responsible for registering the movement.
-	pub completed_at: Option<DateTime<chrono::Utc>>,
+	pub completed_at: Option<DateTime<chrono::Local>>,
 }

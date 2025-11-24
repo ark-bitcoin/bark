@@ -87,7 +87,7 @@ pub fn create_new_movement(
 	tx: &Transaction,
 	status: MovementStatus,
 	subsystem: &MovementSubsystem,
-	time: DateTime<chrono::Utc>,
+	time: DateTime<chrono::Local>,
 ) -> anyhow::Result<MovementId> {
 	let mut statement = tx.prepare("
 		INSERT INTO bark_movements (status, subsystem_name, movement_kind, intended_balance,
@@ -96,7 +96,7 @@ pub fn create_new_movement(
 			:created_at, :updated_at)
 		RETURNING id"
 	)?;
-	let time = time.timestamp();
+	let time = time.with_timezone(&chrono::Utc);
 	let id = statement.query_row(named_params! {
 		":status": status.as_str(),
 		":name": subsystem.name,
@@ -112,7 +112,7 @@ pub fn create_new_movement(
 }
 
 pub fn update_movement(tx: &Transaction, movement: &Movement) -> anyhow::Result<()> {
-	let id = movement.id.inner();
+	let id = movement.id.0;
 	tx.execute(
 		"UPDATE bark_movements
 		SET status = :status, metadata = :metadata, intended_balance = :intended,
@@ -126,8 +126,8 @@ pub fn update_movement(tx: &Transaction, movement: &Movement) -> anyhow::Result<
 			":intended": movement.intended_balance.to_sat(),
 			":effective": movement.effective_balance.to_sat(),
 			":offchain_fee": movement.offchain_fee.to_sat(),
-			":updated_at": movement.time.updated_at.timestamp(),
-			":completed_at": movement.time.completed_at.map(|t| t.timestamp()),
+			":updated_at": movement.time.updated_at.with_timezone(&chrono::Utc),
+			":completed_at": movement.time.completed_at.map(|t| t.with_timezone(&chrono::Utc)),
 		},
 	)?;
 	// Update the recipient tables
@@ -166,7 +166,9 @@ pub fn update_movement(tx: &Transaction, movement: &Movement) -> anyhow::Result<
 }
 
 pub fn get_all_movements(conn: &Connection) -> anyhow::Result<Vec<Movement>> {
-	let mut statement = conn.prepare("SELECT * FROM bark_movements_view ORDER BY created_at DESC")?;
+	let mut statement = conn.prepare(
+		"SELECT * FROM bark_movements_view ORDER BY created_at DESC, id DESC",
+	)?;
 	let mut rows = statement.query([])?;
 	let mut results = Vec::new();
 	while let Some(row) = rows.next()? {
@@ -175,15 +177,15 @@ pub fn get_all_movements(conn: &Connection) -> anyhow::Result<Vec<Movement>> {
 	Ok(results)
 }
 
-pub fn get_movement(conn: &Connection, id: MovementId) -> anyhow::Result<Movement> {
+pub fn get_movement_by_id(conn: &Connection, id: MovementId) -> anyhow::Result<Movement> {
 	let mut statement = conn.prepare(
-		"SELECT * FROM bark_movements_view WHERE id = ?1 ORDER BY created_at DESC"
+		"SELECT * FROM bark_movements_view WHERE id = ?1"
 	)?;
-	let mut rows = statement.query([id.to_string()])?;
+	let mut rows = statement.query([id.0])?;
 	if let Some(row) = rows.next()? {
 		Ok(row_to_movement(row)?)
 	} else {
-		Err(anyhow::anyhow!("Movement {} not found", id))
+		Err(anyhow!("Movement {} not found", id))
 	}
 }
 
@@ -226,7 +228,7 @@ pub fn store_new_pending_board(
 	statement.execute(named_params! {
 		":vtxo_id": vtxo_id.to_string(),
 		":funding_tx": bitcoin::consensus::encode::serialize_hex(&funding_tx),
-		":movement_id": movement_id.inner(),
+		":movement_id": movement_id.0,
 	})?;
 	Ok(())
 }
@@ -431,7 +433,7 @@ pub fn store_new_pending_lightning_send<V: VtxoRef>(
 		":payment_hash": invoice.payment_hash().as_hex().to_string(),
 		":amount_sats": amount.to_sat(),
 		":htlc_vtxo_ids": serde_json::to_string(&vtxo_ids)?,
-		":movement_id": movement_id.inner(),
+		":movement_id": movement_id.0,
 	})?;
 
 	Ok(PendingLightningSend {
@@ -710,7 +712,7 @@ pub fn update_lightning_receive(
 	statement.execute(named_params! {
 		":payment_hash": payment_hash.as_hex().to_string(),
 		":htlc_vtxo_ids": serde_json::to_string(&vtxo_ids)?,
-		":movement_id": Some(movement_id.inner()),
+		":movement_id": Some(movement_id.0),
 	})?;
 
 	Ok(())

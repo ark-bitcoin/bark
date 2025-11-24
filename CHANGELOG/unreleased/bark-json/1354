@@ -1,0 +1,5 @@
+[PR 1354](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1354)
+- Movements are ordered by creation date followed by ID from newest to oldest
+- `Movement::metadata` is now JSON instead of a string.
+- `MovementTimestamp` now uses `DateTime<chrono::Local>` instead of `DateTime<Utc>`
+- `VtxoState::Locked::movement_id` as a number instead of a string.
