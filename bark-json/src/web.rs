@@ -174,17 +174,6 @@ pub struct OnchainDrainRequest {
 #[derive(Serialize, Deserialize)]
 #[cfg_attr(feature = "utoipa", derive(ToSchema))]
 pub struct ExitStatusRequest {
-	/// The VTXO to check the exit status of
-	pub vtxo: String,
-	/// Whether to include the detailed history of the exit process
-	pub history: Option<bool>,
-	/// Whether to include the exit transactions and their CPFP children
-	pub transactions: Option<bool>,
-}
-
-#[derive(Deserialize)]
-#[cfg_attr(feature = "utoipa", derive(ToSchema))]
-pub struct ExitListRequest {
 	/// Whether to include the detailed history of the exit process
 	pub history: Option<bool>,
 	/// Whether to include the exit transactions and their CPFP children
