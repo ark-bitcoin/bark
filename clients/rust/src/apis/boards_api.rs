@@ -19,7 +19,7 @@ use super::{Error, configuration, ContentType};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum BoardAllError {
-    Status500(),
+    Status500(models::InternalServerError),
     UnknownValue(serde_json::Value),
 }
 
@@ -27,7 +27,7 @@ pub enum BoardAllError {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum BoardAmountError {
-    Status500(),
+    Status500(models::InternalServerError),
     UnknownValue(serde_json::Value),
 }
 

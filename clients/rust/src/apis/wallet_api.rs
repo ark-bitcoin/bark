@@ -19,7 +19,7 @@ use super::{Error, configuration, ContentType};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum AddressError {
-    Status500(),
+    Status500(models::InternalServerError),
     UnknownValue(serde_json::Value),
 }
 
@@ -27,8 +27,8 @@ pub enum AddressError {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum ArkInfoError {
-    Status404(),
-    Status500(),
+    Status404(models::NotFoundError),
+    Status500(models::InternalServerError),
     UnknownValue(serde_json::Value),
 }
 
@@ -36,7 +36,7 @@ pub enum ArkInfoError {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum BalanceError {
-    Status500(),
+    Status500(models::InternalServerError),
     UnknownValue(serde_json::Value),
 }
 
@@ -44,7 +44,7 @@ pub enum BalanceError {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum ConnectedError {
-    Status500(),
+    Status500(models::InternalServerError),
     UnknownValue(serde_json::Value),
 }
 
@@ -52,7 +52,7 @@ pub enum ConnectedError {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum MovementsError {
-    Status500(),
+    Status500(models::InternalServerError),
     UnknownValue(serde_json::Value),
 }
 
@@ -60,7 +60,7 @@ pub enum MovementsError {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum OffboardAllError {
-    Status500(),
+    Status500(models::InternalServerError),
     UnknownValue(serde_json::Value),
 }
 
@@ -68,6 +68,8 @@ pub enum OffboardAllError {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum OffboardVtxosError {
+    Status400(models::BadRequestError),
+    Status404(models::NotFoundError),
     Status500(),
     UnknownValue(serde_json::Value),
 }
@@ -76,7 +78,7 @@ pub enum OffboardVtxosError {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum PeakAddressError {
-    Status500(),
+    Status500(models::InternalServerError),
     UnknownValue(serde_json::Value),
 }
 
@@ -84,7 +86,7 @@ pub enum PeakAddressError {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum PendingRoundsError {
-    Status500(),
+    Status500(models::InternalServerError),
     UnknownValue(serde_json::Value),
 }
 
@@ -92,7 +94,7 @@ pub enum PendingRoundsError {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum RefreshAllError {
-    Status500(),
+    Status500(models::InternalServerError),
     UnknownValue(serde_json::Value),
 }
 
@@ -100,8 +102,8 @@ pub enum RefreshAllError {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum RefreshCounterpartyError {
-    Status400(),
-    Status500(),
+    Status404(models::NotFoundError),
+    Status500(models::InternalServerError),
     UnknownValue(serde_json::Value),
 }
 
@@ -109,8 +111,9 @@ pub enum RefreshCounterpartyError {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum RefreshVtxosError {
-    Status400(),
-    Status500(),
+    Status400(models::BadRequestError),
+    Status404(models::NotFoundError),
+    Status500(models::InternalServerError),
     UnknownValue(serde_json::Value),
 }
 
@@ -118,8 +121,8 @@ pub enum RefreshVtxosError {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum SendError {
-    Status400(),
-    Status500(),
+    Status400(models::BadRequestError),
+    Status500(models::InternalServerError),
     UnknownValue(serde_json::Value),
 }
 
@@ -127,7 +130,7 @@ pub enum SendError {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum SendOnchainError {
-    Status500(),
+    Status500(models::InternalServerError),
     UnknownValue(serde_json::Value),
 }
 
@@ -135,7 +138,6 @@ pub enum SendOnchainError {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum SyncError {
-    Status500(),
     UnknownValue(serde_json::Value),
 }
 
@@ -143,15 +145,16 @@ pub enum SyncError {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum VtxosError {
-    Status500(),
+    Status500(models::InternalServerError),
     UnknownValue(serde_json::Value),
 }
 
 
+/// Generates a new Ark address and stores it in the wallet database
 pub async fn address(configuration: &configuration::Configuration, ) -> Result<models::Address, Error<AddressError>> {
 
     let uri_str = format!("{}/api/v1/wallet/addresses/next", configuration.base_path);
-    let mut req_builder = configuration.client.request(reqwest::Method::PUT, &uri_str);
+    let mut req_builder = configuration.client.request(reqwest::Method::POST, &uri_str);
 
     if let Some(ref user_agent) = configuration.user_agent {
         req_builder = req_builder.header(reqwest::header::USER_AGENT, user_agent.clone());
@@ -182,6 +185,7 @@ pub async fn address(configuration: &configuration::Configuration, ) -> Result<m
     }
 }
 
+/// Returns the current Ark infos
 pub async fn ark_info(configuration: &configuration::Configuration, ) -> Result<models::ArkInfo, Error<ArkInfoError>> {
 
     let uri_str = format!("{}/api/v1/wallet/ark-info", configuration.base_path);
@@ -216,6 +220,7 @@ pub async fn ark_info(configuration: &configuration::Configuration, ) -> Result<
     }
 }
 
+/// Returns the current wallet balance
 pub async fn balance(configuration: &configuration::Configuration, ) -> Result<models::Balance, Error<BalanceError>> {
 
     let uri_str = format!("{}/api/v1/wallet/balance", configuration.base_path);
@@ -250,6 +255,7 @@ pub async fn balance(configuration: &configuration::Configuration, ) -> Result<m
     }
 }
 
+/// Returns whether the wallet is currently connected to the Ark server
 pub async fn connected(configuration: &configuration::Configuration, ) -> Result<models::ConnectedResponse, Error<ConnectedError>> {
 
     let uri_str = format!("{}/api/v1/wallet/connected", configuration.base_path);
@@ -284,6 +290,7 @@ pub async fn connected(configuration: &configuration::Configuration, ) -> Result
     }
 }
 
+/// Returns all the wallet movements
 pub async fn movements(configuration: &configuration::Configuration, ) -> Result<Vec<models::Movement>, Error<MovementsError>> {
 
     let uri_str = format!("{}/api/v1/wallet/movements", configuration.base_path);
@@ -318,6 +325,7 @@ pub async fn movements(configuration: &configuration::Configuration, ) -> Result
     }
 }
 
+/// Creates a new round participation to offboard all VTXOs
 pub async fn offboard_all(configuration: &configuration::Configuration, offboard_all_request: models::OffboardAllRequest) -> Result<models::PendingRoundInfo, Error<OffboardAllError>> {
     // add a prefix to parameters to efficiently prevent name collisions
     let p_offboard_all_request = offboard_all_request;
@@ -355,6 +363,7 @@ pub async fn offboard_all(configuration: &configuration::Configuration, offboard
     }
 }
 
+/// Creates a new round participation to offboard the given VTXOs
 pub async fn offboard_vtxos(configuration: &configuration::Configuration, offboard_vtxos_request: models::OffboardVtxosRequest) -> Result<models::PendingRoundInfo, Error<OffboardVtxosError>> {
     // add a prefix to parameters to efficiently prevent name collisions
     let p_offboard_vtxos_request = offboard_vtxos_request;
@@ -392,14 +401,14 @@ pub async fn offboard_vtxos(configuration: &configuration::Configuration, offboa
     }
 }
 
+/// Returns the Ark address at the given index. The address must have been already derived before using the /addresses/next endpoint.
 pub async fn peak_address(configuration: &configuration::Configuration, index: i32) -> Result<models::Address, Error<PeakAddressError>> {
     // add a prefix to parameters to efficiently prevent name collisions
     let p_index = index;
 
-    let uri_str = format!("{}/api/v1/wallet/addresses/peak", configuration.base_path);
+    let uri_str = format!("{}/api/v1/wallet/addresses/index/{index}", configuration.base_path, index=p_index);
     let mut req_builder = configuration.client.request(reqwest::Method::GET, &uri_str);
 
-    req_builder = req_builder.query(&[("index", &p_index.to_string())]);
     if let Some(ref user_agent) = configuration.user_agent {
         req_builder = req_builder.header(reqwest::header::USER_AGENT, user_agent.clone());
     }
@@ -429,6 +438,7 @@ pub async fn peak_address(configuration: &configuration::Configuration, index: i
     }
 }
 
+/// Returns all the wallet ongoing round participations
 pub async fn pending_rounds(configuration: &configuration::Configuration, ) -> Result<Vec<models::PendingRoundInfo>, Error<PendingRoundsError>> {
 
     let uri_str = format!("{}/api/v1/wallet/rounds", configuration.base_path);
@@ -463,6 +473,7 @@ pub async fn pending_rounds(configuration: &configuration::Configuration, ) -> R
     }
 }
 
+/// Creates a new round participation to refresh all VTXOs
 pub async fn refresh_all(configuration: &configuration::Configuration, ) -> Result<models::PendingRoundInfo, Error<RefreshAllError>> {
 
     let uri_str = format!("{}/api/v1/wallet/refresh/all", configuration.base_path);
@@ -497,6 +508,7 @@ pub async fn refresh_all(configuration: &configuration::Configuration, ) -> Resu
     }
 }
 
+/// Creates a new round participation to refresh VTXOs marked with counterparty
 pub async fn refresh_counterparty(configuration: &configuration::Configuration, refresh_request: models::RefreshRequest) -> Result<models::PendingRoundInfo, Error<RefreshCounterpartyError>> {
     // add a prefix to parameters to efficiently prevent name collisions
     let p_refresh_request = refresh_request;
@@ -534,6 +546,7 @@ pub async fn refresh_counterparty(configuration: &configuration::Configuration, 
     }
 }
 
+/// Creates a new round participation to refresh the given VTXOs
 pub async fn refresh_vtxos(configuration: &configuration::Configuration, refresh_request: models::RefreshRequest) -> Result<models::PendingRoundInfo, Error<RefreshVtxosError>> {
     // add a prefix to parameters to efficiently prevent name collisions
     let p_refresh_request = refresh_request;
@@ -571,6 +584,7 @@ pub async fn refresh_vtxos(configuration: &configuration::Configuration, refresh
     }
 }
 
+/// Sends a payment to the given destination. The destination can be an Ark address, a BOLT11-invoice, LNURL or a lightning address
 pub async fn send(configuration: &configuration::Configuration, send_request: models::SendRequest) -> Result<models::SendResponse, Error<SendError>> {
     // add a prefix to parameters to efficiently prevent name collisions
     let p_send_request = send_request;
@@ -608,6 +622,7 @@ pub async fn send(configuration: &configuration::Configuration, send_request: mo
     }
 }
 
+/// Creates a new round participation to send a payment onchain from ark round
 pub async fn send_onchain(configuration: &configuration::Configuration, send_onchain_request: models::SendOnchainRequest) -> Result<models::PendingRoundInfo, Error<SendOnchainError>> {
     // add a prefix to parameters to efficiently prevent name collisions
     let p_send_onchain_request = send_onchain_request;
@@ -645,6 +660,7 @@ pub async fn send_onchain(configuration: &configuration::Configuration, send_onc
     }
 }
 
+/// Syncs the wallet
 pub async fn sync(configuration: &configuration::Configuration, ) -> Result<(), Error<SyncError>> {
 
     let uri_str = format!("{}/api/v1/wallet/sync", configuration.base_path);
@@ -668,6 +684,7 @@ pub async fn sync(configuration: &configuration::Configuration, ) -> Result<(), 
     }
 }
 
+/// Returns all the wallet VTXOs
 pub async fn vtxos(configuration: &configuration::Configuration, all: Option<bool>) -> Result<Vec<models::WalletVtxoInfo>, Error<VtxosError>> {
     // add a prefix to parameters to efficiently prevent name collisions
     let p_all = all;

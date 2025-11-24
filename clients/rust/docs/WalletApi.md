@@ -4,14 +4,14 @@ All URIs are relative to *http://localhost*
 
 Method | HTTP request | Description
 ------------- | ------------- | -------------
-[**address**](WalletApi.md#address) | **PUT** /api/v1/wallet/addresses/next | 
+[**address**](WalletApi.md#address) | **POST** /api/v1/wallet/addresses/next | 
 [**ark_info**](WalletApi.md#ark_info) | **GET** /api/v1/wallet/ark-info | 
 [**balance**](WalletApi.md#balance) | **GET** /api/v1/wallet/balance | 
 [**connected**](WalletApi.md#connected) | **GET** /api/v1/wallet/connected | 
 [**movements**](WalletApi.md#movements) | **GET** /api/v1/wallet/movements | 
 [**offboard_all**](WalletApi.md#offboard_all) | **POST** /api/v1/wallet/offboard/all | 
 [**offboard_vtxos**](WalletApi.md#offboard_vtxos) | **POST** /api/v1/wallet/offboard/vtxos | 
-[**peak_address**](WalletApi.md#peak_address) | **GET** /api/v1/wallet/addresses/peak | 
+[**peak_address**](WalletApi.md#peak_address) | **GET** /api/v1/wallet/addresses/index/{index} | 
 [**pending_rounds**](WalletApi.md#pending_rounds) | **GET** /api/v1/wallet/rounds | 
 [**refresh_all**](WalletApi.md#refresh_all) | **POST** /api/v1/wallet/refresh/all | 
 [**refresh_counterparty**](WalletApi.md#refresh_counterparty) | **POST** /api/v1/wallet/refresh/counterparty | 
@@ -27,6 +27,8 @@ Method | HTTP request | Description
 
 > models::Address address()
 
+
+Generates a new Ark address and stores it in the wallet database
 
 ### Parameters
 
@@ -53,6 +55,8 @@ No authorization required
 > models::ArkInfo ark_info()
 
 
+Returns the current Ark infos
+
 ### Parameters
 
 This endpoint does not need any parameter.
@@ -77,6 +81,8 @@ No authorization required
 
 > models::Balance balance()
 
+
+Returns the current wallet balance
 
 ### Parameters
 
@@ -103,6 +109,8 @@ No authorization required
 > models::ConnectedResponse connected()
 
 
+Returns whether the wallet is currently connected to the Ark server
+
 ### Parameters
 
 This endpoint does not need any parameter.
@@ -128,6 +136,8 @@ No authorization required
 > Vec<models::Movement> movements()
 
 
+Returns all the wallet movements
+
 ### Parameters
 
 This endpoint does not need any parameter.
@@ -152,6 +162,8 @@ No authorization required
 
 > models::PendingRoundInfo offboard_all(offboard_all_request)
 
+
+Creates a new round participation to offboard all VTXOs
 
 ### Parameters
 
@@ -181,6 +193,8 @@ No authorization required
 > models::PendingRoundInfo offboard_vtxos(offboard_vtxos_request)
 
 
+Creates a new round participation to offboard the given VTXOs
+
 ### Parameters
 
 
@@ -208,6 +222,8 @@ No authorization required
 
 > models::Address peak_address(index)
 
+
+Returns the Ark address at the given index. The address must have been already derived before using the /addresses/next endpoint.
 
 ### Parameters
 
@@ -237,6 +253,8 @@ No authorization required
 > Vec<models::PendingRoundInfo> pending_rounds()
 
 
+Returns all the wallet ongoing round participations
+
 ### Parameters
 
 This endpoint does not need any parameter.
@@ -262,6 +280,8 @@ No authorization required
 > models::PendingRoundInfo refresh_all()
 
 
+Creates a new round participation to refresh all VTXOs
+
 ### Parameters
 
 This endpoint does not need any parameter.
@@ -286,6 +306,8 @@ No authorization required
 
 > models::PendingRoundInfo refresh_counterparty(refresh_request)
 
+
+Creates a new round participation to refresh VTXOs marked with counterparty
 
 ### Parameters
 
@@ -315,6 +337,8 @@ No authorization required
 > models::PendingRoundInfo refresh_vtxos(refresh_request)
 
 
+Creates a new round participation to refresh the given VTXOs
+
 ### Parameters
 
 
@@ -342,6 +366,8 @@ No authorization required
 
 > models::SendResponse send(send_request)
 
+
+Sends a payment to the given destination. The destination can be an Ark address, a BOLT11-invoice, LNURL or a lightning address
 
 ### Parameters
 
@@ -371,6 +397,8 @@ No authorization required
 > models::PendingRoundInfo send_onchain(send_onchain_request)
 
 
+Creates a new round participation to send a payment onchain from ark round
+
 ### Parameters
 
 
@@ -399,6 +427,8 @@ No authorization required
 > sync()
 
 
+Syncs the wallet
+
 ### Parameters
 
 This endpoint does not need any parameter.
@@ -423,6 +453,8 @@ No authorization required
 
 > Vec<models::WalletVtxoInfo> vtxos(all)
 
+
+Returns all the wallet VTXOs
 
 ### Parameters
 

@@ -19,8 +19,7 @@ use super::{Error, configuration, ContentType};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum GenerateInvoiceError {
-    Status400(),
-    Status500(),
+    Status500(models::InternalServerError),
     UnknownValue(serde_json::Value),
 }
 
@@ -28,7 +27,9 @@ pub enum GenerateInvoiceError {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum GetReceiveStatusError {
-    Status500(),
+    Status400(models::BadRequestError),
+    Status404(models::NotFoundError),
+    Status500(models::InternalServerError),
     UnknownValue(serde_json::Value),
 }
 
@@ -36,7 +37,7 @@ pub enum GetReceiveStatusError {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum ListReceiveStatusesError {
-    Status500(),
+    Status500(models::InternalServerError),
     UnknownValue(serde_json::Value),
 }
 
@@ -44,8 +45,8 @@ pub enum ListReceiveStatusesError {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum PayError {
-    Status400(),
-    Status500(),
+    Status400(models::BadRequestError),
+    Status500(models::InternalServerError),
     UnknownValue(serde_json::Value),
 }
 

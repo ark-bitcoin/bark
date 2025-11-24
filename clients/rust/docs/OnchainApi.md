@@ -4,7 +4,7 @@ All URIs are relative to *http://localhost*
 
 Method | HTTP request | Description
 ------------- | ------------- | -------------
-[**onchain_address**](OnchainApi.md#onchain_address) | **PUT** /api/v1/onchain/addresses/next | 
+[**onchain_address**](OnchainApi.md#onchain_address) | **POST** /api/v1/onchain/addresses/next | 
 [**onchain_balance**](OnchainApi.md#onchain_balance) | **GET** /api/v1/onchain/balance | 
 [**onchain_drain**](OnchainApi.md#onchain_drain) | **POST** /api/v1/onchain/drain | 
 [**onchain_send**](OnchainApi.md#onchain_send) | **POST** /api/v1/onchain/send | 
@@ -19,6 +19,8 @@ Method | HTTP request | Description
 
 > models::Address onchain_address()
 
+
+Generates a new onchain address and stores its index in the onchain wallet database
 
 ### Parameters
 
@@ -45,6 +47,8 @@ No authorization required
 > models::OnchainBalance onchain_balance()
 
 
+Returns the current onchain wallet balance
+
 ### Parameters
 
 This endpoint does not need any parameter.
@@ -69,6 +73,8 @@ No authorization required
 
 > models::Send onchain_drain(onchain_drain_request)
 
+
+Sends all onchain wallet funds to the given address
 
 ### Parameters
 
@@ -98,6 +104,8 @@ No authorization required
 > models::Send onchain_send(onchain_send_request)
 
 
+Sends a payment to the given onchain address
+
 ### Parameters
 
 
@@ -125,6 +133,8 @@ No authorization required
 
 > models::Send onchain_send_many(onchain_send_many_request)
 
+
+Sends multiple payments to provided onchain addresses
 
 ### Parameters
 
@@ -154,6 +164,8 @@ No authorization required
 > onchain_sync()
 
 
+Syncs the onchain wallet
+
 ### Parameters
 
 This endpoint does not need any parameter.
@@ -169,7 +181,7 @@ No authorization required
 ### HTTP request headers
 
 - **Content-Type**: Not defined
-- **Accept**: Not defined
+- **Accept**: application/json
 
 [[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
 
@@ -178,6 +190,8 @@ No authorization required
 
 > Vec<models::TransactionInfo> onchain_transactions()
 
+
+Returns all the onchain wallet transactions
 
 ### Parameters
 
@@ -203,6 +217,8 @@ No authorization required
 
 > Vec<models::UtxoInfo> onchain_utxos()
 
+
+Returns all the onchain wallet UTXOs
 
 ### Parameters
 

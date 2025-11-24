@@ -41,7 +41,7 @@ Class | Method | HTTP request | Description
 *LightningApi* | [**get_receive_status**](docs/LightningApi.md#get_receive_status) | **GET** /api/v1/lightning/receives/{identifier} | 
 *LightningApi* | [**list_receive_statuses**](docs/LightningApi.md#list_receive_statuses) | **GET** /api/v1/lightning/receives | 
 *LightningApi* | [**pay**](docs/LightningApi.md#pay) | **POST** /api/v1/lightning/pay | 
-*OnchainApi* | [**onchain_address**](docs/OnchainApi.md#onchain_address) | **PUT** /api/v1/onchain/addresses/next | 
+*OnchainApi* | [**onchain_address**](docs/OnchainApi.md#onchain_address) | **POST** /api/v1/onchain/addresses/next | 
 *OnchainApi* | [**onchain_balance**](docs/OnchainApi.md#onchain_balance) | **GET** /api/v1/onchain/balance | 
 *OnchainApi* | [**onchain_drain**](docs/OnchainApi.md#onchain_drain) | **POST** /api/v1/onchain/drain | 
 *OnchainApi* | [**onchain_send**](docs/OnchainApi.md#onchain_send) | **POST** /api/v1/onchain/send | 
@@ -49,14 +49,14 @@ Class | Method | HTTP request | Description
 *OnchainApi* | [**onchain_sync**](docs/OnchainApi.md#onchain_sync) | **POST** /api/v1/onchain/sync | 
 *OnchainApi* | [**onchain_transactions**](docs/OnchainApi.md#onchain_transactions) | **GET** /api/v1/onchain/transactions | 
 *OnchainApi* | [**onchain_utxos**](docs/OnchainApi.md#onchain_utxos) | **GET** /api/v1/onchain/utxos | 
-*WalletApi* | [**address**](docs/WalletApi.md#address) | **PUT** /api/v1/wallet/addresses/next | 
+*WalletApi* | [**address**](docs/WalletApi.md#address) | **POST** /api/v1/wallet/addresses/next | 
 *WalletApi* | [**ark_info**](docs/WalletApi.md#ark_info) | **GET** /api/v1/wallet/ark-info | 
 *WalletApi* | [**balance**](docs/WalletApi.md#balance) | **GET** /api/v1/wallet/balance | 
 *WalletApi* | [**connected**](docs/WalletApi.md#connected) | **GET** /api/v1/wallet/connected | 
 *WalletApi* | [**movements**](docs/WalletApi.md#movements) | **GET** /api/v1/wallet/movements | 
 *WalletApi* | [**offboard_all**](docs/WalletApi.md#offboard_all) | **POST** /api/v1/wallet/offboard/all | 
 *WalletApi* | [**offboard_vtxos**](docs/WalletApi.md#offboard_vtxos) | **POST** /api/v1/wallet/offboard/vtxos | 
-*WalletApi* | [**peak_address**](docs/WalletApi.md#peak_address) | **GET** /api/v1/wallet/addresses/peak | 
+*WalletApi* | [**peak_address**](docs/WalletApi.md#peak_address) | **GET** /api/v1/wallet/addresses/index/{index} | 
 *WalletApi* | [**pending_rounds**](docs/WalletApi.md#pending_rounds) | **GET** /api/v1/wallet/rounds | 
 *WalletApi* | [**refresh_all**](docs/WalletApi.md#refresh_all) | **POST** /api/v1/wallet/refresh/all | 
 *WalletApi* | [**refresh_counterparty**](docs/WalletApi.md#refresh_counterparty) | **POST** /api/v1/wallet/refresh/counterparty | 
@@ -72,6 +72,7 @@ Class | Method | HTTP request | Description
  - [Address](docs/Address.md)
  - [ArkAddressResponse](docs/ArkAddressResponse.md)
  - [ArkInfo](docs/ArkInfo.md)
+ - [BadRequestError](docs/BadRequestError.md)
  - [Balance](docs/Balance.md)
  - [Board](docs/Board.md)
  - [BoardRequest](docs/BoardRequest.md)
@@ -139,6 +140,7 @@ Class | Method | HTTP request | Description
  - [ExitTxStatusOneOf4](docs/ExitTxStatusOneOf4.md)
  - [ExitTxStatusOneOf5](docs/ExitTxStatusOneOf5.md)
  - [ExitTxStatusOneOf6](docs/ExitTxStatusOneOf6.md)
+ - [InternalServerError](docs/InternalServerError.md)
  - [InvoiceInfo](docs/InvoiceInfo.md)
  - [LightningInvoiceRequest](docs/LightningInvoiceRequest.md)
  - [LightningPayRequest](docs/LightningPayRequest.md)
@@ -148,13 +150,13 @@ Class | Method | HTTP request | Description
  - [MovementDestination](docs/MovementDestination.md)
  - [MovementSubsystem](docs/MovementSubsystem.md)
  - [MovementTimestamp](docs/MovementTimestamp.md)
+ - [NotFoundError](docs/NotFoundError.md)
  - [OffboardAllRequest](docs/OffboardAllRequest.md)
  - [OffboardVtxosRequest](docs/OffboardVtxosRequest.md)
  - [OnchainBalance](docs/OnchainBalance.md)
  - [OnchainDrainRequest](docs/OnchainDrainRequest.md)
  - [OnchainSendManyRequest](docs/OnchainSendManyRequest.md)
  - [OnchainSendRequest](docs/OnchainSendRequest.md)
- - [PeakAddressRequest](docs/PeakAddressRequest.md)
  - [PendingRoundInfo](docs/PendingRoundInfo.md)
  - [RefreshRequest](docs/RefreshRequest.md)
  - [RoundStatus](docs/RoundStatus.md)

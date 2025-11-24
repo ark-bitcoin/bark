@@ -19,8 +19,8 @@ use super::{Error, configuration, ContentType};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum ExitClaimAllError {
-    Status400(),
-    Status500(),
+    Status400(models::BadRequestError),
+    Status500(models::InternalServerError),
     UnknownValue(serde_json::Value),
 }
 
@@ -28,8 +28,8 @@ pub enum ExitClaimAllError {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum ExitClaimVtxosError {
-    Status400(),
-    Status500(),
+    Status400(models::BadRequestError),
+    Status500(models::InternalServerError),
     UnknownValue(serde_json::Value),
 }
 
@@ -37,7 +37,7 @@ pub enum ExitClaimVtxosError {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum ExitProgressError {
-    Status500(),
+    Status500(models::InternalServerError),
     UnknownValue(serde_json::Value),
 }
 
@@ -45,8 +45,7 @@ pub enum ExitProgressError {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum ExitStartAllError {
-    Status400(),
-    Status500(),
+    Status500(models::InternalServerError),
     UnknownValue(serde_json::Value),
 }
 
@@ -54,8 +53,9 @@ pub enum ExitStartAllError {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum ExitStartVtxosError {
-    Status400(),
-    Status500(),
+    Status400(models::BadRequestError),
+    Status404(models::NotFoundError),
+    Status500(models::InternalServerError),
     UnknownValue(serde_json::Value),
 }
 
@@ -63,7 +63,7 @@ pub enum ExitStartVtxosError {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum GetAllExitStatusError {
-    Status500(),
+    Status500(models::InternalServerError),
     UnknownValue(serde_json::Value),
 }
 
@@ -71,8 +71,8 @@ pub enum GetAllExitStatusError {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum GetExitStatusByVtxoIdError {
-    Status404(),
-    Status500(),
+    Status404(models::NotFoundError),
+    Status500(models::InternalServerError),
     UnknownValue(serde_json::Value),
 }
 
