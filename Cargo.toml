@@ -12,7 +12,7 @@ members = [
   "server-rpc",
   "testing",
   "cln-rpc",
-  "clients/rust"
+  "bark-rest-client"
 ]
 
 resolver = "2"

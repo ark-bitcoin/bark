@@ -7,7 +7,7 @@ export BARK_EXEC := CARGO_TARGET / "debug" / "bark"
 SERVER_SQL_SCHEMA_PATH := "server/schema.sql"
 BARK_SQL_SCHEMA_PATH := "bark/schema.sql"
 BARK_OPENAPI_SCHEMA_PATH := "bark-rest/openapi.json"
-BARK_CLIENT_DIR := "clients"
+BARK_REST_CLIENT_DIR := "bark-rest-client"
 BARK_REST_VERSION := `grep '^version = ' bark-rest/Cargo.toml | sed -E 's/^version = "([^"]+)"/\1/'`
 
 precheck CHECK:
@@ -164,18 +164,18 @@ dump-bark-openapi-schema:
 	cargo run --package bark-rest --example dump_api_docs > {{BARK_OPENAPI_SCHEMA_PATH}}
 
 generate-rust-api: dump-bark-openapi-schema
-	rm -rf {{BARK_CLIENT_DIR}}/rust
+	rm -rf {{BARK_REST_CLIENT_DIR}}
 	openapi-generator-cli generate \
 		-i {{BARK_OPENAPI_SCHEMA_PATH}} \
 		-g rust \
-		-o {{BARK_CLIENT_DIR}}/rust \
-		--package-name bark-openapi \
+		-o {{BARK_REST_CLIENT_DIR}} \
+		--package-name bark-rest-client \
 		--artifact-version "{{BARK_REST_VERSION}}" \
 		--additional-properties packageVersion="{{BARK_REST_VERSION}}"
-	cargo add --package bark-openapi --path bark-json
-	cargo add --package bark-openapi --path bark-rest
-	rm {{BARK_CLIENT_DIR}}/rust/src/models/*.rs
-	cp clients/helpers/models.rs {{BARK_CLIENT_DIR}}/rust/src/models/mod.rs
+	cargo add --package bark-rest-client --path bark-json
+	cargo add --package bark-rest-client --path bark-rest
+	rm {{BARK_REST_CLIENT_DIR}}/src/models/*.rs
+	cp bark-rest/helpers/models.rs {{BARK_REST_CLIENT_DIR}}/src/models/mod.rs
 
 generate-static-files: dump-server-sql-schema dump-bark-sql-schema dump-bark-openapi-schema
 
