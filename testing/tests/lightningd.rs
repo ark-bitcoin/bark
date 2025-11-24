@@ -447,12 +447,11 @@ async fn bark_can_receive_lightning() {
 	let receives = bark.list_lightning_receives().await;
 	assert!(receives.is_empty());
 
-	assert_eq!(bark.offchain_balance().await.pending_lightning_receive.total, btc(0),
-		"pending lightning receive should be reset after payment");
-	assert_eq!(bark.offchain_balance().await.pending_lightning_receive.claimable, btc(0),
-		"pending lightning receive should be reset after payment");
+	assert_eq!(bark.offchain_balance().await.claimable_lightning_receive, btc(0),
+		"claimable lightning receive should be reset after payment");
 	let vtxos = bark.vtxos().await;
-	assert!(!vtxos.iter().any(|v| matches!(v.state, VtxoStateInfo::Locked { .. })), "should not be any locked vtxo left");
+	assert!(!vtxos.iter().any(|v| matches!(v.state, VtxoStateInfo::Locked { .. })),
+		"should not be any locked vtxo left");
 }
 
 #[tokio::test]
@@ -499,10 +498,8 @@ async fn bark_check_lightning_receive_no_wait() {
 	// HTLC settlement on lightning side
 	res1.ready().await.unwrap();
 
-	assert_eq!(bark.offchain_balance().await.pending_lightning_receive.total, btc(0),
-		"pending lightning receive should be reset after payment");
-	assert_eq!(bark.offchain_balance().await.pending_lightning_receive.claimable, btc(0),
-		"pending lightning receive should be reset after payment");
+	assert_eq!(bark.offchain_balance().await.claimable_lightning_receive, btc(0),
+		"claimable lightning receive should be reset after payment");
 	let vtxos = bark.vtxos().await;
 	assert!(!vtxos.iter().any(|v| matches!(v.state, VtxoStateInfo::Locked { .. })), "should not be any locked vtxo left");
 }
@@ -556,10 +553,8 @@ async fn bark_can_pay_intra_ark_invoice() {
 
 	assert_eq!(bark_1.spendable_balance().await, board_amount + pay_amount);
 
-	assert_eq!(bark_1.offchain_balance().await.pending_lightning_receive.total, btc(0),
-		"pending lightning receive should be reset after payment");
-	assert_eq!(bark_1.offchain_balance().await.pending_lightning_receive.claimable, btc(0),
-		"pending lightning receive should be reset after payment");
+	assert_eq!(bark_1.offchain_balance().await.claimable_lightning_receive, btc(0),
+		"claimable lightning receive should be reset after payment");
 	let vtxos = bark_1.vtxos().await;
 	assert!(!vtxos.iter().any(|v| matches!(v.state, VtxoStateInfo::Locked { .. })), "should not be any locked vtxo left");
 }

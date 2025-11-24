@@ -450,17 +450,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 			}
 
 			let balance = wallet.balance()?;
-			output_json(&json::Balance {
-				spendable: balance.spendable,
-				pending_in_round: balance.pending_in_round,
-				pending_lightning_send: balance.pending_lightning_send,
-				pending_lightning_receive: json::LightningReceiveBalance {
-					total: balance.pending_lightning_receive.total,
-					claimable: balance.pending_lightning_receive.claimable,
-				},
-				pending_exit: balance.pending_exit,
-				pending_board: balance.pending_board,
-			});
+			output_json(&json::Balance::from(balance));
 		},
 		Command::Vtxos { all, no_sync } => {
 			if !no_sync {

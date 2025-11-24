@@ -383,7 +383,7 @@ pub struct Balance {
 	/// Coins that are in the process of being sent over Lightning.
 	pub pending_lightning_send: Amount,
 	/// Coins that are in the process of being received over Lightning.
-	pub pending_lightning_receive: LightningReceiveBalance,
+	pub claimable_lightning_receive: Amount,
 	/// Coins locked in a round.
 	pub pending_in_round: Amount,
 	/// Coins that are in the process of unilaterally exiting the Ark.
@@ -996,7 +996,7 @@ impl Wallet {
 		let pending_lightning_send = self.pending_lightning_send_vtxos()?.iter().map(|v| v.amount())
 			.sum::<Amount>();
 
-		let pending_lightning_receive = self.pending_lightning_receive_balance()?;
+		let claimable_lightning_receive = self.claimable_lightning_receive_balance()?;
 
 		let pending_board = self.pending_board_vtxos()?.iter().map(|v| v.amount()).sum::<Amount>();
 
@@ -1008,7 +1008,7 @@ impl Wallet {
 			spendable,
 			pending_in_round,
 			pending_lightning_send,
-			pending_lightning_receive,
+			claimable_lightning_receive,
 			pending_exit,
 			pending_board,
 		})
@@ -2437,24 +2437,17 @@ impl Wallet {
 		Ok(self.db.get_all_pending_lightning_receives()?)
 	}
 
-	pub fn pending_lightning_receive_balance(&self) -> anyhow::Result<LightningReceiveBalance> {
-		let pending_lightning_receives = self.pending_lightning_receives()?;
+	pub fn claimable_lightning_receive_balance(&self) -> anyhow::Result<Amount> {
+		let receives = self.pending_lightning_receives()?;
 
-		let mut total_pending_lightning_receive = Amount::ZERO;
-		let mut claimable_pending_lightning_receive = Amount::ZERO;
-		for receive in pending_lightning_receives {
-			total_pending_lightning_receive += receive.invoice.amount_milli_satoshis()
-				.map(|a| Amount::from_msat_floor(a))
-				.expect("ln receive invoice should have amount");
+		let mut total = Amount::ZERO;
+		for receive in receives {
 			if let Some(htlc_vtxos) = receive.htlc_vtxos {
-				claimable_pending_lightning_receive += htlc_vtxos.iter().map(|v| v.amount()).sum::<Amount>();
+				total += htlc_vtxos.iter().map(|v| v.amount()).sum::<Amount>();
 			}
 		}
 
-		Ok(LightningReceiveBalance {
-			total: total_pending_lightning_receive,
-			claimable: claimable_pending_lightning_receive,
-		})
+		Ok(total)
 	}
 
 	/// Claim incoming lightning payment with the given [PaymentHash].
