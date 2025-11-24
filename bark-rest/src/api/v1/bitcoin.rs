@@ -30,6 +30,7 @@ pub fn router() -> Router<RestServer> {
 		(status = 200, description = "Returns the current bitcoin tip height", body = bark_json::web::TipResponse),
 		(status = 500, description = "Internal server error")
 	),
+	description = "Returns the current bitcoin tip height",
 	tag = "bitcoin"
 )]
 #[debug_handler]
