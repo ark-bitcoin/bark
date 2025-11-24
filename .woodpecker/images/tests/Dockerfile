@@ -31,14 +31,23 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 	libpq-dev \
 	sudo \
 	podman \
+	gnupg2 \
 	&& rm -rf /var/lib/apt/lists/*
 
+COPY wakemeops.gpg /etc/apt/trusted.gpg.d/
+RUN cat /etc/apt/trusted.gpg.d/wakemeops.gpg | gpg --dearmor > /etc/apt/trusted.gpg.d/wakemeops-keyring.gpg && \
+	echo "deb [signed-by=/etc/apt/trusted.gpg.d/wakemeops-keyring.gpg] http://deb.wakemeops.com/wakemeops stable dev devops" > /etc/apt/sources.list.d/wakemeops.list && \
+	apt-get update && \
+	apt-get install -y --no-install-recommends glab && \
+	rm -rf /var/lib/apt/lists/*
+
 ENV RUST_BACKTRACE=1 \
+	RUSTUP_TOOLCHAIN_VERSION=1.90 \
+	CARGO_PROFILE_RELEASE_BUILD_OVERRIDE_DEBUG=true \
 	DEBIAN_FRONTEND=noninteractive \
 	PATH=/home/nixuser/.cargo/bin:/home/nixuser/.nix-profile/bin:/home/nixuser/.nix-profile/sbin:/home/nixuser/.nix-profile/lib:/nix/var/nix/profiles/default/bin:$PATH \
 	NIX_PATH=/nix/var/nix/profiles/per-user/nixuser/channels \
 	NIX_PROFILES="/nix/var/nix/profiles/default /nixuser/.nix-profile" \
-	RUSTUP_TOOLCHAIN_VERSION=1.90 \
 	MACOS_SDK_VERSION=15.4 \
 	MACOS_DARWIN_VERSION=24.4 \
 	ZIG_VERSION=0.13.0
@@ -55,6 +64,10 @@ USER nixuser
 WORKDIR /home/nixuser
 
 RUN sudo chown -R nixuser:nixbld /nix
+
+RUN mkdir -p /home/nixuser/assets/swagger-ui && \
+	wget -O /home/nixuser/assets/swagger-ui/v5.30.2.zip https://github.com/swagger-api/swagger-ui/archive/refs/tags/v5.30.2.zip && \
+	export SWAGGER_UI_DOWNLOAD_URL=file:///home/nixuser/assets/swagger-ui/v5.30.2.zip
 
 RUN mkdir -p ~/.config/containers && \
 	echo '{"default":[{"type":"insecureAcceptAnything"}],"transports":{"docker":{"":[{"type":"insecureAcceptAnything"}]},"docker-archive":{"":[{"type":"insecureAcceptAnything"}]}}}' > ~/.config/containers/policy.json
@@ -115,7 +128,7 @@ RUN mkdir -p /home/nixuser/.cargo && \
 RUN cat /home/nixuser/.cargo/config.toml
 
 RUN echo "clone bark" && \
-	git clone -b hold-plugin-upgrade https://gitlab.com/ark-bitcoin/bark.git
+	git clone -b master https://gitlab.com/ark-bitcoin/bark.git
 
 RUN echo "pre-build bark" && \
 	cd /tmp && \
@@ -146,7 +159,5 @@ RUN echo "build bark" && \
 		cargo install --locked --path bark-cli && \
 		cargo install --locked --path server && \
 		cargo run --example dump-sqlite-schema && \
-		cargo run --example dump-server-postgres-schema"
-
-RUN rm -rf /tmp/bark
-RUN echo "Done"
+		cargo run --example dump-server-postgres-schema" && \
+    nix develop .#msrv-lib --command bash -c "cd testing/msrv-lib && cargo build"
