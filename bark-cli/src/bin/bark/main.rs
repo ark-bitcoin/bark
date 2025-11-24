@@ -24,7 +24,7 @@ use log::{debug, info, warn};
 
 use ark::VtxoId;
 use bark::{BarkNetwork, Config};
-use bark::lightning_utils::{pay_invoice, pay_lnaddr, pay_offer};
+use bark::lightning::{pay_invoice, pay_lnaddr, pay_offer};
 use bark::round::RoundStatus;
 use bark::vtxo::selection::VtxoFilter;
 use bark::vtxo::state::VtxoStateKind;
