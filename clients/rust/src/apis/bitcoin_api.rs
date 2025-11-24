@@ -24,6 +24,7 @@ pub enum TipError {
 }
 
 
+/// Returns the current bitcoin tip height
 pub async fn tip(configuration: &configuration::Configuration, ) -> Result<models::TipResponse, Error<TipError>> {
 
     let uri_str = format!("{}/api/v1/bitcoin/tip", configuration.base_path);

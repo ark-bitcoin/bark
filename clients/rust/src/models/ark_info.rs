@@ -20,9 +20,6 @@ pub struct ArkInfo {
     /// Indicates whether the Ark server requires clients to either provide a VTXO ownership proof, or a lightning receive token when preparing a lightning claim.
     #[serde(rename = "ln_receive_anti_dos_required")]
     pub ln_receive_anti_dos_required: bool,
-    /// Maximum number of OOR transition after VTXO tree leaf
-    #[serde(rename = "max_arkoor_depth")]
-    pub max_arkoor_depth: i32,
     /// Maximum CLTV delta server will allow clients to request an invoice generation with.
     #[serde(rename = "max_user_invoice_cltv_delta")]
     pub max_user_invoice_cltv_delta: i32,
@@ -57,12 +54,11 @@ pub struct ArkInfo {
 }
 
 impl ArkInfo {
-    pub fn new(htlc_expiry_delta: i32, htlc_send_expiry_delta: i32, ln_receive_anti_dos_required: bool, max_arkoor_depth: i32, max_user_invoice_cltv_delta: i32, max_vtxo_amount: i64, min_board_amount_sat: i64, nb_round_nonces: i32, network: String, offboard_feerate_sat_per_kvb: i64, required_board_confirmations: i32, round_interval: String, server_pubkey: String, vtxo_exit_delta: i32, vtxo_expiry_delta: i32) -> ArkInfo {
+    pub fn new(htlc_expiry_delta: i32, htlc_send_expiry_delta: i32, ln_receive_anti_dos_required: bool, max_user_invoice_cltv_delta: i32, max_vtxo_amount: i64, min_board_amount_sat: i64, nb_round_nonces: i32, network: String, offboard_feerate_sat_per_kvb: i64, required_board_confirmations: i32, round_interval: String, server_pubkey: String, vtxo_exit_delta: i32, vtxo_expiry_delta: i32) -> ArkInfo {
         ArkInfo {
             htlc_expiry_delta,
             htlc_send_expiry_delta,
             ln_receive_anti_dos_required,
-            max_arkoor_depth,
             max_user_invoice_cltv_delta,
             max_vtxo_amount,
             min_board_amount_sat,

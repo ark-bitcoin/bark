@@ -19,17 +19,13 @@ pub struct ExitStatusRequest {
     /// Whether to include the exit transactions and their CPFP children
     #[serde(rename = "transactions", default, with = "::serde_with::rust::double_option", skip_serializing_if = "Option::is_none")]
     pub transactions: Option<Option<bool>>,
-    /// The VTXO to check the exit status of
-    #[serde(rename = "vtxo")]
-    pub vtxo: String,
 }
 
 impl ExitStatusRequest {
-    pub fn new(vtxo: String) -> ExitStatusRequest {
+    pub fn new() -> ExitStatusRequest {
         ExitStatusRequest {
             history: None,
             transactions: None,
-            vtxo,
         }
     }
 }

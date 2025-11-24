@@ -1,7 +1,8 @@
-use ark::lightning::{Bolt11Invoice, PaymentHash, Preimage};
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "utoipa")]
 use utoipa::ToSchema;
+
+use ark::lightning::Preimage;
 
 #[derive(Serialize, Deserialize)]
 #[cfg_attr(feature = "utoipa", derive(ToSchema))]
@@ -98,31 +99,6 @@ pub struct OffboardAllRequest {
 pub struct LightningInvoiceRequest {
 	/// The amount to create invoice for (in satoshis)
 	pub amount_sat: u64,
-}
-
-#[derive(Serialize, Deserialize)]
-#[cfg_attr(feature = "utoipa", derive(ToSchema))]
-pub struct LightningStatusRequest {
-	/// Payment hash or invoice string
-	pub filter: Option<String>,
-	/// Filter by preimage
-	pub preimage: Option<String>,
-}
-
-#[derive(Serialize, Deserialize)]
-#[cfg_attr(feature = "utoipa", derive(ToSchema))]
-pub struct LightningStatusResponse {
-	/// The payment hash of the invoice
-	#[cfg_attr(feature = "utoipa", schema(value_type = String))]
-	pub payment_hash: PaymentHash,
-	/// The preimage that was used to pay the invoice
-	#[cfg_attr(feature = "utoipa", schema(value_type = String))]
-	pub payment_preimage: Preimage,
-	/// The invoice that was paid
-	#[cfg_attr(feature = "utoipa", schema(value_type = String))]
-	pub invoice: Bolt11Invoice,
-	/// The time the preimage was revealed
-	pub preimage_revealed_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 #[derive(Serialize, Deserialize)]
