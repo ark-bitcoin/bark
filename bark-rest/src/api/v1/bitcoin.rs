@@ -3,7 +3,7 @@ use axum::routing::get;
 use axum::{debug_handler, Json, Router};
 use utoipa::OpenApi;
 
-use crate::error::HandlerResult;
+use crate::error::{self, HandlerResult};
 use crate::RestServer;
 
 #[derive(OpenApi)]
@@ -28,7 +28,7 @@ pub fn router() -> Router<RestServer> {
 	path = "/tip",
 	responses(
 		(status = 200, description = "Returns the current bitcoin tip height", body = bark_json::web::TipResponse),
-		(status = 500, description = "Internal server error")
+		(status = 500, description = "Internal server error", body = error::InternalServerError)
 	),
 	description = "Returns the current bitcoin tip height",
 	tag = "bitcoin"

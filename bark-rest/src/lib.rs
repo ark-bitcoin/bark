@@ -88,7 +88,7 @@ impl RestServer {
 			.merge(SwaggerUi::new("/swagger-ui").url("/api-docs/openapi.json", api.clone()))
 			.layer(CorsLayer::permissive())
 			.with_state(self)
-			.fallback(error::not_found);
+			.fallback(error::route_not_found);
 
 		// Run the server
 		log::info!("Server running on http://{}", socket_addr);

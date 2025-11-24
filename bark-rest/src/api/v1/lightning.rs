@@ -12,7 +12,7 @@ use bark::lightning::{pay_invoice, pay_lnaddr, pay_offer};
 use bark::lightning_invoice::Bolt11Invoice;
 use bark::lnurllib::lightning_address::LightningAddress;
 
-use crate::error::HandlerResult;
+use crate::error::{self, HandlerResult, badarg, not_found};
 use crate::RestServer;
 
 #[derive(OpenApi)]
@@ -48,8 +48,7 @@ pub fn router() -> Router<RestServer> {
 	request_body = bark_json::web::LightningInvoiceRequest,
 	responses(
 		(status = 200, description = "Returns the created invoice", body = bark_json::cli::InvoiceInfo),
-		(status = 400, description = "Bad request - invalid parameters"),
-		(status = 500, description = "Internal server error")
+		(status = 500, description = "Internal server error", body = error::InternalServerError)
 	),
 	description = "Generates a new lightning invoice with the given amount",
 	tag = "lightning"
@@ -76,7 +75,9 @@ pub async fn generate_invoice(
 	),
 	responses(
 		(status = 200, description = "Returns the lightning receive status", body = bark_json::cli::LightningReceiveInfo),
-		(status = 500, description = "Internal server error")
+		(status = 400, description = "Bad request", body = error::BadRequestError),
+		(status = 404, description = "Not found", body = error::NotFoundError),
+		(status = 500, description = "Internal server error", body = error::InternalServerError)
 	),
 	description = "Returns the status of a lightning receive for the provided filter",
 	tag = "lightning"
@@ -93,7 +94,7 @@ pub async fn get_receive_status(
 	} else if let Ok(p) = ark::lightning::Preimage::from_str(&identifier) {
 		p.into()
 	} else {
-		return Err(anyhow::anyhow!("filter is not valid payment hash nor invoice").into());
+		badarg!("identifier is not a valid payment hash, invoice or preimage");
 	};
 
 	if let Some(status) = state.wallet.lightning_receive_status(payment_hash)
@@ -101,7 +102,7 @@ pub async fn get_receive_status(
 
 		Ok(axum::Json(status.into()))
 	} else {
-		return Err(anyhow::anyhow!("No invoice found").into());
+		not_found!([payment_hash], "No invoice found");
 	}
 }
 
@@ -110,7 +111,7 @@ pub async fn get_receive_status(
 	path = "/receives",
 	responses(
 		(status = 200, description = "Returns all receive statuses", body = Vec<bark_json::cli::LightningReceiveInfo>),
-		(status = 500, description = "Internal server error")
+		(status = 500, description = "Internal server error", body = error::InternalServerError)
 	),
 	description = "Returns all the current pending receive statuses",
 	tag = "lightning"
@@ -136,8 +137,9 @@ pub async fn list_receive_statuses(
 	request_body = bark_json::web::LightningPayRequest,
 	responses(
 		(status = 200, description = "Returns payment result", body = bark_json::web::LightningPayResponse),
-		(status = 400, description = "Bad request - invalid destination or amount"),
-		(status = 500, description = "Internal server error")
+		(status = 400, description = "The provided destination is not a valid \
+			bolt11 invoice, bolt12 offer or lightning address", body = error::BadRequestError),
+		(status = 500, description = "Internal server error", body = error::InternalServerError)
 	),
 	description = "Sends a payment to the given lightning destination",
 	tag = "lightning"
@@ -157,7 +159,7 @@ pub async fn pay(
 	} else if let Ok(lnaddr) = LightningAddress::from_str(&body.destination) {
 		pay_lnaddr(lnaddr, amount, body.comment, no_sync, &state.wallet).await?
 	} else {
-		return Err(anyhow::anyhow!("argument is not a valid bolt11 invoice, bolt12 offer or lightning address").into());
+		badarg!("argument is not a valid bolt11 invoice, bolt12 offer or lightning address");
 	};
 
 	Ok(axum::Json(bark_json::web::LightningPayResponse {

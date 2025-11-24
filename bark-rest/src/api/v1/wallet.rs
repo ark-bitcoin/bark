@@ -15,8 +15,8 @@ use bark::lnurllib::lightning_address::LightningAddress;
 use bark::subsystem::RoundMovement;
 use bark::vtxo::selection::VtxoFilter;
 
-use crate::RestServer;
-use crate::error::HandlerResult;
+use crate::{RestServer, error};
+use crate::error::{ContextExt, HandlerResult, badarg, not_found};
 
 pub fn router() -> Router<RestServer> {
 	Router::new()
@@ -73,6 +73,9 @@ pub fn router() -> Router<RestServer> {
 		bark_json::web::OffboardAllRequest,
 		bark_json::web::PendingRoundInfo,
 		bark_json::cli::RoundStatus,
+		error::InternalServerError,
+		error::NotFoundError,
+		error::BadRequestError,
 	)),
 	tags(
 		(name = "wallet", description = "Wallet-related endpoints"),
@@ -85,7 +88,7 @@ pub struct WalletApiDoc;
 	path = "/connected",
 	responses(
 		(status = 200, description = "Returns whether the wallet is connected to an Ark server", body = bark_json::web::ConnectedResponse),
-		(status = 500, description = "Internal server error")
+		(status = 500, description = "Internal server error", body = error::InternalServerError)
 	),
 	description = "Returns whether the wallet is currently connected to the Ark server",
 	tag = "wallet"
@@ -102,18 +105,20 @@ pub async fn connected(State(state): State<RestServer>) -> HandlerResult<Json<ba
 	path = "/ark-info",
 	responses(
 		(status = 200, description = "Returns the Ark info", body = bark_json::cli::ArkInfo),
-		(status = 404, description = "No ark info found"),
-		(status = 500, description = "Internal server error")
+		(status = 404, description = "Wallet not connected to an Ark server", body = error::NotFoundError),
+		(status = 500, description = "Internal server error", body = error::InternalServerError)
 	),
 	description = "Returns the current Ark infos",
 	tag = "wallet"
 )]
 #[debug_handler]
 pub async fn ark_info(State(state): State<RestServer>) -> HandlerResult<Json<bark_json::cli::ArkInfo>> {
-	let ark_info = state.wallet.ark_info()
-		.ok_or_else(|| anyhow::anyhow!("No ark info found"))?;
+	let ark_info = state.wallet.ark_info();
 
-	Ok(axum::Json(ark_info.into()))
+	match ark_info {
+		Some(ark_info) => Ok(axum::Json(ark_info.into())),
+		None => not_found!(["ark server"], "Wallet not connected to an Ark server"),
+	}
 }
 
 #[utoipa::path(
@@ -121,7 +126,7 @@ pub async fn ark_info(State(state): State<RestServer>) -> HandlerResult<Json<bar
 	path = "/addresses/next",
 	responses(
 		(status = 200, description = "Returns the Ark address", body = bark_json::cli::onchain::Address),
-		(status = 500, description = "Internal server error")
+		(status = 500, description = "Internal server error", body = error::InternalServerError)
 	),
 	description = "Generates a new Ark address and stores it in the wallet database",
 	tag = "wallet"
@@ -146,7 +151,7 @@ pub async fn address(
 	),
 	responses(
 		(status = 200, description = "Returns the Ark address", body = bark_json::cli::onchain::Address),
-		(status = 500, description = "Internal server error")
+		(status = 500, description = "Internal server error", body = error::InternalServerError)
 	),
 	description = "Returns the Ark address at the given index. The address must \
 		have been already derived before using the /addresses/next endpoint.",
@@ -170,7 +175,7 @@ pub async fn peak_address(
 	path = "/balance",
 	responses(
 		(status = 200, description = "Returns the wallet balance", body = bark_json::cli::Balance),
-		(status = 500, description = "Internal server error")
+		(status = 500, description = "Internal server error", body = error::InternalServerError)
 	),
 	description = "Returns the current wallet balance",
 	tag = "wallet"
@@ -191,7 +196,7 @@ pub async fn balance(State(state): State<RestServer>) -> HandlerResult<Json<bark
 	),
 	responses(
 		(status = 200, description = "Returns the wallet VTXOs", body = Vec<bark_json::primitives::WalletVtxoInfo>),
-		(status = 500, description = "Internal server error")
+		(status = 500, description = "Internal server error", body = error::InternalServerError)
 	),
 	description = "Returns all the wallet VTXOs",
 	tag = "wallet"
@@ -223,7 +228,7 @@ pub async fn vtxos(
 	path = "/movements",
 	responses(
 		(status = 200, description = "Returns the wallet movements", body = Vec<bark_json::cli::Movement>),
-		(status = 500, description = "Internal server error")
+		(status = 500, description = "Internal server error", body = error::InternalServerError)
 	),
 	description = "Returns all the wallet movements",
 	tag = "wallet"
@@ -246,7 +251,7 @@ pub async fn movements(State(state): State<RestServer>) -> HandlerResult<Json<Ve
 	path = "/rounds",
 	responses(
 		(status = 200, description = "Returns the wallet pending rounds", body = Vec<bark_json::web::PendingRoundInfo>),
-		(status = 500, description = "Internal server error")
+		(status = 500, description = "Internal server error", body = error::InternalServerError)
 	),
 	description = "Returns all the wallet ongoing round participations",
 	tag = "wallet"
@@ -273,8 +278,9 @@ pub async fn pending_rounds(
 	request_body = bark_json::web::SendRequest,
 	responses(
 		(status = 200, description = "Payment sent successfully", body = bark_json::web::SendResponse),
-		(status = 400, description = "Bad request - invalid parameters"),
-		(status = 500, description = "Internal server error")
+		(status = 400, description = "The provided destination is not a valid Ark address, \
+			bolt11 invoice, bolt12 offer or lightning address", body = error::BadRequestError),
+		(status = 500, description = "Internal server error", body = error::InternalServerError)
 	),
 	description = "Sends a payment to the given destination. The destination \
 		can be an Ark address, a BOLT11-invoice, LNURL or a lightning address",
@@ -309,11 +315,8 @@ pub async fn send(
 			.send_round_onchain_payment(checked_addr, amount)
 			.await?;
 	} else {
-		return Err(anyhow::anyhow!(
-			"Argument is not a valid destination. Supported are: \
-			VTXO pubkeys, bolt11 invoices, bolt12 offers and lightning addresses",
-		)
-		.into());
+		badarg!("Argument is not a valid destination. Supported are: \
+			VTXO pubkeys, bolt11 invoices, bolt12 offers and lightning addresses");
 	}
 
 	Ok(axum::Json(bark_json::web::SendResponse {
@@ -327,8 +330,10 @@ pub async fn send(
 	request_body = bark_json::web::RefreshRequest,
 	responses(
 		(status = 200, description = "Returns the refresh result", body = bark_json::web::PendingRoundInfo),
-		(status = 400, description = "Bad request - exactly one parameter must be provided"),
-		(status = 500, description = "Internal server error")
+		(status = 400, description = "No VTXO IDs provided, or one of the provided VTXO \
+			IDs is invalid", body = error::BadRequestError),
+		(status = 404, description = "One the VTXOs wasn't found", body = error::NotFoundError),
+		(status = 500, description = "Internal server error", body = error::InternalServerError)
 	),
 	description = "Creates a new round participation to refresh the given VTXOs",
 	tag = "wallet"
@@ -339,20 +344,15 @@ pub async fn refresh_vtxos(
 	Json(body): Json<bark_json::web::RefreshRequest>,
 ) -> HandlerResult<Json<bark_json::web::PendingRoundInfo>> {
 	if body.vtxos.is_empty() {
-		return Err(anyhow::anyhow!("No VTXO IDs provided").into());
+		badarg!("No VTXO IDs provided");
 	}
 
-	// Specific VTXO IDs
-	let vtxos = body.vtxos
-		.iter()
-		.map(|s| {
-			let id = ark::VtxoId::from_str(s)?;
-			Ok(state.wallet.get_vtxo_by_id(id)?)
-		})
-		.collect::<anyhow::Result<Vec<_>>>()
-		.context("Invalid vtxo_id")?;
-
-	let vtxo_ids = vtxos.into_iter().map(|v| v.id()).collect::<Vec<_>>();
+	let mut vtxo_ids = Vec::new();
+	for s in body.vtxos {
+		let id = ark::VtxoId::from_str(&s).badarg("Invalid VTXO id")?;
+		state.wallet.get_vtxo_by_id(id).not_found([id], "VTXO not found")?;
+		vtxo_ids.push(id);
+	}
 
 	let participation = state.wallet
 		.build_refresh_participation(vtxo_ids)
@@ -367,7 +367,7 @@ pub async fn refresh_vtxos(
 			Ok(axum::Json(round.into()))
 		}
 		None => {
-			return Err(anyhow::anyhow!("No VTXOs to refresh").into());
+			badarg!("No VTXOs to refresh");
 		}
 	}
 }
@@ -377,7 +377,7 @@ pub async fn refresh_vtxos(
 	path = "/refresh/all",
 	responses(
 		(status = 200, description = "Returns the refresh result", body = bark_json::web::PendingRoundInfo),
-		(status = 500, description = "Internal server error")
+		(status = 500, description = "Internal server error", body = error::InternalServerError)
 	),
 	description = "Creates a new round participation to refresh all VTXOs",
 	tag = "wallet"
@@ -403,7 +403,7 @@ pub async fn refresh_all(
 			Ok(axum::Json(round.into()))
 		}
 		None => {
-			return Err(anyhow::anyhow!("No VTXOs to refresh").into());
+			badarg!("No VTXOs to refresh");
 		}
 	}
 }
@@ -414,8 +414,8 @@ pub async fn refresh_all(
 	request_body = bark_json::web::RefreshRequest,
 	responses(
 		(status = 200, description = "Returns the refresh result", body = bark_json::web::PendingRoundInfo),
-		(status = 400, description = "Bad request - exactly one parameter must be provided"),
-		(status = 500, description = "Internal server error")
+		(status = 404, description = "There is no VTXO to refresh", body = error::NotFoundError),
+		(status = 500, description = "Internal server error", body = error::InternalServerError)
 	),
 	description = "Creates a new round participation to refresh VTXOs marked with counterparty",
 	tag = "wallet"
@@ -442,7 +442,7 @@ pub async fn refresh_counterparty(
 			Ok(axum::Json(round.into()))
 		}
 		None => {
-			return Err(anyhow::anyhow!("No VTXOs to refresh").into());
+			not_found!(Vec::<String>::new(), "No VTXO to refresh");
 		}
 	}
 }
@@ -453,6 +453,9 @@ pub async fn refresh_counterparty(
 	request_body = bark_json::web::OffboardVtxosRequest,
 	responses(
 		(status = 200, description = "Returns the offboard result", body = bark_json::web::PendingRoundInfo),
+		(status = 400, description = "No VTXO IDs provided, or one of the provided \
+			VTXO IDs is invalid, or destination address is invalid", body = error::BadRequestError),
+		(status = 404, description = "One the VTXOs wasn't found", body = error::NotFoundError),
 		(status = 500, description = "Internal server error")
 	),
 	description = "Creates a new round participation to offboard the given VTXOs",
@@ -466,24 +469,25 @@ pub async fn offboard_vtxos(
 	let mut onchain_lock = state.onchain.write().await;
 
 	if body.vtxos.is_empty() {
-		return Err(anyhow::anyhow!("No VTXO IDs provided").into());
+		badarg!("No VTXO IDs provided");
 	}
 
 	let address = if let Some(addr) = body.address {
 		let network = state.wallet.properties()?.network;
 		bitcoin::Address::from_str(&addr)
-			.context("invalid destination address")?
+			.badarg("invalid destination address")?
 			.require_network(network)
-			.context("address is not valid for configured network")?
+			.badarg("address is not valid for configured network")?
 	} else {
 		onchain_lock.address()?
 	};
 
-	let vtxo_ids = body
-		.vtxos
-		.into_iter()
-		.map(|s| ark::VtxoId::from_str(&s).context("invalid vtxo_id"))
-		.collect::<anyhow::Result<Vec<_>>>()?;
+	let mut vtxo_ids = Vec::new();
+	for s in body.vtxos {
+		let id = ark::VtxoId::from_str(&s).badarg("Invalid VTXO id")?;
+		state.wallet.get_vtxo_by_id(id).not_found([id], "VTXO not found")?;
+		vtxo_ids.push(id);
+	}
 
 	let participation = state.wallet
 		.build_offboard_participation(vtxo_ids, address.script_pubkey())
@@ -502,7 +506,7 @@ pub async fn offboard_vtxos(
 	request_body = bark_json::web::OffboardAllRequest,
 	responses(
 		(status = 200, description = "Returns the offboard result", body = bark_json::web::PendingRoundInfo),
-		(status = 500, description = "Internal server error")
+		(status = 500, description = "Internal server error", body = error::InternalServerError)
 	),
 	description = "Creates a new round participation to offboard all VTXOs",
 	tag = "wallet"
@@ -517,9 +521,9 @@ pub async fn offboard_all(
 	let address = if let Some(addr) = body.address {
 		let network = state.wallet.properties()?.network;
 		bitcoin::Address::from_str(&addr)
-			.context("invalid destination address")?
+			.badarg("invalid destination address")?
 			.require_network(network)
-			.context("address is not valid for configured network")?
+			.badarg("address is not valid for configured network")?
 	} else {
 		onchain_lock.address()?
 	};
@@ -543,7 +547,7 @@ pub async fn offboard_all(
 	request_body = bark_json::web::SendOnchainRequest,
 	responses(
 		(status = 200, description = "Returns the send onchain result", body = bark_json::web::PendingRoundInfo),
-		(status = 500, description = "Internal server error")
+		(status = 500, description = "Internal server error", body = error::InternalServerError)
 	),
 	description = "Creates a new round participation to send a payment onchain from ark round",
 	tag = "wallet"
@@ -554,9 +558,9 @@ pub async fn send_onchain(
 	Json(body): Json<bark_json::web::SendOnchainRequest>,
 ) -> HandlerResult<Json<bark_json::web::PendingRoundInfo>> {
 	let addr = bitcoin::Address::from_str(&body.destination)
-		.context("invalid destination address")?
+		.badarg("invalid destination address")?
 		.require_network(state.wallet.properties()?.network)
-		.context("address is not valid for configured network")?;
+		.badarg("address is not valid for configured network")?;
 
 	let amount = Amount::from_sat(body.amount_sat);
 
@@ -576,14 +580,11 @@ pub async fn send_onchain(
 	path = "/sync",
 	responses(
 		(status = 200, description = "Wallet was successfully synced"),
-		(status = 500, description = "Internal server error")
 	),
 	description = "Syncs the wallet",
 	tag = "wallet"
 )]
 #[debug_handler]
-pub async fn sync(State(state): State<RestServer>) -> HandlerResult<()> {
+pub async fn sync(State(state): State<RestServer>) {
 	state.wallet.sync().await;
-
-	Ok(())
 }

@@ -4,7 +4,7 @@ use axum::{debug_handler, Json, Router};
 use bitcoin::Amount;
 use utoipa::OpenApi;
 
-use crate::error::HandlerResult;
+use crate::error::{self, HandlerResult};
 use crate::RestServer;
 
 #[derive(OpenApi)]
@@ -33,7 +33,7 @@ pub fn router() -> Router<RestServer> {
 	request_body = bark_json::web::BoardRequest,
 	responses(
 		(status = 200, description = "Returns the board result", body = bark_json::cli::Board),
-		(status = 500, description = "Internal server error")
+		(status = 500, description = "Internal server error", body = error::InternalServerError)
 	),
 	description = "Board the given amount of onchain funds to the offchain wallet",
 	tag = "boards"
@@ -59,7 +59,7 @@ pub async fn board_amount(
 	path = "/board-all",
 	responses(
 		(status = 200, description = "Returns the board result", body = bark_json::cli::Board),
-		(status = 500, description = "Internal server error")
+		(status = 500, description = "Internal server error", body = error::InternalServerError)
 	),
 	description = "Board all the onchain funds to the offchain wallet",
 	tag = "boards"
