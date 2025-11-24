@@ -324,24 +324,21 @@ impl Server {
 		wait: bool,
 	) -> anyhow::Result<LightningHtlcSubscription> {
 		let sub = loop {
-			if let Some(subscription) = self.db.get_htlc_subscription_by_payment_hash(payment_hash).await? {
-				match subscription.status {
-					LightningHtlcSubscriptionStatus::Accepted |
-					LightningHtlcSubscriptionStatus::HtlcsReady => {
-						break subscription;
-					},
-					LightningHtlcSubscriptionStatus::Settled => {
-						return badarg!("invoice already settled");
-					},
-					LightningHtlcSubscriptionStatus::Cancelled => {
-						return badarg!("payment cancelled");
-					},
-					LightningHtlcSubscriptionStatus::Created => {},
-				}
-			}
+			let subscription = self.db.get_htlc_subscription_by_payment_hash(payment_hash).await?
+				.not_found([payment_hash], "invoice not found")?;
 
-			if !wait {
-				return badarg!("payment not yet initiated by sender");
+			match subscription.status {
+				LightningHtlcSubscriptionStatus::Accepted |
+				LightningHtlcSubscriptionStatus::HtlcsReady => {
+					break subscription;
+				},
+				LightningHtlcSubscriptionStatus::Settled |
+				LightningHtlcSubscriptionStatus::Cancelled |
+				LightningHtlcSubscriptionStatus::Created => {
+					if !wait {
+						break subscription;
+					}
+				},
 			}
 
 			tokio::time::sleep(self.config.invoice_check_interval).await;
