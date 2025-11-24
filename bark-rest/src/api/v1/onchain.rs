@@ -2,7 +2,7 @@ use std::str::FromStr;
 
 use anyhow::Context;
 use axum::extract::State;
-use axum::routing::{get, post, put};
+use axum::routing::{get, post};
 use axum::{debug_handler, Json, Router};
 use bitcoin::Amount;
 use tracing::info;
@@ -13,7 +13,7 @@ use crate::{error::HandlerResult, RestServer};
 pub fn router() -> Router<RestServer> {
 	Router::new()
 		.route("/balance", get(onchain_balance))
-		.route("/addresses/next", put(onchain_address))
+		.route("/addresses/next", post(onchain_address))
 		.route("/send", post(onchain_send))
 		.route("/send-many", post(onchain_send_many))
 		.route("/drain", post(onchain_drain))
@@ -55,6 +55,7 @@ pub struct OnchainApiDoc;
 		(status = 200, description = "Returns the onchain balance", body = bark_json::cli::onchain::OnchainBalance),
 		(status = 500, description = "Internal server error")
 	),
+	description = "Returns the current onchain wallet balance",
 	tag = "onchain"
 )]
 #[debug_handler]
@@ -77,12 +78,13 @@ pub async fn onchain_balance(
 }
 
 #[utoipa::path(
-	put,
+	post,
 	path = "/addresses/next",
 	responses(
 		(status = 200, description = "Returns the onchain address", body = bark_json::cli::onchain::Address),
 		(status = 500, description = "Internal server error")
 	),
+	description = "Generates a new onchain address and stores its index in the onchain wallet database",
 	tag = "onchain"
 )]
 #[debug_handler]
@@ -108,23 +110,24 @@ pub async fn onchain_address(
 		(status = 400, description = "Bad request - invalid destination or amount"),
 		(status = 500, description = "Internal server error")
 	),
+	description = "Sends a payment to the given onchain address",
 	tag = "onchain"
 )]
 #[debug_handler]
 pub async fn onchain_send(
 	State(state): State<RestServer>,
-	Json(params): Json<bark_json::web::OnchainSendRequest>,
+	Json(body): Json<bark_json::web::OnchainSendRequest>,
 ) -> HandlerResult<Json<bark_json::cli::onchain::Send>> {
 	let mut onchain_lock = state.onchain.write().await;
 
 	let net = state.wallet.properties()?.network;
-	let addr = bitcoin::Address::from_str	(&params.destination)
+	let addr = bitcoin::Address::from_str	(&body.destination)
 		.context("Invalid destination address")?
 		.require_network(net)
 		.context("Address is not valid for configured network")?;
 
 	let fee_rate = state.wallet.chain.fee_rates().await.regular;
-	let amount = Amount::from_sat(params.amount_sat);
+	let amount = Amount::from_sat(body.amount_sat);
 	let txid = onchain_lock.send(&state.wallet.chain, addr, amount, fee_rate).await
 		.context("Failed to send onchain payment")?;
 
@@ -140,17 +143,18 @@ pub async fn onchain_send(
 		(status = 400, description = "Bad request - invalid destinations"),
 		(status = 500, description = "Internal server error")
 	),
+	description = "Sends multiple payments to provided onchain addresses",
 	tag = "onchain"
 )]
 #[debug_handler]
 pub async fn onchain_send_many(
 	State(state): State<RestServer>,
-	Json(params): Json<bark_json::web::OnchainSendManyRequest>,
+	Json(body): Json<bark_json::web::OnchainSendManyRequest>,
 ) -> HandlerResult<Json<bark_json::cli::onchain::Send>> {
 	let mut onchain_lock = state.onchain.write().await;
 
 	let net = state.wallet.properties()?.network;
-	let outputs = params.destinations
+	let outputs = body.destinations
 		.iter()
 		.map(|dest| -> anyhow::Result<(bitcoin::Address, Amount)> {
 			let mut parts = dest.splitn(2, ':');
@@ -192,17 +196,18 @@ pub async fn onchain_send_many(
 		(status = 400, description = "Bad request - invalid destination"),
 		(status = 500, description = "Internal server error")
 	),
+	description = "Sends all onchain wallet funds to the given address",
 	tag = "onchain"
 )]
 #[debug_handler]
 pub async fn onchain_drain(
 	State(state): State<RestServer>,
-	Json(params): Json<bark_json::web::OnchainDrainRequest>,
+	Json(body): Json<bark_json::web::OnchainDrainRequest>,
 ) -> HandlerResult<Json<bark_json::cli::onchain::Send>> {
 	let mut onchain_lock = state.onchain.write().await;
 
 	let net = state.wallet.properties()?.network;
-	let addr = bitcoin::Address::from_str(&params.destination)
+	let addr = bitcoin::Address::from_str(&body.destination)
 		.context("Invalid destination address")?
 		.require_network(net)
 		.context("Address is not valid for configured network")?;
@@ -221,6 +226,7 @@ pub async fn onchain_drain(
 		(status = 200, description = "Returns the onchain UTXOs", body = Vec<bark_json::primitives::UtxoInfo>),
 		(status = 500, description = "Internal server error")
 	),
+	description = "Returns all the onchain wallet UTXOs",
 	tag = "onchain"
 )]
 #[debug_handler]
@@ -244,6 +250,7 @@ pub async fn onchain_utxos(
 		(status = 200, description = "Returns the onchain transactions", body = Vec<bark_json::primitives::TransactionInfo>),
 		(status = 500, description = "Internal server error")
 	),
+	description = "Returns all the onchain wallet transactions",
 	tag = "onchain"
 )]
 #[debug_handler]
@@ -270,6 +277,7 @@ pub async fn onchain_transactions(
 		(status = 200, description = "Synced onchain wallet"),
 		(status = 500, description = "Internal server error")
 	),
+	description = "Syncs the onchain wallet",
 	tag = "onchain"
 )]
 #[debug_handler]
