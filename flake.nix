@@ -32,13 +32,6 @@
 					name = rustVersion;
 					sha256 = "sha256-SJwZ8g0zF2WrKDVmHrVG3pD2RGoQeo24MEXnNx5FyuI=";
 				};
-				rustBuildToolchain = fenix.packages.${system}.combine [
-					rustToolchain.rustc
-					rustToolchain.cargo
-					rustToolchain.rust-src
-					rustToolchain.llvm-tools
-					rustToolchain.rust-std
-				];
 
 				slogJq = name: filter: pkgs.writeShellApplication {
 					inherit name;
@@ -100,7 +93,7 @@
 					};
 
 					devShell = import ./nix/dev-shell.nix {
-						inherit pkgs masterPkgs lib buildShell rustBuildToolchain slog-tools;
+						inherit system pkgs masterPkgs lib fenix buildShell slog-tools;
 					};
 
 					libMsrvShell =
