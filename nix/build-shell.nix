@@ -26,7 +26,6 @@ in {
 			rustToolchain.llvm-tools
 			rustToolchain.rust-std
 			rustToolchain.rust-docs
-			rustToolchain.rust-analyzer
 
 			# For building
 			pkgs.glibcLocales

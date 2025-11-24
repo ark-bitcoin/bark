@@ -138,7 +138,7 @@ impl ConnectorChain {
 		let sighash = shc.taproot_key_spend_signature_hash(
 			0, &sighash::Prevouts::All(&[prevout]), TapSighashType::Default,
 		).expect("sighash error");
-		let sig = SECP.sign_schnorr(&sighash.into(), &keypair);
+		let sig = SECP.sign_schnorr_with_aux_rand(&sighash.into(), &keypair, &rand::random());
 		tx.input[0].witness = Witness::from_slice(&[&sig[..]]);
 	}
 

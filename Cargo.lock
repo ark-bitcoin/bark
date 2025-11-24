@@ -134,6 +134,7 @@ dependencies = [
  "bitcoin",
  "bitcoinkernel",
  "chrono",
+ "getrandom 0.3.3",
  "hex-conservative 0.3.0",
  "lazy_static",
  "lightning",

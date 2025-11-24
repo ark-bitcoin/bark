@@ -1,6 +1,4 @@
-{ pkgs, masterPkgs, lib, slog-tools, buildShell,
-	# this toolchain is used to build the internal tools
-	rustBuildToolchain,
+{ system, pkgs, masterPkgs, lib, fenix, slog-tools, buildShell,
 }:
 let
 	bitcoinVersion = "29.1";
@@ -10,6 +8,16 @@ let
 
 	isDarwin = pkgs.stdenv.hostPlatform.isDarwin;
 
+	rustToolchain = buildShell.rustToolchain;
+	rustTargets = fenix.packages.${system}.targets;
+	# this toolchain is used to build the internal tools
+	rustBuildToolchain = fenix.packages.${system}.combine [
+		rustToolchain.rustc
+		rustToolchain.cargo
+		rustToolchain.rust-src
+		rustToolchain.llvm-tools
+		rustToolchain.rust-std
+	];
 	rustPlatform = pkgs.makeRustPlatform {
 		cargo = rustBuildToolchain;
 		rustc = rustBuildToolchain;
@@ -154,6 +162,16 @@ in {
 		inputsFrom = [ buildShell.shell ];
 
 		packages = [
+			(fenix.packages.${system}.combine [
+				rustToolchain.rustc
+				rustToolchain.cargo
+				rustToolchain.rust-src
+				rustToolchain.llvm-tools
+				rustToolchain.rust-std
+				rustToolchain.rust-analyzer
+				rustTargets.wasm32-unknown-unknown.stable.rust-std
+			])
+
 			slog-tools
 
 			# for bark
@@ -180,6 +198,9 @@ in {
 			# for rust-bitcoinkernel build
 			pkgs.cmake
 			pkgs.boost.dev
+
+			# for WASM development
+			pkgs.wasm-pack
 
 		] ++ (
 			if isDarwin then [

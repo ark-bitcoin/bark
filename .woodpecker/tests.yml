@@ -96,7 +96,17 @@ steps:
           cargo build -p ark-lib          --no-default-features --features=\"\"
         "
 
-  - name: msrv-lib
+  - name: lib-wasm
+    depends_on: test-unit
+    image: registry.2nd.dev/build:25
+    commands:
+      - >
+        nix develop .#default --command bash -c "
+          cd lib/ &&
+          cargo build --lib --release --target "wasm32-unknown-unknown" --features wasm-js
+        "
+
+  - name: lib-msrv
     depends_on: test-unit
     image: registry.2nd.dev/build:25
     commands:
