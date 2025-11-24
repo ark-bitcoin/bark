@@ -75,7 +75,7 @@ impl Wallet {
 		self.mark_vtxos_as_spent(&htlc_vtxos)?;
 		self.movements.finish_movement(payment.movement_id, MovementStatus::Failed).await?;
 
-		self.db.remove_lightning_send(payment.invoice.payment_hash())?;
+		self.db.finish_lightning_send(payment.invoice.payment_hash(), None)?;
 
 		info!("Revoked {} HTLC VTXOs", count);
 
@@ -113,7 +113,7 @@ impl Wallet {
 					preimage.as_hex(), payment.invoice.payment_hash().as_hex());
 
 				// Complete the payment
-				self.db.remove_lightning_send(payment.invoice.payment_hash())?;
+				self.db.finish_lightning_send(payment_hash, Some(preimage))?;
 				self.mark_vtxos_as_spent(&payment.htlc_vtxos)?;
 				self.movements.finish_movement(payment.movement_id,
 					MovementStatus::Finished).await?;
@@ -245,7 +245,7 @@ impl Wallet {
 					self.movements.finish_movement(
 						payment.movement_id, MovementStatus::Failed,
 					).await?;
-					self.db.remove_lightning_send(payment_hash)?;
+					self.db.finish_lightning_send(payment.invoice.payment_hash(), None)?;
 				}
 			}
 		}

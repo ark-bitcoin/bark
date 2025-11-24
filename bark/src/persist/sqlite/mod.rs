@@ -296,6 +296,15 @@ impl BarkPersister for SqliteClient {
 		query::get_all_pending_lightning_send(&conn)
 	}
 
+	fn finish_lightning_send(
+		&self,
+		payment_hash: PaymentHash,
+		preimage: Option<Preimage>,
+	) -> anyhow::Result<()> {
+		let conn = self.connect()?;
+		query::finish_lightning_send(&conn, payment_hash, preimage)
+	}
+
 	fn remove_lightning_send(&self, payment_hash: PaymentHash) -> anyhow::Result<()> {
 		let conn = self.connect()?;
 		query::remove_lightning_send(&conn, payment_hash)?;

@@ -413,13 +413,27 @@ pub trait BarkPersister: Send + Sync + 'static {
 	/// - Returns an error if the query fails.
 	fn get_all_pending_lightning_send(&self) -> anyhow::Result<Vec<LightningSend>>;
 
+	/// Mark a lightning send as finished.
+	///
+	/// Parameters:
+	/// - payment_hash: The [PaymentHash] of the lightning send to update.
+	/// - preimage: The [Preimage] of the successful lightning send.
+	///
+	/// Errors:
+	/// - Returns an error if the lightning send cannot be updated.
+	fn finish_lightning_send(
+		&self,
+		payment_hash: PaymentHash,
+		preimage: Option<Preimage>,
+	) -> anyhow::Result<()>;
+
 	/// Remove a lightning send.
 	///
 	/// Parameters:
-	/// - payment_hash: The [PaymentHash] of the pending lightning send to remove.
+	/// - payment_hash: The [PaymentHash] of the lightning send to remove.
 	///
 	/// Errors:
-	/// - Returns an error if the pending lightning send cannot be removed.
+	/// - Returns an error if the lightning send cannot be removed.
 	fn remove_lightning_send(&self, payment_hash: PaymentHash) -> anyhow::Result<()>;
 
 	/// Store an incoming Lightning receive record.

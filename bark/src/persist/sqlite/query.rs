@@ -467,6 +467,27 @@ pub fn store_new_pending_lightning_send<V: VtxoRef>(
 	})
 }
 
+pub fn finish_lightning_send(
+	conn: &Connection,
+	payment_hash: PaymentHash,
+	preimage: Option<Preimage>,
+) -> anyhow::Result<()> {
+	let query = "
+		UPDATE bark_lightning_send
+		SET preimage = :preimage, finished_at = :finished_at
+		WHERE payment_hash = :payment_hash";
+
+	let mut statement = conn.prepare(query)?;
+
+	statement.execute(named_params! {
+		":payment_hash": payment_hash.as_hex().to_string(),
+		":preimage": preimage.map(|p| p.as_hex().to_string()),
+		":finished_at": chrono::Local::now(),
+	})?;
+
+	Ok(())
+}
+
 pub fn remove_lightning_send(
 	conn: &Connection,
 	payment_hash: PaymentHash,

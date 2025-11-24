@@ -142,6 +142,14 @@ impl BarkPersister for Dummy {
 		Ok(vec![])
 	}
 
+	fn finish_lightning_send(
+		&self,
+		_payment_hash: PaymentHash,
+		_preimage: Option<Preimage>,
+	) -> anyhow::Result<()> {
+		Ok(())
+	}
+
 	fn remove_lightning_send(&self, _payment_hash: PaymentHash) -> anyhow::Result<()> {
 		Ok(())
 	}
