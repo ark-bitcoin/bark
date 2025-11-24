@@ -10,43 +10,45 @@ use crate::RestServer;
 #[derive(OpenApi)]
 #[openapi(
 	paths(
-		board,
+		board_amount,
 		board_all,
 	),
 	components(schemas(
 		bark_json::web::BoardRequest,
 		bark_json::cli::Board,
 	)),
-	tags((name = "board", description = "Board-related endpoints"))
+	tags((name = "boards", description = "Board-related endpoints"))
 )]
-pub struct BoardApiDoc;
+pub struct BoardsApiDoc;
 
 pub fn router() -> Router<RestServer> {
 	Router::new()
-		.route("/board", post(board))
-		.route("/board/all", post(board_all))
+		.route("/board-amount", post(board_amount))
+		.route("/board-all", post(board_all))
 }
 
 #[utoipa::path(
 	post,
-	path = "/board",
+	path = "/board-amount",
 	request_body = bark_json::web::BoardRequest,
 	responses(
 		(status = 200, description = "Returns the board result", body = bark_json::cli::Board),
 		(status = 500, description = "Internal server error")
 	),
-	tag = "board"
+	description = "Board the given amount of onchain funds to the offchain wallet",
+	tag = "boards"
 )]
 #[debug_handler]
-pub async fn board(
+pub async fn board_amount(
 	State(state): State<RestServer>,
-	Json(params): Json<bark_json::web::BoardRequest>,
+	Json(body): Json<bark_json::web::BoardRequest>,
 ) -> HandlerResult<Json<bark_json::cli::Board>> {
 	let mut onchain_lock = state.onchain.write().await;
+	let amount = Amount::from_sat(body.amount_sat);
 
 	let board = state.wallet.board_amount(
 		&mut *onchain_lock,
-		Amount::from_sat(params.amount_sat),
+		amount,
 	).await?;
 
 	Ok(axum::Json(board.into()))
@@ -54,12 +56,13 @@ pub async fn board(
 
 #[utoipa::path(
 	post,
-	path = "/board/all",
+	path = "/board-all",
 	responses(
 		(status = 200, description = "Returns the board result", body = bark_json::cli::Board),
 		(status = 500, description = "Internal server error")
 	),
-	tag = "board"
+	description = "Board all the onchain funds to the offchain wallet",
+	tag = "boards"
 )]
 #[debug_handler]
 pub async fn board_all(
