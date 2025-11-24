@@ -12,12 +12,6 @@ pub struct TipResponse {
 
 #[derive(Serialize, Deserialize)]
 #[cfg_attr(feature = "utoipa", derive(ToSchema))]
-pub struct PeakAddressRequest {
-	pub index: u32,
-}
-
-#[derive(Serialize, Deserialize)]
-#[cfg_attr(feature = "utoipa", derive(ToSchema))]
 pub struct ConnectedResponse {
 	/// Whether the wallet is currently connected to its Ark server
 	pub connected: bool,
