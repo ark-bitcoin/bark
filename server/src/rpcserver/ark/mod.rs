@@ -169,6 +169,15 @@ impl rpc::server::ArkService for Server {
 	}
 
 	// oor
+	/// Handles a checkpointed OOR cosign request.
+	async fn checkpointed_cosign_oor(
+		&self,
+		_req: tonic::Request<protos::CheckpointedPackageCosignRequest>,
+	) -> Result<tonic::Response<protos::CheckpointedPackageCosignResponse>, tonic::Status> {
+		todo!("Implement")
+	}
+
+
 	async fn request_arkoor_package_cosign(
 		&self,
 		req: tonic::Request<protos::ArkoorPackageCosignRequest>,
