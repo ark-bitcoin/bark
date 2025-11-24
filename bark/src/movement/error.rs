@@ -1,9 +1,7 @@
-use thiserror::Error;
-
 use crate::movement::MovementId;
 use crate::subsystem::SubsystemId;
 
-#[derive(Debug, Error)]
+#[derive(Debug, thiserror::Error)]
 pub enum MovementError {
 	#[error("Movement Cache Error: Movement missing from cache ({id})")]
 	CacheError { id: MovementId },
