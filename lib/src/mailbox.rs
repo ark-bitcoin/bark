@@ -152,7 +152,7 @@ impl MailboxAuthorization {
 		MailboxAuthorization {
 			id: MailboxIdentifier::from_pubkey(mailbox_key.public_key()),
 			expiry: expiry,
-			sig: SECP.sign_schnorr(&msg, mailbox_key),
+			sig: SECP.sign_schnorr_with_aux_rand(&msg, mailbox_key, &rand::random()),
 		}
 	}
 

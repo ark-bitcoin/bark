@@ -5,7 +5,7 @@ pub use secp256k1_musig::musig::{
 	AggregatedNonce, PublicNonce, PartialSignature, SecretNonce, Session, SessionSecretRand,
 };
 
-use bitcoin::secp256k1::{rand, schnorr, Keypair, PublicKey, SecretKey, XOnlyPublicKey};
+use bitcoin::secp256k1::{schnorr, Keypair, PublicKey, SecretKey, XOnlyPublicKey};
 use secpm::musig::KeyAggCache;
 
 lazy_static! {

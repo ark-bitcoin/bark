@@ -7,7 +7,7 @@ use std::str::FromStr;
 use bitcoin::{Transaction, Txid};
 use bitcoin::hashes::{sha256, Hash};
 use bitcoin::hex::DisplayHex;
-use bitcoin::secp256k1::{self, rand, schnorr, Keypair, Message, PublicKey};
+use bitcoin::secp256k1::{self, schnorr, Keypair, Message, PublicKey};
 
 use crate::{musig, OffboardRequest, SECP, SignedVtxoRequest, Vtxo, VtxoId};
 use crate::encode::ProtocolEncoding;
@@ -77,7 +77,7 @@ impl VtxoOwnershipChallenge {
 		vtxo_keypair: Keypair,
 	) -> schnorr::Signature {
 		let msg = self.as_signable_message(vtxo_id, vtxo_reqs, offboard_reqs);
-		SECP.sign_schnorr(&msg, &vtxo_keypair)
+		SECP.sign_schnorr_with_aux_rand(&msg, &vtxo_keypair, &rand::random())
 	}
 
 	pub fn verify_input_vtxo_sig(
