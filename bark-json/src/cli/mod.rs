@@ -92,26 +92,6 @@ impl<T: Borrow<ark::ArkInfo>> From<T> for ArkInfo {
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[cfg_attr(feature = "utoipa", derive(ToSchema))]
-pub struct LightningReceiveBalance {
-	#[serde(rename = "total_sat", with = "bitcoin::amount::serde::as_sat")]
-	#[cfg_attr(feature = "utoipa", schema(value_type = u64))]
-	pub total: Amount,
-	#[serde(rename = "claimable_sat", with = "bitcoin::amount::serde::as_sat")]
-	#[cfg_attr(feature = "utoipa", schema(value_type = u64))]
-	pub claimable: Amount,
-}
-
-impl From<bark::LightningReceiveBalance> for LightningReceiveBalance {
-	fn from(v: bark::LightningReceiveBalance) -> Self {
-		LightningReceiveBalance {
-			total: v.total,
-			claimable: v.claimable,
-		}
-	}
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
-#[cfg_attr(feature = "utoipa", derive(ToSchema))]
 pub struct Balance {
 	#[serde(rename = "spendable_sat", with = "bitcoin::amount::serde::as_sat")]
 	#[cfg_attr(feature = "utoipa", schema(value_type = u64))]
