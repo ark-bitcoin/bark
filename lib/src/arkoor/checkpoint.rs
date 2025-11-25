@@ -128,6 +128,11 @@ pub enum ArkoorSigningError {
 		expected: usize,
 		got: usize,
 	},
+	#[error("Wrong number of keypairs. Expected {expected}, got {got}")]
+	InvalidNbKeypairs {
+		expected: usize,
+		got: usize,
+	},
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

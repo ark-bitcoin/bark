@@ -78,17 +78,22 @@ impl<'a> CheckpointedPackageBuilder<'a, state::Initial> {
 }
 
 impl<'a> CheckpointedPackageBuilder<'a, state::UserGeneratedNonces> {
-	pub fn user_cosign(self, user_keypair: &Keypair, server_cosign_data: &[CosignResponse]) -> Result<CheckpointedPackageBuilder<'a, state::UserSigned>, ArkoorSigningError> {
-		if server_cosign_data.len() != self.builders.len() {
+	pub fn user_cosign(self, user_keypair: &[Keypair], server_cosign_response: &[CosignResponse]) -> Result<CheckpointedPackageBuilder<'a, state::UserSigned>, ArkoorSigningError> {
+		if server_cosign_response.len() != self.builders.len() {
 			return Err(ArkoorSigningError::InvalidNbPackages {
 				expected: self.builders.len(),
-				got: server_cosign_data.len()
+				got: server_cosign_response.len()
 			})
 		}
 
+		if user_keypair.len() != self.builders.len() {
+			return Err(ArkoorSigningError::InvalidNbKeypairs { expected: self.builders.len(), got: user_keypair.len()})
+		}
+
 		let mut packages = Vec::with_capacity(self.builders.len());
-		for (pkg, cosign_data) in self.builders.into_iter().zip(server_cosign_data.iter()) {
-			packages.push(pkg.user_cosign(user_keypair, cosign_data)?);
+
+		for (idx, pkg) in self.builders.into_iter().enumerate() {
+			packages.push(pkg.user_cosign(&user_keypair[idx], &server_cosign_response[idx])?);
 		}
 		Ok(CheckpointedPackageBuilder { builders: packages })
 	}
@@ -187,7 +192,7 @@ mod test {
 		}.build()
 	}
 
-	fn verify_package_builder(builder: CheckpointedPackageBuilder<state::Initial>, funding_tx_map: HashMap<Txid, Transaction>) {
+	fn verify_package_builder(builder: CheckpointedPackageBuilder<state::Initial>, keypairs: &[Keypair], funding_tx_map: HashMap<Txid, Transaction>) {
 		let user_builder = builder.generate_user_nonces();
 		let cosign_requests = user_builder.cosign_requests();
 
@@ -197,7 +202,8 @@ mod test {
 			.expect("Wrong server key")
 			.cosign_responses();
 
-		let vtxos = user_builder.user_cosign(&alice_keypair(), &cosign_responses)
+
+		let vtxos = user_builder.user_cosign(keypairs, &cosign_responses)
 			.expect("Invalid cosign responses")
 			.build_signed_vtxos();
 
@@ -230,7 +236,7 @@ mod test {
 		).expect("Valid package");
 
 		let funding_map = HashMap::from([(funding_tx.compute_txid(), funding_tx)]);
-		verify_package_builder(package_builder, funding_map);
+		verify_package_builder(package_builder, &[alice_keypair()], funding_map);
 	}
 
 	#[test]
@@ -254,7 +260,7 @@ mod test {
 
 		// Verify if it produces valid vtxos
 		let funding_map = HashMap::from([(funding_tx.compute_txid(), funding_tx)]);
-		verify_package_builder(package_builder, funding_map);
+		verify_package_builder(package_builder, &[alice_keypair()], funding_map);
 	}
 
 	#[test]
@@ -283,7 +289,7 @@ mod test {
 			(funding_tx_2.compute_txid(), funding_tx_2),
 			(funding_tx_3.compute_txid(), funding_tx_3),
 		]);
-		verify_package_builder(package, funding_map);
+		verify_package_builder(package, &[alice_keypair(), alice_keypair(), alice_keypair()], funding_map);
 
 	}
 
@@ -319,7 +325,7 @@ mod test {
 			(funding_tx_2.compute_txid(), funding_tx_2),
 			(funding_tx_3.compute_txid(), funding_tx_3),
 		]);
-		verify_package_builder(package, funding_map);
+		verify_package_builder(package, &[alice_keypair(), alice_keypair(), alice_keypair()], funding_map);
 	}
 
 	#[test]
@@ -348,7 +354,7 @@ mod test {
 			(funding_tx_1.compute_txid(), funding_tx_1),
 			(funding_tx_2.compute_txid(), funding_tx_2),
 		]);
-		verify_package_builder(package, funding_map);
+		verify_package_builder(package, &[alice_keypair(), alice_keypair()], funding_map);
 	}
 
 	#[test]
