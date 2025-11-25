@@ -4,10 +4,10 @@
 
 Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
+**claimable_lightning_receive_sat** | **i64** |  | 
 **pending_board_sat** | **i64** |  | 
 **pending_exit_sat** | Option<**i64**> |  | [optional]
 **pending_in_round_sat** | **i64** |  | 
-**pending_lightning_receive** | [**models::LightningReceiveBalance**](LightningReceiveBalance.md) |  | 
 **pending_lightning_send_sat** | **i64** |  | 
 **spendable_sat** | **i64** |  | 
 

@@ -1325,11 +1325,16 @@
         "required": [
           "spendable_sat",
           "pending_lightning_send_sat",
-          "pending_lightning_receive",
+          "claimable_lightning_receive_sat",
           "pending_in_round_sat",
           "pending_board_sat"
         ],
         "properties": {
+          "claimable_lightning_receive_sat": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
           "pending_board_sat": {
             "type": "integer",
             "format": "int64",
@@ -1347,9 +1352,6 @@
             "type": "integer",
             "format": "int64",
             "minimum": 0
-          },
-          "pending_lightning_receive": {
-            "$ref": "#/components/schemas/LightningReceiveBalance"
           },
           "pending_lightning_send_sat": {
             "type": "integer",
@@ -2737,34 +2739,22 @@
           }
         }
       },
-      "LightningReceiveBalance": {
-        "type": "object",
-        "required": [
-          "total_sat",
-          "claimable_sat"
-        ],
-        "properties": {
-          "claimable_sat": {
-            "type": "integer",
-            "format": "int64",
-            "minimum": 0
-          },
-          "total_sat": {
-            "type": "integer",
-            "format": "int64",
-            "minimum": 0
-          }
-        }
-      },
       "LightningReceiveInfo": {
         "type": "object",
         "required": [
+          "amount_sat",
           "payment_hash",
           "payment_preimage",
           "invoice",
           "htlc_vtxos"
         ],
         "properties": {
+          "amount_sat": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The amount of the lightning receive",
+            "minimum": 0
+          },
           "htlc_vtxos": {
             "type": [
               "array",

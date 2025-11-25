@@ -4,6 +4,7 @@
 
 Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
+**amount_sat** | **i64** | The amount of the lightning receive | 
 **htlc_vtxos** | Option<[**Vec<models::WalletVtxoInfo>**](WalletVtxoInfo.md)> | The HTLC VTXOs granted by the server for the lightning receive  Only present if the lightning HTLC has been received by the server. | 
 **invoice** | **String** | The invoice string | 
 **payment_hash** | **String** | The payment hash linked to the lightning receive info | 
