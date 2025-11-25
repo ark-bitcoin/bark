@@ -1,23 +1,27 @@
 use anyhow::Context;
 use bitcoin::Amount;
 use bitcoin::hex::DisplayHex;
+use bitcoin::secp256k1::PublicKey;
 
 use log::{info, error};
 
 use ark::{VtxoRequest, ProtocolEncoding};
-use ark::vtxo::{Vtxo, VtxoId, VtxoPolicy, VtxoPolicyKind};
 use ark::arkoor::ArkoorPackageBuilder;
 use ark::musig;
+use ark::arkoor::checkpointed_package::{CheckpointedPackageBuilder, PackageCosignResponse};
+use ark::vtxo::{Vtxo, VtxoId, VtxoPolicy, VtxoPolicyKind};
 
 use bitcoin_ext::P2TR_DUST;
 
 use server_rpc::protos;
 
+use crate::movement::MovementDestination;
 use crate::{
 	ArkoorMovement, BarkSubsystem, VtxoDelivery,
-	MovementGuard, MovementDestination, MovementUpdate, MovementStatus,
+	MovementGuard, MovementUpdate, MovementStatus,
 	Wallet
 };
+
 
 
 /// The result of creating an arkoor transaction
@@ -137,6 +141,61 @@ impl Wallet {
 		Ok(())
 	}
 
+	async fn create_checkpointed_arkoor(
+		&self, vtxo_request: VtxoRequest, change_pubkey: PublicKey
+	) -> anyhow::Result<ArkoorCreateResult> {
+		if vtxo_request.policy.user_pubkey() == change_pubkey {
+			bail!("Cannot create arkoor to same address as change");
+		}
+
+		// Find vtxos to cover
+		let mut srv = self.require_server()?;
+		let inputs: Vec<Vtxo> = self.select_vtxos_to_cover(vtxo_request.amount, None)?;
+		let input_ids: Vec<VtxoId> = inputs.iter().map(|v| v.id()).collect();
+
+		let user_keypairs = inputs.iter()
+			.map(|vtxo| self.get_vtxo_key(&vtxo))
+			.collect::<Result<Vec<_>, _>>()?;
+
+		let builder = CheckpointedPackageBuilder::new(inputs.clone(), vtxo_request, change_pubkey)
+			.context("Failed to construct arkoor package")?
+			.generate_user_nonces(&user_keypairs)
+			.context("invalid nb of keypairs")?;
+
+		let cosign_request = protos::CheckpointedPackageCosignRequest::from(
+			builder.cosign_requests().convert_vtxo(|vtxo| vtxo.id()));
+
+		let response = srv.client.checkpointed_cosign_oor(cosign_request).await
+			.context("server failed to cosign arkoor")?
+			.into_inner();
+
+		let cosign_responses = PackageCosignResponse::try_from(response)
+			.context("Failed to parse cosign response from server")?;
+
+		let vtxos = builder
+			.user_cosign(&user_keypairs, cosign_responses)
+			.context("Failed to cosign vtxos")?
+			.build_signed_vtxos();
+
+		// See if their is a change vtxo
+		if vtxos.last().expect("At least one vtxo").user_pubkey() == change_pubkey {
+			let nb_vtxos = vtxos.len();
+			let change = vtxos.last().cloned();
+			Ok(ArkoorCreateResult {
+				input: input_ids,
+				// The last one is change
+				created: vtxos.into_iter().take(nb_vtxos.saturating_sub(1)).collect::<Vec<_>>(),
+				change: change,
+			})
+		} else {
+			Ok(ArkoorCreateResult {
+				input: input_ids,
+				created: vtxos,
+				change: None,
+			})
+		}
+	}
+
 	/// Makes an out-of-round payment to the given [ark::Address]. This does not require waiting for
 	/// a round, so it should be relatively instantaneous.
 	///
@@ -156,30 +215,47 @@ impl Wallet {
 		self.validate_arkoor_address(&destination).await
 			.context("address validation failed")?;
 
+		let negative_amount = - amount.to_signed().context("Amount out-of-range")?;
+
 		if amount < P2TR_DUST {
 			bail!("Sent amount must be at least {}", P2TR_DUST);
 		}
+
+		let change_pubkey = self.derive_store_next_keypair()
+			.context("Failed to create change keypair")?.0;
 
 		let mut movement = MovementGuard::new_movement(
 			self.movements.clone(),
 			self.subsystem_ids[&BarkSubsystem::Arkoor],
 			ArkoorMovement::Send.to_string(),
 		).await?;
-		let arkoor = self.create_arkoor_vtxos(destination.policy().clone(), amount).await?;
+
+
+		let request = VtxoRequest { amount, policy: destination.policy().clone() };
+		let arkoor = self.create_checkpointed_arkoor(request.clone(), change_pubkey.public_key())
+			.await
+			.context("Failed to create checkpointed transactions")?;
+
 		movement.apply_update(
-			arkoor.to_movement_update()?
-				.sent_to([MovementDestination::new(destination.to_string(), amount)])
-				.intended_and_effective_balance(-amount.to_signed()?)
+			arkoor
+					.to_movement_update().context("Failed to create movement update")?
+					.intended_and_effective_balance(negative_amount)
+					.sent_to([MovementDestination {
+						destination: destination.to_string(),
+						amount: amount,
+					}])
 		).await?;
+
 
 		let req = protos::ArkoorPackage {
 			arkoors: arkoor.created.iter().map(|v| protos::ArkoorVtxo {
-				pubkey: destination.policy().user_pubkey().serialize().to_vec(),
+				pubkey: request.policy.user_pubkey().serialize().to_vec(),
 				vtxo: v.serialize().to_vec(),
 			}).collect(),
 		};
 
-		// TODO: Figure out how to better handle this error. Technically the payment fails but our
+		// TODO: Figure out how to better handle this error.
+		// Technically the payment fails but our
 		//       funds are considered spent anyway? Maybe add the failure reason to the metadata?
 		if let Err(e) = srv.client.post_arkoor_package_mailbox(req).await {
 			error!("Failed to post the arkoor vtxo to the recipients mailbox: '{:#}'", e);
