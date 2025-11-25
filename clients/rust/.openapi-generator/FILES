@@ -88,6 +88,7 @@ docs/LightningStatusRequest.md
 docs/LightningStatusResponse.md
 docs/Movement.md
 docs/MovementDestination.md
+docs/MovementStatus.md
 docs/MovementSubsystem.md
 docs/MovementTimestamp.md
 docs/OffboardAllRequest.md
@@ -213,6 +214,7 @@ src/models/lightning_status_response.rs
 src/models/mod.rs
 src/models/movement.rs
 src/models/movement_destination.rs
+src/models/movement_status.rs
 src/models/movement_subsystem.rs
 src/models/movement_timestamp.rs
 src/models/offboard_all_request.rs

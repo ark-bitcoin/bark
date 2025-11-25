@@ -13,7 +13,7 @@ use utoipa::ToSchema;
 
 use ark::lightning::{PaymentHash, Preimage};
 use ark::VtxoId;
-use bark::movement::{MovementId, MovementStatus};
+use bark::movement::MovementId;
 use bitcoin_ext::{AmountExt, BlockDelta, BlockHeight};
 
 use crate::exit::error::ExitError;
@@ -239,6 +239,33 @@ impl From<bark::Board> for Board {
 	}
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[cfg_attr(feature = "utoipa", derive(ToSchema))]
+pub enum MovementStatus {
+	/// The default status of a new [Movement]. Should be treated as in-progress.
+	Pending,
+	/// The [Movement] has completed with changes. Note; this does not necessarily mean the [Movement]
+	/// completed successfully, e.g., VTXOs may be consumed and new ones produced.
+	Finished,
+	/// The [Movement] failed to complete due to an error. This should result in changes in user
+	/// funds.
+	Failed,
+	/// A [Movement] was cancelled, either by the protocol (e.g., lightning payments) or by the
+	/// user.
+	Cancelled,
+}
+
+impl From<bark::movement::MovementStatus> for MovementStatus {
+	fn from(v: bark::movement::MovementStatus) -> Self {
+		match v {
+			bark::movement::MovementStatus::Pending => Self::Pending,
+			bark::movement::MovementStatus::Finished => Self::Finished,
+			bark::movement::MovementStatus::Failed => Self::Failed,
+			bark::movement::MovementStatus::Cancelled => Self::Cancelled,
+		}
+	}
+}
+
 /// Describes an attempted movement of offchain funds within the Bark [Wallet].
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[cfg_attr(feature = "utoipa", derive(ToSchema))]
@@ -247,7 +274,6 @@ pub struct Movement {
 	#[cfg_attr(feature = "utoipa", schema(value_type = u32))]
 	pub id: MovementId,
 	/// The status of the movement.
-	#[cfg_attr(feature = "utoipa", schema(value_type = String))]
 	pub status: MovementStatus,
 	/// Contains information about the subsystem that created the movement as well as the purpose
 	/// of the movement.
@@ -300,7 +326,7 @@ impl From<bark::movement::Movement> for Movement {
 	fn from(m: bark::movement::Movement) -> Self {
 		Movement {
 			id: m.id,
-			status: m.status,
+			status: m.status.into(),
 			subsystem: MovementSubsystem::from(m.subsystem),
 			metadata: if m.metadata.is_empty() { None } else { Some(m.metadata) },
 			intended_balance: m.intended_balance,

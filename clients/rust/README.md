@@ -149,6 +149,7 @@ Class | Method | HTTP request | Description
  - [LightningStatusResponse](docs/LightningStatusResponse.md)
  - [Movement](docs/Movement.md)
  - [MovementDestination](docs/MovementDestination.md)
+ - [MovementStatus](docs/MovementStatus.md)
  - [MovementSubsystem](docs/MovementSubsystem.md)
  - [MovementTimestamp](docs/MovementTimestamp.md)
  - [OffboardAllRequest](docs/OffboardAllRequest.md)
