@@ -1,0 +1,7 @@
+- Created a new `challenges` module to centralize VTXO ownership challenge types.
+  Challenge implementations for round attempts and Lightning receives have been moved
+  from `rounds` and `lightning` modules to this new module.
+  `VtxoOwnershipChallenge` was renamed to `RoundAttemptChallenge` to better describe
+  its usage. A `VtxoStatusChallenge` type was introduced for usage with the upcoming
+  VTXO status endpoint to authenticate queries.
+  [#1368](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1368)

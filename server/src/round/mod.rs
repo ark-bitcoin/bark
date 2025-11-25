@@ -23,11 +23,12 @@ use ark::{
 	OffboardRequest, ProtocolEncoding, SignedVtxoRequest, Vtxo, VtxoId, VtxoIdInput, VtxoPolicy,
 	VtxoRequest,
 };
+use ark::challenges::RoundAttemptChallenge;
 use ark::connectors::ConnectorChain;
 use ark::musig::{self, DangerousSecretNonce, PublicNonce, SecretNonce};
 use ark::rounds::{
-	RoundAttempt, RoundEvent, RoundFinished, RoundProposal, RoundSeq, VtxoOwnershipChallenge,
-	VtxoProposal, ROUND_TX_CONNECTOR_VOUT, ROUND_TX_VTXO_TREE_VOUT,
+	RoundAttempt, RoundEvent, RoundFinished, RoundProposal, RoundSeq, VtxoProposal,
+	ROUND_TX_CONNECTOR_VOUT, ROUND_TX_VTXO_TREE_VOUT,
 };
 use ark::tree::signed::{CachedSignedVtxoTree, UnsignedVtxoTree, VtxoTreeSpec};
 use server_log::{LogMsg, RoundVtxoCreated};
@@ -166,7 +167,7 @@ pub struct RoundData {
 pub struct CollectingPayments {
 	round_data: RoundData,
 
-	vtxo_ownership_challenge: VtxoOwnershipChallenge,
+	round_attempt_challenge: RoundAttemptChallenge,
 
 	/// All inputs that have participated in the previous attempt.
 	locked_inputs: OwnedVtxoFluxLock,
@@ -197,7 +198,7 @@ impl CollectingPayments {
 	) -> CollectingPayments {
 		CollectingPayments {
 			round_data,
-			vtxo_ownership_challenge: VtxoOwnershipChallenge::generate(),
+			round_attempt_challenge: RoundAttemptChallenge::generate(),
 			locked_inputs,
 			allowed_inputs,
 
@@ -455,7 +456,7 @@ impl CollectingPayments {
 		let v_reqs = vtxo_requests.iter().map(|v| v.req.clone()).collect::<Vec<_>>();
 		for input in &input_vtxos {
 			let sig = ownership_proof_by_vtxo_id.get(&input.id()).expect("all vtxos were found");
-			self.vtxo_ownership_challenge.verify_input_vtxo_sig(input, &v_reqs, &offboards, sig)
+			self.round_attempt_challenge.verify_input_vtxo_sig(input, &v_reqs, &offboards, sig)
 				.context(format!("ownership proof is invalid: vtxo {}, proof: {}", input.id(), sig))?;
 		}
 
@@ -1360,18 +1361,18 @@ async fn perform_round(
 		state.locked_inputs.release_all();
 
 		let mut span = trace_round_step(&state.round_step);
-		span.set_bytes_attr("challenge", state.vtxo_ownership_challenge.inner().as_slice());
+		span.set_bytes_attr("challenge", state.round_attempt_challenge.inner().as_slice());
 
 		telemetry::set_round_attempt(state.attempt_seq());
 
 		srv.rounds.broadcast_event(RoundEvent::Attempt(RoundAttempt {
 			round_seq,
 			attempt_seq: state.attempt_seq(),
-			challenge: state.vtxo_ownership_challenge,
+			challenge: state.round_attempt_challenge,
 		}));
 
 		server_rslog!(AttemptingRound, state.round_step,
-			challenge: state.vtxo_ownership_challenge.inner().to_vec(),
+			challenge: state.round_attempt_challenge.inner().to_vec(),
 		);
 		telemetry::set_round_step_duration(state.round_step);
 

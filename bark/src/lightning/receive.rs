@@ -9,7 +9,8 @@ use log::{info, trace, warn};
 
 use ark::arkoor::ArkoorPackageBuilder;
 use ark::{ProtocolEncoding, Vtxo, VtxoPolicy, VtxoRequest, musig};
-use ark::lightning::{LightningReceiveChallenge, PaymentHash, Preimage};
+use ark::challenges::{LightningReceiveChallenge};
+use ark::lightning::{PaymentHash, Preimage};
 use bitcoin_ext::{AmountExt, BlockDelta, BlockHeight};
 use server_rpc::protos;
 use server_rpc::protos::prepare_lightning_receive_claim_request::LightningReceiveAntiDos;

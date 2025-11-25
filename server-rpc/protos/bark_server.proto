@@ -285,7 +285,7 @@ message CheckLightningReceiveResponse {
 message RoundAttempt {
 	uint64 round_seq = 1;
 	uint64 attempt_seq = 2;
-	bytes vtxo_ownership_challenge = 3;
+	bytes round_attempt_challenge = 3;
 }
 
 message ForfeitNonces {
