@@ -273,7 +273,7 @@ impl Wallet {
 			bail!("Invoice is for wrong network: {}", invoice.network());
 		}
 
-		if self.db.check_recipient_exists(&invoice.to_string())? {
+		if self.db.get_lightning_send(invoice.payment_hash())?.is_some() {
 			bail!("Invoice has already been paid");
 		}
 

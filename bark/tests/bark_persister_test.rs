@@ -154,6 +154,10 @@ impl BarkPersister for Dummy {
 		Ok(())
 	}
 
+	fn get_lightning_send(&self, _payment_hash: PaymentHash) -> anyhow::Result<Option<LightningSend>> {
+		Ok(Some(dummy_lightning_send()))
+	}
+
 	fn store_lightning_receive(
 		&self,
 		_payment_hash: PaymentHash,
@@ -311,6 +315,16 @@ impl BarkPersister for Dummy {
 		_vtxos: &[(&Vtxo, &VtxoState)],
 	) -> anyhow::Result<()> {
 		Ok(())
+	}
+}
+
+fn dummy_lightning_send() -> LightningSend {
+	LightningSend {
+		invoice: Invoice::Bolt11(Bolt11Invoice::from_str("bob").unwrap()),
+		amount: Amount::ZERO,
+		htlc_vtxos: vec![],
+		movement_id: MovementId::new(0),
+		preimage: None,
 	}
 }
 

@@ -436,6 +436,15 @@ pub trait BarkPersister: Send + Sync + 'static {
 	/// - Returns an error if the lightning send cannot be removed.
 	fn remove_lightning_send(&self, payment_hash: PaymentHash) -> anyhow::Result<()>;
 
+	/// Get a lightning send by payment hash
+	///
+	/// Parameters:
+	/// - payment_hash: The [PaymentHash] of the lightning send to get.
+	///
+	/// Errors:
+	/// - Returns an error if the lookup fails.
+	fn get_lightning_send(&self, payment_hash: PaymentHash) -> anyhow::Result<Option<LightningSend>>;
+
 	/// Store an incoming Lightning receive record.
 	///
 	/// Parameters:

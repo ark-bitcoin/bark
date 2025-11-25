@@ -499,6 +499,42 @@ pub fn remove_lightning_send(
 	Ok(())
 }
 
+pub fn get_lightning_send(
+	conn: &Connection,
+	payment_hash: PaymentHash,
+) -> anyhow::Result<Option<LightningSend>> {
+	let query = "
+		SELECT htlc_vtxo_ids, invoice, amount_sats, movement_id, preimage
+		FROM bark_lightning_send
+		WHERE payment_hash = ?1";
+	let mut statement = conn.prepare(query)?;
+	let mut rows = statement.query([payment_hash.as_hex().to_string()])?;
+
+	if let Some(row) = rows.next()? {
+		let invoice = row.get::<_, String>("invoice")?;
+		let htlc_vtxo_ids = serde_json::from_str::<Vec<VtxoId>>(&row.get::<_, String>(0)?)?;
+		let amount_sats = row.get::<_, i64>("amount_sats")?;
+		let movement_id = MovementId::new(row.get::<_, u32>("movement_id")?);
+
+		let mut htlc_vtxos = Vec::new();
+		for htlc_vtxo_id in htlc_vtxo_ids {
+			htlc_vtxos.push(get_wallet_vtxo_by_id(conn, htlc_vtxo_id)?.context("no vtxo found")?);
+		}
+
+		Ok(Some(LightningSend {
+			invoice: Invoice::from_str(&invoice)?,
+			amount: Amount::from_sat(amount_sats as u64),
+			preimage: row.get::<_, Option<String>>("preimage")?
+				.map(|p| Preimage::from_str(&p))
+				.transpose()?,
+			htlc_vtxos,
+			movement_id,
+		}))
+	} else {
+		Ok(None)
+	}
+}
+
 pub fn get_wallet_vtxo_by_id(
 	conn: &Connection,
 	id: VtxoId

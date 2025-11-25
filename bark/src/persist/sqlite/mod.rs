@@ -311,6 +311,11 @@ impl BarkPersister for SqliteClient {
 		Ok(())
 	}
 
+	fn get_lightning_send(&self, payment_hash: PaymentHash) -> anyhow::Result<Option<LightningSend>> {
+		let conn = self.connect()?;
+		query::get_lightning_send(&conn, payment_hash)
+	}
+
 	fn get_all_pending_lightning_receives(&self) -> anyhow::Result<Vec<LightningReceive>> {
 		let conn = self.connect()?;
 		query::get_all_pending_lightning_receives(&conn)
