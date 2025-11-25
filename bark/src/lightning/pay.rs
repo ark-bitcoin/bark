@@ -75,7 +75,7 @@ impl Wallet {
 		self.mark_vtxos_as_spent(&htlc_vtxos)?;
 		self.movements.finish_movement(payment.movement_id, MovementStatus::Failed).await?;
 
-		self.db.finish_lightning_send(payment.invoice.payment_hash(), None)?;
+		self.db.remove_lightning_send(payment.invoice.payment_hash())?;
 
 		info!("Revoked {} HTLC VTXOs", count);
 
