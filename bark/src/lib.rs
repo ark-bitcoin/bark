@@ -336,7 +336,7 @@ use crate::movement::manager::{MovementGuard, MovementManager};
 use crate::movement::update::MovementUpdate;
 use crate::onchain::{ChainSource, PreparePsbt, ExitUnilaterally, Utxo, SignPsbt};
 use crate::persist::{BarkPersister, RoundStateId};
-use crate::persist::models::{LightningReceive, PendingBoard, PendingLightningSend};
+use crate::persist::models::{LightningReceive, LightningSend, PendingBoard};
 use crate::round::{RoundParticipation, RoundStatus};
 use crate::subsystem::{ArkoorMovement, BarkSubsystem, BoardMovement, RoundMovement, SubsystemId};
 use crate::vtxo::selection::{FilterVtxos, VtxoFilter, RefreshStrategy};
@@ -1108,7 +1108,7 @@ impl Wallet {
 		Ok(ret)
 	}
 
-	/// Queries the database for any VTXO that is an pending lightning send.
+	/// Queries the database for any VTXO that is a pending lightning send.
 	pub fn pending_lightning_send_vtxos(&self) -> anyhow::Result<Vec<WalletVtxo>> {
 		let vtxos = self.db.get_all_pending_lightning_send()?.into_iter()
 			.flat_map(|pending_lightning_send| pending_lightning_send.htlc_vtxos)
@@ -1301,7 +1301,7 @@ impl Wallet {
 		Ok(())
 	}
 
-	pub fn pending_lightning_sends(&self) -> anyhow::Result<Vec<PendingLightningSend>> {
+	pub fn pending_lightning_sends(&self) -> anyhow::Result<Vec<LightningSend>> {
 		Ok(self.db.get_all_pending_lightning_send()?)
 	}
 

@@ -59,14 +59,14 @@ CREATE TABLE bark_pending_board (
 				created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now')), movement_id INTEGER NOT NULL, amount_sat INTEGER NOT NULL DEFAULT 0,
 				UNIQUE (vtxo_id)
 			);
-CREATE TABLE bark_pending_lightning_send (
+CREATE TABLE IF NOT EXISTS "bark_lightning_send" (
 				id INTEGER PRIMARY KEY,
 				invoice TEXT NOT NULL UNIQUE,
 				payment_hash TEXT NOT NULL UNIQUE,
 				amount_sats INTEGER NOT NULL,
 				htlc_vtxo_ids TEXT NOT NULL,
 				created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now'))
-			, movement_id INTEGER NOT NULL);
+			, movement_id INTEGER NOT NULL, preimage TEXT, finished_at DATETIME);
 CREATE TABLE bark_round_state (
 				id INTEGER PRIMARY KEY AUTOINCREMENT,
 				state BLOB NOT NULL

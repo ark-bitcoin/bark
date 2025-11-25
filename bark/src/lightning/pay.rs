@@ -18,12 +18,12 @@ use crate::Wallet;
 use crate::lightning::lnaddr_invoice;
 use crate::movement::{MovementDestination, MovementStatus};
 use crate::movement::update::MovementUpdate;
-use crate::persist::models::PendingLightningSend;
+use crate::persist::models::LightningSend;
 use crate::subsystem::{BarkSubsystem, LightningMovement, LightningSendMovement};
 
 
 impl Wallet {
-	async fn process_lightning_revocation(&self, payment: &PendingLightningSend) -> anyhow::Result<()> {
+	async fn process_lightning_revocation(&self, payment: &LightningSend) -> anyhow::Result<()> {
 		let mut srv = self.require_server()?;
 		let htlc_vtxos = payment.htlc_vtxos.clone().into_iter()
 			.map(|v| v.vtxo).collect::<Vec<_>>();
@@ -75,7 +75,7 @@ impl Wallet {
 		self.mark_vtxos_as_spent(&htlc_vtxos)?;
 		self.movements.finish_movement(payment.movement_id, MovementStatus::Failed).await?;
 
-		self.db.remove_pending_lightning_send(payment.invoice.payment_hash())?;
+		self.db.remove_lightning_send(payment.invoice.payment_hash())?;
 
 		info!("Revoked {} HTLC VTXOs", count);
 
@@ -99,7 +99,7 @@ impl Wallet {
 	async fn process_lightning_send_server_preimage(
 		&self,
 		preimage: Option<Vec<u8>>,
-		payment: &PendingLightningSend,
+		payment: &LightningSend,
 	) -> anyhow::Result<Option<Preimage>> {
 		let payment_hash = payment.invoice.payment_hash();
 		let preimage_res = preimage
@@ -113,7 +113,7 @@ impl Wallet {
 					preimage.as_hex(), payment.invoice.payment_hash().as_hex());
 
 				// Complete the payment
-				self.db.remove_pending_lightning_send(payment.invoice.payment_hash())?;
+				self.db.remove_lightning_send(payment.invoice.payment_hash())?;
 				self.mark_vtxos_as_spent(&payment.htlc_vtxos)?;
 				self.movements.finish_movement(payment.movement_id,
 					MovementStatus::Finished).await?;
@@ -155,7 +155,7 @@ impl Wallet {
 	///     revokes the VTXOs.
 	///   - **Complete**: Extracts the payment preimage, logs the payment, registers movement
 	///     in the database and returns
-	pub async fn check_lightning_payment(&self, payment: &PendingLightningSend)
+	pub async fn check_lightning_payment(&self, payment: &LightningSend)
 		-> anyhow::Result<Option<Preimage>>
 	{
 		let mut srv = self.require_server()?;
@@ -245,7 +245,7 @@ impl Wallet {
 					self.movements.finish_movement(
 						payment.movement_id, MovementStatus::Failed,
 					).await?;
-					self.db.remove_pending_lightning_send(payment_hash)?;
+					self.db.remove_lightning_send(payment_hash)?;
 				}
 			}
 		}

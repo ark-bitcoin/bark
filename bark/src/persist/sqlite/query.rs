@@ -20,7 +20,7 @@ use crate::exit::models::{ExitState, ExitTxOrigin};
 use crate::movement::{Movement, MovementId, MovementStatus, MovementSubsystem};
 use crate::persist::{RoundStateId, StoredRoundState};
 use crate::persist::models::{
-	LightningReceive, PendingBoard, PendingLightningSend, SerdeRoundState, SerdeUnconfirmedRound, StoredExit
+	LightningReceive, LightningSend, PendingBoard, SerdeRoundState, SerdeUnconfirmedRound, StoredExit
 };
 use crate::persist::sqlite::convert::{row_to_movement, row_to_wallet_vtxo, rows_to_wallet_vtxos};
 use crate::round::{RoundState, UnconfirmedRound};
@@ -393,10 +393,14 @@ pub fn load_recovered_past_rounds(
 	Ok(ret)
 }
 
-pub fn get_all_pending_lightning_send(conn: &Connection) -> anyhow::Result<Vec<PendingLightningSend>> {
-	let mut statement = conn.prepare("
-		SELECT htlc_vtxo_ids, invoice, amount_sats, movement_id FROM bark_pending_lightning_send
-	")?;
+pub fn get_all_pending_lightning_send(conn: &Connection) -> anyhow::Result<Vec<LightningSend>> {
+	let query = "
+		SELECT htlc_vtxo_ids, invoice, amount_sats, movement_id, preimage
+		FROM bark_lightning_send
+		WHERE finished_at IS NULL";
+
+	let mut statement = conn.prepare(query)?;
+
 	let mut rows = statement.query(())?;
 
 	let mut pending_lightning_sends = Vec::new();
@@ -411,11 +415,14 @@ pub fn get_all_pending_lightning_send(conn: &Connection) -> anyhow::Result<Vec<P
 			htlc_vtxos.push(get_wallet_vtxo_by_id(conn, htlc_vtxo_id)?.context("no vtxo found")?);
 		}
 
-		pending_lightning_sends.push(PendingLightningSend {
+		pending_lightning_sends.push(LightningSend {
 			invoice: Invoice::from_str(&invoice)?,
 			amount: Amount::from_sat(amount_sats as u64),
 			htlc_vtxos,
 			movement_id,
+			preimage: row.get::<_, Option<String>>("preimage")?
+				.map(|p| Preimage::from_str(&p))
+				.transpose()?,
 		});
 	}
 
@@ -428,9 +435,9 @@ pub fn store_new_pending_lightning_send<V: VtxoRef>(
 	amount: &Amount,
 	htlc_vtxo_ids: &[V],
 	movement_id: MovementId,
-) -> anyhow::Result<PendingLightningSend> {
+) -> anyhow::Result<LightningSend> {
 	let query = "
-		INSERT INTO bark_pending_lightning_send (invoice, payment_hash, amount_sats, htlc_vtxo_ids, movement_id)
+		INSERT INTO bark_lightning_send (invoice, payment_hash, amount_sats, htlc_vtxo_ids, movement_id)
 		VALUES (:invoice, :payment_hash, :amount_sats, :htlc_vtxo_ids, :movement_id)
 	";
 
@@ -451,19 +458,20 @@ pub fn store_new_pending_lightning_send<V: VtxoRef>(
 		":movement_id": movement_id.0,
 	})?;
 
-	Ok(PendingLightningSend {
+	Ok(LightningSend {
 		invoice: invoice.clone(),
 		amount: *amount,
+		preimage: None,
 		htlc_vtxos,
 		movement_id,
 	})
 }
 
-pub fn remove_pending_lightning_send(
+pub fn remove_lightning_send(
 	conn: &Connection,
 	payment_hash: PaymentHash,
 ) -> anyhow::Result<()> {
-	let query = "DELETE FROM bark_pending_lightning_send WHERE payment_hash = :payment_hash";
+	let query = "DELETE FROM bark_lightning_send WHERE payment_hash = :payment_hash";
 	let mut statement = conn.prepare(query)?;
 	statement.execute(named_params! { ":payment_hash": payment_hash.as_hex().to_string() })?;
 
