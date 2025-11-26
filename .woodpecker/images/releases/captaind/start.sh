@@ -31,5 +31,5 @@ if [ ! -f "/data/captaind/mnemonic" ]; then
 fi
 
 cat /var/lib/postgresql/log.log
-echo "Booting"
+echo "Booting captaind"
 /usr/local/bin/captaind --config "${CONFIG_PATH}" start

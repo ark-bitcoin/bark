@@ -32,12 +32,18 @@ steps:
     commands:
       - cat VERSION
       - just release-bark
-      - cp ./target/x86_64-unknown-linux-gnu/release/bark      bark-linux-x86_64
-      - cp ./target/aarch64-unknown-linux-gnu/release/bark     bark-linux-aarch64
-      - cp ./target/armv7-unknown-linux-gnueabihf/release/bark bark-linux-armv7
-      - cp ./target/x86_64-pc-windows-gnu/release/bark.exe     bark-windows-x86_64.exe
-      - cp ./target/x86_64-apple-darwin/release/bark           bark-apple-x86_64
-      - cp ./target/aarch64-apple-darwin/release/bark          bark-apple-aarch64
+      - cp ./target/x86_64-unknown-linux-gnu/release/bark       bark-linux-x86_64
+      - cp ./target/x86_64-unknown-linux-gnu/release/barkd      barkd-linux-x86_64
+      - cp ./target/aarch64-unknown-linux-gnu/release/bark      bark-linux-aarch64
+      - cp ./target/aarch64-unknown-linux-gnu/release/barkd     barkd-linux-aarch64
+      - cp ./target/armv7-unknown-linux-gnueabihf/release/bark  bark-linux-armv7
+      - cp ./target/armv7-unknown-linux-gnueabihf/release/barkd barkd-linux-armv7
+      - cp ./target/x86_64-pc-windows-gnu/release/bark.exe      bark-windows-x86_64.exe
+      - cp ./target/x86_64-pc-windows-gnu/release/barkd.exe     barkd-windows-x86_64.exe
+      - cp ./target/x86_64-apple-darwin/release/bark            bark-apple-x86_64
+      - cp ./target/x86_64-apple-darwin/release/barkd           barkd-apple-x86_64
+      - cp ./target/aarch64-apple-darwin/release/bark           bark-apple-aarch64
+      - cp ./target/aarch64-apple-darwin/release/barkd          barkd-apple-aarch64
 
   - name: build-and-push-bark-to-registry
     when:
@@ -148,18 +154,30 @@ steps:
     commands:
       - cat VERSION
       - cd ./target
-      - cp x86_64-unknown-linux-gnu/release/bark       "bark-$(cat ../VERSION)-linux-x86_64"
-      - cp aarch64-unknown-linux-gnu/release/bark      "bark-$(cat ../VERSION)-linux-arm64"
-      - cp armv7-unknown-linux-gnueabihf/release/bark  "bark-$(cat ../VERSION)-linux-armv7"
-      - cp x86_64-pc-windows-gnu/release/bark.exe      "bark-$(cat ../VERSION)-windows-x86_64.exe"
-      - cp x86_64-apple-darwin/release/bark            "bark-$(cat ../VERSION)-apple-x86_64"
-      - cp aarch64-apple-darwin/release/bark           "bark-$(cat ../VERSION)-apple-aarch64"
-      - sha256sum "bark-$(cat ../VERSION)-linux-x86_64"       > SHA256SUMS
-      - sha256sum "bark-$(cat ../VERSION)-linux-arm64"        >> SHA256SUMS
-      - sha256sum "bark-$(cat ../VERSION)-linux-armv7"        >> SHA256SUMS
-      - sha256sum "bark-$(cat ../VERSION)-windows-x86_64.exe" >> SHA256SUMS
-      - sha256sum "bark-$(cat ../VERSION)-apple-x86_64"       >> SHA256SUMS
-      - sha256sum "bark-$(cat ../VERSION)-apple-aarch64"      >> SHA256SUMS
+      - cp x86_64-unknown-linux-gnu/release/bark        "bark-$(cat ../VERSION)-linux-x86_64"
+      - cp x86_64-unknown-linux-gnu/release/barkd       "barkd-$(cat ../VERSION)-linux-x86_64"
+      - cp aarch64-unknown-linux-gnu/release/bark       "bark-$(cat ../VERSION)-linux-arm64"
+      - cp aarch64-unknown-linux-gnu/release/barkd      "barkd-$(cat ../VERSION)-linux-arm64"
+      - cp armv7-unknown-linux-gnueabihf/release/bark   "bark-$(cat ../VERSION)-linux-armv7"
+      - cp armv7-unknown-linux-gnueabihf/release/barkd  "barkd-$(cat ../VERSION)-linux-armv7"
+      - cp x86_64-pc-windows-gnu/release/bark.exe       "bark-$(cat ../VERSION)-windows-x86_64.exe"
+      - cp x86_64-pc-windows-gnu/release/barkd.exe      "barkd-$(cat ../VERSION)-windows-x86_64.exe"
+      - cp x86_64-apple-darwin/release/bark             "bark-$(cat ../VERSION)-apple-x86_64"
+      - cp x86_64-apple-darwin/release/barkd            "barkd-$(cat ../VERSION)-apple-x86_64"
+      - cp aarch64-apple-darwin/release/bark            "bark-$(cat ../VERSION)-apple-aarch64"
+      - cp aarch64-apple-darwin/release/barkd           "barkd-$(cat ../VERSION)-apple-aarch64"
+      - sha256sum "bark-$(cat ../VERSION)-linux-x86_64"        > SHA256SUMS
+      - sha256sum "barkd-$(cat ../VERSION)-linux-x86_64"       >> SHA256SUMS
+      - sha256sum "bark-$(cat ../VERSION)-linux-arm64"         >> SHA256SUMS
+      - sha256sum "barkd-$(cat ../VERSION)-linux-arm64"        >> SHA256SUMS
+      - sha256sum "bark-$(cat ../VERSION)-linux-armv7"         >> SHA256SUMS
+      - sha256sum "barkd-$(cat ../VERSION)-linux-armv7"        >> SHA256SUMS
+      - sha256sum "bark-$(cat ../VERSION)-windows-x86_64.exe"  >> SHA256SUMS
+      - sha256sum "barkd-$(cat ../VERSION)-windows-x86_64.exe" >> SHA256SUMS
+      - sha256sum "bark-$(cat ../VERSION)-apple-x86_64"        >> SHA256SUMS
+      - sha256sum "barkd-$(cat ../VERSION)-apple-x86_64"       >> SHA256SUMS
+      - sha256sum "bark-$(cat ../VERSION)-apple-aarch64"       >> SHA256SUMS
+      - sha256sum "barkd-$(cat ../VERSION)-apple-aarch64"      >> SHA256SUMS
 
   - name: publish-bark-forgejo
     when:
@@ -168,9 +186,9 @@ steps:
     image: woodpeckerci/plugin-release@sha256:f746ad9a4e652d7b793d6aafdab3df01e7640abf66b49333ebae26edd1678c64
     settings:
       files:
-        - "./target/bark-*-linux-*"
-        - "./target/bark-*-windows-x86_64.exe"
-        - "./target/bark-*-apple-*"
+        - "./target/bark*-linux-*"
+        - "./target/bark*-windows-x86_64.exe"
+        - "./target/bark*-apple-*"
         - "./target/SHA256SUMS"
       api_key:
         from_secret: RELEASE
@@ -184,7 +202,7 @@ steps:
       GITLAB_RELEASE_TOKEN:
         from_secret: GITLAB_RELEASE_TOKEN
     commands:
-      - bash ./contrib/ci-gitlab-release.sh "./target/bark-*-linux-* ./target/bark-*-windows-x86_64.exe ./target/bark-*-apple-* ./target/SHA256SUMS"
+      - bash ./contrib/ci-gitlab-release.sh "./target/bark*-linux-* ./target/bark*-windows-x86_64.exe ./target/bark*-apple-* ./target/SHA256SUMS"
 
 depends_on:
   - helpers
