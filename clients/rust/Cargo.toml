@@ -1,6 +1,6 @@
 [package]
 name = "bark-openapi"
-version = "0.1.0-beta.2"
+version = "0.1.0-beta.4"
 authors = ["hello@second.tech"]
 description = "A simple REST API for Barkd"
 license = "CC0-1.0"
@@ -13,4 +13,4 @@ serde_json = "^1.0"
 serde_repr = "^0.1"
 url = "^2.5"
 reqwest = { version = "^0.12", default-features = false, features = ["json", "multipart"] }
-bark-json = { version = "0.1.0-beta.2", path = "../../bark-json" }
+bark-json = { version = "0.1.0-beta.4", path = "../../bark-json" }

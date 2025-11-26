@@ -14,7 +14,7 @@ use utoipa::ToSchema;
 use ark::lightning::{PaymentHash, Preimage};
 use ark::VtxoId;
 use bark::movement::{MovementId, MovementStatus};
-use bitcoin_ext::{BlockDelta, BlockHeight};
+use bitcoin_ext::{AmountExt, BlockDelta, BlockHeight};
 
 use crate::exit::error::ExitError;
 use crate::exit::package::ExitTransactionPackage;
@@ -86,26 +86,6 @@ impl<T: Borrow<ark::ArkInfo>> From<T> for ArkInfo {
 			min_board_amount: v.min_board_amount,
 			offboard_feerate_sat_per_kvb: v.offboard_feerate.to_sat_per_kwu() * 4,
 			ln_receive_anti_dos_required: v.ln_receive_anti_dos_required,
-		}
-	}
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
-#[cfg_attr(feature = "utoipa", derive(ToSchema))]
-pub struct LightningReceiveBalance {
-	#[serde(rename = "total_sat", with = "bitcoin::amount::serde::as_sat")]
-	#[cfg_attr(feature = "utoipa", schema(value_type = u64))]
-	pub total: Amount,
-	#[serde(rename = "claimable_sat", with = "bitcoin::amount::serde::as_sat")]
-	#[cfg_attr(feature = "utoipa", schema(value_type = u64))]
-	pub claimable: Amount,
-}
-
-impl From<bark::LightningReceiveBalance> for LightningReceiveBalance {
-	fn from(v: bark::LightningReceiveBalance) -> Self {
-		LightningReceiveBalance {
-			total: v.total,
-			claimable: v.claimable,
 		}
 	}
 }
@@ -474,6 +454,10 @@ pub struct InvoiceInfo {
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[cfg_attr(feature = "utoipa", derive(ToSchema))]
 pub struct LightningReceiveInfo {
+	/// The amount of the lightning receive
+	#[serde(rename = "amount_sat", with = "bitcoin::amount::serde::as_sat")]
+	#[cfg_attr(feature = "utoipa", schema(value_type = u64))]
+	pub amount: Amount,
 	/// The payment hash linked to the lightning receive info
 	#[cfg_attr(feature = "utoipa", schema(value_type = String))]
 	pub payment_hash: PaymentHash,
@@ -503,6 +487,8 @@ impl From<bark::persist::models::LightningReceive> for LightningReceiveInfo {
 			invoice: v.invoice.to_string(),
 			htlc_vtxos: v.htlc_vtxos.map(|vtxos| vtxos.into_iter()
 				.map(crate::primitives::WalletVtxoInfo::from).collect()),
+			amount: v.invoice.amount_milli_satoshis().map(Amount::from_msat_floor)
+				.unwrap_or(Amount::ZERO),
 		}
 	}
 }

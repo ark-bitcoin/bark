@@ -83,7 +83,6 @@ docs/LightningApi.md
 docs/LightningInvoiceRequest.md
 docs/LightningPayRequest.md
 docs/LightningPayResponse.md
-docs/LightningReceiveBalance.md
 docs/LightningReceiveInfo.md
 docs/LightningStatusRequest.md
 docs/LightningStatusResponse.md
@@ -106,6 +105,7 @@ docs/RoundStatusOneOf.md
 docs/RoundStatusOneOf1.md
 docs/RoundStatusOneOf2.md
 docs/RoundStatusOneOf3.md
+docs/RoundStatusOneOf4.md
 docs/Send.md
 docs/SendOnchainRequest.md
 docs/SendRequest.md
@@ -207,7 +207,6 @@ src/models/invoice_info.rs
 src/models/lightning_invoice_request.rs
 src/models/lightning_pay_request.rs
 src/models/lightning_pay_response.rs
-src/models/lightning_receive_balance.rs
 src/models/lightning_receive_info.rs
 src/models/lightning_status_request.rs
 src/models/lightning_status_response.rs
@@ -230,6 +229,7 @@ src/models/round_status_one_of.rs
 src/models/round_status_one_of_1.rs
 src/models/round_status_one_of_2.rs
 src/models/round_status_one_of_3.rs
+src/models/round_status_one_of_4.rs
 src/models/send.rs
 src/models/send_onchain_request.rs
 src/models/send_request.rs
