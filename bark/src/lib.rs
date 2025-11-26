@@ -1152,10 +1152,11 @@ impl Wallet {
 	/// Performs maintenance tasks on the offchain wallet.
 	///
 	/// This can take a long period of time due to syncing rounds, arkoors, checking pending
-	/// payments and refreshing VTXOs if necessary.
+	/// payments, progressing pending rounds, and refreshing VTXOs if necessary.
 	pub async fn maintenance(&self) -> anyhow::Result<()> {
 		info!("Starting wallet maintenance");
 		self.sync().await;
+		self.progress_pending_rounds(None).await?;
 		self.maintenance_refresh().await?;
 		Ok(())
 	}
