@@ -136,6 +136,7 @@ impl From<ark::ArkInfo> for protos::ArkInfo {
 			// To make sure they don't complain or crash when receiving
 			// a bad ArkInfo message we keep pretending the field exists
 			// and give them a sufficiently high value.
+			#[allow(deprecated)]
 			max_arkoor_depth: u16::MAX as u32,
 			required_board_confirmations: v.required_board_confirmations as u32,
 			max_user_invoice_cltv_delta: v.max_user_invoice_cltv_delta as u32,
