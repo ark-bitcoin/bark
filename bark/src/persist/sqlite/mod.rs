@@ -333,9 +333,9 @@ impl BarkPersister for SqliteClient {
 		query::fetch_lightning_receive_by_payment_hash(&conn, payment_hash)
 	}
 
-	fn remove_pending_lightning_receive(&self, payment_hash: PaymentHash) -> anyhow::Result<()> {
+	fn finish_pending_lightning_receive(&self, payment_hash: PaymentHash) -> anyhow::Result<()> {
 		let conn = self.connect()?;
-		query::remove_pending_lightning_receive(&conn, payment_hash)?;
+		query::finish_pending_lightning_receive(&conn, payment_hash)?;
 		Ok(())
 	}
 

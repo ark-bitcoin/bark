@@ -496,7 +496,9 @@ pub struct LightningReceiveInfo {
 	#[cfg_attr(feature = "utoipa", schema(value_type = String))]
 	pub payment_preimage: Preimage,
 	/// The timestamp at which the preimage was revealed
-	pub preimage_revealed_at: Option<chrono::DateTime<chrono::Utc>>,
+	pub preimage_revealed_at: Option<chrono::DateTime<chrono::Local>>,
+	/// The timestamp at which the lightning receive was finished
+	pub finished_at: Option<chrono::DateTime<chrono::Local>>,
 	/// The invoice string
 	pub invoice: String,
 	/// The HTLC VTXOs granted by the server for the lightning receive
@@ -511,15 +513,13 @@ impl From<bark::persist::models::LightningReceive> for LightningReceiveInfo {
 		LightningReceiveInfo {
 			payment_hash: v.payment_hash,
 			payment_preimage: v.payment_preimage,
-			preimage_revealed_at: v.preimage_revealed_at.map(|ts| {
-				chrono::DateTime::from_timestamp_secs(ts as i64)
-					.expect("timestamp is valid")
-			}),
+			preimage_revealed_at: v.preimage_revealed_at,
 			invoice: v.invoice.to_string(),
 			htlc_vtxos: v.htlc_vtxos.map(|vtxos| vtxos.into_iter()
 				.map(crate::primitives::WalletVtxoInfo::from).collect()),
 			amount: v.invoice.amount_milli_satoshis().map(Amount::from_msat_floor)
 				.unwrap_or(Amount::ZERO),
+			finished_at: v.finished_at,
 		}
 	}
 }

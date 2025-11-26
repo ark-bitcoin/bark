@@ -489,10 +489,11 @@ async fn bark_check_lightning_receive_no_wait() {
 		bark.try_lightning_receive_no_wait(invoice_info.invoice.clone()).ready().await
 			.expect("should not fail");
 
-		// once pending receive is removed, it means payment is done
-		if bark.lightning_receive_status(&invoice).await.is_none() {
-			success = true;
-			break;
+		if let Some(receive) = bark.lightning_receive_status(&invoice).await {
+			if receive.finished_at.is_some() {
+				success = true;
+				break;
+			}
 		}
 	}
 

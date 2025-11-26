@@ -212,6 +212,7 @@ impl Migration for Migration0022 {
 		let queries = [
 			// Adding default 0 for backward compatibility
 			"ALTER TABLE bark_pending_board ADD COLUMN amount_sat INTEGER NOT NULL DEFAULT 0;",
+			"ALTER TABLE bark_pending_lightning_receive ADD COLUMN finished_at DATETIME;",
 		];
 
 		for query in queries {

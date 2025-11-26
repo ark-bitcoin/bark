@@ -68,10 +68,11 @@ pub struct LightningReceive {
 	pub payment_hash: PaymentHash,
 	pub payment_preimage: Preimage,
 	pub invoice: Bolt11Invoice,
-	pub preimage_revealed_at: Option<u64>,
+	pub preimage_revealed_at: Option<chrono::DateTime<chrono::Local>>,
 	pub htlc_vtxos: Option<Vec<WalletVtxo>>,
 	pub htlc_recv_cltv_delta: BlockDelta,
 	pub movement_id: Option<MovementId>,
+	pub finished_at: Option<chrono::DateTime<chrono::Local>>,
 }
 
 /// Persistable view of an [ExitVtxo].

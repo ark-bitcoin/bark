@@ -98,7 +98,7 @@ CREATE TABLE bark_pending_lightning_receive (
 				preimage_revealed_at DATETIME,
 				movement_id INTEGER,
 				created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now'))
-			);
+			, finished_at DATETIME);
 CREATE TABLE bark_vtxo (
 				id TEXT PRIMARY KEY,
 				expiry_height INTEGER,

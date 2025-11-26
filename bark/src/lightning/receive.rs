@@ -192,7 +192,7 @@ impl Wallet {
 			movement_id, MovementStatus::Finished,
 		).await?;
 
-		self.db.remove_pending_lightning_receive(receive.payment_hash)?;
+		self.db.finish_pending_lightning_receive(receive.payment_hash)?;
 
 		Ok(outputs)
 	}
@@ -438,7 +438,7 @@ impl Wallet {
 			self.movements.finish_movement(movement_id, status).await?;
 		}
 
-		self.db.remove_pending_lightning_receive(lightning_receive.payment_hash)?;
+		self.db.finish_pending_lightning_receive(lightning_receive.payment_hash)?;
 
 		Ok(())
 	}
