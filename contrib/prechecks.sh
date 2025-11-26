@@ -7,7 +7,7 @@ rust_no_spaces_for_indent() {
 	for filename in $(git ls-files *.rs); do
 		gen=$(echo "$filename" | git check-attr --stdin linguist-generated)
 		case "$gen" in
-			*"linguist-generated: true"*)
+			*"linguist-generated: set"*)
 				echo "skipping file: $filename"
 				continue ;;
 		esac
@@ -38,7 +38,7 @@ rust_no_whitespace_on_empty_lines() {
 	for filename in $(git ls-files *.rs); do
 		gen=$(echo "$filename" | git check-attr --stdin linguist-generated)
 		case "$gen" in
-			*"linguist-generated: true"*)
+			*"linguist-generated: set"*)
 				echo "skipping file: $filename"
 				continue ;;
 		esac
