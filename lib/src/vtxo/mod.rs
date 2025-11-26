@@ -187,6 +187,18 @@ impl<'de> serde::Deserialize<'de> for VtxoId {
 	}
 }
 
+impl ProtocolEncoding for VtxoId {
+	fn encode<W: io::Write + ?Sized>(&self, w: &mut W) -> Result<(), io::Error> {
+		w.emit_slice(&self.0)
+	}
+	fn decode<R: io::Read + ?Sized>(r: &mut R) -> Result<Self, ProtocolDecodingError> {
+		let array: [u8; 36] = r.read_byte_array()
+			.map_err(|_| ProtocolDecodingError::invalid("invalid vtxo id. Expected 36 bytes"))?;
+
+		Ok(VtxoId(array))
+	}
+}
+
 /// Returns the clause to unilaterally spend a VTXO
 fn exit_clause(
 	user_pubkey: PublicKey,
