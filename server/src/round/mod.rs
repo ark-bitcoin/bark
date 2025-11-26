@@ -1095,7 +1095,7 @@ impl SigningForfeits {
 				user_nonces, user_part_sigs,
 				pub_nonces: self.forfeit_pub_nonces.remove(id).expect("missing vtxo"),
 				sec_nonces: sec_nonces.remove(id).expect("missing vtxo").into_iter()
-					.map(|x| Secret::new(DangerousSecretNonce::new(x)))
+					.map(|x| Secret::new(DangerousSecretNonce::dangerous_from_secret_nonce(x)))
 					.collect(),
 			};
 			(*id, forfeit_state)
