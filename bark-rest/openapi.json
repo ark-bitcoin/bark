@@ -3249,7 +3249,7 @@
             "description": "A list of external recipients that received funds from this movement."
           },
           "status": {
-            "type": "string",
+            "$ref": "#/components/schemas/MovementStatus",
             "description": "The status of the movement."
           },
           "subsystem": {
@@ -3281,6 +3281,15 @@
             "description": "An address, invoice or any other identifier to distinguish the recipient."
           }
         }
+      },
+      "MovementStatus": {
+        "type": "string",
+        "enum": [
+          "Pending",
+          "Finished",
+          "Failed",
+          "Cancelled"
+        ]
       },
       "MovementSubsystem": {
         "type": "object",

@@ -148,6 +148,7 @@ Class | Method | HTTP request | Description
  - [LightningReceiveInfo](docs/LightningReceiveInfo.md)
  - [Movement](docs/Movement.md)
  - [MovementDestination](docs/MovementDestination.md)
+ - [MovementStatus](docs/MovementStatus.md)
  - [MovementSubsystem](docs/MovementSubsystem.md)
  - [MovementTimestamp](docs/MovementTimestamp.md)
  - [NotFoundError](docs/NotFoundError.md)

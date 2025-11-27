@@ -46,7 +46,7 @@ pub struct Movement {
     pub sent_to: Vec<models::MovementDestination>,
     /// The status of the movement.
     #[serde(rename = "status")]
-    pub status: String,
+    pub status: models::MovementStatus,
     /// Contains information about the subsystem that created the movement as well as the purpose of the movement.
     #[serde(rename = "subsystem")]
     pub subsystem: Box<models::MovementSubsystem>,
@@ -57,7 +57,7 @@ pub struct Movement {
 
 impl Movement {
     /// Describes an attempted movement of offchain funds within the Bark [Wallet].
-    pub fn new(effective_balance_sat: i64, exited_vtxos: Vec<String>, id: i32, input_vtxos: Vec<String>, intended_balance_sat: i64, offchain_fee_sat: i64, output_vtxos: Vec<String>, received_on: Vec<models::MovementDestination>, sent_to: Vec<models::MovementDestination>, status: String, subsystem: models::MovementSubsystem, time: models::MovementTimestamp) -> Movement {
+    pub fn new(effective_balance_sat: i64, exited_vtxos: Vec<String>, id: i32, input_vtxos: Vec<String>, intended_balance_sat: i64, offchain_fee_sat: i64, output_vtxos: Vec<String>, received_on: Vec<models::MovementDestination>, sent_to: Vec<models::MovementDestination>, status: models::MovementStatus, subsystem: models::MovementSubsystem, time: models::MovementTimestamp) -> Movement {
         Movement {
             effective_balance_sat,
             exited_vtxos,

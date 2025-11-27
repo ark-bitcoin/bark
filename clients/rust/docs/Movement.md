@@ -14,7 +14,7 @@ Name | Type | Description | Notes
 **output_vtxos** | **Vec<String>** | A list of IDs for new VTXOs that were produced as a result of this movement. Often change VTXOs will be found here for outbound actions unless this was an inbound action. | 
 **received_on** | [**Vec<models::MovementDestination>**](MovementDestination.md) | Describes the means by which the wallet received funds in this movement. This could include BOLT11 invoices or other useful data. | 
 **sent_to** | [**Vec<models::MovementDestination>**](MovementDestination.md) | A list of external recipients that received funds from this movement. | 
-**status** | **String** | The status of the movement. | 
+**status** | [**models::MovementStatus**](MovementStatus.md) | The status of the movement. | 
 **subsystem** | [**models::MovementSubsystem**](MovementSubsystem.md) | Contains information about the subsystem that created the movement as well as the purpose of the movement. | 
 **time** | [**models::MovementTimestamp**](MovementTimestamp.md) | Contains the times at which the movement was created, updated and completed. | 
 
