@@ -3,3 +3,4 @@
 --
 
 ALTER TABLE vtxo_pool ADD COLUMN vtxo BYTEA NOT NULL;
+ALTER TABLE vtxo_pool DROP COLUMN depth;

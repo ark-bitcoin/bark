@@ -62,9 +62,9 @@ impl Db {
 	) -> anyhow::Result<()> {
 		let conn = self.get_conn().await?;
 		let stmt = conn.prepare_typed(
-			"INSERT INTO vtxo_pool (vtxo_id, vtxo, expiry_height, amount, depth) \
-				VALUES ( $1, $2, $3, $4, $5 )",
-			&[Type::TEXT, Type::BYTEA, Type::INT4, Type::INT8, Type::INT2],
+			"INSERT INTO vtxo_pool (vtxo_id, vtxo, expiry_height, amount) \
+				VALUES ( $1, $2, $3, $4)",
+			&[Type::TEXT, Type::BYTEA, Type::INT4, Type::INT8],
 		).await?;
 
 		conn.execute(&stmt, &[
@@ -72,7 +72,6 @@ impl Db {
 			&vtxo.serialize(),
 			&(vtxo.expiry_height() as i32),
 			&(vtxo.amount().to_sat() as i64),
-			&(vtxo.arkoor_depth() as i16),
 		]).await?;
 		Ok(())
 	}
@@ -83,20 +82,19 @@ impl Db {
 	) -> anyhow::Result<()> {
 		let conn = self.get_conn().await?;
 		let stmt = conn.prepare_typed(
-			"INSERT INTO vtxo_pool (vtxo_id, vtxo, expiry_height, amount, depth) \
-				VALUES ( UNNEST($1), UNNEST($2), UNNEST($3), UNNEST($4), UNNEST($5) )",
-			&[Type::TEXT_ARRAY, Type::BYTEA_ARRAY, Type::INT4_ARRAY, Type::INT8_ARRAY, Type::INT2_ARRAY],
+			"INSERT INTO vtxo_pool (vtxo_id, vtxo, expiry_height, amount) \
+				VALUES ( UNNEST($1), UNNEST($2), UNNEST($3), UNNEST($4) )",
+			&[Type::TEXT_ARRAY, Type::BYTEA_ARRAY, Type::INT4_ARRAY, Type::INT8_ARRAY],
 		).await?;
 
-		let (ids, vtxos, expiries, amounts, depths) = vtxos.into_iter().map(|v|
+		let (ids, vtxos, expiries, amounts) = vtxos.into_iter().map(|v|
 			(v.id().to_string(),
 			v.serialize(),
 			v.expiry_height() as i32,
 			v.amount().to_sat() as i64,
-			v.arkoor_depth() as i16)
-		).collect::<(Vec<_>, Vec<_>, Vec<_>, Vec<_>, Vec<_>)>();
+		)).collect::<(Vec<_>, Vec<_>, Vec<_>, Vec<_>)>();
 
-		conn.execute(&stmt, &[&ids, &vtxos, &expiries, &amounts, &depths]).await?;
+		conn.execute(&stmt, &[&ids, &vtxos, &expiries, &amounts]).await?;
 		Ok(())
 	}
 
@@ -121,7 +119,7 @@ impl Db {
 		let conn = self.get_conn().await?;
 		// fetch without keys
 		let stmt = conn.prepare(
-			"SELECT vtxo_id, vtxo, expiry_height, amount, depth FROM vtxo_pool WHERE spent_at IS NULL",
+			"SELECT vtxo_id, vtxo, expiry_height, amount FROM vtxo_pool WHERE spent_at IS NULL",
 		).await?;
 
 		let rows = conn.query_raw(&stmt, NOARG).await?;

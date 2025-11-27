@@ -977,7 +977,6 @@ CREATE TABLE public.vtxo_pool (
     vtxo_id text,
     expiry_height integer NOT NULL,
     amount bigint NOT NULL,
-    depth smallint NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     spent_at timestamp with time zone,
     vtxo bytea NOT NULL

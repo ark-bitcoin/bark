@@ -86,7 +86,6 @@ pub struct VtxoInfo {
 	#[cfg_attr(feature = "utoipa", schema(value_type = String))]
 	pub chain_anchor: OutPoint,
 	pub exit_depth: u16,
-	pub arkoor_depth: u16,
 }
 
 impl<'a> From<&'a Vtxo> for VtxoInfo {
@@ -101,7 +100,6 @@ impl<'a> From<&'a Vtxo> for VtxoInfo {
 			exit_delta: v.exit_delta(),
 			chain_anchor: v.chain_anchor(),
 			exit_depth: v.exit_depth(),
-			arkoor_depth: v.arkoor_depth(),
 		}
 	}
 }

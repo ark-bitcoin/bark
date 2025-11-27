@@ -1784,7 +1784,6 @@ impl Wallet {
 	fn select_vtxos_to_cover(
 		&self,
 		amount: Amount,
-		max_depth: Option<u16>,
 		expiry_threshold: Option<BlockHeight>,
 	) -> anyhow::Result<Vec<Vtxo>> {
 		let inputs = self.spendable_vtxos()?;
@@ -1793,15 +1792,6 @@ impl Wallet {
 		let mut result = Vec::new();
 		let mut total_amount = bitcoin::Amount::ZERO;
 		for input in inputs {
-			if let Some(max_depth) = max_depth {
-				if input.arkoor_depth() >= max_depth {
-					warn!("VTXO {} reached max depth of {}, skipping it. \
-						Please refresh your VTXO.", input.id(), max_depth,
-					);
-					continue;
-				}
-			}
-
 			// Check if vtxo is soon-to-expire for arkoor payments
 			if let Some(threshold) = expiry_threshold {
 				if input.expiry_height() < threshold {
@@ -1848,7 +1838,6 @@ impl Wallet {
 		let tip = self.chain.tip().await?;
 		let inputs = self.select_vtxos_to_cover(
 			req.amount,
-			Some(srv.info.max_arkoor_depth),
 			Some(tip + self.config.vtxo_refresh_expiry_threshold),
 		)?;
 
@@ -2012,7 +2001,7 @@ impl Wallet {
 		};
 		let required_amount = offb.amount + offb.fee(srv.info.offboard_feerate)?;
 
-		let inputs = self.select_vtxos_to_cover(required_amount, None, None)?;
+		let inputs = self.select_vtxos_to_cover(required_amount, None)?;
 
 		let change = {
 			let input_sum = inputs.iter().map(|v| v.amount()).sum::<Amount>();

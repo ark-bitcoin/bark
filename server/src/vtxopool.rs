@@ -105,19 +105,19 @@ type ArkoorDepth = u16;
 struct Data {
 	/// A quick manual index into the vtxo pool.
 	/// We first order by expiry height and then by amount.
-	pool: BTreeMap<BlockHeight, BTreeMap<Amount, Vec<(VtxoId, ArkoorDepth)>>>,
+	pool: BTreeMap<BlockHeight, BTreeMap<Amount, Vec<VtxoId>>>,
 }
 
 impl Data {
 	/// Insert a new vtxo into the pool data
-	pub fn insert(&mut self, vtxo: VtxoId, expiry: BlockHeight, amount: Amount, depth: ArkoorDepth) {
-		self.pool.entry(expiry).or_default().entry(amount).or_default().push((vtxo, depth));
+	pub fn insert(&mut self, vtxo: VtxoId, expiry: BlockHeight, amount: Amount) {
+		self.pool.entry(expiry).or_default().entry(amount).or_default().push(vtxo);
 	}
 
 	/// Shorthand to insert a series of vtxos at once
 	pub fn insert_vtxos(&mut self, vtxos: &[PoolVtxo]) {
 		for v in vtxos {
-			self.insert(v.id(), v.expiry_height(), v.amount(), v.arkoor_depth());
+			self.insert(v.id(), v.expiry_height(), v.amount());
 		}
 	}
 
@@ -127,7 +127,7 @@ impl Data {
 
 		let mut ret = Data::default();
 		while let Some(v) = stream.try_next().await? {
-			ret.insert(v.id(), v.expiry_height(), v.amount(), v.arkoor_depth());
+			ret.insert(v.id(), v.expiry_height(), v.amount());
 		}
 		Ok(ret)
 	}
@@ -180,7 +180,7 @@ impl Data {
 	pub fn take_inputs(
 		&mut self,
 		required_amount: Amount,
-	) -> Vec<(VtxoId, BlockHeight, Amount, ArkoorDepth)> {
+	) -> Vec<(VtxoId, BlockHeight, Amount)> {
 		// The strategy here is to always prioritize expiry.
 		// For each expiry "bucket", pick the highest amount if the
 		// required amount exceeds it, otherwise pick the smallest amount
@@ -193,15 +193,15 @@ impl Data {
 		// before we move up to the next height.
 
 		let mut remaining = required_amount;
-		let mut ret = Vec::<(VtxoId, BlockHeight, Amount, ArkoorDepth)>::new();
+		let mut ret = Vec::<(VtxoId, BlockHeight, Amount)>::new();
 		'main:
 		for (height, for_height) in self.pool.iter_mut() {
 			let mut amount_iter = for_height.iter_mut().rev().peekable();
 			while let Some((amount, for_amount)) = amount_iter.next() {
 				let next_amount = amount_iter.peek().map(|p| *p.0).unwrap_or(Amount::ZERO);
 				while !for_amount.is_empty() && remaining > next_amount {
-					let (id, depth) = for_amount.pop().unwrap();
-					ret.push((id, *height, *amount, depth));
+					let id = for_amount.pop().unwrap();
+					ret.push((id, *height, *amount));
 					remaining = remaining.checked_sub(*amount).unwrap_or(Amount::ZERO);
 					if remaining == Amount::ZERO {
 						break 'main;
@@ -212,8 +212,8 @@ impl Data {
 
 		if remaining != Amount::ZERO {
 			// required amount too high, put everything back and return empty
-			for (v, h, a, d) in ret {
-				self.insert(v, h, a, d);
+			for (v, h, a) in ret {
+				self.insert(v, h, a);
 			}
 			return vec![];
 		}
@@ -237,7 +237,7 @@ impl VtxoPool {
 		&self,
 		srv: &Server,
 		req: VtxoRequest,
-		inputs: &[(VtxoId, BlockHeight, Amount, ArkoorDepth)],
+		inputs: &[(VtxoId, BlockHeight, Amount)],
 	) -> anyhow::Result<Vec<Vtxo>> {
 		let input_ids = inputs.iter().map(|v| v.0).collect::<Vec<_>>();
 		let vtxos = srv.db.get_pool_vtxos_by_ids(&input_ids).await?;
@@ -279,14 +279,14 @@ impl VtxoPool {
 			slog!(SpentPoolVtxo, vtxo: vtxo.id(), amount: vtxo.amount(), request: req.clone());
 		}
 
-		if let Some(ch) = change.filter(|c| c.arkoor_depth() <= self.config.vtxo_max_arkoor_depth) {
+		if let Some(ch) = change {
 			let new = PoolVtxo::new(ch.clone());
 			if let Err(e) = srv.db.store_vtxopool_vtxo(&new).await {
 				// don't abort for this
 				warn!("Failed to store change from a vtxopool spend: {:#}", e);
 			} else {
 				self.data.lock().insert_vtxos(&[new.clone()]);
-				slog!(ChangePoolVtxo, vtxo: new.id(), amount: new.amount(), depth: new.arkoor_depth());
+				slog!(ChangePoolVtxo, vtxo: new.id(), amount: new.amount());
 			}
 		}
 
@@ -304,8 +304,8 @@ impl VtxoPool {
 			Ok(v) => Ok(v),
 			Err(e) => {
 				let mut guard = self.data.lock();
-				for (v, h, a, d) in inputs {
-					guard.insert(v, h, a, d);
+				for (v, h, a) in inputs {
+					guard.insert(v, h, a);
 				}
 				Err(e)
 			},
@@ -535,12 +535,12 @@ mod test {
 	/// assert a given selection
 	#[track_caller]
 	fn assert_sel(
-		selection: &[(VtxoId, BlockHeight, Amount, ArkoorDepth)],
+		selection: &[(VtxoId, BlockHeight, Amount)],
 		expected: &[(BlockHeight, Amount)],
 	) {
 		let mut sel = selection.to_vec();
 		for (height, amount) in expected {
-			if let Some(i) = sel.iter().position(|(_, h, a, _)| h == height && a == amount) {
+			if let Some(i) = sel.iter().position(|(_, h, a)| h == height && a == amount) {
 				sel.swap_remove(i);
 			} else {
 				panic!("missing item: ({}, {}), selection: {:?}",
@@ -573,7 +573,7 @@ mod test {
 
 		let mut data = Data::default();
 		for (v, h, a) in vtxos {
-			data.insert(v, h, a, 0);
+			data.insert(v, h, a);
 		}
 		assert_eq!(data.len(), len);
 

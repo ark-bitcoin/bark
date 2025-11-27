@@ -48,8 +48,6 @@ pub struct ArkInfo {
 	/// Maximum amount of a VTXO
 	#[cfg_attr(feature = "utoipa", schema(value_type = u64))]
 	pub max_vtxo_amount: Option<Amount>,
-	/// Maximum number of OOR transition after VTXO tree leaf
-	pub max_arkoor_depth: u16,
 	/// The number of confirmations required to register a board vtxo
 	pub required_board_confirmations: usize,
 	/// Maximum CLTV delta server will allow clients to request an
@@ -80,7 +78,6 @@ impl<T: Borrow<ark::ArkInfo>> From<T> for ArkInfo {
 			htlc_send_expiry_delta: v.htlc_send_expiry_delta,
 			htlc_expiry_delta: v.htlc_expiry_delta,
 			max_vtxo_amount: v.max_vtxo_amount,
-			max_arkoor_depth: v.max_arkoor_depth,
 			required_board_confirmations: v.required_board_confirmations,
 			max_user_invoice_cltv_delta: v.max_user_invoice_cltv_delta,
 			min_board_amount: v.min_board_amount,
@@ -514,7 +511,6 @@ mod test {
 				htlc_send_expiry_delta: j.htlc_send_expiry_delta,
 				htlc_expiry_delta: j.htlc_expiry_delta,
 				max_vtxo_amount: j.max_vtxo_amount,
-				max_arkoor_depth: j.max_arkoor_depth,
 				required_board_confirmations: j.required_board_confirmations,
 				max_user_invoice_cltv_delta: j.max_user_invoice_cltv_delta,
 				min_board_amount: j.min_board_amount,

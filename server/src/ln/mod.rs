@@ -47,8 +47,6 @@ impl Server {
 
 		self.check_vtxos_not_exited(&inputs).await?;
 
-		self.validate_arkoor_inputs(&inputs)?;
-
 		//TODO(stevenroose) check that vtxos are valid
 
 		let expiry = {

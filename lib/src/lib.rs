@@ -66,8 +66,6 @@ pub struct ArkInfo {
 	pub htlc_expiry_delta: BlockDelta,
 	/// Maximum amount of a VTXO
 	pub max_vtxo_amount: Option<Amount>,
-	/// Maximum number of OOR transition after VTXO tree leaf
-	pub max_arkoor_depth: u16,
 	/// The number of confirmations required to register a board vtxo
 	pub required_board_confirmations: usize,
 	/// Maximum CLTV delta server will allow clients to request an

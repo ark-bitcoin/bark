@@ -285,7 +285,7 @@ impl Wallet {
 
 		let (change_keypair, _) = self.derive_store_next_keypair()?;
 
-		let inputs = self.select_vtxos_to_cover(amount, Some(srv.info.max_arkoor_depth), None)
+		let inputs = self.select_vtxos_to_cover(amount, None)
 			.context("Could not find enough suitable VTXOs to cover lightning payment")?;
 
 		let mut secs = Vec::with_capacity(inputs.len());
