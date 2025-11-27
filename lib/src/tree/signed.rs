@@ -35,7 +35,9 @@ pub fn expiry_clause(server_pubkey: PublicKey, expiry_height: BlockHeight) -> Sc
 	scripts::timelock_sign(expiry_height, pk)
 }
 
-/// The hash-based unlock clause hidden in the node taproot as only script.
+/// The hash-based unlock clause that requires a signature and a preimage
+///
+/// It is used hidden in the leaf taproot as only script or used in the forfeit output.
 pub fn unlock_clause(pubkey: XOnlyPublicKey, unlock_hash: UnlockHash) -> ScriptBuf {
 	scripts::hash_and_sign(unlock_hash, pubkey)
 }
