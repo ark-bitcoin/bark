@@ -1,6 +1,5 @@
 use std::iter;
 
-use bark_json::primitives::VtxoStateInfo;
 use bitcoin::{Address, Amount, FeeRate};
 use bitcoin::params::Params;
 use futures::FutureExt;
@@ -9,6 +8,7 @@ use rand::random;
 use ark::vtxo::exit_taproot;
 use bark_json::exit::ExitState;
 use bark_json::exit::states::ExitStartState;
+use bark_json::primitives::VtxoStateInfo;
 use bitcoin_ext::TaprootSpendInfoExt;
 use server_rpc::protos::{self, lightning_payment_status};
 

@@ -323,7 +323,8 @@ use ark::{ArkInfo, OffboardRequest, ProtocolEncoding, Vtxo, VtxoId, VtxoPolicy, 
 use ark::address::VtxoDelivery;
 use ark::board::{BoardBuilder, BOARD_FUNDING_TX_VTXO_VOUT};
 use ark::rounds::RoundId;
-use ark::vtxo::{VtxoRef, PubkeyVtxoPolicy};
+use ark::vtxo::VtxoRef;
+use ark::vtxo::policy::PubkeyVtxoPolicy;
 use bitcoin_ext::{BlockHeight, P2TR_DUST, TxStatus};
 use server_rpc::{self as rpc, protos, ServerConnection};
 

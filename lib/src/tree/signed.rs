@@ -1269,7 +1269,7 @@ mod test {
 
 	use crate::encode;
 	use crate::encode::test::{encoding_roundtrip, json_roundtrip};
-	use crate::vtxo::VtxoPolicy;
+	use crate::vtxo::policy::VtxoPolicy;
 	use crate::tree::signed::builder::SignedTreeBuilder;
 
 	use super::*;
