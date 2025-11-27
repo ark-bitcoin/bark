@@ -174,6 +174,7 @@ generate-rust-api: dump-bark-openapi-schema
 		--additional-properties packageVersion="{{BARK_REST_VERSION}}"
 	cargo add --package bark-openapi --path bark-json
 	cargo add --package bark-openapi --path bark-rest
+	rm {{BARK_CLIENT_DIR}}/rust/src/models/*.rs
 	cp clients/helpers/models.rs {{BARK_CLIENT_DIR}}/rust/src/models/mod.rs
 
 generate-static-files: dump-server-sql-schema dump-bark-sql-schema dump-bark-openapi-schema
