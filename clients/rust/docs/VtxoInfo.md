@@ -5,7 +5,6 @@
 Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
 **amount_sat** | **i64** |  | 
-**arkoor_depth** | **i32** |  | 
 **chain_anchor** | **String** |  | 
 **exit_delta** | **i32** |  | 
 **exit_depth** | **i32** |  | 

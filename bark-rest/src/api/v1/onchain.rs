@@ -2,18 +2,19 @@ use std::str::FromStr;
 
 use anyhow::Context;
 use axum::extract::State;
-use axum::routing::{get, post, put};
+use axum::routing::{get, post};
 use axum::{debug_handler, Json, Router};
 use bitcoin::Amount;
 use tracing::info;
 use utoipa::OpenApi;
 
-use crate::{error::HandlerResult, RestServer};
+use crate::RestServer;
+use crate::error::{self, HandlerResult, ContextExt};
 
 pub fn router() -> Router<RestServer> {
 	Router::new()
 		.route("/balance", get(onchain_balance))
-		.route("/addresses/next", put(onchain_address))
+		.route("/addresses/next", post(onchain_address))
 		.route("/send", post(onchain_send))
 		.route("/send-many", post(onchain_send_many))
 		.route("/drain", post(onchain_drain))
@@ -53,8 +54,8 @@ pub struct OnchainApiDoc;
 	path = "/balance",
 	responses(
 		(status = 200, description = "Returns the onchain balance", body = bark_json::cli::onchain::OnchainBalance),
-		(status = 500, description = "Internal server error")
 	),
+	description = "Returns the current onchain wallet balance",
 	tag = "onchain"
 )]
 #[debug_handler]
@@ -77,12 +78,13 @@ pub async fn onchain_balance(
 }
 
 #[utoipa::path(
-	put,
+	post,
 	path = "/addresses/next",
 	responses(
 		(status = 200, description = "Returns the onchain address", body = bark_json::cli::onchain::Address),
-		(status = 500, description = "Internal server error")
+		(status = 500, description = "Internal server error", body = error::InternalServerError)
 	),
+	description = "Generates a new onchain address and stores its index in the onchain wallet database",
 	tag = "onchain"
 )]
 #[debug_handler]
@@ -105,26 +107,27 @@ pub async fn onchain_address(
 	request_body = bark_json::web::OnchainSendRequest,
 	responses(
 		(status = 200, description = "Returns the send result", body = bark_json::cli::onchain::Send),
-		(status = 400, description = "Bad request - invalid destination or amount"),
-		(status = 500, description = "Internal server error")
+		(status = 400, description = "The provided destination address is invalid", body = error::BadRequestError),
+		(status = 500, description = "Internal server error", body = error::InternalServerError)
 	),
+	description = "Sends a payment to the given onchain address",
 	tag = "onchain"
 )]
 #[debug_handler]
 pub async fn onchain_send(
 	State(state): State<RestServer>,
-	Json(params): Json<bark_json::web::OnchainSendRequest>,
+	Json(body): Json<bark_json::web::OnchainSendRequest>,
 ) -> HandlerResult<Json<bark_json::cli::onchain::Send>> {
 	let mut onchain_lock = state.onchain.write().await;
 
 	let net = state.wallet.properties()?.network;
-	let addr = bitcoin::Address::from_str	(&params.destination)
-		.context("Invalid destination address")?
+	let addr = bitcoin::Address::from_str	(&body.destination)
+		.badarg("Invalid destination address")?
 		.require_network(net)
-		.context("Address is not valid for configured network")?;
+		.badarg("Address is not valid for configured network")?;
 
 	let fee_rate = state.wallet.chain.fee_rates().await.regular;
-	let amount = Amount::from_sat(params.amount_sat);
+	let amount = Amount::from_sat(body.amount_sat);
 	let txid = onchain_lock.send(&state.wallet.chain, addr, amount, fee_rate).await
 		.context("Failed to send onchain payment")?;
 
@@ -137,39 +140,41 @@ pub async fn onchain_send(
 	request_body = bark_json::web::OnchainSendManyRequest,
 	responses(
 		(status = 200, description = "Returns the send result", body = bark_json::cli::onchain::Send),
-		(status = 400, description = "Bad request - invalid destinations"),
-		(status = 500, description = "Internal server error")
+		(status = 400, description = "One of the provided destinations is invalid", body = error::BadRequestError),
+		(status = 500, description = "Internal server error", body = error::InternalServerError)
 	),
+	description = "Sends multiple payments to provided onchain addresses",
 	tag = "onchain"
 )]
 #[debug_handler]
 pub async fn onchain_send_many(
 	State(state): State<RestServer>,
-	Json(params): Json<bark_json::web::OnchainSendManyRequest>,
+	Json(body): Json<bark_json::web::OnchainSendManyRequest>,
 ) -> HandlerResult<Json<bark_json::cli::onchain::Send>> {
 	let mut onchain_lock = state.onchain.write().await;
 
 	let net = state.wallet.properties()?.network;
-	let outputs = params.destinations
+	let outputs = body.destinations
 		.iter()
-		.map(|dest| -> anyhow::Result<(bitcoin::Address, Amount)> {
+		.map(|dest| {
 			let mut parts = dest.splitn(2, ':');
 			let addr = {
 				let s = parts.next()
-					.context("invalid destination format, expected address:amount")?;
-				bitcoin::Address::from_str(s)?.require_network(net)
-					.context("invalid address")?
+					.badarg("invalid destination format, expected address:amount")?;
+				bitcoin::Address::from_str(s)
+					.badarg("invalid address")?
+					.require_network(net)
+					.badarg("address is not valid for configured network")?
 			};
 			let amount = {
 				let s = parts.next()
-					.context("invalid destination format, expected address:amount")?;
+					.badarg("invalid destination format, expected address:amount")?;
 				Amount::from_str(s)
-					.context("invalid amount")?
+					.badarg("invalid amount")?
 			};
 			Ok((addr, amount))
 		})
-		.collect::<Result<Vec<_>, _>>()
-		.context("Failed to parse destinations")?;
+		.collect::<Result<Vec<_>, error::ErrorResponse>>()?;
 
 	info!("Attempting to send the following:");
 	for (address, amount) in &outputs {
@@ -189,23 +194,24 @@ pub async fn onchain_send_many(
 	request_body = bark_json::web::OnchainDrainRequest,
 	responses(
 		(status = 200, description = "Returns the drain result", body = bark_json::cli::onchain::Send),
-		(status = 400, description = "Bad request - invalid destination"),
-		(status = 500, description = "Internal server error")
+		(status = 400, description = "The provided destination address is invalid", body = error::BadRequestError),
+		(status = 500, description = "Internal server error", body = error::InternalServerError)
 	),
+	description = "Sends all onchain wallet funds to the given address",
 	tag = "onchain"
 )]
 #[debug_handler]
 pub async fn onchain_drain(
 	State(state): State<RestServer>,
-	Json(params): Json<bark_json::web::OnchainDrainRequest>,
+	Json(body): Json<bark_json::web::OnchainDrainRequest>,
 ) -> HandlerResult<Json<bark_json::cli::onchain::Send>> {
 	let mut onchain_lock = state.onchain.write().await;
 
 	let net = state.wallet.properties()?.network;
-	let addr = bitcoin::Address::from_str(&params.destination)
-		.context("Invalid destination address")?
+	let addr = bitcoin::Address::from_str(&body.destination)
+		.badarg("Invalid destination address")?
 		.require_network(net)
-		.context("Address is not valid for configured network")?;
+		.badarg("Address is not valid for configured network")?;
 
 	let fee_rate = state.wallet.chain.fee_rates().await.regular;
 	let txid = onchain_lock.drain(&state.wallet.chain, addr, fee_rate).await
@@ -219,8 +225,8 @@ pub async fn onchain_drain(
 	path = "/utxos",
 	responses(
 		(status = 200, description = "Returns the onchain UTXOs", body = Vec<bark_json::primitives::UtxoInfo>),
-		(status = 500, description = "Internal server error")
 	),
+	description = "Returns all the onchain wallet UTXOs",
 	tag = "onchain"
 )]
 #[debug_handler]
@@ -242,8 +248,8 @@ pub async fn onchain_utxos(
 	path = "/transactions",
 	responses(
 		(status = 200, description = "Returns the onchain transactions", body = Vec<bark_json::primitives::TransactionInfo>),
-		(status = 500, description = "Internal server error")
 	),
+	description = "Returns all the onchain wallet transactions",
 	tag = "onchain"
 )]
 #[debug_handler]
@@ -268,8 +274,9 @@ pub async fn onchain_transactions(
 	path = "/sync",
 	responses(
 		(status = 200, description = "Synced onchain wallet"),
-		(status = 500, description = "Internal server error")
+		(status = 500, description = "Internal server error", body = error::InternalServerError)
 	),
+	description = "Syncs the onchain wallet",
 	tag = "onchain"
 )]
 #[debug_handler]
@@ -277,8 +284,6 @@ pub async fn onchain_sync(
 	State(state): State<RestServer>,
 ) -> HandlerResult<()> {
 	let mut onchain_lock = state.onchain.write().await;
-
 	onchain_lock.sync(&state.wallet.chain).await?;
-
 	Ok(())
 }

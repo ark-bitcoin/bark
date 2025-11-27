@@ -126,7 +126,7 @@ impl Daemon {
 					self.wallet.progress_pending_rounds(Some(&event)).await?;
 				},
 				_ = self.shutdown.cancelled() => {
-					info!("Shutdown signal received! Shutting round events process...");
+					info!("Shutdown signal received! Shutting inner round events process...");
 					return Ok(());
 				},
 			}

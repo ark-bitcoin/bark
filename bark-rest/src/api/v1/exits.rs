@@ -1,6 +1,7 @@
+use std::collections::HashSet;
 use std::str::FromStr;
 
-use axum::extract::{Query, State};
+use axum::extract::{Path, Query, State};
 use axum::routing::{get, post};
 use axum::{debug_handler, Json, Router};
 use anyhow::Context;
@@ -11,13 +12,14 @@ use utoipa::OpenApi;
 use bark::vtxo::selection::{FilterVtxos, VtxoFilter};
 use bitcoin_ext::FeeRateExt;
 
-use crate::{error::HandlerResult, RestServer};
+use crate::RestServer;
+use crate::error::{self, HandlerResult, ContextExt, badarg, not_found};
 
 #[derive(OpenApi)]
 #[openapi(
 	paths(
-		exit_status,
-		exit_list,
+		get_exit_status_by_vtxo_id,
+		get_all_exit_status,
 		exit_start_vtxos,
 		exit_start_all,
 		exit_progress,
@@ -27,7 +29,6 @@ use crate::{error::HandlerResult, RestServer};
 	components(schemas(
 		bark_json::web::ExitStatusRequest,
 		bark_json::cli::ExitTransactionStatus,
-		bark_json::web::ExitListRequest,
 		bark_json::web::ExitStartRequest,
 		bark_json::web::ExitStartResponse,
 		bark_json::web::ExitProgressRequest,
@@ -36,14 +37,14 @@ use crate::{error::HandlerResult, RestServer};
 		bark_json::web::ExitClaimVtxosRequest,
 		bark_json::web::ExitClaimResponse,
 	)),
-	tags((name = "exit", description = "Exit-related endpoints"))
+	tags((name = "exits", description = "Exit-related endpoints"))
 )]
-pub struct ExitApiDoc;
+pub struct ExitsApiDoc;
 
 pub fn router() -> Router<RestServer> {
 	Router::new()
-		.route("/status", get(exit_status))
-		.route("/list", get(exit_list))
+		.route("/status/{vtxo_id}", get(get_exit_status_by_vtxo_id))
+		.route("/status", get(get_all_exit_status))
 		.route("/start/vtxos", post(exit_start_vtxos))
 		.route("/start/all", post(exit_start_all))
 		.route("/progress", post(exit_progress))
@@ -53,56 +54,58 @@ pub fn router() -> Router<RestServer> {
 
 #[utoipa::path(
 	get,
-	path = "/status",
+	path = "/status/{vtxo_id}",
 	params(
-		("vtxo" = String, Query, description = "The VTXO to check the exit status of"),
+		("vtxo_id" = String, Path, description = "The VTXO to check the exit status of"),
 		("history" = Option<bool>, Query, description = "Whether to include the detailed history of the exit process"),
 		("transactions" = Option<bool>, Query, description = "Whether to include the exit transactions and their CPFP children")
 	),
 	responses(
 		(status = 200, description = "Returns the exit status", body = bark_json::cli::ExitTransactionStatus),
-		(status = 404, description = "VTXO not found"),
-		(status = 500, description = "Internal server error")
+		(status = 404, description = "VTXO wasn't found", body = error::NotFoundError),
+		(status = 500, description = "Internal server error", body = error::InternalServerError)
 	),
-	tag = "exit"
+	description = "Returns the status of the exit for the given VTXO",
+	tag = "exits"
 )]
 #[debug_handler]
-pub async fn exit_status(
+pub async fn get_exit_status_by_vtxo_id(
 	State(state): State<RestServer>,
-	Query(params): Query<bark_json::web::ExitStatusRequest>,
+	Path(vtxo): Path<String>,
+	Query(query): Query<bark_json::web::ExitStatusRequest>,
 ) -> HandlerResult<Json<bark_json::cli::ExitTransactionStatus>> {
-	let vtxo_id = ark::VtxoId::from_str(&params.vtxo)
-		.context("Invalid VTXO ID")?;
+	let vtxo_id = ark::VtxoId::from_str(&vtxo).badarg("Invalid VTXO ID")?;
 
 	let status = state.wallet.exit.write().await.get_exit_status(
 		vtxo_id,
-		params.history.unwrap_or(false),
-		params.transactions.unwrap_or(false)
+		query.history.unwrap_or(false),
+		query.transactions.unwrap_or(false)
 	).await.context("Failed to get exit status")?;
 
 	match status {
-		None => Err(anyhow::anyhow!("VTXO not found: {}", vtxo_id).into()),
+		None => not_found!([vtxo_id], "VTXO not found"),
 		Some(status) => Ok(axum::Json(status.into())),
 	}
 }
 
 #[utoipa::path(
 	get,
-	path = "/list",
+	path = "/status",
 	params(
 		("history" = Option<bool>, Query, description = "Whether to include the detailed history of the exit process"),
 		("transactions" = Option<bool>, Query, description = "Whether to include the exit transactions and their CPFP children")
 	),
 	responses(
 		(status = 200, description = "Returns all exit statuses", body = Vec<bark_json::cli::ExitTransactionStatus>),
-		(status = 500, description = "Internal server error")
+		(status = 500, description = "Internal server error", body = error::InternalServerError)
 	),
-	tag = "exit"
+	description = "Returns all the current in-progress, completed and failed exits",
+	tag = "exits"
 )]
 #[debug_handler]
-pub async fn exit_list(
+pub async fn get_all_exit_status(
 	State(state): State<RestServer>,
-	Query(params): Query<bark_json::web::ExitListRequest>,
+	Query(query): Query<bark_json::web::ExitStatusRequest>,
 ) -> HandlerResult<Json<Vec<bark_json::cli::ExitTransactionStatus>>> {
 	let exit = state.wallet.exit.write().await;
 	let mut statuses = Vec::with_capacity(exit.get_exit_vtxos().len());
@@ -110,9 +113,9 @@ pub async fn exit_list(
 	for e in exit.get_exit_vtxos() {
 		let status = exit.get_exit_status(
 			e.id(),
-			params.history.unwrap_or(false),
-			params.transactions.unwrap_or(false)
-		).await.context("Failed to get exit status")?.unwrap();
+			query.history.unwrap_or(false),
+			query.transactions.unwrap_or(false)
+		).await.badarg("Failed to get exit status")?.unwrap();
 
 		statuses.push(bark_json::cli::ExitTransactionStatus::from(status));
 	}
@@ -126,34 +129,39 @@ pub async fn exit_list(
 	request_body = bark_json::web::ExitStartRequest,
 	responses(
 		(status = 200, description = "Exit started successfully", body = bark_json::web::ExitStartResponse),
-		(status = 400, description = "Bad request - no VTXOs specified"),
-		(status = 500, description = "Internal server error")
+		(status = 400, description = "No VTXO IDs provided, or one of the provided VTXO \
+			IDs is invalid", body = error::BadRequestError),
+		(status = 404, description = "One the VTXOs wasn't found", body = error::NotFoundError),
+		(status = 500, description = "Internal server error", body = error::InternalServerError)
 	),
-	tag = "exit"
+	description = "Starts an exit for the given VTXOs",
+	tag = "exits"
 )]
 #[debug_handler]
 pub async fn exit_start_vtxos(
 	State(state): State<RestServer>,
-	Json(params): Json<bark_json::web::ExitStartRequest>,
+	Json(body): Json<bark_json::web::ExitStartRequest>,
 ) -> HandlerResult<Json<bark_json::web::ExitStartResponse>> {
 	let mut onchain_lock = state.onchain.write().await;
 
-	if params.vtxos.is_empty() {
-		return Err(anyhow::anyhow!("No VTXO IDs provided").into());
+	if body.vtxos.is_empty() {
+		badarg!("No VTXO IDs provided");
 	}
 
-	let vtxo_ids = params.vtxos
-		.into_iter()
-		.map(|s| ark::VtxoId::from_str(&s).context("Invalid VTXO ID"))
-		.collect::<anyhow::Result<Vec<_>>>()?;
+	let mut vtxo_ids = Vec::new();
+	for s in body.vtxos {
+		let id = ark::VtxoId::from_str(&s).badarg("Invalid VTXO ID")?;
+		state.wallet.get_vtxo_by_id(id).not_found([id], "VTXO not found")?;
+		vtxo_ids.push(id);
+	}
 
 	let filter = VtxoFilter::new(&state.wallet).include_many(vtxo_ids);
 
 	let spendable = state.wallet.spendable_vtxos_with(&filter)
-		.context("Error parsing vtxos")?;
+		.context("Error fetching spendable VTXOs")?;
 	let inround = {
 		let mut vtxos = state.wallet.pending_round_input_vtxos()
-			.context("Error parsing vtxos")?;
+			.context("Error fetching pending round input VTXOs")?;
 		filter.filter_vtxos(&mut vtxos)?;
 		vtxos
 	};
@@ -174,10 +182,10 @@ pub async fn exit_start_vtxos(
 	path = "/start/all",
 	responses(
 		(status = 200, description = "Exit started successfully", body = bark_json::web::ExitStartResponse),
-		(status = 400, description = "Bad request - no VTXOs specified"),
-		(status = 500, description = "Internal server error")
+		(status = 500, description = "Internal server error", body = error::InternalServerError)
 	),
-	tag = "exit"
+	description = "Starts an exit for all VTXOs",
+	tag = "exits"
 )]
 #[debug_handler]
 pub async fn exit_start_all(
@@ -200,18 +208,19 @@ pub async fn exit_start_all(
 	request_body = bark_json::web::ExitProgressRequest,
 	responses(
 		(status = 200, description = "Returns the exit progress", body = bark_json::cli::ExitProgressResponse),
-		(status = 500, description = "Internal server error")
+		(status = 500, description = "Internal server error", body = error::InternalServerError)
 	),
-	tag = "exit"
+	description = "Progresses the exit process of all current exits until it completes",
+	tag = "exits"
 )]
 #[debug_handler]
 pub async fn exit_progress(
 	State(state): State<RestServer>,
-	Json(params): Json<bark_json::web::ExitProgressRequest>,
+	Json(body): Json<bark_json::web::ExitProgressRequest>,
 ) -> HandlerResult<Json<bark_json::cli::ExitProgressResponse>> {
 	let mut onchain_lock = state.onchain.write().await;
 
-	let fee_rate = params.fee_rate.map(FeeRate::from_sat_per_kvb_ceil);
+	let fee_rate = body.fee_rate.map(FeeRate::from_sat_per_kvb_ceil);
 
 	let mut exit = state.wallet.exit.write().await;
 	let result = exit.progress_exits(&mut *onchain_lock, fee_rate).await
@@ -265,27 +274,28 @@ async fn inner_claim_vtxos(
 	request_body = bark_json::web::ExitClaimAllRequest,
 	responses(
 		(status = 200, description = "Exit claimed successfully", body = bark_json::web::ExitClaimResponse),
-		(status = 400, description = "Bad request - invalid parameters"),
-		(status = 500, description = "Internal server error")
+		(status = 400, description = "The provided destination address is invalid", body = error::BadRequestError),
+		(status = 500, description = "Internal server error", body = error::InternalServerError)
 	),
-	tag = "exit"
+	description = "Claims all claimable exited VTXOs to the given destination address",
+	tag = "exits"
 )]
 #[debug_handler]
 pub async fn exit_claim_all(
 	State(state): State<RestServer>,
-	Json(params): Json<bark_json::web::ExitClaimAllRequest>,
+	Json(body): Json<bark_json::web::ExitClaimAllRequest>,
 ) -> HandlerResult<Json<bark_json::web::ExitClaimResponse>> {
 
 	let network = state.wallet.properties()?.network;
-	let address = bitcoin::Address::from_str(&params.destination)
-		.context("Invalid destination address")?
+	let address = bitcoin::Address::from_str(&body.destination)
+		.badarg("Invalid destination address")?
 		.require_network(network)
-		.context("Address is not valid for configured network")?;
+		.badarg("Address is not valid for configured network")?;
 
 	let exit = state.wallet.exit.read().await;
 	let vtxos = exit.list_claimable();
 
-	let fee_rate = params.fee_rate.map(FeeRate::from_sat_per_kvb_ceil);
+	let fee_rate = body.fee_rate.map(FeeRate::from_sat_per_kvb_ceil);
 
 	inner_claim_vtxos(&state, &*exit, address, &vtxos, fee_rate).await
 }
@@ -296,37 +306,44 @@ pub async fn exit_claim_all(
 	request_body = bark_json::web::ExitClaimVtxosRequest,
 	responses(
 		(status = 200, description = "Exit claimed successfully", body = bark_json::web::ExitClaimResponse),
-		(status = 400, description = "Bad request - invalid parameters"),
-		(status = 500, description = "Internal server error")
+		(status = 400, description = "One of the provided VTXO isn't spendable, or \
+			the provided destination address is invalid", body = error::BadRequestError),
+		(status = 500, description = "Internal server error", body = error::InternalServerError)
 	),
-	tag = "exit"
+	description = "Claims the given exited VTXOs to the given destination address",
+	tag = "exits"
 )]
 #[debug_handler]
 pub async fn exit_claim_vtxos(
 	State(state): State<RestServer>,
-	Json(params): Json<bark_json::web::ExitClaimVtxosRequest>,
+	Json(body): Json<bark_json::web::ExitClaimVtxosRequest>,
 ) -> HandlerResult<Json<bark_json::web::ExitClaimResponse>> {
 	let network = state.wallet.properties()?.network;
-	let address = bitcoin::Address::from_str(&params.destination)
-		.context("Invalid destination address")?
+	let address = bitcoin::Address::from_str(&body.destination)
+		.badarg("Invalid destination address")?
 		.require_network(network)
-		.context("Address is not valid for configured network")?;
+		.badarg("Address is not valid for configured network")?;
 
 	let exit = state.wallet.exit.read().await;
 	let vtxos = {
-		let mut vtxo_ids = params.vtxos.iter().map(|s| {
-			ark::VtxoId::from_str(s).context("invalid vtxo id")
-		}).collect::<anyhow::Result<std::collections::HashSet<_>>>()?;
+		let mut vtxo_ids = HashSet::new();
+		for s in body.vtxos {
+			let id = ark::VtxoId::from_str(&s).badarg("Invalid VTXO ID")?;
+			state.wallet.get_vtxo_by_id(id).not_found([id], "VTXO not found")?;
+			vtxo_ids.insert(id);
+		}
+
 		let vtxos = exit.list_claimable().into_iter()
 			.filter(|v| vtxo_ids.remove(&v.id()))
 			.collect::<Vec<_>>();
+
 		for id in vtxo_ids {
-			return Err(anyhow::anyhow!("Unspendable VTXO provided: {}", id).into());
+			badarg!("Unspendable VTXO provided: {}", id);
 		}
 		vtxos
 	};
 
-	let fee_rate = params.fee_rate.map(FeeRate::from_sat_per_kvb_ceil);
+	let fee_rate = body.fee_rate.map(FeeRate::from_sat_per_kvb_ceil);
 
 	inner_claim_vtxos(&state, &*exit, address, &vtxos, fee_rate).await
 }

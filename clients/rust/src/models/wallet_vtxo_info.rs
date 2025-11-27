@@ -16,8 +16,6 @@ use serde::{Deserialize, Serialize};
 pub struct WalletVtxoInfo {
     #[serde(rename = "amount_sat")]
     pub amount_sat: i64,
-    #[serde(rename = "arkoor_depth")]
-    pub arkoor_depth: i32,
     #[serde(rename = "chain_anchor")]
     pub chain_anchor: String,
     #[serde(rename = "exit_delta")]
@@ -40,10 +38,9 @@ pub struct WalletVtxoInfo {
 
 impl WalletVtxoInfo {
     /// Same as [VtxoInfo], but with the current VTXO state.
-    pub fn new(amount_sat: i64, arkoor_depth: i32, chain_anchor: String, exit_delta: i32, exit_depth: i32, expiry_height: i32, id: String, policy_type: String, server_pubkey: String, user_pubkey: String, state: models::VtxoStateInfo) -> WalletVtxoInfo {
+    pub fn new(amount_sat: i64, chain_anchor: String, exit_delta: i32, exit_depth: i32, expiry_height: i32, id: String, policy_type: String, server_pubkey: String, user_pubkey: String, state: models::VtxoStateInfo) -> WalletVtxoInfo {
         WalletVtxoInfo {
             amount_sat,
-            arkoor_depth,
             chain_anchor,
             exit_delta,
             exit_depth,

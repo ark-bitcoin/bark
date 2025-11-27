@@ -13,6 +13,8 @@ Method | HTTP request | Description
 > models::TipResponse tip()
 
 
+Returns the current bitcoin tip height
+
 ### Parameters
 
 This endpoint does not need any parameter.

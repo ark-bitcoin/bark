@@ -4,17 +4,19 @@ All URIs are relative to *http://localhost*
 
 Method | HTTP request | Description
 ------------- | ------------- | -------------
-[**lightning_invoice**](LightningApi.md#lightning_invoice) | **POST** /api/v1/lightning/receive/invoice | 
-[**lightning_invoices**](LightningApi.md#lightning_invoices) | **GET** /api/v1/lightning/receive/invoices | 
-[**lightning_pay**](LightningApi.md#lightning_pay) | **POST** /api/v1/lightning/pay | 
-[**lightning_status**](LightningApi.md#lightning_status) | **GET** /api/v1/lightning/receive/status | 
+[**generate_invoice**](LightningApi.md#generate_invoice) | **POST** /api/v1/lightning/receives/invoice | 
+[**get_receive_status**](LightningApi.md#get_receive_status) | **GET** /api/v1/lightning/receives/{identifier} | 
+[**list_receive_statuses**](LightningApi.md#list_receive_statuses) | **GET** /api/v1/lightning/receives | 
+[**pay**](LightningApi.md#pay) | **POST** /api/v1/lightning/pay | 
 
 
 
-## lightning_invoice
+## generate_invoice
 
-> models::InvoiceInfo lightning_invoice(lightning_invoice_request)
+> models::InvoiceInfo generate_invoice(lightning_invoice_request)
 
+
+Generates a new lightning invoice with the given amount
 
 ### Parameters
 
@@ -39,10 +41,42 @@ No authorization required
 [[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
 
 
-## lightning_invoices
+## get_receive_status
 
-> Vec<models::LightningReceiveInfo> lightning_invoices()
+> models::LightningReceiveInfo get_receive_status(identifier)
 
+
+Returns the status of a lightning receive for the provided filter
+
+### Parameters
+
+
+Name | Type | Description  | Required | Notes
+------------- | ------------- | ------------- | ------------- | -------------
+**identifier** | **String** | Payment hash, invoice string or preimage to search for | [required] |
+
+### Return type
+
+[**models::LightningReceiveInfo**](LightningReceiveInfo.md)
+
+### Authorization
+
+No authorization required
+
+### HTTP request headers
+
+- **Content-Type**: Not defined
+- **Accept**: application/json
+
+[[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
+
+
+## list_receive_statuses
+
+> Vec<models::LightningReceiveInfo> list_receive_statuses()
+
+
+Returns all the current pending receive statuses
 
 ### Parameters
 
@@ -64,10 +98,12 @@ No authorization required
 [[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
 
 
-## lightning_pay
+## pay
 
-> models::LightningPayResponse lightning_pay(lightning_pay_request)
+> models::LightningPayResponse pay(lightning_pay_request)
 
+
+Sends a payment to the given lightning destination
 
 ### Parameters
 
@@ -87,35 +123,6 @@ No authorization required
 ### HTTP request headers
 
 - **Content-Type**: application/json
-- **Accept**: application/json
-
-[[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
-
-
-## lightning_status
-
-> models::LightningStatusResponse lightning_status(filter, preimage)
-
-
-### Parameters
-
-
-Name | Type | Description  | Required | Notes
-------------- | ------------- | ------------- | ------------- | -------------
-**filter** | Option<**String**> | Payment hash or invoice string |  |
-**preimage** | Option<**String**> | Filter by preimage |  |
-
-### Return type
-
-[**models::LightningStatusResponse**](LightningStatusResponse.md)
-
-### Authorization
-
-No authorization required
-
-### HTTP request headers
-
-- **Content-Type**: Not defined
 - **Accept**: application/json
 
 [[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)

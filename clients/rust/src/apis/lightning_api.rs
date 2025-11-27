@@ -15,46 +15,48 @@ use crate::{apis::ResponseContent, models};
 use super::{Error, configuration, ContentType};
 
 
-/// struct for typed errors of method [`lightning_invoice`]
+/// struct for typed errors of method [`generate_invoice`]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
-pub enum LightningInvoiceError {
-    Status400(),
-    Status500(),
+pub enum GenerateInvoiceError {
+    Status500(models::InternalServerError),
     UnknownValue(serde_json::Value),
 }
 
-/// struct for typed errors of method [`lightning_invoices`]
+/// struct for typed errors of method [`get_receive_status`]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
-pub enum LightningInvoicesError {
-    Status500(),
+pub enum GetReceiveStatusError {
+    Status400(models::BadRequestError),
+    Status404(models::NotFoundError),
+    Status500(models::InternalServerError),
     UnknownValue(serde_json::Value),
 }
 
-/// struct for typed errors of method [`lightning_pay`]
+/// struct for typed errors of method [`list_receive_statuses`]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
-pub enum LightningPayError {
-    Status400(),
-    Status500(),
+pub enum ListReceiveStatusesError {
+    Status500(models::InternalServerError),
     UnknownValue(serde_json::Value),
 }
 
-/// struct for typed errors of method [`lightning_status`]
+/// struct for typed errors of method [`pay`]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
-pub enum LightningStatusError {
-    Status500(),
+pub enum PayError {
+    Status400(models::BadRequestError),
+    Status500(models::InternalServerError),
     UnknownValue(serde_json::Value),
 }
 
 
-pub async fn lightning_invoice(configuration: &configuration::Configuration, lightning_invoice_request: models::LightningInvoiceRequest) -> Result<models::InvoiceInfo, Error<LightningInvoiceError>> {
+/// Generates a new lightning invoice with the given amount
+pub async fn generate_invoice(configuration: &configuration::Configuration, lightning_invoice_request: models::LightningInvoiceRequest) -> Result<models::InvoiceInfo, Error<GenerateInvoiceError>> {
     // add a prefix to parameters to efficiently prevent name collisions
     let p_lightning_invoice_request = lightning_invoice_request;
 
-    let uri_str = format!("{}/api/v1/lightning/receive/invoice", configuration.base_path);
+    let uri_str = format!("{}/api/v1/lightning/receives/invoice", configuration.base_path);
     let mut req_builder = configuration.client.request(reqwest::Method::POST, &uri_str);
 
     if let Some(ref user_agent) = configuration.user_agent {
@@ -82,14 +84,52 @@ pub async fn lightning_invoice(configuration: &configuration::Configuration, lig
         }
     } else {
         let content = resp.text().await?;
-        let entity: Option<LightningInvoiceError> = serde_json::from_str(&content).ok();
+        let entity: Option<GenerateInvoiceError> = serde_json::from_str(&content).ok();
         Err(Error::ResponseError(ResponseContent { status, content, entity }))
     }
 }
 
-pub async fn lightning_invoices(configuration: &configuration::Configuration, ) -> Result<Vec<models::LightningReceiveInfo>, Error<LightningInvoicesError>> {
+/// Returns the status of a lightning receive for the provided filter
+pub async fn get_receive_status(configuration: &configuration::Configuration, identifier: &str) -> Result<models::LightningReceiveInfo, Error<GetReceiveStatusError>> {
+    // add a prefix to parameters to efficiently prevent name collisions
+    let p_identifier = identifier;
 
-    let uri_str = format!("{}/api/v1/lightning/receive/invoices", configuration.base_path);
+    let uri_str = format!("{}/api/v1/lightning/receives/{identifier}", configuration.base_path, identifier=crate::apis::urlencode(p_identifier));
+    let mut req_builder = configuration.client.request(reqwest::Method::GET, &uri_str);
+
+    if let Some(ref user_agent) = configuration.user_agent {
+        req_builder = req_builder.header(reqwest::header::USER_AGENT, user_agent.clone());
+    }
+
+    let req = req_builder.build()?;
+    let resp = configuration.client.execute(req).await?;
+
+    let status = resp.status();
+    let content_type = resp
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("application/octet-stream");
+    let content_type = super::ContentType::from(content_type);
+
+    if !status.is_client_error() && !status.is_server_error() {
+        let content = resp.text().await?;
+        match content_type {
+            ContentType::Json => serde_json::from_str(&content).map_err(Error::from),
+            ContentType::Text => return Err(Error::from(serde_json::Error::custom("Received `text/plain` content type response that cannot be converted to `models::LightningReceiveInfo`"))),
+            ContentType::Unsupported(unknown_type) => return Err(Error::from(serde_json::Error::custom(format!("Received `{unknown_type}` content type response that cannot be converted to `models::LightningReceiveInfo`")))),
+        }
+    } else {
+        let content = resp.text().await?;
+        let entity: Option<GetReceiveStatusError> = serde_json::from_str(&content).ok();
+        Err(Error::ResponseError(ResponseContent { status, content, entity }))
+    }
+}
+
+/// Returns all the current pending receive statuses
+pub async fn list_receive_statuses(configuration: &configuration::Configuration, ) -> Result<Vec<models::LightningReceiveInfo>, Error<ListReceiveStatusesError>> {
+
+    let uri_str = format!("{}/api/v1/lightning/receives", configuration.base_path);
     let mut req_builder = configuration.client.request(reqwest::Method::GET, &uri_str);
 
     if let Some(ref user_agent) = configuration.user_agent {
@@ -116,12 +156,13 @@ pub async fn lightning_invoices(configuration: &configuration::Configuration, ) 
         }
     } else {
         let content = resp.text().await?;
-        let entity: Option<LightningInvoicesError> = serde_json::from_str(&content).ok();
+        let entity: Option<ListReceiveStatusesError> = serde_json::from_str(&content).ok();
         Err(Error::ResponseError(ResponseContent { status, content, entity }))
     }
 }
 
-pub async fn lightning_pay(configuration: &configuration::Configuration, lightning_pay_request: models::LightningPayRequest) -> Result<models::LightningPayResponse, Error<LightningPayError>> {
+/// Sends a payment to the given lightning destination
+pub async fn pay(configuration: &configuration::Configuration, lightning_pay_request: models::LightningPayRequest) -> Result<models::LightningPayResponse, Error<PayError>> {
     // add a prefix to parameters to efficiently prevent name collisions
     let p_lightning_pay_request = lightning_pay_request;
 
@@ -153,50 +194,7 @@ pub async fn lightning_pay(configuration: &configuration::Configuration, lightni
         }
     } else {
         let content = resp.text().await?;
-        let entity: Option<LightningPayError> = serde_json::from_str(&content).ok();
-        Err(Error::ResponseError(ResponseContent { status, content, entity }))
-    }
-}
-
-pub async fn lightning_status(configuration: &configuration::Configuration, filter: Option<&str>, preimage: Option<&str>) -> Result<models::LightningStatusResponse, Error<LightningStatusError>> {
-    // add a prefix to parameters to efficiently prevent name collisions
-    let p_filter = filter;
-    let p_preimage = preimage;
-
-    let uri_str = format!("{}/api/v1/lightning/receive/status", configuration.base_path);
-    let mut req_builder = configuration.client.request(reqwest::Method::GET, &uri_str);
-
-    if let Some(ref param_value) = p_filter {
-        req_builder = req_builder.query(&[("filter", &param_value.to_string())]);
-    }
-    if let Some(ref param_value) = p_preimage {
-        req_builder = req_builder.query(&[("preimage", &param_value.to_string())]);
-    }
-    if let Some(ref user_agent) = configuration.user_agent {
-        req_builder = req_builder.header(reqwest::header::USER_AGENT, user_agent.clone());
-    }
-
-    let req = req_builder.build()?;
-    let resp = configuration.client.execute(req).await?;
-
-    let status = resp.status();
-    let content_type = resp
-        .headers()
-        .get("content-type")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("application/octet-stream");
-    let content_type = super::ContentType::from(content_type);
-
-    if !status.is_client_error() && !status.is_server_error() {
-        let content = resp.text().await?;
-        match content_type {
-            ContentType::Json => serde_json::from_str(&content).map_err(Error::from),
-            ContentType::Text => return Err(Error::from(serde_json::Error::custom("Received `text/plain` content type response that cannot be converted to `models::LightningStatusResponse`"))),
-            ContentType::Unsupported(unknown_type) => return Err(Error::from(serde_json::Error::custom(format!("Received `{unknown_type}` content type response that cannot be converted to `models::LightningStatusResponse`")))),
-        }
-    } else {
-        let content = resp.text().await?;
-        let entity: Option<LightningStatusError> = serde_json::from_str(&content).ok();
+        let entity: Option<PayError> = serde_json::from_str(&content).ok();
         Err(Error::ResponseError(ResponseContent { status, content, entity }))
     }
 }

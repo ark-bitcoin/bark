@@ -19,6 +19,7 @@
         "tags": [
           "bitcoin"
         ],
+        "description": "Returns the current bitcoin tip height",
         "operationId": "tip",
         "responses": {
           "200": {
@@ -32,17 +33,56 @@
             }
           },
           "500": {
-            "description": "Internal server error"
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternalServerError"
+                }
+              }
+            }
           }
         }
       }
     },
-    "/api/v1/board/board": {
+    "/api/v1/boards/board-all": {
       "post": {
         "tags": [
-          "board"
+          "boards"
         ],
-        "operationId": "board",
+        "description": "Board all the onchain funds to the offchain wallet",
+        "operationId": "board_all",
+        "responses": {
+          "200": {
+            "description": "Returns the board result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Board"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternalServerError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/boards/board-amount": {
+      "post": {
+        "tags": [
+          "boards"
+        ],
+        "description": "Board the given amount of onchain funds to the offchain wallet",
+        "operationId": "board_amount",
         "requestBody": {
           "content": {
             "application/json": {
@@ -65,39 +105,24 @@
             }
           },
           "500": {
-            "description": "Internal server error"
-          }
-        }
-      }
-    },
-    "/api/v1/board/board/all": {
-      "post": {
-        "tags": [
-          "board"
-        ],
-        "operationId": "board_all",
-        "responses": {
-          "200": {
-            "description": "Returns the board result",
+            "description": "Internal server error",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Board"
+                  "$ref": "#/components/schemas/InternalServerError"
                 }
               }
             }
-          },
-          "500": {
-            "description": "Internal server error"
           }
         }
       }
     },
-    "/api/v1/exit/claim/all": {
+    "/api/v1/exits/claim/all": {
       "post": {
         "tags": [
-          "exit"
+          "exits"
         ],
+        "description": "Claims all claimable exited VTXOs to the given destination address",
         "operationId": "exit_claim_all",
         "requestBody": {
           "content": {
@@ -121,19 +146,34 @@
             }
           },
           "400": {
-            "description": "Bad request - invalid parameters"
+            "description": "The provided destination address is invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
+                }
+              }
+            }
           },
           "500": {
-            "description": "Internal server error"
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternalServerError"
+                }
+              }
+            }
           }
         }
       }
     },
-    "/api/v1/exit/claim/vtxos": {
+    "/api/v1/exits/claim/vtxos": {
       "post": {
         "tags": [
-          "exit"
+          "exits"
         ],
+        "description": "Claims the given exited VTXOs to the given destination address",
         "operationId": "exit_claim_vtxos",
         "requestBody": {
           "content": {
@@ -157,20 +197,168 @@
             }
           },
           "400": {
-            "description": "Bad request - invalid parameters"
+            "description": "One of the provided VTXO isn't spendable, or the provided destination address is invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
+                }
+              }
+            }
           },
           "500": {
-            "description": "Internal server error"
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternalServerError"
+                }
+              }
+            }
           }
         }
       }
     },
-    "/api/v1/exit/list": {
+    "/api/v1/exits/progress": {
+      "post": {
+        "tags": [
+          "exits"
+        ],
+        "description": "Progresses the exit process of all current exits until it completes",
+        "operationId": "exit_progress",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExitProgressRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Returns the exit progress",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExitProgressResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternalServerError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/exits/start/all": {
+      "post": {
+        "tags": [
+          "exits"
+        ],
+        "description": "Starts an exit for all VTXOs",
+        "operationId": "exit_start_all",
+        "responses": {
+          "200": {
+            "description": "Exit started successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExitStartResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternalServerError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/exits/start/vtxos": {
+      "post": {
+        "tags": [
+          "exits"
+        ],
+        "description": "Starts an exit for the given VTXOs",
+        "operationId": "exit_start_vtxos",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExitStartRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Exit started successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExitStartResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "No VTXO IDs provided, or one of the provided VTXO IDs is invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "One the VTXOs wasn't found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotFoundError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternalServerError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/exits/status": {
       "get": {
         "tags": [
-          "exit"
+          "exits"
         ],
-        "operationId": "exit_list",
+        "description": "Returns all the current in-progress, completed and failed exits",
+        "operationId": "get_all_exit_status",
         "parameters": [
           {
             "name": "history",
@@ -206,116 +394,29 @@
             }
           },
           "500": {
-            "description": "Internal server error"
-          }
-        }
-      }
-    },
-    "/api/v1/exit/progress": {
-      "post": {
-        "tags": [
-          "exit"
-        ],
-        "operationId": "exit_progress",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ExitProgressRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Returns the exit progress",
+            "description": "Internal server error",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ExitProgressResponse"
+                  "$ref": "#/components/schemas/InternalServerError"
                 }
               }
             }
-          },
-          "500": {
-            "description": "Internal server error"
           }
         }
       }
     },
-    "/api/v1/exit/start/all": {
-      "post": {
-        "tags": [
-          "exit"
-        ],
-        "operationId": "exit_start_all",
-        "responses": {
-          "200": {
-            "description": "Exit started successfully",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ExitStartResponse"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Bad request - no VTXOs specified"
-          },
-          "500": {
-            "description": "Internal server error"
-          }
-        }
-      }
-    },
-    "/api/v1/exit/start/vtxos": {
-      "post": {
-        "tags": [
-          "exit"
-        ],
-        "operationId": "exit_start_vtxos",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ExitStartRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Exit started successfully",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ExitStartResponse"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Bad request - no VTXOs specified"
-          },
-          "500": {
-            "description": "Internal server error"
-          }
-        }
-      }
-    },
-    "/api/v1/exit/status": {
+    "/api/v1/exits/status/{vtxo_id}": {
       "get": {
         "tags": [
-          "exit"
+          "exits"
         ],
-        "operationId": "exit_status",
+        "description": "Returns the status of the exit for the given VTXO",
+        "operationId": "get_exit_status_by_vtxo_id",
         "parameters": [
           {
-            "name": "vtxo",
-            "in": "query",
+            "name": "vtxo_id",
+            "in": "path",
             "description": "The VTXO to check the exit status of",
             "required": true,
             "schema": {
@@ -353,10 +454,24 @@
             }
           },
           "404": {
-            "description": "VTXO not found"
+            "description": "VTXO wasn't found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotFoundError"
+                }
+              }
+            }
           },
           "500": {
-            "description": "Internal server error"
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternalServerError"
+                }
+              }
+            }
           }
         }
       }
@@ -366,7 +481,8 @@
         "tags": [
           "lightning"
         ],
-        "operationId": "lightning_pay",
+        "description": "Sends a payment to the given lightning destination",
+        "operationId": "pay",
         "requestBody": {
           "content": {
             "application/json": {
@@ -389,20 +505,69 @@
             }
           },
           "400": {
-            "description": "Bad request - invalid destination or amount"
+            "description": "The provided destination is not a valid bolt11 invoice, bolt12 offer or lightning address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
+                }
+              }
+            }
           },
           "500": {
-            "description": "Internal server error"
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternalServerError"
+                }
+              }
+            }
           }
         }
       }
     },
-    "/api/v1/lightning/receive/invoice": {
+    "/api/v1/lightning/receives": {
+      "get": {
+        "tags": [
+          "lightning"
+        ],
+        "description": "Returns all the current pending receive statuses",
+        "operationId": "list_receive_statuses",
+        "responses": {
+          "200": {
+            "description": "Returns all receive statuses",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/LightningReceiveInfo"
+                  }
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternalServerError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/lightning/receives/invoice": {
       "post": {
         "tags": [
           "lightning"
         ],
-        "operationId": "lightning_invoice",
+        "description": "Generates a new lightning invoice with the given amount",
+        "operationId": "generate_invoice",
         "requestBody": {
           "content": {
             "application/json": {
@@ -424,62 +589,32 @@
               }
             }
           },
-          "400": {
-            "description": "Bad request - invalid parameters"
-          },
           "500": {
-            "description": "Internal server error"
-          }
-        }
-      }
-    },
-    "/api/v1/lightning/receive/invoices": {
-      "get": {
-        "tags": [
-          "lightning"
-        ],
-        "operationId": "lightning_invoices",
-        "responses": {
-          "200": {
-            "description": "Returns all lightning invoices",
+            "description": "Internal server error",
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/LightningReceiveInfo"
-                  }
+                  "$ref": "#/components/schemas/InternalServerError"
                 }
               }
             }
-          },
-          "500": {
-            "description": "Internal server error"
           }
         }
       }
     },
-    "/api/v1/lightning/receive/status": {
+    "/api/v1/lightning/receives/{identifier}": {
       "get": {
         "tags": [
           "lightning"
         ],
-        "operationId": "lightning_status",
+        "description": "Returns the status of a lightning receive for the provided filter",
+        "operationId": "get_receive_status",
         "parameters": [
           {
-            "name": "filter",
-            "in": "query",
-            "description": "Payment hash or invoice string",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "preimage",
-            "in": "query",
-            "description": "Filter by preimage",
-            "required": false,
+            "name": "identifier",
+            "in": "path",
+            "description": "Payment hash, invoice string or preimage to search for",
+            "required": true,
             "schema": {
               "type": "string"
             }
@@ -491,22 +626,50 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/LightningStatusResponse"
+                  "$ref": "#/components/schemas/LightningReceiveInfo"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotFoundError"
                 }
               }
             }
           },
           "500": {
-            "description": "Internal server error"
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternalServerError"
+                }
+              }
+            }
           }
         }
       }
     },
     "/api/v1/onchain/addresses/next": {
-      "put": {
+      "post": {
         "tags": [
           "onchain"
         ],
+        "description": "Generates a new onchain address and stores its index in the onchain wallet database",
         "operationId": "onchain_address",
         "responses": {
           "200": {
@@ -520,7 +683,14 @@
             }
           },
           "500": {
-            "description": "Internal server error"
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternalServerError"
+                }
+              }
+            }
           }
         }
       }
@@ -530,6 +700,7 @@
         "tags": [
           "onchain"
         ],
+        "description": "Returns the current onchain wallet balance",
         "operationId": "onchain_balance",
         "responses": {
           "200": {
@@ -541,9 +712,6 @@
                 }
               }
             }
-          },
-          "500": {
-            "description": "Internal server error"
           }
         }
       }
@@ -553,6 +721,7 @@
         "tags": [
           "onchain"
         ],
+        "description": "Sends all onchain wallet funds to the given address",
         "operationId": "onchain_drain",
         "requestBody": {
           "content": {
@@ -576,10 +745,24 @@
             }
           },
           "400": {
-            "description": "Bad request - invalid destination"
+            "description": "The provided destination address is invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
+                }
+              }
+            }
           },
           "500": {
-            "description": "Internal server error"
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternalServerError"
+                }
+              }
+            }
           }
         }
       }
@@ -589,6 +772,7 @@
         "tags": [
           "onchain"
         ],
+        "description": "Sends a payment to the given onchain address",
         "operationId": "onchain_send",
         "requestBody": {
           "content": {
@@ -612,10 +796,24 @@
             }
           },
           "400": {
-            "description": "Bad request - invalid destination or amount"
+            "description": "The provided destination address is invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
+                }
+              }
+            }
           },
           "500": {
-            "description": "Internal server error"
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternalServerError"
+                }
+              }
+            }
           }
         }
       }
@@ -625,6 +823,7 @@
         "tags": [
           "onchain"
         ],
+        "description": "Sends multiple payments to provided onchain addresses",
         "operationId": "onchain_send_many",
         "requestBody": {
           "content": {
@@ -648,10 +847,24 @@
             }
           },
           "400": {
-            "description": "Bad request - invalid destinations"
+            "description": "One of the provided destinations is invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
+                }
+              }
+            }
           },
           "500": {
-            "description": "Internal server error"
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternalServerError"
+                }
+              }
+            }
           }
         }
       }
@@ -661,13 +874,21 @@
         "tags": [
           "onchain"
         ],
+        "description": "Syncs the onchain wallet",
         "operationId": "onchain_sync",
         "responses": {
           "200": {
             "description": "Synced onchain wallet"
           },
           "500": {
-            "description": "Internal server error"
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternalServerError"
+                }
+              }
+            }
           }
         }
       }
@@ -677,6 +898,7 @@
         "tags": [
           "onchain"
         ],
+        "description": "Returns all the onchain wallet transactions",
         "operationId": "onchain_transactions",
         "responses": {
           "200": {
@@ -691,9 +913,6 @@
                 }
               }
             }
-          },
-          "500": {
-            "description": "Internal server error"
           }
         }
       }
@@ -703,6 +922,7 @@
         "tags": [
           "onchain"
         ],
+        "description": "Returns all the onchain wallet UTXOs",
         "operationId": "onchain_utxos",
         "responses": {
           "200": {
@@ -717,46 +937,21 @@
                 }
               }
             }
-          },
-          "500": {
-            "description": "Internal server error"
           }
         }
       }
     },
-    "/api/v1/wallet/addresses/next": {
-      "put": {
-        "tags": [
-          "wallet"
-        ],
-        "operationId": "address",
-        "responses": {
-          "200": {
-            "description": "Returns the Ark address",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Address"
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "Internal server error"
-          }
-        }
-      }
-    },
-    "/api/v1/wallet/addresses/peak": {
+    "/api/v1/wallet/addresses/index/{index}": {
       "get": {
         "tags": [
           "wallet"
         ],
+        "description": "Returns the Ark address at the given index. The address must have been already derived before using the /addresses/next endpoint.",
         "operationId": "peak_address",
         "parameters": [
           {
             "name": "index",
-            "in": "query",
+            "in": "path",
             "description": "Index for the address.",
             "required": true,
             "schema": {
@@ -778,7 +973,45 @@
             }
           },
           "500": {
-            "description": "Internal server error"
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternalServerError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/wallet/addresses/next": {
+      "post": {
+        "tags": [
+          "wallet"
+        ],
+        "description": "Generates a new Ark address and stores it in the wallet database",
+        "operationId": "address",
+        "responses": {
+          "200": {
+            "description": "Returns the Ark address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Address"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternalServerError"
+                }
+              }
+            }
           }
         }
       }
@@ -788,6 +1021,7 @@
         "tags": [
           "wallet"
         ],
+        "description": "Returns the current Ark infos",
         "operationId": "ark_info",
         "responses": {
           "200": {
@@ -801,10 +1035,24 @@
             }
           },
           "404": {
-            "description": "No ark info found"
+            "description": "Wallet not connected to an Ark server",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotFoundError"
+                }
+              }
+            }
           },
           "500": {
-            "description": "Internal server error"
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternalServerError"
+                }
+              }
+            }
           }
         }
       }
@@ -814,6 +1062,7 @@
         "tags": [
           "wallet"
         ],
+        "description": "Returns the current wallet balance",
         "operationId": "balance",
         "responses": {
           "200": {
@@ -827,7 +1076,14 @@
             }
           },
           "500": {
-            "description": "Internal server error"
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternalServerError"
+                }
+              }
+            }
           }
         }
       }
@@ -837,6 +1093,7 @@
         "tags": [
           "wallet"
         ],
+        "description": "Returns whether the wallet is currently connected to the Ark server",
         "operationId": "connected",
         "responses": {
           "200": {
@@ -850,7 +1107,14 @@
             }
           },
           "500": {
-            "description": "Internal server error"
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternalServerError"
+                }
+              }
+            }
           }
         }
       }
@@ -860,6 +1124,7 @@
         "tags": [
           "wallet"
         ],
+        "description": "Returns all the wallet movements",
         "operationId": "movements",
         "responses": {
           "200": {
@@ -876,7 +1141,14 @@
             }
           },
           "500": {
-            "description": "Internal server error"
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternalServerError"
+                }
+              }
+            }
           }
         }
       }
@@ -886,6 +1158,7 @@
         "tags": [
           "wallet"
         ],
+        "description": "Creates a new round participation to offboard all VTXOs",
         "operationId": "offboard_all",
         "requestBody": {
           "content": {
@@ -909,7 +1182,14 @@
             }
           },
           "500": {
-            "description": "Internal server error"
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternalServerError"
+                }
+              }
+            }
           }
         }
       }
@@ -919,6 +1199,7 @@
         "tags": [
           "wallet"
         ],
+        "description": "Creates a new round participation to offboard the given VTXOs",
         "operationId": "offboard_vtxos",
         "requestBody": {
           "content": {
@@ -941,6 +1222,26 @@
               }
             }
           },
+          "400": {
+            "description": "No VTXO IDs provided, or one of the provided VTXO IDs is invalid, or destination address is invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "One the VTXOs wasn't found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotFoundError"
+                }
+              }
+            }
+          },
           "500": {
             "description": "Internal server error"
           }
@@ -952,6 +1253,7 @@
         "tags": [
           "wallet"
         ],
+        "description": "Creates a new round participation to refresh all VTXOs",
         "operationId": "refresh_all",
         "responses": {
           "200": {
@@ -965,7 +1267,14 @@
             }
           },
           "500": {
-            "description": "Internal server error"
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternalServerError"
+                }
+              }
+            }
           }
         }
       }
@@ -975,6 +1284,7 @@
         "tags": [
           "wallet"
         ],
+        "description": "Creates a new round participation to refresh VTXOs marked with counterparty",
         "operationId": "refresh_counterparty",
         "requestBody": {
           "content": {
@@ -997,11 +1307,25 @@
               }
             }
           },
-          "400": {
-            "description": "Bad request - exactly one parameter must be provided"
+          "404": {
+            "description": "There is no VTXO to refresh",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotFoundError"
+                }
+              }
+            }
           },
           "500": {
-            "description": "Internal server error"
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternalServerError"
+                }
+              }
+            }
           }
         }
       }
@@ -1011,6 +1335,7 @@
         "tags": [
           "wallet"
         ],
+        "description": "Creates a new round participation to refresh the given VTXOs",
         "operationId": "refresh_vtxos",
         "requestBody": {
           "content": {
@@ -1034,10 +1359,34 @@
             }
           },
           "400": {
-            "description": "Bad request - exactly one parameter must be provided"
+            "description": "No VTXO IDs provided, or one of the provided VTXO IDs is invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "One the VTXOs wasn't found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotFoundError"
+                }
+              }
+            }
           },
           "500": {
-            "description": "Internal server error"
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternalServerError"
+                }
+              }
+            }
           }
         }
       }
@@ -1047,6 +1396,7 @@
         "tags": [
           "wallet"
         ],
+        "description": "Returns all the wallet ongoing round participations",
         "operationId": "pending_rounds",
         "responses": {
           "200": {
@@ -1063,7 +1413,14 @@
             }
           },
           "500": {
-            "description": "Internal server error"
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternalServerError"
+                }
+              }
+            }
           }
         }
       }
@@ -1073,6 +1430,7 @@
         "tags": [
           "wallet"
         ],
+        "description": "Sends a payment to the given destination. The destination can be an Ark address, a BOLT11-invoice, LNURL or a lightning address",
         "operationId": "send",
         "requestBody": {
           "content": {
@@ -1096,10 +1454,24 @@
             }
           },
           "400": {
-            "description": "Bad request - invalid parameters"
+            "description": "The provided destination is not a valid Ark address, bolt11 invoice, bolt12 offer or lightning address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
+                }
+              }
+            }
           },
           "500": {
-            "description": "Internal server error"
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternalServerError"
+                }
+              }
+            }
           }
         }
       }
@@ -1109,6 +1481,7 @@
         "tags": [
           "wallet"
         ],
+        "description": "Creates a new round participation to send a payment onchain from ark round",
         "operationId": "send_onchain",
         "requestBody": {
           "content": {
@@ -1132,7 +1505,14 @@
             }
           },
           "500": {
-            "description": "Internal server error"
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternalServerError"
+                }
+              }
+            }
           }
         }
       }
@@ -1142,13 +1522,11 @@
         "tags": [
           "wallet"
         ],
+        "description": "Syncs the wallet",
         "operationId": "sync",
         "responses": {
           "200": {
-            "description": "Synced wallet"
-          },
-          "500": {
-            "description": "Internal server error"
+            "description": "Wallet was successfully synced"
           }
         }
       }
@@ -1158,6 +1536,7 @@
         "tags": [
           "wallet"
         ],
+        "description": "Returns all the wallet VTXOs",
         "operationId": "vtxos",
         "parameters": [
           {
@@ -1185,7 +1564,14 @@
             }
           },
           "500": {
-            "description": "Internal server error"
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternalServerError"
+                }
+              }
+            }
           }
         }
       }
@@ -1310,6 +1696,17 @@
           "vtxo_expiry_delta": {
             "$ref": "#/components/schemas/u16",
             "description": "Expiration delta of the VTXO"
+          }
+        }
+      },
+      "BadRequestError": {
+        "type": "object",
+        "required": [
+          "message"
+        ],
+        "properties": {
+          "message": {
+            "type": "string"
           }
         }
       },
@@ -2063,25 +2460,6 @@
           }
         ]
       },
-      "ExitListRequest": {
-        "type": "object",
-        "properties": {
-          "history": {
-            "type": [
-              "boolean",
-              "null"
-            ],
-            "description": "Whether to include the detailed history of the exit process"
-          },
-          "transactions": {
-            "type": [
-              "boolean",
-              "null"
-            ],
-            "description": "Whether to include the exit transactions and their CPFP children"
-          }
-        }
-      },
       "ExitProcessingState": {
         "type": "object",
         "required": [
@@ -2348,9 +2726,6 @@
       },
       "ExitStatusRequest": {
         "type": "object",
-        "required": [
-          "vtxo"
-        ],
         "properties": {
           "history": {
             "type": [
@@ -2365,10 +2740,6 @@
               "null"
             ],
             "description": "Whether to include the exit transactions and their CPFP children"
-          },
-          "vtxo": {
-            "type": "string",
-            "description": "The VTXO to check the exit status of"
           }
         }
       },
@@ -2661,6 +3032,17 @@
           }
         ]
       },
+      "InternalServerError": {
+        "type": "object",
+        "required": [
+          "message"
+        ],
+        "properties": {
+          "message": {
+            "type": "string"
+          }
+        }
+      },
       "InvoiceInfo": {
         "type": "object",
         "required": [
@@ -2777,55 +3159,6 @@
             ],
             "format": "date-time",
             "description": "The timestamp at which the preimage was revealed"
-          }
-        }
-      },
-      "LightningStatusRequest": {
-        "type": "object",
-        "properties": {
-          "filter": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Payment hash or invoice string"
-          },
-          "preimage": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Filter by preimage"
-          }
-        }
-      },
-      "LightningStatusResponse": {
-        "type": "object",
-        "required": [
-          "payment_hash",
-          "payment_preimage",
-          "invoice"
-        ],
-        "properties": {
-          "invoice": {
-            "type": "string",
-            "description": "The invoice that was paid"
-          },
-          "payment_hash": {
-            "type": "string",
-            "description": "The payment hash of the invoice"
-          },
-          "payment_preimage": {
-            "type": "string",
-            "description": "The preimage that was used to pay the invoice"
-          },
-          "preimage_revealed_at": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "format": "date-time",
-            "description": "The time the preimage was revealed"
           }
         }
       },
@@ -2995,6 +3328,24 @@
           }
         }
       },
+      "NotFoundError": {
+        "type": "object",
+        "required": [
+          "resource",
+          "message"
+        ],
+        "properties": {
+          "message": {
+            "type": "string"
+          },
+          "resource": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
       "OffboardAllRequest": {
         "type": "object",
         "properties": {
@@ -3128,19 +3479,6 @@
           "destination": {
             "type": "string",
             "description": "The destination Bitcoin address"
-          }
-        }
-      },
-      "PeakAddressRequest": {
-        "type": "object",
-        "required": [
-          "index"
-        ],
-        "properties": {
-          "index": {
-            "type": "integer",
-            "format": "int32",
-            "minimum": 0
           }
         }
       },
@@ -3574,11 +3912,11 @@
   },
   "tags": [
     {
-      "name": "board",
+      "name": "boards",
       "description": "Board-related endpoints"
     },
     {
-      "name": "exit",
+      "name": "exits",
       "description": "Exit-related endpoints"
     },
     {

@@ -1,18 +1,13 @@
-use ark::lightning::{Bolt11Invoice, PaymentHash, Preimage};
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "utoipa")]
 use utoipa::ToSchema;
+
+use ark::lightning::Preimage;
 
 #[derive(Serialize, Deserialize)]
 #[cfg_attr(feature = "utoipa", derive(ToSchema))]
 pub struct TipResponse {
 	pub tip_height: u32,
-}
-
-#[derive(Serialize, Deserialize)]
-#[cfg_attr(feature = "utoipa", derive(ToSchema))]
-pub struct PeakAddressRequest {
-	pub index: u32,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -102,31 +97,6 @@ pub struct LightningInvoiceRequest {
 
 #[derive(Serialize, Deserialize)]
 #[cfg_attr(feature = "utoipa", derive(ToSchema))]
-pub struct LightningStatusRequest {
-	/// Payment hash or invoice string
-	pub filter: Option<String>,
-	/// Filter by preimage
-	pub preimage: Option<String>,
-}
-
-#[derive(Serialize, Deserialize)]
-#[cfg_attr(feature = "utoipa", derive(ToSchema))]
-pub struct LightningStatusResponse {
-	/// The payment hash of the invoice
-	#[cfg_attr(feature = "utoipa", schema(value_type = String))]
-	pub payment_hash: PaymentHash,
-	/// The preimage that was used to pay the invoice
-	#[cfg_attr(feature = "utoipa", schema(value_type = String))]
-	pub payment_preimage: Preimage,
-	/// The invoice that was paid
-	#[cfg_attr(feature = "utoipa", schema(value_type = String))]
-	pub invoice: Bolt11Invoice,
-	/// The time the preimage was revealed
-	pub preimage_revealed_at: Option<chrono::DateTime<chrono::Utc>>,
-}
-
-#[derive(Serialize, Deserialize)]
-#[cfg_attr(feature = "utoipa", derive(ToSchema))]
 pub struct LightningPayRequest {
 	/// The invoice, offer, or lightning address to pay
 	pub destination: String,
@@ -174,17 +144,6 @@ pub struct OnchainDrainRequest {
 #[derive(Serialize, Deserialize)]
 #[cfg_attr(feature = "utoipa", derive(ToSchema))]
 pub struct ExitStatusRequest {
-	/// The VTXO to check the exit status of
-	pub vtxo: String,
-	/// Whether to include the detailed history of the exit process
-	pub history: Option<bool>,
-	/// Whether to include the exit transactions and their CPFP children
-	pub transactions: Option<bool>,
-}
-
-#[derive(Deserialize)]
-#[cfg_attr(feature = "utoipa", derive(ToSchema))]
-pub struct ExitListRequest {
 	/// Whether to include the detailed history of the exit process
 	pub history: Option<bool>,
 	/// Whether to include the exit transactions and their CPFP children

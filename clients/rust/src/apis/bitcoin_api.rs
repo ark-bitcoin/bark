@@ -19,11 +19,12 @@ use super::{Error, configuration, ContentType};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum TipError {
-    Status500(),
+    Status500(models::InternalServerError),
     UnknownValue(serde_json::Value),
 }
 
 
+/// Returns the current bitcoin tip height
 pub async fn tip(configuration: &configuration::Configuration, ) -> Result<models::TipResponse, Error<TipError>> {
 
     let uri_str = format!("{}/api/v1/bitcoin/tip", configuration.base_path);

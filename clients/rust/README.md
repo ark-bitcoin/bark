@@ -27,21 +27,21 @@ All URIs are relative to *http://localhost*
 Class | Method | HTTP request | Description
 ------------ | ------------- | ------------- | -------------
 *BitcoinApi* | [**tip**](docs/BitcoinApi.md#tip) | **GET** /api/v1/bitcoin/tip | 
-*BoardApi* | [**board**](docs/BoardApi.md#board) | **POST** /api/v1/board/board | 
-*BoardApi* | [**board_all**](docs/BoardApi.md#board_all) | **POST** /api/v1/board/board/all | 
+*BoardsApi* | [**board_all**](docs/BoardsApi.md#board_all) | **POST** /api/v1/boards/board-all | 
+*BoardsApi* | [**board_amount**](docs/BoardsApi.md#board_amount) | **POST** /api/v1/boards/board-amount | 
 *DefaultApi* | [**ping**](docs/DefaultApi.md#ping) | **GET** /ping | 
-*ExitApi* | [**exit_claim_all**](docs/ExitApi.md#exit_claim_all) | **POST** /api/v1/exit/claim/all | 
-*ExitApi* | [**exit_claim_vtxos**](docs/ExitApi.md#exit_claim_vtxos) | **POST** /api/v1/exit/claim/vtxos | 
-*ExitApi* | [**exit_list**](docs/ExitApi.md#exit_list) | **GET** /api/v1/exit/list | 
-*ExitApi* | [**exit_progress**](docs/ExitApi.md#exit_progress) | **POST** /api/v1/exit/progress | 
-*ExitApi* | [**exit_start_all**](docs/ExitApi.md#exit_start_all) | **POST** /api/v1/exit/start/all | 
-*ExitApi* | [**exit_start_vtxos**](docs/ExitApi.md#exit_start_vtxos) | **POST** /api/v1/exit/start/vtxos | 
-*ExitApi* | [**exit_status**](docs/ExitApi.md#exit_status) | **GET** /api/v1/exit/status | 
-*LightningApi* | [**lightning_invoice**](docs/LightningApi.md#lightning_invoice) | **POST** /api/v1/lightning/receive/invoice | 
-*LightningApi* | [**lightning_invoices**](docs/LightningApi.md#lightning_invoices) | **GET** /api/v1/lightning/receive/invoices | 
-*LightningApi* | [**lightning_pay**](docs/LightningApi.md#lightning_pay) | **POST** /api/v1/lightning/pay | 
-*LightningApi* | [**lightning_status**](docs/LightningApi.md#lightning_status) | **GET** /api/v1/lightning/receive/status | 
-*OnchainApi* | [**onchain_address**](docs/OnchainApi.md#onchain_address) | **PUT** /api/v1/onchain/addresses/next | 
+*ExitsApi* | [**exit_claim_all**](docs/ExitsApi.md#exit_claim_all) | **POST** /api/v1/exits/claim/all | 
+*ExitsApi* | [**exit_claim_vtxos**](docs/ExitsApi.md#exit_claim_vtxos) | **POST** /api/v1/exits/claim/vtxos | 
+*ExitsApi* | [**exit_progress**](docs/ExitsApi.md#exit_progress) | **POST** /api/v1/exits/progress | 
+*ExitsApi* | [**exit_start_all**](docs/ExitsApi.md#exit_start_all) | **POST** /api/v1/exits/start/all | 
+*ExitsApi* | [**exit_start_vtxos**](docs/ExitsApi.md#exit_start_vtxos) | **POST** /api/v1/exits/start/vtxos | 
+*ExitsApi* | [**get_all_exit_status**](docs/ExitsApi.md#get_all_exit_status) | **GET** /api/v1/exits/status | 
+*ExitsApi* | [**get_exit_status_by_vtxo_id**](docs/ExitsApi.md#get_exit_status_by_vtxo_id) | **GET** /api/v1/exits/status/{vtxo_id} | 
+*LightningApi* | [**generate_invoice**](docs/LightningApi.md#generate_invoice) | **POST** /api/v1/lightning/receives/invoice | 
+*LightningApi* | [**get_receive_status**](docs/LightningApi.md#get_receive_status) | **GET** /api/v1/lightning/receives/{identifier} | 
+*LightningApi* | [**list_receive_statuses**](docs/LightningApi.md#list_receive_statuses) | **GET** /api/v1/lightning/receives | 
+*LightningApi* | [**pay**](docs/LightningApi.md#pay) | **POST** /api/v1/lightning/pay | 
+*OnchainApi* | [**onchain_address**](docs/OnchainApi.md#onchain_address) | **POST** /api/v1/onchain/addresses/next | 
 *OnchainApi* | [**onchain_balance**](docs/OnchainApi.md#onchain_balance) | **GET** /api/v1/onchain/balance | 
 *OnchainApi* | [**onchain_drain**](docs/OnchainApi.md#onchain_drain) | **POST** /api/v1/onchain/drain | 
 *OnchainApi* | [**onchain_send**](docs/OnchainApi.md#onchain_send) | **POST** /api/v1/onchain/send | 
@@ -49,14 +49,14 @@ Class | Method | HTTP request | Description
 *OnchainApi* | [**onchain_sync**](docs/OnchainApi.md#onchain_sync) | **POST** /api/v1/onchain/sync | 
 *OnchainApi* | [**onchain_transactions**](docs/OnchainApi.md#onchain_transactions) | **GET** /api/v1/onchain/transactions | 
 *OnchainApi* | [**onchain_utxos**](docs/OnchainApi.md#onchain_utxos) | **GET** /api/v1/onchain/utxos | 
-*WalletApi* | [**address**](docs/WalletApi.md#address) | **PUT** /api/v1/wallet/addresses/next | 
+*WalletApi* | [**address**](docs/WalletApi.md#address) | **POST** /api/v1/wallet/addresses/next | 
 *WalletApi* | [**ark_info**](docs/WalletApi.md#ark_info) | **GET** /api/v1/wallet/ark-info | 
 *WalletApi* | [**balance**](docs/WalletApi.md#balance) | **GET** /api/v1/wallet/balance | 
 *WalletApi* | [**connected**](docs/WalletApi.md#connected) | **GET** /api/v1/wallet/connected | 
 *WalletApi* | [**movements**](docs/WalletApi.md#movements) | **GET** /api/v1/wallet/movements | 
 *WalletApi* | [**offboard_all**](docs/WalletApi.md#offboard_all) | **POST** /api/v1/wallet/offboard/all | 
 *WalletApi* | [**offboard_vtxos**](docs/WalletApi.md#offboard_vtxos) | **POST** /api/v1/wallet/offboard/vtxos | 
-*WalletApi* | [**peak_address**](docs/WalletApi.md#peak_address) | **GET** /api/v1/wallet/addresses/peak | 
+*WalletApi* | [**peak_address**](docs/WalletApi.md#peak_address) | **GET** /api/v1/wallet/addresses/index/{index} | 
 *WalletApi* | [**pending_rounds**](docs/WalletApi.md#pending_rounds) | **GET** /api/v1/wallet/rounds | 
 *WalletApi* | [**refresh_all**](docs/WalletApi.md#refresh_all) | **POST** /api/v1/wallet/refresh/all | 
 *WalletApi* | [**refresh_counterparty**](docs/WalletApi.md#refresh_counterparty) | **POST** /api/v1/wallet/refresh/counterparty | 
@@ -72,6 +72,7 @@ Class | Method | HTTP request | Description
  - [Address](docs/Address.md)
  - [ArkAddressResponse](docs/ArkAddressResponse.md)
  - [ArkInfo](docs/ArkInfo.md)
+ - [BadRequestError](docs/BadRequestError.md)
  - [Balance](docs/Balance.md)
  - [Board](docs/Board.md)
  - [BoardRequest](docs/BoardRequest.md)
@@ -109,7 +110,6 @@ Class | Method | HTTP request | Description
  - [ExitErrorOneOf7](docs/ExitErrorOneOf7.md)
  - [ExitErrorOneOf8](docs/ExitErrorOneOf8.md)
  - [ExitErrorOneOf9](docs/ExitErrorOneOf9.md)
- - [ExitListRequest](docs/ExitListRequest.md)
  - [ExitProcessingState](docs/ExitProcessingState.md)
  - [ExitProgressRequest](docs/ExitProgressRequest.md)
  - [ExitProgressResponse](docs/ExitProgressResponse.md)
@@ -140,24 +140,23 @@ Class | Method | HTTP request | Description
  - [ExitTxStatusOneOf4](docs/ExitTxStatusOneOf4.md)
  - [ExitTxStatusOneOf5](docs/ExitTxStatusOneOf5.md)
  - [ExitTxStatusOneOf6](docs/ExitTxStatusOneOf6.md)
+ - [InternalServerError](docs/InternalServerError.md)
  - [InvoiceInfo](docs/InvoiceInfo.md)
  - [LightningInvoiceRequest](docs/LightningInvoiceRequest.md)
  - [LightningPayRequest](docs/LightningPayRequest.md)
  - [LightningPayResponse](docs/LightningPayResponse.md)
  - [LightningReceiveInfo](docs/LightningReceiveInfo.md)
- - [LightningStatusRequest](docs/LightningStatusRequest.md)
- - [LightningStatusResponse](docs/LightningStatusResponse.md)
  - [Movement](docs/Movement.md)
  - [MovementDestination](docs/MovementDestination.md)
  - [MovementSubsystem](docs/MovementSubsystem.md)
  - [MovementTimestamp](docs/MovementTimestamp.md)
+ - [NotFoundError](docs/NotFoundError.md)
  - [OffboardAllRequest](docs/OffboardAllRequest.md)
  - [OffboardVtxosRequest](docs/OffboardVtxosRequest.md)
  - [OnchainBalance](docs/OnchainBalance.md)
  - [OnchainDrainRequest](docs/OnchainDrainRequest.md)
  - [OnchainSendManyRequest](docs/OnchainSendManyRequest.md)
  - [OnchainSendRequest](docs/OnchainSendRequest.md)
- - [PeakAddressRequest](docs/PeakAddressRequest.md)
  - [PendingRoundInfo](docs/PendingRoundInfo.md)
  - [RefreshRequest](docs/RefreshRequest.md)
  - [RoundStatus](docs/RoundStatus.md)

@@ -19,7 +19,7 @@ use super::{Error, configuration, ContentType};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum OnchainAddressError {
-    Status500(),
+    Status500(models::InternalServerError),
     UnknownValue(serde_json::Value),
 }
 
@@ -27,7 +27,6 @@ pub enum OnchainAddressError {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum OnchainBalanceError {
-    Status500(),
     UnknownValue(serde_json::Value),
 }
 
@@ -35,8 +34,8 @@ pub enum OnchainBalanceError {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum OnchainDrainError {
-    Status400(),
-    Status500(),
+    Status400(models::BadRequestError),
+    Status500(models::InternalServerError),
     UnknownValue(serde_json::Value),
 }
 
@@ -44,8 +43,8 @@ pub enum OnchainDrainError {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum OnchainSendError {
-    Status400(),
-    Status500(),
+    Status400(models::BadRequestError),
+    Status500(models::InternalServerError),
     UnknownValue(serde_json::Value),
 }
 
@@ -53,8 +52,8 @@ pub enum OnchainSendError {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum OnchainSendManyError {
-    Status400(),
-    Status500(),
+    Status400(models::BadRequestError),
+    Status500(models::InternalServerError),
     UnknownValue(serde_json::Value),
 }
 
@@ -62,7 +61,7 @@ pub enum OnchainSendManyError {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum OnchainSyncError {
-    Status500(),
+    Status500(models::InternalServerError),
     UnknownValue(serde_json::Value),
 }
 
@@ -70,7 +69,6 @@ pub enum OnchainSyncError {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum OnchainTransactionsError {
-    Status500(),
     UnknownValue(serde_json::Value),
 }
 
@@ -78,15 +76,15 @@ pub enum OnchainTransactionsError {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum OnchainUtxosError {
-    Status500(),
     UnknownValue(serde_json::Value),
 }
 
 
+/// Generates a new onchain address and stores its index in the onchain wallet database
 pub async fn onchain_address(configuration: &configuration::Configuration, ) -> Result<models::Address, Error<OnchainAddressError>> {
 
     let uri_str = format!("{}/api/v1/onchain/addresses/next", configuration.base_path);
-    let mut req_builder = configuration.client.request(reqwest::Method::PUT, &uri_str);
+    let mut req_builder = configuration.client.request(reqwest::Method::POST, &uri_str);
 
     if let Some(ref user_agent) = configuration.user_agent {
         req_builder = req_builder.header(reqwest::header::USER_AGENT, user_agent.clone());
@@ -117,6 +115,7 @@ pub async fn onchain_address(configuration: &configuration::Configuration, ) -> 
     }
 }
 
+/// Returns the current onchain wallet balance
 pub async fn onchain_balance(configuration: &configuration::Configuration, ) -> Result<models::OnchainBalance, Error<OnchainBalanceError>> {
 
     let uri_str = format!("{}/api/v1/onchain/balance", configuration.base_path);
@@ -151,6 +150,7 @@ pub async fn onchain_balance(configuration: &configuration::Configuration, ) -> 
     }
 }
 
+/// Sends all onchain wallet funds to the given address
 pub async fn onchain_drain(configuration: &configuration::Configuration, onchain_drain_request: models::OnchainDrainRequest) -> Result<models::Send, Error<OnchainDrainError>> {
     // add a prefix to parameters to efficiently prevent name collisions
     let p_onchain_drain_request = onchain_drain_request;
@@ -188,6 +188,7 @@ pub async fn onchain_drain(configuration: &configuration::Configuration, onchain
     }
 }
 
+/// Sends a payment to the given onchain address
 pub async fn onchain_send(configuration: &configuration::Configuration, onchain_send_request: models::OnchainSendRequest) -> Result<models::Send, Error<OnchainSendError>> {
     // add a prefix to parameters to efficiently prevent name collisions
     let p_onchain_send_request = onchain_send_request;
@@ -225,6 +226,7 @@ pub async fn onchain_send(configuration: &configuration::Configuration, onchain_
     }
 }
 
+/// Sends multiple payments to provided onchain addresses
 pub async fn onchain_send_many(configuration: &configuration::Configuration, onchain_send_many_request: models::OnchainSendManyRequest) -> Result<models::Send, Error<OnchainSendManyError>> {
     // add a prefix to parameters to efficiently prevent name collisions
     let p_onchain_send_many_request = onchain_send_many_request;
@@ -262,6 +264,7 @@ pub async fn onchain_send_many(configuration: &configuration::Configuration, onc
     }
 }
 
+/// Syncs the onchain wallet
 pub async fn onchain_sync(configuration: &configuration::Configuration, ) -> Result<(), Error<OnchainSyncError>> {
 
     let uri_str = format!("{}/api/v1/onchain/sync", configuration.base_path);
@@ -285,6 +288,7 @@ pub async fn onchain_sync(configuration: &configuration::Configuration, ) -> Res
     }
 }
 
+/// Returns all the onchain wallet transactions
 pub async fn onchain_transactions(configuration: &configuration::Configuration, ) -> Result<Vec<models::TransactionInfo>, Error<OnchainTransactionsError>> {
 
     let uri_str = format!("{}/api/v1/onchain/transactions", configuration.base_path);
@@ -319,6 +323,7 @@ pub async fn onchain_transactions(configuration: &configuration::Configuration, 
     }
 }
 
+/// Returns all the onchain wallet UTXOs
 pub async fn onchain_utxos(configuration: &configuration::Configuration, ) -> Result<Vec<models::UtxoInfo>, Error<OnchainUtxosError>> {
 
     let uri_str = format!("{}/api/v1/onchain/utxos", configuration.base_path);

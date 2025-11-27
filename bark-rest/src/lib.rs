@@ -29,8 +29,8 @@ const CRATE_VERSION : &'static str = env!("CARGO_PKG_VERSION");
 		ping,
 	),
 	nest(
-		(path = "/api/v1/board", api = api::v1::board::BoardApiDoc),
-		(path = "/api/v1/exit", api = api::v1::exit::ExitApiDoc),
+		(path = "/api/v1/boards", api = api::v1::boards::BoardsApiDoc),
+		(path = "/api/v1/exits", api = api::v1::exits::ExitsApiDoc),
 		(path = "/api/v1/lightning", api = api::v1::lightning::LightningApiDoc),
 		(path = "/api/v1/onchain", api = api::v1::onchain::OnchainApiDoc),
 		(path = "/api/v1/wallet", api = api::v1::wallet::WalletApiDoc),
@@ -88,7 +88,7 @@ impl RestServer {
 			.merge(SwaggerUi::new("/swagger-ui").url("/api-docs/openapi.json", api.clone()))
 			.layer(CorsLayer::permissive())
 			.with_state(self)
-			.fallback(error::not_found);
+			.fallback(error::route_not_found);
 
 		// Run the server
 		log::info!("Server running on http://{}", socket_addr);
