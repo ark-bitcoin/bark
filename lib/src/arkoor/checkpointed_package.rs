@@ -68,12 +68,16 @@ impl<'a> CheckpointedPackageBuilder<'a, state::Initial> {
 		Ok(Self { builders: packages })
 	}
 
-	pub fn generate_user_nonces(self) -> CheckpointedPackageBuilder<'a, state::UserGeneratedNonces> {
-		let mut packages = Vec::with_capacity(self.builders.len());
-		for package in self.builders.into_iter() {
-			packages.push(package.generate_user_nonces());
+	pub fn generate_user_nonces(self, user_keypairs: &[Keypair]) -> Result<CheckpointedPackageBuilder<'a, state::UserGeneratedNonces>, ArkoorSigningError> {
+		if user_keypairs.len() != self.builders.len() {
+			return Err(ArkoorSigningError::InvalidNbKeypairs { expected: self.builders.len(), got: user_keypairs.len() })
 		}
-		CheckpointedPackageBuilder { builders: packages }
+
+		let mut builder = Vec::with_capacity(self.builders.len());
+		for (idx, package) in self.builders.into_iter().enumerate() {
+			builder.push(package.generate_user_nonces(user_keypairs[idx]));
+		}
+		Ok(CheckpointedPackageBuilder { builders: builder })
 	}
 }
 
@@ -193,7 +197,7 @@ mod test {
 	}
 
 	fn verify_package_builder(builder: CheckpointedPackageBuilder<state::Initial>, keypairs: &[Keypair], funding_tx_map: HashMap<Txid, Transaction>) {
-		let user_builder = builder.generate_user_nonces();
+		let user_builder = builder.generate_user_nonces(keypairs).expect("Valid nb of keypairs");
 		let cosign_requests = user_builder.cosign_requests();
 
 		let cosign_responses = CheckpointedPackageBuilder::from_cosign_requests(&cosign_requests)

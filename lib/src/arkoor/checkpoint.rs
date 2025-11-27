@@ -443,22 +443,13 @@ impl<'a> CheckpointedArkoorBuilder<'a, state::Initial> {
 
 	/// Generates the user nonces and moves the builder to the [state::UserGeneratedNonces] state
 	/// This is the path that is used by the user
-	pub fn generate_user_nonces(mut self) -> CheckpointedArkoorBuilder<'a, state::UserGeneratedNonces> {
+	pub fn generate_user_nonces(mut self, user_keypair: Keypair) -> CheckpointedArkoorBuilder<'a, state::UserGeneratedNonces> {
 		let mut user_pub_nonces = Vec::with_capacity(self.nb_sigs());
 		let mut user_sec_nonces = Vec::with_capacity(self.nb_sigs());
 
 		for idx in 0..self.nb_sigs() {
-			let (agg, _tweaked_pubkey) = musig::tweaked_key_agg(
-				[self.input.user_pubkey(), self.input.server_pubkey()],
-				self.taptweak_at(idx).to_byte_array(),
-			);
-
-			let (sec_nonce, pub_nonce) = agg.nonce_gen(
-				musig::SessionSecretRand::assume_unique_per_nonce_gen(rand::random()),
-				musig::pubkey_to(self.input.user_pubkey()),
-				&self.sighashes[idx].to_byte_array(),
-				None
-			);
+			let sighash = &self.sighashes[idx].to_byte_array();
+			let (sec_nonce, pub_nonce) = musig::nonce_pair_with_msg(&user_keypair, sighash);
 
 			user_pub_nonces.push(pub_nonce);
 			user_sec_nonces.push(sec_nonce);
@@ -728,7 +719,7 @@ mod test {
 
 
 		// The user generates their nonces
-		let user_builder =user_builder.generate_user_nonces();
+		let user_builder =user_builder.generate_user_nonces(alice_keypair);
 		let cosign_request = user_builder.cosign_request();
 
 		// The server will cosign the request
