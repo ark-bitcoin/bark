@@ -57,7 +57,7 @@ impl BarkPersister for Dummy {
 
 	fn store_pending_board(
 		&self,
-		_vtxo: VtxoId,
+		_vtxo: &Vtxo,
 		_funding_tx: &Transaction,
 		_movement_id: MovementId,
 	) -> anyhow::Result<()> {

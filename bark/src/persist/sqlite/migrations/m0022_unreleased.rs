@@ -210,7 +210,10 @@ impl Migration for Migration0022 {
 		conn.execute_batch(movement_batch).context("failed to migrate movements")?;
 
 		let queries = [
+			// Adding default 0 for backward compatibility
+			"ALTER TABLE bark_pending_board ADD COLUMN amount_sat INTEGER NOT NULL DEFAULT 0;",
 		];
+
 		for query in queries {
 			conn.execute(query, ()).context("failed to execute migration")?;
 		}

@@ -1420,7 +1420,7 @@ impl Wallet {
 		self.store_locked_vtxos([&vtxo], Some(movement_id))?;
 
 		let tx = wallet.finish_tx(board_psbt)?;
-		self.db.store_pending_board(vtxo.id(), &tx, movement_id)?;
+		self.db.store_pending_board(&vtxo, &tx, movement_id)?;
 
 		trace!("Broadcasting board tx: {}", bitcoin::consensus::encode::serialize_hex(&tx));
 		self.chain.broadcast_tx(&tx).await?;

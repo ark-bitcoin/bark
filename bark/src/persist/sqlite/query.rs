@@ -216,17 +216,18 @@ pub fn get_pending_board_movement_id(
 
 pub fn store_new_pending_board(
 	tx: &Transaction,
-	vtxo_id: VtxoId,
+	vtxo: &Vtxo,
 	funding_tx: &bitcoin::Transaction,
 	movement_id: MovementId,
 ) -> anyhow::Result<()> {
 	let mut statement = tx.prepare("
-		INSERT INTO bark_pending_board (vtxo_id, funding_tx, movement_id)
-		VALUES (:vtxo_id, :funding_tx, :movement_id);"
+		INSERT INTO bark_pending_board (vtxo_id, amount_sat, funding_tx, movement_id)
+		VALUES (:vtxo_id, :amount_sat, :funding_tx, :movement_id);"
 	)?;
 
 	statement.execute(named_params! {
-		":vtxo_id": vtxo_id.to_string(),
+		":vtxo_id": vtxo.id().to_string(),
+		":amount_sat": vtxo.amount().to_sat(),
 		":funding_tx": bitcoin::consensus::encode::serialize_hex(&funding_tx),
 		":movement_id": movement_id.0,
 	})?;

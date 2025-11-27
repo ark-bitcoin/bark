@@ -128,13 +128,13 @@ impl BarkPersister for SqliteClient {
 
 	fn store_pending_board(
 		&self,
-		vtxo_id: VtxoId,
+		vtxo: &Vtxo,
 		funding_tx: &bitcoin::Transaction,
 		movement_id: MovementId,
 	) -> anyhow::Result<()> {
 		let mut conn = self.connect()?;
 		let tx = conn.transaction()?;
-		query::store_new_pending_board(&tx, vtxo_id, funding_tx, movement_id)?;
+		query::store_new_pending_board(&tx, vtxo, funding_tx, movement_id)?;
 		tx.commit()?;
 		Ok(())
 	}

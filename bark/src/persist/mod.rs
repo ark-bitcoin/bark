@@ -209,7 +209,7 @@ pub trait BarkPersister: Send + Sync + 'static {
 	/// - Returns an error if the board cannot be stored.
 	fn store_pending_board(
 		&self,
-		vtxo_id: VtxoId,
+		vtxo: &Vtxo,
 		funding_tx: &Transaction,
 		movement_id: MovementId,
 	) -> anyhow::Result<()>;
