@@ -155,15 +155,18 @@ dump-server-sql-schema:
 	  | sed '/^\\restrict.*$/d' \
 	  | sed '/^\\unrestrict.*$/d' > {{SERVER_SQL_SCHEMA_PATH}}.tmp && mv {{SERVER_SQL_SCHEMA_PATH}}.tmp {{SERVER_SQL_SCHEMA_PATH}}
 	echo "bark-server SQL schema written to {{SERVER_SQL_SCHEMA_PATH}}"
+	chmod 644 bark/schema.sql
 
 dump-bark-sql-schema:
 	cargo run --example dump-sqlite-schema > {{BARK_SQL_SCHEMA_PATH}}
 	echo "bark SQL schema written to {{BARK_SQL_SCHEMA_PATH}}"
+	chmod 644 bark/schema.sql
 
-dump-bark-openapi-schema:
+dump-bark-rest-openapi-schema:
 	cargo run --package bark-rest --example dump_api_docs > {{BARK_OPENAPI_SCHEMA_PATH}}
+	chmod 644 bark-rest/openapi.json
 
-generate-rust-api: dump-bark-openapi-schema
+generate-bark-rest-client: dump-bark-rest-openapi-schema
 	rm -rf {{BARK_REST_CLIENT_DIR}}
 	openapi-generator-cli generate \
 		-i {{BARK_OPENAPI_SCHEMA_PATH}} \
@@ -177,6 +180,6 @@ generate-rust-api: dump-bark-openapi-schema
 	rm {{BARK_REST_CLIENT_DIR}}/src/models/*.rs
 	cp bark-rest/helpers/models.rs {{BARK_REST_CLIENT_DIR}}/src/models/mod.rs
 
-generate-static-files: dump-server-sql-schema dump-bark-sql-schema dump-bark-openapi-schema
+generate-static-files: dump-server-sql-schema dump-bark-sql-schema dump-bark-rest-openapi-schema generate-bark-rest-client
 
 
