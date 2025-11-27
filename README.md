@@ -46,6 +46,20 @@ The project consists of:
 - [**Compile from source**](https://docs.second.tech/getting-started/optional/compile-from-source/)
 - [**Set up an Ark server**](https://docs.second.tech/run-ark-server/): For patient folks looking to do more in-depth testing!
 
+## What if I don't speak rust?
+
+No rust, no problem!
+
+
+**barkd** is an Ark wallet that runs as a daemon and exposes a REST API over HTTP.
+It's well suited for power users and great for automation—think web shops, Telegram/Discord bots, and similar use cases.
+The [barkd-clients repository](https://gitlab.com/ark-bitcoin/barkd-clients) provides clients in TypeScript and C#.
+
+**uniffi-bindings** are the better choice if you're building a native
+desktop or mobile application. The bindings are available in the
+[bark-ffi repository](https://gitlab.com/ark-bitcoi/bark-ffi).
+Note, that these are still experimental, but stabilizing quickly.
+
 ## Why Ark?
 
 As bitcoin adoption grows, on-chain fees spike during busy periods, making everyday transactions impractical. While Lightning has been revolutionary for bitcoin scaling, it's beginning to show its limitations-channel management and liquidity requirements create complexity for developers and users.
