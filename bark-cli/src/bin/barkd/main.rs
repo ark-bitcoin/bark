@@ -14,6 +14,10 @@ use bark_cli::log::init_logging;
 use bark_cli::wallet::open_wallet;
 
 
+/// The full version string we show in our binary.
+/// (GIT_HASH is set in build.rs)
+const FULL_VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), " (", env!("GIT_HASH"), ")");
+
 fn default_datadir() -> String {
 	home::home_dir().or_else(|| {
 		std::env::current_dir().ok()
@@ -23,7 +27,7 @@ fn default_datadir() -> String {
 }
 
 #[derive(Parser)]
-#[command(name = "barkd", about = "Bark web daemon")]
+#[command(name = "barkd", about = "Bark daemon", version = FULL_VERSION)]
 struct Cli {
 	/// Enable verbose logging
 	#[arg(
@@ -125,6 +129,7 @@ async fn main() -> anyhow::Result<()>{
 	let datadir = PathBuf::from_str(&cli.datadir).unwrap();
 
 	init_logging(cli.verbose, cli.quiet, &datadir);
+	info!("Starting barkd daemon with version {}", FULL_VERSION);
 
 	let (wallet, onchain) = open_wallet(&datadir).await?;
 	let wallet = Arc::new(wallet);
