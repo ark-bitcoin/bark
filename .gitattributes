@@ -1,2 +1,2 @@
-bark-rest/openapi.json text diff=json linguist-generated=true
-clients/rust/** text diff=rust linguist-generated=true
+bark-rest/openapi.json linguist-generated gitlab-generated
+clients/rust/** linguist-generated gitlab-generated
