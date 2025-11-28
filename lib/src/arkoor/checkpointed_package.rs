@@ -10,6 +10,34 @@ pub struct CheckpointedPackageBuilder<S: state::BuilderState> {
 	builders: Vec<CheckpointedArkoorBuilder<S>>,
 }
 
+#[derive(Debug, Clone)]
+pub struct PackageCosignRequest<V> {
+	pub requests: Vec<CosignRequest<V>>
+}
+
+impl<V> PackageCosignRequest<V> {
+	pub fn convert_vtxo<F, O>(self, f: F) -> PackageCosignRequest<O>
+		where F: Fn(V) -> O
+	{
+		PackageCosignRequest {
+			requests: self.requests.into_iter().map(|r| {
+				CosignRequest {
+					user_pub_nonces: r.user_pub_nonces,
+					input: f(r.input),
+					outputs: r.outputs,
+				}
+
+			}).collect::<Vec<_>>()
+		}
+	}
+}
+
+
+#[derive(Debug, Clone)]
+pub struct PackageCosignResponse {
+	pub responses: Vec<CosignResponse>
+}
+
 impl CheckpointedPackageBuilder<state::Initial> {
 
 	pub fn new(
@@ -83,12 +111,12 @@ impl CheckpointedPackageBuilder<state::Initial> {
 	}
 }
 
-impl<'a> CheckpointedPackageBuilder<state::UserGeneratedNonces> {
-	pub fn user_cosign(self, user_keypair: &[Keypair], server_cosign_response: &[CosignResponse]) -> Result<CheckpointedPackageBuilder<state::UserSigned>, ArkoorSigningError> {
-		if server_cosign_response.len() != self.builders.len() {
+impl CheckpointedPackageBuilder<state::UserGeneratedNonces> {
+	pub fn user_cosign(self, user_keypair: &[Keypair], server_cosign_response: PackageCosignResponse) -> Result<CheckpointedPackageBuilder<state::UserSigned>, ArkoorSigningError> {
+		if server_cosign_response.responses.len() != self.builders.len() {
 			return Err(ArkoorSigningError::InvalidNbPackages {
 				expected: self.builders.len(),
-				got: server_cosign_response.len()
+				got: server_cosign_response.responses.len()
 			})
 		}
 
@@ -99,15 +127,17 @@ impl<'a> CheckpointedPackageBuilder<state::UserGeneratedNonces> {
 		let mut packages = Vec::with_capacity(self.builders.len());
 
 		for (idx, pkg) in self.builders.into_iter().enumerate() {
-			packages.push(pkg.user_cosign(&user_keypair[idx], &server_cosign_response[idx])?);
+			packages.push(pkg.user_cosign(&user_keypair[idx], &server_cosign_response.responses[idx])?);
 		}
 		Ok(CheckpointedPackageBuilder { builders: packages })
 	}
 
-	pub fn cosign_requests(&self) -> Vec<CosignRequest<Vtxo>> {
-		self.builders.iter()
+	pub fn cosign_requests(&self) -> PackageCosignRequest<Vtxo> {
+		let requests = self.builders.iter()
 			.map(|package| package.cosign_request())
-			.collect::<Vec<_>>()
+			.collect::<Vec<_>>();
+
+		PackageCosignRequest { requests }
 	}
 }
 
@@ -121,12 +151,13 @@ impl CheckpointedPackageBuilder<state::UserSigned> {
 }
 
 impl CheckpointedPackageBuilder<state::ServerCanCosign> {
-	pub fn from_cosign_requests(cosign_requests: Vec<CosignRequest<Vtxo>>) -> Result<Self, ArkoorSigningError> {
-		let request_iter = cosign_requests.into_iter();
+	pub fn from_cosign_requests(cosign_requests: PackageCosignRequest<Vtxo>) -> Result<Self, ArkoorSigningError> {
+		let request_iter = cosign_requests.requests.into_iter();
 		let mut packages = Vec::with_capacity(request_iter.size_hint().0);
 		for request in request_iter {
 			packages.push(CheckpointedArkoorBuilder::from_cosign_request(request)?);
 		}
+
 		Ok(Self { builders: packages })
 	}
 
@@ -140,10 +171,12 @@ impl CheckpointedPackageBuilder<state::ServerCanCosign> {
 }
 
 impl CheckpointedPackageBuilder<state::ServerSigned> {
-	pub fn cosign_responses(&self) -> Vec<CosignResponse> {
-		self.builders.iter()
-			.map(|b| b.cosign_response())
-			.collect::<Vec<_>>()
+	pub fn cosign_response(&self) -> PackageCosignResponse {
+		let responses = self.builders.iter()
+			.map(|package| package.cosign_response())
+			.collect::<Vec<_>>();
+
+		PackageCosignResponse { responses }
 	}
 }
 
@@ -219,10 +252,10 @@ mod test {
 			.expect("Invalid cosign requests")
 			.server_cosign(server_keypair())
 			.expect("Wrong server key")
-			.cosign_responses();
+			.cosign_response();
 
 
-		let vtxos = user_builder.user_cosign(keypairs, &cosign_responses)
+		let vtxos = user_builder.user_cosign(keypairs, cosign_responses)
 			.expect("Invalid cosign responses")
 			.build_signed_vtxos();
 
