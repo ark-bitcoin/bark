@@ -7,6 +7,7 @@
 mod error;
 
 mod bitcoind;
+pub mod arkoor;
 pub mod config;
 pub mod database;
 pub mod rpcserver;
