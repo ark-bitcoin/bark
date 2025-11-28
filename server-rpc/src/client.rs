@@ -28,11 +28,16 @@
 
 use std::cmp;
 use std::convert::TryFrom;
+use std::ops::Deref;
 use std::str::FromStr;
-use std::time::Duration;
+use std::sync::Arc;
+use std::time::{Duration, SystemTime};
 
 use bitcoin::Network;
 use log::{info, warn};
+use tokio::sync::RwLock;
+use tonic::service::interceptor::InterceptedService;
+use tonic::transport::Channel;
 
 use ark::ArkInfo;
 
@@ -48,6 +53,11 @@ pub const MIN_PROTOCOL_VERSION: u64 = 1;
 ///
 /// For info on protocol versions, see [server_rpc](crate) module documentation.
 pub const MAX_PROTOCOL_VERSION: u64 = 1;
+
+/// The time to live for the Ark info.
+///
+/// The Ark info is refreshed every 10 minutes.
+pub const ARK_INFO_TTL: u32 = 10 * 60;
 
 #[derive(Debug, thiserror::Error)]
 #[error("failed to create gRPC endpoint: {msg}")]
@@ -70,17 +80,19 @@ pub enum ConnectError {
 	#[error(transparent)]
 	Connect(#[from] tonic::transport::Error),
 	#[error("handshake request failed: {0}")]
-	Handshake(String),
+	Handshake(tonic::Status),
 	#[error("version mismatch. Client max is: {client_max}, server min is: {server_min}")]
 	ProtocolVersionMismatchClientTooOld { client_max: u64, server_min: u64 },
 	#[error("version mismatch. Client min is: {client_min}, server max is: {server_max}")]
 	ProtocolVersionMismatchServerTooOld { client_min: u64, server_max: u64 },
 	#[error("error getting ark info: {0}")]
-	GetArkInfo(#[from] tonic::Status),
+	GetArkInfo(tonic::Status),
 	#[error("invalid ark info from ark server: {0}")]
 	InvalidArkInfo(#[from] ConvertError),
 	#[error("network mismatch. Expected: {expected}, Got: {got}")]
 	NetworkMismatch { expected: Network, got: Network },
+	#[error("tokio channel error: {0}")]
+	Tokio(#[from] tokio::sync::oneshot::error::RecvError),
 }
 
 /// A gRPC interceptor that attaches the negotiated protocol version to each request.
@@ -100,7 +112,57 @@ impl tonic::service::Interceptor for ProtocolVersionInterceptor {
 	}
 }
 
+/// A handle to the Ark info.
+///
+/// This handle is used to wait for the Ark info to be updated, if needed.
+pub struct ArkInfoHandle {
+	pub info: ArkInfo,
+	pub waiter: Option<tokio::sync::oneshot::Receiver<Result<ArkInfo, ConnectError>>>,
+}
+
+impl Deref for ArkInfoHandle {
+	type Target = ArkInfo;
+
+	fn deref(&self) -> &Self::Target {
+		&self.info
+	}
+}
+
+pub struct ServerInfo {
+	/// Protocol version used for rpc protocol.
+	///
+	/// For info on protocol versions, see [server_rpc](crate) module documentation.
+	pub pver: u64,
+	/// Server-side configuration and network parameters returned after connection.
+	pub info: ArkInfo,
+	/// Informations contained in this struct will be considered outdated after this time.
+	pub refresh_at: SystemTime,
+}
+
+impl ServerInfo {
+	/// Compute the time at which the Ark info will be considered outdated.
+	fn ttl() -> SystemTime {
+		SystemTime::now() + Duration::from_secs(ARK_INFO_TTL as u64)
+	}
+
+	pub fn new(pver: u64, info: ArkInfo) -> Self {
+		Self { pver, info, refresh_at: Self::ttl() }
+	}
+
+	pub fn update(&mut self, info: ArkInfo) {
+		self.info = info;
+		self.refresh_at = Self::ttl();
+	}
+
+	/// Checks if the information contained in this struct is outdated.
+	pub fn is_outdated(&self) -> bool {
+		SystemTime::now() > self.refresh_at
+	}
+}
+
 /// A managed connection to the Ark server.
+///
+/// Note: it is not clonable on purpose, to avoid keeping an outdated connection.
 ///
 /// This type encapsulates:
 /// - `pver`: The negotiated protocol version for the current session.
@@ -108,18 +170,18 @@ impl tonic::service::Interceptor for ProtocolVersionInterceptor {
 /// - `client`: A ready-to-use gRPC client bound to the same channel used for the handshake.
 #[derive(Clone)]
 pub struct ServerConnection {
-	/// Protocol version used for rpc protocol.
-	///
-	/// For info on protocol versions, see [server_rpc](crate) module documentation.
-	#[allow(unused)]
-	pub pver: u64,
-	/// Server-side configuration and network parameters returned after connection.
-	pub info: ArkInfo,
+	info: Arc<RwLock<ServerInfo>>,
 	/// The gRPC client to call Ark RPCs.
-	pub client: ArkServiceClient<tonic::service::interceptor::InterceptedService<tonic::transport::Channel, ProtocolVersionInterceptor>>,
+	pub client: ArkServiceClient<InterceptedService<Channel, ProtocolVersionInterceptor>>,
 }
 
 impl ServerConnection {
+	fn handshake_req() -> protos::HandshakeRequest {
+		protos::HandshakeRequest {
+			bark_version: Some(env!("CARGO_PKG_VERSION").into()),
+		}
+	}
+
 	/// Build a tonic endpoint from a server address, configuring timeouts and TLS if required.
 	///
 	/// - Supports `http` and `https` URIs. Any other scheme results in an error.
@@ -178,34 +240,56 @@ impl ServerConnection {
 		let channel = endpoint.connect().await?;
 
 		let mut handshake_client = ArkServiceClient::new(channel.clone());
-		let handshake = handshake_client.handshake(protos::HandshakeRequest {
-			bark_version: Some(env!("CARGO_PKG_VERSION").into()),
-		}).await.map_err(|e| ConnectError::Handshake(e.to_string()))?.into_inner();
+		let handshake = handshake_client.handshake(Self::handshake_req()).await
+			.map_err(ConnectError::Handshake)?.into_inner();
 
-
-		if let Some(ref msg) = handshake.psa {
-			warn!("Message from Ark server: \"{}\"", msg);
-		}
-
-		if MAX_PROTOCOL_VERSION < handshake.min_protocol_version {
-			return Err(ConnectError::ProtocolVersionMismatchClientTooOld {
-				client_max: MAX_PROTOCOL_VERSION, server_min: handshake.min_protocol_version
-			});
-		}
-		if MIN_PROTOCOL_VERSION > handshake.max_protocol_version {
-			return Err(ConnectError::ProtocolVersionMismatchServerTooOld {
-				client_min: MIN_PROTOCOL_VERSION, server_max: handshake.max_protocol_version
-			});
-		}
-
-		let pver = cmp::min(MAX_PROTOCOL_VERSION, handshake.max_protocol_version);
-		assert!((MIN_PROTOCOL_VERSION..=MAX_PROTOCOL_VERSION).contains(&pver));
-		assert!((handshake.min_protocol_version..=handshake.max_protocol_version).contains(&pver));
+		let pver = check_handshake(handshake)?;
 
 		let interceptor = ProtocolVersionInterceptor { pver };
 		let mut client = ArkServiceClient::with_interceptor(channel, interceptor);
 
-		let res = client.get_ark_info(protos::Empty {}).await
+		let info = client.ark_info(network).await?;
+		info!("Ark info: {:?}", info);
+
+		let info = Arc::new(RwLock::new(ServerInfo::new(pver, info)));
+		Ok(ServerConnection { info, client })
+	}
+
+	/// Checks the connection to the Ark server by performing an handshake request.
+	pub async fn check_connection(&self) -> Result<(), ConnectError> {
+		let mut client = self.client.clone();
+		let handshake = client.handshake(Self::handshake_req()).await
+			.map_err(ConnectError::Handshake)?.into_inner();
+		check_handshake(handshake)?;
+		Ok(())
+	}
+
+	/// Returns a [ArkInfoHandle]
+	///
+	/// If the Ark info is outdated, a new request will be sent to
+	/// the Ark server to refresh it asynchronously.
+	///
+	/// The handle also contains a receiver that will be signalled
+	/// when the Ark info is successfully refreshed.
+	pub async fn ark_info(&self) -> Result<ArkInfo, ConnectError> {
+		let mut current = self.info.write().await;
+
+		let new_info = self.client.clone().ark_info(current.info.network).await?;
+		if current.is_outdated() {
+			current.update(new_info);
+			return Ok(new_info);
+		}
+
+		Ok(current.info)
+	}
+}
+trait ArkServiceClientExt {
+	async fn ark_info(&mut self, network: Network) -> Result<ArkInfo, ConnectError>;
+}
+
+impl ArkServiceClientExt for ArkServiceClient<InterceptedService<Channel, ProtocolVersionInterceptor>> {
+	async fn ark_info(&mut self, network: Network) -> Result<ArkInfo, ConnectError> {
+		let res = self.get_ark_info(protos::Empty {}).await
 			.map_err(ConnectError::GetArkInfo)?;
 		let info = ArkInfo::try_from(res.into_inner())
 			.map_err(ConnectError::InvalidArkInfo)?;
@@ -213,6 +297,29 @@ impl ServerConnection {
 			return Err(ConnectError::NetworkMismatch { expected: network, got: info.network });
 		}
 
-		Ok(ServerConnection { pver, info, client })
+		Ok(info)
 	}
+}
+
+fn check_handshake(handshake: protos::HandshakeResponse) -> Result<u64, ConnectError> {
+	if let Some(ref msg) = handshake.psa {
+		warn!("Message from Ark server: \"{}\"", msg);
+	}
+
+	if MAX_PROTOCOL_VERSION < handshake.min_protocol_version {
+		return Err(ConnectError::ProtocolVersionMismatchClientTooOld {
+			client_max: MAX_PROTOCOL_VERSION, server_min: handshake.min_protocol_version
+		});
+	}
+	if MIN_PROTOCOL_VERSION > handshake.max_protocol_version {
+		return Err(ConnectError::ProtocolVersionMismatchServerTooOld {
+			client_min: MIN_PROTOCOL_VERSION, server_max: handshake.max_protocol_version
+		});
+	}
+
+	let pver = cmp::min(MAX_PROTOCOL_VERSION, handshake.max_protocol_version);
+	assert!((MIN_PROTOCOL_VERSION..=MAX_PROTOCOL_VERSION).contains(&pver));
+	assert!((handshake.min_protocol_version..=handshake.max_protocol_version).contains(&pver));
+
+	Ok(pver)
 }

@@ -14,7 +14,7 @@ async fn example() -> anyhow::Result<()> {
 	let db = Arc::new(SqliteClient::open("./bark_db")?);
 	let wallet = Wallet::create(&mnemonic, Network::Signet, cfg, db, false).await?;
 
-	let address = wallet.new_address()?;
+	let address = wallet.new_address().await?;
 	println!("My first Ark address: {}", address);
 
 	let invoice = wallet.bolt11_invoice("10000sat".parse()?).await?;

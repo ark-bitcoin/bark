@@ -546,6 +546,7 @@ async fn start_attempt(
 	event: &RoundAttempt,
 ) -> anyhow::Result<AttemptState> {
 	let mut srv = wallet.require_server().context("server not available")?;
+	let ark_info = srv.ark_info().await?;
 
 	// Assign cosign pubkeys to the payment requests.
 	let cosign_keys = iter::repeat_with(|| Keypair::new(&SECP, &mut rand::thread_rng()))
@@ -559,9 +560,9 @@ async fn start_attempt(
 	// For each of our requested vtxo output, we need a set of public and secret nonces.
 	let cosign_nonces = cosign_keys.iter()
 		.map(|key| {
-			let mut secs = Vec::with_capacity(srv.info.nb_round_nonces);
-			let mut pubs = Vec::with_capacity(srv.info.nb_round_nonces);
-			for _ in 0..srv.info.nb_round_nonces {
+			let mut secs = Vec::with_capacity(ark_info.nb_round_nonces);
+			let mut pubs = Vec::with_capacity(ark_info.nb_round_nonces);
+			for _ in 0..ark_info.nb_round_nonces {
 				let (s, p) = musig::nonce_pair(key);
 				secs.push(s);
 				pubs.push(p);
@@ -796,6 +797,7 @@ async fn sign_forfeits(
 	connector_pubkey: PublicKey,
 ) -> anyhow::Result<(Vec<Vtxo>, HashMap<VtxoId, Vec<(musig::PublicNonce, musig::PartialSignature)>>)> {
 	let srv = wallet.require_server().context("server not available")?;
+	let ark_info = srv.ark_info().await?;
 
 	let round_txid = unsigned_round_tx.compute_txid();
 	let vtxos_utxo = OutPoint::new(round_txid, ROUND_TX_VTXO_TREE_VOUT);
@@ -842,7 +844,7 @@ async fn sign_forfeits(
 
 			let (nonce, sig) = musig::deterministic_partial_sign(
 				&keypair,
-				[srv.info.server_pubkey],
+				[ark_info.server_pubkey],
 				&[srv_nonce],
 				sighash.to_byte_array(),
 				Some(vtxo.output_taproot().tap_tweak().to_byte_array()),

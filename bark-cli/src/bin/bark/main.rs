@@ -430,7 +430,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 			})
 		},
 		Command::ArkInfo => {
-			if let Some(info) = wallet.ark_info() {
+			if let Some(info) = wallet.ark_info().await? {
 				output_json(&bark_json::cli::ArkInfo::from(info));
 			} else {
 				warn!("Could not connect with Ark server.")
@@ -438,9 +438,9 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 		},
 		Command::Address { index } => {
 			if let Some(index) = index {
-				println!("{}", wallet.peak_address(index)?)
+				println!("{}", wallet.peak_address(index).await?)
 			} else {
-				println!("{}", wallet.new_address()?)
+				println!("{}", wallet.new_address().await?)
 			}
 		},
 		Command::Balance { no_sync } => {

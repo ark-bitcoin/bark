@@ -29,22 +29,23 @@ impl Wallet {
 	/// Create, store and return a [Bolt11Invoice] for offchain boarding
 	pub async fn bolt11_invoice(&self, amount: Amount) -> anyhow::Result<Bolt11Invoice> {
 		let mut srv = self.require_server()?;
+		let ark_info = srv.ark_info().await?;
 		let config = self.config();
 
 		// User needs to enfore the following delta:
 		// - vtxo exit delta + htlc expiry delta (to give him time to exit the vtxo before htlc expires)
 		// - vtxo exit margin (to give him time to exit the vtxo before htlc expires)
 		// - htlc recv claim delta (to give him time to claim the htlc before it expires)
-		let requested_min_cltv_delta = srv.info.vtxo_exit_delta +
-			srv.info.htlc_expiry_delta +
+		let requested_min_cltv_delta = ark_info.vtxo_exit_delta +
+			ark_info.htlc_expiry_delta +
 			config.vtxo_exit_margin +
 			config.htlc_recv_claim_delta +
 			LIGHTNING_PREPARE_CLAIM_DELTA;
 
-		if requested_min_cltv_delta > srv.info.max_user_invoice_cltv_delta {
+		if requested_min_cltv_delta > ark_info.max_user_invoice_cltv_delta {
 			bail!("HTLC CLTV delta ({}) is greater than Server's max HTLC recv CLTV delta: {}",
 				requested_min_cltv_delta,
-				srv.info.max_user_invoice_cltv_delta,
+				ark_info.max_user_invoice_cltv_delta,
 			);
 		}
 
@@ -474,6 +475,7 @@ impl Wallet {
 		token: Option<&str>,
 	) -> anyhow::Result<Option<Vec<Vtxo>>> {
 		let srv = self.require_server()?;
+		let ark_info = srv.ark_info().await?;
 
 		let receive = match self.check_lightning_receive(payment_hash, wait, token).await? {
 			Some(receive) => receive,
@@ -501,7 +503,7 @@ impl Wallet {
 					.expect("only server htlc recv vtxos can be pending lightning recv").htlc_expiry;
 
 				let safe_exit_margin = first_vtxo.exit_delta() +
-					srv.info.htlc_expiry_delta +
+					ark_info.htlc_expiry_delta +
 					self.config.vtxo_exit_margin;
 
 				if tip > vtxo_htlc_expiry.saturating_sub(safe_exit_margin as BlockHeight) {

@@ -57,6 +57,7 @@ tonic.workspace = true
 tokio.workspace = true
 tokio-stream.workspace = true
 futures.workspace = true
+parking_lot.workspace = true
 
 # Prebuilt BDK Wallet only
 bdk_wallet = { workspace = true, features = [ "rusqlite" ], optional = true }
