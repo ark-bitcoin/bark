@@ -64,7 +64,6 @@
 //! will construct the [CosignResponse] which is sent to the client.
 //!
 
-use std::borrow::Cow;
 use std::marker::PhantomData;
 
 use bitcoin::hashes::Hash;
@@ -142,9 +141,9 @@ pub struct CosignResponse {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CosignRequest<'a> {
+pub struct CosignRequest {
 	pub user_pub_nonces: Vec<musig::PublicNonce>,
-	pub input: std::borrow::Cow<'a, Vtxo>,
+	pub input: Vtxo,
 	pub outputs: Vec<VtxoRequest>,
 }
 
@@ -189,10 +188,10 @@ pub mod state {
 	impl BuilderState for ServerSigned {}
 }
 
-pub struct CheckpointedArkoorBuilder<'a, S: state::BuilderState> {
+pub struct CheckpointedArkoorBuilder<S: state::BuilderState> {
 	// These variables are provided by the user
 	/// The input vtxo to be spent
-	input: &'a Vtxo,
+	input: Vtxo,
 	/// `n` [VtxoRequest]s that the user wants to receive
 	outputs: Vec<VtxoRequest>,
 
@@ -228,7 +227,7 @@ pub struct CheckpointedArkoorBuilder<'a, S: state::BuilderState> {
 	_state: PhantomData<S>,
 }
 
-impl<'a, S: state::BuilderState> CheckpointedArkoorBuilder<'a, S> {
+impl<S: state::BuilderState> CheckpointedArkoorBuilder<S> {
 
 	fn checkpoint_vtxo_at(
 		&self,
@@ -303,18 +302,16 @@ impl<'a, S: state::BuilderState> CheckpointedArkoorBuilder<'a, S> {
 		self.outputs.len()
 	}
 
-	/// Construct all unsigned vtxos that will be created by this builder.
-	pub fn build_unsigned_vtxos(&'a self) -> impl Iterator<Item = Vtxo> + 'a {
+	pub fn build_unsigned_vtxos<'a>(&'a self) -> impl Iterator<Item = Vtxo> + 'a {
 		(0..self.nb_outputs()).map(|i| self.vtxo_at(i, None, None))
 	}
 
-	pub fn build_unsigned_checkpoint_vtxos(&'a self) -> impl Iterator<Item = Vtxo> + 'a {
+	pub fn build_unsigned_checkpoint_vtxos<'a>(&'a self) -> impl Iterator<Item = Vtxo> + 'a {
 		(0..self.nb_outputs()).map(|i| self.checkpoint_vtxo_at(i, None))
 	}
 
-
 	/// The returned [VtxoId] is spent out-of-round by [Txid]
-	pub fn spend_info(&'a self) -> impl Iterator<Item=(VtxoId, Txid)> + 'a {
+	pub fn spend_info<'a>(&'a self) -> impl Iterator<Item=(VtxoId, Txid)> + 'a {
 		let first = [(self.input.id(), self.unsigned_checkpoint_txid)];
 		let others = (0..self.nb_outputs()).map(|idx| {
 			(
@@ -435,7 +432,7 @@ impl<'a, S: state::BuilderState> CheckpointedArkoorBuilder<'a, S> {
 	}
 
 
-	fn to_state<S2: state::BuilderState>(self) -> CheckpointedArkoorBuilder<'a, S2> {
+	fn to_state<S2: state::BuilderState>(self) -> CheckpointedArkoorBuilder<S2> {
 		CheckpointedArkoorBuilder {
 			input: self.input,
 			outputs: self.outputs,
@@ -456,17 +453,17 @@ impl<'a, S: state::BuilderState> CheckpointedArkoorBuilder<'a, S> {
 	}
 }
 
-impl<'a> CheckpointedArkoorBuilder<'a, state::Initial> {
+impl CheckpointedArkoorBuilder<state::Initial> {
 
 	/// Create a new checkpointed arkoor builder
-	pub fn new(input: &'a Vtxo, outputs: Vec<VtxoRequest>) -> Result<Self, ArkoorConstructionError> {
+	pub fn new(input: Vtxo, outputs: Vec<VtxoRequest>) -> Result<Self, ArkoorConstructionError> {
 		// Do some validation on the amounts
-		Self::validate_amounts(input, &outputs)?;
+		Self::validate_amounts(&input, &outputs)?;
 
 		// Construct the checkpoint and arkoor transactions
-		let unsigned_checkpoint_tx = Self::construct_unsigned_checkpoint_tx(input, &outputs);
+		let unsigned_checkpoint_tx = Self::construct_unsigned_checkpoint_tx(&input, &outputs);
 		let unsigned_checkpoint_txid = unsigned_checkpoint_tx.compute_txid();
-		let unsigned_arkoor_txs = Self::construct_unsigned_arkoor_txs(input, &outputs, unsigned_checkpoint_tx.compute_txid());
+		let unsigned_arkoor_txs = Self::construct_unsigned_arkoor_txs(&input, &outputs, unsigned_checkpoint_tx.compute_txid());
 
 		// Compute all vtx-ids
 		let new_vtxo_ids = unsigned_arkoor_txs.iter()
@@ -508,7 +505,7 @@ impl<'a> CheckpointedArkoorBuilder<'a, state::Initial> {
 
 	/// Generates the user nonces and moves the builder to the [state::UserGeneratedNonces] state
 	/// This is the path that is used by the user
-	pub fn generate_user_nonces(mut self, user_keypair: Keypair) -> CheckpointedArkoorBuilder<'a, state::UserGeneratedNonces> {
+	pub fn generate_user_nonces(mut self, user_keypair: Keypair) -> CheckpointedArkoorBuilder<state::UserGeneratedNonces> {
 		let mut user_pub_nonces = Vec::with_capacity(self.nb_sigs());
 		let mut user_sec_nonces = Vec::with_capacity(self.nb_sigs());
 
@@ -531,7 +528,7 @@ impl<'a> CheckpointedArkoorBuilder<'a, state::Initial> {
 	///
 	/// If you are implementing a client, use [Self::generate_user_nonces] instead.
 	/// If you are implementing a server you should look at [CheckpointedArkoorBuilder::from_cosign_request]
-	fn set_user_pub_nonces(mut self, user_pub_nonces: Vec<musig::PublicNonce>) -> Result<CheckpointedArkoorBuilder<'a, state::ServerCanCosign>, ArkoorSigningError> {
+	fn set_user_pub_nonces(mut self, user_pub_nonces: Vec<musig::PublicNonce>) -> Result<CheckpointedArkoorBuilder<state::ServerCanCosign>, ArkoorSigningError> {
 		if user_pub_nonces.len() != self.nb_sigs() {
 			return Err(ArkoorSigningError::InvalidNbUserNonces {
 				expected: self.nb_sigs(),
@@ -544,18 +541,19 @@ impl<'a> CheckpointedArkoorBuilder<'a, state::Initial> {
 	}
 }
 
-impl<'a> CheckpointedArkoorBuilder<'a, state::ServerCanCosign> {
+impl<'a> CheckpointedArkoorBuilder<state::ServerCanCosign> {
 
-	pub fn from_cosign_request(cosign_request: &'a CosignRequest) -> Result<CheckpointedArkoorBuilder<'a, state::ServerCanCosign>, ArkoorSigningError> {
+	pub fn from_cosign_request(cosign_request: CosignRequest) -> Result<CheckpointedArkoorBuilder<state::ServerCanCosign>, ArkoorSigningError> {
 		CheckpointedArkoorBuilder::new(
-				&cosign_request.input,
-				cosign_request.outputs.clone())
+				cosign_request.input,
+				cosign_request.outputs,
+		)
 			.map_err(ArkoorSigningError::ArkoorConstructionError)?
 			.set_user_pub_nonces(cosign_request.user_pub_nonces.clone())
 
 	}
 
-	pub fn server_cosign(mut self, server_keypair: Keypair) -> Result<CheckpointedArkoorBuilder<'a, state::ServerSigned>, ArkoorSigningError> {
+	pub fn server_cosign(mut self, server_keypair: Keypair) -> Result<CheckpointedArkoorBuilder<state::ServerSigned>, ArkoorSigningError> {
 		// Verify that the provided keypair is correct
 		if server_keypair.public_key() != self.input.server_pubkey() {
 			return Err(ArkoorSigningError::IncorrectKey {
@@ -587,7 +585,7 @@ impl<'a> CheckpointedArkoorBuilder<'a, state::ServerCanCosign> {
 
 }
 
-impl<'a> CheckpointedArkoorBuilder<'a, state::ServerSigned> {
+impl CheckpointedArkoorBuilder<state::ServerSigned> {
 
 	pub fn user_pub_nonces(&self) -> Vec<musig::PublicNonce> {
 		self.user_pub_nonces.as_ref().expect("state invariant").clone()
@@ -605,16 +603,16 @@ impl<'a> CheckpointedArkoorBuilder<'a, state::ServerSigned> {
 	}
 }
 
-impl<'a> CheckpointedArkoorBuilder<'a, state::UserGeneratedNonces> {
+impl CheckpointedArkoorBuilder<state::UserGeneratedNonces> {
 
 	pub fn user_pub_nonces(&self) -> &[PublicNonce] {
 		self.user_pub_nonces.as_ref().expect("State invariant")
 	}
 
-	pub fn cosign_request(&'a self) -> CosignRequest<'a> {
+	pub fn cosign_request(&self) -> CosignRequest {
 		CosignRequest {
 			user_pub_nonces: self.user_pub_nonces.as_ref().expect("state invariant").clone(),
-			input: Cow::Borrowed(self.input),
+			input: self.input.clone(),
 			outputs: self.outputs.clone(),
 		}
 	}
@@ -662,7 +660,7 @@ impl<'a> CheckpointedArkoorBuilder<'a, state::UserGeneratedNonces> {
 		mut self,
 		user_keypair: &Keypair,
 		server_cosign_data: &CosignResponse,
-	) -> Result<CheckpointedArkoorBuilder<'a, state::UserSigned>, ArkoorSigningError> {
+	) -> Result<CheckpointedArkoorBuilder<state::UserSigned>, ArkoorSigningError> {
 		// Verify that the correct user keypair is provided
 		if user_keypair.public_key() != self.input.user_pubkey() {
 			return Err(ArkoorSigningError::IncorrectKey {
@@ -707,7 +705,7 @@ impl<'a> CheckpointedArkoorBuilder<'a, state::UserGeneratedNonces> {
 }
 
 
-impl<'a> CheckpointedArkoorBuilder<'a, state::UserSigned> {
+impl<'a> CheckpointedArkoorBuilder<state::UserSigned> {
 
 	pub fn build_signed_vtxos(&self) -> Vec<Vtxo> {
 		let checkpoint_sig = self.full_signatures.as_ref().expect("state invariant")[0];
@@ -718,11 +716,6 @@ impl<'a> CheckpointedArkoorBuilder<'a, state::UserSigned> {
 		}).collect()
 	}
 }
-
-impl<'a, S: state::BuilderState> CheckpointedArkoorBuilder<'a, S> {
-}
-
-
 
 
 #[cfg(test)]
@@ -773,7 +766,7 @@ mod test {
 
 		// The user generates their nonces
 		let user_builder = CheckpointedArkoorBuilder::new(
-			&alice_vtxo,
+			alice_vtxo.clone(),
 			vtxo_request.clone(),
 		).expect("Valid arkoor request");
 
@@ -788,7 +781,7 @@ mod test {
 		let cosign_request = user_builder.cosign_request();
 
 		// The server will cosign the request
-		let server_builder = CheckpointedArkoorBuilder::from_cosign_request(&cosign_request).expect("Invalid cosign request")
+		let server_builder = CheckpointedArkoorBuilder::from_cosign_request(cosign_request).expect("Invalid cosign request")
 			.server_cosign(server_keypair).expect("Incorrect key");
 
 		let cosign_data = server_builder.cosign_response();
