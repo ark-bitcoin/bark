@@ -43,8 +43,7 @@ This will result in a tree of arkoor transactions as illustrated below.
 ```
 
 Obviously, we didn't draw the entire tree because it becomes somewhat long. 
-If Alice repeats this process 5 times she will have a
-end Alice will have `4*4*4*4*4=1024` vtxos.
+If Alice repeats this process 5 times she will have `4*4*4*4*4=1024` vtxos.
 
 # Participating in a round
 
