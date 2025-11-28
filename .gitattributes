@@ -1,2 +1,2 @@
 bark-rest/openapi.json linguist-generated gitlab-generated
-clients/rust/** linguist-generated gitlab-generated
+bark-rest-client/** linguist-generated gitlab-generated

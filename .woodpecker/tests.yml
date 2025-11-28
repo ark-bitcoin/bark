@@ -50,17 +50,11 @@ steps:
     commands:
       - >
         nix develop .#default --command bash -c "
-          cargo run --example dump-sqlite-schema            > bark/schema.sql
-          cargo run --example dump-server-postgres-schema   > server/schema.sql
-          sed -i '/^-- Dumped by .*$/d'   server/schema.sql
-          sed -i '/^-- Dumped from .*$/d' server/schema.sql
-          sed -i '/^.restrict.*$/d'       server/schema.sql
-          sed -i '/^.unrestrict.*$/d'     server/schema.sql
-          chmod 644 bark/schema.sql
-          chmod 644 server/schema.sql
+          just generate-static-files
         "
       - bash contrib/check-clean-diff.sh bark/schema.sql
       - bash contrib/check-clean-diff.sh server/schema.sql
+      - bash contrib/check-clean-diff.sh bark-rest/openapi.json
 
   - name: test-unit
     depends_on: build
