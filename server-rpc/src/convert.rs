@@ -13,6 +13,7 @@ use ark::challenges::RoundAttemptChallenge;
 use ark::lightning::{PaymentHash, Preimage};
 use ark::rounds::RoundId;
 use ark::tree::signed::VtxoTreeSpec;
+use ark::vtxo::VtxoRef;
 
 use crate::protos;
 
@@ -456,6 +457,95 @@ impl From<ark::integration::TokenStatus> for protos::intman::TokenStatus {
 			ark::integration::TokenStatus::Abused => protos::intman::TokenStatus::Abused,
 			ark::integration::TokenStatus::Disabled => protos::intman::TokenStatus::Disabled,
 		}
+	}
+}
+
+// Serialization of a CosignRequest
+impl<V: VtxoRef> From<ark::arkoor::checkpoint::CosignRequest<V>> for protos::CheckpointedCosignRequest {
+
+	fn from(v: ark::arkoor::checkpoint::CosignRequest<V>) -> Self {
+		Self {
+			input_vtxo_id: v.input.vtxo_id().serialize(),
+			user_pub_nonces: v.user_pub_nonces.into_iter().map(|n| n.serialize().to_vec()).collect::<Vec<_>>(),
+			outputs: v.outputs.into_iter().map(|output| {
+				protos::VtxoRequest {
+					amount: output.amount.to_sat(),
+					policy: output.policy.serialize()
+				}
+			}).collect::<Vec<_>>()
+		}
+	}
+}
+
+// Deserialization of CosignRequest
+impl TryFrom<protos::CheckpointedCosignRequest> for ark::arkoor::checkpoint::CosignRequest<VtxoId> {
+	type Error = ConvertError;
+	fn try_from(v: protos::CheckpointedCosignRequest) -> Result<Self, Self::Error> {
+		Ok(Self::new(
+			v.user_pub_nonces.into_iter().map(|n| musig::PublicNonce::from_bytes(&n)).collect::<Result<Vec<_>, _>>()?,
+			VtxoId::from_bytes(&v.input_vtxo_id)?,
+			v.outputs.into_iter().map(|output| VtxoRequest::try_from(output)).collect::<Result<Vec<_>, _>>()?,
+		))
+	}
+}
+
+// Serialize the package cosign request
+impl<V: VtxoRef> From<ark::arkoor::checkpointed_package::PackageCosignRequest<V>> for protos::CheckpointedPackageCosignRequest {
+	fn from(v: ark::arkoor::checkpointed_package::PackageCosignRequest<V>) -> Self {
+		Self {
+			parts: v.requests.into_iter().map(|p| p.into()).collect::<Vec<_>>(),
+		}
+	}
+}
+
+// Serialize the PackageCosignRequest
+impl<'a> TryFrom<protos::CheckpointedPackageCosignRequest> for ark::arkoor::checkpointed_package::PackageCosignRequest<VtxoId> {
+	type Error = ConvertError;
+
+	fn try_from(v: protos::CheckpointedPackageCosignRequest) -> Result<Self, Self::Error> {
+		Ok(Self {
+			requests: v.parts.into_iter().map(|p| p.try_into()).collect::<Result<Vec<_>, _>>()?,
+		})
+	}
+}
+
+// Serialization of CosignResponse
+impl From<ark::arkoor::checkpoint::CosignResponse> for protos::CheckpointedCosignResponse {
+	fn from(v: ark::arkoor::checkpoint::CosignResponse) -> Self {
+		Self {
+			server_pub_nonces: v.server_pub_nonces.into_iter().map(|p| p.serialize().to_vec()).collect::<Vec<_>>(),
+			server_partial_sigs: v.server_partial_sigs.into_iter().map(|p| p.serialize().to_vec()).collect::<Vec<_>>(),
+		}
+	}
+}
+
+// Deserialize the CosignResponse
+impl TryFrom<protos::CheckpointedCosignResponse> for ark::arkoor::checkpoint::CosignResponse {
+	type Error = ConvertError;
+	fn try_from(v: protos::CheckpointedCosignResponse) -> Result<Self, Self::Error> {
+		Ok(Self {
+			server_pub_nonces: v.server_pub_nonces.into_iter().map(|n| musig::PublicNonce::from_bytes(&n)).collect::<Result<Vec<_>, _>>()?,
+			server_partial_sigs: v.server_partial_sigs.into_iter().map(|n| musig::PartialSignature::from_bytes(&n)).collect::<Result<Vec<_>, _>>()?,
+		})
+	}
+}
+
+// Serialize the package cosign response
+impl From<ark::arkoor::checkpointed_package::PackageCosignResponse> for protos::CheckpointedPackageCosignResponse {
+	fn from(v: ark::arkoor::checkpointed_package::PackageCosignResponse) -> Self {
+		Self {
+			parts: v.responses.into_iter().map(|p| p.into()).collect::<Vec<_>>(),
+		}
+	}
+}
+
+// Deserialize the PackageCosignResponse
+impl TryFrom<protos::CheckpointedPackageCosignResponse> for ark::arkoor::checkpointed_package::PackageCosignResponse {
+	type Error = ConvertError;
+	fn try_from(v: protos::CheckpointedPackageCosignResponse) -> Result<Self, Self::Error> {
+		Ok(Self {
+			responses: v.parts.into_iter().map(|p| p.try_into()).collect::<Result<Vec<_>, _>>()?,
+		})
 	}
 }
 
