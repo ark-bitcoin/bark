@@ -5,7 +5,7 @@ use bitcoin::hex::DisplayHex;
 use log::{info, error};
 
 use ark::{VtxoRequest, ProtocolEncoding};
-use ark::vtxo::{Vtxo, VtxoPolicy, VtxoPolicyKind};
+use ark::vtxo::{Vtxo, VtxoId, VtxoPolicy, VtxoPolicyKind};
 use ark::arkoor::ArkoorPackageBuilder;
 use ark::musig;
 
@@ -22,7 +22,7 @@ use crate::{
 
 /// The result of creating an arkoor transaction
 pub struct ArkoorCreateResult {
-	input: Vec<Vtxo>,
+	input: Vec<VtxoId>,
 	created: Vec<Vtxo>,
 	change: Option<Vtxo>,
 }
@@ -92,7 +92,7 @@ impl Wallet {
 		}
 
 		Ok(ArkoorCreateResult {
-			input: inputs,
+			input: inputs.iter().map(|vtxo| vtxo.id()).collect::<Vec<_>>(),
 			created: sent,
 			change,
 		})
