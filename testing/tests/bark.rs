@@ -130,7 +130,7 @@ async fn board_bark() {
 	let board = bark1.board(sat(BOARD_AMOUNT)).await;
 
 	let [vtxo] = bark1.vtxos().await.try_into().expect("should have board vtxo");
-	assert_eq!(board.vtxos[0].id, vtxo.id);
+	assert_eq!(board.vtxos[0], vtxo.id);
 	assert!(matches!(vtxo.state, VtxoStateInfo::Locked { .. }));
 
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
@@ -152,8 +152,8 @@ async fn board_twice_bark() {
 
 	let vtxos = bark1.vtxos().await;
 	assert_eq!(vtxos.len(), 2, "should have 2 board vtxos");
-	assert!(vtxos.iter().any(|v| v.id == board_a.vtxos[0].id));
-	assert!(vtxos.iter().any(|v| v.id == board_b.vtxos[0].id));
+	assert!(vtxos.iter().any(|v| v.id == board_a.vtxos[0]));
+	assert!(vtxos.iter().any(|v| v.id == board_b.vtxos[0]));
 	assert!(vtxos.iter().all(|v| matches!(v.state, VtxoStateInfo::Locked { .. })));
 
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
@@ -176,7 +176,7 @@ async fn board_all_bark() {
 
 	let board = bark1.board_all().await;
 	let [vtxo] = bark1.vtxos().await.try_into().expect("should have board vtxo");
-	assert_eq!(board.vtxos[0].id, vtxo.id);
+	assert_eq!(board.vtxos[0], vtxo.id);
 	assert!(matches!(vtxo.state, VtxoStateInfo::Locked { .. }));
 
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
@@ -185,7 +185,7 @@ async fn board_all_bark() {
 	assert_eq!(bark1.onchain_balance().await, Amount::ZERO);
 
 	// Check if the boarding tx's output value is the same as our off-chain balance
-	let board_tx = ctx.bitcoind().await_transaction(board.funding_txid).await;
+	let board_tx = ctx.bitcoind().await_transaction(board.funding_tx.txid).await;
 	assert_eq!(
 		bark1.spendable_balance().await,
 		board_tx.output.last().unwrap().value,

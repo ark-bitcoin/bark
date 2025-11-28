@@ -56,7 +56,7 @@ CREATE TABLE bark_pending_board (
 				id INTEGER PRIMARY KEY,
 				vtxo_id TEXT NOT NULL REFERENCES bark_vtxo(id) ON DELETE CASCADE,
 				funding_tx TEXT NOT NULL UNIQUE,
-				created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now')), movement_id INTEGER NOT NULL,
+				created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now')), movement_id INTEGER NOT NULL, amount_sat INTEGER NOT NULL DEFAULT 0,
 				UNIQUE (vtxo_id)
 			);
 CREATE TABLE bark_pending_lightning_send (

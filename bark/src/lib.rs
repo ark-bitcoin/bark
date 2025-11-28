@@ -336,7 +336,7 @@ use crate::movement::manager::{MovementGuard, MovementManager};
 use crate::movement::update::MovementUpdate;
 use crate::onchain::{ChainSource, PreparePsbt, ExitUnilaterally, Utxo, SignPsbt};
 use crate::persist::{BarkPersister, RoundStateId};
-use crate::persist::models::{PendingLightningSend, LightningReceive};
+use crate::persist::models::{LightningReceive, PendingBoard, PendingLightningSend};
 use crate::round::{RoundParticipation, RoundStatus};
 use crate::subsystem::{ArkoorMovement, BarkSubsystem, BoardMovement, RoundMovement, SubsystemId};
 use crate::vtxo::selection::{FilterVtxos, VtxoFilter, RefreshStrategy};
@@ -412,20 +412,6 @@ impl From<Utxo> for UtxoInfo {
 			},
 		}
 	}
-}
-
-/// Describes a completed transition of funds from onchain to offchain.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct Board {
-	/// The [bitcoin::Txid] of the funding-transaction.
-	/// This is the transaction that has to be confirmed
-	/// onchain for the board to succeed.
-	pub funding_txid: bitcoin::Txid,
-	/// The info for each [ark::Vtxo] that was created
-	/// in this board.
-	///
-	/// Currently, this is always a vector of length 1
-	pub vtxos: Vec<Vtxo>,
 }
 
 /// Describes a completed transition of funds from offchain to onchain collaboratively with the
@@ -1072,14 +1058,32 @@ impl Wallet {
 		Ok(vtxos)
 	}
 
+	pub fn pending_boards(&self) -> anyhow::Result<Vec<PendingBoard>> {
+		let boarding_vtxo_ids = self.db.get_all_pending_board_ids()?;
+		let mut boards = Vec::with_capacity(boarding_vtxo_ids.len());
+		for vtxo_id in boarding_vtxo_ids {
+			let board = self.db.get_pending_board_by_vtxo_id(vtxo_id)?
+				.expect("id just retrieved from db");
+			boards.push(board);
+		}
+		Ok(boards)
+	}
+
 	/// Queries the database for any VTXO that is an unregistered board. There is a lag time between
 	/// when a board is created and when it becomes spendable.
 	///
 	/// See [ArkInfo::required_board_confirmations] and [Wallet::sync_pending_boards].
 	pub fn pending_board_vtxos(&self) -> anyhow::Result<Vec<WalletVtxo>> {
-		let vtxos = self.db.get_all_pending_board_ids()?.iter()
-			.map(|vtxo_id| self.get_vtxo_by_id(*vtxo_id))
-			.collect::<anyhow::Result<Vec<_>>>()?;
+		let vtxo_ids = self.pending_boards()?.into_iter()
+			.flat_map(|b| b.vtxos.into_iter())
+			.collect::<Vec<_>>();
+
+		let mut vtxos = Vec::with_capacity(vtxo_ids.len());
+		for vtxo_id in vtxo_ids {
+			let vtxo = self.get_vtxo_by_id(vtxo_id)
+				.expect("vtxo id just got retrieved from db");
+			vtxos.push(vtxo);
+		}
 
 		debug_assert!(vtxos.iter().all(|v| matches!(v.state.kind(), VtxoStateKind::Locked)),
 			"all pending board vtxos should be locked"
@@ -1346,7 +1350,7 @@ impl Wallet {
 		&self,
 		onchain: &mut dyn onchain::Board,
 		amount: Amount,
-	) -> anyhow::Result<Board> {
+	) -> anyhow::Result<PendingBoard> {
 		let (user_keypair, _) = self.derive_store_next_keypair()?;
 		self.board(onchain, Some(amount), user_keypair).await
 	}
@@ -1355,7 +1359,7 @@ impl Wallet {
 	pub async fn board_all(
 		&self,
 		onchain: &mut dyn onchain::Board,
-	) -> anyhow::Result<Board> {
+	) -> anyhow::Result<PendingBoard> {
 		let (user_keypair, _) = self.derive_store_next_keypair()?;
 		self.board(onchain, None, user_keypair).await
 	}
@@ -1365,7 +1369,7 @@ impl Wallet {
 		wallet: &mut dyn onchain::Board,
 		amount: Option<Amount>,
 		user_keypair: Keypair,
-	) -> anyhow::Result<Board> {
+	) -> anyhow::Result<PendingBoard> {
 		let mut srv = self.require_server()?;
 		let ark_info = srv.ark_info().await?;
 
@@ -1438,20 +1442,17 @@ impl Wallet {
 		self.store_locked_vtxos([&vtxo], Some(movement_id))?;
 
 		let tx = wallet.finish_tx(board_psbt)?;
-		self.db.store_pending_board(vtxo.id(), &tx, movement_id)?;
+		self.db.store_pending_board(&vtxo, &tx, movement_id)?;
 
 		trace!("Broadcasting board tx: {}", bitcoin::consensus::encode::serialize_hex(&tx));
 		self.chain.broadcast_tx(&tx).await?;
 
 		info!("Board broadcasted");
-		Ok(Board {
-			funding_txid: tx.compute_txid(),
-			vtxos: vec![vtxo.into()],
-		})
+		Ok(self.db.get_pending_board_by_vtxo_id(vtxo.id())?.expect("board should be stored"))
 	}
 
 	/// Registers a board to the Ark server
-	async fn register_board(&self, vtxo: impl VtxoRef) -> anyhow::Result<Board> {
+	async fn register_board(&self, vtxo: impl VtxoRef) -> anyhow::Result<()> {
 		trace!("Attempting to register board {} to server", vtxo.vtxo_id());
 		let mut srv = self.require_server()?;
 
@@ -1473,17 +1474,13 @@ impl Wallet {
 		// No need to complain if the vtxo is already registered
 		self.db.update_vtxo_state_checked(vtxo.id(), VtxoState::Spendable, &UNSPENT_STATES)?;
 
-		let movement_id = self.db.get_pending_board_movement_id(vtxo.id())?;
+		let board = self.db.get_pending_board_by_vtxo_id(vtxo.id())?
+			.context("pending board not found")?;
+
+		self.movements.finish_movement(board.movement_id, MovementStatus::Finished).await?;
 		self.db.remove_pending_board(&vtxo.id())?;
 
-		self.movements.finish_movement(movement_id, MovementStatus::Finished).await?;
-
-		let funding_txid = vtxo.chain_anchor().txid;
-
-		Ok(Board {
-			funding_txid,
-			vtxos: vec![vtxo.clone()],
-		})
+		Ok(())
 	}
 
 	/// Checks if the provided VTXO has some counterparty risk in the current wallet

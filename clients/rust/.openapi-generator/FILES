@@ -9,7 +9,6 @@ docs/ArkInfo.md
 docs/BadRequestError.md
 docs/Balance.md
 docs/BitcoinApi.md
-docs/Board.md
 docs/BoardRequest.md
 docs/BoardsApi.md
 docs/ChildTransactionInfo.md
@@ -98,6 +97,7 @@ docs/OnchainBalance.md
 docs/OnchainDrainRequest.md
 docs/OnchainSendManyRequest.md
 docs/OnchainSendRequest.md
+docs/PendingBoardInfo.md
 docs/PendingRoundInfo.md
 docs/RefreshRequest.md
 docs/RoundStatus.md
@@ -137,7 +137,6 @@ src/models/ark_address_response.rs
 src/models/ark_info.rs
 src/models/bad_request_error.rs
 src/models/balance.rs
-src/models/board.rs
 src/models/board_request.rs
 src/models/child_transaction_info.rs
 src/models/connected_response.rs
@@ -222,6 +221,7 @@ src/models/onchain_balance.rs
 src/models/onchain_drain_request.rs
 src/models/onchain_send_many_request.rs
 src/models/onchain_send_request.rs
+src/models/pending_board_info.rs
 src/models/pending_round_info.rs
 src/models/refresh_request.rs
 src/models/round_status.rs

@@ -45,6 +45,32 @@
         }
       }
     },
+    "/api/v1/boards/": {
+      "get": {
+        "tags": [
+          "boards"
+        ],
+        "operationId": "get_pending_boards",
+        "responses": {
+          "200": {
+            "description": "Returns all pending boards",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/PendingBoardInfo"
+                  }
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      }
+    },
     "/api/v1/boards/board-all": {
       "post": {
         "tags": [
@@ -58,7 +84,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Board"
+                  "$ref": "#/components/schemas/PendingBoardInfo"
                 }
               }
             }
@@ -99,7 +125,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Board"
+                  "$ref": "#/components/schemas/PendingBoardInfo"
                 }
               }
             }
@@ -1752,27 +1778,6 @@
             "type": "integer",
             "format": "int64",
             "minimum": 0
-          }
-        }
-      },
-      "Board": {
-        "type": "object",
-        "description": "Describes a completed transition of funds from onchain to offchain.",
-        "required": [
-          "funding_txid",
-          "vtxos"
-        ],
-        "properties": {
-          "funding_txid": {
-            "type": "string",
-            "description": "The [Txid] of the funding-transaction.\nThis is the transaction that has to be confirmed\nonchain for the board to succeed."
-          },
-          "vtxos": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/VtxoInfo"
-            },
-            "description": "The info for each [ark::Vtxo] that was created\nin this board.\n\nCurrently, this is always a vector of length 1"
           }
         }
       },
@@ -3488,6 +3493,41 @@
           "destination": {
             "type": "string",
             "description": "The destination Bitcoin address"
+          }
+        }
+      },
+      "PendingBoardInfo": {
+        "type": "object",
+        "description": "Describes a completed transition of funds from onchain to offchain.",
+        "required": [
+          "funding_tx",
+          "vtxos",
+          "amount_sat",
+          "movement_id"
+        ],
+        "properties": {
+          "amount_sat": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The amount of the board.",
+            "minimum": 0
+          },
+          "funding_tx": {
+            "$ref": "#/components/schemas/TransactionInfo",
+            "description": "The funding transaction.\nThis is the transaction that has to be confirmed\nonchain for the board to succeed."
+          },
+          "movement_id": {
+            "type": "integer",
+            "format": "int32",
+            "description": "The ID of the movement associated with this board.",
+            "minimum": 0
+          },
+          "vtxos": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The IDs of the VTXOs that were created\nin this board.\n\nCurrently, this is always a vector of length 1"
           }
         }
       },

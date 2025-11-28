@@ -28,6 +28,22 @@ use crate::exit::models::ExitState;
 use crate::movement::MovementId;
 use crate::round::{AttemptState, RoundFlowState, RoundParticipation, RoundState, UnconfirmedRound};
 
+/// Persisted representation of a pending board.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PendingBoard {
+	/// This is the [bitcoin::Transaction] that has to
+	/// be confirmed onchain for the board to succeed.
+	pub funding_tx: Transaction,
+	/// The id of VTXOs being boarded.
+	///
+	/// Currently, this is always a vector of length 1
+	pub vtxos: Vec<VtxoId>,
+	/// The amount of the board.
+	pub amount: Amount,
+	/// The [MovementId] associated with this board.
+	pub movement_id: MovementId,
+}
+
 /// Persisted representation of a pending lightning send.
 ///
 /// Stores the invoice and the amount being sent.

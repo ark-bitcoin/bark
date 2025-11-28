@@ -432,20 +432,20 @@ impl Bark {
 		serde_json::from_str(&res).expect("json error")
 	}
 
-	pub async fn try_board(&self, amount: Amount) -> anyhow::Result<json::Board> {
+	pub async fn try_board(&self, amount: Amount) -> anyhow::Result<json::PendingBoardInfo> {
 		info!("{}: Board {}", self.name, amount);
 		self.try_run_json(["board", &amount.to_string()]).await
 	}
 
-	pub async fn board(&self, amount: Amount) -> json::Board {
+	pub async fn board(&self, amount: Amount) -> json::PendingBoardInfo {
 		self.try_board(amount).await.expect("board command failed")
 	}
 
-	pub async fn board_all(&self) -> json::Board {
+	pub async fn board_all(&self) -> json::PendingBoardInfo {
 		self.try_board_all().await.expect("board command failed")
 	}
 
-	pub async fn try_board_all(&self) -> anyhow::Result<json::Board> {
+	pub async fn try_board_all(&self) -> anyhow::Result<json::PendingBoardInfo> {
 		info!("{}: Boarding all on-chain funds", self.name);
 		self.try_run_json(["board", "--all"]).await
 	}

@@ -24,7 +24,7 @@ use bark::movement::{
 	Movement, MovementDestination, MovementId, MovementStatus, MovementSubsystem, MovementTimestamp,
 };
 use bark::persist::{BarkPersister, RoundStateId, StoredRoundState};
-use bark::persist::models::{self, PendingLightningSend, LightningReceive, StoredExit};
+use bark::persist::models::{self, PendingBoard, PendingLightningSend, LightningReceive, StoredExit};
 use bark::round::{RoundState, UnconfirmedRound};
 use bark::vtxo::state::{VtxoState, VtxoStateKind};
 
@@ -57,7 +57,7 @@ impl BarkPersister for Dummy {
 
 	fn store_pending_board(
 		&self,
-		_vtxo: VtxoId,
+		_vtxo: &Vtxo,
 		_funding_tx: &Transaction,
 		_movement_id: MovementId,
 	) -> anyhow::Result<()> {
@@ -70,6 +70,10 @@ impl BarkPersister for Dummy {
 
 	fn get_all_pending_board_ids(&self) -> anyhow::Result<Vec<VtxoId>> {
 		Ok(vec![])
+	}
+
+	fn get_pending_board_by_vtxo_id(&self, _vtxo_id: VtxoId) -> anyhow::Result<Option<PendingBoard>> {
+		Ok(None)
 	}
 
 	fn get_wallet_vtxo(&self, _id: VtxoId) -> anyhow::Result<Option<WalletVtxo>> {
@@ -288,10 +292,6 @@ impl BarkPersister for Dummy {
 
 	fn get_all_movements(&self) -> anyhow::Result<Vec<Movement>> {
 		Ok(vec![dummy_movement(MovementStatus::Failed)])
-	}
-
-	fn get_pending_board_movement_id(&self, _vtxo_id: VtxoId) -> anyhow::Result<MovementId> {
-		Ok(MovementId::new(0))
 	}
 
 	fn store_vtxos(

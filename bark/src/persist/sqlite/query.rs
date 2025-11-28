@@ -21,7 +21,7 @@ use crate::exit::models::{ExitState, ExitTxOrigin};
 use crate::movement::{Movement, MovementId, MovementStatus, MovementSubsystem};
 use crate::persist::{RoundStateId, StoredRoundState};
 use crate::persist::models::{
-	LightningReceive, PendingLightningSend, SerdeRoundState, SerdeUnconfirmedRound, StoredExit,
+	LightningReceive, PendingBoard, PendingLightningSend, SerdeRoundState, SerdeUnconfirmedRound, StoredExit
 };
 use crate::persist::sqlite::convert::{row_to_movement, row_to_wallet_vtxo, rows_to_wallet_vtxos};
 use crate::round::{RoundState, UnconfirmedRound};
@@ -202,31 +202,47 @@ pub fn get_all_pending_boards_ids(conn: &Connection) -> anyhow::Result<Vec<VtxoI
 	Ok(pending_boards)
 }
 
-pub fn get_pending_board_movement_id(
+pub fn get_pending_board_by_vtxo_id(
 	conn: &Connection,
 	vtxo_id: VtxoId,
-) -> anyhow::Result<MovementId> {
-	Ok(conn.prepare(
-		"SELECT movement_id FROM bark_pending_board WHERE vtxo_id = ?1",
-	)?.query_row(
-		params![vtxo_id.to_string()],
-		|row| Ok(MovementId::new(row.get(0)?)),
-	)?)
+) -> anyhow::Result<Option<PendingBoard>> {
+	let q = "SELECT vtxo_id, amount_sat, funding_tx, movement_id FROM bark_pending_board WHERE vtxo_id = :vtxo_id;";
+	let mut statement = conn.prepare(q)?;
+	let mut rows = statement.query(named_params! {
+		":vtxo_id": vtxo_id.to_string(),
+	})?;
+
+	match rows.next()? {
+		Some(row) => {
+			let vtxo_id = VtxoId::from_str(&row.get::<_, String>("vtxo_id")?)?;
+			let amount_sat = row.get::<_, i64>("amount_sat")? as u64;
+
+			let funding_tx = row.get::<_, String>("funding_tx")?;
+			Ok(Some(PendingBoard {
+				vtxos: vec![vtxo_id],
+				amount: Amount::from_sat(amount_sat),
+				funding_tx: bitcoin::consensus::encode::deserialize_hex(&funding_tx)?,
+				movement_id: MovementId::new(row.get::<_, u32>("movement_id")?),
+			}))
+		}
+		None => Ok(None),
+	}
 }
 
 pub fn store_new_pending_board(
 	tx: &Transaction,
-	vtxo_id: VtxoId,
+	vtxo: &Vtxo,
 	funding_tx: &bitcoin::Transaction,
 	movement_id: MovementId,
 ) -> anyhow::Result<()> {
 	let mut statement = tx.prepare("
-		INSERT INTO bark_pending_board (vtxo_id, funding_tx, movement_id)
-		VALUES (:vtxo_id, :funding_tx, :movement_id);"
+		INSERT INTO bark_pending_board (vtxo_id, amount_sat, funding_tx, movement_id)
+		VALUES (:vtxo_id, :amount_sat, :funding_tx, :movement_id);"
 	)?;
 
 	statement.execute(named_params! {
-		":vtxo_id": vtxo_id.to_string(),
+		":vtxo_id": vtxo.id().to_string(),
+		":amount_sat": vtxo.amount().to_sat(),
 		":funding_tx": bitcoin::consensus::encode::serialize_hex(&funding_tx),
 		":movement_id": movement_id.0,
 	})?;
