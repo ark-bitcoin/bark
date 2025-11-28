@@ -141,10 +141,30 @@ pub struct CosignResponse {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CosignRequest {
+pub struct CosignRequest<V> {
 	pub user_pub_nonces: Vec<musig::PublicNonce>,
-	pub input: Vtxo,
+	pub input: V,
 	pub outputs: Vec<VtxoRequest>,
+}
+
+impl<V> CosignRequest<V> {
+	pub fn new(user_pub_nonces: Vec<musig::PublicNonce>, input: V, outputs: Vec<VtxoRequest>) -> Self {
+		Self {
+			user_pub_nonces,
+			input,
+			outputs,
+		}
+	}
+}
+
+impl CosignRequest<VtxoId> {
+	pub fn with_vtxo(self, vtxo: Vtxo) -> Result<CosignRequest<Vtxo>, &'static str> {
+		if self.input != vtxo.id() {
+			return Err("Input vtxo id does not match the provided vtxo id")
+		}
+
+		Ok(CosignRequest::new(self.user_pub_nonces, vtxo,  self.outputs))
+	}
 }
 
 pub mod state {
@@ -543,7 +563,7 @@ impl CheckpointedArkoorBuilder<state::Initial> {
 
 impl<'a> CheckpointedArkoorBuilder<state::ServerCanCosign> {
 
-	pub fn from_cosign_request(cosign_request: CosignRequest) -> Result<CheckpointedArkoorBuilder<state::ServerCanCosign>, ArkoorSigningError> {
+	pub fn from_cosign_request(cosign_request: CosignRequest<Vtxo>) -> Result<CheckpointedArkoorBuilder<state::ServerCanCosign>, ArkoorSigningError> {
 		CheckpointedArkoorBuilder::new(
 				cosign_request.input,
 				cosign_request.outputs,
@@ -609,9 +629,9 @@ impl CheckpointedArkoorBuilder<state::UserGeneratedNonces> {
 		self.user_pub_nonces.as_ref().expect("State invariant")
 	}
 
-	pub fn cosign_request(&self) -> CosignRequest {
+	pub fn cosign_request(&self) -> CosignRequest<Vtxo> {
 		CosignRequest {
-			user_pub_nonces: self.user_pub_nonces.as_ref().expect("state invariant").clone(),
+			user_pub_nonces: self.user_pub_nonces().to_vec(),
 			input: self.input.clone(),
 			outputs: self.outputs.clone(),
 		}

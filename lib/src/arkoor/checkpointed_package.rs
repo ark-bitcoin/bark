@@ -104,7 +104,7 @@ impl<'a> CheckpointedPackageBuilder<state::UserGeneratedNonces> {
 		Ok(CheckpointedPackageBuilder { builders: packages })
 	}
 
-	pub fn cosign_requests(&self) -> Vec<CosignRequest> {
+	pub fn cosign_requests(&self) -> Vec<CosignRequest<Vtxo>> {
 		self.builders.iter()
 			.map(|package| package.cosign_request())
 			.collect::<Vec<_>>()
@@ -121,7 +121,7 @@ impl CheckpointedPackageBuilder<state::UserSigned> {
 }
 
 impl CheckpointedPackageBuilder<state::ServerCanCosign> {
-	pub fn from_cosign_requests(cosign_requests: Vec<CosignRequest>) -> Result<Self, ArkoorSigningError> {
+	pub fn from_cosign_requests(cosign_requests: Vec<CosignRequest<Vtxo>>) -> Result<Self, ArkoorSigningError> {
 		let request_iter = cosign_requests.into_iter();
 		let mut packages = Vec::with_capacity(request_iter.size_hint().0);
 		for request in request_iter {
@@ -139,23 +139,23 @@ impl CheckpointedPackageBuilder<state::ServerCanCosign> {
 	}
 }
 
-impl<'a> CheckpointedPackageBuilder<state::ServerSigned> {
+impl CheckpointedPackageBuilder<state::ServerSigned> {
 	pub fn cosign_responses(&self) -> Vec<CosignResponse> {
 		self.builders.iter()
-			.map(|package| package.cosign_response())
+			.map(|b| b.cosign_response())
 			.collect::<Vec<_>>()
 	}
 }
 
-impl<'a, S: state::BuilderState> CheckpointedPackageBuilder<S> {
+impl<S: state::BuilderState> CheckpointedPackageBuilder<S> {
 
-	pub fn build_unsigned_vtxos(&'a self) -> impl Iterator<Item = Vtxo> + 'a {
+	pub fn build_unsigned_vtxos<'a>(&'a self) -> impl Iterator<Item = Vtxo> + 'a {
 		self.builders.iter()
 			.map(|b| b.build_unsigned_vtxos())
 			.flatten()
 	}
 
-	pub fn build_unsigned_checkpoint_vtxos(&'a self) -> impl Iterator<Item = Vtxo> + 'a {
+	pub fn build_unsigned_checkpoint_vtxos<'a>(&'a self) -> impl Iterator<Item = Vtxo> + 'a {
 		self.builders.iter()
 			.map(|b| b.build_unsigned_checkpoint_vtxos())
 			.flatten()
@@ -163,7 +163,7 @@ impl<'a, S: state::BuilderState> CheckpointedPackageBuilder<S> {
 
 	/// Each [VtxoId] in the list is spent by [Txid]
 	/// in an out-of-round transaction
-	pub fn spend_info(&'a self) -> impl Iterator<Item = (VtxoId, Txid)> + 'a {
+	pub fn spend_info<'a>(&'a self) -> impl Iterator<Item = (VtxoId, Txid)> + 'a {
 		self.builders.iter()
 			.map(|b| b.spend_info())
 			.flatten()
