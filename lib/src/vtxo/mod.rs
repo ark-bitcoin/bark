@@ -77,8 +77,6 @@ use crate::encode::{ProtocolDecodingError, ProtocolEncoding, ReadExt, WriteExt};
 use crate::lightning::{server_htlc_receive_taproot, server_htlc_send_taproot, PaymentHash};
 use crate::tree::signed::{cosign_taproot, leaf_cosign_taproot, unlock_clause};
 
-
-
 /// The total signed tx weight of a exit tx.
 pub const EXIT_TX_WEIGHT: Weight = Weight::from_vb_unchecked(124);
 
@@ -219,6 +217,32 @@ pub fn exit_taproot(
 		.finalize(&SECP, combined_pk).unwrap()
 }
 
+/// Returns the clause which allows the server to sweep funds after expiry
+pub fn expiry_clause(
+	server_pubkey: PublicKey,
+	expiry_height: BlockHeight,
+) -> ScriptBuf {
+	let pk = server_pubkey.x_only_public_key().0;
+	scripts::timelock_sign(expiry_height, pk)
+}
+
+/// The Taproot spend info for the checkpoint policy
+///
+/// user_pubkey: The public key of the user
+/// server_pubkey: The public key of the serve
+/// expiry_height; The height at which the checkpoint will expire
+pub fn checkpoint_taproot(
+	user_pubkey: PublicKey,
+	server_pubkey: PublicKey,
+	expiry_height: BlockHeight,
+) -> taproot::TaprootSpendInfo {
+	let combined_pk = musig::combine_keys([user_pubkey, server_pubkey]);
+	taproot::TaprootBuilder::new()
+		.add_leaf(0, expiry_clause(server_pubkey, expiry_height)).unwrap()
+		.finalize(&SECP, combined_pk).unwrap()
+}
+
+
 /// Create an exit tx.
 ///
 /// When the `signature` argument is provided,
@@ -253,6 +277,9 @@ pub fn create_exit_tx(
 pub enum VtxoPolicyKind {
 	/// Standard VTXO output protected with a public key.
 	Pubkey,
+	/// A public policy that grants bitcoin back to the server after expiry
+	/// It is used to construct checkpoint transactions
+	Checkpoint,
 	/// A VTXO that represents an HTLC with the Ark server to send money.
 	ServerHtlcSend,
 	/// A VTXO that represents an HTLC with the Ark server to receive money.
@@ -263,6 +290,7 @@ impl fmt::Display for VtxoPolicyKind {
 	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
 	    match self {
 			Self::Pubkey => f.write_str("pubkey"),
+			Self::Checkpoint => f.write_str("checkpoint"),
 			Self::ServerHtlcSend => f.write_str("server-htlc-send"),
 			Self::ServerHtlcRecv => f.write_str("server-htlc-receive"),
 		}
@@ -274,6 +302,7 @@ impl FromStr for VtxoPolicyKind {
 	fn from_str(s: &str) -> Result<Self, Self::Err> {
 		Ok(match s {
 			"pubkey" => Self::Pubkey,
+			"checkpoint" => Self::Checkpoint,
 			"server-htlc-send" => Self::ServerHtlcSend,
 			"server-htlc-receive" => Self::ServerHtlcRecv,
 			_ => return Err(format!("unknown VtxoPolicyType: {}", s)),
@@ -315,6 +344,17 @@ impl From<PubkeyVtxoPolicy> for VtxoPolicy {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct CheckpointVtxoPolicy {
+	pub user_pubkey: PublicKey,
+}
+
+impl From<CheckpointVtxoPolicy> for VtxoPolicy {
+	fn from(policy: CheckpointVtxoPolicy) -> Self {
+		Self::Checkpoint(policy)
+	}
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ServerHtlcSendVtxoPolicy {
 	pub user_pubkey: PublicKey,
 	pub payment_hash: PaymentHash,
@@ -352,6 +392,8 @@ pub enum VtxoPolicy {
 	/// - an arkoor tx
 	/// - change from a LN payment
 	Pubkey(PubkeyVtxoPolicy),
+	/// A policy which returns all funds to the server after expiry
+	Checkpoint(CheckpointVtxoPolicy),
 	/// A VTXO that represents an HTLC with the Ark server to send money.
 	ServerHtlcSend(ServerHtlcSendVtxoPolicy),
 	/// A VTXO that represents an HTLC with the Ark server to receive money.
@@ -361,6 +403,10 @@ pub enum VtxoPolicy {
 impl VtxoPolicy {
 	pub fn new_pubkey(user_pubkey: PublicKey) -> Self {
 		Self::Pubkey(PubkeyVtxoPolicy { user_pubkey })
+	}
+
+	pub fn new_checkpoint(user_pubkey: PublicKey) -> Self {
+		Self::Checkpoint(CheckpointVtxoPolicy { user_pubkey })
 	}
 
 	pub fn new_server_htlc_send(
@@ -413,6 +459,7 @@ impl VtxoPolicy {
 	pub fn policy_type(&self) -> VtxoPolicyKind {
 		match self {
 			Self::Pubkey { .. } => VtxoPolicyKind::Pubkey,
+			Self::Checkpoint { .. } => VtxoPolicyKind::Checkpoint,
 			Self::ServerHtlcSend { .. } => VtxoPolicyKind::ServerHtlcSend,
 			Self::ServerHtlcRecv { .. } => VtxoPolicyKind::ServerHtlcRecv,
 		}
@@ -422,6 +469,7 @@ impl VtxoPolicy {
 	pub fn is_arkoor_compatible(&self) -> bool {
 		match self {
 			Self::Pubkey { .. } => true,
+			Self::Checkpoint { .. } => true,
 			Self::ServerHtlcSend { .. } => false,
 			Self::ServerHtlcRecv { .. } => false,
 		}
@@ -432,6 +480,7 @@ impl VtxoPolicy {
 	pub fn arkoor_pubkey(&self) -> Option<PublicKey> {
 		match self {
 			Self::Pubkey(PubkeyVtxoPolicy { user_pubkey }) => Some(*user_pubkey),
+			Self::Checkpoint(CheckpointVtxoPolicy { user_pubkey }) => Some(*user_pubkey),
 			Self::ServerHtlcSend(ServerHtlcSendVtxoPolicy { user_pubkey, .. }) => Some(*user_pubkey),
 			Self::ServerHtlcRecv(ServerHtlcRecvVtxoPolicy { user_pubkey, .. }) => Some(*user_pubkey),
 		}
@@ -441,6 +490,7 @@ impl VtxoPolicy {
 	pub fn user_pubkey(&self) -> PublicKey {
 		match self {
 			Self::Pubkey(PubkeyVtxoPolicy { user_pubkey }) => *user_pubkey,
+			Self::Checkpoint(CheckpointVtxoPolicy { user_pubkey }) => *user_pubkey,
 			Self::ServerHtlcSend(ServerHtlcSendVtxoPolicy { user_pubkey, .. }) => *user_pubkey,
 			Self::ServerHtlcRecv(ServerHtlcRecvVtxoPolicy { user_pubkey, .. }) => *user_pubkey,
 		}
@@ -450,11 +500,15 @@ impl VtxoPolicy {
 		&self,
 		server_pubkey: PublicKey,
 		exit_delta: BlockDelta,
+		expiry_height: BlockHeight,
 	) -> taproot::TaprootSpendInfo {
 		match self {
 			Self::Pubkey(PubkeyVtxoPolicy { user_pubkey }) => {
 				exit_taproot(*user_pubkey, server_pubkey, exit_delta)
 			},
+			Self::Checkpoint(CheckpointVtxoPolicy {user_pubkey}) => {
+				checkpoint_taproot(*user_pubkey, server_pubkey, expiry_height)
+			}
 			Self::ServerHtlcSend(ServerHtlcSendVtxoPolicy { user_pubkey, payment_hash, htlc_expiry }) => {
 				server_htlc_send_taproot(*payment_hash, server_pubkey, *user_pubkey, exit_delta, *htlc_expiry)
 			},
@@ -476,6 +530,9 @@ impl VtxoPolicy {
 			Self::Pubkey(PubkeyVtxoPolicy { user_pubkey }) => {
 				exit_clause(*user_pubkey, exit_delta)
 			},
+			Self::Checkpoint(_) => {
+				todo!("This clause cannot be exited by the user")
+			},
 			Self::ServerHtlcSend(ServerHtlcSendVtxoPolicy { user_pubkey, htlc_expiry, .. }) => {
 				scripts::delay_timelock_sign(
 					2 * exit_delta, *htlc_expiry, user_pubkey.x_only_public_key().0,
@@ -493,14 +550,25 @@ impl VtxoPolicy {
 		}
 	}
 
-	pub(crate) fn script_pubkey(&self, server_pubkey: PublicKey, exit_delta: BlockDelta) -> ScriptBuf {
-		self.taproot(server_pubkey, exit_delta).script_pubkey()
+	pub(crate) fn script_pubkey(
+		&self,
+		server_pubkey: PublicKey,
+		exit_delta: BlockDelta,
+		expiry_height: BlockHeight,
+	) -> ScriptBuf {
+		self.taproot(server_pubkey, exit_delta, expiry_height).script_pubkey()
 	}
 
-	pub(crate) fn txout(&self, amount: Amount, server_pubkey: PublicKey, exit_delta: BlockDelta) -> TxOut {
+	pub(crate) fn txout(
+		&self,
+		amount: Amount,
+		server_pubkey: PublicKey,
+		exit_delta: BlockDelta,
+		expiry_height: BlockHeight,
+	) -> TxOut {
 		TxOut {
 			value: amount,
-			script_pubkey: self.script_pubkey(server_pubkey, exit_delta),
+			script_pubkey: self.script_pubkey(server_pubkey, exit_delta, expiry_height),
 		}
 	}
 }
@@ -581,7 +649,7 @@ impl GenesisTransition {
 				let agg_pk = musig::combine_keys([*user_pubkey, server_pubkey]);
 				leaf_cosign_taproot(agg_pk, server_pubkey, expiry_height, unlock.hash())
 			},
-			Self::Arkoor { policy, .. } => policy.taproot(server_pubkey, exit_delta),
+			Self::Arkoor { policy, .. } => policy.taproot(server_pubkey, exit_delta, expiry_height),
 		}
 	}
 
@@ -751,7 +819,7 @@ impl<'a> Iterator for VtxoTxIter<'a> {
 		} else {
 			// when we reach the end of the chain, we take the eventual output of the vtxo
 			self.done = true;
-			self.vtxo.policy.txout(self.vtxo.amount, self.vtxo.server_pubkey, self.vtxo.exit_delta)
+			self.vtxo.policy.txout(self.vtxo.amount, self.vtxo.server_pubkey, self.vtxo.exit_delta, self.vtxo.expiry_height)
 		};
 
 		let tx = item.tx(self.prev, next_output, self.vtxo.server_pubkey, self.vtxo.expiry_height);
@@ -784,17 +852,17 @@ pub struct VtxoSpec {
 impl VtxoSpec {
 	/// The taproot spend info for the output of this [Vtxo].
 	pub fn output_taproot(&self) -> taproot::TaprootSpendInfo {
-		self.policy.taproot(self.server_pubkey, self.exit_delta)
+		self.policy.taproot(self.server_pubkey, self.exit_delta, self.expiry_height)
 	}
 
 	/// The scriptPubkey of the output of this [Vtxo].
 	pub fn output_script_pubkey(&self) -> ScriptBuf {
-		self.policy.script_pubkey(self.server_pubkey, self.exit_delta)
+		self.policy.script_pubkey(self.server_pubkey, self.exit_delta, self.expiry_height)
 	}
 
 	/// The transaction output (eventual UTXO) of this [Vtxo].
 	pub fn txout(&self) -> TxOut {
-		self.policy.txout(self.amount, self.server_pubkey, self.exit_delta)
+		self.policy.txout(self.amount, self.server_pubkey, self.exit_delta, self.expiry_height)
 	}
 }
 
@@ -906,6 +974,7 @@ impl Vtxo {
 			VtxoPolicy::ServerHtlcSend(ServerHtlcSendVtxoPolicy { payment_hash, .. }) => Some(payment_hash),
 			VtxoPolicy::ServerHtlcRecv(ServerHtlcRecvVtxoPolicy { payment_hash, .. }) => Some(payment_hash),
 			VtxoPolicy::Pubkey { .. } => None,
+			VtxoPolicy::Checkpoint( ..) => None,
 		}
 	}
 
@@ -946,17 +1015,17 @@ impl Vtxo {
 
 	/// The taproot spend info for the output of this [Vtxo].
 	pub fn output_taproot(&self) -> taproot::TaprootSpendInfo {
-		self.policy.taproot(self.server_pubkey, self.exit_delta)
+		self.policy.taproot(self.server_pubkey, self.exit_delta, self.expiry_height)
 	}
 
 	/// The scriptPubkey of the output of this [Vtxo].
 	pub fn output_script_pubkey(&self) -> ScriptBuf {
-		self.policy.script_pubkey(self.server_pubkey, self.exit_delta)
+		self.policy.script_pubkey(self.server_pubkey, self.exit_delta, self.expiry_height)
 	}
 
 	/// The transaction output (eventual UTXO) of this [Vtxo].
 	pub fn txout(&self) -> TxOut {
-		self.policy.txout(self.amount, self.server_pubkey, self.exit_delta)
+		self.policy.txout(self.amount, self.server_pubkey, self.exit_delta, self.expiry_height)
 	}
 
 	/// Whether this VTXO is fully signed
@@ -977,6 +1046,7 @@ impl Vtxo {
 	pub fn claim_satisfaction_weight(&self)  -> Weight {
 		match self.policy {
 			VtxoPolicy::Pubkey { .. } => VTXO_CLAIM_INPUT_WEIGHT,
+			VtxoPolicy::Checkpoint( ..) => VTXO_CLAIM_INPUT_WEIGHT,
 			//TODO(stevenroose) think about this. it's the same if you use keyspend
 			// but it's not the same if you have to use exit spend
 			// I guess the same holds for any vtxo
@@ -1071,11 +1141,18 @@ const VTXO_POLICY_SERVER_HTLC_SEND: u8 = 0x01;
 /// The byte used to encode the [VtxoPolicy::ServerHtlcRecv] output type.
 const VTXO_POLICY_SERVER_HTLC_RECV: u8 = 0x02;
 
+/// The byte used to encode the [VtxoPolicy::Checkpoint] output type.
+const VTXO_CHECKPOINT_CHECKPOINT: u8 = 0x03;
+
 impl ProtocolEncoding for VtxoPolicy {
 	fn encode<W: io::Write + ?Sized>(&self, w: &mut W) -> Result<(), io::Error> {
 		match self {
 			Self::Pubkey(PubkeyVtxoPolicy { user_pubkey }) => {
 				w.emit_u8(VTXO_POLICY_PUBKEY)?;
+				user_pubkey.encode(w)?;
+			},
+			Self::Checkpoint(CheckpointVtxoPolicy { user_pubkey }) => {
+				w.emit_u8(VTXO_CHECKPOINT_CHECKPOINT)?;
 				user_pubkey.encode(w)?;
 			},
 			Self::ServerHtlcSend(ServerHtlcSendVtxoPolicy { user_pubkey, payment_hash, htlc_expiry }) => {
@@ -1103,6 +1180,10 @@ impl ProtocolEncoding for VtxoPolicy {
 				let user_pubkey = PublicKey::decode(r)?;
 				Ok(Self::Pubkey(PubkeyVtxoPolicy { user_pubkey }))
 			},
+			VTXO_CHECKPOINT_CHECKPOINT => {
+				let user_pubkey = PublicKey::decode(r)?;
+				Ok(Self::new_checkpoint(user_pubkey))
+			}
 			VTXO_POLICY_SERVER_HTLC_SEND => {
 				let user_pubkey = PublicKey::decode(r)?;
 				let payment_hash = PaymentHash::from(sha256::Hash::decode(r)?.to_byte_array());

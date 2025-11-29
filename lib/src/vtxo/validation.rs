@@ -66,7 +66,7 @@ fn verify_transition(
 		)
 	}).unwrap_or_else(|| {
 		// when we reach the end of the chain, we take the eventual output of the vtxo
-		vtxo.policy.txout(vtxo.amount, vtxo.server_pubkey, vtxo.exit_delta)
+		vtxo.policy.txout(vtxo.amount, vtxo.server_pubkey, vtxo.exit_delta, vtxo.expiry_height)
 	});
 
 	let prevout = OutPoint::new(prev_tx.compute_txid(), prev_vout as u32);

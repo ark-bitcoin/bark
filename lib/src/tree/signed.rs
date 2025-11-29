@@ -168,7 +168,7 @@ impl VtxoTreeSpec {
 	fn leaf_tx(&self, vtxo: &VtxoRequest) -> Transaction {
 		let txout = TxOut {
 			value: vtxo.amount,
-			script_pubkey: vtxo.policy.script_pubkey(self.server_pubkey, self.exit_delta),
+			script_pubkey: vtxo.policy.script_pubkey(self.server_pubkey, self.exit_delta, self.expiry_height),
 		};
 
 		vtxo::create_exit_tx(OutPoint::null(), txout, None)

@@ -1906,7 +1906,7 @@ impl Wallet {
 		// Not all policies are supported for sending arkoor
 		match address.policy().policy_type() {
 			VtxoPolicyKind::Pubkey => {},
-			VtxoPolicyKind::ServerHtlcRecv | VtxoPolicyKind::ServerHtlcSend => {
+			VtxoPolicyKind::Checkpoint | VtxoPolicyKind::ServerHtlcRecv | VtxoPolicyKind::ServerHtlcSend => {
 				bail!("VTXO policy in address cannot be used for arkoor payment: {}",
 					address.policy().policy_type(),
 				);
