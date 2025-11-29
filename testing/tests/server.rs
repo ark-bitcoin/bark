@@ -5,6 +5,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 
+use ark::arkoor::checkpointed_package::CheckpointedPackageBuilder;
 use bitcoin::hex::FromHex;
 use bitcoin::{absolute, transaction, Amount, Network, OutPoint, Transaction};
 use bitcoin::hashes::Hash;
@@ -464,57 +465,79 @@ async fn full_round() {
 #[tokio::test]
 async fn double_spend_oor() {
 	let ctx = TestContext::new("server/double_spend_oor").await;
-
-	/// This proxy will always duplicate OOR requests and store the latest request in the mutex.
-	#[derive(Clone)]
-	struct Proxy(Arc<Mutex<Option<protos::ArkoorPackageCosignRequest>>>);
-	#[tonic::async_trait]
-	impl captaind::proxy::ArkRpcProxy for Proxy {
-		async fn request_arkoor_package_cosign(
-			&self, upstream: &mut ArkClient, req: protos::ArkoorPackageCosignRequest,
-		) -> Result<protos::ArkoorPackageCosignResponse, tonic::Status> {
-			let (mut c1, mut c2) = (upstream.clone(), upstream.clone());
-			let (res1, res2) = tokio::join!(
-				c1.request_arkoor_package_cosign(req.clone()),
-				c2.request_arkoor_package_cosign(req.clone()),
-			);
-			self.0.lock().await.replace(req);
-			match (res1, res2) {
-				(Ok(_), Ok(_)) => panic!("one of them should fail"),
-				(Err(_), Err(_)) => panic!("one of them should work"),
-				(Ok(r), Err(e)) | (Err(e), Ok(r)) => {
-					assert!(
-						e.to_string().contains("attempted to sign arkoor tx for vtxo already in flux")
-							|| e.to_string().contains("attempted to sign arkoor tx for already spent vtxo"),
-						"err: {e}",
-					);
-					Ok(r.into_inner())
-				},
-			}
-		}
-	}
-
 	let srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
-	let last_req = Arc::new(Mutex::new(None));
-	let proxy = srv.get_proxy_rpc(Proxy(last_req.clone())).await;
 
-	let bark = ctx.new_bark_with_funds("bark".to_string(), &proxy.address, sat(1_000_000)).await;
+	// Instantiate bark
+	let bark = ctx.new_bark_with_funds("bark".to_string(), &srv, sat(1_000_000)).await;
 	bark.board(sat(800_000)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 
-	let addr = ark::Address::builder()
-		.testnet(true)
-		.server_pubkey(srv.ark_info().await.server_pubkey)
-		.pubkey_policy(*RANDOM_PK)
-		.into_address().unwrap();
-	bark.send_oor(addr, sat(100_000)).await;
+	let bark_client = bark.client().await;
+	bark_client.maintenance().await.unwrap();
 
-	// then after it's done, fire the request again, which should fail.
-	let req = last_req.lock().await.take().unwrap();
-	let err = srv.get_public_rpc().await.request_arkoor_package_cosign(req).await.unwrap_err();
-	assert!(err.to_string().contains(
-		"bad user input: attempted to sign arkoor tx for already spent vtxo",
-	), "err: {err}");
+	// Let's try to construct a few conflicting arkoor transactions
+	let vtxo = bark_client.vtxos().unwrap().into_iter().next().unwrap().vtxo;
+	let vtxo_keypair = bark_client.pubkey_keypair(&vtxo.user_pubkey()).unwrap().unwrap().1;
+
+	let pk1 = bark_client.derive_store_next_keypair().unwrap().0.public_key();
+	let pk2 = bark_client.derive_store_next_keypair().unwrap().0.public_key();
+
+	let builder1 = CheckpointedPackageBuilder::new([vtxo.clone()], VtxoRequest { amount: sat(100_000), policy: VtxoPolicy::new_pubkey(*RANDOM_PK)}, pk1).unwrap();
+	let builder2 = CheckpointedPackageBuilder::new([vtxo.clone()], VtxoRequest { amount: sat(200_000), policy: VtxoPolicy::new_pubkey(*RANDOM_PK)}, pk1).unwrap();
+	let builder3 = CheckpointedPackageBuilder::new([vtxo.clone()], VtxoRequest { amount: sat(100_000), policy: VtxoPolicy::new_pubkey(*RANDOM_PK)}, pk2).unwrap();
+
+	// And the corresponding requests to the server
+	use protos::CheckpointedPackageCosignRequest;
+	let req1: CheckpointedPackageCosignRequest = builder1
+		.generate_user_nonces(&[vtxo_keypair]).unwrap()
+		.cosign_requests()
+		.convert_vtxo(|vtxo| vtxo.id())
+		.into();
+
+	let req2: CheckpointedPackageCosignRequest = builder2
+		.generate_user_nonces(&[vtxo_keypair]).unwrap()
+		.cosign_requests()
+		.convert_vtxo(|vtxo| vtxo.id())
+		.into();
+
+	let req3: CheckpointedPackageCosignRequest = builder3
+		.generate_user_nonces(&[vtxo_keypair]).unwrap()
+		.cosign_requests()
+		.convert_vtxo(|vtxo| vtxo.id())
+		.into();
+
+	// Create 3 rpc-clients so we can send 3 requests in paralel
+	let mut rpc1 = srv.get_public_rpc().await;
+	let mut rpc2 = srv.get_public_rpc().await;
+	let mut rpc3 = srv.get_public_rpc().await;
+
+	let (r1, r2, r3)  = tokio::join!(
+		rpc1.checkpointed_cosign_oor(req1.clone()),
+		rpc2.checkpointed_cosign_oor(req2.clone()),
+		rpc3.checkpointed_cosign_oor(req3.clone()),
+	);
+
+	let succeeded = match (r1, r2, r3) {
+		(Ok(_), Err(_), Err(_)) => 1,
+		(Err(_), Ok(_), Err(_)) => 2,
+		(Err(_), Err(_), Ok(_)) => 3,
+		(a, b, c) => panic!("Only one request should succeed {:?}, {:?}, {:?}", a, b, c),
+	};
+
+	// Make the same set of requests again
+	// We want idempotency
+	let (r1, r2, r3)  = tokio::join!(
+		rpc1.checkpointed_cosign_oor(req1.clone()),
+		rpc2.checkpointed_cosign_oor(req2.clone()),
+		rpc3.checkpointed_cosign_oor(req3.clone()),
+	);
+
+	match (r1, r2, r3) {
+		(Ok(_), Err(_), Err(_)) => assert_eq!(succeeded, 1, "Different requests succeeded"),
+		(Err(_), Ok(_), Err(_)) => assert_eq!(succeeded, 2, "Different requests succeeded"),
+		(Err(_), Err(_), Ok(_)) => assert_eq!(succeeded, 3, "Different requests succeeded"),
+		(a, b, c) => panic!("Only one request should succeed {:?}, {:?}, {:?}", a, b, c),
+	}
 }
 
 #[tokio::test]
