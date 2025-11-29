@@ -30,6 +30,10 @@ check_version() {
 }
 
 case "$TAG_NAME" in
+	*internal*)
+		echo "Internal tag, skipping."
+		exit 0
+		;;
 	server-*)
 		check_version server server-
 		;;
