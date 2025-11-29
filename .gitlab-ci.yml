@@ -65,4 +65,4 @@ woodpecker:
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
     - if: $CI_PIPELINE_SOURCE == "push"
-  timeout: 70m
+  timeout: 240m
