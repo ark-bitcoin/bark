@@ -6,10 +6,8 @@ use bitcoin::secp256k1::PublicKey;
 use log::{info, error};
 
 use ark::{VtxoRequest, ProtocolEncoding};
-use ark::arkoor::ArkoorPackageBuilder;
-use ark::musig;
 use ark::arkoor::checkpointed_package::{CheckpointedPackageBuilder, PackageCosignResponse};
-use ark::vtxo::{Vtxo, VtxoId, VtxoPolicy, VtxoPolicyKind};
+use ark::vtxo::{Vtxo, VtxoId, VtxoPolicyKind};
 
 use bitcoin_ext::P2TR_DUST;
 
@@ -41,67 +39,6 @@ impl ArkoorCreateResult {
 }
 
 impl Wallet {
-	/// Create Arkoor VTXOs for a given destination and amount
-	///
-	/// Outputs cannot have more than one input, so we can create new
-	/// arkoors for each input needed to match requested amount + one
-	/// optional change output.
-	async fn create_arkoor_vtxos(
-		&self,
-		destination_policy: VtxoPolicy,
-		amount: Amount,
-	) -> anyhow::Result<ArkoorCreateResult> {
-		let mut srv = self.require_server()?;
-
-		let change_pubkey = self.derive_store_next_keypair()?.0.public_key();
-
-		let req = VtxoRequest {
-			amount,
-			policy: destination_policy,
-		};
-
-		// Get current height for expiry checking
-		let tip = self.chain.tip().await?;
-		let inputs = self.select_vtxos_to_cover(
-			req.amount,
-			Some(tip + self.config.vtxo_refresh_expiry_threshold),
-		)?;
-
-		let mut secs = Vec::with_capacity(inputs.len());
-		let mut pubs = Vec::with_capacity(inputs.len());
-		let mut keypairs = Vec::with_capacity(inputs.len());
-		for input in inputs.iter() {
-			let keypair = self.get_vtxo_key(&input)?;
-			let (s, p) = musig::nonce_pair(&keypair);
-			secs.push(s);
-			pubs.push(p);
-			keypairs.push(keypair);
-		}
-
-		let builder = ArkoorPackageBuilder::new(&inputs, &pubs, req, Some(change_pubkey))?;
-
-		let req = protos::ArkoorPackageCosignRequest {
-			arkoors: builder.arkoors.iter().map(|a| a.into()).collect(),
-		};
-		let cosign_resp: Vec<_> = srv.client.request_arkoor_package_cosign(req).await?
-			.into_inner().try_into().context("invalid server cosign response")?;
-		ensure!(builder.verify_cosign_response(&cosign_resp),
-			"invalid arkoor cosignature received from server",
-		);
-
-		let (sent, change) = builder.build_vtxos(&cosign_resp, &keypairs, secs)?;
-
-		if let Some(change) = change.as_ref() {
-			info!("Added change VTXO of {}", change.amount());
-		}
-
-		Ok(ArkoorCreateResult {
-			input: inputs.iter().map(|vtxo| vtxo.id()).collect::<Vec<_>>(),
-			created: sent,
-			change,
-		})
-	}
-
 	/// Validate if we can send arkoor payments to the given [ark::Address], for example an error
 	/// will be returned if the given [ark::Address] belongs to a different server (see
 	/// [ark::address::ArkId]).

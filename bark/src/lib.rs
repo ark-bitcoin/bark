@@ -329,7 +329,7 @@ use server_rpc::{self as rpc, protos, ServerConnection};
 
 use crate::daemon::Daemon;
 use crate::exit::Exit;
-use crate::movement::{Movement, MovementDestination, MovementStatus};
+use crate::movement::{Movement, MovementStatus};
 use crate::movement::manager::{MovementGuard, MovementManager};
 use crate::movement::update::MovementUpdate;
 use crate::onchain::{ChainSource, PreparePsbt, ExitUnilaterally, Utxo, SignPsbt};
