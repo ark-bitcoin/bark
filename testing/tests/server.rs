@@ -12,7 +12,7 @@ use bitcoin::hashes::Hash;
 use bitcoin::script::PushBytes;
 use bitcoin::secp256k1::{Keypair, PublicKey};
 use bitcoin::{ScriptBuf, WPubkeyHash};
-use bitcoin_ext::{P2TR_DUST, P2TR_DUST_SAT};
+use bitcoin_ext::P2TR_DUST_SAT;
 use bitcoin_ext::rpc::BitcoinRpcExt;
 use futures::future::join_all;
 use futures::{Stream, StreamExt, TryStreamExt};
@@ -1323,30 +1323,54 @@ async fn reject_dust_offboard_request() {
 
 #[tokio::test]
 async fn reject_dust_arkoor_cosign() {
+	// Set up server and bark-wallet
 	let ctx = TestContext::new("server/reject_dust_arkoor_cosign").await;
 	let srv = ctx.new_captaind("server", None).await;
-
-	#[derive(Clone)]
-	struct Proxy;
-	#[tonic::async_trait]
-	impl captaind::proxy::ArkRpcProxy for Proxy {
-		async fn request_arkoor_package_cosign(
-			&self, upstream: &mut ArkClient, mut req: protos::ArkoorPackageCosignRequest,
-		) -> Result<protos::ArkoorPackageCosignResponse, tonic::Status> {
-			req.arkoors[0].outputs[0].amount = P2TR_DUST.to_sat() - 1;
-			Ok(upstream.request_arkoor_package_cosign(req).await?.into_inner())
-		}
-	}
-
-	let proxy = srv.get_proxy_rpc(Proxy).await;
-	let bark = ctx.new_bark_with_funds("bark", &proxy.address, sat(1_000_000)).await;
-
+	let bark = ctx.new_bark_with_funds("bark", &srv, sat(1_000_000)).await;
 	bark.board_all_and_confirm_and_register(&ctx).await;
 
-	let bark2 = ctx.new_bark("bark2", &srv).await;
+	// Read the vtxo and corresponding keypair
+	let bark_client = bark.client().await;
+	let vtxos = bark_client.vtxos().unwrap();
+	let vtxo = vtxos[0].clone().vtxo;
+	let vtxo_id = vtxo.id();
+	let vtxo_amount = vtxo.amount();
+	let vtxo_keypair = bark_client.get_vtxo_key(&vtxo).unwrap();
 
-	let err = bark.try_send_oor(bark2.address().await, sat(10_000), true).await.unwrap_err();
-	assert!(err.to_string().contains("arkoor output amounts cannot be below the p2tr dust threshold"), "err: {err}");
+	// Compute the amounts
+	let send_amount = sat(P2TR_DUST_SAT - 1); // A dusty output
+	let change_amount = vtxo_amount - send_amount;
+
+	// Some random policies
+	let send_policy = VtxoPolicy::new_pubkey(*RANDOM_PK);
+	let change_policy = VtxoPolicy::new_pubkey(*RANDOM_PK);
+
+	// We need 3 nonces (checkpoint + one for each output)
+	let n1 = musig::nonce_pair(&vtxo_keypair);
+	let n2 = musig::nonce_pair(&vtxo_keypair);
+	let n3 = musig::nonce_pair(&vtxo_keypair);
+
+	// Construct the request manually
+	// The ark::arkoor::checkpointed_package::CheckpointedPackageBuilder
+	// will refuse to create this request
+	let request = protos::CheckpointedPackageCosignRequest {
+		parts: vec![
+			protos::CheckpointedCosignRequest {
+				input_vtxo_id: vtxo_id.serialize(),
+				outputs: vec![
+					protos::VtxoRequest { amount: send_amount.to_sat(), policy:  send_policy.serialize()},
+					protos::VtxoRequest { amount: change_amount.to_sat(), policy: change_policy.serialize()},
+				],
+				user_pub_nonces: vec![n1.1.serialize().to_vec(), n2.1.serialize().to_vec(), n3.1.serialize().to_vec()],
+			}
+		]
+	};
+
+
+	let mut public_rpc = srv.get_public_rpc().await;
+	let err = public_rpc.checkpointed_cosign_oor(request).await.unwrap_err();
+
+	assert!(err.message().contains("An output is below the dust threshold"), "Unexpected error message: {}", err.message())
 }
 
 #[tokio::test]
