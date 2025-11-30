@@ -51,6 +51,7 @@ use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::wrappers::errors::BroadcastStreamRecvError;
 
 use ark::{Vtxo, VtxoId, VtxoRequest};
+use ark::vtxo::VtxoRef;
 use ark::arkoor::{ArkoorBuilder, ArkoorCosignResponse, ArkoorPackageBuilder};
 use ark::board::BoardBuilder;
 use ark::musig::{self, PublicNonce};
@@ -632,18 +633,22 @@ impl Server {
 		Ok(())
 	}
 
-	pub async fn check_vtxos_not_exited(&self, vtxos: &[Vtxo]) -> anyhow::Result<()> {
+	pub async fn check_vtxos_not_exited<V: VtxoRef>(
+		&self,
+		vtxos: impl IntoIterator<Item=V>
+	) -> anyhow::Result<()> {
 		for vtxo in vtxos {
-			let txid = vtxo.point().txid;
+			let vtxo_id = vtxo.vtxo_id();
+			let txid = vtxo_id.utxo().txid;
 			let status = self.bitcoind.tx_status(&txid)?;
 
 			match status {
 				TxStatus::Confirmed(_) => {
 					// TODO: should we mark vtxo as spent here?
-					return badarg!("cannot spend vtxo that is already exited: {}", vtxo.id());
+					return badarg!("cannot spend vtxo that is already exited: {}", vtxo_id);
 				},
 				TxStatus::Mempool => {
-					return badarg!("cannot spend vtxo that is being exited: {}", vtxo.id());
+					return badarg!("cannot spend vtxo that is being exited: {}", vtxo_id);
 				},
 				TxStatus::NotFound => {},
 			}
