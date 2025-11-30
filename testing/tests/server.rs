@@ -1918,11 +1918,11 @@ async fn should_refuse_oor_input_vtxo_that_is_being_exited() {
 	struct Proxy(VtxoId);
 	#[tonic::async_trait]
 	impl captaind::proxy::ArkRpcProxy for Proxy {
-		async fn request_arkoor_package_cosign(
-			&self, upstream: &mut ArkClient, mut req: protos::ArkoorPackageCosignRequest,
-		) -> Result<protos::ArkoorPackageCosignResponse, tonic::Status> {
-			req.arkoors[0].input_id = self.0.to_bytes().to_vec();
-			Ok(upstream.request_arkoor_package_cosign(req).await?.into_inner())
+		async fn checkpointed_cosign_oor(
+			&self, upstream: &mut ArkClient, mut req: protos::CheckpointedPackageCosignRequest,
+		) -> Result<protos::CheckpointedPackageCosignResponse, tonic::Status> {
+			req.parts[0].input_vtxo_id = self.0.to_bytes().to_vec();
+			Ok(upstream.checkpointed_cosign_oor(req).await?.into_inner())
 		}
 	}
 
@@ -1930,7 +1930,7 @@ async fn should_refuse_oor_input_vtxo_that_is_being_exited() {
 
 	bark.set_ark_url(&proxy.address).await;
 
-	let err = bark.try_send_oor(&bark2.address().await, sat(100_000), false).await.unwrap_err();
+	let err = bark.try_send_oor(&bark2.address().await, sat(100_000), false).await.expect_err("Server should refuse oor");
 	assert!(err.to_string().contains(format!("bad user input: cannot spend vtxo that is already exited: {}", vtxo_a.id).as_str()), "err: {err}");
 }
 
