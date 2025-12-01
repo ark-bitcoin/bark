@@ -7,7 +7,7 @@ woodpecker:
   script:
     - set +e
     - |
-      echo "Waiting for Woodpecker CI result (branch ${CI_COMMIT_REF_SLUG})..."
+      echo "Waiting for Woodpecker CI result (branch ${CI_COMMIT_REF_NAME})..."
       echo "Sleeping for 15s, so woodpecker can get started."
       sleep 15
       REPO_ID=6
@@ -16,7 +16,7 @@ woodpecker:
       LAST_STATUS=""
       CURRENT_INDICATOR=""
       while true; do
-        RESPONSE=$(curl -s "https://ci.2nd.dev/api/repos/${REPO_ID}/pipelines?branch=${CI_COMMIT_REF_SLUG}")
+        RESPONSE=$(curl -s "https://ci.2nd.dev/api/repos/${REPO_ID}/pipelines?branch=${CI_COMMIT_REF_NAME}")
         if [[ "$RESPONSE" == "[]" || -z "$RESPONSE" ]]; then
           printf '.' >&2
           sleep 1
