@@ -335,10 +335,10 @@ impl<S: state::BuilderState> ArkoorBuilder<S> {
 			anchor_point: self.input.anchor_point,
 			genesis: self.input.genesis.clone().into_iter().chain([
 				GenesisItem {
-					transition: GenesisTransition::Arkoor {
-						policy: self.input.policy.clone(),
-						signature: checkpoint_sig,
-					},
+					transition: GenesisTransition::new_arkoor(
+						self.input.policy.clone(),
+						checkpoint_sig,
+					),
 					output_idx: output_idx as u8,
 					other_outputs: checkpoint_tx.output
 						.iter().enumerate()
@@ -377,10 +377,10 @@ impl<S: state::BuilderState> ArkoorBuilder<S> {
 				anchor_point: self.input.anchor_point,
 				genesis: self.input.genesis.iter().cloned().chain([
 					GenesisItem {
-						transition: GenesisTransition::Arkoor {
-							policy: self.input.policy.clone(),
-							signature: checkpoint_sig,
-						},
+						transition: GenesisTransition::new_arkoor(
+							self.input.policy.clone(),
+							checkpoint_sig,
+						),
 						output_idx: output_idx as u8,
 						other_outputs: checkpoint_tx.output
 							.iter().enumerate()
@@ -394,10 +394,10 @@ impl<S: state::BuilderState> ArkoorBuilder<S> {
 							.collect(),
 					},
 					GenesisItem {
-						transition: GenesisTransition::Arkoor {
-							policy: checkpoint_policy,
-							signature: arkoor_sig,
-						},
+						transition: GenesisTransition::new_arkoor(
+							checkpoint_policy,
+							arkoor_sig,
+						),
 						output_idx: 0,
 						other_outputs: vec![]
 					}
@@ -417,10 +417,10 @@ impl<S: state::BuilderState> ArkoorBuilder<S> {
 				anchor_point: self.input.anchor_point,
 				genesis: self.input.genesis.iter().cloned().chain([
 					GenesisItem {
-						transition: GenesisTransition::Arkoor {
-							policy: self.input.policy.clone(),
-							signature: arkoor_sig,
-						},
+						transition: GenesisTransition::new_arkoor(
+							self.input.policy.clone(),
+							arkoor_sig,
+						),
 						output_idx: output_idx as u8,
 						other_outputs: arkoor_tx.output
 							.iter().enumerate()
@@ -473,10 +473,10 @@ impl<S: state::BuilderState> ArkoorBuilder<S> {
 				genesis: self.input.genesis.iter().cloned().chain([
 					// Transition 1: input -> checkpoint
 					GenesisItem {
-						transition: GenesisTransition::Arkoor {
-							policy: self.input.policy.clone(),
-							signature: pre_fanout_tx_sig,
-						},
+						transition: GenesisTransition::new_arkoor(
+							self.input.policy.clone(),
+							pre_fanout_tx_sig,
+						),
 						output_idx: dust_isolation_output_idx as u8,
 						// other outputs are the normal outputs
 						// (we skip our combined dust output and fee anchor)
@@ -493,10 +493,10 @@ impl<S: state::BuilderState> ArkoorBuilder<S> {
 					},
 					// Transition 2: checkpoint -> isolation fanout tx (final vtxo)
 					GenesisItem {
-						transition: GenesisTransition::Arkoor {
-							policy: checkpoint_policy,
-							signature: isolation_fanout_tx_sig,
-						},
+						transition: GenesisTransition::new_arkoor(
+							checkpoint_policy,
+							isolation_fanout_tx_sig,
+						),
 						output_idx: isolated_idx as u8,
 						// other outputs are the other isolated outputs
 						// (we skip our output and fee anchor)
@@ -528,10 +528,10 @@ impl<S: state::BuilderState> ArkoorBuilder<S> {
 				genesis: self.input.genesis.iter().cloned().chain([
 					// Transition 1: input -> arkoor tx (which includes isolation output)
 					GenesisItem {
-						transition: GenesisTransition::Arkoor {
-							policy: self.input.policy.clone(),
-							signature: pre_fanout_tx_sig,
-						},
+						transition: GenesisTransition::new_arkoor(
+							self.input.policy.clone(),
+							pre_fanout_tx_sig,
+						),
 						output_idx: dust_isolation_output_idx as u8,
 						other_outputs: arkoor_tx.output
 							.iter().enumerate()
@@ -546,10 +546,10 @@ impl<S: state::BuilderState> ArkoorBuilder<S> {
 					},
 					// Transition 2: isolation output -> isolation fanout tx (final vtxo)
 					GenesisItem {
-						transition: GenesisTransition::Arkoor {
-							policy: checkpoint_policy,
-							signature: isolation_fanout_tx_sig,
-						},
+						transition: GenesisTransition::new_arkoor(
+							checkpoint_policy,
+							isolation_fanout_tx_sig,
+						),
 						output_idx: isolated_idx as u8,
 						other_outputs: fanout_tx.output
 							.iter().enumerate()
@@ -625,10 +625,10 @@ impl<S: state::BuilderState> ArkoorBuilder<S> {
 				anchor_point: self.input.anchor_point,
 				genesis: self.input.genesis.clone().into_iter().chain([
 					GenesisItem {
-						transition: GenesisTransition::Arkoor {
-							policy: self.input.policy.clone(),
-							signature: None,
-						},
+						transition: GenesisTransition::new_arkoor(
+							self.input.policy.clone(),
+							None,
+						),
 						output_idx: output_idx as u8,
 						other_outputs: int_tx.output.iter().enumerate()
 							.filter_map(|(i, txout)| {

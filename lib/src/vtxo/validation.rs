@@ -1,13 +1,10 @@
 
 use std::borrow::Cow;
 
-use bitcoin::{sighash, Amount, OutPoint, TapLeafHash, Transaction, TxOut};
+use bitcoin::{Amount, OutPoint, Transaction, TxOut};
 
-use crate::tree::signed::unlock_clause;
-use crate::{musig, SECP};
 use crate::vtxo::{Vtxo, VtxoPolicyKind};
 use crate::vtxo::genesis::{GenesisTransition, TransitionKind};
-
 
 #[derive(Debug, PartialEq, Eq, thiserror::Error)]
 #[error("VTXO validation error")]
@@ -74,51 +71,17 @@ fn verify_transition(
 	let prevout = OutPoint::new(prev_tx.compute_txid(), prev_vout as u32);
 	let tx = item.tx(prevout, next_output, vtxo.server_pubkey, vtxo.expiry_height);
 
-	let sighash = match item.transition {
-		GenesisTransition::HashLockedCosigned { user_pubkey, unlock, .. } => {
-			let mut shc = sighash::SighashCache::new(&tx);
-			let agg_pk = musig::combine_keys([user_pubkey, vtxo.server_pubkey]);
-			let script = unlock_clause(agg_pk, unlock.hash());
-			let leaf = TapLeafHash::from_script(&script, bitcoin::taproot::LeafVersion::TapScript);
-			shc.taproot_script_spend_signature_hash(
-				0, &sighash::Prevouts::All(&[prev_txout]), leaf, sighash::TapSighashType::Default,
-			).expect("correct prevouts")
-		},
-		GenesisTransition::Cosigned { .. } | GenesisTransition::Arkoor { .. } => {
-			let mut shc = sighash::SighashCache::new(&tx);
-			shc.taproot_key_spend_signature_hash(
-				0, &sighash::Prevouts::All(&[prev_txout]), sighash::TapSighashType::Default,
-			).expect("correct prevouts")
-		},
-	};
-
-	let pubkey = {
-		let taproot = item.transition.input_taproot(
-			vtxo.server_pubkey(), vtxo.expiry_height(), vtxo.exit_delta(),
-		);
-		match item.transition {
-			GenesisTransition::Cosigned { .. } | GenesisTransition::Arkoor { .. } => {
-				taproot.output_key().to_x_only_public_key()
-			},
-			// hark transition is script-spend that uses internal key
-			GenesisTransition::HashLockedCosigned { .. } => taproot.internal_key(),
+	match &item.transition {
+		GenesisTransition::Cosigned(inner) => {
+			inner.validate_sigs(&tx, 0, prev_txout, vtxo.server_pubkey, vtxo.expiry_height)?
+		}
+		GenesisTransition::Arkoor(inner) => {
+			inner.validate_sigs(&tx, 0, prev_txout, vtxo.server_pubkey(), vtxo.expiry_height(), vtxo.exit_delta())?
+		}
+		GenesisTransition::HashLockedCosigned(inner) => {
+			inner.validate_sigs(&tx, 0, prev_txout, vtxo.server_pubkey, vtxo.expiry_height)?
 		}
 	};
-
-	let signature = match item.transition {
-		GenesisTransition::Cosigned { signature, .. } => signature,
-		GenesisTransition::HashLockedCosigned { signature: Some(sig), .. } => sig,
-		GenesisTransition::HashLockedCosigned { signature: None, .. } => {
-			return Err("missing signature of hash-locked cosign leaf");
-		},
-		GenesisTransition::Arkoor { signature: Some(signature), .. } => signature,
-		GenesisTransition::Arkoor { signature: None, .. } => {
-			return Err("missing arkoor signature");
-		},
-	};
-
-	SECP.verify_schnorr(&signature, &sighash.into(), &pubkey)
-		.map_err(|_| "invalid signature")?;
 
 	#[cfg(test)]
 	{
@@ -187,10 +150,10 @@ pub fn validate(
 					}
 				}
 			},
-			GenesisTransition::Arkoor { policy, .. } => {
-				if policy.arkoor_pubkey().is_none() {
+			GenesisTransition::Arkoor(ref inner) => {
+				if inner.policy.arkoor_pubkey().is_none() {
 					return Err(VtxoValidationError::InvalidArkoorPolicy {
-						policy: policy.policy_type(),
+						policy: inner.policy.policy_type(),
 						msg: "arkoor transition without arkoor pubkey",
 					});
 				}

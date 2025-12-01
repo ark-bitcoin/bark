@@ -869,11 +869,7 @@ impl CachedSignedVtxoTree {
 			// first do the leaf item
 			let leaf_node = branch.next().unwrap();
 			genesis.push(GenesisItem {
-				transition: GenesisTransition::HashLockedCosigned {
-					user_pubkey: req.vtxo.policy.user_pubkey(),
-					signature: None,
-					unlock: MaybePreimage::Hash(req.unlock_hash),
-				},
+				transition: GenesisTransition::new_hash_locked_cosigned(req.vtxo.policy.user_pubkey(), None, MaybePreimage::Hash(req.unlock_hash)),
 				output_idx: 0,
 				other_outputs: vec![],
 			});
@@ -881,14 +877,15 @@ impl CachedSignedVtxoTree {
 			// then the others
 			let mut last_node = leaf_node.idx();
 			for node in branch {
-				let transition = GenesisTransition::Cosigned {
-					pubkeys: node.leaves()
-						.filter_map(|i| self.spec.spec.vtxos[i].cosign_pubkey)
-						.chain(self.spec.spec.global_cosign_pubkeys.iter().copied())
-						.collect(),
-					signature: *self.spec.cosign_sigs.get(node.internal_idx())
-						.expect("enough sigs for all nodes"),
-				};
+				let pubkeys = node.leaves()
+					.filter_map(|i| self.spec.spec.vtxos[i].cosign_pubkey)
+					.chain(self.spec.spec.global_cosign_pubkeys.iter().copied())
+					.collect();
+				let sig = self.spec.cosign_sigs.get(node.internal_idx())
+					.expect("enough sigs for all nodes");
+
+				let transition = GenesisTransition::new_cosigned(pubkeys, *sig);
+
 				let output_idx = node.children().position(|child_idx| last_node == child_idx)
 					.expect("last node should be our child") as u8;
 				let other_outputs = self.txs.get(node.idx()).expect("we have all txs")
@@ -957,9 +954,9 @@ fn hashlocked_leaf_sighash_from_vtxo(
 ) -> TapSighash {
 	assert_eq!(chain_anchor.compute_txid(), vtxo.chain_anchor().txid);
 	let last_genesis = vtxo.genesis.last().expect("at least one genesis item");
-	let (user_pubkey, unlock_hash) = match last_genesis.transition {
-		GenesisTransition::HashLockedCosigned { user_pubkey, unlock, .. } => {
-			(user_pubkey, unlock.hash())
+	let (user_pubkey, unlock_hash) = match &last_genesis.transition {
+		GenesisTransition::HashLockedCosigned(inner) => {
+			(inner.user_pubkey, inner.unlock.hash())
 		},
 		_ => panic!("VTXO is not a HashLockedCosigned VTXO")
 	};

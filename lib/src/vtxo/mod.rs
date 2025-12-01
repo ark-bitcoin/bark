@@ -483,10 +483,10 @@ impl Vtxo {
 	/// [Vtxo::arkoor_pubkey].
 	pub fn past_arkoor_pubkeys(&self) -> impl Iterator<Item = PublicKey> + '_ {
 		self.genesis.iter().filter_map(|g| {
-			match g.transition {
+			match &g.transition {
 				// NB in principle, a genesis item's transition MUST have
 				// an arkoor pubkey, otherwise the vtxo is invalid
-				GenesisTransition::Arkoor { ref policy, .. } => policy.arkoor_pubkey(),
+				GenesisTransition::Arkoor(inner) => inner.policy.arkoor_pubkey(),
 				_ => None,
 			}
 		})
@@ -538,9 +538,9 @@ impl Vtxo {
 	/// of the VTXO exit path.
 	pub fn arkoor_pubkeys(&self) -> HashSet<PublicKey> {
 		self.genesis.iter().filter_map(|i| match &i.transition {
-			GenesisTransition::Arkoor { policy, .. } => policy.arkoor_pubkey(),
-			GenesisTransition::Cosigned { .. } => None,
-			GenesisTransition::HashLockedCosigned { .. } => None,
+			GenesisTransition::Arkoor(inner) => inner.policy.arkoor_pubkey(),
+			GenesisTransition::Cosigned(_) => None,
+			GenesisTransition::HashLockedCosigned(_) => None,
 		}).collect()
 	}
 
@@ -568,7 +568,7 @@ impl Vtxo {
 	/// Returns the "hArk" unlock hash if this is a hArk leaf VTXO
 	pub fn unlock_hash(&self) -> Option<UnlockHash> {
 		match self.genesis.last()?.transition {
-			GenesisTransition::HashLockedCosigned { unlock, .. } => Some(unlock.hash()),
+			GenesisTransition::HashLockedCosigned(ref inner) => Some(inner.unlock.hash()),
 			_ => None,
 		}
 	}
@@ -578,8 +578,8 @@ impl Vtxo {
 	/// Returns true if this VTXO was an unfinalized hArk VTXO.
 	pub fn provide_unlock_signature(&mut self, signature: schnorr::Signature) -> bool {
 		match self.genesis.last_mut().map(|g| &mut g.transition) {
-			Some(GenesisTransition::HashLockedCosigned { signature: ref mut sig, .. }) => {
-				*sig = Some(signature);
+			Some(GenesisTransition::HashLockedCosigned(inner)) => {
+				inner.signature.replace(signature);
 				true
 			},
 			_ => false,
@@ -591,9 +591,9 @@ impl Vtxo {
 	/// Returns true if this VTXO was an unfinalized hArk VTXO and the preimage matched.
 	pub fn provide_unlock_preimage(&mut self, preimage: UnlockPreimage) -> bool {
 		match self.genesis.last_mut().map(|g| &mut g.transition) {
-			Some(GenesisTransition::HashLockedCosigned { ref mut unlock, .. }) => {
-				if unlock.hash() == UnlockHash::hash(&preimage) {
-					*unlock = MaybePreimage::Preimage(preimage);
+			Some(GenesisTransition::HashLockedCosigned(ref mut inner)) => {
+				if inner.unlock.hash() == UnlockHash::hash(&preimage) {
+					inner.unlock = MaybePreimage::Preimage(preimage);
 					true
 				} else {
 					false
@@ -768,19 +768,19 @@ const GENESIS_TRANSITION_TYPE_HASH_LOCKED_COSIGNED: u8 = 3;
 impl ProtocolEncoding for GenesisTransition {
 	fn encode<W: io::Write + ?Sized>(&self, w: &mut W) -> Result<(), io::Error> {
 		match self {
-			Self::Cosigned { pubkeys, signature } => {
+			Self::Cosigned(t) => {
 				w.emit_u8(GENESIS_TRANSITION_TYPE_COSIGNED)?;
-				w.emit_u16(pubkeys.len().try_into().expect("cosign pubkey length overflow"))?;
-				for pk in pubkeys {
+				w.emit_u16(t.pubkeys.len().try_into().expect("cosign pubkey length overflow"))?;
+				for pk in t.pubkeys.iter() {
 					pk.encode(w)?;
 				}
-				signature.encode(w)?;
+				t.signature.encode(w)?;
 			},
-			Self::HashLockedCosigned { user_pubkey, signature, unlock } => {
+			Self::HashLockedCosigned(t) => {
 				w.emit_u8(GENESIS_TRANSITION_TYPE_HASH_LOCKED_COSIGNED)?;
-				user_pubkey.encode(w)?;
-				signature.encode(w)?;
-				match unlock {
+				t.user_pubkey.encode(w)?;
+				t.signature.encode(w)?;
+				match t.unlock {
 					MaybePreimage::Preimage(p) => {
 						w.emit_u8(0)?;
 						w.emit_slice(&p[..])?;
@@ -791,10 +791,10 @@ impl ProtocolEncoding for GenesisTransition {
 					},
 				}
 			},
-			Self::Arkoor { policy, signature } => {
+			Self::Arkoor(t) => {
 				w.emit_u8(GENESIS_TRANSITION_TYPE_ARKOOR)?;
-				policy.encode(w)?;
-				signature.encode(w)?;
+				t.policy.encode(w)?;
+				t.signature.encode(w)?;
 			},
 		}
 		Ok(())
@@ -809,7 +809,7 @@ impl ProtocolEncoding for GenesisTransition {
 					pubkeys.push(PublicKey::decode(r)?);
 				}
 				let signature = schnorr::Signature::decode(r)?;
-				Ok(Self::Cosigned { pubkeys, signature })
+				Ok(Self::new_cosigned(pubkeys, signature))
 			},
 			GENESIS_TRANSITION_TYPE_HASH_LOCKED_COSIGNED => {
 				let user_pubkey = PublicKey::decode(r)?;
@@ -821,12 +821,12 @@ impl ProtocolEncoding for GenesisTransition {
 						"invalid HashLockedCosignedTransitionWitness type byte: {v:#x}",
 					))),
 				};
-				Ok(Self::HashLockedCosigned { user_pubkey, signature, unlock })
+				Ok(Self::new_hash_locked_cosigned(user_pubkey, signature, unlock))
 			},
 			GENESIS_TRANSITION_TYPE_ARKOOR => {
 				let policy = VtxoPolicy::decode(r)?;
 				let signature = Option::<schnorr::Signature>::decode(r)?;
-				Ok(Self::Arkoor { policy, signature })
+				Ok(Self::new_arkoor(policy, signature))
 			},
 			v => Err(ProtocolDecodingError::invalid(format_args!(
 				"invalid GenesisTransistion type byte: {v:#x}",
