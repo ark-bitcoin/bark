@@ -5,7 +5,8 @@ use bitcoin::{sighash, Amount, OutPoint, TapLeafHash, Transaction, TxOut};
 
 use crate::tree::signed::unlock_clause;
 use crate::{musig, SECP};
-use crate::vtxo::{GenesisTransition, TransitionKind, Vtxo, VtxoPolicyKind};
+use crate::vtxo::{Vtxo, VtxoPolicyKind};
+use crate::vtxo::genesis::{GenesisTransition, TransitionKind};
 
 
 #[derive(Debug, PartialEq, Eq, thiserror::Error)]
