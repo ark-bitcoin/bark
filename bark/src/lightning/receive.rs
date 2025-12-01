@@ -482,6 +482,10 @@ impl Wallet {
 			None => return Ok(()),
 		};
 
+		if receive.finished_at.is_some() {
+			return Ok(());
+		}
+
 		let vtxos = match receive.htlc_vtxos {
 			// payment still not available
 			None => return Ok(()),
