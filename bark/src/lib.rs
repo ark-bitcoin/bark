@@ -1948,7 +1948,8 @@ impl Wallet {
 	) -> anyhow::Result<Vec<Vtxo>> {
 		let mut srv = self.require_server()?;
 
-		self.validate_arkoor_address(&destination).await.context("cannot send to address")?;
+		self.validate_arkoor_address(&destination).await
+			.context("address validation failed")?;
 
 		if amount < P2TR_DUST {
 			bail!("Sent amount must be at least {}", P2TR_DUST);
