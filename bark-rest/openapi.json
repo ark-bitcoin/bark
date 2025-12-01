@@ -521,7 +521,7 @@
         },
         "responses": {
           "200": {
-            "description": "Returns payment result",
+            "description": "Returns success message, optionally with preimage if payment was immediately settled",
             "content": {
               "application/json": {
                 "schema": {
@@ -3105,17 +3105,12 @@
       "LightningPayResponse": {
         "type": "object",
         "required": [
-          "message",
-          "preimage"
+          "message"
         ],
         "properties": {
           "message": {
             "type": "string",
             "description": "Success message"
-          },
-          "preimage": {
-            "type": "string",
-            "description": "The payment preimage (for successful payments)"
           }
         }
       },

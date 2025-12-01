@@ -3,16 +3,16 @@ pub mod receive;
 
 use anyhow::Context;
 use bitcoin::Amount;
-use bitcoin::hex::DisplayHex;
 use lightning_invoice::Bolt11Invoice;
 use lnurllib::LnUrlResponse;
 use lnurllib::lightning_address::LightningAddress;
 use log::info;
 
-use ark::lightning::{Bolt11InvoiceExt, Offer, Preimage};
+use ark::lightning::{Bolt11InvoiceExt, Offer};
 use bitcoin_ext::AmountExt;
 
 use crate::Wallet;
+use crate::persist::models::LightningSend;
 
 pub async fn pay_invoice(
 	invoice: Bolt11Invoice,
@@ -20,7 +20,7 @@ pub async fn pay_invoice(
 	comment: Option<String>,
 	no_sync: bool,
 	wallet: &Wallet,
-) -> anyhow::Result<Preimage> {
+) -> anyhow::Result<LightningSend> {
 	let amount = invoice.get_final_amount(amount)?;
 	if comment.is_some() {
 		bail!("comment not supported for bolt11 invoice");
@@ -31,10 +31,8 @@ pub async fn pay_invoice(
 		wallet.sync().await;
 	}
 	info!("Sending bolt11 payment of {} to invoice {}", amount, invoice);
-	let preimage = wallet.pay_lightning_invoice(invoice, Some(amount)).await?;
-	info!("Payment preimage received: {}", preimage.as_hex());
 
-	Ok(preimage)
+	wallet.pay_lightning_invoice(invoice, Some(amount)).await
 }
 
 pub async fn pay_offer(
@@ -43,7 +41,7 @@ pub async fn pay_offer(
 	comment: Option<String>,
 	no_sync: bool,
 	wallet: &Wallet,
-) -> anyhow::Result<Preimage> {
+) -> anyhow::Result<LightningSend> {
 	if comment.is_some() {
 		bail!("comment not supported for bolt12 offer");
 	}
@@ -54,11 +52,10 @@ pub async fn pay_offer(
 	}
 
 	info!("Sending bolt12 payment of {:?} to offer {}", amount, offer);
-	let (invoice, preimage) = wallet.pay_lightning_offer(offer, amount).await?;
-	info!("Paid invoice: {:?}", invoice);
-	info!("Payment preimage received: {}", preimage.as_hex());
+	let payment = wallet.pay_lightning_offer(offer, amount).await?;
+	info!("Paid invoice: {:?}", payment.invoice);
 
-	Ok(preimage)
+	Ok(payment)
 }
 
 pub async fn pay_lnaddr(
@@ -67,7 +64,7 @@ pub async fn pay_lnaddr(
 	comment: Option<String>,
 	no_sync: bool,
 	wallet: &Wallet,
-) -> anyhow::Result<Preimage> {
+) -> anyhow::Result<LightningSend> {
 	let amount = amount.context("amount missing")?;
 
 	if !no_sync {
@@ -76,11 +73,10 @@ pub async fn pay_lnaddr(
 	}
 	info!("Sending {} to lightning address {}", amount, lnaddr);
 	let comment = comment.as_ref().map(|c| c.as_str());
-	let (inv, preimage) = wallet.pay_lightning_address(&lnaddr, amount, comment).await?;
-	info!("Paid invoice {}", inv);
-	info!("Payment preimage received: {}", preimage.as_hex());
+	let payment = wallet.pay_lightning_address(&lnaddr, amount, comment).await?;
+	info!("Paid invoice {}", payment.invoice);
 
-	Ok(preimage)
+	Ok(payment)
 }
 
 async fn lnurlp_invoice(

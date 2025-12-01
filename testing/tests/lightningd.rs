@@ -16,7 +16,10 @@ use ark_testing::{btc, constants::BOARD_CONFIRMATIONS, sat, TestContext};
 use ark_testing::daemon::captaind::{self, ArkClient};
 use ark_testing::util::FutureExt;
 use bitcoin_ext::{P2TR_DUST, P2TR_DUST_SAT};
-use server_rpc::protos::{self, prepare_lightning_receive_claim_request::LightningReceiveAntiDos};
+use server_rpc::protos::{
+	self, prepare_lightning_receive_claim_request::LightningReceiveAntiDos,
+	lightning_payment_status,
+};
 
 
 #[tokio::test]
@@ -714,23 +717,17 @@ async fn bark_revoke_expired_pending_ln_payment() {
 			&self,
 			_upstream: &mut ArkClient,
 			_req: server_rpc::protos::InitiateLightningPaymentRequest,
-		) -> Result<server_rpc::protos::LightningPaymentResult, tonic::Status> {
-			// Never return - wait indefinitely
-			loop {
-				tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-			}
+		) -> Result<server_rpc::protos::Empty, tonic::Status> {
+			Ok(server_rpc::protos::Empty {})
 		}
 
 		async fn check_lightning_payment(
 			&self,
 			_upstream: &mut ArkClient,
 			_req: server_rpc::protos::CheckLightningPaymentRequest,
-		) -> Result<server_rpc::protos::LightningPaymentResult, tonic::Status> {
-			Ok(server_rpc::protos::LightningPaymentResult {
-				progress_message: "Payment is pending".to_string(),
-				status: server_rpc::protos::PaymentStatus::Pending as i32,
-				payment_hash: vec![],
-				payment_preimage: None,
+		) -> Result<server_rpc::protos::LightningPaymentStatus, tonic::Status> {
+			Ok(server_rpc::protos::LightningPaymentStatus {
+				payment_status: Some(lightning_payment_status::PaymentStatus::Pending(protos::Empty {})),
 			})
 		}
 	}
@@ -753,7 +750,7 @@ async fn bark_revoke_expired_pending_ln_payment() {
 
 	// Try send coins through lightning
 	assert_eq!(bark_1.spendable_balance().await, board_amount);
-	bark_1.try_pay_lightning(invoice, None).try_wait_millis(1000).await.expect_err("the payment is held");
+	bark_1.pay_lightning(invoice, None).await;
 
 	// htlc expiry is 6 ahead of current block
 	ctx.generate_blocks(srv.config().htlc_send_expiry_delta as u32 + 6).await;

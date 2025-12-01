@@ -4,13 +4,12 @@ use anyhow::Context;
 use bitcoin::Amount;
 use bitcoin::hex::DisplayHex;
 use lightning::util::ser::Writeable;
-use lightning_invoice::Bolt11Invoice;
 use lnurllib::lightning_address::LightningAddress;
-use log::{debug, error, info, trace, warn};
-use server_rpc::protos;
+use log::{error, info, trace, warn};
+use server_rpc::protos::{self, lightning_payment_status::PaymentStatus};
 
 use ark::arkoor::ArkoorPackageBuilder;
-use ark::lightning::{Bolt12Invoice, Bolt12InvoiceExt, Invoice, Offer, Preimage};
+use ark::lightning::{Bolt12Invoice, Bolt12InvoiceExt, Invoice, Offer, PaymentHash, Preimage};
 use ark::{ProtocolEncoding, VtxoPolicy, VtxoRequest, musig};
 use bitcoin_ext::P2TR_DUST;
 
@@ -155,13 +154,15 @@ impl Wallet {
 	///     revokes the VTXOs.
 	///   - **Complete**: Extracts the payment preimage, logs the payment, registers movement
 	///     in the database and returns
-	pub async fn check_lightning_payment(&self, payment: &LightningSend)
+	pub async fn check_lightning_payment(&self, payment_hash: PaymentHash)
 		-> anyhow::Result<Option<Preimage>>
 	{
-		let mut srv = self.require_server()?;
-		let tip = self.chain.tip().await?;
+		trace!("Checking lightning payment status for payment hash: {}", payment_hash);
 
-		let payment_hash = payment.invoice.payment_hash();
+		let mut srv = self.require_server()?;
+
+		let payment = self.db.get_lightning_send(payment_hash)?
+			.context("no lightning send found for payment hash")?;
 
 		let policy = payment.htlc_vtxos.first().context("no vtxo provided")?.vtxo.policy();
 		debug_assert!(payment.htlc_vtxos.iter().all(|v| v.vtxo.policy() == policy),
@@ -176,49 +177,44 @@ impl Wallet {
 			hash: policy.payment_hash.to_vec(),
 			wait: false,
 		};
-		let res = srv.client.check_lightning_payment(req).await?.into_inner();
+		// NB: we don't early return on server error or bad response because we
+		// don't want it to prevent us from revoking or exiting HTLCs if necessary.
+		let response = srv.client.check_lightning_payment(req).await
+			.map(|r| r.into_inner().payment_status);
 
-		let payment_status = protos::PaymentStatus::try_from(res.status)?;
+		let tip = self.chain.tip().await?;
+		let expired = tip > policy.htlc_expiry;
 
-		let should_revoke = match payment_status {
-			protos::PaymentStatus::Failed => {
-				info!("Payment failed ({}): revoking VTXO", res.progress_message);
-				true
-			},
-			protos::PaymentStatus::Pending => {
-				if tip > policy.htlc_expiry {
-					trace!("Payment is still pending, but HTLC is expired (tip: {}, \
-						expiry: {}): revoking VTXO", tip, policy.htlc_expiry);
-					true
-				} else {
-					trace!("Payment is still pending and HTLC is not expired (tip: {}, \
-						expiry: {}): doing nothing for now", tip, policy.htlc_expiry);
-					false
-				}
-			},
-			protos::PaymentStatus::Success => {
+		let should_revoke = match response {
+			Ok(Some(PaymentStatus::Success(status))) => {
 				let preimage_opt = self.process_lightning_send_server_preimage(
-					res.payment_preimage, &payment,
+					Some(status.preimage), &payment,
 				).await?;
 
 				if let Some(preimage) = preimage_opt {
 					return Ok(Some(preimage));
 				} else {
-					if tip > policy.htlc_expiry {
-						trace!("Completed payment has no valid preimage and HTLC is \
-							expired (tip: {}, expiry: {}): revoking VTXO", tip, policy.htlc_expiry);
-						true
-					} else {
-						trace!("Completed payment has no valid preimage, but HTLC is \
-							not expired (tip: {}, expiry: {}): doing nothing for now", tip, policy.htlc_expiry);
-						false
-					}
+					trace!("Server said payment is complete, but has no valid preimage: {:?}", preimage_opt);
+					expired
 				}
 			},
+			Ok(Some(PaymentStatus::Failed(_))) => {
+				info!("Payment failed, revoking VTXO");
+				true
+			},
+			Ok(Some(PaymentStatus::Pending(_))) => {
+				trace!("Payment is still pending");
+				expired
+			},
+			// bad server response or request error
+			Ok(None) | Err(_) => expired,
 		};
 
 		if should_revoke {
-			if let Err(e) = self.process_lightning_revocation(payment).await {
+			info!("Revoking HTLC VTXOs for payment {} (tip: {}, expiry: {})",
+				payment_hash, tip, policy.htlc_expiry);
+
+			if let Err(e) = self.process_lightning_revocation(&payment).await {
 				warn!("Failed to revoke VTXO: {}", e);
 
 				// if one of the htlc is about to expire, we exit all of them.
@@ -228,7 +224,8 @@ impl Wallet {
 					.map(|v| v.vtxo.spec().expiry_height).min().unwrap();
 
 				if tip > min_expiry.saturating_sub(self.config().vtxo_refresh_expiry_threshold) {
-					warn!("Some VTXO is about to expire soon, marking to exit");
+					warn!("Some HTLC VTXOs for payment {} are about to expire soon, marking to exit", payment_hash);
+
 					let vtxos = payment.htlc_vtxos
 						.iter()
 						.map(|v| v.vtxo.clone())
@@ -247,6 +244,8 @@ impl Wallet {
 					).await?;
 					self.db.finish_lightning_send(payment.invoice.payment_hash(), None)?;
 				}
+
+				return Err(e)
 			}
 		}
 
@@ -255,11 +254,15 @@ impl Wallet {
 
 	/// Pays a Lightning [Invoice] using Ark VTXOs. This is also an out-of-round payment
 	/// so the same [Wallet::send_arkoor_payment] rules apply.
+	///
+	/// # Returns
+	///
+	/// Returns the [Invoice] for which payment was initiated.
 	pub async fn pay_lightning_invoice<T>(
 		&self,
 		invoice: T,
 		user_amount: Option<Amount>,
-	) -> anyhow::Result<Preimage>
+	) -> anyhow::Result<LightningSend>
 	where
 		T: TryInto<Invoice>,
 		T::Error: std::error::Error + fmt::Display + Send + Sync + 'static,
@@ -317,12 +320,12 @@ impl Wallet {
 			.collect::<Result<Vec<_>, _>>()?;
 		let policy = VtxoPolicy::deserialize(&resp.policy)?;
 
-		let pay_req = match policy {
+		let pay_req = match &policy {
 			VtxoPolicy::ServerHtlcSend(policy) => {
 				ensure!(policy.user_pubkey == change_keypair.public_key(), "user pubkey mismatch");
 				ensure!(policy.payment_hash == invoice.payment_hash(), "payment hash mismatch");
 				// TODO: ensure expiry is not too high? add new bark config to check against?
-				VtxoRequest { amount: amount, policy: policy.into() }
+				VtxoRequest { amount: amount, policy: policy.clone().into() }
 			},
 			_ => bail!("invalid policy returned from server"),
 		};
@@ -377,29 +380,20 @@ impl Wallet {
 				.metadata(LightningMovement::htlc_metadata(&htlc_vtxos)?)
 		).await?;
 
-		let payment = self.db.store_new_pending_lightning_send(
+		let lightning_send = self.db.store_new_pending_lightning_send(
 			&invoice, &amount, &htlc_vtxos.iter().map(|v| v.id()).collect::<Vec<_>>(), movement_id,
 		)?;
 
 		let req = protos::InitiateLightningPaymentRequest {
 			invoice: invoice.to_string(),
 			htlc_vtxo_ids: htlc_vtxos.iter().map(|v| v.id().to_bytes().to_vec()).collect(),
-			wait: true,
+			#[allow(deprecated)]
+			wait: false,
 		};
 
-		let res = srv.client.initiate_lightning_payment(req).await?.into_inner();
-		debug!("Progress update: {}", res.progress_message);
+		srv.client.initiate_lightning_payment(req).await?;
 
-		let preimage_opt = self.process_lightning_send_server_preimage(
-			res.payment_preimage, &payment,
-		).await?;
-
-		if let Some(preimage) = preimage_opt {
-			return Ok(preimage);
-		} else {
-			self.process_lightning_revocation(&payment).await?;
-			bail!("Payment failed, but got revocation vtxos: {}", res.progress_message);
-		}
+		Ok(lightning_send)
 	}
 
 	/// Same as [Wallet::pay_lightning_invoice] but instead it pays a [LightningAddress].
@@ -408,13 +402,13 @@ impl Wallet {
 		addr: &LightningAddress,
 		amount: Amount,
 		comment: Option<&str>,
-	) -> anyhow::Result<(Bolt11Invoice, Preimage)> {
+	) -> anyhow::Result<LightningSend> {
 		let invoice = lnaddr_invoice(addr, amount, comment).await
 			.context("lightning address error")?;
 		info!("Attempting to pay invoice {}", invoice);
-		let preimage = self.pay_lightning_invoice(invoice.clone(), None).await
-			.context("bolt11 payment error")?;
-		Ok((invoice, preimage))
+
+		self.pay_lightning_invoice(invoice.clone(), None).await
+			.context("bolt11 payment error")
 	}
 
 	/// Attempts to pay the given BOLT12 [Offer] using offchain funds.
@@ -422,7 +416,7 @@ impl Wallet {
 		&self,
 		offer: Offer,
 		amount: Option<Amount>,
-	) -> anyhow::Result<(Bolt12Invoice, Preimage)> {
+	) -> anyhow::Result<LightningSend> {
 		let mut srv = self.require_server()?;
 
 		let offer_bytes = {
@@ -443,9 +437,7 @@ impl Wallet {
 
 		invoice.validate_issuance(offer)?;
 
-		let preimage = self.pay_lightning_invoice(invoice.clone(), None).await
-			.context("bolt11 payment error")?;
-		Ok((invoice, preimage))
+		self.pay_lightning_invoice(invoice.clone(), None).await
+			.context("bolt12 payment error")
 	}
-
 }

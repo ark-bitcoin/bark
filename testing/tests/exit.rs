@@ -10,7 +10,7 @@ use ark::vtxo::exit_taproot;
 use bark_json::exit::ExitState;
 use bark_json::exit::states::ExitStartState;
 use bitcoin_ext::TaprootSpendInfoExt;
-use server_rpc::protos;
+use server_rpc::protos::{self, lightning_payment_status};
 
 use ark_testing::{btc, sat, Bark, TestContext};
 use ark_testing::constants::{BOARD_CONFIRMATIONS, ROUND_CONFIRMATIONS};
@@ -423,7 +423,8 @@ async fn exit_revoked_lightning_payment() {
 
 	// Try send coins through lightning
 	assert_eq!(bark_1.spendable_balance().await, board_amount);
-	bark_1.try_pay_lightning(invoice, None).await.expect_err("The payment fails");
+	bark_1.pay_lightning(invoice, None).await;
+	bark_1.maintain().await;
 
 	srv.stop().await.unwrap();
 	bark_1.start_exit_all().await;
@@ -455,7 +456,7 @@ async fn bark_should_exit_a_failed_htlc_out_that_server_refuse_to_revoke() {
 	impl captaind::proxy::ArkRpcProxy for Proxy {
 		async fn initiate_lightning_payment(
 			&self, _upstream: &mut ArkClient, _req: protos::InitiateLightningPaymentRequest,
-		) -> Result<protos::LightningPaymentResult, tonic::Status> {
+		) -> Result<protos::Empty, tonic::Status> {
 			Err(tonic::Status::internal("Refused to finish bolt11 payment"))
 		}
 
@@ -514,24 +515,16 @@ async fn bark_should_exit_a_pending_htlc_out_that_server_refuse_to_revoke() {
 	impl captaind::proxy::ArkRpcProxy for Proxy {
 		async fn initiate_lightning_payment(
 			&self, _upstream: &mut ArkClient, _req: protos::InitiateLightningPaymentRequest,
-		) -> Result<protos::LightningPaymentResult, tonic::Status> {
-			Ok(protos::LightningPaymentResult {
-				progress_message: "Payment is pending".to_string(),
-				status: protos::PaymentStatus::Pending as i32,
-				payment_hash: vec![],
-				payment_preimage: None,
-			})
+		) -> Result<protos::Empty, tonic::Status> {
+			Ok(protos::Empty {})
 		}
 
 		async fn check_lightning_payment(
 			&self, _upstream: &mut ArkClient,
 			_req: protos::CheckLightningPaymentRequest,
-		) -> Result<protos::LightningPaymentResult, tonic::Status> {
-			Ok(protos::LightningPaymentResult {
-				progress_message: "Payment is pending".to_string(),
-				status: protos::PaymentStatus::Pending as i32,
-				payment_hash: vec![],
-				payment_preimage: None,
+		) -> Result<protos::LightningPaymentStatus, tonic::Status> {
+			Ok(protos::LightningPaymentStatus {
+				payment_status: Some(lightning_payment_status::PaymentStatus::Pending(protos::Empty {})),
 			})
 		}
 
@@ -560,7 +553,7 @@ async fn bark_should_exit_a_pending_htlc_out_that_server_refuse_to_revoke() {
 
 	// Try send coins through lightning
 	assert_eq!(bark_1.spendable_balance().await, board_amount);
-	bark_1.try_pay_lightning(invoice, None).await.expect_err("The payment fails");
+	bark_1.pay_lightning(invoice, None).await;
 
 	// vtxo expiry is 144, so exit should be triggered after 120 blocks
 	ctx.generate_blocks(130).await;

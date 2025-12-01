@@ -150,8 +150,7 @@ impl ClnManager {
 		invoice: &Invoice,
 		htlc_amount: Amount,
 		htlc_send_expiry_height: BlockHeight,
-		wait: bool,
-	) -> anyhow::Result<PaymentStatus> {
+	) -> anyhow::Result<()> {
 		invoice.check_signature().context("invalid invoice signature")?;
 
 		let user_amount = if invoice.amount_msat().is_none() {
@@ -160,7 +159,6 @@ impl ClnManager {
 			None
 		};
 
-		let update_rx = self.payment_update_rx.resubscribe();
 		self.send_ctrl(Ctrl::PaymentRequest {
 			invoice: Box::new(invoice.clone()),
 			user_amount,
@@ -169,8 +167,7 @@ impl ClnManager {
 
 		debug!("Bolt11 invoice sent for payment, waiting for maintenance task CLN updates...");
 
-		let payment_hash = PaymentHash::from(invoice.payment_hash());
-		self.inner_check_bolt11(update_rx, &payment_hash, wait, false).await
+		Ok(())
 	}
 
 	/// Checks a bolt-11 invoice and returns the pre-image
