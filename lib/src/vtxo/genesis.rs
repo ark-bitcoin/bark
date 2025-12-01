@@ -65,6 +65,18 @@ impl CosignedGenesis {
 		cosign_taproot(agg_pk, server_pubkey, expiry_height)
 	}
 
+	pub(crate) fn input_txout(
+		&self,
+		amount: Amount,
+		server_pubkey: PublicKey,
+		expiry_height: BlockHeight,
+	) -> TxOut {
+		TxOut {
+			value: amount,
+			script_pubkey: self.input_taproot(server_pubkey, expiry_height).script_pubkey(),
+		}
+	}
+
 	pub(crate) fn witness(&self) -> Witness {
 		Witness::from_slice(&[&self.signature[..]])
 	}
@@ -116,6 +128,18 @@ impl HashLockedCosignedGenesis {
 		expiry_height: BlockHeight,
 	) -> taproot::TaprootSpendInfo {
 		leaf_cosign_taproot(self.user_pubkey, server_pubkey, expiry_height, self.unlock.hash())
+	}
+
+	pub(crate) fn input_txout(
+		&self,
+		amount: Amount,
+		server_pubkey: PublicKey,
+		expiry_height: BlockHeight,
+	) -> TxOut {
+		TxOut {
+			value: amount,
+			script_pubkey: self.input_taproot(server_pubkey, expiry_height).script_pubkey(),
+		}
 	}
 
 	pub(crate) fn witness(
@@ -215,6 +239,19 @@ impl ArkoorGenesis {
 		self.policy.taproot(server_pubkey, exit_delta, expiry_height)
 	}
 
+	pub(crate) fn input_txout(
+		&self,
+		amount: Amount,
+		server_pubkey: PublicKey,
+		expiry_height: BlockHeight,
+		exit_delta: BlockDelta,
+	) -> TxOut {
+		TxOut {
+			value: amount,
+			script_pubkey: self.input_taproot(server_pubkey, expiry_height, exit_delta).script_pubkey(),
+		}
+	}
+
 	pub(crate) fn witness(&self) -> Witness {
 		match self.signature {
 			Some(sig) => Witness::from_slice(&[&sig[..]]),
@@ -300,20 +337,6 @@ impl GenesisTransition {
 		)
 	}
 
-	/// Taproot that this transition is satisfying.
-	pub(crate) fn input_taproot(
-		&self,
-		server_pubkey: PublicKey,
-		expiry_height: BlockHeight,
-		exit_delta: BlockDelta,
-	) -> taproot::TaprootSpendInfo {
-		match self {
-			Self::Cosigned(inner) => inner.input_taproot(server_pubkey, expiry_height),
-			Self::HashLockedCosigned(inner) => inner.input_taproot(server_pubkey, expiry_height),
-			Self::Arkoor(inner) => inner.input_taproot(server_pubkey, expiry_height, exit_delta),
-		}
-	}
-
 	/// Output that this transition is spending.
 	pub(crate) fn input_txout(
 		&self,
@@ -322,10 +345,10 @@ impl GenesisTransition {
 		expiry_height: BlockHeight,
 		exit_delta: BlockDelta,
 	) -> TxOut {
-		let taproot = self.input_taproot(server_pubkey, expiry_height, exit_delta);
-		TxOut {
-			value: amount,
-			script_pubkey: taproot.script_pubkey(),
+		match self {
+			Self::Cosigned(inner) => inner.input_txout(amount, server_pubkey, expiry_height),
+			Self::HashLockedCosigned(inner) => inner.input_txout(amount, server_pubkey, expiry_height),
+			Self::Arkoor(inner) => inner.input_txout(amount, server_pubkey, expiry_height, exit_delta),
 		}
 	}
 
