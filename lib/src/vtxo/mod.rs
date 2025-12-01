@@ -717,6 +717,15 @@ impl GenesisTransition {
 			Self::Arkoor { signature, .. } => signature.is_some(),
 		}
 	}
+
+	/// String of the transition type, for error reporting
+	fn transition_type(&self) -> &'static str {
+		match self {
+			Self::Cosigned { .. } => "cosigned",
+			Self::HashLockedCosigned { .. } => "hash-locked-cosigned",
+			Self::Arkoor { .. } => "arkoor",
+		}
+	}
 }
 
 /// An item in a VTXO's genesis.
@@ -768,6 +777,8 @@ impl GenesisItem {
 pub struct VtxoTxIterItem {
 	/// The actual transaction.
 	pub tx: Transaction,
+	/// The index of the relevant output of this tx
+	pub output_idx: usize,
 }
 
 /// Iterator returned by [Vtxo::transactions].
@@ -826,7 +837,8 @@ impl<'a> Iterator for VtxoTxIter<'a> {
 		self.prev = OutPoint::new(tx.compute_txid(), item.output_idx as u32);
 		self.genesis_idx += 1;
 		self.current_amount = next_amount;
-		Some(VtxoTxIterItem { tx })
+		let output_idx = item.output_idx as usize;
+		Some(VtxoTxIterItem { tx, output_idx })
 	}
 
 	fn size_hint(&self) -> (usize, Option<usize>) {

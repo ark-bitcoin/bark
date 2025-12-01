@@ -613,7 +613,9 @@ async fn start_attempt(
 	Ok(AttemptState::AwaitingUnsignedVtxoTree {
 		cosign_keys: cosign_keys,
 		secret_nonces: cosign_nonces.into_iter()
-			.map(|(sec, _pub)| sec.into_iter().map(DangerousSecretNonce::new).collect())
+			.map(|(sec, _pub)| sec.into_iter()
+				.map(DangerousSecretNonce::dangerous_from_secret_nonce)
+				.collect())
 			.collect(),
 	})
 }

@@ -22,11 +22,13 @@ pub enum VtxoValidationError {
 	},
 	#[error("Cosigned genesis transitions don't have any common pubkeys")]
 	InconsistentCosignPubkeys,
-	#[error("error verifying one of the genesis transitions (idx={genesis_idx}/{genesis_len}): {error}")]
+	#[error("error verifying one of the genesis transitions \
+		(idx={genesis_idx}/{genesis_len} type={transition_type}): {error}")]
 	GenesisTransition {
 		error: &'static str,
 		genesis_idx: usize,
 		genesis_len: usize,
+		transition_type: &'static str,
 	},
 	#[error("non-standard output on genesis item #{genesis_item_idx} other \
 		output #{other_output_idx}")]
@@ -43,8 +45,13 @@ pub enum VtxoValidationError {
 
 impl VtxoValidationError {
 	/// Constructor for [VtxoValidationError::GenesisTransition].
-	fn transition(genesis_item_idx: usize, nb_genesis_items: usize, error: &'static str) -> Self {
-		VtxoValidationError::GenesisTransition { error, genesis_idx: genesis_item_idx, genesis_len: nb_genesis_items }
+	fn transition(
+		genesis_idx: usize,
+		genesis_len: usize,
+		transition_type: &'static str,
+		error: &'static str,
+	) -> Self {
+		VtxoValidationError::GenesisTransition { error, genesis_idx, genesis_len, transition_type }
 	}
 }
 
@@ -158,7 +165,8 @@ pub fn validate(
 						GenesisTransition::Cosigned { .. }
 						| GenesisTransition::HashLockedCosigned { .. } => {
 							return Err(VtxoValidationError::transition(
-								idx, vtxo.genesis.len(), "hash-locked cosigned transition must \
+								idx, vtxo.genesis.len(), item.transition.transition_type(),
+								"hash-locked cosigned transition must \
 									be followed by arkoor transitions",
 							));
 						},
@@ -180,7 +188,7 @@ pub fn validate(
 						GenesisTransition::Cosigned { .. }
 						| GenesisTransition::HashLockedCosigned { .. } => {
 							return Err(VtxoValidationError::transition(
-								idx, vtxo.genesis.len(),
+								idx, vtxo.genesis.len(), item.transition.transition_type(),
 								"Arkoor transition must be followed by arkoor transitions",
 							));
 						},
@@ -200,7 +208,9 @@ pub fn validate(
 		let next_amount = prev.2.checked_sub(item.other_outputs.iter().map(|o| o.value).sum())
 			.ok_or(VtxoValidationError::Invalid("insufficient onchain amount"))?;
 		let next_tx = verify_transition(&vtxo, idx, prev.0.as_ref(), prev.1, next_amount)
-			.map_err(|e| VtxoValidationError::transition(idx, vtxo.genesis.len(), e))?;
+			.map_err(|e| VtxoValidationError::transition(
+				idx, vtxo.genesis.len(), item.transition.transition_type(), e,
+			))?;
 		prev = (Cow::Owned(next_tx), item.output_idx as usize, next_amount);
 	}
 

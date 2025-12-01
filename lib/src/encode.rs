@@ -187,7 +187,7 @@ pub trait ReadExt: io::Read {
 		Ok(u64::from_le_bytes(buf))
 	}
 
-	/// Read from the writer to fill the entire slice.
+	/// Read from the reader to fill the entire slice.
 	fn read_slice(&mut self, slice: &mut [u8]) -> Result<(), io::Error> {
 		self.read_exact(slice)
 	}
@@ -245,6 +245,30 @@ impl ProtocolEncoding for PublicKey {
 		PublicKey::from_slice(&buf).map_err(|e| {
 			ProtocolDecodingError::invalid_err(e, "invalid public key")
 		})
+	}
+}
+
+impl ProtocolEncoding for Option<sha256::Hash> {
+	fn encode<W: io::Write + ?Sized>(&self, w: &mut W) -> Result<(), io::Error> {
+		if let Some(h) = self {
+			w.emit_u8(1)?;
+			w.emit_slice(&h.as_byte_array()[..])
+		} else {
+			w.emit_u8(0)
+		}
+	}
+
+	fn decode<R: io::Read + ?Sized>(r: &mut R) -> Result<Self, ProtocolDecodingError> {
+		let first = r.read_u8()?;
+		if first == 0 {
+			Ok(None)
+		} else if first == 1 {
+			let mut buf = [0u8; 32];
+			r.read_slice(&mut buf)?;
+			Ok(Some(sha256::Hash::from_byte_array(buf)))
+		} else {
+			Err(ProtocolDecodingError::invalid("invalid optional hash prefix byte"))
+		}
 	}
 }
 
