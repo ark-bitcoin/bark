@@ -5,6 +5,7 @@
 use std::collections::HashMap;
 use std::str::FromStr;
 
+#[cfg(feature = "onchain_bdk")]
 use bdk_wallet::ChangeSet;
 use bitcoin::{Amount, BlockHash, Network, SignedAmount, Transaction, Txid};
 use bitcoin::bip32::Fingerprint;
@@ -24,7 +25,7 @@ use bark::movement::{
 	Movement, MovementDestination, MovementId, MovementStatus, MovementSubsystem, MovementTimestamp,
 };
 use bark::persist::{BarkPersister, RoundStateId, StoredRoundState};
-use bark::persist::models::{self, PendingBoard, PendingLightningSend, LightningReceive, StoredExit};
+use bark::persist::models::{self, LightningReceive, LightningSend, PendingBoard, StoredExit};
 use bark::round::{RoundState, UnconfirmedRound};
 use bark::vtxo::state::{VtxoState, VtxoStateKind};
 
@@ -36,10 +37,12 @@ impl BarkPersister for Dummy {
 		Ok(())
 	}
 
+	#[cfg(feature = "onchain_bdk")]
 	fn initialize_bdk_wallet(&self) -> anyhow::Result<ChangeSet> {
 		Ok(ChangeSet::default())
 	}
 
+	#[cfg(feature = "onchain_bdk")]
 	fn store_bdk_wallet_changeset(&self, _changeset: &ChangeSet) -> anyhow::Result<()> {
 		Ok(())
 	}
@@ -125,21 +128,34 @@ impl BarkPersister for Dummy {
 		amount: &Amount,
 		_vtxos: &[VtxoId],
 		movement_id: MovementId
-	) -> anyhow::Result<PendingLightningSend> {
-		Ok(PendingLightningSend {
+	) -> anyhow::Result<LightningSend> {
+		Ok(LightningSend {
 			invoice: invoice.clone(),
 			amount: *amount,
 			htlc_vtxos: vec![],
+			preimage: None,
 			movement_id,
 		})
 	}
 
-	fn get_all_pending_lightning_send(&self) -> anyhow::Result<Vec<PendingLightningSend>> {
+	fn get_all_pending_lightning_send(&self) -> anyhow::Result<Vec<LightningSend>> {
 		Ok(vec![])
 	}
 
-	fn remove_pending_lightning_send(&self, _payment_hash: PaymentHash) -> anyhow::Result<()> {
+	fn finish_lightning_send(
+		&self,
+		_payment_hash: PaymentHash,
+		_preimage: Option<Preimage>,
+	) -> anyhow::Result<()> {
 		Ok(())
+	}
+
+	fn remove_lightning_send(&self, _payment_hash: PaymentHash) -> anyhow::Result<()> {
+		Ok(())
+	}
+
+	fn get_lightning_send(&self, _payment_hash: PaymentHash) -> anyhow::Result<Option<LightningSend>> {
+		Ok(Some(dummy_lightning_send()))
 	}
 
 	fn store_lightning_receive(
@@ -299,6 +315,16 @@ impl BarkPersister for Dummy {
 		_vtxos: &[(&Vtxo, &VtxoState)],
 	) -> anyhow::Result<()> {
 		Ok(())
+	}
+}
+
+fn dummy_lightning_send() -> LightningSend {
+	LightningSend {
+		invoice: Invoice::Bolt11(Bolt11Invoice::from_str("bob").unwrap()),
+		amount: Amount::ZERO,
+		htlc_vtxos: vec![],
+		movement_id: MovementId::new(0),
+		preimage: None,
 	}
 }
 

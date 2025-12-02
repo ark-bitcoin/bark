@@ -30,7 +30,7 @@ use crate::{Vtxo, VtxoId, VtxoState, WalletProperties};
 use crate::exit::models::ExitTxOrigin;
 use crate::movement::{Movement, MovementId, MovementStatus, MovementSubsystem};
 use crate::persist::{BarkPersister, RoundStateId, StoredRoundState};
-use crate::persist::models::{PendingLightningSend, LightningReceive, PendingBoard, StoredExit};
+use crate::persist::models::{LightningReceive, LightningSend, PendingBoard, StoredExit};
 use crate::round::{RoundState, UnconfirmedRound};
 use crate::vtxo::state::{VtxoStateKind, WalletVtxo};
 
@@ -286,20 +286,34 @@ impl BarkPersister for SqliteClient {
 		amount: &Amount,
 		vtxos: &[VtxoId],
 		movement_id: MovementId,
-	) -> anyhow::Result<PendingLightningSend> {
+	) -> anyhow::Result<LightningSend> {
 		let conn = self.connect()?;
 		query::store_new_pending_lightning_send(&conn, invoice, amount, vtxos, movement_id)
 	}
 
-	fn get_all_pending_lightning_send(&self) -> anyhow::Result<Vec<PendingLightningSend>> {
+	fn get_all_pending_lightning_send(&self) -> anyhow::Result<Vec<LightningSend>> {
 		let conn = self.connect()?;
 		query::get_all_pending_lightning_send(&conn)
 	}
 
-	fn remove_pending_lightning_send(&self, payment_hash: PaymentHash) -> anyhow::Result<()> {
+	fn finish_lightning_send(
+		&self,
+		payment_hash: PaymentHash,
+		preimage: Option<Preimage>,
+	) -> anyhow::Result<()> {
 		let conn = self.connect()?;
-		query::remove_pending_lightning_send(&conn, payment_hash)?;
+		query::finish_lightning_send(&conn, payment_hash, preimage)
+	}
+
+	fn remove_lightning_send(&self, payment_hash: PaymentHash) -> anyhow::Result<()> {
+		let conn = self.connect()?;
+		query::remove_lightning_send(&conn, payment_hash)?;
 		Ok(())
+	}
+
+	fn get_lightning_send(&self, payment_hash: PaymentHash) -> anyhow::Result<Option<LightningSend>> {
+		let conn = self.connect()?;
+		query::get_lightning_send(&conn, payment_hash)
 	}
 
 	fn get_all_pending_lightning_receives(&self) -> anyhow::Result<Vec<LightningReceive>> {

@@ -37,7 +37,7 @@ use bitcoin_ext::BlockDelta;
 use crate::WalletProperties;
 use crate::exit::models::ExitTxOrigin;
 use crate::movement::{Movement, MovementId, MovementStatus, MovementSubsystem};
-use crate::persist::models::{PendingLightningSend, LightningReceive, PendingBoard, StoredExit};
+use crate::persist::models::{LightningReceive, LightningSend, PendingBoard, StoredExit};
 use crate::round::{RoundState, UnconfirmedRound};
 use crate::vtxo::state::{VtxoState, VtxoStateKind, WalletVtxo};
 
@@ -402,25 +402,48 @@ pub trait BarkPersister: Send + Sync + 'static {
 		amount: &Amount,
 		vtxos: &[VtxoId],
 		movement_id: MovementId,
-	) -> anyhow::Result<PendingLightningSend>;
+	) -> anyhow::Result<LightningSend>;
 
 	/// Get all pending lightning sends.
 	///
 	/// Returns:
-	/// - `Ok(Vec<PendingLightningSend>)` possibly empty.
+	/// - `Ok(Vec<LightningSend>)` possibly empty.
 	///
 	/// Errors:
 	/// - Returns an error if the query fails.
-	fn get_all_pending_lightning_send(&self) -> anyhow::Result<Vec<PendingLightningSend>>;
+	fn get_all_pending_lightning_send(&self) -> anyhow::Result<Vec<LightningSend>>;
 
-	/// Remove a pending lightning send.
+	/// Mark a lightning send as finished.
 	///
 	/// Parameters:
-	/// - payment_hash: The [PaymentHash] of the pending lightning send to remove.
+	/// - payment_hash: The [PaymentHash] of the lightning send to update.
+	/// - preimage: The [Preimage] of the successful lightning send.
 	///
 	/// Errors:
-	/// - Returns an error if the pending lightning send cannot be removed.
-	fn remove_pending_lightning_send(&self, payment_hash: PaymentHash) -> anyhow::Result<()>;
+	/// - Returns an error if the lightning send cannot be updated.
+	fn finish_lightning_send(
+		&self,
+		payment_hash: PaymentHash,
+		preimage: Option<Preimage>,
+	) -> anyhow::Result<()>;
+
+	/// Remove a lightning send.
+	///
+	/// Parameters:
+	/// - payment_hash: The [PaymentHash] of the lightning send to remove.
+	///
+	/// Errors:
+	/// - Returns an error if the lightning send cannot be removed.
+	fn remove_lightning_send(&self, payment_hash: PaymentHash) -> anyhow::Result<()>;
+
+	/// Get a lightning send by payment hash
+	///
+	/// Parameters:
+	/// - payment_hash: The [PaymentHash] of the lightning send to get.
+	///
+	/// Errors:
+	/// - Returns an error if the lookup fails.
+	fn get_lightning_send(&self, payment_hash: PaymentHash) -> anyhow::Result<Option<LightningSend>>;
 
 	/// Store an incoming Lightning receive record.
 	///

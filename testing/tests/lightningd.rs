@@ -196,13 +196,14 @@ async fn bark_pay_invoice_twice() {
 
 
 #[tokio::test]
-async fn bark_pay_ln_fails() {
-	let ctx = TestContext::new("lightningd/bark_pay_ln_fails").await;
+async fn bark_pay_ln_fails_then_succeeds() {
+	let ctx = TestContext::new("lightningd/bark_pay_ln_fails_then_succeeds").await;
 
 	let lightning = ctx.new_lightning_setup_no_channel("lightningd").await;
 
 	// Start a server and link it to our cln installation
-	let srv = ctx.new_captaind("server", Some(&lightning.sender)).await;
+	let srv = ctx.new_captaind_with_funds("server", Some(&lightning.sender), btc(10)).await;
+	srv.wait_for_vtxopool(&ctx).await;
 
 	// Start a bark and create a VTXO
 	let onchain_amount = btc(3);
@@ -220,7 +221,7 @@ async fn bark_pay_ln_fails() {
 
 	// Try send coins through lightning
 	assert_eq!(bark.spendable_balance().await, board_amount);
-	bark.try_pay_lightning(invoice, None).await.expect_err("The payment fails");
+	bark.try_pay_lightning(invoice.clone(), None).await.expect_err("The payment fails");
 
 	let vtxos = bark.vtxos().await;
 	assert!(!vtxos.iter().any(|v| v.id == board_vtxo), "board vtxo not spent");
@@ -236,6 +237,29 @@ async fn bark_pay_ln_fails() {
 		vtxos.iter().any(|v| v.amount == invoice_amount),
 		"user should get a revocation arkoor of payment_amount + forwarding fee, got: {:?}", vtxos,
 	);
+
+	assert_eq!(bark.offchain_balance().await.pending_lightning_send, btc(0), "pending lightning send should be reset after payment");
+	let vtxos = bark.vtxos().await;
+	assert!(!vtxos.iter().any(|v| matches!(v.state, VtxoStateInfo::Locked { .. })), "should not be any locked vtxo left");
+
+	// Now if we create a channel and try pay the same invoice again, the payment should succeed.
+	// This tests if we're able to retry payments to invoices that are safe to retry.
+
+	// We need to await the channel funding transaction or else we get
+	// infinite 'Waiting for gossip...' below.
+	trace!("Creating channel between lightning nodes");
+	lightning.sender.connect(&lightning.receiver).await;
+	let funding_txid = lightning.sender.fund_channel(&lightning.receiver, btc(1)).await;
+	ctx.await_transaction(funding_txid).await;
+	// Default depth before channel_ready
+	ctx.generate_blocks(6).await;
+	lightning.sender.wait_for_block_sync().await;
+	lightning.receiver.wait_for_block_sync().await;
+
+	trace!("Retrying send to same invoice after channel exists");
+	// Try send coins through lightning again with the same invoice
+	bark.pay_lightning(invoice, None).await;
+	assert_eq!(bark.spendable_balance().await, board_amount - invoice_amount);
 
 	assert_eq!(bark.offchain_balance().await.pending_lightning_send, btc(0), "pending lightning send should be reset after payment");
 	let vtxos = bark.vtxos().await;

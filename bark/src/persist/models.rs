@@ -44,17 +44,16 @@ pub struct PendingBoard {
 	pub movement_id: MovementId,
 }
 
-/// Persisted representation of a pending lightning send.
+/// Persisted representation of a lightning send.
 ///
 /// Stores the invoice and the amount being sent.
-///
-/// Note: the record should be removed when the payments is completed or failed.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct PendingLightningSend {
+pub struct LightningSend {
 	pub invoice: Invoice,
 	pub amount: Amount,
 	pub htlc_vtxos: Vec<WalletVtxo>,
 	pub movement_id: MovementId,
+	pub preimage: Option<Preimage>,
 }
 
 /// Persisted representation of an incoming Lightning payment.

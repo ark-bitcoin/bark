@@ -213,6 +213,12 @@ impl Migration for Migration0022 {
 			// Adding default 0 for backward compatibility
 			"ALTER TABLE bark_pending_board ADD COLUMN amount_sat INTEGER NOT NULL DEFAULT 0;",
 			"ALTER TABLE bark_pending_lightning_receive ADD COLUMN finished_at DATETIME;",
+
+			// --- Store historical lightning sends with preimage ---
+			// The table will now store non-pending payments too so it needs a rename.
+			"ALTER TABLE bark_pending_lightning_send RENAME TO bark_lightning_send;",
+			"ALTER TABLE bark_lightning_send ADD COLUMN preimage TEXT;",
+			"ALTER TABLE bark_lightning_send ADD COLUMN finished_at DATETIME;",
 		];
 
 		for query in queries {
