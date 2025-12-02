@@ -16,7 +16,7 @@ use uuid::Uuid;
 use ark::{musig, ProtocolEncoding, Vtxo, VtxoId, VtxoPolicy, VtxoRequest};
 use ark::arkoor::{ArkoorCosignResponse, ArkoorPackageBuilder};
 use ark::challenges::LightningReceiveChallenge;
-use ark::lightning::{Bolt12Invoice, Invoice, Offer, PaymentHash, Preimage};
+use ark::lightning::{Bolt12Invoice, Invoice, Offer, PaymentHash, PaymentStatus, Preimage};
 use server_rpc::{
 	protos::{self, InputVtxo, prepare_lightning_receive_claim_request::LightningReceiveAntiDos},
 	TryFromBytes
@@ -139,9 +139,14 @@ impl Server {
 		}
 
 		// Spawn a task that performs the payment
-		let res = self.cln.pay_bolt11(&invoice, htlc_vtxo_sum, min_expiry_height, wait).await;
+		let payment_status = self.cln.pay_bolt11(
+			&invoice,
+			htlc_vtxo_sum,
+			min_expiry_height,
+			wait,
+		).await?;
 
-		Self::process_lightning_pay_response(invoice_payment_hash, res)
+		Ok(Self::format_lightning_pay_response(invoice_payment_hash, payment_status))
 	}
 
 	pub async fn check_lightning_payment(
@@ -149,40 +154,38 @@ impl Server {
 		payment_hash: PaymentHash,
 		wait: bool,
 	) -> anyhow::Result<protos::LightningPaymentResult> {
-		let res = self.cln.check_bolt11(&payment_hash, wait).await;
+		let payment_status = self.cln.check_bolt11(&payment_hash, wait).await?;
 
-		Self::process_lightning_pay_response(payment_hash, res)
+		Ok(Self::format_lightning_pay_response(payment_hash, payment_status))
 	}
 
-	fn process_lightning_pay_response(
+	fn format_lightning_pay_response(
 		payment_hash: PaymentHash,
-		res: anyhow::Result<Preimage>,
-	) -> anyhow::Result<protos::LightningPaymentResult> {
-		match res {
-			Ok(preimage) => {
-				Ok(protos::LightningPaymentResult {
+		payment_status: PaymentStatus,
+	) -> protos::LightningPaymentResult {
+		match payment_status {
+			PaymentStatus::Success(preimage) => {
+				protos::LightningPaymentResult {
 					progress_message: "Payment completed".to_string(),
-					status: protos::PaymentStatus::Complete.into(),
+					status: protos::PaymentStatus::Success.into(),
 					payment_hash: payment_hash.to_vec(),
 					payment_preimage: Some(preimage.to_vec())
-				})
+				}
 			},
-			Err(e) => {
-				let status = e.downcast_ref::<LightningPaymentStatus>();
-				if let Some(LightningPaymentStatus::Failed) = status {
-					Ok(protos::LightningPaymentResult {
-						progress_message: format!("Payment failed: {}", e),
-						status: protos::PaymentStatus::Failed.into(),
-						payment_hash: payment_hash.to_vec(),
-						payment_preimage: None
-					})
-				} else {
-					Ok(protos::LightningPaymentResult {
-						progress_message: format!("Error during payment: {:?}", e),
-						status: protos::PaymentStatus::Failed.into(),
-						payment_hash: payment_hash.to_vec(),
-						payment_preimage: None
-					})
+			PaymentStatus::Failed => {
+				protos::LightningPaymentResult {
+					progress_message: "Payment failed".to_string(),
+					status: protos::PaymentStatus::Failed.into(),
+					payment_hash: payment_hash.to_vec(),
+					payment_preimage: None
+				}
+			},
+			PaymentStatus::Pending => {
+				protos::LightningPaymentResult {
+					progress_message: "Payment pending".to_string(),
+					status: protos::PaymentStatus::Pending.into(),
+					payment_hash: payment_hash.to_vec(),
+					payment_preimage: None
 				}
 			},
 		}
@@ -235,7 +238,8 @@ impl Server {
 				},
 				_ if tip > first_policy.htlc_expiry => {
 					// Check one last time to see if it completed
-					if let Ok(preimage) = self.cln.check_bolt11(&invoice.payment_hash, false).await {
+					let res = self.cln.check_bolt11(&invoice.payment_hash, false).await;
+					if let Ok(PaymentStatus::Success(preimage)) = res {
 						return badarg!("This lightning payment has completed. preimage: {}",
 							preimage.as_hex());
 					}

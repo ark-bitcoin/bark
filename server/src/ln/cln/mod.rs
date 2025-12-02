@@ -53,7 +53,7 @@ use tokio::sync::broadcast::Receiver;
 use tokio::sync::{broadcast, Notify, mpsc, oneshot};
 use tonic::transport::{Channel, Uri};
 
-use ark::lightning::{Bolt12Invoice, Bolt12InvoiceExt, Invoice, Offer, PaymentHash, Preimage};
+use ark::lightning::{Bolt12Invoice, Bolt12InvoiceExt, Invoice, Offer, PaymentHash, PaymentStatus, Preimage};
 use cln_rpc::node_client::NodeClient;
 
 use crate::error::ContextExt;
@@ -151,7 +151,7 @@ impl ClnManager {
 		htlc_amount: Amount,
 		htlc_send_expiry_height: BlockHeight,
 		wait: bool,
-	) -> anyhow::Result<Preimage> {
+	) -> anyhow::Result<PaymentStatus> {
 		invoice.check_signature().context("invalid invoice signature")?;
 
 		let user_amount = if invoice.amount_msat().is_none() {
@@ -178,7 +178,7 @@ impl ClnManager {
 		&self,
 		payment_hash: &PaymentHash,
 		wait: bool,
-	) -> anyhow::Result<Preimage> {
+	) -> anyhow::Result<PaymentStatus> {
 		let update_rx = self.payment_update_rx.resubscribe();
 
 		self.inner_check_bolt11(update_rx, payment_hash, wait, true).await
@@ -190,7 +190,7 @@ impl ClnManager {
 		payment_hash: &PaymentHash,
 		wait: bool,
 		instant_check: bool,
-	) -> anyhow::Result<Preimage> {
+	) -> anyhow::Result<PaymentStatus> {
 		let mut poll_interval = tokio::time::interval(self.invoice_poll_interval);
 
 		if !instant_check {
@@ -227,12 +227,11 @@ impl ClnManager {
 					let preimage = invoice.preimage
 						.context("missing preimage on bolt11 success")?;
 					debug!("Done, preimage: {} for invoice {}", preimage.as_hex(), invoice.invoice);
-					return Ok(Preimage::from(preimage));
+					return Ok(PaymentStatus::Success(preimage));
 				}
 
 				if status == LightningPaymentStatus::Failed {
-					return Err(anyhow::Error::msg("payment failed")
-						.context(LightningPaymentStatus::Failed));
+					return Ok(PaymentStatus::Failed);
 				}
 			} else {
 				warn!("Bolt11 invoice status for payment {}: no attempt on invoice",
@@ -241,12 +240,7 @@ impl ClnManager {
 			}
 
 			if !wait {
-				let err = anyhow!("payment pending");
-				return Err(if let Some(status) = invoice.last_attempt_status {
-					err.context(status)
-				} else {
-					err
-				})
+				return Ok(PaymentStatus::Pending);
 			}
 			// Continue loop, wait for next trigger or timeout
 		}

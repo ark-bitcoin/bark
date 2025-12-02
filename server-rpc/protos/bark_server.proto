@@ -458,5 +458,5 @@ message Empty {}
 enum PaymentStatus {
 	PENDING = 0;
 	FAILED = 1;
-	COMPLETE = 2;
+	SUCCESS = 2;
 }

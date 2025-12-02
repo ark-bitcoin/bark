@@ -196,7 +196,7 @@ impl Wallet {
 					false
 				}
 			},
-			protos::PaymentStatus::Complete => {
+			protos::PaymentStatus::Success => {
 				let preimage_opt = self.process_lightning_send_server_preimage(
 					res.payment_preimage, &payment,
 				).await?;
