@@ -38,7 +38,7 @@ use server_log::{
 	UnconfirmedBoardRegisterAttempt, ForfeitedExitInMempool, ForfeitedExitConfirmed,
 	ForfeitBroadcasted, RoundError
 };
-use server_rpc::protos;
+use server_rpc::protos::{self, lightning_payment_status};
 
 use ark_testing::{Captaind, TestContext, btc, sat, secs, Bark};
 use ark_testing::constants::{BOARD_CONFIRMATIONS, ROUND_CONFIRMATIONS};
@@ -696,14 +696,25 @@ async fn reject_revocation_on_successful_lightning_payment() {
 	struct Proxy;
 	#[tonic::async_trait]
 	impl captaind::proxy::ArkRpcProxy for Proxy {
-		async fn initiate_lightning_payment(
-			&self, upstream: &mut ArkClient, req: protos::InitiateLightningPaymentRequest,
-		) -> Result<protos::Empty, tonic::Status> {
-			trace!("ArkRpcProxy: Calling finish_lightning_payment.");
-			// Wait until payment is successful then we drop update so client asks for revocation
-			upstream.initiate_lightning_payment(req).await?.into_inner();
+		async fn check_lightning_payment(
+			&self, upstream: &mut ArkClient,
+			req: protos::CheckLightningPaymentRequest,
+		) -> Result<protos::LightningPaymentStatus, tonic::Status> {
+			let res = upstream.check_lightning_payment(req).await?.into_inner();
+			let status = res.payment_status.unwrap();
 
-			Ok(protos::Empty {})
+			match status {
+				lightning_payment_status::PaymentStatus::Pending(_) => {
+					Ok(protos::LightningPaymentStatus {
+						payment_status: Some(lightning_payment_status::PaymentStatus::Pending(protos::Empty {})),
+					})
+				},
+				_ => {
+					Ok(protos::LightningPaymentStatus {
+						payment_status: Some(lightning_payment_status::PaymentStatus::Failed(protos::Empty {})),
+					})
+				},
+			}
 		}
 	}
 
@@ -729,7 +740,7 @@ async fn reject_revocation_on_successful_lightning_payment() {
 	lightning.sync().await;
 
 	assert_eq!(bark_1.spendable_balance().await, board_amount);
-	let err = bark_1.try_pay_lightning(invoice, None).await.unwrap_err();
+	let err = bark_1.try_pay_lightning(invoice, None, true).await.unwrap_err();
 	assert!(err.to_string().contains("This lightning payment has completed. preimage: "), "err: {err}");
 }
 
@@ -1388,7 +1399,7 @@ async fn reject_dust_bolt11_payment() {
 	bark.board_all_and_confirm_and_register(&ctx).await;
 
 	let invoice = lightningd_1.invoice(None, "test_payment", "A test payment").await;
-	let err = bark.try_pay_lightning(invoice, Some(sat(100_000))).await.unwrap_err();
+	let err = bark.try_pay_lightning(invoice, Some(sat(100_000)), false).await.unwrap_err();
 	assert!(err.to_string().contains(
 		"arkoor output amounts cannot be below the p2tr dust threshold",
 	), "err: {err}");
@@ -1718,7 +1729,7 @@ async fn should_refuse_paying_invoice_not_matching_htlcs() {
 
 	let invoice = lightning.receiver.invoice(Some(btc(1)), "real invoice", "A real invoice").await;
 
-	let err = bark_1.try_pay_lightning(invoice, None).await.unwrap_err();
+	let err = bark_1.try_pay_lightning(invoice, None, false).await.unwrap_err();
 	assert!(err.to_string().contains("htlc payment hash doesn't match invoice"), "err: {err}");
 }
 
@@ -1754,7 +1765,7 @@ async fn should_refuse_paying_invoice_whose_amount_is_higher_than_htlcs() {
 
 	let invoice = lightning.receiver.invoice(Some(btc(1)), "real invoice", "A real invoice").await;
 
-	let err = bark_1.try_pay_lightning(invoice, None).await.unwrap_err();
+	let err = bark_1.try_pay_lightning(invoice, None, false).await.unwrap_err();
 	assert!(err.to_string().contains("htlc vtxo amount too low for invoice"), "err: {err}");
 }
 
@@ -1968,7 +1979,7 @@ async fn should_refuse_ln_pay_input_vtxo_that_is_being_exited() {
 
 	let invoice = lightningd.invoice(Some(sat(100_000)), "real invoice", "A real invoice").await;
 
-	let err = bark.try_pay_lightning(&invoice, None).await.unwrap_err();
+	let err = bark.try_pay_lightning(&invoice, None, false).await.unwrap_err();
 	assert!(err.to_string().contains(format!("bad user input: cannot spend vtxo that is already exited: {}", vtxo_a.id).as_str()), "err: {err}");
 }
 

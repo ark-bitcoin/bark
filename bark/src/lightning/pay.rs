@@ -22,6 +22,26 @@ use crate::subsystem::{BarkSubsystem, LightningMovement, LightningSendMovement};
 
 
 impl Wallet {
+	/// Performs the revocation of HTLC VTXOs associated with a failed Lightning payment.
+	///
+	/// Builds a revocation package, requests server cosign,
+	/// then constructs new spendable VTXOs from server response.
+	///
+	/// Updates wallet database and movement logs to reflect the failed
+	/// payment and new produced VTXOs; removes the pending send record.
+	///
+	/// # Arguments
+	///
+	/// * `payment` - A reference to the [`LightningSend`] representing the failed payment whose
+	///     associated HTLC VTXOs should be revoked.
+	///
+	/// # Errors
+	///
+	/// Returns an error if revocation fails at any step.
+	///
+	/// # Returns
+	///
+	/// Returns `Ok(())` if revocation succeeds and the wallet state is properly updated.
 	async fn process_lightning_revocation(&self, payment: &LightningSend) -> anyhow::Result<()> {
 		let mut srv = self.require_server()?;
 		let htlc_vtxos = payment.htlc_vtxos.clone().into_iter()
@@ -133,8 +153,8 @@ impl Wallet {
 	///
 	/// # Arguments
 	///
-	/// * `htlc_vtxos` - Slice of [WalletVtxo] objects that represent HTLC outputs involved in the
-	///                  payment.
+	/// * `payment_hash` - The [PaymentHash] identifying the lightning payment.
+	/// * `wait`         - If true, asks the server to wait for payment completion (may block longer).
 	///
 	/// # Returns
 	///
@@ -147,14 +167,14 @@ impl Wallet {
 	/// # Behavior
 	///
 	/// - Validates that all HTLC VTXOs share the same invoice, amount and policy.
-	/// - Sends a request to the lightning payment server to check the payment status.
+	/// - Sends a request to the Ark server to check the payment status.
 	/// - Depending on the payment status:
 	///   - **Failed**: Revokes the associated VTXOs.
 	///   - **Pending**: Checks if the HTLC has expired based on the tip height. If expired,
 	///     revokes the VTXOs.
 	///   - **Complete**: Extracts the payment preimage, logs the payment, registers movement
-	///     in the database and returns
-	pub async fn check_lightning_payment(&self, payment_hash: PaymentHash)
+	///     in the database and returns the preimage.
+	pub async fn check_lightning_payment(&self, payment_hash: PaymentHash, wait: bool)
 		-> anyhow::Result<Option<Preimage>>
 	{
 		trace!("Checking lightning payment status for payment hash: {}", payment_hash);
@@ -174,8 +194,8 @@ impl Wallet {
 		}
 
 		let req = protos::CheckLightningPaymentRequest {
-			hash: policy.payment_hash.to_vec(),
-			wait: false,
+			hash: payment_hash.to_vec(),
+			wait,
 		};
 		// NB: we don't early return on server error or bad response because we
 		// don't want it to prevent us from revoking or exiting HTLCs if necessary.

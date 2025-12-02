@@ -30,6 +30,9 @@ pub enum LightningCommand {
 		/// Skip syncing wallet
 		#[arg(long)]
 		no_sync: bool,
+		/// Wait for the payment to be settled
+		#[arg(long)]
+		wait: bool,
 	},
 	/// creates a bolt11 invoice with the provided amount
 	///
@@ -100,15 +103,20 @@ pub async fn execute_lightning_command(
 	wallet: &mut Wallet,
 ) -> anyhow::Result<()> {
 	match lightning_command {
-		LightningCommand::Pay { invoice, amount, comment, no_sync } => {
-			if let Ok(invoice) = Bolt11Invoice::from_str(&invoice) {
-				pay_invoice(invoice, amount, comment, no_sync, wallet).await?;
+		LightningCommand::Pay { invoice, amount, comment, no_sync, wait } => {
+			let payment = if let Ok(invoice) = Bolt11Invoice::from_str(&invoice) {
+				pay_invoice(invoice, amount, comment, no_sync, wallet).await?
 			} else if let Ok(offer) = Offer::from_str(&invoice) {
-				pay_offer(offer, amount, comment, no_sync, wallet).await?;
+				pay_offer(offer, amount, comment, no_sync, wallet).await?
 			} else if let Ok(lnaddr) = LightningAddress::from_str(&invoice) {
-				pay_lnaddr(lnaddr, amount, comment, no_sync, wallet).await?;
+				pay_lnaddr(lnaddr, amount, comment, no_sync, wallet).await?
 			} else {
 				bail!("argument is not a valid bolt11 invoice, bolt12 offer or lightning address");
+			};
+
+			if wait {
+				let payment_hash = payment.invoice.payment_hash();
+				wallet.check_lightning_payment(payment_hash, true).await?;
 			}
 		},
 		LightningCommand::Invoice { amount, wait, token } => {

@@ -1315,7 +1315,7 @@ impl Wallet {
 
 		for payment in pending_payments {
 			let payment_hash = payment.invoice.payment_hash();
-			self.check_lightning_payment(payment_hash).await?;
+			self.check_lightning_payment(payment_hash, false).await?;
 		}
 
 		Ok(())
