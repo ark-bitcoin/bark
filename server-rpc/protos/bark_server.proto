@@ -34,7 +34,7 @@ service ArkService {
 	rpc RequestLightningPayHtlcCosign(LightningPayHtlcCosignRequest) returns (LightningPayHtlcCosignResponse) {}
 	rpc InitiateLightningPayment(InitiateLightningPaymentRequest) returns (LightningPaymentResult) {}
 	rpc CheckLightningPayment(CheckLightningPaymentRequest) returns (LightningPaymentResult) {}
-	rpc RevokeLightningPayment(RevokeLightningPaymentRequest) returns (ArkoorPackageCosignResponse) {}
+	rpc RequestLightningPayHtlcRevocation(RevokeLightningPayHtlcRequest) returns (ArkoorPackageCosignResponse) {}
 
 	// TODO: Remove this once we hit 0.1.0-beta.6 or higher
 	rpc StartLightningPayment(LightningPayHtlcCosignRequest) returns (LightningPayHtlcCosignResponse) {
@@ -42,6 +42,10 @@ service ArkService {
 	}
 	// TODO: Remove this once we hit 0.1.0-beta.6 or higher
 	rpc FinishLightningPayment(InitiateLightningPaymentRequest) returns (LightningPaymentResult) {
+		option deprecated = true;
+	}
+	// TODO: Remove this once we hit 0.1.0-beta.6 or higher
+	rpc RevokeLightningPayment(RevokeLightningPayHtlcRequest) returns (ArkoorPackageCosignResponse) {
 		option deprecated = true;
 	}
 
@@ -217,7 +221,7 @@ message LightningPaymentResult {
 	optional bytes payment_preimage = 4;
 }
 
-message RevokeLightningPaymentRequest {
+message RevokeLightningPayHtlcRequest {
 	repeated bytes htlc_vtxo_ids = 1;
 	repeated bytes user_nonces = 2;
 }

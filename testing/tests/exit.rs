@@ -459,8 +459,8 @@ async fn bark_should_exit_a_failed_htlc_out_that_server_refuse_to_revoke() {
 			Err(tonic::Status::internal("Refused to finish bolt11 payment"))
 		}
 
-		async fn revoke_lightning_payment(
-			&self, _upstream: &mut ArkClient, _req: protos::RevokeLightningPaymentRequest,
+		async fn request_lightning_pay_htlc_revocation(
+			&self, _upstream: &mut ArkClient, _req: protos::RevokeLightningPayHtlcRequest,
 		) -> Result<protos::ArkoorPackageCosignResponse, tonic::Status> {
 			Err(tonic::Status::internal("Refused to revoke htlc out"))
 		}
@@ -535,9 +535,9 @@ async fn bark_should_exit_a_pending_htlc_out_that_server_refuse_to_revoke() {
 			})
 		}
 
-		async fn revoke_lightning_payment(
+		async fn request_lightning_pay_htlc_revocation(
 			&self, _upstream: &mut ArkClient,
-			_req: protos::RevokeLightningPaymentRequest,
+			_req: protos::RevokeLightningPayHtlcRequest,
 		) -> Result<protos::ArkoorPackageCosignResponse, tonic::Status> {
 			Err(tonic::Status::internal("Refused to revoke htlc out"))
 		}

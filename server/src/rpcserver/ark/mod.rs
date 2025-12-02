@@ -353,11 +353,20 @@ impl rpc::server::ArkService for Server {
 		Ok(tonic::Response::new(res))
 	}
 
+	// TODO: Remove this once we hit 0.1.0-beta.6 or higher
 	async fn revoke_lightning_payment(
 		&self,
-		req: tonic::Request<protos::RevokeLightningPaymentRequest>
+		req: tonic::Request<protos::RevokeLightningPayHtlcRequest>
 	) -> Result<tonic::Response<protos::ArkoorPackageCosignResponse>, tonic::Status> {
 		let _ = RpcMethodDetails::grpc_ark(middleware::RPC_SERVICE_ARK_REVOKE_LIGHTNING_PAYMENT);
+		rpc::server::ArkService::request_lightning_pay_htlc_revocation(self, req).await
+	}
+
+	async fn request_lightning_pay_htlc_revocation(
+		&self,
+		req: tonic::Request<protos::RevokeLightningPayHtlcRequest>
+	) -> Result<tonic::Response<protos::ArkoorPackageCosignResponse>, tonic::Status> {
+		let _ = RpcMethodDetails::grpc_ark(middleware::RPC_SERVICE_ARK_REQUEST_LIGHTNING_PAY_HTLC_REVOCATION);
 		let req = req.into_inner();
 
 		crate::rpcserver::add_tracing_attributes(vec![

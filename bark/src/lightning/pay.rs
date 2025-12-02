@@ -43,7 +43,7 @@ impl Wallet {
 
 		let revocation = ArkoorPackageBuilder::new_htlc_revocation(&htlc_vtxos, &pubs)?;
 
-		let req = protos::RevokeLightningPaymentRequest {
+		let req = protos::RevokeLightningPayHtlcRequest {
 			htlc_vtxo_ids: revocation.arkoors.iter()
 				.map(|i| i.input.id().to_bytes().to_vec())
 				.collect(),
@@ -51,7 +51,7 @@ impl Wallet {
 				.map(|i| i.user_nonce.serialize().to_vec())
 				.collect(),
 		};
-		let cosign_resp: Vec<_> = srv.client.revoke_lightning_payment(req).await?
+		let cosign_resp: Vec<_> = srv.client.request_lightning_pay_htlc_revocation(req).await?
 			.into_inner().try_into().context("invalid server cosign response")?;
 		ensure!(revocation.verify_cosign_response(&cosign_resp),
 			"invalid arkoor cosignature received from server",
