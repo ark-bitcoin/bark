@@ -852,9 +852,11 @@ async fn reject_arkoor_with_bad_signature() {
 
 	// check that we saw a log
 	tokio::time::sleep(Duration::from_millis(250)).await;
+
+
 	assert!(io::BufReader::new(std::fs::File::open(bark2.command_log_file()).unwrap()).lines().any(|line| {
 		line.unwrap().contains("Received invalid arkoor VTXO from server: \
-			error verifying one of the genesis transitions (idx=1/2): invalid signature")
+			error verifying one of the genesis transitions (idx=1/2 type=arkoor): invalid signature")
 	}));
 }
 
