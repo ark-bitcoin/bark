@@ -3135,6 +3135,14 @@
             "description": "The amount of the lightning receive",
             "minimum": 0
           },
+          "finished_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "The timestamp at which the lightning receive was finished"
+          },
           "htlc_vtxos": {
             "type": [
               "array",

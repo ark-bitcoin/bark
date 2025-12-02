@@ -1,5 +1,4 @@
 use std::str::FromStr;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::Context;
 use bitcoin::{Amount, Network, SignedAmount, Txid};
@@ -673,8 +672,10 @@ pub fn get_all_pending_lightning_receives<'a>(
 ) -> anyhow::Result<Vec<LightningReceive>> {
 	let query = "
 		SELECT payment_hash, preimage, invoice, htlc_vtxo_ids,
-			preimage_revealed_at, htlc_recv_cltv_delta, movement_id
+			preimage_revealed_at, htlc_recv_cltv_delta, movement_id,
+			finished_at
 		FROM bark_pending_lightning_receive
+		WHERE finished_at IS NULL
 		ORDER BY created_at DESC";
 	let mut statement = conn.prepare(query)?;
 	let mut rows = statement.query([])?;
@@ -684,11 +685,14 @@ pub fn get_all_pending_lightning_receives<'a>(
 		result.push(LightningReceive {
 			payment_hash: PaymentHash::from_str(&row.get::<_, String>("payment_hash")?)?,
 			payment_preimage: Preimage::from_str(&row.get::<_, String>("preimage")?)?,
-			preimage_revealed_at: row.get::<_, Option<u64>>("preimage_revealed_at")?,
+			preimage_revealed_at: row.get::<_, Option<DateTime<chrono::Utc>>>("preimage_revealed_at")?
+				.map(|ts| ts.with_timezone(&chrono::Local)),
 			invoice: Bolt11Invoice::from_str(&row.get::<_, String>("invoice")?)?,
 			htlc_recv_cltv_delta: row.get::<_, BlockDelta>("htlc_recv_cltv_delta")?,
 			htlc_vtxos: get_htlc_vtxos(conn, &row)?,
 			movement_id: row.get::<_, Option<u32>>("movement_id")?.map(MovementId::new),
+			finished_at: row.get::<_, Option<DateTime<chrono::Utc>>>("finished_at")?
+				.map(|ts| ts.with_timezone(&chrono::Local)),
 		});
 	}
 
@@ -701,7 +705,7 @@ pub fn set_preimage_revealed(conn: &Connection, payment_hash: PaymentHash) -> an
 	let mut statement = conn.prepare(query)?;
 	statement.execute(named_params! {
 		":payment_hash": payment_hash.as_hex().to_string(),
-		":revealed_at": SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs(),
+		":revealed_at": chrono::Local::now(),
 	})?;
 	Ok(())
 }
@@ -734,13 +738,18 @@ pub fn update_lightning_receive(
 	Ok(())
 }
 
-pub fn remove_pending_lightning_receive(
+pub fn finish_pending_lightning_receive(
 	conn: &Connection,
 	payment_hash: PaymentHash,
 ) -> anyhow::Result<()> {
-	let query = "DELETE FROM bark_pending_lightning_receive WHERE payment_hash = :payment_hash";
+	let query = "
+		UPDATE bark_pending_lightning_receive SET finished_at = :finished_at
+		WHERE payment_hash = :payment_hash";
 	let mut statement = conn.prepare(query)?;
-	statement.execute(named_params! { ":payment_hash": payment_hash.as_hex().to_string() })?;
+	statement.execute(named_params! {
+		":payment_hash": payment_hash.as_hex().to_string(),
+		":finished_at": chrono::Local::now(),
+	})?;
 
 	Ok(())
 }
@@ -763,11 +772,14 @@ pub fn fetch_lightning_receive_by_payment_hash(
 	Ok(Some(LightningReceive {
 		payment_hash: PaymentHash::from_str(&row.get::<_, String>("payment_hash")?)?,
 		payment_preimage: Preimage::from_str(&row.get::<_, String>("preimage")?)?,
-		preimage_revealed_at: row.get::<_, Option<u64>>("preimage_revealed_at")?,
+		preimage_revealed_at: row.get::<_, Option<DateTime<chrono::Utc>>>("preimage_revealed_at")?
+			.map(|ts| ts.with_timezone(&chrono::Local)),
 		invoice: Bolt11Invoice::from_str(&row.get::<_, String>("invoice")?)?,
 		htlc_recv_cltv_delta: row.get::<_, BlockDelta>("htlc_recv_cltv_delta")?,
 		htlc_vtxos: get_htlc_vtxos(conn, &row)?,
 		movement_id: row.get::<_, Option<u32>>("movement_id")?.map(MovementId::new),
+		finished_at: row.get::<_, Option<DateTime<chrono::Utc>>>("finished_at")?
+			.map(|ts| ts.with_timezone(&chrono::Local)),
 	}))
 }
 

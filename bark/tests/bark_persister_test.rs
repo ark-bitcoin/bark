@@ -178,7 +178,7 @@ impl BarkPersister for Dummy {
 		Ok(Some(dummy_lightning_receive()))
 	}
 
-	fn remove_pending_lightning_receive(&self, _payment_hash: PaymentHash) -> anyhow::Result<()> {
+	fn finish_pending_lightning_receive(&self, _payment_hash: PaymentHash) -> anyhow::Result<()> {
 		Ok(())
 	}
 
@@ -307,10 +307,11 @@ fn dummy_lightning_receive() -> LightningReceive {
 		payment_hash: PaymentHash::from_bytes([]).unwrap(),
 		payment_preimage: Preimage::from_bytes([]).unwrap(),
 		invoice: Bolt11Invoice::from_str("bob").unwrap(),
-		preimage_revealed_at:Some(0),
+		preimage_revealed_at: None,
 		htlc_vtxos: None,
 		htlc_recv_cltv_delta: 0,
 		movement_id: Some(MovementId::new(0)),
+		finished_at: None,
 	}
 }
 

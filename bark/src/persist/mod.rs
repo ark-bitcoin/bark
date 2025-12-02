@@ -497,7 +497,7 @@ pub trait BarkPersister: Send + Sync + 'static {
 	///
 	/// Errors:
 	/// - Returns an error if the removal fails.
-	fn remove_pending_lightning_receive(&self, payment_hash: PaymentHash) -> anyhow::Result<()>;
+	fn finish_pending_lightning_receive(&self, payment_hash: PaymentHash) -> anyhow::Result<()>;
 
 	/// Store an entry indicating a [Vtxo] is being exited.
 	///
