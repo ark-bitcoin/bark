@@ -255,11 +255,20 @@ impl rpc::server::ArkService for Server {
 
 	// lightning
 
+	// TODO: Remove this once we hit 0.1.0-beta.6 or higher
 	async fn start_lightning_payment(
 		&self,
-		req: tonic::Request<protos::StartLightningPaymentRequest>,
-	) -> Result<tonic::Response<protos::StartLightningPaymentResponse>, tonic::Status> {
+		req: tonic::Request<protos::LightningPayHtlcCosignRequest>,
+	) -> Result<tonic::Response<protos::LightningPayHtlcCosignResponse>, tonic::Status> {
 		let _ = RpcMethodDetails::grpc_ark(middleware::RPC_SERVICE_ARK_START_LIGHTNING_PAYMENT);
+		rpc::server::ArkService::request_lightning_pay_htlc_cosign(self, req).await
+	}
+
+	async fn request_lightning_pay_htlc_cosign(
+		&self,
+		req: tonic::Request<protos::LightningPayHtlcCosignRequest>,
+	) -> Result<tonic::Response<protos::LightningPayHtlcCosignResponse>, tonic::Status> {
+		let _ = RpcMethodDetails::grpc_ark(middleware::RPC_SERVICE_ARK_REQUEST_LIGHTNING_PAY_HTLC_COSIGN);
 		let req = req.into_inner();
 
 		crate::rpcserver::add_tracing_attributes(
@@ -290,7 +299,7 @@ impl rpc::server::ArkService for Server {
 
 		let user_pubkey = PublicKey::from_bytes(&req.user_pubkey)?;
 
-		let resp = self.start_lightning_payment(
+		let resp = self.request_lightning_pay_htlc_cosign(
 			invoice, amount, user_pubkey, input_vtxos, user_nonces
 		).await.context("error making payment")?;
 

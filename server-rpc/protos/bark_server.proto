@@ -31,10 +31,15 @@ service ArkService {
 
 	// * SEND LN payments
 
-	rpc StartLightningPayment(StartLightningPaymentRequest) returns (StartLightningPaymentResponse) {}
+	rpc RequestLightningPayHtlcCosign(LightningPayHtlcCosignRequest) returns (LightningPayHtlcCosignResponse) {}
 	rpc FinishLightningPayment(SignedLightningPaymentDetails) returns (LightningPaymentResult) {}
 	rpc CheckLightningPayment(CheckLightningPaymentRequest) returns (LightningPaymentResult) {}
 	rpc RevokeLightningPayment(RevokeLightningPaymentRequest) returns (ArkoorPackageCosignResponse) {}
+
+	// TODO: Remove this once we hit 0.1.0-beta.6 or higher
+	rpc StartLightningPayment(LightningPayHtlcCosignRequest) returns (LightningPayHtlcCosignResponse) {
+		option deprecated = true;
+	}
 
 	// * RECEIVE LN payments
 
@@ -177,7 +182,7 @@ message ArkoorVtxosResponse {
 
 // lightning
 
-message StartLightningPaymentRequest {
+message LightningPayHtlcCosignRequest {
 	string invoice = 1;
 	optional uint64 user_amount_sat = 2;
 	repeated bytes input_vtxo_ids = 3;
@@ -185,7 +190,7 @@ message StartLightningPaymentRequest {
 	bytes user_pubkey = 5;
 }
 
-message StartLightningPaymentResponse {
+message LightningPayHtlcCosignResponse {
 	repeated ArkoorCosignResponse sigs = 1;
 	bytes policy = 2;
 }

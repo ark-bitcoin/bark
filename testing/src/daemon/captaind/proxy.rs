@@ -49,8 +49,13 @@ pub trait ArkRpcProxy: Send + Sync + Clone + 'static {
 		Ok(upstream.empty_arkoor_mailbox(req).await?.into_inner())
 	}
 
-	async fn start_lightning_payment(&self, upstream: &mut ArkClient, req: protos::StartLightningPaymentRequest) -> Result<protos::StartLightningPaymentResponse, tonic::Status> {
+	// TODO: Remove this once we hit 0.1.0-beta.6 or higher
+	async fn start_lightning_payment(&self, upstream: &mut ArkClient, req: protos::LightningPayHtlcCosignRequest) -> Result<protos::LightningPayHtlcCosignResponse, tonic::Status> {
 		Ok(upstream.start_lightning_payment(req).await?.into_inner())
+	}
+
+	async fn request_lightning_pay_htlc_cosign(&self, upstream: &mut ArkClient, req: protos::LightningPayHtlcCosignRequest) -> Result<protos::LightningPayHtlcCosignResponse, tonic::Status> {
+		Ok(upstream.request_lightning_pay_htlc_cosign(req).await?.into_inner())
 	}
 
 	async fn finish_lightning_payment(&self, upstream: &mut ArkClient, req: protos::SignedLightningPaymentDetails) -> Result<protos::LightningPaymentResult, tonic::Status> {
@@ -240,10 +245,17 @@ impl<T: ArkRpcProxy> rpc::server::ArkService for ArkRpcProxyWrapper<T> {
 		Ok(tonic::Response::new(ArkRpcProxy::empty_arkoor_mailbox(&self.proxy, &mut self.upstream.clone(), req.into_inner()).await?))
 	}
 
+	// TODO: Remove this once we hit 0.1.0-beta.6 or higher
 	async fn start_lightning_payment(
-		&self, req: tonic::Request<protos::StartLightningPaymentRequest>,
-	) -> Result<tonic::Response<protos::StartLightningPaymentResponse>, tonic::Status> {
+		&self, req: tonic::Request<protos::LightningPayHtlcCosignRequest>,
+	) -> Result<tonic::Response<protos::LightningPayHtlcCosignResponse>, tonic::Status> {
 		Ok(tonic::Response::new(ArkRpcProxy::start_lightning_payment(&self.proxy, &mut self.upstream.clone(), req.into_inner()).await?))
+	}
+
+	async fn request_lightning_pay_htlc_cosign(
+		&self, req: tonic::Request<protos::LightningPayHtlcCosignRequest>,
+	) -> Result<tonic::Response<protos::LightningPayHtlcCosignResponse>, tonic::Status> {
+		Ok(tonic::Response::new(ArkRpcProxy::request_lightning_pay_htlc_cosign(&self.proxy, &mut self.upstream.clone(), req.into_inner()).await?))
 	}
 
 	async fn finish_lightning_payment(

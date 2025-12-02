@@ -302,7 +302,7 @@ impl Wallet {
 			input_ids.push(input.id());
 		}
 
-		let req = protos::StartLightningPaymentRequest {
+		let req = protos::LightningPayHtlcCosignRequest {
 			invoice: invoice.to_string(),
 			user_amount_sat: user_amount.map(|a| a.to_sat()),
 			input_vtxo_ids: input_ids.iter().map(|v| v.to_bytes().to_vec()).collect(),
@@ -310,7 +310,7 @@ impl Wallet {
 			user_pubkey: change_keypair.public_key().serialize().to_vec(),
 		};
 
-		let resp = srv.client.start_lightning_payment(req).await
+		let resp = srv.client.request_lightning_pay_htlc_cosign(req).await
 			.context("htlc request failed")?.into_inner();
 
 		let cosign_resp = resp.sigs.into_iter().map(|i| i.try_into())

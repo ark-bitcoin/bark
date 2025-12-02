@@ -29,6 +29,8 @@ pub const RPC_SERVICE_ARK_REGISTER_BOARD_VTXOS: &'static str = "register_board_v
 pub const RPC_SERVICE_ARK_REQUEST_ARKOOR_PACKAGE_COSIGN: &'static str = "request_arkoor_package_cosign";
 pub const RPC_SERVICE_ARK_POST_ARKOOR_PACKAGE_MAILBOX: &'static str = "post_arkoor_package_mailbox";
 pub const RPC_SERVICE_ARK_EMPTY_ARKOOR_MAILBOX: &'static str = "empty_arkoor_mailbox";
+pub const RPC_SERVICE_ARK_REQUEST_LIGHTNING_PAY_HTLC_COSIGN: &'static str = "request_lightning_pay_htlc_cosign";
+// TODO: Remove this once we hit 0.1.0-beta.6 or higher
 pub const RPC_SERVICE_ARK_START_LIGHTNING_PAYMENT: &'static str = "start_lightning_payment";
 pub const RPC_SERVICE_ARK_FINISH_LIGHTNING_PAYMENT: &'static str = "finish_lightning_payment";
 pub const RPC_SERVICE_ARK_CHECK_LIGHTNING_PAYMENT: &'static str = "check_lightning_payment";
@@ -53,7 +55,7 @@ const RPC_SERVICE_ARK_METHODS: [&str; 22] = [
 	RPC_SERVICE_ARK_REQUEST_ARKOOR_PACKAGE_COSIGN,
 	RPC_SERVICE_ARK_POST_ARKOOR_PACKAGE_MAILBOX,
 	RPC_SERVICE_ARK_EMPTY_ARKOOR_MAILBOX,
-	RPC_SERVICE_ARK_START_LIGHTNING_PAYMENT,
+	RPC_SERVICE_ARK_REQUEST_LIGHTNING_PAY_HTLC_COSIGN,
 	RPC_SERVICE_ARK_FINISH_LIGHTNING_PAYMENT,
 	RPC_SERVICE_ARK_CHECK_LIGHTNING_PAYMENT,
 	RPC_SERVICE_ARK_REVOKE_LIGHTNING_PAYMENT,
