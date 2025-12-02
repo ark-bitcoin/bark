@@ -49,7 +49,6 @@ use bitcoin_ext::{AmountExt, BlockDelta, BlockHeight};
 use cln_rpc::plugins::hold::{self, hold_client::HoldClient};
 use lightning_invoice::Bolt11Invoice;
 use log::{debug, error, info, trace, warn};
-use tokio::sync::broadcast::Receiver;
 use tokio::sync::{broadcast, Notify, mpsc, oneshot};
 use tonic::transport::{Channel, Uri};
 
@@ -170,29 +169,14 @@ impl ClnManager {
 		Ok(())
 	}
 
-	/// Checks a bolt-11 invoice and returns the pre-image
-	pub async fn check_bolt11(
+	/// Gets the payment status for a given payment hash
+	pub async fn get_payment_status(
 		&self,
 		payment_hash: &PaymentHash,
 		wait: bool,
 	) -> anyhow::Result<PaymentStatus> {
-		let update_rx = self.payment_update_rx.resubscribe();
-
-		self.inner_check_bolt11(update_rx, payment_hash, wait, true).await
-	}
-
-	pub async fn inner_check_bolt11(
-		&self,
-		mut update_rx: Receiver<PaymentHash>,
-		payment_hash: &PaymentHash,
-		wait: bool,
-		instant_check: bool,
-	) -> anyhow::Result<PaymentStatus> {
+		let mut update_rx = self.payment_update_rx.resubscribe();
 		let mut poll_interval = tokio::time::interval(self.invoice_poll_interval);
-
-		if !instant_check {
-			poll_interval.reset();
-		}
 
 		loop {
 			tokio::select! {

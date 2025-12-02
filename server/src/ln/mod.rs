@@ -151,7 +151,7 @@ impl Server {
 		payment_hash: PaymentHash,
 		wait: bool,
 	) -> anyhow::Result<lightning_payment_status::PaymentStatus> {
-		let payment_status = self.cln.check_bolt11(&payment_hash, wait).await?;
+		let payment_status = self.cln.get_payment_status(&payment_hash, wait).await?;
 
 		Ok(Self::format_lightning_pay_response(payment_status))
 	}
@@ -221,7 +221,7 @@ impl Server {
 				},
 				_ if tip > first_policy.htlc_expiry => {
 					// Check one last time to see if it completed
-					let res = self.cln.check_bolt11(&invoice.payment_hash, false).await;
+					let res = self.cln.get_payment_status(&invoice.payment_hash, false).await;
 					if let Ok(PaymentStatus::Success(preimage)) = res {
 						return badarg!("This lightning payment has completed. preimage: {}",
 							preimage.as_hex());
