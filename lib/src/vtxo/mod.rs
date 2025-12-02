@@ -983,10 +983,12 @@ impl Vtxo {
 	/// Get the payment hash if this vtxo is an HTLC send arkoor vtxo.
 	pub fn server_htlc_out_payment_hash(&self) -> Option<PaymentHash> {
 		match self.policy {
-			VtxoPolicy::ServerHtlcSend(ServerHtlcSendVtxoPolicy { payment_hash, .. }) => Some(payment_hash),
-			VtxoPolicy::ServerHtlcRecv(ServerHtlcRecvVtxoPolicy { payment_hash, .. }) => Some(payment_hash),
-			VtxoPolicy::Pubkey { .. } => None,
-			VtxoPolicy::Checkpoint( ..) => None,
+			VtxoPolicy::ServerHtlcSend(ServerHtlcSendVtxoPolicy { payment_hash, .. }) => {
+				Some(payment_hash)
+			},
+			VtxoPolicy::ServerHtlcRecv(_) => None,
+			VtxoPolicy::Pubkey(_) => None,
+			VtxoPolicy::Checkpoint(_) => None,
 		}
 	}
 
