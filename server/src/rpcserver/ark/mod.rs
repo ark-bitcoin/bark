@@ -306,11 +306,20 @@ impl rpc::server::ArkService for Server {
 		Ok(tonic::Response::new(resp))
 	}
 
+	// TODO: Remove this once we hit 0.1.0-beta.6 or higher
 	async fn finish_lightning_payment(
 		&self,
-		req: tonic::Request<protos::SignedLightningPaymentDetails>,
+		req: tonic::Request<protos::InitiateLightningPaymentRequest>,
 	) -> Result<tonic::Response<protos::LightningPaymentResult>, tonic::Status> {
 		let _ = RpcMethodDetails::grpc_ark(middleware::RPC_SERVICE_ARK_FINISH_LIGHTNING_PAYMENT);
+		rpc::server::ArkService::initiate_lightning_payment(self, req).await
+	}
+
+	async fn initiate_lightning_payment(
+		&self,
+		req: tonic::Request<protos::InitiateLightningPaymentRequest>,
+	) -> Result<tonic::Response<protos::LightningPaymentResult>, tonic::Status> {
+		let _ = RpcMethodDetails::grpc_ark(middleware::RPC_SERVICE_ARK_INITIATE_LIGHTNING_PAYMENT);
 		let req = req.into_inner();
 
 		let htlc_vtxo_ids = req.htlc_vtxo_ids.iter()
@@ -324,7 +333,7 @@ impl rpc::server::ArkService for Server {
 
 		let invoice = Invoice::from_str(&req.invoice).badarg("invalid invoice")?;
 
-		let res = self.finish_lightning_payment(invoice, htlc_vtxo_ids, req.wait).await.to_status()?;
+		let res = self.initiate_lightning_payment(invoice, htlc_vtxo_ids, req.wait).await.to_status()?;
 		Ok(tonic::Response::new(res))
 	}
 

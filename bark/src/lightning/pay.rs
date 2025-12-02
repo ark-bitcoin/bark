@@ -381,13 +381,13 @@ impl Wallet {
 			&invoice, &amount, &htlc_vtxos.iter().map(|v| v.id()).collect::<Vec<_>>(), movement_id,
 		)?;
 
-		let req = protos::SignedLightningPaymentDetails {
+		let req = protos::InitiateLightningPaymentRequest {
 			invoice: invoice.to_string(),
 			htlc_vtxo_ids: htlc_vtxos.iter().map(|v| v.id().to_bytes().to_vec()).collect(),
 			wait: true,
 		};
 
-		let res = srv.client.finish_lightning_payment(req).await?.into_inner();
+		let res = srv.client.initiate_lightning_payment(req).await?.into_inner();
 		debug!("Progress update: {}", res.progress_message);
 
 		let preimage_opt = self.process_lightning_send_server_preimage(

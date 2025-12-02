@@ -453,8 +453,8 @@ async fn bark_should_exit_a_failed_htlc_out_that_server_refuse_to_revoke() {
 
 	#[tonic::async_trait]
 	impl captaind::proxy::ArkRpcProxy for Proxy {
-		async fn finish_lightning_payment(
-			&self, _upstream: &mut ArkClient, _req: protos::SignedLightningPaymentDetails,
+		async fn initiate_lightning_payment(
+			&self, _upstream: &mut ArkClient, _req: protos::InitiateLightningPaymentRequest,
 		) -> Result<protos::LightningPaymentResult, tonic::Status> {
 			Err(tonic::Status::internal("Refused to finish bolt11 payment"))
 		}
@@ -512,8 +512,8 @@ async fn bark_should_exit_a_pending_htlc_out_that_server_refuse_to_revoke() {
 
 	#[tonic::async_trait]
 	impl captaind::proxy::ArkRpcProxy for Proxy {
-		async fn finish_lightning_payment(
-			&self, _upstream: &mut ArkClient, _req: protos::SignedLightningPaymentDetails,
+		async fn initiate_lightning_payment(
+			&self, _upstream: &mut ArkClient, _req: protos::InitiateLightningPaymentRequest,
 		) -> Result<protos::LightningPaymentResult, tonic::Status> {
 			Ok(protos::LightningPaymentResult {
 				progress_message: "Payment is pending".to_string(),

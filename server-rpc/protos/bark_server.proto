@@ -32,12 +32,16 @@ service ArkService {
 	// * SEND LN payments
 
 	rpc RequestLightningPayHtlcCosign(LightningPayHtlcCosignRequest) returns (LightningPayHtlcCosignResponse) {}
-	rpc FinishLightningPayment(SignedLightningPaymentDetails) returns (LightningPaymentResult) {}
+	rpc InitiateLightningPayment(InitiateLightningPaymentRequest) returns (LightningPaymentResult) {}
 	rpc CheckLightningPayment(CheckLightningPaymentRequest) returns (LightningPaymentResult) {}
 	rpc RevokeLightningPayment(RevokeLightningPaymentRequest) returns (ArkoorPackageCosignResponse) {}
 
 	// TODO: Remove this once we hit 0.1.0-beta.6 or higher
 	rpc StartLightningPayment(LightningPayHtlcCosignRequest) returns (LightningPayHtlcCosignResponse) {
+		option deprecated = true;
+	}
+	// TODO: Remove this once we hit 0.1.0-beta.6 or higher
+	rpc FinishLightningPayment(InitiateLightningPaymentRequest) returns (LightningPaymentResult) {
 		option deprecated = true;
 	}
 
@@ -195,7 +199,7 @@ message LightningPayHtlcCosignResponse {
 	bytes policy = 2;
 }
 
-message SignedLightningPaymentDetails {
+message InitiateLightningPaymentRequest {
 	string invoice = 1;
 	repeated bytes htlc_vtxo_ids = 2;
 	bool wait = 3;

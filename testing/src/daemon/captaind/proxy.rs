@@ -58,8 +58,13 @@ pub trait ArkRpcProxy: Send + Sync + Clone + 'static {
 		Ok(upstream.request_lightning_pay_htlc_cosign(req).await?.into_inner())
 	}
 
-	async fn finish_lightning_payment(&self, upstream: &mut ArkClient, req: protos::SignedLightningPaymentDetails) -> Result<protos::LightningPaymentResult, tonic::Status> {
+	// TODO: Remove this once we hit 0.1.0-beta.6 or higher
+	async fn finish_lightning_payment(&self, upstream: &mut ArkClient, req: protos::InitiateLightningPaymentRequest) -> Result<protos::LightningPaymentResult, tonic::Status> {
 		Ok(upstream.finish_lightning_payment(req).await?.into_inner())
+	}
+
+	async fn initiate_lightning_payment(&self, upstream: &mut ArkClient, req: protos::InitiateLightningPaymentRequest) -> Result<protos::LightningPaymentResult, tonic::Status> {
+		Ok(upstream.initiate_lightning_payment(req).await?.into_inner())
 	}
 
 	async fn check_lightning_payment(&self, upstream: &mut ArkClient, req: protos::CheckLightningPaymentRequest) -> Result<protos::LightningPaymentResult, tonic::Status> {
@@ -258,10 +263,17 @@ impl<T: ArkRpcProxy> rpc::server::ArkService for ArkRpcProxyWrapper<T> {
 		Ok(tonic::Response::new(ArkRpcProxy::request_lightning_pay_htlc_cosign(&self.proxy, &mut self.upstream.clone(), req.into_inner()).await?))
 	}
 
+	// TODO: Remove this once we hit 0.1.0-beta.6 or higher
 	async fn finish_lightning_payment(
-		&self, req: tonic::Request<protos::SignedLightningPaymentDetails>,
+		&self, req: tonic::Request<protos::InitiateLightningPaymentRequest>,
 	) -> Result<tonic::Response<protos::LightningPaymentResult>, tonic::Status> {
 		Ok(tonic::Response::new(ArkRpcProxy::finish_lightning_payment(&self.proxy, &mut self.upstream.clone(), req.into_inner()).await?))
+	}
+
+	async fn initiate_lightning_payment(
+		&self, req: tonic::Request<protos::InitiateLightningPaymentRequest>,
+	) -> Result<tonic::Response<protos::LightningPaymentResult>, tonic::Status> {
+		Ok(tonic::Response::new(ArkRpcProxy::initiate_lightning_payment(&self.proxy, &mut self.upstream.clone(), req.into_inner()).await?))
 	}
 
 	async fn check_lightning_payment(

@@ -80,7 +80,7 @@ impl Server {
 	}
 
 	/// Try to finish the lightning payment that was previously started.
-	pub async fn finish_lightning_payment(
+	pub async fn initiate_lightning_payment(
 		&self,
 		invoice: Invoice,
 		htlc_vtxo_ids: Vec<VtxoId>,
