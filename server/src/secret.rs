@@ -5,7 +5,7 @@
 /// access the inner value. This only prevents a developer
 /// from accidentally writing the secret to logs when doing
 /// a [std::fmt::Debug]-print.
-
+///
 /// Wraps a [Secret] and ensures and hides it in [std::fmt::Debug]-logs.
 ///
 /// # Usage
@@ -44,15 +44,15 @@
 /// // The secret will be redacted when writing the debug log
 /// log::debug!("Initiating connection with config {:?}", &config)
 /// ````
+
 use serde::{Serialize, Deserialize};
 
-pub struct Secret<T>
-{
-	inner: T
+
+pub struct Secret<T> {
+	inner: T,
 }
 
 impl<T> Secret<T> {
-
 	pub fn new(inner: T) -> Self {
 		Self { inner }
 	}
@@ -76,8 +76,7 @@ impl<T> std::fmt::Debug for Secret<T> {
 	}
 }
 
-impl<T> Clone for Secret<T>
-where T: Clone {
+impl<T: Clone> Clone for Secret<T> {
 	fn clone(&self) -> Self {
 		Self {
 			inner: self.inner.clone()
@@ -85,13 +84,9 @@ where T: Clone {
 	}
 }
 
-impl<T> Copy for Secret<T>
-where T: Copy {}
+impl <T: Copy> Copy for Secret<T> {}
 
-
-impl<T> PartialEq for Secret<T>
-where T: PartialEq {
-
+impl<T: PartialEq> PartialEq for Secret<T> {
 	fn eq(&self, other: &Self) -> bool {
 		T::eq(&self.inner, &other.inner)
 	}
@@ -101,32 +96,21 @@ where T: PartialEq {
 	}
 }
 
-impl<T> Eq for Secret<T>
-where T: Eq {}
+impl<T: Eq> Eq for Secret<T> {}
 
-impl<T> Serialize for Secret<T>
-where T: Serialize
-{
-	fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-		where
-			S: serde::Serializer {
+impl<T: Serialize> Serialize for Secret<T> {
+	fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
 		self.inner.serialize(serializer)
 	}
 }
 
-impl<'de, T> Deserialize<'de> for Secret<T>
-where T: Deserialize<'de>
-{
-	fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-		where
-			D: serde::Deserializer<'de> {
-		T::deserialize(deserializer)
-			.map(|x| Secret::new(x))
+impl<'de, T: Deserialize<'de>> Deserialize<'de> for Secret<T> {
+	fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+		T::deserialize(deserializer).map(|x| Secret::new(x))
 	}
 }
 
-impl<T> From<T> for Secret<T>
-{
+impl<T> From<T> for Secret<T> {
 	fn from(value: T) -> Self {
 		Secret::new(value)
 	}
