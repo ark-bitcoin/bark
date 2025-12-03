@@ -326,7 +326,7 @@ impl Db {
 	 * Arkoors
 	*/
 
-	pub async fn store_oor(
+	pub async fn store_arkoor_by_vtxo_pubkey(
 		&self,
 		pubkey: PublicKey,
 		arkoor_package_id: &[u8; 32],

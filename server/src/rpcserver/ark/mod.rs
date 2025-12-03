@@ -232,7 +232,7 @@ impl rpc::server::ArkService for Server {
 		for arkoor in req.arkoors {
 			let pubkey = PublicKey::from_bytes(&arkoor.pubkey)?;
 			let vtxo = Vtxo::from_bytes(&arkoor.vtxo)?;
-			self.db.store_oor(pubkey, &arkoor_package_id, vtxo).await.to_status()?;
+			self.db.store_arkoor_by_vtxo_pubkey(pubkey, &arkoor_package_id, vtxo).await.to_status()?;
 		}
 
 		Ok(tonic::Response::new(protos::Empty{}))
