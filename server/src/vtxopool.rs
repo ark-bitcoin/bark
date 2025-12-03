@@ -11,14 +11,13 @@ use bitcoin::{Amount, FeeRate, OutPoint};
 use bitcoin_ext::{BlockDelta, BlockHeight};
 use futures::{stream, StreamExt, TryStreamExt};
 use log::{info, warn};
-
 use ark::{musig, Vtxo, VtxoId, VtxoPolicy, VtxoRequest};
 use ark::arkoor::ArkoorPackageBuilder;
 use ark::tree::signed::builder::SignedTreeBuilder;
 
 use crate::database::vtxopool::PoolVtxo;
 use crate::wallet::BdkWalletExt;
-use crate::{database, Server, SECP};
+use crate::{database, telemetry, Server, SECP};
 
 
 /// Type used to express a vtxo issuance target for the [VtxoPool]
@@ -129,6 +128,9 @@ impl Data {
 		while let Some(v) = stream.try_next().await? {
 			ret.insert(v.id(), v.expiry_height(), v.amount());
 		}
+
+		telemetry::set_vtxo_pool_metrics(&ret.pool);
+
 		Ok(ret)
 	}
 
@@ -169,7 +171,8 @@ impl Data {
 
 	/// Prune all vtxos expiring before or on the threshold
 	pub fn prune_expiring(&mut self, threshold: BlockHeight) {
-		self.pool.retain(|h, _| *h > threshold);
+		self.pool.retain(|expiration_height, _vtxo_map| { *expiration_height > threshold });
+		telemetry::set_vtxo_pool_metrics(&self.pool);
 	}
 
 	/// Take inputs from the pool to match the required amount
@@ -219,6 +222,8 @@ impl Data {
 		}
 
 		self.prune();
+
+		telemetry::set_vtxo_pool_metrics(&self.pool);
 
 		ret
 	}
