@@ -31,10 +31,23 @@ service ArkService {
 
 	// * SEND LN payments
 
-	rpc StartLightningPayment(StartLightningPaymentRequest) returns (StartLightningPaymentResponse) {}
-	rpc FinishLightningPayment(SignedLightningPaymentDetails) returns (LightningPaymentResult) {}
+	rpc RequestLightningPayHtlcCosign(LightningPayHtlcCosignRequest) returns (LightningPayHtlcCosignResponse) {}
+	rpc InitiateLightningPayment(InitiateLightningPaymentRequest) returns (LightningPaymentResult) {}
 	rpc CheckLightningPayment(CheckLightningPaymentRequest) returns (LightningPaymentResult) {}
-	rpc RevokeLightningPayment(RevokeLightningPaymentRequest) returns (ArkoorPackageCosignResponse) {}
+	rpc RequestLightningPayHtlcRevocation(RevokeLightningPayHtlcRequest) returns (ArkoorPackageCosignResponse) {}
+
+	// TODO: Remove this once we hit 0.1.0-beta.6 or higher
+	rpc StartLightningPayment(LightningPayHtlcCosignRequest) returns (LightningPayHtlcCosignResponse) {
+		option deprecated = true;
+	}
+	// TODO: Remove this once we hit 0.1.0-beta.6 or higher
+	rpc FinishLightningPayment(InitiateLightningPaymentRequest) returns (LightningPaymentResult) {
+		option deprecated = true;
+	}
+	// TODO: Remove this once we hit 0.1.0-beta.6 or higher
+	rpc RevokeLightningPayment(RevokeLightningPayHtlcRequest) returns (ArkoorPackageCosignResponse) {
+		option deprecated = true;
+	}
 
 	// * RECEIVE LN payments
 
@@ -177,7 +190,7 @@ message ArkoorVtxosResponse {
 
 // lightning
 
-message StartLightningPaymentRequest {
+message LightningPayHtlcCosignRequest {
 	string invoice = 1;
 	optional uint64 user_amount_sat = 2;
 	repeated bytes input_vtxo_ids = 3;
@@ -185,12 +198,12 @@ message StartLightningPaymentRequest {
 	bytes user_pubkey = 5;
 }
 
-message StartLightningPaymentResponse {
+message LightningPayHtlcCosignResponse {
 	repeated ArkoorCosignResponse sigs = 1;
 	bytes policy = 2;
 }
 
-message SignedLightningPaymentDetails {
+message InitiateLightningPaymentRequest {
 	string invoice = 1;
 	repeated bytes htlc_vtxo_ids = 2;
 	bool wait = 3;
@@ -208,7 +221,7 @@ message LightningPaymentResult {
 	optional bytes payment_preimage = 4;
 }
 
-message RevokeLightningPaymentRequest {
+message RevokeLightningPayHtlcRequest {
 	repeated bytes htlc_vtxo_ids = 1;
 	repeated bytes user_nonces = 2;
 }

@@ -710,10 +710,10 @@ async fn bark_revoke_expired_pending_ln_payment() {
 
 	#[tonic::async_trait]
 	impl captaind::proxy::ArkRpcProxy for Proxy {
-		async fn finish_lightning_payment(
+		async fn initiate_lightning_payment(
 			&self,
 			_upstream: &mut ArkClient,
-			_req: server_rpc::protos::SignedLightningPaymentDetails,
+			_req: server_rpc::protos::InitiateLightningPaymentRequest,
 		) -> Result<server_rpc::protos::LightningPaymentResult, tonic::Status> {
 			// Never return - wait indefinitely
 			loop {

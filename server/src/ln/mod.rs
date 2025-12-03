@@ -32,14 +32,14 @@ use crate::{Server, CAPTAIND_API_KEY};
 
 
 impl Server {
-	pub async fn start_lightning_payment(
+	pub async fn request_lightning_pay_htlc_cosign(
 		&self,
 		invoice: Invoice,
 		amount: Amount,
 		user_pubkey: PublicKey,
 		inputs: Vec<Vtxo>,
 		user_nonces: Vec<musig::PublicNonce>,
-	) -> anyhow::Result<protos::StartLightningPaymentResponse> {
+	) -> anyhow::Result<protos::LightningPayHtlcCosignResponse> {
 		let invoice_payment_hash = invoice.payment_hash();
 		if self.db.get_open_lightning_payment_attempt_by_payment_hash(&invoice_payment_hash).await?.is_some() {
 			return badarg!("payment already in progress for this invoice");
@@ -73,14 +73,14 @@ impl Server {
 
 		let cosign_resp = self.cosign_oor_package_with_builder(&package).await?;
 
-		Ok(protos::StartLightningPaymentResponse {
+		Ok(protos::LightningPayHtlcCosignResponse {
 			sigs: cosign_resp.into_iter().map(|i| i.into()).collect(),
 			policy: policy.serialize().to_vec(),
 		})
 	}
 
 	/// Try to finish the lightning payment that was previously started.
-	pub async fn finish_lightning_payment(
+	pub async fn initiate_lightning_payment(
 		&self,
 		invoice: Invoice,
 		htlc_vtxo_ids: Vec<VtxoId>,

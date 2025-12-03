@@ -673,12 +673,12 @@ async fn reject_revocation_on_successful_lightning_payment() {
 	struct Proxy;
 	#[tonic::async_trait]
 	impl captaind::proxy::ArkRpcProxy for Proxy {
-		async fn finish_lightning_payment(
-			&self, upstream: &mut ArkClient, req: protos::SignedLightningPaymentDetails,
+		async fn initiate_lightning_payment(
+			&self, upstream: &mut ArkClient, req: protos::InitiateLightningPaymentRequest,
 		) -> Result<protos::LightningPaymentResult, tonic::Status> {
-			trace!("ArkRpcProxy: Calling finish_lightning_payment.");
+			trace!("ArkRpcProxy: Calling initiate_lightning_payment.");
 			// Wait until payment is successful then we drop update so client asks for revocation
-			let res = upstream.finish_lightning_payment(req).await?.into_inner();
+			let res = upstream.initiate_lightning_payment(req).await?.into_inner();
 			if res.payment_preimage().len() > 0 {
 				trace!("ArkRpcProxy: Received preimage which we are 'dropping' for this test.");
 			} else {
@@ -1337,11 +1337,11 @@ async fn reject_dust_bolt11_payment() {
 	struct Proxy;
 	#[tonic::async_trait]
 	impl captaind::proxy::ArkRpcProxy for Proxy {
-		async fn start_lightning_payment(
-			&self, upstream: &mut ArkClient, mut req: protos::StartLightningPaymentRequest,
-		) -> Result<protos::StartLightningPaymentResponse, tonic::Status> {
+		async fn request_lightning_pay_htlc_cosign(
+			&self, upstream: &mut ArkClient, mut req: protos::LightningPayHtlcCosignRequest,
+		) -> Result<protos::LightningPayHtlcCosignResponse, tonic::Status> {
 			req.user_amount_sat = Some(P2TR_DUST_SAT - 1);
-			Ok(upstream.start_lightning_payment(req).await?.into_inner())
+			Ok(upstream.request_lightning_pay_htlc_cosign(req).await?.into_inner())
 		}
 	}
 
@@ -1665,11 +1665,11 @@ async fn should_refuse_paying_invoice_not_matching_htlcs() {
 	struct Proxy(String);
 	#[tonic::async_trait]
 	impl captaind::proxy::ArkRpcProxy for Proxy {
-		async fn finish_lightning_payment(
-			&self, upstream: &mut ArkClient, mut req: protos::SignedLightningPaymentDetails,
+		async fn initiate_lightning_payment(
+			&self, upstream: &mut ArkClient, mut req: protos::InitiateLightningPaymentRequest,
 		) -> Result<protos::LightningPaymentResult, tonic::Status> {
 			req.invoice = self.0.clone();
-			Ok(upstream.finish_lightning_payment(req).await?.into_inner())
+			Ok(upstream.initiate_lightning_payment(req).await?.into_inner())
 		}
 	}
 
@@ -1698,11 +1698,11 @@ async fn should_refuse_paying_invoice_whose_amount_is_higher_than_htlcs() {
 	struct Proxy;
 	#[tonic::async_trait]
 	impl captaind::proxy::ArkRpcProxy for Proxy {
-		async fn finish_lightning_payment(
-			&self, upstream: &mut ArkClient, mut req: protos::SignedLightningPaymentDetails,
+		async fn initiate_lightning_payment(
+			&self, upstream: &mut ArkClient, mut req: protos::InitiateLightningPaymentRequest,
 		) -> Result<protos::LightningPaymentResult, tonic::Status> {
 			req.htlc_vtxo_ids.pop();
-			Ok(upstream.finish_lightning_payment(req).await?.into_inner())
+			Ok(upstream.initiate_lightning_payment(req).await?.into_inner())
 		}
 	}
 
@@ -1917,11 +1917,11 @@ async fn should_refuse_ln_pay_input_vtxo_that_is_being_exited() {
 	struct Proxy(VtxoId);
 	#[tonic::async_trait]
 	impl captaind::proxy::ArkRpcProxy for Proxy {
-		async fn start_lightning_payment(
-			&self, upstream: &mut ArkClient, mut req: protos::StartLightningPaymentRequest,
-		) -> Result<protos::StartLightningPaymentResponse, tonic::Status> {
+		async fn request_lightning_pay_htlc_cosign(
+			&self, upstream: &mut ArkClient, mut req: protos::LightningPayHtlcCosignRequest,
+		) -> Result<protos::LightningPayHtlcCosignResponse, tonic::Status> {
 			req.input_vtxo_ids = vec![self.0.to_bytes().to_vec()];
-			Ok(upstream.start_lightning_payment(req).await?.into_inner())
+			Ok(upstream.request_lightning_pay_htlc_cosign(req).await?.into_inner())
 		}
 	}
 

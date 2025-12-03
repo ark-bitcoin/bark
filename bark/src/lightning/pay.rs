@@ -43,7 +43,7 @@ impl Wallet {
 
 		let revocation = ArkoorPackageBuilder::new_htlc_revocation(&htlc_vtxos, &pubs)?;
 
-		let req = protos::RevokeLightningPaymentRequest {
+		let req = protos::RevokeLightningPayHtlcRequest {
 			htlc_vtxo_ids: revocation.arkoors.iter()
 				.map(|i| i.input.id().to_bytes().to_vec())
 				.collect(),
@@ -51,7 +51,7 @@ impl Wallet {
 				.map(|i| i.user_nonce.serialize().to_vec())
 				.collect(),
 		};
-		let cosign_resp: Vec<_> = srv.client.revoke_lightning_payment(req).await?
+		let cosign_resp: Vec<_> = srv.client.request_lightning_pay_htlc_revocation(req).await?
 			.into_inner().try_into().context("invalid server cosign response")?;
 		ensure!(revocation.verify_cosign_response(&cosign_resp),
 			"invalid arkoor cosignature received from server",
@@ -302,7 +302,7 @@ impl Wallet {
 			input_ids.push(input.id());
 		}
 
-		let req = protos::StartLightningPaymentRequest {
+		let req = protos::LightningPayHtlcCosignRequest {
 			invoice: invoice.to_string(),
 			user_amount_sat: user_amount.map(|a| a.to_sat()),
 			input_vtxo_ids: input_ids.iter().map(|v| v.to_bytes().to_vec()).collect(),
@@ -310,7 +310,7 @@ impl Wallet {
 			user_pubkey: change_keypair.public_key().serialize().to_vec(),
 		};
 
-		let resp = srv.client.start_lightning_payment(req).await
+		let resp = srv.client.request_lightning_pay_htlc_cosign(req).await
 			.context("htlc request failed")?.into_inner();
 
 		let cosign_resp = resp.sigs.into_iter().map(|i| i.try_into())
@@ -381,13 +381,13 @@ impl Wallet {
 			&invoice, &amount, &htlc_vtxos.iter().map(|v| v.id()).collect::<Vec<_>>(), movement_id,
 		)?;
 
-		let req = protos::SignedLightningPaymentDetails {
+		let req = protos::InitiateLightningPaymentRequest {
 			invoice: invoice.to_string(),
 			htlc_vtxo_ids: htlc_vtxos.iter().map(|v| v.id().to_bytes().to_vec()).collect(),
 			wait: true,
 		};
 
-		let res = srv.client.finish_lightning_payment(req).await?.into_inner();
+		let res = srv.client.initiate_lightning_payment(req).await?.into_inner();
 		debug!("Progress update: {}", res.progress_message);
 
 		let preimage_opt = self.process_lightning_send_server_preimage(
