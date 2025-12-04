@@ -1,5 +1,4 @@
 when:
-  - event: manual
   - event: cron
     cron: nightly
 
