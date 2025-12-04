@@ -46,6 +46,14 @@ The project consists of:
 - [**Compile from source**](https://docs.second.tech/getting-started/optional/compile-from-source/)
 - [**Set up an Ark server**](https://docs.second.tech/run-ark-server/): For patient folks looking to do more in-depth testing!
 
+## What if I don't speak Rust?
+
+No Rust, no problem!
+
+**barkd** is an Ark wallet that runs as a daemon and exposes a REST API over HTTP. It's well suited for power users and great for automation—think web shops, Telegram/Discord bots, and similar use cases. The [barkd-clients repository](https://gitlab.com/ark-bitcoin/barkd-clients) provides clients in TypeScript and C#.
+
+**uniffi-bindings** are the better choice if you're building a native desktop or mobile application. The bindings are available in the [bark-ffi repository](https://gitlab.com/ark-bitcoi/bark-ffi). These are still experimental, but stabilizing quickly.
+
 ## Why Ark?
 
 As bitcoin adoption grows, on-chain fees spike during busy periods, making everyday transactions impractical. While Lightning has been revolutionary for bitcoin scaling, it's beginning to show its limitations-channel management and liquidity requirements create complexity for developers and users.
@@ -72,13 +80,11 @@ For a detailed technical explanation, see our [protocol documentation](https://d
 ![An example of an Ark transaction tree from a refresh](assets/tx-tree-refresh.jpg)
 _A transaction tree showing how Ark enables multiple users to share control of a single UTXO through pre-signed transactions._
 
-## Minimum Supported Rust Version (MSRV)
+## Minimum supported Rust version (MSRV)
 
-Most of our crates do not yet specify a MSRV, but we will commit to one once we
-make an official release.
+Most of our crates do not yet specify a MSRV, but we will commit to one once we make an official release.
 
-The `ark-lib` crate (and by extension the `bark-bitcoin-ext` crate) have a MSRV
-of v1.74.0.
+The `ark-lib` crate (and by extension the `bark-bitcoin-ext` crate) have a MSRV of v1.74.0.
 
 ## Contributing
 
