@@ -3,7 +3,7 @@
 //!
 //! ## A high-level summary of the payment flow.
 //!
-//! * User makes a payment over grpc, server calls [ClnManager::pay_bolt11].
+//! * User makes a payment over grpc, server calls [ClnManager::pay_invoice].
 //! * The payment request is sent over the payment channel to the processor.
 //! * The calling thread will then subscribe to the payment update channel,
 //!   - and wait for a msg with its payment hash, or
@@ -13,7 +13,7 @@
 //! * It calls [ClnManagerProcess::start_payment], which will
 //! * store the payment request in the db
 //! * pick the highest priority online CLN node from our list
-//! * calls [handle_pay_bolt11] which calls the cln node's RPC `pay` endpoint.
+//! * calls [handle_pay_invoice] which calls the cln node's RPC `pay` endpoint.
 //!   - on any progress it sends a message on the payment update channel
 //!     - on error it stores the error data in the database
 //!       (this is necessary because on some errors, we don't get a listsendpay update)
@@ -144,7 +144,7 @@ impl ClnManager {
 	/// This method is also more clever than calling the grpc-method.
 	/// We might be able to recover from a short connection-break or time-outs
 	/// from Core Lightning.
-	pub async fn pay_bolt11(
+	pub async fn pay_invoice(
 		&self,
 		invoice: &Invoice,
 		htlc_amount: Amount,
@@ -769,7 +769,7 @@ impl ClnManagerProcess {
 		// (grpc-connection problems or time-outs).
 		// We keep the error-around but will verify if the payment actually failed.
 		trace!("Bolt11 invoice payment of {:?} sent to CLN: {}", user_amount, invoice);
-		tokio::spawn(handle_pay_bolt11(
+		tokio::spawn(handle_pay_invoice(
 			self.db.clone(),
 			self.payment_update_tx.clone(),
 			node.rpc.clone(),
@@ -969,7 +969,7 @@ impl ClnManagerProcess {
 }
 
 /// Handles calling the pay cln endpoint and processing the response.
-async fn handle_pay_bolt11(
+async fn handle_pay_invoice(
 	db: database::Db,
 	payment_update_tx: broadcast::Sender<PaymentHash>,
 	mut rpc: ClnGrpcClient,
@@ -978,7 +978,7 @@ async fn handle_pay_bolt11(
 	max_cltv_expiry_delta: BlockDelta,
 ) {
 	let payment_hash = invoice.payment_hash();
-	match call_pay_bolt11(&mut rpc, &invoice, amount, max_cltv_expiry_delta).await {
+	match call_xpay(&mut rpc, &invoice, amount, max_cltv_expiry_delta).await {
 		Ok(preimage) => {
 			// NB we don't do db stuff when it's succesful, because
 			// it will happen in the sendpay stream of the monitor process
@@ -1011,10 +1011,10 @@ async fn handle_pay_bolt11(
 	}
 }
 
-/// Calls the pay-command over gRPC.
+/// Calls the xpay-command over gRPC.
 /// If the payment completes successfully it will return the pre-image
 /// Otherwise, an error will be returned
-async fn call_pay_bolt11(
+async fn call_xpay(
 	rpc: &mut ClnGrpcClient,
 	invoice: &Invoice,
 	user_amount: Option<Amount>,

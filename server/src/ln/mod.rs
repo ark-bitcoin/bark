@@ -137,7 +137,7 @@ impl Server {
 		}
 
 		// Spawn a task that performs the payment
-		self.cln.pay_bolt11(
+		self.cln.pay_invoice(
 			&invoice,
 			htlc_vtxo_sum,
 			min_expiry_height
