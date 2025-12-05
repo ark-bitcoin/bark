@@ -5,6 +5,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use ark::VtxoId;
+use ark::vtxo::VtxoRef;
 
 
 #[derive(Debug)]
@@ -45,23 +46,23 @@ impl VtxosInFlux {
 		ids: impl IntoIterator<Item = V> + Clone,
 	) -> Result<VtxoFluxLock<'_>, VtxoId>
 	where
-		V: Borrow<VtxoId>,
+		V: VtxoRef,
 	{
 		self.atomic_check_put(ids.clone())?;
 		let mut ret = self.empty_lock();
-		ret.add_locked(ids.into_iter().map(|v| *v.borrow()));
+		ret.add_locked(ids.into_iter().map(|v| v.vtxo_id()));
 		Ok(ret)
 	}
 
 	fn atomic_check_put<V>(&self, ids: impl IntoIterator<Item = V>) -> Result<(), VtxoId>
 	where
-		V: Borrow<VtxoId>,
+		V: VtxoRef,
 	{
 		let ids = ids.into_iter();
 		let mut buf = Vec::with_capacity(ids.size_hint().0);
 		let mut inner = self.inner.lock();
 		for id in ids {
-			let id = *id.borrow();
+			let id = id.vtxo_id();
 			if !inner.vtxos.insert(id) {
 				// abort
 				for take in buf {
