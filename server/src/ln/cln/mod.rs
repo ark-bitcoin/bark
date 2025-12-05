@@ -158,13 +158,19 @@ impl ClnManager {
 			None
 		};
 
+		let (result_tx, result_rx) = oneshot::channel();
 		self.send_ctrl(Ctrl::PaymentRequest {
+			result_tx,
 			invoice: Box::new(invoice.clone()),
 			user_amount,
 			htlc_expiry_height: htlc_send_expiry_height,
 		});
 
-		debug!("Bolt11 invoice sent for payment, waiting for maintenance task CLN updates...");
+		if let Err(e) = result_rx.await.context("channel closed")? {
+			error!("Error sending bolt11 payment for invoice: {:#}", e);
+		} else {
+			debug!("Bolt11 invoice sent for payment, waiting for maintenance task CLN updates...");
+		}
 
 		Ok(())
 	}
@@ -175,6 +181,9 @@ impl ClnManager {
 		payment_hash: &PaymentHash,
 		wait: bool,
 	) -> anyhow::Result<PaymentStatus> {
+		trace!("Getting payment status for payment hash: {}. wait: {}",
+			payment_hash, wait);
+
 		let mut update_rx = self.payment_update_rx.resubscribe();
 		let mut poll_interval = tokio::time::interval(self.invoice_poll_interval);
 
@@ -472,6 +481,7 @@ enum Ctrl {
 		invoice: Box<Invoice>,
 		user_amount: Option<Amount>,
 		htlc_expiry_height: BlockHeight,
+		result_tx: oneshot::Sender<anyhow::Result<()>>,
 	},
 	GenerateInvoice {
 		payment_hash: PaymentHash,
@@ -911,17 +921,18 @@ impl ClnManagerProcess {
 						Ctrl::DisableCln(uri) => {
 							self.disable_node(&uri).await;
 						},
-						Ctrl::PaymentRequest { invoice, user_amount, htlc_expiry_height } => {
+						Ctrl::PaymentRequest { invoice, user_amount, htlc_expiry_height, result_tx } => {
 							trace!("Payment request received: payment_hash={}",
 								invoice.payment_hash(),
 							);
-							if let Err(e) = self.start_payment(
+
+							let res = self.start_payment(
 								invoice,
 								user_amount,
 								htlc_expiry_height,
-							).await {
-								error!("Error sending bolt11 payment for invoice: {:#}", e);
-							}
+							).await;
+
+							let _ = result_tx.send(res);
 						},
 						Ctrl::GenerateInvoice { payment_hash, amount, cltv_delta, invoice_tx } => {
 							trace!("Invoice generation received: payment_hash={:?}", payment_hash);
