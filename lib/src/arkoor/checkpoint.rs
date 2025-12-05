@@ -199,6 +199,7 @@ pub struct CheckpointedArkoorBuilder<'a, S: state::BuilderState> {
 	// These can be computed in the constructor
 	/// The unsigned checkpoint transaction
 	unsigned_checkpoint_tx: Transaction,
+	unsigned_checkpoint_txid: Txid,
 	/// The unsigned arkoor transactions
 	unsigned_arkoor_txs: Vec<Transaction>,
 	/// The sighashes that must be signed
@@ -228,6 +229,35 @@ pub struct CheckpointedArkoorBuilder<'a, S: state::BuilderState> {
 }
 
 impl<'a, S: state::BuilderState> CheckpointedArkoorBuilder<'a, S> {
+
+	fn checkpoint_vtxo_at(
+		&self,
+		output_idx: usize,
+		checkpoint_sig: Option<schnorr::Signature>
+	) -> Vtxo {
+		let output = &self.outputs[output_idx];
+		let checkpoint_txid = self.unsigned_checkpoint_tx.compute_txid();
+
+		Vtxo {
+			amount: output.amount,
+			policy: VtxoPolicy::new_checkpoint(self.input.user_pubkey()),
+			expiry_height: self.input.expiry_height,
+			server_pubkey: self.input.server_pubkey,
+			exit_delta: self.input.exit_delta,
+			anchor_point: self.input.anchor_point,
+			genesis: self.input.genesis.clone().into_iter().chain([
+				GenesisItem {
+					transition: GenesisTransition::Arkoor { policy: self.input.policy.clone(), signature: checkpoint_sig },
+					output_idx: output_idx as u8,
+					other_outputs: self.unsigned_checkpoint_tx.output
+						.iter().enumerate()
+						.filter_map(|(iii, txout)| if iii == (output_idx as usize) || txout.is_p2a_fee_anchor() { None } else { Some(txout.clone()) })
+						.collect(),
+				},
+			]).collect(),
+			point: OutPoint::new(checkpoint_txid, output_idx as u32)
+		}
+	}
 
 	fn vtxo_at(
 		&self,
@@ -274,8 +304,41 @@ impl<'a, S: state::BuilderState> CheckpointedArkoorBuilder<'a, S> {
 	}
 
 	/// Construct all unsigned vtxos that will be created by this builder.
-	pub fn build_unsigned_vtxos(&self) -> Vec<Vtxo> {
-		(0..self.nb_outputs()).map(|i| self.vtxo_at(i, None, None)).collect()
+	pub fn build_unsigned_vtxos(&'a self) -> impl Iterator<Item = Vtxo> + 'a {
+		(0..self.nb_outputs()).map(|i| self.vtxo_at(i, None, None))
+	}
+
+	pub fn build_unsigned_checkpoint_vtxos(&'a self) -> impl Iterator<Item = Vtxo> + 'a {
+		(0..self.nb_outputs()).map(|i| self.checkpoint_vtxo_at(i, None))
+	}
+
+
+	/// The returned [VtxoId] is spent out-of-round by [Txid]
+	pub fn spend_info(&'a self) -> impl Iterator<Item=(VtxoId, Txid)> + 'a {
+		let first = [(self.input.id(), self.unsigned_checkpoint_txid)];
+		let others = (0..self.nb_outputs()).map(|idx| {
+			(
+				VtxoId::from(OutPoint::new(self.unsigned_checkpoint_txid, idx as u32)),
+				self.unsigned_arkoor_txs[idx].compute_txid()
+			)
+		});
+
+		first.into_iter().chain(others)
+	}
+
+	/// These are the intermediate Vtxos that will be owned by the server
+	///
+	/// The tuples represent a [Vtxo] which is spent out-of-round
+	/// by [Txid]
+	pub fn checkpoint_spend_info(&self) -> Vec<(Vtxo, Txid)> {
+		let mut result = Vec::with_capacity(self.nb_outputs());
+
+		for idx in 0..self.nb_outputs() {
+			let vtxo = self.checkpoint_vtxo_at(idx, None);
+			result.push((vtxo, self.new_vtxo_ids[idx].utxo().txid))
+		}
+
+		result
 	}
 
 	fn taptweak_at(&self, idx: usize) -> TapTweakHash {
@@ -285,7 +348,6 @@ impl<'a, S: state::BuilderState> CheckpointedArkoorBuilder<'a, S> {
 		else {
 			self.arkoor_taptweak
 		}
-
 	}
 
 	fn user_pubkey(&self) -> PublicKey {
@@ -378,6 +440,7 @@ impl<'a, S: state::BuilderState> CheckpointedArkoorBuilder<'a, S> {
 			input: self.input,
 			outputs: self.outputs,
 			unsigned_checkpoint_tx: self.unsigned_checkpoint_tx,
+			unsigned_checkpoint_txid: self.unsigned_checkpoint_txid,
 			unsigned_arkoor_txs: self.unsigned_arkoor_txs,
 			new_vtxo_ids: self.new_vtxo_ids,
 			sighashes: self.sighashes,
@@ -402,6 +465,7 @@ impl<'a> CheckpointedArkoorBuilder<'a, state::Initial> {
 
 		// Construct the checkpoint and arkoor transactions
 		let unsigned_checkpoint_tx = Self::construct_unsigned_checkpoint_tx(input, &outputs);
+		let unsigned_checkpoint_txid = unsigned_checkpoint_tx.compute_txid();
 		let unsigned_arkoor_txs = Self::construct_unsigned_arkoor_txs(input, &outputs, unsigned_checkpoint_tx.compute_txid());
 
 		// Compute all vtx-ids
@@ -430,6 +494,7 @@ impl<'a> CheckpointedArkoorBuilder<'a, state::Initial> {
 			checkpoint_taptweak: checkpoint_taptweak,
 			arkoor_taptweak: arkoor_taptweak,
 			unsigned_checkpoint_tx: unsigned_checkpoint_tx,
+			unsigned_checkpoint_txid: unsigned_checkpoint_txid,
 			unsigned_arkoor_txs: unsigned_arkoor_txs,
 			new_vtxo_ids: new_vtxo_ids,
 			user_pub_nonces: None,
@@ -715,7 +780,7 @@ mod test {
 		// At this point all out-of-round transactions are fully defined.
 		// They are just missing the required signatures.
 		// We are already able to compute the vtxos and validate them
-		let _unsigned_vtxos = user_builder.build_unsigned_vtxos();
+		let _unsigned_vtxos = user_builder.build_unsigned_vtxos().collect::<Vec<_>>();
 
 
 		// The user generates their nonces

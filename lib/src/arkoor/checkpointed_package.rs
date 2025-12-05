@@ -1,9 +1,10 @@
+use bitcoin::Txid;
 use bitcoin::secp256k1::Keypair;
 use bitcoin_ext::P2TR_DUST;
 
 
 use crate::arkoor::checkpoint::{CheckpointedArkoorBuilder, ArkoorConstructionError, state, CosignResponse, ArkoorSigningError, CosignRequest};
-use crate::{Vtxo, VtxoRequest, VtxoPolicy, PublicKey, Amount};
+use crate::{Vtxo, VtxoId, VtxoRequest, VtxoPolicy, PublicKey, Amount};
 
 pub struct CheckpointedPackageBuilder<'a, S: state::BuilderState> {
 	builders: Vec<CheckpointedArkoorBuilder<'a, S>>,
@@ -147,11 +148,24 @@ impl<'a> CheckpointedPackageBuilder<'a, state::ServerSigned> {
 
 impl<'a, S: state::BuilderState> CheckpointedPackageBuilder<'a, S> {
 
-	pub fn build_unsigned_vtxos(&self) -> Vec<Vtxo> {
+	pub fn build_unsigned_vtxos(&'a self) -> impl Iterator<Item = Vtxo> + 'a {
 		self.builders.iter()
-			.map(|package| package.build_unsigned_vtxos())
+			.map(|b| b.build_unsigned_vtxos())
 			.flatten()
-			.collect::<Vec<_>>()
+	}
+
+	pub fn build_unsigned_checkpoint_vtxos(&'a self) -> impl Iterator<Item = Vtxo> + 'a {
+		self.builders.iter()
+			.map(|b| b.build_unsigned_checkpoint_vtxos())
+			.flatten()
+	}
+
+	/// Each [VtxoId] in the list is spent by [Txid]
+	/// in an out-of-round transaction
+	pub fn spend_info(&'a self) -> impl Iterator<Item = (VtxoId, Txid)> + 'a {
+		self.builders.iter()
+			.map(|b| b.spend_info())
+			.flatten()
 	}
 }
 
@@ -256,7 +270,7 @@ mod test {
 		).expect("Valid package");
 
 		// We should generate one vtxo for an amount of 1000 sat to bob
-		let vtxos = package_builder.build_unsigned_vtxos();
+		let vtxos: Vec<Vtxo> = package_builder.build_unsigned_vtxos().collect();
 		assert_eq!(vtxos.len(), 1);
 		assert_eq!(vtxos[0].amount(), Amount::from_sat(1000));
 		assert_eq!(vtxos[0].policy().user_pubkey(), bob_public_key());
@@ -281,7 +295,7 @@ mod test {
 			alice_public_key()
 		).expect("Valid package");
 
-		let vtxos = package.build_unsigned_vtxos();
+		let vtxos: Vec<Vtxo> = package.build_unsigned_vtxos().collect();
 		assert_eq!(vtxos.len(), 3);
 		assert_eq!(vtxos[0].amount(), Amount::from_sat(10_000));
 		assert_eq!(vtxos[1].amount(), Amount::from_sat(5_000));
@@ -312,7 +326,7 @@ mod test {
 			alice_public_key()
 		).expect("Valid package");
 
-		let vtxos = package.build_unsigned_vtxos();
+		let vtxos: Vec<Vtxo> = package.build_unsigned_vtxos().collect();
 		assert_eq!(vtxos.len(), 4);
 		assert_eq!(vtxos[0].amount(), Amount::from_sat(10_000));
 		assert_eq!(vtxos[1].amount(), Amount::from_sat(5_000));
@@ -346,7 +360,7 @@ mod test {
 			alice_public_key()
 		).expect("Valid package");
 
-		let vtxos = package.build_unsigned_vtxos();
+		let vtxos: Vec<Vtxo> = package.build_unsigned_vtxos().collect();
 		assert_eq!(vtxos.len(), 2);
 		assert_eq!(vtxos[0].amount(), Amount::from_sat(5_000));
 		assert_eq!(vtxos[1].amount(), Amount::from_sat(1_000));
