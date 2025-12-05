@@ -30,6 +30,12 @@ impl<V> PackageCosignRequest<V> {
 			}).collect::<Vec<_>>()
 		}
 	}
+
+	pub fn inputs(&self) -> impl Iterator<Item=&V> {
+		self.requests.iter()
+			.map(|r| Some(&r.input))
+			.flatten()
+	}
 }
 
 
