@@ -10,13 +10,16 @@ use log::{info, warn};
 use tokio::sync::RwLock;
 
 use crate::Wallet;
-use crate::onchain::ExitUnilaterally;
+use crate::onchain::{ChainSync, ExitUnilaterally};
 
 lazy_static::lazy_static! {
 	static ref FAST_INTERVAL: Duration = Duration::from_secs(1);
 	static ref MEDIUM_INTERVAL: Duration = Duration::from_secs(30);
 	static ref SLOW_INTERVAL: Duration = Duration::from_secs(60);
 }
+
+pub trait DaemonizableOnchainWallet: ExitUnilaterally + ChainSync {}
+impl <W: ExitUnilaterally + ChainSync> DaemonizableOnchainWallet for W {}
 
 /// The daemon is responsible for running the wallet and performing the
 /// necessary actions to keep the wallet in a healthy state
@@ -25,7 +28,7 @@ pub struct Daemon {
 
 	connected: AtomicBool,
 	wallet: Arc<Wallet>,
-	onchain: Arc<RwLock<dyn ExitUnilaterally>>,
+	onchain: Arc<RwLock<dyn DaemonizableOnchainWallet>>,
 }
 
 impl Daemon {
@@ -41,7 +44,7 @@ impl Daemon {
 	pub fn new(
 		shutdown: CancellationToken,
 		wallet: Arc<Wallet>,
-		onchain: Arc<RwLock<dyn ExitUnilaterally>>,
+		onchain: Arc<RwLock<dyn DaemonizableOnchainWallet>>,
 	) -> anyhow::Result<Daemon> {
 		let daemon = Daemon {
 			shutdown,

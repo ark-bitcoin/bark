@@ -329,7 +329,7 @@ use ark::vtxo::{VtxoRef, PubkeyVtxoPolicy, VtxoPolicyKind};
 use bitcoin_ext::{BlockHeight, P2TR_DUST, TxStatus};
 use server_rpc::{self as rpc, protos, ServerConnection};
 
-use crate::daemon::Daemon;
+use crate::daemon::{Daemon, DaemonizableOnchainWallet};
 use crate::exit::Exit;
 use crate::movement::{Movement, MovementDestination, MovementStatus};
 use crate::movement::manager::{MovementGuard, MovementManager};
@@ -2086,7 +2086,7 @@ impl Wallet {
 	pub async fn run_daemon(
 		self: &Arc<Self>,
 		shutdown: CancellationToken,
-		onchain: Arc<RwLock<dyn ExitUnilaterally>>,
+		onchain: Arc<RwLock<dyn DaemonizableOnchainWallet>>,
 	) -> anyhow::Result<()> {
 		let daemon = Daemon::new(shutdown, self.clone(), onchain)?;
 
