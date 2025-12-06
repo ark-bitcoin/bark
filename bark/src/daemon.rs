@@ -84,6 +84,14 @@ impl Daemon {
 		}
 	}
 
+	/// Sync onchain wallet
+	async fn run_onchain_sync(&self) {
+		let mut onchain = self.onchain.write().await;
+		if let Err(e) = onchain.sync(&self.wallet.chain).await {
+			warn!("An error occured while syncing onchain: {e}");
+		}
+	}
+
 	/// Perform library built-in maintenance refresh
 	async fn run_maintenance_refresh_process(&self) {
 		loop {
@@ -205,6 +213,7 @@ impl Daemon {
 						continue;
 					}
 
+					self.run_onchain_sync().await;
 					self.run_exits().await;
 					slow_interval.reset();
 				},
