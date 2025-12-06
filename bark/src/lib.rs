@@ -1133,7 +1133,7 @@ impl Wallet {
 	pub async fn sync_pending_boards(&self) -> anyhow::Result<()> {
 		let ark_info = self.require_server()?.ark_info().await?;
 		let current_height = self.chain.tip().await?;
-		let unregistered_boards = self.pending_board_vtxos()?;
+		let unregistered_boards = self.pending_boards()?;
 		let mut registered_boards = 0;
 
 		if unregistered_boards.is_empty() {
@@ -1143,7 +1143,12 @@ impl Wallet {
 		trace!("Attempting registration of sufficiently confirmed boards");
 
 		for board in unregistered_boards {
-			let anchor = board.vtxo.chain_anchor();
+			let [vtxo_id] = board.vtxos.try_into()
+				.map_err(|_| anyhow!("multiple board vtxos is not supported yet"))?;
+
+			let vtxo = self.get_vtxo_by_id(vtxo_id)?;
+
+			let anchor = vtxo.chain_anchor();
 			let confs = match self.chain.tx_status(anchor.txid).await {
 				Ok(TxStatus::Confirmed(block_ref)) => Some(current_height - (block_ref.height - 1)),
 				Ok(TxStatus::Mempool) => Some(0),
@@ -1153,13 +1158,22 @@ impl Wallet {
 
 			if let Some(confs) = confs {
 				if confs >= ark_info.required_board_confirmations as BlockHeight {
-					if let Err(e) = self.register_board(board.vtxo.id()).await {
-						warn!("Failed to register board {}: {}", board.vtxo.id(), e);
+					if let Err(e) = self.register_board(vtxo.id()).await {
+						warn!("Failed to register board {}: {}", vtxo.id(), e);
 					} else {
-						info!("Registered board {}", board.vtxo.id());
+						info!("Registered board {}", vtxo.id());
 						registered_boards += 1;
 					}
 				}
+
+				continue;
+			}
+
+			if vtxo.expiry_height() < current_height + ark_info.required_board_confirmations as BlockHeight {
+				warn!("VTXO {} expired before its board was confirmed, removing board", vtxo.id());
+				self.movements.finish_movement(board.movement_id, MovementStatus::Failed).await?;
+				self.mark_vtxos_as_spent(&[vtxo])?;
+				self.db.remove_pending_board(&vtxo_id)?;
 			}
 		};
 
