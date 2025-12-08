@@ -3,15 +3,15 @@ use std::str::FromStr;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::Context;
-use bark_json::cli::{ExitProgressStatus, ExitTransactionStatus};
 use bitcoin::{address, Address, FeeRate};
 use clap;
 use log::{warn, info};
 
 use ark::VtxoId;
 use bark::Wallet;
-use bark::onchain::OnchainWallet;
+use bark::onchain::{ChainSync, OnchainWallet};
 use bark::vtxo::selection::{FilterVtxos, VtxoFilter};
+use bark_json::cli::{ExitProgressStatus, ExitTransactionStatus};
 use bitcoin_ext::FeeRateExt;
 
 use crate::util::output_json;

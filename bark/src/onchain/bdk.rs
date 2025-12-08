@@ -22,8 +22,8 @@ use bitcoin_ext::rpc::RpcApi;
 use crate::exit::ExitVtxo;
 use crate::exit::models::ExitState;
 use crate::onchain::{
-	ChainSource, LocalUtxo, GetBalance, GetSpendingTx, GetWalletTx, MakeCpfp, MakeCpfpFees,
-	PreparePsbt, SignPsbt, Utxo,
+	ChainSource, ChainSync, GetBalance, GetSpendingTx, GetWalletTx, LocalUtxo,
+	MakeCpfp, MakeCpfpFees, PreparePsbt, SignPsbt, Utxo
 };
 use crate::onchain::chain::ChainSourceClient;
 use crate::persist::BarkPersister;
@@ -269,6 +269,40 @@ impl SignPsbt for OnchainWallet {
 	}
 }
 
+#[tonic::async_trait]
+impl ChainSync for OnchainWallet {
+	async fn sync(&mut self, chain: &ChainSource) -> anyhow::Result<()> {
+		debug!("Starting wallet sync...");
+		debug!("Starting balance: {}", self.inner.balance());
+		trace!("Starting unconfirmed txs: {:?}", self.unconfirmed_txids().collect::<Vec<_>>());
+		let now = SystemTime::now().duration_since(UNIX_EPOCH).expect("now").as_secs();
+
+		match chain.inner() {
+			ChainSourceClient::Bitcoind(bitcoind) => {
+				let prev_tip = self.inner.latest_checkpoint();
+				self.inner_sync_bitcoind(bitcoind, prev_tip).await?;
+			},
+			ChainSourceClient::Esplora(client) => {
+				debug!("Syncing with esplora...");
+				let request = self.inner.start_sync_with_revealed_spks()
+					.outpoints(self.list_unspent().iter().map(|o| o.outpoint).collect::<Vec<_>>())
+					.txids(self.inner.transactions().map(|tx| tx.tx_node.txid).collect::<Vec<_>>());
+
+				let update = client.sync(request, PARALLEL_REQS).await?;
+				self.inner.apply_update(update)?;
+				self.persist()?;
+				debug!("Finished syncing with esplora");
+			},
+		}
+
+		debug!("Current balance: {}", self.inner.balance());
+		trace!("Current unconfirmed txs: {:?}", self.unconfirmed_txids().collect::<Vec<_>>());
+		self.rebroadcast_txs(chain, now).await?;
+
+		Ok(())
+	}
+}
+
 impl OnchainWallet {
 	pub fn balance(&self) -> Balance {
 		self.inner.balance()
@@ -382,35 +416,6 @@ impl OnchainWallet {
 		}
 
 		Ok(balance.total())
-	}
-
-	pub async fn sync(&mut self, chain: &ChainSource) -> anyhow::Result<Amount> {
-		debug!("Starting wallet sync...");
-		debug!("Starting balance: {}", self.inner.balance());
-		trace!("Starting unconfirmed txs: {:?}", self.unconfirmed_txids().collect::<Vec<_>>());
-		let now = SystemTime::now().duration_since(UNIX_EPOCH).expect("now").as_secs();
-
-		match chain.inner() {
-			ChainSourceClient::Bitcoind(bitcoind) => {
-				let prev_tip = self.inner.latest_checkpoint();
-				self.inner_sync_bitcoind(bitcoind, prev_tip).await?;
-			},
-			ChainSourceClient::Esplora(client) => {
-				debug!("Syncing with esplora...");
-				let request = self.inner.start_sync_with_revealed_spks()
-					.outpoints(self.list_unspent().iter().map(|o| o.outpoint).collect::<Vec<_>>())
-					.txids(self.inner.transactions().map(|tx| tx.tx_node.txid).collect::<Vec<_>>());
-
-				let update = client.sync(request, PARALLEL_REQS).await?;
-				self.inner.apply_update(update)?;
-				self.persist()?;
-				debug!("Finished syncing with esplora");
-			},
-		}
-
-		debug!("Current balance: {}", self.inner.balance());
-		trace!("Current unconfirmed txs: {:?}", self.unconfirmed_txids().collect::<Vec<_>>());
-		self.rebroadcast_txs(chain, now).await
 	}
 
 	pub async fn initial_wallet_scan(

@@ -3,11 +3,11 @@ use std::str::FromStr;
 use std::time::Duration;
 
 use anyhow::Context;
-use bark::onchain::OnchainWallet;
 use bitcoin::{address, Amount};
 use log::{info, warn};
 
 use bark::Wallet;
+use bark::onchain::{ChainSync, OnchainWallet};
 use bark_json::{cli as json, primitives};
 
 use crate::util::output_json;
