@@ -42,7 +42,7 @@ use tonic::transport::Channel;
 use ark::ArkInfo;
 
 use crate::{protos, ArkServiceClient, ConvertError, RequestExt};
-
+use crate::mailbox;
 
 /// The minimum protocol version supported by the client.
 ///
@@ -173,6 +173,8 @@ pub struct ServerConnection {
 	info: Arc<RwLock<ServerInfo>>,
 	/// The gRPC client to call Ark RPCs.
 	pub client: ArkServiceClient<InterceptedService<Channel, ProtocolVersionInterceptor>>,
+	/// The mailbox gRPC client to call mailbox RPCs.
+	pub mailbox_client: mailbox::MailboxServiceClient<InterceptedService<Channel, ProtocolVersionInterceptor>>,
 }
 
 impl ServerConnection {
@@ -246,13 +248,19 @@ impl ServerConnection {
 		let pver = check_handshake(handshake)?;
 
 		let interceptor = ProtocolVersionInterceptor { pver };
-		let mut client = ArkServiceClient::with_interceptor(channel, interceptor);
+		let mut client = ArkServiceClient::with_interceptor(channel.clone(), interceptor.clone());
 
 		let info = client.ark_info(network).await?;
 		info!("Ark info: {:?}", info);
 
+		let mailbox_client = mailbox::MailboxServiceClient::with_interceptor(channel, interceptor);
+
 		let info = Arc::new(RwLock::new(ServerInfo::new(pver, info)));
-		Ok(ServerConnection { info, client })
+		Ok(ServerConnection {
+			info,
+			client,
+			mailbox_client,
+		})
 	}
 
 	/// Checks the connection to the Ark server by performing an handshake request.

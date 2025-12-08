@@ -3,7 +3,6 @@ use std::str::FromStr;
 use std::sync::Arc;
 use std::sync::atomic;
 use std::time::Duration;
-
 use bip39::rand::Rng;
 use bitcoin::{Amount, OutPoint, ScriptBuf};
 use bitcoin::hashes::Hash;
@@ -13,14 +12,12 @@ use log::info;
 use opentelemetry::KeyValue;
 use tokio::sync::oneshot;
 use tokio_stream::{Stream, StreamExt};
-
 use ark::{musig, OffboardRequest, ProtocolEncoding, Vtxo, VtxoId, VtxoIdInput, VtxoPolicy, VtxoRequest};
 use ark::lightning::{Bolt12InvoiceExt, Invoice, Offer, OfferAmount, PaymentHash, Preimage};
 use ark::arkoor::checkpointed_package::PackageCosignRequest;
 use ark::rounds::RoundId;
 use bitcoin_ext::{AmountExt, BlockDelta, BlockHeight};
 use server_rpc::{self as rpc, protos, TryFromBytes};
-
 use crate::Server;
 use crate::rpcserver::{
 	middleware,
@@ -33,17 +30,8 @@ use crate::rpcserver::{
 };
 use crate::round::RoundInput;
 use crate::rpcserver::middleware::RpcMethodDetails;
+use crate::rpcserver::macros;
 use crate::telemetry;
-
-
-macro_rules! badarg {
-	($($arg:tt)*) => { return $crate::error::badarg!($($arg)*).to_status(); };
-}
-
-#[allow(unused)]
-macro_rules! not_found {
-	($($arg:tt)*) => { return $crate::error::not_found!($($arg)*).to_status(); };
-}
 
 #[tonic::async_trait]
 impl rpc::server::ArkService for Server {
@@ -215,6 +203,8 @@ impl rpc::server::ArkService for Server {
 		Ok(tonic::Response::new(cosign_resp.into()))
 	}
 
+	// mailbox
+	// deprecated
 	async fn post_arkoor_package_mailbox(
 		&self,
 		req: tonic::Request<protos::ArkoorPackage>,
@@ -225,7 +215,6 @@ impl rpc::server::ArkService for Server {
 		crate::rpcserver::add_tracing_attributes(vec![
 			KeyValue::new("arkoors", format!("{:?}", req.arkoors)),
 		]);
-
 
 		let arkoor_package_id = rand::thread_rng().r#gen::<[u8; 32]>();
 
@@ -238,6 +227,7 @@ impl rpc::server::ArkService for Server {
 		Ok(tonic::Response::new(protos::Empty{}))
 	}
 
+	// deprecated
 	async fn empty_arkoor_mailbox(
 		&self,
 		req: tonic::Request<protos::ArkoorVtxosRequest>,
@@ -250,7 +240,7 @@ impl rpc::server::ArkService for Server {
 		]);
 
 		if req.pubkeys.len() > rpc::MAX_NB_MAILBOX_PUBKEYS {
-			badarg!("too many pubkeys: max {}", rpc::MAX_NB_MAILBOX_PUBKEYS);
+			macros::badarg!("too many pubkeys: max {}", rpc::MAX_NB_MAILBOX_PUBKEYS);
 		}
 
 		let pubkeys = req.pubkeys.iter()
@@ -422,7 +412,7 @@ impl rpc::server::ArkService for Server {
 		let offer = match Offer::try_from(req.offer.to_vec()) {
 			Ok(offer) => offer,
 			Err(_) => {
-				badarg!("invalid offer");
+				macros::badarg!("invalid offer");
 			},
 		};
 
@@ -431,11 +421,11 @@ impl rpc::server::ArkService for Server {
 			None if offer.amount().is_some() => {
 				match offer.amount().unwrap() {
 					OfferAmount::Bitcoin { amount_msats } => { Amount::from_msat_ceil(amount_msats) },
-					_ => { badarg!("unsupported offer currency"); }
+					_ => { macros::badarg!("unsupported offer currency"); }
 				}
 			},
 			None => {
-				badarg!("amount_sat is required for bolt12 offers with no amount specified");
+				macros::badarg!("amount_sat is required for bolt12 offers with no amount specified");
 			},
 		};
 
@@ -565,7 +555,7 @@ impl rpc::server::ArkService for Server {
 		if let Some(event) = self.rounds.last_event() {
 			Ok(tonic::Response::new(event.as_ref().into()))
 		} else {
-			not_found!([""], "no round event yet");
+			macros::not_found!([""], "no round event yet");
 		}
 	}
 
@@ -592,7 +582,7 @@ impl rpc::server::ArkService for Server {
 		for r in req.vtxo_requests.clone() {
 			// Make sure users provided right number of nonces.
 			if r.public_nonces.len() != self.config.nb_round_nonces {
-				badarg!("need exactly {} public nonces", self.config.nb_round_nonces);
+				macros::badarg!("need exactly {} public nonces", self.config.nb_round_nonces);
 			}
 			vtxo_requests.push(r.try_into().badarg("invalid vtxo request")?);
 		}
@@ -683,7 +673,8 @@ pub async fn run_rpc_server(srv: Arc<Server>) -> anyhow::Result<()> {
 	info!("Starting public gRPC service on address {}", addr);
 
 	let routes = tonic::service::Routes::default()
-		.add_service(rpc::server::ArkServiceServer::from_arc(srv.clone()));
+		.add_service(rpc::server::ArkServiceServer::from_arc(srv.clone()))
+		.add_service(rpc::server::MailboxServiceServer::from_arc(srv.clone()));
 
 	if srv.config.otel_collector_endpoint.is_some() {
 		tonic::transport::Server::builder()

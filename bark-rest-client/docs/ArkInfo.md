@@ -7,6 +7,7 @@ Name | Type | Description | Notes
 **htlc_expiry_delta** | **i32** |  | 
 **htlc_send_expiry_delta** | **i32** |  | 
 **ln_receive_anti_dos_required** | **bool** | Indicates whether the Ark server requires clients to either provide a VTXO ownership proof, or a lightning receive token when preparing a lightning claim. | 
+**mailbox_pubkey** | **String** | The pubkey used for blinding unified mailbox IDs | 
 **max_user_invoice_cltv_delta** | **i32** | Maximum CLTV delta server will allow clients to request an invoice generation with. | 
 **max_vtxo_amount** | **i64** | Maximum amount of a VTXO | 
 **min_board_amount_sat** | **i64** | Minimum amount for a board the server will cosign | 

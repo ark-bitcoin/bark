@@ -38,6 +38,7 @@ use tokio_postgres::types::Type;
 use log::{info, warn};
 
 use ark::{Vtxo, VtxoId, VtxoRequest};
+use ark::mailbox::MailboxIdentifier;
 use ark::arkoor::ArkoorPackageBuilder;
 use ark::encode::ProtocolEncoding;
 use ark::rounds::RoundId;
@@ -326,6 +327,7 @@ impl Db {
 	 * Arkoors
 	*/
 
+	#[deprecated]
 	pub async fn store_arkoor_by_vtxo_pubkey(
 		&self,
 		pubkey: PublicKey,
@@ -345,11 +347,12 @@ impl Db {
 			&arkoor_package_id.to_vec(),
 			&vtxo.id().to_string(),
 		]).await?;
-		assert_eq!(rows_affected, 1);
+		debug_assert_eq!(rows_affected, 1);
 
 		Ok(())
 	}
 
+	#[deprecated]
 	pub async fn pull_oors(
 		&self,
 		pubkeys: &[PublicKey],
@@ -383,6 +386,82 @@ impl Db {
 		assert_eq!(result, rows.len() as u64);
 
 		Ok(vtxos_by_package_id)
+	}
+
+	pub async fn store_vtxos_in_mailbox(
+		&self,
+		mailbox_id: MailboxIdentifier,
+		vtxos: &[Vtxo],
+	) -> anyhow::Result<Option<Checkpoint>> {
+		if vtxos.len() == 0 {
+			return Ok(None);
+		}
+
+		let conn = self.get_conn().await?;
+		let statement = conn.prepare("SELECT next_checkpoint();").await?;
+		let checkpoint = conn.query_one(&statement, &[]).await?;
+		let checkpoint = checkpoint.get::<_, i64>(0);
+
+		let statement = conn.prepare("
+			INSERT INTO vtxo_mailbox (unblinded_mailbox_id, vtxo_id, vtxo, checkpoint, created_at)
+			VALUES ($1, $2, $3, $4, NOW());
+		").await?;
+		for vtxo in vtxos {
+			let rows_updated = conn.execute(&statement, &[
+				&mailbox_id.to_string(),
+				&vtxo.id().to_string(),
+				&vtxo.serialize().to_vec(),
+				&checkpoint,
+			]).await?;
+			debug_assert_eq!(rows_updated, 1);
+		}
+
+		Ok(Some(u64::try_from(checkpoint)?))
+	}
+
+	pub async fn get_vtxos_mailbox(
+		&self,
+		mailbox_id: MailboxIdentifier,
+		checkpoint: Checkpoint,
+	) -> anyhow::Result<Vec<(Checkpoint, Vec<Vtxo>)>> {
+		let conn = self.get_conn().await?;
+		let statement = conn.prepare("
+			SELECT vtxo_id, vtxo, checkpoint
+			FROM vtxo_mailbox
+			WHERE unblinded_mailbox_id = $1 AND checkpoint > $2
+			ORDER BY checkpoint ASC;
+		").await?;
+
+		let checkpoint = checkpoint as i64;
+		let mailbox_id = mailbox_id.to_string();
+		let rows = conn.query(&statement, &[&mailbox_id, &checkpoint]).await?;
+		if rows.is_empty() {
+			return Ok(vec![]);
+		}
+
+		let mut res = Vec::new();
+		let mut vtxos = Vec::new();
+		let mut last_checkpoint = 0;
+		for row in &rows {
+			let checkpoint = row.get::<_, i64>("checkpoint") as u64;
+			if vtxos.len() == 0 {
+				last_checkpoint = checkpoint;
+			}
+
+			if last_checkpoint != checkpoint {
+				res.push((last_checkpoint, vtxos.clone()));
+				vtxos.clear();
+				last_checkpoint = checkpoint;
+			}
+
+			let vtxo = Vtxo::deserialize(row.get("vtxo"))?;
+			debug_assert_eq!(vtxo.id().to_string(), row.get::<_, String>("vtxo_id"));
+			vtxos.push(vtxo);
+		}
+
+		res.push((last_checkpoint, vtxos));
+
+		Ok(res)
 	}
 
 	/**

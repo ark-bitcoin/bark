@@ -472,6 +472,7 @@ impl Builder {
 	/// is incorrect.
 	pub fn mailbox(
 		mut self,
+		server_mailbox_pubkey: PublicKey,
 		mailbox: MailboxIdentifier,
 		vtxo_key: &Keypair,
 	) -> Result<Self, AddressBuilderError> {
@@ -481,8 +482,7 @@ impl Builder {
 			return Err("VTXO key does not match policy".into());
 		}
 
-		let server = self.server_pubkey.ok_or("set server pubkey first")?;
-		self.mailbox_id = Some(mailbox.to_blinded(server, vtxo_key));
+		self.mailbox_id = Some(mailbox.to_blinded(server_mailbox_pubkey, vtxo_key));
 		self.add_builtin_delivery = false;
 		Ok(self)
 	}
@@ -587,16 +587,17 @@ mod test {
 
 	#[test]
 	fn test_mailbox() {
-		let mailbox_key = Keypair::new(&SECP, &mut rand::thread_rng());
 		let server_key = Keypair::new(&SECP, &mut rand::thread_rng());
+		let server_mailbox_key = Keypair::new(&SECP, &mut rand::thread_rng());
+		let bark_mailbox_key = Keypair::new(&SECP, &mut rand::thread_rng());
 		let vtxo_key = Keypair::new(&SECP, &mut rand::thread_rng());
 
-		let mailbox = MailboxIdentifier::from_pubkey(mailbox_key.public_key());
+		let mailbox = MailboxIdentifier::from_pubkey(bark_mailbox_key.public_key());
 
 		let addr = Address::builder()
 			.server_pubkey(server_key.public_key())
 			.pubkey_policy(vtxo_key.public_key())
-			.mailbox(mailbox, &vtxo_key).expect("error mailbox call")
+			.mailbox(server_mailbox_key.public_key(), mailbox, &vtxo_key).expect("error mailbox call")
 			.into_address().unwrap();
 
 		let blinded = match addr.delivery[0] {
@@ -605,7 +606,7 @@ mod test {
 		};
 
 		let unblinded = MailboxIdentifier::from_blinded(
-			blinded, addr.policy().user_pubkey(), &server_key);
+			blinded, addr.policy().user_pubkey(), &server_mailbox_key);
 
 		assert_eq!(mailbox, unblinded);
 	}

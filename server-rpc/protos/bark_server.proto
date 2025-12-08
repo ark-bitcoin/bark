@@ -3,10 +3,12 @@ syntax = "proto3";
 
 package bark_server;
 
+import "core.proto";
+
 /// Public ark service for arkd.
 service ArkService {
 	rpc Handshake(HandshakeRequest) returns (HandshakeResponse) {}
-	rpc GetArkInfo(Empty) returns (ArkInfo) {}
+	rpc GetArkInfo(core.Empty) returns (ArkInfo) {}
 
 	// Get new round since the given round id
 	//
@@ -17,28 +19,39 @@ service ArkService {
 	// * BOARDING *
 
 	rpc RequestBoardCosign(BoardCosignRequest) returns (BoardCosignResponse) {}
-	rpc RegisterBoardVtxo(BoardVtxoRequest) returns (Empty) {}
+	rpc RegisterBoardVtxo(BoardVtxoRequest) returns (core.Empty) {}
 
-	// * OOR PAYMENTS*
+	// * ARKOOR PAYMENTS*
 
 	rpc CheckpointedCosignOor(CheckpointedPackageCosignRequest) returns (CheckpointedPackageCosignResponse) {}
-	rpc PostArkoorPackageMailbox(ArkoorPackage) returns (Empty) {}
 
-	// TODO: Remove in 0.1.0-beta.6 
+	// TODO: Remove in 0.1.0-beta.6
 	// It is kept for backward compatiblity
 	rpc RequestArkoorPackageCosign(ArkoorPackageCosignRequest) returns (ArkoorPackageCosignResponse) {
 		option deprecated = true;
 	}
 
+
+	// * MAILBOX *
+
+	// This method is deprecated.
+	// Please use `PostVtxoMailbox`
+	rpc PostArkoorPackageMailbox(ArkoorPackage) returns (core.Empty) {
+		option deprecated = true;
+	}
 	// Empty the arkoor mailbox for certain pubkeys.
 	//
 	// At most 100 pubkeys should be provided.
-	rpc EmptyArkoorMailbox(ArkoorVtxosRequest) returns (ArkoorVtxosResponse) {}
+	// This method is deprecated.
+	// Please use `ReadMailbox` or `SubscribeMailbox`.
+	rpc EmptyArkoorMailbox(ArkoorVtxosRequest) returns (ArkoorVtxosResponse) {
+		option deprecated = true;
+	}
 
 	// * SEND LN payments
 
 	rpc RequestLightningPayHtlcCosign(LightningPayHtlcCosignRequest) returns (LightningPayHtlcCosignResponse) {}
-	rpc InitiateLightningPayment(InitiateLightningPaymentRequest) returns (Empty) {}
+	rpc InitiateLightningPayment(InitiateLightningPaymentRequest) returns (core.Empty) {}
 	rpc CheckLightningPayment(CheckLightningPaymentRequest) returns (LightningPaymentStatus) {}
 	rpc RequestLightningPayHtlcRevocation(RevokeLightningPayHtlcRequest) returns (ArkoorPackageCosignResponse) {}
 
@@ -67,12 +80,12 @@ service ArkService {
 	// * ARK ROUND INTERACTIONS *
 
 	// Subscribe to the round events
-	rpc SubscribeRounds(Empty) returns (stream RoundEvent) {}
+	rpc SubscribeRounds(core.Empty) returns (stream RoundEvent) {}
 	// Get the last round event
-	rpc LastRoundEvent(Empty) returns (RoundEvent) {}
-	rpc SubmitPayment(SubmitPaymentRequest) returns (Empty) {}
-	rpc ProvideVtxoSignatures(VtxoSignaturesRequest) returns (Empty) {}
-	rpc ProvideForfeitSignatures(ForfeitSignaturesRequest) returns (Empty) {}
+	rpc LastRoundEvent(core.Empty) returns (RoundEvent) {}
+	rpc SubmitPayment(SubmitPaymentRequest) returns (core.Empty) {}
+	rpc ProvideVtxoSignatures(VtxoSignaturesRequest) returns (core.Empty) {}
+	rpc ProvideForfeitSignatures(ForfeitSignaturesRequest) returns (core.Empty) {}
 }
 
 message HandshakeRequest {
@@ -106,6 +119,7 @@ message ArkInfo {
 	// permanent into another struct for bark to check
 	uint64 offboard_feerate_sat_vkb = 14;
 	bool ln_receive_anti_dos_required = 15;
+	bytes mailbox_pubkey = 16;
 }
 
 message FreshRoundsRequest {
@@ -201,27 +215,37 @@ message ArkoorPackageCosignResponse {
 	repeated ArkoorCosignResponse sigs = 1;
 }
 
+
+// mailbox
+
+message ArkoorPackage {
+	option deprecated = true;
+	repeated ArkoorVtxo arkoors = 1;
+}
+
 message ArkoorVtxo {
+	option deprecated = true;
 	bytes pubkey = 1;
 	bytes vtxo = 2;
 }
 
-message ArkoorPackage {
-	repeated ArkoorVtxo arkoors = 1;
-}
-
 message ArkoorVtxosRequest {
+	option deprecated = true;
 	repeated bytes pubkeys = 1;
 }
 
 message ArkoorMailboxPackage {
+	option deprecated = true;
 	bytes arkoor_package_id = 1;
 	repeated bytes vtxos = 2;
 }
 
 message ArkoorVtxosResponse {
+	option deprecated = true;
 	repeated ArkoorMailboxPackage packages = 1;
 }
+
+
 
 // lightning
 
@@ -271,9 +295,9 @@ message PaymentSuccessStatus {
 
 message LightningPaymentStatus {
 	oneof payment_status {
-		Empty pending = 1;
+		core.Empty pending = 1;
 		PaymentSuccessStatus success = 2;
-		Empty failed = 3;
+		core.Empty failed = 3;
 	};
 }
 
@@ -436,21 +460,21 @@ message VtxoSignaturesRequest {
 }
 
 service WalletAdminService {
-	rpc WalletSync(Empty) returns (Empty) {}
-	rpc WalletStatus(Empty) returns (WalletStatusResponse) {}
+	rpc WalletSync(core.Empty) returns (core.Empty) {}
+	rpc WalletStatus(core.Empty) returns (WalletStatusResponse) {}
 }
 
 service RoundAdminService {
-	rpc TriggerRound(Empty) returns (Empty) {}
+	rpc TriggerRound(core.Empty) returns (core.Empty) {}
 }
 
 service LightningAdminService {
-	rpc StartLightningNode(LightningNodeUri) returns (Empty) {}
-	rpc StopLightningNode(LightningNodeUri) returns (Empty) {}
+	rpc StartLightningNode(LightningNodeUri) returns (core.Empty) {}
+	rpc StopLightningNode(LightningNodeUri) returns (core.Empty) {}
 }
 
 service SweepAdminService {
-	rpc TriggerSweep(Empty) returns (Empty) {}
+	rpc TriggerSweep(core.Empty) returns (core.Empty) {}
 }
 
 message WalletStatus {
@@ -471,5 +495,3 @@ message WalletStatusResponse {
 message LightningNodeUri {
 	string uri = 1;
 }
-
-message Empty {}

@@ -9,9 +9,10 @@ use tokio_postgres::Row;
 
 use bitcoin_ext::BlockHeight;
 use ark::{ProtocolEncoding, Vtxo, VtxoId};
-
 use crate::database::forfeits::ForfeitState;
 
+// Used by mailbox as an always increasing number for data sorting.
+pub type Checkpoint = u64;
 
 #[derive(Debug)]
 pub struct VtxoState {

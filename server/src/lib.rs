@@ -18,6 +18,7 @@ pub mod tip_fetcher;
 pub mod vtxopool;
 pub mod wallet;
 pub mod watchman;
+pub mod mailbox_manager;
 
 pub(crate) mod flux;
 pub(crate) mod system;
@@ -55,6 +56,7 @@ use ark::{Vtxo, VtxoId, VtxoRequest};
 use ark::vtxo::VtxoRef;
 use ark::arkoor::{ArkoorBuilder, ArkoorCosignResponse, ArkoorPackageBuilder};
 use ark::board::BoardBuilder;
+use ark::mailbox::{BlindedMailboxIdentifier, MailboxIdentifier};
 use ark::musig::{self, PublicNonce};
 use ark::rounds::RoundEvent;
 use ark::tree::signed::builder::{SignedTreeBuilder, SignedTreeCosignResponse};
@@ -66,6 +68,7 @@ use crate::error::ContextExt;
 use crate::flux::VtxosInFlux;
 use crate::forfeits::ForfeitWatcher;
 use crate::ln::cln::ClnManager;
+use crate::mailbox_manager::MailboxManager;
 use crate::round::RoundInput;
 use crate::secret::Secret;
 use crate::sweeps::VtxoSweeper;
@@ -83,6 +86,9 @@ lazy_static::lazy_static! {
 
 /// The HD keypath to use for the server key.
 const SERVER_KEY_PATH: &str = "m/2'/0'";
+
+/// The HD keypath to use for the mailbox key.
+const MAILBOX_KEY_PATH: &str = "m/2'/1'";
 
 /// The HD keypath used to generate ephemeral keys
 const EPHEMERAL_KEY_PATH: &str = "m/30'";
@@ -149,6 +155,10 @@ pub struct Server {
 	db: database::Db,
 	server_key: Secret<Keypair>,
 	server_pubkey: PublicKey, // public key part of former
+	/// The key used for unblinding unified mailbox ids
+	mailbox_key: Secret<Keypair>,
+	mailbox_pubkey: PublicKey, // public key part of former
+	mailbox_manager: Arc<MailboxManager>,
 	/// The keypair used to generate ephemeral keys using tweaks
 	ephemeral_master_key: Secret<Keypair>,
 	// NB this needs to be an Arc so we can take a static guard
@@ -220,10 +230,15 @@ impl Server {
 		self.server_pubkey
 	}
 
+	pub fn mailbox_pubkey(&self) -> PublicKey {
+		self.mailbox_pubkey
+	}
+
 	pub fn ark_info(&self) -> ark::ArkInfo {
 		ark::ArkInfo {
 			network: self.config.network,
 			server_pubkey: self.server_pubkey,
+			mailbox_pubkey: self.mailbox_pubkey,
 			round_interval: self.config.round_interval,
 			nb_round_nonces: self.config.nb_round_nonces,
 			vtxo_exit_delta: self.config.vtxo_exit_delta,
@@ -288,6 +303,12 @@ impl Server {
 
 		let server_key = {
 			let path = bip32::DerivationPath::from_str(SERVER_KEY_PATH).unwrap();
+			let xpriv = master_xpriv.derive_priv(&SECP, &path).unwrap();
+			Keypair::from_secret_key(&SECP, &xpriv.private_key)
+		};
+
+		let mailbox_key = {
+			let path = bip32::DerivationPath::from_str(MAILBOX_KEY_PATH).unwrap();
 			let xpriv = master_xpriv.derive_priv(&SECP, &path).unwrap();
 			Keypair::from_secret_key(&SECP, &xpriv.private_key)
 		};
@@ -387,6 +408,7 @@ impl Server {
 		let (round_event_tx, _rx) = broadcast::channel(8);
 		let (round_input_tx, round_input_rx) = tokio::sync::mpsc::unbounded_channel();
 		let (round_trigger_tx, round_trigger_rx) = tokio::sync::mpsc::channel(1);
+		let mailbox_manager = Arc::new(MailboxManager::new());
 
 		let srv = Server {
 			rounds_wallet: Arc::new(tokio::sync::Mutex::new(rounds_wallet)),
@@ -401,6 +423,9 @@ impl Server {
 			db,
 			server_pubkey: server_key.public_key(),
 			server_key: Secret::new(server_key),
+			mailbox_pubkey: mailbox_key.public_key(),
+			mailbox_key: Secret::new(mailbox_key),
+			mailbox_manager,
 			ephemeral_master_key: Secret::new(ephemeral_master_key),
 			bitcoind,
 			tip_fetcher,
@@ -714,6 +739,15 @@ impl Server {
 			.badarg("error creating arkoor package")?;
 
 		self.cosign_oor_package_with_builder(&builder).await
+	}
+
+	/// Unblind a [BlindedMailboxIdentifier]
+	pub fn unblind_mailbox_id(
+		&self,
+		blinded: BlindedMailboxIdentifier,
+		vtxo_pubkey: PublicKey,
+	) -> MailboxIdentifier {
+		MailboxIdentifier::from_blinded(blinded, vtxo_pubkey, self.mailbox_key.leak_ref())
 	}
 
 	pub async fn generate_ephemeral_cosign_key(

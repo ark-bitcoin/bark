@@ -85,7 +85,6 @@ macro_rules! not_found {
 		Err($crate::anyhow::Error::from($crate::error::NotFound::new($ids, format!($($arg)*))))
 	};
 }
-#[allow(unused)]
 pub(crate) use not_found;
 
 

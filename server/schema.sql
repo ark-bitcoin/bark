@@ -283,6 +283,74 @@ $$;
 
 
 --
+-- Name: next_checkpoint(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.next_checkpoint() RETURNS bigint
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+  now_ms      BIGINT;
+  rec         RECORD;
+  new_time    BIGINT;
+  new_counter INT;
+  resp        BIGINT;
+BEGIN
+  now_ms := EXTRACT(EPOCH FROM clock_timestamp()) * 1000;
+
+  LOOP
+    -- Lock the specific sequence row
+    SELECT last_time, last_counter, max_time
+      INTO rec
+    FROM checkpoint_state
+    WHERE type_id = 1
+    FOR UPDATE;
+
+    -- If a row doesn't exist, create it (should never happen, but it's safe)
+    IF NOT FOUND THEN
+      INSERT INTO checkpoint_state (id, last_time, last_counter, max_time)
+      VALUES (1, 0, 0, 0)
+      RETURNING last_time, last_counter, max_time INTO rec;
+    END IF;
+
+    -- Use max_time to resist clock rollback
+    new_time := GREATEST(now_ms, rec.max_time);
+
+    IF new_time > rec.last_time THEN
+      new_counter := 0;
+    ELSE
+      new_counter := rec.last_counter + 1;
+
+      -- Prevent overflow: 20-bit counter = 1,048,575
+      IF new_counter >= 1048576 THEN
+        PERFORM pg_sleep(0.001);
+        CONTINUE;
+      END IF;
+    END IF;
+
+    -- Build 64-bit ID: [44-bit time] [20-bit counter]
+    resp := (new_time << 20) | new_counter;
+
+    -- Update atomically
+    UPDATE checkpoint_state
+    SET
+      last_time = new_time,
+      last_counter = new_counter,
+      max_time = GREATEST(max_time, now_ms)
+    WHERE type_id = 1 AND
+      last_time = rec.last_time AND
+      last_counter = rec.last_counter AND
+      max_time = rec.max_time;
+
+    EXIT WHEN FOUND;
+  END LOOP;
+
+  RETURN resp;
+END;
+$$;
+
+
+--
 -- Name: vtxo_update_trigger(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -403,6 +471,19 @@ CREATE SEQUENCE public.board_id_seq
 --
 
 ALTER SEQUENCE public.board_id_seq OWNED BY public.board.id;
+
+
+--
+-- Name: checkpoint_state; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.checkpoint_state (
+    type_id integer NOT NULL,
+    last_time bigint NOT NULL,
+    last_counter integer NOT NULL,
+    max_time bigint NOT NULL,
+    CONSTRAINT checkpoint_state_type_id_check CHECK ((type_id = 1))
+);
 
 
 --
@@ -969,6 +1050,39 @@ ALTER SEQUENCE public.vtxo_id_seq OWNED BY public.vtxo.id;
 
 
 --
+-- Name: vtxo_mailbox; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.vtxo_mailbox (
+    id bigint NOT NULL,
+    unblinded_mailbox_id text NOT NULL,
+    vtxo_id text NOT NULL,
+    vtxo bytea NOT NULL,
+    checkpoint bigint NOT NULL,
+    created_at timestamp with time zone NOT NULL
+);
+
+
+--
+-- Name: vtxo_mailbox_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.vtxo_mailbox_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: vtxo_mailbox_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.vtxo_mailbox_id_seq OWNED BY public.vtxo_mailbox.id;
+
+
+--
 -- Name: vtxo_pool; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -1132,6 +1246,13 @@ ALTER TABLE ONLY public.vtxo ALTER COLUMN id SET DEFAULT nextval('public.vtxo_id
 
 
 --
+-- Name: vtxo_mailbox id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.vtxo_mailbox ALTER COLUMN id SET DEFAULT nextval('public.vtxo_mailbox_id_seq'::regclass);
+
+
+--
 -- Name: vtxo_pool id; Type: DEFAULT; Schema: public; Owner: -
 --
 
@@ -1183,6 +1304,14 @@ ALTER TABLE ONLY public.board
 
 ALTER TABLE ONLY public.board
     ADD CONSTRAINT board_sweep_vtxo_unique UNIQUE (vtxo_id);
+
+
+--
+-- Name: checkpoint_state checkpoint_state_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.checkpoint_state
+    ADD CONSTRAINT checkpoint_state_pkey PRIMARY KEY (type_id);
 
 
 --
@@ -1303,6 +1432,14 @@ ALTER TABLE ONLY public.round
 
 ALTER TABLE ONLY public.sweep
     ADD CONSTRAINT sweep_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: vtxo_mailbox vtxo_mailbox_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.vtxo_mailbox
+    ADD CONSTRAINT vtxo_mailbox_pkey PRIMARY KEY (id);
 
 
 --
@@ -1489,6 +1626,20 @@ CREATE UNIQUE INDEX sweep_txid_pending_uix ON public.sweep USING btree (txid) IN
 --
 
 CREATE INDEX vtxo_has_forfeit_state_ix ON public.vtxo USING btree (((forfeit_state IS NOT NULL)), vtxo_id);
+
+
+--
+-- Name: vtxo_mailbox_unblinded_mailbox_id_checkpoint_ix; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX vtxo_mailbox_unblinded_mailbox_id_checkpoint_ix ON public.vtxo_mailbox USING btree (unblinded_mailbox_id, checkpoint);
+
+
+--
+-- Name: vtxo_mailbox_vtxo_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX vtxo_mailbox_vtxo_id ON public.vtxo_mailbox USING btree (vtxo_id);
 
 
 --
@@ -1731,6 +1882,14 @@ ALTER TABLE ONLY public.vtxo
 
 ALTER TABLE ONLY public.vtxo
     ADD CONSTRAINT vtxo_lightning_htlc_subscription_id_fkey FOREIGN KEY (lightning_htlc_subscription_id) REFERENCES public.lightning_htlc_subscription(id);
+
+
+--
+-- Name: vtxo_mailbox vtxo_mailbox_vtxo_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.vtxo_mailbox
+    ADD CONSTRAINT vtxo_mailbox_vtxo_id_fkey FOREIGN KEY (vtxo_id) REFERENCES public.vtxo(vtxo_id);
 
 
 --

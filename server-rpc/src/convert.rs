@@ -2,6 +2,7 @@
 use std::convert::TryFrom;
 use std::time::Duration;
 
+use ark::mailbox::BlindedMailboxIdentifier;
 use bitcoin::hashes::sha256;
 use bitcoin::secp256k1::{schnorr, PublicKey};
 use bitcoin::{self, Amount, FeeRate, OutPoint, Transaction};
@@ -104,6 +105,7 @@ macro_rules! impl_try_from_bytes_protocol {
 impl_try_from_bytes_protocol!(OutPoint, "outpoint");
 impl_try_from_bytes_protocol!(Vtxo, "VTXO");
 impl_try_from_bytes_protocol!(VtxoPolicy, "VTXO policy");
+impl_try_from_bytes_protocol!(BlindedMailboxIdentifier, "a blinded VTXO mailbox identifier");
 
 macro_rules! impl_try_from_bytes_bitcoin {
 	($ty:path, $exp:expr) => {
@@ -123,6 +125,7 @@ impl From<ark::ArkInfo> for protos::ArkInfo {
 		protos::ArkInfo {
 			network: v.network.to_string(),
 			server_pubkey: v.server_pubkey.serialize().to_vec(),
+			mailbox_pubkey: v.mailbox_pubkey.serialize().to_vec(),
 			round_interval_secs: v.round_interval.as_secs() as u32,
 			nb_round_nonces: v.nb_round_nonces as u32,
 			vtxo_exit_delta: v.vtxo_exit_delta as u32,
@@ -155,6 +158,8 @@ impl TryFrom<protos::ArkInfo> for ark::ArkInfo {
 			network: v.network.parse().map_err(|_| "invalid network")?,
 			server_pubkey: PublicKey::from_slice(&v.server_pubkey)
 				.map_err(|_| "invalid server pubkey")?,
+			mailbox_pubkey: PublicKey::from_slice(&v.mailbox_pubkey)
+				.map_err(|_| "invalid mailbox pubkey")?,
 			round_interval: Duration::from_secs(v.round_interval_secs as u64),
 			nb_round_nonces: v.nb_round_nonces as usize,
 			vtxo_exit_delta: v.vtxo_exit_delta.try_into()

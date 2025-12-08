@@ -19,7 +19,7 @@ use server_log::{FinishedPoolIssuance, LogMsg, ParsedRecord, TipUpdated, TxIndex
 use server_rpc::{self as rpc, protos};
 pub use server::config::{self, Config};
 
-use crate::daemon::captaind::proxy::{ArkRpcProxy, ArkRpcProxyServer};
+use crate::daemon::captaind::proxy::{ArkRpcProxy, ArkRpcProxyServer, MailboxRpcProxy, MailboxRpcProxyServer};
 use crate::{secs, Bitcoind, Daemon, DaemonHelper, TestContext};
 use crate::daemon::LogHandler;
 use crate::constants::env::CAPTAIND_EXEC;
@@ -28,6 +28,7 @@ use crate::util::resolve_path;
 pub type Captaind = Daemon<CaptaindHelper>;
 
 pub type ArkClient = rpc::ArkServiceClient<tonic::transport::Channel>;
+pub type MailboxClient = rpc::mailbox::MailboxServiceClient<tonic::transport::Channel>;
 pub type WalletAdminClient = rpc::admin::WalletAdminServiceClient<tonic::transport::Channel>;
 pub type RoundAdminClient = rpc::admin::RoundAdminServiceClient<tonic::transport::Channel>;
 pub type SweepAdminClient = rpc::admin::SweepAdminServiceClient<tonic::transport::Channel>;
@@ -177,6 +178,14 @@ impl Captaind {
 
 	pub async fn get_proxy_rpc(&self, proxy: impl ArkRpcProxy) -> ArkRpcProxyServer {
 		ArkRpcProxyServer::start(proxy, self.get_public_rpc().await).await
+	}
+
+	pub async fn get_mailbox_public_rpc(&self) -> MailboxClient {
+		MailboxClient::connect(self.ark_url()).await.expect("can't connect server public rpc")
+	}
+
+	pub async fn get_mailbox_proxy_rpc(&self, proxy: impl MailboxRpcProxy) -> MailboxRpcProxyServer {
+		MailboxRpcProxyServer::start(proxy, self.get_mailbox_public_rpc().await).await
 	}
 
 	pub async fn get_wallet_rpc(&self) -> WalletAdminClient {
