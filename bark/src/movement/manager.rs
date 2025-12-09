@@ -171,7 +171,7 @@ impl MovementManager {
 		details: MovementUpdate,
 	) -> anyhow::Result<MovementId, MovementError> {
 		if status == MovementStatus::Pending {
-			return Err(MovementError::IncorrectStatus { status: status.as_str().into() });
+			return Err(MovementError::IncorrectPendingStatus);
 		}
 		let id = self.new_movement(subsystem_id, movement_kind).await?;
 		let mut movement = self.db.get_movement_by_id(id)
@@ -240,7 +240,7 @@ impl MovementManager {
 		new_status: MovementStatus,
 	) -> anyhow::Result<(), MovementError> {
 		if new_status == MovementStatus::Pending {
-			return Err(MovementError::IncorrectStatus { status: new_status.as_str().into() });
+			return Err(MovementError::IncorrectPendingStatus);
 		}
 
 		// Ensure the movement is loaded.
