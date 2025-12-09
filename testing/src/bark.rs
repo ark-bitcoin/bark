@@ -19,6 +19,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::process::Command as TokioCommand;
 use tokio::sync::Mutex;
 
+use ark::VtxoId;
 use bark_json::cli::{InvoiceInfo, LightningReceiveInfo, RoundStatus};
 use bark_json::primitives::{UtxoInfo, WalletVtxoInfo};
 use bitcoin_ext::{BlockHeight, FeeRateExt};
@@ -296,6 +297,14 @@ impl Bark {
 	pub async fn utxos(&self) -> Vec<UtxoInfo> {
 		let res = self.run(["onchain", "utxos"]).await;
 		serde_json::from_str(&res).expect("json error")
+	}
+
+	pub async fn vtxo_ids(&self) -> Vec<VtxoId> {
+		self.vtxos().await.into_iter().map(|vtxo| vtxo.id).collect()
+	}
+
+	pub async fn vtxo_ids_no_sync(&self) -> Vec<VtxoId> {
+		self.vtxos_no_sync().await.into_iter().map(|vtxo| vtxo.id).collect()
 	}
 
 	pub async fn vtxos(&self) -> Vec<WalletVtxoInfo> {

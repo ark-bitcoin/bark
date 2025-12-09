@@ -1,12 +1,14 @@
 use std::iter;
+use std::str::FromStr;
 
 use bitcoin::{Address, Amount, FeeRate};
 use bitcoin::params::Params;
 use futures::FutureExt;
 use rand::random;
 
-use ark::vtxo::{exit_taproot, VtxoPolicyKind};
-use bark_json::cli::PaymentMethod;
+use ark::lightning::{Invoice, PaymentHash};
+use ark::vtxo::{exit_taproot, VtxoId, VtxoPolicyKind};
+use bark_json::cli::{MovementDestination, MovementStatus, PaymentMethod};
 use bark_json::exit::ExitState;
 use bark_json::exit::states::ExitStartState;
 use bark_json::primitives::VtxoStateInfo;
@@ -14,7 +16,7 @@ use bitcoin_ext::TaprootSpendInfoExt;
 use bitcoin_ext::rpc::BitcoinRpcExt;
 use server_rpc::protos::{self, lightning_payment_status};
 
-use ark_testing::{btc, sat, Bark, TestContext};
+use ark_testing::{btc, sat, signed_sat, Bark, TestContext};
 use ark_testing::constants::{BOARD_CONFIRMATIONS, ROUND_CONFIRMATIONS};
 use ark_testing::daemon::captaind::{self, ArkClient};
 use ark_testing::exit::complete_exit;
@@ -481,11 +483,14 @@ async fn bark_should_exit_a_failed_htlc_out_that_server_refuse_to_revoke() {
 
 	// Create a payable invoice
 	let invoice_amount = btc(1);
-	let invoice = lightning.receiver.invoice(Some(invoice_amount), "test_payment", "A test payment").await;
+	let invoice = Invoice::from_str(
+		&lightning.receiver.invoice(Some(invoice_amount), "test_payment", "A test payment").await,
+	).unwrap();
 
-	// Try send coins through lightning
+	// Try to send coins through lightning
 	assert_eq!(bark_1.spendable_balance().await, board_amount);
-	bark_1.try_pay_lightning(invoice, None, false).await.expect_err("The payment fails");
+	bark_1.try_pay_lightning(invoice.to_string(), None, false).await
+		.expect_err("The payment fails");
 
 	// We need to ensure the HTLC expires so an exit will be triggered.
 	let tip = ctx.bitcoind().sync_client().tip().unwrap();
@@ -502,6 +507,57 @@ async fn bark_should_exit_a_failed_htlc_out_that_server_refuse_to_revoke() {
 	// Should start an exit
 	assert_eq!(bark_1.list_exits().await[0].state, ExitState::Start(ExitStartState { tip_height: desired_height }));
 	complete_exit(&ctx, &bark_1).await;
+
+	// Check that we have a lightning send -> exit movement chain
+	let movements = bark_1.list_movements().await;
+	let [.., send_movement, exit_movement] = movements.as_slice() else {
+		panic!("Should have at least two movements");
+	};
+
+	// Verify send movement
+	assert_eq!(send_movement.status, MovementStatus::Failed);
+	assert_eq!(send_movement.subsystem.name, "bark.lightning_send");
+	assert_eq!(send_movement.subsystem.kind, "send");
+	assert_eq!(send_movement.intended_balance, -invoice_amount.to_signed().unwrap());
+	assert_eq!(send_movement.effective_balance, signed_sat(0));
+	assert_eq!(send_movement.offchain_fee, sat(0));
+	assert_eq!(send_movement.sent_to.len(), 1);
+	assert_eq!(send_movement.sent_to.first().unwrap(), &MovementDestination {
+		destination: PaymentMethod::Invoice(invoice.to_string()),
+		amount: invoice_amount,
+	});
+	assert_eq!(send_movement.received_on.len(), 0);
+	assert_eq!(send_movement.input_vtxos.len(), 1);
+	assert_eq!(send_movement.output_vtxos.len(), 1); // HTLC VTXOs aren't included here
+	assert_eq!(send_movement.exited_vtxos.len(), 1); // HTLC VTXO is included here
+	assert_eq!(send_movement.time.completed_at.is_some(), true);
+
+	assert_eq!(send_movement.metadata.is_some(), true);
+	let metadata = send_movement.metadata.as_ref().unwrap();
+	let payment_hash = metadata.get("payment_hash").map(|ph| serde_json::from_value::<PaymentHash>(ph.clone()).unwrap());
+	let htlc_vtxos = metadata.get("htlc_vtxos").map(|v| serde_json::from_value::<Vec<VtxoId>>(v.clone()).unwrap()).unwrap();
+	assert_eq!(payment_hash, Some(invoice.payment_hash()));
+	assert_eq!(htlc_vtxos.len(), 1);
+	assert_eq!(send_movement.exited_vtxos, htlc_vtxos);
+
+	// Verify exit movement
+	assert_eq!(exit_movement.status, MovementStatus::Successful);
+	assert_eq!(exit_movement.subsystem.name, "bark.exit");
+	assert_eq!(exit_movement.subsystem.kind, "start");
+	assert_eq!(exit_movement.intended_balance, -invoice_amount.to_signed().unwrap());
+	assert_eq!(exit_movement.effective_balance, -invoice_amount.to_signed().unwrap());
+	assert_eq!(exit_movement.offchain_fee, sat(0));
+	assert_eq!(exit_movement.sent_to.len(), 1);
+	let sent_to = exit_movement.sent_to.first().unwrap();
+	assert!(matches!(sent_to.destination, PaymentMethod::Bitcoin(_))); // TODO: Can we rebuild the output address with VtxoInfo?
+	assert_eq!(sent_to.amount, invoice_amount);
+	assert_eq!(exit_movement.received_on.len(), 0);
+	assert_eq!(exit_movement.input_vtxos.len(), 1);
+	assert_eq!(exit_movement.input_vtxos, htlc_vtxos);
+	assert_eq!(exit_movement.output_vtxos.len(), 0);
+	assert_eq!(exit_movement.exited_vtxos.len(), 0);
+	assert_eq!(exit_movement.time.completed_at.is_some(), true);
+	assert_eq!(exit_movement.metadata.is_none(), true);
 
 	// TODO: Drain exit outputs then check balance in onchain wallet
 }
@@ -558,11 +614,13 @@ async fn bark_should_exit_a_pending_htlc_out_that_server_refuse_to_revoke() {
 
 	// Create a payable invoice
 	let invoice_amount = btc(1);
-	let invoice = lightning.receiver.invoice(Some(invoice_amount), "test_payment", "A test payment").await;
+	let invoice = Invoice::from_str(
+		&lightning.receiver.invoice(Some(invoice_amount), "test_payment", "A test payment").await,
+	).unwrap();
 
 	// Try send coins through lightning
 	assert_eq!(bark_1.spendable_balance().await, board_amount);
-	bark_1.pay_lightning(invoice, None).await;
+	bark_1.pay_lightning(invoice.to_string(), None).await;
 
 	// We need to ensure the HTLC expires so an exit will be triggered.
 	let tip = ctx.bitcoind().sync_client().tip().unwrap();
@@ -583,6 +641,56 @@ async fn bark_should_exit_a_pending_htlc_out_that_server_refuse_to_revoke() {
 	assert_eq!(bark_1.offchain_balance().await.pending_lightning_send, btc(0));
 	let vtxos = bark_1.vtxos().await;
 	assert!(!vtxos.iter().any(|v| matches!(v.state, VtxoStateInfo::Locked { .. })), "should not be any locked vtxo left");
+
+	// Check that we have a lightning send -> exit movement chain
+	let movements = bark_1.list_movements().await;
+	let [.., send_movement, exit_movement] = movements.as_slice() else {
+		panic!("Should have at least two movements");
+	};
+
+	// Verify send movement
+	assert_eq!(send_movement.status, MovementStatus::Failed);
+	assert_eq!(send_movement.subsystem.name, "bark.lightning_send");
+	assert_eq!(send_movement.subsystem.kind, "send");
+	assert_eq!(send_movement.intended_balance, -invoice_amount.to_signed().unwrap());
+	assert_eq!(send_movement.effective_balance, signed_sat(0));
+	assert_eq!(send_movement.offchain_fee, sat(0));
+	assert_eq!(send_movement.sent_to.len(), 1);
+	assert_eq!(send_movement.sent_to.first().unwrap(), &MovementDestination {
+		destination: PaymentMethod::Invoice(invoice.to_string()),
+		amount: invoice_amount,
+	});
+	assert_eq!(send_movement.received_on.len(), 0);
+	assert_eq!(send_movement.input_vtxos.len(), 1);
+	assert_eq!(send_movement.output_vtxos.len(), 1); // HTLC VTXOs aren't included here
+	assert_eq!(send_movement.exited_vtxos.len(), 1); // HTLC VTXO is included here
+	assert_eq!(send_movement.time.completed_at.is_some(), true);
+
+	assert_eq!(send_movement.metadata.is_some(), true);
+	let metadata = send_movement.metadata.as_ref().unwrap();
+	let payment_hash = metadata.get("payment_hash").map(|ph| serde_json::from_value::<PaymentHash>(ph.clone()).unwrap());
+	let htlc_vtxos = metadata.get("htlc_vtxos").map(|v| serde_json::from_value::<Vec<VtxoId>>(v.clone()).unwrap()).unwrap();
+	assert_eq!(payment_hash, Some(invoice.payment_hash()));
+	assert_eq!(htlc_vtxos.len(), 1);
+	assert_eq!(send_movement.exited_vtxos, htlc_vtxos);
+
+	// Verify exit movement
+	assert_eq!(exit_movement.status, MovementStatus::Successful);
+	assert_eq!(exit_movement.subsystem.name, "bark.exit");
+	assert_eq!(exit_movement.subsystem.kind, "start");
+	assert_eq!(exit_movement.intended_balance, -invoice_amount.to_signed().unwrap());
+	assert_eq!(exit_movement.effective_balance, -invoice_amount.to_signed().unwrap());
+	assert_eq!(exit_movement.offchain_fee, sat(0));
+	assert_eq!(exit_movement.sent_to.len(), 1);
+	let sent_to = exit_movement.sent_to.first().unwrap();
+	assert!(matches!(sent_to.destination, PaymentMethod::Bitcoin(_))); // TODO: Can we rebuild the output address with VtxoInfo?
+	assert_eq!(exit_movement.received_on.len(), 0);
+	assert_eq!(exit_movement.input_vtxos.len(), 1);
+	assert_eq!(exit_movement.input_vtxos, htlc_vtxos);
+	assert_eq!(exit_movement.output_vtxos.len(), 0);
+	assert_eq!(exit_movement.exited_vtxos.len(), 0);
+	assert_eq!(exit_movement.time.completed_at.is_some(), true);
+	assert_eq!(exit_movement.metadata.is_none(), true);
 
 	// TODO: Drain exit outputs then check balance in onchain wallet
 }
