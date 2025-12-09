@@ -1473,7 +1473,7 @@ impl Wallet {
 		let board = self.db.get_pending_board_by_vtxo_id(vtxo.id())?
 			.context("pending board not found")?;
 
-		self.movements.finish_movement(board.movement_id, MovementStatus::Finished).await?;
+		self.movements.finish_movement(board.movement_id, MovementStatus::Successful).await?;
 		self.db.remove_pending_board(&vtxo.id())?;
 
 		Ok(())
@@ -1558,7 +1558,7 @@ impl Wallet {
 				self.movements.new_finished_movement(
 					self.subsystem_ids[&BarkSubsystem::Arkoor],
 					ArkoorMovement::Receive.to_string(),
-					MovementStatus::Finished,
+					MovementStatus::Successful,
 					MovementUpdate::new()
 						.produced_vtxos(&vtxos)
 						.intended_and_effective_balance(

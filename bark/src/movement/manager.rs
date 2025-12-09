@@ -76,7 +76,7 @@ impl MovementManager {
 	}
 
 	/// Creates a new [Movement] and returns a [MovementGuard] to manage it. The guard will call
-	/// [MovementManager::finish_movement] on drop unless [MovementGuard::finish] has already been
+	/// [MovementManager::finish_movement] on drop unless [MovementGuard::success] has already been
 	/// called.
 	///
 	/// See [MovementManager::new_movement] and [MovementGuard::new] for more information.
@@ -347,7 +347,7 @@ impl From<OnDropStatus> for MovementStatus {
 /// [MovementGuard::new_movement].
 ///
 /// When the [MovementGuard] is dropped from the stack, it will finalize the movement according to
-/// the configured [OnDropStatus] unless [MovementGuard::finish] has already been called.
+/// the configured [OnDropStatus] unless [MovementGuard::success] has already been called.
 pub struct MovementGuard {
 	id: MovementId,
 	manager: Arc<MovementManager>,
@@ -402,27 +402,27 @@ impl<'a> MovementGuard {
 		self.manager.update_movement(self.id, update).await
 	}
 
-	/// Same as [MovementGuard::finish] but sets [Movement::status] to [MovementStatus::Cancelled].
+	/// Same as [MovementGuard::success] but sets [Movement::status] to [MovementStatus::Cancelled].
 	pub async fn cancel(&mut self) -> anyhow::Result<(), MovementError> {
 		self.stop();
 		self.manager.finish_movement(self.id, MovementStatus::Cancelled).await
 	}
 
-	/// Same as [MovementGuard::finish] but sets [Movement::status] to [MovementStatus::Failed].
+	/// Same as [MovementGuard::success] but sets [Movement::status] to [MovementStatus::Failed].
 	pub async fn fail(&mut self) -> anyhow::Result<(), MovementError> {
 		self.stop();
 		self.manager.finish_movement(self.id, MovementStatus::Failed).await
 	}
 
-	/// Finalizes a movement, setting it to [MovementStatus::Finished]. If the [MovementGuard] is
+	/// Finalizes a movement, setting it to [MovementStatus::Successful]. If the [MovementGuard] is
 	/// dropped after calling this function, no further changes will be made to the [Movement].
 	///
 	/// See [MovementManager::finish_movement] for more information.
-	pub async fn finish(
+	pub async fn success(
 		&mut self,
 	) -> anyhow::Result<(), MovementError> {
 		self.stop();
-		self.manager.finish_movement(self.id, MovementStatus::Finished).await
+		self.manager.finish_movement(self.id, MovementStatus::Successful).await
 	}
 
 	/// Prevents the guard from making further changes to the movement after being dropped. Manual

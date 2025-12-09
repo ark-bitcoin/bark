@@ -18,7 +18,7 @@ use ark::lightning::Invoice;
 use crate::payment_method::PaymentMethod;
 
 const MOVEMENT_PENDING: &'static str = "pending";
-const MOVEMENT_FINISHED: &'static str = "finished";
+const MOVEMENT_SUCCESSFUL: &'static str = "successful";
 const MOVEMENT_FAILED: &'static str = "failed";
 const MOVEMENT_CANCELLED: &'static str = "cancelled";
 
@@ -88,14 +88,17 @@ impl fmt::Debug for MovementId {
 	}
 }
 
-/// Represents the current status of a [Movement].
+/// Represents the current status of a [Movement]. It's important to note that each status can
+/// result in fund changes. As an example, a lightning payment could fail but this will still result
+/// in a change of VTXOs. You can't assume that [MovementStatus::Failed] means that user funds
+/// didn't change.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum MovementStatus {
 	/// The default status of a new [Movement]. Should be treated as in-progress.
 	Pending,
 	/// The [Movement] has completed with changes. Note; this does not necessarily mean the [Movement]
 	/// completed successfully, e.g., VTXOs may be consumed and new ones produced.
-	Finished,
+	Successful,
 	/// The [Movement] failed to complete due to an error. This should result in changes in user
 	/// funds.
 	Failed,
@@ -112,7 +115,7 @@ impl MovementStatus {
 	pub fn as_str(&self) -> &'static str {
 		match self {
 			Self::Pending => MOVEMENT_PENDING,
-			Self::Finished => MOVEMENT_FINISHED,
+			Self::Successful => MOVEMENT_SUCCESSFUL,
 			Self::Failed => MOVEMENT_FAILED,
 			Self::Cancelled => MOVEMENT_CANCELLED,
 		}
@@ -138,7 +141,7 @@ impl FromStr for MovementStatus {
 	fn from_str(s: &str) -> Result<Self, Self::Err> {
 		match s {
 			MOVEMENT_PENDING => Ok(MovementStatus::Pending),
-			MOVEMENT_FINISHED => Ok(MovementStatus::Finished),
+			MOVEMENT_SUCCESSFUL => Ok(MovementStatus::Successful),
 			MOVEMENT_FAILED => Ok(MovementStatus::Failed),
 			MOVEMENT_CANCELLED => Ok(MovementStatus::Cancelled),
 			_ => bail!("Invalid MovementStatus: {}", s),

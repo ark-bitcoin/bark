@@ -184,7 +184,7 @@ impl Wallet {
 
 		self.movements.finish_movement_with_update(
 			movement_id,
-			MovementStatus::Finished,
+			MovementStatus::Successful,
 			MovementUpdate::new()
 				.effective_balance(effective_balance.to_signed()?)
 				.produced_vtxos(&outputs)

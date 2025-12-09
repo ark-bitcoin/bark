@@ -136,7 +136,7 @@ impl Wallet {
 				self.db.finish_lightning_send(payment_hash, Some(preimage))?;
 				self.mark_vtxos_as_spent(&payment.htlc_vtxos)?;
 				self.movements.finish_movement(
-					payment.movement_id, MovementStatus::Finished,
+					payment.movement_id, MovementStatus::Successful,
 				).await?;
 
 				Ok(Some(preimage))

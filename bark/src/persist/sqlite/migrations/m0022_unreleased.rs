@@ -259,6 +259,9 @@ impl Migration for Migration0022 {
 			"ALTER TABLE bark_pending_lightning_send RENAME TO bark_lightning_send;",
 			"ALTER TABLE bark_lightning_send ADD COLUMN preimage TEXT;",
 			"ALTER TABLE bark_lightning_send ADD COLUMN finished_at DATETIME;",
+
+			// Change MovementStatus::Finished to MovementStatus::Successful.
+			"UPDATE bark_movements SET status = 'successful' WHERE status = 'finished'",
 		];
 
 		for query in queries {

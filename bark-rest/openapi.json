@@ -3321,7 +3321,7 @@
         "type": "string",
         "enum": [
           "Pending",
-          "Finished",
+          "Successful",
           "Failed",
           "Cancelled"
         ]

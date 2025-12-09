@@ -399,7 +399,7 @@ impl RoundState {
 		let status = if let Some(funding_txid) = confirmed_funding_txid {
 			if let Some(movement_id) = self.movement_id {
 				update_funding_txid(funding_txid, movement_id, wallet).await?;
-				wallet.movements.finish_movement(movement_id, MovementStatus::Finished).await?;
+				wallet.movements.finish_movement(movement_id, MovementStatus::Successful).await?;
 			}
 
 			RoundStatus::Confirmed { funding_txid }

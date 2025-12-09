@@ -344,7 +344,7 @@ impl Exit {
 			self.movement_manager.new_finished_movement(
 				self.subsystem_id,
 				ExitMovement::Exit.to_string(),
-				MovementStatus::Finished,
+				MovementStatus::Successful,
 				MovementUpdate::new()
 					.intended_and_effective_balance(balance)
 					.consumed_vtxo(vtxo.id())

@@ -79,7 +79,7 @@ pub fn check_recipient_exists(
 			INNER JOIN bark_movements_sent_to st ON m.id = st.movement_id
 			WHERE m.status = ?1 AND st.destination = ?2
 		)",
-		params!(MovementStatus::Finished.as_str(), serde_json::to_string(recipient)?),
+		params!(MovementStatus::Successful.as_str(), serde_json::to_string(recipient)?),
 		|row| row.get(0)
 	)?;
 

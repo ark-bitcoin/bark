@@ -256,11 +256,10 @@ impl From<bark::persist::models::PendingBoard> for PendingBoardInfo {
 pub enum MovementStatus {
 	/// The default status of a new [Movement]. Should be treated as in-progress.
 	Pending,
-	/// The [Movement] has completed with changes. Note; this does not necessarily mean the [Movement]
-	/// completed successfully, e.g., VTXOs may be consumed and new ones produced.
-	Finished,
-	/// The [Movement] failed to complete due to an error. This should result in changes in user
-	/// funds.
+	/// The [Movement] has completed successfully.
+	Successful,
+	/// The [Movement] failed to complete due to an error. Note; this does not mean that VTXOs or
+	/// user funds didn't change, old VTXOs may be consumed and new ones produced.
 	Failed,
 	/// A [Movement] was cancelled, either by the protocol (e.g., lightning payments) or by the
 	/// user.
@@ -271,7 +270,7 @@ impl From<bark::movement::MovementStatus> for MovementStatus {
 	fn from(v: bark::movement::MovementStatus) -> Self {
 		match v {
 			bark::movement::MovementStatus::Pending => Self::Pending,
-			bark::movement::MovementStatus::Finished => Self::Finished,
+			bark::movement::MovementStatus::Successful => Self::Successful,
 			bark::movement::MovementStatus::Failed => Self::Failed,
 			bark::movement::MovementStatus::Cancelled => Self::Cancelled,
 		}

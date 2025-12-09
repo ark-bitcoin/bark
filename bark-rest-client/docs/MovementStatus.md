@@ -5,7 +5,7 @@
 | Name | Value |
 |---- | -----|
 | Pending | Pending |
-| Finished | Finished |
+| Successful | Successful |
 | Failed | Failed |
 | Cancelled | Cancelled |
 
