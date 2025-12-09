@@ -459,6 +459,11 @@ impl Bark {
 		self.try_run_json(["board", "--all"]).await
 	}
 
+	pub async fn sync(&self) {
+		// We can just use the balance command to perform a sync and drop the successful result
+		let _ = self.offchain_balance().await;
+	}
+
 	pub async fn maintain(&self) {
 		self.run(["maintain"]).await;
 	}

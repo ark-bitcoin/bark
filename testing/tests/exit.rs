@@ -497,7 +497,7 @@ async fn bark_should_exit_a_failed_htlc_out_that_server_refuse_to_revoke() {
 		htlc.policy().as_server_htlc_send().unwrap().htlc_expiry + 1
 	};
 	ctx.generate_blocks(desired_height - tip.height).await;
-	bark_1.maintain().await;
+	bark_1.sync().await;
 
 	// Should start an exit
 	assert_eq!(bark_1.list_exits().await[0].state, ExitState::Start(ExitStartState { tip_height: desired_height }));
@@ -574,7 +574,7 @@ async fn bark_should_exit_a_pending_htlc_out_that_server_refuse_to_revoke() {
 		htlc.policy().as_server_htlc_send().unwrap().htlc_expiry + 1
 	};
 	ctx.generate_blocks(desired_height - tip.height).await;
-	bark_1.maintain().await;
+	bark_1.sync().await;
 
 	// Should start an exit
 	assert_eq!(bark_1.list_exits().await[0].state, ExitState::Start(ExitStartState { tip_height: desired_height }));
