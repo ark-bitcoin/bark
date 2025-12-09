@@ -207,6 +207,28 @@ impl MovementManager {
 		self.unload_movement_from_cache(id).await
 	}
 
+	/// Applies a [MovementUpdate] before finalizing the movement with
+	/// [MovementManager::finish_movement].
+	///
+	/// Parameters:
+	/// - id: The ID of the movement previously created by [MovementManager::new_movement].
+	/// - new_status: The final [MovementStatus] to set. This can't be [MovementStatus::Pending].
+	/// - update: Contains information to apply to the movement before finalizing it.
+	///
+	/// Errors:
+	/// - If the movement ID is not recognized.
+	/// - If [MovementStatus::Pending] is given.
+	/// - If a database error occurs.
+	pub async fn finish_movement_with_update(
+		&self,
+		id: MovementId,
+		new_status: MovementStatus,
+		update: MovementUpdate,
+	) -> anyhow::Result<(), MovementError> {
+		self.update_movement(id, update).await?;
+		self.finish_movement(id, new_status).await
+	}
+
 	async fn get_movement_lock(
 		&self,
 		id: MovementId,

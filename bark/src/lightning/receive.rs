@@ -182,14 +182,12 @@ impl Wallet {
 			outputs.iter().map(|v| v.id().to_string()).collect::<Vec<_>>().join(", ")
 		);
 
-		self.movements.update_movement(
+		self.movements.finish_movement_with_update(
 			movement_id,
+			MovementStatus::Finished,
 			MovementUpdate::new()
 				.effective_balance(effective_balance.to_signed()?)
 				.produced_vtxos(&outputs)
-		).await?;
-		self.movements.finish_movement(
-			movement_id, MovementStatus::Finished,
 		).await?;
 
 		self.db.finish_pending_lightning_receive(receive.payment_hash)?;
@@ -430,8 +428,7 @@ impl Wallet {
 		};
 
 		if let Some((movement_id, update, status)) = update_opt {
-			self.movements.update_movement(movement_id, update).await?;
-			self.movements.finish_movement(movement_id, status).await?;
+			self.movements.finish_movement_with_update(movement_id, status, update).await?;
 		}
 
 		self.db.finish_pending_lightning_receive(lightning_receive.payment_hash)?;

@@ -84,15 +84,15 @@ impl Wallet {
 		}
 
 		let count = vtxos.len();
-		self.movements.update_movement(
+		self.movements.finish_movement_with_update(
 			payment.movement_id,
+			MovementStatus::Failed,
 			MovementUpdate::new()
 				.effective_balance(-payment.amount.to_signed()? + revoked.to_signed()?)
 				.produced_vtxos(&vtxos)
 		).await?;
 		self.store_spendable_vtxos(&vtxos)?;
 		self.mark_vtxos_as_spent(&htlc_vtxos)?;
-		self.movements.finish_movement(payment.movement_id, MovementStatus::Failed).await?;
 
 		self.db.remove_lightning_send(payment.invoice.payment_hash())?;
 
@@ -134,8 +134,9 @@ impl Wallet {
 				// Complete the payment
 				self.db.finish_lightning_send(payment_hash, Some(preimage))?;
 				self.mark_vtxos_as_spent(&payment.htlc_vtxos)?;
-				self.movements.finish_movement(payment.movement_id,
-					MovementStatus::Finished).await?;
+				self.movements.finish_movement(
+					payment.movement_id, MovementStatus::Finished,
+				).await?;
 
 				Ok(Some(preimage))
 			},
@@ -253,14 +254,12 @@ impl Wallet {
 					self.exit.write().await.mark_vtxos_for_exit(&vtxos).await?;
 
 					let exited = vtxos.iter().map(|v| v.amount()).sum::<Amount>();
-					self.movements.update_movement(
+					self.movements.finish_movement_with_update(
 						payment.movement_id,
+						MovementStatus::Failed,
 						MovementUpdate::new()
 							.effective_balance(-payment.amount.to_signed()? + exited.to_signed()?)
 							.exited_vtxos(&vtxos)
-					).await?;
-					self.movements.finish_movement(
-						payment.movement_id, MovementStatus::Failed,
 					).await?;
 					self.db.finish_lightning_send(payment.invoice.payment_hash(), None)?;
 				}
