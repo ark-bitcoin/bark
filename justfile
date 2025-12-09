@@ -180,6 +180,6 @@ generate-bark-rest-client: dump-bark-rest-openapi-schema
 	rm {{BARK_REST_CLIENT_DIR}}/src/models/*.rs
 	cp bark-rest/helpers/models.rs {{BARK_REST_CLIENT_DIR}}/src/models/mod.rs
 
-generate-static-files: dump-server-sql-schema dump-bark-sql-schema dump-bark-rest-openapi-schema generate-bark-rest-client
+generate-static-files: dump-server-sql-schema dump-bark-sql-schema generate-bark-rest-client
 
 
