@@ -442,7 +442,6 @@ pub mod helpers {
 
 #[cfg(test)]
 mod test {
-	use bdk_wallet::chain::DescriptorExt;
 	use bitcoin::bip32;
 
 	use ark::vtxo::test::VTXO_VECTORS;
@@ -499,7 +498,10 @@ mod test {
 	}
 
 	#[test]
+	#[cfg(feature = "onchain_bdk")]
 	fn test_create_wallet_then_load() {
+		use bdk_wallet::chain::DescriptorExt;
+
 		let (connection_string, conn) = in_memory_db();
 
 		let db = SqliteClient::open(connection_string).unwrap();
