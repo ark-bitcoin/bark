@@ -113,15 +113,14 @@ impl Daemon {
 	async fn run_exits(&self) {
 		let mut onchain = self.onchain.write().await;
 
-		if let Err(e) = self.wallet.sync_exits(&mut *onchain).await {
-			warn!("An error occured while syncing exits: {e}");
+		let mut exit_lock = self.wallet.exit.write().await;
+		if let Err(e) = exit_lock.sync_no_progress(&*onchain).await {
+			warn!("An error occurred while syncing exits: {e}");
 		}
 
-		let mut exit_lock = self.wallet.exit.write().await;
 		if let Err(e) = exit_lock.progress_exits(&mut *onchain, None).await {
-			warn!("An error occured while progressing exits: {e}");
+			warn!("An error occurred while progressing exits: {e}");
 		}
-		drop(exit_lock);
 	}
 
 	/// Subscribe to round event stream and process each incoming event

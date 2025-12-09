@@ -142,8 +142,6 @@ pub async fn exit_start_vtxos(
 	State(state): State<RestServer>,
 	Json(body): Json<bark_json::web::ExitStartRequest>,
 ) -> HandlerResult<Json<bark_json::web::ExitStartResponse>> {
-	let mut onchain_lock = state.onchain.write().await;
-
 	if body.vtxos.is_empty() {
 		badarg!("No VTXO IDs provided");
 	}
@@ -169,7 +167,7 @@ pub async fn exit_start_vtxos(
 	let vtxos = spendable.into_iter().chain(inround)
 		.map(|v| v.vtxo).collect::<Vec<_>>();
 
-	state.wallet.exit.write().await.start_exit_for_vtxos(&vtxos, &mut *onchain_lock).await
+	state.wallet.exit.write().await.start_exit_for_vtxos(&vtxos).await
 		.context("Failed to start exit for VTXOs")?;
 
 	Ok(axum::Json(bark_json::web::ExitStartResponse {
@@ -191,9 +189,7 @@ pub async fn exit_start_vtxos(
 pub async fn exit_start_all(
 	State(state): State<RestServer>,
 ) -> HandlerResult<Json<bark_json::web::ExitStartResponse>> {
-	let mut onchain_lock = state.onchain.write().await;
-
-	state.wallet.exit.write().await.start_exit_for_entire_wallet(&mut *onchain_lock).await
+	state.wallet.exit.write().await.start_exit_for_entire_wallet().await
 		.context("Failed to start exit for entire wallet")?;
 
 	Ok(axum::Json(bark_json::web::ExitStartResponse {

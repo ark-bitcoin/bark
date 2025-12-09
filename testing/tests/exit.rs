@@ -734,8 +734,8 @@ async fn exit_oor_ping_pong_then_rbf_tx() {
 	bark2.send_oor(bark1.address().await, sat(400_000)).await;
 
 	// Force a sync
-	bark1.vtxos().await;
-	bark2.vtxos().await;
+	bark1.sync().await;
+	bark2.sync().await;
 
 	// Exit the funds
 	srv.stop().await.unwrap();
@@ -744,7 +744,11 @@ async fn exit_oor_ping_pong_then_rbf_tx() {
 
 	// Progress once so we have transactions stuck in the mempool
 	async fn await_propagation(ctx: &TestContext, primary: &Bark, secondary: &Bark) {
-		let child_txs = primary.list_exits_with_details().await.into_iter().flat_map(|s| {
+		// We have to use the no-sync variant until we track the fee-rate of packages built
+		// from the onchain wallet and those broadcast by a third party. Else the syncing process
+		// will download a lower fee-rate package from the mempool until esplora syncs the higher
+		// fee-rate package.
+		let child_txs = primary.list_exits_with_details_no_sync().await.into_iter().flat_map(|s| {
 			s.transactions.into_iter().filter_map(|package| package.child)
 		});
 		ctx.await_transactions_across_nodes(

@@ -389,7 +389,7 @@ impl Wallet {
 		let update_opt = match (vtxos, lightning_receive.preimage_revealed_at) {
 			(Some(vtxos), Some(_)) => {
 				warn!("LN receive is being canceled but preimage has been disclosed. Exiting");
-				self.exit.write().await.mark_vtxos_for_exit(&vtxos).await?;
+				self.exit.write().await.start_exit_for_vtxos(&vtxos).await?;
 				if let Some(movement_id) = lightning_receive.movement_id {
 					Some((
 						movement_id,

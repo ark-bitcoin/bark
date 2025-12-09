@@ -1295,7 +1295,7 @@ impl Wallet {
 		&self,
 		onchain: &mut dyn ExitUnilaterally,
 	) -> anyhow::Result<()> {
-		self.exit.write().await.sync_exit(onchain).await?;
+		self.exit.write().await.sync(onchain).await?;
 		Ok(())
 	}
 
@@ -1338,7 +1338,7 @@ impl Wallet {
 			self.db.remove_vtxo(vtxo.id())?;
 		}
 
-		self.exit.write().await.clear_exit()?;
+		self.exit.write().await.dangerous_clear_exit()?;
 		Ok(())
 	}
 

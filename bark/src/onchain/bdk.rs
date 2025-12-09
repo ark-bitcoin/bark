@@ -48,11 +48,19 @@ impl From<LocalOutput> for LocalUtxo {
 /// When used, the resulting PSBT should be signed using
 /// [crate::exit::Exit::sign_exit_claim_inputs].
 pub trait TxBuilderExt {
-	fn add_exit_claim_inputs(&mut self, exit_outputs: &[&ExitVtxo]) -> anyhow::Result<()>;
+	fn add_exit_claim_inputs(
+		&mut self,
+		persister: &dyn BarkPersister,
+		exit_outputs: &[&ExitVtxo],
+	) -> anyhow::Result<()>;
 }
 
 impl<Cs> TxBuilderExt for TxBuilder<'_, Cs> {
-	fn add_exit_claim_inputs(&mut self, exit_outputs: &[&ExitVtxo]) -> anyhow::Result<()> {
+	fn add_exit_claim_inputs(
+		&mut self,
+		persister: &dyn BarkPersister,
+		exit_outputs: &[&ExitVtxo],
+	) -> anyhow::Result<()> {
 		self.version(2);
 
 		for input in exit_outputs {
@@ -60,8 +68,8 @@ impl<Cs> TxBuilderExt for TxBuilder<'_, Cs> {
 				bail!("VTXO exit is not spendable");
 			}
 
-			let vtxo = input.vtxo();
-
+			let vtxo = persister.get_wallet_vtxo(input.id())?
+				.context(format!("Unable to load VTXO for exit: {}", input.id()))?;
 			let mut psbt_in = psbt::Input::default();
 			psbt_in.set_exit_claim_input(&vtxo);
 			psbt_in.witness_utxo = Some(TxOut {

@@ -252,7 +252,7 @@ impl Wallet {
 						.iter()
 						.map(|v| v.vtxo.clone())
 						.collect::<Vec<_>>();
-					self.exit.write().await.mark_vtxos_for_exit(&vtxos).await?;
+					self.exit.write().await.start_exit_for_vtxos(&vtxos).await?;
 
 					let exited = vtxos.iter().map(|v| v.amount()).sum::<Amount>();
 					self.movements.finish_movement_with_update(

@@ -562,8 +562,16 @@ impl Bark {
 		self.run_json(["exit", "list"]).await
 	}
 
+	pub async fn list_exits_no_sync(&self) -> Vec<json::ExitTransactionStatus> {
+		self.run_json(["exit", "list", "--no-sync"]).await
+	}
+
 	pub async fn list_exits_with_details(&self) -> Vec<json::ExitTransactionStatus> {
 		self.run_json(["exit", "list", "--transactions", "--history"]).await
+	}
+
+	pub async fn list_exits_with_details_no_sync(&self) -> Vec<json::ExitTransactionStatus> {
+		self.run_json(["exit", "list", "--transactions", "--history", "--no-sync"]).await
 	}
 
 	pub async fn claim_all_exits(&self, destination: impl fmt::Display) {
