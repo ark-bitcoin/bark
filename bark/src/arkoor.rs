@@ -10,7 +10,7 @@ use ark::vtxo::{Vtxo, VtxoId, VtxoPolicyKind};
 use bitcoin_ext::P2TR_DUST;
 use server_rpc::protos;
 
-use crate::{ArkoorMovement, BarkSubsystem, VtxoDelivery, MovementUpdate, MovementStatus, Wallet};
+use crate::{ArkoorMovement, BarkSubsystem, VtxoDelivery, MovementUpdate, Wallet};
 use crate::movement::MovementDestination;
 use crate::movement::manager::OnDropStatus;
 

@@ -402,6 +402,18 @@ impl<'a> MovementGuard {
 		self.manager.update_movement(self.id, update).await
 	}
 
+	/// Same as [MovementGuard::finish] but sets [Movement::status] to [MovementStatus::Cancelled].
+	pub async fn cancel(&mut self) -> anyhow::Result<(), MovementError> {
+		self.stop();
+		self.manager.finish_movement(self.id, MovementStatus::Cancelled).await
+	}
+
+	/// Same as [MovementGuard::finish] but sets [Movement::status] to [MovementStatus::Failed].
+	pub async fn fail(&mut self) -> anyhow::Result<(), MovementError> {
+		self.stop();
+		self.manager.finish_movement(self.id, MovementStatus::Failed).await
+	}
+
 	/// Finalizes a movement, setting it to [MovementStatus::Finished]. If the [MovementGuard] is
 	/// dropped after calling this function, no further changes will be made to the [Movement].
 	///
