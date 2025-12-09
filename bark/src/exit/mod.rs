@@ -339,7 +339,7 @@ impl Exit {
 			let destination = MovementDestination::bitcoin(onchain_address, vtxo.amount());
 
 			// A big reason for creating a finished movement is that we currently don't support
-			// cancelling exits. When we do, we can leave this in pending until it's either finished
+			// canceling exits. When we do, we can leave this in pending until it's either finished
 			// or canceled by the user.
 			self.movement_manager.new_finished_movement(
 				self.subsystem_id,

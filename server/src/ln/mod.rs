@@ -319,7 +319,7 @@ impl Server {
 					break subscription;
 				},
 				LightningHtlcSubscriptionStatus::Settled |
-				LightningHtlcSubscriptionStatus::Cancelled |
+				LightningHtlcSubscriptionStatus::Canceled |
 				LightningHtlcSubscriptionStatus::Created => {
 					if !wait {
 						break subscription;
@@ -352,8 +352,8 @@ impl Server {
 					.collect();
 				return Ok((sub, vtxos));
 			},
-			LightningHtlcSubscriptionStatus::Cancelled => {
-				return badarg!("payment cancelled");
+			LightningHtlcSubscriptionStatus::Canceled => {
+				return badarg!("payment canceled");
 			},
 			LightningHtlcSubscriptionStatus::Settled => {
 				return badarg!("payment already settled");

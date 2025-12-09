@@ -708,12 +708,12 @@ impl ClnManagerProcess {
 			LightningHtlcSubscriptionStatus::Accepted |
 			LightningHtlcSubscriptionStatus::HtlcsReady |
 			LightningHtlcSubscriptionStatus::Settled |
-			LightningHtlcSubscriptionStatus::Cancelled => {
+			LightningHtlcSubscriptionStatus::Canceled => {
 				bail!("invoice is not in a valid state to pay: {}. expected: {}",
 					subscription.status,
 					LightningHtlcSubscriptionStatus::Created,
 				);
-			},
+			}
 		};
 
 		Ok(())
@@ -857,7 +857,7 @@ impl ClnManagerProcess {
 	async fn cancel_invoice(&self, subscription: LightningHtlcSubscription) -> anyhow::Result<()> {
 		// NB: we need to use the node that created the subscription
 		let mut hold_client = self.get_node_by_id(subscription.lightning_node_id)
-			.context("invoice cannot be cancelled: node is now offline")?
+			.context("invoice cannot be canceled: node is now offline")?
 			.hodl_rpc.clone().context("node doesn't support hodl anymore")?;
 
 		let payment_hash = PaymentHash::from(*subscription.invoice.payment_hash());

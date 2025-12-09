@@ -1441,8 +1441,8 @@ async fn server_refuse_claim_invoice_not_settled() {
 }
 
 #[tokio::test]
-async fn server_should_release_hodl_invoice_when_subscription_is_cancelled() {
-	let ctx = TestContext::new("server/server_should_release_hodl_invoice_when_subscription_is_cancelled").await;
+async fn server_should_release_hodl_invoice_when_subscription_is_canceled() {
+	let ctx = TestContext::new("server/server_should_release_hodl_invoice_when_subscription_is_canceled").await;
 	let cfg_htlc_subscription_timeout = Duration::from_secs(5);
 
 	let lightning = ctx.new_lightning_setup("lightningd").await;

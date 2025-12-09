@@ -23,7 +23,7 @@ CREATE TYPE public.lightning_htlc_subscription_status AS ENUM (
     'created',
     'accepted',
     'settled',
-    'cancelled',
+    'canceled',
     'htlcs-ready'
 );
 

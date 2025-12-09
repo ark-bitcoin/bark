@@ -20,7 +20,7 @@ use crate::payment_method::PaymentMethod;
 const MOVEMENT_PENDING: &'static str = "pending";
 const MOVEMENT_SUCCESSFUL: &'static str = "successful";
 const MOVEMENT_FAILED: &'static str = "failed";
-const MOVEMENT_CANCELLED: &'static str = "cancelled";
+const MOVEMENT_CANCELED: &'static str = "canceled";
 
 /// Describes an attempted movement of offchain funds within the Bark [Wallet].
 #[derive(Debug, Clone)]
@@ -102,9 +102,9 @@ pub enum MovementStatus {
 	/// The [Movement] failed to complete due to an error. This should result in changes in user
 	/// funds.
 	Failed,
-	/// A [Movement] was cancelled, either by the protocol (e.g., lightning payments) or by the
+	/// A [Movement] was canceled, either by the protocol (e.g., lightning payments) or by the
 	/// user.
-	Cancelled,
+	Canceled,
 }
 
 impl MovementStatus {
@@ -117,7 +117,7 @@ impl MovementStatus {
 			Self::Pending => MOVEMENT_PENDING,
 			Self::Successful => MOVEMENT_SUCCESSFUL,
 			Self::Failed => MOVEMENT_FAILED,
-			Self::Cancelled => MOVEMENT_CANCELLED,
+			Self::Canceled => MOVEMENT_CANCELED,
 		}
 	}
 }
@@ -143,7 +143,7 @@ impl FromStr for MovementStatus {
 			MOVEMENT_PENDING => Ok(MovementStatus::Pending),
 			MOVEMENT_SUCCESSFUL => Ok(MovementStatus::Successful),
 			MOVEMENT_FAILED => Ok(MovementStatus::Failed),
-			MOVEMENT_CANCELLED => Ok(MovementStatus::Cancelled),
+			MOVEMENT_CANCELED => Ok(MovementStatus::Canceled),
 			_ => bail!("Invalid MovementStatus: {}", s),
 		}
 	}

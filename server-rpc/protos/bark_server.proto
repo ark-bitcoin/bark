@@ -362,7 +362,7 @@ enum LightningReceiveStatus {
 	// The HTLCs have been executed and the payment was settled
 	SETTLED = 3;
 	// The payment was canceled before being executed
-	CANCELLED = 4;
+	CANCELED = 4;
 }
 
 message CheckLightningReceiveResponse {

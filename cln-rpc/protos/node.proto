@@ -1984,7 +1984,7 @@ message FundchannelCancelRequest {
 }
 
 message FundchannelCancelResponse {
-	string cancelled = 1;
+	string canceled = 1;
 }
 
 message FundchannelCompleteRequest {

@@ -238,7 +238,7 @@ impl Wallet {
 	/// * `Ok(Some(lightning_receive))` if the payment was initiated by
 	///   the sender and the HTLC VTXOs were successfully prepared.
 	/// * `Ok(None)` if the payment was not initiated by the sender or
-	///   the payment was cancelled by server.
+	///   the payment was canceled by server.
 	/// * `Err` if an error occurs at any stage of the operation.
 	///
 	/// # Remarks
@@ -282,8 +282,8 @@ impl Wallet {
 				return Ok(None);
 			},
 			protos::LightningReceiveStatus::Settled => bail!("payment already settled"),
-			protos::LightningReceiveStatus::Cancelled => {
-				warn!("payment was cancelled. removing pending lightning receive");
+			protos::LightningReceiveStatus::Canceled => {
+				warn!("payment was canceled. removing pending lightning receive");
 				self.exit_or_cancel_lightning_receive(&receive).await?;
 				return Ok(None);
 			},
@@ -388,7 +388,7 @@ impl Wallet {
 
 		let update_opt = match (vtxos, lightning_receive.preimage_revealed_at) {
 			(Some(vtxos), Some(_)) => {
-				warn!("LN receive is being cancelled but preimage has been disclosed. Exiting");
+				warn!("LN receive is being canceled but preimage has been disclosed. Exiting");
 				self.exit.write().await.mark_vtxos_for_exit(&vtxos).await?;
 				if let Some(movement_id) = lightning_receive.movement_id {
 					Some((
@@ -402,14 +402,14 @@ impl Wallet {
 				}
 			}
 			(Some(vtxos), None) => {
-				warn!("HTLC-recv VTXOs are about to expire, but preimage has not been disclosed yet. Cancelling");
+				warn!("HTLC-recv VTXOs are about to expire, but preimage has not been disclosed yet. Canceling");
 				self.mark_vtxos_as_spent(vtxos)?;
 				if let Some(movement_id) = lightning_receive.movement_id {
 					Some((
 						movement_id,
 						MovementUpdate::new()
 							.effective_balance(SignedAmount::ZERO),
-						MovementStatus::Cancelled,
+						MovementStatus::Canceled,
 					))
 				} else {
 					error!("movement id is missing but we got HTLC vtxos: {}", lightning_receive.payment_hash);
@@ -417,11 +417,11 @@ impl Wallet {
 				}
 			}
 			(None, Some(_)) => {
-				error!("No HTLC vtxos set on ln receive but preimage has been disclosed. Cancelling");
+				error!("No HTLC vtxos set on ln receive but preimage has been disclosed. Canceling");
 				lightning_receive.movement_id.map(|id| (id,
 					MovementUpdate::new()
 						.effective_balance(SignedAmount::ZERO),
-					MovementStatus::Cancelled,
+					MovementStatus::Canceled,
 				))
 			}
 			(None, None) => None,

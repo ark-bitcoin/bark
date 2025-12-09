@@ -25,7 +25,7 @@ pub struct OnchainBalance {
 	pub total: Amount,
 	/// Get sum of trusted_pending and confirmed coins.
 	///
-	/// This is the balance you can spend right now that shouldn't get cancelled via another party
+	/// This is the balance you can spend right now that shouldn't get canceled via another party
 	/// double spending it.
 	#[serde(rename="trusted_spendable_sat", with="bitcoin::amount::serde::as_sat")]
 	#[cfg_attr(feature = "utoipa", schema(value_type = u64))]

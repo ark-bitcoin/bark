@@ -262,6 +262,9 @@ impl Migration for Migration0022 {
 
 			// Change MovementStatus::Finished to MovementStatus::Successful.
 			"UPDATE bark_movements SET status = 'successful' WHERE status = 'finished'",
+
+			// Change MovementStatus::Cancelled to MovementStatus::Canceled.
+			"UPDATE bark_movements SET status = 'cancelled' WHERE status = 'canceled'",
 		];
 
 		for query in queries {
