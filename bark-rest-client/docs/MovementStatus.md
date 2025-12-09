@@ -4,10 +4,10 @@
 
 | Name | Value |
 |---- | -----|
-| Pending | Pending |
-| Successful | Successful |
-| Failed | Failed |
-| Cancelled | Cancelled |
+| Pending | pending |
+| Successful | successful |
+| Failed | failed |
+| Cancelled | cancelled |
 
 
 [[Back to Model list]](../README.md#documentation-for-models) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to README]](../README.md)

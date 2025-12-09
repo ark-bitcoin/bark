@@ -3320,10 +3320,10 @@
       "MovementStatus": {
         "type": "string",
         "enum": [
-          "Pending",
-          "Successful",
-          "Failed",
-          "Cancelled"
+          "pending",
+          "successful",
+          "failed",
+          "cancelled"
         ]
       },
       "MovementSubsystem": {

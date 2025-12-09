@@ -252,6 +252,7 @@ impl From<bark::persist::models::PendingBoard> for PendingBoardInfo {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case")]
 #[cfg_attr(feature = "utoipa", derive(ToSchema))]
 pub enum MovementStatus {
 	/// The default status of a new [Movement]. Should be treated as in-progress.
