@@ -367,12 +367,9 @@ impl Wallet {
 			effective_balance += vtxo.amount();
 		}
 
-		let movement_id = self.movements.new_movement(
+		let movement_id = self.movements.new_movement_with_update(
 			self.subsystem_ids[&BarkSubsystem::LightningSend],
 			LightningSendMovement::Send.to_string(),
-		).await?;
-		self.movements.update_movement(
-			movement_id,
 			MovementUpdate::new()
 				.intended_balance(-amount.to_signed()?)
 				.effective_balance(-effective_balance.to_signed()?)

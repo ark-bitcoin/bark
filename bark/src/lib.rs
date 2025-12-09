@@ -1427,12 +1427,9 @@ impl Wallet {
 		let vtxo = builder.build_vtxo(&cosign_resp, &user_keypair)?;
 
 		let onchain_fee = board_psbt.fee()?;
-		let movement_id = self.movements.new_movement(
+		let movement_id = self.movements.new_movement_with_update(
 			self.subsystem_ids[&BarkSubsystem::Board],
 			BoardMovement::Board.to_string(),
-		).await?;
-		self.movements.update_movement(
-			movement_id,
 			MovementUpdate::new()
 				.produced_vtxo(&vtxo)
 				.intended_and_effective_balance(vtxo.amount().to_signed()?)

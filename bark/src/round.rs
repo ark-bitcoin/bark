@@ -1217,12 +1217,11 @@ impl Wallet {
 		}
 
 		let movement_id = if let Some(kind) = movement_kind {
-			let movement_id = self.movements.new_movement(
-				self.subsystem_ids[&BarkSubsystem::Round], kind.to_string(),
-			).await?;
-			let update = participation.to_movement_update(self.chain.network())?;
-			self.movements.update_movement(movement_id, update).await?;
-			Some(movement_id)
+			Some(self.movements.new_movement_with_update(
+				self.subsystem_ids[&BarkSubsystem::Round],
+				kind.to_string(),
+				participation.to_movement_update(self.chain.network())?
+			).await?)
 		} else {
 			None
 		};

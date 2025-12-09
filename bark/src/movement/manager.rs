@@ -75,6 +75,29 @@ impl MovementManager {
 		).map_err(|e| MovementError::CreationError { e })
 	}
 
+	/// Similar to [MovementManager::new_movement] but it immediately calls
+	/// [MovementManager::update_movement] afterward.
+	///
+	/// Parameters:
+	/// - subsystem_id: The ID of the subsystem that wishes to start a new movement.
+	/// - movement_kind: A descriptor for the type of movement being performed, e.g. "send",
+	///   "receive", "round".
+	/// - update: Describes the initial state of the movement.
+	///
+	/// Errors:
+	/// - If the subsystem ID is not recognized.
+	/// - If a database error occurs.
+	pub async fn new_movement_with_update(
+		&self,
+		subsystem_id: SubsystemId,
+		movement_kind: String,
+		update: MovementUpdate,
+	) -> anyhow::Result<MovementId, MovementError> {
+		let id = self.new_movement(subsystem_id, movement_kind).await?;
+		self.update_movement(id, update).await?;
+		Ok(id)
+	}
+
 	/// Creates and marks a [Movement] as finished based on the given parameters. This is useful for
 	/// one-shot movements where the details are known at the time of creation, an example would be
 	/// when receiving funds asynchronously from a third party.
