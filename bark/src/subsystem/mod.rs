@@ -9,6 +9,7 @@ use std::fmt;
 
 use bitcoin::{Amount, OutPoint};
 
+use ark::lightning::PaymentHash;
 use ark::vtxo::VtxoRef;
 
 /// A unique identifier for a subsystem.
@@ -124,11 +125,15 @@ impl fmt::Display for ExitMovement {
 pub(crate) struct LightningMovement {}
 
 impl LightningMovement {
-	pub fn htlc_metadata(
+	pub fn metadata(
+		payment_hash: PaymentHash,
 		htlcs: impl IntoIterator<Item = impl VtxoRef>,
 	) -> anyhow::Result<impl IntoIterator<Item = (String, serde_json::Value)>> {
 		let htlcs = htlcs.into_iter().map(|v| v.vtxo_id()).collect::<Vec<_>>();
-		Ok([("htlc_vtxos".into(), serde_json::to_value(&htlcs)?)])
+		Ok([
+			("payment_hash".into(), serde_json::to_value(payment_hash)?),
+			("htlc_vtxos".into(), serde_json::to_value(&htlcs)?)
+		])
 	}
 }
 

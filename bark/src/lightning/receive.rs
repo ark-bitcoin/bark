@@ -355,7 +355,7 @@ impl Wallet {
 				MovementUpdate::new()
 					.intended_balance(invoice_amount.to_signed()?)
 					.effective_balance(htlc_amount.to_signed()?)
-					.metadata(LightningMovement::htlc_metadata(&vtxos)?)
+					.metadata(LightningMovement::metadata(receive.payment_hash, &vtxos)?)
 					.received_on(
 						[MovementDestination::new(receive.invoice.clone().into(), htlc_amount)],
 					),

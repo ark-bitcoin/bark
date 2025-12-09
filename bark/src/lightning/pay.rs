@@ -486,7 +486,7 @@ impl Wallet {
 			movement_id,
 			MovementUpdate::new()
 				.produced_vtxo_if_some(change_vtxo)
-				.metadata(LightningMovement::htlc_metadata(&htlc_vtxos)?)
+				.metadata(LightningMovement::metadata(invoice.payment_hash(), &htlc_vtxos)?)
 		).await?;
 
 		let lightning_send = self.db.store_new_pending_lightning_send(
