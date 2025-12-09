@@ -265,10 +265,14 @@ impl Migration for Migration0022 {
 
 			// Change MovementStatus::Cancelled to MovementStatus::Canceled.
 			"UPDATE bark_movements SET status = 'cancelled' WHERE status = 'canceled'",
+
+			// remove recovery for past rounds
+			"DROP TABLE bark_recovered_past_round;",
 		];
 
 		for query in queries {
-			conn.execute(query, ()).context("failed to execute migration")?;
+			conn.execute(query, ())
+				.with_context(|| format!("failed to execute migration query {}", query))?;
 		}
 
 		Ok(())

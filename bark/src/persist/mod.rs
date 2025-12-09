@@ -39,7 +39,7 @@ use crate::exit::models::ExitTxOrigin;
 use crate::movement::{Movement, MovementId, MovementStatus, MovementSubsystem};
 use crate::payment_method::PaymentMethod;
 use crate::persist::models::{LightningReceive, LightningSend, PendingBoard, StoredExit};
-use crate::round::{RoundState, UnconfirmedRound};
+use crate::round::RoundState;
 use crate::vtxo::state::{VtxoState, VtxoStateKind, WalletVtxo};
 
 /// Identifier for a stored [RoundState].
@@ -282,15 +282,6 @@ pub trait BarkPersister: Send + Sync + 'static {
 	/// Errors:
 	/// - returns an error of the states could not be succesfully retrieved
 	fn load_round_states(&self) -> anyhow::Result<Vec<StoredRoundState>>;
-
-	/// Store a recovered past round
-	fn store_recovered_round(&self, round: &UnconfirmedRound) -> anyhow::Result<()>;
-
-	/// Remove a recovered past round
-	fn remove_recovered_round(&self, funding_txid: Txid) -> anyhow::Result<()>;
-
-	/// Load the recovered past rounds
-	fn load_recovered_rounds(&self) -> anyhow::Result<Vec<UnconfirmedRound>>;
 
 	/// Stores the given VTXOs in the given [VtxoState].
 	fn store_vtxos(

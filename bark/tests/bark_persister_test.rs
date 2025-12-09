@@ -30,7 +30,7 @@ use bark::movement::{
 use bark::payment_method::PaymentMethod;
 use bark::persist::{BarkPersister, RoundStateId, StoredRoundState};
 use bark::persist::models::{self, LightningReceive, LightningSend, PendingBoard, StoredExit};
-use bark::round::{RoundState, UnconfirmedRound};
+use bark::round::RoundState;
 use bark::vtxo::state::{VtxoState, VtxoStateKind};
 
 
@@ -279,18 +279,6 @@ impl BarkPersister for Dummy {
 			id: RoundStateId(5),
 			state: rmp_serde::from_slice::<models::SerdeRoundState>(&[]).unwrap().into(),
 		}])
-	}
-
-	fn store_recovered_round(&self, _round: &UnconfirmedRound) -> anyhow::Result<()> {
-		Ok(())
-	}
-	fn remove_recovered_round(&self, _funding_txid: Txid) -> anyhow::Result<()> {
-
-		Ok(())
-	}
-
-	fn load_recovered_rounds(&self) -> anyhow::Result<Vec<UnconfirmedRound>> {
-		Ok(vec![rmp_serde::from_slice::<models::SerdeUnconfirmedRound>(&[]).unwrap().into()])
 	}
 
 	fn create_new_movement(
