@@ -2,7 +2,6 @@ use std::cmp::PartialEq;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use chrono::DateTime;
 use tokio::sync::RwLock;
 
 use crate::movement::{Movement, MovementId, MovementStatus, MovementSubsystem};
@@ -46,16 +45,6 @@ impl MovementManager {
 			}
 	}
 
-	/// Similar to [MovementManager::new_movement_at] but it sets the [Movement::created_at] field
-	/// to the current time.
-	pub async fn new_movement(
-		&self,
-		subsystem_id: SubsystemId,
-		movement_kind: String,
-	) -> anyhow::Result<MovementId, MovementError> {
-		self.new_movement_at(subsystem_id, movement_kind, chrono::Local::now()).await
-	}
-
 	/// Begins the process of creating a new movement. This newly created movement will be defaulted
 	/// to a [MovementStatus::Pending] state. It can then be updated by using [MovementUpdate] in
 	/// combination with [MovementManager::update_movement].
@@ -67,16 +56,14 @@ impl MovementManager {
 	/// - subsystem_id: The ID of the subsystem that wishes to start a new movement.
 	/// - movement_kind: A descriptor for the type of movement being performed, e.g. "send",
 	///   "receive", "round".
-	/// - at: The timestamp to set the [MovementTimestamp::created_at] field to.
 	///
 	/// Errors:
 	/// - If the subsystem ID is not recognized.
 	/// - If a database error occurs.
-	pub async fn new_movement_at(
+	pub async fn new_movement(
 		&self,
 		subsystem_id: SubsystemId,
 		movement_kind: String,
-		at: DateTime<chrono::Local>,
 	) -> anyhow::Result<MovementId, MovementError> {
 		self.db.create_new_movement(
 			MovementStatus::Pending,
@@ -84,27 +71,13 @@ impl MovementManager {
 				name: self.get_subsystem_name(subsystem_id).await?,
 				kind: movement_kind,
 			},
-			at,
+			chrono::Local::now(),
 		).map_err(|e| MovementError::CreationError { e })
 	}
 
-	/// Similar to [MovementManager::new_finished_movement_at] but it sets the
-	/// [Movement::created_at] field to the current time.
-	pub async fn new_finished_movement(
-		&self,
-		subsystem_id: SubsystemId,
-		movement_kind: String,
-		status: MovementStatus,
-		details: MovementUpdate,
-	) -> anyhow::Result<MovementId, MovementError> {
-		self.new_finished_movement_at(
-			subsystem_id, movement_kind, status, details, chrono::Local::now(),
-		).await
-	}
-
 	/// Creates and marks a [Movement] as finished based on the given parameters. This is useful for
-	/// one-shot movements where the details are known at time of creation, an example would be when
-	/// receiving funds asynchronously from a third party.
+	/// one-shot movements where the details are known at the time of creation, an example would be
+	/// when receiving funds asynchronously from a third party.
 	///
 	/// Parameters:
 	/// - subsystem_id: The ID of the subsystem that wishes to start a new movement.
@@ -113,42 +86,31 @@ impl MovementManager {
 	/// - status: The [MovementStatus] to set. This can't be [MovementStatus::Pending].
 	/// - details: Contains information about the movement, e.g. what VTXOs were consumed or
 	///   produced.
-	/// - at: The timestamp to set the [Movement::time] field to.
 	///
 	/// Errors:
 	/// - If the subsystem ID is not recognized.
 	/// - If [MovementStatus::Pending] is given.
 	/// - If a database error occurs.
-	pub async fn new_finished_movement_at(
+	pub async fn new_finished_movement(
 		&self,
 		subsystem_id: SubsystemId,
 		movement_kind: String,
 		status: MovementStatus,
 		details: MovementUpdate,
-		at: DateTime<chrono::Local>,
 	) -> anyhow::Result<MovementId, MovementError> {
 		if status == MovementStatus::Pending {
 			return Err(MovementError::IncorrectStatus { status: status.as_str().into() });
 		}
-		let id = self.new_movement_at(subsystem_id, movement_kind, at).await?;
+		let id = self.new_movement(subsystem_id, movement_kind).await?;
 		let mut movement = self.db.get_movement_by_id(id)
 			.map_err(|e| MovementError::LoadError { id, e })?;
+		let at = chrono::Local::now();
 		details.apply_to(&mut movement, at);
 		movement.status = status;
 		movement.time.completed_at = Some(at);
 		self.db.update_movement(&movement)
 			.map_err(|e| MovementError::PersisterError { id, e })?;
 		Ok(id)
-	}
-
-	/// Similar to [MovementManager::update_movement_at] but it sets the
-	/// [MovementTimestamp::updated_at] field to the current time.
-	pub async fn update_movement(
-		&self,
-		id: MovementId,
-		update: MovementUpdate,
-	) -> anyhow::Result<(), MovementError> {
-		self.update_movement_at(id, update, chrono::Local::now()).await
 	}
 
 	/// Updates a movement with the given parameters.
@@ -159,24 +121,21 @@ impl MovementManager {
 	/// - id: The ID of the movement previously created by [MovementManager::new_movement].
 	/// - update: Specifies properties to set on the movement. `Option` fields will be ignored if
 	///   they are `None`. `Some` will result in that particular field being overwritten.
-	/// - at: The timestamp to set the [MovementTimestamp::completed_at] field to.
 	///
 	/// Errors:
 	/// - If the [MovementId] is not recognized.
 	/// - If a movement is not [MovementStatus::Pending].
 	/// - If a database error occurs.
-	pub async fn update_movement_at(
+	pub async fn update_movement(
 		&self,
 		id: MovementId,
 		update: MovementUpdate,
-		at: DateTime<chrono::Local>,
 	) -> anyhow::Result<(), MovementError> {
-
 		// Ensure the movement is loaded.
 		self.load_movement_into_cache(id).await?;
 
 		// Apply the update to the movement.
-		update.apply_to(&mut *self.get_movement_lock(id).await?.write().await, at);
+		update.apply_to(&mut *self.get_movement_lock(id).await?.write().await, chrono::Local::now());
 
 		// Persist the changes using a read lock.
 		let lock = self.get_movement_lock(id).await?;
@@ -191,16 +150,6 @@ impl MovementManager {
 		Ok(())
 	}
 
-	/// Similar to [MovementManager::finish_movement] but it sets the
-	/// [MovementTimestamp::completed_at] field to the current time.
-	pub async fn finish_movement(
-		&self,
-		id: MovementId,
-		new_status: MovementStatus,
-	) -> anyhow::Result<(), MovementError> {
-		self.finish_movement_at(id, new_status, chrono::Local::now()).await
-	}
-
 	/// Finalizes a movement, setting it to the given [MovementStatus].
 	///
 	/// See also: [MovementManager::create_movement] and [MovementManager::update_movement]
@@ -208,17 +157,15 @@ impl MovementManager {
 	/// Parameters:
 	/// - id: The ID of the movement previously created by [MovementManager::new_movement].
 	/// - new_status: The final [MovementStatus] to set. This can't be [MovementStatus::Pending].
-	/// - at: The timestamp to set the [MovementTimestamp::completed_at] field to.
 	///
 	/// Errors:
 	/// - If the movement ID is not recognized.
 	/// - If [MovementStatus::Pending] is given.
 	/// - If a database error occurs.
-	pub async fn finish_movement_at(
+	pub async fn finish_movement(
 		&self,
 		id: MovementId,
 		new_status: MovementStatus,
-		at: DateTime<chrono::Local>,
 	) -> anyhow::Result<(), MovementError> {
 		if new_status == MovementStatus::Pending {
 			return Err(MovementError::IncorrectStatus { status: new_status.as_str().into() });
@@ -231,7 +178,7 @@ impl MovementManager {
 		let lock = self.get_movement_lock(id).await?;
 		let mut movement = lock.write().await;
 		movement.status = new_status;
-		movement.time.completed_at = Some(at);
+		movement.time.completed_at = Some(chrono::Local::now());
 		self.db.update_movement(&*movement)
 			.map_err(|e| MovementError::PersisterError { id, e })?;
 		self.unload_movement_from_cache(id).await
@@ -355,29 +302,6 @@ impl<'a> MovementGuard {
 		})
 	}
 
-	/// Similar to [MovementGuard::new_movement] with the ability to set a custom timestamp.
-	///
-	/// Parameters:
-	/// - manager: A reference to the [MovementManager] so the guard can update the [Movement].
-	/// - subsystem_id: The ID of the subsystem that wishes to start a new movement.
-	/// - movement_kind: A descriptor for the type of movement being performed, e.g. "send",
-	///   "receive", "round".
-	/// - at: The timestamp to set the [MovementTimestamp::created_at] field to.
-	pub async fn new_movement_at(
-		manager: Arc<MovementManager>,
-		subsystem_id: SubsystemId,
-		movement_kind: String,
-		at: DateTime<chrono::Local>,
-	) -> anyhow::Result<Self, MovementError> {
-		let id = manager.new_movement_at(subsystem_id, movement_kind, at).await?;
-		Ok(Self {
-			id,
-			manager,
-			on_drop: OnDropStatus::Failed,
-			has_finished: false,
-		})
-	}
-
 	/// Gets the [MovementId] stored by this guard.
 	pub fn id(&self) -> MovementId {
 		self.id
@@ -405,20 +329,6 @@ impl<'a> MovementGuard {
 		self.manager.update_movement(self.id, update).await
 	}
 
-	/// Similar to [MovementGuard::apply_update] with the ability to set a custom timestamp.
-	///
-	/// Parameters:
-	/// - update: Specifies properties to set on the movement. `Option` fields will be ignored if
-	///   they are `None`. `Some` will result in that particular field being overwritten.
-	/// - at: The timestamp to set the [MovementTimestamp::completed_at] field to.
-	pub async fn apply_update_at(
-		&self,
-		update: MovementUpdate,
-		at: DateTime<chrono::Local>,
-	) -> anyhow::Result<(), MovementError> {
-		self.manager.update_movement_at(self.id, update, at).await
-	}
-
 	/// Finalizes a movement, setting it to the given [MovementStatus]. If the [MovementGuard] is
 	/// dropped after calling this function, no further changes will be made to the [Movement].
 	///
@@ -431,24 +341,6 @@ impl<'a> MovementGuard {
 		status: MovementStatus,
 	) -> anyhow::Result<(), MovementError> {
 		self.manager.finish_movement(self.id, status).await?;
-		self.has_finished = true;
-		Ok(())
-	}
-
-	/// Finalizes a movement, setting it to the given [MovementStatus]. If the [MovementGuard] is
-	/// dropped after calling this function, no further changes will be made to the [Movement].
-	///
-	/// See [MovementManager::finish_movement] for more information.
-	///
-	/// Parameters:
-	/// - status: The final [MovementStatus] to set. Must not be [MovementStatus::Pending].
-	/// - at: The timestamp to set the [MovementTimestamp::completed_at] field to.
-	pub async fn finish_at(
-		&mut self,
-		status: MovementStatus,
-		at: DateTime<chrono::Local>,
-	) -> anyhow::Result<(), MovementError> {
-		self.manager.finish_movement_at(self.id, status, at).await?;
 		self.has_finished = true;
 		Ok(())
 	}
