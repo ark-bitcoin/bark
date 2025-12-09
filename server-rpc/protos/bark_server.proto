@@ -21,8 +21,14 @@ service ArkService {
 
 	// * OOR PAYMENTS*
 
-	rpc RequestArkoorPackageCosign(ArkoorPackageCosignRequest) returns (ArkoorPackageCosignResponse) {}
+	rpc CheckpointedCosignOor(CheckpointedPackageCosignRequest) returns (CheckpointedPackageCosignResponse) {}
 	rpc PostArkoorPackageMailbox(ArkoorPackage) returns (Empty) {}
+
+	// TODO: Remove in 0.1.0-beta.6 
+	// It is kept for backward compatiblity
+	rpc RequestArkoorPackageCosign(ArkoorPackageCosignRequest) returns (ArkoorPackageCosignResponse) {
+		option deprecated = true;
+	}
 
 	// Empty the arkoor mailbox for certain pubkeys.
 	//
@@ -147,21 +153,50 @@ message VtxoRequest {
 	bytes policy = 2;
 }
 
+message CheckpointedCosignRequest {
+	bytes input_vtxo_id = 1;
+	repeated VtxoRequest outputs = 2;
+	repeated bytes user_pub_nonces = 3;
+}
+
+message CheckpointedPackageCosignRequest {
+	repeated CheckpointedCosignRequest parts = 1;
+}
+
+message CheckpointedCosignResponse {
+	repeated bytes server_pub_nonces = 1;
+	repeated bytes server_partial_sigs = 2;
+}
+
+message CheckpointedPackageCosignResponse {
+	repeated CheckpointedCosignResponse parts = 1;
+}
+
+/// TODO: Remove in 0.1.0-beta.6
+// This is kept for backward compatibility
 message ArkoorCosignRequest {
 	bytes input_id = 1;
 	repeated VtxoRequest outputs = 2;
 	bytes pub_nonce = 3;
 }
 
+
+// TODO Remove in 0.1.0-beta.6
+// This is kept for backward compatibility
 message ArkoorPackageCosignRequest {
 	repeated ArkoorCosignRequest arkoors = 1;
 }
 
+// TODO: Remove in 0.1.0-beta.6
+// This is kept for backward compatibility
 message ArkoorCosignResponse {
 	bytes pub_nonce = 1;
 	bytes partial_sig = 2;
 }
 
+
+// TODO: Remove this in 0.1.0-beta.6
+// This is kept for backward compatibility
 message ArkoorPackageCosignResponse {
 	repeated ArkoorCosignResponse sigs = 1;
 }

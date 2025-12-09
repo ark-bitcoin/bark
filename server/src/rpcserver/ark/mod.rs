@@ -16,6 +16,7 @@ use tokio_stream::{Stream, StreamExt};
 
 use ark::{musig, OffboardRequest, ProtocolEncoding, Vtxo, VtxoId, VtxoIdInput, VtxoPolicy, VtxoRequest};
 use ark::lightning::{Bolt12InvoiceExt, Invoice, Offer, OfferAmount, PaymentHash, Preimage};
+use ark::arkoor::checkpointed_package::PackageCosignRequest;
 use ark::rounds::RoundId;
 use bitcoin_ext::{AmountExt, BlockDelta, BlockHeight};
 use server_rpc::{self as rpc, protos, TryFromBytes};
@@ -169,6 +170,22 @@ impl rpc::server::ArkService for Server {
 	}
 
 	// oor
+	/// Handles a checkpointed OOR cosign request.
+	async fn checkpointed_cosign_oor(
+		&self,
+		req: tonic::Request<protos::CheckpointedPackageCosignRequest>,
+	) -> Result<tonic::Response<protos::CheckpointedPackageCosignResponse>, tonic::Status> {
+		let _ = RpcMethodDetails::grpc_ark(middleware::RPC_SERVICE_ARK_CHECKPOINTED_COSIGN_OOR);
+		let req = req.into_inner();
+
+		let request = PackageCosignRequest::try_from(req)
+			.context("Failed to parse request")?;
+
+		let response = self.cosign_oor(request).await.to_status()?;
+		Ok(tonic::Response::new(response.into()))
+	}
+
+
 	async fn request_arkoor_package_cosign(
 		&self,
 		req: tonic::Request<protos::ArkoorPackageCosignRequest>,

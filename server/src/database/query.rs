@@ -23,7 +23,6 @@ pub async fn upsert_vtxos<T, V: Borrow<Vtxo>>(
 ) -> Result<(), tokio_postgres::Error>
 	where T: GenericClient
 {
-	// Store all vtxos created in this round.
 	let statement = client.prepare_typed("
 		INSERT INTO vtxo (vtxo_id, vtxo, expiry, created_at, updated_at) VALUES (
 			UNNEST($1), UNNEST($2), UNNEST($3), NOW(), NOW())
@@ -48,7 +47,6 @@ pub async fn upsert_vtxos<T, V: Borrow<Vtxo>>(
 
 	Ok(())
 }
-
 
 /// Get vtxos by id and ensure the order of the returned vtxos matches
 /// the order of the provided ids

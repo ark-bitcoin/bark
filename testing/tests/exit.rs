@@ -280,7 +280,7 @@ async fn exit_oor() {
 
 	bark2.claim_all_exits(bark2.get_onchain_address().await).await;
 	ctx.generate_blocks(1).await;
-	assert_eq!(bark2.onchain_balance().await, sat(1_096_376));
+	assert_eq!(bark2.onchain_balance().await, sat(1_094_994));
 }
 
 #[tokio::test]
@@ -759,8 +759,8 @@ async fn exit_oor_ping_pong_then_rbf_tx() {
 	bark2.claim_all_exits(bark2.get_onchain_address().await).await;
 	ctx.generate_blocks(1).await;
 
-	assert_eq!(bark1.onchain_balance().await, sat(498_799));
+	assert_eq!(bark1.onchain_balance().await, sat(497_968));
 	assert_eq!(bark1.onchain_utxos().await.len(), 2, "We should have board change and a claim UTXO");
-	assert_eq!(bark2.onchain_balance().await, sat(1_396_675));
+	assert_eq!(bark2.onchain_balance().await, sat(1_286_175));
 	assert_eq!(bark2.onchain_utxos().await.len(), 2, "We should have the funding and a claim UTXO");
 }

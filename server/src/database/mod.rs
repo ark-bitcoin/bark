@@ -7,11 +7,12 @@ pub mod intman;
 
 pub mod forfeits;
 pub mod ln;
-mod query;
+pub mod oor;
 pub mod rounds;
 pub mod vtxopool;
 
 mod model;
+mod query;
 
 pub use model::*;
 
@@ -259,6 +260,28 @@ impl Db {
 			.collect()
 	}
 
+	/// Upsert new vtxos and mark vtxos as spend
+	///
+	/// It is performed in a single function to ensure atomicity
+	/// Note, that the spend_info might mark newly created vtxos as spend
+	pub async fn upsert_vtxos_and_mark_spends<V : Borrow<Vtxo>>(
+		&self,
+		new_vtxos: impl Iterator<Item = V>,
+		spend_info: impl Iterator<Item = (VtxoId, Txid)>,
+	) -> anyhow::Result<()> {
+		let (vtxos, txids) = spend_info.collect::<(Vec<_>, Vec<_>)>();
+
+		let mut conn = self.get_conn().await.context("Failed to connect to db")?;
+		let tx = conn.transaction().await.context("Failed to start db transaction")?;
+
+		query::upsert_vtxos(&tx, new_vtxos).await?;
+		oor::mark_package_spent(&tx, &vtxos, &txids).await?;
+
+		tx.commit().await?;
+		Ok(())
+	}
+
+
 	/// Returns [None] if all the ids were not previously marked as signed
 	/// and are now correctly marked as such.
 	/// Returns [Some] for the first vtxo that was already signed.
@@ -296,6 +319,8 @@ impl Db {
 		tx.commit().await?;
 		Ok(None)
 	}
+
+
 
 	/**
 	 * Arkoors

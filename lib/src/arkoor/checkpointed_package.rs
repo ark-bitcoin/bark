@@ -1,18 +1,53 @@
+use bitcoin::Txid;
 use bitcoin::secp256k1::Keypair;
 use bitcoin_ext::P2TR_DUST;
 
 
 use crate::arkoor::checkpoint::{CheckpointedArkoorBuilder, ArkoorConstructionError, state, CosignResponse, ArkoorSigningError, CosignRequest};
-use crate::{Vtxo, VtxoRequest, VtxoPolicy, PublicKey, Amount};
+use crate::{Vtxo, VtxoId, VtxoRequest, VtxoPolicy, PublicKey, Amount};
 
-pub struct CheckpointedPackageBuilder<'a, S: state::BuilderState> {
-	builders: Vec<CheckpointedArkoorBuilder<'a, S>>,
+pub struct CheckpointedPackageBuilder<S: state::BuilderState> {
+	builders: Vec<CheckpointedArkoorBuilder<S>>,
 }
 
-impl<'a> CheckpointedPackageBuilder<'a, state::Initial> {
+#[derive(Debug, Clone)]
+pub struct PackageCosignRequest<V> {
+	pub requests: Vec<CosignRequest<V>>
+}
+
+impl<V> PackageCosignRequest<V> {
+	pub fn convert_vtxo<F, O>(self, f: F) -> PackageCosignRequest<O>
+		where F: Fn(V) -> O
+	{
+		PackageCosignRequest {
+			requests: self.requests.into_iter().map(|r| {
+				CosignRequest {
+					user_pub_nonces: r.user_pub_nonces,
+					input: f(r.input),
+					outputs: r.outputs,
+				}
+
+			}).collect::<Vec<_>>()
+		}
+	}
+
+	pub fn inputs(&self) -> impl Iterator<Item=&V> {
+		self.requests.iter()
+			.map(|r| Some(&r.input))
+			.flatten()
+	}
+}
+
+
+#[derive(Debug, Clone)]
+pub struct PackageCosignResponse {
+	pub responses: Vec<CosignResponse>
+}
+
+impl CheckpointedPackageBuilder<state::Initial> {
 
 	pub fn new(
-		inputs: impl IntoIterator<Item = &'a Vtxo>,
+		inputs: impl IntoIterator<Item = Vtxo>,
 		output: VtxoRequest,
 		change_pubkey: PublicKey,
 	) -> Result<Self, ArkoorConstructionError> {
@@ -24,14 +59,15 @@ impl<'a> CheckpointedPackageBuilder<'a, state::Initial> {
 		let mut packages = Vec::with_capacity(input_iter.size_hint().0);
 		let mut to_be_paid = output.amount;
 		for input in input_iter {
-			if to_be_paid >= input.amount() {
+			let input_amount = input.amount();
+			if to_be_paid >= input_amount {
 				let package = CheckpointedArkoorBuilder::new(
-					&input,
-					vec![VtxoRequest { amount: input.amount(), policy: output.policy.clone() }]
+					input,
+					vec![VtxoRequest { amount: input_amount, policy: output.policy.clone() }]
 				)?;
 
 				packages.push(package);
-				to_be_paid = to_be_paid - input.amount();
+				to_be_paid = to_be_paid - input_amount;
 			} else if to_be_paid >  Amount::ZERO {
 				// If change_amount is less than P2TR we don't do change
 				// We will send the left-overs as a tip
@@ -46,7 +82,7 @@ impl<'a> CheckpointedPackageBuilder<'a, state::Initial> {
 				};
 
 				let package = CheckpointedArkoorBuilder::new(
-					&input,
+					input,
 					requests,
 				)?;
 
@@ -68,7 +104,7 @@ impl<'a> CheckpointedPackageBuilder<'a, state::Initial> {
 		Ok(Self { builders: packages })
 	}
 
-	pub fn generate_user_nonces(self, user_keypairs: &[Keypair]) -> Result<CheckpointedPackageBuilder<'a, state::UserGeneratedNonces>, ArkoorSigningError> {
+	pub fn generate_user_nonces(self, user_keypairs: &[Keypair]) -> Result<CheckpointedPackageBuilder<state::UserGeneratedNonces>, ArkoorSigningError> {
 		if user_keypairs.len() != self.builders.len() {
 			return Err(ArkoorSigningError::InvalidNbKeypairs { expected: self.builders.len(), got: user_keypairs.len() })
 		}
@@ -81,12 +117,12 @@ impl<'a> CheckpointedPackageBuilder<'a, state::Initial> {
 	}
 }
 
-impl<'a> CheckpointedPackageBuilder<'a, state::UserGeneratedNonces> {
-	pub fn user_cosign(self, user_keypair: &[Keypair], server_cosign_response: &[CosignResponse]) -> Result<CheckpointedPackageBuilder<'a, state::UserSigned>, ArkoorSigningError> {
-		if server_cosign_response.len() != self.builders.len() {
+impl CheckpointedPackageBuilder<state::UserGeneratedNonces> {
+	pub fn user_cosign(self, user_keypair: &[Keypair], server_cosign_response: PackageCosignResponse) -> Result<CheckpointedPackageBuilder<state::UserSigned>, ArkoorSigningError> {
+		if server_cosign_response.responses.len() != self.builders.len() {
 			return Err(ArkoorSigningError::InvalidNbPackages {
 				expected: self.builders.len(),
-				got: server_cosign_response.len()
+				got: server_cosign_response.responses.len()
 			})
 		}
 
@@ -97,19 +133,21 @@ impl<'a> CheckpointedPackageBuilder<'a, state::UserGeneratedNonces> {
 		let mut packages = Vec::with_capacity(self.builders.len());
 
 		for (idx, pkg) in self.builders.into_iter().enumerate() {
-			packages.push(pkg.user_cosign(&user_keypair[idx], &server_cosign_response[idx])?);
+			packages.push(pkg.user_cosign(&user_keypair[idx], &server_cosign_response.responses[idx])?);
 		}
 		Ok(CheckpointedPackageBuilder { builders: packages })
 	}
 
-	pub fn cosign_requests(&'a self) -> Vec<CosignRequest<'a>> {
-		self.builders.iter()
+	pub fn cosign_requests(&self) -> PackageCosignRequest<Vtxo> {
+		let requests = self.builders.iter()
 			.map(|package| package.cosign_request())
-			.collect::<Vec<_>>()
+			.collect::<Vec<_>>();
+
+		PackageCosignRequest { requests }
 	}
 }
 
-impl<'a> CheckpointedPackageBuilder<'a, state::UserSigned> {
+impl CheckpointedPackageBuilder<state::UserSigned> {
 	pub fn build_signed_vtxos(self) -> Vec<Vtxo> {
 		self.builders.into_iter()
 			.map(|package| package.build_signed_vtxos())
@@ -118,17 +156,18 @@ impl<'a> CheckpointedPackageBuilder<'a, state::UserSigned> {
 	}
 }
 
-impl<'a> CheckpointedPackageBuilder<'a, state::ServerCanCosign> {
-	pub fn from_cosign_requests(cosign_requests: &'a[CosignRequest<'a>]) -> Result<Self, ArkoorSigningError> {
-		let request_iter = cosign_requests.into_iter();
+impl CheckpointedPackageBuilder<state::ServerCanCosign> {
+	pub fn from_cosign_requests(cosign_requests: PackageCosignRequest<Vtxo>) -> Result<Self, ArkoorSigningError> {
+		let request_iter = cosign_requests.requests.into_iter();
 		let mut packages = Vec::with_capacity(request_iter.size_hint().0);
 		for request in request_iter {
-			packages.push(CheckpointedArkoorBuilder::<'a>::from_cosign_request(&request)?);
+			packages.push(CheckpointedArkoorBuilder::from_cosign_request(request)?);
 		}
+
 		Ok(Self { builders: packages })
 	}
 
-	pub fn server_cosign(self, server_keypair: Keypair) -> Result<CheckpointedPackageBuilder<'a, state::ServerSigned>, ArkoorSigningError> {
+	pub fn server_cosign(self, server_keypair: Keypair) -> Result<CheckpointedPackageBuilder<state::ServerSigned>, ArkoorSigningError> {
 		let mut packages = Vec::with_capacity(self.builders.len());
 		for package in self.builders.into_iter() {
 			packages.push(package.server_cosign(server_keypair)?);
@@ -137,21 +176,36 @@ impl<'a> CheckpointedPackageBuilder<'a, state::ServerCanCosign> {
 	}
 }
 
-impl<'a> CheckpointedPackageBuilder<'a, state::ServerSigned> {
-	pub fn cosign_responses(&self) -> Vec<CosignResponse> {
-		self.builders.iter()
+impl CheckpointedPackageBuilder<state::ServerSigned> {
+	pub fn cosign_response(&self) -> PackageCosignResponse {
+		let responses = self.builders.iter()
 			.map(|package| package.cosign_response())
-			.collect::<Vec<_>>()
+			.collect::<Vec<_>>();
+
+		PackageCosignResponse { responses }
 	}
 }
 
-impl<'a, S: state::BuilderState> CheckpointedPackageBuilder<'a, S> {
+impl<S: state::BuilderState> CheckpointedPackageBuilder<S> {
 
-	pub fn build_unsigned_vtxos(&self) -> Vec<Vtxo> {
+	pub fn build_unsigned_vtxos<'a>(&'a self) -> impl Iterator<Item = Vtxo> + 'a {
 		self.builders.iter()
-			.map(|package| package.build_unsigned_vtxos())
+			.map(|b| b.build_unsigned_vtxos())
 			.flatten()
-			.collect::<Vec<_>>()
+	}
+
+	pub fn build_unsigned_checkpoint_vtxos<'a>(&'a self) -> impl Iterator<Item = Vtxo> + 'a {
+		self.builders.iter()
+			.map(|b| b.build_unsigned_checkpoint_vtxos())
+			.flatten()
+	}
+
+	/// Each [VtxoId] in the list is spent by [Txid]
+	/// in an out-of-round transaction
+	pub fn spend_info<'a>(&'a self) -> impl Iterator<Item = (VtxoId, Txid)> + 'a {
+		self.builders.iter()
+			.map(|b| b.spend_info())
+			.flatten()
 	}
 }
 
@@ -200,14 +254,14 @@ mod test {
 		let user_builder = builder.generate_user_nonces(keypairs).expect("Valid nb of keypairs");
 		let cosign_requests = user_builder.cosign_requests();
 
-		let cosign_responses = CheckpointedPackageBuilder::from_cosign_requests(&cosign_requests)
+		let cosign_responses = CheckpointedPackageBuilder::from_cosign_requests(cosign_requests)
 			.expect("Invalid cosign requests")
 			.server_cosign(server_keypair())
 			.expect("Wrong server key")
-			.cosign_responses();
+			.cosign_response();
 
 
-		let vtxos = user_builder.user_cosign(keypairs, &cosign_responses)
+		let vtxos = user_builder.user_cosign(keypairs, cosign_responses)
 			.expect("Invalid cosign responses")
 			.build_signed_vtxos();
 
@@ -234,7 +288,7 @@ mod test {
 		let (funding_tx, alice_vtxo) = dummy_vtxo_for_amount(Amount::from_sat(100_000));
 
 		let package_builder = CheckpointedPackageBuilder::new(
-			[&alice_vtxo],
+			[alice_vtxo],
 			VtxoRequest { amount: Amount::from_sat(100_000), policy: VtxoPolicy::new_pubkey(bob_public_key()) },
 			alice_public_key()
 		).expect("Valid package");
@@ -250,13 +304,13 @@ mod test {
 		// She will send the subdust remainder to Bob as well
 		let (funding_tx, alice_vtxo) = dummy_vtxo_for_amount(Amount::from_sat(1000));
 		let package_builder = CheckpointedPackageBuilder::new(
-			[&alice_vtxo],
+			[alice_vtxo],
 			VtxoRequest { amount: Amount::from_sat(900), policy: VtxoPolicy::new_pubkey(bob_public_key()) },
 			alice_public_key()
 		).expect("Valid package");
 
 		// We should generate one vtxo for an amount of 1000 sat to bob
-		let vtxos = package_builder.build_unsigned_vtxos();
+		let vtxos: Vec<Vtxo> = package_builder.build_unsigned_vtxos().collect();
 		assert_eq!(vtxos.len(), 1);
 		assert_eq!(vtxos[0].amount(), Amount::from_sat(1000));
 		assert_eq!(vtxos[0].policy().user_pubkey(), bob_public_key());
@@ -276,12 +330,12 @@ mod test {
 		let (funding_tx_3, alice_vtxo_3) = dummy_vtxo_for_amount(Amount::from_sat(2_000));
 
 		let package = CheckpointedPackageBuilder::new(
-			[&alice_vtxo_1, &alice_vtxo_2, &alice_vtxo_3],
+			[alice_vtxo_1, alice_vtxo_2, alice_vtxo_3],
 			VtxoRequest { amount: Amount::from_sat(17_000), policy: VtxoPolicy::new_pubkey(bob_public_key()) },
 			alice_public_key()
 		).expect("Valid package");
 
-		let vtxos = package.build_unsigned_vtxos();
+		let vtxos: Vec<Vtxo> = package.build_unsigned_vtxos().collect();
 		assert_eq!(vtxos.len(), 3);
 		assert_eq!(vtxos[0].amount(), Amount::from_sat(10_000));
 		assert_eq!(vtxos[1].amount(), Amount::from_sat(5_000));
@@ -307,12 +361,12 @@ mod test {
 		let (funding_tx_3, alice_vtxo_3) = dummy_vtxo_for_amount(Amount::from_sat(2_000));
 
 		let package = CheckpointedPackageBuilder::new(
-			[&alice_vtxo_1, &alice_vtxo_2, &alice_vtxo_3],
+			[alice_vtxo_1, alice_vtxo_2, alice_vtxo_3],
 			VtxoRequest { amount: Amount::from_sat(16_000), policy: VtxoPolicy::new_pubkey(bob_public_key()) },
 			alice_public_key()
 		).expect("Valid package");
 
-		let vtxos = package.build_unsigned_vtxos();
+		let vtxos: Vec<Vtxo> = package.build_unsigned_vtxos().collect();
 		assert_eq!(vtxos.len(), 4);
 		assert_eq!(vtxos[0].amount(), Amount::from_sat(10_000));
 		assert_eq!(vtxos[1].amount(), Amount::from_sat(5_000));
@@ -341,12 +395,12 @@ mod test {
 		let (funding_tx_2, alice_vtxo_2) = dummy_vtxo_for_amount(Amount::from_sat(1_000));
 
 		let package = CheckpointedPackageBuilder::new(
-			[&alice_vtxo_1, &alice_vtxo_2],
+			[alice_vtxo_1, alice_vtxo_2],
 			VtxoRequest { amount: Amount::from_sat(5_700), policy: VtxoPolicy::new_pubkey(bob_public_key()) },
 			alice_public_key()
 		).expect("Valid package");
 
-		let vtxos = package.build_unsigned_vtxos();
+		let vtxos: Vec<Vtxo> = package.build_unsigned_vtxos().collect();
 		assert_eq!(vtxos.len(), 2);
 		assert_eq!(vtxos[0].amount(), Amount::from_sat(5_000));
 		assert_eq!(vtxos[1].amount(), Amount::from_sat(1_000));
@@ -368,7 +422,7 @@ mod test {
 		// She will not be able to send the payment
 		let (_funding_tx, alice_vtxo) = dummy_vtxo_for_amount(Amount::from_sat(900));
 		let result = CheckpointedPackageBuilder::new(
-			[&alice_vtxo],
+			[alice_vtxo],
 			VtxoRequest { amount: Amount::from_sat(1000), policy: VtxoPolicy::new_pubkey(bob_public_key()) },
 			alice_public_key()
 		);
@@ -393,7 +447,7 @@ mod test {
 		let (_funding_tx, alice_vtxo_3) = dummy_vtxo_for_amount(Amount::from_sat(2_000));
 
 		let package = CheckpointedPackageBuilder::new(
-			[&alice_vtxo_1, &alice_vtxo_2, &alice_vtxo_3],
+			[alice_vtxo_1, alice_vtxo_2, alice_vtxo_3],
 			VtxoRequest { amount: Amount::from_sat(20_000), policy: VtxoPolicy::new_pubkey(bob_public_key()) },
 			alice_public_key()
 		);
@@ -415,7 +469,7 @@ mod test {
 		// Sending subdust amounts is not allowed
 		let (_funding_tx, alice_vtxo) = dummy_vtxo_for_amount(Amount::from_sat(1000));
 		let result = CheckpointedPackageBuilder::new(
-			[&alice_vtxo],
+			[alice_vtxo],
 			VtxoRequest {
 				amount: Amount::from_sat(100),
 				policy: VtxoPolicy::new_pubkey(bob_public_key())
@@ -443,7 +497,7 @@ mod test {
 		let (_funding_tx, alice_vtxo_4) = dummy_vtxo_for_amount(Amount::from_sat(1000));
 
 		let package = CheckpointedPackageBuilder::new(
-			[&alice_vtxo_1, &alice_vtxo_2, &alice_vtxo_3, &alice_vtxo_4],
+			[alice_vtxo_1, alice_vtxo_2, alice_vtxo_3, alice_vtxo_4],
 			VtxoRequest { amount: Amount::from_sat(2000), policy: VtxoPolicy::new_pubkey(bob_public_key()) },
 			alice_public_key()
 		);

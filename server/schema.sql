@@ -298,7 +298,7 @@ BEGIN
         OLD.created_at, OLD.updated_at
     );
 
-    IF NEW.updated_at = OLD.updated_at THEN
+    IF NEW.updated_at = OLD.updated_at AND new.updated_AT <> NOW() THEN
         RAISE EXCEPTION 'updated_at must be updated';
     END IF;
 
