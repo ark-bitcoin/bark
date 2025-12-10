@@ -168,7 +168,7 @@ pub fn server_htlc_receive_taproot(
 #[derive(Debug, Clone)]
 pub enum PaymentStatus {
 	Pending,
-	Complete,
+	Success(Preimage),
 	Failed,
 }
 

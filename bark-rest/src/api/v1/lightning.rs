@@ -136,7 +136,8 @@ pub async fn list_receive_statuses(
 	path = "/pay",
 	request_body = bark_json::web::LightningPayRequest,
 	responses(
-		(status = 200, description = "Returns payment result", body = bark_json::web::LightningPayResponse),
+		(status = 200, description = "Returns success message, optionally with \
+			preimage if payment was immediately settled", body = bark_json::web::LightningPayResponse),
 		(status = 400, description = "The provided destination is not a valid \
 			bolt11 invoice, bolt12 offer or lightning address", body = error::BadRequestError),
 		(status = 500, description = "Internal server error", body = error::InternalServerError)
@@ -152,7 +153,7 @@ pub async fn pay(
 	let amount = body.amount_sat.map(|a| Amount::from_sat(a));
 	let no_sync = true;
 
-	let preimage = if let Ok(invoice) = Bolt11Invoice::from_str(&body.destination) {
+	if let Ok(invoice) = Bolt11Invoice::from_str(&body.destination) {
 		pay_invoice(invoice, amount, body.comment, no_sync, &state.wallet).await?
 	} else if let Ok(offer) = Offer::from_str(&body.destination) {
 		pay_offer(offer, amount, body.comment, no_sync, &state.wallet).await?
@@ -163,7 +164,6 @@ pub async fn pay(
 	};
 
 	Ok(axum::Json(bark_json::web::LightningPayResponse {
-		message: "Payment sent successfully".to_string(),
-		preimage: Some(preimage),
+		message: "Payment initiated successfully".to_string(),
 	}))
 }

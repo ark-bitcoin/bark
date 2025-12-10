@@ -38,8 +38,8 @@ service ArkService {
 	// * SEND LN payments
 
 	rpc RequestLightningPayHtlcCosign(LightningPayHtlcCosignRequest) returns (LightningPayHtlcCosignResponse) {}
-	rpc InitiateLightningPayment(InitiateLightningPaymentRequest) returns (LightningPaymentResult) {}
-	rpc CheckLightningPayment(CheckLightningPaymentRequest) returns (LightningPaymentResult) {}
+	rpc InitiateLightningPayment(InitiateLightningPaymentRequest) returns (Empty) {}
+	rpc CheckLightningPayment(CheckLightningPaymentRequest) returns (LightningPaymentStatus) {}
 	rpc RequestLightningPayHtlcRevocation(RevokeLightningPayHtlcRequest) returns (ArkoorPackageCosignResponse) {}
 
 	// TODO: Remove this once we hit 0.1.0-beta.6 or higher
@@ -241,7 +241,8 @@ message LightningPayHtlcCosignResponse {
 message InitiateLightningPaymentRequest {
 	string invoice = 1;
 	repeated bytes htlc_vtxo_ids = 2;
-	bool wait = 3;
+	// TODO: Remove this once we hit 0.1.0-beta.6 or higher
+	bool wait = 3 [deprecated = true];
 }
 
 message CheckLightningPaymentRequest {
@@ -249,11 +250,31 @@ message CheckLightningPaymentRequest {
 	bool wait = 2;
 }
 
+// TODO: Remove this once we hit 0.1.0-beta.6 or higher
+enum PaymentStatus {
+	PENDING = 0;
+	FAILED = 1;
+	SUCCESS = 2;
+}
+
+// TODO: Remove this once we hit 0.1.0-beta.6 or higher
 message LightningPaymentResult {
 	string progress_message = 1;
 	PaymentStatus status = 2;
 	bytes payment_hash = 3;
 	optional bytes payment_preimage = 4;
+}
+
+message PaymentSuccessStatus {
+	bytes preimage = 1;
+}
+
+message LightningPaymentStatus {
+	oneof payment_status {
+		Empty pending = 1;
+		PaymentSuccessStatus success = 2;
+		Empty failed = 3;
+	};
 }
 
 message RevokeLightningPayHtlcRequest {
@@ -414,7 +435,6 @@ message VtxoSignaturesRequest {
 	repeated bytes signatures = 2;
 }
 
-
 service WalletAdminService {
 	rpc WalletSync(Empty) returns (Empty) {}
 	rpc WalletStatus(Empty) returns (WalletStatusResponse) {}
@@ -453,10 +473,3 @@ message LightningNodeUri {
 }
 
 message Empty {}
-
-/// Primitives
-enum PaymentStatus {
-	PENDING = 0;
-	FAILED = 1;
-	COMPLETE = 2;
-}

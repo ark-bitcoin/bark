@@ -176,16 +176,6 @@ impl TryFrom<protos::ArkInfo> for ark::ArkInfo {
 	}
 }
 
-impl From<ark::lightning::PaymentStatus> for protos::PaymentStatus {
-	fn from(value: ark::lightning::PaymentStatus) -> Self {
-		match value {
-			ark::lightning::PaymentStatus::Complete => protos::PaymentStatus::Complete,
-			ark::lightning::PaymentStatus::Pending => protos::PaymentStatus::Pending,
-			ark::lightning::PaymentStatus::Failed => protos::PaymentStatus::Failed,
-		}
-	}
-}
-
 impl<'a> From<&'a ark::rounds::RoundEvent> for protos::RoundEvent {
 	fn from(e: &'a ark::rounds::RoundEvent) -> Self {
 		protos::RoundEvent {

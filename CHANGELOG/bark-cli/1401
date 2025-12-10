@@ -1,0 +1,3 @@
+- `lightning pay` command doesn't wait for payment settlement anymore. To do
+  so, `--wait` argument must be set.
+  [1401](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1401)

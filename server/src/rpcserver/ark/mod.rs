@@ -329,13 +329,21 @@ impl rpc::server::ArkService for Server {
 		req: tonic::Request<protos::InitiateLightningPaymentRequest>,
 	) -> Result<tonic::Response<protos::LightningPaymentResult>, tonic::Status> {
 		let _ = RpcMethodDetails::grpc_ark(middleware::RPC_SERVICE_ARK_FINISH_LIGHTNING_PAYMENT);
-		rpc::server::ArkService::initiate_lightning_payment(self, req).await
+		let req = req.into_inner();
+		let invoice = Invoice::from_str(&req.invoice).badarg("invalid invoice")?;
+		rpc::server::ArkService::initiate_lightning_payment(self, tonic::Request::new(req)).await?;
+		Ok(tonic::Response::new(protos::LightningPaymentResult {
+			progress_message: "Payment is pending".to_string(),
+			status: protos::PaymentStatus::Pending.into(),
+			payment_hash: invoice.payment_hash().to_vec(),
+			payment_preimage: None,
+		}))
 	}
 
 	async fn initiate_lightning_payment(
 		&self,
 		req: tonic::Request<protos::InitiateLightningPaymentRequest>,
-	) -> Result<tonic::Response<protos::LightningPaymentResult>, tonic::Status> {
+	) -> Result<tonic::Response<protos::Empty>, tonic::Status> {
 		let _ = RpcMethodDetails::grpc_ark(middleware::RPC_SERVICE_ARK_INITIATE_LIGHTNING_PAYMENT);
 		let req = req.into_inner();
 
@@ -350,24 +358,25 @@ impl rpc::server::ArkService for Server {
 
 		let invoice = Invoice::from_str(&req.invoice).badarg("invalid invoice")?;
 
-		let res = self.initiate_lightning_payment(invoice, htlc_vtxo_ids, req.wait).await.to_status()?;
-		Ok(tonic::Response::new(res))
+		self.initiate_lightning_payment(invoice, htlc_vtxo_ids).await.to_status()?;
+		Ok(tonic::Response::new(protos::Empty {}))
 	}
 
 	async fn check_lightning_payment(
 		&self,
 		req: tonic::Request<protos::CheckLightningPaymentRequest>,
-	) -> Result<tonic::Response<protos::LightningPaymentResult>, tonic::Status> {
+	) -> Result<tonic::Response<protos::LightningPaymentStatus>, tonic::Status> {
 		let _ = RpcMethodDetails::grpc_ark(middleware::RPC_SERVICE_ARK_CHECK_LIGHTNING_PAYMENT);
 		let req = req.into_inner();
 
 		crate::rpcserver::add_tracing_attributes(vec![
 			KeyValue::new("payment_hash", req.hash.as_hex().to_string()),
+			KeyValue::new("wait", req.wait.to_string()),
 		]);
 
 		let payment_hash = PaymentHash::from_bytes(req.hash)?;
 		let res = self.check_lightning_payment(payment_hash, req.wait).await.to_status()?;
-		Ok(tonic::Response::new(res))
+		Ok(tonic::Response::new(protos::LightningPaymentStatus { payment_status: Some(res) }))
 	}
 
 	// TODO: Remove this once we hit 0.1.0-beta.6 or higher

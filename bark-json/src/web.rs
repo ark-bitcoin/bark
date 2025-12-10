@@ -2,8 +2,6 @@ use serde::{Deserialize, Serialize};
 #[cfg(feature = "utoipa")]
 use utoipa::ToSchema;
 
-use ark::lightning::Preimage;
-
 #[derive(Serialize, Deserialize)]
 #[cfg_attr(feature = "utoipa", derive(ToSchema))]
 pub struct TipResponse {
@@ -111,9 +109,6 @@ pub struct LightningPayRequest {
 pub struct LightningPayResponse {
 	/// Success message
 	pub message: String,
-	/// The payment preimage (for successful payments)
-	#[cfg_attr(feature = "utoipa", schema(value_type = String))]
-	pub preimage: Option<Preimage>,
 }
 
 #[derive(Serialize, Deserialize)]
