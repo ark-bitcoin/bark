@@ -1,0 +1,18 @@
+- Remove _at variants from the MovementManager
+  [#1362](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1362)
+- Add [new|finish]_movement_with_update methods to the MovementManager
+  [#1362](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1362)
+- Add new_guarded_movement to the MovementManager and stop defaulting on-drop behaviour of the MovementGuard
+  [#1362](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1362)
+- Remove status from MovementGuard::finish and add MovementGuard::[cancel|fail] methods instead
+  [#1362](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1362)
+- Improve MovementError messages
+  [#1362](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1362)
+- Implement a strongly typed PaymentMethod to use for MovementDestination
+  Allows for easy serialization and deserialization of address/invoice formats
+  [#1362](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1362)
+- Add the payment hash to lightning movement metadata
+  [#1362](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1362)
+- Rename MovementStatus::Finished to MovementStatus::Successful
+  Also use kebab-case for JSON and OpenAPI enums
+  [#1362](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1362)
