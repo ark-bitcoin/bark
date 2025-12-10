@@ -496,9 +496,18 @@ impl ClnNodeMonitorProcess {
 				continue;
 			}
 
-			if htlc_subscription.created_at < Local::now() - self.config.htlc_subscription_timeout {
-				debug!("Lightning htlc subscription ({}) timed out.",
-					htlc_subscription.id,
+			// Cancel subscription if htlc_subscription_timeout reached or invoice expired
+			let should_cancel = htlc_subscription.created_at < Local::now() - self.config.htlc_subscription_timeout
+				|| htlc_subscription.invoice.is_expired();
+
+			if should_cancel {
+				let reason = if htlc_subscription.invoice.is_expired() {
+					"invoice expired"
+				} else {
+					"HTLC subscription timed out"
+				};
+				debug!("Lightning htlc subscription ({}) canceled: {}.",
+					htlc_subscription.id, reason,
 				);
 
 				hodl_client.cancel(hold::CancelRequest {
@@ -515,13 +524,13 @@ impl ClnNodeMonitorProcess {
 				let payment_attempt = self.db
 					.get_open_lightning_payment_attempt_by_payment_hash(&payment_hash).await?;
 				if let Some(payment_attempt) = payment_attempt {
-					debug!("HTLC subscription timed out with ongoing payment attempt, \
+					debug!("HTLC subscription canceled with ongoing payment attempt, \
 						marking as failed: {}", payment_attempt.id,
 					);
 					self.db.update_lightning_payment_attempt_status(
 						&payment_attempt,
 						LightningPaymentStatus::Failed,
-						Some("HTLC subscription timed out"),
+						Some(reason),
 					).await?;
 				}
 			}

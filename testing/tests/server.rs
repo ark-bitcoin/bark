@@ -1485,11 +1485,22 @@ async fn server_generated_invoice_has_configured_expiry() {
 	bark.board_and_confirm_and_register(&ctx, btc(2)).await;
 
 	let invoice_info = bark.bolt11_invoice(btc(1)).await;
+	let invoice = Bolt11Invoice::from_str(&invoice_info.invoice).unwrap();
+	let payment_hash = invoice.payment_hash().to_byte_array().to_vec();
 
-	// Wait for the invoice to expire
-	tokio::time::sleep(cfg_invoice_expiry + Duration::from_secs(1)).await;
+	// Wait for the invoice to expire and for the server to process the cancellation
+	tokio::time::sleep(cfg_invoice_expiry + srv.config().invoice_check_interval).await;
 
-	// Sender rejects expired invoice, confirming expiry was set correctly in the invoice
+	// Verify the server has canceled the HTLC subscription due to invoice expiry
+	let mut rpc = srv.get_public_rpc().await;
+	let resp = rpc.check_lightning_receive(protos::CheckLightningReceiveRequest {
+		hash: payment_hash,
+		wait: false,
+	}).await.unwrap().into_inner();
+	assert_eq!(resp.status, protos::LightningReceiveStatus::Canceled as i32,
+		"expected CANCELED status, got {:?}", resp.status);
+
+	// Sender also rejects expired invoice, confirming expiry was set correctly in the invoice
 	let err = lightning.sender.try_pay_bolt11(invoice_info.invoice).await.unwrap_err();
 	assert!(err.to_string().contains("Invoice expired"), "err: {err}");
 }
