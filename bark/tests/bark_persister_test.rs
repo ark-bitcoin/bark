@@ -1,12 +1,16 @@
 //!
 //! A test to ensure that it is possible to implement the [BarkPersister] trait.
 //!
+//! This test is purely about the type names being available in the public API,
+//! so all that matters is that the code can compile. It doesn't have to run.
+//!
 
 use std::collections::HashMap;
 use std::str::FromStr;
 
 #[cfg(feature = "onchain_bdk")]
 use bdk_wallet::ChangeSet;
+use bitcoin::consensus::deserialize;
 use bitcoin::{Amount, BlockHash, Network, SignedAmount, Transaction, Txid};
 use bitcoin::bip32::Fingerprint;
 use bitcoin::hashes::Hash;
@@ -14,10 +18,9 @@ use bitcoin::secp256k1::PublicKey;
 use chrono::{DateTime, Local};
 use lightning_invoice::Bolt11Invoice;
 
-use ark::{Vtxo, VtxoId};
+use ark::{ProtocolEncoding, Vtxo, VtxoId};
 use ark::lightning::{Invoice, PaymentHash, Preimage};
 use bitcoin_ext::{BlockDelta, BlockRef};
-use server_rpc::TryFromBytes;
 
 use bark::{WalletProperties, WalletVtxo};
 use bark::exit::models::{ExitState, ExitClaimableState, ExitTxOrigin};
@@ -81,21 +84,21 @@ impl BarkPersister for Dummy {
 
 	fn get_wallet_vtxo(&self, _id: VtxoId) -> anyhow::Result<Option<WalletVtxo>> {
 		Ok(Some(WalletVtxo {
-			vtxo: Vtxo::from_bytes([])?,
+			vtxo: Vtxo::deserialize(&[])?,
 			state: VtxoState::Spendable,
 		}))
 	}
 
 	fn get_all_vtxos(&self) -> anyhow::Result<Vec<WalletVtxo>> {
 		Ok(Vec::<WalletVtxo>::from([WalletVtxo {
-			vtxo: Vtxo::from_bytes([])?,
+			vtxo: Vtxo::deserialize(&[])?,
 			state: VtxoState::Spendable,
 		}]))
 	}
 
 	fn get_vtxos_by_state(&self, _state: &[VtxoStateKind]) -> anyhow::Result<Vec<WalletVtxo>> {
 		Ok(Vec::<WalletVtxo>::from([WalletVtxo {
-			vtxo: Vtxo::from_bytes([])?,
+			vtxo: Vtxo::deserialize(&[])?,
 			state: VtxoState::Locked {
 				movement_id: Some(MovementId::new(0)),
 			},
@@ -103,7 +106,7 @@ impl BarkPersister for Dummy {
 	}
 
 	fn remove_vtxo(&self, _id: VtxoId) -> anyhow::Result<Option<Vtxo>> {
-		Ok(Some(Vtxo::from_bytes([])?))
+		Ok(Some(Vtxo::deserialize(&[])?))
 	}
 
 	fn has_spent_vtxo(&self, _id: VtxoId) -> anyhow::Result<bool> {
@@ -209,7 +212,7 @@ impl BarkPersister for Dummy {
 	fn get_exit_vtxo_entries(&self) -> anyhow::Result<Vec<StoredExit>> {
 		Ok(Vec::<StoredExit>::from([
 			StoredExit {
-				vtxo_id: VtxoId::from_bytes([])?,
+				vtxo_id: VtxoId::from_slice(&[])?,
 				state: ExitState::Claimable(ExitClaimableState {
 					tip_height: 0,
 					claimable_since: BlockRef {
@@ -237,7 +240,7 @@ impl BarkPersister for Dummy {
 		_exit_txid: Txid,
 	) -> anyhow::Result<Option<(Transaction, ExitTxOrigin)>> {
 		Ok(Some((
-			Transaction::from_bytes([])?,
+			deserialize::<Transaction>(&[])?,
 			ExitTxOrigin::Wallet {
 			confirmed_in: Some(BlockRef {
 				height: 0,
@@ -253,7 +256,7 @@ impl BarkPersister for Dummy {
 		_allowed_old_states: &[VtxoStateKind],
 	) -> anyhow::Result<WalletVtxo> {
 		Ok(Vec::<WalletVtxo>::from([WalletVtxo {
-			vtxo: Vtxo::from_bytes([])?,
+			vtxo: Vtxo::deserialize(&[])?,
 			state: VtxoState::Spent,
 		}]).pop().unwrap())
 	}
@@ -330,8 +333,8 @@ fn dummy_lightning_send() -> LightningSend {
 
 fn dummy_lightning_receive() -> LightningReceive {
 	LightningReceive {
-		payment_hash: PaymentHash::from_bytes([]).unwrap(),
-		payment_preimage: Preimage::from_bytes([]).unwrap(),
+		payment_hash: PaymentHash::from_slice(&[]).unwrap(),
+		payment_preimage: Preimage::from_slice(&[]).unwrap(),
 		invoice: Bolt11Invoice::from_str("bob").unwrap(),
 		preimage_revealed_at: None,
 		htlc_vtxos: None,
