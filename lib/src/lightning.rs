@@ -24,11 +24,13 @@ const BECH32_BOLT12_INVOICE_HRP: &str = "lni";
 /// The minimum fee we consider for an HTLC transaction.
 pub const HTLC_MIN_FEE: Amount = P2TR_DUST;
 
+pub const PREIMAGE_SIZE: usize = 32;
+pub const PAYMENT_HASH_SIZE: usize = 32;
 
 /// A 32-byte secret preimage used for HTLC-based payments.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
-pub struct Preimage([u8; 32]);
-impl_byte_newtype!(Preimage, 32);
+pub struct Preimage([u8; PREIMAGE_SIZE]);
+impl_byte_newtype!(Preimage, PREIMAGE_SIZE);
 
 impl Preimage {
 	/// Generate a new random preimage.
@@ -44,8 +46,8 @@ impl Preimage {
 
 /// The hash of a [Preimage], used to identify HTLC-based payments.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Ord, PartialOrd)]
-pub struct PaymentHash([u8; 32]);
-impl_byte_newtype!(PaymentHash, 32);
+pub struct PaymentHash([u8; PAYMENT_HASH_SIZE]);
+impl_byte_newtype!(PaymentHash, PAYMENT_HASH_SIZE);
 
 impl From<sha256::Hash> for PaymentHash {
 	fn from(hash: sha256::Hash) -> Self {
