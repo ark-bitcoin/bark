@@ -1,0 +1,11 @@
+- Avoid unintentional refresh in HTLC exit tests
+  The change VTXOs were being refreshed which was messing up the order of movements
+  [#1414](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1414)
+- Make await_propagation in exit tests avoid syncing
+  Due to latency between mempool.space syncing with bitcoin core, bark might download lower-fee packages until
+  mempool.space performs its next sync. This is an issue that will be fixed in a different PR.
+  [#1414](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1414)
+- Verify movements when exiting HTLCs forcefully
+  [#1414](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1414)
+- Add tests for different movement subsystems
+  [#1414](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1414)
