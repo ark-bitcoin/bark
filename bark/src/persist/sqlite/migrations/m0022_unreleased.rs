@@ -1,6 +1,11 @@
-use anyhow::Context;
-use rusqlite::Transaction;
+use std::str::FromStr;
 
+use anyhow::Context;
+use rusqlite::{params, Transaction};
+
+use ark::lightning::Invoice;
+
+use crate::payment_method::PaymentMethod;
 use super::Migration;
 
 pub struct Migration0022 {}
@@ -176,7 +181,7 @@ impl Migration for Migration0022 {
 						m.completed_at,
 						(
 							SELECT JSON_GROUP_ARRAY(JSON_OBJECT(
-								'destination', destination,
+								'destination', JSON(destination),
 								'amount', amount
 							))
 							FROM bark_movements_sent_to
@@ -184,7 +189,7 @@ impl Migration for Migration0022 {
 						) AS sent_to,
 						(
 							SELECT JSON_GROUP_ARRAY(JSON_OBJECT(
-								'destination', destination,
+								'destination', JSON(destination),
 								'amount', amount
 							))
 							FROM bark_movements_received_on
@@ -208,6 +213,41 @@ impl Migration for Migration0022 {
 					FROM bark_movements m;
 		";
 		conn.execute_batch(movement_batch).context("failed to migrate movements")?;
+
+		// Convert destination fields from strings to the new PaymentMethod enum.
+		for table in ["bark_movements_sent_to", "bark_movements_received_on"] {
+			let mut statement = conn.prepare(&format!("SELECT destination FROM {table}"))?;
+			let mut rows = statement.query([])?;
+			while let Some(row) = rows.next()? {
+				let destination: String = row.get(0)?;
+
+				// If the destination is already a PaymentMethod, we can skip it.
+				if serde_json::from_str::<PaymentMethod>(&destination).is_ok() {
+					continue;
+				}
+
+				// We should only have ark address, bitcoin address or lightning invoices right now.
+				let new_destination : PaymentMethod = if let Ok(address) = ark::Address::from_str(&destination) {
+					address.into()
+				} else if let Ok(address) = bitcoin::Address::from_str(&destination) {
+					address.into()
+				} else if let Ok(invoice) = Invoice::from_str(&destination) {
+					invoice.into()
+				} else {
+					bail!("unexpected destination type for movement: {}", destination);
+				};
+
+				// Now update the destination field.
+				let query = format!("
+					UPDATE {table}
+					SET destination = ?1
+					WHERE destination = ?2;
+				");
+				conn.execute(
+					&query, params![&serde_json::to_string(&new_destination)?, &destination],
+				).context("failed to migrate movements")?;
+			}
+		}
 
 		let queries = [
 			// Adding default 0 for backward compatibility

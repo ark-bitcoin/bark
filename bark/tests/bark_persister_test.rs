@@ -27,6 +27,7 @@ use bark::exit::models::{ExitState, ExitClaimableState, ExitTxOrigin};
 use bark::movement::{
 	Movement, MovementDestination, MovementId, MovementStatus, MovementSubsystem, MovementTimestamp,
 };
+use bark::payment_method::PaymentMethod;
 use bark::persist::{BarkPersister, RoundStateId, StoredRoundState};
 use bark::persist::models::{self, LightningReceive, LightningSend, PendingBoard, StoredExit};
 use bark::round::{RoundState, UnconfirmedRound};
@@ -57,7 +58,7 @@ impl BarkPersister for Dummy {
 		}))
 	}
 
-	fn check_recipient_exists(&self, _recipient: &str) -> anyhow::Result<bool> {
+	fn check_recipient_exists(&self, _recipient: &PaymentMethod) -> anyhow::Result<bool> {
 		Ok(true)
 	}
 
@@ -357,7 +358,7 @@ fn dummy_movement(status: MovementStatus) -> Movement {
 		effective_balance: SignedAmount::ZERO,
 		offchain_fee: Amount::ZERO,
 		sent_to: vec![MovementDestination {
-			destination: "".to_string(),
+			destination: PaymentMethod::Custom("".into()),
 			amount: Amount::ZERO,
 		}],
 		received_on: vec![],

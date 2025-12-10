@@ -357,7 +357,7 @@ impl Wallet {
 					.effective_balance(htlc_amount.to_signed()?)
 					.metadata(LightningMovement::htlc_metadata(&vtxos)?)
 					.received_on(
-						[MovementDestination::new(receive.invoice.to_string(), htlc_amount)],
+						[MovementDestination::new(receive.invoice.clone().into(), htlc_amount)],
 					),
 			).await?
 		};

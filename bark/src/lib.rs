@@ -294,6 +294,7 @@ pub mod exit;
 pub mod lightning;
 pub mod movement;
 pub mod onchain;
+pub mod payment_method;
 pub mod persist;
 pub mod round;
 pub mod subsystem;
@@ -307,7 +308,6 @@ mod config;
 mod psbtext;
 
 use std::collections::{HashMap, HashSet};
-
 use std::sync::Arc;
 
 use anyhow::{bail, Context};

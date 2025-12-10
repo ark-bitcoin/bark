@@ -1,5 +1,6 @@
 
 use std::{fmt, io};
+use std::borrow::Cow;
 use std::str::FromStr;
 
 use bitcoin::bech32::{self, ByteIterExt, Fe32IterExt};
@@ -379,6 +380,25 @@ impl FromStr for Address {
 		}
 
 		Address::decode_payload(testnet, iter.fes_to_bytes())
+	}
+}
+
+impl serde::Serialize for Address {
+	fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+	where
+		S: serde::Serializer,
+	{
+		serializer.collect_str(&self)
+	}
+}
+
+impl<'de> serde::Deserialize<'de> for Address {
+	fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+	where
+		D: serde::Deserializer<'de>,
+	{
+		let s: Cow<'de, str> = serde::Deserialize::deserialize(deserializer)?;
+		s.parse().map_err(serde::de::Error::custom)
 	}
 }
 

@@ -3,16 +3,19 @@ pub mod onchain;
 
 use std::borrow::Borrow;
 use std::collections::HashMap;
+use std::str::FromStr;
 use std::time::Duration;
 
+use anyhow::anyhow;
 use bitcoin::secp256k1::PublicKey;
-use bitcoin::{Amount, FeeRate, Txid, SignedAmount};
+use bitcoin::{Amount, FeeRate, Txid, SignedAmount, ScriptBuf};
 use chrono::DateTime;
 #[cfg(feature = "utoipa")]
 use utoipa::ToSchema;
 
-use ark::lightning::{PaymentHash, Preimage};
 use ark::VtxoId;
+use ark::lightning::{Invoice, Offer, PaymentHash, Preimage};
+use bark::lnurllib::lightning_address::LightningAddress;
 use bark::movement::MovementId;
 use bitcoin_ext::{AmountExt, BlockDelta, BlockHeight};
 
@@ -357,7 +360,7 @@ impl From<bark::movement::Movement> for Movement {
 #[cfg_attr(feature = "utoipa", derive(ToSchema))]
 pub struct MovementDestination {
 	/// An address, invoice or any other identifier to distinguish the recipient.
-	pub destination: String,
+	pub destination: PaymentMethod,
 	/// How many sats the recipient received.
 	#[serde(rename="amount_sat", with="bitcoin::amount::serde::as_sat")]
 	#[cfg_attr(feature = "utoipa", schema(value_type = u64))]
@@ -367,8 +370,105 @@ pub struct MovementDestination {
 impl From<bark::movement::MovementDestination> for MovementDestination {
 	fn from(d: bark::movement::MovementDestination) -> Self {
 		MovementDestination {
-			destination: d.destination,
+			destination: PaymentMethod::from(d.destination),
 			amount: d.amount,
+		}
+	}
+}
+
+/// Provides a typed mechanism for describing the recipient in a [MovementDestination].
+/// This is a bark-json wrapper that serializes all payment methods as strings for utoipa
+/// compatibility.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Deserialize, Serialize)]
+#[serde(tag = "type", content = "value", rename_all = "kebab-case")]
+pub enum PaymentMethod {
+	/// An [ark::Address] format for bark.
+	Ark(String),
+	/// An onchain [bitcoin::Address].
+	Bitcoin(String),
+	/// An onchain [bitcoin::ScriptBuf] output, typically used for non-address formats like
+	/// OP_RETURN.
+	OutputScript(String),
+	/// Any supported form of lightning invoice, e.g., BOLT11 and BOLT12.
+	Invoice(String),
+	/// A reusable BOLT12 offer for making lightning payments.
+	Offer(String),
+	/// A variant using an email-like lightning address format.
+	LightningAddress(String),
+	/// An alternative payment method that isn't native to bark.
+	Custom(String),
+}
+
+#[cfg(feature = "utoipa")]
+impl utoipa::PartialSchema for PaymentMethod { 
+	fn schema() -> utoipa::openapi::RefOr<utoipa::openapi::schema::Schema> {
+		use utoipa::openapi::schema;
+
+		schema::ObjectBuilder::new()
+			.title(Some("PaymentMethod"))
+			.description(Some("A payment method with a type discriminator and string value"))
+			.property(
+				"type",
+				schema::ObjectBuilder::new()
+					.schema_type(schema::SchemaType::Type(schema::Type::String))
+					.enum_values(Some([
+						"ark",
+						"bitcoin",
+						"output-script",
+						"invoice",
+						"offer",
+						"lightning-address",
+						"custom",
+					]))
+					.description(Some("The type of payment method"))
+			)
+			.required("type")
+			.property(
+				"value",
+				schema::ObjectBuilder::new()
+					.schema_type(schema::SchemaType::Type(schema::Type::String))
+					.description(Some("The payment method value (address, invoice, etc.)"))
+			)
+			.required("value")
+			.into()
+	}
+}
+
+#[cfg(feature = "utoipa")]
+impl utoipa::ToSchema for PaymentMethod {
+	fn name() -> std::borrow::Cow<'static, str> {
+		std::borrow::Cow::Borrowed("PaymentMethod")
+	}
+}
+
+impl From<bark::payment_method::PaymentMethod> for PaymentMethod {
+	fn from(p: bark::payment_method::PaymentMethod) -> Self {
+		match p {
+			bark::payment_method::PaymentMethod::Ark(a) => Self::Ark(a.to_string()),
+			bark::payment_method::PaymentMethod::Bitcoin(b) => Self::Bitcoin(b.assume_checked().to_string()),
+			bark::payment_method::PaymentMethod::OutputScript(s) => Self::OutputScript(s.to_hex_string()),
+			bark::payment_method::PaymentMethod::Invoice(i) => Self::Invoice(i.to_string()),
+			bark::payment_method::PaymentMethod::Offer(o) => Self::Offer(o.to_string()),
+			bark::payment_method::PaymentMethod::LightningAddress(l) => Self::LightningAddress(l.to_string()),
+			bark::payment_method::PaymentMethod::Custom(c) => Self::Custom(c),
+		}
+	}
+}
+
+impl TryFrom<PaymentMethod> for bark::payment_method::PaymentMethod {
+	type Error = anyhow::Error;
+
+	fn try_from(p: PaymentMethod) -> Result<Self, Self::Error> {
+		match p {
+			PaymentMethod::Ark(a) => Ok(bark::payment_method::PaymentMethod::Ark(ark::Address::from_str(&a)?)),
+			PaymentMethod::Bitcoin(b) => Ok(bark::payment_method::PaymentMethod::Bitcoin(bitcoin::Address::from_str(&b)?)),
+			PaymentMethod::OutputScript(s) => Ok(bark::payment_method::PaymentMethod::OutputScript(ScriptBuf::from_hex(&s)?)),
+			PaymentMethod::Invoice(i) => Ok(bark::payment_method::PaymentMethod::Invoice(Invoice::from_str(&i)?)),
+			PaymentMethod::Offer(o) => Ok(bark::payment_method::PaymentMethod::Offer(
+				Offer::from_str(&o).map_err(|e| anyhow!("Failed to parse offer: {:?}", e))?,
+			)),
+			PaymentMethod::LightningAddress(l) => Ok(bark::payment_method::PaymentMethod::LightningAddress(LightningAddress::from_str(&l)?)),
+			PaymentMethod::Custom(c) => Ok(bark::payment_method::PaymentMethod::Custom(c)),
 		}
 	}
 }

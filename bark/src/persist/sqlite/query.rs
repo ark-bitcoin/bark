@@ -18,6 +18,7 @@ use bitcoin_ext::BlockDelta;
 use crate::{Vtxo, VtxoId, VtxoState, WalletProperties};
 use crate::exit::models::{ExitState, ExitTxOrigin};
 use crate::movement::{Movement, MovementId, MovementStatus, MovementSubsystem};
+use crate::payment_method::PaymentMethod;
 use crate::persist::{RoundStateId, StoredRoundState};
 use crate::persist::models::{
 	LightningReceive, LightningSend, PendingBoard, SerdeRoundState, SerdeUnconfirmedRound, StoredExit
@@ -67,7 +68,10 @@ pub (crate) fn fetch_properties(conn: &Connection) -> anyhow::Result<Option<Wall
 	}
 }
 
-pub fn check_recipient_exists(conn: &Connection, recipient: &str) -> anyhow::Result<bool> {
+pub fn check_recipient_exists(
+	conn: &Connection,
+	recipient: &PaymentMethod,
+) -> anyhow::Result<bool> {
 	let exists: bool = conn.query_row(
 		"SELECT EXISTS(
 			SELECT 1
@@ -75,7 +79,7 @@ pub fn check_recipient_exists(conn: &Connection, recipient: &str) -> anyhow::Res
 			INNER JOIN bark_movements_sent_to st ON m.id = st.movement_id
 			WHERE m.status = ?1 AND st.destination = ?2
 		)",
-		params!(MovementStatus::Finished.as_str(), recipient),
+		params!(MovementStatus::Finished.as_str(), serde_json::to_string(recipient)?),
 		|row| row.get(0)
 	)?;
 
@@ -142,7 +146,7 @@ pub fn update_movement(tx: &Transaction, movement: &Movement) -> anyhow::Result<
 					"INSERT INTO {} (movement_id, destination, amount) VALUES (?1, ?2, ?3)",
 					table,
 				),
-				params![id, dest.destination.to_string(), dest.amount.to_sat()],
+				params![id, &serde_json::to_string(&dest.destination)?, dest.amount.to_sat()],
 			)?;
 		}
 	}

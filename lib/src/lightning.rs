@@ -411,7 +411,7 @@ pub trait Bolt12InvoiceExt: Borrow<Bolt12Invoice> {
 		Bolt12Invoice::try_from(bytes.to_vec())
 	}
 
-	fn validate_issuance(&self, offer: Offer) -> Result<(), CheckSignatureError> {
+	fn validate_issuance(&self, offer: &Offer) -> Result<(), CheckSignatureError> {
 		if self.borrow().issuer_signing_pubkey() != offer.issuer_signing_pubkey() {
 			Err(CheckSignatureError("public keys mismatch".to_string()))
 		} else {

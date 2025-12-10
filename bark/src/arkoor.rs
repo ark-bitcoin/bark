@@ -155,7 +155,7 @@ impl Wallet {
 			MovementUpdate::new()
 				.intended_and_effective_balance(negative_amount)
 				.consumed_vtxos(&arkoor.input)
-				.sent_to([MovementDestination::new(destination.to_string(), amount)])
+				.sent_to([MovementDestination::ark(destination.clone(), amount)])
 		).await?;
 
 		let req = protos::ArkoorPackage {

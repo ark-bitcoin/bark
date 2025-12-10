@@ -29,6 +29,7 @@ use bitcoin_ext::BlockDelta;
 use crate::{Vtxo, VtxoId, VtxoState, WalletProperties};
 use crate::exit::models::ExitTxOrigin;
 use crate::movement::{Movement, MovementId, MovementStatus, MovementSubsystem};
+use crate::payment_method::PaymentMethod;
 use crate::persist::{BarkPersister, RoundStateId, StoredRoundState};
 use crate::persist::models::{LightningReceive, LightningSend, PendingBoard, StoredExit};
 use crate::round::{RoundState, UnconfirmedRound};
@@ -91,7 +92,7 @@ impl BarkPersister for SqliteClient {
 		Ok(query::fetch_properties(&conn)?)
 	}
 
-	fn check_recipient_exists(&self, recipient: &str) -> anyhow::Result<bool> {
+	fn check_recipient_exists(&self, recipient: &PaymentMethod) -> anyhow::Result<bool> {
 		let conn = self.connect()?;
 		query::check_recipient_exists(&conn, recipient)
 	}

@@ -37,6 +37,7 @@ use crate::{SECP, Wallet};
 use crate::movement::{MovementDestination, MovementId, MovementStatus};
 use crate::movement::update::MovementUpdate;
 use crate::onchain::{ChainSource, ChainSourceClient};
+use crate::payment_method::PaymentMethod;
 use crate::persist::{RoundStateId, StoredRoundState};
 use crate::subsystem::{BarkSubsystem, RoundMovement};
 
@@ -65,8 +66,14 @@ impl RoundParticipation {
 		let intended = -offboard_amount.to_signed()?;
 		let mut sent_to = Vec::with_capacity(self.offboards.len());
 		for o in &self.offboards {
-			let address = Address::from_script(&o.script_pubkey, &params)?;
-			sent_to.push(MovementDestination::new(address.to_string(), o.amount));
+			let method = match Address::from_script(&o.script_pubkey, &params) {
+				Ok(address) => PaymentMethod::Bitcoin(address.into_unchecked()),
+				Err(e) => {
+					debug!("Failed to parse offboard address, storing script pubkey instead: {:#}", e);
+					PaymentMethod::OutputScript(o.script_pubkey.clone())
+				},
+			};
+			sent_to.push(MovementDestination::new(method, o.amount));
 		}
 		Ok(MovementUpdate::new()
 			.consumed_vtxos(&self.inputs)

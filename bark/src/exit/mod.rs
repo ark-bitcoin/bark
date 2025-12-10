@@ -334,11 +334,9 @@ impl Exit {
 			// Register the movement now so users can be aware of where their funds have gone.
 			self.persister.update_vtxo_state_checked(vtxo_id, VtxoState::Spent, &UNSPENT_STATES)?;
 			let params = Params::new(self.chain_source.network());
+			let onchain_address = Address::from_script(&vtxo.output_script_pubkey(), &params)?;
 			let balance = -vtxo.amount().to_signed()?;
-			let destination = MovementDestination::new(
-				Address::from_script(&vtxo.output_script_pubkey(), &params)?.to_string(),
-				vtxo.amount(),
-			);
+			let destination = MovementDestination::bitcoin(onchain_address, vtxo.amount());
 
 			// A big reason for creating a finished movement is that we currently don't support
 			// cancelling exits. When we do, we can leave this in pending until it's either finished

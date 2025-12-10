@@ -159,7 +159,7 @@ CREATE VIEW bark_movements_view AS
 						m.completed_at,
 						(
 							SELECT JSON_GROUP_ARRAY(JSON_OBJECT(
-								'destination', destination,
+								'destination', JSON(destination),
 								'amount', amount
 							))
 							FROM bark_movements_sent_to
@@ -167,7 +167,7 @@ CREATE VIEW bark_movements_view AS
 						) AS sent_to,
 						(
 							SELECT JSON_GROUP_ARRAY(JSON_OBJECT(
-								'destination', destination,
+								'destination', JSON(destination),
 								'amount', amount
 							))
 							FROM bark_movements_received_on

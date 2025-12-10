@@ -1,11 +1,11 @@
-# MovementDestination
+# PaymentMethod
 
 ## Properties
 
 Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
-**amount_sat** | **i64** | How many sats the recipient received. | 
-**destination** | [**models::PaymentMethod**](PaymentMethod.md) | An address, invoice or any other identifier to distinguish the recipient. | 
+**r#type** | **String** | The type of payment method | 
+**value** | **String** | The payment method value (address, invoice, etc.) | 
 
 [[Back to Model list]](../README.md#documentation-for-models) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to README]](../README.md)
 

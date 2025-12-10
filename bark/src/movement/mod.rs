@@ -8,9 +8,14 @@ use std::str::FromStr;
 
 use bitcoin::{Amount, SignedAmount};
 use chrono::DateTime;
+use lightning::offers::offer::Offer;
+use lnurllib::lightning_address::LightningAddress;
 use serde::{Deserialize, Serialize};
 
 use ark::VtxoId;
+use ark::lightning::Invoice;
+
+use crate::payment_method::PaymentMethod;
 
 const MOVEMENT_PENDING: &'static str = "pending";
 const MOVEMENT_FINISHED: &'static str = "finished";
@@ -162,17 +167,41 @@ impl<'de> Deserialize<'de> for MovementStatus {
 
 /// Describes a recipient of a movement. This could either be an external recipient in send actions
 /// or it could be the bark wallet itself.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct MovementDestination {
 	/// An address, invoice or any other identifier to distinguish the recipient.
-	pub destination: String,
+	pub destination: PaymentMethod,
 	/// How many sats the recipient received.
 	pub amount: Amount,
 }
 
 impl MovementDestination {
-	pub fn new(destination: String, amount: Amount) -> Self {
-		Self { destination, amount }
+	pub fn new(payment_method: PaymentMethod, amount: Amount) -> Self {
+		Self { destination: payment_method, amount }
+	}
+
+	pub fn ark(address: ark::Address, amount: Amount) -> Self {
+		Self::new(address.into(), amount)
+	}
+
+	pub fn bitcoin(address: bitcoin::Address, amount: Amount) -> Self {
+		Self::new(address.into(), amount)
+	}
+
+	pub fn invoice(invoice: Invoice, amount: Amount) -> Self {
+		Self::new(invoice.into(), amount)
+	}
+
+	pub fn offer(offer: Offer, amount: Amount) -> Self {
+		Self::new(offer.into(), amount)
+	}
+
+	pub fn lightning_address(address: LightningAddress, amount: Amount) -> Self {
+		Self::new(address.into(), amount)
+	}
+
+	pub fn custom(destination: String, amount: Amount) -> Self {
+		Self::new(PaymentMethod::Custom(destination), amount)
 	}
 }
 
