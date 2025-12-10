@@ -331,7 +331,7 @@ use server_rpc::{self as rpc, protos, ServerConnection};
 use crate::daemon::{Daemon, DaemonizableOnchainWallet};
 use crate::exit::Exit;
 use crate::movement::{Movement, MovementStatus};
-use crate::movement::manager::{MovementGuard, MovementManager};
+use crate::movement::manager::MovementManager;
 use crate::movement::update::MovementUpdate;
 use crate::onchain::{ChainSource, PreparePsbt, ExitUnilaterally, Utxo, SignPsbt};
 use crate::persist::{BarkPersister, RoundStateId};

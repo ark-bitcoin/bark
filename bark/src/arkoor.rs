@@ -2,40 +2,23 @@ use anyhow::Context;
 use bitcoin::Amount;
 use bitcoin::hex::DisplayHex;
 use bitcoin::secp256k1::PublicKey;
-
 use log::{info, error};
 
 use ark::{VtxoRequest, ProtocolEncoding};
 use ark::arkoor::checkpointed_package::{CheckpointedPackageBuilder, PackageCosignResponse};
 use ark::vtxo::{Vtxo, VtxoId, VtxoPolicyKind};
-
 use bitcoin_ext::P2TR_DUST;
-
 use server_rpc::protos;
 
+use crate::{ArkoorMovement, BarkSubsystem, VtxoDelivery, MovementUpdate, MovementStatus, Wallet};
 use crate::movement::MovementDestination;
-use crate::{
-	ArkoorMovement, BarkSubsystem, VtxoDelivery,
-	MovementGuard, MovementUpdate, MovementStatus,
-	Wallet
-};
-
-
+use crate::movement::manager::OnDropStatus;
 
 /// The result of creating an arkoor transaction
 pub struct ArkoorCreateResult {
 	input: Vec<VtxoId>,
 	created: Vec<Vtxo>,
 	change: Option<Vtxo>,
-}
-
-impl ArkoorCreateResult {
-	pub fn to_movement_update(&self) -> anyhow::Result<MovementUpdate> {
-		Ok(MovementUpdate::new()
-			.consumed_vtxos(self.input.iter())
-			.produced_vtxo_if_some(self.change.as_ref())
-		)
-	}
 }
 
 impl Wallet {
@@ -152,8 +135,7 @@ impl Wallet {
 		self.validate_arkoor_address(&destination).await
 			.context("address validation failed")?;
 
-		let negative_amount = - amount.to_signed().context("Amount out-of-range")?;
-
+		let negative_amount = -amount.to_signed().context("Amount out-of-range")?;
 		if amount < P2TR_DUST {
 			bail!("Sent amount must be at least {}", P2TR_DUST);
 		}
@@ -161,28 +143,20 @@ impl Wallet {
 		let change_pubkey = self.derive_store_next_keypair()
 			.context("Failed to create change keypair")?.0;
 
-		let mut movement = MovementGuard::new_movement(
-			self.movements.clone(),
-			self.subsystem_ids[&BarkSubsystem::Arkoor],
-			ArkoorMovement::Send.to_string(),
-		).await?;
-
-
 		let request = VtxoRequest { amount, policy: destination.policy().clone() };
 		let arkoor = self.create_checkpointed_arkoor(request.clone(), change_pubkey.public_key())
 			.await
 			.context("Failed to create checkpointed transactions")?;
 
-		movement.apply_update(
-			arkoor
-					.to_movement_update().context("Failed to create movement update")?
-					.intended_and_effective_balance(negative_amount)
-					.sent_to([MovementDestination {
-						destination: destination.to_string(),
-						amount: amount,
-					}])
+		let mut movement = self.movements.new_guarded_movement_with_update(
+			self.subsystem_ids[&BarkSubsystem::Arkoor],
+			ArkoorMovement::Send.to_string(),
+			OnDropStatus::Failed,
+			MovementUpdate::new()
+				.intended_and_effective_balance(negative_amount)
+				.consumed_vtxos(&arkoor.input)
+				.sent_to([MovementDestination::new(destination.to_string(), amount)])
 		).await?;
-
 
 		let req = protos::ArkoorPackage {
 			arkoors: arkoor.created.iter().map(|v| protos::ArkoorVtxo {
@@ -191,9 +165,6 @@ impl Wallet {
 			}).collect(),
 		};
 
-		// TODO: Figure out how to better handle this error.
-		// Technically the payment fails but our
-		//       funds are considered spent anyway? Maybe add the failure reason to the metadata?
 		#[allow(deprecated)]
 		if let Err(e) = srv.client.post_arkoor_package_mailbox(req).await {
 			error!("Failed to post the arkoor vtxo to the recipients mailbox: '{:#}'", e);
@@ -201,7 +172,8 @@ impl Wallet {
 		}
 		self.mark_vtxos_as_spent(&arkoor.input)?;
 		if let Some(change) = arkoor.change {
-			self.store_spendable_vtxos(&[change])?;
+			self.store_spendable_vtxos([&change])?;
+			movement.apply_update(MovementUpdate::new().produced_vtxo(change)).await?;
 		}
 		movement.finish(MovementStatus::Finished).await?;
 		Ok(arkoor.created)

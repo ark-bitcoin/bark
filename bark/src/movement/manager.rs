@@ -75,6 +75,28 @@ impl MovementManager {
 		).map_err(|e| MovementError::CreationError { e })
 	}
 
+	/// Creates a new [Movement] and returns a [MovementGuard] to manage it. The guard will call
+	/// [MovementManager::finish_movement] on drop unless [MovementGuard::finish] has already been
+	/// called.
+	///
+	/// See [MovementManager::new_movement] and [MovementGuard::new] for more information.
+	///
+	/// Parameters:
+	/// - subsystem_id: The ID of the subsystem that wishes to start a new movement.
+	/// - movement_kind: A descriptor for the type of movement being performed, e.g. "send",
+	///   "receive", "round".
+	/// - on_drop: Determines what status the movement will be set to when the guard is dropped.
+	pub async fn new_guarded_movement(
+		self: &Arc<Self>,
+		subsystem_id: SubsystemId,
+		movement_kind: String,
+		on_drop: OnDropStatus,
+	) -> anyhow::Result<MovementGuard, MovementError> {
+		Ok(MovementGuard::new(
+			self.new_movement(subsystem_id, movement_kind).await?, self.clone(), on_drop,
+		))
+	}
+
 	/// Similar to [MovementManager::new_movement] but it immediately calls
 	/// [MovementManager::update_movement] afterward.
 	///
@@ -96,6 +118,33 @@ impl MovementManager {
 		let id = self.new_movement(subsystem_id, movement_kind).await?;
 		self.update_movement(id, update).await?;
 		Ok(id)
+	}
+
+	/// Similar to [MovementManager::new_guarded_movement] but it immediately calls
+	/// [MovementManager::update_movement] after creating the [Movement].
+	///
+	/// Parameters:
+	/// - subsystem_id: The ID of the subsystem that wishes to start a new movement.
+	/// - movement_kind: A descriptor for the type of movement being performed, e.g. "send",
+	///   "receive", "round".
+	/// - on_drop: Determines what status the movement will be set to when the guard is dropped.
+	/// - update: Describes the initial state of the movement.
+	///
+	/// Errors:
+	/// - If the subsystem ID is not recognized.
+	/// - If a database error occurs.
+	pub async fn new_guarded_movement_with_update(
+		self: &Arc<Self>,
+		subsystem_id: SubsystemId,
+		movement_kind: String,
+		on_drop: OnDropStatus,
+		update: MovementUpdate,
+	) -> anyhow::Result<MovementGuard, MovementError> {
+		Ok(MovementGuard::new(
+			self.new_movement_with_update(subsystem_id, movement_kind, update).await?,
+			self.clone(),
+			on_drop,
+		))
 	}
 
 	/// Creates and marks a [Movement] as finished based on the given parameters. This is useful for
@@ -312,39 +361,18 @@ impl<'a> MovementGuard {
 	/// Parameters:
 	/// - id: The ID of the [Movement] to update.
 	/// - manager: A reference to the [MovementManager] so the guard can update the [Movement].
+	/// - on_drop: Determines what status the movement will be set to when the guard is dropped.
 	pub fn new(
 		id: MovementId,
 		manager: Arc<MovementManager>,
+		on_drop: OnDropStatus,
 	) -> Self {
 		Self {
 			id,
 			manager,
-			on_drop: OnDropStatus::Failed,
+			on_drop,
 			has_finished: false,
 		}
-	}
-
-	/// Constructs a [MovementGuard] and creates a new [Movement] for the guard to manage.
-	///
-	/// See [MovementManager::new_movement] for more information.
-	///
-	/// Parameters:
-	/// - manager: A reference to the [MovementManager] so the guard can update the [Movement].
-	/// - subsystem_id: The ID of the subsystem that wishes to start a new movement.
-	/// - movement_kind: A descriptor for the type of movement being performed, e.g. "send",
-	///   "receive", "round".
-	pub async fn new_movement(
-		manager: Arc<MovementManager>,
-		subsystem_id: SubsystemId,
-		movement_kind: String,
-	) -> anyhow::Result<Self, MovementError> {
-		let id = manager.new_movement(subsystem_id, movement_kind).await?;
-		Ok(Self {
-			id,
-			manager,
-			on_drop: OnDropStatus::Failed,
-			has_finished: false,
-		})
 	}
 
 	/// Gets the [MovementId] stored by this guard.
