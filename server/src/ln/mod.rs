@@ -40,6 +40,15 @@ impl Server {
 		user_nonces: Vec<musig::PublicNonce>,
 	) -> anyhow::Result<protos::LightningPayHtlcCosignResponse> {
 		let invoice_payment_hash = invoice.payment_hash();
+
+		// Bail early if this invoice was already paid to avoid setting up HTLCs just to have them revoked
+		// some time later.
+		if let Some(invoice) = self.db.get_lightning_invoice_by_payment_hash(&invoice_payment_hash).await? {
+			if invoice.preimage.is_some() {
+				return badarg!("invoice has already been paid");
+			}
+		}
+
 		if self.db.get_open_lightning_payment_attempt_by_payment_hash(&invoice_payment_hash).await?.is_some() {
 			return badarg!("payment already in progress for this invoice");
 		}
