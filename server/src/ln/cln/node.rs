@@ -32,6 +32,7 @@ pub struct ClnNodeMonitorConfig {
 	pub invoice_check_interval: Duration,
 	pub invoice_recheck_delay: Duration,
 	pub htlc_subscription_timeout: Duration,
+	pub invoice_expiry: Duration,
 	pub check_base_delay: Duration,
 	pub check_max_delay: Duration,
 }

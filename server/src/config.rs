@@ -373,6 +373,9 @@ pub struct Config {
 	/// generated invoice will be canceled if not settled yet.
 	#[serde(with = "serde_util::duration")]
 	pub htlc_subscription_timeout: Duration,
+	/// The duration after which a generated invoice will expire.
+	#[serde(with = "serde_util::duration")]
+	pub invoice_expiry: Duration,
 
 	/// Indicates whether the Ark server requires clients to either
 	/// provide a VTXO ownership proof, or a lightning receive token

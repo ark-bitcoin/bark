@@ -1468,6 +1468,33 @@ async fn server_should_release_hodl_invoice_when_subscription_is_canceled() {
 }
 
 #[tokio::test]
+async fn server_generated_invoice_has_configured_expiry() {
+	let ctx = TestContext::new("server/server_generated_invoice_has_configured_expiry").await;
+	let cfg_invoice_expiry = Duration::from_secs(5);
+
+	let lightning = ctx.new_lightning_setup("lightningd").await;
+
+	let srv = ctx.new_captaind_with_cfg("server", Some(&lightning.receiver), |cfg| {
+		// Set invoice expiry very short so invoice expires quickly
+		cfg.invoice_expiry = cfg_invoice_expiry;
+	}).await;
+	ctx.fund_captaind(&srv, btc(10)).await;
+
+	// Start a bark and create a VTXO to be able to board
+	let bark = Arc::new(ctx.new_bark_with_funds("bark-1", &srv, btc(3)).await);
+	bark.board_and_confirm_and_register(&ctx, btc(2)).await;
+
+	let invoice_info = bark.bolt11_invoice(btc(1)).await;
+
+	// Wait for the invoice to expire
+	tokio::time::sleep(cfg_invoice_expiry + Duration::from_secs(1)).await;
+
+	// Sender rejects expired invoice, confirming expiry was set correctly in the invoice
+	let err = lightning.sender.try_pay_bolt11(invoice_info.invoice).await.unwrap_err();
+	assert!(err.to_string().contains("Invoice expired"), "err: {err}");
+}
+
+#[tokio::test]
 async fn server_should_refuse_claim_twice() {
 	let ctx = TestContext::new("server/server_should_refuse_claim_twice").await;
 
