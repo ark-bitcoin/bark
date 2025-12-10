@@ -175,7 +175,7 @@ impl Wallet {
 			self.store_spendable_vtxos([&change])?;
 			movement.apply_update(MovementUpdate::new().produced_vtxo(change)).await?;
 		}
-		movement.finish(MovementStatus::Finished).await?;
+		movement.finish().await?;
 		Ok(arkoor.created)
 	}
 }

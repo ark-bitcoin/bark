@@ -402,20 +402,15 @@ impl<'a> MovementGuard {
 		self.manager.update_movement(self.id, update).await
 	}
 
-	/// Finalizes a movement, setting it to the given [MovementStatus]. If the [MovementGuard] is
+	/// Finalizes a movement, setting it to [MovementStatus::Finished]. If the [MovementGuard] is
 	/// dropped after calling this function, no further changes will be made to the [Movement].
 	///
 	/// See [MovementManager::finish_movement] for more information.
-	///
-	/// Parameters:
-	/// - status: The final [MovementStatus] to set. Must not be [MovementStatus::Pending].
 	pub async fn finish(
 		&mut self,
-		status: MovementStatus,
 	) -> anyhow::Result<(), MovementError> {
-		self.manager.finish_movement(self.id, status).await?;
-		self.has_finished = true;
-		Ok(())
+		self.stop();
+		self.manager.finish_movement(self.id, MovementStatus::Finished).await
 	}
 
 	/// Prevents the guard from making further changes to the movement after being dropped. Manual
