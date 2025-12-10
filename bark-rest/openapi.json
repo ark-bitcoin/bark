@@ -3353,14 +3353,14 @@
       "NotFoundError": {
         "type": "object",
         "required": [
-          "resource",
+          "resources",
           "message"
         ],
         "properties": {
           "message": {
             "type": "string"
           },
-          "resource": {
+          "resources": {
             "type": "array",
             "items": {
               "type": "string"
