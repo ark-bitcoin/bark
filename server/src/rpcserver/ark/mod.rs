@@ -221,6 +221,7 @@ impl rpc::server::ArkService for Server {
 		for arkoor in req.arkoors {
 			let pubkey = PublicKey::from_bytes(&arkoor.pubkey)?;
 			let vtxo = Vtxo::from_bytes(&arkoor.vtxo)?;
+			#[allow(deprecated)]
 			self.db.store_arkoor_by_vtxo_pubkey(pubkey, &arkoor_package_id, vtxo).await.to_status()?;
 		}
 
@@ -246,6 +247,7 @@ impl rpc::server::ArkService for Server {
 		let pubkeys = req.pubkeys.iter()
 			.map(PublicKey::from_bytes)
 			.collect::<Result<Vec<_>, _>>()?;
+		#[allow(deprecated)]
 		let vtxos_by_package_id = self.db.pull_oors(&pubkeys).await.to_status()?;
 
 		let response = protos::ArkoorVtxosResponse {

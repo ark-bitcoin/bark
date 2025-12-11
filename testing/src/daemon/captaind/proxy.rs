@@ -45,10 +45,12 @@ pub trait ArkRpcProxy: Send + Sync + Clone + 'static {
 	}
 
 	async fn post_arkoor_package_mailbox(&self, upstream: &mut ArkClient, req: protos::ArkoorPackage) -> Result<protos::Empty, tonic::Status> {
+		#[allow(deprecated)]
 		Ok(upstream.post_arkoor_package_mailbox(req).await?.into_inner())
 	}
 
 	async fn empty_arkoor_mailbox(&self, upstream: &mut ArkClient, req: protos::ArkoorVtxosRequest) -> Result<protos::ArkoorVtxosResponse, tonic::Status> {
+		#[allow(deprecated)]
 		Ok(upstream.empty_arkoor_mailbox(req).await?.into_inner())
 	}
 

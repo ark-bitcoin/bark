@@ -820,6 +820,7 @@ async fn reject_arkoor_with_bad_signature() {
 		async fn empty_arkoor_mailbox(
 			&self, upstream: &mut ArkClient, req: protos::ArkoorVtxosRequest,
 		) -> Result<protos::ArkoorVtxosResponse, tonic::Status> {
+			#[allow(deprecated)]
 			let response = upstream.empty_arkoor_mailbox(req).await?.into_inner();
 			let mut vtxo = Vtxo::deserialize(&response.packages[0].vtxos[0]).unwrap();
 			vtxo.invalidate_final_sig();
