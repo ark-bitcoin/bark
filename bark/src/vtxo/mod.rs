@@ -1,5 +1,6 @@
 
 mod selection;
+mod signing;
 mod state;
 
 pub use self::selection::{FilterVtxos, RefreshStrategy, VtxoFilter};
