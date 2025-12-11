@@ -148,12 +148,12 @@ pub enum LightningHtlcSubscriptionStatus {
 	/// The invoice preimage was revealed and the invoice was settled
 	#[postgres(name = "settled")]
 	Settled,
-	/// The subscription was cancelled
+	/// The subscription was canceled
 	///
 	/// Can be set either manually by the user or automatically by the
 	/// server after `htlc_subscription_timeout`
-	#[postgres(name = "cancelled")]
-	Cancelled,
+	#[postgres(name = "canceled")]
+	Canceled,
 }
 
 impl fmt::Display for LightningHtlcSubscriptionStatus {
@@ -163,7 +163,7 @@ impl fmt::Display for LightningHtlcSubscriptionStatus {
 			LightningHtlcSubscriptionStatus::Accepted => f.write_str("accepted"),
 			LightningHtlcSubscriptionStatus::HtlcsReady => f.write_str("htlcs-ready"),
 			LightningHtlcSubscriptionStatus::Settled => f.write_str("settled"),
-			LightningHtlcSubscriptionStatus::Cancelled => f.write_str("cancelled"),
+			LightningHtlcSubscriptionStatus::Canceled => f.write_str("canceled"),
 		}
 	}
 }
@@ -175,7 +175,7 @@ impl From<LightningHtlcSubscriptionStatus> for protos::LightningReceiveStatus {
 			LightningHtlcSubscriptionStatus::Accepted => Self::Accepted,
 			LightningHtlcSubscriptionStatus::HtlcsReady => Self::HtlcsReady,
 			LightningHtlcSubscriptionStatus::Settled => Self::Settled,
-			LightningHtlcSubscriptionStatus::Cancelled => Self::Cancelled,
+			LightningHtlcSubscriptionStatus::Canceled => Self::Canceled,
 		}
 	}
 }

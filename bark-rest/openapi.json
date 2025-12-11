@@ -3323,7 +3323,7 @@
           "pending",
           "successful",
           "failed",
-          "cancelled"
+          "canceled"
         ]
       },
       "MovementSubsystem": {
@@ -3462,7 +3462,7 @@
           "trusted_spendable_sat": {
             "type": "integer",
             "format": "int64",
-            "description": "Get sum of trusted_pending and confirmed coins.\n\nThis is the balance you can spend right now that shouldn't get cancelled via another party\ndouble spending it.",
+            "description": "Get sum of trusted_pending and confirmed coins.\n\nThis is the balance you can spend right now that shouldn't get canceled via another party\ndouble spending it.",
             "minimum": 0
           },
           "untrusted_pending_sat": {

@@ -326,8 +326,8 @@ impl MovementManager {
 /// See [MovementGuard::new_movement] for more information.
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum OnDropStatus {
-	/// Marks the [Movement] as [MovementStatus::Cancelled].
-	Cancelled,
+	/// Marks the [Movement] as [MovementStatus::Canceled].
+	Canceled,
 	/// Marks the [Movement] as [MovementStatus::Failed].
 	Failed,
 }
@@ -335,7 +335,7 @@ pub enum OnDropStatus {
 impl From<OnDropStatus> for MovementStatus {
 	fn from(status: OnDropStatus) -> Self {
 		match status {
-			OnDropStatus::Cancelled => MovementStatus::Cancelled,
+			OnDropStatus::Canceled => MovementStatus::Canceled,
 			OnDropStatus::Failed => MovementStatus::Failed,
 		}
 	}
@@ -402,10 +402,10 @@ impl<'a> MovementGuard {
 		self.manager.update_movement(self.id, update).await
 	}
 
-	/// Same as [MovementGuard::success] but sets [Movement::status] to [MovementStatus::Cancelled].
+	/// Same as [MovementGuard::success] but sets [Movement::status] to [MovementStatus::Canceled].
 	pub async fn cancel(&mut self) -> anyhow::Result<(), MovementError> {
 		self.stop();
-		self.manager.finish_movement(self.id, MovementStatus::Cancelled).await
+		self.manager.finish_movement(self.id, MovementStatus::Canceled).await
 	}
 
 	/// Same as [MovementGuard::success] but sets [Movement::status] to [MovementStatus::Failed].

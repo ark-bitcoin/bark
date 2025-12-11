@@ -410,7 +410,7 @@ impl ClnNodeMonitorProcess {
 	/// For each subscription, verifies if incoming HTLCs have been accepted.
 	/// - If so, it updates the status to accepted.
 	/// - After a delay, it cancels the subscription on the plugin and updates
-	/// the status to cancelled.
+	/// the status to canceled.
 	async fn process_htlc_subscriptions(&mut self) -> anyhow::Result<()> {
 		let tip = self.rpc.getinfo(cln_rpc::GetinfoRequest {}).await?
 			.into_inner().blockheight;
@@ -487,7 +487,7 @@ impl ClnNodeMonitorProcess {
 
 					self.db.store_lightning_htlc_subscription_status(
 						htlc_subscription.id,
-						LightningHtlcSubscriptionStatus::Cancelled,
+						LightningHtlcSubscriptionStatus::Canceled,
 						None,
 					).await?;
 				}
@@ -506,7 +506,7 @@ impl ClnNodeMonitorProcess {
 
 				self.db.store_lightning_htlc_subscription_status(
 					htlc_subscription.id,
-					LightningHtlcSubscriptionStatus::Cancelled,
+					LightningHtlcSubscriptionStatus::Canceled,
 					None,
 				).await?;
 

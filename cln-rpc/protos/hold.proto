@@ -13,7 +13,7 @@ service Hold {
   rpc Settle (SettleRequest) returns (SettleResponse) {}
   rpc Cancel (CancelRequest) returns (CancelResponse) {}
 
-  // Cleans cancelled invoices
+  // Cleans canceled invoices
   rpc Clean (CleanRequest) returns (CleanResponse) {}
 
   rpc Track (TrackRequest) returns (stream TrackResponse) {}
@@ -84,7 +84,7 @@ enum InvoiceState {
   UNPAID = 0;
   ACCEPTED = 1;
   PAID = 2;
-  CANCELLED = 3;
+  CANCELED = 3;
 }
 
 message Htlc {

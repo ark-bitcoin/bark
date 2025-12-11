@@ -609,9 +609,9 @@ impl Db {
 		").await?;
 
 		let status_settled = LightningHtlcSubscriptionStatus::Settled;
-		let status_cancelled = LightningHtlcSubscriptionStatus::Cancelled;
+		let status_canceled = LightningHtlcSubscriptionStatus::Canceled;
 		let rows = conn.query(
-			&stmt, &[&status_settled, &status_cancelled, &node_id]
+			&stmt, &[&status_settled, &status_canceled, &node_id]
 		).await?;
 
 		Ok(rows.iter().map(TryInto::try_into).collect::<Result<Vec<_>, _>>()?)

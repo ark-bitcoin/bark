@@ -262,9 +262,9 @@ pub enum MovementStatus {
 	/// The [Movement] failed to complete due to an error. Note; this does not mean that VTXOs or
 	/// user funds didn't change, old VTXOs may be consumed and new ones produced.
 	Failed,
-	/// A [Movement] was cancelled, either by the protocol (e.g., lightning payments) or by the
+	/// A [Movement] was canceled, either by the protocol (e.g., lightning payments) or by the
 	/// user.
-	Cancelled,
+	Canceled,
 }
 
 impl From<bark::movement::MovementStatus> for MovementStatus {
@@ -273,7 +273,7 @@ impl From<bark::movement::MovementStatus> for MovementStatus {
 			bark::movement::MovementStatus::Pending => Self::Pending,
 			bark::movement::MovementStatus::Successful => Self::Successful,
 			bark::movement::MovementStatus::Failed => Self::Failed,
-			bark::movement::MovementStatus::Cancelled => Self::Cancelled,
+			bark::movement::MovementStatus::Canceled => Self::Canceled,
 		}
 	}
 }

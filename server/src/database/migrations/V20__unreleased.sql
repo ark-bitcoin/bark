@@ -4,6 +4,7 @@
 
 ALTER TABLE vtxo_pool ADD COLUMN vtxo BYTEA NOT NULL;
 ALTER TABLE vtxo_pool DROP COLUMN depth;
+ALTER TYPE lightning_htlc_subscription_status RENAME VALUE 'cancelled' TO 'canceled';
 
 CREATE OR REPLACE FUNCTION vtxo_update_trigger()
   RETURNS TRIGGER AS $$
