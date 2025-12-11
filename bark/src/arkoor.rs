@@ -194,6 +194,7 @@ impl Wallet {
 		// TODO: Figure out how to better handle this error.
 		// Technically the payment fails but our
 		//       funds are considered spent anyway? Maybe add the failure reason to the metadata?
+		#[allow(deprecated)]
 		if let Err(e) = srv.client.post_arkoor_package_mailbox(req).await {
 			error!("Failed to post the arkoor vtxo to the recipients mailbox: '{:#}'", e);
 			//NB we will continue to at least not lose our own change

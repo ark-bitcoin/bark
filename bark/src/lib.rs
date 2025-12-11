@@ -1519,6 +1519,8 @@ impl Wallet {
 			let req = protos::ArkoorVtxosRequest {
 				pubkeys: pubkeys.iter().map(|pk| pk.serialize().to_vec()).collect(),
 			};
+
+			#[allow(deprecated)]
 			let packages = srv.client.empty_arkoor_mailbox(req).await
 				.context("error fetching oors")?.into_inner().packages;
 			debug!("Ark server has {} arkoor packages for us", packages.len());
