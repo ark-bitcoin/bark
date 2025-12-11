@@ -14,7 +14,7 @@ use tokio_stream::StreamExt;
 
 use ark::{ProtocolEncoding, Vtxo, VtxoPolicy, VtxoRequest};
 use ark::rounds::RoundEvent;
-use ark::vtxo::PubkeyVtxoPolicy;
+use ark::vtxo::policy::PubkeyVtxoPolicy;
 use bark::BarkNetwork;
 use bark::persist::StoredRoundState;
 use bark::round::RoundParticipation;
