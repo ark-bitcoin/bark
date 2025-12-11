@@ -92,10 +92,7 @@ pub enum ExitError {
 	},
 
 	#[error("Invalid Locktime ({tip}): {error}")]
-	InvalidLocktime {
-		tip: BlockHeight,
-		error: String
-	},
+	InvalidLocktime { tip: BlockHeight, error: String },
 
 	#[error("Invalid Wallet State: {error}")]
 	InvalidWalletState { error: String },

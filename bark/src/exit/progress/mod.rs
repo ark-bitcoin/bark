@@ -11,10 +11,10 @@ use ark::Vtxo;
 use bitcoin_ext::{BlockHeight, BlockRef, TxStatus};
 use bitcoin_ext::cpfp::{CpfpError, MakeCpfpFees};
 
-use crate::chain::ChainSource;
 use crate::exit::models::{ExitError, ExitState, ExitTx, ExitTxOrigin, ExitTxStatus};
 use crate::exit::transaction_manager::ExitTransactionManager;
 use crate::onchain::ExitUnilaterally;
+use crate::Wallet;
 
 /// A trait which allows [ExitState] objects to transition from their current state to a new state
 /// depending on the contents of the users wallet, the mempool or the blockchain. E.g. Calling
@@ -85,7 +85,7 @@ impl From<ExitError> for ExitProgressError {
 pub(crate) struct ProgressContext<'a> {
 	pub vtxo: &'a Vtxo,
 	pub exit_txids: &'a Vec<Txid>,
-	pub chain_source: &'a ChainSource,
+	pub wallet: &'a Wallet,
 	pub fee_rate: FeeRate,
 	pub tx_manager: &'a mut ExitTransactionManager,
 }
@@ -149,7 +149,7 @@ impl<'a> ProgressContext<'a> {
 	}
 
 	pub async fn get_block_ref(&self, height: BlockHeight) -> anyhow::Result<BlockRef, ExitError> {
-		self.chain_source.block_ref(height).await
+		self.wallet.chain.block_ref(height).await
 			.map_err(|e| ExitError::BlockRetrievalFailure { height, error: e.to_string() })
 	}
 
@@ -234,7 +234,7 @@ impl<'a> ProgressContext<'a> {
 	}
 
 	pub async fn tip_height(&self) -> anyhow::Result<u32, ExitError> {
-		self.chain_source.tip().await
+		self.wallet.chain.tip().await
 			.map_err(|e| ExitError::TipRetrievalFailure { error: e.to_string() })
 	}
 }

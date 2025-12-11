@@ -135,7 +135,7 @@ impl DaemonProcess {
 			warn!("An error occurred while syncing exits: {e}");
 		}
 
-		if let Err(e) = exit_lock.progress_exits(&mut *onchain, None).await {
+		if let Err(e) = exit_lock.progress_exits(&self.wallet, &mut *onchain, None).await {
 			warn!("An error occurred while progressing exits: {e}");
 		}
 	}

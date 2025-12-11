@@ -1315,7 +1315,7 @@ impl Wallet {
 		&self,
 		onchain: &mut dyn ExitUnilaterally,
 	) -> anyhow::Result<()> {
-		self.exit.write().await.sync(onchain).await?;
+		self.exit.write().await.sync(&self, onchain).await?;
 		Ok(())
 	}
 

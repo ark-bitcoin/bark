@@ -219,7 +219,7 @@ pub async fn exit_progress(
 	let fee_rate = body.fee_rate.map(FeeRate::from_sat_per_kvb_ceil);
 
 	let mut exit = state.wallet.exit.write().await;
-	let result = exit.progress_exits(&mut *onchain_lock, fee_rate).await
+	let result = exit.progress_exits(&state.wallet, &mut *onchain_lock, fee_rate).await
 		.context("error making progress on exit process")?;
 
 	let done = !exit.has_pending_exits();

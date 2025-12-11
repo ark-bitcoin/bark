@@ -85,18 +85,21 @@
 //! # async fn main() -> anyhow::Result<()> {
 //! let (mut bark_wallet, mut onchain_wallet) = get_wallets().await;
 //!
+//! // Get lock on exit system
+//! let mut exit_lock = bark_wallet.exit.write().await;
+//!
 //! // Mark all VTXOs for exit.
-//! bark_wallet.exit.write().await.start_exit_for_entire_wallet().await?;
+//! exit_lock.start_exit_for_entire_wallet().await?;
 //!
 //! // Transactions will be broadcast and require confirmations so keep periodically calling this.
-//! bark_wallet.exit.write().await.sync_no_progress(&onchain_wallet).await?;
-//! bark_wallet.exit.write().await.progress_exits(&mut onchain_wallet, None).await?;
+//! exit_lock.sync_no_progress(&onchain_wallet).await?;
+//! exit_lock.progress_exits(&bark_wallet, &mut onchain_wallet, None).await?;
 //!
 //! // Once all VTXOs are claimable, construct a PSBT to drain them.
 //! let drain_to = bitcoin::Address::from_str("bc1p...")?.assume_checked();
-//! let exit = bark_wallet.exit.read().await;
-//! let drain_psbt = exit.drain_exits(
-//!   &exit.list_claimable(),
+//! let claimable_outputs = exit_lock.list_claimable();
+//! let drain_psbt = exit_lock.drain_exits(
+//!   &claimable_outputs,
 //!   &bark_wallet,
 //!   drain_to,
 //!   None,
@@ -394,6 +397,7 @@ impl Exit {
 	/// The exit status of each VTXO being exited which has also not yet been spent
 	pub async fn progress_exits(
 		&mut self,
+		wallet: &Wallet,
 		onchain: &mut dyn ExitUnilaterally,
 		fee_rate_override: Option<FeeRate>,
 	) -> anyhow::Result<Option<Vec<ExitProgressStatus>>> {
@@ -406,9 +410,8 @@ impl Exit {
 
 			info!("Progressing exit for VTXO {}", ev.id());
 			let error = match ev.progress(
-				&self.chain_source,
+				wallet,
 				&mut self.tx_manager,
-				&*self.persister,
 				onchain,
 				fee_rate_override,
 				true,
@@ -442,6 +445,7 @@ impl Exit {
 	/// for network updates will be progressed.
 	pub async fn sync(
 		&mut self,
+		wallet: &Wallet,
 		onchain: &mut dyn ExitUnilaterally,
 	) -> anyhow::Result<()> {
 		self.sync_no_progress(onchain).await?;
@@ -449,7 +453,7 @@ impl Exit {
 			// If the exit is waiting for new blocks, we should trigger an update
 			if exit.state().requires_network_update() {
 				if let Err(e) = exit.progress(
-					&self.chain_source, &mut self.tx_manager, &*self.persister, onchain, None, false,
+					wallet, &mut self.tx_manager, onchain, None, false,
 				).await {
 					error!("Error syncing exit for VTXO {}: {}", exit.id(), e);
 				}

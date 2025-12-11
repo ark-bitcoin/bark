@@ -158,7 +158,11 @@ pub async fn list_exits(
 	let exit = wallet.exit.get_mut();
 	let mut statuses = Vec::with_capacity(exit.get_exit_vtxos().len());
 	for e in exit.get_exit_vtxos() {
-		statuses.push(exit.get_exit_status(e.id(), args.history, args.transactions).await?.unwrap());
+		statuses.push(exit.get_exit_status(
+			e.id(),
+			args.history,
+			args.transactions,
+		).await?.unwrap());
 	}
 
 	let statuses = statuses.into_iter()
@@ -239,9 +243,9 @@ async fn progress_once(
 	info!("Wallet sync completed");
 	info!("Start progressing exit");
 
-	let exit = wallet.exit.get_mut();
+	let mut exit = wallet.exit.write().await;
 	exit.sync_no_progress(onchain).await.context("unable to sync exit process")?;
-	let result = exit.progress_exits(onchain, fee_rate).await
+	let result = exit.progress_exits(wallet, onchain, fee_rate).await
 		.context("error making progress on exit process")?;
 
 	let done = !exit.has_pending_exits();
