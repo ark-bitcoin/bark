@@ -50,7 +50,7 @@ impl FromStr for VtxoPolicyKind {
 			"checkpoint" => Self::Checkpoint,
 			"server-htlc-send" => Self::ServerHtlcSend,
 			"server-htlc-receive" => Self::ServerHtlcRecv,
-			_ => return Err(format!("unknown VtxoPolicyType: {}", s)),
+			_ => return Err(format!("unknown VtxoPolicyKind: {}", s)),
 		})
 	}
 }
@@ -67,7 +67,7 @@ impl<'de> serde::Deserialize<'de> for VtxoPolicyKind {
 		impl<'de> serde::de::Visitor<'de> for Visitor {
 			type Value = VtxoPolicyKind;
 			fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-				write!(f, "a VtxoPolicyType")
+				write!(f, "a VtxoPolicyKind")
 			}
 			fn visit_str<E: serde::de::Error>(self, v: &str) -> Result<Self::Value, E> {
 				VtxoPolicyKind::from_str(v).map_err(serde::de::Error::custom)
@@ -350,7 +350,7 @@ impl VtxoPolicy {
 		}
 	}
 
-	pub(crate) fn taproot(
+	pub fn taproot(
 		&self,
 		server_pubkey: PublicKey,
 		exit_delta: BlockDelta,
