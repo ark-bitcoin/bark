@@ -31,7 +31,6 @@ use crate::telemetry;
 pub struct ClnNodeMonitorConfig {
 	pub invoice_check_interval: Duration,
 	pub invoice_recheck_delay: Duration,
-	pub htlc_subscription_timeout: Duration,
 	pub invoice_expiry: Duration,
 	pub receive_htlc_forward_timeout: Duration,
 	pub check_base_delay: Duration,

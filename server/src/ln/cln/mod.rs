@@ -98,7 +98,6 @@ impl ClnManager {
 		let node_monitor_config = ClnNodeMonitorConfig {
 			invoice_check_interval: config.invoice_check_interval,
 			invoice_recheck_delay: config.invoice_recheck_delay,
-			htlc_subscription_timeout: config.htlc_subscription_timeout,
 			invoice_expiry: config.invoice_expiry,
 			receive_htlc_forward_timeout: config.receive_htlc_forward_timeout,
 			check_base_delay: config.invoice_check_base_delay,
