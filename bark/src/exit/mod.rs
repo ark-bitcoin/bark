@@ -131,12 +131,13 @@ use std::sync::Arc;
 
 use anyhow::Context;
 use bitcoin::{
-	sighash, Address, Amount, FeeRate, Psbt, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Witness,
+	Address, Amount, FeeRate, Psbt, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Witness, sighash
 };
 use bitcoin::consensus::Params;
 use log::{error, info, trace, warn};
 
-use ark::{Vtxo, VtxoId, SECP};
+use ark::{Vtxo, VtxoId};
+use ark::vtxo::policy::signing::VtxoSigner;
 use bitcoin_ext::{BlockHeight, P2TR_DUST};
 
 use crate::Wallet;
@@ -516,16 +517,10 @@ impl Exit {
 			if let Some(vtxo) = vtxo {
 				let exit_vtxo = *claimable.get(&vtxo.id()).context("vtxo is not claimable yet")?;
 
-				let keypair = wallet.get_vtxo_key(&vtxo)?;
+				let witness = wallet.sign_input(&vtxo, i, &mut shc, &prevouts)
+					.map_err(|e| ExitError::ClaimSigningError { error: e.to_string() })?;
 
-				input.maybe_sign_exit_claim_input(
-					&SECP,
-					&mut shc,
-					&prevouts,
-					i,
-					&keypair
-				)?;
-
+				input.final_script_witness = Some(witness);
 				spent.push(exit_vtxo);
 			}
 		}
@@ -569,11 +564,16 @@ impl Exit {
 				if !matches!(input.state(), ExitState::Claimable(..)) {
 					return Err(ExitError::VtxoNotClaimable { vtxo: input.id() });
 				}
+
 				output_amount += vtxo.amount();
+
+				let clause = wallet.find_signable_clause(vtxo)
+					.ok_or(ExitError::ClaimMissingSignableClause { vtxo: vtxo.id() })?;
+
 				tx_ins.push(TxIn {
 					previous_output: vtxo.point(),
 					script_sig: ScriptBuf::default(),
-					sequence: Sequence::from_height(vtxo.exit_delta()),
+					sequence: clause.sequence().unwrap_or(Sequence::ZERO),
 					witness: Witness::new(),
 				});
 			}

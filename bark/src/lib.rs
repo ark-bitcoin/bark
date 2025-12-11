@@ -323,8 +323,8 @@ use tokio::sync::RwLock;
 use ark::{ArkInfo, ProtocolEncoding, Vtxo, VtxoId, VtxoPolicy, VtxoRequest};
 use ark::address::VtxoDelivery;
 use ark::board::{BoardBuilder, BOARD_FUNDING_TX_VTXO_VOUT};
-use ark::vtxo::VtxoRef;
-use ark::vtxo::policy::PubkeyVtxoPolicy;
+use ark::vtxo::{PubkeyVtxoPolicy, VtxoRef};
+use ark::vtxo::policy::signing::VtxoSigner;
 use bitcoin_ext::{BlockHeight, P2TR_DUST, TxStatus};
 use server_rpc::{self as rpc, protos, ServerConnection};
 
@@ -726,7 +726,10 @@ impl Wallet {
 	/// * `Err(anyhow::Error)` - If the corresponding public key doesn't exist
 	///   in the database or a database error occurred.
 	pub fn get_vtxo_key(&self, vtxo: &Vtxo) -> anyhow::Result<Keypair> {
-		let idx = self.db.get_public_key_idx(&vtxo.user_pubkey())?
+		let pubkey = self.find_signable_clause(vtxo)
+			.context("VTXO is not signable by wallet")?
+			.pubkey();
+		let idx = self.db.get_public_key_idx(&pubkey)?
 			.context("VTXO key not found")?;
 		Ok(self.seed.derive_vtxo_keypair(idx))
 	}
@@ -1511,7 +1514,9 @@ impl Wallet {
 				return Ok(true);
 			}
 		}
-		Ok(!self.db.get_public_key_idx(&vtxo.user_pubkey())?.is_some())
+
+		let my_clause = self.find_signable_clause(vtxo);
+		Ok(!my_clause.is_some())
 	}
 
 	pub async fn sync_oors(&self) -> anyhow::Result<()> {

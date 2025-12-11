@@ -1,12 +1,12 @@
+use ark::vtxo::policy::signing::VtxoSigner;
 use log::{debug, error, info, trace, warn};
 use tonic::async_trait;
 
-use bitcoin_ext::{TxStatus, P2TR_DUST};
+use bitcoin_ext::{BlockDelta, P2TR_DUST, TxStatus};
 use crate::exit::models::{
 	ExitError, ExitAwaitingDeltaState, ExitProcessingState, ExitClaimInProgressState, ExitClaimableState,
 	ExitClaimedState, ExitState, ExitStartState, ExitTx, ExitTxOrigin, ExitTxStatus,
 };
-
 use crate::exit::progress::{ExitProgressError, ExitStateProgress, ProgressContext};
 use crate::exit::progress::util::{count_broadcast, count_confirmed, estimate_exit_cost};
 use crate::onchain::ExitUnilaterally;
@@ -105,7 +105,10 @@ impl ExitStateProgress for ExitProcessingState {
 				.max_by(|a, b| a.height.cmp(&b.height))
 				.unwrap();
 
-			let wait_delta = ctx.vtxo.exit_delta();
+			let clause = ctx.wallet.find_signable_clause(ctx.vtxo)
+				.ok_or_else(|| ExitError::ClaimMissingSignableClause { vtxo: ctx.vtxo.id() })?;
+
+			let wait_delta = clause.sequence().map_or(0, |csv| csv.0) as BlockDelta;
 			return Ok(ExitState::new_awaiting_delta(tip, *conf_block, wait_delta));
 		}
 		if now_confirmed != prev_confirmed {

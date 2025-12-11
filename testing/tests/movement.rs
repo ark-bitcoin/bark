@@ -2,9 +2,8 @@ use std::collections::HashSet;
 use std::str::FromStr;
 use std::sync::Arc;
 
-use ark::VtxoId;
+use ark::{VtxoId, VtxoPolicy};
 use ark::lightning::{Invoice, PaymentHash};
-use ark::vtxo::exit_taproot;
 use bark_json::cli::{MovementDestination, MovementStatus, PaymentMethod};
 use bitcoin::{Address, Amount, OutPoint, Txid};
 use bitcoin::params::Params;
@@ -140,7 +139,9 @@ async fn exit_start() {
 	assert_eq!(movement.sent_to.first().unwrap(), &MovementDestination {
 		destination: PaymentMethod::Bitcoin({
 			let v = vtxos.first().unwrap();
-			let exit_spk = exit_taproot(v.user_pubkey, v.server_pubkey, v.exit_delta).script_pubkey();
+			let exit_spk = VtxoPolicy::new_pubkey(v.user_pubkey)
+				.taproot(v.server_pubkey, v.exit_delta, v.expiry_height)
+				.script_pubkey();
 			Address::from_script(&exit_spk, Params::REGTEST).unwrap().to_string()
 		}),
 		amount: sat(100_000),

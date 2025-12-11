@@ -84,9 +84,9 @@ use bitcoin::taproot::LeafVersion;
 
 use bitcoin_ext::{fee, BlockDelta, BlockHeight, TaprootSpendInfoExt};
 
-use crate::{musig, scripts, SECP};
+use crate::{musig, scripts};
 use crate::encode::{ProtocolDecodingError, ProtocolEncoding, ReadExt, WriteExt};
-use crate::lightning::{PaymentHash};
+use crate::lightning::PaymentHash;
 use crate::tree::signed::{cosign_taproot, leaf_cosign_taproot, unlock_clause, UnlockHash, UnlockPreimage};
 
 /// The total signed tx weight of a exit tx.
@@ -216,44 +216,6 @@ pub(crate) fn exit_clause(
 ) -> ScriptBuf {
 	scripts::delayed_sign(exit_delta, user_pubkey.x_only_public_key().0)
 }
-
-/// Returns taproot spend info for a regular vtxo exit output.
-pub fn exit_taproot(
-	user_pubkey: PublicKey,
-	server_pubkey: PublicKey,
-	exit_delta: BlockDelta,
-) -> taproot::TaprootSpendInfo {
-	let combined_pk = musig::combine_keys([user_pubkey, server_pubkey]);
-	taproot::TaprootBuilder::new()
-		.add_leaf(0, exit_clause(user_pubkey, exit_delta)).unwrap()
-		.finalize(&SECP, combined_pk).unwrap()
-}
-
-/// Returns the clause which allows the server to sweep funds after expiry
-pub fn expiry_clause(
-	server_pubkey: PublicKey,
-	expiry_height: BlockHeight,
-) -> ScriptBuf {
-	let pk = server_pubkey.x_only_public_key().0;
-	scripts::timelock_sign(expiry_height, pk)
-}
-
-/// The Taproot spend info for the checkpoint policy
-///
-/// user_pubkey: The public key of the user
-/// server_pubkey: The public key of the serve
-/// expiry_height; The height at which the checkpoint will expire
-pub fn checkpoint_taproot(
-	user_pubkey: PublicKey,
-	server_pubkey: PublicKey,
-	expiry_height: BlockHeight,
-) -> taproot::TaprootSpendInfo {
-	let combined_pk = musig::combine_keys([user_pubkey, server_pubkey]);
-	taproot::TaprootBuilder::new()
-		.add_leaf(0, expiry_clause(server_pubkey, expiry_height)).unwrap()
-		.finalize(&SECP, combined_pk).unwrap()
-}
-
 
 /// Create an exit tx.
 ///
