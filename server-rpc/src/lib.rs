@@ -36,12 +36,19 @@ pub use convert::{ConvertError, TryFromBytes};
 
 pub mod client;
 pub mod protos {
+	pub mod core {
+		tonic::include_proto!("core");
+	}
+	pub use core::*;
 	pub mod bark_server {
 		tonic::include_proto!("bark_server");
 	}
 	pub use bark_server::*;
 	pub mod intman {
 		tonic::include_proto!("intman");
+	}
+	pub mod mailbox_server {
+		tonic::include_proto!("mailbox_server");
 	}
 }
 
@@ -68,7 +75,13 @@ pub mod server {
 	pub use crate::protos::bark_server::lightning_admin_service_server::{LightningAdminService, LightningAdminServiceServer};
 	pub use crate::protos::bark_server::sweep_admin_service_server::{SweepAdminService, SweepAdminServiceServer};
 	pub use crate::protos::intman::integration_service_server::{IntegrationService, IntegrationServiceServer};
+	pub use crate::protos::mailbox_server::mailbox_service_server::{MailboxService, MailboxServiceServer};
 }
+
+pub mod mailbox {
+	pub use crate::protos::mailbox_server::mailbox_service_client::MailboxServiceClient;
+}
+
 
 use std::str::FromStr;
 

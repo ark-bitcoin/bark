@@ -31,6 +31,9 @@ pub struct ArkInfo {
 	/// The Ark server pubkey
 	#[cfg_attr(feature = "utoipa", schema(value_type = String))]
 	pub server_pubkey: PublicKey,
+	/// The pubkey used for blinding unified mailbox IDs
+	#[cfg_attr(feature = "utoipa", schema(value_type = String))]
+	pub mailbox_pubkey: PublicKey,
 	/// The interval between each round
 	#[serde(with = "serde_utils::duration")]
 	#[cfg_attr(feature = "utoipa", schema(value_type = String))]
@@ -71,6 +74,7 @@ impl<T: Borrow<ark::ArkInfo>> From<T> for ArkInfo {
 	    ArkInfo {
 			network: v.network,
 			server_pubkey: v.server_pubkey,
+			mailbox_pubkey: v.mailbox_pubkey,
 			round_interval: v.round_interval,
 			nb_round_nonces: v.nb_round_nonces,
 			vtxo_exit_delta: v.vtxo_exit_delta,
@@ -538,6 +542,7 @@ mod test {
 			ark::ArkInfo {
 				network: j.network,
 				server_pubkey: j.server_pubkey,
+				mailbox_pubkey: j.mailbox_pubkey,
 				round_interval: j.round_interval,
 				nb_round_nonces: j.nb_round_nonces,
 				vtxo_exit_delta: j.vtxo_exit_delta,

@@ -1643,6 +1643,7 @@
         "required": [
           "network",
           "server_pubkey",
+          "mailbox_pubkey",
           "round_interval",
           "nb_round_nonces",
           "vtxo_exit_delta",
@@ -1668,6 +1669,10 @@
           "ln_receive_anti_dos_required": {
             "type": "boolean",
             "description": "Indicates whether the Ark server requires clients to either\nprovide a VTXO ownership proof, or a lightning receive token\nwhen preparing a lightning claim."
+          },
+          "mailbox_pubkey": {
+            "type": "string",
+            "description": "The pubkey used for blinding unified mailbox IDs"
           },
           "max_user_invoice_cltv_delta": {
             "type": "integer",

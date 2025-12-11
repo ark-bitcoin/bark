@@ -216,15 +216,15 @@ mod test {
 	#[test]
 	fn mailbox_blinding() {
 		let mailbox_key = Keypair::new(&SECP, &mut rand::thread_rng());
-		let server_key = Keypair::new(&SECP, &mut rand::thread_rng());
+		let server_mailbox_key = Keypair::new(&SECP, &mut rand::thread_rng());
 		let vtxo_key = Keypair::new(&SECP, &mut rand::thread_rng());
 
 		let mailbox = MailboxIdentifier::from_pubkey(mailbox_key.public_key());
 
-		let blinded = mailbox.to_blinded(server_key.public_key(), &vtxo_key);
+		let blinded = mailbox.to_blinded(server_mailbox_key.public_key(), &vtxo_key);
 
 		let unblinded = MailboxIdentifier::from_blinded(
-			blinded, vtxo_key.public_key(), &server_key,
+			blinded, vtxo_key.public_key(), &server_mailbox_key,
 		);
 
 		assert_eq!(unblinded, mailbox);

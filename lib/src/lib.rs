@@ -52,6 +52,8 @@ pub struct ArkInfo {
 	pub network: Network,
 	/// The Ark server pubkey
 	pub server_pubkey: PublicKey,
+	/// The pubkey used for blinding unified mailbox IDs
+	pub mailbox_pubkey: PublicKey,
 	/// The interval between each round
 	pub round_interval: Duration,
 	/// Number of nonces per round

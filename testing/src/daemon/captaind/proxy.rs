@@ -4,10 +4,8 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::time::Duration;
 
 use tokio_stream::Stream;
-
 use server_rpc::{self as rpc, protos};
-
-use crate::daemon::captaind::ArkClient;
+use crate::daemon::captaind::{ArkClient, MailboxClient};
 use crate::util::FutureExt;
 
 /// Trait used to easily implement Ark proxy interfaces.
@@ -385,5 +383,116 @@ impl<T: ArkRpcProxy> rpc::server::ArkService for ArkRpcProxyWrapper<T> {
 		&self, req: tonic::Request<protos::ForfeitSignaturesRequest>,
 	) -> Result<tonic::Response<protos::Empty>, tonic::Status> {
 		Ok(tonic::Response::new(ArkRpcProxy::provide_forfeit_signatures(&self.proxy, &mut self.upstream.clone(), req.into_inner()).await?))
+	}
+}
+
+/// Trait used to easily implement mailbox proxy interfaces.
+#[tonic::async_trait]
+pub trait MailboxRpcProxy: Send + Sync + Clone + 'static {
+	async fn post_vtxos_mailbox(&self, upstream: &mut MailboxClient, req: protos::mailbox_server::PostVtxosMailboxRequest) -> Result<protos::core::Empty, tonic::Status> {
+		Ok(upstream.post_vtxos_mailbox(req).await?.into_inner())
+	}
+
+	async fn read_mailbox(&self, upstream: &mut MailboxClient, req: protos::mailbox_server::MailboxRequest) -> Result<protos::mailbox_server::MailboxMessages, tonic::Status> {
+		Ok(upstream.read_mailbox(req).await?.into_inner())
+	}
+
+	async fn subscribe_mailbox(&self, upstream: &mut MailboxClient, req: protos::mailbox_server::MailboxRequest) -> Result<Box<
+		dyn Stream<Item = Result<protos::mailbox_server::MailboxMessage, tonic::Status>> + Unpin + Send + 'static
+	>, tonic::Status> {
+		Ok(Box::new(upstream.subscribe_mailbox(req).await?.into_inner()))
+	}
+}
+
+pub struct MailboxRpcProxyServer {
+	pub client: rpc::mailbox::MailboxServiceClient<tonic::transport::Channel>,
+	pub stop: tokio::sync::oneshot::Sender<()>,
+	pub address: String,
+}
+
+impl MailboxRpcProxyServer {
+	/// Run a mailbox proxy server.
+	pub async fn start(proxy: impl MailboxRpcProxy, upstream: MailboxClient) -> MailboxRpcProxyServer {
+		loop {
+			let (stop_tx, stop_rx) = tokio::sync::oneshot::channel();
+			let stop_rx = futures::FutureExt::map(stop_rx, |_| ());
+
+			let port = portpicker::pick_unused_port().expect("free port available");
+			let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), port);
+			let server = rpc::server::MailboxServiceServer::new(MailboxRpcProxyWrapper {
+				proxy: proxy.clone(),
+				upstream: upstream.clone(),
+			});
+
+			// The serve_with_shutdown call stays running if the port number
+			// is accepted, but returns immediatelly if it's not.
+			// So we have to ignore the port usage error and then check if
+			// the future yields fast.
+			let server_res = tokio::spawn(async move {
+				let ret = tonic::transport::Server::builder()
+					.add_service(server)
+					.serve_with_shutdown(addr, stop_rx)
+					.await;
+				if let Err(ref e) = ret {
+					if let Some(e) = std::error::Error::source(&e) {
+						if let Some(e) = e.downcast_ref::<io::Error>() {
+							if e.kind() == io::ErrorKind::AddrInUse {
+								return;
+							}
+						}
+					}
+				}
+				ret.expect("rpc proxy server stopped with error");
+			});
+			if server_res.try_fast().await.is_ok() {
+				continue;
+			}
+
+			// try to connect
+			let address = format!("http://{}", addr);
+			let client = loop {
+				tokio::time::sleep(Duration::from_millis(10)).await;
+				if let Ok(c) = rpc::mailbox::MailboxServiceClient::connect(address.clone()).await {
+					break c;
+				}
+			};
+
+			return MailboxRpcProxyServer {
+				client,
+				stop: stop_tx,
+				address,
+			};
+		}
+	}
+}
+
+/// A wrapper struct around a proxy implementation to run a tonic server.
+struct MailboxRpcProxyWrapper<T: MailboxRpcProxy> {
+	proxy: T,
+	upstream: MailboxClient,
+}
+
+#[tonic::async_trait]
+impl<T: MailboxRpcProxy> rpc::server::MailboxService for MailboxRpcProxyWrapper<T> {
+	async fn post_vtxos_mailbox(
+		&self, req: tonic::Request<protos::mailbox_server::PostVtxosMailboxRequest>,
+	) -> Result<tonic::Response<protos::core::Empty>, tonic::Status> {
+		Ok(tonic::Response::new(MailboxRpcProxy::post_vtxos_mailbox(&self.proxy, &mut self.upstream.clone(), req.into_inner()).await?))
+	}
+
+	async fn read_mailbox(
+		&self, req: tonic::Request<protos::mailbox_server::MailboxRequest>,
+	) -> Result<tonic::Response<protos::mailbox_server::MailboxMessages>, tonic::Status> {
+		Ok(tonic::Response::new(MailboxRpcProxy::read_mailbox(&self.proxy, &mut self.upstream.clone(), req.into_inner()).await?))
+	}
+
+	type SubscribeMailboxStream = Box<
+		dyn Stream<Item = Result<protos::mailbox_server::MailboxMessage, tonic::Status>> + Unpin + Send + 'static
+	>;
+
+	async fn subscribe_mailbox(
+		&self, req: tonic::Request<protos::mailbox_server::MailboxRequest>,
+	) -> Result<tonic::Response<Self::SubscribeMailboxStream>, tonic::Status> {
+		Ok(tonic::Response::new(MailboxRpcProxy::subscribe_mailbox(&self.proxy, &mut self.upstream.clone(), req.into_inner()).await?))
 	}
 }

@@ -1,0 +1,45 @@
+
+syntax = "proto3";
+
+package mailbox_server;
+
+import "core.proto";
+
+/// Public mailbox service.
+service MailboxService {
+	/// Deposits your VTXOs into the mailbox (blinded ID is unblinded with the VTXOs’ shared user pubkey; all VTXOs must have identical user pubkeys).
+	rpc PostVtxosMailbox(PostVtxosMailboxRequest) returns (core.Empty) {};
+	rpc SubscribeMailbox(MailboxRequest) returns (stream MailboxMessage);
+	rpc ReadMailbox(MailboxRequest) returns (MailboxMessages);
+}
+
+message PostVtxosMailboxRequest {
+	// The blinded mailbox ID
+	bytes blinded_id = 1;
+	repeated bytes vtxos = 2;
+}
+
+message MailboxRequest {
+	// The unblinded mailbox ID to obtain data from
+	bytes unblinded_id = 1;
+	// A signed proof that you are allowed to read from this mailbox
+	optional bytes authorization = 2;
+	// The last checkpoint you have seen/processed
+	uint64 checkpoint = 3;
+}
+
+message MailboxMessage {
+	oneof message {
+		ArkoorMessage arkoor = 1;
+	}
+	// Strictly ascending time based number.
+	uint64 checkpoint = 2;
+}
+
+message ArkoorMessage {
+	repeated bytes vtxos = 1;
+}
+
+message MailboxMessages {
+	repeated MailboxMessage messages = 1;
+}
