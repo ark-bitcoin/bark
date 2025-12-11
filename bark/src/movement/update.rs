@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 use std::hash::Hash;
 
-use bdk_core::Merge;
 use bdk_esplora::esplora_client::Amount;
 use bitcoin::SignedAmount;
 use chrono::DateTime;
@@ -249,7 +248,7 @@ impl MovementUpdate {
 	}
 }
 
-impl<T: PartialEq + Eq + Ord> UpdateMethod<Vec<T>> {
+impl<T: PartialEq + Eq> UpdateMethod<Vec<T>> {
 	pub fn apply_to(self, target: &mut Vec<T>) {
 		match self {
 			UpdateMethod::Merge(vec) => target.extend(vec),
@@ -259,11 +258,23 @@ impl<T: PartialEq + Eq + Ord> UpdateMethod<Vec<T>> {
 
 	pub fn apply_unique_to(self, target: &mut Vec<T>) {
 		match self {
-			UpdateMethod::Merge(vec) => target.merge(vec),
-			UpdateMethod::Replace(vec) => *target = vec,
+			UpdateMethod::Merge(vec) => {
+				for value in vec {
+					if !target.contains(&value) {
+						target.push(value);
+					}
+				}
+			},
+			UpdateMethod::Replace(vec) => {
+				target.clear();
+				target.reserve(vec.len());
+				for value in vec {
+					if !target.contains(&value) {
+						target.push(value);
+					}
+				}
+			},
 		}
-		target.sort_unstable();
-		target.dedup();
 	}
 
 	pub fn merge(&mut self, values: impl IntoIterator<Item = T>) {

@@ -15,6 +15,7 @@ use log::{info, trace};
 use ark_testing::{btc, constants::BOARD_CONFIRMATIONS, sat, TestContext};
 use ark_testing::daemon::captaind::{self, ArkClient};
 use ark_testing::util::FutureExt;
+use bark_json::cli::PaymentMethod;
 use bitcoin_ext::{P2TR_DUST, P2TR_DUST_SAT};
 use server_rpc::protos::{
 	self, prepare_lightning_receive_claim_request::LightningReceiveAntiDos,
@@ -461,7 +462,7 @@ async fn bark_can_receive_lightning() {
 		ln_receive_mvt.effective_balance == pay_amount.to_signed().unwrap() &&
 		ln_receive_mvt.offchain_fee == Amount::ZERO &&
 		ln_receive_mvt.sent_to.is_empty() &&
-		ln_receive_mvt.received_on[0].destination == invoice.to_string() &&
+		ln_receive_mvt.received_on[0].destination == PaymentMethod::Invoice(invoice.to_string()) &&
 		ln_receive_mvt.received_on[0].amount == pay_amount &&
 		ln_receive_mvt.received_on.len() == 1
 	);

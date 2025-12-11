@@ -182,14 +182,12 @@ impl Wallet {
 			outputs.iter().map(|v| v.id().to_string()).collect::<Vec<_>>().join(", ")
 		);
 
-		self.movements.update_movement(
+		self.movements.finish_movement_with_update(
 			movement_id,
+			MovementStatus::Successful,
 			MovementUpdate::new()
 				.effective_balance(effective_balance.to_signed()?)
 				.produced_vtxos(&outputs)
-		).await?;
-		self.movements.finish_movement(
-			movement_id, MovementStatus::Finished,
 		).await?;
 
 		self.db.finish_pending_lightning_receive(receive.payment_hash)?;
@@ -351,26 +349,22 @@ impl Wallet {
 		let movement_id = if let Some(movement_id) = receive.movement_id {
 			movement_id
 		} else {
-			self.movements.new_movement(
+			self.movements.new_movement_with_update(
 				self.subsystem_ids[&BarkSubsystem::LightningReceive],
 				LightningReceiveMovement::Receive.to_string(),
+				MovementUpdate::new()
+					.intended_balance(invoice_amount.to_signed()?)
+					.effective_balance(htlc_amount.to_signed()?)
+					.metadata(LightningMovement::metadata(receive.payment_hash, &vtxos)?)
+					.received_on(
+						[MovementDestination::new(receive.invoice.clone().into(), htlc_amount)],
+					),
 			).await?
 		};
 		self.store_locked_vtxos(&vtxos, Some(movement_id))?;
 
 		let vtxo_ids = vtxos.iter().map(|v| v.id()).collect::<Vec<_>>();
 		self.db.update_lightning_receive(payment_hash, &vtxo_ids, movement_id)?;
-
-		self.movements.update_movement(
-			movement_id,
-			MovementUpdate::new()
-				.intended_balance(invoice_amount.to_signed()?)
-				.effective_balance(htlc_amount.to_signed()?)
-				.metadata(LightningMovement::htlc_metadata(&vtxos)?)
-				.received_on(
-					[MovementDestination::new(receive.invoice.to_string(), htlc_amount)],
-				),
-		).await?;
 
 		let vtxos = vtxos
 			.into_iter()
@@ -434,8 +428,7 @@ impl Wallet {
 		};
 
 		if let Some((movement_id, update, status)) = update_opt {
-			self.movements.update_movement(movement_id, update).await?;
-			self.movements.finish_movement(movement_id, status).await?;
+			self.movements.finish_movement_with_update(movement_id, status, update).await?;
 		}
 
 		self.db.finish_pending_lightning_receive(lightning_receive.payment_hash)?;

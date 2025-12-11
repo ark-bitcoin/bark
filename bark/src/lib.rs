@@ -294,6 +294,7 @@ pub mod exit;
 pub mod lightning;
 pub mod movement;
 pub mod onchain;
+pub mod payment_method;
 pub mod persist;
 pub mod round;
 pub mod subsystem;
@@ -307,7 +308,6 @@ mod config;
 mod psbtext;
 
 use std::collections::{HashMap, HashSet};
-
 use std::sync::Arc;
 
 use anyhow::{bail, Context};
@@ -331,7 +331,7 @@ use server_rpc::{self as rpc, protos, ServerConnection};
 use crate::daemon::{Daemon, DaemonizableOnchainWallet};
 use crate::exit::Exit;
 use crate::movement::{Movement, MovementStatus};
-use crate::movement::manager::{MovementGuard, MovementManager};
+use crate::movement::manager::MovementManager;
 use crate::movement::update::MovementUpdate;
 use crate::onchain::{ChainSource, PreparePsbt, ExitUnilaterally, Utxo, SignPsbt};
 use crate::persist::{BarkPersister, RoundStateId};
@@ -1427,12 +1427,9 @@ impl Wallet {
 		let vtxo = builder.build_vtxo(&cosign_resp, &user_keypair)?;
 
 		let onchain_fee = board_psbt.fee()?;
-		let movement_id = self.movements.new_movement(
+		let movement_id = self.movements.new_movement_with_update(
 			self.subsystem_ids[&BarkSubsystem::Board],
 			BoardMovement::Board.to_string(),
-		).await?;
-		self.movements.update_movement(
-			movement_id,
 			MovementUpdate::new()
 				.produced_vtxo(&vtxo)
 				.intended_and_effective_balance(vtxo.amount().to_signed()?)
@@ -1476,7 +1473,7 @@ impl Wallet {
 		let board = self.db.get_pending_board_by_vtxo_id(vtxo.id())?
 			.context("pending board not found")?;
 
-		self.movements.finish_movement(board.movement_id, MovementStatus::Finished).await?;
+		self.movements.finish_movement(board.movement_id, MovementStatus::Successful).await?;
 		self.db.remove_pending_board(&vtxo.id())?;
 
 		Ok(())
@@ -1561,7 +1558,7 @@ impl Wallet {
 				self.movements.new_finished_movement(
 					self.subsystem_ids[&BarkSubsystem::Arkoor],
 					ArkoorMovement::Receive.to_string(),
-					MovementStatus::Finished,
+					MovementStatus::Successful,
 					MovementUpdate::new()
 						.produced_vtxos(&vtxos)
 						.intended_and_effective_balance(

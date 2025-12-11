@@ -29,6 +29,7 @@ use bitcoin_ext::BlockDelta;
 use crate::{Vtxo, VtxoId, VtxoState, WalletProperties};
 use crate::exit::models::ExitTxOrigin;
 use crate::movement::{Movement, MovementId, MovementStatus, MovementSubsystem};
+use crate::payment_method::PaymentMethod;
 use crate::persist::{BarkPersister, RoundStateId, StoredRoundState};
 use crate::persist::models::{LightningReceive, LightningSend, PendingBoard, StoredExit};
 use crate::round::{RoundState, UnconfirmedRound};
@@ -91,7 +92,7 @@ impl BarkPersister for SqliteClient {
 		Ok(query::fetch_properties(&conn)?)
 	}
 
-	fn check_recipient_exists(&self, recipient: &str) -> anyhow::Result<bool> {
+	fn check_recipient_exists(&self, recipient: &PaymentMethod) -> anyhow::Result<bool> {
 		let conn = self.connect()?;
 		query::check_recipient_exists(&conn, recipient)
 	}
@@ -442,7 +443,6 @@ pub mod helpers {
 
 #[cfg(test)]
 mod test {
-	use bdk_wallet::chain::DescriptorExt;
 	use bitcoin::bip32;
 
 	use ark::vtxo::test::VTXO_VECTORS;
@@ -499,7 +499,10 @@ mod test {
 	}
 
 	#[test]
+	#[cfg(feature = "onchain_bdk")]
 	fn test_create_wallet_then_load() {
+		use bdk_wallet::chain::DescriptorExt;
+
 		let (connection_string, conn) = in_memory_db();
 
 		let db = SqliteClient::open(connection_string).unwrap();

@@ -6,6 +6,7 @@ use futures::FutureExt;
 use rand::random;
 
 use ark::vtxo::exit_taproot;
+use bark_json::cli::PaymentMethod;
 use bark_json::exit::ExitState;
 use bark_json::exit::states::ExitStartState;
 use bark_json::primitives::VtxoStateInfo;
@@ -323,7 +324,7 @@ async fn double_exit_call() {
 				let address = Address::from_script(&exit_spk, Params::REGTEST)
 					.unwrap().to_string();
 				*m.input_vtxos.first().unwrap() == v.id &&
-					m.sent_to[0].destination == address.to_string()
+					m.sent_to[0].destination == PaymentMethod::Bitcoin(address)
 			})
 		),
 		"each exited vtxo should be linked to a movement with exit_spk as destination"
@@ -350,7 +351,7 @@ async fn double_exit_call() {
 
 	let exit_spk = exit_taproot(vtxo.user_pubkey, vtxo.server_pubkey, vtxo.exit_delta).script_pubkey();
 	let address = Address::from_script(&exit_spk, Params::REGTEST).unwrap().to_string();
-	assert_eq!(last_move.sent_to[0].destination, address, "movement destination should be exit_spk");
+	assert_eq!(last_move.sent_to[0].destination, PaymentMethod::Bitcoin(address), "movement destination should be exit_spk");
 
 	assert_eq!(bark1.vtxos().await.len(), 0, "vtxo should be marked as spent");
 

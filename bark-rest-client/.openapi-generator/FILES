@@ -98,6 +98,7 @@ docs/OnchainBalance.md
 docs/OnchainDrainRequest.md
 docs/OnchainSendManyRequest.md
 docs/OnchainSendRequest.md
+docs/PaymentMethod.md
 docs/PendingBoardInfo.md
 docs/PendingRoundInfo.md
 docs/RefreshRequest.md
@@ -223,6 +224,7 @@ src/models/onchain_balance.rs
 src/models/onchain_drain_request.rs
 src/models/onchain_send_many_request.rs
 src/models/onchain_send_request.rs
+src/models/payment_method.rs
 src/models/pending_board_info.rs
 src/models/pending_round_info.rs
 src/models/refresh_request.rs

@@ -37,6 +37,7 @@ use bitcoin_ext::BlockDelta;
 use crate::WalletProperties;
 use crate::exit::models::ExitTxOrigin;
 use crate::movement::{Movement, MovementId, MovementStatus, MovementSubsystem};
+use crate::payment_method::PaymentMethod;
 use crate::persist::models::{LightningReceive, LightningSend, PendingBoard, StoredExit};
 use crate::round::{RoundState, UnconfirmedRound};
 use crate::vtxo::state::{VtxoState, VtxoStateKind, WalletVtxo};
@@ -147,7 +148,7 @@ pub trait BarkPersister: Send + Sync + 'static {
 	///
 	/// Errors:
 	/// - Returns an error if the lookup fails.
-	fn check_recipient_exists(&self, recipient: &str) -> anyhow::Result<bool>;
+	fn check_recipient_exists(&self, recipient: &PaymentMethod) -> anyhow::Result<bool>;
 
 	/// Creates a new movement in the given state, ready to be updated.
 	///

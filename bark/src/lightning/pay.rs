@@ -17,6 +17,7 @@ use crate::Wallet;
 use crate::lightning::lnaddr_invoice;
 use crate::movement::{MovementDestination, MovementStatus};
 use crate::movement::update::MovementUpdate;
+use crate::payment_method::PaymentMethod;
 use crate::persist::models::LightningSend;
 use crate::subsystem::{BarkSubsystem, LightningMovement, LightningSendMovement};
 
@@ -84,15 +85,15 @@ impl Wallet {
 		}
 
 		let count = vtxos.len();
-		self.movements.update_movement(
+		self.movements.finish_movement_with_update(
 			payment.movement_id,
+			MovementStatus::Failed,
 			MovementUpdate::new()
 				.effective_balance(-payment.amount.to_signed()? + revoked.to_signed()?)
 				.produced_vtxos(&vtxos)
 		).await?;
 		self.store_spendable_vtxos(&vtxos)?;
 		self.mark_vtxos_as_spent(&htlc_vtxos)?;
-		self.movements.finish_movement(payment.movement_id, MovementStatus::Failed).await?;
 
 		self.db.remove_lightning_send(payment.invoice.payment_hash())?;
 
@@ -134,8 +135,9 @@ impl Wallet {
 				// Complete the payment
 				self.db.finish_lightning_send(payment_hash, Some(preimage))?;
 				self.mark_vtxos_as_spent(&payment.htlc_vtxos)?;
-				self.movements.finish_movement(payment.movement_id,
-					MovementStatus::Finished).await?;
+				self.movements.finish_movement(
+					payment.movement_id, MovementStatus::Successful,
+				).await?;
 
 				Ok(Some(preimage))
 			},
@@ -253,14 +255,12 @@ impl Wallet {
 					self.exit.write().await.mark_vtxos_for_exit(&vtxos).await?;
 
 					let exited = vtxos.iter().map(|v| v.amount()).sum::<Amount>();
-					self.movements.update_movement(
+					self.movements.finish_movement_with_update(
 						payment.movement_id,
+						MovementStatus::Failed,
 						MovementUpdate::new()
 							.effective_balance(-payment.amount.to_signed()? + exited.to_signed()?)
 							.exited_vtxos(&vtxos)
-					).await?;
-					self.movements.finish_movement(
-						payment.movement_id, MovementStatus::Failed,
 					).await?;
 					self.db.finish_lightning_send(payment.invoice.payment_hash(), None)?;
 				}
@@ -287,11 +287,103 @@ impl Wallet {
 		T: TryInto<Invoice>,
 		T::Error: std::error::Error + fmt::Display + Send + Sync + 'static,
 	{
+		let invoice = invoice.try_into().context("failed to parse invoice")?;
+		self.make_lightning_payment(&invoice, invoice.clone().into(), user_amount).await
+	}
+
+	/// Same as [Wallet::pay_lightning_invoice] but instead it pays a [LightningAddress].
+	pub async fn pay_lightning_address(
+		&self,
+		addr: &LightningAddress,
+		amount: Amount,
+		comment: Option<&str>,
+	) -> anyhow::Result<LightningSend> {
+		let invoice = lnaddr_invoice(addr, amount, comment).await
+			.context("lightning address error")?;
+		info!("Attempting to pay invoice {}", invoice);
+		self.make_lightning_payment(&invoice.into(), addr.clone().into(), None).await
+			.context("bolt11 payment error")
+	}
+
+	/// Attempts to pay the given BOLT12 [Offer] using offchain funds.
+	pub async fn pay_lightning_offer(
+		&self,
+		offer: Offer,
+		amount: Option<Amount>,
+	) -> anyhow::Result<LightningSend> {
+		let mut srv = self.require_server()?;
+
+		let offer_bytes = {
+			let mut bytes = Vec::new();
+			offer.write(&mut bytes).unwrap();
+			bytes
+		};
+
+		let req = protos::FetchBolt12InvoiceRequest {
+			offer: offer_bytes,
+			amount_sat: amount.map(|a| a.to_sat()),
+		};
+
+		let resp = srv.client.fetch_bolt12_invoice(req).await?.into_inner();
+
+		let invoice = Bolt12Invoice::try_from(resp.invoice)
+			.map_err(|_| anyhow::anyhow!("invalid invoice"))?;
+
+		invoice.validate_issuance(&offer)?;
+
+		self.make_lightning_payment(&invoice.into(), offer.into(), None).await
+			.context("bolt12 payment error")
+	}
+
+	/// Makes a payment using the Lightning Network. This is a low-level primitive to allow for
+	/// more fine-grained control over the payment process. The primary purpose of using this method
+	/// is to support [PaymentMethod::Custom] for other payment use cases such as LNURL-Pay.
+	///
+	/// It's recommended to use the following higher-level functions where suitable:
+	/// - BOLT11: [Wallet::pay_lightning_invoice]
+	/// - BOLT12: [Wallet::pay_lightning_offer]
+	/// - Lightning Address: [Wallet::pay_lightning_address]
+	///
+	/// # Parameters
+	/// - `invoice`: A reference to the BOLT11/BOLT12 invoice to be paid.
+	/// - `original_payment_method`: The payment method that the given invoice was originally
+	///   derived from (e.g., BOLT11, an offer, lightning address). This will appear in the stored
+	///   [Movement].
+	/// - `user_amount`: An optional custom amount to override the amount specified in the invoice.
+	///   If not provided, the invoice's amount is used.
+	///
+	/// # Returns
+	/// Returns a `Preimage` representing the successful payment. If an error occurs during the
+	/// process, an `anyhow::Error` is returned.
+	///
+	/// # Errors
+	/// This function can return an error for the following reasons:
+	/// - If the given payment method is not either an officially supported lightning payment method
+	///   or [PaymentMethod::Custom].
+	/// - The `invoice` belongs to a different network than the one configured in the server's
+	///   properties.
+	/// - The `invoice` has already been paid (the payment hash exists in the database).
+	/// - The `invoice` contains an invalid or tampered signature.
+	/// - The amount to be sent is smaller than the dust limit (`P2TR_DUST`).
+	/// - The wallet doesn't have enough funds to cover the payment.
+	/// - Validation, signing, server or network issues occur.
+	///
+	/// # Notes
+	/// - A movement won't be recorded until we receive an intermediary HTLC VTXO.
+	/// - This is effectively an arkoor payment with an additional HTLC conversion step, so the
+	///   same [Wallet::send_arkoor_payment] rules apply.
+	pub async fn make_lightning_payment(
+		&self,
+		invoice: &Invoice,
+		original_payment_method: PaymentMethod,
+		user_amount: Option<Amount>,
+	) -> anyhow::Result<LightningSend> {
+		if !original_payment_method.is_lightning() && !original_payment_method.is_custom() {
+			bail!("Invalid original payment method for lightning payment");
+		}
 		let mut srv = self.require_server()?;
 
 		let properties = self.db.read_properties()?.context("Missing config")?;
-
-		let invoice = invoice.try_into().context("failed to parse invoice")?;
 		if invoice.network() != properties.network {
 			bail!("Invoice is for wrong network: {}", invoice.network());
 		}
@@ -367,17 +459,14 @@ impl Wallet {
 			effective_balance += vtxo.amount();
 		}
 
-		let movement_id = self.movements.new_movement(
+		let movement_id = self.movements.new_movement_with_update(
 			self.subsystem_ids[&BarkSubsystem::LightningSend],
 			LightningSendMovement::Send.to_string(),
-		).await?;
-		self.movements.update_movement(
-			movement_id,
 			MovementUpdate::new()
 				.intended_balance(-amount.to_signed()?)
 				.effective_balance(-effective_balance.to_signed()?)
 				.consumed_vtxos(&inputs)
-				.sent_to([MovementDestination::new(invoice.to_string(), amount)])
+				.sent_to([MovementDestination::new(original_payment_method, amount)])
 		).await?;
 		self.store_locked_vtxos(&htlc_vtxos, Some(movement_id))?;
 		self.mark_vtxos_as_spent(&input_ids)?;
@@ -397,7 +486,7 @@ impl Wallet {
 			movement_id,
 			MovementUpdate::new()
 				.produced_vtxo_if_some(change_vtxo)
-				.metadata(LightningMovement::htlc_metadata(&htlc_vtxos)?)
+				.metadata(LightningMovement::metadata(invoice.payment_hash(), &htlc_vtxos)?)
 		).await?;
 
 		let lightning_send = self.db.store_new_pending_lightning_send(
@@ -414,50 +503,5 @@ impl Wallet {
 		srv.client.initiate_lightning_payment(req).await?;
 
 		Ok(lightning_send)
-	}
-
-	/// Same as [Wallet::pay_lightning_invoice] but instead it pays a [LightningAddress].
-	pub async fn pay_lightning_address(
-		&self,
-		addr: &LightningAddress,
-		amount: Amount,
-		comment: Option<&str>,
-	) -> anyhow::Result<LightningSend> {
-		let invoice = lnaddr_invoice(addr, amount, comment).await
-			.context("lightning address error")?;
-		info!("Attempting to pay invoice {}", invoice);
-
-		self.pay_lightning_invoice(invoice.clone(), None).await
-			.context("bolt11 payment error")
-	}
-
-	/// Attempts to pay the given BOLT12 [Offer] using offchain funds.
-	pub async fn pay_lightning_offer(
-		&self,
-		offer: Offer,
-		amount: Option<Amount>,
-	) -> anyhow::Result<LightningSend> {
-		let mut srv = self.require_server()?;
-
-		let offer_bytes = {
-			let mut bytes = Vec::new();
-			offer.write(&mut bytes).unwrap();
-			bytes
-		};
-
-		let req = protos::FetchBolt12InvoiceRequest {
-			offer: offer_bytes,
-			amount_sat: amount.map(|a| a.to_sat()),
-		};
-
-		let resp = srv.client.fetch_bolt12_invoice(req).await?.into_inner();
-
-		let invoice = Bolt12Invoice::try_from(resp.invoice)
-			.map_err(|_| anyhow::anyhow!("invalid invoice"))?;
-
-		invoice.validate_issuance(offer)?;
-
-		self.pay_lightning_invoice(invoice.clone(), None).await
-			.context("bolt12 payment error")
 	}
 }

@@ -9,8 +9,8 @@ pub enum MovementError {
 	#[error("Movement Creation Error: {e}")]
 	CreationError { e: anyhow::Error },
 
-	#[error("Incorrect Status Error: Attempt to incorrectly set movement to {status}")]
-	IncorrectStatus { status: String },
+	#[error("Incorrect Pending Status: Attempt to incorrectly set movement status to pending")]
+	IncorrectPendingStatus,
 
 	#[error("Invalid Subsystem ID: {id} does not exist")]
 	InvalidSubsystemId { id: SubsystemId },

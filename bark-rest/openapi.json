@@ -3312,7 +3312,7 @@
             "minimum": 0
           },
           "destination": {
-            "type": "string",
+            "$ref": "#/components/schemas/PaymentMethod",
             "description": "An address, invoice or any other identifier to distinguish the recipient."
           }
         }
@@ -3320,10 +3320,10 @@
       "MovementStatus": {
         "type": "string",
         "enum": [
-          "Pending",
-          "Finished",
-          "Failed",
-          "Cancelled"
+          "pending",
+          "successful",
+          "failed",
+          "cancelled"
         ]
       },
       "MovementSubsystem": {
@@ -3523,6 +3523,34 @@
           "destination": {
             "type": "string",
             "description": "The destination Bitcoin address"
+          }
+        }
+      },
+      "PaymentMethod": {
+        "type": "object",
+        "title": "PaymentMethod",
+        "description": "A payment method with a type discriminator and string value",
+        "required": [
+          "type",
+          "value"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "description": "The type of payment method",
+            "enum": [
+              "ark",
+              "bitcoin",
+              "output-script",
+              "invoice",
+              "offer",
+              "lightning-address",
+              "custom"
+            ]
+          },
+          "value": {
+            "type": "string",
+            "description": "The payment method value (address, invoice, etc.)"
           }
         }
       },

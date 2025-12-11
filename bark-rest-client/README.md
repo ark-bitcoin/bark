@@ -159,6 +159,7 @@ Class | Method | HTTP request | Description
  - [OnchainDrainRequest](docs/OnchainDrainRequest.md)
  - [OnchainSendManyRequest](docs/OnchainSendManyRequest.md)
  - [OnchainSendRequest](docs/OnchainSendRequest.md)
+ - [PaymentMethod](docs/PaymentMethod.md)
  - [PendingBoardInfo](docs/PendingBoardInfo.md)
  - [PendingRoundInfo](docs/PendingRoundInfo.md)
  - [RefreshRequest](docs/RefreshRequest.md)

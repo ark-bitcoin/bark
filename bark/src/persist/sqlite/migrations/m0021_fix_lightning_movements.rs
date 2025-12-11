@@ -1,11 +1,8 @@
-use std::str::FromStr;
-
 use anyhow::Context;
 use rusqlite::Transaction;
 
 use ark::VtxoPolicy;
 
-use crate::movement::MovementStatus;
 use crate::persist::sqlite::query;
 use crate::vtxo::state::{VtxoState, VtxoStateKind};
 
@@ -41,13 +38,13 @@ impl Migration for Migration0021 {
 						)?;
 						let mut rows = statement.query([movement_id.0])?;
 						if let Some(row) = rows.next()? {
-							MovementStatus::from_str(&row.get::<_, String>("status")?)
+							Ok(row.get::<_, String>("status")?)
 						} else {
 							Err(anyhow!("Movement {} not found", movement_id))
 						}
 					}?;
 
-					if movement_status == MovementStatus::Finished {
+					if movement_status == "finished" {
 						query::update_vtxo_state_checked(
 							conn, wallet_vtxo.id(), VtxoState::Spent, &[VtxoStateKind::Locked],
 						).context("failed to update vtxo state")?;

@@ -37,6 +37,7 @@ use crate::{SECP, Wallet};
 use crate::movement::{MovementDestination, MovementId, MovementStatus};
 use crate::movement::update::MovementUpdate;
 use crate::onchain::{ChainSource, ChainSourceClient};
+use crate::payment_method::PaymentMethod;
 use crate::persist::{RoundStateId, StoredRoundState};
 use crate::subsystem::{BarkSubsystem, RoundMovement};
 
@@ -65,8 +66,14 @@ impl RoundParticipation {
 		let intended = -offboard_amount.to_signed()?;
 		let mut sent_to = Vec::with_capacity(self.offboards.len());
 		for o in &self.offboards {
-			let address = Address::from_script(&o.script_pubkey, &params)?;
-			sent_to.push(MovementDestination::new(address.to_string(), o.amount));
+			let method = match Address::from_script(&o.script_pubkey, &params) {
+				Ok(address) => PaymentMethod::Bitcoin(address.into_unchecked()),
+				Err(e) => {
+					debug!("Failed to parse offboard address, storing script pubkey instead: {:#}", e);
+					PaymentMethod::OutputScript(o.script_pubkey.clone())
+				},
+			};
+			sent_to.push(MovementDestination::new(method, o.amount));
 		}
 		Ok(MovementUpdate::new()
 			.consumed_vtxos(&self.inputs)
@@ -392,7 +399,7 @@ impl RoundState {
 		let status = if let Some(funding_txid) = confirmed_funding_txid {
 			if let Some(movement_id) = self.movement_id {
 				update_funding_txid(funding_txid, movement_id, wallet).await?;
-				wallet.movements.finish_movement(movement_id, MovementStatus::Finished).await?;
+				wallet.movements.finish_movement(movement_id, MovementStatus::Successful).await?;
 			}
 
 			RoundStatus::Confirmed { funding_txid }
@@ -1217,12 +1224,11 @@ impl Wallet {
 		}
 
 		let movement_id = if let Some(kind) = movement_kind {
-			let movement_id = self.movements.new_movement(
-				self.subsystem_ids[&BarkSubsystem::Round], kind.to_string(),
-			).await?;
-			let update = participation.to_movement_update(self.chain.network())?;
-			self.movements.update_movement(movement_id, update).await?;
-			Some(movement_id)
+			Some(self.movements.new_movement_with_update(
+				self.subsystem_ids[&BarkSubsystem::Round],
+				kind.to_string(),
+				participation.to_movement_update(self.chain.network())?
+			).await?)
 		} else {
 			None
 		};

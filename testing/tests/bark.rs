@@ -19,7 +19,7 @@ use bark::BarkNetwork;
 use bark::persist::StoredRoundState;
 use bark::round::RoundParticipation;
 use bark::subsystem::RoundMovement;
-use bark_json::cli::MovementDestination;
+use bark_json::cli::{MovementDestination, PaymentMethod};
 use bark_json::primitives::VtxoStateInfo;
 use server_log::{MissingForfeits, RestartMissingForfeits, RoundUserVtxoNotAllowed};
 use server_rpc::protos;
@@ -621,7 +621,7 @@ async fn offboard_all() {
 	assert_eq!(
 		offb_movement.sent_to.first(),
 		Some(MovementDestination {
-			destination: address.to_string(),
+			destination: PaymentMethod::Bitcoin(address.to_string()),
 			amount: sat(829100),
 		}).as_ref(), "destination should be correct"
 	);
@@ -680,7 +680,7 @@ async fn offboard_vtxos() {
 	assert_eq!(
 		offb_movement.sent_to.first(),
 		Some(MovementDestination {
-			destination: address.to_string(),
+			destination: PaymentMethod::Bitcoin(address.to_string()),
 			amount: vtxo_to_offboard.amount - sat(900),
 		}).as_ref(), "destination should be correct"
 	);
@@ -717,7 +717,7 @@ async fn bark_send_onchain() {
 	assert_eq!(
 		send_movement.sent_to.first(),
 		Some(MovementDestination {
-			destination: addr.to_string(),
+			destination: PaymentMethod::Bitcoin(addr.to_string()),
 			amount: sat(300_000),
 		}).as_ref(), "destination should be correct"
 	);
