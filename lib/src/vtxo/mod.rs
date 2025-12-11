@@ -92,9 +92,6 @@ use crate::tree::signed::{cosign_taproot, leaf_cosign_taproot, unlock_clause, Un
 /// The total signed tx weight of a exit tx.
 pub const EXIT_TX_WEIGHT: Weight = Weight::from_vb_unchecked(124);
 
-/// The input weight required to claim a VTXO.
-const VTXO_CLAIM_INPUT_WEIGHT: Weight = Weight::from_wu(138);
-
 /// The current version of the vtxo encoding.
 const VTXO_ENCODING_VERSION: u16 = 1;
 
@@ -756,20 +753,6 @@ impl Vtxo {
 	/// Iterator that constructs all the exit txs for this [Vtxo].
 	pub fn transactions(&self) -> VtxoTxIter<'_> {
 		VtxoTxIter::new(self)
-	}
-
-	/// The satisfaction weight required to spend the output
-	/// when doing a unilateral exit.
-	pub fn claim_satisfaction_weight(&self)  -> Weight {
-		match self.policy {
-			VtxoPolicy::Pubkey { .. } => VTXO_CLAIM_INPUT_WEIGHT,
-			VtxoPolicy::Checkpoint( ..) => VTXO_CLAIM_INPUT_WEIGHT,
-			//TODO(stevenroose) think about this. it's the same if you use keyspend
-			// but it's not the same if you have to use exit spend
-			// I guess the same holds for any vtxo
-			VtxoPolicy::ServerHtlcSend { .. } => VTXO_CLAIM_INPUT_WEIGHT,
-			VtxoPolicy::ServerHtlcRecv { .. } => VTXO_CLAIM_INPUT_WEIGHT,
-		}
 	}
 
 	/// The set of all arkoor pubkeys present in the arkoor part

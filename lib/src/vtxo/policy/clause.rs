@@ -1,12 +1,14 @@
 
 use bitcoin::absolute::LockTime;
+use bitcoin::key::constants::SCHNORR_SIGNATURE_SIZE;
 use bitcoin::secp256k1::schnorr;
 use bitcoin::taproot::{self, ControlBlock};
-use bitcoin::{Sequence, Witness};
+use bitcoin::{Sequence, VarInt, Witness};
 use bitcoin::{secp256k1::PublicKey, ScriptBuf};
+
 use bitcoin_ext::{BlockDelta, BlockHeight};
 
-use crate::lightning::{PaymentHash, Preimage};
+use crate::lightning::{PREIMAGE_SIZE, PaymentHash, Preimage};
 use crate::{Vtxo, scripts};
 
 /// A trait describing a VTXO policy clause.
@@ -26,6 +28,9 @@ pub trait TapScriptClause: Sized + Clone {
 			.control_block(&(self.tapscript(), taproot::LeafVersion::TapScript))
 			.expect("clause is not in taproot tree")
 	}
+
+	/// Computes the total witness size in bytes for spending via this clause.
+	fn witness_size(&self, vtxo: &Vtxo) -> usize;
 
 	/// Constructs the witness for the clause.
 	fn witness(
@@ -69,6 +74,20 @@ impl TapScriptClause for DelayedSignClause {
 			&control_block.serialize()[..],
 		])
 	}
+
+
+	fn witness_size(&self, vtxo: &Vtxo) -> usize {
+		let cb_size = self.control_block(vtxo).size();
+		let tapscript_size = self.tapscript().as_bytes().len();
+
+		1 // byte for the number of witness elements
+		+ 1  // schnorr signature size byte
+		+ SCHNORR_SIGNATURE_SIZE // schnorr sig bytes
+		+ VarInt::from(tapscript_size).size()  // tapscript size bytes
+		+ tapscript_size // tapscript bytes
+		+ VarInt::from(cb_size).size()  // control block size bytes
+		+ cb_size // control block bytes
+	}
 }
 
 impl Into<VtxoClause> for DelayedSignClause {
@@ -109,6 +128,19 @@ impl TapScriptClause for TimelockSignClause {
 			self.tapscript().as_bytes(),
 			&control_block.serialize()[..],
 		])
+	}
+
+	fn witness_size(&self, vtxo: &Vtxo) -> usize {
+		let cb_size = self.control_block(vtxo).size();
+		let tapscript_size = self.tapscript().as_bytes().len();
+
+		1 // byte for the number of witness elements
+		+ 1  // schnorr signature size byte
+		+ SCHNORR_SIGNATURE_SIZE // schnorr sig bytes
+		+ VarInt::from(tapscript_size).size()  // tapscript size bytes
+		+ tapscript_size // tapscript bytes
+		+ VarInt::from(cb_size).size()  // control block size bytes
+		+ cb_size // control block bytes
 	}
 }
 
@@ -162,6 +194,19 @@ impl TapScriptClause for DelayedTimelockSignClause {
 			&control_block.serialize()[..],
 		])
 	}
+
+	fn witness_size(&self, vtxo: &Vtxo) -> usize {
+		let cb_size = self.control_block(vtxo).size();
+		let tapscript_size = self.tapscript().as_bytes().len();
+
+		1 // byte for the number of witness elements
+		+ 1  // schnorr signature size byte
+		+ SCHNORR_SIGNATURE_SIZE // schnorr sig bytes
+		+ VarInt::from(tapscript_size).size()  // tapscript size bytes
+		+ tapscript_size // tapscript bytes
+		+ VarInt::from(cb_size).size()  // control block size bytes
+		+ cb_size // control block bytes
+	}
 }
 
 impl Into<VtxoClause> for DelayedTimelockSignClause {
@@ -211,6 +256,21 @@ impl TapScriptClause for HashDelaySignClause {
 			self.tapscript().as_bytes(),
 			&control_block.serialize()[..],
 		])
+	}
+
+	fn witness_size(&self, vtxo: &Vtxo) -> usize {
+		let cb_size = self.control_block(vtxo).size();
+		let tapscript_size = self.tapscript().as_bytes().len();
+
+		1 // byte for the number of witness elements
+		+ 1  // schnorr signature size byte
+		+ SCHNORR_SIGNATURE_SIZE // schnorr sig bytes
+		+ 1  // preimage size byte
+		+ PREIMAGE_SIZE // preimage bytes
+		+ VarInt::from(tapscript_size).size()  // tapscript size bytes
+		+ tapscript_size // tapscript bytes
+		+ VarInt::from(cb_size).size()  // control block size bytes
+		+ cb_size // control block bytes
 	}
 }
 
@@ -266,6 +326,16 @@ impl VtxoClause {
 			Self::TimelockSign(c) => c.control_block(vtxo),
 			Self::DelayedTimelockSign(c) => c.control_block(vtxo),
 			Self::HashDelaySign(c) => c.control_block(vtxo),
+		}
+	}
+
+	/// Computes the total witness size in bytes for spending the VTXO via this clause.
+	pub fn witness_size(&self, vtxo: &Vtxo) -> usize {
+		match self {
+			Self::DelayedSign(c) => c.witness_size(vtxo),
+			Self::TimelockSign(c) => c.witness_size(vtxo),
+			Self::DelayedTimelockSign(c) => c.witness_size(vtxo),
+			Self::HashDelaySign(c) => c.witness_size(vtxo),
 		}
 	}
 }

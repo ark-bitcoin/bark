@@ -9,7 +9,7 @@ use bdk_wallet::Wallet as BdkWallet;
 use bdk_wallet::coin_selection::DefaultCoinSelectionAlgorithm;
 use bdk_wallet::{Balance, KeychainKind, LocalOutput, SignOptions, TxBuilder, TxOrdering};
 use bitcoin::{
-	Address, Amount, FeeRate, Network, OutPoint, Psbt, Sequence, Transaction, TxOut, Txid, bip32, psbt
+	Address, Amount, FeeRate, Network, OutPoint, Psbt, Sequence, Transaction, TxOut, Txid, Weight, bip32, psbt
 };
 use log::{debug, error, info, trace, warn};
 
@@ -79,10 +79,16 @@ impl<Cs> TxBuilderExt for TxBuilder<'_, Cs> {
 
 			let clause = wallet.find_signable_clause(&vtxo)
 				.context("Cannot sign vtxo")?;
+
+			let witness_weight = {
+				let witness_size = clause.witness_size(&vtxo);
+				Weight::from_witness_data_size(witness_size as u64)
+			};
+
 			self.add_foreign_utxo_with_sequence(
 				vtxo.point(),
 				psbt_in,
-				vtxo.claim_satisfaction_weight(),
+				witness_weight,
 				clause.sequence().unwrap_or(Sequence::ZERO),
 			).expect("error adding foreign utxo for claim input");
 		}

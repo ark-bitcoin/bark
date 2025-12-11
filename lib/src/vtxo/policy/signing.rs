@@ -75,6 +75,12 @@ pub trait VtxoSigner {
 		let witness = self.witness(&clause, &cb, sighash)
 			.expect("found clause should be signable");
 
+		debug_assert_eq!(
+			witness.size(), clause.witness_size(vtxo),
+			"actual witness size ({}) does not match expected ({})",
+			witness.size(), clause.witness_size(vtxo)
+		);
+
 		Ok(witness)
 	}
 }
