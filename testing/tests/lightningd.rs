@@ -198,6 +198,72 @@ async fn bark_pay_invoice_twice() {
 	assert!(!vtxos.iter().any(|v| matches!(v.state, VtxoStateInfo::Locked { .. })), "should not be any locked vtxo left");
 }
 
+#[tokio::test]
+async fn another_bark_pays_invoice_after_first() {
+	let ctx = TestContext::new("lightningd/another_bark_pays_invoice_after_first").await;
+
+	let lightning = ctx.new_lightning_setup("lightningd").await;
+
+	// Start a server and link it to our cln installation
+	let srv = ctx.new_captaind("server", Some(&lightning.sender)).await;
+
+	// Start a bark and create a VTXO
+	let bark_1 = ctx.new_bark_with_funds("bark-1", &srv, btc(4)).await;
+	let bark_2 = ctx.new_bark_with_funds("bark-2", &srv, btc(4)).await;
+
+	bark_1.board_and_confirm_and_register(&ctx, btc(3)).await;
+	bark_2.board_and_confirm_and_register(&ctx, btc(3)).await;
+
+	// Create a payable invoice
+	let invoice_amount = btc(2);
+	let invoice = lightning.receiver.invoice(Some(invoice_amount), "test_payment", "A test payment").await;
+
+	lightning.sync().await;
+
+	bark_1.pay_lightning_wait(invoice.clone(), None).await;
+
+	let res = bark_2.try_pay_lightning(invoice, None, true).await;
+	assert!(res.unwrap_err().to_string().contains("invoice has already been paid"));
+
+	assert_eq!(bark_2.offchain_balance().await.pending_lightning_send, btc(0), "pending lightning send should be reset after payment");
+	let vtxos = bark_2.vtxos().await;
+	assert!(!vtxos.iter().any(|v| matches!(v.state, VtxoStateInfo::Locked { .. })), "should not be any locked vtxo left");
+}
+
+#[tokio::test]
+async fn two_barks_try_to_pay_same_invoice() {
+	let ctx = TestContext::new("lightningd/two_barks_try_to_pay_same_invoice").await;
+
+	let lightning = ctx.new_lightning_setup("lightningd").await;
+
+	// Start a server and link it to our cln installation
+	let srv = ctx.new_captaind("server", Some(&lightning.sender)).await;
+
+	// Start a bark and create a VTXO
+	let bark_1 = ctx.new_bark_with_funds("bark-1", &srv, btc(4)).await;
+	let bark_2 = ctx.new_bark_with_funds("bark-2", &srv, btc(4)).await;
+	let bark_receiver = ctx.new_bark_with_funds("bark-receiver", &srv, btc(2)).await;
+
+	bark_1.board_and_confirm_and_register(&ctx, btc(3)).await;
+	bark_2.board_and_confirm_and_register(&ctx, btc(3)).await;
+	bark_receiver.board_and_confirm_and_register(&ctx, btc(1)).await;
+
+	// Create a payable invoice
+	let invoice_amount = btc(2);
+	let invoice = bark_receiver.bolt11_invoice(invoice_amount).await;
+
+	lightning.sync().await;
+
+	// Will initiate, but not wait for payment to settle.
+	bark_1.pay_lightning(invoice.invoice.clone(), None).await;
+
+	let res = bark_2.try_pay_lightning(invoice.invoice, None, true).await;
+	assert!(res.unwrap_err().to_string().contains("payment already in progress"));
+
+	assert_eq!(bark_2.offchain_balance().await.pending_lightning_send, btc(0), "pending lightning send should not have changed");
+	let vtxos = bark_2.vtxos().await;
+	assert!(!vtxos.iter().any(|v| matches!(v.state, VtxoStateInfo::Locked { .. })), "should not be any locked vtxo left");
+}
 
 #[tokio::test]
 async fn bark_pay_ln_fails_then_succeeds() {
