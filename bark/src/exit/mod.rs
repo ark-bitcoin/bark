@@ -545,6 +545,9 @@ impl Exit {
 		address: Address,
 		fee_rate_override: Option<FeeRate>,
 	) -> anyhow::Result<Psbt, ExitError> {
+		let tip = self.chain_source.tip().await
+			.map_err(|e| ExitError::TipRetrievalFailure { error: e.to_string() })?;
+
 		if inputs.is_empty() {
 			return Err(ExitError::ClaimMissingInputs);
 		}
@@ -564,9 +567,13 @@ impl Exit {
 					witness: Witness::new(),
 				});
 			}
+
+			let locktime = bitcoin::absolute::LockTime::from_height(tip)
+				.map_err(|e| ExitError::InvalidLocalLocktime { tip, error: e.to_string() })?;
+
 			Transaction {
 				version: bitcoin::transaction::Version(3),
-				lock_time: bitcoin::absolute::LockTime::ZERO,
+				lock_time: locktime,
 				input: tx_ins,
 				output: vec![
 					TxOut {

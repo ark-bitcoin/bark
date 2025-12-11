@@ -103,6 +103,7 @@ Class | Method | HTTP request | Description
  - [ExitErrorOneOf21](docs/ExitErrorOneOf21.md)
  - [ExitErrorOneOf22](docs/ExitErrorOneOf22.md)
  - [ExitErrorOneOf23](docs/ExitErrorOneOf23.md)
+ - [ExitErrorOneOf24](docs/ExitErrorOneOf24.md)
  - [ExitErrorOneOf3](docs/ExitErrorOneOf3.md)
  - [ExitErrorOneOf4](docs/ExitErrorOneOf4.md)
  - [ExitErrorOneOf5](docs/ExitErrorOneOf5.md)

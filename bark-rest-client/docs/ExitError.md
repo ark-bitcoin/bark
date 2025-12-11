@@ -21,6 +21,7 @@
 | ExitErrorOneOf21 |  |
 | ExitErrorOneOf22 |  |
 | ExitErrorOneOf23 |  |
+| ExitErrorOneOf24 |  |
 | ExitErrorOneOf3 |  |
 | ExitErrorOneOf4 |  |
 | ExitErrorOneOf5 |  |

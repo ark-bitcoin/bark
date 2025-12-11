@@ -272,7 +272,9 @@ pub async fn claim_exits(
 	};
 
 	let address_spk = address.script_pubkey();
-	let psbt = exit.drain_exits(&vtxos, &wallet, address, None).await?;
+
+	let fee_rate = wallet.chain.fee_rates().await.regular;
+	let psbt = exit.drain_exits(&vtxos, &wallet, address, Some(fee_rate)).await.unwrap();
 	let tx = psbt.extract_tx()?;
 	wallet.chain.broadcast_tx(&tx).await?;
 	info!("Drain transaction broadcasted: {}", tx.compute_txid());
