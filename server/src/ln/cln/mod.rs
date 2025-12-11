@@ -100,6 +100,7 @@ impl ClnManager {
 			invoice_recheck_delay: config.invoice_recheck_delay,
 			htlc_subscription_timeout: config.htlc_subscription_timeout,
 			invoice_expiry: config.invoice_expiry,
+			receive_htlc_forward_timeout: config.receive_htlc_forward_timeout,
 			check_base_delay: config.invoice_check_base_delay,
 			check_max_delay: config.invoice_check_max_delay,
 		};

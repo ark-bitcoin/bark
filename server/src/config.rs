@@ -376,6 +376,11 @@ pub struct Config {
 	/// The duration after which a generated invoice will expire.
 	#[serde(with = "serde_util::duration")]
 	pub invoice_expiry: Duration,
+	/// The duration for which the server will hold inbound HTLC(s) while
+	/// waiting for a user to claim a lightning receive.
+	/// After this timeout the server will fail the HTLC(s) back to the sender.
+	#[serde(with = "serde_util::duration")]
+	pub receive_htlc_forward_timeout: Duration,
 
 	/// Indicates whether the Ark server requires clients to either
 	/// provide a VTXO ownership proof, or a lightning receive token
