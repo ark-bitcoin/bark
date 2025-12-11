@@ -1,5 +1,6 @@
 
 pub mod clause;
+pub mod signing;
 
 use std::fmt;
 use std::str::FromStr;
