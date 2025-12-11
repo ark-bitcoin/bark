@@ -1,7 +1,7 @@
 use log::{debug, error, info, trace, warn};
 use tonic::async_trait;
 
-use bitcoin_ext::{BlockHeight, TxStatus, P2TR_DUST};
+use bitcoin_ext::{TxStatus, P2TR_DUST};
 use crate::exit::models::{
 	ExitError, ExitAwaitingDeltaState, ExitProcessingState, ExitClaimInProgressState, ExitClaimableState,
 	ExitClaimedState, ExitState, ExitStartState, ExitTx, ExitTxOrigin, ExitTxStatus,
@@ -104,8 +104,9 @@ impl ExitStateProgress for ExitProcessingState {
 				.filter_map(|exit| exit.status.confirmed_in())
 				.max_by(|a, b| a.height.cmp(&b.height))
 				.unwrap();
-			let spendable = conf_block.height + BlockHeight::from(ctx.vtxo.exit_delta());
-			return Ok(ExitState::new_awaiting_delta(tip, *conf_block, spendable));
+
+			let wait_delta = ctx.vtxo.exit_delta();
+			return Ok(ExitState::new_awaiting_delta(tip, *conf_block, wait_delta));
 		}
 		if now_confirmed != prev_confirmed {
 			info!("Exit for VTXO ({}) now has {} confirmed transactions with {} more required.",
