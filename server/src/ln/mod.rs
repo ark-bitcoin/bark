@@ -73,6 +73,8 @@ impl Server {
 			tip + expiry_delta as BlockHeight
 		};
 
+		slog!(LightningPayHtlcsRequested, invoice_payment_hash, amount, expiry);
+
 		let policy = VtxoPolicy::new_server_htlc_send(user_pubkey, invoice_payment_hash, expiry);
 		let pay_req = VtxoRequest { amount, policy: policy.clone() };
 
@@ -97,6 +99,8 @@ impl Server {
 		let invoice_payment_hash = invoice.payment_hash();
 
 		let htlc_vtxos = self.db.get_vtxos_by_id(&htlc_vtxo_ids).await?;
+
+		slog!(LightningPaymentInitRequested, invoice_payment_hash, htlc_vtxo_ids);
 
 		let mut vtxos = vec![];
 		for htlc_vtxo in htlc_vtxos {
@@ -152,6 +156,10 @@ impl Server {
 			min_expiry_height
 		).await?;
 
+		slog!(LightningPaymentInitiated, invoice_payment_hash, amount: htlc_vtxo_sum,
+			min_expiry: min_expiry_height,
+		);
+
 		Ok(())
 	}
 
@@ -160,15 +168,7 @@ impl Server {
 		payment_hash: PaymentHash,
 		wait: bool,
 	) -> anyhow::Result<lightning_payment_status::PaymentStatus> {
-		let payment_status = self.cln.get_payment_status(&payment_hash, wait).await?;
-
-		Ok(Self::format_lightning_pay_response(payment_status))
-	}
-
-	fn format_lightning_pay_response(
-		res: PaymentStatus,
-	) -> lightning_payment_status::PaymentStatus {
-		match res {
+		Ok(match self.cln.get_payment_status(&payment_hash, wait).await? {
 			PaymentStatus::Success(preimage) => {
 				lightning_payment_status::PaymentStatus::Success(protos::PaymentSuccessStatus {
 					preimage: preimage.to_vec(),
@@ -180,7 +180,7 @@ impl Server {
 			PaymentStatus::Pending => {
 				lightning_payment_status::PaymentStatus::Pending(protos::Empty {})
 			},
-		}
+		})
 	}
 
 	pub async fn fetch_bolt12_invoice(&self, offer: Offer, amount: Amount) -> anyhow::Result<Bolt12Invoice> {
@@ -196,10 +196,14 @@ impl Server {
 		let tip = self.bitcoind.get_block_count()? as BlockHeight;
 		let db = self.db.clone();
 
+
 		let htlc_vtxos = self.db.get_vtxos_by_id(&htlc_vtxo_ids).await?;
 
 		let first = htlc_vtxos.first().badarg("vtxo is empty")?.vtxo.spec();
 		let first_policy = first.policy.as_server_htlc_send().context("vtxo is not outgoing htlc vtxo")?;
+		let invoice_payment_hash = first_policy.payment_hash;
+
+		slog!(LightningPayHtlcsRevocationRequested, invoice_payment_hash, htlc_vtxo_ids);
 
 		let mut vtxos = vec![];
 		for htlc_vtxo in htlc_vtxos {
@@ -214,7 +218,7 @@ impl Server {
 			vtxos.push(htlc_vtxo.vtxo);
 		}
 
-		let invoice = db.get_lightning_invoice_by_payment_hash(&first_policy.payment_hash).await?;
+		let invoice = db.get_lightning_invoice_by_payment_hash(&invoice_payment_hash).await?;
 
 		// If payment not found but input vtxos are found, we can allow revoke
 		if let Some(invoice) = invoice {
@@ -230,7 +234,7 @@ impl Server {
 				},
 				_ if tip > first_policy.htlc_expiry => {
 					// Check one last time to see if it completed
-					let res = self.cln.get_payment_status(&invoice.payment_hash, false).await;
+					let res = self.cln.get_payment_status(&invoice_payment_hash, false).await;
 					if let Ok(PaymentStatus::Success(preimage)) = res {
 						return badarg!("This lightning payment has completed. preimage: {}",
 							preimage.as_hex());
@@ -240,12 +244,18 @@ impl Server {
 			}
 		}
 
-		let pay_req = VtxoRequest {
+		let vtxo_request = VtxoRequest {
 			amount: vtxos.iter().map(|v| v.amount()).sum(),
 			policy: VtxoPolicy::new_pubkey(vtxos.first().unwrap().user_pubkey()),
 		};
-		let package = ArkoorPackageBuilder::new(&vtxos, &user_nonces, pay_req, None)?;
-		self.cosign_oor_package_with_builder(&package).await
+		let package = ArkoorPackageBuilder::new(
+			&vtxos, &user_nonces, vtxo_request.clone(), None
+		).badarg("error creating arkoor package")?;
+
+		let cosign_resp = self.cosign_oor_package_with_builder(&package).await?;
+		slog!(LightningPayHtlcsRevoked, invoice_payment_hash, vtxo_request);
+
+		Ok(cosign_resp)
 	}
 
 	pub async fn start_lightning_receive(
@@ -351,6 +361,9 @@ impl Server {
 	) -> anyhow::Result<(LightningHtlcSubscription, Vec<Vtxo>)> {
 		let mut sub = self.db.get_htlc_subscription_by_payment_hash(payment_hash).await?
 			.not_found([payment_hash], "no pending payment with this payment hash")?;
+
+		slog!(LightningReceivePrepareRequested, payment_hash, user_pubkey, htlc_recv_expiry);
+
 		// first check whether we're in the right state to do this
 		match sub.status {
 			LightningHtlcSubscriptionStatus::Accepted => {}, // we continue
@@ -412,6 +425,9 @@ impl Server {
 		sub.status = LightningHtlcSubscriptionStatus::HtlcsReady;
 		sub.htlc_vtxos = vtxos.iter().map(|v| v.id()).collect();
 
+		let htlc_vtxo_ids = vtxos.iter().map(|v| v.id()).collect::<Vec<_>>();
+		slog!(LightningReceivePrepared, payment_hash, htlc_vtxo_ids);
+
 		Ok((sub, vtxos))
 	}
 
@@ -472,6 +488,9 @@ impl Server {
 			return badarg!("preimage doesn't match payment hash");
 		}
 
+		let cloned_vtxo_policy = vtxo_policy.clone();
+		slog!(LightningReceiveClaimRequested, payment_hash, payment_preimage, vtxo_policy);
+
 		let sub = self.db.get_htlc_subscription_by_payment_hash(payment_hash).await?
 			.not_found([payment_hash], "no pending payment with this payment hash")?;
 
@@ -485,21 +504,25 @@ impl Server {
 
 		let htlc_vtxos = self.db.get_vtxos_by_id(&sub.htlc_vtxos).await?;
 
-		let vtxo_req = VtxoRequest {
+		let vtxo_request = VtxoRequest {
 			amount: sub.amount(),
-			policy: vtxo_policy,
+			policy: cloned_vtxo_policy,
 		};
 		let input = {
 			let mut ret = htlc_vtxos.iter().map(|v| &v.vtxo).collect::<Vec<_>>();
 			ret.sort_by_key(|v| v.id());
 			ret
 		};
-		let package = ArkoorPackageBuilder::new(input, &user_nonces, vtxo_req, None)
-			.badarg("incorrect VTXO request data")?;
+		let package = ArkoorPackageBuilder::new(
+			input, &user_nonces, vtxo_request.clone(), None
+		).badarg("error creating arkoor package")?;
 
 		self.cln.settle_invoice(sub.id, payment_preimage).await
 			.context("could not settle invoice")?;
 
-		Ok(self.cosign_oor_package_with_builder(&package).await?)
+		let cosign_resp = self.cosign_oor_package_with_builder(&package).await?;
+		slog!(LightningReceiveClaimed, payment_hash, payment_preimage, vtxo_request);
+
+		Ok(cosign_resp)
 	}
 }

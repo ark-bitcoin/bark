@@ -159,6 +159,8 @@ impl ClnManager {
 			None
 		};
 
+		debug!("Sending payment to CLN for invoice: {}", invoice);
+
 		let (result_tx, result_rx) = oneshot::channel();
 		self.send_ctrl(Ctrl::PaymentRequest {
 			result_tx,
@@ -170,7 +172,7 @@ impl ClnManager {
 		if let Err(e) = result_rx.await.context("channel closed")? {
 			error!("Error sending bolt11 payment for invoice: {:#}", e);
 		} else {
-			debug!("Bolt11 invoice sent for payment, waiting for maintenance task CLN updates...");
+			debug!("Bolt11 invoice sent for payment");
 		}
 
 		Ok(())
