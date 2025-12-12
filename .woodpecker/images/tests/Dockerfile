@@ -65,6 +65,7 @@ WORKDIR /home/nixuser
 
 RUN sudo chown -R nixuser:nixbld /nix
 
+# When changing SWAGGER_UI_DOWNLOAD_URL one should also change the env vars for the woodpecker server.
 RUN mkdir -p /home/nixuser/assets/swagger-ui && \
 	wget -O /home/nixuser/assets/swagger-ui/v5.30.2.zip https://github.com/swagger-api/swagger-ui/archive/refs/tags/v5.30.2.zip && \
 	export SWAGGER_UI_DOWNLOAD_URL=file:///home/nixuser/assets/swagger-ui/v5.30.2.zip
