@@ -159,6 +159,7 @@ impl LightningDHelper {
 		writeln!(file, "dev-fast-gossip").unwrap();
 		writeln!(file, "dev-bitcoind-poll=1").unwrap();
 		writeln!(file, "allow-deprecated-apis=false").unwrap();
+		writeln!(file, "log-level=debug").unwrap();
 
 		if let Some(grpc_port) = self.state.lock().await.grpc_port {
 			writeln!(file, "grpc-port={}", grpc_port).unwrap();
