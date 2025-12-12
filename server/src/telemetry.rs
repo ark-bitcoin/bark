@@ -267,6 +267,7 @@ struct Metrics {
 	lightning_payment_volume: Counter<u64>,
 	lightning_invoice_verification_counter: Counter<u64>,
 	lightning_invoice_verification_queue_gauge: Gauge<u64>,
+	lightning_open_invoices_gauge: Gauge<u64>,
 	grpc_in_progress_counter: UpDownCounter<i64>,
 	grpc_latency_histogram: Histogram<u64>,
 	grpc_request_counter: Counter<u64>,
@@ -394,6 +395,7 @@ impl Metrics {
 		let lightning_payment_volume = meter.u64_counter("lightning_payment_volume").build();
 		let lightning_invoice_verification_counter = meter.u64_counter("lightning_invoice_verification_counter").build();
 		let lightning_invoice_verification_queue_gauge = meter.u64_gauge("lightning_invoice_verification_queue_gauge").build();
+		let lightning_open_invoices_gauge = meter.u64_gauge("lightning_open_invoices_gauge").build();
 		// gRPC metrics
 		let grpc_in_progress_counter = meter.i64_up_down_counter("grpc_requests_in_progress").build();
 		let grpc_latency_histogram = meter.u64_histogram("grpc_request_duration_ms").build();
@@ -449,6 +451,7 @@ impl Metrics {
 			lightning_payment_volume,
 			lightning_invoice_verification_counter,
 			lightning_invoice_verification_queue_gauge,
+			lightning_open_invoices_gauge,
 			grpc_in_progress_counter,
 			grpc_latency_histogram,
 			grpc_request_counter,
@@ -472,7 +475,7 @@ impl Metrics {
 		&self.global_labels
 	}
 
-	fn with_global_labels<I>(&self, additional: I) -> SmallVec<[KeyValue; 10]> 
+	fn with_global_labels<I>(&self, additional: I) -> SmallVec<[KeyValue; 10]>
 	where
 		I: IntoIterator<Item = KeyValue>,
 	{
@@ -782,6 +785,15 @@ pub fn set_pending_invoice_verifications(lightning_node_id: i64, count: usize) {
 			KeyValue::new(ATTRIBUTE_LIGHTNING_NODE_ID, lightning_node_id.to_string()),
 		]);
 		m.lightning_invoice_verification_queue_gauge.record(count as u64, &attrs)
+	}
+}
+
+pub fn set_open_invoices(lightning_node_id: i64, count: usize) {
+	if let Some(m) = TELEMETRY.get() {
+		let attrs = m.with_global_labels([
+			KeyValue::new(ATTRIBUTE_LIGHTNING_NODE_ID, lightning_node_id.to_string()),
+		]);
+		m.lightning_open_invoices_gauge.record(count as u64, &attrs)
 	}
 }
 

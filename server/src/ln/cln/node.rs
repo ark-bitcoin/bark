@@ -427,6 +427,8 @@ impl ClnNodeMonitorProcess {
 			self.node_id,
 		).await?;
 
+		telemetry::set_open_invoices(self.node_id, htlc_subscriptions.len());
+
 		for htlc_subscription in htlc_subscriptions {
 			let payment_hash = htlc_subscription.invoice.payment_hash();
 
