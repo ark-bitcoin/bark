@@ -5,7 +5,7 @@ use bitcoin::{Amount, SignedAmount};
 use bitcoin::hex::DisplayHex;
 use futures::StreamExt;
 use lightning_invoice::Bolt11Invoice;
-use log::{info, trace, warn};
+use log::{trace, debug, info, warn};
 
 use ark::arkoor::ArkoorPackageBuilder;
 use ark::{ProtocolEncoding, Vtxo, VtxoPolicy, VtxoRequest, musig};
@@ -265,13 +265,16 @@ impl Wallet {
 			return Ok(Some(receive))
 		}
 
-		info!("Waiting for payment...");
+		trace!("Requesting updates for ln-receive to server with for wait={} and hash={}", wait, payment_hash);
 		let sub = srv.client.check_lightning_receive(protos::CheckLightningReceiveRequest {
 			hash: payment_hash.to_byte_array().to_vec(), wait,
 		}).await?.into_inner();
 
+
 		let status = protos::LightningReceiveStatus::try_from(sub.status)
 			.with_context(|| format!("unknown payment status: {}", sub.status))?;
+
+		debug!("Received status {:?} for {}", status, payment_hash);
 		match status {
 			// this is the good case
 			protos::LightningReceiveStatus::Accepted |
