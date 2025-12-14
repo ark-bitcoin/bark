@@ -9,7 +9,7 @@ pub use states::*;
 use ark::VtxoId;
 use bitcoin::Txid;
 
-use bitcoin_ext::{BlockHeight, BlockRef, TxStatus};
+use bitcoin_ext::{BlockDelta, BlockHeight, BlockRef, TxStatus};
 
 /// A utility type to wrap ExitState children so they can be easily serialized. This also helps with
 /// debugging a lot!
@@ -51,9 +51,10 @@ impl ExitState {
 	pub fn new_awaiting_delta(
 		tip: BlockHeight,
 		confirmed_block: BlockRef,
-		claimable_height: BlockHeight
+		wait_delta: BlockDelta
 	) -> Self {
-		assert!(claimable_height >= confirmed_block.height);
+		debug_assert_ne!(wait_delta, 0, "wait delta must be non-zero");
+		let claimable_height = confirmed_block.height + wait_delta as BlockHeight;
 		ExitState::AwaitingDelta(ExitAwaitingDeltaState {
 			tip_height: tip,
 			confirmed_block,
