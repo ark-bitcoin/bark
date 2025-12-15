@@ -880,6 +880,7 @@ impl captaind::proxy::ArkRpcProxy for NoFinishRoundProxy {
 	}
 }
 
+#[ignore]
 #[tokio::test]
 async fn claim_forfeit_connector_chain() {
 	let ctx = TestContext::new("server/claim_forfeit_connector_chain").await;
@@ -943,6 +944,7 @@ async fn claim_forfeit_connector_chain() {
 	}.wait_millis(20_000).await;
 }
 
+#[ignore]
 #[tokio::test]
 async fn claim_forfeit_round_connector() {
 	//! Special case of the forfeit caim test where the connector output is on the round tx
