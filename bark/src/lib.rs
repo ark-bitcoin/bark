@@ -718,14 +718,21 @@ impl Wallet {
 		Ok(self.properties().await?.network)
 	}
 
-	/// Derive and store the keypair directly after currently last revealed one,
-	/// together with its index.
-	pub async fn derive_store_next_keypair(&self) -> anyhow::Result<(Keypair, u32)> {
+	/// Peek at the keypair directly after currently last revealed one,
+	/// together with its index, without storing it.
+	pub async fn peek_next_keypair(&self) -> anyhow::Result<(Keypair, u32)> {
 		let last_revealed = self.db.get_last_vtxo_key_index().await?;
 
 		let index = last_revealed.map(|i| i + 1).unwrap_or(u32::MIN);
 		let keypair = self.seed.derive_vtxo_keypair(index);
 
+		Ok((keypair, index))
+	}
+
+	/// Derive and store the keypair directly after currently last revealed one,
+	/// together with its index.
+	pub async fn derive_store_next_keypair(&self) -> anyhow::Result<(Keypair, u32)> {
+		let (keypair, index) = self.peek_next_keypair().await?;
 		self.db.store_vtxo_key(index, keypair.public_key()).await?;
 		Ok((keypair, index))
 	}

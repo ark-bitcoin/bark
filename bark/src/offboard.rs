@@ -115,17 +115,12 @@ impl Wallet {
 		// this will be the key that holds the temporary vtxos we will offboard
 		let offboard_pubkey = self.derive_store_next_keypair().await
 			.context("failed to create new keypair")?.0;
-		let change_pubkey = self.derive_store_next_keypair().await
-			.context("failed to create new keypair")?.0;
 		let offboard_dest = ArkoorDestination {
 			total_amount: required_amount,
 			policy: VtxoPolicy::new_pubkey(offboard_pubkey.public_key()),
 		};
-		let arkoor = self.create_checkpointed_arkoor_with_vtxos(
-			offboard_dest,
-			change_pubkey.public_key(),
-			vtxos,
-		).await.context("error trying to prepare offboard VTXOs with an arkoor tx")?;
+		let arkoor = self.create_checkpointed_arkoor_with_vtxos(offboard_dest, vtxos.into_iter())
+			.await.context("error trying to prepare offboard VTXOs with an arkoor tx")?;
 
 		self.store_spendable_vtxos(&arkoor.change).await
 			.context("error storing change VTXOs from preparatory arkoor")?;

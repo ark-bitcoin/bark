@@ -1,7 +1,6 @@
 use anyhow::Context;
 use bitcoin::Amount;
 use bitcoin::hex::DisplayHex;
-use bitcoin::secp256k1::PublicKey;
 use log::{info, error};
 
 use ark::{VtxoPolicy, ProtocolEncoding};
@@ -66,12 +65,10 @@ impl Wallet {
 	pub(crate) async fn create_checkpointed_arkoor(
 		&self,
 		arkoor_dest: ArkoorDestination,
-		change_pubkey: PublicKey,
 	) -> anyhow::Result<ArkoorCreateResult> {
 		let inputs = self.select_vtxos_to_cover(arkoor_dest.total_amount).await?;
 		self.create_checkpointed_arkoor_with_vtxos(
 			arkoor_dest,
-			change_pubkey,
 			inputs.into_iter(),
 		).await
 	}
@@ -79,20 +76,24 @@ impl Wallet {
 	pub(crate) async fn create_checkpointed_arkoor_with_vtxos(
 		&self,
 		arkoor_dest: ArkoorDestination,
-		change_pubkey: PublicKey,
 		inputs: impl IntoIterator<Item = WalletVtxo>,
 	) -> anyhow::Result<ArkoorCreateResult> {
-		if arkoor_dest.policy.user_pubkey() == change_pubkey {
-			bail!("Cannot create arkoor to same address as change");
-		}
-
 		// Find vtxos to cover
 		let (mut srv, _) = self.require_server().await?;
 		let (input_ids, inputs) = inputs.into_iter()
 			.map(|v| (v.id(), v))
 			.collect::<(Vec<_>, Vec<_>)>();
 
-		let mut user_keypairs = Vec::with_capacity(inputs.len());
+		// Peek at a potential change keypair without storing it yet.
+		// We'll only store it if change is actually created.
+		let (change_keypair, change_key_index) = self.peek_next_keypair().await?;
+		let change_pubkey = change_keypair.public_key();
+
+		if arkoor_dest.policy.user_pubkey() == change_pubkey {
+			bail!("Cannot create arkoor to same address as change");
+		}
+
+		let mut user_keypairs = vec![];
 		for vtxo in &inputs {
 			user_keypairs.push(self.get_vtxo_key(vtxo).await?);
 		}
@@ -126,10 +127,15 @@ impl Wallet {
 		let (dest, change) = vtxos.into_iter()
 			.partition::<Vec<_>, _>(|v| *v.policy() == arkoor_dest.policy);
 
+		if !change.is_empty() {
+			// Change was created, so now store the keypair
+			self.db.store_vtxo_key(change_key_index, change_pubkey).await?;
+		}
+
 		Ok(ArkoorCreateResult {
 			inputs: input_ids,
 			created: dest,
-			change: change,
+			change,
 		})
 	}
 
@@ -154,14 +160,9 @@ impl Wallet {
 
 		let negative_amount = -amount.to_signed().context("Amount out-of-range")?;
 
-		let change_pubkey = self.derive_store_next_keypair().await
-			.context("Failed to create change keypair")?.0;
-
 		let dest = ArkoorDestination { total_amount: amount, policy: destination.policy().clone() };
-		let arkoor = self.create_checkpointed_arkoor(
-			dest.clone(),
-			change_pubkey.public_key(),
-		).await.context("failed to create arkoor transaction")?;
+		let arkoor = self.create_checkpointed_arkoor(dest.clone())
+			.await.context("failed to create arkoor transaction")?;
 
 		let mut movement = self.movements.new_guarded_movement_with_update(
 			Subsystem::ARKOOR,
