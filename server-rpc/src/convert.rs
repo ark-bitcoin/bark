@@ -2,7 +2,6 @@
 use std::convert::TryFrom;
 use std::time::Duration;
 
-use ark::mailbox::BlindedMailboxIdentifier;
 use bitcoin::hashes::sha256;
 use bitcoin::secp256k1::{schnorr, PublicKey};
 use bitcoin::{self, Amount, FeeRate, OutPoint, Transaction};
@@ -11,9 +10,11 @@ use ark::{musig, ProtocolEncoding, SignedVtxoRequest, Vtxo, VtxoId, VtxoPolicy, 
 use ark::arkoor::{ArkoorBuilder, ArkoorCosignResponse};
 use ark::board::BoardCosignResponse;
 use ark::challenges::RoundAttemptChallenge;
+use ark::forfeit::{HashLockedForfeitBundle, HashLockedForfeitNonces};
 use ark::lightning::{PaymentHash, Preimage};
+use ark::mailbox::BlindedMailboxIdentifier;
 use ark::rounds::RoundId;
-use ark::tree::signed::VtxoTreeSpec;
+use ark::tree::signed::{LeafVtxoCosignRequest, LeafVtxoCosignResponse, VtxoTreeSpec};
 use ark::vtxo::VtxoRef;
 
 use crate::protos;
@@ -106,6 +107,8 @@ impl_try_from_bytes_protocol!(OutPoint, "outpoint");
 impl_try_from_bytes_protocol!(Vtxo, "VTXO");
 impl_try_from_bytes_protocol!(VtxoPolicy, "VTXO policy");
 impl_try_from_bytes_protocol!(BlindedMailboxIdentifier, "a blinded VTXO mailbox identifier");
+impl_try_from_bytes_protocol!(HashLockedForfeitNonces, "hArk forfeit nonces");
+impl_try_from_bytes_protocol!(HashLockedForfeitBundle, "hArk forfeit bundle");
 
 macro_rules! impl_try_from_bytes_bitcoin {
 	($ty:path, $exp:expr) => {
@@ -570,6 +573,35 @@ impl TryFrom<protos::CheckpointedPackageCosignResponse> for ark::arkoor::checkpo
 	fn try_from(v: protos::CheckpointedPackageCosignResponse) -> Result<Self, Self::Error> {
 		Ok(Self {
 			responses: v.parts.into_iter().map(|p| p.try_into()).collect::<Result<Vec<_>, _>>()?,
+		})
+	}
+}
+
+impl From<LeafVtxoCosignRequest> for protos::LeafVtxoCosignRequest {
+	fn from(v: LeafVtxoCosignRequest) -> Self {
+		protos::LeafVtxoCosignRequest {
+			vtxo_id: v.vtxo_id.to_bytes().to_vec(),
+			public_nonce: v.pub_nonce.serialize().to_vec(),
+		}
+	}
+}
+
+impl From<LeafVtxoCosignResponse> for protos::LeafVtxoCosignResponse {
+	fn from(v: LeafVtxoCosignResponse) -> Self {
+		protos::LeafVtxoCosignResponse {
+			public_nonce: v.public_nonce.serialize().to_vec(),
+			partial_signature: v.partial_signature.serialize().to_vec(),
+		}
+	}
+}
+
+impl TryFrom<protos::LeafVtxoCosignResponse> for LeafVtxoCosignResponse {
+	type Error = ConvertError;
+
+	fn try_from(v: protos::LeafVtxoCosignResponse) -> Result<Self, Self::Error> {
+		Ok(Self {
+			public_nonce: TryFromBytes::from_bytes(v.public_nonce)?,
+			partial_signature: TryFromBytes::from_bytes(v.partial_signature)?,
 		})
 	}
 }

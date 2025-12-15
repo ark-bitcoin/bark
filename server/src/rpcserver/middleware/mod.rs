@@ -52,8 +52,13 @@ pub const RPC_SERVICE_ARK_LAST_ROUND_EVENT: &'static str = "last_round_event";
 pub const RPC_SERVICE_ARK_SUBMIT_PAYMENT: &'static str = "submit_payment";
 pub const RPC_SERVICE_ARK_PROVIDE_VTXO_SIGNATURES: &'static str = "provide_vtxo_signatures";
 pub const RPC_SERVICE_ARK_PROVIDE_FORFEIT_SIGNATURES: &'static str = "provide_forfeit_signatures";
+pub const RPC_SERVICE_ARK_SUBMIT_ROUND_PARTICIPATION: &'static str = "submit_round_participation";
+pub const RPC_SERVICE_ARK_ROUND_PARTICIPATION_STATUS: &'static str = "round_participation_status";
+pub const RPC_SERVICE_ARK_REQUEST_LEAF_VTXO_COSIGN: &'static str = "request_leaf_vtxo_cosign";
+pub const RPC_SERVICE_ARK_REQUEST_FORFEIT_NONCES: &'static str = "request_forfeit_nonces";
+pub const RPC_SERVICE_ARK_FORFEIT_VTXOS: &'static str = "forfeit_vtxos";
 
-const RPC_SERVICE_ARK_METHODS: [&str; 28] = [
+const RPC_SERVICE_ARK_METHODS: &[&str] = &[
 	RPC_SERVICE_ARK_HANDSHAKE,
 	RPC_SERVICE_ARK_GET_ARK_INFO,
 	RPC_SERVICE_ARK_GET_FRESH_ROUNDS,
@@ -82,6 +87,11 @@ const RPC_SERVICE_ARK_METHODS: [&str; 28] = [
 	RPC_SERVICE_ARK_SUBMIT_PAYMENT,
 	RPC_SERVICE_ARK_PROVIDE_VTXO_SIGNATURES,
 	RPC_SERVICE_ARK_PROVIDE_FORFEIT_SIGNATURES,
+	RPC_SERVICE_ARK_SUBMIT_ROUND_PARTICIPATION,
+	RPC_SERVICE_ARK_ROUND_PARTICIPATION_STATUS,
+	RPC_SERVICE_ARK_REQUEST_LEAF_VTXO_COSIGN,
+	RPC_SERVICE_ARK_REQUEST_FORFEIT_NONCES,
+	RPC_SERVICE_ARK_FORFEIT_VTXOS,
 ];
 
 const RPC_SERVICE_ADMIN: &'static str = "AdminService";
