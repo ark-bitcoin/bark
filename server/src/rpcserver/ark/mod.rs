@@ -643,13 +643,6 @@ impl rpc::server::ArkService for Server {
 		Ok(tonic::Response::new(protos::Empty {}))
 	}
 
-	async fn provide_forfeit_signatures(
-		&self,
-		_req: tonic::Request<protos::ForfeitSignaturesRequest>,
-	) -> Result<tonic::Response<protos::Empty>, tonic::Status> {
-		unimplemented!();
-	}
-
 	// hArk
 
 	async fn submit_round_participation(

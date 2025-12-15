@@ -137,10 +137,6 @@ pub trait ArkRpcProxy: Send + Sync + Clone + 'static {
 		Ok(upstream.provide_vtxo_signatures(req).await?.into_inner())
 	}
 
-	async fn provide_forfeit_signatures(&self, upstream: &mut ArkClient, req: protos::ForfeitSignaturesRequest) -> Result<protos::Empty, tonic::Status> {
-		Ok(upstream.provide_forfeit_signatures(req).await?.into_inner())
-	}
-
 	async fn submit_round_participation(&self, upstream: &mut ArkClient, req: protos::RoundParticipationRequest) -> Result<protos::RoundParticipationResponse, tonic::Status> {
 		Ok(upstream.submit_round_participation(req).await?.into_inner())
 	}
@@ -399,12 +395,6 @@ impl<T: ArkRpcProxy> rpc::server::ArkService for ArkRpcProxyWrapper<T> {
 		&self, req: tonic::Request<protos::VtxoSignaturesRequest>,
 	) -> Result<tonic::Response<protos::Empty>, tonic::Status> {
 		Ok(tonic::Response::new(ArkRpcProxy::provide_vtxo_signatures(&self.proxy, &mut self.upstream.clone(), req.into_inner()).await?))
-	}
-
-	async fn provide_forfeit_signatures(
-		&self, req: tonic::Request<protos::ForfeitSignaturesRequest>,
-	) -> Result<tonic::Response<protos::Empty>, tonic::Status> {
-		Ok(tonic::Response::new(ArkRpcProxy::provide_forfeit_signatures(&self.proxy, &mut self.upstream.clone(), req.into_inner()).await?))
 	}
 
 	async fn submit_round_participation(

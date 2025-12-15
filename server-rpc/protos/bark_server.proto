@@ -85,7 +85,6 @@ service ArkService {
 	rpc LastRoundEvent(core.Empty) returns (RoundEvent) {}
 	rpc SubmitPayment(SubmitPaymentRequest) returns (SubmitPaymentResponse) {}
 	rpc ProvideVtxoSignatures(VtxoSignaturesRequest) returns (core.Empty) {}
-	rpc ProvideForfeitSignatures(ForfeitSignaturesRequest) returns (core.Empty) {}
 
 	// Submit a non-interactive round participation
 	rpc SubmitRoundParticipation(RoundParticipationRequest) returns (RoundParticipationResponse) {}
@@ -401,15 +400,6 @@ message VtxoProposal {
 	repeated bytes vtxos_agg_nonces = 5;
 }
 
-message RoundProposal {
-	uint64 round_seq = 1;
-	uint64 attempt_seq = 2;
-	/// The cosign signatures to plug into the vtxo tree.
-	repeated bytes vtxo_cosign_signatures = 3;
-	repeated ForfeitNonces forfeit_nonces = 4;
-	bytes connector_pubkey = 5;
-}
-
 message RoundFinished {
 	uint64 round_seq = 1;
 	uint64 attempt_seq = 2;
@@ -423,8 +413,10 @@ message RoundEvent {
 	oneof event {
 		RoundAttempt attempt = 1;
 		VtxoProposal vtxo_proposal = 2;
-		RoundProposal round_proposal = 3;
 		RoundFinished finished = 4;
+
+		// old variants:
+		//RoundProposal round_proposal = 3;
 	};
 }
 
@@ -460,10 +452,6 @@ message ForfeitSignatures {
 	bytes input_vtxo_id = 1;
 	repeated bytes pub_nonces = 2;
 	repeated bytes signatures = 3;
-}
-
-message ForfeitSignaturesRequest {
-	repeated ForfeitSignatures signatures = 1;
 }
 
 message VtxoSignaturesRequest {

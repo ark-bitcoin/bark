@@ -55,7 +55,7 @@ use tokio::sync::mpsc;
 
 use ark::{musig, Vtxo};
 use ark::connectors::ConnectorChain;
-use ark::rounds::{RoundId, ROUND_TX_CONNECTOR_VOUT, ROUND_TX_VTXO_TREE_VOUT};
+use ark::rounds::{RoundId, ROUND_TX_VTXO_TREE_VOUT};
 
 use crate::database::rounds::StoredRound;
 use crate::psbtext::{PsbtExt, PsbtInputExt, SweepMeta};
@@ -499,7 +499,6 @@ impl Process {
 	async fn round_finished(&mut self, round: &ExpiredRound) {
 		// round tx root
 		self.pending_tx_by_utxo.remove(&OutPoint::new(round.id.as_round_txid(), ROUND_TX_VTXO_TREE_VOUT));
-		self.pending_tx_by_utxo.remove(&OutPoint::new(round.id.as_round_txid(), ROUND_TX_CONNECTOR_VOUT));
 
 		// vtxo tree txs
 		let vtxo_txs = round.round.signed_tree.all_final_txs();

@@ -1,15 +1,14 @@
 pub use crate::challenges::RoundAttemptChallenge;
 
 use std::fmt;
-use std::collections::HashMap;
 use std::str::FromStr;
 
 use bitcoin::{Transaction, Txid};
 use bitcoin::hashes::Hash as _;
 use bitcoin::hex::DisplayHex;
-use bitcoin::secp256k1::{schnorr, PublicKey};
+use bitcoin::secp256k1::schnorr;
 
-use crate::{musig, VtxoId};
+use crate::musig;
 use crate::tree::signed::VtxoTreeSpec;
 
 /// A round tx must have at least vtxo tree and connector chain outputs.
@@ -18,8 +17,6 @@ pub const MIN_ROUND_TX_OUTPUTS: usize = 2;
 
 /// The output index of the vtxo tree root in the round tx.
 pub const ROUND_TX_VTXO_TREE_VOUT: u32 = 0;
-/// The output index of the connector chain  start in the round tx.
-pub const ROUND_TX_CONNECTOR_VOUT: u32 = 1;
 
 /// Unique identifier for a round.
 ///
@@ -161,15 +158,6 @@ pub struct VtxoProposal {
 }
 
 #[derive(Debug, Clone)]
-pub struct RoundProposal {
-	pub round_seq: RoundSeq,
-	pub attempt_seq: usize,
-	pub cosign_sigs: Vec<schnorr::Signature>,
-	pub forfeit_nonces: HashMap<VtxoId, Vec<musig::PublicNonce>>,
-	pub connector_pubkey: PublicKey,
-}
-
-#[derive(Debug, Clone)]
 pub struct RoundFinished {
 	pub round_seq: RoundSeq,
 	pub attempt_seq: usize,
@@ -181,7 +169,6 @@ pub struct RoundFinished {
 pub enum RoundEvent {
 	Attempt(RoundAttempt),
 	VtxoProposal(VtxoProposal),
-	RoundProposal(RoundProposal),
 	Finished(RoundFinished),
 }
 
@@ -191,7 +178,6 @@ impl RoundEvent {
 		match self {
 			Self::Attempt(_) => "RoundAttempt",
 			Self::VtxoProposal { .. } => "VtxoProposal",
-			Self::RoundProposal { .. } => "RoundProposal",
 			Self::Finished { .. } => "Finished",
 		}
 	}
@@ -200,7 +186,6 @@ impl RoundEvent {
 		match self {
 			Self::Attempt(e) => e.round_seq,
 			Self::VtxoProposal(e) => e.round_seq,
-			Self::RoundProposal(e) => e.round_seq,
 			Self::Finished(e) => e.round_seq,
 		}
 	}
@@ -209,7 +194,6 @@ impl RoundEvent {
 		match self {
 			Self::Attempt(e) => e.attempt_seq,
 			Self::VtxoProposal(e) => e.attempt_seq,
-			Self::RoundProposal(e) => e.attempt_seq,
 			Self::Finished(e) => e.attempt_seq,
 		}
 	}
@@ -231,13 +215,6 @@ impl fmt::Display for RoundEvent {
 					.field("round_seq", round_seq)
 					.field("attempt_seq", attempt_seq)
 					.field("unsigned_round_txid", &unsigned_round_tx.compute_txid())
-					.finish()
-			},
-			Self::RoundProposal(RoundProposal { round_seq, attempt_seq, connector_pubkey, .. }) => {
-				f.debug_struct("RoundProposal")
-					.field("round_seq", round_seq)
-					.field("attempt_seq", attempt_seq)
-					.field("connector_pubkey", &connector_pubkey)
 					.finish()
 			},
 			Self::Finished(RoundFinished {
