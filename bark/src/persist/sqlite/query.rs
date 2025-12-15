@@ -21,10 +21,10 @@ use crate::movement::{Movement, MovementId, MovementStatus, MovementSubsystem};
 use crate::payment_method::PaymentMethod;
 use crate::persist::{RoundStateId, StoredRoundState};
 use crate::persist::models::{
-	LightningReceive, LightningSend, PendingBoard, SerdeRoundState, SerdeUnconfirmedRound, StoredExit
+	LightningReceive, LightningSend, PendingBoard, SerdeRoundState, StoredExit
 };
 use crate::persist::sqlite::convert::{row_to_movement, row_to_wallet_vtxo, rows_to_wallet_vtxos};
-use crate::round::{RoundState, UnconfirmedRound};
+use crate::round::RoundState;
 use crate::vtxo::state::{VtxoStateKind, WalletVtxo};
 
 /// Set read-only properties for the wallet
@@ -350,49 +350,6 @@ pub fn load_round_states(
 			id: RoundStateId(row.get::<_, i64>(0)? as u32),
 			state: state.into(),
 		});
-	}
-	Ok(ret)
-}
-
-pub fn store_recovered_past_round(
-	conn: &Connection,
-	round: &UnconfirmedRound,
-) -> anyhow::Result<()> {
-	let bytes = rmp_serde::to_vec(&SerdeUnconfirmedRound::from(round)).expect("can serialize");
-	let mut stmt = conn.prepare(
-		"INSERT INTO bark_recovered_past_round (funding_txid, past_round_state) \
-			VALUES (:funding_txid, :state)",
-	)?;
-	stmt.execute(named_params! {
-		":funding_txid": round.funding_txid().to_string(),
-		":state": bytes,
-	})?;
-	Ok(())
-}
-
-pub fn remove_recovered_past_round(
-	conn: &Connection,
-	funding_txid: Txid,
-) -> anyhow::Result<()> {
-	let mut stmt = conn.prepare(
-		"DELETE FROM bark_recovered_past_round WHERE funding_txid = :funding_txid",
-	)?;
-	stmt.execute(named_params! {
-		":funding_txid": funding_txid.to_string(),
-	})?;
-	Ok(())
-}
-
-pub fn load_recovered_past_rounds(
-	conn: &Connection,
-) -> anyhow::Result<Vec<UnconfirmedRound>> {
-	let mut stmt = conn.prepare("SELECT past_round_state FROM bark_recovered_past_round")?;
-	let mut rows = stmt.query([])?;
-
-	let mut ret = Vec::new();
-	while let Some(row) = rows.next()? {
-		let state = rmp_serde::from_slice::<SerdeUnconfirmedRound>(&row.get::<_, Vec<u8>>(0)?)?;
-		ret.push(state.into());
 	}
 	Ok(ret)
 }

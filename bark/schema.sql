@@ -85,10 +85,6 @@ CREATE VIEW vtxo_view
 			JOIN most_recent_vtxo_state as vs
 				ON v.id = vs.vtxo_id
 /* vtxo_view(id,expiry_height,amount_sat,raw_vtxo,created_at,state,state_kind,last_updated_at) */;
-CREATE TABLE bark_recovered_past_round (
-				funding_txid TEXT PRIMARY KEY,
-				past_round_state BLOB NOT NULL
-			);
 CREATE TABLE bark_pending_lightning_receive (
 				payment_hash TEXT NOT NULL PRIMARY KEY,
 				preimage TEXT NOT NULL UNIQUE,

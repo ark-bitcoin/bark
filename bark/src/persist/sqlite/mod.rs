@@ -32,7 +32,7 @@ use crate::movement::{Movement, MovementId, MovementStatus, MovementSubsystem};
 use crate::payment_method::PaymentMethod;
 use crate::persist::{BarkPersister, RoundStateId, StoredRoundState};
 use crate::persist::models::{LightningReceive, LightningSend, PendingBoard, StoredExit};
-use crate::round::{RoundState, UnconfirmedRound};
+use crate::round::RoundState;
 use crate::vtxo::state::{VtxoStateKind, WalletVtxo};
 
 /// An implementation of the BarkPersister using rusqlite. Changes are persisted using the given
@@ -189,21 +189,6 @@ impl BarkPersister for SqliteClient {
 	fn load_round_states(&self) -> anyhow::Result<Vec<StoredRoundState>> {
 		let conn = self.connect()?;
 		query::load_round_states(&conn)
-	}
-
-	fn store_recovered_round(&self, round: &UnconfirmedRound) -> anyhow::Result<()> {
-		let conn = self.connect()?;
-		query::store_recovered_past_round(&conn, round)
-	}
-
-	fn remove_recovered_round(&self, funding_txid: Txid) -> anyhow::Result<()> {
-		let conn = self.connect()?;
-		query::remove_recovered_past_round(&conn, funding_txid)
-	}
-
-	fn load_recovered_rounds(&self) -> anyhow::Result<Vec<UnconfirmedRound>> {
-		let conn = self.connect()?;
-		query::load_recovered_past_rounds(&conn)
 	}
 
 	fn store_vtxos(

@@ -5,14 +5,13 @@
 use std::{cmp, iter};
 use std::borrow::Cow;
 use std::convert::Infallible;
-use std::sync::Arc;
 use std::time::{Duration, SystemTime};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use anyhow::Context;
 use bdk_esplora::esplora_client::Amount;
 use bip39::rand;
-use bitcoin::consensus::encode::{serialize_hex, deserialize};
+use bitcoin::consensus::encode::serialize_hex;
 use bitcoin::key::Keypair;
 use bitcoin::secp256k1::{schnorr, PublicKey};
 use bitcoin::{Address, Network, OutPoint, Transaction, Txid};
@@ -26,9 +25,9 @@ use ark::{OffboardRequest, ProtocolEncoding, SignedVtxoRequest, Vtxo, VtxoId, Vt
 use ark::connectors::ConnectorChain;
 use ark::musig::{self, DangerousSecretNonce, PublicNonce, SecretNonce};
 use ark::rounds::{
-	RoundAttempt, RoundEvent, RoundFinished, RoundId, RoundSeq, MIN_ROUND_TX_OUTPUTS, ROUND_TX_CONNECTOR_VOUT, ROUND_TX_VTXO_TREE_VOUT
+	RoundAttempt, RoundEvent, RoundFinished, RoundSeq, MIN_ROUND_TX_OUTPUTS, ROUND_TX_CONNECTOR_VOUT, ROUND_TX_VTXO_TREE_VOUT
 };
-use ark::tree::signed::{SignedVtxoTreeSpec, VtxoTreeSpec};
+use ark::tree::signed::VtxoTreeSpec;
 use bitcoin_ext::{TxStatus, P2TR_DUST};
 use bitcoin_ext::rpc::RpcApi;
 use server_rpc::protos;
@@ -1291,35 +1290,6 @@ impl Wallet {
 			}).await;
 		}
 
-		// also sync recovered states if we have any
-		let recovered = self.db.load_recovered_rounds()?;
-		if !recovered.is_empty() {
-			debug!("Syncing {} recovered past rounds...", recovered.len());
-
-			tokio_stream::iter(recovered).for_each_concurrent(10, |mut state| async move {
-				match state.sync(self).await {
-					Ok(UnconfirmedRoundStatus::Confirmed) => {
-						info!("Recovered old round with funding txid {} confirmed",
-							state.funding_txid(),
-						);
-						if let Err(e) = self.db.remove_recovered_round(state.funding_txid()) {
-							warn!("Error removing finished recovered round from db: {:#}", e);
-						}
-					},
-					Ok(UnconfirmedRoundStatus::DoubleSpent { double_spender }) => {
-						debug!("Old recovered round {} invalidated because double spent by {:?}",
-							state.funding_txid(), double_spender,
-						);
-						if let Err(e) = self.db.remove_recovered_round(state.funding_txid()) {
-							warn!("Error invalidated recovered round from db: {:#}", e);
-						}
-					},
-					Ok(UnconfirmedRoundStatus::Unconfirmed) => {},
-					Err(e) => debug!("Error trying to progress recovered past round: {:#}", e),
-				}
-			}).await;
-		}
-
 		Ok(())
 	}
 
@@ -1505,91 +1475,5 @@ impl Wallet {
 				self.db.update_round_state(&state)?;
 			}
 		}
-	}
-
-	/// Look for past rounds that might contain some of our VTXOs
-	///
-	/// Afterwards, call [Wallet::sync_pending_rounds] to make progress on these.
-	pub async fn start_sync_past_rounds(&self) -> anyhow::Result<()> {
-		let mut srv = self.require_server()?;
-
-		let fresh_rounds = srv.client.get_fresh_rounds(protos::FreshRoundsRequest {
-			last_round_txid: None,
-		}).await?.into_inner().txids.into_iter()
-			.map(|txid| RoundId::from_slice(&txid))
-			.collect::<Result<Vec<_>, _>>()?;
-
-		if fresh_rounds.is_empty() {
-			debug!("No new rounds to sync");
-			return Ok(());
-		}
-
-		debug!("Received {} new rounds from ark", fresh_rounds.len());
-
-		let last_pk_index = self.db.get_last_vtxo_key_index()?.unwrap_or_default();
-		let pubkeys = (0..=last_pk_index).map(|idx| {
-			self.vtxo_seed.derive_keypair(idx).public_key()
-		}).collect::<HashSet<_>>();
-
-		let pending_states = Arc::new(self.db.load_recovered_rounds()?.into_iter()
-			.map(|s| (s.funding_txid(), s))
-			.collect::<HashMap<_, _>>());
-
-		let results = tokio_stream::iter(fresh_rounds).map(|round_id| {
-			let pubkeys = pubkeys.clone();
-			let mut srv = srv.clone();
-			let pending_states = pending_states.clone();
-
-			async move {
-				//TODO(stevenroose) detect if we already are aware
-				if pending_states.contains_key(&round_id.as_round_txid()) {
-					debug!("Skipping round {} because it already exists", round_id);
-					return Ok::<_, anyhow::Error>(());
-				}
-
-				let req = protos::RoundId {
-					txid: round_id.as_round_txid().to_byte_array().to_vec(),
-				};
-				let round = srv.client.get_round(req).await?.into_inner();
-
-				let tree = SignedVtxoTreeSpec::deserialize(&round.signed_vtxos)
-					.context("invalid signed vtxo tree from srv")?
-					.into_cached_tree();
-
-				let mut reqs = Vec::new();
-				let mut vtxos = vec![];
-				for (idx, dest) in tree.spec.spec.vtxos.iter().enumerate() {
-					if pubkeys.contains(&dest.vtxo.policy.user_pubkey()) {
-						let vtxo = tree.build_vtxo(idx).expect("correct leaf idx");
-
-						if self.db.get_wallet_vtxo(vtxo.id())?.is_none() {
-							debug!("Built new vtxo {} with value {}", vtxo.id(), vtxo.amount());
-							reqs.push(dest.vtxo.clone());
-							vtxos.push(vtxo);
-						} else {
-							debug!("Not adding vtxo {} because it already exists", vtxo.id());
-						}
-					}
-				}
-
-				let round_tx = deserialize::<Transaction>(&round.funding_tx)?;
-
-				let state = UnconfirmedRound::new(round_tx, vtxos);
-				self.db.store_recovered_round(&state)?;
-
-				Ok(())
-			}
-		})
-			.buffer_unordered(10)
-			.collect::<Vec<_>>()
-			.await;
-
-		for result in results {
-			if let Err(e) = result {
-				return Err(e).context("failed to sync round");
-			}
-		}
-
-		Ok(())
 	}
 }

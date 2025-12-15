@@ -254,7 +254,6 @@ mod test {
 		assert!(table_exists(&conn, "bark_exit_states").unwrap());
 		assert!(table_exists(&conn, "bark_exit_child_transactions").unwrap());
 		assert!(table_exists(&conn, "bark_round_state").unwrap());
-		assert!(table_exists(&conn, "bark_recovered_past_round").unwrap());
 		assert!(table_exists(&conn, "bark_lightning_send").unwrap());
 
 		// The migration can be run multiple times

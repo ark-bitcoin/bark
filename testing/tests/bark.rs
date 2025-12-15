@@ -913,6 +913,7 @@ async fn second_round_attempt() {
 	assert_eq!(log_not_allowed.recv().ready().await.unwrap().vtxo, bark2_vtxo);
 }
 
+#[ignore] // we removed this functionality, might be added again later
 #[tokio::test]
 async fn recover_mnemonic() {
 	let ctx = TestContext::new("bark/recover_mnemonic").await;
