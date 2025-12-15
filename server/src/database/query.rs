@@ -8,16 +8,24 @@
 
 use std::borrow::Borrow;
 use std::collections::HashMap;
+use std::str::FromStr;
 
 use anyhow::Context;
-use tokio_postgres::GenericClient;
+use bitcoin::hashes::Hash;
+use bitcoin::hex::DisplayHex;
+use bitcoin::{Amount, Txid};
+use tokio_postgres::{GenericClient, Row, Transaction};
 use tokio_postgres::types::Type;
 
-use ark::{Vtxo, VtxoId, ProtocolEncoding};
+use ark::{ProtocolEncoding, Vtxo, VtxoId, VtxoRequest};
+use ark::rounds::RoundId;
+use ark::tree::signed::{UnlockHash, UnlockPreimage};
 use bitcoin_ext::BlockHeight;
 
 use crate::database::model::{Board, VtxoState};
+use crate::database::rounds::{StoredRoundInput, StoredRoundParticipation};
 use crate::error::ContextExt;
+use crate::secret::Secret;
 
 
 pub async fn upsert_vtxos<T, V: Borrow<Vtxo>>(
@@ -163,6 +171,144 @@ pub async fn mark_board_swept<T>(
 
 	client.execute(&statement, &[&vtxo_id.to_string()]).await
 		.context("Failed to execute query")?;
+
+	Ok(())
+}
+
+pub async fn store_round_participation(
+	tx: &Transaction<'_>,
+	unlock_hash: UnlockHash,
+	unlock_preimage: UnlockPreimage,
+	inputs: &[VtxoId],
+	outputs: impl IntoIterator<Item = &VtxoRequest>,
+) -> anyhow::Result<()> {
+	let part_stmt = tx.prepare_typed(
+		"INSERT INTO round_participation (unlock_hash, unlock_preimage, created_at) \
+		VALUES ($1, $2, NOW()) RETURNING id",
+		&[Type::TEXT, Type::BYTEA]
+	).await?;
+
+	let part_row = tx.query_one(&part_stmt, &[
+		&unlock_hash.to_string(),
+		&&unlock_preimage[..],
+	]).await?;
+
+	let part_id = part_row.get::<_, i64>("id");
+
+	let input_stmt = tx.prepare_typed(
+		"INSERT INTO round_part_input (participation_id, vtxo_id) VALUES ($1, $2)",
+		&[Type::INT8, Type::TEXT]
+	).await?;
+	for input in inputs {
+		tx.execute(&input_stmt, &[&part_id, &input.to_string()]).await?;
+	}
+
+	let output_stmt = tx.prepare_typed(
+		"INSERT INTO round_part_output (participation_id, policy, amount) \
+		VALUES ($1, $2, $3)",
+		&[Type::INT8, Type::BYTEA, Type::INT8]
+	).await?;
+
+	for output in outputs {
+		tx.execute(&output_stmt, &[
+			&part_id,
+			&output.policy.serialize(),
+			&(output.amount.to_sat() as i64),
+		]).await?;
+	}
+
+	Ok(())
+}
+
+/// complete a round participation from the main row
+pub async fn complete_round_participation(
+	tx: &Transaction<'_>,
+	part_row: Row,
+) -> anyhow::Result<StoredRoundParticipation> {
+	let part_id = part_row.get::<_, i64>("id");
+
+	let input_rows = tx.query(
+		"SELECT vtxo_id, signed_forfeit_tx, signed_forfeit_claim_tx \
+			FROM round_part_input WHERE participation_id = $1",
+		&[&part_id],
+	).await?;
+
+	let mut inputs = Vec::with_capacity(input_rows.len());
+	for row in input_rows {
+		let signed_forfeit_tx = row.get::<_, Option<&[u8]>>("signed_forfeit_tx").map(|b|
+			bitcoin::consensus::deserialize::<bitcoin::Transaction>(b)
+				.context("invalid round input signed_forfeit_tx")
+		).transpose()?;
+
+		let signed_forfeit_claim_tx = row.get::<_, Option<&[u8]>>("signed_forfeit_claim_tx").map(|b|
+			bitcoin::consensus::deserialize::<bitcoin::Transaction>(b)
+				.context("invalid round input signed_forfeit_claim_tx")
+		).transpose()?;
+
+		inputs.push(StoredRoundInput {
+			vtxo_id: VtxoId::from_str(&row.get::<_, &str>("vtxo_id"))
+				.context("invalid round input vtxoid")?,
+			signed_forfeit_tx,
+			signed_forfeit_claim_tx,
+		});
+	}
+
+	let output_rows = tx.query(
+		"SELECT policy, amount FROM round_part_output WHERE participation_id = $1",
+		&[&part_id],
+	).await?;
+
+	let mut outputs = Vec::with_capacity(output_rows.len());
+	for row in output_rows {
+		let policy_bytes = row.get::<_, &[u8]>("policy");
+		let amount = row.get::<_, i64>("amount");
+		outputs.push(VtxoRequest {
+			policy: ark::VtxoPolicy::deserialize(policy_bytes)
+				.context("invalid vtxo policy in round outputs")?,
+			amount: Amount::from_sat(amount as u64),
+		});
+	}
+
+	let round_id = part_row.get::<_, Option<&str>>("round_id").map(|id|
+		RoundId::from_str(id).context("invalid round id")
+	).transpose()?;
+
+	let unlock_preimage = UnlockPreimage::try_from(part_row.get::<_, &[u8]>("unlock_preimage"))
+		.context("invalid unlock_preimage")?;
+	let unlock_hash = UnlockHash::from_str(&part_row.get::<_, &str>("unlock_hash"))
+		.context("invalid unlock_hash")?;
+	ensure!(UnlockHash::hash(&unlock_preimage) == unlock_hash,
+		"unlock_hash ({}) does not match unlock_preimage ({})",
+		unlock_hash, unlock_preimage.as_hex(),
+	);
+
+	Ok(StoredRoundParticipation {
+		unlock_preimage: Secret::new(unlock_preimage),
+		unlock_hash,
+		inputs,
+		outputs,
+		round_id,
+	})
+}
+
+pub async fn set_round_id_for_participations(
+	tx: &Transaction<'_>,
+	unlock_hashes: impl IntoIterator<Item = UnlockHash>,
+	round_txid: Txid,
+) -> anyhow::Result<()> {
+	let unlock_hash_strings = unlock_hashes.into_iter()
+		.map(|h| h.to_string())
+		.collect::<Vec<_>>();
+
+	if unlock_hash_strings.is_empty() {
+		return Ok(());
+	}
+
+	let stmt = tx.prepare_typed(
+		"UPDATE round_participation SET round_id = $1 WHERE unlock_hash = ANY($2)",
+		&[Type::TEXT, Type::TEXT_ARRAY]
+	).await?;
+	tx.execute(&stmt, &[&round_txid.to_string(), &unlock_hash_strings]).await?;
 
 	Ok(())
 }

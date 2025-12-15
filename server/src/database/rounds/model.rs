@@ -4,14 +4,37 @@ use std::str::FromStr;
 use bitcoin::Transaction;
 use bitcoin::consensus::deserialize;
 use bitcoin::secp256k1::SecretKey;
-use bitcoin_ext::BlockHeight;
 use chrono::{DateTime, Local};
 use tokio_postgres::Row;
 
-use ark::ProtocolEncoding;
+use ark::{ProtocolEncoding, VtxoId, VtxoRequest};
 use ark::rounds::{RoundId, RoundSeq};
-use ark::tree::signed::SignedVtxoTreeSpec;
+use ark::tree::signed::{SignedVtxoTreeSpec, UnlockHash, UnlockPreimage};
+use bitcoin_ext::BlockHeight;
 
+use crate::secret::Secret;
+
+
+pub struct StoredRoundInput {
+	pub vtxo_id: VtxoId,
+	pub signed_forfeit_tx: Option<Transaction>,
+	pub signed_forfeit_claim_tx: Option<Transaction>,
+}
+
+impl StoredRoundInput {
+	/// Whether this input was succesfully forfeited
+	pub fn is_forfeited(&self) -> bool {
+		self.signed_forfeit_tx.is_some() && self.signed_forfeit_claim_tx.is_some()
+	}
+}
+
+pub struct StoredRoundParticipation {
+	pub unlock_hash: UnlockHash,
+	pub unlock_preimage: Secret<UnlockPreimage>,
+	pub inputs: Vec<StoredRoundInput>,
+	pub outputs: Vec<VtxoRequest>,
+	pub round_id: Option<RoundId>,
+}
 
 #[derive(Debug, Clone)]
 pub struct StoredRound {

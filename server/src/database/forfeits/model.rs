@@ -94,9 +94,7 @@ mod test {
 	use bitcoin::hex::FromHex;
 	use bitcoin::key::Keypair;
 	use bitcoin::secp256k1::rand;
-
 	use ark::musig;
-
 	use crate::SECP;
 
 	#[test]

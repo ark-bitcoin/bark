@@ -962,6 +962,61 @@ ALTER SEQUENCE public.round_id_seq OWNED BY public.round.id;
 
 
 --
+-- Name: round_part_input; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.round_part_input (
+    participation_id bigint NOT NULL,
+    vtxo_id text NOT NULL,
+    signed_forfeit_tx bytea,
+    signed_forfeit_claim_tx bytea
+);
+
+
+--
+-- Name: round_part_output; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.round_part_output (
+    participation_id bigint NOT NULL,
+    policy bytea NOT NULL,
+    amount bigint NOT NULL
+);
+
+
+--
+-- Name: round_participation; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.round_participation (
+    id bigint NOT NULL,
+    unlock_hash text,
+    unlock_preimage bytea,
+    round_id text,
+    created_at timestamp without time zone NOT NULL
+);
+
+
+--
+-- Name: round_participation_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.round_participation_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: round_participation_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.round_participation_id_seq OWNED BY public.round_participation.id;
+
+
+--
 -- Name: sweep; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -1232,6 +1287,13 @@ ALTER TABLE ONLY public.round ALTER COLUMN id SET DEFAULT nextval('public.round_
 
 
 --
+-- Name: round_participation id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.round_participation ALTER COLUMN id SET DEFAULT nextval('public.round_participation_id_seq'::regclass);
+
+
+--
 -- Name: sweep id; Type: DEFAULT; Schema: public; Owner: -
 --
 
@@ -1416,6 +1478,14 @@ ALTER TABLE ONLY public.lightning_payment_attempt
 
 ALTER TABLE ONLY public.refinery_schema_history
     ADD CONSTRAINT refinery_schema_history_pkey PRIMARY KEY (version);
+
+
+--
+-- Name: round_participation round_participation_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.round_participation
+    ADD CONSTRAINT round_participation_pkey PRIMARY KEY (id);
 
 
 --
@@ -1605,6 +1675,34 @@ CREATE INDEX round_expiry_ix ON public.round USING btree (expiry, ((swept_at IS 
 --
 
 CREATE UNIQUE INDEX round_funding_tx_id_uix ON public.round USING btree (funding_txid) INCLUDE (swept_at);
+
+
+--
+-- Name: round_part_input_participation_id_ix; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX round_part_input_participation_id_ix ON public.round_part_input USING btree (participation_id);
+
+
+--
+-- Name: round_part_output_participation_id_ix; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX round_part_output_participation_id_ix ON public.round_part_output USING btree (participation_id);
+
+
+--
+-- Name: round_participation_round_id_null_ix; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX round_participation_round_id_null_ix ON public.round_participation USING btree (((round_id IS NULL)));
+
+
+--
+-- Name: round_participation_unlock_hash_uix; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX round_participation_unlock_hash_uix ON public.round_participation USING btree (unlock_hash);
 
 
 --
@@ -1866,6 +1964,30 @@ ALTER TABLE ONLY public.lightning_payment_attempt
 
 ALTER TABLE ONLY public.lightning_payment_attempt
     ADD CONSTRAINT lightning_payment_attempt_lightning_node_id_fkey FOREIGN KEY (lightning_node_id) REFERENCES public.lightning_node(id);
+
+
+--
+-- Name: round_part_input round_part_input_participation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.round_part_input
+    ADD CONSTRAINT round_part_input_participation_id_fkey FOREIGN KEY (participation_id) REFERENCES public.round_participation(id);
+
+
+--
+-- Name: round_part_input round_part_input_vtxo_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.round_part_input
+    ADD CONSTRAINT round_part_input_vtxo_id_fkey FOREIGN KEY (vtxo_id) REFERENCES public.vtxo(vtxo_id);
+
+
+--
+-- Name: round_part_output round_part_output_participation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.round_part_output
+    ADD CONSTRAINT round_part_output_participation_id_fkey FOREIGN KEY (participation_id) REFERENCES public.round_participation(id);
 
 
 --

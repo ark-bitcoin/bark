@@ -1,20 +1,24 @@
 
 mod model;
+pub use model::*;
+
+
 use std::str::FromStr;
 use std::time::Duration;
 
-pub use model::*;
-
+use anyhow::bail;
+use bitcoin::hashes::Hash;
 use bitcoin::{Transaction, Txid};
 use bitcoin::consensus::serialize;
 use bitcoin::secp256k1::SecretKey;
-use bitcoin_ext::BlockHeight;
+use log::trace;
 use tokio_postgres::types::Type;
 
-use ark::VtxoId;
+use ark::{VtxoId, VtxoRequest};
 use ark::encode::ProtocolEncoding;
 use ark::rounds::{RoundId, RoundSeq};
-use ark::tree::signed::CachedSignedVtxoTree;
+use ark::tree::signed::{CachedSignedVtxoTree, UnlockHash, UnlockPreimage};
+use bitcoin_ext::BlockHeight;
 
 use crate::database::Db;
 use crate::database::forfeits::ForfeitState;
@@ -182,5 +186,143 @@ impl Db {
 		Ok(conn.query_opt(&stmt, &[]).await?.map(|r|
 			RoundId::from_str(&r.get::<_, &str>("funding_txid")).expect("corrupt db: funding txid")
 		))
+	}
+
+	pub async fn get_round_participation_by_unlock_hash(
+		&self,
+		unlock_hash: UnlockHash,
+	) -> anyhow::Result<Option<StoredRoundParticipation>> {
+		let mut conn = self.get_conn().await?;
+		let tx = conn.transaction().await?;
+
+		let part_opt = tx.query_opt(
+			"SELECT id, unlock_hash, unlock_preimage, round_id, created_at \
+			FROM round_participation \
+			WHERE unlock_hash = $1",
+			&[&unlock_hash.to_string()],
+		).await?;
+
+		let part_row = match part_opt {
+			Some(r) => r,
+			None => return Ok(None),
+		};
+
+		Ok(Some(query::complete_round_participation(&tx, part_row).await?))
+	}
+
+	pub async fn get_all_pending_round_participations(
+		&self,
+	) -> anyhow::Result<Vec<StoredRoundParticipation>> {
+		let mut conn = self.get_conn().await?;
+		let tx = conn.transaction().await?;
+
+		let parts = tx.query(
+			"SELECT id, unlock_hash, unlock_preimage, round_id, created_at \
+			FROM round_participation \
+			WHERE round_id IS NULL",
+			&[],
+		).await?;
+
+		let mut ret = Vec::with_capacity(parts.len());
+		for row in parts {
+			ret.push(query::complete_round_participation(&tx, row).await?);
+		}
+
+		Ok(ret)
+	}
+
+	/// Try register a new hArk round participation
+	///
+	/// Will check that the input vtxos are spendable.
+	pub async fn try_store_round_participation(
+		&self,
+		unlock_preimage: UnlockPreimage,
+		inputs: &[VtxoId],
+		outputs: impl IntoIterator<Item = &VtxoRequest>,
+	) -> anyhow::Result<()> {
+		let mut conn = self.get_conn().await?;
+		let tx = conn.transaction().await?;
+
+		let unlock_hash = UnlockHash::hash(&unlock_preimage);
+		trace!("Storing round participation for unlock hash {} and inputs {:?}",
+			unlock_hash, inputs,
+		);
+
+		// check that all inputs are free
+		for vtxo in query::get_vtxos_by_id(&tx, inputs).await? {
+			if !vtxo.is_spendable() {
+				return badarg!("input vtxo {} is not spendable", vtxo.vtxo_id);
+			}
+		}
+
+		query::store_round_participation(
+			&tx, unlock_hash, unlock_preimage, inputs, outputs,
+		).await?;
+
+		tx.commit().await?;
+		Ok(())
+	}
+
+	pub async fn set_forfeit_transactions(
+		&self,
+		unlock_hash: UnlockHash,
+		vtxo_id: VtxoId,
+		signed_forfeit_tx: &Transaction,
+		signed_forfeit_claim_tx: &Transaction,
+	) -> anyhow::Result<()> {
+		let conn = self.get_conn().await?;
+
+		let stmt = conn.prepare_typed(
+			"UPDATE round_part_input \
+			SET signed_forfeit_tx = $3, signed_forfeit_claim_tx = $4 \
+			FROM round_participation \
+			WHERE round_part_input.participation_id = round_participation.id \
+				AND round_participation.unlock_hash = $1 \
+				AND round_participation.round_id IS NOT NULL \
+				AND round_part_input.vtxo_id = $2",
+			&[Type::TEXT, Type::TEXT, Type::BYTEA, Type::BYTEA]
+		).await?;
+
+		let rows_affected = conn.execute(&stmt, &[
+			&unlock_hash.to_string(),
+			&vtxo_id.to_string(),
+			&serialize(signed_forfeit_tx),
+			&serialize(signed_forfeit_claim_tx),
+		]).await?;
+
+		if rows_affected == 0 {
+			return badarg!("no matching round participation input found for \
+				unlock_hash {} and vtxo_id {}", unlock_hash, vtxo_id,
+			);
+		}
+
+		Ok(())
+	}
+
+	pub async fn remove_round_participation(
+		&self,
+		unlock_hash: UnlockHash,
+	) -> anyhow::Result<bool> {
+		let conn = self.get_conn().await?;
+
+		let stmt = conn.prepare_typed(
+			"WITH deleted AS (
+				DELETE FROM round_participation WHERE unlock_hash = $1
+				RETURNING id
+			),
+			_ AS (
+				DELETE FROM round_part_input
+				WHERE participation_id IN (SELECT id FROM deleted)
+			),
+			_ AS (
+				DELETE FROM round_part_output
+				WHERE participation_id IN (SELECT id FROM deleted)
+			)
+			SELECT id FROM deleted",
+			&[Type::TEXT]
+		).await?;
+		let rows_affected = conn.execute(&stmt, &[&unlock_hash.to_string()]).await?;
+
+		Ok(rows_affected > 0)
 	}
 }
