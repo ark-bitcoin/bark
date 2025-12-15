@@ -1,4 +1,6 @@
 
+pub mod forfeit;
+
 
 use std::borrow::Borrow;
 use std::collections::{HashMap, HashSet};
@@ -23,7 +25,7 @@ use tracing_opentelemetry::OpenTelemetrySpanExt;
 use ark::{
 	ProtocolEncoding, SignedVtxoRequest, Vtxo, VtxoId, VtxoIdInput, VtxoPolicy, VtxoRequest,
 };
-use ark::challenges::RoundAttemptChallenge;
+use ark::challenges::{NonInteractiveRoundParticipationChallenge, RoundAttemptChallenge};
 use ark::connectors::ConnectorChain;
 use ark::musig::{self, DangerousSecretNonce, PublicNonce, SecretNonce};
 use ark::rounds::{
@@ -1647,6 +1649,19 @@ pub async fn run_round_coordinator(
 	};
 
 	loop {
+		{
+			let mut nonce_guard = srv.forfeit_nonces.lock();
+			let dropped = nonce_guard.remove_older(srv.config.round_forfeit_nonces_timeout);
+			let remaining = nonce_guard.len();
+			drop(nonce_guard);
+			let nb_dropped = dropped.len();
+			let unfinished = dropped.filter(|(_, v)| v.is_some()).count();
+			slog!(RoundForfeitNonceCleanup, remaining,
+				removed_finished: nb_dropped - unfinished,
+				removed_unfinished: unfinished,
+			);
+		}
+
 		round_seq.increment();
 		match perform_round(srv, &mut round_input_rx, round_seq).await {
 			RoundResult::Success => {},
@@ -1688,6 +1703,41 @@ pub async fn run_round_coordinator(
 				}
 			}
 		}
+	}
+}
+
+impl Server {
+	pub async fn register_non_interactive_round_participation(
+		&self,
+		inputs: Vec<VtxoIdInput>,
+		vtxo_requests: Vec<VtxoRequest>,
+	) -> anyhow::Result<UnlockHash> {
+		let input_ids = inputs.iter().map(|i| i.vtxo_id).collect::<Vec<_>>();
+
+		// we do check the vtxo's spendability in the db call below, but
+		// with this, if the user is doing race-y behavior, we can fail early
+		// either here or on the other side of the race
+		let _guard = match self.vtxos_in_flux.lock(&input_ids) {
+			Ok(g) => g,
+			Err(v) => return badarg!("vtxo already in flux: {}", v),
+		};
+
+		// check input proofs
+		let vtxos = self.db.get_vtxos_by_id(&input_ids).await?;
+		for (input, vtxo) in inputs.iter().zip(&vtxos) {
+			NonInteractiveRoundParticipationChallenge::verify_input_vtxo_sig(
+				&vtxo.vtxo, &vtxo_requests, &input.ownership_proof,
+			).with_badarg(|| format!("ownership proof for vtxo {} failed", input.vtxo_id))?;
+		}
+
+		let unlock_preimage = rand::random::<UnlockPreimage>();
+		let unlock_hash = UnlockHash::hash(&unlock_preimage);
+
+		self.db.try_store_round_participation(
+			unlock_preimage, &input_ids, &vtxo_requests,
+		).await?;
+
+		Ok(unlock_hash)
 	}
 }
 

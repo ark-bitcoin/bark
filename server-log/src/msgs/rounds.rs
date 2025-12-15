@@ -377,6 +377,33 @@ pub struct RoundFinished {
 }
 impl_slog!(RoundFinished, Info, "Round finished");
 
+// ****************************************************************************
+// * hArk leaf and forfeit signing
+// ****************************************************************************
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HarkLeafSigned {
+	pub vtxo_id: VtxoId,
+	pub funding_txid: Txid,
+}
+impl_slog!(HarkLeafSigned, Trace, "signed hArk leaf output");
+
+// ****************
+// * general hArk *
+// ****************
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RoundForfeitNonceCleanup {
+	pub removed_finished: usize,
+	pub removed_unfinished: usize,
+	pub remaining: usize,
+}
+impl_slog!(RoundForfeitNonceCleanup, Info, "cleaned up hArk round forfeit nonce sessions");
+
+// ****************************************************************************
+// * general round
+// ****************************************************************************
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RoundError {
 	pub round_seq: RoundSeq,

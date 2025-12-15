@@ -281,6 +281,9 @@ pub struct Config {
 	#[serde(with = "utils::serde::duration")]
 	pub round_sign_time: Duration,
 	pub nb_round_nonces: usize,
+	/// The duration after which to drop forfeit nonces
+	#[serde(with = "utils::serde::duration")]
+	pub round_forfeit_nonces_timeout: Duration,
 	#[serde(with = "utils::serde::fee_rate")]
 	pub round_tx_feerate: FeeRate,
 
