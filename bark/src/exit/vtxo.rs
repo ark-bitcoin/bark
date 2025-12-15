@@ -9,7 +9,7 @@
 //!
 //! See [ExitModel] for persisting the state machine in a database.
 
-use bitcoin::{FeeRate, Txid};
+use bitcoin::{Amount, FeeRate, Txid};
 use log::{debug, trace};
 
 use ark::{Vtxo, VtxoId};
@@ -20,6 +20,7 @@ use crate::exit::transaction_manager::ExitTransactionManager;
 use crate::onchain::{ChainSource, ExitUnilaterally};
 use crate::persist::BarkPersister;
 use crate::persist::models::StoredExit;
+use crate::WalletVtxo;
 
 /// Tracks the exit lifecycle for a single [Vtxo].
 ///
@@ -33,53 +34,55 @@ use crate::persist::models::StoredExit;
 /// only persist when a logical state transition occurs.
 #[derive(Debug, Clone)]
 pub struct ExitVtxo {
-	vtxo: Vtxo,
-	txids: Vec<Txid>,
+	vtxo_id: VtxoId,
+	amount: Amount,
 	state: ExitState,
 	history: Vec<ExitState>,
+	txids: Option<Vec<Txid>>,
 }
 
 impl ExitVtxo {
-	/// Create a new instance for the given [Vtxo].
+	/// Create a new instance for the given [VtxoId] with an initial state of [ExitState::Start].
+	/// The unilateral exit can't progress until [ExitVtxo::initialize] is called.
 	///
-	/// - `vtxo`: the [Vtxo] being exited.
-	/// - `txids`: the ID of each transaction which needs broadcasting onchain in topographical
-	///   order.
+	/// # Parameters
+	/// - `vtxo_id`: the [VtxoId] being exited.
 	/// - `tip`: current chain tip used to initialize the starting state.
-	pub fn new(vtxo: Vtxo, txids: Vec<Txid>, tip: u32) -> Self {
+	pub fn new(vtxo: &Vtxo, tip: u32) -> Self {
 		Self {
-			vtxo,
-			txids,
+			vtxo_id: vtxo.id(),
+			amount: vtxo.amount(),
 			state: ExitState::new_start(tip),
 			history: vec![],
+			txids: None,
 		}
 	}
 
-	/// Reconstruct an `ExitVtxo` from its parts.
+	/// Reconstruct an `ExitVtxo` from its parts. This leaves the instance in an uninitialized
+	/// state. Useful when loading a tracked exit from storage.
 	///
-	/// Useful when loading a tracked exit from storage.
-	pub fn from_parts(
-		vtxo: Vtxo,
-		txids: Vec<Txid>,
-		state: ExitState,
-		history: Vec<ExitState>,
-	) -> Self {
+	/// # Parameters
+	/// - `entry`: The persisted data to reconstruct this instance from.
+	/// - `vtxo`: The [Vtxo] that this exit is tracking.
+	pub fn from_entry(entry: StoredExit, vtxo: &Vtxo) -> Self {
+		assert_eq!(entry.vtxo_id, vtxo.id());
 		ExitVtxo {
-			vtxo,
-			txids,
-			state,
-			history,
+			vtxo_id: entry.vtxo_id,
+			amount: vtxo.amount(),
+			state: entry.state,
+			history: entry.history,
+			txids: None,
 		}
 	}
 
 	/// Returns the ID of the tracked [Vtxo].
 	pub fn id(&self) -> VtxoId {
-		self.vtxo.id()
+		self.vtxo_id
 	}
 
-	/// Returns the underlying [Vtxo].
-	pub fn vtxo(&self) -> &Vtxo {
-		&self.vtxo
+	/// Returns the amount being exited.
+	pub fn amount(&self) -> Amount {
+		self.amount
 	}
 
 	/// Returns the current state of the unilateral exit.
@@ -92,14 +95,34 @@ impl ExitVtxo {
 		&self.history
 	}
 
-	/// Returns the set of exit-related transaction IDs, these may not be broadcast yet.
-	pub fn txids(&self) -> &Vec<Txid> {
-		&self.txids
+	/// Returns the set of exit-related transaction IDs, these may not be broadcast yet. If the
+	/// instance is not yet initialized, None will be returned.
+	pub fn txids(&self) -> Option<&Vec<Txid>> {
+		self.txids.as_ref()
 	}
 
 	/// True if the exit is currently [ExitState::Claimable] and can be claimed/spent.
 	pub fn is_claimable(&self) -> bool {
 		matches!(self.state, ExitState::Claimable(..))
+	}
+
+	/// True if [ExitVtxo::initialize] has been called and the exit is ready to progress.
+	pub fn is_initialized(&self) -> bool {
+		self.txids.is_some()
+	}
+
+	/// Prepares an [ExitVtxo] for progression by querying the list of transactions required to
+	/// process the unilateral exit and adds them to the [ExitTransactionManager].
+	pub async fn initialize(
+		&mut self,
+		tx_manager: &mut ExitTransactionManager,
+		persister: &dyn BarkPersister,
+		onchain: &dyn ExitUnilaterally,
+	) -> anyhow::Result<(), ExitError> {
+		trace!("Initializing VTXO for exit {}", self.vtxo_id);
+		let vtxo = self.get_vtxo(persister)?;
+		self.txids = Some(tx_manager.track_vtxo_exits(&vtxo, onchain).await?);
+		Ok(())
 	}
 
 	/// Advances the exit state machine for this [Vtxo].
@@ -124,12 +147,20 @@ impl ExitVtxo {
 		persister: &dyn BarkPersister,
 		onchain: &mut dyn ExitUnilaterally,
 		fee_rate_override: Option<FeeRate>,
+		continue_until_finished: bool,
 	) -> anyhow::Result<(), ExitError> {
+		if self.txids.is_none() {
+			return Err(ExitError::InternalError {
+				error: String::from("Unilateral exit not yet initialized"),
+			});
+		}
+
+		let wallet_vtxo = self.get_vtxo(persister)?;
 		const MAX_ITERATIONS: usize = 100;
 		for _ in 0..MAX_ITERATIONS {
 			let mut context = ProgressContext {
-				vtxo: &self.vtxo,
-				exit_txids: &self.txids,
+				vtxo: &wallet_vtxo.vtxo,
+				exit_txids: self.txids.as_ref().unwrap(),
 				chain_source: &chain_source,
 				fee_rate: fee_rate_override.unwrap_or(chain_source.fee_rates().await.fast),
 				tx_manager,
@@ -139,6 +170,9 @@ impl ExitVtxo {
 			match self.state.clone().progress(&mut context, onchain).await {
 				Ok(new_state) => {
 					self.update_state_if_newer(new_state, persister)?;
+					if !continue_until_finished {
+						return Ok(());
+					}
 					match ProgressStep::from_exit_state(&self.state) {
 						ProgressStep::Continue => debug!("VTXO {} can continue", self.id()),
 						ProgressStep::Done => return Ok(())
@@ -155,6 +189,14 @@ impl ExitVtxo {
 		}
 		debug_assert!(false, "Exceeded maximum iterations for progressing VTXO {}", self.id());
 		Ok(())
+	}
+
+	pub fn get_vtxo(&self, persister: &dyn BarkPersister) -> anyhow::Result<WalletVtxo, ExitError> {
+		persister.get_wallet_vtxo(self.vtxo_id)
+			.map_err(|e| ExitError::InvalidWalletState { error: e.to_string() })?
+			.ok_or_else(|| ExitError::InternalError {
+				error: format!("VTXO for exit couldn't be found: {}", self.vtxo_id)
+			})
 	}
 
 	fn update_state_if_newer(

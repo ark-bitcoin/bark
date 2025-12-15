@@ -1,0 +1,2 @@
+- Add --no-sync options to exit list and exit status commands
+  [#1414](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1414)

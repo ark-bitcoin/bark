@@ -19,6 +19,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::process::Command as TokioCommand;
 use tokio::sync::Mutex;
 
+use ark::VtxoId;
 use bark_json::cli::{InvoiceInfo, LightningReceiveInfo, RoundStatus};
 use bark_json::primitives::{UtxoInfo, WalletVtxoInfo};
 use bitcoin_ext::{BlockHeight, FeeRateExt};
@@ -298,6 +299,14 @@ impl Bark {
 		serde_json::from_str(&res).expect("json error")
 	}
 
+	pub async fn vtxo_ids(&self) -> Vec<VtxoId> {
+		self.vtxos().await.into_iter().map(|vtxo| vtxo.id).collect()
+	}
+
+	pub async fn vtxo_ids_no_sync(&self) -> Vec<VtxoId> {
+		self.vtxos_no_sync().await.into_iter().map(|vtxo| vtxo.id).collect()
+	}
+
 	pub async fn vtxos(&self) -> Vec<WalletVtxoInfo> {
 		let res = self.run(["vtxos"]).await;
 		serde_json::from_str(&res).expect("json error")
@@ -459,6 +468,11 @@ impl Bark {
 		self.try_run_json(["board", "--all"]).await
 	}
 
+	pub async fn sync(&self) {
+		// We can just use the balance command to perform a sync and drop the successful result
+		let _ = self.offchain_balance().await;
+	}
+
 	pub async fn maintain(&self) {
 		self.run(["maintain"]).await;
 	}
@@ -557,8 +571,16 @@ impl Bark {
 		self.run_json(["exit", "list"]).await
 	}
 
+	pub async fn list_exits_no_sync(&self) -> Vec<json::ExitTransactionStatus> {
+		self.run_json(["exit", "list", "--no-sync"]).await
+	}
+
 	pub async fn list_exits_with_details(&self) -> Vec<json::ExitTransactionStatus> {
 		self.run_json(["exit", "list", "--transactions", "--history"]).await
+	}
+
+	pub async fn list_exits_with_details_no_sync(&self) -> Vec<json::ExitTransactionStatus> {
+		self.run_json(["exit", "list", "--transactions", "--history", "--no-sync"]).await
 	}
 
 	pub async fn claim_all_exits(&self, destination: impl fmt::Display) {

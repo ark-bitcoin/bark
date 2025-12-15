@@ -58,6 +58,10 @@ pub struct StatusExitOpts {
 	/// Whether to include the exit transactions and their CPFP children
 	#[arg(long)]
 	transactions: bool,
+
+	/// Skip syncing wallet
+	#[arg(long)]
+	no_sync: bool,
 }
 
 #[derive(clap::Args)]
@@ -69,6 +73,10 @@ pub struct ListExitsOpts {
 	/// Whether to include the exit transactions and their CPFP children
 	#[arg(long)]
 	transactions: bool,
+
+	/// Skip syncing wallet
+	#[arg(long)]
+	no_sync: bool,
 }
 
 #[derive(clap::Args)]
@@ -103,10 +111,10 @@ pub async fn execute_exit_command(
 ) -> anyhow::Result<()> {
 	match exit_command {
 		ExitCommand::Status(opts) => {
-			get_exit_status(opts, wallet).await
+			get_exit_status(opts, wallet, onchain).await
 		},
 		ExitCommand::List(opts) => {
-			list_exits(opts, wallet).await
+			list_exits(opts, wallet, onchain).await
 		},
 		ExitCommand::Start(opts) => {
 			start_exit(opts, wallet, onchain).await
@@ -123,7 +131,13 @@ pub async fn execute_exit_command(
 pub async fn get_exit_status(
 	args: StatusExitOpts,
 	wallet: &mut Wallet,
+	onchain: &mut OnchainWallet,
 ) -> anyhow::Result<()> {
+	if !args.no_sync {
+		info!("Starting exit sync");
+		wallet.sync_exits(onchain).await?;
+	}
+
 	match wallet.exit.get_mut().get_exit_status(args.vtxo, args.history, args.transactions).await? {
 		None => bail!("VTXO not found: {}", args.vtxo),
 		Some(status) => output_json(&ExitTransactionStatus::from(status)),
@@ -134,7 +148,13 @@ pub async fn get_exit_status(
 pub async fn list_exits(
 	args: ListExitsOpts,
 	wallet: &mut Wallet,
+	onchain: &mut OnchainWallet,
 ) -> anyhow::Result<()> {
+	if !args.no_sync {
+		info!("Starting exit sync");
+		wallet.sync_exits(onchain).await?;
+	}
+
 	let exit = wallet.exit.get_mut();
 	let mut statuses = Vec::with_capacity(exit.get_exit_vtxos().len());
 	for e in exit.get_exit_vtxos() {
@@ -165,7 +185,7 @@ pub async fn start_exit(
 	info!("Starting exit");
 
 	if args.all {
-		wallet.exit.get_mut().start_exit_for_entire_wallet(onchain).await
+		wallet.exit.get_mut().start_exit_for_entire_wallet().await
 	} else {
 		let filter = VtxoFilter::new(wallet).include_many(args.vtxos);
 
@@ -180,7 +200,7 @@ pub async fn start_exit(
 		let vtxos = spendable.into_iter().chain(inround)
 			.map(|v| v.vtxo).collect::<Vec<_>>();
 
-		wallet.exit.get_mut().start_exit_for_vtxos(&vtxos, onchain).await
+		wallet.exit.get_mut().start_exit_for_vtxos(&vtxos).await
 	}
 }
 
@@ -220,6 +240,7 @@ async fn progress_once(
 	info!("Start progressing exit");
 
 	let exit = wallet.exit.get_mut();
+	exit.sync_no_progress(onchain).await.context("unable to sync exit process")?;
 	let result = exit.progress_exits(onchain, fee_rate).await
 		.context("error making progress on exit process")?;
 
