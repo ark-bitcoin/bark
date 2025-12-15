@@ -3629,16 +3629,23 @@
         "required": [
           "id",
           "status",
-          "round_txid"
+          "participation",
+          "unlock_hash",
+          "funding_txid"
         ],
         "properties": {
-          "attempt_seq": {
+          "funding_tx_hex": {
             "type": [
-              "integer",
+              "string",
+              "null"
+            ]
+          },
+          "funding_txid": {
+            "type": [
+              "string",
               "null"
             ],
-            "description": "Attempt sequence number within the round, if known",
-            "minimum": 0
+            "description": "The round transaction id, if already assigned"
           },
           "id": {
             "type": "integer",
@@ -3646,41 +3653,21 @@
             "description": "Unique identifier for the round",
             "minimum": 0
           },
-          "round_seq": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "int64",
-            "description": "Round sequence number, if known",
-            "minimum": 0
+          "participation": {
+            "$ref": "#/components/schemas/RoundParticipationInfo",
+            "description": "the round participation details"
           },
-          "round_txid": {
+          "status": {
+            "$ref": "#/components/schemas/RoundStatus",
+            "description": "the current status of the round"
+          },
+          "unlock_hash": {
             "type": [
               "string",
               "null"
-            ],
-            "description": "The round transaction id, if already assigned"
-          },
-          "status": {
-            "$ref": "#/components/schemas/PendingRoundStatus",
-            "description": "Current status of the pending round"
+            ]
           }
         }
-      },
-      "PendingRoundStatus": {
-        "type": "string",
-        "enum": [
-          "waiting-to-start",
-          "attempt-started",
-          "payment-submitted",
-          "vtxo-tree-signed",
-          "forfeit-signed",
-          "pending-confirmation",
-          "confirmed",
-          "failed",
-          "canceled"
-        ]
       },
       "RefreshRequest": {
         "type": "object",
@@ -3697,20 +3684,60 @@
           }
         }
       },
+      "RoundParticipationInfo": {
+        "type": "object",
+        "required": [
+          "inputs",
+          "outputs"
+        ],
+        "properties": {
+          "inputs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "outputs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/VtxoRequestInfo"
+            }
+          }
+        }
+      },
       "RoundStatus": {
         "oneOf": [
+          {
+            "type": "object",
+            "description": "Failed to sync round",
+            "required": [
+              "error",
+              "status"
+            ],
+            "properties": {
+              "error": {
+                "type": "string"
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "sync-error"
+                ]
+              }
+            }
+          },
           {
             "type": "object",
             "description": "The round was successful and is fully confirmed",
             "required": [
               "funding_txid",
-              "result"
+              "status"
             ],
             "properties": {
               "funding_txid": {
                 "type": "string"
               },
-              "result": {
+              "status": {
                 "type": "string",
                 "enum": [
                   "confirmed"
@@ -3723,13 +3750,13 @@
             "description": "Round successful but not fully confirmed",
             "required": [
               "funding_txid",
-              "result"
+              "status"
             ],
             "properties": {
               "funding_txid": {
                 "type": "string"
               },
-              "result": {
+              "status": {
                 "type": "string",
                 "enum": [
                   "unconfirmed"
@@ -3741,21 +3768,14 @@
             "type": "object",
             "description": "We have unsigned funding transactions that might confirm",
             "required": [
-              "unsigned_funding_txids",
-              "result"
+              "status"
             ],
             "properties": {
-              "result": {
+              "status": {
                 "type": "string",
                 "enum": [
                   "pending"
                 ]
-              },
-              "unsigned_funding_txids": {
-                "type": "array",
-                "items": {
-                  "type": "string"
-                }
               }
             }
           },
@@ -3764,13 +3784,13 @@
             "description": "The round failed",
             "required": [
               "error",
-              "result"
+              "status"
             ],
             "properties": {
               "error": {
                 "type": "string"
               },
-              "result": {
+              "status": {
                 "type": "string",
                 "enum": [
                   "failed"
@@ -3782,10 +3802,10 @@
             "type": "object",
             "description": "The round canceled",
             "required": [
-              "result"
+              "status"
             ],
             "properties": {
-              "result": {
+              "status": {
                 "type": "string",
                 "enum": [
                   "canceled"
@@ -3964,6 +3984,27 @@
             "type": "string"
           },
           "server_pubkey": {
+            "type": "string"
+          },
+          "user_pubkey": {
+            "type": "string"
+          }
+        }
+      },
+      "VtxoRequestInfo": {
+        "type": "object",
+        "required": [
+          "amount_sat",
+          "policy_type",
+          "user_pubkey"
+        ],
+        "properties": {
+          "amount_sat": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "policy_type": {
             "type": "string"
           },
           "user_pubkey": {

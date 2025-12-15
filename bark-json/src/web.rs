@@ -1,6 +1,18 @@
+
+use bitcoin::{Amount, Txid};
+use bitcoin::consensus::encode::serialize_hex;
+use bitcoin::secp256k1::PublicKey;
 use serde::{Deserialize, Serialize};
+
+use ark::VtxoId;
+use ark::tree::signed::UnlockHash;
+use ark::vtxo::VtxoPolicyKind;
+
 #[cfg(feature = "utoipa")]
 use utoipa::ToSchema;
+
+use crate::cli::RoundStatus;
+
 
 #[derive(Serialize, Deserialize)]
 #[cfg_attr(feature = "utoipa", derive(ToSchema))]
@@ -193,19 +205,66 @@ pub struct ExitClaimResponse {
 	pub message: String,
 }
 
+
 #[derive(Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
 #[cfg_attr(feature = "utoipa", derive(ToSchema))]
-pub enum PendingRoundStatus {
-	WaitingToStart,
-	AttemptStarted,
-	PaymentSubmitted,
-	VtxoTreeSigned,
-	ForfeitSigned,
-	PendingConfirmation,
-	Confirmed,
-	Failed,
-	Canceled,
+pub struct VtxoRequestInfo {
+	#[serde(rename = "amount_sat", with = "bitcoin::amount::serde::as_sat")]
+	#[cfg_attr(feature = "utoipa", schema(value_type = u64))]
+	pub amount: Amount,
+	#[cfg_attr(feature = "utoipa", schema(value_type = String))]
+	pub policy_type: VtxoPolicyKind,
+	#[cfg_attr(feature = "utoipa", schema(value_type = String))]
+	pub user_pubkey: PublicKey,
+}
+
+impl<'a> From<&'a ark::VtxoRequest> for VtxoRequestInfo {
+	fn from(v: &'a ark::VtxoRequest) -> Self {
+		Self {
+			amount: v.amount,
+			policy_type: v.policy.policy_type(),
+			user_pubkey: v.policy.user_pubkey(),
+		}
+	}
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize, Serialize)]
+#[cfg_attr(feature = "utoipa", derive(ToSchema))]
+pub struct OffboardRequestInfo {
+	/// hexadecimal representation of the output script
+	pub script_pubkey_hex: String,
+	/// opcode representation of the output script
+	pub script_pubkey_asm: String,
+	#[serde(rename = "amount_sat", with = "bitcoin::amount::serde::as_sat")]
+	#[cfg_attr(feature = "utoipa", schema(value_type = u64))]
+	pub amount: Amount,
+}
+
+impl<'a> From<&'a ark::OffboardRequest> for OffboardRequestInfo {
+	fn from(v: &'a ark::OffboardRequest) -> Self {
+		Self {
+			script_pubkey_hex: v.script_pubkey.to_hex_string(),
+			script_pubkey_asm: v.script_pubkey.to_asm_string(),
+			amount: v.amount,
+		}
+	}
+}
+
+#[derive(Serialize, Deserialize)]
+#[cfg_attr(feature = "utoipa", derive(ToSchema))]
+pub struct RoundParticipationInfo {
+	#[cfg_attr(feature = "utoipa", schema(value_type = Vec<String>))]
+	pub inputs: Vec<VtxoId>,
+	pub outputs: Vec<VtxoRequestInfo>,
+}
+
+impl<'a> From<&'a bark::round::RoundParticipation> for RoundParticipationInfo {
+	fn from(v: &'a bark::round::RoundParticipation) -> Self {
+	    Self {
+			inputs: v.inputs.iter().map(|v| v.id()).collect(),
+			outputs: v.outputs.iter().map(Into::into).collect(),
+		}
+	}
 }
 
 #[derive(Serialize, Deserialize)]
@@ -213,97 +272,36 @@ pub enum PendingRoundStatus {
 pub struct PendingRoundInfo {
 	/// Unique identifier for the round
 	pub id: u32,
-	/// Current status of the pending round
-	pub status: PendingRoundStatus,
-	/// Round sequence number, if known
-	pub round_seq: Option<u64>,
-	/// Attempt sequence number within the round, if known
-	pub attempt_seq: Option<usize>,
+	/// the current status of the round
+	pub status: RoundStatus,
+	/// the round participation details
+	pub participation: RoundParticipationInfo,
+	#[cfg_attr(feature = "utoipa", schema(value_type = String, nullable = true))]
+	pub unlock_hash: Option<UnlockHash>,
 	/// The round transaction id, if already assigned
 	#[cfg_attr(feature = "utoipa", schema(value_type = String, nullable = true))]
-	pub round_txid: Option<ark::rounds::RoundId>,
+	pub funding_txid: Option<Txid>,
+	pub funding_tx_hex: Option<String>,
 }
 
-impl From<bark::persist::StoredRoundState> for PendingRoundInfo {
-	fn from(state: bark::persist::StoredRoundState) -> Self {
-		match state.state.flow() {
-			bark::round::RoundFlowState::WaitingToStart => {
-				PendingRoundInfo {
-					id: state.id.0,
-					status: PendingRoundStatus::WaitingToStart,
-					round_seq: None,
-					attempt_seq: None,
-					round_txid: None,
-				}
+impl PendingRoundInfo {
+	pub fn new<'a>(
+		state: &'a bark::persist::StoredRoundState,
+		sync_result: anyhow::Result<bark::round::RoundStatus>,
+	) -> Self {
+		let funding_tx = state.state.funding_tx();
+		Self {
+			id: state.id.0,
+			status: match sync_result {
+				Ok(status) => status.into(),
+				Err(e) => RoundStatus::SyncError {
+					error: format!("{:#}", e),
+				},
 			},
-			bark::round::RoundFlowState::Ongoing { round_seq, attempt_seq, state: attempt_state } => {
-				// Map attempt state kind to the old kind strings
-				let status = match attempt_state {
-					bark::round::AttemptState::AwaitingAttempt => PendingRoundStatus::AttemptStarted,
-					bark::round::AttemptState::AwaitingUnsignedVtxoTree { .. } => PendingRoundStatus::PaymentSubmitted,
-					bark::round::AttemptState::AwaitingRoundProposal { .. } => PendingRoundStatus::VtxoTreeSigned,
-					bark::round::AttemptState::AwaitingFinishedRound { .. } => PendingRoundStatus::ForfeitSigned,
-				};
-				// Get round_txid from unconfirmed_rounds if available
-				let round_txid = state.state.unconfirmed_rounds().first()
-					.map(|r| r.funding_txid())
-					.map(|txid| ark::rounds::RoundId::from(txid));
-
-				PendingRoundInfo {
-					id: state.id.0,
-					status,
-					round_seq: Some(round_seq.inner() as u64),
-					attempt_seq: Some(*attempt_seq),
-					round_txid: round_txid,
-				}
-			},
-			bark::round::RoundFlowState::Success => {
-				// If we have unconfirmed rounds, it's pending confirmation
-				// Otherwise it's a completed success state
-				if !state.state.unconfirmed_rounds().is_empty() {
-					let round_txid = state.state.unconfirmed_rounds().first()
-						.map(|r| r.funding_txid())
-						.map(|txid| ark::rounds::RoundId::from(txid));
-
-					PendingRoundInfo {
-						id: state.id.0,
-						status: PendingRoundStatus::PendingConfirmation,
-						round_seq: None,
-						attempt_seq: None,
-						round_txid: round_txid,
-					}
-				} else {
-					PendingRoundInfo {
-						id: state.id.0,
-						status: PendingRoundStatus::Confirmed,
-						round_seq: None,
-						attempt_seq: None,
-						round_txid: None,
-					}
-				}
-			},
-			bark::round::RoundFlowState::Failed { .. } => {
-				let round_txid = state.state.unconfirmed_rounds().first()
-					.map(|r| r.funding_txid())
-					.map(|txid| ark::rounds::RoundId::from(txid));
-
-				PendingRoundInfo {
-					id: state.id.0,
-					status: PendingRoundStatus::Failed,
-					round_seq: None,
-					attempt_seq: None,
-					round_txid: round_txid,
-				}
-			},
-			bark::round::RoundFlowState::Canceled => {
-				PendingRoundInfo {
-					id: state.id.0,
-					status: PendingRoundStatus::Canceled,
-					round_seq: None,
-					attempt_seq: None,
-					round_txid: None,
-				}
-			},
+			participation: state.state.participation().into(),
+			unlock_hash: state.state.unlock_hash(),
+			funding_txid: funding_tx.map(|t| t.compute_txid()),
+			funding_tx_hex: funding_tx.map(|t| serialize_hex(t)),
 		}
 	}
 }

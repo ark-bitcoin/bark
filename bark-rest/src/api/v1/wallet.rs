@@ -13,6 +13,7 @@ use ark::lightning::{Bolt11Invoice, Offer};
 use bark::lnurllib::lightning_address::LightningAddress;
 use bark::subsystem::RoundMovement;
 use bark::vtxo::selection::VtxoFilter;
+use bark_json::web::PendingRoundInfo;
 
 use crate::{RestServer, error};
 use crate::error::{ContextExt, HandlerResult, badarg, not_found};
@@ -288,15 +289,13 @@ pub async fn history(State(state): State<RestServer>) -> HandlerResult<Json<Vec<
 pub async fn pending_rounds(
 	State(state): State<RestServer>,
 ) -> HandlerResult<Json<Vec<bark_json::web::PendingRoundInfo>>> {
-	let rounds = state.wallet
-		.pending_round_states()
+	let rounds = state.wallet.pending_round_states()
 		.context("Failed to get pending rounds")?;
-
-	let infos = rounds
-		.into_iter()
-		.map(bark_json::web::PendingRoundInfo::from)
-		.collect();
-
+	let mut infos = Vec::with_capacity(rounds.len());
+	for mut round in rounds {
+		let sync = round.state.sync(&state.wallet).await;
+		infos.push(PendingRoundInfo::new(&round, sync));
+	}
 	Ok(axum::Json(infos))
 }
 
@@ -392,11 +391,12 @@ pub async fn refresh_vtxos(
 
 	match participation {
 		Some(participation) => {
-			let round = state.wallet.join_next_round(participation, Some(RoundMovement::Refresh))
+			let mut round = state.wallet.join_next_round(participation, Some(RoundMovement::Refresh))
 				.await
 				.context("Failed to store round participation")?;
 
-			Ok(axum::Json(round.into()))
+			let sync = round.state.sync(&state.wallet).await;
+			Ok(axum::Json(PendingRoundInfo::new(&round, sync)))
 		}
 		None => {
 			badarg!("No VTXOs to refresh");
@@ -428,11 +428,12 @@ pub async fn refresh_all(
 
 	match participation {
 		Some(participation) => {
-			let round = state.wallet.join_next_round(participation, Some(RoundMovement::Refresh))
+			let mut round = state.wallet.join_next_round(participation, Some(RoundMovement::Refresh))
 				.await
 				.context("Failed to store round participation")?;
 
-			Ok(axum::Json(round.into()))
+			let sync = round.state.sync(&state.wallet).await;
+			Ok(axum::Json(PendingRoundInfo::new(&round, sync)))
 		}
 		None => {
 			badarg!("No VTXOs to refresh");
@@ -467,11 +468,12 @@ pub async fn refresh_counterparty(
 
 	match participation {
 		Some(participation) => {
-			let round = state.wallet.join_next_round(participation, Some(RoundMovement::Refresh))
+			let mut round = state.wallet.join_next_round(participation, Some(RoundMovement::Refresh))
 				.await
 				.context("Failed to store round participation")?;
 
-			Ok(axum::Json(round.into()))
+			let sync = round.state.sync(&state.wallet).await;
+			Ok(axum::Json(PendingRoundInfo::new(&round, sync)))
 		}
 		None => {
 			not_found!(Vec::<String>::new(), "No VTXO to refresh");
