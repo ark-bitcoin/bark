@@ -6,7 +6,7 @@ use std::sync::atomic::{self, AtomicBool};
 use std::time::Duration;
 
 use anyhow::Context;
-use ark::tree::signed::UnlockPreimage;
+use ark::tree::signed::{LeafVtxoCosignContext, UnlockPreimage};
 use bitcoin::secp256k1::{rand, Keypair};
 use bitcoin::{Amount, FeeRate, OutPoint};
 use bitcoin_ext::{BlockDelta, BlockHeight};
@@ -349,8 +349,15 @@ struct Process {
 
 impl Process {
 	async fn issue_vtxos(&self, issuance: Vec<(Amount, usize)>) -> anyhow::Result<()> {
-		let requests = {
-			let mut ret = Vec::with_capacity(issuance.iter().map(|i| i.1).sum());
+		let nb_vtxos = issuance.iter().map(|i| i.1).sum();
+		if nb_vtxos < 2 {
+			warn!("Ignoring vtxopool issuance request for 1 VTXO");
+			return Ok(());
+		}
+
+		let (requests, leaf_keys) = {
+			let mut leaf_keys = Vec::with_capacity(nb_vtxos);
+			let mut requests = Vec::with_capacity(nb_vtxos);
 			for (amount, count) in issuance {
 				let keys = stream::iter(0..count).map(|_| {
 					self.srv.generate_ephemeral_cosign_key(self.config.vtxo_key_lifetime())
@@ -359,21 +366,25 @@ impl Process {
 				.collect::<Vec<_>>().await
 				.into_iter().collect::<Result<Vec<_>, _>>()?;
 
-				ret.extend(keys.iter().map(|key| {
+				requests.extend(keys.iter().map(|key| {
 					VtxoRequest {
 						policy: VtxoPolicy::new_pubkey(key.public_key()),
 						amount: amount,
 					}
 				}));
+				leaf_keys.extend(keys);
+
 				slog!(PreparingPoolIssuance, amount, count);
 			}
-			ret
+			(requests, leaf_keys)
 		};
 
 		let expiry = self.srv.chain_tip().height + self.config.vtxo_lifetime as BlockHeight;
 
 		let cosign_key = Keypair::new(&*SECP, &mut rand::thread_rng());
-		let server_cosign_key = self.srv.generate_ephemeral_cosign_key(Duration::from_secs(600)).await?;
+		let server_cosign_key = self.srv.generate_ephemeral_cosign_key(
+			Duration::from_secs(600),
+		).await?;
 		let unlock_preimage = rand::random::<UnlockPreimage>();
 
 		let builder = SignedTreeBuilder::new(
@@ -428,16 +439,20 @@ impl Process {
 
 		let tree = builder.build_tree(&cosign, &cosign_key)
 			.context("error finishing signed tree with cosign")?;
+		let tree = tree.into_cached_tree();
 
-		self.srv.register_cosigned_vtxo_tree(
-			requests.iter().cloned(),
-			cosign_key.public_key(),
-			unlock_preimage,
-			server_cosign_key.public_key(),
-			expiry,
-			utxo,
-			tree.cosign_sigs.clone(),
-		).await.context("error registering cosigned tree")?;
+		// finish VTXOs by cosigning leaves
+		// we rely here on the order of the vtxos being identical to the order of the requests
+		let mut vtxos = tree.all_vtxos().collect::<Vec<_>>();
+		for (vtxo, leaf_key) in vtxos.iter_mut().zip(leaf_keys.iter()) {
+			let (ctx, req) = LeafVtxoCosignContext::new(vtxo, &funding_psbt.unsigned_tx, &leaf_key);
+			let resp = self.srv.cosign_hashlocked_leaf(&req, vtxo, &funding_psbt.unsigned_tx);
+			ensure!(ctx.finalize(vtxo, resp), "failed to finalize leaf vtxo");
+			ensure!(vtxo.provide_unlock_preimage(unlock_preimage), "invalid unlock preimage");
+		}
+
+		self.srv.register_vtxos(&vtxos).await
+			.context("failed to register newly created vtxos with server")?;
 
 		// finish and broadcast the tx
 		let tx = wallet.finish_tx(funding_psbt).context("error finishing tree funding tx")?;
@@ -449,9 +464,7 @@ impl Process {
 		// store the new vtxos
 		self.srv.db.upsert_bitcoin_transaction(txid, &tx).await
 			.context("error storing unbroadcasted vtxo issuance funding tx")?;
-		let tree = tree.into_cached_tree();
-		// we rely here on the order of the vtxos being identical to the order of the requests
-		let pool_vtxos = tree.all_vtxos().into_iter()
+		let pool_vtxos = vtxos.into_iter()
 			.map(|v| PoolVtxo::new(v)).collect::<Vec<_>>();
 		self.srv.db.store_vtxopool_vtxos(&pool_vtxos).await.context("storing pool vtxos")?;
 		self.data.lock().insert_vtxos(&pool_vtxos);

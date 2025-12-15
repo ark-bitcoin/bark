@@ -37,6 +37,7 @@ pub use crate::config::Config;
 use crate::utils::TimedEntryMap;
 
 
+use std::borrow::Borrow;
 use std::collections::HashSet;
 use std::fs;
 use std::pin::Pin;
@@ -46,9 +47,8 @@ use std::task::Poll;
 use std::time::Duration;
 
 use anyhow::Context;
-use bitcoin::hashes::{sha256, Hash};
 use bitcoin::{bip32, Address, Amount, OutPoint, Transaction};
-use bitcoin::secp256k1::{self, rand, schnorr, Keypair, PublicKey};
+use bitcoin::secp256k1::{self, rand, Keypair, PublicKey};
 use futures::Stream;
 use log::{info, trace, warn};
 use tokio::sync::{broadcast, mpsc, oneshot};
@@ -842,42 +842,14 @@ impl Server {
 		Ok(self.cosign_hashlocked_leaf(request, &vtxo.vtxo, &round.funding_tx))
 	}
 
-	/// Register the VTXOs in the signed vtxo tree
+	/// Register a set of new VTXOs
 	///
 	/// This should only be called once we trust that the root of the tree
 	/// will confirm.
-	pub async fn register_cosigned_vtxo_tree(
+	pub async fn register_vtxos<V: Borrow<Vtxo>>(
 		&self,
-		vtxos: impl IntoIterator<Item = VtxoRequest>,
-		cosign_pubkey: PublicKey,
-		unlock_preimage: UnlockPreimage,
-		server_cosign_pubkey: PublicKey,
-		expiry_height: BlockHeight,
-		utxo: OutPoint,
-		signatures: Vec<schnorr::Signature>,
+		vtxos: impl IntoIterator<Item = V>,
 	) -> anyhow::Result<()> {
-		let tree = SignedTreeBuilder::construct_tree_spec(
-			vtxos,
-			cosign_pubkey,
-			sha256::Hash::hash(&unlock_preimage),
-			expiry_height,
-			self.server_key.leak_ref().public_key(),
-			server_cosign_pubkey,
-			self.config.vtxo_exit_delta,
-		).badarg("invalid VTXO tree spec")?.into_unsigned_tree(utxo);
-
-		if let Err(pk) = tree.verify_cosign_sigs(&signatures) {
-			bail!("invalid cosign signatures for xonly pk {}", pk);
-		}
-
-		// Now we're done and we can drop the key.
-		let _ = self.drop_ephemeral_cosign_key(server_cosign_pubkey).await?;
-
-		//TODO(stevenroose) some sanity check on expiry?
-
-		let tree = tree.into_signed_tree(signatures).into_cached_tree();
-		self.db.upsert_vtxos(tree.all_vtxos()).await.context("db error occurred")?;
-
-		Ok(())
+		self.db.upsert_vtxos(vtxos).await.context("db error occurred")
 	}
 }

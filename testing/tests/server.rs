@@ -5,7 +5,6 @@ use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 
-use ark::arkoor::checkpointed_package::CheckpointedPackageBuilder;
 use bitcoin::hex::FromHex;
 use bitcoin::{absolute, transaction, Amount, Network, OutPoint, Transaction};
 use bitcoin::hashes::Hash;
@@ -21,9 +20,10 @@ use ark::{
 	ProtocolEncoding, SECP, SignedVtxoRequest,
 	Vtxo, VtxoId, VtxoPolicy, VtxoRequest, musig
 };
+use ark::arkoor::checkpointed_package::CheckpointedPackageBuilder;
 use ark::challenges::RoundAttemptChallenge;
 use ark::tree::signed::builder::SignedTreeBuilder;
-use ark::tree::signed::UnlockPreimage;
+use ark::tree::signed::{LeafVtxoCosignContext, UnlockPreimage};
 use bark::Wallet;
 use bark::lightning_invoice::Bolt11Invoice;
 use bark_json::cli::RoundStatus;
@@ -1785,13 +1785,12 @@ async fn test_ephemeral_keys() {
 async fn test_cosign_vtxo_tree() {
 	let ctx = TestContext::new("server/test_cosign_vtxo_tree").await;
 	let srv = ctx.new_server_with_cfg("server", None, |_| { }).await;
-	let db = srv.database();
 
 	let expiry = 100_000;
 	let exit_delta = srv.ark_info().vtxo_exit_delta;
 
-	let vtxo_pubkey = "035e160cd261ac8ffcd2866a5aab2116bc90fbefdb1d739531e121eee612583802".parse().unwrap();
-	let policy = VtxoPolicy::new_pubkey(vtxo_pubkey);
+	let vtxo_key = Keypair::from_str("b44d09e86c02df6b57b6e92ac1c63b72c8781d5ed90d6f42073e4f47945d9e0d").unwrap();
+	let policy = VtxoPolicy::new_pubkey(vtxo_key.public_key());
 	let vtxos = (1..5).map(|i| VtxoRequest {
 		amount: Amount::from_sat(1000 * i),
 		policy: policy.clone(),
@@ -1827,12 +1826,14 @@ async fn test_cosign_vtxo_tree() {
 	builder.verify_cosign_response(&cosign).unwrap();
 	let tree = builder.build_tree(&cosign, &user_cosign_key).unwrap();
 
-	srv.register_cosigned_vtxo_tree(
-		vtxos.iter().cloned(), user_cosign_pubkey, unlock_preimge, server_cosign_pubkey,
-		expiry, utxo, tree.cosign_sigs,
-	).await.unwrap();
+	let mut vtxos = tree.into_cached_tree().all_vtxos().collect::<Vec<_>>();
+	for vtxo in vtxos.iter_mut() {
+		let (ctx, req) = LeafVtxoCosignContext::new(vtxo, &funding_tx, &vtxo_key);
+		let resp = srv.cosign_hashlocked_leaf(&req, vtxo, &funding_tx);
+		assert!(ctx.finalize(vtxo, resp));
+	}
 
-	assert!(db.fetch_ephemeral_tweak(server_cosign_pubkey).await.unwrap().is_none());
+	srv.register_vtxos(&vtxos).await.unwrap();
 }
 
 #[tokio::test]
