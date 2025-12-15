@@ -2,7 +2,8 @@
 }:
 let
 	bitcoinVersion = "29.1";
-	lightningVersion = "25.09.1";
+	lightningVersion = "25.12";
+	holdPluginVersion = "0.3.3";
 	esploraElectrsRevision = "9a4175d68ff8a098a05676e774c46aba0c9e558d";
 	mempoolElectrsRevision = "v3.2.0";
 
@@ -90,7 +91,7 @@ let
 		version = lightningVersion;
 		src = pkgs.fetchurl {
 			url = "https://github.com/ElementsProject/lightning/releases/download/v${lightningVersion}/clightning-v${lightningVersion}.zip";
-			hash = "sha256-maH+SSMunXH43Hl9FFvk5L6n4e06vgsL3T8W3ydy+hQ=";
+			hash = "sha256-m1r8F/jfO2lTOevsttN3Rn/dROjBdCnlVO0rP8vBisY=";
 		};
 		makeFlags = [ "VERSION=v${lightningVersion}" ];
 		preInstall = ''
@@ -121,11 +122,11 @@ let
 
 	hold-invoice = rustPlatform.buildRustPackage rec {
 		pname = "hold-invoice";
-		version = "99.99.99";
+		version = holdPluginVersion;
 		src = pkgs.fetchFromGitHub {
 			owner = "BoltzExchange";
 			repo = "hold";
-			rev = "1e5dec4b479397d77c813060dd01263d689469bc";
+			rev = "v${holdPluginVersion}";
 			hash = "sha256-VFohDTItt/8TUN0my4gXs0r+JuJ+e7IyO1ZDVoanyfQ=";
 		};
 		nativeBuildInputs = [ rustBuildToolchain pkgs.protobuf ];
