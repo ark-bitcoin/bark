@@ -427,7 +427,7 @@ async fn full_round() {
 	impl captaind::proxy::ArkRpcProxy for Proxy {
 		async fn submit_payment(
 			&self, upstream: &mut ArkClient, req: protos::SubmitPaymentRequest,
-		) -> Result<protos::Empty, tonic::Status> {
+		) -> Result<protos::SubmitPaymentResponse, tonic::Status> {
 			let mut lock = self.0.lock().await;
 			let res = upstream.submit_payment(req).await;
 			// the last bark should fail being registered
@@ -551,7 +551,7 @@ async fn double_spend_round() {
 	impl captaind::proxy::ArkRpcProxy for Proxy {
 		async fn submit_payment(
 			&self, upstream: &mut ArkClient, mut req: protos::SubmitPaymentRequest,
-		) -> Result<protos::Empty, tonic::Status> {
+		) -> Result<protos::SubmitPaymentResponse, tonic::Status> {
 			let vtxoid = VtxoId::from_slice(&req.input_vtxos[0].vtxo_id).unwrap();
 
 			let (mut c1, mut c2) = (upstream.clone(), upstream.clone());
@@ -567,7 +567,7 @@ async fn double_spend_round() {
 			assert!(err.message().contains(
 				&format!("vtxo {} already registered", vtxoid),
 			), "err: {err}");
-			Ok(protos::Empty{})
+			Ok(res1.unwrap().into_inner())
 		}
 	}
 
@@ -599,11 +599,13 @@ async fn test_participate_round_wrong_step() {
 	impl captaind::proxy::ArkRpcProxy for ProxyA {
 		async fn submit_payment(
 			&self, upstream: &mut ArkClient, _req: protos::SubmitPaymentRequest,
-		) -> Result<protos::Empty, tonic::Status> {
+		) -> Result<protos::SubmitPaymentResponse, tonic::Status> {
 			upstream.provide_vtxo_signatures(protos::VtxoSignaturesRequest {
 				pubkey: RANDOM_PK.serialize().to_vec(), signatures: vec![]
 			}).await?;
-			Ok(protos::Empty{})
+			Ok(protos::SubmitPaymentResponse {
+				unlock_hash: rand::random::<[u8; 32]>().to_vec(),
+			})
 		}
 	}
 
@@ -1174,7 +1176,7 @@ async fn reject_dust_vtxo_request() {
 		// Proxy alters the request to make it vtxo request subdust but correctly signed
 		async fn submit_payment(
 			&self, upstream: &mut ArkClient, mut req: protos::SubmitPaymentRequest,
-		) -> Result<protos::Empty, tonic::Status> {
+		) -> Result<protos::SubmitPaymentResponse, tonic::Status> {
 			req.vtxo_requests[0].vtxo.as_mut().unwrap().amount = P2TR_DUST_SAT - 1;
 
 			let vtxo_requests = req.vtxo_requests.iter().map(|r| {
@@ -1984,7 +1986,7 @@ async fn should_refuse_round_input_vtxo_that_is_being_exited() {
 
 		async fn submit_payment(
 			&self, upstream: &mut ArkClient, mut req: protos::SubmitPaymentRequest,
-		) -> Result<protos::Empty, tonic::Status> {
+		) -> Result<protos::SubmitPaymentResponse, tonic::Status> {
 			// Spending input boarded with first derivation
 			let (_, keypair) = self.wallet.pubkey_keypair(&self.vtxo.user_pubkey).unwrap().unwrap();
 

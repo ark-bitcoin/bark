@@ -129,7 +129,7 @@ pub trait ArkRpcProxy: Send + Sync + Clone + 'static {
 		Ok(upstream.last_round_event(req).await?.into_inner())
 	}
 
-	async fn submit_payment(&self, upstream: &mut ArkClient, req: protos::SubmitPaymentRequest) -> Result<protos::Empty, tonic::Status> {
+	async fn submit_payment(&self, upstream: &mut ArkClient, req: protos::SubmitPaymentRequest) -> Result<protos::SubmitPaymentResponse, tonic::Status> {
 		Ok(upstream.submit_payment(req).await?.into_inner())
 	}
 
@@ -391,7 +391,7 @@ impl<T: ArkRpcProxy> rpc::server::ArkService for ArkRpcProxyWrapper<T> {
 
 	async fn submit_payment(
 		&self, req: tonic::Request<protos::SubmitPaymentRequest>,
-	) -> Result<tonic::Response<protos::Empty>, tonic::Status> {
+	) -> Result<tonic::Response<protos::SubmitPaymentResponse>, tonic::Status> {
 		Ok(tonic::Response::new(ArkRpcProxy::submit_payment(&self.proxy, &mut self.upstream.clone(), req.into_inner()).await?))
 	}
 

@@ -83,7 +83,7 @@ service ArkService {
 	rpc SubscribeRounds(core.Empty) returns (stream RoundEvent) {}
 	// Get the last round event
 	rpc LastRoundEvent(core.Empty) returns (RoundEvent) {}
-	rpc SubmitPayment(SubmitPaymentRequest) returns (core.Empty) {}
+	rpc SubmitPayment(SubmitPaymentRequest) returns (SubmitPaymentResponse) {}
 	rpc ProvideVtxoSignatures(VtxoSignaturesRequest) returns (core.Empty) {}
 	rpc ProvideForfeitSignatures(ForfeitSignaturesRequest) returns (core.Empty) {}
 
@@ -415,6 +415,8 @@ message RoundFinished {
 	uint64 attempt_seq = 2;
 	/// The signed round tx.
 	bytes signed_round_tx = 3;
+	/// The cosign signatures to plug into the vtxo tree.
+	repeated bytes vtxo_cosign_signatures = 4;
 }
 
 message RoundEvent {
@@ -448,6 +450,10 @@ message SubmitPaymentRequest {
 	repeated InputVtxo input_vtxos = 2;
 	repeated SignedVtxoRequest vtxo_requests = 3;
 	repeated OffboardRequest offboard_requests = 4 [ deprecated = true ];
+}
+
+message SubmitPaymentResponse {
+	bytes unlock_hash = 1;
 }
 
 message ForfeitSignatures {

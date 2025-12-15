@@ -21,7 +21,7 @@ use bark::round::RoundParticipation;
 use bark::subsystem::RoundMovement;
 use bark_json::cli::{MovementDestination, PaymentMethod};
 use bark_json::primitives::VtxoStateInfo;
-use server_log::{MissingForfeits, RestartMissingForfeits, RoundUserVtxoNotAllowed};
+use server_log::{RestartMissingVtxoSigs, RoundUserVtxoNotAllowed};
 use server_rpc::protos;
 
 use ark_testing::{btc, sat, signed_sat, Bark, TestContext};
@@ -899,7 +899,6 @@ async fn second_round_attempt() {
 	bark1.send_oor(bark2.address().await, sat(200_000)).await;
 	let bark2_vtxo = bark2.vtxos().await.get(0).expect("should have 1 vtxo").id;
 
-	let mut log_missing_forfeits = srv.subscribe_log::<MissingForfeits>();
 	let mut log_not_allowed = srv.subscribe_log::<RoundUserVtxoNotAllowed>();
 
 	ctx.generate_blocks(1).await;
@@ -907,15 +906,14 @@ async fn second_round_attempt() {
 	let res2 = tokio::spawn(async move { bark2.refresh_all().await });
 	tokio::time::sleep(Duration::from_millis(500)).await;
 	let _ = srv.wallet_status().await;
-	let mut log_restart_missing_forfeits = srv.subscribe_log::<RestartMissingForfeits>();
+	let mut log_restart_missing_sigs = srv.subscribe_log::<RestartMissingVtxoSigs>();
 	srv.trigger_round().await;
-	log_restart_missing_forfeits.recv().await.unwrap();
+	log_restart_missing_sigs.recv().await.unwrap();
 	info!("Waiting for bark2 to fail...");
 	res2.await.unwrap_err();
 	info!("Waiting for bark1 to finish...");
 	res1.await.unwrap();
 	// check that bark2 was kicked
-	assert_eq!(log_missing_forfeits.recv().ready().await.unwrap().input, bark2_vtxo);
 	assert_eq!(log_not_allowed.recv().ready().await.unwrap().vtxo, bark2_vtxo);
 }
 

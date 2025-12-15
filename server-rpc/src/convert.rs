@@ -230,11 +230,13 @@ impl<'a> From<&'a ark::rounds::RoundEvent> for protos::RoundEvent {
 					})
 				},
 				ark::rounds::RoundEvent::Finished(ark::rounds::RoundFinished {
-					round_seq, attempt_seq, signed_round_tx,
+					round_seq, attempt_seq, cosign_sigs, signed_round_tx,
 				}) => {
 					protos::round_event::Event::Finished(protos::RoundFinished {
 						round_seq: (*round_seq).into(),
 						attempt_seq: *attempt_seq as u64,
+						vtxo_cosign_signatures: cosign_sigs.into_iter()
+							.map(|s| s.serialize().to_vec()).collect(),
 						signed_round_tx: bitcoin::consensus::serialize(&signed_round_tx),
 					})
 				},
@@ -294,6 +296,10 @@ impl TryFrom<protos::RoundEvent> for ark::rounds::RoundEvent {
 				ark::rounds::RoundEvent::Finished(ark::rounds::RoundFinished {
 					round_seq: m.round_seq.into(),
 					attempt_seq: m.attempt_seq as usize,
+					cosign_sigs: m.vtxo_cosign_signatures.into_iter().map(|s| {
+						schnorr::Signature::from_slice(&s)
+							.map_err(|_| "invalid vtxo_cosign_signatures")
+					}).collect::<Result<_, _>>()?,
 					signed_round_tx: bitcoin::consensus::deserialize(&m.signed_round_tx)
 						.map_err(|_| "invalid signed_round_tx")?,
 				})

@@ -3,14 +3,15 @@ mod model;
 pub use model::*;
 
 
+use std::collections::HashMap;
 use std::str::FromStr;
 use std::time::Duration;
 
-use anyhow::bail;
+use anyhow::{bail, Context};
 use bitcoin::hashes::Hash;
 use bitcoin::{Transaction, Txid};
 use bitcoin::consensus::serialize;
-use log::{info, trace};
+use log::{debug, info, trace};
 use tokio_postgres::types::Type;
 
 use ark::{VtxoId, VtxoRequest};
@@ -21,6 +22,7 @@ use bitcoin_ext::BlockHeight;
 
 use crate::database::Db;
 use crate::database::query;
+use crate::round::InteractiveParticipation;
 
 
 impl Db {
@@ -30,6 +32,7 @@ impl Db {
 		round_tx: &Transaction,
 		input_vtxos: impl IntoIterator<Item = VtxoId>,
 		output_vtxos: &CachedSignedVtxoTree,
+		interactive_participations: &HashMap<UnlockHash, InteractiveParticipation>,
 	) -> anyhow::Result<()> {
 		let round_txid = round_tx.compute_txid();
 		info!("Storing finished round with round funding txid {}", round_txid);
@@ -38,14 +41,14 @@ impl Db {
 		let tx = conn.transaction().await?;
 
 		// First, store the round itself.
-		let statement = tx.prepare_typed(
+		let stmt = tx.prepare_typed(
 			"INSERT INTO round (seq, funding_txid, funding_tx, signed_tree, expiry, created_at)
 			VALUES ($1, $2, $3, $4, $5, NOW())
 			RETURNING id;",
 			&[Type::INT8, Type::TEXT, Type::BYTEA, Type::BYTEA, Type::INT4],
 		).await?;
 		let row = tx.query_one(
-			&statement,
+			&stmt,
 			&[
 				&(round_seq.inner() as i64),
 				&round_txid.to_string(),
@@ -57,17 +60,53 @@ impl Db {
 		let round_id = row.get::<_, i64>("id");
 
 		// mark the input vtxos as refreshed
-		let statement = tx.prepare_typed(
+		let stmt = tx.prepare_typed(
 			"UPDATE vtxo SET spent_in_round = $2, updated_at = NOW()
 			WHERE vtxo_id = $1 AND oor_spent_txid IS NULL AND spent_in_round IS NULL;",
 			&[Type::TEXT, Type::INT8],
 		).await?;
 		for vtxo_id in input_vtxos {
-			let rows_affected = tx.execute(&statement, &[&vtxo_id.to_string(), &round_id]).await?;
+			let rows_affected = tx.execute(&stmt, &[&vtxo_id.to_string(), &round_id]).await?;
 			if rows_affected == 0 {
 				bail!("tried to mark unspendable vtxo {} as spent in round", vtxo_id);
 			}
 		}
+
+		// store round participations for the interactive participants
+		let remove_existing_stmt = tx.prepare_typed(
+			"DELETE FROM round_participation
+			WHERE id IN (
+				SELECT participation_id
+				FROM round_part_input
+				WHERE vtxo_id = ANY($1)
+			);", &[Type::TEXT_ARRAY],
+		).await?;
+		for (unlock_hash, part) in interactive_participations {
+			// remove any existing ones, but if the round was not full,
+			// this should already have happened
+			let input_strings = part.inputs.iter().map(|i| i.to_string()).collect::<Vec<_>>();
+			let existing = tx.execute(&remove_existing_stmt, &[&input_strings]).await?;
+			if existing > 0 {
+				debug!("Had to remove existing hark participation for interactive participant \
+					with input ids: {:?}", part.inputs,
+				);
+			}
+
+			query::store_round_participation(
+				&tx,
+				*unlock_hash,
+				part.unlock_preimage,
+				&part.inputs,
+				&part.outputs,
+			).await.with_context(|| format!(
+				"db rejected round participation for interactive participant (unlock_hash={}) \
+				with inputs {:?}", unlock_hash, part.inputs,
+			))?;
+		}
+
+		// update the hark round participations, both non-interactive and interactive
+		let hark_unlock_hashes = output_vtxos.spec.spec.vtxos.iter().map(|v| v.unlock_hash);
+		query::set_round_id_for_participations(&tx, hark_unlock_hashes, round_txid).await?;
 
 		// Finally insert new vtxos.
 		query::upsert_vtxos(&tx, output_vtxos.all_vtxos()).await?;

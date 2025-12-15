@@ -21,7 +21,7 @@ use ark::{
 use ark::arkoor::checkpointed_package::PackageCosignRequest;
 use ark::forfeit::HashLockedForfeitBundle;
 use ark::lightning::{Bolt12InvoiceExt, Invoice, Offer, OfferAmount, PaymentHash, Preimage};
-use ark::tree::signed::{LeafVtxoCosignRequest, UnlockHash};
+use ark::tree::signed::{LeafVtxoCosignRequest, UnlockHash, UnlockPreimage};
 use ark::rounds::RoundId;
 use bitcoin_ext::{AmountExt, BlockDelta, BlockHeight};
 use server_rpc::{self as rpc, protos, TryFromBytes};
@@ -573,7 +573,7 @@ impl rpc::server::ArkService for Server {
 	async fn submit_payment(
 		&self,
 		req: tonic::Request<protos::SubmitPaymentRequest>,
-	) -> Result<tonic::Response<protos::Empty>, tonic::Status> {
+	) -> Result<tonic::Response<protos::SubmitPaymentResponse>, tonic::Status> {
 		let _ = RpcMethodDetails::grpc_ark(middleware::RPC_SERVICE_ARK_SUBMIT_PAYMENT);
 		let req = req.into_inner();
 
@@ -602,14 +602,19 @@ impl rpc::server::ArkService for Server {
 			return Err(tonic::Status::unimplemented("offboards in rounds are no longer supported"));
 		}
 
+		let unlock_preimage = rand::random::<UnlockPreimage>();
+		let unlock_hash = UnlockHash::hash(&unlock_preimage);
+
 		let (tx, rx) = oneshot::channel();
-		let inp = RoundInput::RegisterPayment { inputs, vtxo_requests };
+		let inp = RoundInput::RegisterPayment { inputs, vtxo_requests, unlock_preimage };
 
 		self.rounds.round_input_tx.send((inp, tx))
 			.expect("input channel closed");
 		rx.wait_for_status().await?;
 
-		Ok(tonic::Response::new(protos::Empty {}))
+		Ok(tonic::Response::new(protos::SubmitPaymentResponse {
+			unlock_hash: unlock_hash.to_byte_array().to_vec(),
+		}))
 	}
 
 	async fn provide_vtxo_signatures(
@@ -640,33 +645,9 @@ impl rpc::server::ArkService for Server {
 
 	async fn provide_forfeit_signatures(
 		&self,
-		req: tonic::Request<protos::ForfeitSignaturesRequest>,
+		_req: tonic::Request<protos::ForfeitSignaturesRequest>,
 	) -> Result<tonic::Response<protos::Empty>, tonic::Status> {
-		let _ = RpcMethodDetails::grpc_ark(middleware::RPC_SERVICE_ARK_PROVIDE_FORFEIT_SIGNATURES);
-		let req = req.into_inner();
-
-		crate::rpcserver::add_tracing_attributes(vec![
-			KeyValue::new("signatures_count", format!("{:?}", req.signatures.len())),
-		]);
-
-		let (tx, rx) = oneshot::channel();
-		let inp = RoundInput::ForfeitSignatures {
-			signatures: req.signatures.iter().map(|ff| {
-				let id = VtxoId::from_bytes(&ff.input_vtxo_id)?;
-				let nonces = ff.pub_nonces.iter()
-					.map(musig::PublicNonce::from_bytes)
-					.collect::<Result<_, _>>()?;
-				let signatures = ff.signatures.iter()
-					.map(musig::PartialSignature::from_bytes)
-					.collect::<Result<_, _>>()?;
-				Ok((id, nonces, signatures))
-			}).collect::<Result<_, tonic::Status>>()?
-		};
-
-		self.rounds.round_input_tx.send((inp, tx)).expect("input channel closed");
-		rx.wait_for_status().await?;
-
-		Ok(tonic::Response::new(protos::Empty {}))
+		unimplemented!();
 	}
 
 	// hArk

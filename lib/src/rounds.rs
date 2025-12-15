@@ -173,6 +173,7 @@ pub struct RoundProposal {
 pub struct RoundFinished {
 	pub round_seq: RoundSeq,
 	pub attempt_seq: usize,
+	pub cosign_sigs: Vec<schnorr::Signature>,
 	pub signed_round_tx: Transaction,
 }
 
@@ -239,7 +240,9 @@ impl fmt::Display for RoundEvent {
 					.field("connector_pubkey", &connector_pubkey)
 					.finish()
 			},
-			Self::Finished(RoundFinished { round_seq, attempt_seq, signed_round_tx }) => {
+			Self::Finished(RoundFinished {
+				round_seq, attempt_seq, signed_round_tx, ..
+			}) => {
 				f.debug_struct("Finished")
 					.field("round_seq", round_seq)
 					.field("attempt_seq", attempt_seq)

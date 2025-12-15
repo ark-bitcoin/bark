@@ -1,11 +1,13 @@
 use std::time::Duration;
 
+use ark::tree::signed::UnlockHash;
+use bitcoin::{Amount, Txid};
+use bitcoin::secp256k1::PublicKey;
+
+use ark::VtxoId;
 use ark::rounds::RoundSeq;
 use ark::vtxo::VtxoPolicyKind;
-use bitcoin::{Amount, Txid};
-use bitcoin::secp256k1::{PublicKey, SecretKey};
 use bitcoin_ext::BlockHeight;
-use ark::VtxoId;
 
 // ****************************************************************************
 // * Round start
@@ -136,6 +138,7 @@ pub struct RoundPaymentRegistered {
 	pub nb_outputs: usize,
 	#[serde(with = "crate::serde_utils::duration_millis")]
 	pub client_duration: Duration,
+	pub unlock_hash: UnlockHash,
 }
 impl_slog!(RoundPaymentRegistered, Trace, "Registered payment from a participant");
 
@@ -262,71 +265,14 @@ pub struct CreatedSignedVtxoTree {
 }
 impl_slog!(CreatedSignedVtxoTree, Debug, "Created the final signed VTXO tree, ready to broadcast to participants");
 
-// ****************************************************************************
-// * Forfeit signatures
-// ****************************************************************************
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ReceivedForfeitSignatures {
-	pub round_seq: RoundSeq,
-	pub attempt_seq: usize,
-	pub nb_forfeits: usize,
-	pub vtxo_ids: Vec<VtxoId>,
-	#[serde(with = "crate::serde_utils::duration_millis")]
-	pub client_duration: Duration,
-}
-impl_slog!(ReceivedForfeitSignatures, Trace, "Received signatures for given VTXOs");
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct UnknownForfeitSignature {
-	pub round_seq: RoundSeq,
-	pub attempt_seq: usize,
-	pub vtxo_id: VtxoId,
-	#[serde(with = "crate::serde_utils::duration_millis")]
-	pub client_duration: Duration,
-}
-impl_slog!(UnknownForfeitSignature, Trace, "Participant provided a forfeit signature for an unknown input");
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ForfeitRegistrationFailed {
-	pub round_seq: RoundSeq,
-	pub attempt_seq: usize,
-	pub error: String,
-	#[serde(with = "crate::serde_utils::duration_millis")]
-	pub client_duration: Duration,
-}
-impl_slog!(ForfeitRegistrationFailed, Warn, "Failed to register forfeits for the VTXO tree");
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ReceivedRoundForfeits {
-	pub round_seq: RoundSeq,
-	pub attempt_seq: usize,
-	pub nb_forfeits: usize,
-	#[serde(with = "crate::serde_utils::duration_millis")]
-	pub server_duration: Duration,
-	#[serde(with = "crate::serde_utils::duration_millis")]
-	pub max_round_sign_time: Duration,
-}
-impl_slog!(ReceivedRoundForfeits, Debug, "Finished receiving round forfeits");
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MissingForfeits {
-	pub round_seq: RoundSeq,
-	pub attempt_seq: usize,
-	pub input: VtxoId,
-	#[serde(with = "crate::serde_utils::duration_millis")]
-	pub server_duration: Duration,
-}
-impl_slog!(MissingForfeits, Trace, "Missing forfeit sigs for input vtxo");
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RestartMissingForfeits {
+pub struct RestartMissingVtxoSigs {
 	pub round_seq: RoundSeq,
 	pub attempt_seq: usize,
 	#[serde(with = "crate::serde_utils::duration_millis")]
 	pub server_duration: Duration,
 }
-impl_slog!(RestartMissingForfeits, Debug, "Restarting round because of missing forfeits");
+impl_slog!(RestartMissingVtxoSigs, Debug, "Restarting round because of missing VTXO tree signatures");
 
 // ****************************************************************************
 // * Round end
@@ -383,6 +329,13 @@ impl_slog!(HarkLeafSigned, Trace, "signed hArk leaf output");
 // ****************
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RoundParticipationRejected {
+	pub unlock_hash: UnlockHash,
+	pub reason: String,
+}
+impl_slog!(RoundParticipationRejected, Debug, "rejected hArk participation for round");
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RoundForfeitNonceCleanup {
 	pub removed_finished: usize,
 	pub removed_unfinished: usize,
@@ -416,8 +369,7 @@ pub struct FatalStoringRound {
 	pub signed_tx: Vec<u8>,
 	#[serde(with = "crate::serde_utils::hex")]
 	pub vtxo_tree: Vec<u8>,
-	pub connector_key: SecretKey,
-	pub forfeit_vtxos: Vec<VtxoId>,
+	pub input_vtxos: Vec<VtxoId>,
 	#[serde(with = "crate::serde_utils::duration_millis")]
 	pub server_duration: Duration,
 }

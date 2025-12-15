@@ -104,6 +104,12 @@ pub struct VtxoRequest {
 	pub policy: VtxoPolicy,
 }
 
+impl AsRef<VtxoRequest> for VtxoRequest {
+	fn as_ref(&self) -> &VtxoRequest {
+	    self
+	}
+}
+
 /// Request for the creation of an vtxo in a signed round
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize, Serialize)]
 pub struct SignedVtxoRequest {
