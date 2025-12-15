@@ -602,6 +602,63 @@ async fn bark_check_lightning_receive_no_wait() {
 }
 
 #[tokio::test]
+async fn bark_can_pay_inter_ark_invoice() {
+	let ctx = TestContext::new("lightningd/bark_can_pay_inter_ark_invoice").await;
+
+	let lightning = ctx.new_lightning_setup("lightningd").await;
+
+	// Start a server and link it to our cln installation
+	let srv1 = ctx.new_captaind_with_funds("server1", Some(&lightning.receiver), btc(10)).await;
+	let srv2 = ctx.new_captaind_with_funds("server2", Some(&lightning.sender), btc(10)).await;
+
+	// Start a bark and create a VTXO to be able to board
+	let bark_1 = Arc::new(ctx.new_bark_with_funds("bark-1", &srv1, btc(3)).await);
+	let bark_2 = Arc::new(ctx.new_bark_with_funds("bark-2", &srv2, btc(3)).await);
+	let board_amount = btc(2);
+	bark_1.board(board_amount).await;
+	bark_2.board(board_amount).await;
+	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
+	bark_1.maintain().await;
+	bark_2.maintain().await;
+
+	let pay_amount = btc(1);
+	let invoice_info = bark_1.bolt11_invoice(pay_amount).await;
+
+	srv1.wait_for_vtxopool(&ctx).await;
+	lightning.sync().await;
+
+	let cloned = bark_1.clone();
+	let cloned_invoice_info = invoice_info.clone();
+	let res1 = tokio::spawn(async move {
+		cloned.lightning_receive(cloned_invoice_info.invoice).wait_millis(10_000).await;
+	});
+
+	let max_delay = srv1.config().invoice_check_interval.as_millis() + 1_000;
+	tokio::spawn(async move {
+		// Payment settlement should not take more than receiver invoice check interval
+		bark_2.pay_lightning(invoice_info.invoice, None).wait_millis(max_delay as u64).await;
+
+		assert_eq!(bark_2.offchain_balance().await.pending_lightning_send, btc(0),
+			"pending lightning send should be reset after payment");
+		let vtxos = bark_2.vtxos().await;
+		assert!(!vtxos.iter().any(|v| matches!(v.state, VtxoStateInfo::Locked { .. })), "should not be any locked vtxo left");
+	});
+
+	res1.await.unwrap();
+
+	let vtxos = bark_1.vtxos().await;
+	assert!(vtxos.iter().any(|v| v.amount == pay_amount), "should have received lightning amount");
+	assert!(vtxos.iter().any(|v| v.amount == board_amount), "should have fees change");
+
+	assert_eq!(bark_1.spendable_balance().await, board_amount + pay_amount);
+
+	assert_eq!(bark_1.offchain_balance().await.claimable_lightning_receive, btc(0),
+		"claimable lightning receive should be reset after payment");
+	let vtxos = bark_1.vtxos().await;
+	assert!(!vtxos.iter().any(|v| matches!(v.state, VtxoStateInfo::Locked { .. })), "should not be any locked vtxo left");
+}
+
+#[tokio::test]
 async fn bark_can_pay_intra_ark_invoice() {
 	let ctx = TestContext::new("lightningd/bark_can_pay_intra_ark_invoice").await;
 

@@ -301,7 +301,7 @@ impl TestContext {
 			invoice_check_max_delay: Duration::from_secs(10),
 			invoice_poll_interval: Duration::from_secs(10),
 			htlc_expiry_delta: 6,
-			htlc_send_expiry_delta: 58,
+			htlc_send_expiry_delta: 258,
 			max_user_invoice_cltv_delta: 58,
 			htlc_subscription_timeout: Duration::from_secs(10*60),
 			min_board_amount: Amount::from_sat(20_000),
