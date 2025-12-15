@@ -22,10 +22,12 @@ RUN apt-get update && \
 
 RUN mkdir -p /root/captaind/
 COPY ./captaind-linux-x86_64                              /usr/local/bin/captaind
+COPY ./watchmand-linux-x86-64                             /usr/local/bin/watchmand
 COPY ./.woodpecker/images/releases/captaind/start.sh      /root/captaind/start.sh
 COPY ./.woodpecker/images/releases/captaind/captaind.toml /root/captaind/captaind.toml
 
 RUN chmod a+x /usr/local/bin/captaind && \
+    chmod a+x /usr/local/bin/watchmand && \
     chmod a+x /root/captaind/start.sh && \
     dos2unix /root/captaind/start.sh
 
