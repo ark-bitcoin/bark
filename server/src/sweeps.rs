@@ -54,18 +54,17 @@ use log::{trace, info, warn, error};
 use tokio::sync::mpsc;
 
 use ark::{musig, Vtxo};
-use ark::connectors::{ConnectorChain, CONNECTOR_TX_CHAIN_VOUT, CONNECTOR_TX_CONNECTOR_VOUT};
+use ark::connectors::ConnectorChain;
 use ark::rounds::{RoundId, ROUND_TX_CONNECTOR_VOUT, ROUND_TX_VTXO_TREE_VOUT};
 
 use crate::database::rounds::StoredRound;
 use crate::psbtext::{PsbtExt, PsbtInputExt, SweepMeta};
 use crate::system::RuntimeManager;
-
 use crate::txindex::{self, TxIndex};
 use crate::txindex::broadcast::TxNursery;
-
 use crate::wallet::BdkWalletExt;
-use crate::{database, telemetry, SECP};
+use crate::{database, telemetry};
+
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -189,16 +188,8 @@ struct ExpiredRound {
 }
 
 impl ExpiredRound {
-	fn new(id: RoundId, round: StoredRound) -> Self {
-		Self {
-			vtxo_txs: round.signed_tree.all_final_txs(),
-			connectors: ConnectorChain::new(
-				round.nb_input_vtxos,
-				OutPoint::new(id.as_round_txid(), 1),
-				round.connector_key.public_key(&*SECP),
-			),
-			id, round,
-		}
+	fn new(_id: RoundId, _round: StoredRound) -> Self {
+		unimplemented!();
 	}
 }
 
@@ -249,22 +240,6 @@ impl<'a> SweepBuilder<'a> {
 			internal_key: agg_pk,
 			sweep_meta: SweepMeta::Vtxo,
 			weight: ark::tree::signed::NODE_SPEND_WEIGHT,
-		});
-	}
-
-	/// Add a sweep for the given connector output.
-	fn add_connector_output(
-		&mut self,
-		round: &'a ExpiredRound,
-		point: OutPoint,
-		utxo: TxOut,
-	) {
-		trace!("Adding connector sweep input {}", point);
-		self.sweeps.push(RoundSweepInput {
-			point, utxo, round,
-			internal_key: round.round.signed_tree.spec.server_pubkey.x_only_public_key().0,
-			sweep_meta: SweepMeta::Connector(round.round.connector_key),
-			weight: ark::connectors::INPUT_WEIGHT,
 		});
 	}
 
@@ -406,101 +381,12 @@ impl<'a> SweepBuilder<'a> {
 		Ok(ret)
 	}
 
-	/// Sweep the leftover connectors of the given round.
-	///
-	/// Returns the most recent of the confirmation heights for all sweep txs,
-	/// [None] if there are unconfirmed transactions.
-	async fn process_connectors(&mut self, round: &'a ExpiredRound) -> Option<BlockHeight> {
-		// When it comes to connectors, we should have a single leftover output to sweep,
-		// plus maybe some unused connector(s).
-
-		// NB we don't really know the number of connectors, because we don't know the number
-		// of inputs to the round. it doesn't matter, though, they are pre-signed, so
-		// we can generate any chain of connector txs and check if the txs are on the chain or not
-		let round_point = OutPoint::new(round.id.as_round_txid(), ROUND_TX_CONNECTOR_VOUT);
-		let mut conn_txs = round.connectors.iter_unsigned_txs();
-
-		let mut last = (round_point, round.round.funding_tx.output[ROUND_TX_CONNECTOR_VOUT as usize].clone());
-		let mut ret = Some(0);
-		loop {
-			let tx = match conn_txs.next() {
-				None => return Some(0), // all connector txs confirmed and spent
-				Some(c) => c,
-			};
-
-			let txid = tx.compute_txid();
-			let indexed_tx = self.sweeper.txindex.get_or_insert(txid, move || {
-				error!("Txindex should have all connector txs. Missing {} for round {}",
-					txid, round.id,
-				);
-				tx
-			}).await;
-
-			let is_confirmed = if let Ok(tx) = indexed_tx.as_ref() {
-				tx.confirmed()
-			} else {
-				error!("The connector tx is not present in the TxIndex. Missing {} for round {}", txid, round.id);
-				false
-			};
-
-			if is_confirmed {
-				let indexed_tx = indexed_tx.expect("We know it is in the index and confirmed");
-				// Check if the connector output is still unspent.
-				let conn = OutPoint::new(indexed_tx.txid, CONNECTOR_TX_CONNECTOR_VOUT);
-				match self.sweeper.bitcoind.get_tx_out(&conn.txid, conn.vout, Some(true)) {
-					Ok(Some(out)) => {
-						if let Some((h, _txid)) = self.sweeper.is_swept(conn).await {
-							ret = ret.and_then(|old| Some(cmp::max(old, h)));
-						} else {
-							let txout = TxOut {
-								value: out.value,
-								script_pubkey: out.script_pub_key.script().expect("invalid script"),
-							};
-							self.add_connector_output(round, conn, txout);
-							ret = None;
-						}
-					},
-					Ok(None) => {}, // ignore it
-					Err(e) => {
-						// we just try later
-						error!("Error calling gettxout for connector utxo {}: {}", conn, e);
-						return None;
-					},
-				}
-
-				// Then continue the chain.
-				last = (OutPoint::new(indexed_tx.txid, CONNECTOR_TX_CHAIN_VOUT), indexed_tx.tx.output[CONNECTOR_TX_CHAIN_VOUT as usize].clone());
-			} else {
-				// add the last point
-				let (point, output) = last;
-				if let Some((h, _txid)) = self.sweeper.is_swept(point).await {
-					ret = ret.and_then(|old| Some(cmp::max(old, h)));
-				} else {
-					self.add_connector_output(round, point, output);
-					ret = None;
-				}
-				break;
-			}
-		}
-		assert_ne!(ret, Some(0), "ret should have changed to something at least");
-		ret
-	}
-
 	async fn process_round(&mut self, round: &'a ExpiredRound, done_height: BlockHeight) -> anyhow::Result<()> {
 		trace!("Processing vtxo tree for round {}", round.id);
 		let vtxos_done = self.process_vtxos(round).await?;
 		if vtxos_done.is_none() || vtxos_done.unwrap() > done_height {
 			trace!("Pending vtxo sweeps for this round (height {:?}), waiting for {}",
 				vtxos_done, done_height,
-			);
-			return Ok(());
-		}
-
-		trace!("Processing connectors for round {}", round.id);
-		let connectors_done = self.process_connectors(round).await;
-		if connectors_done.is_none() || connectors_done.unwrap() > done_height {
-			trace!("Pending connector sweeps for this round (height {:?}), waiting for {}",
-				connectors_done, done_height,
 			);
 			return Ok(());
 		}
@@ -777,7 +663,7 @@ impl Process {
 		loop {
 			tokio::select! {
 				// Periodic interval for sweeping
-				_ = timer.tick() => {},
+				_ = timer.tick() => continue, //TODO remove this continue to re-enable
 				Some(ctrl) = ctrl_rx.recv() => match ctrl {
 					Ctrl::TriggerSweep => slog!(ReceivedSweepTrigger),
 				},
@@ -849,7 +735,7 @@ impl VtxoSweeper {
 
 		for (_txid, raw_tx) in raw_pending {
 			let tx = proc.tx_nursery.broadcast_tx(raw_tx).await
-					.context("Failed to broadcast sweeping tx")?;
+				.context("Failed to broadcast sweeping tx")?;
 			proc.store_pending(tx);
 		}
 
