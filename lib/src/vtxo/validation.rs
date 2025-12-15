@@ -7,7 +7,7 @@ use bitcoin_ext::TxOutExt;
 
 use crate::tree::signed::unlock_clause;
 use crate::{musig, SECP};
-use crate::vtxo::{GenesisTransition, Vtxo, VtxoPolicyKind};
+use crate::vtxo::{GenesisTransition, TransitionKind, Vtxo, VtxoPolicyKind};
 
 
 #[derive(Debug, PartialEq, Eq, thiserror::Error)]
@@ -23,12 +23,13 @@ pub enum VtxoValidationError {
 	#[error("Cosigned genesis transitions don't have any common pubkeys")]
 	InconsistentCosignPubkeys,
 	#[error("error verifying one of the genesis transitions \
-		(idx={genesis_idx}/{genesis_len} type={transition_type}): {error}")]
+		(idx={genesis_idx}/{genesis_len} type={transition_kind}): {error}")]
 	GenesisTransition {
 		error: &'static str,
 		genesis_idx: usize,
 		genesis_len: usize,
-		transition_type: &'static str,
+		// NB we use str here because we don't want to expose the kind enum
+		transition_kind: &'static str,
 	},
 	#[error("non-standard output on genesis item #{genesis_item_idx} other \
 		output #{other_output_idx}")]
@@ -48,10 +49,11 @@ impl VtxoValidationError {
 	fn transition(
 		genesis_idx: usize,
 		genesis_len: usize,
-		transition_type: &'static str,
+		transition_kind: TransitionKind,
 		error: &'static str,
 	) -> Self {
-		VtxoValidationError::GenesisTransition { error, genesis_idx, genesis_len, transition_type }
+		let transition_kind = transition_kind.as_str();
+		VtxoValidationError::GenesisTransition { error, genesis_idx, genesis_len, transition_kind }
 	}
 }
 
@@ -129,7 +131,9 @@ fn verify_transition(
 	{
 		if let Err(e) = crate::test::verify_tx(&[prev_txout.clone()], 0, &tx) {
 			// just print error because this is unit test context
-			println!("TX VALIDATION FAILED: invalid tx in genesis of vtxo {}: idx={}: {}", vtxo.id(), genesis_idx, e);
+			println!("TX VALIDATION FAILED: invalid tx in genesis of vtxo {}: idx={}: {}",
+				vtxo.id(), genesis_idx, e,
+			);
 			return Err("transaction validation failed");
 		}
 	}
@@ -139,6 +143,9 @@ fn verify_transition(
 
 /// Validate that the [Vtxo] is valid and can be constructed from its
 /// chain anchor.
+///
+/// General checks and chain-anchor related checks are performed first,
+/// transitions are checked last.
 pub fn validate(
 	vtxo: &Vtxo,
 	chain_anchor_tx: &Transaction,
@@ -153,7 +160,10 @@ pub fn validate(
 		onchain_amount, vtxo.server_pubkey(), vtxo.expiry_height(), vtxo.exit_delta(),
 	);
 	if *anchor_txout != expected_anchor_txout {
-		return Err(VtxoValidationError::IncorrectChainAnchor { expected: expected_anchor_txout, got: anchor_txout.clone() });
+		return Err(VtxoValidationError::IncorrectChainAnchor {
+			expected: expected_anchor_txout,
+			got: anchor_txout.clone(),
+		});
 	}
 
 	// Every VTXO should have one or more `Cosigned` transitions, followed by 0 or more
@@ -176,7 +186,7 @@ pub fn validate(
 						GenesisTransition::Cosigned { .. }
 						| GenesisTransition::HashLockedCosigned { .. } => {
 							return Err(VtxoValidationError::transition(
-								idx, vtxo.genesis.len(), item.transition.transition_type(),
+								idx, vtxo.genesis.len(), item.transition.kind(),
 								"hash-locked cosigned transition must \
 									be followed by arkoor transitions",
 							));
@@ -199,7 +209,7 @@ pub fn validate(
 						GenesisTransition::Cosigned { .. }
 						| GenesisTransition::HashLockedCosigned { .. } => {
 							return Err(VtxoValidationError::transition(
-								idx, vtxo.genesis.len(), item.transition.transition_type(),
+								idx, vtxo.genesis.len(), item.transition.kind(),
 								"Arkoor transition must be followed by arkoor transitions",
 							));
 						},
@@ -220,7 +230,7 @@ pub fn validate(
 			.ok_or(VtxoValidationError::Invalid("insufficient onchain amount"))?;
 		let next_tx = verify_transition(&vtxo, idx, prev.0.as_ref(), prev.1, next_amount)
 			.map_err(|e| VtxoValidationError::transition(
-				idx, vtxo.genesis.len(), item.transition.transition_type(), e,
+				idx, vtxo.genesis.len(), item.transition.kind(), e,
 			))?;
 		prev = (Cow::Owned(next_tx), item.output_idx as usize, next_amount);
 	}

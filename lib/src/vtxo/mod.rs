@@ -283,7 +283,34 @@ pub fn create_exit_tx(
 	}
 }
 
+/// Represents the kind of [GenesisTransition]
+pub(crate) enum TransitionKind {
+	Cosigned,
+	HashLockedCosigned,
+	Arkoor,
+}
 
+impl TransitionKind {
+	pub fn as_str(&self) -> &'static str {
+		match self {
+			Self::Cosigned => "cosigned",
+			Self::HashLockedCosigned => "hash-locked-cosigned",
+			Self::Arkoor => "arkoor",
+		}
+	}
+}
+
+impl fmt::Display for TransitionKind {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		f.write_str(self.as_str())
+	}
+}
+
+impl fmt::Debug for TransitionKind {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		fmt::Display::fmt(self, f)
+	}
+}
 
 /// Enum type used to represent a preimage<>hash relationship
 /// for which the preimage might be known but the hash always
@@ -431,12 +458,12 @@ impl GenesisTransition {
 		}
 	}
 
-	/// String of the transition type, for error reporting
-	fn transition_type(&self) -> &'static str {
+	/// String of the transition kind, for error reporting
+	fn kind(&self) -> TransitionKind {
 		match self {
-			Self::Cosigned { .. } => "cosigned",
-			Self::HashLockedCosigned { .. } => "hash-locked-cosigned",
-			Self::Arkoor { .. } => "arkoor",
+			Self::Cosigned { .. } => TransitionKind::Cosigned,
+			Self::HashLockedCosigned { .. } => TransitionKind::HashLockedCosigned,
+			Self::Arkoor { .. } => TransitionKind::Arkoor,
 		}
 	}
 }
