@@ -185,7 +185,7 @@ async fn exit_vtxo() {
 
 	bark.claim_all_exits(bark.get_onchain_address().await).await;
 	ctx.generate_blocks(1).await;
-	assert_eq!(bark.onchain_balance().await, sat(997_201));
+	assert_eq!(bark.onchain_balance().await, sat(995_408));
 }
 
 #[tokio::test]
@@ -224,7 +224,7 @@ async fn exit_and_send_vtxo() {
 	bark.claim_exits([exit.vtxo_id], bark.get_onchain_address().await).await;
 	ctx.generate_blocks(1).await;
 
-	assert_eq!(bark.onchain_balance().await, sat(997_201));
+	assert_eq!(bark.onchain_balance().await, sat(995_408));
 }
 
 #[tokio::test]
@@ -302,6 +302,7 @@ async fn double_exit_call() {
 
 	// refresh vtxo
 	bark1.refresh_all().await;
+	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
 
 	// board vtxo
 	bark1.board(sat(300_000)).await;

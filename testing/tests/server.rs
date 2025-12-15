@@ -26,7 +26,6 @@ use ark::tree::signed::builder::SignedTreeBuilder;
 use ark::tree::signed::{LeafVtxoCosignContext, UnlockPreimage};
 use bark::Wallet;
 use bark::lightning_invoice::Bolt11Invoice;
-use bark_json::cli::RoundStatus;
 use bark_json::primitives::WalletVtxoInfo;
 use bark_json::exit::ExitState;
 use server::secret::Secret;
@@ -244,6 +243,8 @@ async fn cant_spend_untrusted() {
 		}
 		panic!("first refresh failed, err: {err:?}, round errs: {round_errs:?}");
 	}
+
+	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
 
 	// and the unconfirmed change should be able to be used for a second round
 	tokio::time::sleep(Duration::from_millis(2000)).await;
@@ -614,32 +615,13 @@ async fn test_participate_round_wrong_step() {
 	let err = bark.try_refresh_all().await.expect_err("refresh should time out");
 	assert!(err.to_string().contains("current step is payment registration"), "err: {err}");
 
-	/// This proxy will send a `provide_forfeit_signatures` req instead of `provide_vtxo_signatures` one
+	/// This proxy will send a `submit_payment` req instead of `provide_vtxo_signatures` one
 	#[derive(Clone)]
 	struct ProxyB;
 	#[tonic::async_trait]
 	impl captaind::proxy::ArkRpcProxy for ProxyB {
 		async fn provide_vtxo_signatures(
 			&self, upstream: &mut ArkClient, _req: protos::VtxoSignaturesRequest,
-		) -> Result<protos::Empty, tonic::Status> {
-			upstream.provide_forfeit_signatures(protos::ForfeitSignaturesRequest { signatures: vec![] }).await?;
-			Ok(protos::Empty{})
-		}
-	}
-
-	let proxy = srv.get_proxy_rpc(ProxyB).await;
-	bark.set_timeout(srv.max_round_delay());
-	bark.set_ark_url(&proxy).await;
-	let err = bark.try_refresh_all().await.expect_err("refresh should fail");
-	assert!(err.to_string().contains("current step is vtxo signatures submission"), "err: {err}");
-
-	/// This proxy will send a `submit_payment` req instead of `provide_forfeit_signatures` one
-	#[derive(Clone)]
-	struct ProxyC;
-	#[tonic::async_trait]
-	impl captaind::proxy::ArkRpcProxy for ProxyC {
-		async fn provide_forfeit_signatures(
-			&self, upstream: &mut ArkClient, _req: protos::ForfeitSignaturesRequest,
 		) -> Result<protos::Empty, tonic::Status> {
 			upstream.submit_payment(protos::SubmitPaymentRequest {
 				input_vtxos: vec![],
@@ -651,15 +633,11 @@ async fn test_participate_round_wrong_step() {
 		}
 	}
 
-	let proxy = srv.get_proxy_rpc(ProxyC).await;
+	let proxy = srv.get_proxy_rpc(ProxyB).await;
+	bark.set_timeout(srv.max_round_delay());
 	bark.set_ark_url(&proxy).await;
-	bark.unset_timeout();
-	let res = bark.try_refresh_all().await.expect("should get pending state");
-	if let RoundStatus::Pending { .. } = res {
-		// since from the bark POV we sent our forfeits, it should keep the pending state
-	} else {
-		panic!("should be pending state")
-	}
+	let err = bark.try_refresh_all().await.expect_err("refresh should fail");
+	assert!(err.to_string().contains("Message arrived late or round was full."), "err: {err}");
 }
 
 #[tokio::test]
@@ -2145,7 +2123,7 @@ async fn server_can_use_vtxo_pool_change_for_next_receive() {
 	// Start a server and link it to our cln installation
 	let srv = ctx.new_captaind_with_cfg("server", Some(&lightning.receiver), |cfg| {
 		cfg.vtxopool.vtxo_targets = vec![
-			VtxoTarget { count: 1, amount: sat(100_000) },
+			VtxoTarget { count: 5, amount: sat(100_000) },
 		];
 	}).await;
 	ctx.fund_captaind(&srv, btc(10)).await;

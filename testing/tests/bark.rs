@@ -485,6 +485,7 @@ async fn compute_balance() {
 	bark1.board(sat(200_000)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 	bark1.refresh_all().await;
+	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
 
 	// board vtxo
 	bark1.board_and_confirm_and_register(&ctx, sat(300_000)).await;
@@ -492,6 +493,7 @@ async fn compute_balance() {
 	// oor vtxo
 	bark2.send_oor(&bark1.address().await, sat(330_000)).await;
 
+	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
 	let balance = bark1.spendable_balance().await;
 	assert_eq!(balance, sat(830_000));
 
@@ -871,14 +873,14 @@ async fn reject_arkoor_with_bad_signature() {
 async fn second_round_attempt() {
 	//! test that we can recover from an error in the round
 
-	/// This proxy will drop the very first request to provide_forfeit_signatures.
+	/// This proxy will drop the very first request to provide_vtxo_signatures.
 	#[derive(Clone)]
 	struct Proxy;
 
 	#[tonic::async_trait]
 	impl captaind::proxy::ArkRpcProxy for Proxy {
-		async fn provide_forfeit_signatures(
-			&self, _upstream: &mut ArkClient, _req: protos::ForfeitSignaturesRequest,
+		async fn provide_vtxo_signatures(
+			&self, _upstream: &mut ArkClient, _req: protos::VtxoSignaturesRequest,
 		) -> Result<protos::Empty, tonic::Status> {
 			Ok(protos::Empty {})
 		}
@@ -1230,14 +1232,22 @@ async fn stepwise_round() {
 		bark.progress_pending_rounds(Some(&event)).await.unwrap();
 
 		let states = print_pending_rounds(&bark);
-		if let Some(ours) = states.into_iter().find(|s| s.id == state_id) {
+		if let Some(mut ours) = states.into_iter().find(|s| s.id == state_id) {
 			if !ours.state.ongoing_participation() {
 				info!("Round finished");
 				break;
+			} else {
+				if let RoundEvent::Finished(_) = event {
+					let status = ours.state.sync(&bark).await.unwrap();
+					panic!("Our round state says ongoing participation but we just got round \
+						finished event. status: {:?}", status,
+					);
+				}
 			}
 		} else {
 			panic!("our round is gone");
 		}
+		trace!("waiting for next event...");
 	}
 	drop(events);
 
