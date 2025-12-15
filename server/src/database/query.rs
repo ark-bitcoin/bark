@@ -34,11 +34,12 @@ pub async fn upsert_vtxos<T, V: Borrow<Vtxo>>(
 ) -> Result<(), tokio_postgres::Error>
 	where T: GenericClient
 {
-	let statement = client.prepare_typed("
-		INSERT INTO vtxo (vtxo_id, vtxo, expiry, created_at, updated_at) VALUES (
-			UNNEST($1), UNNEST($2), UNNEST($3), NOW(), NOW())
-		ON CONFLICT DO NOTHING
-	", &[Type::TEXT_ARRAY, Type::BYTEA_ARRAY, Type::INT4_ARRAY]).await?;
+	let statement = client.prepare_typed(
+		"INSERT INTO vtxo (vtxo_id, vtxo, expiry, created_at, updated_at) VALUES ( \
+			UNNEST($1), UNNEST($2), UNNEST($3), NOW(), NOW() \
+		) ON CONFLICT DO NOTHING",
+		&[Type::TEXT_ARRAY, Type::BYTEA_ARRAY, Type::INT4_ARRAY],
+	).await?;
 
 	let vtxos = vtxos.into_iter();
 	let mut vtxo_ids = Vec::with_capacity(vtxos.size_hint().0);
@@ -64,8 +65,7 @@ pub async fn get_vtxo_by_id<T>(client: &T, id: VtxoId) -> anyhow::Result<VtxoSta
 	where T : GenericClient + Sized
 {
 	let stmt = client.prepare_typed("
-		SELECT id, vtxo_id, vtxo, expiry, oor_spent_txid, forfeit_state, forfeit_round_id,
-			created_at, updated_at
+		SELECT id, vtxo_id, vtxo, expiry, oor_spent_txid, spent_in_round, created_at, updated_at
 		FROM vtxo
 		WHERE vtxo_id = $1;
 	", &[Type::TEXT]).await?;
@@ -83,11 +83,10 @@ pub async fn get_vtxos_by_id<T>(
 	client: &T,
 	ids: &[VtxoId],
 ) -> anyhow::Result<Vec<VtxoState>>
-	where T : GenericClient + Sized
+	where T: GenericClient + Sized
 {
 	let statement = client.prepare_typed("
-		SELECT id, vtxo_id, vtxo, expiry, oor_spent_txid, forfeit_state, forfeit_round_id,
-			created_at, updated_at
+		SELECT id, vtxo_id, vtxo, expiry, oor_spent_txid, spent_in_round, created_at, updated_at
 		FROM vtxo
 		WHERE vtxo_id = ANY($1);
 	", &[Type::TEXT_ARRAY]).await?;

@@ -5,7 +5,6 @@ mod embedded {
 }
 pub mod intman;
 
-pub mod forfeits;
 pub mod ln;
 pub mod oor;
 pub mod rounds;
@@ -32,7 +31,7 @@ use bitcoin::{Transaction, Txid};
 use bitcoin::consensus::{serialize, deserialize};
 use bitcoin::secp256k1::{self, PublicKey};
 use chrono::Local;
-use futures::{Stream, TryStreamExt};
+use futures::Stream;
 use tokio_postgres::{Client, NoTls, RowStream};
 use tokio_postgres::types::Type;
 use log::{info, warn};
@@ -41,7 +40,6 @@ use ark::{Vtxo, VtxoId, VtxoRequest};
 use ark::mailbox::MailboxIdentifier;
 use ark::arkoor::ArkoorPackageBuilder;
 use ark::encode::ProtocolEncoding;
-use ark::rounds::RoundId;
 use bitcoin_ext::BlockHeight;
 
 use crate::wallet::WalletKind;
@@ -229,43 +227,6 @@ impl Db {
 		query::get_vtxos_by_id(&*conn, ids).await
 	}
 
-	/// Fetch all vtxos that have been forfeited.
-	pub async fn fetch_all_forfeited_vtxos(
-		&self,
-	) -> anyhow::Result<impl Stream<Item = anyhow::Result<Vtxo>> + '_> {
-		let conn = self.get_conn().await?;
-		//TODO(stevenroose) this query is wrong
-		let stmt = conn.prepare("
-			SELECT vtxo FROM vtxo WHERE forfeit_state IS NOT NULL;
-		").await?;
-
-		let raw = conn.query_raw(&stmt, NOARG).await?;
-		let stream = OwnedRowStream::new(conn, raw);
-
-		Ok(stream.err_into().map_ok(
-			|row| Vtxo::deserialize(row.get("vtxo")).expect("corrupt db: vtxo")
-		))
-	}
-
-	pub async fn fetch_vtxos_forfeited_in(
-		&self,
-		rounds: &[RoundId],
-	) -> anyhow::Result<Vec<VtxoState>> {
-		let conn = self.get_conn().await?;
-		let stmt = conn.prepare_typed("
-			SELECT v.id, v.vtxo_id, v.vtxo, v.expiry, v.oor_spent_txid, v.forfeit_state, v.forfeit_round_id,
-				v.created_at, v.updated_at
-			FROM vtxo AS v
-				JOIN round ON round.id = v.forfeit_round_id
-			WHERE round.funding_txid = ANY($1);
-		", &[Type::TEXT_ARRAY]).await?;
-
-		let ids = rounds.iter().map(|id| id.to_string()).collect::<Vec<_>>();
-		conn.query(&stmt, &[&ids]).await?.into_iter()
-			.map(|row| VtxoState::try_from(row))
-			.collect()
-	}
-
 	/// Upsert new vtxos and mark vtxos as spend
 	///
 	/// It is performed in a single function to ensure atomicity
@@ -287,7 +248,6 @@ impl Db {
 		Ok(())
 	}
 
-
 	/// Returns [None] if all the ids were not previously marked as signed
 	/// and are now correctly marked as such.
 	/// Returns [Some] for the first vtxo that was already signed.
@@ -306,7 +266,7 @@ impl Db {
 			UPDATE vtxo SET oor_spent_txid = $2, updated_at = NOW()
 			WHERE
 				vtxo_id = $1 AND
-				forfeit_state IS NULL AND
+				spent_in_round IS NULL AND
 				oor_spent_txid IS NULL;
 		", &[Type::TEXT, Type::TEXT]).await?;
 
@@ -325,8 +285,6 @@ impl Db {
 		tx.commit().await?;
 		Ok(None)
 	}
-
-
 
 	/**
 	 * Arkoors

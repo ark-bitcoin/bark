@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use ark::rounds::RoundSeq;
 use ark::vtxo::VtxoPolicyKind;
-use bitcoin::{Amount, OutPoint, Txid};
+use bitcoin::{Amount, Txid};
 use bitcoin::secp256k1::{PublicKey, SecretKey};
 use bitcoin_ext::BlockHeight;
 use ark::VtxoId;
@@ -343,16 +343,6 @@ pub struct BroadcastedFinalizedRoundTransaction {
 impl_slog!(BroadcastedFinalizedRoundTransaction, Info,
 	"Broadcasted round transaction to the network and all participants"
 );
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct StoringForfeitVtxo {
-	pub round_seq: RoundSeq,
-	pub attempt_seq: usize,
-	pub out_point: OutPoint,
-	#[serde(with = "crate::serde_utils::duration_millis")]
-	pub server_duration: Duration,
-}
-impl_slog!(StoringForfeitVtxo, Trace, "Storing forfeit vtxo for outpoint");
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RoundVtxoCreated {

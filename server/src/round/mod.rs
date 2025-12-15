@@ -27,7 +27,7 @@ use ark::{
 };
 use ark::challenges::{NonInteractiveRoundParticipationChallenge, RoundAttemptChallenge};
 use ark::connectors::ConnectorChain;
-use ark::musig::{self, DangerousSecretNonce, PublicNonce, SecretNonce};
+use ark::musig::{self, PublicNonce, SecretNonce};
 use ark::rounds::{
 	RoundAttempt, RoundEvent, RoundFinished, RoundProposal, RoundSeq, VtxoProposal,
 	ROUND_TX_CONNECTOR_VOUT, ROUND_TX_VTXO_TREE_VOUT,
@@ -38,10 +38,8 @@ use ark::tree::signed::{
 use server_log::{LogMsg, RoundVtxoCreated};
 
 use crate::{telemetry, Server, SECP};
-use crate::database::forfeits::ForfeitState;
 use crate::error::{ContextExt, NotFound};
 use crate::flux::{VtxoFluxGuard, OwnedVtxoFluxGuard};
-use crate::secret::Secret;
 use crate::telemetry::{MetricsService, RoundStep, SpanExt, TimedRoundStep};
 use crate::wallet::{BdkWalletExt, PersistedWallet, WalletUtxoGuard};
 
@@ -1064,27 +1062,11 @@ impl SigningForfeits {
 				);
 			}
 		}
-		let mut sec_nonces = self.forfeit_sec_nonces.take().unwrap();
-		let forfeit_vtxos = self.all_inputs.iter().map(|(id, vtxo)| {
-			server_rslog!(StoringForfeitVtxo, round_step, out_point: vtxo.point());
-			let (user_nonces, user_part_sigs) = self.forfeit_part_sigs.remove(id)
-				.expect("missing part sigs");
-			let forfeit_state = ForfeitState {
-				round_id: round_txid.into(),
-				user_nonces, user_part_sigs,
-				pub_nonces: self.forfeit_pub_nonces.remove(id).expect("missing vtxo"),
-				sec_nonces: sec_nonces.remove(id).expect("missing vtxo").into_iter()
-					.map(|x| Secret::new(DangerousSecretNonce::dangerous_from_secret_nonce(x)))
-					.collect(),
-			};
-			(*id, forfeit_state)
-		}).collect();
 		let result = srv.db.finish_round(
 			round_step.round_seq(),
 			&signed_round_tx.tx,
+			self.all_inputs.keys().copied(),
 			&self.signed_vtxos,
-			&self.connector_key.secret_key(),
-			forfeit_vtxos,
 		).await;
 		telemetry::set_round_step_duration(round_step);
 		if let Err(e) = result {

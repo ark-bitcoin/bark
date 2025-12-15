@@ -358,23 +358,23 @@ CREATE FUNCTION public.vtxo_update_trigger() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
 BEGIN
-    INSERT INTO vtxo_history (
-        id, vtxo_id, vtxo, expiry, oor_spent_txid, forfeit_state, forfeit_round_id,
-        created_at, updated_at
-    ) VALUES (
-        OLD.id, OLD.vtxo_id, OLD.vtxo, OLD.expiry, OLD.oor_spent_txid, OLD.forfeit_state, OLD.forfeit_round_id,
-        OLD.created_at, OLD.updated_at
-    );
+	INSERT INTO vtxo_history (
+		id, vtxo_id, vtxo, expiry, oor_spent_txid, spent_in_round,
+		created_at, updated_at
+	) VALUES (
+		OLD.id, OLD.vtxo_id, OLD.vtxo, OLD.expiry, OLD.oor_spent_txid, OLD.spent_in_round,
+		OLD.created_at, OLD.updated_at
+	);
 
-    IF NEW.updated_at = OLD.updated_at AND new.updated_AT <> NOW() THEN
-        RAISE EXCEPTION 'updated_at must be updated';
-    END IF;
+	IF NEW.updated_at = OLD.updated_at AND new.updated_AT <> NOW() THEN
+		RAISE EXCEPTION 'updated_at must be updated';
+	END IF;
 
-    IF NEW.created_at <> OLD.created_at THEN
-        RAISE EXCEPTION 'created_at cannot be updated';
-    END IF;
+	IF NEW.created_at <> OLD.created_at THEN
+		RAISE EXCEPTION 'created_at cannot be updated';
+	END IF;
 
-    RETURN NEW;
+	RETURN NEW;
 END;
 $$;
 
@@ -934,8 +934,6 @@ CREATE TABLE public.round (
     funding_txid text NOT NULL,
     funding_tx bytea NOT NULL,
     signed_tree bytea NOT NULL,
-    nb_input_vtxos integer NOT NULL,
-    connector_key bytea NOT NULL,
     expiry integer NOT NULL,
     swept_at timestamp with time zone,
     created_at timestamp with time zone NOT NULL
@@ -1059,8 +1057,7 @@ CREATE TABLE public.vtxo (
     vtxo bytea NOT NULL,
     expiry integer NOT NULL,
     oor_spent_txid text,
-    forfeit_state bytea,
-    forfeit_round_id bigint,
+    spent_in_round bigint,
     created_at timestamp with time zone NOT NULL,
     updated_at timestamp with time zone NOT NULL,
     lightning_htlc_subscription_id bigint
@@ -1077,8 +1074,7 @@ CREATE TABLE public.vtxo_history (
     vtxo bytea NOT NULL,
     expiry integer NOT NULL,
     oor_spent_txid text,
-    forfeit_state bytea,
-    forfeit_round_id bigint,
+    spent_in_round bigint,
     created_at timestamp with time zone NOT NULL,
     updated_at timestamp with time zone NOT NULL,
     history_created_at timestamp with time zone DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC'::text) NOT NULL
@@ -1720,13 +1716,6 @@ CREATE UNIQUE INDEX sweep_txid_pending_uix ON public.sweep USING btree (txid) IN
 
 
 --
--- Name: vtxo_has_forfeit_state_ix; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX vtxo_has_forfeit_state_ix ON public.vtxo USING btree (((forfeit_state IS NOT NULL)), vtxo_id);
-
-
---
 -- Name: vtxo_mailbox_unblinded_mailbox_id_checkpoint_ix; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -1758,7 +1747,7 @@ CREATE INDEX vtxo_pool_vtxo_id_ix ON public.vtxo_pool USING btree (vtxo_id);
 -- Name: vtxo_spendable_ix; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX vtxo_spendable_ix ON public.vtxo USING btree (((oor_spent_txid IS NULL)), ((forfeit_state IS NULL)), vtxo_id);
+CREATE INDEX vtxo_spendable_ix ON public.vtxo USING btree (((oor_spent_txid IS NULL)), ((spent_in_round IS NULL)), vtxo_id);
 
 
 --
@@ -1995,7 +1984,7 @@ ALTER TABLE ONLY public.round_part_output
 --
 
 ALTER TABLE ONLY public.vtxo
-    ADD CONSTRAINT vtxo_forfeit_round_id_fkey FOREIGN KEY (forfeit_round_id) REFERENCES public.round(id);
+    ADD CONSTRAINT vtxo_forfeit_round_id_fkey FOREIGN KEY (spent_in_round) REFERENCES public.round(id);
 
 
 --

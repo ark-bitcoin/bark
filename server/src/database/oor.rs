@@ -20,7 +20,7 @@ pub async fn mark_package_spent<T>(
 	let statement = client.prepare_typed("
 		UPDATE vtxo
 		SET oor_spent_txid = $2, updated_at = NOW()
-		WHERE vtxo_id = $1 AND oor_spent_txid IS NULL AND forfeit_state IS NULL",
+		WHERE vtxo_id = $1 AND oor_spent_txid IS NULL AND spent_in_round IS NULL",
 	&[Type::TEXT, Type::TEXT]).await.context("Failed to prepare query")?;
 
 	for (vtxo_id, spending_txid) in inputs.iter().zip(spending_txids) {

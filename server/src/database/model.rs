@@ -9,7 +9,7 @@ use tokio_postgres::Row;
 
 use bitcoin_ext::BlockHeight;
 use ark::{ProtocolEncoding, Vtxo, VtxoId};
-use crate::database::forfeits::ForfeitState;
+
 
 // Used by mailbox as an always increasing number for data sorting.
 pub type Checkpoint = u64;
@@ -27,11 +27,8 @@ pub struct VtxoState {
 
 	/// If this vtxo was spent in an OOR tx, the txid of the OOR tx.
 	pub oor_spent_txid: Option<Txid>,
-	/// The round id this vtxo was forfeited in, plus the forfeit tx signatures
-	/// of the user, if the vtxo was forfeited.
-	pub forfeit_state: Option<ForfeitState>,
 	/// The round id this vtxo was forfeited in.
-	pub forfeit_round_id: Option<i64>,
+	pub spent_in_round: Option<i64>,
 	/// If this is a board vtxo, the time at which it was swept.
 	pub created_at: DateTime<Local>,
 	pub updated_at: DateTime<Local>,
@@ -39,7 +36,7 @@ pub struct VtxoState {
 
 impl VtxoState {
 	pub fn is_spendable(&self) -> bool {
-		self.oor_spent_txid.is_none() && self.forfeit_state.is_none()
+		self.oor_spent_txid.is_none() && self.spent_in_round.is_none()
 	}
 }
 
@@ -60,11 +57,7 @@ impl TryFrom<Row> for VtxoState {
 				.get::<_, Option<&str>>("oor_spent_txid")
 				.map(|txid| Txid::from_str(txid))
 				.transpose()?,
-			forfeit_state: row
-				.get::<_, Option<&[u8]>>("forfeit_state")
-				.map(|bytes| rmp_serde::from_slice(bytes))
-				.transpose()?,
-			forfeit_round_id: row.get("forfeit_round_id"),
+			spent_in_round: row.get("spent_in_round"),
 			created_at: row.get("created_at"),
 			updated_at: row.get("updated_at"),
 		})
@@ -122,89 +115,5 @@ impl TryFrom<Row> for Board {
 			created_at,
 			updated_at,
 		})
-	}
-}
-
-pub(crate) mod serde {
-	use std::fmt;
-	use serde::{Deserializer, Serializer};
-	use crate::utils::serde::Bytes;
-
-	pub mod pub_nonces {
-		use super::*;
-		use serde::ser::SerializeSeq;
-		use ark::musig::PublicNonce;
-
-		pub fn serialize<S: Serializer>(nonces: &Vec<PublicNonce>, s: S) -> Result<S::Ok, S::Error> {
-			let mut seq = s.serialize_seq(Some(nonces.len()))?;
-			for nonce in nonces {
-				seq.serialize_element(&Bytes(nonce.serialize()[..].into()))?;
-			}
-			seq.end()
-		}
-
-		pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Vec<PublicNonce>, D::Error> {
-			struct Visitor;
-
-			impl<'de> serde::de::Visitor<'de> for Visitor {
-				type Value = Vec<PublicNonce>;
-
-				fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
-					f.write_str("a list of public musig nonces")
-				}
-
-				fn visit_seq<A>(self, mut s: A) -> Result<Self::Value, A::Error>
-					where A: serde::de::SeqAccess<'de>,
-				{
-					let mut ret = Vec::with_capacity(s.size_hint().unwrap_or(0));
-					while let Some(e) = s.next_element::<Bytes>()? {
-						ret.push(PublicNonce::from_byte_array(
-							&TryFrom::try_from(e.0.as_ref()).map_err(serde::de::Error::custom)?
-						).map_err(serde::de::Error::custom)?);
-					}
-					Ok(ret)
-				}
-			}
-			d.deserialize_seq(Visitor)
-		}
-	}
-
-	pub mod part_sigs {
-		use super::*;
-		use serde::ser::SerializeSeq;
-		use ark::musig::PartialSignature;
-
-		pub fn serialize<S: Serializer>(nonces: &Vec<PartialSignature>, s: S) -> Result<S::Ok, S::Error> {
-			let mut seq = s.serialize_seq(Some(nonces.len()))?;
-			for nonce in nonces {
-				seq.serialize_element(&Bytes(nonce.serialize()[..].into()))?;
-			}
-			seq.end()
-		}
-
-		pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Vec<PartialSignature>, D::Error> {
-			struct Visitor;
-
-			impl<'de> serde::de::Visitor<'de> for Visitor {
-				type Value = Vec<PartialSignature>;
-
-				fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
-					f.write_str("a list of partial musig signatures")
-				}
-
-				fn visit_seq<A>(self, mut s: A) -> Result<Self::Value, A::Error>
-					where A: serde::de::SeqAccess<'de>,
-				{
-					let mut ret = Vec::with_capacity(s.size_hint().unwrap_or(0));
-					while let Some(e) = s.next_element::<Bytes>()? {
-						ret.push(PartialSignature::from_byte_array(
-							&TryFrom::try_from(e.0.as_ref()).map_err(serde::de::Error::custom)?
-						).map_err(serde::de::Error::custom)?);
-					}
-					Ok(ret)
-				}
-			}
-			d.deserialize_seq(Visitor)
-		}
 	}
 }

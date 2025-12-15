@@ -1,3 +1,4 @@
+#![allow(unused)]
 
 use std::collections::{HashMap, HashSet};
 use std::time::Duration;
@@ -7,7 +8,6 @@ use bitcoin::{OutPoint, Transaction, Txid, FeeRate, bip32, Network, Amount};
 use bitcoin::key::Keypair;
 use log::{error, debug, info, trace};
 use tokio::sync::{mpsc, oneshot};
-use tokio_stream::StreamExt;
 
 use ark::{Vtxo, VtxoId};
 use ark::connectors::ConnectorIter;

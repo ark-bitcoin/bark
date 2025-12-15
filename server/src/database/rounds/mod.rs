@@ -10,8 +10,7 @@ use anyhow::bail;
 use bitcoin::hashes::Hash;
 use bitcoin::{Transaction, Txid};
 use bitcoin::consensus::serialize;
-use bitcoin::secp256k1::SecretKey;
-use log::trace;
+use log::{info, trace};
 use tokio_postgres::types::Type;
 
 use ark::{VtxoId, VtxoRequest};
@@ -21,7 +20,6 @@ use ark::tree::signed::{CachedSignedVtxoTree, UnlockHash, UnlockPreimage};
 use bitcoin_ext::BlockHeight;
 
 use crate::database::Db;
-use crate::database::forfeits::ForfeitState;
 use crate::database::query;
 
 
@@ -30,23 +28,21 @@ impl Db {
 		&self,
 		round_seq: RoundSeq,
 		round_tx: &Transaction,
-		vtxos: &CachedSignedVtxoTree,
-		connector_key: &SecretKey,
-		forfeit_vtxos: Vec<(VtxoId, ForfeitState)>,
+		input_vtxos: impl IntoIterator<Item = VtxoId>,
+		output_vtxos: &CachedSignedVtxoTree,
 	) -> anyhow::Result<()> {
 		let round_txid = round_tx.compute_txid();
+		info!("Storing finished round with round funding txid {}", round_txid);
 
 		let mut conn = self.get_conn().await?;
 		let tx = conn.transaction().await?;
 
 		// First, store the round itself.
 		let statement = tx.prepare_typed(
-			"INSERT INTO round (seq, funding_txid, funding_tx, signed_tree, nb_input_vtxos,
-				connector_key, expiry, created_at)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
-			RETURNING id;
-			",
-			&[Type::INT8, Type::TEXT, Type::BYTEA, Type::BYTEA, Type::INT4, Type::BYTEA, Type::INT4],
+			"INSERT INTO round (seq, funding_txid, funding_tx, signed_tree, expiry, created_at)
+			VALUES ($1, $2, $3, $4, $5, NOW())
+			RETURNING id;",
+			&[Type::INT8, Type::TEXT, Type::BYTEA, Type::BYTEA, Type::INT4],
 		).await?;
 		let row = tx.query_one(
 			&statement,
@@ -54,35 +50,27 @@ impl Db {
 				&(round_seq.inner() as i64),
 				&round_txid.to_string(),
 				&serialize(&round_tx),
-				&vtxos.spec.serialize(),
-				&(forfeit_vtxos.len() as i32),
-				&connector_key.secret_bytes().to_vec(),
-				&(vtxos.spec.spec.expiry_height as i32)
+				&output_vtxos.spec.serialize(),
+				&(output_vtxos.spec.spec.expiry_height as i32)
 			]
 		).await?;
 		let round_id = row.get::<_, i64>("id");
 
-		// Then mark inputs as forfeited.
-		let statement = tx.prepare_typed("
-			UPDATE vtxo
-			SET forfeit_state = $2, forfeit_round_id = $3, updated_at = NOW()
-			WHERE vtxo_id = $1 AND oor_spent_txid IS NULL AND forfeit_state IS NULL;
-		", &[Type::TEXT, Type::BYTEA, Type::INT8]).await?;
-		for (id, forfeit_state) in forfeit_vtxos {
-			let state_bytes = rmp_serde::to_vec_named(&forfeit_state)
-				.expect("serde serialization");
-			let rows_affected = tx.execute(&statement, &[
-				&id.to_string(),
-				&state_bytes,
-				&round_id,
-			]).await?;
+		// mark the input vtxos as refreshed
+		let statement = tx.prepare_typed(
+			"UPDATE vtxo SET spent_in_round = $2, updated_at = NOW()
+			WHERE vtxo_id = $1 AND oor_spent_txid IS NULL AND spent_in_round IS NULL;",
+			&[Type::TEXT, Type::INT8],
+		).await?;
+		for vtxo_id in input_vtxos {
+			let rows_affected = tx.execute(&statement, &[&vtxo_id.to_string(), &round_id]).await?;
 			if rows_affected == 0 {
-				bail!("tried to mark unspendable vtxo as forfeited: {}", id);
+				bail!("tried to mark unspendable vtxo {} as spent in round", vtxo_id);
 			}
 		}
 
 		// Finally insert new vtxos.
-		query::upsert_vtxos(&tx, vtxos.all_vtxos()).await?;
+		query::upsert_vtxos(&tx, output_vtxos.all_vtxos()).await?;
 
 		tx.commit().await?;
 		Ok(())
@@ -99,7 +87,7 @@ impl Db {
 	pub async fn get_round(&self, id: RoundId) -> anyhow::Result<Option<StoredRound>> {
 		let conn = self.get_conn().await?;
 		let statement = conn.prepare("
-			SELECT id, seq, funding_txid, funding_tx, signed_tree, nb_input_vtxos, connector_key,
+			SELECT id, seq, funding_txid, funding_tx, signed_tree,
 				expiry, swept_at, created_at
 			FROM round
 			WHERE funding_txid = $1;
