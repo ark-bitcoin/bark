@@ -5,12 +5,13 @@ use bitcoin::params::Params;
 use futures::FutureExt;
 use rand::random;
 
-use ark::vtxo::exit_taproot;
+use ark::vtxo::{exit_taproot, VtxoPolicyKind};
 use bark_json::cli::PaymentMethod;
 use bark_json::exit::ExitState;
 use bark_json::exit::states::ExitStartState;
 use bark_json::primitives::VtxoStateInfo;
 use bitcoin_ext::TaprootSpendInfoExt;
+use bitcoin_ext::rpc::BitcoinRpcExt;
 use server_rpc::protos::{self, lightning_payment_status};
 
 use ark_testing::{btc, sat, Bark, TestContext};
@@ -486,12 +487,20 @@ async fn bark_should_exit_a_failed_htlc_out_that_server_refuse_to_revoke() {
 	assert_eq!(bark_1.spendable_balance().await, board_amount);
 	bark_1.try_pay_lightning(invoice, None, false).await.expect_err("The payment fails");
 
-	// vtxo expiry is 144, so exit should be triggered after 120 blocks
-	ctx.generate_blocks(130).await;
+	// We need to ensure the HTLC expires so an exit will be triggered.
+	let tip = ctx.bitcoind().sync_client().tip().unwrap();
+	let desired_height = {
+		let bark = bark_1.client().await;
+		let htlc = bark.vtxos().unwrap().into_iter().find(
+			|v| v.policy_type() == VtxoPolicyKind::ServerHtlcSend
+		).unwrap();
+		htlc.policy().as_server_htlc_send().unwrap().htlc_expiry + 1
+	};
+	ctx.generate_blocks(desired_height - tip.height).await;
 	bark_1.maintain().await;
 
 	// Should start an exit
-	assert_eq!(bark_1.list_exits().await[0].state, ExitState::Start(ExitStartState { tip_height: 245 }));
+	assert_eq!(bark_1.list_exits().await[0].state, ExitState::Start(ExitStartState { tip_height: desired_height }));
 	complete_exit(&ctx, &bark_1).await;
 
 	// TODO: Drain exit outputs then check balance in onchain wallet
@@ -555,9 +564,20 @@ async fn bark_should_exit_a_pending_htlc_out_that_server_refuse_to_revoke() {
 	assert_eq!(bark_1.spendable_balance().await, board_amount);
 	bark_1.pay_lightning(invoice, None).await;
 
-	// vtxo expiry is 144, so exit should be triggered after 120 blocks
-	ctx.generate_blocks(130).await;
+	// We need to ensure the HTLC expires so an exit will be triggered.
+	let tip = ctx.bitcoind().sync_client().tip().unwrap();
+	let desired_height = {
+		let bark = bark_1.client().await;
+		let htlc = bark.vtxos().unwrap().into_iter().find(
+			|v| v.policy_type() == VtxoPolicyKind::ServerHtlcSend
+		).unwrap();
+		htlc.policy().as_server_htlc_send().unwrap().htlc_expiry + 1
+	};
+	ctx.generate_blocks(desired_height - tip.height).await;
 	bark_1.maintain().await;
+
+	// Should start an exit
+	assert_eq!(bark_1.list_exits().await[0].state, ExitState::Start(ExitStartState { tip_height: desired_height }));
 	complete_exit(&ctx, &bark_1).await;
 
 	assert_eq!(bark_1.offchain_balance().await.pending_lightning_send, btc(0));
