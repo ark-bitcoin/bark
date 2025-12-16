@@ -62,18 +62,18 @@ steps:
     image: registry.2nd.dev/build:25
     volumes:
       - /data:/host/data
+      - tmpfs:/dev/shm:rw
     environment:
-      BITCOIND_EXEC: /bitcoin/29.0/bin/bitcoind
-      LIGHTNINGD_EXEC: /lightning/25.02.2/bin/lightningd
       TEST_DIRECTORY: ./test/btc29-codecov
       RUST_TEST_THREADS: 1
       BARK_COMMAND_TIMEOUT_MILLIS: 120000
       TX_PROPAGATION_TIMEOUT: 30000
-      HODL_INVOICE_PLUGIN: /hold/target/debug/hold
+    privileged: true
     commands:
       - git log --oneline | head -n 1
-      - export CAPTAIND_EXEC=$CI_WORKSPACE/target/debug/captaind
-      - export BARK_EXEC=$CI_WORKSPACE/target/debug/bark
+      - export RUN_DATETIME=$(cat RUN_DATETIME)
+      - export CAPTAIND_EXEC=${CI_WORKSPACE}/target/debug/captaind
+      - export BARK_EXEC=${CI_WORKSPACE}/target/debug/bark
       - bash ./contrib/ci-run-test.sh test-integration-codecov
 
   - name: code-coverage
