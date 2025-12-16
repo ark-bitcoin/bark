@@ -3,6 +3,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 
+use ark::lightning::PaymentHash;
 use ark::vtxo::VtxoPolicyKind;
 use bark::lightning_invoice::Bolt11Invoice;
 use ark_testing::constants::ROUND_CONFIRMATIONS;
@@ -228,6 +229,36 @@ async fn another_bark_pays_invoice_after_first() {
 	assert_eq!(bark_2.offchain_balance().await.pending_lightning_send, btc(0), "pending lightning send should be reset after payment");
 	let vtxos = bark_2.vtxos().await;
 	assert!(!vtxos.iter().any(|v| matches!(v.state, VtxoStateInfo::Locked { .. })), "should not be any locked vtxo left");
+}
+
+#[tokio::test]
+async fn bark_check_lightning_payment_twice_succeeds() {
+	let ctx = TestContext::new("lightningd/bark_check_lightning_payment_twice_succeeds").await;
+
+	let lightning = ctx.new_lightning_setup("lightningd").await;
+
+	let srv = ctx.new_captaind("server", Some(&lightning.sender)).await;
+
+	let bark_1 = ctx.new_bark_with_funds("bark-1", &srv, btc(7)).await;
+
+	bark_1.board_and_confirm_and_register(&ctx, btc(5)).await;
+
+	let invoice_amount = btc(2);
+	let invoice = lightning.receiver.invoice(Some(invoice_amount), "test_payment", "A test payment").await;
+
+	lightning.sync().await;
+
+	// First check happens internally via --wait
+	bark_1.pay_lightning_wait(invoice.clone(), None).await;
+
+	// Get wallet client and call check_lightning_payment again on same payment
+	let wallet = bark_1.client().await;
+	let bolt11 = Bolt11Invoice::from_str(&invoice).unwrap();
+	let payment_hash = PaymentHash::from(&bolt11);
+
+	// Second check should succeed and return preimage, not error
+	let result = wallet.check_lightning_payment(payment_hash, false).await.expect("check_lightning_payment should not error on second call");
+	assert_eq!(result.unwrap().compute_payment_hash(), payment_hash, "should return correct preimage on second call");
 }
 
 #[tokio::test]
