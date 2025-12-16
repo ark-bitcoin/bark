@@ -1,4 +1,6 @@
 
+use std::fmt;
+
 pub use secp256k1_musig as secpm;
 pub use secp256k1_musig::musig::{
 	AggregatedNonce, PublicNonce, PartialSignature, SecretNonce, Session, SessionSecretRand,
@@ -228,7 +230,7 @@ pub mod serde {
 }
 /// A type that actually represents a [SecretNonce] but without the
 /// typesystem defenses for dangerous usage.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct DangerousSecretNonce([u8; MUSIG_SECNONCE_SIZE]);
 
 impl DangerousSecretNonce {
@@ -246,6 +248,12 @@ impl DangerousSecretNonce {
 
 	pub fn from_byte_array(bytes: [u8; MUSIG_SECNONCE_SIZE]) -> Self {
 		Self(bytes)
+	}
+}
+
+impl fmt::Debug for DangerousSecretNonce {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+	    f.write_str("[secret nonces redacted]")
 	}
 }
 
