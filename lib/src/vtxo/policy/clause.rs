@@ -20,6 +20,7 @@ pub trait TapScriptClause: Sized + Clone {
 	/// Returns the tapscript for the clause.
 	fn tapscript(&self) -> ScriptBuf;
 
+	/// Construct the taproot control block for spending the VTXO using this clause
 	fn control_block(&self, vtxo: &Vtxo) -> ControlBlock {
 		vtxo.output_taproot()
 			.control_block(&(self.tapscript(), taproot::LeafVersion::TapScript))
@@ -29,8 +30,8 @@ pub trait TapScriptClause: Sized + Clone {
 	/// Constructs the witness for the clause.
 	fn witness(
 		&self,
-		data: Self::WitnessData,
-		control_block: ControlBlock,
+		data: &Self::WitnessData,
+		control_block: &ControlBlock,
 	) -> Witness;
 }
 
@@ -43,8 +44,8 @@ pub struct DelayedSignClause {
 }
 
 impl DelayedSignClause {
-	/// Returns the CSV value for this clause.
-	pub fn csv(&self) -> Sequence {
+	/// Returns the input sequence value for this clause.
+	pub fn sequence(&self) -> Sequence {
 		Sequence::from_height(self.block_delta)
 	}
 }
@@ -59,15 +60,14 @@ impl TapScriptClause for DelayedSignClause {
 
 	fn witness(
 		&self,
-		signature: Self::WitnessData,
-		control_block: ControlBlock,
+		signature: &Self::WitnessData,
+		control_block: &ControlBlock,
 	) -> Witness {
-		let mut witness = Witness::new();
-		witness.push(&signature[..]);
-		witness.push(self.tapscript().as_bytes());
-		witness.push(&control_block.serialize()[..]);
-
-		witness
+		Witness::from_slice(&[
+			&signature[..],
+			self.tapscript().as_bytes(),
+			&control_block.serialize()[..],
+		])
 	}
 }
 
@@ -86,8 +86,8 @@ pub struct TimelockSignClause {
 }
 
 impl TimelockSignClause {
-	/// Returns the absolute timelock for this clause.
-	pub fn cltv(&self) -> LockTime {
+	/// Returns the absolute locktime for this clause.
+	pub fn locktime(&self) -> LockTime {
 		LockTime::from_height(self.timelock_height).expect("timelock height is valid")
 	}
 }
@@ -101,15 +101,14 @@ impl TapScriptClause for TimelockSignClause {
 
 	fn witness(
 		&self,
-		signature: Self::WitnessData,
-		control_block: ControlBlock,
+		signature: &Self::WitnessData,
+		control_block: &ControlBlock,
 	) -> Witness {
-		let mut witness = Witness::new();
-		witness.push(&signature[..]);
-		witness.push(self.tapscript().as_bytes());
-		witness.push(&control_block.serialize()[..]);
-
-		witness
+		Witness::from_slice(&[
+			&signature[..],
+			self.tapscript().as_bytes(),
+			&control_block.serialize()[..],
+		])
 	}
 }
 
@@ -122,97 +121,102 @@ impl Into<VtxoClause> for TimelockSignClause {
 /// A clause that allows to sign and spend the UTXO after a relative
 /// timelock, with an additional absolute one.
 #[derive(Debug, Clone)]
-pub struct DelayedTimelockClause {
+pub struct DelayedTimelockSignClause {
 	pub pubkey: PublicKey,
 	pub timelock_height: BlockHeight,
 	pub block_delta: BlockDelta,
 }
 
-impl DelayedTimelockClause {
-	/// Returns the relative timelock for this clause.
-	pub fn csv(&self) -> Sequence {
+impl DelayedTimelockSignClause {
+	/// Returns the input sequence for this clause.
+	pub fn sequence(&self) -> Sequence {
 		Sequence::from_height(self.block_delta)
 	}
 
-	/// Returns the absolute timelock for this clause.
-	pub fn cltv(&self) -> LockTime {
+	/// Returns the absolute locktime for this clause.
+	pub fn locktime(&self) -> LockTime {
 		LockTime::from_height(self.timelock_height).expect("timelock height is valid")
 	}
 }
 
-impl TapScriptClause for DelayedTimelockClause {
+impl TapScriptClause for DelayedTimelockSignClause {
 	type WitnessData = schnorr::Signature;
 
 	fn tapscript(&self) -> ScriptBuf {
 		assert_ne!(self.block_delta, 0, "block delta must be non-zero");
-		scripts::delay_timelock_sign(self.block_delta, self.timelock_height, self.pubkey.x_only_public_key().0)
+		scripts::delay_timelock_sign(
+			self.block_delta,
+			self.timelock_height,
+			self.pubkey.x_only_public_key().0,
+		)
 	}
 
 	fn witness(
 		&self,
-		signature: Self::WitnessData,
-		control_block: ControlBlock,
+		signature: &Self::WitnessData,
+		control_block: &ControlBlock,
 	) -> Witness {
-		let mut witness = Witness::new();
-		witness.push(&signature[..]);
-		witness.push(self.tapscript().as_bytes());
-		witness.push(&control_block.serialize()[..]);
-
-		witness
+		Witness::from_slice(&[
+			&signature[..],
+			self.tapscript().as_bytes(),
+			&control_block.serialize()[..],
+		])
 	}
 }
 
-impl Into<VtxoClause> for DelayedTimelockClause {
+impl Into<VtxoClause> for DelayedTimelockSignClause {
 	fn into(self) -> VtxoClause {
-		VtxoClause::DelayedTimelock(self)
+		VtxoClause::DelayedTimelockSign(self)
 	}
 }
 
 /// A clause that allows to sign and spend the UTXO after a relative
 /// timelock, if preimage matching the payment hash is provided.
 #[derive(Debug, Clone)]
-pub struct HashDelayClause {
+pub struct HashDelaySignClause {
 	pub pubkey: PublicKey,
 	pub payment_hash: PaymentHash,
 	pub block_delta: BlockDelta,
 }
 
-impl HashDelayClause {
-	/// Returns the relative timelock for this clause.
-	pub fn csv(&self) -> Sequence {
+impl HashDelaySignClause {
+	/// Returns the input sequence for this clause.
+	pub fn sequence(&self) -> Sequence {
 		assert_ne!(self.block_delta, 0, "block delta must be non-zero");
 		Sequence::from_height(self.block_delta)
 	}
 }
 
-impl TapScriptClause for HashDelayClause {
+impl TapScriptClause for HashDelaySignClause {
 	type WitnessData = (schnorr::Signature, Preimage);
 
 	fn tapscript(&self) -> ScriptBuf {
 		assert_ne!(self.block_delta, 0, "block delta must be non-zero");
-		scripts::hash_delay_sign(self.payment_hash.to_sha256_hash(), self.block_delta, self.pubkey.x_only_public_key().0)
+		scripts::hash_delay_sign(
+			self.payment_hash.to_sha256_hash(),
+			self.block_delta,
+			self.pubkey.x_only_public_key().0,
+		)
 	}
 
 	fn witness(
 		&self,
-		data: Self::WitnessData,
-		control_block: ControlBlock,
+		data: &Self::WitnessData,
+		control_block: &ControlBlock,
 	) -> Witness {
 		let (signature, preimage) = data;
-
-		let mut witness = Witness::new();
-		witness.push(&signature[..]);
-		witness.push(&preimage.as_ref()[..]);
-		witness.push(self.tapscript().as_bytes());
-		witness.push(&control_block.serialize()[..]);
-
-		witness
+		Witness::from_slice(&[
+			&signature[..],
+			&preimage.as_ref()[..],
+			self.tapscript().as_bytes(),
+			&control_block.serialize()[..],
+		])
 	}
 }
 
-impl Into<VtxoClause> for HashDelayClause {
+impl Into<VtxoClause> for HashDelaySignClause {
 	fn into(self) -> VtxoClause {
-		VtxoClause::HashDelay(self)
+		VtxoClause::HashDelaySign(self)
 	}
 }
 
@@ -220,8 +224,8 @@ impl Into<VtxoClause> for HashDelayClause {
 pub enum VtxoClause {
 	DelayedSign(DelayedSignClause),
 	TimelockSign(TimelockSignClause),
-	DelayedTimelock(DelayedTimelockClause),
-	HashDelay(HashDelayClause),
+	DelayedTimelockSign(DelayedTimelockSignClause),
+	HashDelaySign(HashDelaySignClause),
 }
 
 impl VtxoClause {
@@ -230,8 +234,8 @@ impl VtxoClause {
 		match self {
 			Self::DelayedSign(c) => c.pubkey,
 			Self::TimelockSign(c) => c.pubkey,
-			Self::DelayedTimelock(c) => c.pubkey,
-			Self::HashDelay(c) => c.pubkey,
+			Self::DelayedTimelockSign(c) => c.pubkey,
+			Self::HashDelaySign(c) => c.pubkey,
 		}
 	}
 
@@ -240,18 +244,18 @@ impl VtxoClause {
 		match self {
 			Self::DelayedSign(c) => c.tapscript(),
 			Self::TimelockSign(c) => c.tapscript(),
-			Self::DelayedTimelock(c) => c.tapscript(),
-			Self::HashDelay(c) => c.tapscript(),
+			Self::DelayedTimelockSign(c) => c.tapscript(),
+			Self::HashDelaySign(c) => c.tapscript(),
 		}
 	}
 
-	/// Returns the relative timelock for this clause, if applicable.
-	pub fn csv(&self) -> Option<Sequence> {
+	/// Returns the input sequence for this clause, if applicable.
+	pub fn sequence(&self) -> Option<Sequence> {
 		match self {
-			Self::DelayedSign(c) => Some(c.csv()),
+			Self::DelayedSign(c) => Some(c.sequence()),
 			Self::TimelockSign(_) => None,
-			Self::DelayedTimelock(c) => Some(c.csv()),
-			Self::HashDelay(c) => Some(c.csv()),
+			Self::DelayedTimelockSign(c) => Some(c.sequence()),
+			Self::HashDelaySign(c) => Some(c.sequence()),
 		}
 	}
 
@@ -260,8 +264,8 @@ impl VtxoClause {
 		match self {
 			Self::DelayedSign(c) => c.control_block(vtxo),
 			Self::TimelockSign(c) => c.control_block(vtxo),
-			Self::DelayedTimelock(c) => c.control_block(vtxo),
-			Self::HashDelay(c) => c.control_block(vtxo),
+			Self::DelayedTimelockSign(c) => c.control_block(vtxo),
+			Self::HashDelaySign(c) => c.control_block(vtxo),
 		}
 	}
 }
@@ -292,8 +296,8 @@ mod tests {
 		match clause {
 			VtxoClause::DelayedSign(_) => true,
 			VtxoClause::TimelockSign(_) => true,
-			VtxoClause::DelayedTimelock(_) => true,
-			VtxoClause::HashDelay(_) => true,
+			VtxoClause::DelayedTimelockSign(_) => true,
+			VtxoClause::HashDelaySign(_) => true,
 		}
 	}
 
@@ -361,13 +365,13 @@ mod tests {
 		tx.input.push(TxIn {
 			previous_output: OutPoint::new(Txid::all_zeros(), 0),
 			script_sig: ScriptBuf::default(),
-			sequence: clause.csv(),
+			sequence: clause.sequence(),
 			witness: Witness::new(),
 		});
 
 		// We compute the signature for the transaction
 		let signature = signature(&tx, &tx_in, clause.tapscript());
-		tx.input[0].witness = clause.witness(signature, cb);
+		tx.input[0].witness = clause.witness(&signature, &cb);
 
 		// We verify the transaction
 		verify_tx(&[tx_in], 0, &tx).expect("transaction is invalid");
@@ -389,7 +393,7 @@ mod tests {
 
 		// We build transaction spending input containing clause
 		let mut tx = transaction();
-		tx.lock_time = clause.cltv();
+		tx.lock_time = clause.locktime();
 		tx.input.push(TxIn {
 			previous_output: OutPoint::new(Txid::all_zeros(), 0),
 			script_sig: ScriptBuf::default(),
@@ -399,7 +403,7 @@ mod tests {
 
 		// We compute the signature for the transaction
 		let signature = signature(&tx, &tx_in, clause.tapscript());
-		tx.input[0].witness = clause.witness(signature, cb);
+		tx.input[0].witness = clause.witness(&signature, &cb);
 
 		// We verify the transaction
 		verify_tx(&[tx_in], 0, &tx).expect("transaction is invalid");
@@ -407,7 +411,7 @@ mod tests {
 
 	#[test]
 	fn test_delayed_timelock_clause() {
-		let clause = DelayedTimelockClause {
+		let clause = DelayedTimelockSignClause {
 			pubkey: USER_KEYPAIR.public_key(),
 			timelock_height: 100,
 			block_delta: 24,
@@ -422,17 +426,17 @@ mod tests {
 
 		// We build transaction spending input containing clause
 		let mut tx = transaction();
-		tx.lock_time = clause.cltv();
+		tx.lock_time = clause.locktime();
 		tx.input.push(TxIn {
 			previous_output: OutPoint::new(Txid::all_zeros(), 0),
 			script_sig: ScriptBuf::default(),
-			sequence: clause.csv(),
+			sequence: clause.sequence(),
 			witness: Witness::new(),
 		});
 
 		// We compute the signature for the transaction
 		let signature = signature(&tx, &tx_in, clause.tapscript());
-		tx.input[0].witness = clause.witness(signature, cb);
+		tx.input[0].witness = clause.witness(&signature, &cb);
 
 		// We verify the transaction
 		verify_tx(&[tx_in], 0, &tx).expect("transaction is invalid");
@@ -442,7 +446,7 @@ mod tests {
 	fn test_hash_delay_clause() {
 		let preimage = Preimage::from_slice(&[0; 32]).unwrap();
 
-		let clause = HashDelayClause {
+		let clause = HashDelaySignClause {
 			pubkey: USER_KEYPAIR.public_key(),
 			payment_hash: preimage.compute_payment_hash(),
 			block_delta: 24,
@@ -460,13 +464,13 @@ mod tests {
 		tx.input.push(TxIn {
 			previous_output: OutPoint::new(Txid::all_zeros(), 0),
 			script_sig: ScriptBuf::default(),
-			sequence: clause.csv(),
+			sequence: clause.sequence(),
 			witness: Witness::new(),
 		});
 
 		// We compute the signature for the transaction
 		let signature = signature(&tx, &tx_in, clause.tapscript());
-		tx.input[0].witness = clause.witness((signature, preimage), cb);
+		tx.input[0].witness = clause.witness(&(signature, preimage), &cb);
 
 		// We verify the transaction
 		verify_tx(&[tx_in], 0, &tx).expect("transaction is invalid");
