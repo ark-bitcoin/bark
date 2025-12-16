@@ -370,8 +370,8 @@ impl Lightningd {
 		let response = client.new_addr(cln_rpc::NewaddrRequest {
 			addresstype: None,
 		}).await.unwrap().into_inner();
-		let bech32 = response.bech32.unwrap();
-		bitcoin::Address::from_str(&bech32).unwrap()
+		let p2tr = response.p2tr.unwrap();
+		bitcoin::Address::from_str(&p2tr).unwrap()
 			.require_network(Network::Regtest).unwrap()
 	}
 
