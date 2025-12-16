@@ -1417,6 +1417,15 @@ pub mod test {
 		println!("  round2_vtxo: {}", v.round2_vtxo.serialize().as_hex().to_string());
 		println!("  arkoor3_vtxo: {}", v.arkoor3_vtxo.serialize().as_hex().to_string());
 
+		assert_eq!(g.anchor_tx, v.anchor_tx, "anchor_tx does not match");
+		assert_eq!(g.board_vtxo, v.board_vtxo, "board_vtxo does not match");
+		assert_eq!(g.arkoor_htlc_out_vtxo, v.arkoor_htlc_out_vtxo, "arkoor_htlc_out_vtxo does not match");
+		assert_eq!(g.arkoor2_vtxo, v.arkoor2_vtxo, "arkoor2_vtxo does not match");
+		assert_eq!(g.round_tx, v.round_tx, "round_tx does not match");
+		assert_eq!(g.round1_vtxo, v.round1_vtxo, "round1_vtxo does not match");
+		assert_eq!(g.round2_vtxo, v.round2_vtxo, "round2_vtxo does not match");
+		assert_eq!(g.arkoor3_vtxo, v.arkoor3_vtxo, "arkoor3_vtxo does not match");
+
 		// this passes because the Eq is based on id which doesn't compare signatures
 		assert_eq!(g, *v);
 	}
