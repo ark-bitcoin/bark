@@ -58,6 +58,15 @@ pub mod policy;
 pub use self::validation::VtxoValidationError;
 pub use self::policy::{VtxoPolicy, VtxoPolicyKind};
 
+pub use self::policy::{
+	PubkeyVtxoPolicy, CheckpointVtxoPolicy, ServerHtlcRecvVtxoPolicy,
+	ServerHtlcSendVtxoPolicy,
+};
+pub use self::policy::clause::{
+	VtxoClause, DelayedSignClause, DelayedTimelockClause, HashDelayClause,
+	TapScriptClause,
+};
+
 mod validation;
 
 use std::collections::HashSet;
@@ -75,7 +84,6 @@ use bitcoin::taproot::LeafVersion;
 
 use bitcoin_ext::{fee, BlockDelta, BlockHeight, TaprootSpendInfoExt};
 
-use crate::vtxo::policy::{CheckpointVtxoPolicy, PubkeyVtxoPolicy, ServerHtlcRecvVtxoPolicy, ServerHtlcSendVtxoPolicy};
 use crate::{musig, scripts, SECP};
 use crate::encode::{ProtocolDecodingError, ProtocolEncoding, ReadExt, WriteExt};
 use crate::lightning::{PaymentHash};

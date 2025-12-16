@@ -1,15 +1,18 @@
 
+pub mod clause;
+
 use std::fmt;
 use std::str::FromStr;
 
-use bitcoin::{taproot, Amount, ScriptBuf, TxOut};
+use bitcoin::{Amount, ScriptBuf, TxOut, taproot};
 use bitcoin::secp256k1::PublicKey;
 
 use bitcoin_ext::{BlockDelta, BlockHeight, TaprootSpendInfoExt};
 
-use crate::scripts;
-use crate::lightning::{server_htlc_receive_taproot, server_htlc_send_taproot, PaymentHash};
 use crate::vtxo::{checkpoint_taproot, exit_clause, exit_taproot};
+use crate::scripts;
+use crate::lightning::{PaymentHash, server_htlc_receive_taproot, server_htlc_send_taproot};
+use crate::vtxo::policy::clause::{DelayedSignClause, DelayedTimelockClause, HashDelayClause, TimelockSignClause, VtxoClause};
 
 /// Type enum of [VtxoPolicy].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -82,6 +85,17 @@ impl From<PubkeyVtxoPolicy> for VtxoPolicy {
 	}
 }
 
+impl PubkeyVtxoPolicy {
+	/// Allows Alice to spend the VTXO after a delay.
+	pub fn user_pubkey_claim_clause(&self, exit_delta: BlockDelta) -> DelayedSignClause {
+		DelayedSignClause { pubkey: self.user_pubkey, block_delta: exit_delta }
+	}
+
+	pub fn clauses(&self, exit_delta: BlockDelta) -> Vec<VtxoClause> {
+		vec![VtxoClause::DelayedSign(self.user_pubkey_claim_clause(exit_delta))]
+	}
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct CheckpointVtxoPolicy {
 	pub user_pubkey: PublicKey,
@@ -93,6 +107,18 @@ impl From<CheckpointVtxoPolicy> for VtxoPolicy {
 	}
 }
 
+impl CheckpointVtxoPolicy {
+	/// Allows Server to spend the checkpoint after expiry height.
+	pub fn server_sweeping_clause(&self, expiry_height: BlockHeight, server_pubkey: PublicKey) -> TimelockSignClause {
+		TimelockSignClause { pubkey: server_pubkey, timelock_height: expiry_height }
+	}
+
+	pub fn clauses(&self, expiry_height: BlockHeight, server_pubkey: PublicKey) -> Vec<VtxoClause> {
+		vec![VtxoClause::TimelockSign(
+			self.server_sweeping_clause(expiry_height, server_pubkey)
+		)]
+	}
+}
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ServerHtlcSendVtxoPolicy {
 	pub user_pubkey: PublicKey,
@@ -106,12 +132,86 @@ impl From<ServerHtlcSendVtxoPolicy> for VtxoPolicy {
 	}
 }
 
+impl ServerHtlcSendVtxoPolicy {
+	/// Allows Server to spend the HTLC after the delta, if it knows the
+	/// preimage. Server can use this path if Alice tries to spend using her
+	/// clause.
+	pub fn server_reveals_preimage_clause(&self, server_pubkey: PublicKey, exit_delta: BlockDelta) -> HashDelayClause {
+		HashDelayClause {
+			pubkey: server_pubkey,
+			payment_hash: self.payment_hash,
+			block_delta: exit_delta
+		}
+	}
+
+	/// Allows Alice to spend the HTLC after its expiry and with a delay.
+	/// Alice must use this path if the server fails to provide the preimage
+	/// and refuse to revoke the HTLC. It will either force the server to
+	/// reveal the preimage (by spending using its clause) or give Alice her
+	/// money back.
+	pub fn user_claim_after_expiry_clause(&self, exit_delta: BlockDelta) -> DelayedTimelockClause {
+		DelayedTimelockClause {
+			pubkey: self.user_pubkey,
+			timelock_height: self.htlc_expiry,
+			block_delta: 2 * exit_delta
+		}
+	}
+
+
+	pub fn clauses(&self, exit_delta: BlockDelta, server_pubkey: PublicKey) -> Vec<VtxoClause> {
+		vec![
+			VtxoClause::HashDelay(
+				self.server_reveals_preimage_clause(server_pubkey, exit_delta)
+			),
+			VtxoClause::DelayedTimelock(
+				self.user_claim_after_expiry_clause(exit_delta)
+			),
+		]
+	}
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ServerHtlcRecvVtxoPolicy {
 	pub user_pubkey: PublicKey,
 	pub payment_hash: PaymentHash,
 	pub htlc_expiry_delta: BlockDelta,
 	pub htlc_expiry: BlockHeight,
+}
+
+impl ServerHtlcRecvVtxoPolicy {
+	/// Allows Alice to spend the HTLC if she knows the preimage, but with a
+	/// greater exit delta delay than server's clause. Alice must use this
+	/// path if she revealed the preimage but server refused to cosign
+	/// claim VTXO.
+	pub fn user_reveals_preimage_clause(&self, exit_delta: BlockDelta) -> HashDelayClause {
+		HashDelayClause {
+			pubkey: self.user_pubkey,
+			payment_hash: self.payment_hash,
+			block_delta: self.htlc_expiry_delta + exit_delta
+		}
+	}
+
+	/// Allows Server to spend the HTLC after the HTLC expiry, with an exit
+	/// delta delay. Server can use this path if Alice tries to spend the
+	/// HTLC using her clause after the HTLC expiry.
+	pub fn server_claim_after_expiry_clause(&self, server_pubkey: PublicKey, exit_delta: BlockDelta) -> DelayedTimelockClause {
+		DelayedTimelockClause {
+			pubkey: server_pubkey,
+			timelock_height: self.htlc_expiry,
+			block_delta: exit_delta
+		}
+	}
+
+	pub fn clauses(&self, exit_delta: BlockDelta, server_pubkey: PublicKey) -> Vec<VtxoClause> {
+		vec![
+			VtxoClause::HashDelay(
+				self.user_reveals_preimage_clause(exit_delta)
+			),
+			VtxoClause::DelayedTimelock(
+				self.server_claim_after_expiry_clause(server_pubkey, exit_delta)
+			),
+		]
+	}
 }
 
 impl From<ServerHtlcRecvVtxoPolicy> for VtxoPolicy {
@@ -308,6 +408,15 @@ impl VtxoPolicy {
 		TxOut {
 			value: amount,
 			script_pubkey: self.script_pubkey(server_pubkey, exit_delta, expiry_height),
+		}
+	}
+
+	pub fn clauses(&self, exit_delta: u16, expiry_height: BlockHeight, server_pubkey: PublicKey) -> Vec<VtxoClause> {
+		match self {
+			Self::Pubkey(policy) => policy.clauses(exit_delta),
+			Self::Checkpoint(policy) => policy.clauses(expiry_height, server_pubkey),
+			Self::ServerHtlcSend(policy) => policy.clauses(exit_delta, server_pubkey),
+			Self::ServerHtlcRecv(policy) => policy.clauses(exit_delta, server_pubkey),
 		}
 	}
 }
