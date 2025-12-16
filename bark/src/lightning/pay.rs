@@ -186,6 +186,12 @@ impl Wallet {
 		let payment = self.db.get_lightning_send(payment_hash)?
 			.context("no lightning send found for payment hash")?;
 
+		// If the payment already has a preimage, it was already completed successfully
+		if let Some(preimage) = payment.preimage {
+			trace!("Payment already completed with preimage: {}", preimage.as_hex());
+			return Ok(Some(preimage));
+		}
+
 		let policy = payment.htlc_vtxos.first().context("no vtxo provided")?.vtxo.policy();
 		debug_assert!(payment.htlc_vtxos.iter().all(|v| v.vtxo.policy() == policy),
 			"All lightning htlc should have the same policy",
