@@ -361,18 +361,19 @@ pub struct Config {
 	/// - `vtxo_exit_delta` (144) + `htlc_expiry_delta` (40) +
 	/// `vtxo_exit_margin` (12) + `htlc_recv_claim_delta` (18)
 	///
-	/// Generated invoices will be canceled after `htlc_subscription_timeout` anyway, if
-	/// not settled yet.
-	///
 	/// Note: it is added to [Config::htlc_expiry_delta]
 	/// to set the actual invoice's min final cltv expiry delta.
 	///
 	/// Default is 250
 	pub max_user_invoice_cltv_delta: BlockDelta,
-	/// The delay after which an htlc subscription made for a
-	/// generated invoice will be canceled if not settled yet.
+	/// The duration after which a generated invoice will expire.
 	#[serde(with = "serde_util::duration")]
-	pub htlc_subscription_timeout: Duration,
+	pub invoice_expiry: Duration,
+	/// The duration for which the server will hold inbound HTLC(s) while
+	/// waiting for a user to claim a lightning receive.
+	/// After this timeout the server will fail the HTLC(s) back to the sender.
+	#[serde(with = "serde_util::duration")]
+	pub receive_htlc_forward_timeout: Duration,
 
 	/// Indicates whether the Ark server requires clients to either
 	/// provide a VTXO ownership proof, or a lightning receive token

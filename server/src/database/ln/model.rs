@@ -151,7 +151,8 @@ pub enum LightningHtlcSubscriptionStatus {
 	/// The subscription was canceled
 	///
 	/// Can be set either manually by the user or automatically by the
-	/// server after `htlc_subscription_timeout`
+	/// server after `invoice_expiry` or when the invoice is accepted (HTLCs are held)
+	/// for longer than `receive_htlc_forward_timeout`.
 	#[postgres(name = "canceled")]
 	Canceled,
 }

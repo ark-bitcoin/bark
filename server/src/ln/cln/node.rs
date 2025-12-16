@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Context;
-use bitcoin::hashes::Hash;
+use bitcoin::hashes::{sha256, Hash};
 use bitcoin::hex::DisplayHex;
 use bitcoin_ext::BlockHeight;
 use chrono::{DateTime, Local};
@@ -23,7 +23,7 @@ use cln_rpc::listsendpays_request::ListsendpaysIndex;
 use cln_rpc::node_client::NodeClient;
 use cln_rpc::plugins::hold::hold_client::HoldClient;
 use crate::database;
-use crate::database::ln::{ClnNodeId, LightningHtlcSubscriptionStatus, LightningPaymentStatus};
+use crate::database::ln::{ClnNodeId, LightningHtlcSubscription, LightningHtlcSubscriptionStatus, LightningPaymentStatus};
 use crate::system::RuntimeManager;
 use crate::telemetry;
 
@@ -31,7 +31,8 @@ use crate::telemetry;
 pub struct ClnNodeMonitorConfig {
 	pub invoice_check_interval: Duration,
 	pub invoice_recheck_delay: Duration,
-	pub htlc_subscription_timeout: Duration,
+	pub invoice_expiry: Duration,
+	pub receive_htlc_forward_timeout: Duration,
 	pub check_base_delay: Duration,
 	pub check_max_delay: Duration,
 }
@@ -415,7 +416,7 @@ impl ClnNodeMonitorProcess {
 		let tip = self.rpc.getinfo(cln_rpc::GetinfoRequest {}).await?
 			.into_inner().blockheight;
 
-		let mut hodl_client = match &self.hold_rpc {
+		let mut hold_client = match &self.hold_rpc {
 			Some(client) => client.clone(),
 			None => {
 				warn!("No hold rpc client, skipping incoming htlc subscriptions");
@@ -441,7 +442,7 @@ impl ClnNodeMonitorProcess {
 					payment_hash.to_byte_array().to_vec(),
 				)),
 			};
-			let res = hodl_client.list(req).await?.into_inner();
+			let res = hold_client.list(req).await?.into_inner();
 
 			if res.invoices.is_empty() {
 				warn!("Lightning htlc subscription ({}) is not found on plugin.",
@@ -452,6 +453,23 @@ impl ClnNodeMonitorProcess {
 			let accepted_invoice = res.invoices.iter().find(|i| i.state == InvoiceState::Accepted as i32);
 
 			if let Some(accepted_invoice) = accepted_invoice {
+				// If any HTLCs have been held with the invoice in the `LightningHtlcSubscriptionStatus::Accepted` state
+				// for too long (i.e. the receiving user has not prepared a claim) then we cancel the invoice and subscription.
+				if htlc_subscription.status == LightningHtlcSubscriptionStatus::Accepted && accepted_invoice.htlcs.iter().any(
+					|h| {
+						// Note that `created_at` for HTLC in the hold plugin is a UTC timestamp in seconds.
+						let created_at = DateTime::from_timestamp(h.created_at as i64, 0)
+							.unwrap_or_else(|| {
+								warn!("Invalid HTLC created_at timestamp: {}", h.created_at);
+								DateTime::UNIX_EPOCH
+							});
+						created_at < chrono::Utc::now() - self.config.receive_htlc_forward_timeout
+					}
+				) {
+					self.cancel_invoice_and_htlc_subscription(&mut hold_client, payment_hash, &htlc_subscription, "htlc vtxo setup timed out").await?;
+					continue;
+				}
+
 				let lowest_incoming_htlc_expiry = match accepted_invoice.htlcs.iter().map(|h| h.cltv_expiry).min() {
 					Some(Some(lowest_incoming_htlc_expiry)) => lowest_incoming_htlc_expiry as BlockHeight,
 					None | Some(None) => {
@@ -497,35 +515,48 @@ impl ClnNodeMonitorProcess {
 				continue;
 			}
 
-			if htlc_subscription.created_at < Local::now() - self.config.htlc_subscription_timeout {
-				debug!("Lightning htlc subscription ({}) timed out.",
-					htlc_subscription.id,
-				);
-
-				hodl_client.cancel(hold::CancelRequest {
-					payment_hash: payment_hash.to_byte_array().to_vec(),
-				}).await?;
-
-				self.db.store_lightning_htlc_subscription_status(
-					htlc_subscription.id,
-					LightningHtlcSubscriptionStatus::Canceled,
-					None,
-				).await?;
-
-				let payment_hash = PaymentHash::from(&htlc_subscription.invoice);
-				let payment_attempt = self.db
-					.get_open_lightning_payment_attempt_by_payment_hash(&payment_hash).await?;
-				if let Some(payment_attempt) = payment_attempt {
-					debug!("HTLC subscription timed out with ongoing payment attempt, \
-						marking as failed: {}", payment_attempt.id,
-					);
-					self.db.update_lightning_payment_attempt_status(
-						&payment_attempt,
-						LightningPaymentStatus::Failed,
-						Some("HTLC subscription timed out"),
-					).await?;
-				}
+			// Cancel invoice & subscription if invoice expired
+			if htlc_subscription.invoice.is_expired() {
+				self.cancel_invoice_and_htlc_subscription(&mut hold_client, payment_hash, &htlc_subscription, "invoice expired").await?;
 			}
+		}
+
+		Ok(())
+	}
+
+	async fn cancel_invoice_and_htlc_subscription(
+		&self,
+		hold_client: &mut HoldClient<Channel>,
+		payment_hash: &sha256::Hash,
+		htlc_subscription: &LightningHtlcSubscription,
+		reason: &str,
+	) -> anyhow::Result<()> {
+		debug!("Lightning htlc subscription ({}) canceled: {}.",
+			htlc_subscription.id, reason,
+		);
+
+		hold_client.cancel(hold::CancelRequest {
+			payment_hash: payment_hash.to_byte_array().to_vec(),
+		}).await?;
+
+		self.db.store_lightning_htlc_subscription_status(
+			htlc_subscription.id,
+			LightningHtlcSubscriptionStatus::Canceled,
+			None,
+		).await?;
+
+		let payment_hash = PaymentHash::from(&htlc_subscription.invoice);
+		let payment_attempt = self.db
+			.get_open_lightning_payment_attempt_by_payment_hash(&payment_hash).await?;
+		if let Some(payment_attempt) = payment_attempt {
+			debug!("HTLC subscription canceled with ongoing payment attempt, \
+				marking as failed: {}", payment_attempt.id,
+			);
+			self.db.update_lightning_payment_attempt_status(
+				&payment_attempt,
+				LightningPaymentStatus::Failed,
+				Some(reason),
+			).await?;
 		}
 
 		Ok(())

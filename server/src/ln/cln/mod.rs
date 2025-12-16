@@ -98,7 +98,8 @@ impl ClnManager {
 		let node_monitor_config = ClnNodeMonitorConfig {
 			invoice_check_interval: config.invoice_check_interval,
 			invoice_recheck_delay: config.invoice_recheck_delay,
-			htlc_subscription_timeout: config.htlc_subscription_timeout,
+			invoice_expiry: config.invoice_expiry,
+			receive_htlc_forward_timeout: config.receive_htlc_forward_timeout,
 			check_base_delay: config.invoice_check_base_delay,
 			check_max_delay: config.invoice_check_max_delay,
 		};
@@ -820,7 +821,7 @@ impl ClnManagerProcess {
 			payment_hash: payment_hash.to_vec(),
 			amount_msat: amount.to_msat(),
 			min_final_cltv_expiry: Some(cltv_delta as u64),
-			expiry: None,
+			expiry: Some(self.node_monitor_config.invoice_expiry.as_secs()),
 			routing_hints: vec![],
 			description: None,
 		}).await?.into_inner();

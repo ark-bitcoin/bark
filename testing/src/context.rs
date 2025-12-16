@@ -303,7 +303,8 @@ impl TestContext {
 			htlc_expiry_delta: 6,
 			htlc_send_expiry_delta: 258,
 			max_user_invoice_cltv_delta: 58,
-			htlc_subscription_timeout: Duration::from_secs(10*60),
+			invoice_expiry: Duration::from_secs(10 * 60),
+			receive_htlc_forward_timeout: Duration::from_secs(30),
 			min_board_amount: Amount::from_sat(20_000),
 			ln_receive_anti_dos_required: false,
 		}

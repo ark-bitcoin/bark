@@ -1443,28 +1443,79 @@ async fn server_refuse_claim_invoice_not_settled() {
 #[tokio::test]
 async fn server_should_release_hodl_invoice_when_subscription_is_canceled() {
 	let ctx = TestContext::new("server/server_should_release_hodl_invoice_when_subscription_is_canceled").await;
-	let cfg_htlc_subscription_timeout = Duration::from_secs(5);
+	let cfg_htlc_forward_timeout = Duration::from_secs(5);
 
 	let lightning = ctx.new_lightning_setup("lightningd").await;
 
 	let srv = ctx.new_captaind_with_cfg("server", Some(&lightning.receiver), |cfg| {
-		// Set the subscription timeout very short to cancel the subscription quickly
-		cfg.htlc_subscription_timeout = cfg_htlc_subscription_timeout
+		// Set the receive_htlc_forward_timeout very short so the subscription
+		// gets canceled quickly when the receiver doesn't prepare the claim
+		cfg.receive_htlc_forward_timeout = cfg_htlc_forward_timeout
 	}).await;
 	ctx.fund_captaind(&srv, btc(10)).await;
 
 	// Start a bark and create a VTXO to be able to board
 	let bark = Arc::new(ctx.new_bark_with_funds("bark-1", &srv, btc(3)).await);
-	bark.board(btc(2)).await;
-	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
+	bark.board_and_confirm_and_register(&ctx, btc(2)).await;
 
 	let invoice_info = bark.bolt11_invoice(btc(1)).await;
 
-	tokio::time::sleep(cfg_htlc_subscription_timeout + srv.config().invoice_check_interval).await;
+	// Spawn the payment - it will be held by the server until claimed or canceled
+	let cloned_invoice_info = invoice_info.clone();
+	let sender = Arc::new(lightning.sender);
+	let cloned_sender = sender.clone();
+	let payment_result = tokio::spawn(async move {
+		cloned_sender.try_pay_bolt11(cloned_invoice_info.invoice).await
+	});
 
-	// cln rpc error code when cannot pay invoice
-	let err = lightning.sender.try_pay_bolt11(invoice_info.invoice).await.unwrap_err();
+	// Wait for the HTLC forward timeout to elapse plus time for server to process
+	tokio::time::sleep(cfg_htlc_forward_timeout + srv.config().invoice_check_interval).await;
+
+	// The payment should fail because the subscription was canceled (receiver didn't claim)
+	let err = payment_result.await.unwrap().unwrap_err();
 	assert!(err.to_string().contains("WIRE_INCORRECT_OR_UNKNOWN_PAYMENT_DETAILS"), "err: {err}");
+
+	// Verify the hold invoice was released by trying to pay again - should also fail
+	let err = sender.try_pay_bolt11(invoice_info.invoice).await.unwrap_err();
+	assert!(err.to_string().contains("WIRE_INCORRECT_OR_UNKNOWN_PAYMENT_DETAILS"), "err: {err}");
+}
+
+#[tokio::test]
+async fn server_generated_invoice_has_configured_expiry() {
+	let ctx = TestContext::new("server/server_generated_invoice_has_configured_expiry").await;
+	let cfg_invoice_expiry = Duration::from_secs(5);
+
+	let lightning = ctx.new_lightning_setup("lightningd").await;
+
+	let srv = ctx.new_captaind_with_cfg("server", Some(&lightning.receiver), |cfg| {
+		// Set invoice expiry very short so invoice expires quickly
+		cfg.invoice_expiry = cfg_invoice_expiry;
+	}).await;
+	ctx.fund_captaind(&srv, btc(10)).await;
+
+	// Start a bark and create a VTXO to be able to board
+	let bark = Arc::new(ctx.new_bark_with_funds("bark-1", &srv, btc(3)).await);
+	bark.board_and_confirm_and_register(&ctx, btc(2)).await;
+
+	let invoice_info = bark.bolt11_invoice(btc(1)).await;
+	let invoice = Bolt11Invoice::from_str(&invoice_info.invoice).unwrap();
+	let payment_hash = invoice.payment_hash().to_byte_array().to_vec();
+
+	// Wait for the invoice to expire and for the server to process the cancellation
+	tokio::time::sleep(cfg_invoice_expiry + srv.config().invoice_check_interval).await;
+
+	// Verify the server has canceled the HTLC subscription due to invoice expiry
+	let mut rpc = srv.get_public_rpc().await;
+	let resp = rpc.check_lightning_receive(protos::CheckLightningReceiveRequest {
+		hash: payment_hash,
+		wait: false,
+	}).await.unwrap().into_inner();
+	assert_eq!(resp.status, protos::LightningReceiveStatus::Canceled as i32,
+		"expected CANCELED status, got {:?}", resp.status);
+
+	// Sender also rejects expired invoice, confirming expiry was set correctly in the invoice
+	let err = lightning.sender.try_pay_bolt11(invoice_info.invoice).await.unwrap_err();
+	assert!(err.to_string().contains("Invoice expired"), "err: {err}");
 }
 
 #[tokio::test]
