@@ -63,7 +63,7 @@ pub use self::policy::{
 	ServerHtlcSendVtxoPolicy,
 };
 pub use self::policy::clause::{
-	VtxoClause, DelayedSignClause, DelayedTimelockClause, HashDelayClause,
+	VtxoClause, DelayedSignClause, DelayedTimelockSignClause, HashDelaySignClause,
 	TapScriptClause,
 };
 
