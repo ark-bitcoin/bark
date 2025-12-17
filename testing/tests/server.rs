@@ -31,10 +31,9 @@ use bark_json::exit::ExitState;
 use server::secret::Secret;
 use server::vtxopool::VtxoTarget;
 use server_log::{
-	RoundFinished, RoundUserVtxoAlreadyRegistered,
-	RoundUserVtxoUnknown, TxIndexUpdateFinished,
-	UnconfirmedBoardRegisterAttempt, ForfeitedExitInMempool, ForfeitedExitConfirmed,
-	ForfeitBroadcasted, RoundError
+	ForfeitBroadcasted, ForfeitedExitConfirmed, ForfeitedExitInMempool, FullRound, RoundError,
+	RoundFinished, RoundUserVtxoAlreadyRegistered, RoundUserVtxoUnknown, TxIndexUpdateFinished,
+	UnconfirmedBoardRegisterAttempt,
 };
 use server_rpc::protos::{self, lightning_payment_status};
 
@@ -387,8 +386,8 @@ async fn restart_server_with_payments() {
 async fn full_round() {
 	let ctx = TestContext::new("server/full_round").await;
 	let srv = ctx.new_captaind_with_cfg("server", None, |cfg| {
-		cfg.round_interval = Duration::from_millis(2_000);
-		cfg.round_submit_time = Duration::from_millis(10_000);
+		cfg.round_interval = Duration::from_millis(100_000_000);
+		cfg.round_submit_time = Duration::from_millis(15_000);
 		cfg.round_sign_time = Duration::from_millis(10_000);
 		cfg.nb_round_nonces = 2;
 		cfg.min_board_amount = sat(0);
@@ -396,12 +395,12 @@ async fn full_round() {
 	ctx.fund_captaind(&srv, btc(10)).await;
 
 	// based on nb_round_nonces
-	const MAX_OUTPUTS: usize = 16;
-	const NB_BARKS: usize = 5;
-	const VTXOS_PER_BARK: usize = 4;
-	assert!(NB_BARKS * VTXOS_PER_BARK > MAX_OUTPUTS);
+	const MAX_OUTPUTS: usize = 16; // 4**cfg.nb_round_nonces
+	assert_eq!(MAX_OUTPUTS, 4usize.pow(srv.config().nb_round_nonces as u32));
+	const NB_BARKS: usize = 17;
+	assert!(NB_BARKS > MAX_OUTPUTS);
 
-	// Since we can have 16 inputs, we will create 5 barks with 4 vtxos each.
+	// Since we can have 16 outputs, we will create 17 barks with 1 output each.
 
 	let barks = join_all((1..=NB_BARKS).map(|i| {
 		let name = format!("bark{}", i);
@@ -409,13 +408,11 @@ async fn full_round() {
 	})).await;
 	ctx.generate_blocks(1).await;
 
-	// have each board 4 times
-	for _ in 0..VTXOS_PER_BARK {
-		futures::future::join_all(barks.iter().map(|bark| async {
-			bark.board(sat(1_000)).await;
-		})).await;
-		ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
-	}
+	// board their funds
+	futures::future::join_all(barks.iter().map(|bark| async {
+		bark.board(sat(1_000)).await;
+	})).await;
+	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 
 	let (tx, mut rx) = mpsc::unbounded_channel();
 
@@ -450,13 +447,17 @@ async fn full_round() {
 	let proxy = srv.get_proxy_rpc(proxy).await;
 	futures::future::join_all(barks.iter().map(|bark| bark.set_ark_url(&proxy))).await;
 
-	//TODO(stevenroose) need to find a way to ensure that all these happen in the same round
+	let mut log_full = srv.subscribe_log::<FullRound>();
+	srv.trigger_round().await;
 	tokio::spawn(async move {
 		futures::future::join_all(barks.iter().map(|bark| async {
 			// ignoring error as last one will fail
 			let _ = bark.refresh_all().await;
 		})).await;
 	});
+
+	let full = log_full.recv().await.unwrap();
+	assert_eq!(full.max_output_vtxos, MAX_OUTPUTS);
 
 	// then we wait for the error to happen
 	let err = rx.recv().wait_millis(30_000).await.unwrap();
