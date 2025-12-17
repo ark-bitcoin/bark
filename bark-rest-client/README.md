@@ -162,6 +162,7 @@ Class | Method | HTTP request | Description
  - [PaymentMethod](docs/PaymentMethod.md)
  - [PendingBoardInfo](docs/PendingBoardInfo.md)
  - [PendingRoundInfo](docs/PendingRoundInfo.md)
+ - [PendingRoundStatus](docs/PendingRoundStatus.md)
  - [RefreshRequest](docs/RefreshRequest.md)
  - [RoundStatus](docs/RoundStatus.md)
  - [RoundStatusOneOf](docs/RoundStatusOneOf.md)

@@ -194,12 +194,27 @@ pub struct ExitClaimResponse {
 }
 
 #[derive(Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+#[cfg_attr(feature = "utoipa", derive(ToSchema))]
+pub enum PendingRoundStatus {
+	WaitingToStart,
+	AttemptStarted,
+	PaymentSubmitted,
+	VtxoTreeSigned,
+	ForfeitSigned,
+	PendingConfirmation,
+	Confirmed,
+	Failed,
+	Canceled,
+}
+
+#[derive(Serialize, Deserialize)]
 #[cfg_attr(feature = "utoipa", derive(ToSchema))]
 pub struct PendingRoundInfo {
 	/// Unique identifier for the round
 	pub id: u32,
-	/// Discriminant of the round state
-	pub kind: String,
+	/// Current status of the pending round
+	pub status: PendingRoundStatus,
 	/// Round sequence number, if known
 	pub round_seq: Option<u64>,
 	/// Attempt sequence number within the round, if known
@@ -215,7 +230,7 @@ impl From<bark::persist::StoredRoundState> for PendingRoundInfo {
 			bark::round::RoundFlowState::WaitingToStart => {
 				PendingRoundInfo {
 					id: state.id.0,
-					kind: "WaitingToStart".to_string(),
+					status: PendingRoundStatus::WaitingToStart,
 					round_seq: None,
 					attempt_seq: None,
 					round_txid: None,
@@ -223,11 +238,11 @@ impl From<bark::persist::StoredRoundState> for PendingRoundInfo {
 			},
 			bark::round::RoundFlowState::Ongoing { round_seq, attempt_seq, state: attempt_state } => {
 				// Map attempt state kind to the old kind strings
-				let kind = match attempt_state {
-					bark::round::AttemptState::AwaitingAttempt => "AttemptStarted",
-					bark::round::AttemptState::AwaitingUnsignedVtxoTree { .. } => "PaymentSubmitted",
-					bark::round::AttemptState::AwaitingRoundProposal { .. } => "VtxoTreeSigned",
-					bark::round::AttemptState::AwaitingFinishedRound { .. } => "ForfeitSigned",
+				let status = match attempt_state {
+					bark::round::AttemptState::AwaitingAttempt => PendingRoundStatus::AttemptStarted,
+					bark::round::AttemptState::AwaitingUnsignedVtxoTree { .. } => PendingRoundStatus::PaymentSubmitted,
+					bark::round::AttemptState::AwaitingRoundProposal { .. } => PendingRoundStatus::VtxoTreeSigned,
+					bark::round::AttemptState::AwaitingFinishedRound { .. } => PendingRoundStatus::ForfeitSigned,
 				};
 				// Get round_txid from unconfirmed_rounds if available
 				let round_txid = state.state.unconfirmed_rounds().first()
@@ -236,7 +251,7 @@ impl From<bark::persist::StoredRoundState> for PendingRoundInfo {
 
 				PendingRoundInfo {
 					id: state.id.0,
-					kind: kind.to_string(),
+					status,
 					round_seq: Some(round_seq.inner() as u64),
 					attempt_seq: Some(*attempt_seq),
 					round_txid: round_txid,
@@ -252,7 +267,7 @@ impl From<bark::persist::StoredRoundState> for PendingRoundInfo {
 
 					PendingRoundInfo {
 						id: state.id.0,
-						kind: "PendingConfirmation".to_string(),
+						status: PendingRoundStatus::PendingConfirmation,
 						round_seq: None,
 						attempt_seq: None,
 						round_txid: round_txid,
@@ -260,7 +275,7 @@ impl From<bark::persist::StoredRoundState> for PendingRoundInfo {
 				} else {
 					PendingRoundInfo {
 						id: state.id.0,
-						kind: "RoundConfirmed".to_string(),
+						status: PendingRoundStatus::Confirmed,
 						round_seq: None,
 						attempt_seq: None,
 						round_txid: None,
@@ -274,7 +289,7 @@ impl From<bark::persist::StoredRoundState> for PendingRoundInfo {
 
 				PendingRoundInfo {
 					id: state.id.0,
-					kind: "RoundFailed".to_string(),
+					status: PendingRoundStatus::Failed,
 					round_seq: None,
 					attempt_seq: None,
 					round_txid: round_txid,
@@ -283,7 +298,7 @@ impl From<bark::persist::StoredRoundState> for PendingRoundInfo {
 			bark::round::RoundFlowState::Canceled => {
 				PendingRoundInfo {
 					id: state.id.0,
-					kind: "RoundCanceled".to_string(),
+					status: PendingRoundStatus::Canceled,
 					round_seq: None,
 					attempt_seq: None,
 					round_txid: None,

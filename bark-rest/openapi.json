@@ -3593,7 +3593,7 @@
         "type": "object",
         "required": [
           "id",
-          "kind",
+          "status",
           "round_txid"
         ],
         "properties": {
@@ -3611,10 +3611,6 @@
             "description": "Unique identifier for the round",
             "minimum": 0
           },
-          "kind": {
-            "type": "string",
-            "description": "Discriminant of the round state"
-          },
           "round_seq": {
             "type": [
               "integer",
@@ -3630,8 +3626,26 @@
               "null"
             ],
             "description": "The round transaction id, if already assigned"
+          },
+          "status": {
+            "$ref": "#/components/schemas/PendingRoundStatus",
+            "description": "Current status of the pending round"
           }
         }
+      },
+      "PendingRoundStatus": {
+        "type": "string",
+        "enum": [
+          "waiting-to-start",
+          "attempt-started",
+          "payment-submitted",
+          "vtxo-tree-signed",
+          "forfeit-signed",
+          "pending-confirmation",
+          "confirmed",
+          "failed",
+          "canceled"
+        ]
       },
       "RefreshRequest": {
         "type": "object",
