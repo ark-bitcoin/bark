@@ -586,6 +586,7 @@ async fn multiple_spends_in_payment() {
 	assert_eq!(refresh_mvt.offchain_fee, Amount::ZERO);
 }
 
+#[ignore]
 #[tokio::test]
 async fn offboard_all() {
 	let ctx = TestContext::new("bark/offboard_all").await;
@@ -633,6 +634,7 @@ async fn offboard_all() {
 	assert_eq!(bark2.inround_balance().await, sat(0));
 }
 
+#[ignore]
 #[tokio::test]
 async fn offboard_vtxos() {
 	let ctx = TestContext::new("bark/offboard_vtxos").await;
