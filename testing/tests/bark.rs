@@ -305,7 +305,6 @@ async fn large_round() {
 		cfg.round_interval = Duration::from_millis(2_000);
 		cfg.round_submit_time = Duration::from_millis(100 * N as u64);
 		cfg.round_sign_time = Duration::from_millis(1000 * N as u64);
-		cfg.nb_round_nonces = 200;
 	}).await;
 	ctx.fund_captaind(&srv, btc(10)).await;
 

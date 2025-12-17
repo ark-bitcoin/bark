@@ -73,7 +73,9 @@ round_sign_time = "2s"
 # The amount of round cosign nonces we require users to provide
 #
 # This effectively caps the maximum number of leaf VTXOs in a round.
-nb_round_nonces = 64
+# So, by default, the maximum number of output VTXOs in a round is:
+#   `radix ^ nb_round_nonces` (= 4 ^ 8 = 65 536)
+nb_round_nonces = 8
 
 # The duration after which to drop forfeit nonces
 round_forfeit_nonces_timeout = "30s"

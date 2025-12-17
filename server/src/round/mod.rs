@@ -1219,7 +1219,7 @@ async fn perform_round(
 		// The maximum number of output vtxos per round based on the max number
 		// of vtxo tree nonces we require users to provide.
 		//TODO(stevenroose) should probably reverse the config here
-		max_output_vtxos: 4_usize.pow(srv.config.nb_round_nonces as u32),
+		max_output_vtxos: 4_usize.saturating_pow(srv.config.nb_round_nonces as u32),
 		nb_vtxo_nonces: srv.config.nb_round_nonces,
 		max_vtxo_amount: srv.config.max_vtxo_amount,
 	};

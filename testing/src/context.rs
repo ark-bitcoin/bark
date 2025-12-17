@@ -245,7 +245,7 @@ impl TestContext {
 			round_submit_time: Duration::from_millis(2000),
 			// this one can be long cuz in most tests all users are ready and we don't wait
 			round_sign_time: Duration::from_millis(5000),
-			nb_round_nonces: 64,
+			nb_round_nonces: 8,
 			round_forfeit_nonces_timeout: Duration::from_secs(30),
 			round_tx_feerate: FeeRate::from_sat_per_vb_unchecked(10),
 			required_board_confirmations: constants::BOARD_CONFIRMATIONS as usize,
