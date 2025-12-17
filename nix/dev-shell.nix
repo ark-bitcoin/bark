@@ -107,7 +107,7 @@ let
 			owner = "ElementsProject";
 			repo = "lightning";
 			rev = "v${lightningVersion}";
-			hash = "sha256-H1baJIYmTbXXkvXXBZ9PiYv/yAtd9bGJ7W9yU5k82Xk=";
+			hash = "sha256-7/UlYanv5RMmafgGHhFTSJd3rOeAl2bx21vt6cEOPPw=";
 		};
 		buildAndTestSubdir = "plugins/grpc-plugin";
 		nativeBuildInputs = [ rustBuildToolchain pkgs.protobuf ];
@@ -127,7 +127,7 @@ let
 			owner = "BoltzExchange";
 			repo = "hold";
 			rev = "v${holdPluginVersion}";
-			hash = "sha256-VFohDTItt/8TUN0my4gXs0r+JuJ+e7IyO1ZDVoanyfQ=";
+			hash = "sha256-AIqYN1z91oUfCxM2MALUpduviEzX4mj87GcdFkXnNdQ=";
 		};
 		nativeBuildInputs = [ rustBuildToolchain pkgs.protobuf ];
 		buildInputs = [
