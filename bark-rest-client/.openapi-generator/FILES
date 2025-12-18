@@ -101,6 +101,7 @@ docs/OnchainSendRequest.md
 docs/PaymentMethod.md
 docs/PendingBoardInfo.md
 docs/PendingRoundInfo.md
+docs/PendingRoundStatus.md
 docs/RefreshRequest.md
 docs/RoundStatus.md
 docs/RoundStatusOneOf.md
@@ -227,6 +228,7 @@ src/models/onchain_send_request.rs
 src/models/payment_method.rs
 src/models/pending_board_info.rs
 src/models/pending_round_info.rs
+src/models/pending_round_status.rs
 src/models/refresh_request.rs
 src/models/round_status.rs
 src/models/round_status_one_of.rs
