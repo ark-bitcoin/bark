@@ -6,34 +6,35 @@
 #[macro_use]
 mod error;
 
-mod bitcoind;
 pub mod arkoor;
 pub mod config;
 pub mod database;
-pub mod rpcserver;
+pub mod filters;
 pub mod forfeits;
+pub mod mailbox_manager;
+pub mod rpcserver;
 pub mod secret;
 pub mod sweeps;
 pub mod tip_fetcher;
 pub mod vtxopool;
 pub mod wallet;
 pub mod watchman;
-pub mod mailbox_manager;
 
 pub(crate) mod flux;
 pub(crate) mod system;
 
+mod bitcoind;
 mod intman;
 mod ln;
 mod psbtext;
 mod round;
-mod serde_util;
 mod telemetry;
 mod txindex;
-pub mod filters;
+mod utils;
 
 pub use crate::intman::{CAPTAIND_API_KEY, CAPTAIND_CLI_API_KEY};
 pub use crate::config::Config;
+
 
 use std::collections::HashSet;
 use std::fs;

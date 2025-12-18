@@ -128,7 +128,7 @@ impl TryFrom<Row> for Board {
 pub(crate) mod serde {
 	use std::fmt;
 	use serde::{Deserializer, Serializer};
-	use crate::serde_util::Bytes;
+	use crate::utils::serde::Bytes;
 
 	pub mod pub_nonces {
 		use super::*;

@@ -65,14 +65,14 @@ use crate::txindex::{self, TxIndex};
 use crate::txindex::broadcast::TxNursery;
 
 use crate::wallet::BdkWalletExt;
-use crate::{database, serde_util, telemetry, SECP};
+use crate::{database, telemetry, SECP};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
-	#[serde(with = "serde_util::fee_rate")]
+	#[serde(with = "crate::utils::serde::fee_rate")]
 	pub sweep_tx_fallback_feerate: FeeRate,
-	#[serde(with = "serde_util::duration")]
+	#[serde(with = "crate::utils::serde::duration")]
 	pub round_sweep_interval: Duration,
 	/// Don't make sweep txs for amounts lower than this amount.
 	#[serde(with = "bitcoin::amount::serde::as_sat")]
