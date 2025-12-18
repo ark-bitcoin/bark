@@ -48,6 +48,7 @@ steps:
       - cp ./target/armv7-unknown-linux-gnueabihf/release/barkd barkd-linux-armv7
       - just release-server
       - cp ./target/x86_64-unknown-linux-gnu/release/captaind   captaind-linux-x86_64
+      - cp ./target/x86_64-unknown-linux-gnu/release/watchmand  watchmand-linux-x86_64
 
   - name: build-and-push-to-docker
     when:
