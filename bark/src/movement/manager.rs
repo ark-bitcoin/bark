@@ -1,5 +1,5 @@
 use std::cmp::PartialEq;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use tokio::sync::RwLock;
@@ -14,7 +14,7 @@ use crate::subsystem::SubsystemId;
 /// [SubsystemId] values.
 pub struct MovementManager {
 	db: Arc<dyn BarkPersister>,
-	subsystem_ids: RwLock<HashMap<SubsystemId, String>>,
+	subsystem_ids: RwLock<HashSet<SubsystemId>>,
 	active_movements: RwLock<HashMap<MovementId, Arc<RwLock<Movement>>>>,
 }
 
@@ -23,7 +23,7 @@ impl MovementManager {
 	pub fn new(db: Arc<dyn BarkPersister>) -> Self {
 		Self {
 			db,
-			subsystem_ids: RwLock::new(HashMap::new()),
+			subsystem_ids: RwLock::new(HashSet::new()),
 			active_movements: RwLock::new(HashMap::new()),
 		}
 	}
@@ -31,18 +31,18 @@ impl MovementManager {
 	/// Registers a subsystem with the movement manager. Subsystems are identified using unique
 	/// names, to maintain this guarantee a unique [SubsystemId] will be generated and returned by
 	/// this function. Future calls to register or modify movements must provide this ID.
-	pub async fn register_subsystem(&self, name: String) -> anyhow::Result<SubsystemId, MovementError> {
-		let exists = self.subsystem_ids.read().await.iter().any(|(_, n)| n == &name);
+	pub async fn register_subsystem(&self, name: &'static str) -> anyhow::Result<SubsystemId, MovementError> {
+		let id = SubsystemId::new(name);
+		let exists = self.subsystem_ids.read().await.contains(&id);
 		if exists {
 			Err(MovementError::SubsystemError {
-				name, error: "Subsystem already registered".into(),
+				name: name.to_string(), error: "Subsystem already registered".into(),
 			})
 		} else {
 			let mut ids = self.subsystem_ids.write().await;
-			let id = SubsystemId::new(ids.len() as u32);
-				ids.insert(id, name);
-				Ok(id)
-			}
+			ids.insert(id);
+			Ok(id)
+		}
 	}
 
 	/// Begins the process of creating a new movement. This newly created movement will be defaulted
@@ -68,7 +68,7 @@ impl MovementManager {
 		self.db.create_new_movement(
 			MovementStatus::Pending,
 			&MovementSubsystem {
-				name: self.get_subsystem_name(subsystem_id).await?,
+				name: subsystem_id.as_name().to_string(),
 				kind: movement_kind,
 			},
 			chrono::Local::now(),
@@ -288,15 +288,6 @@ impl MovementManager {
 			.get(&id)
 			.cloned()
 			.ok_or(MovementError::CacheError { id })
-	}
-
-	async fn get_subsystem_name(&self, id: SubsystemId) -> anyhow::Result<String, MovementError> {
-		self.subsystem_ids
-			.read()
-			.await
-			.get(&id)
-			.cloned()
-			.ok_or(MovementError::InvalidSubsystemId { id })
 	}
 
 	async fn load_movement_into_cache(&self, id: MovementId) -> anyhow::Result<(), MovementError> {
