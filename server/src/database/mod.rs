@@ -47,7 +47,7 @@ use bitcoin_ext::BlockHeight;
 use crate::wallet::WalletKind;
 use crate::config::Postgres as PostgresConfig;
 use crate::telemetry;
-
+use crate::telemetry::MailboxType;
 
 /// Can be used as function argument when there are no query_raw arguments
 const NOARG: &[&bool] = &[];
@@ -349,6 +349,8 @@ impl Db {
 		]).await?;
 		debug_assert_eq!(rows_affected, 1);
 
+		telemetry::add_to_mailbox(MailboxType::LegacyVtxo, 1);
+
 		Ok(())
 	}
 
@@ -385,6 +387,8 @@ impl Db {
 		let result = conn.execute(&statement, &[&serialized_pubkeys]).await?;
 		assert_eq!(result, rows.len() as u64);
 
+		telemetry::get_from_mailbox(MailboxType::LegacyVtxo, rows.len());
+
 		Ok(vtxos_by_package_id)
 	}
 
@@ -415,6 +419,8 @@ impl Db {
 			]).await?;
 			debug_assert_eq!(rows_updated, 1);
 		}
+
+		telemetry::add_to_mailbox(MailboxType::BlindedVtxo, vtxos.len());
 
 		Ok(Some(u64::try_from(checkpoint)?))
 	}
@@ -449,6 +455,7 @@ impl Db {
 			}
 
 			if last_checkpoint != checkpoint {
+				telemetry::get_from_mailbox(MailboxType::BlindedVtxo, vtxos.len());
 				res.push((last_checkpoint, vtxos.clone()));
 				vtxos.clear();
 				last_checkpoint = checkpoint;
@@ -459,6 +466,7 @@ impl Db {
 			vtxos.push(vtxo);
 		}
 
+		telemetry::get_from_mailbox(MailboxType::BlindedVtxo, vtxos.len());
 		res.push((last_checkpoint, vtxos));
 
 		Ok(res)
