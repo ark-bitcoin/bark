@@ -47,3 +47,4 @@ steps:
       - buildah build -f ./.woodpecker/images/releases/captaind/Dockerfile --tag "registry.2nd.dev/captaind:$(cat VERSION)" .
       # Push containers to registry.2nd.dev
       - buildah push "registry.2nd.dev/captaind:$(cat VERSION)"
+      - curl "http://192.168.2.10:7777/zulip?topic=deployment&type=bell&message=captaind%20$(cat VERSION)%20is%20ready%20for%20deployment."
