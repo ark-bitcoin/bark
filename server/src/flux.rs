@@ -29,9 +29,9 @@ impl VtxosInFlux {
 	}
 
 	/// Create a new [VtxoFluxLock] without any vtxos locked.
-	pub fn empty_lock(&self) -> VtxoFluxLock<'_> {
-		VtxoFluxLock {
-			inner: VtxoFluxLockInner {
+	pub fn empty_guard(&self) -> VtxoFluxGuard<'_> {
+		VtxoFluxGuard {
+			inner: VtxoFluxGuardInner {
 				flux: self,
 				vtxos: HashSet::new(),
 			}
@@ -44,12 +44,12 @@ impl VtxosInFlux {
 	pub fn lock<V>(
 		&self,
 		ids: impl IntoIterator<Item = V> + Clone,
-	) -> Result<VtxoFluxLock<'_>, VtxoId>
+	) -> Result<VtxoFluxGuard<'_>, VtxoId>
 	where
 		V: VtxoRef,
 	{
 		self.atomic_check_put(ids.clone())?;
-		let mut ret = self.empty_lock();
+		let mut ret = self.empty_guard();
 		ret.add_locked(ids.into_iter().map(|v| v.vtxo_id()));
 		Ok(ret)
 	}
@@ -91,12 +91,12 @@ impl VtxosInFlux {
 }
 
 #[derive(Debug)]
-struct VtxoFluxLockInner<F: Borrow<VtxosInFlux> = VtxosInFlux> {
+struct VtxoFluxGuardInner<F: Borrow<VtxosInFlux> = VtxosInFlux> {
 	flux: F,
 	vtxos: HashSet<VtxoId>,
 }
 
-impl<F: Borrow<VtxosInFlux>> VtxoFluxLockInner<F> {
+impl<F: Borrow<VtxosInFlux>> VtxoFluxGuardInner<F> {
 	fn add_locked(&mut self, vtxos: impl IntoIterator<Item = VtxoId>) {
 		self.vtxos.extend(vtxos);
 	}
@@ -108,37 +108,37 @@ impl<F: Borrow<VtxosInFlux>> VtxoFluxLockInner<F> {
 		}
 	}
 
-	fn absorb(&mut self, mut other: VtxoFluxLock) {
+	fn absorb(&mut self, mut other: VtxoFluxGuard) {
 		self.vtxos.extend(other.inner.vtxos.drain());
 	}
 }
 
-impl<F: Borrow<VtxosInFlux>> ops::Drop for VtxoFluxLockInner<F> {
+impl<F: Borrow<VtxosInFlux>> ops::Drop for VtxoFluxGuardInner<F> {
 	fn drop(&mut self) {
 		self.release_all();
 	}
 }
 
-/// Represents a sort-of "lock" on vtxos that are in flux.
+/// Represents a sort-of "guard" on vtxos that are in flux.
 ///
 /// Used to automatically release the vtxos from the flux lock when
 /// this structure is dropped.
 #[derive(Debug)]
-pub struct VtxoFluxLock<'a> {
-	inner: VtxoFluxLockInner<&'a VtxosInFlux>,
+pub struct VtxoFluxGuard<'a> {
+	inner: VtxoFluxGuardInner<&'a VtxosInFlux>,
 }
 
-impl<'a> VtxoFluxLock<'a> {
+impl<'a> VtxoFluxGuard<'a> {
 	/// Add new vtxos that are already marked as in-flux.
 	pub fn add_locked(&mut self, vtxos: impl IntoIterator<Item = VtxoId>) {
 		self.inner.add_locked(vtxos)
 	}
 
-	pub fn into_owned(mut self) -> OwnedVtxoFluxLock {
+	pub fn into_owned(mut self) -> OwnedVtxoFluxGuard {
 		// we need to drain the vtxos so that they aren't released on Drop
 		let vtxos = self.inner.vtxos.drain().collect();
-		OwnedVtxoFluxLock {
-			inner: VtxoFluxLockInner {
+		OwnedVtxoFluxGuard {
+			inner: VtxoFluxGuardInner {
 				flux: self.inner.flux.clone(),
 				vtxos,
 			},
@@ -148,25 +148,25 @@ impl<'a> VtxoFluxLock<'a> {
 
 /// Owned variant of [VtxoFluxLock].
 #[derive(Debug)]
-pub struct OwnedVtxoFluxLock {
-	inner: VtxoFluxLockInner<VtxosInFlux>,
+pub struct OwnedVtxoFluxGuard {
+	inner: VtxoFluxGuardInner<VtxosInFlux>,
 }
 
-impl OwnedVtxoFluxLock {
+impl OwnedVtxoFluxGuard {
 	/// Release and drop all vtxos from the lock.
 	pub fn release_all(&mut self) {
 		self.inner.release_all()
 	}
 
 	/// Absorb all locked vtxos into this one.
-	pub fn absorb(&mut self, other: VtxoFluxLock) {
+	pub fn absorb(&mut self, other: VtxoFluxGuard) {
 		self.inner.absorb(other)
 	}
 
 	#[cfg(test)]
 	pub fn dummy() -> Self {
 		Self {
-			inner: VtxoFluxLockInner {
+			inner: VtxoFluxGuardInner {
 				flux: VtxosInFlux::new(),
 				vtxos: HashSet::new(),
 			}

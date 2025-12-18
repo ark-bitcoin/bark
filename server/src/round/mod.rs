@@ -37,7 +37,7 @@ use server_rpc::protos;
 use crate::{telemetry, Server, SECP};
 use crate::database::forfeits::ForfeitState;
 use crate::error::{ContextExt, NotFound};
-use crate::flux::{VtxoFluxLock, OwnedVtxoFluxLock};
+use crate::flux::{VtxoFluxGuard, OwnedVtxoFluxGuard};
 use crate::secret::Secret;
 use crate::telemetry::{MetricsService, RoundStep, SpanExt, TimedRoundStep};
 use crate::wallet::{BdkWalletExt, PersistedWallet, WalletUtxoGuard};
@@ -170,7 +170,7 @@ pub struct CollectingPayments {
 	round_attempt_challenge: RoundAttemptChallenge,
 
 	/// All inputs that have participated in the previous attempt.
-	locked_inputs: OwnedVtxoFluxLock,
+	locked_inputs: OwnedVtxoFluxGuard,
 
 	cosign_key: Keypair,
 	allowed_inputs: Option<HashSet<VtxoId>>,
@@ -192,7 +192,7 @@ impl CollectingPayments {
 		round_seq: RoundSeq,
 		attempt_seq: usize,
 		round_data: RoundData,
-		locked_inputs: OwnedVtxoFluxLock,
+		locked_inputs: OwnedVtxoFluxGuard,
 		allowed_inputs: Option<HashSet<VtxoId>>,
 		common_round_tx_input: Option<WalletUtxoGuard>,
 	) -> CollectingPayments {
@@ -486,7 +486,7 @@ impl CollectingPayments {
 
 	fn register_payment(
 		&mut self,
-		lock: VtxoFluxLock,
+		lock: VtxoFluxGuard,
 		inputs: Vec<Vtxo>,
 		vtxo_requests: Vec<VtxoParticipant>,
 		offboards: Vec<OffboardRequest>,
@@ -748,7 +748,7 @@ pub struct SigningVtxoTree {
 	user_cosign_nonces: HashMap<PublicKey, Vec<musig::PublicNonce>>,
 	inputs_per_cosigner: HashMap<PublicKey, Vec<VtxoId>>,
 	/// All inputs that have participated, but might have dropped out.
-	locked_inputs: OwnedVtxoFluxLock,
+	locked_inputs: OwnedVtxoFluxGuard,
 
 	common_round_tx_input: WalletUtxoGuard,
 
@@ -928,7 +928,7 @@ pub struct SigningForfeits {
 	signed_vtxos: CachedSignedVtxoTree,
 	all_inputs: HashMap<VtxoId, Vtxo>,
 	/// All inputs that have participated, but might have dropped out.
-	locked_inputs: OwnedVtxoFluxLock,
+	locked_inputs: OwnedVtxoFluxGuard,
 
 	// other public data
 	connectors: ConnectorChain,
@@ -1349,7 +1349,7 @@ async fn perform_round(
 	};
 
 	let mut round_state = RoundState::CollectingPayments(CollectingPayments::new(
-		round_seq, 0, round_data, srv.vtxos_in_flux.empty_lock().into_owned(), None, None,
+		round_seq, 0, round_data, srv.vtxos_in_flux.empty_guard().into_owned(), None, None,
 	));
 	telemetry::set_round_state(round_state.kind());
 
@@ -1777,7 +1777,7 @@ mod tests {
 			offboard_feerate: FeeRate::ZERO,
 			max_vtxo_amount: None,
 		};
-		CollectingPayments::new(0.into(), 0, round_data, OwnedVtxoFluxLock::dummy(), None, None)
+		CollectingPayments::new(0.into(), 0, round_data, OwnedVtxoFluxGuard::dummy(), None, None)
 	}
 
 	#[test]
@@ -1796,7 +1796,7 @@ mod tests {
 		state.validate_payment_amounts(&inputs, &outputs, &[]).unwrap();
 
 		let flux = VtxosInFlux::new();
-		state.register_payment(flux.empty_lock(), inputs, outputs.clone(), vec![]);
+		state.register_payment(flux.empty_guard(), inputs, outputs.clone(), vec![]);
 		assert_eq!(state.all_inputs.len(), 1);
 		assert_eq!(state.all_outputs.len(), 1);
 		assert_eq!(state.all_offboards.len(), 0);
@@ -1896,7 +1896,7 @@ mod tests {
 
 		let flux = VtxosInFlux::new();
 		state.validate_payment_data(&input_ids1, &outputs1).unwrap();
-		state.register_payment(flux.empty_lock(), inputs1, outputs1, vec![]);
+		state.register_payment(flux.empty_guard(), inputs1, outputs1, vec![]);
 		state.validate_payment_data(&input_ids2, &outputs2).unwrap_err();
 	}
 
@@ -1946,9 +1946,9 @@ mod tests {
 
 		let flux = VtxosInFlux::new();
 		state.validate_payment_data(&input_ids1, &outputs1).unwrap();
-		state.register_payment(flux.empty_lock(), inputs1, outputs1.clone(), vec![]);
+		state.register_payment(flux.empty_guard(), inputs1, outputs1.clone(), vec![]);
 		state.validate_payment_data(&input_ids2, &outputs2).unwrap();
-		state.register_payment(flux.empty_lock(), inputs2, outputs2.clone(), vec![]);
+		state.register_payment(flux.empty_guard(), inputs2, outputs2.clone(), vec![]);
 
 		assert_eq!(state.all_inputs.len(), 2);
 		assert_eq!(state.all_outputs.len(), 4);
