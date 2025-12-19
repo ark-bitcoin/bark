@@ -99,6 +99,9 @@ offboard_feerate = "7sat/vb"
 # A single 2-in-2-out taproot keyspend tx is 846 or 212 vb.
 offboard_fixed_fee_vb = 212
 
+# The time after which we drop offboard sessions and release locked VTXOs
+offboard_session_timeout = "30s"
+
 
 #############
 # LIGHTNING #

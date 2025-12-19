@@ -399,6 +399,13 @@ pub struct Config {
 	/// The number of virtual bytes to account as the fixed part of the
 	/// offboard fee. This is multiplied with the offboard feerate.
 	pub offboard_fixed_fee_vb: u64,
+
+	/// The time after which an offboard session times out and will be removed
+	///
+	/// This is the time a user has to to sign their forfeit txs.
+	/// This is also the duration during which UTXOs stay locked in offboard sessions.
+	#[serde(with = "utils::serde::duration")]
+	pub offboard_session_timeout: Duration,
 }
 
 impl Config {
