@@ -19,6 +19,7 @@ use crate::{RestServer, error};
 use crate::error::{ContextExt, HandlerResult, badarg, not_found};
 
 pub fn router() -> Router<RestServer> {
+	#[allow(deprecated)]
 	Router::new()
 		.route("/connected", get(connected))
 		.route("/ark-info", get(ark_info))
@@ -27,6 +28,7 @@ pub fn router() -> Router<RestServer> {
 		.route("/balance", get(balance))
 		.route("/vtxos", get(vtxos))
 		.route("/movements", get(movements))
+		.route("/history", get(history))
 		.route("/send", post(send))
 		.route("/refresh/vtxos", post(refresh_vtxos))
 		.route("/refresh/all", post(refresh_all))
@@ -48,6 +50,7 @@ pub fn router() -> Router<RestServer> {
 		balance,
 		vtxos,
 		movements,
+		history,
 		send,
 		refresh_vtxos,
 		refresh_all,
@@ -223,6 +226,7 @@ pub async fn vtxos(
 	Ok(axum::Json(vtxo_infos))
 }
 
+
 #[utoipa::path(
 	get,
 	path = "/movements",
@@ -230,11 +234,36 @@ pub async fn vtxos(
 		(status = 200, description = "Returns the wallet movements", body = Vec<bark_json::cli::Movement>),
 		(status = 500, description = "Internal server error", body = error::InternalServerError)
 	),
-	description = "Returns all the wallet movements",
+	description = "Deprecated: Use history instead",
+	tag = "wallet",
+)]
+#[debug_handler]
+#[deprecated(note = "Use `history` instead")]
+pub async fn movements(State(state): State<RestServer>) -> HandlerResult<Json<Vec<bark_json::cli::Movement>>> {
+	#[allow(deprecated)]
+	let movements = state.wallet.movements().context("Failed to get movements")?;
+
+	let json_movements = movements
+		.into_iter()
+		.map(|m| bark_json::cli::Movement::try_from(m)
+			.context("Failed to convert movement to JSON")
+		).collect::<Result<Vec<_>, _>>()?;
+
+	Ok(axum::Json(json_movements))
+}
+
+#[utoipa::path(
+	get,
+	path = "/history",
+	responses(
+		(status = 200, description = "Returns the wallet history", body = Vec<bark_json::cli::Movement>),
+		(status = 500, description = "Internal server error", body = error::InternalServerError)
+	),
+	description = "Returns all the wallet history",
 	tag = "wallet"
 )]
 #[debug_handler]
-pub async fn movements(State(state): State<RestServer>) -> HandlerResult<Json<Vec<bark_json::cli::Movement>>> {
+pub async fn history(State(state): State<RestServer>) -> HandlerResult<Json<Vec<bark_json::cli::Movement>>> {
 	let movements = state.wallet.movements().context("Failed to get movements")?;
 
 	let json_movements = movements
