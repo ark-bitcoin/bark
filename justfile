@@ -140,7 +140,9 @@ clean:
 		-p bark-server-rpc \
 		-p bark-bitcoin-ext \
 		-p bark-wallet \
-		-p bark-json
+		-p bark-json \
+		-p bark-rest \
+		-p bark-cli
 
 # run a single clippy lint
 clippy LINT:
