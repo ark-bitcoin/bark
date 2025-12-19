@@ -481,7 +481,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 				wallet.sync().await;
 			}
 
-			let mut movements = wallet.movements()?.into_iter()
+			let mut movements = wallet.history()?.into_iter()
 				.map(json::Movement::try_from)
 				.collect::<Result<Vec<_>, _>>()?;
 

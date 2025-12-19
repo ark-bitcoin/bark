@@ -1005,8 +1005,14 @@ impl Wallet {
 		Ok(vtxo)
 	}
 
-	/// Fetches all wallet fund movements ordered from newest to oldest.
+	/// Fetches all movements ordered from newest to oldest.
+	#[deprecated(since="0.1.0-beta.5", note = "Use Wallet::history instead")]
 	pub fn movements(&self) -> anyhow::Result<Vec<Movement>> {
+		self.history()
+	}
+
+	/// Fetches all wallet fund movements ordered from newest to oldest.
+	pub fn history(&self) -> anyhow::Result<Vec<Movement>> {
 		Ok(self.db.get_all_movements()?)
 	}
 

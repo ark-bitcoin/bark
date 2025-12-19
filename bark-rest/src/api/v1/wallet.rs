@@ -264,7 +264,7 @@ pub async fn movements(State(state): State<RestServer>) -> HandlerResult<Json<Ve
 )]
 #[debug_handler]
 pub async fn history(State(state): State<RestServer>) -> HandlerResult<Json<Vec<bark_json::cli::Movement>>> {
-	let movements = state.wallet.movements().context("Failed to get movements")?;
+	let movements = state.wallet.history().context("Failed to get movements")?;
 
 	let json_movements = movements
 		.into_iter()
