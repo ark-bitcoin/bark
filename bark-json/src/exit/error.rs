@@ -33,6 +33,12 @@ pub enum ExitError {
 		output: Amount,
 	},
 
+	#[error("Claim Missing Signable Clause: Couldn't find a signable clause for VTXO {vtxo}")]
+	ClaimMissingSignableClause {
+		#[cfg_attr(feature = "utoipa", schema(value_type = String))]
+		vtxo: VtxoId,
+	},
+
 	#[error("Claim Signing Error: Unable to sign claim: {error}")]
 	ClaimSigningError { error: String },
 
@@ -149,6 +155,9 @@ impl From<bark::exit::ExitError> for ExitError {
 			},
 			bark::exit::ExitError::ClaimFeeExceedsOutput { needed, output } => {
 				ExitError::ClaimFeeExceedsOutput { needed, output }
+			},
+			bark::exit::ExitError::ClaimMissingSignableClause { vtxo } => {
+				ExitError::ClaimMissingSignableClause { vtxo }
 			},
 			bark::exit::ExitError::ClaimSigningError { error } => {
 				ExitError::ClaimSigningError { error }

@@ -27,6 +27,9 @@ pub enum ExitError {
 		output: Amount,
 	},
 
+	#[error("Claim Missing Signable Clause: Couldn't find a signable clause for VTXO {vtxo}")]
+	ClaimMissingSignableClause { vtxo: VtxoId },
+
 	#[error("Claim Signing Error: Unable to sign claim: {error}")]
 	ClaimSigningError { error: String },
 
