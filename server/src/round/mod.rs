@@ -428,15 +428,9 @@ impl CollectingPayments {
 		self.validate_payment_data(&inputs, &vtxo_requests)?;
 
 		let input_ids = inputs.iter().map(|i| i.vtxo_id).collect::<Vec<_>>();
-		let lock = match srv.vtxos_in_flux.lock(&input_ids) {
-			Ok(l) => l,
-			Err(id) => {
-				client_rslog!(RoundUserVtxoInFlux, self.round_step,
-					vtxo: id,
-				);
-				bail!("vtxo {id} already in flux");
-			},
-		};
+		let flux_guard = srv.vtxos_in_flux.lock(&input_ids)
+			.map_err(|e| { client_rslog!(RoundUserVtxoInFlux, self.round_step, vtxo: e.id); e })
+			.badarg("input VTXO already locked")?;
 
 		// Check if the input vtxos exist and are unspent.
 		let input_vtxos = match self.check_fetch_round_input_vtxos(srv, &inputs).await {
@@ -479,14 +473,14 @@ impl CollectingPayments {
 		}
 
 		// Finally, we are done
-		self.register_payment(lock, input_vtxos, vtxo_requests, offboards);
+		self.register_payment(flux_guard, input_vtxos, vtxo_requests, offboards);
 
 		Ok(())
 	}
 
 	fn register_payment(
 		&mut self,
-		lock: VtxoFluxGuard,
+		flux_guard: VtxoFluxGuard,
 		inputs: Vec<Vtxo>,
 		vtxo_requests: Vec<VtxoParticipant>,
 		offboards: Vec<OffboardRequest>,
@@ -499,7 +493,7 @@ impl CollectingPayments {
 
 		// If we're adding inputs for the first time, also add them to locked_inputs.
 		if self.first_attempt() {
-			self.locked_inputs.absorb(lock);
+			self.locked_inputs.absorb(flux_guard);
 		}
 
 		let input_ids = inputs.iter().map(|v| v.id()).collect::<Vec<_>>();

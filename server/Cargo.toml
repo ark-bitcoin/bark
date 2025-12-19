@@ -32,6 +32,7 @@ serde.workspace = true
 log.workspace = true
 
 # INTERNAL
+thiserror.workspace = true
 tokio-postgres.workspace = true
 bb8.workspace = true
 bb8-postgres.workspace = true

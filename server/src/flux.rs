@@ -19,6 +19,12 @@ pub struct VtxosInFlux {
 	inner: Arc<parking_lot::Mutex<VtxosInFluxInner>>,
 }
 
+#[derive(Debug, thiserror::Error)]
+#[error("VTXO is already locked by another process: {id}")]
+pub struct VtxoAlreadyInFluxError {
+	pub id: VtxoId,
+}
+
 impl VtxosInFlux {
 	pub fn new() -> VtxosInFlux {
 		VtxosInFlux {
@@ -44,7 +50,7 @@ impl VtxosInFlux {
 	pub fn lock<V>(
 		&self,
 		ids: impl IntoIterator<Item = V> + Clone,
-	) -> Result<VtxoFluxGuard<'_>, VtxoId>
+	) -> Result<VtxoFluxGuard<'_>, VtxoAlreadyInFluxError>
 	where
 		V: VtxoRef,
 	{
@@ -54,7 +60,10 @@ impl VtxosInFlux {
 		Ok(ret)
 	}
 
-	fn atomic_check_put<V>(&self, ids: impl IntoIterator<Item = V>) -> Result<(), VtxoId>
+	fn atomic_check_put<V>(
+		&self,
+		ids: impl IntoIterator<Item = V>,
+	) -> Result<(), VtxoAlreadyInFluxError>
 	where
 		V: VtxoRef,
 	{
@@ -68,7 +77,7 @@ impl VtxosInFlux {
 				for take in buf {
 					inner.vtxos.remove(&take);
 				}
-				return Err(id);
+				return Err(VtxoAlreadyInFluxError { id });
 			}
 			buf.push(id);
 		}
