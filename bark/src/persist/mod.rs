@@ -393,6 +393,25 @@ pub trait BarkPersister: Send + Sync + 'static {
 	/// - Returns an error if the query fails.
 	async fn get_public_key_idx(&self, public_key: &PublicKey) -> anyhow::Result<Option<u32>>;
 
+	/// Retrieves the mailbox checkpoint from the database
+	///
+	/// Returns:
+	/// - `Ok(u64)` the stored checkpoint.
+	///
+	/// Errors:
+	/// - Returns an error if the query fails.
+	async fn get_mailbox_checkpoint(&self) -> anyhow::Result<u64>;
+
+	/// Update the mailbox checkpoint to the new checkpoint
+	///
+	/// Returns:
+	///
+	///
+	/// Errors:
+	/// - Returns error when the query fails
+	/// - Returns error when the provided checkpoint is smaller than the existing checkpoint
+	async fn store_mailbox_checkpoint(&self, checkpoint: u64) -> anyhow::Result<()>;
+
 	/// Store a new pending lightning send.
 	///
 	/// Parameters:

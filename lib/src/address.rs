@@ -141,10 +141,11 @@ impl VtxoDelivery {
 /// let addr = ark::Address::builder()
 /// 	.server_pubkey(srv_pubkey)
 /// 	.pubkey_policy(vtxo_pubkey)
+/// 	.no_delivery()
 /// 	.into_address().unwrap();
 ///
 /// assert_eq!(addr.to_string(),
-/// 	"ark1pndckx4ezqqp4cn00sj5cswh7vrhh9vm647qr3ht5a57s4vdp7vrpptxv66x3ehgpqqnevf3z",
+/// 	"ark1pndckx4ezqqp4cn00sj5cswh7vrhh9vm647qr3ht5a57s4vdp7vrpptxv66x3ehgxrng5y",
 /// );
 /// ```
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -582,15 +583,16 @@ mod test {
 		let addr = Address::builder()
 			.server_pubkey(ark)
 			.pubkey_policy(usr)
+			.no_delivery()
 			.into_address().unwrap();
-		assert_eq!(addr.to_string(), "ark1pwh9vsmezqqpjy9akejayl2vvcse6he97rn40g84xrlvrlnhayuuyefrp9nse2yspqqjl5wpy");
+		assert_eq!(addr.to_string(), "ark1pwh9vsmezqqpjy9akejayl2vvcse6he97rn40g84xrlvrlnhayuuyefrp9nse2yszc7ehh");
 
 		let parsed = test_roundtrip(&addr);
 		assert_eq!(parsed.ark_id, ark_id);
 		assert_eq!(parsed.policy, policy);
-		assert_eq!(parsed.delivery.len(), 1);
+		assert_eq!(parsed.delivery.len(), 0);
 
-		// built-in delivery
+		// no delivery testnet
 		let addr = Address::builder()
 			.testnet(true)
 			.server_pubkey(ark)

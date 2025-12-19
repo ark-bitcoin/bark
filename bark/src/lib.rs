@@ -305,6 +305,7 @@ mod lightning;
 mod offboard;
 mod psbtext;
 mod server;
+mod mailbox;
 
 pub use self::arkoor::ArkoorCreateResult;
 pub use self::config::{BarkNetwork, Config};
@@ -320,16 +321,17 @@ use bip39::Mnemonic;
 use bitcoin::{Amount, Network, OutPoint};
 use bitcoin::bip32::{self, ChildNumber, Fingerprint};
 use bitcoin::secp256k1::{self, Keypair, PublicKey};
-use log::{trace, debug, info, warn, error};
+use log::{trace, info, warn, error};
 use tokio::sync::RwLock;
 
 use ark::{ArkInfo, ProtocolEncoding, Vtxo, VtxoId, VtxoPolicy, VtxoRequest};
 use ark::address::VtxoDelivery;
 use ark::board::{BoardBuilder, BOARD_FUNDING_TX_VTXO_VOUT};
+use ark::mailbox::MailboxIdentifier;
 use ark::vtxo::{PubkeyVtxoPolicy, VtxoRef};
 use ark::vtxo::policy::signing::VtxoSigner;
 use bitcoin_ext::{BlockHeight, TxStatus};
-use server_rpc::{self as rpc, protos, ServerConnection};
+use server_rpc::{protos, ServerConnection};
 
 use crate::chain::{ChainSource, ChainSourceSpec};
 use crate::exit::Exit;
@@ -464,7 +466,6 @@ impl WalletSeed {
 		self.vtxo.derive_priv(&SECP, &[idx.into()]).unwrap().to_keypair(&SECP)
 	}
 
-	#[allow(unused)]
 	fn to_mailbox_keypair(&self) -> Keypair {
 		let mailbox_path = [ChildNumber::from_hardened_idx(MAILBOX_KEY_INDEX).unwrap()];
 		self.master.derive_priv(&SECP, &mailbox_path).unwrap().to_keypair(&SECP)
@@ -742,31 +743,39 @@ impl Wallet {
 		Ok(self.seed.derive_vtxo_keypair(idx))
 	}
 
-	/// Generate a new [ark::Address].
+	/// Generate a new mailbox [ark::Address].
 	pub async fn new_address(&self) -> anyhow::Result<ark::Address> {
 		let srv = &self.require_server()?;
 		let network = self.properties().await?.network;
 		let (keypair, _) = self.derive_store_next_keypair().await?;
+		let ark_info = srv.ark_info().await?;
+		let mailbox_kp = self.mailbox_keypair()?;
 
 		Ok(ark::Address::builder()
 			.testnet(network != bitcoin::Network::Bitcoin)
-			.server_pubkey(srv.ark_info().await?.server_pubkey)
+			.server_pubkey(ark_info.server_pubkey)
 			.pubkey_policy(keypair.public_key())
+			.mailbox(ark_info.mailbox_pubkey, MailboxIdentifier::from_pubkey(mailbox_kp.public_key()), &keypair)
+			.expect("Failed to assign mailbox")
 			.into_address().unwrap())
 	}
 
-	/// Peak for an [ark::Address] at the given key index.
+	/// Peak for a mailbox [ark::Address] at the given key index.
 	///
 	/// May return an error if the address at the given index has not been derived yet.
 	pub async fn peak_address(&self, index: u32) -> anyhow::Result<ark::Address> {
 		let srv = &self.require_server()?;
 		let network = self.properties().await?.network;
 		let keypair = self.peak_keypair(index).await?;
+		let ark_info = srv.ark_info().await?;
+		let mailbox_kp = self.mailbox_keypair()?;
 
 		Ok(ark::Address::builder()
-			.testnet(network != Network::Bitcoin)
-			.server_pubkey(srv.ark_info().await?.server_pubkey)
+			.testnet(network != bitcoin::Network::Bitcoin)
+			.server_pubkey(ark_info.server_pubkey)
 			.pubkey_policy(keypair.public_key())
+			.mailbox(ark_info.mailbox_pubkey, MailboxIdentifier::from_pubkey(mailbox_kp.public_key()), &keypair)
+			.expect("Failed to assign mailbox")
 			.into_address().unwrap())
 	}
 
@@ -777,12 +786,17 @@ impl Wallet {
 		let srv = &self.require_server()?;
 		let network = self.properties().await?.network;
 		let (keypair, index) = self.derive_store_next_keypair().await?;
-		let pubkey = keypair.public_key();
+		let ark_info = srv.ark_info().await?;
+		let mailbox_kp = self.mailbox_keypair()?;
+
 		let addr = ark::Address::builder()
 			.testnet(network != bitcoin::Network::Bitcoin)
-			.server_pubkey(srv.ark_info().await?.server_pubkey)
-			.pubkey_policy(pubkey)
+			.server_pubkey(ark_info.server_pubkey)
+			.pubkey_policy(keypair.public_key())
+			.mailbox(ark_info.mailbox_pubkey, MailboxIdentifier::from_pubkey(mailbox_kp.public_key()), &keypair)
+			.expect("Failed to assign mailbox")
 			.into_address()?;
+
 		Ok((addr, index))
 	}
 
@@ -1530,88 +1544,6 @@ impl Wallet {
 
 		let my_clause = self.find_signable_clause(vtxo).await;
 		Ok(!my_clause.is_some())
-	}
-
-	pub async fn sync_oors(&self) -> anyhow::Result<()> {
-		let last_pk_index = self.db.get_last_vtxo_key_index().await?.unwrap_or_default();
-		let pubkeys = (0..=last_pk_index).map(|idx| {
-			self.seed.derive_vtxo_keypair(idx).public_key()
-		}).collect::<Vec<_>>();
-
-		self.sync_arkoor_for_pubkeys(&pubkeys).await?;
-
-		Ok(())
-	}
-
-	/// Sync with the Ark server and look for out-of-round received VTXOs by public key.
-	async fn sync_arkoor_for_pubkeys(
-		&self,
-		public_keys: &[PublicKey],
-	) -> anyhow::Result<()> {
-		let mut srv = self.require_server()?;
-
-		for pubkeys in public_keys.chunks(rpc::MAX_NB_MAILBOX_PUBKEYS) {
-			// Then sync OOR vtxos.
-			debug!("Emptying OOR mailbox at Ark server...");
-			let req = protos::ArkoorVtxosRequest {
-				pubkeys: pubkeys.iter().map(|pk| pk.serialize().to_vec()).collect(),
-			};
-
-			#[allow(deprecated)]
-			let packages = srv.client.empty_arkoor_mailbox(req).await
-				.context("error fetching oors")?.into_inner().packages;
-			debug!("Ark server has {} arkoor packages for us", packages.len());
-
-			for package in packages {
-				let mut vtxos = Vec::with_capacity(package.vtxos.len());
-				for vtxo in package.vtxos {
-					let vtxo = match Vtxo::deserialize(&vtxo) {
-						Ok(vtxo) => vtxo,
-						Err(e) => {
-							warn!("Invalid vtxo from Ark server: {}", e);
-							continue;
-						}
-					};
-
-					if let Err(e) = self.validate_vtxo(&vtxo).await {
-						error!("Received invalid arkoor VTXO from server: {}", e);
-						continue;
-					}
-
-					match self.db.has_spent_vtxo(vtxo.id()).await {
-						Ok(spent) if spent => {
-							debug!("Not adding OOR vtxo {} because it is considered spent", vtxo.id());
-							continue;
-						},
-						_ => {}
-					}
-
-					if let Ok(Some(_)) = self.db.get_wallet_vtxo(vtxo.id()).await {
-						debug!("Not adding OOR vtxo {} because it already exists", vtxo.id());
-						continue;
-					}
-
-					vtxos.push(vtxo);
-				}
-
-				self.store_spendable_vtxos(&vtxos).await?;
-				self.movements.new_finished_movement(
-					Subsystem::ARKOOR,
-					ArkoorMovement::Receive.to_string(),
-					MovementStatus::Successful,
-					MovementUpdate::new()
-						.produced_vtxos(&vtxos)
-						.intended_and_effective_balance(
-							vtxos
-							.iter()
-							.map(|vtxo| vtxo.amount()).sum::<Amount>()
-							.to_signed()?,
-						),
-				).await?;
-			}
-		}
-
-		Ok(())
 	}
 
 	/// If there are any VTXOs that match the "should-refresh" condition with
