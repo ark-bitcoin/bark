@@ -8,6 +8,7 @@ Method | HTTP request | Description
 [**ark_info**](WalletApi.md#ark_info) | **GET** /api/v1/wallet/ark-info | 
 [**balance**](WalletApi.md#balance) | **GET** /api/v1/wallet/balance | 
 [**connected**](WalletApi.md#connected) | **GET** /api/v1/wallet/connected | 
+[**history**](WalletApi.md#history) | **GET** /api/v1/wallet/history | 
 [**movements**](WalletApi.md#movements) | **GET** /api/v1/wallet/movements | 
 [**offboard_all**](WalletApi.md#offboard_all) | **POST** /api/v1/wallet/offboard/all | 
 [**offboard_vtxos**](WalletApi.md#offboard_vtxos) | **POST** /api/v1/wallet/offboard/vtxos | 
@@ -131,12 +132,39 @@ No authorization required
 [[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
 
 
+## history
+
+> Vec<models::Movement> history()
+
+
+Returns all the wallet history
+
+### Parameters
+
+This endpoint does not need any parameter.
+
+### Return type
+
+[**Vec<models::Movement>**](Movement.md)
+
+### Authorization
+
+No authorization required
+
+### HTTP request headers
+
+- **Content-Type**: Not defined
+- **Accept**: application/json
+
+[[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
+
+
 ## movements
 
 > Vec<models::Movement> movements()
 
 
-Returns all the wallet movements
+Deprecated: Use history instead
 
 ### Parameters
 

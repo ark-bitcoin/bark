@@ -1145,12 +1145,46 @@
         }
       }
     },
+    "/api/v1/wallet/history": {
+      "get": {
+        "tags": [
+          "wallet"
+        ],
+        "description": "Returns all the wallet history",
+        "operationId": "history",
+        "responses": {
+          "200": {
+            "description": "Returns the wallet history",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Movement"
+                  }
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternalServerError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/wallet/movements": {
       "get": {
         "tags": [
           "wallet"
         ],
-        "description": "Returns all the wallet movements",
+        "description": "Deprecated: Use history instead",
         "operationId": "movements",
         "responses": {
           "200": {
@@ -1176,7 +1210,8 @@
               }
             }
           }
-        }
+        },
+        "deprecated": true
       }
     },
     "/api/v1/wallet/offboard/all": {

@@ -265,8 +265,8 @@ enum Command {
 	/// List the wallet's payments
 	///
 	/// By default will fetch the 10 first items
-	#[command()]
-	Movements {
+	#[command(alias="movements")]
+	History {
 		/// Skip syncing wallet
 		#[arg(long)]
 		no_sync: bool,
@@ -475,13 +475,13 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 
 			output_json(&vtxos.into_iter().map(WalletVtxoInfo::from).collect::<Vec<_>>());
 		},
-		Command::Movements { no_sync } => {
+		Command::History { no_sync } => {
 			if !no_sync {
 				info!("Syncing wallet...");
 				wallet.sync().await;
 			}
 
-			let mut movements = wallet.movements()?.into_iter()
+			let mut movements = wallet.history()?.into_iter()
 				.map(json::Movement::try_from)
 				.collect::<Result<Vec<_>, _>>()?;
 

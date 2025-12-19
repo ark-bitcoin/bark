@@ -317,7 +317,7 @@ async fn double_exit_call() {
 
 	// TODO: Drain exit outputs then check balance in onchain wallet
 
-	let movements = bark1.list_movements().await;
+	let movements = bark1.history().await;
 	assert_eq!(movements.len(), 7);
 
 	let last_moves = &movements[4..];
@@ -343,7 +343,7 @@ async fn double_exit_call() {
 	bark1.start_exit_all().await;
 	complete_exit(&ctx, &bark1).await;
 
-	let movements = bark1.list_movements().await;
+	let movements = bark1.history().await;
 	assert_eq!(movements.len(), 9);
 
 	// check we only exited last vtxo
@@ -360,7 +360,7 @@ async fn double_exit_call() {
 
 	bark1.start_exit_all().await;
 	complete_exit(&ctx, &bark1).await;
-	assert_eq!(bark1.list_movements().await.len(), 9, "should not create new movement when no new vtxo to exit");
+	assert_eq!(bark1.history().await.len(), 9, "should not create new movement when no new vtxo to exit");
 }
 
 #[tokio::test]
@@ -509,7 +509,7 @@ async fn bark_should_exit_a_failed_htlc_out_that_server_refuse_to_revoke() {
 	complete_exit(&ctx, &bark_1).await;
 
 	// Check that we have a lightning send -> exit movement chain
-	let movements = bark_1.list_movements().await;
+	let movements = bark_1.history().await;
 	let [.., send_movement, exit_movement] = movements.as_slice() else {
 		panic!("Should have at least two movements");
 	};
@@ -643,7 +643,7 @@ async fn bark_should_exit_a_pending_htlc_out_that_server_refuse_to_revoke() {
 	assert!(!vtxos.iter().any(|v| matches!(v.state, VtxoStateInfo::Locked { .. })), "should not be any locked vtxo left");
 
 	// Check that we have a lightning send -> exit movement chain
-	let movements = bark_1.list_movements().await;
+	let movements = bark_1.history().await;
 	let [.., send_movement, exit_movement] = movements.as_slice() else {
 		panic!("Should have at least two movements");
 	};

@@ -54,6 +54,7 @@ Class | Method | HTTP request | Description
 *WalletApi* | [**ark_info**](docs/WalletApi.md#ark_info) | **GET** /api/v1/wallet/ark-info | 
 *WalletApi* | [**balance**](docs/WalletApi.md#balance) | **GET** /api/v1/wallet/balance | 
 *WalletApi* | [**connected**](docs/WalletApi.md#connected) | **GET** /api/v1/wallet/connected | 
+*WalletApi* | [**history**](docs/WalletApi.md#history) | **GET** /api/v1/wallet/history | 
 *WalletApi* | [**movements**](docs/WalletApi.md#movements) | **GET** /api/v1/wallet/movements | 
 *WalletApi* | [**offboard_all**](docs/WalletApi.md#offboard_all) | **POST** /api/v1/wallet/offboard/all | 
 *WalletApi* | [**offboard_vtxos**](docs/WalletApi.md#offboard_vtxos) | **POST** /api/v1/wallet/offboard/vtxos | 

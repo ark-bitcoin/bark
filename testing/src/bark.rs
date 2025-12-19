@@ -317,8 +317,8 @@ impl Bark {
 		serde_json::from_str(&res).expect("json error")
 	}
 
-	pub async fn list_movements(&self) -> Vec<json::Movement> {
-		let res = self.run(["movements"]).await;
+	pub async fn history(&self) -> Vec<json::Movement> {
+		let res = self.run(["history"]).await;
 		serde_json::from_str(&res).expect("json error")
 	}
 
