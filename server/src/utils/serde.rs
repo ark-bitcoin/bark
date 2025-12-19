@@ -217,6 +217,7 @@ pub mod fee_rate {
 	use super::*;
 
 	use bitcoin::FeeRate;
+	use bitcoin_ext::FeeRateExt;
 
 	pub fn serialize<S: Serializer>(fee_rate: &FeeRate, s: S) -> Result<S::Ok, S::Error> {
 		let sat_per_kwu = fee_rate.to_sat_per_kwu();
@@ -234,22 +235,26 @@ pub mod fee_rate {
 			}
 
 			fn visit_str<E: de::Error>(self, s: &str) -> Result<Self::Value, E> {
-				if let Some(stripped) = s.strip_suffix("sat/vb") {
-					if let Ok(number) = stripped.trim().parse::<u64>() {
-						let fr = FeeRate::from_sat_per_vb(number);
-						if fr.is_some() {
-							return Ok(fr.unwrap());
-						}
+				if let Some(s) = s.strip_suffix("sat/vb") {
+					let n = s.trim().parse::<u64>().map_err(E::custom)?;
+					match FeeRate::from_sat_per_vb(n) {
+						Some(r) => Ok(r),
+						None => Err(E::custom("invalid feerate")),
 					}
-				} else if let Some(stripped) = s.strip_suffix("sat/kwu") {
-					if let Ok(number) = stripped.trim().parse::<u64>() {
-						return Ok(FeeRate::from_sat_per_kwu(number));
-					}
+				} else if let Some(s) = s.strip_suffix("sat/kvb") {
+					let n = s.trim().parse::<u64>().map_err(E::custom)?;
+					Ok(FeeRate::from_sat_per_kvb_ceil(n))
+				} else if let Some(s) = s.strip_suffix("sat/kwu") {
+					let n = s.trim().parse::<u64>().map_err(E::custom)?;
+					Ok(FeeRate::from_sat_per_kwu(n))
+				} else {
+					Err(serde::de::Error::custom(
+						"failed to parse FeeRate in sat/kwu, sat/vb or sat/kvb",
+					))
 				}
-
-				Err(serde::de::Error::custom("Failed to parse FeeRate in sat/kwu or sat/vb"))
 			}
 		}
+
 		d.deserialize_str(Visitor)
 	}
 }
