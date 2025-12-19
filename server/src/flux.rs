@@ -1,6 +1,6 @@
 
+use std::{mem, ops};
 use std::borrow::Borrow;
-use std::ops;
 use std::collections::HashSet;
 use std::sync::Arc;
 
@@ -39,7 +39,7 @@ impl VtxosInFlux {
 		VtxoFluxGuard {
 			inner: VtxoFluxGuardInner {
 				flux: self,
-				vtxos: HashSet::new(),
+				vtxos: Vec::new(),
 			}
 		}
 	}
@@ -102,7 +102,7 @@ impl VtxosInFlux {
 #[derive(Debug)]
 struct VtxoFluxGuardInner<F: Borrow<VtxosInFlux> = VtxosInFlux> {
 	flux: F,
-	vtxos: HashSet<VtxoId>,
+	vtxos: Vec<VtxoId>,
 }
 
 impl<F: Borrow<VtxosInFlux>> VtxoFluxGuardInner<F> {
@@ -112,13 +112,13 @@ impl<F: Borrow<VtxosInFlux>> VtxoFluxGuardInner<F> {
 
 	fn release_all(&mut self) {
 		if !self.vtxos.is_empty() {
-			let drain = self.vtxos.drain();
+			let drain = self.vtxos.drain(..);
 			self.flux.borrow().release(drain);
 		}
 	}
 
 	fn absorb(&mut self, mut other: VtxoFluxGuard) {
-		self.vtxos.extend(other.inner.vtxos.drain());
+		self.vtxos.extend(other.inner.vtxos.drain(..));
 	}
 }
 
@@ -138,6 +138,12 @@ pub struct VtxoFluxGuard<'a> {
 }
 
 impl<'a> VtxoFluxGuard<'a> {
+	/// The list of locked VTXOs
+	#[allow(unused)]
+	pub fn vtxos(&self) -> &[VtxoId] {
+		&self.inner.vtxos
+	}
+
 	/// Add new vtxos that are already marked as in-flux.
 	pub fn add_locked(&mut self, vtxos: impl IntoIterator<Item = VtxoId>) {
 		self.inner.add_locked(vtxos)
@@ -145,11 +151,11 @@ impl<'a> VtxoFluxGuard<'a> {
 
 	pub fn into_owned(mut self) -> OwnedVtxoFluxGuard {
 		// we need to drain the vtxos so that they aren't released on Drop
-		let vtxos = self.inner.vtxos.drain().collect();
+		let vtxos = mem::replace(&mut self.inner.vtxos, Vec::new());
 		OwnedVtxoFluxGuard {
 			inner: VtxoFluxGuardInner {
 				flux: self.inner.flux.clone(),
-				vtxos,
+				vtxos: vtxos,
 			},
 		}
 	}
@@ -162,6 +168,12 @@ pub struct OwnedVtxoFluxGuard {
 }
 
 impl OwnedVtxoFluxGuard {
+	/// The list of locked VTXOs
+	#[allow(unused)]
+	pub fn vtxos(&self) -> &[VtxoId] {
+		&self.inner.vtxos
+	}
+
 	/// Release and drop all vtxos from the lock.
 	pub fn release_all(&mut self) {
 		self.inner.release_all()
@@ -177,7 +189,7 @@ impl OwnedVtxoFluxGuard {
 		Self {
 			inner: VtxoFluxGuardInner {
 				flux: VtxosInFlux::new(),
-				vtxos: HashSet::new(),
+				vtxos: Vec::new(),
 			}
 		}
 	}
