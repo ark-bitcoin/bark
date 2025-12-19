@@ -60,6 +60,8 @@ pub mod rpc_names {
 		pub const REQUEST_LEAF_VTXO_COSIGN: &str = "request_leaf_vtxo_cosign";
 		pub const REQUEST_FORFEIT_NONCES: &str = "request_forfeit_nonces";
 		pub const FORFEIT_VTXOS: &str = "forfeit_vtxos";
+		pub const PREPARE_OFFBOARD: &str = "prepare_offboard";
+		pub const FINISH_OFFBOARD: &str = "finish_offboard";
 	}
 
 	pub mod admin {
@@ -113,6 +115,8 @@ const RPC_SERVICE_ARK_METHODS: &[&str] = &[
 	rpc_names::ark::REQUEST_LEAF_VTXO_COSIGN,
 	rpc_names::ark::REQUEST_FORFEIT_NONCES,
 	rpc_names::ark::FORFEIT_VTXOS,
+	rpc_names::ark::PREPARE_OFFBOARD,
+	rpc_names::ark::FINISH_OFFBOARD,
 ];
 
 const RPC_SERVICE_ADMIN_METHODS: &[&str] = &[

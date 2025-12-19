@@ -77,6 +77,11 @@ service ArkService {
 	rpc PrepareLightningReceiveClaim(PrepareLightningReceiveClaimRequest) returns (PrepareLightningReceiveClaimResponse) {}
 	rpc ClaimLightningReceive(ClaimLightningReceiveRequest) returns (ArkoorPackageCosignResponse) {}
 
+	// * OFFBOARDS
+
+	rpc PrepareOffboard(PrepareOffboardRequest) returns (PrepareOffboardResponse) {}
+	rpc FinishOffboard(FinishOffboardRequest) returns (FinishOffboardResponse) {}
+
 	// * ARK ROUND INTERACTIONS *
 
 	// Subscribe to the round events
@@ -380,6 +385,29 @@ message CheckLightningReceiveResponse {
 	LightningReceiveStatus status = 3;
 	// Empty until the status is HTLCS_READY or SETTLED
 	repeated bytes htlc_vtxos = 4;
+}
+
+// offboard
+
+message PrepareOffboardRequest {
+	OffboardRequest offboard = 1;
+	repeated bytes input_vtxo_ids = 2;
+	repeated bytes input_vtxo_ownership_proofs = 3;
+}
+
+message PrepareOffboardResponse {
+	bytes offboard_tx = 1;
+	repeated bytes forfeit_cosign_nonces = 2;
+}
+
+message FinishOffboardRequest {
+	bytes offboard_txid = 1;
+	repeated bytes user_nonces = 2;
+	repeated bytes partial_signatures = 3;
+}
+
+message FinishOffboardResponse {
+	bytes signed_offboard_tx = 1;
 }
 
 // round

@@ -156,6 +156,14 @@ pub trait ArkRpcProxy: Send + Sync + Clone + 'static {
 	async fn forfeit_vtxos(&self, upstream: &mut ArkClient, req: protos::ForfeitVtxosRequest) -> Result<protos::ForfeitVtxosResponse, tonic::Status> {
 		Ok(upstream.forfeit_vtxos(req).await?.into_inner())
 	}
+
+	async fn prepare_offboard(&self, upstream: &mut ArkClient, req: protos::PrepareOffboardRequest) -> Result<protos::PrepareOffboardResponse, tonic::Status> {
+		Ok(upstream.prepare_offboard(req).await?.into_inner())
+	}
+
+	async fn finish_offboard(&self, upstream: &mut ArkClient, req: protos::FinishOffboardRequest) -> Result<protos::FinishOffboardResponse, tonic::Status> {
+		Ok(upstream.finish_offboard(req).await?.into_inner())
+	}
 }
 
 pub struct ArkRpcProxyServer {
@@ -430,6 +438,20 @@ impl<T: ArkRpcProxy> rpc::server::ArkService for ArkRpcProxyWrapper<T> {
 		req: tonic::Request<protos::ForfeitVtxosRequest>,
 	) -> Result<tonic::Response<protos::ForfeitVtxosResponse>, tonic::Status> {
 		Ok(tonic::Response::new(ArkRpcProxy::forfeit_vtxos(&self.proxy, &mut self.upstream.clone(), req.into_inner()).await?))
+	}
+
+	async fn prepare_offboard(
+		&self,
+		req: tonic::Request<protos::PrepareOffboardRequest>,
+	) -> Result<tonic::Response<protos::PrepareOffboardResponse>, tonic::Status> {
+		Ok(tonic::Response::new(ArkRpcProxy::prepare_offboard(&self.proxy, &mut self.upstream.clone(), req.into_inner()).await?))
+	}
+
+	async fn finish_offboard(
+		&self,
+		req: tonic::Request<protos::FinishOffboardRequest>,
+	) -> Result<tonic::Response<protos::FinishOffboardResponse>, tonic::Status> {
+		Ok(tonic::Response::new(ArkRpcProxy::finish_offboard(&self.proxy, &mut self.upstream.clone(), req.into_inner()).await?))
 	}
 }
 

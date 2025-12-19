@@ -6,6 +6,7 @@ use std::time::Duration;
 
 use bip39::rand::Rng;
 use bitcoin::consensus::serialize;
+use bitcoin::Txid;
 use bitcoin::{Amount, OutPoint};
 use bitcoin::hashes::Hash;
 use bitcoin::hex::DisplayHex;
@@ -788,6 +789,52 @@ impl rpc::server::ArkService for Server {
 
 		Ok(tonic::Response::new(protos::ForfeitVtxosResponse {
 			unlock_preimage: preimage.to_vec(),
+		}))
+	}
+
+	async fn prepare_offboard(
+		&self,
+		req: tonic::Request<protos::PrepareOffboardRequest>,
+	) -> Result<tonic::Response<protos::PrepareOffboardResponse>, tonic::Status> {
+		let _ = RpcMethodDetails::grpc_ark(middleware::rpc_names::ark::PREPARE_OFFBOARD);
+		let req = req.into_inner();
+
+		let request = req.offboard.badarg("missing offboard field")?.try_into()
+			.badarg("invalid offboard request")?;
+		let input_vtxos = req.input_vtxo_ids.iter().map(|v| VtxoId::from_bytes(v))
+			.collect::<Result<Vec<_>, _>>()?;
+		let ownership_proofs = req.input_vtxo_ownership_proofs.iter()
+			.map(|v| schnorr::Signature::from_bytes(v))
+			.collect::<Result<Vec<_>, _>>()?;
+		let resp = self.prepare_offboard(request, input_vtxos, ownership_proofs).await.to_status()?;
+
+		Ok(tonic::Response::new(protos::PrepareOffboardResponse {
+			offboard_tx: serialize(&resp.offboard_tx),
+			forfeit_cosign_nonces: resp.forfeit_cosign_nonces.into_iter()
+				.map(|n| n.serialize().to_vec())
+				.collect(),
+		}))
+	}
+
+	async fn finish_offboard(
+		&self,
+		req: tonic::Request<protos::FinishOffboardRequest>,
+	) -> Result<tonic::Response<protos::FinishOffboardResponse>, tonic::Status> {
+		let _ = RpcMethodDetails::grpc_ark(middleware::rpc_names::ark::FINISH_OFFBOARD);
+		let req = req.into_inner();
+
+		let offboard_txid = Txid::from_bytes(req.offboard_txid)?;
+		let pub_nonces = req.user_nonces.iter()
+			.map(musig::PublicNonce::from_bytes)
+			.collect::<Result<Vec<_>, _>>()?;
+		let partial_sigs = req.partial_signatures.iter()
+			.map(musig::PartialSignature::from_bytes)
+			.collect::<Result<Vec<_>, _>>()?;
+
+		let tx = self.finish_offboard(offboard_txid, &pub_nonces, &partial_sigs).await.to_status()?;
+
+		Ok(tonic::Response::new(protos::FinishOffboardResponse {
+			signed_offboard_tx: serialize(&tx),
 		}))
 	}
 }
