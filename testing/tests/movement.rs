@@ -41,7 +41,7 @@ async fn arkoor_send_receive() {
 	let bark1_vtxos_post_pay = bark1.vtxo_ids().await;
 	let bark2_vtxos = bark2.vtxo_ids().await;
 
-	let send_movement = bark1.list_movements().await.last().cloned().unwrap();
+	let send_movement = bark1.history().await.last().cloned().unwrap();
 	assert_eq!(send_movement.status, MovementStatus::Successful);
 	assert_eq!(send_movement.subsystem.name, "bark.arkoor");
 	assert_eq!(send_movement.subsystem.kind, "send");
@@ -62,7 +62,7 @@ async fn arkoor_send_receive() {
 	assert_eq!(send_movement.time.completed_at.is_some(), true);
 	assert_eq!(send_movement.metadata, None);
 
-	let receive_movement = bark2.list_movements().await.last().cloned().unwrap();
+	let receive_movement = bark2.history().await.last().cloned().unwrap();
 	assert_eq!(receive_movement.status, MovementStatus::Successful);
 	assert_eq!(receive_movement.subsystem.name, "bark.arkoor");
 	assert_eq!(receive_movement.subsystem.kind, "receive");
@@ -89,7 +89,7 @@ async fn board_board() {
 	let vtxos = bark.vtxo_ids().await;
 	assert_eq!(vtxos.len(), 1);
 
-	let movement = bark.list_movements().await.last().cloned().unwrap();
+	let movement = bark.history().await.last().cloned().unwrap();
 	assert_eq!(movement.status, MovementStatus::Successful);
 	assert_eq!(movement.subsystem.name, "bark.board");
 	assert_eq!(movement.subsystem.kind, "board");
@@ -129,7 +129,7 @@ async fn exit_start() {
 	assert_eq!(exits.len(), 1);
 	assert_eq!(exits.first().unwrap().vtxo_id, vtxos.first().unwrap().vtxo.id);
 
-	let movement = bark.list_movements().await.last().cloned().unwrap();
+	let movement = bark.history().await.last().cloned().unwrap();
 	assert_eq!(movement.status, MovementStatus::Successful);
 	assert_eq!(movement.subsystem.name, "bark.exit");
 	assert_eq!(movement.subsystem.kind, "start");
@@ -166,11 +166,11 @@ async fn lightning_send_invoice_receive() {
 	let bark1_vtxos = bark1.vtxo_ids().await;
 
 	// Verify movements don't exist until a payment is initiated. bark1 will have a board movement.
-	assert_eq!(bark1.list_movements().await.len(), 1);
-	assert_eq!(bark2.list_movements().await.len(), 0);
+	assert_eq!(bark1.history().await.len(), 1);
+	assert_eq!(bark2.history().await.len(), 0);
 
 	let invoice = Invoice::from_str(&bark2.bolt11_invoice(sat(10_000)).await.invoice).unwrap();
-	assert_eq!(bark2.list_movements().await.len(), 0);
+	assert_eq!(bark2.history().await.len(), 0);
 	let bark2_clone = bark2.clone();
 	srv.wait_for_vtxopool(&ctx).await;
 	join!(
@@ -180,7 +180,7 @@ async fn lightning_send_invoice_receive() {
 		},
 	);
 
-	let send_movement = bark1.list_movements().await.last().cloned().unwrap();
+	let send_movement = bark1.history().await.last().cloned().unwrap();
 	assert_eq!(send_movement.status, MovementStatus::Successful);
 	assert_eq!(send_movement.subsystem.name, "bark.lightning_send");
 	assert_eq!(send_movement.subsystem.kind, "send");
@@ -207,7 +207,7 @@ async fn lightning_send_invoice_receive() {
 	assert_eq!(metadata.get("htlc_vtxos").map(|v| serde_json::from_value::<Vec<VtxoId>>(v.clone()).unwrap()).unwrap().len(), 1);
 
 	let bark2_vtxos = bark2.vtxo_ids().await;
-	let receive_movement = bark2.list_movements().await.last().cloned().unwrap();
+	let receive_movement = bark2.history().await.last().cloned().unwrap();
 	assert_eq!(receive_movement.status, MovementStatus::Successful);
 	assert_eq!(receive_movement.subsystem.name, "bark.lightning_receive");
 	assert_eq!(receive_movement.subsystem.kind, "receive");
@@ -244,7 +244,7 @@ async fn lightning_send_invoice_revoke() {
 	let vtxos_pre_pay = bark.vtxo_ids().await;
 
 	// Verify movements don't exist until a payment is initiated. bark1 will have a board movement.
-	assert_eq!(bark.list_movements().await.len(), 1);
+	assert_eq!(bark.history().await.len(), 1);
 
 	let invoice = Invoice::from_str(
 		&ln.receiver.invoice(Some(sat(10_000)), "movement_send_fail", "will fail").await,
@@ -253,7 +253,7 @@ async fn lightning_send_invoice_revoke() {
 	bark.pay_lightning_wait(&invoice, None).await;
 	let vtxos_post_pay = bark.vtxo_ids().await;
 
-	let send_movement = bark.list_movements().await.last().cloned().unwrap();
+	let send_movement = bark.history().await.last().cloned().unwrap();
 	assert_eq!(send_movement.status, MovementStatus::Failed);
 	assert_eq!(send_movement.subsystem.name, "bark.lightning_send");
 	assert_eq!(send_movement.subsystem.kind, "send");
@@ -290,7 +290,7 @@ async fn lightning_send_offer() {
 	bark.board_and_confirm_and_register(&ctx, sat(500_000)).await;
 
 	// Verify movements don't exist until a payment is initiated. bark1 will have a board movement.
-	assert_eq!(bark.list_movements().await.len(), 1);
+	assert_eq!(bark.history().await.len(), 1);
 
 	let mut payment_hashes = HashSet::<PaymentHash>::new();
 	let mut htlc_vtxos = HashSet::<VtxoId>::new();
@@ -302,7 +302,7 @@ async fn lightning_send_offer() {
 		let vtxos_pre_pay = bark.vtxo_ids().await;
 		bark.pay_lightning_wait(&offer, Some(amount)).await;
 
-		let movement = bark.list_movements().await.last().cloned().unwrap();
+		let movement = bark.history().await.last().cloned().unwrap();
 		assert_eq!(movement.status, MovementStatus::Successful);
 		assert_eq!(movement.subsystem.name, "bark.lightning_send");
 		assert_eq!(movement.subsystem.kind, "send");
@@ -352,7 +352,7 @@ async fn round_offboard() {
 	bark.offboard_vtxo(vtxos.first().unwrap(), &addr).await;
 	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
 
-	let movement = bark.list_movements().await.last().cloned().unwrap();
+	let movement = bark.history().await.last().cloned().unwrap();
 	assert_eq!(movement.status, MovementStatus::Successful);
 	assert_eq!(movement.subsystem.name, "bark.round");
 	assert_eq!(movement.subsystem.kind, "offboard");
@@ -394,7 +394,7 @@ async fn round_refresh() {
 	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
 	let vtxos_post_refresh = bark.vtxo_ids().await;
 
-	let movement = bark.list_movements().await.last().cloned().unwrap();
+	let movement = bark.history().await.last().cloned().unwrap();
 	assert_eq!(movement.status, MovementStatus::Successful);
 	assert_eq!(movement.subsystem.name, "bark.round");
 	assert_eq!(movement.subsystem.kind, "refresh");
@@ -430,7 +430,7 @@ async fn round_send_onchain() {
 	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
 	let vtxos_post_send = bark.vtxo_ids().await;
 
-	let movement = bark.list_movements().await.last().cloned().unwrap();
+	let movement = bark.history().await.last().cloned().unwrap();
 	assert_eq!(movement.status, MovementStatus::Successful);
 	assert_eq!(movement.subsystem.name, "bark.round");
 	assert_eq!(movement.subsystem.kind, "send_onchain");
