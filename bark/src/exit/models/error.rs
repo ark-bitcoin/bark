@@ -88,8 +88,8 @@ pub enum ExitError {
 		error: String
 	},
 
-	#[error("Invalid Local Locktime: {error}")]
-	InvalidLocalLocktime {
+	#[error("Invalid Locktime ({tip}): {error}")]
+	InvalidLocktime {
 		tip: BlockHeight,
 		error: String
 	},

@@ -575,7 +575,7 @@ impl Exit {
 			}
 
 			let locktime = bitcoin::absolute::LockTime::from_height(tip)
-				.map_err(|e| ExitError::InvalidLocalLocktime { tip, error: e.to_string() })?;
+				.map_err(|e| ExitError::InvalidLocktime { tip, error: e.to_string() })?;
 
 			Transaction {
 				version: bitcoin::transaction::Version(3),

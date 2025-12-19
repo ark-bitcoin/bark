@@ -108,7 +108,7 @@ pub enum ExitError {
 	},
 
 	#[error("Invalid LockTime ({tip}): {error}")]
-	InvalidLocalLocktime { tip: BlockHeight, error: String },
+	InvalidLocktime { tip: BlockHeight, error: String },
 
 	#[error("Invalid Wallet State: {error}")]
 	InvalidWalletState { error: String },
@@ -186,8 +186,8 @@ impl From<bark::exit::ExitError> for ExitError {
 			bark::exit::ExitError::InvalidExitTransactionStatus { txid, status, error } => {
 				ExitError::InvalidExitTransactionStatus { txid, status: status.into(), error }
 			},
-			bark::exit::ExitError::InvalidLocalLocktime { tip, error } => {
-				ExitError::InvalidLocalLocktime { tip, error }
+			bark::exit::ExitError::InvalidLocktime { tip, error } => {
+				ExitError::InvalidLocktime { tip, error }
 			},
 			bark::exit::ExitError::InvalidWalletState { error } => {
 				ExitError::InvalidWalletState { error }
