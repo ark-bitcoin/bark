@@ -25,15 +25,15 @@ use crate::system::RuntimeManager;
 use crate::txindex::{TxIndex, Tx};
 use crate::txindex::broadcast::TxNursery;
 use crate::wallet::{BdkWalletExt, PersistedWallet, WalletKind};
-use crate::{serde_util, SECP, database, telemetry};
+use crate::{utils, SECP, database, telemetry};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
 	/// The fallback feerate for txs claiming forfeited vtxos.
-	#[serde(with = "serde_util::fee_rate")]
+	#[serde(with = "utils::serde::fee_rate")]
 	pub claim_fallback_feerate: FeeRate,
-	#[serde(with = "serde_util::duration")]
+	#[serde(with = "utils::serde::duration")]
 	pub wake_interval: Duration,
 }
 

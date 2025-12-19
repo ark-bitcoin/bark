@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use tonic::transport::{Certificate, Channel, ClientTlsConfig, Identity};
 use cln_rpc::node_client::NodeClient;
 
-use crate::{forfeits, serde_util, sweeps, vtxopool};
+use crate::{forfeits, utils, sweeps, vtxopool};
 use crate::secret::Secret;
 
 
@@ -172,7 +172,7 @@ pub struct Rpc {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct HodlInvoiceClnPlugin {
-	#[serde(with = "serde_util::string")]
+	#[serde(with = "utils::serde::string")]
 	pub uri: tonic::transport::Uri,
 	pub server_cert_path: PathBuf,
 	pub client_cert_path: PathBuf,
@@ -182,7 +182,7 @@ pub struct HodlInvoiceClnPlugin {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Lightningd {
-	#[serde(with = "serde_util::string")]
+	#[serde(with = "utils::serde::string")]
 	pub uri: tonic::transport::Uri,
 	/// Lowest number has the highest priority.
 	pub priority: u8,
@@ -262,10 +262,10 @@ pub struct Config {
 	pub vtxo_exit_delta: BlockDelta,
 
 	/// Maximum value any vtxo can have.
-	#[serde(default, with = "crate::serde_util::string::opt")]
+	#[serde(default, with = "utils::serde::string::opt")]
 	pub max_vtxo_amount: Option<Amount>,
 	/// Minimum amount required for board transactions.
-	#[serde(with = "crate::serde_util::string")]
+	#[serde(with = "utils::serde::string")]
 	pub min_board_amount: Amount,
 	/// Maximum number of OOR transition after VTXO tree leaf
 	pub max_arkoor_depth: u16,
@@ -274,21 +274,21 @@ pub struct Config {
 	/// Number of confirmations untrusted inputs of the round tx need to have.
 	pub round_tx_untrusted_input_confirmations: usize,
 
-	#[serde(with = "serde_util::duration")]
+	#[serde(with = "utils::serde::duration")]
 	pub round_interval: Duration,
-	#[serde(with = "serde_util::duration")]
+	#[serde(with = "utils::serde::duration")]
 	pub round_submit_time: Duration,
-	#[serde(with = "serde_util::duration")]
+	#[serde(with = "utils::serde::duration")]
 	pub round_sign_time: Duration,
 	pub nb_round_nonces: usize,
-	#[serde(with = "serde_util::fee_rate")]
+	#[serde(with = "utils::serde::fee_rate")]
 	pub round_tx_feerate: FeeRate,
 
 	/// Whether or not to add full error information to RPC internal errors.
 	pub rpc_rich_errors: bool,
 
 	/// The interval at which the txindex checks tx statuses.
-	#[serde(with = "serde_util::duration")]
+	#[serde(with = "utils::serde::duration")]
 	pub txindex_check_interval: Duration,
 
 	/// A message that can be used by the operator to make
@@ -307,14 +307,14 @@ pub struct Config {
 
 	/// Config for the ForfeitWatcher process.
 	pub forfeit_watcher: OptionalService<forfeits::Config>,
-	#[serde(with = "crate::serde_util::string")]
+	#[serde(with = "utils::serde::string")]
 	pub forfeit_watcher_min_balance: Amount,
 
 	/// Config for the VtxoPool process
 	pub vtxopool: vtxopool::Config,
 
 	// The interval used to rebroadcast transactions
-	#[serde(with = "serde_util::duration")]
+	#[serde(with = "utils::serde::duration")]
 	pub transaction_rebroadcast_interval: Duration,
 
 	pub rpc: Rpc,
@@ -324,18 +324,18 @@ pub struct Config {
 
 	#[serde(default)]
 	pub cln_array: Vec<Lightningd>,
-	#[serde(with = "serde_util::duration")]
+	#[serde(with = "utils::serde::duration")]
 	pub cln_reconnect_interval: Duration,
-	#[serde(with = "serde_util::duration")]
+	#[serde(with = "utils::serde::duration")]
 	pub invoice_check_interval: Duration,
 	/// The time for which not to manually recheck invoice state.
-	#[serde(with = "serde_util::duration")]
+	#[serde(with = "utils::serde::duration")]
 	pub invoice_recheck_delay: Duration,
-	#[serde(with = "serde_util::duration")]
+	#[serde(with = "utils::serde::duration")]
 	pub invoice_check_base_delay: Duration,
-	#[serde(with = "serde_util::duration")]
+	#[serde(with = "utils::serde::duration")]
 	pub invoice_check_max_delay: Duration,
-	#[serde(with = "serde_util::duration")]
+	#[serde(with = "utils::serde::duration")]
 	pub invoice_poll_interval: Duration,
 
 	/// The number of blocks to keep between Lightning and Ark HTLCs expiries.
@@ -367,12 +367,12 @@ pub struct Config {
 	/// Default is 250
 	pub max_user_invoice_cltv_delta: BlockDelta,
 	/// The duration after which a generated invoice will expire.
-	#[serde(with = "serde_util::duration")]
+	#[serde(with = "utils::serde::duration")]
 	pub invoice_expiry: Duration,
 	/// The duration for which the server will hold inbound HTLC(s) while
 	/// waiting for a user to claim a lightning receive.
 	/// After this timeout the server will fail the HTLC(s) back to the sender.
-	#[serde(with = "serde_util::duration")]
+	#[serde(with = "utils::serde::duration")]
 	pub receive_htlc_forward_timeout: Duration,
 
 	/// Indicates whether the Ark server requires clients to either
@@ -456,7 +456,7 @@ pub mod watchman {
 		pub network: bitcoin::Network,
 
 		/// The interval at which the txindex checks tx statuses.
-		#[serde(with = "serde_util::duration")]
+		#[serde(with = "utils::serde::duration")]
 		pub txindex_check_interval: Duration,
 
 		pub otel_collector_endpoint: Option<String>,
@@ -472,7 +472,7 @@ pub mod watchman {
 		pub forfeit_watcher: forfeits::Config,
 
 		// The interval used to rebroadcast transactions
-		#[serde(with = "serde_util::duration")]
+		#[serde(with = "utils::serde::duration")]
 		pub transaction_rebroadcast_interval: Duration,
 
 		pub postgres: Postgres,

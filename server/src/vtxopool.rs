@@ -55,7 +55,7 @@ pub struct Config {
 	///
 	/// The string representation of the elements is `"<amount>:<count>"`,
 	/// for example `["10000sat:50", "0.01 btc:30"]`.
-	#[serde(with = "crate::serde_util::string::vec")]
+	#[serde(with = "crate::utils::serde::string::vec")]
 	pub vtxo_targets: Vec<VtxoTarget>,
 	/// below what percentage of the target should we issue more vtxos
 	pub vtxo_target_issue_threshold: u8,
@@ -66,9 +66,9 @@ pub struct Config {
 	/// maximum arkoor depth to keep change until
 	pub vtxo_max_arkoor_depth: ArkoorDepth,
 
-	#[serde(with = "crate::serde_util::fee_rate")]
+	#[serde(with = "crate::utils::serde::fee_rate")]
 	pub issue_tx_fallback_feerate: FeeRate,
-	#[serde(with = "crate::serde_util::duration")]
+	#[serde(with = "crate::utils::serde::duration")]
 	pub issue_interval: Duration,
 }
 
