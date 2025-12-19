@@ -42,7 +42,7 @@ fn taproot_output() -> TxOut {
 	}
 }
 
-fn taproot_input() -> TxIn {
+fn taproot_keyspend_input() -> TxIn {
 	TxIn {
 		previous_output: OutPoint::new(Txid::hash(&[]), 0),
 		script_sig: ScriptBuf::new(),
@@ -90,7 +90,7 @@ fn clark_node_tx(radix: u64) -> Transaction {
 	Transaction {
 		version: bitcoin::transaction::Version::TWO,
 		lock_time: bitcoin::locktime::absolute::LockTime::from_consensus(0),
-		input: vec![taproot_input()],
+		input: vec![taproot_keyspend_input()],
 		output: iter::repeat(taproot_output()).take(radix as usize).chain(Some(anchor_output())).collect(),
 	}
 }
@@ -99,7 +99,7 @@ fn clark_leaf_tx() -> Transaction {
 	Transaction {
 		version: bitcoin::transaction::Version::TWO,
 		lock_time: bitcoin::locktime::absolute::LockTime::from_consensus(0),
-		input: vec![taproot_input()],
+		input: vec![taproot_keyspend_input()],
 		output: vec![taproot_output(), anchor_output()],
 	}
 }
@@ -108,7 +108,7 @@ fn round_tx() -> Transaction {
 	Transaction {
 		version: bitcoin::transaction::Version::TWO,
 		lock_time: bitcoin::locktime::absolute::LockTime::from_consensus(0),
-		input: vec![taproot_input(), taproot_input(), taproot_input()],
+		input: vec![taproot_keyspend_input(), taproot_keyspend_input(), taproot_keyspend_input()],
 		output: vec![taproot_output(), taproot_output(), anchor_output()],
 	}
 }
@@ -138,7 +138,7 @@ fn calc_exit_cost(n: u64, radix: u64) {
 	let exit_claim_tx = Transaction {
 		version: bitcoin::transaction::Version::TWO,
 		lock_time: bitcoin::locktime::absolute::LockTime::from_consensus(0),
-		input: iter::repeat(anchor_input()).take(levels as usize).chain(Some(taproot_input())).collect(),
+		input: iter::repeat(anchor_input()).take(levels as usize).chain(Some(taproot_keyspend_input())).collect(),
 		output: vec![taproot_output()],
 	};
 
@@ -158,6 +158,16 @@ fn calc_exit_cost(n: u64, radix: u64) {
 
 #[test]
 fn napkin() {
+	let taproot_2_in_2_out = Transaction {
+		version: bitcoin::transaction::Version::TWO,
+		lock_time: bitcoin::locktime::absolute::LockTime::from_consensus(0),
+		input: vec![taproot_keyspend_input(); 2],
+		output: vec![taproot_output(); 2],
+	};
+
+	println!("taproot keyspend 2-in-2-out: {} wu", taproot_2_in_2_out.weight());
+	println!("");
+
 	println!("CTV node tx radix=2: {} wu", ctv_node_tx(2).weight());
 	println!("CTV node tx radix=4: {} wu", ctv_node_tx(4).weight());
 	println!("CTV leaf tx: {} wu", ctv_leaf_tx().weight());
