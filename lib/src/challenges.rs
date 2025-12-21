@@ -27,9 +27,7 @@ impl RoundAttemptChallenge {
 		self.0
 	}
 
-	/// Combines [RoundAttemptChallenge] and [VtxoId] in a signable message
-	///
-	/// Note: because we use [`VtxoId`] in the message, there is no
+	/// Combines [RoundAttemptChallenge] and round submit data in a signable message
 	fn as_signable_message(
 		&self,
 		vtxo_id: VtxoId,
@@ -61,7 +59,7 @@ impl RoundAttemptChallenge {
 		vtxo_id: VtxoId,
 		vtxo_reqs: &[SignedVtxoRequest],
 		offboard_reqs: &[OffboardRequest],
-		vtxo_keypair: Keypair,
+		vtxo_keypair: &Keypair,
 	) -> schnorr::Signature {
 		let msg = self.as_signable_message(vtxo_id, vtxo_reqs, offboard_reqs);
 		SECP.sign_schnorr_with_aux_rand(&msg, &vtxo_keypair, &rand::random())
@@ -110,7 +108,7 @@ impl LightningReceiveChallenge {
 	pub fn sign_with(
 		&self,
 		vtxo_id: VtxoId,
-		vtxo_keypair: Keypair,
+		vtxo_keypair: &Keypair,
 	) -> schnorr::Signature {
 		SECP.sign_schnorr_with_aux_rand(
 			&Self::as_signable_message(self, vtxo_id),
@@ -167,7 +165,7 @@ impl VtxoStatusChallenge {
 	pub fn sign_with(
 		&self,
 		vtxo_id: VtxoId,
-		vtxo_keypair: Keypair,
+		vtxo_keypair: &Keypair,
 	) -> schnorr::Signature {
 		SECP.sign_schnorr_with_aux_rand(
 			&Self::as_signable_message(self, vtxo_id),

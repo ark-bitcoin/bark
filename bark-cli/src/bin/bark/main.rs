@@ -26,7 +26,6 @@ use ark::VtxoId;
 use bark::{BarkNetwork, Config};
 use bark::lightning::{pay_invoice, pay_lnaddr, pay_offer};
 use bark::onchain::ChainSync;
-use bark::round::RoundStatus;
 use bark::vtxo::selection::VtxoFilter;
 use bark::vtxo::state::VtxoStateKind;
 use bark_json::{cli as json};
@@ -53,24 +52,6 @@ fn default_datadir() -> String {
 /// The full version string we show in our binary.
 /// (GIT_HASH is set in build.rs)
 const FULL_VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), " (", env!("GIT_HASH"), ")");
-
-fn round_status_to_json(status: &RoundStatus) -> json::RoundStatus {
-	match status {
-		RoundStatus::Confirmed { funding_txid } => {
-			json::RoundStatus::Confirmed { funding_txid: *funding_txid }
-		},
-		RoundStatus::Unconfirmed { funding_txid } => {
-			json::RoundStatus::Unconfirmed { funding_txid: *funding_txid }
-		},
-		RoundStatus::Pending { unsigned_funding_txids } => {
-			json::RoundStatus::Pending { unsigned_funding_txids: unsigned_funding_txids.clone() }
-		},
-		RoundStatus::Failed { error } => {
-			json::RoundStatus::Failed { error: error.clone() }
-		},
-		RoundStatus::Canceled => json::RoundStatus::Canceled,
-	}
-}
 
 #[derive(Parser)]
 #[command(name = "bark", author = "Team Second <hello@second.tech>", version = FULL_VERSION, about)]
@@ -524,7 +505,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 
 			info!("Refreshing {} vtxos...", vtxos.len());
 			if let Some(res) = wallet.refresh_vtxos(vtxos).await? {
-				output_json(&round_status_to_json(&res));
+				output_json(&json::RoundStatus::from(res));
 			} else {
 				info!("No round happened");
 			}
@@ -634,7 +615,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 			} else {
 				bail!("Either --vtxos or --all argument must be provided to offboard");
 			};
-			output_json(&round_status_to_json(&ret));
+			output_json(&json::RoundStatus::from(ret));
 		},
 		Command::Onchain(onchain_command) => {
 			onchain::execute_onchain_command(onchain_command, &mut wallet, &mut onchain).await?;

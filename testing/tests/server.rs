@@ -788,7 +788,9 @@ async fn bad_round_input() {
 
 	let input = protos::InputVtxo {
 		vtxo_id: vtxo.id().to_bytes().to_vec(),
-		ownership_proof: challenge.sign_with(vtxo.id(), &[vtxo_req.clone()], &[offb_req.clone()], key).serialize().to_vec(),
+		ownership_proof: challenge.sign_with(
+			vtxo.id(), &[vtxo_req.clone()], &[offb_req.clone()], &key,
+		).serialize().to_vec(),
 	};
 
 	// let's fire some bad attempts
@@ -835,7 +837,9 @@ async fn bad_round_input() {
 	let fake_vtxo = VtxoId::from_slice(&rand::random::<[u8; 36]>()[..]).unwrap();
 	let fake_input = protos::InputVtxo {
 		vtxo_id: fake_vtxo.to_bytes().to_vec(),
-		ownership_proof: challenge.sign_with(vtxo.id(), &[vtxo_req.clone()], &[offb_req.clone()], key).serialize().to_vec(),
+		ownership_proof: challenge.sign_with(
+			vtxo.id(), &[vtxo_req.clone()], &[offb_req.clone()], &key,
+		).serialize().to_vec(),
 	};
 	let err = rpc.submit_payment(protos::SubmitPaymentRequest {
 		input_vtxos: vec![fake_input],
@@ -1205,12 +1209,8 @@ async fn reject_dust_vtxo_request() {
 			// Spending input boarded with first derivation
 			let (_, keypair) = self.wallet.pubkey_keypair(&self.vtxo.user_pubkey).unwrap().unwrap();
 
-			let sig = self.challenge.lock().await.as_ref().unwrap().sign_with(
-				self.vtxo.id,
-				&vtxo_requests,
-				&[],
-				keypair,
-			);
+			let sig = self.challenge.lock().await.as_ref().unwrap()
+				.sign_with(self.vtxo.id, &vtxo_requests, &[], &keypair);
 
 			req.input_vtxos.get_mut(0).unwrap().ownership_proof = sig.serialize().to_vec();
 
@@ -1296,7 +1296,7 @@ async fn reject_dust_offboard_request() {
 				self.vtxo.id,
 				&[],
 				&offboard_requests,
-				keypair,
+				&keypair,
 			);
 
 
@@ -2100,12 +2100,8 @@ async fn should_refuse_round_input_vtxo_that_is_being_exited() {
 				});
 			}
 
-			let sig = self.challenge.lock().await.as_ref().unwrap().sign_with(
-				self.vtxo.id,
-				&vtxo_requests,
-				&[],
-				keypair,
-			);
+			let sig = self.challenge.lock().await.as_ref().unwrap()
+				.sign_with(self.vtxo.id, &vtxo_requests, &[], &keypair);
 
 			*req.input_vtxos.get_mut(0).unwrap() = protos::InputVtxo {
 				vtxo_id: self.vtxo.id.to_bytes().to_vec(),

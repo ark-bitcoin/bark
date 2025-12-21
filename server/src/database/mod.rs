@@ -219,6 +219,11 @@ impl Db {
 		Ok(())
 	}
 
+	pub async fn get_vtxo_by_id(&self, id: VtxoId) -> anyhow::Result<VtxoState> {
+		let conn = self.get_conn().await?;
+		query::get_vtxo_by_id(&*conn, id).await
+	}
+
 	pub async fn get_vtxos_by_id(&self, ids: &[VtxoId]) -> anyhow::Result<Vec<VtxoState>> {
 		let conn = self.get_conn().await?;
 		query::get_vtxos_by_id(&*conn, ids).await

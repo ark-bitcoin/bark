@@ -13,9 +13,12 @@ use anyhow::Context;
 use tokio_postgres::GenericClient;
 use tokio_postgres::types::Type;
 
-use bitcoin_ext::BlockHeight;
 use ark::{Vtxo, VtxoId, ProtocolEncoding};
-use crate::database::model::{VtxoState, Board};
+use bitcoin_ext::BlockHeight;
+
+use crate::database::model::{Board, VtxoState};
+use crate::error::ContextExt;
+
 
 pub async fn upsert_vtxos<T, V: Borrow<Vtxo>>(
 	client: &T,
@@ -48,6 +51,24 @@ pub async fn upsert_vtxos<T, V: Borrow<Vtxo>>(
 	Ok(())
 }
 
+/// Get a VTXO by id
+pub async fn get_vtxo_by_id<T>(client: &T, id: VtxoId) -> anyhow::Result<VtxoState>
+	where T : GenericClient + Sized
+{
+	let stmt = client.prepare_typed("
+		SELECT id, vtxo_id, vtxo, expiry, oor_spent_txid, forfeit_state, forfeit_round_id,
+			created_at, updated_at
+		FROM vtxo
+		WHERE vtxo_id = $1;
+	", &[Type::TEXT]).await?;
+
+	let row = client.query_opt(&stmt, &[&id.to_string()]).await
+		.context("Query get_vtxo_by_id failed")?
+		.not_found([id], "VTXO not found")?;
+
+	Ok(VtxoState::try_from(row)?)
+}
+
 /// Get vtxos by id and ensure the order of the returned vtxos matches
 /// the order of the provided ids
 pub async fn get_vtxos_by_id<T>(
@@ -57,7 +78,8 @@ pub async fn get_vtxos_by_id<T>(
 	where T : GenericClient + Sized
 {
 	let statement = client.prepare_typed("
-		SELECT id, vtxo_id, vtxo, expiry, oor_spent_txid, forfeit_state, forfeit_round_id, created_at, updated_at
+		SELECT id, vtxo_id, vtxo, expiry, oor_spent_txid, forfeit_state, forfeit_round_id,
+			created_at, updated_at
 		FROM vtxo
 		WHERE vtxo_id = ANY($1);
 	", &[Type::TEXT_ARRAY]).await?;

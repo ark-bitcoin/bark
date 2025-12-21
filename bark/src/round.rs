@@ -592,7 +592,7 @@ async fn start_attempt(
 				vtxo_id: vtxo.id().to_bytes().to_vec(),
 				ownership_proof: {
 					let sig = event.challenge.sign_with(
-						vtxo.id(), &vtxo_reqs, &participation.offboards, keypair,
+						vtxo.id(), &vtxo_reqs, &participation.offboards, &keypair,
 					);
 					sig.serialize().to_vec()
 				},

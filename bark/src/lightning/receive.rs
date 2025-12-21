@@ -211,7 +211,7 @@ impl Wallet {
 			LightningReceiveAntiDos::InputVtxo(protos::InputVtxo {
 				vtxo_id: vtxo.id().to_bytes().to_vec(),
 				ownership_proof: {
-					let sig = challenge.sign_with(vtxo.id(), vtxo_keypair);
+					let sig = challenge.sign_with(vtxo.id(), &vtxo_keypair);
 					sig.serialize().to_vec()
 				}
 			})

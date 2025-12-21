@@ -160,51 +160,7 @@ impl TimedRoundStep {
 	}
 
 	pub fn proceed(&self, round_step: RoundStep) -> TimedRoundStep {
-		let old_round_step = self.step;
-		let new_timed_round_step = match old_round_step {
-			RoundStep::AttemptInitiation => {
-				RoundStep::ReceivePayments.with_instant(self.round_seq, self.attempt_seq)
-			}
-			RoundStep::ReceivePayments => {
-				RoundStep::ConstructVtxoTree.with_instant(self.round_seq, self.attempt_seq)
-			}
-			RoundStep::ConstructVtxoTree => {
-				RoundStep::SendingVtxoProposal.with_instant(self.round_seq, self.attempt_seq)
-			}
-			RoundStep::SendingVtxoProposal => {
-				RoundStep::ReceiveVtxoSignatures.with_instant(self.round_seq, self.attempt_seq)
-			}
-			RoundStep::ReceiveVtxoSignatures => {
-				RoundStep::ConstructRoundProposal.with_instant(self.round_seq, self.attempt_seq)
-			}
-			RoundStep::ConstructRoundProposal => {
-				RoundStep::CombineVtxoSignatures.with_instant(self.round_seq, self.attempt_seq)
-			}
-			RoundStep::CombineVtxoSignatures => {
-				RoundStep::ReceiveForfeitSignatures.with_instant(self.round_seq, self.attempt_seq)
-			}
-			RoundStep::ReceiveForfeitSignatures => {
-				RoundStep::FinalStage.with_instant(self.round_seq, self.attempt_seq)
-			}
-			RoundStep::FinalStage => {
-				RoundStep::SignOnChainTransaction.with_instant(self.round_seq, self.attempt_seq)
-			}
-			RoundStep::SignOnChainTransaction => {
-				RoundStep::Persist.with_instant(self.round_seq, self.attempt_seq)
-			}
-			RoundStep::Persist => {
-				panic!("Cannot proceed to next step")
-			}
-		};
-
-		if new_timed_round_step.step != round_step {
-			let new_round_step = new_timed_round_step.step;
-			panic!("Proceeding to next step is not allowed from: {:?} to {:?} but expected: {:?}",
-				old_round_step, new_round_step, round_step,
-			)
-		}
-
-		new_timed_round_step
+		round_step.with_instant(self.round_seq, self.attempt_seq)
 	}
 }
 
