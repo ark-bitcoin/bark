@@ -110,9 +110,10 @@ impl VtxoState {
 }
 
 /// A wallet-owned [Vtxo] paired with its current tracked state.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WalletVtxo {
 	/// The underlying [Vtxo].
+	#[serde(with = "ark::encode::serde")]
 	pub vtxo: Vtxo,
 	/// The current tracked state for [WalletVtxo::into_vtxo].
 	pub state: VtxoState,
