@@ -802,8 +802,8 @@ async fn bark_can_revoke_on_intra_ark_send_when_receiver_leaves() {
 
 	// Start a server and link it to our cln installation
 	let srv = ctx.new_captaind_with_cfg("server", Some(&lightning.receiver), |cfg| {
-		// speed invoice expiry
-		cfg.invoice_expiry = Duration::from_secs(2);
+		// Short timeout for when HTLCs are held but receiver doesn't claim
+		cfg.receive_htlc_forward_timeout = Duration::from_secs(2);
 		// speed htlc subscription check
 		cfg.invoice_check_interval = Duration::from_secs(1);
 		// quick payment update check
