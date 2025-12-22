@@ -28,7 +28,7 @@
 ///
 /// ```
 /// use server::secret::Secret;
-/// use log;
+/// use tracing::debug;
 ///
 /// #[derive(Debug)]
 /// struct Config {
@@ -42,7 +42,7 @@
 /// };
 ///
 /// // The secret will be redacted when writing the debug log
-/// log::debug!("Initiating connection with config {:?}", &config)
+/// debug!("Initiating connection with config {:?}", &config)
 /// ````
 
 use serde::{Serialize, Deserialize};

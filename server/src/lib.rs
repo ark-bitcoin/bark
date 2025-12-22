@@ -28,14 +28,14 @@ mod intman;
 mod ln;
 mod psbtext;
 mod round;
-mod telemetry;
+pub mod telemetry;
 mod txindex;
 mod utils;
+
 
 pub use crate::intman::{CAPTAIND_API_KEY, CAPTAIND_CLI_API_KEY};
 pub use crate::config::Config;
 use crate::utils::TimedEntryMap;
-
 
 use std::borrow::Borrow;
 use std::collections::HashSet;
@@ -50,10 +50,10 @@ use anyhow::Context;
 use bitcoin::{bip32, Address, Amount, OutPoint, Transaction};
 use bitcoin::secp256k1::{self, rand, Keypair, PublicKey};
 use futures::Stream;
-use log::{info, trace, warn};
 use tokio::sync::{broadcast, mpsc, oneshot};
 use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::wrappers::errors::BroadcastStreamRecvError;
+use tracing::{info, warn, trace};
 
 use ark::{Vtxo, VtxoId, VtxoRequest};
 use ark::vtxo::VtxoRef;
@@ -280,6 +280,32 @@ impl Server {
 
 	/// Start the server.
 	pub async fn start(cfg: Config) -> anyhow::Result<Arc<Self>> {
+		let seed = wallet::read_mnemonic_from_datadir(&cfg.data_dir)?.to_seed("");
+		let master_xpriv = bip32::Xpriv::new_master(cfg.network, &seed).unwrap();
+
+		let server_key = {
+			let path = bip32::DerivationPath::from_str(SERVER_KEY_PATH).unwrap();
+			let xpriv = master_xpriv.derive_priv(&SECP, &path).unwrap();
+			Keypair::from_secret_key(&SECP, &xpriv.private_key)
+		};
+
+		let mailbox_key = {
+			let path = bip32::DerivationPath::from_str(MAILBOX_KEY_PATH).unwrap();
+			let xpriv = master_xpriv.derive_priv(&SECP, &path).unwrap();
+			Keypair::from_secret_key(&SECP, &xpriv.private_key)
+		};
+
+		telemetry::init_telemetry::<telemetry::Captaind>(
+			cfg.otel_collector_endpoint.clone(),
+			cfg.otel_tracing_sampler,
+			cfg.otel_deployment_name.as_str(),
+			cfg.network,
+			cfg.round_interval,
+			cfg.max_vtxo_amount,
+			server_key.public_key(),
+		);
+		info!("Running with config: {:#?}", cfg);
+
 		info!("Starting server at {}", cfg.data_dir.display());
 
 		info!("Connecting to db at {}:{}", cfg.postgres.host, cfg.postgres.port);
@@ -301,42 +327,15 @@ impl Server {
 			);
 		}
 
-		let seed = wallet::read_mnemonic_from_datadir(&cfg.data_dir)?.to_seed("");
-		let master_xpriv = bip32::Xpriv::new_master(cfg.network, &seed).unwrap();
-
 		let deep_tip = bitcoind.deep_tip().context("failed to query node for deep tip")?;
 		let mut rounds_wallet = Self::open_round_wallet(&cfg, db.clone(), &master_xpriv, deep_tip)
 			.await.context("error loading wallet")?;
-
-		let server_key = {
-			let path = bip32::DerivationPath::from_str(SERVER_KEY_PATH).unwrap();
-			let xpriv = master_xpriv.derive_priv(&SECP, &path).unwrap();
-			Keypair::from_secret_key(&SECP, &xpriv.private_key)
-		};
-
-		let mailbox_key = {
-			let path = bip32::DerivationPath::from_str(MAILBOX_KEY_PATH).unwrap();
-			let xpriv = master_xpriv.derive_priv(&SECP, &path).unwrap();
-			Keypair::from_secret_key(&SECP, &xpriv.private_key)
-		};
 
 		let ephemeral_master_key = {
 			let path = bip32::DerivationPath::from_str(EPHEMERAL_KEY_PATH).unwrap();
 			let xpriv = master_xpriv.derive_priv(&SECP, &path).unwrap();
 			Keypair::from_secret_key(&SECP, &xpriv.private_key)
 		};
-
-		if let Some(ref endpoint) = cfg.otel_collector_endpoint {
-			telemetry::init_telemetry::<telemetry::Captaind>(
-				endpoint,
-				cfg.otel_tracing_sampler,
-				cfg.otel_deployment_name.as_str(),
-				cfg.network,
-				cfg.round_interval,
-				cfg.max_vtxo_amount,
-				server_key.public_key(),
-			);
-		}
 
 		// *******************
 		// * START PROCESSES *
@@ -664,7 +663,9 @@ impl Server {
 		self.db.upsert_board(&vtxo).await.context("db error")
 			.context("Failed to upsert board into database")?;
 
-		slog!(RegisteredBoard, onchain_utxo: vtxo.chain_anchor(), vtxo: vtxo.point(),
+		slog!(RegisteredBoard,
+			onchain_utxo: vtxo.chain_anchor(),
+			vtxo: vtxo.point(),
 			amount: vtxo.amount(),
 		);
 
@@ -713,9 +714,10 @@ impl Server {
 				badarg!("attempted to sign arkoor tx for already spent vtxo {}", dup)
 			},
 			Ok(None) => {
-				let output_ids = builder.new_vtxos().into_iter().flatten()
+				let output_vtxo_ids = builder.new_vtxos().into_iter().flatten()
 					.map(|v| v.id()).collect::<Vec<_>>();
-				slog!(ArkoorCosign, input_ids, output_ids);
+				let input_vtxo_ids = input_ids.into_iter().map(|id| id).collect::<Vec<_>>();
+				slog!(ArkoorCosign, input_ids: input_vtxo_ids, output_ids: output_vtxo_ids);
 				// let's sign the tx
 				Ok(builder.server_cosign(&self.server_key.leak_ref()))
 			},

@@ -11,7 +11,7 @@ pub struct SpentPoolVtxo {
 	pub amount: Amount,
 	pub request: VtxoRequest,
 }
-impl_slog!(SpentPoolVtxo, Debug, "a VTXO pool vtxo was spent");
+impl_slog!(SpentPoolVtxo, DEBUG, "a VTXO pool vtxo was spent");
 
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -19,7 +19,7 @@ pub struct ChangePoolVtxo {
 	pub vtxo: VtxoId,
 	pub amount: Amount,
 }
-impl_slog!(ChangePoolVtxo, Debug, "we created a change VTXO from the VTXO pool");
+impl_slog!(ChangePoolVtxo, DEBUG, "we created a change VTXO from the VTXO pool");
 
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -27,7 +27,7 @@ pub struct PreparingPoolIssuance {
 	pub amount: Amount,
 	pub count: usize,
 }
-impl_slog!(PreparingPoolIssuance, Info, "preparing to issue VTXOs for VTXO pool");
+impl_slog!(PreparingPoolIssuance, INFO, "preparing to issue VTXOs for VTXO pool");
 
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -36,7 +36,7 @@ pub struct PreparingPoolIssuanceTx {
 	pub total_amount: Amount,
 	pub total_count: usize,
 }
-impl_slog!(PreparingPoolIssuanceTx, Info, "preparing funding tx for signed VTXO tree");
+impl_slog!(PreparingPoolIssuanceTx, INFO, "preparing funding tx for signed VTXO tree");
 
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -45,5 +45,5 @@ pub struct FinishedPoolIssuance {
 	pub total_amount: Amount,
 	pub total_count: usize,
 }
-impl_slog!(FinishedPoolIssuance, Info, "finished issuing new pool VTXOs");
+impl_slog!(FinishedPoolIssuance, INFO, "finished issuing new pool VTXOs");
 

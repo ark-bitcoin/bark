@@ -7,8 +7,7 @@ use std::process;
 
 use anyhow::Context;
 use clap::Parser;
-use log::{error, info};
-
+use tracing::error;
 use server::config::watchman::Config;
 use server::watchman::Watchman;
 
@@ -58,9 +57,6 @@ async fn inner_main() -> anyhow::Result<()> {
 	let cfg = Config::load(cli.config.as_ref().context("no config file path provided")?)
 		.context("error loading config file")?;
 	cfg.validate().expect("invalid configuration");
-
-	common::init_logging();
-	info!("Running with config: {:#?}", cfg);
 
 	match cli.command {
 		Command::Start => {

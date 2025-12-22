@@ -29,7 +29,6 @@ bitcoin.workspace = true
 lightning-invoice.workspace = true
 anyhow.workspace = true
 serde.workspace = true
-log.workspace = true
 
 # INTERNAL
 thiserror.workspace = true
@@ -79,7 +78,10 @@ opentelemetry_sdk.workspace = true
 opentelemetry-semantic-conventions.workspace = true
 tracing-opentelemetry.workspace = true
 tracing-subscriber.workspace = true
+tracing-core.workspace = true
 tracing.workspace = true
+tonic-tracing-opentelemetry.workspace = true
+json-subscriber.workspace = true
 
 [dev-dependencies]
 ark-lib = { path = "../lib", features = [ "test-util" ] }

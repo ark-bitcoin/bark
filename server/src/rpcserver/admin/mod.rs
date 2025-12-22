@@ -1,7 +1,10 @@
 use std::str::FromStr;
 use std::sync::{atomic, Arc};
-use log::{info, trace, warn};
+
+use tonic_tracing_opentelemetry::middleware::server::OtelGrpcLayer;
+use tracing::{info, trace, warn};
 use server_rpc::{self as rpc, protos};
+
 use crate::rpcserver::{middleware, StatusContext, ToStatusResult, RPC_RICH_ERRORS};
 use crate::rpcserver::middleware::rpc_names;
 use crate::rpcserver::middleware::RpcMethodDetails;
@@ -123,16 +126,11 @@ pub async fn run_rpc_server(srv: Arc<Server>) -> anyhow::Result<()> {
 		.add_service(rpc::server::LightningAdminServiceServer::from_arc(srv.clone()))
 		.add_service(rpc::server::SweepAdminServiceServer::from_arc(srv.clone()));
 
-	if srv.config.otel_collector_endpoint.is_some() {
-		tonic::transport::Server::builder()
-			.layer(middleware::TelemetryMetricsLayer)
-			.add_routes(routes)
-			.serve_with_shutdown(addr, srv.rtmgr.shutdown_signal()).await?;
-	} else {
-		tonic::transport::Server::builder()
-			.add_routes(routes)
-			.serve_with_shutdown(addr, srv.rtmgr.shutdown_signal()).await?;
-	}
+	tonic::transport::Server::builder()
+		.layer(OtelGrpcLayer::default())
+		.layer(middleware::TelemetryMetricsLayer)
+		.add_routes(routes)
+		.serve_with_shutdown(addr, srv.rtmgr.shutdown_signal()).await?;
 
 	info!("Terminated admin gRPC service on address {}", addr);
 

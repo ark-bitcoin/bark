@@ -3,13 +3,12 @@ use std::pin::Pin;
 use std::str::FromStr;
 use std::task::Poll;
 use std::time::Instant;
-use log::trace;
-use opentelemetry::{global, Context, KeyValue};
-use opentelemetry::trace::{Span, SpanKind, TraceContextExt, Tracer};
+
+use opentelemetry::KeyValue;
 use tonic::transport::server::TcpConnectInfo;
 use tower::{Layer, Service};
-use crate::telemetry::{self, MetricsService};
-use crate::telemetry::SpanExt;
+use tracing::trace;
+use crate::telemetry::{self};
 
 const RPC_SYSTEM_HTTP: &'static str = "http";
 const RPC_SYSTEM_GRPC: &'static str = "grpc";
@@ -287,20 +286,6 @@ where
 		];
 		telemetry::add_grpc_in_progress(&attributes);
 
-		// NB currently only captains uses
-		let tracer = global::tracer(telemetry::Captaind::TRACER);
-		let mut span = tracer
-			.span_builder(rpc_method_details.format_path())
-			.with_kind(SpanKind::Server)
-			.start(&tracer);
-		span.set_str_attr(telemetry::RPC_SYSTEM, rpc_method_details.system);
-		span.set_str_attr(telemetry::RPC_SERVICE, rpc_method_details.service);
-		span.set_str_attr(telemetry::RPC_METHOD, rpc_method_details.method);
-
-		span.add_event(format!("Processing {} request", rpc_method_details.format_path()), vec![]);
-
-		let span_context = Context::current_with_span(span);
-
 		let start_time = Instant::now();
 		let future = self.inner.call(req);
 		Box::pin(async move {
@@ -325,8 +310,6 @@ where
 					rpc_method_details.format_path(), duration, error_string,
 				);
 			} else {
-				span_context.span().set_int_attr(telemetry::RPC_GRPC_STATUS_CODE, tonic::Code::Ok as i64);
-
 				trace!("Completed gRPC call: {} in {:?}, status: OK",
 					rpc_method_details.format_path(), duration,
 				);

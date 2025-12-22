@@ -10,7 +10,7 @@ use chrono::{DateTime, Local};
 use futures::future::join_all;
 use tokio::sync::watch;
 
-use log::{error, info};
+use tracing::{error, info};
 
 use bitcoin_ext::rpc::{BitcoinRpcClient, RpcApi};
 use bitcoin_ext::BlockRef;

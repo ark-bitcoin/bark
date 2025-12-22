@@ -48,10 +48,9 @@ use bitcoin::secp256k1::PublicKey;
 use bitcoin_ext::{AmountExt, BlockDelta, BlockHeight};
 use cln_rpc::plugins::hold::{self, hold_client::HoldClient};
 use lightning_invoice::Bolt11Invoice;
-use log::{debug, error, info, trace, warn};
 use tokio::sync::{broadcast, Notify, mpsc, oneshot};
 use tonic::transport::{Channel, Uri};
-
+use tracing::{debug, error, info, trace, warn};
 use ark::lightning::{Bolt12Invoice, Bolt12InvoiceExt, Invoice, Offer, PaymentHash, PaymentStatus, Preimage};
 use cln_rpc::node_client::NodeClient;
 

@@ -42,17 +42,16 @@ use std::time::Duration;
 use anyhow::Context;
 use ark::tree::signed::cosign_taproot;
 use ark::vtxo::VtxoSpec;
-use bitcoin::consensus::encode::serialize_hex;
 use bitcoin::secp256k1::{XOnlyPublicKey, Keypair};
 use bitcoin::{
 	psbt, sighash, Address, Amount, FeeRate, Network, OutPoint, Sequence, Transaction, TxOut,
 	Txid, Weight,
 };
+use bitcoin::consensus::encode::serialize_hex;
 use bitcoin_ext::{BlockHeight, TaprootSpendInfoExt, TransactionExt, DEEPLY_CONFIRMED};
 use bitcoin_ext::rpc::{BitcoinRpcClient, BitcoinRpcExt, RpcApi};
-use log::{trace, info, warn, error};
 use tokio::sync::mpsc;
-
+use tracing::{error, info, trace, warn};
 use ark::{musig, Vtxo};
 use ark::connectors::ConnectorChain;
 use ark::rounds::{RoundId, ROUND_TX_VTXO_TREE_VOUT};
@@ -464,7 +463,8 @@ impl Process {
 	/// Store the pending tx both in the db and mem cache.
 	async fn add_new_pending(&mut self, txid: Txid, tx: Transaction) -> anyhow::Result<()> {
 		self.db.store_pending_sweep(&txid, &tx).await
-			.with_context(|| format!("db error storing pending sweep, tx={}", serialize_hex(&tx)))?;
+			.with_context(||
+				format!("db error storing pending sweep, tx={}", serialize_hex(&tx)))?;
 
 		let tx = self.tx_nursery.broadcast_tx(tx).await
 			.context("Failed to broadcast sweeping transaction")?;
@@ -581,20 +581,28 @@ impl Process {
 				SweepMeta::Connector(_) => "connector",
 				SweepMeta::Board => unreachable!(),
 			};
-			slog!(SweepingOutput, outpoint: s.point, amount: s.amount(), sweep_type: tp.into(),
-				surplus: s.surplus(feerate).unwrap(), expiry_height: s.round.round.expiry_height,
+			slog!(SweepingOutput,
+				outpoint: s.point,
+				amount: s.amount(),
+				sweep_type: tp.into(),
+				surplus: s.surplus(feerate).unwrap(),
+				expiry_height: s.round.round.expiry_height,
 			);
 		}
 		for s in &builder.board_sweeps {
-			slog!(SweepingOutput, outpoint: s.point, amount: s.amount(), sweep_type: "board".into(),
-				surplus: s.surplus(feerate).unwrap(), expiry_height: s.vtxo_spec.expiry_height,
+			slog!(SweepingOutput,
+				outpoint: s.point,
+				amount: s.amount(),
+				sweep_type: "board".into(),
+				surplus: s.surplus(feerate).unwrap(),
+				expiry_height: s.vtxo_spec.expiry_height,
 			);
 		}
 
 		let signed = builder.create_tx(tip).await.context("creating sweep tx")?;
 		let txid = signed.compute_txid();
 		self.add_new_pending(txid, signed.clone()).await?;
-		slog!(SweepBroadcast, txid, surplus: surplus);
+		slog!(SweepBroadcast, txid, surplus);
 
 		Ok(())
 	}
@@ -613,13 +621,15 @@ impl Process {
 					slog!(SweepTxFullyConfirmed, txid: *txid);
 					self.db.confirm_pending_sweep(txid).await?;
 				} else {
-					slog!(SweepTxAbandoned, txid: *txid,
+					slog!(SweepTxAbandoned,
+						txid: *txid,
 						tx: bitcoin::consensus::encode::serialize_hex(&tx.tx),
 					);
 					self.db.abandon_pending_sweep(txid).await?;
 				}
 			} else {
-				slog!(SweepTxAbandoned, txid: *txid,
+				slog!(SweepTxAbandoned,
+					txid: *txid,
 					tx: bitcoin::consensus::encode::serialize_hex(&tx.tx),
 				);
 				self.db.abandon_pending_sweep(txid).await?;
@@ -631,7 +641,8 @@ impl Process {
 			self.pending_txs.remove(&txid);
 		}
 
-		slog!(SweeperStats, nb_pending_txs: self.pending_txs.len(),
+		slog!(SweeperStats,
+			nb_pending_txs: self.pending_txs.len(),
 			nb_pending_utxos: self.pending_tx_by_utxo.len(),
 		);
 

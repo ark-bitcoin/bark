@@ -9,13 +9,14 @@ mod macros;
 
 use std::fmt;
 use std::sync::atomic::{self, AtomicBool};
-use log::trace;
+
 use opentelemetry::KeyValue;
 use opentelemetry::trace::get_active_span;
 use tokio::sync::oneshot;
 use tonic::async_trait;
-
+use tracing::trace;
 use server_rpc::RequestExt;
+
 use crate::error::{BadArgument, NotFound};
 
 

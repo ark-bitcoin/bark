@@ -10,7 +10,7 @@ use ark::integration::TokenStatus;
 use bitcoin::Amount;
 use bitcoin::hex::DisplayHex;
 use bitcoin::secp256k1::{schnorr, PublicKey};
-use log::{info, trace, error};
+use tracing::{error, info, trace};
 use uuid::Uuid;
 
 use ark::{musig, ProtocolEncoding, Vtxo, VtxoId, VtxoPolicy, VtxoRequest};

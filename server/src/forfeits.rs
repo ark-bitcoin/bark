@@ -6,11 +6,12 @@ use std::time::Duration;
 use anyhow::Context;
 use bitcoin::{OutPoint, Transaction, Txid, FeeRate, bip32, Network, Amount};
 use bitcoin::key::Keypair;
-use log::{error, debug, info, trace};
 use tokio::sync::{mpsc, oneshot};
+use tokio_stream::StreamExt;
+use tracing::{debug, error, info, trace};
 
-use ark::{Vtxo, VtxoId};
-use ark::connectors::ConnectorIter;
+use ark::{musig, Vtxo, VtxoId};
+use ark::connectors::{ConnectorChain, ConnectorIter};
 use ark::rounds::RoundId;
 use bitcoin_ext::bdk::WalletExt;
 use bitcoin_ext::cpfp::MakeCpfpFees;

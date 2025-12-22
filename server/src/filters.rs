@@ -2,7 +2,7 @@ use std::net::{IpAddr, SocketAddr};
 
 use clap::Args;
 use ipnet::IpNet;
-use log::trace;
+use tracing::trace;
 use trust_dns_resolver::TokioAsyncResolver;
 
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq, Args)]

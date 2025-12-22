@@ -2,8 +2,8 @@
 use std::net::SocketAddr;
 use std::sync::{atomic, Arc};
 
-use log::{error, info};
-
+use tonic_tracing_opentelemetry::middleware::server::OtelGrpcLayer;
+use tracing::{error, info};
 use server_rpc::protos;
 
 use crate::rpcserver::middleware::rpc_names;
@@ -145,28 +145,17 @@ pub async fn run_rpc_server(server: Arc<Server>) -> anyhow::Result<()> {
 	info!("Starting integration gRPC service on address {}", addr);
 	let integration_server = server_rpc::server::IntegrationServiceServer::from_arc(server.clone());
 
-	if server.config.otel_collector_endpoint.is_some() {
-		tonic::transport::Server::builder()
-			.layer(crate::rpcserver::middleware::TelemetryMetricsLayer)
-			.layer(crate::rpcserver::middleware::RemoteAddrLayer)
-			.add_service(integration_server)
-			.serve_with_shutdown(addr, server.rtmgr.shutdown_signal()).await
-			.map_err(|e| {
-				error!("Failed to start admin gRPC server on {}: {}", addr, e);
+	tonic::transport::Server::builder()
+		.layer(OtelGrpcLayer::default())
+		.layer(crate::rpcserver::middleware::TelemetryMetricsLayer)
+		.layer(crate::rpcserver::middleware::RemoteAddrLayer)
+		.add_service(integration_server)
+		.serve_with_shutdown(addr, server.rtmgr.shutdown_signal()).await
+		.map_err(|e| {
+			error!("Failed to start admin gRPC server on {}: {}", addr, e);
 
-				e
-			})?;
-	} else {
-		tonic::transport::Server::builder()
-			.layer(crate::rpcserver::middleware::RemoteAddrLayer)
-			.add_service(integration_server)
-			.serve_with_shutdown(addr, server.rtmgr.shutdown_signal()).await
-			.map_err(|e| {
-				error!("Failed to start admin gRPC server on {}: {}", addr, e);
-
-				e
-			})?;
-	};
+			e
+		})?;
 
 	info!("Terminated admin gRPC service on address {}", addr);
 

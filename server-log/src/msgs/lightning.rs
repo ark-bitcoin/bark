@@ -13,14 +13,14 @@ pub struct LightningPayHtlcsRequested {
 	pub amount: Amount,
 	pub expiry: BlockHeight,
 }
-impl_slog!(LightningPayHtlcsRequested, Info, "requested HTLCs for lightning payment");
+impl_slog!(LightningPayHtlcsRequested, INFO, "requested HTLCs for lightning payment");
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LightningPaymentInitRequested {
 	pub invoice_payment_hash: PaymentHash,
 	pub htlc_vtxo_ids: Vec<VtxoId>,
 }
-impl_slog!(LightningPaymentInitRequested, Trace, "requested lightning payment initiation");
+impl_slog!(LightningPaymentInitRequested, TRACE, "requested lightning payment initiation");
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LightningPaymentInitiated {
@@ -28,21 +28,21 @@ pub struct LightningPaymentInitiated {
 	pub amount: Amount,
 	pub min_expiry: BlockHeight,
 }
-impl_slog!(LightningPaymentInitiated, Info, "initiated lightning payment");
+impl_slog!(LightningPaymentInitiated, INFO, "initiated lightning payment");
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LightningPayHtlcsRevocationRequested {
 	pub invoice_payment_hash: PaymentHash,
 	pub htlc_vtxo_ids: Vec<VtxoId>,
 }
-impl_slog!(LightningPayHtlcsRevocationRequested, Trace, "requested htlc revocation");
+impl_slog!(LightningPayHtlcsRevocationRequested, TRACE, "requested htlc revocation");
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LightningPayHtlcsRevoked {
 	pub invoice_payment_hash: PaymentHash,
 	pub vtxo_request: VtxoRequest,
 }
-impl_slog!(LightningPayHtlcsRevoked, Info, "revoked HTLCs for lightning payment");
+impl_slog!(LightningPayHtlcsRevoked, INFO, "revoked HTLCs for lightning payment");
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LightningReceivePrepareRequested {
@@ -50,14 +50,14 @@ pub struct LightningReceivePrepareRequested {
 	pub user_pubkey: PublicKey,
 	pub htlc_recv_expiry: BlockHeight,
 }
-impl_slog!(LightningReceivePrepareRequested, Trace, "requested lightning receive HTLCs preparation");
+impl_slog!(LightningReceivePrepareRequested, TRACE, "requested lightning receive HTLCs preparation");
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LightningReceivePrepared {
 	pub payment_hash: PaymentHash,
 	pub htlc_vtxo_ids: Vec<VtxoId>,
 }
-impl_slog!(LightningReceivePrepared, Info, "prepared HTLC VTXOs for lightning receive");
+impl_slog!(LightningReceivePrepared, INFO, "prepared HTLC VTXOs for lightning receive");
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LightningReceiveClaimRequested {
@@ -66,7 +66,7 @@ pub struct LightningReceiveClaimRequested {
 	#[serde(with = "ark::encode::serde")]
 	pub vtxo_policy: VtxoPolicy,
 }
-impl_slog!(LightningReceiveClaimRequested, Trace, "requested lightning receive claim");
+impl_slog!(LightningReceiveClaimRequested, TRACE, "requested lightning receive claim");
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LightningReceiveClaimed {
@@ -74,5 +74,5 @@ pub struct LightningReceiveClaimed {
 	pub payment_preimage: Preimage,
 	pub vtxo_request: VtxoRequest,
 }
-impl_slog!(LightningReceiveClaimed, Info, "claimed lightning receive");
+impl_slog!(LightningReceiveClaimed, INFO, "claimed lightning receive");
 

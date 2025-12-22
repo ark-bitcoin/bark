@@ -1,9 +1,9 @@
 use std::pin::Pin;
+
 use bitcoin::hex::DisplayHex;
 use futures::Stream;
 use opentelemetry::KeyValue;
-use log::{error, warn};
-
+use tracing::{error, warn};
 use ark::{ProtocolEncoding, Vtxo};
 use ark::mailbox::{BlindedMailboxIdentifier, MailboxAuthorization, MailboxIdentifier};
 use server_rpc::{self as rpc, protos, TryFromBytes};

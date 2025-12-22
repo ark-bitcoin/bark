@@ -3,10 +3,10 @@ use std::sync::Arc;
 use std::sync::atomic::{self, AtomicUsize};
 use std::time::{Duration, Instant};
 
-use log::{error, info};
 use tokio::signal;
 use tokio::sync::Notify;
 use tokio_util::sync::CancellationToken;
+use tracing::{error, info};
 use crate::telemetry;
 
 /// A struct to be held in scope while a process is working.
