@@ -20,13 +20,20 @@ impl OffboardRequest {
 	/// Calculate the fee we have to charge for adding an output
 	/// with the given scriptPubkey to a transaction.
 	///
+	/// Use the `fixed_weight_charged` argument to add the fixed fee part that the
+	/// server charges. This will be added to the offboard's output size
+	/// and multiplied with the given fee rate.
+	///
 	/// Returns `None` in the calculation overflows because of insane
 	/// scriptPubkey or fee rate.
 	pub fn calculate_fee(
 		script_pubkey: &Script,
 		fee_rate: FeeRate,
+		fixed_weight_charged: Weight,
 	) -> Option<Amount> {
-		Some(fee_rate.checked_mul_by_weight(Weight::from_vb(script_pubkey.len() as u64)?)?)
+		let total = Weight::from_vb(script_pubkey.len() as u64)?
+			.checked_add(fixed_weight_charged)?;
+		Some(fee_rate.checked_mul_by_weight(total)?)
 	}
 
 	/// Validate that the offboard has a valid script.
@@ -46,12 +53,20 @@ impl OffboardRequest {
 		}
 	}
 
-	/// Returns the fee charged for the user to make this offboard given the fee rate.
+	/// Returns the fee charged for the user to make this offboard given the fee rate
+	///
+	///
+	/// Use the `fixed_weight_charged` argument to add the fixed fee part that the
+	/// server charges. This will be added to the offboard's output size
+	/// and multiplied with the given fee rate.
 	///
 	/// Returns `None` in the calculation overflows because of insane
 	/// scriptPubkey or fee rate.
-	pub fn fee(&self, fee_rate: FeeRate) -> Option<Amount> {
-		Self::calculate_fee(&self.script_pubkey, fee_rate)
+	pub fn fee(
+		&self,
+		fee_rate: FeeRate,
+		fixed_weight_charged: Weight,
+	) -> Option<Amount> {
+		Self::calculate_fee(&self.script_pubkey, fee_rate, fixed_weight_charged)
 	}
 }
-
