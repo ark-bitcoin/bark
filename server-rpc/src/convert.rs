@@ -149,6 +149,7 @@ impl From<ark::ArkInfo> for protos::ArkInfo {
 			max_user_invoice_cltv_delta: v.max_user_invoice_cltv_delta as u32,
 			min_board_amount: v.min_board_amount.to_sat(),
 			offboard_feerate_sat_vkb: v.offboard_feerate.to_sat_per_kwu() * 4,
+			offboard_fixed_fee_vb: v.offboard_fixed_fee_vb,
 			ln_receive_anti_dos_required: v.ln_receive_anti_dos_required,
 		}
 	}
@@ -179,6 +180,7 @@ impl TryFrom<protos::ArkInfo> for ark::ArkInfo {
 				.map_err(|_| "invalid max user invoice cltv delta")?,
 			min_board_amount: Amount::from_sat(v.min_board_amount),
 			offboard_feerate: FeeRate::from_sat_per_kwu(v.offboard_feerate_sat_vkb / 4),
+			offboard_fixed_fee_vb: v.offboard_fixed_fee_vb,
 			ln_receive_anti_dos_required: v.ln_receive_anti_dos_required,
 		})
 	}

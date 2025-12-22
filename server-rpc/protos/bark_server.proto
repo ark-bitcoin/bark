@@ -120,12 +120,15 @@ message ArkInfo {
 	uint32 required_board_confirmations = 11;
 	uint32 max_user_invoice_cltv_delta = 12;
 	uint64 min_board_amount = 13;
+	bool ln_receive_anti_dos_required = 15;
+	bytes mailbox_pubkey = 16;
 
 	//TODO(stevenroose) move fee related values that are less
 	// permanent into another struct for bark to check
 	uint64 offboard_feerate_sat_vkb = 14;
-	bool ln_receive_anti_dos_required = 15;
-	bytes mailbox_pubkey = 16;
+	uint64 offboard_fixed_fee_vb = 17;
+
+	// last index: 17
 }
 
 message FreshRoundsRequest {

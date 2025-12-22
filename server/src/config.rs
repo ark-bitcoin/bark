@@ -386,6 +386,19 @@ pub struct Config {
 	/// provide a VTXO ownership proof, or a lightning receive token
 	/// when preparing a lightning claim.
 	pub ln_receive_anti_dos_required: bool,
+
+	/// The feerate to use and charge for offboards
+	//
+	// NB when we change this to be dynamic at-runtime, we should be careful
+	// because clients rely on deterministic feerates to prepare change VTXOs.
+	// We should always accept a feerate for at least some time (like 15mins) after
+	// announcing so that we don't screw over clients.
+	#[serde(with = "utils::serde::fee_rate")]
+	pub offboard_feerate: FeeRate,
+
+	/// The number of virtual bytes to account as the fixed part of the
+	/// offboard fee. This is multiplied with the offboard feerate.
+	pub offboard_fixed_fee_vb: u64,
 }
 
 impl Config {

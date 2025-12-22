@@ -76,7 +76,16 @@ pub struct ArkInfo {
 	pub min_board_amount: Amount,
 
 	//TODO(stevenroose) move elsewhere eith other temp fields
+
+	/// The feerate for offboards
 	pub offboard_feerate: FeeRate,
+
+	/// Fixed number of virtual bytes charged offboard on top of the output size
+	///
+	/// The fee for an offboard will be this value, plus the offboard output virtual size,
+	/// multiplied with the offboard fee rate.
+	pub offboard_fixed_fee_vb: u64,
+
 	/// Indicates whether the Ark server requires clients to either
 	/// provide a VTXO ownership proof, or a lightning receive token
 	/// when preparing a lightning claim.
