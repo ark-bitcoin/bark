@@ -444,12 +444,6 @@ impl ClnNodeMonitorProcess {
 			};
 			let res = hold_client.list(req).await?.into_inner();
 
-			if res.invoices.is_empty() {
-				warn!("Lightning htlc subscription ({}) is not found on plugin.",
-					htlc_subscription.id,
-				);
-			}
-
 			let accepted_invoice = res.invoices.iter().find(|i| i.state == InvoiceState::Accepted as i32);
 
 			if let Some(accepted_invoice) = accepted_invoice {
@@ -515,6 +509,18 @@ impl ClnNodeMonitorProcess {
 				continue;
 			}
 
+			// For intra-ark payments, the hold invoice is canceled after we set
+			// the subscription to Accepted, so there won't be an accepted invoice
+			// in the hold plugin. We need to check if the subscription has been
+			// in the Accepted state for too long using `receive_htlc_forward_timeout`.
+			if htlc_subscription.status == LightningHtlcSubscriptionStatus::Accepted {
+				let accepted_at = htlc_subscription.updated_at;
+				if accepted_at < Local::now() - self.config.receive_htlc_forward_timeout {
+					self.cancel_htlc_subscription(&htlc_subscription, "htlc vtxo setup timed out").await?;
+					continue;
+				}
+			}
+
 			// Cancel invoice & subscription if invoice expired
 			if htlc_subscription.invoice.is_expired() {
 				self.cancel_invoice_and_htlc_subscription(&mut hold_client, payment_hash, &htlc_subscription, "invoice expired").await?;
@@ -531,13 +537,27 @@ impl ClnNodeMonitorProcess {
 		htlc_subscription: &LightningHtlcSubscription,
 		reason: &str,
 	) -> anyhow::Result<()> {
-		debug!("Lightning htlc subscription ({}) canceled: {}.",
-			htlc_subscription.id, reason,
-		);
-
 		hold_client.cancel(hold::CancelRequest {
 			payment_hash: payment_hash.to_byte_array().to_vec(),
 		}).await?;
+
+		self.cancel_htlc_subscription(htlc_subscription, reason).await?;
+
+		Ok(())
+	}
+
+	/// Cancel a subscription without canceling the hold invoice.
+	///
+	/// This is used for intra-ark payments where the hold invoice was already
+	/// canceled when the subscription was set to Accepted.
+	async fn cancel_htlc_subscription(
+		&self,
+		htlc_subscription: &LightningHtlcSubscription,
+		reason: &str,
+	) -> anyhow::Result<()> {
+		debug!("Lightning htlc subscription ({}) canceled: {}.",
+			htlc_subscription.id, reason,
+		);
 
 		self.db.store_lightning_htlc_subscription_status(
 			htlc_subscription.id,
