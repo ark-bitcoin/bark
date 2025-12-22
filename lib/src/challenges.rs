@@ -5,9 +5,10 @@ use bitcoin::hashes::{sha256, Hash, HashEngine};
 use bitcoin::key::Keypair;
 use bitcoin::secp256k1::{self, schnorr, Message};
 
-use crate::{OffboardRequest, SignedVtxoRequest, Vtxo, VtxoId, VtxoRequest, SECP};
+use crate::{SignedVtxoRequest, Vtxo, VtxoId, VtxoRequest, SECP};
 use crate::encode::ProtocolEncoding;
 use crate::lightning::PaymentHash;
+use crate::offboard::OffboardRequest;
 
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
