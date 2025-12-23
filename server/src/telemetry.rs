@@ -220,6 +220,7 @@ struct Metrics {
 	pending_expired_operation_gauge: Gauge<u64>,
 	pending_sweeper_gauge: Gauge<u64>,
 	pending_forfeit_gauge: Gauge<u64>,
+	mailbox_counter: Counter<u64>,
 	lightning_node_gauge: Gauge<u64>,
 	lightning_node_boot_counter: Counter<u64>,
 	lightning_payment_counter: Counter<u64>,
@@ -350,6 +351,7 @@ impl Metrics {
 		let round_offboard_count_gauge = meter.u64_gauge("round_offboard_count_gauge").build();
 		let pending_expired_operation_gauge = meter.u64_gauge("pending_expired_operation_gauge").build();
 		let pending_sweeper_gauge = meter.u64_gauge("pending_sweeper_gauge").build();
+		let mailbox_counter = meter.u64_counter("mailbox_counter").build();
 		let pending_forfeit_gauge = meter.u64_gauge("pending_forfeit_gauge").build();
 		let lightning_node_gauge = meter.u64_gauge("lightning_node_gauge").build();
 		let lightning_node_boot_counter = meter.u64_counter("lightning_node_boot_counter").build();
@@ -410,6 +412,7 @@ impl Metrics {
 			pending_expired_operation_gauge,
 			pending_sweeper_gauge,
 			pending_forfeit_gauge,
+			mailbox_counter,
 			lightning_node_gauge,
 			lightning_node_boot_counter,
 			lightning_payment_counter,
@@ -681,6 +684,39 @@ pub fn set_forfeit_metrics(
 			KeyValue::new(ATTRIBUTE_TYPE, "pending_claim_volume"),
 		]);
 		m.pending_forfeit_gauge.record(pending_claim_volume as u64, &claim_volume_attrs)
+	}
+}
+
+#[derive(Debug)]
+pub enum MailboxType {
+	LegacyVtxo,
+	BlindedVtxo,
+}
+
+impl MailboxType {
+	pub fn to_string(&self) -> String {
+		match self {
+			MailboxType::LegacyVtxo => "legacy_vtxo".to_owned(),
+			MailboxType::BlindedVtxo => "blinded_vtxo".to_owned(),
+		}
+	}
+}
+
+pub fn add_to_mailbox(mailbox_type: MailboxType, count: usize) {
+	set_mailbox_metric(mailbox_type, "add", count);
+}
+
+pub fn get_from_mailbox(mailbox_type: MailboxType, count: usize) {
+	set_mailbox_metric(mailbox_type, "get", count);
+}
+
+fn set_mailbox_metric(mailbox_type: MailboxType, t: &'static str, count: usize) {
+	if let Some(m) = TELEMETRY.get() {
+		let attrs = m.with_global_labels([
+			KeyValue::new(ATTRIBUTE_KIND, mailbox_type.to_string()),
+			KeyValue::new(ATTRIBUTE_TYPE, t),
+		]);
+		m.mailbox_counter.add(count as u64, &attrs);
 	}
 }
 
