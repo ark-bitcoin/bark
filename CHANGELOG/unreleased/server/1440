@@ -1,0 +1,12 @@
+
+* round protocol is changed to hArk protocol
+  [PR #1440](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1440)
+  - for hArk details, see https://delvingbitcoin.org/t/evolving-the-ark-protocol-using-ctv-and-csfs/1602
+  - new gRPC endpoints for non-interactive rounds:
+    - `SubmitRoundParticipation`
+    - `RoundParticipationStatus`
+	- `RoundParticiRequestLeafVtxoCosign`
+	- `RoundParticiRequestForfeitNonces`
+	- `RoundParticiForfeitVtxos`
+  - gRPC `SubmitPayment` now returns an unlock_hash
+  - config `round_forfeit_nonces_timeout` (duration) added
