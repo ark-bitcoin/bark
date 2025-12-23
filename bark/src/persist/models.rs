@@ -11,11 +11,11 @@
 use std::borrow::Cow;
 use std::time::SystemTime;
 
-use bitcoin::{Amount, ScriptBuf, Transaction, Txid};
+use bitcoin::{Amount, Transaction, Txid};
 use bitcoin::secp256k1::Keypair;
 use lightning_invoice::Bolt11Invoice;
 
-use ark::{OffboardRequest, Vtxo, VtxoId, VtxoPolicy, VtxoRequest};
+use ark::{Vtxo, VtxoId, VtxoPolicy, VtxoRequest};
 use ark::musig::DangerousSecretNonce;
 use ark::tree::signed::VtxoTreeSpec;
 use ark::lightning::{Invoice, PaymentHash, Preimage};
@@ -124,33 +124,6 @@ impl<'a> From<SerdeVtxoRequest<'a>> for VtxoRequest {
 	}
 }
 
-/// Model for [OffboardRequest]
-#[derive(Debug, Clone, Deserialize, Serialize)]
-struct SerdeOffboardRequest<'a> {
-	#[serde(with = "bitcoin_ext::serde::encodable::cow")]
-	script_pubkey: Cow<'a, ScriptBuf>,
-	#[serde(with = "bitcoin::amount::serde::as_sat")]
-	amount: Amount,
-}
-
-impl<'a> From<&'a OffboardRequest> for SerdeOffboardRequest<'a> {
-	fn from(v: &'a OffboardRequest) -> Self {
-		SerdeOffboardRequest {
-			script_pubkey: Cow::Borrowed(&v.script_pubkey),
-			amount: v.amount,
-		}
-	}
-}
-
-impl<'a> From<SerdeOffboardRequest<'a>> for OffboardRequest {
-	fn from(v: SerdeOffboardRequest) -> Self {
-	    OffboardRequest {
-			script_pubkey: v.script_pubkey.into_owned(),
-			amount: v.amount,
-		}
-	}
-}
-
 /// Model for [UnconfirmedRound]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SerdeUnconfirmedRound<'a> {
@@ -190,7 +163,6 @@ struct SerdeRoundParticipation<'a> {
 	#[serde(with = "ark::encode::serde::cow::vec")]
 	inputs: Cow<'a, [Vtxo]>,
 	outputs: Vec<SerdeVtxoRequest<'a>>,
-	offboards: Vec<SerdeOffboardRequest<'a>>,
 }
 
 impl<'a> From<&'a RoundParticipation> for SerdeRoundParticipation<'a> {
@@ -198,7 +170,6 @@ impl<'a> From<&'a RoundParticipation> for SerdeRoundParticipation<'a> {
 	    Self {
 			inputs: Cow::Borrowed(&v.inputs),
 			outputs: v.outputs.iter().map(|v| v.into()).collect(),
-			offboards: v.offboards.iter().map(|v| v.into()).collect(),
 		}
 	}
 }
@@ -208,7 +179,6 @@ impl<'a> From<SerdeRoundParticipation<'a>> for RoundParticipation {
 		Self {
 			inputs: v.inputs.into_owned(),
 			outputs: v.outputs.into_iter().map(|v| v.into()).collect(),
-			offboards: v.offboards.into_iter().map(|v| v.into()).collect(),
 		}
 	}
 }

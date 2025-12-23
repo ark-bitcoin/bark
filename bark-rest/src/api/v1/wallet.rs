@@ -340,14 +340,12 @@ pub async fn send(
 		let amount = amount.badarg("amount is required for Lightning addresses")?;
 		state.wallet.pay_lightning_address(&addr, amount, body.comment).await?;
 	} else if let Ok(addr) = bitcoin::Address::from_str(&body.destination) {
-		let checked_addr = addr
+		let _checked_addr = addr
 			.require_network(state.wallet.properties()?.network)
 			.context("bitcoin address is not valid for configured network")?;
-		let amount = amount.context("amount missing")?;
+		let _amount = amount.context("amount missing")?;
 
-		state.wallet
-			.send_round_onchain_payment(checked_addr, amount)
-			.await?;
+		return Err(anyhow!("offboards are temporarily disabled").into());
 	} else {
 		badarg!("Argument is not a valid destination. Supported are: \
 			VTXO pubkeys, bolt11 invoices, bolt12 offers and lightning addresses");
@@ -506,7 +504,7 @@ pub async fn offboard_vtxos(
 		badarg!("No VTXO IDs provided");
 	}
 
-	let address = if let Some(addr) = body.address {
+	let _address = if let Some(addr) = body.address {
 		let network = state.wallet.properties()?.network;
 		bitcoin::Address::from_str(&addr)
 			.badarg("invalid destination address")?
@@ -516,22 +514,14 @@ pub async fn offboard_vtxos(
 		onchain_lock.address()?
 	};
 
-	let mut vtxo_ids = Vec::new();
+	let mut _vtxo_ids = Vec::new();
 	for s in body.vtxos {
 		let id = ark::VtxoId::from_str(&s).badarg("Invalid VTXO id")?;
 		state.wallet.get_vtxo_by_id(id).not_found([id], "VTXO not found")?;
-		vtxo_ids.push(id);
+		_vtxo_ids.push(id);
 	}
 
-	let participation = state.wallet
-		.build_offboard_participation(vtxo_ids, address.script_pubkey()).await
-		.context("Failed to build round participation")?;
-
-	let round = state.wallet.join_next_round(participation, Some(RoundMovement::Offboard))
-		.await
-		.context("Failed to store round participation")?;
-
-	Ok(axum::Json(round.into()))
+	Err(anyhow!("offboards are temporarily not supported").into())
 }
 
 #[utoipa::path(
@@ -552,7 +542,7 @@ pub async fn offboard_all(
 ) -> HandlerResult<Json<bark_json::web::PendingRoundInfo>> {
 	let mut onchain_lock = state.onchain.write().await;
 
-	let address = if let Some(addr) = body.address {
+	let _address = if let Some(addr) = body.address {
 		let network = state.wallet.properties()?.network;
 		bitcoin::Address::from_str(&addr)
 			.badarg("invalid destination address")?
@@ -562,17 +552,7 @@ pub async fn offboard_all(
 		onchain_lock.address()?
 	};
 
-	let input_vtxos = state.wallet.spendable_vtxos()?;
-
-	let participation = state.wallet
-		.build_offboard_participation(input_vtxos, address.script_pubkey()).await
-		.context("Failed to build round participation")?;
-
-	let round = state.wallet.join_next_round(participation, Some(RoundMovement::Offboard))
-		.await
-		.context("Failed to store round participation")?;
-
-	Ok(axum::Json(round.into()))
+	Err(anyhow!("offboards are temporarily not supported").into())
 }
 
 #[utoipa::path(
@@ -590,23 +570,15 @@ pub async fn offboard_all(
 pub async fn send_onchain(
 	State(state): State<RestServer>,
 	Json(body): Json<bark_json::web::SendOnchainRequest>,
-) -> HandlerResult<Json<bark_json::web::PendingRoundInfo>> {
-	let addr = bitcoin::Address::from_str(&body.destination)
+) -> HandlerResult<Json<()>> {
+	let _addr = bitcoin::Address::from_str(&body.destination)
 		.badarg("invalid destination address")?
 		.require_network(state.wallet.properties()?.network)
 		.badarg("address is not valid for configured network")?;
 
-	let amount = Amount::from_sat(body.amount_sat);
+	let _amount = Amount::from_sat(body.amount_sat);
 
-	let participation = state.wallet
-		.build_round_onchain_payment_participation(addr, amount).await
-		.context("Failed to build round participation")?;
-
-	let round = state.wallet.join_next_round(participation, Some(RoundMovement::SendOnchain))
-		.await
-		.context("Failed to store round participation")?;
-
-	Ok(axum::Json(round.into()))
+	Err(anyhow!("onchain payments are temporarily not supported").into())
 }
 
 #[utoipa::path(

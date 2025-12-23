@@ -14,14 +14,13 @@ use bip39::rand;
 use bitcoin::consensus::encode::serialize_hex;
 use bitcoin::key::Keypair;
 use bitcoin::secp256k1::{schnorr, PublicKey};
-use bitcoin::{Address, Network, OutPoint, Transaction, Txid};
-use bitcoin::consensus::Params;
+use bitcoin::{OutPoint, SignedAmount, Transaction, Txid};
 use bitcoin::hashes::Hash;
 use futures::future::try_join_all;
 use futures::{Stream, StreamExt};
 use log::{debug, error, info, trace, warn};
 
-use ark::{OffboardRequest, SignedVtxoRequest, Vtxo, VtxoId, VtxoRequest};
+use ark::{SignedVtxoRequest, Vtxo, VtxoId, VtxoRequest};
 use ark::connectors::ConnectorChain;
 use ark::musig::{self, DangerousSecretNonce, PublicNonce, SecretNonce};
 use ark::rounds::{
@@ -33,10 +32,9 @@ use bitcoin_ext::rpc::RpcApi;
 use server_rpc::protos;
 
 use crate::{SECP, Wallet};
-use crate::movement::{MovementDestination, MovementId, MovementStatus};
+use crate::movement::{MovementId, MovementStatus};
 use crate::movement::update::MovementUpdate;
 use crate::onchain::{ChainSource, ChainSourceClient};
-use crate::payment_method::PaymentMethod;
 use crate::persist::{RoundStateId, StoredRoundState};
 use crate::subsystem::{BarkSubsystem, RoundMovement};
 
@@ -52,34 +50,18 @@ pub struct RoundParticipation {
 	/// The output VTXOs that we request in the round,
 	/// including change
 	pub outputs: Vec<VtxoRequest>,
-	pub offboards: Vec<OffboardRequest>,
 }
 
 impl RoundParticipation {
-	pub fn to_movement_update(&self, network: Network) -> anyhow::Result<MovementUpdate> {
-		let params = Params::from(network);
+	pub fn to_movement_update(&self) -> anyhow::Result<MovementUpdate> {
 		let input_amount = self.inputs.iter().map(|i| i.amount()).sum::<Amount>();
 		let output_amount = self.outputs.iter().map(|r| r.amount).sum::<Amount>();
-		let offboard_amount = self.offboards.iter().map(|r| r.amount).sum::<Amount>();
-		let fee = input_amount - output_amount - offboard_amount;
-		let intended = -offboard_amount.to_signed()?;
-		let mut sent_to = Vec::with_capacity(self.offboards.len());
-		for o in &self.offboards {
-			let method = match Address::from_script(&o.script_pubkey, &params) {
-				Ok(address) => PaymentMethod::Bitcoin(address.into_unchecked()),
-				Err(e) => {
-					debug!("Failed to parse offboard address, storing script pubkey instead: {:#}", e);
-					PaymentMethod::OutputScript(o.script_pubkey.clone())
-				},
-			};
-			sent_to.push(MovementDestination::new(method, o.amount));
-		}
+		let fee = input_amount - output_amount;
 		Ok(MovementUpdate::new()
 			.consumed_vtxos(&self.inputs)
-			.intended_balance(intended)
-			.effective_balance(intended - fee.to_signed()?)
+			.intended_balance(SignedAmount::ZERO)
+			.effective_balance( - fee.to_signed()?)
 			.fee(fee)
-			.sent_to(sent_to)
 		)
 	}
 }
@@ -577,8 +559,8 @@ async fn start_attempt(
 
 
 	// The round has now started. We can submit our payment.
-	debug!("Submitting payment request with {} inputs, {} vtxo outputs and {} offboard outputs",
-		participation.inputs.len(), participation.outputs.len(), participation.offboards.len(),
+	debug!("Submitting payment request with {} inputs and {} vtxo outputs",
+		participation.inputs.len(), participation.outputs.len(),
 	);
 
 	let signed_reqs = participation.outputs.iter()
@@ -602,18 +584,14 @@ async fn start_attempt(
 				vtxo_id: vtxo.id().to_bytes().to_vec(),
 				ownership_proof: {
 					let sig = event.challenge
-						.sign_with(vtxo.id(), &signed_reqs, &participation.offboards, &keypair);
+						.sign_with(vtxo.id(), &signed_reqs, &keypair);
 					sig.serialize().to_vec()
 				},
 			}
 		}).collect(),
 		vtxo_requests: signed_reqs.into_iter().map(Into::into).collect(),
-		offboard_requests: participation.offboards.iter().map(|r| {
-			protos::OffboardRequest {
-				amount: r.amount.to_sat(),
-				offboard_spk: r.script_pubkey.to_bytes(),
-			}
-		}).collect(),
+		#[allow(deprecated)]
+		offboard_requests: vec![],
 	}).await.context("Ark server refused our payment submission")?;
 
 	Ok(AttemptState::AwaitingUnsignedVtxoTree {
@@ -739,28 +717,16 @@ async fn sign_vtxo_tree(
 	let vtxos_utxo = OutPoint::new(unsigned_round_tx.compute_txid(), ROUND_TX_VTXO_TREE_VOUT);
 
 	// Check that the proposal contains our inputs.
-	{
-		let mut my_vtxos = participation.outputs.iter().collect::<Vec<_>>();
-		for vtxo_req in vtxo_tree.iter_vtxos() {
-			if let Some(i) = my_vtxos.iter().position(|v| {
-				v.policy == vtxo_req.vtxo.policy && v.amount == vtxo_req.vtxo.amount
-			}) {
-				my_vtxos.swap_remove(i);
-			}
+	let mut my_vtxos = participation.outputs.iter().collect::<Vec<_>>();
+	for vtxo_req in vtxo_tree.iter_vtxos() {
+		if let Some(i) = my_vtxos.iter().position(|v| {
+			v.policy == vtxo_req.vtxo.policy && v.amount == vtxo_req.vtxo.amount
+		}) {
+			my_vtxos.swap_remove(i);
 		}
-		if !my_vtxos.is_empty() {
-			bail!("server didn't include all of our vtxos, missing: {:?}", my_vtxos);
-		}
-
-		let mut my_offbs = participation.offboards.to_vec();
-		for offb in unsigned_round_tx.output.iter().skip(2) {
-			if let Some(i) = my_offbs.iter().position(|o| o.to_txout() == *offb) {
-				my_offbs.swap_remove(i);
-			}
-		}
-		if !my_offbs.is_empty() {
-			bail!("server didn't include all of our offboards, missing: {:?}", my_offbs);
-		}
+	}
+	if !my_vtxos.is_empty() {
+		bail!("server didn't include all of our vtxos, missing: {:?}", my_vtxos);
 	}
 
 	// Make vtxo signatures from top to bottom, just like sighashes are returned.
@@ -923,8 +889,8 @@ async fn persist_round_success(
 	new_vtxos: &[Vtxo],
 	signed_round_tx: &Transaction,
 ) -> anyhow::Result<()> {
-	debug!("Persisting newly finished round. {} new vtxos, {} offboards, movement ID {:?}",
-		new_vtxos.len(), participation.offboards.len(), movement_id,
+	debug!("Persisting newly finished round. {} new vtxos, movement ID {:?}",
+		new_vtxos.len(), movement_id,
 	);
 
 	let store_result = wallet.store_spendable_vtxos(new_vtxos);
@@ -1211,15 +1177,12 @@ impl Wallet {
 		if let Some(payreq) = participation.outputs.iter().find(|p| p.amount < P2TR_DUST) {
 			bail!("VTXO amount must be at least {}, requested {}", P2TR_DUST, payreq.amount);
 		}
-		if let Some(offb) = participation.offboards.iter().find(|o| o.amount < P2TR_DUST) {
-			bail!("Offboard amount must be at least {}, requested {}", P2TR_DUST, offb.amount);
-		}
 
 		let movement_id = if let Some(kind) = movement_kind {
 			Some(self.movements.new_movement_with_update(
 				self.subsystem_ids[&BarkSubsystem::Round],
 				kind.to_string(),
-				participation.to_movement_update(self.chain.network())?
+				participation.to_movement_update()?
 			).await?)
 		} else {
 			None

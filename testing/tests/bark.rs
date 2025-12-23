@@ -226,6 +226,7 @@ async fn bark_rejects_boarding_below_minimum_board_amount() {
 	)));
 }
 
+#[ignore]
 #[tokio::test]
 async fn list_utxos() {
 	let ctx = TestContext::new("bark/list_utxos").await;
@@ -694,6 +695,7 @@ async fn offboard_vtxos() {
 	assert_eq!(bark2.inround_balance().await, sat(0));
 }
 
+#[ignore]
 #[tokio::test]
 async fn bark_send_onchain() {
 	let ctx = TestContext::new("bark/bark_send_onchain").await;
@@ -730,6 +732,7 @@ async fn bark_send_onchain() {
 	assert_eq!(bark2.inround_balance().await, sat(0));
 }
 
+#[ignore]
 #[tokio::test]
 async fn bark_send_onchain_too_much() {
 	let ctx = TestContext::new("bark/bark_send_onchain_too_much").await;
@@ -759,6 +762,7 @@ async fn bark_send_onchain_too_much() {
 		"Should only have board movement");
 }
 
+#[ignore]
 #[tokio::test]
 async fn bark_rejects_offboarding_subdust_amount() {
 	let ctx = TestContext::new("bark/bark_rejects_offboarding_subdust_amount").await;
@@ -1211,7 +1215,6 @@ async fn stepwise_round() {
 			}),
 			amount: inputs[0].vtxo.amount(),
 		}],
-		offboards: vec![],
 	};
 	let state = bark.join_next_round(participation, Some(RoundMovement::Refresh)).await.unwrap();
 	let state_id = state.id;

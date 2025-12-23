@@ -8,7 +8,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::Context;
 use bitcoin::consensus::encode::serialize;
-use bitcoin::{Amount, FeeRate, OutPoint, Psbt, Txid};
+use bitcoin::{Amount, OutPoint, Psbt, Txid};
 use bitcoin::hashes::{sha256, Hash};
 use bitcoin::secp256k1::{rand, Keypair, PublicKey};
 use bitcoin_ext::{BlockHeight, P2TR_DUST, P2WSH_DUST};
@@ -21,7 +21,7 @@ use tracing::info_span;
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 
 use ark::{
-	OffboardRequest, ProtocolEncoding, SignedVtxoRequest, Vtxo, VtxoId, VtxoIdInput, VtxoPolicy, VtxoRequest
+	ProtocolEncoding, SignedVtxoRequest, Vtxo, VtxoId, VtxoIdInput, VtxoPolicy, VtxoRequest,
 };
 use ark::challenges::RoundAttemptChallenge;
 use ark::connectors::ConnectorChain;
@@ -74,7 +74,6 @@ pub enum RoundInput {
 	RegisterPayment {
 		inputs: Vec<VtxoIdInput>,
 		vtxo_requests: Vec<SignedVtxoRequest>,
-		offboards: Vec<OffboardRequest>,
 	},
 	VtxoSignatures {
 		pubkey: PublicKey,
@@ -151,7 +150,6 @@ impl VtxoParticipant {
 pub struct RoundData {
 	max_output_vtxos: usize,
 	nb_vtxo_nonces: usize,
-	offboard_feerate: FeeRate,
 	max_vtxo_amount: Option<Amount>,
 }
 
@@ -169,7 +167,6 @@ pub struct CollectingPayments {
 	all_outputs: Vec<VtxoParticipant>,
 	/// Keep track of which input vtxos belong to which inputs.
 	inputs_per_cosigner: HashMap<PublicKey, Vec<VtxoId>>,
-	all_offboards: Vec<OffboardRequest>,
 
 	common_round_tx_input: Option<WalletUtxoGuard>,
 
@@ -201,7 +198,6 @@ impl CollectingPayments {
 			all_inputs: HashMap::new(),
 			all_outputs: Vec::new(),
 			inputs_per_cosigner: HashMap::new(),
-			all_offboards: Vec::new(),
 			unlock_preimages: HashMap::new(),
 
 			common_round_tx_input,
@@ -222,7 +218,7 @@ impl CollectingPayments {
 	}
 
 	fn have_payments(&self) -> bool {
-		!self.all_inputs.is_empty() && (!self.all_outputs.is_empty() || !self.all_offboards.is_empty())
+		!self.all_inputs.is_empty() && (!self.all_outputs.is_empty())
 	}
 
 	fn attempt_seq(&self) -> usize {
@@ -238,7 +234,6 @@ impl CollectingPayments {
 		&self,
 		inputs: &[Vtxo],
 		outputs: impl IntoIterator<Item = impl AsRef<VtxoRequest>>,
-		offboards: &[OffboardRequest],
 	) -> anyhow::Result<()> {
 		let mut in_set = HashSet::with_capacity(inputs.len());
 		let mut in_sum = Amount::ZERO;
@@ -281,18 +276,6 @@ impl CollectingPayments {
 
 			if out_sum > in_sum {
 				return badarg!("total output amount ({out_sum}) exceeds total input amount ({in_sum})");
-			}
-		}
-		for offboard in offboards {
-			if offboard.amount < P2TR_DUST {
-				return badarg!("offboard amount must be at least {}", P2TR_DUST);
-			}
-
-			let fee = offboard.fee(self.round_data.offboard_feerate)
-				.badarg("invalid offboard request")?;
-			out_sum += offboard.amount + fee;
-			if out_sum > in_sum {
-				return badarg!("total output amount with offboard ({out_sum}) exceeds total input amount ({in_sum})");
 			}
 		}
 
@@ -414,10 +397,9 @@ impl CollectingPayments {
 		srv: &Server,
 		inputs: Vec<VtxoIdInput>,
 		vtxo_requests: Vec<SignedVtxoRequest>,
-		offboards: Vec<OffboardRequest>,
 	) -> anyhow::Result<()> {
-		if vtxo_requests.is_empty() && offboards.is_empty() {
-			return badarg!("invalid request: zero outputs and zero offboards");
+		if vtxo_requests.is_empty() {
+			return badarg!("invalid request: no outputs");
 		}
 
 		self.validate_payment_data(&inputs, &vtxo_requests)?;
@@ -448,14 +430,13 @@ impl CollectingPayments {
 			.map(|v| (v.vtxo_id, v.ownership_proof)).collect::<HashMap<_,_>>();
 		for input in &input_vtxos {
 			let sig = ownership_proof_by_vtxo_id.get(&input.id()).expect("all vtxos were found");
-			self.round_attempt_challenge.verify_input_vtxo_sig(
-				input, &vtxo_requests, &offboards, sig,
-			).with_context(|| format!(
-				"ownership proof is invalid: vtxo {}, proof: {}", input.id(), sig,
-			))?;
+			self.round_attempt_challenge.verify_input_vtxo_sig(input, &vtxo_requests, sig)
+				.with_context(|| format!(
+					"ownership proof is invalid: vtxo {}, proof: {}", input.id(), sig,
+				))?;
 		}
 
-		if let Err(e) = self.validate_payment_amounts(&input_vtxos, &vtxo_requests, &offboards) {
+		if let Err(e) = self.validate_payment_amounts(&input_vtxos, &vtxo_requests) {
 			client_rslog!(RoundPaymentRegistrationFailed, self.round_step,
 				error: e.to_string(),
 			);
@@ -470,7 +451,7 @@ impl CollectingPayments {
 		}
 
 		// Finally, we are done
-		self.register_payment(flux_guard, input_vtxos, vtxo_requests, offboards);
+		self.register_payment(flux_guard, input_vtxos, vtxo_requests);
 
 		Ok(())
 	}
@@ -480,12 +461,10 @@ impl CollectingPayments {
 		flux_guard: VtxoFluxGuard,
 		inputs: Vec<Vtxo>,
 		vtxo_requests: Vec<SignedVtxoRequest>,
-		offboards: Vec<OffboardRequest>,
 	) {
 		client_rslog!(RoundPaymentRegistered, self.round_step,
 			nb_inputs: inputs.len(),
 			nb_outputs: vtxo_requests.len(),
-			nb_offboards: offboards.len(),
 		);
 
 		// If we're adding inputs for the first time, also add them to locked_inputs.
@@ -509,8 +488,6 @@ impl CollectingPayments {
 			self.all_outputs.push(VtxoParticipant::new(req, unlock_hash));
 		}
 
-		self.all_offboards.extend(offboards);
-
 		// Check whether our round is full.
 		if self.all_outputs.len() == self.round_data.max_output_vtxos {
 			server_rslog!(FullRound, self.round_step,
@@ -530,10 +507,7 @@ impl CollectingPayments {
 		span.set_int_attr("expiry_height", expiry_height);
 		span.set_int_attr("block_height", tip);
 
-		// Since it's possible in testing that we only have to do offboards,
-		// and since it's pretty annoying to deal with the case of no vtxos,
-		// if there are no vtxos, we will just add a fake vtxo for the server.
-		// In practice, in later versions, it is very likely that the server
+		// In later versions, it is very likely that the server
 		// will actually want to create change vtxos, so temporarily, this
 		// dummy vtxo will be a placeholder for a potential change vtxo.
 		let mut change_vtxo = if self.all_outputs.is_empty() {
@@ -611,9 +585,6 @@ impl CollectingPayments {
 			// NB: order is important here, we need to respect `ROUND_TX_VTXO_TREE_VOUT` and `ROUND_TX_CONNECTOR_VOUT`
 			b.add_recipient(vtxos_spec.funding_tx_script_pubkey(), vtxos_spec.total_required_value());
 			b.add_recipient(connector_output.script_pubkey, connector_output.value);
-			for offb in &self.all_offboards {
-				b.add_recipient(offb.script_pubkey.clone(), offb.amount);
-			}
 			b.fee_rate(srv.config.round_tx_feerate);
 			match b.finish().context("bdk failed to create round tx") {
 				Ok(psbt) => psbt,
@@ -1335,8 +1306,6 @@ async fn perform_round(
 	slog!(RoundStarted, round_seq);
 	telemetry::set_round_seq(round_seq);
 
-	let offboard_feerate = srv.config.round_tx_feerate;
-
 	// Allocate this data once per round so that we can keep them
 	// Perhaps we could even keep allocations between all rounds, but time
 	// in between attempts is way more critial than in between rounds.
@@ -1348,7 +1317,6 @@ async fn perform_round(
 		max_output_vtxos: srv.config.nb_round_nonces * 3,
 		nb_vtxo_nonces: srv.config.nb_round_nonces,
 		max_vtxo_amount: srv.config.max_vtxo_amount,
-		offboard_feerate,
 	};
 
 	let mut round_state = RoundState::CollectingPayments(CollectingPayments::new(
@@ -1395,13 +1363,12 @@ async fn perform_round(
 					let (input, tx) = input.expect("broken channel");
 
 					let res = match input {
-						RoundInput::RegisterPayment { inputs, vtxo_requests, offboards } => {
-							state.process_payment(
-								srv, inputs, vtxo_requests, offboards,
-							).await.map_err(|e| {
-								debug!("error processing payment: {e}");
-								e
-							})
+						RoundInput::RegisterPayment { inputs, vtxo_requests } => {
+							state.process_payment(srv, inputs, vtxo_requests).await
+								.map_err(|e| {
+									debug!("error processing payment: {e}");
+									e
+								})
 						},
 						_ => badarg!("unexpected message. current step is payment registration"),
 					};
@@ -1421,17 +1388,15 @@ async fn perform_round(
 		let input_volume = state.total_input_amount();
 		let input_count = state.all_inputs.len();
 		let output_count = state.all_outputs.len();
-		let offboard_count = state.all_offboards.len();
 
 		server_rslog!(ReceivedRoundPayments, round_step,
 			max_round_submit_time: srv.config.round_submit_time,
 			input_volume,
 			input_count,
 			output_count,
-			offboard_count,
 		);
 		telemetry::set_round_step_duration(round_step);
-		telemetry::set_round_metrics(input_volume, input_count, output_count, offboard_count);
+		telemetry::set_round_metrics(input_volume, input_count, output_count);
 
 		if !state.have_payments() {
 			server_rslog!(NoRoundPayments, round_step,
@@ -1454,7 +1419,6 @@ async fn perform_round(
 		span.set_int_attr("input_volume", input_volume.to_sat());
 		span.set_int_attr("input_count", input_count);
 		span.set_int_attr("output_count", output_count);
-		span.set_int_attr("offboard_count", offboard_count);
 
 
 		// ****************************************************************
@@ -1774,7 +1738,6 @@ mod tests {
 		let round_data = RoundData {
 			max_output_vtxos: max_output_vtxos,
 			nb_vtxo_nonces: max_output_vtxos / 3 + 1, // add 1 for rounding
-			offboard_feerate: FeeRate::ZERO,
 			max_vtxo_amount: None,
 		};
 		CollectingPayments::new(0.into(), 0, round_data, OwnedVtxoFluxGuard::dummy(), None, None)
@@ -1793,13 +1756,12 @@ mod tests {
 		let outputs = vec![create_signed_req(inputs[0].amount().to_sat(), &state.round_data)];
 
 		state.validate_payment_data(&input_ids, &outputs).unwrap();
-		state.validate_payment_amounts(&inputs, &outputs, &[]).unwrap();
+		state.validate_payment_amounts(&inputs, &outputs).unwrap();
 
 		let flux = VtxosInFlux::new();
-		state.register_payment(flux.empty_guard(), inputs, outputs.clone(), vec![]);
+		state.register_payment(flux.empty_guard(), inputs, outputs.clone());
 		assert_eq!(state.all_inputs.len(), 1);
 		assert_eq!(state.all_outputs.len(), 1);
-		assert_eq!(state.all_offboards.len(), 0);
 		assert_eq!(state.inputs_per_cosigner.len(), 1);
 		assert_eq!(1, state.inputs_per_cosigner.get(&outputs[0].cosign_pubkey).unwrap().len());
 	}
@@ -1819,7 +1781,7 @@ mod tests {
 		)];
 
 		state.validate_payment_data(&input_ids, &outputs).unwrap();
-		state.validate_payment_amounts(&inputs, &outputs, &[]).unwrap_err();
+		state.validate_payment_amounts(&inputs, &outputs).unwrap_err();
 	}
 
 	#[test]
@@ -1896,7 +1858,7 @@ mod tests {
 
 		let flux = VtxosInFlux::new();
 		state.validate_payment_data(&input_ids1, &outputs1).unwrap();
-		state.register_payment(flux.empty_guard(), inputs1, outputs1, vec![]);
+		state.register_payment(flux.empty_guard(), inputs1, outputs1);
 		state.validate_payment_data(&input_ids2, &outputs2).unwrap_err();
 	}
 
@@ -1946,9 +1908,9 @@ mod tests {
 
 		let flux = VtxosInFlux::new();
 		state.validate_payment_data(&input_ids1, &outputs1).unwrap();
-		state.register_payment(flux.empty_guard(), inputs1, outputs1.clone(), vec![]);
+		state.register_payment(flux.empty_guard(), inputs1, outputs1.clone());
 		state.validate_payment_data(&input_ids2, &outputs2).unwrap();
-		state.register_payment(flux.empty_guard(), inputs2, outputs2.clone(), vec![]);
+		state.register_payment(flux.empty_guard(), inputs2, outputs2.clone());
 
 		assert_eq!(state.all_inputs.len(), 2);
 		assert_eq!(state.all_outputs.len(), 4);

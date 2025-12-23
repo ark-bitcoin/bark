@@ -4,7 +4,7 @@ use std::sync::Arc;
 use std::sync::atomic;
 use std::time::Duration;
 use bip39::rand::Rng;
-use bitcoin::{Amount, OutPoint, ScriptBuf};
+use bitcoin::{Amount, OutPoint};
 use bitcoin::hashes::Hash;
 use bitcoin::hex::DisplayHex;
 use bitcoin::secp256k1::{rand, schnorr, PublicKey};
@@ -14,7 +14,7 @@ use tokio::sync::oneshot;
 use tokio_stream::{Stream, StreamExt};
 
 use ark::{
-	musig, OffboardRequest, ProtocolEncoding, Vtxo, VtxoId, VtxoIdInput, VtxoPolicy, VtxoRequest,
+	musig, ProtocolEncoding, Vtxo, VtxoId, VtxoIdInput, VtxoPolicy, VtxoRequest,
 };
 use ark::lightning::{Bolt12InvoiceExt, Invoice, Offer, OfferAmount, PaymentHash, Preimage};
 use ark::arkoor::checkpointed_package::PackageCosignRequest;
@@ -574,7 +574,6 @@ impl rpc::server::ArkService for Server {
 		crate::rpcserver::add_tracing_attributes(vec![
 			KeyValue::new("input_vtxos_count", format!("{:?}", req.input_vtxos.len())),
 			KeyValue::new("vtxo_requests_count", format!("{:?}", req.vtxo_requests.len())),
-			KeyValue::new("offboard_requests_count", format!("{:?}", req.offboard_requests.len())),
 		]);
 
 		let inputs =  req.input_vtxos.iter().map(|input| {
@@ -592,16 +591,13 @@ impl rpc::server::ArkService for Server {
 			vtxo_requests.push(r.try_into().badarg("invalid signed vtxo request")?);
 		}
 
-		let offboards = req.offboard_requests.iter().map(|r| {
-			let amount = Amount::from_sat(r.amount);
-			let script_pubkey = ScriptBuf::from_bytes(r.clone().offboard_spk);
-			let ret = OffboardRequest { script_pubkey, amount };
-			ret.validate().badarg("invalid offboard request")?;
-			Ok(ret)
-		}).collect::<Result<_, tonic::Status>>()?;
+		#[allow(deprecated)]
+		if !req.offboard_requests.is_empty() {
+			return Err(tonic::Status::unimplemented("offboards in rounds are no longer supported"));
+		}
 
 		let (tx, rx) = oneshot::channel();
-		let inp = RoundInput::RegisterPayment { inputs, vtxo_requests, offboards };
+		let inp = RoundInput::RegisterPayment { inputs, vtxo_requests };
 
 		self.rounds.round_input_tx.send((inp, tx))
 			.expect("input channel closed");

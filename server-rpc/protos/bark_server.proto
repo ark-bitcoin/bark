@@ -440,7 +440,7 @@ message OffboardRequest {
 message SubmitPaymentRequest {
 	repeated InputVtxo input_vtxos = 2;
 	repeated SignedVtxoRequest vtxo_requests = 3;
-	repeated OffboardRequest offboard_requests = 4;
+	repeated OffboardRequest offboard_requests = 4 [ deprecated = true ];
 }
 
 message ForfeitSignatures {

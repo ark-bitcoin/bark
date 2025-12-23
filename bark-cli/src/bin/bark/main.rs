@@ -576,7 +576,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 				}
 
 				info!("Sending on-chain payment of {} to {} through round...", amount, addr);
-				wallet.send_round_onchain_payment(addr, amount).await?;
+				bail!("onchain payments are temporarily disabled");
 			} else {
 				bail!("Invalid destination");
 			}

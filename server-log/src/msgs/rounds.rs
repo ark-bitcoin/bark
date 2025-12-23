@@ -134,7 +134,6 @@ pub struct RoundPaymentRegistered {
 	pub attempt_seq: usize,
 	pub nb_inputs: usize,
 	pub nb_outputs: usize,
-	pub nb_offboards: usize,
 	#[serde(with = "crate::serde_utils::duration_millis")]
 	pub client_duration: Duration,
 }
@@ -169,7 +168,6 @@ pub struct ReceivedRoundPayments {
 	pub input_volume: Amount,
 	pub input_count: usize,
 	pub output_count: usize,
-	pub offboard_count: usize,
 	#[serde(with = "crate::serde_utils::duration_millis")]
 	pub server_duration: Duration,
 	#[serde(with = "crate::serde_utils::duration_millis")]
