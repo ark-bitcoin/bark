@@ -1,6 +1,6 @@
 
+use std::{mem, ops};
 use std::borrow::Borrow;
-use std::ops;
 use std::collections::HashSet;
 use std::sync::Arc;
 
@@ -19,6 +19,12 @@ pub struct VtxosInFlux {
 	inner: Arc<parking_lot::Mutex<VtxosInFluxInner>>,
 }
 
+#[derive(Debug, thiserror::Error)]
+#[error("VTXO is already locked by another process: {id}")]
+pub struct VtxoAlreadyInFluxError {
+	pub id: VtxoId,
+}
+
 impl VtxosInFlux {
 	pub fn new() -> VtxosInFlux {
 		VtxosInFlux {
@@ -29,11 +35,11 @@ impl VtxosInFlux {
 	}
 
 	/// Create a new [VtxoFluxLock] without any vtxos locked.
-	pub fn empty_lock(&self) -> VtxoFluxLock<'_> {
-		VtxoFluxLock {
-			inner: VtxoFluxLockInner {
+	pub fn empty_guard(&self) -> VtxoFluxGuard<'_> {
+		VtxoFluxGuard {
+			inner: VtxoFluxGuardInner {
 				flux: self,
-				vtxos: HashSet::new(),
+				vtxos: Vec::new(),
 			}
 		}
 	}
@@ -44,17 +50,20 @@ impl VtxosInFlux {
 	pub fn lock<V>(
 		&self,
 		ids: impl IntoIterator<Item = V> + Clone,
-	) -> Result<VtxoFluxLock<'_>, VtxoId>
+	) -> Result<VtxoFluxGuard<'_>, VtxoAlreadyInFluxError>
 	where
 		V: VtxoRef,
 	{
 		self.atomic_check_put(ids.clone())?;
-		let mut ret = self.empty_lock();
+		let mut ret = self.empty_guard();
 		ret.add_locked(ids.into_iter().map(|v| v.vtxo_id()));
 		Ok(ret)
 	}
 
-	fn atomic_check_put<V>(&self, ids: impl IntoIterator<Item = V>) -> Result<(), VtxoId>
+	fn atomic_check_put<V>(
+		&self,
+		ids: impl IntoIterator<Item = V>,
+	) -> Result<(), VtxoAlreadyInFluxError>
 	where
 		V: VtxoRef,
 	{
@@ -68,7 +77,7 @@ impl VtxosInFlux {
 				for take in buf {
 					inner.vtxos.remove(&take);
 				}
-				return Err(id);
+				return Err(VtxoAlreadyInFluxError { id });
 			}
 			buf.push(id);
 		}
@@ -91,56 +100,62 @@ impl VtxosInFlux {
 }
 
 #[derive(Debug)]
-struct VtxoFluxLockInner<F: Borrow<VtxosInFlux> = VtxosInFlux> {
+struct VtxoFluxGuardInner<F: Borrow<VtxosInFlux> = VtxosInFlux> {
 	flux: F,
-	vtxos: HashSet<VtxoId>,
+	vtxos: Vec<VtxoId>,
 }
 
-impl<F: Borrow<VtxosInFlux>> VtxoFluxLockInner<F> {
+impl<F: Borrow<VtxosInFlux>> VtxoFluxGuardInner<F> {
 	fn add_locked(&mut self, vtxos: impl IntoIterator<Item = VtxoId>) {
 		self.vtxos.extend(vtxos);
 	}
 
 	fn release_all(&mut self) {
 		if !self.vtxos.is_empty() {
-			let drain = self.vtxos.drain();
+			let drain = self.vtxos.drain(..);
 			self.flux.borrow().release(drain);
 		}
 	}
 
-	fn absorb(&mut self, mut other: VtxoFluxLock) {
-		self.vtxos.extend(other.inner.vtxos.drain());
+	fn absorb(&mut self, mut other: VtxoFluxGuard) {
+		self.vtxos.extend(other.inner.vtxos.drain(..));
 	}
 }
 
-impl<F: Borrow<VtxosInFlux>> ops::Drop for VtxoFluxLockInner<F> {
+impl<F: Borrow<VtxosInFlux>> ops::Drop for VtxoFluxGuardInner<F> {
 	fn drop(&mut self) {
 		self.release_all();
 	}
 }
 
-/// Represents a sort-of "lock" on vtxos that are in flux.
+/// Represents a sort-of "guard" on vtxos that are in flux.
 ///
 /// Used to automatically release the vtxos from the flux lock when
 /// this structure is dropped.
 #[derive(Debug)]
-pub struct VtxoFluxLock<'a> {
-	inner: VtxoFluxLockInner<&'a VtxosInFlux>,
+pub struct VtxoFluxGuard<'a> {
+	inner: VtxoFluxGuardInner<&'a VtxosInFlux>,
 }
 
-impl<'a> VtxoFluxLock<'a> {
+impl<'a> VtxoFluxGuard<'a> {
+	/// The list of locked VTXOs
+	#[allow(unused)]
+	pub fn vtxos(&self) -> &[VtxoId] {
+		&self.inner.vtxos
+	}
+
 	/// Add new vtxos that are already marked as in-flux.
 	pub fn add_locked(&mut self, vtxos: impl IntoIterator<Item = VtxoId>) {
 		self.inner.add_locked(vtxos)
 	}
 
-	pub fn into_owned(mut self) -> OwnedVtxoFluxLock {
+	pub fn into_owned(mut self) -> OwnedVtxoFluxGuard {
 		// we need to drain the vtxos so that they aren't released on Drop
-		let vtxos = self.inner.vtxos.drain().collect();
-		OwnedVtxoFluxLock {
-			inner: VtxoFluxLockInner {
+		let vtxos = mem::replace(&mut self.inner.vtxos, Vec::new());
+		OwnedVtxoFluxGuard {
+			inner: VtxoFluxGuardInner {
 				flux: self.inner.flux.clone(),
-				vtxos,
+				vtxos: vtxos,
 			},
 		}
 	}
@@ -148,27 +163,33 @@ impl<'a> VtxoFluxLock<'a> {
 
 /// Owned variant of [VtxoFluxLock].
 #[derive(Debug)]
-pub struct OwnedVtxoFluxLock {
-	inner: VtxoFluxLockInner<VtxosInFlux>,
+pub struct OwnedVtxoFluxGuard {
+	inner: VtxoFluxGuardInner<VtxosInFlux>,
 }
 
-impl OwnedVtxoFluxLock {
+impl OwnedVtxoFluxGuard {
+	/// The list of locked VTXOs
+	#[allow(unused)]
+	pub fn vtxos(&self) -> &[VtxoId] {
+		&self.inner.vtxos
+	}
+
 	/// Release and drop all vtxos from the lock.
 	pub fn release_all(&mut self) {
 		self.inner.release_all()
 	}
 
 	/// Absorb all locked vtxos into this one.
-	pub fn absorb(&mut self, other: VtxoFluxLock) {
+	pub fn absorb(&mut self, other: VtxoFluxGuard) {
 		self.inner.absorb(other)
 	}
 
 	#[cfg(test)]
 	pub fn dummy() -> Self {
 		Self {
-			inner: VtxoFluxLockInner {
+			inner: VtxoFluxGuardInner {
 				flux: VtxosInFlux::new(),
-				vtxos: HashSet::new(),
+				vtxos: Vec::new(),
 			}
 		}
 	}

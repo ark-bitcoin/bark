@@ -693,13 +693,9 @@ impl Server {
 	) -> anyhow::Result<Vec<ArkoorCosignResponse>> {
 		let inputs = builder.inputs();
 		let input_ids = inputs.iter().map(|input| input.id()).collect::<Vec<_>>();
-		let _lock = match self.vtxos_in_flux.lock(&input_ids) {
-			Ok(l) => l,
-			Err(id) => {
-				slog!(ArkoorInputAlreadyInFlux, vtxo: id);
-				return badarg!("attempted to sign arkoor tx for vtxo already in flux: {}", id);
-			},
-		};
+		let _guard = self.vtxos_in_flux.lock(&input_ids)
+			.map_err(|e| { slog!(ArkoorInputAlreadyInFlux, vtxo: e.id); e })
+			.badarg("attempted to sign arkoor tx for VTXO already locked")?;
 
 		match self.db.check_set_vtxo_oor_spent_package(&builder).await {
 			Ok(Some(dup)) => {
