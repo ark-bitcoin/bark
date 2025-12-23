@@ -1,5 +1,7 @@
 use std::cmp::PartialEq;
-use std::fmt;
+use std::collections::BTreeMap;
+use std::{cmp, fmt};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use smallvec::SmallVec;
@@ -24,7 +26,7 @@ use tokio::time::Instant;
 use tracing_opentelemetry::OpenTelemetryLayer;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::{EnvFilter, Registry};
-
+use ark::VtxoId;
 use crate::database::ln::LightningPaymentStatus;
 use crate::ln::cln::ClnNodeStateKind;
 use crate::round::RoundStateKind;
@@ -175,6 +177,7 @@ pub const RPC_GRPC_STATUS_CODE: &str = opentelemetry_semantic_conventions::attri
 
 /// The global open-telemetry context to register metrics.
 static TELEMETRY: OnceCell<Metrics> = OnceCell::const_new();
+static BLOCK_HEIGHT_TIP: AtomicU64 = AtomicU64::new(0);
 
 /// Initialize open-telemetry.
 ///
@@ -224,6 +227,9 @@ struct Metrics {
 	lightning_invoice_verification_counter: Counter<u64>,
 	lightning_invoice_verification_queue_gauge: Gauge<u64>,
 	lightning_open_invoices_gauge: Gauge<u64>,
+	vtxo_pool_amount_gauge: Gauge<u64>,
+	vtxo_pool_amount_max_gauge: Gauge<u64>,
+	vtxo_pool_count_gauge: Gauge<u64>,
 	grpc_in_progress_counter: UpDownCounter<i64>,
 	grpc_latency_histogram: Histogram<u64>,
 	grpc_request_counter: Counter<u64>,
@@ -352,6 +358,9 @@ impl Metrics {
 		let lightning_invoice_verification_counter = meter.u64_counter("lightning_invoice_verification_counter").build();
 		let lightning_invoice_verification_queue_gauge = meter.u64_gauge("lightning_invoice_verification_queue_gauge").build();
 		let lightning_open_invoices_gauge = meter.u64_gauge("lightning_open_invoices_gauge").build();
+		let vtxo_pool_amount_gauge = meter.u64_gauge("vtxo_pool_amount_gauge").build();
+		let vtxo_pool_amount_max_gauge = meter.u64_gauge("vtxo_pool_amount_max_gauge").build();
+		let vtxo_pool_count_gauge = meter.u64_gauge("vtxo_pool_count_gauge").build();
 		// gRPC metrics
 		let grpc_in_progress_counter = meter.i64_up_down_counter("grpc_requests_in_progress").build();
 		let grpc_latency_histogram = meter.u64_histogram("grpc_request_duration_ms").build();
@@ -408,6 +417,9 @@ impl Metrics {
 			lightning_invoice_verification_counter,
 			lightning_invoice_verification_queue_gauge,
 			lightning_open_invoices_gauge,
+			vtxo_pool_amount_gauge,
+			vtxo_pool_amount_max_gauge,
+			vtxo_pool_count_gauge,
 			grpc_in_progress_counter,
 			grpc_latency_histogram,
 			grpc_request_counter,
@@ -522,6 +534,7 @@ pub fn set_wallet_balance(wallet_kind: WalletKind, wallet_balance: Balance) {
 }
 
 pub fn set_block_height(block_height: BlockHeight) {
+	BLOCK_HEIGHT_TIP.store(block_height as u64, Ordering::Relaxed);
 	if let Some(m) = TELEMETRY.get() {
 		m.block_height_gauge.record(block_height as u64, m.global_labels());
 	}
@@ -800,6 +813,64 @@ pub fn set_postgres_connection_pool_metrics(state: bb8::State) {
 		m.postgres_get_waited.record(stats.get_waited, global_labels);
 		m.postgres_get_wait_time.record(stats.get_wait_time.as_millis() as u64, global_labels);
 	}
+}
+
+pub fn set_vtxo_pool_metrics(pool: &BTreeMap<BlockHeight, BTreeMap<Amount, Vec<VtxoId>>>) {
+	if TELEMETRY.get().is_none() { return; }
+
+	#[derive(Copy, Clone)]
+	struct Bucket {
+		total: u64,
+		max: u64,
+		count: u32,
+	}
+
+	let block_height_tip = BLOCK_HEIGHT_TIP.load(Ordering::Relaxed) as u32;
+
+	const LIFETIME_BUCKETS: &[(u32, &'static str)] = &[
+		(6,        "0-5"),     // < 1 hour  (~10min blocks)
+		(72,       "6-71"),    // < 12 hours
+		(144,      "72-143"),  // < 24 hours
+		(288,      "144-287"), // < 48 hours
+		(u32::MAX, "288-*"),   // ≥ 48 hours
+	];
+
+	let mut lifetime_buckets = [Bucket { total: 0, max: 0, count: 0 }; 5];
+
+	for (&expiry_height, vtxo_map) in pool {
+		let expiry_height_delta = expiry_height.saturating_sub(block_height_tip);
+
+		let bucket_ix = LIFETIME_BUCKETS.iter()
+			.position(|(upper, _)| expiry_height_delta < *upper)
+			.expect("Last bucket is u32::MAX, so this should never fail");
+
+		let bucket_entry = &mut lifetime_buckets[bucket_ix];
+		for (&amount, ids) in vtxo_map {
+			let sats = amount.to_sat();
+			let n = ids.len() as u32;
+
+			bucket_entry.total += sats.saturating_mul(n as u64);
+			bucket_entry.count += n;
+			bucket_entry.max = cmp::max(bucket_entry.max, sats);
+		}
+	}
+	for (i, &(_, label)) in LIFETIME_BUCKETS.iter().enumerate() {
+		let bucket_entry = lifetime_buckets[i];
+		set_vtxo_pool_metric(label, bucket_entry.total, bucket_entry.max, bucket_entry.count);
+	}
+}
+
+
+fn set_vtxo_pool_metric(block_delta_label: &'static str, amount_total: u64, amount_max: u64, count: u32) {
+	let Some(m) = TELEMETRY.get() else { return };
+
+	let attrs = m.with_global_labels([
+		KeyValue::new("blocks_until_expiry", block_delta_label),
+	]);
+
+	m.vtxo_pool_amount_gauge.record(amount_total, &attrs);
+	m.vtxo_pool_amount_max_gauge.record(amount_max, &attrs);
+	m.vtxo_pool_count_gauge.record(count as u64, &attrs);
 }
 
 /// An extention trait for span tracing.
