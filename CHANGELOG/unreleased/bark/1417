@@ -1,3 +1,0 @@
-
-- remove support for recovering round VTXOs from past rounds
-  ([PR #1417](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1417))

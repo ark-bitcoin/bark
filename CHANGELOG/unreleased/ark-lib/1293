@@ -1,4 +1,0 @@
-
-- add Vtxo::is_fully_signed to check whether a VTXO is fully signed
-  (this check is obviously included in the validation procedure)
-  [PR 1293](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1293)

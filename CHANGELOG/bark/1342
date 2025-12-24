@@ -1,3 +1,0 @@
-- bark will not consider arkoor-depth anymore.
-  `Wallet:select_vtxos_to_cover` doesn't require the arkoor_depth argument anymore
-  `bark vtxos` and other calls will not return an arkoor_depth anymore

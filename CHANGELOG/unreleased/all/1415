@@ -1,3 +1,0 @@
-- Change variants of the word "cancel" to the US spelling.
-  This effects REST endpoints, function names and RPC types/names.
-  [#1415](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1415)

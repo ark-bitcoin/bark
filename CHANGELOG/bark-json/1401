@@ -1,2 +1,0 @@
-- Preimage field has been removed from `LightningPayResponse` struct.
-  [1401](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1401)

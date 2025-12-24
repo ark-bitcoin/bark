@@ -1,4 +1,0 @@
-- `captaind` will not look at arkoor-depth anymore.
-  It will still tell old-clients a very high arkoor depth to
-  ensure backward compatibility.
-  [#1342](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1342)

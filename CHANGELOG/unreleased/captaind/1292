@@ -1,3 +1,0 @@
-[#1292](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1292)
-- Deprecating `PostArkoorPackageMailbox` and `EmptyArkoorMailbox` gRPC methods of the Ark server.
-- Creation of new gRPC methods `PostVtxosMailbox`, `SubscribeMailbox` and `ReadMailbox` with checkpoint system. Introduced via new proto file `mailbox.proto`.

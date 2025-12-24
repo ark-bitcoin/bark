@@ -1,4 +1,0 @@
-[PR 1354](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1354)
-- Movements are ordered by creation date followed by ID from newest to oldest
-- `MovementTimestamp` now uses `DateTime<chrono::Local>` instead of `DateTime<Utc>`
-- Rename `BarkPersister::get_movement()` to `get_movement_by_id()`

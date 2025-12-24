@@ -1,6 +1,0 @@
-- Implement a strongly typed PaymentMethod to use for MovementDestination
-  Allows for easy serialization and deserialization of address/invoice formats
-  [#1362](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1362)
-- Rename MovementStatus::Finished to MovementStatus::Successful
-  Also use kebab-casing
-  [#1362](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1362)
