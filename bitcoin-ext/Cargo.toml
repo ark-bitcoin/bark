@@ -1,6 +1,6 @@
 [package]
 name = "bark-bitcoin-ext"
-version = "0.1.0-beta.4"
+version = "0.1.0-beta.5"
 license = "CC0-1.0"
 authors = [ "Team Second <hello@second.tech>" ]
 repository = "https://gitlab.com/ark-bitcoin/bark"

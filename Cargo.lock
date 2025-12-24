@@ -128,7 +128,7 @@ dependencies = [
 
 [[package]]
 name = "ark-lib"
-version = "0.1.0-beta.4"
+version = "0.1.0-beta.5"
 dependencies = [
  "bark-bitcoin-ext",
  "bitcoin",
@@ -323,7 +323,7 @@ dependencies = [
 
 [[package]]
 name = "bark-bitcoin-ext"
-version = "0.1.0-beta.4"
+version = "0.1.0-beta.5"
 dependencies = [
  "async-trait",
  "bdk_bitcoind_rpc",
@@ -341,7 +341,7 @@ dependencies = [
 
 [[package]]
 name = "bark-cli"
-version = "0.1.0-beta.4"
+version = "0.1.0-beta.5"
 dependencies = [
  "anyhow",
  "ark-lib",
@@ -385,7 +385,7 @@ dependencies = [
 
 [[package]]
 name = "bark-json"
-version = "0.1.0-beta.4"
+version = "0.1.0-beta.5"
 dependencies = [
  "anyhow",
  "ark-lib",
@@ -402,7 +402,7 @@ dependencies = [
 
 [[package]]
 name = "bark-rest"
-version = "0.1.0-beta.4"
+version = "0.1.0-beta.5"
 dependencies = [
  "anyhow",
  "ark-lib",
@@ -426,7 +426,7 @@ dependencies = [
 
 [[package]]
 name = "bark-rest-client"
-version = "0.1.0-beta.4"
+version = "0.1.0-beta.5"
 dependencies = [
  "bark-json",
  "bark-rest",
@@ -440,7 +440,7 @@ dependencies = [
 
 [[package]]
 name = "bark-server"
-version = "0.1.0-beta.4"
+version = "0.1.0-beta.5"
 dependencies = [
  "anyhow",
  "ark-lib",
@@ -499,7 +499,7 @@ dependencies = [
 
 [[package]]
 name = "bark-server-log"
-version = "0.1.0-beta.4"
+version = "0.1.0-beta.5"
 dependencies = [
  "ark-lib",
  "bark-bitcoin-ext",
@@ -517,7 +517,7 @@ dependencies = [
 
 [[package]]
 name = "bark-server-rpc"
-version = "0.1.0-beta.4"
+version = "0.1.0-beta.5"
 dependencies = [
  "ark-lib",
  "bitcoin",
@@ -533,7 +533,7 @@ dependencies = [
 
 [[package]]
 name = "bark-wallet"
-version = "0.1.0-beta.4"
+version = "0.1.0-beta.5"
 dependencies = [
  "anyhow",
  "ark-lib",
