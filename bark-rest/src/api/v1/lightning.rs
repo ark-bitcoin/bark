@@ -8,11 +8,10 @@ use anyhow::Context;
 use utoipa::OpenApi;
 
 use ark::lightning::Offer;
-use bark::lightning::{pay_invoice, pay_lnaddr, pay_offer};
 use bark::lightning_invoice::Bolt11Invoice;
 use bark::lnurllib::lightning_address::LightningAddress;
 
-use crate::error::{self, HandlerResult, badarg, not_found};
+use crate::error::{self, badarg, not_found, ContextExt, HandlerResult};
 use crate::RestServer;
 
 #[derive(OpenApi)]
@@ -151,16 +150,22 @@ pub async fn pay(
 	Json(body): Json<bark_json::web::LightningPayRequest>,
 ) -> HandlerResult<Json<bark_json::web::LightningPayResponse>> {
 	let amount = body.amount_sat.map(|a| Amount::from_sat(a));
-	let no_sync = true;
 
 	if let Ok(invoice) = Bolt11Invoice::from_str(&body.destination) {
-		pay_invoice(invoice, amount, body.comment, no_sync, &state.wallet).await?
+		if body.comment.is_some() {
+			badarg!("comment is not supported for BOLT-11 invoices");
+		}
+		state.wallet.pay_lightning_invoice(invoice, amount).await?
 	} else if let Ok(offer) = Offer::from_str(&body.destination) {
-		pay_offer(offer, amount, body.comment, no_sync, &state.wallet).await?
+		if body.comment.is_some() {
+			badarg!("comment is not supported for BOLT-12 offers");
+		}
+		state.wallet.pay_lightning_offer(offer, amount).await?
 	} else if let Ok(lnaddr) = LightningAddress::from_str(&body.destination) {
-		pay_lnaddr(lnaddr, amount, body.comment, no_sync, &state.wallet).await?
+		let amount = amount.badarg("amount is required for Lightning addresses")?;
+		state.wallet.pay_lightning_address(&lnaddr, amount, body.comment).await?
 	} else {
-		badarg!("argument is not a valid bolt11 invoice, bolt12 offer or lightning address");
+		badarg!("argument is not a valid BOLT-11 invoice, BOLT-12 offer or Lightning address");
 	};
 
 	Ok(axum::Json(bark_json::web::LightningPayResponse {

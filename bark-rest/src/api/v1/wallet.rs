@@ -10,7 +10,6 @@ use tracing::info;
 use utoipa::OpenApi;
 
 use ark::lightning::{Bolt11Invoice, Offer};
-use bark::lightning::{pay_invoice, pay_lnaddr, pay_offer};
 use bark::lnurllib::lightning_address::LightningAddress;
 use bark::subsystem::RoundMovement;
 use bark::vtxo::selection::VtxoFilter;
@@ -321,7 +320,6 @@ pub async fn send(
 	Json(body): Json<bark_json::web::SendRequest>,
 ) -> HandlerResult<Json<bark_json::web::SendResponse>> {
 	let amount = body.amount_sat.map(|a| Amount::from_sat(a));
-	let no_sync = true;
 
 	if let Ok(addr) = ark::Address::from_str(&body.destination) {
 		let amount = amount.context("amount missing")?;
@@ -329,11 +327,18 @@ pub async fn send(
 		info!("Sending arkoor payment of {} to address {}", amount, addr);
 		state.wallet.send_arkoor_payment(&addr, amount).await?;
 	} else if let Ok(inv) = Bolt11Invoice::from_str(&body.destination) {
-		pay_invoice(inv, amount, body.comment, no_sync, &state.wallet).await?;
+		if body.comment.is_some() {
+			badarg!("comment is not supported for BOLT-11 invoices");
+		}
+		state.wallet.pay_lightning_invoice(inv, amount).await?;
 	} else if let Ok(offer) = Offer::from_str(&body.destination) {
-		pay_offer(offer, amount, body.comment, no_sync, &state.wallet).await?;
+		if body.comment.is_some() {
+			badarg!("comment is not supported for BOLT-12 offers");
+		}
+		state.wallet.pay_lightning_offer(offer, amount).await?;
 	} else if let Ok(addr) = LightningAddress::from_str(&body.destination) {
-		pay_lnaddr(addr, amount, body.comment, no_sync, &state.wallet).await?;
+		let amount = amount.badarg("amount is required for Lightning addresses")?;
+		state.wallet.pay_lightning_address(&addr, amount, body.comment).await?;
 	} else if let Ok(addr) = bitcoin::Address::from_str(&body.destination) {
 		let checked_addr = addr
 			.require_network(state.wallet.properties()?.network)

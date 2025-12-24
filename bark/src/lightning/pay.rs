@@ -294,6 +294,8 @@ impl Wallet {
 		T::Error: std::error::Error + fmt::Display + Send + Sync + 'static,
 	{
 		let invoice = invoice.try_into().context("failed to parse invoice")?;
+		let amount = invoice.get_final_amount(user_amount)?;
+		info!("Sending bolt11 payment of {} to invoice {}", amount, invoice);
 		self.make_lightning_payment(&invoice, invoice.clone().into(), user_amount).await
 	}
 
@@ -302,20 +304,23 @@ impl Wallet {
 		&self,
 		addr: &LightningAddress,
 		amount: Amount,
-		comment: Option<&str>,
+		comment: Option<impl AsRef<str>>,
 	) -> anyhow::Result<LightningSend> {
+		let comment = comment.as_ref();
 		let invoice = lnaddr_invoice(addr, amount, comment).await
 			.context("lightning address error")?;
-		info!("Attempting to pay invoice {}", invoice);
-		self.make_lightning_payment(&invoice.into(), addr.clone().into(), None).await
-			.context("bolt11 payment error")
+		info!("Sending {} to lightning address {}", amount, addr);
+		let ret = self.make_lightning_payment(&invoice.into(), addr.clone().into(), None).await
+			.context("bolt11 payment error")?;
+		info!("Paid invoice {}", ret.invoice);
+		Ok(ret)
 	}
 
 	/// Attempts to pay the given BOLT12 [Offer] using offchain funds.
 	pub async fn pay_lightning_offer(
 		&self,
 		offer: Offer,
-		amount: Option<Amount>,
+		user_amount: Option<Amount>,
 	) -> anyhow::Result<LightningSend> {
 		let mut srv = self.require_server()?;
 
@@ -327,18 +332,29 @@ impl Wallet {
 
 		let req = protos::FetchBolt12InvoiceRequest {
 			offer: offer_bytes,
-			amount_sat: amount.map(|a| a.to_sat()),
+			amount_sat: user_amount.map(|a| a.to_sat()),
 		};
 
+		if let Some(amt) = user_amount {
+			info!("Sending bolt12 payment of {} (user amount) to offer {}", amt, offer);
+		} else if let Some(amt) = offer.amount() {
+			info!("Sending bolt12 payment of {:?} (invoice amount) to offer {}", amt, offer);
+		} else {
+			warn!("Paying offer without amount nor user amount provided: {}", offer);
+		}
+
 		let resp = srv.client.fetch_bolt12_invoice(req).await?.into_inner();
-
 		let invoice = Bolt12Invoice::try_from(resp.invoice)
-			.map_err(|_| anyhow::anyhow!("invalid invoice"))?;
+			.map_err(|e| anyhow!("invalid invoice: {:?}", e))?;
 
-		invoice.validate_issuance(&offer)?;
+		invoice.validate_issuance(&offer)
+			.context("invalid BOLT12 invoice received from offer")?;
 
-		self.make_lightning_payment(&invoice.into(), offer.into(), None).await
-			.context("bolt12 payment error")
+		let ret = self.make_lightning_payment(&invoice.into(), offer.into(), None).await
+			.context("bolt12 payment error")?;
+		info!("Paid invoice: {:?}", ret.invoice);
+
+		Ok(ret)
 	}
 
 	/// Makes a payment using the Lightning Network. This is a low-level primitive to allow for
