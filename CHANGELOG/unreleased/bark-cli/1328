@@ -1,7 +1,0 @@
-
-
-- add round command group to `bark` with `progress` and `cancel` commands
-  ([PR 1328](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1328))
-
-- add `RoundSatus::Canceled` round status to bark-json
-  ([PR 1328](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1328))

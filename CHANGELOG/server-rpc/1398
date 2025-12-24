@@ -1,7 +1,0 @@
-- several RPC comamnds have been renamed
-  - `start_lightning_payment` to `request_lightning_pay_htlc_cosign`
-  - `revoke_lightning_payment` to `request_lightning_pay_htlc_revocation`
-  - `finish_lightning_payment` to `initiate_lightning_payment`
-  This helps better reflecting the actual flow of a lightning payment
-  with the Ark Server
-  [#1398](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1398)

@@ -1,5 +1,0 @@
-- Bark's `pay_lightning_invoice` is made non-blocking. It will ask Server to
-  initiate payment but won't wait for settlement. To check payment progress,
-  `check_lightning_payment` should now be used, optionally with wait=true
-  argument. `pay_lightning_offer` and `pay_lightning_address` are also affected
-  [1401](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1401)

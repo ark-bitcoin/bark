@@ -1,8 +1,0 @@
-- `initiate_lightning_payment` doesn't wait for payment settlement anymore and
-  now returns an empty response instead of payment status.
-  `check_lightning_payment` can be called after payment iniated to check status
-  or wait for settlement.
-  [1401](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1401)
-- `check_lightning_payment` return type has been simplied. It now returns a
-  simple payment status enum, with preimage if payment succeeded
-  [1401](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1401)

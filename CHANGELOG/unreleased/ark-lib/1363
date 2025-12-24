@@ -1,3 +1,0 @@
-
-- make compatible with WASM for the web and ensure compatibility in CI
-  ([PR 1363](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1363))

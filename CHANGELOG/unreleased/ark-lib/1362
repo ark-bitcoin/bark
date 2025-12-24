@@ -1,4 +1,0 @@
-- Change validate_issuance method to take an Offer by reference
-  [#1362](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1362)
-- Implement serialization and deserialization for ark::Address
-  [#1362](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1362)

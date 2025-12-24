@@ -1,3 +1,0 @@
-- PendingRoundInfo's kind field has been replaced by status,
-  and its value is now an enum instead of a string.
-  [1445](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1445)
