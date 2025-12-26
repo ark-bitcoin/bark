@@ -109,7 +109,7 @@ impl Wallet {
 	async fn claim_lightning_receive(
 		&self,
 		receive: &LightningReceive,
-	) -> anyhow::Result<Vec<Vtxo>> {
+	) -> anyhow::Result<LightningReceive> {
 		let movement_id = receive.movement_id
 			.context("No movement created for lightning receive")?;
 		let mut srv = self.require_server()?;
@@ -191,8 +191,11 @@ impl Wallet {
 		).await?;
 
 		self.db.finish_pending_lightning_receive(receive.payment_hash)?;
+		let receive = self.db.fetch_lightning_receive_by_payment_hash(receive.payment_hash)
+			.context("Database error")?
+			.context("Receive not found")?;
 
-		Ok(outputs)
+		Ok(receive)
 	}
 
 	async fn compute_lightning_receive_anti_dos(
@@ -279,7 +282,6 @@ impl Wallet {
 			// this is the good case
 			protos::LightningReceiveStatus::Accepted |
 			protos::LightningReceiveStatus::HtlcsReady => {},
-
 			protos::LightningReceiveStatus::Created => {
 				warn!("sender didn't initiate payment yet");
 				return Ok(None);
@@ -454,10 +456,8 @@ impl Wallet {
 	///
 	/// # Returns
 	///
-	/// Returns an `anyhow::Result<Option<Vec<Vtxo>>>`, which is:
-	/// * `Ok(Some(outputs))` if the process completes successfully
-	///   and VTXOs were received.
-	/// * `Ok(None)` if the payment could not be settled yet.
+	/// Returns an `anyhow::Result<LightningReceive>`, which is:
+	/// * `Ok(LightningReceive)` if
 	/// * `Err` if an error occurs at any stage of the operation.
 	///
 	/// # Remarks
@@ -469,50 +469,58 @@ impl Wallet {
 		payment_hash: PaymentHash,
 		wait: bool,
 		token: Option<&str>,
-	) -> anyhow::Result<()> {
+	) -> anyhow::Result<LightningReceive> {
 		let srv = self.require_server()?;
 		let ark_info = srv.ark_info().await?;
 
+		// check_lightning_receive returns None if there is no incoming payment (yet)
+		// In that case we just return and don't try to claim
 		let receive = match self.check_lightning_receive(payment_hash, wait, token).await? {
 			Some(receive) => receive,
-			None => return Ok(()),
+			None => {
+				return self.db.fetch_lightning_receive_by_payment_hash(payment_hash)?
+					.context("No receive for payment_hash")
+			}
 		};
 
 		if receive.finished_at.is_some() {
-			return Ok(());
+			return Ok(receive);
 		}
 
-		let vtxos = match receive.htlc_vtxos {
-			// payment still not available
-			None => return Ok(()),
-			Some(ref vtxos) => vtxos,
+		// No need to lcaim anything if there
+		// are not htlcs yet
+		let vtxos = match receive.htlc_vtxos.as_ref() {
+			None => return Ok(receive),
+			Some(vtxos) => vtxos
 		};
 
-		if let Err(e) = self.claim_lightning_receive(&receive).await {
-			error!("Failed to claim pubkey vtxo from htlc vtxo: {}", e);
-			let tip = self.chain.tip().await?;
+		match self.claim_lightning_receive(&receive).await {
+			Ok(receive) => Ok(receive),
+			Err(e) => {
+				error!("Failed to claim htlcs for payment_hash: {}", receive.payment_hash);
 
-			let first_vtxo = &vtxos.first().unwrap().vtxo;
-			debug_assert!(vtxos.iter().all(|v| {
-				v.vtxo.policy() == first_vtxo.policy() && v.vtxo.exit_delta() == first_vtxo.exit_delta()
-			}), "all htlc vtxos for the same payment hash should have the same policy and exit delta");
+				let tip = self.chain.tip().await?;
 
-			let vtxo_htlc_expiry = first_vtxo.policy().as_server_htlc_recv()
-				.expect("only server htlc recv vtxos can be pending lightning recv").htlc_expiry;
+				let first_vtxo = &vtxos.first().unwrap().vtxo;
+				debug_assert!(vtxos.iter().all(|v| {
+					v.vtxo.policy() == first_vtxo.policy() && v.vtxo.exit_delta() == first_vtxo.exit_delta()
+				}), "all htlc vtxos for the same payment hash should have the same policy and exit delta");
 
-			let safe_exit_margin = first_vtxo.exit_delta() +
-				ark_info.htlc_expiry_delta +
-				self.config.vtxo_exit_margin;
+				let vtxo_htlc_expiry = first_vtxo.policy().as_server_htlc_recv()
+					.expect("only server htlc recv vtxos can be pending lightning recv").htlc_expiry;
 
-			if tip > vtxo_htlc_expiry.saturating_sub(safe_exit_margin as BlockHeight) {
-				warn!("HTLC-recv VTXOs are about to expire, interupting lightning receive");
-				self.exit_or_cancel_lightning_receive(&receive).await?;
+				let safe_exit_margin = first_vtxo.exit_delta() +
+					ark_info.htlc_expiry_delta +
+					self.config.vtxo_exit_margin;
+
+				if tip > vtxo_htlc_expiry.saturating_sub(safe_exit_margin as BlockHeight) {
+					warn!("HTLC-recv VTXOs are about to expire, interupting lightning receive");
+					self.exit_or_cancel_lightning_receive(&receive).await?;
+				}
+
+				return Err(e)
 			}
-
-			return Err(e)
 		}
-
-		Ok(())
 	}
 
 	/// Check and claim all opened Lightning receive
