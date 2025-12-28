@@ -112,8 +112,10 @@ impl Server {
 				return badarg!("invalid server pubkey used");
 			}
 
-			let payment_hash = vtxo.server_htlc_out_payment_hash()
-				.context("vtxo provided is not an outgoing htlc vtxo")?;
+			let payment_hash = vtxo.policy().as_server_htlc_send()
+				.context("vtxo provided is not an outgoing htlc vtxo")?
+				.payment_hash;
+
 			if payment_hash != invoice_payment_hash {
 				return badarg!("htlc payment hash doesn't match invoice");
 			}
