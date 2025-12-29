@@ -25,7 +25,7 @@ pub const RPC_SERVICE_ARK_GET_ARK_INFO: &'static str = "get_ark_info";
 pub const RPC_SERVICE_ARK_GET_FRESH_ROUNDS: &'static str = "get_fresh_rounds";
 pub const RPC_SERVICE_ARK_GET_ROUND: &'static str = "get_round";
 pub const RPC_SERVICE_ARK_REQUEST_BOARD_COSIGN: &'static str = "request_board_cosign";
-pub const RPC_SERVICE_ARK_REGISTER_BOARD_VTXOS: &'static str = "register_board_vtxos";
+pub const RPC_SERVICE_ARK_REGISTER_BOARD_VTXO: &'static str = "register_board_vtxo";
 pub const RPC_SERVICE_ARK_CHECKPOINTED_COSIGN_OOR: &'static str = "checkpointed_cosign_oor";
 pub const RPC_SERVICE_ARK_REQUEST_ARKOOR_PACKAGE_COSIGN: &'static str = "request_arkoor_package_cosign";
 pub const RPC_SERVICE_ARK_POST_ARKOOR_PACKAGE_MAILBOX: &'static str = "post_arkoor_package_mailbox";
@@ -59,7 +59,7 @@ const RPC_SERVICE_ARK_METHODS: [&str; 28] = [
 	RPC_SERVICE_ARK_GET_FRESH_ROUNDS,
 	RPC_SERVICE_ARK_GET_ROUND,
 	RPC_SERVICE_ARK_REQUEST_BOARD_COSIGN,
-	RPC_SERVICE_ARK_REGISTER_BOARD_VTXOS,
+	RPC_SERVICE_ARK_REGISTER_BOARD_VTXO,
 	RPC_SERVICE_ARK_REQUEST_ARKOOR_PACKAGE_COSIGN,
 	RPC_SERVICE_ARK_POST_ARKOOR_PACKAGE_MAILBOX,
 	RPC_SERVICE_ARK_EMPTY_ARKOOR_MAILBOX,

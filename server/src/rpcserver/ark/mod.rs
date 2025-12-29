@@ -144,7 +144,7 @@ impl rpc::server::ArkService for Server {
 		&self,
 		req: tonic::Request<protos::BoardVtxoRequest>,
 	) -> Result<tonic::Response<protos::Empty>, tonic::Status> {
-		let _ = RpcMethodDetails::grpc_ark(middleware::RPC_SERVICE_ARK_REGISTER_BOARD_VTXOS);
+		let _ = RpcMethodDetails::grpc_ark(middleware::RPC_SERVICE_ARK_REGISTER_BOARD_VTXO);
 		let req = req.into_inner();
 
 		crate::rpcserver::add_tracing_attributes(vec![
