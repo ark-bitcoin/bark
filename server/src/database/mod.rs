@@ -3,8 +3,9 @@ mod embedded {
 	use refinery::embed_migrations;
 	embed_migrations!("src/database/migrations");
 }
-pub mod intman;
 
+pub mod block;
+pub mod intman;
 pub mod ln;
 pub mod oor;
 pub mod rounds;
