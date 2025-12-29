@@ -1,9 +1,10 @@
-use bitcoin::OutPoint;
 
-use bitcoin::{Amount, TxIn, TxOut, Transaction, Witness, ScriptBuf, Sequence};
+use bitcoin::{Amount, OutPoint, Txid, TxIn, TxOut, Transaction, Witness, ScriptBuf, Sequence};
 use bitcoin::absolute::LockTime;
+use bitcoin::hashes::Hash;
 use bitcoin::transaction::Version;
 use bitcoin::secp256k1::Keypair;
+
 use bitcoin_ext::{BlockHeight, BlockDelta};
 
 use crate::Vtxo;
@@ -78,6 +79,10 @@ impl DummyTestVtxoSpec {
 		let vtxo = user_builder.build_vtxo(&server_cosign_response, &self.user_keypair).unwrap();
 		(funding_tx, vtxo)
 	}
+}
+
+pub fn random_utxo() -> OutPoint {
+	OutPoint::new(Txid::from_byte_array(rand::random()), rand::random())
 }
 
 #[test]
