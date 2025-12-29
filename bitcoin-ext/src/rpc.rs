@@ -328,6 +328,11 @@ pub trait BitcoinRpcExt: RpcApi {
 		Ok(BlockRef { height: height as BlockHeight, hash })
 	}
 
+	fn get_block_by_height(&self, height: BlockHeight) -> Result<BlockRef, Error> {
+		let hash = self.get_block_hash(height as u64)?;
+		Ok(BlockRef { height, hash })
+	}
+
 	fn tx_status(&self, txid: &bitcoin::Txid) -> Result<TxStatus, Error> {
 		match self.custom_get_raw_transaction_info(txid, None)? {
 			Some(tx) => match tx.blockhash {
