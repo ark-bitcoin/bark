@@ -1,14 +1,21 @@
 use std::str::FromStr;
-use ark::{lightning::Invoice, vtxo::test::VTXO_VECTORS};
-use bark::lightning_invoice::Bolt11Invoice;
+
 use bitcoin::secp256k1::PublicKey;
 use chrono::Local;
+
+use ark::{lightning::Invoice, vtxo::test::VTXO_VECTORS};
 use ark::integration::{TokenStatus, TokenType};
-use ark_testing::TestContext;
-use server::database::Db;
+
+use bark::lightning_invoice::Bolt11Invoice;
+use bitcoin_ext::BlockRef;
 use cln_rpc::listsendpays_request::ListsendpaysIndex;
+
+use server::database::Db;
 use server::filters;
 use server::filters::Filters;
+
+
+use ark_testing::TestContext;
 
 #[tokio::test]
 async fn upsert_vtxo() {
@@ -223,4 +230,75 @@ async fn integration() {
 
 	let count = db.count_open_integration_tokens(integration_third.id, TokenType::SingleUseBoard).await.unwrap();
 	assert_eq!(count, 0);
+}
+
+#[tokio::test]
+async fn block_database_crud() {
+	let mut ctx = TestContext::new_minimal("postgresd/block_db_crud").await;
+	ctx.init_central_postgres().await;
+	let postgres_cfg = ctx.new_postgres(&ctx.test_name).await;
+
+	Db::create(&postgres_cfg).await.expect("Database created");
+	let db = Db::connect(&postgres_cfg).await.expect("Connected to database");
+
+	// Construct some mock block refs
+	let hash1 = bitcoin::BlockHash::from_str("0000000000000000000670ab57e8c1a4637b22d1d56e4c2837d08ec9a61e7777").unwrap();
+	let block1 = BlockRef {
+		height: 1,
+		hash: hash1,
+	};
+
+	let hash2 = bitcoin::BlockHash::from_str("00000000000000000003acbe2c55c3b2ee3421fd4b726e2f8ef6e7ef1ecc4777").unwrap();
+	let block2 = BlockRef {
+		height: 2,
+		hash: hash2,
+	};
+
+	// Initially no blocks
+	assert!(db.get_block_by_height(1).await.unwrap().is_none());
+	assert!(db.get_block_by_height(2).await.unwrap().is_none());
+
+	// Initially no tip
+	assert!(db.get_highest_block().await.unwrap().is_none());
+
+	// Store first block
+	db.store_block(&block1).await.expect("Store block1");
+	{
+		let stored = db.get_block_by_height(1).await.unwrap().expect("block1 present");
+		assert_eq!(stored.height, block1.height);
+		assert_eq!(stored.hash, block1.hash);
+		assert_eq!(db.get_highest_block
+().await.unwrap(), Some(block1.clone()));
+	}
+
+	// Store second block
+	db.store_block(&block2).await.expect("Store block2");
+	{
+		let stored = db.get_block_by_height(2).await.unwrap().expect("block2 present");
+		assert_eq!(stored.height, block2.height);
+		assert_eq!(stored.hash, block2.hash);
+		assert_eq!(db.get_highest_block
+().await.unwrap(), Some(block2.clone()));
+	}
+
+	// Try to add a conflicting block at block-height 2
+	let hash2_conflict = bitcoin::BlockHash::from_str("11111111111111111111acbe2c55c3b2ee3421fd4b726e2f8ef6e7ef1ecc4777").unwrap();
+	let block2_conflict = BlockRef {
+		height: 2,
+		hash: hash2_conflict,
+	};
+
+	let result = db.store_block(&block2_conflict).await;
+	assert!(result.is_err(), "Storing a conflicting block at the same height should error");
+
+	// Remove blocks above height2 (block2 should still be there)
+	db.remove_blocks_above(2).await.expect("Remove above height2");
+	assert!(db.get_block_by_height(2).await.unwrap().is_some()); // block2 still there
+	assert!(db.get_block_by_height(1).await.unwrap().is_some()); // block1 still there
+	assert_eq!(db.get_highest_block().await.unwrap(), Some(block2.clone())); // Tip should be at block2
+
+	// Remove blocks above height1 (block1 should still be there)
+	db.remove_blocks_above(1).await.expect("Remove above height1");
+	assert!(db.get_block_by_height(1).await.unwrap().is_some()); // block1 still there
+	assert_eq!(db.get_highest_block().await.unwrap(), Some(block1.clone())); // Tip should be at block1
 }
