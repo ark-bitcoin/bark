@@ -24,7 +24,6 @@ use log::{debug, info, warn};
 
 use ark::VtxoId;
 use bark::{BarkNetwork, Config};
-use bark::lightning::{pay_invoice, pay_lnaddr, pay_offer};
 use bark::onchain::ChainSync;
 use bark::vtxo::selection::VtxoFilter;
 use bark::vtxo::state::VtxoStateKind;
@@ -532,25 +531,32 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 			output_json(&json::PendingBoardInfo::from(board));
 		},
 		Command::Send { destination, amount, comment, no_sync } => {
+			if !no_sync {
+				info!("Syncing wallet...");
+				wallet.sync().await;
+			}
+
 			if let Ok(addr) = ark::Address::from_str(&destination) {
 				let amount = amount.context("amount missing")?;
 				if comment.is_some() {
 					bail!("comment not supported for Ark address");
 				}
 
-				if !no_sync {
-					info!("Syncing wallet...");
-					wallet.sync().await;
-				}
-
 				info!("Sending arkoor payment of {} to address {}", amount, addr);
 				wallet.send_arkoor_payment(&addr, amount).await?;
 			} else if let Ok(inv) = Bolt11Invoice::from_str(&destination) {
-				pay_invoice(inv, amount, comment, no_sync, &mut wallet).await?;
+				if comment.is_some() {
+					bail!("comment is not supported for BOLT-11 invoices");
+				}
+				wallet.pay_lightning_invoice(inv, amount).await?;
 			} else if let Ok(offer) = Offer::from_str(&destination) {
-				pay_offer(offer, amount, comment, no_sync, &mut wallet).await?;
+				if comment.is_some() {
+					bail!("comment is not supported for BOLT-12 offers");
+				}
+				wallet.pay_lightning_offer(offer, amount).await?;
 			} else if let Ok(addr) = LightningAddress::from_str(&destination) {
-				pay_lnaddr(addr, amount, comment, no_sync, &mut wallet).await?;
+				let amount = amount.context("amount is required for Lightning addresses")?;
+				wallet.pay_lightning_address(&addr, amount, comment).await?;
 			} else {
 				bail!("Argument is not a valid destination. Supported are: \
 					VTXO pubkeys, bolt11 invoices, bolt12 offers and lightning addresses",

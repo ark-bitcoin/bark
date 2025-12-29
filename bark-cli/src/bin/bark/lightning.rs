@@ -1,5 +1,6 @@
 use std::str::FromStr;
 
+use anyhow::Context;
 use bitcoin::Amount;
 use clap;
 use lightning::offers::offer::Offer;
@@ -8,7 +9,6 @@ use lnurl::lightning_address::LightningAddress;
 use log::info;
 
 use ark::lightning::{PaymentHash, Preimage};
-use bark::lightning::{pay_invoice, pay_lnaddr, pay_offer};
 use bark::Wallet;
 use bark_json::cli::{InvoiceInfo, LightningReceiveInfo};
 
@@ -104,14 +104,27 @@ pub async fn execute_lightning_command(
 ) -> anyhow::Result<()> {
 	match lightning_command {
 		LightningCommand::Pay { invoice, amount, comment, no_sync, wait } => {
+			if !no_sync {
+				info!("Syncing wallet...");
+				wallet.sync().await;
+			}
+
 			let payment = if let Ok(invoice) = Bolt11Invoice::from_str(&invoice) {
-				pay_invoice(invoice, amount, comment, no_sync, wallet).await?
+				if comment.is_some() {
+					bail!("comment is not supported for BOLT-11 invoices");
+				}
+				wallet.pay_lightning_invoice(invoice, amount).await?
 			} else if let Ok(offer) = Offer::from_str(&invoice) {
-				pay_offer(offer, amount, comment, no_sync, wallet).await?
+				if comment.is_some() {
+					bail!("comment is not supported for BOLT-12 offers");
+				}
+				wallet.pay_lightning_offer(offer, amount).await?
 			} else if let Ok(lnaddr) = LightningAddress::from_str(&invoice) {
-				pay_lnaddr(lnaddr, amount, comment, no_sync, wallet).await?
+				let amount = amount.context("amount is required for Lightning addresses")?;
+				wallet.pay_lightning_address(&lnaddr, amount, comment).await?
 			} else {
-				bail!("argument is not a valid bolt11 invoice, bolt12 offer or lightning address");
+				bail!("argument is not a valid BOLT-11 invoice, BOLT-12 offer or \
+					Lightning address");
 			};
 
 			if wait {
