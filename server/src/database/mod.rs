@@ -52,6 +52,12 @@ const NOARG: &[&bool] = &[];
 
 const DEFAULT_DATABASE: &str = "postgres";
 
+/// A stored bitcoin tx with txid pre-calculated
+pub struct StoredBitcoinTx {
+	pub txid: Txid,
+	pub tx: Transaction,
+}
+
 #[derive(Clone)]
 pub struct Db {
 	pool: Pool<PostgresConnectionManager<NoTls>>
@@ -266,8 +272,7 @@ impl Db {
 			UPDATE vtxo SET oor_spent_txid = $2, updated_at = NOW()
 			WHERE
 				vtxo_id = $1 AND
-				spent_in_round IS NULL AND
-				oor_spent_txid IS NULL;
+				spent_in_round IS NULL AND oor_spent_txid IS NULL AND offboarded_in IS NULL;
 		", &[Type::TEXT, Type::TEXT]).await?;
 
 		for input in builder.inputs() {
@@ -499,9 +504,72 @@ impl Db {
 		Ok(pending_sweeps)
 	}
 
-	// **********
-	// * WALLET *
-	// **********
+	// *************
+	// * OFFBOARDS *
+	// *************
+
+	/// Store the offboard (as unbroadcast) and mark VTXOs as spent
+	pub async fn register_offboard(
+		&self,
+		input_vtxos: impl IntoIterator<Item = VtxoId>,
+		offboard_tx: &Transaction,
+	) -> anyhow::Result<()> {
+		let offboard_txid = offboard_tx.compute_txid().to_string();
+		let offboard_tx_bytes = bitcoin::consensus::serialize(offboard_tx);
+
+		let mut conn = self.get_conn().await?;
+		let tx = conn.transaction().await?;
+
+		let stmt = tx.prepare_typed(
+			"INSERT INTO offboards (txid, signed_tx, wallet_commit, created_at)
+			VALUES ($1, $2, FALSE, NOW());",
+			&[Type::TEXT, Type::BYTEA]).await?;
+		tx.execute(&stmt, &[&offboard_txid, &offboard_tx_bytes]).await?;
+
+		let stmt = tx.prepare_typed(
+			"UPDATE vtxo SET offboarded_in = $2, updated_at = NOW()
+			WHERE vtxo_id = $1 AND
+				spent_in_round IS NULL AND oor_spent_txid IS NULL AND offboarded_in IS NULL;",
+			&[Type::TEXT, Type::TEXT],
+		).await?;
+		for vtxo in input_vtxos {
+			let rows_affected = tx.execute(&stmt, &[&vtxo.to_string(), &offboard_txid]).await?;
+			if rows_affected == 0 {
+				bail!("VTXO {} is already spent", vtxo);
+			}
+		}
+
+		tx.commit().await?;
+		Ok(())
+	}
+
+	pub async fn mark_offboard_committed(&self, offboard_txid: Txid) -> anyhow::Result<()> {
+		let conn = self.get_conn().await?;
+		let stmt = conn.prepare_typed(
+			"UPDATE offboards SET wallet_commit = TRUE WHERE txid = $1;",
+			&[Type::TEXT],
+		).await?;
+		ensure!(conn.execute(&stmt, &[&offboard_txid.to_string()]).await? > 0,
+			"no offboard with txid {}", offboard_txid,
+		);
+		Ok(())
+	}
+
+	pub async fn get_uncommitted_offboards(&self) -> anyhow::Result<Vec<StoredBitcoinTx>> {
+		let conn = self.get_conn().await?;
+		let stmt = conn.prepare_typed(
+			"SELECT txid, signed_tx FROM offboards WHERE wallet_commit IS FALSE;", &[],
+		).await?;
+		let rows = conn.query(&stmt, &[]).await?;
+		let mut ret = Vec::with_capacity(rows.len());
+		for row in rows {
+			ret.push(StoredBitcoinTx {
+				txid: row.get::<_, &str>("txid").parse().expect("corrupt db: invalid txid"),
+				tx: deserialize(row.get("signed_tx")).expect("corrupt db: invalid tx"),
+			});
+		}
+		Ok(ret)
+	}
 
 	pub async fn store_changeset(&self, wallet: WalletKind, c: &ChangeSet) -> anyhow::Result<()> {
 		let bytes = rmp_serde::to_vec_named(c).expect("serde serialization");

@@ -27,8 +27,13 @@ pub struct VtxoState {
 
 	/// If this vtxo was spent in an OOR tx, the txid of the OOR tx.
 	pub oor_spent_txid: Option<Txid>,
+
 	/// The round id this vtxo was forfeited in.
 	pub spent_in_round: Option<i64>,
+
+	/// If this VTXO was offboarded, the offboard tx's txid
+	pub offboarded_in: Option<Txid>,
+
 	/// If this is a board vtxo, the time at which it was swept.
 	pub created_at: DateTime<Local>,
 	pub updated_at: DateTime<Local>,
@@ -36,7 +41,15 @@ pub struct VtxoState {
 
 impl VtxoState {
 	pub fn is_spendable(&self) -> bool {
-		self.oor_spent_txid.is_none() && self.spent_in_round.is_none()
+		self.oor_spent_txid.is_none()
+			&& self.spent_in_round.is_none()
+			&& self.offboarded_in.is_none()
+	}
+}
+
+impl AsRef<Vtxo> for VtxoState {
+	fn as_ref(&self) -> &Vtxo {
+	    &self.vtxo
 	}
 }
 
@@ -58,6 +71,10 @@ impl TryFrom<Row> for VtxoState {
 				.map(|txid| Txid::from_str(txid))
 				.transpose()?,
 			spent_in_round: row.get("spent_in_round"),
+			offboarded_in: row
+				.get::<_, Option<&str>>("offboarded_in")
+				.map(|txid| Txid::from_str(txid))
+				.transpose()?,
 			created_at: row.get("created_at"),
 			updated_at: row.get("updated_at"),
 		})

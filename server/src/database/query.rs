@@ -65,7 +65,8 @@ pub async fn get_vtxo_by_id<T>(client: &T, id: VtxoId) -> anyhow::Result<VtxoSta
 	where T : GenericClient + Sized
 {
 	let stmt = client.prepare_typed("
-		SELECT id, vtxo_id, vtxo, expiry, oor_spent_txid, spent_in_round, created_at, updated_at
+		SELECT id, vtxo_id, vtxo, expiry, oor_spent_txid, spent_in_round, offboarded_in,
+			created_at, updated_at
 		FROM vtxo
 		WHERE vtxo_id = $1;
 	", &[Type::TEXT]).await?;
@@ -86,7 +87,8 @@ pub async fn get_vtxos_by_id<T>(
 	where T: GenericClient + Sized
 {
 	let statement = client.prepare_typed("
-		SELECT id, vtxo_id, vtxo, expiry, oor_spent_txid, spent_in_round, created_at, updated_at
+		SELECT id, vtxo_id, vtxo, expiry, oor_spent_txid, spent_in_round, offboarded_in,
+			created_at, updated_at
 		FROM vtxo
 		WHERE vtxo_id = ANY($1);
 	", &[Type::TEXT_ARRAY]).await?;

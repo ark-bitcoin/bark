@@ -360,10 +360,10 @@ CREATE FUNCTION public.vtxo_update_trigger() RETURNS trigger
 BEGIN
 	INSERT INTO vtxo_history (
 		id, vtxo_id, vtxo, expiry, oor_spent_txid, spent_in_round,
-		created_at, updated_at
+		offboarded_in, created_at, updated_at
 	) VALUES (
 		OLD.id, OLD.vtxo_id, OLD.vtxo, OLD.expiry, OLD.oor_spent_txid, OLD.spent_in_round,
-		OLD.created_at, OLD.updated_at
+		OLD.offboarded_in, OLD.created_at, OLD.updated_at
 	);
 
 	IF NEW.updated_at = OLD.updated_at AND new.updated_AT <> NOW() THEN
@@ -923,6 +923,38 @@ ALTER SEQUENCE public.lightning_payment_attempt_lightning_payment_attempt_id_seq
 
 
 --
+-- Name: offboards; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.offboards (
+    id bigint NOT NULL,
+    txid text NOT NULL,
+    signed_tx bytea NOT NULL,
+    wallet_commit boolean NOT NULL,
+    created_at timestamp without time zone NOT NULL
+);
+
+
+--
+-- Name: offboards_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.offboards_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: offboards_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.offboards_id_seq OWNED BY public.offboards.id;
+
+
+--
 -- Name: refinery_schema_history; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -1070,7 +1102,8 @@ CREATE TABLE public.vtxo (
     spent_in_round bigint,
     created_at timestamp with time zone NOT NULL,
     updated_at timestamp with time zone NOT NULL,
-    lightning_htlc_subscription_id bigint
+    lightning_htlc_subscription_id bigint,
+    offboarded_in text
 );
 
 
@@ -1087,7 +1120,8 @@ CREATE TABLE public.vtxo_history (
     spent_in_round bigint,
     created_at timestamp with time zone NOT NULL,
     updated_at timestamp with time zone NOT NULL,
-    history_created_at timestamp with time zone DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC'::text) NOT NULL
+    history_created_at timestamp with time zone DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC'::text) NOT NULL,
+    offboarded_in text
 );
 
 
@@ -1283,6 +1317,13 @@ ALTER TABLE ONLY public.lightning_node ALTER COLUMN id SET DEFAULT nextval('publ
 --
 
 ALTER TABLE ONLY public.lightning_payment_attempt ALTER COLUMN id SET DEFAULT nextval('public.lightning_payment_attempt_lightning_payment_attempt_id_seq'::regclass);
+
+
+--
+-- Name: offboards id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.offboards ALTER COLUMN id SET DEFAULT nextval('public.offboards_id_seq'::regclass);
 
 
 --
@@ -1487,6 +1528,14 @@ ALTER TABLE ONLY public.lightning_payment_attempt
 
 
 --
+-- Name: offboards offboards_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.offboards
+    ADD CONSTRAINT offboards_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: refinery_schema_history refinery_schema_history_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -1685,6 +1734,20 @@ CREATE UNIQUE INDEX lightning_payment_hash_uix ON public.lightning_invoice USING
 
 
 --
+-- Name: offboards_txid_uix; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX offboards_txid_uix ON public.offboards USING btree (txid);
+
+
+--
+-- Name: offboards_wallet_commit_false_ix; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX offboards_wallet_commit_false_ix ON public.offboards USING btree (id) WHERE (wallet_commit IS FALSE);
+
+
+--
 -- Name: round_expiry_ix; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -1772,7 +1835,7 @@ CREATE INDEX vtxo_pool_vtxo_id_ix ON public.vtxo_pool USING btree (vtxo_id);
 -- Name: vtxo_spendable_ix; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX vtxo_spendable_ix ON public.vtxo USING btree (((oor_spent_txid IS NULL)), ((spent_in_round IS NULL)), vtxo_id);
+CREATE INDEX vtxo_spendable_ix ON public.vtxo USING btree (((oor_spent_txid IS NULL)), ((spent_in_round IS NULL)), ((offboarded_in IS NULL)), vtxo_id);
 
 
 --

@@ -62,7 +62,8 @@ impl Db {
 		// mark the input vtxos as refreshed
 		let stmt = tx.prepare_typed(
 			"UPDATE vtxo SET spent_in_round = $2, updated_at = NOW()
-			WHERE vtxo_id = $1 AND oor_spent_txid IS NULL AND spent_in_round IS NULL;",
+			WHERE vtxo_id = $1 AND
+				oor_spent_txid IS NULL AND spent_in_round IS NULL AND offboarded_in IS NULL;",
 			&[Type::TEXT, Type::INT8],
 		).await?;
 		for vtxo_id in input_vtxos {

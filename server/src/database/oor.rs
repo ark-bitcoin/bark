@@ -16,11 +16,13 @@ pub async fn mark_package_spent<T>(
 {
 	debug_assert_eq!(inputs.len(), spending_txids.len(), "Provided bad inputs");
 
-	let statement = client.prepare_typed("
-		UPDATE vtxo
+	let statement = client.prepare_typed(
+		"UPDATE vtxo
 		SET oor_spent_txid = $2, updated_at = NOW()
-		WHERE vtxo_id = $1 AND oor_spent_txid IS NULL AND spent_in_round IS NULL",
-	&[Type::TEXT, Type::TEXT]).await.context("Failed to prepare query")?;
+		WHERE vtxo_id = $1 AND
+			oor_spent_txid IS NULL AND spent_in_round IS NULL AND offboarded_in IS NULL;",
+		&[Type::TEXT, Type::TEXT],
+	).await.context("Failed to prepare query")?;
 
 	for (vtxo_id, spending_txid) in inputs.iter().zip(spending_txids) {
 		let nb_rows_affected = client.execute(&statement, &[
