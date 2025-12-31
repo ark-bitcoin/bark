@@ -21,6 +21,7 @@ use log::info;
 use bitcoin_ext::rpc::{BitcoinRpcClient, BitcoinRpcExt, RpcApi};
 
 use crate::{database, telemetry, wallet, SECP};
+use crate::sync::SyncManager;
 use crate::config::watchman::Config;
 use crate::forfeits::ForfeitWatcher;
 use crate::system::RuntimeManager;
@@ -37,6 +38,8 @@ const SERVER_KEY_PATH: &str = "m/2'/0'";
 /// Server struct that runs all non-user-facing background services
 pub struct Watchman {
 	rtmgr: RuntimeManager,
+	#[allow(unused)]
+	sync_manager: SyncManager,
 	pub txindex: TxIndex,
 	pub tx_nursery: TxNursery,
 	pub forfeit_watcher: ForfeitWatcher,
@@ -179,7 +182,15 @@ impl Watchman {
 			server_key.clone(),
 		).await.context("failed to start VtxoSweeper")?;
 
-		Ok(Self { rtmgr, txindex, tx_nursery, forfeit_watcher, vtxo_sweeper })
+		let sync_manager = SyncManager::start(
+			rtmgr.clone(),
+			bitcoind.clone(),
+			db.clone(),
+			vec![],
+			deep_tip,
+		).await.context("Failed to start SyncManager")?;
+
+		Ok(Self { rtmgr, sync_manager, txindex, tx_nursery, forfeit_watcher, vtxo_sweeper })
 	}
 
 	/// Waits for server to terminate.

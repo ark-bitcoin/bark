@@ -21,7 +21,6 @@ use server_rpc::protos::{self, InputVtxo, lightning_payment_status};
 use server_rpc::protos::prepare_lightning_receive_claim_request::LightningReceiveAntiDos;
 use server_rpc::TryFromBytes;
 use bitcoin_ext::{AmountExt, BlockDelta, BlockHeight, P2TR_DUST};
-use bitcoin_ext::rpc::RpcApi;
 
 use crate::database::ln::{
 	LightningHtlcSubscription, LightningHtlcSubscriptionStatus, LightningPaymentStatus,
@@ -58,7 +57,7 @@ impl Server {
 		//TODO(stevenroose) check that vtxos are valid
 
 		let expiry = {
-			let tip = self.bitcoind.get_block_count()? as BlockHeight;
+			let tip = self.sync_manager.chain_tip();
 			let sub = self.db.get_htlc_subscription_by_payment_hash(invoice_payment_hash).await?;
 
 			// If we have a subscription for that invoice, it means user is
@@ -70,7 +69,7 @@ impl Server {
 				self.config.htlc_send_expiry_delta as u64
 			};
 
-			tip + expiry_delta as BlockHeight
+			tip.height + expiry_delta as BlockHeight
 		};
 
 		let policy = VtxoPolicy::new_server_htlc_send(user_pubkey, invoice_payment_hash, expiry);
@@ -193,7 +192,7 @@ impl Server {
 		htlc_vtxo_ids: Vec<VtxoId>,
 		user_nonces: Vec<musig::PublicNonce>,
 	) -> anyhow::Result<Vec<ArkoorCosignResponse>> {
-		let tip = self.bitcoind.get_block_count()? as BlockHeight;
+		let tip = self.chain_tip().height as BlockHeight;
 		let db = self.db.clone();
 
 		let htlc_vtxos = self.db.get_vtxos_by_id(&htlc_vtxo_ids).await?;

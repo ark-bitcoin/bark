@@ -16,7 +16,6 @@ pub mod mailbox_manager;
 pub mod rpcserver;
 pub mod secret;
 pub mod sweeps;
-pub mod tip_fetcher;
 pub mod vtxopool;
 pub mod wallet;
 pub mod watchman;
@@ -69,6 +68,7 @@ use bitcoin_ext::{BlockHeight, BlockRef, TransactionExt, TxStatus, P2TR_DUST};
 use bitcoin_ext::rpc::{BitcoinRpcClient, BitcoinRpcExt, RpcApi};
 
 use crate::bitcoind::BitcoinRpcClientExt;
+use crate::sync::SyncManager;
 use crate::error::ContextExt;
 use crate::flux::VtxosInFlux;
 use crate::forfeits::ForfeitWatcher;
@@ -79,7 +79,6 @@ use crate::round::forfeit::HarkForfeitNonces;
 use crate::secret::Secret;
 use crate::sweeps::VtxoSweeper;
 use crate::system::RuntimeManager;
-use crate::tip_fetcher::TipFetcher;
 use crate::txindex::TxIndex;
 use crate::txindex::broadcast::TxNursery;
 use crate::vtxopool::VtxoPool;
@@ -170,7 +169,7 @@ pub struct Server {
 	// NB this needs to be an Arc so we can take a static guard
 	rounds_wallet: Arc<tokio::sync::Mutex<PersistedWallet>>,
 	bitcoind: BitcoinRpcClient,
-	tip_fetcher: TipFetcher,
+	sync_manager: SyncManager,
 	rtmgr: RuntimeManager,
 	tx_nursery: TxNursery,
 	vtxo_sweeper: Option<VtxoSweeper>,
@@ -399,10 +398,13 @@ impl Server {
 			None
 		};
 
-		let tip_fetcher = TipFetcher::start(
+		let sync_manager = SyncManager::start(
 			rtmgr.clone(),
 			bitcoind.clone(),
-		).await.context("Failed to start TipFetcher")?;
+			db.clone(),
+			vec![],
+			deep_tip,
+		).await.context("Failed to start SyncManager")?;
 
 		let cln = ClnManager::start(
 			rtmgr.clone(),
@@ -437,7 +439,7 @@ impl Server {
 			mailbox_manager,
 			ephemeral_master_key: Secret::new(ephemeral_master_key),
 			bitcoind,
-			tip_fetcher,
+			sync_manager,
 			rtmgr,
 			tx_nursery: tx_nursery.clone(),
 
@@ -509,7 +511,7 @@ impl Server {
 	}
 
 	pub fn chain_tip(&self) -> BlockRef {
-		self.tip_fetcher.tip()
+		self.sync_manager.chain_tip()
 	}
 
 	/// Sync all the system's wallets.
