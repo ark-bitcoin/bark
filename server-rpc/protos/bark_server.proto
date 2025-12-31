@@ -83,9 +83,15 @@ service ArkService {
 	rpc SubscribeRounds(core.Empty) returns (stream RoundEvent) {}
 	// Get the last round event
 	rpc LastRoundEvent(core.Empty) returns (RoundEvent) {}
-	rpc SubmitPayment(SubmitPaymentRequest) returns (core.Empty) {}
+	rpc SubmitPayment(SubmitPaymentRequest) returns (SubmitPaymentResponse) {}
 	rpc ProvideVtxoSignatures(VtxoSignaturesRequest) returns (core.Empty) {}
-	rpc ProvideForfeitSignatures(ForfeitSignaturesRequest) returns (core.Empty) {}
+
+	// Submit a non-interactive round participation
+	rpc SubmitRoundParticipation(RoundParticipationRequest) returns (RoundParticipationResponse) {}
+	rpc RoundParticipationStatus(RoundParticipationStatusRequest) returns (RoundParticipationStatusResponse) {}
+	rpc RequestLeafVtxoCosign(LeafVtxoCosignRequest) returns (LeafVtxoCosignResponse) {}
+	rpc RequestForfeitNonces(ForfeitNoncesRequest) returns (ForfeitNoncesResponse) {}
+	rpc ForfeitVtxos(ForfeitVtxosRequest) returns (ForfeitVtxosResponse) {}
 }
 
 message HandshakeRequest {
@@ -394,28 +400,23 @@ message VtxoProposal {
 	repeated bytes vtxos_agg_nonces = 5;
 }
 
-message RoundProposal {
-	uint64 round_seq = 1;
-	uint64 attempt_seq = 2;
-	/// The cosign signatures to plug into the vtxo tree.
-	repeated bytes vtxo_cosign_signatures = 3;
-	repeated ForfeitNonces forfeit_nonces = 4;
-	bytes connector_pubkey = 5;
-}
-
 message RoundFinished {
 	uint64 round_seq = 1;
 	uint64 attempt_seq = 2;
 	/// The signed round tx.
 	bytes signed_round_tx = 3;
+	/// The cosign signatures to plug into the vtxo tree.
+	repeated bytes vtxo_cosign_signatures = 4;
 }
 
 message RoundEvent {
 	oneof event {
 		RoundAttempt attempt = 1;
 		VtxoProposal vtxo_proposal = 2;
-		RoundProposal round_proposal = 3;
 		RoundFinished finished = 4;
+
+		// old variants:
+		//RoundProposal round_proposal = 3;
 	};
 }
 
@@ -440,7 +441,11 @@ message OffboardRequest {
 message SubmitPaymentRequest {
 	repeated InputVtxo input_vtxos = 2;
 	repeated SignedVtxoRequest vtxo_requests = 3;
-	repeated OffboardRequest offboard_requests = 4;
+	repeated OffboardRequest offboard_requests = 4 [ deprecated = true ];
+}
+
+message SubmitPaymentResponse {
+	bytes unlock_hash = 1;
 }
 
 message ForfeitSignatures {
@@ -449,15 +454,82 @@ message ForfeitSignatures {
 	repeated bytes signatures = 3;
 }
 
-message ForfeitSignaturesRequest {
-	repeated ForfeitSignatures signatures = 1;
-}
-
 message VtxoSignaturesRequest {
 	/// The cosign pubkey these signatures are for.
 	bytes pubkey = 1;
 	repeated bytes signatures = 2;
 }
+
+message RoundParticipationRequest {
+	repeated InputVtxo input_vtxos = 2;
+	repeated VtxoRequest vtxo_requests = 3;
+}
+
+message RoundParticipationResponse {
+	bytes unlock_hash = 1;
+}
+
+message RoundParticipationStatusRequest {
+	bytes unlock_hash = 1;
+}
+
+enum RoundParticipationStatus {
+	// participation still waiting to happen
+	ROUND_PART_PENDING = 0;
+	// new vtxos have been issued, but not released yet
+	ROUND_PART_ISSUED = 1;
+	// old vtxos have been forfeited and new vtxos released
+	ROUND_PART_RELEASED = 2;
+}
+
+message RoundParticipationStatusResponse {
+	// the actual status
+	RoundParticipationStatus status = 1;
+
+	// signed round funding tx
+	// (provided if status != ROUND_PART_PENDING)
+	optional bytes round_funding_tx = 2;
+
+	// unsigned output vtxos
+	// (provided if status != ROUND_PART_PENDING)
+	repeated bytes output_vtxos = 3;
+
+	// unlock preimage to unlock new vtxos
+	// (provided if status == ROUND_PART_RELEASED)
+	optional bytes unlock_preimage = 4;
+}
+
+message LeafVtxoCosignRequest {
+	bytes vtxo_id = 1;
+	bytes public_nonce = 2;
+}
+
+message LeafVtxoCosignResponse {
+	bytes public_nonce = 1;
+	bytes partial_signature = 2;
+}
+
+message ForfeitNoncesRequest {
+	// the unlock hash to forfeit to, this is the unlock hash that locks the new output VTXO
+	bytes unlock_hash = 1;
+	// the VTXO IDs of the VTXOs to be forfeited for the same unlock preimage
+	repeated bytes vtxo_ids = 2;
+}
+
+message ForfeitNoncesResponse {
+	// list of nonces, two for each vtxo requested
+	repeated bytes public_nonces = 1;
+}
+
+message ForfeitVtxosRequest {
+	// encoded forfeit bundles, should all be for the same unlock hash
+	repeated bytes forfeit_bundles = 1;
+}
+
+message ForfeitVtxosResponse {
+	bytes unlock_preimage = 1;
+}
+
 
 service WalletAdminService {
 	rpc WalletSync(core.Empty) returns (core.Empty) {}

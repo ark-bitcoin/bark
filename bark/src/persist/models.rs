@@ -9,15 +9,14 @@
 //! - Enable forward/backward compatibility when schema migrations occur.
 
 use std::borrow::Cow;
-use std::time::SystemTime;
 
-use bitcoin::{Amount, ScriptBuf, Transaction, Txid};
+use bitcoin::{Amount, Transaction};
 use bitcoin::secp256k1::Keypair;
 use lightning_invoice::Bolt11Invoice;
 
-use ark::{OffboardRequest, Vtxo, VtxoId, VtxoPolicy, VtxoRequest};
+use ark::{Vtxo, VtxoId, VtxoPolicy, VtxoRequest};
 use ark::musig::DangerousSecretNonce;
-use ark::tree::signed::VtxoTreeSpec;
+use ark::tree::signed::{UnlockHash, VtxoTreeSpec};
 use ark::lightning::{Invoice, PaymentHash, Preimage};
 use ark::rounds::RoundSeq;
 use bitcoin_ext::BlockDelta;
@@ -26,7 +25,7 @@ use crate::WalletVtxo;
 use crate::exit::ExitVtxo;
 use crate::exit::models::ExitState;
 use crate::movement::MovementId;
-use crate::round::{AttemptState, RoundFlowState, RoundParticipation, RoundState, UnconfirmedRound};
+use crate::round::{AttemptState, RoundFlowState, RoundParticipation, RoundState};
 
 /// Persisted representation of a pending board.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -124,73 +123,12 @@ impl<'a> From<SerdeVtxoRequest<'a>> for VtxoRequest {
 	}
 }
 
-/// Model for [OffboardRequest]
-#[derive(Debug, Clone, Deserialize, Serialize)]
-struct SerdeOffboardRequest<'a> {
-	#[serde(with = "bitcoin_ext::serde::encodable::cow")]
-	script_pubkey: Cow<'a, ScriptBuf>,
-	#[serde(with = "bitcoin::amount::serde::as_sat")]
-	amount: Amount,
-}
-
-impl<'a> From<&'a OffboardRequest> for SerdeOffboardRequest<'a> {
-	fn from(v: &'a OffboardRequest) -> Self {
-		SerdeOffboardRequest {
-			script_pubkey: Cow::Borrowed(&v.script_pubkey),
-			amount: v.amount,
-		}
-	}
-}
-
-impl<'a> From<SerdeOffboardRequest<'a>> for OffboardRequest {
-	fn from(v: SerdeOffboardRequest) -> Self {
-	    OffboardRequest {
-			script_pubkey: v.script_pubkey.into_owned(),
-			amount: v.amount,
-		}
-	}
-}
-
-/// Model for [UnconfirmedRound]
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SerdeUnconfirmedRound<'a> {
-	#[serde(with = "bitcoin_ext::serde::encodable::cow")]
-	funding_tx: Cow<'a, Transaction>,
-	#[serde(with = "ark::encode::serde::cow::vec")]
-	new_vtxos: Cow<'a, [Vtxo]>,
-	double_spenders: Cow<'a, [Option<Txid>]>,
-	first_double_spent_at: Option<SystemTime>,
-}
-
-impl<'a> From<&'a UnconfirmedRound> for SerdeUnconfirmedRound<'a> {
-	fn from(v: &'a UnconfirmedRound) -> Self {
-		Self {
-			funding_tx: Cow::Borrowed(&v.funding_tx),
-			new_vtxos: Cow::Borrowed(&v.new_vtxos),
-			double_spenders: Cow::Borrowed(&v.double_spenders),
-			first_double_spent_at: v.first_double_spent_at,
-		}
-	}
-}
-
-impl<'a> From<SerdeUnconfirmedRound<'a>> for UnconfirmedRound {
-	fn from(v: SerdeUnconfirmedRound<'a>) -> Self {
-		Self {
-			funding_tx: v.funding_tx.into_owned(),
-			new_vtxos: v.new_vtxos.into_owned(),
-			double_spenders: v.double_spenders.into_owned(),
-			first_double_spent_at: v.first_double_spent_at,
-		}
-	}
-}
-
 /// Model for [RoundParticipation]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct SerdeRoundParticipation<'a> {
 	#[serde(with = "ark::encode::serde::cow::vec")]
 	inputs: Cow<'a, [Vtxo]>,
 	outputs: Vec<SerdeVtxoRequest<'a>>,
-	offboards: Vec<SerdeOffboardRequest<'a>>,
 }
 
 impl<'a> From<&'a RoundParticipation> for SerdeRoundParticipation<'a> {
@@ -198,7 +136,6 @@ impl<'a> From<&'a RoundParticipation> for SerdeRoundParticipation<'a> {
 	    Self {
 			inputs: Cow::Borrowed(&v.inputs),
 			outputs: v.outputs.iter().map(|v| v.into()).collect(),
-			offboards: v.offboards.iter().map(|v| v.into()).collect(),
 		}
 	}
 }
@@ -208,7 +145,6 @@ impl<'a> From<SerdeRoundParticipation<'a>> for RoundParticipation {
 		Self {
 			inputs: v.inputs.into_owned(),
 			outputs: v.outputs.into_iter().map(|v| v.into()).collect(),
-			offboards: v.offboards.into_iter().map(|v| v.into()).collect(),
 		}
 	}
 }
@@ -220,18 +156,14 @@ enum SerdeAttemptState<'a> {
 	AwaitingUnsignedVtxoTree {
 		cosign_keys: Cow<'a, [Keypair]>,
 		secret_nonces: Cow<'a, [Vec<DangerousSecretNonce>]>,
-	},
-	AwaitingRoundProposal {
-		#[serde(with = "bitcoin_ext::serde::encodable::cow")]
-		unsigned_round_tx: Cow<'a, Transaction>,
-		#[serde(with = "ark::encode::serde")]
-		vtxos_spec: VtxoTreeSpec,
+		unlock_hash: UnlockHash,
 	},
 	AwaitingFinishedRound {
 		#[serde(with = "bitcoin_ext::serde::encodable::cow")]
 		unsigned_round_tx: Cow<'a, Transaction>,
-		#[serde(with = "ark::encode::serde::cow::vec")]
-		new_vtxos: Cow<'a, [Vtxo]>,
+		#[serde(with = "ark::encode::serde")]
+		vtxos_spec: Cow<'a, VtxoTreeSpec>,
+		unlock_hash: UnlockHash,
 	},
 }
 
@@ -239,24 +171,20 @@ impl<'a> From<&'a AttemptState> for SerdeAttemptState<'a> {
 	fn from(state: &'a AttemptState) -> Self {
 		match state {
 			AttemptState::AwaitingAttempt => SerdeAttemptState::AwaitingAttempt,
-			AttemptState::AwaitingUnsignedVtxoTree { cosign_keys, secret_nonces } => {
+			AttemptState::AwaitingUnsignedVtxoTree { cosign_keys, secret_nonces, unlock_hash } => {
 				SerdeAttemptState::AwaitingUnsignedVtxoTree {
 					cosign_keys: Cow::Borrowed(cosign_keys),
 					secret_nonces: Cow::Borrowed(secret_nonces),
+					unlock_hash: *unlock_hash,
 				}
-			}
-			AttemptState::AwaitingRoundProposal { unsigned_round_tx, vtxos_spec } => {
-				SerdeAttemptState::AwaitingRoundProposal {
-					unsigned_round_tx: Cow::Borrowed(unsigned_round_tx),
-					vtxos_spec: vtxos_spec.clone(),
-				}
-			}
-			AttemptState::AwaitingFinishedRound { unsigned_round_tx, new_vtxos } => {
+			},
+			AttemptState::AwaitingFinishedRound { unsigned_round_tx, vtxos_spec, unlock_hash } => {
 				SerdeAttemptState::AwaitingFinishedRound {
 					unsigned_round_tx: Cow::Borrowed(unsigned_round_tx),
-					new_vtxos: Cow::Borrowed(new_vtxos),
+					vtxos_spec: Cow::Borrowed(vtxos_spec),
+					unlock_hash: *unlock_hash,
 				}
-			}
+			},
 		}
 	}
 }
@@ -265,24 +193,20 @@ impl<'a> From<SerdeAttemptState<'a>> for AttemptState {
 	fn from(state: SerdeAttemptState<'a>) -> Self {
 		match state {
 			SerdeAttemptState::AwaitingAttempt => AttemptState::AwaitingAttempt,
-			SerdeAttemptState::AwaitingUnsignedVtxoTree { cosign_keys, secret_nonces } => {
+			SerdeAttemptState::AwaitingUnsignedVtxoTree { cosign_keys, secret_nonces, unlock_hash } => {
 				AttemptState::AwaitingUnsignedVtxoTree {
 					cosign_keys: cosign_keys.into_owned(),
 					secret_nonces: secret_nonces.into_owned(),
+					unlock_hash: unlock_hash,
 				}
-			}
-			SerdeAttemptState::AwaitingRoundProposal { unsigned_round_tx, vtxos_spec } => {
-				AttemptState::AwaitingRoundProposal {
-					unsigned_round_tx: unsigned_round_tx.into_owned(),
-					vtxos_spec,
-				}
-			}
-			SerdeAttemptState::AwaitingFinishedRound { unsigned_round_tx, new_vtxos } => {
+			},
+			SerdeAttemptState::AwaitingFinishedRound { unsigned_round_tx, vtxos_spec, unlock_hash } => {
 				AttemptState::AwaitingFinishedRound {
 					unsigned_round_tx: unsigned_round_tx.into_owned(),
-					new_vtxos: new_vtxos.into_owned(),
+					vtxos_spec: vtxos_spec.into_owned(),
+					unlock_hash: unlock_hash,
 				}
-			}
+			},
 		}
 	}
 }
@@ -290,31 +214,57 @@ impl<'a> From<SerdeAttemptState<'a>> for AttemptState {
 /// Model for [RoundFlowState]
 #[derive(Debug, Serialize, Deserialize)]
 enum SerdeRoundFlowState<'a> {
-	WaitingToStart,
-	Ongoing {
+	/// We don't do flow and we just wait for the round to finish
+	NonInteractivePending {
+		unlock_hash: UnlockHash,
+	},
+
+	/// Waiting for round to happen
+	InteractivePending,
+	/// Interactive part ongoing
+	InteractiveOngoing {
 		round_seq: RoundSeq,
 		attempt_seq: usize,
 		state: SerdeAttemptState<'a>,
 	},
-	Finished,
+
+	/// Interactive part finished, waiting for confirmation
+	Finished {
+		funding_tx: Cow<'a, Transaction>,
+		unlock_hash: UnlockHash,
+	},
+
+	/// Failed during round
 	Failed {
 		error: Cow<'a, str>,
 	},
-	Canceled
+
+	/// User canceled round
+	Canceled,
 }
 
 impl<'a> From<&'a RoundFlowState> for SerdeRoundFlowState<'a> {
 	fn from(state: &'a RoundFlowState) -> Self {
 		match state {
-			RoundFlowState::WaitingToStart => SerdeRoundFlowState::WaitingToStart,
-			RoundFlowState::Ongoing { round_seq, attempt_seq, state } => {
-				SerdeRoundFlowState::Ongoing {
+			RoundFlowState::NonInteractivePending { unlock_hash } => {
+				SerdeRoundFlowState::NonInteractivePending {
+					unlock_hash: *unlock_hash,
+				}
+			},
+			RoundFlowState::InteractivePending => SerdeRoundFlowState::InteractivePending,
+			RoundFlowState::InteractiveOngoing { round_seq, attempt_seq, state } => {
+				SerdeRoundFlowState::InteractiveOngoing {
 					round_seq: *round_seq,
 					attempt_seq: *attempt_seq,
 					state: state.into(),
 				}
 			},
-			RoundFlowState::Success => SerdeRoundFlowState::Finished,
+			RoundFlowState::Finished { funding_tx, unlock_hash } => {
+				SerdeRoundFlowState::Finished {
+					funding_tx: Cow::Borrowed(funding_tx),
+					unlock_hash: *unlock_hash,
+				}
+			},
 			RoundFlowState::Failed { error } => {
 				SerdeRoundFlowState::Failed {
 					error: Cow::Borrowed(error),
@@ -328,15 +278,23 @@ impl<'a> From<&'a RoundFlowState> for SerdeRoundFlowState<'a> {
 impl<'a> From<SerdeRoundFlowState<'a>> for RoundFlowState {
 	fn from(state: SerdeRoundFlowState<'a>) -> Self {
 		match state {
-			SerdeRoundFlowState::WaitingToStart => RoundFlowState::WaitingToStart,
-			SerdeRoundFlowState::Ongoing { round_seq, attempt_seq, state } => {
-				RoundFlowState::Ongoing {
-					round_seq,
-					attempt_seq,
+			SerdeRoundFlowState::NonInteractivePending { unlock_hash } => {
+				RoundFlowState::NonInteractivePending { unlock_hash }
+			},
+			SerdeRoundFlowState::InteractivePending => RoundFlowState::InteractivePending,
+			SerdeRoundFlowState::InteractiveOngoing { round_seq, attempt_seq, state } => {
+				RoundFlowState::InteractiveOngoing {
+					round_seq: round_seq,
+					attempt_seq: attempt_seq,
 					state: state.into(),
 				}
 			},
-			SerdeRoundFlowState::Finished => RoundFlowState::Success,
+			SerdeRoundFlowState::Finished { funding_tx, unlock_hash } => {
+				RoundFlowState::Finished {
+					funding_tx: funding_tx.into_owned(),
+					unlock_hash,
+				}
+			},
 			SerdeRoundFlowState::Failed { error } => {
 				RoundFlowState::Failed {
 					error: error.into_owned(),
@@ -350,19 +308,24 @@ impl<'a> From<SerdeRoundFlowState<'a>> for RoundFlowState {
 /// Model for [RoundState]
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SerdeRoundState<'a> {
+	done: bool,
 	participation: SerdeRoundParticipation<'a>,
 	movement_id: Option<MovementId>,
 	flow: SerdeRoundFlowState<'a>,
-	unconfirmed_rounds: Vec<SerdeUnconfirmedRound<'a>>,
+	#[serde(with = "ark::encode::serde::cow::vec")]
+	new_vtxos: Cow<'a, [Vtxo]>,
+	sent_forfeit_sigs: bool,
 }
 
 impl<'a> From<&'a RoundState> for SerdeRoundState<'a> {
 	fn from(state: &'a RoundState) -> Self {
 		Self {
+			done: state.done,
 			participation: (&state.participation).into(),
 			movement_id: state.movement_id,
 			flow: (&state.flow).into(),
-			unconfirmed_rounds: state.unconfirmed_rounds.iter().map(|r| r.into()).collect(),
+			new_vtxos: Cow::Borrowed(&state.new_vtxos),
+			sent_forfeit_sigs: state.sent_forfeit_sigs,
 		}
 	}
 }
@@ -370,10 +333,12 @@ impl<'a> From<&'a RoundState> for SerdeRoundState<'a> {
 impl<'a> From<SerdeRoundState<'a>> for RoundState {
 	fn from(state: SerdeRoundState<'a>) -> Self {
 		Self {
+			done: state.done,
 			participation: state.participation.into(),
 			movement_id: state.movement_id,
 			flow: state.flow.into(),
-			unconfirmed_rounds: state.unconfirmed_rounds.into_iter().map(|r| r.into()).collect(),
+			new_vtxos: state.new_vtxos.into_owned(),
+			sent_forfeit_sigs: state.sent_forfeit_sigs,
 		}
 	}
 }

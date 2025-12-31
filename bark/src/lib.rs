@@ -319,10 +319,9 @@ use log::{trace, debug, info, warn, error};
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 
-use ark::{ArkInfo, OffboardRequest, ProtocolEncoding, Vtxo, VtxoId, VtxoPolicy, VtxoRequest};
+use ark::{ArkInfo, ProtocolEncoding, Vtxo, VtxoId, VtxoPolicy, VtxoRequest};
 use ark::address::VtxoDelivery;
 use ark::board::{BoardBuilder, BOARD_FUNDING_TX_VTXO_VOUT};
-use ark::rounds::RoundId;
 use ark::vtxo::VtxoRef;
 use ark::vtxo::policy::PubkeyVtxoPolicy;
 use bitcoin_ext::{BlockHeight, P2TR_DUST, TxStatus};
@@ -396,14 +395,6 @@ impl From<Utxo> for UtxoInfo {
 			},
 		}
 	}
-}
-
-/// Describes a completed transition of funds from offchain to onchain collaboratively with the
-/// Ark server.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct Offboard {
-	/// The [RoundId] of the round in which the offboard occurred
-	pub round: RoundId,
 }
 
 /// Represents an offchain balance structure consisting of available funds, pending amounts in
@@ -1611,64 +1602,12 @@ impl Wallet {
 		Ok(())
 	}
 
-	pub async fn build_offboard_participation<V: VtxoRef>(
-		&self,
-		vtxos: impl IntoIterator<Item = V>,
-		destination: ScriptBuf,
-	) -> anyhow::Result<RoundParticipation> {
-		let srv = self.require_server()?;
-		let ark_info = srv.ark_info().await?;
-
-		let vtxos = {
-			let vtxos = vtxos.into_iter();
-			let mut ret = Vec::with_capacity(vtxos.size_hint().0);
-			for v in vtxos {
-				let vtxo = match v.vtxo() {
-					Some(v) => v.clone(),
-					None => self.get_vtxo_by_id(v.vtxo_id()).context("vtxo not found")?.vtxo,
-				};
-				ret.push(vtxo);
-			}
-			ret
-		};
-
-		if vtxos.is_empty() {
-			bail!("no VTXO to offboard");
-		}
-
-		let fee = OffboardRequest::calculate_fee(&destination, ark_info.offboard_feerate)
-			.expect("bdk created invalid scriptPubkey");
-
-		let vtxo_sum = vtxos.iter().map(|v| v.amount()).sum::<Amount>();
-
-		if fee > vtxo_sum {
-			bail!("offboarded amount is lower than fees. Need {fee}, got: {vtxo_sum}");
-		}
-
-		let offb = OffboardRequest {
-			amount: vtxo_sum - fee,
-			script_pubkey: destination.clone(),
-		};
-
-		Ok(RoundParticipation {
-			inputs: vtxos.clone(),
-			outputs: Vec::new(),
-			offboards: vec![offb],
-		})
-	}
-
 	pub async fn offboard<V: VtxoRef>(
 		&self,
-		vtxos: impl IntoIterator<Item = V>,
-		destination: ScriptBuf,
+		_vtxos: impl IntoIterator<Item = V>,
+		_destination: ScriptBuf,
 	) -> anyhow::Result<RoundStatus> {
-		let mut participation = self.build_offboard_participation(vtxos, destination.clone()).await?;
-
-		if let Err(e) = self.add_should_refresh_vtxos(&mut participation).await {
-			warn!("Error trying to add additional VTXOs that should be refreshed: {:#}", e);
-		}
-
-		Ok(self.participate_round(participation, Some(RoundMovement::Offboard)).await?)
+		unimplemented!("offboards are currently unsupported");
 	}
 
 	/// Offboard all VTXOs to a given [bitcoin::Address].
@@ -1732,7 +1671,6 @@ impl Wallet {
 		Ok(Some(RoundParticipation {
 			inputs: vtxos.into_values().map(|v| v.vtxo).collect(),
 			outputs: vec![req],
-			offboards: Vec::new(),
 		}))
 	}
 
@@ -1852,64 +1790,6 @@ impl Wallet {
 		}
 
 		Ok(total)
-	}
-
-	pub async fn build_round_onchain_payment_participation(
-		&self,
-		addr: bitcoin::Address,
-		amount: Amount,
-	) -> anyhow::Result<RoundParticipation> {
-		let ark_info = self.require_server()?.ark_info().await?;
-
-		let offb = OffboardRequest {
-			script_pubkey: addr.script_pubkey(),
-			amount: amount,
-		};
-		let required_amount = offb.amount + offb.fee(ark_info.offboard_feerate)?;
-
-		let inputs = self.select_vtxos_to_cover(required_amount, None)?;
-
-		let change = {
-			let input_sum = inputs.iter().map(|v| v.amount()).sum::<Amount>();
-			if input_sum < offb.amount {
-				bail!("Your balance is too low. Needed: {}, available: {}",
-					required_amount, self.balance()?.spendable,
-				);
-			} else if input_sum <= required_amount + P2TR_DUST {
-				info!("No change, emptying wallet.");
-				None
-			} else {
-				let change_amount = input_sum - required_amount;
-				let (change_keypair, _) = self.derive_store_next_keypair()?;
-				info!("Adding change vtxo for {}", change_amount);
-				Some(VtxoRequest {
-					amount: change_amount,
-					policy: VtxoPolicy::new_pubkey(change_keypair.public_key()),
-				})
-			}
-		};
-
-		Ok(RoundParticipation {
-			inputs: inputs,
-			outputs: change.into_iter().collect(),
-			offboards: vec![offb],
-		})
-	}
-
-	/// Sends the given [Amount] to an onchain [bitcoin::Address]. This is an in-round operation
-	/// which may take a long time to perform.
-	pub async fn send_round_onchain_payment(
-		&self,
-		addr: bitcoin::Address,
-		amount: Amount,
-	) -> anyhow::Result<RoundStatus> {
-		let mut participation = self.build_round_onchain_payment_participation(addr, amount).await?;
-
-		if let Err(e) = self.add_should_refresh_vtxos(&mut participation).await {
-			warn!("Error trying to add additional VTXOs that should be refreshed: {:#}", e);
-		}
-
-		self.participate_round(participation, Some(RoundMovement::SendOnchain)).await
 	}
 
 	/// Starts a daemon for the wallet, for more information see [Daemon].

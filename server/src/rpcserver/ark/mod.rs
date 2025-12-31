@@ -3,21 +3,29 @@ use std::str::FromStr;
 use std::sync::Arc;
 use std::sync::atomic;
 use std::time::Duration;
-use bip39::rand::Rng;
-use bitcoin::{Amount, OutPoint, ScriptBuf};
+
+use bitcoin::consensus::serialize;
+use bitcoin::{Amount, OutPoint};
 use bitcoin::hashes::Hash;
 use bitcoin::hex::DisplayHex;
 use bitcoin::secp256k1::{rand, schnorr, PublicKey};
 use log::info;
 use opentelemetry::KeyValue;
+use rand::Rng;
 use tokio::sync::oneshot;
 use tokio_stream::{Stream, StreamExt};
-use ark::{musig, OffboardRequest, ProtocolEncoding, Vtxo, VtxoId, VtxoIdInput, VtxoPolicy, VtxoRequest};
-use ark::lightning::{Bolt12InvoiceExt, Invoice, Offer, OfferAmount, PaymentHash, Preimage};
+
+use ark::{
+	musig, ProtocolEncoding, Vtxo, VtxoId, VtxoIdInput, VtxoPolicy, VtxoRequest,
+};
 use ark::arkoor::checkpointed_package::PackageCosignRequest;
+use ark::forfeit::HashLockedForfeitBundle;
+use ark::lightning::{Bolt12InvoiceExt, Invoice, Offer, OfferAmount, PaymentHash, Preimage};
+use ark::tree::signed::{LeafVtxoCosignRequest, UnlockHash, UnlockPreimage};
 use ark::rounds::RoundId;
 use bitcoin_ext::{AmountExt, BlockDelta, BlockHeight};
 use server_rpc::{self as rpc, protos, TryFromBytes};
+
 use crate::Server;
 use crate::rpcserver::{
 	middleware,
@@ -32,6 +40,7 @@ use crate::round::RoundInput;
 use crate::rpcserver::middleware::RpcMethodDetails;
 use crate::rpcserver::macros;
 use crate::telemetry;
+
 
 #[tonic::async_trait]
 impl rpc::server::ArkService for Server {
@@ -564,14 +573,13 @@ impl rpc::server::ArkService for Server {
 	async fn submit_payment(
 		&self,
 		req: tonic::Request<protos::SubmitPaymentRequest>,
-	) -> Result<tonic::Response<protos::Empty>, tonic::Status> {
+	) -> Result<tonic::Response<protos::SubmitPaymentResponse>, tonic::Status> {
 		let _ = RpcMethodDetails::grpc_ark(middleware::RPC_SERVICE_ARK_SUBMIT_PAYMENT);
 		let req = req.into_inner();
 
 		crate::rpcserver::add_tracing_attributes(vec![
 			KeyValue::new("input_vtxos_count", format!("{:?}", req.input_vtxos.len())),
 			KeyValue::new("vtxo_requests_count", format!("{:?}", req.vtxo_requests.len())),
-			KeyValue::new("offboard_requests_count", format!("{:?}", req.offboard_requests.len())),
 		]);
 
 		let inputs =  req.input_vtxos.iter().map(|input| {
@@ -586,25 +594,27 @@ impl rpc::server::ArkService for Server {
 			if r.public_nonces.len() != self.config.nb_round_nonces {
 				macros::badarg!("need exactly {} public nonces", self.config.nb_round_nonces);
 			}
-			vtxo_requests.push(r.try_into().badarg("invalid vtxo request")?);
+			vtxo_requests.push(r.try_into().badarg("invalid signed vtxo request")?);
 		}
 
-		let offboards = req.offboard_requests.iter().map(|r| {
-			let amount = Amount::from_sat(r.amount);
-			let script_pubkey = ScriptBuf::from_bytes(r.clone().offboard_spk);
-			let ret = OffboardRequest { script_pubkey, amount };
-			ret.validate().badarg("invalid offboard request")?;
-			Ok(ret)
-		}).collect::<Result<_, tonic::Status>>()?;
+		#[allow(deprecated)]
+		if !req.offboard_requests.is_empty() {
+			return Err(tonic::Status::unimplemented("offboards in rounds are no longer supported"));
+		}
+
+		let unlock_preimage = rand::random::<UnlockPreimage>();
+		let unlock_hash = UnlockHash::hash(&unlock_preimage);
 
 		let (tx, rx) = oneshot::channel();
-		let inp = RoundInput::RegisterPayment { inputs, vtxo_requests, offboards };
+		let inp = RoundInput::RegisterPayment { inputs, vtxo_requests, unlock_preimage };
 
 		self.rounds.round_input_tx.send((inp, tx))
 			.expect("input channel closed");
 		rx.wait_for_status().await?;
 
-		Ok(tonic::Response::new(protos::Empty {}))
+		Ok(tonic::Response::new(protos::SubmitPaymentResponse {
+			unlock_hash: unlock_hash.to_byte_array().to_vec(),
+		}))
 	}
 
 	async fn provide_vtxo_signatures(
@@ -633,35 +643,151 @@ impl rpc::server::ArkService for Server {
 		Ok(tonic::Response::new(protos::Empty {}))
 	}
 
-	async fn provide_forfeit_signatures(
+	// hArk
+
+	async fn submit_round_participation(
 		&self,
-		req: tonic::Request<protos::ForfeitSignaturesRequest>,
-	) -> Result<tonic::Response<protos::Empty>, tonic::Status> {
-		let _ = RpcMethodDetails::grpc_ark(middleware::RPC_SERVICE_ARK_PROVIDE_FORFEIT_SIGNATURES);
+		req: tonic::Request<protos::RoundParticipationRequest>,
+	) -> Result<tonic::Response<protos::RoundParticipationResponse>, tonic::Status> {
+		let _ = RpcMethodDetails::grpc_ark(middleware::RPC_SERVICE_ARK_SUBMIT_ROUND_PARTICIPATION);
 		let req = req.into_inner();
 
 		crate::rpcserver::add_tracing_attributes(vec![
-			KeyValue::new("signatures_count", format!("{:?}", req.signatures.len())),
+			KeyValue::new("input_vtxos_count", format!("{:?}", req.input_vtxos.len())),
+			KeyValue::new("vtxo_requests_count", format!("{:?}", req.vtxo_requests.len())),
 		]);
 
-		let (tx, rx) = oneshot::channel();
-		let inp = RoundInput::ForfeitSignatures {
-			signatures: req.signatures.iter().map(|ff| {
-				let id = VtxoId::from_bytes(&ff.input_vtxo_id)?;
-				let nonces = ff.pub_nonces.iter()
-					.map(musig::PublicNonce::from_bytes)
-					.collect::<Result<_, _>>()?;
-				let signatures = ff.signatures.iter()
-					.map(musig::PartialSignature::from_bytes)
-					.collect::<Result<_, _>>()?;
-				Ok((id, nonces, signatures))
-			}).collect::<Result<_, tonic::Status>>()?
+		let inputs =  req.input_vtxos.iter().map(|input| {
+			let vtxo_id = VtxoId::from_bytes(&input.vtxo_id)?;
+			let ownership_proof = schnorr::Signature::from_bytes(&input.ownership_proof)?;
+			Ok(VtxoIdInput { vtxo_id, ownership_proof })
+		}).collect::<Result<_, tonic::Status>>()?;
+
+		let mut vtxo_requests = Vec::with_capacity(req.vtxo_requests.len());
+		for r in req.vtxo_requests.clone() {
+			vtxo_requests.push(r.try_into().badarg("invalid vtxo request")?);
+		}
+
+		let unlock_hash = self.register_non_interactive_round_participation(inputs, vtxo_requests).await
+			.to_status()?;
+
+		Ok(tonic::Response::new(protos::RoundParticipationResponse {
+			unlock_hash: unlock_hash.to_byte_array().to_vec(),
+		}))
+	}
+
+	async fn round_participation_status(
+		&self,
+		req: tonic::Request<protos::RoundParticipationStatusRequest>,
+	) -> Result<tonic::Response<protos::RoundParticipationStatusResponse>, tonic::Status> {
+		let _ = RpcMethodDetails::grpc_ark(middleware::RPC_SERVICE_ARK_ROUND_PARTICIPATION_STATUS);
+		let req = req.into_inner();
+
+		crate::rpcserver::add_tracing_attributes(vec![
+			KeyValue::new("unlock_hash", req.unlock_hash.as_hex().to_string()),
+		]);
+
+		let unlock_hash = UnlockHash::from_bytes(&req.unlock_hash)?;
+		let part = self.db.get_round_participation_by_unlock_hash(unlock_hash).await.to_status()?
+			.not_found([unlock_hash], "round participation not found")?;
+
+		let res = if let Some(round_id) = part.round_id {
+			//TODO(stevenroose) consider storing the new vtxos in the participation table
+			// so that we don't have to create the entire cached tree here each time
+
+			let round = self.db.get_round(round_id).await.to_status()?
+				.context("our own db has unknown round")?;
+			let round_funding_tx = Some(serialize(&round.funding_tx));
+
+			let mut output_vtxos = Vec::with_capacity(part.outputs.len());
+			let tree = round.signed_tree.into_cached_tree();
+			for output in &part.outputs {
+				let idx = tree.spec.spec.leaf_idx_of_req(output)
+					.with_context(|| format!("output req {:?} not in round {}", output, round.id))?;
+				output_vtxos.push(tree.build_vtxo(idx).serialize());
+			}
+
+			if part.inputs.iter().all(|i| i.is_forfeited()) {
+				protos::RoundParticipationStatusResponse {
+					status: protos::RoundParticipationStatus::RoundPartReleased.into(),
+					unlock_preimage: Some(part.unlock_preimage.leak_ref().to_vec()),
+					round_funding_tx, output_vtxos,
+				}
+			} else {
+				protos::RoundParticipationStatusResponse {
+					status: protos::RoundParticipationStatus::RoundPartIssued.into(),
+					unlock_preimage: None,
+					round_funding_tx, output_vtxos,
+				}
+			}
+		} else {
+			protos::RoundParticipationStatusResponse {
+				status: protos::RoundParticipationStatus::RoundPartPending.into(),
+				round_funding_tx: None,
+				unlock_preimage: None,
+				output_vtxos: vec![],
+			}
 		};
 
-		self.rounds.round_input_tx.send((inp, tx)).expect("input channel closed");
-		rx.wait_for_status().await?;
+		Ok(tonic::Response::new(res))
+	}
 
-		Ok(tonic::Response::new(protos::Empty {}))
+	async fn request_leaf_vtxo_cosign(
+		&self,
+		req: tonic::Request<protos::LeafVtxoCosignRequest>,
+	) -> Result<tonic::Response<protos::LeafVtxoCosignResponse>, tonic::Status> {
+		let _ = RpcMethodDetails::grpc_ark(middleware::RPC_SERVICE_ARK_REQUEST_LEAF_VTXO_COSIGN);
+		let req = req.into_inner();
+
+		let vtxo_id = VtxoId::from_bytes(req.vtxo_id)?;
+		crate::rpcserver::add_tracing_attributes(vec![
+			KeyValue::new("vtxo_id", format!("{:?}", vtxo_id)),
+		]);
+
+		let pub_nonce = musig::PublicNonce::from_bytes(req.public_nonce)?;
+		let req = LeafVtxoCosignRequest { vtxo_id, pub_nonce };
+
+		let resp = self.cosign_hashlocked_leaf_round(&req).await.to_status()?;
+		Ok(tonic::Response::new(resp.into()))
+	}
+
+	async fn request_forfeit_nonces(
+		&self,
+		req: tonic::Request<protos::ForfeitNoncesRequest>,
+	) -> Result<tonic::Response<protos::ForfeitNoncesResponse>, tonic::Status> {
+		let _ = RpcMethodDetails::grpc_ark(middleware::RPC_SERVICE_ARK_REQUEST_FORFEIT_NONCES);
+		let req = req.into_inner();
+
+		let unlock_hash = UnlockHash::from_bytes(req.unlock_hash)?;
+		let vtxos = req.vtxo_ids.iter().map(|v| VtxoId::from_bytes(v))
+			.collect::<Result<Vec<_>, _>>()?;
+		crate::rpcserver::add_tracing_attributes(vec![
+			KeyValue::new("unlock_hash", unlock_hash.to_string()),
+			KeyValue::new("vtxo_ids", format!("{:?}", vtxos)),
+		]);
+
+		let res = self.generate_forfeit_nonces(unlock_hash, &vtxos).await.to_status()?;
+		Ok(tonic::Response::new(protos::ForfeitNoncesResponse {
+			public_nonces: res.into_iter().map(|n| n.serialize()).collect(),
+		}))
+	}
+
+	async fn forfeit_vtxos(
+		&self,
+		req: tonic::Request<protos::ForfeitVtxosRequest>,
+	) -> Result<tonic::Response<protos::ForfeitVtxosResponse>, tonic::Status> {
+		let _ = RpcMethodDetails::grpc_ark(middleware::RPC_SERVICE_ARK_FORFEIT_VTXOS);
+		let req = req.into_inner();
+
+		let forfeits = req.forfeit_bundles.iter()
+			.map(|v| HashLockedForfeitBundle::from_bytes(v))
+			.collect::<Result<Vec<_>, _>>()?;
+
+		let preimage = self.register_vtxo_forfeit(&forfeits).await.to_status()?;
+
+		Ok(tonic::Response::new(protos::ForfeitVtxosResponse {
+			unlock_preimage: preimage.to_vec(),
+		}))
 	}
 }
 

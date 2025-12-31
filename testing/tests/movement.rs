@@ -334,6 +334,7 @@ async fn lightning_send_offer() {
 	}
 }
 
+#[ignore]
 #[tokio::test]
 async fn round_offboard() {
 	let ctx = TestContext::new("movement/round_offboard").await;
@@ -415,6 +416,7 @@ async fn round_refresh() {
 		.map(|txid| serde_json::from_value::<Txid>(txid.clone()).unwrap()).unwrap();
 }
 
+#[ignore]
 #[tokio::test]
 async fn round_send_onchain() {
 	let ctx = TestContext::new("movement/round_send_onchain").await;

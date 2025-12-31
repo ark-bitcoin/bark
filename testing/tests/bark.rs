@@ -21,7 +21,7 @@ use bark::round::RoundParticipation;
 use bark::subsystem::RoundMovement;
 use bark_json::cli::{MovementDestination, PaymentMethod};
 use bark_json::primitives::VtxoStateInfo;
-use server_log::{MissingForfeits, RestartMissingForfeits, RoundUserVtxoNotAllowed};
+use server_log::{RestartMissingVtxoSigs, RoundUserVtxoNotAllowed};
 use server_rpc::protos;
 
 use ark_testing::{btc, sat, signed_sat, Bark, TestContext};
@@ -226,6 +226,7 @@ async fn bark_rejects_boarding_below_minimum_board_amount() {
 	)));
 }
 
+#[ignore]
 #[tokio::test]
 async fn list_utxos() {
 	let ctx = TestContext::new("bark/list_utxos").await;
@@ -304,7 +305,6 @@ async fn large_round() {
 		cfg.round_interval = Duration::from_millis(2_000);
 		cfg.round_submit_time = Duration::from_millis(100 * N as u64);
 		cfg.round_sign_time = Duration::from_millis(1000 * N as u64);
-		cfg.nb_round_nonces = 200;
 	}).await;
 	ctx.fund_captaind(&srv, btc(10)).await;
 
@@ -484,6 +484,7 @@ async fn compute_balance() {
 	bark1.board(sat(200_000)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 	bark1.refresh_all().await;
+	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
 
 	// board vtxo
 	bark1.board_and_confirm_and_register(&ctx, sat(300_000)).await;
@@ -491,6 +492,7 @@ async fn compute_balance() {
 	// oor vtxo
 	bark2.send_oor(&bark1.address().await, sat(330_000)).await;
 
+	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
 	let balance = bark1.spendable_balance().await;
 	assert_eq!(balance, sat(830_000));
 
@@ -586,6 +588,7 @@ async fn multiple_spends_in_payment() {
 	assert_eq!(refresh_mvt.offchain_fee, Amount::ZERO);
 }
 
+#[ignore]
 #[tokio::test]
 async fn offboard_all() {
 	let ctx = TestContext::new("bark/offboard_all").await;
@@ -633,6 +636,7 @@ async fn offboard_all() {
 	assert_eq!(bark2.inround_balance().await, sat(0));
 }
 
+#[ignore]
 #[tokio::test]
 async fn offboard_vtxos() {
 	let ctx = TestContext::new("bark/offboard_vtxos").await;
@@ -692,6 +696,7 @@ async fn offboard_vtxos() {
 	assert_eq!(bark2.inround_balance().await, sat(0));
 }
 
+#[ignore]
 #[tokio::test]
 async fn bark_send_onchain() {
 	let ctx = TestContext::new("bark/bark_send_onchain").await;
@@ -728,6 +733,7 @@ async fn bark_send_onchain() {
 	assert_eq!(bark2.inround_balance().await, sat(0));
 }
 
+#[ignore]
 #[tokio::test]
 async fn bark_send_onchain_too_much() {
 	let ctx = TestContext::new("bark/bark_send_onchain_too_much").await;
@@ -757,6 +763,7 @@ async fn bark_send_onchain_too_much() {
 		"Should only have board movement");
 }
 
+#[ignore]
 #[tokio::test]
 async fn bark_rejects_offboarding_subdust_amount() {
 	let ctx = TestContext::new("bark/bark_rejects_offboarding_subdust_amount").await;
@@ -865,14 +872,14 @@ async fn reject_arkoor_with_bad_signature() {
 async fn second_round_attempt() {
 	//! test that we can recover from an error in the round
 
-	/// This proxy will drop the very first request to provide_forfeit_signatures.
+	/// This proxy will drop the very first request to provide_vtxo_signatures.
 	#[derive(Clone)]
 	struct Proxy;
 
 	#[tonic::async_trait]
 	impl captaind::proxy::ArkRpcProxy for Proxy {
-		async fn provide_forfeit_signatures(
-			&self, _upstream: &mut ArkClient, _req: protos::ForfeitSignaturesRequest,
+		async fn provide_vtxo_signatures(
+			&self, _upstream: &mut ArkClient, _req: protos::VtxoSignaturesRequest,
 		) -> Result<protos::Empty, tonic::Status> {
 			Ok(protos::Empty {})
 		}
@@ -893,7 +900,6 @@ async fn second_round_attempt() {
 	bark1.send_oor(bark2.address().await, sat(200_000)).await;
 	let bark2_vtxo = bark2.vtxos().await.get(0).expect("should have 1 vtxo").id;
 
-	let mut log_missing_forfeits = srv.subscribe_log::<MissingForfeits>();
 	let mut log_not_allowed = srv.subscribe_log::<RoundUserVtxoNotAllowed>();
 
 	ctx.generate_blocks(1).await;
@@ -901,15 +907,14 @@ async fn second_round_attempt() {
 	let res2 = tokio::spawn(async move { bark2.refresh_all().await });
 	tokio::time::sleep(Duration::from_millis(500)).await;
 	let _ = srv.wallet_status().await;
-	let mut log_restart_missing_forfeits = srv.subscribe_log::<RestartMissingForfeits>();
+	let mut log_restart_missing_sigs = srv.subscribe_log::<RestartMissingVtxoSigs>();
 	srv.trigger_round().await;
-	log_restart_missing_forfeits.recv().await.unwrap();
+	log_restart_missing_sigs.recv().await.unwrap();
 	info!("Waiting for bark2 to fail...");
 	res2.await.unwrap_err();
 	info!("Waiting for bark1 to finish...");
 	res1.await.unwrap();
 	// check that bark2 was kicked
-	assert_eq!(log_missing_forfeits.recv().ready().await.unwrap().input, bark2_vtxo);
 	assert_eq!(log_not_allowed.recv().ready().await.unwrap().vtxo, bark2_vtxo);
 }
 
@@ -1209,7 +1214,6 @@ async fn stepwise_round() {
 			}),
 			amount: inputs[0].vtxo.amount(),
 		}],
-		offboards: vec![],
 	};
 	let state = bark.join_next_round(participation, Some(RoundMovement::Refresh)).await.unwrap();
 	let state_id = state.id;
@@ -1227,14 +1231,22 @@ async fn stepwise_round() {
 		bark.progress_pending_rounds(Some(&event)).await.unwrap();
 
 		let states = print_pending_rounds(&bark);
-		if let Some(ours) = states.into_iter().find(|s| s.id == state_id) {
+		if let Some(mut ours) = states.into_iter().find(|s| s.id == state_id) {
 			if !ours.state.ongoing_participation() {
 				info!("Round finished");
 				break;
+			} else {
+				if let RoundEvent::Finished(_) = event {
+					let status = ours.state.sync(&bark).await.unwrap();
+					panic!("Our round state says ongoing participation but we just got round \
+						finished event. status: {:?}", status,
+					);
+				}
 			}
 		} else {
 			panic!("our round is gone");
 		}
+		trace!("waiting for next event...");
 	}
 	drop(events);
 

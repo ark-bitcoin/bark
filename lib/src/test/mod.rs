@@ -10,7 +10,7 @@ impl Vtxo {
 		match item.transition {
 			GenesisTransition::Cosigned { ref mut signature, .. } => *signature = fake,
 			GenesisTransition::HashLockedCosigned { ref mut signature, .. } => {
-				*signature = fake;
+				signature.replace(fake).expect("didn't have signature");
 			},
 			GenesisTransition::Arkoor { ref mut signature, .. } => {
 				signature.replace(fake).expect("didn't have arkoor signature");

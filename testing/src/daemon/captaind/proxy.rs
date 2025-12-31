@@ -129,7 +129,7 @@ pub trait ArkRpcProxy: Send + Sync + Clone + 'static {
 		Ok(upstream.last_round_event(req).await?.into_inner())
 	}
 
-	async fn submit_payment(&self, upstream: &mut ArkClient, req: protos::SubmitPaymentRequest) -> Result<protos::Empty, tonic::Status> {
+	async fn submit_payment(&self, upstream: &mut ArkClient, req: protos::SubmitPaymentRequest) -> Result<protos::SubmitPaymentResponse, tonic::Status> {
 		Ok(upstream.submit_payment(req).await?.into_inner())
 	}
 
@@ -137,8 +137,24 @@ pub trait ArkRpcProxy: Send + Sync + Clone + 'static {
 		Ok(upstream.provide_vtxo_signatures(req).await?.into_inner())
 	}
 
-	async fn provide_forfeit_signatures(&self, upstream: &mut ArkClient, req: protos::ForfeitSignaturesRequest) -> Result<protos::Empty, tonic::Status> {
-		Ok(upstream.provide_forfeit_signatures(req).await?.into_inner())
+	async fn submit_round_participation(&self, upstream: &mut ArkClient, req: protos::RoundParticipationRequest) -> Result<protos::RoundParticipationResponse, tonic::Status> {
+		Ok(upstream.submit_round_participation(req).await?.into_inner())
+	}
+
+	async fn round_participation_status(&self, upstream: &mut ArkClient, req: protos::RoundParticipationStatusRequest) -> Result<protos::RoundParticipationStatusResponse, tonic::Status> {
+		Ok(upstream.round_participation_status(req).await?.into_inner())
+	}
+
+	async fn request_leaf_vtxo_cosign(&self, upstream: &mut ArkClient, req: protos::LeafVtxoCosignRequest) -> Result<protos::LeafVtxoCosignResponse, tonic::Status> {
+		Ok(upstream.request_leaf_vtxo_cosign(req).await?.into_inner())
+	}
+
+	async fn request_forfeit_nonces(&self, upstream: &mut ArkClient, req: protos::ForfeitNoncesRequest) -> Result<protos::ForfeitNoncesResponse, tonic::Status> {
+		Ok(upstream.request_forfeit_nonces(req).await?.into_inner())
+	}
+
+	async fn forfeit_vtxos(&self, upstream: &mut ArkClient, req: protos::ForfeitVtxosRequest) -> Result<protos::ForfeitVtxosResponse, tonic::Status> {
+		Ok(upstream.forfeit_vtxos(req).await?.into_inner())
 	}
 }
 
@@ -371,7 +387,7 @@ impl<T: ArkRpcProxy> rpc::server::ArkService for ArkRpcProxyWrapper<T> {
 
 	async fn submit_payment(
 		&self, req: tonic::Request<protos::SubmitPaymentRequest>,
-	) -> Result<tonic::Response<protos::Empty>, tonic::Status> {
+	) -> Result<tonic::Response<protos::SubmitPaymentResponse>, tonic::Status> {
 		Ok(tonic::Response::new(ArkRpcProxy::submit_payment(&self.proxy, &mut self.upstream.clone(), req.into_inner()).await?))
 	}
 
@@ -381,10 +397,39 @@ impl<T: ArkRpcProxy> rpc::server::ArkService for ArkRpcProxyWrapper<T> {
 		Ok(tonic::Response::new(ArkRpcProxy::provide_vtxo_signatures(&self.proxy, &mut self.upstream.clone(), req.into_inner()).await?))
 	}
 
-	async fn provide_forfeit_signatures(
-		&self, req: tonic::Request<protos::ForfeitSignaturesRequest>,
-	) -> Result<tonic::Response<protos::Empty>, tonic::Status> {
-		Ok(tonic::Response::new(ArkRpcProxy::provide_forfeit_signatures(&self.proxy, &mut self.upstream.clone(), req.into_inner()).await?))
+	async fn submit_round_participation(
+		&self,
+		req: tonic::Request<protos::RoundParticipationRequest>,
+	) -> Result<tonic::Response<protos::RoundParticipationResponse>, tonic::Status> {
+		Ok(tonic::Response::new(ArkRpcProxy::submit_round_participation(&self.proxy, &mut self.upstream.clone(), req.into_inner()).await?))
+	}
+
+	async fn round_participation_status(
+		&self,
+		req: tonic::Request<protos::RoundParticipationStatusRequest>,
+	) -> Result<tonic::Response<protos::RoundParticipationStatusResponse>, tonic::Status> {
+		Ok(tonic::Response::new(ArkRpcProxy::round_participation_status(&self.proxy, &mut self.upstream.clone(), req.into_inner()).await?))
+	}
+
+	async fn request_leaf_vtxo_cosign(
+		&self,
+		req: tonic::Request<protos::LeafVtxoCosignRequest>,
+	) -> Result<tonic::Response<protos::LeafVtxoCosignResponse>, tonic::Status> {
+		Ok(tonic::Response::new(ArkRpcProxy::request_leaf_vtxo_cosign(&self.proxy, &mut self.upstream.clone(), req.into_inner()).await?))
+	}
+
+	async fn request_forfeit_nonces(
+		&self,
+		req: tonic::Request<protos::ForfeitNoncesRequest>,
+	) -> Result<tonic::Response<protos::ForfeitNoncesResponse>, tonic::Status> {
+		Ok(tonic::Response::new(ArkRpcProxy::request_forfeit_nonces(&self.proxy, &mut self.upstream.clone(), req.into_inner()).await?))
+	}
+
+	async fn forfeit_vtxos(
+		&self,
+		req: tonic::Request<protos::ForfeitVtxosRequest>,
+	) -> Result<tonic::Response<protos::ForfeitVtxosResponse>, tonic::Status> {
+		Ok(tonic::Response::new(ArkRpcProxy::forfeit_vtxos(&self.proxy, &mut self.upstream.clone(), req.into_inner()).await?))
 	}
 }
 

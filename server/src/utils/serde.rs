@@ -7,6 +7,7 @@ use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 
 
 /// Wrapping a byte array to be serialized as bytes.
+#[allow(unused)]
 pub struct Bytes<'a>(pub Cow<'a, [u8]>);
 
 impl<'a> Serialize for Bytes<'a> {

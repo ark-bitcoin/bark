@@ -63,7 +63,7 @@ impl WalletStatuses {
 	}
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub enum VtxoPoolState {
 	Ready(Txid),
 	NotReady,
@@ -277,7 +277,8 @@ impl Captaind {
 	pub async fn wait_for_vtxopool(&self, ctx: &TestContext) {
 		info!("Waiting for VtxoPool...");
 		loop {
-			if let VtxoPoolState::Ready(txid) = self.inner.state.lock().vtxopool_state {
+			let vtxopool_state = self.inner.state.lock().vtxopool_state.clone();
+			if let VtxoPoolState::Ready(txid) = vtxopool_state {
 				info!("VtxoPool ready: waiting for tx {} propagation", txid);
 				ctx.await_transaction(txid).await;
 				return;

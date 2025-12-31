@@ -400,7 +400,7 @@ pub enum PaymentMethod {
 }
 
 #[cfg(feature = "utoipa")]
-impl utoipa::PartialSchema for PaymentMethod { 
+impl utoipa::PartialSchema for PaymentMethod {
 	fn schema() -> utoipa::openapi::RefOr<utoipa::openapi::schema::Schema> {
 		use utoipa::openapi::schema;
 
@@ -517,9 +517,13 @@ impl From<bark::movement::MovementTimestamp> for MovementTimestamp {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "result", rename_all = "lowercase")]
+#[serde(tag = "status", rename_all = "kebab-case")]
 #[cfg_attr(feature = "utoipa", derive(ToSchema))]
 pub enum RoundStatus {
+	/// Failed to sync round
+	SyncError {
+		error: String,
+	},
 	/// The round was successful and is fully confirmed
 	Confirmed {
 		#[cfg_attr(feature = "utoipa", schema(value_type = String))]
@@ -531,10 +535,7 @@ pub enum RoundStatus {
 		funding_txid: Txid,
 	},
 	/// We have unsigned funding transactions that might confirm
-	Pending {
-		#[cfg_attr(feature = "utoipa", schema(value_type = Vec<String>))]
-		unsigned_funding_txids: Vec<Txid>,
-	},
+	Pending,
 	/// The round failed
 	Failed {
 		error: String,
@@ -547,6 +548,7 @@ impl RoundStatus {
 	/// Whether this is the final state and it won't change anymore
 	pub fn is_final(&self) -> bool {
 		match self {
+			Self::SyncError { .. } => false,
 			Self::Confirmed { .. } => true,
 			Self::Unconfirmed { .. } => false,
 			Self::Pending { .. } => false,
@@ -558,6 +560,7 @@ impl RoundStatus {
 	/// Whether it looks like the round succeeded
 	pub fn is_success(&self) -> bool {
 		match self {
+			Self::SyncError { .. } => false,
 			Self::Confirmed { .. } => true,
 			Self::Unconfirmed { .. } => true,
 			Self::Pending { .. } => false,
@@ -570,9 +573,13 @@ impl RoundStatus {
 impl From<bark::round::RoundStatus> for RoundStatus {
 	fn from(s: bark::round::RoundStatus) -> Self {
 		match s {
-			bark::round::RoundStatus::Confirmed { funding_txid } => Self::Confirmed { funding_txid },
-			bark::round::RoundStatus::Unconfirmed { funding_txid } => Self::Unconfirmed { funding_txid },
-			bark::round::RoundStatus::Pending { unsigned_funding_txids } => Self::Pending { unsigned_funding_txids },
+			bark::round::RoundStatus::Confirmed { funding_txid } => {
+				Self::Confirmed { funding_txid }
+			},
+			bark::round::RoundStatus::Unconfirmed { funding_txid } => {
+				Self::Unconfirmed { funding_txid }
+			},
+			bark::round::RoundStatus::Pending => Self::Pending,
 			bark::round::RoundStatus::Failed { error } => Self::Failed { error },
 			bark::round::RoundStatus::Canceled => Self::Canceled,
 		}

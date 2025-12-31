@@ -72,9 +72,16 @@ impl StdError for NotFound {}
 
 
 /// Return an [mod@anyhow] error tagged with [BadArgument].
+macro_rules! badarg_err {
+	($($arg:tt)*) => {
+		$crate::anyhow::Error::from($crate::error::BadArgument::new(format!($($arg)*)))
+	};
+}
+
+/// Create an anyhow::Result::Err with [BadArgument] context
 macro_rules! badarg {
 	($($arg:tt)*) => {
-		Err($crate::anyhow::Error::from($crate::error::BadArgument::new(format!($($arg)*))))
+		Err(badarg_err!($($arg)*))
 	};
 }
 pub(crate) use badarg;

@@ -34,6 +34,14 @@ impl Node {
 		self.idx as usize
 	}
 
+	/// The index among internal nodes, starting after the leaves
+	///
+	/// Panics if this node is a leaf node, if [Node::is_leaf] returns true.
+	pub fn internal_idx(&self) -> usize {
+		self.idx.checked_sub(self.nb_tree_leaves)
+			.expect("called internal_idx on leaf node") as usize
+	}
+
 	pub fn parent(&self) -> Option<usize> {
 		self.parent.map(|p| p as usize)
 	}
@@ -42,8 +50,18 @@ impl Node {
 		self.children.clone().into_iter().filter_map(|c| c).map(|c| c as usize)
 	}
 
+	/// The level of the node in the tree, starting with 0 for a leaf
 	pub fn level(&self) -> usize {
 		self.level as usize
+	}
+
+	/// The internal level of the node in the tree
+	///
+	/// Panics if this node is a leaf node, if [Node::is_leaf] returns true.
+	///
+	/// Returns 0 for a node  that has leaves as children
+	pub fn internal_level(&self) -> usize {
+		self.level.checked_sub(1).expect("called internal_level on leaf node") as usize
 	}
 
 	/// An iterator over all leaf indices under this node.
@@ -148,6 +166,16 @@ impl Tree {
 		self.nodes.len()
 	}
 
+	/// The number of internal nodes
+	pub fn nb_internal_nodes(&self) -> usize {
+		self.nodes.len().checked_sub(self.nb_leaves)
+			.expect("tree can't have less nodes than leaves")
+	}
+
+	pub fn node_at(&self, node_idx: usize) -> &Node {
+		self.nodes.get(node_idx).expect("node_idx out of bounds")
+	}
+
 	pub fn root(&self) -> &Node {
 		self.nodes.last().expect("no empty trees")
 	}
@@ -155,6 +183,12 @@ impl Tree {
 	/// Iterate over all nodes, starting with the leaves, towards the root.
 	pub fn iter(&self) -> std::slice::Iter<'_, Node> {
 		self.nodes.iter()
+	}
+
+	/// Iterate over all internal nodes, starting with the ones
+	/// right beyond the leaves, towards the root.
+	pub fn iter_internal(&self) -> std::slice::Iter<'_, Node> {
+		self.nodes[self.nb_leaves..].iter()
 	}
 
 	/// Iterate over all nodes, starting with the leaves, towards the root.
@@ -190,6 +224,7 @@ impl Tree {
 }
 
 /// Iterates a tree branch.
+#[derive(Clone)]
 pub struct BranchIter<'a> {
 	tree: &'a Tree,
 	cursor: Option<usize>,
@@ -225,7 +260,8 @@ use super::*;
 					.all(|c| tree.nodes[c as usize].parent == Some(i as u32))
 			}));
 			assert!(tree.nodes.iter().enumerate().rev().skip(1).all(|(i, n)| {
-				tree.nodes[n.parent.unwrap() as usize].children.iter().find(|c| **c == Some(i as u32)).is_some()
+				let parent_idx = n.parent.unwrap() as usize;
+				tree.nodes[parent_idx].children.iter().find(|c| **c == Some(i as u32)).is_some()
 			}));
 			assert_eq!(Tree::nb_nodes_for_leaves(n), tree.nb_nodes(), "leaves: {}", n);
 		}

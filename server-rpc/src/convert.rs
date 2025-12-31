@@ -2,18 +2,19 @@
 use std::convert::TryFrom;
 use std::time::Duration;
 
-use ark::mailbox::BlindedMailboxIdentifier;
 use bitcoin::hashes::sha256;
 use bitcoin::secp256k1::{schnorr, PublicKey};
 use bitcoin::{self, Amount, FeeRate, OutPoint, Transaction};
 
-use ark::{musig, ProtocolEncoding, Vtxo, VtxoId, VtxoPolicy, VtxoRequest};
+use ark::{musig, ProtocolEncoding, SignedVtxoRequest, Vtxo, VtxoId, VtxoPolicy, VtxoRequest};
 use ark::arkoor::{ArkoorBuilder, ArkoorCosignResponse};
 use ark::board::BoardCosignResponse;
 use ark::challenges::RoundAttemptChallenge;
+use ark::forfeit::{HashLockedForfeitBundle, HashLockedForfeitNonces};
 use ark::lightning::{PaymentHash, Preimage};
+use ark::mailbox::BlindedMailboxIdentifier;
 use ark::rounds::RoundId;
-use ark::tree::signed::VtxoTreeSpec;
+use ark::tree::signed::{LeafVtxoCosignRequest, LeafVtxoCosignResponse, VtxoTreeSpec};
 use ark::vtxo::VtxoRef;
 
 use crate::protos;
@@ -106,6 +107,8 @@ impl_try_from_bytes_protocol!(OutPoint, "outpoint");
 impl_try_from_bytes_protocol!(Vtxo, "VTXO");
 impl_try_from_bytes_protocol!(VtxoPolicy, "VTXO policy");
 impl_try_from_bytes_protocol!(BlindedMailboxIdentifier, "a blinded VTXO mailbox identifier");
+impl_try_from_bytes_protocol!(HashLockedForfeitNonces, "hArk forfeit nonces");
+impl_try_from_bytes_protocol!(HashLockedForfeitBundle, "hArk forfeit bundle");
 
 macro_rules! impl_try_from_bytes_bitcoin {
 	($ty:path, $exp:expr) => {
@@ -207,31 +210,14 @@ impl<'a> From<&'a ark::rounds::RoundEvent> for protos::RoundEvent {
 							.collect(),
 					})
 				},
-				ark::rounds::RoundEvent::RoundProposal(ark::rounds::RoundProposal {
-					round_seq, attempt_seq, cosign_sigs, forfeit_nonces, connector_pubkey,
-				}) => {
-					protos::round_event::Event::RoundProposal(protos::RoundProposal {
-						round_seq: (*round_seq).into(),
-						attempt_seq: *attempt_seq as u64,
-						vtxo_cosign_signatures: cosign_sigs.into_iter()
-							.map(|s| s.serialize().to_vec()).collect(),
-						forfeit_nonces: forfeit_nonces.into_iter().map(|(id, nonces)| {
-							protos::ForfeitNonces {
-								input_vtxo_id: id.to_bytes().to_vec(),
-								pub_nonces: nonces.into_iter()
-									.map(|n| n.serialize().to_vec())
-									.collect(),
-							}
-						}).collect(),
-						connector_pubkey: connector_pubkey.serialize().to_vec(),
-					})
-				},
 				ark::rounds::RoundEvent::Finished(ark::rounds::RoundFinished {
-					round_seq, attempt_seq, signed_round_tx,
+					round_seq, attempt_seq, cosign_sigs, signed_round_tx,
 				}) => {
 					protos::round_event::Event::Finished(protos::RoundFinished {
 						round_seq: (*round_seq).into(),
 						attempt_seq: *attempt_seq as u64,
+						vtxo_cosign_signatures: cosign_sigs.into_iter()
+							.map(|s| s.serialize().to_vec()).collect(),
 						signed_round_tx: bitcoin::consensus::serialize(&signed_round_tx),
 					})
 				},
@@ -267,30 +253,14 @@ impl TryFrom<protos::RoundEvent> for ark::rounds::RoundEvent {
 					}).collect::<Result<_, _>>()?,
 				})
 			},
-			protos::round_event::Event::RoundProposal(m) => {
-				ark::rounds::RoundEvent::RoundProposal(ark::rounds::RoundProposal {
+			protos::round_event::Event::Finished(m) => {
+				ark::rounds::RoundEvent::Finished(ark::rounds::RoundFinished {
 					round_seq: m.round_seq.into(),
 					attempt_seq: m.attempt_seq as usize,
 					cosign_sigs: m.vtxo_cosign_signatures.into_iter().map(|s| {
 						schnorr::Signature::from_slice(&s)
 							.map_err(|_| "invalid vtxo_cosign_signatures")
 					}).collect::<Result<_, _>>()?,
-					forfeit_nonces: m.forfeit_nonces.into_iter().map(|f| {
-						let vtxo_id = VtxoId::from_slice(&f.input_vtxo_id)
-							.map_err(|_| "invalid input_vtxo_id")?;
-						let nonces = f.pub_nonces.into_iter().map(|n| {
-							musig::PublicNonce::from_bytes(&n)
-						}).collect::<Result<_, _>>()?;
-						Ok((vtxo_id, nonces))
-					}).collect::<Result<_, ConvertError>>()?,
-					connector_pubkey: PublicKey::from_slice(&m.connector_pubkey)
-						.map_err(|_| "invalid connector pubkey")?,
-				})
-			},
-			protos::round_event::Event::Finished(m) => {
-				ark::rounds::RoundEvent::Finished(ark::rounds::RoundFinished {
-					round_seq: m.round_seq.into(),
-					attempt_seq: m.attempt_seq as usize,
 					signed_round_tx: bitcoin::consensus::deserialize(&m.signed_round_tx)
 						.map_err(|_| "invalid signed_round_tx")?,
 				})
@@ -348,6 +318,36 @@ impl TryFrom<protos::VtxoRequest> for VtxoRequest {
 		Ok(Self {
 			amount: Amount::from_sat(v.amount),
 			policy: VtxoPolicy::deserialize(&v.policy).map_err(|_| "invalid policy")?,
+		})
+	}
+}
+
+impl From<SignedVtxoRequest> for protos::SignedVtxoRequest {
+	fn from(v: SignedVtxoRequest) -> Self {
+		protos::SignedVtxoRequest {
+			vtxo: Some(protos::VtxoRequest {
+				amount: v.vtxo.amount.to_sat(),
+				policy: v.vtxo.policy.serialize(),
+			}),
+			cosign_pubkey: v.cosign_pubkey.serialize().to_vec(),
+			public_nonces: v.nonces.iter().map(|n| n.serialize().to_vec()).collect(),
+		}
+	}
+}
+
+impl TryFrom<protos::SignedVtxoRequest> for SignedVtxoRequest {
+	type Error = ConvertError;
+	fn try_from(v: protos::SignedVtxoRequest) -> Result<Self, Self::Error> {
+		let vtxo = v.vtxo.unwrap();
+		Ok(SignedVtxoRequest {
+			vtxo: VtxoRequest {
+				amount: Amount::from_sat(vtxo.amount),
+				policy: VtxoPolicy::from_bytes(&vtxo.policy)?,
+			},
+			cosign_pubkey: PublicKey::from_bytes(&v.cosign_pubkey)?,
+			nonces: v.public_nonces.into_iter()
+				.map(|n| musig::PublicNonce::from_bytes(n))
+				.collect::<Result<_, _>>()?,
 		})
 	}
 }
@@ -540,6 +540,35 @@ impl TryFrom<protos::CheckpointedPackageCosignResponse> for ark::arkoor::checkpo
 	fn try_from(v: protos::CheckpointedPackageCosignResponse) -> Result<Self, Self::Error> {
 		Ok(Self {
 			responses: v.parts.into_iter().map(|p| p.try_into()).collect::<Result<Vec<_>, _>>()?,
+		})
+	}
+}
+
+impl From<LeafVtxoCosignRequest> for protos::LeafVtxoCosignRequest {
+	fn from(v: LeafVtxoCosignRequest) -> Self {
+		protos::LeafVtxoCosignRequest {
+			vtxo_id: v.vtxo_id.to_bytes().to_vec(),
+			public_nonce: v.pub_nonce.serialize().to_vec(),
+		}
+	}
+}
+
+impl From<LeafVtxoCosignResponse> for protos::LeafVtxoCosignResponse {
+	fn from(v: LeafVtxoCosignResponse) -> Self {
+		protos::LeafVtxoCosignResponse {
+			public_nonce: v.public_nonce.serialize().to_vec(),
+			partial_signature: v.partial_signature.serialize().to_vec(),
+		}
+	}
+}
+
+impl TryFrom<protos::LeafVtxoCosignResponse> for LeafVtxoCosignResponse {
+	type Error = ConvertError;
+
+	fn try_from(v: protos::LeafVtxoCosignResponse) -> Result<Self, Self::Error> {
+		Ok(Self {
+			public_nonce: TryFromBytes::from_bytes(v.public_nonce)?,
+			partial_signature: TryFromBytes::from_bytes(v.partial_signature)?,
 		})
 	}
 }

@@ -83,9 +83,7 @@ pub enum RoundStep {
 	ConstructVtxoTree,
 	SendingVtxoProposal,
 	ReceiveVtxoSignatures,
-	ConstructRoundProposal,
 	CombineVtxoSignatures,
-	ReceiveForfeitSignatures,
 	FinalStage,
 	SignOnChainTransaction,
 	Persist,
@@ -119,8 +117,6 @@ impl RoundStep {
 			RoundStep::ReceiveVtxoSignatures => "round_receive_vtxo_signatures",
 			RoundStep::CombineVtxoSignatures => "round_combine_vtxo_signatures",
 			RoundStep::ConstructVtxoTree => "round_construct_vtxo_tree",
-			RoundStep::ConstructRoundProposal => "round_construct_round_proposal",
-			RoundStep::ReceiveForfeitSignatures => "round_receive_forfeit_signatures",
 			RoundStep::SignOnChainTransaction => "round_sign_on_chain_transaction",
 			RoundStep::FinalStage => "round_finalize_stage",
 			RoundStep::Persist => "round_persist",
@@ -135,8 +131,6 @@ impl RoundStep {
 			RoundStep::ReceiveVtxoSignatures,
 			RoundStep::CombineVtxoSignatures,
 			RoundStep::ConstructVtxoTree,
-			RoundStep::ConstructRoundProposal,
-			RoundStep::ReceiveForfeitSignatures,
 			RoundStep::SignOnChainTransaction,
 			RoundStep::FinalStage,
 			RoundStep::Persist,
@@ -216,7 +210,6 @@ struct Metrics {
 	round_input_volume_gauge: Gauge<u64>,
 	round_input_count_gauge: Gauge<u64>,
 	round_output_count_gauge: Gauge<u64>,
-	round_offboard_count_gauge: Gauge<u64>,
 	pending_expired_operation_gauge: Gauge<u64>,
 	pending_sweeper_gauge: Gauge<u64>,
 	pending_forfeit_gauge: Gauge<u64>,
@@ -348,7 +341,6 @@ impl Metrics {
 		let round_input_volume_gauge = meter.u64_gauge("round_input_volume_gauge").build();
 		let round_input_count_gauge = meter.u64_gauge("round_input_count_gauge").build();
 		let round_output_count_gauge = meter.u64_gauge("round_output_count_gauge").build();
-		let round_offboard_count_gauge = meter.u64_gauge("round_offboard_count_gauge").build();
 		let pending_expired_operation_gauge = meter.u64_gauge("pending_expired_operation_gauge").build();
 		let pending_sweeper_gauge = meter.u64_gauge("pending_sweeper_gauge").build();
 		let mailbox_counter = meter.u64_counter("mailbox_counter").build();
@@ -408,7 +400,6 @@ impl Metrics {
 			round_input_volume_gauge,
 			round_input_count_gauge,
 			round_output_count_gauge,
-			round_offboard_count_gauge,
 			pending_expired_operation_gauge,
 			pending_sweeper_gauge,
 			pending_forfeit_gauge,
@@ -552,7 +543,6 @@ pub fn set_round_seq(round_seq: RoundSeq) {
 		m.round_input_volume_gauge.record(0, global_attrs);
 		m.round_input_count_gauge.record(0, global_attrs);
 		m.round_output_count_gauge.record(0, global_attrs);
-		m.round_offboard_count_gauge.record(0, global_attrs);
 
 		for s in RoundStep::get_all() {
 			let attrs = m.with_global_labels([
@@ -606,14 +596,12 @@ pub fn set_round_metrics(
 	input_volume: Amount,
 	input_count: usize,
 	output_count: usize,
-	offboard_count: usize,
 ) {
 	if let Some(m) = TELEMETRY.get() {
 		let global_labels = m.global_labels();
 		m.round_input_volume_gauge.record(input_volume.to_sat(), global_labels);
 		m.round_input_count_gauge.record(input_count as u64, global_labels);
 		m.round_output_count_gauge.record(output_count as u64, global_labels);
-		m.round_offboard_count_gauge.record(offboard_count as u64, global_labels);
 	}
 }
 

@@ -150,6 +150,7 @@ async fn bark_pay_ln_with_multiple_inputs() {
 	bark_2.board(btc(2)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 	bark_1.refresh_all().await;
+	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
 	bark_1.board(btc(1)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 	bark_2.maintain().await;

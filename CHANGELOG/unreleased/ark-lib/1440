@@ -1,0 +1,6 @@
+
+* `tree::signed` module is refactored to add hArk protocol
+  [PR #1440](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1440)
+  - for hArk details, see https://delvingbitcoin.org/t/evolving-the-ark-protocol-using-ctv-and-csfs/1602
+  - all leaves now have an unlock hash attached
+  - leaf txs are no longer signed during the interactive process

@@ -1,3 +1,7 @@
+
+#[macro_use]
+extern crate anyhow;
+
 pub mod api;
 pub mod config;
 pub mod error;
@@ -7,7 +11,6 @@ pub use crate::config::Config;
 
 use std::sync::Arc;
 
-use anyhow;
 use axum::routing::get;
 use bark::daemon::CancellationToken;
 use tokio::sync::RwLock;

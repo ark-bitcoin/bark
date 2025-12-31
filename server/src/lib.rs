@@ -34,8 +34,10 @@ mod utils;
 
 pub use crate::intman::{CAPTAIND_API_KEY, CAPTAIND_CLI_API_KEY};
 pub use crate::config::Config;
+use crate::utils::TimedEntryMap;
 
 
+use std::borrow::Borrow;
 use std::collections::HashSet;
 use std::fs;
 use std::pin::Pin;
@@ -45,8 +47,8 @@ use std::task::Poll;
 use std::time::Duration;
 
 use anyhow::Context;
-use bitcoin::{bip32, Address, Amount, OutPoint};
-use bitcoin::secp256k1::{self, rand, schnorr, Keypair, PublicKey};
+use bitcoin::{bip32, Address, Amount, OutPoint, Transaction};
+use bitcoin::secp256k1::{self, rand, Keypair, PublicKey};
 use futures::Stream;
 use log::{info, trace, warn};
 use tokio::sync::{broadcast, mpsc, oneshot};
@@ -59,7 +61,8 @@ use ark::arkoor::{ArkoorBuilder, ArkoorCosignResponse, ArkoorPackageBuilder};
 use ark::board::BoardBuilder;
 use ark::mailbox::{BlindedMailboxIdentifier, MailboxIdentifier};
 use ark::musig::{self, PublicNonce};
-use ark::rounds::RoundEvent;
+use ark::rounds::{RoundEvent, RoundId};
+use ark::tree::signed::{LeafVtxoCosignRequest, LeafVtxoCosignResponse, UnlockPreimage};
 use ark::tree::signed::builder::{SignedTreeBuilder, SignedTreeCosignResponse};
 use bitcoin_ext::{BlockHeight, BlockRef, TransactionExt, TxStatus, P2TR_DUST};
 use bitcoin_ext::rpc::{BitcoinRpcClient, BitcoinRpcExt, RpcApi};
@@ -71,6 +74,7 @@ use crate::forfeits::ForfeitWatcher;
 use crate::ln::cln::ClnManager;
 use crate::mailbox_manager::MailboxManager;
 use crate::round::RoundInput;
+use crate::round::forfeit::HarkForfeitNonces;
 use crate::secret::Secret;
 use crate::sweeps::VtxoSweeper;
 use crate::system::RuntimeManager;
@@ -170,6 +174,8 @@ pub struct Server {
 	tx_nursery: TxNursery,
 	vtxo_sweeper: Option<VtxoSweeper>,
 	rounds: RoundHandle,
+	// nb we store Option because remove is costly, we take the option and clean up later
+	forfeit_nonces: parking_lot::Mutex<TimedEntryMap<VtxoId, Option<HarkForfeitNonces>>>,
 	forfeits: Option<ForfeitWatcher>,
 	/// All vtxos that are currently being processed in any way.
 	/// (Plus a small buffer to optimize allocations.)
@@ -419,6 +425,7 @@ impl Server {
 				round_input_tx,
 				round_trigger_tx,
 			},
+			forfeit_nonces: parking_lot::Mutex::new(TimedEntryMap::new()),
 			vtxos_in_flux: VtxosInFlux::new(),
 			config: cfg.clone(),
 			db,
@@ -780,6 +787,7 @@ impl Server {
 		&self,
 		vtxos: impl IntoIterator<Item = VtxoRequest>,
 		cosign_pubkey: PublicKey,
+		unlock_preimage: UnlockPreimage,
 		server_cosign_pubkey: PublicKey,
 		expiry_height: BlockHeight,
 		utxo: OutPoint,
@@ -792,50 +800,56 @@ impl Server {
 		let builder = SignedTreeBuilder::new_for_cosign(
 			vtxos,
 			cosign_pubkey,
+			unlock_preimage,
 			expiry_height,
 			self.server_key.leak_ref().public_key(),
 			server_cosign_pubkey,
 			self.config.vtxo_exit_delta,
 			utxo,
 			pub_nonces,
-		);
+		)?;
 		Ok(builder.server_cosign(&cosign_key))
 	}
 
-	/// Register the VTXOs in the signed vtxo tree
+	/// Cosign the hArk leaf VTXO
+	pub fn cosign_hashlocked_leaf(
+		&self,
+		request: &LeafVtxoCosignRequest,
+		vtxo: &Vtxo,
+		funding_tx: &Transaction,
+	) -> LeafVtxoCosignResponse {
+		// NB there is no danger in doing this multiple times
+		// because user needs the preimage alongside the signature
+
+		trace!("Signing hArk leaf for VTXO {}", request.vtxo_id);
+		let ret = LeafVtxoCosignResponse::new_cosign(
+			request, vtxo, funding_tx, self.server_key.leak_ref(),
+		);
+		slog!(HarkLeafSigned, vtxo_id: request.vtxo_id, funding_txid: funding_tx.compute_txid());
+		ret
+	}
+
+	/// Cosign the hArk leaf VTXO from a known round
+	pub async fn cosign_hashlocked_leaf_round(
+		&self,
+		request: &LeafVtxoCosignRequest,
+	) -> anyhow::Result<LeafVtxoCosignResponse> {
+		let [vtxo] = self.db.get_vtxos_by_id(&[request.vtxo_id]).await?
+			.try_into().expect("one argument one response");
+		let round_id = RoundId::new(vtxo.vtxo.chain_anchor().txid);
+		let round = self.db.get_round(round_id).await?
+			.badarg("VTXO's chain anchor is not a known round")?;
+		Ok(self.cosign_hashlocked_leaf(request, &vtxo.vtxo, &round.funding_tx))
+	}
+
+	/// Register a set of new VTXOs
 	///
 	/// This should only be called once we trust that the root of the tree
 	/// will confirm.
-	pub async fn register_cosigned_vtxo_tree(
+	pub async fn register_vtxos<V: Borrow<Vtxo>>(
 		&self,
-		vtxos: impl IntoIterator<Item = VtxoRequest>,
-		cosign_pubkey: PublicKey,
-		server_cosign_pubkey: PublicKey,
-		expiry_height: BlockHeight,
-		utxo: OutPoint,
-		signatures: Vec<schnorr::Signature>,
+		vtxos: impl IntoIterator<Item = V>,
 	) -> anyhow::Result<()> {
-		let tree = SignedTreeBuilder::construct_tree_spec(
-			vtxos,
-			cosign_pubkey,
-			expiry_height,
-			self.server_key.leak_ref().public_key(),
-			server_cosign_pubkey,
-			self.config.vtxo_exit_delta,
-		).into_unsigned_tree(utxo);
-
-		if let Err(pk) = tree.verify_cosign_sigs(&signatures) {
-			bail!("invalid cosign signatures for xonly pk {}", pk);
-		}
-
-		// Now we're done and we can drop the key.
-		let _ = self.drop_ephemeral_cosign_key(server_cosign_pubkey).await?;
-
-		//TODO(stevenroose) some sanity check on expiry?
-
-		let tree = tree.into_signed_tree(signatures).into_cached_tree();
-		self.db.upsert_vtxos(tree.all_vtxos()).await.context("db error occurred")?;
-
-		Ok(())
+		self.db.upsert_vtxos(vtxos).await.context("db error occurred")
 	}
 }

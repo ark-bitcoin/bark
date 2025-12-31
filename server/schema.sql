@@ -358,23 +358,23 @@ CREATE FUNCTION public.vtxo_update_trigger() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
 BEGIN
-    INSERT INTO vtxo_history (
-        id, vtxo_id, vtxo, expiry, oor_spent_txid, forfeit_state, forfeit_round_id,
-        created_at, updated_at
-    ) VALUES (
-        OLD.id, OLD.vtxo_id, OLD.vtxo, OLD.expiry, OLD.oor_spent_txid, OLD.forfeit_state, OLD.forfeit_round_id,
-        OLD.created_at, OLD.updated_at
-    );
+	INSERT INTO vtxo_history (
+		id, vtxo_id, vtxo, expiry, oor_spent_txid, spent_in_round,
+		created_at, updated_at
+	) VALUES (
+		OLD.id, OLD.vtxo_id, OLD.vtxo, OLD.expiry, OLD.oor_spent_txid, OLD.spent_in_round,
+		OLD.created_at, OLD.updated_at
+	);
 
-    IF NEW.updated_at = OLD.updated_at AND new.updated_AT <> NOW() THEN
-        RAISE EXCEPTION 'updated_at must be updated';
-    END IF;
+	IF NEW.updated_at = OLD.updated_at AND new.updated_AT <> NOW() THEN
+		RAISE EXCEPTION 'updated_at must be updated';
+	END IF;
 
-    IF NEW.created_at <> OLD.created_at THEN
-        RAISE EXCEPTION 'created_at cannot be updated';
-    END IF;
+	IF NEW.created_at <> OLD.created_at THEN
+		RAISE EXCEPTION 'created_at cannot be updated';
+	END IF;
 
-    RETURN NEW;
+	RETURN NEW;
 END;
 $$;
 
@@ -934,8 +934,6 @@ CREATE TABLE public.round (
     funding_txid text NOT NULL,
     funding_tx bytea NOT NULL,
     signed_tree bytea NOT NULL,
-    nb_input_vtxos integer NOT NULL,
-    connector_key bytea NOT NULL,
     expiry integer NOT NULL,
     swept_at timestamp with time zone,
     created_at timestamp with time zone NOT NULL
@@ -959,6 +957,61 @@ CREATE SEQUENCE public.round_id_seq
 --
 
 ALTER SEQUENCE public.round_id_seq OWNED BY public.round.id;
+
+
+--
+-- Name: round_part_input; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.round_part_input (
+    participation_id bigint NOT NULL,
+    vtxo_id text NOT NULL,
+    signed_forfeit_tx bytea,
+    signed_forfeit_claim_tx bytea
+);
+
+
+--
+-- Name: round_part_output; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.round_part_output (
+    participation_id bigint NOT NULL,
+    policy bytea NOT NULL,
+    amount bigint NOT NULL
+);
+
+
+--
+-- Name: round_participation; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.round_participation (
+    id bigint NOT NULL,
+    unlock_hash text,
+    unlock_preimage bytea,
+    round_id text,
+    created_at timestamp without time zone NOT NULL
+);
+
+
+--
+-- Name: round_participation_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.round_participation_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: round_participation_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.round_participation_id_seq OWNED BY public.round_participation.id;
 
 
 --
@@ -1004,8 +1057,7 @@ CREATE TABLE public.vtxo (
     vtxo bytea NOT NULL,
     expiry integer NOT NULL,
     oor_spent_txid text,
-    forfeit_state bytea,
-    forfeit_round_id bigint,
+    spent_in_round bigint,
     created_at timestamp with time zone NOT NULL,
     updated_at timestamp with time zone NOT NULL,
     lightning_htlc_subscription_id bigint
@@ -1022,8 +1074,7 @@ CREATE TABLE public.vtxo_history (
     vtxo bytea NOT NULL,
     expiry integer NOT NULL,
     oor_spent_txid text,
-    forfeit_state bytea,
-    forfeit_round_id bigint,
+    spent_in_round bigint,
     created_at timestamp with time zone NOT NULL,
     updated_at timestamp with time zone NOT NULL,
     history_created_at timestamp with time zone DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC'::text) NOT NULL
@@ -1232,6 +1283,13 @@ ALTER TABLE ONLY public.round ALTER COLUMN id SET DEFAULT nextval('public.round_
 
 
 --
+-- Name: round_participation id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.round_participation ALTER COLUMN id SET DEFAULT nextval('public.round_participation_id_seq'::regclass);
+
+
+--
 -- Name: sweep id; Type: DEFAULT; Schema: public; Owner: -
 --
 
@@ -1416,6 +1474,14 @@ ALTER TABLE ONLY public.lightning_payment_attempt
 
 ALTER TABLE ONLY public.refinery_schema_history
     ADD CONSTRAINT refinery_schema_history_pkey PRIMARY KEY (version);
+
+
+--
+-- Name: round_participation round_participation_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.round_participation
+    ADD CONSTRAINT round_participation_pkey PRIMARY KEY (id);
 
 
 --
@@ -1608,6 +1674,34 @@ CREATE UNIQUE INDEX round_funding_tx_id_uix ON public.round USING btree (funding
 
 
 --
+-- Name: round_part_input_participation_id_ix; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX round_part_input_participation_id_ix ON public.round_part_input USING btree (participation_id);
+
+
+--
+-- Name: round_part_output_participation_id_ix; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX round_part_output_participation_id_ix ON public.round_part_output USING btree (participation_id);
+
+
+--
+-- Name: round_participation_round_id_null_ix; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX round_participation_round_id_null_ix ON public.round_participation USING btree (((round_id IS NULL)));
+
+
+--
+-- Name: round_participation_unlock_hash_uix; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX round_participation_unlock_hash_uix ON public.round_participation USING btree (unlock_hash);
+
+
+--
 -- Name: round_seq_uix; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -1619,13 +1713,6 @@ CREATE UNIQUE INDEX round_seq_uix ON public.round USING btree (seq);
 --
 
 CREATE UNIQUE INDEX sweep_txid_pending_uix ON public.sweep USING btree (txid) INCLUDE (abandoned_at, confirmed_at);
-
-
---
--- Name: vtxo_has_forfeit_state_ix; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX vtxo_has_forfeit_state_ix ON public.vtxo USING btree (((forfeit_state IS NOT NULL)), vtxo_id);
 
 
 --
@@ -1660,7 +1747,7 @@ CREATE INDEX vtxo_pool_vtxo_id_ix ON public.vtxo_pool USING btree (vtxo_id);
 -- Name: vtxo_spendable_ix; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX vtxo_spendable_ix ON public.vtxo USING btree (((oor_spent_txid IS NULL)), ((forfeit_state IS NULL)), vtxo_id);
+CREATE INDEX vtxo_spendable_ix ON public.vtxo USING btree (((oor_spent_txid IS NULL)), ((spent_in_round IS NULL)), vtxo_id);
 
 
 --
@@ -1869,11 +1956,35 @@ ALTER TABLE ONLY public.lightning_payment_attempt
 
 
 --
+-- Name: round_part_input round_part_input_participation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.round_part_input
+    ADD CONSTRAINT round_part_input_participation_id_fkey FOREIGN KEY (participation_id) REFERENCES public.round_participation(id);
+
+
+--
+-- Name: round_part_input round_part_input_vtxo_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.round_part_input
+    ADD CONSTRAINT round_part_input_vtxo_id_fkey FOREIGN KEY (vtxo_id) REFERENCES public.vtxo(vtxo_id);
+
+
+--
+-- Name: round_part_output round_part_output_participation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.round_part_output
+    ADD CONSTRAINT round_part_output_participation_id_fkey FOREIGN KEY (participation_id) REFERENCES public.round_participation(id);
+
+
+--
 -- Name: vtxo vtxo_forfeit_round_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.vtxo
-    ADD CONSTRAINT vtxo_forfeit_round_id_fkey FOREIGN KEY (forfeit_round_id) REFERENCES public.round(id);
+    ADD CONSTRAINT vtxo_forfeit_round_id_fkey FOREIGN KEY (spent_in_round) REFERENCES public.round(id);
 
 
 --

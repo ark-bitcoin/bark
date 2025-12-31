@@ -1,31 +1,30 @@
+#![allow(unused)]
 
-use std::collections::{hash_map, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
 use anyhow::Context;
 use bitcoin::{OutPoint, Transaction, Txid, FeeRate, bip32, Network, Amount};
-use bitcoin::hashes::Hash;
 use bitcoin::key::Keypair;
 use log::{error, debug, info, trace};
 use tokio::sync::{mpsc, oneshot};
-use tokio_stream::StreamExt;
 
-use ark::{musig, Vtxo, VtxoId};
-use ark::connectors::{ConnectorChain, ConnectorIter};
+use ark::{Vtxo, VtxoId};
+use ark::connectors::ConnectorIter;
 use ark::rounds::RoundId;
 use bitcoin_ext::bdk::WalletExt;
 use bitcoin_ext::cpfp::MakeCpfpFees;
 use bitcoin_ext::rpc::{BitcoinRpcClient, BitcoinRpcExt};
-use bitcoin_ext::{KeypairExt, TransactionExt};
+use bitcoin_ext::TransactionExt;
 use server_rpc as rpc;
 
-use crate::database::forfeits::ForfeitState;
 use crate::database::rounds::StoredRound;
 use crate::system::RuntimeManager;
 use crate::txindex::{TxIndex, Tx};
 use crate::txindex::broadcast::TxNursery;
 use crate::wallet::{BdkWalletExt, PersistedWallet, WalletKind};
-use crate::{utils, SECP, database, telemetry};
+use crate::{utils, database, telemetry};
+
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -46,76 +45,6 @@ impl Default for Config {
 	}
 }
 
-fn finalize_forfeit_tx(
-	vtxo: &Vtxo,
-	ff: &ForfeitState,
-	conn_idx: usize,
-	conn: OutPoint,
-	conn_key: &Keypair,
-	server_key: &Keypair,
-) -> Transaction {
-	// First sign the forfeit input and combine with user part sig.
-	let forfeit_sig = {
-		let (sighash, _tx) = ark::forfeit::connector_forfeit_sighash_exit(
-			&vtxo, conn, conn_key.public_key(),
-		);
-		let agg_nonce = musig::nonce_agg(&[
-			&ff.user_nonces.get(conn_idx).expect("user nonce index"),
-			&ff.pub_nonces.get(conn_idx).expect("pub nonce index"),
-		]);
-		let sec_nonce = ff.sec_nonces
-			.get(conn_idx)
-			.expect("sec nonce index")
-			.leak_ref()
-			.to_sec_nonce();
-		let (part, sig) = musig::partial_sign(
-			[vtxo.user_pubkey(), vtxo.server_pubkey()],
-			agg_nonce,
-			&server_key,
-			sec_nonce,
-			sighash.to_byte_array(),
-			Some(vtxo.output_taproot().tap_tweak().to_byte_array()),
-			Some(&[&ff.user_part_sigs.get(conn_idx).expect("user part sig index")]),
-		);
-
-		// Validate our partial sig
-		debug_assert!({
-			let (key_agg, _) = musig::tweaked_key_agg(
-				[vtxo.user_pubkey(), vtxo.server_pubkey()],
-				vtxo.output_taproot().tap_tweak().to_byte_array(),
-			);
-			let session = musig::Session::new(
-				&key_agg,
-				agg_nonce,
-				&sighash.to_byte_array(),
-			);
-			session.partial_verify(
-				&key_agg,
-				&part,
-				ff.pub_nonces.get(conn_idx).expect("pub nonce index"),
-				musig::pubkey_to(vtxo.server_pubkey()),
-			)
-		}, "invalid partial ff signature created");
-
-		sig.expect("forfeit partial siging failed")
-	};
-
-	// Then sign the connector input
-	let conn_sig = {
-		let (sighash, _tx) = ark::forfeit::connector_forfeit_sighash_connector(
-			&vtxo, conn, conn_key.public_key(),
-		);
-		SECP.sign_schnorr(&sighash.into(), &conn_key.for_keyspend(&*SECP))
-	};
-
-	ark::forfeit::create_connector_forfeit_tx(
-		&vtxo,
-		conn,
-		Some(&forfeit_sig),
-		Some(&conn_sig),
-	)
-}
-
 struct RoundState {
 	id: RoundId,
 	nb_input_vtxos: u32,
@@ -127,22 +56,8 @@ struct RoundState {
 }
 
 impl RoundState {
-	fn new_from_round(round: &StoredRound) -> RoundState {
-		let connector_key = Keypair::from_secret_key(&SECP, &round.connector_key);
-		RoundState {
-			id: round.funding_txid,
-			nb_input_vtxos: round.nb_input_vtxos as u32,
-			nb_connectors_used: 0,
-			connectors: {
-				let chain = ConnectorChain::new(
-					round.nb_input_vtxos,
-					OutPoint::new(round.funding_txid.as_round_txid(), 1),
-					connector_key.public_key(),
-				);
-				chain.connectors_signed(&connector_key).unwrap().into_owned()
-			},
-			connector_key: connector_key,
-		}
+	fn new_from_round(_round: &StoredRound) -> RoundState {
+		unimplemented!();
 	}
 
 	fn next_connector(&mut self) -> (u32, OutPoint, Option<Transaction>) {
@@ -292,43 +207,6 @@ impl Process {
 	}
 
 	async fn load_new_forfeits(&mut self) -> anyhow::Result<()> {
-		let last_id = if let Some(id) = self.last_checked_round_id {
-			id
-		} else {
-			// edge case on first run
-			if let Some(id) = self.db.get_last_round_id().await? {
-				info!("Found first round ID: {}", id);
-
-				// Since the later code only checks rounds *after* this one, we sync
-				// this one separately first
-				let new_vtxos = self.db.fetch_vtxos_forfeited_in(&[id]).await?;
-				trace!("Registering {} new forfeited vtxos", new_vtxos.len());
-				for vtxo in new_vtxos {
-					trace!("Registering forfeited vtxo {}", vtxo.id);
-					self.register_vtxo(&vtxo.vtxo).await?;
-				}
-
-				self.last_checked_round_id = Some(id);
-				id
-			} else {
-				return Ok(());
-			}
-		};
-
-		trace!("Asking for fresh rounds since {}", last_id);
-		let new_rounds = self.db.get_fresh_round_ids(Some(last_id), None).await?;
-		if new_rounds.is_empty() {
-			return Ok(());
-		}
-
-		let new_vtxos = self.db.fetch_vtxos_forfeited_in(&new_rounds).await?;
-		trace!("Registering {} new forfeited vtxos", new_vtxos.len());
-		for vtxo in new_vtxos {
-			trace!("Registering forfeited vtxo {}", vtxo.id);
-			self.register_vtxo(&vtxo.vtxo).await?;
-		}
-
-		self.last_checked_round_id = Some(*new_rounds.last().expect("checked not empty"));
 		Ok(())
 	}
 
@@ -337,52 +215,6 @@ impl Process {
 		let exit_tx = vtxo.transactions().last().unwrap().tx;
 		let indexed_tx = self.txindex.register(exit_tx).await?;
 		self.exit_txs.push((indexed_tx, vtxo_id));
-		Ok(())
-	}
-
-	async fn handle_exit_tx(&mut self, vtxo_id: VtxoId) -> anyhow::Result<()> {
-		let [vtxo] = self.db.get_vtxos_by_id(&[vtxo_id]).await
-			.context("failed to fetch forfeit vtxo")?
-			.try_into().expect("1 id 1 vtxo");
-		let ff_state = vtxo.forfeit_state.as_ref().expect("vtxo is forfeited");
-		let round_state = match self.rounds.entry(ff_state.round_id) {
-			hash_map::Entry::Occupied(e) => e.into_mut(),
-			hash_map::Entry::Vacant(e) => {
-				let round = self.db.get_round(ff_state.round_id).await
-					.context("db error fetching round")?
-					.expect("corrupt db: vtxo mentions round that doesn't exist");
-				e.insert(RoundState::new_from_round(&round))
-			},
-		};
-
-		// Gather the connector tx from our connector chain.
-		let (conn_idx, connector, conn_tx) = round_state.next_connector();
-
-		// Create the forfeit tx.
-		let ff_tx = finalize_forfeit_tx(
-			&vtxo.vtxo,
-			&ff_state,
-			conn_idx as usize,
-			connector,
-			&round_state.connector_key,
-			&self.server_key,
-		);
-
-		let connector = if let Some(conn_tx) = conn_tx {
-			Connector::ConnectorTx {
-				tx: conn_tx,
-				output_idx: if conn_idx == round_state.nb_input_vtxos { 0 } else { 1 },
-			}
-		} else {
-			Connector::RoundTx {
-				txid: round_state.id.as_round_txid(),
-				output_idx: ark::rounds::ROUND_TX_CONNECTOR_VOUT,
-			}
-		};
-		let claim = ClaimState::start(self, vtxo_id, connector, ff_tx).await
-			.with_context(|| format!("error starting forfeit claim for vtxo {}", vtxo_id))?;
-		self.claims.push(claim);
-
 		Ok(())
 	}
 
@@ -398,8 +230,9 @@ impl Process {
 			}
 		}
 
-		for vtxo in &new_confirmed {
-			self.handle_exit_tx(*vtxo).await?;
+		for _vtxo in &new_confirmed {
+			//TODO(stevenroose) handle new forfeit type
+			// self.handle_exit_tx(*vtxo).await?;
 		}
 		self.exit_txs.retain(|(_tx, vtxo)| !new_confirmed.contains(vtxo));
 
@@ -585,14 +418,7 @@ impl ForfeitWatcher {
 		proc.load_state_from_db().await.context("error loading state from db")?;
 
 		// Fetch all forfeited vtxos and register their exit txs.
-		let mut forfeited_vtxos = Box::pin(db.fetch_all_forfeited_vtxos().await
-			.context("db: failed to fetch forfeited vtxos")?);
-		while let Some(res) = forfeited_vtxos.next().await {
-			let vtxo = res.context("db: error fetching forfeited vtxo")?;
-			proc.register_vtxo(&vtxo).await
-				.context("bitcoind: failed to register forfeited vtxo")?;
-		}
-		drop(forfeited_vtxos); // make borrowck happy
+		//TODO(stevenroose) implement
 
 		let (ctrl_tx, ctrl_rx) = mpsc::unbounded_channel();
 		tokio::spawn(proc.run(rtmgr, ctrl_rx));

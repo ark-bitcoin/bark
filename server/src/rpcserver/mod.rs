@@ -85,6 +85,12 @@ trait StatusContext<T, E> {
 	where
 		C: fmt::Display + Send + Sync + 'static;
 
+	/// Shortcut for `.with_context(|| ..).to_status()`.
+	fn with_context<C, F>(self, f: F) -> Result<T, tonic::Status>
+	where
+		C: fmt::Display + Send + Sync + 'static,
+		F: FnOnce() -> C;
+
 	/// Shortcut for `.badarg(..).to_status()`.
 	fn badarg<C>(self, context: C) -> Result<T, tonic::Status>
 	where
@@ -107,6 +113,14 @@ where
 		C: fmt::Display + Send + Sync + 'static
 	{
 		anyhow::Context::context(self, context).to_status()
+	}
+
+	fn with_context<C, F>(self, f: F) -> Result<T, tonic::Status>
+	where
+		C: fmt::Display + Send + Sync + 'static,
+		F: FnOnce() -> C
+	{
+		anyhow::Context::with_context(self, f).to_status()
 	}
 
 	fn badarg<C>(self, context: C) -> Result<T, tonic::Status>
