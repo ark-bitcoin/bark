@@ -9,8 +9,7 @@ use bitcoin_ext::rpc::{BitcoinRpcClient, BitcoinRpcExt, RpcApi};
 use bitcoin_ext::{BlockRef};
 
 use crate::database::Db;
-use crate::sync::BlockData;
-use crate::sync::ChainEventListener;
+use crate::sync::{BlockData, ChainEventListener};
 use crate::telemetry;
 
 pub struct BlockIndex {
