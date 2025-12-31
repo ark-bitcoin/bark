@@ -71,8 +71,8 @@ impl Bitcoind {
 		Daemon::wrap(BitcoindHelper { name, exec, config, state, add_node })
 	}
 
-	pub fn sync_client(&self) -> rpc::Client {
-		self.inner.sync_client().unwrap()
+	pub fn sync_client(&self) -> bitcoin_ext::rpc::BitcoinRpcClient {
+		bitcoin_ext::rpc::BitcoinRpcClient::new(&self.rpc_url(), self.auth()).unwrap()
 	}
 
 	pub fn rpc_cookie(&self) -> PathBuf {
