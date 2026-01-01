@@ -1,0 +1,6 @@
+
+* Fix `ln status` can't find payment hash for outgoing payments
+  [PR #1466](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1466)
+  - Split `ln status` into `ln pay status` (outgoing) and `ln receive status` (incoming)
+  - Add `LightningSendInfo` struct to display outgoing payment status
+  - Include `finished_at` field to detect when a payment has failed or succeeded

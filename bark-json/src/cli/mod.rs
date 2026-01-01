@@ -665,6 +665,54 @@ impl From<bark::persist::models::LightningReceive> for LightningReceiveInfo {
 	}
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[cfg_attr(feature = "utoipa", derive(ToSchema))]
+pub struct LightningSendInfo {
+	/// The amount being sent
+	#[serde(rename = "amount_sat", with = "bitcoin::amount::serde::as_sat")]
+	#[cfg_attr(feature = "utoipa", schema(value_type = u64))]
+	pub amount: Amount,
+	/// The payment hash linked to the lightning send
+	#[cfg_attr(feature = "utoipa", schema(value_type = String))]
+	pub payment_hash: PaymentHash,
+	/// The invoice string
+	pub invoice: String,
+	/// The payment preimage if the payment has completed successfully
+	#[cfg_attr(feature = "utoipa", schema(value_type = Option<String>))]
+	pub preimage: Option<Preimage>,
+	/// The HTLC VTXOs used for the lightning send
+	#[cfg_attr(feature = "utoipa", schema(value_type = Vec<WalletVtxoInfo>))]
+	pub htlc_vtxos: Vec<WalletVtxoInfo>,
+	/// When the payment reached a terminal state (succeeded or failed)
+	#[cfg_attr(feature = "utoipa", schema(value_type = Option<String>))]
+	pub finished_at: Option<chrono::DateTime<chrono::Local>>,
+}
+
+impl From<bark::persist::models::LightningSend> for LightningSendInfo {
+	fn from(v: bark::persist::models::LightningSend) -> Self {
+		LightningSendInfo {
+			payment_hash: v.invoice.payment_hash(),
+			invoice: v.invoice.to_string(),
+			htlc_vtxos: v.htlc_vtxos.into_iter()
+				.map(crate::primitives::WalletVtxoInfo::from).collect(),
+			amount: v.amount,
+			preimage: v.preimage,
+			finished_at: v.finished_at,
+		}
+	}
+}
+
+/// Represents a lightning movement, either a send or receive
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(tag = "status", rename_all = "kebab-case")]
+#[cfg_attr(feature = "utoipa", derive(ToSchema))]
+pub enum LightningMovement {
+	/// A lightning receive (incoming payment)
+	Receive(LightningReceiveInfo),
+	/// A lightning send (outgoing payment)
+	Send(LightningSendInfo),
+}
+
 #[cfg(test)]
 mod test {
 	use bitcoin::FeeRate;

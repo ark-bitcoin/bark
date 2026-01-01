@@ -215,10 +215,8 @@ impl Wallet {
 	///
 	/// # Returns
 	///
-	/// Returns `Ok(Some(Preimage))` if the payment is successfully completed and a preimage is
-	/// received.
-	/// Returns `Ok(None)` for payments still pending, failed payments or if necessary revocation
-	/// or exit processing occurs.
+	/// Returns `Ok(Some(LightningSend))` with the current payment status.
+	/// Returns `Ok(None)` if no lightning send is found for the payment hash.
 	/// Returns an `Err` if an error occurs during the process.
 	///
 	/// # Behavior
@@ -230,9 +228,9 @@ impl Wallet {
 	///   - **Pending**: Checks if the HTLC has expired based on the tip height. If expired,
 	///     revokes the VTXOs.
 	///   - **Complete**: Extracts the payment preimage, logs the payment, registers movement
-	///     in the database and returns the preimage.
+	///     in the database and returns the payment info.
 	pub async fn check_lightning_payment(&self, payment_hash: PaymentHash, wait: bool)
-		-> anyhow::Result<Option<Preimage>>
+		-> anyhow::Result<Option<LightningSend>>
 	{
 		trace!("Checking lightning payment status for payment hash: {}", payment_hash);
 
@@ -259,7 +257,7 @@ impl Wallet {
 
 	/// Internal implementation of lightning payment status check after concurrency check.
 	async fn check_lightning_payment_inner(&self, payment_hash: PaymentHash, wait: bool)
-		-> anyhow::Result<Option<Preimage>>
+		-> anyhow::Result<Option<LightningSend>>
 	{
 		let (mut srv, _) = self.require_server().await?;
 
@@ -267,9 +265,9 @@ impl Wallet {
 			.context("no lightning send found for payment hash")?;
 
 		// If the payment already has a preimage, it was already completed successfully
-		if let Some(preimage) = payment.preimage {
-			trace!("Payment already completed with preimage: {}", preimage.as_hex());
-			return Ok(Some(preimage));
+		if payment.preimage.is_some() {
+			trace!("Payment already completed with preimage");
+			return Ok(Some(payment));
 		}
 
 		if payment.htlc_vtxos.is_empty() {
@@ -307,8 +305,11 @@ impl Wallet {
 					Some(status.preimage), &payment,
 				).await?;
 
-				if let Some(preimage) = preimage_opt {
-					return Ok(Some(preimage));
+				if preimage_opt.is_some() {
+					// Re-fetch from DB to get the updated payment with preimage
+					let updated_payment = self.db.get_lightning_send(payment_hash).await?
+						.context("payment disappeared from database")?;
+					return Ok(Some(updated_payment));
 				} else {
 					trace!("Server said payment is complete, but has no valid preimage: {:?}", preimage_opt);
 					expired
@@ -367,7 +368,8 @@ impl Wallet {
 			}
 		}
 
-		Ok(None)
+		// Return current payment state from DB (may have been updated by revocation)
+		Ok(self.db.get_lightning_send(payment_hash).await?)
 	}
 
 	/// Pays a Lightning [Invoice] using Ark VTXOs. This is also an out-of-round payment
