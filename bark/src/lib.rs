@@ -302,6 +302,7 @@ mod arkoor;
 mod config;
 mod daemon;
 mod lightning;
+mod offboard;
 mod psbtext;
 
 pub use self::arkoor::ArkoorCreateResult;
@@ -315,7 +316,7 @@ use std::sync::Arc;
 
 use anyhow::{bail, Context};
 use bip39::Mnemonic;
-use bitcoin::{Amount, Network, OutPoint, ScriptBuf};
+use bitcoin::{Amount, Network, OutPoint};
 use bitcoin::bip32::{self, ChildNumber, Fingerprint};
 use bitcoin::secp256k1::{self, Keypair, PublicKey};
 use log::{trace, debug, info, warn, error};
@@ -1624,39 +1625,6 @@ impl Wallet {
 		}
 
 		Ok(())
-	}
-
-	pub async fn offboard<V: VtxoRef>(
-		&self,
-		_vtxos: impl IntoIterator<Item = V>,
-		_destination: ScriptBuf,
-	) -> anyhow::Result<RoundStatus> {
-		unimplemented!("offboards are currently unsupported");
-	}
-
-	/// Offboard all VTXOs to a given [bitcoin::Address].
-	pub async fn offboard_all(&self, address: bitcoin::Address) -> anyhow::Result<RoundStatus> {
-		let input_vtxos = self.spendable_vtxos().await?;
-		Ok(self.offboard(input_vtxos, address.script_pubkey()).await?)
-	}
-
-	/// Offboard the given VTXOs to a given [bitcoin::Address].
-	pub async fn offboard_vtxos<V: VtxoRef>(
-		&self,
-		vtxos: impl IntoIterator<Item = V>,
-		address: bitcoin::Address,
-	) -> anyhow::Result<RoundStatus> {
-		let mut input_vtxos = vec![];
-		for v in vtxos {
-			let id = v.vtxo_id();
-			let vtxo = match self.db.get_wallet_vtxo(id).await? {
-				Some(vtxo) => vtxo.vtxo,
-				_ => bail!("cannot find requested vtxo: {}", id),
-			};
-			input_vtxos.push(vtxo);
-		}
-
-		Ok(self.offboard(input_vtxos, address.script_pubkey()).await?)
 	}
 
 	pub async fn build_refresh_participation<V: VtxoRef>(
