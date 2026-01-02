@@ -18,7 +18,7 @@
 //! use anyhow::Result;
 //! use bitcoin::Amount;
 //! use bark::WalletVtxo;
-//! use bark::vtxo::selection::FilterVtxos;
+//! use bark::vtxo::FilterVtxos;
 //!
 //! fn is_large(v: &WalletVtxo) -> Result<bool> {
 //!     Ok(v.amount() >= Amount::from_sat(50_000))
@@ -32,7 +32,7 @@
 //! Builder style with [VtxoFilter]:
 //! ```rust
 //! use bitcoin_ext::BlockHeight;
-//! use bark::vtxo::selection::{FilterVtxos, VtxoFilter};
+//! use bark::vtxo::{FilterVtxos, VtxoFilter};
 //!
 //! # fn example(wallet: &bark::Wallet, mut vtxos: Vec<bark::WalletVtxo>) -> anyhow::Result<Vec<bark::WalletVtxo>> {
 //! let tip: BlockHeight = 1_000;
@@ -129,7 +129,7 @@ impl<'a> VtxoFilter<'a> {
 	/// Examples
 	/// ```
 	/// # fn demo(wallet: &bark::Wallet) -> anyhow::Result<Vec<bark::WalletVtxo>> {
-	/// use bark::vtxo::selection::{VtxoFilter, FilterVtxos};
+	/// use bark::vtxo::{VtxoFilter, FilterVtxos};
 	/// use bitcoin_ext::BlockHeight;
 	///
 	/// let tip: BlockHeight = 1_000;
@@ -154,7 +154,7 @@ impl<'a> VtxoFilter<'a> {
 	/// Examples
 	/// ```
 	/// # fn demo(wallet: &bark::Wallet) -> anyhow::Result<Vec<bark::WalletVtxo>> {
-	/// use bark::vtxo::selection::{VtxoFilter, FilterVtxos};
+	/// use bark::vtxo::{VtxoFilter, FilterVtxos};
 	/// use bitcoin_ext::BlockHeight;
 	///
 	/// let h: BlockHeight = 10_000;
@@ -276,7 +276,7 @@ impl<'a> RefreshStrategy<'a> {
 	/// Examples
 	/// ```
 	/// # fn demo(wallet: &bark::Wallet, mut vtxos: Vec<bark::WalletVtxo>) -> anyhow::Result<Vec<bark::WalletVtxo>> {
-	/// use bark::vtxo::selection::{FilterVtxos, RefreshStrategy};
+	/// use bark::vtxo::{FilterVtxos, RefreshStrategy};
 	/// use bitcoin::FeeRate;
 	/// use bitcoin_ext::BlockHeight;
 	///
@@ -317,7 +317,7 @@ impl<'a> RefreshStrategy<'a> {
 	/// Examples
 	/// ```
 	/// # fn demo(wallet: &bark::Wallet, mut vtxos: Vec<bark::WalletVtxo>) -> anyhow::Result<Vec<bark::WalletVtxo>> {
-	/// use bark::vtxo::selection::{FilterVtxos, RefreshStrategy};
+	/// use bark::vtxo::{FilterVtxos, RefreshStrategy};
 	/// use bitcoin::FeeRate;
 	/// use bitcoin_ext::BlockHeight;
 	///

@@ -31,7 +31,7 @@ use bark::movement::{
 use bark::persist::{BarkPersister, RoundStateId, StoredRoundState};
 use bark::persist::models::{self, LightningReceive, LightningSend, PendingBoard, StoredExit};
 use bark::round::RoundState;
-use bark::vtxo::state::{VtxoState, VtxoStateKind};
+use bark::vtxo::{VtxoState, VtxoStateKind};
 
 
 struct Dummy;

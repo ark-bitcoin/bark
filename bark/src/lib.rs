@@ -259,7 +259,7 @@
 //! 	#   Wallet::open(&mnemonic, db, config).await.unwrap()
 //! 	# }
 //! #
-//! use bark::vtxo::selection::RefreshStrategy;
+//! use bark::vtxo::RefreshStrategy;
 //!
 //! #[tokio::main]
 //! async fn main() -> anyhow::Result<()> {
@@ -305,7 +305,7 @@ mod psbtext;
 pub use self::arkoor::ArkoorCreateResult;
 pub use self::config::{BarkNetwork, Config};
 pub use self::persist::sqlite::SqliteClient;
-pub use self::vtxo::state::WalletVtxo;
+pub use self::vtxo::WalletVtxo;
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -337,8 +337,7 @@ use crate::persist::{BarkPersister, RoundStateId};
 use crate::persist::models::{LightningReceive, LightningSend, PendingBoard};
 use crate::round::{RoundParticipation, RoundStatus};
 use crate::subsystem::{ArkoorMovement, BarkSubsystem, BoardMovement, RoundMovement, SubsystemId};
-use crate::vtxo::selection::{FilterVtxos, VtxoFilter, RefreshStrategy};
-use crate::vtxo::state::{VtxoState, VtxoStateKind};
+use crate::vtxo::{FilterVtxos, RefreshStrategy, VtxoFilter, VtxoState, VtxoStateKind};
 
 const ARK_PURPOSE_INDEX: u32 = 350;
 

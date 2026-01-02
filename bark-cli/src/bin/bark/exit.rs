@@ -10,7 +10,7 @@ use log::{warn, info};
 use ark::VtxoId;
 use bark::Wallet;
 use bark::onchain::{ChainSync, OnchainWallet};
-use bark::vtxo::selection::{FilterVtxos, VtxoFilter};
+use bark::vtxo::{FilterVtxos, VtxoFilter};
 use bark_json::cli::{ExitProgressStatus, ExitTransactionStatus};
 use bitcoin_ext::FeeRateExt;
 

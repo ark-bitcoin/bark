@@ -10,7 +10,7 @@ use utoipa::ToSchema;
 use ark::{Vtxo, VtxoId};
 use ark::vtxo::VtxoPolicyKind;
 use bark::movement::MovementId;
-use bark::vtxo::state::VtxoState;
+use bark::vtxo::VtxoState;
 use bitcoin_ext::{BlockDelta, BlockHeight};
 
 /// Struct representing information about an Unspent Transaction Output (UTXO).

@@ -15,7 +15,7 @@ use ark::lightning::{Invoice, PaymentHash, Preimage};
 use ark::vtxo::VtxoRef;
 use bitcoin_ext::BlockDelta;
 
-use crate::{Vtxo, VtxoId, VtxoState, WalletProperties};
+use crate::{Vtxo, VtxoId, WalletProperties};
 use crate::exit::models::{ExitState, ExitTxOrigin};
 use crate::movement::{Movement, MovementId, MovementStatus, MovementSubsystem, PaymentMethod};
 use crate::persist::{RoundStateId, StoredRoundState};
@@ -24,7 +24,7 @@ use crate::persist::models::{
 };
 use crate::persist::sqlite::convert::{row_to_movement, row_to_wallet_vtxo, rows_to_wallet_vtxos};
 use crate::round::RoundState;
-use crate::vtxo::state::{VtxoStateKind, WalletVtxo};
+use crate::vtxo::{VtxoState, VtxoStateKind, WalletVtxo};
 
 /// Set read-only properties for the wallet
 ///

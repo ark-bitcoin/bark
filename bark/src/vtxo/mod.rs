@@ -1,5 +1,9 @@
-pub mod selection;
-pub mod state;
+
+mod selection;
+mod state;
+
+pub use self::selection::{FilterVtxos, RefreshStrategy, VtxoFilter};
+pub use self::state::{VtxoState, VtxoStateKind, WalletVtxo};
 
 use log::{debug, error, trace};
 use ark::{ProtocolEncoding, Vtxo};
@@ -7,7 +11,6 @@ use ark::vtxo::VtxoRef;
 
 use crate::Wallet;
 use crate::movement::MovementId;
-use crate::vtxo::state::{VtxoState, VtxoStateKind};
 
 impl Wallet {
 	/// Attempts to lock VTXOs with the given [VtxoId] values. This will only work if the current

@@ -12,7 +12,7 @@ use utoipa::OpenApi;
 use ark::lightning::{Bolt11Invoice, Offer};
 use bark::lnurllib::lightning_address::LightningAddress;
 use bark::subsystem::RoundMovement;
-use bark::vtxo::selection::VtxoFilter;
+use bark::vtxo::VtxoFilter;
 use bark_json::web::PendingRoundInfo;
 
 use crate::{RestServer, error};

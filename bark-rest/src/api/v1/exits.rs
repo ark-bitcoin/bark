@@ -9,7 +9,7 @@ use bitcoin::FeeRate;
 use tracing::info;
 use utoipa::OpenApi;
 
-use bark::vtxo::selection::{FilterVtxos, VtxoFilter};
+use bark::vtxo::{FilterVtxos, VtxoFilter};
 use bitcoin_ext::FeeRateExt;
 
 use crate::RestServer;

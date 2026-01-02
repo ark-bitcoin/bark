@@ -14,7 +14,7 @@ use ark::{ProtocolEncoding, Vtxo};
 
 use crate::WalletVtxo;
 use crate::movement::{Movement, MovementId, MovementStatus, MovementSubsystem, MovementTimestamp};
-use crate::vtxo::state::VtxoState;
+use crate::vtxo::VtxoState;
 
 #[allow(unused)]
 pub trait RowExt<'a>: Borrow<Row<'a>> {

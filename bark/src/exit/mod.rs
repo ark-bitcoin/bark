@@ -146,7 +146,7 @@ use crate::persist::BarkPersister;
 use crate::persist::models::StoredExit;
 use crate::psbtext::PsbtInputExt;
 use crate::subsystem::{BarkSubsystem, ExitMovement, SubsystemId};
-use crate::vtxo::state::{VtxoState, VtxoStateKind};
+use crate::vtxo::{VtxoState, VtxoStateKind};
 
 /// Handles the process of ongoing VTXO exits.
 pub struct Exit {
