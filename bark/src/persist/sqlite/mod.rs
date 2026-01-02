@@ -432,7 +432,6 @@ mod test {
 	use ark::vtxo::test::VTXO_VECTORS;
 
 	use crate::persist::sqlite::helpers::in_memory_db;
-	use crate::vtxo::state::UNSPENT_STATES;
 
 	use super::*;
 
@@ -465,7 +464,7 @@ mod test {
 
 		// Verify that we can mark a vtxo as spent
 		db.update_vtxo_state_checked(
-			vtxo_1.id(), VtxoState::Spent, &UNSPENT_STATES,
+			vtxo_1.id(), VtxoState::Spent, &VtxoStateKind::UNSPENT_STATES,
 		).unwrap();
 
 		let vtxos = db.get_vtxos_by_state(&[VtxoStateKind::Spendable]).unwrap();

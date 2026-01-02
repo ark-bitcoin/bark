@@ -338,7 +338,7 @@ use crate::persist::models::{LightningReceive, LightningSend, PendingBoard};
 use crate::round::{RoundParticipation, RoundStatus};
 use crate::subsystem::{ArkoorMovement, BarkSubsystem, BoardMovement, RoundMovement, SubsystemId};
 use crate::vtxo::selection::{FilterVtxos, VtxoFilter, RefreshStrategy};
-use crate::vtxo::state::{VtxoState, VtxoStateKind, UNSPENT_STATES};
+use crate::vtxo::state::{VtxoState, VtxoStateKind};
 
 const ARK_PURPOSE_INDEX: u32 = 350;
 
@@ -1014,7 +1014,7 @@ impl Wallet {
 
 	/// Returns all not spent vtxos
 	pub fn vtxos(&self) -> anyhow::Result<Vec<WalletVtxo>> {
-		Ok(self.db.get_vtxos_by_state(&UNSPENT_STATES)?)
+		Ok(self.db.get_vtxos_by_state(&VtxoStateKind::UNSPENT_STATES)?)
 	}
 
 	/// Returns all vtxos matching the provided predicate
@@ -1465,7 +1465,9 @@ impl Wallet {
 
 		// Remember that we have stored the vtxo
 		// No need to complain if the vtxo is already registered
-		self.db.update_vtxo_state_checked(vtxo.id(), VtxoState::Spendable, &UNSPENT_STATES)?;
+		self.db.update_vtxo_state_checked(
+			vtxo.id(), VtxoState::Spendable, &VtxoStateKind::UNSPENT_STATES,
+		)?;
 
 		let board = self.db.get_pending_board_by_vtxo_id(vtxo.id())?
 			.context("pending board not found")?;

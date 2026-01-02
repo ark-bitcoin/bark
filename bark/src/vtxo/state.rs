@@ -48,6 +48,12 @@ impl VtxoStateKind {
 			VtxoStateKind::Spent => SPENT,
 		}
 	}
+
+	/// List of the different states considered unspent
+	pub const UNSPENT_STATES: &[VtxoStateKind] = &[
+		VtxoStateKind::Spendable,
+		VtxoStateKind::Locked,
+	];
 }
 
 impl fmt::Display for VtxoStateKind {
@@ -60,13 +66,6 @@ impl fmt::Debug for VtxoStateKind {
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
 	    f.write_str(self.as_str())
 	}
-}
-
-lazy_static::lazy_static! {
-	pub static ref UNSPENT_STATES: Vec<VtxoStateKind> = vec![
-		VtxoStateKind::Spendable,
-		VtxoStateKind::Locked,
-	];
 }
 
 /// Rich [Vtxo] state carrying additional context needed at runtime.

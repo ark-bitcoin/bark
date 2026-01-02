@@ -146,7 +146,7 @@ use crate::persist::BarkPersister;
 use crate::persist::models::StoredExit;
 use crate::psbtext::PsbtInputExt;
 use crate::subsystem::{BarkSubsystem, ExitMovement, SubsystemId};
-use crate::vtxo::state::{VtxoState, UNSPENT_STATES};
+use crate::vtxo::state::{VtxoState, VtxoStateKind};
 
 /// Handles the process of ongoing VTXO exits.
 pub struct Exit {
@@ -297,8 +297,9 @@ impl Exit {
 	/// It's recommended to sync the wallet, by using something like [Wallet::maintenance] being
 	/// doing this.
 	pub async fn start_exit_for_entire_wallet(&mut self) -> anyhow::Result<()> {
-		let vtxos: Vec<Vtxo> = self.persister.get_vtxos_by_state(&UNSPENT_STATES)?.into_iter()
-			.map(|v| v.vtxo).collect();
+		let vtxos = self.persister.get_vtxos_by_state(&VtxoStateKind::UNSPENT_STATES)?.into_iter()
+			.map(|v| v.vtxo)
+			.collect::<Vec<_>>();
 		self.start_exit_for_vtxos(&vtxos).await?;
 
 		Ok(())
@@ -332,7 +333,9 @@ impl Exit {
 			trace!("Starting exit for VTXO: {}", vtxo_id);
 			let exit = ExitVtxo::new(vtxo, tip);
 			self.persister.store_exit_vtxo_entry(&StoredExit::new(&exit))?;
-			self.persister.update_vtxo_state_checked(vtxo_id, VtxoState::Spent, &UNSPENT_STATES)?;
+			self.persister.update_vtxo_state_checked(
+				vtxo_id, VtxoState::Spent, &VtxoStateKind::UNSPENT_STATES,
+			)?;
 			self.exit_vtxos.push(exit);
 			trace!("Exit for VTXO started successfully: {}", vtxo_id);
 

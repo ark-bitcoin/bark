@@ -7,11 +7,11 @@ use ark::vtxo::VtxoRef;
 
 use crate::Wallet;
 use crate::movement::MovementId;
-use crate::vtxo::state::{VtxoState, VtxoStateKind, UNSPENT_STATES};
+use crate::vtxo::state::{VtxoState, VtxoStateKind};
 
 impl Wallet {
 	/// Attempts to lock VTXOs with the given [VtxoId] values. This will only work if the current
-	/// [VtxoState] is contained by [UNSPENT_STATES].
+	/// [VtxoState] is contained by [VtxoStateKind::UNSPENT_STATES].
 	///
 	/// # Errors
 	/// - If the VTXO is not in a lockable [VtxoState].
@@ -22,11 +22,13 @@ impl Wallet {
 		vtxos: impl IntoIterator<Item = impl VtxoRef>,
 		movement_id: Option<MovementId>,
 	) -> anyhow::Result<()> {
-		self.set_vtxo_states(vtxos, &VtxoState::Locked { movement_id }, &UNSPENT_STATES)
+		self.set_vtxo_states(
+			vtxos, &VtxoState::Locked { movement_id }, &VtxoStateKind::UNSPENT_STATES,
+		)
 	}
 
 	/// Attempts to mark VTXOs as [VtxoState::Spent], given that each [VtxoId] is currently a state
-	/// contained by [UNSPENT_STATES].
+	/// contained by [VtxoStateKind::UNSPENT_STATES].
 	///
 	/// # Errors
 	/// - If the VTXO is not currently spent.
@@ -36,7 +38,7 @@ impl Wallet {
 		&self,
 		vtxos: impl IntoIterator<Item = impl VtxoRef>,
 	) -> anyhow::Result<()> {
-		self.set_vtxo_states(vtxos, &VtxoState::Spent, &UNSPENT_STATES)
+		self.set_vtxo_states(vtxos, &VtxoState::Spent, &VtxoStateKind::UNSPENT_STATES)
 	}
 
 	/// Updates the state set the [VtxoState] of VTXOs corresponding to each given [VtxoId]while
