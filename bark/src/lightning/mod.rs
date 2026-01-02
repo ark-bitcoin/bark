@@ -1,5 +1,6 @@
-pub mod pay;
-pub mod receive;
+
+mod pay;
+mod receive;
 
 use anyhow::Context;
 use bitcoin::Amount;

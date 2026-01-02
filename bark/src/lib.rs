@@ -290,7 +290,6 @@ pub extern crate lnurl as lnurllib;
 
 pub mod daemon;
 pub mod exit;
-pub mod lightning;
 pub mod movement;
 pub mod onchain;
 pub mod persist;
@@ -300,6 +299,7 @@ pub mod vtxo;
 
 mod arkoor;
 mod config;
+mod lightning;
 mod psbtext;
 
 pub use self::arkoor::ArkoorCreateResult;
