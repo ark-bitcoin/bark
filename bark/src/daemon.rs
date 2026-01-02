@@ -12,11 +12,9 @@ use tokio::sync::RwLock;
 use crate::Wallet;
 use crate::onchain::{ChainSync, ExitUnilaterally};
 
-lazy_static::lazy_static! {
-	static ref FAST_INTERVAL: Duration = Duration::from_secs(1);
-	static ref MEDIUM_INTERVAL: Duration = Duration::from_secs(30);
-	static ref SLOW_INTERVAL: Duration = Duration::from_secs(60);
-}
+const FAST_INTERVAL: Duration = Duration::from_secs(1);
+const MEDIUM_INTERVAL: Duration = Duration::from_secs(30);
+const SLOW_INTERVAL: Duration = Duration::from_secs(60);
 
 pub trait DaemonizableOnchainWallet: ExitUnilaterally + ChainSync {}
 impl <W: ExitUnilaterally + ChainSync> DaemonizableOnchainWallet for W {}
@@ -100,7 +98,8 @@ impl Daemon {
 			}
 
 			tokio::select! {
-				_ = tokio::time::sleep(*SLOW_INTERVAL) => {},
+				_ = tokio::time::sleep(SLOW_INTERVAL) => {},
+
 				_ = self.shutdown.cancelled() => {
 					info!("Shutdown signal received! Shutting maintenance refresh process...");
 					break;
@@ -155,7 +154,7 @@ impl Daemon {
 			}
 
 			tokio::select! {
-				_ = tokio::time::sleep(*SLOW_INTERVAL) => {},
+				_ = tokio::time::sleep(SLOW_INTERVAL) => {},
 				_ = self.shutdown.cancelled() => {
 					info!("Shutdown signal received! Shutting round events process...");
 					break;
@@ -168,7 +167,7 @@ impl Daemon {
 	async fn run_server_connection_check_process(&self) {
 		loop {
 			tokio::select! {
-				_ = tokio::time::sleep(*FAST_INTERVAL) => {},
+				_ = tokio::time::sleep(FAST_INTERVAL) => {},
 				_ = self.shutdown.cancelled() => {
 					info!("Shutdown signal received! Shutting server connection check process...");
 					break;
@@ -181,11 +180,11 @@ impl Daemon {
 	}
 
 	async fn run_sync_processes(&self) {
-		let mut fast_interval = tokio::time::interval(*FAST_INTERVAL);
+		let mut fast_interval = tokio::time::interval(FAST_INTERVAL);
 		fast_interval.reset();
-		let mut medium_interval = tokio::time::interval(*MEDIUM_INTERVAL);
+		let mut medium_interval = tokio::time::interval(MEDIUM_INTERVAL);
 		medium_interval.reset();
-		let mut slow_interval = tokio::time::interval(*SLOW_INTERVAL);
+		let mut slow_interval = tokio::time::interval(SLOW_INTERVAL);
 		slow_interval.reset();
 
 		loop {
