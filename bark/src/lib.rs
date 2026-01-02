@@ -288,7 +288,6 @@ pub extern crate lnurl as lnurllib;
 #[macro_use] extern crate anyhow;
 #[macro_use] extern crate serde;
 
-pub mod arkoor;
 pub mod daemon;
 pub mod exit;
 pub mod lightning;
@@ -299,12 +298,14 @@ pub mod round;
 pub mod subsystem;
 pub mod vtxo;
 
+mod arkoor;
+mod config;
+mod psbtext;
+
+pub use self::arkoor::ArkoorCreateResult;
 pub use self::config::{BarkNetwork, Config};
 pub use self::persist::sqlite::SqliteClient;
 pub use self::vtxo::state::WalletVtxo;
-
-mod config;
-mod psbtext;
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
