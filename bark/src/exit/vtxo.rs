@@ -113,7 +113,7 @@ impl ExitVtxo {
 	}
 
 	/// Prepares an [ExitVtxo] for progression by querying the list of transactions required to
-	/// process the unilateral exit and adds them to the [ExitTransactionManager].
+	/// process the unilateral exit and adds them to the exit transaction manager.
 	pub async fn initialize(
 		&mut self,
 		tx_manager: &mut ExitTransactionManager,

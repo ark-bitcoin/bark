@@ -187,7 +187,7 @@ impl MovementManager {
 
 	/// Updates a movement with the given parameters.
 	///
-	/// See also: [MovementManager::create_movement] and [MovementManager::finish_movement]
+	/// See also: [MovementManager::new_movement] and [MovementManager::finish_movement]
 	///
 	/// Parameters:
 	/// - id: The ID of the movement previously created by [MovementManager::new_movement].
@@ -224,7 +224,7 @@ impl MovementManager {
 
 	/// Finalizes a movement, setting it to the given [MovementStatus].
 	///
-	/// See also: [MovementManager::create_movement] and [MovementManager::update_movement]
+	/// See also: [MovementManager::new_movement] and [MovementManager::update_movement]
 	///
 	/// Parameters:
 	/// - id: The ID of the movement previously created by [MovementManager::new_movement].
@@ -323,7 +323,7 @@ impl MovementManager {
 
 /// Determines the state to set a [Movement] to when a [MovementGuard] is dropped.
 ///
-/// See [MovementGuard::new_movement] for more information.
+/// See [MovementGuard::new] for more information.
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum OnDropStatus {
 	/// Marks the [Movement] as [MovementStatus::Canceled].
@@ -344,7 +344,7 @@ impl From<OnDropStatus> for MovementStatus {
 /// A RAII helper class to ensure that pending movements get marked as finished in case an error
 /// occurs. You can construct a guard for an existing [Movement] with [MovementGuard::new].
 /// Alternatively, a [MovementGuard] can be coupled to a movement using
-/// [MovementGuard::new_movement].
+/// [MovementGuard::new].
 ///
 /// When the [MovementGuard] is dropped from the stack, it will finalize the movement according to
 /// the configured [OnDropStatus] unless [MovementGuard::success] has already been called.

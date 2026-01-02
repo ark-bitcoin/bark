@@ -78,7 +78,7 @@ pub enum VtxoState {
 	Spent,
 	/// The [Vtxo] is currently locked in an action.
 	Locked {
-		/// The ID of the associated [Movement] that locked this VTXO.
+		/// The ID of the associated [Movement](crate::movement::Movement) that locked this VTXO.
 		movement_id: Option<MovementId>,
 	},
 }

@@ -318,7 +318,7 @@ impl VtxoPolicy {
 		}
 	}
 
-	/// Whether a [Vtxo] with this output can be spend in an arkoor tx.
+	/// Whether a [Vtxo](crate::Vtxo) with this output can be spend in an arkoor tx.
 	pub fn is_arkoor_compatible(&self) -> bool {
 		match self {
 			Self::Pubkey { .. } => true,
@@ -328,7 +328,8 @@ impl VtxoPolicy {
 		}
 	}
 
-	/// The public key used to cosign arkoor txs spending a [Vtxo] with this output.
+	/// The public key used to cosign arkoor txs spending a [Vtxo](crate::Vtxo)
+	/// with this output.
 	/// This will return [None] if [VtxoPolicy::is_arkoor_compatible] returns false.
 	pub fn arkoor_pubkey(&self) -> Option<PublicKey> {
 		match self {
@@ -339,7 +340,7 @@ impl VtxoPolicy {
 		}
 	}
 
-	/// Returns the user pubkey associated with a [Vtxo] with this output.
+	/// Returns the user pubkey associated with a [Vtxo](crate::Vtxo) with this output.
 	pub fn user_pubkey(&self) -> PublicKey {
 		match self {
 			Self::Pubkey(PubkeyVtxoPolicy { user_pubkey }) => *user_pubkey,

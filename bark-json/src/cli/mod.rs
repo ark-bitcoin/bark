@@ -278,7 +278,7 @@ impl From<bark::movement::MovementStatus> for MovementStatus {
 	}
 }
 
-/// Describes an attempted movement of offchain funds within the Bark [Wallet].
+/// Describes an attempted movement of offchain funds within the [bark::Wallet].
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[cfg_attr(feature = "utoipa", derive(ToSchema))]
 pub struct Movement {
@@ -316,8 +316,8 @@ pub struct Movement {
 	/// Describes the means by which the wallet received funds in this movement. This could include
 	/// BOLT11 invoices or other useful data.
 	pub received_on: Vec<MovementDestination>,
-	/// A list of [Vtxo] IDs that were consumed by this movement and are either locked or
-	/// unavailable.
+	/// A list of [Vtxo](ark::Vtxo) IDs that were consumed by this movement and
+	/// are either locked or unavailable.
 	#[cfg_attr(feature = "utoipa", schema(value_type = Vec<String>))]
 	pub input_vtxos: Vec<VtxoId>,
 	/// A list of IDs for new VTXOs that were produced as a result of this movement. Often change
@@ -327,7 +327,7 @@ pub struct Movement {
 	/// A list of IDs for VTXOs that were marked for unilateral exit as a result of this movement.
 	/// This could happen for many reasons, e.g. an unsuccessful lightning payment which can't be
 	/// revoked but is about to expire. VTXOs listed here will result in a reduction of spendable
-	/// balance due to the VTXOs being managed by the [bark::Exit] system.
+	/// balance due to the VTXOs being managed by the [bark::exit::Exit] system.
 	#[cfg_attr(feature = "utoipa", schema(value_type = Vec<String>))]
 	pub exited_vtxos: Vec<VtxoId>,
 	/// Contains the times at which the movement was created, updated and completed.

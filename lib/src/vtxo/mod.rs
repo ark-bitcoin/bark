@@ -733,7 +733,8 @@ impl Vtxo {
 	}
 
 	/// The public key used to cosign arkoor txs spending this [Vtxo].
-	/// This will return [None] if [Vtxo::is_arkoor_compatible] returns false.
+	/// This will return [None] if [VtxoPolicy::is_arkoor_compatible] returns false
+	/// for this VTXO's policy.
 	pub fn arkoor_pubkey(&self) -> Option<PublicKey> {
 		self.policy.arkoor_pubkey()
 	}

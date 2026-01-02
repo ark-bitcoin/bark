@@ -25,7 +25,7 @@ const MOVEMENT_SUCCESSFUL: &'static str = "successful";
 const MOVEMENT_FAILED: &'static str = "failed";
 const MOVEMENT_CANCELED: &'static str = "canceled";
 
-/// Describes an attempted movement of offchain funds within the Bark [Wallet].
+/// Describes an attempted movement of offchain funds within the [Wallet](crate::Wallet).
 #[derive(Debug, Clone)]
 pub struct Movement {
 	/// The internal ID of the movement.
@@ -54,7 +54,7 @@ pub struct Movement {
 	/// Describes the means by which the wallet received funds in this movement. This could include
 	/// BOLT11 invoices or other useful data.
 	pub received_on: Vec<MovementDestination>,
-	/// A list of [Vtxo] IDs that were consumed by this movement and are either locked or
+	/// A list of [Vtxo](ark::Vtxo) IDs that were consumed by this movement and are either locked or
 	/// unavailable.
 	pub input_vtxos: Vec<VtxoId>,
 	/// A list of IDs for new VTXOs that were produced as a result of this movement. Often change

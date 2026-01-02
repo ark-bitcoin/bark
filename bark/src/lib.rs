@@ -49,7 +49,7 @@
 //! can be used to recover funds. Typically, most apps request the user
 //! to write down the mnemonic or ensure they use another method for a secure back-up.
 //!
-//! The user can select an Ark server and a [onchain::ChainSource] as part of
+//! The user can select an Ark server and a [chain::ChainSource] as part of
 //! the configuration. The example below configures
 //!
 //! You will also need a place to store all [ark::Vtxo]s on the users device.
@@ -463,7 +463,6 @@ impl VtxoSeed {
 ///     - [Wallet::offboard_all]
 ///   - sending and receiving Ark payments (including to BOLT11/BOLT12 invoices)
 ///     - [Wallet::send_arkoor_payment],
-///     - [Wallet::send_round_onchain_payment],
 ///     - [Wallet::pay_lightning_invoice],
 ///     - [Wallet::pay_lightning_address],
 ///     - [Wallet::pay_lightning_offer]
@@ -506,7 +505,7 @@ impl VtxoSeed {
 ///   - [Wallet::create],
 ///   - [Wallet::open]
 /// - Creation allows the use of an optional onchain wallet for boarding and [Exit] functionality.
-///   It also initializes any internal state and connects to the [onchain::ChainSource]. See
+///   It also initializes any internal state and connects to the [chain::ChainSource]. See
 ///   [onchain::OnchainWallet] for an implementation of an onchain wallet using BDK.
 ///   - [Wallet::create_with_onchain],
 ///   - [Wallet::open_with_onchain]
@@ -606,7 +605,7 @@ pub struct Wallet {
 }
 
 impl Wallet {
-	/// Creates a [onchain::ChainSource] instance to communicate with an onchain backend from the
+	/// Creates a [chain::ChainSource] instance to communicate with an onchain backend from the
 	/// given [Config].
 	pub fn chain_source(
 		config: &Config,
@@ -633,8 +632,8 @@ impl Wallet {
 		}
 	}
 
-	/// Verifies that the bark [Wallet] can be used with the configured [onchain::ChainSource].
-	/// More specifically, if the [onchain::ChainSource] connects to Bitcoin Core it must be
+	/// Verifies that the bark [Wallet] can be used with the configured [chain::ChainSource].
+	/// More specifically, if the [chain::ChainSource] connects to Bitcoin Core it must be
 	/// a high enough version to support ephemeral anchors.
 	pub fn require_chainsource_version(&self) -> anyhow::Result<()> {
 		self.chain.require_version()

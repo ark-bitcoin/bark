@@ -369,7 +369,7 @@ impl Wallet {
 	/// - `invoice`: A reference to the BOLT11/BOLT12 invoice to be paid.
 	/// - `original_payment_method`: The payment method that the given invoice was originally
 	///   derived from (e.g., BOLT11, an offer, lightning address). This will appear in the stored
-	///   [Movement].
+	///   [Movement](crate::movement::Movement).
 	/// - `user_amount`: An optional custom amount to override the amount specified in the invoice.
 	///   If not provided, the invoice's amount is used.
 	///

@@ -247,7 +247,7 @@ enum InnerRefreshStrategy {
 ///   (e.g., approaching soft thresholds or uneconomical unilateral exit).
 ///
 /// This type implements [FilterVtxos], so it can be passed directly to
-/// [`Wallet::vtxos_with`] or [`Wallet::inround_vtxos_with`].
+/// [`Wallet::vtxos_with`].
 pub struct RefreshStrategy<'a> {
 	inner: InnerRefreshStrategy,
 	tip: BlockHeight,
