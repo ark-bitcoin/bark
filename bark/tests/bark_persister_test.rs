@@ -23,7 +23,7 @@ use ark::lightning::{Invoice, PaymentHash, Preimage};
 use bitcoin_ext::{BlockDelta, BlockRef};
 
 use bark::{WalletProperties, WalletVtxo};
-use bark::exit::models::{ExitState, ExitClaimableState, ExitTxOrigin};
+use bark::exit::{ExitState, ExitClaimableState, ExitTxOrigin};
 use bark::movement::{
 	Movement, MovementDestination, MovementId, MovementStatus, MovementSubsystem,
 	MovementTimestamp, PaymentMethod,

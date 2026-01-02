@@ -22,8 +22,7 @@ use ark::rounds::RoundSeq;
 use bitcoin_ext::BlockDelta;
 
 use crate::WalletVtxo;
-use crate::exit::ExitVtxo;
-use crate::exit::models::ExitState;
+use crate::exit::{ExitVtxo, ExitState};
 use crate::movement::MovementId;
 use crate::round::{AttemptState, RoundFlowState, RoundParticipation, RoundState};
 
@@ -345,7 +344,7 @@ impl<'a> From<SerdeRoundState<'a>> for RoundState {
 
 #[cfg(test)]
 mod test {
-	use crate::exit::models::{ExitState, ExitTxOrigin};
+	use crate::exit::{ExitState, ExitTxOrigin};
 	use crate::vtxo::VtxoState;
 
 	#[test]

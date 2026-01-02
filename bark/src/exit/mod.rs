@@ -108,14 +108,18 @@
 //! # }
 //! ```
 
-pub mod models;
-
+mod models;
+mod vtxo;
 pub(crate) mod progress;
 pub(crate) mod transaction_manager;
 
-pub use vtxo::ExitVtxo;
-
-mod vtxo;
+pub use self::models::{
+	ExitTransactionPackage, TransactionInfo, ChildTransactionInfo, ExitError, ExitState,
+	ExitTx, ExitTxStatus, ExitTxOrigin, ExitStartState, ExitProcessingState, ExitAwaitingDeltaState,
+	ExitClaimableState, ExitClaimInProgressState, ExitClaimedState, ExitProgressStatus,
+	ExitTransactionStatus,
+};
+pub use self::vtxo::ExitVtxo;
 
 use std::borrow::Borrow;
 use std::cmp;
@@ -133,10 +137,6 @@ use ark::{Vtxo, VtxoId, SECP};
 use bitcoin_ext::{BlockHeight, P2TR_DUST};
 
 use crate::Wallet;
-use crate::exit::models::{
-	ExitError, ExitProgressStatus, ExitState, ExitTransactionPackage, ExitTransactionStatus,
-	TransactionInfo,
-};
 use crate::exit::transaction_manager::ExitTransactionManager;
 use crate::movement::{MovementDestination, MovementStatus, PaymentMethod};
 use crate::movement::manager::MovementManager;

@@ -181,8 +181,8 @@ pub struct ExitProgressStatus {
 	pub error: Option<ExitError>,
 }
 
-impl From<bark::exit::models::ExitProgressStatus> for ExitProgressStatus {
-	fn from(v: bark::exit::models::ExitProgressStatus) -> Self {
+impl From<bark::exit::ExitProgressStatus> for ExitProgressStatus {
+	fn from(v: bark::exit::ExitProgressStatus) -> Self {
 		ExitProgressStatus {
 			vtxo_id: v.vtxo_id,
 			state: v.state.into(),
@@ -207,8 +207,8 @@ pub struct ExitTransactionStatus {
 	pub transactions: Vec<ExitTransactionPackage>,
 }
 
-impl From<bark::exit::models::ExitTransactionStatus> for ExitTransactionStatus {
-	fn from(v: bark::exit::models::ExitTransactionStatus) -> Self {
+impl From<bark::exit::ExitTransactionStatus> for ExitTransactionStatus {
+	fn from(v: bark::exit::ExitTransactionStatus) -> Self {
 		ExitTransactionStatus {
 			vtxo_id: v.vtxo_id,
 			state: v.state.into(),

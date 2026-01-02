@@ -1,10 +1,14 @@
-pub mod error;
-pub mod package;
-pub mod states;
 
-pub use package::*;
-pub use error::*;
-pub use states::*;
+mod error;
+mod package;
+mod states;
+
+pub use self::package::{ExitTransactionPackage, TransactionInfo, ChildTransactionInfo};
+pub use self::error::ExitError;
+pub use self::states::{
+	ExitTx, ExitTxStatus, ExitTxOrigin, ExitStartState, ExitProcessingState, ExitAwaitingDeltaState,
+	ExitClaimableState, ExitClaimInProgressState, ExitClaimedState,
+};
 
 use ark::VtxoId;
 use bitcoin::Txid;
@@ -144,16 +148,6 @@ impl ExitState {
 			_ => None,
 		}
 	}
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ExitProgressResponse {
-	/// Status of each pending exit transaction
-	pub exits: Vec<ExitProgressStatus>,
-	/// Whether all transactions have been confirmed
-	pub done: bool,
-	/// Block height at which all exit outputs will be spendable
-	pub claimable_height: Option<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

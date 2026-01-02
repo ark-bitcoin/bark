@@ -174,8 +174,8 @@ pub struct TransactionInfo {
 	pub tx: Transaction,
 }
 
-impl From<bark::exit::models::TransactionInfo> for TransactionInfo {
-	fn from(v: bark::exit::models::TransactionInfo) -> Self {
+impl From<bark::exit::TransactionInfo> for TransactionInfo {
+	fn from(v: bark::exit::TransactionInfo) -> Self {
 		TransactionInfo { txid: v.txid, tx: v.tx }
 	}
 }

@@ -27,7 +27,7 @@ use ark::lightning::{Invoice, PaymentHash, Preimage};
 use bitcoin_ext::BlockDelta;
 
 use crate::{Vtxo, VtxoId, WalletProperties};
-use crate::exit::models::ExitTxOrigin;
+use crate::exit::ExitTxOrigin;
 use crate::movement::{Movement, MovementId, MovementStatus, MovementSubsystem, PaymentMethod};
 use crate::persist::{BarkPersister, RoundStateId, StoredRoundState};
 use crate::persist::models::{LightningReceive, LightningSend, PendingBoard, StoredExit};

@@ -16,7 +16,7 @@ use ark::vtxo::VtxoRef;
 use bitcoin_ext::BlockDelta;
 
 use crate::{Vtxo, VtxoId, WalletProperties};
-use crate::exit::models::{ExitState, ExitTxOrigin};
+use crate::exit::{ExitState, ExitTxOrigin};
 use crate::movement::{Movement, MovementId, MovementStatus, MovementSubsystem, PaymentMethod};
 use crate::persist::{RoundStateId, StoredRoundState};
 use crate::persist::models::{
