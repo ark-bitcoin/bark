@@ -7,9 +7,9 @@ pub mod bitcoin;
 
 use axum::Router;
 
-use crate::RestServer;
+use crate::ServerState;
 
-pub fn router() -> Router<RestServer> {
+pub fn router() -> Router<ServerState> {
 	Router::new()
 		.nest("/lightning", lightning::router())
 		.nest("/onchain", onchain::router())

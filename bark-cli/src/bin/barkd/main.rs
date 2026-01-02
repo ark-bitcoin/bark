@@ -4,10 +4,9 @@ use std::sync::Arc;
 
 use clap::Parser;
 use clap::builder::BoolishValueParser;
-use log::info;
+use log::{info, warn};
 use tokio::sync::RwLock;
 
-use bark::daemon::CancellationToken;
 use bark_rest::{Config, RestServer};
 
 use bark_cli::log::init_logging;
@@ -72,53 +71,45 @@ impl Cli {
 	}
 }
 
-/// Runs a thread that will watch for SIGTERM and ctrl-c signals.
-fn run_shutdown_signal_listener() -> CancellationToken {
-	let shutdown = CancellationToken::new();
+/// Runs a thread that will watch for SIGTERM and ctrl-c signals and
+/// returns when a signal is received
+async fn run_shutdown_signal_listener() {
+	async fn signal_recv() {
+		#[cfg(unix)]
+		{
+			let mut sigterm = tokio::signal::unix::signal(
+				tokio::signal::unix::SignalKind::terminate()
+			).expect("Failed to listen for SIGTERM");
 
-	let cloned = shutdown.clone();
-	tokio::spawn(async move {
-		async fn signal_recv() {
-			#[cfg(unix)]
-			{
-				let mut sigterm = tokio::signal::unix::signal(
-					tokio::signal::unix::SignalKind::terminate()
-				).expect("Failed to listen for SIGTERM");
-
-				sigterm.recv().await;
-				info!("SIGTERM received! Sending shutdown signal...");
-				return;
-			}
-
-			#[cfg(windows)]
-			{
-				let mut ctrl_break = tokio::signal::windows::ctrl_break()
-					.expect("Failed to listen for CTRL+BREAK");
-
-				ctrl_break.recv().await;
-				info!("CTRL+BREAK received! Sending shutdown signal...");
-				return
-			}
-
-			#[cfg(not(any(unix, windows)))]
-			{
-				log::warn!("Unknown platform, not listening for shutdown signals");
-				std::future::pending().await
-			}
+			sigterm.recv().await;
+			info!("SIGTERM received! Sending shutdown signal...");
+			return;
 		}
 
-		tokio::select! {
-			_ = signal_recv() => {},
-			r = tokio::signal::ctrl_c() => match r {
-				Ok(()) => info!("Ctrl+C received! Sending shutdown signal..."),
-				Err(e) => panic!("failed to listen to ctrl-c signal: {e}"),
-			},
+		#[cfg(windows)]
+		{
+			let mut ctrl_break = tokio::signal::windows::ctrl_break()
+				.expect("Failed to listen for CTRL+BREAK");
+
+			ctrl_break.recv().await;
+			info!("CTRL+BREAK received! Sending shutdown signal...");
+			return
 		}
 
-		let _ = cloned.cancel();
-	});
+		#[cfg(not(any(unix, windows)))]
+		{
+			log::warn!("Unknown platform, not listening for shutdown signals");
+			std::future::pending().await
+		}
+	}
 
-	shutdown
+	tokio::select! {
+		_ = signal_recv() => {},
+		r = tokio::signal::ctrl_c() => match r {
+			Ok(()) => info!("Ctrl+C received! Sending shutdown signal..."),
+			Err(e) => panic!("failed to listen to ctrl-c signal: {e}"),
+		},
+	}
 }
 
 
@@ -135,11 +126,16 @@ async fn main() -> anyhow::Result<()>{
 	let wallet = Arc::new(wallet);
 	let onchain = Arc::new(RwLock::new(onchain));
 
-	let shutdown = run_shutdown_signal_listener();
-	wallet.run_daemon(shutdown.clone(), onchain.clone()).await?;
+	let daemon = wallet.run_daemon(onchain.clone()).await?;
+	let server = RestServer::start(&cli.to_config(), wallet, onchain).await?;
 
-	let server = RestServer::new(shutdown.clone(), cli.to_config(), wallet, onchain);
-	server.serve().await?;
+	run_shutdown_signal_listener().await;
+	daemon.stop();
+	if let Err(e) = server.stop_wait().await {
+		warn!("Error while stopping REST server: {:#}", e);
+	}
+
+
 
 	Ok(())
 }

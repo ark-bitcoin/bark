@@ -219,3 +219,7 @@ pub trait ChainSync {
 	/// Sync the wallet with the onchain network.
 	async fn sync(&mut self, chain: &ChainSource) -> anyhow::Result<()>;
 }
+
+/// Trait that covers the requirements to use an onchain wallet with [Wallet::run_daemon]
+pub trait DaemonizableOnchainWallet: ExitUnilaterally + ChainSync {}
+impl <W: ExitUnilaterally + ChainSync> DaemonizableOnchainWallet for W {}

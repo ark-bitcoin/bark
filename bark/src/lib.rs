@@ -289,7 +289,6 @@ pub extern crate lnurl as lnurllib;
 #[macro_use] extern crate serde;
 
 pub mod chain;
-pub mod daemon;
 pub mod exit;
 pub mod movement;
 pub mod onchain;
@@ -300,11 +299,13 @@ pub mod vtxo;
 
 mod arkoor;
 mod config;
+mod daemon;
 mod lightning;
 mod psbtext;
 
 pub use self::arkoor::ArkoorCreateResult;
 pub use self::config::{BarkNetwork, Config};
+pub use self::daemon::DaemonHandle;
 pub use self::persist::sqlite::SqliteClient;
 pub use self::vtxo::WalletVtxo;
 
@@ -318,7 +319,6 @@ use bitcoin::bip32::{self, Fingerprint};
 use bitcoin::secp256k1::{self, Keypair, PublicKey};
 use log::{trace, debug, info, warn, error};
 use tokio::sync::RwLock;
-use tokio_util::sync::CancellationToken;
 
 use ark::{ArkInfo, ProtocolEncoding, Vtxo, VtxoId, VtxoPolicy, VtxoRequest};
 use ark::address::VtxoDelivery;
@@ -329,12 +329,11 @@ use bitcoin_ext::{BlockHeight, P2TR_DUST, TxStatus};
 use server_rpc::{self as rpc, protos, ServerConnection};
 
 use crate::chain::{ChainSource, ChainSourceSpec};
-use crate::daemon::{Daemon, DaemonizableOnchainWallet};
 use crate::exit::Exit;
 use crate::movement::{Movement, MovementStatus};
 use crate::movement::manager::MovementManager;
 use crate::movement::update::MovementUpdate;
-use crate::onchain::{PreparePsbt, ExitUnilaterally, Utxo, SignPsbt};
+use crate::onchain::{DaemonizableOnchainWallet, ExitUnilaterally, PreparePsbt, SignPsbt, Utxo};
 use crate::persist::{BarkPersister, RoundStateId};
 use crate::persist::models::{LightningReceive, LightningSend, PendingBoard};
 use crate::round::{RoundParticipation, RoundStatus};
@@ -1795,22 +1794,17 @@ impl Wallet {
 		Ok(total)
 	}
 
-	/// Starts a daemon for the wallet, for more information see [Daemon].
+	/// Starts a daemon for the wallet.
 	///
 	/// Note:
 	/// - This function doesn't check if a daemon is already running,
 	/// so it's possible to start multiple daemons by mistake.
 	pub async fn run_daemon(
 		self: &Arc<Self>,
-		shutdown: CancellationToken,
 		onchain: Arc<RwLock<dyn DaemonizableOnchainWallet>>,
-	) -> anyhow::Result<()> {
-		let daemon = Daemon::new(shutdown, self.clone(), onchain)?;
-
-		tokio::spawn(async move {
-			daemon.run().await;
-		});
-
-		Ok(())
+	) -> anyhow::Result<DaemonHandle> {
+		// NB currently can't error but it's a pretty common method and quite likely that error
+		// cases will be introduces later
+		Ok(crate::daemon::start_daemon(self.clone(), onchain))
 	}
 }

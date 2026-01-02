@@ -12,7 +12,7 @@ use bark::lightning_invoice::Bolt11Invoice;
 use bark::lnurllib::lightning_address::LightningAddress;
 
 use crate::error::{self, badarg, not_found, ContextExt, HandlerResult};
-use crate::RestServer;
+use crate::ServerState;
 
 #[derive(OpenApi)]
 #[openapi(
@@ -33,7 +33,7 @@ use crate::RestServer;
 )]
 pub struct LightningApiDoc;
 
-pub fn router() -> Router<RestServer> {
+pub fn router() -> Router<ServerState> {
 	Router::new()
 		.route("/receives/invoice", post(generate_invoice))
 		.route("/receives/{identifier}", get(get_receive_status))
@@ -54,7 +54,7 @@ pub fn router() -> Router<RestServer> {
 )]
 #[debug_handler]
 pub async fn generate_invoice(
-	State(state): State<RestServer>,
+	State(state): State<ServerState>,
 	Json(body): Json<bark_json::web::LightningInvoiceRequest>,
 ) -> HandlerResult<Json<bark_json::cli::InvoiceInfo>> {
 	let amount = Amount::from_sat(body.amount_sat);
@@ -83,7 +83,7 @@ pub async fn generate_invoice(
 )]
 #[debug_handler]
 pub async fn get_receive_status(
-	State(state): State<RestServer>,
+	State(state): State<ServerState>,
 	Path(identifier): Path<String>,
 ) -> HandlerResult<Json<bark_json::cli::LightningReceiveInfo>> {
 	let payment_hash = if let Ok(h) = ark::lightning::PaymentHash::from_str(&identifier) {
@@ -117,7 +117,7 @@ pub async fn get_receive_status(
 )]
 #[debug_handler]
 pub async fn list_receive_statuses(
-	State(state): State<RestServer>,
+	State(state): State<ServerState>,
 ) -> HandlerResult<Json<Vec<bark_json::cli::LightningReceiveInfo>>> {
 	let mut receives = state.wallet.pending_lightning_receives()
 		.context("Failed to get lightning receives")?;
@@ -146,7 +146,7 @@ pub async fn list_receive_statuses(
 )]
 #[debug_handler]
 pub async fn pay(
-	State(state): State<RestServer>,
+	State(state): State<ServerState>,
 	Json(body): Json<bark_json::web::LightningPayRequest>,
 ) -> HandlerResult<Json<bark_json::web::LightningPayResponse>> {
 	let amount = body.amount_sat.map(|a| Amount::from_sat(a));
