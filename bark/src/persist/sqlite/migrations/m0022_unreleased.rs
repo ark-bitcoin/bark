@@ -5,7 +5,7 @@ use rusqlite::{params, Transaction};
 
 use ark::lightning::Invoice;
 
-use crate::payment_method::PaymentMethod;
+use crate::movement::PaymentMethod;
 use super::Migration;
 
 pub struct Migration0022 {}

@@ -1,6 +1,11 @@
+
+
 pub mod error;
 pub mod manager;
 pub mod update;
+mod payment_method;
+
+pub use self::payment_method::PaymentMethod;
 
 use std::collections::HashMap;
 use std::fmt;
@@ -14,8 +19,6 @@ use serde::{Deserialize, Serialize};
 
 use ark::VtxoId;
 use ark::lightning::Invoice;
-
-use crate::payment_method::PaymentMethod;
 
 const MOVEMENT_PENDING: &'static str = "pending";
 const MOVEMENT_SUCCESSFUL: &'static str = "successful";

@@ -138,11 +138,10 @@ use crate::exit::models::{
 	TransactionInfo,
 };
 use crate::exit::transaction_manager::ExitTransactionManager;
-use crate::movement::{MovementDestination, MovementStatus};
+use crate::movement::{MovementDestination, MovementStatus, PaymentMethod};
 use crate::movement::manager::MovementManager;
 use crate::movement::update::MovementUpdate;
 use crate::onchain::{ChainSource, ExitUnilaterally};
-use crate::payment_method::PaymentMethod;
 use crate::persist::BarkPersister;
 use crate::persist::models::StoredExit;
 use crate::psbtext::PsbtInputExt;

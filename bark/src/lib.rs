@@ -294,7 +294,6 @@ pub mod exit;
 pub mod lightning;
 pub mod movement;
 pub mod onchain;
-pub mod payment_method;
 pub mod persist;
 pub mod round;
 pub mod subsystem;

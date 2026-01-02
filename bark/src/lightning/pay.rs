@@ -15,9 +15,8 @@ use bitcoin_ext::P2TR_DUST;
 
 use crate::Wallet;
 use crate::lightning::lnaddr_invoice;
-use crate::movement::{MovementDestination, MovementStatus};
+use crate::movement::{MovementDestination, MovementStatus, PaymentMethod};
 use crate::movement::update::MovementUpdate;
-use crate::payment_method::PaymentMethod;
 use crate::persist::models::LightningSend;
 use crate::subsystem::{BarkSubsystem, LightningMovement, LightningSendMovement};
 

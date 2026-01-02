@@ -28,8 +28,7 @@ use bitcoin_ext::BlockDelta;
 
 use crate::{Vtxo, VtxoId, VtxoState, WalletProperties};
 use crate::exit::models::ExitTxOrigin;
-use crate::movement::{Movement, MovementId, MovementStatus, MovementSubsystem};
-use crate::payment_method::PaymentMethod;
+use crate::movement::{Movement, MovementId, MovementStatus, MovementSubsystem, PaymentMethod};
 use crate::persist::{BarkPersister, RoundStateId, StoredRoundState};
 use crate::persist::models::{LightningReceive, LightningSend, PendingBoard, StoredExit};
 use crate::round::RoundState;

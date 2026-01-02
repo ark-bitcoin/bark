@@ -441,34 +441,44 @@ impl utoipa::ToSchema for PaymentMethod {
 	}
 }
 
-impl From<bark::payment_method::PaymentMethod> for PaymentMethod {
-	fn from(p: bark::payment_method::PaymentMethod) -> Self {
+impl From<bark::movement::PaymentMethod> for PaymentMethod {
+	fn from(p: bark::movement::PaymentMethod) -> Self {
 		match p {
-			bark::payment_method::PaymentMethod::Ark(a) => Self::Ark(a.to_string()),
-			bark::payment_method::PaymentMethod::Bitcoin(b) => Self::Bitcoin(b.assume_checked().to_string()),
-			bark::payment_method::PaymentMethod::OutputScript(s) => Self::OutputScript(s.to_hex_string()),
-			bark::payment_method::PaymentMethod::Invoice(i) => Self::Invoice(i.to_string()),
-			bark::payment_method::PaymentMethod::Offer(o) => Self::Offer(o.to_string()),
-			bark::payment_method::PaymentMethod::LightningAddress(l) => Self::LightningAddress(l.to_string()),
-			bark::payment_method::PaymentMethod::Custom(c) => Self::Custom(c),
+			bark::movement::PaymentMethod::Ark(a) => Self::Ark(a.to_string()),
+			bark::movement::PaymentMethod::Bitcoin(b) => Self::Bitcoin(b.assume_checked().to_string()),
+			bark::movement::PaymentMethod::OutputScript(s) => Self::OutputScript(s.to_hex_string()),
+			bark::movement::PaymentMethod::Invoice(i) => Self::Invoice(i.to_string()),
+			bark::movement::PaymentMethod::Offer(o) => Self::Offer(o.to_string()),
+			bark::movement::PaymentMethod::LightningAddress(l) => Self::LightningAddress(l.to_string()),
+			bark::movement::PaymentMethod::Custom(c) => Self::Custom(c),
 		}
 	}
 }
 
-impl TryFrom<PaymentMethod> for bark::payment_method::PaymentMethod {
+impl TryFrom<PaymentMethod> for bark::movement::PaymentMethod {
 	type Error = anyhow::Error;
 
 	fn try_from(p: PaymentMethod) -> Result<Self, Self::Error> {
 		match p {
-			PaymentMethod::Ark(a) => Ok(bark::payment_method::PaymentMethod::Ark(ark::Address::from_str(&a)?)),
-			PaymentMethod::Bitcoin(b) => Ok(bark::payment_method::PaymentMethod::Bitcoin(bitcoin::Address::from_str(&b)?)),
-			PaymentMethod::OutputScript(s) => Ok(bark::payment_method::PaymentMethod::OutputScript(ScriptBuf::from_hex(&s)?)),
-			PaymentMethod::Invoice(i) => Ok(bark::payment_method::PaymentMethod::Invoice(Invoice::from_str(&i)?)),
-			PaymentMethod::Offer(o) => Ok(bark::payment_method::PaymentMethod::Offer(
+			PaymentMethod::Ark(a) => Ok(bark::movement::PaymentMethod::Ark(
+				ark::Address::from_str(&a)?,
+			)),
+			PaymentMethod::Bitcoin(b) => Ok(bark::movement::PaymentMethod::Bitcoin(
+				bitcoin::Address::from_str(&b)?,
+			)),
+			PaymentMethod::OutputScript(s) => Ok(bark::movement::PaymentMethod::OutputScript(
+				ScriptBuf::from_hex(&s)?,
+			)),
+			PaymentMethod::Invoice(i) => Ok(bark::movement::PaymentMethod::Invoice(
+				Invoice::from_str(&i)?,
+			)),
+			PaymentMethod::Offer(o) => Ok(bark::movement::PaymentMethod::Offer(
 				Offer::from_str(&o).map_err(|e| anyhow!("Failed to parse offer: {:?}", e))?,
 			)),
-			PaymentMethod::LightningAddress(l) => Ok(bark::payment_method::PaymentMethod::LightningAddress(LightningAddress::from_str(&l)?)),
-			PaymentMethod::Custom(c) => Ok(bark::payment_method::PaymentMethod::Custom(c)),
+			PaymentMethod::LightningAddress(l) => Ok(bark::movement::PaymentMethod::LightningAddress(
+				LightningAddress::from_str(&l)?,
+			)),
+			PaymentMethod::Custom(c) => Ok(bark::movement::PaymentMethod::Custom(c)),
 		}
 	}
 }
