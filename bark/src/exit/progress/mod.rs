@@ -11,9 +11,10 @@ use ark::Vtxo;
 use bitcoin_ext::{BlockHeight, BlockRef, TxStatus};
 use bitcoin_ext::cpfp::{CpfpError, MakeCpfpFees};
 
+use crate::chain::ChainSource;
 use crate::exit::models::{ExitError, ExitState, ExitTx, ExitTxOrigin, ExitTxStatus};
 use crate::exit::transaction_manager::ExitTransactionManager;
-use crate::onchain::{ChainSource, ExitUnilaterally};
+use crate::onchain::ExitUnilaterally;
 
 /// A trait which allows [ExitState] objects to transition from their current state to a new state
 /// depending on the contents of the users wallet, the mempool or the blockchain. E.g. Calling

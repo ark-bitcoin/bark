@@ -8,8 +8,9 @@ use tokio::sync::RwLock;
 use ark::Vtxo;
 use bitcoin_ext::{BlockHeight, TransactionExt, TxStatus, DEEPLY_CONFIRMED};
 
+use crate::chain::ChainSource;
 use crate::exit::models::{ChildTransactionInfo, ExitChildStatus, ExitError, ExitTransactionPackage, ExitTxOrigin, TransactionInfo};
-use crate::onchain::{ChainSource, ExitUnilaterally};
+use crate::onchain::ExitUnilaterally;
 use crate::persist::BarkPersister;
 
 pub struct ExitTransactionManager {

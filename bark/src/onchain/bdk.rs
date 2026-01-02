@@ -19,12 +19,12 @@ use bitcoin_ext::bdk::{CpfpInternalError, WalletExt};
 use bitcoin_ext::cpfp::CpfpError;
 use bitcoin_ext::rpc::RpcApi;
 
+use crate::chain::{ChainSource, ChainSourceClient};
 use crate::exit::{ExitVtxo, ExitState};
 use crate::onchain::{
-	ChainSource, ChainSync, GetBalance, GetSpendingTx, GetWalletTx, LocalUtxo,
+	ChainSync, GetBalance, GetSpendingTx, GetWalletTx, LocalUtxo,
 	MakeCpfp, MakeCpfpFees, PreparePsbt, SignPsbt, Utxo
 };
-use crate::onchain::chain::ChainSourceClient;
 use crate::persist::BarkPersister;
 use crate::psbtext::PsbtInputExt;
 

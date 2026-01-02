@@ -5,7 +5,7 @@ use bitcoin::{BlockHash, Network, OutPoint, ScriptBuf};
 use bitcoin::hashes::Hash;
 use bitcoin::hashes::sha256::HashEngine;
 
-use bark::onchain::ChainSource;
+use bark::chain::ChainSource;
 use bitcoin_ext::{BlockHeight, TxStatus};
 
 use ark_testing::{sat, Bitcoind, TestContext};

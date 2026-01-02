@@ -288,6 +288,7 @@ pub extern crate lnurl as lnurllib;
 #[macro_use] extern crate anyhow;
 #[macro_use] extern crate serde;
 
+pub mod chain;
 pub mod daemon;
 pub mod exit;
 pub mod movement;
@@ -327,12 +328,13 @@ use ark::vtxo::policy::PubkeyVtxoPolicy;
 use bitcoin_ext::{BlockHeight, P2TR_DUST, TxStatus};
 use server_rpc::{self as rpc, protos, ServerConnection};
 
+use crate::chain::{ChainSource, ChainSourceSpec};
 use crate::daemon::{Daemon, DaemonizableOnchainWallet};
 use crate::exit::Exit;
 use crate::movement::{Movement, MovementStatus};
 use crate::movement::manager::MovementManager;
 use crate::movement::update::MovementUpdate;
-use crate::onchain::{ChainSource, PreparePsbt, ExitUnilaterally, Utxo, SignPsbt};
+use crate::onchain::{PreparePsbt, ExitUnilaterally, Utxo, SignPsbt};
 use crate::persist::{BarkPersister, RoundStateId};
 use crate::persist::models::{LightningReceive, LightningSend, PendingBoard};
 use crate::round::{RoundParticipation, RoundStatus};
@@ -609,9 +611,9 @@ impl Wallet {
 	/// given [Config].
 	pub fn chain_source(
 		config: &Config,
-	) -> anyhow::Result<onchain::ChainSourceSpec> {
+	) -> anyhow::Result<ChainSourceSpec> {
 		if let Some(ref url) = config.esplora_address {
-			Ok(onchain::ChainSourceSpec::Esplora {
+			Ok(ChainSourceSpec::Esplora {
 				url: url.clone(),
 			})
 		} else if let Some(ref url) = config.bitcoind_address {
@@ -623,7 +625,7 @@ impl Wallet {
 					config.bitcoind_pass.clone().context("need bitcoind auth config")?,
 				)
 			};
-			Ok(onchain::ChainSourceSpec::Bitcoind {
+			Ok(ChainSourceSpec::Bitcoind {
 				url: url.clone(),
 				auth,
 			})
@@ -830,7 +832,7 @@ impl Wallet {
 		}
 
 		let chain_source = if let Some(ref url) = config.esplora_address {
-			onchain::ChainSourceSpec::Esplora {
+			ChainSourceSpec::Esplora {
 				url: url.clone(),
 			}
 		} else if let Some(ref url) = config.bitcoind_address {
@@ -842,7 +844,7 @@ impl Wallet {
 					config.bitcoind_pass.clone().context("need bitcoind auth config")?,
 				)
 			};
-			onchain::ChainSourceSpec::Bitcoind { url: url.clone(), auth }
+			ChainSourceSpec::Bitcoind { url: url.clone(), auth }
 		} else {
 			bail!("Need to either provide esplora or bitcoind info");
 		};
