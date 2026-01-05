@@ -1,0 +1,7 @@
+- Add comprehensive `test_register_board` integration test
+  Tests confirmation requirements, idempotency, and server pubkey validation
+  [#1472](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1472)
+- Add `Bitcoind::wait_for_blockheight()` helper method
+  [#1472](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1472)
+- `generate_blocks()` now returns the new block height
+  [#1472](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1472)
