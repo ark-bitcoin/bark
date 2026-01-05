@@ -170,6 +170,16 @@ impl Bitcoind {
 		client.get_block_count().unwrap()
 	}
 
+	pub async fn wait_for_blockheight(&self, height: u64) {
+		loop {
+			let current = self.get_block_count().await;
+			if current >= height {
+				break;
+			}
+			tokio::time::sleep(Duration::from_millis(100)).await;
+		}
+	}
+
 	pub fn get_new_address(&self) -> Address {
 		let client = self.sync_client();
 		client.get_new_address(None, None).unwrap().assume_checked()

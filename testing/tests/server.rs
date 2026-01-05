@@ -6,9 +6,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use bitcoin::hex::FromHex;
-use bitcoin::{absolute, transaction, Amount, Network, OutPoint, Transaction};
+use bitcoin::{absolute, transaction, Address, Amount, Network, OutPoint, Transaction};
 use bitcoin::hashes::Hash;
-use bitcoin::secp256k1::{Keypair, PublicKey};
+use bitcoin::secp256k1::{Keypair, PublicKey, rand::thread_rng};
 use bitcoin_ext::P2TR_DUST_SAT;
 use bitcoin_ext::rpc::BitcoinRpcExt;
 use futures::future::join_all;
@@ -33,7 +33,6 @@ use server::vtxopool::VtxoTarget;
 use server_log::{
 	ForfeitBroadcasted, ForfeitedExitConfirmed, ForfeitedExitInMempool, FullRound, RoundError,
 	RoundFinished, RoundUserVtxoAlreadyRegistered, RoundUserVtxoUnknown, TxIndexUpdateFinished,
-	UnconfirmedBoardRegisterAttempt,
 };
 use server_rpc::protos::{self, lightning_payment_status};
 
@@ -977,78 +976,6 @@ async fn claim_forfeit_round_connector() {
 			}
 		}
 	}.wait_millis(10_000).await;
-}
-
-#[tokio::test]
-async fn register_board_is_idempotent() {
-	let ctx = TestContext::new("server/register_board_is_idempotent").await;
-	let srv = ctx.new_captaind("server", None).await;
-	let bark_wallet = ctx.new_bark("bark", &srv).await;
-
-	ctx.fund_bark(&bark_wallet, bitcoin::Amount::from_sat(50_000)).await;
-	let board = bark_wallet.board_all().await;
-	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
-
-	let bark_client = bark_wallet.client().await;
-
-	let vtxo = bark_client.get_vtxo_by_id(board.vtxos[0]).await.unwrap();
-
-	// We will now call the register_board a few times
-	let mut rpc = srv.get_public_rpc().await;
-	let request = protos::BoardVtxoRequest {
-		board_vtxo: vtxo.vtxo.serialize(),
-	};
-
-	for _ in 0..5 {
-		rpc.register_board_vtxo(request.clone()).await.unwrap();
-	}
-}
-
-#[tokio::test]
-async fn register_unconfirmed_board() {
-	let ctx = TestContext::new("server/register_unconfirmed_board").await;
-	let srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
-
-	let bark = ctx.new_bark_with_funds("bark", &srv, sat(2_000_000)).await;
-
-	bark.board(sat(800_000)).await;
-	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
-	let unconfirmed_board = bark.board(sat(800_000)).await;
-
-	let bark_client = bark.client().await;
-
-	let vtxo = bark_client.get_vtxo_by_id(unconfirmed_board.vtxos[0]).await.unwrap();
-
-	let unconfirmed_board_request = protos::BoardVtxoRequest {
-		board_vtxo: vtxo.vtxo.serialize(),
-	};
-
-	#[derive(Clone)]
-	struct Proxy {
-		pub unconfirmed_board_request: protos::BoardVtxoRequest,
-	}
-	#[async_trait::async_trait]
-	impl captaind::proxy::ArkRpcProxy for Proxy {
-		async fn register_board_vtxo(
-			&self, upstream: &mut ArkClient, _req: protos::BoardVtxoRequest,
-		) -> Result<protos::Empty, tonic::Status> {
-			Ok(upstream.register_board_vtxo(self.unconfirmed_board_request.clone()).await?.into_inner())
-		}
-	}
-
-	let proxy = Proxy {
-		unconfirmed_board_request,
-	};
-	let proxy = srv.get_proxy_rpc(proxy).await;
-
-	bark.set_ark_url(&proxy.address).await;
-
-	let mut l = srv.subscribe_log::<UnconfirmedBoardRegisterAttempt>();
-	tokio::spawn(async move {
-		bark.maintain().await;
-		// we don't care that that call fails
-	});
-	l.recv().wait_millis(2500).await;
 }
 
 #[tokio::test]
@@ -2180,4 +2107,158 @@ async fn server_can_use_vtxo_pool_change_for_next_receive() {
 	let balance = bark.spendable_balance().await;
 
 	assert_eq!(balance, first_pay_amount + second_pay_amount + board_amount);
+}
+
+/// Tests the register_board endpoint.
+///
+/// This test covers:
+/// - Registering a valid board
+/// - Idempotency (registering the same board multiple times)
+/// - Rejecting an unconfirmed board
+/// - Rejecting a board with wrong server pubkey
+#[tokio::test]
+async fn test_register_board() {
+	let ctx = TestContext::new("server/test_register_board").await;
+	let srv = ctx.new_captaind_with_cfg("server", None, |cfg| {
+		cfg.required_board_confirmations = 6;
+	}).await;
+
+	// Create keypair for the board cosigning
+	let client_cosign_keypair = Keypair::new(&*SECP, &mut thread_rng());
+
+	// Get server info and calculate expiry height
+	let ark_info = srv.ark_info().await;
+	let current_height = ctx.bitcoind().get_block_count().await as u32;
+	let expiry_height = current_height + ark_info.vtxo_expiry_delta as u32;
+
+	// Create a board builder to get the funding script
+	let board_amount = sat(100_000);
+	let board_builder = ark::board::BoardBuilder::new(
+		client_cosign_keypair.public_key(),
+		expiry_height,
+		ark_info.server_pubkey,
+		ark_info.vtxo_exit_delta,
+	);
+
+	// Create the funding tx that pays to the board's funding script
+	// NB: In production, you should get the server's cosignature BEFORE funding.
+	// We're doing it backwards here because this is a test and we like to live dangerously.
+	// Don't copy this code unless you enjoy losing money.
+	let funding_script = board_builder.funding_script_pubkey();
+	let funding_address = Address::from_script(&funding_script, Network::Regtest).unwrap();
+	let funding_txid = ctx.bitcoind().fund_addr(&funding_address, board_amount).await;
+	let funding_tx = ctx.bitcoind().await_transaction(funding_txid).await;
+	let vout = funding_tx.output.iter().position(|o| o.script_pubkey == funding_script).unwrap();
+	let board_utxo = OutPoint::new(funding_txid, vout as u32);
+
+	// Set funding details and generate nonces
+	let board_builder = board_builder
+		.set_funding_details(board_amount, board_utxo)
+		.generate_user_nonces();
+
+	// Request server to cosign the board
+	let cosign_request = protos::BoardCosignRequest {
+		amount: board_amount.to_sat(),
+		utxo: board_utxo.serialize(),
+		expiry_height,
+		user_pubkey: client_cosign_keypair.public_key().serialize().to_vec(),
+		pub_nonce: board_builder.user_pub_nonce().serialize().to_vec(),
+	};
+
+	let mut rpc = srv.get_public_rpc().await;
+	let cosign_response = rpc.request_board_cosign(cosign_request).await.unwrap().into_inner();
+
+	// Build the VTXO from the cosign response
+	let board_cosign: ark::board::BoardCosignResponse = cosign_response.try_into().unwrap();
+	let vtxo = board_builder.build_vtxo(&board_cosign, &client_cosign_keypair).unwrap();
+
+	// === Now the fun begins ===
+
+	let register_request = protos::BoardVtxoRequest {
+		board_vtxo: vtxo.serialize(),
+	};
+
+	// Wait for the funding tx to propagate to server's bitcoind
+	srv.bitcoind().await_transaction(funding_txid).await;
+
+	// Try to register the board before it's confirmed - should fail
+	let err = rpc.register_board_vtxo(register_request.clone()).await.unwrap_err();
+	assert!(err.message().contains("requires 6"), "err: {err}");
+
+	// Try with 3 confirmations - should still fail (need 6)
+	let height = ctx.generate_blocks(3).await;
+	srv.bitcoind().wait_for_blockheight(height).await;
+	let err = rpc.register_board_vtxo(register_request.clone()).await.unwrap_err();
+	assert!(err.message().contains("requires 6"), "err: {err}");
+
+	// Try with 6 confirmations - should succeed
+	let height = ctx.generate_blocks(3).await;
+	srv.bitcoind().wait_for_blockheight(height).await;
+	rpc.register_board_vtxo(register_request.clone()).await.unwrap();
+
+	// Registering again should be idempotent
+	rpc.register_board_vtxo(register_request.clone()).await.unwrap();
+
+	// Should still be idempotent after more blocks
+	let height = ctx.generate_blocks(1).await;
+	srv.bitcoind().wait_for_blockheight(height).await;
+	rpc.register_board_vtxo(register_request.clone()).await.unwrap();
+
+	// === The client turns evil ===
+	//
+	// From here on, we test scenarios where a malicious client tries to
+	// trick the server into accepting invalid boards.
+
+	// This doesn't match the actual server keypair used by captaind
+	let fake_server_keypair = Keypair::new(&*SECP, &mut thread_rng());
+
+	// Create a board with the fake server keypair
+	let cosign_keypair = Keypair::new(&*SECP, &mut thread_rng());
+	let board_builder = ark::board::BoardBuilder::new(
+		cosign_keypair.public_key(),
+		expiry_height,
+		fake_server_keypair.public_key(),
+		ark_info.vtxo_exit_delta,
+	);
+
+	// Fund the board
+	let funding_script = board_builder.funding_script_pubkey();
+	let funding_address = Address::from_script(&funding_script, Network::Regtest).unwrap();
+	let funding_txid = ctx.bitcoind().fund_addr(&funding_address, board_amount).await;
+	let funding_tx = ctx.bitcoind().await_transaction(funding_txid).await;
+	let vout = funding_tx.output.iter().position(|o| o.script_pubkey == funding_script).unwrap();
+	let utxo = OutPoint::new(funding_txid, vout as u32);
+
+	// Set funding details and generate nonces
+	let board_builder = board_builder
+		.set_funding_details(board_amount, utxo)
+		.generate_user_nonces();
+
+	// Do the server cosigning ourselves with the fake server keypair
+	let server_builder = ark::board::BoardBuilder::new_for_cosign(
+		cosign_keypair.public_key(),
+		expiry_height,
+		fake_server_keypair.public_key(),
+		ark_info.vtxo_exit_delta,
+		board_amount,
+		utxo,
+		*board_builder.user_pub_nonce(),
+	);
+	let cosign_response = server_builder.server_cosign(&fake_server_keypair);
+
+	// This is a fully signed VTXO by a different server. The client could
+	// double-spend here because it knows all the keys.
+	let vtxo = board_builder
+		.build_vtxo(&cosign_response, &cosign_keypair)
+		.unwrap();
+
+	let height = ctx.generate_blocks(6).await;
+	srv.bitcoind().wait_for_blockheight(height).await;
+
+	// Try to register the board with the wrong server pubkey - should fail
+	let register_request = protos::BoardVtxoRequest {
+		board_vtxo: vtxo.serialize(),
+	};
+	let err = rpc.register_board_vtxo(register_request).await.unwrap_err();
+	assert!(err.message().contains("server pubkey"), "err: {err}");
 }

@@ -569,8 +569,9 @@ impl TestContext {
 		join!(central_futures, nodes_future);
 	}
 
-	/// Generated a block using the central bitcoind and ensures that electrs is synced with it
-	pub async fn generate_blocks(&self, block_num: u32) {
+	/// Generated a block using the central bitcoind and ensures that electrs is synced with it.
+	/// Returns the new block height.
+	pub async fn generate_blocks(&self, block_num: u32) -> u64 {
 		// Give transactions time to propagate
 		tokio::time::sleep(Duration::from_millis(1000)).await;
 
@@ -583,7 +584,9 @@ impl TestContext {
 		if now.elapsed() < MIN_WAIT {
 			tokio::time::sleep(MIN_WAIT - now.elapsed()).await;
 		}
-		info!("New chain tip: {}", self.bitcoind().get_block_count().await);
+		let height = self.bitcoind().get_block_count().await;
+		info!("New chain tip: {}", height);
+		height
 	}
 
 	/// Generated a block using the central bitcoind without waiting for propagation
