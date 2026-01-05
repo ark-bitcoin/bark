@@ -4,7 +4,7 @@ use rusqlite::Transaction;
 use ark::VtxoPolicy;
 
 use crate::persist::sqlite::query;
-use crate::vtxo::state::{VtxoState, VtxoStateKind};
+use crate::vtxo::{VtxoState, VtxoStateKind};
 
 use super::Migration;
 

@@ -8,7 +8,7 @@ use log::trace;
 use tokio::fs;
 use tokio::process::Command;
 
-use bark::onchain::ChainSourceSpec;
+use bark::chain::ChainSourceSpec;
 
 use crate::constants::bitcoind::{BITCOINRPC_TEST_PASSWORD, BITCOINRPC_TEST_USER};
 use crate::constants::env::{ESPLORA_ELECTRS_EXEC, MEMPOOL_ELECTRS_EXEC};

@@ -26,14 +26,13 @@ use rusqlite::Connection;
 use ark::lightning::{Invoice, PaymentHash, Preimage};
 use bitcoin_ext::BlockDelta;
 
-use crate::{Vtxo, VtxoId, VtxoState, WalletProperties};
-use crate::exit::models::ExitTxOrigin;
-use crate::movement::{Movement, MovementId, MovementStatus, MovementSubsystem};
-use crate::payment_method::PaymentMethod;
+use crate::{Vtxo, VtxoId, WalletProperties};
+use crate::exit::ExitTxOrigin;
+use crate::movement::{Movement, MovementId, MovementStatus, MovementSubsystem, PaymentMethod};
 use crate::persist::{BarkPersister, RoundStateId, StoredRoundState};
 use crate::persist::models::{LightningReceive, LightningSend, PendingBoard, StoredExit};
 use crate::round::RoundState;
-use crate::vtxo::state::{VtxoStateKind, WalletVtxo};
+use crate::vtxo::{VtxoState, VtxoStateKind, WalletVtxo};
 
 /// An implementation of the BarkPersister using rusqlite. Changes are persisted using the given
 /// [PathBuf].
@@ -432,8 +431,7 @@ mod test {
 
 	use ark::vtxo::test::VTXO_VECTORS;
 
-	use crate::persist::sqlite::helpers::in_memory_db;
-	use crate::vtxo::state::UNSPENT_STATES;
+	use crate::{persist::sqlite::helpers::in_memory_db, vtxo::VtxoState};
 
 	use super::*;
 
@@ -466,7 +464,7 @@ mod test {
 
 		// Verify that we can mark a vtxo as spent
 		db.update_vtxo_state_checked(
-			vtxo_1.id(), VtxoState::Spent, &UNSPENT_STATES,
+			vtxo_1.id(), VtxoState::Spent, &VtxoStateKind::UNSPENT_STATES,
 		).unwrap();
 
 		let vtxos = db.get_vtxos_by_state(&[VtxoStateKind::Spendable]).unwrap();

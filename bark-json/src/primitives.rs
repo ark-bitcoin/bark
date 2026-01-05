@@ -10,7 +10,7 @@ use utoipa::ToSchema;
 use ark::{Vtxo, VtxoId};
 use ark::vtxo::VtxoPolicyKind;
 use bark::movement::MovementId;
-use bark::vtxo::state::VtxoState;
+use bark::vtxo::VtxoState;
 use bitcoin_ext::{BlockDelta, BlockHeight};
 
 /// Struct representing information about an Unspent Transaction Output (UTXO).
@@ -174,8 +174,8 @@ pub struct TransactionInfo {
 	pub tx: Transaction,
 }
 
-impl From<bark::exit::models::TransactionInfo> for TransactionInfo {
-	fn from(v: bark::exit::models::TransactionInfo) -> Self {
+impl From<bark::exit::TransactionInfo> for TransactionInfo {
+	fn from(v: bark::exit::TransactionInfo) -> Self {
 		TransactionInfo { txid: v.txid, tx: v.tx }
 	}
 }

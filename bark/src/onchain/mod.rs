@@ -1,4 +1,3 @@
-
 //! Onchain wallet integration interfaces.
 //!
 //! This module defines the traits and types that an external onchain wallet must
@@ -21,7 +20,6 @@
 //! cargo feature. Enable it to use the provided [OnchainWallet] implementation.
 //! You can use all features from BDK because [bdk_wallet] is re-exported.
 
-mod chain;
 #[cfg(feature = "onchain_bdk")]
 mod bdk;
 
@@ -29,7 +27,6 @@ mod bdk;
 pub use bdk_wallet;
 
 pub use bitcoin_ext::cpfp::{CpfpError, MakeCpfpFees};
-pub use crate::onchain::chain::{ChainSourceSpec, ChainSource, ChainSourceClient, FeeRates};
 
 /// BDK-backed onchain wallet implementation.
 ///
@@ -45,6 +42,8 @@ use bitcoin::{
 
 use ark::Vtxo;
 use bitcoin_ext::{BlockHeight, BlockRef};
+
+use crate::chain::ChainSource;
 
 /// Represents an onchain UTXO known to the wallet.
 ///
@@ -220,3 +219,8 @@ pub trait ChainSync {
 	/// Sync the wallet with the onchain network.
 	async fn sync(&mut self, chain: &ChainSource) -> anyhow::Result<()>;
 }
+
+/// Trait that covers the requirements to use an onchain wallet with
+/// [Wallet::run_daemon](crate::Wallet::run_daemon).
+pub trait DaemonizableOnchainWallet: ExitUnilaterally + ChainSync {}
+impl <W: ExitUnilaterally + ChainSync> DaemonizableOnchainWallet for W {}

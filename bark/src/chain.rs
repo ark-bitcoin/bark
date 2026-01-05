@@ -96,7 +96,7 @@ impl ChainSourceClient {
 ///
 /// ```rust
 /// # async fn func() {
-/// use bark::onchain::{ChainSource, ChainSourceSpec};
+/// use bark::chain::{ChainSource, ChainSourceSpec};
 /// use bdk_bitcoind_rpc::bitcoincore_rpc::Auth;
 /// use bitcoin::{FeeRate, Network};
 ///

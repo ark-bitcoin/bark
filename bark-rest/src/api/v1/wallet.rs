@@ -12,13 +12,13 @@ use utoipa::OpenApi;
 use ark::lightning::{Bolt11Invoice, Offer};
 use bark::lnurllib::lightning_address::LightningAddress;
 use bark::subsystem::RoundMovement;
-use bark::vtxo::selection::VtxoFilter;
+use bark::vtxo::VtxoFilter;
 use bark_json::web::PendingRoundInfo;
 
-use crate::{RestServer, error};
+use crate::{ServerState, error};
 use crate::error::{ContextExt, HandlerResult, badarg, not_found};
 
-pub fn router() -> Router<RestServer> {
+pub fn router() -> Router<ServerState> {
 	#[allow(deprecated)]
 	Router::new()
 		.route("/connected", get(connected))
@@ -97,7 +97,7 @@ pub struct WalletApiDoc;
 	tag = "wallet"
 )]
 #[debug_handler]
-pub async fn connected(State(state): State<RestServer>) -> HandlerResult<Json<bark_json::web::ConnectedResponse>> {
+pub async fn connected(State(state): State<ServerState>) -> HandlerResult<Json<bark_json::web::ConnectedResponse>> {
 	Ok(axum::Json(bark_json::web::ConnectedResponse {
 		connected: state.wallet.ark_info().await?.is_some(),
 	}))
@@ -115,7 +115,7 @@ pub async fn connected(State(state): State<RestServer>) -> HandlerResult<Json<ba
 	tag = "wallet"
 )]
 #[debug_handler]
-pub async fn ark_info(State(state): State<RestServer>) -> HandlerResult<Json<bark_json::cli::ArkInfo>> {
+pub async fn ark_info(State(state): State<ServerState>) -> HandlerResult<Json<bark_json::cli::ArkInfo>> {
 	let ark_info = state.wallet.ark_info().await?;
 
 	match ark_info {
@@ -136,7 +136,7 @@ pub async fn ark_info(State(state): State<RestServer>) -> HandlerResult<Json<bar
 )]
 #[debug_handler]
 pub async fn address(
-	State(state): State<RestServer>,
+	State(state): State<ServerState>,
 ) -> HandlerResult<Json<bark_json::web::ArkAddressResponse>> {
 	let ark_address = state.wallet.new_address().await
 		.context("Failed to generate new address")?;
@@ -162,7 +162,7 @@ pub async fn address(
 )]
 #[debug_handler]
 pub async fn peak_address(
-	State(state): State<RestServer>,
+	State(state): State<ServerState>,
 	Path(index): Path<u32>,
 ) -> HandlerResult<Json<bark_json::web::ArkAddressResponse>> {
 	let ark_address = state.wallet.peak_address(index).await
@@ -184,7 +184,7 @@ pub async fn peak_address(
 	tag = "wallet"
 )]
 #[debug_handler]
-pub async fn balance(State(state): State<RestServer>) -> HandlerResult<Json<bark_json::cli::Balance>> {
+pub async fn balance(State(state): State<ServerState>) -> HandlerResult<Json<bark_json::cli::Balance>> {
 	let balance = state.wallet.balance()
 		.context("Failed to get wallet balance")?;
 
@@ -206,7 +206,7 @@ pub async fn balance(State(state): State<RestServer>) -> HandlerResult<Json<bark
 )]
 #[debug_handler]
 pub async fn vtxos(
-	State(state): State<RestServer>,
+	State(state): State<ServerState>,
 	Query(query): Query<bark_json::web::VtxosQuery>,
 ) -> HandlerResult<Json<Vec<bark_json::primitives::WalletVtxoInfo>>> {
 	let wallet_vtxos = if query.all.unwrap_or(false) {
@@ -239,7 +239,7 @@ pub async fn vtxos(
 )]
 #[debug_handler]
 #[deprecated(note = "Use `history` instead")]
-pub async fn movements(State(state): State<RestServer>) -> HandlerResult<Json<Vec<bark_json::cli::Movement>>> {
+pub async fn movements(State(state): State<ServerState>) -> HandlerResult<Json<Vec<bark_json::cli::Movement>>> {
 	#[allow(deprecated)]
 	let movements = state.wallet.movements().context("Failed to get movements")?;
 
@@ -263,7 +263,7 @@ pub async fn movements(State(state): State<RestServer>) -> HandlerResult<Json<Ve
 	tag = "wallet"
 )]
 #[debug_handler]
-pub async fn history(State(state): State<RestServer>) -> HandlerResult<Json<Vec<bark_json::cli::Movement>>> {
+pub async fn history(State(state): State<ServerState>) -> HandlerResult<Json<Vec<bark_json::cli::Movement>>> {
 	let movements = state.wallet.history().context("Failed to get movements")?;
 
 	let json_movements = movements
@@ -287,7 +287,7 @@ pub async fn history(State(state): State<RestServer>) -> HandlerResult<Json<Vec<
 )]
 #[debug_handler]
 pub async fn pending_rounds(
-	State(state): State<RestServer>,
+	State(state): State<ServerState>,
 ) -> HandlerResult<Json<Vec<bark_json::web::PendingRoundInfo>>> {
 	let rounds = state.wallet.pending_round_states()
 		.context("Failed to get pending rounds")?;
@@ -315,7 +315,7 @@ pub async fn pending_rounds(
 )]
 #[debug_handler]
 pub async fn send(
-	State(state): State<RestServer>,
+	State(state): State<ServerState>,
 	Json(body): Json<bark_json::web::SendRequest>,
 ) -> HandlerResult<Json<bark_json::web::SendResponse>> {
 	let amount = body.amount_sat.map(|a| Amount::from_sat(a));
@@ -371,7 +371,7 @@ pub async fn send(
 )]
 #[debug_handler]
 pub async fn refresh_vtxos(
-	State(state): State<RestServer>,
+	State(state): State<ServerState>,
 	Json(body): Json<bark_json::web::RefreshRequest>,
 ) -> HandlerResult<Json<bark_json::web::PendingRoundInfo>> {
 	if body.vtxos.is_empty() {
@@ -416,7 +416,7 @@ pub async fn refresh_vtxos(
 )]
 #[debug_handler]
 pub async fn refresh_all(
-	State(state): State<RestServer>,
+	State(state): State<ServerState>,
 ) -> HandlerResult<Json<bark_json::web::PendingRoundInfo>> {
 	let vtxos = state.wallet
 		.spendable_vtxos()
@@ -455,7 +455,7 @@ pub async fn refresh_all(
 )]
 #[debug_handler]
 pub async fn refresh_counterparty(
-	State(state): State<RestServer>,
+	State(state): State<ServerState>,
 ) -> HandlerResult<Json<bark_json::web::PendingRoundInfo>> {
 	let filter = VtxoFilter::new(&state.wallet).counterparty();
 	let vtxos = state.wallet
@@ -497,7 +497,7 @@ pub async fn refresh_counterparty(
 )]
 #[debug_handler]
 pub async fn offboard_vtxos(
-	State(state): State<RestServer>,
+	State(state): State<ServerState>,
 	Json(body): Json<bark_json::web::OffboardVtxosRequest>,
 ) -> HandlerResult<Json<bark_json::web::PendingRoundInfo>> {
 	let mut onchain_lock = state.onchain.write().await;
@@ -539,7 +539,7 @@ pub async fn offboard_vtxos(
 )]
 #[debug_handler]
 pub async fn offboard_all(
-	State(state): State<RestServer>,
+	State(state): State<ServerState>,
 	Json(body): Json<bark_json::web::OffboardAllRequest>,
 ) -> HandlerResult<Json<bark_json::web::PendingRoundInfo>> {
 	let mut onchain_lock = state.onchain.write().await;
@@ -570,7 +570,7 @@ pub async fn offboard_all(
 )]
 #[debug_handler]
 pub async fn send_onchain(
-	State(state): State<RestServer>,
+	State(state): State<ServerState>,
 	Json(body): Json<bark_json::web::SendOnchainRequest>,
 ) -> HandlerResult<Json<()>> {
 	let _addr = bitcoin::Address::from_str(&body.destination)
@@ -593,6 +593,6 @@ pub async fn send_onchain(
 	tag = "wallet"
 )]
 #[debug_handler]
-pub async fn sync(State(state): State<RestServer>) {
+pub async fn sync(State(state): State<ServerState>) {
 	state.wallet.sync().await;
 }

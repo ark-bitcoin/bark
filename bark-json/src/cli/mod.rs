@@ -181,8 +181,8 @@ pub struct ExitProgressStatus {
 	pub error: Option<ExitError>,
 }
 
-impl From<bark::exit::models::ExitProgressStatus> for ExitProgressStatus {
-	fn from(v: bark::exit::models::ExitProgressStatus) -> Self {
+impl From<bark::exit::ExitProgressStatus> for ExitProgressStatus {
+	fn from(v: bark::exit::ExitProgressStatus) -> Self {
 		ExitProgressStatus {
 			vtxo_id: v.vtxo_id,
 			state: v.state.into(),
@@ -207,8 +207,8 @@ pub struct ExitTransactionStatus {
 	pub transactions: Vec<ExitTransactionPackage>,
 }
 
-impl From<bark::exit::models::ExitTransactionStatus> for ExitTransactionStatus {
-	fn from(v: bark::exit::models::ExitTransactionStatus) -> Self {
+impl From<bark::exit::ExitTransactionStatus> for ExitTransactionStatus {
+	fn from(v: bark::exit::ExitTransactionStatus) -> Self {
 		ExitTransactionStatus {
 			vtxo_id: v.vtxo_id,
 			state: v.state.into(),
@@ -278,7 +278,7 @@ impl From<bark::movement::MovementStatus> for MovementStatus {
 	}
 }
 
-/// Describes an attempted movement of offchain funds within the Bark [Wallet].
+/// Describes an attempted movement of offchain funds within the [bark::Wallet].
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[cfg_attr(feature = "utoipa", derive(ToSchema))]
 pub struct Movement {
@@ -316,8 +316,8 @@ pub struct Movement {
 	/// Describes the means by which the wallet received funds in this movement. This could include
 	/// BOLT11 invoices or other useful data.
 	pub received_on: Vec<MovementDestination>,
-	/// A list of [Vtxo] IDs that were consumed by this movement and are either locked or
-	/// unavailable.
+	/// A list of [Vtxo](ark::Vtxo) IDs that were consumed by this movement and
+	/// are either locked or unavailable.
 	#[cfg_attr(feature = "utoipa", schema(value_type = Vec<String>))]
 	pub input_vtxos: Vec<VtxoId>,
 	/// A list of IDs for new VTXOs that were produced as a result of this movement. Often change
@@ -327,7 +327,7 @@ pub struct Movement {
 	/// A list of IDs for VTXOs that were marked for unilateral exit as a result of this movement.
 	/// This could happen for many reasons, e.g. an unsuccessful lightning payment which can't be
 	/// revoked but is about to expire. VTXOs listed here will result in a reduction of spendable
-	/// balance due to the VTXOs being managed by the [bark::Exit] system.
+	/// balance due to the VTXOs being managed by the [bark::exit::Exit] system.
 	#[cfg_attr(feature = "utoipa", schema(value_type = Vec<String>))]
 	pub exited_vtxos: Vec<VtxoId>,
 	/// Contains the times at which the movement was created, updated and completed.
@@ -441,34 +441,44 @@ impl utoipa::ToSchema for PaymentMethod {
 	}
 }
 
-impl From<bark::payment_method::PaymentMethod> for PaymentMethod {
-	fn from(p: bark::payment_method::PaymentMethod) -> Self {
+impl From<bark::movement::PaymentMethod> for PaymentMethod {
+	fn from(p: bark::movement::PaymentMethod) -> Self {
 		match p {
-			bark::payment_method::PaymentMethod::Ark(a) => Self::Ark(a.to_string()),
-			bark::payment_method::PaymentMethod::Bitcoin(b) => Self::Bitcoin(b.assume_checked().to_string()),
-			bark::payment_method::PaymentMethod::OutputScript(s) => Self::OutputScript(s.to_hex_string()),
-			bark::payment_method::PaymentMethod::Invoice(i) => Self::Invoice(i.to_string()),
-			bark::payment_method::PaymentMethod::Offer(o) => Self::Offer(o.to_string()),
-			bark::payment_method::PaymentMethod::LightningAddress(l) => Self::LightningAddress(l.to_string()),
-			bark::payment_method::PaymentMethod::Custom(c) => Self::Custom(c),
+			bark::movement::PaymentMethod::Ark(a) => Self::Ark(a.to_string()),
+			bark::movement::PaymentMethod::Bitcoin(b) => Self::Bitcoin(b.assume_checked().to_string()),
+			bark::movement::PaymentMethod::OutputScript(s) => Self::OutputScript(s.to_hex_string()),
+			bark::movement::PaymentMethod::Invoice(i) => Self::Invoice(i.to_string()),
+			bark::movement::PaymentMethod::Offer(o) => Self::Offer(o.to_string()),
+			bark::movement::PaymentMethod::LightningAddress(l) => Self::LightningAddress(l.to_string()),
+			bark::movement::PaymentMethod::Custom(c) => Self::Custom(c),
 		}
 	}
 }
 
-impl TryFrom<PaymentMethod> for bark::payment_method::PaymentMethod {
+impl TryFrom<PaymentMethod> for bark::movement::PaymentMethod {
 	type Error = anyhow::Error;
 
 	fn try_from(p: PaymentMethod) -> Result<Self, Self::Error> {
 		match p {
-			PaymentMethod::Ark(a) => Ok(bark::payment_method::PaymentMethod::Ark(ark::Address::from_str(&a)?)),
-			PaymentMethod::Bitcoin(b) => Ok(bark::payment_method::PaymentMethod::Bitcoin(bitcoin::Address::from_str(&b)?)),
-			PaymentMethod::OutputScript(s) => Ok(bark::payment_method::PaymentMethod::OutputScript(ScriptBuf::from_hex(&s)?)),
-			PaymentMethod::Invoice(i) => Ok(bark::payment_method::PaymentMethod::Invoice(Invoice::from_str(&i)?)),
-			PaymentMethod::Offer(o) => Ok(bark::payment_method::PaymentMethod::Offer(
+			PaymentMethod::Ark(a) => Ok(bark::movement::PaymentMethod::Ark(
+				ark::Address::from_str(&a)?,
+			)),
+			PaymentMethod::Bitcoin(b) => Ok(bark::movement::PaymentMethod::Bitcoin(
+				bitcoin::Address::from_str(&b)?,
+			)),
+			PaymentMethod::OutputScript(s) => Ok(bark::movement::PaymentMethod::OutputScript(
+				ScriptBuf::from_hex(&s)?,
+			)),
+			PaymentMethod::Invoice(i) => Ok(bark::movement::PaymentMethod::Invoice(
+				Invoice::from_str(&i)?,
+			)),
+			PaymentMethod::Offer(o) => Ok(bark::movement::PaymentMethod::Offer(
 				Offer::from_str(&o).map_err(|e| anyhow!("Failed to parse offer: {:?}", e))?,
 			)),
-			PaymentMethod::LightningAddress(l) => Ok(bark::payment_method::PaymentMethod::LightningAddress(LightningAddress::from_str(&l)?)),
-			PaymentMethod::Custom(c) => Ok(bark::payment_method::PaymentMethod::Custom(c)),
+			PaymentMethod::LightningAddress(l) => Ok(bark::movement::PaymentMethod::LightningAddress(
+				LightningAddress::from_str(&l)?,
+			)),
+			PaymentMethod::Custom(c) => Ok(bark::movement::PaymentMethod::Custom(c)),
 		}
 	}
 }

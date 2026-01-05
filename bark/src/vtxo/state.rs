@@ -48,6 +48,12 @@ impl VtxoStateKind {
 			VtxoStateKind::Spent => SPENT,
 		}
 	}
+
+	/// List of the different states considered unspent
+	pub const UNSPENT_STATES: &[VtxoStateKind] = &[
+		VtxoStateKind::Spendable,
+		VtxoStateKind::Locked,
+	];
 }
 
 impl fmt::Display for VtxoStateKind {
@@ -62,13 +68,6 @@ impl fmt::Debug for VtxoStateKind {
 	}
 }
 
-lazy_static::lazy_static! {
-	pub static ref UNSPENT_STATES: Vec<VtxoStateKind> = vec![
-		VtxoStateKind::Spendable,
-		VtxoStateKind::Locked,
-	];
-}
-
 /// Rich [Vtxo] state carrying additional context needed at runtime.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "kebab-case")]
@@ -79,7 +78,7 @@ pub enum VtxoState {
 	Spent,
 	/// The [Vtxo] is currently locked in an action.
 	Locked {
-		/// The ID of the associated [Movement] that locked this VTXO.
+		/// The ID of the associated [Movement](crate::movement::Movement) that locked this VTXO.
 		movement_id: Option<MovementId>,
 	},
 }

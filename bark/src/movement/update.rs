@@ -24,10 +24,10 @@ enum UpdateMethod<T> {
 ///
 /// Each [Option] field that is set to `None` will be ignored. The default behavior of each field is
 /// to merge existing values with the new ones unless a field is explicitly set to
-/// [UpdateMethod::Replace] or a method indicates otherwise. Duplicate [VtxoId] values will be
+/// `UpdateMethod::Replace` or a method indicates otherwise. Duplicate [VtxoId] values will be
 /// ignored.
 ///
-/// See [UpdateMethod] to understand how to control how the [MovementUpdate] is applied.
+/// See `UpdateMethod` to understand how to control how the [MovementUpdate] is applied.
 #[derive(Debug, Clone)]
 pub struct MovementUpdate {
 	intended_balance: Option<SignedAmount>,

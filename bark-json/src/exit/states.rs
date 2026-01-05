@@ -58,28 +58,28 @@ impl fmt::Display for ExitTxStatus {
 	}
 }
 
-impl From<bark::exit::models::ExitTxStatus> for ExitTxStatus {
-	fn from(v: bark::exit::models::ExitTxStatus) -> Self {
+impl From<bark::exit::ExitTxStatus> for ExitTxStatus {
+	fn from(v: bark::exit::ExitTxStatus) -> Self {
 		match v {
-			bark::exit::models::ExitTxStatus::VerifyInputs => {
+			bark::exit::ExitTxStatus::VerifyInputs => {
 				ExitTxStatus::VerifyInputs
 			},
-			bark::exit::models::ExitTxStatus::AwaitingInputConfirmation { txids } => {
+			bark::exit::ExitTxStatus::AwaitingInputConfirmation { txids } => {
 				ExitTxStatus::AwaitingInputConfirmation { txids }
 			},
-			bark::exit::models::ExitTxStatus::NeedsSignedPackage => {
+			bark::exit::ExitTxStatus::NeedsSignedPackage => {
 				ExitTxStatus::NeedsSignedPackage
 			},
-			bark::exit::models::ExitTxStatus::NeedsReplacementPackage { min_fee_rate, min_fee } => {
+			bark::exit::ExitTxStatus::NeedsReplacementPackage { min_fee_rate, min_fee } => {
 				ExitTxStatus::NeedsReplacementPackage { min_fee_rate, min_fee }
 			},
-			bark::exit::models::ExitTxStatus::NeedsBroadcasting { child_txid, origin } => {
+			bark::exit::ExitTxStatus::NeedsBroadcasting { child_txid, origin } => {
 				ExitTxStatus::NeedsBroadcasting { child_txid, origin: origin.into() }
 			},
-			bark::exit::models::ExitTxStatus::BroadcastWithCpfp { child_txid, origin } => {
+			bark::exit::ExitTxStatus::BroadcastWithCpfp { child_txid, origin } => {
 				ExitTxStatus::BroadcastWithCpfp { child_txid, origin: origin.into() }
 			},
-			bark::exit::models::ExitTxStatus::Confirmed { child_txid, block, origin } => {
+			bark::exit::ExitTxStatus::Confirmed { child_txid, block, origin } => {
 				ExitTxStatus::Confirmed { child_txid, block, origin: origin.into() }
 			},
 		}
@@ -115,16 +115,16 @@ impl fmt::Display for ExitTxOrigin {
 	}
 }
 
-impl From<bark::exit::models::ExitTxOrigin> for ExitTxOrigin {
-	fn from(v: bark::exit::models::ExitTxOrigin) -> Self {
+impl From<bark::exit::ExitTxOrigin> for ExitTxOrigin {
+	fn from(v: bark::exit::ExitTxOrigin) -> Self {
 		match v {
-			bark::exit::models::ExitTxOrigin::Wallet { confirmed_in } => {
+			bark::exit::ExitTxOrigin::Wallet { confirmed_in } => {
 				ExitTxOrigin::Wallet { confirmed_in }
 			},
-			bark::exit::models::ExitTxOrigin::Mempool { fee_rate, total_fee } => {
+			bark::exit::ExitTxOrigin::Mempool { fee_rate, total_fee } => {
 				ExitTxOrigin::Mempool { fee_rate, total_fee }
 			},
-			bark::exit::models::ExitTxOrigin::Block { confirmed_in } => {
+			bark::exit::ExitTxOrigin::Block { confirmed_in } => {
 				ExitTxOrigin::Block { confirmed_in }
 			},
 		}

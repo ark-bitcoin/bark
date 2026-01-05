@@ -10,7 +10,7 @@ use bitcoin::{Address, Amount, FeeRate, Network, Transaction, Txid};
 use log::{debug, info};
 use tokio::process::Command;
 
-use bark::onchain::ChainSourceSpec;
+use bark::chain::ChainSourceSpec;
 use bitcoin_ext::FeeRateExt;
 use bitcoin_ext::rpc::{self, RpcApi};
 

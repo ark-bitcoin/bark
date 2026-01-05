@@ -49,7 +49,7 @@
 //! can be used to recover funds. Typically, most apps request the user
 //! to write down the mnemonic or ensure they use another method for a secure back-up.
 //!
-//! The user can select an Ark server and a [onchain::ChainSource] as part of
+//! The user can select an Ark server and a [chain::ChainSource] as part of
 //! the configuration. The example below configures
 //!
 //! You will also need a place to store all [ark::Vtxo]s on the users device.
@@ -259,7 +259,7 @@
 //! 	#   Wallet::open(&mnemonic, db, config).await.unwrap()
 //! 	# }
 //! #
-//! use bark::vtxo::selection::RefreshStrategy;
+//! use bark::vtxo::RefreshStrategy;
 //!
 //! #[tokio::main]
 //! async fn main() -> anyhow::Result<()> {
@@ -288,24 +288,26 @@ pub extern crate lnurl as lnurllib;
 #[macro_use] extern crate anyhow;
 #[macro_use] extern crate serde;
 
-pub mod arkoor;
-pub mod daemon;
+pub mod chain;
 pub mod exit;
-pub mod lightning;
 pub mod movement;
 pub mod onchain;
-pub mod payment_method;
 pub mod persist;
 pub mod round;
 pub mod subsystem;
 pub mod vtxo;
 
-pub use self::config::{BarkNetwork, Config};
-pub use self::persist::sqlite::SqliteClient;
-pub use self::vtxo::state::WalletVtxo;
-
+mod arkoor;
 mod config;
+mod daemon;
+mod lightning;
 mod psbtext;
+
+pub use self::arkoor::ArkoorCreateResult;
+pub use self::config::{BarkNetwork, Config};
+pub use self::daemon::DaemonHandle;
+pub use self::persist::sqlite::SqliteClient;
+pub use self::vtxo::WalletVtxo;
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -317,7 +319,6 @@ use bitcoin::bip32::{self, ChildNumber, Fingerprint};
 use bitcoin::secp256k1::{self, Keypair, PublicKey};
 use log::{trace, debug, info, warn, error};
 use tokio::sync::RwLock;
-use tokio_util::sync::CancellationToken;
 
 use ark::{ArkInfo, ProtocolEncoding, Vtxo, VtxoId, VtxoPolicy, VtxoRequest};
 use ark::address::VtxoDelivery;
@@ -327,18 +328,17 @@ use ark::vtxo::policy::PubkeyVtxoPolicy;
 use bitcoin_ext::{BlockHeight, P2TR_DUST, TxStatus};
 use server_rpc::{self as rpc, protos, ServerConnection};
 
-use crate::daemon::{Daemon, DaemonizableOnchainWallet};
+use crate::chain::{ChainSource, ChainSourceSpec};
 use crate::exit::Exit;
 use crate::movement::{Movement, MovementStatus};
 use crate::movement::manager::MovementManager;
 use crate::movement::update::MovementUpdate;
-use crate::onchain::{ChainSource, PreparePsbt, ExitUnilaterally, Utxo, SignPsbt};
+use crate::onchain::{DaemonizableOnchainWallet, ExitUnilaterally, PreparePsbt, SignPsbt, Utxo};
 use crate::persist::{BarkPersister, RoundStateId};
 use crate::persist::models::{LightningReceive, LightningSend, PendingBoard};
 use crate::round::{RoundParticipation, RoundStatus};
 use crate::subsystem::{ArkoorMovement, BarkSubsystem, BoardMovement, RoundMovement, SubsystemId};
-use crate::vtxo::selection::{FilterVtxos, VtxoFilter, RefreshStrategy};
-use crate::vtxo::state::{VtxoState, VtxoStateKind, UNSPENT_STATES};
+use crate::vtxo::{FilterVtxos, RefreshStrategy, VtxoFilter, VtxoState, VtxoStateKind};
 
 /// Derivation index for Bark usage
 const BARK_PURPOSE_INDEX: u32 = 350;
@@ -485,7 +485,6 @@ impl WalletSeed {
 ///     - [Wallet::offboard_all]
 ///   - sending and receiving Ark payments (including to BOLT11/BOLT12 invoices)
 ///     - [Wallet::send_arkoor_payment],
-///     - [Wallet::send_round_onchain_payment],
 ///     - [Wallet::pay_lightning_invoice],
 ///     - [Wallet::pay_lightning_address],
 ///     - [Wallet::pay_lightning_offer]
@@ -528,7 +527,7 @@ impl WalletSeed {
 ///   - [Wallet::create],
 ///   - [Wallet::open]
 /// - Creation allows the use of an optional onchain wallet for boarding and [Exit] functionality.
-///   It also initializes any internal state and connects to the [onchain::ChainSource]. See
+///   It also initializes any internal state and connects to the [chain::ChainSource]. See
 ///   [onchain::OnchainWallet] for an implementation of an onchain wallet using BDK.
 ///   - [Wallet::create_with_onchain],
 ///   - [Wallet::open_with_onchain]
@@ -628,13 +627,13 @@ pub struct Wallet {
 }
 
 impl Wallet {
-	/// Creates a [onchain::ChainSource] instance to communicate with an onchain backend from the
+	/// Creates a [chain::ChainSource] instance to communicate with an onchain backend from the
 	/// given [Config].
 	pub fn chain_source(
 		config: &Config,
-	) -> anyhow::Result<onchain::ChainSourceSpec> {
+	) -> anyhow::Result<ChainSourceSpec> {
 		if let Some(ref url) = config.esplora_address {
-			Ok(onchain::ChainSourceSpec::Esplora {
+			Ok(ChainSourceSpec::Esplora {
 				url: url.clone(),
 			})
 		} else if let Some(ref url) = config.bitcoind_address {
@@ -646,7 +645,7 @@ impl Wallet {
 					config.bitcoind_pass.clone().context("need bitcoind auth config")?,
 				)
 			};
-			Ok(onchain::ChainSourceSpec::Bitcoind {
+			Ok(ChainSourceSpec::Bitcoind {
 				url: url.clone(),
 				auth,
 			})
@@ -655,8 +654,8 @@ impl Wallet {
 		}
 	}
 
-	/// Verifies that the bark [Wallet] can be used with the configured [onchain::ChainSource].
-	/// More specifically, if the [onchain::ChainSource] connects to Bitcoin Core it must be
+	/// Verifies that the bark [Wallet] can be used with the configured [chain::ChainSource].
+	/// More specifically, if the [chain::ChainSource] connects to Bitcoin Core it must be
 	/// a high enough version to support ephemeral anchors.
 	pub fn require_chainsource_version(&self) -> anyhow::Result<()> {
 		self.chain.require_version()
@@ -855,7 +854,7 @@ impl Wallet {
 		}
 
 		let chain_source = if let Some(ref url) = config.esplora_address {
-			onchain::ChainSourceSpec::Esplora {
+			ChainSourceSpec::Esplora {
 				url: url.clone(),
 			}
 		} else if let Some(ref url) = config.bitcoind_address {
@@ -867,7 +866,7 @@ impl Wallet {
 					config.bitcoind_pass.clone().context("need bitcoind auth config")?,
 				)
 			};
-			onchain::ChainSourceSpec::Bitcoind { url: url.clone(), auth }
+			ChainSourceSpec::Bitcoind { url: url.clone(), auth }
 		} else {
 			bail!("Need to either provide esplora or bitcoind info");
 		};
@@ -1038,7 +1037,7 @@ impl Wallet {
 
 	/// Returns all not spent vtxos
 	pub fn vtxos(&self) -> anyhow::Result<Vec<WalletVtxo>> {
-		Ok(self.db.get_vtxos_by_state(&UNSPENT_STATES)?)
+		Ok(self.db.get_vtxos_by_state(&VtxoStateKind::UNSPENT_STATES)?)
 	}
 
 	/// Returns all vtxos matching the provided predicate
@@ -1489,7 +1488,9 @@ impl Wallet {
 
 		// Remember that we have stored the vtxo
 		// No need to complain if the vtxo is already registered
-		self.db.update_vtxo_state_checked(vtxo.id(), VtxoState::Spendable, &UNSPENT_STATES)?;
+		self.db.update_vtxo_state_checked(
+			vtxo.id(), VtxoState::Spendable, &VtxoStateKind::UNSPENT_STATES,
+		)?;
 
 		let board = self.db.get_pending_board_by_vtxo_id(vtxo.id())?
 			.context("pending board not found")?;
@@ -1816,22 +1817,17 @@ impl Wallet {
 		Ok(total)
 	}
 
-	/// Starts a daemon for the wallet, for more information see [Daemon].
+	/// Starts a daemon for the wallet.
 	///
 	/// Note:
 	/// - This function doesn't check if a daemon is already running,
 	/// so it's possible to start multiple daemons by mistake.
 	pub async fn run_daemon(
 		self: &Arc<Self>,
-		shutdown: CancellationToken,
 		onchain: Arc<RwLock<dyn DaemonizableOnchainWallet>>,
-	) -> anyhow::Result<()> {
-		let daemon = Daemon::new(shutdown, self.clone(), onchain)?;
-
-		tokio::spawn(async move {
-			daemon.run().await;
-		});
-
-		Ok(())
+	) -> anyhow::Result<DaemonHandle> {
+		// NB currently can't error but it's a pretty common method and quite likely that error
+		// cases will be introduces later
+		Ok(crate::daemon::start_daemon(self.clone(), onchain))
 	}
 }

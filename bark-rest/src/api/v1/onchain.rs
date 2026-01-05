@@ -10,10 +10,10 @@ use utoipa::OpenApi;
 
 use bark::onchain::ChainSync;
 
-use crate::RestServer;
+use crate::ServerState;
 use crate::error::{self, HandlerResult, ContextExt};
 
-pub fn router() -> Router<RestServer> {
+pub fn router() -> Router<ServerState> {
 	Router::new()
 		.route("/balance", get(onchain_balance))
 		.route("/addresses/next", post(onchain_address))
@@ -62,7 +62,7 @@ pub struct OnchainApiDoc;
 )]
 #[debug_handler]
 pub async fn onchain_balance(
-	State(state): State<RestServer>,
+	State(state): State<ServerState>,
 ) -> HandlerResult<Json<bark_json::cli::onchain::OnchainBalance>> {
 	let onchain_lock = state.onchain.read().await;
 
@@ -91,7 +91,7 @@ pub async fn onchain_balance(
 )]
 #[debug_handler]
 pub async fn onchain_address(
-	State(state): State<RestServer>,
+	State(state): State<ServerState>,
 ) -> HandlerResult<Json<bark_json::cli::onchain::Address>> {
 	let mut onchain_lock = state.onchain.write().await;
 
@@ -117,7 +117,7 @@ pub async fn onchain_address(
 )]
 #[debug_handler]
 pub async fn onchain_send(
-	State(state): State<RestServer>,
+	State(state): State<ServerState>,
 	Json(body): Json<bark_json::web::OnchainSendRequest>,
 ) -> HandlerResult<Json<bark_json::cli::onchain::Send>> {
 	let mut onchain_lock = state.onchain.write().await;
@@ -150,7 +150,7 @@ pub async fn onchain_send(
 )]
 #[debug_handler]
 pub async fn onchain_send_many(
-	State(state): State<RestServer>,
+	State(state): State<ServerState>,
 	Json(body): Json<bark_json::web::OnchainSendManyRequest>,
 ) -> HandlerResult<Json<bark_json::cli::onchain::Send>> {
 	let mut onchain_lock = state.onchain.write().await;
@@ -204,7 +204,7 @@ pub async fn onchain_send_many(
 )]
 #[debug_handler]
 pub async fn onchain_drain(
-	State(state): State<RestServer>,
+	State(state): State<ServerState>,
 	Json(body): Json<bark_json::web::OnchainDrainRequest>,
 ) -> HandlerResult<Json<bark_json::cli::onchain::Send>> {
 	let mut onchain_lock = state.onchain.write().await;
@@ -233,7 +233,7 @@ pub async fn onchain_drain(
 )]
 #[debug_handler]
 pub async fn onchain_utxos(
-	State(state): State<RestServer>,
+	State(state): State<ServerState>,
 ) -> HandlerResult<Json<Vec<bark_json::primitives::UtxoInfo>>> {
 	let onchain_lock = state.onchain.read().await;
 
@@ -256,7 +256,7 @@ pub async fn onchain_utxos(
 )]
 #[debug_handler]
 pub async fn onchain_transactions(
-	State(state): State<RestServer>,
+	State(state): State<ServerState>,
 ) -> HandlerResult<Json<Vec<bark_json::primitives::TransactionInfo>>> {
 	let onchain_lock = state.onchain.read().await;
 
@@ -283,7 +283,7 @@ pub async fn onchain_transactions(
 )]
 #[debug_handler]
 pub async fn onchain_sync(
-	State(state): State<RestServer>,
+	State(state): State<ServerState>,
 ) -> HandlerResult<()> {
 	let mut onchain_lock = state.onchain.write().await;
 	onchain_lock.sync(&state.wallet.chain).await?;

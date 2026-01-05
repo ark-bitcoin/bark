@@ -26,7 +26,8 @@ const PAYMENT_METHODS: [&str; 7] = [
 	PAYMENT_METHOD_CUSTOM,
 ];
 
-/// Provides a typed mechanism for describing the recipient in a [MovementDestination].
+/// Provides a typed mechanism for describing the recipient in a
+/// [MovementDestination](crate::movement::MovementDestination).
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum PaymentMethod {
 	/// An [ark::Address] for bark.

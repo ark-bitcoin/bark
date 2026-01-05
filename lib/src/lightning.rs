@@ -298,7 +298,9 @@ impl Invoice {
 		}
 	}
 
-	/// See [get_invoice_final_amount] for more details.
+	/// Get the amount to be paid. It checks both user and invoice
+	/// equality if both are provided, else it tries to return one
+	/// of them, or returns an error if neither are provided.
 	pub fn get_final_amount(&self, user_amount: Option<Amount>) -> Result<Amount, CheckAmountError> {
 		match self {
 			Invoice::Bolt11(invoice) => invoice.get_final_amount(user_amount),
@@ -368,8 +370,12 @@ fn get_invoice_final_amount(invoice_amount: Option<Amount>, user_amount: Option<
 		}
 	}
 }
+
+/// Extension trait for the [Bolt11Invoice] type
 pub trait Bolt11InvoiceExt: Borrow<Bolt11Invoice> {
-	/// See [get_invoice_final_amount] for more details.
+	/// Get the amount to be paid. It checks both user and invoice
+	/// equality if both are provided, else it tries to return one
+	/// of them, or returns an error if neither are provided.
 	fn get_final_amount(&self, user_amount: Option<Amount>) -> Result<Amount, CheckAmountError> {
 		let invoice_amount = self.borrow().amount_milli_satoshis()
 			.map(Amount::from_msat_ceil);
@@ -380,10 +386,13 @@ pub trait Bolt11InvoiceExt: Borrow<Bolt11Invoice> {
 
 impl Bolt11InvoiceExt for Bolt11Invoice {}
 
+/// Extension trait for the [Bolt12Invoice] type
 pub trait Bolt12InvoiceExt: Borrow<Bolt12Invoice> {
 	fn payment_hash(&self) -> PaymentHash { PaymentHash::from(self.borrow().payment_hash()) }
 
-	/// See [get_invoice_final_amount] for more details.
+	/// Get the amount to be paid. It checks both user and invoice
+	/// equality if both are provided, else it tries to return one
+	/// of them, or returns an error if neither are provided.
 	fn get_final_amount(&self, user_amount: Option<Amount>) -> Result<Amount, CheckAmountError> {
 		let invoice_amount = Amount::from_msat_ceil(self.borrow().amount_msats());
 		get_invoice_final_amount(Some(invoice_amount), user_amount)

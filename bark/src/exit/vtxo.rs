@@ -14,10 +14,11 @@ use log::{debug, trace};
 
 use ark::{Vtxo, VtxoId};
 
+use crate::chain::ChainSource;
 use crate::exit::models::{ExitError, ExitState};
 use crate::exit::progress::{ExitStateProgress, ProgressContext, ProgressStep};
 use crate::exit::transaction_manager::ExitTransactionManager;
-use crate::onchain::{ChainSource, ExitUnilaterally};
+use crate::onchain::ExitUnilaterally;
 use crate::persist::BarkPersister;
 use crate::persist::models::StoredExit;
 use crate::WalletVtxo;
@@ -112,7 +113,7 @@ impl ExitVtxo {
 	}
 
 	/// Prepares an [ExitVtxo] for progression by querying the list of transactions required to
-	/// process the unilateral exit and adds them to the [ExitTransactionManager].
+	/// process the unilateral exit and adds them to the exit transaction manager.
 	pub async fn initialize(
 		&mut self,
 		tx_manager: &mut ExitTransactionManager,

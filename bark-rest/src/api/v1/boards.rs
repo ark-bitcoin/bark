@@ -5,7 +5,7 @@ use bitcoin::Amount;
 use utoipa::OpenApi;
 
 use crate::error::{self, HandlerResult};
-use crate::RestServer;
+use crate::ServerState;
 
 #[derive(OpenApi)]
 #[openapi(
@@ -22,7 +22,7 @@ use crate::RestServer;
 )]
 pub struct BoardsApiDoc;
 
-pub fn router() -> Router<RestServer> {
+pub fn router() -> Router<ServerState> {
 	Router::new()
 		.route("/board-amount", post(board_amount))
 		.route("/board-all", post(board_all))
@@ -42,7 +42,7 @@ pub fn router() -> Router<RestServer> {
 )]
 #[debug_handler]
 pub async fn board_amount(
-	State(state): State<RestServer>,
+	State(state): State<ServerState>,
 	Json(body): Json<bark_json::web::BoardRequest>,
 ) -> HandlerResult<Json<bark_json::cli::PendingBoardInfo>> {
 	let mut onchain_lock = state.onchain.write().await;
@@ -68,7 +68,7 @@ pub async fn board_amount(
 )]
 #[debug_handler]
 pub async fn board_all(
-	State(state): State<RestServer>,
+	State(state): State<ServerState>,
 ) -> HandlerResult<Json<bark_json::cli::PendingBoardInfo>> {
 	let mut onchain_lock = state.onchain.write().await;
 
@@ -88,7 +88,7 @@ pub async fn board_all(
 )]
 #[debug_handler]
 pub async fn get_pending_boards(
-	State(state): State<RestServer>,
+	State(state): State<ServerState>,
 ) -> HandlerResult<Json<Vec<bark_json::cli::PendingBoardInfo>>> {
 	let boards = state.wallet.pending_boards()?.into_iter()
 		.map(bark_json::cli::PendingBoardInfo::from).collect();

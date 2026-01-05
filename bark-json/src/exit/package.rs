@@ -13,8 +13,8 @@ pub struct ExitTransactionPackage {
 	pub child: Option<ChildTransactionInfo>,
 }
 
-impl From<bark::exit::models::ExitTransactionPackage> for ExitTransactionPackage {
-	fn from(v: bark::exit::models::ExitTransactionPackage) -> Self {
+impl From<bark::exit::ExitTransactionPackage> for ExitTransactionPackage {
+	fn from(v: bark::exit::ExitTransactionPackage) -> Self {
 		ExitTransactionPackage {
 			exit: v.exit.into(),
 			child: v.child.map(|x| x.into()),
@@ -30,8 +30,8 @@ pub struct ChildTransactionInfo {
 	pub origin: ExitTxOrigin,
 }
 
-impl From<bark::exit::models::ChildTransactionInfo> for ChildTransactionInfo {
-	fn from(v: bark::exit::models::ChildTransactionInfo) -> Self {
+impl From<bark::exit::ChildTransactionInfo> for ChildTransactionInfo {
+	fn from(v: bark::exit::ChildTransactionInfo) -> Self {
 		ChildTransactionInfo { info: v.info.into(), origin: v.origin.into() }
 	}
 }

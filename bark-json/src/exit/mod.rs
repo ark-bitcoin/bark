@@ -24,32 +24,32 @@ pub enum ExitState {
 	Claimed(ExitClaimedState),
 }
 
-impl From<bark::exit::models::ExitState> for ExitState {
-	fn from(v: bark::exit::models::ExitState) -> Self {
+impl From<bark::exit::ExitState> for ExitState {
+	fn from(v: bark::exit::ExitState) -> Self {
 		match v {
-			bark::exit::models::ExitState::Start(s) => ExitState::Start(ExitStartState {
+			bark::exit::ExitState::Start(s) => ExitState::Start(ExitStartState {
 				tip_height: s.tip_height,
 			}),
-			bark::exit::models::ExitState::Processing(s) => ExitState::Processing(ExitProcessingState {
+			bark::exit::ExitState::Processing(s) => ExitState::Processing(ExitProcessingState {
 				tip_height: s.tip_height,
 				transactions: s.transactions.into_iter().map(|t| ExitTx { txid: t.txid, status: t.status.into() }).collect(),
 			}),
-			bark::exit::models::ExitState::AwaitingDelta(s) => ExitState::AwaitingDelta(ExitAwaitingDeltaState {
+			bark::exit::ExitState::AwaitingDelta(s) => ExitState::AwaitingDelta(ExitAwaitingDeltaState {
 				tip_height: s.tip_height,
 				confirmed_block: s.confirmed_block,
 				claimable_height: s.claimable_height,
 			}),
-			bark::exit::models::ExitState::Claimable(s) => ExitState::Claimable(ExitClaimableState {
+			bark::exit::ExitState::Claimable(s) => ExitState::Claimable(ExitClaimableState {
 				tip_height: s.tip_height,
 				claimable_since: s.claimable_since,
 				last_scanned_block: s.last_scanned_block,
 			}),
-			bark::exit::models::ExitState::ClaimInProgress(s) => ExitState::ClaimInProgress(ExitClaimInProgressState {
+			bark::exit::ExitState::ClaimInProgress(s) => ExitState::ClaimInProgress(ExitClaimInProgressState {
 				tip_height: s.tip_height,
 				claimable_since: s.claimable_since,
 				claim_txid: s.claim_txid,
 			}),
-			bark::exit::models::ExitState::Claimed(s) => ExitState::Claimed(ExitClaimedState {
+			bark::exit::ExitState::Claimed(s) => ExitState::Claimed(ExitClaimedState {
 				tip_height: s.tip_height,
 				txid: s.txid,
 				block: s.block,

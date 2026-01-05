@@ -1,5 +1,9 @@
-pub mod selection;
-pub mod state;
+
+mod selection;
+mod state;
+
+pub use self::selection::{FilterVtxos, RefreshStrategy, VtxoFilter};
+pub use self::state::{VtxoState, VtxoStateKind, WalletVtxo};
 
 use log::{debug, error, trace};
 use ark::{ProtocolEncoding, Vtxo};
@@ -7,11 +11,10 @@ use ark::vtxo::VtxoRef;
 
 use crate::Wallet;
 use crate::movement::MovementId;
-use crate::vtxo::state::{VtxoState, VtxoStateKind, UNSPENT_STATES};
 
 impl Wallet {
-	/// Attempts to lock VTXOs with the given [VtxoId] values. This will only work if the current
-	/// [VtxoState] is contained by [UNSPENT_STATES].
+	/// Attempts to lock VTXOs with the given [VtxoId](ark::VtxoId) values. This will only work if the current
+	/// [VtxoState] is contained by [VtxoStateKind::UNSPENT_STATES].
 	///
 	/// # Errors
 	/// - If the VTXO is not in a lockable [VtxoState].
@@ -22,11 +25,14 @@ impl Wallet {
 		vtxos: impl IntoIterator<Item = impl VtxoRef>,
 		movement_id: Option<MovementId>,
 	) -> anyhow::Result<()> {
-		self.set_vtxo_states(vtxos, &VtxoState::Locked { movement_id }, &UNSPENT_STATES)
+		self.set_vtxo_states(
+			vtxos, &VtxoState::Locked { movement_id }, &VtxoStateKind::UNSPENT_STATES,
+		)
 	}
 
-	/// Attempts to mark VTXOs as [VtxoState::Spent], given that each [VtxoId] is currently a state
-	/// contained by [UNSPENT_STATES].
+	/// Attempts to mark VTXOs as [VtxoState::Spent], given that each [VtxoId](ark::VtxoId)
+	/// is currently a state
+	/// contained by [VtxoStateKind::UNSPENT_STATES].
 	///
 	/// # Errors
 	/// - If the VTXO is not currently spent.
@@ -36,14 +42,15 @@ impl Wallet {
 		&self,
 		vtxos: impl IntoIterator<Item = impl VtxoRef>,
 	) -> anyhow::Result<()> {
-		self.set_vtxo_states(vtxos, &VtxoState::Spent, &UNSPENT_STATES)
+		self.set_vtxo_states(vtxos, &VtxoState::Spent, &VtxoStateKind::UNSPENT_STATES)
 	}
 
-	/// Updates the state set the [VtxoState] of VTXOs corresponding to each given [VtxoId]while
-	/// validating if the transition is allowed based on the current state and allowed transitions.
+	/// Updates the state set the [VtxoState] of VTXOs corresponding to each given
+	/// [VtxoId](ark::VtxoId) while validating if the transition is allowed based
+	/// on the current state and allowed transitions.
 	///
 	/// # Parameters
-	/// - `vtxos`: The [VtxoId] of each [Vtxo] to update.
+	/// - `vtxos`: The [VtxoId](ark::VtxoId) of each [Vtxo] to update.
 	/// - `state`: A reference to the new [VtxoState] that the VTXOs should be transitioned to.
 	/// - `allowed_states`: A slice of [VtxoStateKind] representing the permissible current states
 	///   from which the VTXOs are allowed to transition to the given `state`.
@@ -146,7 +153,7 @@ impl Wallet {
 		}
 	}
 
-	/// Attempts to unlock VTXOs with the given [VtxoId] values. This will only work if the current
+	/// Attempts to unlock VTXOs with the given [VtxoId](ark::VtxoId) values. This will only work if the current
 	/// [VtxoState] is [VtxoStateKind::Locked].
 	///
 	/// # Errors

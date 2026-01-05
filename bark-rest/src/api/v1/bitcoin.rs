@@ -4,7 +4,7 @@ use axum::{debug_handler, Json, Router};
 use utoipa::OpenApi;
 
 use crate::error::{self, HandlerResult};
-use crate::RestServer;
+use crate::ServerState;
 
 #[derive(OpenApi)]
 #[openapi(
@@ -18,7 +18,7 @@ use crate::RestServer;
 )]
 pub struct BitcoinApiDoc;
 
-pub fn router() -> Router<RestServer> {
+pub fn router() -> Router<ServerState> {
 	Router::new()
 		.route("/tip", get(tip))
 }
@@ -35,7 +35,7 @@ pub fn router() -> Router<RestServer> {
 )]
 #[debug_handler]
 pub async fn tip(
-	State(state): State<RestServer>,
+	State(state): State<ServerState>,
 ) -> HandlerResult<Json<bark_json::web::TipResponse>> {
 	let tip_height = state.wallet.chain.tip().await?;
 	Ok(axum::Json(bark_json::web::TipResponse { tip_height }))

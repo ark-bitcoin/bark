@@ -9,10 +9,10 @@ use bitcoin::FeeRate;
 use tracing::info;
 use utoipa::OpenApi;
 
-use bark::vtxo::selection::{FilterVtxos, VtxoFilter};
+use bark::vtxo::{FilterVtxos, VtxoFilter};
 use bitcoin_ext::FeeRateExt;
 
-use crate::RestServer;
+use crate::ServerState;
 use crate::error::{self, HandlerResult, ContextExt, badarg, not_found};
 
 #[derive(OpenApi)]
@@ -41,7 +41,7 @@ use crate::error::{self, HandlerResult, ContextExt, badarg, not_found};
 )]
 pub struct ExitsApiDoc;
 
-pub fn router() -> Router<RestServer> {
+pub fn router() -> Router<ServerState> {
 	Router::new()
 		.route("/status/{vtxo_id}", get(get_exit_status_by_vtxo_id))
 		.route("/status", get(get_all_exit_status))
@@ -70,7 +70,7 @@ pub fn router() -> Router<RestServer> {
 )]
 #[debug_handler]
 pub async fn get_exit_status_by_vtxo_id(
-	State(state): State<RestServer>,
+	State(state): State<ServerState>,
 	Path(vtxo): Path<String>,
 	Query(query): Query<bark_json::web::ExitStatusRequest>,
 ) -> HandlerResult<Json<bark_json::cli::ExitTransactionStatus>> {
@@ -104,7 +104,7 @@ pub async fn get_exit_status_by_vtxo_id(
 )]
 #[debug_handler]
 pub async fn get_all_exit_status(
-	State(state): State<RestServer>,
+	State(state): State<ServerState>,
 	Query(query): Query<bark_json::web::ExitStatusRequest>,
 ) -> HandlerResult<Json<Vec<bark_json::cli::ExitTransactionStatus>>> {
 	let exit = state.wallet.exit.write().await;
@@ -139,7 +139,7 @@ pub async fn get_all_exit_status(
 )]
 #[debug_handler]
 pub async fn exit_start_vtxos(
-	State(state): State<RestServer>,
+	State(state): State<ServerState>,
 	Json(body): Json<bark_json::web::ExitStartRequest>,
 ) -> HandlerResult<Json<bark_json::web::ExitStartResponse>> {
 	if body.vtxos.is_empty() {
@@ -187,7 +187,7 @@ pub async fn exit_start_vtxos(
 )]
 #[debug_handler]
 pub async fn exit_start_all(
-	State(state): State<RestServer>,
+	State(state): State<ServerState>,
 ) -> HandlerResult<Json<bark_json::web::ExitStartResponse>> {
 	state.wallet.exit.write().await.start_exit_for_entire_wallet().await
 		.context("Failed to start exit for entire wallet")?;
@@ -211,7 +211,7 @@ pub async fn exit_start_all(
 )]
 #[debug_handler]
 pub async fn exit_progress(
-	State(state): State<RestServer>,
+	State(state): State<ServerState>,
 	Json(body): Json<bark_json::web::ExitProgressRequest>,
 ) -> HandlerResult<Json<bark_json::cli::ExitProgressResponse>> {
 	let mut onchain_lock = state.onchain.write().await;
@@ -234,7 +234,7 @@ pub async fn exit_progress(
 }
 
 async fn inner_claim_vtxos(
-	state: &RestServer,
+	state: &ServerState,
 	exit: &bark::exit::Exit,
 	address: bitcoin::Address,
 	vtxos: &[&bark::exit::ExitVtxo],
@@ -278,7 +278,7 @@ async fn inner_claim_vtxos(
 )]
 #[debug_handler]
 pub async fn exit_claim_all(
-	State(state): State<RestServer>,
+	State(state): State<ServerState>,
 	Json(body): Json<bark_json::web::ExitClaimAllRequest>,
 ) -> HandlerResult<Json<bark_json::web::ExitClaimResponse>> {
 
@@ -311,7 +311,7 @@ pub async fn exit_claim_all(
 )]
 #[debug_handler]
 pub async fn exit_claim_vtxos(
-	State(state): State<RestServer>,
+	State(state): State<ServerState>,
 	Json(body): Json<bark_json::web::ExitClaimVtxosRequest>,
 ) -> HandlerResult<Json<bark_json::web::ExitClaimResponse>> {
 	let network = state.wallet.properties()?.network;

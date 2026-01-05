@@ -23,15 +23,15 @@ use ark::lightning::{Invoice, PaymentHash, Preimage};
 use bitcoin_ext::{BlockDelta, BlockRef};
 
 use bark::{WalletProperties, WalletVtxo};
-use bark::exit::models::{ExitState, ExitClaimableState, ExitTxOrigin};
+use bark::exit::{ExitState, ExitClaimableState, ExitTxOrigin};
 use bark::movement::{
-	Movement, MovementDestination, MovementId, MovementStatus, MovementSubsystem, MovementTimestamp,
+	Movement, MovementDestination, MovementId, MovementStatus, MovementSubsystem,
+	MovementTimestamp, PaymentMethod,
 };
-use bark::payment_method::PaymentMethod;
 use bark::persist::{BarkPersister, RoundStateId, StoredRoundState};
 use bark::persist::models::{self, LightningReceive, LightningSend, PendingBoard, StoredExit};
 use bark::round::RoundState;
-use bark::vtxo::state::{VtxoState, VtxoStateKind};
+use bark::vtxo::{VtxoState, VtxoStateKind};
 
 
 struct Dummy;

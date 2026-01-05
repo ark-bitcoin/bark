@@ -25,8 +25,7 @@ use log::{debug, info, warn};
 use ark::VtxoId;
 use bark::{BarkNetwork, Config};
 use bark::onchain::ChainSync;
-use bark::vtxo::selection::VtxoFilter;
-use bark::vtxo::state::VtxoStateKind;
+use bark::vtxo::{VtxoFilter, VtxoStateKind};
 use bark_json::{cli as json};
 use bark_json::primitives::WalletVtxoInfo;
 

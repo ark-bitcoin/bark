@@ -1,4 +1,3 @@
-pub use tokio_util::sync::CancellationToken;
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -8,22 +7,51 @@ use anyhow::Context;
 use futures::StreamExt;
 use log::{info, warn};
 use tokio::sync::RwLock;
+use tokio::task::JoinHandle;
+use tokio_util::sync::CancellationToken;
 
 use crate::Wallet;
-use crate::onchain::{ChainSync, ExitUnilaterally};
+use crate::onchain::DaemonizableOnchainWallet;
 
-lazy_static::lazy_static! {
-	static ref FAST_INTERVAL: Duration = Duration::from_secs(1);
-	static ref MEDIUM_INTERVAL: Duration = Duration::from_secs(30);
-	static ref SLOW_INTERVAL: Duration = Duration::from_secs(60);
+const FAST_INTERVAL: Duration = Duration::from_secs(1);
+const MEDIUM_INTERVAL: Duration = Duration::from_secs(30);
+const SLOW_INTERVAL: Duration = Duration::from_secs(60);
+
+/// A handle to a running background daemon
+pub struct DaemonHandle {
+	shutdown: CancellationToken,
+	jh: JoinHandle<()>,
 }
 
-pub trait DaemonizableOnchainWallet: ExitUnilaterally + ChainSync {}
-impl <W: ExitUnilaterally + ChainSync> DaemonizableOnchainWallet for W {}
+impl DaemonHandle {
+	/// Trigger the daemon process to stop
+	pub fn stop(&self) {
+		self.shutdown.cancel();
+	}
+
+	/// Stop the daemon process and wait for it to finish
+	pub async fn stop_wait(self) -> anyhow::Result<()> {
+		self.stop();
+		self.jh.await?;
+		Ok(())
+	}
+}
+
+pub(crate) fn start_daemon(
+	wallet: Arc<Wallet>,
+	onchain: Arc<RwLock<dyn DaemonizableOnchainWallet>>,
+) -> DaemonHandle {
+	let shutdown = CancellationToken::new();
+	let proc = DaemonProcess::new(shutdown.clone(), wallet, onchain);
+
+	let jh = tokio::spawn(proc.run());
+
+	DaemonHandle { shutdown, jh }
+}
 
 /// The daemon is responsible for running the wallet and performing the
 /// necessary actions to keep the wallet in a healthy state
-pub struct Daemon {
+struct DaemonProcess {
 	shutdown: CancellationToken,
 
 	connected: AtomicBool,
@@ -31,30 +59,18 @@ pub struct Daemon {
 	onchain: Arc<RwLock<dyn DaemonizableOnchainWallet>>,
 }
 
-impl Daemon {
-	/// Create a new [Daemon]
-	///
-	/// Arguments:
-	/// - `shutdown`: A signal receive to shutdown the daemon
-	/// - `wallet`: The wallet to run the daemon on
-	/// - `onchain`: The onchain wallet to run the daemon on
-	///
-	/// Returns:
-	/// - The new [Daemon]
-	pub fn new(
+impl DaemonProcess {
+	fn new(
 		shutdown: CancellationToken,
 		wallet: Arc<Wallet>,
 		onchain: Arc<RwLock<dyn DaemonizableOnchainWallet>>,
-	) -> anyhow::Result<Daemon> {
-		let daemon = Daemon {
-			shutdown,
-
+	) -> DaemonProcess {
+		DaemonProcess {
 			connected: AtomicBool::new(false),
+			shutdown,
 			wallet,
 			onchain,
-		};
-
-		Ok(daemon)
+		}
 	}
 
 	/// Run lightning sync process
@@ -100,7 +116,8 @@ impl Daemon {
 			}
 
 			tokio::select! {
-				_ = tokio::time::sleep(*SLOW_INTERVAL) => {},
+				_ = tokio::time::sleep(SLOW_INTERVAL) => {},
+
 				_ = self.shutdown.cancelled() => {
 					info!("Shutdown signal received! Shutting maintenance refresh process...");
 					break;
@@ -155,7 +172,7 @@ impl Daemon {
 			}
 
 			tokio::select! {
-				_ = tokio::time::sleep(*SLOW_INTERVAL) => {},
+				_ = tokio::time::sleep(SLOW_INTERVAL) => {},
 				_ = self.shutdown.cancelled() => {
 					info!("Shutdown signal received! Shutting round events process...");
 					break;
@@ -168,7 +185,7 @@ impl Daemon {
 	async fn run_server_connection_check_process(&self) {
 		loop {
 			tokio::select! {
-				_ = tokio::time::sleep(*FAST_INTERVAL) => {},
+				_ = tokio::time::sleep(FAST_INTERVAL) => {},
 				_ = self.shutdown.cancelled() => {
 					info!("Shutdown signal received! Shutting server connection check process...");
 					break;
@@ -181,11 +198,11 @@ impl Daemon {
 	}
 
 	async fn run_sync_processes(&self) {
-		let mut fast_interval = tokio::time::interval(*FAST_INTERVAL);
+		let mut fast_interval = tokio::time::interval(FAST_INTERVAL);
 		fast_interval.reset();
-		let mut medium_interval = tokio::time::interval(*MEDIUM_INTERVAL);
+		let mut medium_interval = tokio::time::interval(MEDIUM_INTERVAL);
 		medium_interval.reset();
-		let mut slow_interval = tokio::time::interval(*SLOW_INTERVAL);
+		let mut slow_interval = tokio::time::interval(SLOW_INTERVAL);
 		slow_interval.reset();
 
 		loop {
