@@ -12,9 +12,6 @@ pub enum MovementError {
 	#[error("Incorrect Pending Status: Attempt to incorrectly set movement status to pending")]
 	IncorrectPendingStatus,
 
-	#[error("Invalid Subsystem ID: {id} does not exist")]
-	InvalidSubsystemId { id: Subsystem },
-
 	#[error("Invalid Movement ID: {id} does not exist")]
 	InvalidMovementId { id: MovementId },
 
