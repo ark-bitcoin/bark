@@ -1756,8 +1756,6 @@ impl Wallet {
 	/// Select several vtxos to cover the provided amount
 	///
 	/// Returns an error if amount cannot be reached
-	///
-	/// If `max_depth` is set, it will filter vtxos that have a depth greater than it.
 	async fn select_vtxos_to_cover(
 		&self,
 		amount: Amount,
