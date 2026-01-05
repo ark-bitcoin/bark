@@ -313,7 +313,7 @@ use std::sync::Arc;
 use anyhow::{bail, Context};
 use bip39::Mnemonic;
 use bitcoin::{Amount, Network, OutPoint, ScriptBuf};
-use bitcoin::bip32::{self, Fingerprint};
+use bitcoin::bip32::{self, ChildNumber, Fingerprint};
 use bitcoin::secp256k1::{self, Keypair, PublicKey};
 use log::{trace, debug, info, warn, error};
 use tokio::sync::RwLock;
@@ -340,7 +340,12 @@ use crate::subsystem::{ArkoorMovement, BarkSubsystem, BoardMovement, RoundMoveme
 use crate::vtxo::selection::{FilterVtxos, VtxoFilter, RefreshStrategy};
 use crate::vtxo::state::{VtxoState, VtxoStateKind, UNSPENT_STATES};
 
-const ARK_PURPOSE_INDEX: u32 = 350;
+/// Derivation index for Bark usage
+const BARK_PURPOSE_INDEX: u32 = 350;
+/// Derivation index used to generate keypairs to sign VTXOs
+const VTXO_KEYS_INDEX: u32 = 0;
+/// Derivation index used to generate keypair for the mailbox
+const MAILBOX_KEY_INDEX: u32 = 1;
 
 lazy_static::lazy_static! {
 	/// Global secp context.
@@ -428,21 +433,38 @@ pub struct WalletProperties {
 ///
 /// The VTXO seed is derived by applying a hardened derivation
 /// step at index 350 from the wallet's seed.
-pub struct VtxoSeed(bip32::Xpriv);
+pub struct WalletSeed {
+	master: bip32::Xpriv,
+	vtxo: bip32::Xpriv,
+}
 
-impl VtxoSeed {
+impl WalletSeed {
 	fn new(network: Network, seed: &[u8; 64]) -> Self {
-		let master = bip32::Xpriv::new_master(network, seed).unwrap();
+		let bark_path = [ChildNumber::from_hardened_idx(BARK_PURPOSE_INDEX).unwrap()];
+		let master = bip32::Xpriv::new_master(network, seed)
+			.expect("invalid seed")
+			.derive_priv(&SECP, &bark_path)
+			.expect("purpose is valid");
 
-		Self(master.derive_priv(&SECP, &[ARK_PURPOSE_INDEX.into()]).unwrap())
+		let vtxo_path = [ChildNumber::from_hardened_idx(VTXO_KEYS_INDEX).unwrap()];
+		let vtxo = master.derive_priv(&SECP, &vtxo_path)
+			.expect("vtxo path is valid");
+
+		Self { master, vtxo }
 	}
 
 	fn fingerprint(&self) -> Fingerprint {
-		self.0.fingerprint(&SECP)
+		self.master.fingerprint(&SECP)
 	}
 
-	fn derive_keypair(&self, idx: u32) -> Keypair {
-		self.0.derive_priv(&SECP, &[idx.into()]).unwrap().to_keypair(&SECP)
+	fn derive_vtxo_keypair(&self, idx: u32) -> Keypair {
+		self.vtxo.derive_priv(&SECP, &[idx.into()]).unwrap().to_keypair(&SECP)
+	}
+
+	#[allow(unused)]
+	fn to_mailbox_keypair(&self) -> Keypair {
+		let mailbox_path = [ChildNumber::from_hardened_idx(MAILBOX_KEY_INDEX).unwrap()];
+		self.master.derive_priv(&SECP, &mailbox_path).unwrap().to_keypair(&SECP)
 	}
 }
 
@@ -595,8 +617,8 @@ pub struct Wallet {
 	/// Persistence backend for wallet state (keys metadata, VTXOs, movements, round state, etc.).
 	db: Arc<dyn BarkPersister>,
 
-	/// Deterministic seed material used to derive VTXO ownership keypairs and addresses.
-	vtxo_seed: VtxoSeed,
+	/// Deterministic seed material used to generate wallet keypairs.
+	seed: WalletSeed,
 
 	/// Optional live connection to an Ark server for round participation and synchronization.
 	server: parking_lot::RwLock<Option<ServerConnection>>,
@@ -646,7 +668,7 @@ impl Wallet {
 		let last_revealed = self.db.get_last_vtxo_key_index()?;
 
 		let index = last_revealed.map(|i| i + 1).unwrap_or(u32::MIN);
-		let keypair = self.vtxo_seed.derive_keypair(index);
+		let keypair = self.seed.derive_vtxo_keypair(index);
 
 		self.db.store_vtxo_key(index, keypair.public_key())?;
 		Ok((keypair, index))
@@ -666,7 +688,7 @@ impl Wallet {
 	/// * `Err(anyhow::Error)` - If the public key does not exist in the database or if an error
 	///   occurs during the database query.
 	pub fn peak_keypair(&self, index: u32) -> anyhow::Result<Keypair> {
-		let keypair = self.vtxo_seed.derive_keypair(index);
+		let keypair = self.seed.derive_vtxo_keypair(index);
 		if self.db.get_public_key_idx(&keypair.public_key())?.is_some() {
 			Ok(keypair)
 		} else {
@@ -688,7 +710,7 @@ impl Wallet {
 	/// * `Err(anyhow::Error)` - If an error occurred related to the database query
 	pub fn pubkey_keypair(&self, public_key: &PublicKey) -> anyhow::Result<Option<(u32, Keypair)>> {
 		if let Some(index) = self.db.get_public_key_idx(&public_key)? {
-			Ok(Some((index, self.vtxo_seed.derive_keypair(index))))
+			Ok(Some((index, self.seed.derive_vtxo_keypair(index))))
 		} else {
 			Ok(None)
 		}
@@ -707,7 +729,7 @@ impl Wallet {
 	pub fn get_vtxo_key(&self, vtxo: &Vtxo) -> anyhow::Result<Keypair> {
 		let idx = self.db.get_public_key_idx(&vtxo.user_pubkey())?
 			.context("VTXO key not found")?;
-		Ok(self.vtxo_seed.derive_keypair(idx))
+		Ok(self.seed.derive_vtxo_keypair(idx))
 	}
 
 	/// Generate a new [ark::Address].
@@ -778,7 +800,7 @@ impl Wallet {
 			}
 		}
 
-		let wallet_fingerprint = VtxoSeed::new(network, &mnemonic.to_seed("")).fingerprint();
+		let wallet_fingerprint = WalletSeed::new(network, &mnemonic.to_seed("")).fingerprint();
 		let properties = WalletProperties {
 			network: network,
 			fingerprint: wallet_fingerprint,
@@ -823,10 +845,12 @@ impl Wallet {
 	) -> anyhow::Result<Wallet> {
 		let properties = db.read_properties()?.context("Wallet is not initialised")?;
 
-		let seed = mnemonic.to_seed("");
-		let vtxo_seed = VtxoSeed::new(properties.network, &seed);
+		let seed = {
+			let seed = mnemonic.to_seed("");
+			WalletSeed::new(properties.network, &seed)
+		};
 
-		if properties.fingerprint != vtxo_seed.fingerprint() {
+		if properties.fingerprint != seed.fingerprint() {
 			bail!("incorrect mnemonic")
 		}
 
@@ -881,7 +905,7 @@ impl Wallet {
 			}
 		};
 
-		Ok(Wallet { config, db, vtxo_seed, exit, movements, server, chain, subsystem_ids })
+		Ok(Wallet { config, db, seed, exit, movements, server, chain, subsystem_ids })
 	}
 
 	/// Similar to [Wallet::open] however this also unilateral exits using the provided onchain
@@ -1492,7 +1516,7 @@ impl Wallet {
 	pub async fn sync_oors(&self) -> anyhow::Result<()> {
 		let last_pk_index = self.db.get_last_vtxo_key_index()?.unwrap_or_default();
 		let pubkeys = (0..=last_pk_index).map(|idx| {
-			self.vtxo_seed.derive_keypair(idx).public_key()
+			self.seed.derive_vtxo_keypair(idx).public_key()
 		}).collect::<Vec<_>>();
 
 		self.sync_arkoor_for_pubkeys(&pubkeys).await?;
