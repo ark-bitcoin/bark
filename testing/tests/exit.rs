@@ -1,13 +1,16 @@
 use std::iter;
 use std::str::FromStr;
+use std::sync::Arc;
 
 use bitcoin::{Address, Amount, FeeRate};
 use bitcoin::params::Params;
 use futures::FutureExt;
 use rand::random;
 
+
+use ark::VtxoPolicy;
 use ark::lightning::{Invoice, PaymentHash};
-use ark::vtxo::{exit_taproot, VtxoId, VtxoPolicyKind};
+use ark::vtxo::{VtxoId, VtxoPolicyKind};
 use bark_json::cli::{MovementDestination, MovementStatus, PaymentMethod};
 use bark_json::exit::ExitState;
 use bark_json::exit::states::ExitStartState;
@@ -20,6 +23,7 @@ use ark_testing::{btc, sat, signed_sat, Bark, TestContext};
 use ark_testing::constants::{BOARD_CONFIRMATIONS, ROUND_CONFIRMATIONS};
 use ark_testing::daemon::captaind::{self, ArkClient};
 use ark_testing::exit::complete_exit;
+
 
 #[tokio::test]
 async fn simple_exit() {
@@ -324,7 +328,8 @@ async fn double_exit_call() {
 	let last_moves = &movements[4..];
 	assert!(
 		vtxos.iter().all(|v| last_moves.iter().any(|m| {
-				let exit_spk = exit_taproot(v.user_pubkey, v.server_pubkey, v.exit_delta).script_pubkey();
+				let exit_spk = VtxoPolicy::new_pubkey(v.user_pubkey)
+					.taproot(v.server_pubkey, v.exit_delta, v.expiry_height).script_pubkey();
 				let address = Address::from_script(&exit_spk, Params::REGTEST)
 					.unwrap().to_string();
 				*m.input_vtxos.first().unwrap() == v.id &&
@@ -353,7 +358,8 @@ async fn double_exit_call() {
 	assert_eq!(*last_move.input_vtxos.first().unwrap(), vtxo.id);
 	assert_eq!(bark1.vtxos().await.len(), 0, "vtxo should be marked as spent");
 
-	let exit_spk = exit_taproot(vtxo.user_pubkey, vtxo.server_pubkey, vtxo.exit_delta).script_pubkey();
+	let exit_spk = VtxoPolicy::new_pubkey(vtxo.user_pubkey)
+		.taproot(vtxo.server_pubkey, vtxo.exit_delta, vtxo.expiry_height).script_pubkey();
 	let address = Address::from_script(&exit_spk, Params::REGTEST).unwrap().to_string();
 	assert_eq!(last_move.sent_to[0].destination, PaymentMethod::Bitcoin(address), "movement destination should be exit_spk");
 
@@ -509,6 +515,11 @@ async fn bark_should_exit_a_failed_htlc_out_that_server_refuse_to_revoke() {
 	assert_eq!(bark_1.list_exits().await[0].state, ExitState::Start(ExitStartState { tip_height: desired_height }));
 	complete_exit(&ctx, &bark_1).await;
 
+	bark_1.claim_all_exits(bark_1.get_onchain_address().await).await;
+	ctx.generate_blocks(1).await;
+
+	assert_eq!(bark_1.onchain_balance().await, sat(199_995_556));
+
 	// Check that we have a lightning send -> exit movement chain
 	let movements = bark_1.history().await;
 	let [.., send_movement, exit_movement] = movements.as_slice() else {
@@ -559,8 +570,6 @@ async fn bark_should_exit_a_failed_htlc_out_that_server_refuse_to_revoke() {
 	assert_eq!(exit_movement.exited_vtxos.len(), 0);
 	assert_eq!(exit_movement.time.completed_at.is_some(), true);
 	assert_eq!(exit_movement.metadata.is_none(), true);
-
-	// TODO: Drain exit outputs then check balance in onchain wallet
 }
 
 #[tokio::test]
@@ -639,6 +648,10 @@ async fn bark_should_exit_a_pending_htlc_out_that_server_refuse_to_revoke() {
 	assert_eq!(bark_1.list_exits().await[0].state, ExitState::Start(ExitStartState { tip_height: desired_height }));
 	complete_exit(&ctx, &bark_1).await;
 
+	bark_1.claim_all_exits(bark_1.get_onchain_address().await).await;
+	ctx.generate_blocks(1).await;
+	assert_eq!(bark_1.onchain_balance().await, sat(199_995_556));
+
 	assert_eq!(bark_1.offchain_balance().await.pending_lightning_send, btc(0));
 	let vtxos = bark_1.vtxos().await;
 	assert!(!vtxos.iter().any(|v| matches!(v.state, VtxoStateInfo::Locked { .. })), "should not be any locked vtxo left");
@@ -692,8 +705,6 @@ async fn bark_should_exit_a_pending_htlc_out_that_server_refuse_to_revoke() {
 	assert_eq!(exit_movement.exited_vtxos.len(), 0);
 	assert_eq!(exit_movement.time.completed_at.is_some(), true);
 	assert_eq!(exit_movement.metadata.is_none(), true);
-
-	// TODO: Drain exit outputs then check balance in onchain wallet
 }
 
 #[tokio::test]
@@ -889,4 +900,115 @@ async fn exit_oor_ping_pong_then_rbf_tx() {
 	assert_eq!(bark1.onchain_utxos().await.len(), 2, "We should have board change and a claim UTXO");
 	assert_eq!(bark2.onchain_balance().await, sat(1_286_175));
 	assert_eq!(bark2.onchain_utxos().await.len(), 2, "We should have the funding and a claim UTXO");
+}
+
+#[tokio::test]
+async fn bark_should_exit_a_htlc_recv_that_server_refuse_to_cosign() {
+	let ctx = TestContext::new("exit/bark_should_exit_a_htlc_recv_that_server_refuse_to_cosign").await;
+	let ctx = Arc::new(ctx);
+
+	let lightning = ctx.new_lightning_setup("lightningd").await;
+
+	// Start a server and link it to our cln installation
+	let srv = ctx.new_captaind_with_funds("srv", Some(&lightning.receiver), btc(10)).await;
+
+	/// This proxy will refuse to revoke the htlc out.
+	#[derive(Clone)]
+	struct Proxy;
+	#[tonic::async_trait]
+	impl captaind::proxy::ArkRpcProxy for Proxy {
+		async fn claim_lightning_receive(
+			&self,
+			upstream: &mut ArkClient,
+			req: server_rpc::protos::ClaimLightningReceiveRequest,
+		) -> Result<server_rpc::protos::ArkoorPackageCosignResponse, tonic::Status> {
+			upstream.claim_lightning_receive(req).await?;
+			Err(tonic::Status::internal("Refused to finish bolt11 board"))
+		}
+	}
+
+	let proxy = srv.get_proxy_rpc(Proxy).await;
+
+	// Start a bark and create a VTXO to be able to board
+	let bark = Arc::new(ctx.new_bark_with_funds("bark", &proxy.address, btc(2.1)).await);
+	bark.board(btc(2)).await;
+	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
+
+	let lightning_board_amount = btc(1);
+	let invoice_info = bark.bolt11_invoice(lightning_board_amount).await;
+
+	let cloned_invoice_info = invoice_info.clone();
+	let res1 = tokio::spawn(async move {
+		lightning.sender.pay_bolt11(cloned_invoice_info.invoice).await;
+	});
+
+	let _ = bark.try_lightning_receive(invoice_info.invoice.clone()).await;
+
+	res1.await.unwrap();
+
+	// vtxo expiry is 144, so exit should be triggered after 120 blocks
+	ctx.generate_blocks(130).await;
+
+	bark.sync().await;
+
+	// Should start an exit
+	assert_eq!(bark.list_exits().await[0].state, ExitState::Start(ExitStartState { tip_height: 251 }));
+	complete_exit(&ctx, &bark).await;
+
+	bark.claim_all_exits(bark.get_onchain_address().await).await;
+	ctx.generate_blocks(1).await;
+
+	assert_eq!(bark.onchain_balance().await, sat(109_993_699));
+
+	// Check that we have a lightning receive -> exit movement chain
+	let invoice = Invoice::from_str(&invoice_info.invoice).unwrap();
+	let movements = bark.history().await;
+	let [.., ln_movement, exit_movement] = movements.as_slice() else {
+		panic!("Should have at least two movements");
+	};
+
+	// Verify receive movement
+	assert_eq!(ln_movement.status, MovementStatus::Failed);
+	assert_eq!(ln_movement.subsystem.name, "bark.lightning_receive");
+	assert_eq!(ln_movement.subsystem.kind, "receive");
+	assert_eq!(ln_movement.intended_balance, lightning_board_amount.to_signed().unwrap());
+	assert_eq!(ln_movement.effective_balance, lightning_board_amount.to_signed().unwrap());
+	assert_eq!(ln_movement.offchain_fee, sat(0));
+	assert_eq!(ln_movement.sent_to.len(), 0);
+	assert_eq!(ln_movement.received_on.len(), 1);
+	assert_eq!(ln_movement.received_on.first().unwrap(), &MovementDestination {
+		destination: PaymentMethod::Invoice(invoice.to_string()),
+		amount: lightning_board_amount,
+	});
+	assert_eq!(ln_movement.input_vtxos.len(), 0);
+	assert_eq!(ln_movement.output_vtxos.len(), 0); // HTLC VTXOs aren't included here
+	assert_eq!(ln_movement.exited_vtxos.len(), 1); // HTLC VTXOs are included here
+	assert_eq!(ln_movement.time.completed_at.is_some(), true);
+
+	assert_eq!(ln_movement.metadata.is_some(), true);
+	let metadata = ln_movement.metadata.as_ref().unwrap();
+	let payment_hash = metadata.get("payment_hash").map(|ph| serde_json::from_value::<PaymentHash>(ph.clone()).unwrap());
+	let htlc_vtxos = metadata.get("htlc_vtxos").map(|v| serde_json::from_value::<Vec<VtxoId>>(v.clone()).unwrap()).unwrap();
+	assert_eq!(payment_hash, Some(invoice.payment_hash()));
+	assert_eq!(htlc_vtxos.len(), 1);
+	assert_eq!(ln_movement.exited_vtxos, htlc_vtxos);
+
+	// Verify exit movement
+	assert_eq!(exit_movement.status, MovementStatus::Successful);
+	assert_eq!(exit_movement.subsystem.name, "bark.exit");
+	assert_eq!(exit_movement.subsystem.kind, "start");
+	assert_eq!(exit_movement.intended_balance, -lightning_board_amount.to_signed().unwrap());
+	assert_eq!(exit_movement.effective_balance, -lightning_board_amount.to_signed().unwrap());
+	assert_eq!(exit_movement.offchain_fee, sat(0));
+	assert_eq!(exit_movement.sent_to.len(), 1);
+	let sent_to = exit_movement.sent_to.first().unwrap();
+	assert!(matches!(sent_to.destination, PaymentMethod::Bitcoin(_)));
+	assert_eq!(sent_to.amount, lightning_board_amount);
+	assert_eq!(exit_movement.received_on.len(), 0);
+	assert_eq!(exit_movement.input_vtxos.len(), 1);
+	assert_eq!(exit_movement.input_vtxos, htlc_vtxos);
+	assert_eq!(exit_movement.output_vtxos.len(), 0);
+	assert_eq!(exit_movement.exited_vtxos.len(), 0);
+	assert_eq!(exit_movement.time.completed_at.is_some(), true);
+	assert_eq!(exit_movement.metadata.is_none(), true);
 }

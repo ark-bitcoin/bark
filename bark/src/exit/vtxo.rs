@@ -14,14 +14,13 @@ use log::{debug, trace};
 
 use ark::{Vtxo, VtxoId};
 
-use crate::chain::ChainSource;
 use crate::exit::models::{ExitError, ExitState};
 use crate::exit::progress::{ExitStateProgress, ProgressContext, ProgressStep};
 use crate::exit::transaction_manager::ExitTransactionManager;
 use crate::onchain::ExitUnilaterally;
 use crate::persist::BarkPersister;
 use crate::persist::models::StoredExit;
-use crate::WalletVtxo;
+use crate::{Wallet, WalletVtxo};
 
 /// Tracks the exit lifecycle for a single [Vtxo].
 ///
@@ -143,9 +142,8 @@ impl ExitVtxo {
 	/// - If `fee_rate_override` is `None`, a suitable fee rate will be calculated.
 	pub async fn progress(
 		&mut self,
-		chain_source: &ChainSource,
+		wallet: &Wallet,
 		tx_manager: &mut ExitTransactionManager,
-		persister: &dyn BarkPersister,
 		onchain: &mut dyn ExitUnilaterally,
 		fee_rate_override: Option<FeeRate>,
 		continue_until_finished: bool,
@@ -156,21 +154,21 @@ impl ExitVtxo {
 			});
 		}
 
-		let wallet_vtxo = self.get_vtxo(persister)?;
+		let wallet_vtxo = self.get_vtxo(&*wallet.db)?;
 		const MAX_ITERATIONS: usize = 100;
 		for _ in 0..MAX_ITERATIONS {
 			let mut context = ProgressContext {
 				vtxo: &wallet_vtxo.vtxo,
 				exit_txids: self.txids.as_ref().unwrap(),
-				chain_source: &chain_source,
-				fee_rate: fee_rate_override.unwrap_or(chain_source.fee_rates().await.fast),
+				wallet,
+				fee_rate: fee_rate_override.unwrap_or(wallet.chain.fee_rates().await.fast),
 				tx_manager,
 			};
 			// Attempt to move to the next state, which may or may not generate a new state
-			trace!("Progressing VTXO {} at height {}", self.id(), chain_source.tip().await.unwrap());
+			trace!("Progressing VTXO {} at height {}", self.id(), wallet.chain.tip().await.unwrap());
 			match self.state.clone().progress(&mut context, onchain).await {
 				Ok(new_state) => {
-					self.update_state_if_newer(new_state, persister)?;
+					self.update_state_if_newer(new_state, &*wallet.db)?;
 					if !continue_until_finished {
 						return Ok(());
 					}
@@ -182,7 +180,7 @@ impl ExitVtxo {
 				Err(e) => {
 					// We may need to commit a new state before returning an error
 					if let Some(new_state) = e.state {
-						self.update_state_if_newer(new_state, persister)?;
+						self.update_state_if_newer(new_state, &*wallet.db)?;
 					}
 					return Err(e.error);
 				}

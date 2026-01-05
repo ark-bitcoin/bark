@@ -1,5 +1,6 @@
 
 pub mod clause;
+pub mod signing;
 
 use std::fmt;
 use std::str::FromStr;
@@ -9,9 +10,9 @@ use bitcoin::secp256k1::PublicKey;
 
 use bitcoin_ext::{BlockDelta, BlockHeight, TaprootSpendInfoExt};
 
-use crate::vtxo::{checkpoint_taproot, exit_clause, exit_taproot};
-use crate::scripts;
-use crate::lightning::{PaymentHash, server_htlc_receive_taproot, server_htlc_send_taproot};
+use crate::{SECP, musig };
+use crate::lightning::PaymentHash;
+use crate::vtxo::TapScriptClause;
 use crate::vtxo::policy::clause::{
 	DelayedSignClause, DelayedTimelockSignClause, HashDelaySignClause, TimelockSignClause,
 	VtxoClause,
@@ -50,7 +51,7 @@ impl FromStr for VtxoPolicyKind {
 			"checkpoint" => Self::Checkpoint,
 			"server-htlc-send" => Self::ServerHtlcSend,
 			"server-htlc-receive" => Self::ServerHtlcRecv,
-			_ => return Err(format!("unknown VtxoPolicyType: {}", s)),
+			_ => return Err(format!("unknown VtxoPolicyKind: {}", s)),
 		})
 	}
 }
@@ -67,7 +68,7 @@ impl<'de> serde::Deserialize<'de> for VtxoPolicyKind {
 		impl<'de> serde::de::Visitor<'de> for Visitor {
 			type Value = VtxoPolicyKind;
 			fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-				write!(f, "a VtxoPolicyType")
+				write!(f, "a VtxoPolicyKind")
 			}
 			fn visit_str<E: serde::de::Error>(self, v: &str) -> Result<Self::Value, E> {
 				VtxoPolicyKind::from_str(v).map_err(serde::de::Error::custom)
@@ -77,6 +78,14 @@ impl<'de> serde::Deserialize<'de> for VtxoPolicyKind {
 	}
 }
 
+/// Policy enabling VTXO protected with a public key.
+///
+/// This will build a taproot with 2 spending paths:
+/// 1. The keyspend path allows Alice and Server to collaborate to spend
+/// the VTXO.
+///
+/// 2. The script-spend path allows Alice to unilaterally spend the VTXO
+/// after a delay.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct PubkeyVtxoPolicy {
 	pub user_pubkey: PublicKey,
@@ -97,8 +106,29 @@ impl PubkeyVtxoPolicy {
 	pub fn clauses(&self, exit_delta: BlockDelta) -> Vec<VtxoClause> {
 		vec![self.user_pubkey_claim_clause(exit_delta).into()]
 	}
+
+	pub fn taproot(
+		&self,
+		server_pubkey: PublicKey,
+		exit_delta: BlockDelta,
+	) -> taproot::TaprootSpendInfo {
+		let combined_pk = musig::combine_keys([self.user_pubkey, server_pubkey]);
+
+		let user_pubkey_claim_clause = self.user_pubkey_claim_clause(exit_delta);
+		taproot::TaprootBuilder::new()
+			.add_leaf(0, user_pubkey_claim_clause.tapscript()).unwrap()
+			.finalize(&SECP, combined_pk).unwrap()
+	}
 }
 
+/// Policy enabling server checkpoints
+///
+/// This will build a taproot with 2 clauses:
+/// 1. The keyspend path allows Alice and Server to collaborate to spend
+/// the checkpoint.
+///
+/// 2. The script-spend path allows Server to spend the checkpoint after
+/// the expiry height.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct CheckpointVtxoPolicy {
 	pub user_pubkey: PublicKey,
@@ -127,7 +157,37 @@ impl CheckpointVtxoPolicy {
 	) -> Vec<VtxoClause> {
 		vec![self.server_sweeping_clause(expiry_height, server_pubkey).into()]
 	}
+
+	pub fn taproot(
+		&self,
+		server_pubkey: PublicKey,
+		expiry_height: BlockHeight,
+	) -> taproot::TaprootSpendInfo {
+		let combined_pk = musig::combine_keys([self.user_pubkey, server_pubkey]);
+		let server_sweeping_clause = self.server_sweeping_clause(expiry_height, server_pubkey);
+
+		taproot::TaprootBuilder::new()
+			.add_leaf(0, server_sweeping_clause.tapscript()).unwrap()
+			.finalize(&SECP, combined_pk).unwrap()
+	}
 }
+
+/// Policy enabling outgoing Lightning payments.
+///
+/// This will build a taproot with 3 clauses:
+/// 1. The keyspend path allows Alice and Server to collaborate to spend
+/// the HTLC. The Server can use this path to revoke the HTLC if payment
+/// failed
+///
+/// 2. The script-spend path contains one leaf that allows Server to spend
+/// the HTLC after the expiry, if it knows the preimage. Server can use
+/// this path if Alice tries to spend using her clause.
+///
+/// 3. The second leaf allows Alice to spend the HTLC after its expiry
+/// and with a delay. Alice must use this path if the server fails to
+/// provide the preimage and refuse to revoke the HTLC. It will either
+/// force the Server to reveal the preimage (by spending using her clause)
+/// or give Alice her money back.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ServerHtlcSendVtxoPolicy {
 	pub user_pubkey: PublicKey,
@@ -180,8 +240,36 @@ impl ServerHtlcSendVtxoPolicy {
 			self.user_claim_after_expiry_clause(exit_delta).into(),
 		]
 	}
+
+	pub fn taproot(&self, server_pubkey: PublicKey, exit_delta: BlockDelta) -> taproot::TaprootSpendInfo {
+		let server_reveals_preimage_clause = self.server_reveals_preimage_clause(server_pubkey, exit_delta);
+		let user_claim_after_expiry_clause = self.user_claim_after_expiry_clause(exit_delta);
+
+		let combined_pk = musig::combine_keys([self.user_pubkey, server_pubkey]);
+		bitcoin::taproot::TaprootBuilder::new()
+			.add_leaf(1, server_reveals_preimage_clause.tapscript()).unwrap()
+			.add_leaf(1, user_claim_after_expiry_clause.tapscript()).unwrap()
+			.finalize(&SECP, combined_pk).unwrap()
+	}
 }
 
+
+/// Policy enabling incoming Lightning payments.
+///
+/// This will build a taproot with 3 clauses:
+/// 1. The keyspend path allows Alice and Server to collaborate to spend
+/// the HTLC. This is the expected path to be used. Server should only
+/// accept to collaborate if Alice reveals the preimage.
+///
+/// 2. The script-spend path contains one leaf that allows Server to spend
+/// the HTLC after the expiry, with an exit delta delay. Server can use
+/// this path if Alice tries to spend the HTLC using the 3rd path after
+/// the HTLC expiry
+///
+/// 3. The second leaf allows Alice to spend the HTLC if she knows the
+/// preimage, but with a greater exit delta delay than server's clause.
+/// Alice must use this path if she revealed the preimage but Server
+/// refused to collaborate.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ServerHtlcRecvVtxoPolicy {
 	pub user_pubkey: PublicKey,
@@ -223,6 +311,17 @@ impl ServerHtlcRecvVtxoPolicy {
 			self.user_reveals_preimage_clause(exit_delta).into(),
 			self.server_claim_after_expiry_clause(server_pubkey, exit_delta).into(),
 		]
+	}
+
+	pub fn taproot(&self, server_pubkey: PublicKey, exit_delta: BlockDelta) -> taproot::TaprootSpendInfo {
+		let server_claim_after_expiry_clause = self.server_claim_after_expiry_clause(server_pubkey, exit_delta);
+		let user_reveals_preimage_clause = self.user_reveals_preimage_clause(exit_delta);
+
+		let combined_pk = musig::combine_keys([self.user_pubkey, server_pubkey]);
+		bitcoin::taproot::TaprootBuilder::new()
+			.add_leaf(1, server_claim_after_expiry_clause.tapscript()).unwrap()
+			.add_leaf(1, user_reveals_preimage_clause.tapscript()).unwrap()
+			.finalize(&SECP, combined_pk).unwrap()
 	}
 }
 
@@ -350,66 +449,17 @@ impl VtxoPolicy {
 		}
 	}
 
-	pub(crate) fn taproot(
+	pub fn taproot(
 		&self,
 		server_pubkey: PublicKey,
 		exit_delta: BlockDelta,
 		expiry_height: BlockHeight,
 	) -> taproot::TaprootSpendInfo {
 		match self {
-			Self::Pubkey(PubkeyVtxoPolicy { user_pubkey }) => {
-				exit_taproot(*user_pubkey, server_pubkey, exit_delta)
-			},
-			Self::Checkpoint(CheckpointVtxoPolicy {user_pubkey}) => {
-				checkpoint_taproot(*user_pubkey, server_pubkey, expiry_height)
-			}
-			Self::ServerHtlcSend(ServerHtlcSendVtxoPolicy { user_pubkey, payment_hash, htlc_expiry }) => {
-				server_htlc_send_taproot(
-					*payment_hash, server_pubkey, *user_pubkey, exit_delta, *htlc_expiry,
-				)
-			},
-			Self::ServerHtlcRecv(ServerHtlcRecvVtxoPolicy {
-				user_pubkey, payment_hash, htlc_expiry_delta, htlc_expiry
-			}) => {
-				server_htlc_receive_taproot(
-					*payment_hash,
-					server_pubkey,
-					*user_pubkey,
-					exit_delta,
-					*htlc_expiry_delta,
-					*htlc_expiry,
-				)
-			},
-		}
-	}
-
-	/// Generates a script based on the exit conditions for a given policy type.
-	///
-	/// Depending on the specific policy variant, this function produces an appropriate script
-	/// that implements the user exit clause. The exit clause enforces specific rules for exiting
-	/// the contract or completing a transaction based on the provided `exit_delta` parameter.
-	pub fn user_exit_clause(&self, exit_delta: BlockDelta) -> ScriptBuf {
-		match self {
-			Self::Pubkey(PubkeyVtxoPolicy { user_pubkey }) => {
-				exit_clause(*user_pubkey, exit_delta)
-			},
-			Self::Checkpoint(_) => {
-				todo!("This clause cannot be exited by the user")
-			},
-			Self::ServerHtlcSend(ServerHtlcSendVtxoPolicy { user_pubkey, htlc_expiry, .. }) => {
-				scripts::delay_timelock_sign(
-					2 * exit_delta, *htlc_expiry, user_pubkey.x_only_public_key().0,
-				)
-			},
-			Self::ServerHtlcRecv(ServerHtlcRecvVtxoPolicy {
-				user_pubkey, payment_hash, htlc_expiry_delta, ..
-			}) => {
-				scripts::hash_delay_sign(
-					payment_hash.to_sha256_hash(),
-					exit_delta + *htlc_expiry_delta,
-					user_pubkey.x_only_public_key().0,
-				)
-			},
+			Self::Pubkey(policy) => policy.taproot(server_pubkey, exit_delta),
+			Self::Checkpoint(policy) => policy.taproot(server_pubkey, expiry_height),
+			Self::ServerHtlcSend(policy) => policy.taproot(server_pubkey, exit_delta),
+			Self::ServerHtlcRecv(policy) => policy.taproot(server_pubkey, exit_delta),
 		}
 	}
 

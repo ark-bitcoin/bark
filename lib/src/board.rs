@@ -23,7 +23,7 @@ use bitcoin_ext::{BlockDelta, BlockHeight, TaprootSpendInfoExt};
 use crate::error::IncorrectSigningKeyError;
 use crate::{musig, scripts, Vtxo, VtxoPolicy, SECP};
 use crate::tree::signed::cosign_taproot;
-use crate::vtxo::{self, exit_taproot, GenesisItem, GenesisTransition};
+use crate::vtxo::{self, GenesisItem, GenesisTransition};
 
 use self::state::BuilderState;
 
@@ -169,7 +169,8 @@ impl BoardBuilder<state::CanGenerateNonces> {
 			value: self.amount.expect("state invariant"),
 		};
 
-		let exit_taproot = exit_taproot(self.user_pubkey, self.server_pubkey, self.exit_delta);
+		let exit_taproot = VtxoPolicy::new_pubkey(self.user_pubkey)
+			.taproot(self.server_pubkey, self.exit_delta, self.expiry_height);
 		let exit_txout = TxOut {
 			value: self.amount.expect("state invariant"),
 			script_pubkey: exit_taproot.script_pubkey(),
@@ -219,7 +220,8 @@ impl<S: state::CanSign> BoardBuilder<S> {
 			script_pubkey: funding_taproot.script_pubkey(),
 		};
 
-		let exit_taproot = exit_taproot(self.user_pubkey, self.server_pubkey, self.exit_delta);
+		let exit_taproot = VtxoPolicy::new_pubkey(self.user_pubkey)
+			.taproot(self.server_pubkey, self.exit_delta, self.expiry_height);
 		let exit_txout = TxOut {
 			value: self.amount.expect("state invariant"),
 			script_pubkey: exit_taproot.script_pubkey(),

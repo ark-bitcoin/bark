@@ -27,6 +27,9 @@ pub enum ExitError {
 		output: Amount,
 	},
 
+	#[error("Claim Missing Signable Clause: Couldn't find a signable clause for VTXO {vtxo}")]
+	ClaimMissingSignableClause { vtxo: VtxoId },
+
 	#[error("Claim Signing Error: Unable to sign claim: {error}")]
 	ClaimSigningError { error: String },
 
@@ -88,11 +91,8 @@ pub enum ExitError {
 		error: String
 	},
 
-	#[error("Invalid Local Locktime: {error}")]
-	InvalidLocalLocktime {
-		tip: BlockHeight,
-		error: String
-	},
+	#[error("Invalid Locktime ({tip}): {error}")]
+	InvalidLocktime { tip: BlockHeight, error: String },
 
 	#[error("Invalid Wallet State: {error}")]
 	InvalidWalletState { error: String },

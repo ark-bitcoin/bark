@@ -85,18 +85,21 @@
 //! # async fn main() -> anyhow::Result<()> {
 //! let (mut bark_wallet, mut onchain_wallet) = get_wallets().await;
 //!
+//! // Get lock on exit system
+//! let mut exit_lock = bark_wallet.exit.write().await;
+//!
 //! // Mark all VTXOs for exit.
-//! bark_wallet.exit.write().await.start_exit_for_entire_wallet().await?;
+//! exit_lock.start_exit_for_entire_wallet().await?;
 //!
 //! // Transactions will be broadcast and require confirmations so keep periodically calling this.
-//! bark_wallet.exit.write().await.sync_no_progress(&onchain_wallet).await?;
-//! bark_wallet.exit.write().await.progress_exits(&mut onchain_wallet, None).await?;
+//! exit_lock.sync_no_progress(&onchain_wallet).await?;
+//! exit_lock.progress_exits(&bark_wallet, &mut onchain_wallet, None).await?;
 //!
 //! // Once all VTXOs are claimable, construct a PSBT to drain them.
 //! let drain_to = bitcoin::Address::from_str("bc1p...")?.assume_checked();
-//! let exit = bark_wallet.exit.read().await;
-//! let drain_psbt = exit.drain_exits(
-//!   &exit.list_claimable(),
+//! let claimable_outputs = exit_lock.list_claimable();
+//! let drain_psbt = exit_lock.drain_exits(
+//!   &claimable_outputs,
 //!   &bark_wallet,
 //!   drain_to,
 //!   None,
@@ -128,12 +131,13 @@ use std::sync::Arc;
 
 use anyhow::Context;
 use bitcoin::{
-	sighash, Address, Amount, FeeRate, Psbt, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Witness,
+	Address, Amount, FeeRate, Psbt, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Witness, sighash
 };
 use bitcoin::consensus::Params;
 use log::{error, info, trace, warn};
 
-use ark::{Vtxo, VtxoId, SECP};
+use ark::{Vtxo, VtxoId};
+use ark::vtxo::policy::signing::VtxoSigner;
 use bitcoin_ext::{BlockHeight, P2TR_DUST};
 
 use crate::Wallet;
@@ -394,6 +398,7 @@ impl Exit {
 	/// The exit status of each VTXO being exited which has also not yet been spent
 	pub async fn progress_exits(
 		&mut self,
+		wallet: &Wallet,
 		onchain: &mut dyn ExitUnilaterally,
 		fee_rate_override: Option<FeeRate>,
 	) -> anyhow::Result<Option<Vec<ExitProgressStatus>>> {
@@ -406,9 +411,8 @@ impl Exit {
 
 			info!("Progressing exit for VTXO {}", ev.id());
 			let error = match ev.progress(
-				&self.chain_source,
+				wallet,
 				&mut self.tx_manager,
-				&*self.persister,
 				onchain,
 				fee_rate_override,
 				true,
@@ -442,6 +446,7 @@ impl Exit {
 	/// for network updates will be progressed.
 	pub async fn sync(
 		&mut self,
+		wallet: &Wallet,
 		onchain: &mut dyn ExitUnilaterally,
 	) -> anyhow::Result<()> {
 		self.sync_no_progress(onchain).await?;
@@ -449,7 +454,7 @@ impl Exit {
 			// If the exit is waiting for new blocks, we should trigger an update
 			if exit.state().requires_network_update() {
 				if let Err(e) = exit.progress(
-					&self.chain_source, &mut self.tx_manager, &*self.persister, onchain, None, false,
+					wallet, &mut self.tx_manager, onchain, None, false,
 				).await {
 					error!("Error syncing exit for VTXO {}: {}", exit.id(), e);
 				}
@@ -512,16 +517,10 @@ impl Exit {
 			if let Some(vtxo) = vtxo {
 				let exit_vtxo = *claimable.get(&vtxo.id()).context("vtxo is not claimable yet")?;
 
-				let keypair = wallet.get_vtxo_key(&vtxo)?;
+				let witness = wallet.sign_input(&vtxo, i, &mut shc, &prevouts)
+					.map_err(|e| ExitError::ClaimSigningError { error: e.to_string() })?;
 
-				input.maybe_sign_exit_claim_input(
-					&SECP,
-					&mut shc,
-					&prevouts,
-					i,
-					&keypair
-				)?;
-
+				input.final_script_witness = Some(witness);
 				spent.push(exit_vtxo);
 			}
 		}
@@ -565,17 +564,22 @@ impl Exit {
 				if !matches!(input.state(), ExitState::Claimable(..)) {
 					return Err(ExitError::VtxoNotClaimable { vtxo: input.id() });
 				}
+
 				output_amount += vtxo.amount();
+
+				let clause = wallet.find_signable_clause(vtxo)
+					.ok_or(ExitError::ClaimMissingSignableClause { vtxo: vtxo.id() })?;
+
 				tx_ins.push(TxIn {
 					previous_output: vtxo.point(),
 					script_sig: ScriptBuf::default(),
-					sequence: Sequence::from_height(vtxo.exit_delta()),
+					sequence: clause.sequence().unwrap_or(Sequence::ZERO),
 					witness: Witness::new(),
 				});
 			}
 
 			let locktime = bitcoin::absolute::LockTime::from_height(tip)
-				.map_err(|e| ExitError::InvalidLocalLocktime { tip, error: e.to_string() })?;
+				.map_err(|e| ExitError::InvalidLocktime { tip, error: e.to_string() })?;
 
 			Transaction {
 				version: bitcoin::transaction::Version(3),

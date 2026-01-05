@@ -1,12 +1,8 @@
+use std::borrow::BorrowMut;
 
-
-use std::borrow::{Borrow, BorrowMut};
-
-use bitcoin::{psbt, sighash, taproot, Transaction, TxOut, Witness};
-use bitcoin::secp256k1::{self, Keypair};
+use bitcoin::psbt;
 
 use ark::{ProtocolEncoding, Vtxo};
-use ark::error::IncorrectSigningKeyError;
 
 const PROP_KEY_PREFIX: &'static [u8] = "bark".as_bytes();
 
@@ -34,58 +30,6 @@ pub trait PsbtInputExt: BorrowMut<psbt::Input> {
 		self.borrow().proprietary.get(&*PROP_KEY_CLAIM_INPUT)
 			.map(|e| Vtxo::deserialize(&e).expect("corrupt psbt"))
 	}
-
-	/// If [`self`] has an exit claim input on it, it'll be signed using
-	/// provided `vtxo_key` and signature will be put in witness
-	///
-	/// ### Panic
-	///
-	/// This call will panic if provided keypair's public key does not
-	/// match VTXO's spec one
-	fn maybe_sign_exit_claim_input(
-		&mut self,
-		secp: &secp256k1::Secp256k1<impl secp256k1::Signing>,
-		sighash_cache: &mut sighash::SighashCache<impl Borrow<Transaction>>,
-		prevouts: &sighash::Prevouts<impl Borrow<TxOut>>,
-		input_idx: usize,
-		vtxo_key: &Keypair,
-	) -> Result<(), IncorrectSigningKeyError> {
-		let claim = if let Some(c) = self.get_exit_claim_input() {
-			c
-		} else {
-			return Ok(());
-		};
-
-		if vtxo_key.public_key() != claim.user_pubkey() {
-			return Err(IncorrectSigningKeyError {
-				required: Some(claim.user_pubkey()),
-				provided: vtxo_key.public_key(),
-			});
-		}
-
-		// Now we need to sign for this.
-		let exit_script = claim.policy().user_exit_clause(claim.exit_delta());
-		let leaf_hash = taproot::TapLeafHash::from_script(
-			&exit_script,
-			taproot::LeafVersion::TapScript,
-		);
-		let sighash = sighash_cache.taproot_script_spend_signature_hash(
-			input_idx, prevouts, leaf_hash, sighash::TapSighashType::Default,
-		).expect("all prevouts provided");
-
-		let sig = secp.sign_schnorr(&sighash.into(), &vtxo_key);
-
-		let cb = claim.output_taproot()
-			.control_block(&(exit_script.clone(), taproot::LeafVersion::TapScript))
-			.expect("script is in taproot");
-
-		let wit = Witness::from_slice(
-			&[&sig[..], exit_script.as_bytes(), &cb.serialize()],
-		);
-
-		debug_assert_eq!(wit.size() as u64, claim.claim_satisfaction_weight().to_wu());
-		self.borrow_mut().final_script_witness = Some(wit);
-		Ok(())
-	}
 }
+
 impl PsbtInputExt for psbt::Input {}

@@ -33,6 +33,12 @@ pub enum ExitError {
 		output: Amount,
 	},
 
+	#[error("Claim Missing Signable Clause: Couldn't find a signable clause for VTXO {vtxo}")]
+	ClaimMissingSignableClause {
+		#[cfg_attr(feature = "utoipa", schema(value_type = String))]
+		vtxo: VtxoId,
+	},
+
 	#[error("Claim Signing Error: Unable to sign claim: {error}")]
 	ClaimSigningError { error: String },
 
@@ -108,7 +114,7 @@ pub enum ExitError {
 	},
 
 	#[error("Invalid LockTime ({tip}): {error}")]
-	InvalidLocalLocktime { tip: BlockHeight, error: String },
+	InvalidLocktime { tip: BlockHeight, error: String },
 
 	#[error("Invalid Wallet State: {error}")]
 	InvalidWalletState { error: String },
@@ -150,6 +156,9 @@ impl From<bark::exit::ExitError> for ExitError {
 			bark::exit::ExitError::ClaimFeeExceedsOutput { needed, output } => {
 				ExitError::ClaimFeeExceedsOutput { needed, output }
 			},
+			bark::exit::ExitError::ClaimMissingSignableClause { vtxo } => {
+				ExitError::ClaimMissingSignableClause { vtxo }
+			},
 			bark::exit::ExitError::ClaimSigningError { error } => {
 				ExitError::ClaimSigningError { error }
 			},
@@ -186,8 +195,8 @@ impl From<bark::exit::ExitError> for ExitError {
 			bark::exit::ExitError::InvalidExitTransactionStatus { txid, status, error } => {
 				ExitError::InvalidExitTransactionStatus { txid, status: status.into(), error }
 			},
-			bark::exit::ExitError::InvalidLocalLocktime { tip, error } => {
-				ExitError::InvalidLocalLocktime { tip, error }
+			bark::exit::ExitError::InvalidLocktime { tip, error } => {
+				ExitError::InvalidLocktime { tip, error }
 			},
 			bark::exit::ExitError::InvalidWalletState { error } => {
 				ExitError::InvalidWalletState { error }

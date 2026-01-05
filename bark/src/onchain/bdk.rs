@@ -9,11 +9,11 @@ use bdk_wallet::Wallet as BdkWallet;
 use bdk_wallet::coin_selection::DefaultCoinSelectionAlgorithm;
 use bdk_wallet::{Balance, KeychainKind, LocalOutput, SignOptions, TxBuilder, TxOrdering};
 use bitcoin::{
-	bip32, psbt, Address, Amount, FeeRate, Network, OutPoint, Psbt, Sequence, Transaction, TxOut,
-	Txid,
+	Address, Amount, FeeRate, Network, OutPoint, Psbt, Sequence, Transaction, TxOut, Txid, Weight, bip32, psbt
 };
 use log::{debug, error, info, trace, warn};
 
+use ark::vtxo::policy::signing::VtxoSigner;
 use bitcoin_ext::{BlockHeight, BlockRef};
 use bitcoin_ext::bdk::{CpfpInternalError, WalletExt};
 use bitcoin_ext::cpfp::CpfpError;
@@ -27,6 +27,7 @@ use crate::onchain::{
 };
 use crate::persist::BarkPersister;
 use crate::psbtext::PsbtInputExt;
+use crate::Wallet;
 
 const STOP_GAP: usize = 50;
 const PARALLEL_REQS: usize = 4;
@@ -49,7 +50,7 @@ impl From<LocalOutput> for LocalUtxo {
 pub trait TxBuilderExt {
 	fn add_exit_claim_inputs(
 		&mut self,
-		persister: &dyn BarkPersister,
+		wallet: &Wallet,
 		exit_outputs: &[&ExitVtxo],
 	) -> anyhow::Result<()>;
 }
@@ -57,7 +58,7 @@ pub trait TxBuilderExt {
 impl<Cs> TxBuilderExt for TxBuilder<'_, Cs> {
 	fn add_exit_claim_inputs(
 		&mut self,
-		persister: &dyn BarkPersister,
+		wallet: &Wallet,
 		exit_outputs: &[&ExitVtxo],
 	) -> anyhow::Result<()> {
 		self.version(2);
@@ -67,7 +68,7 @@ impl<Cs> TxBuilderExt for TxBuilder<'_, Cs> {
 				bail!("VTXO exit is not spendable");
 			}
 
-			let vtxo = persister.get_wallet_vtxo(input.id())?
+			let vtxo = wallet.db.get_wallet_vtxo(input.id())?
 				.context(format!("Unable to load VTXO for exit: {}", input.id()))?;
 			let mut psbt_in = psbt::Input::default();
 			psbt_in.set_exit_claim_input(&vtxo);
@@ -76,11 +77,19 @@ impl<Cs> TxBuilderExt for TxBuilder<'_, Cs> {
 				value: vtxo.amount(),
 			});
 
+			let clause = wallet.find_signable_clause(&vtxo)
+				.context("Cannot sign vtxo")?;
+
+			let witness_weight = {
+				let witness_size = clause.witness_size(&vtxo);
+				Weight::from_witness_data_size(witness_size as u64)
+			};
+
 			self.add_foreign_utxo_with_sequence(
 				vtxo.point(),
 				psbt_in,
-				vtxo.claim_satisfaction_weight(),
-				Sequence::from_height(vtxo.exit_delta()),
+				witness_weight,
+				clause.sequence().unwrap_or(Sequence::ZERO),
 			).expect("error adding foreign utxo for claim input");
 		}
 

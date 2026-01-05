@@ -2092,6 +2092,24 @@
           {
             "type": "object",
             "required": [
+              "vtxo",
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "claim-missing-signable-clause"
+                ]
+              },
+              "vtxo": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
               "error",
               "type"
             ],
@@ -2372,7 +2390,7 @@
               "type": {
                 "type": "string",
                 "enum": [
-                  "invalid-local-locktime"
+                  "invalid-locktime"
                 ]
               }
             }
