@@ -17,13 +17,31 @@ use ark::vtxo::VtxoRef;
 pub struct SubsystemId(&'static str);
 
 impl SubsystemId {
-	pub(crate) fn new(id: &'static str) -> Self {
+	pub const fn new(id: &'static str) -> Self {
 		SubsystemId(id)
 	}
 
 	pub fn as_name(&self) -> &'static str {
 		self.0
 	}
+
+	/// The built-in arkoor subsystem
+	pub const ARKOOR: SubsystemId = SubsystemId::new("bark.arkoor");
+
+	/// The built-in board subsystem
+	pub const BOARD: SubsystemId = SubsystemId::new("bark.board");
+
+	/// The built-in exit subsystem
+	pub const EXIT: SubsystemId = SubsystemId::new("bark.exit");
+
+	/// The built-in Lightning receive subsystem
+	pub const LIGHTNING_RECEIVE: SubsystemId = SubsystemId::new("bark.lightning_receive");
+
+	/// The built-in Lightning send subsystem
+	pub const LIGHTNING_SEND: SubsystemId = SubsystemId::new("bark.lightning_send");
+
+	/// The built-in round subsystem
+	pub const ROUND: SubsystemId = SubsystemId::new("bark.round");
 }
 
 impl fmt::Display for SubsystemId {
@@ -45,29 +63,6 @@ impl fmt::Display for RoundMovement {
 			RoundMovement::Offboard => f.write_str("offboard"),
 			RoundMovement::Refresh => f.write_str("refresh"),
 			RoundMovement::SendOnchain => f.write_str("send_onchain"),
-		}
-	}
-}
-
-#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
-pub(crate) enum BarkSubsystem {
-	Arkoor,
-	Board,
-	Exit,
-	LightningReceive,
-	LightningSend,
-	Round,
-}
-
-impl BarkSubsystem {
-	pub fn as_str(&self) -> &'static str {
-		match self {
-			BarkSubsystem::Arkoor => "bark.arkoor",
-			BarkSubsystem::Board => "bark.board",
-			BarkSubsystem::Exit => "bark.exit",
-			BarkSubsystem::LightningReceive => "bark.lightning_receive",
-			BarkSubsystem::LightningSend => "bark.lightning_send",
-			BarkSubsystem::Round => "bark.round",
 		}
 	}
 }

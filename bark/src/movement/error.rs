@@ -24,6 +24,6 @@ pub enum MovementError {
 	#[error("Persist Movement Failed: Unable to persist changes to movement ({id}): {e}")]
 	PersisterError { id: MovementId, e: anyhow::Error },
 
-	#[error("Subsystem Error ({name}): {error}")]
-	SubsystemError { name: String, error: String },
+	#[error("Subsystem Error ({id}): {error}")]
+	SubsystemError { id: SubsystemId, error: String },
 }

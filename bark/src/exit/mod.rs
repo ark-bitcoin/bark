@@ -146,7 +146,7 @@ use crate::onchain::ExitUnilaterally;
 use crate::persist::BarkPersister;
 use crate::persist::models::StoredExit;
 use crate::psbtext::PsbtInputExt;
-use crate::subsystem::{BarkSubsystem, ExitMovement, SubsystemId};
+use crate::subsystem::{ExitMovement, SubsystemId};
 use crate::vtxo::{VtxoState, VtxoStateKind};
 
 /// Handles the process of ongoing VTXO exits.
@@ -156,7 +156,6 @@ pub struct Exit {
 	chain_source: Arc<ChainSource>,
 	movement_manager: Arc<MovementManager>,
 
-	subsystem_id: SubsystemId,
 	exit_vtxos: Vec<ExitVtxo>,
 }
 
@@ -168,12 +167,8 @@ impl Exit {
 	) -> anyhow::Result<Exit> {
 		let tx_manager = ExitTransactionManager::new(persister.clone(), chain_source.clone())?;
 
-		let subsystem_id = movement_manager.register_subsystem(
-			BarkSubsystem::Exit.as_str(),
-		).await?;
 		Ok(Exit {
 			exit_vtxos: Vec::new(),
-			subsystem_id,
 			tx_manager,
 			persister,
 			chain_source,
@@ -355,7 +350,7 @@ impl Exit {
 			// canceling exits. When we do, we can leave this in pending until it's either finished
 			// or canceled by the user.
 			self.movement_manager.new_finished_movement(
-				self.subsystem_id,
+				SubsystemId::EXIT,
 				ExitMovement::Exit.to_string(),
 				MovementStatus::Successful,
 				MovementUpdate::new()

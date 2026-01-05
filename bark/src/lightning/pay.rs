@@ -18,7 +18,7 @@ use crate::lightning::lnaddr_invoice;
 use crate::movement::{MovementDestination, MovementStatus, PaymentMethod};
 use crate::movement::update::MovementUpdate;
 use crate::persist::models::LightningSend;
-use crate::subsystem::{BarkSubsystem, LightningMovement, LightningSendMovement};
+use crate::subsystem::{LightningMovement, LightningSendMovement, SubsystemId};
 
 
 impl Wallet {
@@ -481,7 +481,7 @@ impl Wallet {
 		}
 
 		let movement_id = self.movements.new_movement_with_update(
-			self.subsystem_ids[&BarkSubsystem::LightningSend],
+			SubsystemId::LIGHTNING_SEND,
 			LightningSendMovement::Send.to_string(),
 			MovementUpdate::new()
 				.intended_balance(-amount.to_signed()?)

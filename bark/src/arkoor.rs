@@ -10,7 +10,8 @@ use ark::vtxo::{Vtxo, VtxoId, VtxoPolicyKind};
 use bitcoin_ext::P2TR_DUST;
 use server_rpc::protos;
 
-use crate::{ArkoorMovement, BarkSubsystem, VtxoDelivery, MovementUpdate, Wallet};
+use crate::subsystem::SubsystemId;
+use crate::{ArkoorMovement, VtxoDelivery, MovementUpdate, Wallet};
 use crate::movement::MovementDestination;
 use crate::movement::manager::OnDropStatus;
 
@@ -149,7 +150,7 @@ impl Wallet {
 			.context("Failed to create checkpointed transactions")?;
 
 		let mut movement = self.movements.new_guarded_movement_with_update(
-			self.subsystem_ids[&BarkSubsystem::Arkoor],
+			SubsystemId::ARKOOR,
 			ArkoorMovement::Send.to_string(),
 			OnDropStatus::Failed,
 			MovementUpdate::new()

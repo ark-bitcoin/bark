@@ -31,17 +31,15 @@ impl MovementManager {
 	/// Registers a subsystem with the movement manager. Subsystems are identified using unique
 	/// names, to maintain this guarantee a unique [SubsystemId] will be generated and returned by
 	/// this function. Future calls to register or modify movements must provide this ID.
-	pub async fn register_subsystem(&self, name: &'static str) -> anyhow::Result<SubsystemId, MovementError> {
-		let id = SubsystemId::new(name);
-		let exists = self.subsystem_ids.read().await.contains(&id);
-		if exists {
+	pub async fn register_subsystem(&self, id: SubsystemId) -> anyhow::Result<(), MovementError> {
+		let mut guard = self.subsystem_ids.write().await;
+		if guard.contains(&id) {
 			Err(MovementError::SubsystemError {
-				name: name.to_string(), error: "Subsystem already registered".into(),
+				id, error: "Subsystem already registered".into(),
 			})
 		} else {
-			let mut ids = self.subsystem_ids.write().await;
-			ids.insert(id);
-			Ok(id)
+			guard.insert(id);
+			Ok(())
 		}
 	}
 

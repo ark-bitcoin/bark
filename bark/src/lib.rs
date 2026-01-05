@@ -337,7 +337,7 @@ use crate::onchain::{DaemonizableOnchainWallet, ExitUnilaterally, PreparePsbt, S
 use crate::persist::{BarkPersister, RoundStateId};
 use crate::persist::models::{LightningReceive, LightningSend, PendingBoard};
 use crate::round::{RoundParticipation, RoundStatus};
-use crate::subsystem::{ArkoorMovement, BarkSubsystem, BoardMovement, RoundMovement, SubsystemId};
+use crate::subsystem::{ArkoorMovement, BoardMovement, RoundMovement, SubsystemId};
 use crate::vtxo::{FilterVtxos, RefreshStrategy, VtxoFilter, VtxoState, VtxoStateKind};
 
 /// Derivation index for Bark usage
@@ -621,9 +621,6 @@ pub struct Wallet {
 
 	/// Optional live connection to an Ark server for round participation and synchronization.
 	server: parking_lot::RwLock<Option<ServerConnection>>,
-
-	/// TODO: Replace this when we move to a modular subsystem architecture
-	subsystem_ids: HashMap<BarkSubsystem, SubsystemId>,
 }
 
 impl Wallet {
@@ -889,22 +886,8 @@ impl Wallet {
 
 		let movements = Arc::new(MovementManager::new(db.clone()));
 		let exit = RwLock::new(Exit::new(db.clone(), chain.clone(), movements.clone()).await?);
-		let mut subsystem_ids = HashMap::new();
-		{
-			let subsystems = [
-				BarkSubsystem::Arkoor,
-				BarkSubsystem::Board,
-				BarkSubsystem::LightningReceive,
-				BarkSubsystem::LightningSend,
-				BarkSubsystem::Round,
-			];
-			for subsystem in subsystems {
-				let id = movements.register_subsystem(subsystem.as_str()).await?;
-				subsystem_ids.insert(subsystem, id);
-			}
-		};
 
-		Ok(Wallet { config, db, seed, exit, movements, server, chain, subsystem_ids })
+		Ok(Wallet { config, db, seed, exit, movements, server, chain })
 	}
 
 	/// Similar to [Wallet::open] however this also unilateral exits using the provided onchain
@@ -1448,7 +1431,7 @@ impl Wallet {
 
 		let onchain_fee = board_psbt.fee()?;
 		let movement_id = self.movements.new_movement_with_update(
-			self.subsystem_ids[&BarkSubsystem::Board],
+			SubsystemId::BOARD,
 			BoardMovement::Board.to_string(),
 			MovementUpdate::new()
 				.produced_vtxo(&vtxo)
@@ -1578,7 +1561,7 @@ impl Wallet {
 
 				self.store_spendable_vtxos(&vtxos)?;
 				self.movements.new_finished_movement(
-					self.subsystem_ids[&BarkSubsystem::Arkoor],
+					SubsystemId::ARKOOR,
 					ArkoorMovement::Receive.to_string(),
 					MovementStatus::Successful,
 					MovementUpdate::new()
