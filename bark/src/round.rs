@@ -35,7 +35,7 @@ use crate::{SECP, Wallet};
 use crate::movement::{MovementId, MovementStatus};
 use crate::movement::update::MovementUpdate;
 use crate::persist::{RoundStateId, StoredRoundState};
-use crate::subsystem::{RoundMovement, SubsystemId};
+use crate::subsystem::{RoundMovement, Subsystem};
 
 
 /// The type string for the hArk leaf transition
@@ -1206,7 +1206,7 @@ impl Wallet {
 
 		let movement_id = if let Some(kind) = movement_kind {
 			Some(self.movements.new_movement_with_update(
-				SubsystemId::ROUND,
+				Subsystem::ROUND,
 				kind.to_string(),
 				participation.to_movement_update()?
 			).await?)
@@ -1228,7 +1228,7 @@ impl Wallet {
 
 		let movement_id = if let Some(kind) = movement_kind {
 			let movement_id = self.movements.new_movement(
-				SubsystemId::ROUND, kind.to_string(),
+				Subsystem::ROUND, kind.to_string(),
 			).await?;
 			let update = participation.to_movement_update()?;
 			self.movements.update_movement(movement_id, update).await?;

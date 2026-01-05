@@ -1,5 +1,5 @@
 use crate::movement::MovementId;
-use crate::subsystem::SubsystemId;
+use crate::subsystem::Subsystem;
 
 #[derive(Debug, thiserror::Error)]
 pub enum MovementError {
@@ -13,7 +13,7 @@ pub enum MovementError {
 	IncorrectPendingStatus,
 
 	#[error("Invalid Subsystem ID: {id} does not exist")]
-	InvalidSubsystemId { id: SubsystemId },
+	InvalidSubsystemId { id: Subsystem },
 
 	#[error("Invalid Movement ID: {id} does not exist")]
 	InvalidMovementId { id: MovementId },
@@ -25,5 +25,5 @@ pub enum MovementError {
 	PersisterError { id: MovementId, e: anyhow::Error },
 
 	#[error("Subsystem Error ({id}): {error}")]
-	SubsystemError { id: SubsystemId, error: String },
+	SubsystemError { id: Subsystem, error: String },
 }

@@ -8,13 +8,13 @@ use crate::movement::{Movement, MovementId, MovementStatus, MovementSubsystem};
 use crate::movement::error::MovementError;
 use crate::movement::update::MovementUpdate;
 use crate::persist::BarkPersister;
-use crate::subsystem::SubsystemId;
+use crate::subsystem::Subsystem;
 
 /// A minimalist helper class to handle movement registration and updating based on unique
 /// [SubsystemId] values.
 pub struct MovementManager {
 	db: Arc<dyn BarkPersister>,
-	subsystem_ids: RwLock<HashSet<SubsystemId>>,
+	subsystem_ids: RwLock<HashSet<Subsystem>>,
 	active_movements: RwLock<HashMap<MovementId, Arc<RwLock<Movement>>>>,
 }
 
@@ -31,7 +31,7 @@ impl MovementManager {
 	/// Registers a subsystem with the movement manager. Subsystems are identified using unique
 	/// names, to maintain this guarantee a unique [SubsystemId] will be generated and returned by
 	/// this function. Future calls to register or modify movements must provide this ID.
-	pub async fn register_subsystem(&self, id: SubsystemId) -> anyhow::Result<(), MovementError> {
+	pub async fn register_subsystem(&self, id: Subsystem) -> anyhow::Result<(), MovementError> {
 		let mut guard = self.subsystem_ids.write().await;
 		if guard.contains(&id) {
 			Err(MovementError::SubsystemError {
@@ -60,7 +60,7 @@ impl MovementManager {
 	/// - If a database error occurs.
 	pub async fn new_movement(
 		&self,
-		subsystem_id: SubsystemId,
+		subsystem_id: Subsystem,
 		movement_kind: String,
 	) -> anyhow::Result<MovementId, MovementError> {
 		self.db.create_new_movement(
@@ -86,7 +86,7 @@ impl MovementManager {
 	/// - on_drop: Determines what status the movement will be set to when the guard is dropped.
 	pub async fn new_guarded_movement(
 		self: &Arc<Self>,
-		subsystem_id: SubsystemId,
+		subsystem_id: Subsystem,
 		movement_kind: String,
 		on_drop: OnDropStatus,
 	) -> anyhow::Result<MovementGuard, MovementError> {
@@ -109,7 +109,7 @@ impl MovementManager {
 	/// - If a database error occurs.
 	pub async fn new_movement_with_update(
 		&self,
-		subsystem_id: SubsystemId,
+		subsystem_id: Subsystem,
 		movement_kind: String,
 		update: MovementUpdate,
 	) -> anyhow::Result<MovementId, MovementError> {
@@ -133,7 +133,7 @@ impl MovementManager {
 	/// - If a database error occurs.
 	pub async fn new_guarded_movement_with_update(
 		self: &Arc<Self>,
-		subsystem_id: SubsystemId,
+		subsystem_id: Subsystem,
 		movement_kind: String,
 		on_drop: OnDropStatus,
 		update: MovementUpdate,
@@ -163,7 +163,7 @@ impl MovementManager {
 	/// - If a database error occurs.
 	pub async fn new_finished_movement(
 		&self,
-		subsystem_id: SubsystemId,
+		subsystem_id: Subsystem,
 		movement_kind: String,
 		status: MovementStatus,
 		details: MovementUpdate,

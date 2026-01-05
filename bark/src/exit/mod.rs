@@ -146,7 +146,7 @@ use crate::onchain::ExitUnilaterally;
 use crate::persist::BarkPersister;
 use crate::persist::models::StoredExit;
 use crate::psbtext::PsbtInputExt;
-use crate::subsystem::{ExitMovement, SubsystemId};
+use crate::subsystem::{ExitMovement, Subsystem};
 use crate::vtxo::{VtxoState, VtxoStateKind};
 
 /// Handles the process of ongoing VTXO exits.
@@ -350,7 +350,7 @@ impl Exit {
 			// canceling exits. When we do, we can leave this in pending until it's either finished
 			// or canceled by the user.
 			self.movement_manager.new_finished_movement(
-				SubsystemId::EXIT,
+				Subsystem::EXIT,
 				ExitMovement::Exit.to_string(),
 				MovementStatus::Successful,
 				MovementUpdate::new()

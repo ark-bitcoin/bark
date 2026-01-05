@@ -14,11 +14,11 @@ use ark::vtxo::VtxoRef;
 
 /// A unique identifier for a subsystem.
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, Deserialize, Serialize)]
-pub struct SubsystemId(&'static str);
+pub struct Subsystem(&'static str);
 
-impl SubsystemId {
+impl Subsystem {
 	pub const fn new(id: &'static str) -> Self {
-		SubsystemId(id)
+		Subsystem(id)
 	}
 
 	pub fn as_name(&self) -> &'static str {
@@ -26,25 +26,25 @@ impl SubsystemId {
 	}
 
 	/// The built-in arkoor subsystem
-	pub const ARKOOR: SubsystemId = SubsystemId::new("bark.arkoor");
+	pub const ARKOOR: Subsystem = Subsystem::new("bark.arkoor");
 
 	/// The built-in board subsystem
-	pub const BOARD: SubsystemId = SubsystemId::new("bark.board");
+	pub const BOARD: Subsystem = Subsystem::new("bark.board");
 
 	/// The built-in exit subsystem
-	pub const EXIT: SubsystemId = SubsystemId::new("bark.exit");
+	pub const EXIT: Subsystem = Subsystem::new("bark.exit");
 
 	/// The built-in Lightning receive subsystem
-	pub const LIGHTNING_RECEIVE: SubsystemId = SubsystemId::new("bark.lightning_receive");
+	pub const LIGHTNING_RECEIVE: Subsystem = Subsystem::new("bark.lightning_receive");
 
 	/// The built-in Lightning send subsystem
-	pub const LIGHTNING_SEND: SubsystemId = SubsystemId::new("bark.lightning_send");
+	pub const LIGHTNING_SEND: Subsystem = Subsystem::new("bark.lightning_send");
 
 	/// The built-in round subsystem
-	pub const ROUND: SubsystemId = SubsystemId::new("bark.round");
+	pub const ROUND: Subsystem = Subsystem::new("bark.round");
 }
 
-impl fmt::Display for SubsystemId {
+impl fmt::Display for Subsystem {
 	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
 		f.write_str(self.0)
 	}

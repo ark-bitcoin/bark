@@ -337,7 +337,7 @@ use crate::onchain::{DaemonizableOnchainWallet, ExitUnilaterally, PreparePsbt, S
 use crate::persist::{BarkPersister, RoundStateId};
 use crate::persist::models::{LightningReceive, LightningSend, PendingBoard};
 use crate::round::{RoundParticipation, RoundStatus};
-use crate::subsystem::{ArkoorMovement, BoardMovement, RoundMovement, SubsystemId};
+use crate::subsystem::{ArkoorMovement, BoardMovement, RoundMovement, Subsystem};
 use crate::vtxo::{FilterVtxos, RefreshStrategy, VtxoFilter, VtxoState, VtxoStateKind};
 
 /// Derivation index for Bark usage
@@ -1431,7 +1431,7 @@ impl Wallet {
 
 		let onchain_fee = board_psbt.fee()?;
 		let movement_id = self.movements.new_movement_with_update(
-			SubsystemId::BOARD,
+			Subsystem::BOARD,
 			BoardMovement::Board.to_string(),
 			MovementUpdate::new()
 				.produced_vtxo(&vtxo)
@@ -1561,7 +1561,7 @@ impl Wallet {
 
 				self.store_spendable_vtxos(&vtxos)?;
 				self.movements.new_finished_movement(
-					SubsystemId::ARKOOR,
+					Subsystem::ARKOOR,
 					ArkoorMovement::Receive.to_string(),
 					MovementStatus::Successful,
 					MovementUpdate::new()
