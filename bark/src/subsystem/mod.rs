@@ -14,17 +14,21 @@ use ark::vtxo::VtxoRef;
 
 /// A unique identifier for a subsystem.
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, Deserialize, Serialize)]
-pub struct SubsystemId(u32);
+pub struct SubsystemId(&'static str);
 
 impl SubsystemId {
-	pub fn new(id: u32) -> Self {
+	pub(crate) fn new(id: &'static str) -> Self {
 		SubsystemId(id)
+	}
+
+	pub fn as_name(&self) -> &'static str {
+		self.0
 	}
 }
 
 impl fmt::Display for SubsystemId {
 	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-		write!(f, "{}", self.0)
+		f.write_str(self.0)
 	}
 }
 

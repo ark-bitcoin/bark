@@ -169,7 +169,7 @@ impl Exit {
 		let tx_manager = ExitTransactionManager::new(persister.clone(), chain_source.clone())?;
 
 		let subsystem_id = movement_manager.register_subsystem(
-			BarkSubsystem::Exit.as_str().into(),
+			BarkSubsystem::Exit.as_str(),
 		).await?;
 		Ok(Exit {
 			exit_vtxos: Vec::new(),
