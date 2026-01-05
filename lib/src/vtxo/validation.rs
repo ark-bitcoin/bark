@@ -235,6 +235,12 @@ pub fn validate(
 		prev = (Cow::Owned(next_tx), item.output_idx as usize, next_amount);
 	}
 
+	// Verify the point field matches the computed exit outpoint
+	let expected_point = OutPoint::new(prev.0.compute_txid(), prev.1 as u32);
+	if vtxo.point != expected_point {
+		return Err(VtxoValidationError::Invalid("point doesn't match computed exit outpoint"));
+	}
+
 	Ok(())
 }
 
