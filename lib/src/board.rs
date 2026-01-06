@@ -489,5 +489,111 @@ mod test {
 
 		vtxo.validate(&funding_tx).unwrap();
 	}
+
+	/// Helper to create a valid vtxo and funding tx for testing new_from_vtxo
+	fn create_board_vtxo() -> (Vtxo, Transaction, Keypair, Keypair) {
+		let user_key = Keypair::from_str("5255d132d6ec7d4fc2a41c8f0018bb14343489ddd0344025cc60c7aa2b3fda6a").unwrap();
+		let server_key = Keypair::from_str("1fb316e653eec61de11c6b794636d230379509389215df1ceb520b65313e5426").unwrap();
+
+		let amount = Amount::from_btc(1.5).unwrap();
+		let expiry = 100_000;
+		let server_pubkey = server_key.public_key();
+		let exit_delta = 24;
+
+		let builder = BoardBuilder::new(
+			user_key.public_key(), expiry, server_pubkey, exit_delta,
+		);
+		let funding_tx = Transaction {
+			version: transaction::Version::TWO,
+			lock_time: absolute::LockTime::ZERO,
+			input: vec![],
+			output: vec![TxOut {
+				value: amount,
+				script_pubkey: builder.funding_script_pubkey(),
+			}],
+		};
+		let utxo = OutPoint::new(funding_tx.compute_txid(), 0);
+		let builder = builder.set_funding_details(amount, utxo).generate_user_nonces();
+
+		let cosign = {
+			let server_builder = BoardBuilder::new_for_cosign(
+				builder.user_pubkey, expiry, server_pubkey, exit_delta, amount, utxo, *builder.user_pub_nonce(),
+			);
+			server_builder.server_cosign(&server_key)
+		};
+
+		let vtxo = builder.build_vtxo(&cosign, &user_key).unwrap();
+		(vtxo, funding_tx, user_key, server_key)
+	}
+
+	#[test]
+	fn test_new_from_vtxo_success() {
+		let (vtxo, funding_tx, _, server_key) = create_board_vtxo();
+
+		// Should succeed with correct inputs
+		let result = BoardBuilder::new_from_vtxo(&vtxo, &funding_tx, server_key.public_key());
+		assert!(result.is_ok());
+	}
+
+	#[test]
+	fn test_new_from_vtxo_txid_mismatch() {
+		let (vtxo, funding_tx, _, server_key) = create_board_vtxo();
+
+		// Create a different funding tx with wrong txid
+		let wrong_funding_tx = Transaction {
+			version: transaction::Version::TWO,
+			lock_time: absolute::LockTime::ZERO,
+			input: vec![],
+			output: vec![TxOut {
+				value: Amount::from_btc(2.0).unwrap(), // Different amount = different txid
+				script_pubkey: funding_tx.output[0].script_pubkey.clone(),
+			}],
+		};
+
+		let result = BoardBuilder::new_from_vtxo(&vtxo, &wrong_funding_tx, server_key.public_key());
+		assert!(matches!(
+			result,
+			Err(BoardFromVtxoError::FundingTxMismatch { expected, got })
+			if expected == vtxo.chain_anchor().txid && got == wrong_funding_tx.compute_txid()
+		));
+	}
+
+	#[test]
+	fn test_new_from_vtxo_server_pubkey_mismatch() {
+		let (vtxo, funding_tx, _, _) = create_board_vtxo();
+
+		// Use a different server pubkey
+		let wrong_server_key = Keypair::from_str("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa").unwrap();
+
+		let result = BoardBuilder::new_from_vtxo(&vtxo, &funding_tx, wrong_server_key.public_key());
+		assert!(matches!(
+			result,
+			Err(BoardFromVtxoError::ServerPubkeyMismatch { expected, got })
+			if expected == wrong_server_key.public_key() && got == vtxo.server_pubkey()
+		));
+	}
+
+	#[test]
+	fn test_new_from_vtxo_vtxoid_mismatch() {
+		// This test verifies that BoardBuilder::new_from_vtxo detects when the
+		// vtxo's point doesn't match the computed exit tx output.
+		//
+		// Note: It is not the responsibility of new_from_vtxo to validate that
+		// the vtxo's point is correct in the first place. That validation
+		// happens in Vtxo::validate. This check ensures internal consistency
+		// when reconstructing the board from a vtxo.
+		let (mut vtxo, funding_tx, _, server_key) = create_board_vtxo();
+
+		// Tamper with the vtxo's point to cause a mismatch
+		let original_point = vtxo.point;
+		vtxo.point = OutPoint::new(vtxo.point.txid, vtxo.point.vout + 1);
+
+		let result = BoardBuilder::new_from_vtxo(&vtxo, &funding_tx, server_key.public_key());
+		assert!(matches!(
+			result,
+			Err(BoardFromVtxoError::VtxoIdMismatch { expected, got })
+			if expected == original_point && got == vtxo.point
+		));
+	}
 }
 
