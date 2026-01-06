@@ -404,6 +404,7 @@ impl Server {
 			db.clone(),
 			vec![],
 			deep_tip,
+			cfg.sync_manager_block_poll_interval,
 		).await.context("Failed to start SyncManager")?;
 
 		let cln = ClnManager::start(

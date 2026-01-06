@@ -12,6 +12,8 @@ network = "regtest"
 
 # The interval to update the tx index
 txindex_check_interval = "30s"
+# The interval at which the SyncManager polls for new blocks
+sync_manager_block_poll_interval = "100ms"
 
 # The interval to rebroadcast transactions
 transaction_rebroadcast_interval = "1m"

@@ -82,6 +82,7 @@ pub trait ChainEventListener: Send + Sync {
 struct Process {
 	block_index: BlockIndex,
 	bitcoind: BitcoinRpcClient,
+	block_poll_interval: Duration,
 }
 
 impl Process {
@@ -93,7 +94,7 @@ impl Process {
 	async fn run(mut self, rtmgr: RuntimeManager) -> anyhow::Result<()> {
 		let _worker = rtmgr.spawn_critical("SyncManager");
 
-		let mut block_interval = tokio::time::interval(Duration::from_secs(1));
+		let mut block_interval = tokio::time::interval(self.block_poll_interval);
 		block_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
 		loop {
@@ -166,6 +167,7 @@ impl SyncManager {
 		db: Db,
 		listeners: Vec<Box<dyn ChainEventListener>>,
 		birthday: BlockRef,
+		block_poll_interval: Duration,
 	) -> anyhow::Result<Self> {
 		// Create the block index
 		let block_index = BlockIndex::new(bitcoind.clone(), db, listeners, birthday).await
@@ -175,7 +177,7 @@ impl SyncManager {
 
 
 		// Create the process and start running it in a separate task
-		let process = Process { block_index, bitcoind };
+		let process = Process { block_index, bitcoind, block_poll_interval };
 		tokio::spawn(process.run(rtmgr));
 
 		Ok(SyncManager {

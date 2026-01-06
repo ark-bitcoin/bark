@@ -188,6 +188,7 @@ impl Watchman {
 			db.clone(),
 			vec![],
 			deep_tip,
+			cfg.sync_manager_block_poll_interval,
 		).await.context("Failed to start SyncManager")?;
 
 		Ok(Self { rtmgr, sync_manager, txindex, tx_nursery, forfeit_watcher, vtxo_sweeper })
