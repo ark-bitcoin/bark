@@ -355,7 +355,7 @@ pub fn load_round_states(
 
 pub fn get_all_pending_lightning_send(conn: &Connection) -> anyhow::Result<Vec<LightningSend>> {
 	let query = "
-		SELECT htlc_vtxo_ids, invoice, amount_sats, movement_id, preimage
+		SELECT htlc_vtxo_ids, invoice, amount_sats, movement_id, preimage, finished_at
 		FROM bark_lightning_send
 		WHERE finished_at IS NULL";
 
@@ -383,6 +383,7 @@ pub fn get_all_pending_lightning_send(conn: &Connection) -> anyhow::Result<Vec<L
 			preimage: row.get::<_, Option<String>>("preimage")?
 				.map(|p| Preimage::from_str(&p))
 				.transpose()?,
+			finished_at: row.get("finished_at")?,
 		});
 	}
 
@@ -424,6 +425,7 @@ pub fn store_new_pending_lightning_send<V: VtxoRef>(
 		preimage: None,
 		htlc_vtxos,
 		movement_id,
+		finished_at: None,
 	})
 }
 
@@ -464,7 +466,7 @@ pub fn get_lightning_send(
 	payment_hash: PaymentHash,
 ) -> anyhow::Result<Option<LightningSend>> {
 	let query = "
-		SELECT htlc_vtxo_ids, invoice, amount_sats, movement_id, preimage
+		SELECT htlc_vtxo_ids, invoice, amount_sats, movement_id, preimage, finished_at
 		FROM bark_lightning_send
 		WHERE payment_hash = ?1";
 	let mut statement = conn.prepare(query)?;
@@ -489,6 +491,7 @@ pub fn get_lightning_send(
 				.transpose()?,
 			htlc_vtxos,
 			movement_id,
+			finished_at: row.get("finished_at")?,
 		}))
 	} else {
 		Ok(None)

@@ -139,6 +139,7 @@ impl BarkPersister for Dummy {
 			htlc_vtxos: vec![],
 			preimage: None,
 			movement_id,
+			finished_at: None,
 		})
 	}
 
@@ -317,6 +318,7 @@ fn dummy_lightning_send() -> LightningSend {
 		htlc_vtxos: vec![],
 		movement_id: MovementId::new(0),
 		preimage: None,
+		finished_at: None,
 	}
 }
 
