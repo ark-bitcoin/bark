@@ -52,6 +52,7 @@ pub struct LightningSend {
 	pub htlc_vtxos: Vec<WalletVtxo>,
 	pub movement_id: MovementId,
 	pub preimage: Option<Preimage>,
+	pub finished_at: Option<chrono::DateTime<chrono::Local>>,
 }
 
 /// Persisted representation of an incoming Lightning payment.
