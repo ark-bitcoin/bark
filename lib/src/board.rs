@@ -21,9 +21,9 @@ use bitcoin::secp256k1::{Keypair, PublicKey};
 use bitcoin_ext::{BlockDelta, BlockHeight, TaprootSpendInfoExt};
 
 use crate::error::IncorrectSigningKeyError;
-use crate::{musig, scripts, Vtxo, VtxoPolicy, SECP};
+use crate::{musig, scripts, SECP};
 use crate::tree::signed::cosign_taproot;
-use crate::vtxo::{self, GenesisItem, GenesisTransition};
+use crate::vtxo::{self, Vtxo, VtxoId, VtxoPolicy, GenesisItem, GenesisTransition};
 
 use self::state::BuilderState;
 
@@ -41,6 +41,25 @@ fn exit_tx_sighash(
 		0, &sighash::Prevouts::All(&[prev_utxo]), sighash::TapSighashType::Default,
 	).expect("matching prevouts");
 	(sighash, exit_tx)
+}
+
+#[derive(Debug, Clone, thiserror::Error)]
+pub enum BoardFromVtxoError {
+	#[error("funding txid mismatch: expected {expected}, got {got}")]
+	FundingTxMismatch {
+		expected: Txid,
+		got: Txid,
+	},
+	#[error("server pubkey mismatch: expected {expected}, got {got}")]
+	ServerPubkeyMismatch {
+		expected: PublicKey,
+		got: PublicKey,
+	},
+	#[error("vtxo id mismatch: expected {expected}, got {got}")]
+	VtxoIdMismatch {
+		expected: OutPoint,
+		got: OutPoint,
+	},
 }
 
 /// Partial signature the server responds to a board request.
@@ -210,6 +229,59 @@ impl BoardBuilder<state::CanGenerateNonces> {
 			_state: PhantomData,
 		}
 	}
+
+	/// Constructs a BoardBuilder from a vtxo
+	///
+	/// This is used to validate that a vtxo is a board
+	/// that originates from the provided server.
+	///
+	/// This call assumes the [Vtxo] is valid. The caller
+	/// has to call [Vtxo::validate] before using this
+	/// constructor.
+	pub fn new_from_vtxo(
+		vtxo: &Vtxo,
+		funding_tx: &Transaction,
+		server_pubkey: PublicKey,
+	) -> Result<Self, BoardFromVtxoError> {
+		if vtxo.chain_anchor().txid != funding_tx.compute_txid() {
+			return Err(BoardFromVtxoError::FundingTxMismatch {
+				expected: vtxo.chain_anchor().txid,
+				got: funding_tx.compute_txid(),
+			})
+		}
+
+		if vtxo.server_pubkey() != server_pubkey {
+			return Err(BoardFromVtxoError::ServerPubkeyMismatch {
+				expected: server_pubkey,
+				got: vtxo.server_pubkey(),
+			})
+		}
+
+		let builder = Self {
+			user_pub_nonce: None,
+			user_sec_nonce: None,
+			amount: Some(vtxo.amount()),
+			user_pubkey: vtxo.user_pubkey(),
+			server_pubkey,
+			expiry_height: vtxo.expiry_height,
+			exit_delta: vtxo.exit_delta,
+			utxo: Some(vtxo.chain_anchor()),
+			_state: PhantomData,
+		};
+
+		// We compute the vtxo_id again from all reconstructed data
+		// It must match exactly
+		let (_, _, exit_tx) = builder.exit_tx_sighash_data();
+		let expected_vtxo_id = OutPoint::new(exit_tx, BOARD_FUNDING_TX_VTXO_VOUT);
+		if vtxo.point() != expected_vtxo_id {
+			return Err(BoardFromVtxoError::VtxoIdMismatch {
+				expected: expected_vtxo_id,
+				got: vtxo.point(),
+			})
+		}
+
+		Ok(builder)
+	}
 }
 
 impl<S: state::CanSign> BoardBuilder<S> {
@@ -361,7 +433,6 @@ impl<S: state::HasFundingDetails> BoardBuilder<S> {
 		(sighash, funding_taproot, tx.compute_txid())
 	}
 }
-
 
 #[cfg(test)]
 mod test {
