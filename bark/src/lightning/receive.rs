@@ -15,7 +15,7 @@ use bitcoin_ext::{AmountExt, BlockDelta, BlockHeight};
 use server_rpc::protos;
 use server_rpc::protos::prepare_lightning_receive_claim_request::LightningReceiveAntiDos;
 
-use crate::subsystem::{BarkSubsystem, LightningMovement, LightningReceiveMovement};
+use crate::subsystem::{LightningMovement, LightningReceiveMovement, Subsystem};
 use crate::{Wallet, error};
 use crate::movement::{MovementDestination, MovementStatus};
 use crate::movement::update::MovementUpdate;
@@ -355,7 +355,7 @@ impl Wallet {
 			movement_id
 		} else {
 			self.movements.new_movement_with_update(
-				self.subsystem_ids[&BarkSubsystem::LightningReceive],
+				Subsystem::LIGHTNING_RECEIVE,
 				LightningReceiveMovement::Receive.to_string(),
 				MovementUpdate::new()
 					.intended_balance(invoice_amount.to_signed()?)
