@@ -86,6 +86,12 @@ pub mod state {
 	pub trait CanSign: BuilderState {}
 	impl CanSign for ServerCanCosign {}
 	impl CanSign for CanFinish {}
+
+	/// Trait for once the funding details are known
+	pub trait HasFundingDetails: BuilderState {}
+	impl HasFundingDetails for CanGenerateNonces {}
+	impl HasFundingDetails for ServerCanCosign {}
+	impl HasFundingDetails for CanFinish {}
 }
 
 /// A request for the server to cosign an board vtxo.
@@ -116,6 +122,7 @@ impl<S: BuilderState> BoardBuilder<S> {
 		let combined_pubkey = musig::combine_keys([self.user_pubkey, self.server_pubkey]);
 		cosign_taproot(combined_pubkey, self.server_pubkey, self.expiry_height).script_pubkey()
 	}
+
 }
 
 impl BoardBuilder<state::Preparing> {
@@ -208,28 +215,6 @@ impl BoardBuilder<state::CanGenerateNonces> {
 impl<S: state::CanSign> BoardBuilder<S> {
 	pub fn user_pub_nonce(&self) -> &musig::PublicNonce {
 		self.user_pub_nonce.as_ref().expect("state invariant")
-	}
-
-	/// The signature hash to sign the exit tx and the taproot info
-	/// (of the funding tx) used to calcualte it and the exit tx's txid.
-	fn exit_tx_sighash_data(&self) -> (TapSighash, TaprootSpendInfo, Txid) {
-		let combined_pubkey = musig::combine_keys([self.user_pubkey, self.server_pubkey]);
-		let funding_taproot = cosign_taproot(combined_pubkey, self.server_pubkey, self.expiry_height);
-		let funding_txout = TxOut {
-			value: self.amount.expect("state invariant"),
-			script_pubkey: funding_taproot.script_pubkey(),
-		};
-
-		let exit_taproot = VtxoPolicy::new_pubkey(self.user_pubkey)
-			.taproot(self.server_pubkey, self.exit_delta, self.expiry_height);
-		let exit_txout = TxOut {
-			value: self.amount.expect("state invariant"),
-			script_pubkey: exit_taproot.script_pubkey(),
-		};
-
-		let utxo = self.utxo.expect("state invariant");
-		let (sighash, tx) = exit_tx_sighash(&funding_txout, utxo, exit_txout);
-		(sighash, funding_taproot, tx.compute_txid())
 	}
 }
 
@@ -352,6 +337,31 @@ impl BoardBuilder<state::CanFinish> {
 #[error("board funding tx validation error: {0}")]
 pub struct BoardFundingTxValidationError(String);
 
+impl<S: state::HasFundingDetails> BoardBuilder<S> {
+
+	/// The signature hash to sign the exit tx and the taproot info
+	/// (of the funding tx) used to calculate it and the exit tx's txid.
+	fn exit_tx_sighash_data(&self) -> (TapSighash, TaprootSpendInfo, Txid) {
+		let combined_pubkey = musig::combine_keys([self.user_pubkey, self.server_pubkey]);
+		let funding_taproot = cosign_taproot(combined_pubkey, self.server_pubkey, self.expiry_height);
+		let funding_txout = TxOut {
+			value: self.amount.expect("state invariant"),
+			script_pubkey: funding_taproot.script_pubkey(),
+		};
+
+		let exit_taproot = VtxoPolicy::new_pubkey(self.user_pubkey)
+			.taproot(self.server_pubkey, self.exit_delta, self.expiry_height);
+		let exit_txout = TxOut {
+			value: self.amount.expect("state invariant"),
+			script_pubkey: exit_taproot.script_pubkey(),
+		};
+
+		let utxo = self.utxo.expect("state invariant");
+		let (sighash, tx) = exit_tx_sighash(&funding_txout, utxo, exit_txout);
+		(sighash, funding_taproot, tx.compute_txid())
+	}
+}
+
 
 #[cfg(test)]
 mod test {
@@ -409,3 +419,4 @@ mod test {
 		vtxo.validate(&funding_tx).unwrap();
 	}
 }
+
