@@ -44,14 +44,25 @@ pub struct PendingBoard {
 
 /// Persisted representation of a lightning send.
 ///
-/// Stores the invoice and the amount being sent.
+/// Created after the HTLCs from client to server are constructed.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LightningSend {
+	/// The Lightning invoice being paid.
 	pub invoice: Invoice,
+	/// The amount being sent.
 	pub amount: Amount,
+	/// The open HTLCs that are used for this payment.
 	pub htlc_vtxos: Vec<WalletVtxo>,
+	/// The movement associated with this payment.
 	pub movement_id: MovementId,
+	/// The payment preimage, serving as proof of payment.
+	///
+	/// Combined with [`finished_at`](Self::finished_at), determines the payment state:
+	/// - `None` + `finished_at: None` → Pending (in-flight)
+	/// - `None` + `finished_at: Some(_)` → Failed
+	/// - `Some(_)` + `finished_at: Some(_)` → Succeeded
 	pub preimage: Option<Preimage>,
+	/// When the payment reached a terminal state (succeeded or failed).
 	pub finished_at: Option<chrono::DateTime<chrono::Local>>,
 }
 
