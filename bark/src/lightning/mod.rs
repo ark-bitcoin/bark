@@ -10,7 +10,14 @@ use lnurllib::lightning_address::LightningAddress;
 
 use bitcoin_ext::AmountExt;
 
-
+/// Initiates payment of a LNURL-Pay invoice.
+///
+/// This function attempts to pay the given invoice and returns immediately;
+/// it does not wait for the payment to be completed or for the pre-image
+/// to be released by the receiver.
+///
+/// To determine whether the payment succeeded or failed,
+/// call [Wallet::check_lightning_payment] after initiating the payment.
 async fn lnurlp_invoice(
 	lnurlp: &str,
 	amount: Amount,
@@ -30,6 +37,14 @@ async fn lnurlp_invoice(
 	Ok(invoice.parse().with_context(|| format!("received invalid invoice: {}", invoice))?)
 }
 
+/// Initiates payment of a Lightning Address.
+///
+/// This function attempts to pay the given address and returns immediately;
+/// it does not wait for the payment to be completed or for the pre-image
+/// to be released by the receiver.
+///
+/// To determine whether the payment succeeded or failed,
+/// call [Wallet::check_lightning_payment] after initiating the payment.
 async fn lnaddr_invoice(
 	addr: &LightningAddress,
 	amount: Amount,

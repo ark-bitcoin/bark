@@ -374,8 +374,8 @@ impl Wallet {
 	///   If not provided, the invoice's amount is used.
 	///
 	/// # Returns
-	/// Returns a `Preimage` representing the successful payment. If an error occurs during the
-	/// process, an `anyhow::Error` is returned.
+	/// Returns a `LightningSend` representing the successful payment.
+	/// If an error occurs during the process, an `anyhow::Error` is returned.
 	///
 	/// # Errors
 	/// This function can return an error for the following reasons:

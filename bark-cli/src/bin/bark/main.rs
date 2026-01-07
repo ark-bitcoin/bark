@@ -23,6 +23,8 @@ use lnurl::lightning_address::LightningAddress;
 use log::{debug, info, warn};
 
 use ark::VtxoId;
+use ark::lightning::PaymentHash;
+use bark::Wallet;
 use bark::{BarkNetwork, Config};
 use bark::onchain::ChainSync;
 use bark::vtxo::{VtxoFilter, VtxoStateKind};
@@ -308,6 +310,9 @@ enum Command {
 		/// Skip syncing wallet
 		#[arg(long)]
 		no_sync: bool,
+		/// Wait for the payment to be completed
+		#[arg(long)]
+		wait: bool
 	},
 
 	/// Send money from your vtxo's to an onchain address
@@ -529,7 +534,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 			};
 			output_json(&json::PendingBoardInfo::from(board));
 		},
-		Command::Send { destination, amount, comment, no_sync } => {
+		Command::Send { destination, amount, comment, no_sync, wait } => {
 			if !no_sync {
 				info!("Syncing wallet...");
 				wallet.sync().await;
@@ -543,19 +548,23 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 
 				info!("Sending arkoor payment of {} to address {}", amount, addr);
 				wallet.send_arkoor_payment(&addr, amount).await?;
+				info!("Payment sent successfully!");
 			} else if let Ok(inv) = Bolt11Invoice::from_str(&destination) {
 				if comment.is_some() {
 					bail!("comment is not supported for BOLT-11 invoices");
 				}
-				wallet.pay_lightning_invoice(inv, amount).await?;
+				let ln_send = wallet.pay_lightning_invoice(inv, amount).await?;
+				wait_for_lightning_send(&wallet, ln_send.invoice.payment_hash(), wait).await;
 			} else if let Ok(offer) = Offer::from_str(&destination) {
 				if comment.is_some() {
 					bail!("comment is not supported for BOLT-12 offers");
 				}
-				wallet.pay_lightning_offer(offer, amount).await?;
+				let ln_send = wallet.pay_lightning_offer(offer, amount).await?;
+				wait_for_lightning_send(&wallet, ln_send.invoice.payment_hash(), wait).await;
 			} else if let Ok(addr) = LightningAddress::from_str(&destination) {
 				let amount = amount.context("amount is required for Lightning addresses")?;
-				wallet.pay_lightning_address(&addr, amount, comment).await?;
+				let ln_send = wallet.pay_lightning_address(&addr, amount, comment).await?;
+				wait_for_lightning_send(&wallet, ln_send.invoice.payment_hash(), wait).await;
 			} else {
 				bail!("Argument is not a valid destination. Supported are: \
 					VTXO pubkeys, bolt11 invoices, bolt12 offers and lightning addresses",
@@ -639,6 +648,20 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 		},
 	}
 	Ok(())
+}
+
+
+async fn wait_for_lightning_send(wallet: &Wallet, payment_hash: PaymentHash, wait: bool) {
+	if wait {
+		match wallet.check_lightning_payment(payment_hash, true).await {
+			Ok(Some(_)) => log::info!("Payment received: hash = {}", payment_hash),
+			Err(err) => log::warn!("Error waiting for payment: {:?}", err),
+			Ok(None) => log::info!("Payment failed: hash={}", payment_hash),
+		}
+	} else {
+		info!("Payment initiated but not completed (yet).");
+	}
+
 }
 
 #[tokio::main]
