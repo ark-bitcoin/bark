@@ -185,7 +185,7 @@ pub async fn peak_address(
 )]
 #[debug_handler]
 pub async fn balance(State(state): State<ServerState>) -> HandlerResult<Json<bark_json::cli::Balance>> {
-	let balance = state.wallet.balance()
+	let balance = state.wallet.balance().await
 		.context("Failed to get wallet balance")?;
 
 	Ok(axum::Json(balance.into()))
@@ -210,9 +210,9 @@ pub async fn vtxos(
 	Query(query): Query<bark_json::web::VtxosQuery>,
 ) -> HandlerResult<Json<Vec<bark_json::primitives::WalletVtxoInfo>>> {
 	let wallet_vtxos = if query.all.unwrap_or(false) {
-		state.wallet.all_vtxos().context("Failed to get all VTXOs")?
+		state.wallet.all_vtxos().await.context("Failed to get all VTXOs")?
 	} else {
-		state.wallet.vtxos().context("Failed to get VTXOs")?
+		state.wallet.vtxos().await.context("Failed to get VTXOs")?
 	};
 
 	let vtxo_infos = wallet_vtxos
@@ -241,7 +241,7 @@ pub async fn vtxos(
 #[deprecated(note = "Use `history` instead")]
 pub async fn movements(State(state): State<ServerState>) -> HandlerResult<Json<Vec<bark_json::cli::Movement>>> {
 	#[allow(deprecated)]
-	let movements = state.wallet.movements().context("Failed to get movements")?;
+	let movements = state.wallet.movements().await.context("Failed to get movements")?;
 
 	let json_movements = movements
 		.into_iter()
@@ -264,7 +264,7 @@ pub async fn movements(State(state): State<ServerState>) -> HandlerResult<Json<V
 )]
 #[debug_handler]
 pub async fn history(State(state): State<ServerState>) -> HandlerResult<Json<Vec<bark_json::cli::Movement>>> {
-	let movements = state.wallet.history().context("Failed to get movements")?;
+	let movements = state.wallet.history().await.context("Failed to get movements")?;
 
 	let json_movements = movements
 		.into_iter()
@@ -289,7 +289,7 @@ pub async fn history(State(state): State<ServerState>) -> HandlerResult<Json<Vec
 pub async fn pending_rounds(
 	State(state): State<ServerState>,
 ) -> HandlerResult<Json<Vec<bark_json::web::PendingRoundInfo>>> {
-	let rounds = state.wallet.pending_round_states()
+	let rounds = state.wallet.pending_round_states().await
 		.context("Failed to get pending rounds")?;
 	let mut infos = Vec::with_capacity(rounds.len());
 	for mut round in rounds {
@@ -340,7 +340,7 @@ pub async fn send(
 		state.wallet.pay_lightning_address(&addr, amount, body.comment).await?;
 	} else if let Ok(addr) = bitcoin::Address::from_str(&body.destination) {
 		let _checked_addr = addr
-			.require_network(state.wallet.properties()?.network)
+			.require_network(state.wallet.network().await?)
 			.context("bitcoin address is not valid for configured network")?;
 		let _amount = amount.context("amount missing")?;
 
@@ -381,18 +381,18 @@ pub async fn refresh_vtxos(
 	let mut vtxo_ids = Vec::new();
 	for s in body.vtxos {
 		let id = ark::VtxoId::from_str(&s).badarg("Invalid VTXO id")?;
-		state.wallet.get_vtxo_by_id(id).not_found([id], "VTXO not found")?;
+		state.wallet.get_vtxo_by_id(id).await.not_found([id], "VTXO not found")?;
 		vtxo_ids.push(id);
 	}
 
 	let participation = state.wallet
-		.build_refresh_participation(vtxo_ids)
+		.build_refresh_participation(vtxo_ids).await
 		.context("Failed to build round participation")?;
 
 	match participation {
 		Some(participation) => {
-			let mut round = state.wallet.join_next_round(participation, Some(RoundMovement::Refresh))
-				.await
+			let mut round = state.wallet
+				.join_next_round(participation, Some(RoundMovement::Refresh)).await
 				.context("Failed to store round participation")?;
 
 			let sync = round.state.sync(&state.wallet).await;
@@ -419,17 +419,17 @@ pub async fn refresh_all(
 	State(state): State<ServerState>,
 ) -> HandlerResult<Json<bark_json::web::PendingRoundInfo>> {
 	let vtxos = state.wallet
-		.spendable_vtxos()
+		.spendable_vtxos().await
 		.context("Failed to get spendable VTXOs")?;
 
 	let participation = state.wallet
-		.build_refresh_participation(vtxos)
+		.build_refresh_participation(vtxos).await
 		.context("Failed to build round participation")?;
 
 	match participation {
 		Some(participation) => {
-			let mut round = state.wallet.join_next_round(participation, Some(RoundMovement::Refresh))
-				.await
+			let mut round = state.wallet
+				.join_next_round(participation, Some(RoundMovement::Refresh)).await
 				.context("Failed to store round participation")?;
 
 			let sync = round.state.sync(&state.wallet).await;
@@ -459,17 +459,17 @@ pub async fn refresh_counterparty(
 ) -> HandlerResult<Json<bark_json::web::PendingRoundInfo>> {
 	let filter = VtxoFilter::new(&state.wallet).counterparty();
 	let vtxos = state.wallet
-		.spendable_vtxos_with(&filter)
+		.spendable_vtxos_with(&filter).await
 		.context("Failed to get VTXOs")?;
 
 	let participation = state.wallet
-		.build_refresh_participation(vtxos)
+		.build_refresh_participation(vtxos).await
 		.context("Failed to build round participation")?;
 
 	match participation {
 		Some(participation) => {
-			let mut round = state.wallet.join_next_round(participation, Some(RoundMovement::Refresh))
-				.await
+			let mut round = state.wallet
+				.join_next_round(participation, Some(RoundMovement::Refresh)).await
 				.context("Failed to store round participation")?;
 
 			let sync = round.state.sync(&state.wallet).await;
@@ -507,19 +507,19 @@ pub async fn offboard_vtxos(
 	}
 
 	let _address = if let Some(addr) = body.address {
-		let network = state.wallet.properties()?.network;
+		let network = state.wallet.network().await?;
 		bitcoin::Address::from_str(&addr)
 			.badarg("invalid destination address")?
 			.require_network(network)
 			.badarg("address is not valid for configured network")?
 	} else {
-		onchain_lock.address()?
+		onchain_lock.address().await?
 	};
 
 	let mut _vtxo_ids = Vec::new();
 	for s in body.vtxos {
 		let id = ark::VtxoId::from_str(&s).badarg("Invalid VTXO id")?;
-		state.wallet.get_vtxo_by_id(id).not_found([id], "VTXO not found")?;
+		state.wallet.get_vtxo_by_id(id).await.not_found([id], "VTXO not found")?;
 		_vtxo_ids.push(id);
 	}
 
@@ -545,13 +545,13 @@ pub async fn offboard_all(
 	let mut onchain_lock = state.onchain.write().await;
 
 	let _address = if let Some(addr) = body.address {
-		let network = state.wallet.properties()?.network;
+		let network = state.wallet.network().await?;
 		bitcoin::Address::from_str(&addr)
 			.badarg("invalid destination address")?
 			.require_network(network)
 			.badarg("address is not valid for configured network")?
 	} else {
-		onchain_lock.address()?
+		onchain_lock.address().await?
 	};
 
 	Err(anyhow!("offboards are temporarily not supported").into())
@@ -575,7 +575,7 @@ pub async fn send_onchain(
 ) -> HandlerResult<Json<()>> {
 	let _addr = bitcoin::Address::from_str(&body.destination)
 		.badarg("invalid destination address")?
-		.require_network(state.wallet.properties()?.network)
+		.require_network(state.wallet.network().await?)
 		.badarg("address is not valid for configured network")?;
 
 	let _amount = Amount::from_sat(body.amount_sat);

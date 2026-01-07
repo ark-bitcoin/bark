@@ -135,7 +135,7 @@ async fn sweep_vtxos() {
 	// We need to now register this board without triggering bark maintenance.
 	let bark_client = bark.client().await;
 
-	let vtxo = bark_client.get_vtxo_by_id(board.vtxos[0]).unwrap();
+	let vtxo = bark_client.get_vtxo_by_id(board.vtxos[0]).await.unwrap();
 
 	let mut rpc = srv.get_public_rpc().await;
 	let request = protos::BoardVtxoRequest {

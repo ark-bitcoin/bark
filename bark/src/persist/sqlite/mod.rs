@@ -62,8 +62,9 @@ impl SqliteClient {
 	}
 }
 
+#[async_trait]
 impl BarkPersister for SqliteClient {
-	fn init_wallet(&self, properties: &WalletProperties) -> anyhow::Result<()> {
+	async fn init_wallet(&self, properties: &WalletProperties) -> anyhow::Result<()> {
 		let mut conn = self.connect()?;
 		let tx = conn.transaction()?;
 
@@ -74,29 +75,29 @@ impl BarkPersister for SqliteClient {
 	}
 
 	#[cfg(feature = "onchain_bdk")]
-	fn initialize_bdk_wallet(&self) -> anyhow::Result<bdk_wallet::ChangeSet> {
+	async fn initialize_bdk_wallet(&self) -> anyhow::Result<bdk_wallet::ChangeSet> {
 	    let mut conn = self.connect()?;
 		Ok(bdk_wallet::WalletPersister::initialize(&mut conn)?)
 	}
 
 	#[cfg(feature = "onchain_bdk")]
-	fn store_bdk_wallet_changeset(&self, changeset: &bdk_wallet::ChangeSet) -> anyhow::Result<()> {
+	async fn store_bdk_wallet_changeset(&self, changeset: &bdk_wallet::ChangeSet) -> anyhow::Result<()> {
 	    let mut conn = self.connect()?;
 		bdk_wallet::WalletPersister::persist(&mut conn, changeset)?;
 		Ok(())
 	}
 
-	fn read_properties(&self) -> anyhow::Result<Option<WalletProperties>> {
+	async fn read_properties(&self) -> anyhow::Result<Option<WalletProperties>> {
 		let conn = self.connect()?;
 		Ok(query::fetch_properties(&conn)?)
 	}
 
-	fn check_recipient_exists(&self, recipient: &PaymentMethod) -> anyhow::Result<bool> {
+	async fn check_recipient_exists(&self, recipient: &PaymentMethod) -> anyhow::Result<bool> {
 		let conn = self.connect()?;
 		query::check_recipient_exists(&conn, recipient)
 	}
 
-	fn create_new_movement(&self,
+	async fn create_new_movement(&self,
 		status: MovementStatus,
 		subsystem: &MovementSubsystem,
 		time: DateTime<chrono::Local>,
@@ -108,7 +109,7 @@ impl BarkPersister for SqliteClient {
 		Ok(movement_id)
 	}
 
-	fn update_movement(&self, movement: &Movement) -> anyhow::Result<()> {
+	async fn update_movement(&self, movement: &Movement) -> anyhow::Result<()> {
 		let mut conn = self.connect()?;
 		let tx = conn.transaction()?;
 		query::update_movement(&tx, movement)?;
@@ -116,17 +117,17 @@ impl BarkPersister for SqliteClient {
 		Ok(())
 	}
 
-	fn get_movement_by_id(&self, movement_id: MovementId) -> anyhow::Result<Movement> {
+	async fn get_movement_by_id(&self, movement_id: MovementId) -> anyhow::Result<Movement> {
 		let conn = self.connect()?;
 		query::get_movement_by_id(&conn, movement_id)
 	}
 
-	fn get_all_movements(&self) -> anyhow::Result<Vec<Movement>> {
+	async fn get_all_movements(&self) -> anyhow::Result<Vec<Movement>> {
 		let conn = self.connect()?;
 		query::get_all_movements(&conn)
 	}
 
-	fn store_pending_board(
+	async fn store_pending_board(
 		&self,
 		vtxo: &Vtxo,
 		funding_tx: &bitcoin::Transaction,
@@ -139,7 +140,7 @@ impl BarkPersister for SqliteClient {
 		Ok(())
 	}
 
-	fn remove_pending_board(&self, vtxo_id: &VtxoId) -> anyhow::Result<()> {
+	async fn remove_pending_board(&self, vtxo_id: &VtxoId) -> anyhow::Result<()> {
 		let mut conn = self.connect()?;
 		let tx = conn.transaction()?;
 		query::remove_pending_board(&tx, vtxo_id)?;
@@ -147,17 +148,17 @@ impl BarkPersister for SqliteClient {
 		Ok(())
 	}
 
-	fn get_all_pending_board_ids(&self) -> anyhow::Result<Vec<VtxoId>> {
+	async fn get_all_pending_board_ids(&self) -> anyhow::Result<Vec<VtxoId>> {
 		let conn = self.connect()?;
 		query::get_all_pending_boards_ids(&conn)
 	}
 
-	fn get_pending_board_by_vtxo_id(&self, vtxo_id: VtxoId) -> anyhow::Result<Option<PendingBoard>> {
+	async fn get_pending_board_by_vtxo_id(&self, vtxo_id: VtxoId) -> anyhow::Result<Option<PendingBoard>> {
 		let conn = self.connect()?;
 		query::get_pending_board_by_vtxo_id(&conn, vtxo_id)
 	}
 
-	fn store_round_state_lock_vtxos(&self, round_state: &RoundState) -> anyhow::Result<RoundStateId> {
+	async fn store_round_state_lock_vtxos(&self, round_state: &RoundState) -> anyhow::Result<RoundStateId> {
 		let mut conn = self.connect()?;
 		let tx = conn.transaction()?;
 		for vtxo in round_state.participation().inputs.iter() {
@@ -173,24 +174,24 @@ impl BarkPersister for SqliteClient {
 		Ok(id)
 	}
 
-	fn update_round_state(&self, state: &StoredRoundState) -> anyhow::Result<()> {
+	async fn update_round_state(&self, state: &StoredRoundState) -> anyhow::Result<()> {
 		let conn = self.connect()?;
 		query::update_round_state(&conn, state)?;
 		Ok(())
 	}
 
-	fn remove_round_state(&self, round_state: &StoredRoundState) -> anyhow::Result<()> {
+	async fn remove_round_state(&self, round_state: &StoredRoundState) -> anyhow::Result<()> {
 		let conn = self.connect()?;
 		query::remove_round_state(&conn, round_state.id)?;
 		Ok(())
 	}
 
-	fn load_round_states(&self) -> anyhow::Result<Vec<StoredRoundState>> {
+	async fn load_round_states(&self) -> anyhow::Result<Vec<StoredRoundState>> {
 		let conn = self.connect()?;
 		query::load_round_states(&conn)
 	}
 
-	fn store_vtxos(
+	async fn store_vtxos(
 		&self,
 		vtxos: &[(&Vtxo, &VtxoState)],
 	) -> anyhow::Result<()> {
@@ -204,30 +205,30 @@ impl BarkPersister for SqliteClient {
 		Ok(())
 	}
 
-	fn get_wallet_vtxo(&self, id: VtxoId) -> anyhow::Result<Option<WalletVtxo>> {
+	async fn get_wallet_vtxo(&self, id: VtxoId) -> anyhow::Result<Option<WalletVtxo>> {
 		let conn = self.connect()?;
 		query::get_wallet_vtxo_by_id(&conn, id)
 	}
 
-	fn get_all_vtxos(&self) -> anyhow::Result<Vec<WalletVtxo>> {
+	async fn get_all_vtxos(&self) -> anyhow::Result<Vec<WalletVtxo>> {
 		let conn = self.connect()?;
 		query::get_all_vtxos(&conn)
 	}
 
 	/// Get all VTXOs that are in one of the provided states
-	fn get_vtxos_by_state(&self, state: &[VtxoStateKind]) -> anyhow::Result<Vec<WalletVtxo>> {
+	async fn get_vtxos_by_state(&self, state: &[VtxoStateKind]) -> anyhow::Result<Vec<WalletVtxo>> {
 		let conn = self.connect()?;
 		query::get_vtxos_by_state(&conn, state)
 	}
 
-	fn has_spent_vtxo(&self, id: VtxoId) -> anyhow::Result<bool> {
+	async fn has_spent_vtxo(&self, id: VtxoId) -> anyhow::Result<bool> {
 		let conn = self.connect()?;
 		let state : Option<VtxoState> = query::get_vtxo_state(&conn, id)?;
 		let result = state.map(|s| s == VtxoState::Spent).unwrap_or(false);
 		Ok(result)
 	}
 
-	fn remove_vtxo(&self, id: VtxoId) -> anyhow::Result<Option<Vtxo>> {
+	async fn remove_vtxo(&self, id: VtxoId) -> anyhow::Result<Option<Vtxo>> {
 		let mut conn = self.connect()?;
 		let tx = conn.transaction().context("Failed to start transaction")?;
 		let result = query::delete_vtxo(&tx, id);
@@ -235,23 +236,23 @@ impl BarkPersister for SqliteClient {
 		result
 	}
 
-	fn store_vtxo_key(&self, index: u32, public_key: PublicKey) -> anyhow::Result<()> {
+	async fn store_vtxo_key(&self, index: u32, public_key: PublicKey) -> anyhow::Result<()> {
 		let conn = self.connect()?;
 		query::store_vtxo_key(&conn, index, public_key)
 	}
 
-	fn get_last_vtxo_key_index(&self) -> anyhow::Result<Option<u32>> {
+	async fn get_last_vtxo_key_index(&self) -> anyhow::Result<Option<u32>> {
 		let conn = self.connect()?;
 		query::get_last_vtxo_key_index(&conn)
 	}
 
-	fn get_public_key_idx(&self, public_key: &PublicKey) -> anyhow::Result<Option<u32>> {
+	async fn get_public_key_idx(&self, public_key: &PublicKey) -> anyhow::Result<Option<u32>> {
 		let conn = self.connect()?;
 		query::get_public_key_idx(&conn, public_key)
 	}
 
 	/// Store a lightning receive
-	fn store_lightning_receive(
+	async fn store_lightning_receive(
 		&self,
 		payment_hash: PaymentHash,
 		preimage: Preimage,
@@ -265,7 +266,7 @@ impl BarkPersister for SqliteClient {
 		Ok(())
 	}
 
-	fn store_new_pending_lightning_send(
+	async fn store_new_pending_lightning_send(
 		&self,
 		invoice: &Invoice,
 		amount: &Amount,
@@ -276,12 +277,12 @@ impl BarkPersister for SqliteClient {
 		query::store_new_pending_lightning_send(&conn, invoice, amount, vtxos, movement_id)
 	}
 
-	fn get_all_pending_lightning_send(&self) -> anyhow::Result<Vec<LightningSend>> {
+	async fn get_all_pending_lightning_send(&self) -> anyhow::Result<Vec<LightningSend>> {
 		let conn = self.connect()?;
 		query::get_all_pending_lightning_send(&conn)
 	}
 
-	fn finish_lightning_send(
+	async fn finish_lightning_send(
 		&self,
 		payment_hash: PaymentHash,
 		preimage: Option<Preimage>,
@@ -290,29 +291,29 @@ impl BarkPersister for SqliteClient {
 		query::finish_lightning_send(&conn, payment_hash, preimage)
 	}
 
-	fn remove_lightning_send(&self, payment_hash: PaymentHash) -> anyhow::Result<()> {
+	async fn remove_lightning_send(&self, payment_hash: PaymentHash) -> anyhow::Result<()> {
 		let conn = self.connect()?;
 		query::remove_lightning_send(&conn, payment_hash)?;
 		Ok(())
 	}
 
-	fn get_lightning_send(&self, payment_hash: PaymentHash) -> anyhow::Result<Option<LightningSend>> {
+	async fn get_lightning_send(&self, payment_hash: PaymentHash) -> anyhow::Result<Option<LightningSend>> {
 		let conn = self.connect()?;
 		query::get_lightning_send(&conn, payment_hash)
 	}
 
-	fn get_all_pending_lightning_receives(&self) -> anyhow::Result<Vec<LightningReceive>> {
+	async fn get_all_pending_lightning_receives(&self) -> anyhow::Result<Vec<LightningReceive>> {
 		let conn = self.connect()?;
 		query::get_all_pending_lightning_receives(&conn)
 	}
 
-	fn set_preimage_revealed(&self, payment_hash: PaymentHash) -> anyhow::Result<()> {
+	async fn set_preimage_revealed(&self, payment_hash: PaymentHash) -> anyhow::Result<()> {
 		let conn = self.connect()?;
 		query::set_preimage_revealed(&conn, payment_hash)?;
 		Ok(())
 	}
 
-	fn update_lightning_receive(
+	async fn update_lightning_receive(
 		&self,
 		payment_hash: PaymentHash,
 		htlc_vtxo_ids: &[VtxoId],
@@ -324,7 +325,7 @@ impl BarkPersister for SqliteClient {
 	}
 
 	/// Fetch a lightning receive by payment hash
-	fn fetch_lightning_receive_by_payment_hash(
+	async fn fetch_lightning_receive_by_payment_hash(
 		&self,
 		payment_hash: PaymentHash,
 	) -> anyhow::Result<Option<LightningReceive>> {
@@ -332,13 +333,13 @@ impl BarkPersister for SqliteClient {
 		query::fetch_lightning_receive_by_payment_hash(&conn, payment_hash)
 	}
 
-	fn finish_pending_lightning_receive(&self, payment_hash: PaymentHash) -> anyhow::Result<()> {
+	async fn finish_pending_lightning_receive(&self, payment_hash: PaymentHash) -> anyhow::Result<()> {
 		let conn = self.connect()?;
 		query::finish_pending_lightning_receive(&conn, payment_hash)?;
 		Ok(())
 	}
 
-	fn store_exit_vtxo_entry(&self, exit: &StoredExit) -> anyhow::Result<()> {
+	async fn store_exit_vtxo_entry(&self, exit: &StoredExit) -> anyhow::Result<()> {
 		let mut conn = self.connect()?;
 		let tx = conn.transaction()?;
 		query::store_exit_vtxo_entry(&tx, exit)?;
@@ -346,7 +347,7 @@ impl BarkPersister for SqliteClient {
 		Ok(())
 	}
 
-	fn remove_exit_vtxo_entry(&self, id: &VtxoId) -> anyhow::Result<()> {
+	async fn remove_exit_vtxo_entry(&self, id: &VtxoId) -> anyhow::Result<()> {
 		let mut conn = self.connect()?;
 		let tx = conn.transaction()?;
 		query::remove_exit_vtxo_entry(&tx, &id)?;
@@ -354,12 +355,12 @@ impl BarkPersister for SqliteClient {
 		Ok(())
 	}
 
-	fn get_exit_vtxo_entries(&self) -> anyhow::Result<Vec<StoredExit>> {
+	async fn get_exit_vtxo_entries(&self) -> anyhow::Result<Vec<StoredExit>> {
 		let conn = self.connect()?;
 		query::get_exit_vtxo_entries(&conn)
 	}
 
-	fn store_exit_child_tx(
+	async fn store_exit_child_tx(
 		&self,
 		exit_txid: Txid,
 		child_tx: &bitcoin::Transaction,
@@ -372,7 +373,7 @@ impl BarkPersister for SqliteClient {
 		Ok(())
 	}
 
-	fn get_exit_child_tx(
+	async fn get_exit_child_tx(
 		&self,
 		exit_txid: Txid,
 	) -> anyhow::Result<Option<(bitcoin::Transaction, ExitTxOrigin)>> {
@@ -380,7 +381,7 @@ impl BarkPersister for SqliteClient {
 		query::get_exit_child_tx(&conn, exit_txid)
 	}
 
-	fn update_vtxo_state_checked(
+	async fn update_vtxo_state_checked(
 		&self,
 		vtxo_id: VtxoId,
 		new_state: VtxoState,
@@ -435,8 +436,8 @@ mod test {
 
 	use super::*;
 
-	#[test]
-	fn test_add_and_retrieve_vtxos() {
+	#[tokio::test]
+	async fn test_add_and_retrieve_vtxos() {
 		let vtxo_1 = &VTXO_VECTORS.board_vtxo;
 		let vtxo_2 = &VTXO_VECTORS.arkoor_htlc_out_vtxo;
 		let vtxo_3 = &VTXO_VECTORS.round2_vtxo;
@@ -446,17 +447,17 @@ mod test {
 
 		db.store_vtxos(&[
 			(vtxo_1, &VtxoState::Spendable), (vtxo_2, &VtxoState::Spendable)
-		]).unwrap();
+		]).await.unwrap();
 
 		// Check that vtxo-1 can be retrieved from the database
-		let vtxo_1_db = db.get_wallet_vtxo(vtxo_1.id()).expect("No error").expect("A vtxo was found");
+		let vtxo_1_db = db.get_wallet_vtxo(vtxo_1.id()).await.expect("No error").expect("A vtxo was found");
 		assert_eq!(vtxo_1_db.vtxo, *vtxo_1);
 
 		// Verify that vtxo 3 is not in the database
-		assert!(db.get_wallet_vtxo(vtxo_3.id()).expect("No error").is_none());
+		assert!(db.get_wallet_vtxo(vtxo_3.id()).await.expect("No error").is_none());
 
 		// Verify that we have two entries in the database
-		let vtxos = db.get_vtxos_by_state(&[VtxoStateKind::Spendable]).unwrap();
+		let vtxos = db.get_vtxos_by_state(&[VtxoStateKind::Spendable]).await.unwrap();
 		assert_eq!(vtxos.len(), 2);
 		assert!(vtxos.iter().any(|v| v.vtxo == *vtxo_1));
 		assert!(vtxos.iter().any(|v| v.vtxo == *vtxo_2));
@@ -465,15 +466,15 @@ mod test {
 		// Verify that we can mark a vtxo as spent
 		db.update_vtxo_state_checked(
 			vtxo_1.id(), VtxoState::Spent, &VtxoStateKind::UNSPENT_STATES,
-		).unwrap();
+		).await.unwrap();
 
-		let vtxos = db.get_vtxos_by_state(&[VtxoStateKind::Spendable]).unwrap();
+		let vtxos = db.get_vtxos_by_state(&[VtxoStateKind::Spendable]).await.unwrap();
 		assert_eq!(vtxos.len(), 1);
 
 		// Add the third entry to the database
-		db.store_vtxos(&[(vtxo_3, &VtxoState::Spendable)]).unwrap();
+		db.store_vtxos(&[(vtxo_3, &VtxoState::Spendable)]).await.unwrap();
 
-		let vtxos = db.get_vtxos_by_state(&[VtxoStateKind::Spendable]).unwrap();
+		let vtxos = db.get_vtxos_by_state(&[VtxoStateKind::Spendable]).await.unwrap();
 		assert_eq!(vtxos.len(), 2);
 		assert!(vtxos.iter().any(|v| v.vtxo == *vtxo_2));
 		assert!(vtxos.iter().any(|v| v.vtxo == *vtxo_3));
@@ -481,9 +482,9 @@ mod test {
 		conn.close().unwrap();
 	}
 
-	#[test]
+	#[tokio::test]
 	#[cfg(feature = "onchain_bdk")]
-	fn test_create_wallet_then_load() {
+	async fn test_create_wallet_then_load() {
 		use bdk_wallet::chain::DescriptorExt;
 
 		let (connection_string, conn) = in_memory_db();
@@ -497,15 +498,15 @@ mod test {
 		let desc = format!("tr({}/84'/0'/0'/*)", xpriv);
 
 		// need to call init before we call store
-		let _ = db.initialize_bdk_wallet().unwrap();
+		let _ = db.initialize_bdk_wallet().await.unwrap();
 		let mut created = bdk_wallet::Wallet::create_single(desc.clone())
 			.network(network)
 			.create_wallet_no_persist()
 			.unwrap();
-		db.store_bdk_wallet_changeset(&created.take_staged().unwrap()).unwrap();
+		db.store_bdk_wallet_changeset(&created.take_staged().unwrap()).await.unwrap();
 
 		let loaded = {
-			let changeset = db.initialize_bdk_wallet().unwrap();
+			let changeset = db.initialize_bdk_wallet().await.unwrap();
 			bdk_wallet::Wallet::load()
 				.descriptor(bdk_wallet::KeychainKind::External, Some(desc.clone()))
 				.extract_keys()

@@ -70,7 +70,7 @@ impl MovementManager {
 				kind: movement_kind,
 			},
 			chrono::Local::now(),
-		).map_err(|e| MovementError::CreationError { e })
+		).await.map_err(|e| MovementError::CreationError { e })
 	}
 
 	/// Creates a new [Movement] and returns a [MovementGuard] to manage it. The guard will call
@@ -172,13 +172,13 @@ impl MovementManager {
 			return Err(MovementError::IncorrectPendingStatus);
 		}
 		let id = self.new_movement(subsystem_id, movement_kind).await?;
-		let mut movement = self.db.get_movement_by_id(id)
+		let mut movement = self.db.get_movement_by_id(id).await
 			.map_err(|e| MovementError::LoadError { id, e })?;
 		let at = chrono::Local::now();
 		details.apply_to(&mut movement, at);
 		movement.status = status;
 		movement.time.completed_at = Some(at);
-		self.db.update_movement(&movement)
+		self.db.update_movement(&movement).await
 			.map_err(|e| MovementError::PersisterError { id, e })?;
 		Ok(id)
 	}
@@ -210,7 +210,7 @@ impl MovementManager {
 		// Persist the changes using a read lock.
 		let lock = self.get_movement_lock(id).await?;
 		let movement = lock.read().await;
-		self.db.update_movement(&movement)
+		self.db.update_movement(&movement).await
 			.map_err(|e| MovementError::PersisterError { id, e })?;
 
 		// Drop the movement if it's in a finished state as this was likely a one-time update.
@@ -249,7 +249,7 @@ impl MovementManager {
 		let mut movement = lock.write().await;
 		movement.status = new_status;
 		movement.time.completed_at = Some(chrono::Local::now());
-		self.db.update_movement(&*movement)
+		self.db.update_movement(&*movement).await
 			.map_err(|e| MovementError::PersisterError { id, e })?;
 		self.unload_movement_from_cache(id).await
 	}
@@ -297,7 +297,7 @@ impl MovementManager {
 		if movements.contains_key(&id) {
 			return Ok(());
 		}
-		let movement = self.db.get_movement_by_id(id)
+		let movement = self.db.get_movement_by_id(id).await
 			.map_err(|e| MovementError::LoadError { id, e })?;
 		movements.insert(id, Arc::new(RwLock::new(movement)));
 		Ok(())

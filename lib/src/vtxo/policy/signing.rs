@@ -12,9 +12,10 @@ use crate::vtxo::policy::clause::VtxoClause;
 pub struct CannotSignVtxoError;
 
 /// A trait to implement a signer for a [Vtxo].
+#[async_trait::async_trait]
 pub trait VtxoSigner {
 	/// Returns the witness for a [VtxoClause] if it is signable, otherwise [None].
-	fn witness(
+	async fn witness(
 		&self,
 		clause: &VtxoClause,
 		control_block: &taproot::ControlBlock,
@@ -22,16 +23,16 @@ pub trait VtxoSigner {
 	) -> Option<Witness>;
 
 	/// Returns true if the clause is signable, otherwise false.
-	fn can_sign(&self, clause: &VtxoClause, vtxo: &Vtxo) -> bool {
+	async fn can_sign(&self, clause: &VtxoClause, vtxo: &Vtxo) -> bool {
 		// NB: We won't use the witness after this, so we can use all zeros
 		let sighash = TapSighash::all_zeros();
 		let cb = clause.control_block(vtxo);
-		self.witness(clause, &cb, sighash).is_some()
+		self.witness(clause, &cb, sighash).await.is_some()
 	}
 
 	/// Returns the first signable clause from [Vtxo]'s policy.
 	/// If no clause is signable, returns [None].
-	fn find_signable_clause(&self, vtxo: &Vtxo) -> Option<VtxoClause> {
+	async fn find_signable_clause(&self, vtxo: &Vtxo) -> Option<VtxoClause> {
 		let exit_delta = vtxo.exit_delta();
 		let expiry_height = vtxo.expiry_height();
 		let server_pubkey = vtxo.server_pubkey();
@@ -39,7 +40,7 @@ pub trait VtxoSigner {
 		let clauses = vtxo.policy().clauses(exit_delta, expiry_height, server_pubkey);
 
 		for clause in clauses {
-			if self.can_sign(&clause, vtxo) {
+			if self.can_sign(&clause, vtxo).await {
 				return Some(clause);
 			}
 		}
@@ -52,14 +53,15 @@ pub trait VtxoSigner {
 	/// # Errors
 	///
 	/// Returns [CannotSignVtxoError] if no clause is signable.
-	fn sign_input(
+	async fn sign_input(
 		&self,
 		vtxo: &Vtxo,
 		input_idx: usize,
-		sighash_cache: &mut sighash::SighashCache<impl Borrow<Transaction>>,
-		prevouts: &sighash::Prevouts<impl Borrow<TxOut>>,
+		sighash_cache: &mut sighash::SighashCache<impl Borrow<Transaction> + Send + Sync>,
+		prevouts: &sighash::Prevouts<impl Borrow<TxOut> + Send + Sync>,
 	) -> Result<Witness, CannotSignVtxoError> {
-		let clause = self.find_signable_clause(vtxo).ok_or(CannotSignVtxoError)?;
+		let clause = self.find_signable_clause(vtxo).await
+			.ok_or(CannotSignVtxoError)?;
 		let cb = clause.control_block(vtxo);
 
 		let exit_script = clause.tapscript();
@@ -72,7 +74,7 @@ pub trait VtxoSigner {
 			input_idx, &prevouts, leaf_hash, sighash::TapSighashType::Default,
 		).expect("all prevouts provided");
 
-		let witness = self.witness(&clause, &cb, sighash)
+		let witness = self.witness(&clause, &cb, sighash).await
 			.expect("found clause should be signable");
 
 		debug_assert_eq!(

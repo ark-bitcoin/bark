@@ -478,11 +478,13 @@ async fn double_spend_oor() {
 	bark_client.maintenance().await.unwrap();
 
 	// Let's try to construct a few conflicting arkoor transactions
-	let vtxo = bark_client.vtxos().unwrap().into_iter().next().unwrap().vtxo;
-	let vtxo_keypair = bark_client.pubkey_keypair(&vtxo.user_pubkey()).unwrap().unwrap().1;
+	let vtxo = bark_client.vtxos().await
+		.unwrap().into_iter().next().unwrap().vtxo;
+	let vtxo_keypair = bark_client.pubkey_keypair(&vtxo.user_pubkey()).await
+		.unwrap().unwrap().1;
 
-	let pk1 = bark_client.derive_store_next_keypair().unwrap().0.public_key();
-	let pk2 = bark_client.derive_store_next_keypair().unwrap().0.public_key();
+	let pk1 = bark_client.derive_store_next_keypair().await.unwrap().0.public_key();
+	let pk2 = bark_client.derive_store_next_keypair().await.unwrap().0.public_key();
 
 	let builder1 = CheckpointedPackageBuilder::new([vtxo.clone()], VtxoRequest { amount: sat(100_000), policy: VtxoPolicy::new_pubkey(*RANDOM_PK)}, pk1).unwrap();
 	let builder2 = CheckpointedPackageBuilder::new([vtxo.clone()], VtxoRequest { amount: sat(200_000), policy: VtxoPolicy::new_pubkey(*RANDOM_PK)}, pk1).unwrap();
@@ -737,7 +739,8 @@ async fn bad_round_input() {
 	}).await;
 	let bark = ctx.new_bark_with_funds("bark", &srv, btc(1)).await;
 	bark.board_and_confirm_and_register(&ctx, btc(0.5)).await;
-	let [vtxo] = bark.client().await.spendable_vtxos().unwrap().try_into().unwrap();
+	let [vtxo] = bark.client().await.spendable_vtxos().await
+		.unwrap().try_into().unwrap();
 
 	let ark_info = srv.ark_info().await;
 	let mut rpc = srv.get_public_rpc().await;
@@ -988,7 +991,7 @@ async fn register_board_is_idempotent() {
 
 	let bark_client = bark_wallet.client().await;
 
-	let vtxo = bark_client.get_vtxo_by_id(board.vtxos[0]).unwrap();
+	let vtxo = bark_client.get_vtxo_by_id(board.vtxos[0]).await.unwrap();
 
 	// We will now call the register_board a few times
 	let mut rpc = srv.get_public_rpc().await;
@@ -1014,7 +1017,7 @@ async fn register_unconfirmed_board() {
 
 	let bark_client = bark.client().await;
 
-	let vtxo = bark_client.get_vtxo_by_id(unconfirmed_board.vtxos[0]).unwrap();
+	let vtxo = bark_client.get_vtxo_by_id(unconfirmed_board.vtxos[0]).await.unwrap();
 
 	let unconfirmed_board_request = protos::BoardVtxoRequest {
 		board_vtxo: vtxo.vtxo.serialize(),
@@ -1167,7 +1170,7 @@ async fn reject_dust_vtxo_request() {
 			}).collect::<Vec<_>>();
 
 			// Spending input boarded with first derivation
-			let (_, keypair) = self.wallet.pubkey_keypair(&self.vtxo.user_pubkey).unwrap().unwrap();
+			let (_, keypair) = self.wallet.pubkey_keypair(&self.vtxo.user_pubkey).await.unwrap().unwrap();
 
 			let sig = self.challenge.lock().await.as_ref().unwrap()
 				.sign_with(self.vtxo.id, &vtxo_requests, &keypair);
@@ -1204,11 +1207,11 @@ async fn reject_dust_arkoor_cosign() {
 
 	// Read the vtxo and corresponding keypair
 	let bark_client = bark.client().await;
-	let vtxos = bark_client.vtxos().unwrap();
+	let vtxos = bark_client.vtxos().await.unwrap();
 	let vtxo = vtxos[0].clone().vtxo;
 	let vtxo_id = vtxo.id();
 	let vtxo_amount = vtxo.amount();
-	let vtxo_keypair = bark_client.get_vtxo_key(&vtxo).unwrap();
+	let vtxo_keypair = bark_client.get_vtxo_key(&vtxo).await.unwrap();
 
 	// Compute the amounts
 	let send_amount = sat(P2TR_DUST_SAT - 1); // A dusty output
@@ -1967,7 +1970,7 @@ async fn should_refuse_round_input_vtxo_that_is_being_exited() {
 			&self, upstream: &mut ArkClient, mut req: protos::SubmitPaymentRequest,
 		) -> Result<protos::SubmitPaymentResponse, tonic::Status> {
 			// Spending input boarded with first derivation
-			let (_, keypair) = self.wallet.pubkey_keypair(&self.vtxo.user_pubkey).unwrap().unwrap();
+			let (_, keypair) = self.wallet.pubkey_keypair(&self.vtxo.user_pubkey).await.unwrap().unwrap();
 
 			let vtxo_requests = req.vtxo_requests.iter().map(|r| {
 				SignedVtxoRequest {

@@ -149,18 +149,18 @@ pub async fn exit_start_vtxos(
 	let mut vtxo_ids = Vec::new();
 	for s in body.vtxos {
 		let id = ark::VtxoId::from_str(&s).badarg("Invalid VTXO ID")?;
-		state.wallet.get_vtxo_by_id(id).not_found([id], "VTXO not found")?;
+		state.wallet.get_vtxo_by_id(id).await.not_found([id], "VTXO not found")?;
 		vtxo_ids.push(id);
 	}
 
 	let filter = VtxoFilter::new(&state.wallet).include_many(vtxo_ids);
 
-	let spendable = state.wallet.spendable_vtxos_with(&filter)
+	let spendable = state.wallet.spendable_vtxos_with(&filter).await
 		.context("Error fetching spendable VTXOs")?;
 	let inround = {
-		let mut vtxos = state.wallet.pending_round_input_vtxos()
+		let mut vtxos = state.wallet.pending_round_input_vtxos().await
 			.context("Error fetching pending round input VTXOs")?;
-		filter.filter_vtxos(&mut vtxos)?;
+		filter.filter_vtxos(&mut vtxos).await?;
 		vtxos
 	};
 
@@ -282,7 +282,7 @@ pub async fn exit_claim_all(
 	Json(body): Json<bark_json::web::ExitClaimAllRequest>,
 ) -> HandlerResult<Json<bark_json::web::ExitClaimResponse>> {
 
-	let network = state.wallet.properties()?.network;
+	let network = state.wallet.network().await?;
 	let address = bitcoin::Address::from_str(&body.destination)
 		.badarg("Invalid destination address")?
 		.require_network(network)
@@ -314,7 +314,7 @@ pub async fn exit_claim_vtxos(
 	State(state): State<ServerState>,
 	Json(body): Json<bark_json::web::ExitClaimVtxosRequest>,
 ) -> HandlerResult<Json<bark_json::web::ExitClaimResponse>> {
-	let network = state.wallet.properties()?.network;
+	let network = state.wallet.network().await?;
 	let address = bitcoin::Address::from_str(&body.destination)
 		.badarg("Invalid destination address")?
 		.require_network(network)
@@ -325,7 +325,7 @@ pub async fn exit_claim_vtxos(
 		let mut vtxo_ids = HashSet::new();
 		for s in body.vtxos {
 			let id = ark::VtxoId::from_str(&s).badarg("Invalid VTXO ID")?;
-			state.wallet.get_vtxo_by_id(id).not_found([id], "VTXO not found")?;
+			state.wallet.get_vtxo_by_id(id).await.not_found([id], "VTXO not found")?;
 			vtxo_ids.insert(id);
 		}
 

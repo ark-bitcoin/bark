@@ -53,7 +53,7 @@ impl Wallet {
 		let mut pubs = Vec::with_capacity(htlc_vtxos.len());
 		let mut keypairs = Vec::with_capacity(htlc_vtxos.len());
 		for input in htlc_vtxos.iter() {
-			let keypair = self.get_vtxo_key(&input)?;
+			let keypair = self.get_vtxo_key(&input).await?;
 			let (s, p) = musig::nonce_pair(&keypair);
 			secs.push(s);
 			pubs.push(p);
@@ -91,10 +91,10 @@ impl Wallet {
 				.effective_balance(-payment.amount.to_signed()? + revoked.to_signed()?)
 				.produced_vtxos(&vtxos)
 		).await?;
-		self.store_spendable_vtxos(&vtxos)?;
-		self.mark_vtxos_as_spent(&htlc_vtxos)?;
+		self.store_spendable_vtxos(&vtxos).await?;
+		self.mark_vtxos_as_spent(&htlc_vtxos).await?;
 
-		self.db.remove_lightning_send(payment.invoice.payment_hash())?;
+		self.db.remove_lightning_send(payment.invoice.payment_hash()).await?;
 
 		info!("Revoked {} HTLC VTXOs", count);
 
@@ -132,8 +132,8 @@ impl Wallet {
 					preimage.as_hex(), payment.invoice.payment_hash().as_hex());
 
 				// Complete the payment
-				self.db.finish_lightning_send(payment_hash, Some(preimage))?;
-				self.mark_vtxos_as_spent(&payment.htlc_vtxos)?;
+				self.db.finish_lightning_send(payment_hash, Some(preimage)).await?;
+				self.mark_vtxos_as_spent(&payment.htlc_vtxos).await?;
 				self.movements.finish_movement(
 					payment.movement_id, MovementStatus::Successful,
 				).await?;
@@ -182,7 +182,7 @@ impl Wallet {
 
 		let mut srv = self.require_server()?;
 
-		let payment = self.db.get_lightning_send(payment_hash)?
+		let payment = self.db.get_lightning_send(payment_hash).await?
 			.context("no lightning send found for payment hash")?;
 
 		// If the payment already has a preimage, it was already completed successfully
@@ -267,7 +267,7 @@ impl Wallet {
 							.effective_balance(-payment.amount.to_signed()? + exited.to_signed()?)
 							.exited_vtxos(&vtxos)
 					).await?;
-					self.db.finish_lightning_send(payment.invoice.payment_hash(), None)?;
+					self.db.finish_lightning_send(payment.invoice.payment_hash(), None).await?;
 				}
 
 				return Err(e)
@@ -404,12 +404,13 @@ impl Wallet {
 		}
 		let mut srv = self.require_server()?;
 
-		let properties = self.db.read_properties()?.context("Missing config")?;
+		let properties = self.db.read_properties().await?.context("Missing config")?;
 		if invoice.network() != properties.network {
 			bail!("Invoice is for wrong network: {}", invoice.network());
 		}
 
-		if self.db.get_lightning_send(invoice.payment_hash())?.is_some() {
+		let lightning_send = self.db.get_lightning_send(invoice.payment_hash()).await?;
+		if lightning_send.is_some() {
 			bail!("Invoice has already been paid");
 		}
 
@@ -420,9 +421,9 @@ impl Wallet {
 			bail!("Sent amount must be at least {}", P2TR_DUST);
 		}
 
-		let (change_keypair, _) = self.derive_store_next_keypair()?;
+		let (change_keypair, _) = self.derive_store_next_keypair().await?;
 
-		let inputs = self.select_vtxos_to_cover(amount, None)
+		let inputs = self.select_vtxos_to_cover(amount, None).await
 			.context("Could not find enough suitable VTXOs to cover lightning payment")?;
 
 		let mut secs = Vec::with_capacity(inputs.len());
@@ -430,7 +431,7 @@ impl Wallet {
 		let mut keypairs = Vec::with_capacity(inputs.len());
 		let mut input_ids = Vec::with_capacity(inputs.len());
 		for input in inputs.iter() {
-			let keypair = self.get_vtxo_key(&input)?;
+			let keypair = self.get_vtxo_key(&input).await?;
 			let (s, p) = musig::nonce_pair(&keypair);
 			secs.push(s);
 			pubs.push(p);
@@ -489,8 +490,8 @@ impl Wallet {
 				.consumed_vtxos(&inputs)
 				.sent_to([MovementDestination::new(original_payment_method, amount)])
 		).await?;
-		self.store_locked_vtxos(&htlc_vtxos, Some(movement_id))?;
-		self.mark_vtxos_as_spent(&input_ids)?;
+		self.store_locked_vtxos(&htlc_vtxos, Some(movement_id)).await?;
+		self.mark_vtxos_as_spent(&input_ids).await?;
 
 		// Validate the change vtxo. It has the same chain anchor as the last input.
 		if let Some(ref change) = change_vtxo {
@@ -500,7 +501,7 @@ impl Wallet {
 				format!("input vtxo chain anchor not found for lightning change vtxo: {}", last_input.chain_anchor().txid)
 			})?;
 			change.validate(&tx).context("invalid lightning change vtxo")?;
-			self.store_spendable_vtxos([change])?;
+			self.store_spendable_vtxos([change]).await?;
 		}
 
 		self.movements.update_movement(
@@ -511,8 +512,10 @@ impl Wallet {
 		).await?;
 
 		let lightning_send = self.db.store_new_pending_lightning_send(
-			&invoice, &amount, &htlc_vtxos.iter().map(|v| v.id()).collect::<Vec<_>>(), movement_id,
-		)?;
+			&invoice, &amount,
+			&htlc_vtxos.iter().map(|v| v.id()).collect::<Vec<_>>(),
+			movement_id,
+		).await?;
 
 		let req = protos::InitiateLightningPaymentRequest {
 			invoice: invoice.to_string(),

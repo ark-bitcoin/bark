@@ -23,7 +23,7 @@ async fn example() -> anyhow::Result<()> {
 	// Wait for someone to send the sats...
 	wallet.try_claim_all_lightning_receives(true).await?;
 
-	let balance = wallet.balance()?;
+	let balance = wallet.balance().await?;
 	println!("I now have sats: {}!", balance.spendable);
 
 	// Let's give back!

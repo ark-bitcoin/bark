@@ -193,11 +193,11 @@ pub async fn start_exit(
 	} else {
 		let filter = VtxoFilter::new(wallet).include_many(args.vtxos);
 
-		let spendable = wallet.spendable_vtxos_with(&filter)
+		let spendable = wallet.spendable_vtxos_with(&filter).await
 			.context("Error parsing vtxos")?;
 		let inround = {
-			let mut buf = wallet.pending_round_input_vtxos()?;
-			filter.filter_vtxos(&mut buf)?;
+			let mut buf = wallet.pending_round_input_vtxos().await?;
+			filter.filter_vtxos(&mut buf).await?;
 			buf
 		};
 
@@ -272,7 +272,7 @@ pub async fn claim_exits(
 		}
 	}
 
-	let network = wallet.properties()?.network;
+	let network = wallet.network().await?;
 	let address = address.require_network(network).with_context(|| {
 		format!("address is not valid for configured network {}", network)
 	})?;

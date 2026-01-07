@@ -90,7 +90,7 @@ pub async fn board_all(
 pub async fn get_pending_boards(
 	State(state): State<ServerState>,
 ) -> HandlerResult<Json<Vec<bark_json::cli::PendingBoardInfo>>> {
-	let boards = state.wallet.pending_boards()?.into_iter()
+	let boards = state.wallet.pending_boards().await?.into_iter()
 		.map(bark_json::cli::PendingBoardInfo::from).collect();
 
 	Ok(axum::Json(boards))

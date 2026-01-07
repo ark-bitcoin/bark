@@ -104,7 +104,7 @@ impl ExitStateProgress for ExitProcessingState {
 				.max_by(|a, b| a.height.cmp(&b.height))
 				.unwrap();
 
-			let clause = ctx.wallet.find_signable_clause(ctx.vtxo)
+			let clause = ctx.wallet.find_signable_clause(ctx.vtxo).await
 				.ok_or_else(|| ExitError::ClaimMissingSignableClause { vtxo: ctx.vtxo.id() })?;
 
 			let wait_delta = clause.sequence().map_or(0, |csv| csv.0) as BlockDelta;
@@ -239,7 +239,7 @@ async fn progress_exit_tx(
 					if matches!(status, TxStatus::Mempool) {
 						debug!("Commiting exit CPFP {} to database", new_child_txid);
 						let tx = &guard.child.as_ref().expect("child can't be missing").info.tx;
-						onchain.store_signed_p2a_cpfp(tx)
+						onchain.store_signed_p2a_cpfp(tx).await
 							.map_err(|e| ExitError::ExitPackageStoreFailure {
 								txid: exit.txid,
 								error: e.to_string(),

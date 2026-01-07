@@ -83,9 +83,10 @@ pub struct SpendableExit {
 ///
 /// Wallets should apply all necessary signatures and finalize inputs according
 /// to their internal key management and policies.
+#[async_trait]
 pub trait SignPsbt {
 	/// Consume a [Psbt] and return a fully signed and finalized [Transaction].
-	fn finish_tx(&mut self, psbt: Psbt) -> anyhow::Result<Transaction>;
+	async fn finish_tx(&mut self, psbt: Psbt) -> anyhow::Result<Transaction>;
 }
 
 /// Ability to query the wallets' total balance.
@@ -139,6 +140,7 @@ pub trait GetSpendingTx {
 }
 
 /// Ability to create and persist CPFP transactions for spending P2A outputs.
+#[async_trait]
 pub trait MakeCpfp {
 	/// Creates a signed Child Pays for Parent (CPFP) transaction using a Pay-to-Anchor (P2A) output
 	/// to broadcast unilateral exits and other TRUC transactions.
@@ -169,7 +171,7 @@ pub trait MakeCpfp {
 	) -> Result<Transaction, CpfpError>;
 
 	/// Persist the signed CPFP transaction so it can be rebroadcast or retrieved as needed.
-	fn store_signed_p2a_cpfp(&mut self, tx: &Transaction) -> anyhow::Result<(), CpfpError>;
+	async fn store_signed_p2a_cpfp(&mut self, tx: &Transaction) -> anyhow::Result<(), CpfpError>;
 }
 
 /// Trait alias for wallets that support boarding.
