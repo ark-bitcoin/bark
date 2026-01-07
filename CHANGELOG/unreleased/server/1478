@@ -1,0 +1,3 @@
+- Rename `hodl` references to `hold` across configuration and code.
+  Fixes inconsistent spelling of `hodl` vs `hold` in configuration, daemon logic, tests, and documentation, improving naming consistency and clarity.
+  [#1478](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1478)
