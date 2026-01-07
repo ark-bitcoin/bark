@@ -41,6 +41,13 @@ pub struct TipUpdated {
 }
 impl_slog!(TipUpdated, Debug, "the chain tip has been updated");
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SyncedToHeight {
+	pub height: BlockHeight,
+	pub hash: BlockHash,
+}
+impl_slog!(SyncedToHeight, Debug, "synced to height");
+
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StoredEphemeralTweak {

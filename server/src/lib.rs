@@ -7,6 +7,7 @@
 mod error;
 
 pub mod arkoor;
+pub mod sync;
 pub mod config;
 pub mod database;
 pub mod filters;
