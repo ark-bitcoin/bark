@@ -56,7 +56,7 @@ with the [hold plugin](https://github.com/BoltzExchange/hold)
 in your `PATH` variable, alternatively you can set the following environmental variables:
 - `BITCOIND_EXEC`: e.g. `export BITCOIND_EXEC="${PATH_TO_BITCOIND}/bin/bitcoind"`
 - `LIGHTNINGD_EXEC`: e.g. `export LIGHTNINGD_EXEC="${PATH_TO_LIGHTNINGD}/bin/lightningd"`
-- `HODL_INVOICE_PLUGIN`: e.g. `export HODL_INVOICE_PLUGIN="/hold/target/debug/hold"`
+- `HOLD_INVOICE_PLUGIN`: e.g. `export HOLD_INVOICE_PLUGIN="/hold/target/debug/hold"`
 
 You also have to ensure you have a working postgres installation
 
