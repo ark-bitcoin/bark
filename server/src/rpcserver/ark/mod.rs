@@ -48,7 +48,7 @@ impl rpc::server::ArkService for Server {
 		&self,
 		req: tonic::Request<protos::HandshakeRequest>,
 	) -> Result<tonic::Response<protos::HandshakeResponse>, tonic::Status> {
-		let _ = RpcMethodDetails::grpc_ark(middleware::RPC_SERVICE_ARK_HANDSHAKE);
+		let _ = RpcMethodDetails::grpc_ark(middleware::rpc_names::ark::HANDSHAKE);
 		let req = req.into_inner();
 
 		telemetry::count_bark_version(req.bark_version);
@@ -65,7 +65,7 @@ impl rpc::server::ArkService for Server {
 		&self,
 		_req: tonic::Request<protos::Empty>,
 	) -> Result<tonic::Response<protos::ArkInfo>, tonic::Status> {
-		let _ = RpcMethodDetails::grpc_ark(middleware::RPC_SERVICE_ARK_GET_ARK_INFO);
+		let _ = RpcMethodDetails::grpc_ark(middleware::rpc_names::ark::GET_ARK_INFO);
 
 		Ok(tonic::Response::new(self.ark_info().into()))
 	}
@@ -74,7 +74,7 @@ impl rpc::server::ArkService for Server {
 		&self,
 		req: tonic::Request<protos::FreshRoundsRequest>,
 	) -> Result<tonic::Response<protos::FreshRounds>, tonic::Status> {
-		let _ = RpcMethodDetails::grpc_ark(middleware::RPC_SERVICE_ARK_GET_FRESH_ROUNDS);
+		let _ = RpcMethodDetails::grpc_ark(middleware::rpc_names::ark::GET_FRESH_ROUNDS);
 		let req = req.into_inner();
 
 		crate::rpcserver::add_tracing_attributes(vec![
@@ -100,7 +100,7 @@ impl rpc::server::ArkService for Server {
 		&self,
 		req: tonic::Request<protos::RoundId>,
 	) -> Result<tonic::Response<protos::RoundInfo>, tonic::Status> {
-		let _ = RpcMethodDetails::grpc_ark(middleware::RPC_SERVICE_ARK_GET_ROUND);
+		let _ = RpcMethodDetails::grpc_ark(middleware::rpc_names::ark::GET_ROUND);
 		let req = req.into_inner();
 
 		crate::rpcserver::add_tracing_attributes(vec![KeyValue::new("txid", format!("{:?}", req.txid))]);
@@ -125,7 +125,7 @@ impl rpc::server::ArkService for Server {
 		&self,
 		req: tonic::Request<protos::BoardCosignRequest>,
 	) -> Result<tonic::Response<protos::BoardCosignResponse>, tonic::Status> {
-		let _ = RpcMethodDetails::grpc_ark(middleware::RPC_SERVICE_ARK_REQUEST_BOARD_COSIGN);
+		let _ = RpcMethodDetails::grpc_ark(middleware::rpc_names::ark::REQUEST_BOARD_COSIGN);
 		let req = req.into_inner();
 
 		crate::rpcserver::add_tracing_attributes(vec![KeyValue::new("amount", req.amount.to_string())]);
@@ -153,7 +153,7 @@ impl rpc::server::ArkService for Server {
 		&self,
 		req: tonic::Request<protos::BoardVtxoRequest>,
 	) -> Result<tonic::Response<protos::Empty>, tonic::Status> {
-		let _ = RpcMethodDetails::grpc_ark(middleware::RPC_SERVICE_ARK_REGISTER_BOARD_VTXO);
+		let _ = RpcMethodDetails::grpc_ark(middleware::rpc_names::ark::REGISTER_BOARD_VTXO);
 		let req = req.into_inner();
 
 		crate::rpcserver::add_tracing_attributes(vec![
@@ -172,7 +172,7 @@ impl rpc::server::ArkService for Server {
 		&self,
 		req: tonic::Request<protos::CheckpointedPackageCosignRequest>,
 	) -> Result<tonic::Response<protos::CheckpointedPackageCosignResponse>, tonic::Status> {
-		let _ = RpcMethodDetails::grpc_ark(middleware::RPC_SERVICE_ARK_CHECKPOINTED_COSIGN_OOR);
+		let _ = RpcMethodDetails::grpc_ark(middleware::rpc_names::ark::CHECKPOINTED_COSIGN_OOR);
 		let req = req.into_inner();
 
 		let request = PackageCosignRequest::try_from(req)
@@ -187,7 +187,7 @@ impl rpc::server::ArkService for Server {
 		&self,
 		req: tonic::Request<protos::ArkoorPackageCosignRequest>,
 	) -> Result<tonic::Response<protos::ArkoorPackageCosignResponse>, tonic::Status> {
-		let _ = RpcMethodDetails::grpc_ark(middleware::RPC_SERVICE_ARK_REQUEST_ARKOOR_PACKAGE_COSIGN);
+		let _ = RpcMethodDetails::grpc_ark(middleware::rpc_names::ark::REQUEST_ARKOOR_PACKAGE_COSIGN);
 		let req = req.into_inner();
 
 		crate::rpcserver::add_tracing_attributes(vec![
@@ -218,7 +218,7 @@ impl rpc::server::ArkService for Server {
 		&self,
 		req: tonic::Request<protos::ArkoorPackage>,
 	) -> Result<tonic::Response<protos::Empty>, tonic::Status> {
-		let _ = RpcMethodDetails::grpc_ark(middleware::RPC_SERVICE_ARK_POST_ARKOOR_PACKAGE_MAILBOX);
+		let _ = RpcMethodDetails::grpc_ark(middleware::rpc_names::ark::POST_ARKOOR_PACKAGE_MAILBOX);
 		let req = req.into_inner();
 
 		crate::rpcserver::add_tracing_attributes(vec![
@@ -242,7 +242,7 @@ impl rpc::server::ArkService for Server {
 		&self,
 		req: tonic::Request<protos::ArkoorVtxosRequest>,
 	) -> Result<tonic::Response<protos::ArkoorVtxosResponse>, tonic::Status> {
-		let _ = RpcMethodDetails::grpc_ark(middleware::RPC_SERVICE_ARK_EMPTY_ARKOOR_MAILBOX);
+		let _ = RpcMethodDetails::grpc_ark(middleware::rpc_names::ark::EMPTY_ARKOOR_MAILBOX);
 		let req = req.into_inner();
 
 		crate::rpcserver::add_tracing_attributes(vec![
@@ -278,7 +278,7 @@ impl rpc::server::ArkService for Server {
 		&self,
 		req: tonic::Request<protos::LightningPayHtlcCosignRequest>,
 	) -> Result<tonic::Response<protos::LightningPayHtlcCosignResponse>, tonic::Status> {
-		let _ = RpcMethodDetails::grpc_ark(middleware::RPC_SERVICE_ARK_START_LIGHTNING_PAYMENT);
+		let _ = RpcMethodDetails::grpc_ark(middleware::rpc_names::ark::START_LIGHTNING_PAYMENT);
 		rpc::server::ArkService::request_lightning_pay_htlc_cosign(self, req).await
 	}
 
@@ -286,7 +286,7 @@ impl rpc::server::ArkService for Server {
 		&self,
 		req: tonic::Request<protos::LightningPayHtlcCosignRequest>,
 	) -> Result<tonic::Response<protos::LightningPayHtlcCosignResponse>, tonic::Status> {
-		let _ = RpcMethodDetails::grpc_ark(middleware::RPC_SERVICE_ARK_REQUEST_LIGHTNING_PAY_HTLC_COSIGN);
+		let _ = RpcMethodDetails::grpc_ark(middleware::rpc_names::ark::REQUEST_LIGHTNING_PAY_HTLC_COSIGN);
 		let req = req.into_inner();
 
 		crate::rpcserver::add_tracing_attributes(
@@ -329,7 +329,7 @@ impl rpc::server::ArkService for Server {
 		&self,
 		req: tonic::Request<protos::InitiateLightningPaymentRequest>,
 	) -> Result<tonic::Response<protos::LightningPaymentResult>, tonic::Status> {
-		let _ = RpcMethodDetails::grpc_ark(middleware::RPC_SERVICE_ARK_FINISH_LIGHTNING_PAYMENT);
+		let _ = RpcMethodDetails::grpc_ark(middleware::rpc_names::ark::FINISH_LIGHTNING_PAYMENT);
 		let req = req.into_inner();
 		let invoice = Invoice::from_str(&req.invoice).badarg("invalid invoice")?;
 		rpc::server::ArkService::initiate_lightning_payment(self, tonic::Request::new(req)).await?;
@@ -345,7 +345,7 @@ impl rpc::server::ArkService for Server {
 		&self,
 		req: tonic::Request<protos::InitiateLightningPaymentRequest>,
 	) -> Result<tonic::Response<protos::Empty>, tonic::Status> {
-		let _ = RpcMethodDetails::grpc_ark(middleware::RPC_SERVICE_ARK_INITIATE_LIGHTNING_PAYMENT);
+		let _ = RpcMethodDetails::grpc_ark(middleware::rpc_names::ark::INITIATE_LIGHTNING_PAYMENT);
 		let req = req.into_inner();
 
 		let htlc_vtxo_ids = req.htlc_vtxo_ids.iter()
@@ -367,7 +367,7 @@ impl rpc::server::ArkService for Server {
 		&self,
 		req: tonic::Request<protos::CheckLightningPaymentRequest>,
 	) -> Result<tonic::Response<protos::LightningPaymentStatus>, tonic::Status> {
-		let _ = RpcMethodDetails::grpc_ark(middleware::RPC_SERVICE_ARK_CHECK_LIGHTNING_PAYMENT);
+		let _ = RpcMethodDetails::grpc_ark(middleware::rpc_names::ark::CHECK_LIGHTNING_PAYMENT);
 		let req = req.into_inner();
 
 		crate::rpcserver::add_tracing_attributes(vec![
@@ -385,7 +385,7 @@ impl rpc::server::ArkService for Server {
 		&self,
 		req: tonic::Request<protos::RevokeLightningPayHtlcRequest>
 	) -> Result<tonic::Response<protos::ArkoorPackageCosignResponse>, tonic::Status> {
-		let _ = RpcMethodDetails::grpc_ark(middleware::RPC_SERVICE_ARK_REVOKE_LIGHTNING_PAYMENT);
+		let _ = RpcMethodDetails::grpc_ark(middleware::rpc_names::ark::REVOKE_LIGHTNING_PAYMENT);
 		rpc::server::ArkService::request_lightning_pay_htlc_revocation(self, req).await
 	}
 
@@ -393,7 +393,7 @@ impl rpc::server::ArkService for Server {
 		&self,
 		req: tonic::Request<protos::RevokeLightningPayHtlcRequest>
 	) -> Result<tonic::Response<protos::ArkoorPackageCosignResponse>, tonic::Status> {
-		let _ = RpcMethodDetails::grpc_ark(middleware::RPC_SERVICE_ARK_REQUEST_LIGHTNING_PAY_HTLC_REVOCATION);
+		let _ = RpcMethodDetails::grpc_ark(middleware::rpc_names::ark::REQUEST_LIGHTNING_PAY_HTLC_REVOCATION);
 		let req = req.into_inner();
 
 		crate::rpcserver::add_tracing_attributes(vec![
@@ -417,7 +417,7 @@ impl rpc::server::ArkService for Server {
 		&self,
 		req: tonic::Request<protos::FetchBolt12InvoiceRequest>,
 	) -> Result<tonic::Response<protos::FetchBolt12InvoiceResponse>, tonic::Status> {
-		let _ = RpcMethodDetails::grpc_ark(middleware::RPC_SERVICE_ARK_FETCH_BOLT12_INVOICE);
+		let _ = RpcMethodDetails::grpc_ark(middleware::rpc_names::ark::FETCH_BOLT12_INVOICE);
 		let req = req.into_inner();
 
 		let offer = match Offer::try_from(req.offer.to_vec()) {
@@ -451,7 +451,7 @@ impl rpc::server::ArkService for Server {
 		&self,
 		req: tonic::Request<protos::StartLightningReceiveRequest>,
 	) -> Result<tonic::Response<protos::StartLightningReceiveResponse>, tonic::Status> {
-		let _ = RpcMethodDetails::grpc_ark(middleware::RPC_SERVICE_ARK_START_LIGHTNING_RECEIVE);
+		let _ = RpcMethodDetails::grpc_ark(middleware::rpc_names::ark::START_LIGHTNING_RECEIVE);
 		let req = req.into_inner();
 
 		crate::rpcserver::add_tracing_attributes(vec![
@@ -475,7 +475,7 @@ impl rpc::server::ArkService for Server {
 		&self,
 		req: tonic::Request<protos::CheckLightningReceiveRequest>,
 	) -> Result<tonic::Response<protos::CheckLightningReceiveResponse>, tonic::Status> {
-		let _ = RpcMethodDetails::grpc_ark(middleware::RPC_SERVICE_ARK_CHECK_LIGHTNING_RECEIVE);
+		let _ = RpcMethodDetails::grpc_ark(middleware::rpc_names::ark::CHECK_LIGHTNING_RECEIVE);
 		let req = req.into_inner();
 
 		let payment_hash = PaymentHash::from_bytes(req.hash)?;
@@ -491,7 +491,7 @@ impl rpc::server::ArkService for Server {
 		&self,
 		req: tonic::Request<protos::PrepareLightningReceiveClaimRequest>
 	) -> Result<tonic::Response<protos::PrepareLightningReceiveClaimResponse>, tonic::Status> {
-		let _ = RpcMethodDetails::grpc_ark(middleware::RPC_SERVICE_ARK_CLAIM_LIGHTNING_RECEIVE);
+		let _ = RpcMethodDetails::grpc_ark(middleware::rpc_names::ark::CLAIM_LIGHTNING_RECEIVE);
 		let req = req.into_inner();
 
 		let payment_hash = PaymentHash::from_bytes(req.payment_hash)?;
@@ -516,7 +516,7 @@ impl rpc::server::ArkService for Server {
 		&self,
 		req: tonic::Request<protos::ClaimLightningReceiveRequest>
 	) -> Result<tonic::Response<protos::ArkoorPackageCosignResponse>, tonic::Status> {
-		let _ = RpcMethodDetails::grpc_ark(middleware::RPC_SERVICE_ARK_CLAIM_LIGHTNING_RECEIVE);
+		let _ = RpcMethodDetails::grpc_ark(middleware::rpc_names::ark::CLAIM_LIGHTNING_RECEIVE);
 		let req = req.into_inner();
 
 		let payment_hash = PaymentHash::from_bytes(req.payment_hash)?;
@@ -551,7 +551,7 @@ impl rpc::server::ArkService for Server {
 		&self,
 		_req: tonic::Request<protos::Empty>,
 	) -> Result<tonic::Response<Self::SubscribeRoundsStream>, tonic::Status> {
-		let _ = RpcMethodDetails::grpc_ark(middleware::RPC_SERVICE_ARK_SUBSCRIBE_ROUNDS);
+		let _ = RpcMethodDetails::grpc_ark(middleware::rpc_names::ark::SUBSCRIBE_ROUNDS);
 
 		let stream = self.rounds.events();
 		Ok(tonic::Response::new(Box::new(stream.map(|e| Ok(e.as_ref().into())))))
@@ -561,7 +561,7 @@ impl rpc::server::ArkService for Server {
 		&self,
 		_req: tonic::Request<protos::Empty>,
 	) -> Result<tonic::Response<protos::RoundEvent>, tonic::Status> {
-		let _ = RpcMethodDetails::grpc_ark(middleware::RPC_SERVICE_ARK_LAST_ROUND_EVENT);
+		let _ = RpcMethodDetails::grpc_ark(middleware::rpc_names::ark::LAST_ROUND_EVENT);
 
 		if let Some(event) = self.rounds.last_event() {
 			Ok(tonic::Response::new(event.as_ref().into()))
@@ -574,7 +574,7 @@ impl rpc::server::ArkService for Server {
 		&self,
 		req: tonic::Request<protos::SubmitPaymentRequest>,
 	) -> Result<tonic::Response<protos::SubmitPaymentResponse>, tonic::Status> {
-		let _ = RpcMethodDetails::grpc_ark(middleware::RPC_SERVICE_ARK_SUBMIT_PAYMENT);
+		let _ = RpcMethodDetails::grpc_ark(middleware::rpc_names::ark::SUBMIT_PAYMENT);
 		let req = req.into_inner();
 
 		crate::rpcserver::add_tracing_attributes(vec![
@@ -621,7 +621,7 @@ impl rpc::server::ArkService for Server {
 		&self,
 		req: tonic::Request<protos::VtxoSignaturesRequest>,
 	) -> Result<tonic::Response<protos::Empty>, tonic::Status> {
-		let _ = RpcMethodDetails::grpc_ark(middleware::RPC_SERVICE_ARK_PROVIDE_VTXO_SIGNATURES);
+		let _ = RpcMethodDetails::grpc_ark(middleware::rpc_names::ark::PROVIDE_VTXO_SIGNATURES);
 		let req = req.into_inner();
 
 		crate::rpcserver::add_tracing_attributes(vec![
@@ -649,7 +649,7 @@ impl rpc::server::ArkService for Server {
 		&self,
 		req: tonic::Request<protos::RoundParticipationRequest>,
 	) -> Result<tonic::Response<protos::RoundParticipationResponse>, tonic::Status> {
-		let _ = RpcMethodDetails::grpc_ark(middleware::RPC_SERVICE_ARK_SUBMIT_ROUND_PARTICIPATION);
+		let _ = RpcMethodDetails::grpc_ark(middleware::rpc_names::ark::SUBMIT_ROUND_PARTICIPATION);
 		let req = req.into_inner();
 
 		crate::rpcserver::add_tracing_attributes(vec![
@@ -680,7 +680,7 @@ impl rpc::server::ArkService for Server {
 		&self,
 		req: tonic::Request<protos::RoundParticipationStatusRequest>,
 	) -> Result<tonic::Response<protos::RoundParticipationStatusResponse>, tonic::Status> {
-		let _ = RpcMethodDetails::grpc_ark(middleware::RPC_SERVICE_ARK_ROUND_PARTICIPATION_STATUS);
+		let _ = RpcMethodDetails::grpc_ark(middleware::rpc_names::ark::ROUND_PARTICIPATION_STATUS);
 		let req = req.into_inner();
 
 		crate::rpcserver::add_tracing_attributes(vec![
@@ -736,7 +736,7 @@ impl rpc::server::ArkService for Server {
 		&self,
 		req: tonic::Request<protos::LeafVtxoCosignRequest>,
 	) -> Result<tonic::Response<protos::LeafVtxoCosignResponse>, tonic::Status> {
-		let _ = RpcMethodDetails::grpc_ark(middleware::RPC_SERVICE_ARK_REQUEST_LEAF_VTXO_COSIGN);
+		let _ = RpcMethodDetails::grpc_ark(middleware::rpc_names::ark::REQUEST_LEAF_VTXO_COSIGN);
 		let req = req.into_inner();
 
 		let vtxo_id = VtxoId::from_bytes(req.vtxo_id)?;
@@ -755,7 +755,7 @@ impl rpc::server::ArkService for Server {
 		&self,
 		req: tonic::Request<protos::ForfeitNoncesRequest>,
 	) -> Result<tonic::Response<protos::ForfeitNoncesResponse>, tonic::Status> {
-		let _ = RpcMethodDetails::grpc_ark(middleware::RPC_SERVICE_ARK_REQUEST_FORFEIT_NONCES);
+		let _ = RpcMethodDetails::grpc_ark(middleware::rpc_names::ark::REQUEST_FORFEIT_NONCES);
 		let req = req.into_inner();
 
 		let unlock_hash = UnlockHash::from_bytes(req.unlock_hash)?;
@@ -776,7 +776,7 @@ impl rpc::server::ArkService for Server {
 		&self,
 		req: tonic::Request<protos::ForfeitVtxosRequest>,
 	) -> Result<tonic::Response<protos::ForfeitVtxosResponse>, tonic::Status> {
-		let _ = RpcMethodDetails::grpc_ark(middleware::RPC_SERVICE_ARK_FORFEIT_VTXOS);
+		let _ = RpcMethodDetails::grpc_ark(middleware::rpc_names::ark::FORFEIT_VTXOS);
 		let req = req.into_inner();
 
 		let forfeits = req.forfeit_bundles.iter()
