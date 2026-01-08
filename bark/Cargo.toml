@@ -9,12 +9,14 @@ edition = "2024"
 readme = "README.md"
 
 [features]
-default = ["rand"]
+default = ["rand", "sqlite"]
 pid_lock = []
 onchain_bdk = ["bdk_wallet", "bark-bitcoin-ext/bdk"]
 tls-native-roots = ["tonic/tls-native-roots"]
 tls-webpki-roots = ["tonic/tls-webpki-roots"]
 rand = ["bitcoin/rand", "bip39/rand"]
+
+sqlite = ["rusqlite", "bdk_wallet/rusqlite"]
 
 [lib]
 name = "bark"
@@ -41,7 +43,6 @@ tokio-util.workspace = true
 
 # INTERNAL
 rand.workspace = true
-rusqlite = { version = "0.31.0", features = ["chrono"] }
 
 lazy_static.workspace = true
 async-trait.workspace = true
@@ -63,7 +64,10 @@ futures.workspace = true
 parking_lot.workspace = true
 
 # Prebuilt BDK Wallet only
-bdk_wallet = { workspace = true, features = [ "rusqlite" ], optional = true }
+bdk_wallet = { workspace = true, optional = true }
+
+# Storage clients crates
+rusqlite = { version = "0.31.0", features = ["chrono"], optional = true }
 
 [dev-dependencies]
 ark-lib = { path = "../lib", features = [ "test-util" ] }

@@ -18,6 +18,7 @@
 //! - A default rusqlite implementation is provided by [sqlite::SqliteClient].
 
 pub mod models;
+#[cfg(feature = "sqlite")]
 pub mod sqlite;
 
 

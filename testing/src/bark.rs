@@ -1,5 +1,4 @@
 
-use bark::{BarkNetwork, Config};
 pub use bark_json::cli as json;
 
 use std::{env, fmt};
@@ -20,6 +19,8 @@ use tokio::process::Command as TokioCommand;
 use tokio::sync::Mutex;
 
 use ark::VtxoId;
+use bark::{BarkNetwork, Config};
+use bark::persist::sqlite::SqliteClient;
 use bark_json::cli::{InvoiceInfo, LightningReceiveInfo, RoundStatus};
 use bark_json::primitives::{UtxoInfo, WalletVtxoInfo};
 use bitcoin_ext::{BlockHeight, FeeRateExt};
@@ -182,9 +183,9 @@ impl Bark {
 		let config: bark::Config = toml::from_str(&config_str)
 			.with_context(|| format!("Failed to parse config file at {}", config_path.display()))?;
 
-		let db = bark::SqliteClient::open(self.datadir.join(DB_FILE))?;
+		let db = Arc::new(SqliteClient::open(self.datadir.join(DB_FILE))?);
 
-		Ok(bark::Wallet::open(&mnemonic, Arc::new(db), config).await?)
+		Ok(bark::Wallet::open(&mnemonic, db, config).await?)
 	}
 
 	pub async fn client(&self) -> bark::Wallet {

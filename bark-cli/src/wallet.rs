@@ -37,10 +37,11 @@ use bitcoin::Network;
 use clap::Args;
 use log::{debug, info, warn};
 
-use bark::{BarkNetwork, Config, Wallet as BarkWallet, SqliteClient};
+use bark::{BarkNetwork, Config, Wallet as BarkWallet};
 use bark::onchain::OnchainWallet;
 use bark::persist::BarkPersister;
 use bark::pid_lock::LOCK_FILE;
+use bark::persist::sqlite::SqliteClient;
 
 use bitcoin_ext::BlockHeight;
 
