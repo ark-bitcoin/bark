@@ -172,6 +172,7 @@ pub const RPC_GRPC_STATUS_CODE: &str = opentelemetry_semantic_conventions::attri
 /// The global open-telemetry context to register metrics.
 static TELEMETRY: OnceCell<Metrics> = OnceCell::const_new();
 static BLOCK_HEIGHT_TIP: AtomicU64 = AtomicU64::new(0);
+static SYNC_HEIGHT_TIP: AtomicU64 = AtomicU64::new(0);
 
 /// Initialize open-telemetry.
 ///
@@ -203,6 +204,7 @@ struct Metrics {
 	protocol_version_counter: Counter<u64>,
 	wallet_balance_gauge: Gauge<u64>,
 	block_height_gauge: Gauge<u64>,
+	sync_height_gauge: Gauge<u64>,
 	round_seq_gauge: Gauge<u64>,
 	round_state_gauge: Gauge<u64>,
 	round_step_duration_gauge: Gauge<u64>,
@@ -334,6 +336,7 @@ impl Metrics {
 		let protocol_version_counter = meter.u64_counter("protocol_version_counter").build();
 		let wallet_balance_gauge = meter.u64_gauge("wallet_balance_gauge").build();
 		let block_height_gauge = meter.u64_gauge("block_gauge").build();
+		let sync_height_gauge = meter.u64_gauge("sync_height_gauge").build();
 		let round_seq_gauge = meter.u64_gauge("round_seq_gauge").build();
 		let round_state_gauge = meter.u64_gauge("round_state_gauge").build();
 		let round_step_duration_gauge = meter.u64_gauge("round_step_duration_gauge").build();
@@ -393,6 +396,7 @@ impl Metrics {
 			protocol_version_counter,
 			wallet_balance_gauge,
 			block_height_gauge,
+			sync_height_gauge,
 			round_seq_gauge,
 			round_state_gauge,
 			round_step_duration_gauge,
@@ -531,6 +535,13 @@ pub fn set_block_height(block_height: BlockHeight) {
 	BLOCK_HEIGHT_TIP.store(block_height as u64, Ordering::Relaxed);
 	if let Some(m) = TELEMETRY.get() {
 		m.block_height_gauge.record(block_height as u64, m.global_labels());
+	}
+}
+
+pub fn set_sync_height(block_height: BlockHeight) {
+	SYNC_HEIGHT_TIP.store(block_height as u64, Ordering::Relaxed);
+	if let Some(m) = TELEMETRY.get() {
+		m.sync_height_gauge.record(block_height as u64, m.global_labels());
 	}
 }
 

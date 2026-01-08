@@ -440,6 +440,16 @@ ALTER TABLE public.bitcoin_transaction ALTER COLUMN id ADD GENERATED ALWAYS AS I
 
 
 --
+-- Name: block; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.block (
+    height bigint NOT NULL,
+    hash text NOT NULL
+);
+
+
+--
 -- Name: board; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -1349,6 +1359,14 @@ ALTER TABLE ONLY public.bitcoin_transaction
 
 
 --
+-- Name: block block_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.block
+    ADD CONSTRAINT block_pkey PRIMARY KEY (height);
+
+
+--
 -- Name: board board_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -1573,6 +1591,13 @@ CREATE INDEX board_sweep_swept_at_ix ON public.board USING btree (((swept_at IS 
 --
 
 CREATE INDEX board_sweep_vtxo_id_ix ON public.board USING btree (vtxo_id);
+
+
+--
+-- Name: idx_block_hash; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_block_hash ON public.block USING btree (hash);
 
 
 --

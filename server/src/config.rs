@@ -294,6 +294,10 @@ pub struct Config {
 	#[serde(with = "utils::serde::duration")]
 	pub txindex_check_interval: Duration,
 
+	/// The interval at which the SyncManager polls for new blocks.
+	#[serde(with = "utils::serde::duration")]
+	pub sync_manager_block_poll_interval: Duration,
+
 	/// A message that can be used by the operator to make
 	/// announcements to all cliens.
 	pub handshake_psa: Option<String>,
@@ -461,6 +465,10 @@ pub mod watchman {
 		/// The interval at which the txindex checks tx statuses.
 		#[serde(with = "utils::serde::duration")]
 		pub txindex_check_interval: Duration,
+
+		/// The interval at which the SyncManager polls for new blocks.
+		#[serde(with = "utils::serde::duration")]
+		pub sync_manager_block_poll_interval: Duration,
 
 		pub otel_collector_endpoint: Option<String>,
 		/// <=0 -> Tracing always disabled,

@@ -1,0 +1,3 @@
+- Add `get_block_by_height`
+  Allows fetching a block by its height from bitcoind.
+  [#1471](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1471)

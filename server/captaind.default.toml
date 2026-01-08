@@ -37,6 +37,8 @@ rpc_rich_errors = true
 
 # The interval to update the tx index
 txindex_check_interval = "30s"
+# The interval at which the SyncManager polls for new blocks
+sync_manager_block_poll_interval = "100ms"
 
 # The minimum balance to maintain for the forfeit watcher, if running
 forfeit_watcher_min_balance = "1 btc"
