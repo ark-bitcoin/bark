@@ -679,18 +679,6 @@ impl Vtxo {
 		self.genesis.len() as u16
 	}
 
-	/// Get the payment hash if this vtxo is an HTLC send arkoor vtxo.
-	pub fn server_htlc_out_payment_hash(&self) -> Option<PaymentHash> {
-		match self.policy {
-			VtxoPolicy::ServerHtlcSend(ServerHtlcSendVtxoPolicy { payment_hash, .. }) => {
-				Some(payment_hash)
-			},
-			VtxoPolicy::ServerHtlcRecv(_) => None,
-			VtxoPolicy::Pubkey(_) => None,
-			VtxoPolicy::Checkpoint(_) => None,
-		}
-	}
-
 	/// The public key used to cosign arkoor txs spending this [Vtxo].
 	/// This will return [None] if [VtxoPolicy::is_arkoor_compatible] returns false
 	/// for this VTXO's policy.
