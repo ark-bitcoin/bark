@@ -25,7 +25,6 @@ use server::vtxopool::VtxoTarget;
 use server::Server;
 use tokio::{fs, join};
 use tonic::transport::Uri;
-use server_rpc as rpc;
 
 use crate::daemon::bitcoind::BitcoindRpcHandle;
 use crate::daemon::bitcoind::snapshot;
@@ -576,8 +575,6 @@ impl TestContext {
 		tokio::time::sleep(Duration::from_millis(1000)).await;
 		self.bitcoind().generate(1).await;
 		tokio::time::sleep(Duration::from_millis(1000)).await;
-		srv.get_wallet_rpc().await.wallet_sync(rpc::protos::Empty {}).await
-			.expect("error calling wallet status after funding server");
 	}
 
 	/// Send `amount` to an onchain address of this Bark client.

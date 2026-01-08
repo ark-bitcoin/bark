@@ -262,8 +262,7 @@ impl Captaind {
 
 	pub async fn wallet_status(&self) -> WalletStatuses {
 		let mut rpc = self.get_wallet_rpc().await;
-		rpc.wallet_sync(protos::Empty{}).await.expect("sync error");
-		let res = rpc.wallet_status(protos::Empty{}).await.expect("sync error").into_inner();
+		let res = rpc.wallet_status(protos::Empty{}).await.expect("wallet status error").into_inner();
 		WalletStatuses {
 			rounds: res.rounds.unwrap().try_into().unwrap(),
 			watchman: res.watchman.map(|w| w.try_into().unwrap()),

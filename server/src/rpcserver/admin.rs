@@ -14,17 +14,6 @@ use crate::Server;
 #[async_trait]
 impl rpc::server::WalletAdminService for Server {
 	#[tracing::instrument(skip(self, _req))]
-	async fn wallet_sync(
-		&self,
-		_req: tonic::Request<protos::Empty>,
-	) -> Result<tonic::Response<protos::Empty>, tonic::Status> {
-
-		self.sync_wallets().await.to_status()?;
-
-		Ok(tonic::Response::new(protos::Empty {}))
-	}
-
-	#[tracing::instrument(skip(self, _req))]
 	async fn wallet_status(
 		&self,
 		_req: tonic::Request<protos::Empty>,

@@ -65,7 +65,6 @@ use ark::tree::signed::{LeafVtxoCosignRequest, LeafVtxoCosignResponse, UnlockPre
 use ark::tree::signed::builder::{SignedTreeBuilder, SignedTreeCosignResponse};
 use bitcoin_ext::{BlockHeight, BlockRef, TxStatus, P2TR_DUST};
 use bitcoin_ext::bdk::WalletExt;
-use bitcoin_ext::rpc::BitcoinRpcClient;
 use bitcoind_async_client::Client as BitcoindClient;
 use bitcoind_async_client::traits::Reader;
 
@@ -184,12 +183,6 @@ pub struct Server {
 	rounds_wallet: InstrumentedLock<PersistedWallet>,
 	watchman_wallet: Option<InstrumentedLock<PersistedWallet>>,
 	bitcoind: BitcoindClient,
-	/// Sync companion to `bitcoind`, used inside `spawn_blocking` for the
-	/// `bdk_bitcoind_rpc::Emitter` (which is sync-only).
-	///
-	/// TODO: drop this (and the sync `bitcoincore_rpc` dep) once
-	/// `bdk_bitcoind_rpc::Emitter` is async upstream.
-	bitcoind_sync: BitcoinRpcClient,
 	// NB needs to be Arc so tasks started before Server is constructed can share it
 	sync_manager: Arc<SyncManager>,
 	rtmgr: RuntimeManager,
@@ -329,11 +322,6 @@ impl Server {
 		bcd::require_version(&bitcoind).await?;
 		bcd::require_txindex(&bitcoind).await?;
 
-		// Sync companion to `bitcoind` for the (sync-only) `bdk_bitcoind_rpc::Emitter`,
-		// which the wallet runs inside `tokio::task::spawn_blocking`.
-		let bitcoind_sync = BitcoinRpcClient::new(&cfg.bitcoind.url, cfg.bitcoind.auth())
-			.context("failed to create sync bitcoind rpc client")?;
-
 		let deep_tip = bcd::deep_tip(&bitcoind).await
 			.context("failed to query node for deep tip")?;
 		let wallet_xpriv = master_xpriv.derive_priv(
@@ -428,7 +416,6 @@ impl Server {
 				watchman_cfg,
 				signer,
 				bitcoind.clone(),
-				bitcoind_sync.clone(),
 				db.clone(),
 				BlockTable::Captaind,
 				fee_estimator.clone(),
@@ -484,7 +471,6 @@ impl Server {
 			mailbox_manager,
 			ephemeral_master_key: Secret::new(ephemeral_master_key),
 			bitcoind,
-			bitcoind_sync,
 			sync_manager,
 			rtmgr,
 			tx_nursery: tx_nursery.clone(),
@@ -600,30 +586,12 @@ impl Server {
 		self.sync_manager.chain_tip()
 	}
 
-	/// Sync all the system's wallets.
-	#[tracing::instrument(skip(self))]
-	pub async fn sync_wallets(&self) -> anyhow::Result<()> {
-		tokio::try_join!(
-			async {
-				self.rounds_wallet.lock().await.sync(&self.bitcoind_sync, false).await?;
-				Ok::<_, anyhow::Error>(())
-			},
-			async {
-				if let Some(ref fw) = self.watchman_wallet {
-					fw.lock().await.sync(&self.bitcoind_sync, false).await?;
-				}
-				Ok::<_, anyhow::Error>(())
-			},
-		)?;
-		Ok(())
-	}
-
 	/// Rebalance coins between the rounds and watchman wallets.
 	///
 	/// If the watchman wallet balance is below `watchman_min_balance`,
 	/// sends bitcoin from the rounds wallet to top it up.
 	///
-	/// Should be called after `sync_wallets`.
+	/// Wallet syncing is handled by the SyncManager via the ChainEventListener.
 	#[tracing::instrument(skip(self))]
 	pub async fn rebalance_wallets(&self) -> anyhow::Result<()> {
 		let Some(ref watchman_wallet) = self.watchman_wallet else {
@@ -667,9 +635,6 @@ impl Server {
 				tokio::time::sleep(Duration::from_millis(500)).await;
 			}
 		}).await.context("waiting for tx broadcast timed out")?;
-
-		// then re-sync
-		watchman_wallet.lock().await.sync(&self.bitcoind_sync, false).await?;
 
 		Ok(())
 	}
