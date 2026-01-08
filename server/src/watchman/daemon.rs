@@ -189,6 +189,7 @@ impl Daemon {
 		));
 
 		let listeners: Vec<Box<dyn ChainEventListener>> = vec![
+			Box::new(watchman_wallet.clone()),
 			Box::new(frontier.clone()),
 		];
 

@@ -243,6 +243,25 @@ pub trait WalletExt: BorrowMut<Wallet> {
 			.collect()
 	}
 
+	/// Check if a transaction is fully owned by the wallet (all inputs spend
+	/// wallet-owned outputs). 
+	fn is_fully_owned_tx(&self, txid: Txid) -> bool {
+		let wallet = self.borrow();
+		let graph = wallet.tx_graph();
+		match graph.get_tx(txid) {
+			Some(tx) => {
+				tx.input.iter().all(|input| {
+					let prev = input.previous_output;
+					graph.get_tx(prev.txid)
+						.and_then(|prev_tx| prev_tx.output.get(prev.vout as usize).cloned())
+						.map(|out| wallet.is_mine(out.script_pubkey))
+						.unwrap_or(false)
+					})
+			}, None => false
+		}
+
+	}
+
 	/// Insert a checkpoint into the wallet.
 	///
 	/// It's advised to use this only when recovering a wallet with a birthday.

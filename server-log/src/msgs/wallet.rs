@@ -58,3 +58,10 @@ pub struct WalletSignedTx {
 	pub fee: Amount,
 }
 impl_slog!(WalletSignedTx, DEBUG, "Our wallet signed an onchain tx");
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TxEvicted {
+	pub wallet: Cow<'static, str>,
+	pub txid: Txid,
+}
+impl_slog!(TxEvicted, INFO, "Transaction evicted from wallet");

@@ -1,3 +1,4 @@
+pub mod sync;
 
 use std::collections::HashSet;
 use std::sync::Arc;

@@ -343,6 +343,7 @@ impl Server {
 			db.clone(), cfg.network, &wallet_xpriv, WalletKind::Rounds, deep_tip,
 			cfg.min_trusted_confs,
 		).await.context("error loading rounds wallet")?;
+		let rounds_wallet = InstrumentedLock::new("rounds_wallet", rounds_wallet);
 
 		let ephemeral_master_key = {
 			let path = bip32::DerivationPath::from_str(EPHEMERAL_KEY_PATH).unwrap();
@@ -384,12 +385,14 @@ impl Server {
 		));
 
 		let mut listeners: Vec<Box<dyn ChainEventListener>> = vec![];
+		listeners.push(Box::new(rounds_wallet.clone()));
 		let watchman_deps = if let Some(watchman_cfg) = cfg.watchman.enabled() {
 			let watchman_wallet = PersistedWallet::load_derive_from_master_xpriv(
 				db.clone(), cfg.network, &master_xpriv, WalletKind::Watchman, deep_tip,
 				cfg.min_trusted_confs,
 			).await.context("error loading watchman wallet")?;
 			let watchman_wallet = InstrumentedLock::new("watchman_wallet", watchman_wallet);
+			listeners.push(Box::new(watchman_wallet.clone()));
 
 			let frontier = VtxoExitFrontier::init(db.clone(), htlc_settler.clone()).await?;
 			let frontier = Arc::new(tokio::sync::RwLock::new(frontier));
@@ -418,7 +421,7 @@ impl Server {
 				Secret::new(ephemeral_master_key),
 				db.clone(),
 			);
-			let drain_address = rounds_wallet.peek_next_address().address;
+			let drain_address = rounds_wallet.lock().await.peek_next_address().address;
 			let sync_height_watcher = sync_manager.sync_height_watcher();
 
 			let watchman = watchman::Watchman::new(
@@ -459,7 +462,7 @@ impl Server {
 		let (round_trigger_tx, round_trigger_rx) = tokio::sync::mpsc::channel(1);
 
 		let srv = Server {
-			rounds_wallet: InstrumentedLock::new("rounds_wallet", rounds_wallet),
+			rounds_wallet,
 			watchman_wallet,
 			rounds: RoundHandle {
 				round_event_tx,
