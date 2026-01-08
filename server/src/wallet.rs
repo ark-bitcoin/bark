@@ -290,7 +290,7 @@ impl PersistedWallet {
 			.collect::<Vec<_>>()
 	}
 
-	pub fn lock_wallet_utxo(&self, utxo: OutPoint) -> WalletUtxoGuard {
+	pub fn lock_wallet_utxo(&self, utxo: OutPoint) -> Result<WalletUtxoGuard, UtxoAlreadyLockedError> {
 		WalletUtxoGuard::new(self.locked_outputs.clone(), utxo)
 	}
 }
@@ -329,6 +329,10 @@ impl LockedWalletUtxosIndex {
 	}
 }
 
+#[derive(Debug, Clone, thiserror::Error)]
+#[error("utxo already locked: {0}")]
+pub struct UtxoAlreadyLockedError(pub OutPoint);
+
 /// A guard over a utxo in the wallet to keep it locked during guard
 /// lifetime.
 ///
@@ -341,11 +345,15 @@ pub struct WalletUtxoGuard {
 }
 
 impl WalletUtxoGuard {
-	pub fn new(index: LockedWalletUtxosIndex, utxo: OutPoint) -> Self {
+	pub fn new(index: LockedWalletUtxosIndex, utxo: OutPoint) -> Result<Self, UtxoAlreadyLockedError> {
 		let mut index_lock = index.0.lock();
-		index_lock.insert(utxo);
+		let inserted = index_lock.insert(utxo);
 		drop(index_lock);
-		Self { index, utxo }
+		if inserted {
+			Ok(Self { index, utxo })
+		} else {
+			Err(UtxoAlreadyLockedError(utxo))
+		}
 	}
 
 	pub fn utxo(&self) -> OutPoint {
@@ -387,5 +395,27 @@ mod test {
 		};
 		assert_eq!(forfeits, BIP32_IDX_FORFEITS);
 		assert_eq!(forfeits, WalletKind::Forfeits.child_number());
+	}
+
+	#[test]
+	fn wallet_utxo_guard_double_lock() {
+		let index = LockedWalletUtxosIndex::new();
+		let utxo = OutPoint::new(
+			bitcoin::Txid::from_byte_array([0u8; 32]),
+			0,
+		);
+
+		// First lock should succeed
+		let guard1 = WalletUtxoGuard::new(index.clone(), utxo);
+		assert!(guard1.is_ok());
+
+		// Second lock of same UTXO should fail
+		let guard2 = WalletUtxoGuard::new(index.clone(), utxo);
+		assert!(guard2.is_err());
+
+		// After dropping first guard, locking should succeed again
+		drop(guard1);
+		let guard3 = WalletUtxoGuard::new(index.clone(), utxo);
+		assert!(guard3.is_ok());
 	}
 }

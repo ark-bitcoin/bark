@@ -746,6 +746,7 @@ impl CollectingPayments {
 				let common_round_tx_input = unsigned_round_tx.input.first()
 					.expect("funded round tx should have an input").previous_output;
 				wallet_lock.lock_wallet_utxo(common_round_tx_input)
+					.map_err(|e| RoundError::Recoverable(e.into()))?
 			}
 		};
 
