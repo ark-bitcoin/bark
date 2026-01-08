@@ -141,10 +141,10 @@ ln_receive_anti_dos_required = false
 #server_cert_path = "/etc/cln/server.cert"
 #client_cert_path = "/etc/cln/client.cert"
 #client_key_path = "/etc/cln/client.key"
-#hodl_invoice.uri = "http://127.0.0.1:8001"
-#hodl_invoice.server_cert_path = "/etc/cln/hold/server.cert"
-#hodl_invoice.client_cert_path = "/etc/cln/hold/client.cert"
-#hodl_invoice.client_key_path = "/etc/cln/chold/lient.key"
+#hold_invoice.uri = "http://127.0.0.1:8001"
+#hold_invoice.server_cert_path = "/etc/cln/hold/server.cert"
+#hold_invoice.client_cert_path = "/etc/cln/hold/client.cert"
+#hold_invoice.client_key_path = "/etc/cln/chold/lient.key"
 
 
 ################

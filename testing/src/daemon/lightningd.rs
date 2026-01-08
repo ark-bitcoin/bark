@@ -85,7 +85,7 @@ impl Lightningd {
 #[derive(Default)]
 struct LightningDHelperState{
 	grpc_port: Option<u16>,
-	hodl_port: Option<u16>,
+	hold_port: Option<u16>,
 	port: Option<u16>,
 }
 
@@ -169,8 +169,8 @@ impl LightningDHelper {
 			writeln!(file, "addr=0.0.0.0:{}", port).unwrap();
 		}
 
-		if let Some(hodl_port) = self.state.lock().await.hodl_port {
-			writeln!(file, "hold-grpc-port={}", hodl_port).unwrap();
+		if let Some(hold_port) = self.state.lock().await.hold_port {
+			writeln!(file, "hold-grpc-port={}", hold_port).unwrap();
 		}
 
 	}
@@ -214,11 +214,11 @@ impl LightningDHelper {
 		}
 	}
 
-	pub async fn hodl_details(&self) -> GrpcDetails {
+	pub async fn hold_details(&self) -> GrpcDetails {
 		let state = self.state.lock().await;
 		let dir = &self.config.lightning_dir;
 		GrpcDetails {
-			uri: format!("https://localhost:{}", state.hodl_port.unwrap()),
+			uri: format!("https://localhost:{}", state.hold_port.unwrap()),
 			server_cert_path: dir.join("regtest/hold/ca.pem"),
 			client_cert_path: dir.join("regtest/hold/client.pem"),
 			client_key_path: dir.join("regtest/hold/client-key.pem")
@@ -261,7 +261,7 @@ impl DaemonHelper for LightningDHelper {
 		trace!("Reserved grpc_port={}, hold_port={} and port={}", grpc_port, hold_port, port);
 		let mut state = self.state.lock().await;
 		state.grpc_port = Some(grpc_port);
-		state.hodl_port = Some(hold_port);
+		state.hold_port = Some(hold_port);
 		state.port = Some(port);
 
 		Ok(())
@@ -312,8 +312,8 @@ impl Lightningd {
 		self.inner.grpc_details().await
 	}
 
-	pub async fn hodl_details(&self) -> GrpcDetails {
-		self.inner.hodl_details().await
+	pub async fn hold_details(&self) -> GrpcDetails {
+		self.inner.hold_details().await
 	}
 
 	pub async fn port(&self) -> Option<u16> {

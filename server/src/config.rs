@@ -189,7 +189,7 @@ pub struct Lightningd {
 	pub server_cert_path: PathBuf,
 	pub client_cert_path: PathBuf,
 	pub client_key_path: PathBuf,
-	pub hodl_invoice: Option<HodlInvoiceClnPlugin>,
+	pub hold_invoice: Option<HodlInvoiceClnPlugin>,
 }
 
 impl Lightningd {
@@ -215,17 +215,17 @@ impl Lightningd {
 		Ok(NodeClient::new(channel))
 	}
 
-	pub async fn build_hodl_client(&self) ->  anyhow::Result<Option<HoldClient<tonic::transport::Channel>>> {
+	pub async fn build_hold_client(&self) ->  anyhow::Result<Option<HoldClient<tonic::transport::Channel>>> {
 		// Client doesn't support grpc over http
 		// We need to use https using m-TLS authentication
-		if let Some(hodl_config) = &self.hodl_invoice {
+		if let Some(hold_config) = &self.hold_invoice {
 			// Client doesn't support grpc over http
 			// We need to use https using m-TLS authentication
-			let ca_pem = fs::read_to_string(&hodl_config.server_cert_path)?;
-			let id_pem = fs::read_to_string(&hodl_config.client_cert_path)?;
-			let id_key = fs::read_to_string(&hodl_config.client_key_path)?;
+			let ca_pem = fs::read_to_string(&hold_config.server_cert_path)?;
+			let id_pem = fs::read_to_string(&hold_config.client_cert_path)?;
+			let id_key = fs::read_to_string(&hold_config.client_key_path)?;
 
-			let channel = Channel::builder(hodl_config.uri.clone().into())
+			let channel = Channel::builder(hold_config.uri.clone().into())
 				.tls_config(ClientTlsConfig::new()
 					.ca_certificate(Certificate::from_pem(ca_pem))
 					.identity(Identity::from_pem(&id_pem, &id_key))
@@ -617,7 +617,7 @@ mod test {
 			server_cert_path: PathBuf::from(server_cert_path.clone()),
 			client_cert_path: PathBuf::from(client_cert_path.clone()),
 			client_key_path: PathBuf::from(client_key_path.clone()),
-			hodl_invoice: None,
+			hold_invoice: None,
 		};
 		let mut cln_array = Vec::new();
 		cln_array.push(cln);

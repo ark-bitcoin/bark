@@ -314,7 +314,7 @@ pub struct ClnNodeOnlineState {
 	id: ClnNodeId,
 	pubkey: PublicKey,
 	rpc: ClnGrpcClient,
-	hodl_rpc: Option<HoldClient<Channel>>,
+	hold_rpc: Option<HoldClient<Channel>>,
 	// option so we can take() when marking as down
 	monitor: Option<ClnNodeMonitor>,
 }
@@ -434,7 +434,7 @@ impl ClnNodeInfo {
 		waker: &Arc<Notify>,
 	) -> anyhow::Result<ClnNodeId> {
 		let mut rpc = self.config.build_grpc_client().await.context("failed to connect rpc")?;
-		let hodl_rpc = self.config.build_hodl_client().await.context("failed to connect hodl rpc")?;
+		let hold_rpc = self.config.build_hold_client().await.context("failed to connect hold rpc")?;
 
 		let info = rpc.getinfo(cln_rpc::GetinfoRequest {}).await
 			.context("failed to get info from rpc")?
@@ -461,11 +461,11 @@ impl ClnNodeInfo {
 			payment_update_tx.clone(),
 			id,
 			rpc.clone(),
-			hodl_rpc.clone(),
+			hold_rpc.clone(),
 			monitor_config.clone(),
 		).await.context("failed to start ClnNodeMonitor")?;
 
-		let online = ClnNodeOnlineState { id, pubkey, rpc, hodl_rpc, monitor: Some(monitor) };
+		let online = ClnNodeOnlineState { id, pubkey, rpc, hold_rpc, monitor: Some(monitor) };
 		let new_state = ClnNodeState::Online(online);
 		telemetry::set_lightning_node_state(
 			self.uri.clone(), Some(id), Some(pubkey), new_state.kind(),
@@ -539,9 +539,9 @@ impl ClnManagerProcess {
 		self.online_nodes().min_by_key(|&(prio, _)| prio).map(|(_, node)| node)
 	}
 
-	fn get_hodl_active_node(&self) -> Option<&ClnNodeOnlineState> {
+	fn get_hold_active_node(&self) -> Option<&ClnNodeOnlineState> {
 		self.online_nodes()
-			.filter(|(_, node)| node.hodl_rpc.is_some())
+			.filter(|(_, node)| node.hold_rpc.is_some())
 			.min_by_key(|&(prio, _)| prio).map(|(_, node)| node)
 	}
 
@@ -798,14 +798,14 @@ impl ClnManagerProcess {
 	/// database.
 	/// - If there is an existing invoice in the database, creates a new
 	///   subscription for it and returns the invoice
-	/// - Otherwise, creates a new invoice in the hodl plugin, stores it in
+	/// - Otherwise, creates a new invoice in the hold plugin, stores it in
 	///   the database and returns it
 	///
 	/// Caller is responsible for checking if there is an existing opened
 	/// subscription in the db and act accordingly.
 	async fn generate_invoice(&self, payment_hash: PaymentHash, amount: Amount, cltv_delta: BlockDelta) -> anyhow::Result<Bolt11Invoice> {
-		let node = self.get_hodl_active_node().context("no active hodl-compatible cln node")?;
-		let mut hold_client = node.hodl_rpc.clone().expect("active node not hodl enabled");
+		let node = self.get_hold_active_node().context("no active hold-compatible cln node")?;
+		let mut hold_client = node.hold_rpc.clone().expect("active node not hold enabled");
 
 		if let Ok(Some(existing)) = self.db.get_lightning_invoice_by_payment_hash(&payment_hash).await {
 			trace!("Found invoice but no subscription, creating new one");
@@ -847,7 +847,7 @@ impl ClnManagerProcess {
 			.find(|(_, node)| node.id == htlc_subscription.lightning_node_id)
 			.map(|(_, node)| node)
 			.context("invoice cannot be settled: node is now offline")?
-			.hodl_rpc.clone().context("node doesn't support hodl anymore")?;
+			.hold_rpc.clone().context("node doesn't support hold anymore")?;
 
 		hold_client.settle(hold::SettleRequest {
 			payment_preimage: preimage.to_vec(),
@@ -856,12 +856,12 @@ impl ClnManagerProcess {
 		Ok(())
 	}
 
-	/// Cancels an invoice by sending a cancel request to the hodl plugin.
+	/// Cancels an invoice by sending a cancel request to the hold plugin.
 	async fn cancel_invoice(&self, subscription: LightningHtlcSubscription) -> anyhow::Result<()> {
 		// NB: we need to use the node that created the subscription
 		let mut hold_client = self.get_node_by_id(subscription.lightning_node_id)
 			.context("invoice cannot be canceled: node is now offline")?
-			.hodl_rpc.clone().context("node doesn't support hodl anymore")?;
+			.hold_rpc.clone().context("node doesn't support hold anymore")?;
 
 		let payment_hash = PaymentHash::from(*subscription.invoice.payment_hash());
 		hold_client.cancel(hold::CancelRequest {
