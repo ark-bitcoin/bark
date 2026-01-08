@@ -16,114 +16,120 @@ const RPC_SYSTEM_GRPC: &'static str = "grpc";
 
 const RPC_UNKNOWN: &'static str = "Unknown";
 
-const RPC_SERVICES: [&str; 3] = [RPC_SERVICE_ARK, RPC_SERVICE_ADMIN, RPC_SERVICE_INTEGRATION];
+const RPC_SERVICES: &[&str] = &[RPC_SERVICE_ARK, RPC_SERVICE_ADMIN, RPC_SERVICE_INTEGRATION];
 
 const RPC_SERVICE_ARK: &'static str = "ArkService";
-
-pub const RPC_SERVICE_ARK_HANDSHAKE: &'static str = "handshake";
-pub const RPC_SERVICE_ARK_GET_ARK_INFO: &'static str = "get_ark_info";
-pub const RPC_SERVICE_ARK_GET_FRESH_ROUNDS: &'static str = "get_fresh_rounds";
-pub const RPC_SERVICE_ARK_GET_ROUND: &'static str = "get_round";
-pub const RPC_SERVICE_ARK_REQUEST_BOARD_COSIGN: &'static str = "request_board_cosign";
-pub const RPC_SERVICE_ARK_REGISTER_BOARD_VTXO: &'static str = "register_board_vtxo";
-pub const RPC_SERVICE_ARK_CHECKPOINTED_COSIGN_OOR: &'static str = "checkpointed_cosign_oor";
-pub const RPC_SERVICE_ARK_REQUEST_ARKOOR_PACKAGE_COSIGN: &'static str = "request_arkoor_package_cosign";
-pub const RPC_SERVICE_ARK_POST_ARKOOR_PACKAGE_MAILBOX: &'static str = "post_arkoor_package_mailbox";
-pub const RPC_SERVICE_ARK_EMPTY_ARKOOR_MAILBOX: &'static str = "empty_arkoor_mailbox";
-pub const RPC_SERVICE_ARK_POST_VTXOS_MAILBOX: &'static str = "post_vtxos_mailbox";
-pub const RPC_SERVICE_ARK_SUBSCRIBE_MAILBOX: &'static str = "subscribe_mailbox";
-pub const RPC_SERVICE_ARK_READ_MAILBOX: &'static str = "read_mailbox";
-pub const RPC_SERVICE_ARK_REQUEST_LIGHTNING_PAY_HTLC_COSIGN: &'static str = "request_lightning_pay_htlc_cosign";
-// TODO: Remove this once we hit 0.1.0-beta.6 or higher
-pub const RPC_SERVICE_ARK_START_LIGHTNING_PAYMENT: &'static str = "start_lightning_payment";
-// TODO: Remove this once we hit 0.1.0-beta.6 or higher
-pub const RPC_SERVICE_ARK_FINISH_LIGHTNING_PAYMENT: &'static str = "finish_lightning_payment";
-pub const RPC_SERVICE_ARK_INITIATE_LIGHTNING_PAYMENT: &'static str = "initiate_lightning_payment";
-pub const RPC_SERVICE_ARK_CHECK_LIGHTNING_PAYMENT: &'static str = "check_lightning_payment";
-pub const RPC_SERVICE_ARK_REQUEST_LIGHTNING_PAY_HTLC_REVOCATION: &'static str = "request_lightning_pay_htlc_revocation";
-// TODO: Remove this once we hit 0.1.0-beta.6 or higher
-pub const RPC_SERVICE_ARK_REVOKE_LIGHTNING_PAYMENT: &'static str = "revoke_lightning_payment";
-pub const RPC_SERVICE_ARK_FETCH_BOLT12_INVOICE: &'static str = "fetch_bolt12_invoice";
-pub const RPC_SERVICE_ARK_START_LIGHTNING_RECEIVE: &'static str = "start_lightning_receive";
-pub const RPC_SERVICE_ARK_CHECK_LIGHTNING_RECEIVE: &'static str = "check_lightning_receive";
-pub const RPC_SERVICE_ARK_CLAIM_LIGHTNING_RECEIVE: &'static str = "claim_lightning_receive";
-pub const RPC_SERVICE_ARK_SUBSCRIBE_ROUNDS: &'static str = "subscribe_rounds";
-pub const RPC_SERVICE_ARK_LAST_ROUND_EVENT: &'static str = "last_round_event";
-pub const RPC_SERVICE_ARK_SUBMIT_PAYMENT: &'static str = "submit_payment";
-pub const RPC_SERVICE_ARK_PROVIDE_VTXO_SIGNATURES: &'static str = "provide_vtxo_signatures";
-pub const RPC_SERVICE_ARK_PROVIDE_FORFEIT_SIGNATURES: &'static str = "provide_forfeit_signatures";
-pub const RPC_SERVICE_ARK_SUBMIT_ROUND_PARTICIPATION: &'static str = "submit_round_participation";
-pub const RPC_SERVICE_ARK_ROUND_PARTICIPATION_STATUS: &'static str = "round_participation_status";
-pub const RPC_SERVICE_ARK_REQUEST_LEAF_VTXO_COSIGN: &'static str = "request_leaf_vtxo_cosign";
-pub const RPC_SERVICE_ARK_REQUEST_FORFEIT_NONCES: &'static str = "request_forfeit_nonces";
-pub const RPC_SERVICE_ARK_FORFEIT_VTXOS: &'static str = "forfeit_vtxos";
-
-const RPC_SERVICE_ARK_METHODS: &[&str] = &[
-	RPC_SERVICE_ARK_HANDSHAKE,
-	RPC_SERVICE_ARK_GET_ARK_INFO,
-	RPC_SERVICE_ARK_GET_FRESH_ROUNDS,
-	RPC_SERVICE_ARK_GET_ROUND,
-	RPC_SERVICE_ARK_REQUEST_BOARD_COSIGN,
-	RPC_SERVICE_ARK_REGISTER_BOARD_VTXO,
-	RPC_SERVICE_ARK_REQUEST_ARKOOR_PACKAGE_COSIGN,
-	RPC_SERVICE_ARK_POST_ARKOOR_PACKAGE_MAILBOX,
-	RPC_SERVICE_ARK_EMPTY_ARKOOR_MAILBOX,
-	RPC_SERVICE_ARK_POST_VTXOS_MAILBOX,
-	RPC_SERVICE_ARK_SUBSCRIBE_MAILBOX,
-	RPC_SERVICE_ARK_READ_MAILBOX,
-	RPC_SERVICE_ARK_START_LIGHTNING_PAYMENT,
-	RPC_SERVICE_ARK_FINISH_LIGHTNING_PAYMENT,
-	RPC_SERVICE_ARK_REQUEST_LIGHTNING_PAY_HTLC_COSIGN,
-	RPC_SERVICE_ARK_INITIATE_LIGHTNING_PAYMENT,
-	RPC_SERVICE_ARK_CHECK_LIGHTNING_PAYMENT,
-	RPC_SERVICE_ARK_REQUEST_LIGHTNING_PAY_HTLC_REVOCATION,
-	RPC_SERVICE_ARK_REVOKE_LIGHTNING_PAYMENT,
-	RPC_SERVICE_ARK_FETCH_BOLT12_INVOICE,
-	RPC_SERVICE_ARK_START_LIGHTNING_RECEIVE,
-	RPC_SERVICE_ARK_CHECK_LIGHTNING_RECEIVE,
-	RPC_SERVICE_ARK_CLAIM_LIGHTNING_RECEIVE,
-	RPC_SERVICE_ARK_SUBSCRIBE_ROUNDS,
-	RPC_SERVICE_ARK_LAST_ROUND_EVENT,
-	RPC_SERVICE_ARK_SUBMIT_PAYMENT,
-	RPC_SERVICE_ARK_PROVIDE_VTXO_SIGNATURES,
-	RPC_SERVICE_ARK_PROVIDE_FORFEIT_SIGNATURES,
-	RPC_SERVICE_ARK_SUBMIT_ROUND_PARTICIPATION,
-	RPC_SERVICE_ARK_ROUND_PARTICIPATION_STATUS,
-	RPC_SERVICE_ARK_REQUEST_LEAF_VTXO_COSIGN,
-	RPC_SERVICE_ARK_REQUEST_FORFEIT_NONCES,
-	RPC_SERVICE_ARK_FORFEIT_VTXOS,
-];
-
 const RPC_SERVICE_ADMIN: &'static str = "AdminService";
-
-pub const RPC_SERVICE_ADMIN_WALLET_SYNC: &'static str = "wallet_sync";
-pub const RPC_SERVICE_ADMIN_WALLET_STATUS: &'static str = "wallet_status";
-pub const RPC_SERVICE_ADMIN_TRIGGER_ROUND: &'static str = "trigger_round";
-pub const RPC_SERVICE_ADMIN_TRIGGER_SWEEP: &'static str = "trigger_sweep";
-pub const RPC_SERVICE_ADMIN_START_LIGHTNING_NODE: &'static str = "start_lightning_node";
-pub const RPC_SERVICE_ADMIN_STOP_LIGHTNING_NODE: &'static str = "stop_lightning_node";
-pub const RPC_SERVICE_ADMIN_STOP: &'static str = "stop";
-
-const RPC_SERVICE_ADMIN_METHODS: [&str; 7] = [
-	RPC_SERVICE_ADMIN_WALLET_SYNC,
-	RPC_SERVICE_ADMIN_WALLET_STATUS,
-	RPC_SERVICE_ADMIN_TRIGGER_ROUND,
-	RPC_SERVICE_ADMIN_TRIGGER_SWEEP,
-	RPC_SERVICE_ADMIN_START_LIGHTNING_NODE,
-	RPC_SERVICE_ADMIN_STOP_LIGHTNING_NODE,
-	RPC_SERVICE_ADMIN_STOP,
-];
-
 const RPC_SERVICE_INTEGRATION: &'static str = "IntegrationService";
 
-pub const RPC_SERVICE_INTEGRATION_GET_TOKENS: &'static str = "get_tokens";
-pub const RPC_SERVICE_INTEGRATION_GET_TOKEN_INFO: &'static str = "get_token_info";
-pub const RPC_SERVICE_INTEGRATION_UPDATE_TOKEN: &'static str = "update_token";
+pub mod rpc_names {
+	pub mod ark {
+		pub const HANDSHAKE: &str = "handshake";
+		pub const GET_ARK_INFO: &str = "get_ark_info";
+		pub const GET_FRESH_ROUNDS: &str = "get_fresh_rounds";
+		pub const GET_ROUND: &str = "get_round";
+		pub const REQUEST_BOARD_COSIGN: &str = "request_board_cosign";
+		pub const REGISTER_BOARD_VTXO: &str = "register_board_vtxo";
+		pub const CHECKPOINTED_COSIGN_OOR: &str = "checkpointed_cosign_oor";
+		pub const REQUEST_ARKOOR_PACKAGE_COSIGN: &str = "request_arkoor_package_cosign";
+		pub const POST_ARKOOR_PACKAGE_MAILBOX: &str = "post_arkoor_package_mailbox";
+		pub const EMPTY_ARKOOR_MAILBOX: &str = "empty_arkoor_mailbox";
+		pub const POST_VTXOS_MAILBOX: &str = "post_vtxos_mailbox";
+		pub const SUBSCRIBE_MAILBOX: &str = "subscribe_mailbox";
+		pub const READ_MAILBOX: &str = "read_mailbox";
+		pub const REQUEST_LIGHTNING_PAY_HTLC_COSIGN: &str = "request_lightning_pay_htlc_cosign";
+		// TODO: Remove this once we hit 0.1.0-beta.6 or higher
+		pub const START_LIGHTNING_PAYMENT: &str = "start_lightning_payment";
+		// TODO: Remove this once we hit 0.1.0-beta.6 or higher
+		pub const FINISH_LIGHTNING_PAYMENT: &str = "finish_lightning_payment";
+		pub const INITIATE_LIGHTNING_PAYMENT: &str = "initiate_lightning_payment";
+		pub const CHECK_LIGHTNING_PAYMENT: &str = "check_lightning_payment";
+		pub const REQUEST_LIGHTNING_PAY_HTLC_REVOCATION: &str = "request_lightning_pay_htlc_revocation";
+		// TODO: Remove this once we hit 0.1.0-beta.6 or higher
+		pub const REVOKE_LIGHTNING_PAYMENT: &str = "revoke_lightning_payment";
+		pub const FETCH_BOLT12_INVOICE: &str = "fetch_bolt12_invoice";
+		pub const START_LIGHTNING_RECEIVE: &str = "start_lightning_receive";
+		pub const CHECK_LIGHTNING_RECEIVE: &str = "check_lightning_receive";
+		pub const CLAIM_LIGHTNING_RECEIVE: &str = "claim_lightning_receive";
+		pub const SUBSCRIBE_ROUNDS: &str = "subscribe_rounds";
+		pub const LAST_ROUND_EVENT: &str = "last_round_event";
+		pub const SUBMIT_PAYMENT: &str = "submit_payment";
+		pub const PROVIDE_VTXO_SIGNATURES: &str = "provide_vtxo_signatures";
+		pub const PROVIDE_FORFEIT_SIGNATURES: &str = "provide_forfeit_signatures";
+		pub const SUBMIT_ROUND_PARTICIPATION: &str = "submit_round_participation";
+		pub const ROUND_PARTICIPATION_STATUS: &str = "round_participation_status";
+		pub const REQUEST_LEAF_VTXO_COSIGN: &str = "request_leaf_vtxo_cosign";
+		pub const REQUEST_FORFEIT_NONCES: &str = "request_forfeit_nonces";
+		pub const FORFEIT_VTXOS: &str = "forfeit_vtxos";
+	}
 
-const RPC_SERVICE_INTEGRATION_METHODS: [&str; 3] = [
-	RPC_SERVICE_INTEGRATION_GET_TOKENS,
-	RPC_SERVICE_INTEGRATION_GET_TOKEN_INFO,
-	RPC_SERVICE_INTEGRATION_UPDATE_TOKEN,
+	pub mod admin {
+		pub const WALLET_SYNC: &str = "wallet_sync";
+		pub const WALLET_STATUS: &str = "wallet_status";
+		pub const TRIGGER_ROUND: &str = "trigger_round";
+		pub const TRIGGER_SWEEP: &str = "trigger_sweep";
+		pub const START_LIGHTNING_NODE: &str = "start_lightning_node";
+		pub const STOP_LIGHTNING_NODE: &str = "stop_lightning_node";
+		pub const STOP: &str = "stop";
+	}
+
+	pub mod integration {
+		pub const GET_TOKENS: &str = "get_tokens";
+		pub const GET_TOKEN_INFO: &str = "get_token_info";
+		pub const UPDATE_TOKEN: &str = "update_token";
+	}
+}
+
+const RPC_SERVICE_ARK_METHODS: &[&str] = &[
+	rpc_names::ark::HANDSHAKE,
+	rpc_names::ark::GET_ARK_INFO,
+	rpc_names::ark::GET_FRESH_ROUNDS,
+	rpc_names::ark::GET_ROUND,
+	rpc_names::ark::REQUEST_BOARD_COSIGN,
+	rpc_names::ark::REGISTER_BOARD_VTXO,
+	rpc_names::ark::REQUEST_ARKOOR_PACKAGE_COSIGN,
+	rpc_names::ark::POST_ARKOOR_PACKAGE_MAILBOX,
+	rpc_names::ark::EMPTY_ARKOOR_MAILBOX,
+	rpc_names::ark::POST_VTXOS_MAILBOX,
+	rpc_names::ark::SUBSCRIBE_MAILBOX,
+	rpc_names::ark::READ_MAILBOX,
+	rpc_names::ark::START_LIGHTNING_PAYMENT,
+	rpc_names::ark::FINISH_LIGHTNING_PAYMENT,
+	rpc_names::ark::REQUEST_LIGHTNING_PAY_HTLC_COSIGN,
+	rpc_names::ark::INITIATE_LIGHTNING_PAYMENT,
+	rpc_names::ark::CHECK_LIGHTNING_PAYMENT,
+	rpc_names::ark::REQUEST_LIGHTNING_PAY_HTLC_REVOCATION,
+	rpc_names::ark::REVOKE_LIGHTNING_PAYMENT,
+	rpc_names::ark::FETCH_BOLT12_INVOICE,
+	rpc_names::ark::START_LIGHTNING_RECEIVE,
+	rpc_names::ark::CHECK_LIGHTNING_RECEIVE,
+	rpc_names::ark::CLAIM_LIGHTNING_RECEIVE,
+	rpc_names::ark::SUBSCRIBE_ROUNDS,
+	rpc_names::ark::LAST_ROUND_EVENT,
+	rpc_names::ark::SUBMIT_PAYMENT,
+	rpc_names::ark::PROVIDE_VTXO_SIGNATURES,
+	rpc_names::ark::PROVIDE_FORFEIT_SIGNATURES,
+	rpc_names::ark::SUBMIT_ROUND_PARTICIPATION,
+	rpc_names::ark::ROUND_PARTICIPATION_STATUS,
+	rpc_names::ark::REQUEST_LEAF_VTXO_COSIGN,
+	rpc_names::ark::REQUEST_FORFEIT_NONCES,
+	rpc_names::ark::FORFEIT_VTXOS,
+];
+
+const RPC_SERVICE_ADMIN_METHODS: &[&str] = &[
+	rpc_names::admin::WALLET_SYNC,
+	rpc_names::admin::WALLET_STATUS,
+	rpc_names::admin::TRIGGER_ROUND,
+	rpc_names::admin::TRIGGER_SWEEP,
+	rpc_names::admin::START_LIGHTNING_NODE,
+	rpc_names::admin::STOP_LIGHTNING_NODE,
+	rpc_names::admin::STOP,
+];
+
+const RPC_SERVICE_INTEGRATION_METHODS: &[&str] = &[
+	rpc_names::integration::GET_TOKENS,
+	rpc_names::integration::GET_TOKEN_INFO,
+	rpc_names::integration::UPDATE_TOKEN,
 ];
 
 #[derive(Clone, Debug)]
