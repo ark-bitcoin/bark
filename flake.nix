@@ -3,7 +3,7 @@
 
 	inputs = {
 		nixpkgs.url = "nixpkgs/nixos-25.05";
-		nixpkgs-master.url = "github:NixOS/nixpkgs/master";
+		# nixpkgs-master.url = "github:NixOS/nixpkgs/master";
 		flake-utils.url = "github:numtide/flake-utils";
 		fenix = {
 			url = "github:nix-community/fenix";
@@ -11,7 +11,7 @@
 		};
 	};
 
-	outputs = { self, nixpkgs, nixpkgs-master, flake-utils, fenix }:
+	outputs = { self, nixpkgs, flake-utils, fenix }:
 		flake-utils.lib.eachDefaultSystem (system:
 			let
 				rustVersion = "1.90.0";
