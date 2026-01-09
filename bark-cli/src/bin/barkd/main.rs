@@ -122,17 +122,27 @@ async fn main() -> anyhow::Result<()>{
 	init_logging(cli.verbose, cli.quiet, &datadir);
 	info!("Starting barkd daemon with version {}", FULL_VERSION);
 
-	let (wallet, onchain) = open_wallet(&datadir).await?;
-	let wallet = Arc::new(wallet);
-	let onchain = Arc::new(RwLock::new(onchain));
+	let (wallet_opt, daemon_opt) = if let Some((wallet, onchain)) = open_wallet(&datadir).await? {
+		let wallet = Arc::new(wallet);
+		let onchain = Arc::new(RwLock::new(onchain));
 
-	let daemon = wallet.run_daemon(onchain.clone()).await?;
+		let daemon = wallet.run_daemon(onchain.clone()).await?;
+		info!("Wallet loaded and daemon started");
+		let server_wallet = bark_rest::ServerWallet::new(wallet, onchain);
 
-	let wallet_handle = bark_rest::ServerWallet::new(wallet.clone(), onchain.clone());
-	let server = RestServer::start(&cli.to_config(), Some(wallet_handle)).await?;
+		(Some(server_wallet), Some(daemon))
+	} else {
+		(None, None)
+	};
+
+	let server = RestServer::start(&cli.to_config(), wallet_opt).await?;
 
 	run_shutdown_signal_listener().await;
-	daemon.stop();
+
+	if let Some(daemon) = daemon_opt {
+		daemon.stop();
+	}
+
 	if let Err(e) = server.stop_wait().await {
 		warn!("Error while stopping REST server: {:#}", e);
 	}

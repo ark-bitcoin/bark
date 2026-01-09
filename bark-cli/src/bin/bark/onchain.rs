@@ -10,7 +10,7 @@ use bark::Wallet;
 use bark::onchain::{ChainSync, OnchainWallet};
 use bark_json::{cli as json, primitives};
 
-use crate::util::output_json;
+use bark_cli::util::output_json;
 
 #[derive(clap::Subcommand)]
 pub enum OnchainCommand {
