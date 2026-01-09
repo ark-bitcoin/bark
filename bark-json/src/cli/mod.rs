@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use anyhow::anyhow;
 use bitcoin::secp256k1::PublicKey;
-use bitcoin::{Amount, FeeRate, Txid, SignedAmount, ScriptBuf};
+use bitcoin::{Amount, Txid, SignedAmount, ScriptBuf};
 use chrono::DateTime;
 #[cfg(feature = "utoipa")]
 use utoipa::ToSchema;
@@ -17,7 +17,7 @@ use ark::VtxoId;
 use ark::lightning::{Invoice, Offer, PaymentHash, Preimage};
 use bark::lnurllib::lightning_address::LightningAddress;
 use bark::movement::MovementId;
-use bitcoin_ext::{AmountExt, BlockDelta, BlockHeight};
+use bitcoin_ext::{AmountExt, BlockDelta};
 
 use crate::exit::error::ExitError;
 use crate::exit::package::ExitTransactionPackage;
@@ -133,28 +133,6 @@ impl From<bark::Balance> for Balance {
 			pending_board: v.pending_board,
 		}
 	}
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[cfg_attr(feature = "utoipa", derive(ToSchema))]
-pub struct Config {
-	/// Ark server address
-	pub ark: String,
-	/// Bitcoin Core RPC address to use for syncing
-	pub bitcoind: Option<String>,
-	/// Cookie to use for RPC authentication
-	pub bitcoind_cookie: Option<String>,
-	/// Username to use for RPC authentication
-	pub bitcoind_user: Option<String>,
-	/// password to use for RPC authentication
-	pub bitcoind_pass: Option<String>,
-	/// The Esplora REST API address to use for syncing
-	pub esplora: Option<String>,
-	/// How many blocks before VTXO expiration before preemptively refreshing them
-	pub vtxo_refresh_expiry_threshold: BlockHeight,
-	#[serde(rename = "fallback_fee_rate_kvb", with = "serde_utils::fee_rate_sats_per_kvb")]
-	#[cfg_attr(feature = "utoipa", schema(value_type = u64, nullable = true))]
-	pub fallback_fee_rate: Option<FeeRate>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
@@ -647,6 +625,7 @@ impl From<bark::persist::models::LightningReceive> for LightningReceiveInfo {
 
 #[cfg(test)]
 mod test {
+	use bitcoin::FeeRate;
 	use super::*;
 
 	#[test]

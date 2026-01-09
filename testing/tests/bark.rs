@@ -57,7 +57,7 @@ async fn bark_config_json() {
 	let srv = ctx.new_captaind("server", None).await;
 	let bark1 = ctx.new_bark("bark1", &srv).await;
 	let result = bark1.run(&[&"config"]).await;
-	serde_json::from_str::<bark_json::cli::Config>(&result).expect("should deserialise");
+	serde_json::from_str::<bark::Config>(&result).expect("should deserialise");
 }
 
 #[tokio::test]
