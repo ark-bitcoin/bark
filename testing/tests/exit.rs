@@ -117,6 +117,14 @@ async fn exit_round() {
 	let bark7_round_vtxo = &bark7.vtxos().await[0];
 	let bark8_round_vtxo = &bark8.vtxos().await[0];
 
+	// Verify all clients participated in the same batched round
+	assert!(
+		[bark1_round_vtxo, bark2_round_vtxo, bark3_round_vtxo, bark4_round_vtxo,
+		 bark5_round_vtxo, bark6_round_vtxo, bark7_round_vtxo, bark8_round_vtxo]
+			.windows(2).all(|w| w[0].chain_anchor.txid == w[1].chain_anchor.txid),
+		"all clients should participate in the same round"
+	);
+
 	// We don't need server for exits.
 	srv.stop().await.unwrap();
 
