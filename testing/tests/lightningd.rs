@@ -857,7 +857,7 @@ async fn bark_revoke_expired_pending_ln_payment() {
 	#[derive(Clone)]
 	struct Proxy;
 
-	#[tonic::async_trait]
+	#[async_trait::async_trait]
 	impl captaind::proxy::ArkRpcProxy for Proxy {
 		async fn initiate_lightning_payment(
 			&self,
@@ -1091,7 +1091,7 @@ async fn server_rejects_claim_receive_for_bad_vtxo_proof() {
 	#[derive(Clone)]
 	struct InvalidVtxoProofProxy;
 
-	#[tonic::async_trait]
+	#[async_trait::async_trait]
 	impl captaind::proxy::ArkRpcProxy for InvalidVtxoProofProxy {
 		async fn prepare_lightning_receive_claim(
 			&self, upstream: &mut ArkClient, mut req: protos::PrepareLightningReceiveClaimRequest,

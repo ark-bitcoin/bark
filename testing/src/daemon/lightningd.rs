@@ -243,7 +243,7 @@ impl LightningDHelper {
 	}
 }
 
-#[tonic::async_trait]
+#[async_trait]
 impl DaemonHelper for LightningDHelper {
 	fn name(&self) -> &str {
 		&self.name

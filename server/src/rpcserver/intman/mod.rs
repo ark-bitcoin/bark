@@ -11,7 +11,7 @@ use crate::rpcserver::middleware::RpcMethodDetails;
 use crate::rpcserver::ToStatusResult;
 use crate::Server;
 
-#[tonic::async_trait]
+#[async_trait]
 impl server_rpc::server::IntegrationService for Server {
 	async fn get_tokens(
 		&self,

@@ -822,7 +822,7 @@ async fn reject_arkoor_with_bad_signature() {
 	#[derive(Clone)]
 	struct InvalidSigProxy;
 
-	#[tonic::async_trait]
+	#[async_trait::async_trait]
 	impl captaind::proxy::ArkRpcProxy for InvalidSigProxy {
 		async fn empty_arkoor_mailbox(
 			&self, upstream: &mut ArkClient, req: protos::ArkoorVtxosRequest,
@@ -876,7 +876,7 @@ async fn second_round_attempt() {
 	#[derive(Clone)]
 	struct Proxy;
 
-	#[tonic::async_trait]
+	#[async_trait::async_trait]
 	impl captaind::proxy::ArkRpcProxy for Proxy {
 		async fn provide_vtxo_signatures(
 			&self, _upstream: &mut ArkClient, _req: protos::VtxoSignaturesRequest,
@@ -1087,7 +1087,7 @@ async fn bark_recover_unregistered_board() {
 	#[derive(Clone)]
 	struct Proxy(Arc<AtomicBool>);
 
-	#[tonic::async_trait]
+	#[async_trait::async_trait]
 	impl captaind::proxy::ArkRpcProxy for Proxy {
 		async fn register_board_vtxo(
 			&self, upstream: &mut ArkClient, req: protos::BoardVtxoRequest,

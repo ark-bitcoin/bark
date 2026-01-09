@@ -23,7 +23,7 @@ fn new_mailbox_msg(checkpoint: Checkpoint, vtxos: Vec<Vtxo>) -> protos::mailbox_
 	}
 }
 
-#[tonic::async_trait]
+#[async_trait]
 impl rpc::server::MailboxService for crate::Server {
 	async fn post_vtxos_mailbox(
 		&self,

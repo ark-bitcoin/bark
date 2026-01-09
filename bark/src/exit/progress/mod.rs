@@ -5,7 +5,6 @@ use std::collections::HashSet;
 
 use bitcoin::{Amount, FeeRate, Transaction, Txid};
 use log::{debug, error, warn};
-use tonic::async_trait;
 
 use ark::Vtxo;
 use bitcoin_ext::{BlockHeight, BlockRef, TxStatus};

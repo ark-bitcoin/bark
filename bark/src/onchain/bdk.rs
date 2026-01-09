@@ -285,7 +285,7 @@ impl SignPsbt for OnchainWallet {
 	}
 }
 
-#[tonic::async_trait]
+#[async_trait]
 impl ChainSync for OnchainWallet {
 	async fn sync(&mut self, chain: &ChainSource) -> anyhow::Result<()> {
 		debug!("Starting wallet sync...");

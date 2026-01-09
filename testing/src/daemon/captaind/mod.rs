@@ -288,7 +288,7 @@ impl Captaind {
 	}
 }
 
-#[tonic::async_trait]
+#[async_trait]
 impl DaemonHelper for CaptaindHelper {
 	fn name(&self) -> &str {
 		&self.name

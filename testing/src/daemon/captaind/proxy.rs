@@ -9,7 +9,7 @@ use crate::daemon::captaind::{ArkClient, MailboxClient};
 use crate::util::FutureExt;
 
 /// Trait used to easily implement Ark proxy interfaces.
-#[tonic::async_trait]
+#[async_trait]
 pub trait ArkRpcProxy: Send + Sync + Clone + 'static {
 	async fn handshake(&self, upstream: &mut ArkClient, req: protos::HandshakeRequest) -> Result<protos::HandshakeResponse, tonic::Status> {
 		Ok(upstream.handshake(req).await?.into_inner())
@@ -226,7 +226,7 @@ struct ArkRpcProxyWrapper<T: ArkRpcProxy> {
 	upstream: ArkClient,
 }
 
-#[tonic::async_trait]
+#[async_trait]
 impl<T: ArkRpcProxy> rpc::server::ArkService for ArkRpcProxyWrapper<T> {
 	async fn handshake(
 		&self, req: tonic::Request<protos::HandshakeRequest>,
@@ -434,7 +434,7 @@ impl<T: ArkRpcProxy> rpc::server::ArkService for ArkRpcProxyWrapper<T> {
 }
 
 /// Trait used to easily implement mailbox proxy interfaces.
-#[tonic::async_trait]
+#[async_trait]
 pub trait MailboxRpcProxy: Send + Sync + Clone + 'static {
 	async fn post_vtxos_mailbox(&self, upstream: &mut MailboxClient, req: protos::mailbox_server::PostVtxosMailboxRequest) -> Result<protos::core::Empty, tonic::Status> {
 		Ok(upstream.post_vtxos_mailbox(req).await?.into_inner())
@@ -519,7 +519,7 @@ struct MailboxRpcProxyWrapper<T: MailboxRpcProxy> {
 	upstream: MailboxClient,
 }
 
-#[tonic::async_trait]
+#[async_trait]
 impl<T: MailboxRpcProxy> rpc::server::MailboxService for MailboxRpcProxyWrapper<T> {
 	async fn post_vtxos_mailbox(
 		&self, req: tonic::Request<protos::mailbox_server::PostVtxosMailboxRequest>,

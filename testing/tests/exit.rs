@@ -470,7 +470,7 @@ async fn bark_should_exit_a_failed_htlc_out_that_server_refuse_to_revoke() {
 	#[derive(Clone)]
 	struct Proxy;
 
-	#[tonic::async_trait]
+	#[async_trait::async_trait]
 	impl captaind::proxy::ArkRpcProxy for Proxy {
 		async fn initiate_lightning_payment(
 			&self, _upstream: &mut ArkClient, _req: protos::InitiateLightningPaymentRequest,
@@ -594,7 +594,7 @@ async fn bark_should_exit_a_pending_htlc_out_that_server_refuse_to_revoke() {
 	#[derive(Clone)]
 	struct Proxy;
 
-	#[tonic::async_trait]
+	#[async_trait::async_trait]
 	impl captaind::proxy::ArkRpcProxy for Proxy {
 		async fn initiate_lightning_payment(
 			&self, _upstream: &mut ArkClient, _req: protos::InitiateLightningPaymentRequest,
@@ -923,7 +923,7 @@ async fn bark_should_exit_a_htlc_recv_that_server_refuse_to_cosign() {
 	/// This proxy will refuse to revoke the htlc out.
 	#[derive(Clone)]
 	struct Proxy;
-	#[tonic::async_trait]
+	#[async_trait::async_trait]
 	impl captaind::proxy::ArkRpcProxy for Proxy {
 		async fn claim_lightning_receive(
 			&self,

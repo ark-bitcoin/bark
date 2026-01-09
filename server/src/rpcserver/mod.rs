@@ -13,7 +13,6 @@ use std::sync::atomic::{self, AtomicBool};
 use opentelemetry::KeyValue;
 use opentelemetry::trace::get_active_span;
 use tokio::sync::oneshot;
-use tonic::async_trait;
 use tracing::trace;
 use server_rpc::RequestExt;
 

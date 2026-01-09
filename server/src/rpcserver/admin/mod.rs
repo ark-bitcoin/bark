@@ -10,7 +10,7 @@ use crate::rpcserver::middleware::rpc_names;
 use crate::rpcserver::middleware::RpcMethodDetails;
 use crate::Server;
 
-#[tonic::async_trait]
+#[async_trait]
 impl rpc::server::WalletAdminService for Server {
 	async fn wallet_sync(
 		&self,
@@ -49,7 +49,7 @@ impl rpc::server::WalletAdminService for Server {
 	}
 }
 
-#[tonic::async_trait]
+#[async_trait]
 impl rpc::server::RoundAdminService for Server {
 	async fn trigger_round(
 		&self,
@@ -69,7 +69,7 @@ impl rpc::server::RoundAdminService for Server {
 	}
 }
 
-#[tonic::async_trait]
+#[async_trait]
 impl rpc::server::LightningAdminService for Server {
 	async fn start_lightning_node(
 		&self,
@@ -94,7 +94,7 @@ impl rpc::server::LightningAdminService for Server {
 	}
 }
 
-#[tonic::async_trait]
+#[async_trait]
 impl rpc::server::SweepAdminService for Server {
 	async fn trigger_sweep(
 		&self,
