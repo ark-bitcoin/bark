@@ -1,11 +1,9 @@
-use std::cmp::PartialEq;
-use std::collections::BTreeMap;
+
 use std::{cmp, fmt};
+use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
-use smallvec::SmallVec;
-use ark::rounds::RoundSeq;
 use bdk_wallet::Balance;
 use bitcoin::secp256k1::PublicKey;
 use bitcoin::{Amount, Network};
@@ -22,7 +20,6 @@ use opentelemetry_sdk::metrics::{PeriodicReader, SdkMeterProvider};
 use opentelemetry_sdk::propagation::TraceContextPropagator;
 use opentelemetry_sdk::Resource;
 use opentelemetry_sdk::trace::{BatchSpanProcessor, RandomIdGenerator, Sampler, SpanData, SpanExporter};
-use std::time::SystemTime;
 use tokio::time::Instant;
 use tracing::warn;
 use tracing_core::LevelFilter;
@@ -31,7 +28,11 @@ use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::fmt::format::Writer;
 use tracing_subscriber::fmt::time::FormatTime;
 use tracing_subscriber::EnvFilter;
+use smallvec::SmallVec;
+
 use ark::VtxoId;
+use ark::rounds::RoundSeq;
+
 use crate::database::ln::LightningPaymentStatus;
 use crate::ln::cln::ClnNodeStateKind;
 use crate::round::RoundStateKind;
