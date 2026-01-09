@@ -23,6 +23,72 @@ pub struct TipResponse {
 
 #[derive(Serialize, Deserialize)]
 #[cfg_attr(feature = "utoipa", derive(ToSchema))]
+pub struct CreateWalletRequest {
+	/// The Ark server to use for the wallet
+	pub ark_server: String,
+	/// The chain source to use for the wallet
+	pub chain_source: ChainSourceConfig,
+	/// The optional mnemonic to use for the wallet
+	pub mnemonic: Option<String>,
+	/// The network to use for the wallet
+	pub network: BarkNetwork,
+	/// An optional birthday height to start syncing the wallet from
+	pub birthday_height: Option<u32>,
+}
+
+/// Networks bark can be used on
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+#[cfg_attr(feature = "utoipa", derive(ToSchema))]
+pub enum BarkNetwork {
+	/// Bitcoin's mainnet
+	Mainnet,
+	/// The official Bitcoin Core signet
+	Signet,
+	/// Mutinynet
+	Mutinynet,
+	/// Any regtest network
+	Regtest,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+#[cfg_attr(feature = "utoipa", derive(ToSchema))]
+pub enum ChainSourceConfig {
+	/// Use a bitcoind RPC server
+	Bitcoind {
+		bitcoind: String,
+		bitcoind_auth: BitcoindAuth,
+	},
+	/// Use an Esplora HTTP server
+	Esplora {
+		url: String,
+	},
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+#[cfg_attr(feature = "utoipa", derive(ToSchema))]
+pub enum BitcoindAuth {
+	/// Use a cookie file for authentication
+	Cookie {
+		cookie: String,
+	},
+	/// Use a username and password for authentication
+	UserPass {
+		user: String,
+		pass: String,
+	},
+}
+
+#[derive(Serialize, Deserialize)]
+#[cfg_attr(feature = "utoipa", derive(ToSchema))]
+pub struct CreateWalletResponse {
+	pub fingerprint: String,
+}
+
+#[derive(Serialize, Deserialize)]
+#[cfg_attr(feature = "utoipa", derive(ToSchema))]
 pub struct ConnectedResponse {
 	/// Whether the wallet is currently connected to its Ark server
 	pub connected: bool,

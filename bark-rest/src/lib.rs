@@ -9,10 +9,12 @@ pub mod error;
 pub use crate::config::Config;
 
 
+use std::pin::Pin;
 use std::sync::Arc;
 
 use anyhow::Context;
 use axum::routing::get;
+use bark_json::web::CreateWalletRequest;
 use log::{error, info};
 use tokio::sync::RwLock;
 use tokio::task::JoinHandle;
@@ -25,7 +27,11 @@ use utoipa_swagger_ui::SwaggerUi;
 use bark::Wallet;
 use bark::onchain::OnchainWallet;
 
+type BoxFuture<T> =
+	Pin<Box<dyn Future<Output = T> + Send + 'static>>;
 
+pub type OnWalletCreate = dyn Fn(CreateWalletRequest)
+	-> BoxFuture<anyhow::Result<ServerWallet>> + Send + Sync;
 
 const CRATE_VERSION : &'static str = env!("CARGO_PKG_VERSION");
 
@@ -76,6 +82,7 @@ impl ServerWallet {
 #[derive(Clone)]
 pub(crate) struct ServerState {
 	wallet: Arc<parking_lot::RwLock<Option<ServerWallet>>>,
+	on_wallet_create: Option<Arc<OnWalletCreate>>,
 }
 
 impl ServerState {
@@ -96,16 +103,18 @@ impl RestServer {
 	/// Start a new [RestServer] with the given config and an optional [ServerWallet]
 	///
 	/// If no wallet is provided, the server will reject any action
-	pub async fn start(config: &Config, wallet: Option<ServerWallet>)
-		-> anyhow::Result<Self>
-	{
+	pub async fn start(
+		config: &Config,
+		wallet: Option<ServerWallet>,
+		on_wallet_create: Option<Arc<OnWalletCreate>>,
+	) -> anyhow::Result<Self> {
 		let (router, api) = OpenApiRouter::with_openapi(ApiDoc::openapi())
 			.split_for_parts();
 
 		let socket_addr = config.socket_addr();
 
 		let wallet = Arc::new(parking_lot::RwLock::new(wallet));
-		let state = ServerState { wallet };
+		let state = ServerState { wallet, on_wallet_create };
 
 		// Build our application with routes
 		let router = router

@@ -22,6 +22,7 @@ pub fn router() -> Router<ServerState> {
 	#[allow(deprecated)]
 	Router::new()
 		.route("/connected", get(connected))
+		.route("/create", post(create_wallet))
 		.route("/ark-info", get(ark_info))
 		.route("/addresses/next", post(address))
 		.route("/addresses/index/{index}", get(peak_address))
@@ -44,6 +45,7 @@ pub fn router() -> Router<ServerState> {
 #[openapi(
 	paths(
 		connected,
+		create_wallet,
 		ark_info,
 		address,
 		peak_address,
@@ -63,6 +65,8 @@ pub fn router() -> Router<ServerState> {
 	),
 	components(schemas(
 		bark_json::web::ConnectedResponse,
+		bark_json::web::CreateWalletRequest,
+		bark_json::web::CreateWalletResponse,
 		bark_json::cli::ArkInfo,
 		bark_json::web::ArkAddressResponse,
 		bark_json::web::VtxosQuery,
@@ -102,6 +106,36 @@ pub async fn connected(State(state): State<ServerState>) -> HandlerResult<Json<b
 	Ok(axum::Json(bark_json::web::ConnectedResponse {
 		connected: wallet.ark_info().await?.is_some(),
 	}))
+}
+
+#[utoipa::path(
+	post,
+	path = "/create",
+	responses(
+		(status = 200, description = "Wallet created successfully", body = bark_json::web::CreateWalletResponse),
+		(status = 500, description = "Internal server error", body = error::InternalServerError)
+	),
+	description = "Creates a new wallet",
+	tag = "wallet"
+)]
+#[debug_handler]
+pub async fn create_wallet(
+	State(state): State<ServerState>,
+	Json(req): Json<bark_json::web::CreateWalletRequest>,
+) -> HandlerResult<Json<bark_json::web::CreateWalletResponse>> {
+	if state.wallet.read().is_some() {
+		return Err(anyhow!("Wallet already set").into());
+	}
+
+	if let Some(on_wallet_create) = state.on_wallet_create.as_ref() {
+		let wallet = on_wallet_create(req).await?;
+		let fingerprint = wallet.wallet.fingerprint().to_string();
+		let _ = state.wallet.write().insert(wallet);
+
+		Ok(axum::Json(bark_json::web::CreateWalletResponse { fingerprint }))
+	} else {
+		Err(anyhow!("No wallet creation hook set").into())
+	}
 }
 
 #[utoipa::path(
