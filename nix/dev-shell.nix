@@ -1,4 +1,4 @@
-{ system, pkgs, masterPkgs, lib, fenix, slog-tools, buildShell,
+{ system, pkgs, lib, fenix, slog-tools, buildShell,
 }:
 let
 	bitcoinVersion = "29.1";
@@ -26,7 +26,7 @@ let
 
 	postgresql = pkgs.postgresql_16;
 
-	bitcoin = masterPkgs.bitcoind.overrideAttrs (old: {
+	bitcoin = pkgs.bitcoind.overrideAttrs (old: {
 		version = bitcoinVersion;
 		src = pkgs.fetchurl {
 			urls = [ "https://bitcoincore.org/bin/bitcoin-core-${bitcoinVersion}/bitcoin-${bitcoinVersion}.tar.gz" ];

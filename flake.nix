@@ -24,10 +24,6 @@
 
 				isDarwin = pkgs.stdenv.hostPlatform.isDarwin;
 
-				masterPkgs = import nixpkgs-master {
-					inherit system;
-				};
-
 				rustToolchain = fenix.packages.${system}.fromToolchainName {
 					name = rustVersion;
 					sha256 = "sha256-SJwZ8g0zF2WrKDVmHrVG3pD2RGoQeo24MEXnNx5FyuI=";
@@ -93,7 +89,7 @@
 					};
 
 					devShell = import ./nix/dev-shell.nix {
-						inherit system pkgs masterPkgs lib fenix buildShell slog-tools;
+						inherit system pkgs lib fenix buildShell slog-tools;
 					};
 
 					libMsrvShell =
