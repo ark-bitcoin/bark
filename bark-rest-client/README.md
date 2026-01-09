@@ -54,6 +54,7 @@ Class | Method | HTTP request | Description
 *WalletApi* | [**ark_info**](docs/WalletApi.md#ark_info) | **GET** /api/v1/wallet/ark-info | 
 *WalletApi* | [**balance**](docs/WalletApi.md#balance) | **GET** /api/v1/wallet/balance | 
 *WalletApi* | [**connected**](docs/WalletApi.md#connected) | **GET** /api/v1/wallet/connected | 
+*WalletApi* | [**create_wallet**](docs/WalletApi.md#create_wallet) | **POST** /api/v1/wallet/create | 
 *WalletApi* | [**history**](docs/WalletApi.md#history) | **GET** /api/v1/wallet/history | 
 *WalletApi* | [**movements**](docs/WalletApi.md#movements) | **GET** /api/v1/wallet/movements | 
 *WalletApi* | [**offboard_all**](docs/WalletApi.md#offboard_all) | **POST** /api/v1/wallet/offboard/all | 
@@ -76,9 +77,22 @@ Class | Method | HTTP request | Description
  - [ArkInfo](docs/ArkInfo.md)
  - [BadRequestError](docs/BadRequestError.md)
  - [Balance](docs/Balance.md)
+ - [BarkNetwork](docs/BarkNetwork.md)
+ - [BitcoindAuth](docs/BitcoindAuth.md)
+ - [BitcoindAuthOneOf](docs/BitcoindAuthOneOf.md)
+ - [BitcoindAuthOneOf1](docs/BitcoindAuthOneOf1.md)
+ - [BitcoindAuthOneOf1UserPass](docs/BitcoindAuthOneOf1UserPass.md)
+ - [BitcoindAuthOneOfCookie](docs/BitcoindAuthOneOfCookie.md)
  - [BoardRequest](docs/BoardRequest.md)
+ - [ChainSourceConfig](docs/ChainSourceConfig.md)
+ - [ChainSourceConfigOneOf](docs/ChainSourceConfigOneOf.md)
+ - [ChainSourceConfigOneOf1](docs/ChainSourceConfigOneOf1.md)
+ - [ChainSourceConfigOneOf1Esplora](docs/ChainSourceConfigOneOf1Esplora.md)
+ - [ChainSourceConfigOneOfBitcoind](docs/ChainSourceConfigOneOfBitcoind.md)
  - [ChildTransactionInfo](docs/ChildTransactionInfo.md)
  - [ConnectedResponse](docs/ConnectedResponse.md)
+ - [CreateWalletRequest](docs/CreateWalletRequest.md)
+ - [CreateWalletResponse](docs/CreateWalletResponse.md)
  - [ExitAwaitingDeltaState](docs/ExitAwaitingDeltaState.md)
  - [ExitClaimAllRequest](docs/ExitClaimAllRequest.md)
  - [ExitClaimInProgressState](docs/ExitClaimInProgressState.md)
