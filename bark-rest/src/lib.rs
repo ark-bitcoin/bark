@@ -60,25 +60,52 @@ pub struct RestServer {
 	jh: JoinHandle<()>,
 }
 
+/// A simple wrapper around a [Wallet] and an [OnchainWallet] hold by
+/// the [RestServer]
+pub struct ServerWallet {
+	pub wallet: Arc<Wallet>,
+	pub onchain: Arc<RwLock<OnchainWallet>>,
+}
+
+impl ServerWallet {
+	pub fn new(wallet: Arc<Wallet>, onchain: Arc<RwLock<OnchainWallet>>) -> Self {
+		Self { wallet, onchain }
+	}
+}
+
 #[derive(Clone)]
 pub(crate) struct ServerState {
-	wallet: Arc<Wallet>,
-	onchain: Arc<RwLock<OnchainWallet>>,
+	wallet: Arc<parking_lot::RwLock<Option<ServerWallet>>>,
+}
+
+impl ServerState {
+	pub fn require_wallet(&self) -> anyhow::Result<Arc<Wallet>> {
+		let wallet = self.wallet.read().as_ref()
+			.ok_or_else(|| anyhow!("No wallet set"))?.wallet.clone();
+		Ok(wallet)
+	}
+
+	pub fn require_onchain(&self) -> anyhow::Result<Arc<RwLock<OnchainWallet>>> {
+		let onchain = self.wallet.read().as_ref()
+			.ok_or_else(|| anyhow!("No onchain set"))?.onchain.clone();
+		Ok(onchain)
+	}
 }
 
 impl RestServer {
-	/// Create a new [RestServer] for the given bark [Wallet] and [OnchainWallet]
-	pub async fn start(
-		config: &Config,
-		wallet: Arc<Wallet>,
-		onchain: Arc<RwLock<OnchainWallet>>,
-	) -> anyhow::Result<Self> {
+	/// Start a new [RestServer] with the given config and an optional [ServerWallet]
+	///
+	/// If no wallet is provided, the server will reject any action
+	pub async fn start(config: &Config, wallet: Option<ServerWallet>)
+		-> anyhow::Result<Self>
+	{
 		let (router, api) = OpenApiRouter::with_openapi(ApiDoc::openapi())
 			.split_for_parts();
 
 		let socket_addr = config.socket_addr();
 
-		let state = ServerState { wallet, onchain };
+		let wallet = Arc::new(parking_lot::RwLock::new(wallet));
+		let state = ServerState { wallet };
 
 		// Build our application with routes
 		let router = router

@@ -64,9 +64,9 @@ pub struct OnchainApiDoc;
 pub async fn onchain_balance(
 	State(state): State<ServerState>,
 ) -> HandlerResult<Json<bark_json::cli::onchain::OnchainBalance>> {
-	let onchain_lock = state.onchain.read().await;
+	let onchain = state.require_onchain()?;
 
-	let balance = onchain_lock.balance();
+	let balance = onchain.read().await.balance();
 	let onchain_balance = bark_json::cli::onchain::OnchainBalance {
 		total: balance.total(),
 		trusted_spendable: balance.trusted_spendable(),
@@ -93,9 +93,9 @@ pub async fn onchain_balance(
 pub async fn onchain_address(
 	State(state): State<ServerState>,
 ) -> HandlerResult<Json<bark_json::cli::onchain::Address>> {
-	let mut onchain_lock = state.onchain.write().await;
+	let onchain = state.require_onchain()?;
 
-	let address = onchain_lock.address().await
+	let address = onchain.write().await.address().await
 		.context("Wallet failed to generate address")?;
 
 	Ok(axum::Json(bark_json::cli::onchain::Address {
@@ -120,17 +120,18 @@ pub async fn onchain_send(
 	State(state): State<ServerState>,
 	Json(body): Json<bark_json::web::OnchainSendRequest>,
 ) -> HandlerResult<Json<bark_json::cli::onchain::Send>> {
-	let mut onchain_lock = state.onchain.write().await;
+	let wallet = state.require_wallet()?;
+	let onchain = state.require_onchain()?;
 
-	let net = state.wallet.network().await?;
+	let net = wallet.network().await?;
 	let addr = bitcoin::Address::from_str	(&body.destination)
 		.badarg("Invalid destination address")?
 		.require_network(net)
 		.badarg("Address is not valid for configured network")?;
 
-	let fee_rate = state.wallet.chain.fee_rates().await.regular;
+	let fee_rate = wallet.chain.fee_rates().await.regular;
 	let amount = Amount::from_sat(body.amount_sat);
-	let txid = onchain_lock.send(&state.wallet.chain, addr, amount, fee_rate).await
+	let txid = onchain.write().await.send(&wallet.chain, addr, amount, fee_rate).await
 		.context("Failed to send onchain payment")?;
 
 	Ok(axum::Json(bark_json::cli::onchain::Send { txid }))
@@ -153,9 +154,10 @@ pub async fn onchain_send_many(
 	State(state): State<ServerState>,
 	Json(body): Json<bark_json::web::OnchainSendManyRequest>,
 ) -> HandlerResult<Json<bark_json::cli::onchain::Send>> {
-	let mut onchain_lock = state.onchain.write().await;
+	let onchain = state.require_onchain()?;
+	let wallet = state.require_wallet()?;
 
-	let net = state.wallet.network().await?;
+	let net = wallet.network().await?;
 	let outputs = body.destinations
 		.iter()
 		.map(|dest| {
@@ -183,8 +185,8 @@ pub async fn onchain_send_many(
 		info!("{} to {}", amount, address);
 	}
 
-	let fee_rate = state.wallet.chain.fee_rates().await.regular;
-	let txid = onchain_lock.send_many(&state.wallet.chain, &outputs, fee_rate).await
+	let fee_rate = wallet.chain.fee_rates().await.regular;
+	let txid = onchain.write().await.send_many(&wallet.chain, &outputs, fee_rate).await
 		.context("Failed to send many onchain payments")?;
 
 	Ok(axum::Json(bark_json::cli::onchain::Send { txid }))
@@ -207,16 +209,17 @@ pub async fn onchain_drain(
 	State(state): State<ServerState>,
 	Json(body): Json<bark_json::web::OnchainDrainRequest>,
 ) -> HandlerResult<Json<bark_json::cli::onchain::Send>> {
-	let mut onchain_lock = state.onchain.write().await;
+	let onchain = state.require_onchain()?;
+	let wallet = state.require_wallet()?;
 
-	let net = state.wallet.network().await?;
+	let net = wallet.network().await?;
 	let addr = bitcoin::Address::from_str(&body.destination)
 		.badarg("Invalid destination address")?
 		.require_network(net)
 		.badarg("Address is not valid for configured network")?;
 
-	let fee_rate = state.wallet.chain.fee_rates().await.regular;
-	let txid = onchain_lock.drain(&state.wallet.chain, addr, fee_rate).await
+	let fee_rate = wallet.chain.fee_rates().await.regular;
+	let txid = onchain.write().await.drain(&wallet.chain, addr, fee_rate).await
 		.context("Failed to drain onchain wallet")?;
 
 	Ok(axum::Json(bark_json::cli::onchain::Send { txid }))
@@ -235,9 +238,9 @@ pub async fn onchain_drain(
 pub async fn onchain_utxos(
 	State(state): State<ServerState>,
 ) -> HandlerResult<Json<Vec<bark_json::primitives::UtxoInfo>>> {
-	let onchain_lock = state.onchain.read().await;
+	let onchain = state.require_onchain()?;
 
-	let utxos = onchain_lock.utxos()
+	let utxos = onchain.read().await.utxos()
 		.into_iter()
 		.map(bark_json::primitives::UtxoInfo::from)
 		.collect::<Vec<_>>();
@@ -258,9 +261,9 @@ pub async fn onchain_utxos(
 pub async fn onchain_transactions(
 	State(state): State<ServerState>,
 ) -> HandlerResult<Json<Vec<bark_json::primitives::TransactionInfo>>> {
-	let onchain_lock = state.onchain.read().await;
+	let onchain = state.require_onchain()?;
 
-	let mut transactions = onchain_lock.list_transactions();
+	let mut transactions = onchain.read().await.list_transactions();
 	// transactions are ordered from newest to oldest, so we reverse them so last terminal item is newest
 	transactions.reverse();
 
@@ -285,7 +288,9 @@ pub async fn onchain_transactions(
 pub async fn onchain_sync(
 	State(state): State<ServerState>,
 ) -> HandlerResult<()> {
-	let mut onchain_lock = state.onchain.write().await;
-	onchain_lock.sync(&state.wallet.chain).await?;
+	let onchain = state.require_onchain()?;
+	let wallet = state.require_wallet()?;
+
+	onchain.write().await.sync(&wallet.chain).await?;
 	Ok(())
 }

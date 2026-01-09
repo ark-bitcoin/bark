@@ -37,7 +37,9 @@ pub fn router() -> Router<ServerState> {
 pub async fn tip(
 	State(state): State<ServerState>,
 ) -> HandlerResult<Json<bark_json::web::TipResponse>> {
-	let tip_height = state.wallet.chain.tip().await?;
+	let wallet = state.require_wallet()?;
+
+	let tip_height = wallet.chain.tip().await?;
 	Ok(axum::Json(bark_json::web::TipResponse { tip_height }))
 }
 

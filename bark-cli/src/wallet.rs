@@ -22,7 +22,7 @@
 //! # use bark_cli::wallet::open_wallet;
 //! # async fn example() -> anyhow::Result<()> {
 //!     let datadir = Path::new("./bark_data");
-//!     let (bark_wallet, onchain_wallet) = open_wallet(datadir).await?;
+//!     let (bark_wallet, onchain_wallet) = open_wallet(datadir).await?.unwrap();
 //!     // Use the wallets...
 //!     Ok(())
 //! # }

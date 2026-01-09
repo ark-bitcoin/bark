@@ -127,15 +127,15 @@ async fn main() -> anyhow::Result<()>{
 	let onchain = Arc::new(RwLock::new(onchain));
 
 	let daemon = wallet.run_daemon(onchain.clone()).await?;
-	let server = RestServer::start(&cli.to_config(), wallet, onchain).await?;
+
+	let wallet_handle = bark_rest::ServerWallet::new(wallet.clone(), onchain.clone());
+	let server = RestServer::start(&cli.to_config(), Some(wallet_handle)).await?;
 
 	run_shutdown_signal_listener().await;
 	daemon.stop();
 	if let Err(e) = server.stop_wait().await {
 		warn!("Error while stopping REST server: {:#}", e);
 	}
-
-
 
 	Ok(())
 }

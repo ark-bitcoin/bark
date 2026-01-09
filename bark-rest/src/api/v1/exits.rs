@@ -74,9 +74,11 @@ pub async fn get_exit_status_by_vtxo_id(
 	Path(vtxo): Path<String>,
 	Query(query): Query<bark_json::web::ExitStatusRequest>,
 ) -> HandlerResult<Json<bark_json::cli::ExitTransactionStatus>> {
+	let wallet = state.require_wallet()?;
+
 	let vtxo_id = ark::VtxoId::from_str(&vtxo).badarg("Invalid VTXO ID")?;
 
-	let status = state.wallet.exit.write().await.get_exit_status(
+	let status = wallet.exit.write().await.get_exit_status(
 		vtxo_id,
 		query.history.unwrap_or(false),
 		query.transactions.unwrap_or(false)
@@ -107,7 +109,9 @@ pub async fn get_all_exit_status(
 	State(state): State<ServerState>,
 	Query(query): Query<bark_json::web::ExitStatusRequest>,
 ) -> HandlerResult<Json<Vec<bark_json::cli::ExitTransactionStatus>>> {
-	let exit = state.wallet.exit.write().await;
+	let wallet = state.require_wallet()?;
+
+	let exit = wallet.exit.write().await;
 	let mut statuses = Vec::with_capacity(exit.get_exit_vtxos().len());
 
 	for e in exit.get_exit_vtxos() {
@@ -142,6 +146,8 @@ pub async fn exit_start_vtxos(
 	State(state): State<ServerState>,
 	Json(body): Json<bark_json::web::ExitStartRequest>,
 ) -> HandlerResult<Json<bark_json::web::ExitStartResponse>> {
+	let wallet = state.require_wallet()?;
+
 	if body.vtxos.is_empty() {
 		badarg!("No VTXO IDs provided");
 	}
@@ -149,16 +155,16 @@ pub async fn exit_start_vtxos(
 	let mut vtxo_ids = Vec::new();
 	for s in body.vtxos {
 		let id = ark::VtxoId::from_str(&s).badarg("Invalid VTXO ID")?;
-		state.wallet.get_vtxo_by_id(id).await.not_found([id], "VTXO not found")?;
+		wallet.get_vtxo_by_id(id).await.not_found([id], "VTXO not found")?;
 		vtxo_ids.push(id);
 	}
 
-	let filter = VtxoFilter::new(&state.wallet).include_many(vtxo_ids);
+	let filter = VtxoFilter::new(&wallet).include_many(vtxo_ids);
 
-	let spendable = state.wallet.spendable_vtxos_with(&filter).await
+	let spendable = wallet.spendable_vtxos_with(&filter).await
 		.context("Error fetching spendable VTXOs")?;
 	let inround = {
-		let mut vtxos = state.wallet.pending_round_input_vtxos().await
+		let mut vtxos = wallet.pending_round_input_vtxos().await
 			.context("Error fetching pending round input VTXOs")?;
 		filter.filter_vtxos(&mut vtxos).await?;
 		vtxos
@@ -167,7 +173,7 @@ pub async fn exit_start_vtxos(
 	let vtxos = spendable.into_iter().chain(inround)
 		.map(|v| v.vtxo).collect::<Vec<_>>();
 
-	state.wallet.exit.write().await.start_exit_for_vtxos(&vtxos).await
+	wallet.exit.write().await.start_exit_for_vtxos(&vtxos).await
 		.context("Failed to start exit for VTXOs")?;
 
 	Ok(axum::Json(bark_json::web::ExitStartResponse {
@@ -189,7 +195,9 @@ pub async fn exit_start_vtxos(
 pub async fn exit_start_all(
 	State(state): State<ServerState>,
 ) -> HandlerResult<Json<bark_json::web::ExitStartResponse>> {
-	state.wallet.exit.write().await.start_exit_for_entire_wallet().await
+	let wallet = state.require_wallet()?;
+
+	wallet.exit.write().await.start_exit_for_entire_wallet().await
 		.context("Failed to start exit for entire wallet")?;
 
 	Ok(axum::Json(bark_json::web::ExitStartResponse {
@@ -214,12 +222,15 @@ pub async fn exit_progress(
 	State(state): State<ServerState>,
 	Json(body): Json<bark_json::web::ExitProgressRequest>,
 ) -> HandlerResult<Json<bark_json::cli::ExitProgressResponse>> {
-	let mut onchain_lock = state.onchain.write().await;
+	let wallet = state.require_wallet()?;
+
+	let onchain = state.require_onchain()?;
+	let mut onchain_lock = onchain.write().await;
 
 	let fee_rate = body.fee_rate.map(FeeRate::from_sat_per_kvb_ceil);
 
-	let mut exit = state.wallet.exit.write().await;
-	let result = exit.progress_exits(&state.wallet, &mut *onchain_lock, fee_rate).await
+	let mut exit = wallet.exit.write().await;
+	let result = exit.progress_exits(&wallet, &mut *onchain_lock, fee_rate).await
 		.context("error making progress on exit process")?;
 
 	let done = !exit.has_pending_exits();
@@ -240,16 +251,19 @@ async fn inner_claim_vtxos(
 	vtxos: &[&bark::exit::ExitVtxo],
 	fee_rate: Option<FeeRate>,
 ) -> HandlerResult<Json<bark_json::web::ExitClaimResponse>> {
+	let wallet = state.require_wallet()?;
+	let onchain = state.require_onchain()?;
+
 	let address_spk = address.script_pubkey();
-	let psbt = exit.drain_exits(vtxos, &state.wallet, address, fee_rate).await
+	let psbt = exit.drain_exits(vtxos, &wallet, address, fee_rate).await
 		.context("Failed to drain exits")?;
 	let tx = psbt.extract_tx()
 		.context("Failed to extract transaction")?;
-	state.wallet.chain.broadcast_tx(&tx).await
+	wallet.chain.broadcast_tx(&tx).await
 		.context("Failed to broadcast transaction")?;
 	info!("Drain transaction broadcasted: {}", tx.compute_txid());
 
-	let mut onchain_lock = state.onchain.write().await;
+	let mut onchain_lock = onchain.write().await;
 
 	// Commit the transaction to the wallet if the claim destination is ours
 	if onchain_lock.is_mine(address_spk) {
@@ -281,14 +295,15 @@ pub async fn exit_claim_all(
 	State(state): State<ServerState>,
 	Json(body): Json<bark_json::web::ExitClaimAllRequest>,
 ) -> HandlerResult<Json<bark_json::web::ExitClaimResponse>> {
+	let wallet = state.require_wallet()?;
+	let network = wallet.network().await?;
 
-	let network = state.wallet.network().await?;
 	let address = bitcoin::Address::from_str(&body.destination)
 		.badarg("Invalid destination address")?
 		.require_network(network)
 		.badarg("Address is not valid for configured network")?;
 
-	let exit = state.wallet.exit.read().await;
+	let exit = wallet.exit.read().await;
 	let vtxos = exit.list_claimable();
 
 	let fee_rate = body.fee_rate.map(FeeRate::from_sat_per_kvb_ceil);
@@ -314,18 +329,20 @@ pub async fn exit_claim_vtxos(
 	State(state): State<ServerState>,
 	Json(body): Json<bark_json::web::ExitClaimVtxosRequest>,
 ) -> HandlerResult<Json<bark_json::web::ExitClaimResponse>> {
-	let network = state.wallet.network().await?;
+	let wallet = state.require_wallet()?;
+
+	let network = wallet.network().await?;
 	let address = bitcoin::Address::from_str(&body.destination)
 		.badarg("Invalid destination address")?
 		.require_network(network)
 		.badarg("Address is not valid for configured network")?;
 
-	let exit = state.wallet.exit.read().await;
+	let exit = wallet.exit.read().await;
 	let vtxos = {
 		let mut vtxo_ids = HashSet::new();
 		for s in body.vtxos {
 			let id = ark::VtxoId::from_str(&s).badarg("Invalid VTXO ID")?;
-			state.wallet.get_vtxo_by_id(id).await.not_found([id], "VTXO not found")?;
+			wallet.get_vtxo_by_id(id).await.not_found([id], "VTXO not found")?;
 			vtxo_ids.insert(id);
 		}
 
