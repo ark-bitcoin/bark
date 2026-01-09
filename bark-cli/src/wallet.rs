@@ -59,40 +59,40 @@ const DEBUG_LOG_FILE: &str = "debug.log";
 
 /// Options to define the initial bark config
 #[derive(Clone, PartialEq, Eq, Default, clap::Args)]
-struct ConfigOpts {
+pub struct ConfigOpts {
 	/// The address of your Ark server.
 	#[arg(long)]
-	ark: Option<String>,
+	pub ark: Option<String>,
 
 	/// The address of the Esplora HTTP server to use.
 	///
 	/// Either this or the `bitcoind_address` field has to be provided.
 	#[arg(long)]
-	esplora: Option<String>,
+	pub esplora: Option<String>,
 
 	/// The address of the bitcoind RPC server to use.
 	///
 	/// Either this or the `esplora_address` field has to be provided.
 	#[arg(long)]
-	bitcoind: Option<String>,
+	pub bitcoind: Option<String>,
 
 	/// The path to the bitcoind rpc cookie file.
 	///
 	/// Only used with `bitcoind_address`.
 	#[arg(long)]
-	bitcoind_cookie: Option<String>,
+	pub bitcoind_cookie: Option<String>,
 
 	/// The bitcoind RPC username.
 	///
 	/// Only used with `bitcoind_address`.
 	#[arg(long)]
-	bitcoind_user: Option<String>,
+	pub bitcoind_user: Option<String>,
 
 	/// The bitcoind RPC password.
 	///
 	/// Only used with `bitcoind_address`.
 	#[arg(long)]
-	bitcoind_pass: Option<String>,
+	pub bitcoind_pass: Option<String>,
 }
 
 impl ConfigOpts {
@@ -178,32 +178,32 @@ pub struct CreateOpts {
 	/// Force re-create the wallet even if it already exists.
 	/// Any funds in the old wallet will be lost
 	#[arg(long)]
-	force: bool,
+	pub force: bool,
 
 	/// Use bitcoin mainnet
 	#[arg(long)]
-	mainnet: bool,
+	pub mainnet: bool,
 	/// Use regtest network
 	#[arg(long)]
-	regtest: bool,
+	pub regtest: bool,
 	/// Use the official signet network
 	#[arg(long)]
-	signet: bool,
+	pub signet: bool,
 	/// Use mutinynet
 	#[arg(long)]
-	mutinynet: bool,
+	pub mutinynet: bool,
 
 	/// Recover a wallet with an existing mnemonic.
 	/// This currently only works for on-chain funds.
 	#[arg(long)]
-	mnemonic: Option<bip39::Mnemonic>,
+	pub mnemonic: Option<bip39::Mnemonic>,
 
 	/// The wallet/mnemonic's birthday blockheight to start syncing when recovering.
 	#[arg(long)]
-	birthday_height: Option<BlockHeight>,
+	pub birthday_height: Option<BlockHeight>,
 
 	#[command(flatten)]
-	config: ConfigOpts,
+	pub config: ConfigOpts,
 }
 
 /// Checks the config file and maybe cleans it
