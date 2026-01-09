@@ -984,6 +984,10 @@ async fn progress_attempt(
 				));
 			}
 
+			if let Err(e) = wallet.chain.broadcast_tx(&signed_round_tx).await {
+				warn!("Failed to broadcast signed round tx: {:#}", e);
+			}
+
 			match construct_new_vtxos(
 				part, unsigned_round_tx, vtxos_spec, cosign_sigs,
 			).await {
