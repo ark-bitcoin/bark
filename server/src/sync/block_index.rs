@@ -3,7 +3,7 @@ use anyhow::{bail, Context};
 use tokio::sync::watch;
 
 use futures::future::join_all;
-use log::{trace, debug, info, warn};
+use tracing::{trace, debug, info, warn};
 
 use bitcoin_ext::rpc::{BitcoinRpcClient, BitcoinRpcExt, RpcApi};
 use bitcoin_ext::{BlockRef};

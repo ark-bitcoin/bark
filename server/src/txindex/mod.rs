@@ -13,8 +13,7 @@ use bitcoin::{Transaction, Txid};
 use bitcoin_ext::{BlockHeight, BlockRef};
 use bitcoin_ext::rpc::{BitcoinRpcClient, BitcoinRpcExt, RpcApi};
 use chrono::{DateTime, Local};
-use log::{trace, info, warn};
-
+use tracing::{info, trace, warn};
 use crate::database::Db;
 use crate::system::RuntimeManager;
 
@@ -206,7 +205,8 @@ impl TxIndexData {
 		let mut tx_map = self.tx_map.write().await;
 		if let Some(original) = tx_map.get(&txid).map(|wtx| wtx.upgrade()).flatten() {
 			if original.tx != tx {
-				slog!(DifferentDuplicate, txid,
+				slog!(DifferentDuplicate,
+					txid,
 					raw_tx_original: serialize(&original.tx),
 					raw_tx_duplicate: serialize(&tx),
 				);
@@ -396,7 +396,7 @@ impl TxIndex {
 
 		tokio::spawn( async move {
 			proc.run().await.context("txindex exited with error")?;
-			log::info!("TxIndex shut down");
+			info!("TxIndex shut down");
 			Ok::<(), anyhow::Error>(())
 		});
 

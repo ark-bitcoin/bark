@@ -17,15 +17,20 @@ use opentelemetry::{Key, Value};
 use opentelemetry::{global, KeyValue};
 use opentelemetry::trace::{Span, SpanRef, TracerProvider};
 use opentelemetry_otlp::{Compression, WithExportConfig, WithTonicConfig};
+use opentelemetry_sdk::error::OTelSdkResult;
 use opentelemetry_sdk::metrics::{PeriodicReader, SdkMeterProvider};
 use opentelemetry_sdk::propagation::TraceContextPropagator;
 use opentelemetry_sdk::Resource;
-use opentelemetry_sdk::trace::{RandomIdGenerator, Sampler};
-use tokio::sync::OnceCell;
+use opentelemetry_sdk::trace::{BatchSpanProcessor, RandomIdGenerator, Sampler, SpanData, SpanExporter};
+use std::time::SystemTime;
 use tokio::time::Instant;
-use tracing_opentelemetry::OpenTelemetryLayer;
+use tracing::warn;
+use tracing_core::LevelFilter;
 use tracing_subscriber::layer::SubscriberExt;
-use tracing_subscriber::{EnvFilter, Registry};
+use tracing_subscriber::util::SubscriberInitExt;
+use tracing_subscriber::fmt::format::Writer;
+use tracing_subscriber::fmt::time::FormatTime;
+use tracing_subscriber::EnvFilter;
 use ark::VtxoId;
 use crate::database::ln::LightningPaymentStatus;
 use crate::ln::cln::ClnNodeStateKind;
@@ -33,6 +38,8 @@ use crate::round::RoundStateKind;
 use crate::wallet::WalletKind;
 
 pub const TRACE_RUN_ROUND: &str = "round";
+
+pub const TRACE_RUN_ROUND_ATTEMPT: &str = "round_attempt";
 pub const TRACE_RUN_ROUND_POPULATED: &str = "round_populated";
 
 pub const ATTRIBUTE_WORKER: &str = "worker";
@@ -56,6 +63,7 @@ pub trait MetricsService {
 	const NAME: &'static str;
 	const TRACER: &'static str;
 	const METER: &'static str;
+	const LOG_ENV_VAR: &'static str;
 }
 
 /// [MetricsService] for captaind
@@ -65,6 +73,7 @@ impl MetricsService for Captaind {
 	const NAME: &'static str = "captaind";
 	const TRACER: &'static str = "captaind";
 	const METER: &'static str = "captaind";
+	const LOG_ENV_VAR: &'static str = "CAPTAIND_LOG";
 }
 
 /// [MetricsService] for watchmand
@@ -74,6 +83,7 @@ impl MetricsService for Watchmand {
 	const NAME: &'static str = "watchmand";
 	const TRACER: &'static str = "watchmand";
 	const METER: &'static str = "watchmand";
+	const LOG_ENV_VAR: &'static str = "WATCHMAND_LOG";
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -84,8 +94,11 @@ pub enum RoundStep {
 	SendingVtxoProposal,
 	ReceiveVtxoSignatures,
 	CombineVtxoSignatures,
+	ConstructRoundProposal,
+	ReceiveForfeitSignatures,
 	FinalStage,
 	SignOnChainTransaction,
+	BroadcastOnChainTransaction,
 	Persist,
 }
 
@@ -107,19 +120,35 @@ impl RoundStep {
 		}
 	}
 
+	pub const ATTEMPT_INITIATION: &'static str = "round_attempt";
+	pub const RECEIVE_PAYMENTS: &'static str = "round_receive_payments";
+	pub const CONSTRUCT_VTXO_TREE: &'static str = "round_construct_vtxo_tree";
+	pub const SENDING_VTXO_PROPOSAL: &'static str = "round_sending_vtxo_proposal";
+	pub const RECEIVE_VTXO_SIGNATURES: &'static str = "round_receive_vtxo_signatures";
+	pub const COMBINE_VTXO_SIGNATURES: &'static str = "round_combine_vtxo_signatures";
+	pub const CONSTRUCT_ROUND_PROPOSAL: &'static str = "round_construct_round_proposal";
+	pub const RECEIVE_FORFEIT_SIGNATURES: &'static str = "round_receive_forfeit_signatures";
+	pub const FINAL_STAGE: &'static str = "round_finalize_stage";
+	pub const SIGN_ON_CHAIN_TRANSACTION: &'static str = "round_sign_on_chain_transaction";
+	pub const BROADCAST_TX: &'static str = "round_broadcast_tx";
+	pub const PERSIST: &'static str = "round_persist";
+
 	// When changing this also change `get_all`
 
 	pub fn as_str(&self) -> &'static str {
 		match self {
-			RoundStep::AttemptInitiation => "round_attempt",
-			RoundStep::ReceivePayments => "round_receive_payments",
-			RoundStep::SendingVtxoProposal => "round_sending_vtxo_proposal",
-			RoundStep::ReceiveVtxoSignatures => "round_receive_vtxo_signatures",
-			RoundStep::CombineVtxoSignatures => "round_combine_vtxo_signatures",
-			RoundStep::ConstructVtxoTree => "round_construct_vtxo_tree",
-			RoundStep::SignOnChainTransaction => "round_sign_on_chain_transaction",
-			RoundStep::FinalStage => "round_finalize_stage",
-			RoundStep::Persist => "round_persist",
+			RoundStep::AttemptInitiation => Self::ATTEMPT_INITIATION,
+			RoundStep::ReceivePayments => Self::RECEIVE_PAYMENTS,
+			RoundStep::ConstructVtxoTree => Self::CONSTRUCT_VTXO_TREE,
+			RoundStep::SendingVtxoProposal => Self::SENDING_VTXO_PROPOSAL,
+			RoundStep::ReceiveVtxoSignatures => Self::RECEIVE_VTXO_SIGNATURES,
+			RoundStep::CombineVtxoSignatures => Self::COMBINE_VTXO_SIGNATURES,
+			RoundStep::ConstructRoundProposal => Self::CONSTRUCT_ROUND_PROPOSAL,
+			RoundStep::ReceiveForfeitSignatures => Self::RECEIVE_FORFEIT_SIGNATURES,
+			RoundStep::FinalStage => Self::FINAL_STAGE,
+			RoundStep::SignOnChainTransaction => Self::SIGN_ON_CHAIN_TRANSACTION,
+			RoundStep::BroadcastOnChainTransaction => Self::BROADCAST_TX,
+			RoundStep::Persist => Self::PERSIST,
 		}
 	}
 
@@ -127,12 +156,15 @@ impl RoundStep {
 		&[
 			RoundStep::AttemptInitiation,
 			RoundStep::ReceivePayments,
+			RoundStep::ConstructVtxoTree,
 			RoundStep::SendingVtxoProposal,
 			RoundStep::ReceiveVtxoSignatures,
 			RoundStep::CombineVtxoSignatures,
-			RoundStep::ConstructVtxoTree,
-			RoundStep::SignOnChainTransaction,
+			RoundStep::ConstructRoundProposal,
+			RoundStep::ReceiveForfeitSignatures,
 			RoundStep::FinalStage,
+			RoundStep::SignOnChainTransaction,
+			RoundStep::BroadcastOnChainTransaction,
 			RoundStep::Persist,
 		]
 	}
@@ -170,7 +202,7 @@ pub const RPC_METHOD: &str = opentelemetry_semantic_conventions::attribute::RPC_
 pub const RPC_GRPC_STATUS_CODE: &str = opentelemetry_semantic_conventions::attribute::RPC_GRPC_STATUS_CODE;
 
 /// The global open-telemetry context to register metrics.
-static TELEMETRY: OnceCell<Metrics> = OnceCell::const_new();
+static TELEMETRY: tokio::sync::OnceCell<Metrics> = tokio::sync::OnceCell::const_new();
 static BLOCK_HEIGHT_TIP: AtomicU64 = AtomicU64::new(0);
 static SYNC_HEIGHT_TIP: AtomicU64 = AtomicU64::new(0);
 
@@ -178,7 +210,7 @@ static SYNC_HEIGHT_TIP: AtomicU64 = AtomicU64::new(0);
 ///
 /// MUST be called (only once) before registering or updating metrics.
 pub fn init_telemetry<S: MetricsService>(
-	endpoint: &str,
+	endpoint: Option<String>,
 	otel_tracing_sampler: Option<f64>,
 	otel_deployment_name: &str,
 	network: Network,
@@ -186,7 +218,7 @@ pub fn init_telemetry<S: MetricsService>(
 	max_vtxo_amount: Option<Amount>,
 	server_pubkey: PublicKey,
 ) {
-	TELEMETRY.set(Metrics::init::<S>(
+	let _ = TELEMETRY.set(Metrics::init::<S>(
 		endpoint,
 		otel_tracing_sampler,
 		otel_deployment_name,
@@ -194,7 +226,7 @@ pub fn init_telemetry<S: MetricsService>(
 		round_interval,
 		max_vtxo_amount,
 		server_pubkey,
-	)).expect("Telemetry already initialized");
+	));
 }
 
 #[derive(Debug)]
@@ -244,9 +276,27 @@ struct Metrics {
 	global_labels: Vec<KeyValue>,
 }
 
+#[derive(Debug, Default)]
+struct NoopSpanExporter;
+
+impl SpanExporter for NoopSpanExporter {
+	fn export(&self, _batch: Vec<SpanData>) -> impl Future<Output=OTelSdkResult> + Send {
+		async move { Ok(()) }
+	}
+}
+
+struct MillisTimer;
+
+impl FormatTime for MillisTimer {
+	fn format_time(&self, w: &mut Writer<'_>) -> std::fmt::Result {
+		let now = chrono::Local::now();
+		write!(w, "{}", now.to_rfc3339_opts(chrono::SecondsFormat::Millis, true))
+	}
+}
+
 impl Metrics {
 	fn init<S: MetricsService>(
-		endpoint: &str,
+		endpoint: Option<String>,
 		otel_tracing_sampler: Option<f64>,
 		otel_deployment_name: &str,
 		network: Network,
@@ -256,12 +306,26 @@ impl Metrics {
 	) -> Self {
 		global::set_text_map_propagator(TraceContextPropagator::new());
 
-		let trace_exporter = opentelemetry_otlp::SpanExporter::builder()
-			.with_tonic()
-			.with_endpoint(endpoint)
-			.with_timeout(Duration::from_secs(10))
-			.with_compression(Compression::Gzip)
-			.build().unwrap();
+		let span_processor = match endpoint.clone() {
+			Some(endpoint) if !endpoint.trim().is_empty() => {
+				match opentelemetry_otlp::SpanExporter::builder()
+					.with_tonic()
+					.with_endpoint(endpoint)
+					.with_timeout(Duration::from_secs(10))
+					.with_compression(Compression::Gzip)
+					.build() {
+					Ok(exporter) => {
+						BatchSpanProcessor::builder(exporter).build()
+					}
+					Err(_err) => {
+						BatchSpanProcessor::builder(NoopSpanExporter).build()
+					}
+				}
+			}
+			_ => {
+				BatchSpanProcessor::builder(NoopSpanExporter).build()
+			}
+		};
 
 		let resource = Resource::builder()
 			.with_attribute(KeyValue::new(SERVICE_NAME, S::NAME))
@@ -289,10 +353,10 @@ impl Metrics {
 			.build();
 
 		let tracer_sampler = otel_tracing_sampler.map(Sampler::TraceIdRatioBased)
-			.unwrap_or(Sampler::AlwaysOff);
+			.unwrap_or(Sampler::AlwaysOn);
 
 		let tracer_provider = opentelemetry_sdk::trace::SdkTracerProvider::builder()
-			.with_batch_exporter(trace_exporter)
+			.with_span_processor(span_processor)
 			.with_sampler(tracer_sampler)
 			.with_id_generator(RandomIdGenerator::default())
 			.with_max_events_per_span(64)
@@ -300,35 +364,66 @@ impl Metrics {
 			.with_resource(resource.clone())
 			.build();
 
-		let captaind_tracer = tracer_provider.tracer(S::TRACER);
+		let tracer = tracer_provider.tracer(S::TRACER);
 
-		global::set_tracer_provider(tracer_provider);
+		let mut filter = EnvFilter::from_default_env()
+			.add_directive(LevelFilter::TRACE.into())
+			.add_directive("rustls=WARN".parse().unwrap())
+			.add_directive("bitcoincore_rpc=WARN".parse().unwrap())
+			.add_directive("tokio_postgres=INFO".parse().unwrap())
+			.add_directive("h2=INFO".parse().unwrap());
+		if let Ok(env_str) = std::env::var(S::LOG_ENV_VAR) {
+			if !env_str.trim().is_empty() {
+				filter = filter.add_directive(env_str.parse().unwrap());
+			}
+		}
 
-		// Set up the tracing subscriber
-		let filter = EnvFilter::from_default_env()
-			.add_directive("h2=off".parse().unwrap());
-		let captaind_telemetry = OpenTelemetryLayer::new(captaind_tracer);
-		let subscriber = Registry::default()
+		match tracing_subscriber::registry()
 			.with(filter)
-			.with(captaind_telemetry);
-		tracing::subscriber::set_global_default(subscriber)
-			.map_err(|err| anyhow::anyhow!("Failed to set tracing subscriber: {:?}", err)).unwrap();
+			.with(
+				json_subscriber::layer()
+					.with_timer(MillisTimer)
+					.with_writer(std::io::stdout)
+					.with_target(true)
+					.with_thread_ids(false)
+					.with_thread_names(false)
+					.with_file(true)
+					.with_line_number(true)
+					.flatten_event(true)
+					.with_current_span(true)
+					.with_span_list(true)
+					.with_opentelemetry_ids(true))
+			.with(tracing_opentelemetry::layer().with_tracer(tracer))
+			.try_init() {
+			Ok(()) => {
+				global::set_tracer_provider(tracer_provider);
 
-		let metrics_exporter = opentelemetry_otlp::MetricExporter::builder()
-			// Build exporter using Delta Temporality (Defaults to Temporality::Cumulative)
-			// .with_temporality(opentelemetry_sdk::metrics::Temporality::Delta)
-			.with_tonic()
-			.with_endpoint(endpoint)
-			.with_timeout(Duration::from_secs(10))
-			.with_compression(Compression::Gzip)
-			.build().unwrap();
+				match endpoint {
+					Some(endpoint) if !endpoint.trim().is_empty() => {
+						let metrics_exporter = opentelemetry_otlp::MetricExporter::builder()
+							.with_tonic()
+							.with_endpoint(endpoint)
+							.with_timeout(Duration::from_secs(10))
+							.with_compression(Compression::Gzip)
+							.build().unwrap();
 
-		let metrics_reader = PeriodicReader::builder(metrics_exporter).build();
-		let provider = SdkMeterProvider::builder()
-			.with_reader(metrics_reader)
-			.with_resource(resource)
-			.build();
-		global::set_meter_provider(provider);
+						let metrics_reader = PeriodicReader::builder(metrics_exporter).build();
+						let provider = SdkMeterProvider::builder()
+							.with_reader(metrics_reader)
+							.with_resource(resource)
+							.build();
+						global::set_meter_provider(provider);
+					}
+					_ => {
+						let provider = SdkMeterProvider::builder()
+							.with_resource(resource)
+							.build();
+						global::set_meter_provider(provider);
+					}
+				}
+			}
+			Err(_e) => { }
+		}
 
 		let meter = global::meter_provider().meter(S::METER);
 		let spawn_counter = meter.i64_up_down_counter("spawn_counter").build();
@@ -462,9 +557,9 @@ impl Metrics {
 
 		// Warn if we're causing heap allocation (more than 10 total attributes)
 		if attrs.len() > 10 {
-			log::warn!(
+			warn!(
 				"Telemetry attributes exceeded stack allocation limit: {} attributes will cause heap allocation",
-				attrs.len()
+				attrs.len(),
 			);
 		}
 

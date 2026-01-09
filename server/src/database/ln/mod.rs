@@ -7,8 +7,7 @@ use anyhow::Context;
 use bitcoin::secp256k1::PublicKey;
 use chrono::{DateTime, Local};
 use lightning_invoice::Bolt11Invoice;
-use log::{trace, warn};
-
+use tracing::{trace, warn};
 use ark::VtxoId;
 use ark::lightning::{Invoice, PaymentHash, Preimage};
 use bitcoin_ext::BlockHeight;

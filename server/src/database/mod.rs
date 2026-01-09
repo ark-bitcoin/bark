@@ -35,8 +35,7 @@ use chrono::Local;
 use futures::Stream;
 use tokio_postgres::{Client, NoTls, RowStream};
 use tokio_postgres::types::Type;
-use log::{info, warn};
-
+use tracing::{info, warn};
 use ark::{Vtxo, VtxoId, VtxoRequest};
 use ark::mailbox::MailboxIdentifier;
 use ark::arkoor::ArkoorPackageBuilder;
@@ -719,7 +718,8 @@ struct PoolErrorSink;
 
 impl bb8::ErrorSink<tokio_postgres::Error> for PoolErrorSink {
 	fn sink(&self, error: tokio_postgres::Error) {
-		slog!(PostgresPoolError, err: error.to_string(),
+		slog!(PostgresPoolError,
+			err: error.to_string(),
 			code: error.code().map(|c| c.code().to_owned()),
 		);
 	}

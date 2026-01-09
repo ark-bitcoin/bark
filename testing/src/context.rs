@@ -257,7 +257,7 @@ impl TestContext {
 			sync_manager_block_poll_interval: Duration::from_millis(100),
 			handshake_psa: None,
 			otel_collector_endpoint: None,
-			otel_tracing_sampler: None,
+			otel_tracing_sampler: Some(1f64),
 			otel_deployment_name: db_name,
 			vtxo_sweeper: server::sweeps::Config {
 				sweep_tx_fallback_feerate: FeeRate::from_sat_per_vb_unchecked(10),
@@ -600,14 +600,17 @@ impl Drop for TestContext {
 			log::info!("Leave test directory intact");
 			// do nothing
 		} else {
-			if let None = std::env::var_os(constants::env::KEEP_ALL_TEST_DATA) {
+			let keep_all_data = std::env::var_os(constants::env::KEEP_ALL_TEST_DATA)
+				.map(|v| v == "true" || v == "1")
+				.unwrap_or(false);
+			if keep_all_data {
+				log::info!("Keep test data intact because {} is set", constants::env::KEEP_ALL_TEST_DATA);
+			} else {
 				match std::fs::remove_dir_all(&self.datadir) {
 					Ok(_) => log::info!("Cleaned up {:?}", self.datadir),
 					Err(e) => log::warn!("Failed to clean up datadir {:?} because {:?}", self.datadir, e)
 
 				}
-			} else {
-				log::info!("Keep test data intact because {} is set", constants::env::KEEP_ALL_TEST_DATA);
 			}
 		}
 	}

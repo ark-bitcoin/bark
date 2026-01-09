@@ -4,9 +4,8 @@ use std::time::Duration;
 use bitcoin::{Txid, Transaction, Wtxid};
 use bitcoin::consensus::encode::serialize;
 use bitcoin_ext::rpc::{BitcoinRpcClient, RpcApi};
-use log::{trace, debug, info, warn};
 use tokio::sync::mpsc;
-
+use tracing::{debug, info, trace, warn};
 use crate::system::RuntimeManager;
 use crate::txindex::{Tx, TxIndex};
 
@@ -52,7 +51,7 @@ impl TxNursery {
 			ret.push(self.txindex.register(tx).await?);
 		}
 		let txids = ret.iter().map(|t| t.txid).collect::<Vec<_>>();
-		log::debug!("Registering tx package for broadcast: {:?}", txids);
+		debug!("Registering tx package for broadcast: {:?}", txids);
 		self.inner_broadcast(txids);
 		Ok(ret)
 	}
@@ -169,10 +168,10 @@ impl Process {
 
 		let bytes = serialize(&tx.tx);
 		if let Err(e) = self.bitcoind.send_raw_transaction(&bytes) {
-			log::warn!("Error when re-broadcasting one of our txs: {}", e);
+			warn!("Error when re-broadcasting one of our txs: {}", e);
 			slog!(TxBroadcastError, txid: tx.txid, raw_tx: bytes, error: e.to_string());
 		} else {
-			log::trace!("Broadcasted tx {}", tx.txid);
+			trace!("Broadcasted tx {}", tx.txid);
 		}
 	}
 

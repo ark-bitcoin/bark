@@ -11,7 +11,7 @@ use bitcoin::secp256k1::{rand, Keypair};
 use bitcoin::{Amount, FeeRate, OutPoint};
 use bitcoin_ext::{BlockDelta, BlockHeight};
 use futures::{stream, StreamExt, TryStreamExt};
-use log::{info, warn};
+use tracing::{info, warn};
 use ark::{musig, Vtxo, VtxoId, VtxoPolicy, VtxoRequest};
 use ark::arkoor::ArkoorPackageBuilder;
 use ark::tree::signed::builder::SignedTreeBuilder;

@@ -11,8 +11,8 @@ use anyhow::{bail, Context};
 use bitcoin::hashes::Hash;
 use bitcoin::{Transaction, Txid};
 use bitcoin::consensus::serialize;
-use log::{debug, info, trace};
 use tokio_postgres::types::Type;
+use tracing::{debug, info, trace};
 
 use ark::{VtxoId, VtxoRequest};
 use ark::encode::ProtocolEncoding;

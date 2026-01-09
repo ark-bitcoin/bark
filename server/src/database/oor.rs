@@ -2,11 +2,10 @@ use anyhow::Context;
 
 use bitcoin::Txid;
 
-use log::{trace, warn};
 use ark::VtxoId;
 use tokio_postgres::GenericClient;
 use tokio_postgres::types::Type;
-
+use tracing::{trace, warn};
 
 pub async fn mark_package_spent<T>(
 	client: &T,

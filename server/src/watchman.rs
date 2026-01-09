@@ -16,8 +16,7 @@ use std::time::Duration;
 use anyhow::Context;
 use bitcoin::bip32;
 use bitcoin::secp256k1::Keypair;
-use log::info;
-
+use tracing::info;
 use bitcoin_ext::rpc::{BitcoinRpcClient, BitcoinRpcExt, RpcApi};
 
 use crate::{database, telemetry, wallet, SECP};
@@ -95,6 +94,23 @@ impl Watchman {
 
 	/// Start the server.
 	pub async fn start(cfg: Config) -> anyhow::Result<Self> {
+		let seed = wallet::read_mnemonic_from_datadir(&cfg.data_dir)?.to_seed("");
+		let master_xpriv = bip32::Xpriv::new_master(cfg.network, &seed).unwrap();
+		let server_key_path = bip32::DerivationPath::from_str(SERVER_KEY_PATH).unwrap();
+		let server_key_xpriv = master_xpriv.derive_priv(&SECP, &server_key_path).unwrap();
+		let server_key = Keypair::from_secret_key(&SECP, &server_key_xpriv.private_key);
+
+		telemetry::init_telemetry::<telemetry::Watchmand>(
+			cfg.otel_collector_endpoint.clone(),
+			cfg.otel_tracing_sampler,
+			cfg.otel_deployment_name.as_str(),
+			cfg.network,
+			Duration::ZERO,
+			None,
+			server_key.public_key(),
+		);
+		info!("Running with config: {:#?}", cfg);
+
 		info!("Starting server at {}", cfg.data_dir.display());
 
 		info!("Connecting to db at {}:{}", cfg.postgres.host, cfg.postgres.port);
@@ -112,26 +128,8 @@ impl Watchman {
 			);
 		}
 
-		let seed = wallet::read_mnemonic_from_datadir(&cfg.data_dir)?.to_seed("");
-		let master_xpriv = bip32::Xpriv::new_master(cfg.network, &seed).unwrap();
-
 		let deep_tip = bitcoind.deep_tip().context("failed to query node for deep tip")?;
 
-		let server_key_path = bip32::DerivationPath::from_str(SERVER_KEY_PATH).unwrap();
-		let server_key_xpriv = master_xpriv.derive_priv(&SECP, &server_key_path).unwrap();
-		let server_key = Keypair::from_secret_key(&SECP, &server_key_xpriv.private_key);
-
-		if let Some(ref endpoint) = cfg.otel_collector_endpoint {
-			telemetry::init_telemetry::<telemetry::Watchmand>(
-				endpoint,
-				cfg.otel_tracing_sampler,
-				cfg.otel_deployment_name.as_str(),
-				cfg.network,
-				Duration::ZERO,
-				None,
-				server_key.public_key(),
-			);
-		}
 
 		// *******************
 		// * START PROCESSES *

@@ -11,11 +11,10 @@ use anyhow::Context;
 use bitcoin::{Amount, Network, Txid};
 use bitcoin::address::{Address, NetworkUnchecked};
 use log::{info, trace};
-use parking_lot::Mutex;
 use tokio::sync::{self, mpsc};
 use tokio::process::Command;
 
-use server_log::{FinishedPoolIssuance, LogMsg, ParsedRecord, TipUpdated, TxIndexUpdateFinished};
+use server_log::{parse_record, FinishedPoolIssuance, ParsedRecord, LogMsg, TipUpdated, TxIndexUpdateFinished};
 use server_rpc::{self as rpc, protos};
 pub use server::config::{self, Config};
 
@@ -80,8 +79,9 @@ pub struct State {
 
 impl SlogHandler for Arc<parking_lot::Mutex<State>> {
 	fn process_slog(&mut self, log: &ParsedRecord) -> bool {
-	    if let Ok(FinishedPoolIssuance { txid, .. }) = log.try_as::<FinishedPoolIssuance>() {
-			self.lock().vtxopool_state = VtxoPoolState::Ready(txid);
+	    if log.is::<FinishedPoolIssuance>() {
+			let fpi = log.try_as::<FinishedPoolIssuance>().unwrap();
+			self.lock().vtxopool_state = VtxoPoolState::Ready(fpi.txid);
 		}
 
 		false
@@ -92,7 +92,7 @@ pub struct CaptaindHelper {
 	name: String,
 	cfg: Config,
 	bitcoind: Bitcoind,
-	slog_handler_tx: Mutex<Option<mpsc::Sender<Box<dyn SlogHandler>>>>,
+	slog_handler_tx: parking_lot::Mutex<Option<mpsc::Sender<Box<dyn SlogHandler>>>>,
 	state: Arc<parking_lot::Mutex<State>>,
 }
 
@@ -134,7 +134,7 @@ impl Captaind {
 			name: name.as_ref().to_string(),
 			cfg,
 			bitcoind,
-			slog_handler_tx: Mutex::new(None),
+			slog_handler_tx: parking_lot::Mutex::new(None),
 			state: Arc::new(parking_lot::Mutex::new(State::default())),
 		};
 
@@ -242,14 +242,14 @@ impl Captaind {
 			.try_send(Box::new(handler)).expect("too many slog handlers pending");
 	}
 
-	/// Subscribe to all structured logs of the given type.
+	/// Subscribe to all tracing logs of the given type.
 	pub fn subscribe_log<L: LogMsg>(&self) -> mpsc::UnboundedReceiver<L> {
-		trace!("Subscribing to {} logs", L::LOGID);
+		trace!("Subscribing to {} tracing logs", L::LOGID);
 		let (tx, rx) = sync::mpsc::unbounded_channel();
 		self.add_slog_handler(move |log: &ParsedRecord| {
-			if let Ok(msg) = log.try_as() {
+			if log.is::<L>() {
 				trace!("Captured {} log", L::LOGID);
-				return tx.send(msg).is_err();
+				return tx.send(log.try_as::<L>().unwrap()).is_err();
 			}
 			false
 		});
@@ -261,9 +261,9 @@ impl Captaind {
 		info!("Waiting for log {}", L::LOGID);
 		let (tx, mut rx) = sync::mpsc::channel(1);
 		self.add_slog_handler(move |log: &ParsedRecord| {
-			if let Ok(msg) = log.try_as() {
+			if log.is::<L>() {
 				// if channel already closed, user is no longer interested
-				let _ = tx.try_send(msg);
+				let _ = tx.try_send(log.try_as::<L>().unwrap());
 				return true;
 			}
 			false
@@ -466,7 +466,7 @@ impl CaptaindHelper {
 				}
 
 				if !self.handlers.is_empty() {
-					let log = serde_json::from_str::<ParsedRecord>(&line)
+					let log = parse_record(&line)
 						.expect("error parsing slog line");
 					if log.is_slog() {
 						self.handlers.retain_mut(|h| !h.process_slog(&log));

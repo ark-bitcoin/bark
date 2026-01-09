@@ -12,7 +12,7 @@ pub struct WalletBalanceUnchanged {
 	pub balance: Balance,
 	pub block_height: u32,
 }
-impl_slog!(WalletBalanceUnchanged, Trace, "Wallet balance has not unchanged since the previous sync");
+impl_slog!(WalletBalanceUnchanged, TRACE, "Wallet balance has not unchanged since the previous sync");
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WalletBalanceUpdated {
@@ -20,21 +20,21 @@ pub struct WalletBalanceUpdated {
 	pub balance: Balance,
 	pub block_height: u32,
 }
-impl_slog!(WalletBalanceUpdated, Info, "Wallet balance has changed");
+impl_slog!(WalletBalanceUpdated, INFO, "Wallet balance has changed");
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WalletSyncStarting {
 	pub wallet: Cow<'static, str>,
 	pub block_height: u32,
 }
-impl_slog!(WalletSyncStarting, Debug, "Starting onchain sync of wallet");
+impl_slog!(WalletSyncStarting, DEBUG, "Starting onchain sync of wallet");
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WalletSyncCommittingProgress {
 	pub wallet: Cow<'static, str>,
 	pub block_height: u32,
 }
-impl_slog!(WalletSyncCommittingProgress, Debug, "Wallet partially synced, committing changes to the database");
+impl_slog!(WalletSyncCommittingProgress, DEBUG, "Wallet partially synced, committing changes to the database");
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WalletSyncComplete {
@@ -45,7 +45,7 @@ pub struct WalletSyncComplete {
 	pub sync_time: Duration,
 	pub next_address: Address<NetworkUnchecked>,
 }
-impl_slog!(WalletSyncComplete, Debug, "Wallet synced to latest block");
+impl_slog!(WalletSyncComplete, DEBUG, "Wallet synced to latest block");
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WalletTransactionBroadcastFailure {
@@ -53,4 +53,4 @@ pub struct WalletTransactionBroadcastFailure {
 	pub error: String,
 	pub txid: Txid,
 }
-impl_slog!(WalletTransactionBroadcastFailure, Warn, "Failed to broadcast unconfirmed transaction");
+impl_slog!(WalletTransactionBroadcastFailure, WARN, "Failed to broadcast unconfirmed transaction");

@@ -4,16 +4,17 @@ use std::sync::Arc;
 use std::sync::atomic;
 use std::time::Duration;
 
+use bip39::rand::Rng;
 use bitcoin::consensus::serialize;
 use bitcoin::{Amount, OutPoint};
 use bitcoin::hashes::Hash;
 use bitcoin::hex::DisplayHex;
 use bitcoin::secp256k1::{rand, schnorr, PublicKey};
-use log::info;
 use opentelemetry::KeyValue;
-use rand::Rng;
 use tokio::sync::oneshot;
 use tokio_stream::{Stream, StreamExt};
+use tonic_tracing_opentelemetry::middleware::server::OtelGrpcLayer;
+use tracing::info;
 
 use ark::{
 	musig, ProtocolEncoding, Vtxo, VtxoId, VtxoIdInput, VtxoPolicy, VtxoRequest,
@@ -804,16 +805,11 @@ pub async fn run_rpc_server(srv: Arc<Server>) -> anyhow::Result<()> {
 		.add_service(rpc::server::ArkServiceServer::from_arc(srv.clone()))
 		.add_service(rpc::server::MailboxServiceServer::from_arc(srv.clone()));
 
-	if srv.config.otel_collector_endpoint.is_some() {
-		tonic::transport::Server::builder()
-			.layer(middleware::TelemetryMetricsLayer)
-			.add_routes(routes)
-			.serve_with_shutdown(addr, srv.rtmgr.shutdown_signal()).await?;
-	} else {
-		tonic::transport::Server::builder()
-			.add_routes(routes)
-			.serve_with_shutdown(addr, srv.rtmgr.shutdown_signal()).await?;
-	}
+	tonic::transport::Server::builder()
+		.layer(OtelGrpcLayer::default())
+		.layer(middleware::TelemetryMetricsLayer)
+		.add_routes(routes)
+		.serve_with_shutdown(addr, srv.rtmgr.shutdown_signal()).await?;
 
 	info!("Terminated public gRPC service on address {}", addr);
 

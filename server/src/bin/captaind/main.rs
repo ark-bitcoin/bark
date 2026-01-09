@@ -6,15 +6,13 @@ mod common;
 use std::path::PathBuf;
 use std::process;
 use std::str::FromStr;
-
 use anyhow::{bail, Context};
 use bitcoin::{bip32, Address};
 use chrono::Local;
 use clap::{Args, Parser};
-use log::{error, info};
 use serde::{Deserialize, Serialize};
 use tonic::transport::Uri;
-
+use tracing::{debug, error, info};
 use ark::integration::{TokenStatus, TokenType};
 use bitcoin_ext::rpc::{BitcoinRpcClient, BitcoinRpcExt};
 use uuid::Uuid;
@@ -212,7 +210,6 @@ pub struct Filters {
 	dns: Vec<String>,
 }
 
-
 #[tokio::main]
 async fn main() {
 	common::set_panic_hook();
@@ -228,7 +225,6 @@ async fn main() {
 async fn inner_main() -> anyhow::Result<()> {
 	let cli = Cli::parse();
 	let config_path: Option<&PathBuf> = cli.config.as_ref();
-
 
 	if let Command::Rpc { cmd, addr } = cli.command {
 		let rpc_addr = match config_path {
@@ -249,12 +245,10 @@ async fn inner_main() -> anyhow::Result<()> {
 		.context("error loading config file")?;
 	cfg.validate().expect("invalid configuration");
 
-	common::init_logging();
-	info!("Running with config: {:#?}", cfg);
-
 	match cli.command {
 		Command::Rpc { .. } => unreachable!(),
 		Command::Create => {
+			info!("Running with config: {:#?}", cfg);
 			Server::create(cfg).await?;
 		}
 		Command::Start => {
@@ -265,6 +259,7 @@ async fn inner_main() -> anyhow::Result<()> {
 			};
 		}
 		Command::Drain { address } => {
+			info!("Running with config: {:#?}", cfg);
 			let db = server::database::Db::connect(&cfg.postgres).await?;
 			let bitcoind = BitcoinRpcClient::new(&cfg.bitcoind.url, cfg.bitcoind.auth())?;
 
@@ -278,9 +273,11 @@ async fn inner_main() -> anyhow::Result<()> {
 			println!("{}", tx.compute_txid());
 		}
 		Command::GetMnemonic => {
+			info!("Running with config: {:#?}", cfg);
 			println!("{}", server::wallet::read_mnemonic_from_datadir(&cfg.data_dir)?);
 		}
 		Command::Integration { cmd } => {
+			info!("Running with config: {:#?}", cfg);
 			let db = server::database::Db::connect(&cfg.postgres).await?;
 			match cmd {
 				IntegrationCommand::Add {
@@ -445,21 +442,7 @@ async fn inner_main() -> anyhow::Result<()> {
 	Ok(())
 }
 
-fn init_logging_rpc() {
-	let env = env_logger::Env::new().filter("CAPTAIND_LOG");
-	env_logger::Builder::new()
-		.filter_level(log::LevelFilter::Trace)
-		.filter_module("rustls", log::LevelFilter::Warn)
-		.filter_module("bitcoincore_rpc", log::LevelFilter::Warn)
-		.parse_env(env)
-		.format_timestamp_millis()
-		.target(env_logger::Target::Stdout)
-		.init();
-}
-
 async fn run_rpc(addr: &str, cmd: RpcCommand) -> anyhow::Result<()> {
-	init_logging_rpc();
-
 	let addr = if addr.starts_with("http") {
 		addr.to_owned()
 	} else {
@@ -467,7 +450,7 @@ async fn run_rpc(addr: &str, cmd: RpcCommand) -> anyhow::Result<()> {
 	};
 	let endpoint = Uri::from_str(&addr).context("invalid rpc addr")?;
 
-	log::debug!("Query admin rpc-endpoint at {}", endpoint);
+	debug!("Query admin rpc-endpoint at {}", endpoint);
 
 	match cmd {
 		RpcCommand::Wallet => {

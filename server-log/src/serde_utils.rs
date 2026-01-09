@@ -68,34 +68,3 @@ pub mod duration_millis {
 		Ok(Duration::from_millis(millis))
 	}
 }
-
-pub mod trace_id {
-	use super::*;
-	use crate::TraceId;
-	use bitcoin::hex::{DisplayHex, FromHex};
-
-	pub fn serialize<S: Serializer>(b: &TraceId, s: S) -> Result<S::Ok, S::Error> {
-		s.collect_str(b)
-	}
-
-	pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<TraceId, D::Error> {
-		let hex_str: &str = serde::Deserialize::deserialize(d)?;
-		Ok(TraceId::from_hex(hex_str).map_err(D::Error::custom)?)
-	}
-
-	pub mod opt {
-		use super::*;
-
-		pub fn serialize<S: Serializer>(b: &Option<TraceId>, s: S) -> Result<S::Ok, S::Error> {
-			match *b {
-				None => s.serialize_none(),
-				Some(ref b) => s.collect_str(b),
-			}
-		}
-
-		pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Option<TraceId>, D::Error> {
-			let hex: Option<&str> = serde::Deserialize::deserialize(d)?;
-			Ok(hex.map(|s| TraceId::from_hex(s).map_err(D::Error::custom)).transpose()?)
-		}
-	}
-}

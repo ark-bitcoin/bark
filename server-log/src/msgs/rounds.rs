@@ -17,7 +17,7 @@ use bitcoin_ext::BlockHeight;
 pub struct RoundStarted {
 	pub round_seq: RoundSeq,
 }
-impl_slog!(RoundStarted, Info, "Round started");
+impl_slog!(RoundStarted, INFO, "Round started");
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AttemptingRound {
@@ -28,7 +28,7 @@ pub struct AttemptingRound {
 	#[serde(with = "crate::serde_utils::duration_millis")]
 	pub server_duration: Duration,
 }
-impl_slog!(AttemptingRound, Debug, "Initiating a round attempt");
+impl_slog!(AttemptingRound, DEBUG, "Initiating a round attempt");
 
 // ****************************************************************************
 // * Round start
@@ -42,7 +42,7 @@ pub struct RoundPaymentRegistrationFailed {
 	#[serde(with = "crate::serde_utils::duration_millis")]
 	pub client_duration: Duration,
 }
-impl_slog!(RoundPaymentRegistrationFailed, Trace, "Participant failed to register a payment");
+impl_slog!(RoundPaymentRegistrationFailed, TRACE, "Participant failed to register a payment");
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RoundUserVtxoDuplicateInput {
@@ -52,7 +52,7 @@ pub struct RoundUserVtxoDuplicateInput {
 	#[serde(with = "crate::serde_utils::duration_millis")]
 	pub client_duration: Duration,
 }
-impl_slog!(RoundUserVtxoDuplicateInput, Trace, "user attempted to spend same input vtxo twice");
+impl_slog!(RoundUserVtxoDuplicateInput, TRACE, "user attempted to spend same input vtxo twice");
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RoundUserVtxoAlreadyRegistered {
@@ -62,7 +62,7 @@ pub struct RoundUserVtxoAlreadyRegistered {
 	#[serde(with = "crate::serde_utils::duration_millis")]
 	pub client_duration: Duration,
 }
-impl_slog!(RoundUserVtxoAlreadyRegistered, Trace, "user attempted to spend vtxo already registered in round");
+impl_slog!(RoundUserVtxoAlreadyRegistered, TRACE, "user attempted to spend vtxo already registered in round");
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RoundUserVtxoNotAllowed {
@@ -72,7 +72,7 @@ pub struct RoundUserVtxoNotAllowed {
 	#[serde(with = "crate::serde_utils::duration_millis")]
 	pub client_duration: Duration,
 }
-impl_slog!(RoundUserVtxoNotAllowed, Trace, "user attempted to spend vtxo not allowed in this round");
+impl_slog!(RoundUserVtxoNotAllowed, TRACE, "user attempted to spend vtxo not allowed in this round");
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RoundUserVtxoInFlux {
@@ -82,7 +82,7 @@ pub struct RoundUserVtxoInFlux {
 	#[serde(with = "crate::serde_utils::duration_millis")]
 	pub client_duration: Duration,
 }
-impl_slog!(RoundUserVtxoInFlux, Trace, "user attempted to submit vtxo already in flux to round");
+impl_slog!(RoundUserVtxoInFlux, TRACE, "user attempted to submit vtxo already in flux to round");
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RoundUserVtxoUnknown {
@@ -92,7 +92,7 @@ pub struct RoundUserVtxoUnknown {
 	#[serde(with = "crate::serde_utils::duration_millis")]
 	pub client_duration: Duration,
 }
-impl_slog!(RoundUserVtxoUnknown, Trace, "user attempted to spend unknown vtxo");
+impl_slog!(RoundUserVtxoUnknown, TRACE, "user attempted to spend unknown vtxo");
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RoundUserDuplicateCosignPubkey {
@@ -102,7 +102,7 @@ pub struct RoundUserDuplicateCosignPubkey {
 	#[serde(with = "crate::serde_utils::duration_millis")]
 	pub client_duration: Duration,
 }
-impl_slog!(RoundUserDuplicateCosignPubkey, Trace,
+impl_slog!(RoundUserDuplicateCosignPubkey, TRACE,
 	"user attempted to register two payments with the same cosign pubkey",
 );
 
@@ -114,7 +114,7 @@ pub struct RoundUserBadNbNonces {
 	#[serde(with = "crate::serde_utils::duration_millis")]
 	pub client_duration: Duration,
 }
-impl_slog!(RoundUserBadNbNonces, Trace,
+impl_slog!(RoundUserBadNbNonces, TRACE,
 	"user attempted to register output vtxo with incorrect number of cosign nonces",
 );
 
@@ -126,7 +126,7 @@ pub struct RoundUserBadOutputAmount {
 	#[serde(with = "crate::serde_utils::duration_millis")]
 	pub client_duration: Duration,
 }
-impl_slog!(RoundUserBadOutputAmount, Trace,
+impl_slog!(RoundUserBadOutputAmount, TRACE,
 	"user requested an output with an amount exceeding maximum vtxo amount",
 );
 
@@ -140,7 +140,7 @@ pub struct RoundPaymentRegistered {
 	pub client_duration: Duration,
 	pub unlock_hash: UnlockHash,
 }
-impl_slog!(RoundPaymentRegistered, Trace, "Registered payment from a participant");
+impl_slog!(RoundPaymentRegistered, TRACE, "Registered payment from a participant");
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FullRound {
@@ -151,7 +151,7 @@ pub struct FullRound {
 	#[serde(with = "crate::serde_utils::duration_millis")]
 	pub server_duration: Duration,
 }
-impl_slog!(FullRound, Warn, "Round is full, no longer adding payments");
+impl_slog!(FullRound, WARN, "Round is full, no longer adding payments");
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NoRoundPayments {
@@ -162,7 +162,7 @@ pub struct NoRoundPayments {
 	#[serde(with = "crate::serde_utils::duration_millis")]
 	pub server_duration: Duration,
 }
-impl_slog!(NoRoundPayments, Info, "Nothing to do this round, sitting it out...");
+impl_slog!(NoRoundPayments, INFO, "Nothing to do this round, sitting it out...");
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReceivedRoundPayments {
@@ -176,7 +176,7 @@ pub struct ReceivedRoundPayments {
 	#[serde(with = "crate::serde_utils::duration_millis")]
 	pub max_round_submit_time: Duration,
 }
-impl_slog!(ReceivedRoundPayments, Info, "Finished collecting round payments");
+impl_slog!(ReceivedRoundPayments, INFO, "Finished collecting round payments");
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NeedNewRound {
@@ -187,7 +187,7 @@ pub struct NeedNewRound {
 	#[serde(with = "crate::serde_utils::duration_millis")]
 	pub server_duration: Duration,
 }
-impl_slog!(NeedNewRound, Info, "New round is required...");
+impl_slog!(NeedNewRound, INFO, "New round is required...");
 
 // ****************************************************************************
 // * VTXO signatures
@@ -202,7 +202,7 @@ pub struct ConstructingRoundVtxoTree {
 	#[serde(with = "crate::serde_utils::duration_millis")]
 	pub server_duration: Duration,
 }
-impl_slog!(ConstructingRoundVtxoTree, Debug, "Beginning VTXO tree construction and signing");
+impl_slog!(ConstructingRoundVtxoTree, DEBUG, "Beginning VTXO tree construction and signing");
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SendVtxoProposal {
@@ -211,7 +211,7 @@ pub struct SendVtxoProposal {
 	#[serde(with = "crate::serde_utils::duration_millis")]
 	pub server_duration: Duration,
 }
-impl_slog!(SendVtxoProposal, Debug, "Sending VTXO tree propsals to participants");
+impl_slog!(SendVtxoProposal, DEBUG, "Sending VTXO tree propsals to participants");
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DroppingLateVtxoSignatureVtxos {
@@ -221,7 +221,7 @@ pub struct DroppingLateVtxoSignatureVtxos {
 	#[serde(with = "crate::serde_utils::duration_millis")]
 	pub server_duration: Duration,
 }
-impl_slog!(DroppingLateVtxoSignatureVtxos, Trace, "Dropping VTXOs from the round because we didn't receive the participants VTXO tree signature in time");
+impl_slog!(DroppingLateVtxoSignatureVtxos, TRACE, "Dropping VTXOs from the round because we didn't receive the participants VTXO tree signature in time");
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VtxoSignatureRegistrationFailed {
@@ -231,7 +231,7 @@ pub struct VtxoSignatureRegistrationFailed {
 	#[serde(with = "crate::serde_utils::duration_millis")]
 	pub client_duration: Duration,
 }
-impl_slog!(VtxoSignatureRegistrationFailed, Warn, "Participant failed to provide a valid VTXO tree signature");
+impl_slog!(VtxoSignatureRegistrationFailed, WARN, "Participant failed to provide a valid VTXO tree signature");
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RoundVtxoSignaturesRegistered {
@@ -242,7 +242,7 @@ pub struct RoundVtxoSignaturesRegistered {
 	#[serde(with = "crate::serde_utils::duration_millis")]
 	pub client_duration: Duration,
 }
-impl_slog!(RoundVtxoSignaturesRegistered, Trace, "Registered VTXO tree signatures from a participant");
+impl_slog!(RoundVtxoSignaturesRegistered, TRACE, "Registered VTXO tree signatures from a participant");
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReceivedRoundVtxoSignatures {
@@ -253,7 +253,7 @@ pub struct ReceivedRoundVtxoSignatures {
 	#[serde(with = "crate::serde_utils::duration_millis")]
 	pub max_round_sign_time: Duration,
 }
-impl_slog!(ReceivedRoundVtxoSignatures, Debug, "Finished receiving VTXO tree signatures");
+impl_slog!(ReceivedRoundVtxoSignatures, DEBUG, "Finished receiving VTXO tree signatures");
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreatedSignedVtxoTree {
@@ -263,7 +263,7 @@ pub struct CreatedSignedVtxoTree {
 	#[serde(with = "crate::serde_utils::duration_millis")]
 	pub server_duration: Duration,
 }
-impl_slog!(CreatedSignedVtxoTree, Debug, "Created the final signed VTXO tree, ready to broadcast to participants");
+impl_slog!(CreatedSignedVtxoTree, DEBUG, "Created the final signed VTXO tree, ready to broadcast to participants");
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RestartMissingVtxoSigs {
@@ -272,7 +272,7 @@ pub struct RestartMissingVtxoSigs {
 	#[serde(with = "crate::serde_utils::duration_millis")]
 	pub server_duration: Duration,
 }
-impl_slog!(RestartMissingVtxoSigs, Debug, "Restarting round because of missing VTXO tree signatures");
+impl_slog!(RestartMissingVtxoSigs, DEBUG, "Restarting round because of missing VTXO tree signatures");
 
 // ****************************************************************************
 // * Round end
@@ -286,7 +286,7 @@ pub struct BroadcastedFinalizedRoundTransaction {
 	#[serde(with = "crate::serde_utils::duration_millis")]
 	pub server_duration: Duration,
 }
-impl_slog!(BroadcastedFinalizedRoundTransaction, Info,
+impl_slog!(BroadcastedFinalizedRoundTransaction, INFO,
 	"Broadcasted round transaction to the network and all participants"
 );
 
@@ -299,7 +299,7 @@ pub struct RoundVtxoCreated {
 	#[serde(with = "crate::serde_utils::duration_millis")]
 	pub server_duration: Duration,
 }
-impl_slog!(RoundVtxoCreated, Debug, "New VTXO created in round");
+impl_slog!(RoundVtxoCreated, DEBUG, "New VTXO created in round");
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RoundFinished {
@@ -311,7 +311,7 @@ pub struct RoundFinished {
 	pub server_duration: Duration,
 	pub nb_input_vtxos: usize,
 }
-impl_slog!(RoundFinished, Info, "Round finished");
+impl_slog!(RoundFinished, INFO, "Round finished");
 
 // ****************************************************************************
 // * hArk leaf and forfeit signing
@@ -322,7 +322,7 @@ pub struct HarkLeafSigned {
 	pub vtxo_id: VtxoId,
 	pub funding_txid: Txid,
 }
-impl_slog!(HarkLeafSigned, Trace, "signed hArk leaf output");
+impl_slog!(HarkLeafSigned, TRACE, "signed hArk leaf output");
 
 // ****************
 // * general hArk *
@@ -333,7 +333,7 @@ pub struct RoundParticipationRejected {
 	pub unlock_hash: UnlockHash,
 	pub reason: String,
 }
-impl_slog!(RoundParticipationRejected, Debug, "rejected hArk participation for round");
+impl_slog!(RoundParticipationRejected, DEBUG, "rejected hArk participation for round");
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RoundForfeitNonceCleanup {
@@ -341,7 +341,7 @@ pub struct RoundForfeitNonceCleanup {
 	pub removed_unfinished: usize,
 	pub remaining: usize,
 }
-impl_slog!(RoundForfeitNonceCleanup, Info, "cleaned up hArk round forfeit nonce sessions");
+impl_slog!(RoundForfeitNonceCleanup, INFO, "cleaned up hArk round forfeit nonce sessions");
 
 // ****************************************************************************
 // * general round
@@ -352,13 +352,13 @@ pub struct RoundError {
 	pub round_seq: RoundSeq,
 	pub error: String,
 }
-impl_slog!(RoundError, Error, "error during round, restarting");
+impl_slog!(RoundError, ERROR, "error during round, restarting");
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RoundSyncError {
 	pub error: String,
 }
-impl_slog!(RoundSyncError, Warn, "onchain wallet sync failed during round");
+impl_slog!(RoundSyncError, WARN, "onchain wallet sync failed during round");
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FatalStoringRound {
@@ -373,4 +373,4 @@ pub struct FatalStoringRound {
 	#[serde(with = "crate::serde_utils::duration_millis")]
 	pub server_duration: Duration,
 }
-impl_slog!(FatalStoringRound, Error, "failed to store finished and signed round");
+impl_slog!(FatalStoringRound, ERROR, "failed to store finished and signed round");

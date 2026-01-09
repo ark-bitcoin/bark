@@ -11,7 +11,7 @@ use bdk_wallet::{Balance, SignOptions, Wallet};
 use bip39::Mnemonic;
 use bitcoin::{bip32, Address, Amount, FeeRate, Network, OutPoint, ScriptBuf};
 use bitcoin::{hex::DisplayHex, Psbt, Transaction};
-use log::{error, trace};
+use tracing::{error, trace};
 
 use bitcoin_ext::{BlockHeight, BlockRef};
 use bitcoin_ext::bdk::{WalletExt, KEYCHAIN};
