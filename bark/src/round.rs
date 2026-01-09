@@ -828,8 +828,13 @@ async fn check_funding_tx_confirmations(
 	match tx_status {
 		TxStatus::Confirmed(b) if b.height <= conf_height => Ok(true),
 		TxStatus::Mempool | TxStatus::Confirmed(_) => {
-			trace!("Hark round funding tx not confirmed (deep enough) yet: {:?}", tx_status);
-			Ok(false)
+			if wallet.config.round_tx_required_confirmations == 0 {
+				debug!("Accepting round funding tx without confirmations because of configuration");
+				Ok(true)
+			} else {
+				trace!("Hark round funding tx not confirmed (deep enough) yet: {:?}", tx_status);
+				Ok(false)
+			}
 		},
 		TxStatus::NotFound => {
 			// let's try to submit it to our mempool
