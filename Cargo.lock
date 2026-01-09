@@ -692,9 +692,9 @@ checksum = "32637268377fc7b10a8c6d51de3e7fba1ce5dd371a96e342b34e6078db558e7f"
 
 [[package]]
 name = "bindgen"
-version = "0.71.1"
+version = "0.72.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5f58bf3d7db68cfbac37cfc485a8d711e87e064c3d0fe0435b92f7a407f9d6b3"
+checksum = "993776b509cfb49c750f11b8f07a46fa23e0a1386ffc01fb1e7d343efc387895"
 dependencies = [
  "bitflags",
  "cexpr",
@@ -804,9 +804,9 @@ dependencies = [
 
 [[package]]
 name = "bitcoinkernel"
-version = "0.0.24"
+version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b2d883803babcbc79bb3b35318fe61b7c74606d35f1c387937aa23e2a8cf38ff"
+checksum = "26dac21e1d2e51f1e1fb2bc50d04748b6152812f22138a7708277d166cabfd8f"
 dependencies = [
  "libbitcoinkernel-sys",
 ]
@@ -2077,14 +2077,12 @@ checksum = "e2abad23fbc42b3700f2f279844dc832adb2b2eb069b2df918f455c4e18cc646"
 
 [[package]]
 name = "libbitcoinkernel-sys"
-version = "0.0.23"
+version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d8984a997e69bd5ba4402fd0370424619cd37eafb5e43684a6a69ad2a1605dac"
+checksum = "431abda412df5863cccaae257644ee9929b7156b22f5e2205671e1f369bd74c4"
 dependencies = [
  "bindgen",
  "cc",
- "libc",
- "pkg-config",
 ]
 
 [[package]]
