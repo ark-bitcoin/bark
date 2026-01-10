@@ -29,7 +29,7 @@ impl rpc::server::MailboxService for crate::Server {
 		&self,
 		req: tonic::Request<protos::mailbox_server::PostVtxosMailboxRequest>,
 	) -> Result<tonic::Response<protos::core::Empty>, tonic::Status> {
-		let _ = crate::rpcserver::middleware::RpcMethodDetails::grpc_ark(
+		let _ = crate::rpcserver::middleware::RpcMethodDetails::grpc_mailbox(
 			crate::rpcserver::middleware::rpc_names::ark::POST_VTXOS_MAILBOX,
 		);
 		let req = req.into_inner();
@@ -66,7 +66,7 @@ impl rpc::server::MailboxService for crate::Server {
 		&self,
 		req: tonic::Request<protos::mailbox_server::MailboxRequest>,
 	) -> Result<tonic::Response<protos::mailbox_server::MailboxMessages>, tonic::Status> {
-		let _ = crate::rpcserver::middleware::RpcMethodDetails::grpc_ark(
+		let _ = crate::rpcserver::middleware::RpcMethodDetails::grpc_mailbox(
 			crate::rpcserver::middleware::rpc_names::ark::READ_MAILBOX,
 		);
 		let req = req.into_inner();
@@ -108,7 +108,7 @@ impl rpc::server::MailboxService for crate::Server {
 		&self,
 		req: tonic::Request<protos::mailbox_server::MailboxRequest>,
 	) -> Result<tonic::Response<Self::SubscribeMailboxStream>, tonic::Status> {
-		let _ = crate::rpcserver::middleware::RpcMethodDetails::grpc_ark(
+		let _ = crate::rpcserver::middleware::RpcMethodDetails::grpc_mailbox(
 			crate::rpcserver::middleware::rpc_names::ark::SUBSCRIBE_MAILBOX,
 		);
 		let req = req.into_inner();
