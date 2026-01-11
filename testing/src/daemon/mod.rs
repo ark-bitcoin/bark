@@ -49,7 +49,7 @@ where
 	}
 }
 
-#[tonic::async_trait]
+#[async_trait]
 pub trait DaemonHelper {
 	fn name(&self) -> &str;
 	fn datadir(&self) -> PathBuf;

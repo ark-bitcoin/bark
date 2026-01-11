@@ -543,6 +543,7 @@ version = "0.1.0-beta.5"
 dependencies = [
  "anyhow",
  "ark-lib",
+ "async-trait",
  "bark-bitcoin-ext",
  "bark-server-rpc",
  "bdk_bitcoind_rpc",

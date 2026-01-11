@@ -268,7 +268,7 @@ impl BitcoindHelper {
 	}
 }
 
-#[tonic::async_trait]
+#[async_trait]
 impl DaemonHelper for BitcoindHelper {
 	fn name(&self) -> &str {
 		&self.name

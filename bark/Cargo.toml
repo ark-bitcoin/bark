@@ -43,6 +43,7 @@ rand.workspace = true
 rusqlite = { version = "0.31.0", features = ["chrono"] }
 
 lazy_static.workspace = true
+async-trait.workspace = true
 chrono.workspace = true
 serde_json.workspace = true
 rmp-serde.workspace = true

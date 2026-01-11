@@ -421,7 +421,7 @@ async fn full_round() {
 	/// Once that happened succesfully, it fullfils the result channel.
 	#[derive(Clone)]
 	struct Proxy(Arc<Mutex<usize>>, Arc<mpsc::UnboundedSender<tonic::Status>>);
-	#[tonic::async_trait]
+	#[async_trait::async_trait]
 	impl captaind::proxy::ArkRpcProxy for Proxy {
 		async fn submit_payment(
 			&self, upstream: &mut ArkClient, req: protos::SubmitPaymentRequest,
@@ -549,7 +549,7 @@ async fn double_spend_round() {
 	/// This proxy will duplicate all round payment submission requests.
 	#[derive(Clone)]
 	struct Proxy;
-	#[tonic::async_trait]
+	#[async_trait::async_trait]
 	impl captaind::proxy::ArkRpcProxy for Proxy {
 		async fn submit_payment(
 			&self, upstream: &mut ArkClient, mut req: protos::SubmitPaymentRequest,
@@ -597,7 +597,7 @@ async fn test_participate_round_wrong_step() {
 	/// This proxy will send a `provide_vtxo_signatures` req instead of `submit_payment` one
 	#[derive(Clone)]
 	struct ProxyA;
-	#[tonic::async_trait]
+	#[async_trait::async_trait]
 	impl captaind::proxy::ArkRpcProxy for ProxyA {
 		async fn submit_payment(
 			&self, upstream: &mut ArkClient, _req: protos::SubmitPaymentRequest,
@@ -619,7 +619,7 @@ async fn test_participate_round_wrong_step() {
 	/// This proxy will send a `submit_payment` req instead of `provide_vtxo_signatures` one
 	#[derive(Clone)]
 	struct ProxyB;
-	#[tonic::async_trait]
+	#[async_trait::async_trait]
 	impl captaind::proxy::ArkRpcProxy for ProxyB {
 		async fn provide_vtxo_signatures(
 			&self, upstream: &mut ArkClient, _req: protos::VtxoSignaturesRequest,
@@ -647,7 +647,7 @@ async fn spend_unregistered_board() {
 
 	#[derive(Clone)]
 	struct Proxy;
-	#[tonic::async_trait]
+	#[async_trait::async_trait]
 	impl captaind::proxy::ArkRpcProxy for Proxy {
 		async fn register_board_vtxo(
 			&self, _upstream: &mut ArkClient, _req: protos::BoardVtxoRequest,
@@ -678,7 +678,7 @@ async fn reject_revocation_on_successful_lightning_payment() {
 
 	#[derive(Clone)]
 	struct Proxy;
-	#[tonic::async_trait]
+	#[async_trait::async_trait]
 	impl captaind::proxy::ArkRpcProxy for Proxy {
 		async fn check_lightning_payment(
 			&self, upstream: &mut ArkClient,
@@ -844,7 +844,7 @@ async fn bad_round_input() {
 
 #[derive(Clone)]
 struct NoFinishRoundProxy;
-#[tonic::async_trait]
+#[async_trait::async_trait]
 impl captaind::proxy::ArkRpcProxy for NoFinishRoundProxy {
 	async fn subscribe_rounds(
 		&self, upstream: &mut ArkClient, req: protos::Empty,
@@ -1024,7 +1024,7 @@ async fn register_unconfirmed_board() {
 	struct Proxy {
 		pub unconfirmed_board_request: protos::BoardVtxoRequest,
 	}
-	#[tonic::async_trait]
+	#[async_trait::async_trait]
 	impl captaind::proxy::ArkRpcProxy for Proxy {
 		async fn register_board_vtxo(
 			&self, upstream: &mut ArkClient, _req: protos::BoardVtxoRequest,
@@ -1059,7 +1059,7 @@ async fn reject_dust_board_cosign() {
 
 	#[derive(Clone)]
 	struct Proxy;
-	#[tonic::async_trait]
+	#[async_trait::async_trait]
 	impl captaind::proxy::ArkRpcProxy for Proxy {
 		async fn request_board_cosign(
 			&self, upstream: &mut ArkClient, mut req: protos::BoardCosignRequest,
@@ -1093,7 +1093,7 @@ async fn reject_below_minimum_board_cosign() {
 	// side check would prevent a board below the minimum.
 	#[derive(Clone)]
 	struct Proxy;
-	#[tonic::async_trait]
+	#[async_trait::async_trait]
 	impl captaind::proxy::ArkRpcProxy for Proxy {
 		async fn request_board_cosign(
 			&self, upstream: &mut ArkClient, mut req: protos::BoardCosignRequest,
@@ -1131,7 +1131,7 @@ async fn reject_dust_vtxo_request() {
 		wallet: Arc<Wallet>,
 		challenge:  Arc<Mutex<Option<RoundAttemptChallenge>>>
 	}
-	#[tonic::async_trait]
+	#[async_trait::async_trait]
 	impl captaind::proxy::ArkRpcProxy for Proxy {
 		async fn subscribe_rounds(
 			&self, upstream: &mut ArkClient, req: protos::Empty,
@@ -1255,7 +1255,7 @@ async fn reject_dust_bolt11_payment() {
 
 	#[derive(Clone)]
 	struct Proxy;
-	#[tonic::async_trait]
+	#[async_trait::async_trait]
 	impl captaind::proxy::ArkRpcProxy for Proxy {
 		async fn request_lightning_pay_htlc_cosign(
 			&self, upstream: &mut ArkClient, mut req: protos::LightningPayHtlcCosignRequest,
@@ -1288,7 +1288,7 @@ async fn server_refuse_claim_invoice_not_settled() {
 
 	#[derive(Clone)]
 	struct Proxy;
-	#[tonic::async_trait]
+	#[async_trait::async_trait]
 	impl captaind::proxy::ArkRpcProxy for Proxy {
 		async fn claim_lightning_receive(
 			&self, upstream: &mut ArkClient, mut req: protos::ClaimLightningReceiveRequest,
@@ -1634,7 +1634,7 @@ async fn should_refuse_paying_invoice_not_matching_htlcs() {
 
 	#[derive(Clone)]
 	struct Proxy(String);
-	#[tonic::async_trait]
+	#[async_trait::async_trait]
 	impl captaind::proxy::ArkRpcProxy for Proxy {
 		async fn initiate_lightning_payment(
 			&self, upstream: &mut ArkClient, mut req: protos::InitiateLightningPaymentRequest,
@@ -1667,7 +1667,7 @@ async fn should_refuse_paying_invoice_whose_amount_is_higher_than_htlcs() {
 
 	#[derive(Clone)]
 	struct Proxy;
-	#[tonic::async_trait]
+	#[async_trait::async_trait]
 	impl captaind::proxy::ArkRpcProxy for Proxy {
 		async fn initiate_lightning_payment(
 			&self, upstream: &mut ArkClient, mut req: protos::InitiateLightningPaymentRequest,
@@ -1845,7 +1845,7 @@ async fn should_refuse_oor_input_vtxo_that_is_being_exited() {
 
 	#[derive(Clone)]
 	struct Proxy(VtxoId);
-	#[tonic::async_trait]
+	#[async_trait::async_trait]
 	impl captaind::proxy::ArkRpcProxy for Proxy {
 		async fn checkpointed_cosign_oor(
 			&self, upstream: &mut ArkClient, mut req: protos::CheckpointedPackageCosignRequest,
@@ -1891,7 +1891,7 @@ async fn should_refuse_ln_pay_input_vtxo_that_is_being_exited() {
 
 	#[derive(Clone)]
 	struct Proxy(VtxoId);
-	#[tonic::async_trait]
+	#[async_trait::async_trait]
 	impl captaind::proxy::ArkRpcProxy for Proxy {
 		async fn request_lightning_pay_htlc_cosign(
 			&self, upstream: &mut ArkClient, mut req: protos::LightningPayHtlcCosignRequest,
@@ -1944,7 +1944,7 @@ async fn should_refuse_round_input_vtxo_that_is_being_exited() {
 		pub challenge: Arc<Mutex<Option<RoundAttemptChallenge>>>,
 		pub vtxo: WalletVtxoInfo
 	}
-	#[tonic::async_trait]
+	#[async_trait::async_trait]
 	impl captaind::proxy::ArkRpcProxy for Proxy {
 		async fn subscribe_rounds(
 			&self, upstream: &mut ArkClient, req: protos::Empty,
@@ -2020,7 +2020,7 @@ async fn should_refuse_subdust_lightning_receive_request() {
 
 	#[derive(Clone)]
 	struct Proxy;
-	#[tonic::async_trait]
+	#[async_trait::async_trait]
 	impl captaind::proxy::ArkRpcProxy for Proxy {
 		async fn start_lightning_receive(
 			&self, upstream: &mut ArkClient, mut req: protos::StartLightningReceiveRequest,
@@ -2056,7 +2056,7 @@ async fn should_refuse_over_max_vtxo_amount_lightning_receive_request() {
 
 	#[derive(Clone)]
 	struct Proxy;
-	#[tonic::async_trait]
+	#[async_trait::async_trait]
 	impl captaind::proxy::ArkRpcProxy for Proxy {
 		async fn start_lightning_receive(
 			&self, upstream: &mut ArkClient, mut req: protos::StartLightningReceiveRequest,

@@ -1,6 +1,5 @@
 use ark::vtxo::policy::signing::VtxoSigner;
 use log::{debug, error, info, trace, warn};
-use tonic::async_trait;
 
 use bitcoin_ext::{BlockDelta, P2TR_DUST, TxStatus};
 use crate::exit::models::{

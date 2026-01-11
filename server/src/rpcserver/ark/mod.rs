@@ -43,7 +43,7 @@ use crate::rpcserver::macros;
 use crate::telemetry;
 
 
-#[tonic::async_trait]
+#[async_trait]
 impl rpc::server::ArkService for Server {
 	async fn handshake(
 		&self,

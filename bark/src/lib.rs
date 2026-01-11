@@ -286,6 +286,7 @@ pub extern crate lightning_invoice;
 pub extern crate lnurl as lnurllib;
 
 #[macro_use] extern crate anyhow;
+#[macro_use] extern crate async_trait;
 #[macro_use] extern crate serde;
 
 pub mod chain;

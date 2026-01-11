@@ -214,7 +214,7 @@ impl <W: GetBalance +
 	Send + Sync> ExitUnilaterally for W {}
 
 /// Ability to sync the wallet with the onchain network.
-#[tonic::async_trait]
+#[async_trait]
 pub trait ChainSync {
 	/// Sync the wallet with the onchain network.
 	async fn sync(&mut self, chain: &ChainSource) -> anyhow::Result<()>;

@@ -1,6 +1,5 @@
 use std::str::FromStr;
 
-use async_trait::async_trait;
 use bitcoin::{Address, address::NetworkUnchecked};
 
 
@@ -37,7 +36,7 @@ impl BlockIndexListener {
 	}
 }
 
-#[async_trait]
+#[async_trait::async_trait]
 impl ChainEventListener for BlockIndexListener {
 
 	async fn on_mempool_update(&self, _raw: &RawMempool) -> anyhow::Result<()> {
