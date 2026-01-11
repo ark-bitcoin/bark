@@ -75,13 +75,14 @@ use bitcoin::{
 };
 use bitcoin::taproot::TapTweakHash;
 use bitcoin::secp256k1::{schnorr, Keypair, PublicKey};
-use bitcoin_ext::{P2TR_DUST, TxOutExt, fee};
+use bitcoin_ext::{fee, P2TR_DUST, TxOutExt};
 use secp256k1_musig::musig::PublicNonce;
 
-use crate::{Vtxo, VtxoId};
-use crate::musig;
-use crate::scripts;
-use crate::vtxo::{GenesisItem, GenesisTransition, VtxoPolicy};
+use crate::{musig, scripts, Vtxo, VtxoId};
+use crate::vtxo::VtxoPolicy;
+use crate::vtxo::genesis::{GenesisItem, GenesisTransition};
+
+pub use package::ArkoorPackageBuilder;
 
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, thiserror::Error)]
@@ -336,7 +337,12 @@ impl<S: state::BuilderState> ArkoorBuilder<S> {
 			genesis: self.input.genesis.clone().into_iter().chain([
 				GenesisItem {
 					transition: GenesisTransition::new_arkoor(
-						self.input.policy.clone(),
+						vec![self.input.user_pubkey()],
+						self.input.policy().taproot(
+							self.input.server_pubkey,
+							self.input.exit_delta,
+							self.input.expiry_height,
+						).tap_tweak(),
 						checkpoint_sig,
 					),
 					output_idx: output_idx as u8,
@@ -378,7 +384,12 @@ impl<S: state::BuilderState> ArkoorBuilder<S> {
 				genesis: self.input.genesis.iter().cloned().chain([
 					GenesisItem {
 						transition: GenesisTransition::new_arkoor(
-							self.input.policy.clone(),
+							vec![self.input.user_pubkey()],
+							self.input.policy.taproot(
+								self.input.server_pubkey,
+								self.input.exit_delta,
+								self.input.expiry_height,
+							).tap_tweak(),
 							checkpoint_sig,
 						),
 						output_idx: output_idx as u8,
@@ -395,7 +406,12 @@ impl<S: state::BuilderState> ArkoorBuilder<S> {
 					},
 					GenesisItem {
 						transition: GenesisTransition::new_arkoor(
-							checkpoint_policy,
+							vec![self.input.user_pubkey()],
+							checkpoint_policy.taproot(
+								self.input.server_pubkey,
+								self.input.exit_delta,
+								self.input.expiry_height,
+							).tap_tweak(),
 							arkoor_sig,
 						),
 						output_idx: 0,
@@ -418,7 +434,12 @@ impl<S: state::BuilderState> ArkoorBuilder<S> {
 				genesis: self.input.genesis.iter().cloned().chain([
 					GenesisItem {
 						transition: GenesisTransition::new_arkoor(
-							self.input.policy.clone(),
+							vec![self.input.user_pubkey()],
+							self.input.policy.taproot(
+								self.input.server_pubkey,
+								self.input.exit_delta,
+								self.input.expiry_height,
+							).tap_tweak(),
 							arkoor_sig,
 						),
 						output_idx: output_idx as u8,
@@ -474,7 +495,12 @@ impl<S: state::BuilderState> ArkoorBuilder<S> {
 					// Transition 1: input -> checkpoint
 					GenesisItem {
 						transition: GenesisTransition::new_arkoor(
-							self.input.policy.clone(),
+							vec![self.input.user_pubkey()],
+							self.input.policy.taproot(
+								self.input.server_pubkey,
+								self.input.exit_delta,
+								self.input.expiry_height,
+							).tap_tweak(),
 							pre_fanout_tx_sig,
 						),
 						output_idx: dust_isolation_output_idx as u8,
@@ -494,7 +520,12 @@ impl<S: state::BuilderState> ArkoorBuilder<S> {
 					// Transition 2: checkpoint -> isolation fanout tx (final vtxo)
 					GenesisItem {
 						transition: GenesisTransition::new_arkoor(
-							checkpoint_policy,
+							vec![self.input.user_pubkey()],
+							checkpoint_policy.taproot(
+								self.input.server_pubkey,
+								self.input.exit_delta,
+								self.input.expiry_height,
+							).tap_tweak(),
 							isolation_fanout_tx_sig,
 						),
 						output_idx: isolated_idx as u8,
@@ -529,7 +560,12 @@ impl<S: state::BuilderState> ArkoorBuilder<S> {
 					// Transition 1: input -> arkoor tx (which includes isolation output)
 					GenesisItem {
 						transition: GenesisTransition::new_arkoor(
-							self.input.policy.clone(),
+							vec![self.input.user_pubkey()],
+							self.input.policy.taproot(
+								self.input.server_pubkey,
+								self.input.exit_delta,
+								self.input.expiry_height,
+							).tap_tweak(),
 							pre_fanout_tx_sig,
 						),
 						output_idx: dust_isolation_output_idx as u8,
@@ -547,7 +583,12 @@ impl<S: state::BuilderState> ArkoorBuilder<S> {
 					// Transition 2: isolation output -> isolation fanout tx (final vtxo)
 					GenesisItem {
 						transition: GenesisTransition::new_arkoor(
-							checkpoint_policy,
+							vec![self.input.user_pubkey()],
+							checkpoint_policy.taproot(
+								self.input.server_pubkey,
+								self.input.exit_delta,
+								self.input.expiry_height,
+							).tap_tweak(),
 							isolation_fanout_tx_sig,
 						),
 						output_idx: isolated_idx as u8,
@@ -626,7 +667,8 @@ impl<S: state::BuilderState> ArkoorBuilder<S> {
 				genesis: self.input.genesis.clone().into_iter().chain([
 					GenesisItem {
 						transition: GenesisTransition::new_arkoor(
-							self.input.policy.clone(),
+							vec![self.input.user_pubkey()],
+							self.input_tweak,
 							None,
 						),
 						output_idx: output_idx as u8,
@@ -1408,7 +1450,6 @@ fn arkoor_sighash(prevout: &TxOut, arkoor_tx: &Transaction) -> TapSighash {
 		0, &sighash::Prevouts::All(&[prevout]), TapSighashType::Default,
 	).expect("sighash error")
 }
-
 
 #[cfg(test)]
 mod test {

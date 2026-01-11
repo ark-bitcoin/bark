@@ -1510,8 +1510,15 @@ impl Wallet {
 	/// An arkoor vtxo is considered to have some counterparty risk
 	/// if it is (directly or not) based on round VTXOs that aren't owned by the wallet
 	async fn has_counterparty_risk(&self, vtxo: &Vtxo) -> anyhow::Result<bool> {
-		for past_pk in vtxo.past_arkoor_pubkeys() {
-			if !self.db.get_public_key_idx(&past_pk).await?.is_some() {
+		for past_pks in vtxo.past_arkoor_pubkeys() {
+			let mut owns_any = false;
+			for past_pk in past_pks {
+				if self.db.get_public_key_idx(&past_pk).await?.is_some() {
+					owns_any = true;
+					break;
+				}
+			}
+			if !owns_any {
 				return Ok(true);
 			}
 		}

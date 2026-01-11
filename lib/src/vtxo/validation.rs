@@ -76,7 +76,7 @@ fn verify_transition(
 			inner.validate_sigs(&tx, 0, prev_txout, vtxo.server_pubkey, vtxo.expiry_height)?
 		}
 		GenesisTransition::Arkoor(inner) => {
-			inner.validate_sigs(&tx, 0, prev_txout, vtxo.server_pubkey(), vtxo.expiry_height(), vtxo.exit_delta())?
+			inner.validate_sigs(&tx, 0, prev_txout, vtxo.server_pubkey())?
 		}
 		GenesisTransition::HashLockedCosigned(inner) => {
 			inner.validate_sigs(&tx, 0, prev_txout, vtxo.server_pubkey, vtxo.expiry_height)?

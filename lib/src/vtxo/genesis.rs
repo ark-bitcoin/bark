@@ -3,15 +3,16 @@ use std::fmt;
 use bitcoin::secp256k1::{schnorr, PublicKey};
 use bitcoin::{Amount, OutPoint, Sequence, ScriptBuf, Transaction, TxIn, TxOut, Witness};
 use bitcoin::hashes::{sha256, Hash};
+use bitcoin::key::TweakedPublicKey;
 use bitcoin::sighash;
-use bitcoin::taproot::{self, TapLeafHash, LeafVersion};
+use bitcoin::taproot::{self, TapLeafHash, LeafVersion, TapTweakHash};
 
 use bitcoin_ext::{fee, BlockDelta, BlockHeight, TaprootSpendInfoExt};
 
 use crate::SECP;
 use crate::musig;
 use crate::tree::signed::{cosign_taproot, leaf_cosign_taproot, unlock_clause};
-use crate::vtxo::{VtxoPolicy, MaybePreimage};
+use crate::vtxo::MaybePreimage;
 
 /// Represents the kind of [GenesisTransition]
 pub(crate) enum TransitionKind {
@@ -225,31 +226,28 @@ impl HashLockedCosignedGenesis {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ArkoorGenesis {
-	pub policy: VtxoPolicy,
+	/// The keys that are use dfor cosiging the keyspend.
+	/// This excludes the server_pubkey
+	pub client_cosigners: Vec<PublicKey>,
+	pub tap_tweak: taproot::TapTweakHash,
 	pub signature: Option<schnorr::Signature>,
 }
 
 impl ArkoorGenesis {
-	pub(crate) fn input_taproot(
-		&self,
-		server_pubkey: PublicKey,
-		expiry_height: BlockHeight,
-		exit_delta: BlockDelta,
-	) -> taproot::TaprootSpendInfo {
-		self.policy.taproot(server_pubkey, exit_delta, expiry_height)
+	pub fn cosigners<'a>(&'a self, server_pubkey: PublicKey) ->  impl Iterator<Item = PublicKey> + 'a {
+		self.client_cosigners.iter().cloned().chain([server_pubkey])
 	}
 
-	pub(crate) fn input_txout(
-		&self,
-		amount: Amount,
-		server_pubkey: PublicKey,
-		expiry_height: BlockHeight,
-		exit_delta: BlockDelta,
-	) -> TxOut {
+	pub(crate) fn input_txout(&self, amount: Amount, server_pubkey: PublicKey) -> TxOut {
 		TxOut {
 			value: amount,
-			script_pubkey: self.input_taproot(server_pubkey, expiry_height, exit_delta).script_pubkey(),
+			script_pubkey: ScriptBuf::new_p2tr_tweaked(self.output_key(server_pubkey))
 		}
+	}
+
+	pub fn output_key(&self, server_pubkey: PublicKey) -> TweakedPublicKey {
+		let (_, agg_pk) = musig::tweaked_key_agg(self.cosigners(server_pubkey), self.tap_tweak.to_byte_array());
+		TweakedPublicKey::dangerous_assume_tweaked(agg_pk.x_only_public_key().0)
 	}
 
 	pub(crate) fn witness(&self) -> Witness {
@@ -269,8 +267,6 @@ impl ArkoorGenesis {
 		input_idx: usize,
 		prev_txout: &TxOut,
 		server_pubkey: PublicKey,
-		expiry_height: BlockHeight,
-		exit_delta: BlockDelta,
 	) -> Result<(), &'static str> {
 		let signature = match self.signature {
 			Some(sig) => sig,
@@ -278,18 +274,19 @@ impl ArkoorGenesis {
 		};
 
 		let mut shc = sighash::SighashCache::new(tx);
+
 		let tapsighash = shc.taproot_key_spend_signature_hash(
 			input_idx,
 			&sighash::Prevouts::All(&[prev_txout]),
 			sighash::TapSighashType::Default
 		).expect("correct prevouts");
 
-		let pubkey = self.input_taproot(server_pubkey, expiry_height, exit_delta)
-			.output_key()
-			.to_x_only_public_key();
 
-		SECP.verify_schnorr(&signature, &tapsighash.into(), &pubkey)
-			.map_err(|_| "invalid signature")
+		SECP.verify_schnorr(
+			&signature,
+			&tapsighash.into(),
+			&self.output_key(server_pubkey).to_x_only_public_key(),
+		).map_err(|_| "invalid signature")
 	}
 }
 
@@ -331,10 +328,13 @@ impl GenesisTransition {
 		)
 	}
 
-	pub fn new_arkoor(policy: VtxoPolicy, signature: Option<schnorr::Signature>) -> Self {
-		Self::Arkoor(
-			ArkoorGenesis { policy, signature}
-		)
+
+	pub fn new_arkoor(
+		cosigners: Vec<PublicKey>,
+		taptweak: TapTweakHash,
+		signature: Option<schnorr::Signature>
+	) -> Self {
+		Self::Arkoor(ArkoorGenesis { client_cosigners: cosigners, tap_tweak: taptweak, signature })
 	}
 
 	/// Output that this transition is spending.
@@ -343,12 +343,12 @@ impl GenesisTransition {
 		amount: Amount,
 		server_pubkey: PublicKey,
 		expiry_height: BlockHeight,
-		exit_delta: BlockDelta,
+		_exit_delta: BlockDelta,
 	) -> TxOut {
 		match self {
 			Self::Cosigned(inner) => inner.input_txout(amount, server_pubkey, expiry_height),
 			Self::HashLockedCosigned(inner) => inner.input_txout(amount, server_pubkey, expiry_height),
-			Self::Arkoor(inner) => inner.input_txout(amount, server_pubkey, expiry_height, exit_delta),
+			Self::Arkoor(inner) => inner.input_txout(amount, server_pubkey),
 		}
 	}
 
