@@ -389,6 +389,17 @@ impl_bitcoin_encode!(bitcoin::BlockHash);
 impl_bitcoin_encode!(bitcoin::OutPoint);
 impl_bitcoin_encode!(bitcoin::TxOut);
 
+impl ProtocolEncoding for bitcoin::taproot::TapTweakHash {
+	fn encode<W: io::Write + ?Sized>(&self, w: &mut W) -> Result<(), io::Error> {
+		w.emit_slice(&self.to_byte_array())
+	}
+
+	fn decode<R: io::Read + ?Sized>(r: &mut R) -> Result<Self, ProtocolDecodingError> {
+		Ok(Self::from_byte_array(r.read_byte_array().map_err(|e| {
+			ProtocolDecodingError::invalid_err(e, "TapTweakHash must be 32 bytes")
+		})?))
+	}
+}
 
 impl<'a, T: ProtocolEncoding + Clone> ProtocolEncoding for Cow<'a, T> {
 	fn encode<W: io::Write + ?Sized>(&self, writer: &mut W) -> Result<(), io::Error> {
