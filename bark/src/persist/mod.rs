@@ -17,6 +17,7 @@
 //!   storage expectations without depending on a specific database.
 //! - A default rusqlite implementation is provided by [sqlite::SqliteClient].
 
+pub mod adaptor;
 pub mod models;
 #[cfg(feature = "sqlite")]
 pub mod sqlite;

@@ -26,6 +26,33 @@ use crate::WalletVtxo;
 use crate::exit::{ExitVtxo, ExitState};
 use crate::movement::MovementId;
 use crate::round::{AttemptState, RoundFlowState, RoundParticipation, RoundState};
+use crate::vtxo::VtxoState;
+
+/// VTXO with state history for persistence.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SerdeVtxo {
+	#[serde(with = "ark::encode::serde")]
+	pub vtxo: Vtxo,
+	/// VTXO states, sorted from oldest to newest.
+	pub states: Vec<VtxoState>,
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error("vtxo has no state")]
+pub struct MissingStateError;
+
+impl SerdeVtxo {
+	pub fn current_state(&self) -> Option<&VtxoState> {
+		self.states.last()
+	}
+
+	pub fn to_wallet_vtxo(&self) -> Result<WalletVtxo, MissingStateError> {
+		Ok(WalletVtxo {
+			vtxo: self.vtxo.clone(),
+			state: self.current_state().cloned().ok_or(MissingStateError)?,
+		})
+	}
+}
 
 /// Identifier for a stored [RoundState].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
