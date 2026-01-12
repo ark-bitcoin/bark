@@ -397,7 +397,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 
 	let (mut wallet, mut onchain) = open_wallet(&datadir).await.context("error opening wallet")?;
 
-	let net = wallet.properties()?.network;
+	let net = wallet.network().await?;
 
 	match cli.command {
 		Command::Create { .. } | Command::Dev(_) => unreachable!("handled earlier"),
@@ -434,7 +434,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 				wallet.sync().await;
 			}
 
-			let balance = wallet.balance()?;
+			let balance = wallet.balance().await?;
 			output_json(&json::Balance::from(balance));
 		},
 		Command::Vtxos { all, no_sync } => {
@@ -444,9 +444,9 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 			}
 
 			let mut vtxos = if all {
-				wallet.all_vtxos()?
+				wallet.all_vtxos().await?
 			} else {
-				wallet.vtxos()?
+				wallet.vtxos().await?
 			};
 
 			vtxos.sort_by(|a, b| {
@@ -465,7 +465,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 				wallet.sync().await;
 			}
 
-			let mut movements = wallet.history()?.into_iter()
+			let mut movements = wallet.history().await?.into_iter()
 				.map(json::Movement::try_from)
 				.collect::<Result<Vec<_>, _>>()?;
 
@@ -487,18 +487,15 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 				(None, Some(h), false, false, None) => wallet.get_expiring_vtxos(h*6).await?,
 				(None, None, true, false, None) => {
 					let filter = VtxoFilter::new(&wallet).counterparty();
-					wallet.spendable_vtxos_with(&filter)?
+					wallet.spendable_vtxos_with(&filter).await?
 				},
-				(None, None, false, true, None) => wallet.spendable_vtxos()?,
+				(None, None, false, true, None) => wallet.spendable_vtxos().await?,
 				(None, None, false, false, Some(vs)) => {
-					let vtxos = vs.iter()
-						.map(|s| {
-							let id = VtxoId::from_str(s)?;
-							Ok(wallet.get_vtxo_by_id(id)?)
-						})
-						.collect::<anyhow::Result<Vec<_>>>()
-						.with_context(|| "Invalid vtxo_id")?;
-
+					let mut vtxos = vec![];
+					for s in vs {
+						let id = VtxoId::from_str(&s)?;
+						vtxos.push(wallet.get_vtxo_by_id(id).await?);
+					}
 					vtxos
 				}
 				_ => bail!("please provide either threshold vtxo, threshold_blocks, threshold_hours, counterparty or all"),
@@ -601,7 +598,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 
 				address
 			} else {
-				onchain.address()?
+				onchain.address().await?
 			};
 
 			let ret = if let Some(vtxos) = vtxos {

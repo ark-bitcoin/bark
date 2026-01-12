@@ -47,16 +47,18 @@ impl From<LocalOutput> for LocalUtxo {
 ///
 /// When used, the resulting PSBT should be signed using
 /// [crate::exit::Exit::sign_exit_claim_inputs].
-pub trait TxBuilderExt {
-	fn add_exit_claim_inputs(
+#[async_trait]
+pub trait TxBuilderExt: Send + Sync {
+	async fn add_exit_claim_inputs(
 		&mut self,
 		wallet: &Wallet,
 		exit_outputs: &[&ExitVtxo],
 	) -> anyhow::Result<()>;
 }
 
-impl<Cs> TxBuilderExt for TxBuilder<'_, Cs> {
-	fn add_exit_claim_inputs(
+#[async_trait]
+impl<Cs: Send + Sync> TxBuilderExt for TxBuilder<'_, Cs> {
+	async fn add_exit_claim_inputs(
 		&mut self,
 		wallet: &Wallet,
 		exit_outputs: &[&ExitVtxo],
@@ -68,7 +70,7 @@ impl<Cs> TxBuilderExt for TxBuilder<'_, Cs> {
 				bail!("VTXO exit is not spendable");
 			}
 
-			let vtxo = wallet.db.get_wallet_vtxo(input.id())?
+			let vtxo = wallet.db.get_wallet_vtxo(input.id()).await?
 				.context(format!("Unable to load VTXO for exit: {}", input.id()))?;
 			let mut psbt_in = psbt::Input::default();
 			psbt_in.set_exit_claim_input(&vtxo);
@@ -77,7 +79,7 @@ impl<Cs> TxBuilderExt for TxBuilder<'_, Cs> {
 				value: vtxo.amount(),
 			});
 
-			let clause = wallet.find_signable_clause(&vtxo)
+			let clause = wallet.find_signable_clause(&vtxo).await
 				.context("Cannot sign vtxo")?;
 
 			let witness_weight = {
@@ -103,8 +105,9 @@ impl <W: Deref<Target = BdkWallet>> GetBalance for W {
 	}
 }
 
+#[async_trait]
 impl SignPsbt for BdkWallet {
-	fn finish_tx(&mut self, mut psbt: Psbt) -> anyhow::Result<Transaction> {
+	async fn finish_tx(&mut self, mut psbt: Psbt) -> anyhow::Result<Transaction> {
 		#[allow(deprecated)]
 		let opts = bdk_wallet::SignOptions {
 			trust_witness_utxo: true,
@@ -179,6 +182,7 @@ impl <W: Deref<Target = BdkWallet>> GetSpendingTx for W {
 	}
 }
 
+#[async_trait]
 impl MakeCpfp for BdkWallet {
 	fn make_signed_p2a_cpfp(
 		&mut self,
@@ -203,7 +207,7 @@ impl MakeCpfp for BdkWallet {
 			 })
 	}
 
-	fn store_signed_p2a_cpfp(&mut self, tx: &Transaction) -> anyhow::Result<(), CpfpError> {
+	async fn store_signed_p2a_cpfp(&mut self, tx: &Transaction) -> anyhow::Result<(), CpfpError> {
 		let unix = SystemTime::now().duration_since(UNIX_EPOCH)
 			.map_err(|e| CpfpError::InternalError(
 				format!("Unable to calculate time since UNIX epoch: {}", e.to_string()))
@@ -240,11 +244,11 @@ impl DerefMut for OnchainWallet {
 }
 
 impl OnchainWallet {
-	pub fn load_or_create(network: Network, seed: [u8; 64], db: Arc<dyn BarkPersister>) -> anyhow::Result<Self> {
+	pub async fn load_or_create(network: Network, seed: [u8; 64], db: Arc<dyn BarkPersister>) -> anyhow::Result<Self> {
 		let xpriv = bip32::Xpriv::new_master(network, &seed).expect("valid seed");
 		let desc = bdk_wallet::template::Bip86(xpriv, KeychainKind::External);
 
-		let changeset = db.initialize_bdk_wallet().context("error reading bdk wallet state")?;
+		let changeset = db.initialize_bdk_wallet().await.context("error reading bdk wallet state")?;
 		let wallet_opt = bdk_wallet::Wallet::load()
 			.descriptor(bdk_wallet::KeychainKind::External, Some(desc.clone()))
 			.extract_keys()
@@ -262,6 +266,7 @@ impl OnchainWallet {
 	}
 }
 
+#[async_trait]
 impl MakeCpfp for OnchainWallet {
 	fn make_signed_p2a_cpfp(
 		&mut self,
@@ -271,17 +276,18 @@ impl MakeCpfp for OnchainWallet {
 		MakeCpfp::make_signed_p2a_cpfp(&mut self.inner, tx, fees)
 	}
 
-	fn store_signed_p2a_cpfp(&mut self, tx: &Transaction) -> anyhow::Result<(), CpfpError> {
-		self.inner.store_signed_p2a_cpfp(tx)?;
-		self.persist()
+	async fn store_signed_p2a_cpfp(&mut self, tx: &Transaction) -> anyhow::Result<(), CpfpError> {
+		self.inner.store_signed_p2a_cpfp(tx).await?;
+		self.persist().await
 			.map_err(|e| CpfpError::StoreError(e.to_string()))
 	}
 }
 
+#[async_trait]
 impl SignPsbt for OnchainWallet {
-	fn finish_tx(&mut self, psbt: Psbt) -> anyhow::Result<Transaction> {
-		let tx = self.inner.finish_tx(psbt)?;
-		self.persist()?;
+	async fn finish_tx(&mut self, psbt: Psbt) -> anyhow::Result<Transaction> {
+		let tx = self.inner.finish_tx(psbt).await?;
+		self.persist().await?;
 		Ok(tx)
 	}
 }
@@ -307,7 +313,7 @@ impl ChainSync for OnchainWallet {
 
 				let update = client.sync(request, PARALLEL_REQS).await?;
 				self.inner.apply_update(update)?;
-				self.persist()?;
+				self.persist().await?;
 				debug!("Finished syncing with esplora");
 			},
 		}
@@ -333,9 +339,9 @@ impl OnchainWallet {
 		self.inner.transactions().map(|tx| tx.tx_node.tx).collect()
 	}
 
-	pub fn address(&mut self) -> anyhow::Result<Address> {
+	pub async fn address(&mut self) -> anyhow::Result<Address> {
 		let ret = self.inner.reveal_next_address(bdk_wallet::KeychainKind::External).address;
-		self.persist()?;
+		self.persist().await?;
 		Ok(ret)
 	}
 
@@ -346,7 +352,7 @@ impl OnchainWallet {
 	pub async fn send(&mut self, chain: &ChainSource, dest: Address, amount: Amount, fee_rate: FeeRate
 	)	-> anyhow::Result<Txid> {
 		let psbt = self.prepare_tx(&[(dest, amount)], fee_rate)?;
-		let tx = self.finish_tx(psbt)?;
+		let tx = self.finish_tx(psbt).await?;
 		chain.broadcast_tx(&tx).await?;
 		Ok(tx.compute_txid())
 	}
@@ -358,7 +364,7 @@ impl OnchainWallet {
 		fee_rate: FeeRate,
 	) -> anyhow::Result<Txid> {
 		let pbst = self.prepare_tx(destinations, fee_rate)?;
-		let tx = self.finish_tx(pbst)?;
+		let tx = self.finish_tx(pbst).await?;
 		chain.broadcast_tx(&tx).await?;
 		Ok(tx.compute_txid())
 	}
@@ -371,7 +377,7 @@ impl OnchainWallet {
 		fee_rate: FeeRate,
 	) -> anyhow::Result<Txid> {
 		let psbt = self.prepare_drain_tx(destination, fee_rate)?;
-		let tx = self.finish_tx(psbt)?;
+		let tx = self.finish_tx(psbt).await?;
 		chain.broadcast_tx(&tx).await?;
 		Ok(tx.compute_txid())
 	}
@@ -397,7 +403,7 @@ impl OnchainWallet {
 			count += 1;
 
 			if count % 10_000 == 0 {
-				self.persist()?;
+				self.persist().await?;
 				info!("Synced until block height {}", em.block_height());
 			}
 		}
@@ -405,7 +411,7 @@ impl OnchainWallet {
 		let mempool = emitter.mempool()?;
 		self.inner.apply_evicted_txs(mempool.evicted);
 		self.inner.apply_unconfirmed_txs(mempool.update);
-		self.persist()?;
+		self.persist().await?;
 		debug!("Finished syncing with bitcoind");
 
 		Ok(())
@@ -458,7 +464,7 @@ impl OnchainWallet {
 				let request = self.inner.start_full_scan();
 				let update = client.full_scan(request, STOP_GAP, PARALLEL_REQS).await?;
 				self.inner.apply_update(update)?;
-				self.persist()?;
+				self.persist().await?;
 				debug!("Finished scanning with esplora");
 			},
 		}
@@ -468,9 +474,9 @@ impl OnchainWallet {
 	}
 
 
-	fn persist(&mut self) -> anyhow::Result<()> {
+	async fn persist(&mut self) -> anyhow::Result<()> {
 		if let Some(stage) = self.inner.staged() {
-			self.db.store_bdk_wallet_changeset(&*stage)?;
+			self.db.store_bdk_wallet_changeset(&*stage).await?;
 			let _ = self.inner.take_staged();
 		}
 		Ok(())

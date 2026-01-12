@@ -95,7 +95,7 @@ pub async fn onchain_address(
 ) -> HandlerResult<Json<bark_json::cli::onchain::Address>> {
 	let mut onchain_lock = state.onchain.write().await;
 
-	let address = onchain_lock.address()
+	let address = onchain_lock.address().await
 		.context("Wallet failed to generate address")?;
 
 	Ok(axum::Json(bark_json::cli::onchain::Address {
@@ -122,7 +122,7 @@ pub async fn onchain_send(
 ) -> HandlerResult<Json<bark_json::cli::onchain::Send>> {
 	let mut onchain_lock = state.onchain.write().await;
 
-	let net = state.wallet.properties()?.network;
+	let net = state.wallet.network().await?;
 	let addr = bitcoin::Address::from_str	(&body.destination)
 		.badarg("Invalid destination address")?
 		.require_network(net)
@@ -155,7 +155,7 @@ pub async fn onchain_send_many(
 ) -> HandlerResult<Json<bark_json::cli::onchain::Send>> {
 	let mut onchain_lock = state.onchain.write().await;
 
-	let net = state.wallet.properties()?.network;
+	let net = state.wallet.network().await?;
 	let outputs = body.destinations
 		.iter()
 		.map(|dest| {
@@ -209,7 +209,7 @@ pub async fn onchain_drain(
 ) -> HandlerResult<Json<bark_json::cli::onchain::Send>> {
 	let mut onchain_lock = state.onchain.write().await;
 
-	let net = state.wallet.properties()?.network;
+	let net = state.wallet.network().await?;
 	let addr = bitcoin::Address::from_str(&body.destination)
 		.badarg("Invalid destination address")?
 		.require_network(net)

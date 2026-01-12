@@ -511,7 +511,7 @@ async fn bark_should_exit_a_failed_htlc_out_that_server_refuse_to_revoke() {
 	let tip = ctx.bitcoind().sync_client().tip().unwrap();
 	let desired_height = {
 		let bark = bark_1.client().await;
-		let htlc = bark.vtxos().unwrap().into_iter().find(
+		let htlc = bark.vtxos().await.unwrap().into_iter().find(
 			|v| v.policy_type() == VtxoPolicyKind::ServerHtlcSend
 		).unwrap();
 		htlc.policy().as_server_htlc_send().unwrap().htlc_expiry + 1
@@ -644,7 +644,7 @@ async fn bark_should_exit_a_pending_htlc_out_that_server_refuse_to_revoke() {
 	let tip = ctx.bitcoind().sync_client().tip().unwrap();
 	let desired_height = {
 		let bark = bark_1.client().await;
-		let htlc = bark.vtxos().unwrap().into_iter().find(
+		let htlc = bark.vtxos().await.unwrap().into_iter().find(
 			|v| v.policy_type() == VtxoPolicyKind::ServerHtlcSend
 		).unwrap();
 		htlc.policy().as_server_htlc_send().unwrap().htlc_expiry + 1

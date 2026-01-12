@@ -1172,8 +1172,8 @@ async fn bark_can_claim_all_claimable_lightning_receives() {
 	assert_eq!(bark.spendable_balance().await, btc(4));
 }
 
-fn print_pending_rounds(wallet: &bark::Wallet) -> Vec<StoredRoundState> {
-	let states = wallet.pending_round_states().unwrap();
+async fn print_pending_rounds(wallet: &bark::Wallet) -> Vec<StoredRoundState> {
+	let states = wallet.pending_round_states().await.unwrap();
 	info!("Wallet has {} pending round states:", states.len());
 	for state in &states {
 		info!("  - {}", state.id);
@@ -1210,7 +1210,7 @@ async fn stepwise_round() {
 		inputs: vec![inputs[0].vtxo.clone()],
 		outputs: vec![VtxoRequest {
 			policy: VtxoPolicy::Pubkey(PubkeyVtxoPolicy {
-				user_pubkey: bark.derive_store_next_keypair().unwrap().0.public_key(),
+				user_pubkey: bark.derive_store_next_keypair().await.unwrap().0.public_key(),
 			}),
 			amount: inputs[0].vtxo.amount(),
 		}],
@@ -1219,8 +1219,8 @@ async fn stepwise_round() {
 	let state_id = state.id;
 
 	info!("Signed up for round, state_id={}", state.id);
-	print_pending_rounds(&bark);
-	assert_eq!(bark.balance().unwrap().pending_in_round, sat(800_000));
+	print_pending_rounds(&bark).await;
+	assert_eq!(bark.balance().await.unwrap().pending_in_round, sat(800_000));
 
 	let mut rpc = srv.get_public_rpc().await;
 	let mut events = rpc.subscribe_rounds(protos::Empty{}).await.unwrap().into_inner();
@@ -1230,7 +1230,7 @@ async fn stepwise_round() {
 		info!("Received round event of type: {}", event.kind());
 		bark.progress_pending_rounds(Some(&event)).await.unwrap();
 
-		let states = print_pending_rounds(&bark);
+		let states = print_pending_rounds(&bark).await;
 		if let Some(mut ours) = states.into_iter().find(|s| s.id == state_id) {
 			if !ours.state.ongoing_participation() {
 				info!("Round finished");
@@ -1257,7 +1257,7 @@ async fn stepwise_round() {
 		trace!("Syncing pending rounds");
 		bark.sync_pending_rounds().await.unwrap();
 
-		let states = print_pending_rounds(&bark);
+		let states = print_pending_rounds(&bark).await;
 		if let Some(mut ours) = states.into_iter().find(|s| s.id == state_id) {
 			debug!("Result: {:#?}", ours.state.sync(&bark).await);
 		} else {

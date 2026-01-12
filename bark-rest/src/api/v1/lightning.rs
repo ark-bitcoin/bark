@@ -96,9 +96,9 @@ pub async fn get_receive_status(
 		badarg!("identifier is not a valid payment hash, invoice or preimage");
 	};
 
-	if let Some(status) = state.wallet.lightning_receive_status(payment_hash)
-		.context("Failed to get lightning receive status")? {
-
+	if let Some(status) = state.wallet.lightning_receive_status(payment_hash).await
+		.context("Failed to get lightning receive status")?
+	{
 		Ok(axum::Json(status.into()))
 	} else {
 		not_found!([payment_hash], "No invoice found");
@@ -119,7 +119,7 @@ pub async fn get_receive_status(
 pub async fn list_receive_statuses(
 	State(state): State<ServerState>,
 ) -> HandlerResult<Json<Vec<bark_json::cli::LightningReceiveInfo>>> {
-	let mut receives = state.wallet.pending_lightning_receives()
+	let mut receives = state.wallet.pending_lightning_receives().await
 		.context("Failed to get lightning receives")?;
 	// receives are ordered from newest to oldest, so we reverse them so last terminal item is newest
 	receives.reverse();

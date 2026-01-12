@@ -36,33 +36,34 @@ use bark::vtxo::{VtxoState, VtxoStateKind};
 
 struct Dummy;
 
+#[async_trait::async_trait]
 impl BarkPersister for Dummy {
-	fn init_wallet(&self, _properties: &WalletProperties) -> anyhow::Result<()> {
+	async fn init_wallet(&self, _properties: &WalletProperties) -> anyhow::Result<()> {
 		Ok(())
 	}
 
 	#[cfg(feature = "onchain_bdk")]
-	fn initialize_bdk_wallet(&self) -> anyhow::Result<ChangeSet> {
+	async fn initialize_bdk_wallet(&self) -> anyhow::Result<ChangeSet> {
 		Ok(ChangeSet::default())
 	}
 
 	#[cfg(feature = "onchain_bdk")]
-	fn store_bdk_wallet_changeset(&self, _changeset: &ChangeSet) -> anyhow::Result<()> {
+	async fn store_bdk_wallet_changeset(&self, _changeset: &ChangeSet) -> anyhow::Result<()> {
 		Ok(())
 	}
 
-	fn read_properties(&self) -> anyhow::Result<Option<WalletProperties>> {
+	async fn read_properties(&self) -> anyhow::Result<Option<WalletProperties>> {
 		Ok(Some(WalletProperties {
 			network: Network::Bitcoin,
 			fingerprint: Fingerprint::default(),
 		}))
 	}
 
-	fn check_recipient_exists(&self, _recipient: &PaymentMethod) -> anyhow::Result<bool> {
+	async fn check_recipient_exists(&self, _recipient: &PaymentMethod) -> anyhow::Result<bool> {
 		Ok(true)
 	}
 
-	fn store_pending_board(
+	async fn store_pending_board(
 		&self,
 		_vtxo: &Vtxo,
 		_funding_tx: &Transaction,
@@ -71,33 +72,33 @@ impl BarkPersister for Dummy {
 		Ok(())
 	}
 
-	fn remove_pending_board(&self, _vtxo_id: &VtxoId) -> anyhow::Result<()> {
+	async fn remove_pending_board(&self, _vtxo_id: &VtxoId) -> anyhow::Result<()> {
 		Ok(())
 	}
 
-	fn get_all_pending_board_ids(&self) -> anyhow::Result<Vec<VtxoId>> {
+	async fn get_all_pending_board_ids(&self) -> anyhow::Result<Vec<VtxoId>> {
 		Ok(vec![])
 	}
 
-	fn get_pending_board_by_vtxo_id(&self, _vtxo_id: VtxoId) -> anyhow::Result<Option<PendingBoard>> {
+	async fn get_pending_board_by_vtxo_id(&self, _vtxo_id: VtxoId) -> anyhow::Result<Option<PendingBoard>> {
 		Ok(None)
 	}
 
-	fn get_wallet_vtxo(&self, _id: VtxoId) -> anyhow::Result<Option<WalletVtxo>> {
+	async fn get_wallet_vtxo(&self, _id: VtxoId) -> anyhow::Result<Option<WalletVtxo>> {
 		Ok(Some(WalletVtxo {
 			vtxo: Vtxo::deserialize(&[])?,
 			state: VtxoState::Spendable,
 		}))
 	}
 
-	fn get_all_vtxos(&self) -> anyhow::Result<Vec<WalletVtxo>> {
+	async fn get_all_vtxos(&self) -> anyhow::Result<Vec<WalletVtxo>> {
 		Ok(Vec::<WalletVtxo>::from([WalletVtxo {
 			vtxo: Vtxo::deserialize(&[])?,
 			state: VtxoState::Spendable,
 		}]))
 	}
 
-	fn get_vtxos_by_state(&self, _state: &[VtxoStateKind]) -> anyhow::Result<Vec<WalletVtxo>> {
+	async fn get_vtxos_by_state(&self, _state: &[VtxoStateKind]) -> anyhow::Result<Vec<WalletVtxo>> {
 		Ok(Vec::<WalletVtxo>::from([WalletVtxo {
 			vtxo: Vtxo::deserialize(&[])?,
 			state: VtxoState::Locked {
@@ -106,27 +107,27 @@ impl BarkPersister for Dummy {
 		}]))
 	}
 
-	fn remove_vtxo(&self, _id: VtxoId) -> anyhow::Result<Option<Vtxo>> {
+	async fn remove_vtxo(&self, _id: VtxoId) -> anyhow::Result<Option<Vtxo>> {
 		Ok(Some(Vtxo::deserialize(&[])?))
 	}
 
-	fn has_spent_vtxo(&self, _id: VtxoId) -> anyhow::Result<bool> {
+	async fn has_spent_vtxo(&self, _id: VtxoId) -> anyhow::Result<bool> {
 		Ok(true)
 	}
 
-	fn store_vtxo_key(&self, _index: u32, _public_key: PublicKey) -> anyhow::Result<()> {
+	async fn store_vtxo_key(&self, _index: u32, _public_key: PublicKey) -> anyhow::Result<()> {
 		Ok(())
 	}
 
-	fn get_last_vtxo_key_index(&self) -> anyhow::Result<Option<u32>> {
+	async fn get_last_vtxo_key_index(&self) -> anyhow::Result<Option<u32>> {
 		Ok(Some(0))
 	}
 
-	fn get_public_key_idx(&self, _public_key: &PublicKey) -> anyhow::Result<Option<u32>> {
+	async fn get_public_key_idx(&self, _public_key: &PublicKey) -> anyhow::Result<Option<u32>> {
 		Ok(Some(0))
 	}
 
-	fn store_new_pending_lightning_send(
+	async fn store_new_pending_lightning_send(
 		&self,
 		invoice: &Invoice,
 		amount: &Amount,
@@ -143,11 +144,11 @@ impl BarkPersister for Dummy {
 		})
 	}
 
-	fn get_all_pending_lightning_send(&self) -> anyhow::Result<Vec<LightningSend>> {
+	async fn get_all_pending_lightning_send(&self) -> anyhow::Result<Vec<LightningSend>> {
 		Ok(vec![])
 	}
 
-	fn finish_lightning_send(
+	async fn finish_lightning_send(
 		&self,
 		_payment_hash: PaymentHash,
 		_preimage: Option<Preimage>,
@@ -155,15 +156,15 @@ impl BarkPersister for Dummy {
 		Ok(())
 	}
 
-	fn remove_lightning_send(&self, _payment_hash: PaymentHash) -> anyhow::Result<()> {
+	async fn remove_lightning_send(&self, _payment_hash: PaymentHash) -> anyhow::Result<()> {
 		Ok(())
 	}
 
-	fn get_lightning_send(&self, _payment_hash: PaymentHash) -> anyhow::Result<Option<LightningSend>> {
+	async fn get_lightning_send(&self, _payment_hash: PaymentHash) -> anyhow::Result<Option<LightningSend>> {
 		Ok(Some(dummy_lightning_send()))
 	}
 
-	fn store_lightning_receive(
+	async fn store_lightning_receive(
 		&self,
 		_payment_hash: PaymentHash,
 		_preimage: Preimage,
@@ -173,17 +174,17 @@ impl BarkPersister for Dummy {
 		Ok(())
 	}
 
-	fn get_all_pending_lightning_receives(&self) -> anyhow::Result<Vec<LightningReceive>> {
+	async fn get_all_pending_lightning_receives(&self) -> anyhow::Result<Vec<LightningReceive>> {
 		Ok(Vec::<LightningReceive>::from([
 			dummy_lightning_receive(),
 		]))
 	}
 
-	fn set_preimage_revealed(&self, _payment_hash: PaymentHash) -> anyhow::Result<()> {
+	async fn set_preimage_revealed(&self, _payment_hash: PaymentHash) -> anyhow::Result<()> {
 		Ok(())
 	}
 
-	fn update_lightning_receive(
+	async fn update_lightning_receive(
 		&self,
 		_payment_hash: PaymentHash,
 		_vtxo_ids: &[VtxoId],
@@ -192,26 +193,26 @@ impl BarkPersister for Dummy {
 		Ok(())
 	}
 
-	fn fetch_lightning_receive_by_payment_hash(
+	async fn fetch_lightning_receive_by_payment_hash(
 		&self,
 		_payment_hash: PaymentHash,
 	) -> anyhow::Result<Option<LightningReceive>> {
 		Ok(Some(dummy_lightning_receive()))
 	}
 
-	fn finish_pending_lightning_receive(&self, _payment_hash: PaymentHash) -> anyhow::Result<()> {
+	async fn finish_pending_lightning_receive(&self, _payment_hash: PaymentHash) -> anyhow::Result<()> {
 		Ok(())
 	}
 
-	fn store_exit_vtxo_entry(&self, _exit: &StoredExit) -> anyhow::Result<()> {
+	async fn store_exit_vtxo_entry(&self, _exit: &StoredExit) -> anyhow::Result<()> {
 		Ok(())
 	}
 
-	fn remove_exit_vtxo_entry(&self, _id: &VtxoId) -> anyhow::Result<()> {
+	async fn remove_exit_vtxo_entry(&self, _id: &VtxoId) -> anyhow::Result<()> {
 		Ok(())
 	}
 
-	fn get_exit_vtxo_entries(&self) -> anyhow::Result<Vec<StoredExit>> {
+	async fn get_exit_vtxo_entries(&self) -> anyhow::Result<Vec<StoredExit>> {
 		Ok(Vec::<StoredExit>::from([
 			StoredExit {
 				vtxo_id: VtxoId::from_slice(&[])?,
@@ -228,7 +229,7 @@ impl BarkPersister for Dummy {
 		]))
 	}
 
-	fn store_exit_child_tx(
+	async fn store_exit_child_tx(
 		&self,
 		_exit_txid: Txid,
 		_child_tx: &Transaction,
@@ -237,7 +238,7 @@ impl BarkPersister for Dummy {
 		Ok(())
 	}
 
-	fn get_exit_child_tx(
+	async fn get_exit_child_tx(
 		&self,
 		_exit_txid: Txid,
 	) -> anyhow::Result<Option<(Transaction, ExitTxOrigin)>> {
@@ -251,7 +252,7 @@ impl BarkPersister for Dummy {
 		})))
 	}
 
-	fn update_vtxo_state_checked(
+	async fn update_vtxo_state_checked(
 		&self,
 		_vtxo_id: VtxoId,
 		_new_state: VtxoState,
@@ -263,26 +264,26 @@ impl BarkPersister for Dummy {
 		}]).pop().unwrap())
 	}
 
-	fn store_round_state_lock_vtxos(&self, _round_state: &RoundState) -> anyhow::Result<RoundStateId> {
+	async fn store_round_state_lock_vtxos(&self, _round_state: &RoundState) -> anyhow::Result<RoundStateId> {
 		Ok(RoundStateId(5))
 	}
 
-	fn update_round_state(&self, _round_state: &StoredRoundState) -> anyhow::Result<()> {
+	async fn update_round_state(&self, _round_state: &StoredRoundState) -> anyhow::Result<()> {
 		Ok(())
 	}
 
-	fn remove_round_state(&self, _round_state: &StoredRoundState) -> anyhow::Result<()> {
+	async fn remove_round_state(&self, _round_state: &StoredRoundState) -> anyhow::Result<()> {
 		Ok(())
 	}
 
-	fn load_round_states(&self) -> anyhow::Result<Vec<StoredRoundState>> {
+	async fn load_round_states(&self) -> anyhow::Result<Vec<StoredRoundState>> {
 		Ok(vec![StoredRoundState {
 			id: RoundStateId(5),
 			state: rmp_serde::from_slice::<models::SerdeRoundState>(&[]).unwrap().into(),
 		}])
 	}
 
-	fn create_new_movement(
+	async fn create_new_movement(
 		&self,
 		_status: MovementStatus,
 		_subsystem: &MovementSubsystem,
@@ -291,19 +292,19 @@ impl BarkPersister for Dummy {
 		Ok(MovementId::new(0))
 	}
 
-	fn update_movement(&self, _movement: &Movement) -> anyhow::Result<()> {
+	async fn update_movement(&self, _movement: &Movement) -> anyhow::Result<()> {
 		Ok(())
 	}
 
-	fn get_movement_by_id(&self, _movement_id: MovementId) -> anyhow::Result<Movement> {
+	async fn get_movement_by_id(&self, _movement_id: MovementId) -> anyhow::Result<Movement> {
 		Ok(dummy_movement(MovementStatus::Pending))
 	}
 
-	fn get_all_movements(&self) -> anyhow::Result<Vec<Movement>> {
+	async fn get_all_movements(&self) -> anyhow::Result<Vec<Movement>> {
 		Ok(vec![dummy_movement(MovementStatus::Failed)])
 	}
 
-	fn store_vtxos(
+	async fn store_vtxos(
 		&self,
 		_vtxos: &[(&Vtxo, &VtxoState)],
 	) -> anyhow::Result<()> {

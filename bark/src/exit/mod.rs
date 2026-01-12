@@ -77,7 +77,7 @@
 //! #   let mnemonic = bip39::Mnemonic::from_str(&mnemonic_str).unwrap();
 //! #   let bark_wallet = Wallet::open(&mnemonic, db.clone(), config).await.unwrap();
 //! #   let seed = mnemonic.to_seed("");
-//! #   let onchain_wallet = OnchainWallet::load_or_create(Network::Regtest, seed, db).unwrap();
+//! #   let onchain_wallet = OnchainWallet::load_or_create(Network::Regtest, seed, db).await.unwrap();
 //! #   (bark_wallet, onchain_wallet)
 //! # }
 //! #
@@ -184,11 +184,11 @@ impl Exit {
 		&mut self,
 		onchain: &dyn ExitUnilaterally,
 	) -> anyhow::Result<()> {
-		let exit_vtxo_entries = self.persister.get_exit_vtxo_entries()?;
+		let exit_vtxo_entries = self.persister.get_exit_vtxo_entries().await?;
 		self.exit_vtxos.reserve(exit_vtxo_entries.len());
 
 		for entry in exit_vtxo_entries {
-			if let Some(vtxo) = self.persister.get_wallet_vtxo(entry.vtxo_id)? {
+			if let Some(vtxo) = self.persister.get_wallet_vtxo(entry.vtxo_id).await? {
 				let mut exit = ExitVtxo::from_entry(entry, &vtxo);
 				exit.initialize(&mut self.tx_manager, &*self.persister, onchain).await?;
 				self.exit_vtxos.push(exit);
@@ -222,11 +222,12 @@ impl Exit {
 							txs.push(self.tx_manager.get_package(*txid)?.read().await.clone());
 						}
 					} else {
+						let exit_vtxo = exit.get_vtxo(&*self.persister).await?;
 						// Realistically, the only way an exit isn't initialized is if it has been
 						// marked for exit, and we haven't synced the exit system yet. On this basis
 						// we can just return the VTXO transactions since there shouldn't be any
 						// children.
-						for tx in exit.get_vtxo(&*self.persister)?.vtxo.transactions() {
+						for tx in exit_vtxo.vtxo.transactions() {
 							txs.push(ExitTransactionPackage {
 								exit: TransactionInfo {
 									txid: tx.tx.compute_txid(),
@@ -297,7 +298,7 @@ impl Exit {
 	/// It's recommended to sync the wallet, by using something like [Wallet::maintenance] being
 	/// doing this.
 	pub async fn start_exit_for_entire_wallet(&mut self) -> anyhow::Result<()> {
-		let vtxos = self.persister.get_vtxos_by_state(&VtxoStateKind::UNSPENT_STATES)?.into_iter()
+		let vtxos = self.persister.get_vtxos_by_state(&VtxoStateKind::UNSPENT_STATES).await?.into_iter()
 			.map(|v| v.vtxo)
 			.collect::<Vec<_>>();
 		self.start_exit_for_vtxos(&vtxos).await?;
@@ -332,10 +333,10 @@ impl Exit {
 			// as such the ExitVtxo will be considered uninitialized.
 			trace!("Starting exit for VTXO: {}", vtxo_id);
 			let exit = ExitVtxo::new(vtxo, tip);
-			self.persister.store_exit_vtxo_entry(&StoredExit::new(&exit))?;
+			self.persister.store_exit_vtxo_entry(&StoredExit::new(&exit)).await?;
 			self.persister.update_vtxo_state_checked(
 				vtxo_id, VtxoState::Spent, &VtxoStateKind::UNSPENT_STATES,
-			)?;
+			).await?;
 			self.exit_vtxos.push(exit);
 			trace!("Exit for VTXO started successfully: {}", vtxo_id);
 
@@ -369,9 +370,9 @@ impl Exit {
 	/// Reset exit to an empty state. Should be called when dropping VTXOs
 	///
 	/// Note: _This method is **dangerous** and can lead to funds loss. Be cautious._
-	pub (crate) fn dangerous_clear_exit(&mut self) -> anyhow::Result<()> {
+	pub (crate) async fn dangerous_clear_exit(&mut self) -> anyhow::Result<()> {
 		for exit in &self.exit_vtxos {
-			self.persister.remove_exit_vtxo_entry(&exit.id())?;
+			self.persister.remove_exit_vtxo_entry(&exit.id()).await?;
 		}
 		self.exit_vtxos.clear();
 		Ok(())
@@ -492,7 +493,7 @@ impl Exit {
 	///
 	/// Note: This doesn't mark the exit output as spent, it's up to the caller to
 	/// do that, or it will be done once the transaction is seen in the network
-	pub fn sign_exit_claim_inputs(&self, psbt: &mut Psbt, wallet: &Wallet) -> anyhow::Result<()> {
+	pub async fn sign_exit_claim_inputs(&self, psbt: &mut Psbt, wallet: &Wallet) -> anyhow::Result<()> {
 		let prevouts = psbt.inputs.iter()
 			.map(|i| i.witness_utxo.clone().unwrap())
 			.collect::<Vec<_>>();
@@ -512,7 +513,7 @@ impl Exit {
 			if let Some(vtxo) = vtxo {
 				let exit_vtxo = *claimable.get(&vtxo.id()).context("vtxo is not claimable yet")?;
 
-				let witness = wallet.sign_input(&vtxo, i, &mut shc, &prevouts)
+				let witness = wallet.sign_input(&vtxo, i, &mut shc, &prevouts).await
 					.map_err(|e| ExitError::ClaimSigningError { error: e.to_string() })?;
 
 				input.final_script_witness = Some(witness);
@@ -547,7 +548,8 @@ impl Exit {
 		let mut vtxos = HashMap::with_capacity(inputs.len());
 		for input in inputs {
 			let i = input.borrow();
-			vtxos.insert(i.id(), i.get_vtxo(&*self.persister)?);
+			let vtxo = i.get_vtxo(&*self.persister).await?;
+			vtxos.insert(i.id(), vtxo);
 		}
 
 		let mut tx = {
@@ -562,7 +564,7 @@ impl Exit {
 
 				output_amount += vtxo.amount();
 
-				let clause = wallet.find_signable_clause(vtxo)
+				let clause = wallet.find_signable_clause(vtxo).await
 					.ok_or(ExitError::ClaimMissingSignableClause { vtxo: vtxo.id() })?;
 
 				tx_ins.push(TxIn {
@@ -590,7 +592,7 @@ impl Exit {
 		};
 
 		// Create a PSBT to determine the weight of the transaction so we can deduct a tx fee
-		let create_psbt = |tx: Transaction| {
+		let create_psbt = |tx: Transaction| async {
 			let mut psbt = Psbt::from_unsigned_tx(tx)
 				.map_err(|e| ExitError::InternalError {
 					error: format!("Failed to create exit claim PSBT: {}", e),
@@ -600,14 +602,14 @@ impl Exit {
 				i.set_exit_claim_input(&v.vtxo);
 				i.witness_utxo = Some(v.vtxo.txout())
 			});
-			self.sign_exit_claim_inputs(&mut psbt, wallet)
+			self.sign_exit_claim_inputs(&mut psbt, wallet).await
 				.map_err(|e| ExitError::ClaimSigningError { error: e.to_string() })?;
 			Ok(psbt)
 		};
 		let fee_amount = {
 			let fee_rate = fee_rate_override
 				.unwrap_or(self.chain_source.fee_rates().await.regular);
-			fee_rate * create_psbt(tx.clone())?
+			fee_rate * create_psbt(tx.clone()).await?
 				.extract_tx()
 				.map_err(|e| ExitError::InternalError {
 					error: format!("Failed to get tx from signed exit claim PSBT: {}", e),
@@ -625,6 +627,6 @@ impl Exit {
 		tx.output[0].value -= fee_amount;
 
 		// Now create the final signed PSBT
-		create_psbt(tx)
+		create_psbt(tx).await
 	}
 }

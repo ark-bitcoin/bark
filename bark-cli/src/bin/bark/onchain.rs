@@ -88,7 +88,7 @@ pub enum OnchainCommand {
 }
 
 pub async fn execute_onchain_command(onchain_command: OnchainCommand, wallet: &mut Wallet, onchain: &mut OnchainWallet) -> anyhow::Result<()> {
-	let net = wallet.properties()?.network;
+	let net = wallet.network().await?;
 
 	match onchain_command {
 		OnchainCommand::Balance { no_sync } => {
@@ -104,7 +104,7 @@ pub async fn execute_onchain_command(onchain_command: OnchainCommand, wallet: &m
 			output_json(&onchain_balance);
 		},
 		OnchainCommand::Address => {
-			let address = onchain.address().expect("Wallet failed to generate address");
+			let address = onchain.address().await?;
 			let output = json::onchain::Address { address: address.into_unchecked() };
 			output_json(&output);
 		},

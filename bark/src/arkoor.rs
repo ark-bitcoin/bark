@@ -71,12 +71,13 @@ impl Wallet {
 
 		// Find vtxos to cover
 		let mut srv = self.require_server()?;
-		let inputs: Vec<Vtxo> = self.select_vtxos_to_cover(vtxo_request.amount, None)?;
+		let inputs: Vec<Vtxo> = self.select_vtxos_to_cover(vtxo_request.amount, None).await?;
 		let input_ids: Vec<VtxoId> = inputs.iter().map(|v| v.id()).collect();
 
-		let user_keypairs = inputs.iter()
-			.map(|vtxo| self.get_vtxo_key(&vtxo))
-			.collect::<Result<Vec<_>, _>>()?;
+		let mut user_keypairs = vec![];
+		for vtxo in inputs.iter() {
+			user_keypairs.push(self.get_vtxo_key(&vtxo).await?);
+		}
 
 		let builder = CheckpointedPackageBuilder::new(inputs.clone(), vtxo_request, change_pubkey)
 			.context("Failed to construct arkoor package")?
@@ -141,7 +142,7 @@ impl Wallet {
 			bail!("Sent amount must be at least {}", P2TR_DUST);
 		}
 
-		let change_pubkey = self.derive_store_next_keypair()
+		let change_pubkey = self.derive_store_next_keypair().await
 			.context("Failed to create change keypair")?.0;
 
 		let request = VtxoRequest { amount, policy: destination.policy().clone() };
@@ -171,9 +172,9 @@ impl Wallet {
 			error!("Failed to post the arkoor vtxo to the recipients mailbox: '{:#}'", e);
 			//NB we will continue to at least not lose our own change
 		}
-		self.mark_vtxos_as_spent(&arkoor.input)?;
+		self.mark_vtxos_as_spent(&arkoor.input).await?;
 		if let Some(change) = arkoor.change {
-			self.store_spendable_vtxos([&change])?;
+			self.store_spendable_vtxos([&change]).await?;
 			movement.apply_update(MovementUpdate::new().produced_vtxo(change)).await?;
 		}
 		movement.success().await?;

@@ -274,7 +274,7 @@ impl ExitTransactionManager {
 		if wallet.is_some() {
 			Ok(wallet)
 		} else {
-			self.find_child_in_database(exit_info)
+			self.find_child_in_database(exit_info).await
 		}
 	}
 
@@ -305,11 +305,11 @@ impl ExitTransactionManager {
 		}
 	}
 
-	fn find_child_in_database(
+	async fn find_child_in_database(
 		&self,
 		exit_info: &TransactionInfo,
 	) -> Result<Option<ChildTransactionInfo>, ExitError> {
-		let result = self.persister.get_exit_child_tx(exit_info.txid)
+		let result = self.persister.get_exit_child_tx(exit_info.txid).await
 			.map_err(|e| ExitError::DatabaseChildRetrievalFailure { error: e.to_string() })?;
 
 		if let Some((tx, origin)) = result {
@@ -401,7 +401,7 @@ impl ExitTransactionManager {
 			};
 
 			debug!("Storing child tx {} with origin {} in database", txid, origin);
-			let r = self.persister.store_exit_child_tx(outpoint.txid, &tx, origin);
+			let r = self.persister.store_exit_child_tx(outpoint.txid, &tx, origin).await;
 			if let Err(e) = r {
 				error!("Failed to store confirmed exit child transaction: {}", e);
 			}

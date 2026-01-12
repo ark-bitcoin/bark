@@ -21,14 +21,14 @@ impl Wallet {
 	/// - If the VTXO is not in a lockable [VtxoState].
 	/// - If the VTXO doesn't exist.
 	/// - If a database error occurs.
-	pub fn lock_vtxos(
+	pub async fn lock_vtxos(
 		&self,
 		vtxos: impl IntoIterator<Item = impl VtxoRef>,
 		movement_id: Option<MovementId>,
 	) -> anyhow::Result<()> {
 		self.set_vtxo_states(
 			vtxos, &VtxoState::Locked { movement_id }, &VtxoStateKind::UNSPENT_STATES,
-		)
+		).await
 	}
 
 	/// Attempts to mark VTXOs as [VtxoState::Spent], given that each [VtxoId](ark::VtxoId)
@@ -39,11 +39,13 @@ impl Wallet {
 	/// - If the VTXO is not currently spent.
 	/// - If the VTXO doesn't exist.
 	/// - If a database error occurs.
-	pub fn mark_vtxos_as_spent(
+	pub async fn mark_vtxos_as_spent(
 		&self,
 		vtxos: impl IntoIterator<Item = impl VtxoRef>,
 	) -> anyhow::Result<()> {
-		self.set_vtxo_states(vtxos, &VtxoState::Spent, &VtxoStateKind::UNSPENT_STATES)
+		self.set_vtxo_states(
+			vtxos, &VtxoState::Spent, &VtxoStateKind::UNSPENT_STATES
+		).await
 	}
 
 	/// Updates the state set the [VtxoState] of VTXOs corresponding to each given
@@ -59,7 +61,7 @@ impl Wallet {
 	/// # Errors
 	/// - The database operation to update the states fails.
 	/// - The state transition is invalid or does not match the allowed transitions.
-	pub fn set_vtxo_states(
+	pub async fn set_vtxo_states(
 		&self,
 		vtxos: impl IntoIterator<Item = impl VtxoRef>,
 		state: &VtxoState,
@@ -72,7 +74,7 @@ impl Wallet {
 				id,
 				state.clone(),
 				allowed_states,
-			) {
+			).await {
 				error!(
 					"Failed to set {} state with allowed states {:?} for VTXO {}: {:#}",
 					state.kind(), allowed_states, id, e,
@@ -97,12 +99,12 @@ impl Wallet {
 	///
 	/// # Parameters
 	/// - `vtxos`: The VTXOs to store in the wallet.
-	pub fn store_locked_vtxos<'a>(
+	pub async fn store_locked_vtxos<'a>(
 		&self,
 		vtxos: impl IntoIterator<Item = &'a Vtxo>,
 		movement_id: Option<MovementId>,
 	) -> anyhow::Result<()> {
-		self.store_vtxos(vtxos, &VtxoState::Locked { movement_id })
+		self.store_vtxos(vtxos, &VtxoState::Locked { movement_id }).await
 	}
 
 	/// Stores the given collection of VTXOs in the wallet with an initial state of
@@ -110,11 +112,11 @@ impl Wallet {
 	///
 	/// # Parameters
 	/// - `vtxos`: The VTXOs to store in the wallet.
-	pub fn store_spendable_vtxos<'a>(
+	pub async fn store_spendable_vtxos<'a>(
 		&self,
 		vtxos: impl IntoIterator<Item = &'a Vtxo>,
 	) -> anyhow::Result<()> {
-		self.store_vtxos(vtxos, &VtxoState::Spendable)
+		self.store_vtxos(vtxos, &VtxoState::Spendable).await
 	}
 
 	/// Stores the given collection of VTXOs in the wallet with an initial state of
@@ -122,11 +124,11 @@ impl Wallet {
 	///
 	/// # Parameters
 	/// - `vtxos`: The VTXOs to store in the wallet.
-	pub fn store_spent_vtxos<'a>(
+	pub async fn store_spent_vtxos<'a>(
 		&self,
 		vtxos: impl IntoIterator<Item = &'a Vtxo>,
 	) -> anyhow::Result<()> {
-		self.store_vtxos(vtxos, &VtxoState::Spent)
+		self.store_vtxos(vtxos, &VtxoState::Spent).await
 	}
 
 	/// Stores the given collection of VTXOs in the wallet with the given initial state.
@@ -134,13 +136,13 @@ impl Wallet {
 	/// # Parameters
 	/// - `vtxos`: The VTXOs to store in the wallet.
 	/// - `state`: The initial state of the VTXOs.
-	pub fn store_vtxos<'a>(
+	pub async fn store_vtxos<'a>(
 		&self,
 		vtxos: impl IntoIterator<Item = &'a Vtxo>,
 		state: &VtxoState,
 	) -> anyhow::Result<()> {
 		let vtxos = vtxos.into_iter().map(|v| (v, state)).collect::<Vec<_>>();
-		if let Err(e) = self.db.store_vtxos(&vtxos) {
+		if let Err(e) = self.db.store_vtxos(&vtxos).await {
 			error!("An error occurred while storing {} VTXOs: {:#}", vtxos.len(), e);
 			error!("Raw VTXOs for debugging:");
 			for (vtxo, _) in vtxos {
@@ -161,10 +163,10 @@ impl Wallet {
 	/// - If the VTXO is not currently locked.
 	/// - If the VTXO doesn't exist.
 	/// - If a database error occurs.
-	pub fn unlock_vtxos(
+	pub async fn unlock_vtxos(
 		&self,
 		vtxos: impl IntoIterator<Item = impl VtxoRef>,
 	) -> anyhow::Result<()> {
-		self.set_vtxo_states(vtxos, &VtxoState::Spendable, &[VtxoStateKind::Locked])
+		self.set_vtxo_states(vtxos, &VtxoState::Spendable, &[VtxoStateKind::Locked]).await
 	}
 }

@@ -56,14 +56,14 @@ pub async fn open_wallet(datadir: &Path) -> anyhow::Result<(BarkWallet, OnchainW
 	let seed = mnemonic.to_seed("");
 
 	let db = Arc::new(SqliteClient::open(datadir.join(DB_FILE))?);
-	let properties = db.read_properties()?.context("failed to read properties")?;
+	let properties = db.read_properties().await?.context("failed to read properties")?;
 
 	// Read the config
 	let config_path = datadir.join("config.toml");
 	let config = Config::load(properties.network, config_path)
 		.context("error loading bark config file")?;
 
-	let bdk_wallet = OnchainWallet::load_or_create(properties.network, seed, db.clone())?;
+	let bdk_wallet = OnchainWallet::load_or_create(properties.network, seed, db.clone()).await?;
 	let bark_wallet = BarkWallet::open_with_onchain(&mnemonic, db, &bdk_wallet, config).await?;
 
 	if let Err(e) = bark_wallet.require_chainsource_version() {

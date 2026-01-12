@@ -620,20 +620,22 @@ async fn start_attempt(
 		})
 		.collect::<Vec<_>>();
 
-	let resp = srv.client.submit_payment(protos::SubmitPaymentRequest {
-		input_vtxos: participation.inputs.iter().map(|vtxo| {
-			let keypair = wallet.get_vtxo_key(&vtxo)
-				.expect("owned vtxo key should be in database");
+	let mut input_vtxos = Vec::with_capacity(participation.inputs.len());
+	for vtxo in participation.inputs.iter() {
+		let keypair = wallet.get_vtxo_key(vtxo).await
+			.map_err(HarkForfeitError::Err)?;
+		input_vtxos.push(protos::InputVtxo {
+			vtxo_id: vtxo.id().to_bytes().to_vec(),
+			ownership_proof: {
+				let sig = event.challenge
+					.sign_with(vtxo.id(), &signed_reqs, &keypair);
+				sig.serialize().to_vec()
+			},
+		});
+	}
 
-			protos::InputVtxo {
-				vtxo_id: vtxo.id().to_bytes().to_vec(),
-				ownership_proof: {
-					let sig = event.challenge
-						.sign_with(vtxo.id(), &signed_reqs, &keypair);
-					sig.serialize().to_vec()
-				},
-			}
-		}).collect(),
+	let resp = srv.client.submit_payment(protos::SubmitPaymentRequest {
+		input_vtxos: input_vtxos,
 		vtxo_requests: signed_reqs.into_iter().map(Into::into).collect(),
 		#[allow(deprecated)]
 		offboard_requests: vec![],
@@ -667,7 +669,7 @@ async fn hark_cosign_leaf(
 	funding_tx: &Transaction,
 	vtxo: &mut Vtxo,
 ) -> anyhow::Result<()> {
-	let key = wallet.pubkey_keypair(&vtxo.user_pubkey())
+	let key = wallet.pubkey_keypair(&vtxo.user_pubkey()).await
 		.context("error fetching keypair").map_err(HarkForfeitError::Err)?
 		.with_context(|| format!(
 			"keypair {} not found for VTXO {}", vtxo.user_pubkey(), vtxo.id(),
@@ -731,17 +733,16 @@ async fn hark_vtxo_swap(
 		)));
 	}
 
-	let forfeit_bundles = participation.inputs.iter().zip(server_nonces.into_iter())
-		.map(|(input, nonces)| {
-			let user_key = wallet.pubkey_keypair(&input.user_pubkey())
-				.ok().flatten().with_context(|| format!(
-					"failed to fetch keypair for vtxo user pubkey {}", input.user_pubkey(),
-				))?.1;
-			Ok(HashLockedForfeitBundle::forfeit_vtxo(
-				&input, unlock_hash, &user_key, &nonces,
-			))
-		})
-		.collect::<Result<Vec<_>, _>>().map_err(HarkForfeitError::Err)?;
+	let mut forfeit_bundles = Vec::with_capacity(participation.inputs.len());
+	for (input, nonces) in participation.inputs.iter().zip(server_nonces.into_iter()) {
+		let user_key = wallet.pubkey_keypair(&input.user_pubkey()).await
+			.ok().flatten().with_context(|| format!(
+				"failed to fetch keypair for vtxo user pubkey {}", input.user_pubkey(),
+			)).map_err(HarkForfeitError::Err)?.1;
+		forfeit_bundles.push(HashLockedForfeitBundle::forfeit_vtxo(
+			&input, unlock_hash, &user_key, &nonces,
+		))
+	}
 
 	let preimage = srv.client.forfeit_vtxos(protos::ForfeitVtxosRequest {
 		forfeit_bundles: forfeit_bundles.iter().map(|b| b.serialize()).collect(),
@@ -1144,9 +1145,9 @@ async fn persist_round_success(
 	// we first try all actions that need to happen and only afterwards return errors
 	// so that we achieve maximum success
 
-	let store_result = wallet.store_spendable_vtxos(new_vtxos)
+	let store_result = wallet.store_spendable_vtxos(new_vtxos).await
 		.context("failed to store new VTXOs");
-	let spent_result = wallet.mark_vtxos_as_spent(&participation.inputs)
+	let spent_result = wallet.mark_vtxos_as_spent(&participation.inputs).await
 		.context("failed to mark input VTXOs as spent");
 	let update_result = if let Some(mid) = movement_id {
 		wallet.movements.finish_movement_with_update(
@@ -1174,7 +1175,7 @@ async fn persist_round_failure(
 	movement_id: Option<MovementId>,
 ) -> anyhow::Result<()> {
 	debug!("Attempting to persist the failure of a round with the movement ID {:?}", movement_id);
-	let unlock_result = wallet.unlock_vtxos(&participation.inputs);
+	let unlock_result = wallet.unlock_vtxos(&participation.inputs).await;
 	let finish_result = if let Some(movement_id) = movement_id {
 		wallet.movements.finish_movement(movement_id, MovementStatus::Failed).await
 	} else {
@@ -1224,7 +1225,7 @@ impl Wallet {
 		};
 		let state = RoundState::new_interactive(participation, movement_id);
 
-		let id = self.db.store_round_state_lock_vtxos(&state)?;
+		let id = self.db.store_round_state_lock_vtxos(&state).await?;
 		Ok(StoredRoundState { id, state })
 	}
 
@@ -1247,18 +1248,18 @@ impl Wallet {
 		};
 		let state = RoundState::new_interactive(participation, movement_id);
 
-		let id = self.db.store_round_state_lock_vtxos(&state)?;
+		let id = self.db.store_round_state_lock_vtxos(&state).await?;
 		Ok(StoredRoundState { id, state })
 	}
 
 	/// Get all pending round states
-	pub fn pending_round_states(&self) -> anyhow::Result<Vec<StoredRoundState>> {
-		self.db.load_round_states()
+	pub async fn pending_round_states(&self) -> anyhow::Result<Vec<StoredRoundState>> {
+		self.db.load_round_states().await
 	}
 
 	/// Sync pending rounds that have finished but are waiting for confirmations
 	pub async fn sync_pending_rounds(&self) -> anyhow::Result<()> {
-		let states = self.db.load_round_states()?;
+		let states = self.db.load_round_states().await?;
 		if !states.is_empty() {
 			debug!("Syncing {} pending round states...", states.len());
 
@@ -1273,30 +1274,30 @@ impl Wallet {
 				match status {
 					Ok(RoundStatus::Confirmed { funding_txid }) => {
 						info!("Round confirmed. Funding tx {}", funding_txid);
-						if let Err(e) = self.db.remove_round_state(&state) {
+						if let Err(e) = self.db.remove_round_state(&state).await {
 							warn!("Error removing confirmed round state from db: {:#}", e);
 						}
 					},
 					Ok(RoundStatus::Unconfirmed { funding_txid }) => {
 						info!("Waiting for confirmations for round funding tx {}", funding_txid);
-						if let Err(e) = self.db.update_round_state(&state) {
+						if let Err(e) = self.db.update_round_state(&state).await {
 							warn!("Error updating pending round state in db: {:#}", e);
 						}
 					},
 					Ok(RoundStatus::Pending) => {
-						if let Err(e) = self.db.update_round_state(&state) {
+						if let Err(e) = self.db.update_round_state(&state).await {
 							warn!("Error updating pending round state in db: {:#}", e);
 						}
 					},
 					Ok(RoundStatus::Failed { error }) => {
 						error!("Round failed: {}", error);
-						if let Err(e) = self.db.remove_round_state(&state) {
+						if let Err(e) = self.db.remove_round_state(&state).await {
 							warn!("Error removing failed round state from db: {:#}", e);
 						}
 					},
 					Ok(RoundStatus::Canceled) => {
 						error!("Round canceled");
-						if let Err(e) = self.db.remove_round_state(&state) {
+						if let Err(e) = self.db.remove_round_state(&state).await {
 							warn!("Error removing canceled round state from db: {:#}", e);
 						}
 					},
@@ -1324,7 +1325,7 @@ impl Wallet {
 			if let Some(event) = event && state.state.ongoing_participation() {
 				let updated = state.state.process_event(self, &event).await;
 				if updated {
-					if let Err(e) = self.db.update_round_state(&state) {
+					if let Err(e) = self.db.update_round_state(&state).await {
 						error!("Error storing round state #{} after progress: {:#}", state.id, e);
 					}
 				}
@@ -1334,13 +1335,13 @@ impl Wallet {
 				Err(e) => warn!("Error syncing round #{}: {:#}", state.id, e),
 				Ok(s) if s.is_final() => {
 					info!("Round #{} finished with result: {:?}", state.id, s);
-					if let Err(e) = self.db.remove_round_state(&state) {
+					if let Err(e) = self.db.remove_round_state(&state).await {
 						warn!("Failed to remove finished round #{} from db: {:#}", state.id, e);
 					}
 				},
 				Ok(s) => {
 					trace!("Round state #{} is now in state {:?}", state.id, s);
-					if let Err(e) = self.db.update_round_state(&state) {
+					if let Err(e) = self.db.update_round_state(&state).await {
 						warn!("Error storing round state #{}: {:#}", state.id, e);
 					}
 				},
@@ -1356,7 +1357,7 @@ impl Wallet {
 		&self,
 		last_round_event: Option<&RoundEvent>,
 	) -> anyhow::Result<()> {
-		let mut states = self.db.load_round_states()?;
+		let mut states = self.db.load_round_states().await?;
 		info!("Processing {} rounds...", states.len());
 
 		let mut last_round_event = last_round_event.map(|e| Cow::Borrowed(e));
@@ -1396,7 +1397,7 @@ impl Wallet {
 	///
 	/// Returns only once a round has happened on the server.
 	pub async fn participate_ongoing_rounds(&self) -> anyhow::Result<()> {
-		let mut states = self.db.load_round_states()?;
+		let mut states = self.db.load_round_states().await?;
 		states.retain(|s| s.state.ongoing_participation());
 
 		if states.is_empty() {
@@ -1428,11 +1429,11 @@ impl Wallet {
 	/// All rounds that have not started yet can safely be canceled,
 	/// as well as rounds where we have not yet signed any forfeit txs.
 	pub async fn cancel_all_pending_rounds(&self) -> anyhow::Result<()> {
-		let states = self.db.load_round_states()?;
+		let states = self.db.load_round_states().await?;
 		for mut state in states {
 			match state.state.try_cancel(self).await {
 				Ok(true) => {
-					if let Err(e) = self.db.remove_round_state(&state) {
+					if let Err(e) = self.db.remove_round_state(&state).await {
 						warn!("Error removing canceled round state from db: {:#}", e);
 					}
 				},
@@ -1445,14 +1446,14 @@ impl Wallet {
 
 	/// Try to cancel the given round
 	pub async fn cancel_pending_round(&self, id: RoundStateId) -> anyhow::Result<()> {
-		let states = self.db.load_round_states()?;
+		let states = self.db.load_round_states().await?;
 		for mut state in states {
 			if state.id != id {
 				continue;
 			}
 
 			if state.state.try_cancel(self).await.context("failed to cancel round")? {
-				self.db.remove_round_state(&state)
+				self.db.remove_round_state(&state).await
 					.context("error removing canceled round state from db")?;
 			} else {
 				bail!("failed to cancel round");
@@ -1487,7 +1488,7 @@ impl Wallet {
 				.context("events stream broke")?
 				.context("error on event stream")?;
 			if state.state.process_event(self, &event).await {
-				self.db.update_round_state(&state)?;
+				self.db.update_round_state(&state).await?;
 			}
 		}
 	}

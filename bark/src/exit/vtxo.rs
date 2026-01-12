@@ -120,7 +120,7 @@ impl ExitVtxo {
 		onchain: &dyn ExitUnilaterally,
 	) -> anyhow::Result<(), ExitError> {
 		trace!("Initializing VTXO for exit {}", self.vtxo_id);
-		let vtxo = self.get_vtxo(persister)?;
+		let vtxo = self.get_vtxo(persister).await?;
 		self.txids = Some(tx_manager.track_vtxo_exits(&vtxo, onchain).await?);
 		Ok(())
 	}
@@ -154,7 +154,7 @@ impl ExitVtxo {
 			});
 		}
 
-		let wallet_vtxo = self.get_vtxo(&*wallet.db)?;
+		let wallet_vtxo = self.get_vtxo(&*wallet.db).await?;
 		const MAX_ITERATIONS: usize = 100;
 		for _ in 0..MAX_ITERATIONS {
 			let mut context = ProgressContext {
@@ -168,7 +168,7 @@ impl ExitVtxo {
 			trace!("Progressing VTXO {} at height {}", self.id(), wallet.chain.tip().await.unwrap());
 			match self.state.clone().progress(&mut context, onchain).await {
 				Ok(new_state) => {
-					self.update_state_if_newer(new_state, &*wallet.db)?;
+					self.update_state_if_newer(new_state, &*wallet.db).await?;
 					if !continue_until_finished {
 						return Ok(());
 					}
@@ -180,7 +180,7 @@ impl ExitVtxo {
 				Err(e) => {
 					// We may need to commit a new state before returning an error
 					if let Some(new_state) = e.state {
-						self.update_state_if_newer(new_state, &*wallet.db)?;
+						self.update_state_if_newer(new_state, &*wallet.db).await?;
 					}
 					return Err(e.error);
 				}
@@ -190,15 +190,15 @@ impl ExitVtxo {
 		Ok(())
 	}
 
-	pub fn get_vtxo(&self, persister: &dyn BarkPersister) -> anyhow::Result<WalletVtxo, ExitError> {
-		persister.get_wallet_vtxo(self.vtxo_id)
+	pub async fn get_vtxo(&self, persister: &dyn BarkPersister) -> anyhow::Result<WalletVtxo, ExitError> {
+		persister.get_wallet_vtxo(self.vtxo_id).await
 			.map_err(|e| ExitError::InvalidWalletState { error: e.to_string() })?
 			.ok_or_else(|| ExitError::InternalError {
 				error: format!("VTXO for exit couldn't be found: {}", self.vtxo_id)
 			})
 	}
 
-	fn update_state_if_newer(
+	async fn update_state_if_newer(
 		&mut self,
 		new: ExitState,
 		persister: &dyn BarkPersister,
@@ -207,14 +207,14 @@ impl ExitVtxo {
 		if new != self.state {
 			self.history.push(self.state.clone());
 			self.state = new;
-			self.persist(persister)
+			self.persist(persister).await
 		} else {
 			Ok(())
 		}
 	}
 
-	fn persist(&self, persister: &dyn BarkPersister) -> anyhow::Result<(), ExitError> {
-		persister.store_exit_vtxo_entry(&StoredExit::new(self))
+	async fn persist(&self, persister: &dyn BarkPersister) -> anyhow::Result<(), ExitError> {
+		persister.store_exit_vtxo_entry(&StoredExit::new(self)).await
 			.map_err(|e| ExitError::DatabaseVtxoStoreFailure {
 				vtxo_id: self.id(), error: e.to_string(),
 			})

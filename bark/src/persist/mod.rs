@@ -78,6 +78,7 @@ pub struct StoredRoundState {
 /// - If your backend is not thread-safe, prefer a short-lived connection per call or use
 ///   an internal pool with checked-out connections per operation.
 /// - Return precise errors so callers can surface actionable diagnostics.
+#[async_trait]
 pub trait BarkPersister: Send + Sync + 'static {
 	/// Initialize a wallet in storage with the provided properties.
 	///
@@ -92,7 +93,7 @@ pub trait BarkPersister: Send + Sync + 'static {
 	///
 	/// Errors:
 	/// - Returns an error if the wallet is already initialized or if persistence fails.
-	fn init_wallet(&self, properties: &WalletProperties) -> anyhow::Result<()>;
+	async fn init_wallet(&self, properties: &WalletProperties) -> anyhow::Result<()>;
 
 	/// Initialize the onchain BDK wallet and return any previously stored ChangeSet.
 	///
@@ -106,7 +107,7 @@ pub trait BarkPersister: Send + Sync + 'static {
 	/// Errors:
 	/// - Returns an error if the BDK state cannot be created or loaded.
 	#[cfg(feature = "onchain_bdk")]
-	fn initialize_bdk_wallet(&self) -> anyhow::Result<ChangeSet>;
+	async fn initialize_bdk_wallet(&self) -> anyhow::Result<ChangeSet>;
 
 	/// Persist an incremental BDK ChangeSet.
 	///
@@ -121,7 +122,7 @@ pub trait BarkPersister: Send + Sync + 'static {
 	/// Errors:
 	/// - Returns an error if the changeset cannot be written.
 	#[cfg(feature = "onchain_bdk")]
-	fn store_bdk_wallet_changeset(&self, changeset: &ChangeSet) -> anyhow::Result<()>;
+	async fn store_bdk_wallet_changeset(&self, changeset: &ChangeSet) -> anyhow::Result<()>;
 
 	/// Read wallet properties from storage.
 	///
@@ -131,7 +132,7 @@ pub trait BarkPersister: Send + Sync + 'static {
 	///
 	/// Errors:
 	/// - Returns an error on I/O or deserialization failures.
-	fn read_properties(&self) -> anyhow::Result<Option<WalletProperties>>;
+	async fn read_properties(&self) -> anyhow::Result<Option<WalletProperties>>;
 
 	/// Check whether a recipient identifier already exists.
 	///
@@ -147,7 +148,7 @@ pub trait BarkPersister: Send + Sync + 'static {
 	///
 	/// Errors:
 	/// - Returns an error if the lookup fails.
-	fn check_recipient_exists(&self, recipient: &PaymentMethod) -> anyhow::Result<bool>;
+	async fn check_recipient_exists(&self, recipient: &PaymentMethod) -> anyhow::Result<bool>;
 
 	/// Creates a new movement in the given state, ready to be updated.
 	///
@@ -161,7 +162,7 @@ pub trait BarkPersister: Send + Sync + 'static {
 	///
 	/// Errors:
 	/// - Returns an error if the movement is unable to be created.
-	fn create_new_movement(&self,
+	async fn create_new_movement(&self,
 		status: MovementStatus,
 		subsystem: &MovementSubsystem,
 		time: DateTime<chrono::Local>,
@@ -174,7 +175,7 @@ pub trait BarkPersister: Send + Sync + 'static {
 	///
 	/// Errors:
 	/// - Returns an error if updating the movement fails for any reason.
-	fn update_movement(&self, movement: &Movement) -> anyhow::Result<()>;
+	async fn update_movement(&self, movement: &Movement) -> anyhow::Result<()>;
 
 	/// Gets the movement with the given [MovementId].
 	///
@@ -187,7 +188,7 @@ pub trait BarkPersister: Send + Sync + 'static {
 	/// Errors:
 	/// - If the movement does not exist.
 	/// - If retrieving the movement fails.
-	fn get_movement_by_id(&self, movement_id: MovementId) -> anyhow::Result<Movement>;
+	async fn get_movement_by_id(&self, movement_id: MovementId) -> anyhow::Result<Movement>;
 
 	/// Gets every stored movement.
 	///
@@ -196,7 +197,7 @@ pub trait BarkPersister: Send + Sync + 'static {
 	///
 	/// Errors:
 	/// - If retrieving the movements fails.
-	fn get_all_movements(&self) -> anyhow::Result<Vec<Movement>>;
+	async fn get_all_movements(&self) -> anyhow::Result<Vec<Movement>>;
 
 	/// Store a pending board.
 	///
@@ -207,7 +208,7 @@ pub trait BarkPersister: Send + Sync + 'static {
 	///
 	/// Errors:
 	/// - Returns an error if the board cannot be stored.
-	fn store_pending_board(
+	async fn store_pending_board(
 		&self,
 		vtxo: &Vtxo,
 		funding_tx: &Transaction,
@@ -221,7 +222,7 @@ pub trait BarkPersister: Send + Sync + 'static {
 	///
 	/// Errors:
 	/// - Returns an error if the board cannot be removed.
-	fn remove_pending_board(&self, vtxo_id: &VtxoId) -> anyhow::Result<()>;
+	async fn remove_pending_board(&self, vtxo_id: &VtxoId) -> anyhow::Result<()>;
 
 	/// Get the [VtxoId] for each pending board.
 	///
@@ -230,7 +231,7 @@ pub trait BarkPersister: Send + Sync + 'static {
 	///
 	/// Errors:
 	/// - Returns an error if the query fails.
-	fn get_all_pending_board_ids(&self) -> anyhow::Result<Vec<VtxoId>>;
+	async fn get_all_pending_board_ids(&self) -> anyhow::Result<Vec<VtxoId>>;
 
 	/// Get the [PendingBoard] associated with the given [VtxoId].
 	///
@@ -240,7 +241,7 @@ pub trait BarkPersister: Send + Sync + 'static {
 	///
 	/// Errors:
 	/// - Returns an error if the query fails.
-	fn get_pending_board_by_vtxo_id(&self, vtxo_id: VtxoId) -> anyhow::Result<Option<PendingBoard>>;
+	async fn get_pending_board_by_vtxo_id(&self, vtxo_id: VtxoId) -> anyhow::Result<Option<PendingBoard>>;
 
 	/// Store a new ongoing round state and lock the VTXOs in round
 	///
@@ -253,7 +254,7 @@ pub trait BarkPersister: Send + Sync + 'static {
 	/// Errors:
 	/// - returns an error of the new round state could not be stored or the VTXOs
 	///   couldn't be marked as locked
-	fn store_round_state_lock_vtxos(&self, round_state: &RoundState) -> anyhow::Result<RoundStateId>;
+	async fn store_round_state_lock_vtxos(&self, round_state: &RoundState) -> anyhow::Result<RoundStateId>;
 
 	/// Update an existing stored pending round state
 	///
@@ -262,7 +263,7 @@ pub trait BarkPersister: Send + Sync + 'static {
 	///
 	/// Errors:
 	/// - returns an error of the existing round state could not be found or updated
-	fn update_round_state(&self, round_state: &StoredRoundState) -> anyhow::Result<()>;
+	async fn update_round_state(&self, round_state: &StoredRoundState) -> anyhow::Result<()>;
 
 	/// Remove a pending round state from the db
 	///
@@ -271,7 +272,7 @@ pub trait BarkPersister: Send + Sync + 'static {
 	///
 	/// Errors:
 	/// - returns an error of the existing round state could not be found or removed
-	fn remove_round_state(&self, round_state: &StoredRoundState) -> anyhow::Result<()>;
+	async fn remove_round_state(&self, round_state: &StoredRoundState) -> anyhow::Result<()>;
 
 	/// Load all pending round states from the db
 	///
@@ -280,10 +281,10 @@ pub trait BarkPersister: Send + Sync + 'static {
 	///
 	/// Errors:
 	/// - returns an error of the states could not be succesfully retrieved
-	fn load_round_states(&self) -> anyhow::Result<Vec<StoredRoundState>>;
+	async fn load_round_states(&self) -> anyhow::Result<Vec<StoredRoundState>>;
 
 	/// Stores the given VTXOs in the given [VtxoState].
-	fn store_vtxos(
+	async fn store_vtxos(
 		&self,
 		vtxos: &[(&Vtxo, &VtxoState)],
 	) -> anyhow::Result<()>;
@@ -299,7 +300,7 @@ pub trait BarkPersister: Send + Sync + 'static {
 	///
 	/// Errors:
 	/// - Returns an error if the lookup fails.
-	fn get_wallet_vtxo(&self, id: VtxoId) -> anyhow::Result<Option<WalletVtxo>>;
+	async fn get_wallet_vtxo(&self, id: VtxoId) -> anyhow::Result<Option<WalletVtxo>>;
 
 	/// Fetch all wallet VTXOs in the database.
 	///
@@ -308,7 +309,7 @@ pub trait BarkPersister: Send + Sync + 'static {
 	///
 	/// Errors:
 	/// - Returns an error if the query fails.
-	fn get_all_vtxos(&self) -> anyhow::Result<Vec<WalletVtxo>>;
+	async fn get_all_vtxos(&self) -> anyhow::Result<Vec<WalletVtxo>>;
 
 	/// Fetch all wallet VTXOs whose state matches any of the provided kinds.
 	///
@@ -320,7 +321,7 @@ pub trait BarkPersister: Send + Sync + 'static {
 	///
 	/// Errors:
 	/// - Returns an error if the query fails.
-	fn get_vtxos_by_state(&self, state: &[VtxoStateKind]) -> anyhow::Result<Vec<WalletVtxo>>;
+	async fn get_vtxos_by_state(&self, state: &[VtxoStateKind]) -> anyhow::Result<Vec<WalletVtxo>>;
 
 	/// Remove a [Vtxo] by ID.
 	///
@@ -333,7 +334,7 @@ pub trait BarkPersister: Send + Sync + 'static {
 	///
 	/// Errors:
 	/// - Returns an error if the delete operation fails.
-	fn remove_vtxo(&self, id: VtxoId) -> anyhow::Result<Option<Vtxo>>;
+	async fn remove_vtxo(&self, id: VtxoId) -> anyhow::Result<Option<Vtxo>>;
 
 	/// Check whether a [Vtxo] is already marked spent.
 	///
@@ -346,7 +347,7 @@ pub trait BarkPersister: Send + Sync + 'static {
 	///
 	/// Errors:
 	/// - Returns an error if the lookup fails.
-	fn has_spent_vtxo(&self, id: VtxoId) -> anyhow::Result<bool>;
+	async fn has_spent_vtxo(&self, id: VtxoId) -> anyhow::Result<bool>;
 
 	/// Store a newly derived/assigned [Vtxo] public key index mapping.
 	///
@@ -356,7 +357,7 @@ pub trait BarkPersister: Send + Sync + 'static {
 	///
 	/// Errors:
 	/// - Returns an error if the mapping cannot be stored.
-	fn store_vtxo_key(&self, index: u32, public_key: PublicKey) -> anyhow::Result<()>;
+	async fn store_vtxo_key(&self, index: u32, public_key: PublicKey) -> anyhow::Result<()>;
 
 	/// Get the last revealed/used [Vtxo] key index.
 	///
@@ -366,7 +367,7 @@ pub trait BarkPersister: Send + Sync + 'static {
 	///
 	/// Errors:
 	/// - Returns an error if the query fails.
-	fn get_last_vtxo_key_index(&self) -> anyhow::Result<Option<u32>>;
+	async fn get_last_vtxo_key_index(&self) -> anyhow::Result<Option<u32>>;
 
 	/// Retrieves the derivation index of the provided [PublicKey] from the database
 	///
@@ -376,7 +377,7 @@ pub trait BarkPersister: Send + Sync + 'static {
 	///
 	/// Errors:
 	/// - Returns an error if the query fails.
-	fn get_public_key_idx(&self, public_key: &PublicKey) -> anyhow::Result<Option<u32>>;
+	async fn get_public_key_idx(&self, public_key: &PublicKey) -> anyhow::Result<Option<u32>>;
 
 	/// Store a new pending lightning send.
 	///
@@ -387,7 +388,7 @@ pub trait BarkPersister: Send + Sync + 'static {
 	///
 	/// Errors:
 	/// - Returns an error if the pending lightning send cannot be stored.
-	fn store_new_pending_lightning_send(
+	async fn store_new_pending_lightning_send(
 		&self,
 		invoice: &Invoice,
 		amount: &Amount,
@@ -402,7 +403,7 @@ pub trait BarkPersister: Send + Sync + 'static {
 	///
 	/// Errors:
 	/// - Returns an error if the query fails.
-	fn get_all_pending_lightning_send(&self) -> anyhow::Result<Vec<LightningSend>>;
+	async fn get_all_pending_lightning_send(&self) -> anyhow::Result<Vec<LightningSend>>;
 
 	/// Mark a lightning send as finished.
 	///
@@ -412,7 +413,7 @@ pub trait BarkPersister: Send + Sync + 'static {
 	///
 	/// Errors:
 	/// - Returns an error if the lightning send cannot be updated.
-	fn finish_lightning_send(
+	async fn finish_lightning_send(
 		&self,
 		payment_hash: PaymentHash,
 		preimage: Option<Preimage>,
@@ -425,7 +426,7 @@ pub trait BarkPersister: Send + Sync + 'static {
 	///
 	/// Errors:
 	/// - Returns an error if the lightning send cannot be removed.
-	fn remove_lightning_send(&self, payment_hash: PaymentHash) -> anyhow::Result<()>;
+	async fn remove_lightning_send(&self, payment_hash: PaymentHash) -> anyhow::Result<()>;
 
 	/// Get a lightning send by payment hash
 	///
@@ -434,7 +435,7 @@ pub trait BarkPersister: Send + Sync + 'static {
 	///
 	/// Errors:
 	/// - Returns an error if the lookup fails.
-	fn get_lightning_send(&self, payment_hash: PaymentHash) -> anyhow::Result<Option<LightningSend>>;
+	async fn get_lightning_send(&self, payment_hash: PaymentHash) -> anyhow::Result<Option<LightningSend>>;
 
 	/// Store an incoming Lightning receive record.
 	///
@@ -446,7 +447,7 @@ pub trait BarkPersister: Send + Sync + 'static {
 	///
 	/// Errors:
 	/// - Returns an error if the receive cannot be stored.
-	fn store_lightning_receive(
+	async fn store_lightning_receive(
 		&self,
 		payment_hash: PaymentHash,
 		preimage: Preimage,
@@ -461,7 +462,7 @@ pub trait BarkPersister: Send + Sync + 'static {
 	///
 	/// Errors:
 	/// - Returns an error if the query fails.
-	fn get_all_pending_lightning_receives(&self) -> anyhow::Result<Vec<LightningReceive>>;
+	async fn get_all_pending_lightning_receives(&self) -> anyhow::Result<Vec<LightningReceive>>;
 
 	/// Mark a Lightning receive preimage as revealed (e.g., after settlement).
 	///
@@ -470,7 +471,7 @@ pub trait BarkPersister: Send + Sync + 'static {
 	///
 	/// Errors:
 	/// - Returns an error if the update fails or the receive does not exist.
-	fn set_preimage_revealed(&self, payment_hash: PaymentHash) -> anyhow::Result<()>;
+	async fn set_preimage_revealed(&self, payment_hash: PaymentHash) -> anyhow::Result<()>;
 
 	/// Set the VTXO IDs and [MovementId] for a [LightningReceive].
 	///
@@ -481,7 +482,7 @@ pub trait BarkPersister: Send + Sync + 'static {
 	///
 	/// Errors:
 	/// - Returns an error if the update fails or the receive does not exist.
-	fn update_lightning_receive(
+	async fn update_lightning_receive(
 		&self,
 		payment_hash: PaymentHash,
 		htlc_vtxo_ids: &[VtxoId],
@@ -499,7 +500,7 @@ pub trait BarkPersister: Send + Sync + 'static {
 	///
 	/// Errors:
 	/// - Returns an error if the lookup fails.
-	fn fetch_lightning_receive_by_payment_hash(
+	async fn fetch_lightning_receive_by_payment_hash(
 		&self,
 		payment_hash: PaymentHash,
 	) -> anyhow::Result<Option<LightningReceive>>;
@@ -511,7 +512,10 @@ pub trait BarkPersister: Send + Sync + 'static {
 	///
 	/// Errors:
 	/// - Returns an error if the removal fails.
-	fn finish_pending_lightning_receive(&self, payment_hash: PaymentHash) -> anyhow::Result<()>;
+	async fn finish_pending_lightning_receive(
+		&self,
+		payment_hash: PaymentHash,
+	) -> anyhow::Result<()>;
 
 	/// Store an entry indicating a [Vtxo] is being exited.
 	///
@@ -520,7 +524,7 @@ pub trait BarkPersister: Send + Sync + 'static {
 	///
 	/// Errors:
 	/// - Returns an error if the entry cannot be stored.
-	fn store_exit_vtxo_entry(&self, exit: &StoredExit) -> anyhow::Result<()>;
+	async fn store_exit_vtxo_entry(&self, exit: &StoredExit) -> anyhow::Result<()>;
 
 	/// Remove an exit entry for a given [Vtxo] ID.
 	///
@@ -529,7 +533,7 @@ pub trait BarkPersister: Send + Sync + 'static {
 	///
 	/// Errors:
 	/// - Returns an error if the removal fails.
-	fn remove_exit_vtxo_entry(&self, id: &VtxoId) -> anyhow::Result<()>;
+	async fn remove_exit_vtxo_entry(&self, id: &VtxoId) -> anyhow::Result<()>;
 
 	/// List all VTXOs currently tracked as being exited.
 	///
@@ -538,7 +542,7 @@ pub trait BarkPersister: Send + Sync + 'static {
 	///
 	/// Errors:
 	/// - Returns an error if the query fails.
-	fn get_exit_vtxo_entries(&self) -> anyhow::Result<Vec<StoredExit>>;
+	async fn get_exit_vtxo_entries(&self) -> anyhow::Result<Vec<StoredExit>>;
 
 	/// Store a child transaction related to an exit transaction.
 	///
@@ -549,7 +553,7 @@ pub trait BarkPersister: Send + Sync + 'static {
 	///
 	/// Errors:
 	/// - Returns an error if the transaction cannot be stored.
-	fn store_exit_child_tx(
+	async fn store_exit_child_tx(
 		&self,
 		exit_txid: Txid,
 		child_tx: &Transaction,
@@ -567,7 +571,7 @@ pub trait BarkPersister: Send + Sync + 'static {
 	///
 	/// Errors:
 	/// - Returns an error if the lookup fails.
-	fn get_exit_child_tx(
+	async fn get_exit_child_tx(
 		&self,
 		exit_txid: Txid,
 	) -> anyhow::Result<Option<(Transaction, ExitTxOrigin)>>;
@@ -589,7 +593,7 @@ pub trait BarkPersister: Send + Sync + 'static {
 	/// # Errors
 	/// - Returns an error if the current state is not within the `allowed_states`.
 	/// - Returns an error for any other issues encountered during the operation.
-	fn update_vtxo_state_checked(
+	async fn update_vtxo_state_checked(
 		&self,
 		vtxo_id: VtxoId,
 		new_state: VtxoState,

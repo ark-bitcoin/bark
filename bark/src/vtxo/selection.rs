@@ -24,8 +24,8 @@
 //!     Ok(v.amount() >= Amount::from_sat(50_000))
 //! }
 //!
-//! # fn demo(mut vtxos: Vec<WalletVtxo>) -> Result<Vec<WalletVtxo>> {
-//! FilterVtxos::filter_vtxos(&is_large, &mut vtxos)?;
+//! # async fn demo(mut vtxos: Vec<WalletVtxo>) -> Result<Vec<WalletVtxo>> {
+//! FilterVtxos::filter_vtxos(&is_large, &mut vtxos).await?;
 //! # Ok(vtxos) }
 //! ```
 //!
@@ -34,12 +34,12 @@
 //! use bitcoin_ext::BlockHeight;
 //! use bark::vtxo::{FilterVtxos, VtxoFilter};
 //!
-//! # fn example(wallet: &bark::Wallet, mut vtxos: Vec<bark::WalletVtxo>) -> anyhow::Result<Vec<bark::WalletVtxo>> {
+//! # async fn example(wallet: &bark::Wallet, mut vtxos: Vec<bark::WalletVtxo>) -> anyhow::Result<Vec<bark::WalletVtxo>> {
 //! let tip: BlockHeight = 1_000;
 //! let filter = VtxoFilter::new(wallet)
 //!     .expires_before(tip + 144) // expiring within ~1 day
 //!     .counterparty();           // and/or with counterparty risk
-//! filter.filter_vtxos(&mut vtxos)?;
+//! filter.filter_vtxos(&mut vtxos).await?;
 //! # Ok(vtxos) }
 //! ```
 //!
@@ -75,14 +75,15 @@ use crate::vtxo::state::{VtxoStateKind, WalletVtxo};
 /// See [`Wallet::vtxos_with`]. For easy filtering, see [VtxoFilter].
 ///
 /// This trait is also implemented for `Fn(&WalletVtxo) -> anyhow::Result<bool>`.
-pub trait FilterVtxos {
+#[async_trait]
+pub trait FilterVtxos: Send + Sync {
 	/// Check whether the VTXO mathes this filter
-	fn matches(&self, vtxo: &WalletVtxo) -> anyhow::Result<bool>;
+	async fn matches(&self, vtxo: &WalletVtxo) -> anyhow::Result<bool>;
 
 	/// Eliminate from the vector all non-matching VTXOs
-	fn filter_vtxos<V: Borrow<WalletVtxo>>(&self, vtxos: &mut Vec<V>) -> anyhow::Result<()> {
+	async fn filter_vtxos<V: Borrow<WalletVtxo> + Send>(&self, vtxos: &mut Vec<V>) -> anyhow::Result<()> {
 		for i in (0..vtxos.len()).rev() {
-			if !self.matches(vtxos[i].borrow())? {
+			if !self.matches(vtxos[i].borrow()).await? {
 				vtxos.swap_remove(i);
 			}
 		}
@@ -90,11 +91,12 @@ pub trait FilterVtxos {
 	}
 }
 
+#[async_trait]
 impl<F> FilterVtxos for F
 where
-	F: Fn(&WalletVtxo) -> anyhow::Result<bool>,
+	F: Fn(&WalletVtxo) -> anyhow::Result<bool> + Send + Sync,
 {
-	fn matches(&self, vtxo: &WalletVtxo) -> anyhow::Result<bool> {
+	async fn matches(&self, vtxo: &WalletVtxo) -> anyhow::Result<bool> {
 	    self(vtxo)
 	}
 }
@@ -128,7 +130,7 @@ impl<'a> VtxoFilter<'a> {
 	///
 	/// Examples
 	/// ```
-	/// # fn demo(wallet: &bark::Wallet) -> anyhow::Result<Vec<bark::WalletVtxo>> {
+	/// # async fn demo(wallet: &bark::Wallet) -> anyhow::Result<Vec<bark::WalletVtxo>> {
 	/// use bark::vtxo::{VtxoFilter, FilterVtxos};
 	/// use bitcoin_ext::BlockHeight;
 	///
@@ -136,7 +138,7 @@ impl<'a> VtxoFilter<'a> {
 	/// let filter = VtxoFilter::new(wallet)
 	///     .expires_before(tip + 144) // expiring within ~1 day
 	///     .counterparty();           // or with counterparty risk
-	/// let filtered = wallet.spendable_vtxos_with(&filter)?;
+	/// let filtered = wallet.spendable_vtxos_with(&filter).await?;
 	/// # Ok(filtered) }
 	/// ```
 	pub fn new(wallet: &'a Wallet) -> VtxoFilter<'a> {
@@ -153,14 +155,14 @@ impl<'a> VtxoFilter<'a> {
 	///
 	/// Examples
 	/// ```
-	/// # fn demo(wallet: &bark::Wallet) -> anyhow::Result<Vec<bark::WalletVtxo>> {
+	/// # async fn demo(wallet: &bark::Wallet) -> anyhow::Result<Vec<bark::WalletVtxo>> {
 	/// use bark::vtxo::{VtxoFilter, FilterVtxos};
 	/// use bitcoin_ext::BlockHeight;
 	///
 	/// let h: BlockHeight = 10_000;
 	/// let filter = VtxoFilter::new(wallet)
 	///     .expires_before(h);
-	/// let filtered = wallet.spendable_vtxos_with(&filter)?;
+	/// let filtered = wallet.spendable_vtxos_with(&filter).await?;
 	/// # Ok(filtered) }
 	/// ```
 	pub fn expires_before(mut self, expires_before: BlockHeight) -> Self {
@@ -202,8 +204,9 @@ impl<'a> VtxoFilter<'a> {
 	}
 }
 
+#[async_trait]
 impl FilterVtxos for VtxoFilter<'_> {
-	fn matches(&self, vtxo: &WalletVtxo) -> anyhow::Result<bool> {
+	async fn matches(&self, vtxo: &WalletVtxo) -> anyhow::Result<bool> {
 		let id = vtxo.id();
 
 		// First do explicit includes and excludes.
@@ -221,7 +224,7 @@ impl FilterVtxos for VtxoFilter<'_> {
 		}
 
 		if self.counterparty {
-			if self.wallet.has_counterparty_risk(vtxo).context("db error")? {
+			if self.wallet.has_counterparty_risk(vtxo).await.context("db error")? {
 				return Ok(true);
 			}
 		}
@@ -275,7 +278,7 @@ impl<'a> RefreshStrategy<'a> {
 	///
 	/// Examples
 	/// ```
-	/// # fn demo(wallet: &bark::Wallet, mut vtxos: Vec<bark::WalletVtxo>) -> anyhow::Result<Vec<bark::WalletVtxo>> {
+	/// # async fn demo(wallet: &bark::Wallet, mut vtxos: Vec<bark::WalletVtxo>) -> anyhow::Result<Vec<bark::WalletVtxo>> {
 	/// use bark::vtxo::{FilterVtxos, RefreshStrategy};
 	/// use bitcoin::FeeRate;
 	/// use bitcoin_ext::BlockHeight;
@@ -283,7 +286,7 @@ impl<'a> RefreshStrategy<'a> {
 	/// let tip: BlockHeight = 200_000;
 	/// let fr = FeeRate::from_sat_per_vb(5).unwrap();
 	/// let must = RefreshStrategy::must_refresh(wallet, tip, fr);
-	/// must.filter_vtxos(&mut vtxos)?;
+	/// must.filter_vtxos(&mut vtxos).await?;
 	/// # Ok(vtxos) }
 	/// ```
 	pub fn must_refresh(wallet: &'a Wallet, tip: BlockHeight, fee_rate: FeeRate) -> Self {
@@ -316,7 +319,7 @@ impl<'a> RefreshStrategy<'a> {
 	///
 	/// Examples
 	/// ```
-	/// # fn demo(wallet: &bark::Wallet, mut vtxos: Vec<bark::WalletVtxo>) -> anyhow::Result<Vec<bark::WalletVtxo>> {
+	/// # async fn demo(wallet: &bark::Wallet, mut vtxos: Vec<bark::WalletVtxo>) -> anyhow::Result<Vec<bark::WalletVtxo>> {
 	/// use bark::vtxo::{FilterVtxos, RefreshStrategy};
 	/// use bitcoin::FeeRate;
 	/// use bitcoin_ext::BlockHeight;
@@ -324,7 +327,7 @@ impl<'a> RefreshStrategy<'a> {
 	/// let tip: BlockHeight = 200_000;
 	/// let fr = FeeRate::from_sat_per_vb(8).unwrap();
 	/// let should = RefreshStrategy::should_refresh(wallet, tip, fr);
-	/// should.filter_vtxos(&mut vtxos)?;
+	/// should.filter_vtxos(&mut vtxos).await?;
 	/// # Ok(vtxos) }
 	/// ```
 	pub fn should_refresh(wallet: &'a Wallet, tip: BlockHeight, fee_rate: FeeRate) -> Self {
@@ -337,8 +340,9 @@ impl<'a> RefreshStrategy<'a> {
 	}
 }
 
+#[async_trait]
 impl FilterVtxos for RefreshStrategy<'_> {
-	fn matches(&self, vtxo: &WalletVtxo) -> anyhow::Result<bool> {
+	async fn matches(&self, vtxo: &WalletVtxo) -> anyhow::Result<bool> {
 		match self.inner {
 			InnerRefreshStrategy::MustRefresh => {
 				let threshold = self.wallet.config().vtxo_refresh_expiry_threshold;
@@ -372,8 +376,9 @@ impl FilterVtxos for RefreshStrategy<'_> {
 	}
 }
 
+#[async_trait]
 impl FilterVtxos for VtxoStateKind {
-	fn matches(&self, vtxo: &WalletVtxo) -> anyhow::Result<bool> {
+	async fn matches(&self, vtxo: &WalletVtxo) -> anyhow::Result<bool> {
 	    Ok(vtxo.state.kind() == *self)
 	}
 }

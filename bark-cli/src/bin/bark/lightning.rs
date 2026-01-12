@@ -152,14 +152,14 @@ pub async fn execute_lightning_command(
 				(None, None) => bail!("need to provide a filter"),
 				(Some(_), Some(_)) => bail!("cannot provide both filter and preimage"),
 			};
-			if let Some(ret) = wallet.lightning_receive_status(payment_hash)? {
+			if let Some(ret) = wallet.lightning_receive_status(payment_hash).await? {
 				output_json(&LightningReceiveInfo::from(ret));
 			} else {
 				info!("No invoice found");
 			}
 		},
 		LightningCommand::Invoices => {
-			let mut receives = wallet.pending_lightning_receives()?;
+			let mut receives = wallet.pending_lightning_receives().await?;
 			// receives are ordered from newest to oldest, so we reverse them so last terminal item is newest
 			receives.reverse();
 			output_json(&receives.into_iter().map(LightningReceiveInfo::from).collect::<Vec<_>>());

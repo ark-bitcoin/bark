@@ -130,6 +130,7 @@ dependencies = [
 name = "ark-lib"
 version = "0.1.0-beta.5"
 dependencies = [
+ "async-trait",
  "bark-bitcoin-ext",
  "bitcoin",
  "bitcoinkernel",
