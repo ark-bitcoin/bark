@@ -27,8 +27,6 @@ otel_deployment_name = "my_regtest"
 ################
 
 [vtxo_sweeper]
-# Fallback feerate to use for sweep txs
-sweep_tx_fallback_feerate = "2500sat/kwu"
 # Interval to check if sweeps can be made
 round_sweep_interval = "1h"
 # Minimum total sweep value to merit a sweep tx
@@ -40,8 +38,6 @@ sweep_threshold = 1000000
 ###################
 
 [forfeit_watcher]
-# Fallback feerate to use for forfeit claims
-claim_fallback_feerate = "6250sat/kwu"
 # Interval to check of forfeited exits have been broadcast
 wake_interval = "1m"
 

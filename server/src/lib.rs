@@ -385,6 +385,7 @@ impl Server {
 				rounds_wallet.reveal_next_address(
 					bdk_wallet::KeychainKind::External,
 				).address,
+				fee_estimator.clone(),
 			).await.context("failed to start VtxoSweeper")?;
 			Some(s)
 		} else {
@@ -403,6 +404,7 @@ impl Server {
 				master_xpriv.derive_priv(&*SECP, &[WalletKind::Forfeits.child_number()])
 					.expect("can't error"),
 				server_key.clone(),
+				fee_estimator.clone(),
 			).await.context("failed to start ForfeitWatcher")?;
 			Some(s)
 		} else {
@@ -575,7 +577,7 @@ impl Server {
 
 		let mut wallet = self.rounds_wallet.lock().await;
 		let addr = forfeit_wallet.address.assume_checked();
-		let feerate = self.config.round_tx_feerate; //TODO(stevenroose) fix this
+		let feerate = self.fee_estimator.regular();
 		info!("Sending {amount} to forfeit wallet address {addr}...");
 		let tx = match wallet.send(addr.script_pubkey(), amount, feerate).await {
 			Ok(tx) => tx,

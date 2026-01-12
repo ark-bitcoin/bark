@@ -19,7 +19,7 @@ use bitcoin::secp256k1::Keypair;
 use tracing::info;
 use bitcoin_ext::rpc::{BitcoinRpcClient, BitcoinRpcExt, RpcApi};
 
-use crate::{database, telemetry, wallet, SECP};
+use crate::{database, fee_estimator, telemetry, wallet, SECP};
 use crate::sync::SyncManager;
 use crate::config::watchman::Config;
 use crate::forfeits::ForfeitWatcher;
@@ -154,6 +154,12 @@ impl Watchman {
 			cfg.transaction_rebroadcast_interval,
 		);
 
+		let fee_estimator = fee_estimator::start(
+			rtmgr.clone(),
+			cfg.fee_estimator.clone(),
+			bitcoind.clone(),
+		);
+
 		let vtxo_sweeper = VtxoSweeper::start(
 			rtmgr.clone(),
 			cfg.vtxo_sweeper.clone(),
@@ -165,6 +171,7 @@ impl Watchman {
 			server_key.clone(),
 			cfg.sweep_address.clone().context("no sweep address config set")?
 				.require_network(cfg.network).context("sweep address for wrong network")?,
+			fee_estimator.clone(),
 		).await.context("failed to start VtxoSweeper")?;
 
 		let forfeit_watcher = ForfeitWatcher::start(
@@ -178,6 +185,7 @@ impl Watchman {
 			master_xpriv.derive_priv(&*SECP, &[WalletKind::Forfeits.child_number()])
 				.expect("can't error"),
 			server_key.clone(),
+			fee_estimator.clone(),
 		).await.context("failed to start VtxoSweeper")?;
 
 		let sync_manager = SyncManager::start(
