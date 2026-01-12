@@ -81,7 +81,7 @@ pub struct State {
 
 impl SlogHandler for Arc<parking_lot::Mutex<State>> {
 	fn process_slog(&mut self, log: &ParsedRecord) -> bool {
-	    if log.is::<FinishedPoolIssuance>() {
+		if log.is::<FinishedPoolIssuance>() {
 			let fpi = log.try_as::<FinishedPoolIssuance>().unwrap();
 			self.lock().vtxopool_state = VtxoPoolState::Ready(fpi.txid);
 		}
