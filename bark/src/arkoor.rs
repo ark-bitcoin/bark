@@ -71,7 +71,7 @@ impl Wallet {
 
 		// Find vtxos to cover
 		let mut srv = self.require_server()?;
-		let inputs: Vec<Vtxo> = self.select_vtxos_to_cover(vtxo_request.amount, None).await?;
+		let inputs: Vec<Vtxo> = self.select_vtxos_to_cover(vtxo_request.amount).await?;
 		let input_ids: Vec<VtxoId> = inputs.iter().map(|v| v.id()).collect();
 
 		let mut user_keypairs = vec![];

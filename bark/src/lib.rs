@@ -1759,25 +1759,13 @@ impl Wallet {
 	async fn select_vtxos_to_cover(
 		&self,
 		amount: Amount,
-		expiry_threshold: Option<BlockHeight>,
 	) -> anyhow::Result<Vec<Vtxo>> {
 		let inputs = self.spendable_vtxos().await?;
 
 		// Iterate over all rows until the required amount is reached
 		let mut result = Vec::new();
-		let mut total_amount = bitcoin::Amount::ZERO;
+		let mut total_amount = Amount::ZERO;
 		for input in inputs {
-			// Check if vtxo is soon-to-expire for arkoor payments
-			if let Some(threshold) = expiry_threshold {
-				if input.expiry_height() < threshold {
-					warn!("VTXO {} is expiring soon (expires at {}, threshold {}), \
-						skipping for arkoor payment",
-						input.id(), input.expiry_height(), threshold,
-					);
-					continue;
-				}
-			}
-
 			total_amount += input.amount();
 			result.push(input.vtxo);
 
