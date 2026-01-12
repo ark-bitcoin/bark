@@ -11,7 +11,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Context;
-use bitcoin::{Address, Amount, FeeRate, Network};
+use bitcoin::{Address, Amount, FeeRate, Network, Txid};
 use log::{error, info, trace, warn};
 use serde_json;
 use tokio::fs;
@@ -510,19 +510,13 @@ impl Bark {
 		self.run(["refresh", "--counterparty"]).await;
 	}
 
-	pub async fn try_offboard_all(&self, address: impl fmt::Display) -> anyhow::Result<RoundStatus> {
-		let res = self.try_run_json::<Option<RoundStatus>, _, _>(
+	pub async fn try_offboard_all(&self, address: impl fmt::Display) -> anyhow::Result<Txid> {
+		Ok(self.try_run_json(
 			["offboard", "--all", "--address", &address.to_string()],
-		).await
-			.context("running offboard --all command failed")?
-			.context("no round was joined")?;
-		if !res.is_success() {
-			bail!("round failed: {:?}", res);
-		}
-		Ok(res)
+		).await.context("running offboard --all command failed")?)
 	}
 
-	pub async fn offboard_all(&self, address: impl fmt::Display) -> RoundStatus {
+	pub async fn offboard_all(&self, address: impl fmt::Display) -> Txid {
 		self.try_offboard_all(address).await.expect("offboard --all command failed")
 	}
 
@@ -530,7 +524,7 @@ impl Bark {
 		&self,
 		vtxo: impl fmt::Display,
 		address: impl fmt::Display,
-	) -> RoundStatus {
+	) -> Txid {
 		self.run_json([
 			"offboard", "--vtxo", &vtxo.to_string(), "--address", &address.to_string(),
 		]).await

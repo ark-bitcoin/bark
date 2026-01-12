@@ -2,10 +2,12 @@ use std::collections::HashSet;
 use std::str::FromStr;
 use std::sync::Arc;
 
+use ark::offboard::OffboardRequest;
 use ark::{VtxoId, VtxoPolicy};
 use ark::lightning::{Invoice, PaymentHash};
 use bark_json::cli::{MovementDestination, MovementStatus, PaymentMethod};
-use bitcoin::{Address, Amount, OutPoint, Txid};
+use bitcoin::consensus::encode::deserialize_hex;
+use bitcoin::{Address, Amount, OutPoint, Transaction, Txid, Weight};
 use bitcoin::params::Params;
 use tokio::join;
 use bitcoin_ext::TaprootSpendInfoExt;
@@ -335,10 +337,9 @@ async fn lightning_send_offer() {
 	}
 }
 
-#[ignore]
 #[tokio::test]
-async fn round_offboard() {
-	let ctx = TestContext::new("movement/round_offboard").await;
+async fn movement_offboard() {
+	let ctx = TestContext::new("movement/movement_offboard").await;
 	let srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
 	let bark = ctx.new_bark_with_funds("bark", &srv, sat(1_000_000)).await;
 
@@ -348,34 +349,47 @@ async fn round_offboard() {
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 	bark.maintain().await;
 
-	let vtxos = bark.vtxo_ids().await;
+	let vtxos = bark.vtxos().await;
 	assert_eq!(vtxos.len(), 3);
 	let addr = bark.get_onchain_address().await;
-	bark.offboard_vtxo(vtxos.first().unwrap(), &addr).await;
-	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
+	let offb_vtxo = vtxos.first().unwrap();
+	let txid = bark.offboard_vtxo(offb_vtxo.id, &addr).await;
+
+	let expected_fee = OffboardRequest::calculate_fee(
+		&addr.script_pubkey(),
+		srv.config().offboard_feerate,
+		Weight::from_vb_unchecked(srv.config().offboard_fixed_fee_vb),
+	).unwrap();
 
 	let movement = bark.history().await.last().cloned().unwrap();
 	assert_eq!(movement.status, MovementStatus::Successful);
-	assert_eq!(movement.subsystem.name, "bark.round");
+	assert_eq!(movement.subsystem.name, "bark.offboard");
 	assert_eq!(movement.subsystem.kind, "offboard");
-	assert_eq!(movement.intended_balance, signed_sat(-98_900));
-	assert_eq!(movement.effective_balance, signed_sat(-100_000));
-	assert_eq!(movement.offchain_fee, sat(1_100));
+	assert_eq!(movement.intended_balance, -offb_vtxo.amount.to_signed().unwrap());
+	assert_eq!(movement.effective_balance, -offb_vtxo.amount.to_signed().unwrap());
+	assert_eq!(movement.offchain_fee, expected_fee);
 	assert_eq!(movement.sent_to.len(), 1);
 	assert_eq!(movement.sent_to.first().unwrap(), &MovementDestination {
 		destination: PaymentMethod::Bitcoin(addr.to_string()),
-		amount: sat(98_900),
+		amount: offb_vtxo.amount - expected_fee,
 	});
 	assert_eq!(movement.received_on.len(), 0);
 	assert_eq!(movement.input_vtxos.len(), 1);
-	assert_eq!(movement.input_vtxos.first().unwrap(), vtxos.first().unwrap());
+	assert_eq!(*movement.input_vtxos.first().unwrap(), offb_vtxo.id);
 	assert_eq!(movement.output_vtxos.len(), 0);
 	assert_eq!(movement.exited_vtxos.len(), 0);
 	assert_eq!(movement.time.completed_at.is_some(), true);
 
 	assert_eq!(movement.metadata.is_some(), true);
-	movement.metadata.as_ref().unwrap().get("funding_txid")
-		.map(|txid| serde_json::from_value::<Txid>(txid.clone()).unwrap()).unwrap();
+	assert_eq!(txid,
+		movement.metadata.as_ref().unwrap().get("offboard_txid")
+			.map(|txid| serde_json::from_value::<Txid>(txid.clone()).unwrap()).unwrap(),
+	);
+	assert_eq!(txid,
+		deserialize_hex::<Transaction>(&movement.metadata.as_ref().unwrap().get("offboard_tx")
+			.map(|hex| serde_json::from_value::<String>(hex.clone()).unwrap()).unwrap()
+		).unwrap().compute_txid(),
+	);
 }
 
 #[tokio::test]
