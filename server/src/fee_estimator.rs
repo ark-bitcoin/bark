@@ -12,6 +12,7 @@ use bitcoin_ext::rpc::{self, BitcoinRpcClient, RpcApi};
 use tracing::info;
 
 use crate::system::RuntimeManager;
+use crate::telemetry;
 
 const FEE_RATE_TARGET_CONF_FAST: u16 = 1;
 const FEE_RATE_TARGET_CONF_REGULAR: u16 = 3;
@@ -122,14 +123,26 @@ impl Process {
 	}
 
 	fn update_fee_rates(&self) {
-		match self.fetch_fee_rates() {
-			Ok(rates) => self.fee_estimator.update(rates),
+		let (rates, using_fallback) = match self.fetch_fee_rates() {
+			Ok(rates) => (rates, false),
 			Err(e) => {
 				slog!(FeeEstimateFallback, err: e.to_string());
 				let rates = self.config.fallback_fee_rates();
 				self.fee_estimator.update(rates);
+				(self.config.fallback_fee_rates(), true)
 			}
-		}
+		};
+
+		// Convert sat/kwu to sat/vb: 1 vbyte = 4 weight units, so sat/vb = sat/kwu / 250
+		let to_sat_per_vb = |rate: FeeRate| rate.to_sat_per_kwu() as f64 / 250.0;
+		telemetry::set_fee_estimator_metrics(
+			to_sat_per_vb(rates.fast),
+			to_sat_per_vb(rates.regular),
+			to_sat_per_vb(rates.slow),
+			using_fallback,
+		);
+
+		self.fee_estimator.update(rates);
 	}
 
 	fn fetch_fee_rates(&self) -> anyhow::Result<OnchainFeeRates> {

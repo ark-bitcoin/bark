@@ -274,6 +274,8 @@ struct Metrics {
 	postgres_get_timed_out: Gauge<u64>,
 	postgres_get_waited: Gauge<u64>,
 	postgres_get_wait_time: Gauge<u64>,
+	fee_rate_gauge: Gauge<f64>,
+	fee_rate_using_fallback_gauge: Gauge<u64>,
 	global_labels: Vec<KeyValue>,
 }
 
@@ -471,6 +473,14 @@ impl Metrics {
 		let postgres_get_timed_out = meter.u64_gauge("postgres_get_timed_out").build();
 		let postgres_get_waited = meter.u64_gauge("postgres_get_waited").build();
 		let postgres_get_wait_time = meter.u64_gauge("postgres_get_wait_time").build();
+		// fee estimator metrics
+		let fee_rate_gauge = meter.f64_gauge("fee_rate")
+			.with_description("Estimated fee rate (use 'estimator' label: fast/regular/slow)")
+			.with_unit("sat/vb")
+			.build();
+		let fee_rate_using_fallback_gauge = meter.u64_gauge("fee_rate_using_fallback")
+			.with_description("Whether fallback fee rates are being used (0=estimated, 1=fallback)")
+			.build();
 
 		// log the current server version
 		meter.u64_counter("server_version_counter").build().add(
@@ -529,6 +539,8 @@ impl Metrics {
 			postgres_get_timed_out,
 			postgres_get_waited,
 			postgres_get_wait_time,
+			fee_rate_gauge,
+			fee_rate_using_fallback_gauge,
 			global_labels,
 		}
 	}
@@ -1002,6 +1014,24 @@ fn set_vtxo_pool_metric(block_delta_label: &'static str, amount_total: u64, amou
 	m.vtxo_pool_amount_gauge.record(amount_total, &attrs);
 	m.vtxo_pool_amount_max_gauge.record(amount_max, &attrs);
 	m.vtxo_pool_count_gauge.record(count as u64, &attrs);
+}
+
+pub fn set_fee_estimator_metrics(
+	fast_sat_vb: f64,
+	regular_sat_vb: f64,
+	slow_sat_vb: f64,
+	using_fallback: bool,
+) {
+	if let Some(m) = TELEMETRY.get() {
+		let global_labels = m.global_labels();
+		let fast_labels = m.with_global_labels([KeyValue::new("estimator", "fast")]);
+		let regular_labels = m.with_global_labels([KeyValue::new("estimator", "regular")]);
+		let slow_labels = m.with_global_labels([KeyValue::new("estimator", "slow")]);
+		m.fee_rate_gauge.record(fast_sat_vb, &fast_labels);
+		m.fee_rate_gauge.record(regular_sat_vb, &regular_labels);
+		m.fee_rate_gauge.record(slow_sat_vb, &slow_labels);
+		m.fee_rate_using_fallback_gauge.record(if using_fallback { 1 } else { 0 }, global_labels);
+	}
 }
 
 /// An extention trait for span tracing.
