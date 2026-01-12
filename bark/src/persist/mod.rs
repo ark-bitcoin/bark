@@ -36,7 +36,7 @@ use bitcoin_ext::BlockDelta;
 
 use crate::WalletProperties;
 use crate::exit::ExitTxOrigin;
-use crate::movement::{Movement, MovementId, MovementStatus, MovementSubsystem, PaymentMethod};
+use crate::movement::{Movement, MovementId, MovementStatus, MovementSubsystem};
 use crate::persist::models::{LightningReceive, LightningSend, PendingBoard, StoredExit};
 use crate::round::RoundState;
 use crate::vtxo::{VtxoState, VtxoStateKind, WalletVtxo};
@@ -146,22 +146,6 @@ pub trait BarkPersister: Send + Sync + 'static {
 	/// Errors:
 	/// - Returns an error if the update fails.
 	async fn set_server_pubkey(&self, server_pubkey: PublicKey) -> anyhow::Result<()>;
-
-	/// Check whether a recipient identifier already exists.
-	///
-	/// Useful to avoid storing duplicate recipients for the same logical payee or duplicated
-	/// lightning invoice payments (unsafe)
-	///
-	/// Parameters:
-	/// - recipient: A recipient identifier (e.g., invoice).
-	///
-	/// Returns:
-	/// - `Ok(true)` if the recipient exists,
-	/// - `Ok(false)` otherwise.
-	///
-	/// Errors:
-	/// - Returns an error if the lookup fails.
-	async fn check_recipient_exists(&self, recipient: &PaymentMethod) -> anyhow::Result<bool>;
 
 	/// Creates a new movement in the given state, ready to be updated.
 	///

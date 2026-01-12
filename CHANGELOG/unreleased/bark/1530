@@ -1,0 +1,2 @@
+- Remove unused `check_recipient_exists` method from `BarkPersister` trait
+  [#1530](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1530)

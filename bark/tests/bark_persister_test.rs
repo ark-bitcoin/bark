@@ -64,10 +64,6 @@ impl BarkPersister for Dummy {
 		Ok(())
 	}
 
-	async fn check_recipient_exists(&self, _recipient: &PaymentMethod) -> anyhow::Result<bool> {
-		Ok(true)
-	}
-
 	async fn store_pending_board(
 		&self,
 		_vtxo: &Vtxo,
