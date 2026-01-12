@@ -1446,7 +1446,7 @@ impl Wallet {
 			MovementUpdate::new()
 				.produced_vtxo(&vtxo)
 				.intended_and_effective_balance(vtxo.amount().to_signed()?)
-				.metadata(BoardMovement::metadata(utxo, onchain_fee)?),
+				.metadata(BoardMovement::metadata(utxo, onchain_fee)),
 		).await?;
 		self.store_locked_vtxos([&vtxo], Some(movement_id)).await?;
 
