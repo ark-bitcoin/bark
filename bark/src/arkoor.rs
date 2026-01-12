@@ -62,8 +62,10 @@ impl Wallet {
 		Ok(())
 	}
 
-	async fn create_checkpointed_arkoor(
-		&self, vtxo_request: VtxoRequest, change_pubkey: PublicKey
+	pub(crate) async fn create_checkpointed_arkoor(
+		&self,
+		vtxo_request: VtxoRequest,
+		change_pubkey: PublicKey,
 	) -> anyhow::Result<ArkoorCreateResult> {
 		if vtxo_request.policy.user_pubkey() == change_pubkey {
 			bail!("Cannot create arkoor to same address as change");
@@ -75,8 +77,8 @@ impl Wallet {
 		let input_ids = inputs.iter().map(|v| v.id()).collect();
 
 		let mut user_keypairs = vec![];
-		for vtxo in inputs.iter() {
-			user_keypairs.push(self.get_vtxo_key(&vtxo).await?);
+		for vtxo in &inputs {
+			user_keypairs.push(self.get_vtxo_key(vtxo).await?);
 		}
 
 		let builder = CheckpointedPackageBuilder::new(

@@ -727,7 +727,11 @@ impl Wallet {
 	/// * `Ok(Some(Keypair))` - If the pubkey is found, the keypair is returned
 	/// * `Err(anyhow::Error)` - If the corresponding public key doesn't exist
 	///   in the database or a database error occurred.
-	pub async fn get_vtxo_key(&self, vtxo: &Vtxo) -> anyhow::Result<Keypair> {
+	pub async fn get_vtxo_key(&self, vtxo: impl VtxoRef) -> anyhow::Result<Keypair> {
+		let vtxo = match vtxo.vtxo() {
+			Some(v) => v,
+			None => &self.get_vtxo_by_id(vtxo.vtxo_id()).await?,
+		};
 		let pubkey = self.find_signable_clause(vtxo).await
 			.context("VTXO is not signable by wallet")?
 			.pubkey();

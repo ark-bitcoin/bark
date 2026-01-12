@@ -53,7 +53,7 @@ impl Wallet {
 		let mut pubs = Vec::with_capacity(htlc_vtxos.len());
 		let mut keypairs = Vec::with_capacity(htlc_vtxos.len());
 		for input in htlc_vtxos.iter() {
-			let keypair = self.get_vtxo_key(&input).await?;
+			let keypair = self.get_vtxo_key(input).await?;
 			let (s, p) = musig::nonce_pair(&keypair);
 			secs.push(s);
 			pubs.push(p);
@@ -431,7 +431,7 @@ impl Wallet {
 		let mut keypairs = Vec::with_capacity(inputs.len());
 		let mut input_ids = Vec::with_capacity(inputs.len());
 		for input in inputs.iter() {
-			let keypair = self.get_vtxo_key(&input).await?;
+			let keypair = self.get_vtxo_key(input).await?;
 			let (s, p) = musig::nonce_pair(&keypair);
 			secs.push(s);
 			pubs.push(p);

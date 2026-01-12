@@ -126,8 +126,8 @@ impl Wallet {
 		let mut keypairs = vec![];
 		let mut sec_nonces = vec![];
 		let mut pub_nonces = vec![];
-		for v in inputs.iter() {
-			let keypair = self.get_vtxo_key(v).await?;
+		for v in &inputs {
+			let keypair = self.get_vtxo_key(*v).await?;
 			let (sec_nonce, pub_nonce) = musig::nonce_pair(&keypair);
 			keypairs.push(keypair);
 			sec_nonces.push(sec_nonce);
