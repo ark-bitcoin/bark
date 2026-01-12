@@ -75,6 +75,7 @@ use crate::flux::VtxosInFlux;
 use crate::forfeits::ForfeitWatcher;
 use crate::ln::cln::ClnManager;
 use crate::mailbox_manager::MailboxManager;
+use crate::fee_estimator::FeeEstimator;
 use crate::round::RoundInput;
 use crate::round::forfeit::HarkForfeitNonces;
 use crate::secret::Secret;
@@ -185,6 +186,7 @@ pub struct Server {
 	cln: ClnManager,
 	vtxopool: VtxoPool,
 	pending_offboards: parking_lot::Mutex<TimedEntryMap<Txid, Option<offboards::PendingOffboard>>>,
+	fee_estimator: Arc<FeeEstimator>,
 }
 
 impl Server {
@@ -364,6 +366,12 @@ impl Server {
 			cfg.transaction_rebroadcast_interval,
 		);
 
+		let fee_estimator = fee_estimator::start(
+			rtmgr.clone(),
+			cfg.fee_estimator.clone(),
+			bitcoind.clone(),
+		);
+
 		let vtxo_sweeper = if let Some(c) = cfg.vtxo_sweeper.enabled() {
 			let s = VtxoSweeper::start(
 				rtmgr.clone(),
@@ -452,6 +460,7 @@ impl Server {
 			cln,
 			vtxopool,
 			pending_offboards: parking_lot::Mutex::new(TimedEntryMap::new()),
+			fee_estimator,
 		};
 
 		let srv = Arc::new(srv);
