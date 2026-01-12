@@ -8,13 +8,14 @@ use std::path::PathBuf;
 use std::str::FromStr;
 
 use anyhow::Context;
+use bitcoin_ext::BlockHeight;
 use bitcoin::{Amount, Network, Txid};
 use bitcoin::address::{Address, NetworkUnchecked};
 use log::{info, trace};
 use tokio::sync::{self, mpsc};
 use tokio::process::Command;
 
-use server_log::{parse_record, FinishedPoolIssuance, ParsedRecord, LogMsg, TipUpdated, TxIndexUpdateFinished};
+use server_log::{parse_record, FinishedPoolIssuance, ParsedRecord, LogMsg, SyncedToHeight, TipUpdated, TxIndexUpdateFinished};
 use server_rpc::{self as rpc, protos};
 pub use server::config::{self, Config};
 
@@ -75,6 +76,7 @@ impl Default for VtxoPoolState {
 #[derive(Debug, Default)]
 pub struct State {
 	vtxopool_state: VtxoPoolState,
+	sync_height: BlockHeight,
 }
 
 impl SlogHandler for Arc<parking_lot::Mutex<State>> {
@@ -82,6 +84,11 @@ impl SlogHandler for Arc<parking_lot::Mutex<State>> {
 	    if log.is::<FinishedPoolIssuance>() {
 			let fpi = log.try_as::<FinishedPoolIssuance>().unwrap();
 			self.lock().vtxopool_state = VtxoPoolState::Ready(fpi.txid);
+		}
+
+		if log.is::<SyncedToHeight>() {
+			let sth = log.try_as::<SyncedToHeight>().unwrap();
+			self.lock().sync_height = sth.height;
 		}
 
 		false
@@ -284,6 +291,17 @@ impl Captaind {
 				return;
 			}
 			tokio::time::sleep(secs(1)).await;
+		}
+	}
+
+	/// Wait until synced to the given height
+	pub async fn wait_for_sync_height(&self, height: BlockHeight) {
+		info!("Waiting for sync height {}...", height);
+		loop {
+			if self.inner.state.lock().sync_height >= height {
+				return;
+			}
+			tokio::time::sleep(Duration::from_millis(50)).await;
 		}
 	}
 }
