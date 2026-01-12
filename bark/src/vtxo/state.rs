@@ -113,6 +113,12 @@ impl<'a> VtxoRef for &'a WalletVtxo {
 	fn vtxo(&self) -> Option<&Vtxo> { Some(&self.vtxo) }
 }
 
+impl AsRef<Vtxo> for WalletVtxo {
+	fn as_ref(&self) -> &Vtxo {
+		&self.vtxo
+	}
+}
+
 impl Deref for WalletVtxo {
 	type Target = Vtxo;
 

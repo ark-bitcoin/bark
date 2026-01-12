@@ -1761,7 +1761,7 @@ impl Wallet {
 	async fn select_vtxos_to_cover(
 		&self,
 		amount: Amount,
-	) -> anyhow::Result<Vec<Vtxo>> {
+	) -> anyhow::Result<Vec<WalletVtxo>> {
 		let mut vtxos = self.spendable_vtxos().await?;
 		vtxos.sort_by_key(|v| v.expiry_height());
 
@@ -1770,7 +1770,7 @@ impl Wallet {
 		let mut total_amount = Amount::ZERO;
 		for input in vtxos {
 			total_amount += input.amount();
-			result.push(input.vtxo);
+			result.push(input);
 
 			if total_amount >= amount {
 				return Ok(result)

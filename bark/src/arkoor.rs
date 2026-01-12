@@ -71,15 +71,19 @@ impl Wallet {
 
 		// Find vtxos to cover
 		let mut srv = self.require_server()?;
-		let inputs: Vec<Vtxo> = self.select_vtxos_to_cover(vtxo_request.amount).await?;
-		let input_ids: Vec<VtxoId> = inputs.iter().map(|v| v.id()).collect();
+		let inputs = self.select_vtxos_to_cover(vtxo_request.amount).await?;
+		let input_ids = inputs.iter().map(|v| v.id()).collect();
 
 		let mut user_keypairs = vec![];
 		for vtxo in inputs.iter() {
 			user_keypairs.push(self.get_vtxo_key(&vtxo).await?);
 		}
 
-		let builder = CheckpointedPackageBuilder::new(inputs.clone(), vtxo_request, change_pubkey)
+		let builder = CheckpointedPackageBuilder::new(
+			inputs.iter().map(|v| &v.vtxo).cloned(),
+			vtxo_request,
+			change_pubkey,
+		)
 			.context("Failed to construct arkoor package")?
 			.generate_user_nonces(&user_keypairs)
 			.context("invalid nb of keypairs")?;
