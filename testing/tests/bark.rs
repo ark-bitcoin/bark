@@ -31,7 +31,7 @@ use ark_testing::util::{
 	get_bark_chain_source_from_env, FutureExt, TestContextChainSource, ToAltString,
 };
 
-const OFFBOARD_FEES: Amount = sat(900);
+const OFFBOARD_FEES: Amount = Amount::from_sat(900);
 
 #[tokio::test]
 async fn bark_version() {
