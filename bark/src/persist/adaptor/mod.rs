@@ -9,16 +9,43 @@
 //! - **Primary key (`pk`)**: Unique identifier for each record
 //! - **Partition key**: Groups related records for efficient querying
 //! - **Sort key**: Enables ordered iteration and range queries
+//!
+//! # Example
+//!
+//! ```rust
+//! # use bark::persist::adaptor::memory::MemoryStorageAdaptor;
+//! # use bark::persist::adaptor::{Query, Record, StorageAdaptor, SortKey};
+//!
+//! # async fn example() -> anyhow::Result<()> {
+//! // Create an in-memory storage adaptor
+//! let mut storage = MemoryStorageAdaptor::new();
+//!
+//! // Store a record sorted by a numeric field (ascending)
+//! let record = Record {
+//!     partition: 0,
+//!     pk: "item:1".into(),
+//!     sort_key: Some(SortKey::u32_asc(42)),
+//!     data: b"hello world".to_vec(),
+//! };
+//! storage.put(record).await?;
+//!
+//! // Query with efficient index scan
+//! let query = Query::new(0).limit(10);
+//! let records = storage.query(query).await?;
+//! # Ok(())
+//! # }
 //! ```
 
 mod sort;
 
-use bitcoin::hashes::Hash;
+pub mod memory;
+
 pub use sort::SortKey;
 
 use anyhow::Context;
-use bitcoin::secp256k1::PublicKey;
 use bitcoin::{Amount, Transaction, Txid};
+use bitcoin::secp256k1::PublicKey;
+use bitcoin::hashes::Hash;
 #[cfg(feature = "onchain_bdk")]
 use bdk_core::Merge;
 #[cfg(feature = "onchain_bdk")]
