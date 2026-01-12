@@ -6,7 +6,8 @@
 
 use std::fmt;
 
-use bitcoin::{Amount, OutPoint};
+use bitcoin::consensus::encode::serialize_hex;
+use bitcoin::{Amount, OutPoint, Transaction};
 
 use ark::lightning::PaymentHash;
 use ark::vtxo::VtxoRef;
@@ -29,6 +30,9 @@ impl Subsystem {
 
 	/// The built-in board subsystem
 	pub const BOARD: Subsystem = Subsystem::new("bark.board");
+
+	/// The built-in offboard subsystem
+	pub const OFFBOARD: Subsystem = Subsystem::new("bark.offboard");
 
 	/// The built-in exit subsystem
 	pub const EXIT: Subsystem = Subsystem::new("bark.exit");
@@ -106,6 +110,36 @@ impl fmt::Display for BoardMovement {
 	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
 		match self {
 			BoardMovement::Board => f.write_str("board"),
+		}
+	}
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
+pub(crate) enum OffboardMovement {
+	Offboard,
+}
+
+impl OffboardMovement {
+	pub fn metadata(
+		offboard_tx: &Transaction,
+	) -> impl IntoIterator<Item = (String, serde_json::Value)> {
+		[
+			(
+				"offboard_txid".into(),
+				serde_json::to_value(offboard_tx.compute_txid()).expect("txid can serde"),
+			),
+			(
+				"offboard_tx".into(),
+				serde_json::to_value(serialize_hex(&offboard_tx)).expect("string can serde"),
+			),
+		]
+	}
+}
+
+impl fmt::Display for OffboardMovement {
+	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+		match self {
+			OffboardMovement::Offboard => f.write_str("offboard"),
 		}
 	}
 }

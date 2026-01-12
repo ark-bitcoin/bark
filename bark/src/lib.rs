@@ -304,6 +304,7 @@ mod daemon;
 mod lightning;
 mod offboard;
 mod psbtext;
+mod server;
 
 pub use self::arkoor::ArkoorCreateResult;
 pub use self::config::{BarkNetwork, Config};
