@@ -3,18 +3,19 @@ pub mod proxy;
 use std::sync::Arc;
 use std::{env, fs};
 use std::net::SocketAddr;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use std::path::PathBuf;
 use std::str::FromStr;
 
 use anyhow::Context;
+use bitcoin_ext::BlockHeight;
 use bitcoin::{Amount, Network, Txid};
 use bitcoin::address::{Address, NetworkUnchecked};
 use log::{info, trace};
 use tokio::sync::{self, mpsc};
 use tokio::process::Command;
 
-use server_log::{parse_record, FinishedPoolIssuance, ParsedRecord, LogMsg, TipUpdated, TxIndexUpdateFinished};
+use server_log::{parse_record, FinishedPoolIssuance, ParsedRecord, LogMsg, SyncedToHeight};
 use server_rpc::{self as rpc, protos};
 pub use server::config::{self, Config};
 
@@ -75,13 +76,19 @@ impl Default for VtxoPoolState {
 #[derive(Debug, Default)]
 pub struct State {
 	vtxopool_state: VtxoPoolState,
+	sync_height: BlockHeight,
 }
 
 impl SlogHandler for Arc<parking_lot::Mutex<State>> {
 	fn process_slog(&mut self, log: &ParsedRecord) -> bool {
-	    if log.is::<FinishedPoolIssuance>() {
+		if log.is::<FinishedPoolIssuance>() {
 			let fpi = log.try_as::<FinishedPoolIssuance>().unwrap();
 			self.lock().vtxopool_state = VtxoPoolState::Ready(fpi.txid);
+		}
+
+		if log.is::<SyncedToHeight>() {
+			let sth = log.try_as::<SyncedToHeight>().unwrap();
+			self.lock().sync_height = sth.height;
 		}
 
 		false
@@ -223,13 +230,9 @@ impl Captaind {
 	}
 
 	pub async fn trigger_round(&self) {
-		let start = Instant::now();
-		let minimum_wait = tokio::time::sleep(Duration::from_millis(500));
-		let mut l1 = self.subscribe_log::<TipUpdated>();
-		let mut l2 = self.subscribe_log::<TxIndexUpdateFinished>();
 		self.bitcoind().generate(1).await;
-		let _ = tokio::join!(l1.recv(), l2.recv(), minimum_wait);
-		trace!("Waited {} ms before starting round", start.elapsed().as_millis());
+		let height = self.bitcoind().get_block_count().await as BlockHeight;
+		self.wait_for_sync_height(height).await;
 		self.get_round_rpc().await.trigger_round(protos::Empty {}).await.unwrap();
 	}
 
@@ -284,6 +287,17 @@ impl Captaind {
 				return;
 			}
 			tokio::time::sleep(secs(1)).await;
+		}
+	}
+
+	/// Wait until synced to the given height
+	pub async fn wait_for_sync_height(&self, height: BlockHeight) {
+		info!("Waiting for sync height {}...", height);
+		loop {
+			if self.inner.state.lock().sync_height >= height {
+				return;
+			}
+			tokio::time::sleep(Duration::from_millis(50)).await;
 		}
 	}
 }
