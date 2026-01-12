@@ -13,6 +13,7 @@ pub mod database;
 pub mod filters;
 pub mod forfeits;
 pub mod mailbox_manager;
+pub mod fee_estimator;
 pub mod rpcserver;
 pub mod secret;
 pub mod sweeps;
