@@ -1544,9 +1544,12 @@ pub async fn run_round_coordinator(
 			},
 		}
 
-		// We sync all wallets now so that we are sure it doesn't interfere with
-		// rounds happening.
+		// We sync and rebalance all wallets now so that we are sure it doesn't
+		// interfere with rounds happening.
 		if let Err(e) = srv.sync_wallets().await {
+			slog!(RoundSyncError, error: format!("{:?}", e));
+		};
+		if let Err(e) = srv.rebalance_wallets().await {
 			slog!(RoundSyncError, error: format!("{:?}", e));
 		};
 
