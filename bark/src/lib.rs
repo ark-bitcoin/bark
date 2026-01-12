@@ -1753,19 +1753,22 @@ impl Wallet {
 		Ok(first_expiry.map(|h| h.saturating_sub(self.config.vtxo_refresh_expiry_threshold)))
 	}
 
-	/// Select several vtxos to cover the provided amount
+	/// Select several VTXOs to cover the provided amount
 	///
-	/// Returns an error if amount cannot be reached
+	/// VTXOs are selected soonest-expiring-first.
+	///
+	/// Returns an error if amount cannot be reached.
 	async fn select_vtxos_to_cover(
 		&self,
 		amount: Amount,
 	) -> anyhow::Result<Vec<Vtxo>> {
-		let inputs = self.spendable_vtxos().await?;
+		let mut vtxos = self.spendable_vtxos().await?;
+		vtxos.sort_by_key(|v| v.expiry_height());
 
-		// Iterate over all rows until the required amount is reached
+		// Iterate over VTXOs until the required amount is reached
 		let mut result = Vec::new();
 		let mut total_amount = Amount::ZERO;
-		for input in inputs {
+		for input in vtxos {
 			total_amount += input.amount();
 			result.push(input.vtxo);
 
