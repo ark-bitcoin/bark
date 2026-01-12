@@ -109,6 +109,10 @@ impl MovementId {
 	pub fn new(id: u32) -> Self {
 		Self(id)
 	}
+
+	pub fn to_bytes(&self) -> [u8; 4] {
+		self.0.to_be_bytes()
+	}
 }
 
 impl fmt::Display for MovementId {

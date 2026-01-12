@@ -13,9 +13,36 @@
 
 mod sort;
 
+use bitcoin::hashes::Hash;
 pub use sort::SortKey;
 
+use anyhow::Context;
+use bitcoin::secp256k1::PublicKey;
+use bitcoin::{Amount, Transaction, Txid};
+#[cfg(feature = "onchain_bdk")]
+use bdk_core::Merge;
+#[cfg(feature = "onchain_bdk")]
+use bdk_wallet::ChangeSet;
+use chrono::{DateTime, Local};
+use lightning_invoice::Bolt11Invoice;
 use serde::{de::DeserializeOwned, Serialize};
+
+use ark::lightning::{Invoice, PaymentHash, Preimage};
+use ark::{Vtxo, VtxoId};
+use bitcoin_ext::BlockDelta;
+
+use crate::exit::ExitTxOrigin;
+use crate::movement::{
+	Movement, MovementId, MovementStatus, MovementSubsystem,
+};
+use crate::persist::BarkPersister;
+use crate::persist::models::{
+	LightningReceive, LightningSend, PendingBoard, SerdeRoundState, SerdeVtxo, StoredExit,
+	SerdeVtxoKey, SerdeExitChildTx, StoredRoundState, RoundStateId,
+};
+use crate::round::RoundState;
+use crate::vtxo::{VtxoState, VtxoStateKind};
+use crate::{WalletProperties, WalletVtxo};
 
 pub mod partition {
 	pub const PROPERTIES: u8 = 0;
@@ -29,6 +56,7 @@ pub mod partition {
 	pub const LIGHTNING_RECEIVE: u8 = 8;
 	pub const EXIT_VTXO: u8 = 9;
 	pub const EXIT_CHILD_TX: u8 = 10;
+	pub const MAILBOX_CHECKPOINT: u8 = 11;
 
 	pub const LAST_IDS: u8 = u8::MAX;
 }
@@ -200,6 +228,737 @@ pub trait StorageAdaptor: Send + Sync + 'static {
 
 		self.put(record).await?;
 		Ok(next_partition_id)
+	}
+}
+
+async fn get_vtxo(adaptor: &dyn StorageAdaptor, id: VtxoId) -> anyhow::Result<Option<SerdeVtxo>> {
+	match adaptor.get(partition::VTXO, &id.to_bytes()).await? {
+		Some(record) => Ok(Some(record.to_data::<SerdeVtxo>()?)),
+		None => Ok(None),
+	}
+}
+
+async fn get_check_vtxo_state(
+	adaptor: &dyn StorageAdaptor,
+	vtxo_id: VtxoId,
+	allowed_states: &[VtxoStateKind],
+) -> anyhow::Result<SerdeVtxo> {
+	let vtxo = get_vtxo(adaptor, vtxo_id).await?
+		.context("vtxo not found")?;
+
+	let current_state = vtxo.current_state().context("vtxo has no state")?;
+	if !allowed_states.contains(&current_state.kind()) {
+		bail!("current state {:?} not in allowed states {:?}",
+			current_state.kind(), allowed_states
+		);
+	}
+
+	Ok(vtxo)
+}
+
+async fn update_vtxo_state_checked(
+	adaptor: &mut dyn StorageAdaptor,
+	vtxo_id: VtxoId,
+	new_state: VtxoState,
+	allowed_old_states: &[VtxoStateKind],
+) -> anyhow::Result<WalletVtxo> {
+	let mut serde_vtxo = get_check_vtxo_state(adaptor, vtxo_id, allowed_old_states).await?;
+
+	let sk = sort::vtxo_sort_key(
+		new_state.kind(), serde_vtxo.vtxo.expiry_height(), serde_vtxo.vtxo.amount()
+	);
+
+	serde_vtxo.states.push(new_state.clone());
+	let updated_record = Record::from_data(
+		partition::VTXO,
+		&vtxo_id.to_bytes(),
+		Some(sk),
+		&serde_vtxo,
+	)?;
+
+	adaptor.put(updated_record).await?;
+
+	Ok(WalletVtxo {
+		vtxo: serde_vtxo.vtxo,
+		state: new_state,
+	})
+}
+
+pub struct StorageAdaptorWrapper<S: StorageAdaptor> {
+	inner: tokio::sync::RwLock<S>,
+}
+
+impl<S: StorageAdaptor> StorageAdaptorWrapper<S> {
+	pub fn new(inner: S) -> Self {
+		Self {
+			inner: tokio::sync::RwLock::new(inner),
+		}
+	}
+}
+
+/// Blanket implementation of `BarkPersister` for any type implementing `StorageAdaptor`.
+#[async_trait]
+impl <S: StorageAdaptor> BarkPersister for StorageAdaptorWrapper<S> {
+	async fn init_wallet(&self, properties: &WalletProperties) -> anyhow::Result<()> {
+		let record = Record::from_data(
+			partition::PROPERTIES,
+			// NB: a single set of properties is stored, so no need for primary key
+			&[],
+			None,
+			properties,
+		)?;
+		self.inner.write().await.put(record).await
+	}
+
+	async fn read_properties(&self) -> anyhow::Result<Option<WalletProperties>> {
+		match self.inner.read().await.get(partition::PROPERTIES, &[]).await? {
+			Some(record) => Ok(Some(record.to_data()?)),
+			None => Ok(None),
+		}
+	}
+
+	async fn set_server_pubkey(&self, server_pubkey: PublicKey) -> anyhow::Result<()> {
+		let mut properties = match self.read_properties().await? {
+			Some(properties) => properties,
+			None => bail!("wallet not initialized"),
+		};
+
+		properties.server_pubkey = Some(server_pubkey);
+
+		let record = Record::from_data(partition::PROPERTIES, &[], None, &properties)?;
+		self.inner.write().await.put(record).await
+	}
+
+	#[cfg(feature = "onchain_bdk")]
+	async fn initialize_bdk_wallet(&self) -> anyhow::Result<ChangeSet> {
+		match self.inner.read().await.get(partition::BDK_CHANGESET, &[]).await? {
+			Some(record) => record.to_data(),
+			None => Ok(ChangeSet::default()),
+		}
+	}
+
+	#[cfg(feature = "onchain_bdk")]
+	async fn store_bdk_wallet_changeset(&self, changeset: &ChangeSet) -> anyhow::Result<()> {
+		let mut current = self.initialize_bdk_wallet().await?;
+		current.merge(changeset.clone());
+
+		let record = Record::from_data(
+			partition::BDK_CHANGESET,
+			// NB: a single changeset is stored, so no need for primary key
+			&[],
+			None,
+			&current,
+		)?;
+		self.inner.write().await.put(record).await
+	}
+
+	async fn create_new_movement(
+		&self,
+		status: MovementStatus,
+		subsystem: &MovementSubsystem,
+		time: DateTime<Local>,
+	) -> anyhow::Result<MovementId> {
+		let mut lock = self.inner.write().await;
+
+		let id = MovementId(lock.incremental_id(partition::MOVEMENT).await?);
+		let movement = Movement::new(id, status, subsystem, time);
+
+		let record = Record::from_data(
+			partition::MOVEMENT,
+			&id.to_bytes(),
+			Some(sort::movement_sort_key(&time)),
+			&movement,
+		)?;
+		lock.put(record).await?;
+
+		Ok(id)
+	}
+
+	async fn update_movement(&self, movement: &Movement) -> anyhow::Result<()> {
+		let record = Record::from_data(
+			partition::MOVEMENT,
+			&movement.id.to_bytes(),
+			Some(sort::movement_sort_key(&movement.time.created_at)),
+			movement,
+		)?;
+		self.inner.write().await.put(record).await
+	}
+
+	async fn get_movement_by_id(&self, movement_id: MovementId) -> anyhow::Result<Movement> {
+		self.inner.read().await.get(partition::MOVEMENT, &movement_id.to_bytes())
+			.await?
+			.context("movement not found")?
+			.to_data()
+	}
+
+	async fn get_all_movements(&self) -> anyhow::Result<Vec<Movement>> {
+		let records = self.inner.read().await.query(Query::new(partition::MOVEMENT)).await?;
+		records.into_iter().map(|r| r.to_data()).collect()
+	}
+
+	async fn store_pending_board(
+		&self,
+		vtxo: &Vtxo,
+		funding_tx: &Transaction,
+		movement_id: MovementId,
+	) -> anyhow::Result<()> {
+		let pending_board = PendingBoard {
+			vtxos: vec![vtxo.id()],
+			amount: vtxo.amount(),
+			funding_tx: funding_tx.clone(),
+			movement_id,
+		};
+
+		let record = Record::from_data(
+			partition::PENDING_BOARD,
+			&vtxo.id().to_bytes(),
+			None,
+			&pending_board,
+		)?;
+
+		self.inner.write().await.put(record).await
+	}
+
+	async fn remove_pending_board(&self, vtxo_id: &VtxoId) -> anyhow::Result<()> {
+		self.inner.write().await.delete(partition::PENDING_BOARD, &vtxo_id.to_bytes()).await?;
+		Ok(())
+	}
+
+	async fn get_all_pending_board_ids(&self) -> anyhow::Result<Vec<VtxoId>> {
+		let records = self
+			.inner.read().await.query(Query::new(partition::PENDING_BOARD))
+			.await?;
+		records
+			.into_iter()
+			.map(|r| {
+				let board: PendingBoard = r.to_data()?;
+				Ok(board.vtxos.into_iter().next().context("empty vtxos")?)
+			})
+			.collect()
+	}
+
+	async fn get_pending_board_by_vtxo_id(
+		&self,
+		vtxo_id: VtxoId,
+	) -> anyhow::Result<Option<PendingBoard>> {
+		match self.inner.read().await.get(partition::PENDING_BOARD, &vtxo_id.to_bytes()).await? {
+			Some(record) => Ok(Some(record.to_data()?)),
+			None => Ok(None),
+		}
+	}
+
+	async fn store_round_state_lock_vtxos(
+		&self,
+		round_state: &RoundState,
+	) -> anyhow::Result<RoundStateId> {
+		let mut lock = self.inner.write().await;
+
+		let id = RoundStateId(lock.incremental_id(partition::ROUND_STATE).await?);
+
+		let allowed_states = &[VtxoStateKind::Spendable];
+
+		// First check that the inputs are spendable
+		for vtxo in round_state.participation().inputs.iter() {
+			get_check_vtxo_state(&mut *lock, vtxo.id(), allowed_states).await?;
+		}
+
+		for vtxo in round_state.participation().inputs.iter() {
+			update_vtxo_state_checked(
+				&mut *lock,
+				vtxo.id(),
+				VtxoState::Locked { movement_id: round_state.movement_id },
+				allowed_states,
+			).await?;
+		}
+
+		let serde_state = SerdeRoundState::from(round_state);
+		let record = Record::from_data(
+			partition::ROUND_STATE,
+			&id.to_bytes(),
+			Some(sort::SortKey::u32_asc(id.0)),
+			&serde_state,
+		)?;
+		lock.put(record).await?;
+
+		Ok(id)
+	}
+
+	async fn update_round_state(&self, round_state: &StoredRoundState) -> anyhow::Result<()> {
+		let serde_state = SerdeRoundState::from(&round_state.state);
+		let record = Record::from_data(
+			partition::ROUND_STATE,
+			&round_state.id.to_bytes(),
+			Some(sort::SortKey::u32_asc(round_state.id.0)),
+			&serde_state,
+		)?;
+		self.inner.write().await.put(record).await
+	}
+
+	async fn remove_round_state(&self, round_state: &StoredRoundState) -> anyhow::Result<()> {
+		self.inner.write().await
+			.delete(partition::ROUND_STATE, &round_state.id.to_bytes()).await?;
+		Ok(())
+	}
+
+	async fn load_round_states(&self) -> anyhow::Result<Vec<StoredRoundState>> {
+		let records = self.inner.read().await
+			.query(Query::new(partition::ROUND_STATE)).await?;
+		records.into_iter()
+			.map(|r| {
+				let pk_slice: [u8; 4] = r.pk[..4].try_into().expect("4 bytes shouldn't fail");
+				Ok(StoredRoundState {
+					id: RoundStateId(u32::from_be_bytes(pk_slice)),
+					state: r.to_data::<SerdeRoundState>()?.into(),
+				})
+			})
+			.collect()
+	}
+
+	async fn store_vtxos(&self, vtxos: &[(&Vtxo, &VtxoState)]) -> anyhow::Result<()> {
+		let mut lock = self.inner.write().await;
+
+		for (vtxo, state) in vtxos {
+			let serde_vtxo = SerdeVtxo {
+				vtxo: (*vtxo).clone(),
+				states: vec![(*state).clone()],
+			};
+
+			let sk = sort::vtxo_sort_key(
+				state.kind(), vtxo.expiry_height(), vtxo.amount(),
+			);
+			let record = Record::from_data(
+				partition::VTXO,
+				&vtxo.id().to_bytes(),
+				Some(sk),
+				&serde_vtxo,
+			)?;
+			lock.put(record).await?;
+		}
+		Ok(())
+	}
+
+	async fn get_wallet_vtxo(&self, id: VtxoId) -> anyhow::Result<Option<WalletVtxo>> {
+		let lock = self.inner.read().await;
+		match get_vtxo(&*lock, id).await? {
+			Some(vtxo) => Ok(Some(WalletVtxo {
+				state: vtxo.current_state().context("vtxo has no state")?.clone(),
+				vtxo: vtxo.vtxo,
+			})),
+			None => Ok(None),
+		}
+	}
+
+	async fn get_all_vtxos(&self) -> anyhow::Result<Vec<WalletVtxo>> {
+		let records = self.inner.read().await
+			.query(Query::new(partition::VTXO)).await?;
+
+		records
+			.into_iter()
+			.map(|r| {
+				let serde_vtxo = r.to_data::<SerdeVtxo>()?;
+				let state = serde_vtxo
+					.current_state()
+					.cloned()
+					.context("vtxo has no state")?;
+				Ok(WalletVtxo {
+					vtxo: serde_vtxo.vtxo,
+					state,
+				})
+			})
+			.collect()
+	}
+
+	async fn get_vtxos_by_state(
+		&self,
+		states: &[VtxoStateKind],
+	) -> anyhow::Result<Vec<WalletVtxo>> {
+		let lock = self.inner.read().await;
+
+		let range = |state: VtxoStateKind| {
+			let start = sort::vtxo_sort_key(state, u32::MIN, Amount::ZERO);
+			let end = sort::vtxo_sort_key(state, u32::MAX, Amount::MAX);
+			(start, end)
+		};
+
+		let mut records = Vec::new();
+		for state in states {
+			let (start, end) = range(*state);
+			let query = Query::new(partition::VTXO).start(start).end(end);
+
+			for record in lock.query(query).await? {
+				let serde_vtxo = record.to_data::<SerdeVtxo>()?;
+				let current_state = serde_vtxo.current_state()
+					.context("vtxo has no current state")?.clone();
+				debug_assert_eq!(current_state.kind(), *state);
+				records.push(WalletVtxo {
+					vtxo: serde_vtxo.vtxo,
+					state: current_state,
+				});
+			}
+		}
+
+		Ok(records)
+	}
+
+	async fn remove_vtxo(&self, id: VtxoId) -> anyhow::Result<Option<Vtxo>> {
+		match self.inner.write().await.delete(partition::VTXO, &id.to_bytes()).await? {
+			Some(record) => Ok(Some(record.to_data::<SerdeVtxo>()?.vtxo)),
+			None => Ok(None),
+		}
+	}
+
+	async fn has_spent_vtxo(&self, id: VtxoId) -> anyhow::Result<bool> {
+		match self.get_wallet_vtxo(id).await? {
+			Some(vtxo) => Ok(vtxo.state.kind() == VtxoStateKind::Spent),
+			None => Ok(false),
+		}
+	}
+
+	async fn update_vtxo_state_checked(
+		&self,
+		vtxo_id: VtxoId,
+		new_state: VtxoState,
+		allowed_old_states: &[VtxoStateKind],
+	) -> anyhow::Result<WalletVtxo> {
+		let mut lock = self.inner.write().await;
+		update_vtxo_state_checked(&mut *lock, vtxo_id, new_state, allowed_old_states).await
+	}
+
+	async fn store_vtxo_key(&self, index: u32, public_key: PublicKey) -> anyhow::Result<()> {
+		let vtxo_key = SerdeVtxoKey { index, public_key };
+		let record = Record::from_data(
+			partition::PUBLIC_KEY,
+			&public_key.serialize()[..],
+			Some(sort::SortKey::u64_desc(index as u64)),
+			&vtxo_key,
+		)?;
+		self.inner.write().await.put(record).await
+	}
+
+	async fn get_last_vtxo_key_index(&self) -> anyhow::Result<Option<u32>> {
+		// Query with reverse order and limit 1 to get the highest index
+		let query = Query::new(partition::PUBLIC_KEY).limit(1);
+		let records = self.inner.read().await.query(query).await?;
+
+		match records.into_iter().next() {
+			Some(record) => {
+				let vtxo_key = record.to_data::<SerdeVtxoKey>()?;
+				Ok(Some(vtxo_key.index))
+			}
+			None => Ok(None),
+		}
+	}
+
+	async fn get_public_key_idx(&self, public_key: &PublicKey) -> anyhow::Result<Option<u32>> {
+		match self.inner.read().await
+			.get(partition::PUBLIC_KEY, &public_key.serialize()[..]).await?
+		{
+			Some(record) => {
+				let vtxo_key = record.to_data::<SerdeVtxoKey>()?;
+				Ok(Some(vtxo_key.index))
+			}
+			None => Ok(None),
+		}
+	}
+
+	async fn get_mailbox_checkpoint(&self) -> anyhow::Result<u64> {
+		match self.inner.read().await
+			.get(partition::MAILBOX_CHECKPOINT, &[]).await?
+		{
+			Some(record) => Ok(record.to_data::<u64>()?),
+			None => Ok(0),
+		}
+	}
+
+	async fn store_mailbox_checkpoint(&self, checkpoint: u64) -> anyhow::Result<()> {
+		let mut lock = self.inner.write().await;
+		let record = Record::from_data(
+			partition::MAILBOX_CHECKPOINT,
+			&[],
+			None,
+			&checkpoint,
+		)?;
+		lock.put(record).await?;
+		Ok(())
+	}
+
+	async fn store_new_pending_lightning_send(
+		&self,
+		invoice: &Invoice,
+		amount: Amount,
+		fee: Amount,
+		vtxo_ids: &[VtxoId],
+		movement_id: MovementId,
+	) -> anyhow::Result<LightningSend> {
+		let mut lock = self.inner.write().await;
+		let mut htlc_vtxos = Vec::with_capacity(vtxo_ids.len());
+		for vtxo_id in vtxo_ids {
+			let vtxo = get_vtxo(&*lock, *vtxo_id).await?
+				.context("vtxo not found")?;
+			htlc_vtxos.push(vtxo.to_wallet_vtxo()?);
+		}
+
+		let lightning_send = LightningSend {
+			invoice: invoice.clone(),
+			amount,
+			fee,
+			htlc_vtxos,
+			preimage: None,
+			movement_id,
+			finished_at: None,
+		};
+
+		let record = Record::from_data(
+			partition::LIGHTNING_SEND,
+			&invoice.payment_hash().to_byte_array(),
+			None,
+			&lightning_send,
+		)?;
+
+		lock.put(record).await?;
+
+		Ok(lightning_send)
+	}
+
+	async fn get_all_pending_lightning_send(&self) -> anyhow::Result<Vec<LightningSend>> {
+		let records = self.inner.read().await
+			.query(Query::new(partition::LIGHTNING_SEND)).await?;
+		records
+			.into_iter()
+			.filter_map(|r| {
+				let send: LightningSend = r.to_data().ok()?;
+				if send.finished_at.is_none() {
+					Some(Ok(send))
+				} else {
+					None
+				}
+			})
+			.collect()
+	}
+
+	async fn finish_lightning_send(
+		&self,
+		payment_hash: PaymentHash,
+		preimage: Option<Preimage>,
+	) -> anyhow::Result<()> {
+		let mut lock = self.inner.write().await;
+
+		let pk = payment_hash.to_byte_array();
+		let record = lock
+			.get(partition::LIGHTNING_SEND, &pk).await?.context("lightning send not found")?;
+		let mut lightning_send: LightningSend = record.to_data()?;
+
+		lightning_send.preimage = preimage;
+		lightning_send.finished_at = Some(Local::now());
+
+		let updated_record = Record::from_data(
+			partition::LIGHTNING_SEND,
+			&pk,
+			None,
+			&lightning_send,
+		)?;
+		lock.put(updated_record).await?;
+
+		Ok(())
+	}
+
+	async fn remove_lightning_send(&self, payment_hash: PaymentHash) -> anyhow::Result<()> {
+		self.inner.write().await.delete(partition::LIGHTNING_SEND, &payment_hash.to_byte_array()).await?;
+		Ok(())
+	}
+
+	async fn get_lightning_send(
+		&self,
+		payment_hash: PaymentHash,
+	) -> anyhow::Result<Option<LightningSend>> {
+		match self.inner.read().await
+			.get(partition::LIGHTNING_SEND, &payment_hash.to_byte_array()).await?
+		{
+			Some(record) => Ok(Some(record.to_data()?)),
+			None => Ok(None),
+		}
+	}
+
+	async fn store_lightning_receive(
+		&self,
+		payment_hash: PaymentHash,
+		preimage: Preimage,
+		invoice: &Bolt11Invoice,
+		htlc_recv_cltv_delta: BlockDelta,
+	) -> anyhow::Result<()> {
+		let lightning_receive = LightningReceive {
+			payment_hash,
+			payment_preimage: preimage,
+			invoice: invoice.clone(),
+			htlc_recv_cltv_delta,
+			htlc_vtxos: vec![],
+			movement_id: None,
+			finished_at: None,
+			preimage_revealed_at: None,
+		};
+
+		let record = Record::from_data(
+			partition::LIGHTNING_RECEIVE,
+			&payment_hash.to_byte_array(),
+			None,
+			&lightning_receive,
+		)?;
+		self.inner.write().await.put(record).await
+	}
+
+	async fn get_all_pending_lightning_receives(&self) -> anyhow::Result<Vec<LightningReceive>> {
+		let records = self.inner.read().await
+			.query(Query::new(partition::LIGHTNING_RECEIVE))
+			.await?;
+		records
+			.into_iter()
+			.filter_map(|r| {
+				let receive: LightningReceive = r.to_data().ok()?;
+				if receive.finished_at.is_none() {
+					Some(Ok(receive))
+				} else {
+					None
+				}
+			})
+			.collect()
+	}
+
+	async fn set_preimage_revealed(&self, payment_hash: PaymentHash) -> anyhow::Result<()> {
+		let mut lock = self.inner.write().await;
+
+		let pk = payment_hash.to_byte_array();
+		let record = lock.get(partition::LIGHTNING_RECEIVE, &pk).await?
+			.context("lightning receive not found")?;
+		let mut lightning_receive: LightningReceive = record.to_data()?;
+
+		lightning_receive.preimage_revealed_at = Some(Local::now());
+
+		let updated_record = Record::from_data(
+			partition::LIGHTNING_RECEIVE,
+			&pk,
+			None,
+			&lightning_receive,
+		)?;
+		lock.put(updated_record).await
+	}
+
+	async fn update_lightning_receive(
+		&self,
+		payment_hash: PaymentHash,
+		vtxo_ids: &[VtxoId],
+		movement_id: MovementId,
+	) -> anyhow::Result<()> {
+		let mut lock = self.inner.write().await;
+		let pk = payment_hash.to_byte_array();
+		let record = lock.get(partition::LIGHTNING_RECEIVE, &pk).await?
+			.context("lightning receive not found")?;
+		let mut lightning_receive: LightningReceive = record.to_data()?;
+
+		let mut htlc_vtxos = Vec::with_capacity(vtxo_ids.len());
+		for vtxo_id in vtxo_ids {
+			let vtxo = get_vtxo(&*lock, *vtxo_id).await?
+				.context("vtxo not found")?;
+			htlc_vtxos.push(vtxo.to_wallet_vtxo()?);
+		}
+
+		lightning_receive.htlc_vtxos = htlc_vtxos;
+		lightning_receive.movement_id = Some(movement_id);
+
+		let updated_record = Record::from_data(
+			partition::LIGHTNING_RECEIVE,
+			&pk,
+			None,
+			&lightning_receive,
+		)?;
+		lock.put(updated_record).await
+	}
+
+	async fn fetch_lightning_receive_by_payment_hash(
+		&self,
+		payment_hash: PaymentHash,
+	) -> anyhow::Result<Option<LightningReceive>> {
+		match self.inner.read().await
+			.get(partition::LIGHTNING_RECEIVE, &payment_hash.to_byte_array()).await?
+		{
+			Some(record) => Ok(Some(record.to_data()?)),
+			None => Ok(None),
+		}
+	}
+
+	async fn finish_pending_lightning_receive(
+		&self,
+		payment_hash: PaymentHash,
+	) -> anyhow::Result<()> {
+		let mut lock = self.inner.write().await;
+		let pk = payment_hash.to_byte_array();
+		let record = lock.get(partition::LIGHTNING_RECEIVE, &pk).await?
+			.context("lightning receive not found")?;
+		let mut lightning_receive: LightningReceive = record.to_data()?;
+
+		lightning_receive.finished_at = Some(Local::now());
+
+		let updated_record = Record::from_data(
+			partition::LIGHTNING_RECEIVE,
+			&pk,
+			None,
+			&lightning_receive,
+		)?;
+		lock.put(updated_record).await
+	}
+
+	async fn store_exit_vtxo_entry(&self, exit: &StoredExit) -> anyhow::Result<()> {
+		let record = Record::from_data(
+			partition::EXIT_VTXO,
+			&exit.vtxo_id.to_bytes(),
+			None,
+			exit,
+		)?;
+		self.inner.write().await.put(record).await
+	}
+
+	async fn remove_exit_vtxo_entry(&self, id: &VtxoId) -> anyhow::Result<()> {
+		self.inner.write().await.delete(partition::EXIT_VTXO, &id.to_bytes()).await?;
+		Ok(())
+	}
+
+	async fn get_exit_vtxo_entries(&self) -> anyhow::Result<Vec<StoredExit>> {
+		let records = self.inner.read().await
+			.query(Query::new(partition::EXIT_VTXO)).await?;
+		records.into_iter().map(|r| r.to_data()).collect()
+	}
+
+	async fn store_exit_child_tx(
+		&self,
+		exit_txid: Txid,
+		child_tx: &Transaction,
+		origin: ExitTxOrigin,
+	) -> anyhow::Result<()> {
+		let exit_child = SerdeExitChildTx {
+			child_tx: child_tx.clone(),
+			origin,
+		};
+		let record = Record::from_data(
+			partition::EXIT_CHILD_TX,
+			&exit_txid.to_byte_array(),
+			None,
+			&exit_child,
+		)?;
+		self.inner.write().await.put(record).await
+	}
+
+	async fn get_exit_child_tx(
+		&self,
+		exit_txid: Txid,
+	) -> anyhow::Result<Option<(Transaction, ExitTxOrigin)>> {
+		match self.inner.read().await
+			.get(partition::EXIT_CHILD_TX, &exit_txid.to_byte_array()).await?
+		{
+			Some(record) => {
+				let exit_child = record.to_data::<SerdeExitChildTx>()?;
+				Ok(Some((exit_child.child_tx, exit_child.origin)))
+			}
+			None => Ok(None),
+		}
 	}
 }
 

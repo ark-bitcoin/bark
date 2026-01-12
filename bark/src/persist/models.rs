@@ -65,6 +65,12 @@ pub struct SerdeVtxoKey {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RoundStateId(pub u32);
 
+impl RoundStateId {
+	pub fn to_bytes(&self) -> [u8; 4] {
+		self.0.to_be_bytes()
+	}
+}
+
 impl fmt::Display for RoundStateId {
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
 	    fmt::Display::fmt(&self.0, f)
