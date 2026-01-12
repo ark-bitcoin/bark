@@ -7,7 +7,7 @@ use std::str::FromStr;
 use std::time::{SystemTime, UNIX_EPOCH, Instant};
 
 use anyhow::Context;
-use bdk_wallet::{Balance, SignOptions, Wallet};
+use bdk_wallet::{Balance, Wallet};
 use bip39::Mnemonic;
 use bitcoin::{bip32, Address, Amount, FeeRate, Network, OutPoint, ScriptBuf};
 use bitcoin::{hex::DisplayHex, Psbt, Transaction};
@@ -72,7 +72,8 @@ pub trait BdkWalletExt: WalletExt {
 	///
 	/// This method does not persist changes to the database.
 	fn finish_tx(&mut self, mut psbt: Psbt) -> anyhow::Result<Transaction> {
-		let opts = SignOptions {
+		#[allow(deprecated)]
+		let opts = bdk_wallet::SignOptions {
 			trust_witness_utxo: true,
 			..Default::default()
 		};

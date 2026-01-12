@@ -1121,9 +1121,9 @@ mod test {
 	fn guard_ctrl_size() {
 		// NB our invoice types are huge (thanks LDK), so we box them
 		// to reduce the size of our control message
-		assert_eq!(std::mem::size_of::<Invoice>(), 1392);
+		assert_eq!(std::mem::size_of::<Invoice>(), 1616);
 		assert_eq!(std::mem::size_of::<Bolt11Invoice>(), 168);
-		assert_eq!(std::mem::size_of::<Bolt12Invoice>(), 1392);
+		assert_eq!(std::mem::size_of::<Bolt12Invoice>(), 1616);
 		assert_eq!(std::mem::size_of::<Ctrl>(), 96, "Ctrl type size changed");
 	}
 }

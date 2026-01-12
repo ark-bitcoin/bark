@@ -34,6 +34,7 @@ in {
 			pkgs.llvmPackages.llvm
 			pkgs.pkg-config
 			pkgs.gcc.cc.lib
+			pkgs.openssl
 			pkgs.protobuf
 
 			# For generating clients

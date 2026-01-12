@@ -45,4 +45,4 @@ features = [ "serde" ]
 [dev-dependencies]
 bitcoin = { version = "0.32", features = [ "serde", "rand", "rand-std" ] }
 serde_json = { workspace = true }
-bitcoinkernel = "0.0.24"
+bitcoinkernel = "0.1.1"

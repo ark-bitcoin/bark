@@ -2,11 +2,10 @@
 use std::borrow::BorrowMut;
 use std::sync::Arc;
 
-use bdk_wallet::{AddressInfo, SignOptions, TxBuilder, Wallet};
+use bdk_wallet::{AddressInfo, TxBuilder, Wallet};
 use bdk_wallet::chain::BlockId;
 use bdk_wallet::coin_selection::InsufficientFunds;
 use bdk_wallet::error::CreateTxError;
-use bdk_wallet::signer::SignerError;
 use bitcoin::consensus::encode::serialize_hex;
 use bitcoin::{BlockHash, FeeRate, OutPoint, Transaction, TxOut, Txid, Weight, Witness};
 use bitcoin::psbt::{ExtractTxError, Input};
@@ -54,8 +53,9 @@ pub enum CpfpInternalError {
 	InsufficientConfirmedFunds(InsufficientFunds),
 	#[error("Transaction has no fee anchor: {0}")]
 	NoFeeAnchor(Txid),
+	#[allow(deprecated)]
 	#[error("Unable to sign transaction: {0}")]
-	Signer(SignerError),
+	Signer(bdk_wallet::signer::SignerError),
 }
 
 /// An extension trait for [Wallet].
@@ -167,7 +167,8 @@ pub trait WalletExt: BorrowMut<Wallet> {
 				CreateTxError::CoinSelection(e) => CpfpInternalError::InsufficientConfirmedFunds(e),
 				_ => CpfpInternalError::Create(e),
 			})?;
-			let opts = SignOptions {
+			#[allow(deprecated)]
+			let opts = bdk_wallet::SignOptions {
 				trust_witness_utxo: true,
 				..Default::default()
 			};

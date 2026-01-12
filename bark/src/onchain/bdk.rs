@@ -7,7 +7,7 @@ use bdk_esplora::EsploraAsyncExt;
 use bdk_wallet::chain::{ChainPosition, CheckPoint};
 use bdk_wallet::Wallet as BdkWallet;
 use bdk_wallet::coin_selection::DefaultCoinSelectionAlgorithm;
-use bdk_wallet::{Balance, KeychainKind, LocalOutput, SignOptions, TxBuilder, TxOrdering};
+use bdk_wallet::{Balance, KeychainKind, LocalOutput, TxBuilder, TxOrdering};
 use bitcoin::{
 	Address, Amount, FeeRate, Network, OutPoint, Psbt, Sequence, Transaction, TxOut, Txid, Weight, bip32, psbt
 };
@@ -105,7 +105,8 @@ impl <W: Deref<Target = BdkWallet>> GetBalance for W {
 
 impl SignPsbt for BdkWallet {
 	fn finish_tx(&mut self, mut psbt: Psbt) -> anyhow::Result<Transaction> {
-		let opts = SignOptions {
+		#[allow(deprecated)]
+		let opts = bdk_wallet::SignOptions {
 			trust_witness_utxo: true,
 			..Default::default()
 		};
