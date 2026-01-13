@@ -36,17 +36,25 @@ pub async fn mark_package_spent<T>(
 			//
 			// If this is the case, we just continue. This gives us idempotency (Yippy)
 			// Otherwise, we bail
-			let statement = client.prepare("SELECT oor_spent_txid FROM vtxo where vtxo_id = $1").await?;
+			let statement = client.prepare("SELECT oor_spent_txid, spent_in_round FROM vtxo where vtxo_id = $1").await?;
 			let row = client.query_one(&statement, &[&vtxo_id.to_string()])
 				.await
 				.with_context(|| format!("Failed to verify if vtxo {} is spent", vtxo_id))?;
 
-			let stored_spending_txid = row.get::<_, &str>(0);
-			trace!("Comparing txids: db {} and request {}", stored_spending_txid, spending_txid.to_string());
-			if row.get::<_, &str>(0) != spending_txid.to_string() {
-				warn!("Attempt to double-spend a VTXO {} in spending_txid {}", vtxo_id, spending_txid);
-				bail!("Failed to mark vtxo {} as spent", vtxo_id);
+			if let Some(spent_in_round) = row.get::<_, Option<i64>>("spent_in_round") {
+				warn!("Attempt to double-spend a VTXO {} spent in round {}", vtxo_id, spent_in_round);
 			}
+
+			let oor_spent_txid_opt = row.get::<_, Option<&str>>("oor_spent_txid");
+			trace!("Comparing txids: db {:?} and request {}", oor_spent_txid_opt, spending_txid.to_string());
+			// We ignore if the vtxo is spent in the same tx
+			if oor_spent_txid_opt.unwrap_or_default() == spending_txid.to_string() {
+				continue;
+			} else {
+				warn!("Attempt to double-spend a VTXO {} in spending_txid {}", vtxo_id, spending_txid);
+			}
+
+			bail!("Failed to mark vtxo {} as spent", vtxo_id);
 		}
 		if nb_rows_affected > 1 {
 			panic!("Database contains multiple vtxos with id {}", vtxo_id)
