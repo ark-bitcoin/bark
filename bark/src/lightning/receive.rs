@@ -126,8 +126,8 @@ impl Wallet {
 		let mut keypairs = vec![];
 		let mut sec_nonces = vec![];
 		let mut pub_nonces = vec![];
-		for v in inputs.iter() {
-			let keypair = self.get_vtxo_key(v).await?;
+		for v in &inputs {
+			let keypair = self.get_vtxo_key(*v).await?;
 			let (sec_nonce, pub_nonce) = musig::nonce_pair(&keypair);
 			keypairs.push(keypair);
 			sec_nonces.push(sec_nonce);
@@ -213,7 +213,7 @@ impl Wallet {
 		} else {
 			let challenge = LightningReceiveChallenge::new(payment_hash);
 			// We get an existing VTXO as an anti-dos measure.
-			let vtxo = self.select_vtxos_to_cover(Amount::ONE_SAT, None).await
+			let vtxo = self.select_vtxos_to_cover(Amount::ONE_SAT).await
 				.and_then(|vtxos| vtxos.into_iter().next().ok_or_else(|| anyhow!("have no spendable vtxo to prove ownership of")))?;
 			let vtxo_keypair = self.get_vtxo_key(&vtxo).await.expect("owned vtxo should be in database");
 			LightningReceiveAntiDos::InputVtxo(protos::InputVtxo {
@@ -365,7 +365,7 @@ impl Wallet {
 				MovementUpdate::new()
 					.intended_balance(invoice_amount.to_signed()?)
 					.effective_balance(htlc_amount.to_signed()?)
-					.metadata(LightningMovement::metadata(receive.payment_hash, &vtxos)?)
+					.metadata(LightningMovement::metadata(receive.payment_hash, &vtxos))
 					.received_on(
 						[MovementDestination::new(receive.invoice.clone().into(), htlc_amount)],
 					),

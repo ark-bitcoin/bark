@@ -848,6 +848,12 @@ impl std::hash::Hash for Vtxo {
 	}
 }
 
+impl AsRef<Vtxo> for Vtxo {
+	fn as_ref(&self) -> &Vtxo {
+	    self
+	}
+}
+
 /// Implemented on anything that is kinda a [Vtxo]
 pub trait VtxoRef {
 	/// The [VtxoId] of the VTXO

@@ -53,7 +53,7 @@ impl Wallet {
 		let mut pubs = Vec::with_capacity(htlc_vtxos.len());
 		let mut keypairs = Vec::with_capacity(htlc_vtxos.len());
 		for input in htlc_vtxos.iter() {
-			let keypair = self.get_vtxo_key(&input).await?;
+			let keypair = self.get_vtxo_key(input).await?;
 			let (s, p) = musig::nonce_pair(&keypair);
 			secs.push(s);
 			pubs.push(p);
@@ -423,7 +423,7 @@ impl Wallet {
 
 		let (change_keypair, _) = self.derive_store_next_keypair().await?;
 
-		let inputs = self.select_vtxos_to_cover(amount, None).await
+		let inputs = self.select_vtxos_to_cover(amount).await
 			.context("Could not find enough suitable VTXOs to cover lightning payment")?;
 
 		let mut secs = Vec::with_capacity(inputs.len());
@@ -431,7 +431,7 @@ impl Wallet {
 		let mut keypairs = Vec::with_capacity(inputs.len());
 		let mut input_ids = Vec::with_capacity(inputs.len());
 		for input in inputs.iter() {
-			let keypair = self.get_vtxo_key(&input).await?;
+			let keypair = self.get_vtxo_key(input).await?;
 			let (s, p) = musig::nonce_pair(&keypair);
 			secs.push(s);
 			pubs.push(p);
@@ -508,7 +508,7 @@ impl Wallet {
 			movement_id,
 			MovementUpdate::new()
 				.produced_vtxo_if_some(change_vtxo)
-				.metadata(LightningMovement::metadata(invoice.payment_hash(), &htlc_vtxos)?)
+				.metadata(LightningMovement::metadata(invoice.payment_hash(), &htlc_vtxos))
 		).await?;
 
 		let lightning_send = self.db.store_new_pending_lightning_send(

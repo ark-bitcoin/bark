@@ -4,7 +4,6 @@
 //! it will contain interfaces allowing for developers to add their own
 //! subsystems which Bark can use.
 
-use std::collections::HashMap;
 use std::fmt;
 
 use bitcoin::{Amount, OutPoint};
@@ -91,11 +90,17 @@ impl BoardMovement {
 	pub fn metadata(
 		outpoint: OutPoint,
 		onchain_fee: Amount,
-	) -> anyhow::Result<HashMap<String, serde_json::Value>> {
-		Ok(HashMap::from([
-			("chain_anchor".into(), serde_json::to_value(outpoint)?),
-			("onchain_fee_sat".into(), serde_json::to_value(onchain_fee.to_sat())?),
-		]))
+	) -> impl IntoIterator<Item = (String, serde_json::Value)> {
+		[
+			(
+				"chain_anchor".into(),
+				serde_json::to_value(outpoint).expect("outpoint can serde"),
+			),
+			(
+				"onchain_fee_sat".into(),
+				serde_json::to_value(onchain_fee.to_sat()).expect("int can serde"),
+			),
+		]
 	}
 }
 
@@ -127,12 +132,18 @@ impl LightningMovement {
 	pub fn metadata(
 		payment_hash: PaymentHash,
 		htlcs: impl IntoIterator<Item = impl VtxoRef>,
-	) -> anyhow::Result<impl IntoIterator<Item = (String, serde_json::Value)>> {
+	) -> impl IntoIterator<Item = (String, serde_json::Value)> {
 		let htlcs = htlcs.into_iter().map(|v| v.vtxo_id()).collect::<Vec<_>>();
-		Ok([
-			("payment_hash".into(), serde_json::to_value(payment_hash)?),
-			("htlc_vtxos".into(), serde_json::to_value(&htlcs)?)
-		])
+		[
+			(
+				"payment_hash".into(),
+				serde_json::to_value(payment_hash).expect("payment hash can serde"),
+			),
+			(
+				"htlc_vtxos".into(),
+				serde_json::to_value(&htlcs).expect("vtxo ids can serde"),
+			),
+		]
 	}
 }
 

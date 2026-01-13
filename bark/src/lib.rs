@@ -727,7 +727,11 @@ impl Wallet {
 	/// * `Ok(Some(Keypair))` - If the pubkey is found, the keypair is returned
 	/// * `Err(anyhow::Error)` - If the corresponding public key doesn't exist
 	///   in the database or a database error occurred.
-	pub async fn get_vtxo_key(&self, vtxo: &Vtxo) -> anyhow::Result<Keypair> {
+	pub async fn get_vtxo_key(&self, vtxo: impl VtxoRef) -> anyhow::Result<Keypair> {
+		let vtxo = match vtxo.vtxo() {
+			Some(v) => v,
+			None => &self.get_vtxo_by_id(vtxo.vtxo_id()).await?,
+		};
 		let pubkey = self.find_signable_clause(vtxo).await
 			.context("VTXO is not signable by wallet")?
 			.pubkey();
@@ -1446,7 +1450,7 @@ impl Wallet {
 			MovementUpdate::new()
 				.produced_vtxo(&vtxo)
 				.intended_and_effective_balance(vtxo.amount().to_signed()?)
-				.metadata(BoardMovement::metadata(utxo, onchain_fee)?),
+				.metadata(BoardMovement::metadata(utxo, onchain_fee)),
 		).await?;
 		self.store_locked_vtxos([&vtxo], Some(movement_id)).await?;
 
@@ -1753,35 +1757,24 @@ impl Wallet {
 		Ok(first_expiry.map(|h| h.saturating_sub(self.config.vtxo_refresh_expiry_threshold)))
 	}
 
-	/// Select several vtxos to cover the provided amount
+	/// Select several VTXOs to cover the provided amount
 	///
-	/// Returns an error if amount cannot be reached
+	/// VTXOs are selected soonest-expiring-first.
 	///
-	/// If `max_depth` is set, it will filter vtxos that have a depth greater than it.
+	/// Returns an error if amount cannot be reached.
 	async fn select_vtxos_to_cover(
 		&self,
 		amount: Amount,
-		expiry_threshold: Option<BlockHeight>,
-	) -> anyhow::Result<Vec<Vtxo>> {
-		let inputs = self.spendable_vtxos().await?;
+	) -> anyhow::Result<Vec<WalletVtxo>> {
+		let mut vtxos = self.spendable_vtxos().await?;
+		vtxos.sort_by_key(|v| v.expiry_height());
 
-		// Iterate over all rows until the required amount is reached
+		// Iterate over VTXOs until the required amount is reached
 		let mut result = Vec::new();
-		let mut total_amount = bitcoin::Amount::ZERO;
-		for input in inputs {
-			// Check if vtxo is soon-to-expire for arkoor payments
-			if let Some(threshold) = expiry_threshold {
-				if input.expiry_height() < threshold {
-					warn!("VTXO {} is expiring soon (expires at {}, threshold {}), \
-						skipping for arkoor payment",
-						input.id(), input.expiry_height(), threshold,
-					);
-					continue;
-				}
-			}
-
+		let mut total_amount = Amount::ZERO;
+		for input in vtxos {
 			total_amount += input.amount();
-			result.push(input.vtxo);
+			result.push(input);
 
 			if total_amount >= amount {
 				return Ok(result)

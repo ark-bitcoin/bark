@@ -61,13 +61,13 @@ impl MovementManager {
 	pub async fn new_movement(
 		&self,
 		subsystem_id: Subsystem,
-		movement_kind: String,
+		movement_kind: impl Into<String>,
 	) -> anyhow::Result<MovementId, MovementError> {
 		self.db.create_new_movement(
 			MovementStatus::Pending,
 			&MovementSubsystem {
 				name: subsystem_id.as_name().to_string(),
-				kind: movement_kind,
+				kind: movement_kind.into(),
 			},
 			chrono::Local::now(),
 		).await.map_err(|e| MovementError::CreationError { e })
@@ -87,7 +87,7 @@ impl MovementManager {
 	pub async fn new_guarded_movement(
 		self: &Arc<Self>,
 		subsystem_id: Subsystem,
-		movement_kind: String,
+		movement_kind: impl Into<String>,
 		on_drop: OnDropStatus,
 	) -> anyhow::Result<MovementGuard, MovementError> {
 		Ok(MovementGuard::new(
@@ -110,7 +110,7 @@ impl MovementManager {
 	pub async fn new_movement_with_update(
 		&self,
 		subsystem_id: Subsystem,
-		movement_kind: String,
+		movement_kind: impl Into<String>,
 		update: MovementUpdate,
 	) -> anyhow::Result<MovementId, MovementError> {
 		let id = self.new_movement(subsystem_id, movement_kind).await?;
@@ -134,7 +134,7 @@ impl MovementManager {
 	pub async fn new_guarded_movement_with_update(
 		self: &Arc<Self>,
 		subsystem_id: Subsystem,
-		movement_kind: String,
+		movement_kind: impl Into<String>,
 		on_drop: OnDropStatus,
 		update: MovementUpdate,
 	) -> anyhow::Result<MovementGuard, MovementError> {
@@ -164,7 +164,7 @@ impl MovementManager {
 	pub async fn new_finished_movement(
 		&self,
 		subsystem_id: Subsystem,
-		movement_kind: String,
+		movement_kind: impl Into<String>,
 		status: MovementStatus,
 		details: MovementUpdate,
 	) -> anyhow::Result<MovementId, MovementError> {

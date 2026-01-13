@@ -55,8 +55,8 @@ pub enum ArkoorPackageError {
 }
 
 impl<'a> ArkoorPackageBuilder<'a, VtxoRequest> {
-	pub fn new(
-		inputs: impl IntoIterator<Item = &'a Vtxo>,
+	pub fn new<V: AsRef<Vtxo> + 'a>(
+		inputs: impl IntoIterator<Item = &'a V>,
 		user_nonces: &'a [musig::PublicNonce],
 		vtxo_request: VtxoRequest,
 		change_pubkey: Option<PublicKey>,
@@ -68,7 +68,7 @@ impl<'a> ArkoorPackageBuilder<'a, VtxoRequest> {
 		for (idx, input) in inputs.into_iter().enumerate() {
 			let user_nonce = user_nonces.get(idx).ok_or(ArkoorPackageError::InvalidUserNoncesLength)?;
 
-			let change_amount = input.amount().checked_sub(remaining_amount);
+			let change_amount = input.as_ref().amount().checked_sub(remaining_amount);
 			let (output_amount, change) = if let Some(change_amount) = change_amount {
 				// NB: If change amount is less than the dust amount, we don't add any change output
 				let change = if change_amount < P2TR_DUST {
@@ -82,7 +82,7 @@ impl<'a> ArkoorPackageBuilder<'a, VtxoRequest> {
 
 				(remaining_amount, change)
 			} else {
-				(input.amount(), None)
+				(input.as_ref().amount(), None)
 			};
 
 			let output = VtxoRequest {
@@ -92,10 +92,10 @@ impl<'a> ArkoorPackageBuilder<'a, VtxoRequest> {
 
 			let pay_reqs = iter::once(output.clone()).chain(change).collect::<Vec<_>>();
 
-			let arkoor = ArkoorBuilder::new(&input, user_nonce, pay_reqs)
+			let arkoor = ArkoorBuilder::new(input.as_ref(), user_nonce, pay_reqs)
 				.map_err(ArkoorPackageError::ArkoorError)?;
 
-			spending_tx_by_input.insert(input.id(), arkoor.unsigned_transaction());
+			spending_tx_by_input.insert(input.as_ref().id(), arkoor.unsigned_transaction());
 			arkoors.push(arkoor);
 
 			remaining_amount = remaining_amount - output_amount;
