@@ -1,9 +1,8 @@
-use std::collections::HashMap;
 use std::time::Duration;
 
-use bitcoin::{Txid, Transaction, Wtxid};
+use bitcoin::{Txid, Transaction};
 use bitcoin::consensus::encode::serialize;
-use bitcoin_ext::rpc::{BitcoinRpcClient, RpcApi};
+use bitcoin_ext::rpc::{BitcoinRpcClient, BitcoinRpcExt, RpcApi};
 use tokio::sync::mpsc;
 use tracing::{debug, info, trace, warn};
 use crate::system::RuntimeManager;
@@ -187,22 +186,8 @@ impl Process {
 			return;
 		}
 
-		#[derive(Debug, Deserialize)]
-		struct PackageTxInfo {
-			txid: Txid,
-			error: Option<String>,
-		}
-		#[derive(Debug, Deserialize)]
-		struct SubmitPackageResponse {
-			#[serde(rename = "tx-results")]
-			tx_results: HashMap<Wtxid, PackageTxInfo>,
-			package_msg: String,
-		}
-
-		let hexes = pkg.iter()
-			.map(|t| bitcoin::consensus::encode::serialize_hex(&t.tx))
-			.collect::<Vec<_>>();
-		match self.bitcoind.call::<SubmitPackageResponse>("submitpackage", &[hexes.into()]) {
+		let txs: Vec<_> = pkg.iter().map(|t| &t.tx).collect();
+		match self.bitcoind.submit_package(&txs) {
 			Ok(r) if r.package_msg != "success" => {
 				let errors = r.tx_results.values().map(|tx| {
 					let raw_tx = pkg.iter().find(|t| t.txid == tx.txid)

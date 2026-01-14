@@ -2,6 +2,7 @@
 pub use bdk_bitcoind_rpc::bitcoincore_rpc::{self, json, jsonrpc, Auth, Client, Error, RpcApi};
 
 use std::borrow::Borrow;
+use std::collections::HashMap;
 
 use bdk_bitcoind_rpc::bitcoincore_rpc::Result as RpcResult;
 use bitcoin::address::NetworkUnchecked;
@@ -192,6 +193,21 @@ pub struct GetRawTransactionResult {
 	pub blocktime: Option<usize>,
 }
 
+/// Result from the `submitpackage` RPC call.
+#[derive(Clone, Debug, Deserialize)]
+pub struct SubmitPackageResult {
+	#[serde(rename = "tx-results")]
+	pub tx_results: HashMap<bitcoin::Wtxid, SubmitPackageTxResult>,
+	pub package_msg: String,
+}
+
+/// Per-transaction result from the `submitpackage` RPC call.
+#[derive(Clone, Debug, Deserialize)]
+pub struct SubmitPackageTxResult {
+	pub txid: bitcoin::Txid,
+	pub error: Option<String>,
+}
+
 /// Shorthand for converting a variable into a serde_json::Value.
 fn into_json<T>(val: T) -> RpcResult<serde_json::Value>
 where
@@ -348,6 +364,13 @@ pub trait BitcoinRpcExt: RpcApi {
 			},
 			None => Ok(TxStatus::NotFound)
 		}
+	}
+
+	fn submit_package(&self, txs: &[impl Borrow<Transaction>]) -> Result<SubmitPackageResult, Error> {
+		let hexes = txs.iter()
+			.map(|t| bitcoin::consensus::encode::serialize_hex(t.borrow()))
+			.collect::<Vec<_>>();
+		self.call("submitpackage", &[hexes.into()])
 	}
 }
 

@@ -9,7 +9,7 @@ use bdk_core::{BlockId, CheckPoint};
 use bdk_esplora::esplora_client;
 use bitcoin::constants::genesis_block;
 use bitcoin::{
-	Amount, Block, BlockHash, FeeRate, Network, OutPoint, Transaction, Txid, Weight, Wtxid,
+	Amount, Block, BlockHash, FeeRate, Network, OutPoint, Transaction, Txid, Weight,
 };
 use log::{debug, info, warn};
 use tokio::sync::RwLock;
@@ -457,24 +457,9 @@ impl ChainSource {
 	}
 
 	pub async fn broadcast_package(&self, txs: &[impl Borrow<Transaction>]) -> anyhow::Result<()> {
-		#[derive(Debug, Deserialize)]
-		struct PackageTxInfo {
-			txid: Txid,
-			error: Option<String>,
-		}
-		#[derive(Debug, Deserialize)]
-		struct SubmitPackageResponse {
-			#[serde(rename = "tx-results")]
-			tx_results: HashMap<Wtxid, PackageTxInfo>,
-			package_msg: String,
-		}
-
 		match self.inner() {
 			ChainSourceClient::Bitcoind(bitcoind) => {
-				let hexes = txs.iter()
-					.map(|t| bitcoin::consensus::encode::serialize_hex(t.borrow()))
-					.collect::<Vec<_>>();
-				let res = bitcoind.call::<SubmitPackageResponse>("submitpackage", &[hexes.into()])?;
+				let res = bitcoind.submit_package(txs)?;
 				if res.package_msg != "success" {
 					let errors = res.tx_results.values()
 						.map(|t| format!("tx {}: {}",
