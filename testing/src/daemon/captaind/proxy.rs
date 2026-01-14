@@ -49,21 +49,8 @@ pub trait ArkRpcProxy: Send + Sync + Clone + 'static {
 		Ok(upstream.empty_arkoor_mailbox(req).await?.into_inner())
 	}
 
-	// TODO: Remove this once we hit 0.1.0-beta.6 or higher
-	async fn start_lightning_payment(&self, upstream: &mut ArkClient, req: protos::LightningPayHtlcCosignRequest) -> Result<protos::LightningPayHtlcCosignResponse, tonic::Status> {
-		#[allow(deprecated)]
-		Ok(upstream.start_lightning_payment(req).await?.into_inner())
-	}
-
 	async fn request_lightning_pay_htlc_cosign(&self, upstream: &mut ArkClient, req: protos::LightningPayHtlcCosignRequest) -> Result<protos::LightningPayHtlcCosignResponse, tonic::Status> {
 		Ok(upstream.request_lightning_pay_htlc_cosign(req).await?.into_inner())
-	}
-
-	// TODO: Remove this once we hit 0.1.0-beta.6 or higher
-	#[deprecated]
-	async fn finish_lightning_payment(&self, upstream: &mut ArkClient, req: protos::InitiateLightningPaymentRequest) -> Result<protos::LightningPaymentResult, tonic::Status> {
-		#[allow(deprecated)]
-		Ok(upstream.finish_lightning_payment(req).await?.into_inner())
 	}
 
 	async fn initiate_lightning_payment(&self, upstream: &mut ArkClient, req: protos::InitiateLightningPaymentRequest) -> Result<protos::Empty, tonic::Status> {
@@ -73,13 +60,6 @@ pub trait ArkRpcProxy: Send + Sync + Clone + 'static {
 
 	async fn check_lightning_payment(&self, upstream: &mut ArkClient, req: protos::CheckLightningPaymentRequest) -> Result<protos::LightningPaymentStatus, tonic::Status> {
 		Ok(upstream.check_lightning_payment(req).await?.into_inner())
-	}
-
-	// TODO: Remove this once we hit 0.1.0-beta.6 or higher
-	#[deprecated]
-	async fn revoke_lightning_payment(&self, upstream: &mut ArkClient, req: protos::RevokeLightningPayHtlcRequest) -> Result<protos::ArkoorPackageCosignResponse, tonic::Status> {
-		#[allow(deprecated)]
-		Ok(upstream.revoke_lightning_payment(req).await?.into_inner())
 	}
 
 	async fn request_lightning_pay_htlc_revocation(&self, upstream: &mut ArkClient, req: protos::RevokeLightningPayHtlcRequest) -> Result<protos::ArkoorPackageCosignResponse, tonic::Status> {
@@ -285,25 +265,10 @@ impl<T: ArkRpcProxy> rpc::server::ArkService for ArkRpcProxyWrapper<T> {
 		Ok(tonic::Response::new(ArkRpcProxy::empty_arkoor_mailbox(&self.proxy, &mut self.upstream.clone(), req.into_inner()).await?))
 	}
 
-	// TODO: Remove this once we hit 0.1.0-beta.6 or higher
-	async fn start_lightning_payment(
-		&self, req: tonic::Request<protos::LightningPayHtlcCosignRequest>,
-	) -> Result<tonic::Response<protos::LightningPayHtlcCosignResponse>, tonic::Status> {
-		Ok(tonic::Response::new(ArkRpcProxy::start_lightning_payment(&self.proxy, &mut self.upstream.clone(), req.into_inner()).await?))
-	}
-
 	async fn request_lightning_pay_htlc_cosign(
 		&self, req: tonic::Request<protos::LightningPayHtlcCosignRequest>,
 	) -> Result<tonic::Response<protos::LightningPayHtlcCosignResponse>, tonic::Status> {
 		Ok(tonic::Response::new(ArkRpcProxy::request_lightning_pay_htlc_cosign(&self.proxy, &mut self.upstream.clone(), req.into_inner()).await?))
-	}
-
-	// TODO: Remove this once we hit 0.1.0-beta.6 or higher
-	async fn finish_lightning_payment(
-		&self, req: tonic::Request<protos::InitiateLightningPaymentRequest>,
-	) -> Result<tonic::Response<protos::LightningPaymentResult>, tonic::Status> {
-		#[allow(deprecated)]
-		Ok(tonic::Response::new(ArkRpcProxy::finish_lightning_payment(&self.proxy, &mut self.upstream.clone(), req.into_inner()).await?))
 	}
 
 	async fn initiate_lightning_payment(
@@ -318,14 +283,6 @@ impl<T: ArkRpcProxy> rpc::server::ArkService for ArkRpcProxyWrapper<T> {
 	) -> Result<tonic::Response<protos::LightningPaymentStatus>, tonic::Status> {
 		#[allow(deprecated)]
 		Ok(tonic::Response::new(ArkRpcProxy::check_lightning_payment(&self.proxy, &mut self.upstream.clone(), req.into_inner()).await?))
-	}
-
-	// TODO: Remove this once we hit 0.1.0-beta.6 or higher
-	async fn revoke_lightning_payment(
-		&self, req: tonic::Request<protos::RevokeLightningPayHtlcRequest>,
-	) -> Result<tonic::Response<protos::ArkoorPackageCosignResponse>, tonic::Status> {
-		#[allow(deprecated)]
-		Ok(tonic::Response::new(ArkRpcProxy::revoke_lightning_payment(&self.proxy, &mut self.upstream.clone(), req.into_inner()).await?))
 	}
 
 	async fn request_lightning_pay_htlc_revocation(

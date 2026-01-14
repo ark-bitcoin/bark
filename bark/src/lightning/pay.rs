@@ -520,8 +520,6 @@ impl Wallet {
 		let req = protos::InitiateLightningPaymentRequest {
 			invoice: invoice.to_string(),
 			htlc_vtxo_ids: htlc_vtxos.iter().map(|v| v.id().to_bytes().to_vec()).collect(),
-			#[allow(deprecated)]
-			wait: false,
 		};
 
 		srv.client.initiate_lightning_payment(req).await?;

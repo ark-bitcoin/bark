@@ -48,19 +48,6 @@ service ArkService {
 	rpc CheckLightningPayment(CheckLightningPaymentRequest) returns (LightningPaymentStatus) {}
 	rpc RequestLightningPayHtlcRevocation(RevokeLightningPayHtlcRequest) returns (ArkoorPackageCosignResponse) {}
 
-	// TODO: Remove this once we hit 0.1.0-beta.6 or higher
-	rpc StartLightningPayment(LightningPayHtlcCosignRequest) returns (LightningPayHtlcCosignResponse) {
-		option deprecated = true;
-	}
-	// TODO: Remove this once we hit 0.1.0-beta.6 or higher
-	rpc FinishLightningPayment(InitiateLightningPaymentRequest) returns (LightningPaymentResult) {
-		option deprecated = true;
-	}
-	// TODO: Remove this once we hit 0.1.0-beta.6 or higher
-	rpc RevokeLightningPayment(RevokeLightningPayHtlcRequest) returns (ArkoorPackageCosignResponse) {
-		option deprecated = true;
-	}
-
 	// * RECEIVE LN payments
 
 	rpc FetchBolt12Invoice(FetchBolt12InvoiceRequest) returns (FetchBolt12InvoiceResponse) {}
@@ -114,9 +101,8 @@ message ArkInfo {
 	uint32 htlc_send_expiry_delta = 7;
 	uint32 htlc_expiry_delta = 8;
 	optional uint64 max_vtxo_amount = 9;
-	uint32 max_arkoor_depth = 10 [deprecated = true];
-	uint32 required_board_confirmations = 11;
-	uint32 max_user_invoice_cltv_delta = 12;
+	uint32 required_board_confirmations = 10;
+	uint32 max_user_invoice_cltv_delta = 11;
 	uint64 min_board_amount = 13;
 	bool ln_receive_anti_dos_required = 15;
 	bytes mailbox_pubkey = 16;
@@ -272,8 +258,6 @@ message LightningPayHtlcCosignResponse {
 message InitiateLightningPaymentRequest {
 	string invoice = 1;
 	repeated bytes htlc_vtxo_ids = 2;
-	// TODO: Remove this once we hit 0.1.0-beta.6 or higher
-	bool wait = 3 [deprecated = true];
 }
 
 message CheckLightningPaymentRequest {
