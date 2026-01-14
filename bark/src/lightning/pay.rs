@@ -10,7 +10,6 @@ use log::{error, info, trace, warn};
 use server_rpc::protos::{self, lightning_payment_status::PaymentStatus};
 
 use ark::{VtxoPolicy, VtxoRequest, musig};
-use ark::arkoor::ArkoorPackageBuilder;
 use ark::lightning::{Bolt12Invoice, Bolt12InvoiceExt, Invoice, Offer, PaymentHash, Preimage};
 use ark::util::IteratorExt;
 use bitcoin_ext::{BlockHeight, P2TR_DUST};
@@ -53,32 +52,41 @@ impl Wallet {
 
 		let mut secs = Vec::with_capacity(htlc_vtxos.len());
 		let mut pubs = Vec::with_capacity(htlc_vtxos.len());
-		let mut keypairs = Vec::with_capacity(htlc_vtxos.len());
+		let mut htlc_keypairs = Vec::with_capacity(htlc_vtxos.len());
 		for input in htlc_vtxos.iter() {
 			let keypair = self.get_vtxo_key(input).await?;
 			let (s, p) = musig::nonce_pair(&keypair);
 			secs.push(s);
 			pubs.push(p);
-			keypairs.push(keypair);
+			htlc_keypairs.push(keypair);
 		}
 
-		let revocation = ArkoorPackageBuilder::new_htlc_revocation(&htlc_vtxos, &pubs)?;
+		let (revocation_keypair, _) = self.derive_store_next_keypair().await?;
 
-		let req = protos::RevokeLightningPayHtlcRequest {
-			htlc_vtxo_ids: revocation.arkoors.iter()
-				.map(|i| i.input.id().to_bytes().to_vec())
-				.collect(),
-			user_nonces: revocation.arkoors.iter()
-				.map(|i| i.user_nonce.serialize().to_vec())
-				.collect(),
-		};
-		let cosign_resp: Vec<_> = srv.client.request_lightning_pay_htlc_revocation(req).await?
-			.into_inner().try_into().context("invalid server cosign response")?;
-		ensure!(revocation.verify_cosign_response(&cosign_resp),
-			"invalid arkoor cosignature received from server",
+		let revocation_claim_policy = VtxoPolicy::new_pubkey(revocation_keypair.public_key());
+		let builder = CheckpointedPackageBuilder::new_claim_all_with_checkpoints(
+			htlc_vtxos.iter().cloned(),
+			revocation_claim_policy,
+		)
+			.context("Failed to construct arkoor package")?
+			.generate_user_nonces(&htlc_keypairs)?;
+
+		let cosign_request = protos::CheckpointedPackageCosignRequest::from(
+			builder.cosign_request().convert_vtxo(|vtxo| vtxo.id())
 		);
 
-		let (vtxos, _) = revocation.build_vtxos(&cosign_resp, &keypairs, secs)?;
+		let response = srv.client
+			.request_lightning_pay_htlc_revocation(cosign_request).await
+			.context("server failed to cosign arkoor")?.into_inner();
+
+		let cosign_resp = PackageCosignResponse::try_from(response)
+			.context("Failed to parse cosign response from server")?;
+
+		let vtxos = builder
+			.user_cosign(&htlc_keypairs, cosign_resp)
+			.context("Failed to cosign vtxos")?
+			.build_signed_vtxos();
+
 		let mut revoked = Amount::ZERO;
 		for vtxo in &vtxos {
 			info!("Got revocation VTXO: {}: {}", vtxo.id(), vtxo.amount());

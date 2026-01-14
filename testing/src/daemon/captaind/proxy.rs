@@ -62,7 +62,7 @@ pub trait ArkRpcProxy: Send + Sync + Clone + 'static {
 		Ok(upstream.check_lightning_payment(req).await?.into_inner())
 	}
 
-	async fn request_lightning_pay_htlc_revocation(&self, upstream: &mut ArkClient, req: protos::RevokeLightningPayHtlcRequest) -> Result<protos::ArkoorPackageCosignResponse, tonic::Status> {
+	async fn request_lightning_pay_htlc_revocation(&self, upstream: &mut ArkClient, req: protos::CheckpointedPackageCosignRequest) -> Result<protos::CheckpointedPackageCosignResponse, tonic::Status> {
 		Ok(upstream.request_lightning_pay_htlc_revocation(req).await?.into_inner())
 	}
 
@@ -286,8 +286,8 @@ impl<T: ArkRpcProxy> rpc::server::ArkService for ArkRpcProxyWrapper<T> {
 	}
 
 	async fn request_lightning_pay_htlc_revocation(
-		&self, req: tonic::Request<protos::RevokeLightningPayHtlcRequest>,
-	) -> Result<tonic::Response<protos::ArkoorPackageCosignResponse>, tonic::Status> {
+		&self, req: tonic::Request<protos::CheckpointedPackageCosignRequest>,
+	) -> Result<tonic::Response<protos::CheckpointedPackageCosignResponse>, tonic::Status> {
 		Ok(tonic::Response::new(ArkRpcProxy::request_lightning_pay_htlc_revocation(&self.proxy, &mut self.upstream.clone(), req.into_inner()).await?))
 	}
 

@@ -46,7 +46,7 @@ service ArkService {
 	rpc RequestLightningPayHtlcCosign(LightningPayHtlcCosignRequest) returns (CheckpointedPackageCosignResponse) {}
 	rpc InitiateLightningPayment(InitiateLightningPaymentRequest) returns (core.Empty) {}
 	rpc CheckLightningPayment(CheckLightningPaymentRequest) returns (LightningPaymentStatus) {}
-	rpc RequestLightningPayHtlcRevocation(RevokeLightningPayHtlcRequest) returns (ArkoorPackageCosignResponse) {}
+	rpc RequestLightningPayHtlcRevocation(CheckpointedPackageCosignRequest) returns (CheckpointedPackageCosignResponse) {}
 
 	// * RECEIVE LN payments
 
@@ -285,11 +285,6 @@ message LightningPaymentStatus {
 		PaymentSuccessStatus success = 2;
 		core.Empty failed = 3;
 	};
-}
-
-message RevokeLightningPayHtlcRequest {
-	repeated bytes htlc_vtxo_ids = 1;
-	repeated bytes user_nonces = 2;
 }
 
 message FetchBolt12InvoiceRequest {

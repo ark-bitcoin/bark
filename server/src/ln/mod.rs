@@ -240,26 +240,35 @@ impl Server {
 
 	pub async fn revoke_bolt11_payment(
 		&self,
-		htlc_vtxo_ids: Vec<VtxoId>,
-		user_nonces: Vec<musig::PublicNonce>,
-	) -> anyhow::Result<Vec<ArkoorCosignResponse>> {
+		cosign_requests: PackageCosignRequest<VtxoId>,
+	) -> anyhow::Result<PackageCosignResponse> {
 		let tip = self.chain_tip().height as BlockHeight;
 		let db = self.db.clone();
 
+		let requested_policy = cosign_requests.outputs()
+			.all_same(|v| v.policy.clone())
+			.context("all revocation vtxo requests must have the same policy")?;
+		if !matches!(requested_policy, VtxoPolicy::Pubkey(..)) {
+			return badarg!("pay htlcs revocation policy must be pubkey");
+		}
 
-		let vtxos = self.db.get_vtxos_by_id(&htlc_vtxo_ids).await?.into_iter()
+		let htlc_vtxo_ids = cosign_requests.inputs().cloned().collect::<Vec<VtxoId>>();
+		let htlc_vtxos = self.db.get_vtxos_by_id(&htlc_vtxo_ids).await?.into_iter()
 			.map(|v| v.vtxo).collect::<Vec<_>>();
 
-		let policy = vtxos.iter()
+		let input_policy = htlc_vtxos.iter()
 			.all_same(|v| v.policy())
-			.context("all htlc vtxos should have the same policy")?
+			.context("all vtxos should have the same policy")?
 			.as_server_htlc_send()
-			.context("vtxo is not outgoing htlc vtxo")?
-			.clone();
+			.context("vtxo is not htlc send")?.clone();
 
-		let invoice_payment_hash = policy.payment_hash;
+		let invoice_payment_hash = input_policy.payment_hash;
+		slog!(LightningPayHtlcsRevocationRequested, invoice_payment_hash, htlc_vtxo_ids: htlc_vtxo_ids.clone());
 
-		slog!(LightningPayHtlcsRevocationRequested, invoice_payment_hash, htlc_vtxo_ids);
+		let cosign_requests = cosign_requests.set_vtxos(htlc_vtxos)?;
+
+		let builder = CheckpointedPackageBuilder::from_cosign_requests(cosign_requests)
+			.context("Failed to construct arkoor package")?;
 
 		let invoice = db.get_lightning_invoice_by_payment_hash(&invoice_payment_hash).await?;
 
@@ -275,7 +284,7 @@ impl Server {
 						error!("This lightning payment has completed, but no preimage found. Accepting revocation");
 					}
 				},
-				_ if tip > policy.htlc_expiry => {
+				_ if tip > input_policy.htlc_expiry => {
 					// Check one last time to see if it completed
 					let res = self.cln.get_payment_status(&invoice_payment_hash, false).await;
 					if let Ok(PaymentStatus::Success(preimage)) = res {
@@ -287,18 +296,27 @@ impl Server {
 			}
 		}
 
-		let vtxo_request = VtxoRequest {
-			amount: vtxos.iter().map(|v| v.amount()).sum(),
-			policy: VtxoPolicy::new_pubkey(vtxos.first().unwrap().user_pubkey()),
-		};
-		let package = ArkoorPackageBuilder::new(
-			&vtxos, &user_nonces, vtxo_request.clone(), None
-		).badarg("error creating arkoor package")?;
+		// We are going to compute all vtxos and spend-info
+		// and mark it into the database
+		let new_output_vtxos = builder.build_unsigned_vtxos();
+		let new_internal_vtxos = builder.build_unsigned_internal_vtxos();
+		let spend_info = builder.spend_info();
 
-		let cosign_resp = self.cosign_oor_package_with_builder(&package).await?;
-		slog!(LightningPayHtlcsRevoked, invoice_payment_hash, vtxo_request);
+		// We are going to mark the update in the database
+		self.db.upsert_vtxos_and_mark_spends(
+			new_output_vtxos.chain(new_internal_vtxos),
+			spend_info,
+		).await?;
 
-		Ok(cosign_resp)
+		let new_vtxo_ids = builder.build_unsigned_vtxos().map(|v| v.id()).collect::<Vec<_>>();
+
+		// Only now it's safe to sign
+		let builder = builder.server_cosign(*self.server_key.leak_ref())
+			.context("Failed to sign")?;
+
+		slog!(LightningPayHtlcsRevoked, invoice_payment_hash, htlc_vtxo_ids, new_vtxo_ids);
+
+		Ok(builder.cosign_response())
 	}
 
 	pub async fn start_lightning_receive(

@@ -479,8 +479,8 @@ async fn bark_should_exit_a_failed_htlc_out_that_server_refuse_to_revoke() {
 		}
 
 		async fn request_lightning_pay_htlc_revocation(
-			&self, _upstream: &mut ArkClient, _req: protos::RevokeLightningPayHtlcRequest,
-		) -> Result<protos::ArkoorPackageCosignResponse, tonic::Status> {
+			&self, _upstream: &mut ArkClient, _req: protos::CheckpointedPackageCosignRequest,
+		) -> Result<protos::CheckpointedPackageCosignResponse, tonic::Status> {
 			Err(tonic::Status::internal("Refused to revoke htlc out"))
 		}
 	}
@@ -526,7 +526,7 @@ async fn bark_should_exit_a_failed_htlc_out_that_server_refuse_to_revoke() {
 	bark_1.claim_all_exits(bark_1.get_onchain_address().await).await;
 	ctx.generate_blocks(1).await;
 
-	assert_eq!(bark_1.onchain_balance().await, sat(199_995_556));
+	assert_eq!(bark_1.onchain_balance().await, sat(199_994_174));
 
 	// Check that we have a lightning send -> exit movement chain
 	let movements = bark_1.history().await;
@@ -613,8 +613,8 @@ async fn bark_should_exit_a_pending_htlc_out_that_server_refuse_to_revoke() {
 
 		async fn request_lightning_pay_htlc_revocation(
 			&self, _upstream: &mut ArkClient,
-			_req: protos::RevokeLightningPayHtlcRequest,
-		) -> Result<protos::ArkoorPackageCosignResponse, tonic::Status> {
+			_req: protos::CheckpointedPackageCosignRequest,
+		) -> Result<protos::CheckpointedPackageCosignResponse, tonic::Status> {
 			Err(tonic::Status::internal("Refused to revoke htlc out"))
 		}
 	}
@@ -658,7 +658,7 @@ async fn bark_should_exit_a_pending_htlc_out_that_server_refuse_to_revoke() {
 
 	bark_1.claim_all_exits(bark_1.get_onchain_address().await).await;
 	ctx.generate_blocks(1).await;
-	assert_eq!(bark_1.onchain_balance().await, sat(199_995_556));
+	assert_eq!(bark_1.onchain_balance().await, sat(199_994_174));
 
 	assert_eq!(bark_1.offchain_balance().await.pending_lightning_send, btc(0));
 	let vtxos = bark_1.vtxos().await;

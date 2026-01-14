@@ -312,25 +312,21 @@ impl rpc::server::ArkService for Server {
 
 	async fn request_lightning_pay_htlc_revocation(
 		&self,
-		req: tonic::Request<protos::RevokeLightningPayHtlcRequest>
-	) -> Result<tonic::Response<protos::ArkoorPackageCosignResponse>, tonic::Status> {
+		req: tonic::Request<protos::CheckpointedPackageCosignRequest>
+	) -> Result<tonic::Response<protos::CheckpointedPackageCosignResponse>, tonic::Status> {
 		let _ = RpcMethodDetails::grpc_ark(middleware::rpc_names::ark::REQUEST_LIGHTNING_PAY_HTLC_REVOCATION);
 		let req = req.into_inner();
 
+		let cosign_requests = PackageCosignRequest::try_from(req.clone())
+			.context("Failed to parse request")?;
+
 		crate::rpcserver::add_tracing_attributes(vec![
-			KeyValue::new("htlc_vtxo_ids", format!("{:?}", req.htlc_vtxo_ids)),
-			KeyValue::new("user_nonces", format!("{:?}", req.user_nonces)),
+			KeyValue::new("cosign_requests", format!("{:?}", cosign_requests)),
 		]);
 
-		let htlc_vtxo_ids = req.htlc_vtxo_ids.iter()
-			.map(VtxoId::from_bytes)
-			.collect::<Result<Vec<_>, _>>()?;
+		let cosign_resp = self.revoke_bolt11_payment(cosign_requests).await
+			.to_status()?;
 
-		let user_nonces = req.user_nonces.iter()
-			.map(musig::PublicNonce::from_bytes)
-			.collect::<Result<Vec<_>, _>>()?;
-
-		let cosign_resp = self.revoke_bolt11_payment(htlc_vtxo_ids, user_nonces).await.to_status()?;
 		Ok(tonic::Response::new(cosign_resp.into()))
 	}
 

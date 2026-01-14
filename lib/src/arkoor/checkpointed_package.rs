@@ -229,6 +229,23 @@ impl CheckpointedPackageBuilder<state::Initial> {
 		Self::new_with_checkpoints(inputs, outputs)
 	}
 
+	/// Convenience constructor for single output that claims all inputs
+	pub fn new_claim_all_with_checkpoints(
+		inputs: impl IntoIterator<Item = Vtxo>,
+		output_policy: VtxoPolicy,
+	) -> Result<Self, ArkoorConstructionError> {
+		// Calculate total input amount
+		let inputs: Vec<_> = inputs.into_iter().collect();
+		let total_input: Amount = inputs.iter().map(|v| v.amount()).sum();
+
+		let output = VtxoRequest {
+			amount: total_input,
+			policy: output_policy,
+		};
+
+		Self::new_with_checkpoints(inputs, vec![output])
+	}
+
 	fn new(
 		inputs: impl IntoIterator<Item = Vtxo>,
 		outputs: Vec<VtxoRequest>,

@@ -110,41 +110,6 @@ impl<'a> ArkoorPackageBuilder<'a, VtxoRequest> {
 		})
 	}
 
-	pub fn new_htlc_revocation(
-		htlc_vtxos: &'a [Vtxo],
-		user_nonces: &'a [musig::PublicNonce],
-	) -> Result<Self, ArkoorPackageError> {
-		let arkoors = htlc_vtxos.iter().zip(user_nonces).map(|(v, u)| {
-			if !matches!(v.policy(), VtxoPolicy::ServerHtlcSend { .. }) {
-				return Err(ArkoorPackageError::InvalidRevocationSpk);
-			}
-
-			let refund = VtxoRequest {
-				amount: v.amount(),
-				policy: VtxoPolicy::new_pubkey(v.user_pubkey()),
-			};
-			ArkoorBuilder::new(v, u, vec![refund])
-				.map_err(ArkoorPackageError::ArkoorError)
-		}).collect::<Result<Vec<_>, ArkoorPackageError>>()?;
-
-		Self::from_arkoors(arkoors)
-	}
-
-	pub fn from_arkoors(
-		arkoors: Vec<ArkoorBuilder<'a, VtxoRequest>>,
-	) -> Result<Self, ArkoorPackageError> {
-		let mut spending_tx_by_input = HashMap::new();
-
-		for arkoor in arkoors.iter() {
-			spending_tx_by_input.insert(arkoor.input.id(), arkoor.unsigned_transaction());
-		}
-
-		Ok(Self {
-			arkoors,
-			spending_tx_by_input,
-		})
-	}
-
 	pub fn inputs(&self) -> Vec<&'a Vtxo> {
 		self.arkoors.iter().map(|a| a.input).collect::<Vec<_>>()
 	}
