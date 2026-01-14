@@ -439,13 +439,24 @@ impl<S: state::BuilderState> CheckpointedArkoorBuilder<S> {
 		arkoor_txs
 	}
 
-	fn validate_amounts(input: &Vtxo, outputs: &[VtxoRequest]) -> Result<(), ArkoorConstructionError> {
+	/// Returns true if dust isolation is needed.
+	/// Dust isolation is only needed when there's a MIX of dust and non-dust outputs.
+	fn needs_dust_isolation(outputs: &[VtxoRequest], dust_outputs: &[VtxoRequest]) -> bool {
+		!outputs.is_empty() && !dust_outputs.is_empty()
+	}
+
+	fn validate_amounts(
+		input: &Vtxo,
+		outputs: &[VtxoRequest],
+		dust_outputs: &[VtxoRequest],
+	) -> Result<(), ArkoorConstructionError> {
 		// Check if inputs and outputs are balanced
 		// We need to build transactions that pay exactly 0 in onchain fees
 		// to ensure our transaction with an ephemeral anchor is standard.
 		// We need `==` for standardness and we can't be lenient
 		let input_amount = input.amount();
-		let output_amount = outputs.iter().map(|o| o.amount).sum::<Amount>();
+		let output_amount = outputs.iter().chain(dust_outputs.iter())
+			.map(|o| o.amount).sum::<Amount>();
 
 		if input_amount != output_amount {
 			return Err(ArkoorConstructionError::Unbalanced {
@@ -454,9 +465,17 @@ impl<S: state::BuilderState> CheckpointedArkoorBuilder<S> {
 			})
 		}
 
-		// Check if we have any dust outputs
+		// Check if any non-dust output is actually below dust threshold
 		if outputs.iter().any(|o| o.amount < P2TR_DUST) {
 			return Err(ArkoorConstructionError::Dust)
+		}
+
+		// If dust isolation is needed (mixed outputs), the combined dust must be >= P2TR_DUST
+		if Self::needs_dust_isolation(outputs, dust_outputs) {
+			let dust_sum: Amount = dust_outputs.iter().map(|o| o.amount).sum();
+			if dust_sum < P2TR_DUST {
+				return Err(ArkoorConstructionError::Dust)
+			}
 		}
 
 		Ok(())
@@ -494,7 +513,7 @@ impl CheckpointedArkoorBuilder<state::Initial> {
 		dust_outputs: Vec<VtxoRequest>,
 	) -> Result<Self, ArkoorConstructionError> {
 		// Do some validation on the amounts
-		Self::validate_amounts(&input, &outputs)?;
+		Self::validate_amounts(&input, &outputs, &dust_outputs)?;
 
 		// Construct the checkpoint and arkoor transactions
 		let unsigned_checkpoint_tx = Self::construct_unsigned_checkpoint_tx(&input, &outputs);
