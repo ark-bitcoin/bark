@@ -1249,6 +1249,7 @@ async fn reject_dust_arkoor_cosign() {
 					n2.1.serialize().to_vec(),
 					n3.1.serialize().to_vec(),
 				],
+				use_checkpoint: true,
 			}
 		]
 	};

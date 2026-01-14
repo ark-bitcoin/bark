@@ -470,6 +470,7 @@ impl<V: VtxoRef> From<ark::arkoor::checkpoint::CosignRequest<V>> for protos::Che
 					policy: output.policy.serialize()
 				}
 			}).collect::<Vec<_>>(),
+			use_checkpoint: v.use_checkpoint,
 		}
 	}
 }
@@ -489,6 +490,7 @@ impl TryFrom<protos::CheckpointedCosignRequest> for ark::arkoor::checkpoint::Cos
 			v.dust_outputs.into_iter()
 				.map(|output| VtxoRequest::try_from(output))
 				.collect::<Result<Vec<_>, _>>()?,
+			v.use_checkpoint,
 		))
 	}
 }

@@ -26,6 +26,7 @@ impl<V> PackageCosignRequest<V> {
 					input: f(r.input),
 					outputs: r.outputs,
 					dust_outputs: r.dust_outputs,
+					use_checkpoint: r.use_checkpoint,
 				}
 
 			}).collect::<Vec<_>>()
@@ -62,7 +63,7 @@ impl CheckpointedPackageBuilder<state::Initial> {
 		for input in input_iter {
 			let input_amount = input.amount();
 			if to_be_paid >= input_amount {
-				let package = CheckpointedArkoorBuilder::new(
+				let package = CheckpointedArkoorBuilder::new_with_checkpoint(
 					input,
 					vec![VtxoRequest { amount: input_amount, policy: output.policy.clone() }],
 					vec![], // no dust outputs
@@ -83,7 +84,7 @@ impl CheckpointedPackageBuilder<state::Initial> {
 					]
 				};
 
-				let package = CheckpointedArkoorBuilder::new(
+				let package = CheckpointedArkoorBuilder::new_with_checkpoint(
 					input,
 					requests,
 					vec![], // no dust outputs
