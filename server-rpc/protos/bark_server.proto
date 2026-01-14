@@ -48,19 +48,6 @@ service ArkService {
 	rpc CheckLightningPayment(CheckLightningPaymentRequest) returns (LightningPaymentStatus) {}
 	rpc RequestLightningPayHtlcRevocation(RevokeLightningPayHtlcRequest) returns (ArkoorPackageCosignResponse) {}
 
-	// TODO: Remove this once we hit 0.1.0-beta.6 or higher
-	rpc StartLightningPayment(LightningPayHtlcCosignRequest) returns (LightningPayHtlcCosignResponse) {
-		option deprecated = true;
-	}
-	// TODO: Remove this once we hit 0.1.0-beta.6 or higher
-	rpc FinishLightningPayment(InitiateLightningPaymentRequest) returns (LightningPaymentResult) {
-		option deprecated = true;
-	}
-	// TODO: Remove this once we hit 0.1.0-beta.6 or higher
-	rpc RevokeLightningPayment(RevokeLightningPayHtlcRequest) returns (ArkoorPackageCosignResponse) {
-		option deprecated = true;
-	}
-
 	// * RECEIVE LN payments
 
 	rpc FetchBolt12Invoice(FetchBolt12InvoiceRequest) returns (FetchBolt12InvoiceResponse) {}
@@ -272,8 +259,6 @@ message LightningPayHtlcCosignResponse {
 message InitiateLightningPaymentRequest {
 	string invoice = 1;
 	repeated bytes htlc_vtxo_ids = 2;
-	// TODO: Remove this once we hit 0.1.0-beta.6 or higher
-	bool wait = 3 [deprecated = true];
 }
 
 message CheckLightningPaymentRequest {

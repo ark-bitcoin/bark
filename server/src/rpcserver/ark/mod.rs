@@ -245,15 +245,6 @@ impl rpc::server::ArkService for Server {
 
 	// lightning
 
-	// TODO: Remove this once we hit 0.1.0-beta.6 or higher
-	async fn start_lightning_payment(
-		&self,
-		req: tonic::Request<protos::LightningPayHtlcCosignRequest>,
-	) -> Result<tonic::Response<protos::LightningPayHtlcCosignResponse>, tonic::Status> {
-		let _ = RpcMethodDetails::grpc_ark(middleware::rpc_names::ark::START_LIGHTNING_PAYMENT);
-		rpc::server::ArkService::request_lightning_pay_htlc_cosign(self, req).await
-	}
-
 	async fn request_lightning_pay_htlc_cosign(
 		&self,
 		req: tonic::Request<protos::LightningPayHtlcCosignRequest>,
@@ -296,23 +287,6 @@ impl rpc::server::ArkService for Server {
 		Ok(tonic::Response::new(resp))
 	}
 
-	// TODO: Remove this once we hit 0.1.0-beta.6 or higher
-	async fn finish_lightning_payment(
-		&self,
-		req: tonic::Request<protos::InitiateLightningPaymentRequest>,
-	) -> Result<tonic::Response<protos::LightningPaymentResult>, tonic::Status> {
-		let _ = RpcMethodDetails::grpc_ark(middleware::rpc_names::ark::FINISH_LIGHTNING_PAYMENT);
-		let req = req.into_inner();
-		let invoice = Invoice::from_str(&req.invoice).badarg("invalid invoice")?;
-		rpc::server::ArkService::initiate_lightning_payment(self, tonic::Request::new(req)).await?;
-		Ok(tonic::Response::new(protos::LightningPaymentResult {
-			progress_message: "Payment is pending".to_string(),
-			status: protos::PaymentStatus::Pending.into(),
-			payment_hash: invoice.payment_hash().to_vec(),
-			payment_preimage: None,
-		}))
-	}
-
 	async fn initiate_lightning_payment(
 		&self,
 		req: tonic::Request<protos::InitiateLightningPaymentRequest>,
@@ -350,15 +324,6 @@ impl rpc::server::ArkService for Server {
 		let payment_hash = PaymentHash::from_bytes(req.hash)?;
 		let res = self.check_lightning_payment(payment_hash, req.wait).await.to_status()?;
 		Ok(tonic::Response::new(protos::LightningPaymentStatus { payment_status: Some(res) }))
-	}
-
-	// TODO: Remove this once we hit 0.1.0-beta.6 or higher
-	async fn revoke_lightning_payment(
-		&self,
-		req: tonic::Request<protos::RevokeLightningPayHtlcRequest>
-	) -> Result<tonic::Response<protos::ArkoorPackageCosignResponse>, tonic::Status> {
-		let _ = RpcMethodDetails::grpc_ark(middleware::rpc_names::ark::REVOKE_LIGHTNING_PAYMENT);
-		rpc::server::ArkService::request_lightning_pay_htlc_revocation(self, req).await
 	}
 
 	async fn request_lightning_pay_htlc_revocation(
