@@ -220,7 +220,8 @@ pub struct CheckpointedArkoorBuilder<S: state::BuilderState> {
 	// These variables are provided by the user
 	/// The input vtxo to be spent
 	input: Vtxo,
-	/// non-dust [VtxoRequest]s that the user wants to receive (>= P2TR_DUST)
+	/// regular output [VtxoRequest]s that the user wants to receive
+	/// if the input is dust, these can be dust
 	outputs: Vec<VtxoRequest>,
 	/// dusty [VtxoRequest]s that the user wants to receive (< P2TR_DUST)
 	dust_outputs: Vec<VtxoRequest>,
@@ -416,7 +417,6 @@ impl<S: state::BuilderState> CheckpointedArkoorBuilder<S> {
 		}
 	}
 
-
 	fn nb_sigs(&self) -> usize {
 		// 1 checkpoint + m arkoor txs + (if dust isolation: + 1 dust fanout tx + k exit txs)
 		let base = 1 + self.outputs.len();
@@ -427,6 +427,7 @@ impl<S: state::BuilderState> CheckpointedArkoorBuilder<S> {
 		}
 	}
 
+	//TODO(stevenroose) check if used and maybe add dust
 	fn nb_outputs(&self) -> usize {
 		self.outputs.len()
 	}
@@ -657,23 +658,17 @@ impl<S: state::BuilderState> CheckpointedArkoorBuilder<S> {
 		}).collect()
 	}
 
-	/// Returns true if dust isolation is needed.
-	/// Dust isolation is only needed when there's a MIX of dust and non-dust outputs.
-	fn needs_dust_isolation(outputs: &[VtxoRequest], dust_outputs: &[VtxoRequest]) -> bool {
-		!outputs.is_empty() && !dust_outputs.is_empty()
-	}
-
 	fn validate_amounts(
 		input: &Vtxo,
 		outputs: &[VtxoRequest],
-		dust_outputs: &[VtxoRequest],
+		isolation_outputs: &[VtxoRequest],
 	) -> Result<(), ArkoorConstructionError> {
 		// Check if inputs and outputs are balanced
 		// We need to build transactions that pay exactly 0 in onchain fees
 		// to ensure our transaction with an ephemeral anchor is standard.
 		// We need `==` for standardness and we can't be lenient
 		let input_amount = input.amount();
-		let output_amount = outputs.iter().chain(dust_outputs.iter())
+		let output_amount = outputs.iter().chain(isolation_outputs.iter())
 			.map(|o| o.amount).sum::<Amount>();
 
 		if input_amount != output_amount {
@@ -683,15 +678,22 @@ impl<S: state::BuilderState> CheckpointedArkoorBuilder<S> {
 			})
 		}
 
-		// Check if any non-dust output is actually below dust threshold
-		if outputs.iter().any(|o| o.amount < P2TR_DUST) {
-			return Err(ArkoorConstructionError::Dust)
-		}
+		// If dust isolation is needed (mixed outputs),
+		// - we don't allow dust outputs in the normal outputs
+		// - the combined dust must be >= P2TR_DUST
+		if !isolation_outputs.is_empty() {
+			if outputs.iter().any(|o| o.amount < P2TR_DUST) {
+				return Err(ArkoorConstructionError::Dust)
+			}
 
-		// If dust isolation is needed (mixed outputs), the combined dust must be >= P2TR_DUST
-		if Self::needs_dust_isolation(outputs, dust_outputs) {
-			let dust_sum: Amount = dust_outputs.iter().map(|o| o.amount).sum();
+			let dust_sum: Amount = isolation_outputs.iter().map(|o| o.amount).sum();
 			if dust_sum < P2TR_DUST {
+				return Err(ArkoorConstructionError::Dust)
+			}
+		} else {
+			// without isolation they have to either be all dust or all non-dust
+			let nb_dust = outputs.iter().filter(|o| o.amount < P2TR_DUST).count();
+			if !(nb_dust == 0 || nb_dust == outputs.len()) {
 				return Err(ArkoorConstructionError::Dust)
 			}
 		}
@@ -725,19 +727,22 @@ impl<S: state::BuilderState> CheckpointedArkoorBuilder<S> {
 }
 
 impl CheckpointedArkoorBuilder<state::Initial> {
-
 	/// Create a new checkpointed arkoor builder
 	pub fn new(
 		input: Vtxo,
-		outputs: Vec<VtxoRequest>,
-		dust_outputs: Vec<VtxoRequest>,
+		mut outputs: Vec<VtxoRequest>,
+		mut dust_outputs: Vec<VtxoRequest>,
 	) -> Result<Self, ArkoorConstructionError> {
+		// if there is only dust outputs, we just do a dust arkoor
+		if outputs.is_empty() && !dust_outputs.is_empty() {
+			std::mem::swap(&mut outputs, &mut dust_outputs);
+		}
+
 		// Do some validation on the amounts
 		Self::validate_amounts(&input, &outputs, &dust_outputs)?;
 
 		// Compute combined dust amount if dust isolation is needed
-		let needs_dust_isolation = Self::needs_dust_isolation(&outputs, &dust_outputs);
-		let combined_dust_amount = if needs_dust_isolation {
+		let combined_dust_amount = if !dust_outputs.is_empty() {
 			Some(dust_outputs.iter().map(|o| o.amount).sum())
 		} else {
 			None
@@ -757,7 +762,7 @@ impl CheckpointedArkoorBuilder<state::Initial> {
 		);
 
 		// Construct dust fanout tx and exit txs if dust isolation is needed
-		let (unsigned_dust_fanout_tx, unsigned_dust_exit_txs) = if needs_dust_isolation {
+		let (unsigned_dust_fanout_tx, unsigned_dust_exit_txs) = if !dust_outputs.is_empty() {
 			// Combined dust isolation output is at index outputs.len()
 			// (after all non-dust outputs)
 			let dust_isolation_output_vout = outputs.len() as u32;
@@ -1046,7 +1051,7 @@ impl<'a> CheckpointedArkoorBuilder<state::UserSigned> {
 
 		let mut ret = Vec::with_capacity(self.outputs.len() + self.dust_outputs.len());
 
-		// Build non-dust vtxos
+		// Build regular vtxos
 		// Signature order: sigs[1..1+m] = arkoor txs
 		for i in 0..self.outputs.len() {
 			let arkoor_sig = sigs[1 + i];
@@ -1255,7 +1260,7 @@ mod test {
 	}
 
 	#[test]
-	fn build_checkpointed_arkoor_outputs_must_be_above_dust() {
+	fn build_checkpointed_arkoor_outputs_must_be_above_dust_if_mixed() {
 		// Test that outputs in the outputs list must be >= P2TR_DUST
 		let alice_keypair = Keypair::new(&SECP, &mut rand::thread_rng());
 		let bob_keypair = Keypair::new(&SECP, &mut rand::thread_rng());
@@ -1271,26 +1276,68 @@ mod test {
 
 		alice_vtxo.validate(&funding_tx).expect("The unsigned vtxo is valid");
 
-		// Put dust amounts in the outputs list - this should fail
-		let outputs = vec![
-			VtxoRequest {
-				amount: Amount::from_sat(100),  // < 330 sats (P2TR_DUST)
-				policy: VtxoPolicy::new_pubkey(bob_keypair.public_key())
-			},
-			VtxoRequest {
-				amount: Amount::from_sat(900),  // >= 330 sats
-				policy: VtxoPolicy::new_pubkey(alice_keypair.public_key())
-			}
-		];
-
-		// This should fail because one output is below P2TR_DUST
-		let result = CheckpointedArkoorBuilder::new(
+		// only dust is allowed
+		CheckpointedArkoorBuilder::new(
 			alice_vtxo.clone(),
-			outputs.clone(),
+			vec![
+				VtxoRequest {
+					amount: Amount::from_sat(100),  // < 330 sats (P2TR_DUST)
+					policy: VtxoPolicy::new_pubkey(bob_keypair.public_key())
+				}; 10
+			],
 			vec![],
-		);
+		).unwrap();
 
-		match result {
+		// only dust in isolation is also allowed
+		CheckpointedArkoorBuilder::new(
+			alice_vtxo.clone(),
+			vec![],
+			vec![
+				VtxoRequest {
+					amount: Amount::from_sat(100),  // < 330 sats (P2TR_DUST)
+					policy: VtxoPolicy::new_pubkey(bob_keypair.public_key())
+				}; 10
+			],
+		).unwrap();
+
+		// normal case: non-dust in normal outputs and dust in isolation
+		CheckpointedArkoorBuilder::new(
+			alice_vtxo.clone(),
+			vec![
+				VtxoRequest {
+					amount: Amount::from_sat(330),  // >= 330 sats
+					policy: VtxoPolicy::new_pubkey(alice_keypair.public_key())
+				}; 2
+			],
+			vec![
+				VtxoRequest {
+					amount: Amount::from_sat(170),
+					policy: VtxoPolicy::new_pubkey(alice_keypair.public_key())
+				}; 2
+			],
+		).unwrap();
+
+		// can't mix dust and non-dust in normal outputs
+		let res_mixed = CheckpointedArkoorBuilder::new(
+			alice_vtxo.clone(),
+			vec![
+				VtxoRequest {
+					amount: Amount::from_sat(500),
+					policy: VtxoPolicy::new_pubkey(alice_keypair.public_key())
+				},
+				VtxoRequest {
+					amount: Amount::from_sat(300),
+					policy: VtxoPolicy::new_pubkey(alice_keypair.public_key())
+				}
+			],
+			vec![
+				VtxoRequest {
+					amount: Amount::from_sat(100),
+					policy: VtxoPolicy::new_pubkey(alice_keypair.public_key())
+				}; 2
+			],
+		);
+		match res_mixed {
 			Err(ArkoorConstructionError::Dust) => {},
 			_ => panic!("Expected Dust error"),
 		}
@@ -1343,6 +1390,179 @@ mod test {
 		match result {
 			Err(ArkoorConstructionError::Dust) => {},
 			_ => panic!("Expected Dust error"),
+		}
+	}
+
+	#[test]
+	fn spend_dust_vtxo() {
+		// Test the "all dust" case: create a 200 sat vtxo and split into two 100 sat outputs
+		let alice_keypair = Keypair::new(&SECP, &mut rand::thread_rng());
+		let bob_keypair = Keypair::new(&SECP, &mut rand::thread_rng());
+		let server_keypair = Keypair::new(&SECP, &mut rand::thread_rng());
+
+		// Create a 200 sat input vtxo (this is dust since 200 < 330)
+		let (funding_tx, alice_vtxo) = DummyTestVtxoSpec {
+			amount: Amount::from_sat(200),
+			expiry_height: 1000,
+			exit_delta: 128,
+			user_keypair: alice_keypair.clone(),
+			server_keypair: server_keypair.clone()
+		}.build();
+
+		alice_vtxo.validate(&funding_tx).expect("The unsigned vtxo is valid");
+
+		// Split into two 100 sat outputs
+		// outputs is empty, all outputs go to dust_outputs
+		let outputs = vec![];
+		let dust_outputs = vec![
+			VtxoRequest {
+				amount: Amount::from_sat(100),
+				policy: VtxoPolicy::new_pubkey(bob_keypair.public_key())
+			},
+			VtxoRequest {
+				amount: Amount::from_sat(100),
+				policy: VtxoPolicy::new_pubkey(alice_keypair.public_key())
+			}
+		];
+
+		let user_builder = CheckpointedArkoorBuilder::new(
+			alice_vtxo.clone(),
+			outputs,
+			dust_outputs,
+		).expect("Valid arkoor request for all-dust case");
+
+		// Verify dust isolation is NOT active (all-dust case, no mixing)
+		assert!(user_builder.unsigned_dust_fanout_tx.is_none(), "Dust isolation should NOT be active");
+
+		// Check we have 2 outputs
+		assert_eq!(user_builder.nb_outputs(), 2);
+
+		// Check signature count: 1 checkpoint + 2 arkoor = 3
+		assert_eq!(user_builder.nb_sigs(), 3);
+
+		// The user generates their nonces
+		let user_builder = user_builder.generate_user_nonces(alice_keypair);
+		let cosign_request = user_builder.cosign_request();
+
+		// The server will cosign the request
+		let server_builder = CheckpointedArkoorBuilder::from_cosign_request(cosign_request)
+			.expect("Invalid cosign request")
+			.server_cosign(server_keypair)
+			.expect("Incorrect key");
+
+		let cosign_data = server_builder.cosign_response();
+
+		// The user will cosign the request and construct their vtxos
+		let vtxos = user_builder
+			.user_cosign(&alice_keypair, &cosign_data)
+			.expect("Valid cosign data and correct key")
+			.build_signed_vtxos();
+
+		// Should have 2 vtxos
+		assert_eq!(vtxos.len(), 2);
+
+		for vtxo in vtxos.into_iter() {
+			// Check if the vtxo is considered valid
+			vtxo.validate(&funding_tx).expect("Invalid VTXO");
+
+			// Verify amount is 100 sats
+			assert_eq!(vtxo.amount(), Amount::from_sat(100));
+
+			// Check all transactions using libbitcoin-kernel
+			let mut prev_tx = funding_tx.clone();
+			for tx in vtxo.transactions().map(|item| item.tx) {
+				let prev_outpoint: OutPoint = tx.input[0].previous_output;
+				let prev_txout: TxOut = prev_tx.output[prev_outpoint.vout as usize].clone();
+				crate::test::verify_tx(&[prev_txout], 0, &tx).expect("Valid transaction");
+				prev_tx = tx;
+			}
+		}
+	}
+
+	#[test]
+	fn spend_nondust_vtxo_to_dust() {
+		// Test: take a 500 sat vtxo (above dust) and split into two 250 sat vtxos (below dust)
+		// Input is non-dust, outputs are all dust - no dust isolation needed
+		let alice_keypair = Keypair::new(&SECP, &mut rand::thread_rng());
+		let bob_keypair = Keypair::new(&SECP, &mut rand::thread_rng());
+		let server_keypair = Keypair::new(&SECP, &mut rand::thread_rng());
+
+		// Create a 500 sat input vtxo (this is above P2TR_DUST of 330)
+		let (funding_tx, alice_vtxo) = DummyTestVtxoSpec {
+			amount: Amount::from_sat(500),
+			expiry_height: 1000,
+			exit_delta: 128,
+			user_keypair: alice_keypair.clone(),
+			server_keypair: server_keypair.clone()
+		}.build();
+
+		alice_vtxo.validate(&funding_tx).expect("The unsigned vtxo is valid");
+
+		// Split into two 250 sat outputs (each below P2TR_DUST)
+		// outputs is empty, all outputs go to dust_outputs
+		let outputs = vec![];
+		let dust_outputs = vec![
+			VtxoRequest {
+				amount: Amount::from_sat(250),
+				policy: VtxoPolicy::new_pubkey(bob_keypair.public_key())
+			},
+			VtxoRequest {
+				amount: Amount::from_sat(250),
+				policy: VtxoPolicy::new_pubkey(alice_keypair.public_key())
+			}
+		];
+
+		let user_builder = CheckpointedArkoorBuilder::new(
+			alice_vtxo.clone(),
+			outputs,
+			dust_outputs,
+		).expect("Valid arkoor request for non-dust to dust case");
+
+		// Verify dust isolation is NOT active (all-dust case, no mixing)
+		assert!(user_builder.unsigned_dust_fanout_tx.is_none(), "Dust isolation should NOT be active");
+
+		// Check we have 2 outputs
+		assert_eq!(user_builder.nb_outputs(), 2);
+
+		// Check signature count: 1 checkpoint + 2 arkoor = 3
+		assert_eq!(user_builder.nb_sigs(), 3);
+
+		// The user generates their nonces
+		let user_builder = user_builder.generate_user_nonces(alice_keypair);
+		let cosign_request = user_builder.cosign_request();
+
+		// The server will cosign the request
+		let server_builder = CheckpointedArkoorBuilder::from_cosign_request(cosign_request)
+			.expect("Invalid cosign request")
+			.server_cosign(server_keypair)
+			.expect("Incorrect key");
+
+		let cosign_data = server_builder.cosign_response();
+
+		// The user will cosign the request and construct their vtxos
+		let vtxos = user_builder
+			.user_cosign(&alice_keypair, &cosign_data)
+			.expect("Valid cosign data and correct key")
+			.build_signed_vtxos();
+
+		// Should have 2 vtxos
+		assert_eq!(vtxos.len(), 2);
+
+		for vtxo in vtxos.into_iter() {
+			// Check if the vtxo is considered valid
+			vtxo.validate(&funding_tx).expect("Invalid VTXO");
+
+			// Verify amount is 250 sats
+			assert_eq!(vtxo.amount(), Amount::from_sat(250));
+
+			// Check all transactions using libbitcoin-kernel
+			let mut prev_tx = funding_tx.clone();
+			for tx in vtxo.transactions().map(|item| item.tx) {
+				let prev_outpoint: OutPoint = tx.input[0].previous_output;
+				let prev_txout: TxOut = prev_tx.output[prev_outpoint.vout as usize].clone();
+				crate::test::verify_tx(&[prev_txout], 0, &tx).expect("Valid transaction");
+				prev_tx = tx;
+			}
 		}
 	}
 }
