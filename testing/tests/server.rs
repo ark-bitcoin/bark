@@ -1234,10 +1234,21 @@ async fn reject_dust_arkoor_cosign() {
 			protos::CheckpointedCosignRequest {
 				input_vtxo_id: vtxo_id.serialize(),
 				outputs: vec![
-					protos::VtxoRequest { amount: send_amount.to_sat(), policy:  send_policy.serialize()},
-					protos::VtxoRequest { amount: change_amount.to_sat(), policy: change_policy.serialize()},
+					protos::VtxoRequest {
+						amount: send_amount.to_sat(),
+						policy: send_policy.serialize(),
+					},
+					protos::VtxoRequest {
+						amount: change_amount.to_sat(),
+						policy: change_policy.serialize(),
+					},
 				],
-				user_pub_nonces: vec![n1.1.serialize().to_vec(), n2.1.serialize().to_vec(), n3.1.serialize().to_vec()],
+				dust_outputs: vec![],
+				user_pub_nonces: vec![
+					n1.1.serialize().to_vec(),
+					n2.1.serialize().to_vec(),
+					n3.1.serialize().to_vec(),
+				],
 			}
 		]
 	};

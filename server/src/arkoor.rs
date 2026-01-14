@@ -43,7 +43,8 @@ impl Server {
 			.map(|(request, vtxo)| CosignRequest {
 				input: vtxo,
 				user_pub_nonces: request.user_pub_nonces,
-				outputs: request.outputs
+				outputs: request.outputs,
+				dust_outputs: request.dust_outputs,
 			})
 			.collect::<Vec<_>>();
 		let request = PackageCosignRequest { requests: request_parts };

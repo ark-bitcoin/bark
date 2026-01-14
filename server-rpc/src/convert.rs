@@ -452,17 +452,24 @@ impl From<ark::integration::TokenStatus> for protos::intman::TokenStatus {
 
 // Serialization of a CosignRequest
 impl<V: VtxoRef> From<ark::arkoor::checkpoint::CosignRequest<V>> for protos::CheckpointedCosignRequest {
-
 	fn from(v: ark::arkoor::checkpoint::CosignRequest<V>) -> Self {
 		Self {
 			input_vtxo_id: v.input.vtxo_id().serialize(),
-			user_pub_nonces: v.user_pub_nonces.into_iter().map(|n| n.serialize().to_vec()).collect::<Vec<_>>(),
+			user_pub_nonces: v.user_pub_nonces.into_iter()
+				.map(|n| n.serialize().to_vec())
+				.collect::<Vec<_>>(),
 			outputs: v.outputs.into_iter().map(|output| {
 				protos::VtxoRequest {
 					amount: output.amount.to_sat(),
 					policy: output.policy.serialize()
 				}
-			}).collect::<Vec<_>>()
+			}).collect::<Vec<_>>(),
+			dust_outputs: v.dust_outputs.into_iter().map(|output| {
+				protos::VtxoRequest {
+					amount: output.amount.to_sat(),
+					policy: output.policy.serialize()
+				}
+			}).collect::<Vec<_>>(),
 		}
 	}
 }
@@ -472,9 +479,16 @@ impl TryFrom<protos::CheckpointedCosignRequest> for ark::arkoor::checkpoint::Cos
 	type Error = ConvertError;
 	fn try_from(v: protos::CheckpointedCosignRequest) -> Result<Self, Self::Error> {
 		Ok(Self::new(
-			v.user_pub_nonces.into_iter().map(|n| musig::PublicNonce::from_bytes(&n)).collect::<Result<Vec<_>, _>>()?,
+			v.user_pub_nonces.into_iter()
+				.map(|n| musig::PublicNonce::from_bytes(&n))
+				.collect::<Result<Vec<_>, _>>()?,
 			VtxoId::from_bytes(&v.input_vtxo_id)?,
-			v.outputs.into_iter().map(|output| VtxoRequest::try_from(output)).collect::<Result<Vec<_>, _>>()?,
+			v.outputs.into_iter()
+				.map(|output| VtxoRequest::try_from(output))
+				.collect::<Result<Vec<_>, _>>()?,
+			v.dust_outputs.into_iter()
+				.map(|output| VtxoRequest::try_from(output))
+				.collect::<Result<Vec<_>, _>>()?,
 		))
 	}
 }
