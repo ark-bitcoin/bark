@@ -8,7 +8,7 @@ use std::time::Duration;
 use anyhow::Context;
 use ark::tree::signed::{LeafVtxoCosignContext, UnlockPreimage};
 use bitcoin::secp256k1::{rand, Keypair};
-use bitcoin::{Amount, FeeRate, OutPoint};
+use bitcoin::{Amount, OutPoint};
 use bitcoin_ext::{BlockDelta, BlockHeight};
 use futures::{stream, StreamExt, TryStreamExt};
 use tracing::{info, warn};
@@ -66,8 +66,6 @@ pub struct Config {
 	/// maximum arkoor depth to keep change until
 	pub vtxo_max_arkoor_depth: ArkoorDepth,
 
-	#[serde(with = "crate::utils::serde::fee_rate")]
-	pub issue_tx_fallback_feerate: FeeRate,
 	#[serde(with = "crate::utils::serde::duration")]
 	pub issue_interval: Duration,
 }
@@ -80,8 +78,6 @@ impl Default for Config {
 			vtxo_lifetime: 144 * 3,
 			vtxo_pre_expiry: 144,
 			vtxo_max_arkoor_depth: 3,
-
-			issue_tx_fallback_feerate: FeeRate::from_sat_per_vb_unchecked(1),
 			issue_interval: Duration::from_secs(60),
 		}
 	}
@@ -397,8 +393,7 @@ impl Process {
 			self.srv.config.vtxo_exit_delta,
 		).context("builder error")?;
 
-		//TODO(stevenroose) use actual feerate
-		let fee_rate = self.config.issue_tx_fallback_feerate;
+		let fee_rate = self.srv.fee_estimator.slow();
 
 		let funding_txout = builder.funding_txout();
 

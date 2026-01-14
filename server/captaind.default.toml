@@ -82,10 +82,6 @@ nb_round_nonces = 8
 # The duration after which to drop forfeit nonces
 round_forfeit_nonces_timeout = "30s"
 
-# The feerate we set for round funding transactions
-round_tx_feerate = "10sat/vb"
-
-
 #############
 # OFFBOARDS #
 #############
@@ -101,7 +97,6 @@ offboard_fixed_fee_vb = 212
 
 # The time after which we drop offboard sessions and release locked VTXOs
 offboard_session_timeout = "30s"
-
 
 #############
 # LIGHTNING #
@@ -172,8 +167,6 @@ ln_receive_anti_dos_required = false
 
 [vtxo_sweeper]
 enabled = true
-# Fallback feerate to use for sweep txs
-sweep_tx_fallback_feerate = "2500sat/kwu"
 # Interval to check if sweeps can be made
 round_sweep_interval = "1h"
 # Minimum total sweep value to merit a sweep tx
@@ -186,8 +179,6 @@ sweep_threshold = 1000000
 
 [forfeit_watcher]
 enabled = true
-# Fallback feerate to use for forfeit claims
-claim_fallback_feerate = "6250sat/kwu"
 # Interval to check of forfeited exits have been broadcast
 wake_interval = "1m"
 
@@ -211,10 +202,23 @@ vtxo_lifetime = 432
 vtxo_pre_expiry = 144
 # Maximum depth for pool VTXOs
 vtxo_max_arkoor_depth = 3
-# Fallback feerate for VTXO pool issuance txs
-issue_tx_fallback_feerate = "250sat/kwu"
 # The interval at which to check if an issuance should be made
 issue_interval = "1m"
+
+
+#################
+# FEE ESTIMATOR #
+#################
+
+[fee_estimator]
+# Interval to update fee estimates from bitcoind
+update_interval = "1m"
+# Fallback feerate for fast confirmation (1 block target)
+fallback_fee_rate_fast = "25sat/vb"
+# Fallback feerate for regular confirmation (3 block target)
+fallback_fee_rate_regular = "10sat/vb"
+# Fallback feerate for slow confirmation (6 block target)
+fallback_fee_rate_slow = "4sat/vb"
 
 
 ##################

@@ -13,6 +13,7 @@ pub mod database;
 pub mod filters;
 pub mod forfeits;
 pub mod mailbox_manager;
+pub mod fee_estimator;
 pub mod rpcserver;
 pub mod secret;
 pub mod sweeps;
@@ -74,6 +75,7 @@ use crate::flux::VtxosInFlux;
 use crate::forfeits::ForfeitWatcher;
 use crate::ln::cln::ClnManager;
 use crate::mailbox_manager::MailboxManager;
+use crate::fee_estimator::FeeEstimator;
 use crate::round::RoundInput;
 use crate::round::forfeit::HarkForfeitNonces;
 use crate::secret::Secret;
@@ -184,6 +186,7 @@ pub struct Server {
 	cln: ClnManager,
 	vtxopool: VtxoPool,
 	pending_offboards: parking_lot::Mutex<TimedEntryMap<Txid, Option<offboards::PendingOffboard>>>,
+	fee_estimator: Arc<FeeEstimator>,
 }
 
 impl Server {
@@ -363,6 +366,12 @@ impl Server {
 			cfg.transaction_rebroadcast_interval,
 		);
 
+		let fee_estimator = fee_estimator::start(
+			rtmgr.clone(),
+			cfg.fee_estimator.clone(),
+			bitcoind.clone(),
+		);
+
 		let vtxo_sweeper = if let Some(c) = cfg.vtxo_sweeper.enabled() {
 			let s = VtxoSweeper::start(
 				rtmgr.clone(),
@@ -376,6 +385,7 @@ impl Server {
 				rounds_wallet.reveal_next_address(
 					bdk_wallet::KeychainKind::External,
 				).address,
+				fee_estimator.clone(),
 			).await.context("failed to start VtxoSweeper")?;
 			Some(s)
 		} else {
@@ -394,6 +404,7 @@ impl Server {
 				master_xpriv.derive_priv(&*SECP, &[WalletKind::Forfeits.child_number()])
 					.expect("can't error"),
 				server_key.clone(),
+				fee_estimator.clone(),
 			).await.context("failed to start ForfeitWatcher")?;
 			Some(s)
 		} else {
@@ -451,6 +462,7 @@ impl Server {
 			cln,
 			vtxopool,
 			pending_offboards: parking_lot::Mutex::new(TimedEntryMap::new()),
+			fee_estimator,
 		};
 
 		let srv = Arc::new(srv);
@@ -565,7 +577,7 @@ impl Server {
 
 		let mut wallet = self.rounds_wallet.lock().await;
 		let addr = forfeit_wallet.address.assume_checked();
-		let feerate = self.config.round_tx_feerate; //TODO(stevenroose) fix this
+		let feerate = self.fee_estimator.regular();
 		info!("Sending {amount} to forfeit wallet address {addr}...");
 		let tx = match wallet.send(addr.script_pubkey(), amount, feerate).await {
 			Ok(tx) => tx,

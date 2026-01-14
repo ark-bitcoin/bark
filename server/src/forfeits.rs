@@ -4,7 +4,7 @@ use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
 use anyhow::Context;
-use bitcoin::{OutPoint, Transaction, Txid, FeeRate, bip32, Network, Amount};
+use bitcoin::{OutPoint, Transaction, Txid, bip32, Network, Amount};
 use bitcoin::key::Keypair;
 use tokio::sync::{mpsc, oneshot};
 use tokio_stream::StreamExt;
@@ -19,7 +19,10 @@ use bitcoin_ext::rpc::{BitcoinRpcClient, BitcoinRpcExt};
 use bitcoin_ext::TransactionExt;
 use server_rpc as rpc;
 
+use std::sync::Arc;
+
 use crate::database::rounds::StoredRound;
+use crate::fee_estimator::FeeEstimator;
 use crate::system::RuntimeManager;
 use crate::txindex::{TxIndex, Tx};
 use crate::txindex::broadcast::TxNursery;
@@ -30,9 +33,6 @@ use crate::{utils, database, telemetry};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
-	/// The fallback feerate for txs claiming forfeited vtxos.
-	#[serde(with = "utils::serde::fee_rate")]
-	pub claim_fallback_feerate: FeeRate,
 	#[serde(with = "utils::serde::duration")]
 	pub wake_interval: Duration,
 }
@@ -40,7 +40,6 @@ pub struct Config {
 impl Default for Config {
 	fn default() -> Self {
 	    Self {
-			claim_fallback_feerate: FeeRate::from_sat_per_vb_unchecked(25),
 			wake_interval: Duration::from_millis(60_000),
 		}
 	}
@@ -129,8 +128,7 @@ impl ClaimState {
 		proc: &mut Process,
 		connector_tx: Transaction,
 	) -> anyhow::Result<(Tx, Tx)> {
-		//TODO(stevenroose) use fee estimation here once available
-		let fees = MakeCpfpFees::Effective(proc.config.claim_fallback_feerate);
+		let fees = MakeCpfpFees::Effective(proc.fee_estimator.fast());
 		let cpfp = proc.wallet.make_signed_p2a_cpfp(&connector_tx, fees)
 			.context("error making cpfp tx for connector")?;
 		proc.wallet.commit_tx(&cpfp);
@@ -177,6 +175,7 @@ struct Process {
 	bitcoind: BitcoinRpcClient,
 	wallet: PersistedWallet,
 	server_key: Keypair,
+	fee_estimator: Arc<FeeEstimator>,
 
 	// runtime state
 
@@ -275,8 +274,7 @@ impl Process {
 			slog!(ConnectorConfirmed, connector_txid: claim.connector.txid, vtxo: claim.vtxo, block_height: block_ref.height);
 
 			// Let's broadcast the forfeit then finally.
-			//TODO(stevenroose) use fee estimationi here
-			let fees = MakeCpfpFees::Effective(self.config.claim_fallback_feerate);
+			let fees = MakeCpfpFees::Effective(self.fee_estimator.fast());
 			let cpfp = self.wallet.make_signed_p2a_cpfp(&claim.forfeit_tx.tx, fees)
 				.context("error making cpfp tx for forfeit")?;
 			self.wallet.commit_tx(&cpfp);
@@ -397,6 +395,7 @@ impl ForfeitWatcher {
 		tx_nursery: TxNursery,
 		wallet_xpriv: bip32::Xpriv,
 		server_key: Keypair,
+		fee_estimator: Arc<FeeEstimator>,
 	) -> anyhow::Result<Self> {
 		let deep_tip = bitcoind.deep_tip().context("failed to fetch deep tip from bitcoind")?;
 		let wallet = PersistedWallet::load_from_xpriv(
@@ -409,6 +408,7 @@ impl ForfeitWatcher {
 
 		let mut proc = Process {
 			config, db: db.clone(), txindex, bitcoind, wallet, server_key, tx_nursery,
+			fee_estimator,
 			exit_txs: Vec::new(),
 			rounds: HashMap::new(),
 			claims: Vec::new(),

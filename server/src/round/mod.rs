@@ -724,7 +724,7 @@ impl CollectingPayments {
 			}
 			// NB: order is important here, we need to respect `ROUND_TX_VTXO_TREE_VOUT`
 			b.add_recipient(vtxos_spec.funding_tx_script_pubkey(), vtxos_spec.total_required_value());
-			b.fee_rate(srv.config.round_tx_feerate);
+			b.fee_rate(srv.fee_estimator.regular());
 			match b.finish().context("bdk failed to create round tx") {
 				Ok(psbt) => psbt,
 				Err(e) => return Err(RoundError::Recoverable(e)),

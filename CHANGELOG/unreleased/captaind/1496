@@ -1,0 +1,16 @@
+- Add FeeEstimator module for dynamic fee rate estimation
+  Replaces hardcoded fallback fee rates with a centralized FeeEstimator that
+  queries bitcoind for current fee estimates. Provides three fee tiers:
+  fast (1-block), regular (3-block), and slow (6-block) confirmation targets.
+  Falls back to configurable rates when estimation fails.
+  - Removed config options:
+    - `round_tx_feerate`
+    - `[vtxo_sweeper] sweep_tx_fallback_feerate`
+    - `[forfeit_watcher] claim_fallback_feerate`
+    - `[vtxopool] issue_tx_fallback_feerate`
+  - Added `[fee_estimator]` config section with:
+    - `update_interval`: Interval to update fee estimates from bitcoind
+    - `fallback_fee_rate_fast`: Fallback feerate for fast confirmation (1 block target)
+    - `fallback_fee_rate_regular`: Fallback feerate for regular confirmation (3 block target)
+    - `fallback_fee_rate_slow`: Fallback feerate for slow confirmation (6 block target)
+  [#1496](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1496)

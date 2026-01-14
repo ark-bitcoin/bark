@@ -57,6 +57,7 @@ use ark::connectors::ConnectorChain;
 use ark::rounds::{RoundId, ROUND_TX_VTXO_TREE_VOUT};
 
 use crate::database::rounds::StoredRound;
+use crate::fee_estimator::FeeEstimator;
 use crate::psbtext::{PsbtExt, PsbtInputExt, SweepMeta};
 use crate::system::RuntimeManager;
 use crate::txindex::{self, TxIndex};
@@ -64,12 +65,12 @@ use crate::txindex::broadcast::TxNursery;
 use crate::wallet::BdkWalletExt;
 use crate::{database, telemetry};
 
+use std::sync::Arc;
+
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
-	#[serde(with = "crate::utils::serde::fee_rate")]
-	pub sweep_tx_fallback_feerate: FeeRate,
 	#[serde(with = "crate::utils::serde::duration")]
 	pub round_sweep_interval: Duration,
 	/// Don't make sweep txs for amounts lower than this amount.
@@ -80,7 +81,6 @@ pub struct Config {
 impl Default for Config {
 	fn default() -> Self {
 	    Self {
-			sweep_tx_fallback_feerate: FeeRate::from_sat_per_vb_unchecked(10),
 			round_sweep_interval: Duration::from_secs(60 * 60),
 			sweep_threshold: Amount::from_sat(1_000_000),
 		}
@@ -443,6 +443,7 @@ struct Process {
 	wallet: bdk_wallet::Wallet,
 	server_key: Keypair,
 	drain_address: Address,
+	fee_estimator: Arc<FeeEstimator>,
 
 	// runtime fields
 
@@ -541,7 +542,7 @@ impl Process {
 		trace!("{} expired boards fetched", expired_boards.len());
 		telemetry::set_pending_expired_boards_count(expired_boards.len());
 
-		let feerate = self.config.sweep_tx_fallback_feerate;
+		let feerate = self.fee_estimator.regular();
 		let mut builder = SweepBuilder::new(self, feerate);
 
 		let done_height = tip - DEEPLY_CONFIRMED + 1;
@@ -719,6 +720,7 @@ impl VtxoSweeper {
 		tx_nursery: TxNursery,
 		server_key: Keypair,
 		drain_address: Address,
+		fee_estimator: Arc<FeeEstimator>,
 	) -> anyhow::Result<Self> {
 		let wallet = {
 			// NB we don't need a wallet in the sweeper, but currently in BDK
@@ -739,6 +741,7 @@ impl VtxoSweeper {
 
 		let mut proc = Process {
 			config, bitcoind, db, txindex, wallet, server_key, drain_address, tx_nursery,
+			fee_estimator,
 			pending_txs: HashMap::with_capacity(raw_pending.len()),
 			pending_tx_by_utxo: HashMap::with_capacity(raw_pending.values().map(|t| t.input.len()).sum()),
 		};

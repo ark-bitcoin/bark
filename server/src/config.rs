@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use tonic::transport::{Certificate, Channel, ClientTlsConfig, Identity};
 use cln_rpc::node_client::NodeClient;
 
-use crate::{forfeits, utils, sweeps, vtxopool};
+use crate::{forfeits, fee_estimator, utils, sweeps, vtxopool};
 use crate::secret::Secret;
 
 
@@ -284,8 +284,6 @@ pub struct Config {
 	/// The duration after which to drop forfeit nonces
 	#[serde(with = "utils::serde::duration")]
 	pub round_forfeit_nonces_timeout: Duration,
-	#[serde(with = "utils::serde::fee_rate")]
-	pub round_tx_feerate: FeeRate,
 
 	/// Whether or not to add full error information to RPC internal errors.
 	pub rpc_rich_errors: bool,
@@ -319,6 +317,9 @@ pub struct Config {
 
 	/// Config for the VtxoPool process
 	pub vtxopool: vtxopool::Config,
+
+	/// Config for the FeeEstimator process.
+	pub fee_estimator: fee_estimator::Config,
 
 	// The interval used to rebroadcast transactions
 	#[serde(with = "utils::serde::duration")]
@@ -501,6 +502,8 @@ pub mod watchman {
 		pub vtxo_sweeper: sweeps::Config,
 		/// Config for the ForfeitWatcher process.
 		pub forfeit_watcher: forfeits::Config,
+		/// Config for the FeeEstimator process.
+		pub fee_estimator: fee_estimator::Config,
 
 		// The interval used to rebroadcast transactions
 		#[serde(with = "utils::serde::duration")]

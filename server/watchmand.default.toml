@@ -27,8 +27,6 @@ otel_deployment_name = "my_regtest"
 ################
 
 [vtxo_sweeper]
-# Fallback feerate to use for sweep txs
-sweep_tx_fallback_feerate = "2500sat/kwu"
 # Interval to check if sweeps can be made
 round_sweep_interval = "1h"
 # Minimum total sweep value to merit a sweep tx
@@ -40,10 +38,23 @@ sweep_threshold = 1000000
 ###################
 
 [forfeit_watcher]
-# Fallback feerate to use for forfeit claims
-claim_fallback_feerate = "6250sat/kwu"
 # Interval to check of forfeited exits have been broadcast
 wake_interval = "1m"
+
+
+#################
+# FEE ESTIMATOR #
+#################
+
+[fee_estimator]
+# Interval to update fee estimates from bitcoind
+update_interval = "1m"
+# Fallback feerate for fast confirmation (1 block target)
+fallback_fee_rate_fast = "25sat/vb"
+# Fallback feerate for regular confirmation (3 block target)
+fallback_fee_rate_regular = "10sat/vb"
+# Fallback feerate for slow confirmation (6 block target)
+fallback_fee_rate_slow = "4sat/vb"
 
 
 #################

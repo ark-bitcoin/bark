@@ -247,7 +247,6 @@ impl TestContext {
 			round_sign_time: Duration::from_millis(5000),
 			nb_round_nonces: 8,
 			round_forfeit_nonces_timeout: Duration::from_secs(30),
-			round_tx_feerate: FeeRate::from_sat_per_vb_unchecked(10),
 			required_board_confirmations: constants::BOARD_CONFIRMATIONS as usize,
 			round_tx_untrusted_input_confirmations: 1,
 			max_vtxo_amount: None,
@@ -260,12 +259,10 @@ impl TestContext {
 			otel_tracing_sampler: Some(1f64),
 			otel_deployment_name: db_name,
 			vtxo_sweeper: server::sweeps::Config {
-				sweep_tx_fallback_feerate: FeeRate::from_sat_per_vb_unchecked(10),
 				round_sweep_interval: Duration::from_secs(60),
 				sweep_threshold: Amount::from_sat(1_000_000),
 			}.into(),
 			forfeit_watcher: server::forfeits::Config {
-				claim_fallback_feerate: FeeRate::from_sat_per_vb_unchecked(25),
 				wake_interval: Duration::from_millis(1_000),
 			}.into(),
 			forfeit_watcher_min_balance: Amount::from_sat(1_000_000),
@@ -278,12 +275,17 @@ impl TestContext {
 				vtxo_lifetime: 144,
 				vtxo_pre_expiry: 12,
 				vtxo_max_arkoor_depth: 3,
-				issue_tx_fallback_feerate: FeeRate::from_sat_per_vb_unchecked(1),
 				issue_interval: Duration::from_secs(3),
 			},
 			offboard_feerate: FeeRate::from_sat_per_vb_unchecked(7),
 			offboard_fixed_fee_vb: 100,
 			offboard_session_timeout: Duration::from_secs(30),
+			fee_estimator: server::fee_estimator::Config {
+				update_interval: Duration::from_secs(60),
+				fallback_fee_rate_fast: FeeRate::from_sat_per_vb_unchecked(25),
+				fallback_fee_rate_regular: FeeRate::from_sat_per_vb_unchecked(10),
+				fallback_fee_rate_slow: FeeRate::from_sat_per_vb_unchecked(5),
+			},
 			transaction_rebroadcast_interval: std::time::Duration::from_secs(2),
 			rpc: config::Rpc {
 				// these will be overwritten on start, but can't be empty

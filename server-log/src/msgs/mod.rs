@@ -7,6 +7,8 @@ mod forfeits;
 pub use self::forfeits::*;
 mod lightning;
 pub use self::lightning::*;
+mod fee_estimator;
+pub use self::fee_estimator::*;
 mod offboards;
 pub use self::offboards::*;
 mod rounds;
