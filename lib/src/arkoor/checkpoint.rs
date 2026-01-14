@@ -70,7 +70,7 @@ use bitcoin::hashes::Hash;
 use bitcoin::{Amount, OutPoint, TapSighash, Transaction, Txid, TxIn, TxOut, ScriptBuf, Sequence, Witness};
 use bitcoin::taproot::TapTweakHash;
 use bitcoin::secp256k1::{schnorr, Keypair, PublicKey};
-use bitcoin_ext::{fee, P2TR_DUST, TxOutExt};
+use bitcoin_ext::{P2TR_DUST, TxOutExt, fee};
 use secp256k1_musig::musig::PublicNonce;
 
 use crate::vtxo::{GenesisItem, GenesisTransition};
@@ -166,6 +166,7 @@ impl CosignRequest<VtxoId> {
 		Ok(CosignRequest::new(self.user_pub_nonces, vtxo,  self.outputs))
 	}
 }
+
 
 pub mod state {
 	/// There are two paths that a can be followed
@@ -436,6 +437,7 @@ impl<S: state::BuilderState> CheckpointedArkoorBuilder<S> {
 		// We need `==` for standardness and we can't be lenient
 		let input_amount = input.amount();
 		let output_amount = outputs.iter().map(|o| o.amount).sum::<Amount>();
+
 		if input_amount != output_amount {
 			return Err(ArkoorConstructionError::Unbalanced {
 				input: input_amount,
@@ -476,7 +478,10 @@ impl<S: state::BuilderState> CheckpointedArkoorBuilder<S> {
 impl CheckpointedArkoorBuilder<state::Initial> {
 
 	/// Create a new checkpointed arkoor builder
-	pub fn new(input: Vtxo, outputs: Vec<VtxoRequest>) -> Result<Self, ArkoorConstructionError> {
+	pub fn new(
+		input: Vtxo,
+		outputs: Vec<VtxoRequest>,
+	) -> Result<Self, ArkoorConstructionError> {
 		// Do some validation on the amounts
 		Self::validate_amounts(&input, &outputs)?;
 

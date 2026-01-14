@@ -3,7 +3,7 @@ use std::borrow::Cow;
 
 use bitcoin::{sighash, Amount, OutPoint, TapLeafHash, Transaction, TxOut};
 
-use bitcoin_ext::TxOutExt;
+use bitcoin_ext::{TxOutExt, P2TR_DUST};
 
 use crate::tree::signed::unlock_clause;
 use crate::{musig, SECP};
@@ -219,11 +219,14 @@ pub fn validate(
 		}
 
 		// All outputs have to be standard otherwise we can't relay.
-		if let Some(out_idx) = item.other_outputs.iter().position(|o| !o.is_standard()) {
-			return Err(VtxoValidationError::NonStandardTxOut {
-				genesis_item_idx: idx,
-				other_output_idx: out_idx,
-			});
+		// Skip this check for subdust vtxos since they can have subdust sibling outputs.
+		if vtxo.amount >= P2TR_DUST {
+			if let Some(out_idx) = item.other_outputs.iter().position(|o| !o.is_standard()) {
+				return Err(VtxoValidationError::NonStandardTxOut {
+					genesis_item_idx: idx,
+					other_output_idx: out_idx,
+				});
+			}
 		}
 
 		let next_amount = prev.2.checked_sub(item.other_outputs.iter().map(|o| o.value).sum())
