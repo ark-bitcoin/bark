@@ -427,7 +427,7 @@ impl Wallet {
 			bail!("Sent amount must be at least {}", P2TR_DUST);
 		}
 
-		let (change_keypair, _) = self.derive_store_next_keypair().await?;
+		let (user_keypair, _) = self.derive_store_next_keypair().await?;
 
 		let inputs = self.select_vtxos_to_cover(amount).await
 			.context("Could not find enough suitable VTXOs to cover lightning payment")?;
@@ -450,7 +450,7 @@ impl Wallet {
 			user_amount_sat: user_amount.map(|a| a.to_sat()),
 			input_vtxo_ids: input_ids.iter().map(|v| v.to_bytes().to_vec()).collect(),
 			user_nonces: pubs.iter().map(|p| p.serialize().to_vec()).collect(),
-			user_pubkey: change_keypair.public_key().serialize().to_vec(),
+			user_pubkey: user_keypair.public_key().serialize().to_vec(),
 		};
 
 		let resp = srv.client.request_lightning_pay_htlc_cosign(req).await
@@ -462,7 +462,7 @@ impl Wallet {
 
 		let pay_req = match &policy {
 			VtxoPolicy::ServerHtlcSend(policy) => {
-				ensure!(policy.user_pubkey == change_keypair.public_key(), "user pubkey mismatch");
+				ensure!(policy.user_pubkey == user_keypair.public_key(), "user pubkey mismatch");
 				ensure!(policy.payment_hash == invoice.payment_hash(), "payment hash mismatch");
 				// TODO: ensure expiry is not too high? add new bark config to check against?
 				VtxoRequest { amount: amount, policy: policy.clone().into() }
@@ -471,7 +471,7 @@ impl Wallet {
 		};
 
 		let builder = ArkoorPackageBuilder::new(
-			&inputs, &pubs, pay_req, Some(change_keypair.public_key()),
+			&inputs, &pubs, pay_req, Some(user_keypair.public_key()),
 		)?;
 
 		ensure!(builder.verify_cosign_response(&cosign_resp),
