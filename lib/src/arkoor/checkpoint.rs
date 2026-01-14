@@ -1041,12 +1041,35 @@ impl CheckpointedArkoorBuilder<state::UserGeneratedNonces> {
 impl<'a> CheckpointedArkoorBuilder<state::UserSigned> {
 
 	pub fn build_signed_vtxos(&self) -> Vec<Vtxo> {
-		let checkpoint_sig = self.full_signatures.as_ref().expect("state invariant")[0];
-		let arkoor_sigs = &self.full_signatures.as_ref().expect("state invariant")[1..];
+		let sigs = self.full_signatures.as_ref().expect("state invariant");
+		let checkpoint_sig = sigs[0];
 
-		(0..self.nb_outputs()).map(|i| {
-			self.vtxo_at(i, Some(checkpoint_sig), Some(arkoor_sigs[i]))
-		}).collect()
+		let mut ret = Vec::with_capacity(self.outputs.len() + self.dust_outputs.len());
+
+		// Build non-dust vtxos
+		// Signature order: sigs[1..1+m] = arkoor txs
+		for i in 0..self.outputs.len() {
+			let arkoor_sig = sigs[1 + i];
+			ret.push(self.vtxo_at(i, Some(checkpoint_sig), Some(arkoor_sig)));
+		}
+
+		// Build dust vtxos (if dust isolation is active)
+		if self.unsigned_dust_fanout_tx.is_some() {
+			let m = self.outputs.len();
+			let dust_fanout_tx_sig = sigs[1 + m];
+
+			for i in 0..self.dust_outputs.len() {
+				let exit_tx_sig = sigs[2 + m + i];
+				ret.push(self.construct_dust_vtxo_at(
+					i,
+					Some(checkpoint_sig),
+					Some(dust_fanout_tx_sig),
+					Some(exit_tx_sig),
+				));
+			}
+		}
+
+		ret
 	}
 }
 
