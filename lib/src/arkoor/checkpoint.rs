@@ -49,7 +49,7 @@
 //! vtxos but they will still lack signatures.
 //!
 //! Constructing the signatures is an interactive process in which the
-//! client signs first.
+//! server signs first.
 //!
 //! The client will call [CheckpointedArkoorBuilder::generate_user_nonces]
 //! which will update the builder-state to  [state::UserGeneratedNonces].
