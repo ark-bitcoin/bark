@@ -1,6 +1,7 @@
 use std::fmt;
 
 use anyhow::Context;
+use ark::arkoor::checkpointed_package::{CheckpointedPackageBuilder, PackageCosignResponse};
 use bitcoin::Amount;
 use bitcoin::hex::DisplayHex;
 use lightning::util::ser::Writeable;
@@ -8,11 +9,11 @@ use lnurllib::lightning_address::LightningAddress;
 use log::{error, info, trace, warn};
 use server_rpc::protos::{self, lightning_payment_status::PaymentStatus};
 
-use ark::{ProtocolEncoding, VtxoPolicy, VtxoRequest, musig};
+use ark::{VtxoPolicy, VtxoRequest, musig};
 use ark::arkoor::ArkoorPackageBuilder;
 use ark::lightning::{Bolt12Invoice, Bolt12InvoiceExt, Invoice, Offer, PaymentHash, Preimage};
 use ark::util::IteratorExt;
-use bitcoin_ext::P2TR_DUST;
+use bitcoin_ext::{BlockHeight, P2TR_DUST};
 
 use crate::Wallet;
 use crate::lightning::lnaddr_invoice;
@@ -409,6 +410,9 @@ impl Wallet {
 			bail!("Invalid original payment method for lightning payment");
 		}
 		let mut srv = self.require_server()?;
+		let ark_info = srv.ark_info().await?;
+
+		let tip = self.chain.tip().await?;
 
 		let properties = self.db.read_properties().await?.context("Missing config")?;
 		if invoice.network() != properties.network {
@@ -434,51 +438,61 @@ impl Wallet {
 
 		let mut secs = Vec::with_capacity(inputs.len());
 		let mut pubs = Vec::with_capacity(inputs.len());
-		let mut keypairs = Vec::with_capacity(inputs.len());
+		let mut input_keypairs = Vec::with_capacity(inputs.len());
 		let mut input_ids = Vec::with_capacity(inputs.len());
 		for input in inputs.iter() {
 			let keypair = self.get_vtxo_key(input).await?;
 			let (s, p) = musig::nonce_pair(&keypair);
 			secs.push(s);
 			pubs.push(p);
-			keypairs.push(keypair);
+			input_keypairs.push(keypair);
 			input_ids.push(input.id());
 		}
 
-		let req = protos::LightningPayHtlcCosignRequest {
-			invoice: invoice.to_string(),
-			user_amount_sat: user_amount.map(|a| a.to_sat()),
-			input_vtxo_ids: input_ids.iter().map(|v| v.to_bytes().to_vec()).collect(),
-			user_nonces: pubs.iter().map(|p| p.serialize().to_vec()).collect(),
-			user_pubkey: user_keypair.public_key().serialize().to_vec(),
-		};
-
-		let resp = srv.client.request_lightning_pay_htlc_cosign(req).await
-			.context("htlc request failed")?.into_inner();
-
-		let cosign_resp = resp.sigs.into_iter().map(|i| i.try_into())
-			.collect::<Result<Vec<_>, _>>()?;
-		let policy = VtxoPolicy::deserialize(&resp.policy)?;
-
-		let pay_req = match &policy {
-			VtxoPolicy::ServerHtlcSend(policy) => {
-				ensure!(policy.user_pubkey == user_keypair.public_key(), "user pubkey mismatch");
-				ensure!(policy.payment_hash == invoice.payment_hash(), "payment hash mismatch");
-				// TODO: ensure expiry is not too high? add new bark config to check against?
-				VtxoRequest { amount: amount, policy: policy.clone().into() }
-			},
-			_ => bail!("invalid policy returned from server"),
-		};
-
-		let builder = ArkoorPackageBuilder::new(
-			&inputs, &pubs, pay_req, Some(user_keypair.public_key()),
-		)?;
-
-		ensure!(builder.verify_cosign_response(&cosign_resp),
-			"invalid arkoor cosignature received from server",
+		let expiry = tip + ark_info.htlc_send_expiry_delta as BlockHeight;
+		let policy = VtxoPolicy::new_server_htlc_send(
+			user_keypair.public_key(), invoice.payment_hash(), expiry,
 		);
 
-		let (htlc_vtxos, change_vtxo) = builder.build_vtxos(&cosign_resp, &keypairs, secs)?;
+		let input_amount = inputs.iter().map(|v| v.amount()).sum::<Amount>();
+		let pay_req = VtxoRequest { amount, policy };
+		let outputs = if input_amount == amount {
+			vec![pay_req]
+		} else {
+			let change_req = VtxoRequest {
+				amount: input_amount - amount,
+				policy: VtxoPolicy::new_pubkey(user_keypair.public_key()),
+			};
+			vec![pay_req, change_req]
+		};
+		let builder = CheckpointedPackageBuilder::new_with_checkpoints(
+			inputs.iter().map(|v| &v.vtxo).cloned(),
+			outputs,
+		)
+			.context("Failed to construct arkoor package")?
+			.generate_user_nonces(&input_keypairs)
+			.context("invalid nb of keypairs")?;
+
+		let cosign_request = protos::LightningPayHtlcCosignRequest {
+			invoice: invoice.to_string(),
+			parts: builder.cosign_request()
+				.convert_vtxo(|vtxo| vtxo.id()).requests.into_iter()
+				.map(|r| r.into()).collect(),
+		};
+
+		let response = srv.client.request_lightning_pay_htlc_cosign(cosign_request).await
+			.context("htlc request failed")?.into_inner();
+
+		let cosign_responses = PackageCosignResponse::try_from(response)
+			.context("Failed to parse cosign response from server")?;
+
+		let vtxos = builder
+			.user_cosign(&input_keypairs, cosign_responses)
+			.context("Failed to cosign vtxos")?
+			.build_signed_vtxos();
+
+		let (htlc_vtxos, change_vtxos) = vtxos.into_iter()
+			.partition::<Vec<_>, _>(|v| matches!(v.policy(), VtxoPolicy::ServerHtlcSend(_)));
 
 		// Validate the new vtxos. They have the same chain anchor.
 		let mut effective_balance = Amount::ZERO;
@@ -500,7 +514,7 @@ impl Wallet {
 		self.mark_vtxos_as_spent(&input_ids).await?;
 
 		// Validate the change vtxo. It has the same chain anchor as the last input.
-		if let Some(ref change) = change_vtxo {
+		for change in &change_vtxos {
 			let last_input = inputs.last().context("no inputs provided")?;
 			let tx = self.chain.get_tx(&last_input.chain_anchor().txid).await?;
 			let tx = tx.with_context(|| {
@@ -513,7 +527,7 @@ impl Wallet {
 		self.movements.update_movement(
 			movement_id,
 			MovementUpdate::new()
-				.produced_vtxo_if_some(change_vtxo)
+				.produced_vtxos(change_vtxos)
 				.metadata(LightningMovement::metadata(invoice.payment_hash(), &htlc_vtxos))
 		).await?;
 

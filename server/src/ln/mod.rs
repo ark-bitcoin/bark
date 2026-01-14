@@ -6,18 +6,21 @@ use std::cmp;
 use std::collections::HashMap;
 
 use anyhow::Context;
-use ark::integration::TokenStatus;
-use ark::util::IteratorExt;
 use bitcoin::Amount;
 use bitcoin::hex::DisplayHex;
 use bitcoin::secp256k1::{schnorr, PublicKey};
 use tracing::{error, info, trace};
 use uuid::Uuid;
 
-use ark::{musig, ProtocolEncoding, Vtxo, VtxoId, VtxoPolicy, VtxoRequest};
+use ark::{musig, Vtxo, VtxoId, VtxoPolicy, VtxoRequest};
 use ark::arkoor::{ArkoorCosignResponse, ArkoorPackageBuilder};
+use ark::arkoor::checkpointed_package::{
+	CheckpointedPackageBuilder, PackageCosignRequest, PackageCosignResponse,
+};
 use ark::challenges::LightningReceiveChallenge;
+use ark::integration::TokenStatus;
 use ark::lightning::{Bolt12Invoice, Invoice, Offer, PaymentHash, PaymentStatus, Preimage};
+use ark::util::IteratorExt;
 use server_rpc::protos::{self, InputVtxo, lightning_payment_status};
 use server_rpc::protos::prepare_lightning_receive_claim_request::LightningReceiveAntiDos;
 use server_rpc::TryFromBytes;
@@ -34,48 +37,81 @@ impl Server {
 	pub async fn request_lightning_pay_htlc_cosign(
 		&self,
 		invoice: Invoice,
-		amount: Amount,
-		user_pubkey: PublicKey,
-		inputs: Vec<Vtxo>,
-		user_nonces: Vec<musig::PublicNonce>,
-	) -> anyhow::Result<protos::LightningPayHtlcCosignResponse> {
+		request: PackageCosignRequest<VtxoId>,
+	) -> anyhow::Result<PackageCosignResponse> {
 		let invoice_payment_hash = invoice.payment_hash();
 
-		// Bail early if this invoice was already paid to avoid setting up HTLCs just to have them revoked
-		// some time later.
-		if let Some(invoice) = self.db.get_lightning_invoice_by_payment_hash(&invoice_payment_hash).await? {
+		let input_vtxo_ids = request.inputs().cloned().collect::<Vec<VtxoId>>();
+		let input_vtxos = self.db.get_vtxos_by_id(&input_vtxo_ids).await?
+			.into_iter().map(|v| v.vtxo).collect::<Vec<_>>();
+
+		// Mark the vtxo as in-flux
+		let _vtxo_guard = self.vtxos_in_flux.try_lock(&input_vtxo_ids).map_err(|e| {
+			badarg_err!("some VTXO is already locked by another process: {}", e.id)
+		})?;
+
+		//TODO(stevenroose) check that vtxos are valid
+
+		self.check_vtxos_not_exited(&input_vtxos).await?;
+
+		let user_htlc_amount = request.outputs()
+			.filter(|v| matches!(v.policy, VtxoPolicy::ServerHtlcSend(..)))
+			.map(|v| v.amount)
+			.sum::<Amount>();
+
+		// Check if the provided requests are sufficient to pay the invoice
+		let amount = invoice.get_final_amount(Some(user_htlc_amount))
+			.badarg("missing or invalid user amount")?;
+
+		// Convert the PackageCosignRequest<VtxoId> into PackageCosignRequest<Vtxo>
+		// We will mask the old value
+		let request = request.set_vtxos(input_vtxos)?;
+
+		// Bail early if this invoice was already paid to avoid setting up HTLCs
+		// just to have them revoked some time later.
+		if let Some(invoice) = self.db.get_lightning_invoice_by_payment_hash(
+			&invoice_payment_hash,
+		).await?
+		{
 			if invoice.preimage.is_some() {
 				return badarg!("invoice has already been paid");
 			}
 		}
-
-		if self.db.get_open_lightning_payment_attempt_by_payment_hash(&invoice_payment_hash).await?.is_some() {
-			return badarg!("payment already in progress for this invoice");
-		}
-
-		self.check_vtxos_not_exited(&inputs).await?;
-
-		//TODO(stevenroose) check that vtxos are valid
 
 		let expiry = {
 			let tip = self.sync_manager.chain_tip();
 			tip.height + self.config.htlc_send_expiry_delta as BlockHeight
 		};
 
-		slog!(LightningPayHtlcsRequested, invoice_payment_hash, amount, expiry);
+		if self.db.get_open_lightning_payment_attempt_by_payment_hash(
+			&invoice_payment_hash,
+		).await?.is_some()
+		{
+			return badarg!("payment already in progress for this invoice");
+		}
 
-		let policy = VtxoPolicy::new_server_htlc_send(user_pubkey, invoice_payment_hash, expiry);
-		let pay_req = VtxoRequest { amount, policy: policy.clone() };
-
-		let package = ArkoorPackageBuilder::new(&inputs, &user_nonces, pay_req, Some(user_pubkey))
+		let builder = CheckpointedPackageBuilder::from_cosign_requests(request)
 			.badarg("error creating arkoor package")?;
 
-		let cosign_resp = self.cosign_oor_package_with_builder(&package).await?;
+		// We are going to compute all vtxos and spend-info
+		// and mark it into the database
+		let new_output_vtxos = builder.build_unsigned_vtxos();
+		let new_internal_vtxos = builder.build_unsigned_internal_vtxos();
+		let spend_info = builder.spend_info();
 
-		Ok(protos::LightningPayHtlcCosignResponse {
-			sigs: cosign_resp.into_iter().map(|i| i.into()).collect(),
-			policy: policy.serialize().to_vec(),
-		})
+		// We are going to mark the update in the database
+		self.db.upsert_vtxos_and_mark_spends(
+			new_output_vtxos.chain(new_internal_vtxos),
+			spend_info
+		).await?;
+
+		slog!(LightningPayHtlcsRequested, invoice_payment_hash, amount, expiry);
+
+		// Only now it's safe to sign
+		let builder = builder.server_cosign(*self.server_key.leak_ref())
+			.context("Failed to sign")?;
+
+		Ok(builder.cosign_response())
 	}
 
 	/// Try to finish the lightning payment that was previously started.

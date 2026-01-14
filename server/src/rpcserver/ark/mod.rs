@@ -248,43 +248,27 @@ impl rpc::server::ArkService for Server {
 	async fn request_lightning_pay_htlc_cosign(
 		&self,
 		req: tonic::Request<protos::LightningPayHtlcCosignRequest>,
-	) -> Result<tonic::Response<protos::LightningPayHtlcCosignResponse>, tonic::Status> {
+	) -> Result<tonic::Response<protos::CheckpointedPackageCosignResponse>, tonic::Status> {
 		let _ = RpcMethodDetails::grpc_ark(middleware::rpc_names::ark::REQUEST_LIGHTNING_PAY_HTLC_COSIGN);
 		let req = req.into_inner();
+
+		let cosign_requests = PackageCosignRequest::try_from(req.clone())
+			.context("Failed to parse request")?;
 
 		crate::rpcserver::add_tracing_attributes(
 			vec![
 				KeyValue::new("invoice", format!("{:?}", req.invoice)),
-				KeyValue::new("amount_sats", format!("{:?}", req.user_amount_sat)),
-				KeyValue::new("input_vtxo_ids", format!("{:?}", req.input_vtxo_ids)),
-				KeyValue::new("user_nonces", format!("{:?}", req.user_nonces)),
+				KeyValue::new("cosign_requests", format!("{:?}", req.parts)),
 			]);
 
 		let invoice = Invoice::from_str(&req.invoice).badarg("invalid invoice")?;
 		invoice.check_signature().badarg("invalid invoice signature")?;
 
-		let user_amount = req.user_amount_sat.map(|v| Amount::from_sat(v));
-		let amount = invoice.get_final_amount(user_amount)
-			.badarg("missing or invalid user amount")?;
-
-		let input_ids = req.input_vtxo_ids.iter()
-			.map(VtxoId::from_bytes)
-			.collect::<Result<Vec<_>, _>>()?;
-
-		let input_vtxos = self.db.get_vtxos_by_id(&input_ids).await
-			.to_status()?.into_iter().map(|v| v.vtxo).collect::<Vec<_>>();
-
-		let user_nonces = req.user_nonces.iter()
-			.map(musig::PublicNonce::from_bytes)
-			.collect::<Result<Vec<_>, _>>()?;
-
-		let user_pubkey = PublicKey::from_bytes(&req.user_pubkey)?;
-
 		let resp = self.request_lightning_pay_htlc_cosign(
-			invoice, amount, user_pubkey, input_vtxos, user_nonces
+			invoice, cosign_requests
 		).await.context("error making payment")?;
 
-		Ok(tonic::Response::new(resp))
+		Ok(tonic::Response::new(resp.into()))
 	}
 
 	async fn initiate_lightning_payment(

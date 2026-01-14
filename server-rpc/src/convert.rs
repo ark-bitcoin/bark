@@ -505,11 +505,22 @@ impl<V: VtxoRef> From<ark::arkoor::checkpointed_package::PackageCosignRequest<V>
 	}
 }
 
-// Serialize the PackageCosignRequest
+// Deserialize the PackageCosignRequest
 impl<'a> TryFrom<protos::CheckpointedPackageCosignRequest> for ark::arkoor::checkpointed_package::PackageCosignRequest<VtxoId> {
 	type Error = ConvertError;
 
 	fn try_from(v: protos::CheckpointedPackageCosignRequest) -> Result<Self, Self::Error> {
+		Ok(Self {
+			requests: v.parts.into_iter().map(|p| p.try_into()).collect::<Result<Vec<_>, _>>()?,
+		})
+	}
+}
+
+// Serialize the PackageCosignRequest
+impl<'a> TryFrom<protos::LightningPayHtlcCosignRequest> for ark::arkoor::checkpointed_package::PackageCosignRequest<VtxoId> {
+	type Error = ConvertError;
+
+	fn try_from(v: protos::LightningPayHtlcCosignRequest) -> Result<Self, Self::Error> {
 		Ok(Self {
 			requests: v.parts.into_iter().map(|p| p.try_into()).collect::<Result<Vec<_>, _>>()?,
 		})

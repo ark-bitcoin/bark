@@ -49,7 +49,7 @@ pub trait ArkRpcProxy: Send + Sync + Clone + 'static {
 		Ok(upstream.empty_arkoor_mailbox(req).await?.into_inner())
 	}
 
-	async fn request_lightning_pay_htlc_cosign(&self, upstream: &mut ArkClient, req: protos::LightningPayHtlcCosignRequest) -> Result<protos::LightningPayHtlcCosignResponse, tonic::Status> {
+	async fn request_lightning_pay_htlc_cosign(&self, upstream: &mut ArkClient, req: protos::LightningPayHtlcCosignRequest) -> Result<protos::CheckpointedPackageCosignResponse, tonic::Status> {
 		Ok(upstream.request_lightning_pay_htlc_cosign(req).await?.into_inner())
 	}
 
@@ -267,7 +267,7 @@ impl<T: ArkRpcProxy> rpc::server::ArkService for ArkRpcProxyWrapper<T> {
 
 	async fn request_lightning_pay_htlc_cosign(
 		&self, req: tonic::Request<protos::LightningPayHtlcCosignRequest>,
-	) -> Result<tonic::Response<protos::LightningPayHtlcCosignResponse>, tonic::Status> {
+	) -> Result<tonic::Response<protos::CheckpointedPackageCosignResponse>, tonic::Status> {
 		Ok(tonic::Response::new(ArkRpcProxy::request_lightning_pay_htlc_cosign(&self.proxy, &mut self.upstream.clone(), req.into_inner()).await?))
 	}
 

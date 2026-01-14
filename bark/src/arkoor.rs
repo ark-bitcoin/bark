@@ -91,7 +91,8 @@ impl Wallet {
 			.context("invalid nb of keypairs")?;
 
 		let cosign_request = protos::CheckpointedPackageCosignRequest::from(
-			builder.cosign_request().convert_vtxo(|vtxo| vtxo.id()));
+			builder.cosign_request().convert_vtxo(|vtxo| vtxo.id()),
+		);
 
 		let response = srv.client.checkpointed_cosign_oor(cosign_request).await
 			.context("server failed to cosign arkoor")?

@@ -1220,8 +1220,8 @@ async fn reject_dust_bolt11_payment() {
 	impl captaind::proxy::ArkRpcProxy for Proxy {
 		async fn request_lightning_pay_htlc_cosign(
 			&self, upstream: &mut ArkClient, mut req: protos::LightningPayHtlcCosignRequest,
-		) -> Result<protos::LightningPayHtlcCosignResponse, tonic::Status> {
-			req.user_amount_sat = Some(P2TR_DUST_SAT - 1);
+		) -> Result<protos::CheckpointedPackageCosignResponse, tonic::Status> {
+			req.parts[0].outputs[0].amount = P2TR_DUST_SAT - 1;
 			Ok(upstream.request_lightning_pay_htlc_cosign(req).await?.into_inner())
 		}
 	}
@@ -1856,8 +1856,8 @@ async fn should_refuse_ln_pay_input_vtxo_that_is_being_exited() {
 	impl captaind::proxy::ArkRpcProxy for Proxy {
 		async fn request_lightning_pay_htlc_cosign(
 			&self, upstream: &mut ArkClient, mut req: protos::LightningPayHtlcCosignRequest,
-		) -> Result<protos::LightningPayHtlcCosignResponse, tonic::Status> {
-			req.input_vtxo_ids = vec![self.0.to_bytes().to_vec()];
+		) -> Result<protos::CheckpointedPackageCosignResponse, tonic::Status> {
+			req.parts[0].input_vtxo_id = self.0.to_bytes().to_vec();
 			Ok(upstream.request_lightning_pay_htlc_cosign(req).await?.into_inner())
 		}
 	}
