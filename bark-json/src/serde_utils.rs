@@ -15,6 +15,7 @@ pub mod duration {
 	}
 }
 
+#[allow(unused)]
 pub mod fee_rate_sats_per_kvb {
 	use serde::{Deserialize, Deserializer, Serializer};
 	use bitcoin::FeeRate;
