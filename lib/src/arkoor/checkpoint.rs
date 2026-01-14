@@ -1164,4 +1164,185 @@ mod test {
 		}
 
 	}
+
+	#[test]
+	fn build_checkpointed_arkoor_with_dust_isolation() {
+		// Test mixed outputs: some dust, some non-dust
+		// This should activate dust isolation
+		let alice_keypair = Keypair::new(&SECP, &mut rand::thread_rng());
+		let bob_keypair = Keypair::new(&SECP, &mut rand::thread_rng());
+		let charlie_keypair = Keypair::new(&SECP, &mut rand::thread_rng());
+		let server_keypair = Keypair::new(&SECP, &mut rand::thread_rng());
+
+		let (funding_tx, alice_vtxo) = DummyTestVtxoSpec {
+			amount: Amount::from_sat(100_000),
+			expiry_height: 1000,
+			exit_delta : 128,
+			user_keypair: alice_keypair.clone(),
+			server_keypair: server_keypair.clone()
+		}.build();
+
+		// Validate Alice her vtxo
+		alice_vtxo.validate(&funding_tx).expect("The unsigned vtxo is valid");
+
+		// Non-dust outputs (>= 330 sats)
+		let outputs = vec![
+			VtxoRequest {
+				amount: Amount::from_sat(99_600),
+				policy: VtxoPolicy::new_pubkey(bob_keypair.public_key())
+			},
+		];
+
+		// dust outputs (< 330 sats each, but combined >= 330)
+		let dust_outputs = vec![
+			VtxoRequest {
+				amount: Amount::from_sat(200),  // < 330, truly dust
+				policy: VtxoPolicy::new_pubkey(charlie_keypair.public_key())
+			},
+			VtxoRequest {
+				amount: Amount::from_sat(200),  // < 330, truly dust
+				policy: VtxoPolicy::new_pubkey(alice_keypair.public_key())
+			}
+		];
+
+		// The user generates their nonces
+		let user_builder = CheckpointedArkoorBuilder::new(
+			alice_vtxo.clone(),
+			outputs.clone(),
+			dust_outputs.clone(),
+		).expect("Valid arkoor request with dust isolation");
+
+		// Verify dust isolation is active
+		assert!(user_builder.unsigned_dust_fanout_tx.is_some(), "Dust isolation should be active");
+		assert!(user_builder.unsigned_dust_exit_txs.is_some(), "Dust exit txs should be present");
+		assert_eq!(user_builder.unsigned_dust_exit_txs.as_ref().unwrap().len(), 2);
+
+		// Check signature count: 1 checkpoint + 1 arkoor + 1 dust fanout + 2 exits = 5
+		assert_eq!(user_builder.nb_sigs(), 5);
+
+		// The user generates their nonces
+		let user_builder = user_builder.generate_user_nonces(alice_keypair);
+		let cosign_request = user_builder.cosign_request();
+
+		// The server will cosign the request
+		let server_builder = CheckpointedArkoorBuilder::from_cosign_request(cosign_request).expect("Invalid cosign request")
+			.server_cosign(server_keypair).expect("Incorrect key");
+
+		let cosign_data = server_builder.cosign_response();
+
+		// The user will cosign the request and construct their vtxos
+		let vtxos = user_builder
+			.user_cosign(&alice_keypair, &cosign_data)
+			.expect("Valid cosign data and correct key")
+			.build_signed_vtxos();
+
+		// Should have 3 vtxos: 1 non-dust + 2 dust
+		assert_eq!(vtxos.len(), 3);
+
+		for vtxo in vtxos.into_iter() {
+			// Check if the vtxo is considered valid
+			vtxo.validate(&funding_tx).expect("Invalid VTXO");
+
+			// Check all transactions using libbitcoin-kernel
+			let mut prev_tx = funding_tx.clone();
+			for tx in vtxo.transactions().map(|item| item.tx) {
+				let prev_outpoint: OutPoint = tx.input[0].previous_output;
+				let prev_txout: TxOut = prev_tx.output[prev_outpoint.vout as usize].clone();
+				crate::test::verify_tx(&[prev_txout], 0, &tx).expect("Valid transaction");
+				prev_tx = tx;
+			}
+		}
+	}
+
+	#[test]
+	fn build_checkpointed_arkoor_outputs_must_be_above_dust() {
+		// Test that outputs in the outputs list must be >= P2TR_DUST
+		let alice_keypair = Keypair::new(&SECP, &mut rand::thread_rng());
+		let bob_keypair = Keypair::new(&SECP, &mut rand::thread_rng());
+		let server_keypair = Keypair::new(&SECP, &mut rand::thread_rng());
+
+		let (funding_tx, alice_vtxo) = DummyTestVtxoSpec {
+			amount: Amount::from_sat(1000),
+			expiry_height: 1000,
+			exit_delta : 128,
+			user_keypair: alice_keypair.clone(),
+			server_keypair: server_keypair.clone()
+		}.build();
+
+		alice_vtxo.validate(&funding_tx).expect("The unsigned vtxo is valid");
+
+		// Put dust amounts in the outputs list - this should fail
+		let outputs = vec![
+			VtxoRequest {
+				amount: Amount::from_sat(100),  // < 330 sats (P2TR_DUST)
+				policy: VtxoPolicy::new_pubkey(bob_keypair.public_key())
+			},
+			VtxoRequest {
+				amount: Amount::from_sat(900),  // >= 330 sats
+				policy: VtxoPolicy::new_pubkey(alice_keypair.public_key())
+			}
+		];
+
+		// This should fail because one output is below P2TR_DUST
+		let result = CheckpointedArkoorBuilder::new(
+			alice_vtxo.clone(),
+			outputs.clone(),
+			vec![],
+		);
+
+		match result {
+			Err(ArkoorConstructionError::Dust) => {},
+			_ => panic!("Expected Dust error"),
+		}
+	}
+
+	#[test]
+	fn build_checkpointed_arkoor_dust_sum_too_small() {
+		// Test mixed with dust_sum < P2TR_DUST → error
+		let alice_keypair = Keypair::new(&SECP, &mut rand::thread_rng());
+		let bob_keypair = Keypair::new(&SECP, &mut rand::thread_rng());
+		let server_keypair = Keypair::new(&SECP, &mut rand::thread_rng());
+
+		let (funding_tx, alice_vtxo) = DummyTestVtxoSpec {
+			amount: Amount::from_sat(100_000),
+			expiry_height: 1000,
+			exit_delta : 128,
+			user_keypair: alice_keypair.clone(),
+			server_keypair: server_keypair.clone()
+		}.build();
+
+		alice_vtxo.validate(&funding_tx).expect("The unsigned vtxo is valid");
+
+		// Non-dust outputs
+		let outputs = vec![
+			VtxoRequest {
+				amount: Amount::from_sat(99_900),
+				policy: VtxoPolicy::new_pubkey(bob_keypair.public_key())
+			},
+		];
+
+		// dust outputs with combined sum < P2TR_DUST (330)
+		let dust_outputs = vec![
+			VtxoRequest {
+				amount: Amount::from_sat(50),
+				policy: VtxoPolicy::new_pubkey(alice_keypair.public_key())
+			},
+			VtxoRequest {
+				amount: Amount::from_sat(50),
+				policy: VtxoPolicy::new_pubkey(alice_keypair.public_key())
+			}
+		];
+
+		// This should fail because combined dust < P2TR_DUST
+		let result = CheckpointedArkoorBuilder::new(
+			alice_vtxo.clone(),
+			outputs.clone(),
+			dust_outputs.clone(),
+		);
+
+		match result {
+			Err(ArkoorConstructionError::Dust) => {},
+			_ => panic!("Expected Dust error"),
+		}
+	}
 }
