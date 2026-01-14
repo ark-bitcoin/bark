@@ -213,8 +213,10 @@ pub struct CheckpointedArkoorBuilder<S: state::BuilderState> {
 	// These variables are provided by the user
 	/// The input vtxo to be spent
 	input: Vtxo,
-	/// `n` [VtxoRequest]s that the user wants to receive
+	/// non-dust [VtxoRequest]s that the user wants to receive (>= P2TR_DUST)
 	outputs: Vec<VtxoRequest>,
+	/// dusty [VtxoRequest]s that the user wants to receive (< P2TR_DUST)
+	dust_outputs: Vec<VtxoRequest>,
 
 	// These can be computed in the constructor
 	/// The unsigned checkpoint transaction
@@ -445,7 +447,7 @@ impl<S: state::BuilderState> CheckpointedArkoorBuilder<S> {
 			})
 		}
 
-		// Check if we have any subdust outputs
+		// Check if we have any dust outputs
 		if outputs.iter().any(|o| o.amount < P2TR_DUST) {
 			return Err(ArkoorConstructionError::Dust)
 		}
@@ -458,6 +460,7 @@ impl<S: state::BuilderState> CheckpointedArkoorBuilder<S> {
 		CheckpointedArkoorBuilder {
 			input: self.input,
 			outputs: self.outputs,
+			dust_outputs: self.dust_outputs,
 			unsigned_checkpoint_tx: self.unsigned_checkpoint_tx,
 			unsigned_checkpoint_txid: self.unsigned_checkpoint_txid,
 			unsigned_arkoor_txs: self.unsigned_arkoor_txs,
@@ -481,6 +484,7 @@ impl CheckpointedArkoorBuilder<state::Initial> {
 	pub fn new(
 		input: Vtxo,
 		outputs: Vec<VtxoRequest>,
+		dust_outputs: Vec<VtxoRequest>,
 	) -> Result<Self, ArkoorConstructionError> {
 		// Do some validation on the amounts
 		Self::validate_amounts(&input, &outputs)?;
@@ -512,6 +516,7 @@ impl CheckpointedArkoorBuilder<state::Initial> {
 		Ok(Self {
 			input: input,
 			outputs: outputs,
+			dust_outputs: dust_outputs,
 			sighashes: sighashes,
 			checkpoint_taptweak: checkpoint_taptweak,
 			arkoor_taptweak: arkoor_taptweak,
@@ -572,10 +577,10 @@ impl<'a> CheckpointedArkoorBuilder<state::ServerCanCosign> {
 		CheckpointedArkoorBuilder::new(
 				cosign_request.input,
 				cosign_request.outputs,
+				vec![], // TODO: get from cosign_request.dust_outputs
 		)
 			.map_err(ArkoorSigningError::ArkoorConstructionError)?
 			.set_user_pub_nonces(cosign_request.user_pub_nonces.clone())
-
 	}
 
 	pub fn server_cosign(mut self, server_keypair: Keypair) -> Result<CheckpointedArkoorBuilder<state::ServerSigned>, ArkoorSigningError> {
@@ -793,6 +798,7 @@ mod test {
 		let user_builder = CheckpointedArkoorBuilder::new(
 			alice_vtxo.clone(),
 			vtxo_request.clone(),
+			vec![], // no dust outputs
 		).expect("Valid arkoor request");
 
 		// At this point all out-of-round transactions are fully defined.

@@ -63,7 +63,8 @@ impl CheckpointedPackageBuilder<state::Initial> {
 			if to_be_paid >= input_amount {
 				let package = CheckpointedArkoorBuilder::new(
 					input,
-					vec![VtxoRequest { amount: input_amount, policy: output.policy.clone() }]
+					vec![VtxoRequest { amount: input_amount, policy: output.policy.clone() }],
+					vec![], // no dust outputs
 				)?;
 
 				packages.push(package);
@@ -84,6 +85,7 @@ impl CheckpointedPackageBuilder<state::Initial> {
 				let package = CheckpointedArkoorBuilder::new(
 					input,
 					requests,
+					vec![], // no dust outputs
 				)?;
 
 				to_be_paid = Amount::ZERO;
