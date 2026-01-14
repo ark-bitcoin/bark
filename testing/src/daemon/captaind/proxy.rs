@@ -39,11 +39,6 @@ pub trait ArkRpcProxy: Send + Sync + Clone + 'static {
 		Ok(upstream.checkpointed_cosign_oor(req).await?.into_inner())
 	}
 
-	async fn request_arkoor_package_cosign(&self, upstream: &mut ArkClient, req: protos::ArkoorPackageCosignRequest) -> Result<protos::ArkoorPackageCosignResponse, tonic::Status> {
-		#[allow(deprecated)]
-		Ok(upstream.request_arkoor_package_cosign(req).await?.into_inner())
-	}
-
 	async fn post_arkoor_package_mailbox(&self, upstream: &mut ArkClient, req: protos::ArkoorPackage) -> Result<protos::Empty, tonic::Status> {
 		#[allow(deprecated)]
 		Ok(upstream.post_arkoor_package_mailbox(req).await?.into_inner())
@@ -276,12 +271,6 @@ impl<T: ArkRpcProxy> rpc::server::ArkService for ArkRpcProxyWrapper<T> {
 		&self, req: tonic::Request<protos::CheckpointedPackageCosignRequest>,
 	) -> Result<tonic::Response<protos::CheckpointedPackageCosignResponse>, tonic::Status> {
 		Ok(tonic::Response::new(ArkRpcProxy::checkpointed_cosign_oor(&self.proxy, &mut self.upstream.clone(), req.into_inner()).await?))
-	}
-
-	async fn request_arkoor_package_cosign(
-		&self, req: tonic::Request<protos::ArkoorPackageCosignRequest>,
-	) -> Result<tonic::Response<protos::ArkoorPackageCosignResponse>, tonic::Status> {
-		Ok(tonic::Response::new(ArkRpcProxy::request_arkoor_package_cosign(&self.proxy, &mut self.upstream.clone(), req.into_inner()).await?))
 	}
 
 	async fn post_arkoor_package_mailbox(

@@ -1,0 +1,2 @@
+- Remove deprecated `PostArkoorPackageMailbox` and gRPC methods.
+  [#1499](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1499)
