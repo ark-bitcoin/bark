@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use bitcoin::hashes::sha256;
 use bitcoin::secp256k1::{schnorr, PublicKey};
-use bitcoin::{self, Amount, FeeRate, OutPoint, Transaction};
+use bitcoin::{self, Amount, FeeRate, OutPoint, ScriptBuf, Transaction, Txid};
 
 use ark::{musig, ProtocolEncoding, SignedVtxoRequest, Vtxo, VtxoId, VtxoPolicy, VtxoRequest};
 use ark::arkoor::{ArkoorBuilder, ArkoorCosignResponse};
@@ -13,6 +13,7 @@ use ark::challenges::RoundAttemptChallenge;
 use ark::forfeit::{HashLockedForfeitBundle, HashLockedForfeitNonces};
 use ark::lightning::{PaymentHash, Preimage};
 use ark::mailbox::BlindedMailboxIdentifier;
+use ark::offboard::OffboardRequest;
 use ark::rounds::RoundId;
 use ark::tree::signed::{LeafVtxoCosignRequest, LeafVtxoCosignResponse, VtxoTreeSpec};
 use ark::vtxo::VtxoRef;
@@ -60,6 +61,7 @@ macro_rules! impl_try_from_byte_array {
 impl_try_from_byte_array!(PaymentHash, "lightning payment hash");
 impl_try_from_byte_array!(Preimage, "lightning payment preimage");
 impl_try_from_byte_array!(sha256::Hash, "SHA-256 hash");
+impl_try_from_byte_array!(Txid, "transaction id");
 
 macro_rules! impl_try_from_byte_array_result {
 	($ty:path, $exp:expr) => {
@@ -149,6 +151,7 @@ impl From<ark::ArkInfo> for protos::ArkInfo {
 			max_user_invoice_cltv_delta: v.max_user_invoice_cltv_delta as u32,
 			min_board_amount: v.min_board_amount.to_sat(),
 			offboard_feerate_sat_vkb: v.offboard_feerate.to_sat_per_kwu() * 4,
+			offboard_fixed_fee_vb: v.offboard_fixed_fee_vb,
 			ln_receive_anti_dos_required: v.ln_receive_anti_dos_required,
 		}
 	}
@@ -179,6 +182,7 @@ impl TryFrom<protos::ArkInfo> for ark::ArkInfo {
 				.map_err(|_| "invalid max user invoice cltv delta")?,
 			min_board_amount: Amount::from_sat(v.min_board_amount),
 			offboard_feerate: FeeRate::from_sat_per_kwu(v.offboard_feerate_sat_vkb / 4),
+			offboard_fixed_fee_vb: v.offboard_fixed_fee_vb,
 			ln_receive_anti_dos_required: v.ln_receive_anti_dos_required,
 		})
 	}
@@ -569,6 +573,26 @@ impl TryFrom<protos::LeafVtxoCosignResponse> for LeafVtxoCosignResponse {
 		Ok(Self {
 			public_nonce: TryFromBytes::from_bytes(v.public_nonce)?,
 			partial_signature: TryFromBytes::from_bytes(v.partial_signature)?,
+		})
+	}
+}
+
+impl<'a> From<&'a OffboardRequest> for protos::OffboardRequest {
+	fn from(v: &'a OffboardRequest) -> Self {
+	    protos::OffboardRequest {
+			offboard_spk: v.script_pubkey.to_bytes(),
+			amount: v.amount.to_sat(),
+		}
+	}
+}
+
+impl TryFrom<protos::OffboardRequest> for OffboardRequest {
+	type Error = ConvertError;
+
+	fn try_from(v: protos::OffboardRequest) -> Result<Self, Self::Error> {
+		Ok(Self {
+			script_pubkey: ScriptBuf::from_bytes(v.offboard_spk),
+			amount: Amount::from_sat(v.amount),
 		})
 	}
 }

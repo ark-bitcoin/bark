@@ -291,8 +291,18 @@ impl PersistedWallet {
 			.collect::<Vec<_>>()
 	}
 
-	pub fn lock_wallet_utxo(&self, utxo: OutPoint) -> Result<WalletUtxoGuard, UtxoAlreadyLockedError> {
+	pub fn lock_wallet_utxo(
+		&self,
+		utxo: OutPoint,
+	) -> Result<WalletUtxoGuard, UtxoAlreadyLockedError> {
 		WalletUtxoGuard::new(self.locked_outputs.clone(), utxo)
+	}
+
+	pub fn lock_wallet_utxos(
+		&self,
+		utxos: impl IntoIterator<Item = OutPoint>,
+	) -> Result<WalletUtxosGuard, UtxoAlreadyLockedError> {
+		WalletUtxosGuard::new(self.locked_outputs.clone(), utxos)
 	}
 }
 
@@ -346,7 +356,7 @@ pub struct WalletUtxoGuard {
 }
 
 impl WalletUtxoGuard {
-	pub fn new(index: LockedWalletUtxosIndex, utxo: OutPoint) -> Result<Self, UtxoAlreadyLockedError> {
+	fn new(index: LockedWalletUtxosIndex, utxo: OutPoint) -> Result<Self, UtxoAlreadyLockedError> {
 		let mut index_lock = index.0.lock();
 		let inserted = index_lock.insert(utxo);
 		drop(index_lock);
@@ -366,6 +376,51 @@ impl ops::Drop for WalletUtxoGuard {
 	fn drop(&mut self) {
 		let mut index_lock = self.index.0.lock();
 		index_lock.remove(&self.utxo);
+	}
+}
+
+/// A guard over a set of utxos in the wallet to keep them locked during guard
+/// lifetime.
+///
+/// Creating a guard will add the utxos to the locked index, and dropping
+/// the guard will remove them from the index.
+#[derive(Debug, Clone)]
+pub struct WalletUtxosGuard {
+	index: LockedWalletUtxosIndex,
+	utxos: Vec<OutPoint>,
+}
+
+impl WalletUtxosGuard {
+	fn new(
+		index: LockedWalletUtxosIndex,
+		utxos: impl IntoIterator<Item = OutPoint>,
+	) -> Result<Self, UtxoAlreadyLockedError> {
+		let utxos = utxos.into_iter().collect::<Vec<_>>();
+		let mut index_lock = index.0.lock();
+		for (idx, utxo) in utxos.iter().copied().enumerate() {
+			if !index_lock.insert(utxo) {
+				// also remove the ones we just added
+				for remove_utxo in utxos.iter().take(idx) {
+					assert!(index_lock.remove(remove_utxo), "just added");
+				}
+				return Err(UtxoAlreadyLockedError(utxo))
+			}
+		}
+		drop(index_lock);
+		Ok(Self { index, utxos })
+	}
+
+	pub fn utxos(&self) -> &[OutPoint] {
+		&self.utxos
+	}
+}
+
+impl ops::Drop for WalletUtxosGuard {
+	fn drop(&mut self) {
+		let mut index_lock = self.index.0.lock();
+		for utxo in &self.utxos {
+			index_lock.remove(utxo);
+		}
 	}
 }
 

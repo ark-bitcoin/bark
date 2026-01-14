@@ -1,17 +1,25 @@
-use bitcoin::OutPoint;
+use std::str::FromStr;
 
-use bitcoin::{Amount, TxIn, TxOut, Transaction, Witness, ScriptBuf, Sequence};
+use bitcoin::{Amount, OutPoint, Txid, TxIn, TxOut, Transaction, Witness, ScriptBuf, Sequence};
 use bitcoin::absolute::LockTime;
+use bitcoin::hashes::Hash;
 use bitcoin::transaction::Version;
 use bitcoin::secp256k1::Keypair;
+
 use bitcoin_ext::{BlockHeight, BlockDelta};
 
 use crate::Vtxo;
 use crate::board::BoardBuilder;
 
-#[cfg(test)]
-use crate::SECP;
+lazy_static! {
+	pub static ref DUMMY_USER_KEY: Keypair = Keypair::from_str(
+		"76f78cc00278817fe65fd81cb962782d2625834d08b66edbf2cd60f6c520db63",
+	).unwrap();
 
+	pub static ref DUMMY_SERVER_KEY: Keypair = Keypair::from_str(
+		"f2a9eaeba1cdb8411dfda3c9ca391e4ad29938c4f0b9c0709376fc4a1cbf0e5d",
+	).unwrap();
+}
 
 /// Just a utility to write unit tests
 /// It can quickly create a vtxo that matches
@@ -24,10 +32,19 @@ pub struct DummyTestVtxoSpec {
 	pub server_keypair: Keypair,
 }
 
+impl Default for DummyTestVtxoSpec {
+	fn default() -> Self {
+		Self {
+			amount: Amount::ONE_BTC,
+			expiry_height: 10_000,
+			exit_delta: 144,
+			user_keypair: *DUMMY_USER_KEY,
+			server_keypair: *DUMMY_SERVER_KEY,
+		}
+	}
+}
 
 impl DummyTestVtxoSpec {
-
-
 	pub fn build(&self) -> (Transaction, Vtxo) {
 		// The board-builder that is used by the user
 		let user_builder = BoardBuilder::new(
@@ -80,16 +97,24 @@ impl DummyTestVtxoSpec {
 	}
 }
 
+pub fn random_utxo() -> OutPoint {
+	OutPoint::new(Txid::from_byte_array(rand::random()), rand::random())
+}
+
 #[test]
 fn create_dummy_output() {
-
 	let board = DummyTestVtxoSpec {
 		amount: Amount::from_sat(1000),
 		expiry_height: 100000,
 		exit_delta: 1000,
-		user_keypair: Keypair::new(&SECP, &mut bitcoin::secp256k1::rand::thread_rng()),
-		server_keypair: Keypair::new(&SECP, &mut bitcoin::secp256k1::rand::thread_rng()),
+		user_keypair: Keypair::new(&crate::SECP, &mut bitcoin::secp256k1::rand::thread_rng()),
+		server_keypair: Keypair::new(&crate::SECP, &mut bitcoin::secp256k1::rand::thread_rng()),
 	};
 
 	board.build();
+}
+
+#[test]
+fn default_dummy_vtxo() {
+	DummyTestVtxoSpec::default().build();
 }

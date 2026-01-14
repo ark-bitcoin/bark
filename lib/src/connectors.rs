@@ -4,8 +4,7 @@ use std::iter;
 use std::borrow::Cow;
 
 use bitcoin::{
-	Address, Amount, Network, OutPoint, ScriptBuf, Sequence, Transaction, TxIn, TxOut,
-	Weight, Witness,
+	Address, Amount, Network, OutPoint, Script, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Weight, Witness
 };
 use bitcoin::secp256k1::{Keypair, PublicKey};
 use bitcoin::sighash::{self, SighashCache, TapSighashType};
@@ -27,6 +26,29 @@ const TX_WEIGHT: Weight = Weight::from_vb_unchecked(167);
 /// The witness weight of a connector input.
 pub const INPUT_WEIGHT: Weight = Weight::from_wu(66);
 
+
+/// Construct a tx that breaks up a single connector output into N connectors
+pub fn construct_multi_connector_tx(
+	prev: OutPoint,
+	nb_outputs: usize,
+	connector_spk: &Script,
+) -> Transaction {
+	assert_ne!(nb_outputs, 0);
+	Transaction {
+		version: bitcoin::transaction::Version(3),
+		lock_time: bitcoin::absolute::LockTime::ZERO,
+		input: vec![TxIn {
+			previous_output: prev,
+			script_sig: ScriptBuf::new(),
+			sequence: Sequence::MAX,
+			witness: Witness::new(),
+		}],
+		output: (0..nb_outputs)
+			.map(|_| TxOut { script_pubkey: connector_spk.to_owned(), value: P2TR_DUST })
+			.chain([fee::fee_anchor()])
+			.collect(),
+	}
+}
 
 /// A chain of connector outputs.
 ///

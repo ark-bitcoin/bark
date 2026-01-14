@@ -7,6 +7,8 @@ mod forfeits;
 pub use self::forfeits::*;
 mod lightning;
 pub use self::lightning::*;
+mod offboards;
+pub use self::offboards::*;
 mod rounds;
 pub use self::rounds::*;
 mod sweeps;
@@ -21,8 +23,11 @@ mod wallet;
 pub use self::wallet::*;
 
 
+use ark::VtxoId;
 use bitcoin::secp256k1::PublicKey;
 use bitcoin::BlockHash;
+use bitcoin::OutPoint;
+use bitcoin::Txid;
 use bitcoin_ext::BlockHeight;
 use chrono::DateTime;
 use chrono::Local;
@@ -80,4 +85,11 @@ pub struct CleanedEphemeralTweaks {
 impl_slog!(CleanedEphemeralTweaks, INFO, "cleaned expired ephemeral tweaks");
 
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OffboardSessionTimeout {
+	pub offboard_txid: Txid,
+	pub utxos: Vec<OutPoint>,
+	pub vtxos: Vec<VtxoId>,
+}
+impl_slog!(OffboardSessionTimeout, DEBUG, "offboard session timed out and dropped");
 

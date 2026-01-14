@@ -26,6 +26,7 @@ pub(crate) mod system;
 mod bitcoind;
 mod intman;
 mod ln;
+mod offboards;
 mod psbtext;
 mod round;
 pub mod telemetry;
@@ -35,7 +36,6 @@ mod utils;
 
 pub use crate::intman::{CAPTAIND_API_KEY, CAPTAIND_CLI_API_KEY};
 pub use crate::config::Config;
-use crate::utils::TimedEntryMap;
 
 use std::borrow::Borrow;
 use std::collections::HashSet;
@@ -47,7 +47,7 @@ use std::task::Poll;
 use std::time::Duration;
 
 use anyhow::Context;
-use bitcoin::{bip32, Address, Amount, OutPoint, Transaction};
+use bitcoin::{bip32, Address, Amount, OutPoint, Transaction, Txid};
 use bitcoin::secp256k1::{self, rand, Keypair, PublicKey};
 use futures::Stream;
 use tokio::sync::{broadcast, mpsc, oneshot};
@@ -81,6 +81,7 @@ use crate::sweeps::VtxoSweeper;
 use crate::system::RuntimeManager;
 use crate::txindex::TxIndex;
 use crate::txindex::broadcast::TxNursery;
+use crate::utils::TimedEntryMap;
 use crate::vtxopool::VtxoPool;
 use crate::wallet::{PersistedWallet, WalletKind, MNEMONIC_FILE};
 
@@ -182,6 +183,7 @@ pub struct Server {
 	vtxos_in_flux: VtxosInFlux,
 	cln: ClnManager,
 	vtxopool: VtxoPool,
+	pending_offboards: parking_lot::Mutex<TimedEntryMap<Txid, Option<offboards::PendingOffboard>>>,
 }
 
 impl Server {
@@ -256,7 +258,8 @@ impl Server {
 			required_board_confirmations: self.config.required_board_confirmations,
 			max_user_invoice_cltv_delta: self.config.max_user_invoice_cltv_delta,
 			min_board_amount: self.config.min_board_amount,
-			offboard_feerate: self.config.round_tx_feerate,
+			offboard_feerate: self.config.offboard_feerate,
+			offboard_fixed_fee_vb: self.config.offboard_fixed_fee_vb,
 			ln_receive_anti_dos_required: self.config.ln_receive_anti_dos_required,
 		}
 	}
@@ -447,9 +450,12 @@ impl Server {
 			forfeits: forfeits,
 			cln,
 			vtxopool,
+			pending_offboards: parking_lot::Mutex::new(TimedEntryMap::new()),
 		};
 
 		let srv = Arc::new(srv);
+
+		srv.clone().start_offboard_retry_task().await;
 
 		let srv2 = srv.clone();
 		tokio::spawn(async move {

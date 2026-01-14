@@ -77,6 +77,11 @@ service ArkService {
 	rpc PrepareLightningReceiveClaim(PrepareLightningReceiveClaimRequest) returns (PrepareLightningReceiveClaimResponse) {}
 	rpc ClaimLightningReceive(ClaimLightningReceiveRequest) returns (ArkoorPackageCosignResponse) {}
 
+	// * OFFBOARDS
+
+	rpc PrepareOffboard(PrepareOffboardRequest) returns (PrepareOffboardResponse) {}
+	rpc FinishOffboard(FinishOffboardRequest) returns (FinishOffboardResponse) {}
+
 	// * ARK ROUND INTERACTIONS *
 
 	// Subscribe to the round events
@@ -120,12 +125,15 @@ message ArkInfo {
 	uint32 required_board_confirmations = 11;
 	uint32 max_user_invoice_cltv_delta = 12;
 	uint64 min_board_amount = 13;
+	bool ln_receive_anti_dos_required = 15;
+	bytes mailbox_pubkey = 16;
 
 	//TODO(stevenroose) move fee related values that are less
 	// permanent into another struct for bark to check
 	uint64 offboard_feerate_sat_vkb = 14;
-	bool ln_receive_anti_dos_required = 15;
-	bytes mailbox_pubkey = 16;
+	uint64 offboard_fixed_fee_vb = 17;
+
+	// last index: 17
 }
 
 message FreshRoundsRequest {
@@ -377,6 +385,29 @@ message CheckLightningReceiveResponse {
 	LightningReceiveStatus status = 3;
 	// Empty until the status is HTLCS_READY or SETTLED
 	repeated bytes htlc_vtxos = 4;
+}
+
+// offboard
+
+message PrepareOffboardRequest {
+	OffboardRequest offboard = 1;
+	repeated bytes input_vtxo_ids = 2;
+	repeated bytes input_vtxo_ownership_proofs = 3;
+}
+
+message PrepareOffboardResponse {
+	bytes offboard_tx = 1;
+	repeated bytes forfeit_cosign_nonces = 2;
+}
+
+message FinishOffboardRequest {
+	bytes offboard_txid = 1;
+	repeated bytes user_nonces = 2;
+	repeated bytes partial_signatures = 3;
+}
+
+message FinishOffboardResponse {
+	bytes signed_offboard_tx = 1;
 }
 
 // round

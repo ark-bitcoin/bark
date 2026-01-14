@@ -1,12 +1,14 @@
 use std::io::Write as _;
 
-use bitcoin::hashes::{sha256, Hash};
+use bitcoin::consensus::WriteExt;
+use bitcoin::hashes::{sha256, Hash, HashEngine};
 use bitcoin::key::Keypair;
 use bitcoin::secp256k1::{self, schnorr, Message};
 
 use crate::{SignedVtxoRequest, Vtxo, VtxoId, VtxoRequest, SECP};
 use crate::encode::ProtocolEncoding;
 use crate::lightning::PaymentHash;
+use crate::offboard::OffboardRequest;
 
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -220,6 +222,57 @@ impl VtxoStatusChallenge {
 		SECP.verify_schnorr(
 			sig,
 			&Self::as_signable_message(self, vtxo.id()),
+			&vtxo.user_pubkey().x_only_public_key().0,
+		)
+	}
+}
+
+/// Challenge for proving ownership of a VTXO when requesting an offboard
+///
+/// It commits to the offboard request and all input vtxos.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Ord, PartialOrd)]
+pub struct OffboardRequestChallenge {
+	message: Message,
+}
+
+impl OffboardRequestChallenge {
+	const CHALLENGE_MESSAGE_PREFIX: &'static [u8; 32] = b"Ark offboard request challenge  ";
+
+	pub fn new(
+		request: &OffboardRequest,
+		inputs: impl Iterator<Item = VtxoId> + ExactSizeIterator,
+	) -> Self {
+		let mut eng = sha256::Hash::engine();
+		eng.input(Self::CHALLENGE_MESSAGE_PREFIX);
+		request.to_txout().encode(&mut eng).unwrap();
+		eng.emit_u32(inputs.len() as u32).unwrap();
+		for vtxo in inputs {
+			eng.input(&vtxo.to_bytes());
+		}
+		Self {
+			message: Message::from_digest(sha256::Hash::from_engine(eng).to_byte_array()),
+		}
+	}
+
+	pub fn sign_with(
+		&self,
+		vtxo_keypair: &Keypair,
+	) -> schnorr::Signature {
+		SECP.sign_schnorr_with_aux_rand(
+			&self.message,
+			vtxo_keypair,
+			&rand::random(),
+		)
+	}
+
+	pub fn verify_input_vtxo_sig(
+		&self,
+		vtxo: &Vtxo,
+		sig: &schnorr::Signature,
+	) -> Result<(), secp256k1::Error> {
+		SECP.verify_schnorr(
+			sig,
+			&self.message,
 			&vtxo.user_pubkey().x_only_public_key().0,
 		)
 	}

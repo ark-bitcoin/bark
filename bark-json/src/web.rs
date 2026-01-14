@@ -1,4 +1,5 @@
 
+use ark::offboard::OffboardRequest;
 use bitcoin::{Amount, Txid};
 use bitcoin::consensus::encode::serialize_hex;
 use bitcoin::secp256k1::PublicKey;
@@ -240,8 +241,8 @@ pub struct OffboardRequestInfo {
 	pub amount: Amount,
 }
 
-impl<'a> From<&'a ark::OffboardRequest> for OffboardRequestInfo {
-	fn from(v: &'a ark::OffboardRequest) -> Self {
+impl<'a> From<&'a OffboardRequest> for OffboardRequestInfo {
+	fn from(v: &'a OffboardRequest) -> Self {
 		Self {
 			script_pubkey_hex: v.script_pubkey.to_hex_string(),
 			script_pubkey_asm: v.script_pubkey.to_asm_string(),

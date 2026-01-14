@@ -281,6 +281,9 @@ impl TestContext {
 				issue_tx_fallback_feerate: FeeRate::from_sat_per_vb_unchecked(1),
 				issue_interval: Duration::from_secs(3),
 			},
+			offboard_feerate: FeeRate::from_sat_per_vb_unchecked(7),
+			offboard_fixed_fee_vb: 100,
+			offboard_session_timeout: Duration::from_secs(30),
 			transaction_rebroadcast_interval: std::time::Duration::from_secs(2),
 			rpc: config::Rpc {
 				// these will be overwritten on start, but can't be empty
