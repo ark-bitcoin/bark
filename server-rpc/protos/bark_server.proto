@@ -25,13 +25,6 @@ service ArkService {
 
 	rpc CheckpointedCosignOor(CheckpointedPackageCosignRequest) returns (CheckpointedPackageCosignResponse) {}
 
-	// TODO: Remove in 0.1.0-beta.6
-	// It is kept for backward compatiblity
-	rpc RequestArkoorPackageCosign(ArkoorPackageCosignRequest) returns (ArkoorPackageCosignResponse) {
-		option deprecated = true;
-	}
-
-
 	// * MAILBOX *
 
 	// This method is deprecated.

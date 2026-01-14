@@ -18,7 +18,7 @@ use tonic_tracing_opentelemetry::middleware::server::OtelGrpcLayer;
 use tracing::info;
 
 use ark::{
-	musig, ProtocolEncoding, Vtxo, VtxoId, VtxoIdInput, VtxoPolicy, VtxoRequest,
+	musig, ProtocolEncoding, Vtxo, VtxoId, VtxoIdInput, VtxoPolicy,
 };
 use ark::arkoor::checkpointed_package::PackageCosignRequest;
 use ark::forfeit::HashLockedForfeitBundle;
@@ -182,36 +182,6 @@ impl rpc::server::ArkService for Server {
 
 		let response = self.cosign_oor(request).await.to_status()?;
 		Ok(tonic::Response::new(response.into()))
-	}
-
-
-	async fn request_arkoor_package_cosign(
-		&self,
-		req: tonic::Request<protos::ArkoorPackageCosignRequest>,
-	) -> Result<tonic::Response<protos::ArkoorPackageCosignResponse>, tonic::Status> {
-		let _ = RpcMethodDetails::grpc_ark(middleware::rpc_names::ark::REQUEST_ARKOOR_PACKAGE_COSIGN);
-		let req = req.into_inner();
-
-		crate::rpcserver::add_tracing_attributes(vec![
-			KeyValue::new("arkoors", format!("{:?}", req.arkoors)),
-		]);
-
-		let mut arkoor_args = vec![];
-		for arkoor in req.arkoors.iter() {
-			let input_id = VtxoId::from_bytes(&arkoor.input_id)?;
-			let user_nonce = musig::PublicNonce::from_bytes(&arkoor.pub_nonce)?;
-			let outputs = arkoor.outputs.iter().map(|o| {
-				Ok(VtxoRequest {
-					amount: Amount::from_sat(o.amount),
-					policy: VtxoPolicy::from_bytes(&o.policy)?,
-				})
-			}).collect::<Result<Vec<_>, tonic::Status>>()?;
-			arkoor_args.push((input_id, user_nonce, outputs))
-		}
-
-		let cosign_resp = self.cosign_oor_package(arkoor_args).await.to_status()?;
-
-		Ok(tonic::Response::new(cosign_resp.into()))
 	}
 
 	// mailbox
