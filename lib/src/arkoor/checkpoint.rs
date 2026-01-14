@@ -329,9 +329,102 @@ impl<S: state::BuilderState> CheckpointedArkoorBuilder<S> {
 		}
 	}
 
+	/// Build a dust vtxo at the given index (into dust_outputs)
+	///
+	/// Only used when dust isolation is active.
+	/// Genesis chain has 3 transitions:
+	/// 1. input -> checkpoint (with other outputs including combined dust)
+	/// 2. checkpoint -> dust fanout tx (with other dust outputs)
+	/// 3. dust fanout tx -> exit tx (final vtxo)
+	fn construct_dust_vtxo_at(
+		&self,
+		dust_idx: usize,
+		checkpoint_sig: Option<schnorr::Signature>,
+		dust_fanout_tx_sig: Option<schnorr::Signature>,
+		exit_tx_sig: Option<schnorr::Signature>,
+	) -> Vtxo {
+		let output = &self.dust_outputs[dust_idx];
+		let checkpoint_policy = VtxoPolicy::new_checkpoint(self.input.user_pubkey());
+
+		let fanout_tx = self.unsigned_dust_fanout_tx.as_ref()
+			.expect("construct_dust_vtxo_at called without dust isolation");
+		let exit_txs = self.unsigned_dust_exit_txs.as_ref()
+			.expect("construct_dust_vtxo_at called without dust isolation");
+
+		// The combined dust output is at index outputs.len() in the checkpoint tx
+		let dust_isolation_output_idx = self.outputs.len();
+
+		Vtxo {
+			amount: output.amount,
+			policy: output.policy.clone(),
+			expiry_height: self.input.expiry_height,
+			server_pubkey: self.input.server_pubkey,
+			exit_delta: self.input.exit_delta,
+			point: OutPoint::new(exit_txs[dust_idx].compute_txid(), 0),
+			anchor_point: self.input.anchor_point,
+			genesis: self.input.genesis.iter().cloned().chain([
+				// Transition 1: input -> checkpoint
+				GenesisItem {
+					transition: GenesisTransition::Arkoor {
+						policy: self.input.policy.clone(),
+						signature: checkpoint_sig,
+					},
+					output_idx: dust_isolation_output_idx as u8,
+					// other outputs are the non-dust outputs
+					// (we skip our combined dust output and fee anchor)
+					other_outputs: self.unsigned_checkpoint_tx.output
+						.iter().enumerate()
+						.filter_map(|(idx, txout)| {
+							if idx == dust_isolation_output_idx || txout.is_p2a_fee_anchor() {
+								None
+							} else {
+								Some(txout.clone())
+							}
+						})
+						.collect(),
+				},
+				// Transition 2: checkpoint -> dust fanout tx
+				GenesisItem {
+					transition: GenesisTransition::Arkoor {
+						policy: checkpoint_policy.clone(),
+						signature: dust_fanout_tx_sig,
+					},
+					output_idx: dust_idx as u8,
+					// other outputs are the other dust outputs
+					// (we skip our output and fee anchor)
+					other_outputs: fanout_tx.output
+						.iter().enumerate()
+						.filter_map(|(idx, txout)| {
+							if idx == dust_idx || txout.is_p2a_fee_anchor() {
+								None
+							} else {
+								Some(txout.clone())
+							}
+						})
+						.collect(),
+				},
+				// Transition 3: dust fanout tx -> exit_tx (final vtxo)
+				GenesisItem {
+					transition: GenesisTransition::Arkoor {
+						policy: checkpoint_policy,
+						signature: exit_tx_sig,
+					},
+					output_idx: 0,
+					other_outputs: vec![]
+				}
+			]).collect(),
+		}
+	}
+
 
 	fn nb_sigs(&self) -> usize {
-		self.outputs.len() + 1
+		// 1 checkpoint + m arkoor txs + (if dust isolation: + 1 dust fanout tx + k exit txs)
+		let base = 1 + self.outputs.len();
+		if self.unsigned_dust_fanout_tx.is_some() {
+			base + 1 + self.dust_outputs.len()
+		} else {
+			base
+		}
 	}
 
 	fn nb_outputs(&self) -> usize {
@@ -342,21 +435,55 @@ impl<S: state::BuilderState> CheckpointedArkoorBuilder<S> {
 		(0..self.nb_outputs()).map(|i| self.vtxo_at(i, None, None))
 	}
 
+	/// Build unsigned dust vtxos (only when dust isolation is active)
+	pub fn build_unsigned_dust_vtxos<'a>(&'a self) -> impl Iterator<Item = Vtxo> + 'a {
+		(0..self.dust_outputs.len()).map(|i| self.construct_dust_vtxo_at(i, None, None, None))
+	}
+
 	pub fn build_unsigned_checkpoint_vtxos<'a>(&'a self) -> impl Iterator<Item = Vtxo> + 'a {
 		(0..self.nb_outputs()).map(|i| self.checkpoint_vtxo_at(i, None))
 	}
 
 	/// The returned [VtxoId] is spent out-of-round by [Txid]
-	pub fn spend_info<'a>(&'a self) -> impl Iterator<Item=(VtxoId, Txid)> + 'a {
-		let first = [(self.input.id(), self.unsigned_checkpoint_txid)];
-		let others = (0..self.nb_outputs()).map(|idx| {
-			(
+	pub fn spend_info(&self) -> Vec<(VtxoId, Txid)> {
+		let mut ret = Vec::with_capacity(1 + self.nb_outputs());
+
+		// Input vtxo -> checkpoint tx
+		ret.push((self.input.id(), self.unsigned_checkpoint_txid));
+
+		// Non-dust checkpoint outputs -> arkoor txs
+		for idx in 0..self.nb_outputs() {
+			ret.push((
 				VtxoId::from(OutPoint::new(self.unsigned_checkpoint_txid, idx as u32)),
 				self.unsigned_arkoor_txs[idx].compute_txid()
-			)
-		});
+			));
+		}
 
-		first.into_iter().chain(others)
+		// dust isolation paths (if active)
+		if let (Some(fanout_tx), Some(exit_txs))
+			= (&self.unsigned_dust_fanout_tx, &self.unsigned_dust_exit_txs)
+		{
+			ret.reserve(1 + exit_txs.len());
+
+			let fanout_txid = fanout_tx.compute_txid();
+
+			// Combined dust checkpoint output -> dust fanout tx
+			let dust_output_idx = self.outputs.len() as u32;
+			ret.push((
+				VtxoId::from(OutPoint::new(self.unsigned_checkpoint_txid, dust_output_idx)),
+				fanout_txid
+			));
+
+			// dust fanout tx outputs -> exit_txs
+			for (idx, exit_tx) in exit_txs.iter().enumerate() {
+				ret.push((
+					VtxoId::from(OutPoint::new(fanout_txid, idx as u32)),
+					exit_tx.compute_txid()
+				));
+			}
+		}
+
+		ret
 	}
 
 	/// These are the intermediate Vtxos that will be owned by the server
