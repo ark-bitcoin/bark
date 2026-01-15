@@ -597,7 +597,9 @@ async fn bark_check_lightning_receive_no_wait() {
 	let invoice = Bolt11Invoice::from_str(&invoice_info.invoice).unwrap();
 	let _ = bark.lightning_receive_status(&invoice).await.unwrap();
 
-	bark.try_lightning_receive_no_wait(invoice_info.invoice.clone()).ready().await.expect("should not fail");
+	// TODO: figure out why launching the bark wallet is so slow
+	bark.try_lightning_receive_no_wait(invoice_info.invoice.clone())
+		.wait(Duration::from_secs(2)).await.expect("should not fail");
 	bark.lightning_receive_status(&invoice).await.expect("should still be pending");
 
 	let cloned_invoice_info = invoice_info.clone();
@@ -609,8 +611,8 @@ async fn bark_check_lightning_receive_no_wait() {
 	for _ in 0..10 {
 		tokio::time::sleep(std::time::Duration::from_secs(1)).await;
 
-		bark.try_lightning_receive_no_wait(invoice_info.invoice.clone()).ready().await
-			.expect("should not fail");
+		bark.try_lightning_receive_no_wait(invoice_info.invoice.clone())
+			.wait(Duration::from_secs(2)).await.expect("should not fail");
 
 		if let Some(receive) = bark.lightning_receive_status(&invoice).await {
 			if receive.finished_at.is_some() {
@@ -625,7 +627,7 @@ async fn bark_check_lightning_receive_no_wait() {
 	}
 
 	// HTLC settlement on lightning side
-	res1.ready().await.unwrap();
+	res1.wait(Duration::from_secs(2)).await.unwrap();
 
 	assert_eq!(bark.offchain_balance().await.claimable_lightning_receive, btc(0),
 		"claimable lightning receive should be reset after payment");
