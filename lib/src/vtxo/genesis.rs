@@ -50,7 +50,7 @@ pub struct CosignedGenesis {
 	/// Has to include server's cosign pubkey because it differs
 	/// from its regular pubkey.
 	pub pubkeys: Vec<PublicKey>,
-	pub signature: schnorr::Signature,
+	pub signature: Option<schnorr::Signature>,
 }
 
 impl CosignedGenesis {
@@ -78,11 +78,14 @@ impl CosignedGenesis {
 	}
 
 	pub fn witness(&self) -> Witness {
-		Witness::from_slice(&[&self.signature[..]])
+		match self.signature {
+			Some(ref sig) => Witness::from_slice(&[&sig[..]]),
+			None => Witness::new(),
+		}
 	}
 
 	pub fn is_fully_signed(&self) -> bool {
-		true
+		self.signature.is_some()
 	}
 
 	pub fn validate_sigs(
@@ -93,6 +96,11 @@ impl CosignedGenesis {
 		server_pubkey: PublicKey,
 		expiry_height: BlockHeight,
 	) -> Result<(), &'static str> {
+		let signature = match self.signature {
+			Some(sig) => sig,
+			None => return Err("missing cosigned signature"),
+		};
+
 		let mut shc = sighash::SighashCache::new(tx);
 
 		let tapsighash = shc.taproot_key_spend_signature_hash(
@@ -105,7 +113,7 @@ impl CosignedGenesis {
 			.output_key()
 			.to_x_only_public_key();
 
-		SECP.verify_schnorr(&self.signature, &tapsighash.into(), &pubkey)
+		SECP.verify_schnorr(&signature, &tapsighash.into(), &pubkey)
 			.map_err(|_| "invalid signature")
 	}
 }
@@ -317,7 +325,7 @@ pub enum GenesisTransition {
 }
 
 impl GenesisTransition {
-	pub fn new_cosigned(pubkeys: Vec<PublicKey>, signature: schnorr::Signature) -> Self {
+	pub fn new_cosigned(pubkeys: Vec<PublicKey>, signature: Option<schnorr::Signature>) -> Self {
 		Self::Cosigned(CosignedGenesis { pubkeys, signature })
 	}
 

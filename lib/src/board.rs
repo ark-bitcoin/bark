@@ -394,7 +394,7 @@ impl BoardBuilder<state::CanFinish> {
 			genesis: vec![GenesisItem {
 				transition: GenesisTransition::new_cosigned(
 					vec![self.user_pubkey, self.server_pubkey],
-					final_sig,
+					Some(final_sig),
 				),
 				output_idx: 0,
 				other_outputs: vec![],

@@ -895,7 +895,7 @@ impl ProtocolEncoding for GenesisTransition {
 				for _ in 0..nb_pubkeys {
 					pubkeys.push(PublicKey::decode(r)?);
 				}
-				let signature = schnorr::Signature::decode(r)?;
+				let signature = Option::<schnorr::Signature>::decode(r)?;
 				Ok(Self::new_cosigned(pubkeys, signature))
 			},
 			GENESIS_TRANSITION_TYPE_HASH_LOCKED_COSIGNED => {
@@ -1080,7 +1080,7 @@ mod test {
 				GenesisItem {
 					transition: GenesisTransition::new_cosigned(
 						vec![DUMMY_USER_KEY.public_key()],
-						schnorr::Signature::from_slice(&[2u8; 64]).unwrap(),
+						Some(schnorr::Signature::from_slice(&[2u8; 64]).unwrap()),
 					),
 					output_idx: 0,
 					other_outputs: vec![],
