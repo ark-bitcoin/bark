@@ -122,3 +122,42 @@ macro_rules! impl_byte_newtype {
 		}
 	};
 }
+
+/// Extension trait for iterators to add utility methods
+pub trait IteratorExt: Iterator {
+	/// Checks if all elements in the iterator have the same value when passed through the closure.
+	///
+	/// Returns `Some(value)` if all extracted values are equal, `None` otherwise.
+	/// For empty iterators, returns `None`.
+	///
+	/// # Examples
+	/// ```
+	/// use ark::util::IteratorExt;
+	///
+	/// let vec = vec![(1, "a"), (2, "a"), (3, "a")];
+	/// assert_eq!(vec.iter().all_same(|(_, s)| s), Some(&"a"));
+	///
+	/// let vec = vec![(1, "a"), (2, "b"), (3, "c")];
+	/// assert_eq!(vec.iter().all_same(|(_, s)| s), None);
+	/// ```
+	fn all_same<F, T>(self, mut f: F) -> Option<T>
+	where
+		Self: Sized,
+		F: FnMut(&Self::Item) -> T,
+		T: Eq,
+	{
+		let mut iter = self.peekable();
+		let first_item = match iter.next() {
+			None => return None,
+			Some(item) => item,
+		};
+		let first = f(&first_item);
+		if iter.all(|item| f(&item) == first) {
+			Some(first)
+		} else {
+			None
+		}
+	}
+}
+
+impl<I: Iterator> IteratorExt for I {}

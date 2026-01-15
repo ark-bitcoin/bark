@@ -4,7 +4,7 @@ pub extern crate bitcoin;
 #[macro_use] extern crate serde;
 #[macro_use] extern crate lazy_static;
 
-#[macro_use] mod util;
+#[macro_use] pub mod util;
 
 pub mod address;
 pub mod arkoor;

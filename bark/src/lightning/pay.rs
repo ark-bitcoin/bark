@@ -8,9 +8,10 @@ use lnurllib::lightning_address::LightningAddress;
 use log::{error, info, trace, warn};
 use server_rpc::protos::{self, lightning_payment_status::PaymentStatus};
 
+use ark::{ProtocolEncoding, VtxoPolicy, VtxoRequest, musig};
 use ark::arkoor::ArkoorPackageBuilder;
 use ark::lightning::{Bolt12Invoice, Bolt12InvoiceExt, Invoice, Offer, PaymentHash, Preimage};
-use ark::{ProtocolEncoding, VtxoPolicy, VtxoRequest, musig};
+use ark::util::IteratorExt;
 use bitcoin_ext::P2TR_DUST;
 
 use crate::Wallet;
@@ -191,10 +192,14 @@ impl Wallet {
 			return Ok(Some(preimage));
 		}
 
-		let policy = payment.htlc_vtxos.first().context("no vtxo provided")?.vtxo.policy();
-		debug_assert!(payment.htlc_vtxos.iter().all(|v| v.vtxo.policy() == policy),
-			"All lightning htlc should have the same policy",
-		);
+		if payment.htlc_vtxos.is_empty() {
+			bail!("No HTLC VTXOs found for payment");
+		}
+
+		let policy = payment.htlc_vtxos.iter()
+			.all_same(|v| v.vtxo.policy())
+			.ok_or(anyhow::anyhow!("All lightning htlc should have the same policy"))?;
+
 		let policy = policy.as_server_htlc_send().context("VTXO is not an HTLC send")?;
 		if policy.payment_hash != payment_hash {
 			bail!("Payment hash mismatch");

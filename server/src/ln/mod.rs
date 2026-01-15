@@ -7,6 +7,7 @@ use std::collections::HashMap;
 
 use anyhow::Context;
 use ark::integration::TokenStatus;
+use ark::util::IteratorExt;
 use bitcoin::Amount;
 use bitcoin::hex::DisplayHex;
 use bitcoin::secp256k1::{schnorr, PublicKey};
@@ -198,26 +199,19 @@ impl Server {
 		let db = self.db.clone();
 
 
-		let htlc_vtxos = self.db.get_vtxos_by_id(&htlc_vtxo_ids).await?;
+		let vtxos = self.db.get_vtxos_by_id(&htlc_vtxo_ids).await?.into_iter()
+			.map(|v| v.vtxo).collect::<Vec<_>>();
 
-		let first = htlc_vtxos.first().badarg("vtxo is empty")?.vtxo.spec();
-		let first_policy = first.policy.as_server_htlc_send().context("vtxo is not outgoing htlc vtxo")?;
-		let invoice_payment_hash = first_policy.payment_hash;
+		let policy = vtxos.iter()
+			.all_same(|v| v.policy())
+			.context("all htlc vtxos should have the same policy")?
+			.as_server_htlc_send()
+			.context("vtxo is not outgoing htlc vtxo")?
+			.clone();
+
+		let invoice_payment_hash = policy.payment_hash;
 
 		slog!(LightningPayHtlcsRevocationRequested, invoice_payment_hash, htlc_vtxo_ids);
-
-		let mut vtxos = vec![];
-		for htlc_vtxo in htlc_vtxos {
-			let spec = htlc_vtxo.vtxo.spec();
-			let policy = spec.policy.as_server_htlc_send()
-				.context("vtxo is not outgoing htcl vtxo")?;
-
-			if policy != first_policy {
-				return badarg!("all revoked htlc vtxos must have same policy");
-			}
-
-			vtxos.push(htlc_vtxo.vtxo);
-		}
 
 		let invoice = db.get_lightning_invoice_by_payment_hash(&invoice_payment_hash).await?;
 
@@ -233,7 +227,7 @@ impl Server {
 						error!("This lightning payment has completed, but no preimage found. Accepting revocation");
 					}
 				},
-				_ if tip > first_policy.htlc_expiry => {
+				_ if tip > policy.htlc_expiry => {
 					// Check one last time to see if it completed
 					let res = self.cln.get_payment_status(&invoice_payment_hash, false).await;
 					if let Ok(PaymentStatus::Success(preimage)) = res {

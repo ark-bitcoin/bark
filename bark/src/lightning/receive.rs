@@ -7,10 +7,11 @@ use futures::StreamExt;
 use lightning_invoice::Bolt11Invoice;
 use log::{trace, debug, info, warn};
 
-use ark::arkoor::ArkoorPackageBuilder;
 use ark::{ProtocolEncoding, Vtxo, VtxoPolicy, VtxoRequest, musig};
+use ark::arkoor::ArkoorPackageBuilder;
 use ark::challenges::{LightningReceiveChallenge};
 use ark::lightning::{PaymentHash, Preimage};
+use ark::util::IteratorExt;
 use bitcoin_ext::{AmountExt, BlockDelta, BlockHeight};
 use server_rpc::protos;
 use server_rpc::protos::prepare_lightning_receive_claim_request::LightningReceiveAntiDos;
@@ -506,16 +507,14 @@ impl Wallet {
 
 				let tip = self.chain.tip().await?;
 
-				let first_vtxo = &vtxos.first()
-					.context("HTLC VTXOs unexpectedly empty")?.vtxo;
-				debug_assert!(vtxos.iter().all(|v| {
-					v.vtxo.policy() == first_vtxo.policy() && v.vtxo.exit_delta() == first_vtxo.exit_delta()
-				}), "all htlc vtxos for the same payment hash should have the same policy and exit delta");
+				let (policy, exit_delta) = vtxos.iter()
+					.all_same(|v| (v.vtxo.policy(), v.vtxo.exit_delta()))
+					.context("all htlc vtxos should have the same policy and exit delta")?;
 
-				let vtxo_htlc_expiry = first_vtxo.policy().as_server_htlc_recv()
+				let vtxo_htlc_expiry = policy.as_server_htlc_recv()
 					.expect("only server htlc recv vtxos can be pending lightning recv").htlc_expiry;
 
-				let safe_exit_margin = first_vtxo.exit_delta() +
+				let safe_exit_margin = exit_delta +
 					ark_info.htlc_expiry_delta +
 					self.config.vtxo_exit_margin;
 
