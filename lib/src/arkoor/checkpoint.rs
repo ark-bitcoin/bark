@@ -276,7 +276,7 @@ pub struct CheckpointedArkoorBuilder<S: state::BuilderState> {
 }
 
 impl<S: state::BuilderState> CheckpointedArkoorBuilder<S> {
-	fn checkpoint_vtxo_at(
+	fn build_checkpoint_vtxo_at(
 		&self,
 		output_idx: usize,
 		checkpoint_sig: Option<schnorr::Signature>
@@ -315,7 +315,7 @@ impl<S: state::BuilderState> CheckpointedArkoorBuilder<S> {
 		}
 	}
 
-	fn vtxo_at(
+	fn build_vtxo_at(
 		&self,
 		output_idx: usize,
 		checkpoint_sig: Option<schnorr::Signature>,
@@ -405,7 +405,7 @@ impl<S: state::BuilderState> CheckpointedArkoorBuilder<S> {
 	/// The `pre_fanout_tx_sig` is either
 	/// - the arkoor tx signature when no checkpoint tx is used, or
 	/// - the checkpoint tx signature when a checkpoint tx is used
-	fn construct_isolated_vtxo_at(
+	fn build_isolated_vtxo_at(
 		&self,
 		isolated_idx: usize,
 		pre_fanout_tx_sig: Option<schnorr::Signature>,
@@ -563,9 +563,9 @@ impl<S: state::BuilderState> CheckpointedArkoorBuilder<S> {
 	}
 
 	pub fn build_unsigned_vtxos<'a>(&'a self) -> impl Iterator<Item = Vtxo> + 'a {
-		let regular = (0..self.outputs.len()).map(|i| self.vtxo_at(i, None, None));
+		let regular = (0..self.outputs.len()).map(|i| self.build_vtxo_at(i, None, None));
 		let isolated = (0..self.isolated_outputs.len())
-			.map(|i| self.construct_isolated_vtxo_at(i, None, None, None));
+			.map(|i| self.build_isolated_vtxo_at(i, None, None, None));
 		regular.chain(isolated)
 	}
 
@@ -581,7 +581,7 @@ impl<S: state::BuilderState> CheckpointedArkoorBuilder<S> {
 				// none
 				0..0
 			};
-			range.map(|i| self.checkpoint_vtxo_at(i, None))
+			range.map(|i| self.build_checkpoint_vtxo_at(i, None))
 		};
 
 		let isolation_vtxo = if !self.isolated_outputs.is_empty() {
@@ -1391,7 +1391,7 @@ impl<'a> CheckpointedArkoorBuilder<state::UserSigned> {
 			// Build regular vtxos (signatures 1..1+m)
 			for i in 0..self.outputs.len() {
 				let arkoor_sig = sigs[1 + i];
-				ret.push(self.vtxo_at(i, Some(checkpoint_sig), Some(arkoor_sig)));
+				ret.push(self.build_vtxo_at(i, Some(checkpoint_sig), Some(arkoor_sig)));
 			}
 
 			// Build isolated vtxos if present
@@ -1401,7 +1401,7 @@ impl<'a> CheckpointedArkoorBuilder<state::UserSigned> {
 
 				for i in 0..self.isolated_outputs.len() {
 					let exit_tx_sig = sigs[2 + m + i];
-					ret.push(self.construct_isolated_vtxo_at(
+					ret.push(self.build_isolated_vtxo_at(
 						i,
 						Some(checkpoint_sig),
 						Some(fanout_tx_sig),
@@ -1415,7 +1415,7 @@ impl<'a> CheckpointedArkoorBuilder<state::UserSigned> {
 
 			// Build regular vtxos (all use same arkoor signature)
 			for i in 0..self.outputs.len() {
-				ret.push(self.vtxo_at(i, None, Some(arkoor_sig)));
+				ret.push(self.build_vtxo_at(i, None, Some(arkoor_sig)));
 			}
 
 			// Build isolation vtxos if present
@@ -1424,7 +1424,7 @@ impl<'a> CheckpointedArkoorBuilder<state::UserSigned> {
 
 				for i in 0..self.isolated_outputs.len() {
 					let exit_tx_sig = sigs[2 + i];
-					ret.push(self.construct_isolated_vtxo_at(
+					ret.push(self.build_isolated_vtxo_at(
 						i,
 						Some(arkoor_sig),  // In direct mode, first sig is arkoor, not checkpoint
 						Some(fanout_tx_sig),
