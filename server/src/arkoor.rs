@@ -3,7 +3,6 @@ use anyhow::Context;
 use ark::arkoor::checkpoint::state::{ServerCanCosign, ServerSigned};
 use ark::vtxo::{VtxoId, VtxoPolicy};
 use ark::arkoor::checkpointed_package::{PackageCosignRequest, PackageCosignResponse, CheckpointedPackageBuilder};
-use ark::arkoor::checkpoint::CosignRequest;
 
 use crate::Server;
 
@@ -61,17 +60,7 @@ impl Server {
 		// We don't want users to be able to lock other
 		// peoples VTXOs
 
-		// We will maske the old value
-		let request_parts = request.requests.into_iter().zip(input_vtxos)
-			.map(|(request, vtxo)| CosignRequest {
-				input: vtxo,
-				user_pub_nonces: request.user_pub_nonces,
-				outputs: request.outputs,
-				isolated_outputs: request.isolated_outputs,
-				use_checkpoint: request.use_checkpoint,
-			})
-			.collect::<Vec<_>>();
-		let request = PackageCosignRequest { requests: request_parts };
+		let request = request.set_vtxos(input_vtxos)?;
 
 		let builder = CheckpointedPackageBuilder::from_cosign_requests(request)
 			.context("Invalid arkoor request")?;

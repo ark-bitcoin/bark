@@ -51,6 +51,41 @@ impl<V> PackageCosignRequest<V> {
 	}
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash, thiserror::Error)]
+#[error("VTXO id mismatch. Expected {expected}, got {got}")]
+pub struct InputMismatchError {
+	expected: VtxoId,
+	got: VtxoId,
+}
+
+impl PackageCosignRequest<VtxoId> {
+	pub fn set_vtxos(
+		self,
+		vtxos: impl IntoIterator<Item = Vtxo>,
+	) -> Result<PackageCosignRequest<Vtxo>, InputMismatchError> {
+		let package = PackageCosignRequest {
+			requests: self.requests.into_iter().zip(vtxos).map(|(r, vtxo)| {
+				if r.input != vtxo.id() {
+					return Err(InputMismatchError {
+						expected: r.input,
+						got: vtxo.id(),
+					})
+				}
+
+				Ok(CosignRequest {
+					input: vtxo,
+					user_pub_nonces: r.user_pub_nonces,
+					outputs: r.outputs,
+					isolated_outputs: r.isolated_outputs,
+					use_checkpoint: r.use_checkpoint,
+				})
+			}).collect::<Result<Vec<_>, _>>()?,
+		};
+
+		Ok(package)
+	}
+}
+
 
 #[derive(Debug, Clone)]
 pub struct PackageCosignResponse {

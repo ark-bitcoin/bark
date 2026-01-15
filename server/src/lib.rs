@@ -58,7 +58,7 @@ use tracing::{info, warn, trace};
 
 use ark::{Vtxo, VtxoId, VtxoRequest};
 use ark::vtxo::VtxoRef;
-use ark::arkoor::{ArkoorBuilder, ArkoorCosignResponse, ArkoorPackageBuilder};
+use ark::arkoor::{ArkoorCosignResponse, ArkoorPackageBuilder};
 use ark::board::BoardBuilder;
 use ark::mailbox::{BlindedMailboxIdentifier, MailboxIdentifier};
 use ark::musig::{self, PublicNonce};
