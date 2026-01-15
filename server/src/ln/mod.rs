@@ -45,6 +45,24 @@ impl Server {
 		let input_vtxos = self.db.get_vtxos_by_id(&input_vtxo_ids).await?
 			.into_iter().map(|v| v.vtxo).collect::<Vec<_>>();
 
+		let (htlc_vtxos, others) = request.outputs()
+			.partition::<Vec<_>, _>(|v| matches!(v.policy, VtxoPolicy::ServerHtlcSend(..)));
+
+		if htlc_vtxos.is_empty() {
+			return badarg!("no htlc vtxo request provided");
+		}
+
+		// NB: arkoor builder will take care of checking single change output
+		if others.iter().any(|v| !matches!(v.policy, VtxoPolicy::Pubkey(..))) {
+			return badarg!("only change output is allowed");
+		}
+
+		let requested_policy = htlc_vtxos.iter()
+			.all_same(|v| v.policy.clone())
+			.context("all vtxo requests must have the same policy")?
+			.as_server_htlc_send()
+			.context("vtxo request is not htlc send")?.clone();
+
 		// Mark the vtxo as in-flux
 		let _vtxo_guard = self.vtxos_in_flux.try_lock(&input_vtxo_ids).map_err(|e| {
 			badarg_err!("some VTXO is already locked by another process: {}", e.id)
@@ -78,10 +96,15 @@ impl Server {
 			}
 		}
 
-		let expiry = {
-			let tip = self.sync_manager.chain_tip();
-			tip.height + self.config.htlc_send_expiry_delta as BlockHeight
-		};
+		// Verify that the proposed expiry makes sense for us
+		let tip = self.sync_manager.chain_tip().height;
+		let expiry =  tip + self.config.htlc_send_expiry_delta as BlockHeight;
+		if requested_policy.htlc_expiry < expiry - 1 {
+			return badarg!(
+				"requested expiry is too low. our tip is {tip}. \
+				sync your node and try again",
+			);
+		}
 
 		if self.db.get_open_lightning_payment_attempt_by_payment_hash(
 			&invoice_payment_hash,
