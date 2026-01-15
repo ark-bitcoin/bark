@@ -16,6 +16,7 @@ prechecks:
 	just precheck rust_no_spaces_for_indent
 	just precheck rust_no_whitespace_on_empty_lines
 	just precheck unused_server_logs
+	just precheck conflicting_migration_scripts
 
 check:
 	cargo check --all --tests --examples
