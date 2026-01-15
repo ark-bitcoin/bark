@@ -353,6 +353,7 @@ impl Server {
 		Ok(sub)
 	}
 
+	#[tracing::instrument(skip(self))]
 	pub async fn prepare_lightning_claim(
 		&self,
 		payment_hash: PaymentHash,
@@ -432,6 +433,7 @@ impl Server {
 		Ok((sub, vtxos))
 	}
 
+	#[tracing::instrument(skip(self))]
 	async fn verify_ln_receive_anti_dos(
 		&self,
 		anti_dos: Option<LightningReceiveAntiDos>,

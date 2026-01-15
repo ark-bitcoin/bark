@@ -739,6 +739,7 @@ impl Server {
 	/// Perform the arkoor cosign from the builder.
 	/// Assumes that sanity checks on the input have been performed.
 	/// Will lock the input vtxo in flux.
+	#[tracing::instrument(skip(self, builder))]
 	async fn cosign_oor_package_with_builder(
 		&self,
 		builder: &ArkoorPackageBuilder<'_, VtxoRequest>,
@@ -800,6 +801,7 @@ impl Server {
 		MailboxIdentifier::from_blinded(blinded, vtxo_pubkey, self.mailbox_key.leak_ref())
 	}
 
+	#[tracing::instrument(skip(self))]
 	pub async fn generate_ephemeral_cosign_key(
 		&self,
 		lifetime: Duration,
@@ -813,6 +815,7 @@ impl Server {
 		Ok(key)
 	}
 
+	#[tracing::instrument(skip(self))]
 	pub async fn get_ephemeral_cosign_key(&self, pubkey: PublicKey) -> anyhow::Result<Keypair> {
 		let tweak = self.db.fetch_ephemeral_tweak(pubkey).await?
 			.context("ephemeral pubkey unknown")?;
@@ -821,6 +824,7 @@ impl Server {
 		Ok(Keypair::from_secret_key(&*SECP, &seckey))
 	}
 
+	#[tracing::instrument(skip(self))]
 	pub async fn drop_ephemeral_cosign_key(&self, pubkey: PublicKey) -> anyhow::Result<Keypair> {
 		let tweak = self.db.drop_ephemeral_tweak(pubkey).await?
 			.context("ephemeral pubkey unknown")?;
@@ -829,6 +833,7 @@ impl Server {
 		Ok(Keypair::from_secret_key(&*SECP, &seckey))
 	}
 
+	#[tracing::instrument(skip(self, vtxos))]
 	pub async fn cosign_vtxo_tree(
 		&self,
 		vtxos: impl IntoIterator<Item = VtxoRequest>,

@@ -35,6 +35,7 @@ impl TxNursery {
 	}
 	/// Adds the transaction to TxIndex and ensures
 	/// it will be broadcast
+	#[tracing::instrument(skip(self))]
 	pub async fn broadcast_tx(&self, tx: Transaction) -> anyhow::Result<Tx> {
 		let ret = self.txindex.register(tx).await?;
 		self.inner_broadcast(vec![ret.txid]);
