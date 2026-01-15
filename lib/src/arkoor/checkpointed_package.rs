@@ -47,11 +47,29 @@ pub struct PackageCosignResponse {
 }
 
 impl CheckpointedPackageBuilder<state::Initial> {
-
-	pub fn new(
+	/// Create builder with checkpoint transactions
+	pub fn new_with_checkpoints(
 		inputs: impl IntoIterator<Item = Vtxo>,
 		output: VtxoRequest,
 		change_pubkey: PublicKey,
+	) -> Result<Self, ArkoorConstructionError> {
+		Self::new(inputs, output, change_pubkey, true)
+	}
+
+	/// Create builder without checkpoint transactions
+	pub fn new_without_checkpoints(
+		inputs: impl IntoIterator<Item = Vtxo>,
+		output: VtxoRequest,
+		change_pubkey: PublicKey,
+	) -> Result<Self, ArkoorConstructionError> {
+		Self::new(inputs, output, change_pubkey, false)
+	}
+
+	fn new(
+		inputs: impl IntoIterator<Item = Vtxo>,
+		output: VtxoRequest,
+		change_pubkey: PublicKey,
+		use_checkpoint: bool,
 	) -> Result<Self, ArkoorConstructionError> {
 		// Some of the algorithms read a bit awkward.
 		// The key problem is that we can only iterate over the inputs once.
@@ -63,10 +81,11 @@ impl CheckpointedPackageBuilder<state::Initial> {
 		for input in input_iter {
 			let input_amount = input.amount();
 			if to_be_paid >= input_amount {
-				let package = CheckpointedArkoorBuilder::new_with_checkpoint(
+				let package = CheckpointedArkoorBuilder::new(
 					input,
 					vec![VtxoRequest { amount: input_amount, policy: output.policy.clone() }],
 					vec![], // no dust outputs
+					use_checkpoint,
 				)?;
 
 				packages.push(package);
@@ -84,10 +103,11 @@ impl CheckpointedPackageBuilder<state::Initial> {
 					]
 				};
 
-				let package = CheckpointedArkoorBuilder::new_with_checkpoint(
+				let package = CheckpointedArkoorBuilder::new(
 					input,
 					requests,
 					vec![], // no dust outputs
+					use_checkpoint,
 				)?;
 
 				to_be_paid = Amount::ZERO;
@@ -291,7 +311,7 @@ mod test {
 		// She owns a single vtxo and fully spends it
 		let (funding_tx, alice_vtxo) = dummy_vtxo_for_amount(Amount::from_sat(100_000));
 
-		let package_builder = CheckpointedPackageBuilder::new(
+		let package_builder = CheckpointedPackageBuilder::new_with_checkpoints(
 			[alice_vtxo],
 			VtxoRequest { amount: Amount::from_sat(100_000), policy: VtxoPolicy::new_pubkey(bob_public_key()) },
 			alice_public_key()
@@ -307,7 +327,7 @@ mod test {
 		// She only has a vtxo worth a 1000 sats
 		// She will send the subdust remainder to Bob as well
 		let (funding_tx, alice_vtxo) = dummy_vtxo_for_amount(Amount::from_sat(1000));
-		let package_builder = CheckpointedPackageBuilder::new(
+		let package_builder = CheckpointedPackageBuilder::new_with_checkpoints(
 			[alice_vtxo],
 			VtxoRequest { amount: Amount::from_sat(900), policy: VtxoPolicy::new_pubkey(bob_public_key()) },
 			alice_public_key()
@@ -333,7 +353,7 @@ mod test {
 		let (funding_tx_2, alice_vtxo_2) = dummy_vtxo_for_amount(Amount::from_sat(5_000));
 		let (funding_tx_3, alice_vtxo_3) = dummy_vtxo_for_amount(Amount::from_sat(2_000));
 
-		let package = CheckpointedPackageBuilder::new(
+		let package = CheckpointedPackageBuilder::new_with_checkpoints(
 			[alice_vtxo_1, alice_vtxo_2, alice_vtxo_3],
 			VtxoRequest { amount: Amount::from_sat(17_000), policy: VtxoPolicy::new_pubkey(bob_public_key()) },
 			alice_public_key()
@@ -364,7 +384,7 @@ mod test {
 		let (funding_tx_2, alice_vtxo_2) = dummy_vtxo_for_amount(Amount::from_sat(5_000));
 		let (funding_tx_3, alice_vtxo_3) = dummy_vtxo_for_amount(Amount::from_sat(2_000));
 
-		let package = CheckpointedPackageBuilder::new(
+		let package = CheckpointedPackageBuilder::new_with_checkpoints(
 			[alice_vtxo_1, alice_vtxo_2, alice_vtxo_3],
 			VtxoRequest { amount: Amount::from_sat(16_000), policy: VtxoPolicy::new_pubkey(bob_public_key()) },
 			alice_public_key()
@@ -398,7 +418,7 @@ mod test {
 		let (funding_tx_1, alice_vtxo_1) = dummy_vtxo_for_amount(Amount::from_sat(5_000));
 		let (funding_tx_2, alice_vtxo_2) = dummy_vtxo_for_amount(Amount::from_sat(1_000));
 
-		let package = CheckpointedPackageBuilder::new(
+		let package = CheckpointedPackageBuilder::new_with_checkpoints(
 			[alice_vtxo_1, alice_vtxo_2],
 			VtxoRequest { amount: Amount::from_sat(5_700), policy: VtxoPolicy::new_pubkey(bob_public_key()) },
 			alice_public_key()
@@ -425,7 +445,7 @@ mod test {
 		// She only has a vtxo worth a 900 sats
 		// She will not be able to send the payment
 		let (_funding_tx, alice_vtxo) = dummy_vtxo_for_amount(Amount::from_sat(900));
-		let result = CheckpointedPackageBuilder::new(
+		let result = CheckpointedPackageBuilder::new_with_checkpoints(
 			[alice_vtxo],
 			VtxoRequest { amount: Amount::from_sat(1000), policy: VtxoPolicy::new_pubkey(bob_public_key()) },
 			alice_public_key()
@@ -450,7 +470,7 @@ mod test {
 		let (_funding_tx, alice_vtxo_2) = dummy_vtxo_for_amount(Amount::from_sat(5_000));
 		let (_funding_tx, alice_vtxo_3) = dummy_vtxo_for_amount(Amount::from_sat(2_000));
 
-		let package = CheckpointedPackageBuilder::new(
+		let package = CheckpointedPackageBuilder::new_with_checkpoints(
 			[alice_vtxo_1, alice_vtxo_2, alice_vtxo_3],
 			VtxoRequest { amount: Amount::from_sat(20_000), policy: VtxoPolicy::new_pubkey(bob_public_key()) },
 			alice_public_key()
@@ -478,7 +498,7 @@ mod test {
 		let (_funding_tx, alice_vtxo_3) = dummy_vtxo_for_amount(Amount::from_sat(1000));
 		let (_funding_tx, alice_vtxo_4) = dummy_vtxo_for_amount(Amount::from_sat(1000));
 
-		let package = CheckpointedPackageBuilder::new(
+		let package = CheckpointedPackageBuilder::new_with_checkpoints(
 			[alice_vtxo_1, alice_vtxo_2, alice_vtxo_3, alice_vtxo_4],
 			VtxoRequest { amount: Amount::from_sat(2000), policy: VtxoPolicy::new_pubkey(bob_public_key()) },
 			alice_public_key()

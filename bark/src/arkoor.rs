@@ -81,7 +81,7 @@ impl Wallet {
 			user_keypairs.push(self.get_vtxo_key(vtxo).await?);
 		}
 
-		let builder = CheckpointedPackageBuilder::new(
+		let builder = CheckpointedPackageBuilder::new_with_checkpoints(
 			inputs.iter().map(|v| &v.vtxo).cloned(),
 			vtxo_request,
 			change_pubkey,

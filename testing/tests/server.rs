@@ -485,7 +485,7 @@ async fn double_spend_arkoor() {
 	let pk1 = bark_client.derive_store_next_keypair().await.unwrap().0.public_key();
 	let pk2 = bark_client.derive_store_next_keypair().await.unwrap().0.public_key();
 
-	let builder1 = CheckpointedPackageBuilder::new(
+	let builder1 = CheckpointedPackageBuilder::new_with_checkpoints(
 		[vtxo.clone()],
 		VtxoRequest {
 			amount: sat(100_000),
@@ -493,7 +493,7 @@ async fn double_spend_arkoor() {
 		},
 		pk1,
 	).unwrap();
-	let builder2 = CheckpointedPackageBuilder::new(
+	let builder2 = CheckpointedPackageBuilder::new_with_checkpoints(
 		[vtxo.clone()],
 		VtxoRequest {
 			amount: sat(200_000), // other amount
@@ -501,7 +501,7 @@ async fn double_spend_arkoor() {
 		},
 		pk1,
 	).unwrap();
-	let builder3 = CheckpointedPackageBuilder::new(
+	let builder3 = CheckpointedPackageBuilder::new_with_checkpoints(
 		[vtxo.clone()],
 		VtxoRequest {
 			amount: sat(100_000),

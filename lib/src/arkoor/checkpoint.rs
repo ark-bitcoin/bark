@@ -991,7 +991,7 @@ impl CheckpointedArkoorBuilder<state::Initial> {
 		}
 	}
 
-	fn new(
+	pub(crate) fn new(
 		input: Vtxo,
 		outputs: Vec<VtxoRequest>,
 		isolated_outputs: Vec<VtxoRequest>,
