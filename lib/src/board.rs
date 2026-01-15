@@ -142,6 +142,19 @@ impl<S: BuilderState> BoardBuilder<S> {
 		cosign_taproot(combined_pubkey, self.server_pubkey, self.expiry_height).script_pubkey()
 	}
 
+	fn to_state<S2: BuilderState>(self) -> BoardBuilder<S2> {
+		BoardBuilder {
+			user_pubkey: self.user_pubkey,
+			expiry_height: self.expiry_height,
+			server_pubkey: self.server_pubkey,
+			exit_delta: self.exit_delta,
+			amount: self.amount,
+			utxo: self.utxo,
+			user_pub_nonce: self.user_pub_nonce,
+			user_sec_nonce: self.user_sec_nonce,
+			_state: PhantomData,
+		}
+	}
 }
 
 impl BoardBuilder<state::Preparing> {
@@ -166,28 +179,19 @@ impl BoardBuilder<state::Preparing> {
 
 	/// Set the UTXO where the board will be funded and the board amount.
 	pub fn set_funding_details(
-		self,
+		mut self,
 		amount: Amount,
 		utxo: OutPoint,
 	) -> BoardBuilder<state::CanGenerateNonces> {
-		BoardBuilder {
-			amount: Some(amount),
-			utxo: Some(utxo),
-			// copy the rest
-			user_pubkey: self.user_pubkey,
-			expiry_height: self.expiry_height,
-			server_pubkey: self.server_pubkey,
-			exit_delta: self.exit_delta,
-			user_pub_nonce: self.user_pub_nonce,
-			user_sec_nonce: self.user_sec_nonce,
-			_state: PhantomData,
-		}
+		self.amount = Some(amount);
+		self.utxo = Some(utxo);
+		self.to_state()
 	}
 }
 
 impl BoardBuilder<state::CanGenerateNonces> {
 	/// Generate user nonces.
-	pub fn generate_user_nonces(self) -> BoardBuilder<state::CanFinish> {
+	pub fn generate_user_nonces(mut self) -> BoardBuilder<state::CanFinish> {
 		let combined_pubkey = musig::combine_keys([self.user_pubkey, self.server_pubkey]);
 		let funding_taproot = cosign_taproot(combined_pubkey, self.server_pubkey, self.expiry_height);
 		let funding_txout = TxOut {
@@ -216,18 +220,9 @@ impl BoardBuilder<state::CanGenerateNonces> {
 			None,
 		);
 
-		BoardBuilder {
-			user_pub_nonce: Some(pub_nonce),
-			user_sec_nonce: Some(sec_nonce),
-			// copy the rest
-			amount: self.amount,
-			user_pubkey: self.user_pubkey,
-			expiry_height: self.expiry_height,
-			server_pubkey: self.server_pubkey,
-			exit_delta: self.exit_delta,
-			utxo: self.utxo,
-			_state: PhantomData,
-		}
+		self.user_pub_nonce = Some(pub_nonce);
+		self.user_sec_nonce = Some(sec_nonce);
+		self.to_state()
 	}
 
 	/// Constructs a BoardBuilder from a vtxo
