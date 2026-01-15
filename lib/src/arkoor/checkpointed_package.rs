@@ -49,6 +49,12 @@ impl<V> PackageCosignRequest<V> {
 			.map(|r| Some(&r.input))
 			.flatten()
 	}
+
+	pub fn outputs(&self) -> impl Iterator<Item=&VtxoRequest> {
+		self.requests.iter()
+			.map(|r| &r.outputs)
+			.flatten()
+	}
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, thiserror::Error)]
