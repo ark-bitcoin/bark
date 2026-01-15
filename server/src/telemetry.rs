@@ -38,6 +38,7 @@ use crate::ln::cln::ClnNodeStateKind;
 use crate::round::RoundStateKind;
 use crate::wallet::WalletKind;
 
+pub const TRACE_GRPC: &str = "grpc";
 pub const TRACE_RUN_ROUND: &str = "round";
 
 pub const TRACE_RUN_ROUND_ATTEMPT: &str = "round_attempt";
@@ -376,8 +377,13 @@ impl Metrics {
 			.add_directive("tokio_postgres=INFO".parse().unwrap())
 			.add_directive("h2=INFO".parse().unwrap());
 		if let Ok(env_str) = std::env::var(S::LOG_ENV_VAR) {
-			if !env_str.trim().is_empty() {
-				filter = filter.add_directive(env_str.parse().unwrap());
+			for part in env_str.split(',') {
+				let part = part.trim();
+				if !part.is_empty() {
+					if let Ok(d) = part.parse() {
+						filter = filter.add_directive(d);
+					}
+				}
 			}
 		}
 

@@ -7,7 +7,7 @@ use std::time::Instant;
 use opentelemetry::KeyValue;
 use tonic::transport::server::TcpConnectInfo;
 use tower::{Layer, Service};
-use tracing::trace;
+use tracing::{info_span, trace, Instrument};
 use crate::telemetry::{self};
 
 const RPC_SYSTEM_HTTP: &'static str = "http";
@@ -15,9 +15,15 @@ const RPC_SYSTEM_GRPC: &'static str = "grpc";
 
 const RPC_UNKNOWN: &'static str = "Unknown";
 
-const RPC_SERVICES: &[&str] = &[RPC_SERVICE_ARK, RPC_SERVICE_ADMIN, RPC_SERVICE_INTEGRATION];
+const RPC_SERVICES: &[&str] = &[
+	RPC_SERVICE_ARK,
+	RPC_SERVICE_MAILBOX,
+	RPC_SERVICE_ADMIN,
+	RPC_SERVICE_INTEGRATION,
+];
 
 const RPC_SERVICE_ARK: &'static str = "ArkService";
+const RPC_SERVICE_MAILBOX: &'static str = "MailboxService";
 const RPC_SERVICE_ADMIN: &'static str = "AdminService";
 const RPC_SERVICE_INTEGRATION: &'static str = "IntegrationService";
 
@@ -91,9 +97,6 @@ const RPC_SERVICE_ARK_METHODS: &[&str] = &[
 	rpc_names::ark::REQUEST_ARKOOR_PACKAGE_COSIGN,
 	rpc_names::ark::POST_ARKOOR_PACKAGE_MAILBOX,
 	rpc_names::ark::EMPTY_ARKOOR_MAILBOX,
-	rpc_names::ark::POST_VTXOS_MAILBOX,
-	rpc_names::ark::SUBSCRIBE_MAILBOX,
-	rpc_names::ark::READ_MAILBOX,
 	rpc_names::ark::START_LIGHTNING_PAYMENT,
 	rpc_names::ark::FINISH_LIGHTNING_PAYMENT,
 	rpc_names::ark::REQUEST_LIGHTNING_PAY_HTLC_COSIGN,
@@ -117,6 +120,12 @@ const RPC_SERVICE_ARK_METHODS: &[&str] = &[
 	rpc_names::ark::FORFEIT_VTXOS,
 	rpc_names::ark::PREPARE_OFFBOARD,
 	rpc_names::ark::FINISH_OFFBOARD,
+];
+
+const RPC_SERVICE_MAILBOX_METHODS: &[&str] = &[
+	rpc_names::ark::POST_VTXOS_MAILBOX,
+	rpc_names::ark::SUBSCRIBE_MAILBOX,
+	rpc_names::ark::READ_MAILBOX,
 ];
 
 const RPC_SERVICE_ADMIN_METHODS: &[&str] = &[
@@ -147,6 +156,14 @@ impl RpcMethodDetails {
 		RpcMethodDetails {
 			system: RPC_SYSTEM_GRPC,
 			service: RPC_SERVICE_ARK,
+			method,
+		}
+	}
+
+	pub(crate) fn grpc_mailbox(method: &'static str) -> RpcMethodDetails {
+		RpcMethodDetails {
+			system: RPC_SYSTEM_GRPC,
+			service: RPC_SERVICE_MAILBOX,
 			method,
 		}
 	}
@@ -291,9 +308,17 @@ where
 		telemetry::add_grpc_in_progress(&attributes);
 
 		let start_time = Instant::now();
+		let grpc_span = info_span!(
+			telemetry::TRACE_GRPC,
+			otel.kind = "server",
+			{ telemetry::RPC_SYSTEM } = rpc_method_details.system,
+			{ telemetry::RPC_SERVICE } = rpc_method_details.service,
+			{ telemetry::RPC_METHOD } = rpc_method_details.method,
+		);
 		let future = self.inner.call(req);
 		Box::pin(async move {
-			let res = future.await;
+			let res = future.instrument(grpc_span.clone()).await;
+			let _enter = grpc_span.enter();
 
 			let duration = start_time.elapsed();
 
@@ -374,6 +399,7 @@ fn extract_service_method(url: &http::uri::Uri) -> Option<(&'static str, &'stati
 
 			let method_ref = RPC_SERVICE_ARK_METHODS
 				.iter()
+				.chain(RPC_SERVICE_MAILBOX_METHODS.iter())
 				.chain(RPC_SERVICE_ADMIN_METHODS.iter())
 				.chain(RPC_SERVICE_INTEGRATION_METHODS.iter())
 				.find(|&&m| m == method_snake_ref)
