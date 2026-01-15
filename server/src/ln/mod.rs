@@ -59,18 +59,7 @@ impl Server {
 
 		let expiry = {
 			let tip = self.sync_manager.chain_tip();
-			let sub = self.db.get_htlc_subscription_by_payment_hash(invoice_payment_hash).await?;
-
-			// If we have a subscription for that invoice, it means user is
-			// performing intra-Ark lightning payment: we will be the single
-			// hop so we can use its min final cltv expiry delta as expiry delta
-			let expiry_delta = if let Some(sub) = sub {
-				sub.invoice.min_final_cltv_expiry_delta()
-			} else {
-				self.config.htlc_send_expiry_delta as u64
-			};
-
-			tip.height + expiry_delta as BlockHeight
+			tip.height + self.config.htlc_send_expiry_delta as BlockHeight
 		};
 
 		slog!(LightningPayHtlcsRequested, invoice_payment_hash, amount, expiry);
