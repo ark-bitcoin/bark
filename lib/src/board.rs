@@ -23,7 +23,7 @@ use bitcoin_ext::{BlockDelta, BlockHeight, TaprootSpendInfoExt};
 use crate::error::IncorrectSigningKeyError;
 use crate::{musig, scripts, SECP};
 use crate::tree::signed::cosign_taproot;
-use crate::vtxo::{self, Vtxo, VtxoId, VtxoPolicy, GenesisItem, GenesisTransition};
+use crate::vtxo::{self, Vtxo, VtxoPolicy, GenesisItem, GenesisTransition};
 
 use self::state::BuilderState;
 
