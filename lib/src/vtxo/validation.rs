@@ -3,8 +3,6 @@ use std::borrow::Cow;
 
 use bitcoin::{sighash, Amount, OutPoint, TapLeafHash, Transaction, TxOut};
 
-use bitcoin_ext::{TxOutExt, P2TR_DUST};
-
 use crate::tree::signed::unlock_clause;
 use crate::{musig, SECP};
 use crate::vtxo::{GenesisTransition, TransitionKind, Vtxo, VtxoPolicyKind};
@@ -30,12 +28,6 @@ pub enum VtxoValidationError {
 		genesis_len: usize,
 		// NB we use str here because we don't want to expose the kind enum
 		transition_kind: &'static str,
-	},
-	#[error("non-standard output on genesis item #{genesis_item_idx} other \
-		output #{other_output_idx}")]
-	NonStandardTxOut {
-		genesis_item_idx: usize,
-		other_output_idx: usize,
 	},
 	#[error("invalid arkoor policy of type {policy}: {msg}")]
 	InvalidArkoorPolicy {
@@ -218,17 +210,6 @@ pub fn validate(
 			},
 		}
 
-		// All outputs have to be standard otherwise we can't relay.
-		// Skip this check for subdust vtxos since they can have subdust sibling outputs.
-		if vtxo.amount >= P2TR_DUST {
-			if let Some(out_idx) = item.other_outputs.iter().position(|o| !o.is_standard()) {
-				return Err(VtxoValidationError::NonStandardTxOut {
-					genesis_item_idx: idx,
-					other_output_idx: out_idx,
-				});
-			}
-		}
-
 		let next_amount = prev.2.checked_sub(item.other_outputs.iter().map(|o| o.value).sum())
 			.ok_or(VtxoValidationError::Invalid("insufficient onchain amount"))?;
 		let next_tx = verify_transition(&vtxo, idx, prev.0.as_ref(), prev.1, next_amount)
@@ -255,21 +236,27 @@ mod test {
 	pub fn validate_vtxos() {
 		let vtxos = &*VTXO_VECTORS;
 
+		assert!(vtxos.board_vtxo.is_standard());
 		let err = vtxos.board_vtxo.validate(&vtxos.anchor_tx).err();
 		assert!(err.is_none(), "err: {err:?}");
 
+		assert!(vtxos.arkoor_htlc_out_vtxo.is_standard());
 		let err = vtxos.arkoor_htlc_out_vtxo.validate(&vtxos.anchor_tx).err();
 		assert!(err.is_none(), "err: {err:?}");
 
+		assert!(vtxos.arkoor2_vtxo.is_standard());
 		let err = vtxos.arkoor2_vtxo.validate(&vtxos.anchor_tx).err();
 		assert!(err.is_none(), "err: {err:?}");
 
+		assert!(vtxos.round1_vtxo.is_standard());
 		let err = vtxos.round1_vtxo.validate(&vtxos.round_tx).err();
 		assert!(err.is_none(), "err: {err:?}");
 
+		assert!(vtxos.round2_vtxo.is_standard());
 		let err = vtxos.round2_vtxo.validate(&vtxos.round_tx).err();
 		assert!(err.is_none(), "err: {err:?}");
 
+		assert!(vtxos.arkoor3_vtxo.is_standard());
 		let err = vtxos.arkoor3_vtxo.validate(&vtxos.round_tx).err();
 		assert!(err.is_none(), "err: {err:?}");
 	}

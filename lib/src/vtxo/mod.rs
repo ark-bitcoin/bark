@@ -82,7 +82,7 @@ use bitcoin::hashes::{sha256, Hash};
 use bitcoin::secp256k1::{schnorr, PublicKey, XOnlyPublicKey};
 use bitcoin::taproot::LeafVersion;
 
-use bitcoin_ext::{fee, BlockDelta, BlockHeight, TaprootSpendInfoExt};
+use bitcoin_ext::{fee, BlockDelta, BlockHeight, TaprootSpendInfoExt, TxOutExt};
 
 use crate::{musig, scripts};
 use crate::encode::{ProtocolDecodingError, ProtocolEncoding, ReadExt, WriteExt};
@@ -751,6 +751,16 @@ impl Vtxo {
 			GenesisTransition::Cosigned { .. } => None,
 			GenesisTransition::HashLockedCosigned { .. } => None,
 		}).collect()
+	}
+
+	/// Check if this VTXO is standard for relay purposes
+	///
+	/// A VTXO is standard if:
+	/// - Its own output is standard
+	/// - all sibling outputs in the exit path are standard
+	pub fn is_standard(&self) -> bool {
+		self.txout().is_standard() && self.genesis.iter()
+			.all(|i| i.other_outputs.iter().all(|o| o.is_standard()))
 	}
 
 	/// Fully validate this VTXO and its entire transaction chain.
