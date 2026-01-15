@@ -4,7 +4,7 @@ use bitcoin::hex::DisplayHex;
 use bitcoin::secp256k1::PublicKey;
 use log::{info, error};
 
-use ark::{VtxoRequest, ProtocolEncoding};
+use ark::{VtxoRequest, VtxoPolicy, ProtocolEncoding};
 use ark::arkoor::checkpointed_package::{CheckpointedPackageBuilder, PackageCosignResponse};
 use ark::vtxo::{Vtxo, VtxoId, VtxoPolicyKind};
 use bitcoin_ext::P2TR_DUST;
@@ -81,10 +81,10 @@ impl Wallet {
 			user_keypairs.push(self.get_vtxo_key(vtxo).await?);
 		}
 
-		let builder = CheckpointedPackageBuilder::new_with_checkpoints(
+		let builder = CheckpointedPackageBuilder::new_single_output_with_checkpoints(
 			inputs.iter().map(|v| &v.vtxo).cloned(),
 			vtxo_request,
-			change_pubkey,
+			VtxoPolicy::new_pubkey(change_pubkey),
 		)
 			.context("Failed to construct arkoor package")?
 			.generate_user_nonces(&user_keypairs)

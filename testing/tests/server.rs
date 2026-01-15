@@ -485,29 +485,29 @@ async fn double_spend_arkoor() {
 	let pk1 = bark_client.derive_store_next_keypair().await.unwrap().0.public_key();
 	let pk2 = bark_client.derive_store_next_keypair().await.unwrap().0.public_key();
 
-	let builder1 = CheckpointedPackageBuilder::new_with_checkpoints(
+	let builder1 = CheckpointedPackageBuilder::new_single_output_with_checkpoints(
 		[vtxo.clone()],
 		VtxoRequest {
 			amount: sat(100_000),
 			policy: VtxoPolicy::new_pubkey(*RANDOM_PK),
 		},
-		pk1,
+		VtxoPolicy::new_pubkey(pk1),
 	).unwrap();
-	let builder2 = CheckpointedPackageBuilder::new_with_checkpoints(
+	let builder2 = CheckpointedPackageBuilder::new_single_output_with_checkpoints(
 		[vtxo.clone()],
 		VtxoRequest {
 			amount: sat(200_000), // other amount
 			policy: VtxoPolicy::new_pubkey(*RANDOM_PK),
 		},
-		pk1,
+		VtxoPolicy::new_pubkey(pk1),
 	).unwrap();
-	let builder3 = CheckpointedPackageBuilder::new_with_checkpoints(
+	let builder3 = CheckpointedPackageBuilder::new_single_output_with_checkpoints(
 		[vtxo.clone()],
 		VtxoRequest {
 			amount: sat(100_000),
 			policy: VtxoPolicy::new_pubkey(*RANDOM_PK),
 		},
-		pk2, // other change pk
+		VtxoPolicy::new_pubkey(pk2), // other change pk
 	).unwrap();
 
 	// And the corresponding requests to the server

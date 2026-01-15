@@ -1,11 +1,19 @@
+use std::convert::Infallible;
+
 use bitcoin::Txid;
 use bitcoin::secp256k1::Keypair;
-use bitcoin_ext::P2TR_DUST;
-
 
 use crate::arkoor::checkpoint::{CheckpointedArkoorBuilder, ArkoorConstructionError, state, CosignResponse, ArkoorSigningError, CosignRequest};
-use crate::{Vtxo, VtxoId, VtxoRequest, VtxoPolicy, PublicKey, Amount};
+use crate::{Vtxo, VtxoId, VtxoRequest, VtxoPolicy, Amount};
 
+
+/// A builder struct for creating arkoor packages
+///
+/// A package consists out of one or more inputs and matching outputs.
+/// When packages are created, the outputs can be possibly split up
+/// between the inputs.
+///
+/// The builder always keeps input and output order.
 pub struct CheckpointedPackageBuilder<S: state::BuilderState> {
 	builders: Vec<CheckpointedArkoorBuilder<S>>,
 }
@@ -47,85 +55,157 @@ pub struct PackageCosignResponse {
 }
 
 impl CheckpointedPackageBuilder<state::Initial> {
-	/// Create builder with checkpoint transactions
-	pub fn new_with_checkpoints(
+	/// Allocate outputs to inputs with splitting support
+	///
+	/// Distributes outputs across inputs in order, splitting outputs when needed
+	/// to match input amounts exactly. Dust fragments are allowed.
+	fn allocate_outputs_to_inputs(
 		inputs: impl IntoIterator<Item = Vtxo>,
-		output: VtxoRequest,
-		change_pubkey: PublicKey,
-	) -> Result<Self, ArkoorConstructionError> {
-		Self::new(inputs, output, change_pubkey, true)
+		outputs: Vec<VtxoRequest>,
+	) -> Result<Vec<(Vtxo, Vec<VtxoRequest>)>, ArkoorConstructionError> {
+		let total_output = outputs.iter().map(|r| r.amount).sum::<Amount>();
+		if outputs.is_empty() || total_output == Amount::ZERO {
+			return Err(ArkoorConstructionError::NoOutputs);
+		}
+
+		let mut allocations: Vec<(Vtxo, Vec<VtxoRequest>)> = Vec::new();
+
+		let mut output_iter = outputs.into_iter();
+		let mut current_output = output_iter.next();
+		let mut current_output_remaining = current_output.as_ref()
+			.map(|o| o.amount).unwrap_or_default();
+
+		let mut total_input = Amount::ZERO;
+		'inputs:
+		for input in inputs {
+			total_input += input.amount();
+
+			let mut input_remaining = input.amount();
+			let mut input_allocation: Vec<VtxoRequest> = Vec::new();
+
+			'outputs:
+			while let Some(ref output) = current_output {
+				let _: Infallible = if input_remaining == current_output_remaining {
+					// perfect match: finish allocation and advance output
+					input_allocation.push(VtxoRequest {
+						amount: current_output_remaining,
+						policy: output.policy.clone(),
+					});
+
+					current_output = output_iter.next();
+					current_output_remaining = current_output.as_ref()
+						.map(|o| o.amount).unwrap_or_default();
+					allocations.push((input, input_allocation));
+					continue 'inputs;
+				} else if input_remaining > current_output_remaining {
+					// input exceeds output: consume output, continue
+					input_allocation.push(VtxoRequest {
+						amount: current_output_remaining,
+						policy: output.policy.clone(),
+					});
+
+					input_remaining -= current_output_remaining;
+
+					current_output = output_iter.next();
+					current_output_remaining = current_output.as_ref()
+						.map(|o| o.amount).unwrap_or_default();
+					continue 'outputs;
+				} else {
+					// input is less than output: finish allocation and keep remaining output
+					input_allocation.push(VtxoRequest {
+						amount: input_remaining,
+						policy: output.policy.clone(),
+					});
+
+					current_output_remaining -= input_remaining;
+
+					allocations.push((input, input_allocation));
+					continue 'inputs;
+				};
+			}
+		}
+
+		if total_input != total_output {
+			return Err(ArkoorConstructionError::Unbalanced {
+				input: total_input,
+				output: total_output,
+			});
+		}
+
+		Ok(allocations)
 	}
 
-	/// Create builder without checkpoint transactions
+	/// Create builder with checkpoints for multiple outputs
+	pub fn new_with_checkpoints(
+		inputs: impl IntoIterator<Item = Vtxo>,
+		outputs: Vec<VtxoRequest>,
+	) -> Result<Self, ArkoorConstructionError> {
+		Self::new(inputs, outputs, true)
+	}
+
+	/// Create builder without checkpoints for multiple outputs
 	pub fn new_without_checkpoints(
 		inputs: impl IntoIterator<Item = Vtxo>,
-		output: VtxoRequest,
-		change_pubkey: PublicKey,
+		outputs: Vec<VtxoRequest>,
 	) -> Result<Self, ArkoorConstructionError> {
-		Self::new(inputs, output, change_pubkey, false)
+		Self::new(inputs, outputs, false)
+	}
+
+	/// Convenience constructor for single output with automatic change
+	///
+	/// Calculates change amount and creates appropriate output
+	/// (backward-compatible with old API)
+	pub fn new_single_output_with_checkpoints(
+		inputs: impl IntoIterator<Item = Vtxo>,
+		output: VtxoRequest,
+		change_policy: VtxoPolicy,
+	) -> Result<Self, ArkoorConstructionError> {
+		// Calculate total input amount
+		let inputs: Vec<_> = inputs.into_iter().collect();
+		let total_input: Amount = inputs.iter().map(|v| v.amount()).sum();
+
+		let change_amount = total_input.checked_sub(output.amount)
+			.ok_or(ArkoorConstructionError::Unbalanced {
+				input: total_input,
+				output: output.amount,
+			})?;
+
+		let outputs = if change_amount == Amount::ZERO {
+			vec![output]
+		} else {
+			vec![
+				output,
+				VtxoRequest {
+					amount: change_amount,
+					policy: change_policy,
+				},
+			]
+		};
+
+		Self::new_with_checkpoints(inputs, outputs)
 	}
 
 	fn new(
 		inputs: impl IntoIterator<Item = Vtxo>,
-		output: VtxoRequest,
-		change_pubkey: PublicKey,
+		outputs: Vec<VtxoRequest>,
 		use_checkpoint: bool,
 	) -> Result<Self, ArkoorConstructionError> {
-		// Some of the algorithms read a bit awkward.
-		// The key problem is that we can only iterate over the inputs once.
-		let input_iter = inputs.into_iter();
+		// Allocate outputs to inputs
+		let allocations = Self::allocate_outputs_to_inputs(inputs, outputs)?;
 
-		// Constructs a package for each input vtxo
-		let mut packages = Vec::with_capacity(input_iter.size_hint().0);
-		let mut to_be_paid = output.amount;
-		for input in input_iter {
-			let input_amount = input.amount();
-			if to_be_paid >= input_amount {
-				let package = CheckpointedArkoorBuilder::new(
-					input,
-					vec![VtxoRequest { amount: input_amount, policy: output.policy.clone() }],
-					vec![], // no dust outputs
-					use_checkpoint,
-				)?;
-
-				packages.push(package);
-				to_be_paid = to_be_paid - input_amount;
-			} else if to_be_paid >  Amount::ZERO {
-				// If change_amount is less than P2TR we don't do change
-				// We will send the left-overs as a tip
-				let change_amount = input.amount() - to_be_paid;
-				let requests = if change_amount < P2TR_DUST {
-					vec![VtxoRequest { amount: input.amount(), policy: output.policy.clone() }]
-				} else {
-					vec![
-						VtxoRequest { amount: to_be_paid, policy: output.policy.clone() },
-						VtxoRequest { amount: change_amount, policy: VtxoPolicy::new_pubkey(change_pubkey) }
-					]
-				};
-
-				let package = CheckpointedArkoorBuilder::new(
-					input,
-					requests,
-					vec![], // no dust outputs
-					use_checkpoint,
-				)?;
-
-				to_be_paid = Amount::ZERO;
-				packages.push(package);
-			} else {
-				// In this case we aren't using all the inputs.
-				return Err(ArkoorConstructionError::TooManyInputs)
-			}
+		// Build one CheckpointedArkoorBuilder per input
+		let mut builders = Vec::with_capacity(allocations.len());
+		for (input, allocated_outputs) in allocations {
+			let builder = CheckpointedArkoorBuilder::new(
+				input,
+				allocated_outputs,
+				vec![], // no isolated outputs
+				use_checkpoint,
+			)?;
+			builders.push(builder);
 		}
 
-		if to_be_paid != Amount::ZERO {
-			return Err(ArkoorConstructionError::Unbalanced {
-				input: output.amount - to_be_paid,
-				output: output.amount,
-			})
-		}
-
-		Ok(Self { builders: packages })
+		Ok(Self { builders })
 	}
 
 	pub fn generate_user_nonces(self, user_keypairs: &[Keypair]) -> Result<CheckpointedPackageBuilder<state::UserGeneratedNonces>, ArkoorSigningError> {
@@ -246,6 +326,7 @@ mod test {
 	use bitcoin::secp256k1::Keypair;
 	use super::*;
 	use crate::test::dummy::DummyTestVtxoSpec;
+	use crate::PublicKey;
 
 	fn server_keypair() -> Keypair {
 		Keypair::from_str("f7a2a5d150afb575e98fff9caeebf6fbebbaeacfdfa7433307b208b39f1155f2").expect("Invalid key")
@@ -315,10 +396,10 @@ mod test {
 		// She owns a single vtxo and fully spends it
 		let (funding_tx, alice_vtxo) = dummy_vtxo_for_amount(Amount::from_sat(100_000));
 
-		let package_builder = CheckpointedPackageBuilder::new_with_checkpoints(
+		let package_builder = CheckpointedPackageBuilder::new_single_output_with_checkpoints(
 			[alice_vtxo],
 			VtxoRequest { amount: Amount::from_sat(100_000), policy: VtxoPolicy::new_pubkey(bob_public_key()) },
-			alice_public_key()
+			VtxoPolicy::new_pubkey(alice_public_key())
 		).expect("Valid package");
 
 		let funding_map = HashMap::from([(funding_tx.compute_txid(), funding_tx)]);
@@ -326,27 +407,24 @@ mod test {
 	}
 
 	#[test]
-	fn arkoor_no_dust_change() {
+	fn arkoor_subdust_change() {
 		// Alice tries to send 900 sats to Bob
 		// She only has a vtxo worth a 1000 sats
-		// She will send the subdust remainder to Bob as well
-		let (funding_tx, alice_vtxo) = dummy_vtxo_for_amount(Amount::from_sat(1000));
-		let package_builder = CheckpointedPackageBuilder::new_with_checkpoints(
+		// She will create two outputs: 900 for Bob, 100 subdust change for Alice
+		let (_funding_tx, alice_vtxo) = dummy_vtxo_for_amount(Amount::from_sat(1000));
+		let package_builder = CheckpointedPackageBuilder::new_single_output_with_checkpoints(
 			[alice_vtxo],
 			VtxoRequest { amount: Amount::from_sat(900), policy: VtxoPolicy::new_pubkey(bob_public_key()) },
-			alice_public_key()
+			VtxoPolicy::new_pubkey(alice_public_key())
 		).expect("Valid package");
 
-		// We should generate one vtxo for an amount of 1000 sat to bob
+		// We should generate two vtxos: 900 for Bob, 100 subdust change for Alice
 		let vtxos: Vec<Vtxo> = package_builder.build_unsigned_vtxos().collect();
-		assert_eq!(vtxos.len(), 1);
-		assert_eq!(vtxos[0].amount(), Amount::from_sat(1000));
+		assert_eq!(vtxos.len(), 2);
+		assert_eq!(vtxos[0].amount(), Amount::from_sat(900));
 		assert_eq!(vtxos[0].policy().user_pubkey(), bob_public_key());
-
-
-		// Verify if it produces valid vtxos
-		let funding_map = HashMap::from([(funding_tx.compute_txid(), funding_tx)]);
-		verify_package_builder(package_builder, &[alice_keypair()], funding_map);
+		assert_eq!(vtxos[1].amount(), Amount::from_sat(100));
+		assert_eq!(vtxos[1].policy().user_pubkey(), alice_public_key());
 	}
 
 	#[test]
@@ -357,10 +435,10 @@ mod test {
 		let (funding_tx_2, alice_vtxo_2) = dummy_vtxo_for_amount(Amount::from_sat(5_000));
 		let (funding_tx_3, alice_vtxo_3) = dummy_vtxo_for_amount(Amount::from_sat(2_000));
 
-		let package = CheckpointedPackageBuilder::new_with_checkpoints(
+		let package = CheckpointedPackageBuilder::new_single_output_with_checkpoints(
 			[alice_vtxo_1, alice_vtxo_2, alice_vtxo_3],
 			VtxoRequest { amount: Amount::from_sat(17_000), policy: VtxoPolicy::new_pubkey(bob_public_key()) },
-			alice_public_key()
+			VtxoPolicy::new_pubkey(alice_public_key())
 		).expect("Valid package");
 
 		let vtxos: Vec<Vtxo> = package.build_unsigned_vtxos().collect();
@@ -388,10 +466,10 @@ mod test {
 		let (funding_tx_2, alice_vtxo_2) = dummy_vtxo_for_amount(Amount::from_sat(5_000));
 		let (funding_tx_3, alice_vtxo_3) = dummy_vtxo_for_amount(Amount::from_sat(2_000));
 
-		let package = CheckpointedPackageBuilder::new_with_checkpoints(
+		let package = CheckpointedPackageBuilder::new_single_output_with_checkpoints(
 			[alice_vtxo_1, alice_vtxo_2, alice_vtxo_3],
 			VtxoRequest { amount: Amount::from_sat(16_000), policy: VtxoPolicy::new_pubkey(bob_public_key()) },
-			alice_public_key()
+			VtxoPolicy::new_pubkey(alice_public_key())
 		).expect("Valid package");
 
 		let vtxos: Vec<Vtxo> = package.build_unsigned_vtxos().collect();
@@ -415,32 +493,27 @@ mod test {
 	}
 
 	#[test]
-	fn can_send_multiple_vtxos_and_dust_change_will_be_tipped() {
+	fn can_send_multiple_vtxos_with_subdust_change() {
 		// Alice has a vtxo of 5_000 sat and one of 1_000 sat
 		// Alice will send 5_700 sats to Bob
-		// Because the 300 sat change is subdust it will be tipped to Bob
-		let (funding_tx_1, alice_vtxo_1) = dummy_vtxo_for_amount(Amount::from_sat(5_000));
-		let (funding_tx_2, alice_vtxo_2) = dummy_vtxo_for_amount(Amount::from_sat(1_000));
+		// The 300 sat change is subdust but will be created as separate output
+		let (_funding_tx_1, alice_vtxo_1) = dummy_vtxo_for_amount(Amount::from_sat(5_000));
+		let (_funding_tx_2, alice_vtxo_2) = dummy_vtxo_for_amount(Amount::from_sat(1_000));
 
-		let package = CheckpointedPackageBuilder::new_with_checkpoints(
+		let package = CheckpointedPackageBuilder::new_single_output_with_checkpoints(
 			[alice_vtxo_1, alice_vtxo_2],
 			VtxoRequest { amount: Amount::from_sat(5_700), policy: VtxoPolicy::new_pubkey(bob_public_key()) },
-			alice_public_key()
+			VtxoPolicy::new_pubkey(alice_public_key())
 		).expect("Valid package");
 
 		let vtxos: Vec<Vtxo> = package.build_unsigned_vtxos().collect();
-		assert_eq!(vtxos.len(), 2);
+		assert_eq!(vtxos.len(), 3);
 		assert_eq!(vtxos[0].amount(), Amount::from_sat(5_000));
-		assert_eq!(vtxos[1].amount(), Amount::from_sat(1_000));
-
 		assert_eq!(vtxos[0].policy().user_pubkey(), bob_public_key());
+		assert_eq!(vtxos[1].amount(), Amount::from_sat(700));
 		assert_eq!(vtxos[1].policy().user_pubkey(), bob_public_key());
-
-		let funding_map = HashMap::from([
-			(funding_tx_1.compute_txid(), funding_tx_1),
-			(funding_tx_2.compute_txid(), funding_tx_2),
-		]);
-		verify_package_builder(package, &[alice_keypair(), alice_keypair()], funding_map);
+		assert_eq!(vtxos[2].amount(), Amount::from_sat(300));
+		assert_eq!(vtxos[2].policy().user_pubkey(), alice_public_key());
 	}
 
 	#[test]
@@ -449,10 +522,10 @@ mod test {
 		// She only has a vtxo worth a 900 sats
 		// She will not be able to send the payment
 		let (_funding_tx, alice_vtxo) = dummy_vtxo_for_amount(Amount::from_sat(900));
-		let result = CheckpointedPackageBuilder::new_with_checkpoints(
+		let result = CheckpointedPackageBuilder::new_single_output_with_checkpoints(
 			[alice_vtxo],
 			VtxoRequest { amount: Amount::from_sat(1000), policy: VtxoPolicy::new_pubkey(bob_public_key()) },
-			alice_public_key()
+			VtxoPolicy::new_pubkey(alice_public_key())
 		);
 
 		match result {
@@ -474,10 +547,10 @@ mod test {
 		let (_funding_tx, alice_vtxo_2) = dummy_vtxo_for_amount(Amount::from_sat(5_000));
 		let (_funding_tx, alice_vtxo_3) = dummy_vtxo_for_amount(Amount::from_sat(2_000));
 
-		let package = CheckpointedPackageBuilder::new_with_checkpoints(
+		let package = CheckpointedPackageBuilder::new_single_output_with_checkpoints(
 			[alice_vtxo_1, alice_vtxo_2, alice_vtxo_3],
 			VtxoRequest { amount: Amount::from_sat(20_000), policy: VtxoPolicy::new_pubkey(bob_public_key()) },
-			alice_public_key()
+			VtxoPolicy::new_pubkey(alice_public_key())
 		);
 
 		match package {
@@ -491,27 +564,395 @@ mod test {
 	}
 
 	#[test]
-	fn cannot_overprovision_vtxos() {
+	fn can_use_all_provided_inputs_with_change() {
 		// Alice has 4 vtxos of a thousand sats each
-		// She will try to make a payment of 2000 sats to Bob
-		// She will include all of these vtxos as input to the arkoor builder
-		// The arkoor builder will refuse to make the payment because
-		// alice has overprovisioned her vtxos.
+		// She will make a payment of 2000 sats to Bob
+		// She includes all vtxos as input to the arkoor builder
+		// The builder will use all inputs and create 2000 sats of change
 		let (_funding_tx, alice_vtxo_1) = dummy_vtxo_for_amount(Amount::from_sat(1000));
 		let (_funding_tx, alice_vtxo_2) = dummy_vtxo_for_amount(Amount::from_sat(1000));
 		let (_funding_tx, alice_vtxo_3) = dummy_vtxo_for_amount(Amount::from_sat(1000));
 		let (_funding_tx, alice_vtxo_4) = dummy_vtxo_for_amount(Amount::from_sat(1000));
 
-		let package = CheckpointedPackageBuilder::new_with_checkpoints(
+		let package = CheckpointedPackageBuilder::new_single_output_with_checkpoints(
 			[alice_vtxo_1, alice_vtxo_2, alice_vtxo_3, alice_vtxo_4],
-			VtxoRequest { amount: Amount::from_sat(2000), policy: VtxoPolicy::new_pubkey(bob_public_key()) },
-			alice_public_key()
+			VtxoRequest {
+				amount: Amount::from_sat(2000),
+				policy: VtxoPolicy::new_pubkey(bob_public_key()),
+			},
+			VtxoPolicy::new_pubkey(alice_public_key())
+		).expect("Package should be valid");
+
+		// Verify outputs: should have 2000 for Bob and 2000 change for Alice
+		let vtxos = package.build_unsigned_vtxos().collect::<Vec<_>>();
+		let total_output = vtxos.iter().map(|v| v.amount()).sum::<Amount>();
+		assert_eq!(total_output, Amount::from_sat(4000));
+	}
+
+	#[test]
+	fn single_input_multiple_outputs() {
+		// [10_000] -> [4_000, 3_000, 3_000]
+		let (funding_tx, alice_vtxo) = dummy_vtxo_for_amount(Amount::from_sat(10_000));
+
+		let outputs = vec![
+			VtxoRequest {
+				amount: Amount::from_sat(4_000),
+				policy: VtxoPolicy::new_pubkey(bob_public_key())
+			},
+			VtxoRequest {
+				amount: Amount::from_sat(3_000),
+				policy: VtxoPolicy::new_pubkey(bob_public_key())
+			},
+			VtxoRequest {
+				amount: Amount::from_sat(3_000),
+				policy: VtxoPolicy::new_pubkey(bob_public_key())
+			},
+		];
+
+		let package = CheckpointedPackageBuilder::new_with_checkpoints(
+			[alice_vtxo.clone()],
+			outputs,
+		).expect("Valid package");
+
+		let vtxos: Vec<Vtxo> = package.build_unsigned_vtxos().collect();
+		assert_eq!(vtxos.len(), 3);
+		assert_eq!(vtxos[0].amount(), Amount::from_sat(4_000));
+		assert_eq!(vtxos[1].amount(), Amount::from_sat(3_000));
+		assert_eq!(vtxos[2].amount(), Amount::from_sat(3_000));
+
+		// Manually test one vtxo to verify the approach
+		let user_keypair = alice_keypair();
+		let user_builder = package.generate_user_nonces(&[user_keypair])
+			.expect("Valid nb of keypairs");
+		let cosign_requests = user_builder.cosign_requests();
+
+		let cosign_responses = CheckpointedPackageBuilder::from_cosign_requests(cosign_requests)
+			.expect("Invalid cosign requests")
+			.server_cosign(server_keypair())
+			.expect("Wrong server key")
+			.cosign_response();
+
+		let signed_vtxos = user_builder.user_cosign(&[user_keypair], cosign_responses)
+			.expect("Invalid cosign responses")
+			.build_signed_vtxos();
+
+		assert_eq!(signed_vtxos.len(), 3, "Should create 3 signed vtxos");
+
+		// Just validate the first vtxo against funding tx
+		signed_vtxos[0].validate(&funding_tx).expect("First vtxo should be valid");
+	}
+
+	#[test]
+	fn output_split_across_inputs() {
+		// [600, 500] -> [800, 300]
+		// Expect: input[0]->600, input[1]->[200, 300]
+		let (_funding_tx_1, alice_vtxo_1) = dummy_vtxo_for_amount(Amount::from_sat(600));
+		let (_funding_tx_2, alice_vtxo_2) = dummy_vtxo_for_amount(Amount::from_sat(500));
+
+		let outputs = vec![
+			VtxoRequest {
+				amount: Amount::from_sat(800),
+				policy: VtxoPolicy::new_pubkey(bob_public_key())
+			},
+			VtxoRequest {
+				amount: Amount::from_sat(300),
+				policy: VtxoPolicy::new_pubkey(bob_public_key())
+			},
+		];
+
+		let package = CheckpointedPackageBuilder::new_with_checkpoints(
+			[alice_vtxo_1, alice_vtxo_2],
+			outputs,
+		).expect("Valid package");
+
+		let vtxos: Vec<Vtxo> = package.build_unsigned_vtxos().collect();
+		assert_eq!(vtxos.len(), 3);
+		assert_eq!(vtxos[0].amount(), Amount::from_sat(600));
+		assert_eq!(vtxos[0].policy().user_pubkey(), bob_public_key());
+		assert_eq!(vtxos[1].amount(), Amount::from_sat(200));
+		assert_eq!(vtxos[1].policy().user_pubkey(), bob_public_key());
+		assert_eq!(vtxos[2].amount(), Amount::from_sat(300));
+		assert_eq!(vtxos[2].policy().user_pubkey(), bob_public_key());
+	}
+
+	#[test]
+	fn dust_splits_allowed() {
+		// [500, 500] -> [750, 250]
+		// Results in 250 sat fragments (< 330)
+		let (_funding_tx_1, alice_vtxo_1) = dummy_vtxo_for_amount(Amount::from_sat(500));
+		let (_funding_tx_2, alice_vtxo_2) = dummy_vtxo_for_amount(Amount::from_sat(500));
+
+		let outputs = vec![
+			VtxoRequest {
+				amount: Amount::from_sat(750),
+				policy: VtxoPolicy::new_pubkey(bob_public_key())
+			},
+			VtxoRequest {
+				amount: Amount::from_sat(250),
+				policy: VtxoPolicy::new_pubkey(bob_public_key())
+			},
+		];
+
+		let package = CheckpointedPackageBuilder::new_with_checkpoints(
+			[alice_vtxo_1, alice_vtxo_2],
+			outputs,
+		).expect("Valid package");
+
+		let vtxos: Vec<Vtxo> = package.build_unsigned_vtxos().collect();
+		assert_eq!(vtxos.len(), 3);
+		assert_eq!(vtxos[0].amount(), Amount::from_sat(500));
+		assert_eq!(vtxos[1].amount(), Amount::from_sat(250)); // sub-dust!
+		assert_eq!(vtxos[2].amount(), Amount::from_sat(250));
+	}
+
+	#[test]
+	fn unbalanced_amounts_rejected() {
+		// [1000] -> [600, 600] = 1200 > 1000
+		let (_funding_tx, alice_vtxo) = dummy_vtxo_for_amount(Amount::from_sat(1000));
+
+		let outputs = vec![
+			VtxoRequest {
+				amount: Amount::from_sat(600),
+				policy: VtxoPolicy::new_pubkey(bob_public_key())
+			},
+			VtxoRequest {
+				amount: Amount::from_sat(600),
+				policy: VtxoPolicy::new_pubkey(bob_public_key())
+			},
+		];
+
+		let result = CheckpointedPackageBuilder::new_with_checkpoints(
+			[alice_vtxo],
+			outputs,
 		);
 
-		match package {
-			Ok(_) => panic!("Package should be invalid"),
-			Err(ArkoorConstructionError::TooManyInputs) => { /* ok */ }
-			Err(e) => panic!("Unexpected error: {:?}", e)
+		match result {
+			Err(ArkoorConstructionError::Unbalanced { input, output }) => {
+				assert_eq!(input, Amount::from_sat(1000));
+				assert_eq!(output, Amount::from_sat(1200));
+			}
+			_ => panic!("Expected Unbalanced error"),
 		}
+	}
+
+	#[test]
+	fn empty_outputs_rejected() {
+		let (_funding_tx, alice_vtxo) = dummy_vtxo_for_amount(Amount::from_sat(1000));
+
+		let result = CheckpointedPackageBuilder::new_with_checkpoints(
+			[alice_vtxo],
+			vec![],
+		);
+
+		match result {
+			Err(ArkoorConstructionError::NoOutputs) => {}
+			Err(e) => panic!("Expected NoOutputs error, got: {:?}", e),
+			Ok(_) => panic!("Expected NoOutputs error, got Ok"),
+		}
+	}
+
+	#[test]
+	fn multiple_inputs_multiple_outputs_exact_balance() {
+		// [1000, 2000, 1500] -> [2500, 2000]
+		let (_funding_tx_1, alice_vtxo_1) = dummy_vtxo_for_amount(Amount::from_sat(1000));
+		let (_funding_tx_2, alice_vtxo_2) = dummy_vtxo_for_amount(Amount::from_sat(2000));
+		let (_funding_tx_3, alice_vtxo_3) = dummy_vtxo_for_amount(Amount::from_sat(1500));
+
+		let outputs = vec![
+			VtxoRequest {
+				amount: Amount::from_sat(2500),
+				policy: VtxoPolicy::new_pubkey(bob_public_key())
+			},
+			VtxoRequest {
+				amount: Amount::from_sat(2000),
+				policy: VtxoPolicy::new_pubkey(bob_public_key())
+			},
+		];
+
+		let package = CheckpointedPackageBuilder::new_with_checkpoints(
+			[alice_vtxo_1, alice_vtxo_2, alice_vtxo_3],
+			outputs,
+		).expect("Valid package");
+
+		let vtxos: Vec<Vtxo> = package.build_unsigned_vtxos().collect();
+		assert_eq!(vtxos.len(), 4);
+		// input[0] 1000 -> output[0]
+		// input[1] 2000 -> output[0] 1500, output[1] 500
+		// input[2] 1500 -> output[1] 1500
+		assert_eq!(vtxos[0].amount(), Amount::from_sat(1000));
+		assert_eq!(vtxos[1].amount(), Amount::from_sat(1500));
+		assert_eq!(vtxos[2].amount(), Amount::from_sat(500));
+		assert_eq!(vtxos[3].amount(), Amount::from_sat(1500));
+	}
+
+	#[test]
+	fn single_output_across_many_inputs() {
+		// [100, 100, 100, 100] -> [400]
+		// All inputs consumed fully to create single output
+		let (_funding_tx_1, alice_vtxo_1) = dummy_vtxo_for_amount(Amount::from_sat(100));
+		let (_funding_tx_2, alice_vtxo_2) = dummy_vtxo_for_amount(Amount::from_sat(100));
+		let (_funding_tx_3, alice_vtxo_3) = dummy_vtxo_for_amount(Amount::from_sat(100));
+		let (_funding_tx_4, alice_vtxo_4) = dummy_vtxo_for_amount(Amount::from_sat(100));
+
+		let outputs = vec![
+			VtxoRequest {
+				amount: Amount::from_sat(400),
+				policy: VtxoPolicy::new_pubkey(bob_public_key())
+			},
+		];
+
+		let package = CheckpointedPackageBuilder::new_with_checkpoints(
+			[alice_vtxo_1, alice_vtxo_2, alice_vtxo_3, alice_vtxo_4],
+			outputs,
+		).expect("Valid package");
+
+		let vtxos: Vec<Vtxo> = package.build_unsigned_vtxos().collect();
+		assert_eq!(vtxos.len(), 4);
+		assert_eq!(vtxos[0].amount(), Amount::from_sat(100));
+		assert_eq!(vtxos[1].amount(), Amount::from_sat(100));
+		assert_eq!(vtxos[2].amount(), Amount::from_sat(100));
+		assert_eq!(vtxos[3].amount(), Amount::from_sat(100));
+		let total: Amount = vtxos.iter().map(|v| v.amount()).sum();
+		assert_eq!(total, Amount::from_sat(400));
+	}
+
+	#[test]
+	fn many_outputs_from_single_input() {
+		// [1000] -> [100, 200, 150, 250, 300]
+		let (_funding_tx, alice_vtxo) = dummy_vtxo_for_amount(Amount::from_sat(1000));
+
+		let outputs = vec![
+			VtxoRequest {
+				amount: Amount::from_sat(100),
+				policy: VtxoPolicy::new_pubkey(bob_public_key())
+			},
+			VtxoRequest {
+				amount: Amount::from_sat(200),
+				policy: VtxoPolicy::new_pubkey(bob_public_key())
+			},
+			VtxoRequest {
+				amount: Amount::from_sat(150),
+				policy: VtxoPolicy::new_pubkey(bob_public_key())
+			},
+			VtxoRequest {
+				amount: Amount::from_sat(250),
+				policy: VtxoPolicy::new_pubkey(bob_public_key())
+			},
+			VtxoRequest {
+				amount: Amount::from_sat(300),
+				policy: VtxoPolicy::new_pubkey(bob_public_key())
+			},
+		];
+
+		let package = CheckpointedPackageBuilder::new_with_checkpoints(
+			[alice_vtxo],
+			outputs,
+		).expect("Valid package");
+
+		let vtxos: Vec<Vtxo> = package.build_unsigned_vtxos().collect();
+		assert_eq!(vtxos.len(), 5);
+		assert_eq!(vtxos[0].amount(), Amount::from_sat(100));
+		assert_eq!(vtxos[1].amount(), Amount::from_sat(200));
+		assert_eq!(vtxos[2].amount(), Amount::from_sat(150));
+		assert_eq!(vtxos[3].amount(), Amount::from_sat(250));
+		assert_eq!(vtxos[4].amount(), Amount::from_sat(300));
+	}
+
+	#[test]
+	fn first_input_exactly_matches_first_output() {
+		// [1000, 500] -> [1000, 500]
+		// Perfect alignment - each input goes to one output
+		let (_funding_tx_1, alice_vtxo_1) = dummy_vtxo_for_amount(Amount::from_sat(1000));
+		let (_funding_tx_2, alice_vtxo_2) = dummy_vtxo_for_amount(Amount::from_sat(500));
+
+		let outputs = vec![
+			VtxoRequest {
+				amount: Amount::from_sat(1000),
+				policy: VtxoPolicy::new_pubkey(bob_public_key())
+			},
+			VtxoRequest {
+				amount: Amount::from_sat(500),
+				policy: VtxoPolicy::new_pubkey(bob_public_key())
+			},
+		];
+
+		let package = CheckpointedPackageBuilder::new_with_checkpoints(
+			[alice_vtxo_1, alice_vtxo_2],
+			outputs,
+		).expect("Valid package");
+
+		let vtxos: Vec<Vtxo> = package.build_unsigned_vtxos().collect();
+		assert_eq!(vtxos.len(), 2);
+		assert_eq!(vtxos[0].amount(), Amount::from_sat(1000));
+		assert_eq!(vtxos[1].amount(), Amount::from_sat(500));
+	}
+
+	#[test]
+	fn empty_inputs_rejected() {
+		// [] -> [1000] should fail
+		let outputs = vec![
+			VtxoRequest {
+				amount: Amount::from_sat(1000),
+				policy: VtxoPolicy::new_pubkey(bob_public_key())
+			},
+		];
+
+		let result = CheckpointedPackageBuilder::new_with_checkpoints(
+			Vec::<Vtxo>::new(),
+			outputs,
+		);
+
+		match result {
+			Ok(_) => panic!("Should reject empty inputs"),
+			Err(ArkoorConstructionError::Unbalanced { input, output }) => {
+				assert_eq!(input, Amount::ZERO);
+				assert_eq!(output, Amount::from_sat(1000));
+			}
+			Err(e) => panic!("Unexpected error: {:?}", e),
+		}
+	}
+
+	#[test]
+	fn alternating_split_pattern() {
+		// [300, 700, 500] -> [500, 400, 600]
+		// Complex pattern: input[0] split across output[0-1],
+		// input[1] covers rest of output[1] and part of output[2],
+		// input[2] covers rest of output[2]
+		let (_funding_tx_1, alice_vtxo_1) = dummy_vtxo_for_amount(Amount::from_sat(300));
+		let (_funding_tx_2, alice_vtxo_2) = dummy_vtxo_for_amount(Amount::from_sat(700));
+		let (_funding_tx_3, alice_vtxo_3) = dummy_vtxo_for_amount(Amount::from_sat(500));
+
+		let outputs = vec![
+			VtxoRequest {
+				amount: Amount::from_sat(500),
+				policy: VtxoPolicy::new_pubkey(bob_public_key())
+			},
+			VtxoRequest {
+				amount: Amount::from_sat(400),
+				policy: VtxoPolicy::new_pubkey(bob_public_key())
+			},
+			VtxoRequest {
+				amount: Amount::from_sat(600),
+				policy: VtxoPolicy::new_pubkey(bob_public_key())
+			},
+		];
+
+		let package = CheckpointedPackageBuilder::new_with_checkpoints(
+			[alice_vtxo_1, alice_vtxo_2, alice_vtxo_3],
+			outputs,
+		).expect("Valid package");
+
+		let vtxos: Vec<Vtxo> = package.build_unsigned_vtxos().collect();
+		assert_eq!(vtxos.len(), 5);
+		// input[0] 300 -> output[0] 300
+		assert_eq!(vtxos[0].amount(), Amount::from_sat(300));
+		// input[1] 700 -> output[0] 200, output[1] 400, output[2] 100
+		assert_eq!(vtxos[1].amount(), Amount::from_sat(200));
+		assert_eq!(vtxos[2].amount(), Amount::from_sat(400));
+		assert_eq!(vtxos[3].amount(), Amount::from_sat(100));
+		// input[2] 500 -> output[2] 500
+		assert_eq!(vtxos[4].amount(), Amount::from_sat(500));
+		let total: Amount = vtxos.iter().map(|v| v.amount()).sum();
+		assert_eq!(total, Amount::from_sat(1500));
 	}
 }
