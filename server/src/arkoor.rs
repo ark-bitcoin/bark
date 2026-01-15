@@ -45,7 +45,7 @@ impl Server {
 				input: vtxo,
 				user_pub_nonces: request.user_pub_nonces,
 				outputs: request.outputs,
-				dust_outputs: request.dust_outputs,
+				isolated_outputs: request.isolated_outputs,
 				use_checkpoint: request.use_checkpoint,
 			})
 			.collect::<Vec<_>>();

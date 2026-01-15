@@ -25,7 +25,7 @@ impl<V> PackageCosignRequest<V> {
 					user_pub_nonces: r.user_pub_nonces,
 					input: f(r.input),
 					outputs: r.outputs,
-					dust_outputs: r.dust_outputs,
+					isolated_outputs: r.isolated_outputs,
 					use_checkpoint: r.use_checkpoint,
 				}
 

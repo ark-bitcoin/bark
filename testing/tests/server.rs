@@ -1189,7 +1189,7 @@ async fn reject_dust_arkoor_cosign() {
 						policy: change_policy.serialize(),
 					},
 				],
-				dust_outputs: vec![],
+				isolated_outputs: vec![],
 				user_pub_nonces: vec![
 					n1.1.serialize().to_vec(),
 					n2.1.serialize().to_vec(),

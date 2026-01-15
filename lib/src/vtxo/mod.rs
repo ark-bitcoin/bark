@@ -1119,7 +1119,7 @@ pub mod test {
 	use bitcoin::transaction::Version;
 
 	use crate::tree::signed::{VtxoLeafSpec, VtxoTreeSpec};
-use crate::{VtxoRequest, SECP};
+	use crate::{VtxoRequest, SECP};
 	use crate::arkoor::ArkoorBuilder;
 	use crate::board::BoardBuilder;
 	use crate::encode::test::encoding_roundtrip;

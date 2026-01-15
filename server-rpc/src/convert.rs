@@ -465,7 +465,7 @@ impl<V: VtxoRef> From<ark::arkoor::checkpoint::CosignRequest<V>> for protos::Che
 					policy: output.policy.serialize()
 				}
 			}).collect::<Vec<_>>(),
-			dust_outputs: v.dust_outputs.into_iter().map(|output| {
+			isolated_outputs: v.isolated_outputs.into_iter().map(|output| {
 				protos::VtxoRequest {
 					amount: output.amount.to_sat(),
 					policy: output.policy.serialize()
@@ -488,7 +488,7 @@ impl TryFrom<protos::CheckpointedCosignRequest> for ark::arkoor::checkpoint::Cos
 			v.outputs.into_iter()
 				.map(|output| VtxoRequest::try_from(output))
 				.collect::<Result<Vec<_>, _>>()?,
-			v.dust_outputs.into_iter()
+			v.isolated_outputs.into_iter()
 				.map(|output| VtxoRequest::try_from(output))
 				.collect::<Result<Vec<_>, _>>()?,
 			v.use_checkpoint,
