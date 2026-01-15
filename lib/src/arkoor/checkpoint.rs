@@ -276,6 +276,11 @@ pub struct CheckpointedArkoorBuilder<S: state::BuilderState> {
 }
 
 impl<S: state::BuilderState> CheckpointedArkoorBuilder<S> {
+	/// Access the input VTXO
+	pub fn input(&self) -> &Vtxo {
+		&self.input
+	}
+
 	fn build_checkpoint_vtxo_at(
 		&self,
 		output_idx: usize,

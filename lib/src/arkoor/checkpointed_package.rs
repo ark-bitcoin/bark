@@ -291,6 +291,10 @@ impl CheckpointedPackageBuilder<state::ServerSigned> {
 }
 
 impl<S: state::BuilderState> CheckpointedPackageBuilder<S> {
+	/// Access the input VTXO IDs
+	pub fn input_ids<'a>(&'a self) -> impl Iterator<Item = VtxoId> + 'a {
+		self.builders.iter().map(|b| b.input().id())
+	}
 
 	pub fn build_unsigned_vtxos<'a>(&'a self) -> impl Iterator<Item = Vtxo> + 'a {
 		self.builders.iter()
