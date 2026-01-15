@@ -233,7 +233,7 @@ impl CheckpointedPackageBuilder<state::Initial> {
 impl CheckpointedPackageBuilder<state::UserGeneratedNonces> {
 	pub fn user_cosign(
 		self,
-		user_keypair: &[Keypair],
+		user_keypairs: &[Keypair],
 		server_cosign_response: PackageCosignResponse,
 	) -> Result<CheckpointedPackageBuilder<state::UserSigned>, ArkoorSigningError> {
 		if server_cosign_response.responses.len() != self.builders.len() {
@@ -243,10 +243,10 @@ impl CheckpointedPackageBuilder<state::UserGeneratedNonces> {
 			})
 		}
 
-		if user_keypair.len() != self.builders.len() {
+		if user_keypairs.len() != self.builders.len() {
 			return Err(ArkoorSigningError::InvalidNbKeypairs {
 				expected: self.builders.len(),
-				got: user_keypair.len(),
+				got: user_keypairs.len(),
 			})
 		}
 
@@ -254,14 +254,14 @@ impl CheckpointedPackageBuilder<state::UserGeneratedNonces> {
 
 		for (idx, pkg) in self.builders.into_iter().enumerate() {
 			packages.push(pkg.user_cosign(
-				&user_keypair[idx],
+				&user_keypairs[idx],
 				&server_cosign_response.responses[idx],
 			)?,);
 		}
 		Ok(CheckpointedPackageBuilder { builders: packages })
 	}
 
-	pub fn cosign_requests(&self) -> PackageCosignRequest<Vtxo> {
+	pub fn cosign_request(&self) -> PackageCosignRequest<Vtxo> {
 		let requests = self.builders.iter()
 			.map(|package| package.cosign_request())
 			.collect::<Vec<_>>();
@@ -393,7 +393,7 @@ mod test {
 		funding_tx_map: HashMap<Txid, Transaction>,
 	) {
 		let user_builder = builder.generate_user_nonces(keypairs).expect("Valid nb of keypairs");
-		let cosign_requests = user_builder.cosign_requests();
+		let cosign_requests = user_builder.cosign_request();
 
 		let cosign_responses = CheckpointedPackageBuilder::from_cosign_requests(cosign_requests)
 			.expect("Invalid cosign requests")
@@ -685,7 +685,7 @@ mod test {
 		let user_keypair = alice_keypair();
 		let user_builder = package.generate_user_nonces(&[user_keypair])
 			.expect("Valid nb of keypairs");
-		let cosign_requests = user_builder.cosign_requests();
+		let cosign_requests = user_builder.cosign_request();
 
 		let cosign_responses = CheckpointedPackageBuilder::from_cosign_requests(cosign_requests)
 			.expect("Invalid cosign requests")

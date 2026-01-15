@@ -514,19 +514,19 @@ async fn double_spend_arkoor() {
 	use protos::CheckpointedPackageCosignRequest;
 	let req1: CheckpointedPackageCosignRequest = builder1
 		.generate_user_nonces(&[vtxo_keypair]).unwrap()
-		.cosign_requests()
+		.cosign_request()
 		.convert_vtxo(|vtxo| vtxo.id())
 		.into();
 
 	let req2: CheckpointedPackageCosignRequest = builder2
 		.generate_user_nonces(&[vtxo_keypair]).unwrap()
-		.cosign_requests()
+		.cosign_request()
 		.convert_vtxo(|vtxo| vtxo.id())
 		.into();
 
 	let req3: CheckpointedPackageCosignRequest = builder3
 		.generate_user_nonces(&[vtxo_keypair]).unwrap()
-		.cosign_requests()
+		.cosign_request()
 		.convert_vtxo(|vtxo| vtxo.id())
 		.into();
 
