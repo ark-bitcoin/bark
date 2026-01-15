@@ -766,32 +766,6 @@ impl Server {
 		}
 	}
 
-	async fn cosign_oor_package(
-		&self,
-		arkoor_args: Vec<(VtxoId, musig::PublicNonce, Vec<VtxoRequest>)>,
-	) -> anyhow::Result<Vec<ArkoorCosignResponse>> {
-		let ids = arkoor_args.iter().map(|(id, _, _)| *id).collect::<Vec<_>>();
-		let input_vtxos = self.db.get_vtxos_by_id(&ids).await?
-			.into_iter().map(|s| s.vtxo).collect::<Vec<_>>();
-
-		let arkoors = arkoor_args.iter().zip(input_vtxos.iter())
-			.map(|((_, user_nonce, outputs), vtxo)| {
-				ArkoorBuilder::new(
-					&vtxo,
-					&user_nonce,
-					outputs,
-				).badarg("invalid arkoor")
-			})
-			.collect::<anyhow::Result<Vec<_>>>()?;
-
-		self.check_vtxos_not_exited(&input_vtxos).await?;
-
-		let builder = ArkoorPackageBuilder::from_arkoors(arkoors)
-			.badarg("error creating arkoor package")?;
-
-		self.cosign_oor_package_with_builder(&builder).await
-	}
-
 	/// Unblind a [BlindedMailboxIdentifier]
 	pub fn unblind_mailbox_id(
 		&self,
