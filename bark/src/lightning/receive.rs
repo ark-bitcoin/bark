@@ -123,9 +123,9 @@ impl Wallet {
 			ret
 		};
 
-		let mut keypairs = vec![];
-		let mut sec_nonces = vec![];
-		let mut pub_nonces = vec![];
+		let mut keypairs = Vec::with_capacity(inputs.len());
+		let mut sec_nonces = Vec::with_capacity(inputs.len());
+		let mut pub_nonces = Vec::with_capacity(inputs.len());
 		for v in &inputs {
 			let keypair = self.get_vtxo_key(*v).await?;
 			let (sec_nonce, pub_nonce) = musig::nonce_pair(&keypair);
@@ -352,7 +352,7 @@ impl Wallet {
 		let invoice_amount = receive.invoice.amount_milli_satoshis().map(|a| Amount::from_msat_floor(a))
 			.expect("ln receive invoice should have amount");
 		let htlc_amount = vtxos.iter().map(|v| v.amount()).sum::<Amount>();
-		ensure!(vtxos.iter().map(|v| v.amount()).sum::<Amount>() >= invoice_amount,
+		ensure!(htlc_amount >= invoice_amount,
 			"Server didn't return enough VTXOs to cover invoice amount"
 		);
 
@@ -462,7 +462,7 @@ impl Wallet {
 	/// # Returns
 	///
 	/// Returns an `anyhow::Result<LightningReceive>`, which is:
-	/// * `Ok(LightningReceive)` if
+	/// * `Ok(LightningReceive)` if the claim was completed or is awaiting HTLC VTXOs
 	/// * `Err` if an error occurs at any stage of the operation.
 	///
 	/// # Remarks
@@ -492,8 +492,8 @@ impl Wallet {
 			return Ok(receive);
 		}
 
-		// No need to lcaim anything if there
-		// are not htlcs yet
+		// No need to claim anything if there
+		// are no htlcs yet
 		let vtxos = match receive.htlc_vtxos.as_ref() {
 			None => return Ok(receive),
 			Some(vtxos) => vtxos
@@ -506,7 +506,8 @@ impl Wallet {
 
 				let tip = self.chain.tip().await?;
 
-				let first_vtxo = &vtxos.first().unwrap().vtxo;
+				let first_vtxo = &vtxos.first()
+					.context("HTLC VTXOs unexpectedly empty")?.vtxo;
 				debug_assert!(vtxos.iter().all(|v| {
 					v.vtxo.policy() == first_vtxo.policy() && v.vtxo.exit_delta() == first_vtxo.exit_delta()
 				}), "all htlc vtxos for the same payment hash should have the same policy and exit delta");
