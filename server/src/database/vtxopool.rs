@@ -21,6 +21,10 @@ impl PoolVtxo {
 	pub fn inner(&self) -> &Vtxo {
 		&self.0
 	}
+
+	pub fn into_inner(self) -> Vtxo {
+		self.0
+	}
 }
 
 impl Deref for PoolVtxo {

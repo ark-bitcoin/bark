@@ -1400,7 +1400,6 @@ impl CheckpointedArkoorBuilder<state::UserGeneratedNonces> {
 			sigs.push(sig);
 		}
 
-
 		self.full_signatures = Some(sigs);
 
 		Ok(self.to_state::<state::UserSigned>())

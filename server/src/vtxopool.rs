@@ -6,15 +6,16 @@ use std::sync::atomic::{self, AtomicBool};
 use std::time::Duration;
 
 use anyhow::Context;
-use ark::tree::signed::{LeafVtxoCosignContext, UnlockPreimage};
 use bitcoin::secp256k1::{rand, Keypair};
 use bitcoin::{Amount, OutPoint};
-use bitcoin_ext::{BlockDelta, BlockHeight};
 use futures::{stream, StreamExt, TryStreamExt};
 use tracing::{info, warn};
-use ark::{musig, Vtxo, VtxoId, VtxoPolicy, VtxoRequest};
-use ark::arkoor::ArkoorPackageBuilder;
+
+use ark::{Vtxo, VtxoId, VtxoPolicy, VtxoRequest};
+use ark::arkoor::checkpointed_package::CheckpointedPackageBuilder;
+use ark::tree::signed::{LeafVtxoCosignContext, UnlockPreimage};
 use ark::tree::signed::builder::SignedTreeBuilder;
+use bitcoin_ext::{BlockDelta, BlockHeight};
 
 use crate::database::vtxopool::PoolVtxo;
 use crate::wallet::BdkWalletExt;
@@ -243,11 +244,11 @@ impl VtxoPool {
 		inputs: &[(VtxoId, BlockHeight, Amount)],
 	) -> anyhow::Result<Vec<Vtxo>> {
 		let input_ids = inputs.iter().map(|v| v.0).collect::<Vec<_>>();
-		let vtxos = srv.db.get_pool_vtxos_by_ids(&input_ids).await?;
+		let input_vtxos = srv.db.get_pool_vtxos_by_ids(&input_ids).await?;
 
 		let keys = {
-			let mut ret = Vec::with_capacity(vtxos.len());
-			for v in &vtxos {
+			let mut ret = Vec::with_capacity(input_vtxos.len());
+			for v in &input_vtxos {
 				ret.push(srv.get_ephemeral_cosign_key(v.user_pubkey()).await
 					.with_context(|| format!(
 						"failed to fetch ephemeral keys for vtxo {}: {}",
@@ -258,32 +259,39 @@ impl VtxoPool {
 			ret
 		};
 
-		let (sec_nonces, pub_nonces) = keys.iter()
-			.map(|key| musig::nonce_pair(key))
-			.collect::<(Vec<_>, Vec<_>)>();
-
 		let change_key = srv.generate_ephemeral_cosign_key(self.config.vtxo_key_lifetime()).await?;
-		let builder = ArkoorPackageBuilder::new(
-			vtxos.iter().map(|v| v.inner()),
-			&pub_nonces,
-			req.clone(),
-			Some(change_key.public_key()),
+		let change_policy = VtxoPolicy::new_pubkey(change_key.public_key());
+		let change_req = VtxoRequest {
+			policy: change_policy,
+			amount: input_vtxos.iter().map(|v| v.amount()).sum::<Amount>() - req.amount,
+		};
+		let builder = CheckpointedPackageBuilder::new_without_checkpoints(
+			input_vtxos.into_iter().map(|v| v.into_inner()),
+			vec![req.clone(), change_req],
 		).context("arkoor builder error")?;
+		let builder = builder.generate_user_nonces(&keys).context("invalid arkoor cosign keys")?;
 
-		let cosign = srv.cosign_oor_package_with_builder(&builder).await?;
+		let server_builder = CheckpointedPackageBuilder::from_cosign_requests(
+			builder.cosign_request(),
+		).context("error creating server builder from cosign request")?;
+		let cosign_resp = srv.cosign_oor_with_builder(server_builder).await?.cosign_response();
 
-		let (ret, change) = builder.build_vtxos(&cosign, &keys, sec_nonces)
-			.context("arkoor package error")?;
+		let output_vtxos = builder.user_cosign(&keys, cosign_resp)
+			.context("error cosigning our own arkoor")?
+			.build_signed_vtxos();
 
-		srv.db.mark_vtxopool_vtxos_spent(ret.iter().map(|v| v.id())).await
+		let (sent, change) = output_vtxos.into_iter()
+			.partition::<Vec<_>, _>(|v| *v.policy() == req.policy);
+
+		// mark inputs as spent
+		srv.db.mark_vtxopool_vtxos_spent(inputs.iter().map(|v| v.0)).await
 			.context("failed to mark vtxopool vtxos as spent")?;
-
-		for vtxo in &ret {
-			slog!(SpentPoolVtxo, vtxo: vtxo.id(), amount: vtxo.amount(), request: req.clone());
+		for input in inputs {
+			slog!(SpentPoolVtxo, vtxo: input.0, amount: input.2, request: req.clone());
 		}
 
-		if let Some(ch) = change {
-			let new = PoolVtxo::new(ch.clone());
+		for change in change {
+			let new = PoolVtxo::new(change);
 			if let Err(e) = srv.db.store_vtxopool_vtxo(&new).await {
 				// don't abort for this
 				warn!("Failed to store change from a vtxopool spend: {:#}", e);
@@ -293,7 +301,7 @@ impl VtxoPool {
 			}
 		}
 
-		Ok(ret)
+		Ok(sent)
 	}
 
 	#[tracing::instrument(skip(self, srv))]
