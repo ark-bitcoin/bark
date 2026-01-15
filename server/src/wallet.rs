@@ -148,6 +148,7 @@ impl PersistedWallet {
 		Ok(())
 	}
 
+	#[tracing::instrument(skip(self, bitcoind), fields(wallet = self.kind.name().to_string()))]
 	pub async fn sync(
 		&mut self,
 		bitcoind: &impl RpcApi,

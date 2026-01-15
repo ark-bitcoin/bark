@@ -424,6 +424,7 @@ impl rpc::server::ArkService for Server {
 		Ok(tonic::Response::new(sub.into()))
 	}
 
+	#[tracing::instrument(skip(self))]
 	async fn prepare_lightning_receive_claim(
 		&self,
 		req: tonic::Request<protos::PrepareLightningReceiveClaimRequest>

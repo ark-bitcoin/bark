@@ -547,6 +547,7 @@ impl Db {
 	/// Sets the status to "htlcs-ready".
 	/// Adds the HTLCs to the database.
 	/// Errors if the subscription was not currently in state "accepted".
+	#[tracing::instrument(skip(self, htlcs))]
 	pub async fn update_lightning_htlc_subscription_with_htlcs(
 		&self,
 		htlc_subscription_id: i64,

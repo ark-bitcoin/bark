@@ -235,6 +235,7 @@ pub struct VtxoPool {
 }
 
 impl VtxoPool {
+	#[tracing::instrument(skip(self, srv))]
 	async fn prepare_arkoor(
 		&self,
 		srv: &Server,
@@ -295,6 +296,7 @@ impl VtxoPool {
 		Ok(ret)
 	}
 
+	#[tracing::instrument(skip(self, srv))]
 	pub async fn send_arkoor(&self, srv: &Server, req: VtxoRequest) -> anyhow::Result<Vec<Vtxo>> {
 		let inputs = self.data.lock().take_inputs(req.amount);
 		if inputs.is_empty() {
@@ -344,6 +346,7 @@ struct Process {
 }
 
 impl Process {
+	#[tracing::instrument(skip(self))]
 	async fn issue_vtxos(&self, issuance: Vec<(Amount, usize)>) -> anyhow::Result<()> {
 		let nb_vtxos = issuance.iter().map(|i| i.1).sum();
 		if nb_vtxos < 2 {
@@ -477,6 +480,7 @@ impl Process {
 		&self,
 		expiry_threshold: BlockHeight,
 	) -> (Vec<(Amount, usize)>, bool) {
+		info!("Checking vtxo pool issuance with expiry threshold {:?}", expiry_threshold);
 		let mut data = self.data.lock();
 		data.prune_expiring(expiry_threshold);
 
@@ -496,7 +500,11 @@ impl Process {
 		(issuance, must_issue)
 	}
 
-	/// Check the status of the pool
+	#[tracing::instrument(
+		name = "vtxo_pool_issuance"
+		skip(self),
+		fields(otel.kind = "server")
+	)]
 	async fn check_maybe_issue_vtxos(&self) -> anyhow::Result<()> {
 		let tip = self.srv.chain_tip().height;
 		let threshold = tip + self.config.vtxo_pre_expiry as BlockHeight;

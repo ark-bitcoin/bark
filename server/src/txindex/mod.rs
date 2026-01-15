@@ -200,6 +200,7 @@ impl TxIndexData {
 	}
 
 	/// Register a new tx in the index and return the tx handle.
+	#[tracing::instrument(skip(self))]
 	async fn register_as(&self, tx: Transaction, status: TxStatus) -> Tx {
 		let txid = tx.compute_txid();
 		let mut tx_map = self.tx_map.write().await;
@@ -340,6 +341,7 @@ impl TxIndex {
 		}
 	}
 
+	#[tracing::instrument(skip(self))]
 	pub async fn register(&self, tx: Transaction) -> anyhow::Result<Tx> {
 		let txid = tx.compute_txid();
 		self.db.upsert_bitcoin_transaction(txid, &tx).await
