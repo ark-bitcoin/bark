@@ -937,6 +937,60 @@ impl CheckpointedArkoorBuilder<state::Initial> {
 		Self::new(input, outputs, isolated_outputs, false)
 	}
 
+	/// Create builder with checkpoint and automatic dust isolation
+	///
+	/// This constructor takes a single list of outputs and automatically
+	/// determines the best strategy for handling dust.
+	pub fn new_with_checkpoint_isolate_dust(
+		input: Vtxo,
+		outputs: Vec<VtxoRequest>,
+	) -> Result<Self, ArkoorConstructionError> {
+		// fast track if they're either all dust or all non dust
+		if outputs.iter().all(|v| v.amount >= P2TR_DUST)
+			|| outputs.iter().all(|v| v.amount < P2TR_DUST)
+		{
+			return Self::new_with_checkpoint(input, outputs, vec![]);
+		}
+
+		// else split them up by dust limit
+		let (mut dust, mut non_dust) = outputs.into_iter()
+			.partition::<Vec<_>, _>(|v| v.amount < P2TR_DUST);
+
+		let dust_sum = dust.iter().map(|o| o.amount).sum::<Amount>();
+		if dust_sum >= P2TR_DUST {
+			return Self::new_with_checkpoint(input, non_dust, dust);
+		}
+
+		// now it get's interesting, we need to break a vtxo in two
+		let deficit = P2TR_DUST - dust_sum;
+		// Find first viable output to split
+		// Viable = output.amount - deficit >= P2TR_DUST (won't create two dust)
+		let split_idx = non_dust.iter()
+			.position(|o| o.amount - deficit >= P2TR_DUST);
+
+		if let Some(idx) = split_idx {
+			let output_to_split = non_dust[idx].clone();
+
+			let dust_piece = VtxoRequest {
+				amount: deficit,
+				policy: output_to_split.policy.clone(),
+			};
+			let leftover = VtxoRequest {
+				amount: output_to_split.amount - deficit,
+				policy: output_to_split.policy,
+			};
+
+			non_dust[idx] = leftover;
+			dust.push(dust_piece);
+
+			return Self::new_with_checkpoint(input, non_dust, dust);
+		} else {
+			// No viable split found, allow mixing without isolation
+			let all_outputs = non_dust.into_iter().chain(dust).collect();
+			return Self::new_with_checkpoint(input, all_outputs, vec![]);
+		}
+	}
+
 	fn new(
 		input: Vtxo,
 		outputs: Vec<VtxoRequest>,
@@ -1835,5 +1889,282 @@ mod test {
 				prev_tx = tx;
 			}
 		}
+	}
+
+	#[test]
+	fn isolate_dust_all_nondust() {
+		// Test scenario: All outputs >= 330 sats
+		// Should use normal path without isolation
+		let alice_keypair = Keypair::new(&SECP, &mut rand::thread_rng());
+		let bob_keypair = Keypair::new(&SECP, &mut rand::thread_rng());
+		let server_keypair = Keypair::new(&SECP, &mut rand::thread_rng());
+
+		let (funding_tx, alice_vtxo) = DummyTestVtxoSpec {
+			amount: Amount::from_sat(1000),
+			expiry_height: 1000,
+			exit_delta: 128,
+			user_keypair: alice_keypair.clone(),
+			server_keypair: server_keypair.clone()
+		}.build();
+
+		alice_vtxo.validate(&funding_tx).expect("Valid vtxo");
+
+		let builder = CheckpointedArkoorBuilder::new_with_checkpoint_isolate_dust(
+			alice_vtxo,
+			vec![
+				VtxoRequest {
+					amount: Amount::from_sat(500),
+					policy: VtxoPolicy::new_pubkey(bob_keypair.public_key())
+				},
+				VtxoRequest {
+					amount: Amount::from_sat(500),
+					policy: VtxoPolicy::new_pubkey(bob_keypair.public_key())
+				}
+			],
+		).unwrap();
+
+		// Should not have dust isolation active
+		assert!(builder.unsigned_isolation_fanout_tx.is_none());
+		assert!(builder.unsigned_isolated_exit_txs.is_none());
+
+		// Should have 2 regular outputs
+		assert_eq!(builder.outputs.len(), 2);
+		assert_eq!(builder.isolated_outputs.len(), 0);
+	}
+
+	#[test]
+	fn isolate_dust_all_dust() {
+		// Test scenario: All outputs < 330 sats
+		// Should use all-dust path
+		let alice_keypair = Keypair::new(&SECP, &mut rand::thread_rng());
+		let bob_keypair = Keypair::new(&SECP, &mut rand::thread_rng());
+		let server_keypair = Keypair::new(&SECP, &mut rand::thread_rng());
+
+		let (funding_tx, alice_vtxo) = DummyTestVtxoSpec {
+			amount: Amount::from_sat(400),
+			expiry_height: 1000,
+			exit_delta: 128,
+			user_keypair: alice_keypair.clone(),
+			server_keypair: server_keypair.clone()
+		}.build();
+
+		alice_vtxo.validate(&funding_tx).expect("Valid vtxo");
+
+		let builder = CheckpointedArkoorBuilder::new_with_checkpoint_isolate_dust(
+			alice_vtxo,
+			vec![
+				VtxoRequest {
+					amount: Amount::from_sat(200),
+					policy: VtxoPolicy::new_pubkey(bob_keypair.public_key())
+				},
+				VtxoRequest {
+					amount: Amount::from_sat(200),
+					policy: VtxoPolicy::new_pubkey(bob_keypair.public_key())
+				}
+			],
+		).unwrap();
+
+		// Should not have dust isolation active (all dust)
+		assert!(builder.unsigned_isolation_fanout_tx.is_none());
+		assert!(builder.unsigned_isolated_exit_txs.is_none());
+
+		// All outputs should be in outputs vec (no isolation needed)
+		assert_eq!(builder.outputs.len(), 2);
+		assert_eq!(builder.isolated_outputs.len(), 0);
+	}
+
+	#[test]
+	fn isolate_dust_sufficient_dust() {
+		// Test scenario: Mixed with dust sum >= 330
+		// Should use dust isolation
+		let alice_keypair = Keypair::new(&SECP, &mut rand::thread_rng());
+		let bob_keypair = Keypair::new(&SECP, &mut rand::thread_rng());
+		let server_keypair = Keypair::new(&SECP, &mut rand::thread_rng());
+
+		let (funding_tx, alice_vtxo) = DummyTestVtxoSpec {
+			amount: Amount::from_sat(1000),
+			expiry_height: 1000,
+			exit_delta: 128,
+			user_keypair: alice_keypair.clone(),
+			server_keypair: server_keypair.clone()
+		}.build();
+
+		alice_vtxo.validate(&funding_tx).expect("Valid vtxo");
+
+		// 600 non-dust + 200 + 200 dust = 400 dust total (>= 330)
+		let builder = CheckpointedArkoorBuilder::new_with_checkpoint_isolate_dust(
+			alice_vtxo,
+			vec![
+				VtxoRequest {
+					amount: Amount::from_sat(600),
+					policy: VtxoPolicy::new_pubkey(bob_keypair.public_key())
+				},
+				VtxoRequest {
+					amount: Amount::from_sat(200),
+					policy: VtxoPolicy::new_pubkey(bob_keypair.public_key())
+				},
+				VtxoRequest {
+					amount: Amount::from_sat(200),
+					policy: VtxoPolicy::new_pubkey(bob_keypair.public_key())
+				}
+			],
+		).unwrap();
+
+		// Should have dust isolation active
+		assert!(builder.unsigned_isolation_fanout_tx.is_some());
+		assert!(builder.unsigned_isolated_exit_txs.is_some());
+
+		// 1 regular output, 2 isolated dust outputs
+		assert_eq!(builder.outputs.len(), 1);
+		assert_eq!(builder.isolated_outputs.len(), 2);
+	}
+
+	#[test]
+	fn isolate_dust_split_successful() {
+		// Test scenario: Mixed with dust sum < 330, but can split
+		// 800 non-dust + 100 + 100 dust = 200 dust, need 130 more
+		// Should split 800 into 670 + 130
+		let alice_keypair = Keypair::new(&SECP, &mut rand::thread_rng());
+		let bob_keypair = Keypair::new(&SECP, &mut rand::thread_rng());
+		let server_keypair = Keypair::new(&SECP, &mut rand::thread_rng());
+
+		let (funding_tx, alice_vtxo) = DummyTestVtxoSpec {
+			amount: Amount::from_sat(1000),
+			expiry_height: 1000,
+			exit_delta: 128,
+			user_keypair: alice_keypair.clone(),
+			server_keypair: server_keypair.clone()
+		}.build();
+
+		alice_vtxo.validate(&funding_tx).expect("Valid vtxo");
+
+		let builder = CheckpointedArkoorBuilder::new_with_checkpoint_isolate_dust(
+			alice_vtxo,
+			vec![
+				VtxoRequest {
+					amount: Amount::from_sat(800),
+					policy: VtxoPolicy::new_pubkey(bob_keypair.public_key())
+				},
+				VtxoRequest {
+					amount: Amount::from_sat(100),
+					policy: VtxoPolicy::new_pubkey(bob_keypair.public_key())
+				},
+				VtxoRequest {
+					amount: Amount::from_sat(100),
+					policy: VtxoPolicy::new_pubkey(bob_keypair.public_key())
+				}
+			],
+		).unwrap();
+
+		// Should have dust isolation active (split successful)
+		assert!(builder.unsigned_isolation_fanout_tx.is_some());
+		assert!(builder.unsigned_isolated_exit_txs.is_some());
+
+		// 1 regular output (670), 3 isolated dust outputs (130 + 100 + 100 = 330)
+		assert_eq!(builder.outputs.len(), 1);
+		assert_eq!(builder.isolated_outputs.len(), 3);
+
+		// Verify the split amounts
+		assert_eq!(builder.outputs[0].amount, Amount::from_sat(670));
+		let isolated_sum: Amount = builder.isolated_outputs.iter().map(|o| o.amount).sum();
+		assert_eq!(isolated_sum, P2TR_DUST);
+	}
+
+	#[test]
+	fn isolate_dust_split_impossible() {
+		// Test scenario: Mixed with dust sum < 330, can't split
+		// 400 non-dust + 100 + 100 dust = 200 dust, need 130 more
+		// 400 - 130 = 270 < 330, can't split without creating two dust
+		// Should allow mixing without isolation
+		let alice_keypair = Keypair::new(&SECP, &mut rand::thread_rng());
+		let bob_keypair = Keypair::new(&SECP, &mut rand::thread_rng());
+		let server_keypair = Keypair::new(&SECP, &mut rand::thread_rng());
+
+		let (funding_tx, alice_vtxo) = DummyTestVtxoSpec {
+			amount: Amount::from_sat(600),
+			expiry_height: 1000,
+			exit_delta: 128,
+			user_keypair: alice_keypair.clone(),
+			server_keypair: server_keypair.clone()
+		}.build();
+
+		alice_vtxo.validate(&funding_tx).expect("Valid vtxo");
+
+		let builder = CheckpointedArkoorBuilder::new_with_checkpoint_isolate_dust(
+			alice_vtxo,
+			vec![
+				VtxoRequest {
+					amount: Amount::from_sat(400),
+					policy: VtxoPolicy::new_pubkey(bob_keypair.public_key())
+				},
+				VtxoRequest {
+					amount: Amount::from_sat(100),
+					policy: VtxoPolicy::new_pubkey(bob_keypair.public_key())
+				},
+				VtxoRequest {
+					amount: Amount::from_sat(100),
+					policy: VtxoPolicy::new_pubkey(bob_keypair.public_key())
+				}
+			],
+		).unwrap();
+
+		// Should not have dust isolation (mixing allowed)
+		assert!(builder.unsigned_isolation_fanout_tx.is_none());
+		assert!(builder.unsigned_isolated_exit_txs.is_none());
+
+		// All 3 outputs should be in outputs vec (mixed without isolation)
+		assert_eq!(builder.outputs.len(), 3);
+		assert_eq!(builder.isolated_outputs.len(), 0);
+	}
+
+	#[test]
+	fn isolate_dust_exactly_boundary() {
+		// Test scenario: dust sum is already >= 330 (exactly at boundary)
+		// 660 non-dust + 170 + 170 dust = 340 dust (>= 330)
+		// Should use isolation without splitting
+		let alice_keypair = Keypair::new(&SECP, &mut rand::thread_rng());
+		let bob_keypair = Keypair::new(&SECP, &mut rand::thread_rng());
+		let server_keypair = Keypair::new(&SECP, &mut rand::thread_rng());
+
+		let (funding_tx, alice_vtxo) = DummyTestVtxoSpec {
+			amount: Amount::from_sat(1000),
+			expiry_height: 1000,
+			exit_delta: 128,
+			user_keypair: alice_keypair.clone(),
+			server_keypair: server_keypair.clone()
+		}.build();
+
+		alice_vtxo.validate(&funding_tx).expect("Valid vtxo");
+
+		let builder = CheckpointedArkoorBuilder::new_with_checkpoint_isolate_dust(
+			alice_vtxo,
+			vec![
+				VtxoRequest {
+					amount: Amount::from_sat(660),
+					policy: VtxoPolicy::new_pubkey(bob_keypair.public_key())
+				},
+				VtxoRequest {
+					amount: Amount::from_sat(170),
+					policy: VtxoPolicy::new_pubkey(bob_keypair.public_key())
+				},
+				VtxoRequest {
+					amount: Amount::from_sat(170),
+					policy: VtxoPolicy::new_pubkey(bob_keypair.public_key())
+				}
+			],
+		).unwrap();
+
+		// Should have dust isolation active (340 >= 330)
+		assert!(builder.unsigned_isolation_fanout_tx.is_some());
+		assert!(builder.unsigned_isolated_exit_txs.is_some());
+
+		// 1 regular output, 2 isolated dust outputs
+		assert_eq!(builder.outputs.len(), 1);
+		assert_eq!(builder.isolated_outputs.len(), 2);
+
+		// Verify amounts weren't modified
+		assert_eq!(builder.outputs[0].amount, Amount::from_sat(660));
+		assert_eq!(builder.isolated_outputs[0].amount, Amount::from_sat(170));
+		assert_eq!(builder.isolated_outputs[1].amount, Amount::from_sat(170));
 	}
 }
