@@ -108,6 +108,25 @@ fn validate_inner<P: Policy>(
 	// We start by validating the chain anchor output.
 	let anchor_txout = chain_anchor_tx.output.get(vtxo.chain_anchor().vout as usize)
 		.ok_or(VtxoValidationError::Invalid("chain anchor vout out of range"))?;
+
+	// For empty genesis, validate that the chain anchor output matches the policy's txout
+	if vtxo.genesis.is_empty() {
+		let expected_anchor_txout = vtxo.policy.txout(
+			vtxo.amount(),
+			vtxo.server_pubkey(),
+			vtxo.exit_delta(),
+			vtxo.expiry_height(),
+		);
+		if *anchor_txout != expected_anchor_txout {
+			return Err(VtxoValidationError::IncorrectChainAnchor {
+				expected: expected_anchor_txout,
+				got: anchor_txout.clone(),
+			});
+		}
+		return Ok(());
+	}
+
+	// For non-empty genesis, validate using the first genesis item's transition
 	let onchain_amount = vtxo.amount() + vtxo.genesis.iter().map(|i| {
 		i.other_outputs.iter().map(|o| o.value).sum()
 	}).sum();
@@ -119,12 +138,6 @@ fn validate_inner<P: Policy>(
 			expected: expected_anchor_txout,
 			got: anchor_txout.clone(),
 		});
-	}
-
-	// Every VTXO should have one or more `Cosigned` transitions, followed by 0 or more
-	// `Arkoor` transitions.
-	if vtxo.genesis.is_empty() {
-		return Err(VtxoValidationError::Invalid("no genesis items"));
 	}
 
 	let mut prev = (Cow::Borrowed(chain_anchor_tx), vtxo.chain_anchor().vout as usize, onchain_amount);
