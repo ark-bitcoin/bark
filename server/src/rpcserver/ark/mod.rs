@@ -433,7 +433,7 @@ impl rpc::server::ArkService for Server {
 	async fn claim_lightning_receive(
 		&self,
 		req: tonic::Request<protos::ClaimLightningReceiveRequest>
-	) -> Result<tonic::Response<protos::ArkoorPackageCosignResponse>, tonic::Status> {
+	) -> Result<tonic::Response<protos::CheckpointedPackageCosignResponse>, tonic::Status> {
 		let _ = RpcMethodDetails::grpc_ark(middleware::rpc_names::ark::CLAIM_LIGHTNING_RECEIVE);
 		let req = req.into_inner();
 
@@ -443,17 +443,16 @@ impl rpc::server::ArkService for Server {
 		]);
 
 		let payment_preimage = Preimage::from_bytes(req.payment_preimage)?;
-
 		let vtxo_policy = VtxoPolicy::from_bytes(req.vtxo_policy)?;
-		let user_nonces = req.user_pub_nonces.iter()
-			.map(musig::PublicNonce::from_bytes)
-			.collect::<Result<Vec<_>, _>>()?;
+		let cosign_request = PackageCosignRequest::try_from(
+			req.cosign_request.badarg("cosign request missing")?,
+		).badarg("invalid cosign request")?;
 
 		let cosign_resp = self.claim_lightning_receive(
 			payment_hash,
 			vtxo_policy,
-			user_nonces,
 			payment_preimage,
+			cosign_request,
 		).await.to_status()?;
 
 		Ok(tonic::Response::new(cosign_resp.into()))

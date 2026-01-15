@@ -55,7 +55,7 @@ service ArkService {
 	rpc StartLightningReceive(StartLightningReceiveRequest) returns (StartLightningReceiveResponse) {}
 	rpc CheckLightningReceive(CheckLightningReceiveRequest) returns (CheckLightningReceiveResponse) {}
 	rpc PrepareLightningReceiveClaim(PrepareLightningReceiveClaimRequest) returns (PrepareLightningReceiveClaimResponse) {}
-	rpc ClaimLightningReceive(ClaimLightningReceiveRequest) returns (ArkoorPackageCosignResponse) {}
+	rpc ClaimLightningReceive(ClaimLightningReceiveRequest) returns (CheckpointedPackageCosignResponse) {}
 
 	// * OFFBOARDS
 
@@ -330,7 +330,7 @@ message ClaimLightningReceiveRequest {
 	bytes payment_hash = 1;
 	bytes payment_preimage = 2;
 	bytes vtxo_policy = 3;
-	repeated bytes user_pub_nonces = 4;
+	CheckpointedPackageCosignRequest cosign_request = 4;
 }
 
 enum LightningReceiveStatus {

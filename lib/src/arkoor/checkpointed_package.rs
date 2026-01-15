@@ -27,8 +27,8 @@ pub struct PackageCosignRequest<V> {
 }
 
 impl<V> PackageCosignRequest<V> {
-	pub fn convert_vtxo<F, O>(self, f: F) -> PackageCosignRequest<O>
-		where F: Fn(V) -> O
+	pub fn convert_vtxo<F, O>(self, mut f: F) -> PackageCosignRequest<O>
+		where F: FnMut(V) -> O
 	{
 		PackageCosignRequest {
 			requests: self.requests.into_iter().map(|r| {
@@ -244,6 +244,23 @@ impl CheckpointedPackageBuilder<state::Initial> {
 		};
 
 		Self::new_with_checkpoints(inputs, vec![output])
+	}
+
+	/// Convenience constructor for single output that claims all inputs
+	pub fn new_claim_all_without_checkpoints(
+		inputs: impl IntoIterator<Item = Vtxo>,
+		output_policy: VtxoPolicy,
+	) -> Result<Self, ArkoorConstructionError> {
+		// Calculate total input amount
+		let inputs: Vec<_> = inputs.into_iter().collect();
+		let total_input: Amount = inputs.iter().map(|v| v.amount()).sum();
+
+		let output = VtxoRequest {
+			amount: total_input,
+			policy: output_policy,
+		};
+
+		Self::new_without_checkpoints(inputs, vec![output])
 	}
 
 	fn new(

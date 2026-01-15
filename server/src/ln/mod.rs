@@ -12,8 +12,7 @@ use bitcoin::secp256k1::{schnorr, PublicKey};
 use tracing::{error, info, trace};
 use uuid::Uuid;
 
-use ark::{musig, Vtxo, VtxoId, VtxoPolicy, VtxoRequest};
-use ark::arkoor::{ArkoorCosignResponse, ArkoorPackageBuilder};
+use ark::{Vtxo, VtxoId, VtxoPolicy, VtxoRequest};
 use ark::arkoor::checkpointed_package::{
 	CheckpointedPackageBuilder, PackageCosignRequest, PackageCosignResponse,
 };
@@ -544,15 +543,16 @@ impl Server {
 		&self,
 		payment_hash: PaymentHash,
 		vtxo_policy: VtxoPolicy,
-		user_nonces: Vec<musig::PublicNonce>,
 		payment_preimage: Preimage,
-	) -> anyhow::Result<Vec<ArkoorCosignResponse>> {
+		cosign_request: PackageCosignRequest<VtxoId>,
+	) -> anyhow::Result<PackageCosignResponse> {
 		if payment_hash != payment_preimage.compute_payment_hash() {
 			return badarg!("preimage doesn't match payment hash");
 		}
 
-		let cloned_vtxo_policy = vtxo_policy.clone();
-		slog!(LightningReceiveClaimRequested, payment_hash, payment_preimage, vtxo_policy);
+		slog!(LightningReceiveClaimRequested, payment_hash, payment_preimage,
+			vtxo_policy: vtxo_policy.clone(),
+		);
 
 		let sub = self.db.get_htlc_subscription_by_payment_hash(payment_hash).await?
 			.not_found([payment_hash], "no pending payment with this payment hash")?;
@@ -565,27 +565,37 @@ impl Server {
 			bail!("internal error: no HTLC VTXOs found");
 		}
 
-		let htlc_vtxos = self.db.get_vtxos_by_id(&sub.htlc_vtxos).await?;
+		let mut htlc_vtxos = self.db.get_vtxos_by_id(&sub.htlc_vtxos).await?;
+		htlc_vtxos.sort_by_key(|v| v.vtxo_id);
+
+		// check that cosign request input vtxos and htlc vtxos match
+		let input_ids = cosign_request.inputs().copied().collect::<Vec<_>>();
+		let htlc_ids = htlc_vtxos.iter().map(|h| h.vtxo_id).collect::<Vec<_>>();
+		if input_ids != htlc_ids {
+			return badarg!("cosign inputs do not match htlcs: inputs: {:?}, htlc: {:?}",
+				input_ids, htlc_ids,
+			);
+		}
+		let mut htlc_vtxos_iter = htlc_vtxos.into_iter();
+		let cosign_request = cosign_request.convert_vtxo(|id| {
+			let v = htlc_vtxos_iter.next().expect("we checked they match");
+			assert_eq!(id, v.vtxo_id);
+			v.vtxo
+		});
 
 		let vtxo_request = VtxoRequest {
 			amount: sub.amount(),
-			policy: cloned_vtxo_policy,
+			policy: vtxo_policy,
 		};
-		let input = {
-			let mut ret = htlc_vtxos.iter().map(|v| &v.vtxo).collect::<Vec<_>>();
-			ret.sort_by_key(|v| v.id());
-			ret
-		};
-		let package = ArkoorPackageBuilder::new(
-			input, &user_nonces, vtxo_request.clone(), None
-		).badarg("error creating arkoor package")?;
+		let builder = CheckpointedPackageBuilder::from_cosign_requests(cosign_request)
+			.badarg("error creating arkoor package")?;
 
 		self.cln.settle_invoice(sub.id, payment_preimage).await
 			.context("could not settle invoice")?;
 
-		let cosign_resp = self.cosign_oor_package_with_builder(&package).await?;
+		let builder = self.cosign_oor_with_builder(builder).await?;
 		slog!(LightningReceiveClaimed, payment_hash, payment_preimage, vtxo_request);
 
-		Ok(cosign_resp)
+		Ok(builder.cosign_response())
 	}
 }

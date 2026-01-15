@@ -5,6 +5,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 
+use ark::arkoor::checkpoint::CosignRequest;
 use bitcoin::hex::FromHex;
 use bitcoin::{absolute, transaction, Address, Amount, Network, OutPoint, Transaction};
 use bitcoin::hashes::Hash;
@@ -20,7 +21,7 @@ use ark::{
 	ProtocolEncoding, SECP, SignedVtxoRequest,
 	Vtxo, VtxoId, VtxoPolicy, VtxoRequest, musig
 };
-use ark::arkoor::checkpointed_package::CheckpointedPackageBuilder;
+use ark::arkoor::checkpointed_package::{CheckpointedPackageBuilder, PackageCosignRequest};
 use ark::challenges::RoundAttemptChallenge;
 use ark::tree::signed::builder::SignedTreeBuilder;
 use ark::tree::signed::{LeafVtxoCosignContext, UnlockPreimage};
@@ -1253,7 +1254,7 @@ async fn server_refuse_claim_invoice_not_settled() {
 	impl captaind::proxy::ArkRpcProxy for Proxy {
 		async fn claim_lightning_receive(
 			&self, upstream: &mut ArkClient, mut req: protos::ClaimLightningReceiveRequest,
-		) -> Result<protos::ArkoorPackageCosignResponse, tonic::Status> {
+		) -> Result<protos::CheckpointedPackageCosignResponse, tonic::Status> {
 			req.payment_preimage = vec![1; 32];
 			Ok(upstream.claim_lightning_receive(req).await?.into_inner())
 		}
@@ -1385,16 +1386,14 @@ async fn server_should_refuse_claim_twice() {
 	assert_eq!(bark.spendable_balance().await, btc(3));
 
 	let keypair = Keypair::new(&SECP, &mut bip39::rand::thread_rng());
-	let pub_nonces = receive.htlc_vtxos.iter()
-		.map(|_| musig::nonce_pair(&keypair).1)
-		.collect::<Vec<_>>();
 	let policy =  VtxoPolicy::new_pubkey(keypair.public_key());
+	let cosign_req = PackageCosignRequest { requests: Vec::<CosignRequest<VtxoId>>::new() };
 
 	let err = srv.get_public_rpc().await.claim_lightning_receive(protos::ClaimLightningReceiveRequest {
 		payment_hash: receive.payment_hash.to_byte_array().to_vec(),
 		payment_preimage: receive.payment_preimage.to_vec(),
 		vtxo_policy: policy.serialize(),
-		user_pub_nonces: pub_nonces.iter().map(|n| n.serialize().to_vec()).collect(),
+		cosign_request: Some(cosign_req.into()),
 	}).await.unwrap_err();
 
 	assert!(err.to_string().contains("payment status in incorrect state: settled"), "err: {err}");
@@ -1560,16 +1559,14 @@ async fn server_should_refuse_claim_twice_intra_ark_ln_receive() {
 	res1.ready().await.unwrap();
 
 	let keypair = Keypair::new(&SECP, &mut bip39::rand::thread_rng());
-	let pub_nonces = receive.htlc_vtxos.iter()
-		.map(|_| musig::nonce_pair(&keypair).1)
-		.collect::<Vec<_>>();
 	let policy =  VtxoPolicy::new_pubkey(keypair.public_key());
+	let cosign_req = PackageCosignRequest { requests: Vec::<CosignRequest<VtxoId>>::new() };
 
 	let err = srv.get_public_rpc().await.claim_lightning_receive(protos::ClaimLightningReceiveRequest {
 		payment_hash: receive.payment_hash.to_byte_array().to_vec(),
 		payment_preimage: receive.payment_preimage.to_vec(),
 		vtxo_policy: policy.serialize(),
-		user_pub_nonces: pub_nonces.iter().map(|n| n.serialize().to_vec()).collect(),
+		cosign_request: Some(cosign_req.into()),
 	}).await.unwrap_err();
 
 	assert!(err.to_string().contains("payment status in incorrect state: settled"), "err: {err}");
