@@ -351,6 +351,33 @@ $$;
 
 
 --
+-- Name: virtual_transaction_history_trigger(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.virtual_transaction_history_trigger() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+	INSERT INTO virtual_transaction_history (
+		txid, signed_tx, is_funding, server_may_own_descendant_since, created_at, updated_at
+	) VALUES (
+		OLD.txid, OLD.signed_tx, OLD.is_funding, OLD.server_may_own_descendant_since, OLD.created_at, OLD.updated_at
+	);
+
+	IF NEW.updated_at = OLD.updated_at AND NEW.updated_at <> NOW() THEN
+		RAISE EXCEPTION 'updated_at must be updated';
+	END IF;
+
+	IF NEW.created_at <> OLD.created_at THEN
+		RAISE EXCEPTION 'created_at cannot be updated';
+	END IF;
+
+	RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: vtxo_update_trigger(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -359,11 +386,11 @@ CREATE FUNCTION public.vtxo_update_trigger() RETURNS trigger
     AS $$
 BEGIN
 	INSERT INTO vtxo_history (
-		id, vtxo_id, vtxo, expiry, oor_spent_txid, spent_in_round,
-		offboarded_in, created_at, updated_at
+		id, vtxo_id, vtxo_txid, vtxo, expiry, oor_spent_txid, spent_in_round,
+		created_at, updated_at
 	) VALUES (
-		OLD.id, OLD.vtxo_id, OLD.vtxo, OLD.expiry, OLD.oor_spent_txid, OLD.spent_in_round,
-		OLD.offboarded_in, OLD.created_at, OLD.updated_at
+		OLD.id, OLD.vtxo_id, OLD.vtxo_txid, OLD.vtxo, OLD.expiry, OLD.oor_spent_txid, OLD.spent_in_round,
+		OLD.created_at, OLD.updated_at
 	);
 
 	IF NEW.updated_at = OLD.updated_at AND new.updated_AT <> NOW() THEN
@@ -1090,6 +1117,34 @@ ALTER SEQUENCE public.sweep_id_seq OWNED BY public.sweep.id;
 
 
 --
+-- Name: virtual_transaction; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.virtual_transaction (
+    txid text NOT NULL,
+    signed_tx bytea,
+    is_funding boolean NOT NULL,
+    server_may_own_descendant_since timestamp with time zone,
+    created_at timestamp without time zone NOT NULL,
+    updated_at timestamp without time zone NOT NULL
+);
+
+
+--
+-- Name: virtual_transaction_history; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.virtual_transaction_history (
+    txid text,
+    signed_tx bytea,
+    is_funding boolean,
+    server_may_own_descendant_since timestamp with time zone,
+    created_at timestamp without time zone,
+    updated_at timestamp without time zone
+);
+
+
+--
 -- Name: vtxo; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -1103,7 +1158,8 @@ CREATE TABLE public.vtxo (
     created_at timestamp with time zone NOT NULL,
     updated_at timestamp with time zone NOT NULL,
     lightning_htlc_subscription_id bigint,
-    offboarded_in text
+    offboarded_in text,
+    vtxo_txid text
 );
 
 
@@ -1121,7 +1177,8 @@ CREATE TABLE public.vtxo_history (
     created_at timestamp with time zone NOT NULL,
     updated_at timestamp with time zone NOT NULL,
     history_created_at timestamp with time zone DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC'::text) NOT NULL,
-    offboarded_in text
+    offboarded_in text,
+    vtxo_txid text
 );
 
 
@@ -1568,6 +1625,14 @@ ALTER TABLE ONLY public.sweep
 
 
 --
+-- Name: virtual_transaction virtual_transaction_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.virtual_transaction
+    ADD CONSTRAINT virtual_transaction_pkey PRIMARY KEY (txid);
+
+
+--
 -- Name: vtxo_mailbox vtxo_mailbox_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -1839,6 +1904,13 @@ CREATE INDEX vtxo_spendable_ix ON public.vtxo USING btree (((oor_spent_txid IS N
 
 
 --
+-- Name: vtxo_txid_ix; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX vtxo_txid_ix ON public.vtxo USING btree (vtxo_txid);
+
+
+--
 -- Name: vtxo_vtxo_id_uix; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -1906,6 +1978,13 @@ CREATE TRIGGER lightning_node_update BEFORE UPDATE ON public.lightning_node FOR 
 --
 
 CREATE TRIGGER lightning_payment_attempt_update BEFORE UPDATE ON public.lightning_payment_attempt FOR EACH ROW EXECUTE FUNCTION public.lightning_payment_attempt_update_trigger();
+
+
+--
+-- Name: virtual_transaction virtual_transaction_history_update; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER virtual_transaction_history_update BEFORE UPDATE ON public.virtual_transaction FOR EACH ROW EXECUTE FUNCTION public.virtual_transaction_history_trigger();
 
 
 --
