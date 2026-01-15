@@ -45,6 +45,7 @@ impl Server {
 				user_pub_nonces: request.user_pub_nonces,
 				outputs: request.outputs,
 				dust_outputs: request.dust_outputs,
+				use_checkpoint: request.use_checkpoint,
 			})
 			.collect::<Vec<_>>();
 		let request = PackageCosignRequest { requests: request_parts };

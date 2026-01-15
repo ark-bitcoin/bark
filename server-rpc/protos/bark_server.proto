@@ -165,6 +165,7 @@ message CheckpointedCosignRequest {
 	repeated VtxoRequest outputs = 2;
 	repeated bytes user_pub_nonces = 3;
 	repeated VtxoRequest dust_outputs = 4;
+	bool use_checkpoint = 5;
 }
 
 message CheckpointedPackageCosignRequest {
