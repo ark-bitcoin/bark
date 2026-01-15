@@ -573,7 +573,15 @@ impl<P: Policy> Vtxo<P> {
 		&self,
 		chain_anchor_tx: &Transaction,
 	) -> Result<(), VtxoValidationError> {
-		self::validation::validate(&self, chain_anchor_tx)
+		self::validation::validate(self, chain_anchor_tx)
+	}
+
+	/// Validate VTXO structure without checking signatures.
+	pub fn validate_unsigned(
+		&self,
+		chain_anchor_tx: &Transaction,
+	) -> Result<(), VtxoValidationError> {
+		self::validation::validate_unsigned(self, chain_anchor_tx)
 	}
 }
 

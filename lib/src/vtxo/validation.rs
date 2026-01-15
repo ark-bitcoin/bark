@@ -54,6 +54,7 @@ fn verify_transition<P: Policy>(
 	prev_tx: &Transaction,
 	prev_vout: usize,
 	next_amount: Amount,
+	check_signatures: bool,
 ) -> Result<Transaction, &'static str> {
 	let item = vtxo.genesis.get(genesis_idx).expect("genesis_idx out of range");
 
@@ -71,17 +72,19 @@ fn verify_transition<P: Policy>(
 	let prevout = OutPoint::new(prev_tx.compute_txid(), prev_vout as u32);
 	let tx = item.tx(prevout, next_output, vtxo.server_pubkey, vtxo.expiry_height);
 
-	match &item.transition {
-		GenesisTransition::Cosigned(inner) => {
-			inner.validate_sigs(&tx, 0, prev_txout, vtxo.server_pubkey, vtxo.expiry_height)?
-		}
-		GenesisTransition::Arkoor(inner) => {
-			inner.validate_sigs(&tx, 0, prev_txout, vtxo.server_pubkey())?
-		}
-		GenesisTransition::HashLockedCosigned(inner) => {
-			inner.validate_sigs(&tx, 0, prev_txout, vtxo.server_pubkey, vtxo.expiry_height)?
-		}
-	};
+	if check_signatures {
+		match &item.transition {
+			GenesisTransition::Cosigned(inner) => {
+				inner.validate_sigs(&tx, 0, prev_txout, vtxo.server_pubkey, vtxo.expiry_height)?
+			}
+			GenesisTransition::Arkoor(inner) => {
+				inner.validate_sigs(&tx, 0, prev_txout, vtxo.server_pubkey())?
+			}
+			GenesisTransition::HashLockedCosigned(inner) => {
+				inner.validate_sigs(&tx, 0, prev_txout, vtxo.server_pubkey, vtxo.expiry_height)?
+			}
+		};
+	}
 
 	#[cfg(test)]
 	{
@@ -97,14 +100,10 @@ fn verify_transition<P: Policy>(
 	Ok(tx)
 }
 
-/// Validate that the [Vtxo] is valid and can be constructed from its
-/// chain anchor.
-///
-/// General checks and chain-anchor related checks are performed first,
-/// transitions are checked last.
-pub fn validate<P: Policy>(
+fn validate_inner<P: Policy>(
 	vtxo: &Vtxo<P>,
 	chain_anchor_tx: &Transaction,
+	check_signatures: bool,
 ) -> Result<(), VtxoValidationError> {
 	// We start by validating the chain anchor output.
 	let anchor_txout = chain_anchor_tx.output.get(vtxo.chain_anchor().vout as usize)
@@ -132,7 +131,7 @@ pub fn validate<P: Policy>(
 	for (idx, item) in vtxo.genesis.iter().enumerate() {
 		let next_amount = prev.2.checked_sub(item.other_outputs.iter().map(|o| o.value).sum())
 			.ok_or(VtxoValidationError::Invalid("insufficient onchain amount"))?;
-		let next_tx = verify_transition(&vtxo, idx, prev.0.as_ref(), prev.1, next_amount)
+		let next_tx = verify_transition(&vtxo, idx, prev.0.as_ref(), prev.1, next_amount, check_signatures)
 			.map_err(|e| VtxoValidationError::transition(
 				idx, vtxo.genesis.len(), item.transition.kind(), e,
 			))?;
@@ -146,6 +145,26 @@ pub fn validate<P: Policy>(
 	}
 
 	Ok(())
+}
+
+/// Validate that the [Vtxo] is valid and can be constructed from its
+/// chain anchor.
+///
+/// General checks and chain-anchor related checks are performed first,
+/// transitions are checked last.
+pub fn validate<P: Policy>(
+	vtxo: &Vtxo<P>,
+	chain_anchor_tx: &Transaction,
+) -> Result<(), VtxoValidationError> {
+	validate_inner(vtxo, chain_anchor_tx, true)
+}
+
+/// Validate VTXO structure without checking signatures.
+pub fn validate_unsigned<P: Policy>(
+	vtxo: &Vtxo<P>,
+	chain_anchor_tx: &Transaction,
+) -> Result<(), VtxoValidationError> {
+	validate_inner(vtxo, chain_anchor_tx, false)
 }
 
 #[cfg(test)]
