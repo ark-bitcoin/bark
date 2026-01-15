@@ -569,9 +569,65 @@ impl<S: state::BuilderState> CheckpointedArkoorBuilder<S> {
 		regular.chain(isolated)
 	}
 
-	pub fn build_unsigned_checkpoint_vtxos<'a>(&'a self) -> impl Iterator<Item = Vtxo> + 'a {
-		(0..self.outputs.len()).map(|i| self.checkpoint_vtxo_at(i, None))
-		//TODO(stevenroose) we have to add the isolation output here if any
+	/// Builds the unsigned internal VTXOs
+	///
+	/// Returns the checkpoint outputs (if checkpoinst are used) and the
+	/// dust isolation output (if dust isolation is used).
+	pub fn build_unsigned_internal_vtxos<'a>(&'a self) -> impl Iterator<Item = Vtxo> + 'a {
+		let checkpoint_vtxos = {
+			let range = if self.checkpoint_data.is_some() {
+				0..self.outputs.len()
+			} else {
+				// none
+				0..0
+			};
+			range.map(|i| self.checkpoint_vtxo_at(i, None))
+		};
+
+		let isolation_vtxo = if !self.isolated_outputs.is_empty() {
+			// isolation comes after all normal outputs
+			let output_idx = self.outputs.len();
+
+			// intermediate tx depends on checkpoint
+			let (int_tx, int_txid) = if let Some((tx, txid, _tweak)) = &self.checkpoint_data {
+				(tx, *txid)
+			} else {
+				let arkoor_tx = &self.unsigned_arkoor_txs[0];
+				(arkoor_tx, arkoor_tx.compute_txid())
+			};
+
+			Some(Vtxo {
+				amount: self.isolated_outputs.iter().map(|o| o.amount).sum(),
+				policy: VtxoPolicy::new_checkpoint(self.input.user_pubkey()),
+				expiry_height: self.input.expiry_height,
+				server_pubkey: self.input.server_pubkey,
+				exit_delta: self.input.exit_delta,
+				point: OutPoint::new(int_txid, output_idx as u32),
+				anchor_point: self.input.anchor_point,
+				genesis: self.input.genesis.clone().into_iter().chain([
+					GenesisItem {
+						transition: GenesisTransition::Arkoor {
+							policy: self.input.policy.clone(),
+							signature: None,
+						},
+						output_idx: output_idx as u8,
+						other_outputs: int_tx.output.iter().enumerate()
+							.filter_map(|(i, txout)| {
+								if i == output_idx || txout.is_p2a_fee_anchor() {
+									None
+								} else {
+									Some(txout.clone())
+								}
+							})
+							.collect(),
+					},
+				]).collect(),
+			})
+		} else {
+			None
+		};
+
+		checkpoint_vtxos.chain(isolation_vtxo)
 	}
 
 	/// The returned [VtxoId] is spent out-of-round by [Txid]
@@ -639,27 +695,6 @@ impl<S: state::BuilderState> CheckpointedArkoorBuilder<S> {
 				}
 			}
 		}
-
-		ret
-	}
-
-	/// These are the intermediate Vtxos that will be owned by the server
-	///
-	/// The tuples represent a [Vtxo] which is spent out-of-round
-	/// by [Txid]
-	pub fn checkpoint_spend_info(&self) -> Vec<(Vtxo, Txid)> {
-		if self.checkpoint_data.is_none() {
-			return vec![];
-		}
-
-		let mut ret = Vec::with_capacity(self.outputs.len());
-
-		for idx in 0..self.outputs.len() {
-			let vtxo = self.checkpoint_vtxo_at(idx, None);
-			ret.push((vtxo, self.new_vtxo_ids[idx].utxo().txid))
-		}
-
-		//TODO(stevenroose) add the isolation output spend info here
 
 		ret
 	}

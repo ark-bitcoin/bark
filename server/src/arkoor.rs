@@ -60,13 +60,13 @@ impl Server {
 		// We are going to compute all vtxos and spend-info
 		// and mark it into the database
 		let new_output_vtxos = builder.build_unsigned_vtxos();
-		let new_checkpoint_vtxos = builder.build_unsigned_checkpoint_vtxos();
+		let new_internal_vtxos = builder.build_unsigned_internal_vtxos();
 		let spend_info = builder.spend_info();
 
 		// We are going to mark the update in the database
 		self.db.upsert_vtxos_and_mark_spends(
-			new_output_vtxos.chain(new_checkpoint_vtxos),
-			spend_info
+			new_output_vtxos.chain(new_internal_vtxos),
+			spend_info,
 		).await?;
 
 

@@ -218,9 +218,13 @@ impl<S: state::BuilderState> CheckpointedPackageBuilder<S> {
 			.flatten()
 	}
 
-	pub fn build_unsigned_checkpoint_vtxos<'a>(&'a self) -> impl Iterator<Item = Vtxo> + 'a {
+	/// Builds the unsigned internal VTXOs
+	///
+	/// Returns the checkpoint outputs (if checkpoinst are used) and the
+	/// dust isolation output (if dust isolation is used).
+	pub fn build_unsigned_internal_vtxos<'a>(&'a self) -> impl Iterator<Item = Vtxo> + 'a {
 		self.builders.iter()
-			.map(|b| b.build_unsigned_checkpoint_vtxos())
+			.map(|b| b.build_unsigned_internal_vtxos())
 			.flatten()
 	}
 
