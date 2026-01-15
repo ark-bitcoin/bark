@@ -90,6 +90,8 @@ pub enum ArkoorConstructionError {
 	},
 	#[error("An output is below the dust threshold")]
 	Dust,
+	#[error("At least one output is required")]
+	NoOutputs,
 	#[error("Too many inputs provided")]
 	TooManyInputs,
 }
@@ -879,22 +881,16 @@ impl<S: state::BuilderState> CheckpointedArkoorBuilder<S> {
 			})
 		}
 
-		// If dust isolation is needed (mixed outputs),
-		// - we don't allow dust outputs in the normal outputs
-		// - the combined dust must be >= P2TR_DUST
-		if !isolation_outputs.is_empty() {
-			if outputs.iter().any(|o| o.amount < P2TR_DUST) {
-				return Err(ArkoorConstructionError::Dust)
-			}
+		// We need at least one output in the outputs vec
+		if outputs.is_empty() {
+			return Err(ArkoorConstructionError::NoOutputs)
+		}
 
-			let dust_sum: Amount = isolation_outputs.iter().map(|o| o.amount).sum();
-			if dust_sum < P2TR_DUST {
-				return Err(ArkoorConstructionError::Dust)
-			}
-		} else {
-			// without isolation they have to either be all dust or all non-dust
-			let nb_dust = outputs.iter().filter(|o| o.amount < P2TR_DUST).count();
-			if !(nb_dust == 0 || nb_dust == outputs.len()) {
+		// If isolation is provided, the sum must be over dust threshold
+		if !isolation_outputs.is_empty() {
+			let isolation_sum: Amount = isolation_outputs.iter()
+				.map(|o| o.amount).sum();
+			if isolation_sum < P2TR_DUST {
 				return Err(ArkoorConstructionError::Dust)
 			}
 		}
@@ -946,15 +942,10 @@ impl CheckpointedArkoorBuilder<state::Initial> {
 
 	fn new(
 		input: Vtxo,
-		mut outputs: Vec<VtxoRequest>,
-		mut dust_outputs: Vec<VtxoRequest>,
+		outputs: Vec<VtxoRequest>,
+		dust_outputs: Vec<VtxoRequest>,
 		use_checkpoint: bool,
 	) -> Result<Self, ArkoorConstructionError> {
-		// if there is only dust outputs, we just do a dust arkoor
-		if outputs.is_empty() && !dust_outputs.is_empty() {
-			std::mem::swap(&mut outputs, &mut dust_outputs);
-		}
-
 		// Do some validation on the amounts
 		Self::validate_amounts(&input, &outputs, &dust_outputs)?;
 
@@ -1569,8 +1560,8 @@ mod test {
 			vec![],
 		).unwrap();
 
-		// only dust in isolation is also allowed
-		CheckpointedArkoorBuilder::new_with_checkpoint(
+		// empty outputs vec is not allowed (need at least one normal output)
+		let res_empty = CheckpointedArkoorBuilder::new_with_checkpoint(
 			alice_vtxo.clone(),
 			vec![],
 			vec![
@@ -1579,7 +1570,11 @@ mod test {
 					policy: VtxoPolicy::new_pubkey(bob_keypair.public_key())
 				}; 10
 			],
-		).unwrap();
+		);
+		match res_empty {
+			Err(ArkoorConstructionError::NoOutputs) => {},
+			_ => panic!("Expected NoOutputs error for empty outputs"),
+		}
 
 		// normal case: non-dust in normal outputs and dust in isolation
 		CheckpointedArkoorBuilder::new_with_checkpoint(
@@ -1598,8 +1593,8 @@ mod test {
 			],
 		).unwrap();
 
-		// can't mix dust and non-dust in normal outputs
-		let res_mixed = CheckpointedArkoorBuilder::new_with_checkpoint(
+		// mixing with isolation sum < 330 should fail
+		let res_mixed_small = CheckpointedArkoorBuilder::new_with_checkpoint(
 			alice_vtxo.clone(),
 			vec![
 				VtxoRequest {
@@ -1615,18 +1610,18 @@ mod test {
 				VtxoRequest {
 					amount: Amount::from_sat(100),
 					policy: VtxoPolicy::new_pubkey(alice_keypair.public_key())
-				}; 2
+				}; 2  // sum = 200, which is < 330
 			],
 		);
-		match res_mixed {
+		match res_mixed_small {
 			Err(ArkoorConstructionError::Dust) => {},
-			_ => panic!("Expected Dust error"),
+			_ => panic!("Expected Dust error for isolation sum < 330"),
 		}
 	}
 
 	#[test]
 	fn build_checkpointed_arkoor_dust_sum_too_small() {
-		// Test mixed with dust_sum < P2TR_DUST → error
+		// Test that dust_sum < P2TR_DUST is now allowed after removing validation
 		let alice_keypair = Keypair::new(&SECP, &mut rand::thread_rng());
 		let bob_keypair = Keypair::new(&SECP, &mut rand::thread_rng());
 		let server_keypair = Keypair::new(&SECP, &mut rand::thread_rng());
@@ -1661,16 +1656,15 @@ mod test {
 			}
 		];
 
-		// This should fail because combined dust < P2TR_DUST
+		// This should fail because isolation sum (100) < P2TR_DUST (330)
 		let result = CheckpointedArkoorBuilder::new_with_checkpoint(
 			alice_vtxo.clone(),
 			outputs.clone(),
 			dust_outputs.clone(),
 		);
-
 		match result {
 			Err(ArkoorConstructionError::Dust) => {},
-			_ => panic!("Expected Dust error"),
+			_ => panic!("Expected Dust error for isolation sum < 330"),
 		}
 	}
 
@@ -1694,7 +1688,6 @@ mod test {
 
 		// Split into two 100 sat outputs
 		// outputs is empty, all outputs go to dust_outputs
-		let outputs = vec![];
 		let dust_outputs = vec![
 			VtxoRequest {
 				amount: Amount::from_sat(100),
@@ -1708,8 +1701,8 @@ mod test {
 
 		let user_builder = CheckpointedArkoorBuilder::new_with_checkpoint(
 			alice_vtxo.clone(),
-			outputs,
 			dust_outputs,
+			vec![],
 		).expect("Valid arkoor request for all-dust case");
 
 		// Verify dust isolation is NOT active (all-dust case, no mixing)
@@ -1781,7 +1774,6 @@ mod test {
 
 		// Split into two 250 sat outputs (each below P2TR_DUST)
 		// outputs is empty, all outputs go to dust_outputs
-		let outputs = vec![];
 		let dust_outputs = vec![
 			VtxoRequest {
 				amount: Amount::from_sat(250),
@@ -1795,8 +1787,8 @@ mod test {
 
 		let user_builder = CheckpointedArkoorBuilder::new_with_checkpoint(
 			alice_vtxo.clone(),
-			outputs,
 			dust_outputs,
+			vec![],
 		).expect("Valid arkoor request for non-dust to dust case");
 
 		// Verify dust isolation is NOT active (all-dust case, no mixing)

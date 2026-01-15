@@ -467,28 +467,6 @@ mod test {
 	}
 
 	#[test]
-	fn cannot_send_dust() {
-		// Alice has a vtxo worth a 1000 sats
-		// Alice tries to send 100 sats to Bob
-		// Sending subdust amounts is not allowed
-		let (_funding_tx, alice_vtxo) = dummy_vtxo_for_amount(Amount::from_sat(1000));
-		let result = CheckpointedPackageBuilder::new(
-			[alice_vtxo],
-			VtxoRequest {
-				amount: Amount::from_sat(100),
-				policy: VtxoPolicy::new_pubkey(bob_public_key())
-			},
-			alice_public_key()
-		);
-
-		match result {
-			Ok(_) => panic!("Should not allow sending dust amounts"),
-			Err(ArkoorConstructionError::Dust) => { /* ok */ }
-			Err(e) => panic!("Unexpected error: {:?}", e)
-		}
-	}
-
-	#[test]
 	fn cannot_overprovision_vtxos() {
 		// Alice has 4 vtxos of a thousand sats each
 		// She will try to make a payment of 2000 sats to Bob
