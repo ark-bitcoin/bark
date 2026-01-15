@@ -23,7 +23,7 @@ use bitcoin_ext::{BlockDelta, BlockHeight, TaprootSpendInfoExt};
 use crate::error::IncorrectSigningKeyError;
 use crate::{musig, scripts, SECP};
 use crate::tree::signed::cosign_taproot;
-use crate::vtxo::{self, Vtxo, VtxoPolicy, GenesisItem, GenesisTransition};
+use crate::vtxo::{self, Vtxo, VtxoId, VtxoPolicy, ServerVtxo, ServerVtxoPolicy, GenesisItem, GenesisTransition};
 
 use self::state::BuilderState;
 
@@ -300,7 +300,7 @@ impl BoardBuilder<state::CanGenerateNonces> {
 			})
 		}
 
-		let builder = Self {
+		Ok(Self {
 			user_pub_nonce: None,
 			user_sec_nonce: None,
 			amount: Some(vtxo.amount()),
@@ -311,9 +311,71 @@ impl BoardBuilder<state::CanGenerateNonces> {
 			utxo: Some(vtxo.chain_anchor()),
 			exit_data: Some(exit_data),
 			_state: PhantomData,
-		};
+		})
+	}
 
-		Ok(builder)
+	/// Returns a reference to the exit transaction.
+	///
+	/// The exit transaction spends the board's funding UTXO and creates
+	/// the VTXO output.
+	pub fn exit_tx(&self) -> &Transaction {
+		&self.exit_data.as_ref().expect("state invariant").tx
+	}
+
+	/// Returns the txid of the exit transaction.
+	pub fn exit_txid(&self) -> Txid {
+		self.exit_data.as_ref().expect("state invariant").txid
+	}
+
+	/// Builds the internal unsigned VTXOs created by this board operation.
+	///
+	/// Returns two VTXOs:
+	/// 1. An expiry VTXO with empty genesis (for server tracking)
+	/// 2. A pubkey VTXO with an arkoor genesis transition
+	pub fn build_internal_unsigned_vtxos(&self) -> Vec<ServerVtxo> {
+		let exit_data = self.exit_data.as_ref().expect("state invariant");
+		let exit_txid = exit_data.txid;
+		let tap_tweak = exit_data.funding_taproot.tap_tweak();
+
+		let expiry_policy = ServerVtxoPolicy::new_expiry(self.user_pubkey.x_only_public_key().0);
+		vec![
+			Vtxo {
+				policy: expiry_policy,
+				amount: self.amount.expect("state invariant"),
+				expiry_height: self.expiry_height,
+				server_pubkey: self.server_pubkey,
+				exit_delta: self.exit_delta,
+				anchor_point: self.utxo.expect("state invariant"),
+				genesis: vec![],
+				point: self.utxo.expect("state invariant"),
+			},
+			Vtxo {
+				policy: ServerVtxoPolicy::User(VtxoPolicy::new_pubkey(self.user_pubkey)),
+				amount: self.amount.expect("state invariant"),
+				expiry_height: self.expiry_height,
+				server_pubkey: self.server_pubkey,
+				exit_delta: self.exit_delta,
+				anchor_point: self.utxo.expect("state invariant"),
+				genesis: vec![
+					GenesisItem {
+						transition: GenesisTransition::new_arkoor(
+							vec![self.user_pubkey],
+							tap_tweak,
+							None,
+						),
+						output_idx: 0,
+						other_outputs: vec![],
+					}
+				],
+				point: OutPoint::new(exit_txid, BOARD_FUNDING_TX_VTXO_VOUT),
+			},
+		]
+	}
+
+	/// Returns spend information mapping input VTXO IDs to spending transaction IDs.
+	pub fn spend_info(&self) -> Vec<(VtxoId, Txid)> {
+		let exit_txid = self.exit_data.as_ref().expect("state invariant").txid;
+		vec![(self.utxo.expect("state invariant").into(), exit_txid)]
 	}
 }
 
