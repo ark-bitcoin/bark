@@ -667,32 +667,41 @@ impl Server {
 		Ok(resp)
 	}
 
-	/// Registers a board vtxo in the database
+	/// Registers a board in the database.
 	///
-	/// Errors if the board vtxo is not sufficiently confirmed.
+	/// This function will verify that
+	/// - The funding transaction has sufficient confirmations
+	/// - The VTXO is fully valid
+	/// - The VTXO is actually a board (not another VTXO type)
 	pub async fn register_board(&self, vtxo: Vtxo) -> anyhow::Result<()> {
-		//TODO(stevenroose) validate board vtxo
+		let txid = vtxo.chain_anchor().txid;
+		let tx_info = self.bitcoind.custom_get_raw_transaction_info(&txid, None)
+			.with_context(|| format!("failed to fetch funding tx {txid}"))?
+			.with_context(|| format!("funding tx not found: {txid}"))?;
 
-		// All boards must be sufficiently confirmed before we will register them.
-		match self.bitcoind.custom_get_raw_transaction_info(&vtxo.chain_anchor().txid, None) {
-			Ok(Some(txinfo)) => {
-				let confs = txinfo.confirmations.unwrap_or(0) as usize;
-				if confs < self.config.required_board_confirmations {
-					slog!(UnconfirmedBoardRegisterAttempt, vtxo: vtxo.id(), confirmations: confs);
-					return badarg!("board vtxo tx not sufficiently confirmed (has {confs} confs, \
-						but requires {}): {}", self.config.required_board_confirmations, vtxo.id(),
-					);
-				}
-			},
-			Ok(None) => return badarg!("board transaction not found"),
-			Err(e) => bail!("error fetching tx info for board tx: {e}"),
+		let confirmations = tx_info.confirmations.unwrap_or(0) as usize;
+		if confirmations < self.config.required_board_confirmations {
+			slog!(UnconfirmedBoardRegisterAttempt, vtxo: vtxo.id(), confirmations);
+			return badarg!(
+				"funding tx has {confirmations} confirmations, requires {}: {}",
+				self.config.required_board_confirmations, vtxo.id(),
+			);
 		}
 
-		trace!("Board tx {} is sufficiently confirmed, registering board", vtxo.chain_anchor().txid);
+		let funding_tx= bitcoin::consensus::deserialize::<Transaction>(&tx_info.hex)
+			.context("failed to deserialize funding transaction")?;
 
-		// Accepted, let's register
-		self.db.upsert_board(&vtxo).await.context("db error")
-			.context("Failed to upsert board into database")?;
+		trace!("Funding tx {txid} is sufficiently confirmed, registering board");
+
+		// Validate the VTXO against its on-chain transaction
+		vtxo.validate(&funding_tx).badarg("invalid vtxo")?;
+
+		// Verify this is actually a board VTXO (not another type)
+		let _ = BoardBuilder::new_from_vtxo(&vtxo, &funding_tx, self.server_pubkey)
+			.badarg("vtxo is not a board")?;
+
+		self.db.upsert_board(&vtxo).await
+			.context("failed to store board in database")?;
 
 		slog!(RegisteredBoard,
 			onchain_utxo: vtxo.chain_anchor(),

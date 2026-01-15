@@ -1,0 +1,3 @@
+- Add `BoardBuilder::new_from_vtxo` to reconstruct a board from a VTXO
+  Validates server pubkey, funding txid, and vtxo id match expected values
+  [#1472](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1472)
