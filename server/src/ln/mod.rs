@@ -238,7 +238,7 @@ impl Server {
 		Ok(invoice)
 	}
 
-	pub async fn revoke_bolt11_payment(
+	pub async fn revoke_lightning_pay_htlcs(
 		&self,
 		cosign_requests: PackageCosignRequest<VtxoId>,
 	) -> anyhow::Result<PackageCosignResponse> {

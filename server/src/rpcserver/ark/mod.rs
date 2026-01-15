@@ -324,7 +324,7 @@ impl rpc::server::ArkService for Server {
 			KeyValue::new("cosign_requests", format!("{:?}", cosign_requests)),
 		]);
 
-		let cosign_resp = self.revoke_bolt11_payment(cosign_requests).await
+		let cosign_resp = self.revoke_lightning_pay_htlcs(cosign_requests).await
 			.to_status()?;
 
 		Ok(tonic::Response::new(cosign_resp.into()))
