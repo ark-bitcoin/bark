@@ -67,7 +67,9 @@
 use std::marker::PhantomData;
 
 use bitcoin::hashes::Hash;
-use bitcoin::{Amount, OutPoint, TapSighash, Transaction, Txid, TxIn, TxOut, ScriptBuf, Sequence, Witness};
+use bitcoin::{
+	Amount, OutPoint, TapSighash, Transaction, Txid, TxIn, TxOut, ScriptBuf, Sequence, Witness,
+};
 use bitcoin::taproot::TapTweakHash;
 use bitcoin::secp256k1::{schnorr, Keypair, PublicKey};
 use bitcoin_ext::{P2TR_DUST, TxOutExt, fee};
@@ -724,8 +726,10 @@ impl<S: state::BuilderState> CheckpointedArkoorBuilder<S> {
 		self.input.server_pubkey()
 	}
 
-	/// Construct the checkpoint transaction.
-	/// When dust isolation is needed, `combined_dust_amount` should be Some with the total dust amount.
+	/// Construct the checkpoint transaction
+	///
+	/// When dust isolation is needed, `combined_dust_amount` should be Some
+	/// with the total dust amount.
 	fn construct_unsigned_checkpoint_tx(
 		input: &Vtxo,
 		outputs: &[VtxoRequest],
@@ -733,7 +737,8 @@ impl<S: state::BuilderState> CheckpointedArkoorBuilder<S> {
 	) -> Transaction {
 		// All outputs on the checkpoint transaction will use exactly the same policy.
 		let output_policy = VtxoPolicy::new_checkpoint(input.user_pubkey());
-		let checkpoint_spk = output_policy.script_pubkey(input.server_pubkey(), input.exit_delta(), input.expiry_height());
+		let checkpoint_spk = output_policy
+			.script_pubkey(input.server_pubkey(), input.exit_delta(), input.expiry_height());
 
 		Transaction {
 			version: bitcoin::transaction::Version(3),
@@ -782,7 +787,12 @@ impl<S: state::BuilderState> CheckpointedArkoorBuilder<S> {
 						witness: Witness::new(),
 					}],
 					output: vec![
-						output.policy.txout(output.amount, input.server_pubkey(), input.exit_delta(), input.expiry_height()),
+						output.policy.txout(
+							output.amount,
+							input.server_pubkey(),
+							input.exit_delta(),
+							input.expiry_height(),
+						),
 						fee::fee_anchor(),
 					]
 				};
@@ -809,7 +819,12 @@ impl<S: state::BuilderState> CheckpointedArkoorBuilder<S> {
 					witness: Witness::new(),
 				}],
 				output: outputs.iter()
-					.map(|o| o.policy.txout(o.amount, input.server_pubkey(), input.exit_delta(), input.expiry_height()))
+					.map(|o| o.policy.txout(
+						o.amount,
+						input.server_pubkey(),
+						input.exit_delta(),
+						input.expiry_height(),
+					))
 					// Add isolation output if dust is present
 					.chain(dust_isolation_amount.map(|amt| TxOut {
 						value: amt,
@@ -837,7 +852,8 @@ impl<S: state::BuilderState> CheckpointedArkoorBuilder<S> {
 	) -> Transaction {
 		// All outputs on the dust transaction will use exactly the same policy (checkpoint).
 		let output_policy = VtxoPolicy::new_checkpoint(input.user_pubkey());
-		let checkpoint_spk = output_policy.script_pubkey(input.server_pubkey(), input.exit_delta(), input.expiry_height());
+		let checkpoint_spk = output_policy
+			.script_pubkey(input.server_pubkey(), input.exit_delta(), input.expiry_height());
 
 		let mut tx_outputs: Vec<TxOut> = isolated_outputs.iter().map(|o| {
 			TxOut {
@@ -1179,7 +1195,10 @@ impl CheckpointedArkoorBuilder<state::Initial> {
 
 	/// Generates the user nonces and moves the builder to the [state::UserGeneratedNonces] state
 	/// This is the path that is used by the user
-	pub fn generate_user_nonces(mut self, user_keypair: Keypair) -> CheckpointedArkoorBuilder<state::UserGeneratedNonces> {
+	pub fn generate_user_nonces(
+		mut self,
+		user_keypair: Keypair,
+	) -> CheckpointedArkoorBuilder<state::UserGeneratedNonces> {
 		let mut user_pub_nonces = Vec::with_capacity(self.nb_sigs());
 		let mut user_sec_nonces = Vec::with_capacity(self.nb_sigs());
 
@@ -1201,8 +1220,12 @@ impl CheckpointedArkoorBuilder<state::Initial> {
 	/// When this has happened the server can cosign.
 	///
 	/// If you are implementing a client, use [Self::generate_user_nonces] instead.
-	/// If you are implementing a server you should look at [CheckpointedArkoorBuilder::from_cosign_request]
-	fn set_user_pub_nonces(mut self, user_pub_nonces: Vec<musig::PublicNonce>) -> Result<CheckpointedArkoorBuilder<state::ServerCanCosign>, ArkoorSigningError> {
+	/// If you are implementing a server you should look at
+	/// [CheckpointedArkoorBuilder::from_cosign_request].
+	fn set_user_pub_nonces(
+		mut self,
+		user_pub_nonces: Vec<musig::PublicNonce>,
+	) -> Result<CheckpointedArkoorBuilder<state::ServerCanCosign>, ArkoorSigningError> {
 		if user_pub_nonces.len() != self.nb_sigs() {
 			return Err(ArkoorSigningError::InvalidNbUserNonces {
 				expected: self.nb_sigs(),
@@ -1216,7 +1239,6 @@ impl CheckpointedArkoorBuilder<state::Initial> {
 }
 
 impl<'a> CheckpointedArkoorBuilder<state::ServerCanCosign> {
-
 	pub fn from_cosign_request(
 		cosign_request: CosignRequest<Vtxo>,
 	) -> Result<CheckpointedArkoorBuilder<state::ServerCanCosign>, ArkoorSigningError> {
@@ -1230,7 +1252,10 @@ impl<'a> CheckpointedArkoorBuilder<state::ServerCanCosign> {
 			.set_user_pub_nonces(cosign_request.user_pub_nonces.clone())
 	}
 
-	pub fn server_cosign(mut self, server_keypair: Keypair) -> Result<CheckpointedArkoorBuilder<state::ServerSigned>, ArkoorSigningError> {
+	pub fn server_cosign(
+		mut self,
+		server_keypair: Keypair,
+	) -> Result<CheckpointedArkoorBuilder<state::ServerSigned>, ArkoorSigningError> {
 		// Verify that the provided keypair is correct
 		if server_keypair.public_key() != self.input.server_pubkey() {
 			return Err(ArkoorSigningError::IncorrectKey {
@@ -1259,11 +1284,9 @@ impl<'a> CheckpointedArkoorBuilder<state::ServerCanCosign> {
 		self.server_partial_sigs = Some(server_partial_sigs);
 		Ok(self.to_state::<state::ServerSigned>())
 	}
-
 }
 
 impl CheckpointedArkoorBuilder<state::ServerSigned> {
-
 	pub fn user_pub_nonces(&self) -> Vec<musig::PublicNonce> {
 		self.user_pub_nonces.as_ref().expect("state invariant").clone()
 	}
@@ -1274,14 +1297,15 @@ impl CheckpointedArkoorBuilder<state::ServerSigned> {
 
 	pub fn cosign_response(&self) -> CosignResponse {
 		CosignResponse {
-			server_pub_nonces: self.server_pub_nonces.as_ref().expect("state invariant").clone(),
-			server_partial_sigs: self.server_partial_sigs.as_ref().expect("state invariant").clone(),
+			server_pub_nonces: self.server_pub_nonces.as_ref()
+				.expect("state invariant").clone(),
+			server_partial_sigs: self.server_partial_sigs.as_ref()
+				.expect("state invariant").clone(),
 		}
 	}
 }
 
 impl CheckpointedArkoorBuilder<state::UserGeneratedNonces> {
-
 	pub fn user_pub_nonces(&self) -> &[PublicNonce] {
 		self.user_pub_nonces.as_ref().expect("State invariant")
 	}
@@ -1385,7 +1409,6 @@ impl CheckpointedArkoorBuilder<state::UserGeneratedNonces> {
 
 
 impl<'a> CheckpointedArkoorBuilder<state::UserSigned> {
-
 	pub fn build_signed_vtxos(&self) -> Vec<Vtxo> {
 		let sigs = self.full_signatures.as_ref().expect("state invariant");
 		let mut ret = Vec::with_capacity(self.outputs.len() + self.isolated_outputs.len());
@@ -1507,8 +1530,10 @@ mod test {
 		let cosign_request = user_builder.cosign_request();
 
 		// The server will cosign the request
-		let server_builder = CheckpointedArkoorBuilder::from_cosign_request(cosign_request).expect("Invalid cosign request")
-			.server_cosign(server_keypair).expect("Incorrect key");
+		let server_builder = CheckpointedArkoorBuilder::from_cosign_request(cosign_request)
+			.expect("Invalid cosign request")
+			.server_cosign(server_keypair)
+			.expect("Incorrect key");
 
 		let cosign_data = server_builder.cosign_response();
 
@@ -1582,8 +1607,14 @@ mod test {
 		).expect("Valid arkoor request with dust isolation");
 
 		// Verify dust isolation is active
-		assert!(user_builder.unsigned_isolation_fanout_tx.is_some(), "Dust isolation should be active");
-		assert!(user_builder.unsigned_isolated_exit_txs.is_some(), "Dust exit txs should be present");
+		assert!(
+			user_builder.unsigned_isolation_fanout_tx.is_some(),
+			"Dust isolation should be active",
+		);
+		assert!(
+			user_builder.unsigned_isolated_exit_txs.is_some(),
+			"Dust exit txs should be present",
+		);
 		assert_eq!(user_builder.unsigned_isolated_exit_txs.as_ref().unwrap().len(), 2);
 
 		// Check signature count: 1 checkpoint + 1 arkoor + 1 dust fanout + 2 exits = 5
@@ -1594,8 +1625,10 @@ mod test {
 		let cosign_request = user_builder.cosign_request();
 
 		// The server will cosign the request
-		let server_builder = CheckpointedArkoorBuilder::from_cosign_request(cosign_request).expect("Invalid cosign request")
-			.server_cosign(server_keypair).expect("Incorrect key");
+		let server_builder = CheckpointedArkoorBuilder::from_cosign_request(cosign_request)
+			.expect("Invalid cosign request")
+			.server_cosign(server_keypair)
+			.expect("Incorrect key");
 
 		let cosign_data = server_builder.cosign_response();
 
@@ -1798,7 +1831,10 @@ mod test {
 		).expect("Valid arkoor request for all-dust case");
 
 		// Verify dust isolation is NOT active (all-dust case, no mixing)
-		assert!(user_builder.unsigned_isolation_fanout_tx.is_none(), "Dust isolation should NOT be active");
+		assert!(
+			user_builder.unsigned_isolation_fanout_tx.is_none(),
+			"Dust isolation should NOT be active",
+		);
 
 		// Check we have 2 outputs
 		assert_eq!(user_builder.outputs.len(), 2);
@@ -1884,7 +1920,10 @@ mod test {
 		).expect("Valid arkoor request for non-dust to dust case");
 
 		// Verify dust isolation is NOT active (all-dust case, no mixing)
-		assert!(user_builder.unsigned_isolation_fanout_tx.is_none(), "Dust isolation should NOT be active");
+		assert!(
+			user_builder.unsigned_isolation_fanout_tx.is_none(),
+			"Dust isolation should NOT be active",
+		);
 
 		// Check we have 2 outputs
 		assert_eq!(user_builder.outputs.len(), 2);
