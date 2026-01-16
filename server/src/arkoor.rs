@@ -35,7 +35,8 @@ impl Server {
 		// peoples VTXOs
 
 		// Mark the vtxo as in-flux
-		let guard = self.vtxos_in_flux.lock(&input_vtxo_ids);
+		let guard = self.vtxos_in_flux.try_lock(&input_vtxo_ids)
+			.context("some VTXO is already locked by another process")?;
 
 		// Convert the PackageCosignRequest<VtxoId> into PackageCosignRequest<Vtxo>
 		// We will maske the old value
@@ -53,7 +54,7 @@ impl Server {
 
 		// Construct the builder and compute all transaction data
 		let builder = CheckpointedPackageBuilder::from_cosign_requests(request)
-			.context("Invalid arkoor request")?;
+			.context("invalid arkoor request")?;
 
 
 		// We are going to compute all vtxos and spend-info

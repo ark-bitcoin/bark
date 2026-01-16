@@ -22,14 +22,13 @@ pub async fn mark_package_spent<T>(
 		WHERE vtxo_id = $1 AND
 			oor_spent_txid IS NULL AND spent_in_round IS NULL AND offboarded_in IS NULL;",
 		&[Type::TEXT, Type::TEXT],
-	).await.context("Failed to prepare query")?;
+	).await.context("failed to prepare query")?;
 
 	for (vtxo_id, spending_txid) in inputs.iter().zip(spending_txids) {
 		let nb_rows_affected = client.execute(&statement, &[
 			&vtxo_id.to_string(),
 			&spending_txid.to_string()
-		]).await.context("Failed to execute query")?;
-
+		]).await.context("failed to execute query")?;
 
 		if nb_rows_affected == 0 {
 			trace!("Tried to mark vtxo as spent but no update happened");
@@ -38,13 +37,17 @@ pub async fn mark_package_spent<T>(
 			//
 			// If this is the case, we just continue. This gives us idempotency (Yippy)
 			// Otherwise, we bail
-			let statement = client.prepare("SELECT oor_spent_txid, spent_in_round FROM vtxo where vtxo_id = $1").await?;
-			let row = client.query_one(&statement, &[&vtxo_id.to_string()])
-				.await
-				.with_context(|| format!("Failed to verify if vtxo {} is spent", vtxo_id))?;
+			let statement = client.prepare(
+				"SELECT oor_spent_txid, spent_in_round FROM vtxo where vtxo_id = $1",
+			).await?;
+			let row = client.query_one(&statement, &[&vtxo_id.to_string()]).await
+				.context("failed to verify if VTXO is spent")
+				.context(*vtxo_id)?;
 
 			if let Some(spent_in_round) = row.get::<_, Option<i64>>("spent_in_round") {
-				warn!("Attempt to double-spend a VTXO {} spent in round {}", vtxo_id, spent_in_round);
+				warn!("Attempt to double-spend a VTXO {} spent in round {}",
+					vtxo_id, spent_in_round,
+				);
 			}
 
 			let oor_spent_txid_opt = row.get::<_, Option<&str>>("oor_spent_txid");
@@ -56,7 +59,7 @@ pub async fn mark_package_spent<T>(
 				warn!("Attempt to double-spend a VTXO {} in spending_txid {}", vtxo_id, spending_txid);
 			}
 
-			bail!("Failed to mark vtxo {} as spent", vtxo_id);
+			bail!("Failed to mark VTXO {} as spent", vtxo_id);
 		}
 		if nb_rows_affected > 1 {
 			panic!("Database contains multiple vtxos with id {}", vtxo_id)

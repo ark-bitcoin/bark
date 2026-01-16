@@ -244,11 +244,13 @@ impl Db {
 	) -> anyhow::Result<()> {
 		let (vtxos, txids) = spend_info.collect::<(Vec<_>, Vec<_>)>();
 
-		let mut conn = self.get_conn().await.context("Failed to connect to db")?;
-		let tx = conn.transaction().await.context("Failed to start db transaction")?;
+		let mut conn = self.get_conn().await.context("failed to connect to db")?;
+		let tx = conn.transaction().await.context("failed to start db transaction")?;
 
-		query::upsert_vtxos(&tx, new_vtxos).await?;
-		oor::mark_package_spent(&tx, &vtxos, &txids).await?;
+		query::upsert_vtxos(&tx, new_vtxos).await
+			.context("failed to upsert VTXOs")?;
+		oor::mark_package_spent(&tx, &vtxos, &txids).await
+			.context("failed to mark VTXO as spent")?;
 
 		tx.commit().await?;
 		Ok(())
@@ -276,10 +278,12 @@ impl Db {
 		", &[Type::TEXT, Type::TEXT]).await?;
 
 		for input in builder.inputs() {
-			let txid = builder.spending_tx(input.id())
-				.expect("spending tx should be present").compute_txid();
+			let txid = builder.spending_tx(input.id()).expect("spending tx should be present")
+				.compute_txid();
 
-			let rows_affected = tx.execute(&statement, &[&input.id().to_string(), &txid.to_string()]).await?;
+			let rows_affected = tx.execute(
+				&statement, &[&input.id().to_string(), &txid.to_string()],
+			).await?;
 			if rows_affected == 0 {
 				return Ok(Some(input.id()));
 			}

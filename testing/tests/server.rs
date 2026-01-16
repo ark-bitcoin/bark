@@ -464,8 +464,8 @@ async fn full_round() {
 }
 
 #[tokio::test]
-async fn double_spend_oor() {
-	let ctx = TestContext::new("server/double_spend_oor").await;
+async fn double_spend_arkoor() {
+	let ctx = TestContext::new("server/double_spend_arkoor").await;
 	let srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
 
 	// Instantiate bark
@@ -485,9 +485,30 @@ async fn double_spend_oor() {
 	let pk1 = bark_client.derive_store_next_keypair().await.unwrap().0.public_key();
 	let pk2 = bark_client.derive_store_next_keypair().await.unwrap().0.public_key();
 
-	let builder1 = CheckpointedPackageBuilder::new([vtxo.clone()], VtxoRequest { amount: sat(100_000), policy: VtxoPolicy::new_pubkey(*RANDOM_PK)}, pk1).unwrap();
-	let builder2 = CheckpointedPackageBuilder::new([vtxo.clone()], VtxoRequest { amount: sat(200_000), policy: VtxoPolicy::new_pubkey(*RANDOM_PK)}, pk1).unwrap();
-	let builder3 = CheckpointedPackageBuilder::new([vtxo.clone()], VtxoRequest { amount: sat(100_000), policy: VtxoPolicy::new_pubkey(*RANDOM_PK)}, pk2).unwrap();
+	let builder1 = CheckpointedPackageBuilder::new(
+		[vtxo.clone()],
+		VtxoRequest {
+			amount: sat(100_000),
+			policy: VtxoPolicy::new_pubkey(*RANDOM_PK),
+		},
+		pk1,
+	).unwrap();
+	let builder2 = CheckpointedPackageBuilder::new(
+		[vtxo.clone()],
+		VtxoRequest {
+			amount: sat(200_000), // other amount
+			policy: VtxoPolicy::new_pubkey(*RANDOM_PK),
+		},
+		pk1,
+	).unwrap();
+	let builder3 = CheckpointedPackageBuilder::new(
+		[vtxo.clone()],
+		VtxoRequest {
+			amount: sat(100_000),
+			policy: VtxoPolicy::new_pubkey(*RANDOM_PK),
+		},
+		pk2, // other change pk
+	).unwrap();
 
 	// And the corresponding requests to the server
 	use protos::CheckpointedPackageCosignRequest;
@@ -527,13 +548,11 @@ async fn double_spend_oor() {
 		(a, b, c) => panic!("Only one request should succeed {:?}, {:?}, {:?}", a, b, c),
 	};
 
-	// Make the same set of requests again
+	// Make the same set of requests again, this time in sequence to avoid the flux lock
 	// We want idempotency
-	let (r1, r2, r3)  = tokio::join!(
-		rpc1.checkpointed_cosign_oor(req1.clone()),
-		rpc2.checkpointed_cosign_oor(req2.clone()),
-		rpc3.checkpointed_cosign_oor(req3.clone()),
-	);
+	let r1 = rpc1.checkpointed_cosign_oor(req1.clone()).await;
+	let r2 = rpc2.checkpointed_cosign_oor(req2.clone()).await;
+	let r3 = rpc3.checkpointed_cosign_oor(req3.clone()).await;
 
 	match (r1, r2, r3) {
 		(Ok(_), Err(_), Err(_)) => assert_eq!(succeeded, 1, "Different requests succeeded"),
