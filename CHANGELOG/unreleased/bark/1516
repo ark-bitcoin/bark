@@ -1,0 +1,7 @@
+
+* Wallet::try_claim_all_lightning_receives behaviour changed to not bail on first error
+  [PR #1516](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1516)
+  - returns Ok(()) if at least one pending lightning receive is successfully claimed
+  - returns Ok(()) if there are no pending lightning receives to claim
+  - returns an error if all claims for pending receive fail to be claimed
+
