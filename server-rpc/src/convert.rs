@@ -8,7 +8,6 @@ use bitcoin::secp256k1::{schnorr, PublicKey};
 use bitcoin::{self, Amount, FeeRate, OutPoint, ScriptBuf, Transaction, Txid};
 
 use ark::{musig, ProtocolEncoding, SignedVtxoRequest, Vtxo, VtxoId, VtxoPolicy, VtxoRequest};
-use ark::arkoor::{ArkoorBuilder, ArkoorCosignResponse};
 use ark::board::BoardCosignResponse;
 use ark::challenges::RoundAttemptChallenge;
 use ark::forfeit::{HashLockedForfeitBundle, HashLockedForfeitNonces};
@@ -345,50 +344,6 @@ impl TryFrom<protos::SignedVtxoRequest> for SignedVtxoRequest {
 				.map(|n| musig::PublicNonce::from_bytes(n))
 				.collect::<Result<_, _>>()?,
 		})
-	}
-}
-
-impl From<ArkoorCosignResponse> for protos::ArkoorCosignResponse {
-	fn from(v: ArkoorCosignResponse) -> Self {
-		Self {
-			pub_nonce: v.pub_nonce.serialize().to_vec(),
-			partial_sig: v.partial_signature.serialize().to_vec(),
-		}
-	}
-}
-
-impl TryFrom<protos::ArkoorCosignResponse> for ArkoorCosignResponse {
-	type Error = ConvertError;
-	fn try_from(v: protos::ArkoorCosignResponse) -> Result<Self, Self::Error> {
-		Ok(Self {
-			pub_nonce: musig::PublicNonce::from_bytes(&v.pub_nonce)?,
-			partial_signature: musig::PartialSignature::from_bytes(&v.partial_sig)?,
-		})
-	}
-}
-
-impl From<Vec<ArkoorCosignResponse>> for protos::ArkoorPackageCosignResponse {
-	fn from(v: Vec<ArkoorCosignResponse>) -> Self {
-		Self {
-			sigs: v.into_iter().map(|i| i.into()).collect(),
-		}
-	}
-}
-
-impl<'a> From<&'a ArkoorBuilder<'_, VtxoRequest>> for protos::ArkoorCosignRequest {
-	fn from(v: &'a ArkoorBuilder<'_, VtxoRequest>) -> Self {
-		Self {
-			input_id: v.input.id().to_bytes().to_vec(),
-			outputs: v.outputs.iter().map(|o| o.into()).collect(),
-			pub_nonce: v.user_nonce.serialize().to_vec(),
-		}
-	}
-}
-
-impl TryFrom<protos::ArkoorPackageCosignResponse> for Vec<ArkoorCosignResponse> {
-	type Error = ConvertError;
-	fn try_from(v: protos::ArkoorPackageCosignResponse) -> Result<Self, Self::Error> {
-		Ok(v.sigs.into_iter().map(|i| i.try_into()).collect::<Result<_, _>>()?)
 	}
 }
 
