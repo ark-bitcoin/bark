@@ -36,31 +36,21 @@ pub mod rpc_names {
 		pub const REQUEST_BOARD_COSIGN: &str = "request_board_cosign";
 		pub const REGISTER_BOARD_VTXO: &str = "register_board_vtxo";
 		pub const CHECKPOINTED_COSIGN_OOR: &str = "checkpointed_cosign_oor";
-		pub const REQUEST_ARKOOR_PACKAGE_COSIGN: &str = "request_arkoor_package_cosign";
 		pub const POST_ARKOOR_PACKAGE_MAILBOX: &str = "post_arkoor_package_mailbox";
 		pub const EMPTY_ARKOOR_MAILBOX: &str = "empty_arkoor_mailbox";
-		pub const POST_VTXOS_MAILBOX: &str = "post_vtxos_mailbox";
-		pub const SUBSCRIBE_MAILBOX: &str = "subscribe_mailbox";
-		pub const READ_MAILBOX: &str = "read_mailbox";
 		pub const REQUEST_LIGHTNING_PAY_HTLC_COSIGN: &str = "request_lightning_pay_htlc_cosign";
-		// TODO: Remove this once we hit 0.1.0-beta.6 or higher
-		pub const START_LIGHTNING_PAYMENT: &str = "start_lightning_payment";
-		// TODO: Remove this once we hit 0.1.0-beta.6 or higher
-		pub const FINISH_LIGHTNING_PAYMENT: &str = "finish_lightning_payment";
 		pub const INITIATE_LIGHTNING_PAYMENT: &str = "initiate_lightning_payment";
 		pub const CHECK_LIGHTNING_PAYMENT: &str = "check_lightning_payment";
 		pub const REQUEST_LIGHTNING_PAY_HTLC_REVOCATION: &str = "request_lightning_pay_htlc_revocation";
-		// TODO: Remove this once we hit 0.1.0-beta.6 or higher
-		pub const REVOKE_LIGHTNING_PAYMENT: &str = "revoke_lightning_payment";
 		pub const FETCH_BOLT12_INVOICE: &str = "fetch_bolt12_invoice";
 		pub const START_LIGHTNING_RECEIVE: &str = "start_lightning_receive";
 		pub const CHECK_LIGHTNING_RECEIVE: &str = "check_lightning_receive";
+		pub const PREPARE_LIGHTNING_RECEIVE_CLAIM: &str = "prepare_lightning_receive_claim";
 		pub const CLAIM_LIGHTNING_RECEIVE: &str = "claim_lightning_receive";
 		pub const SUBSCRIBE_ROUNDS: &str = "subscribe_rounds";
 		pub const LAST_ROUND_EVENT: &str = "last_round_event";
 		pub const SUBMIT_PAYMENT: &str = "submit_payment";
 		pub const PROVIDE_VTXO_SIGNATURES: &str = "provide_vtxo_signatures";
-		pub const PROVIDE_FORFEIT_SIGNATURES: &str = "provide_forfeit_signatures";
 		pub const SUBMIT_ROUND_PARTICIPATION: &str = "submit_round_participation";
 		pub const ROUND_PARTICIPATION_STATUS: &str = "round_participation_status";
 		pub const REQUEST_LEAF_VTXO_COSIGN: &str = "request_leaf_vtxo_cosign";
@@ -70,6 +60,12 @@ pub mod rpc_names {
 		pub const FINISH_OFFBOARD: &str = "finish_offboard";
 	}
 
+	pub mod mailbox {
+		pub const POST_VTXOS_MAILBOX: &str = "post_vtxos_mailbox";
+		pub const SUBSCRIBE_MAILBOX: &str = "subscribe_mailbox";
+		pub const READ_MAILBOX: &str = "read_mailbox";
+	}
+
 	pub mod admin {
 		pub const WALLET_SYNC: &str = "wallet_sync";
 		pub const WALLET_STATUS: &str = "wallet_status";
@@ -77,7 +73,6 @@ pub mod rpc_names {
 		pub const TRIGGER_SWEEP: &str = "trigger_sweep";
 		pub const START_LIGHTNING_NODE: &str = "start_lightning_node";
 		pub const STOP_LIGHTNING_NODE: &str = "stop_lightning_node";
-		pub const STOP: &str = "stop";
 	}
 
 	pub mod integration {
@@ -94,25 +89,22 @@ const RPC_SERVICE_ARK_METHODS: &[&str] = &[
 	rpc_names::ark::GET_ROUND,
 	rpc_names::ark::REQUEST_BOARD_COSIGN,
 	rpc_names::ark::REGISTER_BOARD_VTXO,
-	rpc_names::ark::REQUEST_ARKOOR_PACKAGE_COSIGN,
+	rpc_names::ark::CHECKPOINTED_COSIGN_OOR,
 	rpc_names::ark::POST_ARKOOR_PACKAGE_MAILBOX,
 	rpc_names::ark::EMPTY_ARKOOR_MAILBOX,
-	rpc_names::ark::START_LIGHTNING_PAYMENT,
-	rpc_names::ark::FINISH_LIGHTNING_PAYMENT,
 	rpc_names::ark::REQUEST_LIGHTNING_PAY_HTLC_COSIGN,
 	rpc_names::ark::INITIATE_LIGHTNING_PAYMENT,
 	rpc_names::ark::CHECK_LIGHTNING_PAYMENT,
 	rpc_names::ark::REQUEST_LIGHTNING_PAY_HTLC_REVOCATION,
-	rpc_names::ark::REVOKE_LIGHTNING_PAYMENT,
 	rpc_names::ark::FETCH_BOLT12_INVOICE,
 	rpc_names::ark::START_LIGHTNING_RECEIVE,
+	rpc_names::ark::PREPARE_LIGHTNING_RECEIVE_CLAIM,
 	rpc_names::ark::CHECK_LIGHTNING_RECEIVE,
 	rpc_names::ark::CLAIM_LIGHTNING_RECEIVE,
 	rpc_names::ark::SUBSCRIBE_ROUNDS,
 	rpc_names::ark::LAST_ROUND_EVENT,
 	rpc_names::ark::SUBMIT_PAYMENT,
 	rpc_names::ark::PROVIDE_VTXO_SIGNATURES,
-	rpc_names::ark::PROVIDE_FORFEIT_SIGNATURES,
 	rpc_names::ark::SUBMIT_ROUND_PARTICIPATION,
 	rpc_names::ark::ROUND_PARTICIPATION_STATUS,
 	rpc_names::ark::REQUEST_LEAF_VTXO_COSIGN,
@@ -123,9 +115,9 @@ const RPC_SERVICE_ARK_METHODS: &[&str] = &[
 ];
 
 const RPC_SERVICE_MAILBOX_METHODS: &[&str] = &[
-	rpc_names::ark::POST_VTXOS_MAILBOX,
-	rpc_names::ark::SUBSCRIBE_MAILBOX,
-	rpc_names::ark::READ_MAILBOX,
+	rpc_names::mailbox::POST_VTXOS_MAILBOX,
+	rpc_names::mailbox::SUBSCRIBE_MAILBOX,
+	rpc_names::mailbox::READ_MAILBOX,
 ];
 
 const RPC_SERVICE_ADMIN_METHODS: &[&str] = &[
@@ -135,7 +127,6 @@ const RPC_SERVICE_ADMIN_METHODS: &[&str] = &[
 	rpc_names::admin::TRIGGER_SWEEP,
 	rpc_names::admin::START_LIGHTNING_NODE,
 	rpc_names::admin::STOP_LIGHTNING_NODE,
-	rpc_names::admin::STOP,
 ];
 
 const RPC_SERVICE_INTEGRATION_METHODS: &[&str] = &[

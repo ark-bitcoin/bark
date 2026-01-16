@@ -429,7 +429,7 @@ impl rpc::server::ArkService for Server {
 		&self,
 		req: tonic::Request<protos::PrepareLightningReceiveClaimRequest>
 	) -> Result<tonic::Response<protos::PrepareLightningReceiveClaimResponse>, tonic::Status> {
-		let _ = RpcMethodDetails::grpc_ark(middleware::rpc_names::ark::CLAIM_LIGHTNING_RECEIVE);
+		let _ = RpcMethodDetails::grpc_ark(middleware::rpc_names::ark::PREPARE_LIGHTNING_RECEIVE_CLAIM);
 		let req = req.into_inner();
 
 		let payment_hash = PaymentHash::from_bytes(req.payment_hash)?;
