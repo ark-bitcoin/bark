@@ -14,10 +14,11 @@ the wallet performs.
 - [Movement Subsystems](#movement-subsystems)
   - [1. bark.arkoor](#1-barkarkoor)
   - [2. bark.board](#2-barkboard)
-  - [3. bark.exit](#3-barkexit)
+  - [3. bark.offboard](#3-barkoffboard)
   - [4. bark.lightning_send](#4-barklightning_send)
   - [5. bark.lightning_receive](#5-barklightning_receive)
   - [6. bark.round](#6-barkround)
+  - [7. bark.exit](#7-barkexit)
 - [FAQ](#faq)
 
 ## Quick Reference
@@ -30,7 +31,7 @@ the wallet performs.
 - **Calculate balance change**: Use `effective_balance_sat` (includes all offchain fees)
 - **Find fee costs**: Check `offchain_fee_sat` for ark and lightning fees, `metadata.onchain_fee_sat` for Bitcoin network fees
 - **Check completion**: Movement is complete when `status` != `pending` and `time.completed_at` is not null
-- **Identify VTXOs**: `input_vtxos` = consumed, `output_vtxos` = created, `exited_vtxos` = marked for unilateral exit
+- **Identify VTXOs**: `input_vtxos` = consumed, `output_vtxos` = created, `exited_vtxos` = marked for emergency exit
 
 **Status Interpretation:**
 - `"pending"` → In progress, VTXOs may be locked
@@ -97,7 +98,8 @@ The following table lists all available subsystems and their associated movement
 |--------------------------|---------------------------------------------|------------------------------------------------------------------|
 | `bark.arkoor`            | `"send"`, `"receive"`                       | Offchain transfers between ark users                             |
 | `bark.board`             | `"board"`                                   | Moving funds from onchain to ark                                 |
-| `bark.exit`              | `"start"`                                   | Initiation of unilateral exits, redeeming offchain funds onchain |
+| `bark.offboard`             | `"offboard"`                                   | Moving funds from ark to onchain                                 |
+| `bark.exit`              | `"start"`                                   | Initiation of emergency exits, redeeming offchain funds onchain |
 | `bark.lightning_send`    | `"send"`                                    | Sending funds via the Lightning Network                          |
 | `bark.lightning_receive` | `"receive"`                                 | Receiving funds via the Lightning Network                        |
 | `bark.round`             | `"offboard"`, `"refresh"`, `"send_onchain"` | Various different round participation methods                    |
@@ -191,42 +193,43 @@ Boarding funds onto the ark.
 
 ---
 
-### 3. bark.exit
+### 3. bark.offboard
 
-Initiation of unilateral exits, redeeming offchain funds onchain.
+Moving funds from ark to onchain.
 
-#### Kind: `"start"`
-A unilateral exit which has been initiated.
+#### Kind: `"offboard"`
+Offboarding funds from the ark.
 
 **Example:**
 ```json
 {
-  "status": "successful",
-  "subsystem": {
-    "name": "bark.exit",
-    "kind": "start"
-  },
-  "intended_balance_sat": -10000,
-  "effective_balance_sat": -10000,
-  "offchain_fee_sat": 0,
-  "sent_to": [
-    {
-      "destination": {
-        "type": "bitcoin",
-        "value": "bc1p5cyxn..."
-      },
-      "amount_sat": 10000
-    }
-  ],
-  "input_vtxos": ["f5a6b7c8...:0"]
+    "status": "successful",
+    "subsystem": {
+      "name": "bark.offboard",
+      "kind": "offboard"
+    },
+    "metadata": {
+      "offboard_tx": "02000000...",
+      "offboard_txid": "bda355fa..."
+    },
+    "intended_balance_sat": -10000,
+    "effective_balance_sat": -10000,
+    "offchain_fee_sat": 488,
+    "sent_to": [
+      {
+        "destination": {
+          "type": "bitcoin",
+          "value": "tb1qf7wn..."
+        },
+        "amount_sat": 9512
+      }
+    ],
+    "received_on": [],
+    "input_vtxos": ["500ed65d...:0"],
+    "output_vtxos": [],
+    "exited_vtxos": []
 }
 ```
-
-**Notes:**
-- The exit address is the taproot exit script address, a transaction for this address will only appear onchain once the
-  exit is completed.
-- The status of an exit will be `"successful"` the moment a VTXO is marked for exit, not when the exit process is
-  completed since movements only track offchain funds. You can query ongoing exits for further details about an exit.
 
 ---
 
@@ -459,6 +462,45 @@ applicable.
 
 ---
 
+### 7. bark.exit
+
+Initiation of emergency exits, redeeming offchain funds onchain.
+
+#### Kind: `"start"`
+A emergency exit which has been initiated.
+
+**Example:**
+```json
+{
+  "status": "successful",
+  "subsystem": {
+    "name": "bark.exit",
+    "kind": "start"
+  },
+  "intended_balance_sat": -10000,
+  "effective_balance_sat": -10000,
+  "offchain_fee_sat": 0,
+  "sent_to": [
+    {
+      "destination": {
+        "type": "bitcoin",
+        "value": "bc1p5cyxn..."
+      },
+      "amount_sat": 10000
+    }
+  ],
+  "input_vtxos": ["f5a6b7c8...:0"]
+}
+```
+
+**Notes:**
+- The exit address is the taproot exit script address, a transaction for this address will only appear onchain once the
+  exit is completed.
+- The status of an exit will be `"successful"` the moment a VTXO is marked for exit, not when the exit process is
+  completed since movements only track offchain funds. You can query ongoing exits for further details about an exit.
+
+---
+
 ## FAQ
 
 ### When is a movement considered complete?
@@ -524,7 +566,7 @@ For lightning payments, you can also match by `metadata.payment_hash`.
 
 ### Why would `exited_vtxos` be populated?
 
-VTXOs are marked for unilateral exit when:
+VTXOs are marked for emergency exit when:
 - Lightning HTLC VTXOs can't be swapped/revoked and are near expiry (see `bark.lightning_send` and
   `bark.lightning_receive` notes)
 
