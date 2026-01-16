@@ -532,7 +532,7 @@ impl Wallet {
 	/// Check and claim all opened Lightning receive
 	///
 	/// This function fetches all opened lightning receives and then
-	/// concurrently tries to check and claim them
+	/// concurrently tries to check and claim them.
 	///
 	/// # Arguments
 	///
@@ -541,16 +541,43 @@ impl Wallet {
 	/// # Returns
 	///
 	/// Returns an `anyhow::Result<()>`, which is:
-	/// * `Ok(())` if the process completes successfully.
-	/// * `Err` if an error occurs at any stage of the operation.
+	/// * `Ok(())` if at least one claim succeeded or there were no pending receives.
+	/// * `Err` if all claim attempts failed.
 	pub async fn try_claim_all_lightning_receives(&self, wait: bool) -> anyhow::Result<()> {
-		// Asynchronously attempts to claim all pending receive by converting the list into a stream
-		tokio_stream::iter(self.pending_lightning_receives().await?)
-			.for_each_concurrent(3, |rcv| async move {
-				if let Err(e) = self.try_claim_lightning_receive(rcv.invoice.into(), wait, None).await {
-					error!("Error claiming lightning receive: {:#}", e);
-				}
-			}).await;
+		let pending = self.pending_lightning_receives().await?;
+		let total = pending.len();
+
+		if total == 0 {
+			return Ok(());
+		}
+
+		let results: Vec<_> = tokio_stream::iter(pending)
+			.map(|rcv| async move {
+				self.try_claim_lightning_receive(rcv.invoice.into(), wait, None).await
+			})
+			.buffer_unordered(3)
+			.collect()
+			.await;
+
+		let succeeded = results.iter().filter(|r| r.is_ok()).count();
+		let failed = total - succeeded;
+
+		for result in &results {
+			if let Err(e) = result {
+				error!("Error claiming lightning receive: {:#}", e);
+			}
+		}
+
+		if failed > 0 {
+			info!(
+				"Lightning receive claims: {} succeeded, {} failed out of {} pending",
+				succeeded, failed, total
+			);
+		}
+
+		if succeeded == 0 {
+			anyhow::bail!("All {} lightning receive claim(s) failed", failed);
+		}
 
 		Ok(())
 	}
