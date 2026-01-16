@@ -1093,4 +1093,224 @@ mod test {
 		let total: Amount = vtxos.iter().map(|v| v.amount()).sum();
 		assert_eq!(total, Amount::from_sat(1500));
 	}
+
+	#[test]
+	fn spend_info_correctness_simple_checkpoint() {
+		// Test spend_info with simple checkpoint case
+		let (_funding_tx, alice_vtxo) = dummy_vtxo_for_amount(
+			Amount::from_sat(100_000)
+		);
+		let input_id = alice_vtxo.id();
+
+		let package = ArkoorPackageBuilder::new_single_output_with_checkpoints(
+			[alice_vtxo],
+			ArkoorDestination {
+				total_amount: Amount::from_sat(100_000),
+				policy: VtxoPolicy::new_pubkey(bob_public_key()),
+			},
+			VtxoPolicy::new_pubkey(alice_public_key())
+		).expect("Valid package");
+
+		// Collect all internal VTXOs
+		let internal_vtxos: Vec<VtxoId> = package
+			.build_unsigned_internal_vtxos()
+			.map(|v| v.id())
+			.collect();
+
+		// Collect all spend_info entries
+		let spend_info: Vec<(VtxoId, Txid)> = package.spend_info().collect();
+
+		// The spend_info should contain the input and all internal VTXOs
+		let mut expected_vtxo_ids = vec![input_id];
+		expected_vtxo_ids.extend(internal_vtxos.iter());
+
+		let actual_vtxo_ids: Vec<VtxoId> = spend_info
+			.iter()
+			.map(|(id, _)| *id)
+			.collect();
+
+		// Check that all expected IDs are present
+		for id in &expected_vtxo_ids {
+			assert!(
+				actual_vtxo_ids.contains(id),
+				"Expected VTXO ID {} not found in spend_info",
+				id
+			);
+		}
+
+		// Check that no extra IDs are present
+		assert_eq!(
+			actual_vtxo_ids.len(),
+			expected_vtxo_ids.len(),
+			"spend_info contains unexpected entries"
+		);
+	}
+
+	#[test]
+	fn spend_info_correctness_with_dust_isolation() {
+		// Test spend_info with dust isolation
+		let (_funding_tx, alice_vtxo) = dummy_vtxo_for_amount(
+			Amount::from_sat(1000)
+		);
+		let input_id = alice_vtxo.id();
+
+		let package = ArkoorPackageBuilder::new_single_output_with_checkpoints(
+			[alice_vtxo],
+			ArkoorDestination {
+				total_amount: Amount::from_sat(900),
+				policy: VtxoPolicy::new_pubkey(bob_public_key()),
+			},
+			VtxoPolicy::new_pubkey(alice_public_key())
+		).expect("Valid package");
+
+		// Collect all internal VTXOs (checkpoints + dust isolation)
+		let internal_vtxos: Vec<VtxoId> = package
+			.build_unsigned_internal_vtxos()
+			.map(|v| v.id())
+			.collect();
+
+		// Collect all spend_info entries
+		let spend_info: Vec<(VtxoId, Txid)> = package.spend_info().collect();
+
+		// The spend_info should contain the input and all internal VTXOs
+		let mut expected_vtxo_ids = vec![input_id];
+		expected_vtxo_ids.extend(internal_vtxos.iter());
+
+		let actual_vtxo_ids: Vec<VtxoId> = spend_info
+			.iter()
+			.map(|(id, _)| *id)
+			.collect();
+
+		// Check that all expected IDs are present
+		for id in &expected_vtxo_ids {
+			assert!(
+				actual_vtxo_ids.contains(id),
+				"Expected VTXO ID {} not found in spend_info",
+				id
+			);
+		}
+
+		// Check that no extra IDs are present
+		assert_eq!(
+			actual_vtxo_ids.len(),
+			expected_vtxo_ids.len(),
+			"spend_info contains unexpected entries"
+		);
+	}
+
+	#[test]
+	fn spend_info_correctness_without_checkpoints() {
+		// Test spend_info without checkpoints
+		let (_funding_tx, alice_vtxo) = dummy_vtxo_for_amount(
+			Amount::from_sat(100_000)
+		);
+		let input_id = alice_vtxo.id();
+
+		let package = ArkoorPackageBuilder::new_without_checkpoints(
+			[alice_vtxo],
+			vec![
+				ArkoorDestination {
+					total_amount: Amount::from_sat(100_000),
+					policy: VtxoPolicy::new_pubkey(bob_public_key()),
+				}
+			]
+		).expect("Valid package");
+
+		// Collect all internal VTXOs
+		let internal_vtxos: Vec<VtxoId> = package
+			.build_unsigned_internal_vtxos()
+			.map(|v| v.id())
+			.collect();
+
+		// Collect all spend_info entries
+		let spend_info: Vec<(VtxoId, Txid)> = package.spend_info().collect();
+
+		// The spend_info should contain the input and all internal VTXOs
+		let mut expected_vtxo_ids = vec![input_id];
+		expected_vtxo_ids.extend(internal_vtxos.iter());
+
+		let actual_vtxo_ids: Vec<VtxoId> = spend_info
+			.iter()
+			.map(|(id, _)| *id)
+			.collect();
+
+		// Check that all expected IDs are present
+		for id in &expected_vtxo_ids {
+			assert!(
+				actual_vtxo_ids.contains(id),
+				"Expected VTXO ID {} not found in spend_info",
+				id
+			);
+		}
+
+		// Check that no extra IDs are present
+		assert_eq!(
+			actual_vtxo_ids.len(),
+			expected_vtxo_ids.len(),
+			"spend_info contains unexpected entries"
+		);
+	}
+
+	#[test]
+	fn spend_info_correctness_multiple_inputs() {
+		// Test spend_info with multiple inputs
+		let (_funding_tx_1, alice_vtxo_1) = dummy_vtxo_for_amount(
+			Amount::from_sat(10_000)
+		);
+		let (_funding_tx_2, alice_vtxo_2) = dummy_vtxo_for_amount(
+			Amount::from_sat(5_000)
+		);
+		let (_funding_tx_3, alice_vtxo_3) = dummy_vtxo_for_amount(
+			Amount::from_sat(2_000)
+		);
+
+		let input_ids = vec![
+			alice_vtxo_1.id(),
+			alice_vtxo_2.id(),
+			alice_vtxo_3.id(),
+		];
+
+		let package = ArkoorPackageBuilder::new_single_output_with_checkpoints(
+			[alice_vtxo_1, alice_vtxo_2, alice_vtxo_3],
+			ArkoorDestination {
+				total_amount: Amount::from_sat(16_000),
+				policy: VtxoPolicy::new_pubkey(bob_public_key()),
+			},
+			VtxoPolicy::new_pubkey(alice_public_key())
+		).expect("Valid package");
+
+		// Collect all internal VTXOs
+		let internal_vtxos: Vec<VtxoId> = package
+			.build_unsigned_internal_vtxos()
+			.map(|v| v.id())
+			.collect();
+
+		// Collect all spend_info entries
+		let spend_info: Vec<(VtxoId, Txid)> = package.spend_info().collect();
+
+		// The spend_info should contain all inputs and all internal VTXOs
+		let mut expected_vtxo_ids = input_ids.clone();
+		expected_vtxo_ids.extend(internal_vtxos.iter());
+
+		let actual_vtxo_ids: Vec<VtxoId> = spend_info
+			.iter()
+			.map(|(id, _)| *id)
+			.collect();
+
+		// Check that all expected IDs are present
+		for id in &expected_vtxo_ids {
+			assert!(
+				actual_vtxo_ids.contains(id),
+				"Expected VTXO ID {} not found in spend_info",
+				id
+			);
+		}
+
+		// Check that no extra IDs are present
+		assert_eq!(
+			actual_vtxo_ids.len(),
+			expected_vtxo_ids.len(),
+			"spend_info contains unexpected entries"
+		);
+	}
 }
