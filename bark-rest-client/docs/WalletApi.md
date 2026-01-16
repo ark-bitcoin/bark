@@ -8,6 +8,7 @@ Method | HTTP request | Description
 [**ark_info**](WalletApi.md#ark_info) | **GET** /api/v1/wallet/ark-info | 
 [**balance**](WalletApi.md#balance) | **GET** /api/v1/wallet/balance | 
 [**connected**](WalletApi.md#connected) | **GET** /api/v1/wallet/connected | 
+[**create_wallet**](WalletApi.md#create_wallet) | **POST** /api/v1/wallet/create | 
 [**history**](WalletApi.md#history) | **GET** /api/v1/wallet/history | 
 [**movements**](WalletApi.md#movements) | **GET** /api/v1/wallet/movements | 
 [**offboard_all**](WalletApi.md#offboard_all) | **POST** /api/v1/wallet/offboard/all | 
@@ -127,6 +128,36 @@ No authorization required
 ### HTTP request headers
 
 - **Content-Type**: Not defined
+- **Accept**: application/json
+
+[[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
+
+
+## create_wallet
+
+> models::CreateWalletResponse create_wallet(create_wallet_request)
+
+
+Creates a new wallet
+
+### Parameters
+
+
+Name | Type | Description  | Required | Notes
+------------- | ------------- | ------------- | ------------- | -------------
+**create_wallet_request** | [**CreateWalletRequest**](CreateWalletRequest.md) |  | [required] |
+
+### Return type
+
+[**models::CreateWalletResponse**](CreateWalletResponse.md)
+
+### Authorization
+
+No authorization required
+
+### HTTP request headers
+
+- **Content-Type**: application/json
 - **Accept**: application/json
 
 [[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)

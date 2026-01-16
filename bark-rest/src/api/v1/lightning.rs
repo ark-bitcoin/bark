@@ -57,8 +57,10 @@ pub async fn generate_invoice(
 	State(state): State<ServerState>,
 	Json(body): Json<bark_json::web::LightningInvoiceRequest>,
 ) -> HandlerResult<Json<bark_json::cli::InvoiceInfo>> {
+	let wallet = state.require_wallet()?;
+
 	let amount = Amount::from_sat(body.amount_sat);
-	let invoice = state.wallet.bolt11_invoice(amount).await
+	let invoice = wallet.bolt11_invoice(amount).await
 		.context("Failed to create invoice")?;
 
 	Ok(axum::Json(bark_json::cli::InvoiceInfo {
@@ -86,6 +88,8 @@ pub async fn get_receive_status(
 	State(state): State<ServerState>,
 	Path(identifier): Path<String>,
 ) -> HandlerResult<Json<bark_json::cli::LightningReceiveInfo>> {
+	let wallet = state.require_wallet()?;
+
 	let payment_hash = if let Ok(h) = ark::lightning::PaymentHash::from_str(&identifier) {
 		h
 	} else if let Ok(i) = Bolt11Invoice::from_str(&identifier) {
@@ -96,9 +100,9 @@ pub async fn get_receive_status(
 		badarg!("identifier is not a valid payment hash, invoice or preimage");
 	};
 
-	if let Some(status) = state.wallet.lightning_receive_status(payment_hash).await
-		.context("Failed to get lightning receive status")?
-	{
+	if let Some(status) = wallet.lightning_receive_status(payment_hash).await
+		.context("Failed to get lightning receive status")? {
+
 		Ok(axum::Json(status.into()))
 	} else {
 		not_found!([payment_hash], "No invoice found");
@@ -119,7 +123,9 @@ pub async fn get_receive_status(
 pub async fn list_receive_statuses(
 	State(state): State<ServerState>,
 ) -> HandlerResult<Json<Vec<bark_json::cli::LightningReceiveInfo>>> {
-	let mut receives = state.wallet.pending_lightning_receives().await
+	let wallet = state.require_wallet()?;
+
+	let mut receives = wallet.pending_lightning_receives().await
 		.context("Failed to get lightning receives")?;
 	// receives are ordered from newest to oldest, so we reverse them so last terminal item is newest
 	receives.reverse();
@@ -149,21 +155,23 @@ pub async fn pay(
 	State(state): State<ServerState>,
 	Json(body): Json<bark_json::web::LightningPayRequest>,
 ) -> HandlerResult<Json<bark_json::web::LightningPayResponse>> {
+	let wallet = state.require_wallet()?;
+
 	let amount = body.amount_sat.map(|a| Amount::from_sat(a));
 
 	if let Ok(invoice) = Bolt11Invoice::from_str(&body.destination) {
 		if body.comment.is_some() {
 			badarg!("comment is not supported for BOLT-11 invoices");
 		}
-		state.wallet.pay_lightning_invoice(invoice, amount).await?
+		wallet.pay_lightning_invoice(invoice, amount).await?
 	} else if let Ok(offer) = Offer::from_str(&body.destination) {
 		if body.comment.is_some() {
 			badarg!("comment is not supported for BOLT-12 offers");
 		}
-		state.wallet.pay_lightning_offer(offer, amount).await?
+		wallet.pay_lightning_offer(offer, amount).await?
 	} else if let Ok(lnaddr) = LightningAddress::from_str(&body.destination) {
 		let amount = amount.badarg("amount is required for Lightning addresses")?;
-		state.wallet.pay_lightning_address(&lnaddr, amount, body.comment).await?
+		wallet.pay_lightning_address(&lnaddr, amount, body.comment).await?
 	} else {
 		badarg!("argument is not a valid BOLT-11 invoice, BOLT-12 offer or Lightning address");
 	};

@@ -5,16 +5,14 @@ mod exit;
 mod lightning;
 mod onchain;
 mod round;
-mod util;
-mod wallet;
 
 use std::cmp::Ordering;
 use std::{env, process};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::str::FromStr;
 
 use anyhow::Context;
-use bitcoin::{Amount, Network};
+use bitcoin::{Amount};
 use clap::builder::BoolishValueParser;
 use clap::Parser;
 use ::lightning::offers::offer::Offer;
@@ -25,20 +23,14 @@ use log::{debug, info, warn};
 use ark::VtxoId;
 use ark::lightning::PaymentHash;
 use bark::Wallet;
-use bark::{BarkNetwork, Config};
 use bark::onchain::ChainSync;
 use bark::vtxo::{VtxoFilter, VtxoStateKind};
 use bark_json::{cli as json};
 use bark_json::primitives::WalletVtxoInfo;
 
-use bark_cli::wallet::open_wallet;
+use bark_cli::wallet::{CreateOpts, create_wallet, open_wallet};
 use bark_cli::log::init_logging;
-
-use crate::util::output_json;
-use crate::wallet::{CreateOpts, create_wallet};
-
-
-const DEBUG_LOG_FILE: &str = "debug.log";
+use bark_cli::util::output_json;
 
 
 fn default_datadir() -> String {
@@ -83,121 +75,6 @@ struct Cli {
 	command: Command,
 }
 
-/// Options to define the initial bark config
-#[derive(Clone, PartialEq, Eq, Default, clap::Args)]
-struct ConfigOpts {
-	/// The address of your Ark server.
-	#[arg(long)]
-	ark: Option<String>,
-
-	/// The address of the Esplora HTTP server to use.
-	///
-	/// Either this or the `bitcoind_address` field has to be provided.
-	#[arg(long)]
-	esplora: Option<String>,
-
-	/// The address of the bitcoind RPC server to use.
-	///
-	/// Either this or the `esplora_address` field has to be provided.
-	#[arg(long)]
-	bitcoind: Option<String>,
-
-	/// The path to the bitcoind rpc cookie file.
-	///
-	/// Only used with `bitcoind_address`.
-	#[arg(long)]
-	bitcoind_cookie: Option<String>,
-
-	/// The bitcoind RPC username.
-	///
-	/// Only used with `bitcoind_address`.
-	#[arg(long)]
-	bitcoind_user: Option<String>,
-
-	/// The bitcoind RPC password.
-	///
-	/// Only used with `bitcoind_address`.
-	#[arg(long)]
-	bitcoind_pass: Option<String>,
-}
-
-impl ConfigOpts {
-	/// Fill the default required config fields based on network
-	fn fill_network_defaults(&mut self, net: BarkNetwork) {
-		// Fallback to our default signet backend
-		// Only do it when the user did *not* specify either --esplora or --bitcoind.
-		if net == BarkNetwork::Signet && self.esplora.is_none() && self.bitcoind.is_none() {
-			self.esplora = Some("https://esplora.signet.2nd.dev/".to_owned());
-		}
-
-		// Fallback to Mutinynet community Esplora
-		// Only do it when the user did *not* specify either --esplora or --bitcoind.
-		if net == BarkNetwork::Mutinynet && self.esplora.is_none() && self.bitcoind.is_none() {
-			self.esplora = Some("https://mutinynet.com/api".to_owned());
-		}
-	}
-
-	/// Validate the config options are sane
-	fn validate(&self) -> anyhow::Result<()> {
-		if self.esplora.is_none() && self.bitcoind.is_none() {
-			bail!("You need to provide a chain source using either --esplora or --bitcoind");
-		}
-
-		match (
-			self.bitcoind.is_some(),
-			self.bitcoind_cookie.is_some(),
-			self.bitcoind_user.is_some(),
-			self.bitcoind_pass.is_some(),
-		) {
-			(false, false, false, false) => {},
-			(false, _, _, _) => bail!("Provided bitcoind auth args without bitcoind address"),
-			(_, true, false, false) => {},
-			(_, true, _, _) => bail!("Bitcoind user/pass shouldn't be provided together with cookie file"),
-			(_, _, true, true) => {},
-			_ => bail!("When providing --bitcoind, you need to provide auth args as well."),
-		}
-
-		Ok(())
-	}
-
-	/// Will write the provided config options to the config
-	///
-	/// Will also load and return the config when loaded from the written file.
-	fn write_to_file(&self, network: Network, path: impl AsRef<Path>) -> anyhow::Result<Config> {
-		use std::fmt::Write;
-
-		let mut conf = String::new();
-		let ark = util::default_scheme("https", self.ark.as_ref().context("missing --ark arg")?)
-			.context("invalid ark server URL")?;
-		writeln!(conf, "server_address = \"{}\"", ark).unwrap();
-
-		if let Some(ref v) = self.esplora {
-			let url = util::default_scheme("https", v).context("invalid esplora URL")?;
-			writeln!(conf, "esplora_address = \"{}\"", url).unwrap();
-		}
-		if let Some(ref v) = self.bitcoind {
-			let url = util::default_scheme("http", v).context("invalid bitcoind URL")?;
-			writeln!(conf, "bitcoind_address = \"{}\"", url).unwrap();
-		}
-		if let Some(ref v) = self.bitcoind_cookie {
-			writeln!(conf, "bitcoind_cookiefile = \"{}\"", v).unwrap();
-		}
-		if let Some(ref v) = self.bitcoind_user {
-			writeln!(conf, "bitcoind_user = \"{}\"", v).unwrap();
-		}
-		if let Some(ref v) = self.bitcoind_pass {
-			writeln!(conf, "bitcoind_pass = \"{}\"", v).unwrap();
-		}
-
-		let path = path.as_ref();
-		std::fs::write(path, conf).with_context(|| format!(
-			"error writing new config file to {}", path.display(),
-		))?;
-
-		// new let's try load it to make sure it's sane
-		Ok(Config::load(network, path).context("problematic config flags provided")?)
-	}
-}
 
 #[derive(clap::Subcommand)]
 enum Command {
@@ -395,7 +272,9 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 		return dev::execute_dev_command(cmd, datadir).await;
 	}
 
-	let (mut wallet, mut onchain) = open_wallet(&datadir).await.context("error opening wallet")?;
+	let (mut wallet, mut onchain) = open_wallet(&datadir).await
+			.context("error opening wallet")?
+			.context("No wallet found")?;
 
 	let net = wallet.network().await?;
 

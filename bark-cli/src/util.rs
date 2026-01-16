@@ -2,7 +2,7 @@
 use std::io::{self, Write};
 use std::str::FromStr;
 
-use anyhow::Context;
+use anyhow::{Context, bail};
 use serde::Serialize;
 use serde_json;
 use tonic::transport::Uri;

@@ -14,7 +14,7 @@ use bark::vtxo::{FilterVtxos, VtxoFilter};
 use bark_json::cli::{ExitProgressStatus, ExitTransactionStatus};
 use bitcoin_ext::FeeRateExt;
 
-use crate::util::output_json;
+use bark_cli::util::output_json;
 
 #[derive(clap::Subcommand)]
 pub enum ExitCommand {

@@ -1145,6 +1145,47 @@
         }
       }
     },
+    "/api/v1/wallet/create": {
+      "post": {
+        "tags": [
+          "wallet"
+        ],
+        "description": "Creates a new wallet",
+        "operationId": "create_wallet",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateWalletRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Wallet created successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreateWalletResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternalServerError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/wallet/history": {
       "get": {
         "tags": [
@@ -1828,6 +1869,66 @@
           }
         }
       },
+      "BarkNetwork": {
+        "type": "string",
+        "description": "Networks bark can be used on",
+        "enum": [
+          "mainnet",
+          "signet",
+          "mutinynet",
+          "regtest"
+        ]
+      },
+      "BitcoindAuth": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "Use a cookie file for authentication",
+            "required": [
+              "cookie"
+            ],
+            "properties": {
+              "cookie": {
+                "type": "object",
+                "description": "Use a cookie file for authentication",
+                "required": [
+                  "cookie"
+                ],
+                "properties": {
+                  "cookie": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Use a username and password for authentication",
+            "required": [
+              "user-pass"
+            ],
+            "properties": {
+              "user-pass": {
+                "type": "object",
+                "description": "Use a username and password for authentication",
+                "required": [
+                  "user",
+                  "pass"
+                ],
+                "properties": {
+                  "pass": {
+                    "type": "string"
+                  },
+                  "user": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        ]
+      },
       "BoardRequest": {
         "type": "object",
         "required": [
@@ -1841,6 +1942,56 @@
             "minimum": 0
           }
         }
+      },
+      "ChainSourceConfig": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "Use a bitcoind RPC server",
+            "required": [
+              "bitcoind"
+            ],
+            "properties": {
+              "bitcoind": {
+                "type": "object",
+                "description": "Use a bitcoind RPC server",
+                "required": [
+                  "bitcoind",
+                  "bitcoind_auth"
+                ],
+                "properties": {
+                  "bitcoind": {
+                    "type": "string"
+                  },
+                  "bitcoind_auth": {
+                    "$ref": "#/components/schemas/BitcoindAuth"
+                  }
+                }
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Use an Esplora HTTP server",
+            "required": [
+              "esplora"
+            ],
+            "properties": {
+              "esplora": {
+                "type": "object",
+                "description": "Use an Esplora HTTP server",
+                "required": [
+                  "url"
+                ],
+                "properties": {
+                  "url": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        ]
       },
       "ChildTransactionInfo": {
         "type": "object",
@@ -1867,6 +2018,55 @@
           "connected": {
             "type": "boolean",
             "description": "Whether the wallet is currently connected to its Ark server"
+          }
+        }
+      },
+      "CreateWalletRequest": {
+        "type": "object",
+        "required": [
+          "ark_server",
+          "chain_source",
+          "network"
+        ],
+        "properties": {
+          "ark_server": {
+            "type": "string",
+            "description": "The Ark server to use for the wallet"
+          },
+          "birthday_height": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "An optional birthday height to start syncing the wallet from",
+            "minimum": 0
+          },
+          "chain_source": {
+            "$ref": "#/components/schemas/ChainSourceConfig",
+            "description": "The chain source to use for the wallet"
+          },
+          "mnemonic": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The optional mnemonic to use for the wallet"
+          },
+          "network": {
+            "$ref": "#/components/schemas/BarkNetwork",
+            "description": "The network to use for the wallet"
+          }
+        }
+      },
+      "CreateWalletResponse": {
+        "type": "object",
+        "required": [
+          "fingerprint"
+        ],
+        "properties": {
+          "fingerprint": {
+            "type": "string"
           }
         }
       },

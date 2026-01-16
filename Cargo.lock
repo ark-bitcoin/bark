@@ -414,6 +414,7 @@ dependencies = [
  "bitcoin",
  "chrono",
  "log",
+ "parking_lot",
  "serde",
  "serde_json",
  "tokio",

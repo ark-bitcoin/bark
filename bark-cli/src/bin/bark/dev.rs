@@ -15,7 +15,7 @@ use server_rpc as rpc;
 
 use bark_cli::wallet::open_wallet;
 
-use crate::util::{self, output_json};
+use bark_cli::util::{self, output_json};
 
 #[derive(clap::Subcommand)]
 pub enum DevCommand {
@@ -91,7 +91,8 @@ async fn execute_vtxo_command(datadir: &Path, command: VtxoCommand) -> anyhow::R
 			}
 
 			let (wallet, _onchain) = open_wallet(&datadir).await
-				.context("Failed to open wallet")?;
+				.context("Failed to open wallet")?
+				.context("No wallet found")?;
 
 			if all {
 				log::info!("Dropping all vtxos");

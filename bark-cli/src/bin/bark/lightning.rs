@@ -12,7 +12,7 @@ use ark::lightning::{PaymentHash, Preimage};
 use bark::Wallet;
 use bark_json::cli::{InvoiceInfo, LightningReceiveInfo};
 
-use crate::util::output_json;
+use bark_cli::util::output_json;
 
 #[derive(clap::Subcommand)]
 pub enum LightningCommand {

@@ -926,6 +926,11 @@ impl Wallet {
 		Ok(properties)
 	}
 
+	/// Returns the fingerprint of the wallet.
+	pub fn fingerprint(&self) -> Fingerprint {
+		self.seed.fingerprint()
+	}
+
 	fn require_server(&self) -> anyhow::Result<ServerConnection> {
 		self.server.read().clone()
 			.context("You should be connected to Ark server to perform this action")
