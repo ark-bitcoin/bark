@@ -1269,6 +1269,18 @@ ALTER SEQUENCE public.wallet_changeset_id_seq OWNED BY public.wallet_changeset.i
 
 
 --
+-- Name: watchman_vtxo_frontier; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.watchman_vtxo_frontier (
+    vtxo_id text NOT NULL,
+    confirmed_height integer,
+    spent_height integer,
+    spent_txid text
+);
+
+
+--
 -- Name: watchmand_block; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -1626,6 +1638,14 @@ ALTER TABLE ONLY public.vtxo_pool
 
 ALTER TABLE ONLY public.wallet_changeset
     ADD CONSTRAINT wallet_changeset_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: watchman_vtxo_frontier watchman_vtxo_frontier_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.watchman_vtxo_frontier
+    ADD CONSTRAINT watchman_vtxo_frontier_pkey PRIMARY KEY (vtxo_id);
 
 
 --
@@ -2118,6 +2138,14 @@ ALTER TABLE ONLY public.vtxo_mailbox
 
 ALTER TABLE ONLY public.vtxo_pool
     ADD CONSTRAINT vtxo_pool_vtxo_id_fkey FOREIGN KEY (vtxo_id) REFERENCES public.vtxo(vtxo_id);
+
+
+--
+-- Name: watchman_vtxo_frontier watchman_vtxo_frontier_vtxo_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.watchman_vtxo_frontier
+    ADD CONSTRAINT watchman_vtxo_frontier_vtxo_id_fkey FOREIGN KEY (vtxo_id) REFERENCES public.vtxo(vtxo_id);
 
 
 --

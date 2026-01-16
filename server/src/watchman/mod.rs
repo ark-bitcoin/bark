@@ -8,6 +8,8 @@
 
 mod config;
 mod daemon;
+mod frontier;
 
 pub use config::Config;
 pub use daemon::Daemon;
+pub use frontier::VtxoExitFrontier;

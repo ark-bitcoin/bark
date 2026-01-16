@@ -67,8 +67,9 @@ use bitcoin_ext::{BlockHeight, BlockRef, TxStatus, P2TR_DUST};
 use bitcoin_ext::rpc::{BitcoinRpcClient, BitcoinRpcExt, RpcApi};
 
 use crate::bitcoind::BitcoinRpcClientExt;
-use crate::sync::SyncManager;
+use crate::sync::{ChainEventListener, SyncManager};
 use crate::error::ContextExt;
+use crate::watchman::VtxoExitFrontier;
 use crate::flux::VtxosInFlux;
 use crate::ln::cln::ClnManager;
 use crate::mailbox_manager::MailboxManager;
@@ -376,10 +377,13 @@ impl Server {
 			bitcoind.clone(),
 		);
 
+		let mut listeners: Vec<Box<dyn ChainEventListener>> = vec![];
 		let watchman_wallet = if let Some(_cfg) = cfg.watchman.enabled() {
 			let watchman_wallet = PersistedWallet::load_derive_from_master_xpriv(
 				db.clone(), cfg.network, &master_xpriv, WalletKind::Watchman, deep_tip,
 			).await.context("error loading watchman wallet")?;
+			let frontier = VtxoExitFrontier::init(db.clone()).await?;
+			listeners.push(Box::new(Arc::new(tokio::sync::RwLock::new(frontier))));
 			Some(Arc::new(tokio::sync::Mutex::new(watchman_wallet)))
 		} else {
 			None
@@ -389,7 +393,7 @@ impl Server {
 			rtmgr.clone(),
 			bitcoind.clone(),
 			db.clone(),
-			vec![],
+			listeners,
 			deep_tip,
 			cfg.sync_manager_block_poll_interval,
 			BlockTable::Captaind,

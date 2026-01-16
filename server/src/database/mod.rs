@@ -5,6 +5,7 @@ mod embedded {
 }
 
 pub mod block;
+pub mod watchman;
 pub mod intman;
 pub mod ln;
 pub mod oor;
@@ -263,7 +264,10 @@ impl Db {
 	}
 
 	/// Queries a virtual transaction by txid
-	pub async fn get_virtual_transaction_by_txid(&self, txid: Txid) -> anyhow::Result<Option<VirtualTransaction<'static>>> {
+	pub async fn get_virtual_transaction_by_txid(
+		&self,
+		txid: Txid,
+	) -> anyhow::Result<Option<VirtualTransaction<'static>>> {
 		let conn = self.get_conn().await.context("Failed to connect to db")?;
 		let client: &tokio_postgres::Client = conn.client();
 		query::get_virtual_transaction_by_txid(client, txid).await

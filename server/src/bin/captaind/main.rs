@@ -260,7 +260,7 @@ async fn inner_main() -> anyhow::Result<()> {
 		}
 		Command::Start => {
 			if let Err(e) = Server::run(cfg).await {
-				error!("Shutdown error from server {:?}", e);
+				eprintln!("Shutdown error from server {:?}", e);
 
 				process::exit(1);
 			};

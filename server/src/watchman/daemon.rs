@@ -18,9 +18,10 @@ use bitcoin::secp256k1::Keypair;
 use tracing::info;
 use bitcoin_ext::rpc::{BitcoinRpcClient, BitcoinRpcExt, RpcApi};
 
+use crate::watchman::VtxoExitFrontier;
 use crate::{database, fee_estimator, telemetry, wallet, SECP};
 use crate::database::BlockTable;
-use crate::sync::SyncManager;
+use crate::sync::{ChainEventListener, SyncManager};
 use crate::config::watchmand::Config;
 use crate::system::RuntimeManager;
 use crate::txindex::TxIndex;
@@ -41,6 +42,8 @@ pub struct Daemon {
 	pub tx_nursery: TxNursery,
 	#[allow(unused)]
 	watchman_wallet: Arc<tokio::sync::Mutex<PersistedWallet>>,
+	#[allow(unused)]
+	frontier: Arc<tokio::sync::RwLock<VtxoExitFrontier>>,
 }
 
 impl Daemon {
@@ -163,17 +166,23 @@ impl Daemon {
 		).await.context("error loading watchman wallet")?;
 		let watchman_wallet = Arc::new(tokio::sync::Mutex::new(watchman_wallet));
 
+		let frontier = Arc::new(tokio::sync::RwLock::new(VtxoExitFrontier::init(db.clone()).await?));
+
+		let listeners: Vec<Box<dyn ChainEventListener>> = vec![
+			Box::new(frontier.clone()),
+		];
+
 		let sync_manager = SyncManager::start(
 			rtmgr.clone(),
 			bitcoind.clone(),
 			db.clone(),
-			vec![],
+			listeners,
 			deep_tip,
 			cfg.sync_manager_block_poll_interval,
 			BlockTable::Watchmand,
 		).await.context("Failed to start SyncManager")?;
 
-		Ok(Self { rtmgr, sync_manager, txindex, tx_nursery, watchman_wallet })
+		Ok(Self { rtmgr, sync_manager, txindex, tx_nursery, watchman_wallet, frontier })
 	}
 
 	/// Waits for server to terminate.
