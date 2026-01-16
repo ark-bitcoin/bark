@@ -4,7 +4,8 @@ use bitcoin::hex::DisplayHex;
 use bitcoin::secp256k1::PublicKey;
 use log::{info, error};
 
-use ark::{VtxoRequest, VtxoPolicy, ProtocolEncoding};
+use ark::{VtxoPolicy, ProtocolEncoding};
+use ark::arkoor::ArkoorDestination;
 use ark::arkoor::package::{ArkoorPackageBuilder, ArkoorPackageCosignResponse};
 use ark::vtxo::{Vtxo, VtxoId, VtxoPolicyKind};
 use bitcoin_ext::P2TR_DUST;
@@ -64,16 +65,16 @@ impl Wallet {
 
 	pub(crate) async fn create_checkpointed_arkoor(
 		&self,
-		vtxo_request: VtxoRequest,
+		arkoor_dest: ArkoorDestination,
 		change_pubkey: PublicKey,
 	) -> anyhow::Result<ArkoorCreateResult> {
-		if vtxo_request.policy.user_pubkey() == change_pubkey {
+		if arkoor_dest.policy.user_pubkey() == change_pubkey {
 			bail!("Cannot create arkoor to same address as change");
 		}
 
 		// Find vtxos to cover
 		let mut srv = self.require_server()?;
-		let inputs = self.select_vtxos_to_cover(vtxo_request.amount).await?;
+		let inputs = self.select_vtxos_to_cover(arkoor_dest.total_amount).await?;
 		let input_ids = inputs.iter().map(|v| v.id()).collect();
 
 		let mut user_keypairs = vec![];
@@ -83,7 +84,7 @@ impl Wallet {
 
 		let builder = ArkoorPackageBuilder::new_single_output_with_checkpoints(
 			inputs.iter().map(|v| &v.vtxo).cloned(),
-			vtxo_request,
+			arkoor_dest,
 			VtxoPolicy::new_pubkey(change_pubkey),
 		)
 			.context("Failed to construct arkoor package")?
@@ -152,8 +153,8 @@ impl Wallet {
 		let change_pubkey = self.derive_store_next_keypair().await
 			.context("Failed to create change keypair")?.0;
 
-		let request = VtxoRequest { amount, policy: destination.policy().clone() };
-		let arkoor = self.create_checkpointed_arkoor(request.clone(), change_pubkey.public_key())
+		let dest = ArkoorDestination { total_amount: amount, policy: destination.policy().clone() };
+		let arkoor = self.create_checkpointed_arkoor(dest.clone(), change_pubkey.public_key())
 			.await
 			.context("Failed to create checkpointed transactions")?;
 
@@ -169,7 +170,7 @@ impl Wallet {
 
 		let req = protos::ArkoorPackage {
 			arkoors: arkoor.created.iter().map(|v| protos::ArkoorVtxo {
-				pubkey: request.policy.user_pubkey().serialize().to_vec(),
+				pubkey: dest.policy.user_pubkey().serialize().to_vec(),
 				vtxo: v.serialize().to_vec(),
 			}).collect(),
 		};

@@ -78,10 +78,11 @@ use bitcoin::secp256k1::{schnorr, Keypair, PublicKey};
 use bitcoin_ext::{P2TR_DUST, TxOutExt, fee};
 use secp256k1_musig::musig::PublicNonce;
 
-use crate::{Vtxo, VtxoId, VtxoRequest};
+use crate::{Vtxo, VtxoId};
 use crate::musig;
 use crate::scripts;
 use crate::vtxo::{GenesisItem, GenesisTransition, VtxoPolicy};
+
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, thiserror::Error)]
 pub enum ArkoorConstructionError {
@@ -138,6 +139,17 @@ pub enum ArkoorSigningError {
 	},
 }
 
+/// The destination of an arkoor pacakage
+///
+/// Because arkoor does not allow multiple inputs, often the destinations
+/// are broken up into multiple VTXOs with the same policy.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize, Serialize)]
+pub struct ArkoorDestination {
+	pub total_amount: Amount,
+	#[serde(with = "crate::encode::serde")]
+	pub policy: VtxoPolicy,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ArkoorCosignResponse {
 	pub server_pub_nonces: Vec<musig::PublicNonce>,
@@ -148,8 +160,8 @@ pub struct ArkoorCosignResponse {
 pub struct ArkoorCosignRequest<V> {
 	pub user_pub_nonces: Vec<musig::PublicNonce>,
 	pub input: V,
-	pub outputs: Vec<VtxoRequest>,
-	pub isolated_outputs: Vec<VtxoRequest>,
+	pub outputs: Vec<ArkoorDestination>,
+	pub isolated_outputs: Vec<ArkoorDestination>,
 	pub use_checkpoint: bool,
 }
 
@@ -157,8 +169,8 @@ impl<V> ArkoorCosignRequest<V> {
 	pub fn new(
 		user_pub_nonces: Vec<musig::PublicNonce>,
 		input: V,
-		outputs: Vec<VtxoRequest>,
-		isolated_outputs: Vec<VtxoRequest>,
+		outputs: Vec<ArkoorDestination>,
+		isolated_outputs: Vec<ArkoorDestination>,
 		use_checkpoint: bool,
 	) -> Self {
 		Self {
@@ -234,11 +246,11 @@ pub struct ArkoorBuilder<S: state::BuilderState> {
 	/// The input vtxo to be spent
 	input: Vtxo,
 	/// Regular output vtxos
-	outputs: Vec<VtxoRequest>,
+	outputs: Vec<ArkoorDestination>,
 	/// Isolated outputs that will go through an isolation tx
 	///
 	/// This is meant to isolate dust outputs from non-dust ones.
-	isolated_outputs: Vec<VtxoRequest>,
+	isolated_outputs: Vec<ArkoorDestination>,
 
 	/// Data on the checkpoint tx, if checkpoints are enabled
 	///
@@ -293,7 +305,7 @@ impl<S: state::BuilderState> ArkoorBuilder<S> {
 			.expect("called checkpoint_vtxo_at in context without checkpoints");
 
 		Vtxo {
-			amount: output.amount,
+			amount: output.total_amount,
 			policy: VtxoPolicy::new_checkpoint(self.input.user_pubkey()),
 			expiry_height: self.input.expiry_height,
 			server_pubkey: self.input.server_pubkey,
@@ -335,7 +347,7 @@ impl<S: state::BuilderState> ArkoorBuilder<S> {
 			let checkpoint_policy = VtxoPolicy::new_checkpoint(self.input.user_pubkey());
 
 			Vtxo {
-				amount: output.amount,
+				amount: output.total_amount,
 				policy: output.policy.clone(),
 				expiry_height: self.input.expiry_height,
 				server_pubkey: self.input.server_pubkey,
@@ -375,7 +387,7 @@ impl<S: state::BuilderState> ArkoorBuilder<S> {
 			let arkoor_tx = &self.unsigned_arkoor_txs[0];
 
 			Vtxo {
-				amount: output.amount,
+				amount: output.total_amount,
 				policy: output.policy.clone(),
 				expiry_height: self.input.expiry_height,
 				server_pubkey: self.input.server_pubkey,
@@ -433,7 +445,7 @@ impl<S: state::BuilderState> ArkoorBuilder<S> {
 		if let Some((checkpoint_tx, _txid, _tweak)) = &self.checkpoint_data {
 			// Three transitions: Input → Checkpoint → Dust Fanout → Exit
 			Vtxo {
-				amount: output.amount,
+				amount: output.total_amount,
 				policy: output.policy.clone(),
 				expiry_height: self.input.expiry_height,
 				server_pubkey: self.input.server_pubkey,
@@ -497,7 +509,7 @@ impl<S: state::BuilderState> ArkoorBuilder<S> {
 			let arkoor_tx = &self.unsigned_arkoor_txs[0];
 
 			Vtxo {
-				amount: output.amount,
+				amount: output.total_amount,
 				policy: output.policy.clone(),
 				expiry_height: self.input.expiry_height,
 				server_pubkey: self.input.server_pubkey,
@@ -604,7 +616,7 @@ impl<S: state::BuilderState> ArkoorBuilder<S> {
 			};
 
 			Some(Vtxo {
-				amount: self.isolated_outputs.iter().map(|o| o.amount).sum(),
+				amount: self.isolated_outputs.iter().map(|o| o.total_amount).sum(),
 				policy: VtxoPolicy::new_checkpoint(self.input.user_pubkey()),
 				expiry_height: self.input.expiry_height,
 				server_pubkey: self.input.server_pubkey,
@@ -732,7 +744,7 @@ impl<S: state::BuilderState> ArkoorBuilder<S> {
 	/// with the total dust amount.
 	fn construct_unsigned_checkpoint_tx(
 		input: &Vtxo,
-		outputs: &[VtxoRequest],
+		outputs: &[ArkoorDestination],
 		dust_isolation_amount: Option<Amount>,
 	) -> Transaction {
 		// All outputs on the checkpoint transaction will use exactly the same policy.
@@ -751,7 +763,7 @@ impl<S: state::BuilderState> ArkoorBuilder<S> {
 			}],
 			output: outputs.iter().map(|o| {
 				TxOut {
-					value: o.amount,
+					value: o.total_amount,
 					script_pubkey: checkpoint_spk.clone(),
 				}
 			})
@@ -768,7 +780,7 @@ impl<S: state::BuilderState> ArkoorBuilder<S> {
 
 	fn construct_unsigned_arkoor_txs(
 		input: &Vtxo,
-		outputs: &[VtxoRequest],
+		outputs: &[ArkoorDestination],
 		checkpoint_txid: Option<Txid>,
 		dust_isolation_amount: Option<Amount>,
 	) -> Vec<Transaction> {
@@ -788,7 +800,7 @@ impl<S: state::BuilderState> ArkoorBuilder<S> {
 					}],
 					output: vec![
 						output.policy.txout(
-							output.amount,
+							output.total_amount,
 							input.server_pubkey(),
 							input.exit_delta(),
 							input.expiry_height(),
@@ -820,7 +832,7 @@ impl<S: state::BuilderState> ArkoorBuilder<S> {
 				}],
 				output: outputs.iter()
 					.map(|o| o.policy.txout(
-						o.amount,
+						o.total_amount,
 						input.server_pubkey(),
 						input.exit_delta(),
 						input.expiry_height(),
@@ -846,7 +858,7 @@ impl<S: state::BuilderState> ArkoorBuilder<S> {
 	/// `parent_txid` is either the checkpoint txid (checkpoint mode) or arkoor txid (direct mode)
 	fn construct_unsigned_isolation_fanout_tx(
 		input: &Vtxo,
-		isolated_outputs: &[VtxoRequest],
+		isolated_outputs: &[ArkoorDestination],
 		parent_txid: Txid,  // Either checkpoint txid or arkoor txid
 		dust_isolation_output_vout: u32,  // Output index containing the dust isolation output
 	) -> Transaction {
@@ -857,7 +869,7 @@ impl<S: state::BuilderState> ArkoorBuilder<S> {
 
 		let mut tx_outputs: Vec<TxOut> = isolated_outputs.iter().map(|o| {
 			TxOut {
-				value: o.amount,
+				value: o.total_amount,
 				script_pubkey: checkpoint_spk.clone(),
 			}
 		}).collect();
@@ -885,7 +897,7 @@ impl<S: state::BuilderState> ArkoorBuilder<S> {
 	/// Called only when dust isolation is needed.
 	fn construct_unsigned_dust_exit_txs(
 		input: &Vtxo,
-		isolated_outputs: &[VtxoRequest],
+		isolated_outputs: &[ArkoorDestination],
 		isolation_fanout_tx: &Transaction,
 	) -> Vec<Transaction> {
 		let fanout_txid = isolation_fanout_tx.compute_txid();
@@ -903,7 +915,7 @@ impl<S: state::BuilderState> ArkoorBuilder<S> {
 				output: vec![
 					// Final vtxo with user's requested policy
 					output.policy.txout(
-						output.amount,
+						output.total_amount,
 						input.server_pubkey(),
 						input.exit_delta(),
 						input.expiry_height(),
@@ -916,8 +928,8 @@ impl<S: state::BuilderState> ArkoorBuilder<S> {
 
 	fn validate_amounts(
 		input: &Vtxo,
-		outputs: &[VtxoRequest],
-		isolation_outputs: &[VtxoRequest],
+		outputs: &[ArkoorDestination],
+		isolation_outputs: &[ArkoorDestination],
 	) -> Result<(), ArkoorConstructionError> {
 		// Check if inputs and outputs are balanced
 		// We need to build transactions that pay exactly 0 in onchain fees
@@ -925,7 +937,7 @@ impl<S: state::BuilderState> ArkoorBuilder<S> {
 		// We need `==` for standardness and we can't be lenient
 		let input_amount = input.amount();
 		let output_amount = outputs.iter().chain(isolation_outputs.iter())
-			.map(|o| o.amount).sum::<Amount>();
+			.map(|o| o.total_amount).sum::<Amount>();
 
 		if input_amount != output_amount {
 			return Err(ArkoorConstructionError::Unbalanced {
@@ -942,7 +954,7 @@ impl<S: state::BuilderState> ArkoorBuilder<S> {
 		// If isolation is provided, the sum must be over dust threshold
 		if !isolation_outputs.is_empty() {
 			let isolation_sum: Amount = isolation_outputs.iter()
-				.map(|o| o.amount).sum();
+				.map(|o| o.total_amount).sum();
 			if isolation_sum < P2TR_DUST {
 				return Err(ArkoorConstructionError::Dust)
 			}
@@ -978,8 +990,8 @@ impl ArkoorBuilder<state::Initial> {
 	/// Create builder with checkpoint transaction
 	pub fn new_with_checkpoint(
 		input: Vtxo,
-		outputs: Vec<VtxoRequest>,
-		isolated_outputs: Vec<VtxoRequest>,
+		outputs: Vec<ArkoorDestination>,
+		isolated_outputs: Vec<ArkoorDestination>,
 	) -> Result<Self, ArkoorConstructionError> {
 		Self::new(input, outputs, isolated_outputs, true)
 	}
@@ -987,8 +999,8 @@ impl ArkoorBuilder<state::Initial> {
 	/// Create builder without checkpoint transaction
 	pub fn new_without_checkpoint(
 		input: Vtxo,
-		outputs: Vec<VtxoRequest>,
-		isolated_outputs: Vec<VtxoRequest>,
+		outputs: Vec<ArkoorDestination>,
+		isolated_outputs: Vec<ArkoorDestination>,
 	) -> Result<Self, ArkoorConstructionError> {
 		Self::new(input, outputs, isolated_outputs, false)
 	}
@@ -999,20 +1011,20 @@ impl ArkoorBuilder<state::Initial> {
 	/// determines the best strategy for handling dust.
 	pub fn new_with_checkpoint_isolate_dust(
 		input: Vtxo,
-		outputs: Vec<VtxoRequest>,
+		outputs: Vec<ArkoorDestination>,
 	) -> Result<Self, ArkoorConstructionError> {
 		// fast track if they're either all dust or all non dust
-		if outputs.iter().all(|v| v.amount >= P2TR_DUST)
-			|| outputs.iter().all(|v| v.amount < P2TR_DUST)
+		if outputs.iter().all(|v| v.total_amount >= P2TR_DUST)
+			|| outputs.iter().all(|v| v.total_amount < P2TR_DUST)
 		{
 			return Self::new_with_checkpoint(input, outputs, vec![]);
 		}
 
 		// else split them up by dust limit
 		let (mut dust, mut non_dust) = outputs.into_iter()
-			.partition::<Vec<_>, _>(|v| v.amount < P2TR_DUST);
+			.partition::<Vec<_>, _>(|v| v.total_amount < P2TR_DUST);
 
-		let dust_sum = dust.iter().map(|o| o.amount).sum::<Amount>();
+		let dust_sum = dust.iter().map(|o| o.total_amount).sum::<Amount>();
 		if dust_sum >= P2TR_DUST {
 			return Self::new_with_checkpoint(input, non_dust, dust);
 		}
@@ -1020,19 +1032,19 @@ impl ArkoorBuilder<state::Initial> {
 		// now it get's interesting, we need to break a vtxo in two
 		let deficit = P2TR_DUST - dust_sum;
 		// Find first viable output to split
-		// Viable = output.amount - deficit >= P2TR_DUST (won't create two dust)
+		// Viable = output.total_amount - deficit >= P2TR_DUST (won't create two dust)
 		let split_idx = non_dust.iter()
-			.position(|o| o.amount - deficit >= P2TR_DUST);
+			.position(|o| o.total_amount - deficit >= P2TR_DUST);
 
 		if let Some(idx) = split_idx {
 			let output_to_split = non_dust[idx].clone();
 
-			let dust_piece = VtxoRequest {
-				amount: deficit,
+			let dust_piece = ArkoorDestination {
+				total_amount: deficit,
 				policy: output_to_split.policy.clone(),
 			};
-			let leftover = VtxoRequest {
-				amount: output_to_split.amount - deficit,
+			let leftover = ArkoorDestination {
+				total_amount: output_to_split.total_amount - deficit,
 				policy: output_to_split.policy,
 			};
 
@@ -1049,8 +1061,8 @@ impl ArkoorBuilder<state::Initial> {
 
 	pub(crate) fn new(
 		input: Vtxo,
-		outputs: Vec<VtxoRequest>,
-		isolated_outputs: Vec<VtxoRequest>,
+		outputs: Vec<ArkoorDestination>,
+		isolated_outputs: Vec<ArkoorDestination>,
 		use_checkpoint: bool,
 	) -> Result<Self, ArkoorConstructionError> {
 		// Do some validation on the amounts
@@ -1058,7 +1070,7 @@ impl ArkoorBuilder<state::Initial> {
 
 		// Compute combined dust amount if dust isolation is needed
 		let combined_dust_amount = if !isolated_outputs.is_empty() {
-			Some(isolated_outputs.iter().map(|o| o.amount).sum())
+			Some(isolated_outputs.iter().map(|o| o.total_amount).sum())
 		} else {
 			None
 		};
@@ -1483,7 +1495,6 @@ mod test {
 	use bitcoin::secp256k1::rand;
 
 	use crate::SECP;
-	use crate::VtxoRequest;
 	use crate::test::dummy::DummyTestVtxoSpec;
 
 
@@ -1509,13 +1520,13 @@ mod test {
 		// Validate Alice her vtxo
 		alice_vtxo.validate(&funding_tx).expect("The unsigned vtxo is valid");
 
-		let vtxo_request = vec![
-			VtxoRequest {
-				amount: Amount::from_sat(96_000),
+		let dest = vec![
+			ArkoorDestination {
+				total_amount: Amount::from_sat(96_000),
 				policy: VtxoPolicy::new_pubkey(bob_keypair.public_key())
 			},
-			VtxoRequest {
-				amount: Amount::from_sat(4_000),
+			ArkoorDestination {
+				total_amount: Amount::from_sat(4_000),
 				policy: VtxoPolicy::new_pubkey(alice_keypair.public_key())
 			}
 		];
@@ -1523,7 +1534,7 @@ mod test {
 		// The user generates their nonces
 		let user_builder = ArkoorBuilder::new_with_checkpoint(
 			alice_vtxo.clone(),
-			vtxo_request.clone(),
+			dest.clone(),
 			vec![], // no isolation outputs
 		).expect("Valid arkoor request");
 
@@ -1588,20 +1599,20 @@ mod test {
 
 		// Non-dust outputs (>= 330 sats)
 		let outputs = vec![
-			VtxoRequest {
-				amount: Amount::from_sat(99_600),
+			ArkoorDestination {
+				total_amount: Amount::from_sat(99_600),
 				policy: VtxoPolicy::new_pubkey(bob_keypair.public_key())
 			},
 		];
 
 		// dust outputs (< 330 sats each, but combined >= 330)
 		let dust_outputs = vec![
-			VtxoRequest {
-				amount: Amount::from_sat(200),  // < 330, truly dust
+			ArkoorDestination {
+				total_amount: Amount::from_sat(200),  // < 330, truly dust
 				policy: VtxoPolicy::new_pubkey(charlie_keypair.public_key())
 			},
-			VtxoRequest {
-				amount: Amount::from_sat(200),  // < 330, truly dust
+			ArkoorDestination {
+				total_amount: Amount::from_sat(200),  // < 330, truly dust
 				policy: VtxoPolicy::new_pubkey(alice_keypair.public_key())
 			}
 		];
@@ -1684,8 +1695,8 @@ mod test {
 		ArkoorBuilder::new_with_checkpoint(
 			alice_vtxo.clone(),
 			vec![
-				VtxoRequest {
-					amount: Amount::from_sat(100),  // < 330 sats (P2TR_DUST)
+				ArkoorDestination {
+					total_amount: Amount::from_sat(100),  // < 330 sats (P2TR_DUST)
 					policy: VtxoPolicy::new_pubkey(bob_keypair.public_key())
 				}; 10
 			],
@@ -1697,8 +1708,8 @@ mod test {
 			alice_vtxo.clone(),
 			vec![],
 			vec![
-				VtxoRequest {
-					amount: Amount::from_sat(100),  // < 330 sats (P2TR_DUST)
+				ArkoorDestination {
+					total_amount: Amount::from_sat(100),  // < 330 sats (P2TR_DUST)
 					policy: VtxoPolicy::new_pubkey(bob_keypair.public_key())
 				}; 10
 			],
@@ -1712,14 +1723,14 @@ mod test {
 		ArkoorBuilder::new_with_checkpoint(
 			alice_vtxo.clone(),
 			vec![
-				VtxoRequest {
-					amount: Amount::from_sat(330),  // >= 330 sats
+				ArkoorDestination {
+					total_amount: Amount::from_sat(330),  // >= 330 sats
 					policy: VtxoPolicy::new_pubkey(alice_keypair.public_key())
 				}; 2
 			],
 			vec![
-				VtxoRequest {
-					amount: Amount::from_sat(170),
+				ArkoorDestination {
+					total_amount: Amount::from_sat(170),
 					policy: VtxoPolicy::new_pubkey(alice_keypair.public_key())
 				}; 2
 			],
@@ -1729,18 +1740,18 @@ mod test {
 		let res_mixed_small = ArkoorBuilder::new_with_checkpoint(
 			alice_vtxo.clone(),
 			vec![
-				VtxoRequest {
-					amount: Amount::from_sat(500),
+				ArkoorDestination {
+					total_amount: Amount::from_sat(500),
 					policy: VtxoPolicy::new_pubkey(alice_keypair.public_key())
 				},
-				VtxoRequest {
-					amount: Amount::from_sat(300),
+				ArkoorDestination {
+					total_amount: Amount::from_sat(300),
 					policy: VtxoPolicy::new_pubkey(alice_keypair.public_key())
 				}
 			],
 			vec![
-				VtxoRequest {
-					amount: Amount::from_sat(100),
+				ArkoorDestination {
+					total_amount: Amount::from_sat(100),
 					policy: VtxoPolicy::new_pubkey(alice_keypair.public_key())
 				}; 2  // sum = 200, which is < 330
 			],
@@ -1770,20 +1781,20 @@ mod test {
 
 		// Non-dust outputs
 		let outputs = vec![
-			VtxoRequest {
-				amount: Amount::from_sat(99_900),
+			ArkoorDestination {
+				total_amount: Amount::from_sat(99_900),
 				policy: VtxoPolicy::new_pubkey(bob_keypair.public_key())
 			},
 		];
 
 		// dust outputs with combined sum < P2TR_DUST (330)
 		let dust_outputs = vec![
-			VtxoRequest {
-				amount: Amount::from_sat(50),
+			ArkoorDestination {
+				total_amount: Amount::from_sat(50),
 				policy: VtxoPolicy::new_pubkey(alice_keypair.public_key())
 			},
-			VtxoRequest {
-				amount: Amount::from_sat(50),
+			ArkoorDestination {
+				total_amount: Amount::from_sat(50),
 				policy: VtxoPolicy::new_pubkey(alice_keypair.public_key())
 			}
 		];
@@ -1821,12 +1832,12 @@ mod test {
 		// Split into two 100 sat outputs
 		// outputs is empty, all outputs go to dust_outputs
 		let dust_outputs = vec![
-			VtxoRequest {
-				amount: Amount::from_sat(100),
+			ArkoorDestination {
+				total_amount: Amount::from_sat(100),
 				policy: VtxoPolicy::new_pubkey(bob_keypair.public_key())
 			},
-			VtxoRequest {
-				amount: Amount::from_sat(100),
+			ArkoorDestination {
+				total_amount: Amount::from_sat(100),
 				policy: VtxoPolicy::new_pubkey(alice_keypair.public_key())
 			}
 		];
@@ -1910,12 +1921,12 @@ mod test {
 		// Split into two 250 sat outputs (each below P2TR_DUST)
 		// outputs is empty, all outputs go to dust_outputs
 		let dust_outputs = vec![
-			VtxoRequest {
-				amount: Amount::from_sat(250),
+			ArkoorDestination {
+				total_amount: Amount::from_sat(250),
 				policy: VtxoPolicy::new_pubkey(bob_keypair.public_key())
 			},
-			VtxoRequest {
-				amount: Amount::from_sat(250),
+			ArkoorDestination {
+				total_amount: Amount::from_sat(250),
 				policy: VtxoPolicy::new_pubkey(alice_keypair.public_key())
 			}
 		];
@@ -1998,12 +2009,12 @@ mod test {
 		let builder = ArkoorBuilder::new_with_checkpoint_isolate_dust(
 			alice_vtxo,
 			vec![
-				VtxoRequest {
-					amount: Amount::from_sat(500),
+				ArkoorDestination {
+					total_amount: Amount::from_sat(500),
 					policy: VtxoPolicy::new_pubkey(bob_keypair.public_key())
 				},
-				VtxoRequest {
-					amount: Amount::from_sat(500),
+				ArkoorDestination {
+					total_amount: Amount::from_sat(500),
 					policy: VtxoPolicy::new_pubkey(bob_keypair.public_key())
 				}
 			],
@@ -2039,12 +2050,12 @@ mod test {
 		let builder = ArkoorBuilder::new_with_checkpoint_isolate_dust(
 			alice_vtxo,
 			vec![
-				VtxoRequest {
-					amount: Amount::from_sat(200),
+				ArkoorDestination {
+					total_amount: Amount::from_sat(200),
 					policy: VtxoPolicy::new_pubkey(bob_keypair.public_key())
 				},
-				VtxoRequest {
-					amount: Amount::from_sat(200),
+				ArkoorDestination {
+					total_amount: Amount::from_sat(200),
 					policy: VtxoPolicy::new_pubkey(bob_keypair.public_key())
 				}
 			],
@@ -2081,16 +2092,16 @@ mod test {
 		let builder = ArkoorBuilder::new_with_checkpoint_isolate_dust(
 			alice_vtxo,
 			vec![
-				VtxoRequest {
-					amount: Amount::from_sat(600),
+				ArkoorDestination {
+					total_amount: Amount::from_sat(600),
 					policy: VtxoPolicy::new_pubkey(bob_keypair.public_key())
 				},
-				VtxoRequest {
-					amount: Amount::from_sat(200),
+				ArkoorDestination {
+					total_amount: Amount::from_sat(200),
 					policy: VtxoPolicy::new_pubkey(bob_keypair.public_key())
 				},
-				VtxoRequest {
-					amount: Amount::from_sat(200),
+				ArkoorDestination {
+					total_amount: Amount::from_sat(200),
 					policy: VtxoPolicy::new_pubkey(bob_keypair.public_key())
 				}
 			],
@@ -2127,16 +2138,16 @@ mod test {
 		let builder = ArkoorBuilder::new_with_checkpoint_isolate_dust(
 			alice_vtxo,
 			vec![
-				VtxoRequest {
-					amount: Amount::from_sat(800),
+				ArkoorDestination {
+					total_amount: Amount::from_sat(800),
 					policy: VtxoPolicy::new_pubkey(bob_keypair.public_key())
 				},
-				VtxoRequest {
-					amount: Amount::from_sat(100),
+				ArkoorDestination {
+					total_amount: Amount::from_sat(100),
 					policy: VtxoPolicy::new_pubkey(bob_keypair.public_key())
 				},
-				VtxoRequest {
-					amount: Amount::from_sat(100),
+				ArkoorDestination {
+					total_amount: Amount::from_sat(100),
 					policy: VtxoPolicy::new_pubkey(bob_keypair.public_key())
 				}
 			],
@@ -2151,8 +2162,8 @@ mod test {
 		assert_eq!(builder.isolated_outputs.len(), 3);
 
 		// Verify the split amounts
-		assert_eq!(builder.outputs[0].amount, Amount::from_sat(670));
-		let isolated_sum: Amount = builder.isolated_outputs.iter().map(|o| o.amount).sum();
+		assert_eq!(builder.outputs[0].total_amount, Amount::from_sat(670));
+		let isolated_sum: Amount = builder.isolated_outputs.iter().map(|o| o.total_amount).sum();
 		assert_eq!(isolated_sum, P2TR_DUST);
 	}
 
@@ -2179,16 +2190,16 @@ mod test {
 		let builder = ArkoorBuilder::new_with_checkpoint_isolate_dust(
 			alice_vtxo,
 			vec![
-				VtxoRequest {
-					amount: Amount::from_sat(400),
+				ArkoorDestination {
+					total_amount: Amount::from_sat(400),
 					policy: VtxoPolicy::new_pubkey(bob_keypair.public_key())
 				},
-				VtxoRequest {
-					amount: Amount::from_sat(100),
+				ArkoorDestination {
+					total_amount: Amount::from_sat(100),
 					policy: VtxoPolicy::new_pubkey(bob_keypair.public_key())
 				},
-				VtxoRequest {
-					amount: Amount::from_sat(100),
+				ArkoorDestination {
+					total_amount: Amount::from_sat(100),
 					policy: VtxoPolicy::new_pubkey(bob_keypair.public_key())
 				}
 			],
@@ -2225,16 +2236,16 @@ mod test {
 		let builder = ArkoorBuilder::new_with_checkpoint_isolate_dust(
 			alice_vtxo,
 			vec![
-				VtxoRequest {
-					amount: Amount::from_sat(660),
+				ArkoorDestination {
+					total_amount: Amount::from_sat(660),
 					policy: VtxoPolicy::new_pubkey(bob_keypair.public_key())
 				},
-				VtxoRequest {
-					amount: Amount::from_sat(170),
+				ArkoorDestination {
+					total_amount: Amount::from_sat(170),
 					policy: VtxoPolicy::new_pubkey(bob_keypair.public_key())
 				},
-				VtxoRequest {
-					amount: Amount::from_sat(170),
+				ArkoorDestination {
+					total_amount: Amount::from_sat(170),
 					policy: VtxoPolicy::new_pubkey(bob_keypair.public_key())
 				}
 			],
@@ -2249,8 +2260,8 @@ mod test {
 		assert_eq!(builder.isolated_outputs.len(), 2);
 
 		// Verify amounts weren't modified
-		assert_eq!(builder.outputs[0].amount, Amount::from_sat(660));
-		assert_eq!(builder.isolated_outputs[0].amount, Amount::from_sat(170));
-		assert_eq!(builder.isolated_outputs[1].amount, Amount::from_sat(170));
+		assert_eq!(builder.outputs[0].total_amount, Amount::from_sat(660));
+		assert_eq!(builder.isolated_outputs[0].total_amount, Amount::from_sat(170));
+		assert_eq!(builder.isolated_outputs[1].total_amount, Amount::from_sat(170));
 	}
 }

@@ -6,6 +6,7 @@ use std::cmp;
 use std::collections::HashMap;
 
 use anyhow::Context;
+use ark::arkoor::ArkoorDestination;
 use bitcoin::Amount;
 use bitcoin::hex::DisplayHex;
 use bitcoin::secp256k1::{schnorr, PublicKey};
@@ -73,7 +74,7 @@ impl Server {
 
 		let user_htlc_amount = request.outputs()
 			.filter(|v| matches!(v.policy, VtxoPolicy::ServerHtlcSend(..)))
-			.map(|v| v.amount)
+			.map(|v| v.total_amount)
 			.sum::<Amount>();
 
 		// Check if the provided requests are sufficient to pay the invoice
@@ -469,13 +470,13 @@ impl Server {
 				},
 			};
 
-			let request = VtxoRequest {
-				amount: sub.amount(),
+			let dest = ArkoorDestination {
+				total_amount: sub.amount(),
 				policy: VtxoPolicy::new_server_htlc_recv(
 					user_pubkey, payment_hash, expiry, self.config.htlc_expiry_delta,
 				),
 			};
-			self.vtxopool.send_arkoor(self, request).await.context("vtxopool error")?
+			self.vtxopool.send_arkoor(self, dest).await.context("vtxopool error")?
 		};
 
 		self.db.update_lightning_htlc_subscription_with_htlcs(

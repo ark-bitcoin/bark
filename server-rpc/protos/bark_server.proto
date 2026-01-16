@@ -160,12 +160,17 @@ message VtxoRequest {
 	bytes policy = 2;
 }
 
+message ArkoorDestination {
+	uint64 total_amount = 1;
+	bytes policy = 2;
+}
+
 message ArkoorCosignRequest {
 	bytes input_vtxo_id = 1;
-	repeated VtxoRequest outputs = 2;
+	repeated ArkoorDestination outputs = 2;
 	repeated bytes user_pub_nonces = 3;
 	// outputs used for dust isolation
-	repeated VtxoRequest isolated_outputs = 4;
+	repeated ArkoorDestination isolated_outputs = 4;
 	bool use_checkpoint = 5;
 }
 

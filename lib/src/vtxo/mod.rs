@@ -85,6 +85,7 @@ use bitcoin::taproot::LeafVersion;
 use bitcoin_ext::{fee, BlockDelta, BlockHeight, TaprootSpendInfoExt, TxOutExt};
 
 use crate::{musig, scripts};
+use crate::arkoor::ArkoorDestination;
 use crate::encode::{ProtocolDecodingError, ProtocolEncoding, ReadExt, WriteExt};
 use crate::lightning::PaymentHash;
 use crate::tree::signed::{cosign_taproot, leaf_cosign_taproot, unlock_clause, UnlockHash, UnlockPreimage};
@@ -1211,21 +1212,21 @@ use crate::tree::signed::{VtxoLeafSpec, VtxoTreeSpec};
 
 		let arkoor_htlc_out_user_key = Keypair::from_str("33b6f3ede430a1a53229f55da7117242d8392cbfc64a57249ba70731dba71408").unwrap();
 		let payment_hash = PaymentHash::from(sha256::Hash::hash("arkoor1".as_bytes()).to_byte_array());
-		let arkoor1_req1 = VtxoRequest {
-			amount: Amount::from_sat(9000),
+		let arkoor1_dest1 = ArkoorDestination {
+			total_amount: Amount::from_sat(9000),
 			policy: VtxoPolicy::ServerHtlcSend(ServerHtlcSendVtxoPolicy {
 				user_pubkey: arkoor_htlc_out_user_key.public_key(),
 				payment_hash,
 				htlc_expiry: expiry_height - 1000,
 			}),
 		};
-		let arkoor1_req2 = VtxoRequest {
-			amount: Amount::from_sat(1000),
+		let arkoor1_dest2 = ArkoorDestination {
+			total_amount: Amount::from_sat(1000),
 			policy: VtxoPolicy::new_pubkey("0229b7de0ce4d573192d002a6f9fd1109e00f7bae52bf10780d6f6e73e12a8390f".parse().unwrap()),
 		};
 		let (sec_nonce, pub_nonce) = musig::nonce_pair(&board_user_key);
 		let builder = ArkoorPackageBuilder::new_with_checkpoints(
-			[board_vtxo.clone()], vec![arkoor1_req1, arkoor1_req2],
+			[board_vtxo.clone()], vec![arkoor1_dest1, arkoor1_dest2],
 		).unwrap().generate_user_nonces(&[board_user_key]).unwrap();
 		let cosign = ArkoorPackageBuilder::from_cosign_request(
 			builder.cosign_request(),
@@ -1239,17 +1240,17 @@ use crate::tree::signed::{VtxoLeafSpec, VtxoTreeSpec};
 		// arkoor2: regular pubkey
 
 		let arkoor2_user_key = Keypair::from_str("fcc43a4f03356092a945ca1d7218503156bed3f94c2fa224578ce5b158fbf5a6").unwrap();
-		let arkoor2_req1 = VtxoRequest {
-			amount: Amount::from_sat(8000),
+		let arkoor2_dest1 = ArkoorDestination {
+			total_amount: Amount::from_sat(8000),
 			policy: VtxoPolicy::new_pubkey(arkoor2_user_key.public_key()),
 		};
-		let arkoor2_req2 = VtxoRequest {
-			amount: Amount::from_sat(1000),
+		let arkoor2_dest2 = ArkoorDestination {
+			total_amount: Amount::from_sat(1000),
 			policy: VtxoPolicy::new_pubkey("037039dc4f4b16e78059d2d56eb98d181cb1bdff2675694d39d92c4a2ea08ced88".parse().unwrap()),
 		};
 		let (sec_nonce, pub_nonce) = musig::nonce_pair(&arkoor_htlc_out_user_key);
 		let builder = ArkoorPackageBuilder::new_with_checkpoints(
-			[arkoor_htlc_out_vtxo.clone()], vec![arkoor2_req1, arkoor2_req2],
+			[arkoor_htlc_out_vtxo.clone()], vec![arkoor2_dest1, arkoor2_dest2],
 		).unwrap().generate_user_nonces(&[arkoor_htlc_out_user_key]).unwrap();
 		let cosign = ArkoorPackageBuilder::from_cosign_request(
 			builder.cosign_request(),
@@ -1410,13 +1411,13 @@ use crate::tree::signed::{VtxoLeafSpec, VtxoTreeSpec};
 		// arkoor3: off from round2's htlc
 
 		let arkoor3_user_key = Keypair::from_str("ad12595bdbdab56cb61d1f60ccc46ff96b11c5d6fe06ae7ba03d3a5f4347440f").unwrap();
-		let arkoor3_req = VtxoRequest {
-			amount: Amount::from_sat(10_000),
+		let arkoor3_dest = ArkoorDestination {
+			total_amount: Amount::from_sat(10_000),
 			policy: VtxoPolicy::Pubkey(PubkeyVtxoPolicy { user_pubkey: arkoor3_user_key.public_key() }),
 		};
 		let (sec_nonce, pub_nonce) = musig::nonce_pair(&round2_user_key);
 		let builder = ArkoorPackageBuilder::new_with_checkpoints(
-			[round2_vtxo.clone()], vec![arkoor3_req],
+			[round2_vtxo.clone()], vec![arkoor3_dest],
 		).unwrap().generate_user_nonces(&[round2_user_key]).unwrap();
 		let cosign = ArkoorPackageBuilder::from_cosign_request(
 			builder.cosign_request(),

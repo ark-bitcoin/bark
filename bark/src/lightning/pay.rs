@@ -2,6 +2,7 @@ use std::fmt;
 
 use anyhow::Context;
 use ark::arkoor::package::{ArkoorPackageBuilder, ArkoorPackageCosignResponse};
+use ark::arkoor::ArkoorDestination;
 use bitcoin::Amount;
 use bitcoin::hex::DisplayHex;
 use lightning::util::ser::Writeable;
@@ -9,7 +10,7 @@ use lnurllib::lightning_address::LightningAddress;
 use log::{error, info, trace, warn};
 use server_rpc::protos::{self, lightning_payment_status::PaymentStatus};
 
-use ark::{VtxoPolicy, VtxoRequest, musig};
+use ark::{musig, VtxoPolicy};
 use ark::lightning::{Bolt12Invoice, Bolt12InvoiceExt, Invoice, Offer, PaymentHash, Preimage};
 use ark::util::IteratorExt;
 use bitcoin_ext::{BlockHeight, P2TR_DUST};
@@ -463,15 +464,15 @@ impl Wallet {
 		);
 
 		let input_amount = inputs.iter().map(|v| v.amount()).sum::<Amount>();
-		let pay_req = VtxoRequest { amount, policy };
+		let pay_dest = ArkoorDestination { total_amount: amount, policy };
 		let outputs = if input_amount == amount {
-			vec![pay_req]
+			vec![pay_dest]
 		} else {
-			let change_req = VtxoRequest {
-				amount: input_amount - amount,
+			let change_dest = ArkoorDestination {
+				total_amount: input_amount - amount,
 				policy: VtxoPolicy::new_pubkey(user_keypair.public_key()),
 			};
-			vec![pay_req, change_req]
+			vec![pay_dest, change_dest]
 		};
 		let builder = ArkoorPackageBuilder::new_with_checkpoints(
 			inputs.iter().map(|v| &v.vtxo).cloned(),

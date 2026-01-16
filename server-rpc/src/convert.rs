@@ -8,7 +8,7 @@ use bitcoin::secp256k1::{schnorr, PublicKey};
 use bitcoin::{self, Amount, FeeRate, OutPoint, ScriptBuf, Transaction, Txid};
 
 use ark::{musig, ProtocolEncoding, SignedVtxoRequest, Vtxo, VtxoId, VtxoPolicy, VtxoRequest};
-use ark::arkoor::{ArkoorCosignRequest, ArkoorCosignResponse};
+use ark::arkoor::{ArkoorCosignRequest, ArkoorCosignResponse, ArkoorDestination};
 use ark::arkoor::package::{ArkoorPackageCosignRequest, ArkoorPackageCosignResponse};
 use ark::board::BoardCosignResponse;
 use ark::challenges::RoundAttemptChallenge;
@@ -319,6 +319,25 @@ impl TryFrom<protos::VtxoRequest> for VtxoRequest {
 	}
 }
 
+impl TryFrom<protos::ArkoorDestination> for ArkoorDestination {
+	type Error = ConvertError;
+	fn try_from(v: protos::ArkoorDestination) -> Result<Self, Self::Error> {
+		Ok(Self {
+			total_amount: Amount::from_sat(v.total_amount),
+			policy: VtxoPolicy::deserialize(&v.policy).map_err(|_| "invalid policy")?,
+		})
+	}
+}
+
+impl From<ArkoorDestination> for protos::ArkoorDestination {
+	fn from(v: ArkoorDestination) -> Self {
+		Self {
+			total_amount: v.total_amount.to_sat(),
+			policy: v.policy.serialize(),
+		}
+	}
+}
+
 impl From<SignedVtxoRequest> for protos::SignedVtxoRequest {
 	fn from(v: SignedVtxoRequest) -> Self {
 		protos::SignedVtxoRequest {
@@ -416,18 +435,10 @@ impl<V: VtxoRef> From<ArkoorCosignRequest<V>> for protos::ArkoorCosignRequest {
 			user_pub_nonces: v.user_pub_nonces.into_iter()
 				.map(|n| n.serialize().to_vec())
 				.collect::<Vec<_>>(),
-			outputs: v.outputs.into_iter().map(|output| {
-				protos::VtxoRequest {
-					amount: output.amount.to_sat(),
-					policy: output.policy.serialize()
-				}
-			}).collect::<Vec<_>>(),
-			isolated_outputs: v.isolated_outputs.into_iter().map(|output| {
-				protos::VtxoRequest {
-					amount: output.amount.to_sat(),
-					policy: output.policy.serialize()
-				}
-			}).collect::<Vec<_>>(),
+			outputs: v.outputs.into_iter().map(|output| output.into()).collect::<Vec<_>>(),
+			isolated_outputs: v.isolated_outputs.into_iter()
+				.map(|output| output.into())
+				.collect::<Vec<_>>(),
 			use_checkpoint: v.use_checkpoint,
 		}
 	}
@@ -443,10 +454,10 @@ impl TryFrom<protos::ArkoorCosignRequest> for ArkoorCosignRequest<VtxoId> {
 				.collect::<Result<Vec<_>, _>>()?,
 			VtxoId::from_bytes(&v.input_vtxo_id)?,
 			v.outputs.into_iter()
-				.map(|output| VtxoRequest::try_from(output))
+				.map(|output| ArkoorDestination::try_from(output))
 				.collect::<Result<Vec<_>, _>>()?,
 			v.isolated_outputs.into_iter()
-				.map(|output| VtxoRequest::try_from(output))
+				.map(|output| ArkoorDestination::try_from(output))
 				.collect::<Result<Vec<_>, _>>()?,
 			v.use_checkpoint,
 		))

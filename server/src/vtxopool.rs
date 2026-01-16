@@ -12,6 +12,7 @@ use futures::{stream, StreamExt, TryStreamExt};
 use tracing::{info, warn};
 
 use ark::{Vtxo, VtxoId, VtxoPolicy, VtxoRequest};
+use ark::arkoor::ArkoorDestination;
 use ark::arkoor::package::ArkoorPackageBuilder;
 use ark::tree::signed::{LeafVtxoCosignContext, UnlockPreimage};
 use ark::tree::signed::builder::SignedTreeBuilder;
@@ -240,7 +241,7 @@ impl VtxoPool {
 	async fn prepare_arkoor(
 		&self,
 		srv: &Server,
-		req: VtxoRequest,
+		dest: ArkoorDestination,
 		inputs: &[(VtxoId, BlockHeight, Amount)],
 	) -> anyhow::Result<Vec<Vtxo>> {
 		let input_ids = inputs.iter().map(|v| v.0).collect::<Vec<_>>();
@@ -261,13 +262,14 @@ impl VtxoPool {
 
 		let change_key = srv.generate_ephemeral_cosign_key(self.config.vtxo_key_lifetime()).await?;
 		let change_policy = VtxoPolicy::new_pubkey(change_key.public_key());
-		let change_req = VtxoRequest {
+		let input_sum = input_vtxos.iter().map(|v| v.amount()).sum::<Amount>();
+		let change_dest = ArkoorDestination {
 			policy: change_policy,
-			amount: input_vtxos.iter().map(|v| v.amount()).sum::<Amount>() - req.amount,
+			total_amount: input_sum - dest.total_amount,
 		};
 		let builder = ArkoorPackageBuilder::new_without_checkpoints(
 			input_vtxos.into_iter().map(|v| v.into_inner()),
-			vec![req.clone(), change_req],
+			vec![dest.clone(), change_dest],
 		).context("arkoor builder error")?;
 		let builder = builder.generate_user_nonces(&keys).context("invalid arkoor cosign keys")?;
 
@@ -281,13 +283,13 @@ impl VtxoPool {
 			.build_signed_vtxos();
 
 		let (sent, change) = output_vtxos.into_iter()
-			.partition::<Vec<_>, _>(|v| *v.policy() == req.policy);
+			.partition::<Vec<_>, _>(|v| *v.policy() == dest.policy);
 
 		// mark inputs as spent
 		srv.db.mark_vtxopool_vtxos_spent(inputs.iter().map(|v| v.0)).await
 			.context("failed to mark vtxopool vtxos as spent")?;
 		for input in inputs {
-			slog!(SpentPoolVtxo, vtxo: input.0, amount: input.2, request: req.clone());
+			slog!(SpentPoolVtxo, vtxo: input.0, amount: input.2, destination: dest.clone());
 		}
 
 		for change in change {
@@ -305,14 +307,18 @@ impl VtxoPool {
 	}
 
 	#[tracing::instrument(skip(self, srv))]
-	pub async fn send_arkoor(&self, srv: &Server, req: VtxoRequest) -> anyhow::Result<Vec<Vtxo>> {
-		let inputs = self.data.lock().take_inputs(req.amount);
+	pub async fn send_arkoor(
+		&self,
+		srv: &Server,
+		dest: ArkoorDestination,
+	) -> anyhow::Result<Vec<Vtxo>> {
+		let inputs = self.data.lock().take_inputs(dest.total_amount);
 		if inputs.is_empty() {
 			bail!("vtxo pool is empty");
 		}
 
 		// we try, but if we fail, we place back the inputs
-		match self.prepare_arkoor(srv, req, &inputs).await {
+		match self.prepare_arkoor(srv, dest, &inputs).await {
 			Ok(v) => Ok(v),
 			Err(e) => {
 				let mut guard = self.data.lock();

@@ -20,7 +20,7 @@ use ark::{
 	ProtocolEncoding, SECP, SignedVtxoRequest,
 	Vtxo, VtxoId, VtxoPolicy, VtxoRequest, musig
 };
-use ark::arkoor::ArkoorCosignRequest;
+use ark::arkoor::{ArkoorCosignRequest, ArkoorDestination};
 use ark::arkoor::package::{ArkoorPackageBuilder, ArkoorPackageCosignRequest};
 use ark::challenges::RoundAttemptChallenge;
 use ark::tree::signed::builder::SignedTreeBuilder;
@@ -488,24 +488,24 @@ async fn double_spend_arkoor() {
 
 	let builder1 = ArkoorPackageBuilder::new_single_output_with_checkpoints(
 		[vtxo.clone()],
-		VtxoRequest {
-			amount: sat(100_000),
+		ArkoorDestination {
+			total_amount: sat(100_000),
 			policy: VtxoPolicy::new_pubkey(*RANDOM_PK),
 		},
 		VtxoPolicy::new_pubkey(pk1),
 	).unwrap();
 	let builder2 = ArkoorPackageBuilder::new_single_output_with_checkpoints(
 		[vtxo.clone()],
-		VtxoRequest {
-			amount: sat(200_000), // other amount
+		ArkoorDestination {
+			total_amount: sat(200_000), // other amount
 			policy: VtxoPolicy::new_pubkey(*RANDOM_PK),
 		},
 		VtxoPolicy::new_pubkey(pk1),
 	).unwrap();
 	let builder3 = ArkoorPackageBuilder::new_single_output_with_checkpoints(
 		[vtxo.clone()],
-		VtxoRequest {
-			amount: sat(100_000),
+		ArkoorDestination {
+			total_amount: sat(100_000),
 			policy: VtxoPolicy::new_pubkey(*RANDOM_PK),
 		},
 		VtxoPolicy::new_pubkey(pk2), // other change pk

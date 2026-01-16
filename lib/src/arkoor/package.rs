@@ -4,7 +4,8 @@ use std::convert::Infallible;
 use bitcoin::Txid;
 use bitcoin::secp256k1::Keypair;
 
-use crate::{Vtxo, VtxoId, VtxoRequest, VtxoPolicy, Amount};
+use crate::{Vtxo, VtxoId, VtxoPolicy, Amount};
+use crate::arkoor::ArkoorDestination;
 use crate::arkoor::{
 	ArkoorBuilder, ArkoorConstructionError, state, ArkoorCosignResponse,
 	ArkoorSigningError, ArkoorCosignRequest,
@@ -51,7 +52,7 @@ impl<V> ArkoorPackageCosignRequest<V> {
 			.flatten()
 	}
 
-	pub fn outputs(&self) -> impl Iterator<Item=&VtxoRequest> {
+	pub fn outputs(&self) -> impl Iterator<Item=&ArkoorDestination> {
 		self.requests.iter()
 			.map(|r| &r.outputs)
 			.flatten()
@@ -106,19 +107,19 @@ impl ArkoorPackageBuilder<state::Initial> {
 	/// to match input amounts exactly. Dust fragments are allowed.
 	fn allocate_outputs_to_inputs(
 		inputs: impl IntoIterator<Item = Vtxo>,
-		outputs: Vec<VtxoRequest>,
-	) -> Result<Vec<(Vtxo, Vec<VtxoRequest>)>, ArkoorConstructionError> {
-		let total_output = outputs.iter().map(|r| r.amount).sum::<Amount>();
+		outputs: Vec<ArkoorDestination>,
+	) -> Result<Vec<(Vtxo, Vec<ArkoorDestination>)>, ArkoorConstructionError> {
+		let total_output = outputs.iter().map(|r| r.total_amount).sum::<Amount>();
 		if outputs.is_empty() || total_output == Amount::ZERO {
 			return Err(ArkoorConstructionError::NoOutputs);
 		}
 
-		let mut allocations: Vec<(Vtxo, Vec<VtxoRequest>)> = Vec::new();
+		let mut allocations: Vec<(Vtxo, Vec<ArkoorDestination>)> = Vec::new();
 
 		let mut output_iter = outputs.into_iter();
 		let mut current_output = output_iter.next();
 		let mut current_output_remaining = current_output.as_ref()
-			.map(|o| o.amount).unwrap_or_default();
+			.map(|o| o.total_amount).unwrap_or_default();
 
 		let mut total_input = Amount::ZERO;
 		'inputs:
@@ -126,26 +127,26 @@ impl ArkoorPackageBuilder<state::Initial> {
 			total_input += input.amount();
 
 			let mut input_remaining = input.amount();
-			let mut input_allocation: Vec<VtxoRequest> = Vec::new();
+			let mut input_allocation: Vec<ArkoorDestination> = Vec::new();
 
 			'outputs:
 			while let Some(ref output) = current_output {
 				let _: Infallible = if input_remaining == current_output_remaining {
 					// perfect match: finish allocation and advance output
-					input_allocation.push(VtxoRequest {
-						amount: current_output_remaining,
+					input_allocation.push(ArkoorDestination {
+						total_amount: current_output_remaining,
 						policy: output.policy.clone(),
 					});
 
 					current_output = output_iter.next();
 					current_output_remaining = current_output.as_ref()
-						.map(|o| o.amount).unwrap_or_default();
+						.map(|o| o.total_amount).unwrap_or_default();
 					allocations.push((input, input_allocation));
 					continue 'inputs;
 				} else if input_remaining > current_output_remaining {
 					// input exceeds output: consume output, continue
-					input_allocation.push(VtxoRequest {
-						amount: current_output_remaining,
+					input_allocation.push(ArkoorDestination {
+						total_amount: current_output_remaining,
 						policy: output.policy.clone(),
 					});
 
@@ -153,12 +154,12 @@ impl ArkoorPackageBuilder<state::Initial> {
 
 					current_output = output_iter.next();
 					current_output_remaining = current_output.as_ref()
-						.map(|o| o.amount).unwrap_or_default();
+						.map(|o| o.total_amount).unwrap_or_default();
 					continue 'outputs;
 				} else {
 					// input is less than output: finish allocation and keep remaining output
-					input_allocation.push(VtxoRequest {
-						amount: input_remaining,
+					input_allocation.push(ArkoorDestination {
+						total_amount: input_remaining,
 						policy: output.policy.clone(),
 					});
 
@@ -183,7 +184,7 @@ impl ArkoorPackageBuilder<state::Initial> {
 	/// Create builder with checkpoints for multiple outputs
 	pub fn new_with_checkpoints(
 		inputs: impl IntoIterator<Item = Vtxo>,
-		outputs: Vec<VtxoRequest>,
+		outputs: Vec<ArkoorDestination>,
 	) -> Result<Self, ArkoorConstructionError> {
 		Self::new(inputs, outputs, true)
 	}
@@ -191,7 +192,7 @@ impl ArkoorPackageBuilder<state::Initial> {
 	/// Create builder without checkpoints for multiple outputs
 	pub fn new_without_checkpoints(
 		inputs: impl IntoIterator<Item = Vtxo>,
-		outputs: Vec<VtxoRequest>,
+		outputs: Vec<ArkoorDestination>,
 	) -> Result<Self, ArkoorConstructionError> {
 		Self::new(inputs, outputs, false)
 	}
@@ -202,17 +203,17 @@ impl ArkoorPackageBuilder<state::Initial> {
 	/// (backward-compatible with old API)
 	pub fn new_single_output_with_checkpoints(
 		inputs: impl IntoIterator<Item = Vtxo>,
-		output: VtxoRequest,
+		output: ArkoorDestination,
 		change_policy: VtxoPolicy,
 	) -> Result<Self, ArkoorConstructionError> {
 		// Calculate total input amount
 		let inputs: Vec<_> = inputs.into_iter().collect();
 		let total_input: Amount = inputs.iter().map(|v| v.amount()).sum();
 
-		let change_amount = total_input.checked_sub(output.amount)
+		let change_amount = total_input.checked_sub(output.total_amount)
 			.ok_or(ArkoorConstructionError::Unbalanced {
 				input: total_input,
-				output: output.amount,
+				output: output.total_amount,
 			})?;
 
 		let outputs = if change_amount == Amount::ZERO {
@@ -220,8 +221,8 @@ impl ArkoorPackageBuilder<state::Initial> {
 		} else {
 			vec![
 				output,
-				VtxoRequest {
-					amount: change_amount,
+				ArkoorDestination {
+					total_amount: change_amount,
 					policy: change_policy,
 				},
 			]
@@ -239,8 +240,8 @@ impl ArkoorPackageBuilder<state::Initial> {
 		let inputs: Vec<_> = inputs.into_iter().collect();
 		let total_input: Amount = inputs.iter().map(|v| v.amount()).sum();
 
-		let output = VtxoRequest {
-			amount: total_input,
+		let output = ArkoorDestination {
+			total_amount: total_input,
 			policy: output_policy,
 		};
 
@@ -256,8 +257,8 @@ impl ArkoorPackageBuilder<state::Initial> {
 		let inputs: Vec<_> = inputs.into_iter().collect();
 		let total_input: Amount = inputs.iter().map(|v| v.amount()).sum();
 
-		let output = VtxoRequest {
-			amount: total_input,
+		let output = ArkoorDestination {
+			total_amount: total_input,
 			policy: output_policy,
 		};
 
@@ -266,7 +267,7 @@ impl ArkoorPackageBuilder<state::Initial> {
 
 	fn new(
 		inputs: impl IntoIterator<Item = Vtxo>,
-		outputs: Vec<VtxoRequest>,
+		outputs: Vec<ArkoorDestination>,
 		use_checkpoint: bool,
 	) -> Result<Self, ArkoorConstructionError> {
 		// Allocate outputs to inputs
@@ -453,9 +454,9 @@ mod test {
 		bob_keypair().public_key()
 	}
 
-	fn dummy_vtxo_for_amount(amount: Amount) -> (Transaction, Vtxo) {
+	fn dummy_vtxo_for_amount(amt: Amount) -> (Transaction, Vtxo) {
 		DummyTestVtxoSpec {
-			amount: amount,
+			amount: amt,
 			expiry_height: 1000,
 			exit_delta: 128,
 			user_keypair: alice_keypair(),
@@ -506,8 +507,8 @@ mod test {
 
 		let package_builder = ArkoorPackageBuilder::new_single_output_with_checkpoints(
 			[alice_vtxo],
-			VtxoRequest {
-				amount: Amount::from_sat(100_000),
+			ArkoorDestination {
+				total_amount: Amount::from_sat(100_000),
 				policy: VtxoPolicy::new_pubkey(bob_public_key()),
 			},
 			VtxoPolicy::new_pubkey(alice_public_key())
@@ -525,8 +526,8 @@ mod test {
 		let (_funding_tx, alice_vtxo) = dummy_vtxo_for_amount(Amount::from_sat(1000));
 		let package_builder = ArkoorPackageBuilder::new_single_output_with_checkpoints(
 			[alice_vtxo],
-			VtxoRequest {
-				amount: Amount::from_sat(900),
+			ArkoorDestination {
+				total_amount: Amount::from_sat(900),
 				policy: VtxoPolicy::new_pubkey(bob_public_key()),
 			},
 			VtxoPolicy::new_pubkey(alice_public_key())
@@ -551,8 +552,8 @@ mod test {
 
 		let package = ArkoorPackageBuilder::new_single_output_with_checkpoints(
 			[alice_vtxo_1, alice_vtxo_2, alice_vtxo_3],
-			VtxoRequest {
-				amount: Amount::from_sat(17_000),
+			ArkoorDestination {
+				total_amount: Amount::from_sat(17_000),
 				policy: VtxoPolicy::new_pubkey(bob_public_key()),
 			},
 			VtxoPolicy::new_pubkey(alice_public_key())
@@ -589,8 +590,8 @@ mod test {
 
 		let package = ArkoorPackageBuilder::new_single_output_with_checkpoints(
 			[alice_vtxo_1, alice_vtxo_2, alice_vtxo_3],
-			VtxoRequest {
-				amount: Amount::from_sat(16_000),
+			ArkoorDestination {
+				total_amount: Amount::from_sat(16_000),
 				policy: VtxoPolicy::new_pubkey(bob_public_key()),
 			},
 			VtxoPolicy::new_pubkey(alice_public_key())
@@ -630,8 +631,8 @@ mod test {
 
 		let package = ArkoorPackageBuilder::new_single_output_with_checkpoints(
 			[alice_vtxo_1, alice_vtxo_2],
-			VtxoRequest {
-				amount: Amount::from_sat(5_700),
+			ArkoorDestination {
+				total_amount: Amount::from_sat(5_700),
 				policy: VtxoPolicy::new_pubkey(bob_public_key()),
 			},
 			VtxoPolicy::new_pubkey(alice_public_key())
@@ -655,8 +656,8 @@ mod test {
 		let (_funding_tx, alice_vtxo) = dummy_vtxo_for_amount(Amount::from_sat(900));
 		let result = ArkoorPackageBuilder::new_single_output_with_checkpoints(
 			[alice_vtxo],
-			VtxoRequest {
-				amount: Amount::from_sat(1000),
+			ArkoorDestination {
+				total_amount: Amount::from_sat(1000),
 				policy: VtxoPolicy::new_pubkey(bob_public_key()),
 			},
 			VtxoPolicy::new_pubkey(alice_public_key())
@@ -683,8 +684,8 @@ mod test {
 
 		let package = ArkoorPackageBuilder::new_single_output_with_checkpoints(
 			[alice_vtxo_1, alice_vtxo_2, alice_vtxo_3],
-			VtxoRequest {
-				amount: Amount::from_sat(20_000),
+			ArkoorDestination {
+				total_amount: Amount::from_sat(20_000),
 				policy: VtxoPolicy::new_pubkey(bob_public_key()),
 			},
 			VtxoPolicy::new_pubkey(alice_public_key())
@@ -713,8 +714,8 @@ mod test {
 
 		let package = ArkoorPackageBuilder::new_single_output_with_checkpoints(
 			[alice_vtxo_1, alice_vtxo_2, alice_vtxo_3, alice_vtxo_4],
-			VtxoRequest {
-				amount: Amount::from_sat(2000),
+			ArkoorDestination {
+				total_amount: Amount::from_sat(2000),
 				policy: VtxoPolicy::new_pubkey(bob_public_key()),
 			},
 			VtxoPolicy::new_pubkey(alice_public_key())
@@ -732,16 +733,16 @@ mod test {
 		let (funding_tx, alice_vtxo) = dummy_vtxo_for_amount(Amount::from_sat(10_000));
 
 		let outputs = vec![
-			VtxoRequest {
-				amount: Amount::from_sat(4_000),
+			ArkoorDestination {
+				total_amount: Amount::from_sat(4_000),
 				policy: VtxoPolicy::new_pubkey(bob_public_key())
 			},
-			VtxoRequest {
-				amount: Amount::from_sat(3_000),
+			ArkoorDestination {
+				total_amount: Amount::from_sat(3_000),
 				policy: VtxoPolicy::new_pubkey(bob_public_key())
 			},
-			VtxoRequest {
-				amount: Amount::from_sat(3_000),
+			ArkoorDestination {
+				total_amount: Amount::from_sat(3_000),
 				policy: VtxoPolicy::new_pubkey(bob_public_key())
 			},
 		];
@@ -787,12 +788,12 @@ mod test {
 		let (_funding_tx_2, alice_vtxo_2) = dummy_vtxo_for_amount(Amount::from_sat(500));
 
 		let outputs = vec![
-			VtxoRequest {
-				amount: Amount::from_sat(800),
+			ArkoorDestination {
+				total_amount: Amount::from_sat(800),
 				policy: VtxoPolicy::new_pubkey(bob_public_key())
 			},
-			VtxoRequest {
-				amount: Amount::from_sat(300),
+			ArkoorDestination {
+				total_amount: Amount::from_sat(300),
 				policy: VtxoPolicy::new_pubkey(bob_public_key())
 			},
 		];
@@ -820,12 +821,12 @@ mod test {
 		let (_funding_tx_2, alice_vtxo_2) = dummy_vtxo_for_amount(Amount::from_sat(500));
 
 		let outputs = vec![
-			VtxoRequest {
-				amount: Amount::from_sat(750),
+			ArkoorDestination {
+				total_amount: Amount::from_sat(750),
 				policy: VtxoPolicy::new_pubkey(bob_public_key())
 			},
-			VtxoRequest {
-				amount: Amount::from_sat(250),
+			ArkoorDestination {
+				total_amount: Amount::from_sat(250),
 				policy: VtxoPolicy::new_pubkey(bob_public_key())
 			},
 		];
@@ -848,12 +849,12 @@ mod test {
 		let (_funding_tx, alice_vtxo) = dummy_vtxo_for_amount(Amount::from_sat(1000));
 
 		let outputs = vec![
-			VtxoRequest {
-				amount: Amount::from_sat(600),
+			ArkoorDestination {
+				total_amount: Amount::from_sat(600),
 				policy: VtxoPolicy::new_pubkey(bob_public_key())
 			},
-			VtxoRequest {
-				amount: Amount::from_sat(600),
+			ArkoorDestination {
+				total_amount: Amount::from_sat(600),
 				policy: VtxoPolicy::new_pubkey(bob_public_key())
 			},
 		];
@@ -896,12 +897,12 @@ mod test {
 		let (_funding_tx_3, alice_vtxo_3) = dummy_vtxo_for_amount(Amount::from_sat(1500));
 
 		let outputs = vec![
-			VtxoRequest {
-				amount: Amount::from_sat(2500),
+			ArkoorDestination {
+				total_amount: Amount::from_sat(2500),
 				policy: VtxoPolicy::new_pubkey(bob_public_key())
 			},
-			VtxoRequest {
-				amount: Amount::from_sat(2000),
+			ArkoorDestination {
+				total_amount: Amount::from_sat(2000),
 				policy: VtxoPolicy::new_pubkey(bob_public_key())
 			},
 		];
@@ -932,8 +933,8 @@ mod test {
 		let (_funding_tx_4, alice_vtxo_4) = dummy_vtxo_for_amount(Amount::from_sat(100));
 
 		let outputs = vec![
-			VtxoRequest {
-				amount: Amount::from_sat(400),
+			ArkoorDestination {
+				total_amount: Amount::from_sat(400),
 				policy: VtxoPolicy::new_pubkey(bob_public_key())
 			},
 		];
@@ -959,24 +960,24 @@ mod test {
 		let (_funding_tx, alice_vtxo) = dummy_vtxo_for_amount(Amount::from_sat(1000));
 
 		let outputs = vec![
-			VtxoRequest {
-				amount: Amount::from_sat(100),
+			ArkoorDestination {
+				total_amount: Amount::from_sat(100),
 				policy: VtxoPolicy::new_pubkey(bob_public_key())
 			},
-			VtxoRequest {
-				amount: Amount::from_sat(200),
+			ArkoorDestination {
+				total_amount: Amount::from_sat(200),
 				policy: VtxoPolicy::new_pubkey(bob_public_key())
 			},
-			VtxoRequest {
-				amount: Amount::from_sat(150),
+			ArkoorDestination {
+				total_amount: Amount::from_sat(150),
 				policy: VtxoPolicy::new_pubkey(bob_public_key())
 			},
-			VtxoRequest {
-				amount: Amount::from_sat(250),
+			ArkoorDestination {
+				total_amount: Amount::from_sat(250),
 				policy: VtxoPolicy::new_pubkey(bob_public_key())
 			},
-			VtxoRequest {
-				amount: Amount::from_sat(300),
+			ArkoorDestination {
+				total_amount: Amount::from_sat(300),
 				policy: VtxoPolicy::new_pubkey(bob_public_key())
 			},
 		];
@@ -1003,12 +1004,12 @@ mod test {
 		let (_funding_tx_2, alice_vtxo_2) = dummy_vtxo_for_amount(Amount::from_sat(500));
 
 		let outputs = vec![
-			VtxoRequest {
-				amount: Amount::from_sat(1000),
+			ArkoorDestination {
+				total_amount: Amount::from_sat(1000),
 				policy: VtxoPolicy::new_pubkey(bob_public_key())
 			},
-			VtxoRequest {
-				amount: Amount::from_sat(500),
+			ArkoorDestination {
+				total_amount: Amount::from_sat(500),
 				policy: VtxoPolicy::new_pubkey(bob_public_key())
 			},
 		];
@@ -1028,8 +1029,8 @@ mod test {
 	fn empty_inputs_rejected() {
 		// [] -> [1000] should fail
 		let outputs = vec![
-			VtxoRequest {
-				amount: Amount::from_sat(1000),
+			ArkoorDestination {
+				total_amount: Amount::from_sat(1000),
 				policy: VtxoPolicy::new_pubkey(bob_public_key())
 			},
 		];
@@ -1060,16 +1061,16 @@ mod test {
 		let (_funding_tx_3, alice_vtxo_3) = dummy_vtxo_for_amount(Amount::from_sat(500));
 
 		let outputs = vec![
-			VtxoRequest {
-				amount: Amount::from_sat(500),
+			ArkoorDestination {
+				total_amount: Amount::from_sat(500),
 				policy: VtxoPolicy::new_pubkey(bob_public_key())
 			},
-			VtxoRequest {
-				amount: Amount::from_sat(400),
+			ArkoorDestination {
+				total_amount: Amount::from_sat(400),
 				policy: VtxoPolicy::new_pubkey(bob_public_key())
 			},
-			VtxoRequest {
-				amount: Amount::from_sat(600),
+			ArkoorDestination {
+				total_amount: Amount::from_sat(600),
 				policy: VtxoPolicy::new_pubkey(bob_public_key())
 			},
 		];
