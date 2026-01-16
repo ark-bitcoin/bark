@@ -1118,7 +1118,7 @@ pub mod test {
 	use bitcoin::secp256k1::Keypair;
 	use bitcoin::transaction::Version;
 
-	use crate::arkoor::checkpointed_package::CheckpointedPackageBuilder;
+	use crate::arkoor::package::CheckpointedPackageBuilder;
 use crate::tree::signed::{VtxoLeafSpec, VtxoTreeSpec};
 	use crate::{VtxoRequest, SECP};
 	use crate::board::BoardBuilder;

@@ -20,7 +20,7 @@ use tracing::info;
 use ark::{
 	musig, ProtocolEncoding, Vtxo, VtxoId, VtxoIdInput, VtxoPolicy,
 };
-use ark::arkoor::checkpointed_package::PackageCosignRequest;
+use ark::arkoor::package::PackageCosignRequest;
 use ark::forfeit::HashLockedForfeitBundle;
 use ark::lightning::{Bolt12InvoiceExt, Invoice, Offer, OfferAmount, PaymentHash, Preimage};
 use ark::tree::signed::{LeafVtxoCosignRequest, UnlockHash, UnlockPreimage};

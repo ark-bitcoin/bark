@@ -1,7 +1,7 @@
 use std::fmt;
 
 use anyhow::Context;
-use ark::arkoor::checkpointed_package::{CheckpointedPackageBuilder, PackageCosignResponse};
+use ark::arkoor::package::{CheckpointedPackageBuilder, PackageCosignResponse};
 use bitcoin::Amount;
 use bitcoin::hex::DisplayHex;
 use lightning::util::ser::Writeable;

@@ -12,7 +12,7 @@ use futures::{stream, StreamExt, TryStreamExt};
 use tracing::{info, warn};
 
 use ark::{Vtxo, VtxoId, VtxoPolicy, VtxoRequest};
-use ark::arkoor::checkpointed_package::CheckpointedPackageBuilder;
+use ark::arkoor::package::CheckpointedPackageBuilder;
 use ark::tree::signed::{LeafVtxoCosignContext, UnlockPreimage};
 use ark::tree::signed::builder::SignedTreeBuilder;
 use bitcoin_ext::{BlockDelta, BlockHeight};

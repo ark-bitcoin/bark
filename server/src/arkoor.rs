@@ -1,8 +1,8 @@
 use anyhow::Context;
 
-use ark::arkoor::checkpoint::state::{ServerCanCosign, ServerSigned};
+use ark::arkoor::state::{ServerCanCosign, ServerSigned};
+use ark::arkoor::package::{PackageCosignRequest, PackageCosignResponse, CheckpointedPackageBuilder};
 use ark::vtxo::{VtxoId, VtxoPolicy};
-use ark::arkoor::checkpointed_package::{PackageCosignRequest, PackageCosignResponse, CheckpointedPackageBuilder};
 
 use crate::Server;
 

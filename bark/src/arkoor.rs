@@ -5,7 +5,7 @@ use bitcoin::secp256k1::PublicKey;
 use log::{info, error};
 
 use ark::{VtxoRequest, VtxoPolicy, ProtocolEncoding};
-use ark::arkoor::checkpointed_package::{CheckpointedPackageBuilder, PackageCosignResponse};
+use ark::arkoor::package::{CheckpointedPackageBuilder, PackageCosignResponse};
 use ark::vtxo::{Vtxo, VtxoId, VtxoPolicyKind};
 use bitcoin_ext::P2TR_DUST;
 use server_rpc::protos;

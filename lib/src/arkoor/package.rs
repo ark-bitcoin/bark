@@ -1,10 +1,11 @@
+
 use std::convert::Infallible;
 
 use bitcoin::Txid;
 use bitcoin::secp256k1::Keypair;
 
 use crate::{Vtxo, VtxoId, VtxoRequest, VtxoPolicy, Amount};
-use crate::arkoor::checkpoint::{
+use crate::arkoor::{
 	CheckpointedArkoorBuilder, ArkoorConstructionError, state, CosignResponse,
 	ArkoorSigningError, CosignRequest,
 };

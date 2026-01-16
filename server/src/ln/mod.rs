@@ -13,7 +13,7 @@ use tracing::{error, info, trace};
 use uuid::Uuid;
 
 use ark::{Vtxo, VtxoId, VtxoPolicy, VtxoRequest};
-use ark::arkoor::checkpointed_package::{
+use ark::arkoor::package::{
 	CheckpointedPackageBuilder, PackageCosignRequest, PackageCosignResponse,
 };
 use ark::challenges::LightningReceiveChallenge;

@@ -1,7 +1,7 @@
 use std::str::FromStr;
 
 use anyhow::Context;
-use ark::arkoor::checkpointed_package::CheckpointedPackageBuilder;
+use ark::arkoor::package::CheckpointedPackageBuilder;
 use bitcoin::{Amount, SignedAmount};
 use bitcoin::hex::DisplayHex;
 use futures::StreamExt;

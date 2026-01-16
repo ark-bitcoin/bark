@@ -5,7 +5,6 @@ use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 
-use ark::arkoor::checkpoint::CosignRequest;
 use bitcoin::hex::FromHex;
 use bitcoin::{absolute, transaction, Address, Amount, Network, OutPoint, Transaction};
 use bitcoin::hashes::Hash;
@@ -21,7 +20,8 @@ use ark::{
 	ProtocolEncoding, SECP, SignedVtxoRequest,
 	Vtxo, VtxoId, VtxoPolicy, VtxoRequest, musig
 };
-use ark::arkoor::checkpointed_package::{CheckpointedPackageBuilder, PackageCosignRequest};
+use ark::arkoor::CosignRequest;
+use ark::arkoor::package::{CheckpointedPackageBuilder, PackageCosignRequest};
 use ark::challenges::RoundAttemptChallenge;
 use ark::tree::signed::builder::SignedTreeBuilder;
 use ark::tree::signed::{LeafVtxoCosignContext, UnlockPreimage};
