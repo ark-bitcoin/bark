@@ -38,6 +38,8 @@
 
 mod sort;
 
+#[cfg(feature = "filestore")]
+pub mod filestore;
 pub mod memory;
 
 pub use sort::SortKey;

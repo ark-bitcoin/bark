@@ -46,6 +46,10 @@ impl MemoryStorageAdaptor {
 	pub fn new() -> Self {
 		Self::default()
 	}
+
+	pub fn partitions(&self) -> &HashMap<u8, BTreeMap<Vec<u8>, Record>> {
+		&self.partitions
+	}
 }
 
 #[async_trait]

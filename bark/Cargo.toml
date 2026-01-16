@@ -17,6 +17,8 @@ tls-webpki-roots = ["tonic/tls-webpki-roots"]
 rand = ["bitcoin/rand", "bip39/rand"]
 
 sqlite = ["rusqlite", "bdk_wallet/rusqlite"]
+# Used for testingn, enables testing storage adaptor implementation
+filestore = []
 
 [lib]
 name = "bark"
@@ -71,3 +73,4 @@ rusqlite = { version = "0.31.0", features = ["chrono"], optional = true }
 
 [dev-dependencies]
 ark-lib = { path = "../lib", features = [ "test-util" ] }
+tempfile = "3"
