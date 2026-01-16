@@ -54,7 +54,7 @@ impl Server {
 
 		// Construct the builder and compute all transaction data
 		let builder = CheckpointedPackageBuilder::from_cosign_requests(request)
-			.context("Invalid arkoor request")?;
+			.context("invalid arkoor request")?;
 
 
 		// We are going to compute all vtxos and spend-info
