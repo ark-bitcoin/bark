@@ -14,7 +14,7 @@ use uuid::Uuid;
 
 use ark::{Vtxo, VtxoId, VtxoPolicy, VtxoRequest};
 use ark::arkoor::package::{
-	CheckpointedPackageBuilder, PackageCosignRequest, PackageCosignResponse,
+	ArkoorPackageBuilder, ArkoorPackageCosignRequest, ArkoorPackageCosignResponse,
 };
 use ark::challenges::LightningReceiveChallenge;
 use ark::integration::TokenStatus;
@@ -36,8 +36,8 @@ impl Server {
 	pub async fn request_lightning_pay_htlc_cosign(
 		&self,
 		invoice: Invoice,
-		request: PackageCosignRequest<VtxoId>,
-	) -> anyhow::Result<PackageCosignResponse> {
+		request: ArkoorPackageCosignRequest<VtxoId>,
+	) -> anyhow::Result<ArkoorPackageCosignResponse> {
 		let invoice_payment_hash = invoice.payment_hash();
 
 		let input_vtxo_ids = request.inputs().cloned().collect::<Vec<VtxoId>>();
@@ -112,7 +112,7 @@ impl Server {
 			return badarg!("payment already in progress for this invoice");
 		}
 
-		let builder = CheckpointedPackageBuilder::from_cosign_request(request)
+		let builder = ArkoorPackageBuilder::from_cosign_request(request)
 			.badarg("error creating arkoor package")?;
 
 		// We are going to compute all vtxos and spend-info
@@ -239,8 +239,8 @@ impl Server {
 
 	pub async fn revoke_lightning_pay_htlcs(
 		&self,
-		cosign_requests: PackageCosignRequest<VtxoId>,
-	) -> anyhow::Result<PackageCosignResponse> {
+		cosign_requests: ArkoorPackageCosignRequest<VtxoId>,
+	) -> anyhow::Result<ArkoorPackageCosignResponse> {
 		let tip = self.chain_tip().height as BlockHeight;
 		let db = self.db.clone();
 
@@ -266,7 +266,7 @@ impl Server {
 
 		let cosign_requests = cosign_requests.set_vtxos(htlc_vtxos)?;
 
-		let builder = CheckpointedPackageBuilder::from_cosign_request(cosign_requests)
+		let builder = ArkoorPackageBuilder::from_cosign_request(cosign_requests)
 			.context("Failed to construct arkoor package")?;
 
 		let invoice = db.get_lightning_invoice_by_payment_hash(&invoice_payment_hash).await?;
@@ -544,8 +544,8 @@ impl Server {
 		payment_hash: PaymentHash,
 		vtxo_policy: VtxoPolicy,
 		payment_preimage: Preimage,
-		cosign_request: PackageCosignRequest<VtxoId>,
-	) -> anyhow::Result<PackageCosignResponse> {
+		cosign_request: ArkoorPackageCosignRequest<VtxoId>,
+	) -> anyhow::Result<ArkoorPackageCosignResponse> {
 		if payment_hash != payment_preimage.compute_payment_hash() {
 			return badarg!("preimage doesn't match payment hash");
 		}
@@ -587,7 +587,7 @@ impl Server {
 			amount: sub.amount(),
 			policy: vtxo_policy,
 		};
-		let builder = CheckpointedPackageBuilder::from_cosign_request(cosign_request)
+		let builder = ArkoorPackageBuilder::from_cosign_request(cosign_request)
 			.badarg("error creating arkoor package")?;
 
 		self.cln.settle_invoice(sub.id, payment_preimage).await

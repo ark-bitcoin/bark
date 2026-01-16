@@ -12,7 +12,7 @@ use futures::{stream, StreamExt, TryStreamExt};
 use tracing::{info, warn};
 
 use ark::{Vtxo, VtxoId, VtxoPolicy, VtxoRequest};
-use ark::arkoor::package::CheckpointedPackageBuilder;
+use ark::arkoor::package::ArkoorPackageBuilder;
 use ark::tree::signed::{LeafVtxoCosignContext, UnlockPreimage};
 use ark::tree::signed::builder::SignedTreeBuilder;
 use bitcoin_ext::{BlockDelta, BlockHeight};
@@ -265,13 +265,13 @@ impl VtxoPool {
 			policy: change_policy,
 			amount: input_vtxos.iter().map(|v| v.amount()).sum::<Amount>() - req.amount,
 		};
-		let builder = CheckpointedPackageBuilder::new_without_checkpoints(
+		let builder = ArkoorPackageBuilder::new_without_checkpoints(
 			input_vtxos.into_iter().map(|v| v.into_inner()),
 			vec![req.clone(), change_req],
 		).context("arkoor builder error")?;
 		let builder = builder.generate_user_nonces(&keys).context("invalid arkoor cosign keys")?;
 
-		let server_builder = CheckpointedPackageBuilder::from_cosign_request(
+		let server_builder = ArkoorPackageBuilder::from_cosign_request(
 			builder.cosign_request(),
 		).context("error creating server builder from cosign request")?;
 		let cosign_resp = srv.cosign_oor_with_builder(server_builder).await?.cosign_response();

@@ -5,7 +5,7 @@ use bitcoin::secp256k1::PublicKey;
 use log::{info, error};
 
 use ark::{VtxoRequest, VtxoPolicy, ProtocolEncoding};
-use ark::arkoor::package::{CheckpointedPackageBuilder, PackageCosignResponse};
+use ark::arkoor::package::{ArkoorPackageBuilder, ArkoorPackageCosignResponse};
 use ark::vtxo::{Vtxo, VtxoId, VtxoPolicyKind};
 use bitcoin_ext::P2TR_DUST;
 use server_rpc::protos;
@@ -81,7 +81,7 @@ impl Wallet {
 			user_keypairs.push(self.get_vtxo_key(vtxo).await?);
 		}
 
-		let builder = CheckpointedPackageBuilder::new_single_output_with_checkpoints(
+		let builder = ArkoorPackageBuilder::new_single_output_with_checkpoints(
 			inputs.iter().map(|v| &v.vtxo).cloned(),
 			vtxo_request,
 			VtxoPolicy::new_pubkey(change_pubkey),
@@ -98,7 +98,7 @@ impl Wallet {
 			.context("server failed to cosign arkoor")?
 			.into_inner();
 
-		let cosign_responses = PackageCosignResponse::try_from(response)
+		let cosign_responses = ArkoorPackageCosignResponse::try_from(response)
 			.context("Failed to parse cosign response from server")?;
 
 		let vtxos = builder

@@ -1118,7 +1118,7 @@ pub mod test {
 	use bitcoin::secp256k1::Keypair;
 	use bitcoin::transaction::Version;
 
-	use crate::arkoor::package::CheckpointedPackageBuilder;
+	use crate::arkoor::package::ArkoorPackageBuilder;
 use crate::tree::signed::{VtxoLeafSpec, VtxoTreeSpec};
 	use crate::{VtxoRequest, SECP};
 	use crate::board::BoardBuilder;
@@ -1224,10 +1224,10 @@ use crate::tree::signed::{VtxoLeafSpec, VtxoTreeSpec};
 			policy: VtxoPolicy::new_pubkey("0229b7de0ce4d573192d002a6f9fd1109e00f7bae52bf10780d6f6e73e12a8390f".parse().unwrap()),
 		};
 		let (sec_nonce, pub_nonce) = musig::nonce_pair(&board_user_key);
-		let builder = CheckpointedPackageBuilder::new_with_checkpoints(
+		let builder = ArkoorPackageBuilder::new_with_checkpoints(
 			[board_vtxo.clone()], vec![arkoor1_req1, arkoor1_req2],
 		).unwrap().generate_user_nonces(&[board_user_key]).unwrap();
-		let cosign = CheckpointedPackageBuilder::from_cosign_request(
+		let cosign = ArkoorPackageBuilder::from_cosign_request(
 			builder.cosign_request(),
 		).unwrap().server_cosign(&server_key).unwrap().cosign_response();
 		let [arkoor_htlc_out_vtxo, change] = builder.user_cosign(&[board_user_key], cosign).unwrap()
@@ -1248,10 +1248,10 @@ use crate::tree::signed::{VtxoLeafSpec, VtxoTreeSpec};
 			policy: VtxoPolicy::new_pubkey("037039dc4f4b16e78059d2d56eb98d181cb1bdff2675694d39d92c4a2ea08ced88".parse().unwrap()),
 		};
 		let (sec_nonce, pub_nonce) = musig::nonce_pair(&arkoor_htlc_out_user_key);
-		let builder = CheckpointedPackageBuilder::new_with_checkpoints(
+		let builder = ArkoorPackageBuilder::new_with_checkpoints(
 			[arkoor_htlc_out_vtxo.clone()], vec![arkoor2_req1, arkoor2_req2],
 		).unwrap().generate_user_nonces(&[arkoor_htlc_out_user_key]).unwrap();
-		let cosign = CheckpointedPackageBuilder::from_cosign_request(
+		let cosign = ArkoorPackageBuilder::from_cosign_request(
 			builder.cosign_request(),
 		).unwrap().server_cosign(&server_key).unwrap().cosign_response();
 		let [arkoor2_vtxo, change] = builder.user_cosign(&[arkoor_htlc_out_user_key], cosign).unwrap()
@@ -1415,10 +1415,10 @@ use crate::tree::signed::{VtxoLeafSpec, VtxoTreeSpec};
 			policy: VtxoPolicy::Pubkey(PubkeyVtxoPolicy { user_pubkey: arkoor3_user_key.public_key() }),
 		};
 		let (sec_nonce, pub_nonce) = musig::nonce_pair(&round2_user_key);
-		let builder = CheckpointedPackageBuilder::new_with_checkpoints(
+		let builder = ArkoorPackageBuilder::new_with_checkpoints(
 			[round2_vtxo.clone()], vec![arkoor3_req],
 		).unwrap().generate_user_nonces(&[round2_user_key]).unwrap();
-		let cosign = CheckpointedPackageBuilder::from_cosign_request(
+		let cosign = ArkoorPackageBuilder::from_cosign_request(
 			builder.cosign_request(),
 		).unwrap().server_cosign(&server_key).unwrap().cosign_response();
 		let [arkoor3_vtxo] = builder.user_cosign(&[round2_user_key], cosign).unwrap()

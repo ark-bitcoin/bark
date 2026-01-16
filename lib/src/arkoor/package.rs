@@ -6,8 +6,8 @@ use bitcoin::secp256k1::Keypair;
 
 use crate::{Vtxo, VtxoId, VtxoRequest, VtxoPolicy, Amount};
 use crate::arkoor::{
-	CheckpointedArkoorBuilder, ArkoorConstructionError, state, CosignResponse,
-	ArkoorSigningError, CosignRequest,
+	ArkoorBuilder, ArkoorConstructionError, state, ArkoorCosignResponse,
+	ArkoorSigningError, ArkoorCosignRequest,
 };
 
 
@@ -18,22 +18,22 @@ use crate::arkoor::{
 /// between the inputs.
 ///
 /// The builder always keeps input and output order.
-pub struct CheckpointedPackageBuilder<S: state::BuilderState> {
-	builders: Vec<CheckpointedArkoorBuilder<S>>,
+pub struct ArkoorPackageBuilder<S: state::BuilderState> {
+	builders: Vec<ArkoorBuilder<S>>,
 }
 
 #[derive(Debug, Clone)]
-pub struct PackageCosignRequest<V> {
-	pub requests: Vec<CosignRequest<V>>
+pub struct ArkoorPackageCosignRequest<V> {
+	pub requests: Vec<ArkoorCosignRequest<V>>
 }
 
-impl<V> PackageCosignRequest<V> {
-	pub fn convert_vtxo<F, O>(self, mut f: F) -> PackageCosignRequest<O>
+impl<V> ArkoorPackageCosignRequest<V> {
+	pub fn convert_vtxo<F, O>(self, mut f: F) -> ArkoorPackageCosignRequest<O>
 		where F: FnMut(V) -> O
 	{
-		PackageCosignRequest {
+		ArkoorPackageCosignRequest {
 			requests: self.requests.into_iter().map(|r| {
-				CosignRequest {
+				ArkoorCosignRequest {
 					user_pub_nonces: r.user_pub_nonces,
 					input: f(r.input),
 					outputs: r.outputs,
@@ -65,12 +65,12 @@ pub struct InputMismatchError {
 	got: VtxoId,
 }
 
-impl PackageCosignRequest<VtxoId> {
+impl ArkoorPackageCosignRequest<VtxoId> {
 	pub fn set_vtxos(
 		self,
 		vtxos: impl IntoIterator<Item = Vtxo>,
-	) -> Result<PackageCosignRequest<Vtxo>, InputMismatchError> {
-		let package = PackageCosignRequest {
+	) -> Result<ArkoorPackageCosignRequest<Vtxo>, InputMismatchError> {
+		let package = ArkoorPackageCosignRequest {
 			requests: self.requests.into_iter().zip(vtxos).map(|(r, vtxo)| {
 				if r.input != vtxo.id() {
 					return Err(InputMismatchError {
@@ -79,7 +79,7 @@ impl PackageCosignRequest<VtxoId> {
 					})
 				}
 
-				Ok(CosignRequest {
+				Ok(ArkoorCosignRequest {
 					input: vtxo,
 					user_pub_nonces: r.user_pub_nonces,
 					outputs: r.outputs,
@@ -95,11 +95,11 @@ impl PackageCosignRequest<VtxoId> {
 
 
 #[derive(Debug, Clone)]
-pub struct PackageCosignResponse {
-	pub responses: Vec<CosignResponse>
+pub struct ArkoorPackageCosignResponse {
+	pub responses: Vec<ArkoorCosignResponse>
 }
 
-impl CheckpointedPackageBuilder<state::Initial> {
+impl ArkoorPackageBuilder<state::Initial> {
 	/// Allocate outputs to inputs with splitting support
 	///
 	/// Distributes outputs across inputs in order, splitting outputs when needed
@@ -272,10 +272,10 @@ impl CheckpointedPackageBuilder<state::Initial> {
 		// Allocate outputs to inputs
 		let allocations = Self::allocate_outputs_to_inputs(inputs, outputs)?;
 
-		// Build one CheckpointedArkoorBuilder per input
+		// Build one ArkoorBuilder per inputpackage
 		let mut builders = Vec::with_capacity(allocations.len());
 		for (input, allocated_outputs) in allocations {
-			let builder = CheckpointedArkoorBuilder::new(
+			let builder = ArkoorBuilder::new(
 				input,
 				allocated_outputs,
 				vec![], // no isolated outputs
@@ -290,7 +290,7 @@ impl CheckpointedPackageBuilder<state::Initial> {
 	pub fn generate_user_nonces(
 		self,
 		user_keypairs: &[Keypair],
-	) -> Result<CheckpointedPackageBuilder<state::UserGeneratedNonces>, ArkoorSigningError> {
+	) -> Result<ArkoorPackageBuilder<state::UserGeneratedNonces>, ArkoorSigningError> {
 		if user_keypairs.len() != self.builders.len() {
 			return Err(ArkoorSigningError::InvalidNbKeypairs {
 				expected: self.builders.len(),
@@ -302,16 +302,16 @@ impl CheckpointedPackageBuilder<state::Initial> {
 		for (idx, package) in self.builders.into_iter().enumerate() {
 			builder.push(package.generate_user_nonces(user_keypairs[idx]));
 		}
-		Ok(CheckpointedPackageBuilder { builders: builder })
+		Ok(ArkoorPackageBuilder { builders: builder })
 	}
 }
 
-impl CheckpointedPackageBuilder<state::UserGeneratedNonces> {
+impl ArkoorPackageBuilder<state::UserGeneratedNonces> {
 	pub fn user_cosign(
 		self,
 		user_keypairs: &[Keypair],
-		server_cosign_response: PackageCosignResponse,
-	) -> Result<CheckpointedPackageBuilder<state::UserSigned>, ArkoorSigningError> {
+		server_cosign_response: ArkoorPackageCosignResponse,
+	) -> Result<ArkoorPackageBuilder<state::UserSigned>, ArkoorSigningError> {
 		if server_cosign_response.responses.len() != self.builders.len() {
 			return Err(ArkoorSigningError::InvalidNbPackages {
 				expected: self.builders.len(),
@@ -334,19 +334,19 @@ impl CheckpointedPackageBuilder<state::UserGeneratedNonces> {
 				&server_cosign_response.responses[idx],
 			)?,);
 		}
-		Ok(CheckpointedPackageBuilder { builders: packages })
+		Ok(ArkoorPackageBuilder { builders: packages })
 	}
 
-	pub fn cosign_request(&self) -> PackageCosignRequest<Vtxo> {
+	pub fn cosign_request(&self) -> ArkoorPackageCosignRequest<Vtxo> {
 		let requests = self.builders.iter()
 			.map(|package| package.cosign_request())
 			.collect::<Vec<_>>();
 
-		PackageCosignRequest { requests }
+		ArkoorPackageCosignRequest { requests }
 	}
 }
 
-impl CheckpointedPackageBuilder<state::UserSigned> {
+impl ArkoorPackageBuilder<state::UserSigned> {
 	pub fn build_signed_vtxos(self) -> Vec<Vtxo> {
 		self.builders.into_iter()
 			.map(|b| b.build_signed_vtxos())
@@ -355,14 +355,14 @@ impl CheckpointedPackageBuilder<state::UserSigned> {
 	}
 }
 
-impl CheckpointedPackageBuilder<state::ServerCanCosign> {
+impl ArkoorPackageBuilder<state::ServerCanCosign> {
 	pub fn from_cosign_request(
-		cosign_request: PackageCosignRequest<Vtxo>,
+		cosign_request: ArkoorPackageCosignRequest<Vtxo>,
 	) -> Result<Self, ArkoorSigningError> {
 		let request_iter = cosign_request.requests.into_iter();
 		let mut packages = Vec::with_capacity(request_iter.size_hint().0);
 		for request in request_iter {
-			packages.push(CheckpointedArkoorBuilder::from_cosign_request(request)?);
+			packages.push(ArkoorBuilder::from_cosign_request(request)?);
 		}
 
 		Ok(Self { builders: packages })
@@ -371,26 +371,26 @@ impl CheckpointedPackageBuilder<state::ServerCanCosign> {
 	pub fn server_cosign(
 		self,
 		server_keypair: &Keypair,
-	) -> Result<CheckpointedPackageBuilder<state::ServerSigned>, ArkoorSigningError> {
+	) -> Result<ArkoorPackageBuilder<state::ServerSigned>, ArkoorSigningError> {
 		let mut packages = Vec::with_capacity(self.builders.len());
 		for package in self.builders.into_iter() {
 			packages.push(package.server_cosign(&server_keypair)?);
 		}
-		Ok(CheckpointedPackageBuilder { builders: packages })
+		Ok(ArkoorPackageBuilder { builders: packages })
 	}
 }
 
-impl CheckpointedPackageBuilder<state::ServerSigned> {
-	pub fn cosign_response(&self) -> PackageCosignResponse {
+impl ArkoorPackageBuilder<state::ServerSigned> {
+	pub fn cosign_response(&self) -> ArkoorPackageCosignResponse {
 		let responses = self.builders.iter()
 			.map(|package| package.cosign_response())
 			.collect::<Vec<_>>();
 
-		PackageCosignResponse { responses }
+		ArkoorPackageCosignResponse { responses }
 	}
 }
 
-impl<S: state::BuilderState> CheckpointedPackageBuilder<S> {
+impl<S: state::BuilderState> ArkoorPackageBuilder<S> {
 	/// Access the input VTXO IDs
 	pub fn input_ids<'a>(&'a self) -> impl Iterator<Item = VtxoId> + Clone + 'a {
 		self.builders.iter().map(|b| b.input().id())
@@ -464,14 +464,14 @@ mod test {
 	}
 
 	fn verify_package_builder(
-		builder: CheckpointedPackageBuilder<state::Initial>,
+		builder: ArkoorPackageBuilder<state::Initial>,
 		keypairs: &[Keypair],
 		funding_tx_map: HashMap<Txid, Transaction>,
 	) {
 		let user_builder = builder.generate_user_nonces(keypairs).expect("Valid nb of keypairs");
 		let cosign_requests = user_builder.cosign_request();
 
-		let cosign_responses = CheckpointedPackageBuilder::from_cosign_request(cosign_requests)
+		let cosign_responses = ArkoorPackageBuilder::from_cosign_request(cosign_requests)
 			.expect("Invalid cosign requests")
 			.server_cosign(&server_keypair())
 			.expect("Wrong server key")
@@ -504,7 +504,7 @@ mod test {
 		// She owns a single vtxo and fully spends it
 		let (funding_tx, alice_vtxo) = dummy_vtxo_for_amount(Amount::from_sat(100_000));
 
-		let package_builder = CheckpointedPackageBuilder::new_single_output_with_checkpoints(
+		let package_builder = ArkoorPackageBuilder::new_single_output_with_checkpoints(
 			[alice_vtxo],
 			VtxoRequest {
 				amount: Amount::from_sat(100_000),
@@ -523,7 +523,7 @@ mod test {
 		// She only has a vtxo worth a 1000 sats
 		// She will create two outputs: 900 for Bob, 100 subdust change for Alice
 		let (_funding_tx, alice_vtxo) = dummy_vtxo_for_amount(Amount::from_sat(1000));
-		let package_builder = CheckpointedPackageBuilder::new_single_output_with_checkpoints(
+		let package_builder = ArkoorPackageBuilder::new_single_output_with_checkpoints(
 			[alice_vtxo],
 			VtxoRequest {
 				amount: Amount::from_sat(900),
@@ -549,7 +549,7 @@ mod test {
 		let (funding_tx_2, alice_vtxo_2) = dummy_vtxo_for_amount(Amount::from_sat(5_000));
 		let (funding_tx_3, alice_vtxo_3) = dummy_vtxo_for_amount(Amount::from_sat(2_000));
 
-		let package = CheckpointedPackageBuilder::new_single_output_with_checkpoints(
+		let package = ArkoorPackageBuilder::new_single_output_with_checkpoints(
 			[alice_vtxo_1, alice_vtxo_2, alice_vtxo_3],
 			VtxoRequest {
 				amount: Amount::from_sat(17_000),
@@ -587,7 +587,7 @@ mod test {
 		let (funding_tx_2, alice_vtxo_2) = dummy_vtxo_for_amount(Amount::from_sat(5_000));
 		let (funding_tx_3, alice_vtxo_3) = dummy_vtxo_for_amount(Amount::from_sat(2_000));
 
-		let package = CheckpointedPackageBuilder::new_single_output_with_checkpoints(
+		let package = ArkoorPackageBuilder::new_single_output_with_checkpoints(
 			[alice_vtxo_1, alice_vtxo_2, alice_vtxo_3],
 			VtxoRequest {
 				amount: Amount::from_sat(16_000),
@@ -628,7 +628,7 @@ mod test {
 		let (_funding_tx_1, alice_vtxo_1) = dummy_vtxo_for_amount(Amount::from_sat(5_000));
 		let (_funding_tx_2, alice_vtxo_2) = dummy_vtxo_for_amount(Amount::from_sat(1_000));
 
-		let package = CheckpointedPackageBuilder::new_single_output_with_checkpoints(
+		let package = ArkoorPackageBuilder::new_single_output_with_checkpoints(
 			[alice_vtxo_1, alice_vtxo_2],
 			VtxoRequest {
 				amount: Amount::from_sat(5_700),
@@ -653,7 +653,7 @@ mod test {
 		// She only has a vtxo worth a 900 sats
 		// She will not be able to send the payment
 		let (_funding_tx, alice_vtxo) = dummy_vtxo_for_amount(Amount::from_sat(900));
-		let result = CheckpointedPackageBuilder::new_single_output_with_checkpoints(
+		let result = ArkoorPackageBuilder::new_single_output_with_checkpoints(
 			[alice_vtxo],
 			VtxoRequest {
 				amount: Amount::from_sat(1000),
@@ -681,7 +681,7 @@ mod test {
 		let (_funding_tx, alice_vtxo_2) = dummy_vtxo_for_amount(Amount::from_sat(5_000));
 		let (_funding_tx, alice_vtxo_3) = dummy_vtxo_for_amount(Amount::from_sat(2_000));
 
-		let package = CheckpointedPackageBuilder::new_single_output_with_checkpoints(
+		let package = ArkoorPackageBuilder::new_single_output_with_checkpoints(
 			[alice_vtxo_1, alice_vtxo_2, alice_vtxo_3],
 			VtxoRequest {
 				amount: Amount::from_sat(20_000),
@@ -711,7 +711,7 @@ mod test {
 		let (_funding_tx, alice_vtxo_3) = dummy_vtxo_for_amount(Amount::from_sat(1000));
 		let (_funding_tx, alice_vtxo_4) = dummy_vtxo_for_amount(Amount::from_sat(1000));
 
-		let package = CheckpointedPackageBuilder::new_single_output_with_checkpoints(
+		let package = ArkoorPackageBuilder::new_single_output_with_checkpoints(
 			[alice_vtxo_1, alice_vtxo_2, alice_vtxo_3, alice_vtxo_4],
 			VtxoRequest {
 				amount: Amount::from_sat(2000),
@@ -746,7 +746,7 @@ mod test {
 			},
 		];
 
-		let package = CheckpointedPackageBuilder::new_with_checkpoints(
+		let package = ArkoorPackageBuilder::new_with_checkpoints(
 			[alice_vtxo.clone()],
 			outputs,
 		).expect("Valid package");
@@ -763,7 +763,7 @@ mod test {
 			.expect("Valid nb of keypairs");
 		let cosign_requests = user_builder.cosign_request();
 
-		let cosign_responses = CheckpointedPackageBuilder::from_cosign_request(cosign_requests)
+		let cosign_responses = ArkoorPackageBuilder::from_cosign_request(cosign_requests)
 			.expect("Invalid cosign requests")
 			.server_cosign(&server_keypair())
 			.expect("Wrong server key")
@@ -797,7 +797,7 @@ mod test {
 			},
 		];
 
-		let package = CheckpointedPackageBuilder::new_with_checkpoints(
+		let package = ArkoorPackageBuilder::new_with_checkpoints(
 			[alice_vtxo_1, alice_vtxo_2],
 			outputs,
 		).expect("Valid package");
@@ -830,7 +830,7 @@ mod test {
 			},
 		];
 
-		let package = CheckpointedPackageBuilder::new_with_checkpoints(
+		let package = ArkoorPackageBuilder::new_with_checkpoints(
 			[alice_vtxo_1, alice_vtxo_2],
 			outputs,
 		).expect("Valid package");
@@ -858,7 +858,7 @@ mod test {
 			},
 		];
 
-		let result = CheckpointedPackageBuilder::new_with_checkpoints(
+		let result = ArkoorPackageBuilder::new_with_checkpoints(
 			[alice_vtxo],
 			outputs,
 		);
@@ -876,7 +876,7 @@ mod test {
 	fn empty_outputs_rejected() {
 		let (_funding_tx, alice_vtxo) = dummy_vtxo_for_amount(Amount::from_sat(1000));
 
-		let result = CheckpointedPackageBuilder::new_with_checkpoints(
+		let result = ArkoorPackageBuilder::new_with_checkpoints(
 			[alice_vtxo],
 			vec![],
 		);
@@ -906,7 +906,7 @@ mod test {
 			},
 		];
 
-		let package = CheckpointedPackageBuilder::new_with_checkpoints(
+		let package = ArkoorPackageBuilder::new_with_checkpoints(
 			[alice_vtxo_1, alice_vtxo_2, alice_vtxo_3],
 			outputs,
 		).expect("Valid package");
@@ -938,7 +938,7 @@ mod test {
 			},
 		];
 
-		let package = CheckpointedPackageBuilder::new_with_checkpoints(
+		let package = ArkoorPackageBuilder::new_with_checkpoints(
 			[alice_vtxo_1, alice_vtxo_2, alice_vtxo_3, alice_vtxo_4],
 			outputs,
 		).expect("Valid package");
@@ -981,7 +981,7 @@ mod test {
 			},
 		];
 
-		let package = CheckpointedPackageBuilder::new_with_checkpoints(
+		let package = ArkoorPackageBuilder::new_with_checkpoints(
 			[alice_vtxo],
 			outputs,
 		).expect("Valid package");
@@ -1013,7 +1013,7 @@ mod test {
 			},
 		];
 
-		let package = CheckpointedPackageBuilder::new_with_checkpoints(
+		let package = ArkoorPackageBuilder::new_with_checkpoints(
 			[alice_vtxo_1, alice_vtxo_2],
 			outputs,
 		).expect("Valid package");
@@ -1034,7 +1034,7 @@ mod test {
 			},
 		];
 
-		let result = CheckpointedPackageBuilder::new_with_checkpoints(
+		let result = ArkoorPackageBuilder::new_with_checkpoints(
 			Vec::<Vtxo>::new(),
 			outputs,
 		);
@@ -1074,7 +1074,7 @@ mod test {
 			},
 		];
 
-		let package = CheckpointedPackageBuilder::new_with_checkpoints(
+		let package = ArkoorPackageBuilder::new_with_checkpoints(
 			[alice_vtxo_1, alice_vtxo_2, alice_vtxo_3],
 			outputs,
 		).expect("Valid package");

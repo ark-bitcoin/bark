@@ -20,8 +20,8 @@ use ark::{
 	ProtocolEncoding, SECP, SignedVtxoRequest,
 	Vtxo, VtxoId, VtxoPolicy, VtxoRequest, musig
 };
-use ark::arkoor::CosignRequest;
-use ark::arkoor::package::{CheckpointedPackageBuilder, PackageCosignRequest};
+use ark::arkoor::ArkoorCosignRequest;
+use ark::arkoor::package::{ArkoorPackageBuilder, ArkoorPackageCosignRequest};
 use ark::challenges::RoundAttemptChallenge;
 use ark::tree::signed::builder::SignedTreeBuilder;
 use ark::tree::signed::{LeafVtxoCosignContext, UnlockPreimage};
@@ -486,7 +486,7 @@ async fn double_spend_arkoor() {
 	let pk1 = bark_client.derive_store_next_keypair().await.unwrap().0.public_key();
 	let pk2 = bark_client.derive_store_next_keypair().await.unwrap().0.public_key();
 
-	let builder1 = CheckpointedPackageBuilder::new_single_output_with_checkpoints(
+	let builder1 = ArkoorPackageBuilder::new_single_output_with_checkpoints(
 		[vtxo.clone()],
 		VtxoRequest {
 			amount: sat(100_000),
@@ -494,7 +494,7 @@ async fn double_spend_arkoor() {
 		},
 		VtxoPolicy::new_pubkey(pk1),
 	).unwrap();
-	let builder2 = CheckpointedPackageBuilder::new_single_output_with_checkpoints(
+	let builder2 = ArkoorPackageBuilder::new_single_output_with_checkpoints(
 		[vtxo.clone()],
 		VtxoRequest {
 			amount: sat(200_000), // other amount
@@ -502,7 +502,7 @@ async fn double_spend_arkoor() {
 		},
 		VtxoPolicy::new_pubkey(pk1),
 	).unwrap();
-	let builder3 = CheckpointedPackageBuilder::new_single_output_with_checkpoints(
+	let builder3 = ArkoorPackageBuilder::new_single_output_with_checkpoints(
 		[vtxo.clone()],
 		VtxoRequest {
 			amount: sat(100_000),
@@ -1174,7 +1174,7 @@ async fn reject_dust_arkoor_cosign() {
 	let n3 = musig::nonce_pair(&vtxo_keypair);
 
 	// Construct the request manually
-	// The ark::arkoor::checkpointed_package::CheckpointedPackageBuilder
+	// The ark::arkoor::ArkoorPackageBuilder
 	// will refuse to create this request
 	let request = protos::CheckpointedPackageCosignRequest {
 		parts: vec![
@@ -1387,7 +1387,7 @@ async fn server_should_refuse_claim_twice() {
 
 	let keypair = Keypair::new(&SECP, &mut bip39::rand::thread_rng());
 	let policy =  VtxoPolicy::new_pubkey(keypair.public_key());
-	let cosign_req = PackageCosignRequest { requests: Vec::<CosignRequest<VtxoId>>::new() };
+	let cosign_req = ArkoorPackageCosignRequest { requests: Vec::<ArkoorCosignRequest<VtxoId>>::new() };
 
 	let err = srv.get_public_rpc().await.claim_lightning_receive(protos::ClaimLightningReceiveRequest {
 		payment_hash: receive.payment_hash.to_byte_array().to_vec(),
@@ -1560,7 +1560,7 @@ async fn server_should_refuse_claim_twice_intra_ark_ln_receive() {
 
 	let keypair = Keypair::new(&SECP, &mut bip39::rand::thread_rng());
 	let policy =  VtxoPolicy::new_pubkey(keypair.public_key());
-	let cosign_req = PackageCosignRequest { requests: Vec::<CosignRequest<VtxoId>>::new() };
+	let cosign_req = ArkoorPackageCosignRequest { requests: Vec::<ArkoorCosignRequest<VtxoId>>::new() };
 
 	let err = srv.get_public_rpc().await.claim_lightning_receive(protos::ClaimLightningReceiveRequest {
 		payment_hash: receive.payment_hash.to_byte_array().to_vec(),

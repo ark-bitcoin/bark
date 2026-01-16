@@ -20,7 +20,7 @@ use tracing::info;
 use ark::{
 	musig, ProtocolEncoding, Vtxo, VtxoId, VtxoIdInput, VtxoPolicy,
 };
-use ark::arkoor::package::PackageCosignRequest;
+use ark::arkoor::package::ArkoorPackageCosignRequest;
 use ark::forfeit::HashLockedForfeitBundle;
 use ark::lightning::{Bolt12InvoiceExt, Invoice, Offer, OfferAmount, PaymentHash, Preimage};
 use ark::tree::signed::{LeafVtxoCosignRequest, UnlockHash, UnlockPreimage};
@@ -177,7 +177,7 @@ impl rpc::server::ArkService for Server {
 		let _ = RpcMethodDetails::grpc_ark(middleware::rpc_names::ark::CHECKPOINTED_COSIGN_OOR);
 		let req = req.into_inner();
 
-		let request = PackageCosignRequest::try_from(req)
+		let request = ArkoorPackageCosignRequest::try_from(req)
 			.context("Failed to parse request")?;
 
 		let response = self.cosign_oor(request).await.to_status()?;
@@ -252,7 +252,7 @@ impl rpc::server::ArkService for Server {
 		let _ = RpcMethodDetails::grpc_ark(middleware::rpc_names::ark::REQUEST_LIGHTNING_PAY_HTLC_COSIGN);
 		let req = req.into_inner();
 
-		let cosign_requests = PackageCosignRequest::try_from(req.clone())
+		let cosign_requests = ArkoorPackageCosignRequest::try_from(req.clone())
 			.context("Failed to parse request")?;
 
 		crate::rpcserver::add_tracing_attributes(
@@ -317,7 +317,7 @@ impl rpc::server::ArkService for Server {
 		let _ = RpcMethodDetails::grpc_ark(middleware::rpc_names::ark::REQUEST_LIGHTNING_PAY_HTLC_REVOCATION);
 		let req = req.into_inner();
 
-		let cosign_requests = PackageCosignRequest::try_from(req.clone())
+		let cosign_requests = ArkoorPackageCosignRequest::try_from(req.clone())
 			.context("Failed to parse request")?;
 
 		crate::rpcserver::add_tracing_attributes(vec![
@@ -444,7 +444,7 @@ impl rpc::server::ArkService for Server {
 
 		let payment_preimage = Preimage::from_bytes(req.payment_preimage)?;
 		let vtxo_policy = VtxoPolicy::from_bytes(req.vtxo_policy)?;
-		let cosign_request = PackageCosignRequest::try_from(
+		let cosign_request = ArkoorPackageCosignRequest::try_from(
 			req.cosign_request.badarg("cosign request missing")?,
 		).badarg("invalid cosign request")?;
 

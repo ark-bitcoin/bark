@@ -1,7 +1,7 @@
 use std::str::FromStr;
 
 use anyhow::Context;
-use ark::arkoor::package::CheckpointedPackageBuilder;
+use ark::arkoor::package::ArkoorPackageBuilder;
 use bitcoin::{Amount, SignedAmount};
 use bitcoin::hex::DisplayHex;
 use futures::StreamExt;
@@ -136,7 +136,7 @@ impl Wallet {
 		trace!("ln arkoor builder params: inputs: {:?}; policy: {:?}",
 			inputs.iter().map(|v| v.id()).collect::<Vec<_>>(), receive_policy,
 		);
-		let builder = CheckpointedPackageBuilder::new_claim_all_without_checkpoints(
+		let builder = ArkoorPackageBuilder::new_claim_all_without_checkpoints(
 			inputs.iter().copied().cloned(),
 			receive_policy.clone(),
 		).context("creating claim arkoor builder failed")?;

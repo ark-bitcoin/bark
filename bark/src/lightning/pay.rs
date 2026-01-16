@@ -1,7 +1,7 @@
 use std::fmt;
 
 use anyhow::Context;
-use ark::arkoor::package::{CheckpointedPackageBuilder, PackageCosignResponse};
+use ark::arkoor::package::{ArkoorPackageBuilder, ArkoorPackageCosignResponse};
 use bitcoin::Amount;
 use bitcoin::hex::DisplayHex;
 use lightning::util::ser::Writeable;
@@ -64,7 +64,7 @@ impl Wallet {
 		let (revocation_keypair, _) = self.derive_store_next_keypair().await?;
 
 		let revocation_claim_policy = VtxoPolicy::new_pubkey(revocation_keypair.public_key());
-		let builder = CheckpointedPackageBuilder::new_claim_all_with_checkpoints(
+		let builder = ArkoorPackageBuilder::new_claim_all_with_checkpoints(
 			htlc_vtxos.iter().cloned(),
 			revocation_claim_policy,
 		)
@@ -79,7 +79,7 @@ impl Wallet {
 			.request_lightning_pay_htlc_revocation(cosign_request).await
 			.context("server failed to cosign arkoor")?.into_inner();
 
-		let cosign_resp = PackageCosignResponse::try_from(response)
+		let cosign_resp = ArkoorPackageCosignResponse::try_from(response)
 			.context("Failed to parse cosign response from server")?;
 
 		let vtxos = builder
@@ -473,7 +473,7 @@ impl Wallet {
 			};
 			vec![pay_req, change_req]
 		};
-		let builder = CheckpointedPackageBuilder::new_with_checkpoints(
+		let builder = ArkoorPackageBuilder::new_with_checkpoints(
 			inputs.iter().map(|v| &v.vtxo).cloned(),
 			outputs,
 		)
@@ -491,7 +491,7 @@ impl Wallet {
 		let response = srv.client.request_lightning_pay_htlc_cosign(cosign_request).await
 			.context("htlc request failed")?.into_inner();
 
-		let cosign_responses = PackageCosignResponse::try_from(response)
+		let cosign_responses = ArkoorPackageCosignResponse::try_from(response)
 			.context("Failed to parse cosign response from server")?;
 
 		let vtxos = builder

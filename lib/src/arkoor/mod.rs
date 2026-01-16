@@ -38,29 +38,29 @@
 //! from a single [Vtxo]. It is a low-level construct and the developer
 //! has to compute the paid amount, change and fees themselves.
 //!
-//! The core construct is [CheckpointedArkoorBuilder] which can be
+//! The core construct is [ArkoorBuilder] which can be
 //! used to build arkoor transactions. The struct is designed to be
 //! used by both the client and the server.
 //!
-//! [CheckpointedArkoorBuilder::new]  is a constructor that validates
+//! [ArkoorBuilder::new]  is a constructor that validates
 //! the intended transaction. At this point, all transactions that
 //! will be constructed are fully designed. You can
-//! use [CheckpointedArkoorBuilder::build_unsigned_vtxos] to construct the
+//! use [ArkoorBuilder::build_unsigned_vtxos] to construct the
 //! vtxos but they will still lack signatures.
 //!
 //! Constructing the signatures is an interactive process in which the
 //! server signs first.
 //!
-//! The client will call [CheckpointedArkoorBuilder::generate_user_nonces]
+//! The client will call [ArkoorBuilder::generate_user_nonces]
 //! which will update the builder-state to  [state::UserGeneratedNonces].
 //! The client will create a [CosignRequest] which contains the details
 //! about the arkoor payment including the user nonces. The server will
 //! respond with a [CosignResponse] which can be used to finalize all
-//! signatures. At the end the client can call [CheckpointedArkoorBuilder::build_signed_vtxos]
+//! signatures. At the end the client can call [ArkoorBuilder::build_signed_vtxos]
 //! to get their fully signed VTXOs.
 //!
-//! The server will also use [CheckpointedArkoorBuilder::from_cosign_request]
-//! to construct a builder. The [CheckpointedArkoorBuilder::server_cosign]
+//! The server will also use [ArkoorBuilder::from_cosign_request]
+//! to construct a builder. The [ArkoorBuilder::server_cosign]
 //! will construct the [CosignResponse] which is sent to the client.
 //!
 
@@ -139,13 +139,13 @@ pub enum ArkoorSigningError {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CosignResponse {
+pub struct ArkoorCosignResponse {
 	pub server_pub_nonces: Vec<musig::PublicNonce>,
 	pub server_partial_sigs: Vec<musig::PartialSignature>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CosignRequest<V> {
+pub struct ArkoorCosignRequest<V> {
 	pub user_pub_nonces: Vec<musig::PublicNonce>,
 	pub input: V,
 	pub outputs: Vec<VtxoRequest>,
@@ -153,7 +153,7 @@ pub struct CosignRequest<V> {
 	pub use_checkpoint: bool,
 }
 
-impl<V> CosignRequest<V> {
+impl<V> ArkoorCosignRequest<V> {
 	pub fn new(
 		user_pub_nonces: Vec<musig::PublicNonce>,
 		input: V,
@@ -171,13 +171,13 @@ impl<V> CosignRequest<V> {
 	}
 }
 
-impl CosignRequest<VtxoId> {
-	pub fn with_vtxo(self, vtxo: Vtxo) -> Result<CosignRequest<Vtxo>, &'static str> {
+impl ArkoorCosignRequest<VtxoId> {
+	pub fn with_vtxo(self, vtxo: Vtxo) -> Result<ArkoorCosignRequest<Vtxo>, &'static str> {
 		if self.input != vtxo.id() {
 			return Err("Input vtxo id does not match the provided vtxo id")
 		}
 
-		Ok(CosignRequest::new(
+		Ok(ArkoorCosignRequest::new(
 			self.user_pub_nonces,
 			vtxo,
 			self.outputs,
@@ -229,7 +229,7 @@ pub mod state {
 	impl BuilderState for ServerSigned {}
 }
 
-pub struct CheckpointedArkoorBuilder<S: state::BuilderState> {
+pub struct ArkoorBuilder<S: state::BuilderState> {
 	// These variables are provided by the user
 	/// The input vtxo to be spent
 	input: Vtxo,
@@ -277,7 +277,7 @@ pub struct CheckpointedArkoorBuilder<S: state::BuilderState> {
 	_state: PhantomData<S>,
 }
 
-impl<S: state::BuilderState> CheckpointedArkoorBuilder<S> {
+impl<S: state::BuilderState> ArkoorBuilder<S> {
 	/// Access the input VTXO
 	pub fn input(&self) -> &Vtxo {
 		&self.input
@@ -952,8 +952,8 @@ impl<S: state::BuilderState> CheckpointedArkoorBuilder<S> {
 	}
 
 
-	fn to_state<S2: state::BuilderState>(self) -> CheckpointedArkoorBuilder<S2> {
-		CheckpointedArkoorBuilder {
+	fn to_state<S2: state::BuilderState>(self) -> ArkoorBuilder<S2> {
+		ArkoorBuilder {
 			input: self.input,
 			outputs: self.outputs,
 			isolated_outputs: self.isolated_outputs,
@@ -974,7 +974,7 @@ impl<S: state::BuilderState> CheckpointedArkoorBuilder<S> {
 	}
 }
 
-impl CheckpointedArkoorBuilder<state::Initial> {
+impl ArkoorBuilder<state::Initial> {
 	/// Create builder with checkpoint transaction
 	pub fn new_with_checkpoint(
 		input: Vtxo,
@@ -1198,7 +1198,7 @@ impl CheckpointedArkoorBuilder<state::Initial> {
 	pub fn generate_user_nonces(
 		mut self,
 		user_keypair: Keypair,
-	) -> CheckpointedArkoorBuilder<state::UserGeneratedNonces> {
+	) -> ArkoorBuilder<state::UserGeneratedNonces> {
 		let mut user_pub_nonces = Vec::with_capacity(self.nb_sigs());
 		let mut user_sec_nonces = Vec::with_capacity(self.nb_sigs());
 
@@ -1221,11 +1221,11 @@ impl CheckpointedArkoorBuilder<state::Initial> {
 	///
 	/// If you are implementing a client, use [Self::generate_user_nonces] instead.
 	/// If you are implementing a server you should look at
-	/// [CheckpointedArkoorBuilder::from_cosign_request].
+	/// [ArkoorBuilder::from_cosign_request].
 	fn set_user_pub_nonces(
 		mut self,
 		user_pub_nonces: Vec<musig::PublicNonce>,
-	) -> Result<CheckpointedArkoorBuilder<state::ServerCanCosign>, ArkoorSigningError> {
+	) -> Result<ArkoorBuilder<state::ServerCanCosign>, ArkoorSigningError> {
 		if user_pub_nonces.len() != self.nb_sigs() {
 			return Err(ArkoorSigningError::InvalidNbUserNonces {
 				expected: self.nb_sigs(),
@@ -1238,11 +1238,11 @@ impl CheckpointedArkoorBuilder<state::Initial> {
 	}
 }
 
-impl<'a> CheckpointedArkoorBuilder<state::ServerCanCosign> {
+impl<'a> ArkoorBuilder<state::ServerCanCosign> {
 	pub fn from_cosign_request(
-		cosign_request: CosignRequest<Vtxo>,
-	) -> Result<CheckpointedArkoorBuilder<state::ServerCanCosign>, ArkoorSigningError> {
-		CheckpointedArkoorBuilder::new(
+		cosign_request: ArkoorCosignRequest<Vtxo>,
+	) -> Result<ArkoorBuilder<state::ServerCanCosign>, ArkoorSigningError> {
+		ArkoorBuilder::new(
 			cosign_request.input,
 			cosign_request.outputs,
 			cosign_request.isolated_outputs,
@@ -1255,7 +1255,7 @@ impl<'a> CheckpointedArkoorBuilder<state::ServerCanCosign> {
 	pub fn server_cosign(
 		mut self,
 		server_keypair: &Keypair,
-	) -> Result<CheckpointedArkoorBuilder<state::ServerSigned>, ArkoorSigningError> {
+	) -> Result<ArkoorBuilder<state::ServerSigned>, ArkoorSigningError> {
 		// Verify that the provided keypair is correct
 		if server_keypair.public_key() != self.input.server_pubkey() {
 			return Err(ArkoorSigningError::IncorrectKey {
@@ -1286,7 +1286,7 @@ impl<'a> CheckpointedArkoorBuilder<state::ServerCanCosign> {
 	}
 }
 
-impl CheckpointedArkoorBuilder<state::ServerSigned> {
+impl ArkoorBuilder<state::ServerSigned> {
 	pub fn user_pub_nonces(&self) -> Vec<musig::PublicNonce> {
 		self.user_pub_nonces.as_ref().expect("state invariant").clone()
 	}
@@ -1295,8 +1295,8 @@ impl CheckpointedArkoorBuilder<state::ServerSigned> {
 		self.server_partial_sigs.as_ref().expect("state invariant").clone()
 	}
 
-	pub fn cosign_response(&self) -> CosignResponse {
-		CosignResponse {
+	pub fn cosign_response(&self) -> ArkoorCosignResponse {
+		ArkoorCosignResponse {
 			server_pub_nonces: self.server_pub_nonces.as_ref()
 				.expect("state invariant").clone(),
 			server_partial_sigs: self.server_partial_sigs.as_ref()
@@ -1305,13 +1305,13 @@ impl CheckpointedArkoorBuilder<state::ServerSigned> {
 	}
 }
 
-impl CheckpointedArkoorBuilder<state::UserGeneratedNonces> {
+impl ArkoorBuilder<state::UserGeneratedNonces> {
 	pub fn user_pub_nonces(&self) -> &[PublicNonce] {
 		self.user_pub_nonces.as_ref().expect("State invariant")
 	}
 
-	pub fn cosign_request(&self) -> CosignRequest<Vtxo> {
-		CosignRequest {
+	pub fn cosign_request(&self) -> ArkoorCosignRequest<Vtxo> {
+		ArkoorCosignRequest {
 			user_pub_nonces: self.user_pub_nonces().to_vec(),
 			input: self.input.clone(),
 			outputs: self.outputs.clone(),
@@ -1322,7 +1322,7 @@ impl CheckpointedArkoorBuilder<state::UserGeneratedNonces> {
 
 	fn validate_server_cosign_response(
 		&self,
-		data: &CosignResponse,
+		data: &ArkoorCosignResponse,
 	) -> Result<(), ArkoorSigningError> {
 
 		// Check if the correct number of nonces is provided
@@ -1362,8 +1362,8 @@ impl CheckpointedArkoorBuilder<state::UserGeneratedNonces> {
 	pub fn user_cosign(
 		mut self,
 		user_keypair: &Keypair,
-		server_cosign_data: &CosignResponse,
-	) -> Result<CheckpointedArkoorBuilder<state::UserSigned>, ArkoorSigningError> {
+		server_cosign_data: &ArkoorCosignResponse,
+	) -> Result<ArkoorBuilder<state::UserSigned>, ArkoorSigningError> {
 		// Verify that the correct user keypair is provided
 		if user_keypair.public_key() != self.input.user_pubkey() {
 			return Err(ArkoorSigningError::IncorrectKey {
@@ -1377,7 +1377,7 @@ impl CheckpointedArkoorBuilder<state::UserGeneratedNonces> {
 
 		let mut sigs = Vec::with_capacity(self.nb_sigs());
 
-		// Takes the secret nonces out of the [CheckpointedArkoorBuilder].
+		// Takes the secret nonces out of the [ArkoorBuilder].
 		// Note, that we can't clone nonces so we can only sign once
 		let user_sec_nonces = self.user_sec_nonces.take().expect("state invariant");
 
@@ -1407,7 +1407,7 @@ impl CheckpointedArkoorBuilder<state::UserGeneratedNonces> {
 }
 
 
-impl<'a> CheckpointedArkoorBuilder<state::UserSigned> {
+impl<'a> ArkoorBuilder<state::UserSigned> {
 	pub fn build_signed_vtxos(&self) -> Vec<Vtxo> {
 		let sigs = self.full_signatures.as_ref().expect("state invariant");
 		let mut ret = Vec::with_capacity(self.outputs.len() + self.isolated_outputs.len());
@@ -1521,7 +1521,7 @@ mod test {
 		];
 
 		// The user generates their nonces
-		let user_builder = CheckpointedArkoorBuilder::new_with_checkpoint(
+		let user_builder = ArkoorBuilder::new_with_checkpoint(
 			alice_vtxo.clone(),
 			vtxo_request.clone(),
 			vec![], // no isolation outputs
@@ -1537,7 +1537,7 @@ mod test {
 		let cosign_request = user_builder.cosign_request();
 
 		// The server will cosign the request
-		let server_builder = CheckpointedArkoorBuilder::from_cosign_request(cosign_request)
+		let server_builder = ArkoorBuilder::from_cosign_request(cosign_request)
 			.expect("Invalid cosign request")
 			.server_cosign(&server_keypair)
 			.expect("Incorrect key");
@@ -1607,7 +1607,7 @@ mod test {
 		];
 
 		// The user generates their nonces
-		let user_builder = CheckpointedArkoorBuilder::new_with_checkpoint(
+		let user_builder = ArkoorBuilder::new_with_checkpoint(
 			alice_vtxo.clone(),
 			outputs.clone(),
 			dust_outputs.clone(),
@@ -1632,7 +1632,7 @@ mod test {
 		let cosign_request = user_builder.cosign_request();
 
 		// The server will cosign the request
-		let server_builder = CheckpointedArkoorBuilder::from_cosign_request(cosign_request)
+		let server_builder = ArkoorBuilder::from_cosign_request(cosign_request)
 			.expect("Invalid cosign request")
 			.server_cosign(&server_keypair)
 			.expect("Incorrect key");
@@ -1681,7 +1681,7 @@ mod test {
 		alice_vtxo.validate(&funding_tx).expect("The unsigned vtxo is valid");
 
 		// only dust is allowed
-		CheckpointedArkoorBuilder::new_with_checkpoint(
+		ArkoorBuilder::new_with_checkpoint(
 			alice_vtxo.clone(),
 			vec![
 				VtxoRequest {
@@ -1693,7 +1693,7 @@ mod test {
 		).unwrap();
 
 		// empty outputs vec is not allowed (need at least one normal output)
-		let res_empty = CheckpointedArkoorBuilder::new_with_checkpoint(
+		let res_empty = ArkoorBuilder::new_with_checkpoint(
 			alice_vtxo.clone(),
 			vec![],
 			vec![
@@ -1709,7 +1709,7 @@ mod test {
 		}
 
 		// normal case: non-dust in normal outputs and dust in isolation
-		CheckpointedArkoorBuilder::new_with_checkpoint(
+		ArkoorBuilder::new_with_checkpoint(
 			alice_vtxo.clone(),
 			vec![
 				VtxoRequest {
@@ -1726,7 +1726,7 @@ mod test {
 		).unwrap();
 
 		// mixing with isolation sum < 330 should fail
-		let res_mixed_small = CheckpointedArkoorBuilder::new_with_checkpoint(
+		let res_mixed_small = ArkoorBuilder::new_with_checkpoint(
 			alice_vtxo.clone(),
 			vec![
 				VtxoRequest {
@@ -1789,7 +1789,7 @@ mod test {
 		];
 
 		// This should fail because isolation sum (100) < P2TR_DUST (330)
-		let result = CheckpointedArkoorBuilder::new_with_checkpoint(
+		let result = ArkoorBuilder::new_with_checkpoint(
 			alice_vtxo.clone(),
 			outputs.clone(),
 			dust_outputs.clone(),
@@ -1831,7 +1831,7 @@ mod test {
 			}
 		];
 
-		let user_builder = CheckpointedArkoorBuilder::new_with_checkpoint(
+		let user_builder = ArkoorBuilder::new_with_checkpoint(
 			alice_vtxo.clone(),
 			dust_outputs,
 			vec![],
@@ -1854,7 +1854,7 @@ mod test {
 		let cosign_request = user_builder.cosign_request();
 
 		// The server will cosign the request
-		let server_builder = CheckpointedArkoorBuilder::from_cosign_request(cosign_request)
+		let server_builder = ArkoorBuilder::from_cosign_request(cosign_request)
 			.expect("Invalid cosign request")
 			.server_cosign(&server_keypair)
 			.expect("Incorrect key");
@@ -1920,7 +1920,7 @@ mod test {
 			}
 		];
 
-		let user_builder = CheckpointedArkoorBuilder::new_with_checkpoint(
+		let user_builder = ArkoorBuilder::new_with_checkpoint(
 			alice_vtxo.clone(),
 			dust_outputs,
 			vec![],
@@ -1943,7 +1943,7 @@ mod test {
 		let cosign_request = user_builder.cosign_request();
 
 		// The server will cosign the request
-		let server_builder = CheckpointedArkoorBuilder::from_cosign_request(cosign_request)
+		let server_builder = ArkoorBuilder::from_cosign_request(cosign_request)
 			.expect("Invalid cosign request")
 			.server_cosign(&server_keypair)
 			.expect("Incorrect key");
@@ -1995,7 +1995,7 @@ mod test {
 
 		alice_vtxo.validate(&funding_tx).expect("Valid vtxo");
 
-		let builder = CheckpointedArkoorBuilder::new_with_checkpoint_isolate_dust(
+		let builder = ArkoorBuilder::new_with_checkpoint_isolate_dust(
 			alice_vtxo,
 			vec![
 				VtxoRequest {
@@ -2036,7 +2036,7 @@ mod test {
 
 		alice_vtxo.validate(&funding_tx).expect("Valid vtxo");
 
-		let builder = CheckpointedArkoorBuilder::new_with_checkpoint_isolate_dust(
+		let builder = ArkoorBuilder::new_with_checkpoint_isolate_dust(
 			alice_vtxo,
 			vec![
 				VtxoRequest {
@@ -2078,7 +2078,7 @@ mod test {
 		alice_vtxo.validate(&funding_tx).expect("Valid vtxo");
 
 		// 600 non-dust + 200 + 200 dust = 400 dust total (>= 330)
-		let builder = CheckpointedArkoorBuilder::new_with_checkpoint_isolate_dust(
+		let builder = ArkoorBuilder::new_with_checkpoint_isolate_dust(
 			alice_vtxo,
 			vec![
 				VtxoRequest {
@@ -2124,7 +2124,7 @@ mod test {
 
 		alice_vtxo.validate(&funding_tx).expect("Valid vtxo");
 
-		let builder = CheckpointedArkoorBuilder::new_with_checkpoint_isolate_dust(
+		let builder = ArkoorBuilder::new_with_checkpoint_isolate_dust(
 			alice_vtxo,
 			vec![
 				VtxoRequest {
@@ -2176,7 +2176,7 @@ mod test {
 
 		alice_vtxo.validate(&funding_tx).expect("Valid vtxo");
 
-		let builder = CheckpointedArkoorBuilder::new_with_checkpoint_isolate_dust(
+		let builder = ArkoorBuilder::new_with_checkpoint_isolate_dust(
 			alice_vtxo,
 			vec![
 				VtxoRequest {
@@ -2222,7 +2222,7 @@ mod test {
 
 		alice_vtxo.validate(&funding_tx).expect("Valid vtxo");
 
-		let builder = CheckpointedArkoorBuilder::new_with_checkpoint_isolate_dust(
+		let builder = ArkoorBuilder::new_with_checkpoint_isolate_dust(
 			alice_vtxo,
 			vec![
 				VtxoRequest {

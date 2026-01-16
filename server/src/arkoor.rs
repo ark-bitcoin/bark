@@ -1,7 +1,7 @@
 use anyhow::Context;
 
 use ark::arkoor::state::{ServerCanCosign, ServerSigned};
-use ark::arkoor::package::{PackageCosignRequest, PackageCosignResponse, CheckpointedPackageBuilder};
+use ark::arkoor::package::{ArkoorPackageCosignRequest, ArkoorPackageCosignResponse, ArkoorPackageBuilder};
 use ark::vtxo::{VtxoId, VtxoPolicy};
 
 use crate::Server;
@@ -9,8 +9,8 @@ use crate::Server;
 impl Server {
 	pub async fn cosign_oor_with_builder(
 		&self,
-		builder: CheckpointedPackageBuilder<ServerCanCosign>,
-	) -> anyhow::Result<CheckpointedPackageBuilder<ServerSigned>> {
+		builder: ArkoorPackageBuilder<ServerCanCosign>,
+	) -> anyhow::Result<ArkoorPackageBuilder<ServerSigned>> {
 		let vtxo_guard = self.vtxos_in_flux.try_lock(builder.input_ids()).map_err(|e| {
 			slog!(ArkoorInputAlreadyInFlux, vtxo: e.id);
 			badarg_err!("some VTXO is already locked by another process: {}", e.id)
@@ -40,8 +40,8 @@ impl Server {
 
 	pub async fn cosign_oor(
 		&self,
-		request: PackageCosignRequest<VtxoId>
-	) -> anyhow::Result<PackageCosignResponse> {
+		request: ArkoorPackageCosignRequest<VtxoId>
+	) -> anyhow::Result<ArkoorPackageCosignResponse> {
 		let input_vtxo_ids = request.inputs().cloned().collect::<Vec<VtxoId>>();
 		let input_vtxos = self.db.get_vtxos_by_id(&input_vtxo_ids).await?
 			.into_iter().map(|v| v.vtxo).collect::<Vec<_>>();
@@ -62,7 +62,7 @@ impl Server {
 
 		let request = request.set_vtxos(input_vtxos)?;
 
-		let builder = CheckpointedPackageBuilder::from_cosign_request(request)
+		let builder = ArkoorPackageBuilder::from_cosign_request(request)
 			.context("Invalid arkoor request")?;
 
 		let builder = self.cosign_oor_with_builder(builder).await?;
