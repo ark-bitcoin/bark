@@ -105,7 +105,7 @@ impl Server {
 		// - send arkoor to self to create new vtxo
 		// - repeat 100 times
 		// => all our money locked
-		let input_vtxos_guard = self.vtxos_in_flux.lock(&input_vtxos)
+		let input_vtxos_guard = self.vtxos_in_flux.try_lock(&input_vtxos)
 			.context("some VTXO is already locked by another process")?;
 
 		request.validate().badarg("invalid offboard request")?;

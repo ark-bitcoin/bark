@@ -451,7 +451,7 @@ impl CollectingPayments {
 		self.validate_payment_data(&inputs, &vtxo_requests)?;
 
 		let input_ids = inputs.iter().map(|i| i.vtxo_id).collect::<Vec<_>>();
-		let flux_guard = srv.vtxos_in_flux.lock(&input_ids)
+		let flux_guard = srv.vtxos_in_flux.try_lock(&input_ids)
 			.map_err(|e| { client_rslog!(RoundUserVtxoInFlux, self.round_step, vtxo: e.id); e })
 			.badarg("input VTXO already locked")?;
 
@@ -536,7 +536,7 @@ impl CollectingPayments {
 		}
 
 		let input_ids = participation.inputs.iter().map(|i| i.vtxo_id).collect::<Vec<_>>();
-		let lock = match srv.vtxos_in_flux.lock(&input_ids) {
+		let lock = match srv.vtxos_in_flux.try_lock(&input_ids) {
 			Ok(l) => l,
 			Err(e) => {
 				client_rslog!(RoundUserVtxoInFlux, self.round_step,
@@ -1579,7 +1579,7 @@ impl Server {
 		// we do check the vtxo's spendability in the db call below, but
 		// with this, if the user is doing race-y behavior, we can fail early
 		// either here or on the other side of the race
-		let _guard = match self.vtxos_in_flux.lock(&input_ids) {
+		let _guard = match self.vtxos_in_flux.try_lock(&input_ids) {
 			Ok(g) => g,
 			Err(v) => return badarg!("vtxo already in flux: {}", v),
 		};

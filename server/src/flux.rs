@@ -44,10 +44,11 @@ impl VtxosInFlux {
 		}
 	}
 
-	/// Lock the given vtxos and return a lock. The vtxos remain
-	/// in flux until either [VtxosInFlux::release] is called on the lock,
-	/// or the lock is dropped.
-	pub fn lock<V>(
+	/// Try lock the given vtxos and return a lock
+	///
+	/// The vtxos remain in flux until either [VtxosInFlux::release]
+	/// is called on the lock, or the lock is dropped.
+	pub fn try_lock<V>(
 		&self,
 		ids: impl IntoIterator<Item = V> + Clone,
 	) -> Result<VtxoFluxGuard<'_>, VtxoAlreadyInFluxError>
@@ -228,17 +229,17 @@ mod test {
 		let flux = VtxosInFlux::new();
 		let vtxos = (0..10).map(gen_vtxoid).collect::<Vec<_>>();
 
-		let l1 = flux.lock([vtxos[0], vtxos[1]]).unwrap();
-		let _l2 = flux.lock([vtxos[2], vtxos[3]]).unwrap();
+		let l1 = flux.try_lock([vtxos[0], vtxos[1]]).unwrap();
+		let _l2 = flux.try_lock([vtxos[2], vtxos[3]]).unwrap();
 		assert_eq!(vec![vtxos[0], vtxos[1], vtxos[2], vtxos[3]], flux.vtxos());
-		flux.lock([vtxos[0], vtxos[4]]).unwrap_err();
+		flux.try_lock([vtxos[0], vtxos[4]]).unwrap_err();
 		assert_eq!(vec![vtxos[0], vtxos[1], vtxos[2], vtxos[3]], flux.vtxos());
 		drop(l1);
 		assert_eq!(vec![vtxos[2], vtxos[3]], flux.vtxos());
-		let _l3 = flux.lock([vtxos[0], vtxos[4]]).unwrap();
+		let _l3 = flux.try_lock([vtxos[0], vtxos[4]]).unwrap();
 		assert_eq!(vec![vtxos[0], vtxos[2], vtxos[3], vtxos[4]], flux.vtxos());
 
-		flux.lock(&[vtxos[2], vtxos[5]]).unwrap_err();
+		flux.try_lock(&[vtxos[2], vtxos[5]]).unwrap_err();
 		assert_eq!(vec![vtxos[0], vtxos[2], vtxos[3], vtxos[4]], flux.vtxos());
 		assert!(!flux.vtxos().contains(&vtxos[5]));
 	}

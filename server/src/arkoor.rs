@@ -35,7 +35,7 @@ impl Server {
 		// peoples VTXOs
 
 		// Mark the vtxo as in-flux
-		let guard = self.vtxos_in_flux.lock(&input_vtxo_ids)
+		let guard = self.vtxos_in_flux.try_lock(&input_vtxo_ids)
 			.context("some VTXO is already locked by another process")?;
 
 		// Convert the PackageCosignRequest<VtxoId> into PackageCosignRequest<Vtxo>
