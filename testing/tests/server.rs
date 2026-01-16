@@ -512,20 +512,20 @@ async fn double_spend_arkoor() {
 	).unwrap();
 
 	// And the corresponding requests to the server
-	use protos::CheckpointedPackageCosignRequest;
-	let req1: CheckpointedPackageCosignRequest = builder1
+	use protos::ArkoorPackageCosignRequest;
+	let req1: ArkoorPackageCosignRequest = builder1
 		.generate_user_nonces(&[vtxo_keypair]).unwrap()
 		.cosign_request()
 		.convert_vtxo(|vtxo| vtxo.id())
 		.into();
 
-	let req2: CheckpointedPackageCosignRequest = builder2
+	let req2: ArkoorPackageCosignRequest = builder2
 		.generate_user_nonces(&[vtxo_keypair]).unwrap()
 		.cosign_request()
 		.convert_vtxo(|vtxo| vtxo.id())
 		.into();
 
-	let req3: CheckpointedPackageCosignRequest = builder3
+	let req3: ArkoorPackageCosignRequest = builder3
 		.generate_user_nonces(&[vtxo_keypair]).unwrap()
 		.cosign_request()
 		.convert_vtxo(|vtxo| vtxo.id())
@@ -1176,9 +1176,9 @@ async fn reject_dust_arkoor_cosign() {
 	// Construct the request manually
 	// The ark::arkoor::ArkoorPackageBuilder
 	// will refuse to create this request
-	let request = protos::CheckpointedPackageCosignRequest {
+	let request = protos::ArkoorPackageCosignRequest {
 		parts: vec![
-			protos::CheckpointedCosignRequest {
+			protos::ArkoorCosignRequest {
 				input_vtxo_id: vtxo_id.serialize(),
 				outputs: vec![
 					protos::VtxoRequest {
@@ -1221,7 +1221,7 @@ async fn reject_dust_bolt11_payment() {
 	impl captaind::proxy::ArkRpcProxy for Proxy {
 		async fn request_lightning_pay_htlc_cosign(
 			&self, upstream: &mut ArkClient, mut req: protos::LightningPayHtlcCosignRequest,
-		) -> Result<protos::CheckpointedPackageCosignResponse, tonic::Status> {
+		) -> Result<protos::ArkoorPackageCosignResponse, tonic::Status> {
 			req.parts[0].outputs[0].amount = P2TR_DUST_SAT - 1;
 			Ok(upstream.request_lightning_pay_htlc_cosign(req).await?.into_inner())
 		}
@@ -1254,7 +1254,7 @@ async fn server_refuse_claim_invoice_not_settled() {
 	impl captaind::proxy::ArkRpcProxy for Proxy {
 		async fn claim_lightning_receive(
 			&self, upstream: &mut ArkClient, mut req: protos::ClaimLightningReceiveRequest,
-		) -> Result<protos::CheckpointedPackageCosignResponse, tonic::Status> {
+		) -> Result<protos::ArkoorPackageCosignResponse, tonic::Status> {
 			req.payment_preimage = vec![1; 32];
 			Ok(upstream.claim_lightning_receive(req).await?.into_inner())
 		}
@@ -1806,8 +1806,8 @@ async fn should_refuse_oor_input_vtxo_that_is_being_exited() {
 	#[async_trait::async_trait]
 	impl captaind::proxy::ArkRpcProxy for Proxy {
 		async fn checkpointed_cosign_oor(
-			&self, upstream: &mut ArkClient, mut req: protos::CheckpointedPackageCosignRequest,
-		) -> Result<protos::CheckpointedPackageCosignResponse, tonic::Status> {
+			&self, upstream: &mut ArkClient, mut req: protos::ArkoorPackageCosignRequest,
+		) -> Result<protos::ArkoorPackageCosignResponse, tonic::Status> {
 			req.parts[0].input_vtxo_id = self.0.to_bytes().to_vec();
 			Ok(upstream.checkpointed_cosign_oor(req).await?.into_inner())
 		}
@@ -1853,7 +1853,7 @@ async fn should_refuse_ln_pay_input_vtxo_that_is_being_exited() {
 	impl captaind::proxy::ArkRpcProxy for Proxy {
 		async fn request_lightning_pay_htlc_cosign(
 			&self, upstream: &mut ArkClient, mut req: protos::LightningPayHtlcCosignRequest,
-		) -> Result<protos::CheckpointedPackageCosignResponse, tonic::Status> {
+		) -> Result<protos::ArkoorPackageCosignResponse, tonic::Status> {
 			req.parts[0].input_vtxo_id = self.0.to_bytes().to_vec();
 			Ok(upstream.request_lightning_pay_htlc_cosign(req).await?.into_inner())
 		}

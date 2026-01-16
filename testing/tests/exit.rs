@@ -479,8 +479,8 @@ async fn bark_should_exit_a_failed_htlc_out_that_server_refuse_to_revoke() {
 		}
 
 		async fn request_lightning_pay_htlc_revocation(
-			&self, _upstream: &mut ArkClient, _req: protos::CheckpointedPackageCosignRequest,
-		) -> Result<protos::CheckpointedPackageCosignResponse, tonic::Status> {
+			&self, _upstream: &mut ArkClient, _req: protos::ArkoorPackageCosignRequest,
+		) -> Result<protos::ArkoorPackageCosignResponse, tonic::Status> {
 			Err(tonic::Status::internal("Refused to revoke htlc out"))
 		}
 	}
@@ -613,8 +613,8 @@ async fn bark_should_exit_a_pending_htlc_out_that_server_refuse_to_revoke() {
 
 		async fn request_lightning_pay_htlc_revocation(
 			&self, _upstream: &mut ArkClient,
-			_req: protos::CheckpointedPackageCosignRequest,
-		) -> Result<protos::CheckpointedPackageCosignResponse, tonic::Status> {
+			_req: protos::ArkoorPackageCosignRequest,
+		) -> Result<protos::ArkoorPackageCosignResponse, tonic::Status> {
 			Err(tonic::Status::internal("Refused to revoke htlc out"))
 		}
 	}
@@ -929,7 +929,7 @@ async fn bark_should_exit_a_htlc_recv_that_server_refuse_to_cosign() {
 			&self,
 			upstream: &mut ArkClient,
 			req: server_rpc::protos::ClaimLightningReceiveRequest,
-		) -> Result<server_rpc::protos::CheckpointedPackageCosignResponse, tonic::Status> {
+		) -> Result<server_rpc::protos::ArkoorPackageCosignResponse, tonic::Status> {
 			upstream.claim_lightning_receive(req).await?;
 			Err(tonic::Status::internal("Refused to finish bolt11 board"))
 		}

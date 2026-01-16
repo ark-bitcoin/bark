@@ -71,7 +71,7 @@ impl Wallet {
 			.context("Failed to construct arkoor package")?
 			.generate_user_nonces(&htlc_keypairs)?;
 
-		let cosign_request = protos::CheckpointedPackageCosignRequest::from(
+		let cosign_request = protos::ArkoorPackageCosignRequest::from(
 			builder.cosign_request().convert_vtxo(|vtxo| vtxo.id())
 		);
 

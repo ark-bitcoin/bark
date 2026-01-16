@@ -23,7 +23,7 @@ service ArkService {
 
 	// * ARKOOR PAYMENTS*
 
-	rpc CheckpointedCosignOor(CheckpointedPackageCosignRequest) returns (CheckpointedPackageCosignResponse) {}
+	rpc CheckpointedCosignOor(ArkoorPackageCosignRequest) returns (ArkoorPackageCosignResponse) {}
 
 	// * MAILBOX *
 
@@ -43,10 +43,10 @@ service ArkService {
 
 	// * SEND LN payments
 
-	rpc RequestLightningPayHtlcCosign(LightningPayHtlcCosignRequest) returns (CheckpointedPackageCosignResponse) {}
+	rpc RequestLightningPayHtlcCosign(LightningPayHtlcCosignRequest) returns (ArkoorPackageCosignResponse) {}
 	rpc InitiateLightningPayment(InitiateLightningPaymentRequest) returns (core.Empty) {}
 	rpc CheckLightningPayment(CheckLightningPaymentRequest) returns (LightningPaymentStatus) {}
-	rpc RequestLightningPayHtlcRevocation(CheckpointedPackageCosignRequest) returns (CheckpointedPackageCosignResponse) {}
+	rpc RequestLightningPayHtlcRevocation(ArkoorPackageCosignRequest) returns (ArkoorPackageCosignResponse) {}
 
 	// * RECEIVE LN payments
 
@@ -55,7 +55,7 @@ service ArkService {
 	rpc StartLightningReceive(StartLightningReceiveRequest) returns (StartLightningReceiveResponse) {}
 	rpc CheckLightningReceive(CheckLightningReceiveRequest) returns (CheckLightningReceiveResponse) {}
 	rpc PrepareLightningReceiveClaim(PrepareLightningReceiveClaimRequest) returns (PrepareLightningReceiveClaimResponse) {}
-	rpc ClaimLightningReceive(ClaimLightningReceiveRequest) returns (CheckpointedPackageCosignResponse) {}
+	rpc ClaimLightningReceive(ClaimLightningReceiveRequest) returns (ArkoorPackageCosignResponse) {}
 
 	// * OFFBOARDS
 
@@ -160,7 +160,7 @@ message VtxoRequest {
 	bytes policy = 2;
 }
 
-message CheckpointedCosignRequest {
+message ArkoorCosignRequest {
 	bytes input_vtxo_id = 1;
 	repeated VtxoRequest outputs = 2;
 	repeated bytes user_pub_nonces = 3;
@@ -169,17 +169,17 @@ message CheckpointedCosignRequest {
 	bool use_checkpoint = 5;
 }
 
-message CheckpointedPackageCosignRequest {
-	repeated CheckpointedCosignRequest parts = 1;
+message ArkoorPackageCosignRequest {
+	repeated ArkoorCosignRequest parts = 1;
 }
 
-message CheckpointedCosignResponse {
+message ArkoorCosignResponse {
 	repeated bytes server_pub_nonces = 1;
 	repeated bytes server_partial_sigs = 2;
 }
 
-message CheckpointedPackageCosignResponse {
-	repeated CheckpointedCosignResponse parts = 1;
+message ArkoorPackageCosignResponse {
+	repeated ArkoorCosignResponse parts = 1;
 }
 
 
@@ -218,7 +218,7 @@ message ArkoorVtxosResponse {
 
 message LightningPayHtlcCosignRequest {
 	string invoice = 1;
-	repeated CheckpointedCosignRequest parts = 2;
+	repeated ArkoorCosignRequest parts = 2;
 }
 
 message InitiateLightningPaymentRequest {
@@ -301,7 +301,7 @@ message ClaimLightningReceiveRequest {
 	bytes payment_hash = 1;
 	bytes payment_preimage = 2;
 	bytes vtxo_policy = 3;
-	CheckpointedPackageCosignRequest cosign_request = 4;
+	ArkoorPackageCosignRequest cosign_request = 4;
 }
 
 enum LightningReceiveStatus {

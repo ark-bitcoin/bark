@@ -90,7 +90,7 @@ impl Wallet {
 			.generate_user_nonces(&user_keypairs)
 			.context("invalid nb of keypairs")?;
 
-		let cosign_request = protos::CheckpointedPackageCosignRequest::from(
+		let cosign_request = protos::ArkoorPackageCosignRequest::from(
 			builder.cosign_request().convert_vtxo(|vtxo| vtxo.id()),
 		);
 

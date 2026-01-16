@@ -172,8 +172,8 @@ impl rpc::server::ArkService for Server {
 	/// Handles a checkpointed OOR cosign request.
 	async fn checkpointed_cosign_oor(
 		&self,
-		req: tonic::Request<protos::CheckpointedPackageCosignRequest>,
-	) -> Result<tonic::Response<protos::CheckpointedPackageCosignResponse>, tonic::Status> {
+		req: tonic::Request<protos::ArkoorPackageCosignRequest>,
+	) -> Result<tonic::Response<protos::ArkoorPackageCosignResponse>, tonic::Status> {
 		let _ = RpcMethodDetails::grpc_ark(middleware::rpc_names::ark::CHECKPOINTED_COSIGN_OOR);
 		let req = req.into_inner();
 
@@ -248,7 +248,7 @@ impl rpc::server::ArkService for Server {
 	async fn request_lightning_pay_htlc_cosign(
 		&self,
 		req: tonic::Request<protos::LightningPayHtlcCosignRequest>,
-	) -> Result<tonic::Response<protos::CheckpointedPackageCosignResponse>, tonic::Status> {
+	) -> Result<tonic::Response<protos::ArkoorPackageCosignResponse>, tonic::Status> {
 		let _ = RpcMethodDetails::grpc_ark(middleware::rpc_names::ark::REQUEST_LIGHTNING_PAY_HTLC_COSIGN);
 		let req = req.into_inner();
 
@@ -312,8 +312,8 @@ impl rpc::server::ArkService for Server {
 
 	async fn request_lightning_pay_htlc_revocation(
 		&self,
-		req: tonic::Request<protos::CheckpointedPackageCosignRequest>
-	) -> Result<tonic::Response<protos::CheckpointedPackageCosignResponse>, tonic::Status> {
+		req: tonic::Request<protos::ArkoorPackageCosignRequest>
+	) -> Result<tonic::Response<protos::ArkoorPackageCosignResponse>, tonic::Status> {
 		let _ = RpcMethodDetails::grpc_ark(middleware::rpc_names::ark::REQUEST_LIGHTNING_PAY_HTLC_REVOCATION);
 		let req = req.into_inner();
 
@@ -433,7 +433,7 @@ impl rpc::server::ArkService for Server {
 	async fn claim_lightning_receive(
 		&self,
 		req: tonic::Request<protos::ClaimLightningReceiveRequest>
-	) -> Result<tonic::Response<protos::CheckpointedPackageCosignResponse>, tonic::Status> {
+	) -> Result<tonic::Response<protos::ArkoorPackageCosignResponse>, tonic::Status> {
 		let _ = RpcMethodDetails::grpc_ark(middleware::rpc_names::ark::CLAIM_LIGHTNING_RECEIVE);
 		let req = req.into_inner();
 
