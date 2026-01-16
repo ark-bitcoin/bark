@@ -1254,7 +1254,7 @@ impl<'a> CheckpointedArkoorBuilder<state::ServerCanCosign> {
 
 	pub fn server_cosign(
 		mut self,
-		server_keypair: Keypair,
+		server_keypair: &Keypair,
 	) -> Result<CheckpointedArkoorBuilder<state::ServerSigned>, ArkoorSigningError> {
 		// Verify that the provided keypair is correct
 		if server_keypair.public_key() != self.input.server_pubkey() {
@@ -1531,7 +1531,7 @@ mod test {
 		// The server will cosign the request
 		let server_builder = CheckpointedArkoorBuilder::from_cosign_request(cosign_request)
 			.expect("Invalid cosign request")
-			.server_cosign(server_keypair)
+			.server_cosign(&server_keypair)
 			.expect("Incorrect key");
 
 		let cosign_data = server_builder.cosign_response();
@@ -1626,7 +1626,7 @@ mod test {
 		// The server will cosign the request
 		let server_builder = CheckpointedArkoorBuilder::from_cosign_request(cosign_request)
 			.expect("Invalid cosign request")
-			.server_cosign(server_keypair)
+			.server_cosign(&server_keypair)
 			.expect("Incorrect key");
 
 		let cosign_data = server_builder.cosign_response();
@@ -1848,7 +1848,7 @@ mod test {
 		// The server will cosign the request
 		let server_builder = CheckpointedArkoorBuilder::from_cosign_request(cosign_request)
 			.expect("Invalid cosign request")
-			.server_cosign(server_keypair)
+			.server_cosign(&server_keypair)
 			.expect("Incorrect key");
 
 		let cosign_data = server_builder.cosign_response();
@@ -1937,7 +1937,7 @@ mod test {
 		// The server will cosign the request
 		let server_builder = CheckpointedArkoorBuilder::from_cosign_request(cosign_request)
 			.expect("Invalid cosign request")
-			.server_cosign(server_keypair)
+			.server_cosign(&server_keypair)
 			.expect("Incorrect key");
 
 		let cosign_data = server_builder.cosign_response();

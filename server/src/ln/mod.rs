@@ -130,7 +130,7 @@ impl Server {
 		slog!(LightningPayHtlcsRequested, invoice_payment_hash, amount, expiry);
 
 		// Only now it's safe to sign
-		let builder = builder.server_cosign(*self.server_key.leak_ref())
+		let builder = builder.server_cosign(self.server_key.leak_ref())
 			.context("Failed to sign")?;
 
 		Ok(builder.cosign_response())
@@ -310,7 +310,7 @@ impl Server {
 		let new_vtxo_ids = builder.build_unsigned_vtxos().map(|v| v.id()).collect::<Vec<_>>();
 
 		// Only now it's safe to sign
-		let builder = builder.server_cosign(*self.server_key.leak_ref())
+		let builder = builder.server_cosign(self.server_key.leak_ref())
 			.context("Failed to sign")?;
 
 		slog!(LightningPayHtlcsRevoked, invoice_payment_hash, htlc_vtxo_ids, new_vtxo_ids);

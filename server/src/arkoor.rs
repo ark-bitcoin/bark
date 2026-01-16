@@ -33,7 +33,7 @@ impl Server {
 		drop(vtxo_guard);
 
 		// Only now it's safe to sign
-		let builder = builder.server_cosign(*self.server_key.leak_ref())
+		let builder = builder.server_cosign(self.server_key.leak_ref())
 			.context("failed to sign arkoor")?;
 		Ok(builder)
 	}

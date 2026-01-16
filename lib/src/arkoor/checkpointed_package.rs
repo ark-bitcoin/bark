@@ -369,11 +369,11 @@ impl CheckpointedPackageBuilder<state::ServerCanCosign> {
 
 	pub fn server_cosign(
 		self,
-		server_keypair: Keypair,
+		server_keypair: &Keypair,
 	) -> Result<CheckpointedPackageBuilder<state::ServerSigned>, ArkoorSigningError> {
 		let mut packages = Vec::with_capacity(self.builders.len());
 		for package in self.builders.into_iter() {
-			packages.push(package.server_cosign(server_keypair)?);
+			packages.push(package.server_cosign(&server_keypair)?);
 		}
 		Ok(CheckpointedPackageBuilder { builders: packages })
 	}
@@ -472,7 +472,7 @@ mod test {
 
 		let cosign_responses = CheckpointedPackageBuilder::from_cosign_request(cosign_requests)
 			.expect("Invalid cosign requests")
-			.server_cosign(server_keypair())
+			.server_cosign(&server_keypair())
 			.expect("Wrong server key")
 			.cosign_response();
 
@@ -764,7 +764,7 @@ mod test {
 
 		let cosign_responses = CheckpointedPackageBuilder::from_cosign_request(cosign_requests)
 			.expect("Invalid cosign requests")
-			.server_cosign(server_keypair())
+			.server_cosign(&server_keypair())
 			.expect("Wrong server key")
 			.cosign_response();
 
