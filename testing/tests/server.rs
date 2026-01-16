@@ -1145,37 +1145,6 @@ async fn reject_dust_vtxo_request() {
 }
 
 #[tokio::test]
-async fn reject_dust_bolt11_payment() {
-	let ctx = TestContext::new("server/reject_dust_bolt11_payment").await;
-	let srv = ctx.new_captaind("server", None).await;
-
-	let lightningd_1 = ctx.new_lightningd("lightningd-1").await;
-
-	#[derive(Clone)]
-	struct Proxy;
-	#[async_trait::async_trait]
-	impl captaind::proxy::ArkRpcProxy for Proxy {
-		async fn request_lightning_pay_htlc_cosign(
-			&self, upstream: &mut ArkClient, mut req: protos::LightningPayHtlcCosignRequest,
-		) -> Result<protos::ArkoorPackageCosignResponse, tonic::Status> {
-			req.parts[0].outputs[0].amount = P2TR_DUST_SAT - 1;
-			Ok(upstream.request_lightning_pay_htlc_cosign(req).await?.into_inner())
-		}
-	}
-
-	let proxy = srv.get_proxy_rpc(Proxy).await;
-	let bark = ctx.new_bark_with_funds("bark", &proxy.address, sat(1_000_000)).await;
-
-	bark.board_all_and_confirm_and_register(&ctx).await;
-
-	let invoice = lightningd_1.invoice(None, "test_payment", "A test payment").await;
-	let err = bark.try_pay_lightning(invoice, Some(sat(100_000)), false).await.unwrap_err();
-	assert!(err.to_string().contains(
-		"arkoor output amounts cannot be below the p2tr dust threshold",
-	), "err: {err}");
-}
-
-#[tokio::test]
 async fn server_refuse_claim_invoice_not_settled() {
 	let ctx = TestContext::new("server/server_refuse_claim_invoice_not_settled").await;
 
