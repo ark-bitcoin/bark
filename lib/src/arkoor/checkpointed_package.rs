@@ -355,10 +355,10 @@ impl CheckpointedPackageBuilder<state::UserSigned> {
 }
 
 impl CheckpointedPackageBuilder<state::ServerCanCosign> {
-	pub fn from_cosign_requests(
-		cosign_requests: PackageCosignRequest<Vtxo>,
+	pub fn from_cosign_request(
+		cosign_request: PackageCosignRequest<Vtxo>,
 	) -> Result<Self, ArkoorSigningError> {
-		let request_iter = cosign_requests.requests.into_iter();
+		let request_iter = cosign_request.requests.into_iter();
 		let mut packages = Vec::with_capacity(request_iter.size_hint().0);
 		for request in request_iter {
 			packages.push(CheckpointedArkoorBuilder::from_cosign_request(request)?);
@@ -470,7 +470,7 @@ mod test {
 		let user_builder = builder.generate_user_nonces(keypairs).expect("Valid nb of keypairs");
 		let cosign_requests = user_builder.cosign_request();
 
-		let cosign_responses = CheckpointedPackageBuilder::from_cosign_requests(cosign_requests)
+		let cosign_responses = CheckpointedPackageBuilder::from_cosign_request(cosign_requests)
 			.expect("Invalid cosign requests")
 			.server_cosign(server_keypair())
 			.expect("Wrong server key")
@@ -762,7 +762,7 @@ mod test {
 			.expect("Valid nb of keypairs");
 		let cosign_requests = user_builder.cosign_request();
 
-		let cosign_responses = CheckpointedPackageBuilder::from_cosign_requests(cosign_requests)
+		let cosign_responses = CheckpointedPackageBuilder::from_cosign_request(cosign_requests)
 			.expect("Invalid cosign requests")
 			.server_cosign(server_keypair())
 			.expect("Wrong server key")

@@ -271,7 +271,7 @@ impl VtxoPool {
 		).context("arkoor builder error")?;
 		let builder = builder.generate_user_nonces(&keys).context("invalid arkoor cosign keys")?;
 
-		let server_builder = CheckpointedPackageBuilder::from_cosign_requests(
+		let server_builder = CheckpointedPackageBuilder::from_cosign_request(
 			builder.cosign_request(),
 		).context("error creating server builder from cosign request")?;
 		let cosign_resp = srv.cosign_oor_with_builder(server_builder).await?.cosign_response();

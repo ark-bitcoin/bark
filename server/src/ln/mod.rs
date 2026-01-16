@@ -112,7 +112,7 @@ impl Server {
 			return badarg!("payment already in progress for this invoice");
 		}
 
-		let builder = CheckpointedPackageBuilder::from_cosign_requests(request)
+		let builder = CheckpointedPackageBuilder::from_cosign_request(request)
 			.badarg("error creating arkoor package")?;
 
 		// We are going to compute all vtxos and spend-info
@@ -266,7 +266,7 @@ impl Server {
 
 		let cosign_requests = cosign_requests.set_vtxos(htlc_vtxos)?;
 
-		let builder = CheckpointedPackageBuilder::from_cosign_requests(cosign_requests)
+		let builder = CheckpointedPackageBuilder::from_cosign_request(cosign_requests)
 			.context("Failed to construct arkoor package")?;
 
 		let invoice = db.get_lightning_invoice_by_payment_hash(&invoice_payment_hash).await?;
@@ -587,7 +587,7 @@ impl Server {
 			amount: sub.amount(),
 			policy: vtxo_policy,
 		};
-		let builder = CheckpointedPackageBuilder::from_cosign_requests(cosign_request)
+		let builder = CheckpointedPackageBuilder::from_cosign_request(cosign_request)
 			.badarg("error creating arkoor package")?;
 
 		self.cln.settle_invoice(sub.id, payment_preimage).await

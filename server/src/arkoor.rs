@@ -62,7 +62,7 @@ impl Server {
 
 		let request = request.set_vtxos(input_vtxos)?;
 
-		let builder = CheckpointedPackageBuilder::from_cosign_requests(request)
+		let builder = CheckpointedPackageBuilder::from_cosign_request(request)
 			.context("Invalid arkoor request")?;
 
 		let builder = self.cosign_oor_with_builder(builder).await?;
