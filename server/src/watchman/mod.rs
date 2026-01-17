@@ -9,7 +9,9 @@
 mod config;
 mod daemon;
 mod frontier;
+mod signer;
 
 pub use config::Config;
 pub use daemon::Daemon;
 pub use frontier::VtxoExitFrontier;
+pub use signer::WatchmanSigner;
