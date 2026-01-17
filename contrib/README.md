@@ -95,7 +95,7 @@ Check if there are structure log messages in server-logs that are not used.
 1. `<TEST>` - e.g. `test-integration` or `test-integration-codecov`
 
 #### Environment Variables:
-1. `KEEP_TEST_DATA` - When set to 1 then ever successful runs will create a link to the test data
+1. `KEEP_ALL_TEST_DATA` - When set to 1 then ever successful runs will create a link to the test data
 
 #### Description:
 Runs a `just` task for the given test with a watchdog and automatic data copy.
