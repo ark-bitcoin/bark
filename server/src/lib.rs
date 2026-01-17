@@ -52,7 +52,7 @@ use futures::Stream;
 use tokio::sync::{broadcast, mpsc, oneshot};
 use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::wrappers::errors::BroadcastStreamRecvError;
-use tracing::{info, trace};
+use tracing::{info, trace, warn};
 
 use ark::{ServerVtxo, Vtxo, VtxoId, VtxoRequest};
 use ark::vtxo::VtxoRef;
@@ -185,6 +185,7 @@ pub struct Server {
 	ephemeral_master_key: Secret<Keypair>,
 	// NB this needs to be an Arc so we can take a static guard
 	rounds_wallet: Arc<tokio::sync::Mutex<PersistedWallet>>,
+	watchman_wallet: Option<Arc<tokio::sync::Mutex<PersistedWallet>>>,
 	bitcoind: BitcoinRpcClient,
 	// NB needs to be Arc so tasks started before Server is constructed can share it
 	sync_manager: Arc<SyncManager>,
@@ -237,14 +238,12 @@ impl Server {
 
 			mnemonic.to_seed("")
 		};
-		let seed_xpriv = bip32::Xpriv::new_master(cfg.network, &seed).unwrap();
+		let master_xpriv = bip32::Xpriv::new_master(cfg.network, &seed).unwrap();
 
 		// Store initial wallet states to avoid full chain sync.
-		for wallet in [WalletKind::Rounds, WalletKind::Forfeits] {
-			let wallet_xpriv = seed_xpriv.derive_priv(&*SECP, &[wallet.child_number()])
-				.expect("can't error");
-			let _wallet = PersistedWallet::load_from_xpriv(
-				db.clone(), cfg.network, &wallet_xpriv, wallet, deep_tip,
+		for wallet in [WalletKind::Rounds, WalletKind::Watchman] {
+			let _wallet = PersistedWallet::load_derive_from_master_xpriv(
+				db.clone(), cfg.network, &master_xpriv, wallet, deep_tip,
 			);
 		}
 
@@ -282,19 +281,6 @@ impl Server {
 
 	pub fn database(&self) -> &database::Db {
 		&self.db
-	}
-
-	pub async fn open_round_wallet(
-		cfg: &Config,
-		db: database::Db,
-		master_xpriv: &bip32::Xpriv,
-		deep_tip: BlockRef,
-	) -> anyhow::Result<PersistedWallet> {
-		let wallet_xpriv = master_xpriv.derive_priv(&*SECP, &[WalletKind::Rounds.child_number()])
-			.expect("can't error");
-		Ok(PersistedWallet::load_from_xpriv(
-			db, cfg.network, &wallet_xpriv, WalletKind::Rounds, deep_tip,
-		).await?)
 	}
 
 	/// Start the server.
@@ -347,8 +333,12 @@ impl Server {
 		}
 
 		let deep_tip = bitcoind.deep_tip().context("failed to query node for deep tip")?;
-		let rounds_wallet = Self::open_round_wallet(&cfg, db.clone(), &master_xpriv, deep_tip)
-			.await.context("error loading wallet")?;
+		let wallet_xpriv = master_xpriv.derive_priv(
+			&crate::SECP, &[WalletKind::Rounds.child_number()],
+		).expect("can't error");
+		let rounds_wallet = PersistedWallet::load_from_xpriv(
+			db.clone(), cfg.network, &wallet_xpriv, WalletKind::Rounds, deep_tip,
+		).await.context("error loading rounds wallet")?;
 
 		let ephemeral_master_key = {
 			let path = bip32::DerivationPath::from_str(EPHEMERAL_KEY_PATH).unwrap();
@@ -385,6 +375,15 @@ impl Server {
 			bitcoind.clone(),
 		);
 
+		let watchman_wallet = if let Some(_cfg) = cfg.watchman.enabled() {
+			let watchman_wallet = PersistedWallet::load_derive_from_master_xpriv(
+				db.clone(), cfg.network, &master_xpriv, WalletKind::Watchman, deep_tip,
+			).await.context("error loading watchman wallet")?;
+			Some(Arc::new(tokio::sync::Mutex::new(watchman_wallet)))
+		} else {
+			None
+		};
+
 		let sync_manager = Arc::new(SyncManager::start(
 			rtmgr.clone(),
 			bitcoind.clone(),
@@ -411,6 +410,7 @@ impl Server {
 
 		let srv = Server {
 			rounds_wallet: Arc::new(tokio::sync::Mutex::new(rounds_wallet)),
+			watchman_wallet,
 			rounds: RoundHandle {
 				round_event_tx,
 				last_round_event: parking_lot::Mutex::new(None),
@@ -508,29 +508,75 @@ impl Server {
 	}
 
 	/// Sync all the system's wallets.
-	///
-	/// This includes the rounds wallet sending new funds to the forfeits
-	/// wallet if it's running low.
 	pub async fn sync_wallets(&self) -> anyhow::Result<()> {
 		tokio::try_join!(
 			async {
-				self.rounds_wallet.lock().await.sync(&self.bitcoind, false).await
+				self.rounds_wallet.lock().await.sync(&self.bitcoind, false).await?;
+				Ok::<_, anyhow::Error>(())
 			},
 			async {
-				Ok(())
+				if let Some(ref fw) = self.watchman_wallet {
+					fw.lock().await.sync(&self.bitcoind, false).await?;
+				}
+				Ok::<_, anyhow::Error>(())
 			},
 		)?;
 		Ok(())
 	}
 
-	/// Rebalance coins between the rounds and forfeit wallets.
+	/// Rebalance coins between the rounds and watchman wallets.
 	///
-	/// If the forfeit wallet balance is below `forfeit_watcher_min_balance`,
+	/// If the watchman wallet balance is below `watchman_min_balance`,
 	/// sends bitcoin from the rounds wallet to top it up.
 	///
 	/// Should be called after `sync_wallets`.
 	pub async fn rebalance_wallets(&self) -> anyhow::Result<()> {
-		unimplemented!("will bring back in next commit");
+		let Some(ref watchman_wallet) = self.watchman_wallet else {
+			return Ok(());
+		};
+
+		let watchman_status = watchman_wallet.lock().await.status();
+		if watchman_status.total_balance >= self.config.watchman_min_balance {
+			return Ok(());
+		}
+
+		let amount = self.config.watchman_min_balance * 2;
+		let rounds_balance = self.rounds_wallet.lock().await.status().total_balance;
+		if rounds_balance < amount {
+			warn!("Rounds wallet doesn't have sufficient bitcoin to top up watchman.");
+			return Ok(());
+		}
+
+		let mut wallet = self.rounds_wallet.lock().await;
+		let addr = watchman_status.address.assume_checked();
+		let feerate = self.fee_estimator.regular();
+		info!("Sending {amount} to watchman wallet address {addr}...");
+		let tx = match wallet.send(addr.script_pubkey(), amount, feerate).await {
+			Ok(tx) => tx,
+			Err(e) => {
+				warn!("Error sending from round to watchman wallet: {:?}", e);
+				return Err(e).context("error sending tx from round to watchman wallet");
+			},
+		};
+		drop(wallet);
+
+		let tx = self.tx_nursery.broadcast_tx(tx).await
+			.context("Failed to broadcast transaction")?;
+
+		// wait until it's actually broadcast
+		tokio::time::timeout(Duration::from_millis(5_000), async {
+			loop {
+				if tx.status().seen() {
+					break;
+				}
+				tokio::time::sleep(Duration::from_millis(500)).await;
+			}
+		}).await.context("waiting for tx broadcast timed out")?;
+
+		// then re-sync
+		watchman_wallet.lock().await.sync(&self.bitcoind, false).await?;
+
+		Ok(())
 	}
 
 	pub async fn new_onchain_address(&self) -> anyhow::Result<Address> {

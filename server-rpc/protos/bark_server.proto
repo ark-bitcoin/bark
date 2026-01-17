@@ -521,7 +521,7 @@ message WalletStatus {
 
 message WalletStatusResponse {
 	WalletStatus rounds = 1;
-	WalletStatus forfeits = 2;
+	WalletStatus watchman = 2;
 }
 
 message LightningNodeUri {

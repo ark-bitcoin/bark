@@ -67,7 +67,8 @@ CREATE TYPE public.token_type AS ENUM (
 
 CREATE TYPE public.wallet_kind AS ENUM (
     'rounds',
-    'forfeits'
+    'forfeits',
+    'watchman'
 );
 
 

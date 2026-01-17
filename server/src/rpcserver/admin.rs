@@ -27,11 +27,22 @@ impl rpc::server::WalletAdminService for Server {
 		_req: tonic::Request<protos::Empty>,
 	) -> Result<tonic::Response<protos::WalletStatusResponse>, tonic::Status> {
 
-		let rounds = self.rounds_wallet.lock().await.status();
+		let rounds = async {
+			Ok(self.rounds_wallet.lock().await.status())
+		};
+		let watchman = async {
+			if let Some(ref fw) = self.watchman_wallet {
+				Ok::<_, anyhow::Error>(Some(fw.lock().await.status()))
+			} else {
+				Ok(None)
+			}
+		};
+
+		let (rounds, watchman) = tokio::try_join!(rounds, watchman).to_status()?;
 
 		Ok(tonic::Response::new(protos::WalletStatusResponse {
 			rounds: Some(rounds.into()),
-			forfeits: None,
+			watchman: watchman.map(|f| f.into()),
 		}))
 	}
 }

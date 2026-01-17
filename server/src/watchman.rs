@@ -10,6 +10,7 @@ pub mod config;
 
 use std::fs;
 use std::str::FromStr;
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Context;
@@ -38,6 +39,8 @@ pub struct Watchman {
 	sync_manager: SyncManager,
 	pub txindex: TxIndex,
 	pub tx_nursery: TxNursery,
+	#[allow(unused)]
+	watchman_wallet: Arc<tokio::sync::Mutex<PersistedWallet>>,
 }
 
 impl Watchman {
@@ -78,10 +81,10 @@ impl Watchman {
 		let seed_xpriv = bip32::Xpriv::new_master(cfg.network, &seed).unwrap();
 
 		// Store initial wallet states to avoid full chain sync.
-		let wallet_xpriv = seed_xpriv.derive_priv(&*SECP, &[WalletKind::Forfeits.child_number()])
+		let wallet_xpriv = seed_xpriv.derive_priv(&*SECP, &[WalletKind::Watchman.child_number()])
 			.expect("can't error");
 		let _wallet = PersistedWallet::load_from_xpriv(
-			db.clone(), cfg.network, &wallet_xpriv, WalletKind::Forfeits, deep_tip,
+			db.clone(), cfg.network, &wallet_xpriv, WalletKind::Watchman, deep_tip,
 		);
 
 		Ok(())
@@ -155,6 +158,11 @@ impl Watchman {
 			bitcoind.clone(),
 		);
 
+		let watchman_wallet = PersistedWallet::load_derive_from_master_xpriv(
+			db.clone(), cfg.network, &master_xpriv, WalletKind::Watchman, deep_tip,
+		).await.context("error loading watchman wallet")?;
+		let watchman_wallet = Arc::new(tokio::sync::Mutex::new(watchman_wallet));
+
 		let sync_manager = SyncManager::start(
 			rtmgr.clone(),
 			bitcoind.clone(),
@@ -164,7 +172,7 @@ impl Watchman {
 			cfg.sync_manager_block_poll_interval,
 		).await.context("Failed to start SyncManager")?;
 
-		Ok(Self { rtmgr, sync_manager, txindex, tx_nursery })
+		Ok(Self { rtmgr, sync_manager, txindex, tx_nursery, watchman_wallet })
 	}
 
 	/// Waits for server to terminate.

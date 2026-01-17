@@ -17,7 +17,7 @@ use bitcoin_ext::{BlockHeight, BlockRef};
 use bitcoin_ext::bdk::{WalletExt, KEYCHAIN};
 use bitcoin_ext::rpc::{BitcoinRpcExt, RpcApi};
 
-use crate::{database, telemetry};
+use crate::{database, telemetry, SECP};
 
 
 /// The location of the mnemonic file in server's datadir.
@@ -26,35 +26,37 @@ pub const MNEMONIC_FILE: &str = "mnemonic";
 /// The BIP32 child index of the rounds wallet.
 ///
 /// Number picked as hash of "rounds" string, see unit test.
-pub const BIP32_IDX_ROUNDS: bip32::ChildNumber = bip32::ChildNumber::Hardened { index: 1856555996 };
+pub const BIP32_IDX_ROUNDS: bip32::ChildNumber =
+	bip32::ChildNumber::Hardened { index: 1856555996 };
 
-/// The BIP32 child index of the ForfeitWatcher wallet.
+/// The BIP32 child index of the Watchman wallet.
 ///
-/// Number picked as hash of "forfeit_watcher" string, see unit test.
-pub const BIP32_IDX_FORFEITS: bip32::ChildNumber = bip32::ChildNumber::Hardened { index: 1445852836 };
+/// Number picked as hash of "watchman" string, see unit test.
+pub const BIP32_IDX_WATCHMAN: bip32::ChildNumber =
+	bip32::ChildNumber::Hardened { index: 38644432 };
 
 
 /// Type to indicate which internal wallet to use.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WalletKind {
-	/// For the round scheduler.
+	/// For the round scheduler
 	Rounds,
-	/// For the forfeit watcher.
-	Forfeits,
+	/// For the watchman
+	Watchman,
 }
 
 impl WalletKind {
 	pub fn name(&self) -> &'static str {
 		match self {
 			Self::Rounds => "rounds",
-			Self::Forfeits => "forfeits",
+			Self::Watchman => "watchman",
 		}
 	}
 
 	pub fn child_number(&self) -> bip32::ChildNumber {
 		match self {
 			Self::Rounds => BIP32_IDX_ROUNDS,
-			Self::Forfeits => BIP32_IDX_FORFEITS,
+			Self::Watchman => BIP32_IDX_WATCHMAN,
 		}
 	}
 }
@@ -119,6 +121,20 @@ impl PersistedWallet {
 		}
 
 		Ok(Self { wallet, kind, db, locked_outputs: LockedWalletUtxosIndex::new() })
+	}
+
+	/// Load a wallet from the database, deriving the wallet's xpriv using the master xpriv
+	/// and the wallet kind
+	pub async fn load_derive_from_master_xpriv(
+		db: database::Db,
+		network: Network,
+		master_xpriv: &bip32::Xpriv,
+		kind: WalletKind,
+		deep_tip: BlockRef,
+	) -> anyhow::Result<Self> {
+		let wallet_xpriv = master_xpriv.derive_priv(&*SECP, &[kind.child_number()])
+			.expect("can't error");
+		Self::load_from_xpriv(db, network, &wallet_xpriv, kind, deep_tip).await
 	}
 
 	/// Persist the committed wallet changes to the database.
@@ -451,14 +467,14 @@ mod test {
 		assert_eq!(rounds, BIP32_IDX_ROUNDS);
 		assert_eq!(rounds, WalletKind::Rounds.child_number());
 
-		let forfeits = {
-			let sha = sha256::Hash::hash("forfeit_watcher".as_bytes());
+		let watchman = {
+			let sha = sha256::Hash::hash("watchman".as_bytes());
 			let sip = siphash24::Hash::hash(&sha[..]);
 			let idx = (sip.as_u64() & MASK_U31) as u32;
 			bip32::ChildNumber::from_hardened_idx(idx).expect("31 bit mask")
 		};
-		assert_eq!(forfeits, BIP32_IDX_FORFEITS);
-		assert_eq!(forfeits, WalletKind::Forfeits.child_number());
+		assert_eq!(watchman, BIP32_IDX_WATCHMAN);
+		assert_eq!(watchman, WalletKind::Watchman.child_number());
 	}
 
 	#[test]

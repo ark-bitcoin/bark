@@ -310,7 +310,7 @@ pub struct Config {
 	pub otel_deployment_name: String,
 
 	#[serde(with = "utils::serde::string")]
-	pub forfeit_watcher_min_balance: Amount,
+	pub watchman_min_balance: Amount,
 
 	/// Config for the Watchman process.
 	pub watchman: OptionalService<crate::watchman::config::Config>,

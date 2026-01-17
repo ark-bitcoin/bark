@@ -44,7 +44,7 @@ txindex_check_interval = "30s"
 sync_manager_block_poll_interval = "100ms"
 
 # The minimum balance to maintain for the forfeit watcher, if running
-forfeit_watcher_min_balance = "1 btc"
+watchman_min_balance = "1 btc"
 
 # The interval to rebroadcast transactions
 transaction_rebroadcast_interval = "1m"
