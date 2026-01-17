@@ -6,7 +6,6 @@
 //! for user functionality.
 //!
 
-pub mod config;
 
 use std::fs;
 use std::str::FromStr;
@@ -33,7 +32,7 @@ const SERVER_KEY_PATH: &str = "m/2'/0'";
 
 
 /// Server struct that runs all non-user-facing background services
-pub struct Watchman {
+pub struct Daemon {
 	rtmgr: RuntimeManager,
 	#[allow(unused)]
 	sync_manager: SyncManager,
@@ -43,7 +42,7 @@ pub struct Watchman {
 	watchman_wallet: Arc<tokio::sync::Mutex<PersistedWallet>>,
 }
 
-impl Watchman {
+impl Daemon {
 	pub async fn create(cfg: Config) -> anyhow::Result<()> {
 		// Check for a mnemonic file to see if the server was already initialized.
 		if cfg.data_dir.join(MNEMONIC_FILE).exists() {

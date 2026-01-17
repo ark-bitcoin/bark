@@ -313,7 +313,7 @@ pub struct Config {
 	pub watchman_min_balance: Amount,
 
 	/// Config for the Watchman process.
-	pub watchman: OptionalService<crate::watchman::config::Config>,
+	pub watchman: OptionalService<crate::watchman::Config>,
 
 	/// Config for the VtxoPool process
 	pub vtxopool: vtxopool::Config,
@@ -509,7 +509,7 @@ pub mod watchmand {
 		pub otel_deployment_name: String,
 
 		/// Config for the Watchman process.
-		pub watchman: crate::watchman::config::Config,
+		pub watchman: crate::watchman::Config,
 		/// Config for the FeeEstimator process.
 		pub fee_estimator: fee_estimator::Config,
 

@@ -9,7 +9,7 @@ use anyhow::Context;
 use clap::Parser;
 use tracing::error;
 use server::config::watchmand::Config;
-use server::watchman::Watchman;
+use server::watchman::Daemon;
 
 /// The full semver version to set, which includes the git commit hash
 /// as the build suffix.
@@ -67,7 +67,7 @@ async fn inner_main() -> anyhow::Result<()> {
 
 	match cli.command {
 		Command::Start => {
-			if let Err(e) = Watchman::run(cfg).await {
+			if let Err(e) = Daemon::run(cfg).await {
 				error!("Shutdown error from server {:?}", e);
 
 				process::exit(1);
