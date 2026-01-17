@@ -196,4 +196,11 @@ impl SyncManager {
 	pub fn sync_height(&self) -> BlockRef {
 		self.sync_height_rx.borrow().clone()
 	}
+
+	/// Get a watcher for the sync height.
+	///
+	/// The returned receiver can be used to track the sync height over time.
+	pub fn sync_height_watcher(&self) -> watch::Receiver<BlockRef> {
+		self.sync_height_rx.clone()
+	}
 }

@@ -25,6 +25,11 @@ otel_deployment_name = "my_regtest"
 # watchman #
 ############
 [watchman]
+process_interval = "60s"
+progress_grace_period = 2
+claim_chunksize = 20
+incremental_relay_fee = "100 sat/kvb"
+min_cpfp_amount = "10000 sat"
 
 
 #################

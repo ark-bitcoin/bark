@@ -48,6 +48,7 @@ impl VtxoValidationError {
 }
 
 #[inline]
+#[allow(unused_variables)]
 fn verify_transition<P: Policy>(
 	vtxo: &Vtxo<P>,
 	genesis_idx: usize,

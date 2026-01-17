@@ -331,6 +331,16 @@ impl PersistedWallet {
 	) -> Result<WalletUtxosGuard, UtxoAlreadyLockedError> {
 		WalletUtxosGuard::new(self.locked_outputs.clone(), utxos)
 	}
+
+	/// Get the wallet kind.
+	pub fn kind(&self) -> WalletKind {
+		self.kind
+	}
+
+	/// Check if the wallet has at least the given amount of confirmed funds.
+	pub fn has_confirmed_funds(&self, amount: Amount) -> bool {
+		self.balance().confirmed >= amount
+	}
 }
 
 impl ops::Deref for PersistedWallet {
