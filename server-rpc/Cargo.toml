@@ -31,4 +31,6 @@ tokio.workspace = true
 thiserror.workspace = true
 
 [build-dependencies]
-tonic-prost-build.workspace= true
+tonic-prost-build.workspace = true
+prost.workspace = true
+prost-types.workspace = true

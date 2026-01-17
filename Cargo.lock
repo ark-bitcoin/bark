@@ -532,6 +532,7 @@ dependencies = [
  "http",
  "log",
  "prost 0.14.1",
+ "prost-types",
  "thiserror 2.0.17",
  "tokio",
  "tonic 0.14.2",
