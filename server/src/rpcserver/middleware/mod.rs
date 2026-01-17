@@ -5,136 +5,15 @@ use std::task::Poll;
 use std::time::Instant;
 
 use opentelemetry::KeyValue;
+use server_rpc::lookup_grpc_method;
 use tonic::transport::server::TcpConnectInfo;
 use tower::{Layer, Service};
 use tracing::{info_span, trace, Instrument};
 use crate::telemetry::{self};
 use super::MAX_PROTOCOL_VERSION;
 
-const RPC_SYSTEM_HTTP: &'static str = "http";
-const RPC_SYSTEM_GRPC: &'static str = "grpc";
-
-const RPC_UNKNOWN: &'static str = "Unknown";
-
-const RPC_SERVICES: &[&str] = &[
-	RPC_SERVICE_ARK,
-	RPC_SERVICE_MAILBOX,
-	RPC_SERVICE_ADMIN,
-	RPC_SERVICE_INTEGRATION,
-];
-
-const RPC_SERVICE_ARK: &'static str = "ArkService";
-const RPC_SERVICE_MAILBOX: &'static str = "MailboxService";
-const RPC_SERVICE_ADMIN: &'static str = "AdminService";
-const RPC_SERVICE_INTEGRATION: &'static str = "IntegrationService";
-
-pub mod rpc_names {
-	pub mod ark {
-		pub const HANDSHAKE: &str = "handshake";
-		pub const GET_ARK_INFO: &str = "get_ark_info";
-		pub const GET_FRESH_ROUNDS: &str = "get_fresh_rounds";
-		pub const GET_ROUND: &str = "get_round";
-		pub const REQUEST_BOARD_COSIGN: &str = "request_board_cosign";
-		pub const REGISTER_BOARD_VTXO: &str = "register_board_vtxo";
-		pub const REQUEST_ARKOOR_COSIGN: &str = "request_arkoor_cosign";
-		pub const POST_ARKOOR_PACKAGE_MAILBOX: &str = "post_arkoor_package_mailbox";
-		pub const EMPTY_ARKOOR_MAILBOX: &str = "empty_arkoor_mailbox";
-		pub const REQUEST_LIGHTNING_PAY_HTLC_COSIGN: &str = "request_lightning_pay_htlc_cosign";
-		pub const INITIATE_LIGHTNING_PAYMENT: &str = "initiate_lightning_payment";
-		pub const CHECK_LIGHTNING_PAYMENT: &str = "check_lightning_payment";
-		pub const REQUEST_LIGHTNING_PAY_HTLC_REVOCATION: &str = "request_lightning_pay_htlc_revocation";
-		pub const FETCH_BOLT12_INVOICE: &str = "fetch_bolt12_invoice";
-		pub const START_LIGHTNING_RECEIVE: &str = "start_lightning_receive";
-		pub const CHECK_LIGHTNING_RECEIVE: &str = "check_lightning_receive";
-		pub const PREPARE_LIGHTNING_RECEIVE_CLAIM: &str = "prepare_lightning_receive_claim";
-		pub const CLAIM_LIGHTNING_RECEIVE: &str = "claim_lightning_receive";
-		pub const SUBSCRIBE_ROUNDS: &str = "subscribe_rounds";
-		pub const LAST_ROUND_EVENT: &str = "last_round_event";
-		pub const SUBMIT_PAYMENT: &str = "submit_payment";
-		pub const PROVIDE_VTXO_SIGNATURES: &str = "provide_vtxo_signatures";
-		pub const SUBMIT_ROUND_PARTICIPATION: &str = "submit_round_participation";
-		pub const ROUND_PARTICIPATION_STATUS: &str = "round_participation_status";
-		pub const REQUEST_LEAF_VTXO_COSIGN: &str = "request_leaf_vtxo_cosign";
-		pub const REQUEST_FORFEIT_NONCES: &str = "request_forfeit_nonces";
-		pub const FORFEIT_VTXOS: &str = "forfeit_vtxos";
-		pub const PREPARE_OFFBOARD: &str = "prepare_offboard";
-		pub const FINISH_OFFBOARD: &str = "finish_offboard";
-	}
-
-	pub mod mailbox {
-		pub const POST_VTXOS_MAILBOX: &str = "post_vtxos_mailbox";
-		pub const SUBSCRIBE_MAILBOX: &str = "subscribe_mailbox";
-		pub const READ_MAILBOX: &str = "read_mailbox";
-	}
-
-	pub mod admin {
-		pub const WALLET_SYNC: &str = "wallet_sync";
-		pub const WALLET_STATUS: &str = "wallet_status";
-		pub const TRIGGER_ROUND: &str = "trigger_round";
-		pub const TRIGGER_SWEEP: &str = "trigger_sweep";
-		pub const START_LIGHTNING_NODE: &str = "start_lightning_node";
-		pub const STOP_LIGHTNING_NODE: &str = "stop_lightning_node";
-	}
-
-	pub mod integration {
-		pub const GET_TOKENS: &str = "get_tokens";
-		pub const GET_TOKEN_INFO: &str = "get_token_info";
-		pub const UPDATE_TOKEN: &str = "update_token";
-	}
-}
-
-const RPC_SERVICE_ARK_METHODS: &[&str] = &[
-	rpc_names::ark::HANDSHAKE,
-	rpc_names::ark::GET_ARK_INFO,
-	rpc_names::ark::GET_FRESH_ROUNDS,
-	rpc_names::ark::GET_ROUND,
-	rpc_names::ark::REQUEST_BOARD_COSIGN,
-	rpc_names::ark::REGISTER_BOARD_VTXO,
-	rpc_names::ark::REQUEST_ARKOOR_COSIGN,
-	rpc_names::ark::POST_ARKOOR_PACKAGE_MAILBOX,
-	rpc_names::ark::EMPTY_ARKOOR_MAILBOX,
-	rpc_names::ark::REQUEST_LIGHTNING_PAY_HTLC_COSIGN,
-	rpc_names::ark::INITIATE_LIGHTNING_PAYMENT,
-	rpc_names::ark::CHECK_LIGHTNING_PAYMENT,
-	rpc_names::ark::REQUEST_LIGHTNING_PAY_HTLC_REVOCATION,
-	rpc_names::ark::FETCH_BOLT12_INVOICE,
-	rpc_names::ark::START_LIGHTNING_RECEIVE,
-	rpc_names::ark::PREPARE_LIGHTNING_RECEIVE_CLAIM,
-	rpc_names::ark::CHECK_LIGHTNING_RECEIVE,
-	rpc_names::ark::CLAIM_LIGHTNING_RECEIVE,
-	rpc_names::ark::SUBSCRIBE_ROUNDS,
-	rpc_names::ark::LAST_ROUND_EVENT,
-	rpc_names::ark::SUBMIT_PAYMENT,
-	rpc_names::ark::PROVIDE_VTXO_SIGNATURES,
-	rpc_names::ark::SUBMIT_ROUND_PARTICIPATION,
-	rpc_names::ark::ROUND_PARTICIPATION_STATUS,
-	rpc_names::ark::REQUEST_LEAF_VTXO_COSIGN,
-	rpc_names::ark::REQUEST_FORFEIT_NONCES,
-	rpc_names::ark::FORFEIT_VTXOS,
-	rpc_names::ark::PREPARE_OFFBOARD,
-	rpc_names::ark::FINISH_OFFBOARD,
-];
-
-const RPC_SERVICE_MAILBOX_METHODS: &[&str] = &[
-	rpc_names::mailbox::POST_VTXOS_MAILBOX,
-	rpc_names::mailbox::SUBSCRIBE_MAILBOX,
-	rpc_names::mailbox::READ_MAILBOX,
-];
-
-const RPC_SERVICE_ADMIN_METHODS: &[&str] = &[
-	rpc_names::admin::WALLET_SYNC,
-	rpc_names::admin::WALLET_STATUS,
-	rpc_names::admin::TRIGGER_ROUND,
-	rpc_names::admin::TRIGGER_SWEEP,
-	rpc_names::admin::START_LIGHTNING_NODE,
-	rpc_names::admin::STOP_LIGHTNING_NODE,
-];
-
-const RPC_SERVICE_INTEGRATION_METHODS: &[&str] = &[
-	rpc_names::integration::GET_TOKENS,
-	rpc_names::integration::GET_TOKEN_INFO,
-	rpc_names::integration::UPDATE_TOKEN,
-];
+const RPC_SYSTEM_HTTP: &str = "http";
+const RPC_SYSTEM_GRPC: &str = "grpc";
 
 #[derive(Clone, Debug)]
 pub struct RpcMethodDetails {
@@ -144,38 +23,6 @@ pub struct RpcMethodDetails {
 }
 
 impl RpcMethodDetails {
-	pub(crate) fn grpc_ark(method: &'static str) -> RpcMethodDetails {
-		RpcMethodDetails {
-			system: RPC_SYSTEM_GRPC,
-			service: RPC_SERVICE_ARK,
-			method,
-		}
-	}
-
-	pub(crate) fn grpc_mailbox(method: &'static str) -> RpcMethodDetails {
-		RpcMethodDetails {
-			system: RPC_SYSTEM_GRPC,
-			service: RPC_SERVICE_MAILBOX,
-			method,
-		}
-	}
-
-	pub(crate) fn grpc_admin(method: &'static str) -> RpcMethodDetails {
-		RpcMethodDetails {
-			system: RPC_SYSTEM_GRPC,
-			service: RPC_SERVICE_ADMIN,
-			method,
-		}
-	}
-
-	pub(crate) fn grpc_intman(method: &'static str) -> RpcMethodDetails {
-		RpcMethodDetails {
-			system: RPC_SYSTEM_GRPC,
-			service: RPC_SERVICE_INTEGRATION,
-			method,
-		}
-	}
-
 	pub fn format_path(&self) -> String {
 		format!("{}://{}/{}", self.system, self.service, self.method)
 	}
@@ -265,23 +112,10 @@ where
 	}
 
 	fn call(&mut self, req: http::Request<B>) -> Self::Future {
-		let uri = req.uri();
 		let is_grpc = req.headers().get("content-type")
 			.map_or(false, |ct| ct == "application/grpc");
 
-		let mut rpc_method_details = RpcMethodDetails {
-			system: RPC_SYSTEM_HTTP,
-			service: RPC_UNKNOWN,
-			method: RPC_UNKNOWN,
-		};
-
-		if is_grpc {
-			rpc_method_details.system = RPC_SYSTEM_GRPC;
-			if let Some((service, method)) = extract_service_method(&uri) {
-				rpc_method_details.service = service;
-				rpc_method_details.method = method;
-			}
-
+		let rpc_method_details = if is_grpc {
 			// Log protocol version used by user.
 			// We allow +50 above MAX to detect clients using newer versions,
 			// while still capping the range to prevent cardinality explosion
@@ -290,10 +124,16 @@ where
 				.and_then(|hv| hv.to_str().ok())
 				.and_then(|s| u64::from_str(s).ok())
 				.filter(|&v| v <= MAX_PROTOCOL_VERSION + 50);
+
 			if let Some(pver) = pver {
 				telemetry::count_protocol_version(pver);
 			}
-		}
+
+			let (service, method) = lookup_grpc_method(req.uri().path());
+			RpcMethodDetails { system: RPC_SYSTEM_GRPC, service, method }
+		} else {
+			RpcMethodDetails { system: RPC_SYSTEM_HTTP, service: "unknown", method: "unknown" }
+		};
 
 		let attributes = [
 			KeyValue::new(telemetry::RPC_SYSTEM, rpc_method_details.system),
@@ -353,56 +193,4 @@ impl<S> tower::Layer<S> for TelemetryMetricsLayer {
 	fn layer(&self, inner: S) -> Self::Service {
 		TelemetryMetricsService::new(inner)
 	}
-}
-
-fn pascal_to_snake(s: &str) -> String {
-	let mut snake_case = String::new();
-
-	for (i, c) in s.chars().enumerate() {
-		if c.is_uppercase() {
-			if i != 0 {
-				snake_case.push('_');
-			}
-			snake_case.push(c.to_ascii_lowercase());
-		} else {
-			snake_case.push(c);
-		}
-	}
-
-	snake_case
-}
-
-fn extract_service_method(url: &http::uri::Uri) -> Option<(&'static str, &'static str)> {
-	// Find the last '/' in the URL
-	let path = url.path();
-	if let Some(last_slash_idx) = path.rfind('/') {
-		let method = &path[last_slash_idx + 1..];
-		let method_snake = pascal_to_snake(method);
-		trace!("Extracting service method: {}", method_snake);
-		let method_snake_ref: &str = &method_snake;
-
-		// Find the last '.' before the method part
-		let before_method = &path[..last_slash_idx];
-		if let Some(dot_idx) = before_method.rfind('.') {
-			let service = &before_method[dot_idx + 1..];
-			trace!("Extracting service: {}", service);
-
-			let service_ref = RPC_SERVICES
-				.iter()
-				.find(|&&m| m == service)
-				.copied()?;
-
-			let method_ref = RPC_SERVICE_ARK_METHODS
-				.iter()
-				.chain(RPC_SERVICE_MAILBOX_METHODS.iter())
-				.chain(RPC_SERVICE_ADMIN_METHODS.iter())
-				.chain(RPC_SERVICE_INTEGRATION_METHODS.iter())
-				.find(|&&m| m == method_snake_ref)
-				.copied()?;
-
-			return Some((service_ref, method_ref));
-		}
-	}
-
-	None
 }

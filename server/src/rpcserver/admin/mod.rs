@@ -6,8 +6,6 @@ use tracing::{info, trace, warn};
 use server_rpc::{self as rpc, protos};
 
 use crate::rpcserver::{middleware, StatusContext, ToStatusResult, RPC_RICH_ERRORS};
-use crate::rpcserver::middleware::rpc_names;
-use crate::rpcserver::middleware::RpcMethodDetails;
 use crate::Server;
 
 #[async_trait]
@@ -16,7 +14,6 @@ impl rpc::server::WalletAdminService for Server {
 		&self,
 		_req: tonic::Request<protos::Empty>,
 	) -> Result<tonic::Response<protos::Empty>, tonic::Status> {
-		let _ = RpcMethodDetails::grpc_admin(rpc_names::admin::WALLET_SYNC);
 
 		self.sync_wallets().await.to_status()?;
 
@@ -27,7 +24,6 @@ impl rpc::server::WalletAdminService for Server {
 		&self,
 		_req: tonic::Request<protos::Empty>,
 	) -> Result<tonic::Response<protos::WalletStatusResponse>, tonic::Status> {
-		let _ = RpcMethodDetails::grpc_admin(rpc_names::admin::WALLET_STATUS);
 
 		let rounds = async {
 			Ok(self.rounds_wallet.lock().await.status())
@@ -55,7 +51,6 @@ impl rpc::server::RoundAdminService for Server {
 		&self,
 		_req: tonic::Request<protos::Empty>,
 	) -> Result<tonic::Response<protos::Empty>, tonic::Status> {
-		let _ = RpcMethodDetails::grpc_admin(rpc_names::admin::TRIGGER_ROUND);
 
 		match self.rounds.round_trigger_tx.try_send(()) {
 			Err(tokio::sync::mpsc::error::TrySendError::Closed(())) => {
@@ -75,7 +70,6 @@ impl rpc::server::LightningAdminService for Server {
 		&self,
 		req: tonic::Request<protos::LightningNodeUri>,
 	) -> Result<tonic::Response<protos::Empty>, tonic::Status> {
-		let _ = RpcMethodDetails::grpc_admin(rpc_names::admin::START_LIGHTNING_NODE);
 		let req = req.into_inner();
 		let uri = http::Uri::from_str(req.uri.as_str()).unwrap();
 		let _ = self.cln.activate(uri);
@@ -86,7 +80,6 @@ impl rpc::server::LightningAdminService for Server {
 		&self,
 		req: tonic::Request<protos::LightningNodeUri>,
 	) -> Result<tonic::Response<protos::Empty>, tonic::Status> {
-		let _ = RpcMethodDetails::grpc_admin(rpc_names::admin::STOP_LIGHTNING_NODE);
 		let req = req.into_inner();
 		let uri = http::Uri::from_str(req.uri.as_str()).unwrap();
 		let _ = self.cln.disable(uri);
@@ -100,7 +93,6 @@ impl rpc::server::SweepAdminService for Server {
 		&self,
 		_req: tonic::Request<protos::Empty>,
 	) -> Result<tonic::Response<protos::Empty>, tonic::Status> {
-		let _ = RpcMethodDetails::grpc_admin(rpc_names::admin::TRIGGER_SWEEP);
 
 		if let Some(ref vs) = self.vtxo_sweeper {
 			vs.trigger_sweep().context("VtxoSweeper down")?;
