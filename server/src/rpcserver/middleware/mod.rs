@@ -9,6 +9,7 @@ use tonic::transport::server::TcpConnectInfo;
 use tower::{Layer, Service};
 use tracing::{info_span, trace, Instrument};
 use crate::telemetry::{self};
+use super::MAX_PROTOCOL_VERSION;
 
 const RPC_SYSTEM_HTTP: &'static str = "http";
 const RPC_SYSTEM_GRPC: &'static str = "grpc";
@@ -281,13 +282,16 @@ where
 				rpc_method_details.method = method;
 			}
 
-			// log protocol version used by user
-			if let Some(hv) = req.headers().get("grpc-pver") {
-				if let Ok(s) = hv.to_str() {
-					if let Ok(pver) = u64::from_str(s) {
-						telemetry::count_protocol_version(pver);
-					}
-				}
+			// Log protocol version used by user.
+			// We allow +50 above MAX to detect clients using newer versions,
+			// while still capping the range to prevent cardinality explosion
+			// from malicious clients sending arbitrary values.
+			let pver = req.headers().get("pver")
+				.and_then(|hv| hv.to_str().ok())
+				.and_then(|s| u64::from_str(s).ok())
+				.filter(|&v| v <= MAX_PROTOCOL_VERSION + 50);
+			if let Some(pver) = pver {
+				telemetry::count_protocol_version(pver);
 			}
 		}
 
