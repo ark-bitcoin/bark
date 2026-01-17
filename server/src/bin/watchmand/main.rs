@@ -8,7 +8,7 @@ use std::process;
 use anyhow::Context;
 use clap::Parser;
 use tracing::error;
-use server::config::watchman::Config;
+use server::config::watchmand::Config;
 use server::watchman::Watchman;
 
 /// The full semver version to set, which includes the git commit hash

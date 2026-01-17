@@ -3,10 +3,10 @@
 //! captaind or the main [crate::Server] struct.
 //!
 //! It runs a subset of the server services, namely those that are not required
-//! for user functionality:
+//! for user functionality.
 //!
-//! - the [ForfeitWatcher]
-//!
+
+pub mod config;
 
 use std::fs;
 use std::str::FromStr;
@@ -20,8 +20,7 @@ use bitcoin_ext::rpc::{BitcoinRpcClient, BitcoinRpcExt, RpcApi};
 
 use crate::{database, fee_estimator, telemetry, wallet, SECP};
 use crate::sync::SyncManager;
-use crate::config::watchman::Config;
-use crate::forfeits::ForfeitWatcher;
+use crate::config::watchmand::Config;
 use crate::system::RuntimeManager;
 use crate::txindex::TxIndex;
 use crate::txindex::broadcast::TxNursery;
@@ -39,7 +38,6 @@ pub struct Watchman {
 	sync_manager: SyncManager,
 	pub txindex: TxIndex,
 	pub tx_nursery: TxNursery,
-	pub forfeit_watcher: ForfeitWatcher,
 }
 
 impl Watchman {
@@ -151,25 +149,11 @@ impl Watchman {
 			cfg.transaction_rebroadcast_interval,
 		);
 
-		let fee_estimator = fee_estimator::start(
+		let _fee_estimator = fee_estimator::start(
 			rtmgr.clone(),
 			cfg.fee_estimator.clone(),
 			bitcoind.clone(),
 		);
-
-		let forfeit_watcher = ForfeitWatcher::start(
-			rtmgr.clone(),
-			cfg.forfeit_watcher.clone(),
-			cfg.network,
-			bitcoind.clone(),
-			db.clone(),
-			txindex.clone(),
-			tx_nursery.clone(),
-			master_xpriv.derive_priv(&*SECP, &[WalletKind::Forfeits.child_number()])
-				.expect("can't error"),
-			server_key.clone(),
-			fee_estimator.clone(),
-		).await.context("failed to start VtxoSweeper")?;
 
 		let sync_manager = SyncManager::start(
 			rtmgr.clone(),
@@ -180,7 +164,7 @@ impl Watchman {
 			cfg.sync_manager_block_poll_interval,
 		).await.context("Failed to start SyncManager")?;
 
-		Ok(Self { rtmgr, sync_manager, txindex, tx_nursery, forfeit_watcher })
+		Ok(Self { rtmgr, sync_manager, txindex, tx_nursery })
 	}
 
 	/// Waits for server to terminate.

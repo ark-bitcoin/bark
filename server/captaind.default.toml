@@ -88,6 +88,7 @@ nb_round_nonces = 8
 # The duration after which to drop forfeit nonces
 round_forfeit_nonces_timeout = "30s"
 
+
 #############
 # OFFBOARDS #
 #############
@@ -104,9 +105,6 @@ offboard_fixed_fee_vb = 212
 # The time after which we drop offboard sessions and release locked VTXOs
 offboard_session_timeout = "30s"
 
-#############
-# LIGHTNING #
-#############
 
 # Interval to retry connecting to disconnected CLN nodes
 cln_reconnect_interval = "10s"
@@ -173,15 +171,11 @@ ln_receive_anti_dos_required = false
 #hold_invoice.client_key_path = "/etc/cln/chold/lient.key"
 
 
-###################
-# FORFEIT WATCHER #
-###################
-
-[forfeit_watcher]
+#############
+# LIGHTNING #
+#############
+[watchman]
 enabled = true
-# Interval to check of forfeited exits have been broadcast
-wake_interval = "1m"
-
 
 #############
 # VTXO POOL #

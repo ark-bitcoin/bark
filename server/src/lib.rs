@@ -11,7 +11,6 @@ pub mod sync;
 pub mod config;
 pub mod database;
 pub mod filters;
-pub mod forfeits;
 pub mod mailbox_manager;
 pub mod fee_estimator;
 pub mod rpcserver;
@@ -53,7 +52,7 @@ use futures::Stream;
 use tokio::sync::{broadcast, mpsc, oneshot};
 use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::wrappers::errors::BroadcastStreamRecvError;
-use tracing::{info, warn, trace};
+use tracing::{info, trace};
 
 use ark::{ServerVtxo, Vtxo, VtxoId, VtxoRequest};
 use ark::vtxo::VtxoRef;
@@ -70,7 +69,6 @@ use crate::bitcoind::BitcoinRpcClientExt;
 use crate::sync::SyncManager;
 use crate::error::ContextExt;
 use crate::flux::VtxosInFlux;
-use crate::forfeits::ForfeitWatcher;
 use crate::ln::cln::ClnManager;
 use crate::mailbox_manager::MailboxManager;
 use crate::fee_estimator::FeeEstimator;
@@ -195,7 +193,6 @@ pub struct Server {
 	rounds: RoundHandle,
 	// nb we store Option because remove is costly, we take the option and clean up later
 	forfeit_nonces: parking_lot::Mutex<TimedEntryMap<VtxoId, Option<HarkForfeitNonces>>>,
-	forfeits: Option<ForfeitWatcher>,
 	/// All vtxos that are currently being processed in any way.
 	/// (Plus a small buffer to optimize allocations.)
 	vtxos_in_flux: VtxosInFlux,
@@ -388,25 +385,6 @@ impl Server {
 			bitcoind.clone(),
 		);
 
-		let forfeits = if let Some(c) = cfg.forfeit_watcher.enabled() {
-			let s = ForfeitWatcher::start(
-				rtmgr.clone(),
-				c.clone(),
-				cfg.network,
-				bitcoind.clone(),
-				db.clone(),
-				txindex.clone(),
-				tx_nursery.clone(),
-				master_xpriv.derive_priv(&*SECP, &[WalletKind::Forfeits.child_number()])
-					.expect("can't error"),
-				server_key.clone(),
-				fee_estimator.clone(),
-			).await.context("failed to start ForfeitWatcher")?;
-			Some(s)
-		} else {
-			None
-		};
-
 		let sync_manager = Arc::new(SyncManager::start(
 			rtmgr.clone(),
 			bitcoind.clone(),
@@ -456,7 +434,6 @@ impl Server {
 			sync_manager,
 			rtmgr,
 			tx_nursery: tx_nursery.clone(),
-			forfeits: forfeits,
 			cln,
 			vtxopool,
 			pending_offboards: parking_lot::Mutex::new(TimedEntryMap::new()),
@@ -540,11 +517,7 @@ impl Server {
 				self.rounds_wallet.lock().await.sync(&self.bitcoind, false).await
 			},
 			async {
-				if let Some(ref fw) = self.forfeits {
-					fw.wallet_sync().await
-				} else {
-					Ok(())
-				}
+				Ok(())
 			},
 		)?;
 		Ok(())
@@ -557,52 +530,7 @@ impl Server {
 	///
 	/// Should be called after `sync_wallets`.
 	pub async fn rebalance_wallets(&self) -> anyhow::Result<()> {
-		let Some(ref forfeits) = self.forfeits else {
-			return Ok(());
-		};
-
-		let forfeit_wallet = forfeits.wallet_status().await?;
-		if forfeit_wallet.total_balance >= self.config.forfeit_watcher_min_balance {
-			return Ok(());
-		}
-
-		let amount = self.config.forfeit_watcher_min_balance * 2;
-		let rounds_balance = self.rounds_wallet.lock().await.status().total_balance;
-		if rounds_balance < amount {
-			warn!("Rounds wallet doesn't have sufficient bitcoin to top up forfeit watcher.");
-			return Ok(());
-		}
-
-		let mut wallet = self.rounds_wallet.lock().await;
-		let addr = forfeit_wallet.address.assume_checked();
-		let feerate = self.fee_estimator.regular();
-		info!("Sending {amount} to forfeit wallet address {addr}...");
-		let tx = match wallet.send(addr.script_pubkey(), amount, feerate).await {
-			Ok(tx) => tx,
-			Err(e) => {
-				warn!("Error sending from round to forfeit wallet: {:?}", e);
-				return Err(e).context("error sending tx from round to forfeit wallet");
-			},
-		};
-		drop(wallet);
-
-		let tx = self.tx_nursery.broadcast_tx(tx).await
-			.context("Failed to broadcast transaction")?;
-
-		// wait until it's actually broadcast
-		tokio::time::timeout(Duration::from_millis(5_000), async {
-			loop {
-				if tx.status().seen() {
-					break;
-				}
-				tokio::time::sleep(Duration::from_millis(500)).await;
-			}
-		}).await.context("waiting for tx broadcast timed out")?;
-
-		// then re-sync
-		forfeits.wallet_sync().await?;
-
-		Ok(())
+		unimplemented!("will bring back in next commit");
 	}
 
 	pub async fn new_onchain_address(&self) -> anyhow::Result<Address> {

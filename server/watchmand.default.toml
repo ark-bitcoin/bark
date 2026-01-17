@@ -21,14 +21,10 @@ transaction_rebroadcast_interval = "1m"
 # The name of your deployment used by OpenTelemetry
 otel_deployment_name = "my_regtest"
 
-
-###################
-# FORFEIT WATCHER #
-###################
-
-[forfeit_watcher]
-# Interval to check of forfeited exits have been broadcast
-wake_interval = "1m"
+#############
+# watchman #
+############
+[watchman]
 
 
 #################

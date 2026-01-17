@@ -259,10 +259,8 @@ impl TestContext {
 			otel_collector_endpoint: None,
 			otel_tracing_sampler: Some(1f64),
 			otel_deployment_name: db_name,
-			forfeit_watcher: server::forfeits::Config {
-				wake_interval: Duration::from_millis(1_000),
-			}.into(),
 			forfeit_watcher_min_balance: Amount::from_sat(1_000_000),
+			watchman: config::OptionalService::Disabled,
 			vtxopool: server::vtxopool::Config {
 				vtxo_targets: vec![
 					VtxoTarget { count: 3, amount: sat(10_000) },
