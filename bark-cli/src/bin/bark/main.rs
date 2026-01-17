@@ -470,7 +470,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 				onchain.address().await?
 			};
 
-			let ret = if let Some(vtxos) = vtxos {
+			let txid = if let Some(vtxos) = vtxos {
 				let vtxos = vtxos
 					.into_iter()
 					.map(|vtxo| {
@@ -495,7 +495,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 			} else {
 				bail!("Either --vtxos or --all argument must be provided to offboard");
 			};
-			output_json(&json::RoundStatus::from(ret));
+			output_json(&txid);
 		},
 		Command::Onchain(onchain_command) => {
 			onchain::execute_onchain_command(onchain_command, &mut wallet, &mut onchain).await?;

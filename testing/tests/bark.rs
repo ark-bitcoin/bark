@@ -4,7 +4,7 @@ use std::sync::Arc;
 use std::sync::atomic::{self, AtomicBool};
 use std::time::Duration;
 
-use bitcoin::Amount;
+use bitcoin::{Amount, Weight};
 use bitcoin_ext::{P2TR_DUST, P2TR_DUST_SAT};
 use bitcoincore_rpc::RpcApi;
 use futures::future::join_all;
@@ -13,6 +13,7 @@ use tokio::fs;
 use tokio_stream::StreamExt;
 
 use ark::{ProtocolEncoding, Vtxo, VtxoPolicy, VtxoRequest};
+use ark::offboard::OffboardRequest;
 use ark::rounds::RoundEvent;
 use ark::vtxo::policy::PubkeyVtxoPolicy;
 use bark::BarkNetwork;
@@ -30,8 +31,6 @@ use ark_testing::daemon::captaind::{self, ArkClient};
 use ark_testing::util::{
 	get_bark_chain_source_from_env, FutureExt, TestContextChainSource, ToAltString,
 };
-
-const OFFBOARD_FEES: Amount = sat(900);
 
 #[tokio::test]
 async fn bark_version() {
@@ -588,7 +587,6 @@ async fn multiple_spends_in_payment() {
 	assert_eq!(refresh_mvt.offchain_fee, Amount::ZERO);
 }
 
-#[ignore]
 #[tokio::test]
 async fn offboard_all() {
 	let ctx = TestContext::new("bark/offboard_all").await;
@@ -602,6 +600,7 @@ async fn offboard_all() {
 
 	// refresh and board more
 	bark1.refresh_all().await;
+	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
 	bark1.board_and_confirm_and_register(&ctx, sat(300_000)).await;
 
 	// oor vtxo
@@ -613,11 +612,15 @@ async fn offboard_all() {
 	assert_eq!(init_balance, sat(830_000));
 
 	bark1.offboard_all(address.clone()).await;
-	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
 
 	// We check that all vtxos have been offboarded
 	assert_eq!(Amount::ZERO, bark1.spendable_balance().await);
 
+	let expected_fee = OffboardRequest::calculate_fee(
+		&address.script_pubkey(),
+		srv.config().offboard_feerate,
+		Weight::from_vb_unchecked(srv.config().offboard_fixed_fee_vb as u64),
+	).unwrap();
 	let movements = bark1.history().await;
 	let offb_movement = movements.last().unwrap();
 	assert_eq!(offb_movement.input_vtxos.len(), 3, "all offboard vtxos should be in movement");
@@ -625,18 +628,17 @@ async fn offboard_all() {
 		offb_movement.sent_to.first(),
 		Some(MovementDestination {
 			destination: PaymentMethod::Bitcoin(address.to_string()),
-			amount: sat(829100),
+			amount: init_balance - expected_fee,
 		}).as_ref(), "destination should be correct"
 	);
 
 	// We check that provided address received the coins
 	ctx.generate_blocks(1).await;
 	let balance = ctx.bitcoind().get_received_by_address(&address);
-	assert_eq!(balance, init_balance - OFFBOARD_FEES);
+	assert_eq!(balance, init_balance - expected_fee);
 	assert_eq!(bark2.inround_balance().await, sat(0));
 }
 
-#[ignore]
 #[tokio::test]
 async fn offboard_vtxos() {
 	let ctx = TestContext::new("bark/offboard_vtxos").await;
@@ -651,6 +653,7 @@ async fn offboard_vtxos() {
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 
 	bark1.refresh_all().await;
+	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
 
 	// board vtxo
 	bark1.board(sat(300_000)).await;
@@ -666,7 +669,6 @@ async fn offboard_vtxos() {
 	let vtxo_to_offboard = &vtxos[1];
 
 	bark1.offboard_vtxo(vtxo_to_offboard.id, address.clone()).await;
-	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
 
 	// We check that only selected vtxo has been touched
 	let updated_vtxos = bark1.vtxos().await
@@ -677,6 +679,11 @@ async fn offboard_vtxos() {
 	assert!(updated_vtxos.contains(&vtxos[0].id));
 	assert!(updated_vtxos.contains(&vtxos[2].id));
 
+	let expected_fee = OffboardRequest::calculate_fee(
+		&address.script_pubkey(),
+		srv.config().offboard_feerate,
+		Weight::from_vb_unchecked(srv.config().offboard_fixed_fee_vb as u64),
+	).unwrap();
 	let movements = bark1.history().await;
 	let offb_movement = movements.last().unwrap();
 	assert_eq!(offb_movement.input_vtxos.len(), 1, "only provided vtxo should be offboarded");
@@ -685,14 +692,14 @@ async fn offboard_vtxos() {
 		offb_movement.sent_to.first(),
 		Some(MovementDestination {
 			destination: PaymentMethod::Bitcoin(address.to_string()),
-			amount: vtxo_to_offboard.amount - sat(900),
+			amount: vtxo_to_offboard.amount - expected_fee,
 		}).as_ref(), "destination should be correct"
 	);
 
 	// We check that provided address received the coins
 	ctx.generate_blocks(1).await;
 	let balance = ctx.bitcoind().get_received_by_address(&address);
-	assert_eq!(balance, vtxo_to_offboard.amount - OFFBOARD_FEES);
+	assert_eq!(balance, vtxo_to_offboard.amount - expected_fee);
 	assert_eq!(bark2.inround_balance().await, sat(0));
 }
 

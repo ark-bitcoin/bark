@@ -1,4 +1,5 @@
 
+use std::borrow::Borrow;
 use std::convert::TryFrom;
 use std::time::Duration;
 
@@ -584,8 +585,9 @@ impl TryFrom<protos::LeafVtxoCosignResponse> for LeafVtxoCosignResponse {
 	}
 }
 
-impl<'a> From<&'a OffboardRequest> for protos::OffboardRequest {
-	fn from(v: &'a OffboardRequest) -> Self {
+impl<V: Borrow<OffboardRequest>> From<V> for protos::OffboardRequest {
+	fn from(v: V) -> Self {
+		let v = v.borrow();
 	    protos::OffboardRequest {
 			offboard_spk: v.script_pubkey.to_bytes(),
 			amount: v.amount.to_sat(),

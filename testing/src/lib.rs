@@ -61,13 +61,21 @@ macro_rules! assert_eq {
 }
 
 /// Shorthand for Amount from sats
-pub const fn sat(sats: u64) -> Amount {
-	Amount::from_sat(sats)
+pub fn sat<V>(sats: V) -> Amount
+where
+	V: TryInto<u64>,
+	V::Error: fmt::Debug,
+{
+	Amount::from_sat(sats.try_into().expect("invalid interger"))
 }
 
 /// Shorthand for SignedAmount from sats
-pub const fn signed_sat(sats: i64) -> SignedAmount {
-	SignedAmount::from_sat(sats)
+pub fn signed_sat<V>(sats: V) -> SignedAmount
+where
+	V: TryInto<i64>,
+	V::Error: fmt::Debug,
+{
+	SignedAmount::from_sat(sats.try_into().expect("invalid signed integer"))
 }
 
 /// Shorthand for Amount from BTC
