@@ -369,7 +369,7 @@ pub struct PendingRoundInfo {
 
 impl PendingRoundInfo {
 	pub fn new<'a>(
-		state: &'a bark::persist::StoredRoundState,
+		state: &'a bark::persist::models::StoredRoundState,
 		sync_result: anyhow::Result<bark::round::RoundStatus>,
 	) -> Self {
 		let funding_tx = state.state.funding_tx();

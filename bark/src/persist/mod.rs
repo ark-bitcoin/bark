@@ -21,8 +21,6 @@ pub mod models;
 pub mod sqlite;
 
 
-use std::fmt;
-
 use bitcoin::{Amount, Transaction, Txid};
 use bitcoin::secp256k1::PublicKey;
 use chrono::DateTime;
@@ -37,24 +35,12 @@ use bitcoin_ext::BlockDelta;
 use crate::WalletProperties;
 use crate::exit::ExitTxOrigin;
 use crate::movement::{Movement, MovementId, MovementStatus, MovementSubsystem};
-use crate::persist::models::{LightningReceive, LightningSend, PendingBoard, StoredExit};
+use crate::persist::models::{
+	LightningReceive, LightningSend, PendingBoard, StoredExit,
+	StoredRoundState, RoundStateId,
+};
 use crate::round::RoundState;
 use crate::vtxo::{VtxoState, VtxoStateKind, WalletVtxo};
-
-/// Identifier for a stored [RoundState].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct RoundStateId(pub u32);
-
-impl fmt::Display for RoundStateId {
-	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-	    fmt::Display::fmt(&self.0, f)
-	}
-}
-
-pub struct StoredRoundState {
-	pub id: RoundStateId,
-	pub state: RoundState,
-}
 
 /// Storage interface for Bark wallets.
 ///

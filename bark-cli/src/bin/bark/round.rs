@@ -2,7 +2,7 @@
 use clap;
 
 use bark::Wallet;
-use bark::persist::RoundStateId;
+use bark::persist::models::RoundStateId;
 
 
 #[derive(clap::Subcommand)]

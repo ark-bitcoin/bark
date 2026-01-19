@@ -28,8 +28,11 @@ use bark::movement::{
 	Movement, MovementDestination, MovementId, MovementStatus, MovementSubsystem,
 	MovementTimestamp, PaymentMethod,
 };
-use bark::persist::{BarkPersister, RoundStateId, StoredRoundState};
-use bark::persist::models::{self, LightningReceive, LightningSend, PendingBoard, StoredExit};
+use bark::persist::BarkPersister;
+use bark::persist::models::{
+	LightningReceive, LightningSend, PendingBoard, StoredExit, StoredRoundState, RoundStateId,
+	SerdeRoundState,
+};
 use bark::round::RoundState;
 use bark::vtxo::{VtxoState, VtxoStateKind};
 
@@ -290,7 +293,7 @@ impl BarkPersister for Dummy {
 	async fn load_round_states(&self) -> anyhow::Result<Vec<StoredRoundState>> {
 		Ok(vec![StoredRoundState {
 			id: RoundStateId(5),
-			state: rmp_serde::from_slice::<models::SerdeRoundState>(&[]).unwrap().into(),
+			state: rmp_serde::from_slice::<SerdeRoundState>(&[]).unwrap().into(),
 		}])
 	}
 

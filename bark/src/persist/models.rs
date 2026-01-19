@@ -9,6 +9,7 @@
 //! - Enable forward/backward compatibility when schema migrations occur.
 
 use std::borrow::Cow;
+use std::fmt;
 
 use bitcoin::{Amount, Transaction};
 use bitcoin::secp256k1::Keypair;
@@ -25,6 +26,21 @@ use crate::WalletVtxo;
 use crate::exit::{ExitVtxo, ExitState};
 use crate::movement::MovementId;
 use crate::round::{AttemptState, RoundFlowState, RoundParticipation, RoundState};
+
+/// Identifier for a stored [RoundState].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RoundStateId(pub u32);
+
+impl fmt::Display for RoundStateId {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+	    fmt::Display::fmt(&self.0, f)
+	}
+}
+
+pub struct StoredRoundState {
+	pub id: RoundStateId,
+	pub state: RoundState,
+}
 
 /// Persisted representation of a pending board.
 #[derive(Debug, Clone, PartialEq, Eq)]
