@@ -1,0 +1,5 @@
+
+- support sending and receiving dust VTXOs
+  [#1440](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1440)
+  - use checkpointed arkoor for lightning send
+  - use dust-isolation in lightning send revocation and lightning receive
