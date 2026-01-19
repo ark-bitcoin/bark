@@ -33,6 +33,7 @@ use std::sync::Arc;
 use std::str::FromStr;
 
 use anyhow::{Context, bail};
+use bark::persist::adaptor::StorageAdaptorWrapper;
 use bitcoin::Network;
 use clap::Args;
 use log::{debug, info, warn};
@@ -42,6 +43,7 @@ use bark::onchain::OnchainWallet;
 use bark::persist::BarkPersister;
 use bark::pid_lock::LOCK_FILE;
 use bark::persist::sqlite::SqliteClient;
+use bark::persist::adaptor::filestore::FileStorageAdaptor;
 
 use bitcoin_ext::BlockHeight;
 
@@ -52,6 +54,8 @@ const MNEMONIC_FILE: &str = "mnemonic";
 
 /// File name of the database file.
 const DB_FILE: &str = "db.sqlite";
+/// File name of the filestore database file.
+const FILESTORE_FILE: &str = "wallet.json";
 
 /// File name of the config file.
 const CONFIG_FILE: &str = "config.toml";
@@ -181,6 +185,13 @@ pub struct CreateOpts {
 	/// Any funds in the old wallet will be lost
 	#[arg(long)]
 	pub force: bool,
+
+	/// Use filestore (JSON file) persistence instead of SQLite.
+	/// This creates a marker file so subsequent commands use the same backend.
+	///
+	/// Warning: do not use this for a production wallet.
+	#[arg(long)]
+	pub use_filestore: bool,
 
 	/// Use bitcoin mainnet
 	#[arg(long)]
@@ -332,7 +343,14 @@ async fn try_create_wallet(
 		.context("failed to write mnemonic")?;
 
 	// open db
-	let db = Arc::new(SqliteClient::open(datadir.join(DB_FILE))?);
+	let db: Arc<dyn BarkPersister + Send + Sync> = if opts.use_filestore {
+		debug!("Using filestore backend");
+		let adaptor = FileStorageAdaptor::open(datadir.join(FILESTORE_FILE)).await?;
+		Arc::new(StorageAdaptorWrapper::new(adaptor))
+	} else {
+		debug!("Using sqlite backend");
+		Arc::new(SqliteClient::open(datadir.join(DB_FILE))?)
+	};
 
 	let mut onchain = OnchainWallet::load_or_create(net.as_bitcoin(), seed, db.clone()).await?;
 	let wallet = BarkWallet::create_with_onchain(
@@ -365,7 +383,15 @@ pub async fn open_wallet(datadir: &Path) -> anyhow::Result<Option<(BarkWallet, O
 	let mnemonic = bip39::Mnemonic::from_str(&mnemonic_str).context("broken mnemonic")?;
 	let seed = mnemonic.to_seed("");
 
-	let db = Arc::new(SqliteClient::open(datadir.join(DB_FILE))?);
+	let use_filestore = datadir.join(FILESTORE_FILE).exists();
+	let db: Arc<dyn BarkPersister + Send + Sync> = if use_filestore {
+		debug!("Using filestore backend");
+		let adaptor = FileStorageAdaptor::open(datadir.join(FILESTORE_FILE)).await?;
+		Arc::new(StorageAdaptorWrapper::new(adaptor))
+	} else {
+		debug!("Using sqlite backend");
+		Arc::new(SqliteClient::open(datadir.join(DB_FILE))?)
+	};
 	let properties = db.read_properties().await?.context("failed to read properties")?;
 
 	// Read the config

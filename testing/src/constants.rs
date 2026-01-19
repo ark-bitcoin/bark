@@ -35,6 +35,9 @@ pub mod env {
 	pub const KEEP_ALL_TEST_DATA: &str = "KEEP_ALL_TEST_DATA";
 	/// Use an external database to run the tests
 	pub const TEST_POSTGRES_HOST: &str = "TEST_POSTGRES_HOST";
+	/// Use filestore (JSON file) persistence instead of SQLite for bark wallets.
+	/// Set to "1" to enable.
+	pub const USE_FILESTORE: &str = "USE_FILESTORE";
 }
 
 pub mod bitcoind {
