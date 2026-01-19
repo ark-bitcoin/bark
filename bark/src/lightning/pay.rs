@@ -13,7 +13,7 @@ use server_rpc::protos::{self, lightning_payment_status::PaymentStatus};
 use ark::{musig, VtxoPolicy};
 use ark::lightning::{Bolt12Invoice, Bolt12InvoiceExt, Invoice, Offer, PaymentHash, Preimage};
 use ark::util::IteratorExt;
-use bitcoin_ext::{BlockHeight, P2TR_DUST};
+use bitcoin_ext::BlockHeight;
 
 use crate::Wallet;
 use crate::lightning::lnaddr_invoice;
@@ -401,7 +401,6 @@ impl Wallet {
 	///   properties.
 	/// - The `invoice` has already been paid (the payment hash exists in the database).
 	/// - The `invoice` contains an invalid or tampered signature.
-	/// - The amount to be sent is smaller than the dust limit (`P2TR_DUST`).
 	/// - The wallet doesn't have enough funds to cover the payment.
 	/// - Validation, signing, server or network issues occur.
 	///
@@ -436,9 +435,6 @@ impl Wallet {
 		invoice.check_signature()?;
 
 		let amount = invoice.get_final_amount(user_amount)?;
-		if amount < P2TR_DUST {
-			bail!("Sent amount must be at least {}", P2TR_DUST);
-		}
 
 		let (user_keypair, _) = self.derive_store_next_keypair().await?;
 
