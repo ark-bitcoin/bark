@@ -1,4 +1,4 @@
 
-* all BarkPersister API was made async, resulting in most of
+- all BarkPersister API was made async, resulting in most of
   Bark's API becoming async too
   [PR #1485](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1485)

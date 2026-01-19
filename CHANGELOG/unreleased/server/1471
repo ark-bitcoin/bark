@@ -1,5 +1,5 @@
 - Introduce `SyncManager` and `BlockIndex`.
-  This are utilities that can be used for block based sync.
+  These are utilities that can be used for block based sync.
   Replaced `TipFetcher` by `SyncManager`.
   Introduced the `sync_manager_block_poll_interval` config to
   specify how frequently `SyncManager` should poll sync.
