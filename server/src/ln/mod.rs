@@ -58,14 +58,7 @@ impl Server {
 			.as_server_htlc_send()
 			.context("vtxo request is not htlc send")?.clone();
 
-		// Mark the vtxo as in-flux
-		let _vtxo_guard = self.vtxos_in_flux.try_lock(&input_vtxo_ids).map_err(|e| {
-			badarg_err!("some VTXO is already locked by another process: {}", e.id)
-		})?;
-
 		//TODO(stevenroose) check that vtxos are valid
-
-		self.check_vtxos_not_exited(&input_vtxos).await?;
 
 		let user_htlc_amount = request.outputs()
 			.filter(|v| matches!(v.policy, VtxoPolicy::ServerHtlcSend(..)))
@@ -120,24 +113,9 @@ impl Server {
 		let builder = self.validate_cosign_request(validation, request)
 			.badarg("invalid cosign request")?;
 
-		// We are going to compute all vtxos and spend-info
-		// and mark it into the database
-		let new_output_vtxos = builder.build_unsigned_vtxos();
-		let new_internal_vtxos = builder.build_unsigned_internal_vtxos();
-		let spend_info = builder.spend_info();
-
-		// We are going to mark the update in the database
-		self.db.upsert_vtxos_and_mark_spends(
-			new_output_vtxos.chain(new_internal_vtxos),
-			spend_info
-		).await?;
-
 		slog!(LightningPayHtlcsRequested, invoice_payment_hash, amount, expiry);
 
-		// Only now it's safe to sign
-		let builder = builder.server_cosign(self.server_key.leak_ref())
-			.context("Failed to sign")?;
-
+		let builder = self.cosign_oor_with_builder(builder).await?;
 		Ok(builder.cosign_response())
 	}
 
