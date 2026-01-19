@@ -283,7 +283,21 @@ pub trait BarkPersister: Send + Sync + 'static {
 	/// - returns an error of the states could not be succesfully retrieved
 	async fn load_round_states(&self) -> anyhow::Result<Vec<StoredRoundState>>;
 
-	/// Stores the given VTXOs in the given [VtxoState].
+	/// Stores VTXOs with their initial state.
+	///
+	/// This operation is idempotent: if a VTXO already exists (same `id`), the
+	/// implementation should succeed without modifying the existing VTXO or its
+	/// state. This allows safe retries during crash recovery scenarios.
+	///
+	/// # Parameters
+	/// - `vtxos`: Slice of VTXO and state pairs to store.
+	///
+	/// # Behavior
+	/// - For each VTXO that does not exist: inserts the VTXO and its initial state.
+	/// - For each VTXO that already exists: no-op for that VTXO.
+	///
+	/// # Errors
+	/// - Returns an error if the storage operation fails.
 	async fn store_vtxos(
 		&self,
 		vtxos: &[(&Vtxo, &VtxoState)],
