@@ -436,7 +436,6 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 					VTXO pubkeys, bolt11 invoices, bolt12 offers and lightning addresses",
 				);
 			}
-			info!("Payment sent succesfully!");
 		},
 		Command::SendOnchain { destination, amount, no_sync } => {
 			if let Ok(addr) = bitcoin::Address::from_str(&destination) {
