@@ -20,7 +20,7 @@ use crate::movement::manager::OnDropStatus;
 pub struct ArkoorCreateResult {
 	input: Vec<VtxoId>,
 	created: Vec<Vtxo>,
-	change: Option<Vtxo>,
+	change: Vec<Vtxo>,
 }
 
 impl Wallet {
@@ -84,7 +84,7 @@ impl Wallet {
 
 		let builder = ArkoorPackageBuilder::new_single_output_with_checkpoints(
 			inputs.iter().map(|v| &v.vtxo).cloned(),
-			arkoor_dest,
+			arkoor_dest.clone(),
 			VtxoPolicy::new_pubkey(change_pubkey),
 		)
 			.context("Failed to construct arkoor package")?
@@ -107,23 +107,15 @@ impl Wallet {
 			.context("Failed to cosign vtxos")?
 			.build_signed_vtxos();
 
-		// See if their is a change vtxo
-		if vtxos.last().expect("At least one vtxo").user_pubkey() == change_pubkey {
-			let nb_vtxos = vtxos.len();
-			let change = vtxos.last().cloned();
-			Ok(ArkoorCreateResult {
-				input: input_ids,
-				// The last one is change
-				created: vtxos.into_iter().take(nb_vtxos.saturating_sub(1)).collect::<Vec<_>>(),
-				change: change,
-			})
-		} else {
-			Ok(ArkoorCreateResult {
-				input: input_ids,
-				created: vtxos,
-				change: None,
-			})
-		}
+		// divide between change and destination
+		let (dest, change) = vtxos.into_iter()
+			.partition::<Vec<_>, _>(|v| *v.policy() == arkoor_dest.policy);
+
+		Ok(ArkoorCreateResult {
+			input: input_ids,
+			created: dest,
+			change: change,
+		})
 	}
 
 	/// Makes an out-of-round payment to the given [ark::Address]. This does not require waiting for
@@ -181,9 +173,9 @@ impl Wallet {
 			//NB we will continue to at least not lose our own change
 		}
 		self.mark_vtxos_as_spent(&arkoor.input).await?;
-		if let Some(change) = arkoor.change {
-			self.store_spendable_vtxos([&change]).await?;
-			movement.apply_update(MovementUpdate::new().produced_vtxo(change)).await?;
+		if !arkoor.change.is_empty() {
+			self.store_spendable_vtxos(&arkoor.change).await?;
+			movement.apply_update(MovementUpdate::new().produced_vtxos(arkoor.change)).await?;
 		}
 		movement.success().await?;
 		Ok(arkoor.created)
