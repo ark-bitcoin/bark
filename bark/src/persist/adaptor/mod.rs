@@ -43,6 +43,8 @@ pub mod filestore;
 pub mod memory;
 pub use self::sort::SortKey;
 
+#[cfg(feature = "indexed-db")]
+pub mod indexed_db;
 
 use std::ops::RangeBounds;
 
