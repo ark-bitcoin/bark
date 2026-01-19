@@ -1,16 +1,17 @@
 use std::str::FromStr;
 
 use anyhow::Context;
+use ark::arkoor::package::ArkoorPackageBuilder;
 use bitcoin::{Amount, SignedAmount};
 use bitcoin::hex::DisplayHex;
 use futures::StreamExt;
 use lightning_invoice::Bolt11Invoice;
 use log::{trace, debug, info, warn};
 
-use ark::arkoor::ArkoorPackageBuilder;
-use ark::{ProtocolEncoding, Vtxo, VtxoPolicy, VtxoRequest, musig};
+use ark::{ProtocolEncoding, Vtxo, VtxoPolicy};
 use ark::challenges::{LightningReceiveChallenge};
 use ark::lightning::{PaymentHash, Preimage};
+use ark::util::IteratorExt;
 use bitcoin_ext::{AmountExt, BlockDelta, BlockHeight};
 use server_rpc::protos;
 use server_rpc::protos::prepare_lightning_receive_claim_request::LightningReceiveAntiDos;
@@ -124,49 +125,38 @@ impl Wallet {
 		};
 
 		let mut keypairs = Vec::with_capacity(inputs.len());
-		let mut sec_nonces = Vec::with_capacity(inputs.len());
-		let mut pub_nonces = Vec::with_capacity(inputs.len());
 		for v in &inputs {
-			let keypair = self.get_vtxo_key(*v).await?;
-			let (sec_nonce, pub_nonce) = musig::nonce_pair(&keypair);
-			keypairs.push(keypair);
-			sec_nonces.push(sec_nonce);
-			pub_nonces.push(pub_nonce);
+			keypairs.push(self.get_vtxo_key(*v).await?);
 		}
 
 		// Claiming arkoor against preimage
 		let (claim_keypair, _) = self.derive_store_next_keypair().await?;
 		let receive_policy = VtxoPolicy::new_pubkey(claim_keypair.public_key());
 
-		let pay_req = VtxoRequest {
-			policy: receive_policy.clone(),
-			amount: inputs.iter().map(|v| v.amount()).sum(),
-		};
-		trace!("ln arkoor builder params: inputs: {:?}; user_nonces: {:?}; req: {:?}",
-			inputs.iter().map(|v| v.id()).collect::<Vec<_>>(), pub_nonces, pay_req,
+		trace!("ln arkoor builder params: inputs: {:?}; policy: {:?}",
+			inputs.iter().map(|v| v.id()).collect::<Vec<_>>(), receive_policy,
 		);
-		let builder = ArkoorPackageBuilder::new(
-			inputs.iter().copied(), &pub_nonces, pay_req, None,
-		)?;
+		let builder = ArkoorPackageBuilder::new_claim_all_without_checkpoints(
+			inputs.iter().copied().cloned(),
+			receive_policy.clone(),
+		).context("creating claim arkoor builder failed")?;
+		let builder = builder.generate_user_nonces(&keypairs)
+			.context("arkoor nonce generation for claim failed")?;
 
 		info!("Claiming arkoor against payment preimage");
 		self.db.set_preimage_revealed(receive.payment_hash).await?;
+		let cosign_request = builder.cosign_request();
 		let resp = srv.client.claim_lightning_receive(protos::ClaimLightningReceiveRequest {
 			payment_hash: receive.payment_hash.to_byte_array().to_vec(),
 			payment_preimage: receive.payment_preimage.to_vec(),
 			vtxo_policy: receive_policy.serialize(),
-			user_pub_nonces: pub_nonces.iter().map(|n| n.serialize().to_vec()).collect(),
+			cosign_request: Some(cosign_request.into()),
 		}).await?.into_inner();
-		let cosign_resp: Vec<_> = resp.try_into().context("invalid cosign response")?;
+		let cosign_resp = resp.try_into().context("invalid cosign response")?;
 
-		ensure!(builder.verify_cosign_response(&cosign_resp),
-			"invalid arkoor cosignature received from server",
-		);
-
-		let (outputs, change) = builder.build_vtxos(&cosign_resp, &keypairs, sec_nonces)?;
-		if change.is_some() {
-			bail!("shouldn't have change VTXO, this is a bug");
-		}
+		let outputs = builder.user_cosign(&keypairs, cosign_resp)
+			.context("claim arkoor cosign failed with user response")?
+			.build_signed_vtxos();
 
 		let mut effective_balance = Amount::ZERO;
 		for vtxo in &outputs {
@@ -506,16 +496,14 @@ impl Wallet {
 
 				let tip = self.chain.tip().await?;
 
-				let first_vtxo = &vtxos.first()
-					.context("HTLC VTXOs unexpectedly empty")?.vtxo;
-				debug_assert!(vtxos.iter().all(|v| {
-					v.vtxo.policy() == first_vtxo.policy() && v.vtxo.exit_delta() == first_vtxo.exit_delta()
-				}), "all htlc vtxos for the same payment hash should have the same policy and exit delta");
+				let (policy, exit_delta) = vtxos.iter()
+					.all_same(|v| (v.vtxo.policy(), v.vtxo.exit_delta()))
+					.context("all htlc vtxos should have the same policy and exit delta")?;
 
-				let vtxo_htlc_expiry = first_vtxo.policy().as_server_htlc_recv()
+				let vtxo_htlc_expiry = policy.as_server_htlc_recv()
 					.expect("only server htlc recv vtxos can be pending lightning recv").htlc_expiry;
 
-				let safe_exit_margin = first_vtxo.exit_delta() +
+				let safe_exit_margin = exit_delta +
 					ark_info.htlc_expiry_delta +
 					self.config.vtxo_exit_margin;
 

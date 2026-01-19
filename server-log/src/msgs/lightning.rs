@@ -40,7 +40,8 @@ impl_slog!(LightningPayHtlcsRevocationRequested, TRACE, "requested htlc revocati
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LightningPayHtlcsRevoked {
 	pub invoice_payment_hash: PaymentHash,
-	pub vtxo_request: VtxoRequest,
+	pub htlc_vtxo_ids: Vec<VtxoId>,
+	pub new_vtxo_ids: Vec<VtxoId>,
 }
 impl_slog!(LightningPayHtlcsRevoked, INFO, "revoked HTLCs for lightning payment");
 

@@ -58,7 +58,6 @@ use tracing::{info, warn, trace};
 
 use ark::{Vtxo, VtxoId, VtxoRequest};
 use ark::vtxo::VtxoRef;
-use ark::arkoor::{ArkoorBuilder, ArkoorCosignResponse, ArkoorPackageBuilder};
 use ark::board::BoardBuilder;
 use ark::mailbox::{BlindedMailboxIdentifier, MailboxIdentifier};
 use ark::musig::{self, PublicNonce};
@@ -734,62 +733,6 @@ impl Server {
 		}
 
 		Ok(())
-	}
-
-	/// Perform the arkoor cosign from the builder.
-	/// Assumes that sanity checks on the input have been performed.
-	/// Will lock the input vtxo in flux.
-	#[tracing::instrument(skip(self, builder))]
-	async fn cosign_oor_package_with_builder(
-		&self,
-		builder: &ArkoorPackageBuilder<'_, VtxoRequest>,
-	) -> anyhow::Result<Vec<ArkoorCosignResponse>> {
-		let inputs = builder.inputs();
-		let input_ids = inputs.iter().map(|input| input.id()).collect::<Vec<_>>();
-		let _guard = self.vtxos_in_flux.try_lock(&input_ids)
-			.map_err(|e| { slog!(ArkoorInputAlreadyInFlux, vtxo: e.id); e })
-			.badarg("attempted to sign arkoor tx for VTXO already locked")?;
-
-		match self.db.check_set_vtxo_oor_spent_package(&builder).await {
-			Ok(Some(dup)) => {
-				badarg!("attempted to sign arkoor tx for already spent vtxo {}", dup)
-			},
-			Ok(None) => {
-				let output_vtxo_ids = builder.new_vtxos().into_iter().flatten()
-					.map(|v| v.id()).collect::<Vec<_>>();
-				let input_vtxo_ids = input_ids.into_iter().map(|id| id).collect::<Vec<_>>();
-				slog!(ArkoorCosign, input_ids: input_vtxo_ids, output_ids: output_vtxo_ids);
-				// let's sign the tx
-				Ok(builder.server_cosign(&self.server_key.leak_ref()))
-			},
-			Err(e) => Err(e),
-		}
-	}
-
-	async fn cosign_oor_package(
-		&self,
-		arkoor_args: Vec<(VtxoId, musig::PublicNonce, Vec<VtxoRequest>)>,
-	) -> anyhow::Result<Vec<ArkoorCosignResponse>> {
-		let ids = arkoor_args.iter().map(|(id, _, _)| *id).collect::<Vec<_>>();
-		let input_vtxos = self.db.get_vtxos_by_id(&ids).await?
-			.into_iter().map(|s| s.vtxo).collect::<Vec<_>>();
-
-		let arkoors = arkoor_args.iter().zip(input_vtxos.iter())
-			.map(|((_, user_nonce, outputs), vtxo)| {
-				ArkoorBuilder::new(
-					&vtxo,
-					&user_nonce,
-					outputs,
-				).badarg("invalid arkoor")
-			})
-			.collect::<anyhow::Result<Vec<_>>>()?;
-
-		self.check_vtxos_not_exited(&input_vtxos).await?;
-
-		let builder = ArkoorPackageBuilder::from_arkoors(arkoors)
-			.badarg("error creating arkoor package")?;
-
-		self.cosign_oor_package_with_builder(&builder).await
 	}
 
 	/// Unblind a [BlindedMailboxIdentifier]

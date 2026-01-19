@@ -251,6 +251,7 @@ impl TestContext {
 			round_tx_untrusted_input_confirmations: 1,
 			max_vtxo_amount: None,
 			max_arkoor_depth: 5,
+			max_arkoor_fanout: 4,
 			rpc_rich_errors: true,
 			txindex_check_interval: Duration::from_millis(500),
 			sync_manager_block_poll_interval: Duration::from_millis(100),

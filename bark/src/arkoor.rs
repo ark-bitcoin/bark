@@ -4,8 +4,9 @@ use bitcoin::hex::DisplayHex;
 use bitcoin::secp256k1::PublicKey;
 use log::{info, error};
 
-use ark::{VtxoRequest, ProtocolEncoding};
-use ark::arkoor::checkpointed_package::{CheckpointedPackageBuilder, PackageCosignResponse};
+use ark::{VtxoPolicy, ProtocolEncoding};
+use ark::arkoor::ArkoorDestination;
+use ark::arkoor::package::{ArkoorPackageBuilder, ArkoorPackageCosignResponse};
 use ark::vtxo::{Vtxo, VtxoId, VtxoPolicyKind};
 use bitcoin_ext::P2TR_DUST;
 use server_rpc::protos;
@@ -19,7 +20,7 @@ use crate::movement::manager::OnDropStatus;
 pub struct ArkoorCreateResult {
 	input: Vec<VtxoId>,
 	created: Vec<Vtxo>,
-	change: Option<Vtxo>,
+	change: Vec<Vtxo>,
 }
 
 impl Wallet {
@@ -64,16 +65,16 @@ impl Wallet {
 
 	pub(crate) async fn create_checkpointed_arkoor(
 		&self,
-		vtxo_request: VtxoRequest,
+		arkoor_dest: ArkoorDestination,
 		change_pubkey: PublicKey,
 	) -> anyhow::Result<ArkoorCreateResult> {
-		if vtxo_request.policy.user_pubkey() == change_pubkey {
+		if arkoor_dest.policy.user_pubkey() == change_pubkey {
 			bail!("Cannot create arkoor to same address as change");
 		}
 
 		// Find vtxos to cover
 		let mut srv = self.require_server()?;
-		let inputs = self.select_vtxos_to_cover(vtxo_request.amount).await?;
+		let inputs = self.select_vtxos_to_cover(arkoor_dest.total_amount).await?;
 		let input_ids = inputs.iter().map(|v| v.id()).collect();
 
 		let mut user_keypairs = vec![];
@@ -81,23 +82,24 @@ impl Wallet {
 			user_keypairs.push(self.get_vtxo_key(vtxo).await?);
 		}
 
-		let builder = CheckpointedPackageBuilder::new(
+		let builder = ArkoorPackageBuilder::new_single_output_with_checkpoints(
 			inputs.iter().map(|v| &v.vtxo).cloned(),
-			vtxo_request,
-			change_pubkey,
+			arkoor_dest.clone(),
+			VtxoPolicy::new_pubkey(change_pubkey),
 		)
 			.context("Failed to construct arkoor package")?
 			.generate_user_nonces(&user_keypairs)
 			.context("invalid nb of keypairs")?;
 
-		let cosign_request = protos::CheckpointedPackageCosignRequest::from(
-			builder.cosign_requests().convert_vtxo(|vtxo| vtxo.id()));
+		let cosign_request = protos::ArkoorPackageCosignRequest::from(
+			builder.cosign_request().convert_vtxo(|vtxo| vtxo.id()),
+		);
 
-		let response = srv.client.checkpointed_cosign_oor(cosign_request).await
+		let response = srv.client.request_arkoor_cosign(cosign_request).await
 			.context("server failed to cosign arkoor")?
 			.into_inner();
 
-		let cosign_responses = PackageCosignResponse::try_from(response)
+		let cosign_responses = ArkoorPackageCosignResponse::try_from(response)
 			.context("Failed to parse cosign response from server")?;
 
 		let vtxos = builder
@@ -105,23 +107,15 @@ impl Wallet {
 			.context("Failed to cosign vtxos")?
 			.build_signed_vtxos();
 
-		// See if their is a change vtxo
-		if vtxos.last().expect("At least one vtxo").user_pubkey() == change_pubkey {
-			let nb_vtxos = vtxos.len();
-			let change = vtxos.last().cloned();
-			Ok(ArkoorCreateResult {
-				input: input_ids,
-				// The last one is change
-				created: vtxos.into_iter().take(nb_vtxos.saturating_sub(1)).collect::<Vec<_>>(),
-				change: change,
-			})
-		} else {
-			Ok(ArkoorCreateResult {
-				input: input_ids,
-				created: vtxos,
-				change: None,
-			})
-		}
+		// divide between change and destination
+		let (dest, change) = vtxos.into_iter()
+			.partition::<Vec<_>, _>(|v| *v.policy() == arkoor_dest.policy);
+
+		Ok(ArkoorCreateResult {
+			input: input_ids,
+			created: dest,
+			change: change,
+		})
 	}
 
 	/// Makes an out-of-round payment to the given [ark::Address]. This does not require waiting for
@@ -151,8 +145,8 @@ impl Wallet {
 		let change_pubkey = self.derive_store_next_keypair().await
 			.context("Failed to create change keypair")?.0;
 
-		let request = VtxoRequest { amount, policy: destination.policy().clone() };
-		let arkoor = self.create_checkpointed_arkoor(request.clone(), change_pubkey.public_key())
+		let dest = ArkoorDestination { total_amount: amount, policy: destination.policy().clone() };
+		let arkoor = self.create_checkpointed_arkoor(dest.clone(), change_pubkey.public_key())
 			.await
 			.context("Failed to create checkpointed transactions")?;
 
@@ -168,7 +162,7 @@ impl Wallet {
 
 		let req = protos::ArkoorPackage {
 			arkoors: arkoor.created.iter().map(|v| protos::ArkoorVtxo {
-				pubkey: request.policy.user_pubkey().serialize().to_vec(),
+				pubkey: dest.policy.user_pubkey().serialize().to_vec(),
 				vtxo: v.serialize().to_vec(),
 			}).collect(),
 		};
@@ -179,9 +173,9 @@ impl Wallet {
 			//NB we will continue to at least not lose our own change
 		}
 		self.mark_vtxos_as_spent(&arkoor.input).await?;
-		if let Some(change) = arkoor.change {
-			self.store_spendable_vtxos([&change]).await?;
-			movement.apply_update(MovementUpdate::new().produced_vtxo(change)).await?;
+		if !arkoor.change.is_empty() {
+			self.store_spendable_vtxos(&arkoor.change).await?;
+			movement.apply_update(MovementUpdate::new().produced_vtxos(arkoor.change)).await?;
 		}
 		movement.success().await?;
 		Ok(arkoor.created)

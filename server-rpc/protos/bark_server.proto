@@ -23,7 +23,7 @@ service ArkService {
 
 	// * ARKOOR PAYMENTS*
 
-	rpc CheckpointedCosignOor(CheckpointedPackageCosignRequest) returns (CheckpointedPackageCosignResponse) {}
+	rpc RequestArkoorCosign(ArkoorPackageCosignRequest) returns (ArkoorPackageCosignResponse) {}
 
 	// * MAILBOX *
 
@@ -43,10 +43,10 @@ service ArkService {
 
 	// * SEND LN payments
 
-	rpc RequestLightningPayHtlcCosign(LightningPayHtlcCosignRequest) returns (LightningPayHtlcCosignResponse) {}
+	rpc RequestLightningPayHtlcCosign(LightningPayHtlcCosignRequest) returns (ArkoorPackageCosignResponse) {}
 	rpc InitiateLightningPayment(InitiateLightningPaymentRequest) returns (core.Empty) {}
 	rpc CheckLightningPayment(CheckLightningPaymentRequest) returns (LightningPaymentStatus) {}
-	rpc RequestLightningPayHtlcRevocation(RevokeLightningPayHtlcRequest) returns (ArkoorPackageCosignResponse) {}
+	rpc RequestLightningPayHtlcRevocation(ArkoorPackageCosignRequest) returns (ArkoorPackageCosignResponse) {}
 
 	// * RECEIVE LN payments
 
@@ -160,54 +160,31 @@ message VtxoRequest {
 	bytes policy = 2;
 }
 
-message CheckpointedCosignRequest {
+message ArkoorDestination {
+	uint64 total_amount = 1;
+	bytes policy = 2;
+}
+
+message ArkoorCosignRequest {
 	bytes input_vtxo_id = 1;
-	repeated VtxoRequest outputs = 2;
+	repeated ArkoorDestination outputs = 2;
 	repeated bytes user_pub_nonces = 3;
-	repeated VtxoRequest dust_outputs = 4;
+	// outputs used for dust isolation
+	repeated ArkoorDestination isolated_outputs = 4;
 	bool use_checkpoint = 5;
 }
 
-message CheckpointedPackageCosignRequest {
-	repeated CheckpointedCosignRequest parts = 1;
+message ArkoorPackageCosignRequest {
+	repeated ArkoorCosignRequest parts = 1;
 }
 
-message CheckpointedCosignResponse {
+message ArkoorCosignResponse {
 	repeated bytes server_pub_nonces = 1;
 	repeated bytes server_partial_sigs = 2;
 }
 
-message CheckpointedPackageCosignResponse {
-	repeated CheckpointedCosignResponse parts = 1;
-}
-
-/// TODO: Remove in 0.1.0-beta.6
-// This is kept for backward compatibility
-message ArkoorCosignRequest {
-	bytes input_id = 1;
-	repeated VtxoRequest outputs = 2;
-	bytes pub_nonce = 3;
-}
-
-
-// TODO Remove in 0.1.0-beta.6
-// This is kept for backward compatibility
-message ArkoorPackageCosignRequest {
-	repeated ArkoorCosignRequest arkoors = 1;
-}
-
-// TODO: Remove in 0.1.0-beta.6
-// This is kept for backward compatibility
-message ArkoorCosignResponse {
-	bytes pub_nonce = 1;
-	bytes partial_sig = 2;
-}
-
-
-// TODO: Remove this in 0.1.0-beta.6
-// This is kept for backward compatibility
 message ArkoorPackageCosignResponse {
-	repeated ArkoorCosignResponse sigs = 1;
+	repeated ArkoorCosignResponse parts = 1;
 }
 
 
@@ -246,15 +223,7 @@ message ArkoorVtxosResponse {
 
 message LightningPayHtlcCosignRequest {
 	string invoice = 1;
-	optional uint64 user_amount_sat = 2;
-	repeated bytes input_vtxo_ids = 3;
-	repeated bytes user_nonces = 4;
-	bytes user_pubkey = 5;
-}
-
-message LightningPayHtlcCosignResponse {
-	repeated ArkoorCosignResponse sigs = 1;
-	bytes policy = 2;
+	repeated ArkoorCosignRequest parts = 2;
 }
 
 message InitiateLightningPaymentRequest {
@@ -292,11 +261,6 @@ message LightningPaymentStatus {
 		PaymentSuccessStatus success = 2;
 		core.Empty failed = 3;
 	};
-}
-
-message RevokeLightningPayHtlcRequest {
-	repeated bytes htlc_vtxo_ids = 1;
-	repeated bytes user_nonces = 2;
 }
 
 message FetchBolt12InvoiceRequest {
@@ -342,7 +306,7 @@ message ClaimLightningReceiveRequest {
 	bytes payment_hash = 1;
 	bytes payment_preimage = 2;
 	bytes vtxo_policy = 3;
-	repeated bytes user_pub_nonces = 4;
+	ArkoorPackageCosignRequest cosign_request = 4;
 }
 
 enum LightningReceiveStatus {

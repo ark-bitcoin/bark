@@ -35,8 +35,8 @@ pub trait ArkRpcProxy: Send + Sync + Clone + 'static {
 		Ok(upstream.register_board_vtxo(req).await?.into_inner())
 	}
 
-	async fn checkpointed_cosign_oor(&self, upstream: &mut ArkClient, req: protos::CheckpointedPackageCosignRequest) -> Result<protos::CheckpointedPackageCosignResponse, tonic::Status> {
-		Ok(upstream.checkpointed_cosign_oor(req).await?.into_inner())
+	async fn request_arkoor_cosign(&self, upstream: &mut ArkClient, req: protos::ArkoorPackageCosignRequest) -> Result<protos::ArkoorPackageCosignResponse, tonic::Status> {
+		Ok(upstream.request_arkoor_cosign(req).await?.into_inner())
 	}
 
 	async fn post_arkoor_package_mailbox(&self, upstream: &mut ArkClient, req: protos::ArkoorPackage) -> Result<protos::Empty, tonic::Status> {
@@ -49,7 +49,7 @@ pub trait ArkRpcProxy: Send + Sync + Clone + 'static {
 		Ok(upstream.empty_arkoor_mailbox(req).await?.into_inner())
 	}
 
-	async fn request_lightning_pay_htlc_cosign(&self, upstream: &mut ArkClient, req: protos::LightningPayHtlcCosignRequest) -> Result<protos::LightningPayHtlcCosignResponse, tonic::Status> {
+	async fn request_lightning_pay_htlc_cosign(&self, upstream: &mut ArkClient, req: protos::LightningPayHtlcCosignRequest) -> Result<protos::ArkoorPackageCosignResponse, tonic::Status> {
 		Ok(upstream.request_lightning_pay_htlc_cosign(req).await?.into_inner())
 	}
 
@@ -62,7 +62,7 @@ pub trait ArkRpcProxy: Send + Sync + Clone + 'static {
 		Ok(upstream.check_lightning_payment(req).await?.into_inner())
 	}
 
-	async fn request_lightning_pay_htlc_revocation(&self, upstream: &mut ArkClient, req: protos::RevokeLightningPayHtlcRequest) -> Result<protos::ArkoorPackageCosignResponse, tonic::Status> {
+	async fn request_lightning_pay_htlc_revocation(&self, upstream: &mut ArkClient, req: protos::ArkoorPackageCosignRequest) -> Result<protos::ArkoorPackageCosignResponse, tonic::Status> {
 		Ok(upstream.request_lightning_pay_htlc_revocation(req).await?.into_inner())
 	}
 
@@ -247,10 +247,10 @@ impl<T: ArkRpcProxy> rpc::server::ArkService for ArkRpcProxyWrapper<T> {
 		Ok(tonic::Response::new(ArkRpcProxy::register_board_vtxo(&self.proxy, &mut self.upstream.clone(), req.into_inner()).await?))
 	}
 
-	async fn checkpointed_cosign_oor(
-		&self, req: tonic::Request<protos::CheckpointedPackageCosignRequest>,
-	) -> Result<tonic::Response<protos::CheckpointedPackageCosignResponse>, tonic::Status> {
-		Ok(tonic::Response::new(ArkRpcProxy::checkpointed_cosign_oor(&self.proxy, &mut self.upstream.clone(), req.into_inner()).await?))
+	async fn request_arkoor_cosign(
+		&self, req: tonic::Request<protos::ArkoorPackageCosignRequest>,
+	) -> Result<tonic::Response<protos::ArkoorPackageCosignResponse>, tonic::Status> {
+		Ok(tonic::Response::new(ArkRpcProxy::request_arkoor_cosign(&self.proxy, &mut self.upstream.clone(), req.into_inner()).await?))
 	}
 
 	async fn post_arkoor_package_mailbox(
@@ -267,7 +267,7 @@ impl<T: ArkRpcProxy> rpc::server::ArkService for ArkRpcProxyWrapper<T> {
 
 	async fn request_lightning_pay_htlc_cosign(
 		&self, req: tonic::Request<protos::LightningPayHtlcCosignRequest>,
-	) -> Result<tonic::Response<protos::LightningPayHtlcCosignResponse>, tonic::Status> {
+	) -> Result<tonic::Response<protos::ArkoorPackageCosignResponse>, tonic::Status> {
 		Ok(tonic::Response::new(ArkRpcProxy::request_lightning_pay_htlc_cosign(&self.proxy, &mut self.upstream.clone(), req.into_inner()).await?))
 	}
 
@@ -286,7 +286,7 @@ impl<T: ArkRpcProxy> rpc::server::ArkService for ArkRpcProxyWrapper<T> {
 	}
 
 	async fn request_lightning_pay_htlc_revocation(
-		&self, req: tonic::Request<protos::RevokeLightningPayHtlcRequest>,
+		&self, req: tonic::Request<protos::ArkoorPackageCosignRequest>,
 	) -> Result<tonic::Response<protos::ArkoorPackageCosignResponse>, tonic::Status> {
 		Ok(tonic::Response::new(ArkRpcProxy::request_lightning_pay_htlc_revocation(&self.proxy, &mut self.upstream.clone(), req.into_inner()).await?))
 	}

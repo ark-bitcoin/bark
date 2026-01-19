@@ -36,9 +36,8 @@ use futures::Stream;
 use tokio_postgres::{Client, NoTls, RowStream};
 use tokio_postgres::types::Type;
 use tracing::{info, warn};
-use ark::{Vtxo, VtxoId, VtxoRequest};
+use ark::{Vtxo, VtxoId};
 use ark::mailbox::MailboxIdentifier;
-use ark::arkoor::ArkoorPackageBuilder;
 use ark::encode::ProtocolEncoding;
 use bitcoin_ext::BlockHeight;
 
@@ -254,45 +253,6 @@ impl Db {
 
 		tx.commit().await?;
 		Ok(())
-	}
-
-	/// Returns [None] if all the ids were not previously marked as signed
-	/// and are now correctly marked as such.
-	/// Returns [Some] for the first vtxo that was already signed.
-	///
-	/// Also stores the new OOR vtxos atomically.
-	pub async fn check_set_vtxo_oor_spent_package(
-		&self,
-		builder: &ArkoorPackageBuilder<'_, VtxoRequest>,
-	) -> anyhow::Result<Option<VtxoId>> {
-		let mut conn = self.get_conn().await?;
-		let tx = conn.transaction().await?;
-
-		let new_vtxos = builder.new_vtxos().into_iter().flatten().collect::<Vec<_>>();
-
-		let statement = tx.prepare_typed("
-			UPDATE vtxo SET oor_spent_txid = $2, updated_at = NOW()
-			WHERE
-				vtxo_id = $1 AND
-				spent_in_round IS NULL AND oor_spent_txid IS NULL AND offboarded_in IS NULL;
-		", &[Type::TEXT, Type::TEXT]).await?;
-
-		for input in builder.inputs() {
-			let txid = builder.spending_tx(input.id()).expect("spending tx should be present")
-				.compute_txid();
-
-			let rows_affected = tx.execute(
-				&statement, &[&input.id().to_string(), &txid.to_string()],
-			).await?;
-			if rows_affected == 0 {
-				return Ok(Some(input.id()));
-			}
-		}
-
-		query::upsert_vtxos(&tx, new_vtxos).await?;
-
-		tx.commit().await?;
-		Ok(None)
 	}
 
 	/**

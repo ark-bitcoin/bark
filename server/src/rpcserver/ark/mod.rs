@@ -20,7 +20,7 @@ use tracing::info;
 use ark::{
 	musig, ProtocolEncoding, Vtxo, VtxoId, VtxoIdInput, VtxoPolicy,
 };
-use ark::arkoor::checkpointed_package::PackageCosignRequest;
+use ark::arkoor::package::ArkoorPackageCosignRequest;
 use ark::forfeit::HashLockedForfeitBundle;
 use ark::lightning::{Bolt12InvoiceExt, Invoice, Offer, OfferAmount, PaymentHash, Preimage};
 use ark::tree::signed::{LeafVtxoCosignRequest, UnlockHash, UnlockPreimage};
@@ -168,16 +168,17 @@ impl rpc::server::ArkService for Server {
 		Ok(tonic::Response::new(protos::Empty {}))
 	}
 
-	// oor
-	/// Handles a checkpointed OOR cosign request.
-	async fn checkpointed_cosign_oor(
+	// arkoor
+
+	/// Handles an arkoor cosign request.
+	async fn request_arkoor_cosign(
 		&self,
-		req: tonic::Request<protos::CheckpointedPackageCosignRequest>,
-	) -> Result<tonic::Response<protos::CheckpointedPackageCosignResponse>, tonic::Status> {
-		let _ = RpcMethodDetails::grpc_ark(middleware::rpc_names::ark::CHECKPOINTED_COSIGN_OOR);
+		req: tonic::Request<protos::ArkoorPackageCosignRequest>,
+	) -> Result<tonic::Response<protos::ArkoorPackageCosignResponse>, tonic::Status> {
+		let _ = RpcMethodDetails::grpc_ark(middleware::rpc_names::ark::REQUEST_ARKOOR_COSIGN);
 		let req = req.into_inner();
 
-		let request = PackageCosignRequest::try_from(req)
+		let request = ArkoorPackageCosignRequest::try_from(req)
 			.context("Failed to parse request")?;
 
 		let response = self.cosign_oor(request).await.to_status()?;
@@ -248,43 +249,27 @@ impl rpc::server::ArkService for Server {
 	async fn request_lightning_pay_htlc_cosign(
 		&self,
 		req: tonic::Request<protos::LightningPayHtlcCosignRequest>,
-	) -> Result<tonic::Response<protos::LightningPayHtlcCosignResponse>, tonic::Status> {
+	) -> Result<tonic::Response<protos::ArkoorPackageCosignResponse>, tonic::Status> {
 		let _ = RpcMethodDetails::grpc_ark(middleware::rpc_names::ark::REQUEST_LIGHTNING_PAY_HTLC_COSIGN);
 		let req = req.into_inner();
+
+		let cosign_requests = ArkoorPackageCosignRequest::try_from(req.clone())
+			.context("Failed to parse request")?;
 
 		crate::rpcserver::add_tracing_attributes(
 			vec![
 				KeyValue::new("invoice", format!("{:?}", req.invoice)),
-				KeyValue::new("amount_sats", format!("{:?}", req.user_amount_sat)),
-				KeyValue::new("input_vtxo_ids", format!("{:?}", req.input_vtxo_ids)),
-				KeyValue::new("user_nonces", format!("{:?}", req.user_nonces)),
+				KeyValue::new("cosign_requests", format!("{:?}", req.parts)),
 			]);
 
 		let invoice = Invoice::from_str(&req.invoice).badarg("invalid invoice")?;
 		invoice.check_signature().badarg("invalid invoice signature")?;
 
-		let user_amount = req.user_amount_sat.map(|v| Amount::from_sat(v));
-		let amount = invoice.get_final_amount(user_amount)
-			.badarg("missing or invalid user amount")?;
-
-		let input_ids = req.input_vtxo_ids.iter()
-			.map(VtxoId::from_bytes)
-			.collect::<Result<Vec<_>, _>>()?;
-
-		let input_vtxos = self.db.get_vtxos_by_id(&input_ids).await
-			.to_status()?.into_iter().map(|v| v.vtxo).collect::<Vec<_>>();
-
-		let user_nonces = req.user_nonces.iter()
-			.map(musig::PublicNonce::from_bytes)
-			.collect::<Result<Vec<_>, _>>()?;
-
-		let user_pubkey = PublicKey::from_bytes(&req.user_pubkey)?;
-
 		let resp = self.request_lightning_pay_htlc_cosign(
-			invoice, amount, user_pubkey, input_vtxos, user_nonces
+			invoice, cosign_requests
 		).await.context("error making payment")?;
 
-		Ok(tonic::Response::new(resp))
+		Ok(tonic::Response::new(resp.into()))
 	}
 
 	async fn initiate_lightning_payment(
@@ -328,25 +313,21 @@ impl rpc::server::ArkService for Server {
 
 	async fn request_lightning_pay_htlc_revocation(
 		&self,
-		req: tonic::Request<protos::RevokeLightningPayHtlcRequest>
+		req: tonic::Request<protos::ArkoorPackageCosignRequest>
 	) -> Result<tonic::Response<protos::ArkoorPackageCosignResponse>, tonic::Status> {
 		let _ = RpcMethodDetails::grpc_ark(middleware::rpc_names::ark::REQUEST_LIGHTNING_PAY_HTLC_REVOCATION);
 		let req = req.into_inner();
 
+		let cosign_requests = ArkoorPackageCosignRequest::try_from(req.clone())
+			.context("Failed to parse request")?;
+
 		crate::rpcserver::add_tracing_attributes(vec![
-			KeyValue::new("htlc_vtxo_ids", format!("{:?}", req.htlc_vtxo_ids)),
-			KeyValue::new("user_nonces", format!("{:?}", req.user_nonces)),
+			KeyValue::new("cosign_requests", format!("{:?}", cosign_requests)),
 		]);
 
-		let htlc_vtxo_ids = req.htlc_vtxo_ids.iter()
-			.map(VtxoId::from_bytes)
-			.collect::<Result<Vec<_>, _>>()?;
+		let cosign_resp = self.revoke_lightning_pay_htlcs(cosign_requests).await
+			.to_status()?;
 
-		let user_nonces = req.user_nonces.iter()
-			.map(musig::PublicNonce::from_bytes)
-			.collect::<Result<Vec<_>, _>>()?;
-
-		let cosign_resp = self.revoke_bolt11_payment(htlc_vtxo_ids, user_nonces).await.to_status()?;
 		Ok(tonic::Response::new(cosign_resp.into()))
 	}
 
@@ -463,17 +444,16 @@ impl rpc::server::ArkService for Server {
 		]);
 
 		let payment_preimage = Preimage::from_bytes(req.payment_preimage)?;
-
 		let vtxo_policy = VtxoPolicy::from_bytes(req.vtxo_policy)?;
-		let user_nonces = req.user_pub_nonces.iter()
-			.map(musig::PublicNonce::from_bytes)
-			.collect::<Result<Vec<_>, _>>()?;
+		let cosign_request = ArkoorPackageCosignRequest::try_from(
+			req.cosign_request.badarg("cosign request missing")?,
+		).badarg("invalid cosign request")?;
 
 		let cosign_resp = self.claim_lightning_receive(
 			payment_hash,
 			vtxo_policy,
-			user_nonces,
 			payment_preimage,
+			cosign_request,
 		).await.to_status()?;
 
 		Ok(tonic::Response::new(cosign_resp.into()))

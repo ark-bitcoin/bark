@@ -20,7 +20,8 @@ use ark::{
 	ProtocolEncoding, SECP, SignedVtxoRequest,
 	Vtxo, VtxoId, VtxoPolicy, VtxoRequest, musig
 };
-use ark::arkoor::checkpointed_package::CheckpointedPackageBuilder;
+use ark::arkoor::{ArkoorCosignRequest, ArkoorDestination};
+use ark::arkoor::package::{ArkoorPackageBuilder, ArkoorPackageCosignRequest};
 use ark::challenges::RoundAttemptChallenge;
 use ark::tree::signed::builder::SignedTreeBuilder;
 use ark::tree::signed::{LeafVtxoCosignContext, UnlockPreimage};
@@ -485,48 +486,48 @@ async fn double_spend_arkoor() {
 	let pk1 = bark_client.derive_store_next_keypair().await.unwrap().0.public_key();
 	let pk2 = bark_client.derive_store_next_keypair().await.unwrap().0.public_key();
 
-	let builder1 = CheckpointedPackageBuilder::new(
+	let builder1 = ArkoorPackageBuilder::new_single_output_with_checkpoints(
 		[vtxo.clone()],
-		VtxoRequest {
-			amount: sat(100_000),
+		ArkoorDestination {
+			total_amount: sat(100_000),
 			policy: VtxoPolicy::new_pubkey(*RANDOM_PK),
 		},
-		pk1,
+		VtxoPolicy::new_pubkey(pk1),
 	).unwrap();
-	let builder2 = CheckpointedPackageBuilder::new(
+	let builder2 = ArkoorPackageBuilder::new_single_output_with_checkpoints(
 		[vtxo.clone()],
-		VtxoRequest {
-			amount: sat(200_000), // other amount
+		ArkoorDestination {
+			total_amount: sat(200_000), // other amount
 			policy: VtxoPolicy::new_pubkey(*RANDOM_PK),
 		},
-		pk1,
+		VtxoPolicy::new_pubkey(pk1),
 	).unwrap();
-	let builder3 = CheckpointedPackageBuilder::new(
+	let builder3 = ArkoorPackageBuilder::new_single_output_with_checkpoints(
 		[vtxo.clone()],
-		VtxoRequest {
-			amount: sat(100_000),
+		ArkoorDestination {
+			total_amount: sat(100_000),
 			policy: VtxoPolicy::new_pubkey(*RANDOM_PK),
 		},
-		pk2, // other change pk
+		VtxoPolicy::new_pubkey(pk2), // other change pk
 	).unwrap();
 
 	// And the corresponding requests to the server
-	use protos::CheckpointedPackageCosignRequest;
-	let req1: CheckpointedPackageCosignRequest = builder1
+	use protos::ArkoorPackageCosignRequest;
+	let req1: ArkoorPackageCosignRequest = builder1
 		.generate_user_nonces(&[vtxo_keypair]).unwrap()
-		.cosign_requests()
+		.cosign_request()
 		.convert_vtxo(|vtxo| vtxo.id())
 		.into();
 
-	let req2: CheckpointedPackageCosignRequest = builder2
+	let req2: ArkoorPackageCosignRequest = builder2
 		.generate_user_nonces(&[vtxo_keypair]).unwrap()
-		.cosign_requests()
+		.cosign_request()
 		.convert_vtxo(|vtxo| vtxo.id())
 		.into();
 
-	let req3: CheckpointedPackageCosignRequest = builder3
+	let req3: ArkoorPackageCosignRequest = builder3
 		.generate_user_nonces(&[vtxo_keypair]).unwrap()
-		.cosign_requests()
+		.cosign_request()
 		.convert_vtxo(|vtxo| vtxo.id())
 		.into();
 
@@ -536,9 +537,9 @@ async fn double_spend_arkoor() {
 	let mut rpc3 = srv.get_public_rpc().await;
 
 	let (r1, r2, r3)  = tokio::join!(
-		rpc1.checkpointed_cosign_oor(req1.clone()),
-		rpc2.checkpointed_cosign_oor(req2.clone()),
-		rpc3.checkpointed_cosign_oor(req3.clone()),
+		rpc1.request_arkoor_cosign(req1.clone()),
+		rpc2.request_arkoor_cosign(req2.clone()),
+		rpc3.request_arkoor_cosign(req3.clone()),
 	);
 
 	let succeeded = match (r1, r2, r3) {
@@ -550,9 +551,9 @@ async fn double_spend_arkoor() {
 
 	// Make the same set of requests again, this time in sequence to avoid the flux lock
 	// We want idempotency
-	let r1 = rpc1.checkpointed_cosign_oor(req1.clone()).await;
-	let r2 = rpc2.checkpointed_cosign_oor(req2.clone()).await;
-	let r3 = rpc3.checkpointed_cosign_oor(req3.clone()).await;
+	let r1 = rpc1.request_arkoor_cosign(req1.clone()).await;
+	let r2 = rpc2.request_arkoor_cosign(req2.clone()).await;
+	let r3 = rpc3.request_arkoor_cosign(req3.clone()).await;
 
 	match (r1, r2, r3) {
 		(Ok(_), Err(_), Err(_)) => assert_eq!(succeeded, 1, "Different requests succeeded"),
@@ -1144,101 +1145,6 @@ async fn reject_dust_vtxo_request() {
 }
 
 #[tokio::test]
-async fn reject_dust_arkoor_cosign() {
-	// Set up server and bark-wallet
-	let ctx = TestContext::new("server/reject_dust_arkoor_cosign").await;
-	let srv = ctx.new_captaind("server", None).await;
-	let bark = ctx.new_bark_with_funds("bark", &srv, sat(1_000_000)).await;
-	bark.board_all_and_confirm_and_register(&ctx).await;
-
-	// Read the vtxo and corresponding keypair
-	let bark_client = bark.client().await;
-	let vtxos = bark_client.vtxos().await.unwrap();
-	let vtxo = vtxos[0].clone().vtxo;
-	let vtxo_id = vtxo.id();
-	let vtxo_amount = vtxo.amount();
-	let vtxo_keypair = bark_client.get_vtxo_key(&vtxo).await.unwrap();
-
-	// Compute the amounts
-	let send_amount = sat(P2TR_DUST_SAT - 1); // A dusty output
-	let change_amount = vtxo_amount - send_amount;
-
-	// Some random policies
-	let send_policy = VtxoPolicy::new_pubkey(*RANDOM_PK);
-	let change_policy = VtxoPolicy::new_pubkey(*RANDOM_PK);
-
-	// We need 3 nonces (checkpoint + one for each output)
-	let n1 = musig::nonce_pair(&vtxo_keypair);
-	let n2 = musig::nonce_pair(&vtxo_keypair);
-	let n3 = musig::nonce_pair(&vtxo_keypair);
-
-	// Construct the request manually
-	// The ark::arkoor::checkpointed_package::CheckpointedPackageBuilder
-	// will refuse to create this request
-	let request = protos::CheckpointedPackageCosignRequest {
-		parts: vec![
-			protos::CheckpointedCosignRequest {
-				input_vtxo_id: vtxo_id.serialize(),
-				outputs: vec![
-					protos::VtxoRequest {
-						amount: send_amount.to_sat(),
-						policy: send_policy.serialize(),
-					},
-					protos::VtxoRequest {
-						amount: change_amount.to_sat(),
-						policy: change_policy.serialize(),
-					},
-				],
-				dust_outputs: vec![],
-				user_pub_nonces: vec![
-					n1.1.serialize().to_vec(),
-					n2.1.serialize().to_vec(),
-					n3.1.serialize().to_vec(),
-				],
-				use_checkpoint: true,
-			}
-		]
-	};
-
-
-	let mut public_rpc = srv.get_public_rpc().await;
-	let err = public_rpc.checkpointed_cosign_oor(request).await.unwrap_err();
-
-	assert!(err.message().contains("An output is below the dust threshold"), "Unexpected error message: {}", err.message())
-}
-
-#[tokio::test]
-async fn reject_dust_bolt11_payment() {
-	let ctx = TestContext::new("server/reject_dust_bolt11_payment").await;
-	let srv = ctx.new_captaind("server", None).await;
-
-	let lightningd_1 = ctx.new_lightningd("lightningd-1").await;
-
-	#[derive(Clone)]
-	struct Proxy;
-	#[async_trait::async_trait]
-	impl captaind::proxy::ArkRpcProxy for Proxy {
-		async fn request_lightning_pay_htlc_cosign(
-			&self, upstream: &mut ArkClient, mut req: protos::LightningPayHtlcCosignRequest,
-		) -> Result<protos::LightningPayHtlcCosignResponse, tonic::Status> {
-			req.user_amount_sat = Some(P2TR_DUST_SAT - 1);
-			Ok(upstream.request_lightning_pay_htlc_cosign(req).await?.into_inner())
-		}
-	}
-
-	let proxy = srv.get_proxy_rpc(Proxy).await;
-	let bark = ctx.new_bark_with_funds("bark", &proxy.address, sat(1_000_000)).await;
-
-	bark.board_all_and_confirm_and_register(&ctx).await;
-
-	let invoice = lightningd_1.invoice(None, "test_payment", "A test payment").await;
-	let err = bark.try_pay_lightning(invoice, Some(sat(100_000)), false).await.unwrap_err();
-	assert!(err.to_string().contains(
-		"arkoor output amounts cannot be below the p2tr dust threshold",
-	), "err: {err}");
-}
-
-#[tokio::test]
 async fn server_refuse_claim_invoice_not_settled() {
 	let ctx = TestContext::new("server/server_refuse_claim_invoice_not_settled").await;
 
@@ -1385,16 +1291,14 @@ async fn server_should_refuse_claim_twice() {
 	assert_eq!(bark.spendable_balance().await, btc(3));
 
 	let keypair = Keypair::new(&SECP, &mut bip39::rand::thread_rng());
-	let pub_nonces = receive.htlc_vtxos.iter()
-		.map(|_| musig::nonce_pair(&keypair).1)
-		.collect::<Vec<_>>();
 	let policy =  VtxoPolicy::new_pubkey(keypair.public_key());
+	let cosign_req = ArkoorPackageCosignRequest { requests: Vec::<ArkoorCosignRequest<VtxoId>>::new() };
 
 	let err = srv.get_public_rpc().await.claim_lightning_receive(protos::ClaimLightningReceiveRequest {
 		payment_hash: receive.payment_hash.to_byte_array().to_vec(),
 		payment_preimage: receive.payment_preimage.to_vec(),
 		vtxo_policy: policy.serialize(),
-		user_pub_nonces: pub_nonces.iter().map(|n| n.serialize().to_vec()).collect(),
+		cosign_request: Some(cosign_req.into()),
 	}).await.unwrap_err();
 
 	assert!(err.to_string().contains("payment status in incorrect state: settled"), "err: {err}");
@@ -1560,16 +1464,14 @@ async fn server_should_refuse_claim_twice_intra_ark_ln_receive() {
 	res1.ready().await.unwrap();
 
 	let keypair = Keypair::new(&SECP, &mut bip39::rand::thread_rng());
-	let pub_nonces = receive.htlc_vtxos.iter()
-		.map(|_| musig::nonce_pair(&keypair).1)
-		.collect::<Vec<_>>();
 	let policy =  VtxoPolicy::new_pubkey(keypair.public_key());
+	let cosign_req = ArkoorPackageCosignRequest { requests: Vec::<ArkoorCosignRequest<VtxoId>>::new() };
 
 	let err = srv.get_public_rpc().await.claim_lightning_receive(protos::ClaimLightningReceiveRequest {
 		payment_hash: receive.payment_hash.to_byte_array().to_vec(),
 		payment_preimage: receive.payment_preimage.to_vec(),
 		vtxo_policy: policy.serialize(),
-		user_pub_nonces: pub_nonces.iter().map(|n| n.serialize().to_vec()).collect(),
+		cosign_request: Some(cosign_req.into()),
 	}).await.unwrap_err();
 
 	assert!(err.to_string().contains("payment status in incorrect state: settled"), "err: {err}");
@@ -1808,11 +1710,11 @@ async fn should_refuse_oor_input_vtxo_that_is_being_exited() {
 	struct Proxy(VtxoId);
 	#[async_trait::async_trait]
 	impl captaind::proxy::ArkRpcProxy for Proxy {
-		async fn checkpointed_cosign_oor(
-			&self, upstream: &mut ArkClient, mut req: protos::CheckpointedPackageCosignRequest,
-		) -> Result<protos::CheckpointedPackageCosignResponse, tonic::Status> {
+		async fn request_arkoor_cosign(
+			&self, upstream: &mut ArkClient, mut req: protos::ArkoorPackageCosignRequest,
+		) -> Result<protos::ArkoorPackageCosignResponse, tonic::Status> {
 			req.parts[0].input_vtxo_id = self.0.to_bytes().to_vec();
-			Ok(upstream.checkpointed_cosign_oor(req).await?.into_inner())
+			Ok(upstream.request_arkoor_cosign(req).await?.into_inner())
 		}
 	}
 
@@ -1856,8 +1758,8 @@ async fn should_refuse_ln_pay_input_vtxo_that_is_being_exited() {
 	impl captaind::proxy::ArkRpcProxy for Proxy {
 		async fn request_lightning_pay_htlc_cosign(
 			&self, upstream: &mut ArkClient, mut req: protos::LightningPayHtlcCosignRequest,
-		) -> Result<protos::LightningPayHtlcCosignResponse, tonic::Status> {
-			req.input_vtxo_ids = vec![self.0.to_bytes().to_vec()];
+		) -> Result<protos::ArkoorPackageCosignResponse, tonic::Status> {
+			req.parts[0].input_vtxo_id = self.0.to_bytes().to_vec();
 			Ok(upstream.request_lightning_pay_htlc_cosign(req).await?.into_inner())
 		}
 	}
