@@ -207,8 +207,8 @@ impl ArkoorPackageBuilder<state::Initial> {
 		change_policy: VtxoPolicy,
 	) -> Result<Self, ArkoorConstructionError> {
 		// Calculate total input amount
-		let inputs: Vec<_> = inputs.into_iter().collect();
-		let total_input: Amount = inputs.iter().map(|v| v.amount()).sum();
+		let inputs = inputs.into_iter().collect::<Vec<_>>();
+		let total_input = inputs.iter().map(|v| v.amount()).sum::<Amount>();
 
 		let change_amount = total_input.checked_sub(output.total_amount)
 			.ok_or(ArkoorConstructionError::Unbalanced {
@@ -237,8 +237,8 @@ impl ArkoorPackageBuilder<state::Initial> {
 		output_policy: VtxoPolicy,
 	) -> Result<Self, ArkoorConstructionError> {
 		// Calculate total input amount
-		let inputs: Vec<_> = inputs.into_iter().collect();
-		let total_input: Amount = inputs.iter().map(|v| v.amount()).sum();
+		let inputs = inputs.into_iter().collect::<Vec<_>>();
+		let total_input = inputs.iter().map(|v| v.amount()).sum::<Amount>();
 
 		let output = ArkoorDestination {
 			total_amount: total_input,
@@ -254,8 +254,8 @@ impl ArkoorPackageBuilder<state::Initial> {
 		output_policy: VtxoPolicy,
 	) -> Result<Self, ArkoorConstructionError> {
 		// Calculate total input amount
-		let inputs: Vec<_> = inputs.into_iter().collect();
-		let total_input: Amount = inputs.iter().map(|v| v.amount()).sum();
+		let inputs = inputs.into_iter().collect::<Vec<_>>();
+		let total_input = inputs.iter().map(|v| v.amount()).sum::<Amount>();
 
 		let output = ArkoorDestination {
 			total_amount: total_input,
@@ -405,7 +405,7 @@ impl<S: state::BuilderState> ArkoorPackageBuilder<S> {
 
 	/// Builds the unsigned internal VTXOs
 	///
-	/// Returns the checkpoint outputs (if checkpoinst are used) and the
+	/// Returns the checkpoint outputs (if checkpoints are used) and the
 	/// dust isolation output (if dust isolation is used).
 	pub fn build_unsigned_internal_vtxos<'a>(&'a self) -> impl Iterator<Item = Vtxo> + 'a {
 		self.builders.iter()
