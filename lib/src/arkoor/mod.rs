@@ -662,7 +662,7 @@ impl<S: state::BuilderState> ArkoorBuilder<S> {
 				let isolated_output_idx = self.outputs.len() as u32;
 				ret.push((
 					VtxoId::from(OutPoint::new(*checkpoint_txid, isolated_output_idx)),
-					fanout_txid
+					fanout_txid,
 				));
 			}
 		} else {
@@ -676,10 +676,10 @@ impl<S: state::BuilderState> ArkoorBuilder<S> {
 				let fanout_txid = fanout_tx.compute_txid();
 
 				// Isolation output in arkoor tx -> dust fanout
-				let dust_output_idx = self.outputs.len() as u32;
+				let isolation_output_idx = self.outputs.len() as u32;
 				ret.push((
-					VtxoId::from(OutPoint::new(arkoor_txid, dust_output_idx)),
-					fanout_txid
+					VtxoId::from(OutPoint::new(arkoor_txid, isolation_output_idx)),
+					fanout_txid,
 				));
 			}
 		}
@@ -937,20 +937,34 @@ impl ArkoorBuilder<state::Initial> {
 		input: Vtxo,
 		outputs: Vec<ArkoorDestination>,
 	) -> Result<Self, ArkoorConstructionError> {
+		Self::new_isolate_dust(input, outputs, true)
+	}
+
+	pub(crate) fn new_isolate_dust(
+		input: Vtxo,
+		outputs: Vec<ArkoorDestination>,
+		use_checkpoints: bool,
+	) -> Result<Self, ArkoorConstructionError> {
 		// fast track if they're either all dust or all non dust
 		if outputs.iter().all(|v| v.total_amount >= P2TR_DUST)
 			|| outputs.iter().all(|v| v.total_amount < P2TR_DUST)
 		{
-			return Self::new_with_checkpoint(input, outputs, vec![]);
+			return Self::new(input, outputs, vec![], use_checkpoints);
 		}
 
 		// else split them up by dust limit
-		let (mut dust, mut non_dust) = outputs.into_iter()
+		let (mut dust, mut non_dust) = outputs.iter().cloned()
 			.partition::<Vec<_>, _>(|v| v.total_amount < P2TR_DUST);
 
 		let dust_sum = dust.iter().map(|o| o.total_amount).sum::<Amount>();
 		if dust_sum >= P2TR_DUST {
-			return Self::new_with_checkpoint(input, non_dust, dust);
+			return Self::new(input, non_dust, dust, use_checkpoints);
+		}
+
+		// if breaking would result in additional dust, just accept
+		let non_dust_sum = non_dust.iter().map(|o| o.total_amount).sum::<Amount>();
+		if non_dust_sum < P2TR_DUST * 2 {
+			return Self::new(input, outputs, vec![], use_checkpoints);
 		}
 
 		// now it get's interesting, we need to break a vtxo in two
@@ -973,13 +987,14 @@ impl ArkoorBuilder<state::Initial> {
 			};
 
 			non_dust[idx] = leftover;
-			dust.push(dust_piece);
+			// we want to push it to the front
+			dust.insert(0, dust_piece);
 
-			return Self::new_with_checkpoint(input, non_dust, dust);
+			return Self::new(input, non_dust, dust, use_checkpoints);
 		} else {
 			// No viable split found, allow mixing without isolation
 			let all_outputs = non_dust.into_iter().chain(dust).collect();
-			return Self::new_with_checkpoint(input, all_outputs, vec![]);
+			return Self::new(input, all_outputs, vec![], use_checkpoints);
 		}
 	}
 
