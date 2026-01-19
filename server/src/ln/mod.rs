@@ -14,9 +14,7 @@ use tracing::{error, info, trace};
 use uuid::Uuid;
 
 use ark::{Vtxo, VtxoId, VtxoPolicy, VtxoRequest};
-use ark::arkoor::package::{
-	ArkoorPackageBuilder, ArkoorPackageCosignRequest, ArkoorPackageCosignResponse,
-};
+use ark::arkoor::package::{ArkoorPackageCosignRequest, ArkoorPackageCosignResponse};
 use ark::challenges::LightningReceiveChallenge;
 use ark::integration::TokenStatus;
 use ark::lightning::{Bolt12Invoice, Invoice, Offer, PaymentHash, PaymentStatus, Preimage};
@@ -26,6 +24,7 @@ use server_rpc::protos::prepare_lightning_receive_claim_request::LightningReceiv
 use server_rpc::TryFromBytes;
 use bitcoin_ext::{AmountExt, BlockDelta, BlockHeight, P2TR_DUST};
 
+use crate::arkoor::ArkoorCosignRequestValidationParams;
 use crate::database::ln::{
 	LightningHtlcSubscription, LightningHtlcSubscriptionStatus, LightningPaymentStatus,
 };
@@ -45,16 +44,12 @@ impl Server {
 		let input_vtxos = self.db.get_vtxos_by_id(&input_vtxo_ids).await?
 			.into_iter().map(|v| v.vtxo).collect::<Vec<_>>();
 
-		let (htlc_vtxos, others) = request.outputs()
-			.partition::<Vec<_>, _>(|v| matches!(v.policy, VtxoPolicy::ServerHtlcSend(..)));
+		let htlc_vtxos = request.outputs()
+			.filter(|v| matches!(v.policy, VtxoPolicy::ServerHtlcSend(..)))
+			.collect::<Vec<_>>();
 
 		if htlc_vtxos.is_empty() {
-			return badarg!("no htlc vtxo request provided");
-		}
-
-		// NB: arkoor builder will take care of checking single change output
-		if others.iter().any(|v| !matches!(v.policy, VtxoPolicy::Pubkey(..))) {
-			return badarg!("only change output is allowed");
+			return badarg!("no HTLC VTXO requests provided");
 		}
 
 		let requested_policy = htlc_vtxos.iter()
@@ -106,6 +101,10 @@ impl Server {
 			);
 		}
 
+		if requested_policy.payment_hash != invoice_payment_hash {
+			return badarg!("provided HTLCs are for incorrect payment hash");
+		}
+
 		if self.db.get_open_lightning_payment_attempt_by_payment_hash(
 			&invoice_payment_hash,
 		).await?.is_some()
@@ -113,8 +112,13 @@ impl Server {
 			return badarg!("payment already in progress for this invoice");
 		}
 
-		let builder = ArkoorPackageBuilder::from_cosign_request(request)
-			.badarg("error creating arkoor package")?;
+		let validation = ArkoorCosignRequestValidationParams {
+			use_checkpoints: true,
+			max_outputs_per_input: self.config.max_arkoor_fanout,
+			disallow_unnecessary_dust: true,
+		};
+		let builder = self.validate_cosign_request(validation, request)
+			.badarg("invalid cosign request")?;
 
 		// We are going to compute all vtxos and spend-info
 		// and mark it into the database
@@ -240,19 +244,19 @@ impl Server {
 
 	pub async fn revoke_lightning_pay_htlcs(
 		&self,
-		cosign_requests: ArkoorPackageCosignRequest<VtxoId>,
+		cosign_request: ArkoorPackageCosignRequest<VtxoId>,
 	) -> anyhow::Result<ArkoorPackageCosignResponse> {
 		let tip = self.chain_tip().height as BlockHeight;
 		let db = self.db.clone();
 
-		let requested_policy = cosign_requests.outputs()
+		let requested_policy = cosign_request.outputs()
 			.all_same(|v| v.policy.clone())
 			.context("all revocation vtxo requests must have the same policy")?;
 		if !matches!(requested_policy, VtxoPolicy::Pubkey(..)) {
 			return badarg!("pay htlcs revocation policy must be pubkey");
 		}
 
-		let htlc_vtxo_ids = cosign_requests.inputs().cloned().collect::<Vec<VtxoId>>();
+		let htlc_vtxo_ids = cosign_request.inputs().cloned().collect::<Vec<VtxoId>>();
 		let htlc_vtxos = self.db.get_vtxos_by_id(&htlc_vtxo_ids).await?.into_iter()
 			.map(|v| v.vtxo).collect::<Vec<_>>();
 
@@ -263,12 +267,19 @@ impl Server {
 			.context("vtxo is not htlc send")?.clone();
 
 		let invoice_payment_hash = input_policy.payment_hash;
-		slog!(LightningPayHtlcsRevocationRequested, invoice_payment_hash, htlc_vtxo_ids: htlc_vtxo_ids.clone());
+		slog!(LightningPayHtlcsRevocationRequested, invoice_payment_hash,
+			htlc_vtxo_ids: htlc_vtxo_ids.clone(),
+		);
 
-		let cosign_requests = cosign_requests.set_vtxos(htlc_vtxos)?;
+		let cosign_request = cosign_request.set_vtxos(htlc_vtxos)?;
 
-		let builder = ArkoorPackageBuilder::from_cosign_request(cosign_requests)
-			.context("Failed to construct arkoor package")?;
+		let validation = ArkoorCosignRequestValidationParams {
+			use_checkpoints: true,
+			max_outputs_per_input: 1, // should claim all
+			disallow_unnecessary_dust: false, // don't need this check if max output is 1
+		};
+		let builder = self.validate_cosign_request(validation, cosign_request)
+			.badarg("invalid cosign request")?;
 
 		let invoice = db.get_lightning_invoice_by_payment_hash(&invoice_payment_hash).await?;
 
@@ -588,8 +599,13 @@ impl Server {
 			amount: sub.amount(),
 			policy: vtxo_policy,
 		};
-		let builder = ArkoorPackageBuilder::from_cosign_request(cosign_request)
-			.badarg("error creating arkoor package")?;
+		let validation = ArkoorCosignRequestValidationParams {
+			use_checkpoints: false,
+			max_outputs_per_input: 1, // should claim all
+			disallow_unnecessary_dust: false, // don't need this check if max output is 1
+		};
+		let builder = self.validate_cosign_request(validation, cosign_request)
+			.badarg("invalid cosign request")?;
 
 		self.cln.settle_invoice(sub.id, payment_preimage).await
 			.context("could not settle invoice")?;

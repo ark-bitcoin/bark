@@ -1,12 +1,85 @@
 use anyhow::Context;
 
+use ark::util::IteratorExt;
+use ark::{Vtxo, VtxoId, VtxoPolicy};
 use ark::arkoor::state::{ServerCanCosign, ServerSigned};
-use ark::arkoor::package::{ArkoorPackageCosignRequest, ArkoorPackageCosignResponse, ArkoorPackageBuilder};
-use ark::vtxo::{VtxoId, VtxoPolicy};
+use ark::arkoor::package::{
+	ArkoorPackageCosignRequest, ArkoorPackageCosignResponse, ArkoorPackageBuilder,
+};
+use bitcoin_ext::P2TR_DUST;
 
+use crate::error::ContextExt;
 use crate::Server;
 
+pub(crate) struct ArkoorCosignRequestValidationParams {
+	/// whether checkpoints should be used
+	pub use_checkpoints: bool,
+	/// maximum number of outputs from a single input
+	pub max_outputs_per_input: usize,
+	/// Don't allow mixing dust and non-dust outputs when not necessary
+	pub disallow_unnecessary_dust: bool,
+}
+
 impl Server {
+	/// Validate the cosign request for the given validation params
+	///
+	/// Returns the arkoor builder that the server can then sign from.
+	pub(crate) fn validate_cosign_request(
+		&self,
+		params: ArkoorCosignRequestValidationParams,
+		cosign_req: ArkoorPackageCosignRequest<Vtxo>,
+	) -> anyhow::Result<ArkoorPackageBuilder<ServerCanCosign>> {
+		// this we can check before creating the builder
+
+		if cosign_req.requests.is_empty() {
+			bail!("empty request");
+		}
+
+		let use_checkpoint = cosign_req.requests.iter()
+			.all_same(|r| r.use_checkpoint)
+			.context("not all requests have the same use_checkpoints value")?;
+		if params.use_checkpoints && !use_checkpoint {
+			bail!("should use arkoor checkpoints");
+		} else if !params.use_checkpoints && use_checkpoint {
+			bail!("should not use arkoor checkpoints");
+		}
+
+		// then we create the builder
+		let ret = ArkoorPackageBuilder::from_cosign_request(cosign_req)
+			.context("error creating ArkoorPackageBuilder from ArkoorCosignRequest")?;
+		for (idx, b) in ret.builders.iter().enumerate() {
+			let nb_outputs = b.outputs().len() + b.isolated_outputs().len();
+			if nb_outputs > params.max_outputs_per_input {
+				bail!("too many outputs for input {} (#{}) ({} > {})",
+					b.input().id(), idx, nb_outputs, params.max_outputs_per_input,
+				);
+			}
+
+			if params.disallow_unnecessary_dust {
+				let non_dust_limit = P2TR_DUST * 2;
+				if b.outputs().iter().any(|o| o.total_amount < P2TR_DUST)
+					&& b.outputs().iter().any(|o| o.total_amount >= non_dust_limit)
+				{
+					bail!(
+						"invalid mix of dust and non-dust outputs for input {} (#{})",
+						b.input().id(), idx,
+					);
+				}
+
+				if b.isolated_outputs().iter().any(|o| o.total_amount < P2TR_DUST)
+					&& b.isolated_outputs().iter().any(|o| o.total_amount >= non_dust_limit)
+				{
+					bail!(
+						"invalid mix of dust and non-dust isolated outputs for input {} (#{})",
+						b.input().id(), idx,
+					);
+				}
+			}
+		}
+
+		Ok(ret)
+	}
+
 	pub async fn cosign_oor_with_builder(
 		&self,
 		builder: ArkoorPackageBuilder<ServerCanCosign>,
@@ -62,8 +135,13 @@ impl Server {
 
 		let request = request.set_vtxos(input_vtxos)?;
 
-		let builder = ArkoorPackageBuilder::from_cosign_request(request)
-			.context("Invalid arkoor request")?;
+		let validation = ArkoorCosignRequestValidationParams {
+			use_checkpoints: true,
+			max_outputs_per_input: self.config.max_arkoor_fanout,
+			disallow_unnecessary_dust: true,
+		};
+		let builder = self.validate_cosign_request(validation, request)
+			.badarg("invalid cosign request")?;
 
 		let builder = self.cosign_oor_with_builder(builder).await?;
 

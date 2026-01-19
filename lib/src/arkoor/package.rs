@@ -20,7 +20,7 @@ use crate::arkoor::{
 ///
 /// The builder always keeps input and output order.
 pub struct ArkoorPackageBuilder<S: state::BuilderState> {
-	builders: Vec<ArkoorBuilder<S>>,
+	pub builders: Vec<ArkoorBuilder<S>>,
 }
 
 #[derive(Debug, Clone)]

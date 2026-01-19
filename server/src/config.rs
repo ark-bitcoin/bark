@@ -269,6 +269,8 @@ pub struct Config {
 	pub min_board_amount: Amount,
 	/// Maximum number of OOR transition after VTXO tree leaf
 	pub max_arkoor_depth: u16,
+	/// The maximum number of outputs per input of an arkoor tx
+	pub max_arkoor_fanout: usize,
 	/// Number of confirmations needed for board vtxos to be spend in rounds.
 	pub required_board_confirmations: usize,
 	/// Number of confirmations untrusted inputs of the round tx need to have.

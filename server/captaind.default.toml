@@ -26,6 +26,9 @@ vtxo_exit_delta = 144
 # The maximum transaction depth of the arkoor part of VTXOs that server cosigns
 max_arkoor_depth = 5
 
+# The maximum number of outputs per input of an arkoor tx
+max_arkoor_fanout = 4
+
 # Number of confirmation required for a board tx to be accepted as a VTXO
 required_board_confirmations = 3
 

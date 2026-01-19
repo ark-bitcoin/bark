@@ -295,6 +295,16 @@ impl<S: state::BuilderState> ArkoorBuilder<S> {
 		&self.input
 	}
 
+	/// Access the regular (non-isolated) outputs of the builder
+	pub fn outputs(&self) -> &[ArkoorDestination] {
+		&self.outputs
+	}
+
+	/// Access the isolated outputs of the builder
+	pub fn isolated_outputs(&self) -> &[ArkoorDestination] {
+		&self.isolated_outputs
+	}
+
 	fn build_checkpoint_vtxo_at(
 		&self,
 		output_idx: usize,
@@ -1254,14 +1264,15 @@ impl<'a> ArkoorBuilder<state::ServerCanCosign> {
 	pub fn from_cosign_request(
 		cosign_request: ArkoorCosignRequest<Vtxo>,
 	) -> Result<ArkoorBuilder<state::ServerCanCosign>, ArkoorSigningError> {
-		ArkoorBuilder::new(
+		let ret = ArkoorBuilder::new(
 			cosign_request.input,
 			cosign_request.outputs,
 			cosign_request.isolated_outputs,
 			cosign_request.use_checkpoint,
 		)
 			.map_err(ArkoorSigningError::ArkoorConstructionError)?
-			.set_user_pub_nonces(cosign_request.user_pub_nonces.clone())
+			.set_user_pub_nonces(cosign_request.user_pub_nonces.clone())?;
+		Ok(ret)
 	}
 
 	pub fn server_cosign(
