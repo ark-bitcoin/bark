@@ -537,9 +537,9 @@ async fn double_spend_arkoor() {
 	let mut rpc3 = srv.get_public_rpc().await;
 
 	let (r1, r2, r3)  = tokio::join!(
-		rpc1.checkpointed_cosign_oor(req1.clone()),
-		rpc2.checkpointed_cosign_oor(req2.clone()),
-		rpc3.checkpointed_cosign_oor(req3.clone()),
+		rpc1.request_arkoor_cosign(req1.clone()),
+		rpc2.request_arkoor_cosign(req2.clone()),
+		rpc3.request_arkoor_cosign(req3.clone()),
 	);
 
 	let succeeded = match (r1, r2, r3) {
@@ -551,9 +551,9 @@ async fn double_spend_arkoor() {
 
 	// Make the same set of requests again, this time in sequence to avoid the flux lock
 	// We want idempotency
-	let r1 = rpc1.checkpointed_cosign_oor(req1.clone()).await;
-	let r2 = rpc2.checkpointed_cosign_oor(req2.clone()).await;
-	let r3 = rpc3.checkpointed_cosign_oor(req3.clone()).await;
+	let r1 = rpc1.request_arkoor_cosign(req1.clone()).await;
+	let r2 = rpc2.request_arkoor_cosign(req2.clone()).await;
+	let r3 = rpc3.request_arkoor_cosign(req3.clone()).await;
 
 	match (r1, r2, r3) {
 		(Ok(_), Err(_), Err(_)) => assert_eq!(succeeded, 1, "Different requests succeeded"),
@@ -1710,11 +1710,11 @@ async fn should_refuse_oor_input_vtxo_that_is_being_exited() {
 	struct Proxy(VtxoId);
 	#[async_trait::async_trait]
 	impl captaind::proxy::ArkRpcProxy for Proxy {
-		async fn checkpointed_cosign_oor(
+		async fn request_arkoor_cosign(
 			&self, upstream: &mut ArkClient, mut req: protos::ArkoorPackageCosignRequest,
 		) -> Result<protos::ArkoorPackageCosignResponse, tonic::Status> {
 			req.parts[0].input_vtxo_id = self.0.to_bytes().to_vec();
-			Ok(upstream.checkpointed_cosign_oor(req).await?.into_inner())
+			Ok(upstream.request_arkoor_cosign(req).await?.into_inner())
 		}
 	}
 

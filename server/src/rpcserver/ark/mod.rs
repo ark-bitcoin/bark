@@ -168,13 +168,14 @@ impl rpc::server::ArkService for Server {
 		Ok(tonic::Response::new(protos::Empty {}))
 	}
 
-	// oor
-	/// Handles a checkpointed OOR cosign request.
-	async fn checkpointed_cosign_oor(
+	// arkoor
+
+	/// Handles an arkoor cosign request.
+	async fn request_arkoor_cosign(
 		&self,
 		req: tonic::Request<protos::ArkoorPackageCosignRequest>,
 	) -> Result<tonic::Response<protos::ArkoorPackageCosignResponse>, tonic::Status> {
-		let _ = RpcMethodDetails::grpc_ark(middleware::rpc_names::ark::CHECKPOINTED_COSIGN_OOR);
+		let _ = RpcMethodDetails::grpc_ark(middleware::rpc_names::ark::REQUEST_ARKOOR_COSIGN);
 		let req = req.into_inner();
 
 		let request = ArkoorPackageCosignRequest::try_from(req)

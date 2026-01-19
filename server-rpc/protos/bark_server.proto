@@ -23,7 +23,7 @@ service ArkService {
 
 	// * ARKOOR PAYMENTS*
 
-	rpc CheckpointedCosignOor(ArkoorPackageCosignRequest) returns (ArkoorPackageCosignResponse) {}
+	rpc RequestArkoorCosign(ArkoorPackageCosignRequest) returns (ArkoorPackageCosignResponse) {}
 
 	// * MAILBOX *
 

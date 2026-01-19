@@ -36,7 +36,7 @@ pub mod rpc_names {
 		pub const GET_ROUND: &str = "get_round";
 		pub const REQUEST_BOARD_COSIGN: &str = "request_board_cosign";
 		pub const REGISTER_BOARD_VTXO: &str = "register_board_vtxo";
-		pub const CHECKPOINTED_COSIGN_OOR: &str = "checkpointed_cosign_oor";
+		pub const REQUEST_ARKOOR_COSIGN: &str = "request_arkoor_cosign";
 		pub const POST_ARKOOR_PACKAGE_MAILBOX: &str = "post_arkoor_package_mailbox";
 		pub const EMPTY_ARKOOR_MAILBOX: &str = "empty_arkoor_mailbox";
 		pub const REQUEST_LIGHTNING_PAY_HTLC_COSIGN: &str = "request_lightning_pay_htlc_cosign";
@@ -90,7 +90,7 @@ const RPC_SERVICE_ARK_METHODS: &[&str] = &[
 	rpc_names::ark::GET_ROUND,
 	rpc_names::ark::REQUEST_BOARD_COSIGN,
 	rpc_names::ark::REGISTER_BOARD_VTXO,
-	rpc_names::ark::CHECKPOINTED_COSIGN_OOR,
+	rpc_names::ark::REQUEST_ARKOOR_COSIGN,
 	rpc_names::ark::POST_ARKOOR_PACKAGE_MAILBOX,
 	rpc_names::ark::EMPTY_ARKOOR_MAILBOX,
 	rpc_names::ark::REQUEST_LIGHTNING_PAY_HTLC_COSIGN,
