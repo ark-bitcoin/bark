@@ -31,21 +31,24 @@ impl Wallet {
 		).await
 	}
 
-	/// Attempts to mark VTXOs as [VtxoState::Spent], given that each [VtxoId](ark::VtxoId)
-	/// is currently a state
-	/// contained by [VtxoStateKind::UNSPENT_STATES].
+	/// Marks VTXOs as [VtxoState::Spent].
+	///
+	/// This operation is idempotent: VTXOs already in [VtxoState::Spent] will
+	/// remain spent (a redundant state entry may be added to history).
 	///
 	/// # Errors
-	/// - If the VTXO is not currently spent.
 	/// - If the VTXO doesn't exist.
 	/// - If a database error occurs.
 	pub async fn mark_vtxos_as_spent(
 		&self,
 		vtxos: impl IntoIterator<Item = impl VtxoRef>,
 	) -> anyhow::Result<()> {
-		self.set_vtxo_states(
-			vtxos, &VtxoState::Spent, &VtxoStateKind::UNSPENT_STATES
-		).await
+		const ALLOWED: &[VtxoStateKind] = &[
+			VtxoStateKind::Spendable,
+			VtxoStateKind::Locked,
+			VtxoStateKind::Spent,
+		];
+		self.set_vtxo_states(vtxos, &VtxoState::Spent, ALLOWED).await
 	}
 
 	/// Updates the state set the [VtxoState] of VTXOs corresponding to each given

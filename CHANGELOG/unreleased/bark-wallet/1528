@@ -1,0 +1,8 @@
+
+* Make VTXO storage and state transitions idempotent for crash recovery
+  [PR #1528](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1528)
+  - `store_vtxos` now succeeds without modification if VTXO already exists
+  - `mark_vtxos_as_spent` now succeeds if VTXO is already spent
+  - **BREAKING:** If you implement your own `BarkPersister`, you need to update
+    `store_vtxos` to be idempotent (no-op if VTXO already exists)
+

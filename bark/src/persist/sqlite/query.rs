@@ -268,28 +268,31 @@ pub fn store_vtxo_with_initial_state(
 	vtxo: &Vtxo,
 	state: &VtxoState,
 ) -> anyhow::Result<()> {
-	// Store the vtxo
+	// Store the vtxo, ignoring if it already exists (idempotent)
 	let q1 =
-		"INSERT INTO bark_vtxo (id, expiry_height, amount_sat, raw_vtxo)
+		"INSERT OR IGNORE INTO bark_vtxo (id, expiry_height, amount_sat, raw_vtxo)
 		VALUES (:vtxo_id, :expiry_height, :amount_sat, :raw_vtxo);";
 	let mut statement = tx.prepare(q1)?;
-	statement.execute(named_params! {
+	let rows_inserted = statement.execute(named_params! {
 		":vtxo_id" : vtxo.id().to_string(),
 		":expiry_height": vtxo.expiry_height(),
 		":amount_sat": vtxo.amount().to_sat(),
 		":raw_vtxo": vtxo.serialize(),
 	})?;
 
-	// Store the initial state
-	let q2 =
-		"INSERT INTO bark_vtxo_state (vtxo_id, state_kind, state)
-		VALUES (:vtxo_id, :state_kind, :state);";
-	let mut statement = tx.prepare(q2)?;
-	statement.execute(named_params! {
-		":vtxo_id": vtxo.id().to_string(),
-		":state_kind": state.kind().as_str(),
-		":state": serde_json::to_vec(&state)?,
-	})?;
+	// Only store initial state if vtxo was newly inserted.
+	// If rows_inserted == 0, the vtxo already existed and has its state.
+	if rows_inserted > 0 {
+		let q2 =
+			"INSERT INTO bark_vtxo_state (vtxo_id, state_kind, state)
+			VALUES (:vtxo_id, :state_kind, :state);";
+		let mut statement = tx.prepare(q2)?;
+		statement.execute(named_params! {
+			":vtxo_id": vtxo.id().to_string(),
+			":state_kind": state.kind().as_str(),
+			":state": serde_json::to_vec(&state)?,
+		})?;
+	}
 
 	Ok(())
 }
@@ -947,5 +950,33 @@ mod test {
 		assert_eq!(state_2, locked);
 		let state_2 = get_vtxo_state(&tx, vtxo_3.id()).unwrap().unwrap();
 		assert_eq!(state_2, locked);
+	}
+
+	#[test]
+	fn test_store_vtxo_idempotent() {
+		let (_, mut conn) = in_memory_db();
+		MigrationContext{}.do_all_migrations(&mut conn).unwrap();
+
+		let tx = conn.transaction().unwrap();
+		let vtxo = &VTXO_VECTORS.board_vtxo;
+
+		// First insert should succeed
+		let spendable = VtxoState::Spendable;
+		store_vtxo_with_initial_state(&tx, vtxo, &spendable).unwrap();
+
+		// Verify state is Spendable
+		let state = get_vtxo_state(&tx, vtxo.id()).unwrap().unwrap();
+		assert_eq!(state, spendable);
+
+		// Second insert with same VTXO should succeed (idempotent)
+		store_vtxo_with_initial_state(&tx, vtxo, &spendable).unwrap();
+
+		// Second insert with different state should also succeed but NOT change state
+		let locked = VtxoState::Locked { movement_id: None };
+		store_vtxo_with_initial_state(&tx, vtxo, &locked).unwrap();
+
+		// State should still be Spendable (original state preserved)
+		let state = get_vtxo_state(&tx, vtxo.id()).unwrap().unwrap();
+		assert_eq!(state, spendable);
 	}
 }
