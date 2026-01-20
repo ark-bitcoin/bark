@@ -314,6 +314,7 @@ mod lightning;
 mod offboard;
 mod psbtext;
 mod mailbox;
+mod utils;
 
 pub use self::arkoor::ArkoorCreateResult;
 pub use self::config::{BarkNetwork, Config};
@@ -348,7 +349,8 @@ use crate::exit::Exit;
 use crate::movement::{Movement, MovementStatus};
 use crate::movement::manager::MovementManager;
 use crate::movement::update::MovementUpdate;
-use crate::onchain::{DaemonizableOnchainWallet, ExitUnilaterally, PreparePsbt, SignPsbt, Utxo};
+use crate::onchain::{ExitUnilaterally, PreparePsbt, SignPsbt, Utxo};
+use crate::onchain::DaemonizableOnchainWallet;
 use crate::persist::BarkPersister;
 use crate::persist::models::{PendingOffboard, RoundStateId, StoredRoundState, Unlocked};
 use crate::round::{RoundParticipation, RoundStateLockIndex, RoundStatus};
@@ -1540,7 +1542,7 @@ impl Wallet {
 	/// Notes:
 	/// - The exit system will not be synced as doing so requires the onchain wallet.
 	pub async fn sync(&self) {
-		tokio::join!(
+		futures::join!(
 			async {
 				// NB: order matters here, if syncing call fails,
 				// we still want to update the fee rates

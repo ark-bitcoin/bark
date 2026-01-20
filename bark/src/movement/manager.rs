@@ -428,7 +428,8 @@ impl Drop for MovementGuard {
 			let manager = self.manager.clone();
 			let id = self.id;
 			let on_drop = self.on_drop;
-			tokio::spawn(async move {
+
+			crate::utils::spawn(async move {
 				if let Err(e) = manager.finish_movement(id, on_drop.into()).await {
 					log::error!("An error occurred in MovementGuard::drop(): {:#}", e);
 				}

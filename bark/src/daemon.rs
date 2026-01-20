@@ -4,10 +4,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use anyhow::Context;
-use futures::StreamExt;
+use futures::{FutureExt, StreamExt};
 use log::{info, warn};
 use tokio::sync::RwLock;
-use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
 use crate::Wallet;
@@ -18,9 +17,16 @@ const MEDIUM_INTERVAL: Duration = Duration::from_secs(30);
 const SLOW_INTERVAL: Duration = Duration::from_secs(60);
 
 /// A handle to a running background daemon
+#[cfg(not(feature = "wasm-web"))]
 pub struct DaemonHandle {
 	shutdown: CancellationToken,
-	jh: JoinHandle<()>,
+	jh: tokio::task::JoinHandle<()>,
+}
+
+/// A handle to a running background daemon for WASM
+#[cfg(feature = "wasm-web")]
+pub struct DaemonHandle {
+	shutdown: CancellationToken,
 }
 
 impl DaemonHandle {
@@ -32,6 +38,7 @@ impl DaemonHandle {
 	/// Stop the daemon process and wait for it to finish
 	pub async fn stop_wait(self) -> anyhow::Result<()> {
 		self.stop();
+		#[cfg(not(feature = "wasm-web"))]
 		self.jh.await?;
 		Ok(())
 	}
@@ -44,9 +51,16 @@ pub(crate) fn start_daemon(
 	let shutdown = CancellationToken::new();
 	let proc = DaemonProcess::new(shutdown.clone(), wallet, onchain);
 
-	let jh = tokio::spawn(proc.run());
-
-	DaemonHandle { shutdown, jh }
+	#[cfg(not(feature = "wasm-web"))]
+	{
+		let jh = crate::utils::spawn(proc.run());
+		DaemonHandle { shutdown, jh }
+	}
+	#[cfg(feature = "wasm-web")]
+	{
+		crate::utils::spawn(proc.run());
+		DaemonHandle { shutdown }
+	}
 }
 
 /// The daemon is responsible for running the wallet and performing the
@@ -122,10 +136,10 @@ impl DaemonProcess {
 				warn!("An error occured while performing maintenance refresh: {e:#}");
 			}
 
-			tokio::select! {
-				_ = tokio::time::sleep(SLOW_INTERVAL) => {},
+			futures::select! {
+				_ = tokio::time::sleep(SLOW_INTERVAL).fuse() => {},
 
-				_ = self.shutdown.cancelled() => {
+				_ = self.shutdown.cancelled().fuse() => {
 					info!("Shutdown signal received! Shutting maintenance refresh process...");
 					break;
 				},
@@ -152,14 +166,14 @@ impl DaemonProcess {
 		let mut events = self.wallet.subscribe_round_events().await?;
 
 		loop {
-			tokio::select! {
-				res = events.next() => {
+			futures::select! {
+				res = events.next().fuse() => {
 					let event = res.context("events stream broke")?
 						.context("error on event stream")?;
 
 					self.wallet.progress_pending_rounds(Some(&event)).await?;
 				},
-				_ = self.shutdown.cancelled() => {
+				_ = self.shutdown.cancelled().fuse() => {
 					info!("Shutdown signal received! Shutting inner round events process...");
 					return Ok(());
 				},
@@ -178,9 +192,9 @@ impl DaemonProcess {
 				}
 			}
 
-			tokio::select! {
-				_ = tokio::time::sleep(SLOW_INTERVAL) => {},
-				_ = self.shutdown.cancelled() => {
+			futures::select! {
+				_ = tokio::time::sleep(SLOW_INTERVAL).fuse() => {},
+				_ = self.shutdown.cancelled().fuse() => {
 					info!("Shutdown signal received! Shutting round events process...");
 					break;
 				},
@@ -191,9 +205,9 @@ impl DaemonProcess {
 	/// Run a process that will recursively check the server connection
 	async fn run_server_connection_check_process(&self) {
 		loop {
-			tokio::select! {
-				_ = tokio::time::sleep(FAST_INTERVAL) => {},
-				_ = self.shutdown.cancelled() => {
+			futures::select! {
+				_ = tokio::time::sleep(FAST_INTERVAL).fuse() => {},
+				_ = self.shutdown.cancelled().fuse() => {
 					info!("Shutdown signal received! Shutting server connection check process...");
 					break;
 				},
@@ -213,8 +227,8 @@ impl DaemonProcess {
 		slow_interval.reset();
 
 		loop {
-			tokio::select! {
-				_ = fast_interval.tick() => {
+			futures::select! {
+				_ = fast_interval.tick().fuse() => {
 					if !self.connected.load(Ordering::Relaxed) {
 						continue;
 					}
@@ -222,7 +236,7 @@ impl DaemonProcess {
 					self.run_lightning_sync().await;
 					fast_interval.reset();
 				},
-				_ = medium_interval.tick() => {
+				_ = medium_interval.tick().fuse() => {
 					if !self.connected.load(Ordering::Relaxed) {
 						continue;
 					}
@@ -232,7 +246,7 @@ impl DaemonProcess {
 					self.run_offboards_sync().await;
 					medium_interval.reset();
 				},
-				_ = slow_interval.tick() => {
+				_ = slow_interval.tick().fuse() => {
 					if !self.connected.load(Ordering::Relaxed) {
 						continue;
 					}
@@ -241,7 +255,7 @@ impl DaemonProcess {
 					self.run_exits().await;
 					slow_interval.reset();
 				},
-				_ = self.shutdown.cancelled() => {
+				_ = self.shutdown.cancelled().fuse() => {
 					info!("Shutdown signal received! Shutting sync processes...");
 					break;
 				},
@@ -253,7 +267,7 @@ impl DaemonProcess {
 		let connected = self.wallet.server.read().is_some();
 		self.connected.store(connected, Ordering::Relaxed);
 
-		let _ = tokio::join!(
+		let _ = futures::join!(
 			self.run_server_connection_check_process(),
 			self.run_round_events_process(),
 			self.run_sync_processes(),
