@@ -13,7 +13,7 @@ name = "server_rpc"
 [features]
 default = ["tonic-native"]
 tonic-native = ["tonic/transport", "tonic/tls-native-roots"]
-tonic-web = ["dep:tonic-web-wasm-client", "getrandom/js", "ark-lib/wasm-js"]
+tonic-web = ["dep:tonic-web-wasm-client", "getrandom/js", "ark-lib/wasm-web"]
 server = []
 intman = []
 

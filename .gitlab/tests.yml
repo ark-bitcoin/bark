@@ -146,8 +146,7 @@ lib-wasm:
   script:
     - |
       nix develop .#default --command bash -c "
-        cd lib/ &&
-        cargo build --lib --release --target \"wasm32-unknown-unknown\" --features wasm-js
+        cargo build --lib --release --target \"wasm32-unknown-unknown\" -p ark-lib --features \"wasm-web\"
       "
 
 lib-msrv:

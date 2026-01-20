@@ -13,7 +13,8 @@ use crate::vtxo::policy::clause::VtxoClause;
 pub struct CannotSignVtxoError;
 
 /// A trait to implement a signer for a [Vtxo].
-#[async_trait::async_trait]
+#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
 pub trait VtxoSigner<P: Policy = VtxoPolicy> {
 	/// Returns the witness for a [VtxoClause] if it is signable, otherwise [None].
 	async fn witness(
