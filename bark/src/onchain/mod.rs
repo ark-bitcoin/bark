@@ -16,22 +16,22 @@
 //! - [ExitUnilaterally]: a convenience trait that aggregates the required capabilities a
 //!   wallet must provide to support unilateral exits.
 //!
-//! A reference implementation based on BDK is available behind the `onchain_bdk`
+//! A reference implementation based on BDK is available behind the `onchain-bdk`
 //! cargo feature. Enable it to use the provided [OnchainWallet] implementation.
 //! You can use all features from BDK because [bdk_wallet] is re-exported.
 
-#[cfg(feature = "onchain_bdk")]
+#[cfg(feature = "onchain-bdk")]
 mod bdk;
 
-#[cfg(feature = "onchain_bdk")]
+#[cfg(feature = "onchain-bdk")]
 pub use bdk_wallet;
 
 pub use bitcoin_ext::cpfp::{CpfpError, MakeCpfpFees};
 
 /// BDK-backed onchain wallet implementation.
 ///
-/// Available only when the `onchain_bdk` feature is enabled.
-#[cfg(feature = "onchain_bdk")]
+/// Available only when the `onchain-bdk` feature is enabled.
+#[cfg(feature = "onchain-bdk")]
 pub use crate::onchain::bdk::{OnchainWallet, TxBuilderExt};
 
 use std::sync::Arc;

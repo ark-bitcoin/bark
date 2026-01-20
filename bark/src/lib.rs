@@ -302,7 +302,7 @@ pub mod round;
 pub mod subsystem;
 pub mod vtxo;
 
-#[cfg(feature = "pid_lock")]
+#[cfg(feature = "pid-lock")]
 pub mod pid_lock;
 
 mod arkoor;
@@ -883,7 +883,7 @@ impl Wallet {
 	}
 
 	/// Create a new wallet with an onchain backend. This enables full Ark functionality. A default
-	/// implementation of an onchain wallet when the `onchain_bdk` feature is enabled. See
+	/// implementation of an onchain wallet when the `onchain-bdk` feature is enabled. See
 	/// [onchain::OnchainWallet] for more details. Alternatively, implement [ExitUnilaterally] if
 	/// you have your own onchain wallet implementation.
 	///

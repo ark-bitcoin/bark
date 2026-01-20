@@ -27,7 +27,7 @@ use bitcoin::{Amount, Transaction, Txid};
 use bitcoin::secp256k1::PublicKey;
 use chrono::DateTime;
 use lightning_invoice::Bolt11Invoice;
-#[cfg(feature = "onchain_bdk")]
+#[cfg(feature = "onchain-bdk")]
 use bdk_wallet::ChangeSet;
 
 use ark::{Vtxo, VtxoId};
@@ -56,7 +56,7 @@ use crate::vtxo::{VtxoState, VtxoStateKind, WalletVtxo};
 /// - Persist the last synchronized Ark block height.
 ///
 /// Feature integration:
-/// - With the `onchain_bdk` feature, methods are provided to initialize and persist a BDK
+/// - With the `onchain-bdk` feature, methods are provided to initialize and persist a BDK
 ///   wallet ChangeSet in the same storage.
 ///
 /// Notes for implementors:
@@ -87,14 +87,14 @@ pub trait BarkPersister: Send + Sync + 'static {
 	///
 	/// Must be called before storing any new BDK changesets to bootstrap the BDK state.
 	///
-	/// Feature: only available with `onchain_bdk`.
+	/// Feature: only available with `onchain-bdk`.
 	///
 	/// Returns:
 	/// - `Ok(ChangeSet)` containing the previously persisted BDK state (possibly empty).
 	///
 	/// Errors:
 	/// - Returns an error if the BDK state cannot be created or loaded.
-	#[cfg(feature = "onchain_bdk")]
+	#[cfg(feature = "onchain-bdk")]
 	async fn initialize_bdk_wallet(&self) -> anyhow::Result<ChangeSet>;
 
 	/// Persist an incremental BDK ChangeSet.
@@ -102,14 +102,14 @@ pub trait BarkPersister: Send + Sync + 'static {
 	/// The changeset should be applied atomically. Callers typically obtain the changeset
 	/// from a BDK wallet instance after mutating wallet state (e.g., sync).
 	///
-	/// Feature: only available with `onchain_bdk`.
+	/// Feature: only available with `onchain-bdk`.
 	///
 	/// Parameters:
 	/// - changeset: The BDK ChangeSet to persist.
 	///
 	/// Errors:
 	/// - Returns an error if the changeset cannot be written.
-	#[cfg(feature = "onchain_bdk")]
+	#[cfg(feature = "onchain-bdk")]
 	async fn store_bdk_wallet_changeset(&self, changeset: &ChangeSet) -> anyhow::Result<()>;
 
 	/// Read wallet properties from storage.

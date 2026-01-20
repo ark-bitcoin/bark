@@ -74,13 +74,13 @@ impl BarkPersister for SqliteClient {
 		Ok(())
 	}
 
-	#[cfg(feature = "onchain_bdk")]
+	#[cfg(feature = "onchain-bdk")]
 	async fn initialize_bdk_wallet(&self) -> anyhow::Result<bdk_wallet::ChangeSet> {
 	    let mut conn = self.connect()?;
 		Ok(bdk_wallet::WalletPersister::initialize(&mut conn)?)
 	}
 
-	#[cfg(feature = "onchain_bdk")]
+	#[cfg(feature = "onchain-bdk")]
 	async fn store_bdk_wallet_changeset(&self, changeset: &bdk_wallet::ChangeSet) -> anyhow::Result<()> {
 	    let mut conn = self.connect()?;
 		bdk_wallet::WalletPersister::persist(&mut conn, changeset)?;
@@ -523,7 +523,7 @@ mod test {
 	}
 
 	#[tokio::test]
-	#[cfg(feature = "onchain_bdk")]
+	#[cfg(feature = "onchain-bdk")]
 	async fn test_create_wallet_then_load() {
 		use bdk_wallet::chain::DescriptorExt;
 
