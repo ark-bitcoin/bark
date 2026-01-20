@@ -1218,3 +1218,113 @@ async fn server_allows_claim_receive_for_valid_token_but_not_for_invalid_or_used
 	assert!(res.is_err());
 	assert_eq!(bark.spendable_balance_no_sync().await, btc(1));
 }
+
+/// Stress test for the TrackAll stream subscription.
+///
+/// This test creates multiple invoices and pays them concurrently to verify
+/// that the TrackAll stream correctly handles multiple simultaneous HTLC
+/// subscriptions without missing any events.
+#[tokio::test]
+async fn stress_test_track_all_stream() {
+	let ctx = TestContext::new("lightningd/stress_test_track_all_stream").await;
+
+	let lightning = ctx.new_lightning_setup("lightningd").await;
+
+	// Start a server linked to the receiver lightning node (for incoming payments)
+	let srv = ctx.new_captaind_with_funds("server", Some(&lightning.receiver), btc(50)).await;
+	srv.wait_for_vtxopool(&ctx).await;
+
+	// Create a bark wallet that will receive multiple payments
+	const NUM_INVOICES: usize = 5;
+	let invoice_amount = sat(100_000);
+	let board_amount = btc(1);
+
+	info!("Creating bark wallet with {} invoices", NUM_INVOICES);
+
+	let bark = Arc::new(ctx.new_bark_with_funds("bark", &srv, btc(3)).await);
+	bark.board_and_confirm_and_register(&ctx, board_amount).await;
+
+	// Create all invoices upfront
+	info!("Creating {} invoices", NUM_INVOICES);
+	let mut invoices = Vec::new();
+	for i in 0..NUM_INVOICES {
+		let invoice_info = bark.bolt11_invoice(invoice_amount).await;
+		let invoice = Bolt11Invoice::from_str(&invoice_info.invoice).unwrap();
+		info!("Created invoice {} with payment_hash {}", i, invoice.payment_hash());
+		invoices.push(invoice_info.invoice.clone());
+	}
+
+	// Pay all invoices and claim them - payments go in background, claims happen concurrently
+	info!("Starting payments and claims for {} invoices", NUM_INVOICES);
+
+	// Move sender into a single spawn that pays all invoices using join
+	let invoices_for_payment = invoices.clone();
+	let payment_handle = tokio::spawn(async move {
+		// Use join to pay all invoices concurrently with the same sender
+		let i1 = invoices_for_payment[0].clone();
+		let i2 = invoices_for_payment[1].clone();
+		let i3 = invoices_for_payment[2].clone();
+		let i4 = invoices_for_payment[3].clone();
+		let i5 = invoices_for_payment[4].clone();
+		tokio::join!(
+			lightning.sender.pay_bolt11(i1),
+			lightning.sender.pay_bolt11(i2),
+			lightning.sender.pay_bolt11(i3),
+			lightning.sender.pay_bolt11(i4),
+			lightning.sender.pay_bolt11(i5),
+		)
+	});
+
+	// Claim all invoices concurrently
+	let mut claim_handles = Vec::new();
+	for (i, invoice) in invoices.into_iter().enumerate() {
+		let bark_clone = bark.clone();
+		let handle = tokio::spawn(async move {
+			info!("Claiming invoice {}", i);
+			bark_clone.lightning_receive(invoice).wait_millis(60_000).await;
+			info!("Claim {} completed", i);
+			i
+		});
+		claim_handles.push(handle);
+	}
+
+	// Wait for all payments to complete
+	info!("Waiting for all payments to complete");
+	payment_handle.await.expect("payment task panicked");
+
+	info!("Waiting for all claims to complete");
+	for handle in claim_handles {
+		let i = handle.await.expect("claim task panicked");
+		info!("Claim task {} completed", i);
+	}
+
+	// Verify bark wallet received the correct amount
+	info!("Verifying balance");
+	let expected_received = invoice_amount * NUM_INVOICES as u64;
+	let expected_balance = board_amount + expected_received;
+	let actual_balance = bark.spendable_balance().await;
+
+	info!("Expected {}, actual {}", expected_balance, actual_balance);
+	assert_eq!(
+		actual_balance, expected_balance,
+		"Balance mismatch: expected {}, got {}",
+		expected_balance, actual_balance
+	);
+
+	// Verify no pending receives left
+	let receives = bark.list_lightning_receives().await;
+	assert!(
+		receives.is_empty(),
+		"Should have no pending receives, but has {}",
+		receives.len()
+	);
+
+	// Verify no locked VTXOs
+	let vtxos = bark.vtxos().await;
+	assert!(
+		!vtxos.iter().any(|v| matches!(v.state, VtxoStateInfo::Locked { .. })),
+		"Should not have any locked VTXOs"
+	);
+
+	info!("Stress test completed successfully: {} invoices processed", NUM_INVOICES);
+}
