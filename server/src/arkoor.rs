@@ -8,6 +8,7 @@ use ark::arkoor::package::{
 };
 use bitcoin_ext::P2TR_DUST;
 
+use crate::database::VirtualTransaction;
 use crate::error::ContextExt;
 use crate::Server;
 
@@ -98,8 +99,13 @@ impl Server {
 		let new_internal_vtxos = builder.build_unsigned_internal_vtxos();
 		let spend_info = builder.spend_info();
 
+		// Create VirtualTransaction objects for virtual txs
+		let virtual_txs = builder.virtual_transactions()
+			.map(|txid| VirtualTransaction::new_unsigned(txid));
+
 		// We are going to mark the update in the database
-		self.db.upsert_vtxos_and_mark_spends(
+		self.db.update_virtual_transaction_tree(
+			virtual_txs,
 			new_output_vtxos.chain(new_internal_vtxos),
 			spend_info,
 		).await?;

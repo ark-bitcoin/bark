@@ -1,6 +1,7 @@
-use anyhow::Context;
-
+use std::borrow::Cow;
 use std::str::FromStr;
+
+use anyhow::Context;
 
 use bitcoin::{Transaction, Txid};
 use bitcoin::consensus::deserialize;
@@ -132,5 +133,58 @@ impl TryFrom<Row> for Board {
 			created_at,
 			updated_at,
 		})
+	}
+}
+
+/// A persisted virtual transaction
+#[derive(Debug, Clone)]
+pub struct VirtualTransaction<'a> {
+	/// The [bitcoin::Txid] of the transaction
+	pub txid: Txid,
+	/// If we know the signatures this contains the signed transaction
+	/// This is empty if the signature isn't known (yet)
+	pub signed_tx: Option<Cow<'a, Transaction>>,
+	/// True if this is a funding transaction
+	pub is_funding: bool,
+	/// The datetime when an descendant became server-owned, or `None` if all
+	/// descendants are client-owned. When set, the server MUST ensure `signed_tx`
+	/// is populated.
+	pub server_may_own_descendant_since: Option<DateTime<Local>>,
+}
+
+impl<'a> VirtualTransaction<'a> {
+	pub fn signed_tx(&self) -> Option<&Transaction> {
+		self.signed_tx.as_deref()
+	}
+
+	/// Returns true if an descendant of this transaction is owned by the server.
+	pub fn server_may_own_descendant(&self) -> bool {
+		self.server_may_own_descendant_since.is_some()
+	}
+
+	pub fn new_unsigned(txid: Txid) -> Self {
+		Self { txid, signed_tx: None, is_funding: false, server_may_own_descendant_since: None }
+	}
+}
+
+
+impl TryFrom<Row> for VirtualTransaction<'static> {
+	type Error = anyhow::Error;
+
+	fn try_from(row: Row) -> Result<Self, Self::Error> {
+		// Parse the txid first. We use it for error messages
+		let txid: &str = row.get("txid");
+		let txid: Txid = Txid::from_str(txid)
+				.with_context(|| format!("Invalid txid {}", txid))?;
+
+		let signed_tx: Option<Cow<'static, Transaction>> = row.get::<_, Option<&[u8]>>("signed_tx")
+			.map(|tx| deserialize(tx)).transpose()
+			.with_context(|| format!("Failed to parse signed_tx for txid {}", txid))?
+			.map(|tx| Cow::Owned(tx));
+		let is_funding: bool = row.get("is_funding");
+		let server_may_own_descendant_since: Option<DateTime<Local>> =
+			row.get("server_may_own_descendant_since");
+
+		Ok(Self { txid, signed_tx, is_funding, server_may_own_descendant_since })
 	}
 }
