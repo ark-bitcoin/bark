@@ -137,16 +137,19 @@ bark-as-libs:
         cargo build -p ark-lib          --no-default-features --features=\"\"
       "
 
-lib-wasm:
+bark-wasm:
   interruptible: true
   stage: test
   extends: .test-and-codecov-rules-no-tags
   needs:
-    - prechecks
+    - test-unit
   script:
     - |
       nix develop .#default --command bash -c "
-        cargo build --lib --release --target \"wasm32-unknown-unknown\" -p ark-lib --features \"wasm-web\"
+        cargo build -p ark-lib --target "wasm32-unknown-unknown" --lib --no-default-features --features wasm-web &&
+        cargo build -p bark-bitcoin-ext --target "wasm32-unknown-unknown" --lib --no-default-features --features wasm-web &&
+        cargo build -p bark-server-rpc --target "wasm32-unknown-unknown" --lib --no-default-features --features tonic-web &&
+        cargo build -p bark-wallet --target "wasm32-unknown-unknown" --lib --no-default-features --features wasm-web
       "
 
 lib-msrv:
