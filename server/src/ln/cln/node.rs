@@ -413,13 +413,178 @@ impl ClnNodeMonitorProcess {
 	/// - After a delay, it cancels the subscription on the plugin and updates
 	/// the status to canceled.
 	async fn process_htlc_subscriptions(&mut self) -> anyhow::Result<()> {
-		let tip = self.rpc.getinfo(cln_rpc::GetinfoRequest {}).await?
-			.into_inner().blockheight;
+		self.check_htlc_subscription_timeouts().await?;
+		self.poll_htlc_state_updates().await?;
+		Ok(())
+	}
+
+	/// Checks all open subscriptions for timeouts and expired invoices.
+	/// Called on timer regardless of whether TrackAll is enabled.
+	async fn check_htlc_subscription_timeouts(&mut self) -> anyhow::Result<()> {
+		let mut hold_client = match &self.hold_rpc {
+			Some(client) => client.clone(),
+			None => {
+				warn!("No hold rpc client, skipping htlc subscription timeout checks");
+				return Ok(());
+			},
+		};
+
+		let htlc_subscriptions = self.db.get_open_lightning_htlc_subscriptions(
+			self.node_id,
+		).await?;
+
+		for htlc_subscription in htlc_subscriptions {
+			let payment_hash = htlc_subscription.invoice.payment_hash();
+
+			// Check for HTLC timeout: subscription held too long in Accepted state.
+			// We use our `accepted_at` timestamp rather than the hold plugin's HTLC
+			// `created_at` for accuracy.
+			if htlc_subscription.status == LightningHtlcSubscriptionStatus::Accepted {
+				// TODO(dunxen): Simply `.expect` and remove this `unwrap_or` at some stage.
+				// The `.unwrap_or` is here for backwards compatibility for existing servers that may
+				// have exsisting subscriptions in an `Accepted` state but without an `accepted_at` field
+				// after restart.
+				let accepted_at = htlc_subscription.accepted_at.unwrap_or(htlc_subscription.updated_at);
+				if accepted_at < Local::now() - self.config.receive_htlc_forward_timeout {
+					// Check if the hold invoice is still active (not an intra-ark payment)
+					let req = hold::ListRequest {
+						constraint: Some(hold::list_request::Constraint::PaymentHash(
+							payment_hash.to_byte_array().to_vec(),
+						)),
+					};
+					let res = hold_client.list(req).await?.into_inner();
+					let has_accepted_invoice = res.invoices.iter().any(|i| i.state == InvoiceState::Accepted as i32);
+
+					if has_accepted_invoice {
+						self.cancel_invoice_and_htlc_subscription(
+							&mut hold_client,
+							payment_hash,
+							&htlc_subscription,
+							"htlc vtxo setup timed out",
+						).await?;
+					} else {
+						// For intra-ark payments, the hold invoice is canceled after we set
+						// the subscription to Accepted, so there won't be an accepted invoice
+						// in the hold plugin.
+						self.cancel_htlc_subscription(&htlc_subscription, "htlc vtxo setup timed out").await?;
+					}
+					continue;
+				}
+			}
+
+			// Cancel invoice & subscription if invoice expired
+			if htlc_subscription.invoice.is_expired() {
+				self.cancel_invoice_and_htlc_subscription(
+					&mut hold_client,
+					payment_hash,
+					&htlc_subscription,
+					"invoice expired",
+				).await?;
+			}
+		}
+
+		Ok(())
+	}
+
+	/// Handles an invoice that has been accepted (HTLCs received).
+	/// Fetches HTLC details from hold plugin and validates expiry.
+	/// Returns true if subscription was updated, false if skipped/already processed.
+	async fn handle_invoice_accepted(
+		&mut self,
+		htlc_subscription: &LightningHtlcSubscription,
+	) -> anyhow::Result<bool> {
+		// Only process subscriptions in Created state
+		if htlc_subscription.status != LightningHtlcSubscriptionStatus::Created {
+			return Ok(false);
+		}
 
 		let mut hold_client = match &self.hold_rpc {
 			Some(client) => client.clone(),
 			None => {
-				warn!("No hold rpc client, skipping incoming htlc subscriptions");
+				warn!("No hold rpc client, cannot handle accepted invoice");
+				return Ok(false);
+			},
+		};
+
+		let payment_hash = htlc_subscription.invoice.payment_hash();
+
+		// Fetch HTLC details (TrackAllResponse only provides state, not HTLC details)
+		let req = hold::ListRequest {
+			constraint: Some(hold::list_request::Constraint::PaymentHash(
+				payment_hash.to_byte_array().to_vec(),
+			)),
+		};
+		let res = hold_client.list(req).await?.into_inner();
+
+		let accepted_invoice = match res.invoices.iter().find(|i| i.state == InvoiceState::Accepted as i32) {
+			Some(invoice) => invoice,
+			None => {
+				// Invoice is no longer in Accepted state
+				return Ok(false);
+			},
+		};
+
+		let lowest_incoming_htlc_expiry = match accepted_invoice.htlcs.iter().map(|h| h.cltv_expiry).min() {
+			Some(Some(lowest_incoming_htlc_expiry)) => lowest_incoming_htlc_expiry as BlockHeight,
+			None | Some(None) => {
+				warn!("CLN returned no HTLC expiry height for accepted invoice of subscription {}",
+					htlc_subscription.id,
+				);
+				return Ok(false);
+			},
+		};
+
+		let invoice = match Bolt11Invoice::from_str(&accepted_invoice.invoice) {
+			Ok(invoice) => {
+				debug_assert_eq!(htlc_subscription.invoice, invoice,
+					"HTLC subscription invoice != hold plugin response's invoice");
+				invoice
+			},
+			Err(e) => {
+				warn!("Failed to parse invoice from cln: '{}', {}", accepted_invoice.invoice, e);
+				return Ok(false);
+			},
+		};
+
+		// Get current tip for expiry validation
+		let tip = self.rpc.getinfo(cln_rpc::GetinfoRequest {}).await?
+			.into_inner().blockheight;
+
+		// NB: We subtract 1 to give some buffer for the lightning payment to be sent.
+		let required_min_htlc_expiry = tip + invoice.min_final_cltv_expiry_delta() as BlockHeight - 1;
+
+		if lowest_incoming_htlc_expiry >= required_min_htlc_expiry {
+			debug!("Lightning htlc subscription ({}) was accepted.", htlc_subscription.id);
+
+			self.db.store_lightning_htlc_subscription_status(
+				htlc_subscription.id,
+				LightningHtlcSubscriptionStatus::Accepted,
+				Some(lowest_incoming_htlc_expiry),
+			).await?;
+
+			Ok(true)
+		} else {
+			debug!("Incoming HTLC expiry height ({}) for subscription doesn't fit. required {}, actual {}",
+				htlc_subscription.id, required_min_htlc_expiry, lowest_incoming_htlc_expiry
+			);
+
+			self.db.store_lightning_htlc_subscription_status(
+				htlc_subscription.id,
+				LightningHtlcSubscriptionStatus::Canceled,
+				None,
+			).await?;
+
+			Ok(false)
+		}
+	}
+
+	/// Polls hold plugin for invoice state changes.
+	/// This is the legacy approach, to be replaced by TrackAll.
+	async fn poll_htlc_state_updates(&mut self) -> anyhow::Result<()> {
+		let mut hold_client = match &self.hold_rpc {
+			Some(client) => client.clone(),
+			None => {
+				warn!("No hold rpc client, skipping polling for htlc state updates");
 				return Ok(());
 			},
 		};
@@ -436,6 +601,11 @@ impl ClnNodeMonitorProcess {
 		telemetry::set_open_invoices(self.node_id, &status_counts);
 
 		for htlc_subscription in htlc_subscriptions {
+			// Only poll for subscriptions that haven't been accepted yet
+			if htlc_subscription.status != LightningHtlcSubscriptionStatus::Created {
+				continue;
+			}
+
 			let payment_hash = htlc_subscription.invoice.payment_hash();
 
 			debug!("Lightning htlc subscription ({}) is being verified.",
@@ -449,84 +619,10 @@ impl ClnNodeMonitorProcess {
 			};
 			let res = hold_client.list(req).await?.into_inner();
 
-			let accepted_invoice = res.invoices.iter().find(|i| i.state == InvoiceState::Accepted as i32);
+			let is_accepted = res.invoices.iter().any(|i| i.state == InvoiceState::Accepted as i32);
 
-			if let Some(accepted_invoice) = accepted_invoice {
-				// If the subscription has been in the `LightningHtlcSubscriptionStatus::Accepted` state
-				// for too long (i.e. the receiving user has not prepared a claim) then we cancel the invoice and subscription.
-				// We use our `accepted_at` timestamp rather than the hold plugin's HTLC `created_at` for accuracy.
-				if htlc_subscription.status == LightningHtlcSubscriptionStatus::Accepted {
-					// TODO(dunxen): Simply `.expect` and remove this `unwrap_or` at some stage.
-					// The `.unwrap_or` is here for backwards compatibility for existing servers that may
-					// have exsisting subscriptions in an `Accepted` state but without an `accepted_at` field
-					// after restart.
-					let accepted_at = htlc_subscription.accepted_at.unwrap_or(htlc_subscription.updated_at);
-					if accepted_at < Local::now() - self.config.receive_htlc_forward_timeout {
-						self.cancel_invoice_and_htlc_subscription(&mut hold_client, payment_hash, &htlc_subscription, "htlc vtxo setup timed out").await?;
-						continue;
-					}
-				}
-
-				let lowest_incoming_htlc_expiry = match accepted_invoice.htlcs.iter().map(|h| h.cltv_expiry).min() {
-					Some(Some(lowest_incoming_htlc_expiry)) => lowest_incoming_htlc_expiry as BlockHeight,
-					None | Some(None) => {
-						warn!("CLN returned no HTLC expiry height for accepted invoice of subscription {}",
-							htlc_subscription.id,
-						);
-						continue;
-					},
-				};
-
-				let invoice = match Bolt11Invoice::from_str(&accepted_invoice.invoice) {
-					Ok(invoice) => invoice,
-					Err(e) => {
-						warn!("Failed to parse invoice from cln: '{}', {}", accepted_invoice.invoice, e);
-						continue;
-					},
-				};
-
-				// NB: We subtract 1 to give some buffer for the lightning payment to be sent.
-				let required_min_htlc_expiry = tip + invoice.min_final_cltv_expiry_delta() as BlockHeight - 1;
-				if lowest_incoming_htlc_expiry >= required_min_htlc_expiry {
-					if htlc_subscription.status == LightningHtlcSubscriptionStatus::Created {
-						debug!("Lightning htlc subscription ({}) was accepted.", htlc_subscription.id);
-
-						self.db.store_lightning_htlc_subscription_status(
-							htlc_subscription.id,
-							LightningHtlcSubscriptionStatus::Accepted,
-							Some(lowest_incoming_htlc_expiry),
-						).await?;
-					}
-				} else {
-					debug!("Incoming HTLC expiry height ({}) for subscription doesn't fit. required {}, actual {}",
-						htlc_subscription.id, required_min_htlc_expiry, lowest_incoming_htlc_expiry
-					);
-
-					self.db.store_lightning_htlc_subscription_status(
-						htlc_subscription.id,
-						LightningHtlcSubscriptionStatus::Canceled,
-						None,
-					).await?;
-				}
-
-				continue;
-			}
-
-			// For intra-ark payments, the hold invoice is canceled after we set
-			// the subscription to Accepted, so there won't be an accepted invoice
-			// in the hold plugin. We need to check if the subscription has been
-			// in the Accepted state for too long using `receive_htlc_forward_timeout`.
-			if htlc_subscription.status == LightningHtlcSubscriptionStatus::Accepted {
-				let accepted_at = htlc_subscription.accepted_at.unwrap_or(htlc_subscription.updated_at);
-				if accepted_at < Local::now() - self.config.receive_htlc_forward_timeout {
-					self.cancel_htlc_subscription(&htlc_subscription, "htlc vtxo setup timed out").await?;
-					continue;
-				}
-			}
-
-			// Cancel invoice & subscription if invoice expired
-			if htlc_subscription.invoice.is_expired() {
-				self.cancel_invoice_and_htlc_subscription(&mut hold_client, payment_hash, &htlc_subscription, "invoice expired").await?;
+			if is_accepted {
+				self.handle_invoice_accepted(&htlc_subscription).await?;
 			}
 		}
 
