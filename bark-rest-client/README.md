@@ -170,6 +170,7 @@ Class | Method | HTTP request | Description
  - [MovementTimestamp](docs/MovementTimestamp.md)
  - [NotFoundError](docs/NotFoundError.md)
  - [OffboardAllRequest](docs/OffboardAllRequest.md)
+ - [OffboardResult](docs/OffboardResult.md)
  - [OffboardVtxosRequest](docs/OffboardVtxosRequest.md)
  - [OnchainBalance](docs/OnchainBalance.md)
  - [OnchainDrainRequest](docs/OnchainDrainRequest.md)

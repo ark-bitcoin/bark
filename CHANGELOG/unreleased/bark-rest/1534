@@ -1,0 +1,6 @@
+
+- offboards got enabled again
+  [PR #1534](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1534)
+  - offboards work again after temporary disability
+  - return type for offboard_vtxos and offboard_all endpoint changed to
+    simple TxId

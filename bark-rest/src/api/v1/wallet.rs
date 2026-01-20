@@ -538,7 +538,8 @@ pub async fn refresh_counterparty(
 	path = "/offboard/vtxos",
 	request_body = bark_json::web::OffboardVtxosRequest,
 	responses(
-		(status = 200, description = "Returns the offboard result", body = bark_json::web::PendingRoundInfo),
+		(status = 200, description = "Returns the offboard transaction id",
+			body = bark_json::cli::OffboardResult),
 		(status = 400, description = "No VTXO IDs provided, or one of the provided \
 			VTXO IDs is invalid, or destination address is invalid", body = error::BadRequestError),
 		(status = 404, description = "One the VTXOs wasn't found", body = error::NotFoundError),
@@ -551,7 +552,7 @@ pub async fn refresh_counterparty(
 pub async fn offboard_vtxos(
 	State(state): State<ServerState>,
 	Json(body): Json<bark_json::web::OffboardVtxosRequest>,
-) -> HandlerResult<Json<bark_json::web::PendingRoundInfo>> {
+) -> HandlerResult<Json<bark_json::cli::OffboardResult>> {
 	let wallet = state.require_wallet()?;
 	let onchain = state.require_onchain()?;
 
@@ -559,7 +560,7 @@ pub async fn offboard_vtxos(
 		badarg!("No VTXO IDs provided");
 	}
 
-	let _address = if let Some(addr) = body.address {
+	let address = if let Some(addr) = body.address {
 		let network = wallet.network().await?;
 		bitcoin::Address::from_str(&addr)
 			.badarg("invalid destination address")?
@@ -569,14 +570,16 @@ pub async fn offboard_vtxos(
 		onchain.write().await.address().await?
 	};
 
-	let mut _vtxo_ids = Vec::new();
+	let mut vtxo_ids = Vec::new();
 	for s in body.vtxos {
 		let id = ark::VtxoId::from_str(&s).badarg("Invalid VTXO id")?;
 		wallet.get_vtxo_by_id(id).await.not_found([id], "VTXO not found")?;
-		_vtxo_ids.push(id);
+		vtxo_ids.push(id);
 	}
 
-	Err(anyhow!("offboards are temporarily not supported").into())
+	let offboard_txid = wallet.offboard_vtxos(vtxo_ids, address).await?;
+
+	Ok(axum::Json(bark_json::cli::OffboardResult { offboard_txid }))
 }
 
 #[utoipa::path(
@@ -584,7 +587,8 @@ pub async fn offboard_vtxos(
 	path = "/offboard/all",
 	request_body = bark_json::web::OffboardAllRequest,
 	responses(
-		(status = 200, description = "Returns the offboard result", body = bark_json::web::PendingRoundInfo),
+		(status = 200, description = "Returns the offboard transaction id",
+			body = bark_json::cli::OffboardResult),
 		(status = 500, description = "Internal server error", body = error::InternalServerError)
 	),
 	description = "Creates a new round participation to offboard all VTXOs",
@@ -594,11 +598,11 @@ pub async fn offboard_vtxos(
 pub async fn offboard_all(
 	State(state): State<ServerState>,
 	Json(body): Json<bark_json::web::OffboardAllRequest>,
-) -> HandlerResult<Json<bark_json::web::PendingRoundInfo>> {
+) -> HandlerResult<Json<bark_json::cli::OffboardResult>> {
 	let wallet = state.require_wallet()?;
 	let onchain = state.require_onchain()?;
 
-	let _address = if let Some(addr) = body.address {
+	let address = if let Some(addr) = body.address {
 		let network = wallet.network().await?;
 		bitcoin::Address::from_str(&addr)
 			.badarg("invalid destination address")?
@@ -608,7 +612,9 @@ pub async fn offboard_all(
 		onchain.write().await.address().await?
 	};
 
-	Err(anyhow!("offboards are temporarily not supported").into())
+	let offboard_txid = wallet.offboard_all(address).await?;
+
+	Ok(axum::Json(bark_json::cli::OffboardResult { offboard_txid }))
 }
 
 #[utoipa::path(
@@ -616,7 +622,8 @@ pub async fn offboard_all(
 	path = "/send-onchain",
 	request_body = bark_json::web::SendOnchainRequest,
 	responses(
-		(status = 200, description = "Returns the send onchain result", body = bark_json::web::PendingRoundInfo),
+		(status = 200, description = "Returns the offboard transaction id",
+			body = bark_json::cli::OffboardResult),
 		(status = 500, description = "Internal server error", body = error::InternalServerError)
 	),
 	description = "Creates a new round participation to send a payment onchain from ark round",
@@ -626,17 +633,19 @@ pub async fn offboard_all(
 pub async fn send_onchain(
 	State(state): State<ServerState>,
 	Json(body): Json<bark_json::web::SendOnchainRequest>,
-) -> HandlerResult<Json<()>> {
+) -> HandlerResult<Json<bark_json::cli::OffboardResult>> {
 	let wallet = state.require_wallet()?;
 
-	let _addr = bitcoin::Address::from_str(&body.destination)
+	let addr = bitcoin::Address::from_str(&body.destination)
 		.badarg("invalid destination address")?
 		.require_network(wallet.network().await?)
 		.badarg("address is not valid for configured network")?;
 
-	let _amount = Amount::from_sat(body.amount_sat);
+	let amount = Amount::from_sat(body.amount_sat);
 
-	Err(anyhow!("onchain payments are temporarily not supported").into())
+	let offboard_txid = wallet.send_onchain(addr, amount).await?;
+
+	Ok(axum::Json(bark_json::cli::OffboardResult { offboard_txid }))
 }
 
 #[utoipa::path(
