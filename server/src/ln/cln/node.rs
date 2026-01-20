@@ -452,21 +452,19 @@ impl ClnNodeMonitorProcess {
 			let accepted_invoice = res.invoices.iter().find(|i| i.state == InvoiceState::Accepted as i32);
 
 			if let Some(accepted_invoice) = accepted_invoice {
-				// If any HTLCs have been held with the invoice in the `LightningHtlcSubscriptionStatus::Accepted` state
+				// If the subscription has been in the `LightningHtlcSubscriptionStatus::Accepted` state
 				// for too long (i.e. the receiving user has not prepared a claim) then we cancel the invoice and subscription.
-				if htlc_subscription.status == LightningHtlcSubscriptionStatus::Accepted && accepted_invoice.htlcs.iter().any(
-					|h| {
-						// Note that `created_at` for HTLC in the hold plugin is a UTC timestamp in seconds.
-						let created_at = DateTime::from_timestamp(h.created_at as i64, 0)
-							.unwrap_or_else(|| {
-								warn!("Invalid HTLC created_at timestamp: {}", h.created_at);
-								DateTime::UNIX_EPOCH
-							});
-						created_at < chrono::Utc::now() - self.config.receive_htlc_forward_timeout
+				// We use our `accepted_at` timestamp rather than the hold plugin's HTLC `created_at` for accuracy.
+				if htlc_subscription.status == LightningHtlcSubscriptionStatus::Accepted {
+					// TODO(dunxen): Simply `.expect` and remove this `unwrap_or` at some stage.
+					// The `.unwrap_or` is here for backwards compatibility for existing servers that may
+					// have exsisting subscriptions in an `Accepted` state but without an `accepted_at` field
+					// after restart.
+					let accepted_at = htlc_subscription.accepted_at.unwrap_or(htlc_subscription.updated_at);
+					if accepted_at < Local::now() - self.config.receive_htlc_forward_timeout {
+						self.cancel_invoice_and_htlc_subscription(&mut hold_client, payment_hash, &htlc_subscription, "htlc vtxo setup timed out").await?;
+						continue;
 					}
-				) {
-					self.cancel_invoice_and_htlc_subscription(&mut hold_client, payment_hash, &htlc_subscription, "htlc vtxo setup timed out").await?;
-					continue;
 				}
 
 				let lowest_incoming_htlc_expiry = match accepted_invoice.htlcs.iter().map(|h| h.cltv_expiry).min() {
@@ -519,7 +517,7 @@ impl ClnNodeMonitorProcess {
 			// in the hold plugin. We need to check if the subscription has been
 			// in the Accepted state for too long using `receive_htlc_forward_timeout`.
 			if htlc_subscription.status == LightningHtlcSubscriptionStatus::Accepted {
-				let accepted_at = htlc_subscription.updated_at;
+				let accepted_at = htlc_subscription.accepted_at.unwrap_or(htlc_subscription.updated_at);
 				if accepted_at < Local::now() - self.config.receive_htlc_forward_timeout {
 					self.cancel_htlc_subscription(&htlc_subscription, "htlc vtxo setup timed out").await?;
 					continue;
