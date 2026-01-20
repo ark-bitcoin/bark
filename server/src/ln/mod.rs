@@ -22,7 +22,7 @@ use ark::util::IteratorExt;
 use server_rpc::protos::{self, InputVtxo, lightning_payment_status};
 use server_rpc::protos::prepare_lightning_receive_claim_request::LightningReceiveAntiDos;
 use server_rpc::TryFromBytes;
-use bitcoin_ext::{AmountExt, BlockDelta, BlockHeight, P2TR_DUST};
+use bitcoin_ext::{AmountExt, BlockDelta, BlockHeight};
 
 use crate::arkoor::ArkoorCosignRequestValidationParams;
 use crate::database::ln::{
@@ -44,30 +44,30 @@ impl Server {
 		let input_vtxos = self.db.get_vtxos_by_id(&input_vtxo_ids).await?
 			.into_iter().map(|v| v.vtxo).collect::<Vec<_>>();
 
-		let htlc_vtxos = request.outputs()
+		let htlc_vtxos = request.all_outputs()
 			.filter(|v| matches!(v.policy, VtxoPolicy::ServerHtlcSend(..)))
 			.collect::<Vec<_>>();
 
 		if htlc_vtxos.is_empty() {
-			return badarg!("no HTLC VTXO requests provided");
+			return badarg!("no HTLC outputs provided");
 		}
 
 		let requested_policy = htlc_vtxos.iter()
 			.all_same(|v| v.policy.clone())
-			.context("all vtxo requests must have the same policy")?
-			.as_server_htlc_send()
-			.context("vtxo request is not htlc send")?.clone();
+			.context("not all HTLC outputs are identical")?
+			.as_server_htlc_send().expect("we filtered above")
+			.clone();
 
 		//TODO(stevenroose) check that vtxos are valid
 
-		let user_htlc_amount = request.outputs()
-			.filter(|v| matches!(v.policy, VtxoPolicy::ServerHtlcSend(..)))
-			.map(|v| v.total_amount)
-			.sum::<Amount>();
+		let user_htlc_amount = htlc_vtxos.iter().map(|v| v.total_amount).sum::<Amount>();
 
 		// Check if the provided requests are sufficient to pay the invoice
 		let amount = invoice.get_final_amount(Some(user_htlc_amount))
 			.badarg("missing or invalid user amount")?;
+
+		// should be checked above, but let's be cautious
+		ensure!(user_htlc_amount.to_msat() >= invoice.amount_msat().unwrap_or_default());
 
 		// Convert the PackageCosignRequest<VtxoId> into PackageCosignRequest<Vtxo>
 		// We will mask the old value
@@ -155,9 +155,6 @@ impl Server {
 			}
 
 			//TODO(stevenroose) no fee is charged here now
-			if vtxo.amount() < P2TR_DUST {
-				return badarg!("htlc vtxo amount is below dust threshold");
-			}
 
 			vtxos.push(vtxo);
 		}
@@ -227,7 +224,7 @@ impl Server {
 		let tip = self.chain_tip().height as BlockHeight;
 		let db = self.db.clone();
 
-		let requested_policy = cosign_request.outputs()
+		let requested_policy = cosign_request.all_outputs()
 			.all_same(|v| v.policy.clone())
 			.context("all revocation vtxo requests must have the same policy")?;
 		if !matches!(requested_policy, VtxoPolicy::Pubkey(..)) {
@@ -320,10 +317,6 @@ impl Server {
 			bail!("Requested min HTLC CLTV delta is greater than max HTLC recv CLTV delta: requested: {}, max: {}",
 				min_cltv_delta, self.config.max_user_invoice_cltv_delta,
 			);
-		}
-
-		if amount < P2TR_DUST {
-			return badarg!("Requested amount must be at least {}", P2TR_DUST);
 		}
 
 		if let Some(max) = self.config.max_vtxo_amount {

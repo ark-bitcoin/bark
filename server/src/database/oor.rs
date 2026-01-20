@@ -17,9 +17,9 @@ pub async fn mark_package_spent<T>(
 	debug_assert_eq!(inputs.len(), spending_txids.len(), "Provided bad inputs");
 
 	let statement = client.prepare_typed(
-		"UPDATE vtxo
-		SET oor_spent_txid = $2, updated_at = NOW()
-		WHERE vtxo_id = $1 AND
+		"UPDATE vtxo \
+		SET oor_spent_txid = $2, updated_at = NOW() \
+		WHERE vtxo_id = $1 AND \
 			oor_spent_txid IS NULL AND spent_in_round IS NULL AND offboarded_in IS NULL;",
 		&[Type::TEXT, Type::TEXT],
 	).await.context("failed to prepare query")?;
@@ -38,7 +38,8 @@ pub async fn mark_package_spent<T>(
 			// If this is the case, we just continue. This gives us idempotency (Yippy)
 			// Otherwise, we bail
 			let statement = client.prepare(
-				"SELECT oor_spent_txid, spent_in_round FROM vtxo where vtxo_id = $1",
+				"SELECT oor_spent_txid, spent_in_round, offboarded_in \
+				FROM vtxo where vtxo_id = $1",
 			).await?;
 			let row = client.query_one(&statement, &[&vtxo_id.to_string()]).await
 				.context("failed to verify if VTXO is spent")
@@ -49,9 +50,16 @@ pub async fn mark_package_spent<T>(
 					vtxo_id, spent_in_round,
 				);
 			}
+			if let Some(offboarded_in) = row.get::<_, Option<String>>("offboarded_in") {
+				warn!("Attempt to double-spend a VTXO {} offboarded in tx {}",
+					vtxo_id, offboarded_in,
+				);
+			}
 
 			let oor_spent_txid_opt = row.get::<_, Option<&str>>("oor_spent_txid");
-			trace!("Comparing txids: db {:?} and request {}", oor_spent_txid_opt, spending_txid.to_string());
+			trace!("Comparing txids: db {:?} and request {}",
+				oor_spent_txid_opt, spending_txid.to_string(),
+			);
 			// We ignore if the vtxo is spent in the same tx
 			if oor_spent_txid_opt.unwrap_or_default() == spending_txid.to_string() {
 				continue;

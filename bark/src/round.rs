@@ -28,7 +28,7 @@ use ark::rounds::{
 	ROUND_TX_VTXO_TREE_VOUT,
 };
 use ark::tree::signed::{LeafVtxoCosignContext, UnlockHash, VtxoTreeSpec};
-use bitcoin_ext::{TxStatus, P2TR_DUST};
+use bitcoin_ext::TxStatus;
 use server_rpc::{protos, ServerConnection, TryFromBytes};
 
 use crate::{SECP, Wallet};
@@ -53,14 +53,6 @@ pub struct RoundParticipation {
 }
 
 impl RoundParticipation {
-	/// Check that participation doesn't make some obvious violations
-	pub fn sanity_check(&self) -> anyhow::Result<()> {
-		if let Some(payreq) = self.outputs.iter().find(|p| p.amount < P2TR_DUST) {
-			bail!("VTXO amount must be at least {}, requested {}", P2TR_DUST, payreq.amount);
-		}
-		Ok(())
-	}
-
 	pub fn to_movement_update(&self) -> anyhow::Result<MovementUpdate> {
 		let input_amount = self.inputs.iter().map(|i| i.amount()).sum::<Amount>();
 		let output_amount = self.outputs.iter().map(|r| r.amount).sum::<Amount>();
@@ -1212,8 +1204,6 @@ impl Wallet {
 		participation: RoundParticipation,
 		movement_kind: Option<RoundMovement>,
 	) -> anyhow::Result<StoredRoundState> {
-		participation.sanity_check().context("bad participations")?;
-
 		let movement_id = if let Some(kind) = movement_kind {
 			Some(self.movements.new_movement_with_update(
 				Subsystem::ROUND,
@@ -1234,8 +1224,6 @@ impl Wallet {
 		participation: RoundParticipation,
 		movement_kind: Option<RoundMovement>,
 	) -> anyhow::Result<StoredRoundState> {
-		participation.sanity_check().context("bad participations")?;
-
 		let movement_id = if let Some(kind) = movement_kind {
 			let movement_id = self.movements.new_movement(
 				Subsystem::ROUND, kind.to_string(),

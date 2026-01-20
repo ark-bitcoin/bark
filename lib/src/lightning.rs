@@ -220,7 +220,10 @@ impl Invoice {
 	/// Get the amount to be paid. It checks both user and invoice
 	/// equality if both are provided, else it tries to return one
 	/// of them, or returns an error if neither are provided.
-	pub fn get_final_amount(&self, user_amount: Option<Amount>) -> Result<Amount, CheckAmountError> {
+	pub fn get_final_amount(
+		&self,
+		user_amount: Option<Amount>,
+	) -> Result<Amount, CheckAmountError> {
 		match self {
 			Invoice::Bolt11(invoice) => invoice.get_final_amount(user_amount),
 			Invoice::Bolt12(invoice) => invoice.get_final_amount(user_amount),

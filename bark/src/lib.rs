@@ -328,7 +328,7 @@ use ark::address::VtxoDelivery;
 use ark::board::{BoardBuilder, BOARD_FUNDING_TX_VTXO_VOUT};
 use ark::vtxo::{PubkeyVtxoPolicy, VtxoRef};
 use ark::vtxo::policy::signing::VtxoSigner;
-use bitcoin_ext::{BlockHeight, P2TR_DUST, TxStatus};
+use bitcoin_ext::{BlockHeight, TxStatus};
 use server_rpc::{self as rpc, protos, ServerConnection};
 
 use crate::chain::{ChainSource, ChainSourceSpec};
@@ -1616,10 +1616,9 @@ impl Wallet {
 			.filter(|v| !excluded_ids.contains(&v.id()))
 			.map(|v| v.vtxo).collect::<Vec<_>>();
 
+		if !should_refresh_vtxos.is_empty() {
+			let total_amount = should_refresh_vtxos.iter().map(|v| v.amount()).sum::<Amount>();
 
-		let total_amount = should_refresh_vtxos.iter().map(|v| v.amount()).sum::<Amount>();
-
-		if total_amount > P2TR_DUST {
 			let (user_keypair, _) = self.derive_store_next_keypair().await?;
 			let req = VtxoRequest {
 				policy: VtxoPolicy::new_pubkey(user_keypair.public_key()),

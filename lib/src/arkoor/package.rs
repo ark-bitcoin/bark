@@ -52,9 +52,11 @@ impl<V> ArkoorPackageCosignRequest<V> {
 			.flatten()
 	}
 
-	pub fn outputs(&self) -> impl Iterator<Item=&ArkoorDestination> {
+	pub fn all_outputs(
+		&self,
+	) -> impl Iterator<Item = &ArkoorDestination> + Clone {
 		self.requests.iter()
-			.map(|r| &r.outputs)
+			.map(|r| r.all_outputs())
 			.flatten()
 	}
 }
@@ -276,10 +278,9 @@ impl ArkoorPackageBuilder<state::Initial> {
 		// Build one ArkoorBuilder per inputpackage
 		let mut builders = Vec::with_capacity(allocations.len());
 		for (input, allocated_outputs) in allocations {
-			let builder = ArkoorBuilder::new(
+			let builder = ArkoorBuilder::new_isolate_dust(
 				input,
 				allocated_outputs,
-				vec![], // no isolated outputs
 				use_checkpoint,
 			)?;
 			builders.push(builder);
@@ -519,7 +520,7 @@ mod test {
 	}
 
 	#[test]
-	fn arkoor_subdust_change() {
+	fn arkoor_dust_change() {
 		// Alice tries to send 900 sats to Bob
 		// She only has a vtxo worth a 1000 sats
 		// She will create two outputs: 900 for Bob, 100 subdust change for Alice
@@ -533,13 +534,15 @@ mod test {
 			VtxoPolicy::new_pubkey(alice_public_key())
 		).expect("Valid package");
 
-		// We should generate two vtxos: 900 for Bob, 100 subdust change for Alice
+		// We should generate 3 vtxos: 670 and 230 for Bob, 100 dust change for Alice
 		let vtxos: Vec<Vtxo> = package_builder.build_unsigned_vtxos().collect();
-		assert_eq!(vtxos.len(), 2);
-		assert_eq!(vtxos[0].amount(), Amount::from_sat(900));
+		assert_eq!(vtxos.len(), 3);
+		assert_eq!(vtxos[0].amount(), Amount::from_sat(670));
 		assert_eq!(vtxos[0].policy().user_pubkey(), bob_public_key());
-		assert_eq!(vtxos[1].amount(), Amount::from_sat(100));
-		assert_eq!(vtxos[1].policy().user_pubkey(), alice_public_key());
+		assert_eq!(vtxos[1].amount(), Amount::from_sat(230));
+		assert_eq!(vtxos[1].policy().user_pubkey(), bob_public_key());
+		assert_eq!(vtxos[2].amount(), Amount::from_sat(100));
+		assert_eq!(vtxos[2].policy().user_pubkey(), alice_public_key());
 	}
 
 	#[test]
@@ -622,7 +625,7 @@ mod test {
 	}
 
 	#[test]
-	fn can_send_multiple_vtxos_with_subdust_change() {
+	fn can_send_multiple_vtxos_with_dust_change() {
 		// Alice has a vtxo of 5_000 sat and one of 1_000 sat
 		// Alice will send 5_700 sats to Bob
 		// The 300 sat change is subdust but will be created as separate output
@@ -639,13 +642,15 @@ mod test {
 		).expect("Valid package");
 
 		let vtxos: Vec<Vtxo> = package.build_unsigned_vtxos().collect();
-		assert_eq!(vtxos.len(), 3);
+		assert_eq!(vtxos.len(), 4);
 		assert_eq!(vtxos[0].amount(), Amount::from_sat(5_000));
 		assert_eq!(vtxos[0].policy().user_pubkey(), bob_public_key());
-		assert_eq!(vtxos[1].amount(), Amount::from_sat(700));
+		assert_eq!(vtxos[1].amount(), Amount::from_sat(670));
 		assert_eq!(vtxos[1].policy().user_pubkey(), bob_public_key());
-		assert_eq!(vtxos[2].amount(), Amount::from_sat(300));
-		assert_eq!(vtxos[2].policy().user_pubkey(), alice_public_key());
+		assert_eq!(vtxos[2].amount(), Amount::from_sat(30));
+		assert_eq!(vtxos[2].policy().user_pubkey(), bob_public_key());
+		assert_eq!(vtxos[3].amount(), Amount::from_sat(300));
+		assert_eq!(vtxos[3].policy().user_pubkey(), alice_public_key());
 	}
 
 	#[test]

@@ -85,7 +85,6 @@ use bitcoin::taproot::LeafVersion;
 use bitcoin_ext::{fee, BlockDelta, BlockHeight, TaprootSpendInfoExt, TxOutExt};
 
 use crate::{musig, scripts};
-use crate::arkoor::ArkoorDestination;
 use crate::encode::{ProtocolDecodingError, ProtocolEncoding, ReadExt, WriteExt};
 use crate::lightning::PaymentHash;
 use crate::tree::signed::{cosign_taproot, leaf_cosign_taproot, unlock_clause, UnlockHash, UnlockPreimage};
@@ -1119,9 +1118,10 @@ pub mod test {
 	use bitcoin::secp256k1::Keypair;
 	use bitcoin::transaction::Version;
 
-	use crate::arkoor::package::ArkoorPackageBuilder;
-use crate::tree::signed::{VtxoLeafSpec, VtxoTreeSpec};
 	use crate::{VtxoRequest, SECP};
+	use crate::arkoor::ArkoorDestination;
+	use crate::arkoor::package::ArkoorPackageBuilder;
+	use crate::tree::signed::{VtxoLeafSpec, VtxoTreeSpec};
 	use crate::board::BoardBuilder;
 	use crate::encode::test::encoding_roundtrip;
 

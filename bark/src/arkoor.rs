@@ -8,7 +8,6 @@ use ark::{VtxoPolicy, ProtocolEncoding};
 use ark::arkoor::ArkoorDestination;
 use ark::arkoor::package::{ArkoorPackageBuilder, ArkoorPackageCosignResponse};
 use ark::vtxo::{Vtxo, VtxoId, VtxoPolicyKind};
-use bitcoin_ext::P2TR_DUST;
 use server_rpc::protos;
 
 use crate::subsystem::Subsystem;
@@ -138,17 +137,15 @@ impl Wallet {
 			.context("address validation failed")?;
 
 		let negative_amount = -amount.to_signed().context("Amount out-of-range")?;
-		if amount < P2TR_DUST {
-			bail!("Sent amount must be at least {}", P2TR_DUST);
-		}
 
 		let change_pubkey = self.derive_store_next_keypair().await
 			.context("Failed to create change keypair")?.0;
 
 		let dest = ArkoorDestination { total_amount: amount, policy: destination.policy().clone() };
-		let arkoor = self.create_checkpointed_arkoor(dest.clone(), change_pubkey.public_key())
-			.await
-			.context("Failed to create checkpointed transactions")?;
+		let arkoor = self.create_checkpointed_arkoor(
+			dest.clone(),
+			change_pubkey.public_key(),
+		).await.context("failed to create arkoor transaction")?;
 
 		let mut movement = self.movements.new_guarded_movement_with_update(
 			Subsystem::ARKOOR,

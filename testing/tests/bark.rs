@@ -415,8 +415,8 @@ async fn refresh_all() {
 }
 
 #[tokio::test]
-async fn bark_rejects_sending_subdust_oor() {
-	let ctx = TestContext::new("bark/bark_rejects_sending_subdust_oor").await;
+async fn bark_allows_sending_dust_arkoor() {
+	let ctx = TestContext::new("bark/bark_allows_sending_dust_arkoor").await;
 	let srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
 	let bark1 = ctx.new_bark_with_funds("bark1", &srv, sat(1_000_000)).await;
 	let bark2 = ctx.new_bark_with_funds("bark2", &srv, sat(1_000_000)).await;
@@ -424,11 +424,8 @@ async fn bark_rejects_sending_subdust_oor() {
 	let board_amount = sat(800_000);
 	bark1.board_and_confirm_and_register(&ctx, board_amount).await;
 
-	let subdust_amount = sat(P2TR_DUST_SAT - 1);
-	let res = bark1.try_send_oor(&bark2.address().await, subdust_amount, true).await;
-
-	assert!(res.unwrap_err().to_string().contains(&format!("Sent amount must be at least {}", P2TR_DUST)));
-	assert_eq!(bark1.spendable_balance().await, board_amount);
+	let dust_amount = sat(P2TR_DUST_SAT - 1);
+	bark1.try_send_oor(&bark2.address().await, dust_amount, true).await.unwrap();
 }
 
 #[tokio::test]
