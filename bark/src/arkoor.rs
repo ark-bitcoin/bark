@@ -142,9 +142,10 @@ impl Wallet {
 			.context("Failed to create change keypair")?.0;
 
 		let dest = ArkoorDestination { total_amount: amount, policy: destination.policy().clone() };
-		let arkoor = self.create_checkpointed_arkoor(dest.clone(), change_pubkey.public_key())
-			.await
-			.context("Failed to create checkpointed transactions")?;
+		let arkoor = self.create_checkpointed_arkoor(
+			dest.clone(),
+			change_pubkey.public_key(),
+		).await.context("failed to create arkoor transaction")?;
 
 		let mut movement = self.movements.new_guarded_movement_with_update(
 			Subsystem::ARKOOR,

@@ -17,7 +17,7 @@ use ark_testing::{btc, constants::BOARD_CONFIRMATIONS, sat, TestContext};
 use ark_testing::daemon::captaind::{self, ArkClient};
 use ark_testing::util::FutureExt;
 use bark_json::cli::PaymentMethod;
-use bitcoin_ext::{P2TR_DUST, P2TR_DUST_SAT};
+use bitcoin_ext::P2TR_DUST_SAT;
 use server_rpc::protos::{
 	self, prepare_lightning_receive_claim_request::LightningReceiveAntiDos,
 	lightning_payment_status,
@@ -444,8 +444,8 @@ async fn bark_refresh_payment_revocation() {
 }
 
 #[tokio::test]
-async fn bark_rejects_sending_subdust_bolt11_payment() {
-	let ctx = TestContext::new("lightningd/bark_rejects_sending_subdust_bolt11_payment").await;
+async fn bark_allows_sending_dust_bolt11_payment() {
+	let ctx = TestContext::new("lightningd/bark_allows_sending_dust_bolt11_payment").await;
 
 	let lightning = ctx.new_lightning_setup("lightningd").await;
 
@@ -462,20 +462,14 @@ async fn bark_rejects_sending_subdust_bolt11_payment() {
 	{
 		// Invoice with amount
 		let invoice = lightning.receiver.invoice(Some(sat(P2TR_DUST_SAT - 1)), "test_payment", "A test payment").await;
-		let res = bark_1.try_pay_lightning(invoice, None, false).await;
-		assert!(res.unwrap_err().to_string().contains(&format!("Sent amount must be at least {}", P2TR_DUST)));
+		bark_1.try_pay_lightning(invoice, None, false).await.unwrap();
 	}
 
 	{
 		// Invoice with no amount
 		let invoice = lightning.receiver.invoice(None, "test_payment2", "A test payment").await;
-		let res = bark_1.try_pay_lightning(invoice, Some(sat(P2TR_DUST_SAT - 1)), false).await;
-		assert!(res.unwrap_err().to_string().contains(&format!("Sent amount must be at least {}", P2TR_DUST)));
+		bark_1.try_pay_lightning(invoice, Some(sat(P2TR_DUST_SAT - 1)), false).await.unwrap();
 	}
-
-	assert_eq!(bark_1.offchain_balance().await.pending_lightning_send, btc(0), "pending lightning send should be reset after payment");
-	let vtxos = bark_1.vtxos().await;
-	assert!(!vtxos.iter().any(|v| matches!(v.state, VtxoStateInfo::Locked { .. })), "should not be any locked vtxo left");
 }
 
 #[tokio::test]

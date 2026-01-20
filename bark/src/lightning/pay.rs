@@ -481,7 +481,8 @@ impl Wallet {
 		let cosign_request = protos::LightningPayHtlcCosignRequest {
 			invoice: invoice.to_string(),
 			parts: builder.cosign_request()
-				.convert_vtxo(|vtxo| vtxo.id()).requests.into_iter()
+				.convert_vtxo(|vtxo| vtxo.id())
+				.requests.into_iter()
 				.map(|r| r.into()).collect(),
 		};
 

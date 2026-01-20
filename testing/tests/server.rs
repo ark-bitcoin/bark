@@ -1868,8 +1868,8 @@ async fn should_refuse_round_input_vtxo_that_is_being_exited() {
 
 
 #[tokio::test]
-async fn should_refuse_subdust_lightning_receive_request() {
-	let ctx = TestContext::new("server/should_refuse_subdust_lightning_receive_request").await;
+async fn should_allow_dust_lightning_receive_request() {
+	let ctx = TestContext::new("server/should_allow_dust_lightning_receive_request").await;
 
 	trace!("Start lightningd-1");
 	let lightningd = ctx.new_lightningd("lightningd-1").await;
@@ -1881,24 +1881,7 @@ async fn should_refuse_subdust_lightning_receive_request() {
 	bark.board(sat(400_000)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 
-	#[derive(Clone)]
-	struct Proxy;
-	#[async_trait::async_trait]
-	impl captaind::proxy::ArkRpcProxy for Proxy {
-		async fn start_lightning_receive(
-			&self, upstream: &mut ArkClient, mut req: protos::StartLightningReceiveRequest,
-		) -> Result<protos::StartLightningReceiveResponse, tonic::Status> {
-			req.amount_sat = P2TR_DUST_SAT - 1;
-			Ok(upstream.start_lightning_receive(req).await?.into_inner())
-		}
-	}
-
-	let proxy = srv.get_proxy_rpc(Proxy).await;
-
-	bark.set_ark_url(&proxy.address).await;
-
-	let err = bark.try_bolt11_invoice(sat(30_000)).await.unwrap_err();
-	assert!(err.to_string().contains(format!("Requested amount must be at least 0.00000330 BTC").as_str()), "err: {err}");
+	bark.try_bolt11_invoice(sat(300)).await.unwrap();
 }
 
 #[tokio::test]
