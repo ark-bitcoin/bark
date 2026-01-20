@@ -17,9 +17,9 @@ use crate::movement::manager::OnDropStatus;
 
 /// The result of creating an arkoor transaction
 pub struct ArkoorCreateResult {
-	input: Vec<VtxoId>,
-	created: Vec<Vtxo>,
-	change: Vec<Vtxo>,
+	pub inputs: Vec<VtxoId>,
+	pub created: Vec<Vtxo>,
+	pub change: Vec<Vtxo>,
 }
 
 impl Wallet {
@@ -111,7 +111,7 @@ impl Wallet {
 			.partition::<Vec<_>, _>(|v| *v.policy() == arkoor_dest.policy);
 
 		Ok(ArkoorCreateResult {
-			input: input_ids,
+			inputs: input_ids,
 			created: dest,
 			change: change,
 		})
@@ -153,7 +153,7 @@ impl Wallet {
 			OnDropStatus::Failed,
 			MovementUpdate::new()
 				.intended_and_effective_balance(negative_amount)
-				.consumed_vtxos(&arkoor.input)
+				.consumed_vtxos(&arkoor.inputs)
 				.sent_to([MovementDestination::ark(destination.clone(), amount)])
 		).await?;
 
@@ -169,7 +169,7 @@ impl Wallet {
 			error!("Failed to post the arkoor vtxo to the recipients mailbox: '{:#}'", e);
 			//NB we will continue to at least not lose our own change
 		}
-		self.mark_vtxos_as_spent(&arkoor.input).await?;
+		self.mark_vtxos_as_spent(&arkoor.inputs).await?;
 		if !arkoor.change.is_empty() {
 			self.store_spendable_vtxos(&arkoor.change).await?;
 			movement.apply_update(MovementUpdate::new().produced_vtxos(arkoor.change)).await?;

@@ -49,6 +49,13 @@ impl VtxoStateKind {
 		}
 	}
 
+	/// List of all existing states
+	pub const ALL: &[VtxoStateKind] = &[
+		VtxoStateKind::Spendable,
+		VtxoStateKind::Locked,
+		VtxoStateKind::Spent,
+	];
+
 	/// List of the different states considered unspent
 	pub const UNSPENT_STATES: &[VtxoStateKind] = &[
 		VtxoStateKind::Spendable,
