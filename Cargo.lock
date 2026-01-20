@@ -569,6 +569,7 @@ dependencies = [
  "chrono",
  "config",
  "futures",
+ "getrandom 0.3.4",
  "lazy_static",
  "lightning",
  "lightning-invoice",
@@ -586,6 +587,7 @@ dependencies = [
  "tokio-stream",
  "tokio-util",
  "tonic 0.14.2",
+ "wasm-bindgen-futures",
 ]
 
 [[package]]
