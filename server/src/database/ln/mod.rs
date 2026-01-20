@@ -599,8 +599,8 @@ impl Db {
 
 		let stmt = conn.prepare("
 			SELECT sub.id, sub.lightning_invoice_id, sub.lightning_node_id,
-				sub.status, sub.lowest_incoming_htlc_expiry, sub.created_at, sub.updated_at,
-				invoice.invoice
+				sub.status, sub.lowest_incoming_htlc_expiry, sub.accepted_at,
+				sub.created_at, sub.updated_at, invoice.invoice
 			FROM lightning_htlc_subscription sub
 			JOIN lightning_invoice invoice ON
 				sub.lightning_invoice_id = invoice.id
@@ -628,8 +628,8 @@ impl Db {
 
 		let stmt = conn.prepare("
 			SELECT sub.id, sub.lightning_invoice_id, sub.lightning_node_id,
-				sub.status, sub.lowest_incoming_htlc_expiry, sub.created_at, sub.updated_at,
-				invoice.invoice
+				sub.status, sub.lowest_incoming_htlc_expiry, sub.accepted_at,
+				sub.created_at, sub.updated_at, invoice.invoice
 			FROM lightning_htlc_subscription sub
 			JOIN lightning_invoice invoice ON
 				sub.lightning_invoice_id = invoice.id
@@ -655,8 +655,8 @@ impl Db {
 
 		let stmt = conn.prepare("
 			SELECT sub.id, sub.lightning_invoice_id, sub.lightning_node_id,
-				sub.status, sub.lowest_incoming_htlc_expiry, sub.created_at, sub.updated_at,
-				invoice.invoice,
+				sub.status, sub.lowest_incoming_htlc_expiry, sub.accepted_at,
+				sub.created_at, sub.updated_at, invoice.invoice,
 				COALESCE(array_agg(vtxo.vtxo_id::text), ARRAY[]::text[]) AS htlc_vtxos
 			FROM lightning_htlc_subscription sub
 			JOIN lightning_invoice invoice ON
@@ -668,6 +668,7 @@ impl Db {
 				sub.lightning_invoice_id,
 				sub.lightning_node_id,
 				sub.status,
+				sub.accepted_at,
 				sub.created_at,
 				sub.updated_at,
 				invoice.invoice
@@ -691,8 +692,8 @@ impl Db {
 
 		let stmt = conn.prepare("
 			SELECT sub.id, sub.lightning_invoice_id, sub.lightning_node_id,
-				sub.status, sub.lowest_incoming_htlc_expiry, sub.created_at, sub.updated_at,
-				invoice.invoice
+				sub.status, sub.lowest_incoming_htlc_expiry, sub.accepted_at,
+				sub.created_at, sub.updated_at, invoice.invoice
 			FROM lightning_htlc_subscription sub
 			JOIN lightning_invoice invoice ON
 				sub.lightning_invoice_id = invoice.id
