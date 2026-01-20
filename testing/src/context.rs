@@ -308,6 +308,8 @@ impl TestContext {
 			invoice_check_base_delay: Duration::from_secs(2),
 			invoice_check_max_delay: Duration::from_secs(10),
 			invoice_poll_interval: Duration::from_secs(10),
+			track_all_base_delay: Duration::from_secs(1),
+			track_all_max_delay: Duration::from_secs(60),
 			htlc_expiry_delta: 6,
 			htlc_send_expiry_delta: 258,
 			max_user_invoice_cltv_delta: 58,

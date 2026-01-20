@@ -101,6 +101,8 @@ impl ClnManager {
 			receive_htlc_forward_timeout: config.receive_htlc_forward_timeout,
 			check_base_delay: config.invoice_check_base_delay,
 			check_max_delay: config.invoice_check_max_delay,
+			track_all_base_delay: config.track_all_base_delay,
+			track_all_max_delay: config.track_all_max_delay,
 		};
 		let proc = ClnManagerProcess {
 			db: db.clone(),

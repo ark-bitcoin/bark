@@ -2,6 +2,7 @@
 use std::str::FromStr;
 use std::{cmp, fmt ,str};
 use std::collections::HashMap;
+use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -12,9 +13,11 @@ use bitcoin_ext::BlockHeight;
 use chrono::{DateTime, Local};
 use cln_rpc::plugins::hold::{self, InvoiceState};
 use cln_rpc::ClnGrpcClient;
+use futures::Stream;
 use lightning_invoice::Bolt11Invoice;
 use tokio::sync::{broadcast, mpsc, Notify};
 use tokio::task::JoinHandle;
+use tokio_stream::StreamExt;
 use tonic::transport::Channel;
 use tracing::{debug, error, info, trace, warn};
 use ark::lightning::PaymentHash;
@@ -35,6 +38,10 @@ pub struct ClnNodeMonitorConfig {
 	pub receive_htlc_forward_timeout: Duration,
 	pub check_base_delay: Duration,
 	pub check_max_delay: Duration,
+	/// Base delay for TrackAll reconnection backoff (e.g., 1 second)
+	pub track_all_base_delay: Duration,
+	/// Maximum delay for TrackAll reconnection backoff (e.g., 60 seconds)
+	pub track_all_max_delay: Duration,
 }
 
 pub struct ClnNodeMonitor {
@@ -116,6 +123,18 @@ impl fmt::Debug for ClnNodeMonitor {
 
 enum Ctrl {
 	Stop,
+}
+
+/// Manages the lifecycle of the TrackAll gRPC stream
+enum TrackAllStreamState {
+	/// hold_rpc is None, TrackAll is disabled
+	Disabled,
+	/// Waiting before attempting to connect (with backoff)
+	Backoff { attempt: u32, retry_at: tokio::time::Instant },
+	/// Stream is active and receiving updates for all invoices
+	Connected(tonic::codec::Streaming<hold::TrackAllResponse>),
+	/// Stream needs to be (re)established
+	NeedsConnect,
 }
 
 struct ClnNodeMonitorProcess {
@@ -629,6 +648,44 @@ impl ClnNodeMonitorProcess {
 		Ok(())
 	}
 
+	/// Attempts to establish TrackAll stream.
+	/// With an empty payment_hashes list, the stream returns updates for ALL invoices.
+	async fn connect_track_all(&mut self) -> anyhow::Result<tonic::codec::Streaming<hold::TrackAllResponse>> {
+		let hold_client = self.hold_rpc.as_mut().context("hold_rpc required")?;
+
+		// Empty list means track ALL invoice updates
+		let request = hold::TrackAllRequest { payment_hashes: vec![] };
+		let stream = hold_client.track_all(request).await?.into_inner();
+
+		Ok(stream)
+	}
+
+	/// Calculate exponential backoff delay for TrackAll reconnection.
+	fn track_all_backoff(&self, attempt: u32) -> Duration {
+		let base = self.config.track_all_base_delay.as_secs();
+		let max = self.config.track_all_max_delay.as_secs();
+		// Cap exponent at 6 to prevent overflow (2^6 = 64)
+		Duration::from_secs((base * 2u64.pow(attempt.min(6))).min(max))
+	}
+
+	/// Handle a TrackAll stream event - process invoice acceptance.
+	async fn handle_track_all_event(&mut self, response: hold::TrackAllResponse) -> anyhow::Result<()> {
+		let payment_hash = sha256::Hash::from_slice(&response.payment_hash)?;
+		let state = hold::InvoiceState::try_from(response.state).ok();
+
+		if state == Some(hold::InvoiceState::Accepted) {
+			if let Some(sub) = self.db
+				.get_open_htlc_subscription_for_node_by_payment_hash(
+					self.node_id,
+					&PaymentHash::from(payment_hash),
+				).await?
+			{
+				self.handle_invoice_accepted(&sub).await?;
+			}
+		}
+		Ok(())
+	}
+
 	async fn cancel_invoice_and_htlc_subscription(
 		&self,
 		hold_client: &mut HoldClient<Channel>,
@@ -695,24 +752,92 @@ impl ClnNodeMonitorProcess {
 		let mut invoice_interval = tokio::time::interval(self.config.invoice_check_interval);
 		let (mut rpc1, mut rpc2) = (self.rpc.clone(), self.rpc.clone()); // circumvent &mut
 
-		// we have two nested loops so that we can keep the gRPC requests
-		// alive while we receive messages over other channels
+		// Initialize TrackAll state based on whether hold_rpc is available
+		let mut track_all_state = if self.hold_rpc.is_some() {
+			TrackAllStreamState::NeedsConnect
+		} else {
+			TrackAllStreamState::Disabled
+		};
+		// NB we can't change the state while we have a mutable borrow on the state
+		// so we use this variable to trigger reconnects in the event loop
+		// it holds the attempt number we should set on failure
+		let mut track_all_reconnect_attempt = None;
+
+		// we have two nested loops so that we can keep the various streams
+		// alive while we receive messages over all channels
 		'requests: loop {
 			let created_request = rpc1.wait(cln_rpc::WaitRequest {
 				subsystem: cln_rpc::wait_request::WaitSubsystem::Sendpays as i32,
 				indexname: cln_rpc::wait_request::WaitIndexname::Created as i32,
 				nextvalue: self.created_index.map(|i| i + 1).unwrap_or(0),
 			});
+			tokio::pin!(created_request);
 			let updated_request = rpc2.wait(cln_rpc::WaitRequest {
 				subsystem: cln_rpc::wait_request::WaitSubsystem::Sendpays as i32,
 				indexname: cln_rpc::wait_request::WaitIndexname::Updated as i32,
 				nextvalue: self.updated_index.map(|i| i + 1).unwrap_or(0),
 			});
-
-			tokio::pin!(created_request);
 			tokio::pin!(updated_request);
+
+			// Attempt TrackAll connection if needed
+			match track_all_state {
+				TrackAllStreamState::NeedsConnect => {
+					track_all_reconnect_attempt = Some(1);
+				},
+				TrackAllStreamState::Backoff { attempt, retry_at }
+					if tokio::time::Instant::now() > retry_at =>
+				{
+					track_all_reconnect_attempt = Some(attempt + 1);
+				},
+				_ => {},
+			}
+			if let Some(next_attempt) = track_all_reconnect_attempt {
+				track_all_reconnect_attempt = None;
+				match self.connect_track_all().await {
+					Ok(stream) => {
+						info!("TrackAll stream connected");
+						// One-time reconciliation to catch any events missed during disconnect
+						if let Err(e) = self.poll_htlc_state_updates().await {
+							warn!("TrackAll post-connect reconciliation failed: {:#}", e);
+						}
+						track_all_state = TrackAllStreamState::Connected(stream);
+					},
+					Err(e) => {
+						warn!("TrackAll connect failed: {:#}", e);
+						let attempt = next_attempt;
+						let backoff_delay = self.track_all_backoff(attempt);
+						let retry_at = tokio::time::Instant::now() + backoff_delay;
+						track_all_state = TrackAllStreamState::Backoff { attempt, retry_at };
+					},
+				}
+			}
+
+			// whether our invoice_interval should handle subscriptions or only timeouts
+			let interval_handle_subscriptions = match track_all_state {
+				TrackAllStreamState::Connected(_) => false,
+				TrackAllStreamState::Backoff { .. } => false,
+				TrackAllStreamState::Disabled | TrackAllStreamState::NeedsConnect => true,
+			};
+
+			// to simplify the select event loop below, we first extract the two possible
+			// futures for the track_all system.
+			// note that we place never-ending `pending` stubs if we don't need them
+			let (mut track_all_stream, mut track_all_backoff): (
+				Pin<Box<dyn Stream<Item = Result<_, _>> + Send>>,
+				Pin<Box<dyn Future<Output = ()> + Send>>,
+			) = match track_all_state {
+				TrackAllStreamState::Connected(ref mut stream) => {
+					(Box::pin(stream), Box::pin(futures::future::pending()))
+				},
+				TrackAllStreamState::Backoff { retry_at, .. } => {
+					let sleep = tokio::time::sleep_until(retry_at);
+					(Box::pin(tokio_stream::pending()), Box::pin(sleep))
+				},
+				_ => (Box::pin(tokio_stream::pending()), Box::pin(futures::future::pending())),
+			};
+
 			loop {
-				tokio::select!{
+				tokio::select! {
 					_ = rtmgr.shutdown_signal() => return Ok(()),
 					ctrl = self.ctrl_rx.recv() => match ctrl {
 						None | Some(Ctrl::Stop) => return Ok(()),
@@ -727,11 +852,38 @@ impl ClnNodeMonitorProcess {
 							.context("error processing updated events")?;
 						continue 'requests;
 					},
+					event = track_all_stream.next() => {
+						match event {
+							Some(Ok(resp)) => {
+								if let Err(e) = self.handle_track_all_event(resp).await {
+									warn!("TrackAll event error: {:#}", e);
+								}
+							}
+							Some(Err(e)) => {
+								warn!("TrackAll stream error: {:#}", e);
+								track_all_reconnect_attempt = Some(0);
+								continue 'requests;
+							}
+							None => {
+								info!("TrackAll stream ended");
+								track_all_reconnect_attempt = Some(0);
+								continue 'requests;
+							}
+						}
+					},
+					_ = &mut track_all_backoff => {
+						info!("TrackAll backoff expired, reconnecting");
+						continue 'requests;
+					},
 					_ = invoice_interval.tick() => {
 						self.process_payment_attempts().await?;
-						self.process_htlc_subscriptions().await?;
+						if interval_handle_subscriptions {
+							self.process_htlc_subscriptions().await?;
+						} else {
+							self.check_htlc_subscription_timeouts().await?;
+						}
 					},
-				};
+				}
 			}
 		}
 	}
