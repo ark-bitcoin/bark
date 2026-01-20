@@ -52,9 +52,11 @@ impl<V> ArkoorPackageCosignRequest<V> {
 			.flatten()
 	}
 
-	pub fn outputs(&self) -> impl Iterator<Item=&ArkoorDestination> {
+	pub fn all_outputs(
+		&self,
+	) -> impl Iterator<Item = &ArkoorDestination> + Clone {
 		self.requests.iter()
-			.map(|r| &r.outputs)
+			.map(|r| r.all_outputs())
 			.flatten()
 	}
 }

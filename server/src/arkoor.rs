@@ -48,7 +48,7 @@ impl Server {
 		let ret = ArkoorPackageBuilder::from_cosign_request(cosign_req)
 			.context("error creating ArkoorPackageBuilder from ArkoorCosignRequest")?;
 		for (idx, b) in ret.builders.iter().enumerate() {
-			let nb_outputs = b.outputs().len() + b.isolated_outputs().len();
+			let nb_outputs = b.all_outputs().count();
 			if nb_outputs > params.max_outputs_per_input {
 				bail!("too many outputs for input {} (#{}) ({} > {})",
 					b.input().id(), idx, nb_outputs, params.max_outputs_per_input,
@@ -57,8 +57,8 @@ impl Server {
 
 			if params.disallow_unnecessary_dust {
 				let non_dust_limit = P2TR_DUST * 2;
-				if b.outputs().iter().any(|o| o.total_amount < P2TR_DUST)
-					&& b.outputs().iter().any(|o| o.total_amount >= non_dust_limit)
+				if b.normal_outputs().iter().any(|o| o.total_amount < P2TR_DUST)
+					&& b.normal_outputs().iter().any(|o| o.total_amount >= non_dust_limit)
 				{
 					bail!(
 						"invalid mix of dust and non-dust outputs for input {} (#{})",

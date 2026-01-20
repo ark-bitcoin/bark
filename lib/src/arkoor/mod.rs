@@ -181,6 +181,10 @@ impl<V> ArkoorCosignRequest<V> {
 			use_checkpoint,
 		}
 	}
+
+	pub fn all_outputs(&self) -> impl Iterator<Item = &ArkoorDestination> + Clone {
+		self.outputs.iter().chain(&self.isolated_outputs)
+	}
 }
 
 impl ArkoorCosignRequest<VtxoId> {
@@ -296,13 +300,20 @@ impl<S: state::BuilderState> ArkoorBuilder<S> {
 	}
 
 	/// Access the regular (non-isolated) outputs of the builder
-	pub fn outputs(&self) -> &[ArkoorDestination] {
+	pub fn normal_outputs(&self) -> &[ArkoorDestination] {
 		&self.outputs
 	}
 
 	/// Access the isolated outputs of the builder
 	pub fn isolated_outputs(&self) -> &[ArkoorDestination] {
 		&self.isolated_outputs
+	}
+
+	/// Access all outputs of the builder
+	pub fn all_outputs(
+		&self,
+	) -> impl Iterator<Item = &ArkoorDestination> + Clone {
+		self.outputs.iter().chain(&self.isolated_outputs)
 	}
 
 	fn build_checkpoint_vtxo_at(

@@ -44,30 +44,30 @@ impl Server {
 		let input_vtxos = self.db.get_vtxos_by_id(&input_vtxo_ids).await?
 			.into_iter().map(|v| v.vtxo).collect::<Vec<_>>();
 
-		let htlc_vtxos = request.outputs()
+		let htlc_vtxos = request.all_outputs()
 			.filter(|v| matches!(v.policy, VtxoPolicy::ServerHtlcSend(..)))
 			.collect::<Vec<_>>();
 
 		if htlc_vtxos.is_empty() {
-			return badarg!("no HTLC VTXO requests provided");
+			return badarg!("no HTLC outputs provided");
 		}
 
 		let requested_policy = htlc_vtxos.iter()
 			.all_same(|v| v.policy.clone())
-			.context("all vtxo requests must have the same policy")?
-			.as_server_htlc_send()
-			.context("vtxo request is not htlc send")?.clone();
+			.context("not all HTLC outputs are identical")?
+			.as_server_htlc_send().expect("we filtered above")
+			.clone();
 
 		//TODO(stevenroose) check that vtxos are valid
 
-		let user_htlc_amount = request.outputs()
-			.filter(|v| matches!(v.policy, VtxoPolicy::ServerHtlcSend(..)))
-			.map(|v| v.total_amount)
-			.sum::<Amount>();
+		let user_htlc_amount = htlc_vtxos.iter().map(|v| v.total_amount).sum::<Amount>();
 
 		// Check if the provided requests are sufficient to pay the invoice
 		let amount = invoice.get_final_amount(Some(user_htlc_amount))
 			.badarg("missing or invalid user amount")?;
+
+		// should be checked above, but let's be cautious
+		ensure!(user_htlc_amount.to_msat() >= invoice.amount_msat().unwrap_or_default());
 
 		// Convert the PackageCosignRequest<VtxoId> into PackageCosignRequest<Vtxo>
 		// We will mask the old value
@@ -227,7 +227,7 @@ impl Server {
 		let tip = self.chain_tip().height as BlockHeight;
 		let db = self.db.clone();
 
-		let requested_policy = cosign_request.outputs()
+		let requested_policy = cosign_request.all_outputs()
 			.all_same(|v| v.policy.clone())
 			.context("all revocation vtxo requests must have the same policy")?;
 		if !matches!(requested_policy, VtxoPolicy::Pubkey(..)) {
