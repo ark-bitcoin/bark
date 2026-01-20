@@ -27,6 +27,7 @@ use cln_rpc::node_client::NodeClient;
 use cln_rpc::plugins::hold::hold_client::HoldClient;
 use crate::database;
 use crate::database::ln::{ClnNodeId, LightningHtlcSubscription, LightningHtlcSubscriptionStatus, LightningPaymentStatus};
+use crate::sync::SyncManager;
 use crate::system::RuntimeManager;
 use crate::telemetry;
 
@@ -59,6 +60,7 @@ impl ClnNodeMonitor {
 		node_rpc: ClnGrpcClient,
 		hold_rpc: Option<HoldClient<Channel>>,
 		config: ClnNodeMonitorConfig,
+		sync_manager: Arc<SyncManager>,
 	) -> anyhow::Result<ClnNodeMonitor> {
 		let payment_idxs = db.get_lightning_payment_indexes(node_id).await
 			.with_context(|| format!("failed to fetch payment indices for {}", node_id))?
@@ -73,6 +75,7 @@ impl ClnNodeMonitor {
 			config, db, payment_update_tx, ctrl_rx, node_id,
 			rpc: node_rpc,
 			hold_rpc,
+			sync_manager,
 			created_index: match payment_idxs.created_index {
 				0 => None,
 				i => Some(i),
@@ -147,6 +150,7 @@ struct ClnNodeMonitorProcess {
 
 	rpc: NodeClient<Channel>,
 	hold_rpc: Option<HoldClient<Channel>>,
+	sync_manager: Arc<SyncManager>,
 
 	/// last seen sendpay created index, or 0 for none seen
 	created_index: Option<u64>,
@@ -566,8 +570,7 @@ impl ClnNodeMonitorProcess {
 		};
 
 		// Get current tip for expiry validation
-		let tip = self.rpc.getinfo(cln_rpc::GetinfoRequest {}).await?
-			.into_inner().blockheight;
+		let tip = self.sync_manager.chain_tip().height;
 
 		// NB: We subtract 1 to give some buffer for the lightning payment to be sent.
 		let required_min_htlc_expiry = tip + invoice.min_final_cltv_expiry_delta() as BlockHeight - 1;

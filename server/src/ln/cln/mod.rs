@@ -55,6 +55,7 @@ use ark::lightning::{Bolt12Invoice, Bolt12InvoiceExt, Invoice, Offer, PaymentHas
 use cln_rpc::node_client::NodeClient;
 
 use crate::error::ContextExt;
+use crate::sync::SyncManager;
 use crate::system::RuntimeManager;
 use crate::config::{self, Config};
 use crate::database;
@@ -90,6 +91,7 @@ impl ClnManager {
 		rtmgr: RuntimeManager,
 		config: &Config,
 		db: database::Db,
+		sync_manager: Arc<SyncManager>,
 	) -> anyhow::Result<ClnManager> {
 		let (ctrl_tx, ctrl_rx) = mpsc::unbounded_channel();
 		let (payment_update_tx, payment_update_rx) = broadcast::channel(256);
@@ -111,6 +113,7 @@ impl ClnManager {
 
 			ctrl_rx,
 			node_monitor_config,
+			sync_manager,
 
 			payment_update_tx: payment_update_tx.clone(),
 
@@ -433,6 +436,7 @@ impl ClnNodeInfo {
 		payment_update_tx: &broadcast::Sender<PaymentHash>,
 		rtmgr: &RuntimeManager,
 		waker: &Arc<Notify>,
+		sync_manager: &Arc<SyncManager>,
 	) -> anyhow::Result<ClnNodeId> {
 		let mut rpc = self.config.build_grpc_client().await.context("failed to connect rpc")?;
 		let hold_rpc = self.config.build_hold_client().await.context("failed to connect hold rpc")?;
@@ -464,6 +468,7 @@ impl ClnNodeInfo {
 			rpc.clone(),
 			hold_rpc.clone(),
 			monitor_config.clone(),
+			sync_manager.clone(),
 		).await.context("failed to start ClnNodeMonitor")?;
 
 		let online = ClnNodeOnlineState { id, pubkey, rpc, hold_rpc, monitor: Some(monitor) };
@@ -518,6 +523,7 @@ struct ClnManagerProcess {
 	nodes: HashMap<Uri, ClnNodeInfo>,
 	node_by_id: HashMap<ClnNodeId, Uri>,
 	node_monitor_config: ClnNodeMonitorConfig,
+	sync_manager: Arc<SyncManager>,
 
 	htlc_expiry_delta: BlockDelta,
 }
@@ -597,6 +603,7 @@ impl ClnManagerProcess {
 						&self.payment_update_tx,
 						&self.rtmgr,
 						&self.waker,
+						&self.sync_manager,
 					).await {
 						Ok(id) => {
 							info!("Successfully connected to CLN node at {}", uri);
