@@ -1388,13 +1388,75 @@ fn arkoor_sighash(prevout: &TxOut, arkoor_tx: &Transaction) -> TapSighash {
 mod test {
 	use super::*;
 
+	use std::collections::HashSet;
+
 	use bitcoin::Amount;
 	use bitcoin::secp256k1::Keypair;
 	use bitcoin::secp256k1::rand;
 
 	use crate::SECP;
 	use crate::test::dummy::DummyTestVtxoSpec;
+	use crate::vtxo::VtxoId;
 
+	/// Verify properties of spend_info(), build_unsigned_internal_vtxos(), and final vtxos.
+	fn verify_builder<S: state::BuilderState>(
+		builder: &ArkoorBuilder<S>,
+		input: &Vtxo,
+		outputs: &[ArkoorDestination],
+		isolated_outputs: &[ArkoorDestination],
+	) {
+		let has_isolation = !isolated_outputs.is_empty();
+
+		let spend_info = builder.spend_info();
+		let spend_vtxo_ids: HashSet<VtxoId> = spend_info.iter().map(|(id, _)| *id).collect();
+
+		// the input vtxo is the first to be spent
+		assert_eq!(spend_info[0].0, input.id());
+
+		// no vtxo should be spent twice
+		assert_eq!(spend_vtxo_ids.len(), spend_info.len());
+
+		// all intermediate vtxos are spent and use checkpoint policy for efficient cosigning
+		let internal_vtxos: Vec<Vtxo> = builder.build_unsigned_internal_vtxos().collect();
+		let internal_vtxo_ids: HashSet<VtxoId> = internal_vtxos.iter().map(|v| v.id()).collect();
+		for internal_vtxo in &internal_vtxos {
+			assert!(spend_vtxo_ids.contains(&internal_vtxo.id()));
+			assert!(matches!(internal_vtxo.policy, VtxoPolicy::Checkpoint(_)));
+		}
+
+		// all spent vtxos except the input are internal vtxos
+		for (vtxo_id, _) in &spend_info[1..] {
+			assert!(internal_vtxo_ids.contains(vtxo_id));
+		}
+
+		// isolation vtxo holds combined value of all dust outputs
+		if has_isolation {
+			let isolation_vtxo = internal_vtxos.last().unwrap();
+			let expected_isolation_amount: Amount = isolated_outputs.iter()
+				.map(|o| o.total_amount)
+				.sum();
+			assert_eq!(isolation_vtxo.amount(), expected_isolation_amount);
+		}
+
+		// final vtxos are unspent outputs that recipients receive
+		let final_vtxos: Vec<Vtxo> = builder.build_unsigned_vtxos().collect();
+		for final_vtxo in &final_vtxos {
+			assert!(!spend_vtxo_ids.contains(&final_vtxo.id()));
+		}
+
+		// final vtxos match requested destinations
+		let all_destinations: Vec<&ArkoorDestination> = outputs.iter()
+			.chain(isolated_outputs.iter())
+			.collect();
+		for (vtxo, dest) in final_vtxos.iter().zip(all_destinations.iter()) {
+			assert_eq!(vtxo.amount(), dest.total_amount);
+			assert_eq!(vtxo.policy, dest.policy);
+		}
+
+		// total value is conserved
+		let total_output_amount: Amount = final_vtxos.iter().map(|v| v.amount()).sum();
+		assert_eq!(total_output_amount, input.amount());
+	}
 
 	#[test]
 	fn build_checkpointed_arkoor() {
@@ -1429,19 +1491,14 @@ mod test {
 			}
 		];
 
-		// The user generates their nonces
 		let user_builder = ArkoorBuilder::new_with_checkpoint(
 			alice_vtxo.clone(),
 			dest.clone(),
 			vec![], // no isolation outputs
 		).expect("Valid arkoor request");
 
-		// At this point all out-of-round transactions are fully defined.
-		// They are just missing the required signatures.
-		// We are already able to compute the vtxos and validate them
-		let _unsigned_vtxos = user_builder.build_unsigned_vtxos().collect::<Vec<_>>();
+		verify_builder(&user_builder, &alice_vtxo, &dest, &[]);
 
-		// The user generates their nonces
 		let user_builder = user_builder.generate_user_nonces(alice_keypair);
 		let cosign_request = user_builder.cosign_request();
 
@@ -1515,12 +1572,13 @@ mod test {
 			}
 		];
 
-		// The user generates their nonces
 		let user_builder = ArkoorBuilder::new_with_checkpoint(
 			alice_vtxo.clone(),
 			outputs.clone(),
 			dust_outputs.clone(),
 		).expect("Valid arkoor request with dust isolation");
+
+		verify_builder(&user_builder, &alice_vtxo, &outputs, &dust_outputs);
 
 		// Verify dust isolation is active
 		assert!(
@@ -1531,7 +1589,6 @@ mod test {
 		// Check signature count: 1 checkpoint + 1 arkoor + 1 dust fanout = 3
 		assert_eq!(user_builder.nb_sigs(), 3);
 
-		// The user generates their nonces
 		let user_builder = user_builder.generate_user_nonces(alice_keypair);
 		let cosign_request = user_builder.cosign_request();
 
@@ -1600,19 +1657,14 @@ mod test {
 			}
 		];
 
-		// The user generates their nonces
 		let user_builder = ArkoorBuilder::new_without_checkpoint(
 			alice_vtxo.clone(),
 			dest.clone(),
 			vec![], // no isolation outputs
 		).expect("Valid arkoor request");
 
-		// At this point all out-of-round transactions are fully defined.
-		// They are just missing the required signatures.
-		// We are already able to compute the vtxos and validate them
-		let _unsigned_vtxos = user_builder.build_unsigned_vtxos().collect::<Vec<_>>();
+		verify_builder(&user_builder, &alice_vtxo, &dest, &[]);
 
-		// The user generates their nonces
 		let user_builder = user_builder.generate_user_nonces(alice_keypair);
 		let cosign_request = user_builder.cosign_request();
 
@@ -1686,12 +1738,13 @@ mod test {
 			}
 		];
 
-		// The user generates their nonces
 		let user_builder = ArkoorBuilder::new_without_checkpoint(
 			alice_vtxo.clone(),
 			outputs.clone(),
 			dust_outputs.clone(),
 		).expect("Valid arkoor request with dust isolation");
+
+		verify_builder(&user_builder, &alice_vtxo, &outputs, &dust_outputs);
 
 		// Verify dust isolation is active
 		assert!(
@@ -1703,7 +1756,6 @@ mod test {
 		// (no checkpoint in non-checkpointed mode)
 		assert_eq!(user_builder.nb_sigs(), 2);
 
-		// The user generates their nonces
 		let user_builder = user_builder.generate_user_nonces(alice_keypair);
 		let cosign_request = user_builder.cosign_request();
 
