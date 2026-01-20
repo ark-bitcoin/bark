@@ -22,7 +22,7 @@ use ark::util::IteratorExt;
 use server_rpc::protos::{self, InputVtxo, lightning_payment_status};
 use server_rpc::protos::prepare_lightning_receive_claim_request::LightningReceiveAntiDos;
 use server_rpc::TryFromBytes;
-use bitcoin_ext::{AmountExt, BlockDelta, BlockHeight, P2TR_DUST};
+use bitcoin_ext::{AmountExt, BlockDelta, BlockHeight};
 
 use crate::arkoor::ArkoorCosignRequestValidationParams;
 use crate::database::ln::{
@@ -155,9 +155,6 @@ impl Server {
 			}
 
 			//TODO(stevenroose) no fee is charged here now
-			if vtxo.amount() < P2TR_DUST {
-				return badarg!("htlc vtxo amount is below dust threshold");
-			}
 
 			vtxos.push(vtxo);
 		}
@@ -320,10 +317,6 @@ impl Server {
 			bail!("Requested min HTLC CLTV delta is greater than max HTLC recv CLTV delta: requested: {}, max: {}",
 				min_cltv_delta, self.config.max_user_invoice_cltv_delta,
 			);
-		}
-
-		if amount < P2TR_DUST {
-			return badarg!("Requested amount must be at least {}", P2TR_DUST);
 		}
 
 		if let Some(max) = self.config.max_vtxo_amount {
