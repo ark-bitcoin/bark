@@ -223,7 +223,8 @@ impl Query {
 /// WHERE partition = :partition
 /// ORDER BY :sort_key DESC
 /// ```
-#[async_trait]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 pub trait StorageAdaptor: Send + Sync + 'static {
 	/// Stores a record, inserting or updating by primary key.
 	async fn put(&mut self, record: Record) -> anyhow::Result<()>;
@@ -327,7 +328,8 @@ impl<S: StorageAdaptor> StorageAdaptorWrapper<S> {
 }
 
 /// Blanket implementation of `BarkPersister` for any type implementing `StorageAdaptor`.
-#[async_trait]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl <S: StorageAdaptor> BarkPersister for StorageAdaptorWrapper<S> {
 	async fn init_wallet(&self, properties: &WalletProperties) -> anyhow::Result<()> {
 		let record = Record::from_data(

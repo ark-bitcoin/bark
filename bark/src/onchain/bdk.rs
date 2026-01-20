@@ -47,7 +47,8 @@ impl From<LocalOutput> for LocalUtxo {
 ///
 /// When used, the resulting PSBT should be signed using
 /// [crate::exit::Exit::sign_exit_claim_inputs].
-#[async_trait]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 pub trait TxBuilderExt: Send + Sync {
 	async fn add_exit_claim_inputs(
 		&mut self,
@@ -56,7 +57,8 @@ pub trait TxBuilderExt: Send + Sync {
 	) -> anyhow::Result<()>;
 }
 
-#[async_trait]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl<Cs: Send + Sync> TxBuilderExt for TxBuilder<'_, Cs> {
 	async fn add_exit_claim_inputs(
 		&mut self,
@@ -105,7 +107,8 @@ impl <W: Deref<Target = BdkWallet>> GetBalance for W {
 	}
 }
 
-#[async_trait]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl SignPsbt for BdkWallet {
 	async fn finish_tx(&mut self, mut psbt: Psbt) -> anyhow::Result<Transaction> {
 		#[allow(deprecated)]
@@ -182,7 +185,8 @@ impl <W: Deref<Target = BdkWallet>> GetSpendingTx for W {
 	}
 }
 
-#[async_trait]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl MakeCpfp for BdkWallet {
 	fn make_signed_p2a_cpfp(
 		&mut self,
@@ -266,7 +270,8 @@ impl OnchainWallet {
 	}
 }
 
-#[async_trait]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl MakeCpfp for OnchainWallet {
 	fn make_signed_p2a_cpfp(
 		&mut self,
@@ -283,7 +288,8 @@ impl MakeCpfp for OnchainWallet {
 	}
 }
 
-#[async_trait]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl SignPsbt for OnchainWallet {
 	async fn finish_tx(&mut self, psbt: Psbt) -> anyhow::Result<Transaction> {
 		let tx = self.inner.finish_tx(psbt).await?;
@@ -292,7 +298,8 @@ impl SignPsbt for OnchainWallet {
 	}
 }
 
-#[async_trait]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl ChainSync for OnchainWallet {
 	async fn sync(&mut self, chain: &ChainSource) -> anyhow::Result<()> {
 		debug!("Starting wallet sync...");

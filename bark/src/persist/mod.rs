@@ -66,7 +66,8 @@ use crate::vtxo::{VtxoState, VtxoStateKind, WalletVtxo};
 /// - If your backend is not thread-safe, prefer a short-lived connection per call or use
 ///   an internal pool with checked-out connections per operation.
 /// - Return precise errors so callers can surface actionable diagnostics.
-#[async_trait]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 pub trait BarkPersister: Send + Sync + 'static {
 	/// Initialize a wallet in storage with the provided properties.
 	///

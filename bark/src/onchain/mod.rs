@@ -83,7 +83,8 @@ pub struct SpendableExit {
 ///
 /// Wallets should apply all necessary signatures and finalize inputs according
 /// to their internal key management and policies.
-#[async_trait]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 pub trait SignPsbt {
 	/// Consume a [Psbt] and return a fully signed and finalized [Transaction].
 	async fn finish_tx(&mut self, psbt: Psbt) -> anyhow::Result<Transaction>;
@@ -140,7 +141,8 @@ pub trait GetSpendingTx {
 }
 
 /// Ability to create and persist CPFP transactions for spending P2A outputs.
-#[async_trait]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 pub trait MakeCpfp {
 	/// Creates a signed Child Pays for Parent (CPFP) transaction using a Pay-to-Anchor (P2A) output
 	/// to broadcast unilateral exits and other TRUC transactions.
@@ -216,7 +218,8 @@ impl <W: GetBalance +
 	Send + Sync> ExitUnilaterally for W {}
 
 /// Ability to sync the wallet with the onchain network.
-#[async_trait]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 pub trait ChainSync {
 	/// Sync the wallet with the onchain network.
 	async fn sync(&mut self, chain: &ChainSource) -> anyhow::Result<()>;

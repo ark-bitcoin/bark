@@ -76,7 +76,8 @@ use crate::vtxo::state::{VtxoStateKind, WalletVtxo};
 /// See [`Wallet::vtxos_with`]. For easy filtering, see [VtxoFilter].
 ///
 /// This trait is also implemented for `Fn(&WalletVtxo) -> anyhow::Result<bool>`.
-#[async_trait]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 pub trait FilterVtxos: Send + Sync {
 	/// Check whether the VTXO mathes this filter
 	async fn matches(&self, vtxo: &WalletVtxo) -> anyhow::Result<bool>;
@@ -92,7 +93,8 @@ pub trait FilterVtxos: Send + Sync {
 	}
 }
 
-#[async_trait]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl<F> FilterVtxos for F
 where
 	F: Fn(&WalletVtxo) -> anyhow::Result<bool> + Send + Sync,
@@ -205,7 +207,8 @@ impl<'a> VtxoFilter<'a> {
 	}
 }
 
-#[async_trait]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl FilterVtxos for VtxoFilter<'_> {
 	async fn matches(&self, vtxo: &WalletVtxo) -> anyhow::Result<bool> {
 		let id = vtxo.id();
@@ -414,7 +417,8 @@ impl<'a> RefreshStrategy<'a> {
 	}
 }
 
-#[async_trait]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl FilterVtxos for RefreshStrategy<'_> {
 	async fn matches(&self, vtxo: &WalletVtxo) -> anyhow::Result<bool> {
 		match self.inner {
@@ -468,7 +472,8 @@ impl FilterVtxos for RefreshStrategy<'_> {
 	}
 }
 
-#[async_trait]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl FilterVtxos for VtxoStateKind {
 	async fn matches(&self, vtxo: &WalletVtxo) -> anyhow::Result<bool> {
 	    Ok(vtxo.state.kind() == *self)
