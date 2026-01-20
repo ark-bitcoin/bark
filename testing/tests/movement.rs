@@ -431,10 +431,9 @@ async fn round_refresh() {
 		.map(|txid| serde_json::from_value::<Txid>(txid.clone()).unwrap()).unwrap();
 }
 
-#[ignore]
 #[tokio::test]
-async fn round_send_onchain() {
-	let ctx = TestContext::new("movement/round_send_onchain").await;
+async fn movement_send_onchain() {
+	let ctx = TestContext::new("movement/movement_send_onchain").await;
 	let srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
 	let bark = ctx.new_bark_with_funds("bark", &srv, sat(1_000_000)).await;
 
@@ -443,21 +442,28 @@ async fn round_send_onchain() {
 	// 1 consumed VTXO and 1 change VTXO
 	let vtxos_pre_send = bark.vtxo_ids().await;
 	let addr = bark.get_onchain_address().await;
-	bark.send_onchain(&addr, sat(50_000)).await;
-	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
+	let amount = sat(50_000);
+	let txid = bark.send_onchain(&addr, amount).await;
+	ctx.generate_blocks(2).await;
 	let vtxos_post_send = bark.vtxo_ids().await;
+
+	let expected_fee = OffboardRequest::calculate_fee(
+		&addr.script_pubkey(),
+		srv.config().offboard_feerate,
+		Weight::from_vb_unchecked(srv.config().offboard_fixed_fee_vb as u64),
+	).unwrap();
 
 	let movement = bark.history().await.last().cloned().unwrap();
 	assert_eq!(movement.status, MovementStatus::Successful);
-	assert_eq!(movement.subsystem.name, "bark.round");
+	assert_eq!(movement.subsystem.name, "bark.offboard");
 	assert_eq!(movement.subsystem.kind, "send_onchain");
-	assert_eq!(movement.intended_balance, signed_sat(-50_000));
-	assert_eq!(movement.effective_balance, signed_sat(-51_100));
-	assert_eq!(movement.offchain_fee, sat(1_100));
+	assert_eq!(movement.intended_balance, -amount.to_signed().unwrap());
+	assert_eq!(movement.effective_balance, -(amount + expected_fee).to_signed().unwrap());
+	assert_eq!(movement.offchain_fee, expected_fee);
 	assert_eq!(movement.sent_to.len(), 1);
 	assert_eq!(movement.sent_to.first().unwrap(), &MovementDestination {
 		destination: PaymentMethod::Bitcoin(addr.to_string()),
-		amount: sat(50_000),
+		amount: amount,
 	});
 	assert_eq!(movement.received_on.len(), 0);
 	assert_eq!(movement.input_vtxos.len(), 1);
@@ -468,6 +474,13 @@ async fn round_send_onchain() {
 	assert_eq!(movement.time.completed_at.is_some(), true);
 
 	assert_eq!(movement.metadata.is_some(), true);
-	movement.metadata.as_ref().unwrap().get("funding_txid")
-		.map(|txid| serde_json::from_value::<Txid>(txid.clone()).unwrap()).unwrap();
+	assert_eq!(txid,
+		movement.metadata.as_ref().unwrap().get("offboard_txid")
+			.map(|txid| serde_json::from_value::<Txid>(txid.clone()).unwrap()).unwrap(),
+	);
+	assert_eq!(txid,
+		deserialize_hex::<Transaction>(&movement.metadata.as_ref().unwrap().get("offboard_tx")
+			.map(|hex| serde_json::from_value::<String>(hex.clone()).unwrap()).unwrap()
+		).unwrap().compute_txid(),
+	);
 }

@@ -331,15 +331,18 @@ impl Bark {
 	}
 
 	/// Use bark wallet to send bitcoin onchain
-	pub async fn try_send_onchain(&self, destination: impl fmt::Display, amount: Amount) -> anyhow::Result<()> {
+	pub async fn try_send_onchain(
+		&self,
+		destination: impl fmt::Display,
+		amount: Amount,
+	) -> anyhow::Result<Txid> {
 		let destination = destination.to_string();
 		let amount = amount.to_string();
-		self.try_run(["send-onchain", &destination, &amount, "--verbose"]).await?;
-		Ok(())
+		self.try_run_json(["send-onchain", &destination, &amount, "--verbose"]).await
 	}
 
-	pub async fn send_onchain(&self, destination: impl fmt::Display, amount: Amount) {
-		self.try_send_onchain(destination, amount).await.unwrap();
+	pub async fn send_onchain(&self, destination: impl fmt::Display, amount: Amount) -> Txid {
+		self.try_send_onchain(destination, amount).await.unwrap()
 	}
 
 	pub async fn try_send_oor(&self, dest: impl fmt::Display, amount: Amount, sync: bool) -> anyhow::Result<()> {
