@@ -335,6 +335,7 @@ dependencies = [
  "bdk_esplora",
  "bdk_wallet",
  "bitcoin",
+ "getrandom 0.2.16",
  "lazy_static",
  "log",
  "reqwest",

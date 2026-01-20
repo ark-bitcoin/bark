@@ -18,6 +18,7 @@ esplora = ["rpc", "bdk_esplora", "async-trait", "reqwest"]
 # temporary feature to gate the TransactionExt::all_related_utxos function that
 # requires a Rust version newer than the rust-bitcoin MSRV.
 all-related-utxos = []
+wasm-web = ["getrandom"]
 
 [dependencies]
 # EXPORTED
@@ -37,8 +38,10 @@ reqwest = { version = "0.12.18", features = [ "rustls-tls" ], default-features =
 async-trait = { version = "0.1.88", optional = true }
 
 # bdk
-bdk_wallet = { version = "2.1.0", optional = true }
+bdk_wallet = { workspace = true, optional = true }
 
+# pin to 0.2 needed to force bdk to use getrandom with js feature
+getrandom = { version = "0.2", optional = true, features = ["js"] }
 
 [dev-dependencies]
 rmp-serde.workspace = true
