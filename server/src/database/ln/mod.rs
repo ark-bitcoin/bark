@@ -722,4 +722,43 @@ impl Db {
 			Ok(None)
 		}
 	}
+
+	/// Retrieve an open HTLC subscription for a specific node by payment hash.
+	///
+	/// This is used by TrackAll event handling to look up subscriptions
+	/// when a state change notification is received.
+	pub async fn get_open_htlc_subscription_for_node_by_payment_hash(
+		&self,
+		node_id: ClnNodeId,
+		payment_hash: &PaymentHash,
+	) -> anyhow::Result<Option<LightningHtlcSubscription>> {
+		let conn = self.get_conn().await?;
+
+		let stmt = conn.prepare("
+			SELECT sub.id, sub.lightning_invoice_id, sub.lightning_node_id,
+				sub.status, sub.lowest_incoming_htlc_expiry, sub.accepted_at,
+				sub.created_at, sub.updated_at, invoice.invoice
+			FROM lightning_htlc_subscription sub
+			JOIN lightning_invoice invoice ON
+				sub.lightning_invoice_id = invoice.id
+			WHERE invoice.payment_hash = $1
+				AND sub.lightning_node_id = $2
+				AND sub.status NOT IN ($3, $4)
+			ORDER BY sub.created_at DESC
+			LIMIT 1;
+		").await?;
+
+		let status_settled = LightningHtlcSubscriptionStatus::Settled;
+		let status_canceled = LightningHtlcSubscriptionStatus::Canceled;
+		let row = conn.query_opt(
+			&stmt,
+			&[&payment_hash.to_vec(), &node_id, &status_settled, &status_canceled],
+		).await?;
+
+		if let Some(ref row) = row {
+			Ok(Some(row.try_into()?))
+		} else {
+			Ok(None)
+		}
+	}
 }
