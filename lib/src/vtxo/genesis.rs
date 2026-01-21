@@ -15,7 +15,7 @@ use crate::tree::signed::{cosign_taproot, leaf_cosign_taproot, unlock_clause};
 use crate::vtxo::MaybePreimage;
 
 /// Represents the kind of [GenesisTransition]
-pub(crate) enum TransitionKind {
+pub enum TransitionKind {
 	Cosigned,
 	HashLockedCosigned,
 	Arkoor,
@@ -30,7 +30,6 @@ impl TransitionKind {
 		}
 	}
 }
-
 
 impl fmt::Display for TransitionKind {
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -57,7 +56,7 @@ pub struct CosignedGenesis {
 impl CosignedGenesis {
 
 	/// Taproot that this transition is satisfying.
-	pub(crate) fn input_taproot(
+	pub fn input_taproot(
 		&self,
 		server_pubkey: PublicKey,
 		expiry_height: BlockHeight,
@@ -66,7 +65,7 @@ impl CosignedGenesis {
 		cosign_taproot(agg_pk, server_pubkey, expiry_height)
 	}
 
-	pub(crate) fn input_txout(
+	pub fn input_txout(
 		&self,
 		amount: Amount,
 		server_pubkey: PublicKey,
@@ -78,15 +77,15 @@ impl CosignedGenesis {
 		}
 	}
 
-	pub(crate) fn witness(&self) -> Witness {
+	pub fn witness(&self) -> Witness {
 		Witness::from_slice(&[&self.signature[..]])
 	}
 
-	pub(crate) fn is_fully_signed(&self) -> bool {
+	pub fn is_fully_signed(&self) -> bool {
 		true
 	}
 
-	pub(crate) fn validate_sigs(
+	pub fn validate_sigs(
 		&self,
 		tx: &Transaction,
 		input_idx: usize,
@@ -123,7 +122,7 @@ pub struct HashLockedCosignedGenesis {
 }
 
 impl HashLockedCosignedGenesis {
-	pub(crate) fn input_taproot(
+	pub fn input_taproot(
 		&self,
 		server_pubkey: PublicKey,
 		expiry_height: BlockHeight,
@@ -131,7 +130,7 @@ impl HashLockedCosignedGenesis {
 		leaf_cosign_taproot(self.user_pubkey, server_pubkey, expiry_height, self.unlock.hash())
 	}
 
-	pub(crate) fn input_txout(
+	pub fn input_txout(
 		&self,
 		amount: Amount,
 		server_pubkey: PublicKey,
@@ -143,7 +142,7 @@ impl HashLockedCosignedGenesis {
 		}
 	}
 
-	pub(crate) fn witness(
+	pub fn witness(
 		&self,
 		server_pubkey: PublicKey,
 		expiry_height: BlockHeight,
@@ -176,7 +175,7 @@ impl HashLockedCosignedGenesis {
 		])
 	}
 
-	pub(crate) fn is_fully_signed(&self) -> bool {
+	pub fn is_fully_signed(&self) -> bool {
 		// Not fully signed if we don't know the preimage
 		match self.unlock {
 			MaybePreimage::Preimage(_) => {},
@@ -189,7 +188,7 @@ impl HashLockedCosignedGenesis {
 		}
 	}
 
-	pub(crate) fn validate_sigs(
+	pub fn validate_sigs(
 		&self,
 		tx: &Transaction,
 		input_idx: usize,
@@ -238,7 +237,7 @@ impl ArkoorGenesis {
 		self.client_cosigners.iter().cloned().chain([server_pubkey])
 	}
 
-	pub(crate) fn input_txout(&self, amount: Amount, server_pubkey: PublicKey) -> TxOut {
+	pub fn input_txout(&self, amount: Amount, server_pubkey: PublicKey) -> TxOut {
 		TxOut {
 			value: amount,
 			script_pubkey: ScriptBuf::new_p2tr_tweaked(self.output_key(server_pubkey))
@@ -250,18 +249,18 @@ impl ArkoorGenesis {
 		TweakedPublicKey::dangerous_assume_tweaked(agg_pk.x_only_public_key().0)
 	}
 
-	pub(crate) fn witness(&self) -> Witness {
+	pub fn witness(&self) -> Witness {
 		match self.signature {
 			Some(sig) => Witness::from_slice(&[&sig[..]]),
 			None => Witness::new(),
 		}
 	}
 
-	pub(crate) fn is_fully_signed(&self) -> bool {
+	pub fn is_fully_signed(&self) -> bool {
 		self.signature.is_some()
 	}
 
-	pub(crate) fn validate_sigs(
+	pub fn validate_sigs(
 		&self,
 		tx: &Transaction,
 		input_idx: usize,
@@ -294,7 +293,7 @@ impl ArkoorGenesis {
 ///
 /// See private module-level documentation for more info.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum GenesisTransition {
+pub enum GenesisTransition {
 	/// A transition based on a cosignature.
 	///
 	/// This can be either the result of a cosigned "clArk" tree branch transition
@@ -338,7 +337,7 @@ impl GenesisTransition {
 	}
 
 	/// Output that this transition is spending.
-	pub(crate) fn input_txout(
+	pub fn input_txout(
 		&self,
 		amount: Amount,
 		server_pubkey: PublicKey,
@@ -353,7 +352,7 @@ impl GenesisTransition {
 	}
 
 	/// The transaction witness for this transition.
-	pub(crate) fn witness(
+	pub fn witness(
 		&self,
 		server_pubkey: PublicKey,
 		expiry_height: BlockHeight,
@@ -367,7 +366,7 @@ impl GenesisTransition {
 
 
 	/// Whether the transition is fully signed
-	pub(crate) fn is_fully_signed(&self) -> bool {
+	pub fn is_fully_signed(&self) -> bool {
 		match self {
 			Self::Cosigned(inner) => inner.is_fully_signed(),
 			Self::HashLockedCosigned(inner) => inner.is_fully_signed(),
@@ -376,7 +375,7 @@ impl GenesisTransition {
 	}
 
 	/// String of the transition kind, for error reporting
-	pub(crate) fn kind(&self) -> TransitionKind {
+	pub fn kind(&self) -> TransitionKind {
 		match self {
 			Self::Cosigned { .. } => TransitionKind::Cosigned,
 			Self::HashLockedCosigned { .. } => TransitionKind::HashLockedCosigned,
@@ -389,19 +388,19 @@ impl GenesisTransition {
 ///
 /// See private module-level documentation for more info.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct GenesisItem {
+pub struct GenesisItem {
 	/// The transition from the previous tx to this one.
-	pub(crate) transition: GenesisTransition,
+	pub transition: GenesisTransition,
 	/// The output index ("vout") of the output going to the next genesis item.
-	pub(crate) output_idx: u8,
+	pub output_idx: u8,
 	/// The other outputs to construct the exit tx.
 	// NB empty for the first item
-	pub(crate) other_outputs: Vec<TxOut>,
+	pub other_outputs: Vec<TxOut>,
 }
 
 impl GenesisItem {
 	/// Construct the exit transaction at this level of the genesis.
-	pub(crate) fn tx(&self,
+	pub fn tx(&self,
 		prev: OutPoint,
 		next: TxOut,
 		server_pubkey: PublicKey,
