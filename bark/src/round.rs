@@ -471,12 +471,39 @@ impl RoundState {
 			=> {
 				&self.participation.inputs
 			},
+			RoundFlowState::Finished { .. } => if self.done {
+				// inputs already unlocked
+				&[]
+			} else {
+				&self.participation.inputs
+			},
 			RoundFlowState::Failed { .. }
-				| RoundFlowState::Finished { .. }
 				| RoundFlowState::Canceled
 			=> {
 				// inputs already unlocked
 				&[]
+			},
+		}
+	}
+
+	/// The balance pending in this round
+	///
+	/// This becomes zero once the new round VTXOs are unlocked.
+	pub fn pending_balance(&self) -> Amount {
+		if self.done {
+			return Amount::ZERO;
+		}
+
+		match self.flow {
+			RoundFlowState::NonInteractivePending { .. }
+				| RoundFlowState::InteractivePending
+				| RoundFlowState::InteractiveOngoing { .. }
+				| RoundFlowState::Finished { .. }
+			=> {
+				self.participation.outputs.iter().map(|o| o.amount).sum()
+			},
+			RoundFlowState::Failed { .. } | RoundFlowState::Canceled => {
+				Amount::ZERO
 			},
 		}
 	}

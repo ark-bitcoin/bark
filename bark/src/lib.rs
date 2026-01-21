@@ -978,14 +978,17 @@ impl Wallet {
 			v.into_iter().map(|v| v.amount()).sum::<Amount>()
 		};
 
-		let pending_lightning_send = self.pending_lightning_send_vtxos().await?.iter().map(|v| v.amount())
+		let pending_lightning_send = self.pending_lightning_send_vtxos().await?.iter()
+			.map(|v| v.amount())
 			.sum::<Amount>();
 
 		let claimable_lightning_receive = self.claimable_lightning_receive_balance().await?;
 
-		let pending_board = self.pending_board_vtxos().await?.iter().map(|v| v.amount()).sum::<Amount>();
+		let pending_board = self.pending_board_vtxos().await?.iter()
+			.map(|v| v.amount())
+			.sum::<Amount>();
 
-		let pending_in_round = self.pending_round_input_vtxos().await?.iter().map(|v| v.amount()).sum();
+		let pending_in_round = self.pending_round_balance().await?;
 
 		let pending_exit = self.exit.try_read().ok().map(|e| e.pending_total());
 
@@ -1112,6 +1115,15 @@ impl Wallet {
 					.context("unknown round input VTXO")?;
 				ret.push(v);
 			}
+		}
+		Ok(ret)
+	}
+
+	/// Balance locked in pending rounds
+	async fn pending_round_balance(&self) -> anyhow::Result<Amount> {
+		let mut ret = Amount::ZERO;
+		for round in self.db.load_round_states().await? {
+			ret += round.state.pending_balance();
 		}
 		Ok(ret)
 	}
