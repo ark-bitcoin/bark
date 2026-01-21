@@ -478,9 +478,10 @@ impl Vtxo {
 	}
 
 
-	/// Iterate over all oor transitions in this VTXO.
-	/// The outer vec cointains one element for each transition
-	/// The inner Vec contains all pubkeys within that transition
+	/// Iterate over all oor transitions in this VTXO
+	///
+	/// The outer `Vec` cointains one element for each transition.
+	/// The inner `Vec` contains all pubkeys within that transition.
 	///
 	/// This does not include the current arkoor pubkey, for that use
 	/// [Vtxo::arkoor_pubkey].
@@ -489,7 +490,7 @@ impl Vtxo {
 			match &g.transition {
 				// NB in principle, a genesis item's transition MUST have
 				// an arkoor pubkey, otherwise the vtxo is invalid
-				GenesisTransition::Arkoor(inner) => Some(inner.cosigners(self.server_pubkey).collect()),
+				GenesisTransition::Arkoor(inner) => Some(inner.client_cosigners().collect()),
 				_ => None,
 			}
 		}).collect()

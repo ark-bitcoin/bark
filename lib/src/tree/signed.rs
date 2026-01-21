@@ -869,7 +869,10 @@ impl CachedSignedVtxoTree {
 			// first do the leaf item
 			let leaf_node = branch.next().unwrap();
 			genesis.push(GenesisItem {
-				transition: GenesisTransition::new_hash_locked_cosigned(req.vtxo.policy.user_pubkey(), None, MaybePreimage::Hash(req.unlock_hash)),
+				transition: GenesisTransition::new_hash_locked_cosigned(
+					req.vtxo.policy.user_pubkey(),
+					None,
+					MaybePreimage::Hash(req.unlock_hash)),
 				output_idx: 0,
 				other_outputs: vec![],
 			});

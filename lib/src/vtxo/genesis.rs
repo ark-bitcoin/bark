@@ -233,7 +233,11 @@ pub struct ArkoorGenesis {
 }
 
 impl ArkoorGenesis {
-	pub fn cosigners<'a>(&'a self, server_pubkey: PublicKey) ->  impl Iterator<Item = PublicKey> + 'a {
+	pub fn client_cosigners(&self) -> impl Iterator<Item = PublicKey> + '_ {
+		self.client_cosigners.iter().copied()
+	}
+
+	pub fn cosigners<'a>(&'a self, server_pubkey: PublicKey) -> impl Iterator<Item = PublicKey> + 'a {
 		self.client_cosigners.iter().cloned().chain([server_pubkey])
 	}
 
@@ -330,10 +334,10 @@ impl GenesisTransition {
 
 	pub fn new_arkoor(
 		cosigners: Vec<PublicKey>,
-		taptweak: TapTweakHash,
+		tap_tweak: TapTweakHash,
 		signature: Option<schnorr::Signature>
 	) -> Self {
-		Self::Arkoor(ArkoorGenesis { client_cosigners: cosigners, tap_tweak: taptweak, signature })
+		Self::Arkoor(ArkoorGenesis { client_cosigners: cosigners, tap_tweak, signature })
 	}
 
 	/// Output that this transition is spending.
