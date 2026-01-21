@@ -353,7 +353,7 @@ async fn movement_offboard() {
 	assert_eq!(vtxos.len(), 3);
 	let addr = bark.get_onchain_address().await;
 	let offb_vtxo = vtxos.first().unwrap();
-	let txid = bark.offboard_vtxo(offb_vtxo.id, &addr).await;
+	let offboard = bark.offboard_vtxo(offb_vtxo.id, &addr).await;
 
 	let expected_fee = OffboardRequest::calculate_fee(
 		&addr.script_pubkey(),
@@ -381,11 +381,11 @@ async fn movement_offboard() {
 	assert_eq!(movement.time.completed_at.is_some(), true);
 
 	assert_eq!(movement.metadata.is_some(), true);
-	assert_eq!(txid,
+	assert_eq!(offboard.offboard_txid,
 		movement.metadata.as_ref().unwrap().get("offboard_txid")
 			.map(|txid| serde_json::from_value::<Txid>(txid.clone()).unwrap()).unwrap(),
 	);
-	assert_eq!(txid,
+	assert_eq!(offboard.offboard_txid,
 		deserialize_hex::<Transaction>(&movement.metadata.as_ref().unwrap().get("offboard_tx")
 			.map(|hex| serde_json::from_value::<String>(hex.clone()).unwrap()).unwrap()
 		).unwrap().compute_txid(),
@@ -443,7 +443,7 @@ async fn movement_send_onchain() {
 	let vtxos_pre_send = bark.vtxo_ids().await;
 	let addr = bark.get_onchain_address().await;
 	let amount = sat(50_000);
-	let txid = bark.send_onchain(&addr, amount).await;
+	let offboard = bark.send_onchain(&addr, amount).await;
 	ctx.generate_blocks(2).await;
 	let vtxos_post_send = bark.vtxo_ids().await;
 
@@ -474,11 +474,11 @@ async fn movement_send_onchain() {
 	assert_eq!(movement.time.completed_at.is_some(), true);
 
 	assert_eq!(movement.metadata.is_some(), true);
-	assert_eq!(txid,
+	assert_eq!(offboard.offboard_txid,
 		movement.metadata.as_ref().unwrap().get("offboard_txid")
 			.map(|txid| serde_json::from_value::<Txid>(txid.clone()).unwrap()).unwrap(),
 	);
-	assert_eq!(txid,
+	assert_eq!(offboard.offboard_txid,
 		deserialize_hex::<Transaction>(&movement.metadata.as_ref().unwrap().get("offboard_tx")
 			.map(|hex| serde_json::from_value::<String>(hex.clone()).unwrap()).unwrap()
 		).unwrap().compute_txid(),

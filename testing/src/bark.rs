@@ -11,7 +11,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Context;
-use bitcoin::{Address, Amount, FeeRate, Network, Txid};
+use bitcoin::{Address, Amount, FeeRate, Network};
 use log::{error, info, trace, warn};
 use serde_json;
 use tokio::fs;
@@ -335,13 +335,13 @@ impl Bark {
 		&self,
 		destination: impl fmt::Display,
 		amount: Amount,
-	) -> anyhow::Result<Txid> {
+	) -> anyhow::Result<json::OffboardResult> {
 		let destination = destination.to_string();
 		let amount = amount.to_string();
 		self.try_run_json(["send-onchain", &destination, &amount, "--verbose"]).await
 	}
 
-	pub async fn send_onchain(&self, destination: impl fmt::Display, amount: Amount) -> Txid {
+	pub async fn send_onchain(&self, destination: impl fmt::Display, amount: Amount) -> json::OffboardResult {
 		self.try_send_onchain(destination, amount).await.unwrap()
 	}
 
@@ -513,13 +513,13 @@ impl Bark {
 		self.run(["refresh", "--counterparty"]).await;
 	}
 
-	pub async fn try_offboard_all(&self, address: impl fmt::Display) -> anyhow::Result<Txid> {
+	pub async fn try_offboard_all(&self, address: impl fmt::Display) -> anyhow::Result<json::OffboardResult> {
 		Ok(self.try_run_json(
 			["offboard", "--all", "--address", &address.to_string()],
 		).await.context("running offboard --all command failed")?)
 	}
 
-	pub async fn offboard_all(&self, address: impl fmt::Display) -> Txid {
+	pub async fn offboard_all(&self, address: impl fmt::Display) -> json::OffboardResult {
 		self.try_offboard_all(address).await.expect("offboard --all command failed")
 	}
 
@@ -527,7 +527,7 @@ impl Bark {
 		&self,
 		vtxo: impl fmt::Display,
 		address: impl fmt::Display,
-	) -> Txid {
+	) -> json::OffboardResult {
 		self.run_json([
 			"offboard", "--vtxo", &vtxo.to_string(), "--address", &address.to_string(),
 		]).await
