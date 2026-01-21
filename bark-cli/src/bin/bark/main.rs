@@ -520,9 +520,9 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 async fn wait_for_lightning_send(wallet: &Wallet, payment_hash: PaymentHash, wait: bool) {
 	if wait {
 		match wallet.check_lightning_payment(payment_hash, true).await {
-			Ok(Some(_)) => log::info!("Payment received: hash = {}", payment_hash),
-			Err(err) => log::warn!("Error waiting for payment: {:?}", err),
-			Ok(None) => log::info!("Payment failed: hash={}", payment_hash),
+			Ok(Some(_)) => info!("Payment sent: hash = {}", payment_hash),
+			Err(err) => warn!("Error waiting for payment: {:?}", err),
+			Ok(None) => info!("Payment failed: hash = {}", payment_hash),
 		}
 	} else {
 		info!("Payment initiated but not completed (yet).");

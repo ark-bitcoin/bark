@@ -7,7 +7,7 @@ use bitcoin::Amount;
 use bitcoin::hex::DisplayHex;
 use lightning::util::ser::Writeable;
 use lnurllib::lightning_address::LightningAddress;
-use log::{error, info, trace, warn};
+use log::{debug, error, info, trace, warn};
 use server_rpc::protos::{self, lightning_payment_status::PaymentStatus};
 
 use ark::{musig, VtxoPolicy};
@@ -49,7 +49,7 @@ impl Wallet {
 		let htlc_vtxos = payment.htlc_vtxos.clone().into_iter()
 			.map(|v| v.vtxo).collect::<Vec<_>>();
 
-		info!("Processing {} HTLC VTXOs for revocation", htlc_vtxos.len());
+		debug!("Processing {} HTLC VTXOs for revocation", htlc_vtxos.len());
 
 		let mut secs = Vec::with_capacity(htlc_vtxos.len());
 		let mut pubs = Vec::with_capacity(htlc_vtxos.len());
@@ -90,7 +90,7 @@ impl Wallet {
 
 		let mut revoked = Amount::ZERO;
 		for vtxo in &vtxos {
-			info!("Got revocation VTXO: {}: {}", vtxo.id(), vtxo.amount());
+			debug!("Got revocation VTXO: {}: {}", vtxo.id(), vtxo.amount());
 			revoked += vtxo.amount();
 		}
 
@@ -107,7 +107,7 @@ impl Wallet {
 
 		self.db.remove_lightning_send(payment.invoice.payment_hash()).await?;
 
-		info!("Revoked {} HTLC VTXOs", count);
+		debug!("Revoked {} HTLC VTXOs", count);
 
 		Ok(())
 	}
@@ -253,7 +253,7 @@ impl Wallet {
 		};
 
 		if should_revoke {
-			info!("Revoking HTLC VTXOs for payment {} (tip: {}, expiry: {})",
+			debug!("Revoking HTLC VTXOs for payment {} (tip: {}, expiry: {})",
 				payment_hash, tip, policy.htlc_expiry);
 
 			if let Err(e) = self.process_lightning_revocation(&payment).await {
