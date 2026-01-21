@@ -6,8 +6,6 @@ use tonic_tracing_opentelemetry::middleware::server::OtelGrpcLayer;
 use tracing::{error, info};
 use server_rpc::protos;
 
-use crate::rpcserver::middleware::rpc_names;
-use crate::rpcserver::middleware::RpcMethodDetails;
 use crate::rpcserver::ToStatusResult;
 use crate::Server;
 
@@ -17,7 +15,6 @@ impl server_rpc::server::IntegrationService for Server {
 		&self,
 		req: tonic::Request<protos::intman::TokensRequest>,
 	) -> Result<tonic::Response<protos::intman::Tokens>, tonic::Status> {
-		let _ = RpcMethodDetails::grpc_intman(rpc_names::integration::GET_TOKENS);
 		let client_address =
 			if let Some(remote_addr) = req.extensions().get::<SocketAddr>().cloned() {
 				Some(remote_addr)
@@ -56,7 +53,6 @@ impl server_rpc::server::IntegrationService for Server {
 		&self,
 		req: tonic::Request<protos::intman::TokenInfoRequest>,
 	) -> Result<tonic::Response<protos::intman::TokenInfo>, tonic::Status> {
-		let _ = RpcMethodDetails::grpc_intman(rpc_names::integration::GET_TOKEN_INFO);
 		let client_address =
 			if let Some(remote_addr) = req.extensions().get::<SocketAddr>().cloned() {
 				Some(remote_addr)
@@ -94,7 +90,6 @@ impl server_rpc::server::IntegrationService for Server {
 		&self,
 		req: tonic::Request<protos::intman::UpdateTokenRequest>,
 	) -> Result<tonic::Response<protos::intman::TokenInfo>, tonic::Status> {
-		let _ = RpcMethodDetails::grpc_intman(rpc_names::integration::UPDATE_TOKEN);
 		let client_address =
 			if let Some(remote_addr) = req.extensions().get::<SocketAddr>().cloned() {
 				Some(remote_addr)

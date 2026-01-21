@@ -29,6 +29,10 @@
 
 pub extern crate tonic;
 
+// Generated gRPC method lookup from proto files (server-only)
+#[cfg(feature = "server")]
+include!(concat!(env!("OUT_DIR"), "/grpc_methods.rs"));
+
 mod convert;
 use std::borrow::BorrowMut;
 

@@ -55,6 +55,7 @@ semver = "1.0.26"
 # async + gRPC stack
 parking_lot = "0.12.4"
 prost = "0.14.1"
+prost-types = "0.14.1"
 tonic-prost = "0.14.2"
 tonic-prost-build = "0.14.2"
 tokio = { version = "1.35", features = [ "rt-multi-thread", "fs", "signal" ] }
