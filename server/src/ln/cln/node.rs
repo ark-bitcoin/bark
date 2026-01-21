@@ -456,6 +456,13 @@ impl ClnNodeMonitorProcess {
 			self.node_id,
 		).await?;
 
+		let status_counts = htlc_subscriptions.iter()
+			.fold(HashMap::new(), |mut acc, sub| {
+				*acc.entry(sub.status).or_insert(0) += 1;
+				acc
+			});
+		telemetry::set_open_invoices(self.node_id, &status_counts);
+
 		for htlc_subscription in htlc_subscriptions {
 			let payment_hash = htlc_subscription.invoice.payment_hash();
 
@@ -614,13 +621,6 @@ impl ClnNodeMonitorProcess {
 		let htlc_subscriptions = self.db.get_open_lightning_htlc_subscriptions(
 			self.node_id,
 		).await?;
-
-		let status_counts = htlc_subscriptions.iter()
-			.fold(HashMap::new(), |mut acc, sub| {
-				*acc.entry(sub.status).or_insert(0) += 1;
-				acc
-			});
-		telemetry::set_open_invoices(self.node_id, &status_counts);
 
 		for htlc_subscription in htlc_subscriptions {
 			// Only poll for subscriptions that haven't been accepted yet
