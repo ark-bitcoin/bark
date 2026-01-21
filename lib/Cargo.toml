@@ -13,7 +13,7 @@ crate-type = ["cdylib", "rlib"]
 
 [features]
 test-util = [ "serde_json" ]
-wasm-web = [ "getrandom/wasm_js" ]
+wasm-web = [ "getrandom/wasm_js", "js-sys" ]
 
 [dependencies]
 

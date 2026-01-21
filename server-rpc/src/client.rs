@@ -30,7 +30,6 @@ use std::cmp;
 use std::convert::TryFrom;
 use std::ops::Deref;
 use std::sync::Arc;
-use std::time::{Duration, SystemTime};
 
 use bitcoin::Network;
 use log::warn;
@@ -120,7 +119,7 @@ pub const MAX_PROTOCOL_VERSION: u64 = 1;
 /// The time to live for the Ark info.
 ///
 /// The Ark info is refreshed every 10 minutes.
-pub const ARK_INFO_TTL: u32 = 10 * 60;
+pub const ARK_INFO_TTL_SECS: u64 = 10 * 60;
 
 #[derive(Debug, thiserror::Error)]
 #[error("failed to create gRPC endpoint: {msg}")]
@@ -197,28 +196,28 @@ pub struct ServerInfo {
 	pub pver: u64,
 	/// Server-side configuration and network parameters returned after connection.
 	pub info: ArkInfo,
-	/// Informations contained in this struct will be considered outdated after this time.
-	pub refresh_at: SystemTime,
+	/// Informations contained in this struct will be considered outdated after this timestamp.
+	pub refresh_at_secs: u64,
 }
 
 impl ServerInfo {
 	/// Compute the time at which the Ark info will be considered outdated.
-	fn ttl() -> SystemTime {
-		SystemTime::now() + Duration::from_secs(ARK_INFO_TTL as u64)
+	fn ttl() -> u64 {
+		ark::time::timestamp_secs() + ARK_INFO_TTL_SECS
 	}
 
 	pub fn new(pver: u64, info: ArkInfo) -> Self {
-		Self { pver, info, refresh_at: Self::ttl() }
+		Self { pver, info, refresh_at_secs: Self::ttl() }
 	}
 
 	pub fn update(&mut self, info: ArkInfo) {
 		self.info = info;
-		self.refresh_at = Self::ttl();
+		self.refresh_at_secs = Self::ttl();
 	}
 
 	/// Checks if the information contained in this struct is outdated.
 	pub fn is_outdated(&self) -> bool {
-		SystemTime::now() > self.refresh_at
+		ark::time::timestamp_secs() > self.refresh_at_secs
 	}
 }
 

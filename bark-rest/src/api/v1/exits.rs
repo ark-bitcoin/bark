@@ -295,9 +295,7 @@ async fn inner_claim_vtxos(
 	// Commit the transaction to the wallet if the claim destination is ours
 	if onchain_lock.is_mine(address_spk) {
 		info!("Adding claim transaction to wallet: {}", tx.compute_txid());
-		let timestamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
-			.context("Failed to get current timestamp")?.as_secs();
-		onchain_lock.apply_unconfirmed_txs([(tx, timestamp)]);
+		onchain_lock.apply_unconfirmed_txs([(tx, ark::time::timestamp_secs())]);
 	}
 
 	Ok(axum::Json(bark_json::web::ExitClaimResponse {

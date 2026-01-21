@@ -1,13 +1,13 @@
 use std::collections::HashSet;
 use std::str::FromStr;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 use anyhow::Context;
 use bitcoin::{address, Address, FeeRate};
 use clap;
 use log::{warn, info};
 
-use ark::VtxoId;
+use ark::{time::timestamp_secs, VtxoId};
 use bark::Wallet;
 use bark::onchain::{ChainSync, OnchainWallet};
 use bark::vtxo::{FilterVtxos, VtxoFilter};
@@ -307,8 +307,7 @@ pub async fn claim_exits(
 	// Commit the transaction to the wallet if the claim destination is ours
 	if onchain.is_mine(address_spk) {
 		info!("Adding claim transaction to wallet: {}", tx.compute_txid());
-		let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
-		onchain.apply_unconfirmed_txs([(tx, timestamp)]);
+		onchain.apply_unconfirmed_txs([(tx, timestamp_secs())]);
 	}
 	Ok(())
 }
