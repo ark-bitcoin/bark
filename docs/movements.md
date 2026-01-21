@@ -98,11 +98,11 @@ The following table lists all available subsystems and their associated movement
 |--------------------------|---------------------------------------------|------------------------------------------------------------------|
 | `bark.arkoor`            | `"send"`, `"receive"`                       | Offchain transfers between ark users                             |
 | `bark.board`             | `"board"`                                   | Moving funds from onchain to ark                                 |
-| `bark.offboard`             | `"offboard"`                                   | Moving funds from ark to onchain                                 |
+| `bark.offboard`             | `"offboard"`, `"send_onchain"`                                   | Moving funds from ark to onchain                                 |
 | `bark.exit`              | `"start"`                                   | Initiation of emergency exits, redeeming offchain funds onchain |
 | `bark.lightning_send`    | `"send"`                                    | Sending funds via the Lightning Network                          |
 | `bark.lightning_receive` | `"receive"`                                 | Receiving funds via the Lightning Network                        |
-| `bark.round`             | `"offboard"`, `"refresh"`, `"send_onchain"` | Various different round participation methods                    |
+| `bark.round`             | `"refresh"` | Various different round participation methods                    |
 
 ## Movement Subsystems
 
@@ -227,6 +227,41 @@ Offboarding funds from the ark.
     "received_on": [],
     "input_vtxos": ["500ed65d...:0"],
     "output_vtxos": [],
+    "exited_vtxos": []
+}
+```
+
+#### Kind: `"send_onchain"`
+
+Sending money to an on-chain address.
+
+**Example:**
+```json
+{
+    "status": "successful",
+    "subsystem": {
+      "name": "bark.offboard",
+      "kind": "send_onchain"
+    },
+    "metadata": {
+      "offboard_tx": "02000000...",
+      "offboard_txid": "bda355fa..."
+    },
+    "intended_balance_sat": -10000,
+    "effective_balance_sat": -10488,
+    "offchain_fee_sat": 488,
+    "sent_to": [
+      {
+        "destination": {
+          "type": "bitcoin",
+          "value": "tb1qf7wn..."
+        },
+        "amount_sat": 10000
+      }
+    ],
+    "received_on": [],
+    "input_vtxos": ["500ed65d...:0"],
+    "output_vtxos": ["169c14b1...:1"],
     "exited_vtxos": []
 }
 ```

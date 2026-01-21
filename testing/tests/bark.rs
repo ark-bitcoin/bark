@@ -5,7 +5,7 @@ use std::sync::atomic::{self, AtomicBool};
 use std::time::Duration;
 
 use bitcoin::{Amount, Weight};
-use bitcoin_ext::{P2TR_DUST, P2TR_DUST_SAT};
+use bitcoin_ext::P2TR_DUST_SAT;
 use bitcoincore_rpc::RpcApi;
 use futures::future::join_all;
 use log::{debug, info, trace};
@@ -225,7 +225,6 @@ async fn bark_rejects_boarding_below_minimum_board_amount() {
 	)));
 }
 
-#[ignore]
 #[tokio::test]
 async fn list_utxos() {
 	let ctx = TestContext::new("bark/list_utxos").await;
@@ -240,15 +239,21 @@ async fn list_utxos() {
 
 	let addr = bark.get_onchain_address().await;
 	let _offb = bark.offboard_all(&addr).await;
-	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
+	ctx.generate_blocks(2).await;
 
 	let utxos = bark.utxos().await;
+
+	let expected_fee = OffboardRequest::calculate_fee(
+		&addr.script_pubkey(),
+		srv.config().offboard_feerate,
+		Weight::from_vb_unchecked(srv.config().offboard_fixed_fee_vb as u64),
+	).unwrap().to_sat();
 
 	assert_eq!(2, utxos.len());
 	// board change utxo
 	assert!(utxos.iter().any(|u| u.amount.to_sat() == 799_228));
 	// offboard utxo
-	assert!(utxos.iter().any(|u| u.amount.to_sat() == 198_900));
+	assert!(utxos.iter().any(|u| u.amount.to_sat() == 200_000 - expected_fee));
 }
 
 #[tokio::test]
@@ -700,7 +705,6 @@ async fn offboard_vtxos() {
 	assert_eq!(bark2.inround_balance().await, sat(0));
 }
 
-#[ignore]
 #[tokio::test]
 async fn bark_send_onchain() {
 	let ctx = TestContext::new("bark/bark_send_onchain").await;
@@ -709,20 +713,25 @@ async fn bark_send_onchain() {
 	let bark2 = ctx.new_bark("bark2", &srv).await;
 
 	bark1.board_and_confirm_and_register(&ctx, sat(800_000)).await;
-
-	let [sent_vtxos] = bark1.vtxos().await.try_into().expect("should have one vtxo");
-	let addr = bark2.get_onchain_address().await;
+	let [input_vtxo] = bark1.vtxos().await.try_into().expect("should have one vtxo");
 
 	// board vtxo
-	bark1.send_onchain(&addr, sat(300_000)).await;
-	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
+	let send_amount = sat(300_000);
+	let addr = bark2.get_onchain_address().await;
+	bark1.send_onchain(&addr, send_amount).await;
+	ctx.generate_blocks(2).await;
 
+	let expected_fee = OffboardRequest::calculate_fee(
+		&addr.script_pubkey(),
+		srv.config().offboard_feerate,
+		Weight::from_vb_unchecked(srv.config().offboard_fixed_fee_vb as u64),
+	).unwrap();
 	let [change_vtxo] = bark1.vtxos().await.try_into().expect("should have one vtxo");
-	assert_eq!(change_vtxo.amount, sat(498_900));
+	assert_eq!(change_vtxo.amount, input_vtxo.amount - send_amount - expected_fee);
 
 	let movements = bark1.history().await;
 	let send_movement = movements.last().unwrap();
-	assert_eq!(send_movement.input_vtxos[0], sent_vtxos.id);
+	assert_eq!(send_movement.input_vtxos[0], input_vtxo.id);
 	assert_eq!(
 		send_movement.sent_to.first(),
 		Some(MovementDestination {
@@ -737,7 +746,6 @@ async fn bark_send_onchain() {
 	assert_eq!(bark2.inround_balance().await, sat(0));
 }
 
-#[ignore]
 #[tokio::test]
 async fn bark_send_onchain_too_much() {
 	let ctx = TestContext::new("bark/bark_send_onchain_too_much").await;
@@ -751,26 +759,32 @@ async fn bark_send_onchain_too_much() {
 
 	let addr = bark2.get_onchain_address().await;
 
+	let expected_fee = OffboardRequest::calculate_fee(
+		&addr.script_pubkey(),
+		srv.config().offboard_feerate,
+		Weight::from_vb_unchecked(srv.config().offboard_fixed_fee_vb as u64),
+	).unwrap();
+
 	// board vtxo
 	let ret = bark1.try_send_onchain(&addr, sat(1_000_000)).await;
-	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
+	ctx.generate_blocks(2).await;
 
 	let err = ret.unwrap_err();
 	let expected = format!("Insufficient money available. Needed {} but {} is available",
-		sat(1_001_100), board_amount,
+		sat(1_000_000) + expected_fee, board_amount,
 	);
 	assert!(err.to_alt_string().contains(&expected),
 		"err does not match '{}': {:#}", expected, err);
+
 	assert_eq!(bark1.spendable_balance().await, board_amount,
 		"offchain balance shouldn't have changed");
 	assert_eq!(bark1.history().await.len(), 1,
 		"Should only have board movement");
 }
 
-#[ignore]
 #[tokio::test]
-async fn bark_rejects_offboarding_subdust_amount() {
-	let ctx = TestContext::new("bark/bark_rejects_offboarding_subdust_amount").await;
+async fn bark_rejects_offboarding_dust_amount() {
+	let ctx = TestContext::new("bark/bark_rejects_offboarding_dust_amount").await;
 	let srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
 	let bark1 = ctx.new_bark_with_funds("bark1", &srv, sat(1_000_000)).await;
 	let bark2 = ctx.new_bark("bark2", &srv).await;
@@ -780,9 +794,10 @@ async fn bark_rejects_offboarding_subdust_amount() {
 
 	let addr = bark2.get_onchain_address().await;
 
-	let res = bark1.try_send_onchain(&addr, sat(P2TR_DUST_SAT - 1)).await;
-
-	assert!(res.unwrap_err().to_string().contains(&format!("Offboard amount must be at least {}", P2TR_DUST)));
+	let err = bark1.try_send_onchain(&addr, sat(P2TR_DUST_SAT - 1)).await.unwrap_err();
+	assert!(err.to_string().contains(
+		"it doesn't make sense to send dust",
+	), "err: {err}");
 }
 
 #[tokio::test]

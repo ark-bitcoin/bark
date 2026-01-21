@@ -448,8 +448,9 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 					wallet.sync().await;
 				}
 
-				info!("Sending on-chain payment of {} to {} through round...", amount, addr);
-				bail!("onchain payments are temporarily disabled");
+				info!("Sending on-chain payment of {} to {}", amount, addr);
+				let txid = wallet.send_onchain(addr, amount).await?;
+				output_json(&txid);
 			} else {
 				bail!("Invalid destination");
 			}

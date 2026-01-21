@@ -56,14 +56,12 @@ impl fmt::Display for Subsystem {
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
 pub enum RoundMovement {
 	Refresh,
-	SendOnchain,
 }
 
 impl fmt::Display for RoundMovement {
 	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
 		match self {
 			RoundMovement::Refresh => f.write_str("refresh"),
-			RoundMovement::SendOnchain => f.write_str("send_onchain"),
 		}
 	}
 }
@@ -117,6 +115,7 @@ impl fmt::Display for BoardMovement {
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
 pub(crate) enum OffboardMovement {
 	Offboard,
+	SendOnchain,
 }
 
 impl OffboardMovement {
@@ -140,6 +139,7 @@ impl fmt::Display for OffboardMovement {
 	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
 		match self {
 			OffboardMovement::Offboard => f.write_str("offboard"),
+			OffboardMovement::SendOnchain => f.write_str("send_onchain"),
 		}
 	}
 }

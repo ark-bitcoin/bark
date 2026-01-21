@@ -59,7 +59,8 @@ impl Wallet {
 	/// - `vtxos`: The [VtxoId](ark::VtxoId) of each [Vtxo] to update.
 	/// - `state`: A reference to the new [VtxoState] that the VTXOs should be transitioned to.
 	/// - `allowed_states`: A slice of [VtxoStateKind] representing the permissible current states
-	///   from which the VTXOs are allowed to transition to the given `state`.
+	///   from which the VTXOs are allowed to transition to the given `state`. If an empty
+	///   slice is passed, all states are allowed.
 	///
 	/// # Errors
 	/// - The database operation to update the states fails.
@@ -68,8 +69,12 @@ impl Wallet {
 		&self,
 		vtxos: impl IntoIterator<Item = impl VtxoRef>,
 		state: &VtxoState,
-		allowed_states: &[VtxoStateKind],
+		mut allowed_states: &[VtxoStateKind],
 	) -> anyhow::Result<()> {
+		if allowed_states.is_empty() {
+			allowed_states = VtxoStateKind::ALL;
+		}
+
 		let mut problematic_vtxos = Vec::new();
 		for vtxo in vtxos {
 			let id = vtxo.vtxo_id();
@@ -85,6 +90,7 @@ impl Wallet {
 				problematic_vtxos.push(id);
 			}
 		}
+
 		if problematic_vtxos.is_empty() {
 			Ok(())
 		} else {
