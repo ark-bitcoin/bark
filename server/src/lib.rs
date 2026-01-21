@@ -661,6 +661,7 @@ impl Server {
 			self.server_pubkey,
 			self.config.vtxo_exit_delta,
 			amount,
+			Amount::ZERO, // TODO(pc): Fees
 			utxo,
 			user_pub_nonce,
 		);

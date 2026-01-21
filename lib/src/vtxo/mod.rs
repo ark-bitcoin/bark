@@ -99,7 +99,9 @@ use crate::tree::signed::{UnlockHash, UnlockPreimage};
 pub const EXIT_TX_WEIGHT: Weight = Weight::from_vb_unchecked(124);
 
 /// The current version of the vtxo encoding.
-const VTXO_ENCODING_VERSION: u16 = 1;
+const VTXO_ENCODING_VERSION: u16 = 2;
+/// The version before a fee amount was added to each genesis item.
+const VTXO_NO_FEE_AMOUNT_VERSION: u16 = 1;
 
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, thiserror::Error)]
@@ -228,6 +230,7 @@ pub fn create_exit_tx(
 	prevout: OutPoint,
 	output: TxOut,
 	signature: Option<&schnorr::Signature>,
+	fee: Amount,
 ) -> Transaction {
 	Transaction {
 		version: bitcoin::transaction::Version(3),
@@ -244,7 +247,7 @@ pub fn create_exit_tx(
 				ret
 			},
 		}],
-		output: vec![output, fee::fee_anchor()],
+		output: vec![output, fee::fee_anchor_with_amount(fee)],
 	}
 }
 
@@ -289,9 +292,8 @@ pub struct VtxoTxIter<'a, P: Policy = VtxoPolicy> {
 impl<'a, P: Policy> VtxoTxIter<'a, P> {
 	fn new(vtxo: &'a Vtxo<P>) -> VtxoTxIter<'a, P> {
 		// Add all the amounts that go into the other outputs.
-		let onchain_amount = vtxo.amount() + vtxo.genesis.iter().map(|i| {
-			i.other_outputs.iter().map(|o| o.value).sum()
-		}).sum();
+		let onchain_amount = vtxo.chain_anchor_amount()
+			.expect("This should only fail if the VTXO is invalid.");
 		VtxoTxIter {
 			prev: vtxo.anchor_point,
 			vtxo: vtxo,
@@ -307,7 +309,7 @@ impl<'a, P: Policy> Iterator for VtxoTxIter<'a, P> {
 	fn next(&mut self) -> Option<Self::Item> {
 		let item = self.vtxo.genesis.get(self.genesis_idx)?;
 		let next_amount = self.current_amount.checked_sub(
-			item.other_outputs.iter().map(|o| o.value).sum()
+			item.other_output_sum().expect("we calculated this amount beforehand")
 		).expect("we calculated this amount beforehand");
 
 		let next_output = if let Some(item) = self.vtxo.genesis.get(self.genesis_idx + 1) {
@@ -509,6 +511,7 @@ impl<P: Policy> Vtxo<P> {
 	/// A VTXO is standard if:
 	/// - Its own output is standard
 	/// - all sibling outputs in the exit path are standard
+	/// - each part of the exit path should have a P2A output
 	pub fn is_standard(&self) -> bool {
 		self.txout().is_standard() && self.genesis.iter()
 			.all(|i| i.other_outputs.iter().all(|o| o.is_standard()))
@@ -585,6 +588,15 @@ impl<P: Policy> Vtxo<P> {
 		chain_anchor_tx: &Transaction,
 	) -> Result<(), VtxoValidationError> {
 		self::validation::validate_unsigned(self, chain_anchor_tx)
+	}
+
+	/// Calculates the onchain amount for the [Vtxo].
+	///
+	/// Returns `None` if any overflow occurs. This should be impossible for any VTXO that is valid.
+	pub(crate) fn chain_anchor_amount(&self) -> Option<Amount> {
+		self.amount.checked_add(self.genesis.iter().try_fold(Amount::ZERO, |sum, i| {
+			i.other_output_sum().and_then(|amt| sum.checked_add(amt))
+		})?)
 	}
 }
 
@@ -936,6 +948,7 @@ impl<P: Policy + ProtocolEncoding> ProtocolEncoding for Vtxo<P> {
 			for txout in &item.other_outputs {
 				txout.encode(w)?;
 			}
+			w.emit_u64(item.fee_amount.to_sat())?;
 		}
 
 		self.policy.encode(w)?;
@@ -945,7 +958,7 @@ impl<P: Policy + ProtocolEncoding> ProtocolEncoding for Vtxo<P> {
 
 	fn decode<R: io::Read + ?Sized>(r: &mut R) -> Result<Self, ProtocolDecodingError> {
 		let version = r.read_u16()?;
-		if version != VTXO_ENCODING_VERSION {
+		if version != VTXO_ENCODING_VERSION && version != VTXO_NO_FEE_AMOUNT_VERSION {
 			return Err(ProtocolDecodingError::invalid(format_args!(
 				"invalid Vtxo encoding version byte: {version:#x}",
 			)));
@@ -970,7 +983,13 @@ impl<P: Policy + ProtocolEncoding> ProtocolEncoding for Vtxo<P> {
 			for _ in 0..nb_other {
 				other_outputs.push(TxOut::decode(r)?);
 			}
-			genesis.push(GenesisItem { transition, output_idx, other_outputs });
+			let fee_amount = if version == VTXO_NO_FEE_AMOUNT_VERSION {
+				// Maintain backwards compatibility by assuming a fee of zero.
+				Amount::ZERO
+			} else {
+				Amount::from_sat(r.read_u64()?)
+			};
+			genesis.push(GenesisItem { transition, output_idx, other_outputs, fee_amount });
 		}
 
 		let policy = P::decode(r)?;
@@ -1075,6 +1094,7 @@ mod test {
 					),
 					output_idx: 0,
 					other_outputs: vec![],
+					fee_amount: Amount::ZERO,
 				}
 			}).collect(),
 			point: OutPoint::new(Txid::from_slice(&[3u8; 32]).unwrap(), 3),

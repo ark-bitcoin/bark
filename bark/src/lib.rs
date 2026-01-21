@@ -1502,7 +1502,8 @@ impl Wallet {
 
 		let utxo = OutPoint::new(board_psbt.unsigned_tx.compute_txid(), BOARD_FUNDING_TX_VTXO_VOUT);
 		let builder = builder
-			.set_funding_details(amount, utxo)
+			.set_funding_details(amount, Amount::ZERO, utxo) // TODO(pc): Fees
+			.context("error setting funding details for board")?
 			.generate_user_nonces();
 
 		let cosign_resp = srv.client.request_board_cosign(protos::BoardCosignRequest {

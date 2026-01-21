@@ -127,9 +127,8 @@ fn validate_inner<P: Policy>(
 	}
 
 	// For non-empty genesis, validate using the first genesis item's transition
-	let onchain_amount = vtxo.amount() + vtxo.genesis.iter().map(|i| {
-		i.other_outputs.iter().map(|o| o.value).sum()
-	}).sum();
+	let onchain_amount = vtxo.chain_anchor_amount()
+		.ok_or_else(|| VtxoValidationError::Invalid("onchain amount overflow"))?;
 	let expected_anchor_txout = vtxo.genesis.get(0).unwrap().transition.input_txout(
 		onchain_amount, vtxo.server_pubkey(), vtxo.expiry_height(), vtxo.exit_delta(),
 	);
@@ -142,7 +141,9 @@ fn validate_inner<P: Policy>(
 
 	let mut prev = (Cow::Borrowed(chain_anchor_tx), vtxo.chain_anchor().vout as usize, onchain_amount);
 	for (idx, item) in vtxo.genesis.iter().enumerate() {
-		let next_amount = prev.2.checked_sub(item.other_outputs.iter().map(|o| o.value).sum())
+		let output_sum = item.other_output_sum()
+			.ok_or(VtxoValidationError::Invalid("output sum overflow"))?;
+		let next_amount = prev.2.checked_sub(output_sum)
 			.ok_or(VtxoValidationError::Invalid("insufficient onchain amount"))?;
 		let next_tx = verify_transition(&vtxo, idx, prev.0.as_ref(), prev.1, next_amount, check_signatures)
 			.map_err(|e| VtxoValidationError::transition(

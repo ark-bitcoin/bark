@@ -408,11 +408,27 @@ pub struct GenesisItem {
 	/// The output index ("vout") of the output going to the next genesis item.
 	pub output_idx: u8,
 	/// The other outputs to construct the exit tx.
-	// NB empty for the first item
 	pub other_outputs: Vec<TxOut>,
+	/// The fee to apply to the P2A (pay-to-anchor) output of the exit tx. Likely to be a value of
+	/// zero, however, fees for certain operations such as boarding can go here if applicable.
+	pub fee_amount: Amount,
 }
 
 impl GenesisItem {
+	/// Construct the P2A (pay-to-anchor) output for the exit tx.
+	pub fn fee_anchor(&self) -> TxOut {
+		fee::fee_anchor_with_amount(self.fee_amount)
+	}
+
+	/// The total sum of sibling tx outputs including the P2A fee output.
+	pub fn other_output_sum(&self) -> Option<Amount> {
+		let mut result = self.fee_amount;
+		for o in &self.other_outputs {
+			result = result.checked_add(o.value)?;
+		}
+		Some(result)
+	}
+
 	/// Construct the exit transaction at this level of the genesis.
 	pub fn tx(&self,
 		prev: OutPoint,
@@ -434,7 +450,7 @@ impl GenesisItem {
 				out.extend(self.other_outputs.iter().take(self.output_idx as usize).cloned());
 				out.push(next);
 				out.extend(self.other_outputs.iter().skip(self.output_idx as usize).cloned());
-				out.push(fee::fee_anchor());
+				out.push(self.fee_anchor());
 				out
 			},
 		}

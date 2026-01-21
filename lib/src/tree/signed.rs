@@ -271,7 +271,10 @@ impl VtxoTreeSpec {
 			script_pubkey: vtxo.policy.script_pubkey(self.server_pubkey, self.exit_delta, self.expiry_height),
 		};
 
-		vtxo::create_exit_tx(OutPoint::null(), txout, None)
+		// We collect fees in rounds by the difference in value between the inputs and outputs which
+		// is enforced by the round payment validation code. Therefore, we can leave fees set to
+		// zero for the leaf tx.
+		vtxo::create_exit_tx(OutPoint::null(), txout, None, Amount::ZERO)
 	}
 
 	/// Calculate all the aggregate cosign pubkeys by aggregating the leaf and server pubkeys.
@@ -899,6 +902,7 @@ impl CachedSignedVtxoTree {
 					MaybePreimage::Hash(req.unlock_hash)),
 				output_idx: 0,
 				other_outputs: vec![],
+				fee_amount: Amount::ZERO,
 			});
 
 			// then the others
@@ -920,7 +924,8 @@ impl CachedSignedVtxoTree {
 					.enumerate()
 					.filter(|(i, o)| !o.is_p2a_fee_anchor() && *i != output_idx as usize)
 					.map(|(_i, o)| o).cloned().collect();
-				genesis.push(GenesisItem { transition, output_idx, other_outputs });
+				let fee_amount = Amount::ZERO;
+				genesis.push(GenesisItem { transition, output_idx, other_outputs, fee_amount });
 				last_node = node.idx();
 			}
 			genesis.reverse();

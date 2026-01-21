@@ -356,6 +356,7 @@ impl<S: state::BuilderState> ArkoorBuilder<S> {
 							}
 						})
 						.collect(),
+					fee_amount: Amount::ZERO,
 				},
 			]).collect(),
 		}
@@ -403,6 +404,7 @@ impl<S: state::BuilderState> ArkoorBuilder<S> {
 								}
 							})
 							.collect(),
+						fee_amount: Amount::ZERO,
 					},
 					GenesisItem {
 						transition: GenesisTransition::new_arkoor(
@@ -415,7 +417,8 @@ impl<S: state::BuilderState> ArkoorBuilder<S> {
 							arkoor_sig,
 						),
 						output_idx: 0,
-						other_outputs: vec![]
+						other_outputs: vec![],
+						fee_amount: Amount::ZERO,
 					}
 				]).collect(),
 			}
@@ -453,6 +456,7 @@ impl<S: state::BuilderState> ArkoorBuilder<S> {
 								}
 							})
 							.collect(),
+						fee_amount: Amount::ZERO,
 					}
 				]).collect(),
 			}
@@ -516,6 +520,7 @@ impl<S: state::BuilderState> ArkoorBuilder<S> {
 								}
 							})
 							.collect(),
+						fee_amount: Amount::ZERO,
 					},
 					// Transition 2: checkpoint -> isolation fanout tx (final vtxo)
 					GenesisItem {
@@ -541,6 +546,7 @@ impl<S: state::BuilderState> ArkoorBuilder<S> {
 								}
 							})
 							.collect(),
+						fee_amount: Amount::ZERO,
 					},
 				]).collect(),
 			}
@@ -579,6 +585,7 @@ impl<S: state::BuilderState> ArkoorBuilder<S> {
 								}
 							})
 							.collect(),
+						fee_amount: Amount::ZERO,
 					},
 					// Transition 2: isolation output -> isolation fanout tx (final vtxo)
 					GenesisItem {
@@ -602,6 +609,7 @@ impl<S: state::BuilderState> ArkoorBuilder<S> {
 								}
 							})
 							.collect(),
+						fee_amount: Amount::ZERO,
 					},
 				]).collect(),
 			}
@@ -681,6 +689,7 @@ impl<S: state::BuilderState> ArkoorBuilder<S> {
 								}
 							})
 							.collect(),
+						fee_amount: Amount::ZERO,
 					},
 				]).collect(),
 			})
@@ -1556,14 +1565,15 @@ mod test {
 		println!("-----------------------------------------------");
 
 		let (funding_tx, alice_vtxo) = DummyTestVtxoSpec {
-			amount: Amount::from_sat(100_000),
+			amount: Amount::from_sat(100_330),
+			fee: Amount::from_sat(330),
 			expiry_height: 1000,
 			exit_delta : 128,
 			user_keypair: alice_keypair.clone(),
 			server_keypair: server_keypair.clone()
 		}.build();
 
-		// Validate Alice her vtxo
+		// Validate Alice's vtxo
 		alice_vtxo.validate(&funding_tx).expect("The unsigned vtxo is valid");
 
 		let dest = vec![
@@ -1628,14 +1638,15 @@ mod test {
 		let server_keypair = Keypair::new(&SECP, &mut rand::thread_rng());
 
 		let (funding_tx, alice_vtxo) = DummyTestVtxoSpec {
-			amount: Amount::from_sat(100_000),
+			amount: Amount::from_sat(100_330),
+			fee: Amount::from_sat(330),
 			expiry_height: 1000,
 			exit_delta : 128,
 			user_keypair: alice_keypair.clone(),
 			server_keypair: server_keypair.clone()
 		}.build();
 
-		// Validate Alice her vtxo
+		// Validate Alice's vtxo
 		alice_vtxo.validate(&funding_tx).expect("The unsigned vtxo is valid");
 
 		// Non-dust outputs (>= 330 sats)
@@ -1722,14 +1733,15 @@ mod test {
 		println!("-----------------------------------------------");
 
 		let (funding_tx, alice_vtxo) = DummyTestVtxoSpec {
-			amount: Amount::from_sat(100_000),
+			amount: Amount::from_sat(100_330),
+			fee: Amount::from_sat(330),
 			expiry_height: 1000,
 			exit_delta : 128,
 			user_keypair: alice_keypair.clone(),
 			server_keypair: server_keypair.clone()
 		}.build();
 
-		// Validate Alice her vtxo
+		// Validate Alice's vtxo
 		alice_vtxo.validate(&funding_tx).expect("The unsigned vtxo is valid");
 
 		let dest = vec![
@@ -1794,14 +1806,15 @@ mod test {
 		let server_keypair = Keypair::new(&SECP, &mut rand::thread_rng());
 
 		let (funding_tx, alice_vtxo) = DummyTestVtxoSpec {
-			amount: Amount::from_sat(100_000),
+			amount: Amount::from_sat(100_330),
+			fee: Amount::from_sat(330),
 			expiry_height: 1000,
 			exit_delta : 128,
 			user_keypair: alice_keypair.clone(),
 			server_keypair: server_keypair.clone()
 		}.build();
 
-		// Validate Alice her vtxo
+		// Validate Alice's vtxo
 		alice_vtxo.validate(&funding_tx).expect("The unsigned vtxo is valid");
 
 		// Non-dust outputs (>= 330 sats)
@@ -1885,7 +1898,8 @@ mod test {
 		let server_keypair = Keypair::new(&SECP, &mut rand::thread_rng());
 
 		let (funding_tx, alice_vtxo) = DummyTestVtxoSpec {
-			amount: Amount::from_sat(1000),
+			amount: Amount::from_sat(1_330),
+			fee: Amount::from_sat(330),
 			expiry_height: 1000,
 			exit_delta : 128,
 			user_keypair: alice_keypair.clone(),
@@ -1973,7 +1987,8 @@ mod test {
 		let server_keypair = Keypair::new(&SECP, &mut rand::thread_rng());
 
 		let (funding_tx, alice_vtxo) = DummyTestVtxoSpec {
-			amount: Amount::from_sat(100_000),
+			amount: Amount::from_sat(100_330),
+			fee: Amount::from_sat(330),
 			expiry_height: 1000,
 			exit_delta : 128,
 			user_keypair: alice_keypair.clone(),
@@ -2024,6 +2039,7 @@ mod test {
 		// Create a 200 sat input vtxo (this is dust since 200 < 330)
 		let (funding_tx, alice_vtxo) = DummyTestVtxoSpec {
 			amount: Amount::from_sat(200),
+			fee: Amount::ZERO,
 			expiry_height: 1000,
 			exit_delta: 128,
 			user_keypair: alice_keypair.clone(),
@@ -2113,6 +2129,7 @@ mod test {
 		// Create a 500 sat input vtxo (this is above P2TR_DUST of 330)
 		let (funding_tx, alice_vtxo) = DummyTestVtxoSpec {
 			amount: Amount::from_sat(500),
+			fee: Amount::ZERO,
 			expiry_height: 1000,
 			exit_delta: 128,
 			user_keypair: alice_keypair.clone(),
@@ -2201,6 +2218,7 @@ mod test {
 
 		let (funding_tx, alice_vtxo) = DummyTestVtxoSpec {
 			amount: Amount::from_sat(1000),
+			fee: Amount::ZERO,
 			expiry_height: 1000,
 			exit_delta: 128,
 			user_keypair: alice_keypair.clone(),
@@ -2241,6 +2259,7 @@ mod test {
 
 		let (funding_tx, alice_vtxo) = DummyTestVtxoSpec {
 			amount: Amount::from_sat(400),
+			fee: Amount::ZERO,
 			expiry_height: 1000,
 			exit_delta: 128,
 			user_keypair: alice_keypair.clone(),
@@ -2281,6 +2300,7 @@ mod test {
 
 		let (funding_tx, alice_vtxo) = DummyTestVtxoSpec {
 			amount: Amount::from_sat(1000),
+			fee: Amount::ZERO,
 			expiry_height: 1000,
 			exit_delta: 128,
 			user_keypair: alice_keypair.clone(),
@@ -2327,6 +2347,7 @@ mod test {
 
 		let (funding_tx, alice_vtxo) = DummyTestVtxoSpec {
 			amount: Amount::from_sat(1000),
+			fee: Amount::ZERO,
 			expiry_height: 1000,
 			exit_delta: 128,
 			user_keypair: alice_keypair.clone(),
@@ -2378,6 +2399,7 @@ mod test {
 
 		let (funding_tx, alice_vtxo) = DummyTestVtxoSpec {
 			amount: Amount::from_sat(600),
+			fee: Amount::ZERO,
 			expiry_height: 1000,
 			exit_delta: 128,
 			user_keypair: alice_keypair.clone(),
@@ -2423,6 +2445,7 @@ mod test {
 
 		let (funding_tx, alice_vtxo) = DummyTestVtxoSpec {
 			amount: Amount::from_sat(1000),
+			fee: Amount::ZERO,
 			expiry_height: 1000,
 			exit_delta: 128,
 			user_keypair: alice_keypair.clone(),

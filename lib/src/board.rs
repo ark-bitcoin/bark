@@ -18,6 +18,7 @@ use bitcoin::taproot::TaprootSpendInfo;
 use bitcoin::{Amount, OutPoint, ScriptBuf, TapSighash, Transaction, TxOut, Txid};
 use bitcoin::hashes::Hash;
 use bitcoin::secp256k1::{Keypair, PublicKey};
+
 use bitcoin_ext::{BlockDelta, BlockHeight, TaprootSpendInfoExt};
 
 use crate::error::IncorrectSigningKeyError;
@@ -46,6 +47,7 @@ fn compute_exit_data(
 	expiry_height: BlockHeight,
 	exit_delta: BlockDelta,
 	amount: Amount,
+	fee: Amount,
 	utxo: OutPoint,
 ) -> ExitData {
 	let combined_pubkey = musig::combine_keys([user_pubkey, server_pubkey])
@@ -59,17 +61,33 @@ fn compute_exit_data(
 	let exit_taproot = VtxoPolicy::new_pubkey(user_pubkey)
 		.taproot(server_pubkey, exit_delta, expiry_height);
 	let exit_txout = TxOut {
-		value: amount,
+		value: amount - fee,
 		script_pubkey: exit_taproot.script_pubkey(),
 	};
 
-	let tx = vtxo::create_exit_tx(utxo, exit_txout, None);
+	let tx = vtxo::create_exit_tx(utxo, exit_txout, None, fee);
 	let sighash = SighashCache::new(&tx).taproot_key_spend_signature_hash(
 		0, &sighash::Prevouts::All(&[funding_txout]), sighash::TapSighashType::Default,
 	).expect("matching prevouts");
 
 	let txid = tx.compute_txid();
 	ExitData { sighash, funding_taproot, tx, txid }
+}
+
+#[derive(Debug, Clone, thiserror::Error, PartialEq, Eq)]
+pub enum BoardFundingError {
+	#[error("fee larger than amount: amount {amount}, fee {fee}")]
+	FeeHigherThanAmount {
+		amount: Amount,
+		fee: Amount,
+	},
+	#[error("amount is zero")]
+	ZeroAmount,
+	#[error("amount after fee is <= 0: amount {amount}, fee {fee}")]
+	ZeroAmountAfterFee {
+		amount: Amount,
+		fee: Amount,
+	},
 }
 
 #[derive(Debug, Clone, thiserror::Error)]
@@ -88,6 +106,10 @@ pub enum BoardFromVtxoError {
 	VtxoIdMismatch {
 		expected: OutPoint,
 		got: OutPoint,
+	},
+	#[error("incorrect number of genesis items {genesis_count}, should be 1")]
+	IncorrectGenesisItemCount {
+		genesis_count: usize,
 	},
 }
 
@@ -157,6 +179,7 @@ pub struct BoardBuilder<S: BuilderState> {
 	pub exit_delta: BlockDelta,
 
 	amount: Option<Amount>,
+	fee: Option<Amount>,
 	utxo: Option<OutPoint>,
 
 	user_pub_nonce: Option<musig::PublicNonce>,
@@ -184,6 +207,7 @@ impl<S: BuilderState> BoardBuilder<S> {
 			exit_delta: self.exit_delta,
 			amount: self.amount,
 			utxo: self.utxo,
+			fee: self.fee,
 			user_pub_nonce: self.user_pub_nonce,
 			user_sec_nonce: self.user_sec_nonce,
 			exit_data: self.exit_data,
@@ -206,6 +230,7 @@ impl BoardBuilder<state::Preparing> {
 			user_pubkey, expiry_height, server_pubkey, exit_delta,
 			amount: None,
 			utxo: None,
+			fee: None,
 			user_pub_nonce: None,
 			user_sec_nonce: None,
 			exit_data: None,
@@ -213,22 +238,33 @@ impl BoardBuilder<state::Preparing> {
 		}
 	}
 
-	/// Set the UTXO where the board will be funded and the board amount.
+	/// Set the UTXO where the board will be funded, the total board amount and the fee to be
+	/// deducted.
 	pub fn set_funding_details(
 		mut self,
 		amount: Amount,
+		fee: Amount,
 		utxo: OutPoint,
-	) -> BoardBuilder<state::CanGenerateNonces> {
+	) -> Result<BoardBuilder<state::CanGenerateNonces>, BoardFundingError> {
+		if amount == Amount::ZERO {
+			return Err(BoardFundingError::ZeroAmount);
+		} else if fee > amount {
+			return Err(BoardFundingError::FeeHigherThanAmount { amount, fee });
+		} else if amount - fee == Amount::ZERO {
+			return Err(BoardFundingError::ZeroAmountAfterFee { amount, fee });
+		}
+
 		let exit_data = compute_exit_data(
 			self.user_pubkey, self.server_pubkey, self.expiry_height,
-			self.exit_delta, amount, utxo,
+			self.exit_delta, amount, fee, utxo,
 		);
 
 		self.amount = Some(amount);
 		self.utxo = Some(utxo);
+		self.fee = Some(fee);
 		self.exit_data = Some(exit_data);
 
-		self.to_state()
+		Ok(self.to_state())
 	}
 }
 
@@ -283,12 +319,20 @@ impl BoardBuilder<state::CanGenerateNonces> {
 			})
 		}
 
+		if vtxo.genesis.len() != 1 {
+			return Err(BoardFromVtxoError::IncorrectGenesisItemCount {
+				genesis_count: vtxo.genesis.len(),
+			});
+		}
+
+		let fee = vtxo.genesis.first().unwrap().fee_amount;
 		let exit_data = compute_exit_data(
 			vtxo.user_pubkey(),
 			server_pubkey,
 			vtxo.expiry_height,
 			vtxo.exit_delta,
-			vtxo.amount(),
+			vtxo.amount() + fee,
+			fee,
 			vtxo.chain_anchor(),
 		);
 
@@ -305,7 +349,8 @@ impl BoardBuilder<state::CanGenerateNonces> {
 		Ok(Self {
 			user_pub_nonce: None,
 			user_sec_nonce: None,
-			amount: Some(vtxo.amount()),
+			amount: Some(vtxo.amount() + fee),
+			fee: Some(fee),
 			user_pubkey: vtxo.user_pubkey(),
 			server_pubkey,
 			expiry_height: vtxo.expiry_height,
@@ -335,6 +380,8 @@ impl BoardBuilder<state::CanGenerateNonces> {
 	/// 1. An expiry VTXO with empty genesis (for server tracking)
 	/// 2. A pubkey VTXO with an arkoor genesis transition
 	pub fn build_internal_unsigned_vtxos(&self) -> Vec<ServerVtxo> {
+		let amount = self.amount.expect("state invariant");
+		let fee = self.fee.expect("state invariant");
 		let exit_data = self.exit_data.as_ref().expect("state invariant");
 		let exit_txid = exit_data.txid;
 		let tap_tweak = exit_data.funding_taproot.tap_tweak();
@@ -343,7 +390,7 @@ impl BoardBuilder<state::CanGenerateNonces> {
 		vec![
 			Vtxo {
 				policy: expiry_policy,
-				amount: self.amount.expect("state invariant"),
+				amount: amount - fee,
 				expiry_height: self.expiry_height,
 				server_pubkey: self.server_pubkey,
 				exit_delta: self.exit_delta,
@@ -353,7 +400,7 @@ impl BoardBuilder<state::CanGenerateNonces> {
 			},
 			Vtxo {
 				policy: ServerVtxoPolicy::User(VtxoPolicy::new_pubkey(self.user_pubkey)),
-				amount: self.amount.expect("state invariant"),
+				amount: amount - fee,
 				expiry_height: self.expiry_height,
 				server_pubkey: self.server_pubkey,
 				exit_delta: self.exit_delta,
@@ -367,6 +414,7 @@ impl BoardBuilder<state::CanGenerateNonces> {
 						),
 						output_idx: 0,
 						other_outputs: vec![],
+						fee_amount: fee,
 					}
 				],
 				point: OutPoint::new(exit_txid, BOARD_FUNDING_TX_VTXO_VOUT),
@@ -396,16 +444,18 @@ impl BoardBuilder<state::ServerCanCosign> {
 		server_pubkey: PublicKey,
 		exit_delta: BlockDelta,
 		amount: Amount,
+		fee: Amount,
 		utxo: OutPoint,
 		user_pub_nonce: musig::PublicNonce,
 	) -> BoardBuilder<state::ServerCanCosign> {
 		let exit_data = compute_exit_data(
-			user_pubkey, server_pubkey, expiry_height, exit_delta, amount, utxo,
+			user_pubkey, server_pubkey, expiry_height, exit_delta, amount, fee, utxo,
 		);
 
 		BoardBuilder {
 			user_pubkey, expiry_height, server_pubkey, exit_delta,
 			amount: Some(amount),
+			fee: Some(fee),
 			utxo: Some(utxo),
 			user_pub_nonce: Some(user_pub_nonce),
 			user_sec_nonce: None,
@@ -494,8 +544,12 @@ impl BoardBuilder<state::CanFinish> {
 			"invalid board exit tx signature produced",
 		);
 
+		let amount = self.amount.expect("state invariant");
+		let fee = self.fee.expect("state invariant");
+		let vtxo_amount = amount.checked_sub(fee).expect("fee cannot exceed amount");
+
 		Ok(Vtxo {
-			amount: self.amount.expect("state invariant"),
+			amount: vtxo_amount,
 			expiry_height: self.expiry_height,
 			server_pubkey: self.server_pubkey,
 			exit_delta: self.exit_delta,
@@ -507,6 +561,7 @@ impl BoardBuilder<state::CanFinish> {
 				),
 				output_idx: 0,
 				other_outputs: vec![],
+				fee_amount: fee,
 			}],
 			policy: VtxoPolicy::new_pubkey(self.user_pubkey),
 			point: OutPoint::new(exit_txid, BOARD_FUNDING_TX_VTXO_VOUT),
@@ -539,6 +594,7 @@ mod test {
 
 		// user
 		let amount = Amount::from_btc(1.5).unwrap();
+		let fee = Amount::from_btc(0.1).unwrap();
 		let expiry = 100_000;
 		let server_pubkey = server_key.public_key();
 		let exit_delta = 24;
@@ -556,12 +612,12 @@ mod test {
 		};
 		let utxo = OutPoint::new(funding_tx.compute_txid(), 0);
 		assert_eq!(utxo.to_string(), "8c4b87af4ce8456bbd682859959ba64b95d5425d761a367f4f20b8ffccb1bde0:0");
-		let builder = builder.set_funding_details(amount, utxo).generate_user_nonces();
+		let builder = builder.set_funding_details(amount, fee, utxo).unwrap().generate_user_nonces();
 
 		// server
 		let cosign = {
 			let server_builder = BoardBuilder::new_for_cosign(
-				builder.user_pubkey, expiry, server_pubkey, exit_delta, amount, utxo, *builder.user_pub_nonce(),
+				builder.user_pubkey, expiry, server_pubkey, exit_delta, amount, fee, utxo, *builder.user_pub_nonce(),
 			);
 			server_builder.server_cosign(&server_key)
 		};
@@ -581,6 +637,7 @@ mod test {
 		let server_key = Keypair::from_str("1fb316e653eec61de11c6b794636d230379509389215df1ceb520b65313e5426").unwrap();
 
 		let amount = Amount::from_btc(1.5).unwrap();
+		let fee = Amount::from_btc(0.1).unwrap();
 		let expiry = 100_000;
 		let server_pubkey = server_key.public_key();
 		let exit_delta = 24;
@@ -598,11 +655,11 @@ mod test {
 			}],
 		};
 		let utxo = OutPoint::new(funding_tx.compute_txid(), 0);
-		let builder = builder.set_funding_details(amount, utxo).generate_user_nonces();
+		let builder = builder.set_funding_details(amount, fee, utxo).unwrap().generate_user_nonces();
 
 		let cosign = {
 			let server_builder = BoardBuilder::new_for_cosign(
-				builder.user_pubkey, expiry, server_pubkey, exit_delta, amount, utxo, *builder.user_pub_nonce(),
+				builder.user_pubkey, expiry, server_pubkey, exit_delta, amount, fee, utxo, *builder.user_pub_nonce(),
 			);
 			server_builder.server_cosign(&server_key)
 		};
@@ -684,6 +741,42 @@ mod test {
 			Err(BoardFromVtxoError::VtxoIdMismatch { expected, got })
 			if expected == original_point && got == vtxo.point
 		));
+	}
+
+	#[test]
+	fn test_board_funding_error() {
+		fn new_builder_with_funding_details(amount: Amount, fee: Amount) -> Result<BoardBuilder<state::CanGenerateNonces>, BoardFundingError> {
+			let user_key = Keypair::from_str("5255d132d6ec7d4fc2a41c8f0018bb14343489ddd0344025cc60c7aa2b3fda6a").unwrap();
+			let server_key = Keypair::from_str("1fb316e653eec61de11c6b794636d230379509389215df1ceb520b65313e5426").unwrap();
+			let expiry = 100_000;
+			let server_pubkey = server_key.public_key();
+			let exit_delta = 24;
+			let builder = BoardBuilder::new(
+				user_key.public_key(), expiry, server_pubkey, exit_delta,
+			);
+			let funding_tx = Transaction {
+				version: transaction::Version::TWO,
+				lock_time: absolute::LockTime::ZERO,
+				input: vec![],
+				output: vec![TxOut {
+					value: amount,
+					script_pubkey: builder.funding_script_pubkey(),
+				}],
+			};
+			let utxo = OutPoint::new(funding_tx.compute_txid(), 0);
+			builder.set_funding_details(amount, fee, utxo)
+		}
+
+		let fee = Amount::ONE_BTC;
+
+		let zero_amount_err = new_builder_with_funding_details(Amount::ZERO, fee).err();
+		assert_eq!(zero_amount_err, Some(BoardFundingError::ZeroAmount));
+
+		let fee_higher_err = new_builder_with_funding_details(Amount::ONE_SAT, fee).err();
+		assert_eq!(fee_higher_err, Some(BoardFundingError::FeeHigherThanAmount { amount: Amount::ONE_SAT, fee }));
+
+		let zero_amount_after_fee_err = new_builder_with_funding_details(fee, fee).err();
+		assert_eq!(zero_amount_after_fee_err, Some(BoardFundingError::ZeroAmountAfterFee { amount: fee, fee }));
 	}
 }
 
