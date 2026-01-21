@@ -585,6 +585,14 @@ pub struct InvoiceInfo {
 	pub invoice: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "utoipa", derive(ToSchema))]
+pub struct OffboardResult {
+	/// The transaction id of the offboard transaction
+	#[cfg_attr(feature = "utoipa", schema(value_type = String))]
+	pub offboard_txid: Txid,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[cfg_attr(feature = "utoipa", derive(ToSchema))]
 pub struct LightningReceiveInfo {

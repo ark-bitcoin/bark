@@ -219,7 +219,7 @@ No authorization required
 
 ## offboard_all
 
-> models::PendingRoundInfo offboard_all(offboard_all_request)
+> models::OffboardResult offboard_all(offboard_all_request)
 
 
 Creates a new round participation to offboard all VTXOs
@@ -233,7 +233,7 @@ Name | Type | Description  | Required | Notes
 
 ### Return type
 
-[**models::PendingRoundInfo**](PendingRoundInfo.md)
+[**models::OffboardResult**](OffboardResult.md)
 
 ### Authorization
 
@@ -249,7 +249,7 @@ No authorization required
 
 ## offboard_vtxos
 
-> models::PendingRoundInfo offboard_vtxos(offboard_vtxos_request)
+> models::OffboardResult offboard_vtxos(offboard_vtxos_request)
 
 
 Creates a new round participation to offboard the given VTXOs
@@ -263,7 +263,7 @@ Name | Type | Description  | Required | Notes
 
 ### Return type
 
-[**models::PendingRoundInfo**](PendingRoundInfo.md)
+[**models::OffboardResult**](OffboardResult.md)
 
 ### Authorization
 
@@ -453,7 +453,7 @@ No authorization required
 
 ## send_onchain
 
-> models::PendingRoundInfo send_onchain(send_onchain_request)
+> models::OffboardResult send_onchain(send_onchain_request)
 
 
 Creates a new round participation to send a payment onchain from ark round
@@ -467,7 +467,7 @@ Name | Type | Description  | Required | Notes
 
 ### Return type
 
-[**models::PendingRoundInfo**](PendingRoundInfo.md)
+[**models::OffboardResult**](OffboardResult.md)
 
 ### Authorization
 

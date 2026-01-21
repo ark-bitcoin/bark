@@ -449,8 +449,8 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 				}
 
 				info!("Sending on-chain payment of {} to {}", amount, addr);
-				let txid = wallet.send_onchain(addr, amount).await?;
-				output_json(&txid);
+				let offboard_txid = wallet.send_onchain(addr, amount).await?;
+				output_json(&json::OffboardResult { offboard_txid });
 			} else {
 				bail!("Invalid destination");
 			}
@@ -470,7 +470,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 				onchain.address().await?
 			};
 
-			let txid = if let Some(vtxos) = vtxos {
+			let offboard_txid = if let Some(vtxos) = vtxos {
 				let vtxos = vtxos
 					.into_iter()
 					.map(|vtxo| {
@@ -495,7 +495,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 			} else {
 				bail!("Either --vtxos or --all argument must be provided to offboard");
 			};
-			output_json(&txid);
+			output_json(&json::OffboardResult { offboard_txid });
 		},
 		Command::Onchain(onchain_command) => {
 			onchain::execute_onchain_command(onchain_command, &mut wallet, &mut onchain).await?;

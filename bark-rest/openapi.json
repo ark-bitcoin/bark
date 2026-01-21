@@ -1274,11 +1274,11 @@
         },
         "responses": {
           "200": {
-            "description": "Returns the offboard result",
+            "description": "Returns the offboard transaction id",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/PendingRoundInfo"
+                  "$ref": "#/components/schemas/OffboardResult"
                 }
               }
             }
@@ -1315,11 +1315,11 @@
         },
         "responses": {
           "200": {
-            "description": "Returns the offboard result",
+            "description": "Returns the offboard transaction id",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/PendingRoundInfo"
+                  "$ref": "#/components/schemas/OffboardResult"
                 }
               }
             }
@@ -1597,11 +1597,11 @@
         },
         "responses": {
           "200": {
-            "description": "Returns the send onchain result",
+            "description": "Returns the offboard transaction id",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/PendingRoundInfo"
+                  "$ref": "#/components/schemas/OffboardResult"
                 }
               }
             }
@@ -3659,6 +3659,18 @@
               "null"
             ],
             "description": "Optional Bitcoin address to send to. If not provided, uses the onchain wallet's address"
+          }
+        }
+      },
+      "OffboardResult": {
+        "type": "object",
+        "required": [
+          "offboard_txid"
+        ],
+        "properties": {
+          "offboard_txid": {
+            "type": "string",
+            "description": "The transaction id of the offboard transaction"
           }
         }
       },

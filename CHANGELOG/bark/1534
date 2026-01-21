@@ -1,0 +1,6 @@
+
+- re-enable the offboard and send-onchain REST endpoints
+  [#1534](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1534/diffs)
+
+- return a struct with offboard txid from offboard CLIs
+  [#1534](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1534/diffs)

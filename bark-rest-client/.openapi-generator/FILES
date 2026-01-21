@@ -106,6 +106,7 @@ docs/MovementSubsystem.md
 docs/MovementTimestamp.md
 docs/NotFoundError.md
 docs/OffboardAllRequest.md
+docs/OffboardResult.md
 docs/OffboardVtxosRequest.md
 docs/OnchainApi.md
 docs/OnchainBalance.md
@@ -250,6 +251,7 @@ src/models/movement_subsystem.rs
 src/models/movement_timestamp.rs
 src/models/not_found_error.rs
 src/models/offboard_all_request.rs
+src/models/offboard_result.rs
 src/models/offboard_vtxos_request.rs
 src/models/onchain_balance.rs
 src/models/onchain_drain_request.rs

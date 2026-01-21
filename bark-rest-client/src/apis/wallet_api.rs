@@ -415,7 +415,7 @@ pub async fn movements(configuration: &configuration::Configuration, ) -> Result
 }
 
 /// Creates a new round participation to offboard all VTXOs
-pub async fn offboard_all(configuration: &configuration::Configuration, offboard_all_request: models::OffboardAllRequest) -> Result<models::PendingRoundInfo, Error<OffboardAllError>> {
+pub async fn offboard_all(configuration: &configuration::Configuration, offboard_all_request: models::OffboardAllRequest) -> Result<models::OffboardResult, Error<OffboardAllError>> {
     // add a prefix to parameters to efficiently prevent name collisions
     let p_offboard_all_request = offboard_all_request;
 
@@ -442,8 +442,8 @@ pub async fn offboard_all(configuration: &configuration::Configuration, offboard
         let content = resp.text().await?;
         match content_type {
             ContentType::Json => serde_json::from_str(&content).map_err(Error::from),
-            ContentType::Text => return Err(Error::from(serde_json::Error::custom("Received `text/plain` content type response that cannot be converted to `models::PendingRoundInfo`"))),
-            ContentType::Unsupported(unknown_type) => return Err(Error::from(serde_json::Error::custom(format!("Received `{unknown_type}` content type response that cannot be converted to `models::PendingRoundInfo`")))),
+            ContentType::Text => return Err(Error::from(serde_json::Error::custom("Received `text/plain` content type response that cannot be converted to `models::OffboardResult`"))),
+            ContentType::Unsupported(unknown_type) => return Err(Error::from(serde_json::Error::custom(format!("Received `{unknown_type}` content type response that cannot be converted to `models::OffboardResult`")))),
         }
     } else {
         let content = resp.text().await?;
@@ -453,7 +453,7 @@ pub async fn offboard_all(configuration: &configuration::Configuration, offboard
 }
 
 /// Creates a new round participation to offboard the given VTXOs
-pub async fn offboard_vtxos(configuration: &configuration::Configuration, offboard_vtxos_request: models::OffboardVtxosRequest) -> Result<models::PendingRoundInfo, Error<OffboardVtxosError>> {
+pub async fn offboard_vtxos(configuration: &configuration::Configuration, offboard_vtxos_request: models::OffboardVtxosRequest) -> Result<models::OffboardResult, Error<OffboardVtxosError>> {
     // add a prefix to parameters to efficiently prevent name collisions
     let p_offboard_vtxos_request = offboard_vtxos_request;
 
@@ -480,8 +480,8 @@ pub async fn offboard_vtxos(configuration: &configuration::Configuration, offboa
         let content = resp.text().await?;
         match content_type {
             ContentType::Json => serde_json::from_str(&content).map_err(Error::from),
-            ContentType::Text => return Err(Error::from(serde_json::Error::custom("Received `text/plain` content type response that cannot be converted to `models::PendingRoundInfo`"))),
-            ContentType::Unsupported(unknown_type) => return Err(Error::from(serde_json::Error::custom(format!("Received `{unknown_type}` content type response that cannot be converted to `models::PendingRoundInfo`")))),
+            ContentType::Text => return Err(Error::from(serde_json::Error::custom("Received `text/plain` content type response that cannot be converted to `models::OffboardResult`"))),
+            ContentType::Unsupported(unknown_type) => return Err(Error::from(serde_json::Error::custom(format!("Received `{unknown_type}` content type response that cannot be converted to `models::OffboardResult`")))),
         }
     } else {
         let content = resp.text().await?;
@@ -712,7 +712,7 @@ pub async fn send(configuration: &configuration::Configuration, send_request: mo
 }
 
 /// Creates a new round participation to send a payment onchain from ark round
-pub async fn send_onchain(configuration: &configuration::Configuration, send_onchain_request: models::SendOnchainRequest) -> Result<models::PendingRoundInfo, Error<SendOnchainError>> {
+pub async fn send_onchain(configuration: &configuration::Configuration, send_onchain_request: models::SendOnchainRequest) -> Result<models::OffboardResult, Error<SendOnchainError>> {
     // add a prefix to parameters to efficiently prevent name collisions
     let p_send_onchain_request = send_onchain_request;
 
@@ -739,8 +739,8 @@ pub async fn send_onchain(configuration: &configuration::Configuration, send_onc
         let content = resp.text().await?;
         match content_type {
             ContentType::Json => serde_json::from_str(&content).map_err(Error::from),
-            ContentType::Text => return Err(Error::from(serde_json::Error::custom("Received `text/plain` content type response that cannot be converted to `models::PendingRoundInfo`"))),
-            ContentType::Unsupported(unknown_type) => return Err(Error::from(serde_json::Error::custom(format!("Received `{unknown_type}` content type response that cannot be converted to `models::PendingRoundInfo`")))),
+            ContentType::Text => return Err(Error::from(serde_json::Error::custom("Received `text/plain` content type response that cannot be converted to `models::OffboardResult`"))),
+            ContentType::Unsupported(unknown_type) => return Err(Error::from(serde_json::Error::custom(format!("Received `{unknown_type}` content type response that cannot be converted to `models::OffboardResult`")))),
         }
     } else {
         let content = resp.text().await?;
