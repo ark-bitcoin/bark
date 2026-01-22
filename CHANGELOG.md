@@ -6,6 +6,154 @@ https://docs.second.tech/changelog/changelog/
 
 Below is a more concise summary for each version.
 
+# v0.1.0-beta.6
+
+- `ark-lib`
+  - `tree::signed` module is refactored to add hArk protocol
+    [PR #1440](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1440)
+      - for hArk details, see https://delvingbitcoin.org/t/evolving-the-ark-protocol-using-ctv-and-csfs/1602
+      - all leaves now have an unlock hash attached
+      - leaf txs are no longer signed during the interactive process
+  - Add `BoardBuilder::new_from_vtxo` to reconstruct a board from a VTXO
+    Validates server pubkey, funding txid, and vtxo id match expected values
+    [#1472](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1472)
+  - changes to arkoor builder to support dust VTXOs
+    [#1440](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1440)
+      - add dust isolation to the checkpointed arkoor builder
+      - remove the old non-checkpointed arkoor builder
+      - rename all checkpointed arkoor builder types to remove checkpoint from name
+      - add `ArkoorDestination` type to replace `VtxoRequest` in arkoor context
+- `bark`
+  - round protocol changed to hArk protocol
+    [#1440](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1440)
+    - offboards and onchain payments temporarily disabled
+    - new round VTXOs are now not immediatelly spendable after interactive round part finished
+  - all BarkPersister API was made async, resulting in most of
+    Bark's API becoming async too
+    [#1485](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1485)
+  - support sending and receiving dust VTXOs
+    [#1440](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1440)
+    - use checkpointed arkoor for lightning send
+    - use dust-isolation in lightning send revocation and lightning receive
+  - Wallet::try_claim_all_lightning_receives behaviour changed to not bail on first error
+    [#1516](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1516)
+    - returns Ok(()) if at least one pending lightning receive is successfully claimed
+    - returns Ok(()) if there are no pending lightning receives to claim
+    - returns an error if all claims for pending receive fail to be claimed
+  - re-enable send-to-onchain functionality
+    [#1531](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1531)
+    - `bark send-onchain` command now returns offboard txid
+    - using offboard swaps, the offboard tx is broadcast instantly
+  - re-enable the offboard and send-onchain REST endpoints
+    [#1534](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1534)
+  - return a struct with offboard txid from offboard CLIs
+    [#1534](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1534)
+  - Replace VtxoSeed by WalletSeed to allow deriving key dedicated to mailbox
+    **BREAKING**: normal derivations were replaced by hardened ones. Any wallet created
+    before that change won't load successfully anymore
+    [#1452](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1452)
+- `bark-rest`
+  - round protocol changed to hArk protocol
+    [#1440](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1440)
+    - offboards and onchain payments temporarily disabled
+    - new round VTXOs are now not immediately spendable after interactive round part finished
+    - round status response structure changed
+  - offboards got enabled again
+    [#1534](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1534)
+    - offboards work again after temporary disability
+    - return type for offboard_vtxos and offboard_all endpoint changed to
+      simple TxId
+- `bark-wallet`
+  - round protocol changed to hArk protocol
+    [#1440](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1440)
+    - offboards and onchain payments temporarily disabled
+    - new round VTXOs are now not immediately spendable after interactive round part finished
+  - Make VTXO storage and state transitions idempotent for crash recovery
+    [#1528](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1528)
+    - `store_vtxos` now succeeds without modification if VTXO already exists
+    - `mark_vtxos_as_spent` now succeeds if VTXO is already spent
+    - **BREAKING:** If you implement your own `BarkPersister`, you need to update 
+      `store_vtxos` to be idempotent (no-op if VTXO already exists)
+- `bictoin-ext`
+  - Add `get_block_by_height`
+    Allows fetching a block by its height from bitcoind.
+    [#1471](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1471)
+- `captaind`
+  - Validate board server pubkey during registration
+    Rejects boards signed with a different server pubkey, preventing potential double-spend attacks
+    [#1472](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1472)
+  - Add FeeEstimator module for dynamic fee rate estimation
+    Replaces hardcoded fallback fee rates with a centralized FeeEstimator that
+    queries bitcoind for current fee estimates. Provides three fee tiers:
+    fast (1-block), regular (3-block), and slow (6-block) confirmation targets.
+    Falls back to configurable rates when estimation fails.
+    - Removed config options:
+      - `round_tx_feerate`
+      - `[vtxo_sweeper] sweep_tx_fallback_feerate`
+      - `[forfeit_watcher] claim_fallback_feerate`
+      - `[vtxopool] issue_tx_fallback_feerate`
+    - Added `[fee_estimator]` config section with:
+      - `update_interval`: Interval to update fee estimates from bitcoind
+      - `fallback_fee_rate_fast`: Fallback feerate for fast confirmation (1 block target)
+      - `fallback_fee_rate_regular`: Fallback feerate for regular confirmation (3 block target)
+      - `fallback_fee_rate_slow`: Fallback feerate for slow confirmation (6 block target)
+    [#1496](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1496)
+- `server`
+  - round protocol is changed to hArk protocol
+    [PR #1440](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1440)
+    - for hArk details, see https://delvingbitcoin.org/t/evolving-the-ark-protocol-using-ctv-and-csfs/1602
+    - new gRPC endpoints for non-interactive rounds:
+      - `SubmitRoundParticipation`
+      - `RoundParticipationStatus`
+      - `RequestLeafVtxoCosign`
+      - `RequestForfeitNonces`
+      - `ForfeitVtxos`
+    - gRPC `SubmitPayment` now returns an unlock_hash
+    - config `round_forfeit_nonces_timeout` (duration) added
+  - Introduce `SyncManager` and `BlockIndex`.
+    These are utilities that can be used for block based sync.
+    Replaced `TipFetcher` by `SyncManager`.
+    Introduced the `sync_manager_block_poll_interval` config to
+    specify how frequently `SyncManager` should poll sync.
+    [#1471](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1471)
+  - Rename `hodl` references to `hold` across configuration and code.
+    Fixes inconsistent spelling of `hodl` vs `hold` in configuration, daemon logic, tests, and documentation, improving naming consistency and clarity.
+    [#1478](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1478)
+  - Remove deprecated `PostArkoorPackageMailbox` and gRPC methods.
+    [#1499](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1499)
+  - support dust VTXOs in arkoor and lightning
+    [#1440](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1440)
+    - adds max_arkoor_fanout config for maximum arkoor outputs
+    - add validation of arkoor cosign requests
+    - use checkpoints for lightning send
+    - use dust-isolation in lightning send revocation and lightning receive
+    - use the new dust-isolation builder for VTXOpool to allow dust change when needed
+    - gRPC changes:
+      - rename `CheckpointedCosignOor` -> `RequestArkoorCosign`
+      - rename `CheckpointedPackageCosignRequest` -> `ArkoorPackageCosignRequest`
+      - rename `CheckpointedPackageCosignResponse` -> `ArkoorPackageCosignResponse`
+      - `RequestLightningPayHtlcCosign` now returns `ArkoorPackageCosignResponse`
+      - `RequestLightningPayHtlcRevocation` now takes `ArkoorPackageCosignRequest`
+      - `ClaimLightningReceiveRequest` now has a `ArkoorPackageCosignRequest`
+      - use new `ArkoorDestination` instead of `VtxoRequest` for arkoor
+      - remove deprecated old arkoor-related types
+- `server-rpc`
+  - removal of deprecated gRPC methods and fields
+    [PR #1501](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1501)
+    - remove deprecated `wait` field from `InitiateLightningPaymentRequest`
+    - remove deprecated `start_lightning_payment`, `finish_lightning_payment`,
+      and `revoke_lightning_payment` methods
+    - removed deprecated `max_arkoor_depth` field from `ArkInfo` and reorder
+      fields
+- `testing`
+  - Add comprehensive `test_register_board` integration test
+    Tests confirmation requirements, idempotency, and server pubkey validation
+    [#1472](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1472)
+  - Add `Bitcoind::wait_for_blockheight()` helper method
+    [#1472](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1472)
+  - `generate_blocks()` now returns the new block height
+    [#1472](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1472)
+
 # v0.1.0-beta.5
 
 - `all`
@@ -195,7 +343,6 @@ Below is a more concise summary for each version.
     [#1414](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1414)
   - Add tests for different movement subsystems
     [#1414](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1414)
-
 
 # v0.1.0-beta.4
 

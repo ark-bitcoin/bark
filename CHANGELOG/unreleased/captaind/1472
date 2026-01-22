@@ -1,3 +1,0 @@
-- Validate board server pubkey during registration
-  Rejects boards signed with a different server pubkey, preventing potential double-spend attacks
-  [#1472](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1472)

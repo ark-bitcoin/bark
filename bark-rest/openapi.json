@@ -11,7 +11,7 @@
       "name": "CC0-1.0",
       "identifier": "CC0-1.0"
     },
-    "version": "0.1.0-beta.5"
+    "version": "0.1.0-beta.6"
   },
   "paths": {
     "/api/v1/bitcoin/tip": {

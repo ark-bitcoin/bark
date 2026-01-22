@@ -1,6 +1,6 @@
 [package]
 name = "bark-cli"
-version = "0.1.0-beta.5"
+version = "0.1.0-beta.6"
 edition = "2024"
 license = "CC0-1.0"
 description = "CLI for the bitcoin Ark protocol built by Second"
@@ -15,12 +15,12 @@ name = "barkd"
 path = "src/bin/barkd/main.rs"
 
 [dependencies]
-ark-lib = { version = "0.1.0-beta.5", path = "../lib" }
-bark-json = { version = "0.1.0-beta.5", path = "../bark-json" }
-bark-wallet = { version = "0.1.0-beta.5", path = "../bark", features = [ "onchain_bdk" ] }
-bark-bitcoin-ext = { version = "0.1.0-beta.5", path = "../bitcoin-ext" }
-bark-server-rpc = { version = "0.1.0-beta.5", path = "../server-rpc" }
-bark-rest = { version = "0.1.0-beta.5", path = "../bark-rest" }
+ark-lib = { version = "0.1.0-beta.6", path = "../lib" }
+bark-json = { version = "0.1.0-beta.6", path = "../bark-json" }
+bark-wallet = { version = "0.1.0-beta.6", path = "../bark", features = [ "onchain_bdk" ] }
+bark-bitcoin-ext = { version = "0.1.0-beta.6", path = "../bitcoin-ext" }
+bark-server-rpc = { version = "0.1.0-beta.6", path = "../server-rpc" }
+bark-rest = { version = "0.1.0-beta.6", path = "../bark-rest" }
 
 anyhow.workspace = true
 bitcoin.workspace = true

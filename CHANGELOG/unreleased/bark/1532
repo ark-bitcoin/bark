@@ -1,5 +1,0 @@
-
-- re-enable send-to-onchain functionality
-  [#1531](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1531)
-  - `bark send-onchain` command now returns offboard txid
-  - using offboard swaps, the offboard tx is broadcast instantly

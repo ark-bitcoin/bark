@@ -1,7 +1,0 @@
-
-- changes to arkoor builder to support dust VTXOs
-  [#1440](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1440)
-  - add dust isolation to the checkpointed arkoor builder
-  - remove the old non-checkpointed arkoor builder
-  - rename all checkpointed arkoor builder types to remove checkpoint from name
-  - add `ArkoorDestination` type to replace `VtxoRequest` in arkoor context
