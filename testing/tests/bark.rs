@@ -888,8 +888,10 @@ async fn reject_arkoor_with_bad_signature() {
 
 
 	assert!(io::BufReader::new(std::fs::File::open(bark2.command_log_file()).unwrap()).lines().any(|line| {
-		line.unwrap().contains("Received invalid arkoor VTXO from server: \
-			error verifying one of the genesis transitions (idx=2/3 type=arkoor): invalid signature")
+		let line = line.unwrap();
+		line.contains("Received invalid arkoor VTXO") &&
+		line.contains("error verifying one of the genesis transitions \
+			(idx=2/3 type=arkoor): invalid signature")
 	}));
 }
 

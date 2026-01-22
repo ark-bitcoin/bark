@@ -8,8 +8,9 @@ pub extern crate lnurl as lnurllib;
 
 use anyhow::Context;
 use bitcoin::Amount;
+use bitcoin::hex::DisplayHex;
 use bitcoin::secp256k1::{Keypair, PublicKey};
-use log::debug;
+use log::{debug, error, info};
 
 use ark::{ProtocolEncoding, Vtxo};
 use ark::mailbox::MailboxIdentifier;
@@ -60,7 +61,11 @@ impl Wallet {
 			debug!("Ark server has {} arkoor packages for us", packages.len());
 
 			for package in packages {
-				self.process_received_arkoor_package(package.vtxos, None).await?;
+				let result = self
+					.process_received_arkoor_package(package.vtxos, None).await;
+				if let Err(e) = result {
+					error!("Error processing received arkoor package: {:#}", e);
+				}
 			}
 		}
 
@@ -86,7 +91,11 @@ impl Wallet {
 		for mailbox_msg in mailbox_msgs {
 			match mailbox_msg.message {
 				Some(mailbox_message::Message::Arkoor(ArkoorMessage { vtxos })) => {
-					self.process_received_arkoor_package(vtxos, Some(mailbox_msg.checkpoint)).await?;
+					let result = self
+						.process_received_arkoor_package(vtxos, Some(mailbox_msg.checkpoint)).await;
+					if let Err(e) = result {
+						error!("Error processing received arkoor package: {:#}", e);
+					}
 				},
 				None => debug!("Unknown mailbox message: {:?}", mailbox_msg),
 			}
@@ -95,56 +104,88 @@ impl Wallet {
 		Ok(())
 	}
 
+	/// Turn raw byte arrays into VTXOs, then validate them.
+	///
+	/// This function doesn't return a result on purpose,
+	/// because we want to make sure we don't early return on
+	/// the first error. This ensure we process all VTXOs, even
+	/// if some are invalid, and print everything we received.
+	async fn process_raw_vtxos(
+		&self,
+		raw_vtxos: Vec<Vec<u8>>,
+	) -> Vec<Vtxo> {
+		let mut invalid_vtxos = Vec::with_capacity(raw_vtxos.len());
+		let mut valid_vtxos = Vec::with_capacity(raw_vtxos.len());
+
+		for bytes in &raw_vtxos {
+			let vtxo = match Vtxo::deserialize(&bytes) {
+				Ok(vtxo) => vtxo,
+				Err(e) => {
+					error!("Failed to deserialize arkoor VTXO: {}: {}", bytes.as_hex(), e);
+					invalid_vtxos.push(bytes);
+					continue;
+				}
+			};
+
+			if let Err(e) = self.validate_vtxo(&vtxo).await {
+				error!("Received invalid arkoor VTXO {} from server: {}", vtxo.id(), e);
+				invalid_vtxos.push(bytes);
+				continue;
+			}
+
+			info!("Received valid arkoor VTXO {}", vtxo.serialize_hex());
+			valid_vtxos.push(vtxo);
+		}
+
+		// We log all invalid VTXOs to keep track
+		if !invalid_vtxos.is_empty() {
+			error!("Received {} invalid arkoor VTXOs out of {} from server", invalid_vtxos.len(), raw_vtxos.len());
+		}
+
+		// We log all valid VTXOs to keep track
+		if !valid_vtxos.is_empty() {
+			for vtxo in &valid_vtxos {
+				info!("Valid arkoor VTXO: {}", vtxo.serialize_hex());
+			}
+			info!("Received {} valid arkoor VTXOs out of {} from server", valid_vtxos.len(), raw_vtxos.len());
+		}
+
+		valid_vtxos
+	}
+
 	async fn process_received_arkoor_package(
 		&self,
 		raw_vtxos: Vec<Vec<u8>>,
 		checkpoint: Option<u64>,
 	) -> anyhow::Result<()> {
-		if raw_vtxos.is_empty() {
-			return Ok(());
-		}
+		let vtxos = self.process_raw_vtxos(raw_vtxos).await;
 
-		let mut valid_vtxos = Vec::with_capacity(raw_vtxos.len());
-		for bytes in raw_vtxos {
-			let vtxo = match Vtxo::deserialize(&bytes) {
-				Ok(vtxo) => vtxo,
-				Err(e) => {
-					bail!("Failed to deserialize VTXO from server: {e}");
-				}
-			};
-
-			if let Err(e) = self.validate_vtxo(&vtxo).await {
-				bail!("Received invalid arkoor VTXO from server: {e}");
-			}
-
-			// Skip if already spent
-			if self.db.has_spent_vtxo(vtxo.id()).await? {
-				bail!("Ignoring already-spent arkoor VTXO {}", vtxo.id());
-			}
-
+		let mut new_vtxos = Vec::with_capacity(vtxos.len());
+		for vtxo in &vtxos {
 			// Skip if already in wallet
 			if self.db.get_wallet_vtxo(vtxo.id()).await?.is_some() {
-				bail!("Ignoring duplicate arkoor VTXO {}", vtxo.id());
+				info!("Ignoring duplicate arkoor VTXO {}", vtxo.id());
+				continue;
 			}
 
-			valid_vtxos.push(vtxo);
+			new_vtxos.push(vtxo);
 		}
 
-		if valid_vtxos.is_empty() {
+		if new_vtxos.is_empty() {
 			return Ok(());
 		}
 
-		let balance = valid_vtxos
+		let balance = vtxos
 			.iter()
 			.map(|vtxo| vtxo.amount()).sum::<Amount>()
 			.to_signed()?;
-		self.store_spendable_vtxos(&valid_vtxos).await?;
+		self.store_spendable_vtxos(&vtxos).await?;
 		self.movements.new_finished_movement(
 			Subsystem::ARKOOR,
 			ArkoorMovement::Receive.to_string(),
 			MovementStatus::Successful,
 			MovementUpdate::new()
-				.produced_vtxos(&valid_vtxos)
+				.produced_vtxos(&vtxos)
 				.intended_and_effective_balance(balance),
 		).await?;
 
