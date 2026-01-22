@@ -421,11 +421,16 @@ impl<S: state::BuilderState> ArkoorPackageBuilder<S> {
 			.map(|b| b.spend_info())
 			.flatten()
 	}
+
+	pub fn virtual_transactions<'a>(&'a self) -> impl Iterator<Item = Txid> + 'a {
+		self.builders.iter()
+			.flat_map(|b| b.virtual_transactions())
+	}
 }
 
 #[cfg(test)]
 mod test {
-	use std::collections::HashMap;
+	use std::collections::{HashMap, HashSet};
 	use std::str::FromStr;
 
 	use bitcoin::{Transaction, Txid};
@@ -470,6 +475,24 @@ mod test {
 		keypairs: &[Keypair],
 		funding_tx_map: HashMap<Txid, Transaction>,
 	) {
+		// Verify virtual_transactions and spend_info consistency
+		let vtxs: Vec<Txid> = builder.virtual_transactions().collect();
+		let vtx_set: HashSet<Txid> = vtxs.iter().copied().collect();
+		let spend_txids: HashSet<Txid> = builder.spend_info().map(|(_, txid)| txid).collect();
+
+		// No duplicates in virtual_transactions
+		assert_eq!(vtxs.len(), vtx_set.len(), "virtual_transactions() contains duplicates");
+
+		// Every virtual_transaction is in spend_info
+		for txid in &vtx_set {
+			assert!(spend_txids.contains(txid), "virtual_transaction {} not in spend_info", txid);
+		}
+
+		// Every spend_info txid is in virtual_transactions
+		for txid in &spend_txids {
+			assert!(vtx_set.contains(txid), "spend_info txid {} not in virtual_transactions", txid);
+		}
+
 		let user_builder = builder.generate_user_nonces(keypairs).expect("Valid nb of keypairs");
 		let cosign_requests = user_builder.cosign_request();
 

@@ -13,8 +13,8 @@ use std::str::FromStr;
 use anyhow::Context;
 use bitcoin::hashes::Hash;
 use bitcoin::hex::DisplayHex;
-use bitcoin::{Amount, Txid};
-use tokio_postgres::{GenericClient, Row, Transaction};
+use bitcoin::{Amount, Transaction, Txid};
+use tokio_postgres::{GenericClient, Row, Transaction as PgTransaction};
 use tokio_postgres::types::Type;
 
 use ark::{ProtocolEncoding, Vtxo, VtxoId, VtxoRequest};
@@ -22,11 +22,74 @@ use ark::rounds::RoundId;
 use ark::tree::signed::{UnlockHash, UnlockPreimage};
 use bitcoin_ext::BlockHeight;
 
-use crate::database::model::{Board, VtxoState};
+use crate::database::model::{Board, VirtualTransaction, VtxoState};
 use crate::database::rounds::{StoredRoundInput, StoredRoundParticipation};
 use crate::error::ContextExt;
 use crate::secret::Secret;
 
+pub async fn upsert_virtual_transaction<T: GenericClient>(
+	client: &T,
+	txid: Txid,
+	signed_tx: Option<&Transaction>,
+	is_funding: bool,
+	server_may_own_descendant_since: Option<chrono::DateTime<chrono::Local>>,
+) -> anyhow::Result<Txid> {
+	let signed_tx_bytes = signed_tx.map(|tx| bitcoin::consensus::serialize(tx));
+
+	client.execute("
+		INSERT INTO virtual_transaction (txid, signed_tx, is_funding, server_may_own_descendant_since, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, NOW(), NOW())
+		ON CONFLICT (txid) DO UPDATE SET
+			signed_tx = COALESCE(virtual_transaction.signed_tx, EXCLUDED.signed_tx),
+			server_may_own_descendant_since = COALESCE(virtual_transaction.server_may_own_descendant_since, EXCLUDED.server_may_own_descendant_since),
+			updated_at = NOW()
+	", &[&txid.to_string(), &signed_tx_bytes, &is_funding, &server_may_own_descendant_since]).await
+		.context("Failed to upsert virtual_transaction")?;
+
+	Ok(txid)
+}
+
+pub async fn get_virtual_transaction_by_txid<T: GenericClient>(
+	client: &T,
+	txid: Txid,
+) -> anyhow::Result<Option<VirtualTransaction<'static>>> {
+	let stmt = client.prepare(
+		"SELECT txid, signed_tx, is_funding, server_may_own_descendant_since
+			FROM virtual_transaction
+			WHERE txid = $1").await?;
+
+	match client.query_opt(&stmt, &[&txid.to_string()]).await? {
+		Some(row) => Ok(Some(VirtualTransaction::try_from(row)?)),
+		None => Ok(None),
+	}
+}
+
+/// Returns the first txid that exists in the virtual_transaction table but has no signed_tx.
+/// Returns None if all txids either don't exist or are signed.
+pub async fn get_first_unsigned_virtual_transaction<T: GenericClient>(
+	client: &T,
+	txids: &[Txid],
+) -> anyhow::Result<Option<Txid>> {
+	if txids.is_empty() {
+		return Ok(None);
+	}
+
+	let txid_strings = txids.iter().map(|t| t.to_string()).collect::<Vec<_>>();
+	let stmt = client.prepare_typed(
+		"SELECT txid FROM virtual_transaction
+			WHERE txid = ANY($1) AND signed_tx IS NULL
+			LIMIT 1",
+		&[Type::TEXT_ARRAY]
+	).await?;
+
+	match client.query_opt(&stmt, &[&txid_strings]).await? {
+		Some(row) => {
+			let txid_str: &str = row.get("txid");
+			Ok(Some(Txid::from_str(txid_str).context("invalid txid in database")?))
+		},
+		None => Ok(None),
+	}
+}
 
 pub async fn upsert_vtxos<T, V: Borrow<Vtxo>>(
 	client: &T,
@@ -34,27 +97,28 @@ pub async fn upsert_vtxos<T, V: Borrow<Vtxo>>(
 ) -> Result<(), tokio_postgres::Error>
 	where T: GenericClient
 {
-	let statement = client.prepare_typed(
-		"INSERT INTO vtxo (vtxo_id, vtxo, expiry, created_at, updated_at) VALUES ( \
-			UNNEST($1), UNNEST($2), UNNEST($3), NOW(), NOW() \
-		) ON CONFLICT DO NOTHING",
-		&[Type::TEXT_ARRAY, Type::BYTEA_ARRAY, Type::INT4_ARRAY],
-	).await?;
+	let statement = client.prepare_typed("
+		INSERT INTO vtxo (vtxo_id, vtxo_txid, vtxo, expiry, created_at, updated_at) VALUES (
+			UNNEST($1), UNNEST($2), UNNEST($3), UNNEST($4), NOW(), NOW())
+		ON CONFLICT DO NOTHING
+	", &[Type::TEXT_ARRAY, Type::TEXT_ARRAY, Type::BYTEA_ARRAY, Type::INT4_ARRAY]).await?;
 
 	let vtxos = vtxos.into_iter();
 	let mut vtxo_ids = Vec::with_capacity(vtxos.size_hint().0);
+	let mut vtxo_txids = Vec::with_capacity(vtxos.size_hint().0);
 	let mut data = Vec::with_capacity(vtxos.size_hint().0);
 	let mut expiry = Vec::with_capacity(vtxos.size_hint().0);
 	for vtxo in vtxos {
 		let vtxo = vtxo.borrow();
 		vtxo_ids.push(vtxo.id().to_string());
+		vtxo_txids.push(vtxo.point().txid.to_string());
 		data.push(vtxo.serialize());
 		expiry.push(vtxo.expiry_height() as i32);
 	}
 
 	client.execute(
 		&statement,
-		&[&vtxo_ids, &data, &expiry]
+		&[&vtxo_ids, &vtxo_txids, &data, &expiry]
 	).await?;
 
 	Ok(())
@@ -177,7 +241,7 @@ pub async fn mark_board_swept<T>(
 }
 
 pub async fn store_round_participation(
-	tx: &Transaction<'_>,
+	tx: &PgTransaction<'_>,
 	unlock_hash: UnlockHash,
 	unlock_preimage: UnlockPreimage,
 	inputs: &[VtxoId],
@@ -223,7 +287,7 @@ pub async fn store_round_participation(
 
 /// complete a round participation from the main row
 pub async fn complete_round_participation(
-	tx: &Transaction<'_>,
+	tx: &PgTransaction<'_>,
 	part_row: Row,
 ) -> anyhow::Result<StoredRoundParticipation> {
 	let part_id = part_row.get::<_, i64>("id");
@@ -293,7 +357,7 @@ pub async fn complete_round_participation(
 }
 
 pub async fn set_round_id_for_participations(
-	tx: &Transaction<'_>,
+	tx: &PgTransaction<'_>,
 	unlock_hashes: impl IntoIterator<Item = UnlockHash>,
 	round_txid: Txid,
 ) -> anyhow::Result<()> {

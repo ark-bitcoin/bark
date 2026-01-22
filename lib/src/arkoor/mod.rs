@@ -698,6 +698,25 @@ impl<S: state::BuilderState> ArkoorBuilder<S> {
 		ret
 	}
 
+	/// Returns the txids of all virtual transactions in this arkoor:
+	/// - checkpoint tx (if checkpoints enabled)
+	/// - arkoor txs (one per normal output, exits from checkpoint)
+	/// - isolation fanout tx (if dust isolation active)
+	pub fn virtual_transactions(&self) -> Vec<Txid> {
+		let mut ret = Vec::new();
+		// Checkpoint tx
+		if let Some((_, txid)) = &self.checkpoint_data {
+			ret.push(*txid);
+		}
+		// Arkoor txs (exits for normal outputs)
+		ret.extend(self.unsigned_arkoor_txs.iter().map(|tx| tx.compute_txid()));
+		// Isolation fanout tx
+		if let Some(tx) = &self.unsigned_isolation_fanout_tx {
+			ret.push(tx.compute_txid());
+		}
+		ret
+	}
+
 	fn taptweak_at(&self, idx: usize) -> TapTweakHash {
 		if idx == 0 { self.input_tweak } else { self.checkpoint_policy_tweak }
 	}

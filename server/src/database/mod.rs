@@ -16,7 +16,6 @@ mod query;
 
 pub use model::*;
 
-
 use std::task;
 use std::backtrace::Backtrace;
 use std::borrow::Borrow;
@@ -33,7 +32,7 @@ use bitcoin::consensus::{serialize, deserialize};
 use bitcoin::secp256k1::{self, PublicKey};
 use chrono::Local;
 use futures::Stream;
-use tokio_postgres::{Client, NoTls, RowStream};
+use tokio_postgres::{Client, NoTls, GenericClient, RowStream};
 use tokio_postgres::types::Type;
 use tracing::{info, warn};
 use ark::{Vtxo, VtxoId};
@@ -232,20 +231,29 @@ impl Db {
 		query::get_vtxos_by_id(&*conn, ids).await
 	}
 
-	/// Upsert new vtxos and mark vtxos as spend
+
+	/// Updates the virtual transaction tree.
+	/// This method will
+	/// - upsert new virtual transactions
+	/// - upsert new vtxos
+	/// - mark spends in the virtual transaction tree
 	///
-	/// It is performed in a single function to ensure atomicity
-	/// Note, that the spend_info might mark newly created vtxos as spend
-	pub async fn upsert_vtxos_and_mark_spends<V : Borrow<Vtxo>>(
+	/// This method will fail
+	/// - if a database error occurred
+	pub async fn update_virtual_transaction_tree<'a, V : Borrow<Vtxo>>(
 		&self,
-		new_vtxos: impl Iterator<Item = V>,
-		spend_info: impl Iterator<Item = (VtxoId, Txid)>,
+		new_virtual_txs: impl IntoIterator<Item = VirtualTransaction<'a>>,
+		new_vtxos: impl IntoIterator<Item = V>,
+		spend_info: impl IntoIterator<Item = (VtxoId, Txid)>,
 	) -> anyhow::Result<()> {
-		let (vtxos, txids) = spend_info.collect::<(Vec<_>, Vec<_>)>();
+		let (vtxos, txids) = spend_info.into_iter().collect::<(Vec<_>, Vec<_>)>();
 
 		let mut conn = self.get_conn().await.context("failed to connect to db")?;
 		let tx = conn.transaction().await.context("failed to start db transaction")?;
 
+		for vtx in new_virtual_txs {
+			query::upsert_virtual_transaction(&tx, vtx.txid, vtx.signed_tx(), vtx.is_funding, vtx.server_may_own_descendant_since).await?;
+		}
 		query::upsert_vtxos(&tx, new_vtxos).await
 			.context("failed to upsert VTXOs")?;
 		oor::mark_package_spent(&tx, &vtxos, &txids).await
@@ -253,6 +261,33 @@ impl Db {
 
 		tx.commit().await?;
 		Ok(())
+	}
+
+	pub async fn upsert_virtual_transaction(
+		&self,
+		txid: Txid,
+		signed_tx: Option<&Transaction>,
+		is_funding: bool,
+		server_may_own_descendant_since: Option<chrono::DateTime<chrono::Local>>,
+	) -> anyhow::Result<Txid> {
+		let conn = self.get_conn().await?;
+		let client = conn.client();
+		query::upsert_virtual_transaction(client, txid, signed_tx, is_funding, server_may_own_descendant_since).await
+	}
+
+	/// Queries a virtual transaction by txid
+	pub async fn get_virtual_transaction_by_txid(&self, txid: Txid) -> anyhow::Result<Option<VirtualTransaction<'static>>> {
+		let conn = self.get_conn().await.context("Failed to connect to db")?;
+		let client: &tokio_postgres::Client = conn.client();
+		query::get_virtual_transaction_by_txid(client, txid).await
+	}
+
+	/// Returns the first txid that exists as an unsigned virtual transaction,
+	/// or None if all txids are either signed or don't exist in the table.
+	pub async fn get_first_unsigned_virtual_transaction(&self, txids: &[Txid]) -> anyhow::Result<Option<Txid>> {
+		let conn = self.get_conn().await.context("Failed to connect to db")?;
+		let client: &tokio_postgres::Client = conn.client();
+		query::get_first_unsigned_virtual_transaction(client, txids).await
 	}
 
 	/**

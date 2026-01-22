@@ -25,6 +25,7 @@ use server_rpc::TryFromBytes;
 use bitcoin_ext::{AmountExt, BlockDelta, BlockHeight};
 
 use crate::arkoor::ArkoorCosignRequestValidationParams;
+use crate::database::VirtualTransaction;
 use crate::database::ln::{
 	LightningHtlcSubscription, LightningHtlcSubscriptionStatus, LightningPaymentStatus,
 };
@@ -284,12 +285,21 @@ impl Server {
 
 		// We are going to compute all vtxos and spend-info
 		// and mark it into the database
+		let virtual_transactions = builder.virtual_transactions();
 		let new_output_vtxos = builder.build_unsigned_vtxos();
 		let new_internal_vtxos = builder.build_unsigned_internal_vtxos();
 		let spend_info = builder.spend_info();
 
 		// We are going to mark the update in the database
-		self.db.upsert_vtxos_and_mark_spends(
+		self.db.update_virtual_transaction_tree(
+			virtual_transactions.map(|txid| {
+				VirtualTransaction {
+					txid: txid,
+					signed_tx: None,
+					is_funding: false,
+					server_may_own_descendant_since: None,
+				}
+			}),
 			new_output_vtxos.chain(new_internal_vtxos),
 			spend_info,
 		).await?;
