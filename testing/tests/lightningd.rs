@@ -791,6 +791,9 @@ async fn bark_can_revoke_on_intra_ark_timeout_invoice_pay_failure() {
 	assert!(!vtxos.iter().any(|v| matches!(v.state, VtxoStateInfo::Locked { .. })), "should not be any locked vtxo left");
 }
 
+/// Test that when receiver doesn't claim an intra-ark payment, the sender:
+/// 1. Gets notified promptly (not waiting for invoice_poll_interval)
+/// 2. Can revoke and recover their funds
 #[tokio::test]
 async fn bark_can_revoke_on_intra_ark_send_when_receiver_leaves() {
 	let ctx = TestContext::new("lightningd/bark_can_revoke_on_intra_ark_send_when_receiver_leaves").await;
@@ -800,11 +803,12 @@ async fn bark_can_revoke_on_intra_ark_send_when_receiver_leaves() {
 	// Start a server and link it to our cln installation
 	let srv = ctx.new_captaind_with_cfg("server", Some(&lightning.receiver), |cfg| {
 		// Short timeout for when HTLCs are held but receiver doesn't claim
-		cfg.receive_htlc_forward_timeout = Duration::from_secs(2);
-		// speed htlc subscription check
+		cfg.receive_htlc_forward_timeout = Duration::from_secs(5);
+		// Speed up htlc subscription check
 		cfg.invoice_check_interval = Duration::from_secs(1);
-		// quick payment update check
-		cfg.invoice_poll_interval = Duration::from_secs(1);
+		// Use a long poll interval to verify that cancellation notification works
+		// (without the notification, the sender would wait this long to discover failure)
+		cfg.invoice_poll_interval = Duration::from_secs(30);
 	}).await;
 	ctx.fund_captaind(&srv, btc(10)).await;
 	srv.wait_for_vtxopool(&ctx).await;
@@ -820,10 +824,25 @@ async fn bark_can_revoke_on_intra_ark_send_when_receiver_leaves() {
 	let pay_amount = btc(0.5);
 	let invoice_info = bark_1.bolt11_invoice(pay_amount).await;
 
-	bark_2.pay_lightning(invoice_info.invoice, None).await;
+	// Pay with wait=true and measure how long it takes to detect the failure.
+	// The receiver never claims, so this should fail after receive_htlc_forward_timeout (5s).
+	// Without proper notification, it would take receive_htlc_forward_timeout + invoice_poll_interval (~35s).
+	let start = std::time::Instant::now();
+	let _result = bark_2.try_pay_lightning(invoice_info.invoice, None, true).await;
+	let elapsed = start.elapsed();
 
-	// receiver never show up and the invoice eventually times out
-	tokio::time::sleep(Duration::from_secs(3)).await;
+	// Verify the cancellation was detected promptly (within ~25s, not ~35s)
+	// We allow some buffer for processing overhead, but it should be well under invoice_poll_interval (30s)
+	let max_expected = Duration::from_secs(25);
+	assert!(
+		elapsed < max_expected,
+		"Payment cancellation took {:?}, expected < {:?}. \
+		Sender may not be receiving prompt notification when payment is cancelled.",
+		elapsed, max_expected
+	);
+	info!("Intra-ark payment cancellation detected in {:?}", elapsed);
+
+	// Now verify the sender can revoke and recover funds
 	bark_2.maintain().await;
 
 	let vtxos = bark_2.vtxos().await;
