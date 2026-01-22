@@ -18,6 +18,47 @@ use crate::vtxo::policy::clause::{
 	VtxoClause,
 };
 
+/// Trait for policy types that can be used in a Vtxo.
+pub trait Policy: Clone {
+	fn policy_type(&self) -> VtxoPolicyKind;
+
+	fn taproot(
+		&self,
+		server_pubkey: PublicKey,
+		exit_delta: BlockDelta,
+		expiry_height: BlockHeight,
+	) -> taproot::TaprootSpendInfo;
+
+	fn script_pubkey(
+		&self,
+		server_pubkey: PublicKey,
+		exit_delta: BlockDelta,
+		expiry_height: BlockHeight,
+	) -> ScriptBuf {
+		Policy::taproot(self, server_pubkey, exit_delta, expiry_height).script_pubkey()
+	}
+
+	fn txout(
+		&self,
+		amount: Amount,
+		server_pubkey: PublicKey,
+		exit_delta: BlockDelta,
+		expiry_height: BlockHeight,
+	) -> TxOut {
+		TxOut {
+			script_pubkey: Policy::script_pubkey(self, server_pubkey, exit_delta, expiry_height),
+			value: amount,
+		}
+	}
+
+	fn clauses(
+		&self,
+		exit_delta: u16,
+		expiry_height: BlockHeight,
+		server_pubkey: PublicKey,
+	) -> Vec<VtxoClause>;
+}
+
 /// Type enum of [VtxoPolicy].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum VtxoPolicyKind {
@@ -138,7 +179,7 @@ pub struct CheckpointVtxoPolicy {
 	pub user_pubkey: PublicKey,
 }
 
-impl From<CheckpointVtxoPolicy> for VtxoPolicy {
+impl From<CheckpointVtxoPolicy> for ServerVtxoPolicy {
 	fn from(policy: CheckpointVtxoPolicy) -> Self {
 		Self::Checkpoint(policy)
 	}
@@ -377,7 +418,10 @@ impl From<ServerHtlcRecvVtxoPolicy> for VtxoPolicy {
 	}
 }
 
-/// The output policy of the VTXO.
+/// User-facing VTXO output policy.
+///
+/// All variants have an associated user public key, accessible via the infallible
+/// `user_pubkey()` method. These policies are used in protocol messages and by clients.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum VtxoPolicy {
 	/// Standard VTXO output protected with a public key.
@@ -388,8 +432,6 @@ pub enum VtxoPolicy {
 	/// - an arkoor tx
 	/// - change from a LN payment
 	Pubkey(PubkeyVtxoPolicy),
-	/// A policy which returns all funds to the server after expiry
-	Checkpoint(CheckpointVtxoPolicy),
 	/// A VTXO that represents an HTLC with the Ark server to send money.
 	ServerHtlcSend(ServerHtlcSendVtxoPolicy),
 	/// A VTXO that represents an HTLC with the Ark server to receive money.
@@ -399,10 +441,6 @@ pub enum VtxoPolicy {
 impl VtxoPolicy {
 	pub fn new_pubkey(user_pubkey: PublicKey) -> Self {
 		Self::Pubkey(PubkeyVtxoPolicy { user_pubkey })
-	}
-
-	pub fn new_checkpoint(user_pubkey: PublicKey) -> Self {
-		Self::Checkpoint(CheckpointVtxoPolicy { user_pubkey })
 	}
 
 	pub fn new_server_htlc_send(
@@ -457,17 +495,15 @@ impl VtxoPolicy {
 	pub fn policy_type(&self) -> VtxoPolicyKind {
 		match self {
 			Self::Pubkey { .. } => VtxoPolicyKind::Pubkey,
-			Self::Checkpoint { .. } => VtxoPolicyKind::Checkpoint,
 			Self::ServerHtlcSend { .. } => VtxoPolicyKind::ServerHtlcSend,
 			Self::ServerHtlcRecv { .. } => VtxoPolicyKind::ServerHtlcRecv,
 		}
 	}
 
-	/// Whether a [Vtxo](crate::Vtxo) with this output can be spend in an arkoor tx.
+	/// Whether a [Vtxo](crate::Vtxo) with this output can be spent in an arkoor tx.
 	pub fn is_arkoor_compatible(&self) -> bool {
 		match self {
 			Self::Pubkey { .. } => true,
-			Self::Checkpoint { .. } => true,
 			Self::ServerHtlcSend { .. } => false,
 			Self::ServerHtlcRecv { .. } => false,
 		}
@@ -475,21 +511,19 @@ impl VtxoPolicy {
 
 	/// The public key used to cosign arkoor txs spending a [Vtxo](crate::Vtxo)
 	/// with this output.
-	/// This will return [None] if [VtxoPolicy::is_arkoor_compatible] returns false.
+	/// Returns [None] for HTLC policies.
 	pub fn arkoor_pubkey(&self) -> Option<PublicKey> {
 		match self {
 			Self::Pubkey(PubkeyVtxoPolicy { user_pubkey }) => Some(*user_pubkey),
-			Self::Checkpoint(CheckpointVtxoPolicy { user_pubkey }) => Some(*user_pubkey),
-			Self::ServerHtlcSend(ServerHtlcSendVtxoPolicy { user_pubkey, .. }) => Some(*user_pubkey),
-			Self::ServerHtlcRecv(ServerHtlcRecvVtxoPolicy { user_pubkey, .. }) => Some(*user_pubkey),
+			Self::ServerHtlcSend { .. } => None,
+			Self::ServerHtlcRecv { .. } => None,
 		}
 	}
 
-	/// Returns the user pubkey associated with a [Vtxo](crate::Vtxo) with this output.
+	/// Returns the user pubkey associated with this policy.
 	pub fn user_pubkey(&self) -> PublicKey {
 		match self {
 			Self::Pubkey(PubkeyVtxoPolicy { user_pubkey }) => *user_pubkey,
-			Self::Checkpoint(CheckpointVtxoPolicy { user_pubkey }) => *user_pubkey,
 			Self::ServerHtlcSend(ServerHtlcSendVtxoPolicy { user_pubkey, .. }) => *user_pubkey,
 			Self::ServerHtlcRecv(ServerHtlcRecvVtxoPolicy { user_pubkey, .. }) => *user_pubkey,
 		}
@@ -501,15 +535,15 @@ impl VtxoPolicy {
 		exit_delta: BlockDelta,
 		expiry_height: BlockHeight,
 	) -> taproot::TaprootSpendInfo {
+		let _ = expiry_height; // not used by user-facing policies
 		match self {
 			Self::Pubkey(policy) => policy.taproot(server_pubkey, exit_delta),
-			Self::Checkpoint(policy) => policy.taproot(server_pubkey, expiry_height),
 			Self::ServerHtlcSend(policy) => policy.taproot(server_pubkey, exit_delta),
 			Self::ServerHtlcRecv(policy) => policy.taproot(server_pubkey, exit_delta),
 		}
 	}
 
-	pub(crate) fn script_pubkey(
+	pub fn script_pubkey(
 		&self,
 		server_pubkey: PublicKey,
 		exit_delta: BlockDelta,
@@ -534,14 +568,166 @@ impl VtxoPolicy {
 	pub fn clauses(
 		&self,
 		exit_delta: u16,
-		expiry_height: BlockHeight,
+		_expiry_height: BlockHeight,
 		server_pubkey: PublicKey,
 	) -> Vec<VtxoClause> {
 		match self {
 			Self::Pubkey(policy) => policy.clauses(exit_delta),
-			Self::Checkpoint(policy) => policy.clauses(expiry_height, server_pubkey),
 			Self::ServerHtlcSend(policy) => policy.clauses(exit_delta, server_pubkey),
 			Self::ServerHtlcRecv(policy) => policy.clauses(exit_delta, server_pubkey),
 		}
+	}
+}
+
+/// Server-internal VTXO policy.
+///
+/// This is a superset of [VtxoPolicy] used by the server for internal tracking.
+/// Includes policies without user public keys.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum ServerVtxoPolicy {
+	/// Wraps any user-facing policy.
+	User(VtxoPolicy),
+	/// A policy which returns all coins to the server after expiry.
+	Checkpoint(CheckpointVtxoPolicy),
+	/// Server-only policy where coins can only be swept by the server after expiry.
+	Expiry(ExpiryVtxoPolicy),
+}
+
+impl From<VtxoPolicy> for ServerVtxoPolicy {
+	fn from(p: VtxoPolicy) -> Self {
+		Self::User(p)
+	}
+}
+
+impl ServerVtxoPolicy {
+	pub fn new_checkpoint(user_pubkey: PublicKey) -> Self {
+		Self::Checkpoint(CheckpointVtxoPolicy { user_pubkey })
+	}
+
+	pub fn new_expiry(internal_key: bitcoin::secp256k1::XOnlyPublicKey) -> Self {
+		Self::Expiry(ExpiryVtxoPolicy { internal_key })
+	}
+
+	/// The policy type id.
+	pub fn policy_type(&self) -> VtxoPolicyKind {
+		match self {
+			Self::User(p) => p.policy_type(),
+			Self::Checkpoint { .. } => VtxoPolicyKind::Checkpoint,
+			Self::Expiry { .. } => VtxoPolicyKind::Expiry,
+		}
+	}
+
+	/// Whether a [Vtxo](crate::Vtxo) with this output can be spent in an arkoor tx.
+	pub fn is_arkoor_compatible(&self) -> bool {
+		match self {
+			Self::User(p) => p.is_arkoor_compatible(),
+			Self::Checkpoint { .. } => true,
+			Self::Expiry { .. } => false,
+		}
+	}
+
+	/// Returns the user pubkey if this policy has one.
+	pub fn user_pubkey(&self) -> Option<PublicKey> {
+		match self {
+			Self::User(p) => Some(p.user_pubkey()),
+			Self::Checkpoint(CheckpointVtxoPolicy { user_pubkey }) => Some(*user_pubkey),
+			Self::Expiry { .. } => None,
+		}
+	}
+
+	pub fn taproot(
+		&self,
+		server_pubkey: PublicKey,
+		exit_delta: BlockDelta,
+		expiry_height: BlockHeight,
+	) -> taproot::TaprootSpendInfo {
+		match self {
+			Self::User(p) => p.taproot(server_pubkey, exit_delta, expiry_height),
+			Self::Checkpoint(policy) => policy.taproot(server_pubkey, expiry_height),
+			Self::Expiry(policy) => policy.taproot(server_pubkey, expiry_height),
+		}
+	}
+
+	pub fn script_pubkey(
+		&self,
+		server_pubkey: PublicKey,
+		exit_delta: BlockDelta,
+		expiry_height: BlockHeight,
+	) -> ScriptBuf {
+		self.taproot(server_pubkey, exit_delta, expiry_height).script_pubkey()
+	}
+
+	pub fn clauses(
+		&self,
+		exit_delta: u16,
+		expiry_height: BlockHeight,
+		server_pubkey: PublicKey,
+	) -> Vec<VtxoClause> {
+		match self {
+			Self::User(p) => p.clauses(exit_delta, expiry_height, server_pubkey),
+			Self::Checkpoint(policy) => policy.clauses(expiry_height, server_pubkey),
+			Self::Expiry(policy) => policy.clauses(expiry_height, server_pubkey),
+		}
+	}
+
+	/// Check whether this is a user policy
+	pub fn is_user_policy(&self) -> bool {
+		matches!(self, ServerVtxoPolicy::User(_))
+	}
+
+	/// Try to convert to a user policy if it is one
+	pub fn into_user_policy(self) -> Option<VtxoPolicy> {
+		match self {
+			ServerVtxoPolicy::User(p) => Some(p),
+			_ => None,
+		}
+	}
+}
+
+impl Policy for VtxoPolicy {
+	fn policy_type(&self) -> VtxoPolicyKind {
+		VtxoPolicy::policy_type(self)
+	}
+
+	fn taproot(
+		&self,
+		server_pubkey: PublicKey,
+		exit_delta: BlockDelta,
+		expiry_height: BlockHeight,
+	) -> taproot::TaprootSpendInfo {
+		VtxoPolicy::taproot(self, server_pubkey, exit_delta, expiry_height)
+	}
+
+	fn clauses(
+		&self,
+		exit_delta: u16,
+		expiry_height: BlockHeight,
+		server_pubkey: PublicKey,
+	) -> Vec<VtxoClause> {
+		VtxoPolicy::clauses(self, exit_delta, expiry_height, server_pubkey)
+	}
+}
+
+impl Policy for ServerVtxoPolicy {
+	fn policy_type(&self) -> VtxoPolicyKind {
+		ServerVtxoPolicy::policy_type(self)
+	}
+
+	fn taproot(
+		&self,
+		server_pubkey: PublicKey,
+		exit_delta: BlockDelta,
+		expiry_height: BlockHeight,
+	) -> taproot::TaprootSpendInfo {
+		ServerVtxoPolicy::taproot(self, server_pubkey, exit_delta, expiry_height)
+	}
+
+	fn clauses(
+		&self,
+		exit_delta: u16,
+		expiry_height: BlockHeight,
+		server_pubkey: PublicKey,
+	) -> Vec<VtxoClause> {
+		ServerVtxoPolicy::clauses(self, exit_delta, expiry_height, server_pubkey)
 	}
 }

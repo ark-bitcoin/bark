@@ -10,7 +10,7 @@ use bitcoin::hashes::{sha256, Hash};
 // We use bitcoin::io::{Read, Write} here but we shouldn't have to.
 // I created this issue in the hope that rust-bitcoin fixes this nuisance:
 //  https://github.com/rust-bitcoin/rust-bitcoin/issues/4530
-use bitcoin::secp256k1::{self, schnorr, PublicKey};
+use bitcoin::secp256k1::{self, schnorr, PublicKey, XOnlyPublicKey};
 use secp256k1_musig::musig;
 
 
@@ -245,6 +245,20 @@ impl ProtocolEncoding for PublicKey {
 		r.read_slice(&mut buf[..])?;
 		PublicKey::from_slice(&buf).map_err(|e| {
 			ProtocolDecodingError::invalid_err(e, "invalid public key")
+		})
+	}
+}
+
+impl ProtocolEncoding for XOnlyPublicKey {
+	fn encode<W: io::Write + ?Sized>(&self, w: &mut W) -> Result<(), io::Error> {
+		w.emit_slice(&self.serialize())
+	}
+
+	fn decode<R: io::Read + ?Sized>(r: &mut R) -> Result<Self, ProtocolDecodingError> {
+		let mut buf = [0; 32];
+		r.read_slice(&mut buf[..])?;
+		XOnlyPublicKey::from_slice(&buf).map_err(|e| {
+			ProtocolDecodingError::invalid_err(e, "invalid x-only public key")
 		})
 	}
 }

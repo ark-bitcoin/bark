@@ -7,7 +7,7 @@ use log::{info, error};
 use ark::{VtxoPolicy, ProtocolEncoding};
 use ark::arkoor::ArkoorDestination;
 use ark::arkoor::package::{ArkoorPackageBuilder, ArkoorPackageCosignResponse};
-use ark::vtxo::{Vtxo, VtxoId, VtxoPolicyKind};
+use ark::vtxo::{Vtxo, VtxoId};
 use server_rpc::protos;
 
 use crate::subsystem::Subsystem;
@@ -34,12 +34,9 @@ impl Wallet {
 		}
 
 		// Not all policies are supported for sending arkoor
-		match address.policy().policy_type() {
-			VtxoPolicyKind::Pubkey => {},
-			VtxoPolicyKind::Checkpoint
-			| VtxoPolicyKind::ServerHtlcRecv
-			| VtxoPolicyKind::ServerHtlcSend
-			| VtxoPolicyKind::Expiry => {
+		match address.policy() {
+			VtxoPolicy::Pubkey(_) => {},
+			VtxoPolicy::ServerHtlcRecv(_) | VtxoPolicy::ServerHtlcSend(_) => {
 				bail!("VTXO policy in address cannot be used for arkoor payment: {}",
 					address.policy().policy_type(),
 				);

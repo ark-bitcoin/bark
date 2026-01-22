@@ -13,7 +13,7 @@ use bitcoin::secp256k1::{schnorr, PublicKey};
 use tracing::{error, info, trace};
 use uuid::Uuid;
 
-use ark::{Vtxo, VtxoId, VtxoPolicy, VtxoRequest};
+use ark::{Vtxo, VtxoId, VtxoPolicy, VtxoRequest, ServerVtxo};
 use ark::arkoor::package::{ArkoorPackageCosignRequest, ArkoorPackageCosignResponse};
 use ark::challenges::LightningReceiveChallenge;
 use ark::integration::TokenStatus;
@@ -286,7 +286,7 @@ impl Server {
 		// We are going to compute all vtxos and spend-info
 		// and mark it into the database
 		let virtual_transactions = builder.virtual_transactions();
-		let new_output_vtxos = builder.build_unsigned_vtxos();
+		let new_output_vtxos = builder.build_unsigned_vtxos().map(ServerVtxo::from);
 		let new_internal_vtxos = builder.build_unsigned_internal_vtxos();
 		let spend_info = builder.spend_info();
 

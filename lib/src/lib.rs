@@ -25,7 +25,7 @@ pub mod integration;
 
 pub use crate::address::Address;
 pub use crate::encode::{ProtocolEncoding, WriteExt, ReadExt, ProtocolDecodingError};
-pub use crate::vtxo::{Vtxo, VtxoId, VtxoPolicy};
+pub use crate::vtxo::{Vtxo, VtxoId, VtxoPolicy, ServerVtxoPolicy, ServerVtxo};
 
 #[cfg(test)]
 mod napkin;

@@ -1,7 +1,7 @@
 use anyhow::Context;
 
 use ark::util::IteratorExt;
-use ark::{Vtxo, VtxoId, VtxoPolicy};
+use ark::{Vtxo, VtxoId, VtxoPolicy, ServerVtxo};
 use ark::arkoor::state::{ServerCanCosign, ServerSigned};
 use ark::arkoor::package::{
 	ArkoorPackageCosignRequest, ArkoorPackageCosignResponse, ArkoorPackageBuilder,
@@ -95,7 +95,7 @@ impl Server {
 
 		// We are going to compute all vtxos and spend-info
 		// and mark it into the database
-		let new_output_vtxos = builder.build_unsigned_vtxos();
+		let new_output_vtxos = builder.build_unsigned_vtxos().map(ServerVtxo::from);
 		let new_internal_vtxos = builder.build_unsigned_internal_vtxos();
 		let spend_info = builder.spend_info();
 
@@ -129,7 +129,6 @@ impl Server {
 		for vtxo in &input_vtxos {
 			match vtxo.policy() {
 				VtxoPolicy::Pubkey( ..) => {},
-				VtxoPolicy::Checkpoint( ..) => bail!("checkpoint vtxo not supported"),
 				VtxoPolicy::ServerHtlcSend( ..) => bail!("server htlc send vtxo not supported"),
 				VtxoPolicy::ServerHtlcRecv( ..) => bail!("server htlc recv vtxo not supported"),
 			}

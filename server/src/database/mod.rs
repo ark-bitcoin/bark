@@ -14,11 +14,12 @@ pub mod vtxopool;
 mod model;
 mod query;
 
-pub use model::*;
+pub use self::model::*;
 
+
+use std::borrow::Borrow;
 use std::task;
 use std::backtrace::Backtrace;
-use std::borrow::Borrow;
 use std::collections::HashMap;
 use std::pin::Pin;
 use std::time::Duration;
@@ -35,7 +36,7 @@ use futures::Stream;
 use tokio_postgres::{Client, NoTls, GenericClient, RowStream};
 use tokio_postgres::types::Type;
 use tracing::{info, warn};
-use ark::{Vtxo, VtxoId};
+use ark::{ServerVtxo, Vtxo, VtxoId};
 use ark::mailbox::MailboxIdentifier;
 use ark::encode::ProtocolEncoding;
 use bitcoin_ext::BlockHeight;
@@ -180,7 +181,7 @@ impl Db {
 	///
 	/// If one or more vtxo's is already present in the database
 	/// the query will succeed.
-	pub async fn upsert_vtxos<V: Borrow<Vtxo>>(
+	pub async fn upsert_vtxos<V: Borrow<ServerVtxo>>(
 		&self,
 		vtxos: impl IntoIterator<Item = V>,
 	) -> anyhow::Result<()> {
@@ -194,7 +195,7 @@ impl Db {
 	}
 
 	/// Upsert a board into the database
-	pub async fn upsert_board(&self, vtxo: &Vtxo) -> anyhow::Result<()> {
+	pub async fn upsert_board(&self, vtxo: &ServerVtxo) -> anyhow::Result<()> {
 		let mut conn = self.get_conn().await?;
 		let tx = conn.transaction().await?;
 		query::upsert_vtxos(&tx, [vtxo]).await?;
@@ -214,7 +215,7 @@ impl Db {
 		query::get_sweepable_boards(&*conn, height).await
 	}
 
-	pub async fn mark_board_swept(&self, vtxo: &Vtxo) -> anyhow::Result<()> {
+	pub async fn mark_board_swept(&self, vtxo: &ServerVtxo) -> anyhow::Result<()> {
 		let conn = self.get_conn().await?;
 		query::mark_board_swept(&*conn, vtxo.id()).await
 			.context("Failed to mark board as swept")?;
@@ -240,7 +241,7 @@ impl Db {
 	///
 	/// This method will fail
 	/// - if a database error occurred
-	pub async fn update_virtual_transaction_tree<'a, V : Borrow<Vtxo>>(
+	pub async fn update_virtual_transaction_tree<'a, V : Borrow<ServerVtxo>>(
 		&self,
 		new_virtual_txs: impl IntoIterator<Item = VirtualTransaction<'a>>,
 		new_vtxos: impl IntoIterator<Item = V>,
@@ -310,7 +311,7 @@ impl Db {
 		").await?;
 		let rows_affected = conn.execute(&statement, &[
 			&pubkey.serialize().to_vec(),
-			&vtxo.serialize(),
+			&ProtocolEncoding::serialize(&vtxo),
 			&arkoor_package_id.to_vec(),
 			&vtxo.id().to_string(),
 		]).await?;
@@ -381,7 +382,7 @@ impl Db {
 			let rows_updated = conn.execute(&statement, &[
 				&mailbox_id.to_string(),
 				&vtxo.id().to_string(),
-				&vtxo.serialize().to_vec(),
+				&ProtocolEncoding::serialize(vtxo).to_vec(),
 				&checkpoint,
 			]).await?;
 			debug_assert_eq!(rows_updated, 1);

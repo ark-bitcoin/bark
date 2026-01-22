@@ -14,7 +14,7 @@ use bitcoin::consensus::serialize;
 use tokio_postgres::types::Type;
 use tracing::{debug, info, trace};
 
-use ark::{VtxoId, VtxoRequest};
+use ark::{ServerVtxo, VtxoId, VtxoRequest};
 use ark::encode::ProtocolEncoding;
 use ark::rounds::{RoundId, RoundSeq};
 use ark::tree::signed::{CachedSignedVtxoTree, UnlockHash, UnlockPreimage};
@@ -110,7 +110,7 @@ impl Db {
 		query::set_round_id_for_participations(&tx, hark_unlock_hashes, round_txid).await?;
 
 		// Finally insert new vtxos.
-		query::upsert_vtxos(&tx, output_vtxos.all_vtxos()).await?;
+		query::upsert_vtxos(&tx, output_vtxos.all_vtxos().map(ServerVtxo::from)).await?;
 
 		tx.commit().await?;
 		Ok(())

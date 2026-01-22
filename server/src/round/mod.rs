@@ -237,10 +237,6 @@ impl CollectingPayments {
 				VtxoPolicy::Pubkey { .. } => {
 					out_sum += output.amount;
 				},
-				VtxoPolicy::Checkpoint { .. } => {
-					// Users shouldn't request a VTXO that is owned by the server
-					return badarg!("invalid vtxo policy: {:?}", output.policy);
-				}
 			}
 
 			if out_sum > in_sum {

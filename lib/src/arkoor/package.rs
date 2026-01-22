@@ -4,7 +4,7 @@ use std::convert::Infallible;
 use bitcoin::Txid;
 use bitcoin::secp256k1::Keypair;
 
-use crate::{Vtxo, VtxoId, VtxoPolicy, Amount};
+use crate::{Vtxo, VtxoId, VtxoPolicy, ServerVtxo, Amount};
 use crate::arkoor::ArkoorDestination;
 use crate::arkoor::{
 	ArkoorBuilder, ArkoorConstructionError, state, ArkoorCosignResponse,
@@ -408,7 +408,7 @@ impl<S: state::BuilderState> ArkoorPackageBuilder<S> {
 	///
 	/// Returns the checkpoint outputs (if checkpoints are used) and the
 	/// dust isolation output (if dust isolation is used).
-	pub fn build_unsigned_internal_vtxos<'a>(&'a self) -> impl Iterator<Item = Vtxo> + 'a {
+	pub fn build_unsigned_internal_vtxos<'a>(&'a self) -> impl Iterator<Item = ServerVtxo> + 'a {
 		self.builders.iter()
 			.map(|b| b.build_unsigned_internal_vtxos())
 			.flatten()

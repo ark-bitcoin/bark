@@ -52,7 +52,7 @@ use bitcoin_ext::{BlockHeight, TaprootSpendInfoExt, TransactionExt, DEEPLY_CONFI
 use bitcoin_ext::rpc::{BitcoinRpcClient, BitcoinRpcExt, RpcApi};
 use tokio::sync::mpsc;
 use tracing::{error, info, trace, warn};
-use ark::{musig, Vtxo};
+use ark::{musig, ServerVtxo, Vtxo};
 use ark::connectors::ConnectorChain;
 use ark::rounds::{RoundId, ROUND_TX_VTXO_TREE_VOUT};
 
@@ -489,7 +489,7 @@ impl Process {
 	/// Clear the board data from our database because we either swept it, or the user
 	/// has broadcast the exit tx, doing a unilateral exit.
 	async fn clear_board(&mut self, vtxo: &Vtxo) {
-		if let Err(e) = self.db.mark_board_swept(vtxo).await {
+		if let Err(e) = self.db.mark_board_swept(&ServerVtxo::from(vtxo.clone())).await {
 			error!("Failed to mark board vtxo {} as swept: {}", vtxo.id(), e);
 		}
 

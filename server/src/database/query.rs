@@ -1,3 +1,4 @@
+use std::borrow::Borrow;
 /// This module contains utilities to create
 /// database queries.
 ///
@@ -6,7 +7,6 @@
 /// module to create a database connection or
 /// transaction if that is required.
 
-use std::borrow::Borrow;
 use std::collections::HashMap;
 use std::str::FromStr;
 
@@ -17,7 +17,7 @@ use bitcoin::{Amount, Transaction, Txid};
 use tokio_postgres::{GenericClient, Row, Transaction as PgTransaction};
 use tokio_postgres::types::Type;
 
-use ark::{ProtocolEncoding, Vtxo, VtxoId, VtxoRequest};
+use ark::{ProtocolEncoding, VtxoId, VtxoRequest, ServerVtxo};
 use ark::rounds::RoundId;
 use ark::tree::signed::{UnlockHash, UnlockPreimage};
 use bitcoin_ext::BlockHeight;
@@ -91,7 +91,7 @@ pub async fn get_first_unsigned_virtual_transaction<T: GenericClient>(
 	}
 }
 
-pub async fn upsert_vtxos<T, V: Borrow<Vtxo>>(
+pub async fn upsert_vtxos<T, V: Borrow<ServerVtxo>>(
 	client: &T,
 	vtxos: impl IntoIterator<Item = V>,
 ) -> Result<(), tokio_postgres::Error>
