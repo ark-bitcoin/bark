@@ -25,6 +25,7 @@ fn new_mailbox_msg(checkpoint: Checkpoint, vtxos: Vec<Vtxo>) -> protos::mailbox_
 
 #[async_trait]
 impl rpc::server::MailboxService for crate::Server {
+	#[tracing::instrument(skip(self, req))]
 	async fn post_vtxos_mailbox(
 		&self,
 		req: tonic::Request<protos::mailbox_server::PostVtxosMailboxRequest>,
@@ -59,6 +60,7 @@ impl rpc::server::MailboxService for crate::Server {
 		Ok(tonic::Response::new(protos::core::Empty{}))
 	}
 
+	#[tracing::instrument(skip(self, req))]
 	async fn read_mailbox(
 		&self,
 		req: tonic::Request<protos::mailbox_server::MailboxRequest>,
@@ -98,6 +100,7 @@ impl rpc::server::MailboxService for crate::Server {
 		dyn Stream<Item = Result<protos::mailbox_server::MailboxMessage, tonic::Status>> + Send + 'static
 	>>;
 
+	#[tracing::instrument(skip(self, req))]
 	async fn subscribe_mailbox(
 		&self,
 		req: tonic::Request<protos::mailbox_server::MailboxRequest>,
