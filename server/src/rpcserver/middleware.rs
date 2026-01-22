@@ -8,7 +8,7 @@ use opentelemetry::KeyValue;
 use server_rpc::lookup_grpc_method;
 use tonic::transport::server::TcpConnectInfo;
 use tower::{Layer, Service};
-use tracing::{info_span, trace, Instrument};
+use tracing::{debug, info_span, trace, Instrument};
 use crate::telemetry::{self};
 use super::MAX_PROTOCOL_VERSION;
 
@@ -92,13 +92,14 @@ impl<S> TelemetryMetricsService<S> {
 	}
 }
 
-impl<S, B> tower::Service<http::Request<B>> for TelemetryMetricsService<S>
+impl<S, B, ResBody> tower::Service<http::Request<B>> for TelemetryMetricsService<S>
 where
-	S: tower::Service<http::Request<B>> + Send + 'static,
+	S: tower::Service<http::Request<B>, Response = http::Response<ResBody>> + Send + 'static,
 	S::Future: Send + 'static,
 	S::Error: std::fmt::Debug,
 	B: http_body::Body + Send + 'static,
 	B::Error: Into<tonic::codegen::StdError> + Send + 'static,
+	ResBody: Send + 'static,
 {
 	type Response = S::Response;
 	type Error = S::Error;
@@ -160,23 +161,56 @@ where
 			telemetry::record_grpc_latency(duration, &attributes);
 			telemetry::drop_grpc_in_progress(&attributes);
 
-			if let Err(ref status) = res {
-				let error_string = format!("{:?}", status);
+			match res {
+				// Check for protocol-level errors (connection failures, timeouts, etc.)
+				Err(ref err) => {
+					telemetry::add_grpc_error(&[
+						KeyValue::new(telemetry::RPC_SYSTEM, rpc_method_details.system),
+						KeyValue::new(telemetry::RPC_SERVICE, rpc_method_details.service),
+						KeyValue::new(telemetry::RPC_METHOD, rpc_method_details.method),
+						KeyValue::new(telemetry::ATTRIBUTE_ERROR, "protocol_error"),
+					]);
 
-				telemetry::add_grpc_error(&[
-					KeyValue::new(telemetry::RPC_SYSTEM, rpc_method_details.system),
-					KeyValue::new(telemetry::RPC_SERVICE, rpc_method_details.service),
-					KeyValue::new(telemetry::RPC_METHOD, rpc_method_details.method),
-					KeyValue::new(telemetry::ATTRIBUTE_ERROR, error_string.clone()),
-				]);
+					let protocol_error = format!("{:?}", err);
+					debug!("Completed gRPC call: {} in {:?}, protocol_error: {}",
+						rpc_method_details.format_path(), duration, protocol_error,
+					);
+				}
+				// Check for application-level gRPC errors in response headers
+				// Note: gRPC status may also be in trailers (after body), but we check
+				// headers here for early errors. The #[instrument] attributes on RPC
+				// handlers will provide detailed error tracking at the application layer.
+				Ok(ref response) => {
+					let grpc_status_code = response.headers()
+						.get("grpc-status")
+						.and_then(|v| v.to_str().ok())
+						.and_then(|s| s.parse::<i32>().ok())
+						.unwrap_or(17);
 
-				trace!("Completed gRPC call: {} in {:?}, status: {}",
-					rpc_method_details.format_path(), duration, error_string,
-				);
-			} else {
-				trace!("Completed gRPC call: {} in {:?}, status: OK",
-					rpc_method_details.format_path(), duration,
-				);
+					if grpc_status_code != 0 {
+						telemetry::add_grpc_error(&[
+							KeyValue::new(telemetry::RPC_SYSTEM, rpc_method_details.system),
+							KeyValue::new(telemetry::RPC_SERVICE, rpc_method_details.service),
+							KeyValue::new(telemetry::RPC_METHOD, rpc_method_details.method),
+							KeyValue::new(telemetry::ATTRIBUTE_ERROR, tonic::Code::from_i32(grpc_status_code).to_string()),
+						]);
+
+						let grpc_message = response.headers()
+							.get("grpc-message")
+							.and_then(|v| v.to_str().ok())
+							.unwrap_or("unknown error");
+						debug!("Completed gRPC call: {} in {:?}, status={}, message={}",
+							rpc_method_details.format_path(),
+							duration,
+							tonic::Code::from_i32(grpc_status_code),
+							grpc_message,
+						);
+					} else {
+						trace!("Completed gRPC call: {} in {:?}, status: OK",
+							rpc_method_details.format_path(), duration,
+						);
+					}
+				}
 			}
 
 			res
