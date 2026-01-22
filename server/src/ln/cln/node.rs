@@ -577,6 +577,13 @@ impl ClnNodeMonitorProcess {
 				LightningPaymentStatus::Failed,
 				Some(reason),
 			).await?;
+
+			// NB: For intra-ark lightning payments, we need to notify the subscriber
+			// that the payment has failed, otherwise it will wait until next timeout
+			// to get the confirmation, since no notification will ever come from CLN hook.
+			if let Err(e) = self.payment_update_tx.send(payment_hash) {
+				debug!("Failed to send payment update notification: {}", e);
+			}
 		}
 
 		Ok(())
