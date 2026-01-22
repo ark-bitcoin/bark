@@ -392,10 +392,10 @@ impl BoardBuilder<state::CanFinish> {
 			exit_delta: self.exit_delta,
 			anchor_point: self.utxo.expect("state invariant"),
 			genesis: vec![GenesisItem {
-				transition: GenesisTransition::Cosigned {
-					pubkeys: vec![self.user_pubkey, self.server_pubkey],
-					signature: final_sig,
-				},
+				transition: GenesisTransition::new_cosigned(
+					vec![self.user_pubkey, self.server_pubkey],
+					final_sig,
+				),
 				output_idx: 0,
 				other_outputs: vec![],
 			}],

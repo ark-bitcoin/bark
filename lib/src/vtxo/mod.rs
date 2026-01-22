@@ -54,9 +54,12 @@
 //   the VTXO's own output policy
 
 pub mod policy;
+pub(crate) mod genesis;
+mod validation;
 
 pub use self::validation::VtxoValidationError;
 pub use self::policy::{VtxoPolicy, VtxoPolicyKind};
+pub(crate) use self::genesis::{GenesisItem, GenesisTransition};
 
 pub use self::policy::{
 	PubkeyVtxoPolicy, CheckpointVtxoPolicy, ServerHtlcRecvVtxoPolicy,
@@ -67,9 +70,6 @@ pub use self::policy::clause::{
 	TapScriptClause,
 };
 
-mod validation;
-
-use std::collections::HashSet;
 use std::iter::FusedIterator;
 use std::{fmt, io};
 use std::str::FromStr;
@@ -80,14 +80,14 @@ use bitcoin::{
 use bitcoin::absolute::LockTime;
 use bitcoin::hashes::{sha256, Hash};
 use bitcoin::secp256k1::{schnorr, PublicKey, XOnlyPublicKey};
-use bitcoin::taproot::LeafVersion;
+use bitcoin::taproot::TapTweakHash;
 
-use bitcoin_ext::{fee, BlockDelta, BlockHeight, TaprootSpendInfoExt, TxOutExt};
+use bitcoin_ext::{fee, BlockDelta, BlockHeight, TxOutExt};
 
 use crate::{musig, scripts};
 use crate::encode::{ProtocolDecodingError, ProtocolEncoding, ReadExt, WriteExt};
 use crate::lightning::PaymentHash;
-use crate::tree::signed::{cosign_taproot, leaf_cosign_taproot, unlock_clause, UnlockHash, UnlockPreimage};
+use crate::tree::signed::{UnlockHash, UnlockPreimage};
 
 /// The total signed tx weight of a exit tx.
 pub const EXIT_TX_WEIGHT: Weight = Weight::from_vb_unchecked(124);
@@ -242,35 +242,6 @@ pub fn create_exit_tx(
 	}
 }
 
-/// Represents the kind of [GenesisTransition]
-pub(crate) enum TransitionKind {
-	Cosigned,
-	HashLockedCosigned,
-	Arkoor,
-}
-
-impl TransitionKind {
-	pub fn as_str(&self) -> &'static str {
-		match self {
-			Self::Cosigned => "cosigned",
-			Self::HashLockedCosigned => "hash-locked-cosigned",
-			Self::Arkoor => "arkoor",
-		}
-	}
-}
-
-impl fmt::Display for TransitionKind {
-	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-		f.write_str(self.as_str())
-	}
-}
-
-impl fmt::Debug for TransitionKind {
-	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-		fmt::Display::fmt(self, f)
-	}
-}
-
 /// Enum type used to represent a preimage<>hash relationship
 /// for which the preimage might be known but the hash always
 /// should be known.
@@ -286,186 +257,6 @@ impl MaybePreimage {
 		match self {
 			Self::Preimage(p) => sha256::Hash::hash(p),
 			Self::Hash(h) => *h,
-		}
-	}
-}
-
-/// A transition from one genesis tx to the next.
-///
-/// See private module-level documentation for more info.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum GenesisTransition {
-	/// A transition based on a cosignature.
-	///
-	/// This can be either the result of a cosigned "clArk" tree branch transition
-	/// or a board which is cosigned just with the server.
-	Cosigned {
-		/// All the cosign pubkeys signing the node.
-		///
-		/// Has to include server's cosign pubkey because it differs
-		/// from its regular pubkey.
-		pubkeys: Vec<PublicKey>,
-		signature: schnorr::Signature,
-	},
-	/// A transition based on a cosignature and a hash lock
-	///
-	/// This is the transition type for hArk leaf policy outputs,
-	/// that spend into the leaf transaction.
-	///
-	/// Refraining from any optimizations, this type is implemented the naive way:
-	/// - the keyspend path is currently unused, could be used later
-	/// - witness will always contain the cosignature and preimage in the script spend
-	HashLockedCosigned {
-		/// User pubkey that is combined with the server pubkey
-		user_pubkey: PublicKey,
-		/// The script-spend signature
-		signature: Option<schnorr::Signature>,
-		/// The unlock preimage or the unlock hash
-		unlock: MaybePreimage,
-	},
-	/// A regular arkoor spend, using the co-signed p2tr key-spend path.
-	Arkoor {
-		policy: VtxoPolicy,
-		signature: Option<schnorr::Signature>,
-	},
-}
-
-impl GenesisTransition {
-	/// Taproot that this transition is satisfying.
-	fn input_taproot(
-		&self,
-		server_pubkey: PublicKey,
-		expiry_height: BlockHeight,
-		exit_delta: BlockDelta,
-	) -> taproot::TaprootSpendInfo {
-		match self {
-			Self::Cosigned { pubkeys, .. } => {
-				let agg_pk = musig::combine_keys(pubkeys.iter().copied());
-				cosign_taproot(agg_pk, server_pubkey, expiry_height)
-			},
-			Self::HashLockedCosigned { user_pubkey, unlock, .. } => {
-				leaf_cosign_taproot(*user_pubkey, server_pubkey, expiry_height, unlock.hash())
-			},
-			Self::Arkoor { policy, .. } => policy.taproot(server_pubkey, exit_delta, expiry_height),
-		}
-	}
-
-	/// Output that this transition is spending.
-	fn input_txout(
-		&self,
-		amount: Amount,
-		server_pubkey: PublicKey,
-		expiry_height: BlockHeight,
-		exit_delta: BlockDelta,
-	) -> TxOut {
-		let taproot = self.input_taproot(server_pubkey, expiry_height, exit_delta);
-		TxOut {
-			value: amount,
-			script_pubkey: taproot.script_pubkey(),
-		}
-	}
-
-	/// The transaction witness for this transition.
-	fn witness(
-		&self,
-		server_pubkey: PublicKey,
-		expiry_height: BlockHeight,
-	) -> Witness {
-		match self {
-			Self::Cosigned { signature, .. } => Witness::from_slice(&[&signature[..]]),
-			Self::HashLockedCosigned {
-				user_pubkey,
-				signature: Some(sig),
-				unlock: MaybePreimage::Preimage(preimage),
-			} => {
-				let unlock_hash = sha256::Hash::hash(preimage);
-				let taproot = leaf_cosign_taproot(
-					*user_pubkey, server_pubkey, expiry_height, unlock_hash,
-				);
-				let clause = unlock_clause(taproot.internal_key(), unlock_hash);
-				let script_leaf = (clause, LeafVersion::TapScript);
-				let cb = taproot.control_block(&script_leaf)
-					.expect("unlock clause not found in hArk taproot");
-				Witness::from_slice(&[
-					&sig.serialize()[..],
-					&preimage[..],
-					&script_leaf.0.as_bytes(),
-					&cb.serialize()[..],
-				])
-			},
-			Self::HashLockedCosigned { .. } => {
-				// without preimage or signature this transition is unfulfilled
-				Witness::new()
-			},
-			Self::Arkoor { signature: Some(sig), .. } => Witness::from_slice(&[&sig[..]]),
-			Self::Arkoor { signature: None, .. } => Witness::new(),
-		}
-	}
-
-
-	/// Whether the transition is fully signed
-	fn is_fully_signed(&self) -> bool {
-		match self {
-			Self::Cosigned { .. } => true,
-			Self::HashLockedCosigned {
-				unlock: MaybePreimage::Preimage(_),
-				signature: Some(_),
-				..
-			} => true,
-			Self::HashLockedCosigned { .. } => false,
-			Self::Arkoor { signature, .. } => signature.is_some(),
-		}
-	}
-
-	/// String of the transition kind, for error reporting
-	fn kind(&self) -> TransitionKind {
-		match self {
-			Self::Cosigned { .. } => TransitionKind::Cosigned,
-			Self::HashLockedCosigned { .. } => TransitionKind::HashLockedCosigned,
-			Self::Arkoor { .. } => TransitionKind::Arkoor,
-		}
-	}
-}
-
-/// An item in a VTXO's genesis.
-///
-/// See private module-level documentation for more info.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct GenesisItem {
-	/// The transition from the previous tx to this one.
-	pub(crate) transition: GenesisTransition,
-	/// The output index ("vout") of the output going to the next genesis item.
-	pub(crate) output_idx: u8,
-	/// The other outputs to construct the exit tx.
-	// NB empty for the first item
-	pub(crate) other_outputs: Vec<TxOut>,
-}
-
-impl GenesisItem {
-	/// Construct the exit transaction at this level of the genesis.
-	fn tx(&self,
-		prev: OutPoint,
-		next: TxOut,
-		server_pubkey: PublicKey,
-		expiry_height: BlockHeight,
-	) -> Transaction {
-		Transaction {
-			version: bitcoin::transaction::Version(3),
-			lock_time: bitcoin::absolute::LockTime::ZERO,
-			input: vec![TxIn {
-				previous_output: prev,
-				script_sig: ScriptBuf::new(),
-				sequence: Sequence::ZERO,
-				witness: self.transition.witness(server_pubkey, expiry_height),
-			}],
-			output: {
-				let mut out = Vec::with_capacity(self.other_outputs.len() + 2);
-				out.extend(self.other_outputs.iter().take(self.output_idx as usize).cloned());
-				out.push(next);
-				out.extend(self.other_outputs.iter().skip(self.output_idx as usize).cloned());
-				out.push(fee::fee_anchor());
-				out
-			},
 		}
 	}
 }
@@ -600,7 +391,7 @@ pub struct Vtxo {
 	pub(crate) exit_delta: BlockDelta,
 
 	pub(crate) anchor_point: OutPoint,
-	pub(crate) genesis: Vec<GenesisItem>,
+	pub(crate) genesis: Vec<genesis::GenesisItem>,
 
 	/// The resulting actual "point" of the VTXO. I.e. the output of the last
 	/// exit tx of this VTXO.
@@ -686,19 +477,23 @@ impl Vtxo {
 		self.policy.arkoor_pubkey()
 	}
 
-	/// Iterate over all arkoor pubkeys in the arkoor chain of this vtxo.
+
+	/// Iterate over all oor transitions in this VTXO
+	///
+	/// The outer `Vec` cointains one element for each transition.
+	/// The inner `Vec` contains all pubkeys within that transition.
 	///
 	/// This does not include the current arkoor pubkey, for that use
 	/// [Vtxo::arkoor_pubkey].
-	pub fn past_arkoor_pubkeys(&self) -> impl Iterator<Item = PublicKey> + '_ {
+	pub fn past_arkoor_pubkeys(&self) -> Vec<Vec<PublicKey>> {
 		self.genesis.iter().filter_map(|g| {
-			match g.transition {
+			match &g.transition {
 				// NB in principle, a genesis item's transition MUST have
 				// an arkoor pubkey, otherwise the vtxo is invalid
-				GenesisTransition::Arkoor { ref policy, .. } => policy.arkoor_pubkey(),
+				GenesisTransition::Arkoor(inner) => Some(inner.client_cosigners().collect()),
 				_ => None,
 			}
-		})
+		}).collect()
 	}
 
 
@@ -743,16 +538,6 @@ impl Vtxo {
 		VtxoTxIter::new(self)
 	}
 
-	/// The set of all arkoor pubkeys present in the arkoor part
-	/// of the VTXO exit path.
-	pub fn arkoor_pubkeys(&self) -> HashSet<PublicKey> {
-		self.genesis.iter().filter_map(|i| match &i.transition {
-			GenesisTransition::Arkoor { policy, .. } => policy.arkoor_pubkey(),
-			GenesisTransition::Cosigned { .. } => None,
-			GenesisTransition::HashLockedCosigned { .. } => None,
-		}).collect()
-	}
-
 	/// Check if this VTXO is standard for relay purposes
 	///
 	/// A VTXO is standard if:
@@ -777,7 +562,7 @@ impl Vtxo {
 	/// Returns the "hArk" unlock hash if this is a hArk leaf VTXO
 	pub fn unlock_hash(&self) -> Option<UnlockHash> {
 		match self.genesis.last()?.transition {
-			GenesisTransition::HashLockedCosigned { unlock, .. } => Some(unlock.hash()),
+			GenesisTransition::HashLockedCosigned(ref inner) => Some(inner.unlock.hash()),
 			_ => None,
 		}
 	}
@@ -787,8 +572,8 @@ impl Vtxo {
 	/// Returns true if this VTXO was an unfinalized hArk VTXO.
 	pub fn provide_unlock_signature(&mut self, signature: schnorr::Signature) -> bool {
 		match self.genesis.last_mut().map(|g| &mut g.transition) {
-			Some(GenesisTransition::HashLockedCosigned { signature: ref mut sig, .. }) => {
-				*sig = Some(signature);
+			Some(GenesisTransition::HashLockedCosigned(inner)) => {
+				inner.signature.replace(signature);
 				true
 			},
 			_ => false,
@@ -800,9 +585,9 @@ impl Vtxo {
 	/// Returns true if this VTXO was an unfinalized hArk VTXO and the preimage matched.
 	pub fn provide_unlock_preimage(&mut self, preimage: UnlockPreimage) -> bool {
 		match self.genesis.last_mut().map(|g| &mut g.transition) {
-			Some(GenesisTransition::HashLockedCosigned { ref mut unlock, .. }) => {
-				if unlock.hash() == UnlockHash::hash(&preimage) {
-					*unlock = MaybePreimage::Preimage(preimage);
+			Some(GenesisTransition::HashLockedCosigned(ref mut inner)) => {
+				if inner.unlock.hash() == UnlockHash::hash(&preimage) {
+					inner.unlock = MaybePreimage::Preimage(preimage);
 					true
 				} else {
 					false
@@ -977,19 +762,19 @@ const GENESIS_TRANSITION_TYPE_HASH_LOCKED_COSIGNED: u8 = 3;
 impl ProtocolEncoding for GenesisTransition {
 	fn encode<W: io::Write + ?Sized>(&self, w: &mut W) -> Result<(), io::Error> {
 		match self {
-			Self::Cosigned { pubkeys, signature } => {
+			Self::Cosigned(t) => {
 				w.emit_u8(GENESIS_TRANSITION_TYPE_COSIGNED)?;
-				w.emit_u16(pubkeys.len().try_into().expect("cosign pubkey length overflow"))?;
-				for pk in pubkeys {
+				w.emit_u16(t.pubkeys.len().try_into().expect("cosign pubkey length overflow"))?;
+				for pk in t.pubkeys.iter() {
 					pk.encode(w)?;
 				}
-				signature.encode(w)?;
+				t.signature.encode(w)?;
 			},
-			Self::HashLockedCosigned { user_pubkey, signature, unlock } => {
+			Self::HashLockedCosigned(t) => {
 				w.emit_u8(GENESIS_TRANSITION_TYPE_HASH_LOCKED_COSIGNED)?;
-				user_pubkey.encode(w)?;
-				signature.encode(w)?;
-				match unlock {
+				t.user_pubkey.encode(w)?;
+				t.signature.encode(w)?;
+				match t.unlock {
 					MaybePreimage::Preimage(p) => {
 						w.emit_u8(0)?;
 						w.emit_slice(&p[..])?;
@@ -1000,10 +785,14 @@ impl ProtocolEncoding for GenesisTransition {
 					},
 				}
 			},
-			Self::Arkoor { policy, signature } => {
+			Self::Arkoor(t) => {
 				w.emit_u8(GENESIS_TRANSITION_TYPE_ARKOOR)?;
-				policy.encode(w)?;
-				signature.encode(w)?;
+				w.emit_u16(t.client_cosigners.len().try_into().expect("Length overflow"))?;
+				for cosigner in t.client_cosigners.iter() {
+					cosigner.encode(w)?;
+				};
+				t.tap_tweak.encode(w)?;
+				t.signature.encode(w)?;
 			},
 		}
 		Ok(())
@@ -1018,7 +807,7 @@ impl ProtocolEncoding for GenesisTransition {
 					pubkeys.push(PublicKey::decode(r)?);
 				}
 				let signature = schnorr::Signature::decode(r)?;
-				Ok(Self::Cosigned { pubkeys, signature })
+				Ok(Self::new_cosigned(pubkeys, signature))
 			},
 			GENESIS_TRANSITION_TYPE_HASH_LOCKED_COSIGNED => {
 				let user_pubkey = PublicKey::decode(r)?;
@@ -1030,12 +819,18 @@ impl ProtocolEncoding for GenesisTransition {
 						"invalid HashLockedCosignedTransitionWitness type byte: {v:#x}",
 					))),
 				};
-				Ok(Self::HashLockedCosigned { user_pubkey, signature, unlock })
+				Ok(Self::new_hash_locked_cosigned(user_pubkey, signature, unlock))
 			},
 			GENESIS_TRANSITION_TYPE_ARKOOR => {
-				let policy = VtxoPolicy::decode(r)?;
+				let nb_cosigners: usize = r.read_u16()?.into();
+
+				let mut pubkeys = Vec::with_capacity(nb_cosigners);
+				for _ in 0..nb_cosigners {
+					pubkeys.push(PublicKey::decode(r)?);
+				}
+				let taptweak = TapTweakHash::decode(r)?;
 				let signature = Option::<schnorr::Signature>::decode(r)?;
-				Ok(Self::Arkoor { policy, signature })
+				Ok(Self::new_arkoor(pubkeys, taptweak, signature))
 			},
 			v => Err(ProtocolDecodingError::invalid(format_args!(
 				"invalid GenesisTransistion type byte: {v:#x}",
@@ -1446,14 +1241,14 @@ pub mod test {
 		pub static ref VTXO_VECTORS: VtxoTestVectors = VtxoTestVectors {
 			server_key: Keypair::from_str("916da686cedaee9a9bfb731b77439f2a3f1df8664e16488fba46b8d2bfe15e92").unwrap(),
 			anchor_tx: deserialize_hex("02000000010000000000000000000000000000000000000000000000000000000000000000ffffffff0000000000011027000000000000225120652675904a84ea02e24b57b3d547203d2ce71526113d35bf4d02e0b4efbe9a2d00000000").unwrap(),
-			board_vtxo: ProtocolEncoding::deserialize_hex("01001027000000000000928a01000365a81233741893bbe2461b8d479dadc5880594fe6f7479180d5843820af72b62e007ed4d23932a2625a78fe5c75bded751da3a99e23a297a527c01bd7bc8372128f20000000001010200030a752219f1b94bbdf8994a0a980cdda08c2ad094cb29dd834878db6dee1612ee0365a81233741893bbe2461b8d479dadc5880594fe6f7479180d5843820af72b62be19abd3f0f0ee3a1ffa9a86b6e13ab9899aef88e5c10c14a047c0256ea880a234913cf2a63c90c851bd9a3e7cd7ce1eba919726a406d34c59123275536622f5010000030a752219f1b94bbdf8994a0a980cdda08c2ad094cb29dd834878db6dee1612ee4c99b744ad009b7070f330794bf003fa8e5cd46ea1a6eb854aaf469385e3080000000000").unwrap(),
-			arkoor_htlc_out_vtxo: ProtocolEncoding::deserialize_hex("01002823000000000000928a01000365a81233741893bbe2461b8d479dadc5880594fe6f7479180d5843820af72b62e007ed4d23932a2625a78fe5c75bded751da3a99e23a297a527c01bd7bc8372128f20000000003010200030a752219f1b94bbdf8994a0a980cdda08c2ad094cb29dd834878db6dee1612ee0365a81233741893bbe2461b8d479dadc5880594fe6f7479180d5843820af72b621c35ec73855eda07716d857d428fe01a6ed3f9f02f830914eb4b95a94317f663bec8a3dc09d8d8df2611959ba9ca1e1261d6f2f79778fc8edc8aaeb4bd6b4abe01000200030a752219f1b94bbdf8994a0a980cdda08c2ad094cb29dd834878db6dee1612ee1aca15ff7c551b90b1b442c64d3079dde840213d2e97b19c9eef09ffc149989d2ca09d634e3ce054820250532a2141d2746d692032b410fad4e5ba80bc39f9b40200e803000000000000225120652675904a84ea02e24b57b3d547203d2ce71526113d35bf4d02e0b4efbe9a2d0203030a752219f1b94bbdf8994a0a980cdda08c2ad094cb29dd834878db6dee1612ee04a4db2cceeac0f4fff3e758155b51187b318fde7076b4e4d3b5c00c6bb643f478e1cf7ddada03317987a971b86ac468e3b1a7ec2673b37d9c72e4a91ae0042e01000103eb4570ae385202d4a48f06bdb14126910b90c07f8e42d7dc5e28a860c085e73712358912c950a9a7d04bb9011ee9f6a16b6127a5aab7415803d48c0225f620f5aa8601006b46ceafff6c10e1c1d07fa308e79cfdac35e952c1e2ccf3f8c9797c776db17200000000").unwrap(),
-			arkoor2_vtxo: ProtocolEncoding::deserialize_hex("0100401f000000000000928a01000365a81233741893bbe2461b8d479dadc5880594fe6f7479180d5843820af72b62e007ed4d23932a2625a78fe5c75bded751da3a99e23a297a527c01bd7bc8372128f20000000005010200030a752219f1b94bbdf8994a0a980cdda08c2ad094cb29dd834878db6dee1612ee0365a81233741893bbe2461b8d479dadc5880594fe6f7479180d5843820af72b621c35ec73855eda07716d857d428fe01a6ed3f9f02f830914eb4b95a94317f663bec8a3dc09d8d8df2611959ba9ca1e1261d6f2f79778fc8edc8aaeb4bd6b4abe01000200030a752219f1b94bbdf8994a0a980cdda08c2ad094cb29dd834878db6dee1612ee1aca15ff7c551b90b1b442c64d3079dde840213d2e97b19c9eef09ffc149989d2ca09d634e3ce054820250532a2141d2746d692032b410fad4e5ba80bc39f9b40200e803000000000000225120652675904a84ea02e24b57b3d547203d2ce71526113d35bf4d02e0b4efbe9a2d0203030a752219f1b94bbdf8994a0a980cdda08c2ad094cb29dd834878db6dee1612ee04a4db2cceeac0f4fff3e758155b51187b318fde7076b4e4d3b5c00c6bb643f478e1cf7ddada03317987a971b86ac468e3b1a7ec2673b37d9c72e4a91ae0042e0100020103eb4570ae385202d4a48f06bdb14126910b90c07f8e42d7dc5e28a860c085e73712358912c950a9a7d04bb9011ee9f6a16b6127a5aab7415803d48c0225f620f5aa860100f8fd2158ece9874609d33a4a03721e82b9d5025abdaa2a4df2143d8b689de1fea73bdde9ec40b7788d19fa7d5ed8499d8a3fa3bbe45e5642ac78cc50129e92430200e80300000000000022512045827da6714a3cadf6646b36f4e18841a8572d7c6f849e8376058be8381941c8020303eb4570ae385202d4a48f06bdb14126910b90c07f8e42d7dc5e28a860c085e737250c3f06a00d78429a1261a13907897fd2e9f320db77660b676f1ee89367b3731d6331eb22c819613717e82abeae9a55e0816d8c77cd27f69ea82389c23510370100000265cca13271cafd0b90c440e722a1937b7c4faf4ccd7dee0548d152c24ce4b2a8dca043938fa10d4ea2d54ab3743f9e092b9f671aa30161bcbd3942b46b1b195700000000").unwrap(),
+			board_vtxo: ProtocolEncoding::deserialize_hex("01001027000000000000928a01000365a81233741893bbe2461b8d479dadc5880594fe6f7479180d5843820af72b62e007ed4d23932a2625a78fe5c75bded751da3a99e23a297a527c01bd7bc8372128f20000000001010200030a752219f1b94bbdf8994a0a980cdda08c2ad094cb29dd834878db6dee1612ee0365a81233741893bbe2461b8d479dadc5880594fe6f7479180d5843820af72b625f36979188844c1da13db66a995c10d1159d8470a3b0054ba0a7ad20f079b1d933ca4694126aaec7ceeb3ef477f6443a81b3049b54f5f228441162080863201e010000030a752219f1b94bbdf8994a0a980cdda08c2ad094cb29dd834878db6dee1612ee4c99b744ad009b7070f330794bf003fa8e5cd46ea1a6eb854aaf469385e3080000000000").unwrap(),
+			arkoor_htlc_out_vtxo: ProtocolEncoding::deserialize_hex("01002823000000000000928a01000365a81233741893bbe2461b8d479dadc5880594fe6f7479180d5843820af72b62e007ed4d23932a2625a78fe5c75bded751da3a99e23a297a527c01bd7bc8372128f20000000003010200030a752219f1b94bbdf8994a0a980cdda08c2ad094cb29dd834878db6dee1612ee0365a81233741893bbe2461b8d479dadc5880594fe6f7479180d5843820af72b625f36979188844c1da13db66a995c10d1159d8470a3b0054ba0a7ad20f079b1d933ca4694126aaec7ceeb3ef477f6443a81b3049b54f5f228441162080863201e0100020100030a752219f1b94bbdf8994a0a980cdda08c2ad094cb29dd834878db6dee1612ee78b9640f859155786c4923b1d634d20b02663f1c4d061c4411f15e386951a63f9198244a3b1606b70444d56791bb7af4f1332c57892700eb53a6325f4ed19d77a7ce39cfa5d91aa2b4817814f31e528c7644843d4f4c9c1c428c877076a9744f0200e803000000000000225120652675904a84ea02e24b57b3d547203d2ce71526113d35bf4d02e0b4efbe9a2d020100030a752219f1b94bbdf8994a0a980cdda08c2ad094cb29dd834878db6dee1612eea77a828ce5ccaca57a4b78f16499219334c6ee95c9b990ee15918aeb91593005c629560805235bce2764f94c151621c30e358e3f76ae12eee77a737116d1bcac591ab1ade1e5bb64c21dd5fbad08898ce9c9e88bff44f3164e0bbe0e316286fe01000103eb4570ae385202d4a48f06bdb14126910b90c07f8e42d7dc5e28a860c085e73712358912c950a9a7d04bb9011ee9f6a16b6127a5aab7415803d48c0225f620f5aa8601006b46ceafff6c10e1c1d07fa308e79cfdac35e952c1e2ccf3f8c9797c776db17200000000").unwrap(),
+			arkoor2_vtxo: ProtocolEncoding::deserialize_hex("0100401f000000000000928a01000365a81233741893bbe2461b8d479dadc5880594fe6f7479180d5843820af72b62e007ed4d23932a2625a78fe5c75bded751da3a99e23a297a527c01bd7bc8372128f20000000005010200030a752219f1b94bbdf8994a0a980cdda08c2ad094cb29dd834878db6dee1612ee0365a81233741893bbe2461b8d479dadc5880594fe6f7479180d5843820af72b625f36979188844c1da13db66a995c10d1159d8470a3b0054ba0a7ad20f079b1d933ca4694126aaec7ceeb3ef477f6443a81b3049b54f5f228441162080863201e0100020100030a752219f1b94bbdf8994a0a980cdda08c2ad094cb29dd834878db6dee1612ee78b9640f859155786c4923b1d634d20b02663f1c4d061c4411f15e386951a63f9198244a3b1606b70444d56791bb7af4f1332c57892700eb53a6325f4ed19d77a7ce39cfa5d91aa2b4817814f31e528c7644843d4f4c9c1c428c877076a9744f0200e803000000000000225120652675904a84ea02e24b57b3d547203d2ce71526113d35bf4d02e0b4efbe9a2d020100030a752219f1b94bbdf8994a0a980cdda08c2ad094cb29dd834878db6dee1612eea77a828ce5ccaca57a4b78f16499219334c6ee95c9b990ee15918aeb91593005c629560805235bce2764f94c151621c30e358e3f76ae12eee77a737116d1bcac591ab1ade1e5bb64c21dd5fbad08898ce9c9e88bff44f3164e0bbe0e316286fe010002010003eb4570ae385202d4a48f06bdb14126910b90c07f8e42d7dc5e28a860c085e737474fa0103bd24e02383f053a708ed3b3cb9818aab2410d1828fa3070836fa5e7efe33891bcf222e872568399b8e2227fafdeb53de2b9d3284d36d812127a31e5bff54282a0510293d127f4778dd97cb630e2d402418bafb565bdbeb4400a739f0200e80300000000000022512045827da6714a3cadf6646b36f4e18841a8572d7c6f849e8376058be8381941c802010003eb4570ae385202d4a48f06bdb14126910b90c07f8e42d7dc5e28a860c085e73771985112b67c902fbaaacfc19801ee5833608e8cb73a84c20dfc541b298dc9abbab87fdf398c52910a972221d5c9b673129c2ce859b61158b9ac30a34656da0a17925ef1416437a85238145362910e98c779c3c098d269929a33019fa88ff3990100000265cca13271cafd0b90c440e722a1937b7c4faf4ccd7dee0548d152c24ce4b2a8dca043938fa10d4ea2d54ab3743f9e092b9f671aa30161bcbd3942b46b1b195700000000").unwrap(),
 			round_tx: deserialize_hex("02000000010000000000000000000000000000000000000000000000000000000000000000ffffffff000000000001c8af000000000000225120649657f65947abfd83ff629ad8a851c795f419ed4d52a2748d3f868cc3e6c94d00000000").unwrap(),
-			round1_vtxo: ProtocolEncoding::deserialize_hex("01001027000000000000928a01000365a81233741893bbe2461b8d479dadc5880594fe6f7479180d5843820af72b62e007a3c23c49874159964c52b95021596d5a22e8f8b6bc7c16aa8303c24498d3d5ab0000000003010800039e8a040d9c1fba5a7b0db8485d8f167f8d2590afd8595f9eb9ba7a769347ba2602bd0ad185b18089d37d20dd784b99003914faadcc59f37bbf3273a3b5cd22ed5002568a3a6d25000fc942f0443dc76be4ef688e8c8dc055591de1f2cc1c847b1ed3036e64c16a01e3d18908a15b55251a5db74ff2c1142c02abd048222893b2a18a16024ac23c8d3f6e0b1116e34f68ee7c9e4c19eba30213e8fae0925d70faf8d1ecc403932b1b0224e375471c938ea84bd17df7d8295941b2db68a6623610dd959b2eb303d215f5e88aefa7a2a9794771878f3d6caf20e884c1e0ce923cfa9dea261bb4e2024482039ebf3624525061f88aa01d4a02b3f2224eee8b4060ae0cbf036b242743662156b3287dbfa9053520ef877f5c6424920a37751548c942c86d1c0ba15c5dffc452f73642fff9d20b60e32e8fb749c819ae9cc1bd686e00b3e7b257782656040388130000000000002251205acb7b65f8da14622a055640893e952e20f68e051087b85be4d56e50cdafd4318813000000000000225120973b9be7e6ee51f8851347130113e4001ab1d01252dd1d09713a6c900cb327f2881300000000000022512052cc228fe0f4951032fbaeb45ed8b73163cedb897412407e5b431d740040a951010500036e64c16a01e3d18908a15b55251a5db74ff2c1142c02abd048222893b2a18a16024ac23c8d3f6e0b1116e34f68ee7c9e4c19eba30213e8fae0925d70faf8d1ecc403932b1b0224e375471c938ea84bd17df7d8295941b2db68a6623610dd959b2eb303d215f5e88aefa7a2a9794771878f3d6caf20e884c1e0ce923cfa9dea261bb4e2024482039ebf3624525061f88aa01d4a02b3f2224eee8b4060ae0cbf036b242743c0a42892e2cd996341b3c722da8ed6ae10f5e0ee1952d65b97ae1b70271f2b7ca00ca83a85cefefe0c8c01facc1e1fd521748038b7a561b2062786d4b2ecac5704001027000000000000225120e9d56cdf22598ce6c05950b3580e194a19e53f8b887fc6c4111ca2a82a0608a88813000000000000225120c3731a9dc38c67dfa2dd206ee346d6225f1f37b97d77d518c59b9c9a291762288813000000000000225120a4ad17a5f329a164977981f1b7638c7a70b0dd1bed29a85637aed2952dd2e38c030374a3ec37cc4ccd29717388e6dc24f2aa366632f1a36a49e73cd7671b23179298286a7abdc629f2e0ee861e77501502201052ed905369a55e431d028d4bdbc5dc6ed9b18ae988b709225bbb3ba1686b923b3716992fe681ae0869dada96dd058100c05bc2f82c8c64e470cd4d87aca42989b46879ca32320cd035db124bb78c4e740100000374a3ec37cc4ccd29717388e6dc24f2aa366632f1a36a49e73cd7671b2317929862d6c4b8e408915af8279d4f14431f517a0c9ecc46fae2e8b0a5f72cfcf506c800000000").unwrap(),
-			round2_vtxo: ProtocolEncoding::deserialize_hex("01001027000000000000928a01000365a81233741893bbe2461b8d479dadc5880594fe6f7479180d5843820af72b62e007a3c23c49874159964c52b95021596d5a22e8f8b6bc7c16aa8303c24498d3d5ab0000000003010800039e8a040d9c1fba5a7b0db8485d8f167f8d2590afd8595f9eb9ba7a769347ba2602bd0ad185b18089d37d20dd784b99003914faadcc59f37bbf3273a3b5cd22ed5002568a3a6d25000fc942f0443dc76be4ef688e8c8dc055591de1f2cc1c847b1ed3036e64c16a01e3d18908a15b55251a5db74ff2c1142c02abd048222893b2a18a16024ac23c8d3f6e0b1116e34f68ee7c9e4c19eba30213e8fae0925d70faf8d1ecc403932b1b0224e375471c938ea84bd17df7d8295941b2db68a6623610dd959b2eb303d215f5e88aefa7a2a9794771878f3d6caf20e884c1e0ce923cfa9dea261bb4e2024482039ebf3624525061f88aa01d4a02b3f2224eee8b4060ae0cbf036b242743662156b3287dbfa9053520ef877f5c6424920a37751548c942c86d1c0ba15c5dffc452f73642fff9d20b60e32e8fb749c819ae9cc1bd686e00b3e7b257782656040388130000000000002251205acb7b65f8da14622a055640893e952e20f68e051087b85be4d56e50cdafd4318813000000000000225120973b9be7e6ee51f8851347130113e4001ab1d01252dd1d09713a6c900cb327f2881300000000000022512052cc228fe0f4951032fbaeb45ed8b73163cedb897412407e5b431d740040a951010500036e64c16a01e3d18908a15b55251a5db74ff2c1142c02abd048222893b2a18a16024ac23c8d3f6e0b1116e34f68ee7c9e4c19eba30213e8fae0925d70faf8d1ecc403932b1b0224e375471c938ea84bd17df7d8295941b2db68a6623610dd959b2eb303d215f5e88aefa7a2a9794771878f3d6caf20e884c1e0ce923cfa9dea261bb4e2024482039ebf3624525061f88aa01d4a02b3f2224eee8b4060ae0cbf036b242743c0a42892e2cd996341b3c722da8ed6ae10f5e0ee1952d65b97ae1b70271f2b7ca00ca83a85cefefe0c8c01facc1e1fd521748038b7a561b2062786d4b2ecac57040110270000000000002251202ec5640d3ba147e40c916e8fa9b0ee89557d10465db1d55a49c87edebe53104c8813000000000000225120c3731a9dc38c67dfa2dd206ee346d6225f1f37b97d77d518c59b9c9a291762288813000000000000225120a4ad17a5f329a164977981f1b7638c7a70b0dd1bed29a85637aed2952dd2e38c030256fda20ffb102f6cf8590d27433ce036d29927fb35324d15d9915df888f16ecd8cdf97edbcb05e33ddb0f683fd678786e097af9eace2879053ea21e8b56c674f30b231828f75d62adb235165aa3d9f80c10092c85b69b7802721ba00cd0c6bcc0061050792ef121826fda248a789c8ba75b955844c65acd2c6361950bdd31dae7d0100020256fda20ffb102f6cf8590d27433ce036d29927fb35324d15d9915df888f16ecd9ea50d885c3f66d40d27e779648ba8dc730629663f65a3e6f7749b4a35b6dfecc28201002800ca6a1d9ccb57f92a11eb4383517f0046482462046eeb9090496785f1893b766f00000000").unwrap(),
+			round1_vtxo: ProtocolEncoding::deserialize_hex("01001027000000000000928a01000365a81233741893bbe2461b8d479dadc5880594fe6f7479180d5843820af72b62e007a3c23c49874159964c52b95021596d5a22e8f8b6bc7c16aa8303c24498d3d5ab0000000003010800039e8a040d9c1fba5a7b0db8485d8f167f8d2590afd8595f9eb9ba7a769347ba2602bd0ad185b18089d37d20dd784b99003914faadcc59f37bbf3273a3b5cd22ed5002568a3a6d25000fc942f0443dc76be4ef688e8c8dc055591de1f2cc1c847b1ed3036e64c16a01e3d18908a15b55251a5db74ff2c1142c02abd048222893b2a18a16024ac23c8d3f6e0b1116e34f68ee7c9e4c19eba30213e8fae0925d70faf8d1ecc403932b1b0224e375471c938ea84bd17df7d8295941b2db68a6623610dd959b2eb303d215f5e88aefa7a2a9794771878f3d6caf20e884c1e0ce923cfa9dea261bb4e2024482039ebf3624525061f88aa01d4a02b3f2224eee8b4060ae0cbf036b24274334507c3f3197b280abcbc6e4a46d5555633f8a2216f2b36f2791492c2ffae768819ac4b88a2db31cef2d5c1e916dc0b465765f88d529779e9cd2c0be5023f492040388130000000000002251205acb7b65f8da14622a055640893e952e20f68e051087b85be4d56e50cdafd4318813000000000000225120973b9be7e6ee51f8851347130113e4001ab1d01252dd1d09713a6c900cb327f2881300000000000022512052cc228fe0f4951032fbaeb45ed8b73163cedb897412407e5b431d740040a951010500036e64c16a01e3d18908a15b55251a5db74ff2c1142c02abd048222893b2a18a16024ac23c8d3f6e0b1116e34f68ee7c9e4c19eba30213e8fae0925d70faf8d1ecc403932b1b0224e375471c938ea84bd17df7d8295941b2db68a6623610dd959b2eb303d215f5e88aefa7a2a9794771878f3d6caf20e884c1e0ce923cfa9dea261bb4e2024482039ebf3624525061f88aa01d4a02b3f2224eee8b4060ae0cbf036b242743da4b083bbe4ba8494e529f4843a3511bce5267dfd6a40f9b790ad59b250cfcd67fa88d7d1e2d86bee585b7f6d9de0af32b23fd8c6b095fa6d67b46e9d310fc8f04001027000000000000225120e9d56cdf22598ce6c05950b3580e194a19e53f8b887fc6c4111ca2a82a0608a88813000000000000225120c3731a9dc38c67dfa2dd206ee346d6225f1f37b97d77d518c59b9c9a291762288813000000000000225120a4ad17a5f329a164977981f1b7638c7a70b0dd1bed29a85637aed2952dd2e38c030374a3ec37cc4ccd29717388e6dc24f2aa366632f1a36a49e73cd7671b231792982e15c8d0efcf6044754f63d6c8318f3ec2151f4ffee658a5e8aa99d604aaffb172287d4c7bd646d2295c7561face3c5d364b9692474e828be1767b056781145700c05bc2f82c8c64e470cd4d87aca42989b46879ca32320cd035db124bb78c4e740100000374a3ec37cc4ccd29717388e6dc24f2aa366632f1a36a49e73cd7671b2317929862d6c4b8e408915af8279d4f14431f517a0c9ecc46fae2e8b0a5f72cfcf506c800000000").unwrap(),
+			round2_vtxo: ProtocolEncoding::deserialize_hex("01001027000000000000928a01000365a81233741893bbe2461b8d479dadc5880594fe6f7479180d5843820af72b62e007a3c23c49874159964c52b95021596d5a22e8f8b6bc7c16aa8303c24498d3d5ab0000000003010800039e8a040d9c1fba5a7b0db8485d8f167f8d2590afd8595f9eb9ba7a769347ba2602bd0ad185b18089d37d20dd784b99003914faadcc59f37bbf3273a3b5cd22ed5002568a3a6d25000fc942f0443dc76be4ef688e8c8dc055591de1f2cc1c847b1ed3036e64c16a01e3d18908a15b55251a5db74ff2c1142c02abd048222893b2a18a16024ac23c8d3f6e0b1116e34f68ee7c9e4c19eba30213e8fae0925d70faf8d1ecc403932b1b0224e375471c938ea84bd17df7d8295941b2db68a6623610dd959b2eb303d215f5e88aefa7a2a9794771878f3d6caf20e884c1e0ce923cfa9dea261bb4e2024482039ebf3624525061f88aa01d4a02b3f2224eee8b4060ae0cbf036b24274334507c3f3197b280abcbc6e4a46d5555633f8a2216f2b36f2791492c2ffae768819ac4b88a2db31cef2d5c1e916dc0b465765f88d529779e9cd2c0be5023f492040388130000000000002251205acb7b65f8da14622a055640893e952e20f68e051087b85be4d56e50cdafd4318813000000000000225120973b9be7e6ee51f8851347130113e4001ab1d01252dd1d09713a6c900cb327f2881300000000000022512052cc228fe0f4951032fbaeb45ed8b73163cedb897412407e5b431d740040a951010500036e64c16a01e3d18908a15b55251a5db74ff2c1142c02abd048222893b2a18a16024ac23c8d3f6e0b1116e34f68ee7c9e4c19eba30213e8fae0925d70faf8d1ecc403932b1b0224e375471c938ea84bd17df7d8295941b2db68a6623610dd959b2eb303d215f5e88aefa7a2a9794771878f3d6caf20e884c1e0ce923cfa9dea261bb4e2024482039ebf3624525061f88aa01d4a02b3f2224eee8b4060ae0cbf036b242743da4b083bbe4ba8494e529f4843a3511bce5267dfd6a40f9b790ad59b250cfcd67fa88d7d1e2d86bee585b7f6d9de0af32b23fd8c6b095fa6d67b46e9d310fc8f040110270000000000002251202ec5640d3ba147e40c916e8fa9b0ee89557d10465db1d55a49c87edebe53104c8813000000000000225120c3731a9dc38c67dfa2dd206ee346d6225f1f37b97d77d518c59b9c9a291762288813000000000000225120a4ad17a5f329a164977981f1b7638c7a70b0dd1bed29a85637aed2952dd2e38c030256fda20ffb102f6cf8590d27433ce036d29927fb35324d15d9915df888f16ecd9d6d81796d4a12ee875523bbd5bde213ea5e7198742c50435cd9cf5bfd3e046d5dbb158456c6c375ea44aa717222cb15d9b7924a92028be3055ac48a42438d840061050792ef121826fda248a789c8ba75b955844c65acd2c6361950bdd31dae7d0100020256fda20ffb102f6cf8590d27433ce036d29927fb35324d15d9915df888f16ecd9ea50d885c3f66d40d27e779648ba8dc730629663f65a3e6f7749b4a35b6dfecc28201002800ca6a1d9ccb57f92a11eb4383517f0046482462046eeb9090496785f1893b766f00000000").unwrap(),
 			arkoor3_user_key: Keypair::from_str("ad12595bdbdab56cb61d1f60ccc46ff96b11c5d6fe06ae7ba03d3a5f4347440f").unwrap(),
-			arkoor3_vtxo: ProtocolEncoding::deserialize_hex("01001027000000000000928a01000365a81233741893bbe2461b8d479dadc5880594fe6f7479180d5843820af72b62e007a3c23c49874159964c52b95021596d5a22e8f8b6bc7c16aa8303c24498d3d5ab0000000005010800039e8a040d9c1fba5a7b0db8485d8f167f8d2590afd8595f9eb9ba7a769347ba2602bd0ad185b18089d37d20dd784b99003914faadcc59f37bbf3273a3b5cd22ed5002568a3a6d25000fc942f0443dc76be4ef688e8c8dc055591de1f2cc1c847b1ed3036e64c16a01e3d18908a15b55251a5db74ff2c1142c02abd048222893b2a18a16024ac23c8d3f6e0b1116e34f68ee7c9e4c19eba30213e8fae0925d70faf8d1ecc403932b1b0224e375471c938ea84bd17df7d8295941b2db68a6623610dd959b2eb303d215f5e88aefa7a2a9794771878f3d6caf20e884c1e0ce923cfa9dea261bb4e2024482039ebf3624525061f88aa01d4a02b3f2224eee8b4060ae0cbf036b242743662156b3287dbfa9053520ef877f5c6424920a37751548c942c86d1c0ba15c5dffc452f73642fff9d20b60e32e8fb749c819ae9cc1bd686e00b3e7b257782656040388130000000000002251205acb7b65f8da14622a055640893e952e20f68e051087b85be4d56e50cdafd4318813000000000000225120973b9be7e6ee51f8851347130113e4001ab1d01252dd1d09713a6c900cb327f2881300000000000022512052cc228fe0f4951032fbaeb45ed8b73163cedb897412407e5b431d740040a951010500036e64c16a01e3d18908a15b55251a5db74ff2c1142c02abd048222893b2a18a16024ac23c8d3f6e0b1116e34f68ee7c9e4c19eba30213e8fae0925d70faf8d1ecc403932b1b0224e375471c938ea84bd17df7d8295941b2db68a6623610dd959b2eb303d215f5e88aefa7a2a9794771878f3d6caf20e884c1e0ce923cfa9dea261bb4e2024482039ebf3624525061f88aa01d4a02b3f2224eee8b4060ae0cbf036b242743c0a42892e2cd996341b3c722da8ed6ae10f5e0ee1952d65b97ae1b70271f2b7ca00ca83a85cefefe0c8c01facc1e1fd521748038b7a561b2062786d4b2ecac57040110270000000000002251202ec5640d3ba147e40c916e8fa9b0ee89557d10465db1d55a49c87edebe53104c8813000000000000225120c3731a9dc38c67dfa2dd206ee346d6225f1f37b97d77d518c59b9c9a291762288813000000000000225120a4ad17a5f329a164977981f1b7638c7a70b0dd1bed29a85637aed2952dd2e38c030256fda20ffb102f6cf8590d27433ce036d29927fb35324d15d9915df888f16ecd8cdf97edbcb05e33ddb0f683fd678786e097af9eace2879053ea21e8b56c674f30b231828f75d62adb235165aa3d9f80c10092c85b69b7802721ba00cd0c6bcc0061050792ef121826fda248a789c8ba75b955844c65acd2c6361950bdd31dae7d010002020256fda20ffb102f6cf8590d27433ce036d29927fb35324d15d9915df888f16ecd9ea50d885c3f66d40d27e779648ba8dc730629663f65a3e6f7749b4a35b6dfecc2820100280065d223ebca35fbf9443e18bcff274a9540179868f7bfd4afe8f756a2394719114b172f295e7ccbe39a76f450fddc894ed448ddb483a112657cd0cadc0fd63be6010002030256fda20ffb102f6cf8590d27433ce036d29927fb35324d15d9915df888f16ecd043c07a4e140b184437e9e1cc66d96a3363b89f0c6fa67f4e074ebed259aca90cc9eb37f3754a4c73bccd6327637e84e892812f8269ccbd51e280315e85f135501000002ed1334f116cea9128e1f59f1d5a431cb4f338f0998e2b32f654c310bf7831f97016422a562a4826f26ff351ecb5b1122e0d27958053fd6595a9424a0305fad0700000000").unwrap(),
+			arkoor3_vtxo: ProtocolEncoding::deserialize_hex("01001027000000000000928a01000365a81233741893bbe2461b8d479dadc5880594fe6f7479180d5843820af72b62e007a3c23c49874159964c52b95021596d5a22e8f8b6bc7c16aa8303c24498d3d5ab0000000005010800039e8a040d9c1fba5a7b0db8485d8f167f8d2590afd8595f9eb9ba7a769347ba2602bd0ad185b18089d37d20dd784b99003914faadcc59f37bbf3273a3b5cd22ed5002568a3a6d25000fc942f0443dc76be4ef688e8c8dc055591de1f2cc1c847b1ed3036e64c16a01e3d18908a15b55251a5db74ff2c1142c02abd048222893b2a18a16024ac23c8d3f6e0b1116e34f68ee7c9e4c19eba30213e8fae0925d70faf8d1ecc403932b1b0224e375471c938ea84bd17df7d8295941b2db68a6623610dd959b2eb303d215f5e88aefa7a2a9794771878f3d6caf20e884c1e0ce923cfa9dea261bb4e2024482039ebf3624525061f88aa01d4a02b3f2224eee8b4060ae0cbf036b24274334507c3f3197b280abcbc6e4a46d5555633f8a2216f2b36f2791492c2ffae768819ac4b88a2db31cef2d5c1e916dc0b465765f88d529779e9cd2c0be5023f492040388130000000000002251205acb7b65f8da14622a055640893e952e20f68e051087b85be4d56e50cdafd4318813000000000000225120973b9be7e6ee51f8851347130113e4001ab1d01252dd1d09713a6c900cb327f2881300000000000022512052cc228fe0f4951032fbaeb45ed8b73163cedb897412407e5b431d740040a951010500036e64c16a01e3d18908a15b55251a5db74ff2c1142c02abd048222893b2a18a16024ac23c8d3f6e0b1116e34f68ee7c9e4c19eba30213e8fae0925d70faf8d1ecc403932b1b0224e375471c938ea84bd17df7d8295941b2db68a6623610dd959b2eb303d215f5e88aefa7a2a9794771878f3d6caf20e884c1e0ce923cfa9dea261bb4e2024482039ebf3624525061f88aa01d4a02b3f2224eee8b4060ae0cbf036b242743da4b083bbe4ba8494e529f4843a3511bce5267dfd6a40f9b790ad59b250cfcd67fa88d7d1e2d86bee585b7f6d9de0af32b23fd8c6b095fa6d67b46e9d310fc8f040110270000000000002251202ec5640d3ba147e40c916e8fa9b0ee89557d10465db1d55a49c87edebe53104c8813000000000000225120c3731a9dc38c67dfa2dd206ee346d6225f1f37b97d77d518c59b9c9a291762288813000000000000225120a4ad17a5f329a164977981f1b7638c7a70b0dd1bed29a85637aed2952dd2e38c030256fda20ffb102f6cf8590d27433ce036d29927fb35324d15d9915df888f16ecd9d6d81796d4a12ee875523bbd5bde213ea5e7198742c50435cd9cf5bfd3e046d5dbb158456c6c375ea44aa717222cb15d9b7924a92028be3055ac48a42438d840061050792ef121826fda248a789c8ba75b955844c65acd2c6361950bdd31dae7d01000201000256fda20ffb102f6cf8590d27433ce036d29927fb35324d15d9915df888f16ecda3f46c1fa220865803e80a3688630644317f8c0a85491d849b4ce7f33d133ccfa2bdb2f1dcaa553e5af9fb7f9f5492438ce6d1a068ca6c4ca3a5e0fefa16342331820c3186bfcfcf7cfe67c6ebfee860781e05fd545b5ed9c5902f1b6c8d405b01000201000256fda20ffb102f6cf8590d27433ce036d29927fb35324d15d9915df888f16ecd565b73d5325e68949a264159ea1da8a7d8ba8788f3f63a202d5f3047d2fe9428fe1de1d71126496fda391e24901d3d3dc63a4a90c281857063c8f7659b5516b0e0ebab163829b4e8f6d1e7949ef1fdff84acde7c9de83bbbefe23e0cba5ee6f501000002ed1334f116cea9128e1f59f1d5a431cb4f338f0998e2b32f654c310bf7831f97016422a562a4826f26ff351ecb5b1122e0d27958053fd6595a9424a0305fad0700000000").unwrap(),
 		};
 	}
 
@@ -1461,6 +1256,17 @@ pub mod test {
 	fn test_generate_vtxo_vectors() {
 		let g = generate_vtxo_vectors();
 		// the generation code prints its inner values
+
+		println!("\n\ngenerated:");
+		println!("  anchor_tx: {}", serialize_hex(&g.anchor_tx));
+		println!("  board_vtxo: {}", g.board_vtxo.serialize().as_hex().to_string());
+		println!("  arkoor_htlc_out_vtxo: {}", g.arkoor_htlc_out_vtxo.serialize().as_hex().to_string());
+		println!("  arkoor2_vtxo: {}", g.arkoor2_vtxo.serialize().as_hex().to_string());
+		println!("  round_tx: {}", serialize_hex(&g.round_tx));
+		println!("  round1_vtxo: {}", g.round1_vtxo.serialize().as_hex().to_string());
+		println!("  round2_vtxo: {}", g.round2_vtxo.serialize().as_hex().to_string());
+		println!("  arkoor3_vtxo: {}", g.arkoor3_vtxo.serialize().as_hex().to_string());
+
 
 		let v = &*VTXO_VECTORS;
 		println!("\n\nstatic:");
