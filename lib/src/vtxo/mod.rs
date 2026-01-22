@@ -62,8 +62,8 @@ pub use self::policy::{VtxoPolicy, VtxoPolicyKind};
 pub(crate) use self::genesis::{GenesisItem, GenesisTransition};
 
 pub use self::policy::{
-	PubkeyVtxoPolicy, CheckpointVtxoPolicy, ServerHtlcRecvVtxoPolicy,
-	ServerHtlcSendVtxoPolicy
+	PubkeyVtxoPolicy, CheckpointVtxoPolicy, ExpiryVtxoPolicy,
+	ServerHtlcRecvVtxoPolicy, ServerHtlcSendVtxoPolicy
 };
 pub use self::policy::clause::{
 	VtxoClause, DelayedSignClause, DelayedTimelockSignClause, HashDelaySignClause,

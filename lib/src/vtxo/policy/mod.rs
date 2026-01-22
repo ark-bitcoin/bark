@@ -30,6 +30,8 @@ pub enum VtxoPolicyKind {
 	ServerHtlcSend,
 	/// A VTXO that represents an HTLC with the Ark server to receive money.
 	ServerHtlcRecv,
+	/// Server-only policy where coins can only be swept by the server after expiry.
+	Expiry,
 }
 
 impl fmt::Display for VtxoPolicyKind {
@@ -39,6 +41,7 @@ impl fmt::Display for VtxoPolicyKind {
 			Self::Checkpoint => f.write_str("checkpoint"),
 			Self::ServerHtlcSend => f.write_str("server-htlc-send"),
 			Self::ServerHtlcRecv => f.write_str("server-htlc-receive"),
+			Self::Expiry => f.write_str("expiry"),
 		}
 	}
 }
@@ -51,6 +54,7 @@ impl FromStr for VtxoPolicyKind {
 			"checkpoint" => Self::Checkpoint,
 			"server-htlc-send" => Self::ServerHtlcSend,
 			"server-htlc-receive" => Self::ServerHtlcRecv,
+			"expiry" => Self::Expiry,
 			_ => return Err(format!("unknown VtxoPolicyKind: {}", s)),
 		})
 	}
@@ -169,6 +173,48 @@ impl CheckpointVtxoPolicy {
 		taproot::TaprootBuilder::new()
 			.add_leaf(0, server_sweeping_clause.tapscript()).unwrap()
 			.finalize(&SECP, combined_pk).unwrap()
+	}
+}
+
+/// Server-only policy where coins can only be swept by the server after expiry.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ExpiryVtxoPolicy {
+	pub internal_key: bitcoin::secp256k1::XOnlyPublicKey,
+}
+
+impl ExpiryVtxoPolicy {
+	/// Creates a new expiry policy with the given internal key.
+	pub fn new(internal_key: bitcoin::secp256k1::XOnlyPublicKey) -> Self {
+		Self { internal_key }
+	}
+
+	/// Allows Server to spend after expiry height.
+	pub fn server_sweeping_clause(
+		&self,
+		expiry_height: BlockHeight,
+		server_pubkey: PublicKey,
+	) -> TimelockSignClause {
+		TimelockSignClause { pubkey: server_pubkey, timelock_height: expiry_height }
+	}
+
+	pub fn clauses(
+		&self,
+		expiry_height: BlockHeight,
+		server_pubkey: PublicKey,
+	) -> Vec<VtxoClause> {
+		vec![self.server_sweeping_clause(expiry_height, server_pubkey).into()]
+	}
+
+	pub fn taproot(
+		&self,
+		server_pubkey: PublicKey,
+		expiry_height: BlockHeight,
+	) -> taproot::TaprootSpendInfo {
+		let server_sweeping_clause = self.server_sweeping_clause(expiry_height, server_pubkey);
+
+		taproot::TaprootBuilder::new()
+			.add_leaf(0, server_sweeping_clause.tapscript()).unwrap()
+			.finalize(&SECP, self.internal_key).unwrap()
 	}
 }
 
