@@ -1,8 +1,6 @@
 use std::pin::Pin;
 
-use bitcoin::hex::DisplayHex;
 use futures::Stream;
-use opentelemetry::KeyValue;
 use tracing::{error, warn};
 use ark::{ProtocolEncoding, Vtxo};
 use ark::mailbox::{BlindedMailboxIdentifier, MailboxAuthorization, MailboxIdentifier};
@@ -32,10 +30,6 @@ impl rpc::server::MailboxService for crate::Server {
 	) -> Result<tonic::Response<protos::core::Empty>, tonic::Status> {
 		let req = req.into_inner();
 
-		crate::rpcserver::add_tracing_attributes(vec![
-			KeyValue::new("blinded_id", req.blinded_id.as_hex().to_string())
-		]);
-
 		let vtxos = req.vtxos.into_iter()
 			.map(|v| Vtxo::from_bytes(v))
 			.collect::<Result<Vec<_>, _>>()?;
@@ -60,18 +54,14 @@ impl rpc::server::MailboxService for crate::Server {
 		Ok(tonic::Response::new(protos::core::Empty{}))
 	}
 
-	#[tracing::instrument(skip(self, req))]
+	#[tracing::instrument(skip(self, req), fields(
+		checkpoint = req.get_ref().checkpoint
+	))]
 	async fn read_mailbox(
 		&self,
 		req: tonic::Request<protos::mailbox_server::MailboxRequest>,
 	) -> Result<tonic::Response<protos::mailbox_server::MailboxMessages>, tonic::Status> {
 		let req = req.into_inner();
-
-		crate::rpcserver::add_tracing_attributes(vec![
-			KeyValue::new("unblinded_id", req.unblinded_id.as_hex().to_string()),
-			KeyValue::new("authorization", req.authorization.clone().unwrap_or(vec![]).as_hex().to_string()),
-			KeyValue::new("checkpoint", req.checkpoint.to_string()),
-		]);
 
 		let unblinded_id = MailboxIdentifier::from_slice(req.unblinded_id.as_slice())
 			.badarg("invalid unblinded mailbox id")?;
@@ -100,18 +90,14 @@ impl rpc::server::MailboxService for crate::Server {
 		dyn Stream<Item = Result<protos::mailbox_server::MailboxMessage, tonic::Status>> + Send + 'static
 	>>;
 
-	#[tracing::instrument(skip(self, req))]
+	#[tracing::instrument(skip(self, req), fields(
+		checkpoint = req.get_ref().checkpoint
+	))]
 	async fn subscribe_mailbox(
 		&self,
 		req: tonic::Request<protos::mailbox_server::MailboxRequest>,
 	) -> Result<tonic::Response<Self::SubscribeMailboxStream>, tonic::Status> {
 		let req = req.into_inner();
-
-		crate::rpcserver::add_tracing_attributes(vec![
-			KeyValue::new("unblinded_id", req.unblinded_id.as_hex().to_string()),
-			KeyValue::new("authorization", req.authorization.clone().unwrap_or(vec![]).as_hex().to_string()),
-			KeyValue::new("checkpoint", req.checkpoint.to_string()),
-		]);
 
 		let mailbox_id = MailboxIdentifier::from_slice(req.unblinded_id.as_slice())
 			.badarg("invalid unblinded mailbox id")?;

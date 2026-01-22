@@ -10,8 +10,6 @@ mod macros;
 use std::fmt;
 use std::sync::atomic::{self, AtomicBool};
 
-use opentelemetry::KeyValue;
-use opentelemetry::trace::get_active_span;
 use tokio::sync::oneshot;
 use tracing::trace;
 use server_rpc::RequestExt;
@@ -159,12 +157,6 @@ impl ReceiverExt for oneshot::Receiver<anyhow::Error> {
 
 		Ok(())
 	}
-}
-
-fn add_tracing_attributes(attributes: Vec<KeyValue>) -> () {
-	get_active_span(|span| {
-		span.add_event("attach-attributes", attributes);
-	})
 }
 
 /// Get the protocol version sent by the user and check if it's supported.
