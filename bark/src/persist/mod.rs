@@ -69,6 +69,18 @@ use crate::vtxo::{VtxoState, VtxoStateKind, WalletVtxo};
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 pub trait BarkPersister: Send + Sync + 'static {
+	/// Check if the wallet is initialized.
+	///
+	/// Returns:
+	/// - `Ok(true)` if the wallet is initialized.
+	/// - `Ok(false)` if the wallet is not initialized.
+	///
+	/// Errors:
+	/// - Returns an error if the query fails.
+	async fn is_initialized(&self) -> anyhow::Result<bool> {
+		Ok(self.read_properties().await?.is_some())
+	}
+
 	/// Initialize a wallet in storage with the provided properties.
 	///
 	/// Call exactly once per wallet database. Subsequent calls should fail to prevent
