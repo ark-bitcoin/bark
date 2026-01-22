@@ -54,7 +54,6 @@ async fn lnaddr_invoice(
 	Ok(lnurlp_invoice(&lnurl, amount, comment).await?)
 }
 
-
 #[cfg(test)]
 mod test {
 	use std::str::FromStr;

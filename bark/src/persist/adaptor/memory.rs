@@ -132,7 +132,8 @@ mod tests {
 	use crate::persist::adaptor::test_suite;
 
 	/// Run the full test suite against MemoryStorageAdaptor.
-	#[tokio::test]
+	#[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
+	#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
 	async fn memory_adaptor_full_test_suite() {
 		let mut storage = MemoryStorageAdaptor::new();
 		test_suite::run_all(&mut storage).await;
