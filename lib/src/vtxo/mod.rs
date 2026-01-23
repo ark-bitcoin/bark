@@ -845,7 +845,7 @@ impl ProtocolEncoding for GenesisTransition {
 		match self {
 			Self::Cosigned(t) => {
 				w.emit_u8(GENESIS_TRANSITION_TYPE_COSIGNED)?;
-				w.emit_u16(t.pubkeys.len().try_into().expect("cosign pubkey length overflow"))?;
+				w.emit_compact_size(t.pubkeys.len() as u64)?;
 				for pk in t.pubkeys.iter() {
 					pk.encode(w)?;
 				}
@@ -868,8 +868,8 @@ impl ProtocolEncoding for GenesisTransition {
 			},
 			Self::Arkoor(t) => {
 				w.emit_u8(GENESIS_TRANSITION_TYPE_ARKOOR)?;
-				w.emit_u16(t.client_cosigners.len().try_into().expect("Length overflow"))?;
-				for cosigner in t.client_cosigners.iter() {
+				w.emit_compact_size(t.client_cosigners.len() as u64)?;
+				for cosigner in &t.client_cosigners {
 					cosigner.encode(w)?;
 				};
 				t.tap_tweak.encode(w)?;
@@ -882,7 +882,7 @@ impl ProtocolEncoding for GenesisTransition {
 	fn decode<R: io::Read + ?Sized>(r: &mut R) -> Result<Self, ProtocolDecodingError> {
 		match r.read_u8()? {
 			GENESIS_TRANSITION_TYPE_COSIGNED => {
-				let nb_pubkeys = r.read_u16()? as usize;
+				let nb_pubkeys = r.read_compact_size()? as usize;
 				let mut pubkeys = Vec::with_capacity(nb_pubkeys);
 				for _ in 0..nb_pubkeys {
 					pubkeys.push(PublicKey::decode(r)?);
@@ -903,15 +903,14 @@ impl ProtocolEncoding for GenesisTransition {
 				Ok(Self::new_hash_locked_cosigned(user_pubkey, signature, unlock))
 			},
 			GENESIS_TRANSITION_TYPE_ARKOOR => {
-				let nb_cosigners: usize = r.read_u16()?.into();
-
-				let mut pubkeys = Vec::with_capacity(nb_cosigners);
+				let nb_cosigners = r.read_compact_size()? as usize;
+				let mut cosigners = Vec::with_capacity(nb_cosigners);
 				for _ in 0..nb_cosigners {
-					pubkeys.push(PublicKey::decode(r)?);
+					cosigners.push(PublicKey::decode(r)?);
 				}
 				let taptweak = TapTweakHash::decode(r)?;
 				let signature = Option::<schnorr::Signature>::decode(r)?;
-				Ok(Self::new_arkoor(pubkeys, taptweak, signature))
+				Ok(Self::new_arkoor(cosigners, taptweak, signature))
 			},
 			v => Err(ProtocolDecodingError::invalid(format_args!(
 				"invalid GenesisTransistion type byte: {v:#x}",
