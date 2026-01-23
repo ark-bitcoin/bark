@@ -337,7 +337,7 @@ mod test {
 	use bitcoin::Txid;
 	use bitcoin::hashes::Hash;
 	use bitcoin_ext::TransactionExt;
-	use crate::test::verify_tx;
+	use crate::test_util::verify_tx;
 	use super::*;
 
 	#[test]

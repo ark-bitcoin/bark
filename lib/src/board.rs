@@ -440,7 +440,7 @@ mod test {
 
 	use bitcoin::{absolute, transaction, Amount};
 
-	use crate::encode::test::encoding_roundtrip;
+	use crate::test_util::encoding_roundtrip;
 
 	use super::*;
 

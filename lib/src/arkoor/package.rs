@@ -436,7 +436,7 @@ mod test {
 	use bitcoin::{Transaction, Txid};
 	use bitcoin::secp256k1::Keypair;
 	use super::*;
-	use crate::test::dummy::DummyTestVtxoSpec;
+	use crate::test_util::dummy::DummyTestVtxoSpec;
 	use crate::PublicKey;
 
 	fn server_keypair() -> Keypair {
@@ -514,7 +514,7 @@ mod test {
 
 			let mut prev_tx = funding_tx.clone();
 			for tx in vtxo.transactions().map(|item| item.tx) {
-				crate::test::verify_tx(
+				crate::test_util::verify_tx(
 					&[prev_tx.output[vtxo.chain_anchor().vout as usize].clone()],
 					0,
 					&tx).expect("Invalid transaction");

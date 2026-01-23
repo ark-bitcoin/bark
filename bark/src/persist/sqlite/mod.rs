@@ -430,7 +430,7 @@ pub mod helpers {
 mod test {
 	use bitcoin::bip32;
 
-	use ark::vtxo::test::VTXO_VECTORS;
+	use ark::test_util::VTXO_VECTORS;
 
 	use crate::{persist::sqlite::helpers::in_memory_db, vtxo::VtxoState};
 

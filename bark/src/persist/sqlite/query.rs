@@ -912,7 +912,7 @@ pub fn get_exit_child_tx(
 
 #[cfg(test)]
 mod test {
-	use ark::vtxo::test::VTXO_VECTORS;
+	use ark::test_util::VTXO_VECTORS;
 
 	use crate::persist::sqlite::helpers::in_memory_db;
 	use crate::persist::sqlite::migrations::MigrationContext;

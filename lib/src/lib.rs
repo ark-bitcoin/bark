@@ -30,7 +30,7 @@ pub use crate::vtxo::{Vtxo, VtxoId, VtxoPolicy};
 #[cfg(test)]
 mod napkin;
 #[cfg(any(test, feature = "test-util"))]
-pub mod test;
+pub mod test_util;
 
 
 use std::time::Duration;

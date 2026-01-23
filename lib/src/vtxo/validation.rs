@@ -85,7 +85,7 @@ fn verify_transition(
 
 	#[cfg(test)]
 	{
-		if let Err(e) = crate::test::verify_tx(&[prev_txout.clone()], 0, &tx) {
+		if let Err(e) = crate::test_util::verify_tx(&[prev_txout.clone()], 0, &tx) {
 			// just print error because this is unit test context
 			println!("TX VALIDATION FAILED: invalid tx in genesis of vtxo {}: idx={}: {}",
 				vtxo.id(), genesis_idx, e,
@@ -150,7 +150,7 @@ pub fn validate(
 
 #[cfg(test)]
 mod test {
-	use crate::vtxo::test::VTXO_VECTORS;
+	use crate::test_util::VTXO_VECTORS;
 
 	#[test]
 	pub fn validate_vtxos() {

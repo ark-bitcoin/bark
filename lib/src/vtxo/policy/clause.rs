@@ -351,7 +351,7 @@ mod tests {
 	use bitcoin_ext::{TaprootSpendInfoExt, fee};
 
 	use crate::{SECP, musig};
-	use crate::test::verify_tx;
+	use crate::test_util::verify_tx;
 
 	use super::*;
 

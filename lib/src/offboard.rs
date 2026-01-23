@@ -418,7 +418,7 @@ fn server_check_finalize_forfeit_tx(
 	#[cfg(test)]
 	{
 		let prevs = [vtxo.txout(), connector_txout.clone()];
-		if let Err(e) = crate::test::verify_tx(&prevs, 0, &tx) {
+		if let Err(e) = crate::test_util::verify_tx(&prevs, 0, &tx) {
 			println!("forfeit tx for VTXO {} failed: {}", vtxo.id(), e);
 			panic!("forfeit tx for VTXO {} failed: {}", vtxo.id(), e);
 		}
@@ -468,7 +468,7 @@ mod test {
 	use std::str::FromStr;
 	use bitcoin::hex::FromHex;
 	use bitcoin::secp256k1::PublicKey;
-	use crate::test::dummy::{random_utxo, DummyTestVtxoSpec};
+	use crate::test_util::dummy::{random_utxo, DummyTestVtxoSpec};
 	use super::*;
 
 	#[test]

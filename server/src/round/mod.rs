@@ -1613,7 +1613,7 @@ mod tests {
 	use bitcoin::Amount;
 	use bitcoin::secp256k1::{schnorr, PublicKey, Secp256k1};
 
-	use ark::vtxo::test::VTXO_VECTORS;
+	use ark::test_util::VTXO_VECTORS;
 
 	use crate::flux::VtxosInFlux;
 
