@@ -1,0 +1,7 @@
+- Add fee amount as a field on GenesisItem.
+  The benefit of this is that it allows us bundling fees for board and arkoor operations into the VTXO itself. This is
+  backwards compatible.
+  [#1535](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1535)
+- Add BoardFundingError to BoardBuilder.
+  When setting funding details for the BoardBuilder, it will return errors if the amount and fee values don't validate.
+  [#1535](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1535)
