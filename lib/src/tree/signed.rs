@@ -1502,7 +1502,7 @@ impl ProtocolEncoding for VtxoTreeSpec {
 						policy: VtxoPolicy::decode(r)?,
 						amount: Amount::from_sat(r.read_u64()?),
 					},
-					cosign_pubkey: Some(PublicKey::decode(r)?),
+					cosign_pubkey: Option::<PublicKey>::decode(r)?,
 					unlock_hash: sha256::Hash::decode(r)?,
 				});
 			}
