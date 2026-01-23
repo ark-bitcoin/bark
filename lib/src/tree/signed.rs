@@ -1505,25 +1505,6 @@ impl ProtocolEncoding for VtxoTreeSpec {
 	fn decode<R: io::Read + ?Sized>(r: &mut R) -> Result<Self, crate::encode::ProtocolDecodingError> {
 		let version = r.read_u8()?;
 
-		// be compatible with old version
-		if version == 0x01 {
-			let expiry_height = r.read_u32()?;
-			let server_pubkey = PublicKey::decode(r)?;
-			let exit_delta = r.read_u16()?;
-			let server_cosign_pk = PublicKey::decode(r)?;
-
-			let nb_vtxos = r.read_u32()?;
-			let mut vtxos = Vec::with_capacity(nb_vtxos as usize);
-			for _ in 0..nb_vtxos {
-				vtxos.push(VtxoLeafSpec::decode(r)?);
-			}
-
-			return Ok(VtxoTreeSpec {
-				vtxos, expiry_height, server_pubkey, exit_delta,
-				global_cosign_pubkeys: vec![server_cosign_pk],
-			});
-		}
-
 		if version != VTXO_TREE_SPEC_VERSION {
 			return Err(ProtocolDecodingError::invalid(format_args!(
 				"invalid VtxoTreeSpec encoding version byte: {version:#x}",
