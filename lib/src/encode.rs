@@ -579,9 +579,11 @@ pub mod serde {
 #[cfg(any(test, feature = "test-util"))]
 pub mod test {
 	use bitcoin::hex::DisplayHex;
+	use bitcoin::secp256k1::{self, Keypair};
 	use ::serde::{Deserialize, Serialize};
 	use serde_json;
 
+	use crate::SECP;
 	use super::*;
 
 	/// Test that the object's encoding round-trips.
@@ -606,5 +608,32 @@ pub mod test {
 		let decoded: T = serde_json::from_str(&encoded).unwrap();
 
 		assert_eq!(*object, decoded);
+	}
+
+	#[test]
+	fn option_pubkey() {
+		let key = Keypair::new(&SECP, &mut secp256k1::rand::thread_rng());
+		let pk = key.public_key();
+
+		println!("pk: {}", pk);
+
+		println!("serialize option: {}",
+			<Option<PublicKey> as ProtocolEncoding>::serialize(&Some(pk)).as_hex(),
+		);
+
+		assert_eq!(pk,
+			ProtocolEncoding::deserialize(&ProtocolEncoding::serialize(&pk)).unwrap(),
+		);
+
+		assert_eq!(Some(pk),
+			ProtocolEncoding::deserialize(&ProtocolEncoding::serialize(&Some(pk))).unwrap(),
+		);
+
+		assert_eq!(None,
+			<Option<PublicKey> as ProtocolEncoding>::deserialize(
+				&ProtocolEncoding::serialize(&Option::<PublicKey>::None),
+			).unwrap(),
+		);
+
 	}
 }
