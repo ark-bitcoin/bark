@@ -79,10 +79,9 @@ impl From<Bolt11Invoice> for PaymentHash {
 }
 
 impl PaymentHash {
-	/// Converts this PaymentHash into a `bitcoin::hashes::sha256::Hash`.
-	pub fn to_sha256_hash(&self) -> bitcoin::hashes::sha256::Hash {
-		bitcoin::hashes::sha256::Hash::from_slice(&self.0)
-			.expect("PaymentHash must be 32 bytes, which is always valid for sha256::Hash")
+	/// Converts this PaymentHash into a [sha256::Hash].
+	pub fn to_sha256_hash(&self) -> sha256::Hash {
+		sha256::Hash::from_byte_array(self.0)
 	}
 }
 
