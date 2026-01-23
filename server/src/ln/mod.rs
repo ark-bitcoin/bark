@@ -351,6 +351,10 @@ impl Server {
 			bail!("invoice already accepted");
 		}
 
+		if subscriptions_by_status.contains_key(&LightningHtlcSubscriptionStatus::HtlcsReady) {
+			bail!("invoice already has htlcs ready");
+		}
+
 		if let Some(created) = subscriptions_by_status.get(&LightningHtlcSubscriptionStatus::Created) {
 			if let Some(subscription) = created.first() {
 				trace!("Found existing created subscription, returning invoice: {}",

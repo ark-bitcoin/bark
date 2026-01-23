@@ -33,7 +33,7 @@ use smallvec::SmallVec;
 use ark::VtxoId;
 use ark::rounds::RoundSeq;
 
-use crate::database::ln::LightningPaymentStatus;
+use crate::database::ln::{LightningHtlcSubscriptionStatus, LightningPaymentStatus};
 use crate::ln::cln::ClnNodeStateKind;
 use crate::round::RoundStateKind;
 use crate::wallet::WalletKind;
@@ -908,12 +908,23 @@ pub fn set_pending_invoice_verifications(lightning_node_id: i64, count: usize) {
 	}
 }
 
-pub fn set_open_invoices(lightning_node_id: i64, count: usize) {
+pub fn set_open_invoices(
+	lightning_node_id: i64,
+	counts: &std::collections::HashMap<LightningHtlcSubscriptionStatus, usize>,
+) {
 	if let Some(m) = TELEMETRY.get() {
-		let attrs = m.with_global_labels([
-			KeyValue::new(ATTRIBUTE_LIGHTNING_NODE_ID, lightning_node_id.to_string()),
-		]);
-		m.lightning_open_invoices_gauge.record(count as u64, &attrs)
+		for status in [
+			LightningHtlcSubscriptionStatus::Created,
+			LightningHtlcSubscriptionStatus::Accepted,
+			LightningHtlcSubscriptionStatus::HtlcsReady,
+		] {
+			let count = counts.get(&status).copied().unwrap_or(0);
+			let attrs = m.with_global_labels([
+				KeyValue::new(ATTRIBUTE_LIGHTNING_NODE_ID, lightning_node_id.to_string()),
+				KeyValue::new(ATTRIBUTE_STATUS, status.to_string()),
+			]);
+			m.lightning_open_invoices_gauge.record(count as u64, &attrs);
+		}
 	}
 }
 
