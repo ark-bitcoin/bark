@@ -897,7 +897,7 @@ impl ProtocolEncoding for GenesisTransition {
 					0 => MaybePreimage::Preimage(r.read_byte_array()?),
 					1 => MaybePreimage::Hash(ProtocolEncoding::decode(r)?),
 					v => return Err(ProtocolDecodingError::invalid(format_args!(
-						"invalid HashLockedCosignedTransitionWitness type byte: {v:#x}",
+						"invalid MaybePreimage type byte: {v:#x}",
 					))),
 				};
 				Ok(Self::new_hash_locked_cosigned(user_pubkey, signature, unlock))
@@ -929,11 +929,12 @@ impl<P: Policy + ProtocolEncoding> ProtocolEncoding for Vtxo<P> {
 		w.emit_u16(self.exit_delta)?;
 		self.anchor_point.encode(w)?;
 
-		w.emit_u8(self.genesis.len().try_into().expect("genesis length overflow"))?;
+		w.emit_compact_size(self.genesis.len() as u64)?;
 		for item in &self.genesis {
 			item.transition.encode(w)?;
 			let nb_outputs = item.other_outputs.len() + 1;
-			w.emit_u8(nb_outputs.try_into().expect("genesis item output length overflow"))?;
+			w.emit_u8(nb_outputs.try_into()
+				.map_err(|_| io::Error::other("too many outputs on genesis transaction"))?)?;
 			w.emit_u8(item.output_idx)?;
 			for txout in &item.other_outputs {
 				txout.encode(w)?;
@@ -959,7 +960,7 @@ impl<P: Policy + ProtocolEncoding> ProtocolEncoding for Vtxo<P> {
 		let exit_delta = r.read_u16()?;
 		let anchor_point = OutPoint::decode(r)?;
 
-		let nb_genesis_items = r.read_u8()? as usize;
+		let nb_genesis_items = r.read_compact_size()? as usize;
 		let mut genesis = Vec::with_capacity(nb_genesis_items);
 		for _ in 0..nb_genesis_items {
 			let transition = GenesisTransition::decode(r)?;
@@ -989,6 +990,8 @@ mod test {
 	use bitcoin::consensus::encode::serialize_hex;
 	use bitcoin::hex::DisplayHex;
 
+	use crate::test_util::encoding_roundtrip;
+	use crate::test_util::dummy::{DUMMY_SERVER_KEY, DUMMY_USER_KEY};
 	use crate::test_util::vectors::{generate_vtxo_vectors, VTXO_VECTORS};
 
 	use super::*;
@@ -1055,5 +1058,30 @@ mod test {
 			vtxos.arkoor3_vtxo.exit_depth(),
 			3 /* cosign */ + 1 /* checkpoint */ + 1 /* arkoor */,
 		);
+	}
+
+	#[test]
+	fn test_genesis_length_257() {
+		let vtxo = Vtxo {
+			policy: VtxoPolicy::new_pubkey(DUMMY_USER_KEY.public_key()),
+			amount: Amount::from_sat(10_000),
+			expiry_height: 101_010,
+			server_pubkey: DUMMY_SERVER_KEY.public_key(),
+			exit_delta: 2016,
+			anchor_point: OutPoint::new(Txid::from_slice(&[1u8; 32]).unwrap(), 1),
+			genesis: (0..257).map(|_| {
+				GenesisItem {
+					transition: GenesisTransition::new_cosigned(
+						vec![DUMMY_USER_KEY.public_key()],
+						schnorr::Signature::from_slice(&[2u8; 64]).unwrap(),
+					),
+					output_idx: 0,
+					other_outputs: vec![],
+				}
+			}).collect(),
+			point: OutPoint::new(Txid::from_slice(&[3u8; 32]).unwrap(), 3),
+		};
+		assert_eq!(vtxo.genesis.len(), 257);
+		encoding_roundtrip(&vtxo);
 	}
 }
