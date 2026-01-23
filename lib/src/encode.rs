@@ -22,6 +22,7 @@ pub enum ProtocolDecodingError {
 	#[error("invalid protocol encoding: {message}")]
 	Invalid {
 		message: String,
+		#[source]
 		source: Option<Box<dyn std::error::Error + Send + Sync + 'static>>,
 	},
 }
