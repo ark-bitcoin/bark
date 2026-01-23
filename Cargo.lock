@@ -128,7 +128,7 @@ dependencies = [
 
 [[package]]
 name = "ark-lib"
-version = "0.1.0-beta.5"
+version = "0.1.0-beta.6"
 dependencies = [
  "async-trait",
  "bark-bitcoin-ext",
@@ -324,7 +324,7 @@ dependencies = [
 
 [[package]]
 name = "bark-bitcoin-ext"
-version = "0.1.0-beta.5"
+version = "0.1.0-beta.6"
 dependencies = [
  "async-trait",
  "bdk_bitcoind_rpc",
@@ -342,7 +342,7 @@ dependencies = [
 
 [[package]]
 name = "bark-cli"
-version = "0.1.0-beta.5"
+version = "0.1.0-beta.6"
 dependencies = [
  "anyhow",
  "ark-lib",
@@ -386,7 +386,7 @@ dependencies = [
 
 [[package]]
 name = "bark-json"
-version = "0.1.0-beta.5"
+version = "0.1.0-beta.6"
 dependencies = [
  "anyhow",
  "ark-lib",
@@ -403,7 +403,7 @@ dependencies = [
 
 [[package]]
 name = "bark-rest"
-version = "0.1.0-beta.5"
+version = "0.1.0-beta.6"
 dependencies = [
  "anyhow",
  "ark-lib",
@@ -429,7 +429,7 @@ dependencies = [
 
 [[package]]
 name = "bark-rest-client"
-version = "0.1.0-beta.5"
+version = "0.1.0-beta.6"
 dependencies = [
  "bark-json",
  "bark-rest",
@@ -443,7 +443,7 @@ dependencies = [
 
 [[package]]
 name = "bark-server"
-version = "0.1.0-beta.5"
+version = "0.1.0-beta.6"
 dependencies = [
  "anyhow",
  "ark-lib",
@@ -505,7 +505,7 @@ dependencies = [
 
 [[package]]
 name = "bark-server-log"
-version = "0.1.0-beta.5"
+version = "0.1.0-beta.6"
 dependencies = [
  "ark-lib",
  "bark-bitcoin-ext",
@@ -525,7 +525,7 @@ dependencies = [
 
 [[package]]
 name = "bark-server-rpc"
-version = "0.1.0-beta.5"
+version = "0.1.0-beta.6"
 dependencies = [
  "ark-lib",
  "bitcoin",
@@ -542,7 +542,7 @@ dependencies = [
 
 [[package]]
 name = "bark-wallet"
-version = "0.1.0-beta.5"
+version = "0.1.0-beta.6"
 dependencies = [
  "anyhow",
  "ark-lib",
@@ -1751,6 +1751,22 @@ dependencies = [
  "hyper-util",
  "pin-project-lite",
  "tokio",
+ "tower-service",
+]
+
+[[package]]
+name = "hyper-tls"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "70206fc6890eaca9fde8a0bf71caa2ddfc9fe045ac9e5c70df101a7dbde866e0"
+dependencies = [
+ "bytes",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "native-tls",
+ "tokio",
+ "tokio-native-tls",
  "tower-service",
 ]
 
@@ -3224,10 +3240,12 @@ dependencies = [
  "http-body-util",
  "hyper",
  "hyper-rustls",
+ "hyper-tls",
  "hyper-util",
  "js-sys",
  "log",
  "mime_guess",
+ "native-tls",
  "percent-encoding",
  "pin-project-lite",
  "quinn",
@@ -3238,6 +3256,7 @@ dependencies = [
  "serde_urlencoded",
  "sync_wrapper",
  "tokio",
+ "tokio-native-tls",
  "tokio-rustls",
  "tower",
  "tower-http 0.6.8",

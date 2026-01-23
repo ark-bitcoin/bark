@@ -1,8 +1,0 @@
-
-- removal of deprecated gRPC methods and fields
-  [PR #1501](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1501)
-  - remove deprecated `wait` field from `InitiateLightningPaymentRequest`
-  - remove deprecated `start_lightning_payment`, `finish_lightning_payment`,
-	and `revoke_lightning_payment` methods
-  - removed deprecated `max_arkoor_depth` field from `ArkInfo` and reorder
-	fields

@@ -1,6 +1,0 @@
-- Introduce `SyncManager` and `BlockIndex`.
-  These are utilities that can be used for block based sync.
-  Replaced `TipFetcher` by `SyncManager`.
-  Introduced the `sync_manager_block_poll_interval` config to
-  specify how frequently `SyncManager` should poll sync.
-  [#1471](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1471)

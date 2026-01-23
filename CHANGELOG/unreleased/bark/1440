@@ -1,5 +1,0 @@
-
-- round protocol changed to hArk protocol
-  [PR #1440](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1440)
-  - offboards and onchain payments temporarily disabled
-  - new round VTXOs are now not immediatelly spendable after interactive round part finished

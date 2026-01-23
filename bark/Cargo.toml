@@ -1,6 +1,6 @@
 [package]
 name = "bark-wallet"
-version = "0.1.0-beta.5"
+version = "0.1.0-beta.6"
 license = "CC0-1.0"
 authors = [ "Team Second <hello@second.tech>" ]
 repository = "https://gitlab.com/ark-bitcoin/bark"
@@ -22,11 +22,11 @@ path = "src/lib.rs"
 [dependencies]
 
 # OWN
-ark-lib = { version = "0.1.0-beta.5", path = "../lib" }
-bark-bitcoin-ext = { version = "0.1.0-beta.5", path = "../bitcoin-ext", default-features = false, features = [
+ark-lib = { version = "0.1.0-beta.6", path = "../lib" }
+bark-bitcoin-ext = { version = "0.1.0-beta.6", path = "../bitcoin-ext", default-features = false, features = [
 	"bdk", "esplora", "rpc",
 ]}
-bark-server-rpc = { version = "0.1.0-beta.5", path = "../server-rpc" }
+bark-server-rpc = { version = "0.1.0-beta.6", path = "../server-rpc" }
 
 # EXPORTED
 bitcoin.workspace = true
