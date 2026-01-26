@@ -1091,4 +1091,116 @@ mod test {
 		assert_eq!(vtxo.genesis.len(), 257);
 		encoding_roundtrip(&vtxo);
 	}
+
+	mod genesis_transition_encoding {
+		use bitcoin::hashes::{sha256, Hash};
+		use bitcoin::secp256k1::{Keypair, PublicKey};
+		use bitcoin::taproot::TapTweakHash;
+		use std::str::FromStr;
+
+		use crate::test_util::encoding_roundtrip;
+		use super::genesis::{
+			GenesisTransition, CosignedGenesis, HashLockedCosignedGenesis, ArkoorGenesis,
+		};
+		use super::MaybePreimage;
+
+		fn test_pubkey() -> PublicKey {
+			Keypair::from_str(
+				"916da686cedaee9a9bfb731b77439f2a3f1df8664e16488fba46b8d2bfe15e92"
+			).unwrap().public_key()
+		}
+
+		fn test_signature() -> bitcoin::secp256k1::schnorr::Signature {
+			"cc8b93e9f6fbc2506bb85ae8bbb530b178daac49704f5ce2e3ab69c266fd5932\
+			 0b28d028eef212e3b9fdc42cfd2e0760a0359d3ea7d2e9e8cfe2040e3f1b71ea"
+				.parse().unwrap()
+		}
+
+		#[test]
+		fn cosigned_with_signature() {
+			let transition = GenesisTransition::Cosigned(CosignedGenesis {
+				pubkeys: vec![test_pubkey()],
+				signature: Some(test_signature()),
+			});
+			encoding_roundtrip(&transition);
+		}
+
+		#[test]
+		fn cosigned_without_signature() {
+			let transition = GenesisTransition::Cosigned(CosignedGenesis {
+				pubkeys: vec![test_pubkey()],
+				signature: None,
+			});
+			encoding_roundtrip(&transition);
+		}
+
+		#[test]
+		fn cosigned_multiple_pubkeys() {
+			let pk1 = test_pubkey();
+			let pk2 = Keypair::from_str(
+				"fab9e598081a3e74b2233d470c4ad87bcc285b6912ed929568e62ac0e9409879"
+			).unwrap().public_key();
+
+			let transition = GenesisTransition::Cosigned(CosignedGenesis {
+				pubkeys: vec![pk1, pk2],
+				signature: Some(test_signature()),
+			});
+			encoding_roundtrip(&transition);
+		}
+
+		#[test]
+		fn hash_locked_cosigned_with_preimage() {
+			let preimage = [0x42u8; 32];
+			let transition = GenesisTransition::HashLockedCosigned(HashLockedCosignedGenesis {
+				user_pubkey: test_pubkey(),
+				signature: Some(test_signature()),
+				unlock: MaybePreimage::Preimage(preimage),
+			});
+			encoding_roundtrip(&transition);
+		}
+
+		#[test]
+		fn hash_locked_cosigned_with_hash() {
+			let hash = sha256::Hash::hash(b"test preimage");
+			let transition = GenesisTransition::HashLockedCosigned(HashLockedCosignedGenesis {
+				user_pubkey: test_pubkey(),
+				signature: Some(test_signature()),
+				unlock: MaybePreimage::Hash(hash),
+			});
+			encoding_roundtrip(&transition);
+		}
+
+		#[test]
+		fn hash_locked_cosigned_without_signature() {
+			let preimage = [0x42u8; 32];
+			let transition = GenesisTransition::HashLockedCosigned(HashLockedCosignedGenesis {
+				user_pubkey: test_pubkey(),
+				signature: None,
+				unlock: MaybePreimage::Preimage(preimage),
+			});
+			encoding_roundtrip(&transition);
+		}
+
+		#[test]
+		fn arkoor_with_signature() {
+			let tap_tweak = TapTweakHash::from_slice(&[0xabu8; 32]).unwrap();
+			let transition = GenesisTransition::Arkoor(ArkoorGenesis {
+				client_cosigners: vec![test_pubkey()],
+				tap_tweak,
+				signature: Some(test_signature()),
+			});
+			encoding_roundtrip(&transition);
+		}
+
+		#[test]
+		fn arkoor_without_signature() {
+			let tap_tweak = TapTweakHash::from_slice(&[0xabu8; 32]).unwrap();
+			let transition = GenesisTransition::Arkoor(ArkoorGenesis {
+				client_cosigners: vec![test_pubkey()],
+				tap_tweak,
+				signature: None,
+			});
+			encoding_roundtrip(&transition);
+		}
+	}
 }
