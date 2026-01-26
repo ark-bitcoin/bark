@@ -614,8 +614,13 @@ mod test {
 		let (vtxo, funding_tx, _, server_key) = create_board_vtxo();
 
 		// Should succeed with correct inputs
-		let result = BoardBuilder::new_from_vtxo(&vtxo, &funding_tx, server_key.public_key());
-		assert!(result.is_ok());
+		let builder = BoardBuilder::new_from_vtxo(&vtxo, &funding_tx, server_key.public_key())
+			.expect("Is valid");
+
+		let server_vtxos = builder.build_internal_unsigned_vtxos();
+		assert_eq!(server_vtxos.len(), 2);
+		assert!(matches!(server_vtxos[0].policy(), ServerVtxoPolicy::Expiry(..)));
+		assert!(matches!(server_vtxos[1].policy(), ServerVtxoPolicy::User(VtxoPolicy::Pubkey{..})));
 	}
 
 	#[test]
