@@ -1595,7 +1595,7 @@ mod test {
 	use bitcoin::{absolute, transaction};
 	use rand::SeedableRng;
 
-	use crate::{encode, test_util};
+	use crate::encode;
 	use crate::test_util::{encoding_roundtrip, json_roundtrip};
 	use crate::tree::signed::builder::SignedTreeBuilder;
 	use crate::vtxo::policy::VtxoPolicy;

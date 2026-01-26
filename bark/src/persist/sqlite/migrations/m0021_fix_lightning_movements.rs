@@ -25,7 +25,6 @@ impl Migration for Migration0021 {
 				VtxoPolicy::Pubkey(_) => false,
 				VtxoPolicy::ServerHtlcSend(_) => true,
 				VtxoPolicy::ServerHtlcRecv(_) => true,
-				VtxoPolicy::Checkpoint(_) => false,
 			};
 			match (is_htlc, wallet_vtxo.state.clone()) {
 				(true, VtxoState::Locked { movement_id: Some(movement_id) }) => {

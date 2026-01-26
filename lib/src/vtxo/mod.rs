@@ -58,17 +58,20 @@ pub(crate) mod genesis;
 mod validation;
 
 pub use self::validation::VtxoValidationError;
-pub use self::policy::{VtxoPolicy, VtxoPolicyKind};
+pub use self::policy::{Policy, VtxoPolicy, VtxoPolicyKind, ServerVtxoPolicy};
 pub(crate) use self::genesis::{GenesisItem, GenesisTransition};
 
 pub use self::policy::{
-	PubkeyVtxoPolicy, CheckpointVtxoPolicy, ServerHtlcRecvVtxoPolicy,
-	ServerHtlcSendVtxoPolicy
+	PubkeyVtxoPolicy, CheckpointVtxoPolicy, ExpiryVtxoPolicy,
+	ServerHtlcRecvVtxoPolicy, ServerHtlcSendVtxoPolicy
 };
 pub use self::policy::clause::{
 	VtxoClause, DelayedSignClause, DelayedTimelockSignClause, HashDelaySignClause,
 	TapScriptClause,
 };
+
+/// Type alias for a server-internal VTXO that may have policies without user pubkeys.
+pub type ServerVtxo = Vtxo<ServerVtxoPolicy>;
 
 use std::iter::FusedIterator;
 use std::{fmt, io};
@@ -272,8 +275,8 @@ pub struct VtxoTxIterItem {
 }
 
 /// Iterator returned by [Vtxo::transactions].
-pub struct VtxoTxIter<'a> {
-	vtxo: &'a Vtxo,
+pub struct VtxoTxIter<'a, P: Policy = VtxoPolicy> {
+	vtxo: &'a Vtxo<P>,
 
 	prev: OutPoint,
 	genesis_idx: usize,
@@ -281,8 +284,8 @@ pub struct VtxoTxIter<'a> {
 	done: bool,
 }
 
-impl<'a> VtxoTxIter<'a> {
-	fn new(vtxo: &'a Vtxo) -> VtxoTxIter<'a> {
+impl<'a, P: Policy> VtxoTxIter<'a, P> {
+	fn new(vtxo: &'a Vtxo<P>) -> VtxoTxIter<'a, P> {
 		// Add all the amounts that go into the other outputs.
 		let onchain_amount = vtxo.amount() + vtxo.genesis.iter().map(|i| {
 			i.other_outputs.iter().map(|o| o.value).sum()
@@ -297,7 +300,7 @@ impl<'a> VtxoTxIter<'a> {
 	}
 }
 
-impl<'a> Iterator for VtxoTxIter<'a> {
+impl<'a, P: Policy> Iterator for VtxoTxIter<'a, P> {
 	type Item = VtxoTxIterItem;
 
 	fn next(&mut self) -> Option<Self::Item> {
@@ -337,21 +340,21 @@ impl<'a> Iterator for VtxoTxIter<'a> {
 	}
 }
 
-impl<'a> ExactSizeIterator for VtxoTxIter<'a> {}
-impl<'a> FusedIterator for VtxoTxIter<'a> {}
+impl<'a, P: Policy> ExactSizeIterator for VtxoTxIter<'a, P> {}
+impl<'a, P: Policy> FusedIterator for VtxoTxIter<'a, P> {}
 
 
 /// Information that specifies a VTXO, independent of its origin.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct VtxoSpec {
-	pub policy: VtxoPolicy,
+pub struct VtxoSpec<P = VtxoPolicy> {
+	pub policy: P,
 	pub amount: Amount,
 	pub expiry_height: BlockHeight,
 	pub server_pubkey: PublicKey,
 	pub exit_delta: BlockDelta,
 }
 
-impl VtxoSpec {
+impl<P: Policy> VtxoSpec<P> {
 	/// The taproot spend info for the output of this [Vtxo].
 	pub fn output_taproot(&self) -> taproot::TaprootSpendInfo {
 		self.policy.taproot(self.server_pubkey, self.exit_delta, self.expiry_height)
@@ -382,8 +385,8 @@ impl VtxoSpec {
 /// Implementations of [PartialEq], [Eq], [PartialOrd], [Ord] and [Hash] are
 /// proxied to the implementation on [Vtxo::id].
 #[derive(Debug, Clone)]
-pub struct Vtxo {
-	pub(crate) policy: VtxoPolicy,
+pub struct Vtxo<P = VtxoPolicy> {
+	pub(crate) policy: P,
 	pub(crate) amount: Amount,
 	pub(crate) expiry_height: BlockHeight,
 
@@ -402,23 +405,12 @@ pub struct Vtxo {
 	pub(crate) point: OutPoint,
 }
 
-impl Vtxo {
+impl<P: Policy> Vtxo<P> {
 	/// Get the identifier for this [Vtxo].
 	///
 	/// This is the same as [Vtxo::point] but encoded as a byte array.
 	pub fn id(&self) -> VtxoId {
 		self.point.into()
-	}
-
-	/// Get the spec for this VTXO.
-	pub fn spec(&self) -> VtxoSpec {
-		VtxoSpec {
-			policy: self.policy.clone(),
-			amount: self.amount,
-			expiry_height: self.expiry_height,
-			server_pubkey: self.server_pubkey,
-			exit_delta: self.exit_delta,
-		}
 	}
 
 	/// The outpoint from which to build forfeit or arkoor txs.
@@ -441,7 +433,7 @@ impl Vtxo {
 	}
 
 	/// The output policy of this VTXO.
-	pub fn policy(&self) -> &VtxoPolicy {
+	pub fn policy(&self) -> &P {
 		&self.policy
 	}
 
@@ -470,14 +462,6 @@ impl Vtxo {
 		self.genesis.len() as u16
 	}
 
-	/// The public key used to cosign arkoor txs spending this [Vtxo].
-	/// This will return [None] if [VtxoPolicy::is_arkoor_compatible] returns false
-	/// for this VTXO's policy.
-	pub fn arkoor_pubkey(&self) -> Option<PublicKey> {
-		self.policy.arkoor_pubkey()
-	}
-
-
 	/// Iterate over all oor transitions in this VTXO
 	///
 	/// The outer `Vec` cointains one element for each transition.
@@ -494,20 +478,6 @@ impl Vtxo {
 				_ => None,
 			}
 		}).collect()
-	}
-
-
-	/// Returns the user pubkey associated with this [Vtxo].
-	pub fn user_pubkey(&self) -> PublicKey {
-		self.policy.user_pubkey()
-	}
-
-	/// Return the aggregate pubkey of the user and server pubkey used in
-	/// hArk forfeit transactions
-	pub(crate) fn forfeit_agg_pubkey(&self) -> XOnlyPublicKey {
-		let ret = musig::combine_keys([self.user_pubkey(), self.server_pubkey()]);
-		debug_assert_eq!(ret, self.output_taproot().internal_key());
-		ret
 	}
 
 	/// The taproot spend info for the output of this [Vtxo].
@@ -533,11 +503,6 @@ impl Vtxo {
 		self.genesis.iter().all(|g| g.transition.is_fully_signed())
 	}
 
-	/// Iterator that constructs all the exit txs for this [Vtxo].
-	pub fn transactions(&self) -> VtxoTxIter<'_> {
-		VtxoTxIter::new(self)
-	}
-
 	/// Check if this VTXO is standard for relay purposes
 	///
 	/// A VTXO is standard if:
@@ -546,17 +511,6 @@ impl Vtxo {
 	pub fn is_standard(&self) -> bool {
 		self.txout().is_standard() && self.genesis.iter()
 			.all(|i| i.other_outputs.iter().all(|o| o.is_standard()))
-	}
-
-	/// Fully validate this VTXO and its entire transaction chain.
-	///
-	/// The `chain_anchor_tx` must be the tx with txid matching
-	/// [Vtxo::chain_anchor].
-	pub fn validate(
-		&self,
-		chain_anchor_tx: &Transaction,
-	) -> Result<(), VtxoValidationError> {
-		self::validation::validate(&self, chain_anchor_tx)
 	}
 
 	/// Returns the "hArk" unlock hash if this is a hArk leaf VTXO
@@ -597,6 +551,55 @@ impl Vtxo {
 		}
 	}
 
+	/// Get the spec for this VTXO.
+	pub fn spec(&self) -> VtxoSpec<P> {
+		VtxoSpec {
+			policy: self.policy.clone(),
+			amount: self.amount,
+			expiry_height: self.expiry_height,
+			server_pubkey: self.server_pubkey,
+			exit_delta: self.exit_delta,
+		}
+	}
+
+	/// Iterator that constructs all the exit txs for this [Vtxo].
+	pub fn transactions(&self) -> VtxoTxIter<'_, P> {
+		VtxoTxIter::new(self)
+	}
+
+	/// Fully validate this VTXO and its entire transaction chain.
+	///
+	/// The `chain_anchor_tx` must be the tx with txid matching
+	/// [Vtxo::chain_anchor].
+	pub fn validate(
+		&self,
+		chain_anchor_tx: &Transaction,
+	) -> Result<(), VtxoValidationError> {
+		self::validation::validate(&self, chain_anchor_tx)
+	}
+}
+
+impl Vtxo {
+	/// Returns the user pubkey associated with this [Vtxo].
+	pub fn user_pubkey(&self) -> PublicKey {
+		self.policy.user_pubkey()
+	}
+
+	/// The public key used to cosign arkoor txs spending this [Vtxo].
+	/// This will return [None] if [VtxoPolicy::is_arkoor_compatible] returns false
+	/// for this VTXO's policy.
+	pub fn arkoor_pubkey(&self) -> Option<PublicKey> {
+		self.policy.arkoor_pubkey()
+	}
+
+	/// Return the aggregate pubkey of the user and server pubkey used in
+	/// hArk forfeit transactions
+	pub(crate) fn forfeit_agg_pubkey(&self) -> XOnlyPublicKey {
+		let ret = musig::combine_keys([self.user_pubkey(), self.server_pubkey()]);
+		debug_assert_eq!(ret, self.output_taproot().internal_key());
+		ret
+	}
+
 	/// Shortcut to fully finalize a hark leaf using both keys
 	#[cfg(any(test, feature = "test-util"))]
 	pub fn finalize_hark_leaf(
@@ -617,27 +620,49 @@ impl Vtxo {
 	}
 }
 
-impl PartialEq for Vtxo {
+impl Vtxo<ServerVtxoPolicy> {
+	/// Try to convert into a user [Vtxo]
+	///
+	/// Returns the original value on failure.
+	pub fn try_into_user_vtxo(self) -> Result<Vtxo, ServerVtxo> {
+		if let Some(p) = self.policy.clone().into_user_policy() {
+			Ok(Vtxo {
+				policy: p,
+				amount: self.amount,
+				expiry_height: self.expiry_height,
+				server_pubkey: self.server_pubkey,
+				exit_delta: self.exit_delta,
+				anchor_point: self.anchor_point,
+				genesis: self.genesis,
+				point: self.point,
+			})
+		} else {
+			Err(self)
+		}
+	}
+}
+
+impl<P: Policy> PartialEq for Vtxo<P> {
 	fn eq(&self, other: &Self) -> bool {
 		PartialEq::eq(&self.id(), &other.id())
 	}
 }
 
-impl Eq for Vtxo {}
+impl<P: Policy> Eq for Vtxo<P> {}
 
-impl PartialOrd for Vtxo {
+impl<P: Policy> PartialOrd for Vtxo<P> {
 	fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
 		PartialOrd::partial_cmp(&self.id(), &other.id())
 	}
 }
 
-impl Ord for Vtxo {
+impl<P: Policy> Ord for Vtxo<P> {
 	fn cmp(&self, other: &Self) -> std::cmp::Ordering {
 		Ord::cmp(&self.id(), &other.id())
 	}
 }
 
-impl std::hash::Hash for Vtxo {
+impl<P: Policy> std::hash::Hash for Vtxo<P> {
 	fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
 		std::hash::Hash::hash(&self.id(), state)
 	}
@@ -646,6 +671,21 @@ impl std::hash::Hash for Vtxo {
 impl AsRef<Vtxo> for Vtxo {
 	fn as_ref(&self) -> &Vtxo {
 	    self
+	}
+}
+
+impl From<Vtxo> for ServerVtxo {
+	fn from(vtxo: Vtxo) -> ServerVtxo {
+		ServerVtxo {
+			policy: vtxo.policy.into(),
+			amount: vtxo.amount,
+			expiry_height: vtxo.expiry_height,
+			server_pubkey: vtxo.server_pubkey,
+			exit_delta: vtxo.exit_delta,
+			anchor_point: vtxo.anchor_point,
+			genesis: vtxo.genesis,
+			point: vtxo.point,
+		}
 	}
 }
 
@@ -687,18 +727,17 @@ const VTXO_POLICY_SERVER_HTLC_SEND: u8 = 0x01;
 /// The byte used to encode the [VtxoPolicy::ServerHtlcRecv] output type.
 const VTXO_POLICY_SERVER_HTLC_RECV: u8 = 0x02;
 
-/// The byte used to encode the [VtxoPolicy::Checkpoint] output type.
-const VTXO_CHECKPOINT_CHECKPOINT: u8 = 0x03;
+/// The byte used to encode the [ServerVtxoPolicy::Checkpoint] output type.
+const VTXO_POLICY_CHECKPOINT: u8 = 0x03;
+
+/// The byte used to encode the [ServerVtxoPolicy::Expiry] output type.
+const VTXO_POLICY_EXPIRY: u8 = 0x04;
 
 impl ProtocolEncoding for VtxoPolicy {
 	fn encode<W: io::Write + ?Sized>(&self, w: &mut W) -> Result<(), io::Error> {
 		match self {
 			Self::Pubkey(PubkeyVtxoPolicy { user_pubkey }) => {
 				w.emit_u8(VTXO_POLICY_PUBKEY)?;
-				user_pubkey.encode(w)?;
-			},
-			Self::Checkpoint(CheckpointVtxoPolicy { user_pubkey }) => {
-				w.emit_u8(VTXO_CHECKPOINT_CHECKPOINT)?;
 				user_pubkey.encode(w)?;
 			},
 			Self::ServerHtlcSend(ServerHtlcSendVtxoPolicy { user_pubkey, payment_hash, htlc_expiry }) => {
@@ -721,30 +760,74 @@ impl ProtocolEncoding for VtxoPolicy {
 	}
 
 	fn decode<R: io::Read + ?Sized>(r: &mut R) -> Result<Self, ProtocolDecodingError> {
-		match r.read_u8()? {
-			VTXO_POLICY_PUBKEY => {
-				let user_pubkey = PublicKey::decode(r)?;
-				Ok(Self::Pubkey(PubkeyVtxoPolicy { user_pubkey }))
+		let type_byte = r.read_u8()?;
+		decode_vtxo_policy(type_byte, r)
+	}
+}
+
+/// Decode a [VtxoPolicy] with the given type byte
+///
+/// We have this function so it can be reused in [VtxoPolicy] and [ServerVtxoPolicy].
+fn decode_vtxo_policy<R: io::Read + ?Sized>(
+	type_byte: u8,
+	r: &mut R,
+) -> Result<VtxoPolicy, ProtocolDecodingError> {
+	match type_byte {
+		VTXO_POLICY_PUBKEY => {
+			let user_pubkey = PublicKey::decode(r)?;
+			Ok(VtxoPolicy::Pubkey(PubkeyVtxoPolicy { user_pubkey }))
+		},
+		VTXO_POLICY_SERVER_HTLC_SEND => {
+			let user_pubkey = PublicKey::decode(r)?;
+			let payment_hash = PaymentHash::from(sha256::Hash::decode(r)?.to_byte_array());
+			let htlc_expiry = r.read_u32()?;
+			Ok(VtxoPolicy::ServerHtlcSend(ServerHtlcSendVtxoPolicy { user_pubkey, payment_hash, htlc_expiry }))
+		},
+		VTXO_POLICY_SERVER_HTLC_RECV => {
+			let user_pubkey = PublicKey::decode(r)?;
+			let payment_hash = PaymentHash::from(sha256::Hash::decode(r)?.to_byte_array());
+			let htlc_expiry = r.read_u32()?;
+			let htlc_expiry_delta = r.read_u16()?;
+			Ok(VtxoPolicy::ServerHtlcRecv(ServerHtlcRecvVtxoPolicy { user_pubkey, payment_hash, htlc_expiry, htlc_expiry_delta }))
+		},
+		v => Err(ProtocolDecodingError::invalid(format_args!(
+			"invalid VtxoPolicy type byte: {v:#x}",
+		))),
+	}
+}
+
+impl ProtocolEncoding for ServerVtxoPolicy {
+	fn encode<W: io::Write + ?Sized>(&self, w: &mut W) -> Result<(), io::Error> {
+		match self {
+			Self::User(p) => p.encode(w)?,
+			Self::Checkpoint(CheckpointVtxoPolicy { user_pubkey }) => {
+				w.emit_u8(VTXO_POLICY_CHECKPOINT)?;
+				user_pubkey.encode(w)?;
 			},
-			VTXO_CHECKPOINT_CHECKPOINT => {
-				let user_pubkey = PublicKey::decode(r)?;
-				Ok(Self::new_checkpoint(user_pubkey))
-			}
-			VTXO_POLICY_SERVER_HTLC_SEND => {
-				let user_pubkey = PublicKey::decode(r)?;
-				let payment_hash = PaymentHash::from(sha256::Hash::decode(r)?.to_byte_array());
-				let htlc_expiry = r.read_u32()?;
-				Ok(Self::ServerHtlcSend(ServerHtlcSendVtxoPolicy { user_pubkey, payment_hash, htlc_expiry }))
+			Self::Expiry(ExpiryVtxoPolicy { internal_key }) => {
+				w.emit_u8(VTXO_POLICY_EXPIRY)?;
+				internal_key.encode(w)?;
 			},
-			VTXO_POLICY_SERVER_HTLC_RECV => {
+		}
+		Ok(())
+	}
+
+	fn decode<R: io::Read + ?Sized>(r: &mut R) -> Result<Self, ProtocolDecodingError> {
+		let type_byte = r.read_u8()?;
+		match type_byte {
+			VTXO_POLICY_PUBKEY | VTXO_POLICY_SERVER_HTLC_SEND | VTXO_POLICY_SERVER_HTLC_RECV => {
+				Ok(Self::User(decode_vtxo_policy(type_byte, r)?))
+			},
+			VTXO_POLICY_CHECKPOINT => {
 				let user_pubkey = PublicKey::decode(r)?;
-				let payment_hash = PaymentHash::from(sha256::Hash::decode(r)?.to_byte_array());
-				let htlc_expiry = r.read_u32()?;
-				let htlc_expiry_delta = r.read_u16()?;
-				Ok(Self::ServerHtlcRecv(ServerHtlcRecvVtxoPolicy { user_pubkey, payment_hash, htlc_expiry, htlc_expiry_delta }))
+				Ok(Self::Checkpoint(CheckpointVtxoPolicy { user_pubkey }))
+			},
+			VTXO_POLICY_EXPIRY => {
+				let internal_key = XOnlyPublicKey::decode(r)?;
+				Ok(Self::Expiry(ExpiryVtxoPolicy { internal_key }))
 			},
 			v => Err(ProtocolDecodingError::invalid(format_args!(
-				"invalid VtxoType type byte: {v:#x}",
+				"invalid ServerVtxoPolicy type byte: {v:#x}",
 			))),
 		}
 	}
@@ -839,7 +922,7 @@ impl ProtocolEncoding for GenesisTransition {
 	}
 }
 
-impl ProtocolEncoding for Vtxo {
+impl<P: Policy + ProtocolEncoding> ProtocolEncoding for Vtxo<P> {
 	fn encode<W: io::Write + ?Sized>(&self, w: &mut W) -> Result<(), io::Error> {
 		w.emit_u16(VTXO_ENCODING_VERSION)?;
 		w.emit_u64(self.amount.to_sat())?;
@@ -893,11 +976,11 @@ impl ProtocolEncoding for Vtxo {
 			genesis.push(GenesisItem { transition, output_idx, other_outputs });
 		}
 
-		let output = VtxoPolicy::decode(r)?;
+		let policy = P::decode(r)?;
 		let point = OutPoint::decode(r)?;
 
 		Ok(Self {
-			amount, expiry_height, server_pubkey, exit_delta, anchor_point, genesis, policy: output, point,
+			amount, expiry_height, server_pubkey, exit_delta, anchor_point, genesis, policy, point,
 		})
 	}
 }

@@ -17,8 +17,7 @@ use log::{debug, error, info, trace};
 use tokio::sync::{mpsc, Mutex};
 
 use ark::{
-	ProtocolEncoding, SECP, SignedVtxoRequest,
-	Vtxo, VtxoId, VtxoPolicy, VtxoRequest, musig
+	musig, ProtocolEncoding, ServerVtxo, SignedVtxoRequest, Vtxo, VtxoId, VtxoPolicy, VtxoRequest, SECP
 };
 use ark::arkoor::{ArkoorCosignRequest, ArkoorDestination};
 use ark::arkoor::package::{ArkoorPackageBuilder, ArkoorPackageCosignRequest};
@@ -1344,12 +1343,12 @@ async fn server_returned_htlc_recv_vtxos_should_be_identical_cln() {
 	};
 	let vtxos_1 = client.prepare_lightning_receive_claim(req_1.clone()).await.unwrap()
 		.into_inner().htlc_vtxos.into_iter().map(|b| Vtxo::deserialize(&b))
-		.collect::<Result<Vec<_>, _>>().unwrap();
+		.collect::<Result<Vec<Vtxo>, _>>().unwrap();
 
 	// We test once again with the same request
 	let vtxos_2 = client.prepare_lightning_receive_claim(req_1).await.unwrap()
 		.into_inner().htlc_vtxos.into_iter().map(|b| Vtxo::deserialize(&b))
-		.collect::<Result<Vec<_>, _>>().unwrap();
+		.collect::<Result<Vec<Vtxo>, _>>().unwrap();
 
 	// we change keypair to make sure server don't use it on second request
 	let keypair = Keypair::new(&SECP, &mut bip39::rand::thread_rng());
@@ -1362,7 +1361,7 @@ async fn server_returned_htlc_recv_vtxos_should_be_identical_cln() {
 
 	let vtxos_3 = client.prepare_lightning_receive_claim(req_2).await.unwrap()
 		.into_inner().htlc_vtxos.into_iter().map(|b| Vtxo::deserialize(&b))
-		.collect::<Result<Vec<_>, _>>().unwrap();
+		.collect::<Result<Vec<Vtxo>, _>>().unwrap();
 
 	assert_eq!(vtxos_1, vtxos_2, "should have the same VTXOs");
 	assert_eq!(vtxos_1, vtxos_3, "should have the same VTXOs");
@@ -1410,12 +1409,12 @@ async fn server_returned_htlc_recv_vtxos_should_be_identical_intra_ark() {
 	};
 	let vtxos_1 = client.prepare_lightning_receive_claim(req_1.clone()).await.unwrap()
 		.into_inner().htlc_vtxos.into_iter().map(|b| Vtxo::deserialize(&b))
-		.collect::<Result<Vec<_>, _>>().unwrap();
+		.collect::<Result<Vec<Vtxo>, _>>().unwrap();
 
 	// We test once again with the same request
 	let vtxos_2 = client.prepare_lightning_receive_claim(req_1).await.unwrap()
 		.into_inner().htlc_vtxos.into_iter().map(|b| Vtxo::deserialize(&b))
-		.collect::<Result<Vec<_>, _>>().unwrap();
+		.collect::<Result<Vec<Vtxo>, _>>().unwrap();
 
 	// we change keypair to make sure server don't use it on second request
 	let keypair = Keypair::new(&SECP, &mut bip39::rand::thread_rng());
@@ -1428,7 +1427,7 @@ async fn server_returned_htlc_recv_vtxos_should_be_identical_intra_ark() {
 
 	let vtxos_3 = client.prepare_lightning_receive_claim(req_2).await.unwrap()
 		.into_inner().htlc_vtxos.into_iter().map(|b| Vtxo::deserialize(&b))
-		.collect::<Result<Vec<_>, _>>().unwrap();
+		.collect::<Result<Vec<Vtxo>, _>>().unwrap();
 
 	assert_eq!(vtxos_1, vtxos_2, "should have the same VTXOs");
 	assert_eq!(vtxos_1, vtxos_3, "should have the same VTXOs");
@@ -1679,6 +1678,7 @@ async fn test_cosign_vtxo_tree() {
 		assert!(ctx.finalize(vtxo, resp));
 	}
 
+	let vtxos = vtxos.into_iter().map(ServerVtxo::from).collect::<Vec<_>>();
 	srv.register_vtxos(&vtxos).await.unwrap();
 }
 

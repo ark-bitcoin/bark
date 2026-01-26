@@ -56,7 +56,7 @@ use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::wrappers::errors::BroadcastStreamRecvError;
 use tracing::{info, warn, trace};
 
-use ark::{Vtxo, VtxoId, VtxoRequest};
+use ark::{ServerVtxo, Vtxo, VtxoId, VtxoRequest};
 use ark::vtxo::VtxoRef;
 use ark::board::BoardBuilder;
 use ark::mailbox::{BlindedMailboxIdentifier, MailboxIdentifier};
@@ -699,6 +699,7 @@ impl Server {
 		let _ = BoardBuilder::new_from_vtxo(&vtxo, &funding_tx, self.server_pubkey)
 			.badarg("vtxo is not a board")?;
 
+		let vtxo = ServerVtxo::from(vtxo);
 		self.db.upsert_board(&vtxo).await
 			.context("failed to store board in database")?;
 
@@ -840,7 +841,7 @@ impl Server {
 	///
 	/// This should only be called once we trust that the root of the tree
 	/// will confirm.
-	pub async fn register_vtxos<V: Borrow<Vtxo>>(
+	pub async fn register_vtxos<V: Borrow<ServerVtxo>>(
 		&self,
 		vtxos: impl IntoIterator<Item = V>,
 	) -> anyhow::Result<()> {

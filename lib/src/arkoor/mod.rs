@@ -78,8 +78,8 @@ use bitcoin::secp256k1::{schnorr, Keypair, PublicKey};
 use bitcoin_ext::{fee, P2TR_DUST, TxOutExt};
 use secp256k1_musig::musig::PublicNonce;
 
-use crate::{musig, scripts, Vtxo, VtxoId};
-use crate::vtxo::VtxoPolicy;
+use crate::{musig, scripts, Vtxo, VtxoId, ServerVtxo};
+use crate::vtxo::{VtxoPolicy, ServerVtxoPolicy};
 use crate::vtxo::genesis::{GenesisItem, GenesisTransition};
 
 pub use package::ArkoorPackageBuilder;
@@ -321,14 +321,14 @@ impl<S: state::BuilderState> ArkoorBuilder<S> {
 		&self,
 		output_idx: usize,
 		checkpoint_sig: Option<schnorr::Signature>
-	) -> Vtxo {
+	) -> ServerVtxo {
 		let output = &self.outputs[output_idx];
 		let (checkpoint_tx, checkpoint_txid) = self.checkpoint_data.as_ref()
 			.expect("called checkpoint_vtxo_at in context without checkpoints");
 
 		Vtxo {
 			amount: output.total_amount,
-			policy: VtxoPolicy::new_checkpoint(self.input.user_pubkey()),
+			policy: ServerVtxoPolicy::new_checkpoint(self.input.user_pubkey()),
 			expiry_height: self.input.expiry_height,
 			server_pubkey: self.input.server_pubkey,
 			exit_delta: self.input.exit_delta,
@@ -371,7 +371,7 @@ impl<S: state::BuilderState> ArkoorBuilder<S> {
 
 		if let Some((checkpoint_tx, _txid)) = &self.checkpoint_data {
 			// Two-transition genesis: Input → Checkpoint → Arkoor
-			let checkpoint_policy = VtxoPolicy::new_checkpoint(self.input.user_pubkey());
+			let checkpoint_policy = ServerVtxoPolicy::new_checkpoint(self.input.user_pubkey());
 
 			Vtxo {
 				amount: output.total_amount,
@@ -473,7 +473,7 @@ impl<S: state::BuilderState> ArkoorBuilder<S> {
 		isolation_fanout_tx_sig: Option<schnorr::Signature>,
 	) -> Vtxo {
 		let output = &self.isolated_outputs[isolated_idx];
-		let checkpoint_policy = VtxoPolicy::new_checkpoint(self.input.user_pubkey());
+		let checkpoint_policy = ServerVtxoPolicy::new_checkpoint(self.input.user_pubkey());
 
 		let fanout_tx = self.unsigned_isolation_fanout_tx.as_ref()
 			.expect("construct_dust_vtxo_at called without dust isolation");
@@ -633,7 +633,7 @@ impl<S: state::BuilderState> ArkoorBuilder<S> {
 	///
 	/// Returns the checkpoint outputs (if checkpoinst are used) and the
 	/// dust isolation output (if dust isolation is used).
-	pub fn build_unsigned_internal_vtxos<'a>(&'a self) -> impl Iterator<Item = Vtxo> + 'a {
+	pub fn build_unsigned_internal_vtxos<'a>(&'a self) -> impl Iterator<Item = ServerVtxo> + 'a {
 		let checkpoint_vtxos = {
 			let range = if self.checkpoint_data.is_some() {
 				0..self.outputs.len()
@@ -658,7 +658,7 @@ impl<S: state::BuilderState> ArkoorBuilder<S> {
 
 			Some(Vtxo {
 				amount: self.isolated_outputs.iter().map(|o| o.total_amount).sum(),
-				policy: VtxoPolicy::new_checkpoint(self.input.user_pubkey()),
+				policy: ServerVtxoPolicy::new_checkpoint(self.input.user_pubkey()),
 				expiry_height: self.input.expiry_height,
 				server_pubkey: self.input.server_pubkey,
 				exit_delta: self.input.exit_delta,
@@ -781,7 +781,7 @@ impl<S: state::BuilderState> ArkoorBuilder<S> {
 		dust_isolation_amount: Option<Amount>,
 	) -> Transaction {
 		// All outputs on the checkpoint transaction will use exactly the same policy.
-		let output_policy = VtxoPolicy::new_checkpoint(input.user_pubkey());
+		let output_policy = ServerVtxoPolicy::new_checkpoint(input.user_pubkey());
 		let checkpoint_spk = output_policy
 			.script_pubkey(input.server_pubkey(), input.exit_delta(), input.expiry_height());
 
@@ -847,7 +847,7 @@ impl<S: state::BuilderState> ArkoorBuilder<S> {
 			arkoor_txs
 		} else {
 			// Direct mode: create single arkoor tx with all outputs + optional isolation output
-			let checkpoint_policy = VtxoPolicy::new_checkpoint(input.user_pubkey());
+			let checkpoint_policy = ServerVtxoPolicy::new_checkpoint(input.user_pubkey());
 			let checkpoint_spk = checkpoint_policy.script_pubkey(
 				input.server_pubkey(),
 				input.exit_delta(),
@@ -1165,7 +1165,7 @@ impl ArkoorBuilder<state::Initial> {
 		}
 
 		// Compute taptweaks
-		let policy = VtxoPolicy::new_checkpoint(input.user_pubkey());
+		let policy = ServerVtxoPolicy::new_checkpoint(input.user_pubkey());
 		let input_tweak = input.output_taproot().tap_tweak();
 		let checkpoint_policy_tweak = policy.taproot(
 			input.server_pubkey(),
@@ -1503,11 +1503,11 @@ mod test {
 		assert_eq!(spend_vtxo_ids.len(), spend_info.len());
 
 		// all intermediate vtxos are spent and use checkpoint policy for efficient cosigning
-		let internal_vtxos: Vec<Vtxo> = builder.build_unsigned_internal_vtxos().collect();
+		let internal_vtxos: Vec<ServerVtxo> = builder.build_unsigned_internal_vtxos().collect();
 		let internal_vtxo_ids: HashSet<VtxoId> = internal_vtxos.iter().map(|v| v.id()).collect();
 		for internal_vtxo in &internal_vtxos {
 			assert!(spend_vtxo_ids.contains(&internal_vtxo.id()));
-			assert!(matches!(internal_vtxo.policy, VtxoPolicy::Checkpoint(_)));
+			assert!(matches!(internal_vtxo.policy(), ServerVtxoPolicy::Checkpoint(_)));
 		}
 
 		// all spent vtxos except the input are internal vtxos

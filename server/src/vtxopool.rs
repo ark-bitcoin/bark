@@ -11,7 +11,7 @@ use bitcoin::{Amount, OutPoint};
 use futures::{stream, StreamExt, TryStreamExt};
 use tracing::{info, warn};
 
-use ark::{Vtxo, VtxoId, VtxoPolicy, VtxoRequest};
+use ark::{ServerVtxo, Vtxo, VtxoId, VtxoPolicy, VtxoRequest};
 use ark::arkoor::ArkoorDestination;
 use ark::arkoor::package::ArkoorPackageBuilder;
 use ark::tree::signed::{LeafVtxoCosignContext, UnlockPreimage};
@@ -463,7 +463,7 @@ impl Process {
 			ensure!(vtxo.provide_unlock_preimage(unlock_preimage), "invalid unlock preimage");
 		}
 
-		self.srv.register_vtxos(&vtxos).await
+		self.srv.register_vtxos(vtxos.iter().cloned().map(ServerVtxo::from)).await
 			.context("failed to register newly created vtxos with server")?;
 
 		// finish and broadcast the tx

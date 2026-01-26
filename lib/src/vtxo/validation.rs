@@ -3,7 +3,7 @@ use std::borrow::Cow;
 
 use bitcoin::{Amount, OutPoint, Transaction, TxOut};
 
-use crate::vtxo::{Vtxo, VtxoPolicyKind};
+use crate::vtxo::{Policy, Vtxo, VtxoPolicyKind};
 use crate::vtxo::genesis::{GenesisTransition, TransitionKind};
 
 #[derive(Debug, PartialEq, Eq, thiserror::Error)]
@@ -48,8 +48,8 @@ impl VtxoValidationError {
 }
 
 #[inline]
-fn verify_transition(
-	vtxo: &Vtxo,
+fn verify_transition<P: Policy>(
+	vtxo: &Vtxo<P>,
 	genesis_idx: usize,
 	prev_tx: &Transaction,
 	prev_vout: usize,
@@ -102,8 +102,8 @@ fn verify_transition(
 ///
 /// General checks and chain-anchor related checks are performed first,
 /// transitions are checked last.
-pub fn validate(
-	vtxo: &Vtxo,
+pub fn validate<P: Policy>(
+	vtxo: &Vtxo<P>,
 	chain_anchor_tx: &Transaction,
 ) -> Result<(), VtxoValidationError> {
 	// We start by validating the chain anchor output.
