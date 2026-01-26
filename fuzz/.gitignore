@@ -1,0 +1,6 @@
+target
+corpus
+artifacts
+coverage
+hfuzz_target/
+hfuzz_workspace/
