@@ -871,8 +871,14 @@ async fn reject_arkoor_with_bad_signature() {
 
 	// create a third wallet to receive the invalid arkoor
 	let bark2 = ctx.new_bark("bark2".to_string(), &proxy.address).await;
-
-	bark1.send_oor(bark2.address().await, sat(10_000)).await;
+	let (bark2_vtxo_kp, _) = bark2.client().await.derive_store_next_keypair().await.unwrap();
+	let addr = ark::Address::builder()
+		.testnet(true)
+		.server_pubkey(srv.ark_info().await.server_pubkey)
+		.pubkey_policy(bark2_vtxo_kp.public_key())
+		.into_address().unwrap();
+	// Send arkoor package to mailbox (old style)
+	bark1.send_oor(addr, sat(10_000)).await;
 
 	// we should drop invalid arkoors
 	assert_eq!(bark2.vtxos().await.len(), 0);
@@ -882,9 +888,29 @@ async fn reject_arkoor_with_bad_signature() {
 
 
 	assert!(io::BufReader::new(std::fs::File::open(bark2.command_log_file()).unwrap()).lines().any(|line| {
-		line.unwrap().contains("Received invalid arkoor VTXO from server: \
-			error verifying one of the genesis transitions (idx=2/3 type=arkoor): invalid signature")
+		let line = line.unwrap();
+		line.contains("Received invalid arkoor VTXO") &&
+		line.contains("error verifying one of the genesis transitions \
+			(idx=2/3 type=arkoor): invalid signature")
 	}));
+}
+
+#[tokio::test]
+async fn accept_mailbox() {
+	let ctx = TestContext::new("bark/accept_mailbox").await;
+	let srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
+
+	let bark = ctx.new_bark_with_funds("bark".to_string(), &srv, sat(1_000_000)).await;
+
+	let _board = bark.board(sat(400_000)).await;
+	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
+
+	let bark2 = ctx.new_bark("bark2", &srv).await;
+	bark.send_oor(bark2.address().await, sat(100_000)).await;
+
+	bark2.maintain().await;
+	let bark2_vtxos = bark2.vtxos().await;
+	assert_eq!(bark2_vtxos.len(), 1);
 }
 
 #[tokio::test]
@@ -916,7 +942,14 @@ async fn second_round_attempt() {
 	let proxy = srv.get_proxy_rpc(Proxy).await;
 
 	let bark2 = ctx.new_bark("bark2".to_string(), &proxy.address).await;
-	bark1.send_oor(bark2.address().await, sat(200_000)).await;
+	let (bark2_vtxo_kp, _) = bark2.client().await.derive_store_next_keypair().await.unwrap();
+	let addr = ark::Address::builder()
+		.testnet(true)
+		.server_pubkey(srv.ark_info().await.server_pubkey)
+		.pubkey_policy(bark2_vtxo_kp.public_key())
+		.into_address().unwrap();
+	// Send arkoor package to mailbox (old style)
+	bark1.send_oor(addr, sat(200_000)).await;
 	let bark2_vtxo = bark2.vtxos().await.get(0).expect("should have 1 vtxo").id;
 
 	let mut log_not_allowed = srv.subscribe_log::<RoundUserVtxoNotAllowed>();

@@ -22,6 +22,7 @@ use ark::{
 use ark::arkoor::{ArkoorCosignRequest, ArkoorDestination};
 use ark::arkoor::package::{ArkoorPackageBuilder, ArkoorPackageCosignRequest};
 use ark::challenges::RoundAttemptChallenge;
+use ark::mailbox::{MailboxAuthorization, MailboxIdentifier};
 use ark::tree::signed::builder::SignedTreeBuilder;
 use ark::tree::signed::{LeafVtxoCosignContext, UnlockPreimage};
 use bark::Wallet;
@@ -43,6 +44,7 @@ use ark_testing::daemon::captaind::{self, ArkClient};
 use ark_testing::util::{FutureExt, ReceiverExt, ToAltString};
 
 use ark_testing::exit::complete_exit;
+use server_rpc::protos::mailbox_server::mailbox_message::Message;
 
 lazy_static::lazy_static! {
 	static ref RANDOM_PK: PublicKey = "02c7ef7d49b365974cd219f7036753e1544a3cdd2120eb7247dd8a94ef91cf1e49".parse().unwrap();
@@ -1724,6 +1726,180 @@ async fn should_refuse_oor_input_vtxo_that_is_being_exited() {
 
 	let err = bark.try_send_oor(&bark2.address().await, sat(100_000), false).await.expect_err("Server should refuse oor");
 	assert!(err.to_string().contains(format!("bad user input: cannot spend vtxo that is already exited: {}", vtxo_a.id).as_str()), "err: {err}");
+}
+
+#[tokio::test]
+async fn mailbox_post_and_process() {
+	let ctx = TestContext::new("server/mailbox_post_and_process").await;
+	let srv = ctx.new_captaind("server", None).await;
+
+	let bark = ctx.new_bark_with_funds("bark", &srv, sat(1_000_000)).await;
+
+	let _board = bark.board(sat(400_000)).await;
+	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
+
+	let bark2 = ctx.new_bark("bark2", &srv).await;
+	let bark2_mailbox_kp = bark2.client().await.mailbox_keypair().unwrap();
+	let bark2_vtxo_kp = bark2.client().await.derive_store_next_keypair().await
+		.expect("derive keypair").0;
+
+	let addr = ark::Address::builder()
+		.testnet(true)
+		.server_pubkey(srv.ark_info().await.server_pubkey)
+		.pubkey_policy(bark2_vtxo_kp.public_key())
+		.into_address().unwrap();
+	// Send arkoor package to mailbox (old style)
+	bark.send_oor(addr, sat(100_000)).await;
+
+	bark2.maintain().await;
+	let bark2_vtxos = bark2.client().await.vtxos().await.unwrap();
+	assert_eq!(bark2_vtxos.len(), 1);
+
+	let mut mb_rpc = srv.get_mailbox_public_rpc().await;
+
+	let mailbox_id = MailboxIdentifier::from_pubkey(bark2_mailbox_kp.public_key());
+	let unblinded_id = mailbox_id.to_vec();
+
+	let read_mailbox = protos::mailbox_server::MailboxRequest {
+		authorization: None,
+		unblinded_id,
+		checkpoint: 0,
+	};
+
+	trace!("reading empty mailbox");
+	let mailbox_msgs = mb_rpc.read_mailbox(read_mailbox.clone()).await.unwrap().into_inner();
+	assert_eq!(mailbox_msgs.messages.len(), 0);
+
+	let mut stream = mb_rpc.subscribe_mailbox(read_mailbox.clone()).await.unwrap().into_inner();
+
+	let blinded_id = mailbox_id.to_blinded(srv.ark_info().await.mailbox_pubkey, &bark2_vtxo_kp);
+
+	let post_vtxos = protos::mailbox_server::PostVtxosMailboxRequest {
+		blinded_id: blinded_id.to_vec(),
+		vtxos: vec![bark2_vtxos[0].serialize()],
+	};
+
+	trace!("posting vtxos to mailbox");
+	mb_rpc.post_vtxos_mailbox(post_vtxos).await.unwrap();
+
+	trace!("reading mailbox");
+	let mailbox_msgs = mb_rpc.read_mailbox(read_mailbox).await.unwrap().into_inner();
+	assert_eq!(mailbox_msgs.messages.len(), 1);
+	let msg = mailbox_msgs.messages[0].message.clone().unwrap();
+	match msg {
+		Message::Arkoor(arkoor) => {assert_eq!(arkoor.vtxos.len(), 1)}
+	}
+
+	trace!("processing mailbox");
+	loop {
+		match stream.next().await.unwrap().unwrap() {
+			protos::mailbox_server::MailboxMessage { checkpoint, message } => {
+				match message.unwrap() {
+					Message::Arkoor(arkoor) => {assert_eq!(arkoor.vtxos.len(), 1)}
+				}
+				assert_ne!(checkpoint, 0);
+				return
+			},
+		}
+	}
+}
+
+#[tokio::test]
+async fn mailbox_post_and_process_with_auth() {
+	let ctx = TestContext::new("server/mailbox_post_and_process_with_auth").await;
+	let srv = ctx.new_captaind("server", None).await;
+
+	let bark = ctx.new_bark_with_funds("bark", &srv, sat(1_000_000)).await;
+
+	let _board = bark.board(sat(400_000)).await;
+	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
+
+	let bark2 = ctx.new_bark("bark2", &srv).await;
+	let bark2_mailbox_kp = bark2.client().await.mailbox_keypair().unwrap();
+	let bark2_vtxo_kp = bark2.client().await.derive_store_next_keypair().await
+		.expect("derive keypair").0;
+
+	let addr = ark::Address::builder()
+		.testnet(true)
+		.server_pubkey(srv.ark_info().await.server_pubkey)
+		.pubkey_policy(bark2_vtxo_kp.public_key())
+		.into_address().unwrap();
+	// Send arkoor package to mailbox (old style)
+	bark.send_oor(addr, sat(100_000)).await;
+
+	bark2.maintain().await;
+	let bark2_vtxos = bark2.client().await.vtxos().await.unwrap();
+	assert_eq!(bark2_vtxos.len(), 1);
+
+	let mut mb_rpc = srv.get_mailbox_public_rpc().await;
+
+	let mailbox_id = MailboxIdentifier::from_pubkey(bark2_mailbox_kp.public_key());
+	let unblinded_id = mailbox_id.to_vec();
+	let expiry = chrono::Local::now() + Duration::from_secs(60);
+	let mailbox_auth = MailboxAuthorization::new(&bark2_mailbox_kp, expiry);
+	let authorization = Some(mailbox_auth.serialize().to_vec());
+
+	let read_mailbox = protos::mailbox_server::MailboxRequest {
+		authorization,
+		unblinded_id,
+		checkpoint: 0,
+	};
+
+	trace!("reading empty mailbox");
+	let mailbox_msgs = mb_rpc.read_mailbox(read_mailbox.clone()).await.unwrap().into_inner();
+	assert_eq!(mailbox_msgs.messages.len(), 0);
+
+	trace!("starting subscribe mailbox");
+	let mut stream = mb_rpc.subscribe_mailbox(read_mailbox.clone()).await.unwrap().into_inner();
+
+	trace!("constructing post VTXO mailbox request");
+	let blinded_id = mailbox_id.to_blinded(srv.ark_info().await.mailbox_pubkey, &bark2_vtxo_kp);
+
+	let post_vtxos = protos::mailbox_server::PostVtxosMailboxRequest {
+		blinded_id: blinded_id.to_vec(),
+		vtxos: vec![bark2_vtxos[0].serialize()],
+	};
+
+	trace!("posting vtxos to mailbox");
+	mb_rpc.post_vtxos_mailbox(post_vtxos).await.unwrap();
+
+	trace!("reading mailbox");
+	let mailbox_msgs = mb_rpc.read_mailbox(read_mailbox).await.unwrap().into_inner();
+	assert_eq!(mailbox_msgs.messages.len(), 1);
+	let msg = mailbox_msgs.messages[0].message.clone().unwrap();
+	match msg {
+		Message::Arkoor(arkoor) => {assert_eq!(arkoor.vtxos.len(), 1)}
+	}
+
+	let unblinded_id = mailbox_id.to_vec();
+	let expiry = chrono::Local::now() + Duration::from_secs(60);
+	let invalid_as_mailbox_kp = bark2.client().await.derive_store_next_keypair().await
+		.expect("derive keypair").0;
+	let mailbox_auth = MailboxAuthorization::new(&invalid_as_mailbox_kp, expiry);
+	let authorization = Some(mailbox_auth.serialize().to_vec());
+
+	let incorrect_read_mailbox = protos::mailbox_server::MailboxRequest {
+		authorization,
+		unblinded_id,
+		checkpoint: 0,
+	};
+
+	trace!("reading mailbox incorrect authorization");
+	let mailbox_resp = mb_rpc.read_mailbox(incorrect_read_mailbox).await;
+	assert!(mailbox_resp.is_err());
+
+	trace!("processing mailbox");
+	loop {
+		match stream.next().await.unwrap().unwrap() {
+			protos::mailbox_server::MailboxMessage { checkpoint, message } => {
+				match message.unwrap() {
+					Message::Arkoor(arkoor) => {assert_eq!(arkoor.vtxos.len(), 1)}
+				}
+				assert_ne!(checkpoint, 0);
+				return
+			},
+		}
+	}
 }
 
 #[tokio::test]

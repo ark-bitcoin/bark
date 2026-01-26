@@ -127,6 +127,14 @@ impl BarkPersister for Dummy {
 		Ok(Some(0))
 	}
 
+	async fn store_mailbox_checkpoint(&self, _checkpoint: u64) -> anyhow::Result<()> {
+		Ok(())
+	}
+
+	async fn get_mailbox_checkpoint(&self) -> anyhow::Result<u64> {
+		Ok(0u64)
+	}
+
 	async fn store_new_pending_lightning_send(
 		&self,
 		invoice: &Invoice,

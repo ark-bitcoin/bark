@@ -251,6 +251,17 @@ impl BarkPersister for SqliteClient {
 		query::get_public_key_idx(&conn, public_key)
 	}
 
+	async fn get_mailbox_checkpoint(&self) -> anyhow::Result<u64> {
+		let conn = self.connect()?;
+		query::get_mailbox_checkpoint(&conn)
+	}
+
+	async fn store_mailbox_checkpoint(&self, checkpoint: u64) -> anyhow::Result<()> {
+		let conn = self.connect()?;
+		query::store_mailbox_checkpoint(&conn, checkpoint)?;
+		Ok(())
+	}
+
 	/// Store a lightning receive
 	async fn store_lightning_receive(
 		&self,

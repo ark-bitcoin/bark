@@ -660,6 +660,32 @@ pub fn get_last_vtxo_key_index(conn: &Connection) -> anyhow::Result<Option<u32>>
 	}
 }
 
+pub fn get_mailbox_checkpoint(conn: &Connection) -> anyhow::Result<u64> {
+	let query = "SELECT checkpoint FROM bark_mailbox_checkpoint WHERE id = 1";
+
+	let mut statement = conn.prepare(query)?;
+	let cp = statement.query_row(params![], |row| row.get::<usize, i64>(0))?;
+
+	Ok(u64::try_from(cp)?)
+}
+
+pub fn store_mailbox_checkpoint(conn: &Connection, checkpoint: u64) -> anyhow::Result<()> {
+	conn.execute(
+		r#"
+			UPDATE bark_mailbox_checkpoint
+			SET checkpoint = ?1 AND updated_at = ?2
+			WHERE id = 1 AND ?1 > checkpoint
+		"#,
+		params![checkpoint, chrono::Utc::now()],
+	)?;
+
+	if conn.changes() == 0 {
+		bail!("Checkpoint not advanced - another thread may have a higher value")
+	}
+
+	Ok(())
+}
+
 pub fn store_lightning_receive(
 	conn: &Connection,
 	payment_hash: PaymentHash,

@@ -157,24 +157,58 @@ impl Wallet {
 				.sent_to([MovementDestination::ark(destination.clone(), amount)])
 		).await?;
 
-		let req = protos::ArkoorPackage {
-			arkoors: arkoor.created.iter().map(|v| protos::ArkoorVtxo {
-				pubkey: dest.policy.user_pubkey().serialize().to_vec(),
-				vtxo: v.serialize().to_vec(),
-			}).collect(),
-		};
+		let mut delivered = false;
+		for delivery in destination.delivery() {
+			match delivery {
+				VtxoDelivery::ServerMailbox { blinded_id } => {
+					let req = protos::mailbox_server::PostVtxosMailboxRequest {
+						blinded_id: blinded_id.to_vec(),
+						vtxos: arkoor.created.iter().map(|v| v.serialize().to_vec()).collect(),
+					};
 
-		#[allow(deprecated)]
-		if let Err(e) = srv.client.post_arkoor_package_mailbox(req).await {
-			error!("Failed to post the arkoor vtxo to the recipients mailbox: '{:#}'", e);
-			//NB we will continue to at least not lose our own change
+					if let Err(e) = srv.mailbox_client.post_vtxos_mailbox(req).await {
+						error!("Failed to post the vtxos to the destination's mailbox: '{:#}'", e);
+						//NB we will continue to at least not lose our own change
+					} else {
+						delivered = true;
+					}
+				},
+				VtxoDelivery::ServerBuiltin => {
+					let req = protos::ArkoorPackage {
+						arkoors: arkoor.created.iter().map(|v| protos::ArkoorVtxo {
+							pubkey: v.policy().user_pubkey().serialize().to_vec(),
+							vtxo: v.serialize().to_vec(),
+						}).collect(),
+					};
+
+					#[allow(deprecated)]
+					if let Err(e) = srv.client.post_arkoor_package_mailbox(req).await {
+						error!("Failed to post the arkoor vtxo to the recipients mailbox: '{:#}'", e);
+						//NB we will continue to at least not lose our own change
+					} else {
+						delivered = true;
+					}
+				},
+				VtxoDelivery::Unknown { delivery_type, data } => {
+					error!("Unknown delivery type {} for arkoor payment: {}", delivery_type, data.as_hex());
+				},
+				_ => {
+					error!("Unsupported delivery type for arkoor payment: {:?}", delivery);
+				}
+			}
 		}
 		self.mark_vtxos_as_spent(&arkoor.inputs).await?;
 		if !arkoor.change.is_empty() {
 			self.store_spendable_vtxos(&arkoor.change).await?;
 			movement.apply_update(MovementUpdate::new().produced_vtxos(arkoor.change)).await?;
 		}
-		movement.success().await?;
+
+		if delivered {
+			movement.success().await?;
+		} else {
+			bail!("Failed to deliver arkoor vtxos to any destination");
+		}
+
 		Ok(arkoor.created)
 	}
 }
