@@ -491,7 +491,7 @@ pub fn connector_forfeit_sighash_connector(
 #[cfg(test)]
 mod test {
 	use bitcoin::hex::{DisplayHex, FromHex};
-	use crate::{test::verify_tx, vtxo::test::VTXO_VECTORS};
+	use crate::test_util::{verify_tx, VTXO_VECTORS};
 	use super::*;
 
 	fn verify_hark_forfeits(

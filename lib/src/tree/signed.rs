@@ -1596,9 +1596,9 @@ mod test {
 	use rand::SeedableRng;
 
 	use crate::encode;
-	use crate::encode::test::{encoding_roundtrip, json_roundtrip};
-	use crate::vtxo::policy::VtxoPolicy;
+	use crate::test_util::{encoding_roundtrip, json_roundtrip};
 	use crate::tree::signed::builder::SignedTreeBuilder;
+	use crate::vtxo::policy::VtxoPolicy;
 
 	use super::*;
 

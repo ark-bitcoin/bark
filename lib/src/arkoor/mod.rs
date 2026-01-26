@@ -1481,7 +1481,7 @@ mod test {
 	use bitcoin::secp256k1::rand;
 
 	use crate::SECP;
-	use crate::test::dummy::DummyTestVtxoSpec;
+	use crate::test_util::dummy::DummyTestVtxoSpec;
 	use crate::vtxo::VtxoId;
 
 	/// Verify properties of spend_info(), build_unsigned_internal_vtxos(), and final vtxos.
@@ -1611,7 +1611,7 @@ mod test {
 			for tx in vtxo.transactions().map(|item| item.tx) {
 				let prev_outpoint: OutPoint = tx.input[0].previous_output;
 				let prev_txout: TxOut = prev_tx.output[prev_outpoint.vout as usize].clone();
-				crate::test::verify_tx(&[prev_txout], 0, &tx).expect("Valid transaction");
+				crate::test_util::verify_tx(&[prev_txout], 0, &tx).expect("Valid transaction");
 				prev_tx = tx;
 			}
 		}
@@ -1704,7 +1704,7 @@ mod test {
 			for tx in vtxo.transactions().map(|item| item.tx) {
 				let prev_outpoint: OutPoint = tx.input[0].previous_output;
 				let prev_txout: TxOut = prev_tx.output[prev_outpoint.vout as usize].clone();
-				crate::test::verify_tx(&[prev_txout], 0, &tx).expect("Valid transaction");
+				crate::test_util::verify_tx(&[prev_txout], 0, &tx).expect("Valid transaction");
 				prev_tx = tx;
 			}
 		}
@@ -1777,7 +1777,7 @@ mod test {
 			for tx in vtxo.transactions().map(|item| item.tx) {
 				let prev_outpoint: OutPoint = tx.input[0].previous_output;
 				let prev_txout: TxOut = prev_tx.output[prev_outpoint.vout as usize].clone();
-				crate::test::verify_tx(&[prev_txout], 0, &tx).expect("Valid transaction");
+				crate::test_util::verify_tx(&[prev_txout], 0, &tx).expect("Valid transaction");
 				prev_tx = tx;
 			}
 		}
@@ -1871,7 +1871,7 @@ mod test {
 			for tx in vtxo.transactions().map(|item| item.tx) {
 				let prev_outpoint: OutPoint = tx.input[0].previous_output;
 				let prev_txout: TxOut = prev_tx.output[prev_outpoint.vout as usize].clone();
-				crate::test::verify_tx(&[prev_txout], 0, &tx).expect("Valid transaction");
+				crate::test_util::verify_tx(&[prev_txout], 0, &tx).expect("Valid transaction");
 				prev_tx = tx;
 			}
 		}
@@ -2096,7 +2096,7 @@ mod test {
 			for tx in vtxo.transactions().map(|item| item.tx) {
 				let prev_outpoint: OutPoint = tx.input[0].previous_output;
 				let prev_txout: TxOut = prev_tx.output[prev_outpoint.vout as usize].clone();
-				crate::test::verify_tx(&[prev_txout], 0, &tx).expect("Valid transaction");
+				crate::test_util::verify_tx(&[prev_txout], 0, &tx).expect("Valid transaction");
 				prev_tx = tx;
 			}
 		}
@@ -2185,7 +2185,7 @@ mod test {
 			for tx in vtxo.transactions().map(|item| item.tx) {
 				let prev_outpoint: OutPoint = tx.input[0].previous_output;
 				let prev_txout: TxOut = prev_tx.output[prev_outpoint.vout as usize].clone();
-				crate::test::verify_tx(&[prev_txout], 0, &tx).expect("Valid transaction");
+				crate::test_util::verify_tx(&[prev_txout], 0, &tx).expect("Valid transaction");
 				prev_tx = tx;
 			}
 		}

@@ -4,7 +4,8 @@ use bitcoin::secp256k1::PublicKey;
 use bitcoin::Transaction;
 use chrono::Local;
 
-use ark::{lightning::Invoice, vtxo::test::VTXO_VECTORS};
+use ark::lightning::Invoice;
+use ark::test_util::VTXO_VECTORS;
 use ark::integration::{TokenStatus, TokenType};
 
 use bark::lightning_invoice::Bolt11Invoice;

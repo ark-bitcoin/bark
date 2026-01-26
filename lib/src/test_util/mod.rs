@@ -1,7 +1,15 @@
 pub mod dummy;
+pub mod vectors;
+pub use self::vectors::VTXO_VECTORS;
 
-use crate::Vtxo;
+
+use std::fmt;
+
+use bitcoin::hex::DisplayHex;
+
+use crate::{ProtocolEncoding, Vtxo};
 use crate::vtxo::GenesisTransition;
+
 
 impl Vtxo {
 	pub fn invalidate_final_sig(&mut self) {
@@ -17,6 +25,30 @@ impl Vtxo {
 			},
 		}
 	}
+}
+
+/// Test that the object's encoding round-trips.
+pub fn encoding_roundtrip<T>(object: &T)
+where
+	T: ProtocolEncoding + fmt::Debug + PartialEq,
+{
+	let encoded = object.serialize();
+	let decoded = T::deserialize(&encoded).unwrap();
+
+	assert_eq!(*object, decoded);
+
+	let re_encoded = decoded.serialize();
+	assert_eq!(encoded.as_hex().to_string(), re_encoded.as_hex().to_string());
+}
+
+pub fn json_roundtrip<T>(object: &T)
+where
+	T: fmt::Debug + PartialEq + serde::Serialize + for<'de> serde::Deserialize<'de>,
+{
+	let encoded = serde_json::to_string(object).unwrap();
+	let decoded: T = serde_json::from_str(&encoded).unwrap();
+
+	assert_eq!(*object, decoded);
 }
 
 /// Verify a tx using bitcoinkernel
