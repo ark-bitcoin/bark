@@ -5,6 +5,7 @@ use std::time::Duration;
 
 use tokio_stream::Stream;
 use server_rpc::{self as rpc, protos};
+
 use crate::daemon::captaind::{ArkClient, MailboxClient};
 use crate::util::FutureExt;
 
@@ -37,16 +38,6 @@ pub trait ArkRpcProxy: Send + Sync + Clone + 'static {
 
 	async fn request_arkoor_cosign(&self, upstream: &mut ArkClient, req: protos::ArkoorPackageCosignRequest) -> Result<protos::ArkoorPackageCosignResponse, tonic::Status> {
 		Ok(upstream.request_arkoor_cosign(req).await?.into_inner())
-	}
-
-	async fn post_arkoor_package_mailbox(&self, upstream: &mut ArkClient, req: protos::ArkoorPackage) -> Result<protos::Empty, tonic::Status> {
-		#[allow(deprecated)]
-		Ok(upstream.post_arkoor_package_mailbox(req).await?.into_inner())
-	}
-
-	async fn empty_arkoor_mailbox(&self, upstream: &mut ArkClient, req: protos::ArkoorVtxosRequest) -> Result<protos::ArkoorVtxosResponse, tonic::Status> {
-		#[allow(deprecated)]
-		Ok(upstream.empty_arkoor_mailbox(req).await?.into_inner())
 	}
 
 	async fn request_lightning_pay_htlc_cosign(&self, upstream: &mut ArkClient, req: protos::LightningPayHtlcCosignRequest) -> Result<protos::ArkoorPackageCosignResponse, tonic::Status> {
@@ -145,24 +136,30 @@ pub trait ArkRpcProxy: Send + Sync + Clone + 'static {
 	}
 }
 
+impl ArkRpcProxy for () {}
+
 pub struct ArkRpcProxyServer {
-	pub client: rpc::ArkServiceClient<tonic::transport::Channel>,
 	pub stop: tokio::sync::oneshot::Sender<()>,
 	pub address: String,
 }
 
 impl ArkRpcProxyServer {
 	/// Run an ark proxy server.
-	pub async fn start(proxy: impl ArkRpcProxy, upstream: ArkClient) -> ArkRpcProxyServer {
+	pub async fn start(ark: (impl ArkRpcProxy, ArkClient), mailbox: (impl MailboxRpcProxy, MailboxClient)) -> ArkRpcProxyServer {
 		loop {
 			let (stop_tx, stop_rx) = tokio::sync::oneshot::channel();
 			let stop_rx = futures::FutureExt::map(stop_rx, |_| ());
 
 			let port = portpicker::pick_unused_port().expect("free port available");
 			let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), port);
-			let server = rpc::server::ArkServiceServer::new(ArkRpcProxyWrapper {
-				proxy: proxy.clone(),
-				upstream: upstream.clone(),
+			let ark_server = rpc::server::ArkServiceServer::new(ArkRpcProxyWrapper {
+				proxy: ark.0.clone(),
+				upstream: ark.1.clone(),
+			});
+
+			let mailbox_server = rpc::server::MailboxServiceServer::new(MailboxRpcProxyWrapper {
+				proxy: mailbox.0.clone(),
+				upstream: mailbox.1.clone(),
 			});
 
 			// The serve_with_shutdown call stays running if the port number
@@ -171,9 +168,9 @@ impl ArkRpcProxyServer {
 			// the future yields fast.
 			let server_res = tokio::spawn(async move {
 				let ret = tonic::transport::Server::builder()
-					.add_service(server)
-					.serve_with_shutdown(addr, stop_rx)
-					.await;
+					.add_service(ark_server)
+					.add_service(mailbox_server)
+					.serve_with_shutdown(addr, stop_rx).await;
 				if let Err(ref e) = ret {
 					if let Some(e) = std::error::Error::source(&e) {
 						if let Some(e) = e.downcast_ref::<io::Error>() {
@@ -191,15 +188,14 @@ impl ArkRpcProxyServer {
 
 			// try to connect
 			let addr = format!("http://{}", addr);
-			let client = loop {
+			loop {
 				tokio::time::sleep(Duration::from_millis(10)).await;
-				if let Ok(c) = rpc::ArkServiceClient::connect(addr.clone()).await {
-					break c;
+				if rpc::ArkServiceClient::connect(addr.clone()).await.is_ok() {
+					break
 				}
 			};
 
 			return ArkRpcProxyServer {
-				client: client,
 				stop: stop_tx,
 				address: addr,
 			};
@@ -255,18 +251,6 @@ impl<T: ArkRpcProxy> rpc::server::ArkService for ArkRpcProxyWrapper<T> {
 		&self, req: tonic::Request<protos::ArkoorPackageCosignRequest>,
 	) -> Result<tonic::Response<protos::ArkoorPackageCosignResponse>, tonic::Status> {
 		Ok(tonic::Response::new(ArkRpcProxy::request_arkoor_cosign(&self.proxy, &mut self.upstream.clone(), req.into_inner()).await?))
-	}
-
-	async fn post_arkoor_package_mailbox(
-		&self, req: tonic::Request<protos::ArkoorPackage>,
-	) -> Result<tonic::Response<protos::Empty>, tonic::Status> {
-		Ok(tonic::Response::new(ArkRpcProxy::post_arkoor_package_mailbox(&self.proxy, &mut self.upstream.clone(), req.into_inner()).await?))
-	}
-
-	async fn empty_arkoor_mailbox(
-		&self, req: tonic::Request<protos::ArkoorVtxosRequest>,
-	) -> Result<tonic::Response<protos::ArkoorVtxosResponse>, tonic::Status> {
-		Ok(tonic::Response::new(ArkRpcProxy::empty_arkoor_mailbox(&self.proxy, &mut self.upstream.clone(), req.into_inner()).await?))
 	}
 
 	async fn request_lightning_pay_htlc_cosign(
@@ -429,68 +413,6 @@ pub trait MailboxRpcProxy: Send + Sync + Clone + 'static {
 	}
 }
 
-pub struct MailboxRpcProxyServer {
-	pub client: rpc::mailbox::MailboxServiceClient<tonic::transport::Channel>,
-	pub stop: tokio::sync::oneshot::Sender<()>,
-	pub address: String,
-}
-
-impl MailboxRpcProxyServer {
-	/// Run a mailbox proxy server.
-	pub async fn start(proxy: impl MailboxRpcProxy, upstream: MailboxClient) -> MailboxRpcProxyServer {
-		loop {
-			let (stop_tx, stop_rx) = tokio::sync::oneshot::channel();
-			let stop_rx = futures::FutureExt::map(stop_rx, |_| ());
-
-			let port = portpicker::pick_unused_port().expect("free port available");
-			let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), port);
-			let server = rpc::server::MailboxServiceServer::new(MailboxRpcProxyWrapper {
-				proxy: proxy.clone(),
-				upstream: upstream.clone(),
-			});
-
-			// The serve_with_shutdown call stays running if the port number
-			// is accepted, but returns immediatelly if it's not.
-			// So we have to ignore the port usage error and then check if
-			// the future yields fast.
-			let server_res = tokio::spawn(async move {
-				let ret = tonic::transport::Server::builder()
-					.add_service(server)
-					.serve_with_shutdown(addr, stop_rx)
-					.await;
-				if let Err(ref e) = ret {
-					if let Some(e) = std::error::Error::source(&e) {
-						if let Some(e) = e.downcast_ref::<io::Error>() {
-							if e.kind() == io::ErrorKind::AddrInUse {
-								return;
-							}
-						}
-					}
-				}
-				ret.expect("rpc proxy server stopped with error");
-			});
-			if server_res.try_fast().await.is_ok() {
-				continue;
-			}
-
-			// try to connect
-			let address = format!("http://{}", addr);
-			let client = loop {
-				tokio::time::sleep(Duration::from_millis(10)).await;
-				if let Ok(c) = rpc::mailbox::MailboxServiceClient::connect(address.clone()).await {
-					break c;
-				}
-			};
-
-			return MailboxRpcProxyServer {
-				client,
-				stop: stop_tx,
-				address,
-			};
-		}
-	}
-}
-
 /// A wrapper struct around a proxy implementation to run a tonic server.
 struct MailboxRpcProxyWrapper<T: MailboxRpcProxy> {
 	proxy: T,
@@ -521,3 +443,5 @@ impl<T: MailboxRpcProxy> rpc::server::MailboxService for MailboxRpcProxyWrapper<
 		Ok(tonic::Response::new(MailboxRpcProxy::subscribe_mailbox(&self.proxy, &mut self.upstream.clone(), req.into_inner()).await?))
 	}
 }
+
+impl MailboxRpcProxy for () {}

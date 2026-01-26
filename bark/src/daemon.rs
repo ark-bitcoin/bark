@@ -87,9 +87,9 @@ impl DaemonProcess {
 	}
 
 	/// Check for incoming arkoors
-	async fn run_arkoors_sync(&self) {
-		if let Err(e) = self.wallet.sync_oors().await {
-			warn!("An error occured while syncing oors: {e}");
+	async fn sync_mailbox(&self) {
+		if let Err(e) = self.wallet.sync_mailbox().await {
+			warn!("An error occurred while syncing mailbox: {e}");
 		}
 	}
 
@@ -220,7 +220,7 @@ impl DaemonProcess {
 						continue;
 					}
 
-					self.run_arkoors_sync().await;
+					self.sync_mailbox().await;
 					self.run_boards_sync().await;
 					medium_interval.reset();
 				},

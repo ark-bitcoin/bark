@@ -27,7 +27,7 @@ use server_rpc::protos;
 
 use ark_testing::{btc, sat, signed_sat, Bark, TestContext};
 use ark_testing::constants::{BOARD_CONFIRMATIONS, ROUND_CONFIRMATIONS};
-use ark_testing::daemon::captaind::{self, ArkClient};
+use ark_testing::daemon::captaind::{self, ArkClient, MailboxClient};
 use ark_testing::util::{
 	get_bark_chain_source_from_env, FutureExt, TestContextChainSource, ToAltString,
 };
@@ -842,18 +842,25 @@ async fn reject_arkoor_with_bad_signature() {
 	struct InvalidSigProxy;
 
 	#[async_trait::async_trait]
-	impl captaind::proxy::ArkRpcProxy for InvalidSigProxy {
-		async fn empty_arkoor_mailbox(
-			&self, upstream: &mut ArkClient, req: protos::ArkoorVtxosRequest,
-		) -> Result<protos::ArkoorVtxosResponse, tonic::Status> {
-			#[allow(deprecated)]
-			let response = upstream.empty_arkoor_mailbox(req).await?.into_inner();
-			let mut vtxo = Vtxo::deserialize(&response.packages[0].vtxos[0]).unwrap();
-			vtxo.invalidate_final_sig();
-			Ok(protos::ArkoorVtxosResponse {
-				packages: vec![protos::ArkoorMailboxPackage {
-					arkoor_package_id: [0; 32].to_vec(),
-					vtxos: vec![vtxo.serialize()],
+	impl captaind::proxy::MailboxRpcProxy for InvalidSigProxy {
+		async fn read_mailbox(
+			&self, upstream: &mut MailboxClient, req: protos::mailbox_server::MailboxRequest,
+		) -> Result<protos::mailbox_server::MailboxMessages, tonic::Status> {
+			use protos::mailbox_server::{mailbox_message, ArkoorMessage};
+
+			let response = upstream.read_mailbox(req).await?.into_inner();
+			let message = match response.messages[0].message.as_ref().unwrap() {
+				mailbox_message::Message::Arkoor(ArkoorMessage { vtxos }) => {
+					let mut vtxo = Vtxo::deserialize(&vtxos[0]).unwrap();
+					vtxo.invalidate_final_sig();
+					ArkoorMessage { vtxos: vec![vtxo.serialize()] }
+				},
+			};
+
+			Ok(protos::mailbox_server::MailboxMessages {
+				messages: vec![protos::mailbox_server::MailboxMessage {
+					message: Some(mailbox_message::Message::Arkoor(message)),
+					checkpoint: 0,
 				}],
 			})
 		}
@@ -867,18 +874,14 @@ async fn reject_arkoor_with_bad_signature() {
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 
 	// create a proxy to return an arkoor with invalid signatures
-	let proxy = srv.get_proxy_rpc(InvalidSigProxy).await;
+	let proxy = srv.start_proxy_with_mailbox((), InvalidSigProxy).await;
 
 	// create a third wallet to receive the invalid arkoor
 	let bark2 = ctx.new_bark("bark2".to_string(), &proxy.address).await;
-	let (bark2_vtxo_kp, _) = bark2.client().await.derive_store_next_keypair().await.unwrap();
-	let addr = ark::Address::builder()
-		.testnet(true)
-		.server_pubkey(srv.ark_info().await.server_pubkey)
-		.pubkey_policy(bark2_vtxo_kp.public_key())
-		.into_address().unwrap();
-	// Send arkoor package to mailbox (old style)
-	bark1.send_oor(addr, sat(10_000)).await;
+	let bark2_addr = bark2.address().await;
+
+	// Send arkoor package to mailbox
+	bark1.send_oor(bark2_addr, sat(10_000)).await;
 
 	// we should drop invalid arkoors
 	assert_eq!(bark2.vtxos().await.len(), 0);
@@ -939,18 +942,15 @@ async fn second_round_attempt() {
 	let bark1 = ctx.new_bark_with_funds("bark1".to_string(), &srv, sat(1_000_000)).await;
 	bark1.board_and_confirm_and_register(&ctx, sat(800_000)).await;
 
-	let proxy = srv.get_proxy_rpc(Proxy).await;
+	let bark2 = ctx.new_bark("bark2".to_string(), &srv).await;
+	let bark2_addr = bark2.address().await;
 
-	let bark2 = ctx.new_bark("bark2".to_string(), &proxy.address).await;
-	let (bark2_vtxo_kp, _) = bark2.client().await.derive_store_next_keypair().await.unwrap();
-	let addr = ark::Address::builder()
-		.testnet(true)
-		.server_pubkey(srv.ark_info().await.server_pubkey)
-		.pubkey_policy(bark2_vtxo_kp.public_key())
-		.into_address().unwrap();
-	// Send arkoor package to mailbox (old style)
-	bark1.send_oor(addr, sat(200_000)).await;
+	// Send arkoor package to mailbox
+	bark1.send_oor(bark2_addr, sat(200_000)).await;
 	let bark2_vtxo = bark2.vtxos().await.get(0).expect("should have 1 vtxo").id;
+
+	let proxy = srv.start_proxy_no_mailbox(Proxy).await;
+	bark2.set_ark_url(&proxy.address).await;
 
 	let mut log_not_allowed = srv.subscribe_log::<RoundUserVtxoNotAllowed>();
 
@@ -1154,7 +1154,7 @@ async fn bark_recover_unregistered_board() {
 		}
 	}
 
-	let proxy = srv.get_proxy_rpc(Proxy(Arc::new(AtomicBool::new(true)))).await;
+	let proxy = srv.start_proxy_no_mailbox(Proxy(Arc::new(AtomicBool::new(true)))).await;
 
 	let bark = ctx.new_bark_with_funds("bark", &proxy.address, sat(1_000_00)).await;
 	// Only asks server to cosign, not register a board.

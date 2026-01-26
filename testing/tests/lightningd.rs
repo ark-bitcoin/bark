@@ -893,7 +893,7 @@ async fn bark_revoke_expired_pending_ln_payment() {
 		}
 	}
 
-	let proxy = srv.get_proxy_rpc(Proxy).await;
+	let proxy = srv.start_proxy_no_mailbox(Proxy).await;
 
 	// Start a bark and create a VTXO
 	let onchain_amount = btc(3);
@@ -1133,7 +1133,7 @@ async fn server_rejects_claim_receive_for_bad_vtxo_proof() {
 	srv.wait_for_vtxopool(&ctx).await;
 
 	// create a proxy to invalidate the proof
-	let proxy = srv.get_proxy_rpc(InvalidVtxoProofProxy).await;
+	let proxy = srv.start_proxy_no_mailbox(InvalidVtxoProofProxy).await;
 
 	// Start a bark and create a VTXO to be able to board
 	let bark = Arc::new(ctx.new_bark_with_funds("bark1", &proxy.address, btc(3)).await);

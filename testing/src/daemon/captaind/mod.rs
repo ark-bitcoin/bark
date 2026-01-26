@@ -19,7 +19,7 @@ use server_log::{parse_record, FinishedPoolIssuance, ParsedRecord, LogMsg, Synce
 use server_rpc::{self as rpc, protos};
 pub use server::config::{self, Config};
 
-use crate::daemon::captaind::proxy::{ArkRpcProxy, ArkRpcProxyServer, MailboxRpcProxy, MailboxRpcProxyServer};
+use crate::daemon::captaind::proxy::{ArkRpcProxy, ArkRpcProxyServer, MailboxRpcProxy};
 use crate::{secs, Bitcoind, Daemon, DaemonHelper, TestContext};
 use crate::daemon::LogHandler;
 use crate::constants::env::CAPTAIND_EXEC;
@@ -183,16 +183,20 @@ impl Captaind {
 		ArkClient::connect(self.ark_url()).await.expect("can't connect server public rpc")
 	}
 
-	pub async fn get_proxy_rpc(&self, proxy: impl ArkRpcProxy) -> ArkRpcProxyServer {
-		ArkRpcProxyServer::start(proxy, self.get_public_rpc().await).await
-	}
-
 	pub async fn get_mailbox_public_rpc(&self) -> MailboxClient {
 		MailboxClient::connect(self.ark_url()).await.expect("can't connect server public rpc")
 	}
 
-	pub async fn get_mailbox_proxy_rpc(&self, proxy: impl MailboxRpcProxy) -> MailboxRpcProxyServer {
-		MailboxRpcProxyServer::start(proxy, self.get_mailbox_public_rpc().await).await
+	pub async fn start_proxy_no_mailbox(&self, proxy: impl ArkRpcProxy) -> ArkRpcProxyServer {
+		let ark = (proxy, self.get_public_rpc().await);
+		let mailbox = ((), self.get_mailbox_public_rpc().await);
+		ArkRpcProxyServer::start(ark, mailbox).await
+	}
+
+	pub async fn start_proxy_with_mailbox(&self, ark: impl ArkRpcProxy, mailbox: impl MailboxRpcProxy) -> ArkRpcProxyServer {
+		let ark = (ark, self.get_public_rpc().await);
+		let mailbox = (mailbox, self.get_mailbox_public_rpc().await);
+		ArkRpcProxyServer::start(ark, mailbox).await
 	}
 
 	pub async fn get_wallet_rpc(&self) -> WalletAdminClient {

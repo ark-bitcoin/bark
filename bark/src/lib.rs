@@ -751,13 +751,15 @@ impl Wallet {
 		let network = self.properties().await?.network;
 		let keypair = self.peak_keypair(index).await?;
 		let ark_info = srv.ark_info().await?;
+
 		let mailbox_kp = self.mailbox_keypair()?;
+		let mailbox = MailboxIdentifier::from_pubkey(mailbox_kp.public_key());
 
 		Ok(ark::Address::builder()
 			.testnet(network != bitcoin::Network::Bitcoin)
 			.server_pubkey(ark_info.server_pubkey)
 			.pubkey_policy(keypair.public_key())
-			.mailbox(ark_info.mailbox_pubkey, MailboxIdentifier::from_pubkey(mailbox_kp.public_key()), &keypair)
+			.mailbox(ark_info.mailbox_pubkey, mailbox, &keypair)
 			.expect("Failed to assign mailbox")
 			.into_address().unwrap())
 	}
@@ -1352,8 +1354,8 @@ impl Wallet {
 				}
 			},
 			async {
-				if let Err(e) = self.sync_oors().await {
-					warn!("Error in arkoor sync: {:#}", e);
+				if let Err(e) = self.sync_mailbox().await {
+					warn!("Error in mailbox sync: {:#}", e);
 				}
 			},
 			async {

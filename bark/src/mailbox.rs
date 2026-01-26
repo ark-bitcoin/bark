@@ -9,13 +9,13 @@ pub extern crate lnurl as lnurllib;
 use anyhow::Context;
 use bitcoin::Amount;
 use bitcoin::hex::DisplayHex;
-use bitcoin::secp256k1::{Keypair, PublicKey};
+use bitcoin::secp256k1::Keypair;
 use log::{debug, error, info};
 
 use ark::{ProtocolEncoding, Vtxo};
 use ark::mailbox::MailboxIdentifier;
 use protos::mailbox_server::mailbox_message;
-use server_rpc::{self as rpc, protos};
+use server_rpc::protos;
 use server_rpc::protos::mailbox_server::ArkoorMessage;
 use crate::movement::MovementStatus;
 use crate::movement::update::MovementUpdate;
@@ -28,52 +28,8 @@ impl Wallet {
 		Ok(self.seed.to_mailbox_keypair())
 	}
 
-	pub async fn sync_oors(&self) -> anyhow::Result<()> {
-		let last_pk_index = self.db.get_last_vtxo_key_index().await?.unwrap_or_default();
-		let pubkeys = (0..=last_pk_index).map(|idx| {
-			self.seed.derive_vtxo_keypair(idx).public_key()
-		}).collect::<Vec<_>>();
-
-		self.sync_arkoor_for_pubkeys(&pubkeys).await?;
-
-		self.sync_mailbox().await?;
-
-		Ok(())
-	}
-
-	/// Sync with the Ark server and look for out-of-round received VTXOs by public key.
-	async fn sync_arkoor_for_pubkeys(
-		&self,
-		public_keys: &[PublicKey],
-	) -> anyhow::Result<()> {
-		let mut srv = self.require_server()?;
-
-		for pubkeys in public_keys.chunks(rpc::MAX_NB_MAILBOX_PUBKEYS) {
-			// Then sync OOR vtxos.
-			debug!("Emptying OOR mailbox at Ark server...");
-			let req = protos::ArkoorVtxosRequest {
-				pubkeys: pubkeys.iter().map(|pk| pk.serialize().to_vec()).collect(),
-			};
-
-			#[allow(deprecated)]
-			let packages = srv.client.empty_arkoor_mailbox(req).await
-				.context("error fetching oors")?.into_inner().packages;
-			debug!("Ark server has {} arkoor packages for us", packages.len());
-
-			for package in packages {
-				let result = self
-					.process_received_arkoor_package(package.vtxos, None).await;
-				if let Err(e) = result {
-					error!("Error processing received arkoor package: {:#}", e);
-				}
-			}
-		}
-
-		Ok(())
-	}
-
 	/// Sync with the mailbox on the Ark server and look for out-of-round received VTXOs.
-	async fn sync_mailbox(&self) -> anyhow::Result<()> {
+	pub async fn sync_mailbox(&self) -> anyhow::Result<()> {
 		let mut srv = self.require_server()?;
 
 		let mailbox_id = MailboxIdentifier::from_pubkey(self.mailbox_keypair()?.public_key());

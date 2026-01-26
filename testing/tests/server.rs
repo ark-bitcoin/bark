@@ -445,7 +445,7 @@ async fn full_round() {
 	}
 
 	let proxy = Proxy(Arc::new(Mutex::new(0)), Arc::new(tx));
-	let proxy = srv.get_proxy_rpc(proxy).await;
+	let proxy = srv.start_proxy_no_mailbox(proxy).await;
 	futures::future::join_all(barks.iter().map(|bark| bark.set_ark_url(&proxy))).await;
 
 	let mut log_full = srv.subscribe_log::<FullRound>();
@@ -596,7 +596,7 @@ async fn double_spend_round() {
 	}
 
 	let srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
-	let proxy = srv.get_proxy_rpc(Proxy).await;
+	let proxy = srv.start_proxy_no_mailbox(Proxy).await;
 
 	let bark = ctx.new_bark_with_funds("bark".to_string(), &proxy.address, sat(1_000_000)).await;
 	bark.board(sat(800_000)).await;
@@ -633,7 +633,7 @@ async fn test_participate_round_wrong_step() {
 		}
 	}
 
-	let proxy = srv.get_proxy_rpc(ProxyA).await;
+	let proxy = srv.start_proxy_no_mailbox(ProxyA).await;
 	bark.set_ark_url(&proxy).await;
 	let err = bark.try_refresh_all().await.expect_err("refresh should time out");
 	assert!(err.to_string().contains("current step is payment registration"), "err: {err}");
@@ -656,7 +656,7 @@ async fn test_participate_round_wrong_step() {
 		}
 	}
 
-	let proxy = srv.get_proxy_rpc(ProxyB).await;
+	let proxy = srv.start_proxy_no_mailbox(ProxyB).await;
 	bark.set_timeout(srv.max_round_delay());
 	bark.set_ark_url(&proxy).await;
 	let err = bark.try_refresh_all().await.expect_err("refresh should fail");
@@ -680,7 +680,7 @@ async fn spend_unregistered_board() {
 	}
 
 	let srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
-	let proxy = srv.get_proxy_rpc(Proxy).await;
+	let proxy = srv.start_proxy_no_mailbox(Proxy).await;
 
 	let bark = ctx.new_bark_with_funds("bark".to_string(), &proxy.address, sat(1_000_000)).await;
 	bark.board(sat(800_000)).await;
@@ -733,7 +733,7 @@ async fn reject_revocation_on_successful_lightning_payment() {
 	let onchain_amount = btc(7);
 	let board_amount = btc(5);
 
-	let proxy = srv.get_proxy_rpc(Proxy).await;
+	let proxy = srv.start_proxy_no_mailbox(Proxy).await;
 	let bark_1 = ctx.new_bark_with_funds("bark-1", &proxy.address, onchain_amount).await;
 
 	bark_1.board(board_amount).await;
@@ -890,7 +890,7 @@ async fn claim_forfeit_connector_chain() {
 	let ctx = TestContext::new("server/claim_forfeit_connector_chain").await;
 
 	let srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
-	let proxy = srv.get_proxy_rpc(NoFinishRoundProxy).await;
+	let proxy = srv.start_proxy_no_mailbox(NoFinishRoundProxy).await;
 
 	// To make sure we have a chain of connector, we make a bunch of inputs
 	let bark = ctx.new_bark_with_funds("bark".to_string(), &proxy.address, sat(5_000_000)).await;
@@ -955,7 +955,7 @@ async fn claim_forfeit_round_connector() {
 	let ctx = TestContext::new("server/claim_forfeit_round_connector").await;
 
 	let srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
-	let proxy = srv.get_proxy_rpc(NoFinishRoundProxy).await;
+	let proxy = srv.start_proxy_no_mailbox(NoFinishRoundProxy).await;
 
 	let bark = ctx.new_bark_with_funds("bark".to_string(), &proxy.address, sat(1_000_000)).await;
 	bark.board(sat(800_000)).await;
@@ -1020,7 +1020,7 @@ async fn reject_dust_board_cosign() {
 		}
 	}
 
-	let proxy = srv.get_proxy_rpc(Proxy).await;
+	let proxy = srv.start_proxy_no_mailbox(Proxy).await;
 	let bark = ctx.new_bark_with_funds("bark", &proxy.address, sat(1_000_000)).await;
 
 	let err = bark.try_board_all().await.unwrap_err();
@@ -1054,7 +1054,7 @@ async fn reject_below_minimum_board_cosign() {
 		}
 	}
 
-	let proxy = srv.get_proxy_rpc(Proxy).await;
+	let proxy = srv.start_proxy_no_mailbox(Proxy).await;
 	let bark = ctx.new_bark_with_funds("bark", &proxy.address, sat(100_000)).await;
 
 	let err = bark.try_board_all().await.unwrap_err();
@@ -1134,7 +1134,7 @@ async fn reject_dust_vtxo_request() {
 		wallet: Arc::new(bark_client),
 		challenge: Arc::new(Mutex::new(None)),
 	};
-	let proxy = srv.get_proxy_rpc(proxy).await;
+	let proxy = srv.start_proxy_no_mailbox(proxy).await;
 
 	bark.set_ark_url(&proxy.address).await;
 
@@ -1166,7 +1166,7 @@ async fn server_refuse_claim_invoice_not_settled() {
 		}
 	}
 
-	let proxy = srv.get_proxy_rpc(Proxy).await;
+	let proxy = srv.start_proxy_no_mailbox(Proxy).await;
 
 	// Start a bark and create a VTXO to be able to board
 	let bark = Arc::new(ctx.new_bark_with_funds("bark", &proxy.address, btc(3)).await);
@@ -1508,7 +1508,7 @@ async fn should_refuse_paying_invoice_not_matching_htlcs() {
 		}
 	}
 
-	let proxy = srv.get_proxy_rpc(Proxy(dummy_invoice)).await;
+	let proxy = srv.start_proxy_no_mailbox(Proxy(dummy_invoice)).await;
 
 	// Start a bark and create a VTXO to be able to board
 	let bark_1 = ctx.new_bark_with_funds("bark-1", &proxy.address, btc(3)).await;
@@ -1541,7 +1541,7 @@ async fn should_refuse_paying_invoice_whose_amount_is_higher_than_htlcs() {
 		}
 	}
 
-	let proxy = srv.get_proxy_rpc(Proxy).await;
+	let proxy = srv.start_proxy_no_mailbox(Proxy).await;
 
 	// Start a bark and create a VTXO to be able to board
 	let bark_1 = ctx.new_bark_with_funds("bark-1", &proxy.address, btc(3)).await;
@@ -1720,88 +1720,12 @@ async fn should_refuse_oor_input_vtxo_that_is_being_exited() {
 		}
 	}
 
-	let proxy = srv.get_proxy_rpc(Proxy(vtxo_a.id)).await;
+	let proxy = srv.start_proxy_no_mailbox(Proxy(vtxo_a.id)).await;
 
 	bark.set_ark_url(&proxy.address).await;
 
 	let err = bark.try_send_oor(&bark2.address().await, sat(100_000), false).await.expect_err("Server should refuse oor");
 	assert!(err.to_string().contains(format!("bad user input: cannot spend vtxo that is already exited: {}", vtxo_a.id).as_str()), "err: {err}");
-}
-
-#[tokio::test]
-async fn mailbox_post_and_process() {
-	let ctx = TestContext::new("server/mailbox_post_and_process").await;
-	let srv = ctx.new_captaind("server", None).await;
-
-	let bark = ctx.new_bark_with_funds("bark", &srv, sat(1_000_000)).await;
-
-	let _board = bark.board(sat(400_000)).await;
-	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
-
-	let bark2 = ctx.new_bark("bark2", &srv).await;
-	let bark2_mailbox_kp = bark2.client().await.mailbox_keypair().unwrap();
-	let bark2_vtxo_kp = bark2.client().await.derive_store_next_keypair().await
-		.expect("derive keypair").0;
-
-	let addr = ark::Address::builder()
-		.testnet(true)
-		.server_pubkey(srv.ark_info().await.server_pubkey)
-		.pubkey_policy(bark2_vtxo_kp.public_key())
-		.into_address().unwrap();
-	// Send arkoor package to mailbox (old style)
-	bark.send_oor(addr, sat(100_000)).await;
-
-	bark2.maintain().await;
-	let bark2_vtxos = bark2.client().await.vtxos().await.unwrap();
-	assert_eq!(bark2_vtxos.len(), 1);
-
-	let mut mb_rpc = srv.get_mailbox_public_rpc().await;
-
-	let mailbox_id = MailboxIdentifier::from_pubkey(bark2_mailbox_kp.public_key());
-	let unblinded_id = mailbox_id.to_vec();
-
-	let read_mailbox = protos::mailbox_server::MailboxRequest {
-		authorization: None,
-		unblinded_id,
-		checkpoint: 0,
-	};
-
-	trace!("reading empty mailbox");
-	let mailbox_msgs = mb_rpc.read_mailbox(read_mailbox.clone()).await.unwrap().into_inner();
-	assert_eq!(mailbox_msgs.messages.len(), 0);
-
-	let mut stream = mb_rpc.subscribe_mailbox(read_mailbox.clone()).await.unwrap().into_inner();
-
-	let blinded_id = mailbox_id.to_blinded(srv.ark_info().await.mailbox_pubkey, &bark2_vtxo_kp);
-
-	let post_vtxos = protos::mailbox_server::PostVtxosMailboxRequest {
-		blinded_id: blinded_id.to_vec(),
-		vtxos: vec![bark2_vtxos[0].serialize()],
-	};
-
-	trace!("posting vtxos to mailbox");
-	mb_rpc.post_vtxos_mailbox(post_vtxos).await.unwrap();
-
-	trace!("reading mailbox");
-	let mailbox_msgs = mb_rpc.read_mailbox(read_mailbox).await.unwrap().into_inner();
-	assert_eq!(mailbox_msgs.messages.len(), 1);
-	let msg = mailbox_msgs.messages[0].message.clone().unwrap();
-	match msg {
-		Message::Arkoor(arkoor) => {assert_eq!(arkoor.vtxos.len(), 1)}
-	}
-
-	trace!("processing mailbox");
-	loop {
-		match stream.next().await.unwrap().unwrap() {
-			protos::mailbox_server::MailboxMessage { checkpoint, message } => {
-				match message.unwrap() {
-					Message::Arkoor(arkoor) => {assert_eq!(arkoor.vtxos.len(), 1)}
-				}
-				assert_ne!(checkpoint, 0);
-				return
-			},
-		}
-	}
 }
 
 #[tokio::test]
@@ -1816,20 +1740,6 @@ async fn mailbox_post_and_process_with_auth() {
 
 	let bark2 = ctx.new_bark("bark2", &srv).await;
 	let bark2_mailbox_kp = bark2.client().await.mailbox_keypair().unwrap();
-	let bark2_vtxo_kp = bark2.client().await.derive_store_next_keypair().await
-		.expect("derive keypair").0;
-
-	let addr = ark::Address::builder()
-		.testnet(true)
-		.server_pubkey(srv.ark_info().await.server_pubkey)
-		.pubkey_policy(bark2_vtxo_kp.public_key())
-		.into_address().unwrap();
-	// Send arkoor package to mailbox (old style)
-	bark.send_oor(addr, sat(100_000)).await;
-
-	bark2.maintain().await;
-	let bark2_vtxos = bark2.client().await.vtxos().await.unwrap();
-	assert_eq!(bark2_vtxos.len(), 1);
 
 	let mut mb_rpc = srv.get_mailbox_public_rpc().await;
 
@@ -1845,6 +1755,8 @@ async fn mailbox_post_and_process_with_auth() {
 		checkpoint: 0,
 	};
 
+	// First we check that everything is ok with correct authorization
+
 	trace!("reading empty mailbox");
 	let mailbox_msgs = mb_rpc.read_mailbox(read_mailbox.clone()).await.unwrap().into_inner();
 	assert_eq!(mailbox_msgs.messages.len(), 0);
@@ -1852,24 +1764,26 @@ async fn mailbox_post_and_process_with_auth() {
 	trace!("starting subscribe mailbox");
 	let mut stream = mb_rpc.subscribe_mailbox(read_mailbox.clone()).await.unwrap().into_inner();
 
-	trace!("constructing post VTXO mailbox request");
-	let blinded_id = mailbox_id.to_blinded(srv.ark_info().await.mailbox_pubkey, &bark2_vtxo_kp);
+	let addr = bark2.address().await;
+	// Send arkoor package to mailbox
+	let sent_amount = sat(100_000);
+	bark.send_oor(addr, sent_amount).await;
 
-	let post_vtxos = protos::mailbox_server::PostVtxosMailboxRequest {
-		blinded_id: blinded_id.to_vec(),
-		vtxos: vec![bark2_vtxos[0].serialize()],
-	};
-
-	trace!("posting vtxos to mailbox");
-	mb_rpc.post_vtxos_mailbox(post_vtxos).await.unwrap();
+	let mut read_vtxo = None::<Vtxo<VtxoPolicy>>;
 
 	trace!("reading mailbox");
 	let mailbox_msgs = mb_rpc.read_mailbox(read_mailbox).await.unwrap().into_inner();
 	assert_eq!(mailbox_msgs.messages.len(), 1);
-	let msg = mailbox_msgs.messages[0].message.clone().unwrap();
-	match msg {
-		Message::Arkoor(arkoor) => {assert_eq!(arkoor.vtxos.len(), 1)}
+	match mailbox_msgs.messages[0].message.as_ref().unwrap() {
+		Message::Arkoor(arkoor) => {
+			assert_eq!(arkoor.vtxos.len(), 1);
+			let vtxo = Vtxo::<VtxoPolicy>::deserialize(&arkoor.vtxos[0]).unwrap();
+			assert_eq!(vtxo.amount(), sent_amount);
+			let _ = read_vtxo.insert(vtxo);
+		},
 	}
+
+	// Now we check that server rejects requests with incorrect authorization
 
 	let unblinded_id = mailbox_id.to_vec();
 	let expiry = chrono::Local::now() + Duration::from_secs(60);
@@ -1885,15 +1799,20 @@ async fn mailbox_post_and_process_with_auth() {
 	};
 
 	trace!("reading mailbox incorrect authorization");
-	let mailbox_resp = mb_rpc.read_mailbox(incorrect_read_mailbox).await;
-	assert!(mailbox_resp.is_err());
+	let mailbox_resp = mb_rpc.read_mailbox(incorrect_read_mailbox).await.unwrap_err();
+	assert!(mailbox_resp.to_string()
+		.contains("bad user input: authorization doesn't match mailbox id"), "err: {mailbox_resp}");
 
 	trace!("processing mailbox");
 	loop {
 		match stream.next().await.unwrap().unwrap() {
 			protos::mailbox_server::MailboxMessage { checkpoint, message } => {
 				match message.unwrap() {
-					Message::Arkoor(arkoor) => {assert_eq!(arkoor.vtxos.len(), 1)}
+					Message::Arkoor(arkoor) => {
+						assert_eq!(arkoor.vtxos.len(), 1);
+						let vtxo = Vtxo::<VtxoPolicy>::deserialize(&arkoor.vtxos[0]).unwrap();
+						assert_eq!(read_vtxo.unwrap(), vtxo);
+					},
 				}
 				assert_ne!(checkpoint, 0);
 				return
@@ -1940,7 +1859,7 @@ async fn should_refuse_ln_pay_input_vtxo_that_is_being_exited() {
 		}
 	}
 
-	let proxy = srv.get_proxy_rpc(Proxy(vtxo_a.id)).await;
+	let proxy = srv.start_proxy_no_mailbox(Proxy(vtxo_a.id)).await;
 
 	bark.set_ark_url(&proxy.address).await;
 
@@ -2033,7 +1952,7 @@ async fn should_refuse_round_input_vtxo_that_is_being_exited() {
 		challenge: Arc::new(Mutex::new(None)),
 		vtxo: vtxo_a.clone(),
 	};
-	let proxy = srv.get_proxy_rpc(proxy).await;
+	let proxy = srv.start_proxy_no_mailbox(proxy).await;
 
 	bark.set_ark_url(&proxy.address).await;
 	bark.set_timeout(srv.max_round_delay());
@@ -2088,7 +2007,7 @@ async fn should_refuse_over_max_vtxo_amount_lightning_receive_request() {
 		}
 	}
 
-	let proxy = srv.get_proxy_rpc(Proxy).await;
+	let proxy = srv.start_proxy_no_mailbox(Proxy).await;
 
 	bark.set_ark_url(&proxy.address).await;
 

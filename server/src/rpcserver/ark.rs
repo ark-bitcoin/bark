@@ -5,7 +5,6 @@ use std::sync::atomic;
 use std::time::Duration;
 use std::time::UNIX_EPOCH;
 
-use bip39::rand::Rng;
 use bitcoin::consensus::serialize;
 use bitcoin::Txid;
 use bitcoin::{Amount, OutPoint};
@@ -183,63 +182,6 @@ impl rpc::server::ArkService for Server {
 
 		let response = self.cosign_oor(request).await.to_status()?;
 		Ok(tonic::Response::new(response.into()))
-	}
-
-	// mailbox
-	// deprecated
-	async fn post_arkoor_package_mailbox(
-		&self,
-		req: tonic::Request<protos::ArkoorPackage>,
-	) -> Result<tonic::Response<protos::Empty>, tonic::Status> {
-		let req = req.into_inner();
-
-		crate::rpcserver::add_tracing_attributes(vec![
-			KeyValue::new("arkoors", format!("{:?}", req.arkoors)),
-		]);
-
-		let arkoor_package_id = rand::thread_rng().r#gen::<[u8; 32]>();
-
-		for arkoor in req.arkoors {
-			let pubkey = PublicKey::from_bytes(&arkoor.pubkey)?;
-			let vtxo = Vtxo::from_bytes(&arkoor.vtxo)?;
-			#[allow(deprecated)]
-			self.db.store_arkoor_by_vtxo_pubkey(pubkey, &arkoor_package_id, vtxo).await.to_status()?;
-		}
-
-		Ok(tonic::Response::new(protos::Empty{}))
-	}
-
-	// deprecated
-	async fn empty_arkoor_mailbox(
-		&self,
-		req: tonic::Request<protos::ArkoorVtxosRequest>,
-	) -> Result<tonic::Response<protos::ArkoorVtxosResponse>, tonic::Status> {
-		let req = req.into_inner();
-
-		crate::rpcserver::add_tracing_attributes(vec![
-			KeyValue::new("pubkeys", format!("{:?}", req.pubkeys)),
-		]);
-
-		if req.pubkeys.len() > rpc::MAX_NB_MAILBOX_PUBKEYS {
-			macros::badarg!("too many pubkeys: max {}", rpc::MAX_NB_MAILBOX_PUBKEYS);
-		}
-
-		let pubkeys = req.pubkeys.iter()
-			.map(PublicKey::from_bytes)
-			.collect::<Result<Vec<_>, _>>()?;
-		#[allow(deprecated)]
-		let vtxos_by_package_id = self.db.pull_oors(&pubkeys).await.to_status()?;
-
-		let response = protos::ArkoorVtxosResponse {
-			packages: vtxos_by_package_id.into_iter().map(|(package_id, vtxos)| {
-				protos::ArkoorMailboxPackage {
-					arkoor_package_id: package_id.to_vec(),
-					vtxos: vtxos.into_iter().map(|v| v.serialize()).collect(),
-				}
-			}).collect(),
-		};
-
-		Ok(tonic::Response::new(response))
 	}
 
 	// lightning

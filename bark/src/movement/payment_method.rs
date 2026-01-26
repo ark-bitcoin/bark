@@ -287,8 +287,8 @@ mod test {
 
 	#[test]
 	fn test_serialization() {
-		let ark_str = "tark1pm6sr0fpzqqpgvwxtss7k9zh56vx2atvaty0cg2znc8zfdwah8l52kdgcjlayzzcpqqxc4z0c";
-		let serialised = r#"{"type":"ark","value":"tark1pm6sr0fpzqqpgvwxtss7k9zh56vx2atvaty0cg2znc8zfdwah8l52kdgcjlayzzcpqqxc4z0c"}"#;
+		let ark_str = "tark1pwh9vsmezqqpjy9akejayl2vvcse6he97rn40g84xrlvrlnhayuuyefrp9nse2y3zqqpjy9akejayl2vvcse6he97rn40g84xrlvrlnhayuuyefrp9nse2yscufs5u";
+		let serialised = r#"{"type":"ark","value":"tark1pwh9vsmezqqpjy9akejayl2vvcse6he97rn40g84xrlvrlnhayuuyefrp9nse2y3zqqpjy9akejayl2vvcse6he97rn40g84xrlvrlnhayuuyefrp9nse2yscufs5u"}"#;
 		let ark_method = PaymentMethod::Ark(ark::Address::from_str(ark_str).unwrap());
 		assert_eq!(serde_json::to_string(&ark_method).unwrap(), serialised);
 		assert_eq!(serde_json::from_str::<PaymentMethod>(serialised).unwrap(), ark_method);

@@ -485,7 +485,7 @@ async fn bark_should_exit_a_failed_htlc_out_that_server_refuse_to_revoke() {
 		}
 	}
 
-	let proxy = srv.get_proxy_rpc(Proxy).await;
+	let proxy = srv.start_proxy_no_mailbox(Proxy).await;
 
 	// Start a bark and create a VTXO
 	let onchain_amount = btc(3);
@@ -619,7 +619,7 @@ async fn bark_should_exit_a_pending_htlc_out_that_server_refuse_to_revoke() {
 		}
 	}
 
-	let proxy = srv.get_proxy_rpc(Proxy).await;
+	let proxy = srv.start_proxy_no_mailbox(Proxy).await;
 
 	// Start a bark and create a VTXO
 	let onchain_amount = btc(3);
@@ -935,7 +935,7 @@ async fn bark_should_exit_a_htlc_recv_that_server_refuse_to_cosign() {
 		}
 	}
 
-	let proxy = srv.get_proxy_rpc(Proxy).await;
+	let proxy = srv.start_proxy_no_mailbox(Proxy).await;
 
 	// Start a bark and create a VTXO to be able to board
 	let bark = Arc::new(ctx.new_bark_with_funds("bark", &proxy.address, btc(2.1)).await);
