@@ -89,6 +89,27 @@ pub struct VtxoLeafSpec {
 	pub unlock_hash: UnlockHash,
 }
 
+impl ProtocolEncoding for VtxoLeafSpec {
+	fn encode<W: io::Write + ?Sized>(&self, w: &mut W) -> Result<(), io::Error> {
+		self.vtxo.policy.encode(w)?;
+		w.emit_u64(self.vtxo.amount.to_sat())?;
+		self.cosign_pubkey.encode(w)?;
+		self.unlock_hash.encode(w)?;
+		Ok(())
+	}
+
+	fn decode<R: io::Read + ?Sized>(r: &mut R) -> Result<Self, ProtocolDecodingError> {
+		Ok(VtxoLeafSpec {
+			vtxo: VtxoRequest {
+				policy: VtxoPolicy::decode(r)?,
+				amount: Amount::from_sat(r.read_u64()?),
+			},
+			cosign_pubkey: Option::<PublicKey>::decode(r)?,
+			unlock_hash: sha256::Hash::decode(r)?,
+		})
+	}
+}
+
 /// All the information that uniquely specifies a VTXO tree before it has been signed.
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct VtxoTreeSpec {
@@ -1476,10 +1497,7 @@ impl ProtocolEncoding for VtxoTreeSpec {
 
 		w.emit_compact_size(self.vtxos.len() as u64)?;
 		for vtxo in &self.vtxos {
-			vtxo.vtxo.policy.encode(w)?;
-			w.emit_u64(vtxo.vtxo.amount.to_sat())?;
-			vtxo.cosign_pubkey.encode(w)?;
-			vtxo.unlock_hash.encode(w)?;
+			vtxo.encode(w)?;
 		}
 		Ok(())
 	}
@@ -1497,14 +1515,7 @@ impl ProtocolEncoding for VtxoTreeSpec {
 			let nb_vtxos = r.read_u32()?;
 			let mut vtxos = Vec::with_capacity(nb_vtxos as usize);
 			for _ in 0..nb_vtxos {
-				vtxos.push(VtxoLeafSpec {
-					vtxo: VtxoRequest {
-						policy: VtxoPolicy::decode(r)?,
-						amount: Amount::from_sat(r.read_u64()?),
-					},
-					cosign_pubkey: Some(PublicKey::decode(r)?),
-					unlock_hash: sha256::Hash::decode(r)?,
-				});
+				vtxos.push(VtxoLeafSpec::decode(r)?);
 			}
 
 			return Ok(VtxoTreeSpec {
@@ -1531,14 +1542,7 @@ impl ProtocolEncoding for VtxoTreeSpec {
 		let nb_vtxos = r.read_compact_size()?;
 		let mut vtxos = Vec::with_capacity(nb_vtxos as usize);
 		for _ in 0..nb_vtxos {
-			vtxos.push(VtxoLeafSpec {
-				vtxo: VtxoRequest {
-					policy: VtxoPolicy::decode(r)?,
-					amount: Amount::from_sat(r.read_u64()?),
-				},
-				cosign_pubkey: Option::<PublicKey>::decode(r)?,
-				unlock_hash: sha256::Hash::decode(r)?,
-			});
+			vtxos.push(VtxoLeafSpec::decode(r)?);
 		}
 
 		Ok(VtxoTreeSpec { vtxos, expiry_height, server_pubkey, exit_delta, global_cosign_pubkeys })
@@ -1798,5 +1802,34 @@ mod test {
 				vtxo.validate(&funding_tx).expect("should be value");
 			}
 		}
+	}
+
+	#[test]
+	fn vtxo_leaf_spec_encoding() {
+		let pk1: PublicKey = "020aceb65eed0ee5c512d3718e6f4bd868a7efb58ede7899ffd9bcba09555d4eb8".parse().unwrap();
+		let pk2: PublicKey = "02e4ed0ca35c3b8a2ff675b9b23f4961964b57e130afa607e32a83d2d9a510622b".parse().unwrap();
+		let hash = sha256::Hash::from_str("4bf5122f344554c53bde2ebb8cd2b7e3d1600ad631c385a5d7cce23c7785459a").unwrap();
+
+		// Test with Some(cosign_pubkey)
+		let spec_with_cosign = VtxoLeafSpec {
+			vtxo: VtxoRequest {
+				amount: Amount::from_sat(100_000),
+				policy: VtxoPolicy::new_pubkey(pk1),
+			},
+			cosign_pubkey: Some(pk2),
+			unlock_hash: hash,
+		};
+		encode::test::encoding_roundtrip(&spec_with_cosign);
+
+		// Test with None cosign_pubkey
+		let spec_without_cosign = VtxoLeafSpec {
+			vtxo: VtxoRequest {
+				amount: Amount::from_sat(200_000),
+				policy: VtxoPolicy::new_pubkey(pk1),
+			},
+			cosign_pubkey: None,
+			unlock_hash: hash,
+		};
+		encode::test::encoding_roundtrip(&spec_without_cosign);
 	}
 }
