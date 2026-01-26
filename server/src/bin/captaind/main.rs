@@ -218,6 +218,13 @@ async fn main() {
 		eprintln!("An error occurred: {}", e);
 		eprintln!("");
 		eprintln!("{:?}", e);
+
+		error!(
+			error = %e,
+			error_debug = ?e,
+			"An error occurred"
+		);
+
 		process::exit(1);
 	}
 }
