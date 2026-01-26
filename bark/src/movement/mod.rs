@@ -69,6 +69,35 @@ pub struct Movement {
 	pub time: MovementTimestamp,
 }
 
+impl Movement {
+	pub fn new(
+		id: MovementId,
+		status: MovementStatus,
+		subsystem: &MovementSubsystem,
+		time: DateTime<chrono::Local>,
+	) -> Self {
+		Self {
+			id,
+			status,
+			subsystem: subsystem.clone(),
+			time: MovementTimestamp {
+				created_at: time,
+				updated_at: time,
+				completed_at: None,
+			},
+			metadata: HashMap::new(),
+			intended_balance: SignedAmount::ZERO,
+			effective_balance: SignedAmount::ZERO,
+			offchain_fee: Amount::ZERO,
+			sent_to: vec![],
+			received_on: vec![],
+			input_vtxos: vec![],
+			output_vtxos: vec![],
+			exited_vtxos: vec![],
+		}
+	}
+}
+
 /// A unique identifier for a movement.
 #[derive(Clone, Copy, Eq, Hash, PartialEq, Deserialize, Serialize)]
 pub struct MovementId(pub u32);
