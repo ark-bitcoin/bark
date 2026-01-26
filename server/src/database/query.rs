@@ -20,9 +20,8 @@ use tokio_postgres::types::Type;
 use ark::{ProtocolEncoding, VtxoId, VtxoRequest, ServerVtxo};
 use ark::rounds::RoundId;
 use ark::tree::signed::{UnlockHash, UnlockPreimage};
-use bitcoin_ext::BlockHeight;
 
-use crate::database::model::{Board, VirtualTransaction, VtxoState};
+use crate::database::model::{VirtualTransaction, VtxoState};
 use crate::database::rounds::{StoredRoundInput, StoredRoundParticipation};
 use crate::error::ContextExt;
 use crate::secret::Secret;
@@ -177,67 +176,6 @@ pub async fn get_vtxos_by_id<T>(
 	}
 
 	Ok(ids.iter().map(|id| vtxos.remove(id).unwrap()).collect())
-}
-
-/// Upsert a board into the database
-pub async fn upsert_board<T>(
-	client: &T,
-	vtxo_id: VtxoId,
-	expiry_height: BlockHeight,
-) -> anyhow::Result<Board>
-	where T : GenericClient
-{
-	let statement = client.prepare("
-		WITH INSERTED AS (
-			INSERT INTO board (vtxo_id, expiry_height, created_at, updated_at)
-			VALUES ($1, $2, NOW(), NOW())
-			ON CONFLICT DO NOTHING
-			RETURNING *
-		)
-		SELECT * FROM INSERTED
-		UNION ALL
-		SELECT * FROM board where vtxo_id = $1
-		LIMIT 1;
-	").await?;
-
-	let row = client.query_one(&statement, &[&vtxo_id.to_string(), &(expiry_height as i32)]).await
-		.context("Failed to execute query")?;
-
-	Ok(Board::try_from(row)
-		.context("Bad row: not a valid Board")?
-	)
-}
-
-pub async fn get_sweepable_boards<T>(
-	client: &T,
-	height: BlockHeight,
-) -> anyhow::Result<Vec<Board>>
-	where T : GenericClient
-{
-	let statement = client.prepare("
-		SELECT * FROM board WHERE expiry_height <= $1 AND swept_at IS NULL AND EXITED_at IS NULL;
-	").await?;
-
-	let rows = client.query(&statement, &[&(height as i32)]).await
-		.context("Failed to execute `get_sweepable_boards` query")?;
-
-	Ok(rows.into_iter().map(|row| Board::try_from(row)).collect::<anyhow::Result<Vec<_>>>()?)
-}
-
-pub async fn mark_board_swept<T>(
-	client: &T,
-	vtxo_id: VtxoId,
-) -> anyhow::Result<()>
-	where T : GenericClient
-{
-	let statement = client.prepare("
-		UPDATE board SET swept_at = NOW(), updated_at = NOW() WHERE vtxo_id = $1 and swept_at IS NULL;
-	").await?;
-
-	client.execute(&statement, &[&vtxo_id.to_string()]).await
-		.context("Failed to execute query")?;
-
-	Ok(())
 }
 
 pub async fn store_round_participation(

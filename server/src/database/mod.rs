@@ -39,7 +39,6 @@ use tracing::{info, warn};
 use ark::{ServerVtxo, Vtxo, VtxoId};
 use ark::mailbox::MailboxIdentifier;
 use ark::encode::ProtocolEncoding;
-use bitcoin_ext::BlockHeight;
 
 use crate::wallet::WalletKind;
 use crate::config::Postgres as PostgresConfig;
@@ -191,34 +190,6 @@ impl Db {
 		query::upsert_vtxos(&tx, vtxos).await?;
 
 		tx.commit().await?;
-		Ok(())
-	}
-
-	/// Upsert a board into the database
-	pub async fn upsert_board(&self, vtxo: &ServerVtxo) -> anyhow::Result<()> {
-		let mut conn = self.get_conn().await?;
-		let tx = conn.transaction().await?;
-		query::upsert_vtxos(&tx, [vtxo]).await?;
-		query::upsert_board(&tx, vtxo.id(), vtxo.expiry_height()).await?;
-		tx.commit().await?;
-		Ok(())
-	}
-
-	/// Get all board are sweepable
-	/// A board is sweepable if it has expired and the funding outpoint hasn't been spent yet
-	/// A spent could be a sweep or an exit
-	pub async fn get_sweepable_boards(
-		&self,
-		height: BlockHeight,
-	) -> anyhow::Result<Vec<Board>> {
-		let conn = self.get_conn().await?;
-		query::get_sweepable_boards(&*conn, height).await
-	}
-
-	pub async fn mark_board_swept(&self, vtxo: &ServerVtxo) -> anyhow::Result<()> {
-		let conn = self.get_conn().await?;
-		query::mark_board_swept(&*conn, vtxo.id()).await
-			.context("Failed to mark board as swept")?;
 		Ok(())
 	}
 
