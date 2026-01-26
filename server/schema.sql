@@ -477,40 +477,6 @@ CREATE TABLE public.block (
 
 
 --
--- Name: board; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.board (
-    id bigint NOT NULL,
-    vtxo_id text,
-    expiry_height integer NOT NULL,
-    swept_at timestamp with time zone,
-    exited_at timestamp with time zone,
-    created_at timestamp with time zone NOT NULL,
-    updated_at timestamp with time zone NOT NULL
-);
-
-
---
--- Name: board_id_seq; Type: SEQUENCE; Schema: public; Owner: -
---
-
-CREATE SEQUENCE public.board_id_seq
-    START WITH 1
-    INCREMENT BY 1
-    NO MINVALUE
-    NO MAXVALUE
-    CACHE 1;
-
-
---
--- Name: board_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
---
-
-ALTER SEQUENCE public.board_id_seq OWNED BY public.board.id;
-
-
---
 -- Name: checkpoint_state; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -1309,13 +1275,6 @@ ALTER TABLE ONLY public.arkoor_mailbox ALTER COLUMN id SET DEFAULT nextval('publ
 
 
 --
--- Name: board id; Type: DEFAULT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.board ALTER COLUMN id SET DEFAULT nextval('public.board_id_seq'::regclass);
-
-
---
 -- Name: ephemeral_tweak id; Type: DEFAULT; Schema: public; Owner: -
 --
 
@@ -1464,22 +1423,6 @@ ALTER TABLE ONLY public.bitcoin_transaction
 
 ALTER TABLE ONLY public.block
     ADD CONSTRAINT block_pkey PRIMARY KEY (height);
-
-
---
--- Name: board board_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.board
-    ADD CONSTRAINT board_pkey PRIMARY KEY (id);
-
-
---
--- Name: board board_sweep_vtxo_unique; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.board
-    ADD CONSTRAINT board_sweep_vtxo_unique UNIQUE (vtxo_id);
 
 
 --
@@ -1686,27 +1629,6 @@ CREATE INDEX arkoor_mailbox_pubkey_ix ON public.arkoor_mailbox USING btree (pubk
 --
 
 CREATE UNIQUE INDEX arkoor_mailbox_vtxo_id_uix ON public.arkoor_mailbox USING btree (vtxo_id);
-
-
---
--- Name: board_sweep_exited_at_ix; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX board_sweep_exited_at_ix ON public.board USING btree (((exited_at IS NULL)));
-
-
---
--- Name: board_sweep_swept_at_ix; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX board_sweep_swept_at_ix ON public.board USING btree (((swept_at IS NULL)));
-
-
---
--- Name: board_sweep_vtxo_id_ix; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX board_sweep_vtxo_id_ix ON public.board USING btree (vtxo_id);
 
 
 --
@@ -2002,14 +1924,6 @@ CREATE TRIGGER vtxo_update BEFORE UPDATE ON public.vtxo FOR EACH ROW EXECUTE FUN
 
 ALTER TABLE ONLY public.arkoor_mailbox
     ADD CONSTRAINT arkoor_mailbox_vtxo_id_fkey FOREIGN KEY (vtxo_id) REFERENCES public.vtxo(id);
-
-
---
--- Name: board board_vtxo_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.board
-    ADD CONSTRAINT board_vtxo_id_fkey FOREIGN KEY (vtxo_id) REFERENCES public.vtxo(vtxo_id);
 
 
 --
