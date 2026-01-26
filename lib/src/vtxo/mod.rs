@@ -281,7 +281,6 @@ pub struct VtxoTxIter<'a, P: Policy = VtxoPolicy> {
 	prev: OutPoint,
 	genesis_idx: usize,
 	current_amount: Amount,
-	done: bool,
 }
 
 impl<'a, P: Policy> VtxoTxIter<'a, P> {
@@ -295,7 +294,6 @@ impl<'a, P: Policy> VtxoTxIter<'a, P> {
 			vtxo: vtxo,
 			genesis_idx: 0,
 			current_amount: onchain_amount,
-			done: false,
 		}
 	}
 }
@@ -304,11 +302,7 @@ impl<'a, P: Policy> Iterator for VtxoTxIter<'a, P> {
 	type Item = VtxoTxIterItem;
 
 	fn next(&mut self) -> Option<Self::Item> {
-		if self.done {
-			return None;
-		}
-
-		let item = self.vtxo.genesis.get(self.genesis_idx).expect("broken impl");
+		let item = self.vtxo.genesis.get(self.genesis_idx)?;
 		let next_amount = self.current_amount.checked_sub(
 			item.other_outputs.iter().map(|o| o.value).sum()
 		).expect("we calculated this amount beforehand");
@@ -322,8 +316,12 @@ impl<'a, P: Policy> Iterator for VtxoTxIter<'a, P> {
 			)
 		} else {
 			// when we reach the end of the chain, we take the eventual output of the vtxo
-			self.done = true;
-			self.vtxo.policy.txout(self.vtxo.amount, self.vtxo.server_pubkey, self.vtxo.exit_delta, self.vtxo.expiry_height)
+			self.vtxo.policy.txout(
+				self.vtxo.amount,
+				self.vtxo.server_pubkey,
+				self.vtxo.exit_delta,
+				self.vtxo.expiry_height,
+			)
 		};
 
 		let tx = item.tx(self.prev, next_output, self.vtxo.server_pubkey, self.vtxo.expiry_height);
