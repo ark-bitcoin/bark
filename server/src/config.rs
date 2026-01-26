@@ -347,6 +347,12 @@ pub struct Config {
 	pub invoice_check_max_delay: Duration,
 	#[serde(with = "utils::serde::duration")]
 	pub invoice_poll_interval: Duration,
+	/// Base delay for TrackAll stream reconnection backoff (e.g., 1 second)
+	#[serde(with = "utils::serde::duration")]
+	pub track_all_base_delay: Duration,
+	/// Maximum delay for TrackAll stream reconnection backoff (e.g., 60 seconds)
+	#[serde(with = "utils::serde::duration")]
+	pub track_all_max_delay: Duration,
 
 	/// The number of blocks to keep between Lightning and Ark HTLCs expiries.
 	///

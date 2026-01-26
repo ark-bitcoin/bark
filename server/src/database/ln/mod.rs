@@ -513,6 +513,11 @@ impl Db {
 	/// - status: A status for the subscription
 	/// - lowest_incoming_htlc_expiry: The lowest height of all incoming
 	/// htlc's. This is about HTLC's that the server receives from the network
+	///
+	/// # Idempotency
+	///
+	/// There is currently only idempotency for an Accepted status as we don't
+	/// want the `accepted_at` time to change on duplicate updates to `Accepted`.
 	pub async fn store_lightning_htlc_subscription_status(
 		&self,
 		id: i64,
@@ -521,21 +526,27 @@ impl Db {
 	) -> anyhow::Result<()> {
 		let conn = self.get_conn().await?;
 
-		if let Some(lowest_incoming_htlc_expiry) = lowest_incoming_htlc_expiry {
-			let stmt = conn.prepare("
-				UPDATE lightning_htlc_subscription
-				SET status = $2, lowest_incoming_htlc_expiry = $3, updated_at = NOW()
-				WHERE id = $1
-			").await?;
+		// Set accepted_at when transitioning to Accepted status
+		let set_accepted_at = status == LightningHtlcSubscriptionStatus::Accepted;
 
-			conn.execute(&stmt, &[&id, &status, &(lowest_incoming_htlc_expiry as i64)]).await?;
+		let accepted_at_clause = if set_accepted_at { ", accepted_at = NOW()" } else { "" };
+		let expiry_clause = if lowest_incoming_htlc_expiry.is_some() {
+			", lowest_incoming_htlc_expiry = $3"
 		} else {
-			let stmt = conn.prepare("
-				UPDATE lightning_htlc_subscription
-				SET status = $2, updated_at = NOW()
-				WHERE id = $1
-			").await?;
+			""
+		};
+		let accepted_at_check = if set_accepted_at { " AND accepted_at IS NULL" } else { "" };
 
+		let query = format!(
+			"UPDATE lightning_htlc_subscription \
+			SET status = $2{expiry_clause}{accepted_at_clause}, updated_at = NOW() \
+			WHERE id = $1{accepted_at_check}",
+		);
+
+		let stmt = conn.prepare(&query).await?;
+		if let Some(expiry) = lowest_incoming_htlc_expiry {
+			conn.execute(&stmt, &[&id, &status, &(expiry as i64)]).await?;
+		} else {
 			conn.execute(&stmt, &[&id, &status]).await?;
 		}
 
@@ -599,8 +610,8 @@ impl Db {
 
 		let stmt = conn.prepare("
 			SELECT sub.id, sub.lightning_invoice_id, sub.lightning_node_id,
-				sub.status, sub.lowest_incoming_htlc_expiry, sub.created_at, sub.updated_at,
-				invoice.invoice
+				sub.status, sub.lowest_incoming_htlc_expiry, sub.accepted_at,
+				sub.created_at, sub.updated_at, invoice.invoice
 			FROM lightning_htlc_subscription sub
 			JOIN lightning_invoice invoice ON
 				sub.lightning_invoice_id = invoice.id
@@ -628,8 +639,8 @@ impl Db {
 
 		let stmt = conn.prepare("
 			SELECT sub.id, sub.lightning_invoice_id, sub.lightning_node_id,
-				sub.status, sub.lowest_incoming_htlc_expiry, sub.created_at, sub.updated_at,
-				invoice.invoice
+				sub.status, sub.lowest_incoming_htlc_expiry, sub.accepted_at,
+				sub.created_at, sub.updated_at, invoice.invoice
 			FROM lightning_htlc_subscription sub
 			JOIN lightning_invoice invoice ON
 				sub.lightning_invoice_id = invoice.id
@@ -655,8 +666,8 @@ impl Db {
 
 		let stmt = conn.prepare("
 			SELECT sub.id, sub.lightning_invoice_id, sub.lightning_node_id,
-				sub.status, sub.lowest_incoming_htlc_expiry, sub.created_at, sub.updated_at,
-				invoice.invoice,
+				sub.status, sub.lowest_incoming_htlc_expiry, sub.accepted_at,
+				sub.created_at, sub.updated_at, invoice.invoice,
 				COALESCE(array_agg(vtxo.vtxo_id::text), ARRAY[]::text[]) AS htlc_vtxos
 			FROM lightning_htlc_subscription sub
 			JOIN lightning_invoice invoice ON
@@ -668,6 +679,7 @@ impl Db {
 				sub.lightning_invoice_id,
 				sub.lightning_node_id,
 				sub.status,
+				sub.accepted_at,
 				sub.created_at,
 				sub.updated_at,
 				invoice.invoice
@@ -691,8 +703,8 @@ impl Db {
 
 		let stmt = conn.prepare("
 			SELECT sub.id, sub.lightning_invoice_id, sub.lightning_node_id,
-				sub.status, sub.lowest_incoming_htlc_expiry, sub.created_at, sub.updated_at,
-				invoice.invoice
+				sub.status, sub.lowest_incoming_htlc_expiry, sub.accepted_at,
+				sub.created_at, sub.updated_at, invoice.invoice
 			FROM lightning_htlc_subscription sub
 			JOIN lightning_invoice invoice ON
 				sub.lightning_invoice_id = invoice.id
@@ -702,6 +714,45 @@ impl Db {
 
 		let row = conn.query_opt(
 			&stmt, &[&htlc_subscription_id]
+		).await?;
+
+		if let Some(ref row) = row {
+			Ok(Some(row.try_into()?))
+		} else {
+			Ok(None)
+		}
+	}
+
+	/// Retrieve an open HTLC subscription for a specific node by payment hash.
+	///
+	/// This is used by TrackAll event handling to look up subscriptions
+	/// when a state change notification is received.
+	pub async fn get_open_htlc_subscription_for_node_by_payment_hash(
+		&self,
+		node_id: ClnNodeId,
+		payment_hash: &PaymentHash,
+	) -> anyhow::Result<Option<LightningHtlcSubscription>> {
+		let conn = self.get_conn().await?;
+
+		let stmt = conn.prepare("
+			SELECT sub.id, sub.lightning_invoice_id, sub.lightning_node_id,
+				sub.status, sub.lowest_incoming_htlc_expiry, sub.accepted_at,
+				sub.created_at, sub.updated_at, invoice.invoice
+			FROM lightning_htlc_subscription sub
+			JOIN lightning_invoice invoice ON
+				sub.lightning_invoice_id = invoice.id
+			WHERE invoice.payment_hash = $1
+				AND sub.lightning_node_id = $2
+				AND sub.status NOT IN ($3, $4)
+			ORDER BY sub.created_at DESC
+			LIMIT 1;
+		").await?;
+
+		let status_settled = LightningHtlcSubscriptionStatus::Settled;
+		let status_canceled = LightningHtlcSubscriptionStatus::Canceled;
+		let row = conn.query_opt(
+			&stmt,
+			&[&payment_hash.to_vec(), &node_id, &status_settled, &status_canceled],
 		).await?;
 
 		if let Some(ref row) = row {

@@ -2,6 +2,7 @@
 use std::str::FromStr;
 use std::{cmp, fmt ,str};
 use std::collections::HashMap;
+use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -12,9 +13,11 @@ use bitcoin_ext::BlockHeight;
 use chrono::{DateTime, Local};
 use cln_rpc::plugins::hold::{self, InvoiceState};
 use cln_rpc::ClnGrpcClient;
+use futures::Stream;
 use lightning_invoice::Bolt11Invoice;
 use tokio::sync::{broadcast, mpsc, Notify};
 use tokio::task::JoinHandle;
+use tokio_stream::StreamExt;
 use tonic::transport::Channel;
 use tracing::{debug, error, info, trace, warn};
 use ark::lightning::PaymentHash;
@@ -24,6 +27,7 @@ use cln_rpc::node_client::NodeClient;
 use cln_rpc::plugins::hold::hold_client::HoldClient;
 use crate::database;
 use crate::database::ln::{ClnNodeId, LightningHtlcSubscription, LightningHtlcSubscriptionStatus, LightningPaymentStatus};
+use crate::sync::SyncManager;
 use crate::system::RuntimeManager;
 use crate::telemetry;
 
@@ -35,6 +39,10 @@ pub struct ClnNodeMonitorConfig {
 	pub receive_htlc_forward_timeout: Duration,
 	pub check_base_delay: Duration,
 	pub check_max_delay: Duration,
+	/// Base delay for TrackAll reconnection backoff (e.g., 1 second)
+	pub track_all_base_delay: Duration,
+	/// Maximum delay for TrackAll reconnection backoff (e.g., 60 seconds)
+	pub track_all_max_delay: Duration,
 }
 
 pub struct ClnNodeMonitor {
@@ -52,6 +60,7 @@ impl ClnNodeMonitor {
 		node_rpc: ClnGrpcClient,
 		hold_rpc: Option<HoldClient<Channel>>,
 		config: ClnNodeMonitorConfig,
+		sync_manager: Arc<SyncManager>,
 	) -> anyhow::Result<ClnNodeMonitor> {
 		let payment_idxs = db.get_lightning_payment_indexes(node_id).await
 			.with_context(|| format!("failed to fetch payment indices for {}", node_id))?
@@ -66,6 +75,7 @@ impl ClnNodeMonitor {
 			config, db, payment_update_tx, ctrl_rx, node_id,
 			rpc: node_rpc,
 			hold_rpc,
+			sync_manager,
 			created_index: match payment_idxs.created_index {
 				0 => None,
 				i => Some(i),
@@ -118,6 +128,18 @@ enum Ctrl {
 	Stop,
 }
 
+/// Manages the lifecycle of the TrackAll gRPC stream
+enum TrackAllStreamState {
+	/// hold_rpc is None, TrackAll is disabled
+	Disabled,
+	/// Waiting before attempting to connect (with backoff)
+	Backoff { attempt: u32, retry_at: tokio::time::Instant },
+	/// Stream is active and receiving updates for all invoices
+	Connected(tonic::codec::Streaming<hold::TrackAllResponse>),
+	/// Stream needs to be (re)established
+	NeedsConnect,
+}
+
 struct ClnNodeMonitorProcess {
 	config: ClnNodeMonitorConfig,
 	db: database::Db,
@@ -128,6 +150,7 @@ struct ClnNodeMonitorProcess {
 
 	rpc: NodeClient<Channel>,
 	hold_rpc: Option<HoldClient<Channel>>,
+	sync_manager: Arc<SyncManager>,
 
 	/// last seen sendpay created index, or 0 for none seen
 	created_index: Option<u64>,
@@ -413,13 +436,18 @@ impl ClnNodeMonitorProcess {
 	/// - After a delay, it cancels the subscription on the plugin and updates
 	/// the status to canceled.
 	async fn process_htlc_subscriptions(&mut self) -> anyhow::Result<()> {
-		let tip = self.rpc.getinfo(cln_rpc::GetinfoRequest {}).await?
-			.into_inner().blockheight;
+		self.check_htlc_subscription_timeouts().await?;
+		self.poll_htlc_state_updates().await?;
+		Ok(())
+	}
 
+	/// Checks all open subscriptions for timeouts and expired invoices.
+	/// Called on timer regardless of whether TrackAll is enabled.
+	async fn check_htlc_subscription_timeouts(&mut self) -> anyhow::Result<()> {
 		let mut hold_client = match &self.hold_rpc {
 			Some(client) => client.clone(),
 			None => {
-				warn!("No hold rpc client, skipping incoming htlc subscriptions");
+				warn!("No hold rpc client, skipping htlc subscription timeout checks");
 				return Ok(());
 			},
 		};
@@ -438,6 +466,170 @@ impl ClnNodeMonitorProcess {
 		for htlc_subscription in htlc_subscriptions {
 			let payment_hash = htlc_subscription.invoice.payment_hash();
 
+			// Check for HTLC timeout: subscription held too long in Accepted state.
+			// We use our `accepted_at` timestamp rather than the hold plugin's HTLC
+			// `created_at` for accuracy.
+			if htlc_subscription.status == LightningHtlcSubscriptionStatus::Accepted {
+				// TODO(dunxen): Simply `.expect` and remove this `unwrap_or` at some stage.
+				// The `.unwrap_or` is here for backwards compatibility for existing servers that may
+				// have exsisting subscriptions in an `Accepted` state but without an `accepted_at` field
+				// after restart.
+				let accepted_at = htlc_subscription.accepted_at.unwrap_or(htlc_subscription.updated_at);
+				if accepted_at < Local::now() - self.config.receive_htlc_forward_timeout {
+					// Check if the hold invoice is still active (not an intra-ark payment)
+					let req = hold::ListRequest {
+						constraint: Some(hold::list_request::Constraint::PaymentHash(
+							payment_hash.to_byte_array().to_vec(),
+						)),
+					};
+					let res = hold_client.list(req).await?.into_inner();
+					let has_accepted_invoice = res.invoices.iter().any(|i| i.state == InvoiceState::Accepted as i32);
+
+					if has_accepted_invoice {
+						self.cancel_invoice_and_htlc_subscription(
+							&mut hold_client,
+							payment_hash,
+							&htlc_subscription,
+							"htlc vtxo setup timed out",
+						).await?;
+					} else {
+						// For intra-ark payments, the hold invoice is canceled after we set
+						// the subscription to Accepted, so there won't be an accepted invoice
+						// in the hold plugin.
+						self.cancel_htlc_subscription(&htlc_subscription, "htlc vtxo setup timed out").await?;
+					}
+					continue;
+				}
+			}
+
+			// Cancel invoice & subscription if invoice expired
+			if htlc_subscription.invoice.is_expired() {
+				self.cancel_invoice_and_htlc_subscription(
+					&mut hold_client,
+					payment_hash,
+					&htlc_subscription,
+					"invoice expired",
+				).await?;
+			}
+		}
+
+		Ok(())
+	}
+
+	/// Handles an invoice that has been accepted (HTLCs received).
+	/// Fetches HTLC details from hold plugin and validates expiry.
+	/// Returns true if subscription was updated, false if skipped/already processed.
+	async fn handle_invoice_accepted(
+		&mut self,
+		htlc_subscription: &LightningHtlcSubscription,
+	) -> anyhow::Result<bool> {
+		// Only process subscriptions in Created state
+		if htlc_subscription.status != LightningHtlcSubscriptionStatus::Created {
+			return Ok(false);
+		}
+
+		let mut hold_client = match &self.hold_rpc {
+			Some(client) => client.clone(),
+			None => {
+				warn!("No hold rpc client, cannot handle accepted invoice");
+				return Ok(false);
+			},
+		};
+
+		let payment_hash = htlc_subscription.invoice.payment_hash();
+
+		// Fetch HTLC details (TrackAllResponse only provides state, not HTLC details)
+		let req = hold::ListRequest {
+			constraint: Some(hold::list_request::Constraint::PaymentHash(
+				payment_hash.to_byte_array().to_vec(),
+			)),
+		};
+		let res = hold_client.list(req).await?.into_inner();
+
+		let accepted_invoice = match res.invoices.iter().find(|i| i.state == InvoiceState::Accepted as i32) {
+			Some(invoice) => invoice,
+			None => {
+				// Invoice is no longer in Accepted state
+				return Ok(false);
+			},
+		};
+
+		let lowest_incoming_htlc_expiry = match accepted_invoice.htlcs.iter().map(|h| h.cltv_expiry).min() {
+			Some(Some(lowest_incoming_htlc_expiry)) => lowest_incoming_htlc_expiry as BlockHeight,
+			None | Some(None) => {
+				warn!("CLN returned no HTLC expiry height for accepted invoice of subscription {}",
+					htlc_subscription.id,
+				);
+				return Ok(false);
+			},
+		};
+
+		let invoice = match Bolt11Invoice::from_str(&accepted_invoice.invoice) {
+			Ok(invoice) => {
+				debug_assert_eq!(htlc_subscription.invoice, invoice,
+					"HTLC subscription invoice != hold plugin response's invoice");
+				invoice
+			},
+			Err(e) => {
+				warn!("Failed to parse invoice from cln: '{}', {}", accepted_invoice.invoice, e);
+				return Ok(false);
+			},
+		};
+
+		// Get current tip for expiry validation
+		let tip = self.sync_manager.chain_tip().height;
+
+		// NB: We subtract 1 to give some buffer for the lightning payment to be sent.
+		let required_min_htlc_expiry = tip + invoice.min_final_cltv_expiry_delta() as BlockHeight - 1;
+
+		if lowest_incoming_htlc_expiry >= required_min_htlc_expiry {
+			debug!("Lightning htlc subscription ({}) was accepted.", htlc_subscription.id);
+
+			self.db.store_lightning_htlc_subscription_status(
+				htlc_subscription.id,
+				LightningHtlcSubscriptionStatus::Accepted,
+				Some(lowest_incoming_htlc_expiry),
+			).await?;
+
+			Ok(true)
+		} else {
+			debug!("Incoming HTLC expiry height ({}) for subscription doesn't fit. required {}, actual {}",
+				htlc_subscription.id, required_min_htlc_expiry, lowest_incoming_htlc_expiry
+			);
+
+			self.db.store_lightning_htlc_subscription_status(
+				htlc_subscription.id,
+				LightningHtlcSubscriptionStatus::Canceled,
+				None,
+			).await?;
+
+			Ok(false)
+		}
+	}
+
+	/// Polls hold plugin for invoice state changes.
+	/// This is the legacy approach, to be replaced by TrackAll.
+	async fn poll_htlc_state_updates(&mut self) -> anyhow::Result<()> {
+		let mut hold_client = match &self.hold_rpc {
+			Some(client) => client.clone(),
+			None => {
+				warn!("No hold rpc client, skipping polling for htlc state updates");
+				return Ok(());
+			},
+		};
+
+		let htlc_subscriptions = self.db.get_open_lightning_htlc_subscriptions(
+			self.node_id,
+		).await?;
+
+		for htlc_subscription in htlc_subscriptions {
+			// Only poll for subscriptions that haven't been accepted yet
+			if htlc_subscription.status != LightningHtlcSubscriptionStatus::Created {
+				continue;
+			}
+
+			let payment_hash = htlc_subscription.invoice.payment_hash();
+
 			debug!("Lightning htlc subscription ({}) is being verified.",
 				htlc_subscription.id,
 			);
@@ -449,89 +641,51 @@ impl ClnNodeMonitorProcess {
 			};
 			let res = hold_client.list(req).await?.into_inner();
 
-			let accepted_invoice = res.invoices.iter().find(|i| i.state == InvoiceState::Accepted as i32);
+			let is_accepted = res.invoices.iter().any(|i| i.state == InvoiceState::Accepted as i32);
 
-			if let Some(accepted_invoice) = accepted_invoice {
-				// If any HTLCs have been held with the invoice in the `LightningHtlcSubscriptionStatus::Accepted` state
-				// for too long (i.e. the receiving user has not prepared a claim) then we cancel the invoice and subscription.
-				if htlc_subscription.status == LightningHtlcSubscriptionStatus::Accepted && accepted_invoice.htlcs.iter().any(
-					|h| {
-						// Note that `created_at` for HTLC in the hold plugin is a UTC timestamp in seconds.
-						let created_at = DateTime::from_timestamp(h.created_at as i64, 0)
-							.unwrap_or_else(|| {
-								warn!("Invalid HTLC created_at timestamp: {}", h.created_at);
-								DateTime::UNIX_EPOCH
-							});
-						created_at < chrono::Utc::now() - self.config.receive_htlc_forward_timeout
-					}
-				) {
-					self.cancel_invoice_and_htlc_subscription(&mut hold_client, payment_hash, &htlc_subscription, "htlc vtxo setup timed out").await?;
-					continue;
-				}
-
-				let lowest_incoming_htlc_expiry = match accepted_invoice.htlcs.iter().map(|h| h.cltv_expiry).min() {
-					Some(Some(lowest_incoming_htlc_expiry)) => lowest_incoming_htlc_expiry as BlockHeight,
-					None | Some(None) => {
-						warn!("CLN returned no HTLC expiry height for accepted invoice of subscription {}",
-							htlc_subscription.id,
-						);
-						continue;
-					},
-				};
-
-				let invoice = match Bolt11Invoice::from_str(&accepted_invoice.invoice) {
-					Ok(invoice) => invoice,
-					Err(e) => {
-						warn!("Failed to parse invoice from cln: '{}', {}", accepted_invoice.invoice, e);
-						continue;
-					},
-				};
-
-				// NB: We subtract 1 to give some buffer for the lightning payment to be sent.
-				let required_min_htlc_expiry = tip + invoice.min_final_cltv_expiry_delta() as BlockHeight - 1;
-				if lowest_incoming_htlc_expiry >= required_min_htlc_expiry {
-					if htlc_subscription.status == LightningHtlcSubscriptionStatus::Created {
-						debug!("Lightning htlc subscription ({}) was accepted.", htlc_subscription.id);
-
-						self.db.store_lightning_htlc_subscription_status(
-							htlc_subscription.id,
-							LightningHtlcSubscriptionStatus::Accepted,
-							Some(lowest_incoming_htlc_expiry),
-						).await?;
-					}
-				} else {
-					debug!("Incoming HTLC expiry height ({}) for subscription doesn't fit. required {}, actual {}",
-						htlc_subscription.id, required_min_htlc_expiry, lowest_incoming_htlc_expiry
-					);
-
-					self.db.store_lightning_htlc_subscription_status(
-						htlc_subscription.id,
-						LightningHtlcSubscriptionStatus::Canceled,
-						None,
-					).await?;
-				}
-
-				continue;
-			}
-
-			// For intra-ark payments, the hold invoice is canceled after we set
-			// the subscription to Accepted, so there won't be an accepted invoice
-			// in the hold plugin. We need to check if the subscription has been
-			// in the Accepted state for too long using `receive_htlc_forward_timeout`.
-			if htlc_subscription.status == LightningHtlcSubscriptionStatus::Accepted {
-				let accepted_at = htlc_subscription.updated_at;
-				if accepted_at < Local::now() - self.config.receive_htlc_forward_timeout {
-					self.cancel_htlc_subscription(&htlc_subscription, "htlc vtxo setup timed out").await?;
-					continue;
-				}
-			}
-
-			// Cancel invoice & subscription if invoice expired
-			if htlc_subscription.invoice.is_expired() {
-				self.cancel_invoice_and_htlc_subscription(&mut hold_client, payment_hash, &htlc_subscription, "invoice expired").await?;
+			if is_accepted {
+				self.handle_invoice_accepted(&htlc_subscription).await?;
 			}
 		}
 
+		Ok(())
+	}
+
+	/// Attempts to establish TrackAll stream.
+	/// With an empty payment_hashes list, the stream returns updates for ALL invoices.
+	async fn connect_track_all(&mut self) -> anyhow::Result<tonic::codec::Streaming<hold::TrackAllResponse>> {
+		let hold_client = self.hold_rpc.as_mut().context("hold_rpc required")?;
+
+		// Empty list means track ALL invoice updates
+		let request = hold::TrackAllRequest { payment_hashes: vec![] };
+		let stream = hold_client.track_all(request).await?.into_inner();
+
+		Ok(stream)
+	}
+
+	/// Calculate exponential backoff delay for TrackAll reconnection.
+	fn track_all_backoff(&self, attempt: u32) -> Duration {
+		let base = self.config.track_all_base_delay.as_secs();
+		let max = self.config.track_all_max_delay.as_secs();
+		// Cap exponent at 6 to prevent overflow (2^6 = 64)
+		Duration::from_secs((base * 2u64.pow(attempt.min(6))).min(max))
+	}
+
+	/// Handle a TrackAll stream event - process invoice acceptance.
+	async fn handle_track_all_event(&mut self, response: hold::TrackAllResponse) -> anyhow::Result<()> {
+		let payment_hash = sha256::Hash::from_slice(&response.payment_hash)?;
+		let state = hold::InvoiceState::try_from(response.state).ok();
+
+		if state == Some(hold::InvoiceState::Accepted) {
+			if let Some(sub) = self.db
+				.get_open_htlc_subscription_for_node_by_payment_hash(
+					self.node_id,
+					&PaymentHash::from(payment_hash),
+				).await?
+			{
+				self.handle_invoice_accepted(&sub).await?;
+			}
+		}
 		Ok(())
 	}
 
@@ -601,24 +755,92 @@ impl ClnNodeMonitorProcess {
 		let mut invoice_interval = tokio::time::interval(self.config.invoice_check_interval);
 		let (mut rpc1, mut rpc2) = (self.rpc.clone(), self.rpc.clone()); // circumvent &mut
 
-		// we have two nested loops so that we can keep the gRPC requests
-		// alive while we receive messages over other channels
+		// Initialize TrackAll state based on whether hold_rpc is available
+		let mut track_all_state = if self.hold_rpc.is_some() {
+			TrackAllStreamState::NeedsConnect
+		} else {
+			TrackAllStreamState::Disabled
+		};
+		// NB we can't change the state while we have a mutable borrow on the state
+		// so we use this variable to trigger reconnects in the event loop
+		// it holds the attempt number we should set on failure
+		let mut track_all_reconnect_attempt = None;
+
+		// we have two nested loops so that we can keep the various streams
+		// alive while we receive messages over all channels
 		'requests: loop {
 			let created_request = rpc1.wait(cln_rpc::WaitRequest {
 				subsystem: cln_rpc::wait_request::WaitSubsystem::Sendpays as i32,
 				indexname: cln_rpc::wait_request::WaitIndexname::Created as i32,
 				nextvalue: self.created_index.map(|i| i + 1).unwrap_or(0),
 			});
+			tokio::pin!(created_request);
 			let updated_request = rpc2.wait(cln_rpc::WaitRequest {
 				subsystem: cln_rpc::wait_request::WaitSubsystem::Sendpays as i32,
 				indexname: cln_rpc::wait_request::WaitIndexname::Updated as i32,
 				nextvalue: self.updated_index.map(|i| i + 1).unwrap_or(0),
 			});
-
-			tokio::pin!(created_request);
 			tokio::pin!(updated_request);
+
+			// Attempt TrackAll connection if needed
+			match track_all_state {
+				TrackAllStreamState::NeedsConnect => {
+					track_all_reconnect_attempt = Some(1);
+				},
+				TrackAllStreamState::Backoff { attempt, retry_at }
+					if tokio::time::Instant::now() > retry_at =>
+				{
+					track_all_reconnect_attempt = Some(attempt + 1);
+				},
+				_ => {},
+			}
+			if let Some(next_attempt) = track_all_reconnect_attempt {
+				track_all_reconnect_attempt = None;
+				match self.connect_track_all().await {
+					Ok(stream) => {
+						info!("TrackAll stream connected");
+						// One-time reconciliation to catch any events missed during disconnect
+						if let Err(e) = self.poll_htlc_state_updates().await {
+							warn!("TrackAll post-connect reconciliation failed: {:#}", e);
+						}
+						track_all_state = TrackAllStreamState::Connected(stream);
+					},
+					Err(e) => {
+						warn!("TrackAll connect failed: {:#}", e);
+						let attempt = next_attempt;
+						let backoff_delay = self.track_all_backoff(attempt);
+						let retry_at = tokio::time::Instant::now() + backoff_delay;
+						track_all_state = TrackAllStreamState::Backoff { attempt, retry_at };
+					},
+				}
+			}
+
+			// whether our invoice_interval should handle subscriptions or only timeouts
+			let interval_handle_subscriptions = match track_all_state {
+				TrackAllStreamState::Connected(_) => false,
+				TrackAllStreamState::Backoff { .. } => false,
+				TrackAllStreamState::Disabled | TrackAllStreamState::NeedsConnect => true,
+			};
+
+			// to simplify the select event loop below, we first extract the two possible
+			// futures for the track_all system.
+			// note that we place never-ending `pending` stubs if we don't need them
+			let (mut track_all_stream, mut track_all_backoff): (
+				Pin<Box<dyn Stream<Item = Result<_, _>> + Send>>,
+				Pin<Box<dyn Future<Output = ()> + Send>>,
+			) = match track_all_state {
+				TrackAllStreamState::Connected(ref mut stream) => {
+					(Box::pin(stream), Box::pin(futures::future::pending()))
+				},
+				TrackAllStreamState::Backoff { retry_at, .. } => {
+					let sleep = tokio::time::sleep_until(retry_at);
+					(Box::pin(tokio_stream::pending()), Box::pin(sleep))
+				},
+				_ => (Box::pin(tokio_stream::pending()), Box::pin(futures::future::pending())),
+			};
+
 			loop {
-				tokio::select!{
+				tokio::select! {
 					_ = rtmgr.shutdown_signal() => return Ok(()),
 					ctrl = self.ctrl_rx.recv() => match ctrl {
 						None | Some(Ctrl::Stop) => return Ok(()),
@@ -633,11 +855,38 @@ impl ClnNodeMonitorProcess {
 							.context("error processing updated events")?;
 						continue 'requests;
 					},
+					event = track_all_stream.next() => {
+						match event {
+							Some(Ok(resp)) => {
+								if let Err(e) = self.handle_track_all_event(resp).await {
+									warn!("TrackAll event error: {:#}", e);
+								}
+							}
+							Some(Err(e)) => {
+								warn!("TrackAll stream error: {:#}", e);
+								track_all_reconnect_attempt = Some(0);
+								continue 'requests;
+							}
+							None => {
+								info!("TrackAll stream ended");
+								track_all_reconnect_attempt = Some(0);
+								continue 'requests;
+							}
+						}
+					},
+					_ = &mut track_all_backoff => {
+						info!("TrackAll backoff expired, reconnecting");
+						continue 'requests;
+					},
 					_ = invoice_interval.tick() => {
 						self.process_payment_attempts().await?;
-						self.process_htlc_subscriptions().await?;
+						if interval_handle_subscriptions {
+							self.process_htlc_subscriptions().await?;
+						} else {
+							self.check_htlc_subscription_timeouts().await?;
+						}
 					},
-				};
+				}
 			}
 		}
 	}

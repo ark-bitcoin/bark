@@ -171,7 +171,8 @@ pub struct Server {
 	// NB this needs to be an Arc so we can take a static guard
 	rounds_wallet: Arc<tokio::sync::Mutex<PersistedWallet>>,
 	bitcoind: BitcoinRpcClient,
-	sync_manager: SyncManager,
+	// NB needs to be Arc so tasks started before Server is constructed can share it
+	sync_manager: Arc<SyncManager>,
 	rtmgr: RuntimeManager,
 	tx_nursery: TxNursery,
 	vtxo_sweeper: Option<VtxoSweeper>,
@@ -410,19 +411,20 @@ impl Server {
 			None
 		};
 
-		let sync_manager = SyncManager::start(
+		let sync_manager = Arc::new(SyncManager::start(
 			rtmgr.clone(),
 			bitcoind.clone(),
 			db.clone(),
 			vec![],
 			deep_tip,
 			cfg.sync_manager_block_poll_interval,
-		).await.context("Failed to start SyncManager")?;
+		).await.context("Failed to start SyncManager")?);
 
 		let cln = ClnManager::start(
 			rtmgr.clone(),
 			&cfg,
 			db.clone(),
+			sync_manager.clone(),
 		).await.context("failed to start ClnManager")?;
 
 		let vtxopool = VtxoPool::new(cfg.vtxopool.clone(), &db).await

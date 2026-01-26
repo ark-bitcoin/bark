@@ -176,10 +176,10 @@ CREATE FUNCTION public.lightning_htlc_subscription_update_trigger() RETURNS trig
 BEGIN
     INSERT INTO lightning_htlc_subscription_history (
         id, lightning_invoice_id, lightning_node_id,
-        status, created_at, updated_at
+        status, accepted_at, created_at, updated_at
     ) VALUES (
         OLD.id, OLD.lightning_invoice_id, OLD.lightning_node_id,
-        OLD.status, OLD.created_at, OLD.updated_at
+        OLD.status, OLD.accepted_at, OLD.created_at, OLD.updated_at
     );
 
     IF NEW.updated_at = OLD.updated_at THEN
@@ -761,7 +761,8 @@ CREATE TABLE public.lightning_htlc_subscription (
     status public.lightning_htlc_subscription_status NOT NULL,
     created_at timestamp with time zone NOT NULL,
     updated_at timestamp with time zone NOT NULL,
-    lowest_incoming_htlc_expiry bigint
+    lowest_incoming_htlc_expiry bigint,
+    accepted_at timestamp with time zone
 );
 
 
@@ -776,7 +777,8 @@ CREATE TABLE public.lightning_htlc_subscription_history (
     status public.lightning_htlc_subscription_status NOT NULL,
     created_at timestamp with time zone NOT NULL,
     updated_at timestamp with time zone NOT NULL,
-    history_created_at timestamp with time zone DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC'::text) NOT NULL
+    history_created_at timestamp with time zone DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC'::text) NOT NULL,
+    accepted_at timestamp with time zone
 );
 
 
