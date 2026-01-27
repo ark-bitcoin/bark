@@ -254,6 +254,20 @@ impl Db {
 		query::get_first_unsigned_virtual_transaction(client, txids).await
 	}
 
+	/// Marks virtual transactions as having server-owned descendants.
+	///
+	/// This function:
+	/// 1. Fails if any of the txids have NULL signed_tx (returns the first offending txid)
+	/// 2. Updates server_may_own_descendant_since only where it's currently NULL
+	/// 3. Does not overwrite existing server_may_own_descendant_since values
+	pub async fn mark_server_may_own_descendants(
+		&self,
+		txids: &[Txid],
+	) -> anyhow::Result<()> {
+		let conn = self.get_conn().await.context("failed to connect to db")?;
+		query::mark_server_may_own_descendants(&*conn, txids).await
+	}
+
 	/**
 	 * Arkoors
 	*/
