@@ -160,14 +160,20 @@ impl Config {
 	}
 
 	/// Load config from the config file path, filling missing fields
-	/// from the network default
+	/// from the network default.
+	///
+	/// Config values are loaded in the following priority order (highest to lowest):
+	/// 1. Environment variables with `BARK_` prefix (e.g., `BARK_ESPLORA_ADDRESS`)
+	/// 2. Config file values
+	/// 3. Network defaults
 	pub fn load(network: Network, path: impl AsRef<Path>) -> anyhow::Result<Config> {
 		let default = config::Config::try_from(&Self::network_default(network))
 			.expect("default config failed to deconstruct");
 
 		Ok(config::Config::builder()
 			.add_source(default)
-			.add_source(config::File::from(path.as_ref()))
+			.add_source(config::File::from(path.as_ref()).required(false))
+			.add_source(config::Environment::with_prefix("BARK").separator("_"))
 			.build().context("error building config")?
 			.try_deserialize::<Config>().context("error parsing config")?)
 	}
