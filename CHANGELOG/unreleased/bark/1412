@@ -1,0 +1,5 @@
+- Implement unified mailbox delivery
+  Bark now uses a unified mailbox system for receiving VTXOs, providing more
+  reliable delivery across different sources.
+  [#1412](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1412)
+  - **BREAKING:** Addresses now use mailbox addresses
