@@ -17,6 +17,7 @@ use tokio::sync::Mutex;
 use tonic::transport::{Certificate, Channel, channel::ClientTlsConfig, Identity, Uri};
 
 use cln_rpc::node_client::NodeClient;
+use cln_rpc::plugins::hold::hold_client::HoldClient;
 
 use crate::Bitcoind;
 use crate::constants::bitcoind::{BITCOINRPC_TEST_PASSWORD, BITCOINRPC_TEST_USER};
@@ -211,6 +212,21 @@ impl LightningDHelper {
 		self.try_grpc_client().await.expect("failed to create rpc client")
 	}
 
+	async fn try_hold_client(&self) -> anyhow::Result<HoldClient<Channel>> {
+		let hold_details = self.hold_details().await;
+		let ca_pem = fs::read_to_string(hold_details.server_cert_path).await?;
+		let id_pem = fs::read_to_string(hold_details.client_cert_path).await?;
+		let id_key = fs::read_to_string(hold_details.client_key_path).await?;
+
+		let hold_uri: Uri = hold_details.uri.parse()?;
+		let channel = Channel::builder(hold_uri).tls_config(ClientTlsConfig::new()
+			.ca_certificate(Certificate::from_pem(ca_pem))
+			.identity(Identity::from_pem(&id_pem, &id_key))
+		)?.connect().await?;
+
+		Ok(HoldClient::new(channel))
+	}
+
 	pub async fn grpc_details(&self) -> GrpcDetails {
 		let state = self.state.lock().await;
 		let dir = &self.config.lightning_dir;
@@ -233,7 +249,7 @@ impl LightningDHelper {
 		}
 	}
 
-	async fn is_ready(&self) -> bool {
+	async fn is_cln_ready(&self) -> bool {
 		if let Ok(mut client) = self.try_grpc_client().await {
 			let req = cln_rpc::GetinfoRequest{};
 			match client.getinfo(req).await {
@@ -248,6 +264,18 @@ impl LightningDHelper {
 		} else {
 			false
 		}
+	}
+
+	async fn is_hold_ready(&self) -> bool {
+		if let Ok(mut client) = self.try_hold_client().await {
+			client.get_info(cln_rpc::plugins::hold::GetInfoRequest {}).await.is_ok()
+		} else {
+			false
+		}
+	}
+
+	async fn is_ready(&self) -> bool {
+		self.is_cln_ready().await && self.is_hold_ready().await
 	}
 }
 
