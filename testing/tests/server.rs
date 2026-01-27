@@ -2326,3 +2326,40 @@ async fn empty_round_does_not_replay_stale_attempt() {
 	let event = stream.next().wait(Duration::from_secs(5)).await.unwrap().unwrap();
 	assert!(matches!(event.event, Some(protos::round_event::Event::Attempt(_))));
 }
+
+#[tokio::test]
+async fn initiate_lightning_payment_fails_without_register_vtxos() {
+	let ctx = TestContext::new("server/initiate_lightning_payment_fails_without_register_vtxos").await;
+
+	let lightning = ctx.new_lightning_setup("lightningd").await;
+
+	// Start a server and link it to our cln installation
+	let srv = ctx.new_captaind_with_funds("server", Some(&lightning.sender), btc(10)).await;
+
+	// Create a proxy that drops register_vtxos calls (returns success without calling upstream)
+	#[derive(Clone)]
+	struct Proxy;
+	#[async_trait::async_trait]
+	impl captaind::proxy::ArkRpcProxy for Proxy {
+		async fn register_vtxos(
+			&self, _upstream: &mut ArkClient, _req: protos::RegisterVtxosRequest,
+		) -> Result<protos::Empty, tonic::Status> {
+			// Drop the call - return success but don't register with upstream
+			Ok(protos::Empty {})
+		}
+	}
+
+	let proxy = srv.start_proxy_no_mailbox(Proxy).await;
+
+	// Start a bark and create a VTXO
+	let bark_1 = ctx.new_bark_with_funds("bark-1", &proxy.address, btc(3)).await;
+	bark_1.board_and_confirm_and_register(&ctx, btc(2)).await;
+
+	let invoice = lightning.receiver.invoice(Some(btc(1)), "test_payment", "A test payment").await;
+
+	// The payment should fail because register_vtxos was dropped,
+	// so initiate_lightning_payment will fail when trying to mark server_may_own_descendants
+	let err = bark_1.try_pay_lightning(invoice, None, false).await.unwrap_err();
+	assert!(err.to_string().contains("does not exist") || err.to_string().contains("NULL signed_tx"),
+		"Expected error about missing or unsigned transaction, got: {err}");
+}
