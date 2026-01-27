@@ -182,6 +182,9 @@ in {
 			hal
 			pkgs.jq
 
+			# for all tests
+			pkgs.cargo-nextest
+
 			# for integration tests
 			postgresql
 			bitcoin
