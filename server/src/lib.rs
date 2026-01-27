@@ -755,6 +755,59 @@ impl Server {
 		Ok(())
 	}
 
+	/// Registers VTXO signed transaction chains.
+	///
+	/// Validates each VTXO:
+	/// - Checks it exists in the database
+	/// - Checks it is fully signed
+	/// - Validates signatures against the chain anchor transaction
+	/// - Extracts transactions and updates virtual_transaction table
+	pub async fn register_vtxo_transactions(
+		&self,
+		vtxos: impl IntoIterator<Item = impl AsRef<Vtxo>>,
+	) -> anyhow::Result<()> {
+		for vtxo in vtxos {
+			let vtxo = vtxo.as_ref();
+			let vtxo_id = vtxo.id();
+
+			// Check vtxo exists in database
+			let _stored_vtxo = self.db.get_vtxo_by_id(vtxo_id).await
+				.context(vtxo_id)
+				.badarg("vtxo not found in database")?;
+
+			// Check vtxo is fully signed
+			if !vtxo.has_all_witnesses() {
+				return badarg!("vtxo {} is not fully signed", vtxo_id);
+			}
+
+			// Get chain anchor transaction for validation
+			let anchor_txid = vtxo.chain_anchor().txid;
+			let anchor_vtx = self.db.get_virtual_transaction_by_txid(anchor_txid).await
+				.context(anchor_txid)
+				.context("failed to query virtual transaction")?
+				.context(anchor_txid)
+				.badarg("chain anchor tx not found")?;
+
+			let anchor_tx = anchor_vtx.signed_tx()
+				.context(anchor_txid)
+				.badarg("chain anchor tx has no signed_tx")?;
+
+			// Validate the VTXO against its chain anchor
+			vtxo.validate(&anchor_tx)
+				.context(vtxo_id)
+				.badarg("vtxo validation failed")?;
+
+			// Extract all transactions from the VTXO
+			for item in vtxo.transactions() {
+				let txid = item.tx.compute_txid();
+				trace!("Registering virtual tx {} for vtxo {}", txid, vtxo_id);
+				self.db.upsert_virtual_transaction(txid, Some(&item.tx), false, None).await?;
+			}
+		}
+
+		Ok(())
+	}
+
 	pub async fn check_vtxos_not_exited<V: VtxoRef>(
 		&self,
 		vtxos: impl IntoIterator<Item=V>
