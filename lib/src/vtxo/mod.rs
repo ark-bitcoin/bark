@@ -62,7 +62,7 @@ pub use self::policy::{Policy, VtxoPolicy, VtxoPolicyKind, ServerVtxoPolicy};
 pub(crate) use self::genesis::{GenesisItem, GenesisTransition};
 
 pub use self::policy::{
-	PubkeyVtxoPolicy, CheckpointVtxoPolicy, ExpiryVtxoPolicy,
+	PubkeyVtxoPolicy, CheckpointVtxoPolicy, ExpiryVtxoPolicy, HarkLeafVtxoPolicy,
 	ServerHtlcRecvVtxoPolicy, ServerHtlcSendVtxoPolicy
 };
 pub use self::policy::clause::{
@@ -755,6 +755,9 @@ const VTXO_POLICY_CHECKPOINT: u8 = 0x03;
 /// The byte used to encode the [ServerVtxoPolicy::Expiry] output type.
 const VTXO_POLICY_EXPIRY: u8 = 0x04;
 
+/// The byte used to encode the [ServerVtxoPolicy::HarkLeaf] output type.
+const VTXO_POLICY_HARK_LEAF: u8 = 0x05;
+
 impl ProtocolEncoding for VtxoPolicy {
 	fn encode<W: io::Write + ?Sized>(&self, w: &mut W) -> Result<(), io::Error> {
 		match self {
@@ -830,6 +833,11 @@ impl ProtocolEncoding for ServerVtxoPolicy {
 				w.emit_u8(VTXO_POLICY_EXPIRY)?;
 				internal_key.encode(w)?;
 			},
+			Self::HarkLeaf(HarkLeafVtxoPolicy { user_pubkey, unlock_hash }) => {
+				w.emit_u8(VTXO_POLICY_HARK_LEAF)?;
+				user_pubkey.encode(w)?;
+				unlock_hash.encode(w)?;
+			},
 		}
 		Ok(())
 	}
@@ -847,6 +855,11 @@ impl ProtocolEncoding for ServerVtxoPolicy {
 			VTXO_POLICY_EXPIRY => {
 				let internal_key = XOnlyPublicKey::decode(r)?;
 				Ok(Self::Expiry(ExpiryVtxoPolicy { internal_key }))
+			},
+			VTXO_POLICY_HARK_LEAF => {
+				let user_pubkey = PublicKey::decode(r)?;
+				let unlock_hash = sha256::Hash::decode(r)?;
+				Ok(Self::HarkLeaf(HarkLeafVtxoPolicy { user_pubkey, unlock_hash }))
 			},
 			v => Err(ProtocolDecodingError::invalid(format_args!(
 				"invalid ServerVtxoPolicy type byte: {v:#x}",
