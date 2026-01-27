@@ -1,5 +1,0 @@
-- Refactor `GenesisItem::Arkoor` to remove embedded policy
-  Removes the `Policy` from `GenesisItem::Arkoor` to allow adding new policies
-  without introducing breaking changes to the protocol encoding.
-  [#1396](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1396)
-  - **BREAKING:** `ProtocolEncoding` for `GenesisItem` has changed

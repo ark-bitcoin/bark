@@ -1,3 +1,0 @@
-- Fix encoding for VTXOs with more than 256 genesis items
-  [#1550](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1550)
-  - **BREAKING:** `ProtocolEncoding` for genesis length fields has changed
