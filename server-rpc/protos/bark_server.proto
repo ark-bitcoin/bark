@@ -21,6 +21,9 @@ service ArkService {
 	rpc RequestBoardCosign(BoardCosignRequest) returns (BoardCosignResponse) {}
 	rpc RegisterBoardVtxo(BoardVtxoRequest) returns (core.Empty) {}
 
+	// Register VTXOs with their signed transaction chains
+	rpc RegisterVtxos(RegisterVtxosRequest) returns (core.Empty) {}
+
 	// * ARKOOR PAYMENTS*
 
 	rpc RequestArkoorCosign(ArkoorPackageCosignRequest) returns (ArkoorPackageCosignResponse) {}
@@ -135,6 +138,11 @@ message BoardCosignResponse {
 
 message BoardVtxoRequest {
 	bytes board_vtxo = 1;
+}
+
+message RegisterVtxosRequest {
+	// List of serialized VTXOs (using ProtocolEncoding)
+	repeated bytes vtxos = 1;
 }
 
 

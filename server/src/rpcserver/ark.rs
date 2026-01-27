@@ -153,6 +153,27 @@ impl rpc::server::ArkService for Server {
 		Ok(tonic::Response::new(protos::Empty {}))
 	}
 
+	/// Registers VTXOs with their signed transaction chains
+	#[tracing::instrument(skip(self, req), fields(
+		vtxo_count = req.get_ref().vtxos.len(),
+	))]
+	async fn register_vtxos(
+		&self,
+		req: tonic::Request<protos::RegisterVtxosRequest>,
+	) -> Result<tonic::Response<protos::Empty>, tonic::Status> {
+		let req = req.into_inner();
+
+		if req.vtxos.is_empty() {
+			macros::badarg!("no vtxos provided");
+		}
+
+		let vtxos = req.vtxos.iter().map(|v| Vtxo::from_bytes(v)).collect::<Result<Vec<_>, _>>()?;
+
+		self.register_vtxo_transactions(&vtxos).await.to_status()?;
+
+		Ok(tonic::Response::new(protos::Empty {}))
+	}
+
 	// arkoor
 
 	/// Handles an arkoor cosign request.
