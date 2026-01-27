@@ -5,6 +5,7 @@
 use std::iter;
 use std::borrow::Cow;
 use std::convert::Infallible;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::Context;
 use ark::vtxo::VtxoValidationError;
@@ -1223,6 +1224,13 @@ async fn update_funding_txid(
 }
 
 impl Wallet {
+	/// Ask the server when the next round is scheduled to start
+	pub async fn next_round_start_time(&self) -> anyhow::Result<SystemTime> {
+		let mut srv = self.require_server()?;
+		let ts = srv.client.next_round_time(protos::Empty {}).await?.into_inner().timestamp;
+		Ok(UNIX_EPOCH.checked_add(Duration::from_secs(ts)).context("invalid timestamp")?)
+	}
+
 	/// Start a new round participation
 	///
 	/// This function will store the state in the db and mark the VTXOs as locked.
