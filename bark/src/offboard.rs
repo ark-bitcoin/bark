@@ -31,6 +31,9 @@ impl Wallet {
 		vtxo_keys: &[Keypair],
 		req: &OffboardRequest,
 	) -> anyhow::Result<Transaction> {
+		// Register VTXOs with server before offboarding
+		self.register_vtxos_with_server(&vtxos).await?;
+
 		let challenge = OffboardRequestChallenge::new(
 			&req, vtxos.iter().map(|v| v.as_ref().id()),
 		);
