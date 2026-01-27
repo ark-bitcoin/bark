@@ -94,6 +94,10 @@ pub trait ArkRpcProxy: Send + Sync + Clone + 'static {
 		Ok(upstream.claim_lightning_receive(req).await?.into_inner())
 	}
 
+	async fn next_round_time(&self, upstream: &mut ArkClient, req: protos::Empty) -> Result<protos::NextRoundTimeResponse, tonic::Status> {
+		Ok(upstream.next_round_time(req).await?.into_inner())
+	}
+
 	async fn subscribe_rounds(&self, upstream: &mut ArkClient, req: protos::Empty) -> Result<Box<
 		dyn Stream<Item = Result<protos::RoundEvent, tonic::Status>> + Unpin + Send + 'static
 	>, tonic::Status> {
@@ -321,6 +325,12 @@ impl<T: ArkRpcProxy> rpc::server::ArkService for ArkRpcProxyWrapper<T> {
 		&self, req: tonic::Request<protos::ClaimLightningReceiveRequest>,
 	) -> Result<tonic::Response<protos::ArkoorPackageCosignResponse>, tonic::Status> {
 		Ok(tonic::Response::new(ArkRpcProxy::claim_lightning_receive(&self.proxy, &mut self.upstream.clone(), req.into_inner()).await?))
+	}
+
+	async fn next_round_time(
+		&self, req: tonic::Request<protos::Empty>,
+	) -> Result<tonic::Response<protos::NextRoundTimeResponse>, tonic::Status> {
+		Ok(tonic::Response::new(ArkRpcProxy::next_round_time(&self.proxy, &mut self.upstream.clone(), req.into_inner()).await?))
 	}
 
 	type SubscribeRoundsStream = Box<

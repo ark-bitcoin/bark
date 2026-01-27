@@ -45,7 +45,7 @@ use std::pin::Pin;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::task::Poll;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use anyhow::Context;
 use bitcoin::{bip32, Address, Amount, OutPoint, Transaction, Txid};
@@ -132,6 +132,7 @@ pub struct RoundHandle {
 	last_round_event: parking_lot::Mutex<Option<Arc<RoundEvent>>>,
 	round_input_tx: mpsc::UnboundedSender<(RoundInput, oneshot::Sender<anyhow::Error>)>,
 	round_trigger_tx: mpsc::Sender<()>,
+	next_round_time: Arc<parking_lot::RwLock<SystemTime>>,
 }
 
 impl RoundHandle {
@@ -442,6 +443,9 @@ impl Server {
 				last_round_event: parking_lot::Mutex::new(None),
 				round_input_tx,
 				round_trigger_tx,
+				next_round_time: Arc::new(parking_lot::RwLock::new(
+					SystemTime::now() + cfg.round_interval
+				)),
 			},
 			forfeit_nonces: parking_lot::Mutex::new(TimedEntryMap::new()),
 			vtxos_in_flux: VtxosInFlux::new(),
