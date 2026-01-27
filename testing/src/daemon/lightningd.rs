@@ -149,8 +149,16 @@ impl LightningDHelper {
 		writeln!(file, "bitcoin-rpcuser={}", BITCOINRPC_TEST_USER).unwrap();
 		writeln!(file, "bitcoin-rpcpassword={}", BITCOINRPC_TEST_PASSWORD).unwrap();
 		if let Ok(dir) = env::var(LIGHTNINGD_PLUGIN_DIR) {
-			trace!("Adding plugin-dir to lightningd: {}", dir);
-			writeln!(file, "plugin-dir={}", dir).unwrap();
+			let plugin_dir = std::path::Path::new(&dir);
+
+			// Mark critical plugins as important - CLN will crash if they fail
+			for plugin_name in ["hold", "cln-grpc"] {
+				let plugin_path = plugin_dir.join(plugin_name);
+				if plugin_path.exists() {
+					trace!("Adding important-plugin: {}", plugin_path.display());
+					writeln!(file, "important-plugin={}", plugin_path.display()).unwrap();
+				}
+			}
 		}
 		writeln!(file, "alias={}", self.name).unwrap();
 		writeln!(file, "").unwrap();
