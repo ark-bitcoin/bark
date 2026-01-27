@@ -52,6 +52,11 @@ test-integration TEST="": build docker-pull
 	cargo test --package ark-testing {{TEST}}
 alias int := test-integration
 
+# run integration tests for bark, movement, exit and lightning test files only
+test-integration-client: build docker-pull
+	cargo test --package ark-testing --test bark --test movement --test exit --test lightningd
+alias int-client := test-integration-client
+
 # run all integration tests without logging and without early failure.
 test-integration-all: build docker-pull
 	TEST_LOG=off cargo test --package ark-testing --no-fail-fast
