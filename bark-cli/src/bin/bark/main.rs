@@ -151,6 +151,9 @@ enum Command {
 		/// regardless of expiry height
 		#[arg(long)]
 		counterparty: bool,
+		/// Perform the refresh in delegated (non-interactive) mode
+		#[arg(long)]
+		delegated: bool,
 		/// Skip syncing wallet
 		#[arg(long)]
 		no_sync: bool,
@@ -248,7 +251,11 @@ enum Command {
 	/// This includes onchain sync, offchain sync, registering boards with the server,
 	/// syncing Lightning VTXOs, syncing exits, and refreshing soon-to-expire VTXOs
 	#[command()]
-	Maintain,
+	Maintain {
+		/// Perform the maintenance in delegated (non-interactive) mode
+		#[arg(long)]
+		delegated: bool,
+	},
 
 	/// developer commands
 	#[command(subcommand)]
@@ -344,7 +351,9 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 
 			output_json(&movements);
 		},
-		Command::Refresh { vtxos, threshold_blocks, threshold_hours, counterparty, all, no_sync } => {
+		Command::Refresh {
+			vtxos, threshold_blocks, threshold_hours, counterparty, all, delegated, no_sync,
+		} => {
 			if !no_sync {
 				info!("Syncing wallet...");
 				wallet.sync().await;
@@ -373,10 +382,18 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 			let vtxos = vtxos.into_iter().map(|v| v.id()).collect::<Vec<_>>();
 
 			info!("Refreshing {} vtxos...", vtxos.len());
-			if let Some(res) = wallet.refresh_vtxos(vtxos).await? {
-				output_json(&json::RoundStatus::from(res));
+			if delegated {
+				if let Some(res) = wallet.refresh_vtxos_delegated(vtxos).await? {
+					output_json(&res.id.to_string());
+				} else {
+					info!("No round happened");
+				}
 			} else {
-				info!("No round happened");
+				if let Some(res) = wallet.refresh_vtxos(vtxos).await? {
+					output_json(&json::RoundStatus::from(res));
+				} else {
+					info!("No round happened");
+				}
 			}
 		},
 		Command::Board { amount, all, no_sync } => {
@@ -509,8 +526,12 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 		Command::Round(cmd) => {
 			round::execute_round_command(cmd, &mut wallet).await?;
 		},
-		Command::Maintain => {
-			wallet.maintenance_with_onchain(&mut onchain).await?;
+		Command::Maintain { delegated } => {
+			if delegated {
+				wallet.maintenance_with_onchain_delegated(&mut onchain).await?;
+			} else {
+				wallet.maintenance_with_onchain(&mut onchain).await?;
+			}
 		},
 	}
 	Ok(())
