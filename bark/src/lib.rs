@@ -743,23 +743,6 @@ impl Wallet {
 		Ok(self.seed.derive_vtxo_keypair(idx))
 	}
 
-	/// Generate a new mailbox [ark::Address].
-	pub async fn new_address(&self) -> anyhow::Result<ark::Address> {
-		let srv = &self.require_server()?;
-		let network = self.properties().await?.network;
-		let (keypair, _) = self.derive_store_next_keypair().await?;
-		let ark_info = srv.ark_info().await?;
-		let mailbox_kp = self.mailbox_keypair()?;
-
-		Ok(ark::Address::builder()
-			.testnet(network != bitcoin::Network::Bitcoin)
-			.server_pubkey(ark_info.server_pubkey)
-			.pubkey_policy(keypair.public_key())
-			.mailbox(ark_info.mailbox_pubkey, MailboxIdentifier::from_pubkey(mailbox_kp.public_key()), &keypair)
-			.expect("Failed to assign mailbox")
-			.into_address().unwrap())
-	}
-
 	/// Peak for a mailbox [ark::Address] at the given key index.
 	///
 	/// May return an error if the address at the given index has not been derived yet.
@@ -783,21 +766,15 @@ impl Wallet {
 	///
 	/// This derives and stores the keypair directly after currently last revealed one.
 	pub async fn new_address_with_index(&self) -> anyhow::Result<(ark::Address, u32)> {
-		let srv = &self.require_server()?;
-		let network = self.properties().await?.network;
-		let (keypair, index) = self.derive_store_next_keypair().await?;
-		let ark_info = srv.ark_info().await?;
-		let mailbox_kp = self.mailbox_keypair()?;
-
-		let addr = ark::Address::builder()
-			.testnet(network != bitcoin::Network::Bitcoin)
-			.server_pubkey(ark_info.server_pubkey)
-			.pubkey_policy(keypair.public_key())
-			.mailbox(ark_info.mailbox_pubkey, MailboxIdentifier::from_pubkey(mailbox_kp.public_key()), &keypair)
-			.expect("Failed to assign mailbox")
-			.into_address()?;
-
+		let (_, index) = self.derive_store_next_keypair().await?;
+		let addr = self.peak_address(index).await?;
 		Ok((addr, index))
+	}
+
+	/// Generate a new mailbox [ark::Address].
+	pub async fn new_address(&self) -> anyhow::Result<ark::Address> {
+		let (addr, _) = self.new_address_with_index().await?;
+		Ok(addr)
 	}
 
 	/// Create a new wallet without an optional onchain backend. This will restrict features such as
