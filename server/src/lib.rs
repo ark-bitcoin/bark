@@ -35,10 +35,11 @@ mod txindex;
 mod utils;
 
 
+use crate::database::VirtualTransaction;
 pub use crate::intman::{CAPTAIND_API_KEY, CAPTAIND_CLI_API_KEY};
 pub use crate::config::Config;
 
-use std::borrow::Borrow;
+use std::borrow::{Borrow, Cow};
 use std::collections::HashSet;
 use std::fs;
 use std::pin::Pin;
@@ -679,10 +680,10 @@ impl Server {
 	/// - The VTXO is fully valid
 	/// - The VTXO is actually a board (not another VTXO type)
 	pub async fn register_board(&self, vtxo: Vtxo) -> anyhow::Result<()> {
-		let txid = vtxo.chain_anchor().txid;
-		let tx_info = self.bitcoind.custom_get_raw_transaction_info(&txid, None)
-			.with_context(|| format!("failed to fetch funding tx {txid}"))?
-			.with_context(|| format!("funding tx not found: {txid}"))?;
+		let funding_txid = vtxo.chain_anchor().txid;
+		let tx_info = self.bitcoind.custom_get_raw_transaction_info(&funding_txid, None)
+			.with_context(|| format!("failed to fetch funding tx {funding_txid}"))?
+			.with_context(|| format!("funding tx not found: {funding_txid}"))?;
 
 		let confirmations = tx_info.confirmations.unwrap_or(0) as usize;
 		if confirmations < self.config.required_board_confirmations {
@@ -696,18 +697,35 @@ impl Server {
 		let funding_tx= bitcoin::consensus::deserialize::<Transaction>(&tx_info.hex)
 			.context("failed to deserialize funding transaction")?;
 
-		trace!("Funding tx {txid} is sufficiently confirmed, registering board");
+		trace!("Funding tx {funding_txid} is sufficiently confirmed, registering board");
 
 		// Validate the VTXO against its on-chain transaction
 		vtxo.validate(&funding_tx).badarg("invalid vtxo")?;
 
 		// Verify this is actually a board VTXO (not another type)
-		let _ = BoardBuilder::new_from_vtxo(&vtxo, &funding_tx, self.server_pubkey)
+		let builder = BoardBuilder::new_from_vtxo(&vtxo, &funding_tx, self.server_pubkey)
 			.badarg("vtxo is not a board")?;
 
-		let vtxo = ServerVtxo::from(vtxo);
-		self.db.upsert_board(&vtxo).await
-			.context("failed to store board in database")?;
+		let virtual_transactions = [
+			VirtualTransaction {
+				txid: funding_txid,
+				signed_tx: Some(Cow::Borrowed(&funding_tx)),
+				is_funding: true,
+				server_may_own_descendant_since: None,
+			},
+			VirtualTransaction {
+				txid: builder.exit_txid(),
+				signed_tx: None,
+				is_funding: false,
+				server_may_own_descendant_since: None,
+			}
+		];
+
+		self.db.update_virtual_transaction_tree(
+			virtual_transactions,
+			builder.build_internal_unsigned_vtxos(),
+			builder.spend_info(),
+		).await?;
 
 		slog!(RegisteredBoard,
 			onchain_utxo: vtxo.chain_anchor(),

@@ -3,7 +3,7 @@ use std::sync::Arc;
 use log::info;
 
 use server_log::{
-	NotSweeping, BoardFullySwept, RoundFinished, RoundFullySwept,
+	NotSweeping, RoundFinished, RoundFullySwept,
 	SweepBroadcast, SweeperStats, SweepingOutput, TxIndexUpdateFinished,
 };
 
@@ -76,7 +76,6 @@ async fn sweep_vtxos() {
 	// subscribe to a few log messages
 	let mut log_not_sweeping = srv.subscribe_log::<NotSweeping>();
 	let mut log_sweeping = srv.subscribe_log::<SweepBroadcast>();
-	let mut log_board_done = srv.subscribe_log::<BoardFullySwept>();
 	let mut log_round_done = srv.subscribe_log::<RoundFullySwept>();
 	let mut log_sweeps = srv.subscribe_log::<SweepingOutput>();
 
@@ -158,8 +157,6 @@ async fn sweep_vtxos() {
 	srv.trigger_sweep().await;
 
 	// and eventually the round should be finished
-	log_board_done.recv().wait_millis(10_000).await.unwrap();
-	info!("board done signal received");
 	log_round_done.recv().wait_millis(10_000).await.unwrap();
 	info!("Round done signal received");
 	let stats = log_stats.recv().ready().await.unwrap();

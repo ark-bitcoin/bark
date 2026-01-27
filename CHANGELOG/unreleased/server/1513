@@ -1,0 +1,5 @@
+- Drop the `board` database table
+  Board tracking is now handled through the virtual transaction tree.
+  [#1513](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1513)
+  - Migration V26 removes the table
+  - Remove board-specific database methods and sweep logic

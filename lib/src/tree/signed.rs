@@ -908,7 +908,7 @@ impl CachedSignedVtxoTree {
 				let sig = self.spec.cosign_sigs.get(node.internal_idx())
 					.expect("enough sigs for all nodes");
 
-				let transition = GenesisTransition::new_cosigned(pubkeys, *sig);
+				let transition = GenesisTransition::new_cosigned(pubkeys, Some(*sig));
 
 				let output_idx = node.children().position(|child_idx| last_node == child_idx)
 					.expect("last node should be our child") as u8;

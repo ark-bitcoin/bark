@@ -52,7 +52,7 @@ use bitcoin_ext::{BlockHeight, TaprootSpendInfoExt, TransactionExt, DEEPLY_CONFI
 use bitcoin_ext::rpc::{BitcoinRpcClient, BitcoinRpcExt, RpcApi};
 use tokio::sync::mpsc;
 use tracing::{error, info, trace, warn};
-use ark::{musig, ServerVtxo, Vtxo};
+use ark::musig;
 use ark::connectors::ConnectorChain;
 use ark::rounds::{RoundId, ROUND_TX_VTXO_TREE_VOUT};
 
@@ -219,12 +219,6 @@ impl<'a> SweepBuilder<'a> {
 		self.sweeps.len() + self.board_sweeps.len()
 	}
 
-	/// Add sweep for the given board output.
-	fn add_board_output(&mut self, point: OutPoint, vtxo_spec: VtxoSpec) {
-		trace!("Adding board sweep input {}", point);
-		self.board_sweeps.push(BoardSweepInput { point, vtxo_spec });
-	}
-
 	/// Add sweep for the given vtxo tree output.
 	fn add_vtxo_output(
 		&mut self,
@@ -282,32 +276,6 @@ impl<'a> SweepBuilder<'a> {
 		});
 	}
 
-	async fn process_board(&mut self, vtxo: &Vtxo, done_height: BlockHeight) -> anyhow::Result<()> {
-		let id = vtxo.id();
-		let exit_tx = vtxo.transactions().last().unwrap();
-		let exit_txid = exit_tx.tx.compute_txid();
-		let exit_tx = self.sweeper.txindex.get_or_insert(
-			exit_txid, move || exit_tx.tx
-		).await?;
-
-		if !exit_tx.confirmed() {
-			if let Some((h, txid)) = self.sweeper.is_swept(vtxo.chain_anchor()).await {
-				trace!("Board {id} is already swept by us at height {h}");
-				if h <= done_height {
-					slog!(BoardFullySwept, board_utxo: vtxo.chain_anchor(), sweep_tx: txid);
-					self.sweeper.clear_board(vtxo).await;
-				}
-			} else {
-				trace!("Sweeping board vtxo {id}");
-				self.add_board_output(vtxo.chain_anchor(), vtxo.spec());
-			}
-		} else {
-			trace!("User has broadcast board exit tx {} of board vtxo {id}", exit_txid);
-			self.sweeper.clear_board(vtxo).await;
-		}
-
-		Ok(())
-	}
 
 	/// Sweep the leftovers of the vtxo tree of the given round.
 	///
@@ -486,16 +454,6 @@ impl Process {
 		None
 	}
 
-	/// Clear the board data from our database because we either swept it, or the user
-	/// has broadcast the exit tx, doing a unilateral exit.
-	async fn clear_board(&mut self, vtxo: &Vtxo) {
-		if let Err(e) = self.db.mark_board_swept(&ServerVtxo::from(vtxo.clone())).await {
-			error!("Failed to mark board vtxo {} as swept: {}", vtxo.id(), e);
-		}
-
-		self.pending_tx_by_utxo.remove(&vtxo.chain_anchor());
-	}
-
 	/// Clean up all artifacts after a round has been swept.
 	async fn round_finished(&mut self, round: &ExpiredRound) {
 		// round tx root
@@ -535,13 +493,6 @@ impl Process {
 		trace!("{} expired rounds fetched", expired_rounds.len());
 		telemetry::set_pending_expired_rounds_count(expired_rounds.len());
 
-		let expired_boards = self.db
-			.get_sweepable_boards(tip).await?;
-		let expired_board_vtxos = self.db.get_vtxos_by_id(&expired_boards.iter().map(|b| b.vtxo_id).collect::<Vec<_>>()).await?;
-
-		trace!("{} expired boards fetched", expired_boards.len());
-		telemetry::set_pending_expired_boards_count(expired_boards.len());
-
 		let feerate = self.fee_estimator.regular();
 		let mut builder = SweepBuilder::new(self, feerate);
 
@@ -553,15 +504,6 @@ impl Process {
 			}
 			builder.purge_uneconomical();
 			//TODO(stevenroose) check if we exceeded some builder limits
-		}
-		for board in expired_board_vtxos {
-			let vtxo = board.vtxo;
-			let vtxo_id = board.vtxo_id;
-			trace!("Processing board {}", vtxo_id);
-			if let Err(err) = builder.process_board(&vtxo, done_height).await {
-				warn!("Failed to add board {} to sweep_builder: {}", vtxo_id, err);
-			}
-			builder.purge_uneconomical();
 		}
 
 		// We processed all rounds, check if it's worth to sweep at all.

@@ -23,7 +23,7 @@ use bitcoin_ext::{BlockDelta, BlockHeight, TaprootSpendInfoExt};
 use crate::error::IncorrectSigningKeyError;
 use crate::{musig, scripts, SECP};
 use crate::tree::signed::cosign_taproot;
-use crate::vtxo::{self, Vtxo, VtxoPolicy, GenesisItem, GenesisTransition};
+use crate::vtxo::{self, Vtxo, VtxoId, VtxoPolicy, ServerVtxo, ServerVtxoPolicy, GenesisItem, GenesisTransition};
 
 use self::state::BuilderState;
 
@@ -31,16 +31,44 @@ use self::state::BuilderState;
 /// The output index of the board vtxo in the board tx.
 pub const BOARD_FUNDING_TX_VTXO_VOUT: u32 = 0;
 
-fn exit_tx_sighash(
-	prev_utxo: &TxOut,
+/// Cached data computed from the exit transaction.
+#[derive(Debug)]
+struct ExitData {
+	sighash: TapSighash,
+	funding_taproot: TaprootSpendInfo,
+	tx: Transaction,
+	txid: Txid,
+}
+
+fn compute_exit_data(
+	user_pubkey: PublicKey,
+	server_pubkey: PublicKey,
+	expiry_height: BlockHeight,
+	exit_delta: BlockDelta,
+	amount: Amount,
 	utxo: OutPoint,
-	output: TxOut,
-) -> (TapSighash, Transaction) {
-	let exit_tx = vtxo::create_exit_tx(utxo, output, None);
-	let sighash = SighashCache::new(&exit_tx).taproot_key_spend_signature_hash(
-		0, &sighash::Prevouts::All(&[prev_utxo]), sighash::TapSighashType::Default,
+) -> ExitData {
+	let combined_pubkey = musig::combine_keys([user_pubkey, server_pubkey]);
+	let funding_taproot = cosign_taproot(combined_pubkey, server_pubkey, expiry_height);
+	let funding_txout = TxOut {
+		value: amount,
+		script_pubkey: funding_taproot.script_pubkey(),
+	};
+
+	let exit_taproot = VtxoPolicy::new_pubkey(user_pubkey)
+		.taproot(server_pubkey, exit_delta, expiry_height);
+	let exit_txout = TxOut {
+		value: amount,
+		script_pubkey: exit_taproot.script_pubkey(),
+	};
+
+	let tx = vtxo::create_exit_tx(utxo, exit_txout, None);
+	let sighash = SighashCache::new(&tx).taproot_key_spend_signature_hash(
+		0, &sighash::Prevouts::All(&[funding_txout]), sighash::TapSighashType::Default,
 	).expect("matching prevouts");
-	(sighash, exit_tx)
+
+	let txid = tx.compute_txid();
+	ExitData { sighash, funding_taproot, tx, txid }
 }
 
 #[derive(Debug, Clone, thiserror::Error)]
@@ -132,6 +160,10 @@ pub struct BoardBuilder<S: BuilderState> {
 
 	user_pub_nonce: Option<musig::PublicNonce>,
 	user_sec_nonce: Option<musig::SecretNonce>,
+
+	// Cached exit tx data (computed when funding details are set)
+	exit_data: Option<ExitData>,
+
 	_state: PhantomData<S>,
 }
 
@@ -142,6 +174,20 @@ impl<S: BuilderState> BoardBuilder<S> {
 		cosign_taproot(combined_pubkey, self.server_pubkey, self.expiry_height).script_pubkey()
 	}
 
+	fn to_state<S2: BuilderState>(self) -> BoardBuilder<S2> {
+		BoardBuilder {
+			user_pubkey: self.user_pubkey,
+			expiry_height: self.expiry_height,
+			server_pubkey: self.server_pubkey,
+			exit_delta: self.exit_delta,
+			amount: self.amount,
+			utxo: self.utxo,
+			user_pub_nonce: self.user_pub_nonce,
+			user_sec_nonce: self.user_sec_nonce,
+			exit_data: self.exit_data,
+			_state: PhantomData,
+		}
+	}
 }
 
 impl BoardBuilder<state::Preparing> {
@@ -160,50 +206,37 @@ impl BoardBuilder<state::Preparing> {
 			utxo: None,
 			user_pub_nonce: None,
 			user_sec_nonce: None,
+			exit_data: None,
 			_state: PhantomData,
 		}
 	}
 
 	/// Set the UTXO where the board will be funded and the board amount.
 	pub fn set_funding_details(
-		self,
+		mut self,
 		amount: Amount,
 		utxo: OutPoint,
 	) -> BoardBuilder<state::CanGenerateNonces> {
-		BoardBuilder {
-			amount: Some(amount),
-			utxo: Some(utxo),
-			// copy the rest
-			user_pubkey: self.user_pubkey,
-			expiry_height: self.expiry_height,
-			server_pubkey: self.server_pubkey,
-			exit_delta: self.exit_delta,
-			user_pub_nonce: self.user_pub_nonce,
-			user_sec_nonce: self.user_sec_nonce,
-			_state: PhantomData,
-		}
+		let exit_data = compute_exit_data(
+			self.user_pubkey, self.server_pubkey, self.expiry_height,
+			self.exit_delta, amount, utxo,
+		);
+
+		self.amount = Some(amount);
+		self.utxo = Some(utxo);
+		self.exit_data = Some(exit_data);
+
+		self.to_state()
 	}
 }
 
 impl BoardBuilder<state::CanGenerateNonces> {
 	/// Generate user nonces.
-	pub fn generate_user_nonces(self) -> BoardBuilder<state::CanFinish> {
-		let combined_pubkey = musig::combine_keys([self.user_pubkey, self.server_pubkey]);
-		let funding_taproot = cosign_taproot(combined_pubkey, self.server_pubkey, self.expiry_height);
-		let funding_txout = TxOut {
-			script_pubkey: funding_taproot.script_pubkey(),
-			value: self.amount.expect("state invariant"),
-		};
+	pub fn generate_user_nonces(mut self) -> BoardBuilder<state::CanFinish> {
+		let exit_data = self.exit_data.as_ref().expect("state invariant");
+		let funding_taproot = &exit_data.funding_taproot;
+		let exit_sighash = exit_data.sighash;
 
-		let exit_taproot = VtxoPolicy::new_pubkey(self.user_pubkey)
-			.taproot(self.server_pubkey, self.exit_delta, self.expiry_height);
-		let exit_txout = TxOut {
-			value: self.amount.expect("state invariant"),
-			script_pubkey: exit_taproot.script_pubkey(),
-		};
-
-		let utxo = self.utxo.expect("state invariant");
-		let (reveal_sighash, _tx) = exit_tx_sighash(&funding_txout, utxo, exit_txout);
 		let (agg, _) = musig::tweaked_key_agg(
 			[self.user_pubkey, self.server_pubkey],
 			funding_taproot.tap_tweak().to_byte_array(),
@@ -212,22 +245,13 @@ impl BoardBuilder<state::CanGenerateNonces> {
 		let (sec_nonce, pub_nonce) = agg.nonce_gen(
 			musig::SessionSecretRand::assume_unique_per_nonce_gen(rand::random()),
 			musig::pubkey_to(self.user_pubkey),
-			&reveal_sighash.to_byte_array(),
+			&exit_sighash.to_byte_array(),
 			None,
 		);
 
-		BoardBuilder {
-			user_pub_nonce: Some(pub_nonce),
-			user_sec_nonce: Some(sec_nonce),
-			// copy the rest
-			amount: self.amount,
-			user_pubkey: self.user_pubkey,
-			expiry_height: self.expiry_height,
-			server_pubkey: self.server_pubkey,
-			exit_delta: self.exit_delta,
-			utxo: self.utxo,
-			_state: PhantomData,
-		}
+		self.user_pub_nonce = Some(pub_nonce);
+		self.user_sec_nonce = Some(sec_nonce);
+		self.to_state()
 	}
 
 	/// Constructs a BoardBuilder from a vtxo
@@ -257,7 +281,26 @@ impl BoardBuilder<state::CanGenerateNonces> {
 			})
 		}
 
-		let builder = Self {
+		let exit_data = compute_exit_data(
+			vtxo.user_pubkey(),
+			server_pubkey,
+			vtxo.expiry_height,
+			vtxo.exit_delta,
+			vtxo.amount(),
+			vtxo.chain_anchor(),
+		);
+
+		// We compute the vtxo_id again from all reconstructed data
+		// It must match exactly
+		let expected_vtxo_id = OutPoint::new(exit_data.txid, BOARD_FUNDING_TX_VTXO_VOUT);
+		if vtxo.point() != expected_vtxo_id {
+			return Err(BoardFromVtxoError::VtxoIdMismatch {
+				expected: expected_vtxo_id,
+				got: vtxo.point(),
+			})
+		}
+
+		Ok(Self {
 			user_pub_nonce: None,
 			user_sec_nonce: None,
 			amount: Some(vtxo.amount()),
@@ -266,21 +309,73 @@ impl BoardBuilder<state::CanGenerateNonces> {
 			expiry_height: vtxo.expiry_height,
 			exit_delta: vtxo.exit_delta,
 			utxo: Some(vtxo.chain_anchor()),
+			exit_data: Some(exit_data),
 			_state: PhantomData,
-		};
+		})
+	}
 
-		// We compute the vtxo_id again from all reconstructed data
-		// It must match exactly
-		let (_, _, exit_tx) = builder.exit_tx_sighash_data();
-		let expected_vtxo_id = OutPoint::new(exit_tx, BOARD_FUNDING_TX_VTXO_VOUT);
-		if vtxo.point() != expected_vtxo_id {
-			return Err(BoardFromVtxoError::VtxoIdMismatch {
-				expected: expected_vtxo_id,
-				got: vtxo.point(),
-			})
-		}
+	/// Returns a reference to the exit transaction.
+	///
+	/// The exit transaction spends the board's funding UTXO and creates
+	/// the VTXO output.
+	pub fn exit_tx(&self) -> &Transaction {
+		&self.exit_data.as_ref().expect("state invariant").tx
+	}
 
-		Ok(builder)
+	/// Returns the txid of the exit transaction.
+	pub fn exit_txid(&self) -> Txid {
+		self.exit_data.as_ref().expect("state invariant").txid
+	}
+
+	/// Builds the internal unsigned VTXOs created by this board operation.
+	///
+	/// Returns two VTXOs:
+	/// 1. An expiry VTXO with empty genesis (for server tracking)
+	/// 2. A pubkey VTXO with an arkoor genesis transition
+	pub fn build_internal_unsigned_vtxos(&self) -> Vec<ServerVtxo> {
+		let exit_data = self.exit_data.as_ref().expect("state invariant");
+		let exit_txid = exit_data.txid;
+		let tap_tweak = exit_data.funding_taproot.tap_tweak();
+
+		let expiry_policy = ServerVtxoPolicy::new_expiry(self.user_pubkey.x_only_public_key().0);
+		vec![
+			Vtxo {
+				policy: expiry_policy,
+				amount: self.amount.expect("state invariant"),
+				expiry_height: self.expiry_height,
+				server_pubkey: self.server_pubkey,
+				exit_delta: self.exit_delta,
+				anchor_point: self.utxo.expect("state invariant"),
+				genesis: vec![],
+				point: self.utxo.expect("state invariant"),
+			},
+			Vtxo {
+				policy: ServerVtxoPolicy::User(VtxoPolicy::new_pubkey(self.user_pubkey)),
+				amount: self.amount.expect("state invariant"),
+				expiry_height: self.expiry_height,
+				server_pubkey: self.server_pubkey,
+				exit_delta: self.exit_delta,
+				anchor_point: self.utxo.expect("state invariant"),
+				genesis: vec![
+					GenesisItem {
+						transition: GenesisTransition::new_arkoor(
+							vec![self.user_pubkey],
+							tap_tweak,
+							None,
+						),
+						output_idx: 0,
+						other_outputs: vec![],
+					}
+				],
+				point: OutPoint::new(exit_txid, BOARD_FUNDING_TX_VTXO_VOUT),
+			},
+		]
+	}
+
+	/// Returns spend information mapping input VTXO IDs to spending transaction IDs.
+	pub fn spend_info(&self) -> Vec<(VtxoId, Txid)> {
+		let exit_txid = self.exit_data.as_ref().expect("state invariant").txid;
+		vec![(self.utxo.expect("state invariant").into(), exit_txid)]
 	}
 }
 
@@ -302,12 +397,17 @@ impl BoardBuilder<state::ServerCanCosign> {
 		utxo: OutPoint,
 		user_pub_nonce: musig::PublicNonce,
 	) -> BoardBuilder<state::ServerCanCosign> {
+		let exit_data = compute_exit_data(
+			user_pubkey, server_pubkey, expiry_height, exit_delta, amount, utxo,
+		);
+
 		BoardBuilder {
 			user_pubkey, expiry_height, server_pubkey, exit_delta,
 			amount: Some(amount),
 			utxo: Some(utxo),
 			user_pub_nonce: Some(user_pub_nonce),
 			user_sec_nonce: None,
+			exit_data: Some(exit_data),
 			_state: PhantomData,
 		}
 	}
@@ -316,7 +416,9 @@ impl BoardBuilder<state::ServerCanCosign> {
 	///
 	/// Returns `None` if utxo or user_pub_nonce field is not provided.
 	pub fn server_cosign(&self, key: &Keypair) -> BoardCosignResponse {
-		let (sighash, taproot, _txid) = self.exit_tx_sighash_data();
+		let exit_data = self.exit_data.as_ref().expect("state invariant");
+		let sighash = exit_data.sighash;
+		let taproot = &exit_data.funding_taproot;
 		let (pub_nonce, partial_signature) = musig::deterministic_partial_sign(
 			key,
 			[self.user_pubkey],
@@ -331,7 +433,9 @@ impl BoardBuilder<state::ServerCanCosign> {
 impl BoardBuilder<state::CanFinish> {
 	/// Validate the server's partial signature.
 	pub fn verify_cosign_response(&self, server_cosign: &BoardCosignResponse) -> bool {
-		let (sighash, taproot, _txid) = self.exit_tx_sighash_data();
+		let exit_data = self.exit_data.as_ref().expect("state invariant");
+		let sighash = exit_data.sighash;
+		let taproot = &exit_data.funding_taproot;
 		scripts::verify_partial_sig(
 			sighash,
 			taproot.tap_tweak(),
@@ -354,7 +458,10 @@ impl BoardBuilder<state::CanFinish> {
 			});
 		}
 
-		let (sighash, taproot, exit_txid) = self.exit_tx_sighash_data();
+		let exit_data = self.exit_data.as_ref().expect("state invariant");
+		let sighash = exit_data.sighash;
+		let taproot = &exit_data.funding_taproot;
+		let exit_txid = exit_data.txid;
 
 		let agg_nonce = musig::nonce_agg(&[&self.user_pub_nonce(), &server_cosign.pub_nonce]);
 		let (user_sig, final_sig) = musig::partial_sign(
@@ -394,7 +501,7 @@ impl BoardBuilder<state::CanFinish> {
 			genesis: vec![GenesisItem {
 				transition: GenesisTransition::new_cosigned(
 					vec![self.user_pubkey, self.server_pubkey],
-					final_sig,
+					Some(final_sig),
 				),
 				output_idx: 0,
 				other_outputs: vec![],
@@ -409,30 +516,6 @@ impl BoardBuilder<state::CanFinish> {
 #[error("board funding tx validation error: {0}")]
 pub struct BoardFundingTxValidationError(String);
 
-impl<S: state::HasFundingDetails> BoardBuilder<S> {
-
-	/// The signature hash to sign the exit tx and the taproot info
-	/// (of the funding tx) used to calculate it and the exit tx's txid.
-	fn exit_tx_sighash_data(&self) -> (TapSighash, TaprootSpendInfo, Txid) {
-		let combined_pubkey = musig::combine_keys([self.user_pubkey, self.server_pubkey]);
-		let funding_taproot = cosign_taproot(combined_pubkey, self.server_pubkey, self.expiry_height);
-		let funding_txout = TxOut {
-			value: self.amount.expect("state invariant"),
-			script_pubkey: funding_taproot.script_pubkey(),
-		};
-
-		let exit_taproot = VtxoPolicy::new_pubkey(self.user_pubkey)
-			.taproot(self.server_pubkey, self.exit_delta, self.expiry_height);
-		let exit_txout = TxOut {
-			value: self.amount.expect("state invariant"),
-			script_pubkey: exit_taproot.script_pubkey(),
-		};
-
-		let utxo = self.utxo.expect("state invariant");
-		let (sighash, tx) = exit_tx_sighash(&funding_txout, utxo, exit_txout);
-		(sighash, funding_taproot, tx.compute_txid())
-	}
-}
 
 #[cfg(test)]
 mod test {
@@ -531,8 +614,13 @@ mod test {
 		let (vtxo, funding_tx, _, server_key) = create_board_vtxo();
 
 		// Should succeed with correct inputs
-		let result = BoardBuilder::new_from_vtxo(&vtxo, &funding_tx, server_key.public_key());
-		assert!(result.is_ok());
+		let builder = BoardBuilder::new_from_vtxo(&vtxo, &funding_tx, server_key.public_key())
+			.expect("Is valid");
+
+		let server_vtxos = builder.build_internal_unsigned_vtxos();
+		assert_eq!(server_vtxos.len(), 2);
+		assert!(matches!(server_vtxos[0].policy(), ServerVtxoPolicy::Expiry(..)));
+		assert!(matches!(server_vtxos[1].policy(), ServerVtxoPolicy::User(VtxoPolicy::Pubkey{..})));
 	}
 
 	#[test]

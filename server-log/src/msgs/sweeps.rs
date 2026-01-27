@@ -48,14 +48,6 @@ impl_slog!(SweepBroadcast, INFO, "Completed a sweep tx");
 
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BoardFullySwept {
-	pub board_utxo: OutPoint,
-	pub sweep_tx: Txid,
-}
-impl_slog!(BoardFullySwept, INFO, "Succesfully swept and fully confirmed an board vtxo");
-
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RoundFullySwept {
 	pub round_id: RoundId,
 }
