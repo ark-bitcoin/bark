@@ -259,10 +259,6 @@ impl TestContext {
 			otel_collector_endpoint: None,
 			otel_tracing_sampler: Some(1f64),
 			otel_deployment_name: db_name,
-			vtxo_sweeper: server::sweeps::Config {
-				round_sweep_interval: Duration::from_secs(60),
-				sweep_threshold: Amount::from_sat(1_000_000),
-			}.into(),
 			forfeit_watcher: server::forfeits::Config {
 				wake_interval: Duration::from_millis(1_000),
 			}.into(),

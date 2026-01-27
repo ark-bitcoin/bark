@@ -6,7 +6,6 @@
 //! for user functionality:
 //!
 //! - the [ForfeitWatcher]
-//! - the [VtxoSweeper]
 //!
 
 use std::fs;
@@ -26,7 +25,6 @@ use crate::forfeits::ForfeitWatcher;
 use crate::system::RuntimeManager;
 use crate::txindex::TxIndex;
 use crate::txindex::broadcast::TxNursery;
-use crate::sweeps::VtxoSweeper;
 use crate::wallet::{PersistedWallet, WalletKind, MNEMONIC_FILE};
 
 
@@ -42,7 +40,6 @@ pub struct Watchman {
 	pub txindex: TxIndex,
 	pub tx_nursery: TxNursery,
 	pub forfeit_watcher: ForfeitWatcher,
-	pub vtxo_sweeper: VtxoSweeper,
 }
 
 impl Watchman {
@@ -160,20 +157,6 @@ impl Watchman {
 			bitcoind.clone(),
 		);
 
-		let vtxo_sweeper = VtxoSweeper::start(
-			rtmgr.clone(),
-			cfg.vtxo_sweeper.clone(),
-			cfg.network,
-			bitcoind.clone(),
-			db.clone(),
-			txindex.clone(),
-			tx_nursery.clone(),
-			server_key.clone(),
-			cfg.sweep_address.clone().context("no sweep address config set")?
-				.require_network(cfg.network).context("sweep address for wrong network")?,
-			fee_estimator.clone(),
-		).await.context("failed to start VtxoSweeper")?;
-
 		let forfeit_watcher = ForfeitWatcher::start(
 			rtmgr.clone(),
 			cfg.forfeit_watcher.clone(),
@@ -197,7 +180,7 @@ impl Watchman {
 			cfg.sync_manager_block_poll_interval,
 		).await.context("Failed to start SyncManager")?;
 
-		Ok(Self { rtmgr, sync_manager, txindex, tx_nursery, forfeit_watcher, vtxo_sweeper })
+		Ok(Self { rtmgr, sync_manager, txindex, tx_nursery, forfeit_watcher })
 	}
 
 	/// Waits for server to terminate.

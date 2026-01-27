@@ -5,7 +5,7 @@ use tonic_tracing_opentelemetry::middleware::server::OtelGrpcLayer;
 use tracing::{info, trace, warn};
 use server_rpc::{self as rpc, protos};
 
-use crate::rpcserver::{middleware, StatusContext, ToStatusResult, RPC_RICH_ERRORS};
+use crate::rpcserver::{middleware, ToStatusResult, RPC_RICH_ERRORS};
 use crate::Server;
 
 #[async_trait]
@@ -100,12 +100,7 @@ impl rpc::server::SweepAdminService for Server {
 		_req: tonic::Request<protos::Empty>,
 	) -> Result<tonic::Response<protos::Empty>, tonic::Status> {
 
-		if let Some(ref vs) = self.vtxo_sweeper {
-			vs.trigger_sweep().context("VtxoSweeper down")?;
-			Ok(tonic::Response::new(protos::Empty{}))
-		} else {
-			Err(tonic::Status::unavailable("VtxoSweeper disabled"))
-		}
+		Err(tonic::Status::unavailable("VtxoSweeper disabled"))
 	}
 }
 

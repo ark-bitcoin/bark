@@ -173,18 +173,6 @@ ln_receive_anti_dos_required = false
 #hold_invoice.client_key_path = "/etc/cln/chold/lient.key"
 
 
-################
-# VTXO SWEEPER #
-################
-
-[vtxo_sweeper]
-enabled = true
-# Interval to check if sweeps can be made
-round_sweep_interval = "1h"
-# Minimum total sweep value to merit a sweep tx
-sweep_threshold = 1000000
-
-
 ###################
 # FORFEIT WATCHER #
 ###################

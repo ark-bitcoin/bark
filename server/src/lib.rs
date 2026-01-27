@@ -16,7 +16,6 @@ pub mod mailbox_manager;
 pub mod fee_estimator;
 pub mod rpcserver;
 pub mod secret;
-pub mod sweeps;
 pub mod vtxopool;
 pub mod wallet;
 pub mod watchman;
@@ -28,7 +27,6 @@ mod bitcoind;
 mod intman;
 mod ln;
 mod offboards;
-mod psbtext;
 mod round;
 pub mod telemetry;
 mod txindex;
@@ -65,7 +63,7 @@ use ark::musig::{self, PublicNonce};
 use ark::rounds::{RoundEvent, RoundId};
 use ark::tree::signed::{LeafVtxoCosignRequest, LeafVtxoCosignResponse, UnlockPreimage};
 use ark::tree::signed::builder::{SignedTreeBuilder, SignedTreeCosignResponse};
-use bitcoin_ext::{BlockHeight, BlockRef, TransactionExt, TxStatus, P2TR_DUST};
+use bitcoin_ext::{BlockHeight, BlockRef, TxStatus, P2TR_DUST};
 use bitcoin_ext::rpc::{BitcoinRpcClient, BitcoinRpcExt, RpcApi};
 
 use crate::bitcoind::BitcoinRpcClientExt;
@@ -79,7 +77,6 @@ use crate::fee_estimator::FeeEstimator;
 use crate::round::RoundInput;
 use crate::round::forfeit::HarkForfeitNonces;
 use crate::secret::Secret;
-use crate::sweeps::VtxoSweeper;
 use crate::system::RuntimeManager;
 use crate::txindex::TxIndex;
 use crate::txindex::broadcast::TxNursery;
@@ -195,7 +192,6 @@ pub struct Server {
 	sync_manager: Arc<SyncManager>,
 	rtmgr: RuntimeManager,
 	tx_nursery: TxNursery,
-	vtxo_sweeper: Option<VtxoSweeper>,
 	rounds: RoundHandle,
 	// nb we store Option because remove is costly, we take the option and clean up later
 	forfeit_nonces: parking_lot::Mutex<TimedEntryMap<VtxoId, Option<HarkForfeitNonces>>>,
@@ -354,7 +350,7 @@ impl Server {
 		}
 
 		let deep_tip = bitcoind.deep_tip().context("failed to query node for deep tip")?;
-		let mut rounds_wallet = Self::open_round_wallet(&cfg, db.clone(), &master_xpriv, deep_tip)
+		let rounds_wallet = Self::open_round_wallet(&cfg, db.clone(), &master_xpriv, deep_tip)
 			.await.context("error loading wallet")?;
 
 		let ephemeral_master_key = {
@@ -391,26 +387,6 @@ impl Server {
 			cfg.fee_estimator.clone(),
 			bitcoind.clone(),
 		);
-
-		let vtxo_sweeper = if let Some(c) = cfg.vtxo_sweeper.enabled() {
-			let s = VtxoSweeper::start(
-				rtmgr.clone(),
-				c.clone(),
-				cfg.network,
-				bitcoind.clone(),
-				db.clone(),
-				txindex.clone(),
-				tx_nursery.clone(),
-				server_key.clone(),
-				rounds_wallet.reveal_next_address(
-					bdk_wallet::KeychainKind::External,
-				).address,
-				fee_estimator.clone(),
-			).await.context("failed to start VtxoSweeper")?;
-			Some(s)
-		} else {
-			None
-		};
 
 		let forfeits = if let Some(c) = cfg.forfeit_watcher.enabled() {
 			let s = ForfeitWatcher::start(
@@ -480,8 +456,6 @@ impl Server {
 			sync_manager,
 			rtmgr,
 			tx_nursery: tx_nursery.clone(),
-
-			vtxo_sweeper: vtxo_sweeper,
 			forfeits: forfeits,
 			cln,
 			vtxopool,
@@ -639,12 +613,9 @@ impl Server {
 	}
 
 	/// Fetch all the utxos in our wallet that are being spent or created by txs
-	/// from the VtxoSweeper.
+	/// from the VtxoSweeper. Returns empty set when sweeper is disabled.
 	pub async fn pending_sweep_utxos(&self) -> anyhow::Result<HashSet<OutPoint>> {
-		let ret = self.db.fetch_pending_sweeps().await?.values()
-			.map(|tx| tx.all_related_utxos())
-			.flatten().collect();
-		Ok(ret)
+		Ok(HashSet::new())
 	}
 
 	pub async fn cosign_board(

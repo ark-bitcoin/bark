@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use tonic::transport::{Certificate, Channel, ClientTlsConfig, Identity};
 use cln_rpc::node_client::NodeClient;
 
-use crate::{forfeits, fee_estimator, utils, sweeps, vtxopool};
+use crate::{forfeits, fee_estimator, utils, vtxopool};
 use crate::secret::Secret;
 
 
@@ -309,9 +309,6 @@ pub struct Config {
 	pub otel_tracing_sampler: Option<f64>,
 	pub otel_deployment_name: String,
 
-	/// Config for the VtxoSweeper process.
-	pub vtxo_sweeper: OptionalService<sweeps::Config>,
-
 	/// Config for the ForfeitWatcher process.
 	pub forfeit_watcher: OptionalService<forfeits::Config>,
 	#[serde(with = "utils::serde::string")]
@@ -510,8 +507,6 @@ pub mod watchman {
 		pub otel_tracing_sampler: Option<f64>,
 		pub otel_deployment_name: String,
 
-		/// Config for the VtxoSweeper process.
-		pub vtxo_sweeper: sweeps::Config,
 		/// Config for the ForfeitWatcher process.
 		pub forfeit_watcher: forfeits::Config,
 		/// Config for the FeeEstimator process.
