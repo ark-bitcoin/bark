@@ -1,0 +1,2 @@
+- Fix bug in signed tree encoding/decoding round-trip
+  [#1551](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1551)

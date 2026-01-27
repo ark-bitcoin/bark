@@ -1,0 +1,3 @@
+- Remove old pre-hark encoding of `VtxoTreeSpec`
+  [#1552](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1552)
+  - **BREAKING:** Old pre-hark `VtxoTreeSpec` encoding is no longer supported

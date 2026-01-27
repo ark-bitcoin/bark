@@ -1,0 +1,2 @@
+- Split `VtxoPolicy` into user-facing and server-internal types
+  [#1542](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1542)
