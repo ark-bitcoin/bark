@@ -480,6 +480,10 @@ impl Bark {
 		self.run(["maintain"]).await;
 	}
 
+	pub async fn maintain_delegated(&self) {
+		self.run(["maintain", "--delegated"]).await;
+	}
+
 	pub async fn board_and_confirm_and_register(&self, ctx: &TestContext, amount: Amount) {
 		self.board(amount).await;
 		ctx.generate_blocks(BOARD_CONFIRMATIONS).await;

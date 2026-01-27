@@ -1172,6 +1172,65 @@ async fn bark_recover_unregistered_board() {
 }
 
 #[tokio::test]
+async fn delegated_maintenance_refresh() {
+	let ctx = TestContext::new("bark/delegated_maintenance_refresh").await;
+	let srv = ctx.new_captaind_with_funds("server", None, btc(1)).await;
+	let bark = ctx.new_bark_with_funds("bark", &srv, sat(1_000_000)).await;
+
+	// Board funds and confirm
+	bark.board(sat(800_000)).await;
+	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
+	bark.maintain().await;
+
+	// Let vtxo almost expire so it needs refresh
+	ctx.generate_blocks(srv.config().vtxo_lifetime as u32).await;
+
+	// Call delegated maintenance - should return immediately
+	bark.maintain_delegated().await;
+
+	// Check that a pending refresh movement was created
+	let movements = bark.history().await;
+	let refresh_movement = movements.iter().find(|m| {
+		m.subsystem.name == "bark.round" &&
+		m.subsystem.kind == "refresh" &&
+		m.status == bark_json::cli::MovementStatus::Pending
+	}).expect("should have pending refresh movement");
+	let movement_id = refresh_movement.id;
+
+	info!("Found pending refresh movement: {:?}", movement_id);
+
+	// Wait loop: call sync() until the movement shows success
+	let mut success = false;
+	for i in 0..100 {
+		// Sync the wallet
+		bark.sync().await;
+
+		// Check movement status
+		let movements = bark.history().await;
+		if let Some(movement) = movements.iter().find(|m| m.id == movement_id) {
+			info!("Movement status: {:?}", movement.status);
+			if movement.status == bark_json::cli::MovementStatus::Successful {
+				success = true;
+				break;
+			}
+		}
+
+		// Wait a bit and generate blocks to progress the round
+		if i % 5 == 0 {
+			ctx.generate_blocks(1).await;
+		}
+		tokio::time::sleep(Duration::from_millis(200)).await;
+	}
+
+	assert!(success, "refresh movement should complete successfully");
+
+	// Verify that the vtxo was refreshed
+	let vtxos = bark.vtxos().await;
+	assert_eq!(vtxos.len(), 1, "should still have one vtxo after refresh");
+	assert_eq!(vtxos[0].amount, sat(800_000));
+}
+
+#[tokio::test]
 async fn test_ark_address_other_ark() {
 	let ctx = TestContext::new("bark/test_ark_address_other_ark").await;
 
