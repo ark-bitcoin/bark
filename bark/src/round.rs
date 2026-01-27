@@ -166,7 +166,6 @@ impl RoundState {
 		}
 	}
 
-	#[allow(unused)]
 	fn new_non_interactive(
 		participation: RoundParticipation,
 		unlock_hash: UnlockHash,
@@ -1254,11 +1253,14 @@ impl Wallet {
 		Ok(StoredRoundState { id, state })
 	}
 
-	pub async fn join_non_interactive_round(
+	/// Join next round in non-interactive or delegated mode
+	pub async fn join_next_round_delegated(
 		&self,
 		participation: RoundParticipation,
 		movement_kind: Option<RoundMovement>,
 	) -> anyhow::Result<StoredRoundState> {
+		let mut srv = self.require_server()?;
+
 		let movement_id = if let Some(kind) = movement_kind {
 			let movement_id = self.movements.new_movement(
 				Subsystem::ROUND, kind.to_string(),
@@ -1269,7 +1271,36 @@ impl Wallet {
 		} else {
 			None
 		};
-		let state = RoundState::new_interactive(participation, movement_id);
+
+		// Generate ownership proofs for input vtxos
+		let mut input_vtxos = Vec::with_capacity(participation.inputs.len());
+		for vtxo in participation.inputs.iter() {
+			let keypair = self.get_vtxo_key(vtxo).await
+				.context("failed to get vtxo keypair")?;
+			input_vtxos.push(protos::InputVtxo {
+				vtxo_id: vtxo.id().to_bytes().to_vec(),
+				ownership_proof: {
+					let sig = ark::challenges::NonInteractiveRoundParticipationChallenge::sign_with(
+						vtxo.id(), &participation.outputs, &keypair,
+					);
+					sig.serialize().to_vec()
+				},
+			});
+		}
+
+		// Submit participation to server and get unlock_hash
+		let resp = srv.client.submit_round_participation(protos::RoundParticipationRequest {
+			input_vtxos,
+			vtxo_requests: participation.outputs.iter().map(|r| protos::VtxoRequest {
+				policy: r.policy.serialize(),
+				amount: r.amount.to_sat(),
+			}).collect(),
+		}).await.context("error submitting round participation to server")?.into_inner();
+
+		let unlock_hash = UnlockHash::from_bytes(resp.unlock_hash)
+			.context("invalid unlock hash from server")?;
+
+		let state = RoundState::new_non_interactive(participation, unlock_hash, movement_id);
 
 		let id = self.db.store_round_state_lock_vtxos(&state).await?;
 		Ok(StoredRoundState { id, state })

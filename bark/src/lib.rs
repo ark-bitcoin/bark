@@ -339,7 +339,7 @@ use crate::movement::{Movement, MovementStatus};
 use crate::movement::manager::MovementManager;
 use crate::movement::update::MovementUpdate;
 use crate::onchain::{DaemonizableOnchainWallet, ExitUnilaterally, PreparePsbt, SignPsbt, Utxo};
-use crate::persist::{BarkPersister, RoundStateId};
+use crate::persist::{BarkPersister, RoundStateId, StoredRoundState};
 use crate::persist::models::{LightningReceive, LightningSend, PendingBoard};
 use crate::round::{RoundParticipation, RoundStatus};
 use crate::subsystem::{ArkoorMovement, BoardMovement, RoundMovement, Subsystem};
@@ -1217,19 +1217,31 @@ impl Wallet {
 		Ok(())
 	}
 
-	/// Performs maintenance tasks on the offchain wallet.
+	/// Performs maintenance tasks and performs refresh interactively until end when needed
 	///
 	/// This can take a long period of time due to syncing rounds, arkoors, checking pending
 	/// payments, progressing pending rounds, and refreshing VTXOs if necessary.
 	pub async fn maintenance(&self) -> anyhow::Result<()> {
-		info!("Starting wallet maintenance");
+		info!("Starting wallet maintenance in interactive mode");
 		self.sync().await;
 		self.progress_pending_rounds(None).await?;
 		self.maintenance_refresh().await?;
 		Ok(())
 	}
 
-	/// Performs maintenance tasks on the onchain and offchain wallet.
+	/// Performs maintenance tasks and schedules delegated refresh when needed
+	///
+	/// This can take a long period of time due to syncing rounds, arkoors, checking pending
+	/// payments, progressing pending rounds, and refreshing VTXOs if necessary.
+	pub async fn maintenance_delegated(&self) -> anyhow::Result<()> {
+		info!("Starting wallet maintenance in delegated mode");
+		self.sync().await;
+		self.progress_pending_rounds(None).await?;
+		self.maybe_schedule_maintenance_refresh_delegated().await?;
+		Ok(())
+	}
+
+	/// Performs maintenance tasks and performs refresh interactively until end when needed
 	///
 	/// This can take a long period of time due to syncing the onchain wallet, registering boards,
 	/// syncing rounds, arkoors, and the exit system, checking pending lightning payments and
@@ -1238,8 +1250,9 @@ impl Wallet {
 		&self,
 		onchain: &mut W,
 	) -> anyhow::Result<()> {
-		info!("Starting wallet maintenance with onchain wallet");
+		info!("Starting wallet maintenance in interactive mode with onchain wallet");
 		self.sync().await;
+		self.progress_pending_rounds(None).await?;
 		self.maintenance_refresh().await?;
 
 		// NB: order matters here, after syncing lightning, we might have new exits to start
@@ -1248,7 +1261,27 @@ impl Wallet {
 		Ok(())
 	}
 
-	/// Checks VTXOs that are due to be refreshed, and schedules a refresh if any
+	/// Performs maintenance tasks and schedules delegated refresh when needed
+	///
+	/// This can take a long period of time due to syncing the onchain wallet, registering boards,
+	/// syncing rounds, arkoors, and the exit system, checking pending lightning payments and
+	/// refreshing VTXOs if necessary.
+	pub async fn maintenance_with_onchain_delegated<W: PreparePsbt + SignPsbt + ExitUnilaterally>(
+		&self,
+		onchain: &mut W,
+	) -> anyhow::Result<()> {
+		info!("Starting wallet maintenance in delegated mode with onchain wallet");
+		self.sync().await;
+		self.progress_pending_rounds(None).await?;
+		self.maybe_schedule_maintenance_refresh_delegated().await?;
+
+		// NB: order matters here, after syncing lightning, we might have new exits to start
+		self.sync_exits(onchain).await?;
+
+		Ok(())
+	}
+
+	/// Checks VTXOs that are due to be refreshed, and schedules an interactive refresh if any
 	///
 	/// This will include any VTXOs within the expiry threshold
 	/// ([Config::vtxo_refresh_expiry_threshold]) or those which
@@ -1263,7 +1296,6 @@ impl Wallet {
 			return Ok(None);
 		}
 
-		info!("Scheduling maintenance refresh");
 		let mut participation = match self.build_refresh_participation(vtxos).await? {
 			Some(participation) => participation,
 			None => return Ok(None),
@@ -1273,12 +1305,46 @@ impl Wallet {
 			warn!("Error trying to add additional VTXOs that should be refreshed: {:#}", e);
 		}
 
+		info!("Scheduling maintenance refresh ({} vtxos)", participation.inputs.len());
 		let state = self.join_next_round(participation, Some(RoundMovement::Refresh)).await?;
 		Ok(Some(state.id))
 	}
 
-	/// Performs a refresh of all VTXOs that are due to be refreshed, if any. This will include any
-	/// VTXOs within the expiry threshold ([Config::vtxo_refresh_expiry_threshold]) or those which
+	/// Checks VTXOs that are due to be refreshed, and schedules a delegated refresh if any
+	///
+	/// This will include any VTXOs within the expiry threshold
+	/// ([Config::vtxo_refresh_expiry_threshold]) or those which
+	/// are uneconomical to exit due to onchain network conditions.
+	///
+	/// Returns a [RoundStateId] if a refresh is scheduled.
+	pub async fn maybe_schedule_maintenance_refresh_delegated(
+		&self,
+	) -> anyhow::Result<Option<RoundStateId>> {
+		let vtxos = self.get_vtxos_to_refresh().await?.into_iter()
+			.map(|v| v.id())
+			.collect::<Vec<_>>();
+		if vtxos.len() == 0 {
+			return Ok(None);
+		}
+
+		let mut participation = match self.build_refresh_participation(vtxos).await? {
+			Some(participation) => participation,
+			None => return Ok(None),
+		};
+
+		if let Err(e) = self.add_should_refresh_vtxos(&mut participation).await {
+			warn!("Error trying to add additional VTXOs that should be refreshed: {:#}", e);
+		}
+
+		info!("Scheduling delegated maintenance refresh ({} vtxos)", participation.inputs.len());
+		let state = self.join_next_round_delegated(participation, Some(RoundMovement::Refresh)).await?;
+		Ok(Some(state.id))
+	}
+
+	/// Performs an interactive refresh of all VTXOs that are due to be refreshed, if any
+	///
+	/// This will include any VTXOs within the expiry threshold
+	/// ([Config::vtxo_refresh_expiry_threshold]) or those which
 	/// are uneconomical to exit due to onchain network conditions.
 	///
 	/// Returns a [RoundStatus] if a refresh occurs.
@@ -1621,8 +1687,7 @@ impl Wallet {
 		}))
 	}
 
-	/// This will refresh all provided VTXOs. Note that attempting to refresh a board VTXO which
-	/// has not yet confirmed will result in an error.
+	/// This will refresh all provided VTXOs in an interactive round and wait until end
 	///
 	/// Returns the [RoundStatus] of the round if a successful refresh occurred.
 	/// It will return [None] if no [Vtxo] needed to be refreshed.
@@ -1640,6 +1705,27 @@ impl Wallet {
 		}
 
 		Ok(Some(self.participate_round(participation, Some(RoundMovement::Refresh)).await?))
+	}
+
+	/// This will refresh all provided VTXOs in delegated (non-interactive) mode
+	///
+	/// Returns the [StoredRoundState] which can be used to track the round's
+	/// progress later by calling sync. It will return [None] if no [Vtxo]
+	/// needed to be refreshed.
+	pub async fn refresh_vtxos_delegated<V: VtxoRef>(
+		&self,
+		vtxos: impl IntoIterator<Item = V>,
+	) -> anyhow::Result<Option<StoredRoundState>> {
+		let mut part = match self.build_refresh_participation(vtxos).await? {
+			Some(participation) => participation,
+			None => return Ok(None),
+		};
+
+		if let Err(e) = self.add_should_refresh_vtxos(&mut part).await {
+			warn!("Error trying to add additional VTXOs that should be refreshed: {:#}", e);
+		}
+
+		Ok(Some(self.join_next_round_delegated(part, Some(RoundMovement::Refresh)).await?))
 	}
 
 	/// This will find all VTXOs that meets must-refresh criteria.
