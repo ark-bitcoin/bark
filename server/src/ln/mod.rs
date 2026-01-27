@@ -183,6 +183,13 @@ impl Server {
 			}
 		}
 
+		// Mark transactions as having server-owned descendants before initiating payment
+		let txids = vtxos.iter()
+			.flat_map(|v| v.transactions().map(|item| item.tx.compute_txid()))
+			.collect::<Vec<_>>();
+		self.db.mark_server_may_own_descendants(&txids).await
+			.context("failed to mark server_may_own_descendants")?;
+
 		// Spawn a task that performs the payment
 		self.cln.pay_invoice(
 			&invoice,
