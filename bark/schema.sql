@@ -187,7 +187,7 @@ CREATE VIEW bark_movements_view AS
 					FROM bark_movements m
 /* bark_movements_view(id,status,subsystem_name,movement_kind,metadata,intended_balance,effective_balance,offchain_fee,created_at,updated_at,completed_at,sent_to,received_on,input_vtxos,output_vtxos,exited_vtxos) */;
 CREATE TABLE bark_mailbox_checkpoint (
-                id INTEGER PRIMARY KEY CHECK (id = 1),
-                checkpoint INTEGER NOT NULL,
-                updated_at DATETIME NOT NULL
-);
+				id INTEGER PRIMARY KEY CHECK (id = 1),
+				checkpoint INTEGER NOT NULL,
+				updated_at DATETIME NOT NULL
+			);

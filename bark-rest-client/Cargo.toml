@@ -15,8 +15,3 @@ url = "^2.5"
 reqwest = { version = "^0.12", default-features = false, features = ["json", "multipart"] }
 bark-json = { version = "0.1.0-beta.6", path = "../bark-json" }
 bark-rest = { version = "0.1.0-beta.6", path = "../bark-rest" }
-
-[features]
-default = ["rustls-tls"]
-native-tls = ["reqwest/native-tls"]
-rustls-tls = ["reqwest/rustls-tls"]
