@@ -3,6 +3,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 use std::sync::atomic;
 use std::time::Duration;
+use std::time::UNIX_EPOCH;
 
 use bip39::rand::Rng;
 use bitcoin::consensus::serialize;
@@ -442,6 +443,17 @@ impl rpc::server::ArkService for Server {
 
 	// round
 
+	async fn next_round_time(
+		&self,
+		_req: tonic::Request<protos::Empty>,
+	) -> Result<tonic::Response<protos::NextRoundTimeResponse>, tonic::Status> {
+		Ok(tonic::Response::new(protos::NextRoundTimeResponse {
+			timestamp: self.rounds.next_round_time.read()
+				.duration_since(UNIX_EPOCH).expect("we set this value beyond unix epoch")
+				.as_secs()
+		}))
+	}
+
 	type SubscribeRoundsStream = Box<
 		dyn Stream<Item = Result<protos::RoundEvent, tonic::Status>> + Unpin + Send + 'static
 	>;
@@ -450,7 +462,6 @@ impl rpc::server::ArkService for Server {
 		&self,
 		_req: tonic::Request<protos::Empty>,
 	) -> Result<tonic::Response<Self::SubscribeRoundsStream>, tonic::Status> {
-
 		let stream = self.rounds.events();
 		Ok(tonic::Response::new(Box::new(stream.map(|e| Ok(e.as_ref().into())))))
 	}
@@ -459,7 +470,6 @@ impl rpc::server::ArkService for Server {
 		&self,
 		_req: tonic::Request<protos::Empty>,
 	) -> Result<tonic::Response<protos::RoundEvent>, tonic::Status> {
-
 		if let Some(event) = self.rounds.last_event() {
 			Ok(tonic::Response::new(event.as_ref().into()))
 		} else {

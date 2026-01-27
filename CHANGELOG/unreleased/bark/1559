@@ -1,0 +1,3 @@
+
+- `Wallet::next_round_start_time` to ask server for next round start time
+  [#1559](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1559)

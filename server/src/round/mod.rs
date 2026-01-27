@@ -1517,6 +1517,9 @@ pub async fn run_round_coordinator(
 			);
 		}
 
+		// set the next round time
+		*srv.rounds.next_round_time.write() = SystemTime::now() + srv.config.round_interval;
+
 		round_seq.increment();
 		match perform_round(srv, &mut round_input_rx, round_seq).await {
 			RoundResult::Success => {},
@@ -1545,8 +1548,13 @@ pub async fn run_round_coordinator(
 			slog!(RoundSyncError, error: format!("{:?}", e));
 		};
 
-		// Sleep for the round interval, but discard all incoming messages.
-		tokio::pin! { let timeout = tokio::time::sleep(srv.config.round_interval); }
+		let time_to_next_round = {
+			let time = *srv.rounds.next_round_time.read();
+			let now_system = SystemTime::now();
+			time.duration_since(now_system).unwrap_or_default()
+		};
+		tokio::pin! { let timeout = tokio::time::sleep(time_to_next_round.into()); }
+		// Sleep until next round, but discard all incoming messages.
 		'sleep: loop {
 			tokio::select! {
 				() = &mut timeout => break 'sleep,

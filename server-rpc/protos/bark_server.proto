@@ -65,6 +65,7 @@ service ArkService {
 	// * ARK ROUND INTERACTIONS *
 
 	// Subscribe to the round events
+	rpc NextRoundTime(core.Empty) returns (NextRoundTimeResponse) {}
 	rpc SubscribeRounds(core.Empty) returns (stream RoundEvent) {}
 	// Get the last round event
 	rpc LastRoundEvent(core.Empty) returns (RoundEvent) {}
@@ -354,6 +355,11 @@ message FinishOffboardResponse {
 }
 
 // round
+
+message NextRoundTimeResponse {
+	// the next round start timestamp in seconds since unix epoch
+	uint64 timestamp = 1;
+}
 
 message RoundAttempt {
 	uint64 round_seq = 1;
