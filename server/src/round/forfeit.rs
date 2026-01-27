@@ -141,6 +141,13 @@ impl Server {
 				.context("error storing signed forfeit txs")?;
 		}
 
+		// Mark transactions as having server-owned descendants after storing forfeits
+		let txids = vtxos.values()
+			.flat_map(|v| v.vtxo.transactions().map(|item| item.tx.compute_txid()))
+			.collect::<Vec<_>>();
+		self.db.mark_server_may_own_descendants(&txids).await
+			.context("failed to mark server_may_own_descendants")?;
+
 		Ok(part.unlock_preimage.leak_owned())
 	}
 }
