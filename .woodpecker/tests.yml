@@ -179,5 +179,27 @@ steps:
       - export BARK_EXEC=${CI_WORKSPACE}/target-btc30/debug/bark
       - bash ./contrib/ci-run-test.sh test-integration-client
 
+  - name: test-integration-filestore
+    when:
+      path: "bark/src/persist/**"
+    depends_on: bark-as-libs
+    image: registry.2nd.dev/build:28
+    volumes:
+      - /data:/host/data
+    environment:
+      CHAIN_SOURCE: mempool
+      USE_FILESTORE: 1
+      TEST_DIRECTORY: ./test/filestore
+      NEXTEST_TEST_THREADS: 2
+      BARK_COMMAND_TIMEOUT_MILLIS: 120000
+      TX_PROPAGATION_TIMEOUT: 30000
+    privileged: true
+    commands:
+      - git log --oneline | head -n 1
+      - export RUN_DATETIME=$(cat RUN_DATETIME)
+      - export CAPTAIND_EXEC=${CI_WORKSPACE}/target/debug/captaind
+      - export BARK_EXEC=${CI_WORKSPACE}/target/debug/bark
+      - bash ./contrib/ci-run-test.sh test-integration-client
+
 depends_on:
   - main
