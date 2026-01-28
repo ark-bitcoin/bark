@@ -12,6 +12,7 @@ pub struct LightningPayHtlcsRequested {
 	pub invoice_payment_hash: PaymentHash,
 	#[serde(with = "bitcoin::amount::serde::as_sat")]
 	pub amount: Amount,
+	pub fee: Amount,
 	pub expiry: BlockHeight,
 }
 impl_slog!(LightningPayHtlcsRequested, INFO, "requested HTLCs for lightning payment");
@@ -28,6 +29,7 @@ pub struct LightningPaymentInitiated {
 	pub invoice_payment_hash: PaymentHash,
 	#[serde(with = "bitcoin::amount::serde::as_sat")]
 	pub amount: Amount,
+	pub fee: Amount,
 	pub min_expiry: BlockHeight,
 }
 impl_slog!(LightningPaymentInitiated, INFO, "initiated lightning payment");

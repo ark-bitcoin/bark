@@ -1404,7 +1404,7 @@ async fn should_refuse_paying_invoice_whose_amount_is_higher_than_htlcs() {
 	let invoice = lightning.receiver.invoice(Some(btc(1)), "real invoice", "A real invoice").await;
 
 	let err = bark_1.try_pay_lightning(invoice, None, false).await.unwrap_err().to_alt_string();
-	assert!(err.contains("htlc vtxo amount too low for invoice"), "err: {err}");
+	assert!(err.contains("HTLC VTXO sum of") && err.contains("is less than the payment amount of"), "err: {err}");
 }
 
 #[tokio::test]

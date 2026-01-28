@@ -246,11 +246,13 @@ message ArkoorMailboxPackage {
 message LightningPayHtlcCosignRequest {
 	string invoice = 1;
 	repeated ArkoorCosignRequest parts = 2;
+	uint64 payment_amount_sat = 3;
 }
 
 message InitiateLightningPaymentRequest {
 	string invoice = 1;
 	repeated bytes htlc_vtxo_ids = 2;
+	uint64 requested_payment_sat = 3;
 }
 
 message CheckLightningPaymentRequest {

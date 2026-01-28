@@ -51,6 +51,8 @@ pub struct LightningSend {
 	pub invoice: Invoice,
 	/// The amount being sent.
 	pub amount: Amount,
+	/// The fee paid for making the lightning payment.
+	pub fee: Amount,
 	/// The open HTLCs that are used for this payment.
 	pub htlc_vtxos: Vec<WalletVtxo>,
 	/// The movement associated with this payment.

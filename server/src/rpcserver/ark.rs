@@ -207,7 +207,7 @@ impl rpc::server::ArkService for Server {
 		invoice.check_signature().badarg("invalid invoice signature")?;
 
 		let resp = self.request_lightning_pay_htlc_cosign(
-			invoice, cosign_requests
+			invoice, Amount::from_sat(req.payment_amount_sat), cosign_requests,
 		).await.context("error making payment")?;
 
 		Ok(tonic::Response::new(resp.into()))
@@ -225,8 +225,9 @@ impl rpc::server::ArkService for Server {
 			.collect::<Result<Vec<_>, _>>()?;
 
 		let invoice = Invoice::from_str(&req.invoice).badarg("invalid invoice")?;
+		let requested_payment = Amount::from_sat(req.requested_payment_sat);
 
-		self.initiate_lightning_payment(invoice, htlc_vtxo_ids).await.to_status()?;
+		self.initiate_lightning_payment(invoice, requested_payment, htlc_vtxo_ids).await.to_status()?;
 		Ok(tonic::Response::new(protos::Empty {}))
 	}
 
