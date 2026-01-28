@@ -99,8 +99,49 @@ message ArkInfo {
 	// permanent into another struct for bark to check
 	uint64 offboard_feerate_sat_vkb = 14;
 	uint64 offboard_fixed_fee_vb = 17;
+	FeeSchedule fees = 18;
 
-	// last index: 17
+	// last index: 18
+}
+
+message FeeSchedule {
+	BoardFees board = 1;
+	OffboardFees offboard = 2;
+	RefreshFees refresh = 3;
+	LightningReceiveFees lightning_receive = 4;
+	LightningSendFees lightning_send = 5;
+}
+
+message PpmExpiryFeeEntry {
+	uint32 expiry_blocks_threshold = 1;
+	uint64 ppm = 2;
+}
+
+message BoardFees {
+	uint64 min_fee_sat = 1;
+	uint64 base_fee_sat = 2;
+	uint64 ppm = 3;
+}
+
+message OffboardFees {
+	uint64 base_fee_sat = 1;
+	repeated PpmExpiryFeeEntry ppm_expiry_table = 2;
+}
+
+message RefreshFees {
+	uint64 base_fee_sat = 1;
+	repeated PpmExpiryFeeEntry ppm_expiry_table = 2;
+}
+
+message LightningReceiveFees {
+	uint64 base_fee_sat = 1;
+	uint64 ppm = 2;
+}
+
+message LightningSendFees {
+	uint64 min_fee_sat = 1;
+	uint64 base_fee_sat = 2;
+	repeated PpmExpiryFeeEntry ppm_expiry_table = 3;
 }
 
 message FreshRoundsRequest {

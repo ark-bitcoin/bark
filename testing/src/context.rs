@@ -4,6 +4,10 @@ use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 
+use ark::fees::{
+	BoardFees, FeeSchedule, LightningReceiveFees, LightningSendFees, OffboardFees, PpmFeeRate,
+	RefreshFees,
+};
 use bark::BarkNetwork;
 use bitcoin::{Amount, FeeRate, Network, Txid};
 use bitcoincore_rpc::RpcApi;
@@ -13,7 +17,6 @@ use server::vtxopool::VtxoTarget;
 use server::Server;
 use tokio::{fs, join};
 use tonic::transport::Uri;
-
 use server::config::{self, Config, HodlInvoiceClnPlugin};
 use server_rpc as rpc;
 
@@ -312,6 +315,30 @@ impl TestContext {
 			min_board_amount: Amount::from_sat(20_000),
 			ln_receive_anti_dos_required: false,
 			max_read_mailbox_items: 100,
+			fees: FeeSchedule {
+				board: BoardFees {
+					min_fee: Amount::ZERO,
+					base_fee: Amount::ZERO,
+					ppm: PpmFeeRate::ZERO,
+				},
+				offboard: OffboardFees {
+					base_fee: Amount::ZERO,
+					ppm_expiry_table: vec![],
+				},
+				refresh: RefreshFees {
+					base_fee: Amount::ZERO,
+					ppm_expiry_table: vec![],
+				},
+				lightning_receive: LightningReceiveFees {
+					base_fee: Amount::ZERO,
+					ppm: PpmFeeRate::ZERO,
+				},
+				lightning_send: LightningSendFees {
+					min_fee: Amount::ZERO,
+					base_fee: Amount::ZERO,
+					ppm_expiry_table: vec![],
+				},
+			},
 		}
 	}
 

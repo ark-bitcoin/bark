@@ -286,11 +286,11 @@ impl ServerConnection {
 
 		let new_info = self.client.clone().ark_info(current.info.network).await?;
 		if current.is_outdated() {
-			current.update(new_info);
+			current.update(new_info.clone());
 			return Ok(new_info);
 		}
 
-		Ok(current.info)
+		Ok(current.info.clone())
 	}
 }
 trait ArkServiceClientExt {

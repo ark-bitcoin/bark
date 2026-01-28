@@ -1011,6 +1011,7 @@ impl Wallet {
 		let srv = if let Some(srv) = server {
 			srv.check_connection().await?;
 			let ark_info = srv.ark_info().await?;
+			ark_info.fees.validate().context("invalid fee schedule")?;
 
 			// Check if server pubkey has changed
 			if let Some(stored_pubkey) = properties.server_pubkey {
@@ -1031,6 +1032,7 @@ impl Wallet {
 
 			let conn = ServerConnection::connect(srv_address, network).await?;
 			let ark_info = conn.ark_info().await?;
+			ark_info.fees.validate().context("invalid fee schedule")?;
 
 			// Check if server pubkey has changed
 			if let Some(stored_pubkey) = properties.server_pubkey {

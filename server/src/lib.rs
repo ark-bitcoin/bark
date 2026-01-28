@@ -276,6 +276,7 @@ impl Server {
 			offboard_feerate: self.config.offboard_feerate,
 			offboard_fixed_fee_vb: self.config.offboard_fixed_fee_vb,
 			ln_receive_anti_dos_required: self.config.ln_receive_anti_dos_required,
+			fees: self.config.fees.clone(),
 		}
 	}
 

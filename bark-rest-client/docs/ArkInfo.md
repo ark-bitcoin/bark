@@ -4,6 +4,7 @@
 
 Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
+**fees** | [**models::FeeSchedule**](FeeSchedule.md) | The fee schedule outlining any fees that must be paid to interact with the Ark server. | 
 **htlc_expiry_delta** | **i32** |  | 
 **htlc_send_expiry_delta** | **i32** |  | 
 **ln_receive_anti_dos_required** | **bool** | Indicates whether the Ark server requires clients to either provide a VTXO ownership proof, or a lightning receive token when preparing a lightning claim. | 

@@ -13,6 +13,7 @@ pub mod challenges;
 pub mod connectors;
 pub mod encode;
 pub mod error;
+pub mod fees;
 pub mod forfeit;
 pub mod lightning;
 pub mod mailbox;
@@ -40,12 +41,14 @@ use bitcoin::secp256k1::{self, schnorr, PublicKey};
 
 use bitcoin_ext::BlockDelta;
 
+use crate::fees::FeeSchedule;
+
 lazy_static! {
 	/// Global secp context.
 	pub static ref SECP: secp256k1::Secp256k1<secp256k1::All> = secp256k1::Secp256k1::new();
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ArkInfo {
 	/// The bitcoin network the server operates on
 	pub network: Network,
@@ -90,6 +93,9 @@ pub struct ArkInfo {
 	/// provide a VTXO ownership proof, or a lightning receive token
 	/// when preparing a lightning claim.
 	pub ln_receive_anti_dos_required: bool,
+
+	/// Fee schedule for all Ark operations
+	pub fees: FeeSchedule,
 }
 
 /// Input of a round

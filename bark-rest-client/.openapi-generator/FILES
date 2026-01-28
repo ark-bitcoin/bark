@@ -16,6 +16,7 @@ docs/BitcoindAuthOneOf1.md
 docs/BitcoindAuthOneOf1UserPass.md
 docs/BitcoindAuthOneOfCookie.md
 docs/BlockRef.md
+docs/BoardFees.md
 docs/BoardRequest.md
 docs/BoardsApi.md
 docs/ChainSourceConfig.md
@@ -93,6 +94,7 @@ docs/ExitTxStatusOneOf4.md
 docs/ExitTxStatusOneOf5.md
 docs/ExitTxStatusOneOf6.md
 docs/ExitsApi.md
+docs/FeeSchedule.md
 docs/ImportVtxoRequest.md
 docs/InternalServerError.md
 docs/InvoiceInfo.md
@@ -100,7 +102,9 @@ docs/LightningApi.md
 docs/LightningInvoiceRequest.md
 docs/LightningPayRequest.md
 docs/LightningPayResponse.md
+docs/LightningReceiveFees.md
 docs/LightningReceiveInfo.md
+docs/LightningSendFees.md
 docs/Movement.md
 docs/MovementDestination.md
 docs/MovementStatus.md
@@ -109,6 +113,7 @@ docs/MovementTimestamp.md
 docs/NextRoundStart.md
 docs/NotFoundError.md
 docs/OffboardAllRequest.md
+docs/OffboardFees.md
 docs/OffboardResult.md
 docs/OffboardVtxosRequest.md
 docs/OnchainApi.md
@@ -119,6 +124,8 @@ docs/OnchainSendRequest.md
 docs/PaymentMethod.md
 docs/PendingBoardInfo.md
 docs/PendingRoundInfo.md
+docs/PpmExpiryFeeEntry.md
+docs/RefreshFees.md
 docs/RefreshRequest.md
 docs/RoundParticipationInfo.md
 docs/RoundStatus.md
@@ -167,6 +174,7 @@ src/models/bitcoind_auth_one_of_1.rs
 src/models/bitcoind_auth_one_of_1_user_pass.rs
 src/models/bitcoind_auth_one_of_cookie.rs
 src/models/block_ref.rs
+src/models/board_fees.rs
 src/models/board_request.rs
 src/models/chain_source_config.rs
 src/models/chain_source_config_one_of.rs
@@ -241,13 +249,16 @@ src/models/exit_tx_status_one_of_3.rs
 src/models/exit_tx_status_one_of_4.rs
 src/models/exit_tx_status_one_of_5.rs
 src/models/exit_tx_status_one_of_6.rs
+src/models/fee_schedule.rs
 src/models/import_vtxo_request.rs
 src/models/internal_server_error.rs
 src/models/invoice_info.rs
 src/models/lightning_invoice_request.rs
 src/models/lightning_pay_request.rs
 src/models/lightning_pay_response.rs
+src/models/lightning_receive_fees.rs
 src/models/lightning_receive_info.rs
+src/models/lightning_send_fees.rs
 src/models/mod.rs
 src/models/movement.rs
 src/models/movement_destination.rs
@@ -257,6 +268,7 @@ src/models/movement_timestamp.rs
 src/models/next_round_start.rs
 src/models/not_found_error.rs
 src/models/offboard_all_request.rs
+src/models/offboard_fees.rs
 src/models/offboard_result.rs
 src/models/offboard_vtxos_request.rs
 src/models/onchain_balance.rs
@@ -266,6 +278,8 @@ src/models/onchain_send_request.rs
 src/models/payment_method.rs
 src/models/pending_board_info.rs
 src/models/pending_round_info.rs
+src/models/ppm_expiry_fee_entry.rs
+src/models/refresh_fees.rs
 src/models/refresh_request.rs
 src/models/round_participation_info.rs
 src/models/round_status.rs
