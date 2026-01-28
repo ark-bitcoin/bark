@@ -1343,6 +1343,9 @@ async fn perform_round(
 			let _round_stop_span_guard = round_step_span.enter();
 			server_rslog!(NoRoundPayments, round_step, max_round_submit_time: srv.config.round_submit_time);
 
+			// Clear stale Attempt event so it won't be replayed to new subscribers
+			srv.rounds.clear_last_event();
+
 			round_state = round_state.into_finished(RoundResult::Empty);
 
 			telemetry::set_round_state(round_state.kind());

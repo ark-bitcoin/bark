@@ -103,7 +103,12 @@ const EPHEMERAL_KEY_PATH: &str = "m/30'";
 
 
 /// Return type for the round event RPC stream.
+///
+/// New subscribers receive the last round event first (if any), allowing
+/// clients that connect mid-round to catch up on the current state. Empty
+/// rounds clear last_round_event to avoid replaying stale Attempt events.
 pub struct RoundEventStream {
+	first: Option<Arc<RoundEvent>>,
 	events: BroadcastStream<Arc<RoundEvent>>,
 }
 
@@ -114,6 +119,9 @@ impl Stream for RoundEventStream {
 		mut self: Pin<&mut Self>,
 		cx: &mut std::task::Context,
 	) -> Poll<Option<Self::Item>> {
+		if let Some(e) = self.first.take() {
+			return Poll::Ready(Some(e));
+		}
 		loop {
 			match Pin::new(&mut self.events).poll_next(cx) {
 				// We lagged behind, we continue which will give us new messages
@@ -135,13 +143,27 @@ pub struct RoundHandle {
 }
 
 impl RoundHandle {
+	/// Subscribe to round events.
+	///
+	/// The returned stream yields the last round event first (if any),
+	/// then all subsequent events. This allows clients joining mid-round
+	/// to participate in already-started rounds.
 	pub fn events(&self) -> RoundEventStream {
+		let first = self.last_round_event.lock().clone();
 		let events = BroadcastStream::new(self.round_event_tx.subscribe());
-		RoundEventStream { events }
+		RoundEventStream { first, events }
 	}
 
 	pub fn last_event(&self) -> Option<Arc<RoundEvent>> {
 		self.last_round_event.lock().clone()
+	}
+
+	/// Clear the last round event.
+	///
+	/// Called when an empty round times out to prevent replaying stale
+	/// Attempt events to new subscribers.
+	pub fn clear_last_event(&self) {
+		*self.last_round_event.lock() = None;
 	}
 }
 
