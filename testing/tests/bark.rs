@@ -967,7 +967,7 @@ async fn second_round_attempt() {
 	let _ = srv.wallet_status().await;
 	let mut log_restart_missing_sigs = srv.subscribe_log::<RestartMissingVtxoSigs>();
 	srv.trigger_round().await;
-	log_restart_missing_sigs.recv().await.unwrap();
+	log_restart_missing_sigs.recv().wait(Duration::from_secs(60)).await.unwrap();
 	info!("Waiting for bark2 to fail...");
 	res2.await.unwrap_err();
 	info!("Waiting for bark1 to finish...");
