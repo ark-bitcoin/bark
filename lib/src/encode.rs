@@ -4,7 +4,7 @@
 
 
 use std::borrow::Cow;
-use std::{fmt, io};
+use std::{fmt, io, mem};
 
 use bitcoin::hashes::{sha256, Hash};
 // We use bitcoin::io::{Read, Write} here but we shouldn't have to.
@@ -13,6 +13,9 @@ use bitcoin::hashes::{sha256, Hash};
 use bitcoin::secp256k1::{self, schnorr, PublicKey, XOnlyPublicKey};
 use secp256k1_musig::musig;
 
+
+/// Maximum size, in bytes, of a vector we are allowed to decode
+pub const MAX_VEC_SIZE: usize = 4_000_000;
 
 /// Error occuring during protocol decoding.
 #[derive(Debug, thiserror::Error)]
@@ -25,6 +28,8 @@ pub enum ProtocolDecodingError {
 		#[source]
 		source: Option<Box<dyn std::error::Error + Send + Sync + 'static>>,
 	},
+	#[error("{0}")]
+	OversizedVector(#[from] OversizedVectorError),
 }
 
 impl ProtocolDecodingError {
@@ -423,6 +428,72 @@ impl<'a, T: ProtocolEncoding + Clone> ProtocolEncoding for Cow<'a, T> {
 
 	fn decode<R: io::Read + ?Sized>(reader: &mut R) -> Result<Self, ProtocolDecodingError> {
 	    Ok(Cow::Owned(ProtocolEncoding::decode(reader)?))
+	}
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("requested to allocate a vector above our limit: requested={requested}, max={max}")]
+pub struct OversizedVectorError {
+	/// requested number of elements
+	pub requested: usize,
+	/// maximum number of elements
+	pub max: usize,
+}
+
+impl OversizedVectorError {
+	/// Check if allocating the requested number of items is allowed
+	pub fn check<T>(requested: usize) -> Result<(), Self> {
+		let max = MAX_VEC_SIZE / mem::size_of::<T>();
+		if requested > max {
+			Err(Self { requested, max })
+		} else {
+			Ok(())
+		}
+	}
+}
+
+/// A wrapper around a `Vec<T>` for any `T` with [ProtocolEncoding] that can be safely
+/// encoded and decoded using a CompactSize length prefix
+///
+/// Max allocation size is protected to `MAX_VEC_SIZE`.
+#[derive(Debug, Clone)]
+pub struct LengthPrefixedVector<'a, T: Clone> {
+	inner: Cow<'a, [T]>,
+}
+
+impl<'a, T: Clone> LengthPrefixedVector<'a, T> {
+	/// Create a new [LengthPrefixedVector] wrapping the slice
+	pub fn new(buf: &'a [T]) -> Self {
+		Self { inner: Cow::Borrowed(buf) }
+	}
+
+	/// Unwrap into inner vector
+	pub fn into_inner(self) -> Vec<T> {
+		self.inner.into_owned()
+	}
+}
+
+impl<'a, T: ProtocolEncoding + Clone> ProtocolEncoding for LengthPrefixedVector<'a, T> {
+	fn encode<W: io::Write + ?Sized>(&self, w: &mut W) -> Result<(), io::Error> {
+		w.emit_compact_size(self.inner.as_ref().len() as u64)?;
+		for item in self.inner.as_ref() {
+			item.encode(w)?;
+		}
+		Ok(())
+	}
+
+	fn decode<R: io::Read + ?Sized>(r: &mut R) -> Result<Self, ProtocolDecodingError> {
+		let count = r.read_compact_size()? as usize;
+		OversizedVectorError::check::<T>(count)?;
+
+		let mut buf = Vec::with_capacity(count);
+		for _ in 0..count {
+			buf.push(ProtocolEncoding::decode(r)?);
+		}
+
+		Ok(LengthPrefixedVector {
+			inner: Cow::Owned(buf),
+		})
 	}
 }
 
