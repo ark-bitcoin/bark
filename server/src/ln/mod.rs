@@ -12,11 +12,11 @@ use bitcoin::secp256k1::{schnorr, PublicKey};
 use tracing::{error, info, trace};
 use uuid::Uuid;
 
-use ark::{Vtxo, VtxoId, VtxoPolicy, VtxoRequest, ServerVtxo};
+use ark::{Vtxo, VtxoId, VtxoPolicy, ServerVtxo};
 use ark::arkoor::ArkoorDestination;
 use ark::arkoor::package::{ArkoorPackageCosignRequest, ArkoorPackageCosignResponse};
 use ark::challenges::LightningReceiveChallenge;
-use ark::fees::VtxoFeeInfo;
+use ark::fees::{validate_and_subtract_fee, VtxoFeeInfo};
 use ark::integration::TokenStatus;
 use ark::lightning::{Bolt12Invoice, Invoice, Offer, PaymentHash, PaymentStatus, Preimage};
 use ark::util::IteratorExt;
@@ -377,6 +377,10 @@ impl Server {
 			);
 		}
 
+		// Calculate lightning receive fees and validate fees don't exceed the received amount
+		let fee = self.config.fees.lightning_receive.calculate(amount).context("fee overflowed")?;
+		validate_and_subtract_fee(amount, fee)?;
+
 		if let Some(max) = self.config.max_vtxo_amount {
 			if amount > max {
 				return badarg!("Requested amount exceeds limit of {}", max);
@@ -493,6 +497,12 @@ impl Server {
 
 		self.verify_ln_receive_anti_dos(anti_dos, payment_hash).await?;
 
+		// Deduct the fees from the HTLC VTXOs.
+		let received_amount = sub.amount();
+		let fee = self.config.fees.lightning_receive.calculate(received_amount)
+			.context("fee overflowed")?;
+		let amount = validate_and_subtract_fee(received_amount, fee)?;
+
 		let vtxos = {
 			// We compare requested htlc expiry height with the lowest LN HTLC expiry height
 			// If the difference is lower than the configured delta, we refuse the request.
@@ -515,7 +525,7 @@ impl Server {
 			};
 
 			let dest = ArkoorDestination {
-				total_amount: sub.amount(),
+				total_amount: amount,
 				policy: VtxoPolicy::new_server_htlc_recv(
 					user_pubkey, payment_hash, expiry, self.config.htlc_expiry_delta,
 				),
@@ -532,7 +542,7 @@ impl Server {
 		sub.htlc_vtxos = vtxos.iter().map(|v| v.id()).collect();
 
 		let htlc_vtxo_ids = vtxos.iter().map(|v| v.id()).collect::<Vec<_>>();
-		slog!(LightningReceivePrepared, payment_hash, htlc_vtxo_ids);
+		slog!(LightningReceivePrepared, payment_hash, htlc_vtxo_ids, htlc_amount: received_amount, fee);
 
 		Ok((sub, vtxos))
 	}
@@ -611,8 +621,13 @@ impl Server {
 		htlc_vtxos.sort_by_key(|v| v.vtxo_id);
 
 		// check that cosign request input vtxos and htlc vtxos match
+		let mut htlc_amount = Amount::ZERO;
+		let mut htlc_ids = Vec::with_capacity(htlc_vtxos.len());
+		for htlc in &htlc_vtxos {
+			htlc_amount += htlc.vtxo.amount();
+			htlc_ids.push(htlc.vtxo_id);
+		}
 		let input_ids = cosign_request.inputs().copied().collect::<Vec<_>>();
-		let htlc_ids = htlc_vtxos.iter().map(|h| h.vtxo_id).collect::<Vec<_>>();
 		if input_ids != htlc_ids {
 			return badarg!("cosign inputs do not match htlcs: inputs: {:?}, htlc: {:?}",
 				input_ids, htlc_ids,

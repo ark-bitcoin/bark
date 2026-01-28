@@ -10,6 +10,7 @@ use log::{trace, debug, info, warn};
 
 use ark::{ProtocolEncoding, Vtxo, VtxoPolicy};
 use ark::challenges::{LightningReceiveChallenge};
+use ark::fees::validate_and_subtract_fee;
 use ark::lightning::{PaymentHash, Preimage};
 use ark::util::IteratorExt;
 use bitcoin_ext::{AmountExt, BlockDelta, BlockHeight};
@@ -55,6 +56,10 @@ impl Wallet {
 
 		let (mut srv, ark_info) = self.require_server().await?;
 		let config = self.config();
+
+		// Calculate and validate lightning receive fees
+		let fee = ark_info.fees.lightning_receive.calculate(amount).context("fee overflowed")?;
+		validate_and_subtract_fee(amount, fee)?;
 
 		// User needs to enfore the following delta:
 		// - vtxo exit delta + htlc expiry delta (to give him time to exit the vtxo before htlc expires)
@@ -341,12 +346,17 @@ impl Wallet {
 			.map(|b| Vtxo::deserialize(&b))
 			.collect::<Result<Vec<_>, _>>()
 			.context("invalid htlc vtxos from server")?;
+		let total_received = Amount::from_sat(
+			res.receive.context("Missing lightning receive subscription details")?.amount_sat,
+		);
 
 		// sanity check the vtxos
+		let mut htlc_amount = Amount::ZERO;
 		for vtxo in &vtxos {
 			trace!("Received HTLC VTXO {} from server: {}", vtxo.id(), vtxo.serialize_hex());
 			self.validate_vtxo(vtxo).await
 				.context("received invalid HTLC VTXO from server")?;
+			htlc_amount += vtxo.amount();
 
 			if let VtxoPolicy::ServerHtlcRecv(p) = vtxo.policy() {
 				if p.payment_hash != receive.payment_hash {
@@ -364,12 +374,23 @@ impl Wallet {
 				bail!("invalid HTLC VTXO policy: {:?}", vtxo.policy());
 			}
 		}
+		if htlc_amount > total_received {
+			bail!("Server returned VTXOs worth more than expected: Expected {}, received {}", total_received, htlc_amount);
+		}
 
-		// check sum match invoice amount
+		// Verify the fee meets our expectations
+		let actual_fee = total_received - htlc_amount;
+		let expected_fee = srv.ark_info().await?.fees.lightning_receive.calculate(total_received)
+			.context("fee overflowed")?;
+		if actual_fee > expected_fee {
+			bail!("Unexpectedly high fee for lightning receive: Total received: {}, fee: {}, expected fee: {}", total_received, actual_fee, expected_fee);
+		}
+
+		// Check that the sum exceeds the invoice amount
 		let invoice_amount = receive.invoice.amount_milli_satoshis().map(|a| Amount::from_msat_floor(a))
 			.expect("ln receive invoice should have amount");
 		let htlc_amount = vtxos.iter().map(|v| v.amount()).sum::<Amount>();
-		ensure!(htlc_amount >= invoice_amount,
+		ensure!(htlc_amount + actual_fee >= invoice_amount,
 			"Server didn't return enough VTXOs to cover invoice amount"
 		);
 
@@ -382,9 +403,12 @@ impl Wallet {
 				MovementUpdate::new()
 					.intended_balance(invoice_amount.to_signed()?)
 					.effective_balance(htlc_amount.to_signed()?)
-					.metadata(LightningMovement::metadata(receive.payment_hash, &vtxos, Some(receive.payment_preimage)))
+					.fee(actual_fee)
+					.metadata(LightningMovement::metadata(
+						receive.payment_hash, &vtxos, Some(receive.payment_preimage),
+					))
 					.received_on(
-						[MovementDestination::new(receive.invoice.clone().into(), htlc_amount)],
+						[MovementDestination::new(receive.invoice.clone().into(), total_received)],
 					),
 			).await?
 		};
@@ -548,7 +572,7 @@ impl Wallet {
 		match self.claim_lightning_receive(&receive).await {
 			Ok(receive) => Ok(receive),
 			Err(e) => {
-				error!("Failed to claim htlcs for payment_hash: {}", receive.payment_hash);
+				error!("Failed to claim htlcs for payment_hash {}: {:#}", receive.payment_hash, e);
 
 				let tip = self.chain.tip().await?;
 

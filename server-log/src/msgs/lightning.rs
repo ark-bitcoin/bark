@@ -61,6 +61,8 @@ impl_slog!(LightningReceivePrepareRequested, TRACE, "requested lightning receive
 pub struct LightningReceivePrepared {
 	pub payment_hash: PaymentHash,
 	pub htlc_vtxo_ids: Vec<VtxoId>,
+	pub htlc_amount: Amount,
+	pub fee: Amount,
 }
 impl_slog!(LightningReceivePrepared, INFO, "prepared HTLC VTXOs for lightning receive");
 
