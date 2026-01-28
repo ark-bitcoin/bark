@@ -17,6 +17,9 @@ use secp256k1_musig::musig;
 /// Maximum size, in bytes, of a vector we are allowed to decode
 pub const MAX_VEC_SIZE: usize = 4_000_000;
 
+/// Maximum allowed scriptPubkey size in vbytes
+pub const MAX_SCRIPT_PUBKEY_SIZE: usize = 100;
+
 /// Error occuring during protocol decoding.
 #[derive(Debug, thiserror::Error)]
 pub enum ProtocolDecodingError {
@@ -407,7 +410,25 @@ macro_rules! impl_bitcoin_encode {
 
 impl_bitcoin_encode!(bitcoin::BlockHash);
 impl_bitcoin_encode!(bitcoin::OutPoint);
-impl_bitcoin_encode!(bitcoin::TxOut);
+
+impl ProtocolEncoding for bitcoin::TxOut {
+	fn encode<W: io::Write + ?Sized>(&self, w: &mut W) -> Result<(), io::Error> {
+		let mut wrapped = bitcoin::io::FromStd::new(w);
+		bitcoin::consensus::Encodable::consensus_encode(self, &mut wrapped)?;
+		Ok(())
+	}
+
+	fn decode<R: io::Read + ?Sized>(r: &mut R) -> Result<Self, ProtocolDecodingError> {
+		use bitcoin::consensus::Decodable;
+
+		let mut wrapped = bitcoin::io::FromStd::new(r);
+		let ret = bitcoin::TxOut::consensus_decode(&mut wrapped)?;
+		if ret.script_pubkey.len() > MAX_SCRIPT_PUBKEY_SIZE {
+			return Err(ProtocolDecodingError::invalid("oversized output scriptPubkey"));
+		}
+		Ok(ret)
+	}
+}
 
 impl ProtocolEncoding for bitcoin::taproot::TapTweakHash {
 	fn encode<W: io::Write + ?Sized>(&self, w: &mut W) -> Result<(), io::Error> {
