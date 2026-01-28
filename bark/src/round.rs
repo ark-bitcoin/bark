@@ -1269,12 +1269,9 @@ impl Wallet {
 		let (mut srv, _) = self.require_server().await?;
 
 		let movement_id = if let Some(kind) = movement_kind {
-			let movement_id = self.movements.new_movement(
-				Subsystem::ROUND, kind.to_string(),
-			).await?;
-			let update = participation.to_movement_update()?;
-			self.movements.update_movement(movement_id, update).await?;
-			Some(movement_id)
+			Some(self.movements.new_movement_with_update(
+				Subsystem::ROUND, kind.to_string(), participation.to_movement_update()?,
+			).await?)
 		} else {
 			None
 		};
