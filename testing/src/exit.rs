@@ -59,12 +59,11 @@ pub async fn complete_exit(ctx: &TestContext, bark: &Bark) {
 		}
 
 		// Fast-forward if we're just waiting for confirmations
-		if let Some(height) = response.claimable_height {
-			let current = ctx.bitcoind().sync_client().get_block_count().unwrap() as u32;
-			let blocks = if current > height { 0 } else { height - current };
-			ctx.generate_blocks(blocks).await;
-		} else if generate_block {
-			ctx.generate_blocks(1).await;
+		let blocks_to_generate = get_blocks_to_generate(
+			ctx, generate_block, response.claimable_height,
+		);
+		if blocks_to_generate > 0 {
+			ctx.generate_blocks(blocks_to_generate).await;
 		}
 
 		// Used to allow for an extra iteration if the status has changed
@@ -78,3 +77,20 @@ pub async fn complete_exit(ctx: &TestContext, bark: &Bark) {
 	panic!("failed to finish unilateral exit of bark {}", bark.name());
 }
 
+fn get_blocks_to_generate(
+	ctx: &TestContext,
+	should_generate_block: bool,
+	claimable_height: Option<u32>,
+) -> u32 {
+	if let Some(height) = claimable_height {
+		let current = ctx.bitcoind().sync_client().get_block_count().unwrap() as u32;
+		if current < height {
+			return height - current;
+		}
+	}
+	if should_generate_block {
+		1
+	} else {
+		0
+	}
+}
