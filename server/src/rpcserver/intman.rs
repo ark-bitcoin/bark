@@ -11,6 +11,7 @@ use crate::Server;
 
 #[async_trait]
 impl server_rpc::server::IntegrationService for Server {
+	#[tracing::instrument(skip(self, req))]
 	async fn get_tokens(
 		&self,
 		req: tonic::Request<protos::intman::TokensRequest>,
@@ -49,6 +50,7 @@ impl server_rpc::server::IntegrationService for Server {
 		Ok(tonic::Response::new(tokens_response))
 	}
 
+	#[tracing::instrument(skip(self, req))]
 	async fn get_token_info(
 		&self,
 		req: tonic::Request<protos::intman::TokenInfoRequest>,
@@ -86,6 +88,7 @@ impl server_rpc::server::IntegrationService for Server {
 		Ok(tonic::Response::new(token_response))
 	}
 
+	#[tracing::instrument(skip(self, req))]
 	async fn update_token(
 		&self,
 		req: tonic::Request<protos::intman::UpdateTokenRequest>,

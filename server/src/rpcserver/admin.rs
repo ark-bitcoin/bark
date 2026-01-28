@@ -10,6 +10,7 @@ use crate::Server;
 
 #[async_trait]
 impl rpc::server::WalletAdminService for Server {
+	#[tracing::instrument(skip(self, _req))]
 	async fn wallet_sync(
 		&self,
 		_req: tonic::Request<protos::Empty>,
@@ -20,6 +21,7 @@ impl rpc::server::WalletAdminService for Server {
 		Ok(tonic::Response::new(protos::Empty {}))
 	}
 
+	#[tracing::instrument(skip(self, _req))]
 	async fn wallet_status(
 		&self,
 		_req: tonic::Request<protos::Empty>,
@@ -47,6 +49,7 @@ impl rpc::server::WalletAdminService for Server {
 
 #[async_trait]
 impl rpc::server::RoundAdminService for Server {
+	#[tracing::instrument(skip(self, _req))]
 	async fn trigger_round(
 		&self,
 		_req: tonic::Request<protos::Empty>,
@@ -66,6 +69,7 @@ impl rpc::server::RoundAdminService for Server {
 
 #[async_trait]
 impl rpc::server::LightningAdminService for Server {
+	#[tracing::instrument(skip(self, req))]
 	async fn start_lightning_node(
 		&self,
 		req: tonic::Request<protos::LightningNodeUri>,
@@ -76,6 +80,7 @@ impl rpc::server::LightningAdminService for Server {
 		Ok(tonic::Response::new(protos::Empty{}))
 	}
 
+	#[tracing::instrument(skip(self, req))]
 	async fn stop_lightning_node(
 		&self,
 		req: tonic::Request<protos::LightningNodeUri>,
@@ -89,6 +94,7 @@ impl rpc::server::LightningAdminService for Server {
 
 #[async_trait]
 impl rpc::server::SweepAdminService for Server {
+	#[tracing::instrument(skip(self, _req))]
 	async fn trigger_sweep(
 		&self,
 		_req: tonic::Request<protos::Empty>,

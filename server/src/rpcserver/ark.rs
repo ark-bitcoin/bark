@@ -46,6 +46,7 @@ use crate::telemetry;
 
 #[async_trait]
 impl rpc::server::ArkService for Server {
+	#[tracing::instrument(skip(self, req))]
 	async fn handshake(
 		&self,
 		req: tonic::Request<protos::HandshakeRequest>,
@@ -62,6 +63,7 @@ impl rpc::server::ArkService for Server {
 		Ok(tonic::Response::new(ret))
 	}
 
+	#[tracing::instrument(skip(self, _req))]
 	async fn get_ark_info(
 		&self,
 		_req: tonic::Request<protos::Empty>,
@@ -70,6 +72,7 @@ impl rpc::server::ArkService for Server {
 		Ok(tonic::Response::new(self.ark_info().into()))
 	}
 
+	#[tracing::instrument(skip(self, req))]
 	async fn get_fresh_rounds(
 		&self,
 		req: tonic::Request<protos::FreshRoundsRequest>,
@@ -95,6 +98,7 @@ impl rpc::server::ArkService for Server {
 		Ok(tonic::Response::new(response))
 	}
 
+	#[tracing::instrument(skip(self, req))]
 	async fn get_round(
 		&self,
 		req: tonic::Request<protos::RoundId>,
@@ -119,6 +123,7 @@ impl rpc::server::ArkService for Server {
 
 	// boarding
 
+	#[tracing::instrument(skip(self, req))]
 	async fn request_board_cosign(
 		&self,
 		req: tonic::Request<protos::BoardCosignRequest>,
@@ -146,6 +151,7 @@ impl rpc::server::ArkService for Server {
 	/// Registers a board vtxo
 	///
 	/// This method is idempotent
+	#[tracing::instrument(skip(self, req))]
 	async fn register_board_vtxo(
 		&self,
 		req: tonic::Request<protos::BoardVtxoRequest>,
@@ -165,6 +171,7 @@ impl rpc::server::ArkService for Server {
 	// arkoor
 
 	/// Handles an arkoor cosign request.
+	#[tracing::instrument(skip(self, req))]
 	async fn request_arkoor_cosign(
 		&self,
 		req: tonic::Request<protos::ArkoorPackageCosignRequest>,
@@ -237,6 +244,7 @@ impl rpc::server::ArkService for Server {
 
 	// lightning
 
+	#[tracing::instrument(skip(self, req))]
 	async fn request_lightning_pay_htlc_cosign(
 		&self,
 		req: tonic::Request<protos::LightningPayHtlcCosignRequest>,
@@ -262,6 +270,7 @@ impl rpc::server::ArkService for Server {
 		Ok(tonic::Response::new(resp.into()))
 	}
 
+	#[tracing::instrument(skip(self, req))]
 	async fn initiate_lightning_payment(
 		&self,
 		req: tonic::Request<protos::InitiateLightningPaymentRequest>,
@@ -283,6 +292,7 @@ impl rpc::server::ArkService for Server {
 		Ok(tonic::Response::new(protos::Empty {}))
 	}
 
+	#[tracing::instrument(skip(self, req))]
 	async fn check_lightning_payment(
 		&self,
 		req: tonic::Request<protos::CheckLightningPaymentRequest>,
@@ -299,6 +309,7 @@ impl rpc::server::ArkService for Server {
 		Ok(tonic::Response::new(protos::LightningPaymentStatus { payment_status: Some(res) }))
 	}
 
+	#[tracing::instrument(skip(self, req))]
 	async fn request_lightning_pay_htlc_revocation(
 		&self,
 		req: tonic::Request<protos::ArkoorPackageCosignRequest>
@@ -318,6 +329,7 @@ impl rpc::server::ArkService for Server {
 		Ok(tonic::Response::new(cosign_resp.into()))
 	}
 
+	#[tracing::instrument(skip(self, req))]
 	async fn fetch_bolt12_invoice(
 		&self,
 		req: tonic::Request<protos::FetchBolt12InvoiceRequest>,
@@ -351,6 +363,7 @@ impl rpc::server::ArkService for Server {
 		}))
 	}
 
+	#[tracing::instrument(skip(self, req))]
 	async fn start_lightning_receive(
 		&self,
 		req: tonic::Request<protos::StartLightningReceiveRequest>,
@@ -374,6 +387,7 @@ impl rpc::server::ArkService for Server {
 		Ok(tonic::Response::new(resp))
 	}
 
+	#[tracing::instrument(skip(self, req))]
 	async fn check_lightning_receive(
 		&self,
 		req: tonic::Request<protos::CheckLightningReceiveRequest>,
@@ -414,6 +428,7 @@ impl rpc::server::ArkService for Server {
 		}))
 	}
 
+	#[tracing::instrument(skip(self, req))]
 	async fn claim_lightning_receive(
 		&self,
 		req: tonic::Request<protos::ClaimLightningReceiveRequest>
@@ -443,6 +458,7 @@ impl rpc::server::ArkService for Server {
 
 	// round
 
+	#[tracing::instrument(skip(self, _req))]
 	async fn next_round_time(
 		&self,
 		_req: tonic::Request<protos::Empty>,
@@ -458,6 +474,7 @@ impl rpc::server::ArkService for Server {
 		dyn Stream<Item = Result<protos::RoundEvent, tonic::Status>> + Unpin + Send + 'static
 	>;
 
+	#[tracing::instrument(skip(self, _req))]
 	async fn subscribe_rounds(
 		&self,
 		_req: tonic::Request<protos::Empty>,
@@ -466,6 +483,7 @@ impl rpc::server::ArkService for Server {
 		Ok(tonic::Response::new(Box::new(stream.map(|e| Ok(e.as_ref().into())))))
 	}
 
+	#[tracing::instrument(skip(self, _req))]
 	async fn last_round_event(
 		&self,
 		_req: tonic::Request<protos::Empty>,
@@ -477,6 +495,7 @@ impl rpc::server::ArkService for Server {
 		}
 	}
 
+	#[tracing::instrument(skip(self, req))]
 	async fn submit_payment(
 		&self,
 		req: tonic::Request<protos::SubmitPaymentRequest>,
@@ -523,6 +542,7 @@ impl rpc::server::ArkService for Server {
 		}))
 	}
 
+	#[tracing::instrument(skip(self, req))]
 	async fn provide_vtxo_signatures(
 		&self,
 		req: tonic::Request<protos::VtxoSignaturesRequest>,
@@ -550,6 +570,7 @@ impl rpc::server::ArkService for Server {
 
 	// hArk
 
+	#[tracing::instrument(skip(self, req))]
 	async fn submit_round_participation(
 		&self,
 		req: tonic::Request<protos::RoundParticipationRequest>,
@@ -580,6 +601,7 @@ impl rpc::server::ArkService for Server {
 		}))
 	}
 
+	#[tracing::instrument(skip(self, req))]
 	async fn round_participation_status(
 		&self,
 		req: tonic::Request<protos::RoundParticipationStatusRequest>,
@@ -635,6 +657,7 @@ impl rpc::server::ArkService for Server {
 		Ok(tonic::Response::new(res))
 	}
 
+	#[tracing::instrument(skip(self, req))]
 	async fn request_leaf_vtxo_cosign(
 		&self,
 		req: tonic::Request<protos::LeafVtxoCosignRequest>,
@@ -653,6 +676,7 @@ impl rpc::server::ArkService for Server {
 		Ok(tonic::Response::new(resp.into()))
 	}
 
+	#[tracing::instrument(skip(self, req))]
 	async fn request_forfeit_nonces(
 		&self,
 		req: tonic::Request<protos::ForfeitNoncesRequest>,
@@ -673,6 +697,7 @@ impl rpc::server::ArkService for Server {
 		}))
 	}
 
+	#[tracing::instrument(skip(self, req))]
 	async fn forfeit_vtxos(
 		&self,
 		req: tonic::Request<protos::ForfeitVtxosRequest>,
@@ -690,6 +715,7 @@ impl rpc::server::ArkService for Server {
 		}))
 	}
 
+	#[tracing::instrument(skip(self, req))]
 	async fn prepare_offboard(
 		&self,
 		req: tonic::Request<protos::PrepareOffboardRequest>,
@@ -713,6 +739,7 @@ impl rpc::server::ArkService for Server {
 		}))
 	}
 
+	#[tracing::instrument(skip(self, req))]
 	async fn finish_offboard(
 		&self,
 		req: tonic::Request<protos::FinishOffboardRequest>,
