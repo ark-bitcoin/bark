@@ -180,7 +180,7 @@ steps:
       - export RUN_DATETIME=$(cat RUN_DATETIME)
       - export CAPTAIND_EXEC=${CI_WORKSPACE}/target/debug/captaind
       - export BARK_EXEC=${CI_WORKSPACE}/target/debug/bark
-      - bash ./contrib/ci-run-test.sh test-integration
+      - bash ./contrib/ci-run-test.sh test-integration-client
 
 depends_on:
   - main
