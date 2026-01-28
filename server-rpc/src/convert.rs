@@ -145,7 +145,6 @@ impl From<ark::ArkInfo> for protos::ArkInfo {
 			max_user_invoice_cltv_delta: v.max_user_invoice_cltv_delta as u32,
 			min_board_amount: v.min_board_amount.to_sat(),
 			offboard_feerate_sat_vkb: v.offboard_feerate.to_sat_per_kwu() * 4,
-			offboard_fixed_fee_vb: v.offboard_fixed_fee_vb,
 			ln_receive_anti_dos_required: v.ln_receive_anti_dos_required,
 			fees: Some(v.fees.into()),
 		}
@@ -177,7 +176,6 @@ impl TryFrom<protos::ArkInfo> for ark::ArkInfo {
 				.map_err(|_| "invalid max user invoice cltv delta")?,
 			min_board_amount: Amount::from_sat(v.min_board_amount),
 			offboard_feerate: FeeRate::from_sat_per_kwu(v.offboard_feerate_sat_vkb / 4),
-			offboard_fixed_fee_vb: v.offboard_fixed_fee_vb,
 			ln_receive_anti_dos_required: v.ln_receive_anti_dos_required,
 			fees: v.fees.ok_or("missing fees")?.try_into()?,
 		})
@@ -226,6 +224,7 @@ impl From<ark::fees::OffboardFees> for protos::OffboardFees {
 	fn from(v: ark::fees::OffboardFees) -> Self {
 		protos::OffboardFees {
 			base_fee_sat: v.base_fee.to_sat(),
+			fixed_additional_vb: v.fixed_additional_vb,
 			ppm_expiry_table: v.ppm_expiry_table.into_iter().map(Into::into).collect(),
 		}
 	}
@@ -235,6 +234,7 @@ impl From<protos::OffboardFees> for ark::fees::OffboardFees {
 	fn from(v: protos::OffboardFees) -> Self {
 		ark::fees::OffboardFees {
 			base_fee: Amount::from_sat(v.base_fee_sat),
+			fixed_additional_vb: v.fixed_additional_vb,
 			ppm_expiry_table: v.ppm_expiry_table.into_iter().map(Into::into).collect(),
 		}
 	}
@@ -702,7 +702,9 @@ impl<V: Borrow<OffboardRequest>> From<V> for protos::OffboardRequest {
 		let v = v.borrow();
 	    protos::OffboardRequest {
 			offboard_spk: v.script_pubkey.to_bytes(),
-			amount: v.amount.to_sat(),
+			net_amount_sat: v.net_amount.to_sat(),
+			deduct_fees_from_gross_amount: v.deduct_fees_from_gross_amount,
+			fee_rate_kwu: v.fee_rate.to_sat_per_kwu(),
 		}
 	}
 }
@@ -713,7 +715,9 @@ impl TryFrom<protos::OffboardRequest> for OffboardRequest {
 	fn try_from(v: protos::OffboardRequest) -> Result<Self, Self::Error> {
 		Ok(Self {
 			script_pubkey: ScriptBuf::from_bytes(v.offboard_spk),
-			amount: Amount::from_sat(v.amount),
+			net_amount: Amount::from_sat(v.net_amount_sat),
+			deduct_fees_from_gross_amount: v.deduct_fees_from_gross_amount,
+			fee_rate: FeeRate::from_sat_per_kwu(v.fee_rate_kwu),
 		})
 	}
 }

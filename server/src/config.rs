@@ -405,10 +405,6 @@ pub struct Config {
 	#[serde(with = "utils::serde::fee_rate")]
 	pub offboard_feerate: FeeRate,
 
-	/// The number of virtual bytes to account as the fixed part of the
-	/// offboard fee. This is multiplied with the offboard feerate.
-	pub offboard_fixed_fee_vb: u64,
-
 	/// The time after which an offboard session times out and will be removed
 	///
 	/// This is the time a user has to to sign their forfeit txs.

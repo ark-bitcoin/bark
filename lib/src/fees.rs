@@ -67,6 +67,7 @@ impl Default for FeeSchedule {
 			},
 			offboard: OffboardFees {
 				base_fee: Amount::ZERO,
+				fixed_additional_vb: 0,
 				ppm_expiry_table: table.clone(),
 			},
 			refresh: RefreshFees {
@@ -126,9 +127,36 @@ pub struct OffboardFees {
 	/// A fee applied to every transaction regardless of value.
 	#[serde(rename = "base_fee_sat", with = "bitcoin::amount::serde::as_sat")]
 	pub base_fee: Amount,
+
+	/// Fixed number of virtual bytes charged offboard on top of the output size.
+	///
+	/// The fee for an offboard will be this value, plus the offboard output virtual size,
+	/// multiplied with the offboard fee rate, plus the `base_fee`, and plus the additional fee
+	/// calculated with the `ppm_expiry_table`.
+	pub fixed_additional_vb: u64,
+
 	/// A table mapping how soon a VTXO will expire to a PPM (parts per million) fee rate.
 	/// The table should be sorted by each `expiry_blocks_threshold` value in ascending order.
 	pub ppm_expiry_table: Vec<PpmExpiryFeeEntry>,
+}
+
+impl OffboardFees {
+	/// Returns the fee charged for the user to make an offboard given the fee rate.
+	///
+	/// Returns `None` in the calculation overflows because of insane destinations or fee rates.
+	pub fn calculate(
+		&self,
+		destination: &ScriptBuf,
+		amount: Amount,
+		fee_rate: FeeRate,
+		vtxos: impl IntoIterator<Item = VtxoFeeInfo>,
+	) -> Option<Amount> {
+		let weight_fee = self.fixed_additional_vb.checked_add(destination.as_script().len() as u64)
+			.and_then(Weight::from_vb)
+			.and_then(|w| fee_rate.checked_mul_by_weight(w))?;
+		let ppm_fee = calc_ppm_expiry_fee(Some(amount), &self.ppm_expiry_table, vtxos)?;
+		self.base_fee.checked_add(weight_fee)?.checked_add(ppm_fee)
+	}
 }
 
 /// Fees for refresh operations.
@@ -501,6 +529,130 @@ mod tests {
 		let fee = fees.calculate(amount).unwrap();
 		// base (100) + (10,000 * 1,000) / 1,000,000 = 100 + 10 = MAX(110, 330) = 330
 		assert_eq!(fee, Amount::from_sat(330));
+	}
+
+	#[test]
+	fn test_offboard_fees_with_single_vtxo() {
+		let fees = OffboardFees {
+			base_fee: Amount::from_sat(200),
+			fixed_additional_vb: 100,
+			ppm_expiry_table: vec![
+				PpmExpiryFeeEntry { expiry_blocks_threshold: 100, ppm: PpmFeeRate(1_000) },
+				PpmExpiryFeeEntry { expiry_blocks_threshold: 500, ppm: PpmFeeRate(2_000) },
+				PpmExpiryFeeEntry { expiry_blocks_threshold: 1_000, ppm: PpmFeeRate(3_000) },
+			],
+		};
+
+		let script_str = "6a0474657374"; // OP_RETURN, push 4 bytes with the string "test"
+		let destination = ScriptBuf::from_hex(script_str)
+			.expect("Failed to parse OP_RETURN script hex string");
+		let fee_rate = FeeRate::from_sat_per_vb_unchecked(10);
+		let amount = Amount::from_sat(100_000);
+
+		// Test with expiry < 100 blocks (should use 0 ppm)
+		let vtxo = VtxoFeeInfo { amount, expiry_blocks: 50 };
+		let fee = fees.calculate(&destination, amount, fee_rate, vec![vtxo]).unwrap();
+		// base (200) + ((100,000 * 0) / 1,000,000) + ((6 + 100) * 10) = 200 + 0 + 1,060 = 1,260
+		assert_eq!(fee, Amount::from_sat(1_260));
+
+		// Test with expiry = 150 blocks (should use 1,000 ppm)
+		let vtxo = VtxoFeeInfo { amount, expiry_blocks: 150 };
+		let fee = fees.calculate(&destination, amount, fee_rate, vec![vtxo]).unwrap();
+		// base (200) + ((100,000 * 1,000) / 1,000,000) + ((6 + 100) * 10) = 200 + 100 + 1,060 = 1,360
+		assert_eq!(fee, Amount::from_sat(1_360));
+
+		// Test with expiry = 750 blocks (should use 2,000 ppm)
+		let vtxo = VtxoFeeInfo { amount, expiry_blocks: 750 };
+		let fee = fees.calculate(&destination, amount, fee_rate, vec![vtxo]).unwrap();
+		// base (200) + ((100,000 * 2,000) / 1,000,000) + ((6 + 100) * 10) = 200 + 200 + 1,060 = 1,460
+		assert_eq!(fee, Amount::from_sat(1_460));
+
+		// Test with expiry = 2,000 blocks (should use 3,000 ppm)
+		let vtxo = VtxoFeeInfo { amount, expiry_blocks: 2_000 };
+		let fee = fees.calculate(&destination, amount, fee_rate, vec![vtxo]).unwrap();
+		// base (200) + ((100,000 * 3,000) / 1,000,000) + ((6 + 100) * 10) = 200 + 300 + 1,060 = 1,560
+		assert_eq!(fee, Amount::from_sat(1_560));
+	}
+
+	#[test]
+	fn test_offboard_fees_with_multiple_vtxos() {
+		let fees = OffboardFees {
+			base_fee: Amount::from_sat(200),
+			fixed_additional_vb: 100,
+			ppm_expiry_table: vec![
+				PpmExpiryFeeEntry { expiry_blocks_threshold: 100, ppm: PpmFeeRate(1_000) },
+				PpmExpiryFeeEntry { expiry_blocks_threshold: 500, ppm: PpmFeeRate(2_000) },
+			],
+		};
+
+		let script_str = "6a0474657374"; // OP_RETURN, push 4 bytes with the string "test"
+		let destination = ScriptBuf::from_hex(script_str)
+			.expect("Failed to parse OP_RETURN script hex string");
+		let fee_rate = FeeRate::from_sat_per_vb_unchecked(10);
+		// Test with multiple VTXOs where total VTXO value exceeds amount being sent
+		// VTXOs total 120,000 but we're only sending 100,000
+		let vtxos = vec![
+			VtxoFeeInfo { amount: Amount::from_sat(30_000), expiry_blocks: 50 },  // 0 ppm (< 100)
+			VtxoFeeInfo { amount: Amount::from_sat(50_000), expiry_blocks: 150 }, // 1,000 ppm
+			VtxoFeeInfo { amount: Amount::from_sat(40_000), expiry_blocks: 600 }, // 2,000 ppm
+		];
+
+		let amount_to_send = Amount::from_sat(100_000);
+		let fee = fees.calculate(&destination, amount_to_send, fee_rate, vtxos).unwrap();
+		// We consume VTXOs in order until we have enough:
+		// - First VTXO: 30,000 at 0 ppm -> fee = 30,000 * 0 / 1,000,000 = 0
+		// - Second VTXO: 50,000 at 1,000 ppm -> fee = 50,000 * 1,000 / 1,000,000 = 50
+		// - Third VTXO: Only need 20,000 at 2,000 ppm -> fee = 20,000 * 2,000 / 1,000,000 = 40
+		// Total: base (200) + (0 + 50 + 40) + ((6 + 100) * 10) = 200 + 90 + 1,060 = 1,350
+		assert_eq!(fee, Amount::from_sat(1_350));
+	}
+
+	#[test]
+	fn test_offboard_fees_with_no_fee_rate() {
+		let fees = OffboardFees {
+			base_fee: Amount::from_sat(200),
+			fixed_additional_vb: 100,
+			ppm_expiry_table: vec![
+				PpmExpiryFeeEntry { expiry_blocks_threshold: 1, ppm: PpmFeeRate(1_000) },
+			],
+		};
+
+		let script_str = "6a0474657374"; // OP_RETURN, push 4 bytes with the string "test"
+		let destination = ScriptBuf::from_hex(script_str)
+			.expect("Failed to parse OP_RETURN script hex string");
+		let fee_rate = FeeRate::from_sat_per_vb_unchecked(0);
+		let vtxos = vec![
+			VtxoFeeInfo { amount: Amount::from_sat(200_000), expiry_blocks: 50 },  // 1,000 ppm (> 1)
+		];
+
+		let amount_to_send = Amount::from_sat(100_000);
+		let fee = fees.calculate(&destination, amount_to_send, fee_rate, vtxos).unwrap();
+		// base (200) + ((100,000 * 1,000) / 1,000,000) + ((6 + 100) * 0) = 200 + 100 + 0 = 300
+		assert_eq!(fee, Amount::from_sat(300));
+	}
+
+	#[test]
+	fn test_offboard_fees_with_no_additional_vb() {
+		let fees = OffboardFees {
+			base_fee: Amount::from_sat(200),
+			fixed_additional_vb: 0,
+			ppm_expiry_table: vec![
+				PpmExpiryFeeEntry { expiry_blocks_threshold: 1, ppm: PpmFeeRate(1_000) },
+			],
+		};
+
+		let script_str = "6a0474657374"; // OP_RETURN, push 4 bytes with the string "test"
+		let destination = ScriptBuf::from_hex(script_str)
+			.expect("Failed to parse OP_RETURN script hex string");
+		let fee_rate = FeeRate::from_sat_per_vb_unchecked(10);
+		let vtxos = vec![
+			VtxoFeeInfo { amount: Amount::from_sat(200_000), expiry_blocks: 50 },  // 1,000 ppm (> 1)
+		];
+
+		let amount_to_send = Amount::from_sat(100_000);
+		let fee = fees.calculate(&destination, amount_to_send, fee_rate, vtxos).unwrap();
+		// base (200) + ((100,000 * 1,000) / 1,000,000) + ((6 + 0) * 10) = 200 + 100 + 60 = 360
+		assert_eq!(fee, Amount::from_sat(360));
 	}
 
 	#[test]

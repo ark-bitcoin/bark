@@ -116,6 +116,12 @@ pub struct OffboardFees {
 	#[serde(rename = "base_fee_sat", with = "bitcoin::amount::serde::as_sat")]
 	#[cfg_attr(feature = "utoipa", schema(value_type = u64))]
 	pub base_fee: Amount,
+	/// Fixed number of virtual bytes charged offboard on top of the output size
+	///
+	/// The fee for an offboard will be this value, plus the offboard output virtual size,
+	/// multiplied with the offboard fee rate, plus the `base_fee`, and plus the additional fee
+	/// calculated with the `ppm_expiry_table`.
+	pub fixed_additional_vb: u64,
 	/// A table mapping how soon a VTXO will expire to a PPM (parts per million) fee rate.
 	/// The table should be sorted by each `expiry_blocks_threshold` value in ascending order.
 	pub ppm_expiry_table: Vec<PpmExpiryFeeEntry>,
@@ -125,6 +131,7 @@ impl From<ark::fees::OffboardFees> for OffboardFees {
 	fn from(v: ark::fees::OffboardFees) -> Self {
 		Self {
 			base_fee: v.base_fee,
+			fixed_additional_vb: v.fixed_additional_vb,
 			ppm_expiry_table: v.ppm_expiry_table.into_iter().map(Into::into).collect(),
 		}
 	}
@@ -134,6 +141,7 @@ impl From<OffboardFees> for ark::fees::OffboardFees {
 	fn from(v: OffboardFees) -> Self {
 		Self {
 			base_fee: v.base_fee,
+			fixed_additional_vb: v.fixed_additional_vb,
 			ppm_expiry_table: v.ppm_expiry_table.into_iter().map(Into::into).collect(),
 		}
 	}

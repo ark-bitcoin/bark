@@ -276,7 +276,6 @@ impl TestContext {
 				issue_interval: Duration::from_secs(3),
 			},
 			offboard_feerate: FeeRate::from_sat_per_vb_unchecked(7),
-			offboard_fixed_fee_vb: 100,
 			offboard_session_timeout: Duration::from_secs(30),
 			fee_estimator: server::fee_estimator::Config {
 				update_interval: Duration::from_secs(60),
@@ -323,6 +322,7 @@ impl TestContext {
 				},
 				offboard: OffboardFees {
 					base_fee: Amount::ZERO,
+					fixed_additional_vb: 100,
 					ppm_expiry_table: vec![],
 				},
 				refresh: RefreshFees {

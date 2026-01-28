@@ -304,7 +304,6 @@ mod daemon;
 mod lightning;
 mod offboard;
 mod psbtext;
-mod server;
 mod mailbox;
 
 pub use self::arkoor::ArkoorCreateResult;
@@ -328,6 +327,7 @@ use ark::lightning::PaymentHash;
 
 use ark::{ArkInfo, ProtocolEncoding, Vtxo, VtxoId, VtxoPolicy, VtxoRequest};
 use ark::address::VtxoDelivery;
+use ark::fees::VtxoFeeInfo;
 use ark::mailbox::MailboxIdentifier;
 use ark::vtxo::{PubkeyVtxoPolicy, VtxoRef};
 use ark::vtxo::policy::signing::VtxoSigner;
@@ -1668,6 +1668,57 @@ impl Wallet {
 		bail!("Insufficient money available. Needed {} but {} is available",
 			amount, total_amount,
 		);
+	}
+
+	/// Determines which VTXOs to use for a fee-paying transaction where the fee is added on top of
+	/// the desired amount. E.g., a lightning payment, a send-onchain payment.
+	///
+	/// Returns a collection of VTXOs capable of covering the desired amount as well as the
+	/// calculated fee.
+	async fn select_vtxos_to_cover_with_fee<F>(
+		&self,
+		amount: Amount,
+		calc_fee: F,
+	) -> anyhow::Result<(Vec<WalletVtxo>, Amount)>
+	where
+		F: for<'a> Fn(
+			Amount, std::iter::Copied<std::slice::Iter<'a, VtxoFeeInfo>>,
+		) -> anyhow::Result<Amount>,
+	{
+		let tip = self.chain.tip().await?;
+
+		// We need to loop to find suitable inputs due to the VTXOs having a direct impact on
+		// how much we must pay in fees.
+		const MAX_ITERATIONS: usize = 100;
+		let mut fee = Amount::ZERO;
+		let mut fee_info = Vec::new();
+		for _ in 0..MAX_ITERATIONS {
+			let required = amount.checked_add(fee)
+				.context("Amount + fee overflow")?;
+
+			let vtxos = self.select_vtxos_to_cover(required).await
+				.context("Could not find enough suitable VTXOs to cover payment + fees")?;
+
+			fee_info.reserve(vtxos.len());
+			let mut vtxo_amount = Amount::ZERO;
+			for vtxo in &vtxos {
+				vtxo_amount += vtxo.amount();
+				fee_info.push(VtxoFeeInfo::from_vtxo_and_tip(vtxo, tip));
+			}
+
+			fee = calc_fee(amount, fee_info.iter().copied())?;
+			if amount + fee <= vtxo_amount {
+				trace!("Selected vtxos to cover amount + fee: amount = {}, fee = {}, total inputs = {}",
+					amount, fee, vtxo_amount,
+				);
+				return Ok((vtxos, fee));
+			}
+			trace!("VTXO sum of {} did not exceed amount {} and fee {}, iterating again",
+				vtxo_amount, amount, fee,
+			);
+			fee_info.clear();
+		}
+		bail!("Fee calculation did not converge after maximum iterations")
 	}
 
 	/// Starts a daemon for the wallet.

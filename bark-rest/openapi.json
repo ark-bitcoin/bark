@@ -1816,7 +1816,6 @@
           "max_user_invoice_cltv_delta",
           "min_board_amount_sat",
           "offboard_feerate_sat_per_kvb",
-          "offboard_fixed_fee_vb",
           "ln_receive_anti_dos_required",
           "fees"
         ],
@@ -1872,12 +1871,6 @@
             "type": "integer",
             "format": "int64",
             "description": "offboard feerate in sat per kvb",
-            "minimum": 0
-          },
-          "offboard_fixed_fee_vb": {
-            "type": "integer",
-            "format": "int64",
-            "description": "fixed number of vb charged additinally for an offboard\nthis is charged after being multiplied with the offboard feerate",
             "minimum": 0
           },
           "required_board_confirmations": {
@@ -3940,6 +3933,7 @@
         "description": "Fees for offboarding from the ark.",
         "required": [
           "base_fee_sat",
+          "fixed_additional_vb",
           "ppm_expiry_table"
         ],
         "properties": {
@@ -3947,6 +3941,12 @@
             "type": "integer",
             "format": "int64",
             "description": "A fee applied to every transaction regardless of value.",
+            "minimum": 0
+          },
+          "fixed_additional_vb": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Fixed number of virtual bytes charged offboard on top of the output size\n\nThe fee for an offboard will be this value, plus the offboard output virtual size,\nmultiplied with the offboard fee rate, plus the `base_fee`, and plus the additional fee\ncalculated with the `ppm_expiry_table`.",
             "minimum": 0
           },
           "ppm_expiry_table": {

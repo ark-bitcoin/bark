@@ -9,6 +9,7 @@ use log::info;
 use ark::{musig, Vtxo, VtxoPolicy};
 use ark::arkoor::ArkoorDestination;
 use ark::challenges::OffboardRequestChallenge;
+use ark::fees::{validate_and_subtract_fee_min_dust, VtxoFeeInfo};
 use ark::offboard::{OffboardForfeitContext, OffboardRequest};
 use ark::vtxo::VtxoRef;
 use bitcoin_ext::P2TR_DUST;
@@ -19,7 +20,6 @@ use crate::vtxo::VtxoState;
 use crate::{Wallet, WalletVtxo};
 use crate::movement::update::MovementUpdate;
 use crate::movement::{MovementDestination, MovementStatus};
-use crate::server::ArkInfoExt;
 use crate::subsystem::{OffboardMovement, Subsystem};
 
 
@@ -34,9 +34,7 @@ impl Wallet {
 		// Register VTXOs with server before offboarding
 		self.register_vtxos_with_server(&vtxos).await?;
 
-		let challenge = OffboardRequestChallenge::new(
-			&req, vtxos.iter().map(|v| v.as_ref().id()),
-		);
+		let challenge = OffboardRequestChallenge::new(req, vtxos.iter().map(|v| v.as_ref().id()));
 		let prep_resp = srv.client.prepare_offboard(protos::PrepareOffboardRequest {
 			offboard: Some(req.into()),
 			input_vtxo_ids: vtxos.iter()
@@ -105,7 +103,10 @@ impl Wallet {
 		let (mut srv, ark) = self.require_server().await?;
 
 		let destination_spk = destination.script_pubkey();
-		let fee = ark.calculate_offboard_fee(&destination_spk)?;
+		let (vtxos, fee) = self.select_vtxos_to_cover_with_fee(amount, |a, v| {
+			ark.fees.offboard.calculate(&destination_spk, a, ark.offboard_feerate, v)
+				.ok_or_else(|| anyhow!("failed to calculate offboard fee for {}", a))
+		}).await?;
 		let required_amount = amount + fee;
 
 		info!("We can only offboard whole VTXOs, so we will make an arkoor tx first...");
@@ -119,9 +120,10 @@ impl Wallet {
 			total_amount: required_amount,
 			policy: VtxoPolicy::new_pubkey(offboard_pubkey.public_key()),
 		};
-		let arkoor = self.create_checkpointed_arkoor(
+		let arkoor = self.create_checkpointed_arkoor_with_vtxos(
 			offboard_dest,
 			change_pubkey.public_key(),
+			vtxos,
 		).await.context("error trying to prepare offboard VTXOs with an arkoor tx")?;
 
 		self.store_spendable_vtxos(&arkoor.change).await
@@ -141,6 +143,12 @@ impl Wallet {
 				.fee(fee)
 				.consumed_vtxos(&arkoor.inputs)
 				.produced_vtxos(&arkoor.change)
+				.metadata([(
+					"offboard_vtxos".into(),
+					serde_json::to_value(
+						arkoor.created.iter().map(|v| v.id()).collect::<Vec<_>>(),
+					).expect("offboard_vtxos can serde"),
+				)])
 				.sent_to([MovementDestination::bitcoin(destination.clone(), amount)])
 		).await?;
 		let state = VtxoState::Locked { movement_id: Some(movement.id()) };
@@ -152,7 +160,9 @@ impl Wallet {
 
 		let req = OffboardRequest {
 			script_pubkey: destination_spk.clone(),
-			amount: amount,
+			net_amount: amount,
+			deduct_fees_from_gross_amount: false,
+			fee_rate: ark.offboard_feerate,
 		};
 		let vtxo_keys = vec![offboard_pubkey; vtxos.len()];
 
@@ -177,17 +187,17 @@ impl Wallet {
 		destination: bitcoin::Address,
 	) -> anyhow::Result<Txid> {
 		let (mut srv, ark) = self.require_server().await?;
+		let tip = self.chain.tip().await?;
 
 		let destination_spk = destination.script_pubkey();
-		let fee = ark.calculate_offboard_fee(&destination_spk)?;
 		let vtxos_amount = vtxos.iter().map(|v| v.amount()).sum::<Amount>();
-		let req_amount = vtxos_amount.checked_sub(fee)
-			.context("fee is higher than selected VTXOs")?;
-
-		if req_amount < P2TR_DUST {
-			bail!("it doesn't make sense to offboard dust");
-		}
-
+		let fee = ark.fees.offboard.calculate(
+			&destination_spk,
+			vtxos_amount,
+			ark.offboard_feerate,
+			vtxos.iter().map(|v| VtxoFeeInfo::from_vtxo_and_tip(v, tip)),
+		).context("error calculating offboard fee")?;
+		let net_amount = validate_and_subtract_fee_min_dust(vtxos_amount, fee)?;
 		let vtxo_keys = {
 			let mut keys = Vec::with_capacity(vtxos.len());
 			for v in &vtxos {
@@ -198,7 +208,9 @@ impl Wallet {
 
 		let req = OffboardRequest {
 			script_pubkey: destination_spk.clone(),
-			amount: req_amount,
+			net_amount,
+			deduct_fees_from_gross_amount: true,
+			fee_rate: ark.offboard_feerate,
 		};
 
 		let signed_offboard_tx = self.offboard_inner(&mut srv, &vtxos, &vtxo_keys, &req).await
@@ -216,7 +228,7 @@ impl Wallet {
 				.effective_balance(effective_amt)
 				.fee(fee)
 				.consumed_vtxos(&vtxos)
-				.sent_to([MovementDestination::bitcoin(destination, req_amount)])
+				.sent_to([MovementDestination::bitcoin(destination, net_amount)])
 				.metadata(OffboardMovement::metadata(&signed_offboard_tx)),
 		).await?;
 

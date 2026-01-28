@@ -1,11 +1,11 @@
 
-use ark::offboard::OffboardRequest;
-use bitcoin::{Amount, Txid};
+use bitcoin::{Amount, FeeRate, Txid};
 use bitcoin::consensus::encode::serialize_hex;
 use bitcoin::secp256k1::PublicKey;
 use serde::{Deserialize, Serialize};
 
 use ark::VtxoId;
+use ark::offboard::OffboardRequest;
 use ark::tree::signed::UnlockHash;
 use ark::vtxo::VtxoPolicyKind;
 
@@ -309,9 +309,16 @@ pub struct OffboardRequestInfo {
 	pub script_pubkey_hex: String,
 	/// opcode representation of the output script
 	pub script_pubkey_asm: String,
-	#[serde(rename = "amount_sat", with = "bitcoin::amount::serde::as_sat")]
+	/// The target amount in sats.
+	#[serde(rename = "net_amount_sat", with = "bitcoin::amount::serde::as_sat")]
 	#[cfg_attr(feature = "utoipa", schema(value_type = u64))]
-	pub amount: Amount,
+	pub net_amount: Amount,
+	/// Determines whether fees should be added onto the given amount or deducted from it.
+	pub deduct_fees_from_gross_amount: bool,
+	/// What fee rate was used when calculating the fee for the offboard.
+	#[serde(rename = "fee_rate_kwu")]
+	#[cfg_attr(feature = "utoipa", schema(value_type = u64))]
+	pub fee_rate: FeeRate,
 }
 
 impl<'a> From<&'a OffboardRequest> for OffboardRequestInfo {
@@ -319,7 +326,9 @@ impl<'a> From<&'a OffboardRequest> for OffboardRequestInfo {
 		Self {
 			script_pubkey_hex: v.script_pubkey.to_hex_string(),
 			script_pubkey_asm: v.script_pubkey.to_asm_string(),
-			amount: v.amount,
+			net_amount: v.net_amount,
+			deduct_fees_from_gross_amount: v.deduct_fees_from_gross_amount,
+			fee_rate: v.fee_rate,
 		}
 	}
 }

@@ -274,7 +274,6 @@ impl Server {
 			max_user_invoice_cltv_delta: self.config.max_user_invoice_cltv_delta,
 			min_board_amount: self.config.min_board_amount,
 			offboard_feerate: self.config.offboard_feerate,
-			offboard_fixed_fee_vb: self.config.offboard_fixed_fee_vb,
 			ln_receive_anti_dos_required: self.config.ln_receive_anti_dos_required,
 			fees: self.config.fees.clone(),
 		}

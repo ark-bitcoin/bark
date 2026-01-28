@@ -11,7 +11,7 @@ use ark::vtxo::{Vtxo, VtxoId};
 use server_rpc::protos;
 
 use crate::subsystem::Subsystem;
-use crate::{ArkoorMovement, VtxoDelivery, MovementUpdate, Wallet};
+use crate::{ArkoorMovement, VtxoDelivery, MovementUpdate, Wallet, WalletVtxo};
 use crate::movement::MovementDestination;
 use crate::movement::manager::OnDropStatus;
 
@@ -67,22 +67,37 @@ impl Wallet {
 		arkoor_dest: ArkoorDestination,
 		change_pubkey: PublicKey,
 	) -> anyhow::Result<ArkoorCreateResult> {
+		let inputs = self.select_vtxos_to_cover(arkoor_dest.total_amount).await?;
+		self.create_checkpointed_arkoor_with_vtxos(
+			arkoor_dest,
+			change_pubkey,
+			inputs.into_iter(),
+		).await
+	}
+
+	pub(crate) async fn create_checkpointed_arkoor_with_vtxos(
+		&self,
+		arkoor_dest: ArkoorDestination,
+		change_pubkey: PublicKey,
+		inputs: impl IntoIterator<Item = WalletVtxo>,
+	) -> anyhow::Result<ArkoorCreateResult> {
 		if arkoor_dest.policy.user_pubkey() == change_pubkey {
 			bail!("Cannot create arkoor to same address as change");
 		}
 
 		// Find vtxos to cover
 		let (mut srv, _) = self.require_server().await?;
-		let inputs = self.select_vtxos_to_cover(arkoor_dest.total_amount).await?;
-		let input_ids = inputs.iter().map(|v| v.id()).collect();
+		let (input_ids, inputs) = inputs.into_iter()
+			.map(|v| (v.id(), v))
+			.collect::<(Vec<_>, Vec<_>)>();
 
-		let mut user_keypairs = vec![];
+		let mut user_keypairs = Vec::with_capacity(inputs.len());
 		for vtxo in &inputs {
 			user_keypairs.push(self.get_vtxo_key(vtxo).await?);
 		}
 
 		let builder = ArkoorPackageBuilder::new_single_output_with_checkpoints(
-			inputs.iter().map(|v| &v.vtxo).cloned(),
+			inputs.into_iter().map(|v| v.vtxo),
 			arkoor_dest.clone(),
 			VtxoPolicy::new_pubkey(change_pubkey),
 		)

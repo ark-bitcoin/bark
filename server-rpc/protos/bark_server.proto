@@ -98,7 +98,6 @@ message ArkInfo {
 	//TODO(stevenroose) move fee related values that are less
 	// permanent into another struct for bark to check
 	uint64 offboard_feerate_sat_vkb = 14;
-	uint64 offboard_fixed_fee_vb = 17;
 	FeeSchedule fees = 18;
 
 	// last index: 18
@@ -125,7 +124,8 @@ message BoardFees {
 
 message OffboardFees {
 	uint64 base_fee_sat = 1;
-	repeated PpmExpiryFeeEntry ppm_expiry_table = 2;
+	uint64 fixed_additional_vb = 2;
+	repeated PpmExpiryFeeEntry ppm_expiry_table = 3;
 }
 
 message RefreshFees {
@@ -434,9 +434,13 @@ message SignedVtxoRequest {
 }
 
 message OffboardRequest {
-	// amount in sats
-	uint64 amount = 1;
+	// The target amount in sats
+	uint64 net_amount_sat = 1;
 	bytes offboard_spk = 2;
+	// Determines whether fees should be added onto the given amount or deducted from the gross amount.
+	bool deduct_fees_from_gross_amount = 3;
+	// The fee rate used to calculate the total fees
+	uint64 fee_rate_kwu = 5;
 }
 
 message SubmitPaymentRequest {
