@@ -7,7 +7,7 @@ use bdk_wallet::chain::BlockId;
 use bdk_wallet::coin_selection::InsufficientFunds;
 use bdk_wallet::error::CreateTxError;
 use bitcoin::consensus::encode::serialize_hex;
-use bitcoin::{BlockHash, FeeRate, OutPoint, Transaction, TxOut, Txid, Weight, Witness};
+use bitcoin::{Amount, BlockHash, FeeRate, OutPoint, Transaction, TxOut, Txid, Weight, Witness};
 use bitcoin::psbt::{ExtractTxError, Input};
 use log::{debug, trace};
 
@@ -148,12 +148,25 @@ pub trait WalletExt: BorrowMut<Wallet> {
 
 		// Since BDK doesn't allow tx without recipients, we add a drain output.
 		let change_addr = wallet.reveal_next_address(KEYCHAIN);
+		let dust_limit = change_addr.address.script_pubkey().minimal_non_dust();
 
 		// We will loop, constructing the transaction and signing it until we exceed the effective
 		// fee rate and meet any minimum fee requirements
 		let mut spend_weight = Weight::ZERO;
 		let mut fee_needed = extra_fee_needed;
 		for i in 0..100 {
+			// We need to account for a particularly annoying BDK bug when using foreign UTXOs when
+			// BDK tries to use the P2A value to pay the fees. If the P2A has a value of 420 sats
+			// and the absolute fee is 200 sats, this will produce a 220 sat change output which
+			// results in a coin selection error. Ideally, BDK would pull in an extra UTXO to ensure
+			// the change output is more than the dust limit; however, this seems to be an edge case
+			// with experimental foreign UTXOs.
+			if fee_needed < txout.value {
+				if txout.value - fee_needed < dust_limit {
+					fee_needed = txout.value + Amount::ONE_SAT;
+				}
+			}
+
 			let mut b = wallet.build_tx();
 			b.only_witness_utxo();
 			b.exclude_unconfirmed();
