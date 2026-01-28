@@ -6,6 +6,7 @@ use log::{info, trace, warn};
 
 use ark::ProtocolEncoding;
 use ark::board::{BoardBuilder, BOARD_FUNDING_TX_VTXO_VOUT};
+use ark::fees::validate_and_subtract_fee;
 use ark::vtxo::VtxoRef;
 use bitcoin_ext::{BlockHeight, TxStatus};
 use server_rpc::protos;
@@ -169,15 +170,16 @@ impl Wallet {
 			let amount = psbt.unsigned_tx.output[0].value;
 			(psbt, amount)
 		};
-
 		ensure!(amount >= ark_info.min_board_amount,
-				"board amount of {amount} is less than minimum board amount required by server ({})",
-				ark_info.min_board_amount,
-			);
+			"board amount of {amount} is less than minimum board amount required by server ({})",
+			ark_info.min_board_amount,
+		);
+		let fee = ark_info.fees.board.calculate(amount).context("fee overflowed")?;
+		validate_and_subtract_fee(amount, fee)?;
 
 		let utxo = OutPoint::new(board_psbt.unsigned_tx.compute_txid(), BOARD_FUNDING_TX_VTXO_VOUT);
 		let builder = builder
-			.set_funding_details(amount, Amount::ZERO, utxo) // TODO(pc): Fees
+			.set_funding_details(amount, fee, utxo)
 			.context("error setting funding details for board")?
 			.generate_user_nonces();
 
@@ -202,8 +204,10 @@ impl Wallet {
 			Subsystem::BOARD,
 			BoardMovement::Board.to_string(),
 			MovementUpdate::new()
+				.intended_balance(amount.to_signed()?)
+				.effective_balance(vtxo.amount().to_signed()?)
+				.fee(fee)
 				.produced_vtxo(&vtxo)
-				.intended_and_effective_balance(vtxo.amount().to_signed()?)
 				.metadata(BoardMovement::metadata(utxo, onchain_fee)),
 		).await?;
 		self.store_locked_vtxos([&vtxo], Some(movement_id)).await?;
