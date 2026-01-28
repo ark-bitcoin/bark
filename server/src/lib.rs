@@ -103,8 +103,6 @@ const EPHEMERAL_KEY_PATH: &str = "m/30'";
 
 
 /// Return type for the round event RPC stream.
-///
-/// It contains a first item that is yielded first and then it refers to the stream.
 pub struct RoundEventStream {
 	events: BroadcastStream<Arc<RoundEvent>>,
 }
@@ -138,8 +136,6 @@ pub struct RoundHandle {
 
 impl RoundHandle {
 	pub fn events(&self) -> RoundEventStream {
-		// If we keep the lock just as long as we create a new receiver,
-		// we will never miss any messages.
 		let events = BroadcastStream::new(self.round_event_tx.subscribe());
 		RoundEventStream { events }
 	}
