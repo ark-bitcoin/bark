@@ -68,21 +68,6 @@ impl fmt::Display for WalletKind {
 /// server-specific extension trait for the BDK [Wallet] struct.
 #[async_trait]
 pub trait BdkWalletExt: WalletExt {
-	/// Finish the PSBT by signing it and committing it to the wallet.
-	///
-	/// This method does not persist changes to the database.
-	fn finish_tx(&mut self, mut psbt: Psbt) -> anyhow::Result<Transaction> {
-		#[allow(deprecated)]
-		let opts = bdk_wallet::SignOptions {
-			trust_witness_utxo: true,
-			..Default::default()
-		};
-		let wallet = self.borrow_mut();
-		let finalized = wallet.sign(&mut psbt, opts).context("error signing psbt")?;
-		ensure!(finalized, "tx not finalized after signing, psbt: {}", psbt.serialize().as_hex());
-		Ok(psbt.extract_tx().context("error extracting finalized tx from psbt")?)
-	}
-
 	/// Commit the tx into our BDK wallet.
 	fn commit_tx(&mut self, tx: &Transaction) {
 		let now = SystemTime::now().duration_since(UNIX_EPOCH)
@@ -239,6 +224,27 @@ impl PersistedWallet {
 			unconfirmed_utxos: unconfirmed.into_iter().map(|u| u.outpoint).collect(),
 		}
 	}
+
+	/// Finish the PSBT by signing it and committing it to the wallet.
+	///
+	/// This method does not persist changes to the database.
+	pub fn finish_tx(&mut self, mut psbt: Psbt) -> anyhow::Result<Transaction> {
+		#[allow(deprecated)]
+		let opts = bdk_wallet::SignOptions {
+			trust_witness_utxo: true,
+			..Default::default()
+		};
+		let finalized = self.sign(&mut psbt, opts).context("error signing psbt")?;
+		ensure!(finalized, "tx not finalized after signing, psbt: {}", psbt.serialize().as_hex());
+		let ret = psbt.extract_tx().context("error extracting finalized tx from psbt")?;
+		let txid = ret.compute_txid();
+		let raw_tx = bitcoin::consensus::serialize(&ret);
+		slog!(WalletSignedTx, wallet: self.kind.name().into(), txid, raw_tx,
+			inputs: ret.input.iter().map(|i| i.previous_output).collect(),
+		);
+		Ok(ret)
+	}
+
 
 	/// Send money to an address.
 	pub async fn send(

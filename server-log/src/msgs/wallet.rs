@@ -2,7 +2,7 @@
 use std::{time::Duration, borrow::Cow};
 
 use bdk_wallet::Balance;
-use bitcoin::Txid;
+use bitcoin::{OutPoint, Txid};
 use bitcoin::address::{Address, NetworkUnchecked};
 
 
@@ -54,3 +54,13 @@ pub struct WalletTransactionBroadcastFailure {
 	pub txid: Txid,
 }
 impl_slog!(WalletTransactionBroadcastFailure, WARN, "Failed to broadcast unconfirmed transaction");
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WalletSignedTx {
+	pub wallet: Cow<'static, str>,
+	pub txid: Txid,
+	pub inputs: Vec<OutPoint>,
+	#[serde(with = "crate::serde_utils::hex")]
+	pub raw_tx: Vec<u8>,
+}
+impl_slog!(WalletSignedTx, DEBUG, "Our wallet signed an onchain tx");

@@ -42,10 +42,10 @@ use std::time::Duration;
 use anyhow::Context;
 use ark::tree::signed::cosign_taproot;
 use ark::vtxo::VtxoSpec;
+use bitcoin::hex::DisplayHex;
 use bitcoin::secp256k1::{XOnlyPublicKey, Keypair};
 use bitcoin::{
-	psbt, sighash, Address, Amount, FeeRate, Network, OutPoint, Sequence, Transaction, TxOut,
-	Txid, Weight,
+	psbt, sighash, Address, Amount, FeeRate, Network, OutPoint, Psbt, Sequence, Transaction, TxOut, Txid, Weight
 };
 use bitcoin::consensus::encode::serialize_hex;
 use bitcoin_ext::{BlockHeight, TaprootSpendInfoExt, TransactionExt, DEEPLY_CONFIRMED};
@@ -62,7 +62,6 @@ use crate::psbtext::{PsbtExt, PsbtInputExt, SweepMeta};
 use crate::system::RuntimeManager;
 use crate::txindex::{self, TxIndex};
 use crate::txindex::broadcast::TxNursery;
-use crate::wallet::BdkWalletExt;
 use crate::{database, telemetry};
 
 use std::sync::Arc;
@@ -190,6 +189,26 @@ impl ExpiredRound {
 	fn new(_id: RoundId, _round: StoredRound) -> Self {
 		unimplemented!();
 	}
+}
+
+/// finish a sweeper-made tx
+///
+/// We need a dedicated fn here because we don't have a PersistedWallet.
+fn finish_tx(wallet: &bdk_wallet::Wallet, mut psbt: Psbt) -> anyhow::Result<Transaction> {
+	#[allow(deprecated)]
+	let opts = bdk_wallet::SignOptions {
+		trust_witness_utxo: true,
+		..Default::default()
+	};
+	let finalized = wallet.sign(&mut psbt, opts).context("error signing psbt")?;
+	ensure!(finalized, "tx not finalized after signing, psbt: {}", psbt.serialize().as_hex());
+	let ret = psbt.extract_tx().context("error extracting finalized tx from psbt")?;
+	let txid = ret.compute_txid();
+	let raw_tx = bitcoin::consensus::serialize(&ret);
+	slog!(WalletSignedTx, wallet: "sweeper".into(), txid, raw_tx,
+		inputs: ret.input.iter().map(|i| i.previous_output).collect(),
+	);
+	Ok(ret)
 }
 
 /// Build a sweep.
@@ -397,10 +416,9 @@ impl<'a> SweepBuilder<'a> {
 		// SIGNING
 
 		psbt.try_sign_sweeps(&self.sweeper.server_key)?;
-		Ok(self.sweeper.wallet.finish_tx(psbt)?)
+		Ok(finish_tx(&self.sweeper.wallet, psbt)?)
 	}
 }
-
 
 struct Process {
 	config: Config,
