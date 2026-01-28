@@ -6,6 +6,77 @@ https://docs.second.tech/changelog/changelog/
 
 Below is a more concise summary for each version.
 
+# v0.1.0-beta.7
+
+- `ark-lib`
+  - Refactor `GenesisItem::Arkoor` to remove embedded policy
+    Removes the `Policy` from `GenesisItem::Arkoor` to allow adding new policies
+    without introducing breaking changes to the protocol encoding.
+    [#1396](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1396)
+    - **BREAKING:** `ProtocolEncoding` for `GenesisItem` has changed
+  - Split `VtxoPolicy` into user-facing and server-internal types
+    [#1542](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1542)
+  - Fix encoding for VTXOs with more than 256 genesis items
+    [#1550](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1550)
+    - **BREAKING:** `ProtocolEncoding` for genesis length fields has changed
+  - Fix bug in signed tree encoding/decoding round-trip
+    [#1551](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1551)
+  - Remove old pre-hark encoding of `VtxoTreeSpec`
+    [#1552](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1552)
+    - **BREAKING:** Old pre-hark `VtxoTreeSpec` encoding is no longer supported
+  - `BoardBuilder` gains functionality to track `ServerVtxo`s
+    and provides methods to build internal unsigned VTXOs and transactions.
+    [#1513](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1513)
+    - `CosignedGenesis::signature` is now `Option<schnorr::Signature>` to support
+      constructing unsigned VTXOs for validation purposes. Wire format unchanged:
+      `None` encodes as an all-zeros 64-byte signature.
+    - Add `Vtxo::validate_unsigned` method for validating VTXO structure without
+      checking signatures
+    - Allow empty genesis in VTXO validation for VTXOs directly anchored on-chain
+    - Add `BoardBuilder` query methods: `exit_tx()`, `exit_txid()`,
+      `build_internal_unsigned_vtxos()`, and `spend_info()`
+    - Add encoding tests for `GenesisTransition` variants
+
+- `bark`
+  - Implement unified mailbox delivery
+    Bark now uses a unified mailbox system for receiving VTXOs, providing more
+    reliable delivery across different sources.
+    [#1412](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1412)
+    - **BREAKING:** Addresses now use mailbox addresses
+  - Add environment variable support to Config
+    Bark configuration values can now be set via environment variables.
+    [#1558](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1558)
+  - `Wallet::next_round_start_time` to ask server for next round start time
+    [#1559](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1559)
+  - Add delegated maintenance and refresh APIs to `Wallet`:
+    - `maintenance_delegated`
+    - `maintenance_with_onchain_delegated`
+    - `maybe_schedule_maintenance_refresh_delegated`
+    - `refresh_vtxos_delegated`
+    - `join_next_round_delegated`
+    These methods return immediately with a pending movement that can be tracked
+    via `sync()` for completion status.
+    [#1566](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1566)
+  - Add `--delegated` flag to `maintain` and `refresh` commands
+    Allows non-blocking maintenance and refresh operations that return immediately.
+    Users can track progress by monitoring movement status via `history` command.
+    [#1566](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1566)
+
+- `server`
+  - add NextRoundTime endpoint to expose next scheduled round start time
+    [#1559](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1559)
+  - Migrate lightning invoice monitoring from polling to TrackAll stream
+    Improves reliability of invoice status tracking with automatic stream
+    recovery and more accurate timeout handling using accepted timestamps.
+    [#1453](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1453)
+  - Notify sender promptly on intra-ark lightning payment cancellation
+    [#1543](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1543)
+  - Drop the `board` database table
+    Board tracking is now handled through the virtual transaction tree.
+    [#1513](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1513)
+    - Migration V26 removes the table
+    - Remove board-specific database methods and sweep logic
+
 # v0.1.0-beta.6
 
 - `ark-lib`

@@ -1,4 +1,0 @@
-- Migrate lightning invoice monitoring from polling to TrackAll stream
-  Improves reliability of invoice status tracking with automatic stream
-  recovery and more accurate timeout handling using accepted timestamps.
-  [#1453](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1453)

@@ -1,3 +1,0 @@
-- Add environment variable support to Config
-  Bark configuration values can now be set via environment variables.
-  [#1558](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1558)
