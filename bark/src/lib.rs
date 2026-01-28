@@ -301,6 +301,7 @@ mod arkoor;
 mod board;
 mod config;
 mod daemon;
+mod fees;
 mod lightning;
 mod offboard;
 mod psbtext;
@@ -309,6 +310,7 @@ mod mailbox;
 pub use self::arkoor::ArkoorCreateResult;
 pub use self::config::{BarkNetwork, Config};
 pub use self::daemon::DaemonHandle;
+pub use self::fees::FeeEstimate;
 pub use self::persist::sqlite::SqliteClient;
 pub use self::vtxo::WalletVtxo;
 
