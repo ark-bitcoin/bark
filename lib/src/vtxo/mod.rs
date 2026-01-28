@@ -88,7 +88,10 @@ use bitcoin::taproot::TapTweakHash;
 use bitcoin_ext::{fee, BlockDelta, BlockHeight, TxOutExt};
 
 use crate::{musig, scripts};
-use crate::encode::{ProtocolDecodingError, ProtocolEncoding, ReadExt, WriteExt};
+use crate::encode::{
+	LengthPrefixedVector, OversizedVectorError, ProtocolDecodingError, ProtocolEncoding, ReadExt,
+	WriteExt,
+};
 use crate::lightning::PaymentHash;
 use crate::tree::signed::{UnlockHash, UnlockPreimage};
 
@@ -853,10 +856,7 @@ impl ProtocolEncoding for GenesisTransition {
 		match self {
 			Self::Cosigned(t) => {
 				w.emit_u8(GENESIS_TRANSITION_TYPE_COSIGNED)?;
-				w.emit_compact_size(t.pubkeys.len() as u64)?;
-				for pk in t.pubkeys.iter() {
-					pk.encode(w)?;
-				}
+				LengthPrefixedVector::new(&t.pubkeys).encode(w)?;
 				t.signature.encode(w)?;
 			},
 			Self::HashLockedCosigned(t) => {
@@ -876,10 +876,7 @@ impl ProtocolEncoding for GenesisTransition {
 			},
 			Self::Arkoor(t) => {
 				w.emit_u8(GENESIS_TRANSITION_TYPE_ARKOOR)?;
-				w.emit_compact_size(t.client_cosigners.len() as u64)?;
-				for cosigner in &t.client_cosigners {
-					cosigner.encode(w)?;
-				};
+				LengthPrefixedVector::new(&t.client_cosigners).encode(w)?;
 				t.tap_tweak.encode(w)?;
 				t.signature.encode(w)?;
 			},
@@ -890,11 +887,7 @@ impl ProtocolEncoding for GenesisTransition {
 	fn decode<R: io::Read + ?Sized>(r: &mut R) -> Result<Self, ProtocolDecodingError> {
 		match r.read_u8()? {
 			GENESIS_TRANSITION_TYPE_COSIGNED => {
-				let nb_pubkeys = r.read_compact_size()? as usize;
-				let mut pubkeys = Vec::with_capacity(nb_pubkeys);
-				for _ in 0..nb_pubkeys {
-					pubkeys.push(PublicKey::decode(r)?);
-				}
+				let pubkeys = LengthPrefixedVector::decode(r)?.into_inner();
 				let signature = Option::<schnorr::Signature>::decode(r)?;
 				Ok(Self::new_cosigned(pubkeys, signature))
 			},
@@ -911,11 +904,7 @@ impl ProtocolEncoding for GenesisTransition {
 				Ok(Self::new_hash_locked_cosigned(user_pubkey, signature, unlock))
 			},
 			GENESIS_TRANSITION_TYPE_ARKOOR => {
-				let nb_cosigners = r.read_compact_size()? as usize;
-				let mut cosigners = Vec::with_capacity(nb_cosigners);
-				for _ in 0..nb_cosigners {
-					cosigners.push(PublicKey::decode(r)?);
-				}
+				let cosigners = LengthPrefixedVector::decode(r)?.into_inner();
 				let taptweak = TapTweakHash::decode(r)?;
 				let signature = Option::<schnorr::Signature>::decode(r)?;
 				Ok(Self::new_arkoor(cosigners, taptweak, signature))
@@ -968,6 +957,7 @@ impl<P: Policy + ProtocolEncoding> ProtocolEncoding for Vtxo<P> {
 		let anchor_point = OutPoint::decode(r)?;
 
 		let nb_genesis_items = r.read_compact_size()? as usize;
+		OversizedVectorError::check::<GenesisItem>(nb_genesis_items)?;
 		let mut genesis = Vec::with_capacity(nb_genesis_items);
 		for _ in 0..nb_genesis_items {
 			let transition = GenesisTransition::decode(r)?;
