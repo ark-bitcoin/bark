@@ -1,0 +1,6 @@
+- Implement fees for board, offboard, refresh and lightning operations.
+  Fees are configured via the config file and are communicated to clients using ArkInfo. Fees are validated on the
+  server side and require clients also calculate the same fee values.
+  [#1500](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1500)
+- Move offboard_fixed_fee_vb to fees.fixed_additional_vb in the server config.
+  [#1500](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1500)

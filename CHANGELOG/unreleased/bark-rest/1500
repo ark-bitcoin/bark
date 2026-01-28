@@ -1,0 +1,6 @@
+- Add FeeSchedule to ArkInfo response.
+  The REST API now includes a complete fee schedule for all operations (board, offboard, refresh, lightning send/receive).
+  Clients can use this to calculate and display fees to users before performing operations.
+  [#1500](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1500)
+  - **BREAKING:** `offboard_fixed_fee_vb` field removed from ArkInfo, moved to `fees.offboard.fixed_additional_vb`
+  - New types: `FeeSchedule`, `BoardFees`, `OffboardFees`, `RefreshFees`, `LightningReceiveFees`, `LightningSendFees`, `PpmExpiryFeeEntry`

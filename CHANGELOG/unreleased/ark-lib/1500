@@ -1,0 +1,8 @@
+- Add FeeSchedule to ArkInfo struct.
+  This contains details and methods to calculate fees for board, offboard, send-onchain, refresh, and lightning
+  operations.
+  [#1500](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1500)
+- Move ArkInfo.offboard_fixed_fee_vb to FeeSchedule.offboard.fixed_additional_vb.
+  This contains details and methods to calculate fees for board, offboard, send-onchain, refresh, and lightning
+  operations.
+  [#1500](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1500)
