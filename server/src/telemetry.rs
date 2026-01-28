@@ -377,6 +377,7 @@ impl Metrics {
 			.add_directive("tokio_postgres=INFO".parse().unwrap())
 			.add_directive("tonic=INFO".parse().unwrap())
 			.add_directive("tower=INFO".parse().unwrap())
+			.add_directive("opentelemetry-otlp=INFO".parse().unwrap())
 			.add_directive("h2=INFO".parse().unwrap());
 		if let Ok(env_str) = std::env::var(S::LOG_ENV_VAR) {
 			for part in env_str.split(',') {
