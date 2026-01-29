@@ -1,0 +1,3 @@
+- `bark`: Disallow creating and paying 0 sat lightning invoices
+  Prevents users from creating invoices for 0 sats and from paying invoices
+  that resolve to 0 sats, which are not useful and could cause issues.
