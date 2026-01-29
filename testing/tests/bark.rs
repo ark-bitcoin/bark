@@ -1344,6 +1344,9 @@ async fn stepwise_round() {
 	while let Some(item) = events.next().await {
 		let event = RoundEvent::try_from(item.unwrap()).unwrap();
 		info!("Received round event of type: {}", event.kind());
+
+		bark.progress_pending_rounds(Some(&event)).await.unwrap();
+		// test idempotency
 		bark.progress_pending_rounds(Some(&event)).await.unwrap();
 
 		let states = print_pending_rounds(&bark).await;
@@ -1362,6 +1365,7 @@ async fn stepwise_round() {
 		} else {
 			panic!("our round is gone");
 		}
+
 		trace!("waiting for next event...");
 	}
 	drop(events);
