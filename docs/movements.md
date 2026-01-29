@@ -300,7 +300,8 @@ Sending a lightning payment using a supported method such as a BOLT11 invoice, a
   "exited_vtxos": [], // Array of VTXO IDs marked for exit if required, these are always HTLC VTXOs
   "metadata": {
     "payment_hash": "e3b0c442...",
-    "htlc_vtxos": ["f7a8b9c0...:0"]
+    "htlc_vtxos": ["f7a8b9c0...:0"],
+    "payment_preimage": "f50b3e22..."
   }
 }
 ```
@@ -345,6 +346,7 @@ Same as invoice, except `sent_to` uses the lightning address type:
   - HTLC VTXOs are tracked separately in metadata and not in output_vtxos.
 - Each payment to an offer generates a unique `payment_hash`.
 - Each payment to a lightning address generates a unique `payment_hash`.
+- A movement will contain a `payment_preimage` in its metadata if and only if it is successful.
 - A movement will not be created until a HTLC VTXO is received from the server.
 
 ---
@@ -380,7 +382,8 @@ Receiving a lightning payment via a BOLT11 invoice.
   "exited_vtxos": [], // Array of VTXO IDs marked for exit if required, these are always HTLC VTXOs
   "metadata": {
     "payment_hash": "a7ffc6f8...",
-    "htlc_vtxos": ["c5d6e7f8...:0"]
+    "htlc_vtxos": ["c5d6e7f8...:0"],
+    "payment_preimage": "84f27d91..."
   }
 }
 ```
