@@ -1,0 +1,2 @@
+- Movements for lightning sends and receives now include the preimage when known
+  [#1579](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1579)
