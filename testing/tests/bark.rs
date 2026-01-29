@@ -420,8 +420,8 @@ async fn refresh_all() {
 }
 
 #[tokio::test]
-async fn bark_allows_sending_dust_arkoor() {
-	let ctx = TestContext::new("bark/bark_allows_sending_dust_arkoor").await;
+async fn bark_allows_sending_dust_arkoor_but_errors_on_dust_refresh() {
+	let ctx = TestContext::new("bark/bark_allows_sending_dust_arkoor_but_errors_on_dust_refresh").await;
 	let srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
 	let bark1 = ctx.new_bark_with_funds("bark1", &srv, sat(1_000_000)).await;
 	let bark2 = ctx.new_bark_with_funds("bark2", &srv, sat(1_000_000)).await;
