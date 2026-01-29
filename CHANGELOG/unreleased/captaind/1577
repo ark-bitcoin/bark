@@ -1,0 +1,2 @@
+- Disallow creating and paying 0 sat lightning invoices
+  These are not useful and could cause issues.
