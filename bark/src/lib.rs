@@ -330,7 +330,7 @@ use ark::board::{BoardBuilder, BOARD_FUNDING_TX_VTXO_VOUT};
 use ark::mailbox::MailboxIdentifier;
 use ark::vtxo::{PubkeyVtxoPolicy, VtxoRef};
 use ark::vtxo::policy::signing::VtxoSigner;
-use bitcoin_ext::{BlockHeight, TxStatus};
+use bitcoin_ext::{BlockHeight, P2TR_DUST, TxStatus};
 use server_rpc::{protos, ServerConnection};
 
 use crate::chain::{ChainSource, ChainSourceSpec};
@@ -1672,6 +1672,11 @@ impl Wallet {
 		}
 
 		let total_amount = vtxos.values().map(|v| v.vtxo.amount()).sum();
+
+		ensure!(total_amount >= P2TR_DUST,
+			"vtxo amount must be at least {} to participate in a round",
+			P2TR_DUST,
+		);
 
 		info!("Refreshing {} VTXOs (total amount = {}).", vtxos.len(), total_amount);
 

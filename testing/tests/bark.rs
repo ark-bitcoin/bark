@@ -431,6 +431,11 @@ async fn bark_allows_sending_dust_arkoor() {
 
 	let dust_amount = sat(P2TR_DUST_SAT - 1);
 	bark1.try_send_oor(&bark2.address().await, dust_amount, true).await.unwrap();
+
+	let err = bark2.try_refresh_all().await.unwrap_err();
+	let err_str = format!("{err:?}");
+	assert!(err_str.contains("vtxo amount must be at least"),
+		"expected: dust validation error, got: {err_str}");
 }
 
 #[tokio::test]
