@@ -1009,7 +1009,9 @@ mod test {
 
 	use crate::test_util::encoding_roundtrip;
 	use crate::test_util::dummy::{DUMMY_SERVER_KEY, DUMMY_USER_KEY};
-	use crate::test_util::vectors::{generate_vtxo_vectors, VTXO_VECTORS};
+	use crate::test_util::vectors::{
+		generate_vtxo_vectors, VTXO_VECTORS, VTXO_NO_FEE_AMOUNT_VERSION_HEXES,
+	};
 
 	use super::*;
 
@@ -1051,6 +1053,47 @@ mod test {
 
 		// this passes because the Eq is based on id which doesn't compare signatures
 		assert_eq!(g, *v);
+	}
+
+	#[test]
+	fn test_vtxo_no_fee_amount_version_upgrade() {
+		let hexes = &*VTXO_NO_FEE_AMOUNT_VERSION_HEXES;
+		let v = hexes.deserialize_test_vectors();
+
+		// Ensure all VTXOs validate correctly.
+		v.validate_vtxos();
+
+		// Ensure each VTXO serializes and is different from the old hex.
+		let board_hex = v.board_vtxo.serialize().as_hex().to_string();
+		let arkoor_htlc_out_vtxo_hex = v.arkoor_htlc_out_vtxo.serialize().as_hex().to_string();
+		let arkoor2_vtxo_hex = v.arkoor2_vtxo.serialize().as_hex().to_string();
+		let round1_vtxo_hex = v.round1_vtxo.serialize().as_hex().to_string();
+		let round2_vtxo_hex = v.round2_vtxo.serialize().as_hex().to_string();
+		let arkoor3_vtxo_hex = v.arkoor3_vtxo.serialize().as_hex().to_string();
+		assert_ne!(board_hex, hexes.board_vtxo);
+		assert_ne!(arkoor_htlc_out_vtxo_hex, hexes.arkoor_htlc_out_vtxo);
+		assert_ne!(arkoor2_vtxo_hex, hexes.arkoor2_vtxo);
+		assert_ne!(round1_vtxo_hex, hexes.round1_vtxo);
+		assert_ne!(round2_vtxo_hex, hexes.round2_vtxo);
+		assert_ne!(arkoor3_vtxo_hex, hexes.arkoor3_vtxo);
+
+		// Now verify that deserializing them again results in exactly the same hex. This should be
+		// the case because the initial hex strings should have been created with a different
+		// version, then, when we serialize the VTXOs, we should use the newest version. If you
+		// deserialize a VTXO with the latest version and serialize it, you should get the same
+		// result.
+		let board_vtxo: Vtxo = ProtocolEncoding::deserialize_hex(&board_hex).unwrap();
+		assert_eq!(board_vtxo.serialize().as_hex().to_string(), board_hex);
+		let arkoor_htlc_out_vtxo: Vtxo = ProtocolEncoding::deserialize_hex(&arkoor_htlc_out_vtxo_hex).unwrap();
+		assert_eq!(arkoor_htlc_out_vtxo.serialize().as_hex().to_string(), arkoor_htlc_out_vtxo_hex);
+		let arkoor2_vtxo: Vtxo = ProtocolEncoding::deserialize_hex(&arkoor2_vtxo_hex).unwrap();
+		assert_eq!(arkoor2_vtxo.serialize().as_hex().to_string(), arkoor2_vtxo_hex);
+		let round1_vtxo: Vtxo = ProtocolEncoding::deserialize_hex(&round1_vtxo_hex).unwrap();
+		assert_eq!(round1_vtxo.serialize().as_hex().to_string(), round1_vtxo_hex);
+		let round2_vtxo: Vtxo = ProtocolEncoding::deserialize_hex(&round2_vtxo_hex).unwrap();
+		assert_eq!(round2_vtxo.serialize().as_hex().to_string(), round2_vtxo_hex);
+		let arkoor3_vtxo: Vtxo = ProtocolEncoding::deserialize_hex(&arkoor3_vtxo_hex).unwrap();
+		assert_eq!(arkoor3_vtxo.serialize().as_hex().to_string(), arkoor3_vtxo_hex);
 	}
 
 	#[test]
