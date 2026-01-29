@@ -61,7 +61,8 @@ impl CosignedGenesis {
 		server_pubkey: PublicKey,
 		expiry_height: BlockHeight,
 	) -> taproot::TaprootSpendInfo {
-		let agg_pk = musig::combine_keys(self.pubkeys.iter().copied());
+		let agg_pk = musig::combine_keys(self.pubkeys.iter().copied())
+			.x_only_public_key().0;
 		cosign_taproot(agg_pk, server_pubkey, expiry_height)
 	}
 
@@ -210,7 +211,8 @@ impl HashLockedCosignedGenesis {
 		};
 
 		let mut shc = sighash::SighashCache::new(tx);
-		let agg_pk = musig::combine_keys([self.user_pubkey, server_pubkey]);
+		let agg_pk = musig::combine_keys([self.user_pubkey, server_pubkey])
+			.x_only_public_key().0;
 		let script = unlock_clause(agg_pk, self.unlock.hash());
 		let leaf = TapLeafHash::from_script(&script, bitcoin::taproot::LeafVersion::TapScript);
 		let tapsighash = shc.taproot_script_spend_signature_hash(

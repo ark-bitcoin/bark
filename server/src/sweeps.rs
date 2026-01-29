@@ -114,7 +114,7 @@ impl BoardSweepInput {
 		let spec = &self.vtxo_spec;
 		let combined_pubkey = musig::combine_keys([
 			self.vtxo_spec.policy.user_pubkey(), spec.server_pubkey,
-		]);
+		]).x_only_public_key().0;
 		let taproot = cosign_taproot(combined_pubkey, spec.server_pubkey, spec.expiry_height);
 		let utxo = TxOut {
 			value: spec.amount,
@@ -338,7 +338,8 @@ impl<'a> SweepBuilder<'a> {
 
 		let mut ret = Some(0);
 		let signed_txs = round.round.signed_tree.all_final_txs();
-		let agg_pkgs = round.round.signed_tree.spec.cosign_agg_pks();
+		let agg_pkgs = round.round.signed_tree.spec.cosign_agg_pks()
+			.map(|p| p.x_only_public_key().0);
 		for (signed_tx, agg_pk) in signed_txs.into_iter().zip(agg_pkgs).rev() {
 			let txid = signed_tx.compute_txid();
 			let tx = self.sweeper.txindex.get_or_insert(txid, || signed_tx.clone()).await?;

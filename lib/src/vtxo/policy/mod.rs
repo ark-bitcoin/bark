@@ -157,7 +157,8 @@ impl PubkeyVtxoPolicy {
 		server_pubkey: PublicKey,
 		exit_delta: BlockDelta,
 	) -> taproot::TaprootSpendInfo {
-		let combined_pk = musig::combine_keys([self.user_pubkey, server_pubkey]);
+		let combined_pk = musig::combine_keys([self.user_pubkey, server_pubkey])
+			.x_only_public_key().0;
 
 		let user_pubkey_claim_clause = self.user_pubkey_claim_clause(exit_delta);
 		taproot::TaprootBuilder::new()
@@ -208,7 +209,8 @@ impl CheckpointVtxoPolicy {
 		server_pubkey: PublicKey,
 		expiry_height: BlockHeight,
 	) -> taproot::TaprootSpendInfo {
-		let combined_pk = musig::combine_keys([self.user_pubkey, server_pubkey]);
+		let combined_pk = musig::combine_keys([self.user_pubkey, server_pubkey])
+			.x_only_public_key().0;
 		let server_sweeping_clause = self.server_sweeping_clause(expiry_height, server_pubkey);
 
 		taproot::TaprootBuilder::new()
@@ -332,7 +334,8 @@ impl ServerHtlcSendVtxoPolicy {
 		let server_reveals_preimage_clause = self.server_reveals_preimage_clause(server_pubkey, exit_delta);
 		let user_claim_after_expiry_clause = self.user_claim_after_expiry_clause(exit_delta);
 
-		let combined_pk = musig::combine_keys([self.user_pubkey, server_pubkey]);
+		let combined_pk = musig::combine_keys([self.user_pubkey, server_pubkey])
+			.x_only_public_key().0;
 		bitcoin::taproot::TaprootBuilder::new()
 			.add_leaf(1, server_reveals_preimage_clause.tapscript()).unwrap()
 			.add_leaf(1, user_claim_after_expiry_clause.tapscript()).unwrap()
@@ -404,7 +407,8 @@ impl ServerHtlcRecvVtxoPolicy {
 		let server_claim_after_expiry_clause = self.server_claim_after_expiry_clause(server_pubkey, exit_delta);
 		let user_reveals_preimage_clause = self.user_reveals_preimage_clause(exit_delta);
 
-		let combined_pk = musig::combine_keys([self.user_pubkey, server_pubkey]);
+		let combined_pk = musig::combine_keys([self.user_pubkey, server_pubkey])
+			.x_only_public_key().0;
 		bitcoin::taproot::TaprootBuilder::new()
 			.add_leaf(1, server_claim_after_expiry_clause.tapscript()).unwrap()
 			.add_leaf(1, user_reveals_preimage_clause.tapscript()).unwrap()

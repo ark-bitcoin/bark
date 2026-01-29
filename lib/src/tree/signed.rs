@@ -54,7 +54,8 @@ pub fn leaf_cosign_taproot(
 	expiry_height: BlockHeight,
 	unlock_hash: UnlockHash,
 ) -> taproot::TaprootSpendInfo {
-	let agg_pk = musig::combine_keys([user_pubkey, server_pubkey]);
+	let agg_pk = musig::combine_keys([user_pubkey, server_pubkey])
+		.x_only_public_key().0;
 	taproot::TaprootBuilder::new()
 		.add_leaf(1, expiry_clause(server_pubkey, expiry_height)).unwrap()
 		.add_leaf(1, unlock_clause(agg_pk, unlock_hash)).unwrap()
@@ -127,7 +128,7 @@ enum ChildSpec<'a> {
 	},
 	Internal {
 		output_value: Amount,
-		agg_pk: XOnlyPublicKey,
+		agg_pk: PublicKey,
 	},
 }
 
@@ -202,7 +203,7 @@ impl VtxoTreeSpec {
 		let keys = self.vtxos.iter()
 			.filter_map(|v| v.cosign_pubkey)
 			.chain(self.global_cosign_pubkeys.iter().copied());
-		musig::combine_keys(keys)
+		musig::combine_keys(keys).x_only_public_key().0
 	}
 
 	/// The scriptPubkey used on the vtxo output of the tx funding the tree
@@ -252,7 +253,7 @@ impl VtxoTreeSpec {
 					}
 				},
 				ChildSpec::Internal { output_value, agg_pk } => {
-					let taproot = self.internal_taproot(agg_pk);
+					let taproot = self.internal_taproot(agg_pk.x_only_public_key().0);
 					TxOut {
 						script_pubkey: taproot.script_pubkey(),
 						value: output_value,
@@ -275,7 +276,7 @@ impl VtxoTreeSpec {
 	///
 	/// Pubkeys expected and returned ordered from leaves to root.
 	pub fn cosign_agg_pks(&self)
-		-> impl Iterator<Item = XOnlyPublicKey> + iter::DoubleEndedIterator + iter::ExactSizeIterator + '_
+		-> impl Iterator<Item = PublicKey> + iter::DoubleEndedIterator + iter::ExactSizeIterator + '_
 	{
 		Tree::new(self.nb_leaves()).into_iter().map(|node| {
 			if node.is_leaf() {
@@ -401,7 +402,7 @@ pub struct UnsignedVtxoTree {
 	// the following fields are calculated from the above
 
 	/// Aggregate pubkeys for the inputs to all nodes, leaves to root.
-	pub cosign_agg_pks: Vec<XOnlyPublicKey>,
+	pub cosign_agg_pks: Vec<PublicKey>,
 	/// Transactions for all nodes, leaves to root.
 	pub txs: Vec<Transaction>,
 	/// Sighashes for the only input of the tx for all internal nodes,
@@ -510,7 +511,7 @@ impl UnsignedVtxoTree {
 				.chain(self.spec.global_cosign_pubkeys.iter().copied());
 			let sighash = self.internal_sighashes[node.internal_idx()];
 
-			let agg_pk = self.cosign_agg_pks[node.idx()];
+			let agg_pk = self.cosign_agg_pks[node.idx()].x_only_public_key().0;
 			let tweak = self.spec.internal_taproot(agg_pk).tap_tweak().to_byte_array();
 			let sig = musig::partial_sign(
 				cosign_pubkeys,
@@ -550,7 +551,7 @@ impl UnsignedVtxoTree {
 				.chain(self.spec.global_cosign_pubkeys.iter().copied());
 			let agg_pk = self.cosign_agg_pks[node.idx()];
 			debug_assert_eq!(agg_pk, musig::combine_keys(cosign_pubkeys.clone()));
-			let taproot = self.spec.internal_taproot(agg_pk);
+			let taproot = self.spec.internal_taproot(agg_pk.x_only_public_key().0);
 			musig::partial_sign(
 				cosign_pubkeys,
 				*agg_nonce,
@@ -580,7 +581,7 @@ impl UnsignedVtxoTree {
 			let cosign_pubkeys = node.leaves()
 				.filter_map(|i| self.spec.vtxos[i].cosign_pubkey)
 				.chain(self.spec.global_cosign_pubkeys.iter().copied());
-			let agg_pk = self.cosign_agg_pks[node.idx()];
+			let agg_pk = self.cosign_agg_pks[node.idx()].x_only_public_key().0;
 			let taproot = self.spec.internal_taproot(agg_pk);
 			let taptweak = taproot.tap_tweak().to_byte_array();
 			musig::tweaked_key_agg(cosign_pubkeys, taptweak).0
@@ -719,7 +720,7 @@ impl UnsignedVtxoTree {
 				part_sigs.push(sigs.as_ref().get(node.internal_idx()).expect("checked before"));
 			}
 
-			let agg_pk = self.cosign_agg_pks[node.idx()];
+			let agg_pk = self.cosign_agg_pks[node.idx()].x_only_public_key().0;
 			let taproot = self.spec.internal_taproot(agg_pk);
 			let agg_nonce = *cosign_agg_nonces.get(node.internal_idx())
 				.ok_or(CosignSignatureError::NotEnoughNonces)?;
@@ -740,7 +741,7 @@ impl UnsignedVtxoTree {
 	) -> Result<(), XOnlyPublicKey> {
 		for node in self.tree.iter_internal() {
 			let sighash = self.internal_sighashes[node.internal_idx()];
-			let agg_pk = &self.cosign_agg_pks[node.idx()];
+			let agg_pk = &self.cosign_agg_pks[node.idx()].x_only_public_key().0;
 			let pk = self.spec.internal_taproot(*agg_pk).output_key().to_x_only_public_key();
 			let sig = signatures.get(node.internal_idx()).ok_or_else(|| pk)?;
 			if SECP.verify_schnorr(sig, &sighash.into(), &pk).is_err() {
@@ -955,7 +956,8 @@ pub fn hashlocked_leaf_sighash(
 	unlock_hash: UnlockHash,
 	prev_txout: &TxOut,
 ) -> TapSighash {
-	let agg_pk = musig::combine_keys([user_pubkey, server_pubkey]);
+	let agg_pk = musig::combine_keys([user_pubkey, server_pubkey])
+		.x_only_public_key().0;
 	let clause = unlock_clause(agg_pk, unlock_hash);
 	let leaf_hash = TapLeafHash::from_script(&clause, bitcoin::taproot::LeafVersion::TapScript);
 	let mut shc = SighashCache::new(leaf_tx);
@@ -1057,7 +1059,8 @@ impl<'a> LeafVtxoCosignContext<'a> {
 		);
 		let final_sig = final_sig.expect("has other sigs");
 
-		let pubkey = musig::combine_keys([vtxo.user_pubkey(), vtxo.server_pubkey()]);
+		let pubkey = musig::combine_keys([vtxo.user_pubkey(), vtxo.server_pubkey()])
+			.x_only_public_key().0;
 		debug_assert_eq!(pubkey, leaf_cosign_taproot(
 			vtxo.user_pubkey(),
 			vtxo.server_pubkey(),
