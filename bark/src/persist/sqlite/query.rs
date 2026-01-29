@@ -1005,4 +1005,35 @@ mod test {
 		let state = get_vtxo_state(&tx, vtxo.id()).unwrap().unwrap();
 		assert_eq!(state, spendable);
 	}
+
+	#[test]
+	fn test_mailbox_checkpoint_stores_correct_value() {
+		let (_, mut conn) = in_memory_db();
+		MigrationContext{}.do_all_migrations(&mut conn).unwrap();
+
+		// Initial checkpoint should be 0
+		let initial = get_mailbox_checkpoint(&conn).unwrap();
+		assert_eq!(initial, 0);
+
+		// Store checkpoint 100
+		store_mailbox_checkpoint(&conn, 100).unwrap();
+
+		// Retrieved checkpoint must be exactly 100, not 0 or 1
+		// This catches the bug where `SET col = ?1 AND ...` was used instead of comma
+		let stored = get_mailbox_checkpoint(&conn).unwrap();
+		assert_eq!(stored, 100, "Checkpoint should be exactly 100, not corrupted by SQL AND operator");
+
+		// Storing a lower checkpoint should fail (no rows updated)
+		let result = store_mailbox_checkpoint(&conn, 50);
+		assert!(result.is_err(), "Storing a lower checkpoint should fail");
+
+		// Checkpoint should still be 100
+		let unchanged = get_mailbox_checkpoint(&conn).unwrap();
+		assert_eq!(unchanged, 100);
+
+		// Storing a higher checkpoint should succeed
+		store_mailbox_checkpoint(&conn, 200).unwrap();
+		let updated = get_mailbox_checkpoint(&conn).unwrap();
+		assert_eq!(updated, 200);
+	}
 }
