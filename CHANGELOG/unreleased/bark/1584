@@ -1,0 +1,2 @@
+- Fix mailbox checkpoint not advancing due to SQL syntax error
+  [#1584](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1584)

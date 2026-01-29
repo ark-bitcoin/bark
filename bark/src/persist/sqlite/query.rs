@@ -673,7 +673,7 @@ pub fn store_mailbox_checkpoint(conn: &Connection, checkpoint: u64) -> anyhow::R
 	conn.execute(
 		r#"
 			UPDATE bark_mailbox_checkpoint
-			SET checkpoint = ?1 AND updated_at = ?2
+			SET checkpoint = ?1, updated_at = ?2
 			WHERE id = 1 AND ?1 > checkpoint
 		"#,
 		params![checkpoint, chrono::Utc::now()],
