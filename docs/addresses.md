@@ -55,12 +55,6 @@ the server to perform this function honestly. The address format allows users to
 provide multiple ways by which they can receive their VTXOs.
 
 
-## Built-in per-VTXO mailbox
-
-The very simplest way to do this is for the server to keep the VTXO and for the
-recipient to ask the server if it has any VTXOs for any of his VTXO public keys.
-The server knows all the VTXOs so it can answer this question easily.
-
 ## Ark server Unified Mailbox
 
 To optimize the process of asking the server for your VTXOs, we also support a

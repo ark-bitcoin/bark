@@ -1,0 +1,4 @@
+- Remove deprecated legacy mailbox gRPC methods
+  Removed `PostArkoorPackageMailbox` and `EmptyArkoorMailbox` methods.
+  Use the new mailbox service (`PostVtxosMailbox`, `ReadMailbox`, `SubscribeMailbox`) instead.
+  [#1502](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1502)

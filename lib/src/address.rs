@@ -55,8 +55,6 @@ impl From<PublicKey> for ArkId {
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[non_exhaustive]
 pub enum VtxoDelivery {
-	/// Use the built-in single-VTXO mailbox of the Ark server
-	ServerBuiltin,
 	/// Use the unified mailbox of the Ark server
 	ServerMailbox {
 		blinded_id: BlindedMailboxIdentifier,
@@ -67,12 +65,19 @@ pub enum VtxoDelivery {
 	},
 }
 
-/// The type byte for the "server built-in" delivery mechanism
+/// The type byte for the legacy "server built-in" delivery
+/// mechanism
+///
+/// This is currently unused but we reserve the byte for a
+/// better implementation of per-pubkey delivery
+#[allow(unused)]
 const DELIVERY_BUILTIN: u8 = 0x00;
+
 /// The type byte for the "server mailbox" delivery mechanism
 const DELIVERY_MAILBOX: u8 = 0x01;
 
 impl VtxoDelivery {
+
 	/// Returns whether the VTXO delivery type is unknown
 	pub fn is_unknown(&self) -> bool {
 		match self {
@@ -84,7 +89,6 @@ impl VtxoDelivery {
 	/// The number of bytes required to encode this delivery
 	fn encoded_length(&self) -> usize {
 		match self {
-			Self::ServerBuiltin => 1,
 			Self::ServerMailbox { .. } => 1 + 33,
 			Self::Unknown { data, .. } => 1 + data.len(),
 		}
@@ -93,9 +97,6 @@ impl VtxoDelivery {
 	/// Encode the address payload
 	fn encode<W: io::Write + ?Sized>(&self, w: &mut W) -> Result<(), io::Error> {
 		match self {
-			Self::ServerBuiltin => {
-				w.emit_u8(DELIVERY_BUILTIN)?;
-			},
 			Self::ServerMailbox { blinded_id } => {
 				w.emit_u8(DELIVERY_MAILBOX)?;
 				w.emit_slice(blinded_id.as_ref())?;
@@ -115,7 +116,6 @@ impl VtxoDelivery {
 		}
 
 		match payload[0] {
-			DELIVERY_BUILTIN => Ok(Self::ServerBuiltin),
 			DELIVERY_MAILBOX => Ok(Self::ServerMailbox {
 				blinded_id: BlindedMailboxIdentifier::from_slice(&payload[1..]).map_err(
 					|_| ParseAddressError::Invalid("invalid blinded mailbox identifier"),
@@ -135,17 +135,21 @@ impl VtxoDelivery {
 ///
 /// Example usage:
 /// ```
+/// # use ark::mailbox::BlindedMailboxIdentifier;
+/// # use ark::address::VtxoDelivery;
+///
 /// let srv_pubkey = "03d2e3205d9fd8fb2d441e9c3aa5e28ac895f7aae68c209ae918e2750861e8ffc1".parse().unwrap();
 /// let vtxo_pubkey = "035c4def84a9883afe60ef72b37aaf8038dd74ed3d0ab1a1f30610acccd68d1cdd".parse().unwrap();
+/// let blinded_id = BlindedMailboxIdentifier::from_pubkey(vtxo_pubkey);
 ///
 /// let addr = ark::Address::builder()
 /// 	.server_pubkey(srv_pubkey)
 /// 	.pubkey_policy(vtxo_pubkey)
-/// 	.no_delivery()
+/// 	.delivery(VtxoDelivery::ServerMailbox { blinded_id })
 /// 	.into_address().unwrap();
 ///
 /// assert_eq!(addr.to_string(),
-/// 	"ark1pndckx4ezqqp4cn00sj5cswh7vrhh9vm647qr3ht5a57s4vdp7vrpptxv66x3ehgxrng5y",
+/// 	"ark1pndckx4ezqqp4cn00sj5cswh7vrhh9vm647qr3ht5a57s4vdp7vrpptxv66x3ehfzqyp4cn00sj5cswh7vrhh9vm647qr3ht5a57s4vdp7vrpptxv66x3ehgjdr0q7",
 /// );
 /// ```
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -418,9 +422,8 @@ impl From<&'static str> for AddressBuilderError {
 
 /// Builder used to create [Address] instances
 ///
-/// By default, when no VTXO delivery mechanism is provided by the user,
-/// the builder will add the built-in [VtxoDelivery::ServerBuiltin].
-/// To prevent this, use [Builder::no_delivery].
+/// Currently, only mailbox delivery is supported.
+
 #[derive(Debug)]
 pub struct Builder {
 	testnet: bool,
@@ -431,7 +434,6 @@ pub struct Builder {
 
 	delivery: Vec<VtxoDelivery>,
 	mailbox_id: Option<BlindedMailboxIdentifier>,
-	add_builtin_delivery: bool,
 }
 
 impl Builder {
@@ -443,7 +445,6 @@ impl Builder {
 			policy: None,
 			delivery: Vec::new(),
 			mailbox_id: None,
-			add_builtin_delivery: true,
 		}
 	}
 
@@ -478,16 +479,7 @@ impl Builder {
 		self
 	}
 
-	/// Prevent the builder from adding the built-in delivery when no delivery is set.
-	pub fn no_delivery(mut self) -> Self {
-		self.delivery.clear();
-		self.add_builtin_delivery = false;
-		self
-	}
-
 	/// Set the mailbox identifier of the server mailbox to use
-	///
-	/// This will also disable adding the built-in delivery mechanism.
 	///
 	/// Errors if no server pubkey was provided yet or if the vtxo key
 	/// is incorrect.
@@ -504,7 +496,6 @@ impl Builder {
 		}
 
 		self.mailbox_id = Some(mailbox.to_blinded(server_mailbox_pubkey, vtxo_key));
-		self.add_builtin_delivery = false;
 		Ok(self)
 	}
 
@@ -516,15 +507,16 @@ impl Builder {
 			policy: self.policy.ok_or("missing policy")?,
 			delivery: {
 				let mut ret = Vec::new();
-				if self.delivery.is_empty() && self.add_builtin_delivery {
-					ret.push(VtxoDelivery::ServerBuiltin);
-				}
 
 				if let Some(blinded_id) = self.mailbox_id {
 					ret.push(VtxoDelivery::ServerMailbox { blinded_id });
 				}
 
 				ret.extend(self.delivery);
+				if ret.is_empty() {
+					return Err("missing delivery mechanism".into());
+				}
+
 				ret
 			}
 		})
@@ -578,33 +570,35 @@ mod test {
 		println!("ark pk: {} (id {})", ark, ark_id);
 		println!("usr pk: {}", usr);
 		let policy = VtxoPolicy::new_pubkey(usr);
+		let blinded_id = BlindedMailboxIdentifier::from_pubkey(usr);
+		let delivery = VtxoDelivery::ServerMailbox { blinded_id };
 
 		// no delivery
 		let addr = Address::builder()
 			.server_pubkey(ark)
 			.pubkey_policy(usr)
-			.no_delivery()
+			.delivery(delivery.clone())
 			.into_address().unwrap();
-		assert_eq!(addr.to_string(), "ark1pwh9vsmezqqpjy9akejayl2vvcse6he97rn40g84xrlvrlnhayuuyefrp9nse2yszc7ehh");
+		assert_eq!(addr.to_string(), "ark1pwh9vsmezqqpjy9akejayl2vvcse6he97rn40g84xrlvrlnhayuuyefrp9nse2y3zqypjy9akejayl2vvcse6he97rn40g84xrlvrlnhayuuyefrp9nse2ysl2dy60");
 
 		let parsed = test_roundtrip(&addr);
 		assert_eq!(parsed.ark_id, ark_id);
 		assert_eq!(parsed.policy, policy);
-		assert_eq!(parsed.delivery.len(), 0);
+		assert_eq!(parsed.delivery, vec![delivery.clone()]);
 
 		// no delivery testnet
 		let addr = Address::builder()
 			.testnet(true)
 			.server_pubkey(ark)
 			.pubkey_policy(usr)
-			.no_delivery()
+			.delivery(delivery.clone())
 			.into_address().unwrap();
-		assert_eq!(addr.to_string(), "tark1pwh9vsmezqqpjy9akejayl2vvcse6he97rn40g84xrlvrlnhayuuyefrp9nse2ysm2x4mn");
+		assert_eq!(addr.to_string(), "tark1pwh9vsmezqqpjy9akejayl2vvcse6he97rn40g84xrlvrlnhayuuyefrp9nse2y3zqypjy9akejayl2vvcse6he97rn40g84xrlvrlnhayuuyefrp9nse2ysuh20ke");
 
 		let parsed = test_roundtrip(&addr);
 		assert_eq!(parsed.ark_id, ArkId::from_server_pubkey(ark));
 		assert_eq!(parsed.policy, policy);
-		assert_eq!(parsed.delivery.len(), 0);
+		assert_eq!(parsed.delivery, vec![delivery.clone()]);
 	}
 
 	#[test]

@@ -25,22 +25,6 @@ service ArkService {
 
 	rpc RequestArkoorCosign(ArkoorPackageCosignRequest) returns (ArkoorPackageCosignResponse) {}
 
-	// * MAILBOX *
-
-	// This method is deprecated.
-	// Please use `PostVtxoMailbox`
-	rpc PostArkoorPackageMailbox(ArkoorPackage) returns (core.Empty) {
-		option deprecated = true;
-	}
-	// Empty the arkoor mailbox for certain pubkeys.
-	//
-	// At most 100 pubkeys should be provided.
-	// This method is deprecated.
-	// Please use `ReadMailbox` or `SubscribeMailbox`.
-	rpc EmptyArkoorMailbox(ArkoorVtxosRequest) returns (ArkoorVtxosResponse) {
-		option deprecated = true;
-	}
-
 	// * SEND LN payments
 
 	rpc RequestLightningPayHtlcCosign(LightningPayHtlcCosignRequest) returns (ArkoorPackageCosignResponse) {}
@@ -191,11 +175,6 @@ message ArkoorPackageCosignResponse {
 
 // mailbox
 
-message ArkoorPackage {
-	option deprecated = true;
-	repeated ArkoorVtxo arkoors = 1;
-}
-
 message ArkoorVtxo {
 	option deprecated = true;
 	bytes pubkey = 1;
@@ -212,13 +191,6 @@ message ArkoorMailboxPackage {
 	bytes arkoor_package_id = 1;
 	repeated bytes vtxos = 2;
 }
-
-message ArkoorVtxosResponse {
-	option deprecated = true;
-	repeated ArkoorMailboxPackage packages = 1;
-}
-
-
 
 // lightning
 

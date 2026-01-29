@@ -1,0 +1,4 @@
+- Remove `VtxoDelivery::ServerBuiltin` variant
+  Only `VtxoDelivery::ServerMailbox` delivery is now supported for addresses.
+  **BREAKING**: Old addresses using builtin delivery are no longer valid.
+  [#1502](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1502)

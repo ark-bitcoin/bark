@@ -173,22 +173,6 @@ impl Wallet {
 						delivered = true;
 					}
 				},
-				VtxoDelivery::ServerBuiltin => {
-					let req = protos::ArkoorPackage {
-						arkoors: arkoor.created.iter().map(|v| protos::ArkoorVtxo {
-							pubkey: v.policy().user_pubkey().serialize().to_vec(),
-							vtxo: v.serialize().to_vec(),
-						}).collect(),
-					};
-
-					#[allow(deprecated)]
-					if let Err(e) = srv.client.post_arkoor_package_mailbox(req).await {
-						error!("Failed to post the arkoor vtxo to the recipients mailbox: '{:#}'", e);
-						//NB we will continue to at least not lose our own change
-					} else {
-						delivered = true;
-					}
-				},
 				VtxoDelivery::Unknown { delivery_type, data } => {
 					error!("Unknown delivery type {} for arkoor payment: {}", delivery_type, data.as_hex());
 				},
