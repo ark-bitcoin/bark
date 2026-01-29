@@ -300,6 +300,7 @@ impl Exit {
 	pub async fn start_exit_for_entire_wallet(&mut self) -> anyhow::Result<()> {
 		let vtxos = self.persister.get_vtxos_by_state(&VtxoStateKind::UNSPENT_STATES).await?.into_iter()
 			.map(|v| v.vtxo)
+			.filter(|v| v.amount() >= P2TR_DUST)
 			.collect::<Vec<_>>();
 		self.start_exit_for_vtxos(&vtxos).await?;
 
@@ -327,6 +328,14 @@ impl Exit {
 			if self.exit_vtxos.iter().any(|ev| ev.id() == vtxo_id) {
 				warn!("VTXO {} is already in the exit process", vtxo_id);
 				continue;
+			}
+
+			// Pre-flight check: Prevent exiting dust, which causes "zombie" states
+			if vtxo.amount() < P2TR_DUST {
+				return Err(ExitError::DustLimit {
+					vtxo: vtxo.amount(),
+					dust: P2TR_DUST,
+				}.into());
 			}
 
 			// We avoid composing the TXID vector since that requires access to the onchain wallet,
