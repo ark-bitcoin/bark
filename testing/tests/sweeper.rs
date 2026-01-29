@@ -93,7 +93,7 @@ async fn sweep_vtxos() {
 	// we can't make vtxos expire, so we have to refresh them
 	let b = bark.clone();
 	tokio::spawn(async move {
-		b.refresh_all().await;
+		b.refresh_all_no_retry().await;
 	});
 	srv.trigger_round().await;
 

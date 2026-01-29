@@ -961,8 +961,8 @@ async fn second_round_attempt() {
 	let mut log_not_allowed = srv.subscribe_log::<RoundUserVtxoNotAllowed>();
 
 	ctx.generate_blocks(1).await;
-	let res1 = tokio::spawn(async move { bark1.refresh_all().await });
-	let res2 = tokio::spawn(async move { bark2.refresh_all().await });
+	let res1 = tokio::spawn(async move { bark1.refresh_all_no_retry().await });
+	let res2 = tokio::spawn(async move { bark2.refresh_all_no_retry().await });
 	tokio::time::sleep(Duration::from_millis(500)).await;
 	let _ = srv.wallet_status().await;
 	let mut log_restart_missing_sigs = srv.subscribe_log::<RestartMissingVtxoSigs>();
@@ -1006,7 +1006,8 @@ async fn bark_can_sign_up_to_round_during_signup_phase() {
 
 	// Now bark tries to join the already-started round.
 	// Use a timeout so the test fails instead of hanging if bark can't join.
-	bark.refresh_all().wait(Duration::from_secs(60)).await;
+	// Use no_retry to test the direct join-in-progress behavior.
+	bark.refresh_all_no_retry().wait(Duration::from_secs(60)).await;
 
 	// Verify the round finished successfully with our vtxo
 	let finished = log_round_finished.recv().wait(Duration::from_secs(30)).await.unwrap();

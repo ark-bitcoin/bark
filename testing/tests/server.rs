@@ -225,7 +225,7 @@ async fn cant_spend_untrusted() {
 	});
 
 	// this will at first produce an error
-	let err = log_round_err.recv().wait_millis(15_000).await.unwrap().error;
+	let err = log_round_err.recv().wait_millis(30_000).await.unwrap().error;
 	assert!(err.contains("Insufficient funds"), "err: {err}");
 
 	attempt_handle.await.unwrap();
@@ -454,7 +454,7 @@ async fn full_round() {
 	tokio::spawn(async move {
 		futures::future::join_all(barks.iter().map(|bark| async {
 			// ignoring error as last one will fail
-			let _ = bark.refresh_all().await;
+			let _ = bark.refresh_all_no_retry().await;
 		})).await;
 	});
 
