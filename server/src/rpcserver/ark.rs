@@ -9,9 +9,7 @@ use bitcoin::consensus::serialize;
 use bitcoin::Txid;
 use bitcoin::{Amount, OutPoint};
 use bitcoin::hashes::Hash;
-use bitcoin::hex::DisplayHex;
 use bitcoin::secp256k1::{rand, schnorr, PublicKey};
-use opentelemetry::KeyValue;
 use tokio::sync::oneshot;
 use tokio_stream::{Stream, StreamExt};
 use tonic_tracing_opentelemetry::middleware::server::OtelGrpcLayer;
@@ -78,10 +76,6 @@ impl rpc::server::ArkService for Server {
 	) -> Result<tonic::Response<protos::FreshRounds>, tonic::Status> {
 		let req = req.into_inner();
 
-		crate::rpcserver::add_tracing_attributes(vec![
-			KeyValue::new("last_round_txid", req.last_round_txid.clone().unwrap_or_default()),
-		]);
-
 		let txid = match req.last_round_txid {
 			Some(t) => Some(RoundId::from_str(&t).badarg("invalid last_round_txid")?),
 			None => None,
@@ -104,8 +98,6 @@ impl rpc::server::ArkService for Server {
 	) -> Result<tonic::Response<protos::RoundInfo>, tonic::Status> {
 		let req = req.into_inner();
 
-		crate::rpcserver::add_tracing_attributes(vec![KeyValue::new("txid", format!("{:?}", req.txid))]);
-
 		let id = RoundId::from_bytes(req.txid.as_slice())?;
 
 		let ret = self.db.get_round(id).await
@@ -122,17 +114,15 @@ impl rpc::server::ArkService for Server {
 
 	// boarding
 
-	#[tracing::instrument(skip(self, req))]
+	#[tracing::instrument(skip(self, req), fields(
+		amount = req.get_ref().amount,
+		expiry_height = req.get_ref().expiry_height,
+	))]
 	async fn request_board_cosign(
 		&self,
 		req: tonic::Request<protos::BoardCosignRequest>,
 	) -> Result<tonic::Response<protos::BoardCosignResponse>, tonic::Status> {
 		let req = req.into_inner();
-
-		crate::rpcserver::add_tracing_attributes(vec![KeyValue::new("amount", req.amount.to_string())]);
-		crate::rpcserver::add_tracing_attributes(vec![KeyValue::new("user_pubkey", req.user_pubkey.as_hex().to_string())]);
-		crate::rpcserver::add_tracing_attributes(vec![KeyValue::new("expiry_height", req.expiry_height.to_string())]);
-		crate::rpcserver::add_tracing_attributes(vec![KeyValue::new("utxo", req.utxo.as_hex().to_string())]);
 
 		let amount = Amount::from_sat(req.amount);
 		let user_pubkey = PublicKey::from_bytes(&req.user_pubkey)?;
@@ -156,10 +146,6 @@ impl rpc::server::ArkService for Server {
 		req: tonic::Request<protos::BoardVtxoRequest>,
 	) -> Result<tonic::Response<protos::Empty>, tonic::Status> {
 		let req = req.into_inner();
-
-		crate::rpcserver::add_tracing_attributes(vec![
-			KeyValue::new("board_vtxo", format!("{:?}", req.board_vtxo.as_hex())),
-		]);
 
 		let vtxo = Vtxo::from_bytes(&req.board_vtxo)?;
 		self.register_board(vtxo).await.to_status()?;
@@ -196,12 +182,6 @@ impl rpc::server::ArkService for Server {
 		let cosign_requests = ArkoorPackageCosignRequest::try_from(req.clone())
 			.context("Failed to parse request")?;
 
-		crate::rpcserver::add_tracing_attributes(
-			vec![
-				KeyValue::new("invoice", format!("{:?}", req.invoice)),
-				KeyValue::new("cosign_requests", format!("{:?}", req.parts)),
-			]);
-
 		let invoice = Invoice::from_str(&req.invoice).badarg("invalid invoice")?;
 		invoice.check_signature().badarg("invalid invoice signature")?;
 
@@ -223,28 +203,20 @@ impl rpc::server::ArkService for Server {
 			.map(VtxoId::from_bytes)
 			.collect::<Result<Vec<_>, _>>()?;
 
-		crate::rpcserver::add_tracing_attributes(vec![
-			KeyValue::new("invoice", format!("{:?}", req.invoice)),
-			KeyValue::new("htlc_vtxo_ids", format!("{:?}", htlc_vtxo_ids)),
-		]);
-
 		let invoice = Invoice::from_str(&req.invoice).badarg("invalid invoice")?;
 
 		self.initiate_lightning_payment(invoice, htlc_vtxo_ids).await.to_status()?;
 		Ok(tonic::Response::new(protos::Empty {}))
 	}
 
-	#[tracing::instrument(skip(self, req))]
+	#[tracing::instrument(skip(self, req), fields(
+		wait = req.get_ref().wait
+	))]
 	async fn check_lightning_payment(
 		&self,
 		req: tonic::Request<protos::CheckLightningPaymentRequest>,
 	) -> Result<tonic::Response<protos::LightningPaymentStatus>, tonic::Status> {
 		let req = req.into_inner();
-
-		crate::rpcserver::add_tracing_attributes(vec![
-			KeyValue::new("payment_hash", req.hash.as_hex().to_string()),
-			KeyValue::new("wait", req.wait.to_string()),
-		]);
 
 		let payment_hash = PaymentHash::from_bytes(req.hash)?;
 		let res = self.check_lightning_payment(payment_hash, req.wait).await.to_status()?;
@@ -260,10 +232,6 @@ impl rpc::server::ArkService for Server {
 
 		let cosign_requests = ArkoorPackageCosignRequest::try_from(req.clone())
 			.context("Failed to parse request")?;
-
-		crate::rpcserver::add_tracing_attributes(vec![
-			KeyValue::new("cosign_requests", format!("{:?}", cosign_requests)),
-		]);
 
 		let cosign_resp = self.revoke_lightning_pay_htlcs(cosign_requests).await
 			.to_status()?;
@@ -305,17 +273,14 @@ impl rpc::server::ArkService for Server {
 		}))
 	}
 
-	#[tracing::instrument(skip(self, req))]
+	#[tracing::instrument(skip(self, req), fields(
+		amount_sats = ?req.get_ref().amount_sat
+	))]
 	async fn start_lightning_receive(
 		&self,
 		req: tonic::Request<protos::StartLightningReceiveRequest>,
 	) -> Result<tonic::Response<protos::StartLightningReceiveResponse>, tonic::Status> {
 		let req = req.into_inner();
-
-		crate::rpcserver::add_tracing_attributes(vec![
-			KeyValue::new("payment_hash", format!("{:?}", req.payment_hash)),
-			KeyValue::new("amount_sats", format!("{:?}", req.amount_sat)),
-		]);
 
 		let payment_hash = PaymentHash::from_bytes(req.payment_hash)?;
 		let amount = Amount::from_sat(req.amount_sat);
@@ -337,15 +302,12 @@ impl rpc::server::ArkService for Server {
 		let req = req.into_inner();
 
 		let payment_hash = PaymentHash::from_bytes(req.hash)?;
-		crate::rpcserver::add_tracing_attributes(vec![
-			KeyValue::new("payment_hash", payment_hash.to_string()),
-		]);
 
 		let sub = self.check_lightning_receive(payment_hash, req.wait).await.to_status()?;
 		Ok(tonic::Response::new(sub.into()))
 	}
 
-	#[tracing::instrument(skip(self))]
+	#[tracing::instrument(skip(self, req))]
 	async fn prepare_lightning_receive_claim(
 		&self,
 		req: tonic::Request<protos::PrepareLightningReceiveClaimRequest>
@@ -353,9 +315,6 @@ impl rpc::server::ArkService for Server {
 		let req = req.into_inner();
 
 		let payment_hash = PaymentHash::from_bytes(req.payment_hash)?;
-		crate::rpcserver::add_tracing_attributes(vec![
-			KeyValue::new("payment_hash", payment_hash.to_string()),
-		]);
 
 		let user_pubkey = PublicKey::from_bytes(&req.user_pubkey)?;
 		let htlc_recv_expiry = req.htlc_recv_expiry as BlockHeight;
@@ -378,9 +337,6 @@ impl rpc::server::ArkService for Server {
 		let req = req.into_inner();
 
 		let payment_hash = PaymentHash::from_bytes(req.payment_hash)?;
-		crate::rpcserver::add_tracing_attributes(vec![
-			KeyValue::new("payment_hash", payment_hash.to_string()),
-		]);
 
 		let payment_preimage = Preimage::from_bytes(req.payment_preimage)?;
 		let vtxo_policy = VtxoPolicy::from_bytes(req.vtxo_policy)?;
@@ -437,17 +393,15 @@ impl rpc::server::ArkService for Server {
 		}
 	}
 
-	#[tracing::instrument(skip(self, req))]
+	#[tracing::instrument(skip(self, req), fields(
+		input_vtxos_count = req.get_ref().input_vtxos.len(),
+		vtxo_requests_count = req.get_ref().vtxo_requests.len()
+	))]
 	async fn submit_payment(
 		&self,
 		req: tonic::Request<protos::SubmitPaymentRequest>,
 	) -> Result<tonic::Response<protos::SubmitPaymentResponse>, tonic::Status> {
 		let req = req.into_inner();
-
-		crate::rpcserver::add_tracing_attributes(vec![
-			KeyValue::new("input_vtxos_count", format!("{:?}", req.input_vtxos.len())),
-			KeyValue::new("vtxo_requests_count", format!("{:?}", req.vtxo_requests.len())),
-		]);
 
 		let inputs =  req.input_vtxos.iter().map(|input| {
 			let vtxo_id = VtxoId::from_bytes(&input.vtxo_id)?;
@@ -484,17 +438,14 @@ impl rpc::server::ArkService for Server {
 		}))
 	}
 
-	#[tracing::instrument(skip(self, req))]
+	#[tracing::instrument(skip(self, req), fields(
+		signatures_count = req.get_ref().signatures.len()
+	))]
 	async fn provide_vtxo_signatures(
 		&self,
 		req: tonic::Request<protos::VtxoSignaturesRequest>,
 	) -> Result<tonic::Response<protos::Empty>, tonic::Status> {
 		let req = req.into_inner();
-
-		crate::rpcserver::add_tracing_attributes(vec![
-			KeyValue::new("pubkey", format!("{:?}", req.pubkey)),
-			KeyValue::new("signatures_count", format!("{:?}", req.signatures.len())),
-		]);
 
 		let (tx, rx) = oneshot::channel();
 		let inp = RoundInput::VtxoSignatures {
@@ -512,17 +463,15 @@ impl rpc::server::ArkService for Server {
 
 	// hArk
 
-	#[tracing::instrument(skip(self, req))]
+	#[tracing::instrument(skip(self, req), fields(
+		input_vtxos_count = req.get_ref().input_vtxos.len(),
+		vtxo_requests_count = req.get_ref().vtxo_requests.len()
+	))]
 	async fn submit_round_participation(
 		&self,
 		req: tonic::Request<protos::RoundParticipationRequest>,
 	) -> Result<tonic::Response<protos::RoundParticipationResponse>, tonic::Status> {
 		let req = req.into_inner();
-
-		crate::rpcserver::add_tracing_attributes(vec![
-			KeyValue::new("input_vtxos_count", format!("{:?}", req.input_vtxos.len())),
-			KeyValue::new("vtxo_requests_count", format!("{:?}", req.vtxo_requests.len())),
-		]);
 
 		let inputs =  req.input_vtxos.iter().map(|input| {
 			let vtxo_id = VtxoId::from_bytes(&input.vtxo_id)?;
@@ -549,10 +498,6 @@ impl rpc::server::ArkService for Server {
 		req: tonic::Request<protos::RoundParticipationStatusRequest>,
 	) -> Result<tonic::Response<protos::RoundParticipationStatusResponse>, tonic::Status> {
 		let req = req.into_inner();
-
-		crate::rpcserver::add_tracing_attributes(vec![
-			KeyValue::new("unlock_hash", req.unlock_hash.as_hex().to_string()),
-		]);
 
 		let unlock_hash = UnlockHash::from_bytes(&req.unlock_hash)?;
 		let part = self.db.get_round_participation_by_unlock_hash(unlock_hash).await.to_status()?
@@ -607,9 +552,6 @@ impl rpc::server::ArkService for Server {
 		let req = req.into_inner();
 
 		let vtxo_id = VtxoId::from_bytes(req.vtxo_id)?;
-		crate::rpcserver::add_tracing_attributes(vec![
-			KeyValue::new("vtxo_id", format!("{:?}", vtxo_id)),
-		]);
 
 		let pub_nonce = musig::PublicNonce::from_bytes(req.public_nonce)?;
 		let req = LeafVtxoCosignRequest { vtxo_id, pub_nonce };
@@ -628,10 +570,6 @@ impl rpc::server::ArkService for Server {
 		let unlock_hash = UnlockHash::from_bytes(req.unlock_hash)?;
 		let vtxos = req.vtxo_ids.iter().map(|v| VtxoId::from_bytes(v))
 			.collect::<Result<Vec<_>, _>>()?;
-		crate::rpcserver::add_tracing_attributes(vec![
-			KeyValue::new("unlock_hash", unlock_hash.to_string()),
-			KeyValue::new("vtxo_ids", format!("{:?}", vtxos)),
-		]);
 
 		let res = self.generate_forfeit_nonces(unlock_hash, &vtxos).await.to_status()?;
 		Ok(tonic::Response::new(protos::ForfeitNoncesResponse {
