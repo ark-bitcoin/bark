@@ -1,0 +1,4 @@
+- prevent a malicious VTXO encoding from crashing the decoder
+  [#1573](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1573)
+- update the encoding of `SignedVtxoTreeSpec` with backwards compatible decoding
+  [#1573](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1573)

@@ -13,9 +13,11 @@ use secp256k1_musig::musig::{AggregatedNonce, PartialSignature, PublicNonce, Sec
 
 use bitcoin_ext::{fee, BlockDelta, BlockHeight, TaprootSpendInfoExt, TransactionExt, TxOutExt};
 
-use crate::error::IncorrectSigningKeyError;
 use crate::{musig, scripts, Vtxo, VtxoId, VtxoPolicy, VtxoRequest, SECP};
-use crate::encode::{ProtocolDecodingError, ProtocolEncoding, ReadExt, WriteExt};
+use crate::encode::{
+	LengthPrefixedVector, OversizedVectorError, ProtocolDecodingError, ProtocolEncoding, ReadExt, WriteExt
+};
+use crate::error::IncorrectSigningKeyError;
 use crate::tree::{self, Tree};
 use crate::vtxo::{self, GenesisItem, GenesisTransition, MaybePreimage};
 
@@ -1493,19 +1495,12 @@ impl ProtocolEncoding for VtxoTreeSpec {
 		w.emit_u32(self.expiry_height)?;
 		self.server_pubkey.encode(w)?;
 		w.emit_u16(self.exit_delta)?;
-		w.emit_compact_size(self.global_cosign_pubkeys.len() as u64)?;
-		for pk in &self.global_cosign_pubkeys {
-			pk.encode(w)?;
-		}
-
-		w.emit_compact_size(self.vtxos.len() as u64)?;
-		for vtxo in &self.vtxos {
-			vtxo.encode(w)?;
-		}
+		LengthPrefixedVector::new(&self.global_cosign_pubkeys).encode(w)?;
+		LengthPrefixedVector::new(&self.vtxos).encode(w)?;
 		Ok(())
 	}
 
-	fn decode<R: io::Read + ?Sized>(r: &mut R) -> Result<Self, crate::encode::ProtocolDecodingError> {
+	fn decode<R: io::Read + ?Sized>(r: &mut R) -> Result<Self, ProtocolDecodingError> {
 		let version = r.read_u8()?;
 
 		if version != VTXO_TREE_SPEC_VERSION {
@@ -1517,51 +1512,49 @@ impl ProtocolEncoding for VtxoTreeSpec {
 		let expiry_height = r.read_u32()?;
 		let server_pubkey = PublicKey::decode(r)?;
 		let exit_delta = r.read_u16()?;
-		let nb_global_signers = r.read_compact_size()?;
-		let mut global_cosign_pubkeys = Vec::with_capacity(nb_global_signers as usize);
-		for _ in 0..nb_global_signers {
-			global_cosign_pubkeys.push(PublicKey::decode(r)?);
-		}
-
-		let nb_vtxos = r.read_compact_size()?;
-		let mut vtxos = Vec::with_capacity(nb_vtxos as usize);
-		for _ in 0..nb_vtxos {
-			vtxos.push(VtxoLeafSpec::decode(r)?);
-		}
-
+		let global_cosign_pubkeys = LengthPrefixedVector::decode(r)?.into_inner();
+		let vtxos = LengthPrefixedVector::decode(r)?.into_inner();
 		Ok(VtxoTreeSpec { vtxos, expiry_height, server_pubkey, exit_delta, global_cosign_pubkeys })
 	}
 }
 
 /// The serialization version of [SignedVtxoTreeSpec].
-const SIGNED_VTXO_TREE_SPEC_VERSION: u8 = 0x01;
+const SIGNED_VTXO_TREE_SPEC_VERSION: u8 = 0x02;
+
+/// The serialization version of [SignedVtxoTreeSpec] with u32 as signature count
+const SIGNED_VTXO_TREE_SPEC_VERSION_U32_SIZE: u8 = 0x01;
 
 impl ProtocolEncoding for SignedVtxoTreeSpec {
 	fn encode<W: io::Write + ?Sized>(&self, w: &mut W) -> Result<(), io::Error> {
 		w.emit_u8(SIGNED_VTXO_TREE_SPEC_VERSION)?;
 		self.spec.encode(w)?;
 		self.utxo.encode(w)?;
-		w.emit_u32(self.cosign_sigs.len() as u32)?;
-		for sig in &self.cosign_sigs {
-			sig.encode(w)?;
-		}
+		LengthPrefixedVector::new(&self.cosign_sigs).encode(w)?;
 		Ok(())
 	}
 
-	fn decode<R: io::Read + ?Sized>(r: &mut R) -> Result<Self, crate::encode::ProtocolDecodingError> {
+	fn decode<R: io::Read + ?Sized>(r: &mut R) -> Result<Self, ProtocolDecodingError> {
 		let version = r.read_u8()?;
-		if version != SIGNED_VTXO_TREE_SPEC_VERSION {
+		if version != SIGNED_VTXO_TREE_SPEC_VERSION
+			&& version != SIGNED_VTXO_TREE_SPEC_VERSION_U32_SIZE
+		{
 			return Err(ProtocolDecodingError::invalid(format_args!(
 				"invalid SignedVtxoTreeSpec encoding version byte: {version:#x}",
 			)));
 		}
 		let spec = VtxoTreeSpec::decode(r)?;
 		let utxo = OutPoint::decode(r)?;
-		let nb_cosign_sigs = r.read_u32()?;
-		let mut cosign_sigs = Vec::with_capacity(nb_cosign_sigs as usize);
-		for _ in 0..nb_cosign_sigs {
-			cosign_sigs.push(schnorr::Signature::decode(r)?);
-		}
+		let cosign_sigs = if version == SIGNED_VTXO_TREE_SPEC_VERSION_U32_SIZE {
+			let nb_cosign_sigs = r.read_u32()?;
+			OversizedVectorError::check::<schnorr::Signature>(nb_cosign_sigs as usize)?;
+			let mut cosign_sigs = Vec::with_capacity(nb_cosign_sigs as usize);
+			for _ in 0..nb_cosign_sigs {
+				cosign_sigs.push(schnorr::Signature::decode(r)?);
+			}
+			cosign_sigs
+		} else {
+			LengthPrefixedVector::decode(r)?.into_inner()
+		};
 		Ok(SignedVtxoTreeSpec { spec, utxo, cosign_sigs })
 	}
 }
@@ -1815,5 +1808,13 @@ mod test {
 			unlock_hash: hash,
 		};
 		encoding_roundtrip(&spec_without_cosign);
+	}
+
+	#[test]
+	fn test_compat_u32_size_signed_spec() {
+		//! check the backwards compatibility of parsing SignedVtxoTreeSpec with u32 as size prefix
+		let hex = "0102888a0100035b0ef8c9bd756af433edc3129975888f6f18b8185b2afbaabc8bb3029a00cf81e0070102f8112234026e68b1e4d1565540d7b791ced1b64c5f30525cbe14f21dd7aa8c78030003c48b53afac0d2d5169cd6848f03f67a21db6f506f8b8fc2dbef2552b6a7dc111a08601000000000002c6c80e198e170ca6f8fa17810d8ee23c7c0d85c5d2febc95c3e24b1878ca733fbfd032abc31b253f5063521fd5b4c431f2cdd3fee1b4ec00a9b00f69d3b033e7000296dfec4c92e831ffe3619285646a46c545577f19dbc27c2fc0950bffb0f4a362a08601000000000003850a7d2bf22e6ba669695410a8b03c5800a0d4c2bec814b9eb21b0cddd2af5c935395dea8bd6dcac26a8a417b553b18d13027c23e8016c3466b81e70832254360002415f712d6e551b715542422b975a2ae7c635b44a1e3747d5a8674231fa10a841a08601000000000002a3d4de26a87f8bb9d5c0b9f1e3409a635b35f656575d8ad60a6a2294ac4e50b87c0cc2177dfce6432efa42ca6c04c0b774dbb3c5ca2573cd893443e10e393bfd0100000000000000000000000000000000000000000000000000000000000000010000000400000002cc1980aba21f65a51342cbaa3beb69d930eac87fe3086c45df4e642f2dd07cd19e0e4c7b9584b9e952eb4fb02e7f43364ee9bbfc667236aa166fd10a97dcbb02cc1980aba21f65a51342cbaa3beb69d930eac87fe3086c45df4e642f2dd07cd19e0e4c7b9584b9e952eb4fb02e7f43364ee9bbfc667236aa166fd10a97dcbb02cc1980aba21f65a51342cbaa3beb69d930eac87fe3086c45df4e642f2dd07cd19e0e4c7b9584b9e952eb4fb02e7f43364ee9bbfc667236aa166fd10a97dcbb02cc1980aba21f65a51342cbaa3beb69d930eac87fe3086c45df4e642f2dd07cd19e0e4c7b9584b9e952eb4fb02e7f43364ee9bbfc667236aa166fd10a97dcbb";
+		let ret = SignedVtxoTreeSpec::deserialize_hex(hex).unwrap();
+		assert_eq!(ret.cosign_sigs.len(), 4);
 	}
 }
