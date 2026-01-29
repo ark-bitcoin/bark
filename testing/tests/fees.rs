@@ -568,7 +568,7 @@ async fn offboard_all_rejects_dust_output() {
 	let ctx = TestContext::new("fees/offboard_all_rejects_dust_output").await;
 	let srv = ctx.new_captaind_with_cfg("server", None, |cfg| {
 		cfg.round_interval = Duration::from_secs(3600);
-		cfg.offboard_feerate = FeeRate::from_sat_per_vb(7).unwrap();
+		cfg.fee_estimator.fallback_fee_rate_regular = FeeRate::from_sat_per_vb(7).unwrap();
 		cfg.fees.offboard = OffboardFees {
 			base_fee: sat(19_600),
 			fixed_additional_vb: 0,

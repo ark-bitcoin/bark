@@ -93,9 +93,6 @@ round_forfeit_nonces_timeout = "30s"
 # OFFBOARDS #
 #############
 
-# The feerate we set for offboard transactions
-offboard_feerate = "7sat/vb"
-
 # The time after which we drop offboard sessions and release locked VTXOs
 offboard_session_timeout = "30s"
 

@@ -61,8 +61,8 @@ impl Server {
 			.flatten().collect()
 	}
 
-	fn offboard_feerate(&self) -> FeeRate {
-		self.config.offboard_feerate
+	pub(crate) fn offboard_feerate(&self) -> FeeRate {
+		self.fee_estimator.regular()
 	}
 
 	pub(crate) async fn start_offboard_retry_task(self: Arc<Self>) {

@@ -292,12 +292,11 @@ impl TestContext {
 				max_vtxo_arkoor_depth: 3,
 				issue_interval: Duration::from_secs(3),
 			},
-			offboard_feerate: FeeRate::from_sat_per_vb_unchecked(7),
 			offboard_session_timeout: Duration::from_secs(30),
 			fee_estimator: server::fee_estimator::Config {
 				update_interval: Duration::from_secs(60),
 				fallback_fee_rate_fast: FeeRate::from_sat_per_vb_unchecked(25),
-				fallback_fee_rate_regular: FeeRate::from_sat_per_vb_unchecked(10),
+				fallback_fee_rate_regular: FeeRate::from_sat_per_vb_unchecked(7),
 				fallback_fee_rate_slow: FeeRate::from_sat_per_vb_unchecked(5),
 			},
 			transaction_rebroadcast_interval: std::time::Duration::from_secs(2),
