@@ -67,6 +67,10 @@ impl Server {
 		let amount = invoice.get_final_amount(Some(user_htlc_amount))
 			.badarg("missing or invalid user amount")?;
 
+		if amount == Amount::ZERO {
+			return badarg!("Cannot pay invoice for 0 sats (0 sat invoices are not any-amount invoices)");
+		}
+
 		// should be checked above, but let's be cautious
 		ensure!(user_htlc_amount.to_msat() >= invoice.amount_msat().unwrap_or_default());
 
@@ -322,6 +326,10 @@ impl Server {
 		min_cltv_delta: BlockDelta,
 	) -> anyhow::Result<protos::StartLightningReceiveResponse> {
 		info!("Starting bolt11 board with payment_hash: {}", payment_hash.as_hex());
+
+		if amount == Amount::ZERO {
+			return badarg!("Cannot create invoice for 0 sats (this would create an explicit 0 sat invoice, not an any-amount invoice)");
+		}
 
 		if min_cltv_delta > self.config.max_user_invoice_cltv_delta {
 			bail!("Requested min HTLC CLTV delta is greater than max HTLC recv CLTV delta: requested: {}, max: {}",

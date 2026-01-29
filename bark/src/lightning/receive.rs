@@ -29,6 +29,10 @@ const LIGHTNING_PREPARE_CLAIM_DELTA: BlockDelta = 2;
 impl Wallet {
 	/// Create, store and return a [Bolt11Invoice] for offchain boarding
 	pub async fn bolt11_invoice(&self, amount: Amount) -> anyhow::Result<Bolt11Invoice> {
+		if amount == Amount::ZERO {
+			bail!("Cannot create invoice for 0 sats (this would create an explicit 0 sat invoice, not an any-amount invoice)");
+		}
+
 		let mut srv = self.require_server()?;
 		let ark_info = srv.ark_info().await?;
 		let config = self.config();

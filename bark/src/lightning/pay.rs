@@ -435,6 +435,9 @@ impl Wallet {
 		invoice.check_signature()?;
 
 		let amount = invoice.get_final_amount(user_amount)?;
+		if amount == Amount::ZERO {
+			bail!("Cannot pay invoice for 0 sats (0 sat invoices are not any-amount invoices)");
+		}
 
 		let (user_keypair, _) = self.derive_store_next_keypair().await?;
 
