@@ -7,17 +7,13 @@ pub use secp256k1_musig::musig::{
 };
 
 
-use bitcoin::secp256k1::{schnorr, Keypair, PublicKey, SecretKey, XOnlyPublicKey};
+use bitcoin::secp256k1::{schnorr, Keypair, PublicKey, SecretKey};
 use secpm::ffi::MUSIG_SECNONCE_SIZE;
 use secpm::musig::KeyAggCache;
 
 lazy_static! {
 	/// Global secp context.
 	pub static ref SECP: secpm::Secp256k1<secpm::All> = secpm::Secp256k1::new();
-}
-
-pub fn xonly_from(pk: secpm::XOnlyPublicKey) -> XOnlyPublicKey {
-	XOnlyPublicKey::from_slice(&pk.serialize()).unwrap()
 }
 
 pub fn pubkey_to(pk: PublicKey) -> secpm::PublicKey {
@@ -74,8 +70,8 @@ pub fn tweaked_key_agg<'a>(
 /// Aggregates the public keys into their aggregate public key.
 ///
 /// Key order is not important as keys are sorted before aggregation.
-pub fn combine_keys(keys: impl IntoIterator<Item = PublicKey>) -> XOnlyPublicKey {
-	xonly_from(key_agg(keys).agg_pk())
+pub fn combine_keys(keys: impl IntoIterator<Item = PublicKey>) -> PublicKey {
+	pubkey_from(key_agg(keys).agg_pk_full())
 }
 
 pub fn nonce_pair(key: &Keypair) -> (SecretNonce, PublicNonce) {

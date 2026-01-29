@@ -48,7 +48,8 @@ fn compute_exit_data(
 	amount: Amount,
 	utxo: OutPoint,
 ) -> ExitData {
-	let combined_pubkey = musig::combine_keys([user_pubkey, server_pubkey]);
+	let combined_pubkey = musig::combine_keys([user_pubkey, server_pubkey])
+		.x_only_public_key().0;
 	let funding_taproot = cosign_taproot(combined_pubkey, server_pubkey, expiry_height);
 	let funding_txout = TxOut {
 		value: amount,
@@ -170,7 +171,8 @@ pub struct BoardBuilder<S: BuilderState> {
 impl<S: BuilderState> BoardBuilder<S> {
 	/// The scriptPubkey to send the board funds to.
 	pub fn funding_script_pubkey(&self) -> ScriptBuf {
-		let combined_pubkey = musig::combine_keys([self.user_pubkey, self.server_pubkey]);
+		let combined_pubkey = musig::combine_keys([self.user_pubkey, self.server_pubkey])
+			.x_only_public_key().0;
 		cosign_taproot(combined_pubkey, self.server_pubkey, self.expiry_height).script_pubkey()
 	}
 

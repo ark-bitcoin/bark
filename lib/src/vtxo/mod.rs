@@ -601,7 +601,8 @@ impl Vtxo {
 	/// Return the aggregate pubkey of the user and server pubkey used in
 	/// hArk forfeit transactions
 	pub(crate) fn forfeit_agg_pubkey(&self) -> XOnlyPublicKey {
-		let ret = musig::combine_keys([self.user_pubkey(), self.server_pubkey()]);
+		let ret = musig::combine_keys([self.user_pubkey(), self.server_pubkey()])
+			.x_only_public_key().0;
 		debug_assert_eq!(ret, self.output_taproot().internal_key());
 		ret
 	}

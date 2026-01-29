@@ -390,7 +390,8 @@ mod tests {
 		let user_pubkey = USER_KEYPAIR.public_key();
 		let server_pubkey = SERVER_KEYPAIR.public_key();
 
-		let combined_pk = musig::combine_keys([user_pubkey, server_pubkey]);
+		let combined_pk = musig::combine_keys([user_pubkey, server_pubkey])
+			.x_only_public_key().0;
 		let taproot = taproot::TaprootBuilder::new()
 			.add_leaf(0, clause_spk.clone()).unwrap()
 			.finalize(&SECP, combined_pk).unwrap();
