@@ -293,8 +293,10 @@ impl TestContext {
 				issue_interval: Duration::from_secs(3),
 			},
 			offboard_session_timeout: Duration::from_secs(30),
+			offboard_acceptable_fee_rate_duration: Duration::from_secs(60 * 10),
 			fee_estimator: server::fee_estimator::Config {
 				update_interval: Duration::from_secs(60),
+				history_duration: Duration::from_secs(60 * 30),
 				fallback_fee_rate_fast: FeeRate::from_sat_per_vb_unchecked(25),
 				fallback_fee_rate_regular: FeeRate::from_sat_per_vb_unchecked(7),
 				fallback_fee_rate_slow: FeeRate::from_sat_per_vb_unchecked(5),

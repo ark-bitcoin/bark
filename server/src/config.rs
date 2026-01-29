@@ -403,6 +403,17 @@ pub struct Config {
 	#[serde(with = "utils::serde::duration")]
 	pub offboard_session_timeout: Duration,
 
+	/// The time in which a fee rate is considered valid for performing an offboard.
+	///
+	/// This allows us to handle the case where clients don't receive up-to-date fee rates due to
+	/// caching, so we allow a grace period in which we honor historical fee rates when they
+	/// request an offboard.
+	///
+	/// Note: Setting this lower than [fee_estimator::Config::history_duration] will result in the
+	/// duration being limited by that.
+	#[serde(with = "utils::serde::duration")]
+	pub offboard_acceptable_fee_rate_duration: Duration,
+
 	/// The maximum number of items we return to mailbox queries
 	#[serde(alias = "read_mailbox_max_items")]
 	pub max_read_mailbox_items: usize,

@@ -39,6 +39,8 @@ min_cpfp_amount = "10000 sat"
 [fee_estimator]
 # Interval to update fee estimates from bitcoind
 update_interval = "1m"
+# How long to maintain the fee rate history for
+history_duration = "60m"
 # Fallback feerate for fast confirmation (1 block target)
 fallback_fee_rate_fast = "25sat/vb"
 # Fallback feerate for regular confirmation (3 block target)

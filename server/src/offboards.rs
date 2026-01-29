@@ -99,14 +99,14 @@ impl Server {
 		input_vtxos: Vec<VtxoId>,
 		ownership_proofs: Vec<schnorr::Signature>,
 	) -> anyhow::Result<OffboardResponse> {
-		// TODO(pc): Make this dynamic and check whether this is a valid historical fee rate.
-		if self.offboard_feerate() != request.fee_rate {
+		request.validate().badarg("invalid offboard request")?;
+		let valid_fee_duration = self.config.offboard_acceptable_fee_rate_duration;
+		if !self.fee_estimator.is_historical_regular_rate(request.fee_rate, valid_fee_duration) {
 			return badarg!(
-				"fee rate does not match the configured offboard fee rate: provided = {}, expected = {}",
+				"fee rate is no longer valid: provided = {}, expected = {}",
 				request.fee_rate, self.offboard_feerate(),
 			);
 		}
-		request.validate().badarg("invalid offboard request")?;
 
 		// We keep the VTXO flux lock for the duration of the session, this means
 		// that if the user bails a session he has to wait for it to time out

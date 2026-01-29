@@ -3,13 +3,16 @@
 //! This module provides a background process that periodically fetches fee rate
 //! estimates from bitcoind and caches them for use throughout the server.
 
+use std::collections::VecDeque;
 use std::sync::Arc;
 use std::time::Duration;
 
 use bitcoin::FeeRate;
+use tokio::time::Instant;
+use tracing::info;
+
 use bitcoin_ext::FeeRateExt;
 use bitcoin_ext::rpc::{self, BitcoinRpcClient, RpcApi};
-use tracing::info;
 
 use crate::system::RuntimeManager;
 use crate::telemetry;
@@ -19,7 +22,7 @@ const FEE_RATE_TARGET_CONF_REGULAR: u16 = 3;
 const FEE_RATE_TARGET_CONF_SLOW: u16 = 6;
 
 /// Cached fee rates for different confirmation targets.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct OnchainFeeRates {
 	/// Fee rate for fast transactions (1-block confirmation target).
 	pub fast: FeeRate,
@@ -36,6 +39,10 @@ pub struct Config {
 	/// Interval between fee rate updates.
 	#[serde(with = "crate::utils::serde::duration")]
 	pub update_interval: Duration,
+	/// How long to maintain the fee rate history for; this impacts how long certain fee rates are
+	/// valid.
+	#[serde(with = "crate::utils::serde::duration")]
+	pub history_duration: Duration,
 	/// Fallback fee rate for fast transactions when estimation fails.
 	#[serde(with = "crate::utils::serde::fee_rate")]
 	pub fallback_fee_rate_fast: FeeRate,
@@ -63,33 +70,91 @@ impl Config {
 /// The fee rates are updated periodically by a background process.
 /// Use [FeeEstimator::fee_rates] to get the current cached rates.
 pub struct FeeEstimator {
-	fee_rates: parking_lot::RwLock<OnchainFeeRates>,
+	fee_rates: parking_lot::RwLock<VecDeque<(OnchainFeeRates, Instant)>>,
+	history_duration: Duration,
 }
 
 impl FeeEstimator {
-	fn new(initial: OnchainFeeRates) -> Self {
+	fn new(initial: OnchainFeeRates, history_duration: Duration) -> Self {
 		Self {
-			fee_rates: parking_lot::RwLock::new(initial),
+			fee_rates: parking_lot::RwLock::new([(initial, Instant::now())].into()),
+			history_duration,
 		}
 	}
 
 	/// Returns the fast fee rate (1-block confirmation target).
 	pub fn fast(&self) -> FeeRate {
-		self.fee_rates.read().fast
+		self.get_current_rates().fast
 	}
 
 	/// Returns the regular fee rate (3-block confirmation target).
 	pub fn regular(&self) -> FeeRate {
-		self.fee_rates.read().regular
+		self.get_current_rates().regular
 	}
 
 	/// Returns the slow fee rate (6-block confirmation target).
 	pub fn slow(&self) -> FeeRate {
-		self.fee_rates.read().slow
+		self.get_current_rates().slow
+	}
+
+	/// Checks if the given fee rate is considered a historically retrieved fast fee rate during the
+	/// given duration.
+	///
+	/// Note: If the duration is longer than the fee estimator's configured history, then the result
+	/// will be limited by that. Historical data is not persisted, so it will be cleared by a
+	/// restart.
+	pub fn is_historical_fast_rate(&self, fee_rate: FeeRate, duration: Duration) -> bool {
+		self.is_historical_rate(fee_rate, duration, |rates| rates.fast)
+	}
+
+	/// Checks if the given fee rate is considered a historically retrieved regular fee rate during
+	/// the given duration.
+	///
+	/// Note: If the duration is longer than the fee estimator's configured history, then the result
+	/// will be limited by that. Historical data is not persisted, so it will be cleared by a
+	/// restart.
+	pub fn is_historical_regular_rate(&self, fee_rate: FeeRate, duration: Duration) -> bool {
+		self.is_historical_rate(fee_rate, duration, |rates| rates.regular)
+	}
+
+	/// Checks if the given fee rate is considered a historically retrieved slow fee rate during the
+	/// given duration.
+	///
+	/// Note: If the duration is longer than the fee estimator's configured history, then the result
+	/// will be limited by that. Historical data is not persisted, so it will be cleared by a
+	/// restart.
+	pub fn is_historical_slow_rate(&self, fee_rate: FeeRate, duration: Duration) -> bool {
+		self.is_historical_rate(fee_rate, duration, |rates| rates.slow)
+	}
+
+	fn get_current_rates(&self) -> OnchainFeeRates {
+		self.fee_rates.read().front().expect("FeeEstimator is not initialized yet").0
+	}
+
+	fn is_historical_rate<F>(&self, fee_rate: FeeRate, duration: Duration, getter: F) -> bool
+	where
+		F: Fn(&OnchainFeeRates) -> FeeRate,
+	{
+		let now = Instant::now();
+		let fee_rates = self.fee_rates.read();
+		for (rates, timestamp) in fee_rates.iter() {
+			if now - *timestamp > duration {
+				break;
+			}
+			if getter(rates) >= fee_rate {
+				return true;
+			}
+		}
+		false
 	}
 
 	fn update(&self, rates: OnchainFeeRates) {
-		*self.fee_rates.write() = rates;
+		let mut deque = self.fee_rates.write();
+		let now = Instant::now();
+		while deque.back().is_some_and(|(_, timestamp)| now - *timestamp >= self.history_duration) {
+			deque.pop_back();
+		}
+		deque.push_front((rates, Instant::now()));
 	}
 }
 
@@ -178,7 +243,9 @@ pub fn start(
 	bitcoind: BitcoinRpcClient,
 ) -> Arc<FeeEstimator> {
 	// Initialize with fallback rates
-	let fee_estimator = Arc::new(FeeEstimator::new(config.fallback_fee_rates()));
+	let fee_estimator = Arc::new(FeeEstimator::new(
+		config.fallback_fee_rates(), config.history_duration,
+	));
 
 	let process = Process {
 		config,
