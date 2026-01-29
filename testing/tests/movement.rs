@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use ark::offboard::OffboardRequest;
 use ark::{VtxoId, VtxoPolicy};
-use ark::lightning::{Invoice, PaymentHash};
+use ark::lightning::{Invoice, PaymentHash, Preimage};
 use bark_json::cli::{MovementDestination, MovementStatus, PaymentMethod};
 use bitcoin::consensus::encode::deserialize_hex;
 use bitcoin::{Address, Amount, OutPoint, Transaction, Txid, Weight};
@@ -208,6 +208,8 @@ async fn lightning_send_invoice_receive() {
 	let payment_hash = metadata.get("payment_hash").map(|ph| serde_json::from_value::<PaymentHash>(ph.clone()).unwrap());
 	assert_eq!(payment_hash, Some(invoice.payment_hash()));
 	assert_eq!(metadata.get("htlc_vtxos").map(|v| serde_json::from_value::<Vec<VtxoId>>(v.clone()).unwrap()).unwrap().len(), 1);
+	let payment_preimage = metadata.get("payment_preimage").map(|preimage| serde_json::from_value::<Preimage>(preimage.clone()).unwrap()).unwrap();
+	assert_eq!(payment_hash, Some(payment_preimage.compute_payment_hash()));
 
 	let bark2_vtxos = bark2.vtxo_ids().await;
 	let receive_movement = bark2.history().await.last().cloned().unwrap();
@@ -234,6 +236,8 @@ async fn lightning_send_invoice_receive() {
 	let payment_hash = metadata.get("payment_hash").map(|ph| serde_json::from_value::<PaymentHash>(ph.clone()).unwrap());
 	assert_eq!(payment_hash, Some(invoice.payment_hash()));
 	assert_eq!(metadata.get("htlc_vtxos").map(|v| serde_json::from_value::<Vec<VtxoId>>(v.clone()).unwrap()).unwrap().len(), 1);
+	let payment_preimage = metadata.get("payment_preimage").map(|preimage| serde_json::from_value::<Preimage>(preimage.clone()).unwrap()).unwrap();
+	assert_eq!(payment_hash, Some(payment_preimage.compute_payment_hash()));
 }
 
 #[tokio::test]

@@ -9,7 +9,7 @@ use std::fmt;
 use bitcoin::consensus::encode::serialize_hex;
 use bitcoin::{Amount, OutPoint, Transaction};
 
-use ark::lightning::PaymentHash;
+use ark::lightning::{PaymentHash, Preimage};
 use ark::vtxo::VtxoRef;
 
 /// A unique identifier for a subsystem.
@@ -164,6 +164,7 @@ impl LightningMovement {
 	pub fn metadata(
 		payment_hash: PaymentHash,
 		htlcs: impl IntoIterator<Item = impl VtxoRef>,
+		payment_preimage: Option<Preimage>,
 	) -> impl IntoIterator<Item = (String, serde_json::Value)> {
 		let htlcs = htlcs.into_iter().map(|v| v.vtxo_id()).collect::<Vec<_>>();
 		[
@@ -174,6 +175,10 @@ impl LightningMovement {
 			(
 				"htlc_vtxos".into(),
 				serde_json::to_value(&htlcs).expect("vtxo ids can serde"),
+			),
+			(
+				"payment_preimage".into(),
+				serde_json::to_value(payment_preimage).expect("payment preimage can serde"),
 			),
 		]
 	}

@@ -145,8 +145,13 @@ impl Wallet {
 				// Complete the payment
 				self.db.finish_lightning_send(payment_hash, Some(preimage)).await?;
 				self.mark_vtxos_as_spent(&payment.htlc_vtxos).await?;
-				self.movements.finish_movement(
-					payment.movement_id, MovementStatus::Successful,
+				self.movements.finish_movement_with_update(
+					payment.movement_id,
+					MovementStatus::Successful,
+					MovementUpdate::new().metadata([(
+						"payment_preimage".into(),
+						serde_json::to_value(preimage).expect("payment preimage can serde"),
+					)])
 				).await?;
 
 				Ok(Some(preimage))
@@ -537,7 +542,7 @@ impl Wallet {
 			movement_id,
 			MovementUpdate::new()
 				.produced_vtxos(change_vtxos)
-				.metadata(LightningMovement::metadata(invoice.payment_hash(), &htlc_vtxos))
+				.metadata(LightningMovement::metadata(invoice.payment_hash(), &htlc_vtxos, None))
 		).await?;
 
 		let lightning_send = self.db.store_new_pending_lightning_send(
