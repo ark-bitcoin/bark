@@ -1302,6 +1302,11 @@ impl Wallet {
 
 		let state = RoundState::new_non_interactive(participation, unlock_hash, movement_id);
 
+		info!("Non-interactive round participation submitted, it will automatically execute \
+			when you next sync your wallet after the round happened \
+			(and has sufficient confirmations).",
+		);
+
 		let id = self.db.store_round_state_lock_vtxos(&state).await?;
 		Ok(StoredRoundState { id, state })
 	}

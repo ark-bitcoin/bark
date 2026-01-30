@@ -580,6 +580,12 @@ impl From<bark::round::RoundStatus> for RoundStatus {
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[cfg_attr(feature = "utoipa", derive(ToSchema))]
+pub struct RoundStateInfo {
+	pub round_state_id: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[cfg_attr(feature = "utoipa", derive(ToSchema))]
 pub struct InvoiceInfo {
 	/// The invoice string
 	pub invoice: String,
