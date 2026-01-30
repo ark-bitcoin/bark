@@ -22,6 +22,18 @@ use crate::movement::update::MovementUpdate;
 use crate::Wallet;
 use crate::subsystem::{ArkoorMovement, Subsystem};
 
+
+/// The maximum number of times we will call the fetch mailbox endpoint in one go
+///
+/// We can't trust the server to honestly tell us to keep trying more forever.
+/// A malicious server could send us empty messages or invalid messages and
+/// lock up our resources forever. So we limit the number of times we will fetch.
+/// If a user actually has more messages left, he will have to call sync again.
+///
+/// (Note that currently the server sends 100 messages per fetch, so this would
+/// only happen for users with more than 1000 pending items.)
+const MAX_MAILBOX_REQUEST_BURST: usize = 10;
+
 impl Wallet {
 	/// Fetch the mailbox keypair.
 	pub fn mailbox_keypair(&self) -> anyhow::Result<Keypair> {
@@ -33,27 +45,35 @@ impl Wallet {
 		let mut srv = self.require_server()?;
 
 		let mailbox_id = MailboxIdentifier::from_pubkey(self.mailbox_keypair()?.public_key());
-		let checkpoint = self.get_mailbox_checkpoint().await?;
-		let mailbox_req = protos::mailbox_server::MailboxRequest {
-			unblinded_id: mailbox_id.to_vec(),
-			// TODO (mailbox): Add support for mailbox authorization
-			authorization: None,
-			checkpoint,
-		};
-		let mailbox_msgs = srv.mailbox_client.read_mailbox(mailbox_req).await
-			.context("error fetching mailbox")?.into_inner().messages;
-		debug!("Ark server has {} mailbox messages for us", mailbox_msgs.len());
 
-		for mailbox_msg in mailbox_msgs {
-			match mailbox_msg.message {
-				Some(mailbox_message::Message::Arkoor(ArkoorMessage { vtxos })) => {
-					let result = self
-						.process_received_arkoor_package(vtxos, Some(mailbox_msg.checkpoint)).await;
-					if let Err(e) = result {
-						error!("Error processing received arkoor package: {:#}", e);
-					}
-				},
-				None => debug!("Unknown mailbox message: {:?}", mailbox_msg),
+		for _ in 0..MAX_MAILBOX_REQUEST_BURST {
+			let checkpoint = self.get_mailbox_checkpoint().await?;
+			let mailbox_req = protos::mailbox_server::MailboxRequest {
+				unblinded_id: mailbox_id.to_vec(),
+				// TODO (mailbox): Add support for mailbox authorization
+				authorization: None,
+				checkpoint,
+			};
+
+			let mailbox_resp = srv.mailbox_client.read_mailbox(mailbox_req).await
+				.context("error fetching mailbox")?.into_inner();
+			debug!("Ark server has {} mailbox messages for us", mailbox_resp.messages.len());
+
+			for mailbox_msg in mailbox_resp.messages {
+				match mailbox_msg.message {
+					Some(mailbox_message::Message::Arkoor(ArkoorMessage { vtxos })) => {
+						let result = self
+							.process_received_arkoor_package(vtxos, Some(mailbox_msg.checkpoint)).await;
+						if let Err(e) = result {
+							error!("Error processing received arkoor package: {:#}", e);
+						}
+					},
+					None => debug!("Unknown mailbox message: {:?}", mailbox_msg),
+				}
+			}
+
+			if !mailbox_resp.have_more {
+				break;
 			}
 		}
 
