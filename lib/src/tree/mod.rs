@@ -206,6 +206,29 @@ impl Tree {
 		}
 	}
 
+	/// Iterate over ancestors of a node with child indices.
+	///
+	/// Starting from `node_idx`, walks up towards the root. The starting node
+	/// is excluded from iteration. Each returned tuple `(ancestor_idx, child_idx)`
+	/// indicates that `child_idx` is the child position that leads back down
+	/// towards `node_idx`.
+	///
+	/// # Example
+	///
+	/// For a node 12 with children `[4, 5, 6, 7]`:
+	/// ```text
+	/// iter_branch_with_output(6) yields (12, 2), ..., (root_idx, ...)
+	/// ```
+	/// Node 6 is at child index 2 (0-indexed) of node 12.
+	pub fn iter_branch_with_output(&self, node_idx: usize) -> BranchWithOutputIter<'_> {
+		assert!(node_idx < self.nodes.len());
+		BranchWithOutputIter {
+			tree: self,
+			prev_idx: node_idx,
+			cursor: self.nodes[node_idx].parent(),
+		}
+	}
+
 	pub fn parent_idx_of(&self, idx: usize) -> Option<usize> {
 		self.nodes.get(idx).and_then(|n| n.parent.map(|c| c as usize))
 	}
@@ -240,6 +263,28 @@ impl<'a> Iterator for BranchIter<'a> {
 		} else {
 			None
 		}
+	}
+}
+
+/// Iterates ancestors of a node, returning (node_idx, child_idx) tuples.
+#[derive(Clone)]
+pub struct BranchWithOutputIter<'a> {
+	tree: &'a Tree,
+	prev_idx: usize,
+	cursor: Option<usize>,
+}
+
+impl<'a> Iterator for BranchWithOutputIter<'a> {
+	type Item = (usize, usize);
+	fn next(&mut self) -> Option<Self::Item> {
+		let cursor = self.cursor?;
+		let node = &self.tree.nodes[cursor];
+		let child_idx = node.children()
+			.position(|c| c == self.prev_idx)
+			.expect("broken tree");
+		self.prev_idx = cursor;
+		self.cursor = node.parent();
+		Some((cursor, child_idx))
 	}
 }
 
@@ -290,6 +335,44 @@ use super::*;
 				);
 			}
 			println!("n={n} ok");
+		}
+	}
+
+	#[test]
+	fn test_iter_branch_with_output() {
+		for n in 1..100 {
+			let tree = Tree::new(n);
+
+			for start_idx in 0..tree.nb_nodes() {
+				let results: Vec<_> = tree.iter_branch_with_output(start_idx).collect();
+
+				// 1. Verify the iterator excludes the starting node
+				assert!(results.iter().all(|(idx, _)| *idx != start_idx));
+
+				// 2. Verify each returned node is an ancestor of the previous
+				let mut expected_parent = tree.nodes[start_idx].parent();
+				for (ancestor_idx, _) in &results {
+					assert_eq!(Some(*ancestor_idx), expected_parent);
+					expected_parent = tree.nodes[*ancestor_idx].parent();
+				}
+
+				// 3. Verify child_idx actually points back down the branch
+				let mut prev = start_idx;
+				for (ancestor_idx, child_idx) in &results {
+					let child = tree.nodes[*ancestor_idx].children().nth(*child_idx).unwrap();
+					assert_eq!(child, prev);
+					prev = *ancestor_idx;
+				}
+
+				// 4. Verify the last node is the root (has no parent)
+				if let Some((last_idx, _)) = results.last() {
+					assert!(tree.nodes[*last_idx].is_root());
+				}
+
+				// 5. Verify consistency with iter_branch (same path, minus starting node)
+				let branch_len = tree.iter_branch(start_idx).skip(1).count();
+				assert_eq!(results.len(), branch_len);
+			}
 		}
 	}
 }
