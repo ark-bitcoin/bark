@@ -248,12 +248,14 @@ impl ServerConnection {
 		let pver = check_handshake(handshake)?;
 
 		let interceptor = ProtocolVersionInterceptor { pver };
-		let mut client = ArkServiceClient::with_interceptor(channel.clone(), interceptor.clone());
+		let mut client = ArkServiceClient::with_interceptor(channel.clone(), interceptor.clone())
+			.max_decoding_message_size(64 * 1024 * 1024); // 64MB limit
 
 		let info = client.ark_info(network).await?;
 		info!("Ark info: {:?}", info);
 
-		let mailbox_client = mailbox::MailboxServiceClient::with_interceptor(channel, interceptor);
+		let mailbox_client = mailbox::MailboxServiceClient::with_interceptor(channel, interceptor)
+			.max_decoding_message_size(64 * 1024 * 1024); // 64MB limit
 
 		let info = Arc::new(RwLock::new(ServerInfo::new(pver, info)));
 		Ok(ServerConnection {
