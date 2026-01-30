@@ -761,7 +761,7 @@ impl ClnManagerProcess {
 			trace!("Updating subscription status for intra-Ark lightning payment with payment hash {payment_hash}");
 			let res = self.set_created_subscription_to_accepted(sub, htlc_send_expiry_height).await;
 			if let Err(e) = res {
-				trace!("Failed to update subscription status: {e}");
+				trace!("Failed to update subscription status: {e:#}");
 				let payment_attempt = self.db
 					.get_open_lightning_payment_attempt_by_payment_hash(&payment_hash).await?
 					.expect("we inserted a payment attempt");
@@ -1021,12 +1021,12 @@ async fn handle_pay_invoice(
 					None,
 				).await {
 					Ok(_) => {},
-					Err(e) => error!("Error updating invoice after pay error: {e}"),
+					Err(e) => error!("Error updating invoice after pay error: {e:#}"),
 				}
 				Ok(None) => error!("Failed to find attempt for invoice just started \
 					payment_hash={payment_hash}"),
 				Err(e) => error!("Error querying attempt for invoice just started \
-					payment_hash={payment_hash}: {e}"),
+					payment_hash={payment_hash}: {e:#}"),
 			}
 			let _ = payment_update_tx.send(payment_hash);
 		},

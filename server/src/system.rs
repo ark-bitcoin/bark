@@ -73,7 +73,7 @@ impl RuntimeManager {
 				_ = sigterm.recv() => info!("SIGTERM received! Sending shutdown signal..."),
 				r = signal::ctrl_c() => match r {
 					Ok(()) => info!("Ctrl+C received! Sending shutdown signal..."),
-					Err(e) => panic!("failed to listen to ctrl-c signal: {e}"),
+					Err(e) => panic!("failed to listen to ctrl-c signal: {e:#}"),
 				},
 			}
 
