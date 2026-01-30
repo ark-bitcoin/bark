@@ -13,13 +13,13 @@ use secp256k1_musig::musig::{AggregatedNonce, PartialSignature, PublicNonce, Sec
 
 use bitcoin_ext::{fee, BlockDelta, BlockHeight, TaprootSpendInfoExt, TransactionExt, TxOutExt};
 
-use crate::{musig, scripts, Vtxo, VtxoId, VtxoPolicy, VtxoRequest, SECP};
+use crate::{musig, scripts, ServerVtxoPolicy, Vtxo, VtxoId, VtxoPolicy, VtxoRequest, SECP};
 use crate::encode::{
 	LengthPrefixedVector, OversizedVectorError, ProtocolDecodingError, ProtocolEncoding, ReadExt, WriteExt
 };
 use crate::error::IncorrectSigningKeyError;
 use crate::tree::{self, Tree};
-use crate::vtxo::{self, GenesisItem, GenesisTransition, MaybePreimage};
+use crate::vtxo::{self, GenesisItem, GenesisTransition, MaybePreimage, ServerVtxo};
 
 
 /// Hash to lock hArk VTXOs from users before forfeits
@@ -919,6 +919,54 @@ impl CachedSignedVtxoTree {
 
 		let fee_amount = Amount::ZERO;
 		GenesisItem {transition, output_idx, other_outputs, fee_amount }
+	}
+
+	/// Construct the server vtxo at the given node index.
+	///
+	/// The index corresponds to the prevout of self.txs[index]
+	///
+	/// Panics if `node_idx` is out of range.
+	fn build_internal_vtxo(&self, node_idx: usize) -> ServerVtxo {
+		let tree = Tree::new(self.spec.spec.nb_leaves());
+		assert!(node_idx < tree.nb_nodes(), "node_idx out of range");
+
+		let mut genesis = tree.iter_branch_with_output(node_idx)
+			.map(|(idx, child_idx)| self.build_genesis_item_at(&tree, idx, child_idx as u8))
+			.collect::<Vec<_>>();
+		genesis.reverse();
+
+		let node = tree.node_at(node_idx);
+		let spec = &self.spec.spec;
+		let (point, amount) = match tree.parent_idx_of_with_sibling_idx(node_idx) {
+			None => (self.spec.utxo, spec.total_required_value()),
+			Some((parent_idx, child_idx)) => {
+				let parent_tx = self.txs.get(parent_idx).expect("parent tx exists");
+				let point = OutPoint::new(parent_tx.compute_txid(), child_idx as u32);
+				(point, parent_tx.output[child_idx].value)
+			}
+		};
+
+		let policy = if node.is_leaf() {
+			let req = spec.vtxos.get(node_idx).expect("one vtxo request for every leaf");
+			ServerVtxoPolicy::new_hark_leaf(req.vtxo.policy.user_pubkey(), req.unlock_hash)
+		} else {
+			let agg_pk = musig::combine_keys(
+				node.leaves().filter_map(|i| self.spec.spec.vtxos[i].cosign_pubkey)
+					.chain(self.spec.spec.global_cosign_pubkeys.iter().copied())
+			);
+			ServerVtxoPolicy::new_expiry(agg_pk.x_only_public_key().0)
+		};
+
+		ServerVtxo {
+			policy,
+			amount,
+			expiry_height: self.spec.spec.expiry_height,
+			server_pubkey: self.spec.spec.server_pubkey,
+			exit_delta: self.spec.spec.exit_delta,
+			anchor_point: self.spec.utxo,
+			genesis,
+			point,
+		}
 	}
 
 	/// Construct the VTXO at the given leaf index.
