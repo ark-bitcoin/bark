@@ -147,13 +147,13 @@ impl Config {
 			vtxo_exit_margin: 12,
 			htlc_recv_claim_delta: 18,
 			fallback_fee_rate: None,
-			round_tx_required_confirmations: 6,
+			round_tx_required_confirmations: 2,
 		};
 
 		if network != Network::Bitcoin {
 			ret.vtxo_refresh_expiry_threshold = 12;
 			ret.fallback_fee_rate = Some(FeeRate::from_sat_per_vb_unchecked(1));
-			ret.round_tx_required_confirmations = 2;
+			ret.round_tx_required_confirmations = 1;
 		}
 
 		ret
