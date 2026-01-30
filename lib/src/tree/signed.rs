@@ -877,6 +877,10 @@ impl CachedSignedVtxoTree {
 		self.spec.nb_leaves()
 	}
 
+	pub fn nb_nodes(&self) -> usize {
+		Tree::nb_nodes_for_leaves(self.spec.nb_leaves())
+	}
+
 	/// Get all final txs in this tree, starting with the leaves, towards the root.
 	pub fn all_final_txs(&self) -> &[Transaction] {
 		&self.txs
@@ -1001,6 +1005,11 @@ impl CachedSignedVtxoTree {
 				OutPoint::new(leaf_tx.compute_txid(), 0)
 			},
 		}
+	}
+
+	/// Construct all ServerVtxos
+	pub fn internal_vtxos(&self) -> impl Iterator<Item = ServerVtxo> + ExactSizeIterator + '_ {
+		(0..self.nb_nodes()).map(|idx| self.build_internal_vtxo(idx))
 	}
 
 	/// Construct all individual vtxos from this round.
