@@ -78,25 +78,25 @@ impl DaemonProcess {
 	/// - Sync pending lightning sends
 	async fn run_lightning_sync(&self) {
 		if let Err(e) = self.wallet.try_claim_all_lightning_receives(false).await {
-			warn!("An error occured while checking and claiming pending lightning receives: {e}");
+			warn!("An error occured while checking and claiming pending lightning receives: {e:#}");
 		}
 
 		if let Err(e) = self.wallet.sync_pending_lightning_send_vtxos().await {
-			warn!("An error occured while syncing pending lightning sends: {e}");
+			warn!("An error occured while syncing pending lightning sends: {e:#}");
 		}
 	}
 
 	/// Check for incoming arkoors
 	async fn sync_mailbox(&self) {
 		if let Err(e) = self.wallet.sync_mailbox().await {
-			warn!("An error occurred while syncing mailbox: {e}");
+			warn!("An error occurred while syncing mailbox: {e:#}");
 		}
 	}
 
 	/// Sync pending boards, register new ones if needed
 	async fn run_boards_sync(&self) {
 		if let Err(e) = self.wallet.sync_pending_boards().await {
-			warn!("An error occured while syncing pending board: {e}");
+			warn!("An error occured while syncing pending board: {e:#}");
 		}
 	}
 
@@ -104,7 +104,7 @@ impl DaemonProcess {
 	async fn run_onchain_sync(&self) {
 		let mut onchain = self.onchain.write().await;
 		if let Err(e) = onchain.sync(&self.wallet.chain).await {
-			warn!("An error occured while syncing onchain: {e}");
+			warn!("An error occured while syncing onchain: {e:#}");
 		}
 	}
 
@@ -112,7 +112,7 @@ impl DaemonProcess {
 	async fn run_maintenance_refresh_process(&self) {
 		loop {
 			if let Err(e) = self.wallet.maintenance_refresh().await {
-				warn!("An error occured while performing maintenance refresh: {e}");
+				warn!("An error occured while performing maintenance refresh: {e:#}");
 			}
 
 			tokio::select! {
@@ -132,11 +132,11 @@ impl DaemonProcess {
 
 		let mut exit_lock = self.wallet.exit.write().await;
 		if let Err(e) = exit_lock.sync_no_progress(&*onchain).await {
-			warn!("An error occurred while syncing exits: {e}");
+			warn!("An error occurred while syncing exits: {e:#}");
 		}
 
 		if let Err(e) = exit_lock.progress_exits(&self.wallet, &mut *onchain, None).await {
-			warn!("An error occurred while progressing exits: {e}");
+			warn!("An error occurred while progressing exits: {e:#}");
 		}
 	}
 
@@ -167,7 +167,7 @@ impl DaemonProcess {
 		loop {
 			if self.connected.load(Ordering::Relaxed) {
 				if let Err(e) = self.inner_process_pending_rounds().await {
-					warn!("An error occured while processing pending rounds: {e}");
+					warn!("An error occured while processing pending rounds: {e:#}");
 				}
 			}
 
