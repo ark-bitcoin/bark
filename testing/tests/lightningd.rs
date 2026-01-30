@@ -15,7 +15,7 @@ use log::{info, trace};
 
 use ark_testing::{btc, constants::BOARD_CONFIRMATIONS, sat, TestContext};
 use ark_testing::daemon::captaind::{self, ArkClient};
-use ark_testing::util::FutureExt;
+use ark_testing::util::{FutureExt, ToAltString};
 use bark_json::cli::PaymentMethod;
 use bitcoin_ext::P2TR_DUST_SAT;
 use server_rpc::protos::{
@@ -1160,8 +1160,8 @@ async fn server_rejects_claim_receive_for_bad_vtxo_proof() {
 		}
 	}
 
-	let err = err.expect("should fail");
-	assert!(err.to_string().contains("vtxo ownership proof invalid"), "{err:?}");
+	let err = err.expect("should fail").to_alt_string();
+	assert!(err.contains("vtxo ownership proof invalid"), "{err}");
 
 	assert_eq!(bark.spendable_balance().await, btc(2));
 }

@@ -308,8 +308,8 @@ async fn max_vtxo_amount() {
 	let cfg_max_amount = bark1.ark_info().await.max_vtxo_amount.unwrap();
 
 	// exceeds limit, should fail
-	let err = bark1.try_board(Amount::from_sat(600_000)).await.unwrap_err();
-	assert!(err.to_string().contains(
+	let err = bark1.try_board(Amount::from_sat(600_000)).await.unwrap_err().to_alt_string();
+	assert!(err.contains(
 		&format!("bad user input: board amount exceeds limit of {}", cfg_max_amount)
 	), "err: {err}");
 
@@ -319,8 +319,8 @@ async fn max_vtxo_amount() {
 
 	// then try send in a round
 	bark1.set_timeout(srv.max_round_delay());
-	let err = bark1.try_refresh_all().await.unwrap_err();
-	assert!(err.to_string().contains(
+	let err = bark1.try_refresh_all().await.unwrap_err().to_alt_string();
+	assert!(err.contains(
 		&format!("output exceeds maximum vtxo amount of {}", cfg_max_amount),
 	), "err: {err}");
 
@@ -461,8 +461,8 @@ async fn full_round() {
 	assert_eq!(full.max_output_vtxos, MAX_OUTPUTS);
 
 	// then we wait for the error to happen
-	let err = rx.recv().wait_millis(30_000).await.unwrap();
-	assert!(err.to_string().contains("Message arrived late or round was full"), "err: {err}");
+	let err = rx.recv().wait_millis(30_000).await.unwrap().to_alt_string();
+	assert!(err.contains("Message arrived late or round was full"), "err: {err}");
 }
 
 #[tokio::test]
@@ -635,8 +635,8 @@ async fn test_participate_round_wrong_step() {
 
 	let proxy = srv.start_proxy_no_mailbox(ProxyA).await;
 	bark.set_ark_url(&proxy).await;
-	let err = bark.try_refresh_all().await.expect_err("refresh should time out");
-	assert!(err.to_string().contains("current step is payment registration"), "err: {err}");
+	let err = bark.try_refresh_all().await.expect_err("refresh should time out").to_alt_string();
+	assert!(err.contains("current step is payment registration"), "err: {err}");
 
 	/// This proxy will send a `submit_payment` req instead of `provide_vtxo_signatures` one
 	#[derive(Clone)]
@@ -659,8 +659,8 @@ async fn test_participate_round_wrong_step() {
 	let proxy = srv.start_proxy_no_mailbox(ProxyB).await;
 	bark.set_timeout(srv.max_round_delay());
 	bark.set_ark_url(&proxy).await;
-	let err = bark.try_refresh_all().await.expect_err("refresh should fail");
-	assert!(err.to_string().contains("Message arrived late or round was full."), "err: {err}");
+	let err = bark.try_refresh_all().await.expect_err("refresh should fail").to_alt_string();
+	assert!(err.contains("Message arrived late or round was full."), "err: {err}");
 }
 
 #[tokio::test]
@@ -746,8 +746,8 @@ async fn reject_revocation_on_successful_lightning_payment() {
 	lightning.sync().await;
 
 	assert_eq!(bark_1.spendable_balance().await, board_amount);
-	let err = bark_1.try_pay_lightning(invoice, None, true).await.unwrap_err();
-	assert!(err.to_string().contains("This lightning payment has completed. preimage: "), "err: {err}");
+	let err = bark_1.try_pay_lightning(invoice, None, true).await.unwrap_err().to_alt_string();
+	assert!(err.contains("This lightning payment has completed. preimage: "), "err: {err}");
 }
 
 #[tokio::test]
@@ -1023,8 +1023,8 @@ async fn reject_dust_board_cosign() {
 	let proxy = srv.start_proxy_no_mailbox(Proxy).await;
 	let bark = ctx.new_bark_with_funds("bark", &proxy.address, sat(1_000_000)).await;
 
-	let err = bark.try_board_all().await.unwrap_err();
-	assert!(err.to_string().contains(
+	let err = bark.try_board_all().await.unwrap_err().to_alt_string();
+	assert!(err.contains(
 		"bad user input: board amount must be at least 0.00000330 BTC",
 	), "err: {err}");
 }
@@ -1057,8 +1057,8 @@ async fn reject_below_minimum_board_cosign() {
 	let proxy = srv.start_proxy_no_mailbox(Proxy).await;
 	let bark = ctx.new_bark_with_funds("bark", &proxy.address, sat(100_000)).await;
 
-	let err = bark.try_board_all().await.unwrap_err();
-	assert!(err.to_string().contains(
+	let err = bark.try_board_all().await.unwrap_err().to_alt_string();
+	assert!(err.contains(
 		"bad user input: board amount must be at least 0.00030000 BTC",
 	), "err: {err}");
 }
@@ -1176,8 +1176,8 @@ async fn server_refuse_claim_invoice_not_settled() {
 
 	let cloned = invoice_info.clone();
 	tokio::spawn(async move { lightning.sender.pay_bolt11(cloned.invoice).await; });
-	let err = bark.try_lightning_receive(invoice_info.invoice).await.unwrap_err();
-	assert!(err.to_string().contains("bad user input: preimage doesn't match payment hash"), "err: {err}");
+	let err = bark.try_lightning_receive(invoice_info.invoice).await.unwrap_err().to_alt_string();
+	assert!(err.contains("bad user input: preimage doesn't match payment hash"), "err: {err}");
 }
 
 #[tokio::test]
@@ -1212,12 +1212,12 @@ async fn server_should_release_hold_invoice_when_subscription_is_canceled() {
 	tokio::time::sleep(cfg_htlc_forward_timeout + srv.config().invoice_check_interval).await;
 
 	// The payment should fail because the subscription was canceled (receiver didn't claim)
-	let err = payment_result.await.unwrap().unwrap_err();
-	assert!(err.to_string().contains("WIRE_INCORRECT_OR_UNKNOWN_PAYMENT_DETAILS"), "err: {err}");
+	let err = payment_result.await.unwrap().unwrap_err().to_alt_string();
+	assert!(err.contains("WIRE_INCORRECT_OR_UNKNOWN_PAYMENT_DETAILS"), "err: {err}");
 
 	// Verify the hold invoice was released by trying to pay again - should also fail
-	let err = sender.try_pay_bolt11(invoice_info.invoice).await.unwrap_err();
-	assert!(err.to_string().contains("WIRE_INCORRECT_OR_UNKNOWN_PAYMENT_DETAILS"), "err: {err}");
+	let err = sender.try_pay_bolt11(invoice_info.invoice).await.unwrap_err().to_alt_string();
+	assert!(err.contains("WIRE_INCORRECT_OR_UNKNOWN_PAYMENT_DETAILS"), "err: {err}");
 }
 
 #[tokio::test]
@@ -1254,8 +1254,8 @@ async fn server_generated_invoice_has_configured_expiry() {
 		"expected CANCELED status, got {:?}", resp.status);
 
 	// Sender also rejects expired invoice, confirming expiry was set correctly in the invoice
-	let err = lightning.sender.try_pay_bolt11(invoice_info.invoice).await.unwrap_err();
-	assert!(err.to_string().contains("Invoice expired"), "err: {err}");
+	let err = lightning.sender.try_pay_bolt11(invoice_info.invoice).await.unwrap_err().to_alt_string();
+	assert!(err.contains("Invoice expired"), "err: {err}");
 }
 
 #[tokio::test]
@@ -1300,9 +1300,9 @@ async fn server_should_refuse_claim_twice() {
 		payment_preimage: receive.payment_preimage.to_vec(),
 		vtxo_policy: policy.serialize(),
 		cosign_request: Some(cosign_req.into()),
-	}).await.unwrap_err();
+	}).await.unwrap_err().to_alt_string();
 
-	assert!(err.to_string().contains("payment status in incorrect state: settled"), "err: {err}");
+	assert!(err.contains("payment status in incorrect state: settled"), "err: {err}");
 }
 
 #[tokio::test]
@@ -1473,9 +1473,9 @@ async fn server_should_refuse_claim_twice_intra_ark_ln_receive() {
 		payment_preimage: receive.payment_preimage.to_vec(),
 		vtxo_policy: policy.serialize(),
 		cosign_request: Some(cosign_req.into()),
-	}).await.unwrap_err();
+	}).await.unwrap_err().to_alt_string();
 
-	assert!(err.to_string().contains("payment status in incorrect state: settled"), "err: {err}");
+	assert!(err.contains("payment status in incorrect state: settled"), "err: {err}");
 }
 
 #[tokio::test]
@@ -1516,8 +1516,8 @@ async fn should_refuse_paying_invoice_not_matching_htlcs() {
 
 	let invoice = lightning.receiver.invoice(Some(btc(1)), "real invoice", "A real invoice").await;
 
-	let err = bark_1.try_pay_lightning(invoice, None, false).await.unwrap_err();
-	assert!(err.to_string().contains("htlc payment hash doesn't match invoice"), "err: {err}");
+	let err = bark_1.try_pay_lightning(invoice, None, false).await.unwrap_err().to_alt_string();
+	assert!(err.contains("htlc payment hash doesn't match invoice"), "err: {err}");
 }
 
 #[tokio::test]
@@ -1552,8 +1552,8 @@ async fn should_refuse_paying_invoice_whose_amount_is_higher_than_htlcs() {
 
 	let invoice = lightning.receiver.invoice(Some(btc(1)), "real invoice", "A real invoice").await;
 
-	let err = bark_1.try_pay_lightning(invoice, None, false).await.unwrap_err();
-	assert!(err.to_string().contains("htlc vtxo amount too low for invoice"), "err: {err}");
+	let err = bark_1.try_pay_lightning(invoice, None, false).await.unwrap_err().to_alt_string();
+	assert!(err.contains("htlc vtxo amount too low for invoice"), "err: {err}");
 }
 
 #[tokio::test]
@@ -1724,8 +1724,11 @@ async fn should_refuse_oor_input_vtxo_that_is_being_exited() {
 
 	bark.set_ark_url(&proxy.address).await;
 
-	let err = bark.try_send_oor(&bark2.address().await, sat(100_000), false).await.expect_err("Server should refuse oor");
-	assert!(err.to_string().contains(format!("bad user input: cannot spend vtxo that is already exited: {}", vtxo_a.id).as_str()), "err: {err}");
+	let err = bark.try_send_oor(&bark2.address().await, sat(100_000), false).await
+		.expect_err("Server should refuse oor").to_alt_string();
+	assert!(err.contains(
+		&format!("bad user input: cannot spend vtxo that is already exited: {}", vtxo_a.id)
+	), "err: {err}");
 }
 
 #[tokio::test]
@@ -1799,9 +1802,8 @@ async fn mailbox_post_and_process_with_auth() {
 	};
 
 	trace!("reading mailbox incorrect authorization");
-	let mailbox_resp = mb_rpc.read_mailbox(incorrect_read_mailbox).await.unwrap_err();
-	assert!(mailbox_resp.to_string()
-		.contains("bad user input: authorization doesn't match mailbox id"), "err: {mailbox_resp}");
+	let err = mb_rpc.read_mailbox(incorrect_read_mailbox).await.unwrap_err().to_alt_string();
+	assert!(err.contains("bad user input: authorization doesn't match mailbox id"), "err: {err}");
 
 	trace!("processing mailbox");
 	loop {
@@ -1865,8 +1867,10 @@ async fn should_refuse_ln_pay_input_vtxo_that_is_being_exited() {
 
 	let invoice = lightningd.invoice(Some(sat(100_000)), "real invoice", "A real invoice").await;
 
-	let err = bark.try_pay_lightning(&invoice, None, false).await.unwrap_err();
-	assert!(err.to_string().contains(format!("bad user input: cannot spend vtxo that is already exited: {}", vtxo_a.id).as_str()), "err: {err}");
+	let err = bark.try_pay_lightning(&invoice, None, false).await.unwrap_err().to_alt_string();
+	assert!(err.contains(&format!(
+		"bad user input: cannot spend vtxo that is already exited: {}", vtxo_a.id,
+	)), "err: {err}");
 }
 
 #[tokio::test]
@@ -1957,8 +1961,10 @@ async fn should_refuse_round_input_vtxo_that_is_being_exited() {
 	bark.set_ark_url(&proxy.address).await;
 	bark.set_timeout(srv.max_round_delay());
 
-	let err = bark.try_refresh_all().await.unwrap_err();
-	assert!(err.to_string().contains(format!("bad user input: cannot spend vtxo that is already exited: {}", vtxo_a.id).as_str()), "err: {err}");
+	let err = bark.try_refresh_all().await.unwrap_err().to_alt_string();
+	assert!(err.contains(&format!(
+		"bad user input: cannot spend vtxo that is already exited: {}", vtxo_a.id,
+	)), "err: {err:#}");
 }
 
 
@@ -2011,8 +2017,8 @@ async fn should_refuse_over_max_vtxo_amount_lightning_receive_request() {
 
 	bark.set_ark_url(&proxy.address).await;
 
-	let err = bark.try_bolt11_invoice(sat(30_000)).await.unwrap_err();
-	assert!(err.to_string().contains(format!("Requested amount exceeds limit of 0.01000000 BTC").as_str()), "err: {err}");
+	let err = bark.try_bolt11_invoice(sat(30_000)).await.unwrap_err().to_alt_string();
+	assert!(err.contains("Requested amount exceeds limit of 0.01000000 BTC"), "err: {err}");
 }
 
 #[tokio::test]

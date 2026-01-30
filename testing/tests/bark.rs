@@ -800,7 +800,7 @@ async fn bark_rejects_offboarding_dust_amount() {
 	let addr = bark2.get_onchain_address().await;
 
 	let err = bark1.try_send_onchain(&addr, sat(P2TR_DUST_SAT - 1)).await.unwrap_err();
-	assert!(err.to_string().contains(
+	assert!(err.to_alt_string().contains(
 		"it doesn't make sense to send dust",
 	), "err: {err}");
 }
@@ -1252,7 +1252,7 @@ async fn test_ark_address_other_ark() {
 
 	let addr1 = bark1.address().await;
 	let err = bark2.try_send_oor(addr1, sat(10_000), false).await.unwrap_err().to_alt_string();
-	assert!(err.contains("Ark address is for different server"), "err: {err}");
+	assert!(err.contains("Ark address is for different server"), "err: {err:#}");
 }
 
 #[tokio::test]
