@@ -882,55 +882,61 @@ impl CachedSignedVtxoTree {
 		&self.txs
 	}
 
+	/// Build the genesis item for the given node tx and its output idx
+	fn build_genesis_item_at<'a>(&self, tree: &Tree, node_idx: usize, output_idx: u8) -> GenesisItem {
+		debug_assert_eq!(self.nb_leaves(), tree.nb_leaves(), "tree corresponds to self");
+		debug_assert!(node_idx < tree.nb_nodes(), "Node index is in tree");
+
+		let other_outputs = self.txs.get(node_idx).expect("Each node has a tx")
+			.output.iter().enumerate()
+			.filter(|(i, _)| *i != output_idx as usize) // Exclude this output
+			.filter(|(_, out)| !out.is_p2a_fee_anchor())    // Exclude the fee-anchor
+			.map(|(_, out)| out)
+			.cloned()
+			.collect();
+
+		let node = tree.node_at(node_idx);
+
+		let transition = if node.is_leaf() {
+			debug_assert_eq!(output_idx, 0, "Leafs have a single output");
+			let req = self.spec.spec.vtxos.get(node_idx).expect("Every leaf has a spec");
+			GenesisTransition::new_hash_locked_cosigned(
+				req.vtxo.policy.user_pubkey(),
+				None,
+				MaybePreimage::Hash(req.unlock_hash),
+			)
+		} else {
+			let pubkeys = node.leaves()
+				.filter_map(|i| self.spec.spec.vtxos[i].cosign_pubkey)
+				.chain(self.spec.spec.global_cosign_pubkeys.iter().copied())
+				.collect();
+
+			let sig = self.spec.cosign_sigs.get(node.internal_idx())
+				.expect("enough sigs for all nodes");
+
+			GenesisTransition::new_cosigned(pubkeys, Some(*sig))
+		};
+
+		let fee_amount = Amount::ZERO;
+		GenesisItem {transition, output_idx, other_outputs, fee_amount }
+	}
+
 	/// Construct the VTXO at the given leaf index.
 	///
 	/// Panics if `leaf_idx` is out of range.
 	pub fn build_vtxo(&self, leaf_idx: usize) -> Vtxo {
 		let req = self.spec.spec.vtxos.get(leaf_idx).expect("index is not a leaf");
+
 		let genesis = {
-			let mut genesis = Vec::new();
-
 			let tree = Tree::new(self.spec.spec.nb_leaves());
-			let mut branch = tree.iter_branch(leaf_idx);
+			let leaf = self.build_genesis_item_at(&tree, leaf_idx, 0);
+			let internal = tree.iter_branch_with_output(leaf_idx)
+				.map(|(node_idx, child_idx)| {
+					self.build_genesis_item_at(&tree, node_idx, child_idx as u8)
+				});
 
-			// first do the leaf item
-			let leaf_node = branch.next().unwrap();
-			genesis.push(GenesisItem {
-				transition: GenesisTransition::new_hash_locked_cosigned(
-					req.vtxo.policy.user_pubkey(),
-					None,
-					MaybePreimage::Hash(req.unlock_hash)),
-				output_idx: 0,
-				other_outputs: vec![],
-				fee_amount: Amount::ZERO,
-			});
-
-			// then the others
-			let mut last_node = leaf_node.idx();
-			for node in branch {
-				let pubkeys = node.leaves()
-					.filter_map(|i| self.spec.spec.vtxos[i].cosign_pubkey)
-					.chain(self.spec.spec.global_cosign_pubkeys.iter().copied())
-					.collect();
-				let sig = self.spec.cosign_sigs.get(node.internal_idx())
-					.expect("enough sigs for all nodes");
-
-				let transition = GenesisTransition::new_cosigned(pubkeys, Some(*sig));
-
-				let output_idx = node.children().position(|child_idx| last_node == child_idx)
-					.expect("last node should be our child") as u8;
-				let other_outputs = self.txs.get(node.idx()).expect("we have all txs")
-					.output.iter()
-					.enumerate()
-					.filter(|(i, o)| !o.is_p2a_fee_anchor() && *i != output_idx as usize)
-					.map(|(_i, o)| o).cloned().collect();
-				let fee_amount = Amount::ZERO;
-				genesis.push(GenesisItem { transition, output_idx, other_outputs, fee_amount });
-				last_node = node.idx();
-			}
+			let mut genesis = [leaf].into_iter().chain(internal).collect::<Vec<_>>();
 			genesis.reverse();
-
-
 			genesis
 		};
 
