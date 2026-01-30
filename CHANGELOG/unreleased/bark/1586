@@ -1,0 +1,2 @@
+- reduce the default number of required confirmations for round txs to 2 (1 for signet)
+  [#1586](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1586)
