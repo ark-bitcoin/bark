@@ -867,6 +867,7 @@ async fn reject_arkoor_with_bad_signature() {
 					message: Some(mailbox_message::Message::Arkoor(message)),
 					checkpoint: 0,
 				}],
+				have_more: false,
 			})
 		}
 	}

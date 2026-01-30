@@ -42,4 +42,6 @@ message ArkoorMessage {
 
 message MailboxMessages {
 	repeated MailboxMessage messages = 1;
+	/// Whether the server has more messages for you
+	bool have_more = 2;
 }

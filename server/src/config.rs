@@ -415,6 +415,9 @@ pub struct Config {
 	/// This is also the duration during which UTXOs stay locked in offboard sessions.
 	#[serde(with = "utils::serde::duration")]
 	pub offboard_session_timeout: Duration,
+
+	/// The maximum number of items we return to mailbox queries
+	pub read_mailbox_max_items: usize,
 }
 
 impl Config {
