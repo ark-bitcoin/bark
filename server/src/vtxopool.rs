@@ -455,7 +455,7 @@ impl Process {
 
 		// finish VTXOs by cosigning leaves
 		// we rely here on the order of the vtxos being identical to the order of the requests
-		let mut vtxos = tree.all_vtxos().collect::<Vec<_>>();
+		let mut vtxos = tree.output_vtxos().collect::<Vec<_>>();
 		for (vtxo, leaf_key) in vtxos.iter_mut().zip(leaf_keys.iter()) {
 			let (ctx, req) = LeafVtxoCosignContext::new(vtxo, &funding_psbt.unsigned_tx, &leaf_key);
 			let resp = self.srv.cosign_hashlocked_leaf(&req, vtxo, &funding_psbt.unsigned_tx);

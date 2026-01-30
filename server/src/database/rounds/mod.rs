@@ -110,7 +110,7 @@ impl Db {
 		query::set_round_id_for_participations(&tx, hark_unlock_hashes, round_txid).await?;
 
 		// Finally insert new vtxos.
-		query::upsert_vtxos(&tx, output_vtxos.all_vtxos().map(ServerVtxo::from)).await?;
+		query::upsert_vtxos(&tx, output_vtxos.output_vtxos().map(ServerVtxo::from)).await?;
 
 		tx.commit().await?;
 		Ok(())

@@ -343,7 +343,7 @@ pub fn generate_vtxo_vectors() -> VtxoTestVectors {
 	}
 	let signed = tree.into_signed_tree(cosign_sigs).into_cached_tree();
 	// we don't need forfeits
-	let mut vtxo_iter = signed.all_vtxos();
+	let mut vtxo_iter = signed.output_vtxos();
 	let round1_vtxo = {
 		let mut ret = vtxo_iter.next().unwrap();
 		ret.finalize_hark_leaf(&round1_user_key, &server_key, &round_tx, round1_unlock_preimage);

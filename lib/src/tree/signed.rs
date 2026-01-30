@@ -1004,7 +1004,7 @@ impl CachedSignedVtxoTree {
 	}
 
 	/// Construct all individual vtxos from this round.
-	pub fn all_vtxos(&self) -> impl Iterator<Item = Vtxo> + ExactSizeIterator + '_ {
+	pub fn output_vtxos(&self) -> impl Iterator<Item = Vtxo> + ExactSizeIterator + '_ {
 		(0..self.nb_leaves()).map(|idx| self.build_vtxo(idx))
 	}
 }
@@ -1753,7 +1753,7 @@ mod test {
 		}
 
 		let cached = signed.into_cached_tree();
-		for vtxo in cached.all_vtxos() {
+		for vtxo in cached.output_vtxos() {
 			encoding_roundtrip(&vtxo);
 		}
 	}
@@ -1816,7 +1816,7 @@ mod test {
 			let tree = builder.build_tree(&cosign, &user_cosign_key).unwrap().into_cached_tree();
 
 			// finalize vtxos and check
-			for mut vtxo in tree.all_vtxos() {
+			for mut vtxo in tree.output_vtxos() {
 				{
 					// check that with just the preimage, the VTXO is not valid
 					let mut with_preimage = vtxo.clone();
