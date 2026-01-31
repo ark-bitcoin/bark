@@ -1643,7 +1643,7 @@ mod test {
 	use crate::encode;
 	use crate::test_util::{encoding_roundtrip, json_roundtrip};
 	use crate::tree::signed::builder::SignedTreeBuilder;
-	use crate::vtxo::policy::VtxoPolicy;
+	use crate::vtxo::policy::{ServerVtxoPolicy, VtxoPolicy};
 
 	use super::*;
 
@@ -1847,6 +1847,26 @@ mod test {
 				println!("vtxo debug: {:#?}", vtxo);
 				println!("vtxo hex: {}", vtxo.serialize_hex());
 				vtxo.validate(&funding_tx).expect("should be value");
+			}
+
+			for (idx, vtxo) in tree.internal_vtxos().enumerate() {
+				// Verify transactions with consensus checks
+				let mut prev_txout = funding_tx.output[vtxo.chain_anchor().vout as usize].clone();
+
+				// Verify that all vtxo.transactions() are consensus valid
+				for item in vtxo.transactions() {
+					crate::test_util::verify_tx(&[prev_txout], 0, &item.tx)
+						.expect("Invalid transaction");
+					prev_txout = item.tx.output[item.output_idx].clone();
+				}
+
+				// Verify the policies
+				if idx < nb_vtxos as usize {
+					// All leafs have the HarkLeafPolicy
+					matches!(vtxo.policy(), ServerVtxoPolicy::HarkLeaf(_));
+				} else {
+					matches!(vtxo.policy(), ServerVtxoPolicy::Expiry(_));
+				}
 			}
 		}
 	}
