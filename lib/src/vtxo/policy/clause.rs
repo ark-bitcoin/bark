@@ -9,6 +9,7 @@ use bitcoin::{secp256k1::PublicKey, ScriptBuf};
 use bitcoin_ext::{BlockDelta, BlockHeight};
 
 use crate::lightning::{PREIMAGE_SIZE, PaymentHash, Preimage};
+use crate::vtxo::policy::Policy;
 use crate::{Vtxo, scripts};
 
 /// A trait describing a VTXO policy clause.
@@ -23,14 +24,14 @@ pub trait TapScriptClause: Sized + Clone {
 	fn tapscript(&self) -> ScriptBuf;
 
 	/// Construct the taproot control block for spending the VTXO using this clause
-	fn control_block(&self, vtxo: &Vtxo) -> ControlBlock {
+	fn control_block<P: Policy>(&self, vtxo: &Vtxo<P>) -> ControlBlock {
 		vtxo.output_taproot()
 			.control_block(&(self.tapscript(), taproot::LeafVersion::TapScript))
 			.expect("clause is not in taproot tree")
 	}
 
 	/// Computes the total witness size in bytes for spending via this clause.
-	fn witness_size(&self, vtxo: &Vtxo) -> usize;
+	fn witness_size<P: Policy>(&self, vtxo: &Vtxo<P>) -> usize;
 
 	/// Constructs the witness for the clause.
 	fn witness(
@@ -76,7 +77,7 @@ impl TapScriptClause for DelayedSignClause {
 	}
 
 
-	fn witness_size(&self, vtxo: &Vtxo) -> usize {
+	fn witness_size<P: Policy>(&self, vtxo: &Vtxo<P>) -> usize {
 		let cb_size = self.control_block(vtxo).size();
 		let tapscript_size = self.tapscript().as_bytes().len();
 
@@ -130,7 +131,7 @@ impl TapScriptClause for TimelockSignClause {
 		])
 	}
 
-	fn witness_size(&self, vtxo: &Vtxo) -> usize {
+	fn witness_size<P: Policy>(&self, vtxo: &Vtxo<P>) -> usize {
 		let cb_size = self.control_block(vtxo).size();
 		let tapscript_size = self.tapscript().as_bytes().len();
 
@@ -195,7 +196,7 @@ impl TapScriptClause for DelayedTimelockSignClause {
 		])
 	}
 
-	fn witness_size(&self, vtxo: &Vtxo) -> usize {
+	fn witness_size<P: Policy>(&self, vtxo: &Vtxo<P>) -> usize {
 		let cb_size = self.control_block(vtxo).size();
 		let tapscript_size = self.tapscript().as_bytes().len();
 
@@ -258,7 +259,7 @@ impl TapScriptClause for HashDelaySignClause {
 		])
 	}
 
-	fn witness_size(&self, vtxo: &Vtxo) -> usize {
+	fn witness_size<P: Policy>(&self, vtxo: &Vtxo<P>) -> usize {
 		let cb_size = self.control_block(vtxo).size();
 		let tapscript_size = self.tapscript().as_bytes().len();
 
@@ -320,7 +321,7 @@ impl VtxoClause {
 	}
 
 	/// Computes the total witness size in bytes for spending the VTXO via this clause.
-	pub fn control_block(&self, vtxo: &Vtxo) -> ControlBlock {
+	pub fn control_block<P: Policy>(&self, vtxo: &Vtxo<P>) -> ControlBlock {
 		match self {
 			Self::DelayedSign(c) => c.control_block(vtxo),
 			Self::TimelockSign(c) => c.control_block(vtxo),
@@ -330,7 +331,7 @@ impl VtxoClause {
 	}
 
 	/// Computes the total witness size in bytes for spending the VTXO via this clause.
-	pub fn witness_size(&self, vtxo: &Vtxo) -> usize {
+	pub fn witness_size<P: Policy>(&self, vtxo: &Vtxo<P>) -> usize {
 		match self {
 			Self::DelayedSign(c) => c.witness_size(vtxo),
 			Self::TimelockSign(c) => c.witness_size(vtxo),

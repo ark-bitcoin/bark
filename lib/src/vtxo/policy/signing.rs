@@ -5,6 +5,7 @@ use bitcoin::hashes::Hash;
 use bitcoin::{TapSighash, Transaction, TxOut, Witness, sighash, taproot};
 
 use crate::Vtxo;
+use crate::vtxo::policy::{Policy, VtxoPolicy};
 use crate::vtxo::policy::clause::VtxoClause;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, thiserror::Error)]
@@ -13,7 +14,7 @@ pub struct CannotSignVtxoError;
 
 /// A trait to implement a signer for a [Vtxo].
 #[async_trait::async_trait]
-pub trait VtxoSigner {
+pub trait VtxoSigner<P: Policy = VtxoPolicy> {
 	/// Returns the witness for a [VtxoClause] if it is signable, otherwise [None].
 	async fn witness(
 		&self,
@@ -23,7 +24,7 @@ pub trait VtxoSigner {
 	) -> Option<Witness>;
 
 	/// Returns true if the clause is signable, otherwise false.
-	async fn can_sign(&self, clause: &VtxoClause, vtxo: &Vtxo) -> bool {
+	async fn can_sign(&self, clause: &VtxoClause, vtxo: &Vtxo<P>) -> bool {
 		// NB: We won't use the witness after this, so we can use all zeros
 		let sighash = TapSighash::all_zeros();
 		let cb = clause.control_block(vtxo);
@@ -32,7 +33,7 @@ pub trait VtxoSigner {
 
 	/// Returns the first signable clause from [Vtxo]'s policy.
 	/// If no clause is signable, returns [None].
-	async fn find_signable_clause(&self, vtxo: &Vtxo) -> Option<VtxoClause> {
+	async fn find_signable_clause(&self, vtxo: &Vtxo<P>) -> Option<VtxoClause> {
 		let exit_delta = vtxo.exit_delta();
 		let expiry_height = vtxo.expiry_height();
 		let server_pubkey = vtxo.server_pubkey();
@@ -55,7 +56,7 @@ pub trait VtxoSigner {
 	/// Returns [CannotSignVtxoError] if no clause is signable.
 	async fn sign_input(
 		&self,
-		vtxo: &Vtxo,
+		vtxo: &Vtxo<P>,
 		input_idx: usize,
 		sighash_cache: &mut sighash::SighashCache<impl Borrow<Transaction> + Send + Sync>,
 		prevouts: &sighash::Prevouts<impl Borrow<TxOut> + Send + Sync>,
@@ -72,7 +73,7 @@ pub trait VtxoSigner {
 	/// Returns [CannotSignVtxoError] if the clause is not signable.
 	async fn sign_input_with_clause(
 		&self,
-		vtxo: &Vtxo,
+		vtxo: &Vtxo<P>,
 		clause: &VtxoClause,
 		input_idx: usize,
 		sighash_cache: &mut sighash::SighashCache<impl Borrow<Transaction> + Send + Sync>,
