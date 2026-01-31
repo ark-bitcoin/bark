@@ -218,18 +218,10 @@ impl Db {
 		new_vtxos: impl IntoIterator<Item = V>,
 		spend_info: impl IntoIterator<Item = (VtxoId, Txid)>,
 	) -> anyhow::Result<()> {
-		let (vtxos, txids) = spend_info.into_iter().collect::<(Vec<_>, Vec<_>)>();
-
 		let mut conn = self.get_conn().await.context("failed to connect to db")?;
 		let tx = conn.transaction().await.context("failed to start db transaction")?;
 
-		for vtx in new_virtual_txs {
-			query::upsert_virtual_transaction(&tx, vtx.txid, vtx.signed_tx(), vtx.is_funding, vtx.server_may_own_descendant_since).await?;
-		}
-		query::upsert_vtxos(&tx, new_vtxos).await
-			.context("failed to upsert VTXOs")?;
-		oor::mark_package_spent(&tx, &vtxos, &txids).await
-			.context("failed to mark VTXO as spent")?;
+		query::update_virtual_transaction_tree(&tx, new_virtual_txs, new_vtxos, spend_info).await?;
 
 		tx.commit().await?;
 		Ok(())
