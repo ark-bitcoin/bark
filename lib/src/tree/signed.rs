@@ -886,6 +886,20 @@ impl CachedSignedVtxoTree {
 		&self.txs
 	}
 
+	/// Returns all leaf transactions
+	///
+	/// These transactions aren't signed (yet)
+	pub fn leaf_txs(&self) -> &[Transaction] {
+		&self.txs[..self.nb_leaves()]
+	}
+
+	/// Returns all internal node transactions
+	///
+	/// These transactions are fully signed
+	pub fn internal_node_txs(&self) -> &[Transaction] {
+		&self.txs[self.nb_leaves()..]
+	}
+
 	/// Build the genesis item for the given node tx and its output idx
 	fn build_genesis_item_at<'a>(&self, tree: &Tree, node_idx: usize, output_idx: u8) -> GenesisItem {
 		debug_assert_eq!(self.nb_leaves(), tree.nb_leaves(), "tree corresponds to self");
