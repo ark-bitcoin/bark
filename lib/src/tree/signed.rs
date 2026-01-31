@@ -5,7 +5,7 @@ use std::collections::{HashMap, VecDeque};
 
 use bitcoin::hashes::{sha256, Hash};
 use bitcoin::{
-	taproot, Amount, OutPoint, ScriptBuf, Sequence, TapLeafHash, Transaction, TxIn, TxOut, Weight, Witness
+	taproot, Amount, OutPoint, ScriptBuf, Sequence, TapLeafHash, Transaction, TxIn, TxOut, Txid, Weight, Witness
 };
 use bitcoin::secp256k1::{schnorr, Keypair, PublicKey, XOnlyPublicKey};
 use bitcoin::sighash::{self, SighashCache, TapSighash, TapSighashType};
@@ -1015,6 +1015,15 @@ impl CachedSignedVtxoTree {
 	/// Construct all individual vtxos from this round.
 	pub fn output_vtxos(&self) -> impl Iterator<Item = Vtxo> + ExactSizeIterator + '_ {
 		(0..self.nb_leaves()).map(|idx| self.build_vtxo(idx))
+	}
+
+	pub fn spend_info(&self) -> impl Iterator<Item = (VtxoId, Txid)> + '_ {
+		// This implementation is the easiest I could find
+		// It can be optimized to ensure we don't have to calculate
+		// the txids all the time.
+		self.internal_vtxos()
+			.enumerate()
+			.map(|(idx, vtxo)| (vtxo.id(), self.txs[idx].compute_txid()))
 	}
 }
 
