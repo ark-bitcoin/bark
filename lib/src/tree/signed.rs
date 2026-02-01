@@ -1771,6 +1771,7 @@ mod test {
 
 
 				// We still miss some signatures. But the tree should be vaild
+				assert!(!vtxo.has_all_witnesses());
 				vtxo.validate_unsigned(&funding_tx).expect("Tree is valid if we ignore sigs");
 				vtxo.validate(&funding_tx).expect_err("The signature check must fail");
 
@@ -1778,7 +1779,13 @@ mod test {
 
 				println!("vtxo debug: {:#?}", vtxo);
 				println!("vtxo hex: {}", vtxo.serialize_hex());
+				assert!(vtxo.has_all_witnesses());
 				vtxo.validate(&funding_tx).expect("should be value");
+
+				vtxo.invalidate_final_sig();
+				assert!(vtxo.has_all_witnesses(), "still has all witnesses, just an invalid one");
+				vtxo.validate_unsigned(&funding_tx).expect("unsigned still valid");
+				vtxo.validate(&funding_tx).expect_err("but not fully valid anymore");
 			}
 		}
 	}
