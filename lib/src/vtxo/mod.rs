@@ -496,12 +496,12 @@ impl<P: Policy> Vtxo<P> {
 		self.policy.txout(self.amount, self.server_pubkey, self.exit_delta, self.expiry_height)
 	}
 
-	/// Whether this VTXO is fully signed
+	/// Whether all transaction witnesses are present
 	///
-	/// It is possible to represent unsigned VTXOs, for which this method
-	/// will return false.
-	pub fn is_fully_signed(&self) -> bool {
-		self.genesis.iter().all(|g| g.transition.is_fully_signed())
+	/// It is possible to represent unsigned or otherwise unfinished VTXOs,
+	/// for which this method will return false.
+	pub fn has_all_witnesses(&self) -> bool {
+		self.genesis.iter().all(|g| g.transition.has_all_witnesses())
 	}
 
 	/// Check if this VTXO is standard for relay purposes
