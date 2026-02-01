@@ -84,18 +84,19 @@ fn verify_transition<P: Policy>(
 				inner.validate_sigs(&tx, 0, prev_txout, vtxo.server_pubkey, vtxo.expiry_height)?
 			}
 		};
-	}
 
-	#[cfg(test)]
-	{
-		if let Err(e) = crate::test_util::verify_tx(&[prev_txout.clone()], 0, &tx) {
-			// just print error because this is unit test context
-			println!("TX VALIDATION FAILED: invalid tx in genesis of vtxo {}: idx={}: {}",
-				vtxo.id(), genesis_idx, e,
-			);
-			return Err("transaction validation failed");
+		#[cfg(test)]
+		{
+			if let Err(e) = crate::test_util::verify_tx(&[prev_txout.clone()], 0, &tx) {
+				// just print error because this is unit test context
+				println!("TX VALIDATION FAILED: invalid tx in genesis of vtxo {}: idx={}: {}",
+					vtxo.id(), genesis_idx, e,
+				);
+				return Err("transaction validation failed");
+			}
 		}
 	}
+
 
 	Ok(tx)
 }

@@ -1769,8 +1769,10 @@ mod test {
 				let cosign = LeafVtxoCosignResponse::new_cosign(&req, &vtxo, &funding_tx, &server_key);
 				assert!(ctx.finalize(&mut vtxo, cosign));
 
-				// with just the signature, it won't be valid
-				assert!(vtxo.validate(&funding_tx).is_err());
+
+				// We still miss some signatures. But the tree should be vaild
+				vtxo.validate_unsigned(&funding_tx).expect("Tree is valid if we ignore sigs");
+				vtxo.validate(&funding_tx).expect_err("The signature check must fail");
 
 				assert!(vtxo.provide_unlock_preimage(unlock_preimage));
 
