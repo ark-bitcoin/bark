@@ -109,13 +109,13 @@ impl Process {
 					}
 				},
 				Ok(None) => debug!("instructed to broadcast a tx we don't know: {}", txid),
-				Err(e) => debug!("Error while fetching tx that must be broadcast {txid}: {e}"),
+				Err(e) => debug!("Error while fetching tx that must be broadcast {txid}: {e:#}"),
 			}
 		} else {
 			let txs = self.txindex.get_batch(pkg).await;
 
 			if let Err(e) = txs {
-				debug!("Error while fetching broadcast pkg {pkg:?}: {e}");
+				debug!("Error while fetching broadcast pkg {pkg:?}: {e:#}");
 				return
 			}
 
@@ -144,7 +144,7 @@ impl Process {
 			let indexed_package = self.txindex.get_batch(&pkg).await;
 
 			if let Err(e) = indexed_package {
-				debug!("Failed to get package from index: {e}");
+				debug!("Failed to get package from index: {e:#}");
 				continue 'outer
 			}
 

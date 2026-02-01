@@ -539,7 +539,7 @@ impl CollectingPayments {
 					vtxo: e.id,
 				);
 				return Err(ProcessHarkParticipationError::BadParticipation(
-					badarg_err!("VTXO already in use by another process: {e}")
+					badarg_err!("VTXO already in use by another process: {e:#}")
 				));
 			},
 		};
@@ -1309,7 +1309,7 @@ async fn perform_round(
 								.process_payment(srv, inputs, vtxo_requests, unlock_preimage)
 								.instrument(round_step_span.clone()).await
 								.map_err(|e| {
-									debug!("error processing payment: {e}");
+									debug!("error processing payment: {e:#}");
 									e
 								})
 						},
