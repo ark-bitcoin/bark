@@ -1,0 +1,10 @@
+- Run all maintenance tasks regardless of error
+  Previously when you ran any maintenance method, and an error was produced, the maintenance would early-out so some
+  steps such as the maintenance refresh never ran. This behavior has been changed so that errors will be logged but the
+  methods will not early-out. If an error does occur then an `anyhow::Error` will still be returned, however the full
+  maintenance procedure will be attempted.
+  [#1592](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1592)
+- Progress exits when any maintenance method is called
+  Previously the exit system would be synced but no TRUC packages would be produced or broadcast. Now, bark will attempt
+  to progress each exit each time a maintenance method is called.
+  [#1592](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1592)
