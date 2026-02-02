@@ -5,5 +5,11 @@ pub fn set_panic_hook() {
 	std::panic::set_hook(Box::new(|panic_info| {
 		let backtrace = std::backtrace::Backtrace::force_capture();
 		eprintln!("Panic occurred: {}\n\nBacktrace:\n{}", panic_info, backtrace);
+
+		tracing::error!(
+			panic_info = %panic_info,
+			backtrace = %backtrace,
+			"Panic occurred"
+		);
 	}));
 }
