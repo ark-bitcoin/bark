@@ -322,7 +322,9 @@ use bitcoin::{Amount, Network, OutPoint};
 use bitcoin::bip32::{self, ChildNumber, Fingerprint};
 use bitcoin::secp256k1::{self, Keypair, PublicKey};
 use log::{trace, info, warn, error};
-use tokio::sync::RwLock;
+use tokio::sync::{Mutex, RwLock};
+
+use ark::lightning::PaymentHash;
 
 use ark::{ArkInfo, ProtocolEncoding, Vtxo, VtxoId, VtxoPolicy, VtxoRequest};
 use ark::address::VtxoDelivery;
@@ -625,6 +627,10 @@ pub struct Wallet {
 
 	/// Optional live connection to an Ark server for round participation and synchronization.
 	server: parking_lot::RwLock<Option<ServerConnection>>,
+
+	/// Tracks payment hashes of lightning payments currently being processed.
+	/// Used to prevent concurrent payment attempts for the same invoice.
+	inflight_lightning_payments: Mutex<HashSet<PaymentHash>>,
 }
 
 impl Wallet {
@@ -894,7 +900,16 @@ impl Wallet {
 		let movements = Arc::new(MovementManager::new(db.clone()));
 		let exit = RwLock::new(Exit::new(db.clone(), chain.clone(), movements.clone()).await?);
 
-		Ok(Wallet { config, db, seed, exit, movements, server, chain })
+		Ok(Wallet {
+			config,
+			db,
+			seed,
+			exit,
+			movements,
+			server,
+			chain,
+			inflight_lightning_payments: Mutex::new(HashSet::new()),
+		})
 	}
 
 	/// Similar to [Wallet::open] however this also unilateral exits using the provided onchain
