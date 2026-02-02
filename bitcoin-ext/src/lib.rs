@@ -26,6 +26,8 @@ use std::{fmt, str::FromStr};
 
 use bitcoin::{Amount, BlockHash};
 
+use serde_crate::ser::SerializeStruct;
+
 /// The number of confirmations after which we don't expect a
 /// re-org to ever happen.
 pub const DEEPLY_CONFIRMED: BlockHeight = 100;
@@ -99,7 +101,10 @@ impl FromStr for BlockRef {
 
 impl serde_crate::Serialize for BlockRef {
 	fn serialize<S: serde_crate::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
-		s.collect_str(self)
+		let mut state = s.serialize_struct("BlockRef", 2)?;
+		state.serialize_field("height", &self.height)?;
+		state.serialize_field("hash", &self.hash)?;
+		state.end()
 	}
 }
 
@@ -109,13 +114,30 @@ impl<'de> serde_crate::Deserialize<'de> for BlockRef {
 		impl<'de> serde_crate::de::Visitor<'de> for Visitor {
 			type Value = BlockRef;
 			fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-				write!(f, "a BlockRef")
+				write!(f, "a BlockRef (struct/string)")
 			}
 			fn visit_str<E: serde_crate::de::Error>(self, v: &str) -> Result<Self::Value, E> {
 				BlockRef::from_str(v).map_err(serde_crate::de::Error::custom)
 			}
+			fn visit_map<A: serde_crate::de::MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {
+				let mut height = None;
+				let mut hash = None;
+				while let Some(key) = map.next_key::<&str>()? {
+					match key {
+						"height" => height = Some(map.next_value()?),
+						"hash" => hash = Some(map.next_value()?),
+						_ => {
+							let _ = map.next_value::<serde_crate::de::IgnoredAny>()?;
+						}
+					}
+				}
+				Ok(BlockRef {
+					height: height.ok_or_else(|| serde_crate::de::Error::missing_field("height"))?,
+					hash: hash.ok_or_else(|| serde_crate::de::Error::missing_field("hash"))?,
+				})
+			}
 		}
-		d.deserialize_str(Visitor)
+		d.deserialize_any(Visitor)
 	}
 }
 
