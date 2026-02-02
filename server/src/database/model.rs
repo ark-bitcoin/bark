@@ -128,6 +128,34 @@ impl<'a> VirtualTransaction<'a> {
 	pub fn new_unsigned(txid: Txid) -> Self {
 		Self { txid, signed_tx: None, is_funding: false, server_may_own_descendant_since: None }
 	}
+
+	pub fn new_signed_ref(tx: &'a Transaction) -> Self {
+		Self {
+			txid: tx.compute_txid(),
+			signed_tx: Some(Cow::Borrowed(tx)),
+			is_funding: false,
+			server_may_own_descendant_since: None,
+		}
+	}
+
+	pub fn new_signed_owned(tx: Transaction) -> VirtualTransaction<'static> {
+		VirtualTransaction {
+			txid: tx.compute_txid(),
+			signed_tx: Some(Cow::Owned(tx)),
+			is_funding: false,
+			server_may_own_descendant_since: None,
+		}
+	}
+
+	pub fn as_funding(mut self) -> Self {
+		self.is_funding = true;
+		self
+	}
+
+	pub fn as_server_owned_since(mut self, since: DateTime<Local>) -> Self {
+		self.server_may_own_descendant_since = Some(since);
+		self
+	}
 }
 
 
