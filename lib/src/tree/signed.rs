@@ -882,6 +882,9 @@ impl CachedSignedVtxoTree {
 	}
 
 	/// Get all final txs in this tree, starting with the leaves, towards the root.
+	///
+	/// The leaf transactions are unsigned and the node transactions are signed.
+	/// This is equivalent to `unsigned_leaf_txs` chained with `signed_node_txs`
 	pub fn all_final_txs(&self) -> &[Transaction] {
 		&self.txs
 	}
@@ -889,7 +892,7 @@ impl CachedSignedVtxoTree {
 	/// Returns all leaf transactions
 	///
 	/// These transactions aren't signed (yet)
-	pub fn leaf_txs(&self) -> &[Transaction] {
+	pub fn unsigned_leaf_txs(&self) -> &[Transaction] {
 		&self.txs[..self.nb_leaves()]
 	}
 

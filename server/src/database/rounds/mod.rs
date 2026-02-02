@@ -20,6 +20,7 @@ use ark::rounds::{RoundId, RoundSeq};
 use ark::tree::signed::{CachedSignedVtxoTree, UnlockHash, UnlockPreimage};
 use bitcoin_ext::BlockHeight;
 
+use crate::database::model::VirtualTransaction;
 use crate::database::Db;
 use crate::database::query;
 use crate::round::InteractiveParticipation;
@@ -31,7 +32,7 @@ impl Db {
 		round_seq: RoundSeq,
 		round_tx: &Transaction,
 		input_vtxos: impl IntoIterator<Item = VtxoId>,
-		output_vtxos: &CachedSignedVtxoTree,
+		signed_tree: &CachedSignedVtxoTree,
 		interactive_participations: &HashMap<UnlockHash, InteractiveParticipation>,
 	) -> anyhow::Result<()> {
 		let round_txid = round_tx.compute_txid();
@@ -53,8 +54,8 @@ impl Db {
 				&(round_seq.inner() as i64),
 				&round_txid.to_string(),
 				&serialize(&round_tx),
-				&output_vtxos.spec.serialize(),
-				&(output_vtxos.spec.spec.expiry_height as i32)
+				&signed_tree.spec.serialize(),
+				&(signed_tree.spec.spec.expiry_height as i32)
 			]
 		).await?;
 		let round_id = row.get::<_, i64>("id");
@@ -106,11 +107,32 @@ impl Db {
 		}
 
 		// update the hark round participations, both non-interactive and interactive
-		let hark_unlock_hashes = output_vtxos.spec.spec.vtxos.iter().map(|v| v.unlock_hash);
+		let hark_unlock_hashes = signed_tree.spec.spec.vtxos.iter().map(|v| v.unlock_hash);
 		query::set_round_id_for_participations(&tx, hark_unlock_hashes, round_txid).await?;
 
 		// Finally insert new vtxos.
-		query::upsert_vtxos(&tx, output_vtxos.output_vtxos().map(ServerVtxo::from)).await?;
+		let funding_tx = VirtualTransaction::new_signed_ref(&round_tx).as_funding();
+		let unsigned_vtxs = signed_tree.unsigned_leaf_txs().iter()
+			.map(Transaction::compute_txid)
+			.map(VirtualTransaction::new_unsigned);
+		let signed_internal_vtxs = signed_tree.internal_node_txs().into_iter()
+			.map(VirtualTransaction::new_signed_ref);
+
+		// I have no clue why I need to collect them into vec first
+		// but it makes the compiler happy
+		// EDIT: Me neither, async code ftw
+		let vtxs = [funding_tx].into_iter()
+			.chain(unsigned_vtxs)
+			.chain(signed_internal_vtxs)
+			.collect::<Vec<_>>();
+
+		query::update_virtual_transaction_tree(
+			&tx,
+			vtxs,
+			signed_tree.internal_vtxos()
+				.chain(signed_tree.output_vtxos().map(ServerVtxo::from)),
+			signed_tree.spend_info(),
+		).await?;
 
 		tx.commit().await?;
 		Ok(())
