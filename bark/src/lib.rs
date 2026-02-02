@@ -1196,31 +1196,54 @@ impl Wallet {
 		Ok(())
 	}
 
-	/// Performs maintenance tasks and performs refresh interactively until end when needed
+	/// Performs maintenance tasks and performs refresh interactively until finished when needed.
+	/// This risks spending users' funds because refreshing may cost fees.
 	///
 	/// This can take a long period of time due to syncing rounds, arkoors, checking pending
 	/// payments, progressing pending rounds, and refreshing VTXOs if necessary.
 	pub async fn maintenance(&self) -> anyhow::Result<()> {
 		info!("Starting wallet maintenance in interactive mode");
 		self.sync().await;
-		self.progress_pending_rounds(None).await?;
-		self.maintenance_refresh().await?;
+
+		let rounds = self.progress_pending_rounds(None).await;
+		if let Err(e) = rounds.as_ref() {
+			warn!("Error progressing pending rounds: {:#}", e);
+		}
+		let refresh = self.maintenance_refresh().await;
+		if let Err(e) = refresh.as_ref() {
+			warn!("Error refreshing VTXOs: {:#}", e);
+		}
+		if rounds.is_err() || refresh.is_err() {
+			bail!("Maintenance encountered errors.\nprogress_rounds: {:#?}\nrefresh: {:#?}", rounds, refresh);
+		}
 		Ok(())
 	}
 
-	/// Performs maintenance tasks and schedules delegated refresh when needed
+	/// Performs maintenance tasks and schedules delegated refresh when needed. This risks spending
+	/// users' funds because refreshing may cost fees.
 	///
 	/// This can take a long period of time due to syncing rounds, arkoors, checking pending
 	/// payments, progressing pending rounds, and refreshing VTXOs if necessary.
 	pub async fn maintenance_delegated(&self) -> anyhow::Result<()> {
 		info!("Starting wallet maintenance in delegated mode");
 		self.sync().await;
-		self.progress_pending_rounds(None).await?;
-		self.maybe_schedule_maintenance_refresh_delegated().await?;
+		let rounds = self.progress_pending_rounds(None).await;
+		if let Err(e) = rounds.as_ref() {
+			warn!("Error progressing pending rounds: {:#}", e);
+		}
+		let refresh = self.maybe_schedule_maintenance_refresh_delegated().await;
+		if let Err(e) = refresh.as_ref() {
+			warn!("Error refreshing VTXOs: {:#}", e);
+		}
+		if rounds.is_err() || refresh.is_err() {
+			bail!("Delegated maintenance encountered errors.\nprogress_rounds: {:#?}\nrefresh: {:#?}", rounds, refresh);
+		}
 		Ok(())
 	}
 
-	/// Performs maintenance tasks and performs refresh interactively until end when needed
+	/// Performs maintenance tasks and performs refresh interactively until finished when needed.
+	/// This risks spending users' funds because refreshing may cost fees and any pending exits will
+	/// be progressed.
 	///
 	/// This can take a long period of time due to syncing the onchain wallet, registering boards,
 	/// syncing rounds, arkoors, and the exit system, checking pending lightning payments and
@@ -1230,17 +1253,27 @@ impl Wallet {
 		onchain: &mut W,
 	) -> anyhow::Result<()> {
 		info!("Starting wallet maintenance in interactive mode with onchain wallet");
-		self.sync().await;
-		self.progress_pending_rounds(None).await?;
-		self.maintenance_refresh().await?;
+
+		// Maintenance will log so we don't need to.
+		let maintenance = self.maintenance().await;
 
 		// NB: order matters here, after syncing lightning, we might have new exits to start
-		self.sync_exits(onchain).await?;
-
+		let exit_sync = self.sync_exits(onchain).await;
+		if let Err(e) = exit_sync.as_ref() {
+			warn!("Error syncing exits: {:#}", e);
+		}
+		let exit_progress = self.exit.write().await.progress_exits(&self, onchain, None).await;
+		if let Err(e) = exit_progress.as_ref() {
+			warn!("Error progressing exits: {:#}", e);
+		}
+		if maintenance.is_err() || exit_sync.is_err() || exit_progress.is_err() {
+			bail!("Maintenance encountered errors.\nmaintenance: {:#?}\nexit_sync: {:#?}\nexit_progress: {:#?}", maintenance, exit_sync, exit_progress);
+		}
 		Ok(())
 	}
 
-	/// Performs maintenance tasks and schedules delegated refresh when needed
+	/// Performs maintenance tasks and schedules delegated refresh when needed. This risks spending
+	/// users' funds because refreshing may cost fees and any pending exits will be progressed.
 	///
 	/// This can take a long period of time due to syncing the onchain wallet, registering boards,
 	/// syncing rounds, arkoors, and the exit system, checking pending lightning payments and
@@ -1250,13 +1283,22 @@ impl Wallet {
 		onchain: &mut W,
 	) -> anyhow::Result<()> {
 		info!("Starting wallet maintenance in delegated mode with onchain wallet");
-		self.sync().await;
-		self.progress_pending_rounds(None).await?;
-		self.maybe_schedule_maintenance_refresh_delegated().await?;
+
+		// Maintenance will log so we don't need to.
+		let maintenance = self.maintenance_delegated().await;
 
 		// NB: order matters here, after syncing lightning, we might have new exits to start
-		self.sync_exits(onchain).await?;
-
+		let exit_sync = self.sync_exits(onchain).await;
+		if let Err(e) = exit_sync.as_ref() {
+			warn!("Error syncing exits: {:#}", e);
+		}
+		let exit_progress = self.exit.write().await.progress_exits(&self, onchain, None).await;
+		if let Err(e) = exit_progress.as_ref() {
+			warn!("Error progressing exits: {:#}", e);
+		}
+		if maintenance.is_err() || exit_sync.is_err() || exit_progress.is_err() {
+			bail!("Delegated maintenance encountered errors.\nmaintenance: {:#?}\nexit_sync: {:#?}\nexit_progress: {:#?}", maintenance, exit_sync, exit_progress);
+		}
 		Ok(())
 	}
 
