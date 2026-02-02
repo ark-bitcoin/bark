@@ -19,7 +19,7 @@ use crate::vtxo::policy::clause::{
 };
 
 /// Trait for policy types that can be used in a Vtxo.
-pub trait Policy: Clone {
+pub trait Policy: Clone + Send + Sync + 'static {
 	fn policy_type(&self) -> VtxoPolicyKind;
 
 	fn taproot(
