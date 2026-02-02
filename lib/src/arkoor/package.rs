@@ -435,6 +435,9 @@ mod test {
 
 	use bitcoin::{Transaction, Txid};
 	use bitcoin::secp256k1::Keypair;
+
+	use bitcoin_ext::P2TR_DUST;
+
 	use super::*;
 	use crate::test_util::dummy::DummyTestVtxoSpec;
 	use crate::PublicKey;
@@ -462,7 +465,8 @@ mod test {
 
 	fn dummy_vtxo_for_amount(amt: Amount) -> (Transaction, Vtxo) {
 		DummyTestVtxoSpec {
-			amount: amt,
+			amount: amt + P2TR_DUST,
+			fee: P2TR_DUST,
 			expiry_height: 1000,
 			exit_delta: 128,
 			user_keypair: alice_keypair(),

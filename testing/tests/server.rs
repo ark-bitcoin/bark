@@ -2150,6 +2150,7 @@ async fn test_register_board() {
 
 	// Create a board builder to get the funding script
 	let board_amount = sat(100_000);
+	let board_fee = Amount::ZERO;
 	let board_builder = ark::board::BoardBuilder::new(
 		client_cosign_keypair.public_key(),
 		expiry_height,
@@ -2170,7 +2171,7 @@ async fn test_register_board() {
 
 	// Set funding details and generate nonces
 	let board_builder = board_builder
-		.set_funding_details(board_amount, board_utxo)
+		.set_funding_details(board_amount, board_fee, board_utxo).unwrap()
 		.generate_user_nonces();
 
 	// Request server to cosign the board
@@ -2248,7 +2249,7 @@ async fn test_register_board() {
 
 	// Set funding details and generate nonces
 	let board_builder = board_builder
-		.set_funding_details(board_amount, utxo)
+		.set_funding_details(board_amount, board_fee, utxo).unwrap()
 		.generate_user_nonces();
 
 	// Do the server cosigning ourselves with the fake server keypair
@@ -2258,6 +2259,7 @@ async fn test_register_board() {
 		fake_server_keypair.public_key(),
 		ark_info.vtxo_exit_delta,
 		board_amount,
+		board_fee,
 		utxo,
 		*board_builder.user_pub_nonce(),
 	);
