@@ -422,6 +422,41 @@ impl Wallet {
 		if !original_payment_method.is_lightning() && !original_payment_method.is_custom() {
 			bail!("Invalid original payment method for lightning payment");
 		}
+
+		let payment_hash = invoice.payment_hash();
+
+		// Try to mark this payment as in-flight to prevent concurrent attempts.
+		// This prevents a race condition where multiple concurrent calls could all pass
+		// the DB check below before any of them complete, leading to orphaned state.
+		{
+			let mut inflight = self.inflight_lightning_payments.lock().await;
+			if !inflight.insert(payment_hash) {
+				bail!("Payment already in progress for this invoice");
+			}
+		}
+
+		// Execute the payment, ensuring we remove from inflight set on any exit path
+		let result = self.make_lightning_payment_inner(
+			invoice, original_payment_method, user_amount, payment_hash
+		).await;
+
+		// Always remove from inflight set when done
+		{
+			let mut inflight = self.inflight_lightning_payments.lock().await;
+			inflight.remove(&payment_hash);
+		}
+
+		result
+	}
+
+	/// Internal implementation of lightning payment after concurrency check.
+	async fn make_lightning_payment_inner(
+		&self,
+		invoice: &Invoice,
+		original_payment_method: PaymentMethod,
+		user_amount: Option<Amount>,
+		payment_hash: PaymentHash,
+	) -> anyhow::Result<LightningSend> {
 		let mut srv = self.require_server()?;
 		let ark_info = srv.ark_info().await?;
 
@@ -432,7 +467,7 @@ impl Wallet {
 			bail!("Invoice is for wrong network: {}", invoice.network());
 		}
 
-		let lightning_send = self.db.get_lightning_send(invoice.payment_hash()).await?;
+		let lightning_send = self.db.get_lightning_send(payment_hash).await?;
 		if lightning_send.is_some() {
 			bail!("Invoice has already been paid");
 		}

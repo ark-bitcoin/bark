@@ -1328,3 +1328,155 @@ async fn stress_test_track_all_stream() {
 
 	info!("Stress test completed successfully: {} invoices processed", NUM_INVOICES);
 }
+
+/// Test that concurrent lightning payment attempts for the same invoice are handled correctly.
+///
+/// This test spawns multiple concurrent tasks that all try to pay the same invoice
+/// using the wallet client directly. The expected behavior is:
+/// 1. Only one payment attempt should proceed
+/// 2. All other concurrent attempts should fail immediately with "Payment already in progress"
+/// 3. No orphaned state (locked VTXOs, pending movements) should remain after completion
+///
+/// This test verifies the fix for the race condition where multiple concurrent calls
+/// could all pass the initial `get_lightning_send` check before any of them completed,
+/// leading to orphaned wallet state.
+#[tokio::test]
+async fn concurrent_payment_attempts_same_invoice() {
+	let ctx = TestContext::new("lightningd/concurrent_payment_attempts_same_invoice").await;
+
+	let lightning = ctx.new_lightning_setup("lightningd").await;
+
+	// Start a server and link it to our cln installation
+	let srv = ctx.new_captaind("server", Some(&lightning.sender)).await;
+
+	// Start a bark with enough funds for multiple potential payments
+	let onchain_amount = btc(10);
+	let board_amount = btc(8);
+	let bark = ctx.new_bark_with_funds("bark", &srv, onchain_amount).await;
+
+	bark.board_and_confirm_and_register(&ctx, board_amount).await;
+
+	lightning.sync().await;
+
+	// Create a payable invoice
+	let invoice_amount = btc(1);
+	let invoice = lightning.receiver.invoice(Some(invoice_amount), "race_test", "Race condition test").await;
+
+	// Get the wallet client - we'll use this directly to trigger concurrent payments
+	let wallet = Arc::new(bark.client().await);
+
+	// Record initial state
+	let initial_balance = bark.spendable_balance().await;
+	let initial_vtxos = bark.vtxos().await;
+	info!("Initial balance: {}, vtxos: {}", initial_balance, initial_vtxos.len());
+
+	// Spawn multiple concurrent payment attempts
+	const NUM_CONCURRENT: usize = 5;
+	let mut handles = Vec::new();
+
+	for i in 0..NUM_CONCURRENT {
+		let wallet_clone = wallet.clone();
+		let invoice_clone = invoice.clone();
+
+		let handle = tokio::spawn(async move {
+			info!("Task {} starting payment attempt", i);
+			let result = wallet_clone.pay_lightning_invoice(invoice_clone, None).await;
+			info!("Task {} result: {:?}", i, result.is_ok());
+			(i, result)
+		});
+		handles.push(handle);
+	}
+
+	// Wait for all tasks to complete
+	let mut results = Vec::new();
+	for handle in handles {
+		let (i, result) = handle.await.expect("task panicked");
+		results.push((i, result));
+	}
+
+	// Count successes and failures
+	let successes: Vec<_> = results.iter().filter(|(_, r)| r.is_ok()).collect();
+	let failures: Vec<_> = results.iter().filter(|(_, r)| r.is_err()).collect();
+
+	info!("Results: {} successes, {} failures", successes.len(), failures.len());
+
+	// Exactly one should succeed
+	assert_eq!(
+		successes.len(), 1,
+		"Expected exactly 1 successful payment, got {}. Results: {:?}",
+		successes.len(),
+		results.iter().map(|(i, r)| (i, r.is_ok())).collect::<Vec<_>>()
+	);
+
+	// The rest should fail with an appropriate error
+	for (i, result) in &failures {
+		let err = result.as_ref().unwrap_err();
+		let err_str = err.to_string();
+		info!("Task {} error: {}", i, err_str);
+
+		// Acceptable errors:
+		// - "already been paid" / "already in progress" - wallet caught duplicate early
+		// - "htlc request failed" - server caught duplicate during cosign
+		// - "UNIQUE constraint" - DB caught duplicate at insert
+		// All of these indicate the duplicate was caught somewhere, which is acceptable.
+		// The real problem would be if the payment succeeded twice or if we see state corruption.
+		let acceptable = err_str.contains("already been paid") ||
+			err_str.contains("already in progress") ||
+			err_str.contains("UNIQUE constraint") ||
+			err_str.contains("htlc request failed");
+
+		assert!(
+			acceptable,
+			"Task {} got unexpected error: {}. Expected duplicate detection error.",
+			i, err_str
+		);
+	}
+
+	// Wait for the successful payment to complete by calling check_lightning_payment
+	// which will wait for the payment to settle (or fail and get revoked)
+	let bolt11 = Bolt11Invoice::from_str(&invoice).unwrap();
+	let payment_hash = PaymentHash::from(&bolt11);
+	let _ = wallet.check_lightning_payment(payment_hash, true).await;
+
+	// Now run maintain to process any pending state
+	bark.maintain().await;
+
+	// Check final state - should have exactly one payment's worth deducted
+	let final_balance = bark.spendable_balance().await;
+	let final_vtxos = bark.vtxos().await;
+
+	info!("Final balance: {}, vtxos: {}", final_balance, final_vtxos.len());
+
+	// The balance should reflect exactly one payment (minus the invoice amount)
+	// If there's orphaned state, we might see unexpected balance changes
+	let expected_spent = invoice_amount;
+	let actual_spent = initial_balance - final_balance;
+
+	// Allow for some variance due to change VTXO handling, but it should be close
+	assert!(
+		actual_spent >= expected_spent && actual_spent <= expected_spent + sat(10_000),
+		"Expected to spend ~{}, but spent {}. This may indicate orphaned state from failed concurrent payments.",
+		expected_spent, actual_spent
+	);
+
+	// No VTXOs should be stuck in a locked state
+	let locked_vtxos: Vec<_> = final_vtxos.iter()
+		.filter(|v| matches!(v.state, VtxoStateInfo::Locked { .. }))
+		.collect();
+
+	assert!(
+		locked_vtxos.is_empty(),
+		"Found {} locked VTXOs after concurrent payment test - this indicates orphaned state: {:?}",
+		locked_vtxos.len(), locked_vtxos
+	);
+
+	// Check that pending lightning send is zero (no orphaned pending payments)
+	let balance = bark.offchain_balance().await;
+	assert_eq!(
+		balance.pending_lightning_send, btc(0),
+		"pending_lightning_send should be 0 after payment completes, got {}. This may indicate orphaned payment state.",
+		balance.pending_lightning_send
+	);
+
+	info!("Concurrent payment test completed");
+}
