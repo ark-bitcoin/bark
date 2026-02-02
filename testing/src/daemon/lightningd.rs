@@ -10,7 +10,7 @@ use bitcoin::consensus::Decodable;
 use bitcoin::hex::DisplayHex;
 use bitcoin::{Amount, Network, Transaction};
 use bitcoin_ext::AmountExt;
-use log::{error, debug, trace};
+use log::{error, debug, trace, warn};
 use tokio::fs;
 use tokio::process::Command;
 use tokio::sync::Mutex;
@@ -79,6 +79,14 @@ impl Lightningd {
 			Some(resolve_path(e).expect("failed to resolve LIGHTNINGD_EXEC"))
 		} else {
 			which::which("lightningd").ok()
+		}
+	}
+
+	/// Checks whether the docker environment is configured to be used.
+	fn should_use_docker() -> bool {
+		match Self::docker() {
+			(Some(_), Some(_)) => true,
+			_ => false,
 		}
 	}
 }
@@ -152,12 +160,23 @@ impl LightningDHelper {
 		if let Ok(dir) = env::var(LIGHTNINGD_PLUGIN_DIR) {
 			let plugin_dir = std::path::Path::new(&dir);
 
-			// Mark critical plugins as important - CLN will crash if they fail
-			for plugin_name in ["hold", "cln-grpc"] {
-				let plugin_path = plugin_dir.join(plugin_name);
-				if plugin_path.exists() {
-					trace!("Adding important-plugin: {}", plugin_path.display());
-					writeln!(file, "important-plugin={}", plugin_path.display()).unwrap();
+			// We assume the docker container is set up with the correct directory structure and
+			// only with the hold plugin
+			if Lightningd::should_use_docker() {
+				let plugin_path = plugin_dir.join("hold");
+				trace!("Adding important-plugin: {}", plugin_path.display());
+				writeln!(file, "important-plugin={}", plugin_path.display()).unwrap();
+				// The cln-grpc plugin is already included in the default docker container
+			} else {
+				// Mark critical plugins as important - CLN will crash if they fail
+				for plugin_name in ["hold", "cln-grpc"] {
+					let plugin_path = plugin_dir.join(plugin_name);
+					if plugin_path.exists() {
+						trace!("Adding important-plugin: {}", plugin_path.display());
+						writeln!(file, "important-plugin={}", plugin_path.display()).unwrap();
+					} else {
+						warn!("Important CLN plugin {} not found. Make sure it is compiled and installed correctly.", plugin_path.display());
+					}
 				}
 			}
 		}
