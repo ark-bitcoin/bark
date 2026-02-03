@@ -134,6 +134,9 @@ impl Db {
 			signed_tree.spend_info(),
 		).await?;
 
+		// and the virtual txs
+		query::upsert_virtual_transaction(&tx, round_txid, Some(round_tx), true, None).await?;
+
 		tx.commit().await?;
 		Ok(())
 	}
