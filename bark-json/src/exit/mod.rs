@@ -36,23 +36,23 @@ impl From<bark::exit::ExitState> for ExitState {
 			}),
 			bark::exit::ExitState::AwaitingDelta(s) => ExitState::AwaitingDelta(ExitAwaitingDeltaState {
 				tip_height: s.tip_height,
-				confirmed_block: s.confirmed_block,
+				confirmed_block: s.confirmed_block.into(),
 				claimable_height: s.claimable_height,
 			}),
 			bark::exit::ExitState::Claimable(s) => ExitState::Claimable(ExitClaimableState {
 				tip_height: s.tip_height,
-				claimable_since: s.claimable_since,
-				last_scanned_block: s.last_scanned_block,
+				claimable_since: s.claimable_since.into(),
+				last_scanned_block: s.last_scanned_block.map(Into::into),
 			}),
 			bark::exit::ExitState::ClaimInProgress(s) => ExitState::ClaimInProgress(ExitClaimInProgressState {
 				tip_height: s.tip_height,
-				claimable_since: s.claimable_since,
+				claimable_since: s.claimable_since.into(),
 				claim_txid: s.claim_txid,
 			}),
 			bark::exit::ExitState::Claimed(s) => ExitState::Claimed(ExitClaimedState {
 				tip_height: s.tip_height,
 				txid: s.txid,
-				block: s.block,
+				block: s.block.into(),
 			}),
 		}
 	}

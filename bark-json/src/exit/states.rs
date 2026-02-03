@@ -3,7 +3,9 @@ use std::fmt;
 
 use bitcoin::{Amount, FeeRate, Txid};
 
-use bitcoin_ext::{BlockHeight, BlockRef};
+use bitcoin_ext::BlockHeight;
+use crate::primitives::BlockRef;
+
 #[cfg(feature = "utoipa")]
 use utoipa::ToSchema;
 
@@ -46,7 +48,6 @@ pub enum ExitTxStatus {
 	Confirmed {
 		#[cfg_attr(feature = "utoipa", schema(value_type = String))]
 		child_txid: Txid,
-		#[cfg_attr(feature = "utoipa", schema(value_type = String))]
 		block: BlockRef,
 		origin: ExitTxOrigin,
 	},
@@ -80,7 +81,7 @@ impl From<bark::exit::ExitTxStatus> for ExitTxStatus {
 				ExitTxStatus::BroadcastWithCpfp { child_txid, origin: origin.into() }
 			},
 			bark::exit::ExitTxStatus::Confirmed { child_txid, block, origin } => {
-				ExitTxStatus::Confirmed { child_txid, block, origin: origin.into() }
+				ExitTxStatus::Confirmed { child_txid, block: block.into(), origin: origin.into() }
 			},
 		}
 	}
@@ -91,7 +92,6 @@ impl From<bark::exit::ExitTxStatus> for ExitTxStatus {
 #[serde(tag = "type", rename_all = "kebab-case")]
 pub enum ExitTxOrigin {
 	Wallet {
-		#[cfg_attr(feature = "utoipa", schema(value_type = String))]
 		confirmed_in: Option<BlockRef>
 	},
 	Mempool {
@@ -104,7 +104,6 @@ pub enum ExitTxOrigin {
 		total_fee: Amount,
 	},
 	Block {
-		#[cfg_attr(feature = "utoipa", schema(value_type = String))]
 		confirmed_in: BlockRef
 	},
 }
@@ -119,13 +118,13 @@ impl From<bark::exit::ExitTxOrigin> for ExitTxOrigin {
 	fn from(v: bark::exit::ExitTxOrigin) -> Self {
 		match v {
 			bark::exit::ExitTxOrigin::Wallet { confirmed_in } => {
-				ExitTxOrigin::Wallet { confirmed_in }
+				ExitTxOrigin::Wallet { confirmed_in: confirmed_in.map(Into::into) }
 			},
 			bark::exit::ExitTxOrigin::Mempool { fee_rate, total_fee } => {
 				ExitTxOrigin::Mempool { fee_rate, total_fee }
 			},
 			bark::exit::ExitTxOrigin::Block { confirmed_in } => {
-				ExitTxOrigin::Block { confirmed_in }
+				ExitTxOrigin::Block { confirmed_in: confirmed_in.into() }
 			},
 		}
 	}
@@ -148,7 +147,6 @@ pub struct ExitProcessingState {
 #[cfg_attr(feature = "utoipa", derive(ToSchema))]
 pub struct ExitAwaitingDeltaState {
 	pub tip_height: BlockHeight,
-	#[cfg_attr(feature = "utoipa", schema(value_type = String))]
 	pub confirmed_block: BlockRef,
 	pub claimable_height: BlockHeight,
 }
@@ -157,9 +155,7 @@ pub struct ExitAwaitingDeltaState {
 #[cfg_attr(feature = "utoipa", derive(ToSchema))]
 pub struct ExitClaimableState {
 	pub tip_height: BlockHeight,
-	#[cfg_attr(feature = "utoipa", schema(value_type = String))]
 	pub claimable_since: BlockRef,
-	#[cfg_attr(feature = "utoipa", schema(value_type = String, nullable = true))]
 	pub last_scanned_block: Option<BlockRef>,
 }
 
@@ -167,7 +163,6 @@ pub struct ExitClaimableState {
 #[cfg_attr(feature = "utoipa", derive(ToSchema))]
 pub struct ExitClaimInProgressState {
 	pub tip_height: BlockHeight,
-	#[cfg_attr(feature = "utoipa", schema(value_type = String))]
 	pub claimable_since: BlockRef,
 	#[cfg_attr(feature = "utoipa", schema(value_type = String))]
 	pub claim_txid: Txid,
@@ -179,6 +174,5 @@ pub struct ExitClaimedState {
 	pub tip_height: BlockHeight,
 	#[cfg_attr(feature = "utoipa", schema(value_type = String))]
 	pub txid: Txid,
-	#[cfg_attr(feature = "utoipa", schema(value_type = String))]
 	pub block: BlockRef,
 }
