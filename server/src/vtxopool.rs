@@ -498,9 +498,13 @@ impl Process {
 		drop(wallet);
 		let txid = tx.compute_txid();
 
-		// store the new vtxos
+		// registre the funding tx
+		self.srv.db.upsert_virtual_transaction(
+			txid, Some(&tx), true, None,
+		).await.context("error storing vtxopool funding tx as virtual tx")?;
 		self.srv.db.upsert_bitcoin_transaction(txid, &tx).await
 			.context("error storing unbroadcasted vtxo issuance funding tx")?;
+		// store the new vtxos
 		let pool_vtxos = vtxos.into_iter()
 			.map(|v| PoolVtxo::new(v)).collect::<Vec<_>>();
 		self.srv.db.store_vtxopool_vtxos(&pool_vtxos).await.context("storing pool vtxos")?;
