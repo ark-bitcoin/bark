@@ -37,11 +37,15 @@ pub async fn upsert_virtual_transaction<T: GenericClient>(
 	let signed_tx_bytes = signed_tx.map(|tx| bitcoin::consensus::serialize(tx));
 
 	client.execute("
-		INSERT INTO virtual_transaction (txid, signed_tx, is_funding, server_may_own_descendant_since, created_at, updated_at)
+		INSERT INTO virtual_transaction
+			(txid, signed_tx, is_funding, server_may_own_descendant_since, created_at, updated_at)
 		VALUES ($1, $2, $3, $4, NOW(), NOW())
 		ON CONFLICT (txid) DO UPDATE SET
 			signed_tx = COALESCE(virtual_transaction.signed_tx, EXCLUDED.signed_tx),
-			server_may_own_descendant_since = COALESCE(virtual_transaction.server_may_own_descendant_since, EXCLUDED.server_may_own_descendant_since),
+			server_may_own_descendant_since = COALESCE(
+				virtual_transaction.server_may_own_descendant_since,
+				EXCLUDED.server_may_own_descendant_since
+			),
 			updated_at = NOW()
 	", &[&txid.to_string(), &signed_tx_bytes, &is_funding, &server_may_own_descendant_since]).await
 		.context("Failed to upsert virtual_transaction")?;

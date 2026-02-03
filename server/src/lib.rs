@@ -737,7 +737,7 @@ impl Server {
 				signed_tx: None,
 				is_funding: false,
 				server_may_own_descendant_since: None,
-			}
+			},
 		];
 
 		self.db.update_virtual_transaction_tree(
