@@ -4,8 +4,8 @@
 
 Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
-**claimable_since** | **String** |  | 
-**last_scanned_block** | **String** |  | 
+**claimable_since** | [**models::BlockRef**](BlockRef.md) |  | 
+**last_scanned_block** | Option<[**models::BlockRef**](BlockRef.md)> |  | [optional]
 **tip_height** | **i32** |  | 
 **r#type** | **String** |  | 
 

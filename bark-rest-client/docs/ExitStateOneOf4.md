@@ -5,7 +5,7 @@
 Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
 **claim_txid** | **String** |  | 
-**claimable_since** | **String** |  | 
+**claimable_since** | [**models::BlockRef**](BlockRef.md) |  | 
 **tip_height** | **i32** |  | 
 **r#type** | **String** |  | 
 

@@ -4,7 +4,7 @@
 
 Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
-**block** | **String** |  | 
+**block** | [**models::BlockRef**](BlockRef.md) |  | 
 **tip_height** | **i32** |  | 
 **txid** | **String** |  | 
 **r#type** | **String** |  | 

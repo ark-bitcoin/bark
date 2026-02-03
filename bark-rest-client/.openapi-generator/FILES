@@ -15,6 +15,7 @@ docs/BitcoindAuthOneOf.md
 docs/BitcoindAuthOneOf1.md
 docs/BitcoindAuthOneOf1UserPass.md
 docs/BitcoindAuthOneOfCookie.md
+docs/BlockRef.md
 docs/BoardRequest.md
 docs/BoardsApi.md
 docs/ChainSourceConfig.md
@@ -163,6 +164,7 @@ src/models/bitcoind_auth_one_of.rs
 src/models/bitcoind_auth_one_of_1.rs
 src/models/bitcoind_auth_one_of_1_user_pass.rs
 src/models/bitcoind_auth_one_of_cookie.rs
+src/models/block_ref.rs
 src/models/board_request.rs
 src/models/chain_source_config.rs
 src/models/chain_source_config_one_of.rs
