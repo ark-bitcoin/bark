@@ -85,7 +85,8 @@ impl CosignedGenesis {
 		}
 	}
 
-	pub fn is_fully_signed(&self) -> bool {
+	/// Whether all transaction witnesses are present
+	pub fn has_all_witnesses(&self) -> bool {
 		self.signature.is_some()
 	}
 
@@ -184,8 +185,8 @@ impl HashLockedCosignedGenesis {
 		])
 	}
 
-	pub fn is_fully_signed(&self) -> bool {
-		// Not fully signed if we don't know the preimage
+	/// Whether all transaction witnesses are present
+	pub fn has_all_witnesses(&self) -> bool {
 		match self.unlock {
 			MaybePreimage::Preimage(_) => {},
 			MaybePreimage::Hash(_) => return false,
@@ -270,7 +271,8 @@ impl ArkoorGenesis {
 		}
 	}
 
-	pub fn is_fully_signed(&self) -> bool {
+	// Not fully signed if we don't know the preimage
+	pub fn has_all_witnesses(&self) -> bool {
 		self.signature.is_some()
 	}
 
@@ -380,11 +382,11 @@ impl GenesisTransition {
 
 
 	/// Whether the transition is fully signed
-	pub fn is_fully_signed(&self) -> bool {
+	pub fn has_all_witnesses(&self) -> bool {
 		match self {
-			Self::Cosigned(inner) => inner.is_fully_signed(),
-			Self::HashLockedCosigned(inner) => inner.is_fully_signed(),
-			Self::Arkoor(inner) => inner.is_fully_signed(),
+			Self::Cosigned(inner) => inner.has_all_witnesses(),
+			Self::HashLockedCosigned(inner) => inner.has_all_witnesses(),
+			Self::Arkoor(inner) => inner.has_all_witnesses(),
 		}
 	}
 
