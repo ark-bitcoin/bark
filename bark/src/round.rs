@@ -675,11 +675,11 @@ async fn start_attempt(
 #[derive(Debug, thiserror::Error)]
 enum HarkForfeitError {
 	/// An error happened after we sent forfeit signatures to the server
-	#[error("error after forfeits were sent: {0}")]
-	SentForfeits(anyhow::Error),
+	#[error("error after forfeits were sent")]
+	SentForfeits(#[source] anyhow::Error),
 	/// An error happened before we sent forfeit signatures to the server
-	#[error("error before forfeits were sent: {0}")]
-	Err(anyhow::Error),
+	#[error("error before forfeits were sent")]
+	Err(#[source] anyhow::Error),
 }
 
 async fn hark_cosign_leaf(
