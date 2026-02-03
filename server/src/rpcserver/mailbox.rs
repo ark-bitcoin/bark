@@ -72,12 +72,15 @@ impl rpc::server::MailboxService for crate::Server {
 				macros::badarg!("authorization doesn't match mailbox id");
 			}
 		}
+		let limit = self.config.read_mailbox_max_items;
 		let vtxos_by_checkpoint = self.db.get_vtxos_mailbox(
 			unblinded_id,
 			req.checkpoint,
+			limit,
 		).await.to_status()?;
 
 		let response = protos::mailbox_server::MailboxMessages {
+			have_more: vtxos_by_checkpoint.len() >= limit,
 			messages: vtxos_by_checkpoint.into_iter().map(|(checkpoint, vtxos)| {
 				new_mailbox_msg(checkpoint, vtxos)
 			}).collect(),
@@ -111,6 +114,7 @@ impl rpc::server::MailboxService for crate::Server {
 
 		let db = self.db.clone();
 		let starting_checkpoint = Checkpoint::from(req.checkpoint.max(0));
+		let ret_limit = self.config.read_mailbox_max_items;
 
 		// Start listening for updates on the tip of the mailbox
 		// I mark the first value as changed
@@ -133,17 +137,24 @@ impl rpc::server::MailboxService for crate::Server {
 					continue;
 				}
 
-				match db.get_vtxos_mailbox(mailbox_id, processed_cp).await {
-					Ok(entries) => {
-						for (cp, vtxos) in entries {
-							let msg = new_mailbox_msg(cp, vtxos);
-							yield msg;
-							processed_cp = cp;
+				'fetching:
+				loop {
+					match db.get_vtxos_mailbox(mailbox_id, processed_cp, ret_limit).await {
+						Ok(entries) => {
+							let done = entries.len() < ret_limit;
+							for (cp, vtxos) in entries {
+								let msg = new_mailbox_msg(cp, vtxos);
+								yield msg;
+								processed_cp = cp;
+							}
+							if done {
+								break 'fetching;
+							}
 						}
-					}
-					Err(err) => {
-						warn!("Failed to read mailbox from DB: {err:#}");
-						Err(err.to_status())?;
+						Err(err) => {
+							warn!("Failed to read mailbox from DB: {err:#}");
+							Err(err.to_status())?;
+						}
 					}
 				}
 			}

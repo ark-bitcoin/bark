@@ -317,6 +317,7 @@ impl TestContext {
 			receive_htlc_forward_timeout: Duration::from_secs(30),
 			min_board_amount: Amount::from_sat(20_000),
 			ln_receive_anti_dos_required: false,
+			read_mailbox_max_items: 100,
 		}
 	}
 

@@ -368,14 +368,16 @@ impl Db {
 		&self,
 		mailbox_id: MailboxIdentifier,
 		checkpoint: Checkpoint,
+		limit: usize,
 	) -> anyhow::Result<Vec<(Checkpoint, Vec<Vtxo>)>> {
 		let conn = self.get_conn().await?;
-		let statement = conn.prepare("
+		let statement = conn.prepare(&format!("
 			SELECT vtxo_id, vtxo, checkpoint
 			FROM vtxo_mailbox
 			WHERE unblinded_mailbox_id = $1 AND checkpoint > $2
-			ORDER BY checkpoint ASC;
-		").await?;
+			ORDER BY checkpoint ASC
+			LIMIT {limit};
+		")).await?;
 
 		let checkpoint = checkpoint as i64;
 		let mailbox_id = mailbox_id.to_string();

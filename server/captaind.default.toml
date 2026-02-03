@@ -61,6 +61,9 @@ transaction_rebroadcast_interval = "1m"
 # The name of your deployment used by OpenTelemetry
 otel_deployment_name = "my_regtest"
 
+# The maximum number of items we return to mailbox queries
+read_mailbox_max_items = 100
+
 
 ##########
 # ROUNDS #
