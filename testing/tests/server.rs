@@ -33,8 +33,7 @@ use server::secret::Secret;
 use server::vtxopool::VtxoTarget;
 use server_log::{
 	ForfeitBroadcasted, ForfeitedExitConfirmed, ForfeitedExitInMempool, FullRound, NoRoundPayments,
-	RoundError, RoundFinished, RoundUserVtxoAlreadyRegistered, RoundUserVtxoUnknown,
-	TxIndexUpdateFinished,
+	RoundError, RoundFinished, RoundUserVtxoAlreadyRegistered, TxIndexUpdateFinished,
 };
 use server_rpc::protos::{self, lightning_payment_status};
 
@@ -687,12 +686,8 @@ async fn spend_unregistered_board() {
 	bark.board(sat(800_000)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 
-	let mut l = srv.subscribe_log::<RoundUserVtxoUnknown>();
-	tokio::spawn(async move {
-		let _ = bark.refresh_all().await;
-		// we don't care that that call fails
-	});
-	l.recv().wait(srv.max_round_delay()).await;
+	let err = bark.try_refresh_all().await.unwrap_err().to_alt_string();
+	assert!(err.contains("failed to register vtxos"), "err: {err}");
 }
 
 #[tokio::test]
