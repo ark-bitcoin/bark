@@ -30,22 +30,17 @@ impl VtxoSigner for Wallet {
 			None => return None,
 		};
 
-		let witness = match clause {
-			VtxoClause::DelayedSign(c) => c.witness(&signature, control_block),
-			VtxoClause::DelayedTimelockSign(c) => c.witness(&signature, &control_block),
-			VtxoClause::TimelockSign(c) => c.witness(&signature, &control_block),
+		match clause {
+			VtxoClause::DelayedSign(c) => Some(c.witness(&signature, control_block)),
+			VtxoClause::DelayedTimelockSign(c) => Some(c.witness(&signature, &control_block)),
+			VtxoClause::TimelockSign(c) => Some(c.witness(&signature, &control_block)),
 			VtxoClause::HashDelaySign(c) => {
 				let receive = self.db.fetch_lightning_receive_by_payment_hash(c.payment_hash)
 					.await.ok().flatten();
 
-				if let Some(receive) = receive {
-					c.witness(&(signature, receive.payment_preimage), &control_block)
-				} else {
-					return None;
-				}
-			}
-		};
-
-		Some(witness)
+				receive.map(|r| c.witness(&(signature, r.payment_preimage), &control_block))
+			},
+			VtxoClause::HashSign(_) => None, // Not used by bark
+		}
 	}
 }

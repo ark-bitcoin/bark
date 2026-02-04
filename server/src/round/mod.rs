@@ -1048,7 +1048,7 @@ impl SigningVtxoTree {
 
 		trace!("Storing round result");
 		if tracing::enabled!(RoundVtxoCreated::LEVEL) {
-			for vtxo in signed_vtxos.all_vtxos() {
+			for vtxo in signed_vtxos.output_vtxos() {
 				server_rslog!(RoundVtxoCreated, round_step,
 					vtxo_id: vtxo.id(),
 					vtxo_type: vtxo.policy().policy_type(),

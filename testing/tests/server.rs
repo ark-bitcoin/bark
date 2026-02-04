@@ -1673,7 +1673,7 @@ async fn test_cosign_vtxo_tree() {
 	builder.verify_cosign_response(&cosign).unwrap();
 	let tree = builder.build_tree(&cosign, &user_cosign_key).unwrap();
 
-	let mut vtxos = tree.into_cached_tree().all_vtxos().collect::<Vec<_>>();
+	let mut vtxos = tree.into_cached_tree().output_vtxos().collect::<Vec<_>>();
 	for vtxo in vtxos.iter_mut() {
 		let (ctx, req) = LeafVtxoCosignContext::new(vtxo, &funding_tx, &vtxo_key);
 		let resp = srv.cosign_hashlocked_leaf(&req, vtxo, &funding_tx);

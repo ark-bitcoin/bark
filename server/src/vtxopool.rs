@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use anyhow::Context;
 use bitcoin::secp256k1::{rand, Keypair};
-use bitcoin::{Amount, OutPoint};
+use bitcoin::{Amount, OutPoint, Transaction};
 use futures::{stream, StreamExt, TryStreamExt};
 use tracing::{info, warn};
 
@@ -19,6 +19,7 @@ use ark::tree::signed::builder::SignedTreeBuilder;
 use bitcoin_ext::{BlockDelta, BlockHeight};
 
 use crate::database::vtxopool::PoolVtxo;
+use crate::database::VirtualTransaction;
 use crate::wallet::BdkWalletExt;
 use crate::{database, telemetry, Server, SECP};
 
@@ -455,7 +456,7 @@ impl Process {
 
 		// finish VTXOs by cosigning leaves
 		// we rely here on the order of the vtxos being identical to the order of the requests
-		let mut vtxos = tree.all_vtxos().collect::<Vec<_>>();
+		let mut vtxos = tree.output_vtxos().collect::<Vec<_>>();
 		for (vtxo, leaf_key) in vtxos.iter_mut().zip(leaf_keys.iter()) {
 			let (ctx, req) = LeafVtxoCosignContext::new(vtxo, &funding_psbt.unsigned_tx, &leaf_key);
 			let resp = self.srv.cosign_hashlocked_leaf(&req, vtxo, &funding_psbt.unsigned_tx);
@@ -463,11 +464,35 @@ impl Process {
 			ensure!(vtxo.provide_unlock_preimage(unlock_preimage), "invalid unlock preimage");
 		}
 
-		self.srv.register_vtxos(vtxos.iter().cloned().map(ServerVtxo::from)).await
-			.context("failed to register newly created vtxos with server")?;
-
 		// finish and broadcast the tx
 		let tx = wallet.finish_tx(funding_psbt).context("error finishing tree funding tx")?;
+
+		// Let's first create the vtxos and virtual_transactions in the database
+		// We want to ensure the tx can be swept by calling update_virtual_transaction_tree
+		// before we commit it to the database.
+		let leaf_txs = tree.unsigned_leaf_txs().iter()
+			.map(Transaction::compute_txid)
+			.map(VirtualTransaction::new_unsigned);
+
+		let node_txs = tree.internal_node_txs().iter()
+			.map(VirtualTransaction::new_signed_ref);
+
+		let funding_tx = VirtualTransaction::new_signed_ref(&tx).as_funding();
+
+		// Again, I don't understand why I need to collect them into
+		// a vec but it makes the compiler happy.
+		let vtxs = leaf_txs.into_iter()
+			.chain(node_txs)
+			.chain([funding_tx])
+			.collect::<Vec<_>>();
+
+		self.srv.db.update_virtual_transaction_tree(
+			vtxs,
+			tree.output_vtxos().map(ServerVtxo::from).chain(tree.internal_vtxos()),
+			tree.spend_info(),
+		).await?;
+
+		// Here we commit the transaction to the wallet
 		wallet.commit_tx(&tx);
 		wallet.persist().await.context("error persisting wallet after signing tree funding tx")?;
 		drop(wallet);

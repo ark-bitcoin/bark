@@ -1,0 +1,6 @@
+- Improve the ability for servers to track their vtxos when hosting a round
+  [#1569](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1569)
+  - Introduced `HarkLeafVtxoPolicy`
+  - Added `spend_info` to show which vtxo is spent by which tx
+  - Added `internal_vtxos` to give insight into ServerVtxos
+  - Added `unsigned_leaf_txs` and `build_signed_node_txs`

@@ -1,5 +1,6 @@
 
 use bitcoin::absolute::LockTime;
+use bitcoin::hashes::sha256;
 use bitcoin::key::constants::SCHNORR_SIGNATURE_SIZE;
 use bitcoin::secp256k1::schnorr;
 use bitcoin::taproot::{self, ControlBlock};
@@ -281,12 +282,68 @@ impl Into<VtxoClause> for HashDelaySignClause {
 	}
 }
 
+/// A clause that allows spending by revealing a preimage and providing a signature.
+///
+/// This is used for the unlock clause in hArk leaf outputs, where the aggregate
+/// pubkey of user+server must sign, and a preimage must be revealed.
+#[derive(Debug, Clone)]
+pub struct HashSignClause {
+	pub pubkey: PublicKey,
+	pub hash: sha256::Hash,
+}
+
+impl TapScriptClause for HashSignClause {
+	type WitnessData = (schnorr::Signature, [u8; 32]);
+
+	fn tapscript(&self) -> ScriptBuf {
+		scripts::hash_and_sign(self.hash, self.pubkey.x_only_public_key().0)
+	}
+
+	fn witness(
+		&self,
+		data: &Self::WitnessData,
+		control_block: &ControlBlock,
+	) -> Witness {
+		let (signature, preimage) = data;
+		Witness::from_slice(&[
+			&signature[..],
+			&preimage[..],
+			self.tapscript().as_bytes(),
+			&control_block.serialize()[..],
+		])
+	}
+
+	fn witness_size<P: Policy>(&self, vtxo: &Vtxo<P>) -> usize {
+		let cb_size = self.control_block(vtxo).size();
+		let tapscript_size = 57;
+
+		debug_assert_eq!(tapscript_size, self.tapscript().as_bytes().len());
+
+		1 // byte for the number of witness elements
+		+ 1  // schnorr signature size byte
+		+ SCHNORR_SIGNATURE_SIZE // schnorr sig bytes
+		+ 1  // preimage size byte
+		+ PREIMAGE_SIZE // preimage bytes
+		+ VarInt::from(tapscript_size).size()  // tapscript size bytes
+		+ tapscript_size // tapscript bytes
+		+ VarInt::from(cb_size).size()  // control block size bytes
+		+ cb_size // control block bytes
+	}
+}
+
+impl Into<VtxoClause> for HashSignClause {
+	fn into(self) -> VtxoClause {
+		VtxoClause::HashSign(self)
+	}
+}
+
 #[derive(Debug, Clone)]
 pub enum VtxoClause {
 	DelayedSign(DelayedSignClause),
 	TimelockSign(TimelockSignClause),
 	DelayedTimelockSign(DelayedTimelockSignClause),
 	HashDelaySign(HashDelaySignClause),
+	HashSign(HashSignClause),
 }
 
 impl VtxoClause {
@@ -297,8 +354,10 @@ impl VtxoClause {
 			Self::TimelockSign(c) => c.pubkey,
 			Self::DelayedTimelockSign(c) => c.pubkey,
 			Self::HashDelaySign(c) => c.pubkey,
+			Self::HashSign(c) => c.pubkey,
 		}
 	}
+
 
 	/// Returns the tapscript for this clause.
 	pub fn tapscript(&self) -> ScriptBuf {
@@ -307,6 +366,7 @@ impl VtxoClause {
 			Self::TimelockSign(c) => c.tapscript(),
 			Self::DelayedTimelockSign(c) => c.tapscript(),
 			Self::HashDelaySign(c) => c.tapscript(),
+			Self::HashSign(c) => c.tapscript(),
 		}
 	}
 
@@ -317,6 +377,7 @@ impl VtxoClause {
 			Self::TimelockSign(_) => None,
 			Self::DelayedTimelockSign(c) => Some(c.sequence()),
 			Self::HashDelaySign(c) => Some(c.sequence()),
+			Self::HashSign(_) => None,
 		}
 	}
 
@@ -327,6 +388,7 @@ impl VtxoClause {
 			Self::TimelockSign(c) => c.control_block(vtxo),
 			Self::DelayedTimelockSign(c) => c.control_block(vtxo),
 			Self::HashDelaySign(c) => c.control_block(vtxo),
+			Self::HashSign(c) => c.control_block(vtxo),
 		}
 	}
 
@@ -337,6 +399,7 @@ impl VtxoClause {
 			Self::TimelockSign(c) => c.witness_size(vtxo),
 			Self::DelayedTimelockSign(c) => c.witness_size(vtxo),
 			Self::HashDelaySign(c) => c.witness_size(vtxo),
+			Self::HashSign(c) => c.witness_size(vtxo),
 		}
 	}
 }
@@ -369,6 +432,7 @@ mod tests {
 			VtxoClause::TimelockSign(_) => true,
 			VtxoClause::DelayedTimelockSign(_) => true,
 			VtxoClause::HashDelaySign(_) => true,
+			VtxoClause::HashSign(_) => true,
 		}
 	}
 
@@ -543,6 +607,74 @@ mod tests {
 		// We compute the signature for the transaction
 		let signature = signature(&tx, &tx_in, clause.tapscript());
 		tx.input[0].witness = clause.witness(&(signature, preimage), &cb);
+
+		// We verify the transaction
+		verify_tx(&[tx_in], 0, &tx).expect("transaction is invalid");
+	}
+
+	#[test]
+	fn test_hash_sign_clause() {
+		let preimage = [0u8; 32];
+		let hash = sha256::Hash::hash(&preimage);
+
+		// HashSignClause uses an x-only aggregate public key
+		let agg_pk = musig::combine_keys([USER_KEYPAIR.public_key(), SERVER_KEYPAIR.public_key()]);
+
+		let clause = HashSignClause {
+			pubkey: agg_pk,
+			hash,
+		};
+
+		// We compute taproot material for the clause
+		let (taproot, cb) = taproot_material(clause.tapscript());
+		let tx_in = TxOut {
+			script_pubkey: taproot.script_pubkey(),
+			value: Amount::from_sat(1_000_000),
+		};
+
+		// We build transaction spending input containing clause
+		let mut tx = transaction();
+		tx.input.push(TxIn {
+			previous_output: OutPoint::new(Txid::all_zeros(), 0),
+			script_sig: ScriptBuf::default(),
+			sequence: Sequence::ZERO, // HashSignClause has no relative timelock
+			witness: Witness::new(),
+		});
+
+		// For HashSignClause, we need a MuSig signature from both parties
+		let leaf_hash = taproot::TapLeafHash::from_script(
+			&clause.tapscript(),
+			taproot::LeafVersion::TapScript,
+		);
+
+		let mut shc = sighash::SighashCache::new(&tx);
+		let sighash = shc.taproot_script_spend_signature_hash(
+			0, &sighash::Prevouts::All(&[tx_in.clone()]), leaf_hash, sighash::TapSighashType::Default,
+		).expect("all prevouts provided");
+
+		// Create MuSig signature
+		let (user_sec_nonce, user_pub_nonce) = musig::nonce_pair(&*USER_KEYPAIR);
+		let (server_pub_nonce, server_part_sig) = musig::deterministic_partial_sign(
+			&*SERVER_KEYPAIR,
+			[USER_KEYPAIR.public_key()],
+			&[&user_pub_nonce],
+			sighash.to_byte_array(),
+			None,
+		);
+		let agg_nonce = musig::nonce_agg(&[&user_pub_nonce, &server_pub_nonce]);
+
+		let (_user_part_sig, final_sig) = musig::partial_sign(
+			[USER_KEYPAIR.public_key(), SERVER_KEYPAIR.public_key()],
+			agg_nonce,
+			&*USER_KEYPAIR,
+			user_sec_nonce,
+			sighash.to_byte_array(),
+			None,
+			Some(&[&server_part_sig]),
+		);
+		let final_sig = final_sig.expect("should have final signature");
+
+		tx.input[0].witness = clause.witness(&(final_sig, preimage), &cb);
 
 		// We verify the transaction
 		verify_tx(&[tx_in], 0, &tx).expect("transaction is invalid");
