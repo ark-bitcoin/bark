@@ -196,6 +196,31 @@ impl Wallet {
 	{
 		trace!("Checking lightning payment status for payment hash: {}", payment_hash);
 
+		// Try to mark this payment as in-flight to prevent concurrent status checks.
+		// This prevents race conditions where multiple concurrent calls could both
+		// attempt to process success/revocation, leading to duplicate operations.
+		{
+			let mut inflight = self.inflight_lightning_payments.lock().await;
+			if !inflight.insert(payment_hash) {
+				bail!("Payment operation already in progress for this invoice");
+			}
+		}
+
+		let result = self.check_lightning_payment_inner(payment_hash, wait).await;
+
+		// Always remove from inflight set when done
+		{
+			let mut inflight = self.inflight_lightning_payments.lock().await;
+			inflight.remove(&payment_hash);
+		}
+
+		result
+	}
+
+	/// Internal implementation of lightning payment status check after concurrency check.
+	async fn check_lightning_payment_inner(&self, payment_hash: PaymentHash, wait: bool)
+		-> anyhow::Result<Option<Preimage>>
+	{
 		let mut srv = self.require_server()?;
 
 		let payment = self.db.get_lightning_send(payment_hash).await?

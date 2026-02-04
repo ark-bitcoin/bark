@@ -469,6 +469,36 @@ impl Wallet {
 		wait: bool,
 		token: Option<&str>,
 	) -> anyhow::Result<LightningReceive> {
+		trace!("Claiming lightning receive for payment hash: {}", payment_hash);
+
+		// Try to mark this payment as in-flight to prevent concurrent claim attempts.
+		// This prevents race conditions where multiple concurrent calls could both
+		// attempt to check/claim the same receive, leading to duplicate operations.
+		{
+			let mut inflight = self.inflight_lightning_payments.lock().await;
+			if !inflight.insert(payment_hash) {
+				bail!("Receive operation already in progress for this payment");
+			}
+		}
+
+		let result = self.try_claim_lightning_receive_inner(payment_hash, wait, token).await;
+
+		// Always remove from inflight set when done
+		{
+			let mut inflight = self.inflight_lightning_payments.lock().await;
+			inflight.remove(&payment_hash);
+		}
+
+		result
+	}
+
+	/// Internal implementation of lightning receive claim after concurrency check.
+	async fn try_claim_lightning_receive_inner(
+		&self,
+		payment_hash: PaymentHash,
+		wait: bool,
+		token: Option<&str>,
+	) -> anyhow::Result<LightningReceive> {
 		let srv = self.require_server()?;
 		let ark_info = srv.ark_info().await?;
 
