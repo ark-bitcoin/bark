@@ -541,6 +541,19 @@ impl Bark {
 		self.run(["dev", "vtxo", "drop", "--all", "--dangerous"]).await;
 	}
 
+	pub async fn try_import_vtxos(&self, vtxo_hexes: &[&str]) -> anyhow::Result<Vec<bark_json::primitives::WalletVtxoInfo>> {
+		let mut args: Vec<&str> = vec!["dev", "vtxo", "import"];
+		for hex in vtxo_hexes {
+			args.push("--vtxo");
+			args.push(hex);
+		}
+		self.try_run_json(args).await
+	}
+
+	pub async fn import_vtxos(&self, vtxo_hexes: &[&str]) -> Vec<bark_json::primitives::WalletVtxoInfo> {
+		self.try_import_vtxos(vtxo_hexes).await.expect("import_vtxos failed")
+	}
+
 	pub async fn progress_exit(&self) -> json::ExitProgressResponse {
 		self.run_json(["exit", "progress"]).await
 	}

@@ -10,6 +10,7 @@ use tracing::info;
 use utoipa::OpenApi;
 
 use ark::lightning::{Bolt11Invoice, Offer};
+use ark::ProtocolEncoding;
 use bark::lnurllib::lightning_address::LightningAddress;
 use bark::subsystem::RoundMovement;
 use bark::vtxo::VtxoFilter;
@@ -39,6 +40,7 @@ pub fn router() -> Router<ServerState> {
 		.route("/send-onchain", post(send_onchain))
 		.route("/rounds", get(pending_rounds))
 		.route("/sync", post(sync))
+		.route("/import-vtxo", post(import_vtxo))
 }
 
 #[derive(OpenApi)]
@@ -62,6 +64,7 @@ pub fn router() -> Router<ServerState> {
 		send_onchain,
 		pending_rounds,
 		sync,
+		import_vtxo,
 	),
 	components(schemas(
 		bark_json::web::ConnectedResponse,
@@ -78,6 +81,7 @@ pub fn router() -> Router<ServerState> {
 		bark_json::web::RefreshRequest,
 		bark_json::web::OffboardVtxosRequest,
 		bark_json::web::OffboardAllRequest,
+		bark_json::web::ImportVtxoRequest,
 		bark_json::web::PendingRoundInfo,
 		bark_json::cli::RoundStatus,
 		error::InternalServerError,
@@ -662,4 +666,40 @@ pub async fn sync(State(state): State<ServerState>) -> HandlerResult<()> {
 	let wallet = state.require_wallet()?;
 	wallet.sync().await;
 	Ok(())
+}
+
+#[utoipa::path(
+	post,
+	path = "/import-vtxo",
+	request_body = bark_json::web::ImportVtxoRequest,
+	responses(
+		(status = 200, description = "VTXO imported successfully", body = Vec<bark_json::primitives::WalletVtxoInfo>),
+		(status = 400, description = "Invalid VTXO hex or VTXO not owned by wallet", body = error::BadRequestError),
+		(status = 500, description = "Internal server error", body = error::InternalServerError)
+	),
+	description = "Imports a raw serialized VTXO into the wallet",
+	tag = "wallet"
+)]
+#[debug_handler]
+pub async fn import_vtxo(
+	State(state): State<ServerState>,
+	Json(body): Json<bark_json::web::ImportVtxoRequest>,
+) -> HandlerResult<Json<Vec<bark_json::primitives::WalletVtxoInfo>>> {
+	let wallet = state.require_wallet()?;
+
+	if body.vtxos.is_empty() {
+		badarg!("No VTXOs provided");
+	}
+
+	let mut imported = Vec::with_capacity(body.vtxos.len());
+
+	for vtxo_hex in body.vtxos {
+		let vtxo = ark::Vtxo::deserialize_hex(&vtxo_hex).badarg("invalid vtxo hex")?;
+		let vtxo_id = vtxo.id();
+		wallet.import_vtxo(&vtxo).await.context("Failed to import VTXO")?;
+		let wallet_vtxo = wallet.get_vtxo_by_id(vtxo_id).await.context("Failed to get imported VTXO")?;
+		imported.push(wallet_vtxo.into());
+	}
+
+	Ok(axum::Json(imported))
 }

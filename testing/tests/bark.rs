@@ -920,6 +920,55 @@ async fn accept_mailbox() {
 	bark2.maintain().await;
 	let bark2_vtxos = bark2.vtxos().await;
 	assert_eq!(bark2_vtxos.len(), 1);
+
+	// Test import_vtxo
+	let bark2_wallet = bark2.client().await;
+	let vtxos = bark2_wallet.vtxos().await.unwrap();
+	let vtxo_hex = vtxos[0].vtxo.serialize_hex();
+
+	bark2.import_vtxos(&[&vtxo_hex]).await;
+	assert_eq!(bark2.vtxos().await.len(), 1, "import should be idempotent");
+
+	let err = bark.try_import_vtxos(&[&vtxo_hex]).await.unwrap_err();
+	assert!(err.to_string().contains("signable clause") || err.to_string().contains("not owned"), "expected ownership error, got: {}", err);
+
+	let bark3 = ctx.new_bark("bark3", &srv).await;
+	bark.send_oor(bark3.address().await, sat(50_000)).await;
+	bark.send_oor(bark3.address().await, sat(60_000)).await;
+
+	bark3.maintain().await;
+	let bark3_vtxos = bark3.vtxos().await;
+	assert_eq!(bark3_vtxos.len(), 2, "bark3 should have 2 VTXOs");
+
+	let bark3_wallet = bark3.client().await;
+	let vtxos = bark3_wallet.vtxos().await.unwrap();
+	let vtxo_hex1 = vtxos[0].vtxo.serialize_hex();
+	let vtxo_hex2 = vtxos[1].vtxo.serialize_hex();
+
+	// Drop all VTXOs from bark3 and re-import them in bulk
+	bark3.drop_vtxos().await;
+	assert_eq!(bark3.vtxos().await.len(), 0, "bark3 should have 0 VTXOs after drop");
+
+	let imported = bark3.import_vtxos(&[&vtxo_hex1, &vtxo_hex2]).await;
+	assert_eq!(imported.len(), 2, "should have imported 2 VTXOs");
+	assert_eq!(bark3.vtxos().await.len(), 2, "bark3 should have 2 VTXOs after bulk import");
+
+	let bark4 = ctx.new_bark("bark4", &srv).await;
+	bark.send_oor(bark4.address().await, sat(40_000)).await;
+	bark4.maintain().await;
+	assert_eq!(bark4.vtxos().await.len(), 1, "bark4 should have 1 VTXO");
+
+	let bark4_wallet = bark4.client().await;
+	let bark4_vtxos = bark4_wallet.vtxos().await.unwrap();
+	let expired_vtxo_hex = bark4_vtxos[0].vtxo.serialize_hex();
+
+	bark4.drop_vtxos().await;
+	assert_eq!(bark4.vtxos().await.len(), 0, "bark4 should have 0 VTXOs after drop");
+
+	ctx.generate_blocks(srv.config().vtxo_lifetime as u32 + 10).await;
+
+	let err = bark4.try_import_vtxos(&[&expired_vtxo_hex]).await.unwrap_err();
+	assert!(err.to_string().contains("expired"), "expected expiry error, got: {}", err);
 }
 
 #[tokio::test]
