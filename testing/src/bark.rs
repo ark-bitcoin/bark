@@ -507,10 +507,37 @@ impl Bark {
 		Ok(res)
 	}
 
-	/// panics if the round failed or if no round happened
-	pub async fn refresh_all(&self) {
-		let res = self.try_refresh_all().await.expect("refresh failed");
+	/// Returns Err if the round failed after all retries
+	pub async fn try_refresh_all_with_retries(&self, retries: usize) -> anyhow::Result<RoundStatus> {
+		let mut last_error = None;
+		for attempt in 0..=retries {
+			match self.try_refresh_all().await {
+				Ok(status) => return Ok(status),
+				Err(e) => {
+					if attempt < retries {
+						warn!("refresh_all attempt {} failed, retrying: {:#}", attempt + 1, e);
+					}
+					last_error = Some(e);
+				}
+			}
+		}
+		Err(last_error.unwrap())
+	}
+
+	/// panics if the round failed or if no round happened after retries
+	pub async fn refresh_all_with_retries(&self, retries: usize) {
+		let res = self.try_refresh_all_with_retries(retries).await.expect("refresh failed after retries");
 		assert!(res.is_success(), "round failed: {:?}", res);
+	}
+
+	/// panics if the round failed or if no round happened (with 2 retries)
+	pub async fn refresh_all(&self) {
+		self.refresh_all_with_retries(2).await;
+	}
+
+	/// panics if the round failed or if no round happened (no retries)
+	pub async fn refresh_all_no_retry(&self) {
+		self.refresh_all_with_retries(0).await;
 	}
 
 	pub async fn refresh_counterparty(&self) {

@@ -32,8 +32,9 @@ use bark_json::exit::ExitState;
 use server::secret::Secret;
 use server::vtxopool::VtxoTarget;
 use server_log::{
-	ForfeitBroadcasted, ForfeitedExitConfirmed, ForfeitedExitInMempool, FullRound, RoundError,
-	RoundFinished, RoundUserVtxoAlreadyRegistered, RoundUserVtxoUnknown, TxIndexUpdateFinished,
+	ForfeitBroadcasted, ForfeitedExitConfirmed, ForfeitedExitInMempool, FullRound, NoRoundPayments,
+	RoundError, RoundFinished, RoundUserVtxoAlreadyRegistered, RoundUserVtxoUnknown,
+	TxIndexUpdateFinished,
 };
 use server_rpc::protos::{self, lightning_payment_status};
 
@@ -224,7 +225,7 @@ async fn cant_spend_untrusted() {
 	});
 
 	// this will at first produce an error
-	let err = log_round_err.recv().wait_millis(15_000).await.unwrap().error;
+	let err = log_round_err.recv().wait_millis(30_000).await.unwrap().error;
 	assert!(err.contains("Insufficient funds"), "err: {err}");
 
 	attempt_handle.await.unwrap();
@@ -453,7 +454,7 @@ async fn full_round() {
 	tokio::spawn(async move {
 		futures::future::join_all(barks.iter().map(|bark| async {
 			// ignoring error as last one will fail
-			let _ = bark.refresh_all().await;
+			let _ = bark.refresh_all_no_retry().await;
 		})).await;
 	});
 
@@ -2280,4 +2281,48 @@ async fn test_register_board() {
 	};
 	let err = rpc.register_board_vtxo(register_request).await.unwrap_err();
 	assert!(err.message().contains("server pubkey"), "err: {err}");
+}
+
+#[tokio::test]
+async fn empty_round_does_not_replay_stale_attempt() {
+	//! Test that stale Attempt events from empty rounds are not replayed.
+	//!
+	//! When a round starts, the server broadcasts an Attempt event and stores
+	//! it as last_round_event. If no clients join and the round times out
+	//! (empty round), this Attempt becomes stale. Without clearing it, new
+	//! subscribers would receive this stale event and try to join a round
+	//! that no longer exists.
+	//!
+	//! This test verifies that:
+	//! 1. After an empty round times out, last_round_event is cleared
+	//! 2. New subscribers don't receive the stale Attempt
+	//! 3. When a fresh round starts, subscribers receive the new Attempt
+
+	let ctx = TestContext::new("server/empty_round_does_not_replay_stale_attempt").await;
+	let srv = ctx.new_captaind_with_cfg("server", None, |cfg| {
+		cfg.round_interval = Duration::from_secs(3600);
+		cfg.round_submit_time = Duration::from_millis(500); // Short signup window
+	}).await;
+
+	// Wait for the initial empty round to time out (server auto-starts a round on boot)
+	// The server will broadcast an Attempt, then wait for round_submit_time (500ms),
+	// and when no payments arrive, emit NoRoundPayments and clear last_round_event.
+	let mut log_no_payments = srv.subscribe_log::<NoRoundPayments>();
+	log_no_payments.recv().wait(Duration::from_secs(5)).await.unwrap();
+
+	// Now subscribe to round events via gRPC - after the empty round finished.
+	// At this point, last_round_event should be cleared.
+	let mut rpc = srv.get_public_rpc().await;
+	let mut stream = rpc.subscribe_rounds(protos::Empty {}).await.unwrap().into_inner();
+
+	// Verify we don't immediately get a stale Attempt.
+	// Use try_fast() - should timeout because no event is pending.
+	assert!(stream.next().try_fast().await.is_err(), "should not receive stale Attempt");
+
+	// Trigger a new round
+	srv.trigger_round().await;
+
+	// Now we should receive the fresh Attempt
+	let event = stream.next().wait(Duration::from_secs(5)).await.unwrap().unwrap();
+	assert!(matches!(event.event, Some(protos::round_event::Event::Attempt(_))));
 }

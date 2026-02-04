@@ -1,0 +1,6 @@
+- Restore round event replay for new subscribers
+  Clients subscribing to round events now receive the current Attempt event,
+  allowing them to join rounds during the signup phase. This fixes a
+  regression where clients waking from push notifications would miss the
+  Attempt event. Empty rounds no longer replay stale events.
+  [#1572](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1572)

@@ -22,7 +22,7 @@ use bark::round::RoundParticipation;
 use bark::subsystem::RoundMovement;
 use bark_json::cli::{MovementDestination, PaymentMethod};
 use bark_json::primitives::VtxoStateInfo;
-use server_log::{RestartMissingVtxoSigs, RoundUserVtxoNotAllowed};
+use server_log::{AttemptingRound, RestartMissingVtxoSigs, RoundFinished, RoundUserVtxoNotAllowed};
 use server_rpc::protos;
 
 use ark_testing::{btc, sat, signed_sat, Bark, TestContext};
@@ -961,19 +961,57 @@ async fn second_round_attempt() {
 	let mut log_not_allowed = srv.subscribe_log::<RoundUserVtxoNotAllowed>();
 
 	ctx.generate_blocks(1).await;
-	let res1 = tokio::spawn(async move { bark1.refresh_all().await });
-	let res2 = tokio::spawn(async move { bark2.refresh_all().await });
+	let res1 = tokio::spawn(async move { bark1.refresh_all_no_retry().await });
+	let res2 = tokio::spawn(async move { bark2.refresh_all_no_retry().await });
 	tokio::time::sleep(Duration::from_millis(500)).await;
 	let _ = srv.wallet_status().await;
 	let mut log_restart_missing_sigs = srv.subscribe_log::<RestartMissingVtxoSigs>();
 	srv.trigger_round().await;
-	log_restart_missing_sigs.recv().await.unwrap();
+	log_restart_missing_sigs.recv().wait(Duration::from_secs(60)).await.unwrap();
 	info!("Waiting for bark2 to fail...");
 	res2.await.unwrap_err();
 	info!("Waiting for bark1 to finish...");
 	res1.await.unwrap();
 	// check that bark2 was kicked
 	assert_eq!(log_not_allowed.recv().ready().await.unwrap().vtxo, bark2_vtxo);
+}
+
+#[tokio::test]
+async fn bark_can_sign_up_to_round_during_signup_phase() {
+	//! Test that a bark client can sign up to a round that has already started.
+	//!
+	//! This simulates a real-world scenario where a phone wakes up (e.g., from a
+	//! push notification) after a round has already begun. The client should be
+	//! able to join the ongoing round during the signup phase, even though it
+	//! wasn't listening when the round started.
+
+	let ctx = TestContext::new("bark/bark_can_sign_up_to_round_during_signup_phase").await;
+	let srv = ctx.new_captaind_with_cfg("server", None, |cfg| {
+		cfg.round_interval = Duration::from_secs(3600);
+	}).await;
+	ctx.fund_captaind(&srv, btc(10)).await;
+
+	let bark = ctx.new_bark_with_funds("bark", &srv, sat(1_000_000)).await;
+	bark.board_and_confirm_and_register(&ctx, sat(800_000)).await;
+
+	// Subscribe to logs before triggering
+	let mut log_round_finished = srv.subscribe_log::<RoundFinished>();
+	let mut log_attempting_round = srv.subscribe_log::<AttemptingRound>();
+
+	// Trigger the round BEFORE the bark starts refresh_all
+	srv.trigger_round().await;
+
+	// Wait for the round attempt to be broadcast. This ensures the round is actually started.
+	log_attempting_round.recv().wait(Duration::from_secs(10)).await.unwrap();
+
+	// Now bark tries to join the already-started round.
+	// Use a timeout so the test fails instead of hanging if bark can't join.
+	// Use no_retry to test the direct join-in-progress behavior.
+	bark.refresh_all_no_retry().wait(Duration::from_secs(60)).await;
+
+	// Verify the round finished successfully with our vtxo
+	let finished = log_round_finished.recv().wait(Duration::from_secs(30)).await.unwrap();
+	assert_eq!(finished.nb_input_vtxos, 1);
 }
 
 #[ignore] // we removed this functionality, might be added again later
