@@ -12,8 +12,6 @@ use serde::de::DeserializeOwned;
 use serde::Serialize;
 pub use crate::msgs::*;
 
-/// The "target" field used for structured logging.
-pub const SLOG_TARGET: &str = "bark-server-slog";
 
 /// Trait implemented by all our trace log messages.
 pub trait LogMsg: Sized + Send + fmt::Debug + Serialize + DeserializeOwned + 'static {

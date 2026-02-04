@@ -14,7 +14,6 @@ macro_rules! impl_slog {
 macro_rules! slog {
 	($struct:ident) => {{
 		tracing::event!(
-			target: $crate::SLOG_TARGET,
 			<$crate::$struct as $crate::LogMsg>::LEVEL,
 			{
 				slog_id = <$crate::$struct as $crate::LogMsg>::LOGID
@@ -28,7 +27,6 @@ macro_rules! slog {
 		let data_json = serde_json::to_string(&temp)
 			.unwrap_or_else(|_| "json serialization error".into());
 		tracing::event!(
-			target: $crate::SLOG_TARGET,
 			<$crate::$struct as $crate::LogMsg>::LEVEL,
 			{
 				slog_id = <$crate::$struct as $crate::LogMsg>::LOGID,
