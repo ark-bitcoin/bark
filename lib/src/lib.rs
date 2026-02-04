@@ -170,7 +170,11 @@ pub mod scripts {
 	}
 
 	/// Create a tapscript
-	pub fn delay_timelock_sign(delay_blocks: BlockDelta, timelock_height: BlockHeight, pubkey: XOnlyPublicKey) -> ScriptBuf {
+	pub fn delay_timelock_sign(
+		delay_blocks: BlockDelta,
+		timelock_height: BlockHeight,
+		pubkey: XOnlyPublicKey,
+	) -> ScriptBuf {
 		let csv = bitcoin::Sequence::from_height(delay_blocks);
 		let lt = bitcoin::absolute::LockTime::from_height(timelock_height).unwrap();
 		bitcoin::Script::builder()
@@ -202,7 +206,11 @@ pub mod scripts {
 			.into_script()
 	}
 
-	pub fn hash_delay_sign(hash: sha256::Hash, delay_blocks: BlockDelta, pubkey: XOnlyPublicKey) -> ScriptBuf {
+	pub fn hash_delay_sign(
+		hash: sha256::Hash,
+		delay_blocks: BlockDelta,
+		pubkey: XOnlyPublicKey,
+	) -> ScriptBuf {
 		let hash_160 = ripemd160::Hash::hash(&hash[..]);
 		let csv = bitcoin::Sequence::from_height(delay_blocks);
 

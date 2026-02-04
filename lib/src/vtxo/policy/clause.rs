@@ -61,7 +61,6 @@ impl TapScriptClause for DelayedSignClause {
 	type WitnessData = schnorr::Signature;
 
 	fn tapscript(&self) -> ScriptBuf {
-		assert_ne!(self.block_delta, 0, "block delta must be non-zero");
 		scripts::delayed_sign(self.block_delta, self.pubkey.x_only_public_key().0)
 	}
 
@@ -177,7 +176,6 @@ impl TapScriptClause for DelayedTimelockSignClause {
 	type WitnessData = schnorr::Signature;
 
 	fn tapscript(&self) -> ScriptBuf {
-		assert_ne!(self.block_delta, 0, "block delta must be non-zero");
 		scripts::delay_timelock_sign(
 			self.block_delta,
 			self.timelock_height,
@@ -229,7 +227,6 @@ pub struct HashDelaySignClause {
 impl HashDelaySignClause {
 	/// Returns the input sequence for this clause.
 	pub fn sequence(&self) -> Sequence {
-		assert_ne!(self.block_delta, 0, "block delta must be non-zero");
 		Sequence::from_height(self.block_delta)
 	}
 }
@@ -238,7 +235,6 @@ impl TapScriptClause for HashDelaySignClause {
 	type WitnessData = (schnorr::Signature, Preimage);
 
 	fn tapscript(&self) -> ScriptBuf {
-		assert_ne!(self.block_delta, 0, "block delta must be non-zero");
 		scripts::hash_delay_sign(
 			self.payment_hash.to_sha256_hash(),
 			self.block_delta,
