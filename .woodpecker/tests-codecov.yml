@@ -32,12 +32,12 @@ steps:
     depends_on: check-commits
     image: registry.2nd.dev/build:25
     environment:
-      RUST_TEST_THREADS: 1
+      NEXTEST_TEST_THREADS: 1
     commands:
       - git log --oneline | head -n 1
       - >
         nix develop .#default --command bash -c "
-          cargo llvm-cov --workspace --exclude ark-testing --no-report
+          just test-unit-codecov
         "
 
   - name: build
@@ -46,14 +46,11 @@ steps:
     depends_on: check-commits
     image: registry.2nd.dev/build:25
     environment:
-      RUST_TEST_THREADS: 1
+      NEXTEST_TEST_THREADS: 1
     commands:
       - git log --oneline | head -n 1
       - >
-        nix develop .#default --command bash -c "
-          cargo version &&
-          RUSTFLAGS=\"-C instrument-coverage\" LLVM_PROFILE_FILE=\"your-binary-%p-%m.profraw\" cargo build --workspace
-        "
+        nix develop .#default --command bash -c "just build-codecov"
 
   - name: test-integration-btc29.1
     when:
@@ -66,7 +63,7 @@ steps:
       - /dev/shm:size=10g
     environment:
       TEST_DIRECTORY: ./test/btc29-codecov
-      RUST_TEST_THREADS: 1
+      NEXTEST_TEST_THREADS: 1
       BARK_COMMAND_TIMEOUT_MILLIS: 120000
       TX_PROPAGATION_TIMEOUT: 30000
     privileged: true
