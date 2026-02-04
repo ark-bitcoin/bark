@@ -211,7 +211,7 @@ async fn cant_spend_untrusted() {
 
 	// Set a time-out on the bark command for the refresh --all
 	// The command is expected to time-out
-	bark.set_timeout(Duration::from_millis(10_000));
+	bark.set_timeout(Duration::from_millis(30_000));
 	let mut bark = Arc::new(bark);
 
 	// we will launch bark to try refresh, it will produce an error log at first,
@@ -219,7 +219,7 @@ async fn cant_spend_untrusted() {
 
 	let bark_clone = bark.clone();
 	let attempt_handle = tokio::spawn(async move {
-		let err = bark_clone.try_refresh_all().await.unwrap_err();
+		let err = bark_clone.try_refresh_all_with_retries(0).await.unwrap_err();
 		debug!("First refresh failed: {:#}", err);
 	});
 
