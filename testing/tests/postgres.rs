@@ -666,3 +666,171 @@ async fn update_virtual_transaction_tree_empty_inputs() {
 	let vtxos = db.get_vtxos_by_id(&[vtxo.id()]).await.unwrap();
 	assert_eq!(vtxos.len(), 1);
 }
+
+#[tokio::test]
+async fn mark_server_may_own_descendants_empty_input() {
+	let mut ctx = TestContext::new_minimal("postgresd/mark_descendants_empty").await;
+	ctx.init_central_postgres().await;
+	let postgres_cfg = ctx.new_postgres(&ctx.test_name).await;
+
+	Db::create(&postgres_cfg).await.expect("Database created");
+	let db = Db::connect(&postgres_cfg).await.expect("Connected to database");
+
+	// Empty input should succeed
+	db.mark_server_may_own_descendants(&[]).await
+		.expect("Empty input should succeed");
+}
+
+#[tokio::test]
+async fn mark_server_may_own_descendants_all_signed() {
+	let mut ctx = TestContext::new_minimal("postgresd/mark_descendants_signed").await;
+	ctx.init_central_postgres().await;
+	let postgres_cfg = ctx.new_postgres(&ctx.test_name).await;
+
+	Db::create(&postgres_cfg).await.expect("Database created");
+	let db = Db::connect(&postgres_cfg).await.expect("Connected to database");
+
+	// Create signed transactions
+	let tx1 = Transaction {
+		version: bitcoin::transaction::Version::non_standard(1),
+		lock_time: bitcoin::absolute::LockTime::ZERO,
+		input: vec![],
+		output: vec![],
+	};
+	let tx2 = Transaction {
+		version: bitcoin::transaction::Version::non_standard(2),
+		lock_time: bitcoin::absolute::LockTime::ZERO,
+		input: vec![],
+		output: vec![],
+	};
+	let txid1 = tx1.compute_txid();
+	let txid2 = tx2.compute_txid();
+
+	// Insert both as signed
+	db.upsert_virtual_transaction(txid1, Some(&tx1), false, None).await.unwrap();
+	db.upsert_virtual_transaction(txid2, Some(&tx2), false, None).await.unwrap();
+
+	// Verify they don't have server_may_own_descendant_since set
+	let vtx1 = db.get_virtual_transaction_by_txid(txid1).await.unwrap().unwrap();
+	let vtx2 = db.get_virtual_transaction_by_txid(txid2).await.unwrap().unwrap();
+	assert!(vtx1.server_may_own_descendant_since.is_none());
+	assert!(vtx2.server_may_own_descendant_since.is_none());
+
+	// Mark them as server may own descendants
+	db.mark_server_may_own_descendants(&[txid1, txid2]).await
+		.expect("Should succeed for signed transactions");
+
+	// Verify server_may_own_descendant_since is now set
+	let vtx1 = db.get_virtual_transaction_by_txid(txid1).await.unwrap().unwrap();
+	let vtx2 = db.get_virtual_transaction_by_txid(txid2).await.unwrap().unwrap();
+	assert!(vtx1.server_may_own_descendant_since.is_some(),
+		"server_may_own_descendant_since should be set for tx1");
+	assert!(vtx2.server_may_own_descendant_since.is_some(),
+		"server_may_own_descendant_since should be set for tx2");
+}
+
+#[tokio::test]
+async fn mark_server_may_own_descendants_fails_for_unsigned() {
+	let mut ctx = TestContext::new_minimal("postgresd/mark_descendants_unsigned").await;
+	ctx.init_central_postgres().await;
+	let postgres_cfg = ctx.new_postgres(&ctx.test_name).await;
+
+	Db::create(&postgres_cfg).await.expect("Database created");
+	let db = Db::connect(&postgres_cfg).await.expect("Connected to database");
+
+	// Create one signed and one unsigned transaction
+	let tx_signed = Transaction {
+		version: bitcoin::transaction::Version::non_standard(1),
+		lock_time: bitcoin::absolute::LockTime::ZERO,
+		input: vec![],
+		output: vec![],
+	};
+	let tx_unsigned = Transaction {
+		version: bitcoin::transaction::Version::non_standard(2),
+		lock_time: bitcoin::absolute::LockTime::ZERO,
+		input: vec![],
+		output: vec![],
+	};
+	let txid_signed = tx_signed.compute_txid();
+	let txid_unsigned = tx_unsigned.compute_txid();
+
+	// Insert one signed and one unsigned
+	db.upsert_virtual_transaction(txid_signed, Some(&tx_signed), false, None).await.unwrap();
+	db.upsert_virtual_transaction(txid_unsigned, None, false, None).await.unwrap();
+
+	// Should fail because one is unsigned
+	let result = db.mark_server_may_own_descendants(&[txid_signed, txid_unsigned]).await;
+	assert!(result.is_err(), "Should fail when one transaction is unsigned");
+	let err_msg = result.unwrap_err().to_string();
+	assert!(err_msg.contains("NULL signed_tx"), "Error should mention NULL signed_tx: {}", err_msg);
+	assert!(err_msg.contains(&txid_unsigned.to_string()),
+		"Error should mention the unsigned txid: {}", err_msg);
+
+	// Verify neither transaction was updated (atomic failure)
+	let vtx_signed = db.get_virtual_transaction_by_txid(txid_signed).await.unwrap().unwrap();
+	assert!(vtx_signed.server_may_own_descendant_since.is_none(),
+		"signed tx should not be updated when operation fails");
+}
+
+#[tokio::test]
+async fn mark_server_may_own_descendants_does_not_overwrite() {
+	let mut ctx = TestContext::new_minimal("postgresd/mark_descendants_no_overwrite").await;
+	ctx.init_central_postgres().await;
+	let postgres_cfg = ctx.new_postgres(&ctx.test_name).await;
+
+	Db::create(&postgres_cfg).await.expect("Database created");
+	let db = Db::connect(&postgres_cfg).await.expect("Connected to database");
+
+	let tx = Transaction {
+		version: bitcoin::transaction::Version::non_standard(1),
+		lock_time: bitcoin::absolute::LockTime::ZERO,
+		input: vec![],
+		output: vec![],
+	};
+	let txid = tx.compute_txid();
+
+	// Insert with server_may_own_descendant_since already set
+	let original_timestamp = Local::now() - chrono::Duration::days(1);
+	db.upsert_virtual_transaction(txid, Some(&tx), false, Some(original_timestamp)).await.unwrap();
+
+	// Verify it's set
+	let vtx = db.get_virtual_transaction_by_txid(txid).await.unwrap().unwrap();
+	let original_stored = vtx.server_may_own_descendant_since.unwrap();
+
+	// Call mark_server_may_own_descendants again
+	db.mark_server_may_own_descendants(&[txid]).await
+		.expect("Should succeed");
+
+	// Verify the timestamp was NOT overwritten
+	let vtx = db.get_virtual_transaction_by_txid(txid).await.unwrap().unwrap();
+	let after_mark = vtx.server_may_own_descendant_since.unwrap();
+	assert_eq!(original_stored, after_mark,
+		"server_may_own_descendant_since should not be overwritten");
+}
+
+#[tokio::test]
+async fn mark_server_may_own_descendants_fails_for_nonexistent() {
+	let mut ctx = TestContext::new_minimal("postgresd/mark_descendants_nonexistent").await;
+	ctx.init_central_postgres().await;
+	let postgres_cfg = ctx.new_postgres(&ctx.test_name).await;
+
+	Db::create(&postgres_cfg).await.expect("Database created");
+	let db = Db::connect(&postgres_cfg).await.expect("Connected to database");
+
+	// Create txid that doesn't exist in database
+	let tx_nonexistent = Transaction {
+		version: bitcoin::transaction::Version::non_standard(99),
+		lock_time: bitcoin::absolute::LockTime::ZERO,
+		input: vec![],
+		output: vec![],
+	};
+	let txid_nonexistent = tx_nonexistent.compute_txid();
+
+	// Should fail for non-existent txids
+	let result = db.mark_server_may_own_descendants(&[txid_nonexistent]).await;
+	assert!(result.is_err(), "Should fail when transaction doesn't exist");
+	let err_msg = result.unwrap_err().to_string();
+	assert!(err_msg.contains("does not exist"), "Error should mention 'does not exist': {}", err_msg);
+	assert!(err_msg.contains(&txid_nonexistent.to_string()),
+		"Error should mention the non-existent txid: {}", err_msg);
+}

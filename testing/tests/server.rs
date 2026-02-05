@@ -33,8 +33,7 @@ use server::secret::Secret;
 use server::vtxopool::VtxoTarget;
 use server_log::{
 	ForfeitBroadcasted, ForfeitedExitConfirmed, ForfeitedExitInMempool, FullRound, NoRoundPayments,
-	RoundError, RoundFinished, RoundUserVtxoAlreadyRegistered, RoundUserVtxoUnknown,
-	TxIndexUpdateFinished,
+	RoundError, RoundFinished, RoundUserVtxoAlreadyRegistered, TxIndexUpdateFinished,
 };
 use server_rpc::protos::{self, lightning_payment_status};
 
@@ -212,7 +211,7 @@ async fn cant_spend_untrusted() {
 
 	// Set a time-out on the bark command for the refresh --all
 	// The command is expected to time-out
-	bark.set_timeout(Duration::from_millis(10_000));
+	bark.set_timeout(Duration::from_millis(30_000));
 	let mut bark = Arc::new(bark);
 
 	// we will launch bark to try refresh, it will produce an error log at first,
@@ -220,7 +219,7 @@ async fn cant_spend_untrusted() {
 
 	let bark_clone = bark.clone();
 	let attempt_handle = tokio::spawn(async move {
-		let err = bark_clone.try_refresh_all().await.unwrap_err();
+		let err = bark_clone.try_refresh_all_with_retries(0).await.unwrap_err();
 		debug!("First refresh failed: {:#}", err);
 	});
 
@@ -687,12 +686,8 @@ async fn spend_unregistered_board() {
 	bark.board(sat(800_000)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 
-	let mut l = srv.subscribe_log::<RoundUserVtxoUnknown>();
-	tokio::spawn(async move {
-		let _ = bark.refresh_all().await;
-		// we don't care that that call fails
-	});
-	l.recv().wait(srv.max_round_delay()).await;
+	let err = bark.try_refresh_all().await.unwrap_err().to_alt_string();
+	assert!(err.contains("failed to register vtxos"), "err: {err}");
 }
 
 #[tokio::test]
@@ -2325,4 +2320,41 @@ async fn empty_round_does_not_replay_stale_attempt() {
 	// Now we should receive the fresh Attempt
 	let event = stream.next().wait(Duration::from_secs(5)).await.unwrap().unwrap();
 	assert!(matches!(event.event, Some(protos::round_event::Event::Attempt(_))));
+}
+
+#[tokio::test]
+async fn initiate_lightning_payment_fails_without_register_vtxos() {
+	let ctx = TestContext::new("server/initiate_lightning_payment_fails_without_register_vtxos").await;
+
+	let lightning = ctx.new_lightning_setup("lightningd").await;
+
+	// Start a server and link it to our cln installation
+	let srv = ctx.new_captaind_with_funds("server", Some(&lightning.sender), btc(10)).await;
+
+	// Create a proxy that drops register_vtxos calls (returns success without calling upstream)
+	#[derive(Clone)]
+	struct Proxy;
+	#[async_trait::async_trait]
+	impl captaind::proxy::ArkRpcProxy for Proxy {
+		async fn register_vtxos(
+			&self, _upstream: &mut ArkClient, _req: protos::RegisterVtxosRequest,
+		) -> Result<protos::Empty, tonic::Status> {
+			// Drop the call - return success but don't register with upstream
+			Ok(protos::Empty {})
+		}
+	}
+
+	let proxy = srv.start_proxy_no_mailbox(Proxy).await;
+
+	// Start a bark and create a VTXO
+	let bark_1 = ctx.new_bark_with_funds("bark-1", &proxy.address, btc(3)).await;
+	bark_1.board_and_confirm_and_register(&ctx, btc(2)).await;
+
+	let invoice = lightning.receiver.invoice(Some(btc(1)), "test_payment", "A test payment").await;
+
+	// The payment should fail because register_vtxos was dropped,
+	// so initiate_lightning_payment will fail when trying to mark server_may_own_descendants
+	let err = bark_1.try_pay_lightning(invoice, None, false).await.unwrap_err();
+	assert!(err.to_string().contains("does not exist") || err.to_string().contains("NULL signed_tx"),
+		"Expected error about missing or unsigned transaction, got: {err}");
 }

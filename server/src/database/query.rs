@@ -37,11 +37,15 @@ pub async fn upsert_virtual_transaction<T: GenericClient>(
 	let signed_tx_bytes = signed_tx.map(|tx| bitcoin::consensus::serialize(tx));
 
 	client.execute("
-		INSERT INTO virtual_transaction (txid, signed_tx, is_funding, server_may_own_descendant_since, created_at, updated_at)
+		INSERT INTO virtual_transaction
+			(txid, signed_tx, is_funding, server_may_own_descendant_since, created_at, updated_at)
 		VALUES ($1, $2, $3, $4, NOW(), NOW())
 		ON CONFLICT (txid) DO UPDATE SET
 			signed_tx = COALESCE(virtual_transaction.signed_tx, EXCLUDED.signed_tx),
-			server_may_own_descendant_since = COALESCE(virtual_transaction.server_may_own_descendant_since, EXCLUDED.server_may_own_descendant_since),
+			server_may_own_descendant_since = COALESCE(
+				virtual_transaction.server_may_own_descendant_since,
+				EXCLUDED.server_may_own_descendant_since
+			),
 			updated_at = NOW()
 	", &[&txid.to_string(), &signed_tx_bytes, &is_funding, &server_may_own_descendant_since]).await
 		.context("Failed to upsert virtual_transaction")?;
@@ -293,6 +297,65 @@ pub async fn complete_round_participation(
 		outputs,
 		round_id,
 	})
+}
+
+/// Marks virtual transactions as having server-owned descendants.
+///
+/// This function:
+/// 1. Fails if any of the txids don't exist in the database
+/// 2. Fails if any of the txids have NULL signed_tx
+/// 3. Updates server_may_own_descendant_since only where it's currently NULL
+/// 4. Does not overwrite existing server_may_own_descendant_since values
+///
+/// Returns an error if any transaction doesn't exist or has NULL signed_tx.
+pub async fn mark_server_may_own_descendants<T: GenericClient>(
+	client: &T,
+	txids: &[Txid],
+) -> anyhow::Result<()> {
+	if txids.is_empty() {
+		return Ok(());
+	}
+
+	let txid_strings = txids.iter().map(|t| t.to_string()).collect::<Vec<_>>();
+
+	// Check that all txids exist and have signed_tx set
+	// Returns the first txid that either doesn't exist or has NULL signed_tx
+	let stmt = client.prepare_typed("
+		WITH input_txids AS (
+			SELECT unnest($1::TEXT[]) AS txid
+		)
+		SELECT i.txid, vt.txid IS NOT NULL AS exists
+		FROM input_txids i
+		LEFT JOIN virtual_transaction vt ON i.txid = vt.txid
+		WHERE vt.txid IS NULL OR vt.signed_tx IS NULL
+		LIMIT 1
+	", &[Type::TEXT_ARRAY]).await?;
+
+	if let Some(row) = client.query_opt(&stmt, &[&txid_strings]).await? {
+		let txid_str: &str = row.get("txid");
+		let exists: bool = row.get("exists");
+		let txid = Txid::from_str(txid_str).context("invalid txid")?;
+
+		if !exists {
+			// Transaction doesn't exist (LEFT JOIN returned NULL)
+			bail!("Cannot mark server_may_own_descendants: transaction {} does not exist", txid);
+		} else {
+			// Transaction exists but has NULL signed_tx
+			bail!("Cannot mark server_may_own_descendants: transaction {} has NULL signed_tx", txid);
+		}
+	}
+
+	// Update server_may_own_descendant_since only where it's currently NULL
+	let stmt = client.prepare_typed("
+		UPDATE virtual_transaction
+		SET server_may_own_descendant_since = NOW(), updated_at = NOW()
+		WHERE txid = ANY($1) AND server_may_own_descendant_since IS NULL
+	", &[Type::TEXT_ARRAY]).await?;
+
+	client.execute(&stmt, &[&txid_strings]).await
+		.context("Failed to mark server_may_own_descendants")?;
+
+	Ok(())
 }
 
 pub async fn set_round_id_for_participations(

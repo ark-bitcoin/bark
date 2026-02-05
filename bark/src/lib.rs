@@ -1869,4 +1869,20 @@ impl Wallet {
 		// cases will be introduces later
 		Ok(crate::daemon::start_daemon(self.clone(), onchain))
 	}
+
+	/// Registers VTXOs with the server by sending their signed transaction chains.
+	/// This should be called before spending VTXOs to ensure the server can
+	/// publish forfeits if needed.
+	pub async fn register_vtxos_with_server(&self, vtxos: &[impl AsRef<Vtxo>]) -> anyhow::Result<()> {
+		if vtxos.is_empty() {
+			return Ok(());
+		}
+
+		let mut srv = self.require_server()?;
+		srv.client.register_vtxos(protos::RegisterVtxosRequest {
+			vtxos: vtxos.iter().map(|v| v.as_ref().serialize()).collect(),
+		}).await.context("failed to register vtxos")?;
+
+		Ok(())
+	}
 }

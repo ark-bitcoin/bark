@@ -46,7 +46,7 @@ impl ToStatus for anyhow::Error {
 
 		// NB it's important that not found goes first as a bad argument could
 		// have been added afterward
-		trace!("RPC ERROR: {:#}", self);
+		trace!("RPC ERROR: {:?}", self);
 		if let Some(nf) = self.downcast_ref::<NotFound>() {
 			let mut metadata = tonic::metadata::MetadataMap::new();
 			let ids = nf.identifiers().join(",").parse().expect("non-ascii identifier");

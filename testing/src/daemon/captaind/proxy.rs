@@ -36,6 +36,10 @@ pub trait ArkRpcProxy: Send + Sync + Clone + 'static {
 		Ok(upstream.register_board_vtxo(req).await?.into_inner())
 	}
 
+	async fn register_vtxos(&self, upstream: &mut ArkClient, req: protos::RegisterVtxosRequest) -> Result<protos::Empty, tonic::Status> {
+		Ok(upstream.register_vtxos(req).await?.into_inner())
+	}
+
 	async fn request_arkoor_cosign(&self, upstream: &mut ArkClient, req: protos::ArkoorPackageCosignRequest) -> Result<protos::ArkoorPackageCosignResponse, tonic::Status> {
 		Ok(upstream.request_arkoor_cosign(req).await?.into_inner())
 	}
@@ -245,6 +249,12 @@ impl<T: ArkRpcProxy> rpc::server::ArkService for ArkRpcProxyWrapper<T> {
 		&self, req: tonic::Request<protos::BoardVtxoRequest>,
 	) -> Result<tonic::Response<protos::Empty>, tonic::Status> {
 		Ok(tonic::Response::new(ArkRpcProxy::register_board_vtxo(&self.proxy, &mut self.upstream.clone(), req.into_inner()).await?))
+	}
+
+	async fn register_vtxos(
+		&self, req: tonic::Request<protos::RegisterVtxosRequest>,
+	) -> Result<tonic::Response<protos::Empty>, tonic::Status> {
+		Ok(tonic::Response::new(ArkRpcProxy::register_vtxos(&self.proxy, &mut self.upstream.clone(), req.into_inner()).await?))
 	}
 
 	async fn request_arkoor_cosign(

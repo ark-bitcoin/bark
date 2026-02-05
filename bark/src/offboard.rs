@@ -1,17 +1,18 @@
 
 use anyhow::Context;
+use bitcoin::{Amount, SignedAmount, Transaction, Txid};
 use bitcoin::hashes::Hash;
 use bitcoin::hex::DisplayHex;
-use bitcoin::{Amount, SignedAmount, Transaction, Txid};
+use bitcoin::secp256k1::Keypair;
 use log::info;
 
-use ark::{musig, VtxoPolicy};
+use ark::{musig, Vtxo, VtxoPolicy};
 use ark::arkoor::ArkoorDestination;
 use ark::challenges::OffboardRequestChallenge;
 use ark::offboard::{OffboardForfeitContext, OffboardRequest};
 use ark::vtxo::VtxoRef;
 use bitcoin_ext::P2TR_DUST;
-use server_rpc::{protos, TryFromBytes};
+use server_rpc::{protos, ServerConnection, TryFromBytes};
 
 use crate::movement::manager::OnDropStatus;
 use crate::vtxo::VtxoState;
@@ -23,6 +24,74 @@ use crate::subsystem::{OffboardMovement, Subsystem};
 
 
 impl Wallet {
+	async fn offboard_inner(
+		&self,
+		srv: &mut ServerConnection,
+		vtxos: &[impl AsRef<Vtxo>],
+		vtxo_keys: &[Keypair],
+		req: &OffboardRequest,
+	) -> anyhow::Result<Transaction> {
+		// Register VTXOs with server before offboarding
+		self.register_vtxos_with_server(&vtxos).await?;
+
+		let challenge = OffboardRequestChallenge::new(
+			&req, vtxos.iter().map(|v| v.as_ref().id()),
+		);
+		let prep_resp = srv.client.prepare_offboard(protos::PrepareOffboardRequest {
+			offboard: Some(req.into()),
+			input_vtxo_ids: vtxos.iter()
+				.map(|v| v.as_ref().id().to_bytes().to_vec())
+				.collect(),
+			input_vtxo_ownership_proofs: vtxo_keys.iter()
+				.map(|k| challenge.sign_with(k).serialize().to_vec())
+				.collect(),
+		}).await.context("prepare offboard request failed")?.into_inner();
+		let unsigned_offboard_tx = bitcoin::consensus::deserialize::<Transaction>(
+			&prep_resp.offboard_tx,
+		).with_context(|| format!(
+			"received invalid unsigned offboard tx from server: {}", prep_resp.offboard_tx.as_hex(),
+		))?;
+		let offboard_txid = unsigned_offboard_tx.compute_txid();
+		info!("Received unsigned offboard tx {} from server", offboard_txid);
+		let forfeit_cosign_nonces = prep_resp.forfeit_cosign_nonces.into_iter().map(|n| {
+			Ok(musig::PublicNonce::from_bytes(&n)
+				.context("received invalid public cosign nonce from server")?)
+		}).collect::<anyhow::Result<Vec<_>>>()?;
+
+		let ctx = OffboardForfeitContext::new(&vtxos, &unsigned_offboard_tx);
+		ctx.validate_offboard_tx(&req).context("received invalid offboard tx from server")?;
+
+		let sigs = ctx.user_sign_forfeits(&vtxo_keys, &forfeit_cosign_nonces);
+
+		let finish_resp = srv.client.finish_offboard(protos::FinishOffboardRequest {
+			offboard_txid: offboard_txid.as_byte_array().to_vec(),
+			user_nonces: sigs.public_nonces.iter().map(|n| n.serialize().to_vec()).collect(),
+			partial_signatures: sigs.partial_signatures.iter()
+				.map(|s| s.serialize().to_vec())
+				.collect(),
+		}).await.context("error sending offboard forfeit signatures to server")?.into_inner();
+
+		let signed_offboard_tx = bitcoin::consensus::deserialize::<Transaction>(
+			&finish_resp.signed_offboard_tx,
+		).with_context(|| format!(
+			"received invalid offboard tx from server: {}", finish_resp.signed_offboard_tx.as_hex(),
+		))?;
+		if signed_offboard_tx.compute_txid() != offboard_txid {
+			bail!("Signed offboard tx received from server is different from \
+				unsigned tx we forfeited for: unsigned={}, signed={}",
+				prep_resp.offboard_tx.as_hex(), finish_resp.signed_offboard_tx.as_hex(),
+			);
+		}
+
+		// we don't accept the tx if our mempool doesn't accept it, it might be a double spend
+		self.chain.broadcast_tx(&signed_offboard_tx).await.with_context(|| format!(
+			"error broadcasting offboard tx {} (tx={})",
+			offboard_txid, finish_resp.signed_offboard_tx.as_hex(),
+		))?;
+
+		Ok(signed_offboard_tx)
+	}
+
 	/// Send to an onchain address using your offchain balance
 	pub async fn send_onchain(
 		&self,
@@ -86,58 +155,10 @@ impl Wallet {
 			script_pubkey: destination_spk.clone(),
 			amount: amount,
 		};
-		let challenge = OffboardRequestChallenge::new(&req, vtxos.iter().map(|v| v.id()));
-
 		let vtxo_keys = vec![offboard_pubkey; vtxos.len()];
 
-		let prep_resp = srv.client.prepare_offboard(protos::PrepareOffboardRequest {
-			offboard: Some((&req).into()),
-			input_vtxo_ids: vtxos.iter().map(|v| v.id().to_bytes().to_vec()).collect(),
-			input_vtxo_ownership_proofs: vtxo_keys.iter()
-				.map(|k| challenge.sign_with(k).serialize().to_vec())
-				.collect(),
-		}).await.context("prepare offboard request failed")?.into_inner();
-		let unsigned_offboard_tx = bitcoin::consensus::deserialize::<Transaction>(
-			&prep_resp.offboard_tx,
-		).with_context(|| format!(
-			"received invalid unsigned offboard tx from server: {}", prep_resp.offboard_tx.as_hex(),
-		))?;
-		let offboard_txid = unsigned_offboard_tx.compute_txid();
-		info!("Received unsigned offboard tx {} from server", offboard_txid);
-		let forfeit_cosign_nonces = prep_resp.forfeit_cosign_nonces.into_iter().map(|n| {
-			Ok(musig::PublicNonce::from_bytes(&n)
-				.context("received invalid public cosign nonce from server")?)
-		}).collect::<anyhow::Result<Vec<_>>>()?;
-
-		let ctx = OffboardForfeitContext::new(&vtxos, &unsigned_offboard_tx);
-		ctx.validate_offboard_tx(&req).context("received invalid offboard tx from server")?;
-
-		let sigs = ctx.user_sign_forfeits(&vtxo_keys, &forfeit_cosign_nonces);
-
-		let finish_resp = srv.client.finish_offboard(protos::FinishOffboardRequest {
-			offboard_txid: offboard_txid.as_byte_array().to_vec(),
-			user_nonces: sigs.public_nonces.iter().map(|n| n.serialize().to_vec()).collect(),
-			partial_signatures: sigs.partial_signatures.iter()
-				.map(|s| s.serialize().to_vec())
-				.collect(),
-		}).await.context("error sending offboard forfeit signatures to server")?.into_inner();
-
-		let signed_offboard_tx = bitcoin::consensus::deserialize::<Transaction>(
-			&finish_resp.signed_offboard_tx,
-		).with_context(|| format!(
-			"received invalid offboard tx from server: {}", finish_resp.signed_offboard_tx.as_hex(),
-		))?;
-		if signed_offboard_tx.compute_txid() != offboard_txid {
-			bail!("Signed offboard tx received from server is different from \
-				unsigned tx we forfeited for: unsigned={}, signed={}",
-				prep_resp.offboard_tx.as_hex(), finish_resp.signed_offboard_tx.as_hex(),
-			);
-		}
-		// we don't accept the tx if our mempool doesn't accept it, it might be a double spend
-		self.chain.broadcast_tx(&signed_offboard_tx).await.with_context(|| format!(
-			"error broadcasting offboard tx {} (tx={})",
-			offboard_txid, finish_resp.signed_offboard_tx.as_hex(),
-		))?;
+		let signed_offboard_tx = self.offboard_inner(&mut srv, &vtxos, &vtxo_keys, &req).await
+			.context("error performing offboard")?;
 
 		movement.apply_update(MovementUpdate::new()
 			.metadata(OffboardMovement::metadata(&signed_offboard_tx))
@@ -148,7 +169,7 @@ impl Wallet {
 		self.mark_vtxos_as_spent(&vtxos).await
 			.context("error marking arkoor VTXOs as spent")?;
 
-		Ok(offboard_txid)
+		Ok(signed_offboard_tx.compute_txid())
 	}
 
 	async fn offboard(
@@ -169,12 +190,6 @@ impl Wallet {
 			bail!("it doesn't make sense to offboard dust");
 		}
 
-		let req = OffboardRequest {
-			script_pubkey: destination_spk.clone(),
-			amount: req_amount,
-		};
-		let challenge = OffboardRequestChallenge::new(&req, vtxos.iter().map(|v| v.id()));
-
 		let vtxo_keys = {
 			let mut keys = Vec::with_capacity(vtxos.len());
 			for v in &vtxos {
@@ -182,54 +197,14 @@ impl Wallet {
 			}
 			keys
 		};
-		let prep_resp = srv.client.prepare_offboard(protos::PrepareOffboardRequest {
-			offboard: Some((&req).into()),
-			input_vtxo_ids: vtxos.iter().map(|v| v.id().to_bytes().to_vec()).collect(),
-			input_vtxo_ownership_proofs: vtxo_keys.iter()
-				.map(|k| challenge.sign_with(k).serialize().to_vec())
-				.collect(),
-		}).await.context("prepare offboard request failed")?.into_inner();
-		let unsigned_offboard_tx = bitcoin::consensus::deserialize::<Transaction>(
-			&prep_resp.offboard_tx,
-		).with_context(|| format!(
-			"received invalid unsigned offboard tx from server: {}", prep_resp.offboard_tx.as_hex(),
-		))?;
-		let offboard_txid = unsigned_offboard_tx.compute_txid();
-		info!("Received unsigned offboard tx {} from server", offboard_txid);
-		let forfeit_cosign_nonces = prep_resp.forfeit_cosign_nonces.into_iter().map(|n| {
-			Ok(musig::PublicNonce::from_bytes(&n)
-				.context("received invalid public cosign nonce from server")?)
-		}).collect::<anyhow::Result<Vec<_>>>()?;
 
-		let ctx = OffboardForfeitContext::new(&vtxos, &unsigned_offboard_tx);
-		ctx.validate_offboard_tx(&req).context("received invalid offboard tx from server")?;
+		let req = OffboardRequest {
+			script_pubkey: destination_spk.clone(),
+			amount: req_amount,
+		};
 
-		let sigs = ctx.user_sign_forfeits(&vtxo_keys, &forfeit_cosign_nonces);
-
-		let finish_resp = srv.client.finish_offboard(protos::FinishOffboardRequest {
-			offboard_txid: offboard_txid.as_byte_array().to_vec(),
-			user_nonces: sigs.public_nonces.iter().map(|n| n.serialize().to_vec()).collect(),
-			partial_signatures: sigs.partial_signatures.iter()
-				.map(|s| s.serialize().to_vec())
-				.collect(),
-		}).await.context("error sending offboard forfeit signatures to server")?.into_inner();
-
-		let signed_offboard_tx = bitcoin::consensus::deserialize::<Transaction>(
-			&finish_resp.signed_offboard_tx,
-		).with_context(|| format!(
-			"received invalid offboard tx from server: {}", finish_resp.signed_offboard_tx.as_hex(),
-		))?;
-		if signed_offboard_tx.compute_txid() != offboard_txid {
-			bail!("Signed offboard tx received from server is different from \
-				unsigned tx we forfeited for: unsigned={}, signed={}",
-				prep_resp.offboard_tx.as_hex(), finish_resp.signed_offboard_tx.as_hex(),
-			);
-		}
-		// we don't accept the tx if our mempool doesn't accept it, it might be a double spend
-		self.chain.broadcast_tx(&signed_offboard_tx).await.with_context(|| format!(
-			"error broadcasting offboard tx {} (tx={})",
-			offboard_txid, finish_resp.signed_offboard_tx.as_hex(),
-		))?;
+		let signed_offboard_tx = self.offboard_inner(&mut srv, &vtxos, &vtxo_keys, &req).await
+			.context("error performing offboard")?;
 
 		self.mark_vtxos_as_spent(&vtxos).await?;
 		let effective_amt = -SignedAmount::try_from(vtxos_amount)
@@ -247,7 +222,7 @@ impl Wallet {
 				.metadata(OffboardMovement::metadata(&signed_offboard_tx)),
 		).await?;
 
-		Ok(offboard_txid)
+		Ok(signed_offboard_tx.compute_txid())
 	}
 
 	/// Offboard all VTXOs to a given [bitcoin::Address].

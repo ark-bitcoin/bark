@@ -653,6 +653,10 @@ async fn start_attempt(
 		});
 	}
 
+	// Register VTXOs with server before round participation
+	wallet.register_vtxos_with_server(&participation.inputs).await
+		.map_err(HarkForfeitError::Err)?;
+
 	let resp = srv.client.submit_payment(protos::SubmitPaymentRequest {
 		input_vtxos: input_vtxos,
 		vtxo_requests: signed_reqs.into_iter().map(Into::into).collect(),
@@ -724,6 +728,11 @@ async fn hark_vtxo_swap(
 	unlock_hash: UnlockHash,
 ) -> Result<(), HarkForfeitError> {
 	let mut srv = wallet.require_server().map_err(HarkForfeitError::Err)?;
+
+	// before we start make sure the server has our input vtxo signatures
+	wallet.register_vtxos_with_server(&participation.inputs).await
+		.context("couldn't send our input vtxos to server")
+		.map_err(HarkForfeitError::Err)?;
 
 	// first get the leaves signed
 	for vtxo in output_vtxos.iter_mut() {

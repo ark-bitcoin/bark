@@ -255,6 +255,13 @@ impl Server {
 
 		//TODO(stevenroose) use the forfeit txs here with sweeper
 
+		// Mark transactions as having server-owned descendants before completing offboard
+		let txids = vtxos.iter()
+			.flat_map(|v| v.vtxo.transactions().map(|item| item.tx.compute_txid()))
+			.collect::<Vec<_>>();
+		self.db.mark_server_may_own_descendants(&txids).await
+			.context("virtual tx update failed, user might not have called register_vtxos")?;
+
 		let mut wallet_guard = self.rounds_wallet.lock().await;
 		let signed_tx = wallet_guard.finish_tx(state.offboard_tx)
 			.context("error signing offboard tx")?;

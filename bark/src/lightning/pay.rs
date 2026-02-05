@@ -611,6 +611,9 @@ impl Wallet {
 			movement_id,
 		).await?;
 
+		// Register HTLC VTXOs with server before initiating payment
+		self.register_vtxos_with_server(&htlc_vtxos).await?;
+
 		let req = protos::InitiateLightningPaymentRequest {
 			invoice: invoice.to_string(),
 			htlc_vtxo_ids: htlc_vtxos.iter().map(|v| v.id().to_bytes().to_vec()).collect(),
