@@ -27,7 +27,7 @@ impl Wallet {
 	/// will be returned if the given [ark::Address] belongs to a different server (see
 	/// [ark::address::ArkId]).
 	pub async fn validate_arkoor_address(&self, address: &ark::Address) -> anyhow::Result<()> {
-		let srv = self.require_server()?;
+		let (srv, _) = self.require_server().await?;
 
 		if !address.ark_id().is_for_server(srv.ark_info().await?.server_pubkey) {
 			bail!("Ark address is for different server");
@@ -72,7 +72,7 @@ impl Wallet {
 		}
 
 		// Find vtxos to cover
-		let mut srv = self.require_server()?;
+		let (mut srv, _) = self.require_server().await?;
 		let inputs = self.select_vtxos_to_cover(arkoor_dest.total_amount).await?;
 		let input_ids = inputs.iter().map(|v| v.id()).collect();
 
@@ -131,7 +131,7 @@ impl Wallet {
 		destination: &ark::Address,
 		amount: Amount,
 	) -> anyhow::Result<Vec<Vtxo>> {
-		let mut srv = self.require_server()?;
+		let (mut srv, _) = self.require_server().await?;
 
 		self.validate_arkoor_address(&destination).await
 			.context("address validation failed")?;

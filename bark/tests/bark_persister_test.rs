@@ -56,7 +56,12 @@ impl BarkPersister for Dummy {
 		Ok(Some(WalletProperties {
 			network: Network::Bitcoin,
 			fingerprint: Fingerprint::default(),
+			server_pubkey: None,
 		}))
+	}
+
+	async fn set_server_pubkey(&self, _server_pubkey: PublicKey) -> anyhow::Result<()> {
+		Ok(())
 	}
 
 	async fn check_recipient_exists(&self, _recipient: &PaymentMethod) -> anyhow::Result<bool> {

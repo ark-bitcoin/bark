@@ -33,15 +33,34 @@ pub (crate) fn set_properties(
 	conn: &Connection,
 	properties: &WalletProperties,
 ) -> anyhow::Result<()> {
-	// Store the ftxo
 	let query =
-		"INSERT INTO bark_properties (id, network, fingerprint)
-		VALUES (1, :network, :fingerprint)";
+		"INSERT INTO bark_properties (id, network, fingerprint, server_pubkey)
+		VALUES (1, :network, :fingerprint, :server_pubkey)";
 	let mut statement = conn.prepare(query)?;
 
 	statement.execute(named_params! {
 		":network": properties.network.to_string(),
 		":fingerprint": properties.fingerprint.to_string(),
+		":server_pubkey": properties.server_pubkey.map(|pk| pk.to_string()),
+	})?;
+
+	Ok(())
+}
+
+/// Update the server pubkey in the wallet properties.
+///
+/// This is used when an existing wallet first connects to a server after
+/// the server pubkey tracking was added.
+pub (crate) fn set_server_pubkey(
+	conn: &Connection,
+	server_pubkey: &PublicKey,
+) -> anyhow::Result<()> {
+	let query = "UPDATE bark_properties SET server_pubkey = :server_pubkey
+		WHERE id = 1 AND server_pubkey IS NULL";
+	let mut statement = conn.prepare(query)?;
+
+	statement.execute(named_params! {
+		":server_pubkey": server_pubkey.to_string(),
 	})?;
 
 	Ok(())
@@ -55,11 +74,18 @@ pub (crate) fn fetch_properties(conn: &Connection) -> anyhow::Result<Option<Wall
 	if let Some(row) = rows.next()? {
 		let network: String = row.get("network")?;
 		let fingerprint: String = row.get("fingerprint")?;
+		let server_pubkey: Option<String> = row.get("server_pubkey")?;
+
+		let server_pubkey = server_pubkey
+			.map(|s| PublicKey::from_str(&s))
+			.transpose()
+			.context("invalid server pubkey")?;
 
 		Ok(Some(
 			WalletProperties {
 				network: Network::from_str(&network).context("invalid network")?,
 				fingerprint: Fingerprint::from_str(&fingerprint).context("invalid fingerprint")?,
+				server_pubkey,
 			}
 		))
 	} else {

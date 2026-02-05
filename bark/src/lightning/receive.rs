@@ -33,8 +33,7 @@ impl Wallet {
 			bail!("Cannot create invoice for 0 sats (this would create an explicit 0 sat invoice, not an any-amount invoice)");
 		}
 
-		let mut srv = self.require_server()?;
-		let ark_info = srv.ark_info().await?;
+		let (mut srv, ark_info) = self.require_server().await?;
 		let config = self.config();
 
 		// User needs to enfore the following delta:
@@ -117,7 +116,7 @@ impl Wallet {
 	) -> anyhow::Result<LightningReceive> {
 		let movement_id = receive.movement_id
 			.context("No movement created for lightning receive")?;
-		let mut srv = self.require_server()?;
+		let (mut srv, _) = self.require_server().await?;
 
 		// order inputs by vtxoid before we generate nonces
 		let inputs = {
@@ -256,7 +255,7 @@ impl Wallet {
 		wait: bool,
 		token: Option<&str>,
 	) -> anyhow::Result<Option<LightningReceive>> {
-		let mut srv = self.require_server()?;
+		let (mut srv, _) = self.require_server().await?;
 		let current_height = self.chain.tip().await?;
 
 		let mut receive = self.db.fetch_lightning_receive_by_payment_hash(payment_hash).await?
@@ -499,8 +498,7 @@ impl Wallet {
 		wait: bool,
 		token: Option<&str>,
 	) -> anyhow::Result<LightningReceive> {
-		let srv = self.require_server()?;
-		let ark_info = srv.ark_info().await?;
+		let (_, ark_info) = self.require_server().await?;
 
 		// check_lightning_receive returns None if there is no incoming payment (yet)
 		// In that case we just return and don't try to claim
