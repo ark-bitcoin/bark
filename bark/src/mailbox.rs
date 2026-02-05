@@ -5,6 +5,7 @@ pub extern crate bip39;
 pub extern crate lightning_invoice;
 pub extern crate lnurl as lnurllib;
 
+use std::collections::HashMap;
 
 use anyhow::Context;
 use bitcoin::Amount;
@@ -17,7 +18,7 @@ use ark::mailbox::MailboxIdentifier;
 use protos::mailbox_server::mailbox_message;
 use server_rpc::protos;
 use server_rpc::protos::mailbox_server::ArkoorMessage;
-use crate::movement::MovementStatus;
+use crate::movement::{MovementDestination, MovementStatus};
 use crate::movement::update::MovementUpdate;
 use crate::Wallet;
 use crate::subsystem::{ArkoorMovement, Subsystem};
@@ -156,13 +157,29 @@ impl Wallet {
 			.map(|vtxo| vtxo.amount()).sum::<Amount>()
 			.to_signed()?;
 		self.store_spendable_vtxos(&vtxos).await?;
+
+		// Build received_on destinations from received VTXOs, aggregated by address
+		let mut received_by_address = HashMap::<ark::Address, Amount>::new();
+		for vtxo in &vtxos {
+			if let Ok(Some((index, _))) = self.pubkey_keypair(&vtxo.user_pubkey()).await {
+				if let Ok(address) = self.peak_address(index).await {
+					*received_by_address.entry(address).or_default() += vtxo.amount();
+				}
+			}
+		}
+		let received_on: Vec<_> = received_by_address
+			.into_iter()
+			.map(|(addr, amount)| MovementDestination::ark(addr, amount))
+			.collect();
+
 		self.movements.new_finished_movement(
 			Subsystem::ARKOOR,
 			ArkoorMovement::Receive.to_string(),
 			MovementStatus::Successful,
 			MovementUpdate::new()
 				.produced_vtxos(&vtxos)
-				.intended_and_effective_balance(balance),
+				.intended_and_effective_balance(balance)
+				.received_on(received_on),
 		).await?;
 
 		if let Some(checkpoint) = checkpoint {

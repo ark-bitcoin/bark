@@ -71,7 +71,11 @@ async fn arkoor_send_receive() {
 	assert_eq!(receive_movement.effective_balance, signed_sat(230_000));
 	assert_eq!(receive_movement.offchain_fee, sat(0));
 	assert_eq!(receive_movement.sent_to.len(), 0);
-	assert_eq!(receive_movement.received_on.len(), 0); // We don't know the address an arkoor was sent to.
+	assert_eq!(receive_movement.received_on.len(), 1);
+	assert_eq!(receive_movement.received_on[0], MovementDestination {
+		destination: PaymentMethod::Ark(bark2_addr.to_string()),
+		amount: sat(230_000),
+	});
 	assert_eq!(receive_movement.input_vtxos.len(), 0);
 	assert_eq!(receive_movement.output_vtxos.len(), 3);
 	assert_vec_unsorted_equal(receive_movement.output_vtxos, bark2_vtxos);
