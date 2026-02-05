@@ -1,0 +1,4 @@
+- Populate `received_on` field for arkoor receive movements
+  Previously, the `received_on` field was always empty for arkoor receives. Now it contains the Ark address(es) the
+  VTXOs were received on, aggregated by address with the total amount received on each.
+  [#1610](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1610)
