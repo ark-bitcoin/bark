@@ -1,0 +1,6 @@
+- Persist server pubkey and detect if it changes
+  The wallet now stores the server's public key on first connection and verifies it on subsequent
+  connections. If the server pubkey changes unexpectedly, the wallet will refuse to interact with
+  the server and suggest the user manually exit their VTXOs. This protects against accidentally
+  connecting to a different or compromised server.
+  [#1611](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1611)
