@@ -51,8 +51,8 @@
 				slog-tools = pkgs.symlinkJoin {
 					name = "bark-slog-tools";
 					paths = [
-						(slogJq "slmod" ''select((.module | split("::") | index($arg)) != null)'')
-						(slogJq "sls" ''select(.kv != null)'')
+						(slogJq "slmod" ''select((.target | split("::") | index($arg)) != null)'')
+						(slogJq "sls" ''select(.slog_id != null)'')
 						(slogJq "slwarn" ''select(.level == "WARN" or .level == "ERROR")'')
 						(slogJq "slinfo" ''select(.level == "INFO" or .level == "WARN" or .level == "ERROR")'')
 						(slogJq "sldebug" ''select(.level == "DEBUG" or .level == "INFO" or .level == "WARN" or .level == "ERROR")'')
@@ -67,9 +67,9 @@
 								def rpad($n; $s):
 									($s // "") as $s0 | ($s0|length) as $L |
 									$s0 + (if $L < $n then (reduce range(0; $n - $L) as $_ (""; . + " ")) else "" end);
-								"\(time_ms3(.timestamp)) \(rpad(5; .level)) \(rpad(16; .module)) \(
-									if .kv != null
-									then "\(.kv.slog_id) - \(.message): \(.kv.slog_data)"
+								"[\(time_ms3(.timestamp)) \(rpad(5; .level)) \(rpad(17; "\(.target)]"))  \(
+									if .slog_id != null
+									then "\(.slog_id) - \(.message): \(.slog_data_json)"
 									else "\(.message)"
 									end
 								)"

@@ -11,7 +11,8 @@ use anyhow::Context;
 use bitcoin_ext::BlockHeight;
 use bitcoin::{Amount, Network, Txid};
 use bitcoin::address::{Address, NetworkUnchecked};
-use log::{info, trace};
+use log::{error, info, trace, warn};
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
 use tokio::sync::{self, mpsc};
 use tokio::process::Command;
 
@@ -21,7 +22,7 @@ pub use server::config::{self, Config};
 
 use crate::daemon::captaind::proxy::{ArkRpcProxy, ArkRpcProxyServer, MailboxRpcProxy};
 use crate::{secs, Bitcoind, Daemon, DaemonHelper, TestContext};
-use crate::daemon::LogHandler;
+use crate::daemon::{LogHandler, STDOUT_LOGFILE};
 use crate::constants::env::CAPTAIND_EXEC;
 use crate::util::resolve_path;
 
@@ -35,6 +36,7 @@ pub type SweepAdminClient = rpc::admin::SweepAdminServiceClient<tonic::transport
 
 
 pub const CAPTAIND_CONFIG_FILE: &str = "config.toml";
+pub const HUMAN_READABLE_LOGFILE: &str = "stdout.hr.log";
 
 
 pub trait SlogHandler: Send + Sync + 'static {
@@ -389,6 +391,10 @@ impl DaemonHelper for CaptaindHelper {
 		log_handler_tx: &mpsc::Sender<Box<dyn LogHandler>>,
 	) -> anyhow::Result<()> {
 		log_handler_tx.send(self.init_slog_handler()).await.unwrap();
+
+		// create human-readable log file if we have our `slf` tool
+		spawn_slf_pipe(self.datadir()).await;
+
 		Ok(())
 	}
 }
@@ -502,4 +508,97 @@ impl CaptaindHelper {
 			hadler_rx: rx,
 		})
 	}
+}
+
+/// Check if the `slf` command is available on the system.
+async fn is_slf_available() -> bool {
+	tokio::process::Command::new("which")
+		.arg("slf")
+		.output()
+		.await
+		.map(|output| output.status.success())
+		.unwrap_or(false)
+}
+
+/// Spawns a task that reads stdout.log and pipes it through slf to stdout.hr.log
+async fn spawn_slf_pipe(datadir: PathBuf) {
+	// Check if slf is available
+	if !is_slf_available().await {
+		trace!("slf not available, skipping formatted log output");
+		return;
+	}
+
+	tokio::spawn(async move {
+		let stdout_path = datadir.join(STDOUT_LOGFILE);
+		let out_path = datadir.join(HUMAN_READABLE_LOGFILE);
+
+		// Spawn slf process
+		let out_file = match std::fs::File::options()
+			.create(true)
+			.append(true)
+			.open(&out_path)
+		{
+			Ok(f) => f,
+			Err(e) => {
+				warn!("Failed to create slf log file: {}", e);
+				return;
+			}
+		};
+
+		let mut cmd = tokio::process::Command::new("slf");
+		cmd.stdin(std::process::Stdio::piped());
+		cmd.stdout(out_file);
+		cmd.stderr(std::process::Stdio::null());
+		cmd.kill_on_drop(true);
+
+		let mut child = match cmd.spawn() {
+			Ok(c) => {
+				info!("slf process spawned, human-readable output will be written to {}",
+					out_path.display(),
+				);
+				c
+			},
+			Err(e) => {
+				warn!("Failed to spawn slf: {}", e);
+				return;
+			}
+		};
+
+		let mut stdin = child.stdin.take().expect("slf stdin was piped");
+
+		// Open and read from stdout.log
+		let in_file = match tokio::fs::File::open(&stdout_path).await {
+			Ok(f) => f,
+			Err(e) => {
+				error!("Failed to open stdout.log for slf reader: {}", e);
+				return;
+			}
+		};
+
+		let mut reader = tokio::io::BufReader::new(in_file);
+		let mut line = String::new();
+		loop {
+			line.clear();
+			match reader.read_line(&mut line).await {
+				Ok(0) => {
+					// EOF or no data yet, wait a bit
+					tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+				}
+				Ok(_) => {
+					if let Err(e) = stdin.write_all(line.as_bytes()).await {
+						warn!("slf pipe closed or error occurred: {}", e);
+						break;
+					}
+				}
+				Err(e) => {
+					warn!("Error reading stdout.log for slf: {}", e);
+					break;
+				}
+			}
+		}
+
+		let _ = stdin.flush().await;
+		drop(stdin);
+		let _ = child.wait().await;
+	});
 }
