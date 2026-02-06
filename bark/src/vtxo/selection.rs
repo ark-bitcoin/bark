@@ -65,7 +65,7 @@ use bitcoin::FeeRate;
 use log::warn;
 
 use ark::VtxoId;
-use bitcoin_ext::BlockHeight;
+use bitcoin_ext::{BlockHeight, P2TR_DUST};
 
 use crate::Wallet;
 use crate::exit::progress::util::estimate_exit_cost;
@@ -238,8 +238,8 @@ impl FilterVtxos for VtxoFilter<'_> {
 enum InnerRefreshStrategy {
 	/// Includes a VTXO absolutely must be refreshed, for example, if it is about to expire.
 	MustRefresh,
-	/// Includes a VTXO that should be refreshed soon, for example, if it's approaching expiry or is
-	/// uneconomical to exit. This will also include VTXOs that meet the
+	/// Includes a VTXO that should be refreshed soon, for example, if it's approaching expiry, is
+	/// uneconomical to exit, or is dust. This will also include VTXOs that meet the
 	/// [InnerRefreshStrategy::MustRefresh] criteria.
 	ShouldRefreshInclusive,
 	/// Same as [InnerRefreshStrategy::ShouldRefreshInclusive], but it excludes VTXOs that meet the
@@ -402,6 +402,11 @@ impl<'a> RefreshStrategy<'a> {
 			warn!("VTXO {} is uneconomical to exit, should be refreshed on \
 				next opportunity", vtxo.id(),
 			);
+			return Ok(true);
+		}
+
+		if vtxo.amount() < P2TR_DUST {
+			warn!("VTXO {} is dust, should be refreshed on next opportunity", vtxo.id());
 			return Ok(true);
 		}
 
