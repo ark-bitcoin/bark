@@ -312,7 +312,7 @@ pub use self::daemon::DaemonHandle;
 pub use self::persist::sqlite::SqliteClient;
 pub use self::vtxo::WalletVtxo;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use anyhow::{bail, Context};
@@ -1324,9 +1324,7 @@ impl Wallet {
 	///
 	/// Returns a [RoundStateId] if a refresh is scheduled.
 	pub async fn maybe_schedule_maintenance_refresh(&self) -> anyhow::Result<Option<RoundStateId>> {
-		let vtxos = self.get_vtxos_to_refresh().await?.into_iter()
-			.map(|v| v.id())
-			.collect::<Vec<_>>();
+		let vtxos = self.get_vtxos_to_refresh().await?;
 		if vtxos.len() == 0 {
 			return Ok(None);
 		}
@@ -1355,9 +1353,7 @@ impl Wallet {
 	pub async fn maybe_schedule_maintenance_refresh_delegated(
 		&self,
 	) -> anyhow::Result<Option<RoundStateId>> {
-		let vtxos = self.get_vtxos_to_refresh().await?.into_iter()
-			.map(|v| v.id())
-			.collect::<Vec<_>>();
+		let vtxos = self.get_vtxos_to_refresh().await?;
 		if vtxos.len() == 0 {
 			return Ok(None);
 		}
@@ -1384,9 +1380,7 @@ impl Wallet {
 	///
 	/// Returns a [RoundStatus] if a refresh occurs.
 	pub async fn maintenance_refresh(&self) -> anyhow::Result<Option<RoundStatus>> {
-		let vtxos = self.get_vtxos_to_refresh().await?.into_iter()
-			.map(|v| v.id())
-			.collect::<Vec<_>>();
+		let vtxos = self.get_vtxos_to_refresh().await?;
 		if vtxos.len() == 0 {
 			return Ok(None);
 		}
@@ -1778,27 +1772,15 @@ impl Wallet {
 		Ok(Some(self.join_next_round_delegated(part, Some(RoundMovement::Refresh)).await?))
 	}
 
-	/// This will find all VTXOs that meets must-refresh criteria.
-	/// Then, if there are some VTXOs to refresh, it will
-	/// also add those that meet should-refresh criteria.
+	/// This will find all VTXOs that meets must-refresh criteria. Then, if there are some VTXOs to
+	/// refresh, it will also add those that meet should-refresh criteria.
 	pub async fn get_vtxos_to_refresh(&self) -> anyhow::Result<Vec<WalletVtxo>> {
-		let tip = self.chain.tip().await?;
-		let fee_rate = self.chain.fee_rates().await.fast;
-
-		// Check if there is any VTXO that we must refresh
-		let must_refresh_vtxos = self.spendable_vtxos_with(
-			&RefreshStrategy::must_refresh(self, tip, fee_rate),
-		).await?;
-		if must_refresh_vtxos.is_empty() {
-			return Ok(vec![]);
-		} else {
-			// If we need to do a refresh, we take all the should_refresh vtxo's as well
-			// This helps us to aggregate some VTXOs
-			let should_refresh_vtxos = self.spendable_vtxos_with(
-				&RefreshStrategy::should_refresh(self, tip, fee_rate),
-			).await?;
-			Ok(should_refresh_vtxos)
-		}
+		let vtxos = self.spendable_vtxos_with(&RefreshStrategy::should_refresh_if_must(
+			self,
+			self.chain.tip().await?,
+			self.chain.fee_rates().await.fast,
+		)).await?;
+		Ok(vtxos)
 	}
 
 	/// Returns the block height at which the first VTXO will expire
