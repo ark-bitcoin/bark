@@ -173,6 +173,10 @@ impl MailboxAuthorization {
 		let msg = Self::signable_message(self.expiry);
 		SECP.verify_schnorr(&self.sig, &msg, &self.id.as_pubkey().into()).is_ok()
 	}
+
+	pub fn is_expired(&self) -> bool {
+		self.expiry() < chrono::Local::now()
+	}
 }
 
 impl ProtocolEncoding for MailboxAuthorization {

@@ -1737,18 +1737,17 @@ async fn mailbox_post_and_process_with_auth() {
 
 	let mailbox_id = MailboxIdentifier::from_pubkey(bark2_mailbox_kp.public_key());
 	let unblinded_id = mailbox_id.to_vec();
-	let expiry = chrono::Local::now() + Duration::from_secs(60);
-	let mailbox_auth = MailboxAuthorization::new(&bark2_mailbox_kp, expiry);
+	let expiry_ok = chrono::Local::now() + Duration::from_secs(60);
+	let mailbox_auth = MailboxAuthorization::new(&bark2_mailbox_kp, expiry_ok);
 	let authorization = Some(mailbox_auth.serialize().to_vec());
 
 	let read_mailbox = protos::mailbox_server::MailboxRequest {
 		authorization,
-		unblinded_id,
+		unblinded_id: unblinded_id.clone(),
 		checkpoint: 0,
 	};
 
-	// First we check that everything is ok with correct authorization
-
+	// First, we check that everything is ok with correct authorization
 	trace!("reading empty mailbox");
 	let mailbox_msgs = mb_rpc.read_mailbox(read_mailbox.clone()).await.unwrap().into_inner();
 	assert_eq!(mailbox_msgs.messages.len(), 0);
@@ -1775,24 +1774,59 @@ async fn mailbox_post_and_process_with_auth() {
 		},
 	}
 
-	// Now we check that server rejects requests with incorrect authorization
-
-	let unblinded_id = mailbox_id.to_vec();
-	let expiry = chrono::Local::now() + Duration::from_secs(60);
+	// Now we check that the server rejects requests with incorrect authorization
 	let invalid_as_mailbox_kp = bark2.client().await.derive_store_next_keypair().await
 		.expect("derive keypair").0;
-	let mailbox_auth = MailboxAuthorization::new(&invalid_as_mailbox_kp, expiry);
-	let authorization = Some(mailbox_auth.serialize().to_vec());
+	let invalid_mailbox_auth = MailboxAuthorization::new(&invalid_as_mailbox_kp, expiry_ok);
+	let invalid_authorization = Some(invalid_mailbox_auth.serialize().to_vec());
 
 	let incorrect_read_mailbox = protos::mailbox_server::MailboxRequest {
-		authorization,
-		unblinded_id,
+		authorization: invalid_authorization,
+		unblinded_id: unblinded_id.clone(),
 		checkpoint: 0,
 	};
 
 	trace!("reading mailbox incorrect authorization");
-	let err = mb_rpc.read_mailbox(incorrect_read_mailbox).await.unwrap_err().to_alt_string();
+	let err = mb_rpc.read_mailbox(incorrect_read_mailbox.clone()).await.unwrap_err().to_alt_string();
 	assert!(err.contains("bad user input: authorization doesn't match mailbox id"), "err: {err}");
+
+	trace!("subscribing mailbox incorrect authorization");
+	let err = mb_rpc.subscribe_mailbox(incorrect_read_mailbox).await.unwrap_err().to_alt_string();
+	assert!(err.contains("bad user input: authorization doesn't match mailbox id"), "err: {err}");
+
+	// Now we check that the server rejects requests with expired authorization
+	let expiry_expired = chrono::Local::now() - Duration::from_secs(60);
+	let expired_mailbox_auth = MailboxAuthorization::new(&bark2_mailbox_kp, expiry_expired);
+	let expired_authorization = Some(expired_mailbox_auth.serialize().to_vec());
+
+	let expired_read_mailbox = protos::mailbox_server::MailboxRequest {
+		authorization: expired_authorization.clone(),
+		unblinded_id: unblinded_id.clone(),
+		checkpoint: 0,
+	};
+
+	trace!("reading mailbox expired authorization");
+	let err = mb_rpc.read_mailbox(expired_read_mailbox.clone()).await.unwrap_err().to_alt_string();
+	assert!(err.contains("bad user input: mailbox authorization expired"), "err: {err}");
+
+	trace!("subscribing mailbox expired authorization");
+	let err = mb_rpc.subscribe_mailbox(expired_read_mailbox).await.unwrap_err().to_alt_string();
+	assert!(err.contains("bad user input: mailbox authorization expired"), "err: {err}");
+
+	// Now we check that the server rejects requests with no authorization
+	let no_auth_read_mailbox = protos::mailbox_server::MailboxRequest {
+		authorization: None,
+		unblinded_id: unblinded_id.clone(),
+		checkpoint: 0,
+	};
+
+	trace!("reading mailbox without authorization");
+	let err = mb_rpc.read_mailbox(no_auth_read_mailbox.clone()).await.unwrap_err().to_alt_string();
+	assert!(err.contains("bad user input: mailbox authorization required"), "err: {err}");
+
+	trace!("subscribing mailbox without authorization");
+	let err = mb_rpc.subscribe_mailbox(no_auth_read_mailbox).await.unwrap_err().to_alt_string();
+	assert!(err.contains("bad user input: mailbox authorization required"), "err: {err}");
 
 	trace!("processing mailbox");
 	loop {
