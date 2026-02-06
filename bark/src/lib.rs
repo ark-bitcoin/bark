@@ -1329,14 +1329,10 @@ impl Wallet {
 			return Ok(None);
 		}
 
-		let mut participation = match self.build_refresh_participation(vtxos).await? {
+		let participation = match self.build_refresh_participation(vtxos).await? {
 			Some(participation) => participation,
 			None => return Ok(None),
 		};
-
-		if let Err(e) = self.add_should_refresh_vtxos(&mut participation).await {
-			warn!("Error trying to add additional VTXOs that should be refreshed: {:#}", e);
-		}
 
 		info!("Scheduling maintenance refresh ({} vtxos)", participation.inputs.len());
 		let state = self.join_next_round(participation, Some(RoundMovement::Refresh)).await?;
@@ -1358,14 +1354,10 @@ impl Wallet {
 			return Ok(None);
 		}
 
-		let mut participation = match self.build_refresh_participation(vtxos).await? {
+		let participation = match self.build_refresh_participation(vtxos).await? {
 			Some(participation) => participation,
 			None => return Ok(None),
 		};
-
-		if let Err(e) = self.add_should_refresh_vtxos(&mut participation).await {
-			warn!("Error trying to add additional VTXOs that should be refreshed: {:#}", e);
-		}
 
 		info!("Scheduling delegated maintenance refresh ({} vtxos)", participation.inputs.len());
 		let state = self.join_next_round_delegated(participation, Some(RoundMovement::Refresh)).await?;
@@ -1649,9 +1641,9 @@ impl Wallet {
 		Ok(!my_clause.is_some())
 	}
 
-	/// If there are any VTXOs that match the "should-refresh" condition with
-	/// a total value over the  p2tr dust limit, they are added to the round
-	/// participation and an additional output is also created.
+	/// If there are any VTXOs that match the "must-refresh" and "should-refresh" criteria with a
+	/// total value over the P2TR dust limit, they are added to the round participation and an
+	/// additional output is also created.
 	async fn add_should_refresh_vtxos(
 		&self,
 		participation: &mut RoundParticipation,
@@ -1659,20 +1651,37 @@ impl Wallet {
 		let excluded_ids = participation.inputs.iter().map(|v| v.vtxo_id())
 			.collect::<HashSet<_>>();
 
-		let should_refresh_vtxos = self.get_vtxos_to_refresh().await?.into_iter()
-			.filter(|v| !excluded_ids.contains(&v.id()))
-			.map(|v| v.vtxo).collect::<Vec<_>>();
+		// Get VTXOs that need and should be refreshed, then filter out any duplicates before
+		// adjusting the round participation.
+		let mut vtxos_to_refresh = self.spendable_vtxos_with(
+			&RefreshStrategy::should_refresh(
+				self,
+				self.chain.tip().await?,
+				self.chain.fee_rates().await.fast,
+			),
+		).await?;
+		let mut should_refresh_amount = Amount::ZERO;
+		for i in (0..vtxos_to_refresh.len()).rev() {
+			let vtxo = &vtxos_to_refresh[i];
+			if excluded_ids.contains(&vtxo.id()) {
+				vtxos_to_refresh.swap_remove(i);
+				continue;
+			}
+			should_refresh_amount += vtxo.amount();
+		}
 
-		if !should_refresh_vtxos.is_empty() {
-			let total_amount = should_refresh_vtxos.iter().map(|v| v.amount()).sum::<Amount>();
-
+		if should_refresh_amount >= P2TR_DUST {
+			info!(
+				"Adding {} extra VTXOs to round participation (total amount = {})",
+				vtxos_to_refresh.len(), should_refresh_amount,
+			);
 			let (user_keypair, _) = self.derive_store_next_keypair().await?;
 			let req = VtxoRequest {
 				policy: VtxoPolicy::new_pubkey(user_keypair.public_key()),
-				amount: total_amount,
+				amount: should_refresh_amount,
 			};
-
-			participation.inputs.extend(should_refresh_vtxos);
+			participation.inputs.reserve(vtxos_to_refresh.len());
+			participation.inputs.extend(vtxos_to_refresh.into_iter().map(|wv| wv.vtxo));
 			participation.outputs.push(req);
 		}
 
