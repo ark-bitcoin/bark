@@ -106,18 +106,20 @@ impl VtxoState {
 pub struct WalletVtxo {
 	/// The underlying [Vtxo].
 	pub vtxo: Vtxo,
-	/// The current tracked state for [WalletVtxo::vtxo].
+	/// The current tracked state for [WalletVtxo::into_vtxo].
 	pub state: VtxoState,
 }
 
 impl VtxoRef for WalletVtxo {
 	fn vtxo_id(&self) -> ark::VtxoId { self.vtxo.id() }
-	fn vtxo(&self) -> Option<&Vtxo> { Some(&self.vtxo) }
+	fn vtxo_ref(&self) -> Option<&Vtxo> { Some(&self.vtxo) }
+	fn into_vtxo(self) -> Option<Vtxo> { Some(self.vtxo) }
 }
 
 impl<'a> VtxoRef for &'a WalletVtxo {
 	fn vtxo_id(&self) -> ark::VtxoId { self.vtxo.id() }
-	fn vtxo(&self) -> Option<&Vtxo> { Some(&self.vtxo) }
+	fn vtxo_ref(&self) -> Option<&Vtxo> { Some(&self.vtxo) }
+	fn into_vtxo(self) -> Option<Vtxo> { Some(self.vtxo.clone()) }
 }
 
 impl AsRef<Vtxo> for WalletVtxo {

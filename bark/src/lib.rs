@@ -737,7 +737,7 @@ impl Wallet {
 	/// * `Err(anyhow::Error)` - If the corresponding public key doesn't exist
 	///   in the database or a database error occurred.
 	pub async fn get_vtxo_key(&self, vtxo: impl VtxoRef) -> anyhow::Result<Keypair> {
-		let vtxo = match vtxo.vtxo() {
+		let vtxo = match vtxo.vtxo_ref() {
 			Some(v) => v,
 			None => &self.get_vtxo_by_id(vtxo.vtxo_id()).await?,
 		};
@@ -1606,7 +1606,7 @@ impl Wallet {
 		let mut srv = self.require_server()?;
 
 		// Get the vtxo and funding transaction from the database
-		let vtxo = match vtxo.vtxo() {
+		let vtxo = match vtxo.vtxo_ref() {
 			Some(v) => v,
 			None => {
 				&self.db.get_wallet_vtxo(vtxo.vtxo_id()).await?

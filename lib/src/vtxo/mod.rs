@@ -716,28 +716,35 @@ pub trait VtxoRef {
 	/// The [VtxoId] of the VTXO
 	fn vtxo_id(&self) -> VtxoId;
 
-	/// If the [Vtxo] can be provided, provides it
-	fn vtxo(&self) -> Option<&Vtxo>;
+	/// If the [Vtxo] can be provided, provides it by reference
+	fn vtxo_ref(&self) -> Option<&Vtxo> { None }
+
+	/// If the [Vtxo] can be provided, provides it by value, either directly or via cloning
+	fn into_vtxo(self) -> Option<Vtxo> where Self: Sized;
 }
 
 impl VtxoRef for VtxoId {
 	fn vtxo_id(&self) -> VtxoId { *self }
-	fn vtxo(&self) -> Option<&Vtxo> { None }
+	fn vtxo_ref(&self) -> Option<&Vtxo> { None }
+	fn into_vtxo(self) -> Option<Vtxo> { None }
 }
 
 impl<'a> VtxoRef for &'a VtxoId {
 	fn vtxo_id(&self) -> VtxoId { **self }
-	fn vtxo(&self) -> Option<&Vtxo> { None }
+	fn vtxo_ref(&self) -> Option<&Vtxo> { None }
+	fn into_vtxo(self) -> Option<Vtxo> { None }
 }
 
 impl VtxoRef for Vtxo {
 	fn vtxo_id(&self) -> VtxoId { self.id() }
-	fn vtxo(&self) -> Option<&Vtxo> { Some(self) }
+	fn vtxo_ref(&self) -> Option<&Vtxo> { Some(self) }
+	fn into_vtxo(self) -> Option<Vtxo> { Some(self) }
 }
 
 impl<'a> VtxoRef for &'a Vtxo {
 	fn vtxo_id(&self) -> VtxoId { self.id() }
-	fn vtxo(&self) -> Option<&Vtxo> { Some(*self) }
+	fn vtxo_ref(&self) -> Option<&Vtxo> { Some(*self) }
+	fn into_vtxo(self) -> Option<Vtxo> { Some(self.clone()) }
 }
 
 /// The byte used to encode the [VtxoPolicy::Pubkey] output type.
