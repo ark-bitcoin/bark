@@ -426,12 +426,10 @@ pub async fn refresh_vtxos(
 		badarg!("No VTXO IDs provided");
 	}
 
-	let mut vtxo_ids = Vec::new();
-	for s in body.vtxos {
-		let id = ark::VtxoId::from_str(&s).badarg("Invalid VTXO id")?;
-		wallet.get_vtxo_by_id(id).await.not_found([id], "VTXO not found")?;
-		vtxo_ids.push(id);
-	}
+	let vtxo_ids = body.vtxos
+		.into_iter()
+		.map(|s| ark::VtxoId::from_str(&s).badarg("Invalid VTXO id"))
+		.collect::<Result<Vec<_>, _>>()?;
 
 	let participation = wallet
 		.build_refresh_participation(vtxo_ids).await

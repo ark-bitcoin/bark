@@ -270,8 +270,7 @@
 //! 	let fee_rate = wallet.chain.fee_rates().await.fast;
 //! 	let strategy = RefreshStrategy::must_refresh(&wallet, tip, fee_rate);
 //!
-//! 	let vtxos = wallet.spendable_vtxos_with(&strategy).await?
-//! 		.into_iter().map(|v| v.vtxo).collect::<Vec<_>>();
+//! 	let vtxos = wallet.spendable_vtxos_with(&strategy).await?;
 //!		wallet.refresh_vtxos(vtxos).await?;
 //! 	Ok(())
 //! }
@@ -1690,33 +1689,42 @@ impl Wallet {
 		&self,
 		vtxos: impl IntoIterator<Item = V>,
 	) -> anyhow::Result<Option<RoundParticipation>> {
-		let vtxos = {
-			let mut ret = HashMap::new();
-			for v in vtxos {
-				let id = v.vtxo_id();
-				let vtxo = self.get_vtxo_by_id(id).await
-					.with_context(|| format!("vtxo with id {} not found", id))?;
-				if !ret.insert(id, vtxo).is_none() {
+		let (vtxos, total_amount) = {
+			let iter = vtxos.into_iter();
+			let size_hint = iter.size_hint();
+			let mut vtxos = Vec::<Vtxo>::with_capacity(size_hint.1.unwrap_or(size_hint.0));
+			let mut amount = Amount::ZERO;
+			for vref in iter {
+				// We use a Vec here instead of a HashMap or a HashSet of IDs because for the kinds
+				// of elements we expect to deal with, a Vec is likely to be quicker. The overhead
+				// of hashing each ID and making additional allocations isn't likely to be worth it
+				// for what is likely to be a handful of VTXOs or at most a couple of hundred.
+				let id = vref.vtxo_id();
+				if vtxos.iter().any(|v| v.id() == id) {
 					bail!("duplicate VTXO id: {}", id);
 				}
+				let vtxo = if let Some(vtxo) = vref.into_vtxo() {
+					vtxo
+				} else {
+					self.get_vtxo_by_id(id).await
+						.with_context(|| format!("vtxo with id {} not found", id))?.vtxo
+				};
+				amount += vtxo.amount();
+				vtxos.push(vtxo);
 			}
-			ret
+			(vtxos, amount)
 		};
 
 		if vtxos.is_empty() {
 			info!("Skipping refresh since no VTXOs are provided.");
 			return Ok(None);
 		}
-
-		let total_amount = vtxos.values().map(|v| v.vtxo.amount()).sum();
-
 		ensure!(total_amount >= P2TR_DUST,
 			"vtxo amount must be at least {} to participate in a round",
 			P2TR_DUST,
 		);
 
 		info!("Refreshing {} VTXOs (total amount = {}).", vtxos.len(), total_amount);
-
 		let (user_keypair, _) = self.derive_store_next_keypair().await?;
 		let req = VtxoRequest {
 			policy: VtxoPolicy::Pubkey(PubkeyVtxoPolicy { user_pubkey: user_keypair.public_key() }),
@@ -1724,7 +1732,7 @@ impl Wallet {
 		};
 
 		Ok(Some(RoundParticipation {
-			inputs: vtxos.into_values().map(|v| v.vtxo).collect(),
+			inputs: vtxos,
 			outputs: vec![req],
 		}))
 	}
