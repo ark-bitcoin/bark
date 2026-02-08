@@ -275,7 +275,7 @@ impl TestContext {
 				vtxo_target_issue_threshold: 50,
 				vtxo_lifetime: 144,
 				vtxo_pre_expiry: 12,
-				vtxo_max_arkoor_depth: 3,
+				max_vtxo_arkoor_depth: 3,
 				issue_interval: Duration::from_secs(3),
 			},
 			offboard_feerate: FeeRate::from_sat_per_vb_unchecked(7),
@@ -306,10 +306,10 @@ impl TestContext {
 			invoice_check_interval: Duration::from_secs(3),
 			invoice_recheck_delay: Duration::from_secs(2),
 			invoice_check_base_delay: Duration::from_secs(2),
-			invoice_check_max_delay: Duration::from_secs(10),
+			max_invoice_check_delay: Duration::from_secs(10),
 			invoice_poll_interval: Duration::from_secs(10),
 			track_all_base_delay: Duration::from_secs(1),
-			track_all_max_delay: Duration::from_secs(60),
+			max_track_all_delay: Duration::from_secs(60),
 			htlc_expiry_delta: 6,
 			htlc_send_expiry_delta: 258,
 			max_user_invoice_cltv_delta: 58,
@@ -317,7 +317,7 @@ impl TestContext {
 			receive_htlc_forward_timeout: Duration::from_secs(30),
 			min_board_amount: Amount::from_sat(20_000),
 			ln_receive_anti_dos_required: false,
-			read_mailbox_max_items: 100,
+			max_read_mailbox_items: 100,
 		}
 	}
 

@@ -102,9 +102,9 @@ impl ClnManager {
 			invoice_expiry: config.invoice_expiry,
 			receive_htlc_forward_timeout: config.receive_htlc_forward_timeout,
 			check_base_delay: config.invoice_check_base_delay,
-			check_max_delay: config.invoice_check_max_delay,
+			max_check_delay: config.max_invoice_check_delay,
 			track_all_base_delay: config.track_all_base_delay,
-			track_all_max_delay: config.track_all_max_delay,
+			max_track_all_delay: config.max_track_all_delay,
 		};
 		let proc = ClnManagerProcess {
 			db: db.clone(),

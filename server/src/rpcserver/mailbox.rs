@@ -72,7 +72,7 @@ impl rpc::server::MailboxService for crate::Server {
 				macros::badarg!("authorization doesn't match mailbox id");
 			}
 		}
-		let limit = self.config.read_mailbox_max_items;
+		let limit = self.config.max_read_mailbox_items;
 		let vtxos_by_checkpoint = self.db.get_vtxos_mailbox(
 			unblinded_id,
 			req.checkpoint,
@@ -114,7 +114,7 @@ impl rpc::server::MailboxService for crate::Server {
 
 		let db = self.db.clone();
 		let starting_checkpoint = Checkpoint::from(req.checkpoint.max(0));
-		let ret_limit = self.config.read_mailbox_max_items;
+		let ret_limit = self.config.max_read_mailbox_items;
 
 		// Start listening for updates on the tip of the mailbox
 		// I mark the first value as changed
