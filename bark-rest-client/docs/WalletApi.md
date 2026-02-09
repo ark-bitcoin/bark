@@ -11,6 +11,7 @@ Method | HTTP request | Description
 [**create_wallet**](WalletApi.md#create_wallet) | **POST** /api/v1/wallet/create | 
 [**history**](WalletApi.md#history) | **GET** /api/v1/wallet/history | 
 [**movements**](WalletApi.md#movements) | **GET** /api/v1/wallet/movements | 
+[**next_round**](WalletApi.md#next_round) | **GET** /api/v1/wallet/next-round | 
 [**offboard_all**](WalletApi.md#offboard_all) | **POST** /api/v1/wallet/offboard/all | 
 [**offboard_vtxos**](WalletApi.md#offboard_vtxos) | **POST** /api/v1/wallet/offboard/vtxos | 
 [**peak_address**](WalletApi.md#peak_address) | **GET** /api/v1/wallet/addresses/index/{index} | 
@@ -204,6 +205,33 @@ This endpoint does not need any parameter.
 ### Return type
 
 [**Vec<models::Movement>**](Movement.md)
+
+### Authorization
+
+No authorization required
+
+### HTTP request headers
+
+- **Content-Type**: Not defined
+- **Accept**: application/json
+
+[[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
+
+
+## next_round
+
+> models::NextRoundStart next_round()
+
+
+Returns the next round start time in RFC 3339 format
+
+### Parameters
+
+This endpoint does not need any parameter.
+
+### Return type
+
+[**models::NextRoundStart**](NextRoundStart.md)
 
 ### Authorization
 

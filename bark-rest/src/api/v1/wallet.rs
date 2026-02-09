@@ -178,8 +178,7 @@ pub async fn ark_info(State(state): State<ServerState>) -> HandlerResult<Json<ba
 pub async fn next_round(State(state): State<ServerState>) -> HandlerResult<Json<bark_json::cli::NextRoundStart>> {
 	let wallet = state.require_wallet()?;
 	let time = wallet.next_round_start_time().await?;
-	let start_time: chrono::DateTime<chrono::Utc> = time.into();
-	Ok(axum::Json(bark_json::cli::NextRoundStart { start_time }))
+	Ok(axum::Json(bark_json::cli::NextRoundStart { start_time: time.into() }))
 }
 
 #[utoipa::path(

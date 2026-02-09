@@ -78,7 +78,7 @@ pub struct ArkInfo {
 #[cfg_attr(feature = "utoipa", derive(ToSchema))]
 pub struct NextRoundStart {
 	/// The next round start time in RFC 3339 format
-	pub start_time: chrono::DateTime<chrono::Utc>,
+	pub start_time: chrono::DateTime<chrono::Local>,
 }
 
 impl<T: Borrow<ark::ArkInfo>> From<T> for ArkInfo {

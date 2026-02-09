@@ -104,6 +104,7 @@ docs/MovementDestination.md
 docs/MovementStatus.md
 docs/MovementSubsystem.md
 docs/MovementTimestamp.md
+docs/NextRoundStart.md
 docs/NotFoundError.md
 docs/OffboardAllRequest.md
 docs/OffboardResult.md
@@ -249,6 +250,7 @@ src/models/movement_destination.rs
 src/models/movement_status.rs
 src/models/movement_subsystem.rs
 src/models/movement_timestamp.rs
+src/models/next_round_start.rs
 src/models/not_found_error.rs
 src/models/offboard_all_request.rs
 src/models/offboard_result.rs

@@ -57,6 +57,7 @@ Class | Method | HTTP request | Description
 *WalletApi* | [**create_wallet**](docs/WalletApi.md#create_wallet) | **POST** /api/v1/wallet/create | 
 *WalletApi* | [**history**](docs/WalletApi.md#history) | **GET** /api/v1/wallet/history | 
 *WalletApi* | [**movements**](docs/WalletApi.md#movements) | **GET** /api/v1/wallet/movements | 
+*WalletApi* | [**next_round**](docs/WalletApi.md#next_round) | **GET** /api/v1/wallet/next-round | 
 *WalletApi* | [**offboard_all**](docs/WalletApi.md#offboard_all) | **POST** /api/v1/wallet/offboard/all | 
 *WalletApi* | [**offboard_vtxos**](docs/WalletApi.md#offboard_vtxos) | **POST** /api/v1/wallet/offboard/vtxos | 
 *WalletApi* | [**peak_address**](docs/WalletApi.md#peak_address) | **GET** /api/v1/wallet/addresses/index/{index} | 
@@ -168,6 +169,7 @@ Class | Method | HTTP request | Description
  - [MovementStatus](docs/MovementStatus.md)
  - [MovementSubsystem](docs/MovementSubsystem.md)
  - [MovementTimestamp](docs/MovementTimestamp.md)
+ - [NextRoundStart](docs/NextRoundStart.md)
  - [NotFoundError](docs/NotFoundError.md)
  - [OffboardAllRequest](docs/OffboardAllRequest.md)
  - [OffboardResult](docs/OffboardResult.md)
