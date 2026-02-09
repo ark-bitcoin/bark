@@ -74,6 +74,13 @@ pub struct ArkInfo {
 	pub ln_receive_anti_dos_required: bool,
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[cfg_attr(feature = "utoipa", derive(ToSchema))]
+pub struct NextRoundStart {
+	/// The next round start time in RFC 3339 format
+	pub start_time: chrono::DateTime<chrono::Utc>,
+}
+
 impl<T: Borrow<ark::ArkInfo>> From<T> for ArkInfo {
 	fn from(v: T) -> Self {
 		let v = v.borrow();

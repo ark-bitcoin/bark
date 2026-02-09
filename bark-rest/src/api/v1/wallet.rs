@@ -24,6 +24,7 @@ pub fn router() -> Router<ServerState> {
 		.route("/connected", get(connected))
 		.route("/create", post(create_wallet))
 		.route("/ark-info", get(ark_info))
+		.route("/next-round", get(next_round))
 		.route("/addresses/next", post(address))
 		.route("/addresses/index/{index}", get(peak_address))
 		.route("/balance", get(balance))
@@ -47,6 +48,7 @@ pub fn router() -> Router<ServerState> {
 		connected,
 		create_wallet,
 		ark_info,
+		next_round,
 		address,
 		peak_address,
 		balance,
@@ -68,6 +70,7 @@ pub fn router() -> Router<ServerState> {
 		bark_json::web::CreateWalletRequest,
 		bark_json::web::CreateWalletResponse,
 		bark_json::cli::ArkInfo,
+		bark_json::cli::NextRoundStart,
 		bark_json::web::ArkAddressResponse,
 		bark_json::web::VtxosQuery,
 		bark_json::cli::Balance,
@@ -158,6 +161,25 @@ pub async fn ark_info(State(state): State<ServerState>) -> HandlerResult<Json<ba
 		Some(ark_info) => Ok(axum::Json(ark_info.into())),
 		None => not_found!(["ark server"], "Wallet not connected to an Ark server"),
 	}
+}
+
+#[utoipa::path(
+	get,
+	path = "/next-round",
+	responses(
+		(status = 200, description = "Returns the next round start time", body = bark_json::cli::NextRoundStart),
+		(status = 404, description = "Wallet not connected to an Ark server", body = error::NotFoundError),
+		(status = 500, description = "Internal server error", body = error::InternalServerError)
+	),
+	description = "Returns the next round start time in RFC 3339 format",
+	tag = "wallet"
+)]
+#[debug_handler]
+pub async fn next_round(State(state): State<ServerState>) -> HandlerResult<Json<bark_json::cli::NextRoundStart>> {
+	let wallet = state.require_wallet()?;
+	let time = wallet.next_round_start_time().await?;
+	let start_time: chrono::DateTime<chrono::Utc> = time.into();
+	Ok(axum::Json(bark_json::cli::NextRoundStart { start_time }))
 }
 
 #[utoipa::path(
