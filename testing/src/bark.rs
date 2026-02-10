@@ -497,7 +497,7 @@ impl Bark {
 	}
 
 	/// returns Err if the round failed or if no round happened
-	pub async fn try_refresh_all(&self) -> anyhow::Result<RoundStatus> {
+	pub async fn try_refresh_all_no_retry(&self) -> anyhow::Result<RoundStatus> {
 		let res = self.try_run_json::<Option<RoundStatus>, _, _>(["refresh", "--all"]).await
 			.context("running refresh --all command failed")?
 			.context("no round was joined")?;
@@ -511,7 +511,7 @@ impl Bark {
 	pub async fn try_refresh_all_with_retries(&self, retries: usize) -> anyhow::Result<RoundStatus> {
 		let mut last_error = None;
 		for attempt in 0..=retries {
-			match self.try_refresh_all().await {
+			match self.try_refresh_all_no_retry().await {
 				Ok(status) => return Ok(status),
 				Err(e) => {
 					if attempt < retries {

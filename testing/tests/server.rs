@@ -1,6 +1,5 @@
 
 use std::iter;
-use std::fmt::Write;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
@@ -13,7 +12,7 @@ use bitcoin_ext::P2TR_DUST_SAT;
 use bitcoin_ext::rpc::BitcoinRpcExt;
 use futures::future::join_all;
 use futures::{Stream, StreamExt, TryStreamExt};
-use log::{debug, error, info, trace};
+use log::{debug, info, trace};
 use tokio::sync::{mpsc, Mutex};
 
 use ark::{
@@ -191,11 +190,13 @@ async fn cant_spend_untrusted() {
 
 	const NEED_CONFS: u32 = 2;
 
+	// Use a long round interval to disable automatic rounds, then trigger manually
 	let srv = ctx.new_captaind_with_cfg("server", None, |cfg| {
 		cfg.round_tx_untrusted_input_confirmations = NEED_CONFS as usize;
+		cfg.round_interval = Duration::from_secs(3600);
 	}).await;
 
-	let mut bark = ctx.new_bark_with_funds("bark", &srv, sat(1_000_000)).await;
+	let bark = ctx.new_bark_with_funds("bark", &srv, sat(1_000_000)).await;
 
 	bark.board(sat(200_000)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
@@ -209,21 +210,18 @@ async fn cant_spend_untrusted() {
 
 	let mut log_round_err = srv.subscribe_log::<RoundError>();
 
-	// Set a time-out on the bark command for the refresh --all
-	// The command is expected to time-out
-	bark.set_timeout(Duration::from_millis(30_000));
-	let mut bark = Arc::new(bark);
-
-	// we will launch bark to try refresh, it will produce an error log at first,
-	// then we'll confirm the server's money and then bark should succeed by retrying
-
-	let bark_clone = bark.clone();
+	// Spawn bark refresh first so it's ready to join the round.
+	// The round will fail with "Insufficient funds" because the server's
+	// 10 BTC funding is unconfirmed and needs NEED_CONFS confirmations.
+	let bark = Arc::new(bark);
+	let bark_ref = bark.clone();
 	let attempt_handle = tokio::spawn(async move {
-		let err = bark_clone.try_refresh_all_with_retries(0).await.unwrap_err();
+		let err = bark_ref.try_refresh_all_with_retries(0).await.unwrap_err();
 		debug!("First refresh failed: {:#}", err);
 	});
 
-	// this will at first produce an error
+	srv.trigger_round().await;
+
 	let err = log_round_err.recv().wait_millis(30_000).await.unwrap().error;
 	assert!(err.contains("Insufficient funds"), "err: {err}");
 
@@ -234,31 +232,26 @@ async fn cant_spend_untrusted() {
 	tokio::time::sleep(Duration::from_millis(3000)).await;
 
 	log_round_err.clear();
-	Arc::get_mut(&mut bark).unwrap().unset_timeout();
-	if let Err(err) = bark.try_refresh_all().await {
-		let mut round_errs = String::new();
-		while let Ok(e) = log_round_err.try_recv() {
-			write!(&mut round_errs, "{:?}\n\n", e).unwrap();
-			error!("round error: {:?}", e.error);
-		}
-		panic!("first refresh failed, err: {err:?}, round errs: {round_errs:?}");
-	}
+	let bark_ref = bark.clone();
+	let refresh_handle = tokio::spawn(async move {
+		bark_ref.try_refresh_all_no_retry().await
+	});
+	srv.trigger_round().await;
+
+	refresh_handle.await.unwrap().expect("first refresh failed");
 
 	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
 
 	// and the unconfirmed change should be able to be used for a second round
 	tokio::time::sleep(Duration::from_millis(2000)).await;
-	assert!(log_round_err.try_recv().is_err());
-	if let Err(err) = bark.try_refresh_all().await {
-		let mut round_errs = String::new();
-		while let Ok(e) = log_round_err.try_recv() {
-			write!(&mut round_errs, "{:?}\n\n", e).unwrap();
-			error!("round error: {:?}", e.error);
-		}
-		panic!("second refresh failed, err: {err:?}, round errs: {round_errs:?}");
-	}
-	// should not have produced errors
-	assert!(log_round_err.try_recv().is_err());
+
+	let bark_ref = bark.clone();
+	let refresh_handle = tokio::spawn(async move {
+		bark_ref.try_refresh_all_no_retry().await
+	});
+	srv.trigger_round().await;
+
+	refresh_handle.await.unwrap().expect("second refresh failed");
 }
 
 #[tokio::test]
@@ -319,7 +312,7 @@ async fn max_vtxo_amount() {
 
 	// then try send in a round
 	bark1.set_timeout(srv.max_round_delay());
-	let err = bark1.try_refresh_all().await.unwrap_err().to_alt_string();
+	let err = bark1.try_refresh_all_no_retry().await.unwrap_err().to_alt_string();
 	assert!(err.contains(
 		&format!("output exceeds maximum vtxo amount of {}", cfg_max_amount),
 	), "err: {err}");
@@ -635,7 +628,7 @@ async fn test_participate_round_wrong_step() {
 
 	let proxy = srv.start_proxy_no_mailbox(ProxyA).await;
 	bark.set_ark_url(&proxy).await;
-	let err = bark.try_refresh_all().await.expect_err("refresh should time out").to_alt_string();
+	let err = bark.try_refresh_all_no_retry().await.expect_err("refresh should time out").to_alt_string();
 	assert!(err.contains("current step is payment registration"), "err: {err}");
 
 	/// This proxy will send a `submit_payment` req instead of `provide_vtxo_signatures` one
@@ -659,7 +652,7 @@ async fn test_participate_round_wrong_step() {
 	let proxy = srv.start_proxy_no_mailbox(ProxyB).await;
 	bark.set_timeout(srv.max_round_delay());
 	bark.set_ark_url(&proxy).await;
-	let err = bark.try_refresh_all().await.expect_err("refresh should fail").to_alt_string();
+	let err = bark.try_refresh_all_no_retry().await.expect_err("refresh should fail").to_alt_string();
 	assert!(err.contains("Message arrived late or round was full."), "err: {err}");
 }
 
@@ -686,7 +679,7 @@ async fn spend_unregistered_board() {
 	bark.board(sat(800_000)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 
-	let err = bark.try_refresh_all().await.unwrap_err().to_alt_string();
+	let err = bark.try_refresh_all_no_retry().await.unwrap_err().to_alt_string();
 	assert!(err.contains("failed to register vtxos"), "err: {err}");
 }
 
@@ -898,7 +891,7 @@ async fn claim_forfeit_connector_chain() {
 	// we do a refresh, but make it seem to the client that it failed
 	let vtxo = bark.vtxos().await.into_iter().next().unwrap();
 	let mut log_round = srv.subscribe_log::<RoundFinished>();
-	assert!(bark.try_refresh_all().await.is_err());
+	assert!(bark.try_refresh_all_no_retry().await.is_err());
 	assert_eq!(bark.inround_balance().await, sat(4_000_000), "vtxos: {:?}", bark.vtxos().await);
 	assert_eq!(log_round.recv().ready().await.unwrap().nb_input_vtxos, 10);
 
@@ -960,7 +953,7 @@ async fn claim_forfeit_round_connector() {
 	// we do a refresh, but make it seem to the client that it failed
 	let [vtxo] = bark.vtxos().await.try_into().expect("1 vtxo");
 	let mut log_round = srv.subscribe_log::<RoundFinished>();
-	assert!(bark.try_refresh_all().await.is_err());
+	assert!(bark.try_refresh_all_no_retry().await.is_err());
 	assert_eq!(bark.inround_balance().await, sat(800_000));
 	assert_eq!(log_round.recv().ready().await.expect("time-out").nb_input_vtxos, 1);
 
@@ -1135,7 +1128,7 @@ async fn reject_dust_vtxo_request() {
 	bark.set_ark_url(&proxy.address).await;
 
 	bark.set_timeout(srv.max_round_delay());
-	let err = bark.try_refresh_all().await.unwrap_err();
+	let err = bark.try_refresh_all_no_retry().await.unwrap_err();
 	assert!(err.to_alt_string().contains(
 		"bad user input: vtxo amount must be at least 0.00000330 BTC",
 	), "err: {err:#}");
@@ -1957,7 +1950,7 @@ async fn should_refuse_round_input_vtxo_that_is_being_exited() {
 	bark.set_ark_url(&proxy.address).await;
 	bark.set_timeout(srv.max_round_delay());
 
-	let err = bark.try_refresh_all().await.unwrap_err().to_alt_string();
+	let err = bark.try_refresh_all_no_retry().await.unwrap_err().to_alt_string();
 	assert!(err.contains(&format!(
 		"bad user input: cannot spend vtxo that is already exited: {}", vtxo_a.id,
 	)), "err: {err:#}");
