@@ -15,7 +15,7 @@ use ark::lightning::{Bolt12Invoice, Bolt12InvoiceExt, Invoice, Offer, PaymentHas
 use ark::util::IteratorExt;
 use bitcoin_ext::BlockHeight;
 
-use crate::Wallet;
+use crate::{Wallet, WalletVtxo};
 use crate::lightning::lnaddr_invoice;
 use crate::movement::{MovementDestination, MovementStatus, PaymentMethod};
 use crate::movement::update::MovementUpdate;
@@ -24,6 +24,39 @@ use crate::subsystem::{LightningMovement, LightningSendMovement, Subsystem};
 
 
 impl Wallet {
+	/// Returns each pending lightning payment.
+	pub async fn pending_lightning_sends(&self) -> anyhow::Result<Vec<LightningSend>> {
+		Ok(self.db.get_all_pending_lightning_send().await?)
+	}
+
+	/// Queries the database for any VTXO that is a pending lightning send.
+	pub async fn pending_lightning_send_vtxos(&self) -> anyhow::Result<Vec<WalletVtxo>> {
+		let vtxos = self.db.get_all_pending_lightning_send().await?.into_iter()
+			.flat_map(|pending_lightning_send| pending_lightning_send.htlc_vtxos)
+			.collect::<Vec<_>>();
+
+		Ok(vtxos)
+	}
+
+	/// Syncs pending lightning payments, verifying whether the payment status has changed and
+	/// creating a revocation VTXO if necessary.
+	pub async fn sync_pending_lightning_send_vtxos(&self) -> anyhow::Result<()> {
+		let pending_payments = self.pending_lightning_sends().await?;
+
+		if pending_payments.is_empty() {
+			return Ok(());
+		}
+
+		info!("Syncing {} pending lightning sends", pending_payments.len());
+
+		for payment in pending_payments {
+			let payment_hash = payment.invoice.payment_hash();
+			self.check_lightning_payment(payment_hash, false).await?;
+		}
+
+		Ok(())
+	}
+
 	/// Performs the revocation of HTLC VTXOs associated with a failed Lightning payment.
 	///
 	/// Builds a revocation package, requests server cosign,

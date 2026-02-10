@@ -1190,15 +1190,6 @@ impl Wallet {
 		Ok(ret)
 	}
 
-	/// Queries the database for any VTXO that is a pending lightning send.
-	pub async fn pending_lightning_send_vtxos(&self) -> anyhow::Result<Vec<WalletVtxo>> {
-		let vtxos = self.db.get_all_pending_lightning_send().await?.into_iter()
-			.flat_map(|pending_lightning_send| pending_lightning_send.htlc_vtxos)
-			.collect::<Vec<_>>();
-
-		Ok(vtxos)
-	}
-
 	/// Returns all vtxos that will expire within `threshold` blocks
 	pub async fn get_expiring_vtxos(
 		&self,
@@ -1432,29 +1423,6 @@ impl Wallet {
 		onchain: &mut dyn ExitUnilaterally,
 	) -> anyhow::Result<()> {
 		self.exit.write().await.sync(&self, onchain).await?;
-		Ok(())
-	}
-
-	pub async fn pending_lightning_sends(&self) -> anyhow::Result<Vec<LightningSend>> {
-		Ok(self.db.get_all_pending_lightning_send().await?)
-	}
-
-	/// Syncs pending lightning payments, verifying whether the payment status has changed and
-	/// creating a revocation VTXO if necessary.
-	pub async fn sync_pending_lightning_send_vtxos(&self) -> anyhow::Result<()> {
-		let pending_payments = self.pending_lightning_sends().await?;
-
-		if pending_payments.is_empty() {
-			return Ok(());
-		}
-
-		info!("Syncing {} pending lightning sends", pending_payments.len());
-
-		for payment in pending_payments {
-			let payment_hash = payment.invoice.payment_hash();
-			self.check_lightning_payment(payment_hash, false).await?;
-		}
-
 		Ok(())
 	}
 
