@@ -820,7 +820,7 @@ async fn exit_spend_anchor_multiple_utxos_required() {
 	ctx.fund_bark(&bark, sat(562)).await;
 	ctx.fund_bark(&bark, sat(988)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
-	bark.maintain().await;
+	bark.sync().await;
 
 	bark.start_exit_all().await;
 	complete_exit(&ctx, &bark).await;

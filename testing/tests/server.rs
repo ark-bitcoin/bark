@@ -1540,7 +1540,7 @@ async fn should_refuse_paying_invoice_whose_amount_is_higher_than_htlcs() {
 	bark_1.board(btc(0.5)).await;
 	bark_1.board(btc(0.6)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
-	bark_1.maintain().await;
+	bark_1.sync().await;
 
 	let invoice = lightning.receiver.invoice(Some(btc(1)), "real invoice", "A real invoice").await;
 

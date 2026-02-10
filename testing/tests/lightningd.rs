@@ -153,7 +153,7 @@ async fn bark_pay_ln_with_multiple_inputs() {
 	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
 	bark_1.board(btc(1)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
-	bark_2.maintain().await;
+	bark_2.sync().await;
 	bark_2.send_oor(bark_1.address().await, btc(1)).await;
 
 	let expected_balance = btc(3);
@@ -646,8 +646,8 @@ async fn bark_can_pay_inter_ark_invoice() {
 	bark_1.board(board_amount).await;
 	bark_2.board(board_amount).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
-	bark_1.maintain().await;
-	bark_2.maintain().await;
+	bark_1.sync().await;
+	bark_2.sync().await;
 
 	let pay_amount = btc(1);
 	let invoice_info = bark_1.bolt11_invoice(pay_amount).await;
@@ -702,8 +702,8 @@ async fn bark_can_pay_intra_ark_invoice() {
 	bark_1.board(board_amount).await;
 	bark_2.board(board_amount).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
-	bark_1.maintain().await;
-	bark_2.maintain().await;
+	bark_1.sync().await;
+	bark_2.sync().await;
 
 	let pay_amount = btc(1);
 	let invoice_info = bark_1.bolt11_invoice(pay_amount).await;

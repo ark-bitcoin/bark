@@ -375,7 +375,7 @@ async fn send_arkoor_package() {
 	bark1.board(sat(20_000)).await;
 	bark1.board(sat(20_000)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
-	bark1.maintain().await;
+	bark1.sync().await;
 
 	let addr2 = bark2.address().await;
 	bark1.send_oor(addr2, sat(50_000)).await;
@@ -521,8 +521,8 @@ async fn list_movements() {
 	bark2.board(sat(800_000)).await;
 	bark1.board(sat(300_000)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
-	bark1.maintain().await;
-	bark2.maintain().await;
+	bark1.sync().await;
+	bark2.sync().await;
 	let movements = bark1.history().await;
 	assert_eq!(movements.len(), 1);
 	assert_eq!(movements.last().unwrap().input_vtxos.len(), 0);
@@ -1224,9 +1224,7 @@ async fn delegated_maintenance_refresh() {
 	let bark = ctx.new_bark_with_funds("bark", &srv, sat(1_000_000)).await;
 
 	// Board funds and confirm
-	bark.board(sat(800_000)).await;
-	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
-	bark.maintain().await;
+	bark.board_and_confirm_and_register(&ctx, sat(800_000)).await;
 
 	// Let vtxo almost expire so it needs refresh
 	ctx.generate_blocks(srv.config().vtxo_lifetime as u32).await;
@@ -1289,7 +1287,7 @@ async fn test_ark_address_other_ark() {
 	bark1.board(sat(800_000)).await;
 	bark2.board(sat(800_000)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
-	bark2.maintain().await;
+	bark2.sync().await;
 
 	let addr1 = bark1.address().await;
 	let err = bark2.try_send_oor(addr1, sat(10_000), false).await.unwrap_err().to_alt_string();
@@ -1350,9 +1348,7 @@ async fn stepwise_round() {
 	// }).await;
 	// ctx.fund_captaind(&src, btc(1)).await;
 	let bark = ctx.new_bark_with_funds("bark", &srv, sat(1_000_000)).await;
-	bark.board(sat(800_000)).await;
-	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
-	bark.maintain().await;
+	bark.board_and_confirm_and_register(&ctx, sat(800_000)).await;
 
 	// let vtxo almost expire
 	ctx.generate_blocks(srv.config().vtxo_lifetime as u32 - BOARD_CONFIRMATIONS).await;
