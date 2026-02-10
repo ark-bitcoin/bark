@@ -67,6 +67,7 @@ pub struct Config {
 	/// number of blocks before their expiry to discard vtxos
 	pub vtxo_pre_expiry: BlockDelta,
 	/// maximum arkoor depth to keep change until
+	#[serde(alias = "vtxo_max_arkoor_depth")]
 	pub max_vtxo_arkoor_depth: ArkoorDepth,
 
 	#[serde(with = "crate::utils::serde::duration")]
