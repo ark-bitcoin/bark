@@ -1,0 +1,5 @@
+- Refactor wallet code to extract functionality into dedicated modules
+  Board, lightning send, lightning receive, and round balance functions have been moved from
+  the main `lib.rs` into their respective modules (`board.rs`, `lightning/pay.rs`,
+  `lightning/receive.rs`, and `round.rs`), improving code organization and modularity.
+  [#1612](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1612)
