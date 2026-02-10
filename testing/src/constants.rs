@@ -2,6 +2,7 @@ use std::time::Duration;
 
 pub const BOARD_CONFIRMATIONS: u32 = 3;
 pub const ROUND_CONFIRMATIONS: u32 = 6;
+pub const OFFBOARD_CONFIRMATIONS: u32 = 0;
 pub const TX_PROPAGATION_SLEEP_TIME: Duration = Duration::from_millis(1000);
 
 pub mod env {

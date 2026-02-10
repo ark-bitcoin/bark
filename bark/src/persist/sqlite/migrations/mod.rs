@@ -23,6 +23,7 @@ mod m0022_unreleased;
 mod m0023_mailbox;
 mod m0024_server_pubkey;
 mod m0025_fees;
+mod m0026_pending_offboard;
 
 use anyhow::Context;
 use log::debug;
@@ -53,6 +54,7 @@ use m0022_unreleased::Migration0022;
 use m0023_mailbox::Migration0023;
 use m0024_server_pubkey::Migration0024;
 use m0025_fees::Migration0025;
+use m0026_pending_offboard::Migration0026;
 
 pub struct MigrationContext {}
 
@@ -95,6 +97,7 @@ impl MigrationContext {
 		self.try_migration(conn, &Migration0023{})?;
 		self.try_migration(conn, &Migration0024{})?;
 		self.try_migration(conn, &Migration0025{})?;
+		self.try_migration(conn, &Migration0026{})?;
 
 		Ok(())
 	}
@@ -249,7 +252,7 @@ mod test {
 
 		// Perform the migrations and confirm it took effect
 		migs.do_all_migrations(&mut conn).unwrap();
-		assert_current_version(&conn, 25).unwrap();
+		assert_current_version(&conn, 26).unwrap();
 
 		assert!(table_exists(&conn, "bark_vtxo").unwrap());
 		assert!(table_exists(&conn, "bark_vtxo_state").unwrap());
@@ -265,6 +268,7 @@ mod test {
 		assert!(table_exists(&conn, "bark_round_state").unwrap());
 		assert!(table_exists(&conn, "bark_lightning_send").unwrap());
 		assert!(table_exists(&conn, "bark_mailbox_checkpoint").unwrap());
+		assert!(table_exists(&conn, "bark_pending_offboard").unwrap());
 
 		// The migration can be run multiple times
 		migs.do_all_migrations(&mut conn).unwrap();

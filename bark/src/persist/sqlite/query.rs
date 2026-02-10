@@ -20,7 +20,8 @@ use crate::exit::{ExitState, ExitTxOrigin};
 use crate::movement::{Movement, MovementId, MovementStatus, MovementSubsystem};
 use crate::persist::{RoundStateId, StoredRoundState};
 use crate::persist::models::{
-	LightningReceive, LightningSend, PendingBoard, SerdeRoundState, StoredExit, Unlocked
+	LightningReceive, LightningSend, PendingBoard, SerdeRoundState, StoredExit, Unlocked,
+	PendingOffboard,
 };
 use crate::persist::sqlite::convert::{row_to_movement, row_to_wallet_vtxo, rows_to_wallet_vtxos};
 use crate::round::RoundState;
@@ -267,6 +268,71 @@ pub fn remove_pending_board(
 	let mut statement = tx.prepare(q)?;
 	statement.execute(named_params! {
 		":vtxo_id": vtxo_id.to_string(),
+	})?;
+	Ok(())
+}
+
+pub fn store_pending_offboard(
+	tx: &Transaction,
+	pending: &PendingOffboard,
+) -> anyhow::Result<()> {
+	let vtxo_ids_json = serde_json::to_string(&pending.vtxo_ids)
+		.context("failed to serialize vtxo_ids")?;
+	let offboard_tx_bytes = consensus::serialize(&pending.offboard_tx);
+
+	let mut statement = tx.prepare("
+		INSERT INTO bark_pending_offboard (movement_id, offboard_txid, offboard_tx, vtxo_ids, destination)
+		VALUES (:movement_id, :offboard_txid, :offboard_tx, :vtxo_ids, :destination);"
+	)?;
+
+	statement.execute(named_params! {
+		":movement_id": pending.movement_id.0,
+		":offboard_txid": pending.offboard_txid.to_string(),
+		":offboard_tx": offboard_tx_bytes,
+		":vtxo_ids": vtxo_ids_json,
+		":destination": pending.destination,
+	})?;
+	Ok(())
+}
+
+pub fn get_all_pending_offboards(conn: &Connection) -> anyhow::Result<Vec<PendingOffboard>> {
+	let q = "SELECT movement_id, offboard_txid, offboard_tx, vtxo_ids, destination, created_at FROM bark_pending_offboard;";
+	let mut statement = conn.prepare(q)?;
+	let mut rows = statement.query([])?;
+	let mut pending = Vec::new();
+	while let Some(row) = rows.next()? {
+		let movement_id = MovementId::new(row.get::<_, u32>("movement_id")?);
+		let offboard_txid = Txid::from_str(&row.get::<_, String>("offboard_txid")?)?;
+		let offboard_tx_bytes = row.get::<_, Vec<u8>>("offboard_tx")?;
+		let offboard_tx: bitcoin::Transaction = consensus::deserialize(&offboard_tx_bytes)
+			.context("failed to deserialize offboard_tx")?;
+		let vtxo_ids_json = row.get::<_, String>("vtxo_ids")?;
+		let vtxo_ids: Vec<VtxoId> = serde_json::from_str(&vtxo_ids_json)
+			.context("failed to deserialize vtxo_ids")?;
+		let destination = row.get::<_, String>("destination")?;
+		let created_at = row.get::<_, DateTime<chrono::Utc>>("created_at")?
+			.with_timezone(&chrono::Local);
+
+		pending.push(PendingOffboard {
+			movement_id,
+			offboard_txid,
+			offboard_tx,
+			vtxo_ids,
+			destination,
+			created_at,
+		});
+	}
+	Ok(pending)
+}
+
+pub fn remove_pending_offboard(
+	tx: &Transaction,
+	movement_id: MovementId,
+) -> anyhow::Result<()> {
+	let q = "DELETE FROM bark_pending_offboard WHERE movement_id = :movement_id;";
+	let mut statement = tx.prepare(q)?;
+	statement.execute(named_params! {
+		":movement_id": movement_id.0,
 	})?;
 	Ok(())
 }

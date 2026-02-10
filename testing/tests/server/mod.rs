@@ -309,6 +309,7 @@ async fn max_vtxo_amount() {
 	let address = ctx.bitcoind().get_new_address();
 	bark1.offboard_all(address.clone()).await;
 	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
+	bark1.maintain().await;
 	let balance = ctx.bitcoind().get_received_by_address(&address);
 	assert_eq!(balance, Amount::from_sat(999_100));
 }

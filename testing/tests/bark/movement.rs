@@ -365,6 +365,7 @@ async fn movement_offboard() {
 
 	let offboard_fee = sat(938);
 
+	// With 0 required confirmations, the movement completes immediately
 	let movement = bark.history().await.last().cloned().unwrap();
 	assert_eq!(movement.status, MovementStatus::Successful);
 	assert_eq!(movement.subsystem.name, "bark.offboard");
@@ -382,7 +383,8 @@ async fn movement_offboard() {
 	assert_eq!(*movement.input_vtxos.first().unwrap(), offb_vtxo.id);
 	assert_eq!(movement.output_vtxos.len(), 0);
 	assert_eq!(movement.exited_vtxos.len(), 0);
-	assert_eq!(movement.time.completed_at.is_some(), true);
+	assert_eq!(movement.time.completed_at.is_some(), true,
+		"completed_at should be set immediately with 0 required confirmations");
 
 	assert_eq!(movement.metadata.is_some(), true);
 	assert_eq!(offboard.offboard_txid,
@@ -453,6 +455,7 @@ async fn movement_send_onchain() {
 	let amount = sat(50_000);
 	let offboard = bark.send_onchain(&addr, amount).await;
 	ctx.generate_blocks(2).await;
+	bark.maintain().await;
 	let vtxos_post_send = bark.vtxo_ids().await;
 
 	let offboard_fee = sat(938);

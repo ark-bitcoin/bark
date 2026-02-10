@@ -100,6 +100,13 @@ impl DaemonProcess {
 		}
 	}
 
+	/// Sync pending offboards, check for confirmations
+	async fn run_offboards_sync(&self) {
+		if let Err(e) = self.wallet.sync_pending_offboards().await {
+			warn!("An error occured while syncing pending offboards: {e:#}");
+		}
+	}
+
 	/// Sync onchain wallet
 	async fn run_onchain_sync(&self) {
 		let mut onchain = self.onchain.write().await;
@@ -222,6 +229,7 @@ impl DaemonProcess {
 
 					self.sync_mailbox().await;
 					self.run_boards_sync().await;
+					self.run_offboards_sync().await;
 					medium_interval.reset();
 				},
 				_ = slow_interval.tick() => {

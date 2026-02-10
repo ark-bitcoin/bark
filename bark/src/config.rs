@@ -129,6 +129,13 @@ pub struct Config {
 	///
 	/// Default value: 6 for mainnet, 2 for testnets
 	pub round_tx_required_confirmations: BlockHeight,
+
+	/// The number of confirmations required before considering an offboard tx
+	/// confirmed. If set to 0, offboard movements are marked as successful
+	/// immediately without waiting for confirmation.
+	///
+	/// Default value: 2 for mainnet
+	pub offboard_required_confirmations: BlockHeight,
 }
 
 impl Config {
@@ -148,12 +155,14 @@ impl Config {
 			htlc_recv_claim_delta: 18,
 			fallback_fee_rate: None,
 			round_tx_required_confirmations: 2,
+			offboard_required_confirmations: 2,
 		};
 
 		if network != Network::Bitcoin {
 			ret.vtxo_refresh_expiry_threshold = 12;
 			ret.fallback_fee_rate = Some(FeeRate::from_sat_per_vb_unchecked(1));
 			ret.round_tx_required_confirmations = 1;
+			ret.offboard_required_confirmations = 0;
 		}
 
 		ret
