@@ -155,13 +155,22 @@ Receiving funds from another ark user offchain.
   "intended_balance_sat": 10000,
   "effective_balance_sat": 10000,
   "offchain_fee_sat": 0,
+  "received_on": [
+    {
+      "destination": {
+        "type": "ark",
+        "value": "ark1pm6..."
+      },
+      "amount_sat": 10000
+    }
+  ],
   "output_vtxos": ["f3a4b5c6...:0", "d7e8f9a0...:0", "b1c2d3e4...:0"]
 }
 ```
 
 **Notes:**
-- The `received_on` field is always empty because currently the recipient is unable to determine what address the sender 
-  used to make the payment.
+- The `received_on` field contains the Ark address(es) the VTXOs were received on, aggregated by address with the total
+  amount received on each.
 
 ---
 
