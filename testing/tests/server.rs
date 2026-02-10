@@ -1,6 +1,5 @@
 
 use std::iter;
-use std::fmt::Write;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
@@ -13,7 +12,7 @@ use bitcoin_ext::P2TR_DUST_SAT;
 use bitcoin_ext::rpc::BitcoinRpcExt;
 use futures::future::join_all;
 use futures::{Stream, StreamExt, TryStreamExt};
-use log::{debug, error, info, trace};
+use log::{debug, info, trace};
 use tokio::sync::{mpsc, Mutex};
 
 use ark::{
@@ -191,11 +190,13 @@ async fn cant_spend_untrusted() {
 
 	const NEED_CONFS: u32 = 2;
 
+	// Use a long round interval to disable automatic rounds, then trigger manually
 	let srv = ctx.new_captaind_with_cfg("server", None, |cfg| {
 		cfg.round_tx_untrusted_input_confirmations = NEED_CONFS as usize;
+		cfg.round_interval = Duration::from_secs(3600);
 	}).await;
 
-	let mut bark = ctx.new_bark_with_funds("bark", &srv, sat(1_000_000)).await;
+	let bark = ctx.new_bark_with_funds("bark", &srv, sat(1_000_000)).await;
 
 	bark.board(sat(200_000)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
@@ -209,21 +210,18 @@ async fn cant_spend_untrusted() {
 
 	let mut log_round_err = srv.subscribe_log::<RoundError>();
 
-	// Set a time-out on the bark command for the refresh --all
-	// The command is expected to time-out
-	bark.set_timeout(Duration::from_millis(30_000));
-	let mut bark = Arc::new(bark);
-
-	// we will launch bark to try refresh, it will produce an error log at first,
-	// then we'll confirm the server's money and then bark should succeed by retrying
-
-	let bark_clone = bark.clone();
+	// Spawn bark refresh first so it's ready to join the round.
+	// The round will fail with "Insufficient funds" because the server's
+	// 10 BTC funding is unconfirmed and needs NEED_CONFS confirmations.
+	let bark = Arc::new(bark);
+	let bark_ref = bark.clone();
 	let attempt_handle = tokio::spawn(async move {
-		let err = bark_clone.try_refresh_all_with_retries(0).await.unwrap_err();
+		let err = bark_ref.try_refresh_all_with_retries(0).await.unwrap_err();
 		debug!("First refresh failed: {:#}", err);
 	});
 
-	// this will at first produce an error
+	srv.trigger_round().await;
+
 	let err = log_round_err.recv().wait_millis(30_000).await.unwrap().error;
 	assert!(err.contains("Insufficient funds"), "err: {err}");
 
