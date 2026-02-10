@@ -341,7 +341,6 @@ use crate::movement::manager::MovementManager;
 use crate::movement::update::MovementUpdate;
 use crate::onchain::{DaemonizableOnchainWallet, ExitUnilaterally, PreparePsbt, SignPsbt, Utxo};
 use crate::persist::{BarkPersister, RoundStateId, StoredRoundState};
-use crate::persist::models::{LightningReceive, LightningSend};
 use crate::round::{RoundParticipation, RoundStatus};
 use crate::subsystem::{ArkoorMovement, RoundMovement};
 use crate::vtxo::{FilterVtxos, RefreshStrategy, VtxoFilter, VtxoStateKind};
@@ -1161,33 +1160,6 @@ impl Wallet {
 		let mut vtxos = self.spendable_vtxos().await?;
 		filter.filter_vtxos(&mut vtxos).await.context("error filtering vtxos")?;
 		Ok(vtxos)
-	}
-
-	/// Returns all VTXOs that are locked in a pending round
-	///
-	/// This excludes all input VTXOs for which the output VTXOs have already
-	/// been created.
-	pub async fn pending_round_input_vtxos(&self) -> anyhow::Result<Vec<WalletVtxo>> {
-		let mut ret = Vec::new();
-		for round in self.db.load_round_states().await? {
-			let inputs = round.state.locked_pending_inputs();
-			ret.reserve(inputs.len());
-			for input in inputs {
-				let v = self.get_vtxo_by_id(input.id()).await
-					.context("unknown round input VTXO")?;
-				ret.push(v);
-			}
-		}
-		Ok(ret)
-	}
-
-	/// Balance locked in pending rounds
-	async fn pending_round_balance(&self) -> anyhow::Result<Amount> {
-		let mut ret = Amount::ZERO;
-		for round in self.db.load_round_states().await? {
-			ret += round.state.pending_balance();
-		}
-		Ok(ret)
 	}
 
 	/// Returns all vtxos that will expire within `threshold` blocks
