@@ -1664,24 +1664,6 @@ impl Wallet {
 		);
 	}
 
-	/// Fetches all pending lightning receives ordered from newest to oldest.
-	pub async fn pending_lightning_receives(&self) -> anyhow::Result<Vec<LightningReceive>> {
-		Ok(self.db.get_all_pending_lightning_receives().await?)
-	}
-
-	pub async fn claimable_lightning_receive_balance(&self) -> anyhow::Result<Amount> {
-		let receives = self.pending_lightning_receives().await?;
-
-		let mut total = Amount::ZERO;
-		for receive in receives {
-			if let Some(htlc_vtxos) = receive.htlc_vtxos {
-				total += htlc_vtxos.iter().map(|v| v.amount()).sum::<Amount>();
-			}
-		}
-
-		Ok(total)
-	}
-
 	/// Starts a daemon for the wallet.
 	///
 	/// Note:
