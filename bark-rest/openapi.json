@@ -1255,6 +1255,47 @@
         "deprecated": true
       }
     },
+    "/api/v1/wallet/next-round": {
+      "get": {
+        "tags": [
+          "wallet"
+        ],
+        "description": "Returns the next round start time in RFC 3339 format",
+        "operationId": "next_round",
+        "responses": {
+          "200": {
+            "description": "Returns the next round start time",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NextRoundStart"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Wallet not connected to an Ark server",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotFoundError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternalServerError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/wallet/offboard/all": {
       "post": {
         "tags": [
@@ -3629,6 +3670,19 @@
             "type": "string",
             "format": "date-time",
             "description": "When the movement was last updated."
+          }
+        }
+      },
+      "NextRoundStart": {
+        "type": "object",
+        "required": [
+          "start_time"
+        ],
+        "properties": {
+          "start_time": {
+            "type": "string",
+            "format": "date-time",
+            "description": "The next round start time in RFC 3339 format"
           }
         }
       },
