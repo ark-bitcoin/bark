@@ -134,6 +134,19 @@ pub trait BarkPersister: Send + Sync + 'static {
 	/// - Returns an error on I/O or deserialization failures.
 	async fn read_properties(&self) -> anyhow::Result<Option<WalletProperties>>;
 
+	/// Set the server public key in wallet properties.
+	///
+	/// This is used to store the server pubkey for existing wallets that were
+	/// created before server pubkey tracking was added. Once set, the wallet
+	/// will verify the server pubkey on every connection.
+	///
+	/// Parameters:
+	/// - server_pubkey: The server's public key to store.
+	///
+	/// Errors:
+	/// - Returns an error if the update fails.
+	async fn set_server_pubkey(&self, server_pubkey: PublicKey) -> anyhow::Result<()>;
+
 	/// Check whether a recipient identifier already exists.
 	///
 	/// Useful to avoid storing duplicate recipients for the same logical payee or duplicated

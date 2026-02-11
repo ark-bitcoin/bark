@@ -45,7 +45,7 @@ impl Wallet {
 	///
 	/// Returns `Ok(())` if revocation succeeds and the wallet state is properly updated.
 	async fn process_lightning_revocation(&self, payment: &LightningSend) -> anyhow::Result<()> {
-		let mut srv = self.require_server()?;
+		let (mut srv, _) = self.require_server().await?;
 		let htlc_vtxos = payment.htlc_vtxos.clone().into_iter()
 			.map(|v| v.vtxo).collect::<Vec<_>>();
 
@@ -221,7 +221,7 @@ impl Wallet {
 	async fn check_lightning_payment_inner(&self, payment_hash: PaymentHash, wait: bool)
 		-> anyhow::Result<Option<Preimage>>
 	{
-		let mut srv = self.require_server()?;
+		let (mut srv, _) = self.require_server().await?;
 
 		let payment = self.db.get_lightning_send(payment_hash).await?
 			.context("no lightning send found for payment hash")?;
@@ -367,7 +367,7 @@ impl Wallet {
 		offer: Offer,
 		user_amount: Option<Amount>,
 	) -> anyhow::Result<LightningSend> {
-		let mut srv = self.require_server()?;
+		let (mut srv, _) = self.require_server().await?;
 
 		let offer_bytes = {
 			let mut bytes = Vec::new();
@@ -482,8 +482,7 @@ impl Wallet {
 		user_amount: Option<Amount>,
 		payment_hash: PaymentHash,
 	) -> anyhow::Result<LightningSend> {
-		let mut srv = self.require_server()?;
-		let ark_info = srv.ark_info().await?;
+		let (mut srv, ark_info) = self.require_server().await?;
 
 		let tip = self.chain.tip().await?;
 

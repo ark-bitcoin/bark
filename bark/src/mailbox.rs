@@ -43,7 +43,7 @@ impl Wallet {
 
 	/// Sync with the mailbox on the Ark server and look for out-of-round received VTXOs.
 	pub async fn sync_mailbox(&self) -> anyhow::Result<()> {
-		let mut srv = self.require_server()?;
+		let (mut srv, _) = self.require_server().await?;
 
 		let mailbox_keypair = self.mailbox_keypair()?;
 		let mailbox_id = MailboxIdentifier::from_pubkey(mailbox_keypair.public_key());

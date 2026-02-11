@@ -102,8 +102,7 @@ impl Wallet {
 			bail!("it doesn't make sense to send dust");
 		}
 
-		let mut srv = self.require_server()?;
-		let ark = srv.ark_info().await?;
+		let (mut srv, ark) = self.require_server().await?;
 
 		let destination_spk = destination.script_pubkey();
 		let fee = ark.calculate_offboard_fee(&destination_spk)?;
@@ -177,8 +176,7 @@ impl Wallet {
 		vtxos: Vec<WalletVtxo>,
 		destination: bitcoin::Address,
 	) -> anyhow::Result<Txid> {
-		let mut srv = self.require_server()?;
-		let ark = srv.ark_info().await?;
+		let (mut srv, ark) = self.require_server().await?;
 
 		let destination_spk = destination.script_pubkey();
 		let fee = ark.calculate_offboard_fee(&destination_spk)?;

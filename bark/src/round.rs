@@ -597,8 +597,7 @@ async fn start_attempt(
 	participation: &RoundParticipation,
 	event: &RoundAttempt,
 ) -> anyhow::Result<AttemptState> {
-	let mut srv = wallet.require_server().context("server not available")?;
-	let ark_info = srv.ark_info().await?;
+	let (mut srv, ark_info) = wallet.require_server().await.context("server not available")?;
 
 	// Assign cosign pubkeys to the payment requests.
 	let cosign_keys = iter::repeat_with(|| Keypair::new(&SECP, &mut rand::thread_rng()))
@@ -727,7 +726,7 @@ async fn hark_vtxo_swap(
 	funding_tx: &Transaction,
 	unlock_hash: UnlockHash,
 ) -> Result<(), HarkForfeitError> {
-	let mut srv = wallet.require_server().map_err(HarkForfeitError::Err)?;
+	let (mut srv, _) = wallet.require_server().await.map_err(HarkForfeitError::Err)?;
 
 	// before we start make sure the server has our input vtxo signatures
 	wallet.register_vtxos_with_server(&participation.inputs).await
@@ -898,7 +897,7 @@ async fn progress_non_interactive(
 	participation: &RoundParticipation,
 	unlock_hash: UnlockHash,
 ) -> Result<HarkProgressResult, HarkForfeitError> {
-	let mut srv = wallet.require_server().map_err(HarkForfeitError::Err)?;
+	let (mut srv, _) = wallet.require_server().await.map_err(HarkForfeitError::Err)?;
 
 	let resp = srv.client.round_participation_status(protos::RoundParticipationStatusRequest {
 		unlock_hash: unlock_hash.to_byte_array().to_vec(),
@@ -1054,7 +1053,7 @@ async fn sign_vtxo_tree(
 	vtxo_tree: &VtxoTreeSpec,
 	cosign_agg_nonces: &[musig::AggregatedNonce],
 ) -> anyhow::Result<()> {
-	let srv = wallet.require_server().context("server not available")?;
+	let (srv, _) = wallet.require_server().await.context("server not available")?;
 
 	if unsigned_round_tx.output.len() < MIN_ROUND_TX_OUTPUTS {
 		bail!("server sent round tx with less than 2 outputs: {}",
@@ -1234,7 +1233,7 @@ async fn update_funding_txid(
 impl Wallet {
 	/// Ask the server when the next round is scheduled to start
 	pub async fn next_round_start_time(&self) -> anyhow::Result<SystemTime> {
-		let mut srv = self.require_server()?;
+		let (mut srv, _) = self.require_server().await?;
 		let ts = srv.client.next_round_time(protos::Empty {}).await?.into_inner().timestamp;
 		Ok(UNIX_EPOCH.checked_add(Duration::from_secs(ts)).context("invalid timestamp")?)
 	}
@@ -1268,7 +1267,7 @@ impl Wallet {
 		participation: RoundParticipation,
 		movement_kind: Option<RoundMovement>,
 	) -> anyhow::Result<StoredRoundState> {
-		let mut srv = self.require_server()?;
+		let (mut srv, _) = self.require_server().await?;
 
 		let movement_id = if let Some(kind) = movement_kind {
 			let movement_id = self.movements.new_movement(
@@ -1379,7 +1378,7 @@ impl Wallet {
 
 	/// Fetch last round event from server
 	async fn get_last_round_event(&self) -> anyhow::Result<RoundEvent> {
-		let mut srv = self.require_server()?;
+		let (mut srv, _) = self.require_server().await?;
 		let e = srv.client.last_round_event(protos::Empty {}).await?.into_inner();
 		Ok(RoundEvent::try_from(e).context("invalid event format from server")?)
 	}
@@ -1448,7 +1447,7 @@ impl Wallet {
 	pub async fn subscribe_round_events(&self)
 		-> anyhow::Result<impl Stream<Item = anyhow::Result<RoundEvent>> + Unpin>
 	{
-		let mut srv = self.require_server()?;
+		let (mut srv, _) = self.require_server().await?;
 		let events = srv.client.subscribe_rounds(protos::Empty {}).await?
 			.into_inner().map(|m| {
 				let m = m.context("received error on event stream")?;

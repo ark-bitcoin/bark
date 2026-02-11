@@ -92,6 +92,12 @@ impl BarkPersister for SqliteClient {
 		Ok(query::fetch_properties(&conn)?)
 	}
 
+	async fn set_server_pubkey(&self, server_pubkey: PublicKey) -> anyhow::Result<()> {
+		let conn = self.connect()?;
+		query::set_server_pubkey(&conn, &server_pubkey)?;
+		Ok(())
+	}
+
 	async fn check_recipient_exists(&self, recipient: &PaymentMethod) -> anyhow::Result<bool> {
 		let conn = self.connect()?;
 		query::check_recipient_exists(&conn, recipient)
