@@ -31,7 +31,7 @@ use bark_json::exit::ExitState;
 use server::secret::Secret;
 use server::vtxopool::VtxoTarget;
 use server_log::{
-	ForfeitBroadcasted, ForfeitedExitConfirmed, ForfeitedExitInMempool, FullRound, NoRoundPayments,
+	ForfeitBroadcasted, ForfeitedExitConfirmed, ForfeitedExitInMempool, FullRound,
 	RoundError, RoundFinished, RoundUserVtxoAlreadyRegistered, TxIndexUpdateFinished,
 };
 use server_rpc::protos::{self, lightning_payment_status};
@@ -195,6 +195,7 @@ async fn cant_spend_untrusted() {
 		cfg.round_tx_untrusted_input_confirmations = NEED_CONFS as usize;
 		cfg.round_interval = Duration::from_secs(3600);
 	}).await;
+	srv.wait_for_initial_round().await;
 
 	let bark = ctx.new_bark_with_funds("bark", &srv, sat(1_000_000)).await;
 
@@ -386,6 +387,7 @@ async fn full_round() {
 		cfg.nb_round_nonces = 2;
 		cfg.min_board_amount = sat(0);
 	}).await;
+	srv.wait_for_initial_round().await;
 	ctx.fund_captaind(&srv, btc(10)).await;
 
 	// based on nb_round_nonces
@@ -746,6 +748,7 @@ async fn bad_round_input() {
 		cfg.round_interval = Duration::from_secs(10000000);
 		cfg.round_submit_time = Duration::from_secs(30);
 	}).await;
+	srv.wait_for_initial_round().await;
 	let bark = ctx.new_bark_with_funds("bark", &srv, btc(1)).await;
 	bark.board_and_confirm_and_register(&ctx, btc(0.5)).await;
 	let [vtxo] = bark.client().await.spendable_vtxos().await
@@ -2293,10 +2296,7 @@ async fn empty_round_does_not_replay_stale_attempt() {
 	}).await;
 
 	// Wait for the initial empty round to time out (server auto-starts a round on boot)
-	// The server will broadcast an Attempt, then wait for round_submit_time (500ms),
-	// and when no payments arrive, emit NoRoundPayments and clear last_round_event.
-	let mut log_no_payments = srv.subscribe_log::<NoRoundPayments>();
-	log_no_payments.recv().wait(Duration::from_secs(5)).await.unwrap();
+	srv.wait_for_initial_round().await;
 
 	// Now subscribe to round events via gRPC - after the empty round finished.
 	// At this point, last_round_event should be cleared.
