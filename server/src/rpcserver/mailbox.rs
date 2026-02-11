@@ -8,7 +8,7 @@ use server_rpc::{self as rpc, protos, TryFromBytes};
 
 use crate::database::Checkpoint;
 use crate::rpcserver::{StatusContext, ToStatus, ToStatusResult};
-use crate::rpcserver::macros;
+use crate::rpcserver::macros::badarg;
 
 fn new_mailbox_msg(checkpoint: Checkpoint, vtxos: Vec<Vtxo>) -> protos::mailbox_server::MailboxMessage {
 	protos::mailbox_server::MailboxMessage {
@@ -34,14 +34,14 @@ impl rpc::server::MailboxService for crate::Server {
 			.map(|v| Vtxo::from_bytes(v))
 			.collect::<Result<Vec<_>, _>>()?;
 		if vtxos.is_empty() {
-			macros::badarg!("no vtxos provided");
+			self::badarg!("no vtxos provided");
 		}
 
 		let blinded_mailbox_id = BlindedMailboxIdentifier::from_bytes(&req.blinded_id.as_slice())?;
 		// should all have same pubkey
 		let vtxo_pubkey = vtxos[0].user_pubkey();
 		if !vtxos.iter().skip(1).all(|v| v.user_pubkey() == vtxo_pubkey) {
-			macros::badarg!("all vtxos should share vtxo pubkey when mailbox is provided");
+			self::badarg!("all vtxos should share vtxo pubkey when mailbox is provided");
 		}
 
 		let mailbox_id = self.unblind_mailbox_id(blinded_mailbox_id, vtxo_pubkey);
@@ -65,12 +65,17 @@ impl rpc::server::MailboxService for crate::Server {
 
 		let unblinded_id = MailboxIdentifier::from_slice(req.unblinded_id.as_slice())
 			.badarg("invalid unblinded mailbox id")?;
-		if let Some(auth) = req.authorization {
-			let auth = MailboxAuthorization::deserialize(auth.as_slice())
-				.badarg("invalid mailbox authorization")?;
-			if auth.mailbox() != unblinded_id {
-				macros::badarg!("authorization doesn't match mailbox id");
-			}
+		let auth_bytes = req.authorization.badarg("mailbox authorization required")?;
+		let auth = MailboxAuthorization::deserialize(auth_bytes.as_slice())
+			.badarg("invalid mailbox authorization")?;
+		if auth.mailbox() != unblinded_id {
+			self::badarg!("authorization doesn't match mailbox id");
+		}
+		if auth.is_expired() {
+			self::badarg!("mailbox authorization expired");
+		}
+		if !auth.verify() {
+			self::badarg!("invalid mailbox authorization signature");
 		}
 		let limit = self.config.read_mailbox_max_items;
 		let vtxos_by_checkpoint = self.db.get_vtxos_mailbox(
@@ -104,12 +109,17 @@ impl rpc::server::MailboxService for crate::Server {
 
 		let mailbox_id = MailboxIdentifier::from_slice(req.unblinded_id.as_slice())
 			.badarg("invalid unblinded mailbox id")?;
-		if let Some(auth) = req.authorization {
-			let auth = MailboxAuthorization::deserialize(auth.as_slice())
-				.badarg("invalid mailbox authorization")?;
-			if auth.mailbox() != mailbox_id {
-				macros::badarg!("authorization doesn't match mailbox id");
-			}
+		let auth_bytes = req.authorization.badarg("mailbox authorization required")?;
+		let auth = MailboxAuthorization::deserialize(auth_bytes.as_slice())
+			.badarg("invalid mailbox authorization")?;
+		if auth.mailbox() != mailbox_id {
+			self::badarg!("authorization doesn't match mailbox id");
+		}
+		if auth.is_expired() {
+			self::badarg!("mailbox authorization expired");
+		}
+		if !auth.verify() {
+			self::badarg!("invalid mailbox authorization signature");
 		}
 
 		let db = self.db.clone();

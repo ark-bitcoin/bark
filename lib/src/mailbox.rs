@@ -123,9 +123,7 @@ impl ProtocolEncoding for BlindedMailboxIdentifier {
 
 /// Authorization to read a VTXO mailbox
 ///
-/// It is tied to a block hash and is valid only as long as this block
-/// is recent. Recentness is specified per Ark server, but users are
-/// encouraged to use the tip when creating an authorization.
+/// It is tied to an expiry UNIX timestamp and is only valid before that time.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct MailboxAuthorization {
 	id: MailboxIdentifier,
@@ -172,6 +170,10 @@ impl MailboxAuthorization {
 	pub fn verify(&self) -> bool {
 		let msg = Self::signable_message(self.expiry);
 		SECP.verify_schnorr(&self.sig, &msg, &self.id.as_pubkey().into()).is_ok()
+	}
+
+	pub fn is_expired(&self) -> bool {
+		self.expiry() < chrono::Local::now()
 	}
 }
 

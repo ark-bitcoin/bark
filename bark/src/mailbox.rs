@@ -14,7 +14,7 @@ use bitcoin::secp256k1::Keypair;
 use log::{debug, error, info};
 
 use ark::{ProtocolEncoding, Vtxo};
-use ark::mailbox::MailboxIdentifier;
+use ark::mailbox::{MailboxAuthorization, MailboxIdentifier};
 use protos::mailbox_server::mailbox_message;
 use server_rpc::protos;
 use server_rpc::protos::mailbox_server::ArkoorMessage;
@@ -45,14 +45,16 @@ impl Wallet {
 	pub async fn sync_mailbox(&self) -> anyhow::Result<()> {
 		let mut srv = self.require_server()?;
 
-		let mailbox_id = MailboxIdentifier::from_pubkey(self.mailbox_keypair()?.public_key());
+		let mailbox_keypair = self.mailbox_keypair()?;
+		let mailbox_id = MailboxIdentifier::from_pubkey(mailbox_keypair.public_key());
 
 		for _ in 0..MAX_MAILBOX_REQUEST_BURST {
 			let checkpoint = self.get_mailbox_checkpoint().await?;
+			let expiry = chrono::Local::now() + std::time::Duration::from_secs(60);
+			let auth = MailboxAuthorization::new(&mailbox_keypair, expiry);
 			let mailbox_req = protos::mailbox_server::MailboxRequest {
 				unblinded_id: mailbox_id.to_vec(),
-				// TODO (mailbox): Add support for mailbox authorization
-				authorization: None,
+				authorization: Some(auth.serialize()),
 				checkpoint,
 			};
 
