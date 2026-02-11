@@ -8,8 +8,8 @@
       "email": "hello@second.tech"
     },
     "license": {
-      "name": "CC0-1.0",
-      "identifier": "CC0-1.0"
+      "name": "MIT",
+      "identifier": "MIT"
     },
     "version": "0.1.0-beta.7"
   },

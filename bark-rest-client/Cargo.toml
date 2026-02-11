@@ -3,7 +3,7 @@ name = "bark-rest-client"
 version = "0.1.0-beta.7"
 authors = ["hello@second.tech"]
 description = "A simple REST API for Barkd"
-license = "CC0-1.0"
+license = "MIT"
 edition = "2021"
 
 [dependencies]
