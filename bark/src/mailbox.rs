@@ -14,10 +14,9 @@ use bitcoin::secp256k1::Keypair;
 use log::{debug, error, info};
 
 use ark::{ProtocolEncoding, Vtxo};
-use ark::mailbox::{MailboxAuthorization, MailboxIdentifier};
-use protos::mailbox_server::mailbox_message;
+use ark::mailbox::MailboxAuthorization;
 use server_rpc::protos;
-use server_rpc::protos::mailbox_server::ArkoorMessage;
+use server_rpc::protos::mailbox_server::{mailbox_message, ArkoorMessage};
 use crate::movement::{MovementDestination, MovementStatus};
 use crate::movement::update::MovementUpdate;
 use crate::Wallet;
@@ -41,17 +40,28 @@ impl Wallet {
 		Ok(self.seed.to_mailbox_keypair())
 	}
 
+	/// Create a mailbox authorization that is valid until the given expiry time
+	///
+	/// This authorization can be used by third parties to lookup your mailbox
+	/// with the Ark server.
+	pub fn mailbox_authorization(
+		&self,
+		authorization_expiry: chrono::DateTime<chrono::Local>,
+	) -> anyhow::Result<MailboxAuthorization> {
+		Ok(MailboxAuthorization::new(&self.mailbox_keypair()?, authorization_expiry))
+	}
+
 	/// Sync with the mailbox on the Ark server and look for out-of-round received VTXOs.
 	pub async fn sync_mailbox(&self) -> anyhow::Result<()> {
 		let (mut srv, _) = self.require_server().await?;
 
-		let mailbox_keypair = self.mailbox_keypair()?;
-		let mailbox_id = MailboxIdentifier::from_pubkey(mailbox_keypair.public_key());
+		// we should be able to do all our syncing in 10 minutes
+		let expiry = chrono::Local::now() + std::time::Duration::from_secs(10 * 60);
+		let auth = self.mailbox_authorization(expiry)?;
+		let mailbox_id = auth.mailbox();
 
 		for _ in 0..MAX_MAILBOX_REQUEST_BURST {
 			let checkpoint = self.get_mailbox_checkpoint().await?;
-			let expiry = chrono::Local::now() + std::time::Duration::from_secs(60);
-			let auth = MailboxAuthorization::new(&mailbox_keypair, expiry);
 			let mailbox_req = protos::mailbox_server::MailboxRequest {
 				unblinded_id: mailbox_id.to_vec(),
 				authorization: Some(auth.serialize()),
