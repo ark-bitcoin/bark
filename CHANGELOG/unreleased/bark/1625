@@ -1,0 +1,2 @@
+- add `Wallet::mailbox_authorization` method to create a new authorization for your server mailbox
+  [#1625](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1625)
