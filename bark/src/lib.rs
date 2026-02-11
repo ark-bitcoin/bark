@@ -270,8 +270,7 @@
 //! 	let fee_rate = wallet.chain.fee_rates().await.fast;
 //! 	let strategy = RefreshStrategy::must_refresh(&wallet, tip, fee_rate);
 //!
-//! 	let vtxos = wallet.spendable_vtxos_with(&strategy).await?
-//! 		.into_iter().map(|v| v.vtxo).collect::<Vec<_>>();
+//! 	let vtxos = wallet.spendable_vtxos_with(&strategy).await?;
 //!		wallet.refresh_vtxos(vtxos).await?;
 //! 	Ok(())
 //! }
@@ -313,7 +312,7 @@ pub use self::daemon::DaemonHandle;
 pub use self::persist::sqlite::SqliteClient;
 pub use self::vtxo::WalletVtxo;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use anyhow::{bail, Context};
@@ -737,7 +736,7 @@ impl Wallet {
 	/// * `Err(anyhow::Error)` - If the corresponding public key doesn't exist
 	///   in the database or a database error occurred.
 	pub async fn get_vtxo_key(&self, vtxo: impl VtxoRef) -> anyhow::Result<Keypair> {
-		let vtxo = match vtxo.vtxo() {
+		let vtxo = match vtxo.vtxo_ref() {
 			Some(v) => v,
 			None => &self.get_vtxo_by_id(vtxo.vtxo_id()).await?,
 		};
@@ -1325,21 +1324,15 @@ impl Wallet {
 	///
 	/// Returns a [RoundStateId] if a refresh is scheduled.
 	pub async fn maybe_schedule_maintenance_refresh(&self) -> anyhow::Result<Option<RoundStateId>> {
-		let vtxos = self.get_vtxos_to_refresh().await?.into_iter()
-			.map(|v| v.id())
-			.collect::<Vec<_>>();
+		let vtxos = self.get_vtxos_to_refresh().await?;
 		if vtxos.len() == 0 {
 			return Ok(None);
 		}
 
-		let mut participation = match self.build_refresh_participation(vtxos).await? {
+		let participation = match self.build_refresh_participation(vtxos).await? {
 			Some(participation) => participation,
 			None => return Ok(None),
 		};
-
-		if let Err(e) = self.add_should_refresh_vtxos(&mut participation).await {
-			warn!("Error trying to add additional VTXOs that should be refreshed: {:#}", e);
-		}
 
 		info!("Scheduling maintenance refresh ({} vtxos)", participation.inputs.len());
 		let state = self.join_next_round(participation, Some(RoundMovement::Refresh)).await?;
@@ -1356,21 +1349,15 @@ impl Wallet {
 	pub async fn maybe_schedule_maintenance_refresh_delegated(
 		&self,
 	) -> anyhow::Result<Option<RoundStateId>> {
-		let vtxos = self.get_vtxos_to_refresh().await?.into_iter()
-			.map(|v| v.id())
-			.collect::<Vec<_>>();
+		let vtxos = self.get_vtxos_to_refresh().await?;
 		if vtxos.len() == 0 {
 			return Ok(None);
 		}
 
-		let mut participation = match self.build_refresh_participation(vtxos).await? {
+		let participation = match self.build_refresh_participation(vtxos).await? {
 			Some(participation) => participation,
 			None => return Ok(None),
 		};
-
-		if let Err(e) = self.add_should_refresh_vtxos(&mut participation).await {
-			warn!("Error trying to add additional VTXOs that should be refreshed: {:#}", e);
-		}
 
 		info!("Scheduling delegated maintenance refresh ({} vtxos)", participation.inputs.len());
 		let state = self.join_next_round_delegated(participation, Some(RoundMovement::Refresh)).await?;
@@ -1385,9 +1372,7 @@ impl Wallet {
 	///
 	/// Returns a [RoundStatus] if a refresh occurs.
 	pub async fn maintenance_refresh(&self) -> anyhow::Result<Option<RoundStatus>> {
-		let vtxos = self.get_vtxos_to_refresh().await?.into_iter()
-			.map(|v| v.id())
-			.collect::<Vec<_>>();
+		let vtxos = self.get_vtxos_to_refresh().await?;
 		if vtxos.len() == 0 {
 			return Ok(None);
 		}
@@ -1606,7 +1591,7 @@ impl Wallet {
 		let mut srv = self.require_server()?;
 
 		// Get the vtxo and funding transaction from the database
-		let vtxo = match vtxo.vtxo() {
+		let vtxo = match vtxo.vtxo_ref() {
 			Some(v) => v,
 			None => {
 				&self.db.get_wallet_vtxo(vtxo.vtxo_id()).await?
@@ -1656,9 +1641,9 @@ impl Wallet {
 		Ok(!my_clause.is_some())
 	}
 
-	/// If there are any VTXOs that match the "should-refresh" condition with
-	/// a total value over the  p2tr dust limit, they are added to the round
-	/// participation and an additional output is also created.
+	/// If there are any VTXOs that match the "must-refresh" and "should-refresh" criteria with a
+	/// total value over the P2TR dust limit, they are added to the round participation and an
+	/// additional output is also created.
 	async fn add_should_refresh_vtxos(
 		&self,
 		participation: &mut RoundParticipation,
@@ -1666,20 +1651,37 @@ impl Wallet {
 		let excluded_ids = participation.inputs.iter().map(|v| v.vtxo_id())
 			.collect::<HashSet<_>>();
 
-		let should_refresh_vtxos = self.get_vtxos_to_refresh().await?.into_iter()
-			.filter(|v| !excluded_ids.contains(&v.id()))
-			.map(|v| v.vtxo).collect::<Vec<_>>();
+		// Get VTXOs that need and should be refreshed, then filter out any duplicates before
+		// adjusting the round participation.
+		let mut vtxos_to_refresh = self.spendable_vtxos_with(
+			&RefreshStrategy::should_refresh(
+				self,
+				self.chain.tip().await?,
+				self.chain.fee_rates().await.fast,
+			),
+		).await?;
+		let mut should_refresh_amount = Amount::ZERO;
+		for i in (0..vtxos_to_refresh.len()).rev() {
+			let vtxo = &vtxos_to_refresh[i];
+			if excluded_ids.contains(&vtxo.id()) {
+				vtxos_to_refresh.swap_remove(i);
+				continue;
+			}
+			should_refresh_amount += vtxo.amount();
+		}
 
-		if !should_refresh_vtxos.is_empty() {
-			let total_amount = should_refresh_vtxos.iter().map(|v| v.amount()).sum::<Amount>();
-
+		if should_refresh_amount >= P2TR_DUST {
+			info!(
+				"Adding {} extra VTXOs to round participation (total amount = {})",
+				vtxos_to_refresh.len(), should_refresh_amount,
+			);
 			let (user_keypair, _) = self.derive_store_next_keypair().await?;
 			let req = VtxoRequest {
 				policy: VtxoPolicy::new_pubkey(user_keypair.public_key()),
-				amount: total_amount,
+				amount: should_refresh_amount,
 			};
-
-			participation.inputs.extend(should_refresh_vtxos);
+			participation.inputs.reserve(vtxos_to_refresh.len());
+			participation.inputs.extend(vtxos_to_refresh.into_iter().map(|wv| wv.vtxo));
 			participation.outputs.push(req);
 		}
 
@@ -1690,33 +1692,42 @@ impl Wallet {
 		&self,
 		vtxos: impl IntoIterator<Item = V>,
 	) -> anyhow::Result<Option<RoundParticipation>> {
-		let vtxos = {
-			let mut ret = HashMap::new();
-			for v in vtxos {
-				let id = v.vtxo_id();
-				let vtxo = self.get_vtxo_by_id(id).await
-					.with_context(|| format!("vtxo with id {} not found", id))?;
-				if !ret.insert(id, vtxo).is_none() {
+		let (vtxos, total_amount) = {
+			let iter = vtxos.into_iter();
+			let size_hint = iter.size_hint();
+			let mut vtxos = Vec::<Vtxo>::with_capacity(size_hint.1.unwrap_or(size_hint.0));
+			let mut amount = Amount::ZERO;
+			for vref in iter {
+				// We use a Vec here instead of a HashMap or a HashSet of IDs because for the kinds
+				// of elements we expect to deal with, a Vec is likely to be quicker. The overhead
+				// of hashing each ID and making additional allocations isn't likely to be worth it
+				// for what is likely to be a handful of VTXOs or at most a couple of hundred.
+				let id = vref.vtxo_id();
+				if vtxos.iter().any(|v| v.id() == id) {
 					bail!("duplicate VTXO id: {}", id);
 				}
+				let vtxo = if let Some(vtxo) = vref.into_vtxo() {
+					vtxo
+				} else {
+					self.get_vtxo_by_id(id).await
+						.with_context(|| format!("vtxo with id {} not found", id))?.vtxo
+				};
+				amount += vtxo.amount();
+				vtxos.push(vtxo);
 			}
-			ret
+			(vtxos, amount)
 		};
 
 		if vtxos.is_empty() {
 			info!("Skipping refresh since no VTXOs are provided.");
 			return Ok(None);
 		}
-
-		let total_amount = vtxos.values().map(|v| v.vtxo.amount()).sum();
-
 		ensure!(total_amount >= P2TR_DUST,
 			"vtxo amount must be at least {} to participate in a round",
 			P2TR_DUST,
 		);
 
 		info!("Refreshing {} VTXOs (total amount = {}).", vtxos.len(), total_amount);
-
 		let (user_keypair, _) = self.derive_store_next_keypair().await?;
 		let req = VtxoRequest {
 			policy: VtxoPolicy::Pubkey(PubkeyVtxoPolicy { user_pubkey: user_keypair.public_key() }),
@@ -1724,7 +1735,7 @@ impl Wallet {
 		};
 
 		Ok(Some(RoundParticipation {
-			inputs: vtxos.into_values().map(|v| v.vtxo).collect(),
+			inputs: vtxos,
 			outputs: vec![req],
 		}))
 	}
@@ -1770,27 +1781,15 @@ impl Wallet {
 		Ok(Some(self.join_next_round_delegated(part, Some(RoundMovement::Refresh)).await?))
 	}
 
-	/// This will find all VTXOs that meets must-refresh criteria.
-	/// Then, if there are some VTXOs to refresh, it will
-	/// also add those that meet should-refresh criteria.
+	/// This will find all VTXOs that meets must-refresh criteria. Then, if there are some VTXOs to
+	/// refresh, it will also add those that meet should-refresh criteria.
 	pub async fn get_vtxos_to_refresh(&self) -> anyhow::Result<Vec<WalletVtxo>> {
-		let tip = self.chain.tip().await?;
-		let fee_rate = self.chain.fee_rates().await.fast;
-
-		// Check if there is any VTXO that we must refresh
-		let must_refresh_vtxos = self.spendable_vtxos_with(
-			&RefreshStrategy::must_refresh(self, tip, fee_rate),
-		).await?;
-		if must_refresh_vtxos.is_empty() {
-			return Ok(vec![]);
-		} else {
-			// If we need to do a refresh, we take all the should_refresh vtxo's as well
-			// This helps us to aggregate some VTXOs
-			let should_refresh_vtxos = self.spendable_vtxos_with(
-				&RefreshStrategy::should_refresh(self, tip, fee_rate),
-			).await?;
-			Ok(should_refresh_vtxos)
-		}
+		let vtxos = self.spendable_vtxos_with(&RefreshStrategy::should_refresh_if_must(
+			self,
+			self.chain.tip().await?,
+			self.chain.fee_rates().await.fast,
+		)).await?;
+		Ok(vtxos)
 	}
 
 	/// Returns the block height at which the first VTXO will expire

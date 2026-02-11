@@ -57,14 +57,15 @@
 //!
 //! The intent is to allow users to filter VTXOs based on different parameters.
 
-use std::{borrow::Borrow, collections::HashSet};
+use std::borrow::Borrow;
+use std::collections::HashSet;
 
 use anyhow::Context;
 use bitcoin::FeeRate;
-use bitcoin_ext::BlockHeight;
+use log::warn;
 
 use ark::VtxoId;
-use log::warn;
+use bitcoin_ext::{BlockHeight, P2TR_DUST};
 
 use crate::Wallet;
 use crate::exit::progress::util::estimate_exit_cost;
@@ -233,9 +234,19 @@ impl FilterVtxos for VtxoFilter<'_> {
 	}
 }
 
+/// Determines how VTXOs get filtered when deciding whether to refresh them.
 enum InnerRefreshStrategy {
+	/// Includes a VTXO absolutely must be refreshed, for example, if it is about to expire.
 	MustRefresh,
-	ShouldRefresh,
+	/// Includes a VTXO that should be refreshed soon, for example, if it's approaching expiry, is
+	/// uneconomical to exit, or is dust. This will also include VTXOs that meet the
+	/// [InnerRefreshStrategy::MustRefresh] criteria.
+	ShouldRefreshInclusive,
+	/// Same as [InnerRefreshStrategy::ShouldRefreshInclusive], but it excludes VTXOs that meet the
+	/// [InnerRefreshStrategy::MustRefresh] criteria.
+	ShouldRefreshExclusive,
+	/// If any VTXOs _MUST_ be refreshed, then both _MUST_ and _SHOULD_ VTXOs will be included.
+	ShouldRefreshIfMustRefresh,
 }
 
 /// Strategy to select VTXOs that need proactive refreshing.
@@ -245,12 +256,17 @@ enum InnerRefreshStrategy {
 ///
 /// Variants:
 /// - [RefreshStrategy::must_refresh]: strict selection intended for mandatory refresh actions
-///   (e.g., at or beyond maximum depth or near-hard expiry threshold).
+///   (e.g., at near expiry threshold).
 /// - [RefreshStrategy::should_refresh]: softer selection for opportunistic refreshes
-///   (e.g., approaching soft thresholds or uneconomical unilateral exit).
+///   (e.g., approaching expiry thresholds or uneconomical unilateral exit).
+/// - [RefreshStrategy::should_refresh_exclusive]: same as [RefreshStrategy::should_refresh], but
+///   excludes VTXOs that meet the [RefreshStrategy::must_refresh] criteria.
+/// - [RefreshStrategy::should_refresh_if_must]: same as [RefreshStrategy::should_refresh], but
+///   only keeps the _SHOULD_ VTXOs if at least one VTXO meets the _MUST_ criteria.
 ///
-/// This type implements [FilterVtxos], so it can be passed directly to
-/// [`Wallet::vtxos_with`].
+/// Notes:
+/// - This type implements [FilterVtxos], so it can be passed directly to [`Wallet::vtxos_with`].
+/// - Calling [FilterVtxos::matches] on [RefreshStategy::should_result_if_must] is invalid.
 pub struct RefreshStrategy<'a> {
 	inner: InnerRefreshStrategy,
 	tip: BlockHeight,
@@ -262,8 +278,6 @@ impl<'a> RefreshStrategy<'a> {
 	/// Builds a strategy that matches VTXOs that must be refreshed immediately.
 	///
 	/// A [WalletVtxo] is selected when at least one of the following strict conditions holds:
-	/// - It reached or exceeded the maximum allowed out-of-round (OOR) depth (if configured by the
-	///   Ark server info in the wallet).
 	/// - It is within `vtxo_refresh_expiry_threshold` blocks of expiry at `tip`.
 	///
 	/// Parameters:
@@ -301,8 +315,6 @@ impl<'a> RefreshStrategy<'a> {
 	/// Builds a strategy that matches VTXOs that should be refreshed soon (opportunistic).
 	///
 	/// A [WalletVtxo] is selected when at least one of the following softer conditions holds:
-	/// - It is at or beyond a soft OOR depth threshold (typically one less than the maximum, if
-	///   configured by the Ark server info in the wallet).
 	/// - It is within a softer expiry window (e.g., `vtxo_refresh_expiry_threshold + 28` blocks)
 	///   relative to `tip`.
 	/// - It is uneconomical to unilaterally exit at the provided `fee_rate` (e.g., its amount is
@@ -332,11 +344,73 @@ impl<'a> RefreshStrategy<'a> {
 	/// ```
 	pub fn should_refresh(wallet: &'a Wallet, tip: BlockHeight, fee_rate: FeeRate) -> Self {
 		Self {
-			inner: InnerRefreshStrategy::ShouldRefresh,
+			inner: InnerRefreshStrategy::ShouldRefreshInclusive,
 			tip,
 			wallet,
 			fee_rate,
 		}
+	}
+
+	/// Same as [RefreshStrategy::should_refresh] but it filters out VTXOs which meet the
+	/// [RefreshStrategy::must_refresh] criteria.
+	pub fn should_refresh_exclusive(
+		wallet: &'a Wallet,
+		tip: BlockHeight,
+		fee_rate: FeeRate,
+	) -> Self {
+		Self {
+			inner: InnerRefreshStrategy::ShouldRefreshExclusive,
+			tip,
+			wallet,
+			fee_rate,
+		}
+	}
+
+	/// Similar to calling [RefreshStrategy::must_refresh] and then
+	/// [RefreshStrategy::should_refresh_exclusive], but it only keeps the _SHOULD_ VTXOs if at
+	/// least one VTXO meets the _MUST_ criteria.
+	pub fn should_refresh_if_must(wallet: &'a Wallet, tip: BlockHeight, fee_rate: FeeRate) -> Self {
+		Self {
+			inner: InnerRefreshStrategy::ShouldRefreshIfMustRefresh,
+			tip,
+			wallet,
+			fee_rate,
+		}
+	}
+
+	fn check_must_refresh(&self, vtxo: &WalletVtxo) -> anyhow::Result<bool> {
+		let threshold = self.wallet.config().vtxo_refresh_expiry_threshold;
+		if self.tip > vtxo.spec().expiry_height.saturating_sub(threshold) {
+			warn!("VTXO {} is about to expire soon, must be refreshed", vtxo.id());
+			return Ok(true);
+		}
+
+		Ok(false)
+	}
+
+	fn check_should_refresh(&self, vtxo: &WalletVtxo) -> anyhow::Result<bool> {
+		let soft_threshold = self.wallet.config().vtxo_refresh_expiry_threshold + 28;
+		if self.tip > vtxo.spec().expiry_height.saturating_sub(soft_threshold) {
+			warn!("VTXO {} is about to expire, should be refreshed on next opportunity",
+				vtxo.id(),
+			);
+			return Ok(true);
+		}
+
+		let fr = self.fee_rate;
+		if vtxo.amount() < estimate_exit_cost(&[vtxo.vtxo.clone()], fr) {
+			warn!("VTXO {} is uneconomical to exit, should be refreshed on \
+				next opportunity", vtxo.id(),
+			);
+			return Ok(true);
+		}
+
+		if vtxo.amount() < P2TR_DUST {
+			warn!("VTXO {} is dust, should be refreshed on next opportunity", vtxo.id());
+			return Ok(true);
+		}
+
+		Ok(false)
 	}
 }
 
@@ -344,35 +418,52 @@ impl<'a> RefreshStrategy<'a> {
 impl FilterVtxos for RefreshStrategy<'_> {
 	async fn matches(&self, vtxo: &WalletVtxo) -> anyhow::Result<bool> {
 		match self.inner {
-			InnerRefreshStrategy::MustRefresh => {
-				let threshold = self.wallet.config().vtxo_refresh_expiry_threshold;
-				if self.tip > vtxo.spec().expiry_height.saturating_sub(threshold) {
-					warn!("VTXO {} is about to expire soon, must be refreshed", vtxo.id());
-					return Ok(true);
-				}
-
-				Ok(false)
-			},
-			InnerRefreshStrategy::ShouldRefresh => {
-				let soft_threshold = self.wallet.config().vtxo_refresh_expiry_threshold + 28;
-				if self.tip > vtxo.spec().expiry_height.saturating_sub(soft_threshold) {
-					warn!("VTXO {} is about to expire, should be refreshed on next opportunity",
-						vtxo.id(),
-					);
-					return Ok(true);
-				}
-
-				let fr = self.fee_rate;
-				if vtxo.amount() < estimate_exit_cost(&[vtxo.vtxo.clone()], fr) {
-					warn!("VTXO {} is uneconomical to exit, should be refreshed on \
-						next opportunity", vtxo.id(),
-					);
-					return Ok(true);
-				}
-
-				Ok(false)
-			}
+			InnerRefreshStrategy::MustRefresh => self.check_must_refresh(vtxo),
+			InnerRefreshStrategy::ShouldRefreshInclusive => self.check_should_refresh(vtxo),
+			InnerRefreshStrategy::ShouldRefreshExclusive =>
+				Ok(!self.check_must_refresh(vtxo)? && self.check_should_refresh(vtxo)?),
+			InnerRefreshStrategy::ShouldRefreshIfMustRefresh =>
+				bail!("FilterVtxos::matches called on RefreshStrategy::should_refresh_if_must"),
 		}
+	}
+
+	async fn filter_vtxos<V: Borrow<WalletVtxo> + Send>(
+		&self,
+		vtxos: &mut Vec<V>,
+	) -> anyhow::Result<()> {
+		match self.inner {
+			InnerRefreshStrategy::ShouldRefreshIfMustRefresh => {
+				let mut must_refresh = false;
+				for i in (0..vtxos.len()).rev() {
+					let keep = {
+						let vtxo = vtxos[i].borrow();
+						if self.check_must_refresh(vtxo)? {
+							must_refresh = true;
+							true
+						} else {
+							self.check_should_refresh(vtxo)?
+						}
+					};
+					if !keep {
+						vtxos.swap_remove(i);
+					}
+				}
+				// We can safely clear the container since we should only keep the should-refresh
+				// vtxos if we found at least one must-refresh vtxo.
+				if !must_refresh {
+					vtxos.clear();
+				}
+			},
+			_ => { 
+				for i in (0..vtxos.len()).rev() {
+					let vtxo = vtxos[i].borrow();
+					if !self.matches(vtxo).await? {
+						vtxos.swap_remove(i);
+					}
+				}
+			},
+		}
+		Ok(())
 	}
 }
 

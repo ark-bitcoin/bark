@@ -379,8 +379,6 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 				_ => bail!("please provide either threshold vtxo, threshold_blocks, threshold_hours, counterparty or all"),
 			};
 
-			let vtxos = vtxos.into_iter().map(|v| v.id()).collect::<Vec<_>>();
-
 			info!("Refreshing {} vtxos...", vtxos.len());
 			if delegated {
 				if let Some(res) = wallet.refresh_vtxos_delegated(vtxos).await? {
