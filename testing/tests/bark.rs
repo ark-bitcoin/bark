@@ -1344,11 +1344,12 @@ async fn stepwise_round() {
 	//! in rounds stepwise by manually feeding events into the wallet
 
 	let ctx = TestContext::new("bark/stepwise_round").await;
-	let srv = ctx.new_captaind_with_funds("server", None, btc(1)).await;
-	// let srv = ctx.new_captaind_with_cfg("server", None, |cfg| {
-	// 	cfg.vtxo_lifetime = 144;
-	// }).await;
-	// ctx.fund_captaind(&src, btc(1)).await;
+	let srv = ctx.new_captaind_with_cfg("server", None, |cfg| {
+		cfg.round_interval = Duration::from_secs(3600);
+	}).await;
+	ctx.fund_captaind(&srv, btc(1)).await;
+	srv.wait_for_initial_round().await;
+
 	let bark = ctx.new_bark_with_funds("bark", &srv, sat(1_000_000)).await;
 	bark.board(sat(800_000)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
@@ -1381,6 +1382,9 @@ async fn stepwise_round() {
 
 	let mut rpc = srv.get_public_rpc().await;
 	let mut events = rpc.subscribe_rounds(protos::Empty{}).await.unwrap().into_inner();
+
+	// Trigger a round manually so bark cannot be late for an automatic round
+	srv.trigger_round().await;
 
 	while let Some(item) = events.next().await {
 		let event = RoundEvent::try_from(item.unwrap()).unwrap();
