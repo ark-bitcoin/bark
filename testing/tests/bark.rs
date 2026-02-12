@@ -943,6 +943,7 @@ async fn second_round_attempt() {
 	let srv = ctx.new_captaind_with_cfg("server", None, |cfg| {
 		cfg.round_interval = Duration::from_secs(3600);
 	}).await;
+	srv.wait_for_initial_round().await;
 	ctx.fund_captaind(&srv, btc(10)).await;
 
 	let bark1 = ctx.new_bark_with_funds("bark1".to_string(), &srv, sat(1_000_000)).await;
@@ -989,6 +990,7 @@ async fn bark_can_sign_up_to_round_during_signup_phase() {
 	let srv = ctx.new_captaind_with_cfg("server", None, |cfg| {
 		cfg.round_interval = Duration::from_secs(3600);
 	}).await;
+	srv.wait_for_initial_round().await;
 	ctx.fund_captaind(&srv, btc(10)).await;
 
 	let bark = ctx.new_bark_with_funds("bark", &srv, sat(1_000_000)).await;

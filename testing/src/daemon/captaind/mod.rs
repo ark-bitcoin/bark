@@ -16,7 +16,10 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
 use tokio::sync::{self, mpsc};
 use tokio::process::Command;
 
-use server_log::{parse_record, FinishedPoolIssuance, ParsedRecord, LogMsg, SyncedToHeight};
+use server_log::{
+	parse_record, FinishedPoolIssuance, NoRoundPayments, ParsedRecord, LogMsg, RoundError,
+	RoundFinished, SyncedToHeight,
+};
 use server_rpc::{self as rpc, protos};
 pub use server::config::{self, Config};
 
@@ -79,6 +82,7 @@ impl Default for VtxoPoolState {
 pub struct State {
 	vtxopool_state: VtxoPoolState,
 	sync_height: BlockHeight,
+	did_initial_round: bool,
 }
 
 impl SlogHandler for Arc<parking_lot::Mutex<State>> {
@@ -91,6 +95,12 @@ impl SlogHandler for Arc<parking_lot::Mutex<State>> {
 		if log.is::<SyncedToHeight>() {
 			let sth = log.try_as::<SyncedToHeight>().unwrap();
 			self.lock().sync_height = sth.height;
+		}
+
+		if !self.lock().did_initial_round {
+			if log.is::<NoRoundPayments>() || log.is::<RoundFinished>() || log.is::<RoundError>() {
+				self.lock().did_initial_round = true;
+			}
 		}
 
 		false
@@ -293,6 +303,18 @@ impl Captaind {
 				return;
 			}
 			tokio::time::sleep(secs(1)).await;
+		}
+	}
+
+	/// Wait until the server's initial startup round has completed.
+	pub async fn wait_for_initial_round(&self) {
+		info!("Waiting for initial round to complete...");
+		loop {
+			if self.inner.state.lock().did_initial_round {
+				info!("Initial round completed");
+				return;
+			}
+			tokio::time::sleep(Duration::from_millis(100)).await;
 		}
 	}
 
