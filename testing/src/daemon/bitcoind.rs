@@ -114,8 +114,13 @@ impl Bitcoind {
 	pub async fn init_wallet(&self) {
 		info!("Initializing a wallet");
 		let client = self.sync_client();
-		if client.get_wallet_info().is_err() {
+		// Check if wallet exists by listing wallets
+		let wallets = client.list_wallets().unwrap_or_default();
+		if wallets.is_empty() {
+			info!("No wallet found, creating one");
 			client.create_wallet("", None, None, None, None).expect("failed to create new wallet");
+		} else {
+			info!("Wallet already exists: {:?}", wallets);
 		}
 	}
 
