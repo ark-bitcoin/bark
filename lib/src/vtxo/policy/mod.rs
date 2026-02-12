@@ -365,7 +365,7 @@ impl ServerHtlcSendVtxoPolicy {
 	) -> HashDelaySignClause {
 		HashDelaySignClause {
 			pubkey: server_pubkey,
-			payment_hash: self.payment_hash,
+			hash: self.payment_hash.to_sha256_hash(),
 			block_delta: exit_delta
 		}
 	}
@@ -440,7 +440,7 @@ impl ServerHtlcRecvVtxoPolicy {
 	pub fn user_reveals_preimage_clause(&self, exit_delta: BlockDelta) -> HashDelaySignClause {
 		HashDelaySignClause {
 			pubkey: self.user_pubkey,
-			payment_hash: self.payment_hash,
+			hash: self.payment_hash.to_sha256_hash(),
 			block_delta: self.htlc_expiry_delta + exit_delta
 		}
 	}
