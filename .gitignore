@@ -16,5 +16,8 @@ testing/tmp-pg-data
 # VS Code
 .vscode/
 
+# Agent reviews
+contrib/agents/reviews/
+
 # macOS
 .DS_Store
