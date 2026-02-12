@@ -24,6 +24,7 @@ Use the skills in `contrib/agents/skills/` extensively:
 | `release-tagging.md` | Tagging releases |
 | `prompts.md` | Managing prompts and research |
 | `corrections.md` | When corrected, encode the fix into skill files |
+| `debug-ci.md` | Debugging CI failures — `debug <url to failed pipeline>` |
 
 ## Testing
 
