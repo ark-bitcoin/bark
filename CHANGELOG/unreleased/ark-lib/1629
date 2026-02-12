@@ -1,0 +1,2 @@
+- make our HTLC-like clause lightning-agnostic
+  [#1629](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1629)
