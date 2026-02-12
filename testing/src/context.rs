@@ -242,7 +242,7 @@ impl TestContext {
 			vtxo_lifetime: 144,
 			vtxo_exit_delta: 12,
 			round_interval: Duration::from_millis(2000),
-			round_submit_time: Duration::from_millis(2000),
+			round_submit_time: Duration::from_millis(5000),
 			// this one can be long cuz in most tests all users are ready and we don't wait
 			round_sign_time: Duration::from_millis(5000),
 			nb_round_nonces: 8,
