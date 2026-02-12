@@ -32,7 +32,7 @@ use ark::tree::signed::{LeafVtxoCosignContext, UnlockHash, VtxoTreeSpec};
 use bitcoin_ext::TxStatus;
 use server_rpc::{protos, ServerConnection, TryFromBytes};
 
-use crate::{SECP, Wallet};
+use crate::{SECP, Wallet, WalletVtxo};
 use crate::movement::{MovementId, MovementStatus};
 use crate::movement::update::MovementUpdate;
 use crate::persist::{RoundStateId, StoredRoundState};
@@ -1322,6 +1322,33 @@ impl Wallet {
 	/// Get all pending round states
 	pub async fn pending_round_states(&self) -> anyhow::Result<Vec<StoredRoundState>> {
 		self.db.load_round_states().await
+	}
+
+	/// Balance locked in pending rounds
+	pub async fn pending_round_balance(&self) -> anyhow::Result<Amount> {
+		let mut ret = Amount::ZERO;
+		for round in self.db.load_round_states().await? {
+			ret += round.state.pending_balance();
+		}
+		Ok(ret)
+	}
+
+	/// Returns all VTXOs that are locked in a pending round
+	///
+	/// This excludes all input VTXOs for which the output VTXOs have already
+	/// been created.
+	pub async fn pending_round_input_vtxos(&self) -> anyhow::Result<Vec<WalletVtxo>> {
+		let mut ret = Vec::new();
+		for round in self.db.load_round_states().await? {
+			let inputs = round.state.locked_pending_inputs();
+			ret.reserve(inputs.len());
+			for input in inputs {
+				let v = self.get_vtxo_by_id(input.id()).await
+					.context("unknown round input VTXO")?;
+				ret.push(v);
+			}
+		}
+		Ok(ret)
 	}
 
 	/// Sync pending rounds that have finished but are waiting for confirmations
