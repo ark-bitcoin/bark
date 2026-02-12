@@ -81,9 +81,8 @@ impl Server {
 		// Bail early if this invoice was already paid to avoid setting up HTLCs
 		// just to have them revoked some time later.
 		if let Some(invoice) = self.db.get_lightning_invoice_by_payment_hash(
-			&invoice_payment_hash,
-		).await?
-		{
+			invoice_payment_hash,
+		).await? {
 			if invoice.preimage.is_some() {
 				return badarg!("invoice has already been paid");
 			}
@@ -104,7 +103,7 @@ impl Server {
 		}
 
 		if self.db.get_open_lightning_payment_attempt_by_payment_hash(
-			&invoice_payment_hash,
+			invoice_payment_hash,
 		).await?.is_some()
 		{
 			return badarg!("payment already in progress for this invoice");
@@ -209,7 +208,7 @@ impl Server {
 		payment_hash: PaymentHash,
 		wait: bool,
 	) -> anyhow::Result<lightning_payment_status::PaymentStatus> {
-		Ok(match self.cln.get_payment_status(&payment_hash, wait).await? {
+		Ok(match self.cln.get_payment_status(payment_hash, wait).await? {
 			PaymentStatus::Success(preimage) => {
 				lightning_payment_status::PaymentStatus::Success(protos::PaymentSuccessStatus {
 					preimage: preimage.to_vec(),
@@ -268,7 +267,7 @@ impl Server {
 		let builder = self.validate_cosign_request(validation, cosign_request)
 			.badarg("invalid cosign request")?;
 
-		let invoice = db.get_lightning_invoice_by_payment_hash(&invoice_payment_hash).await?;
+		let invoice = db.get_lightning_invoice_by_payment_hash(invoice_payment_hash).await?;
 
 		// If payment not found but input vtxos are found, we can allow revoke
 		if let Some(invoice) = invoice {
@@ -284,7 +283,7 @@ impl Server {
 				},
 				_ if tip > input_policy.htlc_expiry => {
 					// Check one last time to see if it completed
-					let res = self.cln.get_payment_status(&invoice_payment_hash, false).await;
+					let res = self.cln.get_payment_status(invoice_payment_hash, false).await;
 					if let Ok(PaymentStatus::Success(preimage)) = res {
 						return badarg!("This lightning payment has completed. preimage: {}",
 							preimage.as_hex());
