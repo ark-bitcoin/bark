@@ -514,7 +514,12 @@ async fn list_movements() {
 	// Initialize the test
 	let ctx = TestContext::new("bark/list_movements").await;
 
-	let srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
+	let srv = ctx.new_captaind_with_cfg("server", None, |cfg| {
+		cfg.round_interval = Duration::from_secs(3600);
+	}).await;
+	ctx.fund_captaind(&srv, btc(10)).await;
+	srv.wait_for_initial_round().await;
+
 	let bark1 = ctx.new_bark_with_funds("bark1", &srv, sat(1_000_000)).await;
 	let bark2 = ctx.new_bark_with_funds("bark2", &srv, sat(1_000_000)).await;
 
@@ -541,8 +546,12 @@ async fn list_movements() {
 	assert_eq!(movements.last().unwrap().sent_to[0].amount, sat(150_000));
 	assert_eq!(movements.last().unwrap().offchain_fee, Amount::ZERO);
 
-	// refresh vtxos
-	bark1.refresh_all().await;
+	// refresh vtxos - trigger round manually
+	let (_, refresh) = tokio::join!(
+		srv.trigger_round(),
+		bark1.try_refresh_all_no_retry(),
+	);
+	refresh.expect("refresh failed");
 	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
 
 	let movements = bark1.history().await;
