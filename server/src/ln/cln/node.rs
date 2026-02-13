@@ -188,7 +188,7 @@ impl ClnNodeMonitorProcess {
 			let payment_hash = PaymentHash::try_from(update.payment_hash.clone())
 				.expect("payment hash must be 32 bytes");
 
-			let attempt = match self.db.get_open_lightning_payment_attempt_by_payment_hash(&payment_hash).await? {
+			let attempt = match self.db.get_open_lightning_payment_attempt_by_payment_hash(payment_hash).await? {
 				Some(r) => r,
 				None => continue, // NB this is unrelated traffic on cln node
 			};
@@ -202,7 +202,7 @@ impl ClnNodeMonitorProcess {
 
 						let status = LightningPaymentStatus::Submitted;
 						let ok = self.db.verify_and_update_invoice(
-							&payment_hash, &attempt, status, None, None, None,
+							payment_hash, &attempt, status, None, None, None,
 						).await?;
 						if ok {
 							self.payment_update_tx.send(payment_hash)?;
@@ -221,7 +221,7 @@ impl ClnNodeMonitorProcess {
 
 					let status = LightningPaymentStatus::Failed;
 					let ok = self.db.verify_and_update_invoice(
-						&payment_hash, &attempt, status, error_string,  None, None,
+						payment_hash, &attempt, status, error_string,  None, None,
 					).await?;
 					if ok {
 						self.payment_update_tx.send(payment_hash)?;
@@ -238,7 +238,7 @@ impl ClnNodeMonitorProcess {
 
 					let status = LightningPaymentStatus::Succeeded;
 					let ok = self.db.verify_and_update_invoice(
-						&payment_hash, &attempt, status, None, Some(final_msat), Some(preimage),
+						payment_hash, &attempt, status, None, Some(final_msat), Some(preimage),
 					).await?;
 					if ok {
 						self.payment_update_tx.send(payment_hash)?;
@@ -399,7 +399,7 @@ impl ClnNodeMonitorProcess {
 						let preimage = latest.preimage.map(|b| b.try_into().expect("invalid preimage not 32 bytes"));
 
 						updated = self.db.verify_and_update_invoice(
-							&invoice.payment_hash,
+							invoice.payment_hash,
 							&attempt,
 							desired_status,
 							error_string,
@@ -726,7 +726,7 @@ impl ClnNodeMonitorProcess {
 
 		let payment_hash = PaymentHash::from(&htlc_subscription.invoice);
 		let payment_attempt = self.db
-			.get_open_lightning_payment_attempt_by_payment_hash(&payment_hash).await?;
+			.get_open_lightning_payment_attempt_by_payment_hash(payment_hash).await?;
 		if let Some(payment_attempt) = payment_attempt {
 			debug!("HTLC subscription canceled with ongoing payment attempt, \
 				marking as failed: {}", payment_attempt.id,

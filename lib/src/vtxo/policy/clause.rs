@@ -9,7 +9,6 @@ use bitcoin::{secp256k1::PublicKey, ScriptBuf};
 
 use bitcoin_ext::{BlockDelta, BlockHeight};
 
-use crate::lightning::{PREIMAGE_SIZE, PaymentHash, Preimage};
 use crate::vtxo::policy::Policy;
 use crate::{Vtxo, scripts};
 
@@ -216,11 +215,11 @@ impl Into<VtxoClause> for DelayedTimelockSignClause {
 }
 
 /// A clause that allows to sign and spend the UTXO after a relative
-/// timelock, if preimage matching the payment hash is provided.
+/// timelock, if preimage matching the hash is provided.
 #[derive(Debug, Clone)]
 pub struct HashDelaySignClause {
 	pub pubkey: PublicKey,
-	pub payment_hash: PaymentHash,
+	pub hash: sha256::Hash,
 	pub block_delta: BlockDelta,
 }
 
@@ -232,11 +231,11 @@ impl HashDelaySignClause {
 }
 
 impl TapScriptClause for HashDelaySignClause {
-	type WitnessData = (schnorr::Signature, Preimage);
+	type WitnessData = (schnorr::Signature, [u8; 32]);
 
 	fn tapscript(&self) -> ScriptBuf {
 		scripts::hash_delay_sign(
-			self.payment_hash.to_sha256_hash(),
+			self.hash,
 			self.block_delta,
 			self.pubkey.x_only_public_key().0,
 		)
@@ -250,7 +249,7 @@ impl TapScriptClause for HashDelaySignClause {
 		let (signature, preimage) = data;
 		Witness::from_slice(&[
 			&signature[..],
-			&preimage.as_ref()[..],
+			&preimage[..],
 			self.tapscript().as_bytes(),
 			&control_block.serialize()[..],
 		])
@@ -264,7 +263,7 @@ impl TapScriptClause for HashDelaySignClause {
 		+ 1  // schnorr signature size byte
 		+ SCHNORR_SIGNATURE_SIZE // schnorr sig bytes
 		+ 1  // preimage size byte
-		+ PREIMAGE_SIZE // preimage bytes
+		+ 32 // preimage bytes
 		+ VarInt::from(tapscript_size).size()  // tapscript size bytes
 		+ tapscript_size // tapscript bytes
 		+ VarInt::from(cb_size).size()  // control block size bytes
@@ -319,7 +318,7 @@ impl TapScriptClause for HashSignClause {
 		+ 1  // schnorr signature size byte
 		+ SCHNORR_SIGNATURE_SIZE // schnorr sig bytes
 		+ 1  // preimage size byte
-		+ PREIMAGE_SIZE // preimage bytes
+		+ 32 // preimage bytes
 		+ VarInt::from(tapscript_size).size()  // tapscript size bytes
 		+ tapscript_size // tapscript bytes
 		+ VarInt::from(cb_size).size()  // control block size bytes
@@ -576,11 +575,11 @@ mod tests {
 
 	#[test]
 	fn test_hash_delay_clause() {
-		let preimage = Preimage::from_slice(&[0; 32]).unwrap();
+		let preimage = [0; 32];
 
 		let clause = HashDelaySignClause {
 			pubkey: USER_KEYPAIR.public_key(),
-			payment_hash: preimage.compute_payment_hash(),
+			hash: sha256::Hash::hash(&preimage),
 			block_delta: 24,
 		};
 

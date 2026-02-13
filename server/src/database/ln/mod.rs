@@ -152,7 +152,7 @@ impl Db {
 
 	pub async fn get_open_lightning_payment_attempt_by_payment_hash(
 		&self,
-		payment_hash: &PaymentHash,
+		payment_hash: PaymentHash,
 	) -> anyhow::Result<Option<LightningPaymentAttempt>> {
 		let conn = self.get_conn().await?;
 
@@ -379,7 +379,7 @@ impl Db {
 
 	pub async fn get_lightning_invoice_by_payment_hash(
 		&self,
-		payment_hash: &PaymentHash,
+		payment_hash: PaymentHash,
 	) -> anyhow::Result<Option<LightningInvoice>> {
 		let conn = self.get_conn().await?;
 

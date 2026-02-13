@@ -185,7 +185,7 @@ impl ClnManager {
 	/// Gets the payment status for a given payment hash
 	pub async fn get_payment_status(
 		&self,
-		payment_hash: &PaymentHash,
+		payment_hash: PaymentHash,
 		wait: bool,
 	) -> anyhow::Result<PaymentStatus> {
 		trace!("Getting payment status for payment hash: {}. wait: {}",
@@ -200,7 +200,7 @@ impl ClnManager {
 				// Trigger received on channel
 				rcv = update_rx.recv() => match rcv {
 					Ok(hash) => {
-						if hash != *payment_hash {
+						if hash != payment_hash {
 							continue;
 						}
 					},
@@ -211,7 +211,7 @@ impl ClnManager {
 				},
 			}
 
-			let invoice = self.db.get_lightning_invoice_by_payment_hash(&payment_hash).await?
+			let invoice = self.db.get_lightning_invoice_by_payment_hash(payment_hash).await?
 				.not_found([payment_hash], "invoice not found")?;
 
 			if let Some(status) = invoice.last_attempt_status {
@@ -264,11 +264,11 @@ impl ClnManager {
 		// If an open payment attempt exists for the payment hash, it is an
 		// intra-Ark lightning payment so we can mark it as succeeded with
 		// preimage, then skip hold invoice settlement
-		let attempt = self.db.get_open_lightning_payment_attempt_by_payment_hash(&payment_hash).await?;
+		let attempt = self.db.get_open_lightning_payment_attempt_by_payment_hash(payment_hash).await?;
 		if let Some(attempt) = attempt {
 			let status = LightningPaymentStatus::Succeeded;
 			self.db.verify_and_update_invoice(
-				&payment_hash, &attempt, status, None, None, Some(preimage),
+				payment_hash, &attempt, status, None, None, Some(preimage),
 			).await?;
 
 			// NB: in case of intra-ark lightning payments, we need to notify the subscriber
@@ -763,7 +763,7 @@ impl ClnManagerProcess {
 			if let Err(e) = res {
 				trace!("Failed to update subscription status: {e:#}");
 				let payment_attempt = self.db
-					.get_open_lightning_payment_attempt_by_payment_hash(&payment_hash).await?
+					.get_open_lightning_payment_attempt_by_payment_hash(payment_hash).await?
 					.expect("we inserted a payment attempt");
 
 				self.db.update_lightning_payment_attempt_status(
@@ -811,11 +811,16 @@ impl ClnManagerProcess {
 	///
 	/// Caller is responsible for checking if there is an existing opened
 	/// subscription in the db and act accordingly.
-	async fn generate_invoice(&self, payment_hash: PaymentHash, amount: Amount, cltv_delta: BlockDelta) -> anyhow::Result<Bolt11Invoice> {
+	async fn generate_invoice(
+		&self,
+		payment_hash: PaymentHash,
+		amount: Amount,
+		cltv_delta: BlockDelta,
+	) -> anyhow::Result<Bolt11Invoice> {
 		let node = self.get_hold_active_node().context("no active hold-compatible cln node")?;
 		let mut hold_client = node.hold_rpc.clone().expect("active node not hold enabled");
 
-		if let Ok(Some(existing)) = self.db.get_lightning_invoice_by_payment_hash(&payment_hash).await {
+		if let Ok(Some(existing)) = self.db.get_lightning_invoice_by_payment_hash(payment_hash).await {
 			trace!("Found invoice but no subscription, creating new one");
 
 			hold_client.inject(hold::InjectRequest {
@@ -1011,9 +1016,9 @@ async fn handle_pay_invoice(
 		// Fetch and store the attempt as failed.
 		Err(pay_err) => {
 			error!("Error calling pay-command: {}", pay_err);
-			match db.get_open_lightning_payment_attempt_by_payment_hash(&payment_hash).await {
+			match db.get_open_lightning_payment_attempt_by_payment_hash(payment_hash).await {
 				Ok(Some(attempt)) => match db.verify_and_update_invoice(
-					&payment_hash,
+					payment_hash,
 					&attempt,
 					LightningPaymentStatus::Submitted,
 					Some(&format!("pay rpc call error: {}", pay_err)),
@@ -1082,7 +1087,7 @@ async fn call_xpay(
 impl database::Db {
 	async fn verify_and_update_invoice(
 		&self,
-		payment_hash: &PaymentHash,
+		payment_hash: PaymentHash,
 		attempt: &LightningPaymentAttempt,
 		status: LightningPaymentStatus,
 		payment_error: Option<&str>,
