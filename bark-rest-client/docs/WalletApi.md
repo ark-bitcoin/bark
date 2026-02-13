@@ -10,6 +10,7 @@ Method | HTTP request | Description
 [**connected**](WalletApi.md#connected) | **GET** /api/v1/wallet/connected | 
 [**create_wallet**](WalletApi.md#create_wallet) | **POST** /api/v1/wallet/create | 
 [**history**](WalletApi.md#history) | **GET** /api/v1/wallet/history | 
+[**import_vtxo**](WalletApi.md#import_vtxo) | **POST** /api/v1/wallet/import-vtxo | 
 [**movements**](WalletApi.md#movements) | **GET** /api/v1/wallet/movements | 
 [**next_round**](WalletApi.md#next_round) | **GET** /api/v1/wallet/next-round | 
 [**offboard_all**](WalletApi.md#offboard_all) | **POST** /api/v1/wallet/offboard/all | 
@@ -186,6 +187,36 @@ No authorization required
 ### HTTP request headers
 
 - **Content-Type**: Not defined
+- **Accept**: application/json
+
+[[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
+
+
+## import_vtxo
+
+> Vec<models::WalletVtxoInfo> import_vtxo(import_vtxo_request)
+
+
+Imports a raw serialized VTXO into the wallet
+
+### Parameters
+
+
+Name | Type | Description  | Required | Notes
+------------- | ------------- | ------------- | ------------- | -------------
+**import_vtxo_request** | [**ImportVtxoRequest**](ImportVtxoRequest.md) |  | [required] |
+
+### Return type
+
+[**Vec<models::WalletVtxoInfo>**](WalletVtxoInfo.md)
+
+### Authorization
+
+No authorization required
+
+### HTTP request headers
+
+- **Content-Type**: application/json
 - **Accept**: application/json
 
 [[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)

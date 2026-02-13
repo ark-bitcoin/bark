@@ -56,6 +56,7 @@ Class | Method | HTTP request | Description
 *WalletApi* | [**connected**](docs/WalletApi.md#connected) | **GET** /api/v1/wallet/connected | 
 *WalletApi* | [**create_wallet**](docs/WalletApi.md#create_wallet) | **POST** /api/v1/wallet/create | 
 *WalletApi* | [**history**](docs/WalletApi.md#history) | **GET** /api/v1/wallet/history | 
+*WalletApi* | [**import_vtxo**](docs/WalletApi.md#import_vtxo) | **POST** /api/v1/wallet/import-vtxo | 
 *WalletApi* | [**movements**](docs/WalletApi.md#movements) | **GET** /api/v1/wallet/movements | 
 *WalletApi* | [**next_round**](docs/WalletApi.md#next_round) | **GET** /api/v1/wallet/next-round | 
 *WalletApi* | [**offboard_all**](docs/WalletApi.md#offboard_all) | **POST** /api/v1/wallet/offboard/all | 
@@ -158,6 +159,7 @@ Class | Method | HTTP request | Description
  - [ExitTxStatusOneOf4](docs/ExitTxStatusOneOf4.md)
  - [ExitTxStatusOneOf5](docs/ExitTxStatusOneOf5.md)
  - [ExitTxStatusOneOf6](docs/ExitTxStatusOneOf6.md)
+ - [ImportVtxoRequest](docs/ImportVtxoRequest.md)
  - [InternalServerError](docs/InternalServerError.md)
  - [InvoiceInfo](docs/InvoiceInfo.md)
  - [LightningInvoiceRequest](docs/LightningInvoiceRequest.md)

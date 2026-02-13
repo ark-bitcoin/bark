@@ -10,7 +10,7 @@ use log::{debug, info};
 
 use ark::{ArkInfo, Vtxo, VtxoId};
 use ark::encode::ProtocolEncoding;
-use bark_json::primitives::VtxoInfo;
+use bark_json::primitives::{VtxoInfo, WalletVtxoInfo};
 use server_rpc as rpc;
 
 use bark_cli::wallet::open_wallet;
@@ -73,7 +73,15 @@ pub enum VtxoCommand {
 		/// Mention a specific vtxo. You can use it multiple times
 		#[arg(long= "vtxo")]
 		vtxo: Vec<VtxoId>,
-	}
+	},
+
+	/// Import serialized VTXOs into the wallet
+	#[command()]
+	Import {
+		/// VTXO encoded in hex
+		#[arg(long = "vtxo")]
+		vtxo: Vec<String>,
+	},
 }
 
 async fn execute_vtxo_command(datadir: &Path, command: VtxoCommand) -> anyhow::Result<()> {
@@ -105,6 +113,27 @@ async fn execute_vtxo_command(datadir: &Path, command: VtxoCommand) -> anyhow::R
 				wallet.dangerous_drop_vtxo(v).await
 					.context("Failed to drop vtxo")?;
 			}
+		}
+		VtxoCommand::Import { vtxo } => {
+			if vtxo.is_empty() {
+				bail!("No VTXOs provided. Use --vtxo <hex> to specify VTXOs to import");
+			}
+
+			let (wallet, _onchain) = open_wallet(&datadir).await
+				.context("Failed to open wallet")?
+				.context("No wallet found")?;
+
+			let mut imported = Vec::with_capacity(vtxo.len());
+			for vtxo_hex in vtxo {
+				let vtxo = Vtxo::deserialize_hex(&vtxo_hex)
+					.with_context(|| format!("invalid vtxo: {}", vtxo_hex))?;
+				let vtxo_id = vtxo.id();
+				wallet.import_vtxo(&vtxo).await.with_context(|| format!("Failed to import vtxo {}", vtxo_id))?;
+				let wallet_vtxo = wallet.get_vtxo_by_id(vtxo_id).await
+					.with_context(|| format!("Failed to get imported vtxo {}", vtxo_id))?;
+				imported.push(WalletVtxoInfo::from(wallet_vtxo));
+			}
+			output_json(&imported);
 		}
 	}
 	Ok(())

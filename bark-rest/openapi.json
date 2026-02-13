@@ -1220,6 +1220,60 @@
         }
       }
     },
+    "/api/v1/wallet/import-vtxo": {
+      "post": {
+        "tags": [
+          "wallet"
+        ],
+        "description": "Imports a raw serialized VTXO into the wallet",
+        "operationId": "import_vtxo",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ImportVtxoRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "VTXO imported successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/WalletVtxoInfo"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid VTXO hex or VTXO not owned by wallet",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternalServerError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/wallet/movements": {
       "get": {
         "tags": [
@@ -3364,6 +3418,21 @@
             }
           }
         ]
+      },
+      "ImportVtxoRequest": {
+        "type": "object",
+        "required": [
+          "vtxos"
+        ],
+        "properties": {
+          "vtxos": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Hex-encoded VTXOs to import"
+          }
+        }
       },
       "InternalServerError": {
         "type": "object",

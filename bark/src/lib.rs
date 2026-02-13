@@ -1111,6 +1111,38 @@ impl Wallet {
 		Ok(())
 	}
 
+	/// Manually import a VTXO into the wallet.
+	///
+	/// # Arguments
+	/// * `vtxo` - The VTXO to import
+	///
+	/// # Errors
+	/// Returns an error if:
+	/// - The VTXO's chain anchor is not found or invalid
+	/// - The wallet doesn't own a signable clause for the VTXO
+	pub async fn import_vtxo(&self, vtxo: &Vtxo) -> anyhow::Result<()> {
+		if self.db.get_wallet_vtxo(vtxo.id()).await?.is_some() {
+			info!("VTXO {} already exists in wallet, skipping import", vtxo.id());
+			return Ok(());
+		}
+
+		self.validate_vtxo(vtxo).await.context("VTXO validation failed")?;
+
+		if self.find_signable_clause(vtxo).await.is_none() {
+			bail!("VTXO {} is not owned by this wallet (no signable clause found)", vtxo.id());
+		}
+
+		let current_height = self.chain.tip().await?;
+		if vtxo.expiry_height() <= current_height {
+			bail!("Vtxo {} has expired", vtxo.id());
+		}
+
+		self.store_spendable_vtxos([vtxo]).await.context("failed to store imported VTXO")?;
+
+		info!("Successfully imported VTXO {}", vtxo.id());
+		Ok(())
+	}
+
 	/// Retrieves the full state of a [Vtxo] for a given [VtxoId] if it exists in the database.
 	pub async fn get_vtxo_by_id(&self, vtxo_id: VtxoId) -> anyhow::Result<WalletVtxo> {
 		let vtxo = self.db.get_wallet_vtxo(vtxo_id).await
