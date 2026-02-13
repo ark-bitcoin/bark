@@ -10,6 +10,7 @@ use bitcoin_ext::BlockHeight;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LightningPayHtlcsRequested {
 	pub invoice_payment_hash: PaymentHash,
+	#[serde(with = "bitcoin::amount::serde::as_sat")]
 	pub amount: Amount,
 	pub expiry: BlockHeight,
 }
@@ -25,6 +26,7 @@ impl_slog!(LightningPaymentInitRequested, TRACE, "requested lightning payment in
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LightningPaymentInitiated {
 	pub invoice_payment_hash: PaymentHash,
+	#[serde(with = "bitcoin::amount::serde::as_sat")]
 	pub amount: Amount,
 	pub min_expiry: BlockHeight,
 }

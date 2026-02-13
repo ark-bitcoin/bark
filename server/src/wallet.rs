@@ -234,12 +234,13 @@ impl PersistedWallet {
 			trust_witness_utxo: true,
 			..Default::default()
 		};
+		let fee = psbt.fee().context("error calculating fee")?;
 		let finalized = self.sign(&mut psbt, opts).context("error signing psbt")?;
 		ensure!(finalized, "tx not finalized after signing, psbt: {}", psbt.serialize().as_hex());
 		let ret = psbt.extract_tx().context("error extracting finalized tx from psbt")?;
 		let txid = ret.compute_txid();
 		let raw_tx = bitcoin::consensus::serialize(&ret);
-		slog!(WalletSignedTx, wallet: self.kind.name().into(), txid, raw_tx,
+		slog!(WalletSignedTx, wallet: self.kind.name().into(), txid, fee, raw_tx,
 			inputs: ret.input.iter().map(|i| i.previous_output).collect(),
 		);
 		Ok(ret)

@@ -122,6 +122,7 @@ impl_slog!(RoundUserBadNbNonces, TRACE,
 pub struct RoundUserBadOutputAmount {
 	pub round_seq: RoundSeq,
 	pub attempt_seq: usize,
+	#[serde(with = "bitcoin::amount::serde::as_sat")]
 	pub amount: Amount,
 	#[serde(with = "crate::serde_utils::duration_millis")]
 	pub client_duration: Duration,
@@ -168,6 +169,7 @@ impl_slog!(NoRoundPayments, INFO, "Nothing to do this round, sitting it out...")
 pub struct ReceivedRoundPayments {
 	pub round_seq: RoundSeq,
 	pub attempt_seq: usize,
+	#[serde(with = "bitcoin::amount::serde::as_sat")]
 	pub input_volume: Amount,
 	pub input_count: usize,
 	pub output_count: usize,
@@ -279,14 +281,16 @@ impl_slog!(RestartMissingVtxoSigs, DEBUG, "Restarting round because of missing V
 // ****************************************************************************
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BroadcastedFinalizedRoundTransaction {
+pub struct BroadcastRoundFundingTx {
 	pub round_seq: RoundSeq,
 	pub attempt_seq: usize,
 	pub txid: Txid,
+	#[serde(with = "bitcoin::amount::serde::as_sat")]
+	pub round_tx_fee: Amount,
 	#[serde(with = "crate::serde_utils::duration_millis")]
 	pub server_duration: Duration,
 }
-impl_slog!(BroadcastedFinalizedRoundTransaction, INFO,
+impl_slog!(BroadcastRoundFundingTx, INFO,
 	"Broadcasted round transaction to the network and all participants"
 );
 

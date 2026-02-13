@@ -727,6 +727,9 @@ impl CollectingPayments {
 				Err(e) => return Err(RoundError::Recoverable(e)),
 			}
 		};
+		let round_tx_fee = round_tx_psbt.fee()
+			.context("error calculating roudn tx fee")
+			.map_err(|e| RoundError::Recoverable(e))?;
 		let res = round_tx_psbt.clone().extract_tx().context("failed to extract tx from psbt");
 		let unsigned_round_tx = match res {
 			Ok(tx) => tx,
@@ -820,6 +823,7 @@ impl CollectingPayments {
 			wallet_lock,
 			round_tx_psbt,
 			round_txid,
+			round_tx_fee,
 			user_cosign_nonces,
 			inputs_per_cosigner: self.inputs_per_cosigner,
 			common_round_tx_input,
@@ -853,6 +857,7 @@ pub struct SigningVtxoTree {
 	wallet_lock: OwnedMutexGuard<PersistedWallet>,
 	round_tx_psbt: Psbt,
 	round_txid: Txid,
+	round_tx_fee: Amount,
 
 	// data from earlier
 	all_inputs: HashMap<VtxoId, Vtxo>,
@@ -1030,8 +1035,8 @@ impl SigningVtxoTree {
 			signed_round_tx: signed_round_tx.tx.clone(),
 		}));
 
-		server_rslog!(BroadcastedFinalizedRoundTransaction, round_step,
-			txid: self.round_txid,
+		server_rslog!(BroadcastRoundFundingTx, round_step,
+			txid: self.round_txid, round_tx_fee: self.round_tx_fee,
 		);
 		telemetry::set_round_step_duration(round_step);
 

@@ -8,6 +8,7 @@ use ark::VtxoId;
 pub struct PreparedOffboard {
 	pub offboard_txid: Txid,
 	pub input_vtxos: Vec<VtxoId>,
+	#[serde(with = "bitcoin::amount::serde::as_sat")]
 	pub amount: Amount,
 	pub wallet_utxos: Vec<OutPoint>,
 }

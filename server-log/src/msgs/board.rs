@@ -6,6 +6,7 @@ use bitcoin::{Amount, OutPoint};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CosignedBoard {
 	pub utxo: OutPoint,
+	#[serde(with = "bitcoin::amount::serde::as_sat")]
 	pub amount: Amount,
 }
 impl_slog!(CosignedBoard, TRACE, "cosigned board tx for user");
@@ -16,6 +17,7 @@ pub struct RegisteredBoard {
 	pub vtxo: OutPoint,
 	/// The on-chain utxo of the board.
 	pub onchain_utxo: OutPoint,
+	#[serde(with = "bitcoin::amount::serde::as_sat")]
 	pub amount: Amount,
 }
 impl_slog!(RegisteredBoard, TRACE, "registered board vtxo");
