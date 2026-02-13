@@ -2,7 +2,7 @@
 use std::{time::Duration, borrow::Cow};
 
 use bdk_wallet::Balance;
-use bitcoin::{OutPoint, Txid};
+use bitcoin::{Amount, OutPoint, Txid};
 use bitcoin::address::{Address, NetworkUnchecked};
 
 
@@ -62,5 +62,7 @@ pub struct WalletSignedTx {
 	pub inputs: Vec<OutPoint>,
 	#[serde(with = "crate::serde_utils::hex")]
 	pub raw_tx: Vec<u8>,
+	#[serde(with = "bitcoin::amount::serde::as_sat")]
+	pub fee: Amount,
 }
 impl_slog!(WalletSignedTx, DEBUG, "Our wallet signed an onchain tx");

@@ -200,12 +200,13 @@ fn finish_tx(wallet: &bdk_wallet::Wallet, mut psbt: Psbt) -> anyhow::Result<Tran
 		trust_witness_utxo: true,
 		..Default::default()
 	};
+	let fee = psbt.fee().context("error calculating fee")?;
 	let finalized = wallet.sign(&mut psbt, opts).context("error signing psbt")?;
 	ensure!(finalized, "tx not finalized after signing, psbt: {}", psbt.serialize().as_hex());
 	let ret = psbt.extract_tx().context("error extracting finalized tx from psbt")?;
 	let txid = ret.compute_txid();
 	let raw_tx = bitcoin::consensus::serialize(&ret);
-	slog!(WalletSignedTx, wallet: "sweeper".into(), txid, raw_tx,
+	slog!(WalletSignedTx, wallet: "sweeper".into(), txid, fee, raw_tx,
 		inputs: ret.input.iter().map(|i| i.previous_output).collect(),
 	);
 	Ok(ret)
