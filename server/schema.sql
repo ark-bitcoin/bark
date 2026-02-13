@@ -41,6 +41,15 @@ CREATE TYPE public.lightning_payment_status AS ENUM (
 
 
 --
+-- Name: mailbox_type; Type: TYPE; Schema: public; Owner: -
+--
+
+CREATE TYPE public.mailbox_type AS ENUM (
+    'arkoor-receive'
+);
+
+
+--
 -- Name: token_status; Type: TYPE; Schema: public; Owner: -
 --
 
@@ -1179,7 +1188,8 @@ CREATE TABLE public.vtxo_mailbox (
     vtxo_id text NOT NULL,
     vtxo bytea NOT NULL,
     checkpoint bigint NOT NULL,
-    created_at timestamp with time zone NOT NULL
+    created_at timestamp with time zone NOT NULL,
+    mailbox_type public.mailbox_type NOT NULL
 );
 
 

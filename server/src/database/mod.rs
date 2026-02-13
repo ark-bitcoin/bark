@@ -22,7 +22,7 @@ pub use self::model::*;
 use std::borrow::Borrow;
 use std::task;
 use std::backtrace::Backtrace;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::pin::Pin;
 use std::time::Duration;
 
@@ -40,13 +40,12 @@ use tokio_postgres::{Client, NoTls, GenericClient, RowStream};
 use tokio_postgres::types::Type;
 use tracing::{info, warn};
 use ark::{ServerVtxo, ServerVtxoPolicy, Vtxo, VtxoId};
-use ark::mailbox::MailboxIdentifier;
+use ark::mailbox::{MailboxIdentifier, MailboxType};
 use ark::encode::ProtocolEncoding;
 
 use crate::wallet::WalletKind;
 use crate::config::Postgres as PostgresConfig;
 use crate::telemetry;
-use crate::telemetry::MailboxType;
 
 /// Can be used as function argument when there are no query_raw arguments
 const NOARG: &[&bool] = &[];
@@ -57,6 +56,14 @@ const DEFAULT_DATABASE: &str = "postgres";
 pub struct StoredBitcoinTx {
 	pub txid: Txid,
 	pub tx: Transaction,
+}
+
+/// A stored mailbox entry
+#[derive(Clone, Debug)]
+pub struct MailboxEntry {
+	pub checkpoint: Checkpoint,
+	pub mailbox_type: MailboxType,
+	pub vtxos: Vec<Vtxo<Full>>,
 }
 
 #[derive(Clone)]
@@ -302,77 +309,10 @@ impl Db {
 		query::mark_server_may_own_descendants(&*conn, txids).await
 	}
 
-	/**
-	 * Arkoors
-	*/
-
-	#[deprecated]
-	pub async fn store_arkoor_by_vtxo_pubkey(
-		&self,
-		pubkey: PublicKey,
-		arkoor_package_id: &[u8; 32],
-		vtxo: Vtxo<Full>,
-	) -> anyhow::Result<()> {
-		let conn = self.get_conn().await?;
-		let statement = conn.prepare("
-			INSERT INTO arkoor_mailbox (pubkey, vtxo_id, vtxo, arkoor_package_id, created_at)
-			SELECT $1, id, $2, $3, NOW()
-			FROM vtxo
-			WHERE vtxo_id = $4;
-		").await?;
-		let rows_affected = conn.execute(&statement, &[
-			&pubkey.serialize().to_vec(),
-			&ProtocolEncoding::serialize(&vtxo),
-			&arkoor_package_id.to_vec(),
-			&vtxo.id().to_string(),
-		]).await?;
-		debug_assert_eq!(rows_affected, 1);
-
-		telemetry::add_to_mailbox(MailboxType::LegacyVtxo, 1);
-
-		Ok(())
-	}
-
-	#[deprecated]
-	pub async fn pull_oors(
-		&self,
-		pubkeys: &[PublicKey],
-	) -> anyhow::Result<HashMap<[u8; 32], Vec<Vtxo::<Full>>>> {
-		let conn = self.get_conn().await?;
-		let statement = conn.prepare("
-			SELECT vtxo, arkoor_package_id
-			FROM arkoor_mailbox
-			WHERE pubkey = ANY($1) AND processed_at IS NULL;
-		").await?;
-
-		let serialized_pubkeys = pubkeys.iter()
-			.map(|pk| pk.serialize().to_vec())
-			.collect::<Vec<_>>();
-		let rows = conn.query(&statement, &[&serialized_pubkeys]).await?;
-
-		let mut vtxos_by_package_id = HashMap::<_, Vec<_>>::new();
-		for row in &rows {
-			let vtxo = Vtxo::<Full>::deserialize(row.get("vtxo"))?;
-			let package_id = row.get::<_, Vec<u8>>("arkoor_package_id")
-				.try_into().expect("invalid arkoor package id");
-
-			vtxos_by_package_id.entry(package_id).or_default().push(vtxo);
-		}
-
-		let statement = conn.prepare("
-			UPDATE arkoor_mailbox SET processed_at = NOW()
-			WHERE pubkey = ANY($1) AND processed_at IS NULL;
-		").await?;
-		let result = conn.execute(&statement, &[&serialized_pubkeys]).await?;
-		assert_eq!(result, rows.len() as u64);
-
-		telemetry::get_from_mailbox(MailboxType::LegacyVtxo, rows.len());
-
-		Ok(vtxos_by_package_id)
-	}
 
 	pub async fn store_vtxos_in_mailbox(
 		&self,
+		mailbox_type: MailboxType,
 		mailbox_id: MailboxIdentifier,
 		vtxos: &[Vtxo<Full>],
 	) -> anyhow::Result<Option<Checkpoint>> {
@@ -384,10 +324,11 @@ impl Db {
 		let statement = conn.prepare("SELECT next_checkpoint();").await?;
 		let checkpoint = conn.query_one(&statement, &[]).await?;
 		let checkpoint = checkpoint.get::<_, i64>(0);
+		let mailbox_type = String::from(mailbox_type);
 
 		let statement = conn.prepare("
-			INSERT INTO vtxo_mailbox (unblinded_mailbox_id, vtxo_id, vtxo, checkpoint, created_at)
-			VALUES ($1, $2, $3, $4, NOW());
+			INSERT INTO vtxo_mailbox (unblinded_mailbox_id, vtxo_id, vtxo, checkpoint, mailbox_type, created_at)
+			VALUES ($1, $2, $3, $4, $5::TEXT::mailbox_type, NOW());
 		").await?;
 		for vtxo in vtxos {
 			let rows_updated = conn.execute(&statement, &[
@@ -395,11 +336,12 @@ impl Db {
 				&vtxo.id().to_string(),
 				&ProtocolEncoding::serialize(vtxo).to_vec(),
 				&checkpoint,
+				&mailbox_type,
 			]).await?;
 			debug_assert_eq!(rows_updated, 1);
 		}
 
-		telemetry::add_to_mailbox(MailboxType::BlindedVtxo, vtxos.len());
+		telemetry::set_mailbox_metric("add", vtxos.len());
 
 		Ok(Some(u64::try_from(checkpoint)?))
 	}
@@ -409,10 +351,10 @@ impl Db {
 		mailbox_id: MailboxIdentifier,
 		checkpoint: Checkpoint,
 		limit: usize,
-	) -> anyhow::Result<Vec<(Checkpoint, Vec<Vtxo<Full>>)>> {
+	) -> anyhow::Result<Vec<MailboxEntry>> {
 		let conn = self.get_conn().await?;
 		let statement = conn.prepare(&format!("
-			SELECT vtxo_id, vtxo, checkpoint
+			SELECT vtxo_id, vtxo, checkpoint, mailbox_type::TEXT AS mailbox_type
 			FROM vtxo_mailbox
 			WHERE unblinded_mailbox_id = $1 AND checkpoint > $2
 			ORDER BY checkpoint ASC
@@ -421,34 +363,38 @@ impl Db {
 
 		let checkpoint = checkpoint as i64;
 		let mailbox_id = mailbox_id.to_string();
+
 		let rows = conn.query(&statement, &[&mailbox_id, &checkpoint]).await?;
 		if rows.is_empty() {
 			return Ok(vec![]);
 		}
 
-		let mut res = Vec::new();
-		let mut vtxos = Vec::new();
-		let mut last_checkpoint = 0;
+		let mut checkpoints = BTreeMap::<Checkpoint, (MailboxType, Vec<Vtxo>)>::new();
 		for row in &rows {
 			let checkpoint = row.get::<_, i64>("checkpoint") as u64;
-			if vtxos.len() == 0 {
-				last_checkpoint = checkpoint;
-			}
-
-			if last_checkpoint != checkpoint {
-				telemetry::get_from_mailbox(MailboxType::BlindedVtxo, vtxos.len());
-				res.push((last_checkpoint, vtxos.clone()));
-				vtxos.clear();
-				last_checkpoint = checkpoint;
-			}
+			let mailbox_type = row.get::<_, &str>("mailbox_type").parse::<MailboxType>()
+				.expect("invalid mailbox_type in database");
 
 			let vtxo = Vtxo::<Full>::deserialize(row.get("vtxo"))?;
 			debug_assert_eq!(vtxo.id().to_string(), row.get::<_, String>("vtxo_id"));
-			vtxos.push(vtxo);
+
+			if let Some((mb_type, vtxos)) = checkpoints.get_mut(&checkpoint) {
+				debug_assert_eq!(&mailbox_type, mb_type, "a checekpoint cannot contain multiple mailbox types");
+				vtxos.push(vtxo);
+			} else {
+				checkpoints.insert(checkpoint, (mailbox_type, vec![vtxo]));
+			}
 		}
 
-		telemetry::get_from_mailbox(MailboxType::BlindedVtxo, vtxos.len());
-		res.push((last_checkpoint, vtxos));
+		let mut res = Vec::new();
+		for (checkpoint, (mailbox_type, vtxos)) in checkpoints {
+			telemetry::set_mailbox_metric("get", vtxos.len());
+			res.push(MailboxEntry {
+				checkpoint,
+				mailbox_type,
+				vtxos,
+			});
+		}
 
 		Ok(res)
 	}
