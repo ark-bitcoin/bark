@@ -33,7 +33,7 @@ async fn arkoor_send_receive() {
 	bark1.board(sat(100_000)).await;
 	bark1.board(sat(100_000)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
-	bark1.maintain().await;
+	bark1.sync().await;
 
 	// Send funds using three VTXOs.
 	let bark1_vtxos_pre_pay = bark1.vtxo_ids().await;
@@ -355,7 +355,7 @@ async fn movement_offboard() {
 	bark.board(sat(100_000)).await;
 	bark.board(sat(100_000)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
-	bark.maintain().await;
+	bark.sync().await;
 
 	let vtxos = bark.vtxos().await;
 	assert_eq!(vtxos.len(), 3);
@@ -410,7 +410,7 @@ async fn round_refresh() {
 	bark.board(sat(100_000)).await;
 	bark.board(sat(100_000)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
-	bark.maintain().await;
+	bark.sync().await;
 
 	let vtxos_pre_refresh = bark.vtxo_ids().await;
 	assert_eq!(vtxos_pre_refresh.len(), 3);

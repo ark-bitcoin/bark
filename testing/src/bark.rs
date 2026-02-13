@@ -487,13 +487,13 @@ impl Bark {
 	pub async fn board_and_confirm_and_register(&self, ctx: &TestContext, amount: Amount) {
 		self.board(amount).await;
 		ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
-		self.maintain().await;
+		self.sync().await;
 	}
 
 	pub async fn board_all_and_confirm_and_register(&self, ctx: &TestContext) {
 		self.board_all().await;
 		ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
-		self.maintain().await;
+		self.sync().await;
 	}
 
 	/// returns Err if the round failed or if no round happened
