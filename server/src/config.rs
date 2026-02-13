@@ -343,16 +343,16 @@ pub struct Config {
 	pub invoice_recheck_delay: Duration,
 	#[serde(with = "utils::serde::duration")]
 	pub invoice_check_base_delay: Duration,
-	#[serde(with = "utils::serde::duration")]
-	pub invoice_check_max_delay: Duration,
+	#[serde(alias = "invoice_check_max_delay", with = "utils::serde::duration")]
+	pub max_invoice_check_delay: Duration,
 	#[serde(with = "utils::serde::duration")]
 	pub invoice_poll_interval: Duration,
 	/// Base delay for TrackAll stream reconnection backoff (e.g., 1 second)
 	#[serde(with = "utils::serde::duration")]
 	pub track_all_base_delay: Duration,
 	/// Maximum delay for TrackAll stream reconnection backoff (e.g., 60 seconds)
-	#[serde(with = "utils::serde::duration")]
-	pub track_all_max_delay: Duration,
+	#[serde(alias = "track_all_max_delay", with = "utils::serde::duration")]
+	pub max_track_all_delay: Duration,
 
 	/// The number of blocks to keep between Lightning and Ark HTLCs expiries.
 	///
@@ -417,7 +417,8 @@ pub struct Config {
 	pub offboard_session_timeout: Duration,
 
 	/// The maximum number of items we return to mailbox queries
-	pub read_mailbox_max_items: usize,
+	#[serde(alias = "read_mailbox_max_items")]
+	pub max_read_mailbox_items: usize,
 }
 
 impl Config {

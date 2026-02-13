@@ -62,7 +62,7 @@ transaction_rebroadcast_interval = "1m"
 otel_deployment_name = "my_regtest"
 
 # The maximum number of items we return to mailbox queries
-read_mailbox_max_items = 100
+max_read_mailbox_items = 100
 
 
 ##########
@@ -121,7 +121,7 @@ invoice_recheck_delay = "2s"
 invoice_check_base_delay = "10s"
 
 # FIXME
-invoice_check_max_delay = "10m"
+max_invoice_check_delay = "10m"
 
 # FIXME
 invoice_poll_interval = "30s"
@@ -130,7 +130,7 @@ invoice_poll_interval = "30s"
 track_all_base_delay = "1s"
 
 # Maximum delay for TrackAll stream reconnection backoff
-track_all_max_delay = "60s"
+max_track_all_delay = "60s"
 
 # The number of blocks to keep between Lightning and Ark HTLCs expiries.
 htlc_expiry_delta = 40
@@ -213,7 +213,7 @@ vtxo_lifetime = 432
 # Time in blocks before the expiry to no longer use VTXOs
 vtxo_pre_expiry = 144
 # Maximum depth for pool VTXOs
-vtxo_max_arkoor_depth = 3
+max_vtxo_arkoor_depth = 3
 # The interval at which to check if an issuance should be made
 issue_interval = "1m"
 

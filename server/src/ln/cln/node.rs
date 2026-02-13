@@ -38,11 +38,11 @@ pub struct ClnNodeMonitorConfig {
 	pub invoice_expiry: Duration,
 	pub receive_htlc_forward_timeout: Duration,
 	pub check_base_delay: Duration,
-	pub check_max_delay: Duration,
+	pub max_check_delay: Duration,
 	/// Base delay for TrackAll reconnection backoff (e.g., 1 second)
 	pub track_all_base_delay: Duration,
 	/// Maximum delay for TrackAll reconnection backoff (e.g., 60 seconds)
-	pub track_all_max_delay: Duration,
+	pub max_track_all_delay: Duration,
 }
 
 pub struct ClnNodeMonitor {
@@ -269,7 +269,7 @@ impl ClnNodeMonitorProcess {
 		// Calculate delay: grows with each attempt
 		// e.g. base 10 seconds, doubling each time, capped to a max delay
 		let base_delay_secs = self.config.check_base_delay.as_secs();
-		let max_delay_secs = self.config.check_max_delay.as_secs();
+		let max_delay_secs = self.config.max_check_delay.as_secs();
 		let delay_secs = (base_delay_secs * 2u64.pow(*attempts as u32 - 1)).min(max_delay_secs);
 
 		*next_check = Local::now() + Duration::from_secs(delay_secs);
@@ -666,7 +666,7 @@ impl ClnNodeMonitorProcess {
 	/// Calculate exponential backoff delay for TrackAll reconnection.
 	fn track_all_backoff(&self, attempt: u32) -> Duration {
 		let base = self.config.track_all_base_delay.as_secs();
-		let max = self.config.track_all_max_delay.as_secs();
+		let max = self.config.max_track_all_delay.as_secs();
 		// Cap exponent at 6 to prevent overflow (2^6 = 64)
 		Duration::from_secs((base * 2u64.pow(attempt.min(6))).min(max))
 	}

@@ -1,0 +1,4 @@
+- Standardize config option naming to use `max_` prefix style
+  Config options now follow a consistent naming pattern. The old names
+  are still accepted as aliases for backward compatibility.
+  [#1616](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1616)
