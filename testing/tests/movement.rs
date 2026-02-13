@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 use std::str::FromStr;
 use std::sync::Arc;
+use std::time::Duration;
 
 use ark::offboard::OffboardRequest;
 use ark::{VtxoId, VtxoPolicy};
@@ -442,7 +443,12 @@ async fn round_refresh() {
 #[tokio::test]
 async fn movement_send_onchain() {
 	let ctx = TestContext::new("movement/movement_send_onchain").await;
-	let srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
+	let srv = ctx.new_captaind_with_cfg("server", None, |cfg| {
+		cfg.round_interval = Duration::from_secs(3600);
+	}).await;
+	ctx.fund_captaind(&srv, btc(10)).await;
+	srv.wait_for_initial_round().await;
+
 	let bark = ctx.new_bark_with_funds("bark", &srv, sat(1_000_000)).await;
 
 	bark.board_and_confirm_and_register(&ctx, sat(100_000)).await;
