@@ -128,7 +128,8 @@ steps:
     image: registry.2nd.dev/build:25
     volumes:
       - /data:/host/data
-      - tmpfs:/dev/shm:rw
+    tmpfs:
+      - /dev/shm:size=10g
     environment:
       CHAIN_SOURCE: esplora
       TEST_DIRECTORY: ./test/esplora
@@ -148,7 +149,8 @@ steps:
     image: registry.2nd.dev/build:25
     volumes:
       - /data:/host/data
-      - tmpfs:/dev/shm:rw
+    tmpfs:
+      - /dev/shm:size=10g
     environment:
       CHAIN_SOURCE: mempool
       TEST_DIRECTORY: ./test/mempool
@@ -168,7 +170,8 @@ steps:
     image: registry.2nd.dev/build:25
     volumes:
       - /data:/host/data
-      - tmpfs:/dev/shm:rw
+    tmpfs:
+      - /dev/shm:size=10g
     environment:
       TEST_DIRECTORY: ./test/btc29
       RUST_TEST_THREADS: 2
