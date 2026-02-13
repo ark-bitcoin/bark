@@ -140,7 +140,11 @@ async fn bark_pay_ln_with_multiple_inputs() {
 	let lightning = ctx.new_lightning_setup("lightningd").await;
 
 	// Start a server and link it to our cln installation
-	let srv = ctx.new_captaind_with_funds("server", Some(&lightning.sender), btc(10)).await;
+	let srv = ctx.new_captaind_with_cfg("server", Some(&lightning.sender), |cfg| {
+		cfg.round_interval = Duration::from_secs(3600);
+	}).await;
+	ctx.fund_captaind(&srv, btc(10)).await;
+	srv.wait_for_initial_round().await;
 
 	// Start a bark and create a VTXO
 	let bark_1 = ctx.new_bark_with_funds("bark-1", &srv, btc(10)).await;
@@ -149,7 +153,11 @@ async fn bark_pay_ln_with_multiple_inputs() {
 	bark_1.board(btc(1)).await;
 	bark_2.board(btc(2)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
-	bark_1.refresh_all().await;
+	let (_, refresh) = tokio::join!(
+		srv.trigger_round(),
+		bark_1.try_refresh_all_no_retry(),
+	);
+	refresh.expect("refresh failed");
 	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
 	bark_1.board(btc(1)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
@@ -375,7 +383,11 @@ async fn bark_refresh_ln_change_vtxo() {
 	let lightning = ctx.new_lightning_setup("lightningd").await;
 
 	// Start a server and link it to our cln installation
-	let srv = ctx.new_captaind_with_funds("server", Some(&lightning.sender), btc(10)).await;
+	let srv = ctx.new_captaind_with_cfg("server", Some(&lightning.sender), |cfg| {
+		cfg.round_interval = Duration::from_secs(3600);
+	}).await;
+	ctx.fund_captaind(&srv, btc(10)).await;
+	srv.wait_for_initial_round().await;
 
 	// Start a bark and create a VTXO
 	let onchain_amount = btc(7);
@@ -395,7 +407,11 @@ async fn bark_refresh_ln_change_vtxo() {
 	bark_1.pay_lightning(invoice, None).await;
 	assert_eq!(bark_1.spendable_balance().await, btc(3));
 
-	bark_1.refresh_all().await;
+	let (_, refresh) = tokio::join!(
+		srv.trigger_round(),
+		bark_1.try_refresh_all_no_retry(),
+	);
+	refresh.expect("refresh failed");
 	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
 	let vtxos = bark_1.vtxos().await;
 	assert_eq!(vtxos.len(), 1, "there should be only one vtxo after refresh {:?}", vtxos);
@@ -413,7 +429,11 @@ async fn bark_refresh_payment_revocation() {
 	let lightning = ctx.new_lightning_setup_no_channel("lightningd").await;
 
 	// Start a server and link it to our cln installation
-	let srv = ctx.new_captaind_with_funds("server", Some(&lightning.sender), btc(10)).await;
+	let srv = ctx.new_captaind_with_cfg("server", Some(&lightning.sender), |cfg| {
+		cfg.round_interval = Duration::from_secs(3600);
+	}).await;
+	ctx.fund_captaind(&srv, btc(10)).await;
+	srv.wait_for_initial_round().await;
 
 	// Start a bark and create a VTXO
 	let onchain_amount = btc(3);
@@ -432,7 +452,11 @@ async fn bark_refresh_payment_revocation() {
 	assert_eq!(bark_1.spendable_balance().await, board_amount);
 	bark_1.pay_lightning_wait(invoice, None).await;
 
-	bark_1.refresh_all().await;
+	let (_, refresh) = tokio::join!(
+		srv.trigger_round(),
+		bark_1.try_refresh_all_no_retry(),
+	);
+	refresh.expect("refresh failed");
 	ctx.generate_blocks(srv.config().htlc_send_expiry_delta as u32 + 6).await;
 	let vtxos = bark_1.vtxos().await;
 	assert_eq!(vtxos.len(), 1, "there should be only one vtxo after refresh {:?}", vtxos);

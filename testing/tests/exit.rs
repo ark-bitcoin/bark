@@ -1,6 +1,7 @@
 use std::iter;
 use std::str::FromStr;
 use std::sync::Arc;
+use std::time::Duration;
 
 use bitcoin::{Address, Amount, FeeRate};
 use bitcoin::params::Params;
@@ -29,14 +30,22 @@ use ark_testing::exit::complete_exit;
 async fn simple_exit() {
 	// Initialize the test
 	let ctx = TestContext::new("exit/simple_exit").await;
-	let srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
+	let srv = ctx.new_captaind_with_cfg("server", None, |cfg| {
+		cfg.round_interval = Duration::from_secs(3600);
+	}).await;
+	ctx.fund_captaind(&srv, btc(10)).await;
+	srv.wait_for_initial_round().await;
 	let bark = ctx.new_bark_with_funds("bark1".to_string(), &srv, sat(1_000_000)).await;
 	ctx.generate_blocks(1).await;
 
 	bark.board(sat(500_000)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 
-	bark.refresh_all().await;
+	let (_, refresh) = tokio::join!(
+		srv.trigger_round(),
+		bark.try_refresh_all_no_retry(),
+	);
+	refresh.expect("refresh failed");
 	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
 
 	srv.stop().await.unwrap();
@@ -54,10 +63,13 @@ async fn simple_exit() {
 async fn exit_round() {
 	// Initialize the test
 	let ctx = TestContext::new("exit/exit_round").await;
-	let srv = ctx.new_captaind("server", None).await;
+	let srv = ctx.new_captaind_with_cfg("server", None, |cfg| {
+		cfg.round_interval = Duration::from_secs(3600);
+	}).await;
 
 	// Fund the server
 	ctx.fund_captaind(&srv, btc(10)).await;
+	srv.wait_for_initial_round().await;
 
 	// Create a few clients
 	let create_bark = |name: &str| ctx.try_new_bark_with_cfg(name.to_string(), &srv, |cfg| {
@@ -96,16 +108,14 @@ async fn exit_round() {
 	);
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 
-	tokio::join!(
-		bark1.refresh_all(),
-		bark2.refresh_all(),
-		bark3.refresh_all(),
-		bark4.refresh_all(),
-		bark5.refresh_all(),
-		bark6.refresh_all(),
-		bark7.refresh_all(),
-		bark8.refresh_all(),
+	// Trigger round while all barks try to refresh concurrently
+	let barks = [&bark1, &bark2, &bark3, &bark4, &bark5, &bark6, &bark7, &bark8];
+	let refresh_futs = barks.iter().map(|b| b.try_refresh_all_no_retry());
+	let (_, results) = tokio::join!(
+		srv.trigger_round(),
+		futures::future::join_all(refresh_futs),
 	);
+	for r in results { r.expect("refresh failed"); }
 	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
 
 	let bark1_round_vtxo = &bark1.vtxos().await[0];
@@ -171,7 +181,11 @@ async fn exit_round() {
 #[tokio::test]
 async fn exit_vtxo() {
 	let ctx = TestContext::new("exit/exit_vtxo").await;
-	let srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
+	let srv = ctx.new_captaind_with_cfg("server", None, |cfg| {
+		cfg.round_interval = Duration::from_secs(3600);
+	}).await;
+	ctx.fund_captaind(&srv, btc(10)).await;
+	srv.wait_for_initial_round().await;
 
 	let bark = ctx.new_bark_with_funds("bark", &srv, sat(1_000_000)).await;
 
@@ -179,7 +193,11 @@ async fn exit_vtxo() {
 
 	bark.board(sat(900_000)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
-	bark.refresh_all().await;
+	let (_, refresh) = tokio::join!(
+		srv.trigger_round(),
+		bark.try_refresh_all_no_retry(),
+	);
+	refresh.expect("refresh failed");
 	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
 
 	// By calling bark vtxos we ensure the wallet is synced
@@ -203,7 +221,11 @@ async fn exit_vtxo() {
 #[tokio::test]
 async fn exit_and_send_vtxo() {
 	let ctx = TestContext::new("exit/exit_and_send_vtxo").await;
-	let srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
+	let srv = ctx.new_captaind_with_cfg("server", None, |cfg| {
+		cfg.round_interval = Duration::from_secs(3600);
+	}).await;
+	ctx.fund_captaind(&srv, btc(10)).await;
+	srv.wait_for_initial_round().await;
 
 	let bark = ctx.new_bark_with_funds("bark", &srv, sat(1_000_000)).await;
 
@@ -211,7 +233,11 @@ async fn exit_and_send_vtxo() {
 
 	bark.board(sat(900_000)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
-	bark.refresh_all().await;
+	let (_, refresh) = tokio::join!(
+		srv.trigger_round(),
+		bark.try_refresh_all_no_retry(),
+	);
+	refresh.expect("refresh failed");
 	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
 
 	// By calling bark vtxos we ensure the wallet is synced
@@ -302,7 +328,11 @@ async fn exit_oor() {
 #[tokio::test]
 async fn double_exit_call() {
 	let ctx = TestContext::new("exit/double_exit_call").await;
-	let srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
+	let srv = ctx.new_captaind_with_cfg("server", None, |cfg| {
+		cfg.round_interval = Duration::from_secs(3600);
+	}).await;
+	ctx.fund_captaind(&srv, btc(10)).await;
+	srv.wait_for_initial_round().await;
 	let bark1 = ctx.new_bark_with_funds("bark1", &srv, sat(1_000_000)).await;
 	let bark2 = ctx.new_bark_with_funds("bark2", &srv, sat(1_000_000)).await;
 	let bark3 = ctx.new_bark_with_funds("bark3", &srv, sat(1_000_000)).await;
@@ -313,7 +343,11 @@ async fn double_exit_call() {
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 
 	// refresh vtxo
-	bark1.refresh_all().await;
+	let (_, refresh) = tokio::join!(
+		srv.trigger_round(),
+		bark1.try_refresh_all_no_retry(),
+	);
+	refresh.expect("refresh failed");
 	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
 
 	// board vtxo

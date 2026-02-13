@@ -349,7 +349,11 @@ async fn lightning_send_offer() {
 #[tokio::test]
 async fn movement_offboard() {
 	let ctx = TestContext::new("movement/movement_offboard").await;
-	let srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
+	let srv = ctx.new_captaind_with_cfg("server", None, |cfg| {
+		cfg.round_interval = Duration::from_secs(3600);
+	}).await;
+	ctx.fund_captaind(&srv, btc(10)).await;
+	srv.wait_for_initial_round().await;
 	let bark = ctx.new_bark_with_funds("bark", &srv, sat(1_000_000)).await;
 
 	bark.board(sat(100_000)).await;
@@ -404,7 +408,11 @@ async fn movement_offboard() {
 #[tokio::test]
 async fn round_refresh() {
 	let ctx = TestContext::new("movement/round_refresh").await;
-	let srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
+	let srv = ctx.new_captaind_with_cfg("server", None, |cfg| {
+		cfg.round_interval = Duration::from_secs(3600);
+	}).await;
+	ctx.fund_captaind(&srv, btc(10)).await;
+	srv.wait_for_initial_round().await;
 	let bark = ctx.new_bark_with_funds("bark", &srv, sat(1_000_000)).await;
 
 	bark.board(sat(100_000)).await;
@@ -415,7 +423,11 @@ async fn round_refresh() {
 
 	let vtxos_pre_refresh = bark.vtxo_ids().await;
 	assert_eq!(vtxos_pre_refresh.len(), 3);
-	bark.refresh_all().await;
+	let (_, refresh) = tokio::join!(
+		srv.trigger_round(),
+		bark.try_refresh_all_no_retry(),
+	);
+	refresh.expect("refresh failed");
 	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
 	let vtxos_post_refresh = bark.vtxo_ids().await;
 
