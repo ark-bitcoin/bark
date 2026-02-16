@@ -356,7 +356,11 @@ async fn restart_custom_cfg_server() {
 #[tokio::test]
 async fn restart_server_with_payments() {
 	let ctx = TestContext::new("server/restart_server_with_payments").await;
-	let mut srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
+	let mut srv = ctx.new_captaind_with_cfg("server", None, |cfg| {
+		cfg.round_interval = Duration::from_secs(3600);
+	}).await;
+	ctx.fund_captaind(&srv, btc(10)).await;
+	srv.wait_for_initial_round().await;
 	let bark1 = ctx.new_bark("bark1", &srv).await;
 	let bark2 = ctx.new_bark("bark2", &srv).await;
 	ctx.fund_bark(&bark1, sat(1_000_000)).await;
@@ -365,11 +369,19 @@ async fn restart_server_with_payments() {
 	bark2.board(sat(800_000)).await;
 	bark1.board(sat(200_000)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
-	bark1.refresh_all().await;
+	let (_, refresh) = tokio::join!(
+		srv.trigger_round(),
+		bark1.try_refresh_all_no_retry(),
+	);
+	refresh.expect("refresh failed");
 	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
 
 	bark2.send_oor(&bark1.address().await, sat(330_000)).await;
-	bark1.refresh_all().await;
+	let (_, refresh) = tokio::join!(
+		srv.trigger_round(),
+		bark1.try_refresh_all_no_retry(),
+	);
+	refresh.expect("refresh failed");
 	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
 
 	bark1.send_oor(&bark2.address().await, sat(350_000)).await;
@@ -590,7 +602,11 @@ async fn double_spend_round() {
 		}
 	}
 
-	let srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
+	let srv = ctx.new_captaind_with_cfg("server", None, |cfg| {
+		cfg.round_interval = Duration::from_secs(3600);
+	}).await;
+	ctx.fund_captaind(&srv, btc(10)).await;
+	srv.wait_for_initial_round().await;
 	let proxy = srv.start_proxy_no_mailbox(Proxy).await;
 
 	let bark = ctx.new_bark_with_funds("bark".to_string(), &proxy.address, sat(1_000_000)).await;
@@ -598,7 +614,10 @@ async fn double_spend_round() {
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 
 	let mut l = srv.subscribe_log::<RoundUserVtxoAlreadyRegistered>();
-	bark.refresh_all().await;
+	tokio::join!(
+		srv.trigger_round(),
+		bark.refresh_all(),
+	);
 	l.recv().wait_millis(2500).await;
 }
 
@@ -881,7 +900,11 @@ impl captaind::proxy::ArkRpcProxy for NoFinishRoundProxy {
 async fn claim_forfeit_connector_chain() {
 	let ctx = TestContext::new("server/claim_forfeit_connector_chain").await;
 
-	let srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
+	let srv = ctx.new_captaind_with_cfg("server", None, |cfg| {
+		cfg.round_interval = Duration::from_secs(3600);
+	}).await;
+	ctx.fund_captaind(&srv, btc(10)).await;
+	srv.wait_for_initial_round().await;
 	let proxy = srv.start_proxy_no_mailbox(NoFinishRoundProxy).await;
 
 	// To make sure we have a chain of connector, we make a bunch of inputs
@@ -894,7 +917,11 @@ async fn claim_forfeit_connector_chain() {
 	// we do a refresh, but make it seem to the client that it failed
 	let vtxo = bark.vtxos().await.into_iter().next().unwrap();
 	let mut log_round = srv.subscribe_log::<RoundFinished>();
-	assert!(bark.try_refresh_all_no_retry().await.is_err());
+	let (_, refresh) = tokio::join!(
+		srv.trigger_round(),
+		bark.try_refresh_all_no_retry(),
+	);
+	assert!(refresh.is_err());
 	assert_eq!(bark.inround_balance().await, sat(4_000_000), "vtxos: {:?}", bark.vtxos().await);
 	assert_eq!(log_round.recv().ready().await.unwrap().nb_input_vtxos, 10);
 
@@ -1553,8 +1580,10 @@ async fn captaind_config_change(){
 	let ctx = TestContext::new("server/captaind_config_change").await;
 	let mut srv = ctx.new_captaind_with_cfg("server", None, |cfg| {
 		cfg.vtxo_exit_delta = 12;
+		cfg.round_interval = Duration::from_secs(3600);
 	}).await;
 	ctx.fund_captaind(&srv, btc(10)).await;
+	srv.wait_for_initial_round().await;
 	let bark1 = ctx.new_bark("bark1", &srv).await;
 	let bark2 = ctx.new_bark("bark2", &srv).await;
 	ctx.fund_bark(&bark1, sat(1_000_000)).await;
@@ -1563,14 +1592,20 @@ async fn captaind_config_change(){
 	bark2.board(sat(800_000)).await;
 	bark1.board(sat(200_000)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
-	bark1.refresh_all().await;
+	let (_, refresh) = tokio::join!(
+		srv.trigger_round(),
+		bark1.try_refresh_all_no_retry(),
+	);
+	refresh.expect("refresh failed");
 	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
 
 	srv.stop().await.unwrap();
 
 	srv.config_mut().vtxo_exit_delta = 24;
+	srv.config_mut().round_interval = Duration::from_secs(3600);
 
 	srv.start().await.unwrap();
+	srv.wait_for_initial_round().await;
 
 	bark1.set_ark_url(&srv).await;
 	bark2.set_ark_url(&srv).await;
@@ -1586,7 +1621,11 @@ async fn captaind_config_change(){
 	// transactions still work
 
 	bark2.send_oor(&bark1.address().await, sat(330_000)).await;
-	bark1.refresh_all().await;
+	let (_, refresh) = tokio::join!(
+		srv.trigger_round(),
+		bark1.try_refresh_all_no_retry(),
+	);
+	refresh.expect("refresh failed");
 	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
 	bark1.send_oor(&bark2.address().await, sat(350_000)).await;
 
