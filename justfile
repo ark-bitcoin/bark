@@ -19,6 +19,7 @@ prechecks:
 	just precheck conflicting_migration_scripts
 
 check:
+	cargo version
 	cargo check --all --tests --examples
 
 checks: prechecks check
@@ -27,6 +28,7 @@ check-commits:
 	bash contrib/check-commits.sh
 
 build:
+	cargo version
 	cargo build --workspace
 
 build-codecov:
