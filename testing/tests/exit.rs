@@ -30,11 +30,7 @@ use ark_testing::exit::complete_exit;
 async fn simple_exit() {
 	// Initialize the test
 	let ctx = TestContext::new("exit/simple_exit").await;
-	let srv = ctx.new_captaind_with_cfg("server", None, |cfg| {
-		cfg.round_interval = Duration::from_secs(3600);
-	}).await;
-	ctx.fund_captaind(&srv, btc(10)).await;
-	srv.wait_for_initial_round().await;
+	let srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
 	let bark = ctx.new_bark_with_funds("bark1".to_string(), &srv, sat(1_000_000)).await;
 	ctx.generate_blocks(1).await;
 
@@ -63,13 +59,10 @@ async fn simple_exit() {
 async fn exit_round() {
 	// Initialize the test
 	let ctx = TestContext::new("exit/exit_round").await;
-	let srv = ctx.new_captaind_with_cfg("server", None, |cfg| {
-		cfg.round_interval = Duration::from_secs(3600);
-	}).await;
+	let srv = ctx.new_captaind("server", None).await;
 
 	// Fund the server
 	ctx.fund_captaind(&srv, btc(10)).await;
-	srv.wait_for_initial_round().await;
 
 	// Create a few clients
 	let create_bark = |name: &str| ctx.try_new_bark_with_cfg(name.to_string(), &srv, |cfg| {
@@ -181,11 +174,7 @@ async fn exit_round() {
 #[tokio::test]
 async fn exit_vtxo() {
 	let ctx = TestContext::new("exit/exit_vtxo").await;
-	let srv = ctx.new_captaind_with_cfg("server", None, |cfg| {
-		cfg.round_interval = Duration::from_secs(3600);
-	}).await;
-	ctx.fund_captaind(&srv, btc(10)).await;
-	srv.wait_for_initial_round().await;
+	let srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
 
 	let bark = ctx.new_bark_with_funds("bark", &srv, sat(1_000_000)).await;
 
@@ -221,11 +210,7 @@ async fn exit_vtxo() {
 #[tokio::test]
 async fn exit_and_send_vtxo() {
 	let ctx = TestContext::new("exit/exit_and_send_vtxo").await;
-	let srv = ctx.new_captaind_with_cfg("server", None, |cfg| {
-		cfg.round_interval = Duration::from_secs(3600);
-	}).await;
-	ctx.fund_captaind(&srv, btc(10)).await;
-	srv.wait_for_initial_round().await;
+	let srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
 
 	let bark = ctx.new_bark_with_funds("bark", &srv, sat(1_000_000)).await;
 
@@ -328,11 +313,7 @@ async fn exit_oor() {
 #[tokio::test]
 async fn double_exit_call() {
 	let ctx = TestContext::new("exit/double_exit_call").await;
-	let srv = ctx.new_captaind_with_cfg("server", None, |cfg| {
-		cfg.round_interval = Duration::from_secs(3600);
-	}).await;
-	ctx.fund_captaind(&srv, btc(10)).await;
-	srv.wait_for_initial_round().await;
+	let srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
 	let bark1 = ctx.new_bark_with_funds("bark1", &srv, sat(1_000_000)).await;
 	let bark2 = ctx.new_bark_with_funds("bark2", &srv, sat(1_000_000)).await;
 	let bark3 = ctx.new_bark_with_funds("bark3", &srv, sat(1_000_000)).await;
@@ -877,12 +858,14 @@ async fn exit_oor_ping_pong_then_rbf_tx() {
 	let ctx = TestContext::new("exit/exit_oor_ping_pong_then_rbf_tx").await;
 	let srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
 
-	let bark1 = ctx.try_new_bark_with_cfg("bark1", &srv, |cfg| {
+	let mut bark1 = ctx.try_new_bark_with_cfg("bark1", &srv, |cfg| {
 		cfg.fallback_fee_rate = Some(FeeRate::from_sat_per_vb_unchecked(1));
 	}).await.unwrap();
-	let bark2 = ctx.try_new_bark_with_cfg("bark2", &srv, |cfg| {
+	let mut bark2 = ctx.try_new_bark_with_cfg("bark2", &srv, |cfg| {
 		cfg.fallback_fee_rate = Some(FeeRate::from_sat_per_vb_unchecked(100));
 	}).await.unwrap();
+	bark1.set_timeout(Duration::from_secs(2 * 60));
+	bark2.set_timeout(Duration::from_secs(2 * 60));
 
 	ctx.fund_bark(&bark1, sat(1_000_000)).await;
 	ctx.fund_bark(&bark2, sat(1_000_000)).await;
@@ -923,8 +906,8 @@ async fn exit_oor_ping_pong_then_rbf_tx() {
 	await_propagation(&ctx, &bark1, &bark2).await;
 	bark2.progress_exit().await;
 	await_propagation(&ctx, &bark2, &bark1).await;
-	assert_eq!(bark1.list_exits_with_details().await.len(), 1, "We should have one exit");
-	assert_eq!(bark2.list_exits_with_details().await.len(), 2, "We have two exits");
+	assert_eq!(bark1.list_exits().await.len(), 1, "We should have one exit");
+	assert_eq!(bark2.list_exits().await.len(), 2, "We have two exits");
 
 	complete_exit(&ctx, &bark1).await;
 	complete_exit(&ctx, &bark2).await;

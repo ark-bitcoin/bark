@@ -2,7 +2,7 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use bark::BarkNetwork;
 use bitcoin::{Amount, FeeRate, Network, Txid};
@@ -241,7 +241,7 @@ impl TestContext {
 			network: Network::Regtest,
 			vtxo_lifetime: 144,
 			vtxo_exit_delta: 12,
-			round_interval: Duration::from_millis(2000),
+			round_interval: Duration::from_secs(3600),
 			round_submit_time: Duration::from_millis(5000),
 			// this one can be long cuz in most tests all users are ready and we don't wait
 			round_sign_time: Duration::from_millis(5000),
@@ -581,12 +581,10 @@ impl TestContext {
 		self.bitcoind().generate(block_num).await;
 
 		// Give blocks time to propagate
-		let now = Instant::now();
-		const MIN_WAIT: Duration = Duration::from_millis(500);
-		self.await_block_count_sync().await;
-		if now.elapsed() < MIN_WAIT {
-			tokio::time::sleep(MIN_WAIT - now.elapsed()).await;
-		}
+		tokio::join!(
+			self.await_block_count_sync(),
+			tokio::time::sleep(Duration::from_millis(500)),
+		);
 		let height = self.bitcoind().get_block_count().await;
 		info!("New chain tip: {}", height);
 		height
