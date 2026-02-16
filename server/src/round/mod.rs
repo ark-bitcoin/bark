@@ -1512,7 +1512,33 @@ pub async fn run_round_coordinator(
 	};
 
 	loop {
+		let time_to_next_round = {
+			let time = *srv.rounds.next_round_time.read();
+			let now_system = SystemTime::now();
+			time.duration_since(now_system).unwrap_or_default()
+		};
+		tokio::pin! { let timeout = tokio::time::sleep(time_to_next_round.into()); }
+		// Sleep until next round, but discard all incoming messages.
+		'sleep: loop {
+			tokio::select! {
+				() = &mut timeout => break 'sleep,
+				Some(()) = round_trigger_rx.recv() => {
+					info!("Starting round based on admin RPC trigger");
+					break 'sleep;
+				},
+				_ = round_input_rx.recv() => {},
+				_ = srv.rtmgr.shutdown_signal() => {
+					info!("Shutdown signal received. Exiting round coordinator loop...");
+					return Ok(());
+				}
+			}
+		}
+
+		// Set the next round time
+		*srv.rounds.next_round_time.write() = SystemTime::now() + srv.config.round_interval;
+
 		{
+			// Drop all old forfeit nonces from memory
 			let mut nonce_guard = srv.forfeit_nonces.lock();
 			let dropped = nonce_guard.remove_older(srv.config.round_forfeit_nonces_timeout);
 			let remaining = nonce_guard.len();
@@ -1524,9 +1550,6 @@ pub async fn run_round_coordinator(
 				removed_unfinished: unfinished,
 			);
 		}
-
-		// set the next round time
-		*srv.rounds.next_round_time.write() = SystemTime::now() + srv.config.round_interval;
 
 		round_seq.increment();
 		match perform_round(srv, &mut round_input_rx, round_seq).await {
@@ -1555,28 +1578,6 @@ pub async fn run_round_coordinator(
 		if let Err(e) = srv.rebalance_wallets().await {
 			slog!(RoundSyncError, error: format!("{:?}", e));
 		};
-
-		let time_to_next_round = {
-			let time = *srv.rounds.next_round_time.read();
-			let now_system = SystemTime::now();
-			time.duration_since(now_system).unwrap_or_default()
-		};
-		tokio::pin! { let timeout = tokio::time::sleep(time_to_next_round.into()); }
-		// Sleep until next round, but discard all incoming messages.
-		'sleep: loop {
-			tokio::select! {
-				() = &mut timeout => break 'sleep,
-				Some(()) = round_trigger_rx.recv() => {
-					info!("Starting round based on admin RPC trigger");
-					break 'sleep;
-				},
-				_ = round_input_rx.recv() => {},
-				_ = srv.rtmgr.shutdown_signal() => {
-					info!("Shutdown signal received. Exiting round coordinator loop...");
-					return Ok(());
-				}
-			}
-		}
 	}
 }
 
