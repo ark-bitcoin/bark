@@ -16,7 +16,11 @@ the bark repository:
   - You may need to use the following flag:
     - `--extra-experimental-features "nix-command flakes"`
 - Alternatively, use [direnv](https://github.com/direnv/direnv) to do this automatically:
-  - `echo "use flake" > .envrc`
+  - Create a `.envrc` file with the following content:
+    ```
+    use flake
+    watch_file nix/*.nix
+    ```
 
 ## Manual setup
 
