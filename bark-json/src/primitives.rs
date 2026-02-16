@@ -13,6 +13,35 @@ use bark::movement::MovementId;
 use bark::vtxo::VtxoState;
 use bitcoin_ext::{BlockDelta, BlockHeight};
 
+/// Reference to a block in the blockchain.
+/// 
+/// Contains the block height and hash. Serializes as an object with `height` and `hash` fields.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[cfg_attr(feature = "utoipa", derive(ToSchema))]
+pub struct BlockRef {
+	pub height: BlockHeight,
+	#[cfg_attr(feature = "utoipa", schema(value_type = String))]
+	pub hash: bitcoin::BlockHash,
+}
+
+impl From<bitcoin_ext::BlockRef> for BlockRef {
+	fn from(v: bitcoin_ext::BlockRef) -> Self {
+		BlockRef {
+			height: v.height,
+			hash: v.hash,
+		}
+	}
+}
+
+impl From<BlockRef> for bitcoin_ext::BlockRef {
+	fn from(v: BlockRef) -> Self {
+		bitcoin_ext::BlockRef {
+			height: v.height,
+			hash: v.hash,
+		}
+	}
+}
+
 /// Struct representing information about an Unspent Transaction Output (UTXO).
 ///
 /// This structure provides details about a UTXO, which includes the outpoint (transaction ID and

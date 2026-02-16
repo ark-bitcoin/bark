@@ -1,0 +1,4 @@
+- Fix BlockRef JSON serialization to output proper object format
+  BlockRef fields are now serialized as a JSON object with `height` and `hash`
+  fields instead of a concatenated string like `"502:hash"`.
+  [#1598](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1598)

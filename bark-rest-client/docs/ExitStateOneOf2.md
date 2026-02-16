@@ -5,7 +5,7 @@
 Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
 **claimable_height** | **i32** |  | 
-**confirmed_block** | **String** |  | 
+**confirmed_block** | [**models::BlockRef**](BlockRef.md) |  | 
 **tip_height** | **i32** |  | 
 **r#type** | **String** |  | 
 

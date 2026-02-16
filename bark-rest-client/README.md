@@ -85,6 +85,7 @@ Class | Method | HTTP request | Description
  - [BitcoindAuthOneOf1](docs/BitcoindAuthOneOf1.md)
  - [BitcoindAuthOneOf1UserPass](docs/BitcoindAuthOneOf1UserPass.md)
  - [BitcoindAuthOneOfCookie](docs/BitcoindAuthOneOfCookie.md)
+ - [BlockRef](docs/BlockRef.md)
  - [BoardRequest](docs/BoardRequest.md)
  - [ChainSourceConfig](docs/ChainSourceConfig.md)
  - [ChainSourceConfigOneOf](docs/ChainSourceConfigOneOf.md)

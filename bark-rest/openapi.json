@@ -2024,6 +2024,22 @@
           }
         ]
       },
+      "BlockRef": {
+        "type": "object",
+        "description": "Reference to a block in the blockchain.\n\nContains the block height and hash. Serializes as an object with `height` and `hash` fields.",
+        "required": [
+          "height",
+          "hash"
+        ],
+        "properties": {
+          "hash": {
+            "type": "string"
+          },
+          "height": {
+            "$ref": "#/components/schemas/u32"
+          }
+        }
+      },
       "BoardRequest": {
         "type": "object",
         "required": [
@@ -2177,7 +2193,7 @@
             "$ref": "#/components/schemas/u32"
           },
           "confirmed_block": {
-            "type": "string"
+            "$ref": "#/components/schemas/BlockRef"
           },
           "tip_height": {
             "$ref": "#/components/schemas/u32"
@@ -2217,7 +2233,7 @@
             "type": "string"
           },
           "claimable_since": {
-            "type": "string"
+            "$ref": "#/components/schemas/BlockRef"
           },
           "tip_height": {
             "$ref": "#/components/schemas/u32"
@@ -2268,17 +2284,20 @@
         "type": "object",
         "required": [
           "tip_height",
-          "claimable_since",
-          "last_scanned_block"
+          "claimable_since"
         ],
         "properties": {
           "claimable_since": {
-            "type": "string"
+            "$ref": "#/components/schemas/BlockRef"
           },
           "last_scanned_block": {
-            "type": [
-              "string",
-              "null"
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/BlockRef"
+              }
             ]
           },
           "tip_height": {
@@ -2295,7 +2314,7 @@
         ],
         "properties": {
           "block": {
-            "type": "string"
+            "$ref": "#/components/schemas/BlockRef"
           },
           "tip_height": {
             "$ref": "#/components/schemas/u32"
@@ -3207,12 +3226,18 @@
           {
             "type": "object",
             "required": [
-              "confirmed_in",
               "type"
             ],
             "properties": {
               "confirmed_in": {
-                "type": "string"
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/BlockRef"
+                  }
+                ]
               },
               "type": {
                 "type": "string",
@@ -3258,7 +3283,7 @@
             ],
             "properties": {
               "confirmed_in": {
-                "type": "string"
+                "$ref": "#/components/schemas/BlockRef"
               },
               "type": {
                 "type": "string",
@@ -3401,7 +3426,7 @@
             ],
             "properties": {
               "block": {
-                "type": "string"
+                "$ref": "#/components/schemas/BlockRef"
               },
               "child_txid": {
                 "type": "string"
