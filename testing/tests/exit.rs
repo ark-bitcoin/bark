@@ -3,7 +3,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 
-use bitcoin::{Address, Amount, FeeRate};
+use bitcoin::{Address, Amount, FeeRate, OutPoint};
 use bitcoin::params::Params;
 use futures::FutureExt;
 use rand::random;
@@ -453,6 +453,117 @@ async fn exit_revoked_lightning_payment() {
 	assert_eq!(bark_1.spendable_balance().await, Amount::ZERO);
 
 	// TODO: Drain exit outputs then check balance in onchain wallet
+}
+
+#[tokio::test]
+async fn bark_should_exit_a_pending_board() {
+	let ctx = TestContext::new("exit/bark_should_exit_a_pending_board").await;
+
+	#[derive(Clone)]
+	struct InvalidSigProxy;
+
+	#[async_trait::async_trait]
+	impl captaind::proxy::ArkRpcProxy for InvalidSigProxy {
+		async fn register_board_vtxo(
+			&self,
+			_upstream: &mut ArkClient,
+			_req: protos::BoardVtxoRequest,
+		) -> Result<protos::Empty, tonic::Status> {
+			Err(tonic::Status::invalid_argument("Invalid signature"))
+		}
+	}
+
+	let srv = ctx.new_captaind("server", None).await;
+	let proxy = srv.start_proxy_no_mailbox(InvalidSigProxy).await;
+	let bark = ctx.new_bark_with_funds("bark1", &proxy.address, sat(1_000_000)).await;
+	let board_amount = sat(500_000);
+	let res = bark.try_board(board_amount).await;
+	assert!(res.is_ok(), "board should succeed");
+
+	// Nothing should happen until the board is almost expired
+	assert_eq!(bark.list_exits().await.len(), 0, "no exit should be triggered");
+	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
+	bark.sync().await;
+	assert_eq!(bark.list_exits().await.len(), 0, "no exit should be triggered");
+	assert_eq!(bark.pending_board_balance().await, board_amount, "board should still be pending because the server is refusing to register");
+
+	let board_mvt = bark.history().await.last().cloned().unwrap();
+	assert_eq!(board_mvt.status, MovementStatus::Pending);
+	assert_eq!(board_mvt.subsystem.name, "bark.board");
+	assert_eq!(board_mvt.subsystem.kind, "board");
+	assert_eq!(board_mvt.intended_balance, board_amount.to_signed().unwrap());
+	assert_eq!(board_mvt.effective_balance, board_amount.to_signed().unwrap());
+	assert_eq!(board_mvt.offchain_fee, sat(0));
+	assert_eq!(board_mvt.sent_to.len(), 0);
+	assert_eq!(board_mvt.received_on.len(), 0);
+	assert_eq!(board_mvt.input_vtxos.len(), 0);
+	assert_eq!(board_mvt.output_vtxos.len(), 1);
+	assert_eq!(board_mvt.exited_vtxos.len(), 0);
+	assert_eq!(board_mvt.time.completed_at.is_some(), false);
+
+	// Bring the board near to its expiry
+	let board_vtxo = bark.vtxos().await.first().cloned().unwrap();
+	let board_expiry = board_vtxo.expiry_height;
+	let tip = ctx.bitcoind().sync_client().tip().unwrap().height;
+	ctx.generate_blocks(board_expiry - tip - 2).await;
+	bark.sync().await;
+
+	assert_eq!(bark.pending_board_balance().await, Amount::ZERO, "board should be cleared");
+	assert_eq!(bark.list_exits().await.len(), 1, "exit should be triggered");
+	assert_eq!(bark.offchain_balance().await.pending_exit, Some(board_amount));
+
+	let movements = bark.history().await;
+	let [board_mvt, exit_mvt] = movements.as_slice() else {
+		panic!("Should have at least two movements");
+	};
+	assert_eq!(board_mvt.status, MovementStatus::Failed);
+	assert_eq!(board_mvt.subsystem.name, "bark.board");
+	assert_eq!(board_mvt.subsystem.kind, "board");
+	assert_eq!(board_mvt.intended_balance, board_amount.to_signed().unwrap());
+	assert_eq!(board_mvt.effective_balance, board_amount.to_signed().unwrap());
+	assert_eq!(board_mvt.offchain_fee, sat(0));
+	assert_eq!(board_mvt.sent_to.len(), 0);
+	assert_eq!(board_mvt.received_on.len(), 0);
+	assert_eq!(board_mvt.input_vtxos.len(), 0);
+	assert_eq!(board_mvt.output_vtxos.len(), 1);
+	assert_eq!(*board_mvt.output_vtxos.first().unwrap(), board_vtxo.id);
+	assert_eq!(board_mvt.exited_vtxos.len(), 1);
+	assert_eq!(*board_mvt.exited_vtxos.first().unwrap(), board_vtxo.id);
+	assert_eq!(board_mvt.time.completed_at.is_some(), true);
+	let metadata = board_mvt.metadata.as_ref().unwrap();
+	let chain_anchor = metadata.get("chain_anchor").map(|ca| serde_json::from_value::<OutPoint>(ca.clone()).unwrap());
+	assert!(chain_anchor.is_some(), "chain anchor should be present");
+	let onchain_fee = metadata.get("onchain_fee_sat").map(|of| Amount::from_sat(serde_json::from_value::<u64>(of.clone()).unwrap()));
+	assert_eq!(onchain_fee, Some(sat(772)));
+
+	assert_eq!(exit_mvt.status, MovementStatus::Successful);
+	assert_eq!(exit_mvt.subsystem.name, "bark.exit");
+	assert_eq!(exit_mvt.subsystem.kind, "start");
+	assert_eq!(exit_mvt.intended_balance, -board_amount.to_signed().unwrap());
+	assert_eq!(exit_mvt.effective_balance, -board_amount.to_signed().unwrap());
+	assert_eq!(exit_mvt.offchain_fee, sat(0));
+	assert_eq!(exit_mvt.sent_to.len(), 1);
+	assert_eq!(exit_mvt.sent_to.first().unwrap(), &MovementDestination {
+		destination: PaymentMethod::Bitcoin({
+			let exit_spk = VtxoPolicy::new_pubkey(board_vtxo.user_pubkey)
+				.taproot(board_vtxo.server_pubkey, board_vtxo.exit_delta, board_vtxo.expiry_height)
+				.script_pubkey();
+			Address::from_script(&exit_spk, Params::REGTEST).unwrap().to_string()
+		}),
+		amount: board_amount,
+	});
+	assert_eq!(exit_mvt.received_on.len(), 0);
+	assert_eq!(exit_mvt.input_vtxos.len(), 1);
+	assert_eq!(*exit_mvt.input_vtxos.first().unwrap(), board_vtxo.id);
+	assert_eq!(exit_mvt.output_vtxos.len(), 0);
+	assert_eq!(exit_mvt.exited_vtxos.len(), 0);
+	assert_eq!(exit_mvt.time.completed_at.is_some(), true);
+
+	// Now verify that the exit can complete
+	complete_exit(&ctx, &bark).await;
+	bark.claim_all_exits(bark.get_onchain_address().await).await;
+	ctx.generate_blocks(1).await;
+	assert_eq!(bark.onchain_balance().await, sat(997_201));
 }
 
 #[tokio::test]

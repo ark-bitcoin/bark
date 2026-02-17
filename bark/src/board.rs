@@ -109,16 +109,21 @@ impl Wallet {
 					} else {
 						info!("Registered board {}", vtxo.id());
 						registered_boards += 1;
+						continue;
 					}
 				}
-
-				continue;
 			}
 
 			if vtxo.expiry_height() < current_height + ark_info.required_board_confirmations as BlockHeight {
-				warn!("VTXO {} expired before its board was confirmed, removing board", vtxo.id());
-				self.movements.finish_movement(board.movement_id, MovementStatus::Failed).await?;
-				self.mark_vtxos_as_spent(&[vtxo]).await?;
+				warn!("VTXO {} expired before its board was confirmed, removing board and marking VTXO for exit", vtxo.id());
+				self.exit.write().await.start_exit_for_vtxos(&[vtxo.vtxo]).await?;
+				self.movements.finish_movement_with_update(
+					board.movement_id,
+					MovementStatus::Failed,
+					MovementUpdate::new()
+						.exited_vtxo(vtxo_id),
+				).await?;
+
 				self.db.remove_pending_board(&vtxo_id).await?;
 			}
 		};
