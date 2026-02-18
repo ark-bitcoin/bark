@@ -19,6 +19,7 @@ use tracing::info;
 use bitcoin_ext::rpc::{BitcoinRpcClient, BitcoinRpcExt, RpcApi};
 
 use crate::{database, fee_estimator, telemetry, wallet, SECP};
+use crate::database::BlockTable;
 use crate::sync::SyncManager;
 use crate::config::watchmand::Config;
 use crate::system::RuntimeManager;
@@ -169,6 +170,7 @@ impl Daemon {
 			vec![],
 			deep_tip,
 			cfg.sync_manager_block_poll_interval,
+			BlockTable::Watchmand,
 		).await.context("Failed to start SyncManager")?;
 
 		Ok(Self { rtmgr, sync_manager, txindex, tx_nursery, watchman_wallet })

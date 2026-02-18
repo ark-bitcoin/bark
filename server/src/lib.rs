@@ -32,7 +32,7 @@ mod txindex;
 mod utils;
 
 
-use crate::database::VirtualTransaction;
+use crate::database::{BlockTable, VirtualTransaction};
 pub use crate::intman::{CAPTAIND_API_KEY, CAPTAIND_CLI_API_KEY};
 pub use crate::config::Config;
 
@@ -391,6 +391,7 @@ impl Server {
 			vec![],
 			deep_tip,
 			cfg.sync_manager_block_poll_interval,
+			BlockTable::Captaind,
 		).await.context("Failed to start SyncManager")?);
 
 		let cln = ClnManager::start(

@@ -8,7 +8,7 @@ use tracing::{trace, debug, info, warn};
 use bitcoin_ext::rpc::{BitcoinRpcClient, BitcoinRpcExt, RpcApi};
 use bitcoin_ext::{BlockRef};
 
-use crate::database::Db;
+use crate::database::{BlockTable, Db};
 use crate::sync::{BlockData, ChainEventListener};
 use crate::telemetry;
 
@@ -20,6 +20,8 @@ pub struct BlockIndex {
 	bitcoind: BitcoinRpcClient,
 	db: Db,
 	pub(super) listeners: Vec<Box<dyn ChainEventListener>>,
+	/// Which block table this index uses for persistence
+	block_table: BlockTable,
 }
 
 impl BlockIndex {
@@ -40,11 +42,12 @@ impl BlockIndex {
 		db: Db,
 		listeners: Vec<Box<dyn ChainEventListener>>,
 		birthday: BlockRef,
+		block_table: BlockTable,
 	) -> anyhow::Result<Self> {
-		let sync_tip = match db.get_highest_block().await.context("Failed to get tip from database")? {
+		let sync_tip = match db.get_highest_block(block_table).await.context("Failed to get tip from database")? {
 			Some(tip) => tip,
 			None => {
-				db.store_block(&birthday).await.context("Failed to store tip in database")?;
+				db.store_block(block_table, &birthday).await.context("Failed to store tip in database")?;
 				birthday
 			}
 		};
@@ -53,7 +56,7 @@ impl BlockIndex {
 
 		let (chain_tip_tx, _) = watch::channel(chain_tip);
 		let (sync_height_tx, _ ) = watch::channel(sync_tip);
-		Ok(Self { chain_tip_tx, sync_height_tx, bitcoind, db, listeners })
+		Ok(Self { chain_tip_tx, sync_height_tx, bitcoind, db, listeners, block_table })
 	}
 
 	/// Get the latest observed tip of bitcoind
@@ -194,7 +197,7 @@ impl BlockIndex {
 			}
 		}
 
-		self.db.remove_blocks_above(block.height).await?;
+		self.db.remove_blocks_above(self.block_table, block.height).await?;
 		Ok(())
 	}
 
@@ -229,7 +232,7 @@ impl BlockIndex {
 			}
 		}
 
-		self.db.store_block(&block.block_ref).await?;
+		self.db.store_block(self.block_table, &block.block_ref).await?;
 		self.update_sync_height(block.block_ref);
 		Ok(())
 	}
@@ -245,7 +248,7 @@ impl BlockIndex {
 		// Take the local and bitcoind at this height and see if they match
 		let mut height = std::cmp::min(bitcoind_tip.height, local_height);
 		let mut bitcoind_block = self.bitcoind.get_block_by_height(height).context("failed to get bitcoind block by height")?;
-		let mut local_block = self.db.get_block_by_height(height).await
+		let mut local_block = self.db.get_block_by_height(self.block_table, height).await
 			.context("Failed to get local block by height")?
 			.context("No local block at height")?;
 
@@ -255,7 +258,7 @@ impl BlockIndex {
 			height -= 1;
 			bitcoind_block = self.bitcoind.get_block_by_height(height)
 				.context("Failed to get bitcoind block by height")?;
-			local_block = self.db.get_block_by_height(height).await
+			local_block = self.db.get_block_by_height(self.block_table, height).await
 				.context("Failed to get local block by height")?
 				.context("No local block at height")?;
 		}

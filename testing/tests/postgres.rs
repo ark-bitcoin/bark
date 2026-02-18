@@ -13,7 +13,7 @@ use bark::lightning_invoice::Bolt11Invoice;
 use bitcoin_ext::BlockRef;
 use cln_rpc::listsendpays_request::ListsendpaysIndex;
 
-use server::database::Db;
+use server::database::{BlockTable, Db};
 use server::filters;
 use server::filters::Filters;
 
@@ -258,30 +258,28 @@ async fn block_database_crud() {
 	};
 
 	// Initially no blocks
-	assert!(db.get_block_by_height(1).await.unwrap().is_none());
-	assert!(db.get_block_by_height(2).await.unwrap().is_none());
+	assert!(db.get_block_by_height(BlockTable::Captaind, 1).await.unwrap().is_none());
+	assert!(db.get_block_by_height(BlockTable::Captaind, 2).await.unwrap().is_none());
 
 	// Initially no tip
-	assert!(db.get_highest_block().await.unwrap().is_none());
+	assert!(db.get_highest_block(BlockTable::Captaind).await.unwrap().is_none());
 
 	// Store first block
-	db.store_block(&block1).await.expect("Store block1");
+	db.store_block(BlockTable::Captaind, &block1).await.expect("Store block1");
 	{
-		let stored = db.get_block_by_height(1).await.unwrap().expect("block1 present");
+		let stored = db.get_block_by_height(BlockTable::Captaind, 1).await.unwrap().expect("block1 present");
 		assert_eq!(stored.height, block1.height);
 		assert_eq!(stored.hash, block1.hash);
-		assert_eq!(db.get_highest_block
-().await.unwrap(), Some(block1.clone()));
+		assert_eq!(db.get_highest_block(BlockTable::Captaind).await.unwrap(), Some(block1.clone()));
 	}
 
 	// Store second block
-	db.store_block(&block2).await.expect("Store block2");
+	db.store_block(BlockTable::Captaind, &block2).await.expect("Store block2");
 	{
-		let stored = db.get_block_by_height(2).await.unwrap().expect("block2 present");
+		let stored = db.get_block_by_height(BlockTable::Captaind, 2).await.unwrap().expect("block2 present");
 		assert_eq!(stored.height, block2.height);
 		assert_eq!(stored.hash, block2.hash);
-		assert_eq!(db.get_highest_block
-().await.unwrap(), Some(block2.clone()));
+		assert_eq!(db.get_highest_block(BlockTable::Captaind).await.unwrap(), Some(block2.clone()));
 	}
 
 	// Try to add a conflicting block at block-height 2
@@ -291,19 +289,19 @@ async fn block_database_crud() {
 		hash: hash2_conflict,
 	};
 
-	let result = db.store_block(&block2_conflict).await;
+	let result = db.store_block(BlockTable::Captaind, &block2_conflict).await;
 	assert!(result.is_err(), "Storing a conflicting block at the same height should error");
 
 	// Remove blocks above height2 (block2 should still be there)
-	db.remove_blocks_above(2).await.expect("Remove above height2");
-	assert!(db.get_block_by_height(2).await.unwrap().is_some()); // block2 still there
-	assert!(db.get_block_by_height(1).await.unwrap().is_some()); // block1 still there
-	assert_eq!(db.get_highest_block().await.unwrap(), Some(block2.clone())); // Tip should be at block2
+	db.remove_blocks_above(BlockTable::Captaind, 2).await.expect("Remove above height2");
+	assert!(db.get_block_by_height(BlockTable::Captaind, 2).await.unwrap().is_some()); // block2 still there
+	assert!(db.get_block_by_height(BlockTable::Captaind, 1).await.unwrap().is_some()); // block1 still there
+	assert_eq!(db.get_highest_block(BlockTable::Captaind).await.unwrap(), Some(block2.clone())); // Tip should be at block2
 
 	// Remove blocks above height1 (block1 should still be there)
-	db.remove_blocks_above(1).await.expect("Remove above height1");
-	assert!(db.get_block_by_height(1).await.unwrap().is_some()); // block1 still there
-	assert_eq!(db.get_highest_block().await.unwrap(), Some(block1.clone())); // Tip should be at block1
+	db.remove_blocks_above(BlockTable::Captaind, 1).await.expect("Remove above height1");
+	assert!(db.get_block_by_height(BlockTable::Captaind, 1).await.unwrap().is_some()); // block1 still there
+	assert_eq!(db.get_highest_block(BlockTable::Captaind).await.unwrap(), Some(block1.clone())); // Tip should be at block1
 }
 
 #[tokio::test]
@@ -833,4 +831,71 @@ async fn mark_server_may_own_descendants_fails_for_nonexistent() {
 	assert!(err_msg.contains("does not exist"), "Error should mention 'does not exist': {}", err_msg);
 	assert!(err_msg.contains(&txid_nonexistent.to_string()),
 		"Error should mention the non-existent txid: {}", err_msg);
+}
+
+#[tokio::test]
+async fn block_table_independence() {
+	let mut ctx = TestContext::new_minimal("postgresd/block_table_independence").await;
+	ctx.init_central_postgres().await;
+	let postgres_cfg = ctx.new_postgres(&ctx.test_name).await;
+
+	Db::create(&postgres_cfg).await.expect("Database created");
+	let db = Db::connect(&postgres_cfg).await.expect("Connected to database");
+
+	// Create test blocks with different hashes at the same height
+	let hash_captaind = bitcoin::BlockHash::from_str("000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f").unwrap();
+	let hash_watchmand = bitcoin::BlockHash::from_str("0000000000000000000065bda8f8a88f2e1e00d9a6887a43d640e52a4c3b3a81").unwrap();
+
+	let captaind_block_100 = BlockRef { height: 100, hash: hash_captaind };
+	let watchmand_block_100 = BlockRef { height: 100, hash: hash_watchmand };
+
+	// Initially both tables are empty
+	assert!(db.get_highest_block(BlockTable::Captaind).await.unwrap().is_none());
+	assert!(db.get_highest_block(BlockTable::Watchmand).await.unwrap().is_none());
+
+	// Insert block 100 into captaind table
+	db.store_block(BlockTable::Captaind, &captaind_block_100).await.expect("Store to captaind");
+
+	// Verify isolation: captaind has it, watchmand doesn't
+	assert_eq!(db.get_highest_block(BlockTable::Captaind).await.unwrap(), Some(captaind_block_100));
+	assert_eq!(db.get_block_by_height(BlockTable::Captaind, 100).await.unwrap(), Some(captaind_block_100));
+	assert_eq!(db.get_highest_block(BlockTable::Watchmand).await.unwrap(), None);
+	assert_eq!(db.get_block_by_height(BlockTable::Watchmand, 100).await.unwrap(), None);
+
+	// Insert block 100 into watchmand table (different hash!)
+	db.store_block(BlockTable::Watchmand, &watchmand_block_100).await.expect("Store to watchmand");
+
+	// Verify both tables have independent data at the same height
+	let captaind_retrieved = db.get_block_by_height(BlockTable::Captaind, 100).await.unwrap().unwrap();
+	let watchmand_retrieved = db.get_block_by_height(BlockTable::Watchmand, 100).await.unwrap().unwrap();
+
+	assert_eq!(captaind_retrieved.hash, hash_captaind);
+	assert_eq!(watchmand_retrieved.hash, hash_watchmand);
+	assert_ne!(captaind_retrieved.hash, watchmand_retrieved.hash, "Tables should have different hashes at same height");
+
+	// Add more blocks to test independent highest block tracking
+	let captaind_block_101 = BlockRef { height: 101, hash: hash_captaind };
+	let watchmand_block_102 = BlockRef { height: 102, hash: hash_watchmand };
+
+	db.store_block(BlockTable::Captaind, &captaind_block_101).await.unwrap();
+	db.store_block(BlockTable::Watchmand, &watchmand_block_102).await.unwrap();
+
+	assert_eq!(db.get_highest_block(BlockTable::Captaind).await.unwrap().unwrap().height, 101);
+	assert_eq!(db.get_highest_block(BlockTable::Watchmand).await.unwrap().unwrap().height, 102);
+
+	// Test independent removal
+	db.remove_blocks_above(BlockTable::Captaind, 100).await.unwrap();
+
+	// Captaind should only have block 100 now
+	assert_eq!(db.get_highest_block(BlockTable::Captaind).await.unwrap().unwrap().height, 100);
+	assert_eq!(db.get_block_by_height(BlockTable::Captaind, 101).await.unwrap(), None);
+
+	// Watchmand should still have both blocks
+	assert_eq!(db.get_highest_block(BlockTable::Watchmand).await.unwrap().unwrap().height, 102);
+	assert!(db.get_block_by_height(BlockTable::Watchmand, 100).await.unwrap().is_some());
+	assert!(db.get_block_by_height(BlockTable::Watchmand, 102).await.unwrap().is_some());
+
+	// Test independent lowest block tracking
+	assert_eq!(db.get_lowest_block(BlockTable::Captaind).await.unwrap().unwrap().height, 100);
+	assert_eq!(db.get_lowest_block(BlockTable::Watchmand).await.unwrap().unwrap().height, 100);
 }

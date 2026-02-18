@@ -468,10 +468,10 @@ ALTER TABLE public.bitcoin_transaction ALTER COLUMN id ADD GENERATED ALWAYS AS I
 
 
 --
--- Name: block; Type: TABLE; Schema: public; Owner: -
+-- Name: captaind_block; Type: TABLE; Schema: public; Owner: -
 --
 
-CREATE TABLE public.block (
+CREATE TABLE public.captaind_block (
     height bigint NOT NULL,
     hash text NOT NULL
 );
@@ -1269,6 +1269,16 @@ ALTER SEQUENCE public.wallet_changeset_id_seq OWNED BY public.wallet_changeset.i
 
 
 --
+-- Name: watchmand_block; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.watchmand_block (
+    height bigint NOT NULL,
+    hash text NOT NULL
+);
+
+
+--
 -- Name: arkoor_mailbox id; Type: DEFAULT; Schema: public; Owner: -
 --
 
@@ -1419,11 +1429,11 @@ ALTER TABLE ONLY public.bitcoin_transaction
 
 
 --
--- Name: block block_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+-- Name: captaind_block captaind_block_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.block
-    ADD CONSTRAINT block_pkey PRIMARY KEY (height);
+ALTER TABLE ONLY public.captaind_block
+    ADD CONSTRAINT captaind_block_pkey PRIMARY KEY (height);
 
 
 --
@@ -1619,6 +1629,14 @@ ALTER TABLE ONLY public.wallet_changeset
 
 
 --
+-- Name: watchmand_block watchmand_block_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.watchmand_block
+    ADD CONSTRAINT watchmand_block_pkey PRIMARY KEY (height);
+
+
+--
 -- Name: arkoor_mailbox_pubkey_ix; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -1633,10 +1651,17 @@ CREATE UNIQUE INDEX arkoor_mailbox_vtxo_id_uix ON public.arkoor_mailbox USING bt
 
 
 --
--- Name: idx_block_hash; Type: INDEX; Schema: public; Owner: -
+-- Name: idx_captaind_block_hash; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX idx_block_hash ON public.block USING btree (hash);
+CREATE INDEX idx_captaind_block_hash ON public.captaind_block USING btree (hash);
+
+
+--
+-- Name: idx_watchmand_block_hash; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_watchmand_block_hash ON public.watchmand_block USING btree (hash);
 
 
 --
