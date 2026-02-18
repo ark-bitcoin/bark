@@ -1048,6 +1048,57 @@ mod test {
 		assert_eq!(state, spendable);
 	}
 
+	/// Tests that update_vtxo_state_checked is idempotent when the VTXO is
+	/// already in the target state. This covers the persist_round_failure
+	/// retry scenario: a VTXO is unlocked (Locked -> Spendable), then on
+	/// retry the same unlock is attempted again and must succeed without
+	/// inserting a redundant state history row.
+	#[test]
+	fn test_update_vtxo_state_idempotent() {
+		let (_, mut conn) = in_memory_db();
+		MigrationContext{}.do_all_migrations(&mut conn).unwrap();
+
+		let tx = conn.transaction().unwrap();
+		let vtxo = &VTXO_VECTORS.board_vtxo;
+
+		// Store a VTXO in Locked state.
+		let locked = VtxoState::Locked { movement_id: None };
+		store_vtxo_with_initial_state(&tx, vtxo, &locked).unwrap();
+
+		// First unlock: Locked -> Spendable. Must succeed.
+		let wv = update_vtxo_state_checked(
+			&tx, vtxo.id(), VtxoState::Spendable, &[VtxoStateKind::Locked, VtxoStateKind::Spendable],
+		).unwrap();
+		assert_eq!(wv.state, VtxoState::Spendable);
+
+		// Count state history rows after the first transition.
+		let rows_after_first: i64 = tx.query_row(
+			"SELECT COUNT(*) FROM bark_vtxo_state WHERE vtxo_id = ?1",
+			[vtxo.id().to_string()], |r| r.get(0),
+		).unwrap();
+		// Initial Locked + transition to Spendable = 2 rows.
+		assert_eq!(rows_after_first, 2);
+
+		// Second unlock (retry): already Spendable -> Spendable. Must succeed.
+		let wv = update_vtxo_state_checked(
+			&tx, vtxo.id(), VtxoState::Spendable, &[VtxoStateKind::Locked, VtxoStateKind::Spendable],
+		).unwrap();
+		assert_eq!(wv.state, VtxoState::Spendable);
+
+		// No redundant row inserted.
+		let rows_after_second: i64 = tx.query_row(
+			"SELECT COUNT(*) FROM bark_vtxo_state WHERE vtxo_id = ?1",
+			[vtxo.id().to_string()], |r| r.get(0),
+		).unwrap();
+		assert_eq!(rows_after_second, 2);
+
+		// Also verify that a disallowed transition still fails.
+		// VTXO is Spendable, but only Spent is allowed -> must error.
+		update_vtxo_state_checked(
+			&tx, vtxo.id(), VtxoState::Locked { movement_id: None }, &[VtxoStateKind::Spent],
+		).expect_err("transition from Spendable should fail when only Spent is allowed");
+	}
+
 	#[test]
 	fn test_mailbox_checkpoint_stores_correct_value() {
 		let (_, mut conn) = in_memory_db();
