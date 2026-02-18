@@ -633,7 +633,8 @@ pub fn update_vtxo_state_checked(
 		SELECT :vtxo_id, :state_kind, :state FROM most_recent_vtxo_state
 		WHERE
 			vtxo_id = :vtxo_id AND
-			state_kind IN (SELECT atom FROM json_each(:old_states))";
+			state_kind IN (SELECT atom FROM json_each(:old_states)) AND
+			state_kind != :state_kind";
 
 	let mut statement = conn.prepare(query)?;
 	let nb_inserted = statement.execute(named_params! {
@@ -644,7 +645,15 @@ pub fn update_vtxo_state_checked(
 	})?;
 
 	match nb_inserted {
-		0 => bail!("No vtxo with provided id or old states"),
+		0 => {
+			// Either the VTXO doesn't exist, its current state is not in the
+			// allowed old states, or it's already in the target state. The last
+			// case is a no-op — return the existing VTXO.
+			match get_wallet_vtxo_by_id(conn, vtxo_id)? {
+				Some(wv) if wv.state.kind() == new_state.kind() => Ok(wv),
+				_ => bail!("No vtxo with provided id or old states"),
+			}
+		},
 		1 => Ok(get_wallet_vtxo_by_id(conn, vtxo_id)?.unwrap()),
 		_ => panic!("Corrupted database. A vtxo can have only one state"),
 	}

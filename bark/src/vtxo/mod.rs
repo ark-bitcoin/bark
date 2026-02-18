@@ -34,7 +34,7 @@ impl Wallet {
 	/// Marks VTXOs as [VtxoState::Spent].
 	///
 	/// This operation is idempotent: VTXOs already in [VtxoState::Spent] will
-	/// remain spent (a redundant state entry may be added to history).
+	/// remain spent without inserting a redundant state entry.
 	///
 	/// # Errors
 	/// - If the VTXO doesn't exist.
@@ -166,16 +166,21 @@ impl Wallet {
 	}
 
 	/// Attempts to unlock VTXOs with the given [VtxoId](ark::VtxoId) values. This will only work if the current
-	/// [VtxoState] is [VtxoStateKind::Locked].
+	/// [VtxoState] is [VtxoStateKind::Locked] or [VtxoStateKind::Spendable].
+	///
+	/// This operation is idempotent: VTXOs already in [VtxoState::Spendable] will
+	/// remain spendable without inserting a redundant state entry.
 	///
 	/// # Errors
-	/// - If the VTXO is not currently locked.
+	/// - If the VTXO is not currently locked or spendable.
 	/// - If the VTXO doesn't exist.
 	/// - If a database error occurs.
 	pub async fn unlock_vtxos(
 		&self,
 		vtxos: impl IntoIterator<Item = impl VtxoRef>,
 	) -> anyhow::Result<()> {
-		self.set_vtxo_states(vtxos, &VtxoState::Spendable, &[VtxoStateKind::Locked]).await
+		self.set_vtxo_states(
+			vtxos, &VtxoState::Spendable, &[VtxoStateKind::Locked, VtxoStateKind::Spendable],
+		).await
 	}
 }
