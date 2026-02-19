@@ -633,7 +633,8 @@ pub fn update_vtxo_state_checked(
 		SELECT :vtxo_id, :state_kind, :state FROM most_recent_vtxo_state
 		WHERE
 			vtxo_id = :vtxo_id AND
-			state_kind IN (SELECT atom FROM json_each(:old_states))";
+			state_kind IN (SELECT atom FROM json_each(:old_states)) AND
+			state_kind != :state_kind";
 
 	let mut statement = conn.prepare(query)?;
 	let nb_inserted = statement.execute(named_params! {
@@ -644,9 +645,24 @@ pub fn update_vtxo_state_checked(
 	})?;
 
 	match nb_inserted {
-		0 => bail!("No vtxo with provided id or old states"),
-		1 => Ok(get_wallet_vtxo_by_id(conn, vtxo_id)?.unwrap()),
-		_ => panic!("Corrupted database. A vtxo can have only one state"),
+		0 => {
+			// Either the VTXO doesn't exist, its current state is not in the
+			// allowed old states, or it's already in the target state. The last
+			// case is a no-op — return the existing VTXO.
+			match get_wallet_vtxo_by_id(conn, vtxo_id)? {
+				Some(wv) if wv.state.kind() == new_state.kind() => Ok(wv),
+				Some(wv) => bail!(
+					"vtxo {} is in state {} which is not in the allowed old states {:?}",
+					vtxo_id, wv.state.kind(), old_states,
+				),
+				None => bail!("no vtxo found with id {}", vtxo_id),
+			}
+		},
+		1 => {
+			get_wallet_vtxo_by_id(conn, vtxo_id)?
+				.context("vtxo not found after state insert")
+		},
+		n => bail!("Corrupted database: inserted {n} state rows for a single vtxo"),
 	}
 }
 
@@ -1030,6 +1046,57 @@ mod test {
 		// State should still be Spendable (original state preserved)
 		let state = get_vtxo_state(&tx, vtxo.id()).unwrap().unwrap();
 		assert_eq!(state, spendable);
+	}
+
+	/// Tests that update_vtxo_state_checked is idempotent when the VTXO is
+	/// already in the target state. This covers the persist_round_failure
+	/// retry scenario: a VTXO is unlocked (Locked -> Spendable), then on
+	/// retry the same unlock is attempted again and must succeed without
+	/// inserting a redundant state history row.
+	#[test]
+	fn test_update_vtxo_state_idempotent() {
+		let (_, mut conn) = in_memory_db();
+		MigrationContext{}.do_all_migrations(&mut conn).unwrap();
+
+		let tx = conn.transaction().unwrap();
+		let vtxo = &VTXO_VECTORS.board_vtxo;
+
+		// Store a VTXO in Locked state.
+		let locked = VtxoState::Locked { movement_id: None };
+		store_vtxo_with_initial_state(&tx, vtxo, &locked).unwrap();
+
+		// First unlock: Locked -> Spendable. Must succeed.
+		let wv = update_vtxo_state_checked(
+			&tx, vtxo.id(), VtxoState::Spendable, &[VtxoStateKind::Locked, VtxoStateKind::Spendable],
+		).unwrap();
+		assert_eq!(wv.state, VtxoState::Spendable);
+
+		// Count state history rows after the first transition.
+		let rows_after_first: i64 = tx.query_row(
+			"SELECT COUNT(*) FROM bark_vtxo_state WHERE vtxo_id = ?1",
+			[vtxo.id().to_string()], |r| r.get(0),
+		).unwrap();
+		// Initial Locked + transition to Spendable = 2 rows.
+		assert_eq!(rows_after_first, 2);
+
+		// Second unlock (retry): already Spendable -> Spendable. Must succeed.
+		let wv = update_vtxo_state_checked(
+			&tx, vtxo.id(), VtxoState::Spendable, &[VtxoStateKind::Locked, VtxoStateKind::Spendable],
+		).unwrap();
+		assert_eq!(wv.state, VtxoState::Spendable);
+
+		// No redundant row inserted.
+		let rows_after_second: i64 = tx.query_row(
+			"SELECT COUNT(*) FROM bark_vtxo_state WHERE vtxo_id = ?1",
+			[vtxo.id().to_string()], |r| r.get(0),
+		).unwrap();
+		assert_eq!(rows_after_second, 2);
+
+		// Also verify that a disallowed transition still fails.
+		// VTXO is Spendable, but only Spent is allowed -> must error.
+		update_vtxo_state_checked(
+			&tx, vtxo.id(), VtxoState::Locked { movement_id: None }, &[VtxoStateKind::Spent],
+		).expect_err("transition from Spendable should fail when only Spent is allowed");
 	}
 
 	#[test]

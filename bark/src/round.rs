@@ -1195,7 +1195,6 @@ async fn persist_round_success(
 	Ok(())
 }
 
-//TODO(stevenroose) should be made idempotent
 async fn persist_round_failure(
 	wallet: &Wallet,
 	participation: &RoundParticipation,
