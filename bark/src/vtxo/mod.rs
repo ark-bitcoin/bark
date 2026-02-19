@@ -106,6 +106,8 @@ impl Wallet {
 	/// Stores the given collection of VTXOs in the wallet with an initial state of
 	/// [VtxoState::Locked].
 	///
+	/// It does nothing if the VTXOs already exist.
+	///
 	/// # Parameters
 	/// - `vtxos`: The VTXOs to store in the wallet.
 	pub async fn store_locked_vtxos<'a>(
@@ -119,6 +121,8 @@ impl Wallet {
 	/// Stores the given collection of VTXOs in the wallet with an initial state of
 	/// [VtxoState::Spendable].
 	///
+	/// It does nothing if the VTXOs already exist.
+	///
 	/// # Parameters
 	/// - `vtxos`: The VTXOs to store in the wallet.
 	pub async fn store_spendable_vtxos<'a>(
@@ -131,6 +135,8 @@ impl Wallet {
 	/// Stores the given collection of VTXOs in the wallet with an initial state of
 	/// [VtxoState::Spent].
 	///
+	/// It does nothing if the VTXOs already exist.
+	///
 	/// # Parameters
 	/// - `vtxos`: The VTXOs to store in the wallet.
 	pub async fn store_spent_vtxos<'a>(
@@ -141,6 +147,8 @@ impl Wallet {
 	}
 
 	/// Stores the given collection of VTXOs in the wallet with the given initial state.
+	///
+	/// It does nothing if the VTXOs already exist.
 	///
 	/// # Parameters
 	/// - `vtxos`: The VTXOs to store in the wallet.
