@@ -1,0 +1,5 @@
+- Add `PidLock` for exclusive datadir access
+  Prevents multiple processes from operating on the same datadir
+  concurrently by writing a `LOCK` file at startup. Available
+  behind the `pid_lock` feature flag.
+  [#1651](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1651)
