@@ -651,11 +651,18 @@ pub fn update_vtxo_state_checked(
 			// case is a no-op — return the existing VTXO.
 			match get_wallet_vtxo_by_id(conn, vtxo_id)? {
 				Some(wv) if wv.state.kind() == new_state.kind() => Ok(wv),
-				_ => bail!("No vtxo with provided id or old states"),
+				Some(wv) => bail!(
+					"vtxo {} is in state {} which is not in the allowed old states {:?}",
+					vtxo_id, wv.state.kind(), old_states,
+				),
+				None => bail!("no vtxo found with id {}", vtxo_id),
 			}
 		},
-		1 => Ok(get_wallet_vtxo_by_id(conn, vtxo_id)?.unwrap()),
-		_ => panic!("Corrupted database. A vtxo can have only one state"),
+		1 => {
+			get_wallet_vtxo_by_id(conn, vtxo_id)?
+				.context("vtxo not found after state insert")
+		},
+		n => bail!("Corrupted database: inserted {n} state rows for a single vtxo"),
 	}
 }
 
