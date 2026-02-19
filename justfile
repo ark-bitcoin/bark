@@ -32,67 +32,66 @@ build:
 	cargo build --workspace
 
 build-codecov:
-	RUSTFLAGS="-C instrument-coverage" LLVM_PROFILE_FILE="your-binary-%p-%m.profraw" cargo build --workspace
+	#!/usr/bin/env bash
+	set -euo pipefail
+	source <(cargo llvm-cov show-env --export-prefix)
+	cargo llvm-cov clean --workspace
+	cargo build --workspace
 
 docker-pull:
 	if [ -n "${LIGHTNINGD_DOCKER_IMAGE-""}" ]; then docker image inspect "$LIGHTNINGD_DOCKER_IMAGE" > /dev/null 2>&1 && echo "Image already exists locally." || (echo "Image not found locally. Pulling..." && docker pull "$LIGHTNINGD_DOCKER_IMAGE"); fi
 
-alias unit := test-unit
 test-unit TEST="":
-	cargo test --workspace --exclude ark-testing {{TEST}}
+	cargo nextest run --no-fail-fast --workspace --exclude ark-testing {{TEST}}
+alias unit := test-unit
 
 test-unit-codecov TEST="":
-	cargo llvm-cov --workspace --exclude ark-testing --no-report {{TEST}}
-
-test-unit-all:
-	cargo test --workspace --exclude ark-testing
-
-test-unit-all-codecov:
-	cargo llvm-cov --workspace --exclude ark-testing --no-report
+	cargo llvm-cov nextest --workspace --exclude ark-testing --no-report {{TEST}}
 
 test-integration TEST="": build docker-pull
-	cargo test --package ark-testing {{TEST}}
+	cargo nextest run --no-fail-fast --package ark-testing {{TEST}}
 alias int := test-integration
 
 # run integration tests for bark, movement, exit and lightning test files only
 test-integration-client: build docker-pull
-	cargo test --package ark-testing --test bark --test movement --test exit --test lightningd
+	cargo nextest run --no-fail-fast --package ark-testing --test bark --test movement --test exit --test lightningd
 alias int-client := test-integration-client
 
-# run all integration tests without logging and without early failure.
-test-integration-all: build docker-pull
-	TEST_LOG=off cargo test --package ark-testing --no-fail-fast
-alias int-all := test-integration-all
-
-test-integration-codecov TEST="": build-codecov docker-pull
-	cargo llvm-cov --package ark-testing --no-report {{TEST}}
-
+test-integration-codecov TEST="": docker-pull
+	#!/usr/bin/env bash
+	set -euo pipefail
+	source <(cargo llvm-cov show-env --export-prefix)
+	cargo nextest run --package ark-testing {{TEST}}
+alias int-cov := test-integration-codecov
 
 test-integration-esplora TEST="": build docker-pull
 	CHAIN_SOURCE=esplora just int "{{TEST}}"
 alias int-esplora := test-integration-esplora
 
-# run all integration tests without logging and without early failure.
-test-integration-esplora-all: build docker-pull
-	TEST_LOG=off CHAIN_SOURCE=esplora cargo test --package ark-testing --no-fail-fast
-alias int-esplora-all := test-integration-esplora-all
-
-test-integration-esplora-codecov TEST="": build-codecov docker-pull
-	CHAIN_SOURCE=esplora cargo llvm-cov --package ark-testing --no-report {{TEST}}
-
+test-integration-esplora-codecov TEST="": docker-pull
+	#!/usr/bin/env bash
+	set -euo pipefail
+	source <(cargo llvm-cov show-env --export-prefix)
+	CHAIN_SOURCE=esplora cargo nextest run --package ark-testing {{TEST}}
 
 test-integration-mempool TEST="": build docker-pull
 	CHAIN_SOURCE=mempool just int "{{TEST}}"
 alias int-mempool := test-integration-mempool
 
-# run all integration tests without logging and without early failure.
-test-integration-mempool-all: build docker-pull
-	TEST_LOG=off CHAIN_SOURCE=mempool cargo test --package ark-testing --no-fail-fast
-alias int-mempool-all := test-integration-mempool-all
+test-integration-mempool-codecov TEST="": docker-pull
+	#!/usr/bin/env bash
+	set -euo pipefail
+	source <(cargo llvm-cov show-env --export-prefix)
+	CHAIN_SOURCE=mempool cargo nextest run --package ark-testing {{TEST}}
 
-test-integration-mempool-codecov TEST="": build-codecov docker-pull
-	CHAIN_SOURCE=mempool cargo llvm-cov --package ark-testing --no-report {{TEST}}
+test-integration-all-codecov: docker-pull
+	just test-integration-codecov
+	just test-integration-mempool-codecov
+alias int-all-cov := test-integration-all-codecov
 
+test-all-codecov:
+	just test-unit-codecov
+	just test-integration-all-codecov
 test: test-unit test-integration test-integration-esplora test-integration-mempool
 
 codecov-report:
@@ -191,5 +190,3 @@ generate-bark-rest-client: dump-bark-rest-openapi-schema
 	cp bark-rest/helpers/models.rs {{BARK_REST_CLIENT_DIR}}/src/models/mod.rs
 
 generate-static-files: dump-server-sql-schema dump-bark-sql-schema generate-bark-rest-client
-
-

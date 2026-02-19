@@ -38,10 +38,7 @@ steps:
     commands:
       - git log --oneline | head -n 1
       - >
-        nix develop .#default --command bash -c "
-          cargo version &&
-          cargo build --workspace
-        "
+        nix develop .#default --command bash -c "just build"
 
 
   - name: compare-static-files
@@ -62,9 +59,7 @@ steps:
     commands:
       - git log --oneline | head -n 1
       - >
-        nix develop .#default --command bash -c "
-          cargo test --workspace --exclude ark-testing
-        "
+        nix develop .#default --command bash -c "just test-unit"
 
   - name: use-bark-as-dependency
     depends_on: test-unit
@@ -133,7 +128,7 @@ steps:
     environment:
       CHAIN_SOURCE: esplora
       TEST_DIRECTORY: ./test/esplora
-      RUST_TEST_THREADS: 2
+      NEXTEST_TEST_THREADS: 2
       BARK_COMMAND_TIMEOUT_MILLIS: 120000
       TX_PROPAGATION_TIMEOUT: 30000
     privileged: true
@@ -154,7 +149,7 @@ steps:
     environment:
       CHAIN_SOURCE: mempool
       TEST_DIRECTORY: ./test/mempool
-      RUST_TEST_THREADS: 2
+      NEXTEST_TEST_THREADS: 2
       BARK_COMMAND_TIMEOUT_MILLIS: 120000
       TX_PROPAGATION_TIMEOUT: 30000
     privileged: true
@@ -174,7 +169,7 @@ steps:
       - /dev/shm:size=10g
     environment:
       TEST_DIRECTORY: ./test/btc29
-      RUST_TEST_THREADS: 2
+      NEXTEST_TEST_THREADS: 2
       BARK_COMMAND_TIMEOUT_MILLIS: 120000
       TX_PROPAGATION_TIMEOUT: 30000
     privileged: true
