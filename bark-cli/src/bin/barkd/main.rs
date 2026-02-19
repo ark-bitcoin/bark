@@ -9,6 +9,7 @@ use clap::builder::BoolishValueParser;
 use log::{info, warn};
 use tokio::sync::RwLock;
 
+use bark::pid_lock::PidLock;
 use bark_rest::{Config, OnWalletCreate, RestServer, ServerWallet};
 
 use bark_cli::log::init_logging;
@@ -168,6 +169,8 @@ async fn main() -> anyhow::Result<()>{
 
 	init_logging(cli.verbose, cli.quiet, &datadir);
 	info!("Starting barkd daemon with version {}", FULL_VERSION);
+
+	let _pid_lock = PidLock::acquire(&datadir)?;
 
 	let (wallet_opt, daemon_opt) = if let Some((wallet, onchain)) = open_wallet(&datadir).await? {
 		let wallet = Arc::new(wallet);

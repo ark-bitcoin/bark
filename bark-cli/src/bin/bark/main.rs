@@ -24,6 +24,7 @@ use ark::VtxoId;
 use ark::lightning::PaymentHash;
 use bark::Wallet;
 use bark::onchain::ChainSync;
+use bark::pid_lock::PidLock;
 use bark::vtxo::{VtxoFilter, VtxoStateKind};
 use bark_json::{cli as json};
 use bark_json::primitives::WalletVtxoInfo;
@@ -268,6 +269,8 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 	debug!("Using bark datadir at {}", datadir.display());
 
 	init_logging(cli.verbose, cli.quiet, &datadir);
+
+	let _pid_lock = PidLock::acquire(&datadir)?;
 
 	// Handle create command differently.
 	if let Command::Create(opts) = cli.command {

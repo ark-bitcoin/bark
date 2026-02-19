@@ -40,6 +40,7 @@ use log::{debug, info, warn};
 use bark::{BarkNetwork, Config, Wallet as BarkWallet, SqliteClient};
 use bark::onchain::OnchainWallet;
 use bark::persist::BarkPersister;
+use bark::pid_lock::LOCK_FILE;
 
 use bitcoin_ext::BlockHeight;
 
@@ -221,6 +222,9 @@ async fn check_clean_datadir(datadir: &Path, clean: bool) -> anyhow::Result<bool
 				continue;
 			}
 			if item.file_name() == DEBUG_LOG_FILE {
+				continue;
+			}
+			if item.file_name() == LOCK_FILE {
 				continue;
 			}
 
