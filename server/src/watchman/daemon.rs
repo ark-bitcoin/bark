@@ -3,14 +3,13 @@
 //! captaind or the main [crate::Server] struct.
 //!
 //! It runs a subset of the server services, namely those that are not required
-//! for user functionality:
+//! for user functionality.
 //!
-//! - the [ForfeitWatcher]
-//! - the [VtxoSweeper]
-//!
+
 
 use std::fs;
 use std::str::FromStr;
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Context;
@@ -21,12 +20,10 @@ use bitcoin_ext::rpc::{BitcoinRpcClient, BitcoinRpcExt, RpcApi};
 
 use crate::{database, fee_estimator, telemetry, wallet, SECP};
 use crate::sync::SyncManager;
-use crate::config::watchman::Config;
-use crate::forfeits::ForfeitWatcher;
+use crate::config::watchmand::Config;
 use crate::system::RuntimeManager;
 use crate::txindex::TxIndex;
 use crate::txindex::broadcast::TxNursery;
-use crate::sweeps::VtxoSweeper;
 use crate::wallet::{PersistedWallet, WalletKind, MNEMONIC_FILE};
 
 
@@ -35,17 +32,17 @@ const SERVER_KEY_PATH: &str = "m/2'/0'";
 
 
 /// Server struct that runs all non-user-facing background services
-pub struct Watchman {
+pub struct Daemon {
 	rtmgr: RuntimeManager,
 	#[allow(unused)]
 	sync_manager: SyncManager,
 	pub txindex: TxIndex,
 	pub tx_nursery: TxNursery,
-	pub forfeit_watcher: ForfeitWatcher,
-	pub vtxo_sweeper: VtxoSweeper,
+	#[allow(unused)]
+	watchman_wallet: Arc<tokio::sync::Mutex<PersistedWallet>>,
 }
 
-impl Watchman {
+impl Daemon {
 	pub async fn create(cfg: Config) -> anyhow::Result<()> {
 		// Check for a mnemonic file to see if the server was already initialized.
 		if cfg.data_dir.join(MNEMONIC_FILE).exists() {
@@ -83,10 +80,10 @@ impl Watchman {
 		let seed_xpriv = bip32::Xpriv::new_master(cfg.network, &seed).unwrap();
 
 		// Store initial wallet states to avoid full chain sync.
-		let wallet_xpriv = seed_xpriv.derive_priv(&*SECP, &[WalletKind::Forfeits.child_number()])
+		let wallet_xpriv = seed_xpriv.derive_priv(&*SECP, &[WalletKind::Watchman.child_number()])
 			.expect("can't error");
 		let _wallet = PersistedWallet::load_from_xpriv(
-			db.clone(), cfg.network, &wallet_xpriv, WalletKind::Forfeits, deep_tip,
+			db.clone(), cfg.network, &wallet_xpriv, WalletKind::Watchman, deep_tip,
 		);
 
 		Ok(())
@@ -154,39 +151,16 @@ impl Watchman {
 			cfg.transaction_rebroadcast_interval,
 		);
 
-		let fee_estimator = fee_estimator::start(
+		let _fee_estimator = fee_estimator::start(
 			rtmgr.clone(),
 			cfg.fee_estimator.clone(),
 			bitcoind.clone(),
 		);
 
-		let vtxo_sweeper = VtxoSweeper::start(
-			rtmgr.clone(),
-			cfg.vtxo_sweeper.clone(),
-			cfg.network,
-			bitcoind.clone(),
-			db.clone(),
-			txindex.clone(),
-			tx_nursery.clone(),
-			server_key.clone(),
-			cfg.sweep_address.clone().context("no sweep address config set")?
-				.require_network(cfg.network).context("sweep address for wrong network")?,
-			fee_estimator.clone(),
-		).await.context("failed to start VtxoSweeper")?;
-
-		let forfeit_watcher = ForfeitWatcher::start(
-			rtmgr.clone(),
-			cfg.forfeit_watcher.clone(),
-			cfg.network,
-			bitcoind.clone(),
-			db.clone(),
-			txindex.clone(),
-			tx_nursery.clone(),
-			master_xpriv.derive_priv(&*SECP, &[WalletKind::Forfeits.child_number()])
-				.expect("can't error"),
-			server_key.clone(),
-			fee_estimator.clone(),
-		).await.context("failed to start VtxoSweeper")?;
+		let watchman_wallet = PersistedWallet::load_derive_from_master_xpriv(
+			db.clone(), cfg.network, &master_xpriv, WalletKind::Watchman, deep_tip,
+		).await.context("error loading watchman wallet")?;
+		let watchman_wallet = Arc::new(tokio::sync::Mutex::new(watchman_wallet));
 
 		let sync_manager = SyncManager::start(
 			rtmgr.clone(),
@@ -197,7 +171,7 @@ impl Watchman {
 			cfg.sync_manager_block_poll_interval,
 		).await.context("Failed to start SyncManager")?;
 
-		Ok(Self { rtmgr, sync_manager, txindex, tx_nursery, forfeit_watcher, vtxo_sweeper })
+		Ok(Self { rtmgr, sync_manager, txindex, tx_nursery, watchman_wallet })
 	}
 
 	/// Waits for server to terminate.

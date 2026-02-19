@@ -59,12 +59,13 @@ where
 #[derive(Debug, Clone)]
 pub struct WalletStatuses {
 	pub rounds: rpc::WalletStatus,
-	pub forfeits: rpc::WalletStatus,
+	pub watchman: Option<rpc::WalletStatus>,
 }
 
 impl WalletStatuses {
 	pub fn total(&self) -> Amount {
-		self.rounds.total_balance + self.forfeits.total_balance
+		let watchman = self.watchman.as_ref().map_or(Amount::ZERO, |w| w.total_balance);
+		self.rounds.total_balance + watchman
 	}
 }
 
@@ -234,7 +235,7 @@ impl Captaind {
 		let res = rpc.wallet_status(protos::Empty{}).await.expect("sync error").into_inner();
 		WalletStatuses {
 			rounds: res.rounds.unwrap().try_into().unwrap(),
-			forfeits: res.forfeits.unwrap().try_into().unwrap(),
+			watchman: res.watchman.map(|w| w.try_into().unwrap()),
 		}
 	}
 

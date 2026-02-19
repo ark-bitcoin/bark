@@ -273,8 +273,13 @@ async fn inner_main() -> anyhow::Result<()> {
 			let seed = server::wallet::read_mnemonic_from_datadir(&cfg.data_dir)?.to_seed("");
 			let master_xpriv = bip32::Xpriv::new_master(cfg.network, &seed).unwrap();
 
-			let deep_tip = bitcoind.deep_tip().context("failed to query node for deep tip")?;
-			let mut w = Server::open_round_wallet(&cfg, db.clone(), &master_xpriv, deep_tip).await?;
+			let mut w = server::wallet::PersistedWallet::load_derive_from_master_xpriv(
+				db.clone(),
+				cfg.network,
+				&master_xpriv,
+				server::wallet::WalletKind::Rounds,
+				bitcoind.deep_tip().context("failed to query node for deep tip")?,
+			).await?;
 
 			let tx = w.drain(address, &bitcoind).await?;
 			println!("{}", tx.compute_txid());

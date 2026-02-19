@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use tonic::transport::{Certificate, Channel, ClientTlsConfig, Identity};
 use cln_rpc::node_client::NodeClient;
 
-use crate::{forfeits, fee_estimator, utils, sweeps, vtxopool};
+use crate::{fee_estimator, utils, vtxopool};
 use crate::secret::Secret;
 
 
@@ -309,13 +309,11 @@ pub struct Config {
 	pub otel_tracing_sampler: Option<f64>,
 	pub otel_deployment_name: String,
 
-	/// Config for the VtxoSweeper process.
-	pub vtxo_sweeper: OptionalService<sweeps::Config>,
-
-	/// Config for the ForfeitWatcher process.
-	pub forfeit_watcher: OptionalService<forfeits::Config>,
 	#[serde(with = "utils::serde::string")]
-	pub forfeit_watcher_min_balance: Amount,
+	pub watchman_min_balance: Amount,
+
+	/// Config for the Watchman process.
+	pub watchman: OptionalService<crate::watchman::Config>,
 
 	/// Config for the VtxoPool process
 	pub vtxopool: vtxopool::Config,
@@ -485,7 +483,7 @@ impl Config {
 	}
 }
 
-pub mod watchman {
+pub mod watchmand {
 	use bitcoin::{address::NetworkUnchecked, Address};
 
 	use super::*;
@@ -510,10 +508,8 @@ pub mod watchman {
 		pub otel_tracing_sampler: Option<f64>,
 		pub otel_deployment_name: String,
 
-		/// Config for the VtxoSweeper process.
-		pub vtxo_sweeper: sweeps::Config,
-		/// Config for the ForfeitWatcher process.
-		pub forfeit_watcher: forfeits::Config,
+		/// Config for the Watchman process.
+		pub watchman: crate::watchman::Config,
 		/// Config for the FeeEstimator process.
 		pub fee_estimator: fee_estimator::Config,
 
@@ -599,7 +595,7 @@ mod test {
 
 	#[test]
 	fn parse_validate_default_watchmand_config_file() {
-		let mut cfg = watchman::Config::load(DEFAULT_WATCHMAND_CONFIG_PATH)
+		let mut cfg = watchmand::Config::load(DEFAULT_WATCHMAND_CONFIG_PATH)
 			.expect("error loading config");
 
 		// some configs are mandatory but can't be set in defaults

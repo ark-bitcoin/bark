@@ -21,25 +21,10 @@ transaction_rebroadcast_interval = "1m"
 # The name of your deployment used by OpenTelemetry
 otel_deployment_name = "my_regtest"
 
-
-################
-# VTXO SWEEPER #
-################
-
-[vtxo_sweeper]
-# Interval to check if sweeps can be made
-round_sweep_interval = "1h"
-# Minimum total sweep value to merit a sweep tx
-sweep_threshold = 1000000
-
-
-###################
-# FORFEIT WATCHER #
-###################
-
-[forfeit_watcher]
-# Interval to check of forfeited exits have been broadcast
-wake_interval = "1m"
+#############
+# watchman #
+############
+[watchman]
 
 
 #################

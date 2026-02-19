@@ -5,7 +5,7 @@ use tonic_tracing_opentelemetry::middleware::server::OtelGrpcLayer;
 use tracing::{info, trace, warn};
 use server_rpc::{self as rpc, protos};
 
-use crate::rpcserver::{middleware, StatusContext, ToStatusResult, RPC_RICH_ERRORS};
+use crate::rpcserver::{middleware, ToStatusResult, RPC_RICH_ERRORS};
 use crate::Server;
 
 #[async_trait]
@@ -30,19 +30,19 @@ impl rpc::server::WalletAdminService for Server {
 		let rounds = async {
 			Ok(self.rounds_wallet.lock().await.status())
 		};
-		let forfeits = async {
-			if let Some(ref fw) = self.forfeits {
-				Some(fw.wallet_status().await).transpose()
+		let watchman = async {
+			if let Some(ref fw) = self.watchman_wallet {
+				Ok::<_, anyhow::Error>(Some(fw.lock().await.status()))
 			} else {
 				Ok(None)
 			}
 		};
 
-		let (rounds, forfeits) = tokio::try_join!(rounds, forfeits).to_status()?;
+		let (rounds, watchman) = tokio::try_join!(rounds, watchman).to_status()?;
 
 		Ok(tonic::Response::new(protos::WalletStatusResponse {
 			rounds: Some(rounds.into()),
-			forfeits: forfeits.map(|f| f.into()),
+			watchman: watchman.map(|f| f.into()),
 		}))
 	}
 }
@@ -100,12 +100,7 @@ impl rpc::server::SweepAdminService for Server {
 		_req: tonic::Request<protos::Empty>,
 	) -> Result<tonic::Response<protos::Empty>, tonic::Status> {
 
-		if let Some(ref vs) = self.vtxo_sweeper {
-			vs.trigger_sweep().context("VtxoSweeper down")?;
-			Ok(tonic::Response::new(protos::Empty{}))
-		} else {
-			Err(tonic::Status::unavailable("VtxoSweeper disabled"))
-		}
+		Err(tonic::Status::unavailable("VtxoSweeper disabled"))
 	}
 }
 

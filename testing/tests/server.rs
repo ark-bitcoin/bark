@@ -9,7 +9,6 @@ use bitcoin::{absolute, transaction, Address, Amount, Network, OutPoint, Transac
 use bitcoin::hashes::Hash;
 use bitcoin::secp256k1::{Keypair, PublicKey, rand::thread_rng};
 use bitcoin_ext::P2TR_DUST_SAT;
-use bitcoin_ext::rpc::BitcoinRpcExt;
 use futures::future::join_all;
 use futures::{Stream, StreamExt, TryStreamExt};
 use log::{debug, info, trace};
@@ -27,16 +26,12 @@ use ark::tree::signed::{LeafVtxoCosignContext, UnlockPreimage};
 use bark::Wallet;
 use bark::lightning_invoice::Bolt11Invoice;
 use bark_json::primitives::WalletVtxoInfo;
-use bark_json::exit::ExitState;
 use server::secret::Secret;
 use server::vtxopool::VtxoTarget;
-use server_log::{
-	ForfeitBroadcasted, ForfeitedExitConfirmed, ForfeitedExitInMempool, FullRound,
-	RoundError, RoundFinished, RoundUserVtxoAlreadyRegistered, TxIndexUpdateFinished,
-};
+use server_log::{FullRound, RoundError, RoundUserVtxoAlreadyRegistered};
 use server_rpc::protos::{self, lightning_payment_status};
 
-use ark_testing::{Captaind, TestContext, btc, sat, secs, Bark};
+use ark_testing::{Captaind, TestContext, btc, sat, secs};
 use ark_testing::constants::{BOARD_CONFIRMATIONS, ROUND_CONFIRMATIONS};
 use ark_testing::constants::bitcoind::{BITCOINRPC_TEST_PASSWORD, BITCOINRPC_TEST_USER};
 use ark_testing::daemon::captaind::{self, ArkClient};
@@ -47,19 +42,6 @@ use server_rpc::protos::mailbox_server::mailbox_message::Message;
 
 lazy_static::lazy_static! {
 	static ref RANDOM_PK: PublicKey = "02c7ef7d49b365974cd219f7036753e1544a3cdd2120eb7247dd8a94ef91cf1e49".parse().unwrap();
-}
-
-async fn progress_exit_to_broadcast(bark: &Bark) {
-	let progress_result = bark.progress_exit().await;
-	assert_eq!(false, progress_result.done);
-	assert_eq!(None, progress_result.claimable_height);
-	for exit in progress_result.exits {
-		assert_eq!(exit.error, None);
-		if matches!(exit.state, ExitState::Processing(..)) {
-			return;
-		}
-	}
-	panic!("no confirming exit found");
 }
 
 #[tokio::test]
@@ -874,148 +856,6 @@ async fn bad_round_input() {
 	}).ready().await.unwrap_err();
 	assert_eq!(err.code(), tonic::Code::NotFound, "[{}]: {}", err.code(), err.message());
 	assert_eq!(err.metadata().get("identifiers").unwrap().to_str().unwrap(), fake_vtxo.to_string());
-}
-
-#[derive(Clone)]
-struct NoFinishRoundProxy;
-#[async_trait::async_trait]
-impl captaind::proxy::ArkRpcProxy for NoFinishRoundProxy {
-	async fn subscribe_rounds(
-		&self, upstream: &mut ArkClient, req: protos::Empty,
-	) -> Result<Box<
-		dyn Stream<Item = Result<protos::RoundEvent, tonic::Status>> + Unpin + Send + 'static
-	>, tonic::Status> {
-		let s = upstream.subscribe_rounds(req).await?.into_inner();
-		Ok(Box::new(s.map(|r| match r {
-			Ok(protos::RoundEvent { event: Some(protos::round_event::Event::Finished(_))}) => {
-				Err(tonic::Status::internal("can't have it!"))
-			}
-			r => r,
-		})))
-	}
-}
-
-#[ignore]
-#[tokio::test]
-async fn claim_forfeit_connector_chain() {
-	let ctx = TestContext::new("server/claim_forfeit_connector_chain").await;
-
-	let srv = ctx.new_captaind_with_cfg("server", None, |cfg| {
-		cfg.round_interval = Duration::from_secs(3600);
-	}).await;
-	ctx.fund_captaind(&srv, btc(10)).await;
-	srv.wait_for_initial_round().await;
-	let proxy = srv.start_proxy_no_mailbox(NoFinishRoundProxy).await;
-
-	// To make sure we have a chain of connector, we make a bunch of inputs
-	let bark = ctx.new_bark_with_funds("bark".to_string(), &proxy.address, sat(5_000_000)).await;
-	for _ in 0..10 {
-		bark.board(sat(400_000)).await;
-	}
-	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
-
-	// we do a refresh, but make it seem to the client that it failed
-	let vtxo = bark.vtxos().await.into_iter().next().unwrap();
-	let mut log_round = srv.subscribe_log::<RoundFinished>();
-	let (_, refresh) = tokio::join!(
-		srv.trigger_round(),
-		bark.try_refresh_all_no_retry(),
-	);
-	assert!(refresh.is_err());
-	assert_eq!(bark.inround_balance().await, sat(4_000_000), "vtxos: {:?}", bark.vtxos().await);
-	assert_eq!(log_round.recv().ready().await.unwrap().nb_input_vtxos, 10);
-
-	// start the exit process
-	let mut log_detected = srv.subscribe_log::<ForfeitedExitInMempool>();
-	bark.start_exit_vtxos([vtxo.id]).await;
-	progress_exit_to_broadcast(&bark).try_wait_millis(10_000).await.expect("time-out");
-	assert_eq!(log_detected.recv().try_wait_millis(10_000).await.expect("time-out").unwrap().vtxo, vtxo.id);
-
-	// confirm the exit
-	let mut log_confirmed = srv.subscribe_log::<ForfeitedExitConfirmed>();
-	ctx.generate_blocks(1).await;
-	let msg = log_confirmed.recv().await.unwrap();
-	assert_eq!(msg.vtxo, vtxo.id);
-	info!("Exit txid: {}", msg.exit_tx);
-	ctx.generate_blocks(1).await;
-
-	// wait for connector txs to confirm and watcher to broadcast ff tx
-	let mut log_broadcast = srv.subscribe_log::<ForfeitBroadcasted>();
-	let txid = async {
-		loop {
-			ctx.generate_blocks(1).await;
-			srv.wait_for_log::<TxIndexUpdateFinished>().await;
-			if let Ok(m) = log_broadcast.try_recv() {
-				break m.forfeit_txid;
-			}
-		}
-	}.wait_millis(15_000).await;
-
-	// and then wait for the forfeit to confirm
-	info!("Waiting for tx {} to confirm", txid);
-	async {
-		loop {
-			ctx.generate_blocks(1).await;
-			if let Some(tx) = ctx.bitcoind().sync_client().custom_get_raw_transaction_info(&txid, None).unwrap() {
-				trace!("Tx {} has confirmations: {:?}", txid, tx.confirmations);
-				if tx.confirmations.unwrap_or(0) > 0 {
-					break;
-				}
-			}
-			tokio::time::sleep(Duration::from_millis(500)).await;
-		}
-	}.wait_millis(20_000).await;
-}
-
-#[ignore]
-#[tokio::test]
-async fn claim_forfeit_round_connector() {
-	//! Special case of the forfeit caim test where the connector output is on the round tx
-	let ctx = TestContext::new("server/claim_forfeit_round_connector").await;
-
-	let srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
-	let proxy = srv.start_proxy_no_mailbox(NoFinishRoundProxy).await;
-
-	let bark = ctx.new_bark_with_funds("bark".to_string(), &proxy.address, sat(1_000_000)).await;
-	bark.board(sat(800_000)).await;
-	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
-
-	// we do a refresh, but make it seem to the client that it failed
-	let [vtxo] = bark.vtxos().await.try_into().expect("1 vtxo");
-	let mut log_round = srv.subscribe_log::<RoundFinished>();
-	assert!(bark.try_refresh_all_no_retry().await.is_err());
-	assert_eq!(bark.inround_balance().await, sat(800_000));
-	assert_eq!(log_round.recv().ready().await.expect("time-out").nb_input_vtxos, 1);
-
-	// start the exit process
-	let mut log_detected = srv.subscribe_log::<ForfeitedExitInMempool>();
-	bark.start_exit_vtxos([vtxo.id]).await;
-	progress_exit_to_broadcast(&bark).try_wait_millis(10_000).await.expect("time-out");
-	assert_eq!(log_detected.recv().try_wait_millis(10_000).await.expect("time-out").unwrap().vtxo, vtxo.id);
-
-	// confirm the exit
-	let mut log_forfeit_broadcasted = srv.subscribe_log::<ForfeitBroadcasted>();
-	let mut log_confirmed = srv.subscribe_log::<ForfeitedExitConfirmed>();
-	ctx.generate_blocks(1).await;
-	assert_eq!(log_confirmed.recv().try_wait_millis(10_000).await.expect("time-out").unwrap().vtxo, vtxo.id);
-
-	// wait until forfeit watcher broadcasts forfeit tx
-	let txid = log_forfeit_broadcasted.recv().try_wait_millis(10_000).await.expect("time-out").unwrap().forfeit_txid;
-
-	// and then wait for it to confirm
-	info!("Waiting for tx {} to confirm", txid);
-	async {
-		let rpc = ctx.bitcoind().sync_client();
-		loop {
-			ctx.generate_blocks(1).await;
-			if let Some(tx) = rpc.custom_get_raw_transaction_info(&txid, None).unwrap() {
-				trace!("Tx {} has confirmations: {:?}", txid, tx.confirmations);
-				if tx.confirmations.unwrap_or(0) > 0 {
-					break;
-				}
-			}
-		}
-	}.wait_millis(10_000).await;
 }
 
 #[tokio::test]

@@ -11,12 +11,10 @@ pub mod sync;
 pub mod config;
 pub mod database;
 pub mod filters;
-pub mod forfeits;
 pub mod mailbox_manager;
 pub mod fee_estimator;
 pub mod rpcserver;
 pub mod secret;
-pub mod sweeps;
 pub mod vtxopool;
 pub mod wallet;
 pub mod watchman;
@@ -28,7 +26,6 @@ mod bitcoind;
 mod intman;
 mod ln;
 mod offboards;
-mod psbtext;
 mod round;
 pub mod telemetry;
 mod txindex;
@@ -55,7 +52,7 @@ use futures::Stream;
 use tokio::sync::{broadcast, mpsc, oneshot};
 use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::wrappers::errors::BroadcastStreamRecvError;
-use tracing::{info, warn, trace};
+use tracing::{info, trace, warn};
 
 use ark::{ServerVtxo, Vtxo, VtxoId, VtxoRequest};
 use ark::vtxo::VtxoRef;
@@ -65,21 +62,19 @@ use ark::musig::{self, PublicNonce};
 use ark::rounds::{RoundEvent, RoundId};
 use ark::tree::signed::{LeafVtxoCosignRequest, LeafVtxoCosignResponse, UnlockPreimage};
 use ark::tree::signed::builder::{SignedTreeBuilder, SignedTreeCosignResponse};
-use bitcoin_ext::{BlockHeight, BlockRef, TransactionExt, TxStatus, P2TR_DUST};
+use bitcoin_ext::{BlockHeight, BlockRef, TxStatus, P2TR_DUST};
 use bitcoin_ext::rpc::{BitcoinRpcClient, BitcoinRpcExt, RpcApi};
 
 use crate::bitcoind::BitcoinRpcClientExt;
 use crate::sync::SyncManager;
 use crate::error::ContextExt;
 use crate::flux::VtxosInFlux;
-use crate::forfeits::ForfeitWatcher;
 use crate::ln::cln::ClnManager;
 use crate::mailbox_manager::MailboxManager;
 use crate::fee_estimator::FeeEstimator;
 use crate::round::RoundInput;
 use crate::round::forfeit::HarkForfeitNonces;
 use crate::secret::Secret;
-use crate::sweeps::VtxoSweeper;
 use crate::system::RuntimeManager;
 use crate::txindex::TxIndex;
 use crate::txindex::broadcast::TxNursery;
@@ -190,16 +185,15 @@ pub struct Server {
 	ephemeral_master_key: Secret<Keypair>,
 	// NB this needs to be an Arc so we can take a static guard
 	rounds_wallet: Arc<tokio::sync::Mutex<PersistedWallet>>,
+	watchman_wallet: Option<Arc<tokio::sync::Mutex<PersistedWallet>>>,
 	bitcoind: BitcoinRpcClient,
 	// NB needs to be Arc so tasks started before Server is constructed can share it
 	sync_manager: Arc<SyncManager>,
 	rtmgr: RuntimeManager,
 	tx_nursery: TxNursery,
-	vtxo_sweeper: Option<VtxoSweeper>,
 	rounds: RoundHandle,
 	// nb we store Option because remove is costly, we take the option and clean up later
 	forfeit_nonces: parking_lot::Mutex<TimedEntryMap<VtxoId, Option<HarkForfeitNonces>>>,
-	forfeits: Option<ForfeitWatcher>,
 	/// All vtxos that are currently being processed in any way.
 	/// (Plus a small buffer to optimize allocations.)
 	vtxos_in_flux: VtxosInFlux,
@@ -244,14 +238,12 @@ impl Server {
 
 			mnemonic.to_seed("")
 		};
-		let seed_xpriv = bip32::Xpriv::new_master(cfg.network, &seed).unwrap();
+		let master_xpriv = bip32::Xpriv::new_master(cfg.network, &seed).unwrap();
 
 		// Store initial wallet states to avoid full chain sync.
-		for wallet in [WalletKind::Rounds, WalletKind::Forfeits] {
-			let wallet_xpriv = seed_xpriv.derive_priv(&*SECP, &[wallet.child_number()])
-				.expect("can't error");
-			let _wallet = PersistedWallet::load_from_xpriv(
-				db.clone(), cfg.network, &wallet_xpriv, wallet, deep_tip,
+		for wallet in [WalletKind::Rounds, WalletKind::Watchman] {
+			let _wallet = PersistedWallet::load_derive_from_master_xpriv(
+				db.clone(), cfg.network, &master_xpriv, wallet, deep_tip,
 			);
 		}
 
@@ -289,19 +281,6 @@ impl Server {
 
 	pub fn database(&self) -> &database::Db {
 		&self.db
-	}
-
-	pub async fn open_round_wallet(
-		cfg: &Config,
-		db: database::Db,
-		master_xpriv: &bip32::Xpriv,
-		deep_tip: BlockRef,
-	) -> anyhow::Result<PersistedWallet> {
-		let wallet_xpriv = master_xpriv.derive_priv(&*SECP, &[WalletKind::Rounds.child_number()])
-			.expect("can't error");
-		Ok(PersistedWallet::load_from_xpriv(
-			db, cfg.network, &wallet_xpriv, WalletKind::Rounds, deep_tip,
-		).await?)
 	}
 
 	/// Start the server.
@@ -354,8 +333,12 @@ impl Server {
 		}
 
 		let deep_tip = bitcoind.deep_tip().context("failed to query node for deep tip")?;
-		let mut rounds_wallet = Self::open_round_wallet(&cfg, db.clone(), &master_xpriv, deep_tip)
-			.await.context("error loading wallet")?;
+		let wallet_xpriv = master_xpriv.derive_priv(
+			&crate::SECP, &[WalletKind::Rounds.child_number()],
+		).expect("can't error");
+		let rounds_wallet = PersistedWallet::load_from_xpriv(
+			db.clone(), cfg.network, &wallet_xpriv, WalletKind::Rounds, deep_tip,
+		).await.context("error loading rounds wallet")?;
 
 		let ephemeral_master_key = {
 			let path = bip32::DerivationPath::from_str(EPHEMERAL_KEY_PATH).unwrap();
@@ -392,41 +375,11 @@ impl Server {
 			bitcoind.clone(),
 		);
 
-		let vtxo_sweeper = if let Some(c) = cfg.vtxo_sweeper.enabled() {
-			let s = VtxoSweeper::start(
-				rtmgr.clone(),
-				c.clone(),
-				cfg.network,
-				bitcoind.clone(),
-				db.clone(),
-				txindex.clone(),
-				tx_nursery.clone(),
-				server_key.clone(),
-				rounds_wallet.reveal_next_address(
-					bdk_wallet::KeychainKind::External,
-				).address,
-				fee_estimator.clone(),
-			).await.context("failed to start VtxoSweeper")?;
-			Some(s)
-		} else {
-			None
-		};
-
-		let forfeits = if let Some(c) = cfg.forfeit_watcher.enabled() {
-			let s = ForfeitWatcher::start(
-				rtmgr.clone(),
-				c.clone(),
-				cfg.network,
-				bitcoind.clone(),
-				db.clone(),
-				txindex.clone(),
-				tx_nursery.clone(),
-				master_xpriv.derive_priv(&*SECP, &[WalletKind::Forfeits.child_number()])
-					.expect("can't error"),
-				server_key.clone(),
-				fee_estimator.clone(),
-			).await.context("failed to start ForfeitWatcher")?;
-			Some(s)
+		let watchman_wallet = if let Some(_cfg) = cfg.watchman.enabled() {
+			let watchman_wallet = PersistedWallet::load_derive_from_master_xpriv(
+				db.clone(), cfg.network, &master_xpriv, WalletKind::Watchman, deep_tip,
+			).await.context("error loading watchman wallet")?;
+			Some(Arc::new(tokio::sync::Mutex::new(watchman_wallet)))
 		} else {
 			None
 		};
@@ -457,6 +410,7 @@ impl Server {
 
 		let srv = Server {
 			rounds_wallet: Arc::new(tokio::sync::Mutex::new(rounds_wallet)),
+			watchman_wallet,
 			rounds: RoundHandle {
 				round_event_tx,
 				last_round_event: parking_lot::Mutex::new(None),
@@ -480,9 +434,6 @@ impl Server {
 			sync_manager,
 			rtmgr,
 			tx_nursery: tx_nursery.clone(),
-
-			vtxo_sweeper: vtxo_sweeper,
-			forfeits: forfeits,
 			cln,
 			vtxopool,
 			pending_offboards: parking_lot::Mutex::new(TimedEntryMap::new()),
@@ -557,57 +508,54 @@ impl Server {
 	}
 
 	/// Sync all the system's wallets.
-	///
-	/// This includes the rounds wallet sending new funds to the forfeits
-	/// wallet if it's running low.
 	pub async fn sync_wallets(&self) -> anyhow::Result<()> {
 		tokio::try_join!(
 			async {
-				self.rounds_wallet.lock().await.sync(&self.bitcoind, false).await
+				self.rounds_wallet.lock().await.sync(&self.bitcoind, false).await?;
+				Ok::<_, anyhow::Error>(())
 			},
 			async {
-				if let Some(ref fw) = self.forfeits {
-					fw.wallet_sync().await
-				} else {
-					Ok(())
+				if let Some(ref fw) = self.watchman_wallet {
+					fw.lock().await.sync(&self.bitcoind, false).await?;
 				}
+				Ok::<_, anyhow::Error>(())
 			},
 		)?;
 		Ok(())
 	}
 
-	/// Rebalance coins between the rounds and forfeit wallets.
+	/// Rebalance coins between the rounds and watchman wallets.
 	///
-	/// If the forfeit wallet balance is below `forfeit_watcher_min_balance`,
+	/// If the watchman wallet balance is below `watchman_min_balance`,
 	/// sends bitcoin from the rounds wallet to top it up.
 	///
 	/// Should be called after `sync_wallets`.
 	pub async fn rebalance_wallets(&self) -> anyhow::Result<()> {
-		let Some(ref forfeits) = self.forfeits else {
+		let Some(ref watchman_wallet) = self.watchman_wallet else {
 			return Ok(());
 		};
 
-		let forfeit_wallet = forfeits.wallet_status().await?;
-		if forfeit_wallet.total_balance >= self.config.forfeit_watcher_min_balance {
+		let watchman_status = watchman_wallet.lock().await.status();
+		if watchman_status.total_balance >= self.config.watchman_min_balance {
 			return Ok(());
 		}
 
-		let amount = self.config.forfeit_watcher_min_balance * 2;
+		let amount = self.config.watchman_min_balance * 2;
 		let rounds_balance = self.rounds_wallet.lock().await.status().total_balance;
 		if rounds_balance < amount {
-			warn!("Rounds wallet doesn't have sufficient bitcoin to top up forfeit watcher.");
+			warn!("Rounds wallet doesn't have sufficient bitcoin to top up watchman.");
 			return Ok(());
 		}
 
 		let mut wallet = self.rounds_wallet.lock().await;
-		let addr = forfeit_wallet.address.assume_checked();
+		let addr = watchman_status.address.assume_checked();
 		let feerate = self.fee_estimator.regular();
-		info!("Sending {amount} to forfeit wallet address {addr}...");
+		info!("Sending {amount} to watchman wallet address {addr}...");
 		let tx = match wallet.send(addr.script_pubkey(), amount, feerate).await {
 			Ok(tx) => tx,
 			Err(e) => {
-				warn!("Error sending from round to forfeit wallet: {:?}", e);
-				return Err(e).context("error sending tx from round to forfeit wallet");
+				warn!("Error sending from round to watchman wallet: {:?}", e);
+				return Err(e).context("error sending tx from round to watchman wallet");
 			},
 		};
 		drop(wallet);
@@ -626,7 +574,7 @@ impl Server {
 		}).await.context("waiting for tx broadcast timed out")?;
 
 		// then re-sync
-		forfeits.wallet_sync().await?;
+		watchman_wallet.lock().await.sync(&self.bitcoind, false).await?;
 
 		Ok(())
 	}
@@ -639,12 +587,9 @@ impl Server {
 	}
 
 	/// Fetch all the utxos in our wallet that are being spent or created by txs
-	/// from the VtxoSweeper.
+	/// from the VtxoSweeper. Returns empty set when sweeper is disabled.
 	pub async fn pending_sweep_utxos(&self) -> anyhow::Result<HashSet<OutPoint>> {
-		let ret = self.db.fetch_pending_sweeps().await?.values()
-			.map(|tx| tx.all_related_utxos())
-			.flatten().collect();
-		Ok(ret)
+		Ok(HashSet::new())
 	}
 
 	pub async fn cosign_board(
