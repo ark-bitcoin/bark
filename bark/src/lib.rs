@@ -297,6 +297,9 @@ pub mod round;
 pub mod subsystem;
 pub mod vtxo;
 
+#[cfg(feature = "pid_lock")]
+pub mod pid_lock;
+
 mod arkoor;
 mod board;
 mod config;
