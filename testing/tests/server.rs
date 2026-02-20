@@ -1035,7 +1035,7 @@ async fn server_refuse_claim_invoice_not_settled() {
 
 	let cloned = invoice_info.clone();
 	tokio::spawn(async move { lightning.sender.pay_bolt11(cloned.invoice).await; });
-	let err = bark.try_lightning_receive(invoice_info.invoice).await.unwrap_err().to_alt_string();
+	let err = bark.try_lightning_receive(&invoice_info.invoice).await.unwrap_err().to_alt_string();
 	assert!(err.contains("bad user input: preimage doesn't match payment hash"), "err: {err}");
 }
 
@@ -1138,7 +1138,7 @@ async fn server_should_refuse_claim_twice() {
 		lightning.sender.pay_bolt11(cloned_invoice_info.invoice).await
 	});
 
-	bark.lightning_receive(invoice_info.invoice.clone()).wait_millis(10_000).await;
+	bark.lightning_receive(&invoice_info.invoice).wait_millis(10_000).await;
 
 	// Wait for the onboarding round to be deeply enough confirmed
 	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
@@ -1318,7 +1318,7 @@ async fn server_should_refuse_claim_twice_intra_ark_ln_receive() {
 		bark2.pay_lightning(cloned_invoice_info.invoice, None).wait_millis(10_000).await;
 	});
 
-	bark1.lightning_receive(invoice_info.invoice.clone()).wait_millis(10_000).await;
+	bark1.lightning_receive(&invoice_info.invoice).wait_millis(10_000).await;
 
 	// HTLC settlement on lightning side
 	res1.ready().await.unwrap();
@@ -1956,7 +1956,7 @@ async fn server_can_use_multi_input_from_vtxo_pool() {
 		lightning.sender.pay_bolt11(cloned_invoice_info.invoice).await
 	});
 
-	bark.lightning_receive(invoice_info.invoice.clone()).wait_millis(10_000).await;
+	bark.lightning_receive(&invoice_info.invoice).wait_millis(10_000).await;
 
 	// We use that to sync and get onboarded vtxos
 	let balance = bark.spendable_balance().await;
@@ -2004,7 +2004,7 @@ async fn server_can_use_vtxo_pool_change_for_next_receive() {
 		});
 
 
-		bark.lightning_receive(invoice_info.invoice.clone()).wait_millis(10_000).await;
+		bark.lightning_receive(&invoice_info.invoice).wait_millis(10_000).await;
 		// HTLC settlement on lightning side
 		res1.ready().await.unwrap();
 	}
@@ -2020,7 +2020,7 @@ async fn server_can_use_vtxo_pool_change_for_next_receive() {
 		});
 
 
-		bark.lightning_receive(invoice_info.invoice.clone()).wait_millis(10_000).await;
+		bark.lightning_receive(&invoice_info.invoice).wait_millis(10_000).await;
 		// HTLC settlement on lightning side
 		res1.ready().await.unwrap();
 	}

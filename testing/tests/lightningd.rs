@@ -555,7 +555,7 @@ async fn bark_can_receive_lightning() {
 
 	srv.wait_for_vtxopool(&ctx).await;
 
-	bark.lightning_receive(invoice_info.invoice.clone()).wait_millis(10_000).await;
+	bark.lightning_receive(&invoice_info.invoice).wait_millis(10_000).await;
 
 	// HTLC settlement on lightning side
 	res1.ready().await.unwrap();
@@ -616,7 +616,7 @@ async fn bark_check_lightning_receive_no_wait() {
 	let _ = bark.lightning_receive_status(&invoice).await.unwrap();
 
 	// TODO: figure out why launching the bark wallet is so slow
-	bark.try_lightning_receive_no_wait(invoice_info.invoice.clone())
+	bark.try_lightning_receive_no_wait(&invoice_info.invoice)
 		.wait(Duration::from_secs(2)).await.expect("should not fail");
 	bark.lightning_receive_status(&invoice).await.expect("should still be pending");
 
@@ -629,7 +629,7 @@ async fn bark_check_lightning_receive_no_wait() {
 	for _ in 0..10 {
 		tokio::time::sleep(std::time::Duration::from_secs(1)).await;
 
-		bark.try_lightning_receive_no_wait(invoice_info.invoice.clone())
+		bark.try_lightning_receive_no_wait(&invoice_info.invoice)
 			.wait(Duration::from_secs(2)).await.expect("should not fail");
 
 		if let Some(receive) = bark.lightning_receive_status(&invoice).await {
@@ -682,7 +682,7 @@ async fn bark_can_pay_inter_ark_invoice() {
 	let cloned = bark_1.clone();
 	let cloned_invoice_info = invoice_info.clone();
 	let res1 = tokio::spawn(async move {
-		cloned.lightning_receive(cloned_invoice_info.invoice).wait_millis(10_000).await;
+		cloned.lightning_receive(&cloned_invoice_info.invoice).wait_millis(10_000).await;
 	});
 
 	let max_delay = srv1.config().invoice_check_interval.as_millis() + 1_000;
@@ -737,7 +737,7 @@ async fn bark_can_pay_intra_ark_invoice() {
 	let cloned = bark_1.clone();
 	let cloned_invoice_info = invoice_info.clone();
 	let res1 = tokio::spawn(async move {
-		cloned.lightning_receive(cloned_invoice_info.invoice).wait_millis(10_000).await;
+		cloned.lightning_receive(&cloned_invoice_info.invoice).wait_millis(10_000).await;
 	});
 
 	let max_delay = srv.config().invoice_check_interval.as_millis() + 1_000;
@@ -796,7 +796,7 @@ async fn bark_can_revoke_on_intra_ark_timeout_invoice_pay_failure() {
 	let cloned = bark_1.clone();
 	let cloned_invoice_info = invoice_info.clone();
 	tokio::spawn(async move {
-		cloned.lightning_receive(cloned_invoice_info.invoice).wait_millis(10_000).await;
+		cloned.lightning_receive(&cloned_invoice_info.invoice).wait_millis(10_000).await;
 	});
 
 	bark_2.pay_lightning_wait(invoice_info.invoice, None).await;
@@ -1073,12 +1073,12 @@ async fn bark_sends_on_lightning_after_receiving_from_lightning() {
 	let cloned_invoice_info = invoice_recv_info.clone();
 	let cloned_lightningd_1 = lightningd_1.clone();
 	let res1 = tokio::spawn(async move {
-		cloned_lightningd_1.pay_bolt11(cloned_invoice_info.invoice).await
+		cloned_lightningd_1.pay_bolt11(&cloned_invoice_info.invoice).await
 	});
 
 	srv.wait_for_vtxopool(&ctx).await;
 
-	bark.lightning_receive(invoice_recv_info.invoice.clone()).wait_millis(10_000).await;
+	bark.lightning_receive(&invoice_recv_info.invoice).wait_millis(10_000).await;
 
 	// HTLC settlement on lightning side
 	res1.ready().await.unwrap();
@@ -1164,8 +1164,8 @@ async fn server_rejects_claim_receive_for_bad_vtxo_proof() {
 	bark.board_and_confirm_and_register(&ctx, btc(2)).await;
 
 	let invoice_info = bark.bolt11_invoice(btc(1)).await;
-	let invoice = invoice_info.invoice.clone();
 
+	let invoice = invoice_info.invoice.clone();
 	let _ = tokio::spawn(async move {
 		lightning.sender.pay_bolt11(invoice).await;
 	});
@@ -1174,8 +1174,7 @@ async fn server_rejects_claim_receive_for_bad_vtxo_proof() {
 	for _ in 0..10 {
 		tokio::time::sleep(std::time::Duration::from_secs(1)).await;
 
-		let fut = bark.try_lightning_receive_no_wait(invoice_info.invoice.clone());
-		match fut.ready().await {
+		match bark.try_lightning_receive_no_wait(&invoice_info.invoice).wait_millis(10_000).await {
 			Ok(_) => {},
 			Err(error) => {
 				err = Some(error);
@@ -1230,15 +1229,15 @@ async fn server_allows_claim_receive_for_valid_token_but_not_for_invalid_or_used
 	srv.wait_for_vtxopool(&ctx).await;
 
 	// First try claim with invalid token
-	let res = bark.try_lightning_receive_with_token(invoice_info_1.invoice.clone(), "badtoken".to_string()).await;
+	let res = bark.try_lightning_receive_with_token(&invoice_info_1.invoice.clone(), "badtoken").await;
 	assert!(res.is_err());
 	assert_eq!(bark.spendable_balance_no_sync().await, btc(0));
 	// Then claim with valid token
-	let res = bark.try_lightning_receive_with_token(invoice_info_1.invoice, token.clone()).await;
+	let res = bark.try_lightning_receive_with_token(&invoice_info_1.invoice, &token).await;
 	assert!(res.is_ok());
 	assert_eq!(bark.spendable_balance_no_sync().await, btc(1));
 	// Claiming with token that has already been used should fail
-	let res = bark.try_lightning_receive_with_token(invoice_info_2.invoice, token).await;
+	let res = bark.try_lightning_receive_with_token(&invoice_info_2.invoice, &token).await;
 	assert!(res.is_err());
 	assert_eq!(bark.spendable_balance_no_sync().await, btc(1));
 }
@@ -1305,7 +1304,7 @@ async fn stress_test_track_all_stream() {
 		let bark_clone = bark.clone();
 		let handle = tokio::spawn(async move {
 			info!("Claiming invoice {}", i);
-			bark_clone.lightning_receive(invoice).wait_millis(60_000).await;
+			bark_clone.lightning_receive(&invoice).wait_millis(60_000).await;
 			info!("Claim {} completed", i);
 			i
 		});
