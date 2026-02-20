@@ -984,7 +984,7 @@ async fn bark_should_exit_a_htlc_recv_that_server_refuse_to_cosign() {
 		lightning.sender.pay_bolt11(cloned_invoice_info.invoice).await;
 	});
 
-	let _ = bark.try_lightning_receive(invoice_info.invoice.clone()).await;
+	let _ = bark.try_lightning_receive(&invoice_info.invoice).await;
 
 	res1.await.unwrap();
 

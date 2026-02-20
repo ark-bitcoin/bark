@@ -399,35 +399,35 @@ impl Bark {
 		self.try_bolt11_invoice(amount).await.expect("bolt11 invoice command failed")
 	}
 
-	pub async fn try_lightning_receive(&self, invoice: String) -> anyhow::Result<()> {
-		self.try_run(["lightning", "claim", &invoice, "--wait", "--verbose", "--no-sync"]).await?;
+	pub async fn try_lightning_receive(&self, invoice: &str) -> anyhow::Result<()> {
+		self.try_run(["lightning", "claim", invoice, "--wait", "--verbose", "--no-sync"]).await?;
 		Ok(())
 	}
 
-	pub async fn lightning_receive(&self, invoice: String) {
+	pub async fn lightning_receive(&self, invoice: &str) {
 		self.try_lightning_receive(invoice).await.unwrap();
 	}
 
-	pub async fn try_lightning_receive_with_token(&self, invoice: String, token: String) -> anyhow::Result<()> {
+	pub async fn try_lightning_receive_with_token(&self, invoice: &str, token: &str) -> anyhow::Result<()> {
 		self.try_run([
-			"lightning", "claim", &invoice, "--token", &token, "--wait", "--verbose", "--no-sync",
+			"lightning", "claim", invoice, "--token", token, "--wait", "--verbose", "--no-sync",
 		]).await?;
 		Ok(())
 	}
 
-	pub async fn try_lightning_receive_no_wait(&self, invoice: String) -> anyhow::Result<()> {
-		self.try_run(["lightning", "claim", &invoice, "--verbose", "--no-sync"]).await?;
+	pub async fn try_lightning_receive_no_wait(&self, invoice: &str) -> anyhow::Result<()> {
+		self.try_run(["lightning", "claim", invoice, "--verbose", "--no-sync"]).await?;
 		Ok(())
 	}
 
-	pub async fn try_lightning_receive_with_token_no_wait(&self, invoice: String, token: String) -> anyhow::Result<()> {
+	pub async fn try_lightning_receive_with_token_no_wait(&self, invoice: &str, token: &str) -> anyhow::Result<()> {
 		self.try_run([
-			"lightning", "claim", &invoice, "--token", &token, "--verbose", "--no-sync",
+			"lightning", "claim", invoice, "--token", token, "--verbose", "--no-sync",
 		]).await?;
 		Ok(())
 	}
 
-	pub async fn lightning_receive_no_wait(&self, invoice: String) {
+	pub async fn lightning_receive_no_wait(&self, invoice: &str) {
 		self.try_lightning_receive_no_wait(invoice).await.unwrap();
 	}
 
