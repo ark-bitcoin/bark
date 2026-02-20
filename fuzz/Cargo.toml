@@ -1,0 +1,19 @@
+[package]
+name = "bark-fuzz"
+version = "0.0.1"
+publish = false
+edition = "2024"
+license = "MIT"
+
+[dependencies]
+honggfuzz = { version = "0.5.55" , default-features = false }
+ark = { package = "ark-lib", path = "../lib" }
+bitcoin = { version = "0.32", default-features = false, features = ["std"]}
+
+[profile.release]
+debug = 1
+opt-level = 3
+
+# Use independent workspace for fuzzers
+[workspace]
+members = ["."]

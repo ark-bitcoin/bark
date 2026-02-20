@@ -1,5 +1,6 @@
 { pkgs, lib, rustToolchain }:
 let
+	isDarwin = pkgs.stdenv.hostPlatform.isDarwin;
 	postgresql = pkgs.postgresql_16;
 
 	env = {
@@ -45,7 +46,12 @@ in {
 
 			# to access just targets
 			pkgs.just
+		] ++ lib.optionals (!isDarwin) [ # honggfuzz deps (Linux only)
+			pkgs.binutils-unwrapped
+			pkgs.libunwind
+			pkgs.libblocksruntime
+			pkgs.xz
+			pkgs.gdb
 		];
-
 	});
 }
