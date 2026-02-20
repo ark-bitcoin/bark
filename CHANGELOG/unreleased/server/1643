@@ -1,0 +1,2 @@
+- no longer schedule a round right after startup, but wait until the first round interval passes
+  [#1643](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1643)
