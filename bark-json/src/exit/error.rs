@@ -97,9 +97,12 @@ pub enum ExitError {
 		balance: Amount,
 		#[cfg_attr(feature = "utoipa", schema(value_type = u64))]
 		total_fee: Amount,
-		#[serde(rename = "fee_rate_kwu")]
+		#[serde(rename = "fee_rate_sat_per_kvb", with = "crate::serde_utils::fee_rate_sat_per_kvb")]
 		#[cfg_attr(feature = "utoipa", schema(value_type = u64))]
 		fee_rate: FeeRate,
+		#[deprecated(note = "use fee_rate_sat_per_kvb instead")]
+		#[cfg_attr(feature = "utoipa", schema(value_type = u64))]
+		fee_rate_kwu: u64,
 	},
 
 	#[error("Internal Error: An unexpected problem occurred, {error}")]
@@ -187,7 +190,8 @@ impl From<bark::exit::ExitError> for ExitError {
 				ExitError::InsufficientConfirmedFunds { needed, available }
 			},
 			bark::exit::ExitError::InsufficientFeeToStart { balance, total_fee, fee_rate } => {
-				ExitError::InsufficientFeeToStart { balance, total_fee, fee_rate }
+				let fee_rate_kwu = fee_rate.to_sat_per_kwu();
+				ExitError::InsufficientFeeToStart { balance, total_fee, fee_rate, fee_rate_kwu }
 			},
 			bark::exit::ExitError::InternalError { error } => {
 				ExitError::InternalError { error }
