@@ -1,7 +1,7 @@
 /*
- * Barkd API
+ * barkd REST API
  *
- * A simple REST API for Barkd
+ * A simple REST API for barkd, a wallet daemon for integrating bitcoin payments into your app over HTTP. Supports self-custodial Lightning, Ark, and on-chain out of the box.  barkd is a long-running daemon best suited for always-on or high-connectivity environments like nodes, servers, desktops, and point-of-sale terminals.  The API is organized into the following groups:  - **Wallet:** The bread and butter for most applications. Manage Ark addresses, balances, VTXOs, and refreshes. Send payments via Ark, Lightning, and on-chain, all funded from your Ark balance. Start here. - **Lightning:** Create BOLT11 invoices to receive payments over Lightning and track receive status. Any application that accepts Lightning payments will use these endpoints alongside the wallet endpoints. - **On-chain:** Manage barkd's built-in on-chain bitcoin wallet. This wallet holds funds in standard UTXOs, separate from your Ark balance, and operates under the normal on-chain trust model without involving the Ark server. - **Boards:** Move on-chain bitcoin onto the Ark protocol to start making off-chain payments. - **Exits:** Unilaterally move bitcoin back on-chain without server cooperation, for when the Ark server is unavailable or uncooperative. - **Bitcoin:** Query bitcoin network data such as the current block height.  All endpoints return JSON. Amounts are denominated in satoshis.
  *
  * The version of the OpenAPI document: 0.1.0-beta.7
  * Contact: hello@second.tech
@@ -80,7 +80,7 @@ pub enum OnchainUtxosError {
 }
 
 
-/// Generates a new onchain address and stores its index in the onchain wallet database
+/// Generates a new on-chain receiving address. Each call returns the next unused address from the wallet's HD keychain.
 pub async fn onchain_address(configuration: &configuration::Configuration, ) -> Result<models::Address, Error<OnchainAddressError>> {
 
     let uri_str = format!("{}/api/v1/onchain/addresses/next", configuration.base_path);
@@ -115,7 +115,7 @@ pub async fn onchain_address(configuration: &configuration::Configuration, ) -> 
     }
 }
 
-/// Returns the current onchain wallet balance
+/// Returns the current on-chain wallet balance, broken down by confirmation status. The `trusted_spendable_sat` field is the sum of `confirmed_sat` and `trusted_pending_sat`—the balance that can be safely spent without risk of double-spend.
 pub async fn onchain_balance(configuration: &configuration::Configuration, ) -> Result<models::OnchainBalance, Error<OnchainBalanceError>> {
 
     let uri_str = format!("{}/api/v1/onchain/balance", configuration.base_path);
@@ -150,7 +150,7 @@ pub async fn onchain_balance(configuration: &configuration::Configuration, ) -> 
     }
 }
 
-/// Sends all onchain wallet funds to the given address
+/// Sends the entire on-chain wallet balance to the specified address. The recipient receives the full balance minus transaction fees. Broadcasts immediately at a fee rate targeting confirmation within three blocks and returns the transaction ID.
 pub async fn onchain_drain(configuration: &configuration::Configuration, onchain_drain_request: models::OnchainDrainRequest) -> Result<models::Send, Error<OnchainDrainError>> {
     // add a prefix to parameters to efficiently prevent name collisions
     let p_onchain_drain_request = onchain_drain_request;
@@ -188,7 +188,7 @@ pub async fn onchain_drain(configuration: &configuration::Configuration, onchain
     }
 }
 
-/// Sends a payment to the given onchain address
+/// Sends the specified amount to an on-chain address. Broadcasts the transaction immediately at a fee rate targeting confirmation within three blocks and returns the transaction ID.
 pub async fn onchain_send(configuration: &configuration::Configuration, onchain_send_request: models::OnchainSendRequest) -> Result<models::Send, Error<OnchainSendError>> {
     // add a prefix to parameters to efficiently prevent name collisions
     let p_onchain_send_request = onchain_send_request;
@@ -226,7 +226,7 @@ pub async fn onchain_send(configuration: &configuration::Configuration, onchain_
     }
 }
 
-/// Sends multiple payments to provided onchain addresses
+/// Batches multiple payments into a single on-chain transaction. Each destination is formatted as `address:amount`. Broadcasts the transaction immediately at a fee rate targeting confirmation within three blocks and returns the transaction ID.
 pub async fn onchain_send_many(configuration: &configuration::Configuration, onchain_send_many_request: models::OnchainSendManyRequest) -> Result<models::Send, Error<OnchainSendManyError>> {
     // add a prefix to parameters to efficiently prevent name collisions
     let p_onchain_send_many_request = onchain_send_many_request;
@@ -264,7 +264,7 @@ pub async fn onchain_send_many(configuration: &configuration::Configuration, onc
     }
 }
 
-/// Syncs the onchain wallet
+/// Syncs the on-chain wallet state with the chain source. Fetches new blocks and transactions, updates the UTXO set, and re-submits any stale unconfirmed transactions to the mempool.
 pub async fn onchain_sync(configuration: &configuration::Configuration, ) -> Result<(), Error<OnchainSyncError>> {
 
     let uri_str = format!("{}/api/v1/onchain/sync", configuration.base_path);
@@ -288,7 +288,7 @@ pub async fn onchain_sync(configuration: &configuration::Configuration, ) -> Res
     }
 }
 
-/// Returns all the onchain wallet transactions
+/// Returns all on-chain wallet transactions, ordered from oldest to newest.
 pub async fn onchain_transactions(configuration: &configuration::Configuration, ) -> Result<Vec<models::TransactionInfo>, Error<OnchainTransactionsError>> {
 
     let uri_str = format!("{}/api/v1/onchain/transactions", configuration.base_path);
@@ -323,7 +323,7 @@ pub async fn onchain_transactions(configuration: &configuration::Configuration, 
     }
 }
 
-/// Returns all the onchain wallet UTXOs
+/// Returns all UTXOs in the on-chain wallet. Each entry includes the outpoint, amount, and confirmation height (if confirmed).
 pub async fn onchain_utxos(configuration: &configuration::Configuration, ) -> Result<Vec<models::UtxoInfo>, Error<OnchainUtxosError>> {
 
     let uri_str = format!("{}/api/v1/onchain/utxos", configuration.base_path);

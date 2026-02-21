@@ -1,6 +1,19 @@
 # Rust API client for bark-rest-client
 
-A simple REST API for Barkd
+A simple REST API for barkd, a wallet daemon for integrating bitcoin payments into your app over HTTP. Supports self-custodial Lightning, Ark, and on-chain out of the box.
+
+barkd is a long-running daemon best suited for always-on or high-connectivity environments like nodes, servers, desktops, and point-of-sale terminals.
+
+The API is organized into the following groups:
+
+- **Wallet:** The bread and butter for most applications. Manage Ark addresses, balances, VTXOs, and refreshes. Send payments via Ark, Lightning, and on-chain, all funded from your Ark balance. Start here.
+- **Lightning:** Create BOLT11 invoices to receive payments over Lightning and track receive status. Any application that accepts Lightning payments will use these endpoints alongside the wallet endpoints.
+- **On-chain:** Manage barkd's built-in on-chain bitcoin wallet. This wallet holds funds in standard UTXOs, separate from your Ark balance, and operates under the normal on-chain trust model without involving the Ark server.
+- **Boards:** Move on-chain bitcoin onto the Ark protocol to start making off-chain payments.
+- **Exits:** Unilaterally move bitcoin back on-chain without server cooperation, for when the Ark server is unavailable or uncooperative.
+- **Bitcoin:** Query bitcoin network data such as the current block height.
+
+All endpoints return JSON. Amounts are denominated in satoshis.
 
 
 ## Overview
@@ -26,50 +39,50 @@ All URIs are relative to *http://localhost*
 
 Class | Method | HTTP request | Description
 ------------ | ------------- | ------------- | -------------
-*BitcoinApi* | [**tip**](docs/BitcoinApi.md#tip) | **GET** /api/v1/bitcoin/tip | 
-*BoardsApi* | [**board_all**](docs/BoardsApi.md#board_all) | **POST** /api/v1/boards/board-all | 
-*BoardsApi* | [**board_amount**](docs/BoardsApi.md#board_amount) | **POST** /api/v1/boards/board-amount | 
-*BoardsApi* | [**get_pending_boards**](docs/BoardsApi.md#get_pending_boards) | **GET** /api/v1/boards/ | 
-*DefaultApi* | [**ping**](docs/DefaultApi.md#ping) | **GET** /ping | 
-*ExitsApi* | [**exit_claim_all**](docs/ExitsApi.md#exit_claim_all) | **POST** /api/v1/exits/claim/all | 
-*ExitsApi* | [**exit_claim_vtxos**](docs/ExitsApi.md#exit_claim_vtxos) | **POST** /api/v1/exits/claim/vtxos | 
-*ExitsApi* | [**exit_progress**](docs/ExitsApi.md#exit_progress) | **POST** /api/v1/exits/progress | 
-*ExitsApi* | [**exit_start_all**](docs/ExitsApi.md#exit_start_all) | **POST** /api/v1/exits/start/all | 
-*ExitsApi* | [**exit_start_vtxos**](docs/ExitsApi.md#exit_start_vtxos) | **POST** /api/v1/exits/start/vtxos | 
-*ExitsApi* | [**get_all_exit_status**](docs/ExitsApi.md#get_all_exit_status) | **GET** /api/v1/exits/status | 
-*ExitsApi* | [**get_exit_status_by_vtxo_id**](docs/ExitsApi.md#get_exit_status_by_vtxo_id) | **GET** /api/v1/exits/status/{vtxo_id} | 
-*LightningApi* | [**generate_invoice**](docs/LightningApi.md#generate_invoice) | **POST** /api/v1/lightning/receives/invoice | 
-*LightningApi* | [**get_receive_status**](docs/LightningApi.md#get_receive_status) | **GET** /api/v1/lightning/receives/{identifier} | 
-*LightningApi* | [**list_receive_statuses**](docs/LightningApi.md#list_receive_statuses) | **GET** /api/v1/lightning/receives | 
-*LightningApi* | [**pay**](docs/LightningApi.md#pay) | **POST** /api/v1/lightning/pay | 
-*OnchainApi* | [**onchain_address**](docs/OnchainApi.md#onchain_address) | **POST** /api/v1/onchain/addresses/next | 
-*OnchainApi* | [**onchain_balance**](docs/OnchainApi.md#onchain_balance) | **GET** /api/v1/onchain/balance | 
-*OnchainApi* | [**onchain_drain**](docs/OnchainApi.md#onchain_drain) | **POST** /api/v1/onchain/drain | 
-*OnchainApi* | [**onchain_send**](docs/OnchainApi.md#onchain_send) | **POST** /api/v1/onchain/send | 
-*OnchainApi* | [**onchain_send_many**](docs/OnchainApi.md#onchain_send_many) | **POST** /api/v1/onchain/send-many | 
-*OnchainApi* | [**onchain_sync**](docs/OnchainApi.md#onchain_sync) | **POST** /api/v1/onchain/sync | 
-*OnchainApi* | [**onchain_transactions**](docs/OnchainApi.md#onchain_transactions) | **GET** /api/v1/onchain/transactions | 
-*OnchainApi* | [**onchain_utxos**](docs/OnchainApi.md#onchain_utxos) | **GET** /api/v1/onchain/utxos | 
-*WalletApi* | [**address**](docs/WalletApi.md#address) | **POST** /api/v1/wallet/addresses/next | 
-*WalletApi* | [**ark_info**](docs/WalletApi.md#ark_info) | **GET** /api/v1/wallet/ark-info | 
-*WalletApi* | [**balance**](docs/WalletApi.md#balance) | **GET** /api/v1/wallet/balance | 
-*WalletApi* | [**connected**](docs/WalletApi.md#connected) | **GET** /api/v1/wallet/connected | 
-*WalletApi* | [**create_wallet**](docs/WalletApi.md#create_wallet) | **POST** /api/v1/wallet/create | 
-*WalletApi* | [**history**](docs/WalletApi.md#history) | **GET** /api/v1/wallet/history | 
-*WalletApi* | [**import_vtxo**](docs/WalletApi.md#import_vtxo) | **POST** /api/v1/wallet/import-vtxo | 
-*WalletApi* | [**movements**](docs/WalletApi.md#movements) | **GET** /api/v1/wallet/movements | 
-*WalletApi* | [**next_round**](docs/WalletApi.md#next_round) | **GET** /api/v1/wallet/next-round | 
-*WalletApi* | [**offboard_all**](docs/WalletApi.md#offboard_all) | **POST** /api/v1/wallet/offboard/all | 
-*WalletApi* | [**offboard_vtxos**](docs/WalletApi.md#offboard_vtxos) | **POST** /api/v1/wallet/offboard/vtxos | 
-*WalletApi* | [**peak_address**](docs/WalletApi.md#peak_address) | **GET** /api/v1/wallet/addresses/index/{index} | 
-*WalletApi* | [**pending_rounds**](docs/WalletApi.md#pending_rounds) | **GET** /api/v1/wallet/rounds | 
-*WalletApi* | [**refresh_all**](docs/WalletApi.md#refresh_all) | **POST** /api/v1/wallet/refresh/all | 
-*WalletApi* | [**refresh_counterparty**](docs/WalletApi.md#refresh_counterparty) | **POST** /api/v1/wallet/refresh/counterparty | 
-*WalletApi* | [**refresh_vtxos**](docs/WalletApi.md#refresh_vtxos) | **POST** /api/v1/wallet/refresh/vtxos | 
-*WalletApi* | [**send**](docs/WalletApi.md#send) | **POST** /api/v1/wallet/send | 
-*WalletApi* | [**send_onchain**](docs/WalletApi.md#send_onchain) | **POST** /api/v1/wallet/send-onchain | 
-*WalletApi* | [**sync**](docs/WalletApi.md#sync) | **POST** /api/v1/wallet/sync | 
-*WalletApi* | [**vtxos**](docs/WalletApi.md#vtxos) | **GET** /api/v1/wallet/vtxos | 
+*BitcoinApi* | [**tip**](docs/BitcoinApi.md#tip) | **GET** /api/v1/bitcoin/tip | Get bitcoin tip height
+*BoardsApi* | [**board_all**](docs/BoardsApi.md#board_all) | **POST** /api/v1/boards/board-all | Board all on-chain bitcoin
+*BoardsApi* | [**board_amount**](docs/BoardsApi.md#board_amount) | **POST** /api/v1/boards/board-amount | Board a specific amount
+*BoardsApi* | [**get_pending_boards**](docs/BoardsApi.md#get_pending_boards) | **GET** /api/v1/boards/ | List pending boards
+*DefaultApi* | [**ping**](docs/DefaultApi.md#ping) | **GET** /ping | Ping
+*ExitsApi* | [**exit_claim_all**](docs/ExitsApi.md#exit_claim_all) | **POST** /api/v1/exits/claim/all | Claim all exited VTXOs
+*ExitsApi* | [**exit_claim_vtxos**](docs/ExitsApi.md#exit_claim_vtxos) | **POST** /api/v1/exits/claim/vtxos | Claim specific exited VTXOs
+*ExitsApi* | [**exit_progress**](docs/ExitsApi.md#exit_progress) | **POST** /api/v1/exits/progress | Progress exits
+*ExitsApi* | [**exit_start_all**](docs/ExitsApi.md#exit_start_all) | **POST** /api/v1/exits/start/all | Start exit for all VTXOs
+*ExitsApi* | [**exit_start_vtxos**](docs/ExitsApi.md#exit_start_vtxos) | **POST** /api/v1/exits/start/vtxos | Start exit for specific VTXOs
+*ExitsApi* | [**get_all_exit_status**](docs/ExitsApi.md#get_all_exit_status) | **GET** /api/v1/exits/status | List all exit statuses
+*ExitsApi* | [**get_exit_status_by_vtxo_id**](docs/ExitsApi.md#get_exit_status_by_vtxo_id) | **GET** /api/v1/exits/status/{vtxo_id} | Get exit status
+*LightningApi* | [**generate_invoice**](docs/LightningApi.md#generate_invoice) | **POST** /api/v1/lightning/receives/invoice | Create a BOLT11 invoice
+*LightningApi* | [**get_receive_status**](docs/LightningApi.md#get_receive_status) | **GET** /api/v1/lightning/receives/{identifier} | Get receive status
+*LightningApi* | [**list_receive_statuses**](docs/LightningApi.md#list_receive_statuses) | **GET** /api/v1/lightning/receives | List all pending receive statuses
+*LightningApi* | [**pay**](docs/LightningApi.md#pay) | **POST** /api/v1/lightning/pay | Send a Lightning payment
+*OnchainApi* | [**onchain_address**](docs/OnchainApi.md#onchain_address) | **POST** /api/v1/onchain/addresses/next | Generate on-chain address
+*OnchainApi* | [**onchain_balance**](docs/OnchainApi.md#onchain_balance) | **GET** /api/v1/onchain/balance | Get on-chain balance
+*OnchainApi* | [**onchain_drain**](docs/OnchainApi.md#onchain_drain) | **POST** /api/v1/onchain/drain | Drain on-chain wallet
+*OnchainApi* | [**onchain_send**](docs/OnchainApi.md#onchain_send) | **POST** /api/v1/onchain/send | Send on-chain payment
+*OnchainApi* | [**onchain_send_many**](docs/OnchainApi.md#onchain_send_many) | **POST** /api/v1/onchain/send-many | Send to multiple addresses
+*OnchainApi* | [**onchain_sync**](docs/OnchainApi.md#onchain_sync) | **POST** /api/v1/onchain/sync | Sync on-chain wallet
+*OnchainApi* | [**onchain_transactions**](docs/OnchainApi.md#onchain_transactions) | **GET** /api/v1/onchain/transactions | List on-chain transactions
+*OnchainApi* | [**onchain_utxos**](docs/OnchainApi.md#onchain_utxos) | **GET** /api/v1/onchain/utxos | List on-chain UTXOs
+*WalletApi* | [**address**](docs/WalletApi.md#address) | **POST** /api/v1/wallet/addresses/next | Generate Ark address
+*WalletApi* | [**ark_info**](docs/WalletApi.md#ark_info) | **GET** /api/v1/wallet/ark-info | Get Ark server info
+*WalletApi* | [**balance**](docs/WalletApi.md#balance) | **GET** /api/v1/wallet/balance | Get wallet balance
+*WalletApi* | [**connected**](docs/WalletApi.md#connected) | **GET** /api/v1/wallet/connected | Check server connection
+*WalletApi* | [**create_wallet**](docs/WalletApi.md#create_wallet) | **POST** /api/v1/wallet/create | Create a wallet
+*WalletApi* | [**history**](docs/WalletApi.md#history) | **GET** /api/v1/wallet/history | Get wallet history
+*WalletApi* | [**import_vtxo**](docs/WalletApi.md#import_vtxo) | **POST** /api/v1/wallet/import-vtxo | Import a VTXO
+*WalletApi* | [**movements**](docs/WalletApi.md#movements) | **GET** /api/v1/wallet/movements | List movements (deprecated)
+*WalletApi* | [**next_round**](docs/WalletApi.md#next_round) | **GET** /api/v1/wallet/next-round | Get next round time
+*WalletApi* | [**offboard_all**](docs/WalletApi.md#offboard_all) | **POST** /api/v1/wallet/offboard/all | Offboard all VTXOs
+*WalletApi* | [**offboard_vtxos**](docs/WalletApi.md#offboard_vtxos) | **POST** /api/v1/wallet/offboard/vtxos | Offboard specific VTXOs
+*WalletApi* | [**peak_address**](docs/WalletApi.md#peak_address) | **GET** /api/v1/wallet/addresses/index/{index} | Get Ark address by index
+*WalletApi* | [**pending_rounds**](docs/WalletApi.md#pending_rounds) | **GET** /api/v1/wallet/rounds | List round participations
+*WalletApi* | [**refresh_all**](docs/WalletApi.md#refresh_all) | **POST** /api/v1/wallet/refresh/all | Refresh all VTXOs
+*WalletApi* | [**refresh_counterparty**](docs/WalletApi.md#refresh_counterparty) | **POST** /api/v1/wallet/refresh/counterparty | Refresh received VTXOs
+*WalletApi* | [**refresh_vtxos**](docs/WalletApi.md#refresh_vtxos) | **POST** /api/v1/wallet/refresh/vtxos | Refresh specific VTXOs
+*WalletApi* | [**send**](docs/WalletApi.md#send) | **POST** /api/v1/wallet/send | Send a payment
+*WalletApi* | [**send_onchain**](docs/WalletApi.md#send_onchain) | **POST** /api/v1/wallet/send-onchain | Send on-chain from Ark balance
+*WalletApi* | [**sync**](docs/WalletApi.md#sync) | **POST** /api/v1/wallet/sync | Sync wallet
+*WalletApi* | [**vtxos**](docs/WalletApi.md#vtxos) | **GET** /api/v1/wallet/vtxos | List VTXOs
 
 
 ## Documentation For Models

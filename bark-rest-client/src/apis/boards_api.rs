@@ -1,7 +1,7 @@
 /*
- * Barkd API
+ * barkd REST API
  *
- * A simple REST API for Barkd
+ * A simple REST API for barkd, a wallet daemon for integrating bitcoin payments into your app over HTTP. Supports self-custodial Lightning, Ark, and on-chain out of the box.  barkd is a long-running daemon best suited for always-on or high-connectivity environments like nodes, servers, desktops, and point-of-sale terminals.  The API is organized into the following groups:  - **Wallet:** The bread and butter for most applications. Manage Ark addresses, balances, VTXOs, and refreshes. Send payments via Ark, Lightning, and on-chain, all funded from your Ark balance. Start here. - **Lightning:** Create BOLT11 invoices to receive payments over Lightning and track receive status. Any application that accepts Lightning payments will use these endpoints alongside the wallet endpoints. - **On-chain:** Manage barkd's built-in on-chain bitcoin wallet. This wallet holds funds in standard UTXOs, separate from your Ark balance, and operates under the normal on-chain trust model without involving the Ark server. - **Boards:** Move on-chain bitcoin onto the Ark protocol to start making off-chain payments. - **Exits:** Unilaterally move bitcoin back on-chain without server cooperation, for when the Ark server is unavailable or uncooperative. - **Bitcoin:** Query bitcoin network data such as the current block height.  All endpoints return JSON. Amounts are denominated in satoshis.
  *
  * The version of the OpenAPI document: 0.1.0-beta.7
  * Contact: hello@second.tech
@@ -40,7 +40,7 @@ pub enum GetPendingBoardsError {
 }
 
 
-/// Board all the onchain funds to the offchain wallet
+/// Moves all bitcoin in the on-chain wallet onto the Ark protocol. Creates and broadcasts a funding transaction that drains the on-chain balance into a single VTXO, then returns the pending board details. The resulting VTXO is not spendable off-chain until the funding transaction reaches the number of on-chain confirmations required by the Ark server.
 pub async fn board_all(configuration: &configuration::Configuration, ) -> Result<models::PendingBoardInfo, Error<BoardAllError>> {
 
     let uri_str = format!("{}/api/v1/boards/board-all", configuration.base_path);
@@ -75,7 +75,7 @@ pub async fn board_all(configuration: &configuration::Configuration, ) -> Result
     }
 }
 
-/// Board the given amount of onchain funds to the offchain wallet
+/// Moves the specified amount of bitcoin in the on-chain wallet onto the Ark protocol. Creates and broadcasts a funding transaction, then returns the pending board details. The resulting VTXO is not spendable off-chain until the funding transaction reaches the number of on-chain confirmations required by the Ark server.
 pub async fn board_amount(configuration: &configuration::Configuration, board_request: models::BoardRequest) -> Result<models::PendingBoardInfo, Error<BoardAmountError>> {
     // add a prefix to parameters to efficiently prevent name collisions
     let p_board_request = board_request;
@@ -113,6 +113,7 @@ pub async fn board_amount(configuration: &configuration::Configuration, board_re
     }
 }
 
+/// Returns all boards whose funding transactions have not yet reached the number of on-chain confirmations required by the Ark server.
 pub async fn get_pending_boards(configuration: &configuration::Configuration, ) -> Result<Vec<models::PendingBoardInfo>, Error<GetPendingBoardsError>> {
 
     let uri_str = format!("{}/api/v1/boards/", configuration.base_path);

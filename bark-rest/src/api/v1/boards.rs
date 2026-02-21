@@ -18,7 +18,7 @@ use crate::ServerState;
 		bark_json::web::BoardRequest,
 		bark_json::cli::PendingBoardInfo,
 	)),
-	tags((name = "boards", description = "Board-related endpoints"))
+	tags((name = "boards", description = "Move on-chain bitcoin onto the Ark protocol."))
 )]
 pub struct BoardsApiDoc;
 
@@ -32,12 +32,16 @@ pub fn router() -> Router<ServerState> {
 #[utoipa::path(
 	post,
 	path = "/board-amount",
+	summary = "Board a specific amount",
 	request_body = bark_json::web::BoardRequest,
 	responses(
 		(status = 200, description = "Returns the board result", body = bark_json::cli::PendingBoardInfo),
 		(status = 500, description = "Internal server error", body = error::InternalServerError)
 	),
-	description = "Board the given amount of onchain funds to the offchain wallet",
+	description = "Moves the specified amount of bitcoin in the on-chain wallet onto the Ark \
+		protocol. Creates and broadcasts a funding transaction, then returns the pending board \
+		details. The resulting VTXO is not spendable off-chain until the funding transaction \
+		reaches the number of on-chain confirmations required by the Ark server.",
 	tag = "boards"
 )]
 #[debug_handler]
@@ -62,11 +66,16 @@ pub async fn board_amount(
 #[utoipa::path(
 	post,
 	path = "/board-all",
+	summary = "Board all on-chain bitcoin",
 	responses(
 		(status = 200, description = "Returns the board result", body = bark_json::cli::PendingBoardInfo),
 		(status = 500, description = "Internal server error", body = error::InternalServerError)
 	),
-	description = "Board all the onchain funds to the offchain wallet",
+	description = "Moves all bitcoin in the on-chain wallet onto the Ark protocol. Creates and \
+		broadcasts a funding transaction that drains the on-chain balance into a single VTXO, \
+		then returns the pending board details. The resulting VTXO is not spendable off-chain \
+		until the funding transaction reaches the number of on-chain confirmations required by \
+		the Ark server.",
 	tag = "boards"
 )]
 #[debug_handler]
@@ -86,10 +95,13 @@ pub async fn board_all(
 #[utoipa::path(
 	get,
 	path = "/",
+	summary = "List pending boards",
 	responses(
 		(status = 200, description = "Returns all pending boards", body = Vec<bark_json::cli::PendingBoardInfo>),
 		(status = 500, description = "Internal server error")
 	),
+	description = "Returns all boards whose funding transactions have not yet reached the \
+		number of on-chain confirmations required by the Ark server.",
 	tag = "boards"
 )]
 #[debug_handler]
@@ -103,4 +115,3 @@ pub async fn get_pending_boards(
 
 	Ok(axum::Json(boards))
 }
-

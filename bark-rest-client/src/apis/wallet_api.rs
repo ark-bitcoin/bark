@@ -1,7 +1,7 @@
 /*
- * Barkd API
+ * barkd REST API
  *
- * A simple REST API for Barkd
+ * A simple REST API for barkd, a wallet daemon for integrating bitcoin payments into your app over HTTP. Supports self-custodial Lightning, Ark, and on-chain out of the box.  barkd is a long-running daemon best suited for always-on or high-connectivity environments like nodes, servers, desktops, and point-of-sale terminals.  The API is organized into the following groups:  - **Wallet:** The bread and butter for most applications. Manage Ark addresses, balances, VTXOs, and refreshes. Send payments via Ark, Lightning, and on-chain, all funded from your Ark balance. Start here. - **Lightning:** Create BOLT11 invoices to receive payments over Lightning and track receive status. Any application that accepts Lightning payments will use these endpoints alongside the wallet endpoints. - **On-chain:** Manage barkd's built-in on-chain bitcoin wallet. This wallet holds funds in standard UTXOs, separate from your Ark balance, and operates under the normal on-chain trust model without involving the Ark server. - **Boards:** Move on-chain bitcoin onto the Ark protocol to start making off-chain payments. - **Exits:** Unilaterally move bitcoin back on-chain without server cooperation, for when the Ark server is unavailable or uncooperative. - **Bitcoin:** Query bitcoin network data such as the current block height.  All endpoints return JSON. Amounts are denominated in satoshis.
  *
  * The version of the OpenAPI document: 0.1.0-beta.7
  * Contact: hello@second.tech
@@ -184,7 +184,7 @@ pub enum VtxosError {
 }
 
 
-/// Generates a new Ark address and stores it in the wallet database
+/// Generates a new Ark receiving address. Each call returns the next unused address from the wallet's HD keychain.
 pub async fn address(configuration: &configuration::Configuration, ) -> Result<models::ArkAddressResponse, Error<AddressError>> {
 
     let uri_str = format!("{}/api/v1/wallet/addresses/next", configuration.base_path);
@@ -219,7 +219,7 @@ pub async fn address(configuration: &configuration::Configuration, ) -> Result<m
     }
 }
 
-/// Returns the current Ark infos
+/// Returns the Ark server's configuration parameters, including network, public key, round interval, VTXO expiry and exit deltas, fee settings, and Lightning support details.
 pub async fn ark_info(configuration: &configuration::Configuration, ) -> Result<models::ArkInfo, Error<ArkInfoError>> {
 
     let uri_str = format!("{}/api/v1/wallet/ark-info", configuration.base_path);
@@ -254,7 +254,7 @@ pub async fn ark_info(configuration: &configuration::Configuration, ) -> Result<
     }
 }
 
-/// Returns the current wallet balance
+/// Returns the wallet balance broken down by category: spendable sats available for immediate use, sats pending in an Ark round, sats locked in outgoing or incoming Lightning payments, sats awaiting board confirmation, and sats in a pending exit. The balance is computed from local state, which the background daemon keeps reasonably fresh (Lightning syncs every second, mailbox and boards every 30 seconds). For the most up-to-date figures, call `sync` before this endpoint.
 pub async fn balance(configuration: &configuration::Configuration, ) -> Result<models::Balance, Error<BalanceError>> {
 
     let uri_str = format!("{}/api/v1/wallet/balance", configuration.base_path);
@@ -289,7 +289,7 @@ pub async fn balance(configuration: &configuration::Configuration, ) -> Result<m
     }
 }
 
-/// Returns whether the wallet is currently connected to the Ark server
+/// Checks whether the wallet has an active connection to the Ark server. Returns `true` if the wallet can reach the server and retrieve its configuration, `false` otherwise. The background daemon checks the server connection every second, so this reflects the most recent known state.
 pub async fn connected(configuration: &configuration::Configuration, ) -> Result<models::ConnectedResponse, Error<ConnectedError>> {
 
     let uri_str = format!("{}/api/v1/wallet/connected", configuration.base_path);
@@ -324,7 +324,7 @@ pub async fn connected(configuration: &configuration::Configuration, ) -> Result
     }
 }
 
-/// Creates a new wallet
+/// Creates a new wallet with the specified Ark server and chain source configuration. Fails if a wallet already exists. Returns the wallet fingerprint on success.
 pub async fn create_wallet(configuration: &configuration::Configuration, create_wallet_request: models::CreateWalletRequest) -> Result<models::CreateWalletResponse, Error<CreateWalletError>> {
     // add a prefix to parameters to efficiently prevent name collisions
     let p_create_wallet_request = create_wallet_request;
@@ -362,7 +362,7 @@ pub async fn create_wallet(configuration: &configuration::Configuration, create_
     }
 }
 
-/// Returns all the wallet history
+/// Returns the full history of wallet movements ordered from newest to oldest. A movement represents any wallet operation that affects VTXOs—an arkoor send or receive, Lightning send or receive, board, offboard, or refresh. Each entry records which VTXOs were consumed and produced, the effective balance change (if any), fees paid, and the operation status.
 pub async fn history(configuration: &configuration::Configuration, ) -> Result<Vec<models::Movement>, Error<HistoryError>> {
 
     let uri_str = format!("{}/api/v1/wallet/history", configuration.base_path);
@@ -397,7 +397,7 @@ pub async fn history(configuration: &configuration::Configuration, ) -> Result<V
     }
 }
 
-/// Imports a raw serialized VTXO into the wallet
+/// Imports hex-encoded serialized VTXOs into the wallet. Validates that each VTXO is anchored on-chain, owned by this wallet, and has not expired. Useful for restoring VTXOs after database loss or re-importing from the server mailbox. The operation is idempotent.
 pub async fn import_vtxo(configuration: &configuration::Configuration, import_vtxo_request: models::ImportVtxoRequest) -> Result<Vec<models::WalletVtxoInfo>, Error<ImportVtxoError>> {
     // add a prefix to parameters to efficiently prevent name collisions
     let p_import_vtxo_request = import_vtxo_request;
@@ -470,7 +470,7 @@ pub async fn movements(configuration: &configuration::Configuration, ) -> Result
     }
 }
 
-/// Returns the next round start time in RFC 3339 format
+/// Queries the Ark server for the next scheduled round start time and returns it in RFC 3339 format.
 pub async fn next_round(configuration: &configuration::Configuration, ) -> Result<models::NextRoundStart, Error<NextRoundError>> {
 
     let uri_str = format!("{}/api/v1/wallet/next-round", configuration.base_path);
@@ -505,7 +505,7 @@ pub async fn next_round(configuration: &configuration::Configuration, ) -> Resul
     }
 }
 
-/// Creates a new round participation to offboard all VTXOs
+/// Cooperatively moves all spendable VTXOs off the Ark protocol to an on-chain address. Each VTXO is offboarded in full—partial amounts are not supported. The on-chain transaction fee is deducted from the total, and the remaining amount is sent to the destination. If no address is specified, the wallet generates a new on-chain address. To send a specific amount on-chain, use `send-onchain` instead.
 pub async fn offboard_all(configuration: &configuration::Configuration, offboard_all_request: models::OffboardAllRequest) -> Result<models::OffboardResult, Error<OffboardAllError>> {
     // add a prefix to parameters to efficiently prevent name collisions
     let p_offboard_all_request = offboard_all_request;
@@ -543,7 +543,7 @@ pub async fn offboard_all(configuration: &configuration::Configuration, offboard
     }
 }
 
-/// Creates a new round participation to offboard the given VTXOs
+/// Cooperatively moves the specified VTXOs off the Ark protocol to an on-chain address. Each VTXO is offboarded in full—partial amounts are not supported. The on-chain transaction fee is deducted from the total, and the remaining amount is sent to the destination. If no address is specified, the wallet generates a new on-chain address. To send a specific amount on-chain, use `send-onchain` instead.
 pub async fn offboard_vtxos(configuration: &configuration::Configuration, offboard_vtxos_request: models::OffboardVtxosRequest) -> Result<models::OffboardResult, Error<OffboardVtxosError>> {
     // add a prefix to parameters to efficiently prevent name collisions
     let p_offboard_vtxos_request = offboard_vtxos_request;
@@ -581,7 +581,7 @@ pub async fn offboard_vtxos(configuration: &configuration::Configuration, offboa
     }
 }
 
-/// Returns the Ark address at the given index. The address must have been already derived before using the /addresses/next endpoint.
+/// Returns a previously generated Ark address by its derivation index. Only addresses that have already been generated are available.
 pub async fn peak_address(configuration: &configuration::Configuration, index: i32) -> Result<models::ArkAddressResponse, Error<PeakAddressError>> {
     // add a prefix to parameters to efficiently prevent name collisions
     let p_index = index;
@@ -618,7 +618,7 @@ pub async fn peak_address(configuration: &configuration::Configuration, index: i
     }
 }
 
-/// Returns all the wallet ongoing round participations
+/// Returns all active round participations and their current status. A round participation is created when you call one of the `refresh` endpoints and persists until the round's funding transaction is confirmed on-chain (2 confirmations on mainnet, 1 on testnet). The list can contain multiple entries—for example, a previous round awaiting on-chain confirmation alongside a newly submitted round waiting for the next server round to start. Confirmed and failed rounds are removed automatically by the background daemon.
 pub async fn pending_rounds(configuration: &configuration::Configuration, ) -> Result<Vec<models::PendingRoundInfo>, Error<PendingRoundsError>> {
 
     let uri_str = format!("{}/api/v1/wallet/rounds", configuration.base_path);
@@ -653,7 +653,7 @@ pub async fn pending_rounds(configuration: &configuration::Configuration, ) -> R
     }
 }
 
-/// Creates a new round participation to refresh all VTXOs
+/// Registers all spendable VTXOs for refresh in the next Ark round. The input VTXOs are locked immediately and will be forfeited once the round completes, yielding new VTXOs with a fresh expiry. The background daemon automatically participates in the round and progresses it to completion. Use the `rounds` endpoint to track progress.
 pub async fn refresh_all(configuration: &configuration::Configuration, ) -> Result<models::PendingRoundInfo, Error<RefreshAllError>> {
 
     let uri_str = format!("{}/api/v1/wallet/refresh/all", configuration.base_path);
@@ -688,7 +688,7 @@ pub async fn refresh_all(configuration: &configuration::Configuration, ) -> Resu
     }
 }
 
-/// Creates a new round participation to refresh VTXOs marked with counterparty
+/// Registers all out-of-round VTXOs held by the wallet for refresh in the next Ark round. Refreshing replaces out-of-round VTXOs under arkoor trust assumptions with trustless, in-round VTXOs. Out-of-round VTXOs whose entire transaction chain originates from your own in-round VTXOs are excluded. The background daemon automatically participates in the round and progresses it to completion. Use the `rounds` endpoint to track progress.
 pub async fn refresh_counterparty(configuration: &configuration::Configuration, ) -> Result<models::PendingRoundInfo, Error<RefreshCounterpartyError>> {
 
     let uri_str = format!("{}/api/v1/wallet/refresh/counterparty", configuration.base_path);
@@ -723,7 +723,7 @@ pub async fn refresh_counterparty(configuration: &configuration::Configuration, 
     }
 }
 
-/// Creates a new round participation to refresh the given VTXOs
+/// Registers the specified VTXOs for refresh in the next Ark round. The input VTXOs are locked immediately and will be forfeited once the round completes, yielding new VTXOs with a fresh expiry. The background daemon automatically participates in the round and progresses it to completion. Use the `rounds` endpoint to track progress.
 pub async fn refresh_vtxos(configuration: &configuration::Configuration, refresh_request: models::RefreshRequest) -> Result<models::PendingRoundInfo, Error<RefreshVtxosError>> {
     // add a prefix to parameters to efficiently prevent name collisions
     let p_refresh_request = refresh_request;
@@ -761,7 +761,7 @@ pub async fn refresh_vtxos(configuration: &configuration::Configuration, refresh
     }
 }
 
-/// Sends a payment to the given destination. The destination can be an Ark address, a BOLT11-invoice, LNURL or a lightning address
+/// Sends an Ark or Lightning payment to the specified destination. Accepts an Ark address, BOLT11 invoice, BOLT12 offer, or Lightning address. Ark address payments are settled instantly via an out-of-round (arkoor) transaction. The `amount_sat` field is required for Ark addresses and Lightning addresses but optional for invoices and offers that already encode an amount. Comments are only supported for Lightning addresses. To send to an on-chain bitcoin address, use `send-onchain` instead.
 pub async fn send(configuration: &configuration::Configuration, send_request: models::SendRequest) -> Result<models::SendResponse, Error<SendError>> {
     // add a prefix to parameters to efficiently prevent name collisions
     let p_send_request = send_request;
@@ -799,7 +799,7 @@ pub async fn send(configuration: &configuration::Configuration, send_request: mo
     }
 }
 
-/// Creates a new round participation to send a payment onchain from ark round
+/// Sends the specified amount to an on-chain address using the wallet's off-chain Ark balance. The on-chain transaction fee is paid on top of the specified amount. Internally creates an out-of-round transaction to consolidate VTXOs into the exact amount needed, then cooperatively sends the on-chain payment via the Ark server. To offboard entire VTXOs without specifying an amount, use `offboard/vtxos` or `offboard/all` instead.
 pub async fn send_onchain(configuration: &configuration::Configuration, send_onchain_request: models::SendOnchainRequest) -> Result<models::OffboardResult, Error<SendOnchainError>> {
     // add a prefix to parameters to efficiently prevent name collisions
     let p_send_onchain_request = send_onchain_request;
@@ -837,7 +837,7 @@ pub async fn send_onchain(configuration: &configuration::Configuration, send_onc
     }
 }
 
-/// Syncs the wallet
+/// Triggers an immediate sync of the wallet's off-chain state. Updates on-chain fee rates, processes incoming arkoor payments, resolves outgoing and incoming Lightning payments, and progresses pending rounds and boards toward confirmation. The background daemon already runs these operations automatically (e.g., Lightning every second, mailbox and boards every 30 seconds), but calling `sync` forces all of them to run immediately.
 pub async fn sync(configuration: &configuration::Configuration, ) -> Result<(), Error<SyncError>> {
 
     let uri_str = format!("{}/api/v1/wallet/sync", configuration.base_path);
@@ -861,7 +861,7 @@ pub async fn sync(configuration: &configuration::Configuration, ) -> Result<(), 
     }
 }
 
-/// Returns all the wallet VTXOs
+/// Returns VTXOs held by the wallet, including their state and expiry information. By default returns only non-spent VTXOs. Set `all=true` to include all VTXOs regardless of state.
 pub async fn vtxos(configuration: &configuration::Configuration, all: Option<bool>) -> Result<Vec<models::WalletVtxoInfo>, Error<VtxosError>> {
     // add a prefix to parameters to efficiently prevent name collisions
     let p_all = all;

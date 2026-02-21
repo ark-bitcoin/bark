@@ -4,35 +4,35 @@ All URIs are relative to *http://localhost*
 
 Method | HTTP request | Description
 ------------- | ------------- | -------------
-[**address**](WalletApi.md#address) | **POST** /api/v1/wallet/addresses/next | 
-[**ark_info**](WalletApi.md#ark_info) | **GET** /api/v1/wallet/ark-info | 
-[**balance**](WalletApi.md#balance) | **GET** /api/v1/wallet/balance | 
-[**connected**](WalletApi.md#connected) | **GET** /api/v1/wallet/connected | 
-[**create_wallet**](WalletApi.md#create_wallet) | **POST** /api/v1/wallet/create | 
-[**history**](WalletApi.md#history) | **GET** /api/v1/wallet/history | 
-[**import_vtxo**](WalletApi.md#import_vtxo) | **POST** /api/v1/wallet/import-vtxo | 
-[**movements**](WalletApi.md#movements) | **GET** /api/v1/wallet/movements | 
-[**next_round**](WalletApi.md#next_round) | **GET** /api/v1/wallet/next-round | 
-[**offboard_all**](WalletApi.md#offboard_all) | **POST** /api/v1/wallet/offboard/all | 
-[**offboard_vtxos**](WalletApi.md#offboard_vtxos) | **POST** /api/v1/wallet/offboard/vtxos | 
-[**peak_address**](WalletApi.md#peak_address) | **GET** /api/v1/wallet/addresses/index/{index} | 
-[**pending_rounds**](WalletApi.md#pending_rounds) | **GET** /api/v1/wallet/rounds | 
-[**refresh_all**](WalletApi.md#refresh_all) | **POST** /api/v1/wallet/refresh/all | 
-[**refresh_counterparty**](WalletApi.md#refresh_counterparty) | **POST** /api/v1/wallet/refresh/counterparty | 
-[**refresh_vtxos**](WalletApi.md#refresh_vtxos) | **POST** /api/v1/wallet/refresh/vtxos | 
-[**send**](WalletApi.md#send) | **POST** /api/v1/wallet/send | 
-[**send_onchain**](WalletApi.md#send_onchain) | **POST** /api/v1/wallet/send-onchain | 
-[**sync**](WalletApi.md#sync) | **POST** /api/v1/wallet/sync | 
-[**vtxos**](WalletApi.md#vtxos) | **GET** /api/v1/wallet/vtxos | 
+[**address**](WalletApi.md#address) | **POST** /api/v1/wallet/addresses/next | Generate Ark address
+[**ark_info**](WalletApi.md#ark_info) | **GET** /api/v1/wallet/ark-info | Get Ark server info
+[**balance**](WalletApi.md#balance) | **GET** /api/v1/wallet/balance | Get wallet balance
+[**connected**](WalletApi.md#connected) | **GET** /api/v1/wallet/connected | Check server connection
+[**create_wallet**](WalletApi.md#create_wallet) | **POST** /api/v1/wallet/create | Create a wallet
+[**history**](WalletApi.md#history) | **GET** /api/v1/wallet/history | Get wallet history
+[**import_vtxo**](WalletApi.md#import_vtxo) | **POST** /api/v1/wallet/import-vtxo | Import a VTXO
+[**movements**](WalletApi.md#movements) | **GET** /api/v1/wallet/movements | List movements (deprecated)
+[**next_round**](WalletApi.md#next_round) | **GET** /api/v1/wallet/next-round | Get next round time
+[**offboard_all**](WalletApi.md#offboard_all) | **POST** /api/v1/wallet/offboard/all | Offboard all VTXOs
+[**offboard_vtxos**](WalletApi.md#offboard_vtxos) | **POST** /api/v1/wallet/offboard/vtxos | Offboard specific VTXOs
+[**peak_address**](WalletApi.md#peak_address) | **GET** /api/v1/wallet/addresses/index/{index} | Get Ark address by index
+[**pending_rounds**](WalletApi.md#pending_rounds) | **GET** /api/v1/wallet/rounds | List round participations
+[**refresh_all**](WalletApi.md#refresh_all) | **POST** /api/v1/wallet/refresh/all | Refresh all VTXOs
+[**refresh_counterparty**](WalletApi.md#refresh_counterparty) | **POST** /api/v1/wallet/refresh/counterparty | Refresh received VTXOs
+[**refresh_vtxos**](WalletApi.md#refresh_vtxos) | **POST** /api/v1/wallet/refresh/vtxos | Refresh specific VTXOs
+[**send**](WalletApi.md#send) | **POST** /api/v1/wallet/send | Send a payment
+[**send_onchain**](WalletApi.md#send_onchain) | **POST** /api/v1/wallet/send-onchain | Send on-chain from Ark balance
+[**sync**](WalletApi.md#sync) | **POST** /api/v1/wallet/sync | Sync wallet
+[**vtxos**](WalletApi.md#vtxos) | **GET** /api/v1/wallet/vtxos | List VTXOs
 
 
 
 ## address
 
 > models::ArkAddressResponse address()
+Generate Ark address
 
-
-Generates a new Ark address and stores it in the wallet database
+Generates a new Ark receiving address. Each call returns the next unused address from the wallet's HD keychain.
 
 ### Parameters
 
@@ -57,9 +57,9 @@ No authorization required
 ## ark_info
 
 > models::ArkInfo ark_info()
+Get Ark server info
 
-
-Returns the current Ark infos
+Returns the Ark server's configuration parameters, including network, public key, round interval, VTXO expiry and exit deltas, fee settings, and Lightning support details.
 
 ### Parameters
 
@@ -84,9 +84,9 @@ No authorization required
 ## balance
 
 > models::Balance balance()
+Get wallet balance
 
-
-Returns the current wallet balance
+Returns the wallet balance broken down by category: spendable sats available for immediate use, sats pending in an Ark round, sats locked in outgoing or incoming Lightning payments, sats awaiting board confirmation, and sats in a pending exit. The balance is computed from local state, which the background daemon keeps reasonably fresh (Lightning syncs every second, mailbox and boards every 30 seconds). For the most up-to-date figures, call `sync` before this endpoint.
 
 ### Parameters
 
@@ -111,9 +111,9 @@ No authorization required
 ## connected
 
 > models::ConnectedResponse connected()
+Check server connection
 
-
-Returns whether the wallet is currently connected to the Ark server
+Checks whether the wallet has an active connection to the Ark server. Returns `true` if the wallet can reach the server and retrieve its configuration, `false` otherwise. The background daemon checks the server connection every second, so this reflects the most recent known state.
 
 ### Parameters
 
@@ -138,9 +138,9 @@ No authorization required
 ## create_wallet
 
 > models::CreateWalletResponse create_wallet(create_wallet_request)
+Create a wallet
 
-
-Creates a new wallet
+Creates a new wallet with the specified Ark server and chain source configuration. Fails if a wallet already exists. Returns the wallet fingerprint on success.
 
 ### Parameters
 
@@ -168,9 +168,9 @@ No authorization required
 ## history
 
 > Vec<models::Movement> history()
+Get wallet history
 
-
-Returns all the wallet history
+Returns the full history of wallet movements ordered from newest to oldest. A movement represents any wallet operation that affects VTXOs—an arkoor send or receive, Lightning send or receive, board, offboard, or refresh. Each entry records which VTXOs were consumed and produced, the effective balance change (if any), fees paid, and the operation status.
 
 ### Parameters
 
@@ -195,9 +195,9 @@ No authorization required
 ## import_vtxo
 
 > Vec<models::WalletVtxoInfo> import_vtxo(import_vtxo_request)
+Import a VTXO
 
-
-Imports a raw serialized VTXO into the wallet
+Imports hex-encoded serialized VTXOs into the wallet. Validates that each VTXO is anchored on-chain, owned by this wallet, and has not expired. Useful for restoring VTXOs after database loss or re-importing from the server mailbox. The operation is idempotent.
 
 ### Parameters
 
@@ -225,7 +225,7 @@ No authorization required
 ## movements
 
 > Vec<models::Movement> movements()
-
+List movements (deprecated)
 
 Deprecated: Use history instead
 
@@ -252,9 +252,9 @@ No authorization required
 ## next_round
 
 > models::NextRoundStart next_round()
+Get next round time
 
-
-Returns the next round start time in RFC 3339 format
+Queries the Ark server for the next scheduled round start time and returns it in RFC 3339 format.
 
 ### Parameters
 
@@ -279,9 +279,9 @@ No authorization required
 ## offboard_all
 
 > models::OffboardResult offboard_all(offboard_all_request)
+Offboard all VTXOs
 
-
-Creates a new round participation to offboard all VTXOs
+Cooperatively moves all spendable VTXOs off the Ark protocol to an on-chain address. Each VTXO is offboarded in full—partial amounts are not supported. The on-chain transaction fee is deducted from the total, and the remaining amount is sent to the destination. If no address is specified, the wallet generates a new on-chain address. To send a specific amount on-chain, use `send-onchain` instead.
 
 ### Parameters
 
@@ -309,9 +309,9 @@ No authorization required
 ## offboard_vtxos
 
 > models::OffboardResult offboard_vtxos(offboard_vtxos_request)
+Offboard specific VTXOs
 
-
-Creates a new round participation to offboard the given VTXOs
+Cooperatively moves the specified VTXOs off the Ark protocol to an on-chain address. Each VTXO is offboarded in full—partial amounts are not supported. The on-chain transaction fee is deducted from the total, and the remaining amount is sent to the destination. If no address is specified, the wallet generates a new on-chain address. To send a specific amount on-chain, use `send-onchain` instead.
 
 ### Parameters
 
@@ -339,9 +339,9 @@ No authorization required
 ## peak_address
 
 > models::ArkAddressResponse peak_address(index)
+Get Ark address by index
 
-
-Returns the Ark address at the given index. The address must have been already derived before using the /addresses/next endpoint.
+Returns a previously generated Ark address by its derivation index. Only addresses that have already been generated are available.
 
 ### Parameters
 
@@ -369,9 +369,9 @@ No authorization required
 ## pending_rounds
 
 > Vec<models::PendingRoundInfo> pending_rounds()
+List round participations
 
-
-Returns all the wallet ongoing round participations
+Returns all active round participations and their current status. A round participation is created when you call one of the `refresh` endpoints and persists until the round's funding transaction is confirmed on-chain (2 confirmations on mainnet, 1 on testnet). The list can contain multiple entries—for example, a previous round awaiting on-chain confirmation alongside a newly submitted round waiting for the next server round to start. Confirmed and failed rounds are removed automatically by the background daemon.
 
 ### Parameters
 
@@ -396,9 +396,9 @@ No authorization required
 ## refresh_all
 
 > models::PendingRoundInfo refresh_all()
+Refresh all VTXOs
 
-
-Creates a new round participation to refresh all VTXOs
+Registers all spendable VTXOs for refresh in the next Ark round. The input VTXOs are locked immediately and will be forfeited once the round completes, yielding new VTXOs with a fresh expiry. The background daemon automatically participates in the round and progresses it to completion. Use the `rounds` endpoint to track progress.
 
 ### Parameters
 
@@ -423,9 +423,9 @@ No authorization required
 ## refresh_counterparty
 
 > models::PendingRoundInfo refresh_counterparty()
+Refresh received VTXOs
 
-
-Creates a new round participation to refresh VTXOs marked with counterparty
+Registers all out-of-round VTXOs held by the wallet for refresh in the next Ark round. Refreshing replaces out-of-round VTXOs under arkoor trust assumptions with trustless, in-round VTXOs. Out-of-round VTXOs whose entire transaction chain originates from your own in-round VTXOs are excluded. The background daemon automatically participates in the round and progresses it to completion. Use the `rounds` endpoint to track progress.
 
 ### Parameters
 
@@ -450,9 +450,9 @@ No authorization required
 ## refresh_vtxos
 
 > models::PendingRoundInfo refresh_vtxos(refresh_request)
+Refresh specific VTXOs
 
-
-Creates a new round participation to refresh the given VTXOs
+Registers the specified VTXOs for refresh in the next Ark round. The input VTXOs are locked immediately and will be forfeited once the round completes, yielding new VTXOs with a fresh expiry. The background daemon automatically participates in the round and progresses it to completion. Use the `rounds` endpoint to track progress.
 
 ### Parameters
 
@@ -480,9 +480,9 @@ No authorization required
 ## send
 
 > models::SendResponse send(send_request)
+Send a payment
 
-
-Sends a payment to the given destination. The destination can be an Ark address, a BOLT11-invoice, LNURL or a lightning address
+Sends an Ark or Lightning payment to the specified destination. Accepts an Ark address, BOLT11 invoice, BOLT12 offer, or Lightning address. Ark address payments are settled instantly via an out-of-round (arkoor) transaction. The `amount_sat` field is required for Ark addresses and Lightning addresses but optional for invoices and offers that already encode an amount. Comments are only supported for Lightning addresses. To send to an on-chain bitcoin address, use `send-onchain` instead.
 
 ### Parameters
 
@@ -510,9 +510,9 @@ No authorization required
 ## send_onchain
 
 > models::OffboardResult send_onchain(send_onchain_request)
+Send on-chain from Ark balance
 
-
-Creates a new round participation to send a payment onchain from ark round
+Sends the specified amount to an on-chain address using the wallet's off-chain Ark balance. The on-chain transaction fee is paid on top of the specified amount. Internally creates an out-of-round transaction to consolidate VTXOs into the exact amount needed, then cooperatively sends the on-chain payment via the Ark server. To offboard entire VTXOs without specifying an amount, use `offboard/vtxos` or `offboard/all` instead.
 
 ### Parameters
 
@@ -540,9 +540,9 @@ No authorization required
 ## sync
 
 > sync()
+Sync wallet
 
-
-Syncs the wallet
+Triggers an immediate sync of the wallet's off-chain state. Updates on-chain fee rates, processes incoming arkoor payments, resolves outgoing and incoming Lightning payments, and progresses pending rounds and boards toward confirmation. The background daemon already runs these operations automatically (e.g., Lightning every second, mailbox and boards every 30 seconds), but calling `sync` forces all of them to run immediately.
 
 ### Parameters
 
@@ -567,9 +567,9 @@ No authorization required
 ## vtxos
 
 > Vec<models::WalletVtxoInfo> vtxos(all)
+List VTXOs
 
-
-Returns all the wallet VTXOs
+Returns VTXOs held by the wallet, including their state and expiry information. By default returns only non-spent VTXOs. Set `all=true` to include all VTXOs regardless of state.
 
 ### Parameters
 

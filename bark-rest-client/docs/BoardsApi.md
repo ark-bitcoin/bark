@@ -4,18 +4,18 @@ All URIs are relative to *http://localhost*
 
 Method | HTTP request | Description
 ------------- | ------------- | -------------
-[**board_all**](BoardsApi.md#board_all) | **POST** /api/v1/boards/board-all | 
-[**board_amount**](BoardsApi.md#board_amount) | **POST** /api/v1/boards/board-amount | 
-[**get_pending_boards**](BoardsApi.md#get_pending_boards) | **GET** /api/v1/boards/ | 
+[**board_all**](BoardsApi.md#board_all) | **POST** /api/v1/boards/board-all | Board all on-chain bitcoin
+[**board_amount**](BoardsApi.md#board_amount) | **POST** /api/v1/boards/board-amount | Board a specific amount
+[**get_pending_boards**](BoardsApi.md#get_pending_boards) | **GET** /api/v1/boards/ | List pending boards
 
 
 
 ## board_all
 
 > models::PendingBoardInfo board_all()
+Board all on-chain bitcoin
 
-
-Board all the onchain funds to the offchain wallet
+Moves all bitcoin in the on-chain wallet onto the Ark protocol. Creates and broadcasts a funding transaction that drains the on-chain balance into a single VTXO, then returns the pending board details. The resulting VTXO is not spendable off-chain until the funding transaction reaches the number of on-chain confirmations required by the Ark server.
 
 ### Parameters
 
@@ -40,9 +40,9 @@ No authorization required
 ## board_amount
 
 > models::PendingBoardInfo board_amount(board_request)
+Board a specific amount
 
-
-Board the given amount of onchain funds to the offchain wallet
+Moves the specified amount of bitcoin in the on-chain wallet onto the Ark protocol. Creates and broadcasts a funding transaction, then returns the pending board details. The resulting VTXO is not spendable off-chain until the funding transaction reaches the number of on-chain confirmations required by the Ark server.
 
 ### Parameters
 
@@ -70,7 +70,9 @@ No authorization required
 ## get_pending_boards
 
 > Vec<models::PendingBoardInfo> get_pending_boards()
+List pending boards
 
+Returns all boards whose funding transactions have not yet reached the number of on-chain confirmations required by the Ark server.
 
 ### Parameters
 

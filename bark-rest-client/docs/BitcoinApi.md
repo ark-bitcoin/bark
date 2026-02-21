@@ -4,16 +4,16 @@ All URIs are relative to *http://localhost*
 
 Method | HTTP request | Description
 ------------- | ------------- | -------------
-[**tip**](BitcoinApi.md#tip) | **GET** /api/v1/bitcoin/tip | 
+[**tip**](BitcoinApi.md#tip) | **GET** /api/v1/bitcoin/tip | Get bitcoin tip height
 
 
 
 ## tip
 
 > models::TipResponse tip()
+Get bitcoin tip height
 
-
-Returns the current bitcoin tip height
+Queries the wallet's chain source for the block height of the latest block on the best chain.
 
 ### Parameters
 

@@ -95,25 +95,46 @@ impl From<bark::onchain::Utxo> for UtxoInfo {
 	}
 }
 
-/// Struct representing information about a VTXO.
+/// Information about a single VTXO (Virtual Transaction Output).
+///
+/// A VTXO is a chain of off-chain, pre-signed transactions rooted in an
+/// on-chain output. It represents spendable bitcoin on Ark.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[cfg_attr(feature = "utoipa", derive(ToSchema))]
 pub struct VtxoInfo {
+	/// Unique identifier for this VTXO, formatted as `txid:vout`.
 	#[cfg_attr(feature = "utoipa", schema(value_type = String))]
 	pub id: VtxoId,
+	/// The value of this VTXO in sats.
 	#[serde(rename = "amount_sat", with = "bitcoin::amount::serde::as_sat")]
 	#[cfg_attr(feature = "utoipa", schema(value_type = u64))]
 	pub amount: Amount,
+	/// The spending policy that governs this VTXO.
 	#[cfg_attr(feature = "utoipa", schema(value_type = String))]
 	pub policy_type: VtxoPolicyKind,
+	/// The owner's public key. Only the holder of the corresponding
+	/// private key can spend this VTXO.
 	#[cfg_attr(feature = "utoipa", schema(value_type = String))]
 	pub user_pubkey: PublicKey,
+	/// The Ark server's public key used to co-sign transactions
+	/// involving this VTXO.
 	#[cfg_attr(feature = "utoipa", schema(value_type = String))]
 	pub server_pubkey: PublicKey,
+	/// The block height at which this VTXO expires. After expiry, the
+	/// server can reclaim the sats. Refresh before expiry to receive
+	/// new VTXOs, or exit to move them on-chain.
 	pub expiry_height: BlockHeight,
+	/// The relative timelock, in blocks, that must elapse before the
+	/// final on-chain claim in an emergency exit.
 	pub exit_delta: BlockDelta,
+	/// The on-chain outpoint that roots this VTXO, formatted as
+	/// `txid:vout`. Typically an output of a round transaction or a
+	/// board transaction.
 	#[cfg_attr(feature = "utoipa", schema(value_type = String))]
 	pub chain_anchor: OutPoint,
+	/// The number of off-chain transactions in this VTXO. Each must
+	/// be broadcast and confirmed on-chain in sequence during an
+	/// emergency exit.
 	pub exit_depth: u16,
 }
 
@@ -139,12 +160,14 @@ impl From<Vtxo> for VtxoInfo {
 	}
 }
 
-/// Same as [VtxoInfo], but with the current VTXO state.
+/// A VTXO together with its current wallet state.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[cfg_attr(feature = "utoipa", derive(ToSchema))]
 pub struct WalletVtxoInfo {
+	/// The VTXO details.
 	#[serde(flatten)]
 	pub vtxo: VtxoInfo,
+	/// The current state of this VTXO in the wallet.
 	pub state: VtxoStateInfo,
 }
 
@@ -165,14 +188,19 @@ impl Deref for WalletVtxoInfo {
 	}
 }
 
-/// Describe the state of a [Vtxo] with additional context.
+/// The current state of a VTXO in the wallet.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[cfg_attr(feature = "utoipa", derive(ToSchema))]
 #[serde(tag = "type", rename_all = "kebab-case")]
 pub enum VtxoStateInfo {
+	/// The VTXO can be spent immediately.
 	Spendable,
+	/// The VTXO has already been spent.
 	Spent,
+	/// The VTXO is locked by an in-progress movement (e.g. a pending
+	/// round or Lightning payment).
 	Locked {
+		/// The movement that locked this VTXO, if any.
 		#[serde(skip_serializing_if = "Option::is_none")]
 		#[cfg_attr(feature = "utoipa", schema(value_type = u32))]
 		movement_id: Option<MovementId>,

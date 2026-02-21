@@ -1,8 +1,8 @@
 {
   "openapi": "3.1.0",
   "info": {
-    "title": "Barkd API",
-    "description": "A simple REST API for Barkd",
+    "title": "barkd REST API",
+    "description": "A simple REST API for barkd, a wallet daemon for integrating bitcoin payments into your app over HTTP. Supports self-custodial Lightning, Ark, and on-chain out of the box.\n\nbarkd is a long-running daemon best suited for always-on or high-connectivity environments like nodes, servers, desktops, and point-of-sale terminals.\n\nThe API is organized into the following groups:\n\n- **Wallet:** The bread and butter for most applications. Manage Ark addresses, balances, VTXOs, and refreshes. Send payments via Ark, Lightning, and on-chain, all funded from your Ark balance. Start here.\n- **Lightning:** Create BOLT11 invoices to receive payments over Lightning and track receive status. Any application that accepts Lightning payments will use these endpoints alongside the wallet endpoints.\n- **On-chain:** Manage barkd's built-in on-chain bitcoin wallet. This wallet holds funds in standard UTXOs, separate from your Ark balance, and operates under the normal on-chain trust model without involving the Ark server.\n- **Boards:** Move on-chain bitcoin onto the Ark protocol to start making off-chain payments.\n- **Exits:** Unilaterally move bitcoin back on-chain without server cooperation, for when the Ark server is unavailable or uncooperative.\n- **Bitcoin:** Query bitcoin network data such as the current block height.\n\nAll endpoints return JSON. Amounts are denominated in satoshis.",
     "contact": {
       "name": "Second Team",
       "email": "hello@second.tech"
@@ -19,7 +19,8 @@
         "tags": [
           "bitcoin"
         ],
-        "description": "Returns the current bitcoin tip height",
+        "summary": "Get bitcoin tip height",
+        "description": "Queries the wallet's chain source for the block height of the latest block on the best chain.",
         "operationId": "tip",
         "responses": {
           "200": {
@@ -50,6 +51,8 @@
         "tags": [
           "boards"
         ],
+        "summary": "List pending boards",
+        "description": "Returns all boards whose funding transactions have not yet reached the number of on-chain confirmations required by the Ark server.",
         "operationId": "get_pending_boards",
         "responses": {
           "200": {
@@ -76,7 +79,8 @@
         "tags": [
           "boards"
         ],
-        "description": "Board all the onchain funds to the offchain wallet",
+        "summary": "Board all on-chain bitcoin",
+        "description": "Moves all bitcoin in the on-chain wallet onto the Ark protocol. Creates and broadcasts a funding transaction that drains the on-chain balance into a single VTXO, then returns the pending board details. The resulting VTXO is not spendable off-chain until the funding transaction reaches the number of on-chain confirmations required by the Ark server.",
         "operationId": "board_all",
         "responses": {
           "200": {
@@ -107,7 +111,8 @@
         "tags": [
           "boards"
         ],
-        "description": "Board the given amount of onchain funds to the offchain wallet",
+        "summary": "Board a specific amount",
+        "description": "Moves the specified amount of bitcoin in the on-chain wallet onto the Ark protocol. Creates and broadcasts a funding transaction, then returns the pending board details. The resulting VTXO is not spendable off-chain until the funding transaction reaches the number of on-chain confirmations required by the Ark server.",
         "operationId": "board_amount",
         "requestBody": {
           "content": {
@@ -148,7 +153,8 @@
         "tags": [
           "exits"
         ],
-        "description": "Claims all claimable exited VTXOs to the given destination address",
+        "summary": "Claim all exited VTXOs",
+        "description": "Sweeps all claimable exit outputs into a single on-chain transaction sent to the specified address. Unlike `progress`, the daemon does not claim automatically—this endpoint must be called manually. Poll the `status` endpoint or call `progress` and check for `done: true` to know when VTXOs are ready to claim. This is the final step of the emergency exit process—the bitcoin is not considered back on-chain until this transaction confirms.",
         "operationId": "exit_claim_all",
         "requestBody": {
           "content": {
@@ -199,7 +205,8 @@
         "tags": [
           "exits"
         ],
-        "description": "Claims the given exited VTXOs to the given destination address",
+        "summary": "Claim specific exited VTXOs",
+        "description": "Sweeps the specified claimable exit outputs into a single on-chain transaction sent to the specified address. Unlike `progress`, the daemon does not claim automatically—this endpoint must be called manually. Poll the `status` endpoint or call `progress` and check for `done: true` to know when VTXOs are ready to claim. This is the final step of the emergency exit process—the bitcoin is not considered back on-chain until this transaction confirms.",
         "operationId": "exit_claim_vtxos",
         "requestBody": {
           "content": {
@@ -250,7 +257,8 @@
         "tags": [
           "exits"
         ],
-        "description": "Progresses the exit process of all current exits until it completes",
+        "summary": "Progress exits",
+        "description": "Triggers all in-progress exits to advance by one step. The daemon already progresses exits automatically in the background—use this endpoint when you want immediate progress rather than waiting for the next automatic cycle. On each call, the endpoint checks whether previously broadcast transactions have confirmed and, if so, creates and broadcasts the next transaction in the sequence. The on-chain wallet must have sufficient bitcoin to cover transaction fees.",
         "operationId": "exit_progress",
         "requestBody": {
           "content": {
@@ -291,7 +299,8 @@
         "tags": [
           "exits"
         ],
-        "description": "Starts an exit for all VTXOs",
+        "summary": "Start exit for all VTXOs",
+        "description": "Registers all wallet VTXOs for emergency exit. The daemon automatically progresses registered exits in the background at the cadence defined by `SLOW_INTERVAL`, creating and broadcasting the required transactions in sequence. Once all exit transactions are confirmed and the timelock has elapsed, call `claim` to sweep the resulting outputs to an on-chain address.",
         "operationId": "exit_start_all",
         "responses": {
           "200": {
@@ -322,7 +331,8 @@
         "tags": [
           "exits"
         ],
-        "description": "Starts an exit for the given VTXOs",
+        "summary": "Start exit for specific VTXOs",
+        "description": "Registers the specified VTXOs for emergency exit. The daemon automatically progresses registered exits in the background at the cadence defined by `SLOW_INTERVAL`, creating and broadcasting the required transactions in sequence. Once all exit transactions are confirmed and the timelock has elapsed, call `claim` to sweep the resulting outputs to an on-chain address.",
         "operationId": "exit_start_vtxos",
         "requestBody": {
           "content": {
@@ -383,7 +393,8 @@
         "tags": [
           "exits"
         ],
-        "description": "Returns all the current in-progress, completed and failed exits",
+        "summary": "List all exit statuses",
+        "description": "Returns the current state of every emergency exit in the wallet. Each entry includes which phase the exit is in (start, processing, awaiting-delta, claimable, claim-in-progress, or claimed), and optionally the full state transition history and the exit transaction packages with their CPFP children.",
         "operationId": "get_all_exit_status",
         "parameters": [
           {
@@ -437,7 +448,8 @@
         "tags": [
           "exits"
         ],
-        "description": "Returns the status of the exit for the given VTXO",
+        "summary": "Get exit status",
+        "description": "Returns the current state of an emergency exit for the specified VTXO, including which phase the exit is in (start, processing, awaiting-delta, claimable, claim-in-progress, or claimed). Optionally includes the full state transition history and the exit transaction packages with their CPFP children.",
         "operationId": "get_exit_status_by_vtxo_id",
         "parameters": [
           {
@@ -507,7 +519,8 @@
         "tags": [
           "lightning"
         ],
-        "description": "Sends a payment to the given lightning destination",
+        "summary": "Send a Lightning payment",
+        "description": "Sends a payment to a Lightning destination. Accepts a BOLT11 invoice, BOLT12 offer, or Lightning address. The `amount_sat` field is required for Lightning addresses but optional for invoices and offers. Comments are only supported for Lightning addresses.",
         "operationId": "pay",
         "requestBody": {
           "content": {
@@ -531,7 +544,7 @@
             }
           },
           "400": {
-            "description": "The provided destination is not a valid bolt11 invoice, bolt12 offer or lightning address",
+            "description": "The provided destination is not a valid BOLT11 invoice, BOLT12 offer, or Lightning address",
             "content": {
               "application/json": {
                 "schema": {
@@ -558,11 +571,12 @@
         "tags": [
           "lightning"
         ],
-        "description": "Returns all the current pending receive statuses",
+        "summary": "List all pending receive statuses",
+        "description": "Returns the statuses of all pending Lightning receives, ordered from oldest to newest. A receive is pending until its `finished_at` timestamp is set, indicating it has settled or been canceled.",
         "operationId": "list_receive_statuses",
         "responses": {
           "200": {
-            "description": "Returns all receive statuses",
+            "description": "Returns all pending receive statuses",
             "content": {
               "application/json": {
                 "schema": {
@@ -592,7 +606,8 @@
         "tags": [
           "lightning"
         ],
-        "description": "Generates a new lightning invoice with the given amount",
+        "summary": "Create a BOLT11 invoice",
+        "description": "Generates a new BOLT11 invoice for the specified amount via the Ark server, creating a pending Lightning receive.",
         "operationId": "generate_invoice",
         "requestBody": {
           "content": {
@@ -633,7 +648,8 @@
         "tags": [
           "lightning"
         ],
-        "description": "Returns the status of a lightning receive for the provided filter",
+        "summary": "Get receive status",
+        "description": "Returns the status of a specified Lightning receive, identified by its payment hash, invoice string, or preimage. The response tracks progress through timestamps: `htlc_vtxos` is populated once HTLCs are created by the Ark server, `preimage_revealed_at` records when the preimage was sent, and `finished_at` indicates the receive has settled or been canceled.",
         "operationId": "get_receive_status",
         "parameters": [
           {
@@ -648,7 +664,7 @@
         ],
         "responses": {
           "200": {
-            "description": "Returns the lightning receive status",
+            "description": "Returns the Lightning receive status",
             "content": {
               "application/json": {
                 "schema": {
@@ -695,11 +711,12 @@
         "tags": [
           "onchain"
         ],
-        "description": "Generates a new onchain address and stores its index in the onchain wallet database",
+        "summary": "Generate on-chain address",
+        "description": "Generates a new on-chain receiving address. Each call returns the next unused address from the wallet's HD keychain.",
         "operationId": "onchain_address",
         "responses": {
           "200": {
-            "description": "Returns the onchain address",
+            "description": "Returns the on-chain address",
             "content": {
               "application/json": {
                 "schema": {
@@ -726,11 +743,12 @@
         "tags": [
           "onchain"
         ],
-        "description": "Returns the current onchain wallet balance",
+        "summary": "Get on-chain balance",
+        "description": "Returns the current on-chain wallet balance, broken down by confirmation status. The `trusted_spendable_sat` field is the sum of `confirmed_sat` and `trusted_pending_sat`—the balance that can be safely spent without risk of double-spend.",
         "operationId": "onchain_balance",
         "responses": {
           "200": {
-            "description": "Returns the onchain balance",
+            "description": "Returns the on-chain balance",
             "content": {
               "application/json": {
                 "schema": {
@@ -747,7 +765,8 @@
         "tags": [
           "onchain"
         ],
-        "description": "Sends all onchain wallet funds to the given address",
+        "summary": "Drain on-chain wallet",
+        "description": "Sends the entire on-chain wallet balance to the specified address. The recipient receives the full balance minus transaction fees. Broadcasts immediately at a fee rate targeting confirmation within three blocks and returns the transaction ID.",
         "operationId": "onchain_drain",
         "requestBody": {
           "content": {
@@ -798,7 +817,8 @@
         "tags": [
           "onchain"
         ],
-        "description": "Sends a payment to the given onchain address",
+        "summary": "Send on-chain payment",
+        "description": "Sends the specified amount to an on-chain address. Broadcasts the transaction immediately at a fee rate targeting confirmation within three blocks and returns the transaction ID.",
         "operationId": "onchain_send",
         "requestBody": {
           "content": {
@@ -849,7 +869,8 @@
         "tags": [
           "onchain"
         ],
-        "description": "Sends multiple payments to provided onchain addresses",
+        "summary": "Send to multiple addresses",
+        "description": "Batches multiple payments into a single on-chain transaction. Each destination is formatted as `address:amount`. Broadcasts the transaction immediately at a fee rate targeting confirmation within three blocks and returns the transaction ID.",
         "operationId": "onchain_send_many",
         "requestBody": {
           "content": {
@@ -900,11 +921,12 @@
         "tags": [
           "onchain"
         ],
-        "description": "Syncs the onchain wallet",
+        "summary": "Sync on-chain wallet",
+        "description": "Syncs the on-chain wallet state with the chain source. Fetches new blocks and transactions, updates the UTXO set, and re-submits any stale unconfirmed transactions to the mempool.",
         "operationId": "onchain_sync",
         "responses": {
           "200": {
-            "description": "Synced onchain wallet"
+            "description": "Synced on-chain wallet"
           },
           "500": {
             "description": "Internal server error",
@@ -924,11 +946,12 @@
         "tags": [
           "onchain"
         ],
-        "description": "Returns all the onchain wallet transactions",
+        "summary": "List on-chain transactions",
+        "description": "Returns all on-chain wallet transactions, ordered from oldest to newest.",
         "operationId": "onchain_transactions",
         "responses": {
           "200": {
-            "description": "Returns the onchain transactions",
+            "description": "Returns the on-chain transactions",
             "content": {
               "application/json": {
                 "schema": {
@@ -948,11 +971,12 @@
         "tags": [
           "onchain"
         ],
-        "description": "Returns all the onchain wallet UTXOs",
+        "summary": "List on-chain UTXOs",
+        "description": "Returns all UTXOs in the on-chain wallet. Each entry includes the outpoint, amount, and confirmation height (if confirmed).",
         "operationId": "onchain_utxos",
         "responses": {
           "200": {
-            "description": "Returns the onchain UTXOs",
+            "description": "Returns the on-chain UTXOs",
             "content": {
               "application/json": {
                 "schema": {
@@ -972,7 +996,8 @@
         "tags": [
           "wallet"
         ],
-        "description": "Returns the Ark address at the given index. The address must have been already derived before using the /addresses/next endpoint.",
+        "summary": "Get Ark address by index",
+        "description": "Returns a previously generated Ark address by its derivation index. Only addresses that have already been generated are available.",
         "operationId": "peak_address",
         "parameters": [
           {
@@ -1016,7 +1041,8 @@
         "tags": [
           "wallet"
         ],
-        "description": "Generates a new Ark address and stores it in the wallet database",
+        "summary": "Generate Ark address",
+        "description": "Generates a new Ark receiving address. Each call returns the next unused address from the wallet's HD keychain.",
         "operationId": "address",
         "responses": {
           "200": {
@@ -1047,7 +1073,8 @@
         "tags": [
           "wallet"
         ],
-        "description": "Returns the current Ark infos",
+        "summary": "Get Ark server info",
+        "description": "Returns the Ark server's configuration parameters, including network, public key, round interval, VTXO expiry and exit deltas, fee settings, and Lightning support details.",
         "operationId": "ark_info",
         "responses": {
           "200": {
@@ -1088,7 +1115,8 @@
         "tags": [
           "wallet"
         ],
-        "description": "Returns the current wallet balance",
+        "summary": "Get wallet balance",
+        "description": "Returns the wallet balance broken down by category: spendable sats available for immediate use, sats pending in an Ark round, sats locked in outgoing or incoming Lightning payments, sats awaiting board confirmation, and sats in a pending exit. The balance is computed from local state, which the background daemon keeps reasonably fresh (Lightning syncs every second, mailbox and boards every 30 seconds). For the most up-to-date figures, call `sync` before this endpoint.",
         "operationId": "balance",
         "responses": {
           "200": {
@@ -1119,7 +1147,8 @@
         "tags": [
           "wallet"
         ],
-        "description": "Returns whether the wallet is currently connected to the Ark server",
+        "summary": "Check server connection",
+        "description": "Checks whether the wallet has an active connection to the Ark server. Returns `true` if the wallet can reach the server and retrieve its configuration, `false` otherwise. The background daemon checks the server connection every second, so this reflects the most recent known state.",
         "operationId": "connected",
         "responses": {
           "200": {
@@ -1150,7 +1179,8 @@
         "tags": [
           "wallet"
         ],
-        "description": "Creates a new wallet",
+        "summary": "Create a wallet",
+        "description": "Creates a new wallet with the specified Ark server and chain source configuration. Fails if a wallet already exists. Returns the wallet fingerprint on success.",
         "operationId": "create_wallet",
         "requestBody": {
           "content": {
@@ -1191,7 +1221,8 @@
         "tags": [
           "wallet"
         ],
-        "description": "Returns all the wallet history",
+        "summary": "Get wallet history",
+        "description": "Returns the full history of wallet movements ordered from newest to oldest. A movement represents any wallet operation that affects VTXOs—an arkoor send or receive, Lightning send or receive, board, offboard, or refresh. Each entry records which VTXOs were consumed and produced, the effective balance change (if any), fees paid, and the operation status.",
         "operationId": "history",
         "responses": {
           "200": {
@@ -1225,7 +1256,8 @@
         "tags": [
           "wallet"
         ],
-        "description": "Imports a raw serialized VTXO into the wallet",
+        "summary": "Import a VTXO",
+        "description": "Imports hex-encoded serialized VTXOs into the wallet. Validates that each VTXO is anchored on-chain, owned by this wallet, and has not expired. Useful for restoring VTXOs after database loss or re-importing from the server mailbox. The operation is idempotent.",
         "operationId": "import_vtxo",
         "requestBody": {
           "content": {
@@ -1279,6 +1311,7 @@
         "tags": [
           "wallet"
         ],
+        "summary": "List movements (deprecated)",
         "description": "Deprecated: Use history instead",
         "operationId": "movements",
         "responses": {
@@ -1314,7 +1347,8 @@
         "tags": [
           "wallet"
         ],
-        "description": "Returns the next round start time in RFC 3339 format",
+        "summary": "Get next round time",
+        "description": "Queries the Ark server for the next scheduled round start time and returns it in RFC 3339 format.",
         "operationId": "next_round",
         "responses": {
           "200": {
@@ -1355,7 +1389,8 @@
         "tags": [
           "wallet"
         ],
-        "description": "Creates a new round participation to offboard all VTXOs",
+        "summary": "Offboard all VTXOs",
+        "description": "Cooperatively moves all spendable VTXOs off the Ark protocol to an on-chain address. Each VTXO is offboarded in full—partial amounts are not supported. The on-chain transaction fee is deducted from the total, and the remaining amount is sent to the destination. If no address is specified, the wallet generates a new on-chain address. To send a specific amount on-chain, use `send-onchain` instead.",
         "operationId": "offboard_all",
         "requestBody": {
           "content": {
@@ -1396,7 +1431,8 @@
         "tags": [
           "wallet"
         ],
-        "description": "Creates a new round participation to offboard the given VTXOs",
+        "summary": "Offboard specific VTXOs",
+        "description": "Cooperatively moves the specified VTXOs off the Ark protocol to an on-chain address. Each VTXO is offboarded in full—partial amounts are not supported. The on-chain transaction fee is deducted from the total, and the remaining amount is sent to the destination. If no address is specified, the wallet generates a new on-chain address. To send a specific amount on-chain, use `send-onchain` instead.",
         "operationId": "offboard_vtxos",
         "requestBody": {
           "content": {
@@ -1450,7 +1486,8 @@
         "tags": [
           "wallet"
         ],
-        "description": "Creates a new round participation to refresh all VTXOs",
+        "summary": "Refresh all VTXOs",
+        "description": "Registers all spendable VTXOs for refresh in the next Ark round. The input VTXOs are locked immediately and will be forfeited once the round completes, yielding new VTXOs with a fresh expiry. The background daemon automatically participates in the round and progresses it to completion. Use the `rounds` endpoint to track progress.",
         "operationId": "refresh_all",
         "responses": {
           "200": {
@@ -1481,7 +1518,8 @@
         "tags": [
           "wallet"
         ],
-        "description": "Creates a new round participation to refresh VTXOs marked with counterparty",
+        "summary": "Refresh received VTXOs",
+        "description": "Registers all out-of-round VTXOs held by the wallet for refresh in the next Ark round. Refreshing replaces out-of-round VTXOs under arkoor trust assumptions with trustless, in-round VTXOs. Out-of-round VTXOs whose entire transaction chain originates from your own in-round VTXOs are excluded. The background daemon automatically participates in the round and progresses it to completion. Use the `rounds` endpoint to track progress.",
         "operationId": "refresh_counterparty",
         "responses": {
           "200": {
@@ -1522,7 +1560,8 @@
         "tags": [
           "wallet"
         ],
-        "description": "Creates a new round participation to refresh the given VTXOs",
+        "summary": "Refresh specific VTXOs",
+        "description": "Registers the specified VTXOs for refresh in the next Ark round. The input VTXOs are locked immediately and will be forfeited once the round completes, yielding new VTXOs with a fresh expiry. The background daemon automatically participates in the round and progresses it to completion. Use the `rounds` endpoint to track progress.",
         "operationId": "refresh_vtxos",
         "requestBody": {
           "content": {
@@ -1583,7 +1622,8 @@
         "tags": [
           "wallet"
         ],
-        "description": "Returns all the wallet ongoing round participations",
+        "summary": "List round participations",
+        "description": "Returns all active round participations and their current status. A round participation is created when you call one of the `refresh` endpoints and persists until the round's funding transaction is confirmed on-chain (2 confirmations on mainnet, 1 on testnet). The list can contain multiple entries—for example, a previous round awaiting on-chain confirmation alongside a newly submitted round waiting for the next server round to start. Confirmed and failed rounds are removed automatically by the background daemon.",
         "operationId": "pending_rounds",
         "responses": {
           "200": {
@@ -1617,7 +1657,8 @@
         "tags": [
           "wallet"
         ],
-        "description": "Sends a payment to the given destination. The destination can be an Ark address, a BOLT11-invoice, LNURL or a lightning address",
+        "summary": "Send a payment",
+        "description": "Sends an Ark or Lightning payment to the specified destination. Accepts an Ark address, BOLT11 invoice, BOLT12 offer, or Lightning address. Ark address payments are settled instantly via an out-of-round (arkoor) transaction. The `amount_sat` field is required for Ark addresses and Lightning addresses but optional for invoices and offers that already encode an amount. Comments are only supported for Lightning addresses. To send to an on-chain bitcoin address, use `send-onchain` instead.",
         "operationId": "send",
         "requestBody": {
           "content": {
@@ -1641,7 +1682,7 @@
             }
           },
           "400": {
-            "description": "The provided destination is not a valid Ark address, bolt11 invoice, bolt12 offer or lightning address",
+            "description": "The provided destination is not a valid Ark address, BOLT11 invoice, BOLT12 offer, or Lightning address",
             "content": {
               "application/json": {
                 "schema": {
@@ -1668,7 +1709,8 @@
         "tags": [
           "wallet"
         ],
-        "description": "Creates a new round participation to send a payment onchain from ark round",
+        "summary": "Send on-chain from Ark balance",
+        "description": "Sends the specified amount to an on-chain address using the wallet's off-chain Ark balance. The on-chain transaction fee is paid on top of the specified amount. Internally creates an out-of-round transaction to consolidate VTXOs into the exact amount needed, then cooperatively sends the on-chain payment via the Ark server. To offboard entire VTXOs without specifying an amount, use `offboard/vtxos` or `offboard/all` instead.",
         "operationId": "send_onchain",
         "requestBody": {
           "content": {
@@ -1709,7 +1751,8 @@
         "tags": [
           "wallet"
         ],
-        "description": "Syncs the wallet",
+        "summary": "Sync wallet",
+        "description": "Triggers an immediate sync of the wallet's off-chain state. Updates on-chain fee rates, processes incoming arkoor payments, resolves outgoing and incoming Lightning payments, and progresses pending rounds and boards toward confirmation. The background daemon already runs these operations automatically (e.g., Lightning every second, mailbox and boards every 30 seconds), but calling `sync` forces all of them to run immediately.",
         "operationId": "sync",
         "responses": {
           "200": {
@@ -1723,7 +1766,8 @@
         "tags": [
           "wallet"
         ],
-        "description": "Returns all the wallet VTXOs",
+        "summary": "List VTXOs",
+        "description": "Returns VTXOs held by the wallet, including their state and expiry information. By default returns only non-spent VTXOs. Set `all=true` to include all VTXOs regardless of state.",
         "operationId": "vtxos",
         "parameters": [
           {
@@ -1766,6 +1810,7 @@
     "/ping": {
       "get": {
         "tags": [],
+        "summary": "Ping",
         "operationId": "ping",
         "responses": {
           "200": {
@@ -1911,6 +1956,7 @@
       },
       "Balance": {
         "type": "object",
+        "description": "The different balances of a Bark wallet, broken down by state.\n\nAll amounts are in sats.",
         "required": [
           "spendable_sat",
           "pending_lightning_send_sat",
@@ -1922,11 +1968,13 @@
           "claimable_lightning_receive_sat": {
             "type": "integer",
             "format": "int64",
+            "description": "Sats from an incoming Lightning payment that can be claimed but\nhave not yet been swept into a spendable VTXO.",
             "minimum": 0
           },
           "pending_board_sat": {
             "type": "integer",
             "format": "int64",
+            "description": "Sats in board transactions that are waiting for sufficient\non-chain confirmations before becoming spendable.",
             "minimum": 0
           },
           "pending_exit_sat": {
@@ -1935,21 +1983,25 @@
               "null"
             ],
             "format": "int64",
+            "description": "Sats in VTXOs undergoing an emergency exit back on-chain.\n`null` if the exit subsystem is unavailable.",
             "minimum": 0
           },
           "pending_in_round_sat": {
             "type": "integer",
             "format": "int64",
+            "description": "Sats locked in VTXOs forfeited for a round that has not yet\ncompleted.",
             "minimum": 0
           },
           "pending_lightning_send_sat": {
             "type": "integer",
             "format": "int64",
+            "description": "Sats locked in an outgoing Lightning payment that has not yet\nsettled.",
             "minimum": 0
           },
           "spendable_sat": {
             "type": "integer",
             "format": "int64",
+            "description": "Sats that are immediately spendable, either in-round or\nout-of-round.",
             "minimum": 0
           }
         }
@@ -4341,7 +4393,7 @@
       },
       "VtxoInfo": {
         "type": "object",
-        "description": "Struct representing information about a VTXO.",
+        "description": "Information about a single VTXO (Virtual Transaction Output).\n\nA VTXO is a chain of off-chain, pre-signed transactions rooted in an\non-chain output. It represents spendable bitcoin on Ark.",
         "required": [
           "id",
           "amount_sat",
@@ -4357,33 +4409,42 @@
           "amount_sat": {
             "type": "integer",
             "format": "int64",
+            "description": "The value of this VTXO in sats.",
             "minimum": 0
           },
           "chain_anchor": {
-            "type": "string"
+            "type": "string",
+            "description": "The on-chain outpoint that roots this VTXO, formatted as\n`txid:vout`. Typically an output of a round transaction or a\nboard transaction."
           },
           "exit_delta": {
-            "$ref": "#/components/schemas/u16"
+            "$ref": "#/components/schemas/u16",
+            "description": "The relative timelock, in blocks, that must elapse before the\nfinal on-chain claim in an emergency exit."
           },
           "exit_depth": {
             "type": "integer",
             "format": "int32",
+            "description": "The number of off-chain transactions in this VTXO. Each must\nbe broadcast and confirmed on-chain in sequence during an\nemergency exit.",
             "minimum": 0
           },
           "expiry_height": {
-            "$ref": "#/components/schemas/u32"
+            "$ref": "#/components/schemas/u32",
+            "description": "The block height at which this VTXO expires. After expiry, the\nserver can reclaim the sats. Refresh before expiry to receive\nnew VTXOs, or exit to move them on-chain."
           },
           "id": {
-            "type": "string"
+            "type": "string",
+            "description": "Unique identifier for this VTXO, formatted as `txid:vout`."
           },
           "policy_type": {
-            "type": "string"
+            "type": "string",
+            "description": "The spending policy that governs this VTXO."
           },
           "server_pubkey": {
-            "type": "string"
+            "type": "string",
+            "description": "The Ark server's public key used to co-sign transactions\ninvolving this VTXO."
           },
           "user_pubkey": {
-            "type": "string"
+            "type": "string",
+            "description": "The owner's public key. Only the holder of the corresponding\nprivate key can spend this VTXO."
           }
         }
       },
@@ -4412,6 +4473,7 @@
         "oneOf": [
           {
             "type": "object",
+            "description": "The VTXO can be spent immediately.",
             "required": [
               "type"
             ],
@@ -4426,6 +4488,7 @@
           },
           {
             "type": "object",
+            "description": "The VTXO has already been spent.",
             "required": [
               "type"
             ],
@@ -4440,6 +4503,7 @@
           },
           {
             "type": "object",
+            "description": "The VTXO is locked by an in-progress movement (e.g. a pending\nround or Lightning payment).",
             "required": [
               "type"
             ],
@@ -4447,6 +4511,7 @@
               "movement_id": {
                 "type": "integer",
                 "format": "int32",
+                "description": "The movement that locked this VTXO, if any.",
                 "minimum": 0
               },
               "type": {
@@ -4458,7 +4523,7 @@
             }
           }
         ],
-        "description": "Describe the state of a [Vtxo] with additional context."
+        "description": "The current state of a VTXO in the wallet."
       },
       "VtxosQuery": {
         "type": "object",
@@ -4475,7 +4540,8 @@
       "WalletVtxoInfo": {
         "allOf": [
           {
-            "$ref": "#/components/schemas/VtxoInfo"
+            "$ref": "#/components/schemas/VtxoInfo",
+            "description": "The VTXO details."
           },
           {
             "type": "object",
@@ -4484,12 +4550,13 @@
             ],
             "properties": {
               "state": {
-                "$ref": "#/components/schemas/VtxoStateInfo"
+                "$ref": "#/components/schemas/VtxoStateInfo",
+                "description": "The current state of this VTXO in the wallet."
               }
             }
           }
         ],
-        "description": "Same as [VtxoInfo], but with the current VTXO state."
+        "description": "A VTXO together with its current wallet state."
       },
       "u16": {
         "type": "integer",
@@ -4506,27 +4573,27 @@
   "tags": [
     {
       "name": "boards",
-      "description": "Board-related endpoints"
+      "description": "Move on-chain bitcoin onto the Ark protocol."
     },
     {
       "name": "exits",
-      "description": "Exit-related endpoints"
+      "description": "Move bitcoin back on-chain without server cooperation."
     },
     {
       "name": "lightning",
-      "description": "Lightning-related endpoints"
+      "description": "Create Lightning invoices and track receives."
     },
     {
       "name": "onchain",
-      "description": "Onchain wallet endpoints"
+      "description": "Manage barkd's on-chain bitcoin wallet."
     },
     {
       "name": "wallet",
-      "description": "Wallet-related endpoints"
+      "description": "Manage Ark balances and VTXOs, send payments via Ark, LN, and on-chain."
     },
     {
       "name": "bitcoin",
-      "description": "Bitcoin network endpoints"
+      "description": "Query bitcoin network data."
     }
   ]
 }

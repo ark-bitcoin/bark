@@ -4,23 +4,23 @@ All URIs are relative to *http://localhost*
 
 Method | HTTP request | Description
 ------------- | ------------- | -------------
-[**onchain_address**](OnchainApi.md#onchain_address) | **POST** /api/v1/onchain/addresses/next | 
-[**onchain_balance**](OnchainApi.md#onchain_balance) | **GET** /api/v1/onchain/balance | 
-[**onchain_drain**](OnchainApi.md#onchain_drain) | **POST** /api/v1/onchain/drain | 
-[**onchain_send**](OnchainApi.md#onchain_send) | **POST** /api/v1/onchain/send | 
-[**onchain_send_many**](OnchainApi.md#onchain_send_many) | **POST** /api/v1/onchain/send-many | 
-[**onchain_sync**](OnchainApi.md#onchain_sync) | **POST** /api/v1/onchain/sync | 
-[**onchain_transactions**](OnchainApi.md#onchain_transactions) | **GET** /api/v1/onchain/transactions | 
-[**onchain_utxos**](OnchainApi.md#onchain_utxos) | **GET** /api/v1/onchain/utxos | 
+[**onchain_address**](OnchainApi.md#onchain_address) | **POST** /api/v1/onchain/addresses/next | Generate on-chain address
+[**onchain_balance**](OnchainApi.md#onchain_balance) | **GET** /api/v1/onchain/balance | Get on-chain balance
+[**onchain_drain**](OnchainApi.md#onchain_drain) | **POST** /api/v1/onchain/drain | Drain on-chain wallet
+[**onchain_send**](OnchainApi.md#onchain_send) | **POST** /api/v1/onchain/send | Send on-chain payment
+[**onchain_send_many**](OnchainApi.md#onchain_send_many) | **POST** /api/v1/onchain/send-many | Send to multiple addresses
+[**onchain_sync**](OnchainApi.md#onchain_sync) | **POST** /api/v1/onchain/sync | Sync on-chain wallet
+[**onchain_transactions**](OnchainApi.md#onchain_transactions) | **GET** /api/v1/onchain/transactions | List on-chain transactions
+[**onchain_utxos**](OnchainApi.md#onchain_utxos) | **GET** /api/v1/onchain/utxos | List on-chain UTXOs
 
 
 
 ## onchain_address
 
 > models::Address onchain_address()
+Generate on-chain address
 
-
-Generates a new onchain address and stores its index in the onchain wallet database
+Generates a new on-chain receiving address. Each call returns the next unused address from the wallet's HD keychain.
 
 ### Parameters
 
@@ -45,9 +45,9 @@ No authorization required
 ## onchain_balance
 
 > models::OnchainBalance onchain_balance()
+Get on-chain balance
 
-
-Returns the current onchain wallet balance
+Returns the current on-chain wallet balance, broken down by confirmation status. The `trusted_spendable_sat` field is the sum of `confirmed_sat` and `trusted_pending_sat`—the balance that can be safely spent without risk of double-spend.
 
 ### Parameters
 
@@ -72,9 +72,9 @@ No authorization required
 ## onchain_drain
 
 > models::Send onchain_drain(onchain_drain_request)
+Drain on-chain wallet
 
-
-Sends all onchain wallet funds to the given address
+Sends the entire on-chain wallet balance to the specified address. The recipient receives the full balance minus transaction fees. Broadcasts immediately at a fee rate targeting confirmation within three blocks and returns the transaction ID.
 
 ### Parameters
 
@@ -102,9 +102,9 @@ No authorization required
 ## onchain_send
 
 > models::Send onchain_send(onchain_send_request)
+Send on-chain payment
 
-
-Sends a payment to the given onchain address
+Sends the specified amount to an on-chain address. Broadcasts the transaction immediately at a fee rate targeting confirmation within three blocks and returns the transaction ID.
 
 ### Parameters
 
@@ -132,9 +132,9 @@ No authorization required
 ## onchain_send_many
 
 > models::Send onchain_send_many(onchain_send_many_request)
+Send to multiple addresses
 
-
-Sends multiple payments to provided onchain addresses
+Batches multiple payments into a single on-chain transaction. Each destination is formatted as `address:amount`. Broadcasts the transaction immediately at a fee rate targeting confirmation within three blocks and returns the transaction ID.
 
 ### Parameters
 
@@ -162,9 +162,9 @@ No authorization required
 ## onchain_sync
 
 > onchain_sync()
+Sync on-chain wallet
 
-
-Syncs the onchain wallet
+Syncs the on-chain wallet state with the chain source. Fetches new blocks and transactions, updates the UTXO set, and re-submits any stale unconfirmed transactions to the mempool.
 
 ### Parameters
 
@@ -189,9 +189,9 @@ No authorization required
 ## onchain_transactions
 
 > Vec<models::TransactionInfo> onchain_transactions()
+List on-chain transactions
 
-
-Returns all the onchain wallet transactions
+Returns all on-chain wallet transactions, ordered from oldest to newest.
 
 ### Parameters
 
@@ -216,9 +216,9 @@ No authorization required
 ## onchain_utxos
 
 > Vec<models::UtxoInfo> onchain_utxos()
+List on-chain UTXOs
 
-
-Returns all the onchain wallet UTXOs
+Returns all UTXOs in the on-chain wallet. Each entry includes the outpoint, amount, and confirmation height (if confirmed).
 
 ### Parameters
 
