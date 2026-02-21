@@ -17,7 +17,7 @@ use bitcoin::{Amount, Transaction, Txid};
 use tokio_postgres::{GenericClient, Row, Transaction as PgTransaction};
 use tokio_postgres::types::Type;
 
-use ark::{ProtocolEncoding, VtxoId, VtxoRequest, ServerVtxo};
+use ark::{ProtocolEncoding, ServerVtxo, ServerVtxoPolicy, VtxoId, VtxoRequest};
 use ark::rounds::RoundId;
 use ark::tree::signed::{UnlockHash, UnlockPreimage};
 
@@ -129,7 +129,12 @@ pub async fn upsert_vtxos<T, V: Borrow<ServerVtxo>>(
 }
 
 /// Get a VTXO by id
-pub async fn get_vtxo_by_id<T>(client: &T, id: VtxoId) -> anyhow::Result<VtxoState>
+///
+/// This function returns a [ServerVtxo]
+pub async fn get_vtxo_by_id<T>(
+	client: &T,
+	id: VtxoId,
+) -> anyhow::Result<VtxoState<ServerVtxoPolicy>>
 	where T : GenericClient + Sized
 {
 	let stmt = client.prepare_typed("
@@ -148,10 +153,12 @@ pub async fn get_vtxo_by_id<T>(client: &T, id: VtxoId) -> anyhow::Result<VtxoSta
 
 /// Get vtxos by id and ensure the order of the returned vtxos matches
 /// the order of the provided ids
+///
+/// This function returns [ServerVtxo]s
 pub async fn get_vtxos_by_id<T>(
 	client: &T,
 	ids: &[VtxoId],
-) -> anyhow::Result<Vec<VtxoState>>
+) -> anyhow::Result<Vec<VtxoState<ServerVtxoPolicy>>>
 	where T: GenericClient + Sized
 {
 	let statement = client.prepare_typed("
