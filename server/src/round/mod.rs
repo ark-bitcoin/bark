@@ -328,7 +328,7 @@ impl CollectingPayments {
 		inputs: &[VtxoId],
 	) -> anyhow::Result<Vec<Vtxo>> {
 		let mut ret  = Vec::with_capacity(inputs.len());
-		match srv.db.get_vtxos_by_id(&inputs).await {
+		match srv.db.get_user_vtxos_by_id(&inputs).await {
 			Ok(vtxos) => {
 				// Check if the input vtxos exist, unspent and owned by user.
 				for v in vtxos {
@@ -1597,7 +1597,7 @@ impl Server {
 		};
 
 		// check input proofs
-		let vtxos = self.db.get_vtxos_by_id(&input_ids).await?;
+		let vtxos = self.db.get_user_vtxos_by_id(&input_ids).await?;
 		for (input, vtxo) in inputs.iter().zip(&vtxos) {
 			NonInteractiveRoundParticipationChallenge::verify_input_vtxo_sig(
 				&vtxo.vtxo, &vtxo_requests, &input.ownership_proof,

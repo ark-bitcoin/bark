@@ -77,7 +77,7 @@ impl Server {
 				return badarg!("not all forfeit bundles have same unlock hash");
 			}
 
-			let vtxo = self.db.get_vtxo_by_id(vtxo_id).await?;
+			let vtxo = self.db.get_user_vtxo_by_id(vtxo_id).await?;
 			total_amount += vtxo.vtxo.amount();
 
 			if vtxos.insert(vtxo_id, vtxo).is_some() {
@@ -116,7 +116,7 @@ impl Server {
 				);
 			}
 			let pub_nonces = nonces.public_nonces();
-			let vtxo = self.db.get_vtxo_by_id(input.vtxo_id).await?;
+			let vtxo = self.db.get_user_vtxo_by_id(input.vtxo_id).await?;
 			if let Err(e) = vtxo_ff.verify(&vtxo.vtxo, &pub_nonces) {
 				return badarg!("forfeit validation failed for vtxo {}: {}", input.vtxo_id, e);
 			}

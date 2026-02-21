@@ -119,7 +119,7 @@ impl Server {
 			return badarg!("wrong number of ownership proofs");
 		}
 
-		let vtxos = self.db.get_vtxos_by_id(&input_vtxos).await?;
+		let vtxos = self.db.get_user_vtxos_by_id(&input_vtxos).await?;
 		if let Some(v) = vtxos.iter().find(|v| !v.is_spendable()) {
 			return badarg!("VTXO {} is already spent", v.vtxo_id);
 		}
@@ -241,7 +241,7 @@ impl Server {
 			return badarg!("incorrect number of partial signatures");
 		}
 
-		let vtxos = self.db.get_vtxos_by_id(input_vtxos).await?;
+		let vtxos = self.db.get_user_vtxos_by_id(input_vtxos).await?;
 		let forfeit_ctx = OffboardForfeitContext::new(&vtxos, &state.offboard_tx.unsigned_tx);
 
 		let forfeit_txs = forfeit_ctx.check_finalize_transactions(

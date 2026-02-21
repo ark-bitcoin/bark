@@ -716,7 +716,7 @@ impl Server {
 			let vtxo_id = vtxo.id();
 
 			// Check vtxo exists in database
-			let _stored_vtxo = self.db.get_vtxo_by_id(vtxo_id).await
+			let _stored_vtxo = self.db.get_user_vtxo_by_id(vtxo_id).await
 				.context(vtxo_id)
 				.badarg("vtxo not found in database")?;
 
@@ -870,7 +870,7 @@ impl Server {
 		&self,
 		request: &LeafVtxoCosignRequest,
 	) -> anyhow::Result<LeafVtxoCosignResponse> {
-		let [vtxo] = self.db.get_vtxos_by_id(&[request.vtxo_id]).await?
+		let [vtxo] = self.db.get_user_vtxos_by_id(&[request.vtxo_id]).await?
 			.try_into().expect("one argument one response");
 		let round_id = RoundId::new(vtxo.vtxo.chain_anchor().txid);
 		let round = self.db.get_round(round_id).await?
