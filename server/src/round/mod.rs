@@ -1348,9 +1348,6 @@ async fn perform_round(
 			let _round_stop_span_guard = round_step_span.enter();
 			server_rslog!(NoRoundPayments, round_step, max_round_submit_time: srv.config.round_submit_time);
 
-			// Clear stale Attempt event so it won't be replayed to new subscribers
-			srv.rounds.clear_last_event();
-
 			round_state = round_state.into_finished(RoundResult::Empty);
 
 			telemetry::set_round_state(round_state.kind());
@@ -1554,11 +1551,17 @@ pub async fn run_round_coordinator(
 		round_seq.increment();
 		match perform_round(srv, &mut round_input_rx, round_seq).await {
 			RoundResult::Success => {},
-			RoundResult::Empty => {},
+			RoundResult::Empty => {
+				srv.rounds.clear_last_event();
+			},
 			// Round got abandoned, immediatelly start a new one.
-			RoundResult::Abandoned => continue,
+			RoundResult::Abandoned => {
+				srv.rounds.clear_last_event();
+				continue;
+			},
 			// Internal error, retry immediatelly.
 			RoundResult::Err(RoundError::Recoverable(e)) => {
+				srv.rounds.clear_last_event();
 				error!("Full round error stack trace: {:?}", e);
 				slog!(RoundError, round_seq, error: format!("{:#}", e));
 				continue;
