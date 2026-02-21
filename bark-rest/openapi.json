@@ -1483,16 +1483,6 @@
         ],
         "description": "Creates a new round participation to refresh VTXOs marked with counterparty",
         "operationId": "refresh_counterparty",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/RefreshRequest"
-              }
-            }
-          },
-          "required": true
-        },
         "responses": {
           "200": {
             "description": "Returns the refresh result",

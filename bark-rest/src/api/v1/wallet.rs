@@ -517,7 +517,6 @@ pub async fn refresh_all(
 #[utoipa::path(
 	post,
 	path = "/refresh/counterparty",
-	request_body = bark_json::web::RefreshRequest,
 	responses(
 		(status = 200, description = "Returns the refresh result", body = bark_json::web::PendingRoundInfo),
 		(status = 404, description = "There is no VTXO to refresh", body = error::NotFoundError),
