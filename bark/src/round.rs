@@ -312,7 +312,7 @@ impl RoundState {
 						true
 					},
 					AttemptProgressResult::Failed(e) => {
-						debug!("Round failed with error: {:#}", e);
+						warn!("Round failed with error: {:#}", e);
 						self.flow = RoundFlowState::Failed {
 							error: format!("{:#}", e),
 						};
