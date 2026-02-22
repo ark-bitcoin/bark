@@ -4,6 +4,10 @@ version = "0.0.0"
 license = "MIT"
 edition = "2024"
 
+[[bin]]
+name = "pid-lock-holder"
+path = "src/bin/pid-lock-holder.rs"
+
 [features]
 slow_test = []
 
@@ -14,7 +18,7 @@ bark-server-log = { path = "../server-log" }
 bark-server-rpc = { path = "../server-rpc", features = ["server"] }
 bark-cln-rpc = { path = "../cln-rpc"}
 bark-json = { path = "../bark-json", features = ["onchain_bdk"] }
-bark-wallet = { path = "../bark" }
+bark-wallet = { path = "../bark", features = ["pid_lock"] }
 bark-bitcoin-ext = { path = "../bitcoin-ext" }
 
 bitcoincore-rpc = "0.19.0"
