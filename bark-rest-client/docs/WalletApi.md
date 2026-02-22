@@ -29,7 +29,7 @@ Method | HTTP request | Description
 
 ## address
 
-> models::Address address()
+> models::ArkAddressResponse address()
 
 
 Generates a new Ark address and stores it in the wallet database
@@ -40,7 +40,7 @@ This endpoint does not need any parameter.
 
 ### Return type
 
-[**models::Address**](Address.md)
+[**models::ArkAddressResponse**](ArkAddressResponse.md)
 
 ### Authorization
 
@@ -338,7 +338,7 @@ No authorization required
 
 ## peak_address
 
-> models::Address peak_address(index)
+> models::ArkAddressResponse peak_address(index)
 
 
 Returns the Ark address at the given index. The address must have been already derived before using the /addresses/next endpoint.
@@ -352,7 +352,7 @@ Name | Type | Description  | Required | Notes
 
 ### Return type
 
-[**models::Address**](Address.md)
+[**models::ArkAddressResponse**](ArkAddressResponse.md)
 
 ### Authorization
 
@@ -422,17 +422,14 @@ No authorization required
 
 ## refresh_counterparty
 
-> models::PendingRoundInfo refresh_counterparty(refresh_request)
+> models::PendingRoundInfo refresh_counterparty()
 
 
 Creates a new round participation to refresh VTXOs marked with counterparty
 
 ### Parameters
 
-
-Name | Type | Description  | Required | Notes
-------------- | ------------- | ------------- | ------------- | -------------
-**refresh_request** | [**RefreshRequest**](RefreshRequest.md) |  | [required] |
+This endpoint does not need any parameter.
 
 ### Return type
 
@@ -444,7 +441,7 @@ No authorization required
 
 ### HTTP request headers
 
-- **Content-Type**: application/json
+- **Content-Type**: Not defined
 - **Accept**: application/json
 
 [[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)

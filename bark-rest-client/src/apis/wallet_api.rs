@@ -185,7 +185,7 @@ pub enum VtxosError {
 
 
 /// Generates a new Ark address and stores it in the wallet database
-pub async fn address(configuration: &configuration::Configuration, ) -> Result<models::Address, Error<AddressError>> {
+pub async fn address(configuration: &configuration::Configuration, ) -> Result<models::ArkAddressResponse, Error<AddressError>> {
 
     let uri_str = format!("{}/api/v1/wallet/addresses/next", configuration.base_path);
     let mut req_builder = configuration.client.request(reqwest::Method::POST, &uri_str);
@@ -209,8 +209,8 @@ pub async fn address(configuration: &configuration::Configuration, ) -> Result<m
         let content = resp.text().await?;
         match content_type {
             ContentType::Json => serde_json::from_str(&content).map_err(Error::from),
-            ContentType::Text => return Err(Error::from(serde_json::Error::custom("Received `text/plain` content type response that cannot be converted to `models::Address`"))),
-            ContentType::Unsupported(unknown_type) => return Err(Error::from(serde_json::Error::custom(format!("Received `{unknown_type}` content type response that cannot be converted to `models::Address`")))),
+            ContentType::Text => return Err(Error::from(serde_json::Error::custom("Received `text/plain` content type response that cannot be converted to `models::ArkAddressResponse`"))),
+            ContentType::Unsupported(unknown_type) => return Err(Error::from(serde_json::Error::custom(format!("Received `{unknown_type}` content type response that cannot be converted to `models::ArkAddressResponse`")))),
         }
     } else {
         let content = resp.text().await?;
@@ -327,7 +327,7 @@ pub async fn connected(configuration: &configuration::Configuration, ) -> Result
 /// Creates a new wallet
 pub async fn create_wallet(configuration: &configuration::Configuration, create_wallet_request: models::CreateWalletRequest) -> Result<models::CreateWalletResponse, Error<CreateWalletError>> {
     // add a prefix to parameters to efficiently prevent name collisions
-    let p_create_wallet_request = create_wallet_request;
+    let p_body_create_wallet_request = create_wallet_request;
 
     let uri_str = format!("{}/api/v1/wallet/create", configuration.base_path);
     let mut req_builder = configuration.client.request(reqwest::Method::POST, &uri_str);
@@ -335,7 +335,7 @@ pub async fn create_wallet(configuration: &configuration::Configuration, create_
     if let Some(ref user_agent) = configuration.user_agent {
         req_builder = req_builder.header(reqwest::header::USER_AGENT, user_agent.clone());
     }
-    req_builder = req_builder.json(&p_create_wallet_request);
+    req_builder = req_builder.json(&p_body_create_wallet_request);
 
     let req = req_builder.build()?;
     let resp = configuration.client.execute(req).await?;
@@ -400,7 +400,7 @@ pub async fn history(configuration: &configuration::Configuration, ) -> Result<V
 /// Imports a raw serialized VTXO into the wallet
 pub async fn import_vtxo(configuration: &configuration::Configuration, import_vtxo_request: models::ImportVtxoRequest) -> Result<Vec<models::WalletVtxoInfo>, Error<ImportVtxoError>> {
     // add a prefix to parameters to efficiently prevent name collisions
-    let p_import_vtxo_request = import_vtxo_request;
+    let p_body_import_vtxo_request = import_vtxo_request;
 
     let uri_str = format!("{}/api/v1/wallet/import-vtxo", configuration.base_path);
     let mut req_builder = configuration.client.request(reqwest::Method::POST, &uri_str);
@@ -408,7 +408,7 @@ pub async fn import_vtxo(configuration: &configuration::Configuration, import_vt
     if let Some(ref user_agent) = configuration.user_agent {
         req_builder = req_builder.header(reqwest::header::USER_AGENT, user_agent.clone());
     }
-    req_builder = req_builder.json(&p_import_vtxo_request);
+    req_builder = req_builder.json(&p_body_import_vtxo_request);
 
     let req = req_builder.build()?;
     let resp = configuration.client.execute(req).await?;
@@ -436,6 +436,7 @@ pub async fn import_vtxo(configuration: &configuration::Configuration, import_vt
 }
 
 /// Deprecated: Use history instead
+#[deprecated]
 pub async fn movements(configuration: &configuration::Configuration, ) -> Result<Vec<models::Movement>, Error<MovementsError>> {
 
     let uri_str = format!("{}/api/v1/wallet/movements", configuration.base_path);
@@ -508,7 +509,7 @@ pub async fn next_round(configuration: &configuration::Configuration, ) -> Resul
 /// Creates a new round participation to offboard all VTXOs
 pub async fn offboard_all(configuration: &configuration::Configuration, offboard_all_request: models::OffboardAllRequest) -> Result<models::OffboardResult, Error<OffboardAllError>> {
     // add a prefix to parameters to efficiently prevent name collisions
-    let p_offboard_all_request = offboard_all_request;
+    let p_body_offboard_all_request = offboard_all_request;
 
     let uri_str = format!("{}/api/v1/wallet/offboard/all", configuration.base_path);
     let mut req_builder = configuration.client.request(reqwest::Method::POST, &uri_str);
@@ -516,7 +517,7 @@ pub async fn offboard_all(configuration: &configuration::Configuration, offboard
     if let Some(ref user_agent) = configuration.user_agent {
         req_builder = req_builder.header(reqwest::header::USER_AGENT, user_agent.clone());
     }
-    req_builder = req_builder.json(&p_offboard_all_request);
+    req_builder = req_builder.json(&p_body_offboard_all_request);
 
     let req = req_builder.build()?;
     let resp = configuration.client.execute(req).await?;
@@ -546,7 +547,7 @@ pub async fn offboard_all(configuration: &configuration::Configuration, offboard
 /// Creates a new round participation to offboard the given VTXOs
 pub async fn offboard_vtxos(configuration: &configuration::Configuration, offboard_vtxos_request: models::OffboardVtxosRequest) -> Result<models::OffboardResult, Error<OffboardVtxosError>> {
     // add a prefix to parameters to efficiently prevent name collisions
-    let p_offboard_vtxos_request = offboard_vtxos_request;
+    let p_body_offboard_vtxos_request = offboard_vtxos_request;
 
     let uri_str = format!("{}/api/v1/wallet/offboard/vtxos", configuration.base_path);
     let mut req_builder = configuration.client.request(reqwest::Method::POST, &uri_str);
@@ -554,7 +555,7 @@ pub async fn offboard_vtxos(configuration: &configuration::Configuration, offboa
     if let Some(ref user_agent) = configuration.user_agent {
         req_builder = req_builder.header(reqwest::header::USER_AGENT, user_agent.clone());
     }
-    req_builder = req_builder.json(&p_offboard_vtxos_request);
+    req_builder = req_builder.json(&p_body_offboard_vtxos_request);
 
     let req = req_builder.build()?;
     let resp = configuration.client.execute(req).await?;
@@ -582,11 +583,11 @@ pub async fn offboard_vtxos(configuration: &configuration::Configuration, offboa
 }
 
 /// Returns the Ark address at the given index. The address must have been already derived before using the /addresses/next endpoint.
-pub async fn peak_address(configuration: &configuration::Configuration, index: i32) -> Result<models::Address, Error<PeakAddressError>> {
+pub async fn peak_address(configuration: &configuration::Configuration, index: i32) -> Result<models::ArkAddressResponse, Error<PeakAddressError>> {
     // add a prefix to parameters to efficiently prevent name collisions
-    let p_index = index;
+    let p_path_index = index;
 
-    let uri_str = format!("{}/api/v1/wallet/addresses/index/{index}", configuration.base_path, index=p_index);
+    let uri_str = format!("{}/api/v1/wallet/addresses/index/{index}", configuration.base_path, index=p_path_index);
     let mut req_builder = configuration.client.request(reqwest::Method::GET, &uri_str);
 
     if let Some(ref user_agent) = configuration.user_agent {
@@ -608,8 +609,8 @@ pub async fn peak_address(configuration: &configuration::Configuration, index: i
         let content = resp.text().await?;
         match content_type {
             ContentType::Json => serde_json::from_str(&content).map_err(Error::from),
-            ContentType::Text => return Err(Error::from(serde_json::Error::custom("Received `text/plain` content type response that cannot be converted to `models::Address`"))),
-            ContentType::Unsupported(unknown_type) => return Err(Error::from(serde_json::Error::custom(format!("Received `{unknown_type}` content type response that cannot be converted to `models::Address`")))),
+            ContentType::Text => return Err(Error::from(serde_json::Error::custom("Received `text/plain` content type response that cannot be converted to `models::ArkAddressResponse`"))),
+            ContentType::Unsupported(unknown_type) => return Err(Error::from(serde_json::Error::custom(format!("Received `{unknown_type}` content type response that cannot be converted to `models::ArkAddressResponse`")))),
         }
     } else {
         let content = resp.text().await?;
@@ -689,9 +690,7 @@ pub async fn refresh_all(configuration: &configuration::Configuration, ) -> Resu
 }
 
 /// Creates a new round participation to refresh VTXOs marked with counterparty
-pub async fn refresh_counterparty(configuration: &configuration::Configuration, refresh_request: models::RefreshRequest) -> Result<models::PendingRoundInfo, Error<RefreshCounterpartyError>> {
-    // add a prefix to parameters to efficiently prevent name collisions
-    let p_refresh_request = refresh_request;
+pub async fn refresh_counterparty(configuration: &configuration::Configuration, ) -> Result<models::PendingRoundInfo, Error<RefreshCounterpartyError>> {
 
     let uri_str = format!("{}/api/v1/wallet/refresh/counterparty", configuration.base_path);
     let mut req_builder = configuration.client.request(reqwest::Method::POST, &uri_str);
@@ -699,7 +698,6 @@ pub async fn refresh_counterparty(configuration: &configuration::Configuration, 
     if let Some(ref user_agent) = configuration.user_agent {
         req_builder = req_builder.header(reqwest::header::USER_AGENT, user_agent.clone());
     }
-    req_builder = req_builder.json(&p_refresh_request);
 
     let req = req_builder.build()?;
     let resp = configuration.client.execute(req).await?;
@@ -729,7 +727,7 @@ pub async fn refresh_counterparty(configuration: &configuration::Configuration, 
 /// Creates a new round participation to refresh the given VTXOs
 pub async fn refresh_vtxos(configuration: &configuration::Configuration, refresh_request: models::RefreshRequest) -> Result<models::PendingRoundInfo, Error<RefreshVtxosError>> {
     // add a prefix to parameters to efficiently prevent name collisions
-    let p_refresh_request = refresh_request;
+    let p_body_refresh_request = refresh_request;
 
     let uri_str = format!("{}/api/v1/wallet/refresh/vtxos", configuration.base_path);
     let mut req_builder = configuration.client.request(reqwest::Method::POST, &uri_str);
@@ -737,7 +735,7 @@ pub async fn refresh_vtxos(configuration: &configuration::Configuration, refresh
     if let Some(ref user_agent) = configuration.user_agent {
         req_builder = req_builder.header(reqwest::header::USER_AGENT, user_agent.clone());
     }
-    req_builder = req_builder.json(&p_refresh_request);
+    req_builder = req_builder.json(&p_body_refresh_request);
 
     let req = req_builder.build()?;
     let resp = configuration.client.execute(req).await?;
@@ -767,7 +765,7 @@ pub async fn refresh_vtxos(configuration: &configuration::Configuration, refresh
 /// Sends a payment to the given destination. The destination can be an Ark address, a BOLT11-invoice, LNURL or a lightning address
 pub async fn send(configuration: &configuration::Configuration, send_request: models::SendRequest) -> Result<models::SendResponse, Error<SendError>> {
     // add a prefix to parameters to efficiently prevent name collisions
-    let p_send_request = send_request;
+    let p_body_send_request = send_request;
 
     let uri_str = format!("{}/api/v1/wallet/send", configuration.base_path);
     let mut req_builder = configuration.client.request(reqwest::Method::POST, &uri_str);
@@ -775,7 +773,7 @@ pub async fn send(configuration: &configuration::Configuration, send_request: mo
     if let Some(ref user_agent) = configuration.user_agent {
         req_builder = req_builder.header(reqwest::header::USER_AGENT, user_agent.clone());
     }
-    req_builder = req_builder.json(&p_send_request);
+    req_builder = req_builder.json(&p_body_send_request);
 
     let req = req_builder.build()?;
     let resp = configuration.client.execute(req).await?;
@@ -805,7 +803,7 @@ pub async fn send(configuration: &configuration::Configuration, send_request: mo
 /// Creates a new round participation to send a payment onchain from ark round
 pub async fn send_onchain(configuration: &configuration::Configuration, send_onchain_request: models::SendOnchainRequest) -> Result<models::OffboardResult, Error<SendOnchainError>> {
     // add a prefix to parameters to efficiently prevent name collisions
-    let p_send_onchain_request = send_onchain_request;
+    let p_body_send_onchain_request = send_onchain_request;
 
     let uri_str = format!("{}/api/v1/wallet/send-onchain", configuration.base_path);
     let mut req_builder = configuration.client.request(reqwest::Method::POST, &uri_str);
@@ -813,7 +811,7 @@ pub async fn send_onchain(configuration: &configuration::Configuration, send_onc
     if let Some(ref user_agent) = configuration.user_agent {
         req_builder = req_builder.header(reqwest::header::USER_AGENT, user_agent.clone());
     }
-    req_builder = req_builder.json(&p_send_onchain_request);
+    req_builder = req_builder.json(&p_body_send_onchain_request);
 
     let req = req_builder.build()?;
     let resp = configuration.client.execute(req).await?;
@@ -867,12 +865,12 @@ pub async fn sync(configuration: &configuration::Configuration, ) -> Result<(), 
 /// Returns all the wallet VTXOs
 pub async fn vtxos(configuration: &configuration::Configuration, all: Option<bool>) -> Result<Vec<models::WalletVtxoInfo>, Error<VtxosError>> {
     // add a prefix to parameters to efficiently prevent name collisions
-    let p_all = all;
+    let p_query_all = all;
 
     let uri_str = format!("{}/api/v1/wallet/vtxos", configuration.base_path);
     let mut req_builder = configuration.client.request(reqwest::Method::GET, &uri_str);
 
-    if let Some(ref param_value) = p_all {
+    if let Some(ref param_value) = p_query_all {
         req_builder = req_builder.query(&[("all", &param_value.to_string())]);
     }
     if let Some(ref user_agent) = configuration.user_agent {

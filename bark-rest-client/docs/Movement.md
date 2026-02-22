@@ -9,7 +9,7 @@ Name | Type | Description | Notes
 **id** | **i32** | The internal ID of the movement. | 
 **input_vtxos** | **Vec<String>** | A list of [Vtxo](ark::Vtxo) IDs that were consumed by this movement and are either locked or unavailable. | 
 **intended_balance_sat** | **i64** | How much the movement was expected to increase or decrease the balance by. This is always an estimate and often discounts any applicable fees. | 
-**metadata** | Option<[**std::collections::HashMap<String, serde_json::Value>**](serde_json::Value.md)> | Miscellaneous metadata for the movement. This is JSON containing arbitrary information as defined by the subsystem that created the movement. | [optional]
+**metadata** | Option<**std::collections::HashMap<String, serde_json::Value>**> | Miscellaneous metadata for the movement. This is JSON containing arbitrary information as defined by the subsystem that created the movement. | [optional]
 **offchain_fee_sat** | **i64** | How much the movement cost the user in offchain fees. If there are applicable onchain fees they will not be included in this value but, depending on the subsystem, could be found in the metadata. | 
 **output_vtxos** | **Vec<String>** | A list of IDs for new VTXOs that were produced as a result of this movement. Often change VTXOs will be found here for outbound actions unless this was an inbound action. | 
 **received_on** | [**Vec<models::MovementDestination>**](MovementDestination.md) | Describes the means by which the wallet received funds in this movement. This could include BOLT11 invoices or other useful data. | 

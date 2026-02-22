@@ -69,12 +69,12 @@ pub fn router() -> Router<ServerState> {
 		import_vtxo,
 	),
 	components(schemas(
+		bark_json::web::ArkAddressResponse,
 		bark_json::web::ConnectedResponse,
 		bark_json::web::CreateWalletRequest,
 		bark_json::web::CreateWalletResponse,
 		bark_json::cli::ArkInfo,
 		bark_json::cli::NextRoundStart,
-		bark_json::web::ArkAddressResponse,
 		bark_json::web::VtxosQuery,
 		bark_json::cli::Balance,
 		bark_json::primitives::WalletVtxoInfo,
@@ -189,7 +189,7 @@ pub async fn next_round(State(state): State<ServerState>) -> HandlerResult<Json<
 	post,
 	path = "/addresses/next",
 	responses(
-		(status = 200, description = "Returns the Ark address", body = bark_json::cli::onchain::Address),
+		(status = 200, description = "Returns the Ark address", body = bark_json::web::ArkAddressResponse),
 		(status = 500, description = "Internal server error", body = error::InternalServerError)
 	),
 	description = "Generates a new Ark address and stores it in the wallet database",
@@ -215,7 +215,7 @@ pub async fn address(
 		("index" = u32, Path, description = "Index for the address.")
 	),
 	responses(
-		(status = 200, description = "Returns the Ark address", body = bark_json::cli::onchain::Address),
+		(status = 200, description = "Returns the Ark address", body = bark_json::web::ArkAddressResponse),
 		(status = 500, description = "Internal server error", body = error::InternalServerError)
 	),
 	description = "Returns the Ark address at the given index. The address must \
