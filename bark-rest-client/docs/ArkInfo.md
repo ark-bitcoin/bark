@@ -4,8 +4,8 @@
 
 Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
-**htlc_expiry_delta** | **i32** | The number of blocks to keep between Lightning and Ark HTLCs expiries | 
-**htlc_send_expiry_delta** | **i32** | The number of blocks after which an HTLC-send VTXO expires once granted. | 
+**htlc_expiry_delta** | **i32** |  | 
+**htlc_send_expiry_delta** | **i32** |  | 
 **ln_receive_anti_dos_required** | **bool** | Indicates whether the Ark server requires clients to either provide a VTXO ownership proof, or a lightning receive token when preparing a lightning claim. | 
 **mailbox_pubkey** | **String** | The pubkey used for blinding unified mailbox IDs | 
 **max_user_invoice_cltv_delta** | **i32** | Maximum CLTV delta server will allow clients to request an invoice generation with. | 
@@ -18,8 +18,8 @@ Name | Type | Description | Notes
 **required_board_confirmations** | **i32** | The number of confirmations required to register a board vtxo | 
 **round_interval** | **String** | The interval between each round | 
 **server_pubkey** | **String** | The Ark server pubkey | 
-**vtxo_exit_delta** | **i32** | Delta between exit confirmation and coins becoming spendable | 
-**vtxo_expiry_delta** | **i32** | Expiration delta of the VTXO | 
+**vtxo_exit_delta** | **i32** |  | 
+**vtxo_expiry_delta** | **i32** |  | 
 
 [[Back to Model list]](../README.md#documentation-for-models) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to README]](../README.md)
 
