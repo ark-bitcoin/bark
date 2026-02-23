@@ -14,6 +14,7 @@ pub mod vtxopool;
 mod model;
 mod query;
 
+pub use self::block::BlockTable;
 pub use self::model::*;
 
 

@@ -8,19 +8,19 @@ use bitcoin_ext::rpc::{BitcoinRpcExt, BitcoinRpcClient, RpcApi};
 
 use server::sync::{ChainEventListener, RawMempool, BlockData};
 use server::sync::block_index::{BlockIndex};
-use server::database::Db;
+use server::database::{BlockTable, Db};
 
 use ark_testing::TestContext;
 
 /// Checks that the block index is fully consistent with the bitcoind chain
-async fn check_block_index_is_consistent(db: &Db, bitcoind: &BitcoinRpcClient) {
+async fn check_block_index_is_consistent(db: &Db, block_table: BlockTable, bitcoind: &BitcoinRpcClient) {
 
-	let lowest_block = db.get_lowest_block().await.unwrap().unwrap();
-	let highest_block = db.get_highest_block().await.unwrap().unwrap();
+	let lowest_block = db.get_lowest_block(block_table).await.unwrap().unwrap();
+	let highest_block = db.get_highest_block(block_table).await.unwrap().unwrap();
 
 	for height in lowest_block.height..=highest_block.height {
 		let bitcoind_block = bitcoind.get_block_by_height(height).unwrap();
-		let db_block = db.get_block_by_height(height).await.unwrap().unwrap();
+		let db_block = db.get_block_by_height(block_table, height).await.unwrap().unwrap();
 
 		assert_eq!(bitcoind_block.hash, db_block.hash);
 	}
@@ -103,8 +103,8 @@ async fn test_block_index_basic_sync() {
 	// Create the BlockIndex (should sync tip with deep_tip from bitcoind)
 	let listeners = vec![Box::new(BlockIndexListener::new()) as Box<dyn ChainEventListener>];
 	let birthday = bitcoind.deep_tip().expect("deep tip");
-	let mut block_index = BlockIndex::new(bitcoind.clone(), db.clone(), listeners, birthday).await.expect("blockindex created");
-	check_block_index_is_consistent(&db, &bitcoind).await;
+	let mut block_index = BlockIndex::new(bitcoind.clone(), db.clone(), listeners, birthday, BlockTable::Captaind).await.expect("blockindex created");
+	check_block_index_is_consistent(&db, BlockTable::Captaind, &bitcoind).await;
 
 	// The current chain-tip is 104
 	// However, we are only synced up-to the deep tip
@@ -117,7 +117,7 @@ async fn test_block_index_basic_sync() {
 	let addrs = Address::<NetworkUnchecked>::from_str("bcrt1p28cpcjynxvz3pyvd99wu7f5uxxkflttec6t4sxndxdsgtxksnp7q90rfcv").unwrap().assume_checked();
 	bitcoind.generate_to_address(20, &addrs).expect("Generated 20 blocks");
 	block_index.sync().await.expect("BlockIndex sync");
-	check_block_index_is_consistent(&db, &bitcoind).await;
+	check_block_index_is_consistent(&db, BlockTable::Captaind, &bitcoind).await;
 
 	// The updated tip goes to block-height 124
 	{
@@ -136,7 +136,7 @@ async fn test_block_index_basic_sync() {
 
 	// Let's retrieve the details about the block at heigh 120
 	let block_120 = {
-		let local_block = db.get_block_by_height(120).await.unwrap().unwrap();
+		let local_block = db.get_block_by_height(BlockTable::Captaind, 120).await.unwrap().unwrap();
 		let bitcoin_block = bitcoind.get_block_by_height(120).unwrap();
 		assert_eq!(local_block.hash, bitcoin_block.hash);
 		assert_eq!(local_block.height, 120);
@@ -152,12 +152,12 @@ async fn test_block_index_basic_sync() {
 
 	// Let's verify that our block-index manages this correctly
 	block_index.sync().await.expect("BlockIndex sync");
-	check_block_index_is_consistent(&db, &bitcoind).await;
+	check_block_index_is_consistent(&db, BlockTable::Captaind, &bitcoind).await;
 	{
 		let bitcoind_tip = bitcoind.tip().expect("Got bitcoind tip");
 		let chain_tip = block_index.chain_tip();
 		let sync_tip = block_index.sync_tip();
-		let db_tip = db.get_highest_block().await.unwrap().unwrap();
+		let db_tip = db.get_highest_block(BlockTable::Captaind).await.unwrap().unwrap();
 
 		assert_eq!(chain_tip.height, bitcoind_tip.height);
 		assert_eq!(chain_tip.hash, bitcoind_tip.hash);

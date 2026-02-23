@@ -15,7 +15,7 @@ use tracing::{error, info};
 use bitcoin_ext::rpc::{BitcoinRpcClient, RpcApi};
 use bitcoin_ext::BlockRef;
 
-use crate::database::Db;
+use crate::database::{BlockTable, Db};
 use crate::system::RuntimeManager;
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -168,9 +168,10 @@ impl SyncManager {
 		listeners: Vec<Box<dyn ChainEventListener>>,
 		birthday: BlockRef,
 		block_poll_interval: Duration,
+		block_table: BlockTable,
 	) -> anyhow::Result<Self> {
 		// Create the block index
-		let block_index = BlockIndex::new(bitcoind.clone(), db, listeners, birthday).await
+		let block_index = BlockIndex::new(bitcoind.clone(), db, listeners, birthday, block_table).await
 			.context("failed to create BlockIndex")?;
 		let chain_tip_rx = block_index.chain_tip_watcher();
 		let sync_height_rx = block_index.sync_height_watcher();
