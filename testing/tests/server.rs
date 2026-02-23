@@ -4,6 +4,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 
+use ark::rounds::RoundSeq;
 use bitcoin::hex::FromHex;
 use bitcoin::{absolute, transaction, Address, Amount, Network, OutPoint, Transaction};
 use bitcoin::hashes::Hash;
@@ -28,14 +29,14 @@ use bark::lightning_invoice::Bolt11Invoice;
 use bark_json::primitives::WalletVtxoInfo;
 use server::secret::Secret;
 use server::vtxopool::VtxoTarget;
-use server_log::{FullRound, RoundError, RoundUserVtxoAlreadyRegistered};
+use server_log::{FullRound, RoundError, RoundStarted, RoundUserVtxoAlreadyRegistered};
 use server_rpc::protos::{self, lightning_payment_status};
 
 use ark_testing::{Captaind, TestContext, btc, sat, secs};
 use ark_testing::constants::{BOARD_CONFIRMATIONS, ROUND_CONFIRMATIONS};
 use ark_testing::constants::bitcoind::{BITCOINRPC_TEST_PASSWORD, BITCOINRPC_TEST_USER};
 use ark_testing::daemon::captaind::{self, ArkClient};
-use ark_testing::util::{FutureExt, ReceiverExt, ToAltString};
+use ark_testing::util::{FutureExt, ToAltString};
 
 use ark_testing::exit::complete_exit;
 use server_rpc::protos::mailbox_server::mailbox_message::Message;
@@ -137,17 +138,25 @@ async fn round_started_log_can_be_captured() {
 	let ctx = TestContext::new("server/capture_log").await;
 	let srv = ctx.new_captaind("server", None).await;
 
-	let mut log_stream = srv.subscribe_log::<server_log::RoundStarted>();
+	let mut last_log_seq = RoundSeq::new(0);
+
+	let mut log_stream = srv.subscribe_log::<RoundStarted>();
+	srv.trigger_round().await;
 	while let Some(l) = log_stream.recv().await {
+		last_log_seq = l.round_seq;
 		info!("Captured log: Round started at {}", l.round_seq);
 		break;
 	}
 
-	let l = srv.wait_for_log::<server_log::RoundStarted>().await;
+	let (l, _) = tokio::join!(
+		srv.wait_for_log::<RoundStarted>(),
+		srv.trigger_round(),
+	);
 	info!("Captured log: Round started with round_num {}", l.round_seq);
+	assert_ne!(last_log_seq, l.round_seq);
 
 	// make sure we only capture the log once.
-	assert!(srv.wait_for_log::<server_log::RoundStarted>().try_fast().await.is_err());
+	assert!(srv.wait_for_log::<RoundStarted>().try_fast().await.is_err());
 }
 
 #[tokio::test]
@@ -177,7 +186,6 @@ async fn cant_spend_untrusted() {
 		cfg.round_tx_untrusted_input_confirmations = NEED_CONFS as usize;
 		cfg.round_interval = Duration::from_secs(3600);
 	}).await;
-	srv.wait_for_initial_round().await;
 
 	let bark = ctx.new_bark_with_funds("bark", &srv, sat(1_000_000)).await;
 
@@ -193,48 +201,42 @@ async fn cant_spend_untrusted() {
 
 	let mut log_round_err = srv.subscribe_log::<RoundError>();
 
-	// Spawn bark refresh first so it's ready to join the round.
 	// The round will fail with "Insufficient funds" because the server's
 	// 10 BTC funding is unconfirmed and needs NEED_CONFS confirmations.
-	let bark = Arc::new(bark);
-	let bark_ref = bark.clone();
-	let attempt_handle = tokio::spawn(async move {
-		let err = bark_ref.try_refresh_all_with_retries(0).await.unwrap_err();
-		debug!("First refresh failed: {:#}", err);
-	});
 
-	srv.trigger_round().await;
+	let (bark_err, srv_err, _) = tokio::join!(
+		async { bark.try_refresh_all_with_retries(0).await.unwrap_err() },
+		async { log_round_err.recv().wait_millis(30_000).await.unwrap().error },
+		srv.trigger_round(),
+	);
+	debug!("First refresh failed: {:#}", bark_err);
+	trace!("Bark VTXOs: {:#?}", bark.vtxos().await);
 
-	let err = log_round_err.recv().wait_millis(30_000).await.unwrap().error;
-	assert!(err.contains("Insufficient funds"), "err: {err}");
-
-	attempt_handle.await.unwrap();
+	assert!(srv_err.contains("Insufficient funds"), "err: {srv_err}");
 
 	// then confirm the money and it should work
 	ctx.generate_blocks(NEED_CONFS).await;
-	tokio::time::sleep(Duration::from_millis(3000)).await;
+	assert_ne!(srv.wallet_status().await.rounds.total_balance, sat(0));
 
-	log_round_err.clear();
-	let bark_ref = bark.clone();
-	let refresh_handle = tokio::spawn(async move {
-		bark_ref.try_refresh_all_no_retry().await
-	});
-	srv.trigger_round().await;
+	// board new funds cuz old funds could be stuck
+	bark.board(sat(200_000)).await;
+	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
+	bark.offchain_balance().await;
 
-	refresh_handle.await.unwrap().expect("first refresh failed");
+	let (_, _) = tokio::join!(
+		bark.refresh_all_no_retry(),
+		srv.trigger_round(),
+	);
 
 	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
 
 	// and the unconfirmed change should be able to be used for a second round
 	tokio::time::sleep(Duration::from_millis(2000)).await;
 
-	let bark_ref = bark.clone();
-	let refresh_handle = tokio::spawn(async move {
-		bark_ref.try_refresh_all_no_retry().await
-	});
-	srv.trigger_round().await;
-
-	refresh_handle.await.unwrap().expect("second refresh failed");
+	let (_, _) = tokio::join!(
+		bark.refresh_all_no_retry(),
+		srv.trigger_round(),
+	);
 }
 
 #[tokio::test]
@@ -338,11 +340,7 @@ async fn restart_custom_cfg_server() {
 #[tokio::test]
 async fn restart_server_with_payments() {
 	let ctx = TestContext::new("server/restart_server_with_payments").await;
-	let mut srv = ctx.new_captaind_with_cfg("server", None, |cfg| {
-		cfg.round_interval = Duration::from_secs(3600);
-	}).await;
-	ctx.fund_captaind(&srv, btc(10)).await;
-	srv.wait_for_initial_round().await;
+	let mut srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
 	let bark1 = ctx.new_bark("bark1", &srv).await;
 	let bark2 = ctx.new_bark("bark2", &srv).await;
 	ctx.fund_bark(&bark1, sat(1_000_000)).await;
@@ -381,7 +379,6 @@ async fn full_round() {
 		cfg.nb_round_nonces = 2;
 		cfg.min_board_amount = sat(0);
 	}).await;
-	srv.wait_for_initial_round().await;
 	ctx.fund_captaind(&srv, btc(10)).await;
 
 	// based on nb_round_nonces
@@ -584,11 +581,7 @@ async fn double_spend_round() {
 		}
 	}
 
-	let srv = ctx.new_captaind_with_cfg("server", None, |cfg| {
-		cfg.round_interval = Duration::from_secs(3600);
-	}).await;
-	ctx.fund_captaind(&srv, btc(10)).await;
-	srv.wait_for_initial_round().await;
+	let srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
 	let proxy = srv.start_proxy_no_mailbox(Proxy).await;
 
 	let bark = ctx.new_bark_with_funds("bark".to_string(), &proxy.address, sat(1_000_000)).await;
@@ -631,7 +624,10 @@ async fn test_participate_round_wrong_step() {
 
 	let proxy = srv.start_proxy_no_mailbox(ProxyA).await;
 	bark.set_ark_url(&proxy).await;
-	let err = bark.try_refresh_all_no_retry().await.expect_err("refresh should time out").to_alt_string();
+	let (err, _) = tokio::join!(
+		async { bark.try_refresh_all_no_retry().await.unwrap_err().to_alt_string() },
+		srv.trigger_round(),
+	);
 	assert!(err.contains("current step is payment registration"), "err: {err}");
 
 	/// This proxy will send a `submit_payment` req instead of `provide_vtxo_signatures` one
@@ -682,7 +678,10 @@ async fn spend_unregistered_board() {
 	bark.board(sat(800_000)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 
-	let err = bark.try_refresh_all_no_retry().await.unwrap_err().to_alt_string();
+	let (err, _) = tokio::join!(
+		async { bark.try_refresh_all_no_retry().await.unwrap_err().to_alt_string() },
+		srv.trigger_round(),
+	);
 	assert!(err.contains("failed to register vtxos"), "err: {err}");
 }
 
@@ -749,7 +748,6 @@ async fn bad_round_input() {
 		cfg.round_interval = Duration::from_secs(10000000);
 		cfg.round_submit_time = Duration::from_secs(30);
 	}).await;
-	srv.wait_for_initial_round().await;
 	let bark = ctx.new_bark_with_funds("bark", &srv, btc(1)).await;
 	bark.board_and_confirm_and_register(&ctx, btc(0.5)).await;
 	let [vtxo] = bark.client().await.spendable_vtxos().await
@@ -998,7 +996,10 @@ async fn reject_dust_vtxo_request() {
 	bark.set_ark_url(&proxy.address).await;
 
 	bark.set_timeout(srv.max_round_delay());
-	let err = bark.try_refresh_all_no_retry().await.unwrap_err();
+	let (err, _) = tokio::join!(
+		async { bark.try_refresh_all_no_retry().await.unwrap_err() },
+		srv.trigger_round(),
+	);
 	assert!(err.to_alt_string().contains(
 		"bad user input: vtxo amount must be at least 0.00000330 BTC",
 	), "err: {err:#}");
@@ -1420,10 +1421,8 @@ async fn captaind_config_change(){
 	let ctx = TestContext::new("server/captaind_config_change").await;
 	let mut srv = ctx.new_captaind_with_cfg("server", None, |cfg| {
 		cfg.vtxo_exit_delta = 12;
-		cfg.round_interval = Duration::from_secs(3600);
 	}).await;
 	ctx.fund_captaind(&srv, btc(10)).await;
-	srv.wait_for_initial_round().await;
 	let bark1 = ctx.new_bark("bark1", &srv).await;
 	let bark2 = ctx.new_bark("bark2", &srv).await;
 	ctx.fund_bark(&bark1, sat(1_000_000)).await;
@@ -1445,7 +1444,6 @@ async fn captaind_config_change(){
 	srv.config_mut().round_interval = Duration::from_secs(3600);
 
 	srv.start().await.unwrap();
-	srv.wait_for_initial_round().await;
 
 	bark1.set_ark_url(&srv).await;
 	bark2.set_ark_url(&srv).await;
@@ -1866,7 +1864,10 @@ async fn should_refuse_round_input_vtxo_that_is_being_exited() {
 	bark.set_ark_url(&proxy.address).await;
 	bark.set_timeout(srv.max_round_delay());
 
-	let err = bark.try_refresh_all_no_retry().await.unwrap_err().to_alt_string();
+	let (err, _) = tokio::join!(
+		async { bark.try_refresh_all_no_retry().await.unwrap_err().to_alt_string() },
+		srv.trigger_round(),
+	);
 	assert!(err.contains(&format!(
 		"bad user input: cannot spend vtxo that is already exited: {}", vtxo_a.id,
 	)), "err: {err:#}");
@@ -2207,9 +2208,6 @@ async fn empty_round_does_not_replay_stale_attempt() {
 		cfg.round_interval = Duration::from_secs(3600);
 		cfg.round_submit_time = Duration::from_millis(500); // Short signup window
 	}).await;
-
-	// Wait for the initial empty round to time out (server auto-starts a round on boot)
-	srv.wait_for_initial_round().await;
 
 	// Now subscribe to round events via gRPC - after the empty round finished.
 	// At this point, last_round_event should be cleared.

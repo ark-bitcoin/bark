@@ -349,11 +349,7 @@ async fn lightning_send_offer() {
 #[tokio::test]
 async fn movement_offboard() {
 	let ctx = TestContext::new("movement/movement_offboard").await;
-	let srv = ctx.new_captaind_with_cfg("server", None, |cfg| {
-		cfg.round_interval = Duration::from_secs(3600);
-	}).await;
-	ctx.fund_captaind(&srv, btc(10)).await;
-	srv.wait_for_initial_round().await;
+	let srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
 	let bark = ctx.new_bark_with_funds("bark", &srv, sat(1_000_000)).await;
 
 	bark.board(sat(100_000)).await;
@@ -408,11 +404,7 @@ async fn movement_offboard() {
 #[tokio::test]
 async fn round_refresh() {
 	let ctx = TestContext::new("movement/round_refresh").await;
-	let srv = ctx.new_captaind_with_cfg("server", None, |cfg| {
-		cfg.round_interval = Duration::from_secs(3600);
-	}).await;
-	ctx.fund_captaind(&srv, btc(10)).await;
-	srv.wait_for_initial_round().await;
+	let srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
 	let bark = ctx.new_bark_with_funds("bark", &srv, sat(1_000_000)).await;
 
 	bark.board(sat(100_000)).await;
@@ -459,7 +451,6 @@ async fn movement_send_onchain() {
 		cfg.round_interval = Duration::from_secs(3600);
 	}).await;
 	ctx.fund_captaind(&srv, btc(10)).await;
-	srv.wait_for_initial_round().await;
 
 	let bark = ctx.new_bark_with_funds("bark", &srv, sat(1_000_000)).await;
 

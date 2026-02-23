@@ -1348,9 +1348,6 @@ async fn perform_round(
 			let _round_stop_span_guard = round_step_span.enter();
 			server_rslog!(NoRoundPayments, round_step, max_round_submit_time: srv.config.round_submit_time);
 
-			// Clear stale Attempt event so it won't be replayed to new subscribers
-			srv.rounds.clear_last_event();
-
 			round_state = round_state.into_finished(RoundResult::Empty);
 
 			telemetry::set_round_state(round_state.kind());
@@ -1512,50 +1509,6 @@ pub async fn run_round_coordinator(
 	};
 
 	loop {
-		{
-			let mut nonce_guard = srv.forfeit_nonces.lock();
-			let dropped = nonce_guard.remove_older(srv.config.round_forfeit_nonces_timeout);
-			let remaining = nonce_guard.len();
-			drop(nonce_guard);
-			let nb_dropped = dropped.len();
-			let unfinished = dropped.filter(|(_, v)| v.is_some()).count();
-			slog!(RoundForfeitNonceCleanup, remaining,
-				removed_finished: nb_dropped - unfinished,
-				removed_unfinished: unfinished,
-			);
-		}
-
-		// set the next round time
-		*srv.rounds.next_round_time.write() = SystemTime::now() + srv.config.round_interval;
-
-		round_seq.increment();
-		match perform_round(srv, &mut round_input_rx, round_seq).await {
-			RoundResult::Success => {},
-			RoundResult::Empty => {},
-			// Round got abandoned, immediatelly start a new one.
-			RoundResult::Abandoned => continue,
-			// Internal error, retry immediatelly.
-			RoundResult::Err(RoundError::Recoverable(e)) => {
-				error!("Full round error stack trace: {:?}", e);
-				slog!(RoundError, round_seq, error: format!("{:#}", e));
-				continue;
-			},
-			// Fatal error, halt operations.
-			RoundResult::Err(RoundError::Fatal(e)) => {
-				error!("Fatal round error: {:?}", e);
-				return Err(e);
-			},
-		}
-
-		// We sync and rebalance all wallets now so that we are sure it doesn't
-		// interfere with rounds happening.
-		if let Err(e) = srv.sync_wallets().await {
-			slog!(RoundSyncError, error: format!("{:?}", e));
-		};
-		if let Err(e) = srv.rebalance_wallets().await {
-			slog!(RoundSyncError, error: format!("{:?}", e));
-		};
-
 		let time_to_next_round = {
 			let time = *srv.rounds.next_round_time.read();
 			let now_system = SystemTime::now();
@@ -1577,6 +1530,57 @@ pub async fn run_round_coordinator(
 				}
 			}
 		}
+
+		// Set the next round time
+		*srv.rounds.next_round_time.write() = SystemTime::now() + srv.config.round_interval;
+
+		{
+			// Drop all old forfeit nonces from memory
+			let mut nonce_guard = srv.forfeit_nonces.lock();
+			let dropped = nonce_guard.remove_older(srv.config.round_forfeit_nonces_timeout);
+			let remaining = nonce_guard.len();
+			drop(nonce_guard);
+			let nb_dropped = dropped.len();
+			let unfinished = dropped.filter(|(_, v)| v.is_some()).count();
+			slog!(RoundForfeitNonceCleanup, remaining,
+				removed_finished: nb_dropped - unfinished,
+				removed_unfinished: unfinished,
+			);
+		}
+
+		round_seq.increment();
+		match perform_round(srv, &mut round_input_rx, round_seq).await {
+			RoundResult::Success => {},
+			RoundResult::Empty => {
+				srv.rounds.clear_last_event();
+			},
+			// Round got abandoned, immediatelly start a new one.
+			RoundResult::Abandoned => {
+				srv.rounds.clear_last_event();
+				continue;
+			},
+			// Internal error, retry immediatelly.
+			RoundResult::Err(RoundError::Recoverable(e)) => {
+				srv.rounds.clear_last_event();
+				error!("Full round error stack trace: {:?}", e);
+				slog!(RoundError, round_seq, error: format!("{:#}", e));
+				continue;
+			},
+			// Fatal error, halt operations.
+			RoundResult::Err(RoundError::Fatal(e)) => {
+				error!("Fatal round error: {:?}", e);
+				return Err(e);
+			},
+		}
+
+		// We sync and rebalance all wallets now so that we are sure it doesn't
+		// interfere with rounds happening.
+		if let Err(e) = srv.sync_wallets().await {
+			slog!(RoundSyncError, error: format!("{:?}", e));
+		};
+		if let Err(e) = srv.rebalance_wallets().await {
+			slog!(RoundSyncError, error: format!("{:?}", e));
+		};
 	}
 }
 

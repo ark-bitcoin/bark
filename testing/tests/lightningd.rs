@@ -140,11 +140,7 @@ async fn bark_pay_ln_with_multiple_inputs() {
 	let lightning = ctx.new_lightning_setup("lightningd").await;
 
 	// Start a server and link it to our cln installation
-	let srv = ctx.new_captaind_with_cfg("server", Some(&lightning.sender), |cfg| {
-		cfg.round_interval = Duration::from_secs(3600);
-	}).await;
-	ctx.fund_captaind(&srv, btc(10)).await;
-	srv.wait_for_initial_round().await;
+	let srv = ctx.new_captaind_with_funds("server", Some(&lightning.sender), btc(10)).await;
 
 	// Start a bark and create a VTXO
 	let bark_1 = ctx.new_bark_with_funds("bark-1", &srv, btc(10)).await;
@@ -383,11 +379,7 @@ async fn bark_refresh_ln_change_vtxo() {
 	let lightning = ctx.new_lightning_setup("lightningd").await;
 
 	// Start a server and link it to our cln installation
-	let srv = ctx.new_captaind_with_cfg("server", Some(&lightning.sender), |cfg| {
-		cfg.round_interval = Duration::from_secs(3600);
-	}).await;
-	ctx.fund_captaind(&srv, btc(10)).await;
-	srv.wait_for_initial_round().await;
+	let srv = ctx.new_captaind_with_funds("server", Some(&lightning.sender), btc(10)).await;
 
 	// Start a bark and create a VTXO
 	let onchain_amount = btc(7);
@@ -429,11 +421,7 @@ async fn bark_refresh_payment_revocation() {
 	let lightning = ctx.new_lightning_setup_no_channel("lightningd").await;
 
 	// Start a server and link it to our cln installation
-	let srv = ctx.new_captaind_with_cfg("server", Some(&lightning.sender), |cfg| {
-		cfg.round_interval = Duration::from_secs(3600);
-	}).await;
-	ctx.fund_captaind(&srv, btc(10)).await;
-	srv.wait_for_initial_round().await;
+	let srv = ctx.new_captaind_with_funds("server", Some(&lightning.sender), btc(10)).await;
 
 	// Start a bark and create a VTXO
 	let onchain_amount = btc(3);
@@ -891,7 +879,7 @@ async fn bark_revoke_expired_pending_ln_payment() {
 	// No channels are created so that payment will fail
 
 	// Start a server and link it to our cln installation
-	let srv = ctx.new_captaind("server", Some(&lightning.sender)).await;
+	let srv = ctx.new_captaind_with_funds("server", Some(&lightning.sender), btc(10)).await;
 	/// This proxy will refuse to revoke the htlc out.
 	#[derive(Clone)]
 	struct Proxy;
@@ -929,17 +917,18 @@ async fn bark_revoke_expired_pending_ln_payment() {
 
 	// Create a payable invoice
 	let invoice_amount = btc(1);
-	let invoice = lightning.receiver.invoice(Some(invoice_amount), "test_payment", "A test payment").await;
+	let invoice = lightning.receiver.invoice(
+		Some(invoice_amount), "test_payment", "A test payment",
+	).await;
 
 	lightning.sync().await;
 
-	// Try send coins through lightning
 	assert_eq!(bark_1.spendable_balance().await, board_amount);
+	info!("Try send coins through lightning...");
 	bark_1.pay_lightning(invoice, None).await;
 
 	// htlc expiry is 6 ahead of current block
 	ctx.generate_blocks(srv.config().htlc_send_expiry_delta as u32 + 6).await;
-	bark_1.maintain().await;
 
 	let vtxos = bark_1.vtxos().await;
 	assert_eq!(vtxos.len(), 2, "user should get 2 VTXOs, change and revocation one");
@@ -951,9 +940,13 @@ async fn bark_revoke_expired_pending_ln_payment() {
 		vtxos.iter().any(|v| v.amount == invoice_amount),
 		"user should get a revocation arkoor of payment_amount + forwarding fee");
 
-	assert_eq!(bark_1.offchain_balance().await.pending_lightning_send, btc(0), "pending lightning send should be reset after payment");
+	assert_eq!(bark_1.offchain_balance().await.pending_lightning_send, btc(0),
+		"pending lightning send should be reset after payment",
+	);
 	let vtxos = bark_1.vtxos().await;
-	assert!(!vtxos.iter().any(|v| matches!(v.state, VtxoStateInfo::Locked { .. })), "should not be any locked vtxo left");
+	assert!(!vtxos.iter().any(|v| matches!(v.state, VtxoStateInfo::Locked { .. })),
+		"should not be any locked vtxo left, vtxos: {:#?}", vtxos,
+	);
 }
 
 
