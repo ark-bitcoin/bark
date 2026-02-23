@@ -153,7 +153,7 @@ pub async fn onchain_balance(configuration: &configuration::Configuration, ) -> 
 /// Sends all onchain wallet funds to the given address
 pub async fn onchain_drain(configuration: &configuration::Configuration, onchain_drain_request: models::OnchainDrainRequest) -> Result<models::Send, Error<OnchainDrainError>> {
     // add a prefix to parameters to efficiently prevent name collisions
-    let p_onchain_drain_request = onchain_drain_request;
+    let p_body_onchain_drain_request = onchain_drain_request;
 
     let uri_str = format!("{}/api/v1/onchain/drain", configuration.base_path);
     let mut req_builder = configuration.client.request(reqwest::Method::POST, &uri_str);
@@ -161,7 +161,7 @@ pub async fn onchain_drain(configuration: &configuration::Configuration, onchain
     if let Some(ref user_agent) = configuration.user_agent {
         req_builder = req_builder.header(reqwest::header::USER_AGENT, user_agent.clone());
     }
-    req_builder = req_builder.json(&p_onchain_drain_request);
+    req_builder = req_builder.json(&p_body_onchain_drain_request);
 
     let req = req_builder.build()?;
     let resp = configuration.client.execute(req).await?;
@@ -191,7 +191,7 @@ pub async fn onchain_drain(configuration: &configuration::Configuration, onchain
 /// Sends a payment to the given onchain address
 pub async fn onchain_send(configuration: &configuration::Configuration, onchain_send_request: models::OnchainSendRequest) -> Result<models::Send, Error<OnchainSendError>> {
     // add a prefix to parameters to efficiently prevent name collisions
-    let p_onchain_send_request = onchain_send_request;
+    let p_body_onchain_send_request = onchain_send_request;
 
     let uri_str = format!("{}/api/v1/onchain/send", configuration.base_path);
     let mut req_builder = configuration.client.request(reqwest::Method::POST, &uri_str);
@@ -199,7 +199,7 @@ pub async fn onchain_send(configuration: &configuration::Configuration, onchain_
     if let Some(ref user_agent) = configuration.user_agent {
         req_builder = req_builder.header(reqwest::header::USER_AGENT, user_agent.clone());
     }
-    req_builder = req_builder.json(&p_onchain_send_request);
+    req_builder = req_builder.json(&p_body_onchain_send_request);
 
     let req = req_builder.build()?;
     let resp = configuration.client.execute(req).await?;
@@ -229,7 +229,7 @@ pub async fn onchain_send(configuration: &configuration::Configuration, onchain_
 /// Sends multiple payments to provided onchain addresses
 pub async fn onchain_send_many(configuration: &configuration::Configuration, onchain_send_many_request: models::OnchainSendManyRequest) -> Result<models::Send, Error<OnchainSendManyError>> {
     // add a prefix to parameters to efficiently prevent name collisions
-    let p_onchain_send_many_request = onchain_send_many_request;
+    let p_body_onchain_send_many_request = onchain_send_many_request;
 
     let uri_str = format!("{}/api/v1/onchain/send-many", configuration.base_path);
     let mut req_builder = configuration.client.request(reqwest::Method::POST, &uri_str);
@@ -237,7 +237,7 @@ pub async fn onchain_send_many(configuration: &configuration::Configuration, onc
     if let Some(ref user_agent) = configuration.user_agent {
         req_builder = req_builder.header(reqwest::header::USER_AGENT, user_agent.clone());
     }
-    req_builder = req_builder.json(&p_onchain_send_many_request);
+    req_builder = req_builder.json(&p_body_onchain_send_many_request);
 
     let req = req_builder.build()?;
     let resp = configuration.client.execute(req).await?;

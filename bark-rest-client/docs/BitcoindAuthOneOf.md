@@ -4,7 +4,7 @@
 
 Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
-**cookie** | [**models::BitcoindAuthOneOfCookie**](BitcoindAuth_oneOf_cookie.md) |  | 
+**cookie** | [**models::BitcoindAuthOneOfCookie**](BitcoindAuthOneOfCookie.md) |  | 
 
 [[Back to Model list]](../README.md#documentation-for-models) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to README]](../README.md)
 

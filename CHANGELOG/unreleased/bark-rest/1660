@@ -1,0 +1,5 @@
+- Fix OpenAPI spec and generated clients for address endpoints
+  The response type for `/addresses/next` and `/addresses/{index}` was
+  incorrectly annotated, causing the generated Rust client to error on
+  deserialization.
+  [#1660](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1660)
