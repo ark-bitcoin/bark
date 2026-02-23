@@ -29,9 +29,12 @@ pub enum ExitTxStatus {
 	},
 	NeedsSignedPackage,
 	NeedsReplacementPackage {
-		#[serde(rename = "min_fee_rate_kwu")]
+		#[serde(rename = "min_fee_rate_sat_per_kvb", with = "crate::serde_utils::fee_rate_sat_per_kvb")]
 		#[cfg_attr(feature = "utoipa", schema(value_type = u64))]
 		min_fee_rate: FeeRate,
+		#[deprecated(note = "use min_fee_rate_sat_per_kvb instead")]
+		#[cfg_attr(feature = "utoipa", schema(value_type = u64))]
+		min_fee_rate_kwu: u64,
 		#[cfg_attr(feature = "utoipa", schema(value_type = u64))]
 		min_fee: Amount,
 	},
@@ -72,7 +75,8 @@ impl From<bark::exit::ExitTxStatus> for ExitTxStatus {
 				ExitTxStatus::NeedsSignedPackage
 			},
 			bark::exit::ExitTxStatus::NeedsReplacementPackage { min_fee_rate, min_fee } => {
-				ExitTxStatus::NeedsReplacementPackage { min_fee_rate, min_fee }
+				let min_fee_rate_kwu = min_fee_rate.to_sat_per_kwu();
+				ExitTxStatus::NeedsReplacementPackage { min_fee_rate, min_fee, min_fee_rate_kwu }
 			},
 			bark::exit::ExitTxStatus::NeedsBroadcasting { child_txid, origin } => {
 				ExitTxStatus::NeedsBroadcasting { child_txid, origin: origin.into() }
@@ -96,9 +100,13 @@ pub enum ExitTxOrigin {
 	},
 	Mempool {
 		/// This is the effective fee rate of the transaction (including CPFP ancestors)
-		#[serde(rename = "fee_rate_kwu")]
+		#[serde(rename = "fee_rate_sat_per_kvb", with = "crate::serde_utils::fee_rate_sat_per_kvb")]
 		#[cfg_attr(feature = "utoipa", schema(value_type = u64))]
 		fee_rate: FeeRate,
+		#[deprecated(note = "use fee_rate_sat_per_kvb instead")]
+		#[cfg_attr(feature = "utoipa", schema(value_type = u64))]
+		#[serde(rename = "fee_rate")]
+		fee_rate_kwu: u64,
 		/// This includes the fees of the CPFP ancestors
 		#[cfg_attr(feature = "utoipa", schema(value_type = u64))]
 		total_fee: Amount,
@@ -121,7 +129,8 @@ impl From<bark::exit::ExitTxOrigin> for ExitTxOrigin {
 				ExitTxOrigin::Wallet { confirmed_in: confirmed_in.map(Into::into) }
 			},
 			bark::exit::ExitTxOrigin::Mempool { fee_rate, total_fee } => {
-				ExitTxOrigin::Mempool { fee_rate, total_fee }
+				let fee_rate_kwu = fee_rate.to_sat_per_kwu();
+				ExitTxOrigin::Mempool { fee_rate, total_fee, fee_rate_kwu }
 			},
 			bark::exit::ExitTxOrigin::Block { confirmed_in } => {
 				ExitTxOrigin::Block { confirmed_in: confirmed_in.into() }

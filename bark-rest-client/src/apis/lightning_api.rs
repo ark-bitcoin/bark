@@ -54,7 +54,7 @@ pub enum PayError {
 /// Generates a new lightning invoice with the given amount
 pub async fn generate_invoice(configuration: &configuration::Configuration, lightning_invoice_request: models::LightningInvoiceRequest) -> Result<models::InvoiceInfo, Error<GenerateInvoiceError>> {
     // add a prefix to parameters to efficiently prevent name collisions
-    let p_body_lightning_invoice_request = lightning_invoice_request;
+    let p_lightning_invoice_request = lightning_invoice_request;
 
     let uri_str = format!("{}/api/v1/lightning/receives/invoice", configuration.base_path);
     let mut req_builder = configuration.client.request(reqwest::Method::POST, &uri_str);
@@ -62,7 +62,7 @@ pub async fn generate_invoice(configuration: &configuration::Configuration, ligh
     if let Some(ref user_agent) = configuration.user_agent {
         req_builder = req_builder.header(reqwest::header::USER_AGENT, user_agent.clone());
     }
-    req_builder = req_builder.json(&p_body_lightning_invoice_request);
+    req_builder = req_builder.json(&p_lightning_invoice_request);
 
     let req = req_builder.build()?;
     let resp = configuration.client.execute(req).await?;
@@ -92,9 +92,9 @@ pub async fn generate_invoice(configuration: &configuration::Configuration, ligh
 /// Returns the status of a lightning receive for the provided filter
 pub async fn get_receive_status(configuration: &configuration::Configuration, identifier: &str) -> Result<models::LightningReceiveInfo, Error<GetReceiveStatusError>> {
     // add a prefix to parameters to efficiently prevent name collisions
-    let p_path_identifier = identifier;
+    let p_identifier = identifier;
 
-    let uri_str = format!("{}/api/v1/lightning/receives/{identifier}", configuration.base_path, identifier=crate::apis::urlencode(p_path_identifier));
+    let uri_str = format!("{}/api/v1/lightning/receives/{identifier}", configuration.base_path, identifier=crate::apis::urlencode(p_identifier));
     let mut req_builder = configuration.client.request(reqwest::Method::GET, &uri_str);
 
     if let Some(ref user_agent) = configuration.user_agent {
@@ -164,7 +164,7 @@ pub async fn list_receive_statuses(configuration: &configuration::Configuration,
 /// Sends a payment to the given lightning destination
 pub async fn pay(configuration: &configuration::Configuration, lightning_pay_request: models::LightningPayRequest) -> Result<models::LightningPayResponse, Error<PayError>> {
     // add a prefix to parameters to efficiently prevent name collisions
-    let p_body_lightning_pay_request = lightning_pay_request;
+    let p_lightning_pay_request = lightning_pay_request;
 
     let uri_str = format!("{}/api/v1/lightning/pay", configuration.base_path);
     let mut req_builder = configuration.client.request(reqwest::Method::POST, &uri_str);
@@ -172,7 +172,7 @@ pub async fn pay(configuration: &configuration::Configuration, lightning_pay_req
     if let Some(ref user_agent) = configuration.user_agent {
         req_builder = req_builder.header(reqwest::header::USER_AGENT, user_agent.clone());
     }
-    req_builder = req_builder.json(&p_body_lightning_pay_request);
+    req_builder = req_builder.json(&p_lightning_pay_request);
 
     let req = req_builder.build()?;
     let resp = configuration.client.execute(req).await?;

@@ -1,0 +1,4 @@
+- rename all feerate fields in JSON outputs
+  - new fields have `_sat_per_kvb` suffix and are expressed as such
+  - old fields are deprecated but still present
+  [#1654](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1654)
