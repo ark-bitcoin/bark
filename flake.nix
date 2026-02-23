@@ -29,6 +29,11 @@
 					sha256 = "sha256-SJwZ8g0zF2WrKDVmHrVG3pD2RGoQeo24MEXnNx5FyuI=";
 				};
 
+				rustTargetWasm = (fenix.packages.${system}.targets.wasm32-unknown-unknown.fromToolchainName {
+					name = rustVersion;
+					sha256 = "sha256-SJwZ8g0zF2WrKDVmHrVG3pD2RGoQeo24MEXnNx5FyuI=";
+				}).rust-std;
+
 				slogJq = name: filter: pkgs.writeShellApplication {
 					inherit name;
 					text = ''
@@ -89,7 +94,7 @@
 					};
 
 					devShell = import ./nix/dev-shell.nix {
-						inherit system pkgs lib fenix buildShell slog-tools;
+						inherit system pkgs lib fenix buildShell slog-tools rustTargetWasm;
 					};
 
 					libMsrvShell =
