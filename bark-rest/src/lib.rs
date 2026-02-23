@@ -36,6 +36,9 @@ type BoxFuture<T> =
 pub type OnWalletCreate = dyn Fn(CreateWalletRequest)
 	-> BoxFuture<anyhow::Result<ServerWallet>> + Send + Sync;
 
+pub type OnWalletDelete = dyn Fn() 
+	-> BoxFuture<anyhow::Result<()>> + Send + Sync;
+
 const CRATE_VERSION : &'static str = env!("CARGO_PKG_VERSION");
 
 // NB please keep below 1000 chars for crates.io publish
@@ -117,6 +120,7 @@ pub struct ServerState {
 	wallet: Arc<parking_lot::RwLock<Option<ServerWallet>>>,
 	on_wallet_create: Option<Arc<OnWalletCreate>>,
 	auth_token: AuthToken,
+	on_wallet_delete: Option<Arc<OnWalletDelete>>,
 }
 
 impl ServerState {
@@ -148,6 +152,7 @@ impl RestServer {
 		auth_token: AuthToken,
 		wallet: Option<ServerWallet>,
 		on_wallet_create: Option<Arc<OnWalletCreate>>,
+		on_wallet_delete: Option<Arc<OnWalletDelete>>,
 	) -> anyhow::Result<Self> {
 		let (router, api) = OpenApiRouter::with_openapi(ApiDoc::openapi())
 			.split_for_parts();
@@ -155,7 +160,7 @@ impl RestServer {
 		let socket_addr = config.socket_addr();
 
 		let wallet = Arc::new(parking_lot::RwLock::new(wallet));
-		let state = ServerState { wallet, on_wallet_create, auth_token };
+		let state = ServerState { wallet, on_wallet_create, auth_token, on_wallet_delete };
 
 		// /ping stays outside the auth layer.
 		let authed_api = api::v1::router()

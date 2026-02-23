@@ -143,6 +143,7 @@ mod tests {
 			wallet: Arc::new(parking_lot::RwLock::new(None)),
 			on_wallet_create: None,
 			auth_token: token,
+			on_wallet_delete: None,
 		})
 	}
 

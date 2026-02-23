@@ -12,7 +12,7 @@ use tokio::sync::RwLock;
 
 use bark::pid_lock::PidLock;
 use bark_json::web::{BarkNetwork, BitcoindAuth, ChainSourceConfig, CreateWalletRequest};
-use bark_rest::{Config, OnWalletCreate, RestServer, ServerWallet};
+use bark_rest::{Config, OnWalletCreate, OnWalletDelete, RestServer, ServerWallet};
 use bark_rest::error::ContextExt;
 use bark_rest::auth::AuthToken;
 
@@ -317,8 +317,27 @@ async fn main() -> anyhow::Result<()>{
 		}
 	});
 
+	let daemon_delete = daemon.clone();
+	let on_wallet_delete: Arc<OnWalletDelete> = Arc::new({
+		let datadir = datadir.clone();
+		move || {
+			let datadir = datadir.clone();
+			let daemon_delete = daemon_delete.clone();
+			Box::pin(async move {
+				// Stop daemon first
+				if let Some(d) = daemon_delete.write().await.take() {
+					d.stop();
+				}
+				// Wipe datadir
+				let _ = tokio::fs::remove_dir_all(&datadir).await.ok();
+				tokio::fs::create_dir_all(&datadir).await?;
+				Ok(())
+			})
+		}
+	});
+
 	let server = RestServer::start(
-		&cli.to_config(), auth_token, wallet_opt, Some(on_wallet_create),
+		&cli.to_config(), auth_token, wallet_opt, Some(on_wallet_create), Some(on_wallet_delete),
 	).await?;
 
 	run_shutdown_signal_listener().await;
