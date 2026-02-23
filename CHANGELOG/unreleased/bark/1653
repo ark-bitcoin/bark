@@ -1,0 +1,3 @@
+- only have `bark --version` return version when built on version tag,
+  otherwise return `DIRTY` (alongside the commit hash)
+  [#1653](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1653)
