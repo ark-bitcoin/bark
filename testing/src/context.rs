@@ -242,7 +242,7 @@ impl TestContext {
 		Config {
 			data_dir: data_dir.clone(),
 			network: Network::Regtest,
-			vtxo_lifetime: 144,
+			vtxo_lifetime: 432,
 			vtxo_exit_delta: 12,
 			round_interval: Duration::from_secs(3600),
 			round_submit_time: Duration::from_millis(5000),
@@ -270,7 +270,7 @@ impl TestContext {
 					VtxoTarget { count: 3, amount: btc(1) },
 				],
 				vtxo_target_issue_threshold: 50,
-				vtxo_lifetime: 144,
+				vtxo_lifetime: 432,
 				vtxo_pre_expiry: 12,
 				max_vtxo_arkoor_depth: 3,
 				issue_interval: Duration::from_secs(3),

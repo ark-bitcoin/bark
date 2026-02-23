@@ -1072,13 +1072,16 @@ async fn bark_should_exit_a_htlc_recv_that_server_refuse_to_cosign() {
 
 	res1.await.unwrap();
 
-	// vtxo expiry is 144, so exit should be triggered after 120 blocks
-	ctx.generate_blocks(130).await;
+	// exit should start triggering some blocks before the lifetime
+	ctx.generate_blocks(srv.config().vtxopool.vtxo_lifetime as u32 - 10).await;
 
 	bark.sync().await;
 
 	// Should start an exit
-	assert_eq!(bark.list_exits().await[0].state, ExitState::Start(ExitStartState { tip_height: 251 }));
+	assert_eq!(
+		bark.list_exits().await[0].state,
+		ExitState::Start(ExitStartState { tip_height: 543 }),
+	);
 	complete_exit(&ctx, &bark).await;
 
 	bark.claim_all_exits(bark.get_onchain_address().await).await;
