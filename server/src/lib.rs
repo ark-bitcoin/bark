@@ -64,6 +64,7 @@ use ark::rounds::{RoundEvent, RoundId};
 use ark::tree::signed::{LeafVtxoCosignRequest, LeafVtxoCosignResponse, UnlockPreimage};
 use ark::tree::signed::builder::{SignedTreeBuilder, SignedTreeCosignResponse};
 use bitcoin_ext::{BlockHeight, BlockRef, TxStatus, P2TR_DUST};
+use bitcoin_ext::bdk::WalletExt;
 use bitcoin_ext::rpc::{BitcoinRpcClient, BitcoinRpcExt, RpcApi};
 
 use crate::bitcoind::BitcoinRpcClientExt;
@@ -378,16 +379,21 @@ impl Server {
 		);
 
 		let mut listeners: Vec<Box<dyn ChainEventListener>> = vec![];
-		let watchman_wallet = if let Some(_cfg) = cfg.watchman.enabled() {
+		let watchman_deps = if let Some(watchman_cfg) = cfg.watchman.enabled() {
 			let watchman_wallet = PersistedWallet::load_derive_from_master_xpriv(
 				db.clone(), cfg.network, &master_xpriv, WalletKind::Watchman, deep_tip,
 			).await.context("error loading watchman wallet")?;
+			let watchman_wallet = Arc::new(tokio::sync::Mutex::new(watchman_wallet));
+
 			let frontier = VtxoExitFrontier::init(db.clone()).await?;
-			listeners.push(Box::new(Arc::new(tokio::sync::RwLock::new(frontier))));
-			Some(Arc::new(tokio::sync::Mutex::new(watchman_wallet)))
+			let frontier = Arc::new(tokio::sync::RwLock::new(frontier));
+			listeners.push(Box::new(frontier.clone()));
+
+			Some((watchman_cfg.clone(), watchman_wallet, frontier))
 		} else {
 			None
 		};
+		let watchman_wallet = watchman_deps.as_ref().map(|(_, w, _)| w.clone());
 
 		let sync_manager = Arc::new(SyncManager::start(
 			rtmgr.clone(),
@@ -398,6 +404,34 @@ impl Server {
 			cfg.sync_manager_block_poll_interval,
 			BlockTable::Captaind,
 		).await.context("Failed to start SyncManager")?);
+
+		// Start Watchman VTXO processor if enabled
+		if let Some((watchman_cfg, watchman_wallet, frontier)) = watchman_deps {
+			let signer = watchman::WatchmanSigner::new(
+				Secret::new(Keypair::from_secret_key(&SECP, &server_key.secret_key())),
+				db.clone(),
+			);
+			let drain_address = rounds_wallet.peek_next_address().address;
+			let sync_height_watcher = sync_manager.sync_height_watcher();
+
+			let watchman = watchman::Watchman::new(
+				watchman_cfg,
+				signer,
+				bitcoind.clone(),
+				db.clone(),
+				BlockTable::Captaind,
+				fee_estimator.clone(),
+				drain_address,
+				watchman_wallet,
+				frontier,
+				sync_height_watcher,
+			);
+
+			let rtmgr2 = rtmgr.clone();
+			tokio::spawn(async move {
+				watchman.run(rtmgr2).await;
+			});
+		}
 
 		let cln = ClnManager::start(
 			rtmgr.clone(),
