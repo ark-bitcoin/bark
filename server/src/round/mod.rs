@@ -1235,6 +1235,15 @@ enum ReceivePaymentsResult {
 	Proceed,
 }
 
+enum ReceiveSignaturesResult {
+	/// Timed out but retries remain — go back to collecting payments.
+	Retry(RoundState),
+	/// Timed out and retries exhausted — round is abandoned.
+	Abandoned(RoundResult),
+	/// All signatures received — continue to finish stage.
+	Proceed,
+}
+
 #[tracing::instrument(
 	skip(srv, round_input_rx),
 	name = "round",
@@ -1365,6 +1374,90 @@ async fn receive_payments(
 
 #[tracing::instrument(
 	skip(srv, round_input_rx, round_state),
+	name = "ReceiveVtxoSignatures",
+	fields(
+		{ telemetry::ATTRIBUTE_ROUND_SEQ } = %round_state.signing_vtxo_tree().round_step.round_seq(),
+		{ telemetry::ATTRIBUTE_ATTEMPT_SEQ } = round_state.signing_vtxo_tree().round_step.attempt_seq(),
+		max_round_sign_time_ms = srv.config.round_sign_time.as_millis() as u64,
+	)
+)]
+async fn receive_vtxo_signatures(
+	srv: &Server,
+	round_input_rx: &mut mpsc::UnboundedReceiver<(RoundInput, oneshot::Sender<anyhow::Error>)>,
+	round_state: &mut RoundState,
+) -> ReceiveSignaturesResult {
+	let round_step = round_state.signing_vtxo_tree().next_step(RoundStep::ReceiveVtxoSignatures);
+
+	tokio::pin! { let timeout = tokio::time::sleep(srv.config.round_sign_time); }
+	'receive: loop {
+		if round_state.proceed() {
+			break 'receive;
+		}
+		tokio::select! {
+			_ = &mut timeout => {
+				warn!("Timed out receiving vtxo partial signatures.");
+				server_rslog!(RestartMissingVtxoSigs, round_step);
+				let old_state = std::mem::replace(round_state, RoundState::Finished(RoundResult::Empty));
+				let new = old_state.into_signing_vtxo_tree().restart();
+				let need_new_round = new.need_new_round();
+				*round_state = RoundState::CollectingPayments(new);
+
+				if need_new_round {
+					server_rslog!(NeedNewRound, round_step,
+						max_round_sign_time: srv.config.round_sign_time,
+					);
+
+					let old_state = std::mem::replace(round_state, RoundState::Finished(RoundResult::Empty));
+					let finished = old_state.into_finished(RoundResult::Abandoned);
+					telemetry::set_round_state(finished.kind());
+
+					return ReceiveSignaturesResult::Abandoned(finished.result().unwrap());
+				}
+
+				return ReceiveSignaturesResult::Retry(std::mem::replace(round_state, RoundState::Finished(RoundResult::Empty)));
+			},
+			input = round_input_rx.recv() => {
+				let state = round_state.signing_vtxo_tree();
+				let round_step = state.round_step;
+				let (input, tx) = input.expect("broken channel");
+
+				let res = match input {
+					RoundInput::VtxoSignatures { pubkey, signatures } => {
+						state
+							.register_signature(pubkey, signatures)
+							.map_err(|e| {
+								client_rslog!(VtxoSignatureRegistrationFailed, round_step, error: e.to_string());
+								e
+						})
+					},
+					RoundInput::RegisterPayment { .. } => {
+						badarg!("Round already started. \
+							Message arrived late or round was full.")
+					},
+				};
+
+				if let Err(e) = res {
+					let _ = tx.send(e);
+					continue 'receive;
+				}
+
+				if round_state.proceed() {
+					break 'receive;
+				}
+			}
+		}
+	}
+
+	server_rslog!(ReceivedRoundVtxoSignatures, round_step,
+		max_round_sign_time: srv.config.round_sign_time,
+	);
+	telemetry::set_round_step_duration(round_step);
+
+	ReceiveSignaturesResult::Proceed
+}
+
+#[tracing::instrument(
+	skip(srv, round_input_rx, round_state),
 	name = "round_attempt",
 	fields(
 		{ telemetry::ATTRIBUTE_ROUND_SEQ } = %round_seq,
@@ -1426,93 +1519,25 @@ async fn perform_round_attempt(
 	};
 
 	// Wait for signatures from users
-	let round_step = round_state.signing_vtxo_tree().next_step(RoundStep::ReceiveVtxoSignatures);
-	let round_step_span = info_span!(
-		RoundStep::RECEIVE_VTXO_SIGNATURES,
-		{ telemetry::ATTRIBUTE_ROUND_SEQ } = %round_step.round_seq(),
-		{ telemetry::ATTRIBUTE_ATTEMPT_SEQ } = round_step.attempt_seq(),
-		max_round_sign_time_ms = srv.config.round_sign_time.as_millis() as u64,
-	);
-
-	tokio::pin! { let timeout = tokio::time::sleep(srv.config.round_sign_time); }
-	'receive: loop {
-		if round_state.proceed() {
-			break 'receive;
-		}
-		tokio::select! {
-			_ = &mut timeout => {
-				let _round_step_span_guard = round_step_span.enter();
-				warn!("Timed out receiving vtxo partial signatures.");
-				server_rslog!(RestartMissingVtxoSigs, round_step);
-				let new = round_state.into_signing_vtxo_tree().restart();
-				let need_new_round = new.need_new_round();
-				round_state = RoundState::CollectingPayments(new);
-
-				if need_new_round {
-					server_rslog!(NeedNewRound, round_step,
-						max_round_sign_time: srv.config.round_sign_time,
-					);
-
-					round_state = round_state.into_finished(RoundResult::Abandoned);
-
-					telemetry::set_round_state(round_state.kind());
-
-					return RoundAttemptResult::Finished(round_state.result().unwrap());
-				}
-
-				return RoundAttemptResult::Retry(round_state);
-			},
-			input = round_input_rx.recv() => {
-				let _round_step_span_guard = round_step_span.enter();
-				let state = round_state.signing_vtxo_tree();
-				let round_step = state.round_step;
-				let (input, tx) = input.expect("broken channel");
-
-				let res = match input {
-					RoundInput::VtxoSignatures { pubkey, signatures } => {
-						state
-							.register_signature(pubkey, signatures)
-							.map_err(|e| {
-								client_rslog!(VtxoSignatureRegistrationFailed, round_step, error: e.to_string());
-								e
-						})
-					},
-					RoundInput::RegisterPayment { .. } => {
-						badarg!("Round already started. \
-							Message arrived late or round was full.")
-					},
-				};
-
-				if let Err(e) = res {
-					let _ = tx.send(e);
-					continue 'receive;
-				}
-
-				if round_state.proceed() {
-					break 'receive;
-				}
-			}
-		}
+	match receive_vtxo_signatures(srv, round_input_rx, &mut round_state).await {
+		ReceiveSignaturesResult::Retry(new_state) => {
+			return RoundAttemptResult::Retry(new_state);
+		},
+		ReceiveSignaturesResult::Abandoned(result) => {
+			return RoundAttemptResult::Finished(result);
+		},
+		ReceiveSignaturesResult::Proceed => {
+			// Continue with final stage
+		},
 	}
-
-	server_rslog!(ReceivedRoundVtxoSignatures, round_step,
-		max_round_sign_time: srv.config.round_sign_time,
-	);
-	telemetry::set_round_step_duration(round_step);
 
 	// ****************************************************************
 	// * Finish the round
 	// ****************************************************************
 
 	let round_step = round_state.signing_vtxo_tree().next_step(RoundStep::FinalStage);
-	let round_step_span = info_span!(
-		RoundStep::FINAL_STAGE,
-		{ telemetry::ATTRIBUTE_ROUND_SEQ } = %round_seq,
-		{ telemetry::ATTRIBUTE_ATTEMPT_SEQ } = round_step.attempt_seq(),
-	);
-	let _round_step_span_guard = round_step_span.enter();
 
-	round_state = match round_state.into_signing_vtxo_tree().finish(&srv).instrument(round_step_span.clone()).await {
+	round_state = match round_state.into_signing_vtxo_tree().finish(&srv).await {
 		Ok(()) => {
 			RoundState::Finished(RoundResult::Success)
 		},
