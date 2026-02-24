@@ -1230,6 +1230,11 @@ enum RoundAttemptResult {
 	Finished(RoundResult),
 }
 
+enum ReceivePaymentsResult {
+	Empty,
+	Proceed,
+}
+
 #[tracing::instrument(
 	skip(srv, round_input_rx),
 	name = "round",
@@ -1282,6 +1287,84 @@ async fn perform_round(
 
 #[tracing::instrument(
 	skip(srv, round_input_rx, round_state),
+	name = "ReceivePayments",
+	fields(
+		{ telemetry::ATTRIBUTE_ROUND_SEQ } = %round_state.collecting_payments().round_step.round_seq(),
+		{ telemetry::ATTRIBUTE_ATTEMPT_SEQ } = round_state.collecting_payments().attempt_seq(),
+		max_round_submit_time_ms = srv.config.round_submit_time.as_millis() as u64,
+	)
+)]
+async fn receive_payments(
+	srv: &Server,
+	round_input_rx: &mut mpsc::UnboundedReceiver<(RoundInput, oneshot::Sender<anyhow::Error>)>,
+	round_state: &mut RoundState,
+) -> ReceivePaymentsResult {
+	let state = round_state.collecting_payments();
+	let round_step = state.next_step(RoundStep::ReceivePayments);
+
+	tokio::pin! { let timeout = tokio::time::sleep(srv.config.round_submit_time); }
+	'receive: loop {
+		tokio::select! {
+			() = &mut timeout => {
+				break 'receive
+			},
+			input = round_input_rx.recv() => {
+				let (input, tx) = input.expect("broken channel");
+
+				let res = match input {
+					RoundInput::RegisterPayment { inputs, vtxo_requests, unlock_preimage } => {
+						state
+							.process_payment(srv, inputs, vtxo_requests, unlock_preimage)
+							.await
+							.map_err(|e| {
+								debug!("error processing payment: {e:#}");
+								e
+							})
+					},
+					_ => badarg!("unexpected message. current step is payment registration"),
+				};
+
+				if let Err(e) = res {
+					tx.send(e).expect("broken channel");
+					continue 'receive;
+				}
+
+				if state.proceed {
+					break 'receive;
+				}
+			}
+		}
+	}
+
+	// after the interactive sign-ups, also add our non-interactive participations
+	state.register_all_non_interactive_participations(srv)
+		.await;
+
+	let input_volume = state.total_input_amount();
+	let input_count = state.all_inputs.len();
+	let output_count = state.all_outputs.len();
+
+	telemetry::set_round_step_duration(round_step);
+	telemetry::set_round_metrics(input_volume, input_count, output_count);
+
+	if !state.have_payments() {
+		server_rslog!(NoRoundPayments, round_step, max_round_submit_time: srv.config.round_submit_time);
+
+		return ReceivePaymentsResult::Empty;
+	}
+
+	server_rslog!(ReceivedRoundPayments, round_step,
+		max_round_submit_time: srv.config.round_submit_time,
+		input_volume,
+		input_count,
+		output_count,
+	);
+
+	ReceivePaymentsResult::Proceed
+}
+
+#[tracing::instrument(
+	skip(srv, round_input_rx, round_state),
 	name = "round_attempt",
 	fields(
 		{ telemetry::ATTRIBUTE_ROUND_SEQ } = %round_seq,
@@ -1314,86 +1397,16 @@ async fn perform_round_attempt(
 	telemetry::set_round_step_duration(state.round_step);
 
 	// Start receiving payments.
-	let round_step = state.next_step(RoundStep::ReceivePayments);
-	let round_step_span = info_span!(
-		RoundStep::RECEIVE_PAYMENTS,
-		{ telemetry::ATTRIBUTE_ROUND_SEQ } = %round_step.round_seq(),
-		{ telemetry::ATTRIBUTE_ATTEMPT_SEQ } = round_step.attempt_seq(),
-		max_round_submit_time_ms = srv.config.round_submit_time.as_millis() as u64,
-	);
-
-	tokio::pin! { let timeout = tokio::time::sleep(srv.config.round_submit_time); }
-	'receive: loop {
-		tokio::select! {
-			() = &mut timeout => {
-				break 'receive
-			},
-			input = round_input_rx.recv() => {
-				let (input, tx) = input.expect("broken channel");
-
-				let res = match input {
-					RoundInput::RegisterPayment { inputs, vtxo_requests, unlock_preimage } => {
-						state
-							.process_payment(srv, inputs, vtxo_requests, unlock_preimage)
-							.instrument(round_step_span.clone()).await
-							.map_err(|e| {
-								debug!("error processing payment: {e:#}");
-								e
-							})
-					},
-					_ => badarg!("unexpected message. current step is payment registration"),
-				};
-
-				if let Err(e) = res {
-					tx.send(e).expect("broken channel");
-					continue 'receive;
-				}
-
-				if state.proceed {
-					break 'receive;
-				}
-			}
-		}
+	match receive_payments(srv, round_input_rx, &mut round_state).await {
+		ReceivePaymentsResult::Empty => {
+			round_state = round_state.into_finished(RoundResult::Empty);
+			telemetry::set_round_state(round_state.kind());
+			return RoundAttemptResult::Finished(round_state.result().unwrap());
+		},
+		ReceivePaymentsResult::Proceed => {
+			// Continue with the rest of the attempt
+		},
 	}
-
-	// after the interactive sign-ups, also add our non-interactive participations
-	state.register_all_non_interactive_participations(srv)
-		.instrument(round_step_span.clone()).await;
-
-	let input_volume = state.total_input_amount();
-	let input_count = state.all_inputs.len();
-	let output_count = state.all_outputs.len();
-
-	telemetry::set_round_step_duration(round_step);
-	telemetry::set_round_metrics(input_volume, input_count, output_count);
-
-	if !state.have_payments() {
-		let _round_stop_span_guard = round_step_span.enter();
-		server_rslog!(NoRoundPayments, round_step, max_round_submit_time: srv.config.round_submit_time);
-
-		round_state = round_state.into_finished(RoundResult::Empty);
-
-		telemetry::set_round_state(round_state.kind());
-
-		return RoundAttemptResult::Finished(round_state.result().unwrap());
-	}
-
-	let round_step_span = info_span!(
-		telemetry::TRACE_RUN_ROUND_POPULATED,
-		{ telemetry::ATTRIBUTE_ROUND_SEQ } = %round_seq,
-		{ telemetry::ATTRIBUTE_ATTEMPT_SEQ } = state.attempt_seq(),
-		max_round_submit_time_ms = srv.config.round_submit_time.as_millis() as u64,
-		input_volume = input_volume.to_sat(),
-		input_count = input_count,
-		output_count = output_count,
-	);
-	let round_step_span_guard = round_step_span.enter();
-	server_rslog!(ReceivedRoundPayments, round_step,
-		max_round_submit_time: srv.config.round_submit_time,
-		input_volume,
-		input_count,
-		output_count,
-	);
 
 	// ****************************************************************
 	// * Vtxo tree construction and signing
@@ -1401,7 +1414,7 @@ async fn perform_round_attempt(
 	// * - We will always store vtxo tx data from top to bottom,
 	// *   meaning from the root tx down to the leaves.
 	// ****************************************************************
-	round_state = match round_state.into_collecting_payments().progress(srv).instrument(round_step_span.clone()).await {
+	round_state = match round_state.into_collecting_payments().progress(srv).await {
 		Ok(s) => RoundState::SigningVtxoTree(s),
 		Err(e) => {
 			round_state = RoundState::Finished(RoundResult::Err(e));
@@ -1414,7 +1427,6 @@ async fn perform_round_attempt(
 
 	// Wait for signatures from users
 	let round_step = round_state.signing_vtxo_tree().next_step(RoundStep::ReceiveVtxoSignatures);
-	drop(round_step_span_guard);
 	let round_step_span = info_span!(
 		RoundStep::RECEIVE_VTXO_SIGNATURES,
 		{ telemetry::ATTRIBUTE_ROUND_SEQ } = %round_step.round_seq(),
