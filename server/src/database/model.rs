@@ -3,25 +3,26 @@ use std::str::FromStr;
 
 use anyhow::Context;
 
+use ark::vtxo::Policy;
 use bitcoin::{Transaction, Txid};
 use bitcoin::consensus::deserialize;
 use chrono::{DateTime, Local};
 use tokio_postgres::Row;
 
-use ark::{ProtocolEncoding, Vtxo, VtxoId};
+use ark::{ProtocolEncoding, ServerVtxoPolicy, Vtxo, VtxoId, VtxoPolicy};
 
 
 // Used by mailbox as an always increasing number for data sorting.
 pub type Checkpoint = u64;
 
 #[derive(Debug)]
-pub struct VtxoState {
+pub struct VtxoState<P: Policy = VtxoPolicy> {
 	pub id: i64,
 	/// The id of the VTXO
 	pub vtxo_id: VtxoId,
 
 	/// The raw vtxo encoded.
-	pub vtxo: Vtxo,
+	pub vtxo: Vtxo<P>,
 	// NB keep this type explicit as u32 instead of BlockHeight to ensure encoding is stable
 	pub expiry: u32,
 
@@ -39,7 +40,40 @@ pub struct VtxoState {
 	pub updated_at: DateTime<Local>,
 }
 
-impl VtxoState {
+impl VtxoState<ServerVtxoPolicy> {
+	pub fn try_into_user_vtxo_state(self) -> Result<VtxoState<VtxoPolicy>, Self> {
+		match self.vtxo.try_into_user_vtxo() {
+			Ok(v) => {
+				Ok(VtxoState {
+					id: self.id,
+					vtxo_id: self.vtxo_id,
+					vtxo: v,
+					expiry: self.expiry,
+					oor_spent_txid: self.oor_spent_txid,
+					spent_in_round: self.spent_in_round,
+					offboarded_in: self.offboarded_in,
+					created_at: self.created_at,
+					updated_at: self.updated_at,
+				})
+			},
+			Err(v) => {
+				Err(VtxoState {
+					id: self.id,
+					vtxo_id: self.vtxo_id,
+					vtxo: v,
+					expiry: self.expiry,
+					oor_spent_txid: self.oor_spent_txid,
+					spent_in_round: self.spent_in_round,
+					offboarded_in: self.offboarded_in,
+					created_at: self.created_at,
+					updated_at: self.updated_at,
+				})
+			},
+		}
+	}
+}
+
+impl<P: Policy> VtxoState<P> {
 	pub fn is_spendable(&self) -> bool {
 		self.oor_spent_txid.is_none()
 			&& self.spent_in_round.is_none()
@@ -47,13 +81,13 @@ impl VtxoState {
 	}
 }
 
-impl AsRef<Vtxo> for VtxoState {
-	fn as_ref(&self) -> &Vtxo {
+impl<P: Policy> AsRef<Vtxo<P>> for VtxoState<P> {
+	fn as_ref(&self) -> &Vtxo<P> {
 	    &self.vtxo
 	}
 }
 
-impl TryFrom<Row> for VtxoState {
+impl<P: Policy + ProtocolEncoding> TryFrom<Row> for VtxoState<P> {
 	type Error = anyhow::Error;
 
 	fn try_from(row: Row) -> Result<Self, Self::Error> {

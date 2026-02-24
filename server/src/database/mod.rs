@@ -37,7 +37,7 @@ use futures::Stream;
 use tokio_postgres::{Client, NoTls, GenericClient, RowStream};
 use tokio_postgres::types::Type;
 use tracing::{info, warn};
-use ark::{ServerVtxo, Vtxo, VtxoId};
+use ark::{ServerVtxo, ServerVtxoPolicy, Vtxo, VtxoId};
 use ark::mailbox::MailboxIdentifier;
 use ark::encode::ProtocolEncoding;
 
@@ -194,14 +194,36 @@ impl Db {
 		Ok(())
 	}
 
-	pub async fn get_vtxo_by_id(&self, id: VtxoId) -> anyhow::Result<VtxoState> {
+	pub async fn get_server_vtxo_by_id(
+		&self,
+		id: VtxoId,
+	) -> anyhow::Result<VtxoState<ServerVtxoPolicy>> {
 		let conn = self.get_conn().await?;
 		query::get_vtxo_by_id(&*conn, id).await
 	}
 
-	pub async fn get_vtxos_by_id(&self, ids: &[VtxoId]) -> anyhow::Result<Vec<VtxoState>> {
+	pub async fn get_server_vtxos_by_id(
+		&self,
+		ids: &[VtxoId],
+	) -> anyhow::Result<Vec<VtxoState<ServerVtxoPolicy>>> {
 		let conn = self.get_conn().await?;
 		query::get_vtxos_by_id(&*conn, ids).await
+	}
+
+	pub async fn get_user_vtxo_by_id(&self, id: VtxoId) -> anyhow::Result<VtxoState> {
+		let v = self.get_server_vtxo_by_id(id).await?;
+		match v.try_into_user_vtxo_state() {
+			Ok(v) => Ok(v),
+			Err(_) => bail!("requested VTXO {} is not a user VTXO", id),
+		}
+	}
+
+	pub async fn get_user_vtxos_by_id(&self, ids: &[VtxoId]) -> anyhow::Result<Vec<VtxoState>> {
+		let vs = self.get_server_vtxos_by_id(ids).await?;
+		Ok(vs.into_iter().map(|v| match v.try_into_user_vtxo_state() {
+			Ok(v) => Ok(v),
+			Err(v) => bail!("requested VTXO {} is not a user VTXO", v.vtxo_id),
+		}).collect::<anyhow::Result<_, _>>()?)
 	}
 
 

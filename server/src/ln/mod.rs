@@ -42,7 +42,7 @@ impl Server {
 		let invoice_payment_hash = invoice.payment_hash();
 
 		let input_vtxo_ids = request.inputs().cloned().collect::<Vec<VtxoId>>();
-		let input_vtxos = self.db.get_vtxos_by_id(&input_vtxo_ids).await?
+		let input_vtxos = self.db.get_user_vtxos_by_id(&input_vtxo_ids).await?
 			.into_iter().map(|v| v.vtxo).collect::<Vec<_>>();
 
 		let htlc_vtxos = request.all_outputs()
@@ -132,7 +132,7 @@ impl Server {
 		//TODO(stevenroose) validate vtxo generally (based on input)
 		let invoice_payment_hash = invoice.payment_hash();
 
-		let htlc_vtxos = self.db.get_vtxos_by_id(&htlc_vtxo_ids).await?;
+		let htlc_vtxos = self.db.get_user_vtxos_by_id(&htlc_vtxo_ids).await?;
 
 		slog!(LightningPaymentInitRequested, invoice_payment_hash, htlc_vtxo_ids);
 
@@ -243,7 +243,7 @@ impl Server {
 		}
 
 		let htlc_vtxo_ids = cosign_request.inputs().cloned().collect::<Vec<VtxoId>>();
-		let htlc_vtxos = self.db.get_vtxos_by_id(&htlc_vtxo_ids).await?.into_iter()
+		let htlc_vtxos = self.db.get_user_vtxos_by_id(&htlc_vtxo_ids).await?.into_iter()
 			.map(|v| v.vtxo).collect::<Vec<_>>();
 
 		let input_policy = htlc_vtxos.iter()
@@ -441,7 +441,7 @@ impl Server {
 			LightningHtlcSubscriptionStatus::Accepted => {}, // we continue
 			LightningHtlcSubscriptionStatus::HtlcsReady => {
 				// we already did this, let's fetch the vtxos and return them
-				let vtxos = self.db.get_vtxos_by_id(&sub.htlc_vtxos).await?.into_iter()
+				let vtxos = self.db.get_user_vtxos_by_id(&sub.htlc_vtxos).await?.into_iter()
 					.map(|v| v.vtxo)
 					.collect();
 				return Ok((sub, vtxos));
@@ -517,7 +517,7 @@ impl Server {
 					let vtxo_id = VtxoId::from_bytes(vtxo_id)?;
 					let ownership_proof = schnorr::Signature::from_bytes(ownership_proof)?;
 
-					let vtxos = self.db.get_vtxos_by_id(&[vtxo_id]).await?;
+					let vtxos = self.db.get_user_vtxos_by_id(&[vtxo_id]).await?;
 					let vtxo = vtxos.first().badarg("vtxo for proof not found")?;
 					if !vtxo.is_spendable() {
 						return badarg!("vtxo for proof is not spendable");
@@ -576,7 +576,7 @@ impl Server {
 			bail!("internal error: no HTLC VTXOs found");
 		}
 
-		let mut htlc_vtxos = self.db.get_vtxos_by_id(&sub.htlc_vtxos).await?;
+		let mut htlc_vtxos = self.db.get_user_vtxos_by_id(&sub.htlc_vtxos).await?;
 		htlc_vtxos.sort_by_key(|v| v.vtxo_id);
 
 		// check that cosign request input vtxos and htlc vtxos match

@@ -122,7 +122,7 @@ impl Server {
 		request: ArkoorPackageCosignRequest<VtxoId>
 	) -> anyhow::Result<ArkoorPackageCosignResponse> {
 		let input_vtxo_ids = request.inputs().cloned().collect::<Vec<VtxoId>>();
-		let input_vtxos = self.db.get_vtxos_by_id(&input_vtxo_ids).await?
+		let input_vtxos = self.db.get_user_vtxos_by_id(&input_vtxo_ids).await?
 			.into_iter().map(|v| v.vtxo).collect::<Vec<_>>();
 
 		// Validate the inputs

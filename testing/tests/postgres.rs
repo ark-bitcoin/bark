@@ -35,8 +35,8 @@ async fn upsert_vtxo() {
 	let vtxo3 = ServerVtxo::from(VTXO_VECTORS.arkoor_htlc_out_vtxo.clone());
 
 	db.upsert_vtxos(&[vtxo1.clone(), vtxo2.clone()]).await.expect("Query succeeded");
-	db.get_vtxos_by_id(&[vtxo1.id(), vtxo2.id()]).await.expect("Query succeeded");
-	db.get_vtxos_by_id(&[vtxo3.id()]).await.expect_err("Query Failed because 3 isn't in the db yet");
+	db.get_user_vtxos_by_id(&[vtxo1.id(), vtxo2.id()]).await.expect("Query succeeded");
+	db.get_user_vtxos_by_id(&[vtxo3.id()]).await.expect_err("Query Failed because 3 isn't in the db yet");
 
 	// It shouldn't complain if vtxo2 is already present
 	db.upsert_vtxos(&[vtxo2.into(), vtxo3.clone()]).await.expect("Query succeeded");
@@ -543,7 +543,7 @@ async fn upsert_vtxos_with_txid() {
 	db.upsert_vtxos(&[vtxo.clone()]).await.expect("Failed to upsert vtxo");
 
 	// Retrieve vtxos and verify they exist
-	let vtxos = db.get_vtxos_by_id(&[vtxo.id()]).await.expect("Failed to get vtxo");
+	let vtxos = db.get_user_vtxos_by_id(&[vtxo.id()]).await.expect("Failed to get vtxo");
 	assert_eq!(vtxos.len(), 1);
 
 	// Query raw DB to check vtxo_txid column
@@ -604,7 +604,7 @@ async fn update_virtual_transaction_tree_atomic() {
 	assert_eq!(retrieved_vtx.is_funding, true);
 
 	// Verify vtxo was inserted
-	let vtxos = db.get_vtxos_by_id(&[vtxo.id()]).await.expect("Query failed");
+	let vtxos = db.get_user_vtxos_by_id(&[vtxo.id()]).await.expect("Query failed");
 	assert_eq!(vtxos.len(), 1);
 }
 
@@ -661,7 +661,7 @@ async fn update_virtual_transaction_tree_empty_inputs() {
 	).await.expect("Only vtxos should succeed");
 
 	// Verify it was inserted
-	let vtxos = db.get_vtxos_by_id(&[vtxo.id()]).await.unwrap();
+	let vtxos = db.get_user_vtxos_by_id(&[vtxo.id()]).await.unwrap();
 	assert_eq!(vtxos.len(), 1);
 }
 
