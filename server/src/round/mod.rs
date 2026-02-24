@@ -29,7 +29,7 @@ use ark::rounds::{
 	RoundAttempt, RoundEvent, RoundFinished, RoundSeq, VtxoProposal, ROUND_TX_VTXO_TREE_VOUT,
 };
 use ark::tree::signed::{
-	UnlockHash, UnlockPreimage, UnsignedVtxoTree, VtxoLeafSpec, VtxoTreeSpec,
+	CachedSignedVtxoTree, UnlockHash, UnlockPreimage, UnsignedVtxoTree, VtxoLeafSpec, VtxoTreeSpec,
 };
 use server_log::{LogMsg, RoundVtxoCreated};
 
@@ -971,15 +971,17 @@ impl SigningVtxoTree {
 		)
 	}
 
+	#[tracing::instrument(
+		skip(self, srv),
+		name = "CombineVtxoSignatures",
+		fields(
+			{ telemetry::ATTRIBUTE_ROUND_SEQ } = %self.round_step.round_seq(),
+			{ telemetry::ATTRIBUTE_ATTEMPT_SEQ } = self.round_step.attempt_seq(),
+		)
+	)]
 	async fn finish(mut self, srv: &Server) -> Result<(), RoundError> {
 		// Combine the vtxo signatures.
-		let round_step = self.next_step(RoundStep::CombineVtxoSignatures);
-		let round_step_span = info_span!(
-			RoundStep::COMBINE_VTXO_SIGNATURES,
-			{ telemetry::ATTRIBUTE_ROUND_SEQ } = %round_step.round_seq(),
-			{ telemetry::ATTRIBUTE_ATTEMPT_SEQ } = round_step.attempt_seq(),
-		);
-		let _round_step_span_guard = round_step_span.enter();
+		self.next_step(RoundStep::CombineVtxoSignatures);
 
 		let srv_cosign_sigs = self.unsigned_vtxo_tree.cosign_tree(
 			&self.cosign_agg_nonces,
@@ -999,55 +1001,18 @@ impl SigningVtxoTree {
 		).expect("failed to combine partial vtxo cosign signatures: should have checked partials");
 		debug_assert_eq!(self.unsigned_vtxo_tree.verify_cosign_sigs(&cosign_sigs), Ok(()));
 
-		// Then construct the final signed vtxo tree.
-		let round_step = self.next_step(RoundStep::SignOnChainTransaction);
-		drop(_round_step_span_guard);
-		let round_step_span = info_span!(
-			RoundStep::SIGN_ON_CHAIN_TRANSACTION,
-			{ telemetry::ATTRIBUTE_ROUND_SEQ } = %round_step.round_seq(),
-			{ telemetry::ATTRIBUTE_ATTEMPT_SEQ } = round_step.attempt_seq(),
-		);
-		let _round_step_span_guard = round_step_span.enter();
+		// Then construct the final signed vtxo tree and sign on-chain tx.
+		let (signed_vtxos, signed_round_tx) = sign_on_chain_transaction(
+			&mut self, cosign_sigs
+		).await?;
 
-		let signed_vtxos = self.unsigned_vtxo_tree
-			.into_signed_tree(cosign_sigs)
-			.into_cached_tree();
+		// Broadcast the transaction.
+		let round_step = self.round_step.proceed(RoundStep::BroadcastOnChainTransaction);
+		self.round_step = round_step;
 
-		// ****************************************************************
-		// * Broadcast signed vtxo tree and round funding tx
-		// ****************************************************************
-
-		server_rslog!(CreatedSignedVtxoTree, round_step,
-			nb_vtxo_signatures: signed_vtxos.spec.cosign_sigs.len(),
-		);
-		telemetry::set_round_step_duration(round_step);
-
-		// Sign the on-chain tx.
-		let signed_round_tx = match self.wallet_lock.finish_tx(self.round_tx_psbt) {
-			Ok(tx) => tx,
-			Err(e) => return Err(RoundError::Recoverable(e.context("round tx signing error"))),
-		};
-		self.wallet_lock.commit_tx(&signed_round_tx);
-		if let Err(e) = self.wallet_lock.persist().instrument(round_step_span.clone()).await {
-			// Failing to persist the tx data at this point means that we might
-			// accidentally re-use certain inputs if we reboot the server.
-			// We keep the change set in the wallet if this happens.
-			warn!("Failed to persist BDK wallet to db: {:?}", e);
-		}
-
-		let round_step = round_step.proceed(RoundStep::BroadcastOnChainTransaction);
-		drop(_round_step_span_guard);
-		let round_step_span = info_span!(
-			RoundStep::SIGN_ON_CHAIN_TRANSACTION,
-			{ telemetry::ATTRIBUTE_ROUND_SEQ } = %round_step.round_seq(),
-			{ telemetry::ATTRIBUTE_ATTEMPT_SEQ } = round_step.attempt_seq(),
-			{ telemetry::ATTRIBUTE_ROUND_ID } = self.round_txid.to_string(),
-		);
-
-		drop(self.wallet_lock); // we no longer need the lock
-		let signed_round_tx = srv.tx_nursery.broadcast_tx(signed_round_tx).instrument(round_step_span.clone()).await
+		// Note: wallet_lock will be dropped naturally at end of state's lifetime
+		let signed_round_tx = srv.tx_nursery.broadcast_tx(signed_round_tx).await
 			.map_err(|err| RoundError::Fatal(err.context("failed to broadcast round")))?;
-		let _round_step_span_guard = round_step_span.enter();
 
 		// Send out the finished round to users.
 		trace!("Sending out finish event.");
@@ -1059,20 +1024,13 @@ impl SigningVtxoTree {
 		}));
 
 		server_rslog!(BroadcastRoundFundingTx, round_step,
-			txid: self.round_txid, round_tx_fee: self.round_tx_fee,
+			txid: self.round_txid,
+			round_tx_fee: self.round_tx_fee,
 		);
 		telemetry::set_round_step_duration(round_step);
 
 		let round_step = round_step.proceed(RoundStep::Persist);
-		drop(_round_step_span_guard);
-		let round_step_span = info_span!(
-			RoundStep::PERSIST,
-			{ telemetry::ATTRIBUTE_ROUND_SEQ } = %round_step.round_seq(),
-			{ telemetry::ATTRIBUTE_ATTEMPT_SEQ } = round_step.attempt_seq(),
-			{ telemetry::ATTRIBUTE_ROUND_ID } = self.round_txid.to_string(),
-			signed_vtxo_count = signed_vtxos.nb_leaves(),
-		);
-		let _round_step_span_guard = round_step_span.enter();
+		self.round_step = round_step;
 
 		trace!("Storing round result");
 		if tracing::enabled!(RoundVtxoCreated::LEVEL) {
@@ -1089,8 +1047,7 @@ impl SigningVtxoTree {
 			self.all_inputs.keys().copied(),
 			&signed_vtxos,
 			&self.interactive_participants,
-		).instrument(round_step_span.clone()).await;
-		let _round_step_span_guard = round_step_span.enter();
+		).await;
 		telemetry::set_round_step_duration(round_step);
 		if let Err(e) = result {
 			server_rslog!(FatalStoringRound, round_step,
@@ -1110,6 +1067,46 @@ impl SigningVtxoTree {
 
 		Ok(())
 	}
+}
+
+#[tracing::instrument(
+	skip(state, cosign_sigs),
+	name = "SignOnChainTransaction",
+	fields(
+		{ telemetry::ATTRIBUTE_ROUND_SEQ } = %state.round_step.round_seq(),
+		{ telemetry::ATTRIBUTE_ATTEMPT_SEQ } = state.round_step.attempt_seq(),
+	)
+)]
+async fn sign_on_chain_transaction(
+	state: &mut SigningVtxoTree,
+	cosign_sigs: Vec<bitcoin::secp256k1::schnorr::Signature>,
+) -> Result<(CachedSignedVtxoTree, bitcoin::Transaction), RoundError> {
+	let round_step = state.next_step(RoundStep::SignOnChainTransaction);
+
+	let signed_vtxos = state.unsigned_vtxo_tree
+		.clone()  // TODO: avoid this clone if possible
+		.into_signed_tree(cosign_sigs)
+		.into_cached_tree();
+
+	server_rslog!(CreatedSignedVtxoTree, round_step,
+		nb_vtxo_signatures: signed_vtxos.spec.cosign_sigs.len(),
+	);
+	telemetry::set_round_step_duration(round_step);
+
+	// Sign the on-chain tx.
+	let signed_round_tx = match state.wallet_lock.finish_tx(state.round_tx_psbt.clone()) {
+		Ok(tx) => tx,
+		Err(e) => return Err(RoundError::Recoverable(e.context("round tx signing error"))),
+	};
+	state.wallet_lock.commit_tx(&signed_round_tx);
+	if let Err(e) = state.wallet_lock.persist().await {
+		// Failing to persist the tx data at this point means that we might
+		// accidentally re-use certain inputs if we reboot the server.
+		// We keep the change set in the wallet if this happens.
+		warn!("Failed to persist BDK wallet to db: {:?}", e);
+	}
+
+	Ok((signed_vtxos, signed_round_tx))
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
