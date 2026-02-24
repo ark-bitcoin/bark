@@ -172,7 +172,6 @@ impl Wallet {
 		let resp = srv.client.claim_lightning_receive(protos::ClaimLightningReceiveRequest {
 			payment_hash: receive.payment_hash.to_byte_array().to_vec(),
 			payment_preimage: receive.payment_preimage.to_vec(),
-			vtxo_policy: receive_policy.serialize(),
 			cosign_request: Some(cosign_request.into()),
 		}).await?.into_inner();
 		let cosign_resp = resp.try_into().context("invalid cosign response")?;

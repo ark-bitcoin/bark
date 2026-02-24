@@ -1151,14 +1151,11 @@ async fn server_should_refuse_claim_twice() {
 
 	assert_eq!(bark.spendable_balance().await, btc(3));
 
-	let keypair = Keypair::new(&SECP, &mut bip39::rand::thread_rng());
-	let policy =  VtxoPolicy::new_pubkey(keypair.public_key());
 	let cosign_req = ArkoorPackageCosignRequest { requests: Vec::<ArkoorCosignRequest<VtxoId>>::new() };
 
 	let err = srv.get_public_rpc().await.claim_lightning_receive(protos::ClaimLightningReceiveRequest {
 		payment_hash: receive.payment_hash.to_byte_array().to_vec(),
 		payment_preimage: receive.payment_preimage.to_vec(),
-		vtxo_policy: policy.serialize(),
 		cosign_request: Some(cosign_req.into()),
 	}).await.unwrap_err().to_alt_string();
 
@@ -1324,14 +1321,11 @@ async fn server_should_refuse_claim_twice_intra_ark_ln_receive() {
 	// HTLC settlement on lightning side
 	res1.ready().await.unwrap();
 
-	let keypair = Keypair::new(&SECP, &mut bip39::rand::thread_rng());
-	let policy =  VtxoPolicy::new_pubkey(keypair.public_key());
 	let cosign_req = ArkoorPackageCosignRequest { requests: Vec::<ArkoorCosignRequest<VtxoId>>::new() };
 
 	let err = srv.get_public_rpc().await.claim_lightning_receive(protos::ClaimLightningReceiveRequest {
 		payment_hash: receive.payment_hash.to_byte_array().to_vec(),
 		payment_preimage: receive.payment_preimage.to_vec(),
-		vtxo_policy: policy.serialize(),
 		cosign_request: Some(cosign_req.into()),
 	}).await.unwrap_err().to_alt_string();
 

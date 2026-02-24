@@ -2,7 +2,7 @@
 use bitcoin::Amount;
 use bitcoin::secp256k1::PublicKey;
 
-use ark::{VtxoId, VtxoPolicy, VtxoRequest};
+use ark::VtxoId;
 use ark::lightning::{PaymentHash, Preimage};
 use bitcoin_ext::BlockHeight;
 
@@ -66,8 +66,6 @@ impl_slog!(LightningReceivePrepared, INFO, "prepared HTLC VTXOs for lightning re
 pub struct LightningReceiveClaimRequested {
 	pub payment_hash: PaymentHash,
 	pub payment_preimage: Preimage,
-	#[serde(with = "ark::encode::serde")]
-	pub vtxo_policy: VtxoPolicy,
 }
 impl_slog!(LightningReceiveClaimRequested, TRACE, "requested lightning receive claim");
 
@@ -75,7 +73,7 @@ impl_slog!(LightningReceiveClaimRequested, TRACE, "requested lightning receive c
 pub struct LightningReceiveClaimed {
 	pub payment_hash: PaymentHash,
 	pub payment_preimage: Preimage,
-	pub vtxo_request: VtxoRequest,
+	pub amount: Amount,
 }
 impl_slog!(LightningReceiveClaimed, INFO, "claimed lightning receive");
 
