@@ -326,10 +326,11 @@ impl Wallet {
 				// Maybe we want a different behavior here, but we have to decide whether
 				// htlc vtxos revocation is a all or nothing process.
 				let min_expiry = payment.htlc_vtxos.iter()
-					.map(|v| v.vtxo.spec().expiry_height)
-					.min().context("no HTLC VTXOs for expiry check")?;
+					.filter_map(|v|
+						v.vtxo.policy().as_server_htlc_send().and_then(|p| Some(p.htlc_expiry))
+					).min().context("no HTLC VTXOs for expiry check")?;
 
-				if tip > min_expiry.saturating_sub(self.config().vtxo_refresh_expiry_threshold) {
+				if tip > min_expiry {
 					warn!("Some HTLC VTXOs for payment {} are about to expire soon, marking to exit", payment_hash);
 
 					let vtxos = payment.htlc_vtxos
