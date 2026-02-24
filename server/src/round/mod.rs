@@ -13,12 +13,10 @@ use anyhow::Context;
 use bitcoin::consensus::encode::serialize;
 use bitcoin::{Amount, OutPoint, Psbt, Txid};
 use bitcoin::hashes::{sha256, Hash};
-use bitcoin::hex::DisplayHex;
 use bitcoin::secp256k1::{rand, Keypair, PublicKey};
 use bitcoin_ext::{BlockHeight, P2TR_DUST, P2WSH_DUST};
 use tokio::sync::{mpsc, oneshot, OwnedMutexGuard};
-use tracing::{debug, error, info, info_span, trace, warn, Span};
-use tracing::Instrument;
+use tracing::{debug, error, info, trace, warn};
 
 use ark::{
 	ProtocolEncoding, SignedVtxoRequest, Vtxo, VtxoId, VtxoIdInput, VtxoPolicy, VtxoRequest,
