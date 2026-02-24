@@ -648,19 +648,25 @@ impl CollectingPayments {
 		}
 	}
 
+	#[tracing::instrument(
+		skip(self, srv),
+		name = "VtxoTree",
+		fields(
+			{ telemetry::ATTRIBUTE_ROUND_SEQ } = %self.round_step.round_seq(),
+			{ telemetry::ATTRIBUTE_ATTEMPT_SEQ } = self.round_step.attempt_seq(),
+			expiry_height = tracing::field::Empty,
+			block_height = tracing::field::Empty,
+		)
+	)]
 	async fn progress(mut self, srv: &Server) -> Result<SigningVtxoTree, RoundError> {
 		let tip = srv.chain_tip().height;
 		let expiry_height = tip + srv.config.vtxo_lifetime as BlockHeight;
 
+		let current_span = tracing::Span::current();
+		current_span.record("expiry_height", expiry_height);
+		current_span.record("block_height", tip);
+
 		let round_step = self.next_step(RoundStep::ConstructVtxoTree);
-		let round_step_span = info_span!(
-			RoundStep::CONSTRUCT_VTXO_TREE,
-			{ telemetry::ATTRIBUTE_ROUND_SEQ } = %round_step.round_seq(),
-			{ telemetry::ATTRIBUTE_ATTEMPT_SEQ } = round_step.attempt_seq(),
-			"expiry_height" = expiry_height,
-			"block_height" = tip,
-		);
-		let round_step_span_guard = round_step_span.enter();
 
 		// In later versions, it is very likely that the server
 		// will actually want to create change vtxos, so temporarily, this
@@ -705,9 +711,7 @@ impl CollectingPayments {
 			0 => None,
 			n => Some(tip.saturating_sub(n as BlockHeight - 1)),
 		};
-		drop(round_step_span_guard);
 		let mut wallet_lock = srv.rounds_wallet.clone().lock_owned().await;
-		let _round_step_span_guard = round_step_span.enter();
 		let round_tx_psbt = {
 			let unavailable = wallet_lock.unavailable_outputs(trusted_height);
 			let mut b = wallet_lock.build_tx();
@@ -784,13 +788,6 @@ impl CollectingPayments {
 		telemetry::set_round_step_duration(round_step);
 
 		let round_step = self.next_step(RoundStep::SendingVtxoProposal);
-		let round_step_span = info_span!(
-			RoundStep::SENDING_VTXO_PROPOSAL,
-			{ telemetry::ATTRIBUTE_ROUND_SEQ } = %round_step.round_seq(),
-			{ telemetry::ATTRIBUTE_ATTEMPT_SEQ } = round_step.attempt_seq(),
-		);
-		drop(_round_step_span_guard);
-		let _round_step_span_guard = round_step_span.enter();
 
 		// Send out a vtxo proposal to signers.
 		srv.rounds.broadcast_event(RoundEvent::VtxoProposal(VtxoProposal {
