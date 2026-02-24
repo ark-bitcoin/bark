@@ -42,8 +42,8 @@ fn default_datadir() -> String {
 }
 
 /// The full version string we show in our binary.
-/// (GIT_HASH is set in build.rs)
-const FULL_VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), " (", env!("GIT_HASH"), ")");
+/// (BARK_VERSION and GIT_HASH are set in build.rs)
+const FULL_VERSION: &str = concat!(env!("BARK_VERSION"), " (", env!("GIT_HASH"), ")");
 
 #[derive(Parser)]
 #[command(name = "bark", author = "Team Second <hello@second.tech>", version = FULL_VERSION, about)]

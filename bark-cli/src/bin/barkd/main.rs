@@ -16,8 +16,8 @@ use bark_cli::wallet::{ConfigOpts, CreateOpts, create_wallet, open_wallet};
 
 
 /// The full version string we show in our binary.
-/// (GIT_HASH is set in build.rs)
-const FULL_VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), " (", env!("GIT_HASH"), ")");
+/// (BARK_VERSION and GIT_HASH are set in build.rs)
+const FULL_VERSION: &str = concat!(env!("BARK_VERSION"), " (", env!("GIT_HASH"), ")");
 
 fn default_datadir() -> String {
 	home::home_dir().or_else(|| {
