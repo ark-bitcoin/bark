@@ -18,8 +18,8 @@ use tokio::sync::{mpsc, Mutex};
 use ark::{
 	musig, ProtocolEncoding, ServerVtxo, SignedVtxoRequest, Vtxo, VtxoId, VtxoPolicy, VtxoRequest, SECP
 };
-use ark::arkoor::{ArkoorCosignRequest, ArkoorDestination};
-use ark::arkoor::package::{ArkoorPackageBuilder, ArkoorPackageCosignRequest};
+use ark::arkoor::ArkoorDestination;
+use ark::arkoor::package::ArkoorPackageBuilder;
 use ark::challenges::RoundAttemptChallenge;
 use ark::mailbox::{MailboxAuthorization, MailboxIdentifier};
 use ark::tree::signed::builder::SignedTreeBuilder;
@@ -1119,8 +1119,8 @@ async fn server_generated_invoice_has_configured_expiry() {
 }
 
 #[tokio::test]
-async fn server_should_refuse_claim_twice() {
-	let ctx = TestContext::new("server/server_should_refuse_claim_twice").await;
+async fn server_claim_lightning_receive_is_idempotent() {
+	let ctx = TestContext::new("server/server_claim_lightning_receive_is_idempotent").await;
 
 	let lightning = ctx.new_lightning_setup("lightningd").await;
 
@@ -1132,7 +1132,6 @@ async fn server_should_refuse_claim_twice() {
 	bark.board_and_confirm_and_register(&ctx, btc(2)).await;
 
 	let invoice_info = bark.bolt11_invoice(btc(1)).await;
-	let receive = bark.lightning_receive_status(&invoice_info.invoice).await.unwrap();
 
 	let cloned_invoice_info = invoice_info.clone();
 	let res1 = tokio::spawn(async move {
@@ -1151,15 +1150,19 @@ async fn server_should_refuse_claim_twice() {
 
 	assert_eq!(bark.spendable_balance().await, btc(3));
 
-	let cosign_req = ArkoorPackageCosignRequest { requests: Vec::<ArkoorCosignRequest<VtxoId>>::new() };
+	let vtxos_before = bark.vtxo_ids_no_sync().await;
+	let status_before = bark.lightning_receive_status(&invoice_info.invoice).await.unwrap();
+	assert!(status_before.finished_at.is_some());
 
-	let err = srv.get_public_rpc().await.claim_lightning_receive(protos::ClaimLightningReceiveRequest {
-		payment_hash: receive.payment_hash.to_byte_array().to_vec(),
-		payment_preimage: receive.payment_preimage.to_vec(),
-		cosign_request: Some(cosign_req.into()),
-	}).await.unwrap_err().to_alt_string();
+	// Claiming again should be a no-op.
+	bark.lightning_receive(&invoice_info.invoice).wait_millis(10_000).await;
 
-	assert!(err.contains("payment status in incorrect state: settled"), "err: {err}");
+	assert_eq!(bark.spendable_balance().await, btc(3));
+	assert_eq!(bark.vtxo_ids_no_sync().await, vtxos_before);
+	assert_eq!(
+		bark.lightning_receive_status(&invoice_info.invoice).await.unwrap().finished_at,
+		status_before.finished_at,
+	);
 }
 
 #[tokio::test]
@@ -1293,8 +1296,8 @@ async fn server_returned_htlc_recv_vtxos_should_be_identical_intra_ark() {
 }
 
 #[tokio::test]
-async fn server_should_refuse_claim_twice_intra_ark_ln_receive() {
-	let ctx = TestContext::new("server/server_should_refuse_claim_twice_intra_ark_ln_receive").await;
+async fn server_claim_lightning_receive_is_idempotent_intra_ark() {
+	let ctx = TestContext::new("server/server_claim_lightning_receive_is_idempotent_intra_ark").await;
 
 	trace!("Start lightningd-1");
 	let lightning = ctx.new_lightning_setup("lightningd").await;
@@ -1309,7 +1312,6 @@ async fn server_should_refuse_claim_twice_intra_ark_ln_receive() {
 	bark2.board_and_confirm_and_register(&ctx, sat(400_000)).await;
 
 	let invoice_info = bark1.bolt11_invoice(sat(30_000)).await;
-	let receive = bark1.lightning_receive_status(&invoice_info.invoice).await.unwrap();
 
 	let cloned_invoice_info = invoice_info.clone();
 	let res1 = tokio::spawn(async move {
@@ -1321,15 +1323,18 @@ async fn server_should_refuse_claim_twice_intra_ark_ln_receive() {
 	// HTLC settlement on lightning side
 	res1.ready().await.unwrap();
 
-	let cosign_req = ArkoorPackageCosignRequest { requests: Vec::<ArkoorCosignRequest<VtxoId>>::new() };
+	let vtxos_before = bark1.vtxo_ids_no_sync().await;
+	let status_before = bark1.lightning_receive_status(&invoice_info.invoice).await.unwrap();
+	assert!(status_before.finished_at.is_some());
 
-	let err = srv.get_public_rpc().await.claim_lightning_receive(protos::ClaimLightningReceiveRequest {
-		payment_hash: receive.payment_hash.to_byte_array().to_vec(),
-		payment_preimage: receive.payment_preimage.to_vec(),
-		cosign_request: Some(cosign_req.into()),
-	}).await.unwrap_err().to_alt_string();
+	// Claiming again should be a no-op.
+	bark1.lightning_receive(&invoice_info.invoice).wait_millis(10_000).await;
 
-	assert!(err.contains("payment status in incorrect state: settled"), "err: {err}");
+	assert_eq!(bark1.vtxo_ids_no_sync().await, vtxos_before);
+	assert_eq!(
+		bark1.lightning_receive_status(&invoice_info.invoice).await.unwrap().finished_at,
+		status_before.finished_at,
+	);
 }
 
 #[tokio::test]

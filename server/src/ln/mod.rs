@@ -565,11 +565,11 @@ impl Server {
 		let sub = self.db.get_htlc_subscription_by_payment_hash(payment_hash).await?
 			.not_found([payment_hash], "no pending payment with this payment hash")?;
 
-		if sub.status != LightningHtlcSubscriptionStatus::HtlcsReady {
-			return badarg!("payment status in incorrect state: {}", sub.status);
+		if !matches!(sub.status, LightningHtlcSubscriptionStatus::HtlcsReady|LightningHtlcSubscriptionStatus::Settled) {
+			return badarg!("payment status in incorrect state: {}", sub.status)
 		}
 		if sub.htlc_vtxos.is_empty() {
-			error!("htlc subscription in status htlcs-ready without htlcs: {}", payment_hash);
+			error!("htlc subscription without htlcs: {}", payment_hash);
 			bail!("internal error: no HTLC VTXOs found");
 		}
 
