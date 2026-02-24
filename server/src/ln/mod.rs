@@ -34,6 +34,7 @@ use crate::{Server, CAPTAIND_API_KEY};
 
 
 impl Server {
+	#[tracing::instrument(skip(self, invoice, request))]
 	pub async fn request_lightning_pay_htlc_cosign(
 		&self,
 		invoice: Invoice,
@@ -124,6 +125,7 @@ impl Server {
 	}
 
 	/// Try to finish the lightning payment that was previously started.
+	#[tracing::instrument(skip(self, invoice, htlc_vtxo_ids))]
 	pub async fn initiate_lightning_payment(
 		&self,
 		invoice: Invoice,
@@ -203,6 +205,7 @@ impl Server {
 		Ok(())
 	}
 
+	#[tracing::instrument(skip(self))]
 	pub async fn check_lightning_payment(
 		&self,
 		payment_hash: PaymentHash,
@@ -223,6 +226,7 @@ impl Server {
 		})
 	}
 
+	#[tracing::instrument(skip(self, offer))]
 	pub async fn fetch_bolt12_invoice(&self, offer: Offer, amount: Amount) -> anyhow::Result<Bolt12Invoice> {
 		let invoice = self.cln.fetch_bolt12_invoice(offer, amount).await?;
 		Ok(invoice)
@@ -325,6 +329,7 @@ impl Server {
 		Ok(builder.cosign_response())
 	}
 
+	#[tracing::instrument(skip(self))]
 	pub async fn start_lightning_receive(
 		&self,
 		payment_hash: PaymentHash,
@@ -394,6 +399,7 @@ impl Server {
 		})
 	}
 
+	#[tracing::instrument(skip(self))]
 	pub async fn check_lightning_receive(
 		&self,
 		payment_hash: PaymentHash,
@@ -550,6 +556,7 @@ impl Server {
 		Ok(())
 	}
 
+	#[tracing::instrument(skip(self, cosign_request))]
 	pub async fn claim_lightning_receive(
 		&self,
 		payment_hash: PaymentHash,

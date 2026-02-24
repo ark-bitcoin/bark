@@ -91,6 +91,7 @@ impl Server {
 		});
 	}
 
+	#[tracing::instrument(skip(self, request, input_vtxos, ownership_proofs))]
 	pub async fn prepare_offboard(
 		&self,
 		request: OffboardRequest,
@@ -221,6 +222,7 @@ impl Server {
 		Ok(())
 	}
 
+	#[tracing::instrument(skip(self, user_pub_nonces, user_partial_sigs))]
 	pub async fn finish_offboard(
 		&self,
 		offboard_txid: Txid,

@@ -138,6 +138,7 @@ impl PersistedWallet {
 	}
 
 	/// Persist the committed wallet changes to the database.
+	#[tracing::instrument(skip(self))]
 	pub async fn persist(&mut self) -> anyhow::Result<()> {
 		// NB we make sure that we don't erase the changeset if an error happened
 		// in the db.
@@ -264,6 +265,7 @@ impl PersistedWallet {
 
 
 	/// Send money to an address.
+	#[tracing::instrument(skip(self, script_pubkey))]
 	pub async fn send(
 		&mut self,
 		script_pubkey: impl Into<ScriptBuf>,
@@ -283,6 +285,7 @@ impl PersistedWallet {
 	}
 
 	/// This function is primarily intended for dev, not prod usage.
+	#[tracing::instrument(skip(self, address, bitcoind))]
 	pub async fn drain(
 		&mut self,
 		address: Address<bitcoin::address::NetworkUnchecked>,

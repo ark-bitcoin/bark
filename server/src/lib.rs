@@ -509,6 +509,7 @@ impl Server {
 	}
 
 	/// Sync all the system's wallets.
+	#[tracing::instrument(skip(self))]
 	pub async fn sync_wallets(&self) -> anyhow::Result<()> {
 		tokio::try_join!(
 			async {
@@ -531,6 +532,7 @@ impl Server {
 	/// sends bitcoin from the rounds wallet to top it up.
 	///
 	/// Should be called after `sync_wallets`.
+	#[tracing::instrument(skip(self))]
 	pub async fn rebalance_wallets(&self) -> anyhow::Result<()> {
 		let Some(ref watchman_wallet) = self.watchman_wallet else {
 			return Ok(());
@@ -593,6 +595,7 @@ impl Server {
 		Ok(HashSet::new())
 	}
 
+	#[tracing::instrument(skip(self))]
 	pub async fn cosign_board(
 		&self,
 		amount: Amount,
@@ -644,6 +647,7 @@ impl Server {
 	/// - The funding transaction has sufficient confirmations
 	/// - The VTXO is fully valid
 	/// - The VTXO is actually a board (not another VTXO type)
+	#[tracing::instrument(skip(self, vtxo))]
 	pub async fn register_board(&self, vtxo: Vtxo) -> anyhow::Result<()> {
 		let funding_txid = vtxo.chain_anchor().txid;
 		let tx_info = self.bitcoind.custom_get_raw_transaction_info(&funding_txid, None)
@@ -867,6 +871,7 @@ impl Server {
 	}
 
 	/// Cosign the hArk leaf VTXO from a known round
+	#[tracing::instrument(skip(self, request))]
 	pub async fn cosign_hashlocked_leaf_round(
 		&self,
 		request: &LeafVtxoCosignRequest,
