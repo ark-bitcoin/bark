@@ -3,7 +3,7 @@
 
 	inputs = {
 		nixpkgs.url = "nixpkgs/nixos-25.05";
-		nixpkgs-master.url = "github:NixOS/nixpkgs/master";
+		# nixpkgs-master.url = "github:NixOS/nixpkgs/master";
 		flake-utils.url = "github:numtide/flake-utils";
 		fenix = {
 			url = "github:nix-community/fenix";
@@ -11,7 +11,7 @@
 		};
 	};
 
-	outputs = { self, nixpkgs, nixpkgs-master, flake-utils, fenix }:
+	outputs = { self, nixpkgs, flake-utils, fenix }:
 		flake-utils.lib.eachDefaultSystem (system:
 			let
 				rustVersion = "1.90.0";
@@ -24,14 +24,15 @@
 
 				isDarwin = pkgs.stdenv.hostPlatform.isDarwin;
 
-				masterPkgs = import nixpkgs-master {
-					inherit system;
-				};
-
 				rustToolchain = fenix.packages.${system}.fromToolchainName {
 					name = rustVersion;
 					sha256 = "sha256-SJwZ8g0zF2WrKDVmHrVG3pD2RGoQeo24MEXnNx5FyuI=";
 				};
+
+				rustTargetWasm = (fenix.packages.${system}.targets.wasm32-unknown-unknown.fromToolchainName {
+					name = rustVersion;
+					sha256 = "sha256-SJwZ8g0zF2WrKDVmHrVG3pD2RGoQeo24MEXnNx5FyuI=";
+				}).rust-std;
 
 				slogJq = name: filter: pkgs.writeShellApplication {
 					inherit name;
@@ -93,7 +94,7 @@
 					};
 
 					devShell = import ./nix/dev-shell.nix {
-						inherit system pkgs masterPkgs lib fenix buildShell slog-tools;
+						inherit system pkgs lib fenix buildShell slog-tools rustTargetWasm;
 					};
 
 					libMsrvShell =

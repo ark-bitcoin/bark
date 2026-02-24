@@ -12,7 +12,7 @@ clone:
 
 steps:
   - name: check-master-status
-    image: registry.2nd.dev/build:25
+    image: registry.2nd.dev/build:26
     commands:
       - |
         RESPONSE=$(curl -s -X GET 'https://gitlab.com/api/v4/projects/75519706/pipelines?ref=master&order_by=updated_at&sort=desc&per_page=2')
@@ -26,7 +26,7 @@ steps:
 
   - name: assign-version
     depends_on: check-master-status
-    image: registry.2nd.dev/build:25
+    image: registry.2nd.dev/build:26
     commands:
       - sudo chown -R nixuser:nixbld /woodpecker
       - echo "nightly-$(date -d '1 minute ago' +%Y-%m-%d)" > VERSION
@@ -35,7 +35,7 @@ steps:
 
   - name: build
     depends_on: assign-version
-    image: registry.2nd.dev/build:25
+    image: registry.2nd.dev/build:26
     commands:
       - cat VERSION
       - just build

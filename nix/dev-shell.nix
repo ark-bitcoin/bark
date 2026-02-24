@@ -1,4 +1,4 @@
-{ system, pkgs, masterPkgs, lib, fenix, slog-tools, buildShell,
+{ system, pkgs, lib, fenix, slog-tools, buildShell, rustTargetWasm,
 }:
 let
 	bitcoinVersion = "29.1";
@@ -10,7 +10,6 @@ let
 	isDarwin = pkgs.stdenv.hostPlatform.isDarwin;
 
 	rustToolchain = buildShell.rustToolchain;
-	rustTargets = fenix.packages.${system}.targets;
 	# this toolchain is used to build the internal tools
 	rustBuildToolchain = fenix.packages.${system}.combine [
 		rustToolchain.rustc
@@ -26,7 +25,7 @@ let
 
 	postgresql = pkgs.postgresql_16;
 
-	bitcoin = masterPkgs.bitcoind.overrideAttrs (old: {
+	bitcoin = pkgs.bitcoind.overrideAttrs (old: {
 		version = bitcoinVersion;
 		src = pkgs.fetchurl {
 			urls = [ "https://bitcoincore.org/bin/bitcoin-core-${bitcoinVersion}/bitcoin-${bitcoinVersion}.tar.gz" ];
@@ -170,7 +169,7 @@ in {
 				rustToolchain.llvm-tools
 				rustToolchain.rust-std
 				rustToolchain.rust-analyzer
-				rustTargets.wasm32-unknown-unknown.stable.rust-std
+				rustTargetWasm
 			])
 
 			slog-tools
