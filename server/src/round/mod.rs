@@ -400,6 +400,13 @@ impl CollectingPayments {
 		}
 	}
 
+	#[tracing::instrument(
+		skip(self, flux_guard, inputs, vtxo_requests, unlock_hash),
+		fields(
+			{ telemetry::ATTRIBUTE_ROUND_SEQ } = %self.round_step.round_seq(),
+			{ telemetry::ATTRIBUTE_ATTEMPT_SEQ } = self.round_step.attempt_seq(),
+		)
+	)]
 	fn register_non_interactive_participation(
 		&mut self,
 		flux_guard: VtxoFluxGuard,
@@ -433,6 +440,13 @@ impl CollectingPayments {
 		}
 	}
 
+	#[tracing::instrument(
+		skip(self, srv, inputs, vtxo_requests, unlock_preimage),
+		fields(
+			{ telemetry::ATTRIBUTE_ROUND_SEQ } = %self.round_step.round_seq(),
+			{ telemetry::ATTRIBUTE_ATTEMPT_SEQ } = self.round_step.attempt_seq(),
+		)
+	)]
 	pub async fn process_payment(
 		&mut self,
 		srv: &Server,
@@ -497,6 +511,12 @@ impl CollectingPayments {
 		Ok(())
 	}
 
+	#[tracing::instrument(
+		skip(self, srv, participation),
+		fields(
+			unlock_hash = %participation.unlock_hash,
+		)
+	)]
 	async fn process_non_interactive_participation(
 		&mut self,
 		srv: &Server,
@@ -600,11 +620,17 @@ impl CollectingPayments {
 		Ok(())
 	}
 
+	#[tracing::instrument(
+		skip(self, srv),
+		fields(
+			{ telemetry::ATTRIBUTE_ROUND_SEQ } = %self.round_step.round_seq(),
+			{ telemetry::ATTRIBUTE_ATTEMPT_SEQ } = self.round_step.attempt_seq(),
+		)
+	)]
 	pub async fn register_all_non_interactive_participations(
 		&mut self,
 		srv: &Server,
 	) {
-		let current_span = Span::current();
 		//TODO(stevenroose) do this streamingly to avoid allocation
 		let parts = match srv.db.get_all_pending_round_participations().await {
 			Ok(p) => p,
@@ -622,7 +648,7 @@ impl CollectingPayments {
 					might mean we don't protect hArk participants during round!");
 				continue;
 			}
-			match self.process_non_interactive_participation(srv, part).instrument(current_span.clone()).await {
+			match self.process_non_interactive_participation(srv, part).await {
 				Ok(()) => {},
 				// NB we already slog this when producing error
 				Err(ProcessHarkParticipationError::RoundFull) => continue,
