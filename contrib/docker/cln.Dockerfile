@@ -1,4 +1,4 @@
-FROM docker.io/elementsproject/lightningd:v25.12
+FROM docker.io/elementsproject/lightningd:v25.12.1
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
 	build-essential \
@@ -13,7 +13,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 ENV RUST_BACKTRACE=1 \
 	RUSTUP_TOOLCHAIN_VERSION=1.90 \
-	CLN_VERSION=25.12 \
+	CLN_VERSION=25.12.1 \
 	PATH=/root/.cargo/bin:${PATH}
 
 RUN apt-get update && apt-get install -y curl git protobuf-compiler build-essential clang libsqlite3-dev libpq-dev
