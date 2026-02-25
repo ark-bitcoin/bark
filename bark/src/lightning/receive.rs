@@ -130,6 +130,10 @@ impl Wallet {
 	///
 	/// * The list of HTLC VTXOs must have the hash lock clause matching the given
 	///   [PaymentHash].
+	/// * The preimage is revealed to the server before the cosign response is
+	///   received. If the call fails after that point, the server's
+	///   `claim_lightning_receive` is idempotent so this method can be retried
+	///   to obtain fresh cosign signatures.
 	async fn claim_lightning_receive(
 		&self,
 		receive: &LightningReceive,
@@ -172,7 +176,6 @@ impl Wallet {
 		let resp = srv.client.claim_lightning_receive(protos::ClaimLightningReceiveRequest {
 			payment_hash: receive.payment_hash.to_byte_array().to_vec(),
 			payment_preimage: receive.payment_preimage.to_vec(),
-			vtxo_policy: receive_policy.serialize(),
 			cosign_request: Some(cosign_request.into()),
 		}).await?.into_inner();
 		let cosign_resp = resp.try_into().context("invalid cosign response")?;
@@ -183,9 +186,10 @@ impl Wallet {
 
 		let mut effective_balance = Amount::ZERO;
 		for vtxo in &outputs {
-			// TODO: bailing here results in vtxos not being registered despite preimage being revealed
-			// should we make `srv.client.claim_lightning_receive` idempotent, so that bark can at
-			// least retry some times before giving up and exiting?
+			// NB: bailing here results in vtxos not being registered despite the
+			// preimage being revealed.  The server's claim_lightning_receive is
+			// idempotent, so bark can retry and obtain fresh cosign signatures,
+			// but if all retries fail the user will be forced to exit on-chain.
 			trace!("Validating Lightning receive claim VTXO {}: {}",
 				vtxo.id(), vtxo.serialize_hex(),
 			);

@@ -16,7 +16,7 @@ use tonic_tracing_opentelemetry::middleware::server::OtelGrpcLayer;
 use tracing::info;
 
 use ark::{
-	musig, ProtocolEncoding, Vtxo, VtxoId, VtxoIdInput, VtxoPolicy,
+	musig, ProtocolEncoding, Vtxo, VtxoId, VtxoIdInput,
 };
 use ark::arkoor::package::ArkoorPackageCosignRequest;
 use ark::forfeit::HashLockedForfeitBundle;
@@ -360,14 +360,12 @@ impl rpc::server::ArkService for Server {
 		let payment_hash = PaymentHash::from_bytes(req.payment_hash)?;
 
 		let payment_preimage = Preimage::from_bytes(req.payment_preimage)?;
-		let vtxo_policy = VtxoPolicy::from_bytes(req.vtxo_policy)?;
 		let cosign_request = ArkoorPackageCosignRequest::try_from(
 			req.cosign_request.badarg("cosign request missing")?,
 		).badarg("invalid cosign request")?;
 
 		let cosign_resp = self.claim_lightning_receive(
 			payment_hash,
-			vtxo_policy,
 			payment_preimage,
 			cosign_request,
 		).await.to_status()?;

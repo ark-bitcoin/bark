@@ -286,7 +286,7 @@ message PrepareLightningReceiveClaimResponse {
 message ClaimLightningReceiveRequest {
 	bytes payment_hash = 1;
 	bytes payment_preimage = 2;
-	bytes vtxo_policy = 3;
+	reserved 3; // vtxo_policy already in cosign_request
 	ArkoorPackageCosignRequest cosign_request = 4;
 }
 

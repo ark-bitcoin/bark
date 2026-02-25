@@ -13,7 +13,7 @@ use bitcoin::secp256k1::{schnorr, PublicKey};
 use tracing::{error, info, trace};
 use uuid::Uuid;
 
-use ark::{Vtxo, VtxoId, VtxoPolicy, VtxoRequest, ServerVtxo};
+use ark::{Vtxo, VtxoId, VtxoPolicy, ServerVtxo};
 use ark::arkoor::package::{ArkoorPackageCosignRequest, ArkoorPackageCosignResponse};
 use ark::challenges::LightningReceiveChallenge;
 use ark::integration::TokenStatus;
@@ -553,7 +553,6 @@ impl Server {
 	pub async fn claim_lightning_receive(
 		&self,
 		payment_hash: PaymentHash,
-		vtxo_policy: VtxoPolicy,
 		payment_preimage: Preimage,
 		cosign_request: ArkoorPackageCosignRequest<VtxoId>,
 	) -> anyhow::Result<ArkoorPackageCosignResponse> {
@@ -561,18 +560,16 @@ impl Server {
 			return badarg!("preimage doesn't match payment hash");
 		}
 
-		slog!(LightningReceiveClaimRequested, payment_hash, payment_preimage,
-			vtxo_policy: vtxo_policy.clone(),
-		);
+		slog!(LightningReceiveClaimRequested, payment_hash, payment_preimage);
 
 		let sub = self.db.get_htlc_subscription_by_payment_hash(payment_hash).await?
 			.not_found([payment_hash], "no pending payment with this payment hash")?;
 
-		if sub.status != LightningHtlcSubscriptionStatus::HtlcsReady {
-			return badarg!("payment status in incorrect state: {}", sub.status);
+		if !matches!(sub.status, LightningHtlcSubscriptionStatus::HtlcsReady|LightningHtlcSubscriptionStatus::Settled) {
+			return badarg!("payment status in incorrect state: {}", sub.status)
 		}
 		if sub.htlc_vtxos.is_empty() {
-			error!("htlc subscription in status htlcs-ready without htlcs: {}", payment_hash);
+			error!("htlc subscription without htlcs: {}", payment_hash);
 			bail!("internal error: no HTLC VTXOs found");
 		}
 
@@ -594,10 +591,6 @@ impl Server {
 			v.vtxo
 		});
 
-		let vtxo_request = VtxoRequest {
-			amount: sub.amount(),
-			policy: vtxo_policy,
-		};
 		let validation = ArkoorCosignRequestValidationParams {
 			use_checkpoints: false,
 			max_outputs_per_input: 1, // should claim all
@@ -610,7 +603,7 @@ impl Server {
 			.context("could not settle invoice")?;
 
 		let builder = self.cosign_oor_with_builder(builder).await?;
-		slog!(LightningReceiveClaimed, payment_hash, payment_preimage, vtxo_request);
+		slog!(LightningReceiveClaimed, payment_hash, payment_preimage, amount: sub.amount());
 
 		Ok(builder.cosign_response())
 	}

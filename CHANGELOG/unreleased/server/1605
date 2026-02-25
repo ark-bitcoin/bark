@@ -1,0 +1,4 @@
+- Make `claim_lightning_receive` idempotent
+  Bark can now retry a lightning receive claim if something goes wrong,
+  avoiding a forced on-chain exit.
+  [#1605](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1605)
