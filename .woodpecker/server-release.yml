@@ -15,7 +15,7 @@ steps:
     when:
       - event: tag
         ref: refs/tags/server-*
-    image: registry.2nd.dev/build:26
+    image: registry.2nd.dev/build:27
     commands:
       - sudo chown -R nixuser:nixbld /woodpecker
       - bash ./contrib/parse-versions.sh "${CI_COMMIT_TAG}" > VERSION
@@ -26,7 +26,7 @@ steps:
       - event: tag
         ref: refs/tags/server-*
     depends_on: parse-versions
-    image: registry.2nd.dev/build:26
+    image: registry.2nd.dev/build:27
     environment:
       SDKROOT: /usr/local/osxcross/SDK/MacOSX15.4.sdk
     commands:
@@ -98,7 +98,7 @@ steps:
       - event: tag
         ref: refs/tags/server-*
     depends_on: build-server
-    image: registry.2nd.dev/build:26
+    image: registry.2nd.dev/build:27
     commands:
       - cat VERSION
       - cd ./target
@@ -124,7 +124,7 @@ steps:
     when:
       - evaluate: 'CI_PIPELINE_EVENT == "tag" && CI_COMMIT_REF contains "refs/tags/server-" && CI_REPO_URL == "https://gitlab.com/ark-bitcoin/bark"'
     depends_on: release-server
-    image: registry.2nd.dev/build:26
+    image: registry.2nd.dev/build:27
     environment:
       GITLAB_RELEASE_TOKEN:
         from_secret: GITLAB_RELEASE_TOKEN

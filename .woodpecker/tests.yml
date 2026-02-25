@@ -17,7 +17,7 @@ clone:
 
 steps:
   - name: check-commits
-    image: registry.2nd.dev/build:26
+    image: registry.2nd.dev/build:27
     commands:
       - sudo chown -R nixuser:nixbld /woodpecker
       - date +"%Y%m%d-%H%M%S" > RUN_DATETIME
@@ -32,7 +32,7 @@ steps:
 
   - name: build
     depends_on: check-commits
-    image: registry.2nd.dev/build:26
+    image: registry.2nd.dev/build:27
     volumes:
       - /data:/host/data
     commands:
@@ -43,7 +43,7 @@ steps:
 
   - name: compare-static-files
     depends_on: check-commits
-    image: registry.2nd.dev/build:26
+    image: registry.2nd.dev/build:27
     commands:
       - >
         nix develop .#default --command bash -c "
@@ -55,7 +55,7 @@ steps:
 
   - name: test-unit
     depends_on: build
-    image: registry.2nd.dev/build:26
+    image: registry.2nd.dev/build:27
     commands:
       - git log --oneline | head -n 1
       - >
@@ -63,7 +63,7 @@ steps:
 
   - name: use-bark-as-dependency
     depends_on: test-unit
-    image: registry.2nd.dev/build:26
+    image: registry.2nd.dev/build:27
     commands:
       - >
         nix develop .#default --command bash -c "
@@ -76,7 +76,7 @@ steps:
 
   - name: bark-as-libs
     depends_on: test-unit
-    image: registry.2nd.dev/build:26
+    image: registry.2nd.dev/build:27
     commands:
       - >
         nix develop .#default --command bash -c "
@@ -87,7 +87,7 @@ steps:
 
   - name: lib-wasm
     depends_on: test-unit
-    image: registry.2nd.dev/build:26
+    image: registry.2nd.dev/build:27
     commands:
       - >
         nix develop .#default --command bash -c "
@@ -97,7 +97,7 @@ steps:
 
   - name: lib-msrv
     depends_on: test-unit
-    image: registry.2nd.dev/build:26
+    image: registry.2nd.dev/build:27
     commands:
       - >
         nix develop .#msrv-lib --command bash -c "
@@ -107,7 +107,7 @@ steps:
 
   - name: check-release
     depends_on: test-unit
-    image: registry.2nd.dev/build:26
+    image: registry.2nd.dev/build:27
     commands:
       - >
         nix develop .#default --command bash -c "
@@ -120,7 +120,7 @@ steps:
       - event: push
         branch: master
     depends_on: bark-as-libs
-    image: registry.2nd.dev/build:26
+    image: registry.2nd.dev/build:27
     volumes:
       - /data:/host/data
     tmpfs:
@@ -141,7 +141,7 @@ steps:
 
   - name: test-integration-mempool
     depends_on: bark-as-libs
-    image: registry.2nd.dev/build:26
+    image: registry.2nd.dev/build:27
     volumes:
       - /data:/host/data
     tmpfs:
@@ -160,15 +160,15 @@ steps:
       - export BARK_EXEC=${CI_WORKSPACE}/target/debug/bark
       - bash ./contrib/ci-run-test.sh test-integration
 
-  - name: test-integration-btc29.1
+  - name: test-integration-btc30.2
     depends_on: bark-as-libs
-    image: registry.2nd.dev/build:26
+    image: registry.2nd.dev/build:27
     volumes:
       - /data:/host/data
     tmpfs:
       - /dev/shm:size=10g
     environment:
-      TEST_DIRECTORY: ./test/btc29
+      TEST_DIRECTORY: ./test/btc30
       NEXTEST_TEST_THREADS: 2
       BARK_COMMAND_TIMEOUT_MILLIS: 120000
       TX_PROPAGATION_TIMEOUT: 30000

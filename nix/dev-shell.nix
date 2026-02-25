@@ -1,11 +1,11 @@
 { system, pkgs, lib, fenix, slog-tools, buildShell, rustTargetWasm,
 }:
 let
-	bitcoinVersion = "29.1";
-	lightningVersion = "25.12";
+	bitcoinVersion = "30.2";
+	lightningVersion = "25.12.1";
 	holdPluginVersion = "0.3.3";
-	esploraElectrsRevision = "9a4175d68ff8a098a05676e774c46aba0c9e558d";
-	mempoolElectrsRevision = "v3.2.0";
+	esploraElectrsRevision = "cb1054f689285523617300d4ae97a63965524b7c";
+	mempoolElectrsRevision = "v3.3.0";
 
 	isDarwin = pkgs.stdenv.hostPlatform.isDarwin;
 
@@ -29,8 +29,11 @@ let
 		version = bitcoinVersion;
 		src = pkgs.fetchurl {
 			urls = [ "https://bitcoincore.org/bin/bitcoin-core-${bitcoinVersion}/bitcoin-${bitcoinVersion}.tar.gz" ];
-			sha256 = "sha256-Bn9iSuJzsNhaFVT/18CYkjNRpkcgTmcDTfbMHfrPoGs=";
+			sha256 = "sha256-b9ALjEKIPVyWOQGtQQmjW+Hl7Fwtx2MBjBZsIaBshMs=";
 		};
+		cmakeFlags = (old.cmakeFlags or []) ++ [
+			"-DENABLE_IPC=OFF"
+		];
 		doCheck = false;
 	});
 
@@ -48,10 +51,10 @@ let
 		pname = "esplora-electrs";
 		version = "99.99.99";
 		src = pkgs.fetchFromGitHub {
-			owner = "stevenroose";
+			owner = "Blockstream";
 			repo = "electrs";
 			rev = esploraElectrsRevision;
-			hash = "sha256-3/0dl+HhUQdCX66ALj+gMndhQAx3AoPJMCqQyq/PK+g=";
+			hash = "sha256-oCzXawzaZRDuOhsUOI1MzgP7VY+aQUlS3F8CgcdtK+I=";
 		};
 
 		nativeBuildInputs = [ rustPlatform.bindgenHook ];
@@ -72,7 +75,7 @@ let
 			owner = "mempool";
 			repo = "electrs";
 			rev = mempoolElectrsRevision;
-			hash = "sha256-3/0dl+HhUQdCX66ALj+gMndhQAx3AoPJMCqQyq/PK+g=";
+			hash = "sha256-oxeD/z+jCe1dG9tmgYy5AUJKCuX3QNErR5gIARhhoZY=";
 		};
 
 		nativeBuildInputs = [ rustPlatform.bindgenHook ];
@@ -81,8 +84,6 @@ let
 		cargoLock.lockFile = "${src}/Cargo.lock";
 		cargoLock.outputHashes = {
 			"electrum-client-0.8.0" = "sha256-HDRdGS7CwWsPXkA1HdurwrVu4lhEx0Ay8vHi08urjZ0=";
-			"electrumd-0.1.0" = "sha256-QsoMD2uVDEITuYmYItfP6BJCq7ApoRztOCs7kdeRL9Y=";
-			"jsonrpc-0.12.0" = "sha256-lSNkkQttb8LnJej4Vfe7MrjiNPOuJ5A6w5iLstl9O1k=";
 		};
 	};
 
@@ -90,7 +91,7 @@ let
 		version = lightningVersion;
 		src = pkgs.fetchurl {
 			url = "https://github.com/ElementsProject/lightning/releases/download/v${lightningVersion}/clightning-v${lightningVersion}.zip";
-			hash = "sha256-m1r8F/jfO2lTOevsttN3Rn/dROjBdCnlVO0rP8vBisY=";
+			hash = "sha256-50rcNH9dXeRezJ3nEW/cRK5uE+IpGoHAzkU3C7p44KY=";
 		};
 		makeFlags = [ "VERSION=v${lightningVersion}" ];
 		preInstall = ''
@@ -106,7 +107,7 @@ let
 			owner = "ElementsProject";
 			repo = "lightning";
 			rev = "v${lightningVersion}";
-			hash = "sha256-7/UlYanv5RMmafgGHhFTSJd3rOeAl2bx21vt6cEOPPw=";
+			hash = "sha256-RgfEEwSqp7qM1CwFFlEUkxjEEAxa3A8kbEuVt4mYJVM=";
 		};
 		buildAndTestSubdir = "plugins/grpc-plugin";
 		nativeBuildInputs = [ rustBuildToolchain pkgs.protobuf ];
