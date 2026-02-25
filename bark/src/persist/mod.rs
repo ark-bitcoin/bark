@@ -554,13 +554,13 @@ pub trait BarkPersister: Send + Sync + 'static {
 		payment_hash: PaymentHash,
 	) -> anyhow::Result<Option<LightningReceive>>;
 
-	/// Remove a Lightning receive by its payment hash.
+	/// Mark a Lightning receive as finished by its payment hash.
 	///
 	/// Parameters:
-	/// - payment_hash: The payment hash of the record to remove.
+	/// - payment_hash: The payment hash of the record to mark finished
 	///
 	/// Errors:
-	/// - Returns an error if the removal fails.
+	/// - Returns an error if the operation fails.
 	async fn finish_pending_lightning_receive(
 		&self,
 		payment_hash: PaymentHash,
