@@ -594,6 +594,18 @@ impl TestContext {
 	pub async fn generate_blocks_unsynced(&self, block_num: u32) {
 		self.bitcoind().generate(block_num).await;
 	}
+
+	/// Triggers a round and refreshes all given barks concurrently.
+	pub async fn refresh_all(&self, srv: &Captaind, barks: &[Bark]) {
+		let futures = barks.iter().map(|b| b.try_refresh_all_no_retry());
+		let (results, _) = tokio::join!(
+			join_all(futures),
+			srv.trigger_round(),
+		);
+		for r in results {
+			r.expect("refresh failed");
+		}
+	}
 }
 
 impl Drop for TestContext {

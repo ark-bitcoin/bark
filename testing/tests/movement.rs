@@ -415,11 +415,7 @@ async fn round_refresh() {
 
 	let vtxos_pre_refresh = bark.vtxo_ids().await;
 	assert_eq!(vtxos_pre_refresh.len(), 3);
-	let (_, refresh) = tokio::join!(
-		srv.trigger_round(),
-		bark.try_refresh_all_no_retry(),
-	);
-	refresh.expect("refresh failed");
+	ctx.refresh_all(&srv, std::slice::from_ref(&bark)).await;
 	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
 	let vtxos_post_refresh = bark.vtxo_ids().await;
 
