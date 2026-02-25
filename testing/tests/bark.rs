@@ -234,11 +234,7 @@ async fn list_utxos() {
 
 	bark.board(sat(200_000)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
-	let (_, refresh) = tokio::join!(
-		srv.trigger_round(),
-		bark.try_refresh_all_no_retry(),
-	);
-	refresh.expect("refresh failed");
+	ctx.refresh_all(&srv, std::slice::from_ref(&bark)).await;
 	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
 
 	let addr = bark.get_onchain_address().await;
@@ -276,11 +272,7 @@ async fn list_vtxos() {
 	bark1.board(sat(200_000)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 
-	let (_, refresh) = tokio::join!(
-		srv.trigger_round(),
-		bark1.try_refresh_all_no_retry(),
-	);
-	refresh.expect("refresh failed");
+	ctx.refresh_all(&srv, std::slice::from_ref(&bark1)).await;
 	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
 
 	// board vtxo
@@ -337,17 +329,7 @@ async fn large_round() {
 	}
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 
-	// Refresh all vtxos - spawn all refreshes first to let them subscribe,
-	// then trigger a single round. We use tokio::spawn here (rather than
-	// tokio::join!) because with N concurrent bark processes we want to give
-	// them a head start to subscribe to round events before the round fires.
-	let barks: Vec<Arc<_>> = barks.into_iter().map(Arc::new).collect();
-	let handles: Vec<_> = barks.iter().map(|b| {
-		let b = b.clone();
-		tokio::spawn(async move { b.try_refresh_all_no_retry().await })
-	}).collect();
-	srv.trigger_round().await;
-	for h in handles { h.await.unwrap().expect("refresh failed"); }
+	ctx.refresh_all(&srv, &barks).await;
 }
 
 #[tokio::test]
@@ -418,11 +400,7 @@ async fn refresh_all() {
 	bark1.board(sat(400_000)).await;
 	bark2.board(sat(800_000)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
-	let (_, refresh) = tokio::join!(
-		srv.trigger_round(),
-		bark1.try_refresh_all_no_retry(),
-	);
-	refresh.expect("refresh failed");
+	ctx.refresh_all(&srv, std::slice::from_ref(&bark1)).await;
 	bark1.board_and_confirm_and_register(&ctx, sat(400_000)).await;
 
 	// We want bark2 to have a refresh, board, round and oor vtxo
@@ -434,11 +412,7 @@ async fn refresh_all() {
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 
 	assert_eq!(3, bark2.vtxos().await.len());
-	let (_, refresh) = tokio::join!(
-		srv.trigger_round(),
-		bark2.try_refresh_all_no_retry(),
-	);
-	refresh.expect("refresh failed");
+	ctx.refresh_all(&srv, std::slice::from_ref(&bark2)).await;
 	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
 	assert_eq!(1, bark2.vtxos().await.len());
 	assert_eq!(bark2.inround_balance().await, sat(0));
@@ -475,11 +449,7 @@ async fn refresh_counterparty() {
 	// refresh vtxo
 	bark1.board(sat(200_000)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
-	let (_, refresh) = tokio::join!(
-		srv.trigger_round(),
-		bark1.try_refresh_all_no_retry(),
-	);
-	refresh.expect("refresh failed");
+	ctx.refresh_all(&srv, std::slice::from_ref(&bark1)).await;
 	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
 
 	// board vtxo
@@ -521,11 +491,7 @@ async fn compute_balance() {
 	// refresh vtxo
 	bark1.board(sat(200_000)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
-	let (_, refresh) = tokio::join!(
-		srv.trigger_round(),
-		bark1.try_refresh_all_no_retry(),
-	);
-	refresh.expect("refresh failed");
+	ctx.refresh_all(&srv, std::slice::from_ref(&bark1)).await;
 	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
 
 	// board vtxo
@@ -582,11 +548,7 @@ async fn list_movements() {
 	assert_eq!(movements.last().unwrap().offchain_fee, Amount::ZERO);
 
 	// refresh vtxos - trigger round manually
-	let (_, refresh) = tokio::join!(
-		srv.trigger_round(),
-		bark1.try_refresh_all_no_retry(),
-	);
-	refresh.expect("refresh failed");
+	ctx.refresh_all(&srv, std::slice::from_ref(&bark1)).await;
 	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
 
 	let movements = bark1.history().await;
@@ -626,12 +588,7 @@ async fn multiple_spends_in_payment() {
 	bark1.board(sat(300_000)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 
-	// refresh vtxos
-	let (_, refresh) = tokio::join!(
-		srv.trigger_round(),
-		bark1.try_refresh_all_no_retry(),
-	);
-	refresh.expect("refresh failed");
+	ctx.refresh_all(&srv, std::slice::from_ref(&bark1)).await;
 	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
 
 	let movements = bark1.history().await;
@@ -653,12 +610,7 @@ async fn offboard_all() {
 	bark2.board(sat(800_000)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 
-	// refresh and board more
-	let (_, refresh) = tokio::join!(
-		srv.trigger_round(),
-		bark1.try_refresh_all_no_retry(),
-	);
-	refresh.expect("refresh failed");
+	ctx.refresh_all(&srv, std::slice::from_ref(&bark1)).await;
 	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
 	bark1.board_and_confirm_and_register(&ctx, sat(300_000)).await;
 
@@ -713,12 +665,7 @@ async fn offboard_vtxos() {
 	// refresh vtxo
 	bark1.board(sat(200_000)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
-
-	let (_, refresh) = tokio::join!(
-		srv.trigger_round(),
-		bark1.try_refresh_all_no_retry(),
-	);
-	refresh.expect("refresh failed");
+	ctx.refresh_all(&srv, std::slice::from_ref(&bark1)).await;
 	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
 
 	// board vtxo
@@ -892,11 +839,7 @@ async fn drop_vtxos() {
 	// refresh vtxo
 	bark1.board(sat(200_000)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
-	let (_, refresh) = tokio::join!(
-		srv.trigger_round(),
-		bark1.try_refresh_all_no_retry(),
-	);
-	refresh.expect("refresh failed");
+	ctx.refresh_all(&srv, std::slice::from_ref(&bark1)).await;
 	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
 
 	bark1.drop_vtxos().await;
@@ -1076,18 +1019,20 @@ async fn second_round_attempt() {
 	let mut log_not_allowed = srv.subscribe_log::<RoundUserVtxoNotAllowed>();
 
 	ctx.generate_blocks(1).await;
-	let res1 = tokio::spawn(async move { bark1.refresh_all_no_retry().await });
-	let res2 = tokio::spawn(async move { bark2.refresh_all_no_retry().await });
-	tokio::time::sleep(Duration::from_millis(500)).await;
-	let _ = srv.wallet_status().await;
-	let mut log_restart_missing_sigs = srv.subscribe_log::<RestartMissingVtxoSigs>();
-	srv.trigger_round().await;
-	log_restart_missing_sigs.recv().wait(Duration::from_secs(60)).await.unwrap();
-	info!("Waiting for bark2 to fail...");
-	res2.await.unwrap_err();
-	info!("Waiting for bark1 to finish...");
-	res1.await.unwrap();
-	// check that bark2 was kicked
+	let (res1, res2, ()) = tokio::join!(
+		bark1.try_refresh_all_no_retry(),
+		bark2.try_refresh_all_no_retry(),
+		async {
+			tokio::time::sleep(Duration::from_millis(500)).await;
+			let _ = srv.wallet_status().await;
+			let mut log_restart_missing_sigs = srv.subscribe_log::<RestartMissingVtxoSigs>();
+			srv.trigger_round().await;
+			log_restart_missing_sigs.recv().wait(Duration::from_secs(60)).await.unwrap();
+		},
+	);
+	info!("Checking bark1 succeeded...");
+	res1.expect("bark1 should have refreshed successfully");
+	// check that bark2 was kicked with the correct log message
 	assert_eq!(log_not_allowed.recv().ready().await.unwrap().vtxo, bark2_vtxo);
 }
 
@@ -1420,7 +1365,7 @@ async fn bark_can_claim_all_claimable_lightning_receives() {
 	let srv = ctx.new_captaind_with_funds("server", Some(&lightning.receiver), btc(10)).await;
 
 	// Start a bark and create a VTXO to be able to board
-	let bark = Arc::new(ctx.new_bark_with_funds("bark1", &srv, btc(3)).await);
+	let bark = ctx.new_bark_with_funds("bark1", &srv, btc(3)).await;
 	bark.board_and_confirm_and_register(&ctx, btc(2)).await;
 
 	let invoice_info_1 = bark.bolt11_invoice(btc(1)).await;

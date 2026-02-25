@@ -37,11 +37,7 @@ async fn simple_exit() {
 	bark.board(sat(500_000)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 
-	let (_, refresh) = tokio::join!(
-		srv.trigger_round(),
-		bark.try_refresh_all_no_retry(),
-	);
-	refresh.expect("refresh failed");
+	ctx.refresh_all(&srv, std::slice::from_ref(&bark)).await;
 	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
 
 	srv.stop().await.unwrap();
@@ -182,11 +178,7 @@ async fn exit_vtxo() {
 
 	bark.board(sat(900_000)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
-	let (_, refresh) = tokio::join!(
-		srv.trigger_round(),
-		bark.try_refresh_all_no_retry(),
-	);
-	refresh.expect("refresh failed");
+	ctx.refresh_all(&srv, std::slice::from_ref(&bark)).await;
 	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
 
 	// By calling bark vtxos we ensure the wallet is synced
@@ -218,11 +210,7 @@ async fn exit_and_send_vtxo() {
 
 	bark.board(sat(900_000)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
-	let (_, refresh) = tokio::join!(
-		srv.trigger_round(),
-		bark.try_refresh_all_no_retry(),
-	);
-	refresh.expect("refresh failed");
+	ctx.refresh_all(&srv, std::slice::from_ref(&bark)).await;
 	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
 
 	// By calling bark vtxos we ensure the wallet is synced
@@ -324,11 +312,7 @@ async fn double_exit_call() {
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 
 	// refresh vtxo
-	let (_, refresh) = tokio::join!(
-		srv.trigger_round(),
-		bark1.try_refresh_all_no_retry(),
-	);
-	refresh.expect("refresh failed");
+	ctx.refresh_all(&srv, std::slice::from_ref(&bark1)).await;
 	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
 
 	// board vtxo
@@ -882,6 +866,11 @@ async fn exit_oor_ping_pong_then_rbf_tx() {
 	bark1.sync().await;
 	bark2.sync().await;
 
+	let both = [bark1, bark2];
+	ctx.refresh_all(&srv, &both).await;
+	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
+	let [bark1, bark2] = both;
+
 	// Exit the funds
 	srv.stop().await.unwrap();
 	bark1.start_exit_all().await;
@@ -905,6 +894,7 @@ async fn exit_oor_ping_pong_then_rbf_tx() {
 	bark1.progress_exit().await;
 	await_propagation(&ctx, &bark1, &bark2).await;
 	bark2.progress_exit().await;
+
 	await_propagation(&ctx, &bark2, &bark1).await;
 	assert_eq!(bark1.list_exits().await.len(), 1, "We should have one exit");
 	assert_eq!(bark2.list_exits().await.len(), 2, "We have two exits");
@@ -955,7 +945,7 @@ async fn bark_should_exit_a_htlc_recv_that_server_refuse_to_cosign() {
 	let proxy = srv.start_proxy_no_mailbox(Proxy).await;
 
 	// Start a bark and create a VTXO to be able to board
-	let bark = Arc::new(ctx.new_bark_with_funds("bark", &proxy.address, btc(2.1)).await);
+	let bark = ctx.new_bark_with_funds("bark", &proxy.address, btc(2.1)).await;
 	bark.board(btc(2)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 

@@ -149,11 +149,7 @@ async fn bark_pay_ln_with_multiple_inputs() {
 	bark_1.board(btc(1)).await;
 	bark_2.board(btc(2)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
-	let (_, refresh) = tokio::join!(
-		srv.trigger_round(),
-		bark_1.try_refresh_all_no_retry(),
-	);
-	refresh.expect("refresh failed");
+	ctx.refresh_all(&srv, std::slice::from_ref(&bark_1)).await;
 	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
 	bark_1.board(btc(1)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
@@ -399,11 +395,7 @@ async fn bark_refresh_ln_change_vtxo() {
 	bark_1.pay_lightning(invoice, None).await;
 	assert_eq!(bark_1.spendable_balance().await, btc(3));
 
-	let (_, refresh) = tokio::join!(
-		srv.trigger_round(),
-		bark_1.try_refresh_all_no_retry(),
-	);
-	refresh.expect("refresh failed");
+	ctx.refresh_all(&srv, std::slice::from_ref(&bark_1)).await;
 	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
 	let vtxos = bark_1.vtxos().await;
 	assert_eq!(vtxos.len(), 1, "there should be only one vtxo after refresh {:?}", vtxos);
@@ -440,11 +432,7 @@ async fn bark_refresh_payment_revocation() {
 	assert_eq!(bark_1.spendable_balance().await, board_amount);
 	bark_1.pay_lightning_wait(invoice, None).await;
 
-	let (_, refresh) = tokio::join!(
-		srv.trigger_round(),
-		bark_1.try_refresh_all_no_retry(),
-	);
-	refresh.expect("refresh failed");
+	ctx.refresh_all(&srv, std::slice::from_ref(&bark_1)).await;
 	ctx.generate_blocks(srv.config().htlc_send_expiry_delta as u32 + 6).await;
 	let vtxos = bark_1.vtxos().await;
 	assert_eq!(vtxos.len(), 1, "there should be only one vtxo after refresh {:?}", vtxos);
