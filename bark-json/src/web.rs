@@ -372,17 +372,17 @@ impl PendingRoundInfo {
 		state: &'a bark::persist::models::StoredRoundState,
 		sync_result: anyhow::Result<bark::round::RoundStatus>,
 	) -> Self {
-		let funding_tx = state.state.funding_tx();
+		let funding_tx = state.state().funding_tx();
 		Self {
-			id: state.id.0,
+			id: state.id().0,
 			status: match sync_result {
 				Ok(status) => status.into(),
 				Err(e) => RoundStatus::SyncError {
 					error: format!("{:#}", e),
 				},
 			},
-			participation: state.state.participation().into(),
-			unlock_hash: state.state.unlock_hash(),
+			participation: state.state().participation().into(),
+			unlock_hash: state.state().unlock_hash(),
 			funding_txid: funding_tx.map(|t| t.compute_txid()),
 			funding_tx_hex: funding_tx.map(|t| serialize_hex(t)),
 		}

@@ -395,11 +395,14 @@ pub async fn pending_rounds(
 ) -> HandlerResult<Json<Vec<bark_json::web::PendingRoundInfo>>> {
 	let wallet = state.require_wallet()?;
 
-	let rounds = wallet.pending_round_states().await
+	let round_state_ids = wallet.pending_round_state_ids().await
 		.context("Failed to get pending rounds")?;
-	let mut infos = Vec::with_capacity(rounds.len());
-	for mut round in rounds {
-		let sync = round.state.sync(&wallet).await;
+	let mut infos = Vec::with_capacity(round_state_ids.len());
+	for id in round_state_ids {
+		let mut round = wallet.lock_wait_round_state(id).await?
+			.context("Failed to lock round state")?;
+
+		let sync = round.state_mut().sync(&wallet).await;
 		infos.push(PendingRoundInfo::new(&round, sync));
 	}
 	Ok(axum::Json(infos))
@@ -514,7 +517,7 @@ pub async fn refresh_vtxos(
 				.join_next_round(participation, Some(RoundMovement::Refresh)).await
 				.context("Failed to store round participation")?;
 
-			let sync = round.state.sync(&wallet).await;
+			let sync = round.state_mut().sync(&wallet).await;
 			Ok(axum::Json(PendingRoundInfo::new(&round, sync)))
 		}
 		None => {
@@ -558,7 +561,7 @@ pub async fn refresh_all(
 				.join_next_round(participation, Some(RoundMovement::Refresh)).await
 				.context("Failed to store round participation")?;
 
-			let sync = round.state.sync(&wallet).await;
+			let sync = round.state_mut().sync(&wallet).await;
 			Ok(axum::Json(PendingRoundInfo::new(&round, sync)))
 		}
 		None => {
@@ -605,7 +608,7 @@ pub async fn refresh_counterparty(
 				.join_next_round(participation, Some(RoundMovement::Refresh)).await
 				.context("Failed to store round participation")?;
 
-			let sync = round.state.sync(&wallet).await;
+			let sync = round.state_mut().sync(&wallet).await;
 			Ok(axum::Json(PendingRoundInfo::new(&round, sync)))
 		}
 		None => {

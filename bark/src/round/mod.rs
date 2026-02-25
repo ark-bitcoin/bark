@@ -2,6 +2,10 @@
 //! Round State Machine
 //!
 
+mod lock;
+
+pub(crate) use lock::{RoundStateGuard, RoundStateLockIndex};
+
 use std::iter;
 use std::borrow::Cow;
 use std::convert::Infallible;
@@ -17,7 +21,7 @@ use bitcoin::hashes::Hash;
 use bitcoin::hex::DisplayHex;
 use bitcoin::key::Keypair;
 use bitcoin::secp256k1::schnorr;
-use futures::future::try_join_all;
+use futures::future::{join_all, try_join_all};
 use futures::{Stream, StreamExt};
 use log::{debug, error, info, trace, warn};
 
@@ -35,13 +39,12 @@ use server_rpc::{protos, ServerConnection, TryFromBytes};
 use crate::{SECP, Wallet, WalletVtxo};
 use crate::movement::{MovementId, MovementStatus};
 use crate::movement::update::MovementUpdate;
-use crate::persist::models::{RoundStateId, StoredRoundState};
+use crate::persist::models::{RoundStateId, StoredRoundState, Unlocked};
 use crate::subsystem::{RoundMovement, Subsystem};
 
 
 /// The type string for the hArk leaf transition
 const HARK_TRANSITION_KIND: &str = "hash-locked-cosigned";
-
 
 /// Struct to communicate your specific participation for an Ark round.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1240,6 +1243,11 @@ impl Wallet {
 	/// Start a new round participation
 	///
 	/// This function will store the state in the db and mark the VTXOs as locked.
+	///
+	/// ### Return
+	///
+	/// - By default, the returned state will be locked to prevent race conditions.
+	/// To unlock the state, [StoredRoundState::unlock()] can be called.
 	pub async fn join_next_round(
 		&self,
 		participation: RoundParticipation,
@@ -1257,7 +1265,10 @@ impl Wallet {
 		let state = RoundState::new_interactive(participation, movement_id);
 
 		let id = self.db.store_round_state_lock_vtxos(&state).await?;
-		Ok(StoredRoundState { id, state })
+		let state = self.lock_wait_round_state(id).await?
+			.context("failed to lock fresh round state")?;
+
+		Ok(state)
 	}
 
 	/// Join next round in non-interactive or delegated mode
@@ -1265,7 +1276,7 @@ impl Wallet {
 		&self,
 		participation: RoundParticipation,
 		movement_kind: Option<RoundMovement>,
-	) -> anyhow::Result<StoredRoundState> {
+	) -> anyhow::Result<StoredRoundState<Unlocked>> {
 		let (mut srv, _) = self.require_server().await?;
 
 		let movement_id = if let Some(kind) = movement_kind {
@@ -1312,11 +1323,16 @@ impl Wallet {
 		);
 
 		let id = self.db.store_round_state_lock_vtxos(&state).await?;
-		Ok(StoredRoundState { id, state })
+		Ok(StoredRoundState::new(id, state))
 	}
 
 	/// Get all pending round states
-	pub async fn pending_round_states(&self) -> anyhow::Result<Vec<StoredRoundState>> {
+	pub async fn pending_round_state_ids(&self) -> anyhow::Result<Vec<RoundStateId>> {
+		self.db.get_pending_round_state_ids().await
+	}
+
+	/// Get all pending round states
+	pub async fn pending_round_states(&self) -> anyhow::Result<Vec<StoredRoundState<Unlocked>>> {
 		let ids = self.db.get_pending_round_state_ids().await?;
 		let mut states = Vec::with_capacity(ids.len());
 		for id in ids {
@@ -1331,7 +1347,7 @@ impl Wallet {
 	pub async fn pending_round_balance(&self) -> anyhow::Result<Amount> {
 		let mut ret = Amount::ZERO;
 		for round in self.pending_round_states().await? {
-			ret += round.state.pending_balance();
+			ret += round.state().pending_balance();
 		}
 		Ok(ret)
 	}
@@ -1343,7 +1359,7 @@ impl Wallet {
 	pub async fn pending_round_input_vtxos(&self) -> anyhow::Result<Vec<WalletVtxo>> {
 		let mut ret = Vec::new();
 		for round in self.pending_round_states().await? {
-			let inputs = round.state.locked_pending_inputs();
+			let inputs = round.state().locked_pending_inputs();
 			ret.reserve(inputs.len());
 			for input in inputs {
 				let v = self.get_vtxo_by_id(input.id()).await
@@ -1363,14 +1379,23 @@ impl Wallet {
 
 		debug!("Syncing {} pending round states...", states.len());
 
-		tokio_stream::iter(states).for_each_concurrent(10, |mut state| async move {
+		tokio_stream::iter(states).for_each_concurrent(10, |state| async move {
 			// not processing events here
-			if state.state.ongoing_participation() {
+			if state.state().ongoing_participation() {
 				return;
 			}
 
-			let status = state.state.sync(self).await;
-			trace!("Synced round #{}, status: {:?}", state.id, status);
+			let mut state = match self.lock_wait_round_state(state.id()).await {
+				Ok(Some(state)) => state,
+				Ok(None) => return,
+				Err(e) => {
+					warn!("Error locking round state: {:#}", e);
+					return;
+				},
+			};
+
+			let status = state.state_mut().sync(self).await;
+			trace!("Synced round #{}, status: {:?}", state.id(), status);
 			match status {
 				Ok(RoundStatus::Confirmed { funding_txid }) => {
 					info!("Round confirmed. Funding tx {}", funding_txid);
@@ -1417,35 +1442,33 @@ impl Wallet {
 
 	async fn inner_process_event(
 		&self,
-		states: impl IntoIterator<Item = &mut StoredRoundState>,
+		state: &mut StoredRoundState,
 		event: Option<&RoundEvent>,
 	) {
-		tokio_stream::iter(states).for_each_concurrent(3, |state| async move {
-			if let Some(event) = event && state.state.ongoing_participation() {
-				let updated = state.state.process_event(self, &event).await;
-				if updated {
-					if let Err(e) = self.db.update_round_state(&state).await {
-						error!("Error storing round state #{} after progress: {:#}", state.id, e);
-					}
+		if let Some(event) = event && state.state().ongoing_participation() {
+			let updated = state.state_mut().process_event(self, &event).await;
+			if updated {
+				if let Err(e) = self.db.update_round_state(&state).await {
+					error!("Error storing round state #{} after progress: {:#}", state.id(), e);
 				}
 			}
+		}
 
-			match state.state.sync(self).await {
-				Err(e) => warn!("Error syncing round #{}: {:#}", state.id, e),
-				Ok(s) if s.is_final() => {
-					info!("Round #{} finished with result: {:?}", state.id, s);
-					if let Err(e) = self.db.remove_round_state(&state).await {
-						warn!("Failed to remove finished round #{} from db: {:#}", state.id, e);
-					}
-				},
-				Ok(s) => {
-					trace!("Round state #{} is now in state {:?}", state.id, s);
-					if let Err(e) = self.db.update_round_state(&state).await {
-						warn!("Error storing round state #{}: {:#}", state.id, e);
-					}
-				},
-			}
-		}).await;
+		match state.state_mut().sync(self).await {
+			Err(e) => warn!("Error syncing round #{}: {:#}", state.id(), e),
+			Ok(s) if s.is_final() => {
+				info!("Round #{} finished with result: {:?}", state.id(), s);
+				if let Err(e) = self.db.remove_round_state(&state).await {
+					warn!("Failed to remove finished round #{} from db: {:#}", state.id(), e);
+				}
+			},
+			Ok(s) => {
+				trace!("Round state #{} is now in state {:?}", state.id(), s);
+				if let Err(e) = self.db.update_round_state(&state).await {
+					warn!("Error storing round state #{}: {:#}", state.id(), e);
+				}
+			},
+		}
 	}
 
 	/// Try to make incremental progress on all pending round states
@@ -1456,11 +1479,14 @@ impl Wallet {
 		&self,
 		last_round_event: Option<&RoundEvent>,
 	) -> anyhow::Result<()> {
-		let mut states = self.pending_round_states().await?;
+		let states: Vec<StoredRoundState<()>> = self.pending_round_states().await?;
 		info!("Processing {} rounds...", states.len());
 
 		let mut last_round_event = last_round_event.map(|e| Cow::Borrowed(e));
-		if states.iter().any(|s| s.state.ongoing_participation()) && last_round_event.is_none() {
+
+		let has_ongoing_participation = states.iter()
+			.any(|s| s.state().ongoing_participation());
+		if has_ongoing_participation && last_round_event.is_none() {
 			match self.get_last_round_event().await {
 				Ok(e) => last_round_event = Some(Cow::Owned(e)),
 				Err(e) => {
@@ -1471,7 +1497,16 @@ impl Wallet {
 		}
 
 		let event = last_round_event.as_ref().map(|c| c.as_ref());
-		self.inner_process_event(states.iter_mut(), event).await;
+
+		let futs = states.into_iter().map(async |state| {
+			let locked = self.lock_wait_round_state(state.id()).await?;
+			if let Some(mut locked) = locked {
+				self.inner_process_event(&mut locked, event).await;
+			}
+			Ok::<_, anyhow::Error>(())
+		});
+
+		futures::future::join_all(futs).await;
 
 		Ok(())
 	}
@@ -1494,32 +1529,36 @@ impl Wallet {
 	/// A blocking call that will try to perform a full round participation
 	/// for all ongoing rounds
 	///
-	/// Returns only once a round has happened on the server.
+	/// Returns only once there is no ongoing rounds anymore.
 	pub async fn participate_ongoing_rounds(&self) -> anyhow::Result<()> {
-		let mut states = self.pending_round_states().await?;
-		states.retain(|s| s.state.ongoing_participation());
-
-		if states.is_empty() {
-			info!("No pending round states");
-			return Ok(());
-		}
-
 		let mut events = self.subscribe_round_events().await?;
 
-		info!("Participating with {} round states...", states.len());
-
 		loop {
+			// NB: we need to load all ongoing rounds on every iteration here
+			// because some might be finished by another call
+			let state_ids = self.pending_round_states().await?.iter()
+				.filter(|s| s.state().ongoing_participation())
+				.map(|s| s.id())
+				.collect::<Vec<_>>();
+
+			if state_ids.is_empty() {
+				info!("All rounds handled");
+				return Ok(());
+			}
+
 			let event = events.next().await
 				.context("events stream broke")?
 				.context("error on event stream")?;
 
-			self.inner_process_event(states.iter_mut(), Some(&event)).await;
+			let futs = state_ids.into_iter().map(async |state| {
+				let locked = self.lock_wait_round_state(state).await?;
+				if let Some(mut locked) = locked {
+					self.inner_process_event(&mut locked, Some(&event)).await;
+				}
+				Ok::<_, anyhow::Error>(())
+			});
 
-			states.retain(|s| s.state.ongoing_participation());
-			if states.is_empty() {
-				info!("All rounds handled");
-				return Ok(());
-			}
+			futures::future::join_all(futs).await;
 		}
 	}
 
@@ -1528,38 +1567,48 @@ impl Wallet {
 	/// All rounds that have not started yet can safely be canceled,
 	/// as well as rounds where we have not yet signed any forfeit txs.
 	pub async fn cancel_all_pending_rounds(&self) -> anyhow::Result<()> {
-		let states = self.pending_round_states().await?;
-		for mut state in states {
-			match state.state.try_cancel(self).await {
-				Ok(true) => {
-					if let Err(e) = self.db.remove_round_state(&state).await {
-						warn!("Error removing canceled round state from db: {:#}", e);
-					}
-				},
-				Ok(false) => {},
-				Err(e) => warn!("Error trying to cancel round #{}: {:#}", state.id, e),
+		// initial load to get all pending round states ids
+		let state_ids = self.db.get_pending_round_state_ids().await?;
+
+		let futures = state_ids.into_iter().map(|state_id| {
+			async move {
+				// wait for lock and load again to ensure most recent state
+				let mut state = match self.lock_wait_round_state(state_id).await {
+					Ok(Some(s)) => s,
+					Ok(None) => return,
+					Err(e) => return warn!("Error loading round state #{}: {:#}", state_id, e),
+				};
+
+				match state.state_mut().try_cancel(self).await {
+					Ok(true) => {
+						if let Err(e) = self.db.remove_round_state(&state).await {
+							warn!("Error removing canceled round state from db: {:#}", e);
+						}
+					},
+					Ok(false) => {},
+					Err(e) => warn!("Error trying to cancel round #{}: {:#}", state_id, e),
+				}
 			}
-		}
+		});
+
+		join_all(futures).await;
+
 		Ok(())
 	}
 
 	/// Try to cancel the given round
 	pub async fn cancel_pending_round(&self, id: RoundStateId) -> anyhow::Result<()> {
-		let states = self.pending_round_states().await?;
-		for mut state in states {
-			if state.id != id {
-				continue;
-			}
+		let mut state = self.lock_wait_round_state(id).await?
+			.context("round state not found")?;
 
-			if state.state.try_cancel(self).await.context("failed to cancel round")? {
-				self.db.remove_round_state(&state).await
-					.context("error removing canceled round state from db")?;
-			} else {
-				bail!("failed to cancel round");
-			}
-			return Ok(());
+		if state.state_mut().try_cancel(self).await.context("failed to cancel round")? {
+			self.db.remove_round_state(&state).await
+				.context("error removing canceled round state from db")?;
+		} else {
+			bail!("failed to cancel round");
 		}
-		bail!("round not found")
+
+		Ok(())
 	}
 
 	/// Participate in a round
@@ -1579,8 +1628,8 @@ impl Wallet {
 		let mut events = self.subscribe_round_events().await?;
 
 		loop {
-			if !state.state.ongoing_participation() {
-				let status = state.state.sync(self).await?;
+			if !state.state().ongoing_participation() {
+				let status = state.state_mut().sync(self).await?;
 				match status {
 					RoundStatus::Failed { error } => bail!("round failed: {}", error),
 					RoundStatus::Canceled => bail!("round canceled"),
@@ -1591,7 +1640,7 @@ impl Wallet {
 			let event = events.next().await
 				.context("events stream broke")?
 				.context("error on event stream")?;
-			if state.state.process_event(self, &event).await {
+			if state.state_mut().process_event(self, &event).await {
 				self.db.update_round_state(&state).await?;
 			}
 		}

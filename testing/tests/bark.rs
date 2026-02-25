@@ -16,7 +16,7 @@ use ark::{ProtocolEncoding, Vtxo, VtxoPolicy, VtxoRequest};
 use ark::rounds::RoundEvent;
 use ark::vtxo::policy::PubkeyVtxoPolicy;
 use bark::BarkNetwork;
-use bark::persist::models::StoredRoundState;
+use bark::persist::models::{StoredRoundState, Unlocked};
 use bark::round::RoundParticipation;
 use bark::subsystem::RoundMovement;
 use bark::vtxo::VtxoState;
@@ -1365,11 +1365,11 @@ async fn bark_can_claim_all_claimable_lightning_receives() {
 	assert_eq!(bark.spendable_balance().await, btc(4));
 }
 
-async fn print_pending_rounds(wallet: &bark::Wallet) -> Vec<StoredRoundState> {
+async fn print_pending_rounds(wallet: &bark::Wallet) -> Vec<StoredRoundState<Unlocked>> {
 	let states = wallet.pending_round_states().await.unwrap();
 	info!("Wallet has {} pending round states:", states.len());
 	for state in &states {
-		info!("  - {}", state.id);
+		info!("  - {}", state.id());
 	}
 	states
 }
@@ -1406,10 +1406,10 @@ async fn stepwise_round() {
 			amount: inputs[0].vtxo.amount(),
 		}],
 	};
-	let state = bark.join_next_round(participation, Some(RoundMovement::Refresh)).await.unwrap();
-	let state_id = state.id;
 
-	info!("Signed up for round, state_id={}", state.id);
+	let state_id = bark.join_next_round(participation, Some(RoundMovement::Refresh)).await.unwrap().id();
+
+	info!("Signed up for round, state_id={}", state_id);
 	print_pending_rounds(&bark).await;
 	assert_eq!(bark.balance().await.unwrap().pending_in_round, sat(800_000));
 
@@ -1428,13 +1428,14 @@ async fn stepwise_round() {
 		bark.progress_pending_rounds(Some(&event)).await.unwrap();
 
 		let states = print_pending_rounds(&bark).await;
-		if let Some(mut ours) = states.into_iter().find(|s| s.id == state_id) {
-			if !ours.state.ongoing_participation() {
+		if let Some(ours) = states.into_iter().find(|s| s.id() == state_id) {
+			let mut ours = bark.lock_wait_round_state(ours.id()).await.unwrap().unwrap();
+			if !ours.state().ongoing_participation() {
 				info!("Round finished");
 				break;
 			} else {
 				if let RoundEvent::Finished(_) = event {
-					let status = ours.state.sync(&bark).await.unwrap();
+					let status = ours.state_mut().sync(&bark).await.unwrap();
 					panic!("Our round state says ongoing participation but we just got round \
 						finished event. status: {:?}", status,
 					);
@@ -1456,8 +1457,9 @@ async fn stepwise_round() {
 		bark.sync_pending_rounds().await.unwrap();
 
 		let states = print_pending_rounds(&bark).await;
-		if let Some(mut ours) = states.into_iter().find(|s| s.id == state_id) {
-			debug!("Result: {:#?}", ours.state.sync(&bark).await);
+		if let Some(ours) = states.into_iter().find(|s| s.id() == state_id) {
+			let mut ours = bark.lock_wait_round_state(ours.id()).await.unwrap().unwrap();
+			debug!("Result: {:#?}", ours.state_mut().sync(&bark).await);
 		} else {
 			info!("Our state is gone!");
 			break;
@@ -1622,7 +1624,9 @@ async fn participate_round_and_progress_pending_dont_race() {
 	for _ in 0..100 {
 		let w = wallet.clone();
 		progress_handles.push(tokio::spawn(async move {
-			while !w.pending_round_states().await?.is_empty() {
+			while w.pending_round_states().await?.iter()
+				.any(|s| s.state().ongoing_participation())
+			{
 				w.progress_pending_rounds(None).await?;
 				tokio::time::sleep(Duration::from_millis(100)).await;
 			}
@@ -1702,10 +1706,8 @@ async fn participate_round_and_event_stream_processing_dont_race() {
 
 	// Also run one user-initiated participate_ongoing_rounds racing with
 	// all the daemon consumers.
-	let ongoing_fut = wallet.participate_ongoing_rounds();
-
 	let (ongoing_result, _) = tokio::join!(
-		ongoing_fut,
+		wallet.participate_ongoing_rounds(),
 		srv.trigger_round(),
 	);
 

@@ -20,7 +20,7 @@ use crate::exit::{ExitState, ExitTxOrigin};
 use crate::movement::{Movement, MovementId, MovementStatus, MovementSubsystem};
 use crate::persist::{RoundStateId, StoredRoundState};
 use crate::persist::models::{
-	LightningReceive, LightningSend, PendingBoard, SerdeRoundState, StoredExit
+	LightningReceive, LightningSend, PendingBoard, SerdeRoundState, StoredExit, Unlocked
 };
 use crate::persist::sqlite::convert::{row_to_movement, row_to_wallet_vtxo, rows_to_wallet_vtxos};
 use crate::round::RoundState;
@@ -323,12 +323,12 @@ pub fn update_round_state(
 	conn: &Connection,
 	state: &StoredRoundState,
 ) -> anyhow::Result<()> {
-	let bytes = rmp_serde::to_vec(&SerdeRoundState::from(&state.state)).expect("can serialize");
+	let bytes = rmp_serde::to_vec(&SerdeRoundState::from(state.state())).expect("can serialize");
 	let mut stmt = conn.prepare(
 		"UPDATE bark_round_state SET state = :state WHERE id = :id",
 	)?;
 	stmt.execute(named_params! {
-		":id": state.id.0 as i64,
+		":id": state.id().0 as i64,
 		":state": bytes,
 	})?;
 	Ok(())
@@ -350,7 +350,7 @@ pub fn remove_round_state(
 pub fn get_round_state_by_id(
 	conn: &Connection,
 	id: RoundStateId,
-) -> anyhow::Result<Option<StoredRoundState>> {
+) -> anyhow::Result<Option<StoredRoundState<Unlocked>>> {
 	let mut stmt = conn.prepare("SELECT id, state FROM bark_round_state WHERE id = :id")?;
 	let mut rows = stmt.query(named_params! {
 		":id": id.0 as i64,
@@ -360,7 +360,7 @@ pub fn get_round_state_by_id(
 		Some(row) => {
 			let state = rmp_serde::from_slice::<SerdeRoundState>(&row.get::<_, Vec<u8>>(1)?)?;
 			let id = RoundStateId(row.get::<_, i64>(0)? as u32);
-			Ok(Some(StoredRoundState { id, state: state.into() }))
+			Ok(Some(StoredRoundState::new(id, state.into())))
 		},
 		None => Ok(None),
 	}

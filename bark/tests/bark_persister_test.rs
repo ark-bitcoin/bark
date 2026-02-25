@@ -30,8 +30,8 @@ use bark::movement::{
 };
 use bark::persist::BarkPersister;
 use bark::persist::models::{
-	LightningReceive, LightningSend, PendingBoard, StoredExit, StoredRoundState, RoundStateId,
-	SerdeRoundState,
+	LightningReceive, LightningSend, PendingBoard, StoredExit, StoredRoundState,
+	Unlocked, RoundStateId, SerdeRoundState
 };
 use bark::round::RoundState;
 use bark::vtxo::{VtxoState, VtxoStateKind};
@@ -290,9 +290,9 @@ impl BarkPersister for Dummy {
 		Ok(())
 	}
 
-	async fn get_round_state_by_id(&self, _id: RoundStateId) -> anyhow::Result<Option<StoredRoundState>> {
+	async fn get_round_state_by_id(&self, _id: RoundStateId) -> anyhow::Result<Option<StoredRoundState<Unlocked>>> {
 		let state = rmp_serde::from_slice::<SerdeRoundState>(&[]).unwrap().into();
-		Ok(Some(StoredRoundState { id: RoundStateId(5), state }))
+		Ok(Some(StoredRoundState::new(RoundStateId(5), state)))
 	}
 
 	async fn get_pending_round_state_ids(&self) -> anyhow::Result<Vec<RoundStateId>> {

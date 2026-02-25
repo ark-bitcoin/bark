@@ -38,8 +38,7 @@ use crate::WalletProperties;
 use crate::exit::ExitTxOrigin;
 use crate::movement::{Movement, MovementId, MovementStatus, MovementSubsystem};
 use crate::persist::models::{
-	LightningReceive, LightningSend, PendingBoard, StoredExit,
-	StoredRoundState, RoundStateId,
+	LightningReceive, LightningSend, PendingBoard, RoundStateId, StoredExit, StoredRoundState, Unlocked
 };
 use crate::round::RoundState;
 use crate::vtxo::{VtxoState, VtxoStateKind, WalletVtxo};
@@ -266,7 +265,7 @@ pub trait BarkPersister: Send + Sync + 'static {
 	///
 	/// Errors:
 	/// - returns an error of the states could not be succesfully retrieved
-	async fn get_round_state_by_id(&self, id: RoundStateId) -> anyhow::Result<Option<StoredRoundState>>;
+	async fn get_round_state_by_id(&self, id: RoundStateId) -> anyhow::Result<Option<StoredRoundState<Unlocked>>>;
 
 	/// Load all pending round states from the db
 	///
