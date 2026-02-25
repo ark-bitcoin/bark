@@ -1574,7 +1574,12 @@ impl Wallet {
 
 		loop {
 			if !state.state.ongoing_participation() {
-				return Ok(state.state.sync(self).await?);
+				let status = state.state.sync(self).await?;
+				match status {
+					RoundStatus::Failed { error } => bail!("round failed: {}", error),
+					RoundStatus::Canceled => bail!("round canceled"),
+					status => return Ok(status),
+				}
 			}
 
 			let event = events.next().await

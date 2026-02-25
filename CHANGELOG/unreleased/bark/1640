@@ -1,0 +1,5 @@
+- Report round failures as errors in the CLI
+  Previously, when a round failed (e.g. due to a borked VTXO), `participate_round`
+  returned `Ok(RoundStatus::Failed)` which caused the CLI to exit silently with
+  no error. Now round failures and cancellations are properly propagated as errors.
+  [#1640](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1640)
