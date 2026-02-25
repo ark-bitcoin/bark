@@ -213,7 +213,6 @@ impl DaemonHelper for ElectrsHelper {
 			"--network", &self.config.network.to_string(),
 			"--db-dir", &self.config.electrs_dir.to_string_lossy(),
 			"--daemon-rpc-addr", &format!("127.0.0.1:{}", self.config.bitcoin_rpc_port),
-			"--zmq-addr", &format!("127.0.0.1:{}", self.config.bitcoin_zmq_port),
 			"--daemon-dir", &self.config.bitcoin_dir.to_string_lossy(),
 			"--cookie", &format!("{}:{}", BITCOINRPC_TEST_USER, BITCOINRPC_TEST_PASSWORD),
 			"--electrum-rpc-addr", &format!("127.0.0.1:{}", self.electrum_port()),

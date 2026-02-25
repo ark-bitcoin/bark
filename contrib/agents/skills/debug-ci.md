@@ -10,7 +10,7 @@ Any CI URL works — the script downloads all failed steps in the pipeline.
 
 Artifacts save to `./contrib/agents/ci-debugging/<pipeline>-<step_name>/`:
 - `raw.log` — full decoded build log
-- `testdata/<commit>/btc29/bark/<test_name>/` — per-test artifacts
+- `testdata/<commit>/btc30/bark/<test_name>/` — per-test artifacts
   (server logs, bark logs, configs, databases)
 
 ## Step 2: Check Out the CI Commit
@@ -38,7 +38,7 @@ Check the end of each `raw.log` for the failure summary and test name.
 
 Look at which CI steps failed:
 
-- **Both `integration-mempool` and `integration-btc29.1` fail on the same
+- **Both `integration-mempool` and `integration-btc30.2` fail on the same
   test** → likely a real code bug. Go to [Step 4a](#step-4a-code-bug).
 - **Only one backend fails, or only one test fails intermittently** → likely
   a flake (race condition). Go to [Step 4b](#step-4b-flake).
@@ -66,7 +66,7 @@ a bad CI run against a good local run to find where state diverges.
 KEEP_ALL_TEST_DATA=1 just int <test_name>
 ```
 
-Local artifacts end up in `test/btc29/bark/<test_name>/`.
+Local artifacts end up in `test/btc30/bark/<test_name>/`.
 
 **Compare CI vs local logs.** Focus on:
 - Timing differences (round start/end, block generation)
