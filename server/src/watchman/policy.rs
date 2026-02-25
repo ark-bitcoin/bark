@@ -189,6 +189,7 @@ impl ActionContextFetcher<'_> {
 				// when they expire and don't have to do anything otherwise
 				decide_action_expiry(&params)
 			},
+			ServerVtxoPolicy::HarkForfeit(_) => unimplemented!("next commit"),
 			ServerVtxoPolicy::User(VtxoPolicy::Pubkey(..)) => {
 				let params = params.with_policy_extras(PubkeyExtra {
 					next_tx: self.fetch_progress(vtxo).await,

@@ -76,17 +76,20 @@ pub enum VtxoPolicyKind {
 	Expiry,
 	/// hArk leaf output policy (intermediate outputs spent by leaf txs).
 	HarkLeaf,
+	/// hArk forfeit tx output policy
+	HarkForfeit,
 }
 
 impl fmt::Display for VtxoPolicyKind {
 	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-	    match self {
+		match self {
 			Self::Pubkey => f.write_str("pubkey"),
 			Self::Checkpoint => f.write_str("checkpoint"),
 			Self::ServerHtlcSend => f.write_str("server-htlc-send"),
 			Self::ServerHtlcRecv => f.write_str("server-htlc-receive"),
 			Self::Expiry => f.write_str("expiry"),
 			Self::HarkLeaf => f.write_str("hark-leaf"),
+			Self::HarkForfeit => f.write_str("hark-forfeit"),
 		}
 	}
 }
@@ -101,6 +104,7 @@ impl FromStr for VtxoPolicyKind {
 			"server-htlc-receive" => Self::ServerHtlcRecv,
 			"expiry" => Self::Expiry,
 			"hark-leaf" => Self::HarkLeaf,
+			"hark-forfeit" => Self::HarkForfeit,
 			_ => return Err(format!("unknown VtxoPolicyKind: {}", s)),
 		})
 	}
@@ -486,6 +490,70 @@ impl From<ServerHtlcRecvVtxoPolicy> for VtxoPolicy {
 	}
 }
 
+/// The server-only VTXO policy on hArk forfeit txs
+///
+/// This policy allows the server to claim the forfeited coins by revealing
+/// the hArk unlock preimage or allow the user to recover its money in case
+/// the server doesn't.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct HarkForfeitVtxoPolicy {
+	pub user_pubkey: PublicKey,
+	pub unlock_hash: UnlockHash,
+}
+
+impl HarkForfeitVtxoPolicy {
+	/// Server claims the forfeit revealing the unlock preimage
+	pub fn server_claim_clause(
+		&self,
+		server_pubkey: PublicKey,
+	) -> HashSignClause {
+		HashSignClause {
+			pubkey: server_pubkey,
+			hash: self.unlock_hash,
+		}
+	}
+
+	/// If the server doesn't reveal the preimage, the user can claim the funds
+	pub fn user_exit_clause(
+		&self,
+		exit_delta: BlockDelta,
+	) -> DelayedSignClause {
+		DelayedSignClause {
+			pubkey: self.user_pubkey,
+			block_delta: exit_delta
+		}
+	}
+
+	pub fn clauses(&self, exit_delta: BlockDelta, server_pubkey: PublicKey) -> Vec<VtxoClause> {
+		vec![
+			self.server_claim_clause(server_pubkey).into(),
+			self.user_exit_clause(exit_delta).into(),
+		]
+	}
+
+	pub fn taproot(
+		&self,
+		server_pubkey: PublicKey,
+		exit_delta: BlockDelta,
+	) -> taproot::TaprootSpendInfo {
+		let server_claim_clause = self.server_claim_clause(server_pubkey);
+		let user_exit_clause = self.user_exit_clause(exit_delta);
+
+		let combined_pk = musig::combine_keys([self.user_pubkey, server_pubkey])
+			.x_only_public_key().0;
+		bitcoin::taproot::TaprootBuilder::new()
+			.add_leaf(1, server_claim_clause.tapscript()).unwrap()
+			.add_leaf(1, user_exit_clause.tapscript()).unwrap()
+			.finalize(&SECP, combined_pk).unwrap()
+	}
+}
+
+impl From<HarkForfeitVtxoPolicy> for ServerVtxoPolicy {
+	fn from(v: HarkForfeitVtxoPolicy) -> Self {
+	    ServerVtxoPolicy::HarkForfeit(v)
+	}
+}
+
 /// User-facing VTXO output policy.
 ///
 /// All variants have an associated user public key, accessible via the infallible
@@ -661,6 +729,8 @@ pub enum ServerVtxoPolicy {
 	Expiry(ExpiryVtxoPolicy),
 	/// hArk leaf output policy (intermediate outputs spent by leaf txs).
 	HarkLeaf(HarkLeafVtxoPolicy),
+	/// hArk forfeit tx output policy
+	HarkForfeit(HarkForfeitVtxoPolicy),
 }
 
 impl From<VtxoPolicy> for ServerVtxoPolicy {
@@ -688,6 +758,10 @@ impl ServerVtxoPolicy {
 		Self::HarkLeaf(HarkLeafVtxoPolicy { user_pubkey, unlock_hash })
 	}
 
+	pub fn new_hark_forfeit(user_pubkey: PublicKey, unlock_hash: UnlockHash) -> Self {
+		Self::HarkForfeit(HarkForfeitVtxoPolicy { user_pubkey, unlock_hash })
+	}
+
 	/// The policy type id.
 	pub fn policy_type(&self) -> VtxoPolicyKind {
 		match self {
@@ -695,6 +769,7 @@ impl ServerVtxoPolicy {
 			Self::Checkpoint { .. } => VtxoPolicyKind::Checkpoint,
 			Self::Expiry { .. } => VtxoPolicyKind::Expiry,
 			Self::HarkLeaf { .. } => VtxoPolicyKind::HarkLeaf,
+			Self::HarkForfeit { .. } => VtxoPolicyKind::HarkForfeit,
 		}
 	}
 
@@ -705,6 +780,7 @@ impl ServerVtxoPolicy {
 			Self::Checkpoint { .. } => true,
 			Self::Expiry { .. } => false,
 			Self::HarkLeaf { .. } => false,
+			Self::HarkForfeit { .. } => false,
 		}
 	}
 
@@ -715,6 +791,7 @@ impl ServerVtxoPolicy {
 			Self::Checkpoint(CheckpointVtxoPolicy { user_pubkey }) => Some(*user_pubkey),
 			Self::Expiry { .. } => None,
 			Self::HarkLeaf(HarkLeafVtxoPolicy { user_pubkey, .. }) => Some(*user_pubkey),
+			Self::HarkForfeit(HarkForfeitVtxoPolicy { user_pubkey, .. }) => Some(*user_pubkey),
 		}
 	}
 
@@ -724,12 +801,12 @@ impl ServerVtxoPolicy {
 		exit_delta: BlockDelta,
 		expiry_height: BlockHeight,
 	) -> taproot::TaprootSpendInfo {
-		let _ = exit_delta; // not used by server-only policies
 		match self {
 			Self::User(p) => p.taproot(server_pubkey, exit_delta, expiry_height),
 			Self::Checkpoint(policy) => policy.taproot(server_pubkey, expiry_height),
 			Self::Expiry(policy) => policy.taproot(server_pubkey, expiry_height),
 			Self::HarkLeaf(policy) => policy.taproot(server_pubkey, expiry_height),
+			Self::HarkForfeit(policy) => policy.taproot(server_pubkey, exit_delta),
 		}
 	}
 
@@ -748,12 +825,12 @@ impl ServerVtxoPolicy {
 		expiry_height: BlockHeight,
 		server_pubkey: PublicKey,
 	) -> Vec<VtxoClause> {
-		let _ = exit_delta; // not used for server-only policies
 		match self {
 			Self::User(p) => p.clauses(exit_delta, expiry_height, server_pubkey),
 			Self::Checkpoint(policy) => policy.clauses(expiry_height, server_pubkey),
 			Self::Expiry(policy) => policy.clauses(expiry_height, server_pubkey),
 			Self::HarkLeaf(policy) => policy.clauses(expiry_height, server_pubkey),
+			Self::HarkForfeit(policy) => policy.clauses(exit_delta, server_pubkey),
 		}
 	}
 
