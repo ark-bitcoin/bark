@@ -323,22 +323,23 @@ impl Db {
 		vtxo_id: VtxoId,
 		signed_forfeit_tx: &Transaction,
 	) -> anyhow::Result<()> {
-		let conn = self.get_conn().await?;
+		let mut conn = self.get_conn().await?;
+		let tx = conn.transaction().await?;
 
-		let stmt = conn.prepare_typed(
+		let stmt = tx.prepare_typed(
 			"UPDATE round_part_input SET signed_forfeit_tx = $3 FROM round_participation \
 			WHERE round_part_input.participation_id = round_participation.id \
 				AND round_participation.unlock_hash = $1 \
 				AND round_participation.round_id IS NOT NULL \
 				AND round_part_input.vtxo_id = $2",
 			&[Type::TEXT, Type::TEXT, Type::BYTEA]
-		).await?;
+		).await.context("error preparing participation query")?;
 
-		let rows_affected = conn.execute(&stmt, &[
+		let rows_affected = tx.execute(&stmt, &[
 			&unlock_hash.to_string(),
 			&vtxo_id.to_string(),
 			&serialize(signed_forfeit_tx),
-		]).await?;
+		]).await.context("error executing participation query")?;
 
 		if rows_affected == 0 {
 			return badarg!("no matching round participation input found for \
@@ -346,6 +347,20 @@ impl Db {
 			);
 		}
 
+		let stmt = tx.prepare_typed(
+			"UPDATE vtxo SET oor_spent_txid = $2, updated_at = NOW() WHERE vtxo_id = $1",
+			&[Type::TEXT, Type::TEXT],
+		).await.context("error preparing vtxo query")?;
+		let rows_affected = tx.execute(&stmt, &[
+			&vtxo_id.to_string(),
+			&signed_forfeit_tx.compute_txid().to_string(),
+		]).await.context("error executing vtxo query")?;
+		ensure!(rows_affected == 1,
+			"corrupt db: should have 1 vtxo matching id {}, have {}",
+			vtxo_id, rows_affected,
+		);
+
+		tx.commit().await?;
 		Ok(())
 	}
 

@@ -1,6 +1,6 @@
 
 
-use bitcoin::{OutPoint, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Witness};
+use bitcoin::{Amount, OutPoint, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Txid, Witness};
 use bitcoin::hashes::Hash;
 use bitcoin::secp256k1::{schnorr, Keypair, PublicKey};
 use bitcoin::sighash::{self, SighashCache, TapSighash, TapSighashType};
@@ -8,11 +8,12 @@ use bitcoin::taproot::{self, TaprootSpendInfo};
 
 use bitcoin_ext::{fee, TaprootSpendInfoExt, P2TR_DUST};
 
-use crate::{musig, Vtxo, VtxoId, SECP};
+use crate::vtxo::genesis::ArkoorGenesis;
+use crate::{musig, ServerVtxo, ServerVtxoPolicy, Vtxo, VtxoId, SECP};
 use crate::connectors::ConnectorChain;
 use crate::encode::{ProtocolDecodingError, ProtocolEncoding, ReadExt, WriteExt};
 use crate::tree::signed::{unlock_clause, UnlockHash};
-use crate::vtxo::exit_clause;
+use crate::vtxo::{exit_clause, GenesisItem, GenesisTransition};
 
 
 /// The taproot for the policy of the output of the hArk forfeit tx
@@ -71,6 +72,45 @@ fn hark_forfeit_sighash(
 		0, &sighash::Prevouts::All(&[exit_prevout]), TapSighashType::Default,
 	).expect("sighash error");
 	(sighash, tx)
+}
+
+/// Construct the internal VTXO that represents the forfeit output
+///
+/// The `forfeit_txid` argument is optional and will be calculated if not present.
+#[inline]
+fn build_internal_forfeit_vtxo(
+	vtxo: &Vtxo,
+	unlock_hash: UnlockHash,
+	forfeit_tx_sig: schnorr::Signature,
+	forfeit_txid: Option<Txid>,
+) -> ServerVtxo {
+	let ff_txid = forfeit_txid.unwrap_or_else(|| {
+		create_hark_forfeit_tx(vtxo, unlock_hash, None).compute_txid()
+	});
+	debug_assert_eq!(ff_txid, create_hark_forfeit_tx(vtxo, unlock_hash, None).compute_txid());
+
+	Vtxo {
+		point: OutPoint::new(ff_txid, 0),
+		policy: ServerVtxoPolicy::new_hark_forfeit(vtxo.user_pubkey(), unlock_hash),
+		genesis: vtxo.genesis.iter().cloned().chain([
+			GenesisItem {
+				transition: GenesisTransition::Arkoor(ArkoorGenesis {
+					client_cosigners: vec![vtxo.user_pubkey()],
+					tap_tweak: vtxo.output_taproot().tap_tweak(),
+					signature: Some(forfeit_tx_sig),
+				}),
+				output_idx: 0,
+				other_outputs: vec![],
+				fee_amount: Amount::ZERO,
+			}
+		]).collect(),
+
+		amount: vtxo.amount,
+		expiry_height: vtxo.expiry_height,
+		server_pubkey: vtxo.server_pubkey,
+		exit_delta: vtxo.exit_delta,
+		anchor_point: vtxo.anchor_point,
+	}
 }
 
 /// A bundle of a signature and metadata that forfeits a user's VTXO
@@ -163,7 +203,7 @@ impl HashLockedForfeitBundle {
 		server_pub_nonce: &musig::PublicNonce,
 		server_sec_nonce: musig::SecretNonce,
 		server_key: &Keypair,
-	) -> (schnorr::Signature, Transaction) {
+	) -> (schnorr::Signature, Transaction, ServerVtxo) {
 		assert_eq!(vtxo.id(), self.vtxo_id);
 
 		let ff_agg_nonce = musig::nonce_agg(
@@ -206,7 +246,10 @@ impl HashLockedForfeitBundle {
 		ff_tx.input[0].witness = Witness::from_slice(&[&ff_sig[..]]);
 		debug_assert_eq!(ff_tx, create_hark_forfeit_tx(vtxo, self.unlock_hash, Some(&ff_sig)));
 
-		(ff_sig, ff_tx)
+		let ff_txid = ff_tx.compute_txid();
+		let ff_vtxo = build_internal_forfeit_vtxo(vtxo, self.unlock_hash, ff_sig, Some(ff_txid));
+
+		(ff_sig, ff_tx, ff_vtxo)
 	}
 }
 
@@ -333,7 +376,7 @@ mod test {
 		assert_eq!(Ok(()), bundle.verify(vtxo, server_pub_nonce));
 
 		// finish it which triggers debug asserts on partial sigs
-		let (sig, tx) = bundle.finish(vtxo, server_pub_nonce, server_sec_nonce, &VTXO_VECTORS.server_key);
+		let (sig, tx, _vtxo) = bundle.finish(vtxo, server_pub_nonce, server_sec_nonce, &VTXO_VECTORS.server_key);
 
 		let (ff_sighash, ff_tx) = hark_forfeit_sighash(vtxo, unlock_hash);
 		SECP.verify_schnorr(

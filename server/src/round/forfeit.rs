@@ -1,4 +1,5 @@
 
+use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 
 use anyhow::Context;
@@ -9,6 +10,7 @@ use ark::{musig, VtxoId};
 use ark::forfeit::HashLockedForfeitBundle;
 use ark::tree::signed::{UnlockHash, UnlockPreimage};
 
+use crate::database::VirtualTransaction;
 use crate::Server;
 use crate::error::ContextExt;
 
@@ -95,6 +97,9 @@ impl Server {
 		}
 
 		// then do the expensive verification and create final sigs
+		let mut ff_txs = Vec::with_capacity(forfeits.len());
+		let mut ff_txids = Vec::with_capacity(forfeits.len());
+		let mut ff_vtxos = Vec::with_capacity(forfeits.len());
 		for vtxo_ff in forfeits {
 			let input = part.inputs.iter().find(|i| i.vtxo_id == vtxo_ff.vtxo_id)
 				.expect("checked this before");
@@ -111,21 +116,36 @@ impl Server {
 			if let Err(e) = vtxo_ff.verify(&vtxo.vtxo, &pub_nonce) {
 				return badarg!("forfeit validation failed for vtxo {}: {}", input.vtxo_id, e);
 			}
-			let (_ff_sig, ff_tx) = vtxo_ff.finish(
+			let (_ff_sig, ff_tx, ff_vtxo) = vtxo_ff.finish(
 				&vtxo.vtxo,
 				&pub_nonce,
 				nonces.into_secret_nonce(),
 				self.server_key.leak_ref(),
 			);
+			let ff_txid = ff_tx.compute_txid();
 
 			// NB if some succeed and others don't, we just don't respond the preimage and
 			// the user has to do the same dance over again
 			self.db.set_forfeit_transactions(unlock_hash, input.vtxo_id, &ff_tx).await
 				.context("error storing signed forfeit txs")?;
+
+			ff_txs.push(VirtualTransaction {
+				txid: ff_txid,
+				signed_tx: Some(Cow::Owned(ff_tx)),
+				is_funding: false,
+				server_may_own_descendant_since: None,
+			});
+			ff_txids.push(ff_txid);
+			ff_vtxos.push(ff_vtxo);
 		}
 
 		// Mark transactions as having server-owned descendants after storing forfeits
-		let txids = vtxos.values().flat_map(|v| v.vtxo.transactions().map(|i| i.tx.compute_txid()));
+		// NB we don't put any spend info here because the set_forfeit_transactions already updates
+		// that for each individual forfeit
+		self.db.update_virtual_transaction_tree(ff_txs, &ff_vtxos, []).await
+			.context("failed to update_virtual_transaction_tree")?;
+		let txids = vtxos.values().flat_map(|v| v.vtxo.transactions().map(|i| i.tx.compute_txid()))
+			.chain(ff_txids);
 		self.db.mark_server_may_own_descendants(txids).await
 			.context("failed to mark server_may_own_descendants")?;
 
