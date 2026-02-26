@@ -527,12 +527,20 @@ impl TestContext {
 	}
 
 	/// If both bitcoind and electrs are available, this will wait until their tips are equal
+	/// and the tip block is fully indexed (queryable by height).
 	pub async fn await_block_count_sync(&self) {
 		match (self.bitcoind.as_ref(), self.electrs.as_ref()) {
 			(Some(bitcoind), Some(electrs)) => {
-				while bitcoind.get_block_count().await != (electrs.get_block_count().await as u64) {
+				let height = loop {
+					let height = bitcoind.get_block_count().await;
+					if height == electrs.get_block_count().await as u64 {
+						break height as u32;
+					}
 					tokio::time::sleep(Duration::from_millis(100)).await;
-				}
+				};
+				// The block height may be reported before the block is fully indexed.
+				// Wait until the block is actually queryable.
+				electrs.await_block_fully_indexed(height).await;
 			},
 			_ => {}
 		}
