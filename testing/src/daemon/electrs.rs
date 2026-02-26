@@ -115,23 +115,49 @@ impl Electrs {
 		client.get_height().await.unwrap()
 	}
 
-	/// Wait until the block at `height` is fully indexed and queryable.
+	/// Poll the Prometheus `tip_height` metric from the monitoring endpoint.
 	///
-	/// The tip height can update before the block is fully indexed. We poll
-	/// by fetching both the block hash and the full block to confirm indexing
-	/// is complete.
-	pub async fn await_block_fully_indexed(&self, height: u32) {
-		let client = self.async_client();
+	/// Both blockstream/electrs and mempool/electrs set this metric *after*
+	/// the full indexing pipeline (txstore, history, synced-tip) completes.
+	/// The REST API's `/blocks/tip/height` can return a new height before
+	/// the history index is ready, causing BDK wallet syncs to miss recent
+	/// transactions. Polling `tip_height` avoids that race.
+	async fn get_tip_height_metric(&self) -> Option<u32> {
+		use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+		let addr = format!("127.0.0.1:{}", self.monitoring_port());
+		let mut stream = tokio::net::TcpStream::connect(&addr).await.ok()?;
+		let request = format!("GET / HTTP/1.0\r\nHost: {}\r\n\r\n", addr);
+		stream.write_all(request.as_bytes()).await.ok()?;
+
+		let mut body = String::new();
+		stream.read_to_string(&mut body).await.ok()?;
+
+		for line in body.lines() {
+			if line.starts_with("tip_height ") {
+				let value = line.strip_prefix("tip_height ")?;
+				return value.trim().parse::<f64>().ok().map(|v| v as u32);
+			}
+		}
+		None
+	}
+
+	/// Wait until electrs has fully indexed up to `height`.
+	///
+	/// Uses the Prometheus `tip_height` metric which is only updated after
+	/// the entire indexing pipeline finishes, including the history (address)
+	/// index that BDK's wallet sync depends on.
+	pub async fn await_tip_synced(&self, height: u32) {
 		let start = Instant::now();
 		while start.elapsed().as_millis() < 10_000 {
-			if let Ok(hash) = client.get_block_hash(height).await {
-				if let Ok(Some(_)) = client.get_block_by_hash(&hash).await {
+			if let Some(tip) = self.get_tip_height_metric().await {
+				if tip >= height {
 					return;
 				}
 			}
 			tokio::time::sleep(Duration::from_millis(100)).await;
 		}
-		panic!("Block at height {} not indexed after 10s", height);
+		panic!("Electrs tip_height metric did not reach {} after 10s", height);
 	}
 }
 
