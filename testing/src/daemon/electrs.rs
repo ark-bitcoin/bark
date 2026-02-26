@@ -1,6 +1,6 @@
 use std::fmt;
 use std::path::PathBuf;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use bdk_esplora::esplora_client::{AsyncClient, Builder};
 use bitcoin::{Network, Transaction, Txid};
@@ -113,6 +113,25 @@ impl Electrs {
 	pub async fn get_block_count(&self) -> u32 {
 		let client = self.async_client();
 		client.get_height().await.unwrap()
+	}
+
+	/// Wait until the block at `height` is fully indexed and queryable.
+	///
+	/// The tip height can update before the block is fully indexed. We poll
+	/// by fetching both the block hash and the full block to confirm indexing
+	/// is complete.
+	pub async fn await_block_fully_indexed(&self, height: u32) {
+		let client = self.async_client();
+		let start = Instant::now();
+		while start.elapsed().as_millis() < 10_000 {
+			if let Ok(hash) = client.get_block_hash(height).await {
+				if let Ok(Some(_)) = client.get_block_by_hash(&hash).await {
+					return;
+				}
+			}
+			tokio::time::sleep(Duration::from_millis(100)).await;
+		}
+		panic!("Block at height {} not indexed after 10s", height);
 	}
 }
 
