@@ -131,12 +131,13 @@ steps:
       NEXTEST_TEST_THREADS: 2
       BARK_COMMAND_TIMEOUT_MILLIS: 120000
       TX_PROPAGATION_TIMEOUT: 30000
+      CARGO_TARGET_DIR: target-esplora
     privileged: true
     commands:
       - git log --oneline | head -n 1
       - export RUN_DATETIME=$(cat RUN_DATETIME)
-      - export CAPTAIND_EXEC=${CI_WORKSPACE}/target/debug/captaind
-      - export BARK_EXEC=${CI_WORKSPACE}/target/debug/bark
+      - export CAPTAIND_EXEC=${CI_WORKSPACE}/target-esplora/debug/captaind
+      - export BARK_EXEC=${CI_WORKSPACE}/target-esplora/debug/bark
       - bash ./contrib/ci-run-test.sh test-integration
 
   - name: test-integration-mempool
@@ -152,12 +153,13 @@ steps:
       NEXTEST_TEST_THREADS: 2
       BARK_COMMAND_TIMEOUT_MILLIS: 120000
       TX_PROPAGATION_TIMEOUT: 30000
+      CARGO_TARGET_DIR: target-mempool
     privileged: true
     commands:
       - git log --oneline | head -n 1
       - export RUN_DATETIME=$(cat RUN_DATETIME)
-      - export CAPTAIND_EXEC=${CI_WORKSPACE}/target/debug/captaind
-      - export BARK_EXEC=${CI_WORKSPACE}/target/debug/bark
+      - export CAPTAIND_EXEC=${CI_WORKSPACE}/target-mempool/debug/captaind
+      - export BARK_EXEC=${CI_WORKSPACE}/target-mempool/debug/bark
       - bash ./contrib/ci-run-test.sh test-integration
 
   - name: test-integration-btc30.2
@@ -172,12 +174,13 @@ steps:
       NEXTEST_TEST_THREADS: 2
       BARK_COMMAND_TIMEOUT_MILLIS: 120000
       TX_PROPAGATION_TIMEOUT: 30000
+      CARGO_TARGET_DIR: target-btc30
     privileged: true
     commands:
       - git log --oneline | head -n 1
       - export RUN_DATETIME=$(cat RUN_DATETIME)
-      - export CAPTAIND_EXEC=${CI_WORKSPACE}/target/debug/captaind
-      - export BARK_EXEC=${CI_WORKSPACE}/target/debug/bark
+      - export CAPTAIND_EXEC=${CI_WORKSPACE}/target-btc30/debug/captaind
+      - export BARK_EXEC=${CI_WORKSPACE}/target-btc30/debug/bark
       - bash ./contrib/ci-run-test.sh test-integration-client
 
 depends_on:
