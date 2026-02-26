@@ -996,7 +996,7 @@ async fn second_round_attempt() {
 	let mut log_not_allowed = srv.subscribe_log::<RoundUserVtxoNotAllowed>();
 
 	ctx.generate_blocks(1).await;
-	let (res1, res2, ()) = tokio::join!(
+	let (res1, _res2, ()) = tokio::join!(
 		bark1.try_refresh_all_no_retry(),
 		bark2.try_refresh_all_no_retry(),
 		async {
