@@ -66,7 +66,7 @@ CREATE TABLE IF NOT EXISTS "bark_lightning_send" (
 				amount_sats INTEGER NOT NULL,
 				htlc_vtxo_ids TEXT NOT NULL,
 				created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now'))
-			, movement_id INTEGER NOT NULL, preimage TEXT, finished_at DATETIME);
+			, movement_id INTEGER NOT NULL, preimage TEXT, finished_at DATETIME, fee_sats INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE bark_round_state (
 				id INTEGER PRIMARY KEY AUTOINCREMENT,
 				state BLOB NOT NULL

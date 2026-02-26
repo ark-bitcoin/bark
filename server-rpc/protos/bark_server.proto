@@ -98,9 +98,50 @@ message ArkInfo {
 	//TODO(stevenroose) move fee related values that are less
 	// permanent into another struct for bark to check
 	uint64 offboard_feerate_sat_vkb = 14;
-	uint64 offboard_fixed_fee_vb = 17;
+	FeeSchedule fees = 18;
 
-	// last index: 17
+	// last index: 18
+}
+
+message FeeSchedule {
+	BoardFees board = 1;
+	OffboardFees offboard = 2;
+	RefreshFees refresh = 3;
+	LightningReceiveFees lightning_receive = 4;
+	LightningSendFees lightning_send = 5;
+}
+
+message PpmExpiryFeeEntry {
+	uint32 expiry_blocks_threshold = 1;
+	uint64 ppm = 2;
+}
+
+message BoardFees {
+	uint64 min_fee_sat = 1;
+	uint64 base_fee_sat = 2;
+	uint64 ppm = 3;
+}
+
+message OffboardFees {
+	uint64 base_fee_sat = 1;
+	uint64 fixed_additional_vb = 2;
+	repeated PpmExpiryFeeEntry ppm_expiry_table = 3;
+}
+
+message RefreshFees {
+	uint64 base_fee_sat = 1;
+	repeated PpmExpiryFeeEntry ppm_expiry_table = 2;
+}
+
+message LightningReceiveFees {
+	uint64 base_fee_sat = 1;
+	uint64 ppm = 2;
+}
+
+message LightningSendFees {
+	uint64 min_fee_sat = 1;
+	uint64 base_fee_sat = 2;
+	repeated PpmExpiryFeeEntry ppm_expiry_table = 3;
 }
 
 message FreshRoundsRequest {
@@ -205,11 +246,13 @@ message ArkoorMailboxPackage {
 message LightningPayHtlcCosignRequest {
 	string invoice = 1;
 	repeated ArkoorCosignRequest parts = 2;
+	uint64 payment_amount_sat = 3;
 }
 
 message InitiateLightningPaymentRequest {
 	string invoice = 1;
 	repeated bytes htlc_vtxo_ids = 2;
+	uint64 requested_payment_sat = 3;
 }
 
 message CheckLightningPaymentRequest {
@@ -393,9 +436,13 @@ message SignedVtxoRequest {
 }
 
 message OffboardRequest {
-	// amount in sats
-	uint64 amount = 1;
+	// The target amount in sats
+	uint64 net_amount_sat = 1;
 	bytes offboard_spk = 2;
+	// Determines whether fees should be added onto the given amount or deducted from the gross amount.
+	bool deduct_fees_from_gross_amount = 3;
+	// The fee rate used to calculate the total fees
+	uint64 fee_rate_kwu = 5;
 }
 
 message SubmitPaymentRequest {

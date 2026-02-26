@@ -5,12 +5,13 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Context;
-use bitcoin::{Amount, FeeRate, OutPoint, Psbt, ScriptBuf, Transaction, Txid, Weight};
+use bitcoin::{Amount, FeeRate, OutPoint, Psbt, ScriptBuf, Transaction, Txid};
 use bitcoin::secp256k1::{schnorr, Keypair};
 use tracing::{error, warn};
 
 use ark::{musig, VtxoId};
 use ark::challenges::OffboardRequestChallenge;
+use ark::fees::{validate_and_subtract_fee_min_dust, VtxoFeeInfo};
 use ark::offboard::{OffboardForfeitContext, OffboardRequest};
 use bitcoin_ext::{BlockHeight, P2TR_DUST};
 use bitcoin_ext::rpc::RpcApi;
@@ -98,6 +99,15 @@ impl Server {
 		input_vtxos: Vec<VtxoId>,
 		ownership_proofs: Vec<schnorr::Signature>,
 	) -> anyhow::Result<OffboardResponse> {
+		// TODO(pc): Make this dynamic and check whether this is a valid historical fee rate.
+		if self.offboard_feerate() != request.fee_rate {
+			return badarg!(
+				"fee rate does not match the configured offboard fee rate: provided = {}, expected = {}",
+				request.fee_rate, self.offboard_feerate(),
+			);
+		}
+		request.validate().badarg("invalid offboard request")?;
+
 		// We keep the VTXO flux lock for the duration of the session, this means
 		// that if the user bails a session he has to wait for it to time out
 		// (currently set to 30 secs)
@@ -108,8 +118,6 @@ impl Server {
 		// => all our money locked
 		let input_vtxos_guard = self.vtxos_in_flux.try_lock(&input_vtxos)
 			.context("some VTXO is already locked by another process")?;
-
-		request.validate().badarg("invalid offboard request")?;
 
 		// Check no duplicates in inputs
 		if input_vtxos.iter().collect::<HashSet<_>>().len() != input_vtxos.len() {
@@ -125,18 +133,44 @@ impl Server {
 			return badarg!("VTXO {} is already spent", v.vtxo_id);
 		}
 
-		let fee = request.fee(
-			self.offboard_feerate(),
-			Weight::from_vb(self.config.offboard_fixed_fee_vb as u64)
-				.expect("insane offboard_fixed_fee_vb"),
-		).expect("our feerate and vb values are sane");
-		let required_amount = request.amount + fee;
-		let input_sum = vtxos.iter().map(|v| v.vtxo.amount()).sum::<Amount>();
-		if input_sum < required_amount {
-			return badarg!("insufficient input: provided={}, required={}, fee={}",
-				input_sum, required_amount, fee,
-			);
-		}
+		// Validate the request parameters
+		let tip = self.chain_tip().height;
+		let fee_info = vtxos.iter().map(|v| VtxoFeeInfo::from_vtxo_and_tip(&v.vtxo, tip));
+		let gross_amount = vtxos.iter().map(|v| v.vtxo.amount()).sum::<Amount>();
+
+		// If the user is trying to perform a send-onchain then we add fees onto the request amount.
+		// If the user is performing an offboard then we deduct fees from the total VTXO sum.
+		let net_amount = if request.deduct_fees_from_gross_amount {
+			let fee = self.config.fees.offboard.calculate(
+				&request.script_pubkey,
+				gross_amount,
+				request.fee_rate,
+				fee_info
+			).context("unable to calculate fee for offboard")?;
+			let net_amount = validate_and_subtract_fee_min_dust(gross_amount, fee)?;
+			if net_amount != request.net_amount {
+				return badarg!(
+					"offboard net amount does not match expected amount: provided = {}, expected = {}",
+					net_amount, request.net_amount,
+				);
+			}
+			net_amount
+		} else {
+			let fee = self.config.fees.offboard.calculate(
+				&request.script_pubkey,
+				request.net_amount,
+				request.fee_rate,
+				fee_info
+			).context("unable to calculate fee for offboard")?;
+			let total = request.net_amount.checked_add(fee).context("request amount + fee overflow")?;
+			if total != gross_amount {
+				return badarg!(
+					"offboard gross amount does not match expected amount: provided = {} ({} fee), expected = {}",
+					total, fee, gross_amount,
+				);
+			}
+			request.net_amount
+		};
 
 		// check ownership proofs
 		let challenge = OffboardRequestChallenge::new(&request, input_vtxos.iter().copied());
@@ -155,7 +189,6 @@ impl Server {
 
 		let mut wallet_guard = self.rounds_wallet.lock().await;
 		let offboard_tx = {
-			let tip = self.chain_tip().height;
 			let trusted_height = match self.config.round_tx_untrusted_input_confirmations {
 				0 => None,
 				n => Some(tip.saturating_sub(n as BlockHeight - 1)),
@@ -166,9 +199,9 @@ impl Server {
 			b.current_height(tip);
 			b.unspendable(unavailable);
 			// NB: order is important here, we need to respect `ROUND_TX_VTXO_TREE_VOUT` and `ROUND_TX_CONNECTOR_VOUT`
-			b.add_recipient(request.script_pubkey, request.amount);
+			b.add_recipient(request.script_pubkey, net_amount);
 			b.add_recipient(connector_spk, connector_amt);
-			b.fee_rate(self.offboard_feerate());
+			b.fee_rate(request.fee_rate);
 			b.finish().context("bdk failed to create offboard tx")?
 		};
 		// we need to lock the inputs
@@ -187,8 +220,8 @@ impl Server {
 		};
 
 		let offboard_txid = offboard_tx.unsigned_tx.compute_txid();
-		slog!(PreparedOffboard, offboard_txid, amount: request.amount, input_vtxos: input_vtxos,
-			wallet_utxos: wallet_input_guard.utxos().to_vec(),
+		slog!(PreparedOffboard, offboard_txid, input_vtxos, net_amount, gross_amount,
+			fee_rate: request.fee_rate, wallet_utxos: wallet_input_guard.utxos().to_vec(),
 		);
 
 		let state = PendingOffboard {
@@ -246,7 +279,7 @@ impl Server {
 		let vtxos = self.db.get_user_vtxos_by_id(input_vtxos).await?;
 		let forfeit_ctx = OffboardForfeitContext::new(&vtxos, &state.offboard_tx.unsigned_tx);
 
-		let forfeit_txs = forfeit_ctx.check_finalize_transactions(
+		let _forfeit_txs = forfeit_ctx.check_finalize_transactions(
 			self.server_key.leak_ref(),
 			&state.connector_key,
 			&state.forfeit_pub_nonces,

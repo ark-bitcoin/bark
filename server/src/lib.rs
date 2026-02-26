@@ -57,6 +57,7 @@ use tracing::{info, trace, warn};
 use ark::{ServerVtxo, Vtxo, VtxoId, VtxoRequest};
 use ark::vtxo::VtxoRef;
 use ark::board::BoardBuilder;
+use ark::fees::validate_and_subtract_fee;
 use ark::mailbox::{BlindedMailboxIdentifier, MailboxIdentifier};
 use ark::musig::{self, PublicNonce};
 use ark::rounds::{RoundEvent, RoundId};
@@ -274,8 +275,8 @@ impl Server {
 			max_user_invoice_cltv_delta: self.config.max_user_invoice_cltv_delta,
 			min_board_amount: self.config.min_board_amount,
 			offboard_feerate: self.config.offboard_feerate,
-			offboard_fixed_fee_vb: self.config.offboard_fixed_fee_vb,
 			ln_receive_anti_dos_required: self.config.ln_receive_anti_dos_required,
+			fees: self.config.fees.clone(),
 		}
 	}
 
@@ -616,6 +617,11 @@ impl Server {
 			}
 		}
 
+		// Validate board fees
+		let fee = self.config.fees.board.calculate(amount).context("fee overflowed")?;
+		validate_and_subtract_fee(amount, fee)
+			.badarg("Board amount cannot support required fee")?;
+
 		//TODO(stevenroose) make this more robust
 		let tip = self.chain_tip();
 		if expiry_height < tip.height {
@@ -628,7 +634,7 @@ impl Server {
 			self.server_pubkey,
 			self.config.vtxo_exit_delta,
 			amount,
-			Amount::ZERO, // TODO(pc): Fees
+			fee,
 			utxo,
 			user_pub_nonce,
 		);
@@ -636,7 +642,7 @@ impl Server {
 		info!("Cosigning board request for utxo {}", utxo);
 		let resp = builder.server_cosign(self.server_key.leak_ref());
 
-		slog!(CosignedBoard, utxo, amount);
+		slog!(CosignedBoard, utxo, amount, fee);
 
 		Ok(resp)
 	}

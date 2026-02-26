@@ -8,6 +8,7 @@ pub struct CosignedBoard {
 	pub utxo: OutPoint,
 	#[serde(with = "bitcoin::amount::serde::as_sat")]
 	pub amount: Amount,
+	pub fee: Amount,
 }
 impl_slog!(CosignedBoard, TRACE, "cosigned board tx for user");
 

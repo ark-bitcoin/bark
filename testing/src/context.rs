@@ -4,6 +4,10 @@ use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 
+use ark::fees::{
+	BoardFees, FeeSchedule, LightningReceiveFees, LightningSendFees, OffboardFees, PpmFeeRate,
+	RefreshFees,
+};
 use bark::BarkNetwork;
 use bitcoin::{Amount, FeeRate, Network, Txid};
 use bitcoincore_rpc::RpcApi;
@@ -13,7 +17,6 @@ use server::vtxopool::VtxoTarget;
 use server::Server;
 use tokio::{fs, join};
 use tonic::transport::Uri;
-
 use server::config::{self, Config, HodlInvoiceClnPlugin};
 use server_rpc as rpc;
 
@@ -273,7 +276,6 @@ impl TestContext {
 				issue_interval: Duration::from_secs(3),
 			},
 			offboard_feerate: FeeRate::from_sat_per_vb_unchecked(7),
-			offboard_fixed_fee_vb: 100,
 			offboard_session_timeout: Duration::from_secs(30),
 			fee_estimator: server::fee_estimator::Config {
 				update_interval: Duration::from_secs(60),
@@ -312,6 +314,31 @@ impl TestContext {
 			min_board_amount: Amount::from_sat(20_000),
 			ln_receive_anti_dos_required: false,
 			max_read_mailbox_items: 100,
+			fees: FeeSchedule {
+				board: BoardFees {
+					min_fee: Amount::ZERO,
+					base_fee: Amount::ZERO,
+					ppm: PpmFeeRate::ZERO,
+				},
+				offboard: OffboardFees {
+					base_fee: Amount::ZERO,
+					fixed_additional_vb: 100,
+					ppm_expiry_table: vec![],
+				},
+				refresh: RefreshFees {
+					base_fee: Amount::ZERO,
+					ppm_expiry_table: vec![],
+				},
+				lightning_receive: LightningReceiveFees {
+					base_fee: Amount::ZERO,
+					ppm: PpmFeeRate::ZERO,
+				},
+				lightning_send: LightningSendFees {
+					min_fee: Amount::ZERO,
+					base_fee: Amount::ZERO,
+					ppm_expiry_table: vec![],
+				},
+			},
 		}
 	}
 

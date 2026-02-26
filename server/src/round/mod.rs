@@ -22,6 +22,7 @@ use ark::{
 	ProtocolEncoding, SignedVtxoRequest, Vtxo, VtxoId, VtxoIdInput, VtxoPolicy, VtxoRequest,
 };
 use ark::challenges::{NonInteractiveRoundParticipationChallenge, RoundAttemptChallenge};
+use ark::fees::{RefreshFees, VtxoFeeInfo};
 use ark::musig::{self, PublicNonce, SecretNonce};
 use ark::rounds::{
 	RoundAttempt, RoundEvent, RoundFinished, RoundSeq, VtxoProposal, ROUND_TX_VTXO_TREE_VOUT,
@@ -201,6 +202,8 @@ impl CollectingPayments {
 		&self,
 		inputs: &[Vtxo],
 		outputs: impl IntoIterator<Item = impl AsRef<VtxoRequest>>,
+		fees: &RefreshFees,
+		current_height: BlockHeight,
 	) -> anyhow::Result<()> {
 		let mut in_set = HashSet::with_capacity(inputs.len());
 		let mut in_sum = Amount::ZERO;
@@ -242,10 +245,25 @@ impl CollectingPayments {
 			}
 		}
 
+		// Validate refresh fees
+		let vtxo_fee_infos = inputs.iter()
+			.map(|v| VtxoFeeInfo::from_vtxo_and_tip(v, current_height));
+		let expected_fee = fees.calculate(vtxo_fee_infos).context("fee overflowed")?;
+
+		debug_assert!(in_sum >= out_sum, "This should be guaranteed by the previous loop");
+		let actual_fee = in_sum - out_sum;
+		if actual_fee < expected_fee {
+			return badarg!(
+				"insufficient refresh fee: expected at least {}, got {}",
+				expected_fee,
+				actual_fee
+			);
+		}
+
 		Ok(())
 	}
 
-	/// This methods does checks on the user input that can be done fast and without
+	/// This method does checks on the user input that can be done fast and without
 	/// the need to fetch the input vtxos.
 	fn validate_payment_data(
 		&self,
@@ -489,7 +507,10 @@ impl CollectingPayments {
 				))?;
 		}
 
-		if let Err(e) = self.validate_payment_amounts(&input_vtxos, &vtxo_requests) {
+		let current_height = srv.sync_manager.chain_tip().height;
+		if let Err(e) = self.validate_payment_amounts(
+			&input_vtxos, &vtxo_requests, &srv.config.fees.refresh, current_height,
+		) {
 			client_rslog!(RoundPaymentRegistrationFailed, self.round_step,
 				error: e.to_string(),
 			);
@@ -589,7 +610,10 @@ impl CollectingPayments {
 			Err(e) => return Err(ProcessHarkParticipationError::BadParticipation(e)),
 		};
 
-		if let Err(e) = self.validate_payment_amounts(&input_vtxos, participation.outputs.iter()) {
+		let current_height = srv.sync_manager.chain_tip().height;
+		if let Err(e) = self.validate_payment_amounts(
+			&input_vtxos, participation.outputs.iter(), &srv.config.fees.refresh, current_height,
+		) {
 			client_rslog!(RoundPaymentRegistrationFailed, self.round_step,
 				error: e.to_string(),
 			);
@@ -648,7 +672,7 @@ impl CollectingPayments {
 			}
 			match self.process_non_interactive_participation(srv, part).await {
 				Ok(()) => {},
-				// NB we already slog this when producing error
+				// NB we already slog this when producing an error
 				Err(ProcessHarkParticipationError::RoundFull) => continue,
 				Err(ProcessHarkParticipationError::BadParticipation(e)) => {
 					slog!(RoundParticipationRejected, unlock_hash, reason: format!("{:#}", e));
@@ -1748,6 +1772,7 @@ mod tests {
 	use bitcoin::Amount;
 	use bitcoin::secp256k1::{schnorr, PublicKey, Secp256k1};
 
+	use ark::fees::{FeeSchedule, PpmExpiryFeeEntry, PpmFeeRate};
 	use ark::test_util::VTXO_VECTORS;
 
 	use crate::flux::VtxosInFlux;
@@ -1801,11 +1826,30 @@ mod tests {
 			.iter()
 			.map(|v| VtxoIdInput { vtxo_id: v.id(), ownership_proof: *TEST_SIG })
 			.collect::<Vec<_>>();
-
-		let outputs = vec![create_signed_req(inputs[0].amount().to_sat(), &state.round_data)];
+		let fees = RefreshFees {
+			base_fee: Amount::from_sat(100),
+			ppm_expiry_table: vec![
+				PpmExpiryFeeEntry {
+					expiry_blocks_threshold: 25_025,
+					ppm: PpmFeeRate(500),
+				},
+				PpmExpiryFeeEntry {
+					expiry_blocks_threshold: 50_505,
+					ppm: PpmFeeRate(1_000),
+				},
+				PpmExpiryFeeEntry {
+					expiry_blocks_threshold: 101_010,
+					ppm: PpmFeeRate(2_000),
+				},
+			],
+		};
+		let fee = fees.calculate(inputs.iter().map(|v| VtxoFeeInfo::from_vtxo_and_tip(v, 1_000)));
+		assert_eq!(fee.unwrap(), Amount::from_sat(110));
+		let output_amount = inputs[0].amount() - fee.unwrap();
+		let outputs = vec![create_signed_req(output_amount.to_sat(), &state.round_data)];
 
 		state.validate_payment_data(&input_ids, &outputs).unwrap();
-		state.validate_payment_amounts(&inputs, &outputs).unwrap();
+		state.validate_payment_amounts(&inputs, &outputs, &fees, 1000).unwrap();
 
 		let flux = VtxosInFlux::new();
 		state.register_interactive_participation(flux.empty_guard(), inputs, outputs.clone(), pre);
@@ -1830,7 +1874,33 @@ mod tests {
 		)];
 
 		state.validate_payment_data(&input_ids, &outputs).unwrap();
-		state.validate_payment_amounts(&inputs, &outputs).unwrap_err();
+		state.validate_payment_amounts(&inputs, &outputs, &FeeSchedule::default().refresh, 0).unwrap_err();
+	}
+
+	#[test]
+	fn test_register_payment_missing_fee() {
+		let state = create_collecting_payments(2);
+
+		let inputs = vec![VTXO_VECTORS.round1_vtxo.clone()];
+		let input_ids = inputs
+			.iter()
+			.map(|v| VtxoIdInput { vtxo_id: v.id(), ownership_proof: *TEST_SIG })
+			.collect::<Vec<_>>();
+
+		let outputs = vec![create_signed_req(
+			inputs[0].amount().to_sat(), &state.round_data,
+		)];
+		let fees = RefreshFees {
+			base_fee: Amount::from_sat(100),
+			ppm_expiry_table: vec![
+				PpmExpiryFeeEntry {
+					expiry_blocks_threshold: 500,
+					ppm: PpmFeeRate(1_000),
+				}
+			],
+		};
+		state.validate_payment_data(&input_ids, &outputs).unwrap();
+		state.validate_payment_amounts(&inputs, &outputs, &fees, 1_000).unwrap_err();
 	}
 
 	#[test]

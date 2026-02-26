@@ -1,3 +1,4 @@
+pub mod fees;
 #[cfg(feature = "onchain_bdk")]
 pub mod onchain;
 
@@ -19,6 +20,7 @@ use bark::lnurllib::lightning_address::LightningAddress;
 use bark::movement::MovementId;
 use bitcoin_ext::{AmountExt, BlockDelta};
 
+use crate::cli::fees::FeeSchedule;
 use crate::exit::error::ExitError;
 use crate::exit::package::ExitTransactionPackage;
 use crate::exit::ExitState;
@@ -65,13 +67,12 @@ pub struct ArkInfo {
 	pub min_board_amount: Amount,
 	/// offboard feerate in sat per kvb
 	pub offboard_feerate_sat_per_kvb: u64,
-	/// fixed number of vb charged additinally for an offboard
-	/// this is charged after being multiplied with the offboard feerate
-	pub offboard_fixed_fee_vb: u64,
 	/// Indicates whether the Ark server requires clients to either
 	/// provide a VTXO ownership proof, or a lightning receive token
 	/// when preparing a lightning claim.
 	pub ln_receive_anti_dos_required: bool,
+	/// The fee schedule outlining any fees that must be paid to interact with the Ark server.
+	pub fees: FeeSchedule,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -99,8 +100,8 @@ impl<T: Borrow<ark::ArkInfo>> From<T> for ArkInfo {
 			max_user_invoice_cltv_delta: v.max_user_invoice_cltv_delta,
 			min_board_amount: v.min_board_amount,
 			offboard_feerate_sat_per_kvb: v.offboard_feerate.to_sat_per_kwu() * 4,
-			offboard_fixed_fee_vb: v.offboard_fixed_fee_vb,
 			ln_receive_anti_dos_required: v.ln_receive_anti_dos_required,
+			fees: v.fees.clone().into(),
 		}
 	}
 }
@@ -690,8 +691,8 @@ mod test {
 				max_user_invoice_cltv_delta: j.max_user_invoice_cltv_delta,
 				min_board_amount: j.min_board_amount,
 				offboard_feerate: FeeRate::from_sat_per_kwu(j.offboard_feerate_sat_per_kvb / 4),
-				offboard_fixed_fee_vb: j.offboard_fixed_fee_vb,
 				ln_receive_anti_dos_required: j.ln_receive_anti_dos_required,
+				fees: j.fees.into(),
 			}
 		}
 	}

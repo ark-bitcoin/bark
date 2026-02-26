@@ -5,12 +5,14 @@ use std::time::Duration;
 
 use anyhow::Context;
 use bitcoin::{Amount, FeeRate};
-use bitcoin_ext::BlockDelta;
-use cln_rpc::plugins::hold::hold_client::HoldClient;
 use config::{Environment, File, Value};
 use serde::{Deserialize, Serialize};
 use tonic::transport::{Certificate, Channel, ClientTlsConfig, Identity};
+
+use ark::fees::FeeSchedule;
+use bitcoin_ext::BlockDelta;
 use cln_rpc::node_client::NodeClient;
+use cln_rpc::plugins::hold::hold_client::HoldClient;
 
 use crate::{fee_estimator, utils, vtxopool};
 use crate::secret::Secret;
@@ -403,10 +405,6 @@ pub struct Config {
 	#[serde(with = "utils::serde::fee_rate")]
 	pub offboard_feerate: FeeRate,
 
-	/// The number of virtual bytes to account as the fixed part of the
-	/// offboard fee. This is multiplied with the offboard feerate.
-	pub offboard_fixed_fee_vb: u64,
-
 	/// The time after which an offboard session times out and will be removed
 	///
 	/// This is the time a user has to to sign their forfeit txs.
@@ -417,6 +415,9 @@ pub struct Config {
 	/// The maximum number of items we return to mailbox queries
 	#[serde(alias = "read_mailbox_max_items")]
 	pub max_read_mailbox_items: usize,
+
+	/// The fee schedule outlining any fees that must be paid to interact with the Ark server.
+	pub fees: FeeSchedule,
 }
 
 impl Config {
@@ -472,6 +473,8 @@ impl Config {
 	/// It also checks if all required configurations are available
 	pub fn validate(&self) -> anyhow::Result<()> {
 		self.bitcoind.validate()?;
+		self.fees.validate()?;
+
 		Ok(())
 	}
 

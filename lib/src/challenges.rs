@@ -10,7 +10,6 @@ use crate::encode::ProtocolEncoding;
 use crate::lightning::PaymentHash;
 use crate::offboard::OffboardRequest;
 
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RoundAttemptChallenge([u8; 32]);
 
@@ -239,12 +238,12 @@ impl OffboardRequestChallenge {
 	const CHALLENGE_MESSAGE_PREFIX: &'static [u8; 32] = b"Ark offboard request challenge  ";
 
 	pub fn new(
-		request: &OffboardRequest,
+		req: &OffboardRequest,
 		inputs: impl Iterator<Item = VtxoId> + ExactSizeIterator,
 	) -> Self {
 		let mut eng = sha256::Hash::engine();
 		eng.input(Self::CHALLENGE_MESSAGE_PREFIX);
-		request.to_txout().encode(&mut eng).unwrap();
+		req.to_txout().encode(&mut eng).unwrap();
 		eng.emit_u32(inputs.len() as u32).unwrap();
 		for vtxo in inputs {
 			eng.input(&vtxo.to_bytes());

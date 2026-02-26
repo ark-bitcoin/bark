@@ -384,7 +384,7 @@ pub fn load_round_states(
 
 pub fn get_all_pending_lightning_send(conn: &Connection) -> anyhow::Result<Vec<LightningSend>> {
 	let query = "
-		SELECT htlc_vtxo_ids, invoice, amount_sats, movement_id, preimage, finished_at
+		SELECT htlc_vtxo_ids, invoice, amount_sats, fee_sats, movement_id, preimage, finished_at
 		FROM bark_lightning_send
 		WHERE finished_at IS NULL";
 
@@ -397,6 +397,7 @@ pub fn get_all_pending_lightning_send(conn: &Connection) -> anyhow::Result<Vec<L
 		let invoice = row.get::<_, String>("invoice")?;
 		let htlc_vtxo_ids = serde_json::from_str::<Vec<VtxoId>>(&row.get::<_, String>(0)?)?;
 		let amount_sats = row.get::<_, i64>("amount_sats")?;
+		let fee_sats = row.get::<_, i64>("fee_sats")?;
 		let movement_id = MovementId::new(row.get::<_, u32>("movement_id")?);
 
 		let mut htlc_vtxos = Vec::new();
@@ -407,6 +408,7 @@ pub fn get_all_pending_lightning_send(conn: &Connection) -> anyhow::Result<Vec<L
 		pending_lightning_sends.push(LightningSend {
 			invoice: Invoice::from_str(&invoice)?,
 			amount: Amount::from_sat(amount_sats as u64),
+			fee: Amount::from_sat(fee_sats as u64),
 			htlc_vtxos,
 			movement_id,
 			preimage: row.get::<_, Option<String>>("preimage")?
@@ -422,13 +424,16 @@ pub fn get_all_pending_lightning_send(conn: &Connection) -> anyhow::Result<Vec<L
 pub fn store_new_pending_lightning_send<V: VtxoRef>(
 	conn: &Connection,
 	invoice: &Invoice,
-	amount: &Amount,
+	amount: Amount,
+	fee: Amount,
 	htlc_vtxo_ids: &[V],
 	movement_id: MovementId,
 ) -> anyhow::Result<LightningSend> {
 	let query = "
-		INSERT INTO bark_lightning_send (invoice, payment_hash, amount_sats, htlc_vtxo_ids, movement_id)
-		VALUES (:invoice, :payment_hash, :amount_sats, :htlc_vtxo_ids, :movement_id)
+		INSERT INTO bark_lightning_send
+			(invoice, payment_hash, amount_sats, fee_sats, htlc_vtxo_ids, movement_id)
+		VALUES
+			(:invoice, :payment_hash, :amount_sats, :fee_sats, :htlc_vtxo_ids, :movement_id)
 	";
 
 	let mut statement = conn.prepare(query)?;
@@ -444,13 +449,15 @@ pub fn store_new_pending_lightning_send<V: VtxoRef>(
 		":invoice": invoice.to_string(),
 		":payment_hash": invoice.payment_hash().as_hex().to_string(),
 		":amount_sats": amount.to_sat(),
+		":fee_sats": fee.to_sat(),
 		":htlc_vtxo_ids": serde_json::to_string(&vtxo_ids)?,
 		":movement_id": movement_id.0,
 	})?;
 
 	Ok(LightningSend {
 		invoice: invoice.clone(),
-		amount: *amount,
+		amount,
+		fee,
 		preimage: None,
 		htlc_vtxos,
 		movement_id,
@@ -495,7 +502,7 @@ pub fn get_lightning_send(
 	payment_hash: PaymentHash,
 ) -> anyhow::Result<Option<LightningSend>> {
 	let query = "
-		SELECT htlc_vtxo_ids, invoice, amount_sats, movement_id, preimage, finished_at
+		SELECT htlc_vtxo_ids, invoice, amount_sats, fee_sats, movement_id, preimage, finished_at
 		FROM bark_lightning_send
 		WHERE payment_hash = ?1";
 	let mut statement = conn.prepare(query)?;
@@ -505,6 +512,7 @@ pub fn get_lightning_send(
 		let invoice = row.get::<_, String>("invoice")?;
 		let htlc_vtxo_ids = serde_json::from_str::<Vec<VtxoId>>(&row.get::<_, String>(0)?)?;
 		let amount_sats = row.get::<_, i64>("amount_sats")?;
+		let fee_sats = row.get::<_, i64>("fee_sats")?;
 		let movement_id = MovementId::new(row.get::<_, u32>("movement_id")?);
 
 		let mut htlc_vtxos = Vec::new();
@@ -515,6 +523,7 @@ pub fn get_lightning_send(
 		Ok(Some(LightningSend {
 			invoice: Invoice::from_str(&invoice)?,
 			amount: Amount::from_sat(amount_sats as u64),
+			fee: Amount::from_sat(fee_sats as u64),
 			preimage: row.get::<_, Option<String>>("preimage")?
 				.map(|p| Preimage::from_str(&p))
 				.transpose()?,

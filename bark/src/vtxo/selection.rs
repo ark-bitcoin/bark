@@ -419,7 +419,8 @@ impl FilterVtxos for RefreshStrategy<'_> {
 	async fn matches(&self, vtxo: &WalletVtxo) -> anyhow::Result<bool> {
 		match self.inner {
 			InnerRefreshStrategy::MustRefresh => self.check_must_refresh(vtxo),
-			InnerRefreshStrategy::ShouldRefreshInclusive => self.check_should_refresh(vtxo),
+			InnerRefreshStrategy::ShouldRefreshInclusive =>
+				Ok(self.check_must_refresh(vtxo)? || self.check_should_refresh(vtxo)?),
 			InnerRefreshStrategy::ShouldRefreshExclusive =>
 				Ok(!self.check_must_refresh(vtxo)? && self.check_should_refresh(vtxo)?),
 			InnerRefreshStrategy::ShouldRefreshIfMustRefresh =>
@@ -454,7 +455,7 @@ impl FilterVtxos for RefreshStrategy<'_> {
 					vtxos.clear();
 				}
 			},
-			_ => { 
+			_ => {
 				for i in (0..vtxos.len()).rev() {
 					let vtxo = vtxos[i].borrow();
 					if !self.matches(vtxo).await? {

@@ -3,20 +3,20 @@ use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 
-use ark::lightning::PaymentHash;
+use ark::VtxoId;
+use ark::lightning::{Invoice, PaymentHash};
 use ark::vtxo::VtxoPolicyKind;
 use bark::lightning_invoice::Bolt11Invoice;
-use ark_testing::constants::ROUND_CONFIRMATIONS;
+use bark_json::cli::{MovementDestination, MovementStatus, PaymentMethod};
 use bark_json::primitives::VtxoStateInfo;
-use bitcoin::Amount;
+use bitcoin::{Amount, OutPoint};
 use cln_rpc as rpc;
-
 use log::{info, trace};
 
-use ark_testing::{btc, constants::BOARD_CONFIRMATIONS, sat, TestContext};
+use ark_testing::{btc, sat, TestContext};
+use ark_testing::constants::{BOARD_CONFIRMATIONS, ROUND_CONFIRMATIONS};
 use ark_testing::daemon::captaind::{self, ArkClient};
 use ark_testing::util::{FutureExt, ToAltString};
-use bark_json::cli::PaymentMethod;
 use bitcoin_ext::P2TR_DUST_SAT;
 use server_rpc::protos::{
 	self, prepare_lightning_receive_claim_request::LightningReceiveAntiDos,
@@ -516,7 +516,7 @@ async fn bark_can_receive_lightning() {
 
 	let pay_amount = btc(1);
 	let invoice_info = bark.bolt11_invoice(pay_amount).await;
-	let invoice = Bolt11Invoice::from_str(&invoice_info.invoice).unwrap();
+	let invoice = Invoice::from_str(&invoice_info.invoice).unwrap();
 	let _ = bark.lightning_receive_status(&invoice).await.unwrap();
 
 	let receives = bark.list_lightning_receives().await;
@@ -537,28 +537,62 @@ async fn bark_can_receive_lightning() {
 	res1.ready().await.unwrap();
 
 	let vtxos = bark.vtxos().await;
-	assert!(vtxos.iter().any(|v| v.amount == pay_amount), "should have received lightning amount");
-	assert!(vtxos.iter().any(|v| v.amount == board_amount));
+	let board_vtxo = vtxos.iter().find(|v| v.amount == board_amount).unwrap();
+	let ln_receive_vtxo = vtxos.iter().find(|v| v.amount == pay_amount).unwrap();
 
 	let [board_mvt, ln_receive_mvt] = bark.history().await
 		.try_into().expect("should have 2 movements");
-	assert!(
-		board_mvt.input_vtxos.is_empty() &&
-		board_mvt.output_vtxos.len() == 1 &&
-		board_mvt.offchain_fee == Amount::ZERO &&
-		board_mvt.effective_balance == board_amount.to_signed().unwrap() &&
-		board_mvt.sent_to.is_empty()
+
+	// Check the board movement
+	assert_eq!(board_mvt.status, MovementStatus::Successful);
+	assert_eq!(board_mvt.subsystem.name, "bark.board");
+	assert_eq!(board_mvt.subsystem.kind, "board");
+	assert_eq!(board_mvt.intended_balance, board_amount.to_signed().unwrap());
+	assert_eq!(board_mvt.effective_balance, board_amount.to_signed().unwrap());
+	assert_eq!(board_mvt.offchain_fee, sat(0));
+	assert_eq!(board_mvt.sent_to.len(), 0);
+	assert_eq!(board_mvt.received_on.len(), 0);
+	assert_eq!(board_mvt.input_vtxos.len(), 0);
+	assert_eq!(board_mvt.output_vtxos.len(), 1);
+	assert_eq!(board_mvt.output_vtxos, vec![board_vtxo.id]);
+	assert_eq!(board_mvt.exited_vtxos.len(), 0);
+	assert_eq!(board_mvt.time.completed_at.is_some(), true);
+
+	assert_eq!(board_mvt.metadata.is_some(), true);
+	let metadata = board_mvt.metadata.as_ref().unwrap();
+	let onchain_fee_sat = metadata.get("onchain_fee_sat").map(|f| serde_json::from_value::<Amount>(f.clone()).unwrap());
+	assert_eq!(onchain_fee_sat, Some(sat(772)));
+	assert_eq!(
+		metadata.get("chain_anchor").map(|ca| serde_json::from_value::<OutPoint>(ca.clone()).unwrap()).is_some(),
+		true,
 	);
 
-	assert!(
-		ln_receive_mvt.effective_balance == pay_amount.to_signed().unwrap() &&
-		ln_receive_mvt.offchain_fee == Amount::ZERO &&
-		ln_receive_mvt.sent_to.is_empty() &&
-		ln_receive_mvt.received_on[0].destination == PaymentMethod::Invoice(invoice.to_string()) &&
-		ln_receive_mvt.received_on[0].amount == pay_amount &&
-		ln_receive_mvt.received_on.len() == 1
-	);
+	// Check the receive movement
+	assert_eq!(ln_receive_mvt.status, MovementStatus::Successful);
+	assert_eq!(ln_receive_mvt.subsystem.name, "bark.lightning_receive");
+	assert_eq!(ln_receive_mvt.subsystem.kind, "receive");
+	assert_eq!(ln_receive_mvt.intended_balance, pay_amount.to_signed().unwrap());
+	assert_eq!(ln_receive_mvt.effective_balance, pay_amount.to_signed().unwrap());
+	assert_eq!(ln_receive_mvt.offchain_fee, sat(0));
+	assert_eq!(ln_receive_mvt.sent_to.len(), 0);
+	assert_eq!(ln_receive_mvt.received_on.len(), 1);
+	assert_eq!(ln_receive_mvt.received_on.first().unwrap(), &MovementDestination {
+		destination: PaymentMethod::Invoice(invoice.to_string()),
+		amount: pay_amount,
+	});
+	assert_eq!(ln_receive_mvt.input_vtxos.len(), 0);
+	assert_eq!(ln_receive_mvt.output_vtxos.len(), 1); // HTLC VTXOs aren't included here
+	assert_eq!(ln_receive_mvt.output_vtxos, vec![ln_receive_vtxo.id]);
+	assert_eq!(ln_receive_mvt.exited_vtxos.len(), 0);
+	assert_eq!(ln_receive_mvt.time.completed_at.is_some(), true);
 
+	assert_eq!(ln_receive_mvt.metadata.is_some(), true);
+	let metadata = ln_receive_mvt.metadata.as_ref().unwrap();
+	let payment_hash = metadata.get("payment_hash").map(|ph| serde_json::from_value::<PaymentHash>(ph.clone()).unwrap());
+	assert_eq!(payment_hash, Some(invoice.payment_hash()));
+	assert_eq!(metadata.get("htlc_vtxos").map(|v| serde_json::from_value::<Vec<VtxoId>>(v.clone()).unwrap()).unwrap().len(), 1);
+
+	// Verify our balance
 	assert_eq!(bark.spendable_balance().await, board_amount + pay_amount);
 
 	let receives = bark.list_lightning_receives().await;

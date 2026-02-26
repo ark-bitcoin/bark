@@ -430,14 +430,17 @@ pub trait BarkPersister: Send + Sync + 'static {
 	/// Parameters:
 	/// - invoice: The invoice of the pending lightning send.
 	/// - amount: The amount of the pending lightning send.
+	/// - fee: The fee of the pending lightning send.
 	/// - vtxos: The vtxos of the pending lightning send.
+	/// - movement_id: The movement ID associated with this send.
 	///
 	/// Errors:
 	/// - Returns an error if the pending lightning send cannot be stored.
 	async fn store_new_pending_lightning_send(
 		&self,
 		invoice: &Invoice,
-		amount: &Amount,
+		amount: Amount,
+		fee: Amount,
 		vtxos: &[VtxoId],
 		movement_id: MovementId,
 	) -> anyhow::Result<LightningSend>;

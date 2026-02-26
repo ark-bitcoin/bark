@@ -12,6 +12,7 @@ use ark::arkoor::{ArkoorCosignRequest, ArkoorCosignResponse, ArkoorDestination};
 use ark::arkoor::package::{ArkoorPackageCosignRequest, ArkoorPackageCosignResponse};
 use ark::board::BoardCosignResponse;
 use ark::challenges::RoundAttemptChallenge;
+use ark::fees::PpmFeeRate;
 use ark::forfeit::{HashLockedForfeitBundle, HashLockedForfeitNonces};
 use ark::lightning::{PaymentHash, Preimage};
 use ark::mailbox::BlindedMailboxIdentifier;
@@ -144,8 +145,8 @@ impl From<ark::ArkInfo> for protos::ArkInfo {
 			max_user_invoice_cltv_delta: v.max_user_invoice_cltv_delta as u32,
 			min_board_amount: v.min_board_amount.to_sat(),
 			offboard_feerate_sat_vkb: v.offboard_feerate.to_sat_per_kwu() * 4,
-			offboard_fixed_fee_vb: v.offboard_fixed_fee_vb,
 			ln_receive_anti_dos_required: v.ln_receive_anti_dos_required,
+			fees: Some(v.fees.into()),
 		}
 	}
 }
@@ -175,8 +176,147 @@ impl TryFrom<protos::ArkInfo> for ark::ArkInfo {
 				.map_err(|_| "invalid max user invoice cltv delta")?,
 			min_board_amount: Amount::from_sat(v.min_board_amount),
 			offboard_feerate: FeeRate::from_sat_per_kwu(v.offboard_feerate_sat_vkb / 4),
-			offboard_fixed_fee_vb: v.offboard_fixed_fee_vb,
 			ln_receive_anti_dos_required: v.ln_receive_anti_dos_required,
+			fees: v.fees.ok_or("missing fees")?.try_into()?,
+		})
+	}
+}
+
+impl From<ark::fees::PpmExpiryFeeEntry> for protos::PpmExpiryFeeEntry {
+	fn from(v: ark::fees::PpmExpiryFeeEntry) -> Self {
+		protos::PpmExpiryFeeEntry {
+			expiry_blocks_threshold: v.expiry_blocks_threshold,
+			ppm: v.ppm.0,
+		}
+	}
+}
+
+impl From<protos::PpmExpiryFeeEntry> for ark::fees::PpmExpiryFeeEntry {
+	fn from(v: protos::PpmExpiryFeeEntry) -> Self {
+		ark::fees::PpmExpiryFeeEntry {
+			expiry_blocks_threshold: v.expiry_blocks_threshold,
+			ppm: PpmFeeRate(v.ppm),
+		}
+	}
+}
+
+impl From<ark::fees::BoardFees> for protos::BoardFees {
+	fn from(v: ark::fees::BoardFees) -> Self {
+		protos::BoardFees {
+			min_fee_sat: v.min_fee.to_sat(),
+			base_fee_sat: v.base_fee.to_sat(),
+			ppm: v.ppm.0,
+		}
+	}
+}
+
+impl From<protos::BoardFees> for ark::fees::BoardFees {
+	fn from(v: protos::BoardFees) -> Self {
+		ark::fees::BoardFees {
+			min_fee: Amount::from_sat(v.min_fee_sat),
+			base_fee: Amount::from_sat(v.base_fee_sat),
+			ppm: PpmFeeRate(v.ppm),
+		}
+	}
+}
+
+impl From<ark::fees::OffboardFees> for protos::OffboardFees {
+	fn from(v: ark::fees::OffboardFees) -> Self {
+		protos::OffboardFees {
+			base_fee_sat: v.base_fee.to_sat(),
+			fixed_additional_vb: v.fixed_additional_vb,
+			ppm_expiry_table: v.ppm_expiry_table.into_iter().map(Into::into).collect(),
+		}
+	}
+}
+
+impl From<protos::OffboardFees> for ark::fees::OffboardFees {
+	fn from(v: protos::OffboardFees) -> Self {
+		ark::fees::OffboardFees {
+			base_fee: Amount::from_sat(v.base_fee_sat),
+			fixed_additional_vb: v.fixed_additional_vb,
+			ppm_expiry_table: v.ppm_expiry_table.into_iter().map(Into::into).collect(),
+		}
+	}
+}
+
+impl From<ark::fees::RefreshFees> for protos::RefreshFees {
+	fn from(v: ark::fees::RefreshFees) -> Self {
+		protos::RefreshFees {
+			base_fee_sat: v.base_fee.to_sat(),
+			ppm_expiry_table: v.ppm_expiry_table.into_iter().map(Into::into).collect(),
+		}
+	}
+}
+
+impl From<protos::RefreshFees> for ark::fees::RefreshFees {
+	fn from(v: protos::RefreshFees) -> Self {
+		ark::fees::RefreshFees {
+			base_fee: Amount::from_sat(v.base_fee_sat),
+			ppm_expiry_table: v.ppm_expiry_table.into_iter().map(Into::into).collect(),
+		}
+	}
+}
+
+impl From<ark::fees::LightningReceiveFees> for protos::LightningReceiveFees {
+	fn from(v: ark::fees::LightningReceiveFees) -> Self {
+		protos::LightningReceiveFees {
+			base_fee_sat: v.base_fee.to_sat(),
+			ppm: v.ppm.0,
+		}
+	}
+}
+
+impl From<protos::LightningReceiveFees> for ark::fees::LightningReceiveFees {
+	fn from(v: protos::LightningReceiveFees) -> Self {
+		ark::fees::LightningReceiveFees {
+			base_fee: Amount::from_sat(v.base_fee_sat),
+			ppm: PpmFeeRate(v.ppm),
+		}
+	}
+}
+
+impl From<ark::fees::LightningSendFees> for protos::LightningSendFees {
+	fn from(v: ark::fees::LightningSendFees) -> Self {
+		protos::LightningSendFees {
+			min_fee_sat: v.min_fee.to_sat(),
+			base_fee_sat: v.base_fee.to_sat(),
+			ppm_expiry_table: v.ppm_expiry_table.into_iter().map(Into::into).collect(),
+		}
+	}
+}
+
+impl From<protos::LightningSendFees> for ark::fees::LightningSendFees {
+	fn from(v: protos::LightningSendFees) -> Self {
+		ark::fees::LightningSendFees {
+			min_fee: Amount::from_sat(v.min_fee_sat),
+			base_fee: Amount::from_sat(v.base_fee_sat),
+			ppm_expiry_table: v.ppm_expiry_table.into_iter().map(Into::into).collect(),
+		}
+	}
+}
+
+impl From<ark::fees::FeeSchedule> for protos::FeeSchedule {
+	fn from(v: ark::fees::FeeSchedule) -> Self {
+		protos::FeeSchedule {
+			board: Some(v.board.into()),
+			offboard: Some(v.offboard.into()),
+			refresh: Some(v.refresh.into()),
+			lightning_receive: Some(v.lightning_receive.into()),
+			lightning_send: Some(v.lightning_send.into()),
+		}
+	}
+}
+
+impl TryFrom<protos::FeeSchedule> for ark::fees::FeeSchedule {
+	type Error = ConvertError;
+	fn try_from(v: protos::FeeSchedule) -> Result<Self, Self::Error> {
+		Ok(ark::fees::FeeSchedule {
+			board: v.board.ok_or("missing board fees")?.into(),
+			offboard: v.offboard.ok_or("missing offboard fees")?.into(),
+			refresh: v.refresh.ok_or("missing refresh fees")?.into(),
+			lightning_receive: v.lightning_receive.ok_or("missing lightning receive fees")?.into(),
+			lightning_send: v.lightning_send.ok_or("missing lightning send fees")?.into(),
 		})
 	}
 }
@@ -562,7 +702,9 @@ impl<V: Borrow<OffboardRequest>> From<V> for protos::OffboardRequest {
 		let v = v.borrow();
 	    protos::OffboardRequest {
 			offboard_spk: v.script_pubkey.to_bytes(),
-			amount: v.amount.to_sat(),
+			net_amount_sat: v.net_amount.to_sat(),
+			deduct_fees_from_gross_amount: v.deduct_fees_from_gross_amount,
+			fee_rate_kwu: v.fee_rate.to_sat_per_kwu(),
 		}
 	}
 }
@@ -573,7 +715,9 @@ impl TryFrom<protos::OffboardRequest> for OffboardRequest {
 	fn try_from(v: protos::OffboardRequest) -> Result<Self, Self::Error> {
 		Ok(Self {
 			script_pubkey: ScriptBuf::from_bytes(v.offboard_spk),
-			amount: Amount::from_sat(v.amount),
+			net_amount: Amount::from_sat(v.net_amount_sat),
+			deduct_fees_from_gross_amount: v.deduct_fees_from_gross_amount,
+			fee_rate: FeeRate::from_sat_per_kwu(v.fee_rate_kwu),
 		})
 	}
 }

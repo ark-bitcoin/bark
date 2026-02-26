@@ -301,15 +301,16 @@ mod arkoor;
 mod board;
 mod config;
 mod daemon;
+mod fees;
 mod lightning;
 mod offboard;
 mod psbtext;
-mod server;
 mod mailbox;
 
 pub use self::arkoor::ArkoorCreateResult;
 pub use self::config::{BarkNetwork, Config};
 pub use self::daemon::DaemonHandle;
+pub use self::fees::FeeEstimate;
 pub use self::persist::sqlite::SqliteClient;
 pub use self::vtxo::WalletVtxo;
 
@@ -328,6 +329,7 @@ use ark::lightning::PaymentHash;
 
 use ark::{ArkInfo, ProtocolEncoding, Vtxo, VtxoId, VtxoPolicy, VtxoRequest};
 use ark::address::VtxoDelivery;
+use ark::fees::{validate_and_subtract_fee_min_dust, VtxoFeeInfo};
 use ark::mailbox::MailboxIdentifier;
 use ark::vtxo::{PubkeyVtxoPolicy, VtxoRef};
 use ark::vtxo::policy::signing::VtxoSigner;
@@ -1011,6 +1013,7 @@ impl Wallet {
 		let srv = if let Some(srv) = server {
 			srv.check_connection().await?;
 			let ark_info = srv.ark_info().await?;
+			ark_info.fees.validate().context("invalid fee schedule")?;
 
 			// Check if server pubkey has changed
 			if let Some(stored_pubkey) = properties.server_pubkey {
@@ -1031,6 +1034,7 @@ impl Wallet {
 
 			let conn = ServerConnection::connect(srv_address, network).await?;
 			let ark_info = conn.ark_info().await?;
+			ark_info.fees.validate().context("invalid fee schedule")?;
 
 			// Check if server pubkey has changed
 			if let Some(stored_pubkey) = properties.server_pubkey {
@@ -1475,6 +1479,8 @@ impl Wallet {
 	/// If there are any VTXOs that match the "must-refresh" and "should-refresh" criteria with a
 	/// total value over the P2TR dust limit, they are added to the round participation and an
 	/// additional output is also created.
+	///
+	/// Note: This assumes that the base refresh fee has already been paid.
 	async fn add_should_refresh_vtxos(
 		&self,
 		participation: &mut RoundParticipation,
@@ -1484,32 +1490,38 @@ impl Wallet {
 
 		// Get VTXOs that need and should be refreshed, then filter out any duplicates before
 		// adjusting the round participation.
+		let tip = self.chain.tip().await?;
 		let mut vtxos_to_refresh = self.spendable_vtxos_with(
-			&RefreshStrategy::should_refresh(
-				self,
-				self.chain.tip().await?,
-				self.chain.fee_rates().await.fast,
-			),
+			&RefreshStrategy::should_refresh(self, tip, self.chain.fee_rates().await.fast),
 		).await?;
-		let mut should_refresh_amount = Amount::ZERO;
+		let mut total_amount = Amount::ZERO;
 		for i in (0..vtxos_to_refresh.len()).rev() {
 			let vtxo = &vtxos_to_refresh[i];
 			if excluded_ids.contains(&vtxo.id()) {
 				vtxos_to_refresh.swap_remove(i);
 				continue;
 			}
-			should_refresh_amount += vtxo.amount();
+			total_amount += vtxo.amount();
 		}
 
-		if should_refresh_amount >= P2TR_DUST {
+		// We need to verify that the output we add won't end up below the dust limit when fees are
+		// applied. We can assume the base fee has been paid by the current refresh participation.
+		let (_, ark_info) = self.require_server().await?;
+		let fee = ark_info.fees.refresh.calculate_no_base_fee(
+			vtxos_to_refresh.iter().map(|wv| VtxoFeeInfo::from_vtxo_and_tip(&wv.vtxo, tip)),
+		).context("fee overflowed")?;
+
+		// Finally, ensure the output is more than dust.
+		let output_amount = validate_and_subtract_fee_min_dust(total_amount, fee)?;
+		if output_amount >= P2TR_DUST {
 			info!(
-				"Adding {} extra VTXOs to round participation (total amount = {})",
-				vtxos_to_refresh.len(), should_refresh_amount,
+				"Adding {} extra VTXOs to round participation total = {}, fee = {}, output = {}",
+				vtxos_to_refresh.len(), total_amount, fee, output_amount,
 			);
 			let (user_keypair, _) = self.derive_store_next_keypair().await?;
 			let req = VtxoRequest {
 				policy: VtxoPolicy::new_pubkey(user_keypair.public_key()),
-				amount: should_refresh_amount,
+				amount: output_amount,
 			};
 			participation.inputs.reserve(vtxos_to_refresh.len());
 			participation.inputs.extend(vtxos_to_refresh.into_iter().map(|wv| wv.vtxo));
@@ -1558,11 +1570,21 @@ impl Wallet {
 			P2TR_DUST,
 		);
 
-		info!("Refreshing {} VTXOs (total amount = {}).", vtxos.len(), total_amount);
+		// Calculate refresh fees
+		let (_, ark_info) = self.require_server().await?;
+		let current_height = self.chain.tip().await?;
+		let vtxo_fee_infos = vtxos.iter()
+			.map(|v| VtxoFeeInfo::from_vtxo_and_tip(v, current_height));
+		let fee = ark_info.fees.refresh.calculate(vtxo_fee_infos).context("fee overflowed")?;
+		let output_amount = validate_and_subtract_fee_min_dust(total_amount, fee)?;
+
+		info!("Refreshing {} VTXOs (total amount = {}, fee = {}, output = {}).",
+			vtxos.len(), total_amount, fee, output_amount,
+		);
 		let (user_keypair, _) = self.derive_store_next_keypair().await?;
 		let req = VtxoRequest {
 			policy: VtxoPolicy::Pubkey(PubkeyVtxoPolicy { user_pubkey: user_keypair.public_key() }),
-			amount: total_amount,
+			amount: output_amount,
 		};
 
 		Ok(Some(RoundParticipation {
@@ -1666,6 +1688,57 @@ impl Wallet {
 		bail!("Insufficient money available. Needed {} but {} is available",
 			amount, total_amount,
 		);
+	}
+
+	/// Determines which VTXOs to use for a fee-paying transaction where the fee is added on top of
+	/// the desired amount. E.g., a lightning payment, a send-onchain payment.
+	///
+	/// Returns a collection of VTXOs capable of covering the desired amount as well as the
+	/// calculated fee.
+	async fn select_vtxos_to_cover_with_fee<F>(
+		&self,
+		amount: Amount,
+		calc_fee: F,
+	) -> anyhow::Result<(Vec<WalletVtxo>, Amount)>
+	where
+		F: for<'a> Fn(
+			Amount, std::iter::Copied<std::slice::Iter<'a, VtxoFeeInfo>>,
+		) -> anyhow::Result<Amount>,
+	{
+		let tip = self.chain.tip().await?;
+
+		// We need to loop to find suitable inputs due to the VTXOs having a direct impact on
+		// how much we must pay in fees.
+		const MAX_ITERATIONS: usize = 100;
+		let mut fee = Amount::ZERO;
+		let mut fee_info = Vec::new();
+		for _ in 0..MAX_ITERATIONS {
+			let required = amount.checked_add(fee)
+				.context("Amount + fee overflow")?;
+
+			let vtxos = self.select_vtxos_to_cover(required).await
+				.context("Could not find enough suitable VTXOs to cover payment + fees")?;
+
+			fee_info.reserve(vtxos.len());
+			let mut vtxo_amount = Amount::ZERO;
+			for vtxo in &vtxos {
+				vtxo_amount += vtxo.amount();
+				fee_info.push(VtxoFeeInfo::from_vtxo_and_tip(vtxo, tip));
+			}
+
+			fee = calc_fee(amount, fee_info.iter().copied())?;
+			if amount + fee <= vtxo_amount {
+				trace!("Selected vtxos to cover amount + fee: amount = {}, fee = {}, total inputs = {}",
+					amount, fee, vtxo_amount,
+				);
+				return Ok((vtxos, fee));
+			}
+			trace!("VTXO sum of {} did not exceed amount {} and fee {}, iterating again",
+				vtxo_amount, amount, fee,
+			);
+			fee_info.clear();
+		}
+		bail!("Fee calculation did not converge after maximum iterations")
 	}
 
 	/// Starts a daemon for the wallet.

@@ -4,7 +4,7 @@ use std::sync::Arc;
 use std::sync::atomic::{self, AtomicBool};
 use std::time::Duration;
 
-use bitcoin::{Amount, Weight};
+use bitcoin::Amount;
 use bitcoin_ext::P2TR_DUST_SAT;
 use bitcoincore_rpc::RpcApi;
 use futures::future::join_all;
@@ -13,7 +13,6 @@ use tokio::fs;
 use tokio_stream::StreamExt;
 
 use ark::{ProtocolEncoding, Vtxo, VtxoPolicy, VtxoRequest};
-use ark::offboard::OffboardRequest;
 use ark::rounds::RoundEvent;
 use ark::vtxo::policy::PubkeyVtxoPolicy;
 use bark::BarkNetwork;
@@ -246,17 +245,13 @@ async fn list_utxos() {
 
 	let utxos = bark.utxos().await;
 
-	let expected_fee = OffboardRequest::calculate_fee(
-		&addr.script_pubkey(),
-		srv.config().offboard_feerate,
-		Weight::from_vb_unchecked(srv.config().offboard_fixed_fee_vb as u64),
-	).unwrap().to_sat();
+	let offboard_fee = 938;
 
 	assert_eq!(2, utxos.len());
 	// board change utxo
 	assert!(utxos.iter().any(|u| u.amount.to_sat() == 799_228));
 	// offboard utxo
-	assert!(utxos.iter().any(|u| u.amount.to_sat() == 200_000 - expected_fee));
+	assert!(utxos.iter().any(|u| u.amount.to_sat() == 200_000 - offboard_fee));
 }
 
 #[tokio::test]
@@ -630,11 +625,7 @@ async fn offboard_all() {
 	// We check that all vtxos have been offboarded
 	assert_eq!(Amount::ZERO, bark1.spendable_balance().await);
 
-	let expected_fee = OffboardRequest::calculate_fee(
-		&address.script_pubkey(),
-		srv.config().offboard_feerate,
-		Weight::from_vb_unchecked(srv.config().offboard_fixed_fee_vb as u64),
-	).unwrap();
+	let offboard_fee = sat(854);
 	let movements = bark1.history().await;
 	let offb_movement = movements.last().unwrap();
 	assert_eq!(offb_movement.input_vtxos.len(), 3, "all offboard vtxos should be in movement");
@@ -642,14 +633,14 @@ async fn offboard_all() {
 		offb_movement.sent_to.first(),
 		Some(MovementDestination {
 			destination: PaymentMethod::Bitcoin(address.to_string()),
-			amount: init_balance - expected_fee,
+			amount: init_balance - offboard_fee,
 		}).as_ref(), "destination should be correct"
 	);
 
 	// We check that provided address received the coins
 	ctx.generate_blocks(1).await;
 	let balance = ctx.bitcoind().get_received_by_address(&address);
-	assert_eq!(balance, init_balance - expected_fee);
+	assert_eq!(balance, init_balance - offboard_fee);
 	assert_eq!(bark2.inround_balance().await, sat(0));
 }
 
@@ -695,11 +686,7 @@ async fn offboard_vtxos() {
 	assert!(updated_vtxos.contains(&vtxos[0].id));
 	assert!(updated_vtxos.contains(&vtxos[2].id));
 
-	let expected_fee = OffboardRequest::calculate_fee(
-		&address.script_pubkey(),
-		srv.config().offboard_feerate,
-		Weight::from_vb_unchecked(srv.config().offboard_fixed_fee_vb as u64),
-	).unwrap();
+	let offboard_fee = sat(854);
 	let movements = bark1.history().await;
 	let offb_movement = movements.last().unwrap();
 	assert_eq!(offb_movement.input_vtxos.len(), 1, "only provided vtxo should be offboarded");
@@ -708,14 +695,14 @@ async fn offboard_vtxos() {
 		offb_movement.sent_to.first(),
 		Some(MovementDestination {
 			destination: PaymentMethod::Bitcoin(address.to_string()),
-			amount: vtxo_to_offboard.amount - expected_fee,
+			amount: vtxo_to_offboard.amount - offboard_fee,
 		}).as_ref(), "destination should be correct"
 	);
 
 	// We check that provided address received the coins
 	ctx.generate_blocks(1).await;
 	let balance = ctx.bitcoind().get_received_by_address(&address);
-	assert_eq!(balance, vtxo_to_offboard.amount - expected_fee);
+	assert_eq!(balance, vtxo_to_offboard.amount - offboard_fee);
 	assert_eq!(bark2.inround_balance().await, sat(0));
 }
 
@@ -735,17 +722,13 @@ async fn bark_send_onchain() {
 	bark1.send_onchain(&addr, send_amount).await;
 	ctx.generate_blocks(2).await;
 
-	let expected_fee = OffboardRequest::calculate_fee(
-		&addr.script_pubkey(),
-		srv.config().offboard_feerate,
-		Weight::from_vb_unchecked(srv.config().offboard_fixed_fee_vb as u64),
-	).unwrap();
+	let offboard_fee = sat(938);
 	let [change_vtxo] = bark1.vtxos().await.try_into().expect("should have one vtxo");
-	assert_eq!(change_vtxo.amount, input_vtxo.amount - send_amount - expected_fee);
+	assert_eq!(change_vtxo.amount, input_vtxo.amount - send_amount - offboard_fee);
 
 	let movements = bark1.history().await;
 	let send_movement = movements.last().unwrap();
-	assert_eq!(send_movement.input_vtxos[0], input_vtxo.id);
+	assert!(send_movement.input_vtxos.contains(&input_vtxo.id));
 	assert_eq!(
 		send_movement.sent_to.first(),
 		Some(MovementDestination {
@@ -773,19 +756,13 @@ async fn bark_send_onchain_too_much() {
 
 	let addr = bark2.get_onchain_address().await;
 
-	let expected_fee = OffboardRequest::calculate_fee(
-		&addr.script_pubkey(),
-		srv.config().offboard_feerate,
-		Weight::from_vb_unchecked(srv.config().offboard_fixed_fee_vb as u64),
-	).unwrap();
-
 	// board vtxo
 	let ret = bark1.try_send_onchain(&addr, sat(1_000_000)).await;
 	ctx.generate_blocks(2).await;
 
 	let err = ret.unwrap_err();
 	let expected = format!("Insufficient money available. Needed {} but {} is available",
-		sat(1_000_000) + expected_fee, board_amount,
+		sat(1_000_000), board_amount,
 	);
 	assert!(err.to_alt_string().contains(&expected),
 		"err does not match '{}': {:#}", expected, err);

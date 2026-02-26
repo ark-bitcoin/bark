@@ -1861,10 +1861,14 @@
           "max_user_invoice_cltv_delta",
           "min_board_amount_sat",
           "offboard_feerate_sat_per_kvb",
-          "offboard_fixed_fee_vb",
-          "ln_receive_anti_dos_required"
+          "ln_receive_anti_dos_required",
+          "fees"
         ],
         "properties": {
+          "fees": {
+            "$ref": "#/components/schemas/FeeSchedule",
+            "description": "The fee schedule outlining any fees that must be paid to interact with the Ark server."
+          },
           "htlc_expiry_delta": {
             "$ref": "#/components/schemas/u16",
             "description": "The number of blocks to keep between Lightning and Ark HTLCs expiries"
@@ -1912,12 +1916,6 @@
             "type": "integer",
             "format": "int64",
             "description": "offboard feerate in sat per kvb",
-            "minimum": 0
-          },
-          "offboard_fixed_fee_vb": {
-            "type": "integer",
-            "format": "int64",
-            "description": "fixed number of vb charged additinally for an offboard\nthis is charged after being multiplied with the offboard feerate",
             "minimum": 0
           },
           "required_board_confirmations": {
@@ -2079,6 +2077,35 @@
           },
           "height": {
             "$ref": "#/components/schemas/u32"
+          }
+        }
+      },
+      "BoardFees": {
+        "type": "object",
+        "description": "Fees for boarding the ark.",
+        "required": [
+          "min_fee_sat",
+          "base_fee_sat",
+          "ppm"
+        ],
+        "properties": {
+          "base_fee_sat": {
+            "type": "integer",
+            "format": "int64",
+            "description": "A fee applied to every transaction regardless of value.",
+            "minimum": 0
+          },
+          "min_fee_sat": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Minimum fee to charge.",
+            "minimum": 0
+          },
+          "ppm": {
+            "type": "integer",
+            "format": "int64",
+            "description": "PPM (parts per million) fee rate to apply based on the value of the transaction.",
+            "minimum": 0
           }
         }
       },
@@ -3507,6 +3534,34 @@
           }
         ]
       },
+      "FeeSchedule": {
+        "type": "object",
+        "description": "Complete fee schedule for all operations.",
+        "required": [
+          "board",
+          "offboard",
+          "refresh",
+          "lightning_receive",
+          "lightning_send"
+        ],
+        "properties": {
+          "board": {
+            "$ref": "#/components/schemas/BoardFees"
+          },
+          "lightning_receive": {
+            "$ref": "#/components/schemas/LightningReceiveFees"
+          },
+          "lightning_send": {
+            "$ref": "#/components/schemas/LightningSendFees"
+          },
+          "offboard": {
+            "$ref": "#/components/schemas/OffboardFees"
+          },
+          "refresh": {
+            "$ref": "#/components/schemas/RefreshFees"
+          }
+        }
+      },
       "ImportVtxoRequest": {
         "type": "object",
         "required": [
@@ -3599,6 +3654,28 @@
           }
         }
       },
+      "LightningReceiveFees": {
+        "type": "object",
+        "description": "Fees for lightning receive operations.",
+        "required": [
+          "base_fee_sat",
+          "ppm"
+        ],
+        "properties": {
+          "base_fee_sat": {
+            "type": "integer",
+            "format": "int64",
+            "description": "A fee applied to every transaction regardless of value.",
+            "minimum": 0
+          },
+          "ppm": {
+            "type": "integer",
+            "format": "int64",
+            "description": "PPM (parts per million) fee rate to apply based on the value of the transaction.",
+            "minimum": 0
+          }
+        }
+      },
       "LightningReceiveInfo": {
         "type": "object",
         "required": [
@@ -3652,6 +3729,36 @@
             ],
             "format": "date-time",
             "description": "The timestamp at which the preimage was revealed"
+          }
+        }
+      },
+      "LightningSendFees": {
+        "type": "object",
+        "description": "Fees for lightning send operations.",
+        "required": [
+          "min_fee_sat",
+          "base_fee_sat",
+          "ppm_expiry_table"
+        ],
+        "properties": {
+          "base_fee_sat": {
+            "type": "integer",
+            "format": "int64",
+            "description": "A fee applied to every transaction regardless of value.",
+            "minimum": 0
+          },
+          "min_fee_sat": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Minimum fee to charge.",
+            "minimum": 0
+          },
+          "ppm_expiry_table": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PpmExpiryFeeEntry"
+            },
+            "description": "A table mapping how soon a VTXO will expire to a PPM (parts per million) fee rate.\nThe table should be sorted by each `expiry_blocks_threshold` value in ascending order."
           }
         }
       },
@@ -3870,6 +3977,36 @@
               "null"
             ],
             "description": "Optional Bitcoin address to send to. If not provided, uses the onchain wallet's address"
+          }
+        }
+      },
+      "OffboardFees": {
+        "type": "object",
+        "description": "Fees for offboarding from the ark.",
+        "required": [
+          "base_fee_sat",
+          "fixed_additional_vb",
+          "ppm_expiry_table"
+        ],
+        "properties": {
+          "base_fee_sat": {
+            "type": "integer",
+            "format": "int64",
+            "description": "A fee applied to every transaction regardless of value.",
+            "minimum": 0
+          },
+          "fixed_additional_vb": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Fixed number of virtual bytes charged offboard on top of the output size\n\nThe fee for an offboard will be this value, plus the offboard output virtual size,\nmultiplied with the offboard fee rate, plus the `base_fee`, and plus the additional fee\ncalculated with the `ppm_expiry_table`.",
+            "minimum": 0
+          },
+          "ppm_expiry_table": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PpmExpiryFeeEntry"
+            },
+            "description": "A table mapping how soon a VTXO will expire to a PPM (parts per million) fee rate.\nThe table should be sorted by each `expiry_blocks_threshold` value in ascending order."
           }
         }
       },
@@ -4114,6 +4251,51 @@
               "string",
               "null"
             ]
+          }
+        }
+      },
+      "PpmExpiryFeeEntry": {
+        "type": "object",
+        "description": "Entry in a table to calculate the PPM (parts per million) fee rate of a transaction based on how\nnew a VTXO is.",
+        "required": [
+          "expiry_blocks_threshold",
+          "ppm"
+        ],
+        "properties": {
+          "expiry_blocks_threshold": {
+            "type": "integer",
+            "format": "int32",
+            "description": "A threshold for the number of blocks until a VTXO expires for the `ppm` amount to apply.\nAs an example, if this value is set to 50 and a VTXO expires in 60 blocks, this\n[PpmExpiryFeeEntry] will be used to calculate the fee unless another entry exists with an\n`expiry_blocks_threshold` with a value between 51 and 60 (inclusive).",
+            "minimum": 0
+          },
+          "ppm": {
+            "type": "integer",
+            "format": "int64",
+            "description": "PPM (parts per million) fee rate to apply for this expiry period.",
+            "minimum": 0
+          }
+        }
+      },
+      "RefreshFees": {
+        "type": "object",
+        "description": "Fees for refresh operations.",
+        "required": [
+          "base_fee_sat",
+          "ppm_expiry_table"
+        ],
+        "properties": {
+          "base_fee_sat": {
+            "type": "integer",
+            "format": "int64",
+            "description": "A fee applied to every transaction regardless of value.",
+            "minimum": 0
+          },
+          "ppm_expiry_table": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PpmExpiryFeeEntry"
+            },
+            "description": "A table mapping how soon a VTXO will expire to a PPM (parts per million) fee rate.\nThe table should be sorted by each `expiry_blocks_threshold` value in ascending order."
           }
         }
       },

@@ -1,8 +1,6 @@
 use std::fmt;
 
 use anyhow::Context;
-use ark::arkoor::package::{ArkoorPackageBuilder, ArkoorPackageCosignResponse};
-use ark::arkoor::ArkoorDestination;
 use bitcoin::Amount;
 use bitcoin::hex::DisplayHex;
 use lightning::util::ser::Writeable;
@@ -11,6 +9,8 @@ use log::{debug, error, info, trace, warn};
 use server_rpc::protos::{self, lightning_payment_status::PaymentStatus};
 
 use ark::{musig, VtxoPolicy};
+use ark::arkoor::ArkoorDestination;
+use ark::arkoor::package::{ArkoorPackageBuilder, ArkoorPackageCosignResponse};
 use ark::lightning::{Bolt12Invoice, Bolt12InvoiceExt, Invoice, Offer, PaymentHash, Preimage};
 use ark::util::IteratorExt;
 use bitcoin_ext::BlockHeight;
@@ -128,11 +128,13 @@ impl Wallet {
 		}
 
 		let count = vtxos.len();
+		let effective = -payment.amount.to_signed()? - payment.fee.to_signed()? + revoked.to_signed()?;
 		self.movements.finish_movement_with_update(
 			payment.movement_id,
 			MovementStatus::Failed,
 			MovementUpdate::new()
-				.effective_balance(-payment.amount.to_signed()? + revoked.to_signed()?)
+				.effective_balance(effective)
+				.fee(effective.unsigned_abs())
 				.produced_vtxos(&vtxos)
 		).await?;
 		self.store_spendable_vtxos(&vtxos).await?;
@@ -340,11 +342,13 @@ impl Wallet {
 					self.exit.write().await.start_exit_for_vtxos(&vtxos).await?;
 
 					let exited = vtxos.iter().map(|v| v.amount()).sum::<Amount>();
+					let effective = -payment.amount.to_signed()? - payment.fee.to_signed()? + exited.to_signed()?;
 					self.movements.finish_movement_with_update(
 						payment.movement_id,
 						MovementStatus::Failed,
 						MovementUpdate::new()
-							.effective_balance(-payment.amount.to_signed()? + exited.to_signed()?)
+							.effective_balance(effective)
+							.fee(effective.unsigned_abs())
 							.exited_vtxos(&vtxos)
 					).await?;
 					self.db.finish_lightning_send(payment.invoice.payment_hash(), None).await?;
@@ -539,8 +543,10 @@ impl Wallet {
 
 		let (user_keypair, _) = self.derive_store_next_keypair().await?;
 
-		let inputs = self.select_vtxos_to_cover(amount).await
-			.context("Could not find enough suitable VTXOs to cover lightning payment")?;
+		let (inputs, fee) = self.select_vtxos_to_cover_with_fee(
+			amount, |a, v| ark_info.fees.lightning_send.calculate(a, v).context("fee overflowed"),
+		).await.context("Could not find enough suitable VTXOs to cover lightning payment")?;
+		let total_amount = amount + fee;
 
 		let mut secs = Vec::with_capacity(inputs.len());
 		let mut pubs = Vec::with_capacity(inputs.len());
@@ -561,12 +567,12 @@ impl Wallet {
 		);
 
 		let input_amount = inputs.iter().map(|v| v.amount()).sum::<Amount>();
-		let pay_dest = ArkoorDestination { total_amount: amount, policy };
-		let outputs = if input_amount == amount {
+		let pay_dest = ArkoorDestination { total_amount, policy };
+		let outputs = if input_amount == total_amount {
 			vec![pay_dest]
 		} else {
 			let change_dest = ArkoorDestination {
-				total_amount: input_amount - amount,
+				total_amount: input_amount - total_amount,
 				policy: VtxoPolicy::new_pubkey(user_keypair.public_key()),
 			};
 			vec![pay_dest, change_dest]
@@ -581,6 +587,7 @@ impl Wallet {
 
 		let cosign_request = protos::LightningPayHtlcCosignRequest {
 			invoice: invoice.to_string(),
+			payment_amount_sat: amount.to_sat(),
 			parts: builder.cosign_request()
 				.convert_vtxo(|vtxo| vtxo.id())
 				.requests.into_iter()
@@ -614,8 +621,10 @@ impl Wallet {
 			MovementUpdate::new()
 				.intended_balance(-amount.to_signed()?)
 				.effective_balance(-effective_balance.to_signed()?)
+				.fee(fee)
 				.consumed_vtxos(&inputs)
 				.sent_to([MovementDestination::new(original_payment_method, amount)])
+				.metadata(LightningMovement::metadata(invoice.payment_hash(), &htlc_vtxos, None))
 		).await?;
 		self.store_locked_vtxos(&htlc_vtxos, Some(movement_id)).await?;
 		self.mark_vtxos_as_spent(&input_ids).await?;
@@ -639,7 +648,9 @@ impl Wallet {
 		).await?;
 
 		let lightning_send = self.db.store_new_pending_lightning_send(
-			&invoice, &amount,
+			&invoice,
+			amount,
+			fee,
 			&htlc_vtxos.iter().map(|v| v.id()).collect::<Vec<_>>(),
 			movement_id,
 		).await?;
@@ -650,6 +661,7 @@ impl Wallet {
 		let req = protos::InitiateLightningPaymentRequest {
 			invoice: invoice.to_string(),
 			htlc_vtxo_ids: htlc_vtxos.iter().map(|v| v.id().to_bytes().to_vec()).collect(),
+			requested_payment_sat: amount.to_sat(),
 		};
 
 		srv.client.initiate_lightning_payment(req).await?;

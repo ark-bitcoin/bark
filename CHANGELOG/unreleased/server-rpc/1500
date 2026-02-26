@@ -1,0 +1,5 @@
+- Add FeeSchedule and related fee messages to protobuf schema.
+  ArkInfo now includes a complete fee schedule for all operations.
+  [#1500](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1500)
+  - New messages: `FeeSchedule`, `BoardFees`, `OffboardFees`, `RefreshFees`, `LightningReceiveFees`, `LightningSendFees`, `PpmExpiryFeeEntry`
+  - `ArkInfo.offboard_fixed_fee_vb` moved to `FeeSchedule.offboard.fixed_additional_vb`

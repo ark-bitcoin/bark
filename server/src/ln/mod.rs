@@ -6,7 +6,6 @@ use std::cmp;
 use std::collections::HashMap;
 
 use anyhow::Context;
-use ark::arkoor::ArkoorDestination;
 use bitcoin::Amount;
 use bitcoin::hex::DisplayHex;
 use bitcoin::secp256k1::{schnorr, PublicKey};
@@ -14,8 +13,10 @@ use tracing::{error, info, trace};
 use uuid::Uuid;
 
 use ark::{Vtxo, VtxoId, VtxoPolicy, ServerVtxo};
+use ark::arkoor::ArkoorDestination;
 use ark::arkoor::package::{ArkoorPackageCosignRequest, ArkoorPackageCosignResponse};
 use ark::challenges::LightningReceiveChallenge;
+use ark::fees::{validate_and_subtract_fee, VtxoFeeInfo};
 use ark::integration::TokenStatus;
 use ark::lightning::{Bolt12Invoice, Invoice, Offer, PaymentHash, PaymentStatus, Preimage};
 use ark::util::IteratorExt;
@@ -38,6 +39,7 @@ impl Server {
 	pub async fn request_lightning_pay_htlc_cosign(
 		&self,
 		invoice: Invoice,
+		payment_amount: Amount,
 		request: ArkoorPackageCosignRequest<VtxoId>,
 	) -> anyhow::Result<ArkoorPackageCosignResponse> {
 		let invoice_payment_hash = invoice.payment_hash();
@@ -62,18 +64,33 @@ impl Server {
 
 		//TODO(stevenroose) check that vtxos are valid
 
-		let user_htlc_amount = htlc_vtxos.iter().map(|v| v.total_amount).sum::<Amount>();
-
 		// Check if the provided requests are sufficient to pay the invoice
-		let amount = invoice.get_final_amount(Some(user_htlc_amount))
+		let amount = invoice.get_final_amount(Some(payment_amount))
 			.badarg("missing or invalid user amount")?;
 
 		if amount == Amount::ZERO {
 			return badarg!("Cannot pay invoice for 0 sats (0 sat invoices are not any-amount invoices)");
 		}
 
+		// Validate lightning send fees
+		let tip = self.sync_manager.chain_tip();
+		let vtxo_fee_infos = input_vtxos.iter()
+			.map(|v| VtxoFeeInfo::from_vtxo_and_tip(v, tip.height));
+		let fee = self.config.fees.lightning_send.calculate(amount, vtxo_fee_infos)
+			.context("fee overflowed")?;
+
+		let expected_htlc_amount = amount.checked_add(fee).context("validation overflow")?;
+		let htlc_amount = htlc_vtxos.iter().map(|v| v.total_amount).sum::<Amount>();
+		if expected_htlc_amount > htlc_amount {
+			return badarg!(
+				"insufficient lightning send: expected at least {}, got {}",
+				expected_htlc_amount,
+				htlc_amount,
+			);
+		}
+
 		// should be checked above, but let's be cautious
-		ensure!(user_htlc_amount.to_msat() >= invoice.amount_msat().unwrap_or_default());
+		ensure!(amount.to_msat() >= invoice.amount_msat().unwrap_or_default());
 
 		// Convert the PackageCosignRequest<VtxoId> into PackageCosignRequest<Vtxo>
 		// We will mask the old value
@@ -118,7 +135,7 @@ impl Server {
 		let builder = self.validate_cosign_request(validation, request)
 			.badarg("invalid cosign request")?;
 
-		slog!(LightningPayHtlcsRequested, invoice_payment_hash, amount, expiry);
+		slog!(LightningPayHtlcsRequested, invoice_payment_hash, amount, fee, expiry);
 
 		let builder = self.cosign_oor_with_builder(builder).await?;
 		Ok(builder.cosign_response())
@@ -129,6 +146,7 @@ impl Server {
 	pub async fn initiate_lightning_payment(
 		&self,
 		invoice: Invoice,
+		requested_payment: Amount,
 		htlc_vtxo_ids: Vec<VtxoId>,
 	) -> anyhow::Result<()> {
 		//TODO(stevenroose) validate vtxo generally (based on input)
@@ -160,8 +178,6 @@ impl Server {
 				return badarg!("htlc payment hash doesn't match invoice");
 			}
 
-			//TODO(stevenroose) no fee is charged here now
-
 			vtxos.push(vtxo);
 		}
 
@@ -177,11 +193,29 @@ impl Server {
 			htlc_vtxo_sum += htlc_vtxo.amount();
 		}
 
-		if let Some(amount) = invoice.amount_msat() {
-			if htlc_vtxo_sum < Amount::from_msat_ceil(amount) {
-				return badarg!("htlc vtxo amount too low for invoice");
-				// any remainder we just keep, can later become fee
-			}
+		// Verify against the invoice amount if applicable, disallowing underpayments.
+		let payment_amount = match invoice.get_final_amount(Some(requested_payment)) {
+			Ok(amount) => amount,
+			Err(e) => return badarg!("requested payment amount too low for invoice: {:#}", e),
+		};
+		if requested_payment < payment_amount {
+			return badarg!("requested payment amount too low for invoice");
+		}
+
+		// Verify we can actually perform the payment when fees are taken into account. If for some
+		// reason the client chooses to pay less than the sum of the HTLC VTXOs and the fees, then
+		// we can just keep the remainder.
+		let tip = self.sync_manager.chain_tip();
+		let vtxo_fee_infos = vtxos.iter()
+			.map(|v| VtxoFeeInfo::from_vtxo_and_tip(v, tip.height));
+		let fee = self.config.fees.lightning_send.calculate(payment_amount, vtxo_fee_infos)
+			.context("fee overflowed")?;
+		let amount_with_fee = payment_amount.checked_add(fee).context("validation overflow")?;
+		if amount_with_fee > htlc_vtxo_sum {
+			return badarg!(
+				"HTLC VTXO sum of {} is less than the payment amount of {} plus fees of {}",
+				htlc_vtxo_sum, payment_amount, fee,
+			);
 		}
 
 		// Mark transactions as having server-owned descendants before initiating payment
@@ -191,17 +225,17 @@ impl Server {
 		self.db.mark_server_may_own_descendants(&txids).await
 			.context("failed to mark server_may_own_descendants")?;
 
-		// Spawn a task that performs the payment
+		// Spawn a task that performs the payment, keep the difference between the payment amount
+		// and the VTXO sum as a fee.
 		self.cln.pay_invoice(
 			&invoice,
-			htlc_vtxo_sum,
+			payment_amount,
 			min_expiry_height
 		).await?;
 
-		slog!(LightningPaymentInitiated, invoice_payment_hash, amount: htlc_vtxo_sum,
+		slog!(LightningPaymentInitiated, invoice_payment_hash, amount: payment_amount, fee,
 			min_expiry: min_expiry_height,
 		);
-
 		Ok(())
 	}
 
@@ -348,6 +382,10 @@ impl Server {
 			);
 		}
 
+		// Calculate lightning receive fees and validate fees don't exceed the received amount
+		let fee = self.config.fees.lightning_receive.calculate(amount).context("fee overflowed")?;
+		validate_and_subtract_fee(amount, fee)?;
+
 		if let Some(max) = self.config.max_vtxo_amount {
 			if amount > max {
 				return badarg!("Requested amount exceeds limit of {}", max);
@@ -465,6 +503,12 @@ impl Server {
 
 		self.verify_ln_receive_anti_dos(anti_dos, payment_hash).await?;
 
+		// Deduct the fees from the HTLC VTXOs.
+		let received_amount = sub.amount();
+		let fee = self.config.fees.lightning_receive.calculate(received_amount)
+			.context("fee overflowed")?;
+		let amount = validate_and_subtract_fee(received_amount, fee)?;
+
 		let vtxos = {
 			// We compare requested htlc expiry height with the lowest LN HTLC expiry height
 			// If the difference is lower than the configured delta, we refuse the request.
@@ -487,7 +531,7 @@ impl Server {
 			};
 
 			let dest = ArkoorDestination {
-				total_amount: sub.amount(),
+				total_amount: amount,
 				policy: VtxoPolicy::new_server_htlc_recv(
 					user_pubkey, payment_hash, expiry, self.config.htlc_expiry_delta,
 				),
@@ -504,7 +548,7 @@ impl Server {
 		sub.htlc_vtxos = vtxos.iter().map(|v| v.id()).collect();
 
 		let htlc_vtxo_ids = vtxos.iter().map(|v| v.id()).collect::<Vec<_>>();
-		slog!(LightningReceivePrepared, payment_hash, htlc_vtxo_ids);
+		slog!(LightningReceivePrepared, payment_hash, htlc_vtxo_ids, htlc_amount: received_amount, fee);
 
 		Ok((sub, vtxos))
 	}
@@ -584,8 +628,13 @@ impl Server {
 		htlc_vtxos.sort_by_key(|v| v.vtxo_id);
 
 		// check that cosign request input vtxos and htlc vtxos match
+		let mut htlc_amount = Amount::ZERO;
+		let mut htlc_ids = Vec::with_capacity(htlc_vtxos.len());
+		for htlc in &htlc_vtxos {
+			htlc_amount += htlc.vtxo.amount();
+			htlc_ids.push(htlc.vtxo_id);
+		}
 		let input_ids = cosign_request.inputs().copied().collect::<Vec<_>>();
-		let htlc_ids = htlc_vtxos.iter().map(|h| h.vtxo_id).collect::<Vec<_>>();
 		if input_ids != htlc_ids {
 			return badarg!("cosign inputs do not match htlcs: inputs: {:?}, htlc: {:?}",
 				input_ids, htlc_ids,

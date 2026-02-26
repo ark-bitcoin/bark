@@ -1,0 +1,4 @@
+- Add workaround for creating P2A CPFPs when fee anchors contain a non-zero value.
+  Allows for exiting VTXOs when fees are stored in the fee anchor.
+  [#1500](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1500)
+

@@ -1,0 +1,8 @@
+- Exit boards which fail to register before expiration.
+  [#1500](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1500)
+- Configure bark to use the new FeeSchedule in ArkInfo.
+  Fees will be applied to board, offboard, refresh and lightning operations.
+  [#1500](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1500)
+- Add fee estimation API for various operations.
+  Allows developers to provide fee estimates and VTXO choices to users in advance.
+  [#1500](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1500)

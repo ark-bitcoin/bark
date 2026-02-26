@@ -286,12 +286,13 @@ impl BarkPersister for SqliteClient {
 	async fn store_new_pending_lightning_send(
 		&self,
 		invoice: &Invoice,
-		amount: &Amount,
+		amount: Amount,
+		fee: Amount,
 		vtxos: &[VtxoId],
 		movement_id: MovementId,
 	) -> anyhow::Result<LightningSend> {
 		let conn = self.connect()?;
-		query::store_new_pending_lightning_send(&conn, invoice, amount, vtxos, movement_id)
+		query::store_new_pending_lightning_send(&conn, invoice, amount, fee, vtxos, movement_id)
 	}
 
 	async fn get_all_pending_lightning_send(&self) -> anyhow::Result<Vec<LightningSend>> {
