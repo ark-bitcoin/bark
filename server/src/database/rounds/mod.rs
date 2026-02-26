@@ -27,6 +27,7 @@ use crate::round::InteractiveParticipation;
 
 
 impl Db {
+	#[tracing::instrument(skip(self, round_tx, input_vtxos, signed_tree, interactive_participations))]
 	pub async fn finish_round(
 		&self,
 		round_seq: RoundSeq,
