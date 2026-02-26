@@ -125,24 +125,20 @@ impl TestContext {
 	}
 
 	pub async fn init_central_bitcoind(&mut self) {
-		let bitcoind = {
-			let mut bitcoind = Bitcoind::new(
-				"bitcoind".to_string(),
-				BitcoindConfig {
-					datadir: self.datadir.join("bitcoind"),
-					wallet: true,
-					txindex: true,
-					network: Network::Regtest,
-					fallback_fee: FeeRate::from_sat_per_vb(1).unwrap(),
-					relay_fee: None,
-				},
-				None
-			);
-			bitcoind.start().await.unwrap();
-			bitcoind
-		};
-
-		bitcoind.init_wallet().await;
+		let mut bitcoind = Bitcoind::new(
+			"bitcoind".to_string(),
+			BitcoindConfig {
+				datadir: self.datadir.join("bitcoind"),
+				wallet: true,
+				txindex: true,
+				network: Network::Regtest,
+				fallback_fee: FeeRate::from_sat_per_vb(1).unwrap(),
+				relay_fee: None,
+			},
+			None,
+		);
+		bitcoind.start().await.unwrap();
+		bitcoind.create_wallet("central").await;
 		bitcoind.prepare_funds().await;
 
 		self.bitcoind = Some(bitcoind);
@@ -193,10 +189,12 @@ impl TestContext {
 
 	pub async fn new_bitcoind_with_cfg(&self, name: impl AsRef<str>, cfg: BitcoindConfig) -> Bitcoind {
 		let wallet = cfg.wallet;
-		let mut bitcoind = Bitcoind::new(name.as_ref().to_string(), cfg, Some(self.bitcoind().p2p_url()));
+		let name = name.as_ref();
+
+		let mut bitcoind = Bitcoind::new(name.to_string(), cfg, Some(self.bitcoind().p2p_url()));
 		bitcoind.start().await.unwrap();
 		if wallet {
-			bitcoind.init_wallet().await;
+			bitcoind.create_wallet(name).await;
 		}
 		self.secondary_bitcoinds.lock().unwrap().push(bitcoind.rpc_handle());
 		bitcoind

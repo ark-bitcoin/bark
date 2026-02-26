@@ -135,22 +135,19 @@ impl Bitcoind {
 		self.inner.config.datadir.clone()
 	}
 
-	pub async fn init_wallet(&self) {
-		info!("Initializing a wallet");
+	pub async fn create_wallet(&self, name: &str) {
+		info!("Creating wallet '{}'", name);
 		let client = self.sync_client();
-		// Check if wallet exists by listing wallets
-		let wallets = client.list_wallets().unwrap_or_default();
-		if wallets.is_empty() {
-			info!("No wallet found, creating one");
-			client.create_wallet("", None, None, None, None).expect("failed to create new wallet");
-		} else {
-			info!("Wallet already exists: {:?}", wallets);
-		}
+		client.create_wallet(name, None, None, None, None).expect("failed to create wallet");
+	}
+
+	pub async fn load_wallet(&self, name: &str) {
+		info!("Loading wallet '{}'", name);
+		let client = self.sync_client();
+		client.load_wallet(name).expect("failed to load wallet");
 	}
 
 	pub async fn generate_to_wallet(&self, block_num: u64) {
-		self.init_wallet().await;
-
 		let client = self.sync_client();
 		let address = client.get_new_address(None, None).unwrap()
 			.require_network(Network::Regtest).unwrap();
