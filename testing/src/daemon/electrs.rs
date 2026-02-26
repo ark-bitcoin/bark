@@ -229,6 +229,7 @@ impl DaemonHelper for ElectrsHelper {
 		let mut cmd = Command::new(exec);
 		cmd.args([
 			"-vvvv",
+			"--timestamp",
 			"--network", &self.config.network.to_string(),
 			"--db-dir", &self.config.electrs_dir.to_string_lossy(),
 			"--daemon-rpc-addr", &format!("127.0.0.1:{}", self.config.bitcoin_rpc_port),
