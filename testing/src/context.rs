@@ -553,21 +553,16 @@ impl TestContext {
 		).unwrap()
 	}
 
-	/// If both bitcoind and electrs are available, this will wait until their tips are equal
-	/// and the tip block is fully indexed (queryable by height).
+	/// Wait until electrs has fully indexed up to bitcoind's current tip.
+	///
+	/// Polls the Prometheus `tip_height` metric rather than the REST API
+	/// height, because the REST height can update before the history
+	/// (address) index is ready — causing BDK wallet syncs to miss txs.
 	pub async fn await_block_count_sync(&self) {
 		match (self.bitcoind.as_ref(), self.electrs.as_ref()) {
 			(Some(bitcoind), Some(electrs)) => {
-				let height = loop {
-					let height = bitcoind.get_block_count().await;
-					if height == electrs.get_block_count().await as u64 {
-						break height as u32;
-					}
-					tokio::time::sleep(Duration::from_millis(100)).await;
-				};
-				// The block height may be reported before the block is fully indexed.
-				// Wait until the block is actually queryable.
-				electrs.await_block_fully_indexed(height).await;
+				let height = bitcoind.get_block_count().await as u32;
+				electrs.await_tip_synced(height).await;
 			},
 			_ => {}
 		}
