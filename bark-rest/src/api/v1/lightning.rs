@@ -29,7 +29,7 @@ use crate::ServerState;
 		bark_json::web::LightningPayRequest,
 		bark_json::web::LightningPayResponse,
 	)),
-	tags((name = "lightning", description = "Lightning-related endpoints"))
+	tags((name = "lightning", description = "Create Lightning invoices and track receives."))
 )]
 pub struct LightningApiDoc;
 
@@ -44,12 +44,14 @@ pub fn router() -> Router<ServerState> {
 #[utoipa::path(
 	post,
 	path = "/receives/invoice",
+	summary = "Create a BOLT11 invoice",
 	request_body = bark_json::web::LightningInvoiceRequest,
 	responses(
 		(status = 200, description = "Returns the created invoice", body = bark_json::cli::InvoiceInfo),
 		(status = 500, description = "Internal server error", body = error::InternalServerError)
 	),
-	description = "Generates a new lightning invoice with the given amount",
+	description = "Generates a new BOLT11 invoice for the specified amount via the Ark server, \
+		creating a pending Lightning receive.",
 	tag = "lightning"
 )]
 #[debug_handler]
@@ -71,16 +73,21 @@ pub async fn generate_invoice(
 #[utoipa::path(
 	get,
 	path = "/receives/{identifier}",
+	summary = "Get receive status",
 	params(
 		("identifier" = String, Path, description = "Payment hash, invoice string or preimage to search for"),
 	),
 	responses(
-		(status = 200, description = "Returns the lightning receive status", body = bark_json::cli::LightningReceiveInfo),
+		(status = 200, description = "Returns the Lightning receive status", body = bark_json::cli::LightningReceiveInfo),
 		(status = 400, description = "Bad request", body = error::BadRequestError),
 		(status = 404, description = "Not found", body = error::NotFoundError),
 		(status = 500, description = "Internal server error", body = error::InternalServerError)
 	),
-	description = "Returns the status of a lightning receive for the provided filter",
+	description = "Returns the status of a specified Lightning receive, identified by its \
+		payment hash, invoice string, or preimage. The response tracks progress through \
+		timestamps: `htlc_vtxos` is populated once HTLCs are created by the Ark server, \
+		`preimage_revealed_at` records when the preimage was sent, and `finished_at` \
+		indicates the receive has settled or been canceled.",
 	tag = "lightning"
 )]
 #[debug_handler]
@@ -112,11 +119,14 @@ pub async fn get_receive_status(
 #[utoipa::path(
 	get,
 	path = "/receives",
+	summary = "List all pending receive statuses",
 	responses(
-		(status = 200, description = "Returns all receive statuses", body = Vec<bark_json::cli::LightningReceiveInfo>),
+		(status = 200, description = "Returns all pending receive statuses", body = Vec<bark_json::cli::LightningReceiveInfo>),
 		(status = 500, description = "Internal server error", body = error::InternalServerError)
 	),
-	description = "Returns all the current pending receive statuses",
+	description = "Returns the statuses of all pending Lightning receives, ordered from oldest \
+		to newest. A receive is pending until its `finished_at` timestamp is set, indicating \
+		it has settled or been canceled.",
 	tag = "lightning"
 )]
 #[debug_handler]
@@ -139,15 +149,19 @@ pub async fn list_receive_statuses(
 #[utoipa::path(
 	post,
 	path = "/pay",
+	summary = "Send a Lightning payment",
 	request_body = bark_json::web::LightningPayRequest,
 	responses(
 		(status = 200, description = "Returns success message, optionally with \
 			preimage if payment was immediately settled", body = bark_json::web::LightningPayResponse),
 		(status = 400, description = "The provided destination is not a valid \
-			bolt11 invoice, bolt12 offer or lightning address", body = error::BadRequestError),
+			BOLT11 invoice, BOLT12 offer, or Lightning address", body = error::BadRequestError),
 		(status = 500, description = "Internal server error", body = error::InternalServerError)
 	),
-	description = "Sends a payment to the given lightning destination",
+	description = "Sends a payment to a Lightning destination. Accepts a BOLT11 invoice, \
+		BOLT12 offer, or Lightning address. The `amount_sat` field is required for Lightning \
+		addresses but optional for invoices and offers. Comments are only supported for \
+		Lightning addresses.",
 	tag = "lightning"
 )]
 #[debug_handler]

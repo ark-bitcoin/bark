@@ -1,7 +1,7 @@
 /*
- * Barkd API
+ * barkd REST API
  *
- * A simple REST API for Barkd
+ * A simple REST API for barkd, a wallet daemon for integrating bitcoin payments into your app over HTTP. Supports self-custodial Lightning, Ark, and on-chain out of the box.  barkd is a long-running daemon best suited for always-on or high-connectivity environments like nodes, servers, desktops, and point-of-sale terminals.  The API is organized into the following groups:  - **Wallet:** The bread and butter for most applications. Manage Ark addresses, balances, VTXOs, and refreshes. Send payments via Ark, Lightning, and on-chain, all funded from your Ark balance. Start here. - **Lightning:** Create BOLT11 invoices to receive payments over Lightning and track receive status. Any application that accepts Lightning payments will use these endpoints alongside the wallet endpoints. - **On-chain:** Manage barkd's built-in on-chain bitcoin wallet. This wallet holds funds in standard UTXOs, separate from your Ark balance, and operates under the normal on-chain trust model without involving the Ark server. - **Boards:** Move on-chain bitcoin onto the Ark protocol to start making off-chain payments. - **Exits:** Unilaterally move bitcoin back on-chain without server cooperation, for when the Ark server is unavailable or uncooperative. - **Bitcoin:** Query bitcoin network data such as the current block height.  All endpoints return JSON. Amounts are denominated in satoshis.
  *
  * The version of the OpenAPI document: 0.1.0-beta.7
  * Contact: hello@second.tech
@@ -24,7 +24,7 @@ pub enum TipError {
 }
 
 
-/// Returns the current bitcoin tip height
+/// Queries the wallet's chain source for the block height of the latest block on the best chain.
 pub async fn tip(configuration: &configuration::Configuration, ) -> Result<models::TipResponse, Error<TipError>> {
 
     let uri_str = format!("{}/api/v1/bitcoin/tip", configuration.base_path);

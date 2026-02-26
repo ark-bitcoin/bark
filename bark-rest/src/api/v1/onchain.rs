@@ -47,17 +47,21 @@ pub fn router() -> Router<ServerState> {
 		bark_json::primitives::UtxoInfo,
 		bark_json::primitives::TransactionInfo,
 	)),
-	tags((name = "onchain", description = "Onchain wallet endpoints"))
+	tags((name = "onchain", description = "Manage barkd's on-chain bitcoin wallet."))
 )]
 pub struct OnchainApiDoc;
 
 #[utoipa::path(
 	get,
 	path = "/balance",
+	summary = "Get on-chain balance",
 	responses(
-		(status = 200, description = "Returns the onchain balance", body = bark_json::cli::onchain::OnchainBalance),
+		(status = 200, description = "Returns the on-chain balance", body = bark_json::cli::onchain::OnchainBalance),
 	),
-	description = "Returns the current onchain wallet balance",
+	description = "Returns the current on-chain wallet balance, broken down by confirmation \
+		status. The `trusted_spendable_sat` field is the sum of `confirmed_sat` and \
+		`trusted_pending_sat`—the balance that can be safely spent without risk of \
+		double-spend.",
 	tag = "onchain"
 )]
 #[debug_handler]
@@ -82,11 +86,13 @@ pub async fn onchain_balance(
 #[utoipa::path(
 	post,
 	path = "/addresses/next",
+	summary = "Generate on-chain address",
 	responses(
-		(status = 200, description = "Returns the onchain address", body = bark_json::cli::onchain::Address),
+		(status = 200, description = "Returns the on-chain address", body = bark_json::cli::onchain::Address),
 		(status = 500, description = "Internal server error", body = error::InternalServerError)
 	),
-	description = "Generates a new onchain address and stores its index in the onchain wallet database",
+	description = "Generates a new on-chain receiving address. Each call returns the next \
+		unused address from the wallet's HD keychain.",
 	tag = "onchain"
 )]
 #[debug_handler]
@@ -106,13 +112,16 @@ pub async fn onchain_address(
 #[utoipa::path(
 	post,
 	path = "/send",
+	summary = "Send on-chain payment",
 	request_body = bark_json::web::OnchainSendRequest,
 	responses(
 		(status = 200, description = "Returns the send result", body = bark_json::cli::onchain::Send),
 		(status = 400, description = "The provided destination address is invalid", body = error::BadRequestError),
 		(status = 500, description = "Internal server error", body = error::InternalServerError)
 	),
-	description = "Sends a payment to the given onchain address",
+	description = "Sends the specified amount to an on-chain address. Broadcasts the \
+		transaction immediately at a fee rate targeting confirmation within three blocks \
+		and returns the transaction ID.",
 	tag = "onchain"
 )]
 #[debug_handler]
@@ -140,13 +149,17 @@ pub async fn onchain_send(
 #[utoipa::path(
 	post,
 	path = "/send-many",
+	summary = "Send to multiple addresses",
 	request_body = bark_json::web::OnchainSendManyRequest,
 	responses(
 		(status = 200, description = "Returns the send result", body = bark_json::cli::onchain::Send),
 		(status = 400, description = "One of the provided destinations is invalid", body = error::BadRequestError),
 		(status = 500, description = "Internal server error", body = error::InternalServerError)
 	),
-	description = "Sends multiple payments to provided onchain addresses",
+	description = "Batches multiple payments into a single on-chain transaction. Each \
+		destination is formatted as `address:amount`. Broadcasts the transaction immediately \
+		at a fee rate targeting confirmation within three blocks and returns the transaction \
+		ID.",
 	tag = "onchain"
 )]
 #[debug_handler]
@@ -195,13 +208,17 @@ pub async fn onchain_send_many(
 #[utoipa::path(
 	post,
 	path = "/drain",
+	summary = "Drain on-chain wallet",
 	request_body = bark_json::web::OnchainDrainRequest,
 	responses(
 		(status = 200, description = "Returns the drain result", body = bark_json::cli::onchain::Send),
 		(status = 400, description = "The provided destination address is invalid", body = error::BadRequestError),
 		(status = 500, description = "Internal server error", body = error::InternalServerError)
 	),
-	description = "Sends all onchain wallet funds to the given address",
+	description = "Sends the entire on-chain wallet balance to the specified address. The \
+		recipient receives the full balance minus transaction fees. Broadcasts immediately \
+		at a fee rate targeting confirmation within three blocks and returns the transaction \
+		ID.",
 	tag = "onchain"
 )]
 #[debug_handler]
@@ -228,10 +245,12 @@ pub async fn onchain_drain(
 #[utoipa::path(
 	get,
 	path = "/utxos",
+	summary = "List on-chain UTXOs",
 	responses(
-		(status = 200, description = "Returns the onchain UTXOs", body = Vec<bark_json::primitives::UtxoInfo>),
+		(status = 200, description = "Returns the on-chain UTXOs", body = Vec<bark_json::primitives::UtxoInfo>),
 	),
-	description = "Returns all the onchain wallet UTXOs",
+	description = "Returns all UTXOs in the on-chain wallet. Each entry includes the outpoint, \
+		amount, and confirmation height (if confirmed).",
 	tag = "onchain"
 )]
 #[debug_handler]
@@ -251,10 +270,11 @@ pub async fn onchain_utxos(
 #[utoipa::path(
 	get,
 	path = "/transactions",
+	summary = "List on-chain transactions",
 	responses(
-		(status = 200, description = "Returns the onchain transactions", body = Vec<bark_json::primitives::TransactionInfo>),
+		(status = 200, description = "Returns the on-chain transactions", body = Vec<bark_json::primitives::TransactionInfo>),
 	),
-	description = "Returns all the onchain wallet transactions",
+	description = "Returns all on-chain wallet transactions, ordered from oldest to newest.",
 	tag = "onchain"
 )]
 #[debug_handler]
@@ -277,11 +297,14 @@ pub async fn onchain_transactions(
 #[utoipa::path(
 	post,
 	path = "/sync",
+	summary = "Sync on-chain wallet",
 	responses(
-		(status = 200, description = "Synced onchain wallet"),
+		(status = 200, description = "Synced on-chain wallet"),
 		(status = 500, description = "Internal server error", body = error::InternalServerError)
 	),
-	description = "Syncs the onchain wallet",
+	description = "Syncs the on-chain wallet state with the chain source. Fetches new blocks \
+		and transactions, updates the UTXO set, and re-submits any stale unconfirmed \
+		transactions to the mempool.",
 	tag = "onchain"
 )]
 #[debug_handler]

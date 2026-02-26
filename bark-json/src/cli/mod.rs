@@ -105,24 +105,39 @@ impl<T: Borrow<ark::ArkInfo>> From<T> for ArkInfo {
 	}
 }
 
+/// The different balances of a Bark wallet, broken down by state.
+///
+/// All amounts are in sats.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[cfg_attr(feature = "utoipa", derive(ToSchema))]
 pub struct Balance {
+	/// Sats that are immediately spendable, either in-round or
+	/// out-of-round.
 	#[serde(rename = "spendable_sat", with = "bitcoin::amount::serde::as_sat")]
 	#[cfg_attr(feature = "utoipa", schema(value_type = u64))]
 	pub spendable: Amount,
+	/// Sats locked in an outgoing Lightning payment that has not yet
+	/// settled.
 	#[serde(rename = "pending_lightning_send_sat", with = "bitcoin::amount::serde::as_sat")]
 	#[cfg_attr(feature = "utoipa", schema(value_type = u64))]
 	pub pending_lightning_send: Amount,
+	/// Sats from an incoming Lightning payment that can be claimed but
+	/// have not yet been swept into a spendable VTXO.
 	#[serde(rename = "claimable_lightning_receive_sat", with = "bitcoin::amount::serde::as_sat")]
 	#[cfg_attr(feature = "utoipa", schema(value_type = u64))]
 	pub claimable_lightning_receive: Amount,
+	/// Sats locked in VTXOs forfeited for a round that has not yet
+	/// completed.
 	#[serde(rename = "pending_in_round_sat", with = "bitcoin::amount::serde::as_sat")]
 	#[cfg_attr(feature = "utoipa", schema(value_type = u64))]
 	pub pending_in_round: Amount,
+	/// Sats in board transactions that are waiting for sufficient
+	/// on-chain confirmations before becoming spendable.
 	#[serde(rename = "pending_board_sat", with = "bitcoin::amount::serde::as_sat")]
 	#[cfg_attr(feature = "utoipa", schema(value_type = u64))]
 	pub pending_board: Amount,
+	/// Sats in VTXOs undergoing an emergency exit back on-chain.
+	/// `null` if the exit subsystem is unavailable.
 	#[serde(
 		default,
 		rename = "pending_exit_sat",

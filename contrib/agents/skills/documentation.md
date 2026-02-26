@@ -1,6 +1,7 @@
 # Documentation Skill
 
-Vocabulary and terminology guide for documentation, docstrings, and comments.
+Vocabulary, terminology, and style guide for documentation, docstrings, and
+comments.
 
 ## Vocabulary Guide
 
@@ -18,6 +19,9 @@ Use consistent terminology throughout all documentation.
 | in-round transaction | inround, in-round payment | "transaction" is more accurate |
 | out-of-round transaction | out of round transaction | |
 | VTXO | vtxo, Vtxo | |
+| emergency exit | unilateral exit | Recently renamed across the project |
+| onto (Ark) | into (Ark) | "onto the Ark protocol", not "into" |
+| registers | marks | For exit start: "registers VTXOs for emergency exit" |
 
 ### Bitcoin Terms
 
@@ -61,10 +65,11 @@ Use consistent terminology throughout all documentation.
 | Use | Don't use | Why |
 |-----|-----------|-----|
 | you, your | the user | More relatable |
+| specified | given | "the specified address", not "the given address" |
 | trade-off | tradeoff | |
 | backend, frontend | back-end, front-end | |
 | co-founder | cofounder | |
-| em dash (—) | spaced hyphens ( - ) | |
+| em dash (—) | spaced hyphens ( - ) | No spaces: `foo—bar` not `foo — bar` |
 | sentence case headings | Title Case Headings | Cleaner |
 | 5K, 5M, 5B | 5 thousand, 5m, 5mm | "mm" confuses people |
 
@@ -74,3 +79,36 @@ Use consistent terminology throughout all documentation.
 - Use digits for 11 and above
 - Use digits for all technical instructions
 - Be consistent within each document
+
+## Style Guide
+
+### Ark protocol references
+
+- Use "the Ark protocol" (with "the") when using the full name.
+- Just "Ark" is fine on its own and does not require "the".
+  - Correct: "the Ark protocol enables..." or "Ark enables..."
+  - Incorrect: "Ark protocol enables..."
+
+### Bark references
+
+- Use "Bark" (capitalized) in prose and explanations.
+- Use "bark" (lowercase) for technical artifacts: CLI commands, code, paths.
+  - Prose: "Bark is Second's implementation of the Ark protocol"
+  - Technical: "run `bark send` to send a payment"
+
+### Atomic operations
+
+Ark operations are atomic—forfeit and output happen in the same transaction.
+Do not use language that implies swapping or exchanging different assets.
+
+- Avoid: "exchange", "swap", "in exchange for", "in return for", "traded for"
+- Prefer: "forfeit and receive", "forfeit to deliver", or describe the atomic
+  operation directly
+  - Correct: "Users forfeit old VTXOs and receive new ones"
+  - Incorrect: "Users exchange old VTXOs for new ones"
+
+### Formatting
+
+- **Endpoint references**: Use backticks (`` `progress` ``, `` `claim` ``).
+- **Field references**: Use backticks with the value where helpful
+  (`` `done: true` ``).

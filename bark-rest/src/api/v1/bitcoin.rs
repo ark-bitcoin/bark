@@ -14,7 +14,7 @@ use crate::ServerState;
 	components(schemas(
 		bark_json::web::TipResponse,
 	)),
-	tags((name = "bitcoin", description = "Bitcoin network endpoints"))
+	tags((name = "bitcoin", description = "Query bitcoin network data."))
 )]
 pub struct BitcoinApiDoc;
 
@@ -26,11 +26,12 @@ pub fn router() -> Router<ServerState> {
 #[utoipa::path(
 	get,
 	path = "/tip",
+	summary = "Get bitcoin tip height",
 	responses(
 		(status = 200, description = "Returns the current bitcoin tip height", body = bark_json::web::TipResponse),
 		(status = 500, description = "Internal server error", body = error::InternalServerError)
 	),
-	description = "Returns the current bitcoin tip height",
+	description = "Queries the wallet's chain source for the block height of the latest block on the best chain.",
 	tag = "bitcoin"
 )]
 #[debug_handler]
@@ -42,5 +43,3 @@ pub async fn tip(
 	let tip_height = wallet.chain.tip().await?;
 	Ok(axum::Json(bark_json::web::TipResponse { tip_height }))
 }
-
-

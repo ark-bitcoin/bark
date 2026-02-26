@@ -92,7 +92,7 @@ pub fn router() -> Router<ServerState> {
 		error::BadRequestError,
 	)),
 	tags(
-		(name = "wallet", description = "Wallet-related endpoints"),
+		(name = "wallet", description = "Manage Ark balances and VTXOs, send payments via Ark, LN, and on-chain."),
 	)
 )]
 pub struct WalletApiDoc;
@@ -100,11 +100,15 @@ pub struct WalletApiDoc;
 #[utoipa::path(
 	get,
 	path = "/connected",
+	summary = "Check server connection",
 	responses(
 		(status = 200, description = "Returns whether the wallet is connected to an Ark server", body = bark_json::web::ConnectedResponse),
 		(status = 500, description = "Internal server error", body = error::InternalServerError)
 	),
-	description = "Returns whether the wallet is currently connected to the Ark server",
+	description = "Checks whether the wallet has an active connection to the Ark server. \
+		Returns `true` if the wallet can reach the server and retrieve its configuration, \
+		`false` otherwise. The background daemon checks the server connection every second, \
+		so this reflects the most recent known state.",
 	tag = "wallet"
 )]
 #[debug_handler]
@@ -118,11 +122,14 @@ pub async fn connected(State(state): State<ServerState>) -> HandlerResult<Json<b
 #[utoipa::path(
 	post,
 	path = "/create",
+	summary = "Create a wallet",
 	responses(
 		(status = 200, description = "Wallet created successfully", body = bark_json::web::CreateWalletResponse),
 		(status = 500, description = "Internal server error", body = error::InternalServerError)
 	),
-	description = "Creates a new wallet",
+	description = "Creates a new wallet with the specified Ark server and chain source \
+		configuration. Fails if a wallet already exists. Returns the wallet fingerprint \
+		on success.",
 	tag = "wallet"
 )]
 #[debug_handler]
@@ -148,12 +155,15 @@ pub async fn create_wallet(
 #[utoipa::path(
 	get,
 	path = "/ark-info",
+	summary = "Get Ark server info",
 	responses(
 		(status = 200, description = "Returns the Ark info", body = bark_json::cli::ArkInfo),
 		(status = 404, description = "Wallet not connected to an Ark server", body = error::NotFoundError),
 		(status = 500, description = "Internal server error", body = error::InternalServerError)
 	),
-	description = "Returns the current Ark infos",
+	description = "Returns the Ark server's configuration parameters, including network, \
+		public key, round interval, VTXO expiry and exit deltas, fee settings, and \
+		Lightning support details.",
 	tag = "wallet"
 )]
 #[debug_handler]
@@ -170,12 +180,14 @@ pub async fn ark_info(State(state): State<ServerState>) -> HandlerResult<Json<ba
 #[utoipa::path(
 	get,
 	path = "/next-round",
+	summary = "Get next round time",
 	responses(
 		(status = 200, description = "Returns the next round start time", body = bark_json::cli::NextRoundStart),
 		(status = 404, description = "Wallet not connected to an Ark server", body = error::NotFoundError),
 		(status = 500, description = "Internal server error", body = error::InternalServerError)
 	),
-	description = "Returns the next round start time in RFC 3339 format",
+	description = "Queries the Ark server for the next scheduled round start time and returns \
+		it in RFC 3339 format.",
 	tag = "wallet"
 )]
 #[debug_handler]
@@ -188,11 +200,13 @@ pub async fn next_round(State(state): State<ServerState>) -> HandlerResult<Json<
 #[utoipa::path(
 	post,
 	path = "/addresses/next",
+	summary = "Generate Ark address",
 	responses(
 		(status = 200, description = "Returns the Ark address", body = bark_json::web::ArkAddressResponse),
 		(status = 500, description = "Internal server error", body = error::InternalServerError)
 	),
-	description = "Generates a new Ark address and stores it in the wallet database",
+	description = "Generates a new Ark receiving address. Each call returns the next unused \
+		address from the wallet's HD keychain.",
 	tag = "wallet"
 )]
 #[debug_handler]
@@ -211,6 +225,7 @@ pub async fn address(
 #[utoipa::path(
 	get,
 	path = "/addresses/index/{index}",
+	summary = "Get Ark address by index",
 	params(
 		("index" = u32, Path, description = "Index for the address.")
 	),
@@ -218,8 +233,8 @@ pub async fn address(
 		(status = 200, description = "Returns the Ark address", body = bark_json::web::ArkAddressResponse),
 		(status = 500, description = "Internal server error", body = error::InternalServerError)
 	),
-	description = "Returns the Ark address at the given index. The address must \
-		have been already derived before using the /addresses/next endpoint.",
+	description = "Returns a previously generated Ark address by its derivation index. Only \
+		addresses that have already been generated are available.",
 	tag = "wallet"
 )]
 #[debug_handler]
@@ -239,11 +254,17 @@ pub async fn peak_address(
 #[utoipa::path(
 	get,
 	path = "/balance",
+	summary = "Get wallet balance",
 	responses(
 		(status = 200, description = "Returns the wallet balance", body = bark_json::cli::Balance),
 		(status = 500, description = "Internal server error", body = error::InternalServerError)
 	),
-	description = "Returns the current wallet balance",
+	description = "Returns the wallet balance broken down by category: spendable sats \
+		available for immediate use, sats pending in an Ark round, sats locked in outgoing \
+		or incoming Lightning payments, sats awaiting board confirmation, and sats in a \
+		pending exit. The balance is computed from local state, which the background daemon \
+		keeps reasonably fresh (Lightning syncs every second, mailbox and boards every \
+		30 seconds). For the most up-to-date figures, call `sync` before this endpoint.",
 	tag = "wallet"
 )]
 #[debug_handler]
@@ -258,6 +279,7 @@ pub async fn balance(State(state): State<ServerState>) -> HandlerResult<Json<bar
 #[utoipa::path(
 	get,
 	path = "/vtxos",
+	summary = "List VTXOs",
 	params(
 		("all" = Option<bool>, Query, description = "Return all VTXOs regardless of their state. If not provided, returns only non-spent VTXOs.")
 	),
@@ -265,7 +287,9 @@ pub async fn balance(State(state): State<ServerState>) -> HandlerResult<Json<bar
 		(status = 200, description = "Returns the wallet VTXOs", body = Vec<bark_json::primitives::WalletVtxoInfo>),
 		(status = 500, description = "Internal server error", body = error::InternalServerError)
 	),
-	description = "Returns all the wallet VTXOs",
+	description = "Returns VTXOs held by the wallet, including their state and expiry \
+		information. By default returns only non-spent VTXOs. Set `all=true` to include \
+		all VTXOs regardless of state.",
 	tag = "wallet"
 )]
 #[debug_handler]
@@ -295,6 +319,7 @@ pub async fn vtxos(
 #[utoipa::path(
 	get,
 	path = "/movements",
+	summary = "List movements (deprecated)",
 	responses(
 		(status = 200, description = "Returns the wallet movements", body = Vec<bark_json::cli::Movement>),
 		(status = 500, description = "Internal server error", body = error::InternalServerError)
@@ -321,11 +346,16 @@ pub async fn movements(State(state): State<ServerState>) -> HandlerResult<Json<V
 #[utoipa::path(
 	get,
 	path = "/history",
+	summary = "Get wallet history",
 	responses(
 		(status = 200, description = "Returns the wallet history", body = Vec<bark_json::cli::Movement>),
 		(status = 500, description = "Internal server error", body = error::InternalServerError)
 	),
-	description = "Returns all the wallet history",
+	description = "Returns the full history of wallet movements ordered from newest to \
+		oldest. A movement represents any wallet operation that affects VTXOs—an arkoor \
+		send or receive, Lightning send or receive, board, offboard, or refresh. Each \
+		entry records which VTXOs were consumed and produced, the effective balance \
+		change (if any), fees paid, and the operation status.",
 	tag = "wallet"
 )]
 #[debug_handler]
@@ -345,11 +375,18 @@ pub async fn history(State(state): State<ServerState>) -> HandlerResult<Json<Vec
 #[utoipa::path(
 	get,
 	path = "/rounds",
+	summary = "List round participations",
 	responses(
 		(status = 200, description = "Returns the wallet pending rounds", body = Vec<bark_json::web::PendingRoundInfo>),
 		(status = 500, description = "Internal server error", body = error::InternalServerError)
 	),
-	description = "Returns all the wallet ongoing round participations",
+	description = "Returns all active round participations and their current status. A round \
+		participation is created when you call one of the `refresh` endpoints and persists \
+		until the round's funding transaction is confirmed on-chain (2 confirmations on \
+		mainnet, 1 on testnet). The list can contain multiple entries—for example, a \
+		previous round awaiting on-chain confirmation alongside a newly submitted round \
+		waiting for the next server round to start. Confirmed and failed rounds are \
+		removed automatically by the background daemon.",
 	tag = "wallet"
 )]
 #[debug_handler]
@@ -371,15 +408,21 @@ pub async fn pending_rounds(
 #[utoipa::path(
 	post,
 	path = "/send",
+	summary = "Send a payment",
 	request_body = bark_json::web::SendRequest,
 	responses(
 		(status = 200, description = "Payment sent successfully", body = bark_json::web::SendResponse),
 		(status = 400, description = "The provided destination is not a valid Ark address, \
-			bolt11 invoice, bolt12 offer or lightning address", body = error::BadRequestError),
+			BOLT11 invoice, BOLT12 offer, or Lightning address", body = error::BadRequestError),
 		(status = 500, description = "Internal server error", body = error::InternalServerError)
 	),
-	description = "Sends a payment to the given destination. The destination \
-		can be an Ark address, a BOLT11-invoice, LNURL or a lightning address",
+	description = "Sends an Ark or Lightning payment to the specified destination. Accepts \
+		an Ark address, BOLT11 invoice, BOLT12 offer, or Lightning address. Ark address \
+		payments are settled instantly via an out-of-round (arkoor) transaction. The \
+		`amount_sat` field is required for Ark addresses and Lightning addresses but \
+		optional for invoices and offers that already encode an amount. Comments are \
+		only supported for Lightning addresses. To send to an on-chain bitcoin address, \
+		use `send-onchain` instead.",
 	tag = "wallet"
 )]
 #[debug_handler]
@@ -429,6 +472,7 @@ pub async fn send(
 #[utoipa::path(
 	post,
 	path = "/refresh/vtxos",
+	summary = "Refresh specific VTXOs",
 	request_body = bark_json::web::RefreshRequest,
 	responses(
 		(status = 200, description = "Returns the refresh result", body = bark_json::web::PendingRoundInfo),
@@ -437,7 +481,11 @@ pub async fn send(
 		(status = 404, description = "One the VTXOs wasn't found", body = error::NotFoundError),
 		(status = 500, description = "Internal server error", body = error::InternalServerError)
 	),
-	description = "Creates a new round participation to refresh the given VTXOs",
+	description = "Registers the specified VTXOs for refresh in the next Ark round. The \
+		input VTXOs are locked immediately and will be forfeited once the round completes, \
+		yielding new VTXOs with a fresh expiry. The background daemon automatically \
+		participates in the round and progresses it to completion. Use the `rounds` \
+		endpoint to track progress.",
 	tag = "wallet"
 )]
 #[debug_handler]
@@ -478,11 +526,16 @@ pub async fn refresh_vtxos(
 #[utoipa::path(
 	post,
 	path = "/refresh/all",
+	summary = "Refresh all VTXOs",
 	responses(
 		(status = 200, description = "Returns the refresh result", body = bark_json::web::PendingRoundInfo),
 		(status = 500, description = "Internal server error", body = error::InternalServerError)
 	),
-	description = "Creates a new round participation to refresh all VTXOs",
+	description = "Registers all spendable VTXOs for refresh in the next Ark round. The \
+		input VTXOs are locked immediately and will be forfeited once the round completes, \
+		yielding new VTXOs with a fresh expiry. The background daemon automatically \
+		participates in the round and progresses it to completion. Use the `rounds` \
+		endpoint to track progress.",
 	tag = "wallet"
 )]
 #[debug_handler]
@@ -517,12 +570,18 @@ pub async fn refresh_all(
 #[utoipa::path(
 	post,
 	path = "/refresh/counterparty",
+	summary = "Refresh received VTXOs",
 	responses(
 		(status = 200, description = "Returns the refresh result", body = bark_json::web::PendingRoundInfo),
 		(status = 404, description = "There is no VTXO to refresh", body = error::NotFoundError),
 		(status = 500, description = "Internal server error", body = error::InternalServerError)
 	),
-	description = "Creates a new round participation to refresh VTXOs marked with counterparty",
+	description = "Registers all out-of-round VTXOs held by the wallet for refresh in the \
+		next Ark round. Refreshing replaces out-of-round VTXOs under arkoor trust \
+		assumptions with trustless, in-round VTXOs. Out-of-round VTXOs whose entire \
+		transaction chain originates from your own in-round VTXOs are excluded. The \
+		background daemon automatically participates in the round and progresses it \
+		to completion. Use the `rounds` endpoint to track progress.",
 	tag = "wallet"
 )]
 #[debug_handler]
@@ -558,6 +617,7 @@ pub async fn refresh_counterparty(
 #[utoipa::path(
 	post,
 	path = "/offboard/vtxos",
+	summary = "Offboard specific VTXOs",
 	request_body = bark_json::web::OffboardVtxosRequest,
 	responses(
 		(status = 200, description = "Returns the offboard transaction id",
@@ -567,7 +627,12 @@ pub async fn refresh_counterparty(
 		(status = 404, description = "One the VTXOs wasn't found", body = error::NotFoundError),
 		(status = 500, description = "Internal server error")
 	),
-	description = "Creates a new round participation to offboard the given VTXOs",
+	description = "Cooperatively moves the specified VTXOs off the Ark protocol to an \
+		on-chain address. Each VTXO is offboarded in full—partial amounts are not \
+		supported. The on-chain transaction fee is deducted from the total, and the \
+		remaining amount is sent to the destination. If no address is specified, the \
+		wallet generates a new on-chain address. To send a specific amount on-chain, \
+		use `send-onchain` instead.",
 	tag = "wallet"
 )]
 #[debug_handler]
@@ -607,13 +672,19 @@ pub async fn offboard_vtxos(
 #[utoipa::path(
 	post,
 	path = "/offboard/all",
+	summary = "Offboard all VTXOs",
 	request_body = bark_json::web::OffboardAllRequest,
 	responses(
 		(status = 200, description = "Returns the offboard transaction id",
 			body = bark_json::cli::OffboardResult),
 		(status = 500, description = "Internal server error", body = error::InternalServerError)
 	),
-	description = "Creates a new round participation to offboard all VTXOs",
+	description = "Cooperatively moves all spendable VTXOs off the Ark protocol to an \
+		on-chain address. Each VTXO is offboarded in full—partial amounts are not \
+		supported. The on-chain transaction fee is deducted from the total, and the \
+		remaining amount is sent to the destination. If no address is specified, the \
+		wallet generates a new on-chain address. To send a specific amount on-chain, \
+		use `send-onchain` instead.",
 	tag = "wallet"
 )]
 #[debug_handler]
@@ -642,13 +713,19 @@ pub async fn offboard_all(
 #[utoipa::path(
 	post,
 	path = "/send-onchain",
+	summary = "Send on-chain from Ark balance",
 	request_body = bark_json::web::SendOnchainRequest,
 	responses(
 		(status = 200, description = "Returns the offboard transaction id",
 			body = bark_json::cli::OffboardResult),
 		(status = 500, description = "Internal server error", body = error::InternalServerError)
 	),
-	description = "Creates a new round participation to send a payment onchain from ark round",
+	description = "Sends the specified amount to an on-chain address using the wallet's \
+		off-chain Ark balance. The on-chain transaction fee is paid on top of the \
+		specified amount. Internally creates an out-of-round transaction to consolidate \
+		VTXOs into the exact amount needed, then cooperatively sends the on-chain \
+		payment via the Ark server. To offboard entire VTXOs without specifying an \
+		amount, use `offboard/vtxos` or `offboard/all` instead.",
 	tag = "wallet"
 )]
 #[debug_handler]
@@ -673,10 +750,16 @@ pub async fn send_onchain(
 #[utoipa::path(
 	post,
 	path = "/sync",
+	summary = "Sync wallet",
 	responses(
 		(status = 200, description = "Wallet was successfully synced"),
 	),
-	description = "Syncs the wallet",
+	description = "Triggers an immediate sync of the wallet's off-chain state. Updates \
+		on-chain fee rates, processes incoming arkoor payments, resolves outgoing and \
+		incoming Lightning payments, and progresses pending rounds and boards toward \
+		confirmation. The background daemon already runs these operations automatically \
+		(e.g., Lightning every second, mailbox and boards every 30 seconds), but calling \
+		`sync` forces all of them to run immediately.",
 	tag = "wallet"
 )]
 #[debug_handler]
@@ -689,13 +772,17 @@ pub async fn sync(State(state): State<ServerState>) -> HandlerResult<()> {
 #[utoipa::path(
 	post,
 	path = "/import-vtxo",
+	summary = "Import a VTXO",
 	request_body = bark_json::web::ImportVtxoRequest,
 	responses(
 		(status = 200, description = "VTXO imported successfully", body = Vec<bark_json::primitives::WalletVtxoInfo>),
 		(status = 400, description = "Invalid VTXO hex or VTXO not owned by wallet", body = error::BadRequestError),
 		(status = 500, description = "Internal server error", body = error::InternalServerError)
 	),
-	description = "Imports a raw serialized VTXO into the wallet",
+	description = "Imports hex-encoded serialized VTXOs into the wallet. Validates that \
+		each VTXO is anchored on-chain, owned by this wallet, and has not expired. \
+		Useful for restoring VTXOs after database loss or re-importing from the \
+		server mailbox. The operation is idempotent.",
 	tag = "wallet"
 )]
 #[debug_handler]

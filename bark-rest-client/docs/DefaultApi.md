@@ -4,14 +4,14 @@ All URIs are relative to *http://localhost*
 
 Method | HTTP request | Description
 ------------- | ------------- | -------------
-[**ping**](DefaultApi.md#ping) | **GET** /ping | 
+[**ping**](DefaultApi.md#ping) | **GET** /ping | Ping
 
 
 
 ## ping
 
 > ping()
-
+Ping
 
 ### Parameters
 

@@ -1,7 +1,7 @@
 /*
- * Barkd API
+ * barkd REST API
  *
- * A simple REST API for Barkd
+ * A simple REST API for barkd, a wallet daemon for integrating bitcoin payments into your app over HTTP. Supports self-custodial Lightning, Ark, and on-chain out of the box.  barkd is a long-running daemon best suited for always-on or high-connectivity environments like nodes, servers, desktops, and point-of-sale terminals.  The API is organized into the following groups:  - **Wallet:** The bread and butter for most applications. Manage Ark addresses, balances, VTXOs, and refreshes. Send payments via Ark, Lightning, and on-chain, all funded from your Ark balance. Start here. - **Lightning:** Create BOLT11 invoices to receive payments over Lightning and track receive status. Any application that accepts Lightning payments will use these endpoints alongside the wallet endpoints. - **On-chain:** Manage barkd's built-in on-chain bitcoin wallet. This wallet holds funds in standard UTXOs, separate from your Ark balance, and operates under the normal on-chain trust model without involving the Ark server. - **Boards:** Move on-chain bitcoin onto the Ark protocol to start making off-chain payments. - **Exits:** Unilaterally move bitcoin back on-chain without server cooperation, for when the Ark server is unavailable or uncooperative. - **Bitcoin:** Query bitcoin network data such as the current block height.  All endpoints return JSON. Amounts are denominated in satoshis.
  *
  * The version of the OpenAPI document: 0.1.0-beta.7
  * Contact: hello@second.tech
@@ -51,7 +51,7 @@ pub enum PayError {
 }
 
 
-/// Generates a new lightning invoice with the given amount
+/// Generates a new BOLT11 invoice for the specified amount via the Ark server, creating a pending Lightning receive.
 pub async fn generate_invoice(configuration: &configuration::Configuration, lightning_invoice_request: models::LightningInvoiceRequest) -> Result<models::InvoiceInfo, Error<GenerateInvoiceError>> {
     // add a prefix to parameters to efficiently prevent name collisions
     let p_lightning_invoice_request = lightning_invoice_request;
@@ -89,7 +89,7 @@ pub async fn generate_invoice(configuration: &configuration::Configuration, ligh
     }
 }
 
-/// Returns the status of a lightning receive for the provided filter
+/// Returns the status of a specified Lightning receive, identified by its payment hash, invoice string, or preimage. The response tracks progress through timestamps: `htlc_vtxos` is populated once HTLCs are created by the Ark server, `preimage_revealed_at` records when the preimage was sent, and `finished_at` indicates the receive has settled or been canceled.
 pub async fn get_receive_status(configuration: &configuration::Configuration, identifier: &str) -> Result<models::LightningReceiveInfo, Error<GetReceiveStatusError>> {
     // add a prefix to parameters to efficiently prevent name collisions
     let p_identifier = identifier;
@@ -126,7 +126,7 @@ pub async fn get_receive_status(configuration: &configuration::Configuration, id
     }
 }
 
-/// Returns all the current pending receive statuses
+/// Returns the statuses of all pending Lightning receives, ordered from oldest to newest. A receive is pending until its `finished_at` timestamp is set, indicating it has settled or been canceled.
 pub async fn list_receive_statuses(configuration: &configuration::Configuration, ) -> Result<Vec<models::LightningReceiveInfo>, Error<ListReceiveStatusesError>> {
 
     let uri_str = format!("{}/api/v1/lightning/receives", configuration.base_path);
@@ -161,7 +161,7 @@ pub async fn list_receive_statuses(configuration: &configuration::Configuration,
     }
 }
 
-/// Sends a payment to the given lightning destination
+/// Sends a payment to a Lightning destination. Accepts a BOLT11 invoice, BOLT12 offer, or Lightning address. The `amount_sat` field is required for Lightning addresses but optional for invoices and offers. Comments are only supported for Lightning addresses.
 pub async fn pay(configuration: &configuration::Configuration, lightning_pay_request: models::LightningPayRequest) -> Result<models::LightningPayResponse, Error<PayError>> {
     // add a prefix to parameters to efficiently prevent name collisions
     let p_lightning_pay_request = lightning_pay_request;

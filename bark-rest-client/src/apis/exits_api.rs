@@ -1,7 +1,7 @@
 /*
- * Barkd API
+ * barkd REST API
  *
- * A simple REST API for Barkd
+ * A simple REST API for barkd, a wallet daemon for integrating bitcoin payments into your app over HTTP. Supports self-custodial Lightning, Ark, and on-chain out of the box.  barkd is a long-running daemon best suited for always-on or high-connectivity environments like nodes, servers, desktops, and point-of-sale terminals.  The API is organized into the following groups:  - **Wallet:** The bread and butter for most applications. Manage Ark addresses, balances, VTXOs, and refreshes. Send payments via Ark, Lightning, and on-chain, all funded from your Ark balance. Start here. - **Lightning:** Create BOLT11 invoices to receive payments over Lightning and track receive status. Any application that accepts Lightning payments will use these endpoints alongside the wallet endpoints. - **On-chain:** Manage barkd's built-in on-chain bitcoin wallet. This wallet holds funds in standard UTXOs, separate from your Ark balance, and operates under the normal on-chain trust model without involving the Ark server. - **Boards:** Move on-chain bitcoin onto the Ark protocol to start making off-chain payments. - **Exits:** Unilaterally move bitcoin back on-chain without server cooperation, for when the Ark server is unavailable or uncooperative. - **Bitcoin:** Query bitcoin network data such as the current block height.  All endpoints return JSON. Amounts are denominated in satoshis.
  *
  * The version of the OpenAPI document: 0.1.0-beta.7
  * Contact: hello@second.tech
@@ -77,7 +77,7 @@ pub enum GetExitStatusByVtxoIdError {
 }
 
 
-/// Claims all claimable exited VTXOs to the given destination address
+/// Sweeps all claimable exit outputs into a single on-chain transaction sent to the specified address. Unlike `progress`, the daemon does not claim automatically—this endpoint must be called manually. Poll the `status` endpoint or call `progress` and check for `done: true` to know when VTXOs are ready to claim. This is the final step of the emergency exit process—the bitcoin is not considered back on-chain until this transaction confirms.
 pub async fn exit_claim_all(configuration: &configuration::Configuration, exit_claim_all_request: models::ExitClaimAllRequest) -> Result<models::ExitClaimResponse, Error<ExitClaimAllError>> {
     // add a prefix to parameters to efficiently prevent name collisions
     let p_exit_claim_all_request = exit_claim_all_request;
@@ -115,7 +115,7 @@ pub async fn exit_claim_all(configuration: &configuration::Configuration, exit_c
     }
 }
 
-/// Claims the given exited VTXOs to the given destination address
+/// Sweeps the specified claimable exit outputs into a single on-chain transaction sent to the specified address. Unlike `progress`, the daemon does not claim automatically—this endpoint must be called manually. Poll the `status` endpoint or call `progress` and check for `done: true` to know when VTXOs are ready to claim. This is the final step of the emergency exit process—the bitcoin is not considered back on-chain until this transaction confirms.
 pub async fn exit_claim_vtxos(configuration: &configuration::Configuration, exit_claim_vtxos_request: models::ExitClaimVtxosRequest) -> Result<models::ExitClaimResponse, Error<ExitClaimVtxosError>> {
     // add a prefix to parameters to efficiently prevent name collisions
     let p_exit_claim_vtxos_request = exit_claim_vtxos_request;
@@ -153,7 +153,7 @@ pub async fn exit_claim_vtxos(configuration: &configuration::Configuration, exit
     }
 }
 
-/// Progresses the exit process of all current exits until it completes
+/// Triggers all in-progress exits to advance by one step. The daemon already progresses exits automatically in the background—use this endpoint when you want immediate progress rather than waiting for the next automatic cycle. On each call, the endpoint checks whether previously broadcast transactions have confirmed and, if so, creates and broadcasts the next transaction in the sequence. The on-chain wallet must have sufficient bitcoin to cover transaction fees.
 pub async fn exit_progress(configuration: &configuration::Configuration, exit_progress_request: models::ExitProgressRequest) -> Result<models::ExitProgressResponse, Error<ExitProgressError>> {
     // add a prefix to parameters to efficiently prevent name collisions
     let p_exit_progress_request = exit_progress_request;
@@ -191,7 +191,7 @@ pub async fn exit_progress(configuration: &configuration::Configuration, exit_pr
     }
 }
 
-/// Starts an exit for all VTXOs
+/// Registers all wallet VTXOs for emergency exit. The daemon automatically progresses registered exits in the background at the cadence defined by `SLOW_INTERVAL`, creating and broadcasting the required transactions in sequence. Once all exit transactions are confirmed and the timelock has elapsed, call `claim` to sweep the resulting outputs to an on-chain address.
 pub async fn exit_start_all(configuration: &configuration::Configuration, ) -> Result<models::ExitStartResponse, Error<ExitStartAllError>> {
 
     let uri_str = format!("{}/api/v1/exits/start/all", configuration.base_path);
@@ -226,7 +226,7 @@ pub async fn exit_start_all(configuration: &configuration::Configuration, ) -> R
     }
 }
 
-/// Starts an exit for the given VTXOs
+/// Registers the specified VTXOs for emergency exit. The daemon automatically progresses registered exits in the background at the cadence defined by `SLOW_INTERVAL`, creating and broadcasting the required transactions in sequence. Once all exit transactions are confirmed and the timelock has elapsed, call `claim` to sweep the resulting outputs to an on-chain address.
 pub async fn exit_start_vtxos(configuration: &configuration::Configuration, exit_start_request: models::ExitStartRequest) -> Result<models::ExitStartResponse, Error<ExitStartVtxosError>> {
     // add a prefix to parameters to efficiently prevent name collisions
     let p_exit_start_request = exit_start_request;
@@ -264,7 +264,7 @@ pub async fn exit_start_vtxos(configuration: &configuration::Configuration, exit
     }
 }
 
-/// Returns all the current in-progress, completed and failed exits
+/// Returns the current state of every emergency exit in the wallet. Each entry includes which phase the exit is in (start, processing, awaiting-delta, claimable, claim-in-progress, or claimed), and optionally the full state transition history and the exit transaction packages with their CPFP children.
 pub async fn get_all_exit_status(configuration: &configuration::Configuration, history: Option<bool>, transactions: Option<bool>) -> Result<Vec<models::ExitTransactionStatus>, Error<GetAllExitStatusError>> {
     // add a prefix to parameters to efficiently prevent name collisions
     let p_history = history;
@@ -308,7 +308,7 @@ pub async fn get_all_exit_status(configuration: &configuration::Configuration, h
     }
 }
 
-/// Returns the status of the exit for the given VTXO
+/// Returns the current state of an emergency exit for the specified VTXO, including which phase the exit is in (start, processing, awaiting-delta, claimable, claim-in-progress, or claimed). Optionally includes the full state transition history and the exit transaction packages with their CPFP children.
 pub async fn get_exit_status_by_vtxo_id(configuration: &configuration::Configuration, vtxo_id: &str, history: Option<bool>, transactions: Option<bool>) -> Result<models::ExitTransactionStatus, Error<GetExitStatusByVtxoIdError>> {
     // add a prefix to parameters to efficiently prevent name collisions
     let p_vtxo_id = vtxo_id;

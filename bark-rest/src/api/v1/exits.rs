@@ -23,8 +23,8 @@ use crate::error::{self, HandlerResult, ContextExt, badarg, not_found};
 		exit_start_vtxos,
 		exit_start_all,
 		exit_progress,
-		exit_claim_all,
 		exit_claim_vtxos,
+		exit_claim_all,
 	),
 	components(schemas(
 		bark_json::web::ExitStatusRequest,
@@ -37,7 +37,7 @@ use crate::error::{self, HandlerResult, ContextExt, badarg, not_found};
 		bark_json::web::ExitClaimVtxosRequest,
 		bark_json::web::ExitClaimResponse,
 	)),
-	tags((name = "exits", description = "Exit-related endpoints"))
+	tags((name = "exits", description = "Move bitcoin back on-chain without server cooperation."))
 )]
 pub struct ExitsApiDoc;
 
@@ -48,13 +48,14 @@ pub fn router() -> Router<ServerState> {
 		.route("/start/vtxos", post(exit_start_vtxos))
 		.route("/start/all", post(exit_start_all))
 		.route("/progress", post(exit_progress))
-		.route("/claim/all", post(exit_claim_all))
 		.route("/claim/vtxos", post(exit_claim_vtxos))
+		.route("/claim/all", post(exit_claim_all))
 }
 
 #[utoipa::path(
 	get,
 	path = "/status/{vtxo_id}",
+	summary = "Get exit status",
 	params(
 		("vtxo_id" = String, Path, description = "The VTXO to check the exit status of"),
 		("history" = Option<bool>, Query, description = "Whether to include the detailed history of the exit process"),
@@ -65,7 +66,10 @@ pub fn router() -> Router<ServerState> {
 		(status = 404, description = "VTXO wasn't found", body = error::NotFoundError),
 		(status = 500, description = "Internal server error", body = error::InternalServerError)
 	),
-	description = "Returns the status of the exit for the given VTXO",
+	description = "Returns the current state of an emergency exit for the specified VTXO, \
+		including which phase the exit is in (start, processing, awaiting-delta, \
+		claimable, claim-in-progress, or claimed). Optionally includes the full state \
+		transition history and the exit transaction packages with their CPFP children.",
 	tag = "exits"
 )]
 #[debug_handler]
@@ -93,6 +97,7 @@ pub async fn get_exit_status_by_vtxo_id(
 #[utoipa::path(
 	get,
 	path = "/status",
+	summary = "List all exit statuses",
 	params(
 		("history" = Option<bool>, Query, description = "Whether to include the detailed history of the exit process"),
 		("transactions" = Option<bool>, Query, description = "Whether to include the exit transactions and their CPFP children")
@@ -101,7 +106,10 @@ pub async fn get_exit_status_by_vtxo_id(
 		(status = 200, description = "Returns all exit statuses", body = Vec<bark_json::cli::ExitTransactionStatus>),
 		(status = 500, description = "Internal server error", body = error::InternalServerError)
 	),
-	description = "Returns all the current in-progress, completed and failed exits",
+	description = "Returns the current state of every emergency exit in the wallet. Each \
+		entry includes which phase the exit is in (start, processing, awaiting-delta, \
+		claimable, claim-in-progress, or claimed), and optionally the full state \
+		transition history and the exit transaction packages with their CPFP children.",
 	tag = "exits"
 )]
 #[debug_handler]
@@ -130,6 +138,7 @@ pub async fn get_all_exit_status(
 #[utoipa::path(
 	post,
 	path = "/start/vtxos",
+	summary = "Start exit for specific VTXOs",
 	request_body = bark_json::web::ExitStartRequest,
 	responses(
 		(status = 200, description = "Exit started successfully", body = bark_json::web::ExitStartResponse),
@@ -138,7 +147,12 @@ pub async fn get_all_exit_status(
 		(status = 404, description = "One the VTXOs wasn't found", body = error::NotFoundError),
 		(status = 500, description = "Internal server error", body = error::InternalServerError)
 	),
-	description = "Starts an exit for the given VTXOs",
+	description = "Registers the specified VTXOs for emergency exit. The daemon \
+		automatically progresses registered exits in the background at the cadence \
+		defined by `SLOW_INTERVAL`, creating and broadcasting the required \
+		transactions in sequence. Once all exit transactions are confirmed and the \
+		timelock has elapsed, call `claim` to sweep the resulting outputs to an \
+		on-chain address.",
 	tag = "exits"
 )]
 #[debug_handler]
@@ -184,11 +198,17 @@ pub async fn exit_start_vtxos(
 #[utoipa::path(
 	post,
 	path = "/start/all",
+	summary = "Start exit for all VTXOs",
 	responses(
 		(status = 200, description = "Exit started successfully", body = bark_json::web::ExitStartResponse),
 		(status = 500, description = "Internal server error", body = error::InternalServerError)
 	),
-	description = "Starts an exit for all VTXOs",
+	description = "Registers all wallet VTXOs for emergency exit. The daemon \
+		automatically progresses registered exits in the background at the cadence \
+		defined by `SLOW_INTERVAL`, creating and broadcasting the required \
+		transactions in sequence. Once all exit transactions are confirmed and the \
+		timelock has elapsed, call `claim` to sweep the resulting outputs to an \
+		on-chain address.",
 	tag = "exits"
 )]
 #[debug_handler]
@@ -209,12 +229,19 @@ pub async fn exit_start_all(
 #[utoipa::path(
 	post,
 	path = "/progress",
+	summary = "Progress exits",
 	request_body = bark_json::web::ExitProgressRequest,
 	responses(
 		(status = 200, description = "Returns the exit progress", body = bark_json::cli::ExitProgressResponse),
 		(status = 500, description = "Internal server error", body = error::InternalServerError)
 	),
-	description = "Progresses the exit process of all current exits until it completes",
+	description = "Triggers all in-progress exits to advance by one step. The daemon already \
+		progresses exits automatically in the background—use this endpoint when you want \
+		immediate progress rather than waiting for the next automatic cycle. On each \
+		call, the endpoint checks whether previously broadcast transactions have \
+		confirmed and, if so, creates and broadcasts the next transaction in the \
+		sequence. The on-chain wallet must have sufficient bitcoin to cover transaction \
+		fees.",
 	tag = "exits"
 )]
 #[debug_handler]
@@ -280,40 +307,8 @@ async fn inner_claim_vtxos(
 
 #[utoipa::path(
 	post,
-	path = "/claim/all",
-	request_body = bark_json::web::ExitClaimAllRequest,
-	responses(
-		(status = 200, description = "Exit claimed successfully", body = bark_json::web::ExitClaimResponse),
-		(status = 400, description = "The provided destination address is invalid", body = error::BadRequestError),
-		(status = 500, description = "Internal server error", body = error::InternalServerError)
-	),
-	description = "Claims all claimable exited VTXOs to the given destination address",
-	tag = "exits"
-)]
-#[debug_handler]
-pub async fn exit_claim_all(
-	State(state): State<ServerState>,
-	Json(body): Json<bark_json::web::ExitClaimAllRequest>,
-) -> HandlerResult<Json<bark_json::web::ExitClaimResponse>> {
-	let wallet = state.require_wallet()?;
-	let network = wallet.network().await?;
-
-	let address = bitcoin::Address::from_str(&body.destination)
-		.badarg("Invalid destination address")?
-		.require_network(network)
-		.badarg("Address is not valid for configured network")?;
-
-	let exit = wallet.exit.read().await;
-	let vtxos = exit.list_claimable();
-
-	let fee_rate = body.fee_rate.map(FeeRate::from_sat_per_kvb_ceil);
-
-	inner_claim_vtxos(&state, &*exit, address, &vtxos, fee_rate).await
-}
-
-#[utoipa::path(
-	post,
 	path = "/claim/vtxos",
+	summary = "Claim specific exited VTXOs",
 	request_body = bark_json::web::ExitClaimVtxosRequest,
 	responses(
 		(status = 200, description = "Exit claimed successfully", body = bark_json::web::ExitClaimResponse),
@@ -321,7 +316,13 @@ pub async fn exit_claim_all(
 			the provided destination address is invalid", body = error::BadRequestError),
 		(status = 500, description = "Internal server error", body = error::InternalServerError)
 	),
-	description = "Claims the given exited VTXOs to the given destination address",
+	description = "Sweeps the specified claimable exit outputs into a single on-chain \
+		transaction sent to the specified address. Unlike `progress`, the daemon does \
+		not claim automatically—this endpoint must be called manually. Poll the \
+		`status` endpoint or call `progress` and check for `done: true` to know when \
+		VTXOs are ready to claim. This is the final step of the emergency exit \
+		process—the bitcoin is not considered back on-chain until this transaction \
+		confirms.",
 	tag = "exits"
 )]
 #[debug_handler]
@@ -355,6 +356,45 @@ pub async fn exit_claim_vtxos(
 		}
 		vtxos
 	};
+
+	let fee_rate = body.fee_rate.map(FeeRate::from_sat_per_kvb_ceil);
+
+	inner_claim_vtxos(&state, &*exit, address, &vtxos, fee_rate).await
+}
+
+#[utoipa::path(
+	post,
+	path = "/claim/all",
+	summary = "Claim all exited VTXOs",
+	request_body = bark_json::web::ExitClaimAllRequest,
+	responses(
+		(status = 200, description = "Exit claimed successfully", body = bark_json::web::ExitClaimResponse),
+		(status = 400, description = "The provided destination address is invalid", body = error::BadRequestError),
+		(status = 500, description = "Internal server error", body = error::InternalServerError)
+	),
+	description = "Sweeps all claimable exit outputs into a single on-chain transaction \
+		sent to the specified address. Unlike `progress`, the daemon does not claim \
+		automatically—this endpoint must be called manually. Poll the `status` endpoint \
+		or call `progress` and check for `done: true` to know when VTXOs are ready to \
+		claim. This is the final step of the emergency exit process—the bitcoin is not \
+		considered back on-chain until this transaction confirms.",
+	tag = "exits"
+)]
+#[debug_handler]
+pub async fn exit_claim_all(
+	State(state): State<ServerState>,
+	Json(body): Json<bark_json::web::ExitClaimAllRequest>,
+) -> HandlerResult<Json<bark_json::web::ExitClaimResponse>> {
+	let wallet = state.require_wallet()?;
+	let network = wallet.network().await?;
+
+	let address = bitcoin::Address::from_str(&body.destination)
+		.badarg("Invalid destination address")?
+		.require_network(network)
+		.badarg("Address is not valid for configured network")?;
+
+	let exit = wallet.exit.read().await;
+	let vtxos = exit.list_claimable();
 
 	let fee_rate = body.fee_rate.map(FeeRate::from_sat_per_kvb_ceil);
 
