@@ -17,13 +17,12 @@ use crate::secret::Secret;
 pub struct StoredRoundInput {
 	pub vtxo_id: VtxoId,
 	pub signed_forfeit_tx: Option<Transaction>,
-	pub signed_forfeit_claim_tx: Option<Transaction>,
 }
 
 impl StoredRoundInput {
 	/// Whether this input was succesfully forfeited
 	pub fn is_forfeited(&self) -> bool {
-		self.signed_forfeit_tx.is_some() && self.signed_forfeit_claim_tx.is_some()
+		self.signed_forfeit_tx.is_some()
 	}
 }
 

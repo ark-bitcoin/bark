@@ -593,7 +593,7 @@ impl rpc::server::ArkService for Server {
 
 		let res = self.generate_forfeit_nonces(unlock_hash, &vtxos).await.to_status()?;
 		Ok(tonic::Response::new(protos::ForfeitNoncesResponse {
-			public_nonces: res.into_iter().map(|n| n.serialize()).collect(),
+			public_nonces: res.into_iter().map(|n| n.serialize().to_vec()).collect(),
 		}))
 	}
 

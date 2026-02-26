@@ -322,26 +322,22 @@ impl Db {
 		unlock_hash: UnlockHash,
 		vtxo_id: VtxoId,
 		signed_forfeit_tx: &Transaction,
-		signed_forfeit_claim_tx: &Transaction,
 	) -> anyhow::Result<()> {
 		let conn = self.get_conn().await?;
 
 		let stmt = conn.prepare_typed(
-			"UPDATE round_part_input \
-			SET signed_forfeit_tx = $3, signed_forfeit_claim_tx = $4 \
-			FROM round_participation \
+			"UPDATE round_part_input SET signed_forfeit_tx = $3 FROM round_participation \
 			WHERE round_part_input.participation_id = round_participation.id \
 				AND round_participation.unlock_hash = $1 \
 				AND round_participation.round_id IS NOT NULL \
 				AND round_part_input.vtxo_id = $2",
-			&[Type::TEXT, Type::TEXT, Type::BYTEA, Type::BYTEA]
+			&[Type::TEXT, Type::TEXT, Type::BYTEA]
 		).await?;
 
 		let rows_affected = conn.execute(&stmt, &[
 			&unlock_hash.to_string(),
 			&vtxo_id.to_string(),
 			&serialize(signed_forfeit_tx),
-			&serialize(signed_forfeit_claim_tx),
 		]).await?;
 
 		if rows_affected == 0 {

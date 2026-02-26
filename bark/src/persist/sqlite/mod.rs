@@ -446,8 +446,6 @@ pub mod helpers {
 
 #[cfg(test)]
 mod test {
-	use bitcoin::bip32;
-
 	use ark::test_util::VTXO_VECTORS;
 
 	use crate::{persist::sqlite::helpers::in_memory_db, vtxo::VtxoState};
@@ -511,7 +509,7 @@ mod test {
 		let network = bitcoin::Network::Testnet;
 
 		let seed = bip39::Mnemonic::generate(12).unwrap().to_seed("");
-		let xpriv = bip32::Xpriv::new_master(network, &seed).unwrap();
+		let xpriv = bitcoin::bip32::Xpriv::new_master(network, &seed).unwrap();
 
 		let desc = format!("tr({}/84'/0'/0'/*)", xpriv);
 

@@ -243,7 +243,7 @@ pub async fn complete_round_participation(
 	let part_id = part_row.get::<_, i64>("id");
 
 	let input_rows = tx.query(
-		"SELECT vtxo_id, signed_forfeit_tx, signed_forfeit_claim_tx \
+		"SELECT vtxo_id, signed_forfeit_tx \
 			FROM round_part_input WHERE participation_id = $1",
 		&[&part_id],
 	).await?;
@@ -255,16 +255,10 @@ pub async fn complete_round_participation(
 				.context("invalid round input signed_forfeit_tx")
 		).transpose()?;
 
-		let signed_forfeit_claim_tx = row.get::<_, Option<&[u8]>>("signed_forfeit_claim_tx").map(|b|
-			bitcoin::consensus::deserialize::<bitcoin::Transaction>(b)
-				.context("invalid round input signed_forfeit_claim_tx")
-		).transpose()?;
-
 		inputs.push(StoredRoundInput {
 			vtxo_id: VtxoId::from_str(&row.get::<_, &str>("vtxo_id"))
 				.context("invalid round input vtxoid")?,
 			signed_forfeit_tx,
-			signed_forfeit_claim_tx,
 		});
 	}
 
