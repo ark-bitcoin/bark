@@ -4,6 +4,9 @@ use std::process::Command;
 
 
 fn main() {
+	println!("cargo:rerun-if-changed=build.rs");
+	println!("cargo:rerun-if-env-changed=GIT_HASH");
+
 	println!("cargo:rustc-env=CARGO_PKG_VERSION={}", env!("CARGO_PKG_VERSION"));
 	if env::var("GIT_HASH").is_err() {
 		// Get the Git commit hash
