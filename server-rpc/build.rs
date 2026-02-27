@@ -27,10 +27,6 @@ fn main() {
 	println!("cargo:rerun-if-changed=protos/bark_server.proto");
 	println!("cargo:rerun-if-changed=protos/intman.proto");
 	println!("cargo:rerun-if-changed=protos/mailbox_server.proto");
-	println!("cargo:rerun-if-changed=src/core.rs");
-	println!("cargo:rerun-if-changed=src/bark_server.rs");
-	println!("cargo:rerun-if-changed=src/intman.rs");
-	println!("cargo:rerun-if-changed=src/mailbox_server.rs");
 }
 
 fn generate_method_lookup(descriptor_path: &Path, out_dir: &str) {
