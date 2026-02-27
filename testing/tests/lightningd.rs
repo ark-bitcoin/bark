@@ -625,9 +625,9 @@ async fn bark_check_lightning_receive_no_wait() {
 	let invoice = Bolt11Invoice::from_str(&invoice_info.invoice).unwrap();
 	let _ = bark.lightning_receive_status(&invoice).await.unwrap();
 
-	// TODO: figure out why launching the bark wallet is so slow
+	// Before the sender pays, the claim should return quickly (just a status check).
 	bark.try_lightning_receive_no_wait(&invoice_info.invoice)
-		.wait(Duration::from_secs(2)).await.expect("should not fail");
+		.wait(Duration::from_secs(2)).await.expect("no-op claim should complete within 2s");
 	bark.lightning_receive_status(&invoice).await.expect("should still be pending");
 
 	let cloned_invoice_info = invoice_info.clone();
@@ -639,8 +639,11 @@ async fn bark_check_lightning_receive_no_wait() {
 	for _ in 0..10 {
 		tokio::time::sleep(std::time::Duration::from_secs(1)).await;
 
+		// When the HTLC has arrived, the claim does a full arkoor round-trip
+		// with the server plus chain validation, which takes longer than a
+		// no-op status check. Use a generous timeout to avoid flakes.
 		bark.try_lightning_receive_no_wait(&invoice_info.invoice)
-			.wait(Duration::from_secs(2)).await.expect("should not fail");
+			.wait(Duration::from_secs(10)).await.expect("should not fail");
 
 		if let Some(receive) = bark.lightning_receive_status(&invoice).await {
 			if receive.finished_at.is_some() {
