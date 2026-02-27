@@ -1,0 +1,4 @@
+- Warn on inconsistent fee accounting for failed Lightning payments
+  Bark now logs a warning when revoked or exited failed Lightning payments do not net to a zero effective fee, making unexpected balance deltas visible.
+  Pending Lightning send records are also validated during SQLite loading by using checked conversions for `amount_sats` and `fee_sats`.
+  [#1686](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1686)
