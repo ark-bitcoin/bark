@@ -7,6 +7,7 @@ let
 		LIBCLANG_PATH = "${pkgs.llvmPackages.clang-unwrapped.lib}/lib/";
 		LD_LIBRARY_PATH = lib.makeLibraryPath [
 			pkgs.gcc.cc.lib
+			pkgs.openssl.out
 			# hold plugin needs these at runtime
 			pkgs.sqlite
 			postgresql.lib
