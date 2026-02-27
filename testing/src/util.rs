@@ -196,7 +196,7 @@ pub trait FutureExt: Future {
 	/// Add a short timeout.
 	#[track_caller]
 	fn try_fast(self) -> tokio::time::Timeout<Self> where Self: Sized {
-		self.try_wait_millis(500)
+		self.try_wait_millis(2000)
 	}
 
 	/// Awaits a future for a short period. Using this assumes that the future is already complete,
