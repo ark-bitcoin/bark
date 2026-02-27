@@ -59,8 +59,6 @@ steps:
     image: registry.2nd.dev/build:27
     volumes:
       - /data:/host/data
-    tmpfs:
-      - /dev/shm:size=10g
     environment:
       TEST_DIRECTORY: ./test/btc30-codecov
       NEXTEST_TEST_THREADS: 1
