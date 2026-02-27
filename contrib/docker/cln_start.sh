@@ -27,15 +27,36 @@ export BITCOIN_RPCPASSWORD=${BITCOIN_RPCPASSWORD:=ark}
 echo " - bitcoin.rpcpassword: ***"
 export CLN_BIND_ADDR=${CLN_BIND_ADDR:=0.0.0.0:9735}
 echo " - bind.addr: ${CLN_BIND_ADDR}"
-export CLN_ANNOUNCE_ADDR=${CLN_ANNOUNCE_ADDR:=${HOSTNAME}:9735}
-echo " - announce.addr: ${CLN_ANNOUNCE_ADDR}"
+
+if [ -n "${CLN_ANNOUNCE_ADDR}" ]; then
+    echo " - announce.addr: ${CLN_ANNOUNCE_ADDR}"
+    ANNOUNCE_ARG="--announce-addr=${CLN_ANNOUNCE_ADDR}"
+else
+    echo " - announce.addr: (not set)"
+    ANNOUNCE_ARG=""
+fi
+if [ -n "${CLN_WALLET_DB}" ]; then
+    echo " - wallet-db: ${CLN_WALLET_DB}"
+    WALLET_ARG="--wallet=${CLN_WALLET_DB}"
+else
+    echo " - wallet-db: (not set)"
+    WALLET_ARG=""
+fi
+if [ -n "${CLN_BOOKKEEPER_DB}" ]; then
+    echo " - bookkeeper-db: ${CLN_BOOKKEEPER_DB}"
+    BOOKKEEPER_ARG="--bookkeeper-db=${CLN_BOOKKEEPER_DB}"
+else
+    echo " - bookkeeper-db: (not set)"
+    BOOKKEEPER_ARG=""
+fi
+
 
 echo "Booting"
 lightningd --${NETWORK} --alias="${CLN_ALIAS}" --log-level=${CLN_LOG_LEVEL} \
 	--grpc-port=${CLN_GRPC_PORT} --grpc-host=${CLN_GRPC_HOST} \
 	--bitcoin-rpcconnect=${BITCOIN_RPCCONNECT} --bitcoin-rpcuser=${BITCOIN_RPCUSER} --bitcoin-rpcpassword=${BITCOIN_RPCPASSWORD} \
 	--important-plugin=/hold/target/debug/hold --hold-grpc-host=${HOLD_GRPC_HOST} --hold-grpc-port=${HOLD_GRPC_PORT} \
-	--bind-addr=${CLN_BIND_ADDR} --announce-addr=${CLN_ANNOUNCE_ADDR} &
+	--bind-addr=${CLN_BIND_ADDR} ${ANNOUNCE_ARG} ${WALLET_ARG} ${BOOKKEEPER_ARG} &
 LIGHTNINGD_PID=$!
 
 WAIT_FILE="/root/.lightning/${NETWORK}/hold/ca.pem"
@@ -110,7 +131,7 @@ EOF
 		--grpc-port=${CLN_GRPC_PORT} --grpc-host=${CLN_GRPC_HOST} \
 		--bitcoin-rpcconnect=${BITCOIN_RPCCONNECT} --bitcoin-rpcuser=${BITCOIN_RPCUSER} --bitcoin-rpcpassword=${BITCOIN_RPCPASSWORD} \
 		--important-plugin=/hold/target/debug/hold --hold-grpc-host=${HOLD_GRPC_HOST} --hold-grpc-port=${HOLD_GRPC_PORT} \
-		--bind-addr=${CLN_BIND_ADDR} --announce-addr=${CLN_ANNOUNCE_ADDR}
+		--bind-addr=${CLN_BIND_ADDR} ${ANNOUNCE_ARG} ${WALLET_ARG} ${BOOKKEEPER_ARG}
 else
 	wait ${LIGHTNINGD_PID}
 fi
