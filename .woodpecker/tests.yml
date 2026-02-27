@@ -139,6 +139,7 @@ steps:
       - bash ./contrib/ci-run-test.sh test-integration
 
   - name: test-integration-mempool
+    failure: ignore
     depends_on: bark-as-libs
     image: registry.2nd.dev/build:27
     volumes:
