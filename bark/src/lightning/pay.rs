@@ -1,7 +1,7 @@
 use std::fmt;
 
 use anyhow::Context;
-use bitcoin::Amount;
+use bitcoin::{Amount, SignedAmount};
 use bitcoin::hex::DisplayHex;
 use lightning::util::ser::Writeable;
 use lnurllib::lightning_address::LightningAddress;
@@ -129,6 +129,11 @@ impl Wallet {
 
 		let count = vtxos.len();
 		let effective = -payment.amount.to_signed()? - payment.fee.to_signed()? + revoked.to_signed()?;
+		if effective != SignedAmount::ZERO {
+			warn!("Movement {} should have fee of zero, but got {}: amount = {}, fee = {}, revoked = {}",
+				payment.movement_id, effective, payment.amount, payment.fee, revoked,
+			);
+		}
 		self.movements.finish_movement_with_update(
 			payment.movement_id,
 			MovementStatus::Failed,
@@ -343,6 +348,11 @@ impl Wallet {
 
 					let exited = vtxos.iter().map(|v| v.amount()).sum::<Amount>();
 					let effective = -payment.amount.to_signed()? - payment.fee.to_signed()? + exited.to_signed()?;
+					if effective != SignedAmount::ZERO {
+						warn!("Movement {} should have fee of zero, but got {}: amount = {}, fee = {}, exited = {}",
+							payment.movement_id, effective, payment.amount, payment.fee, exited,
+						);
+					}
 					self.movements.finish_movement_with_update(
 						payment.movement_id,
 						MovementStatus::Failed,

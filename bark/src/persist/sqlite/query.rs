@@ -407,8 +407,8 @@ pub fn get_all_pending_lightning_send(conn: &Connection) -> anyhow::Result<Vec<L
 
 		pending_lightning_sends.push(LightningSend {
 			invoice: Invoice::from_str(&invoice)?,
-			amount: Amount::from_sat(amount_sats as u64),
-			fee: Amount::from_sat(fee_sats as u64),
+			amount: Amount::from_sat(u64::try_from(amount_sats)?),
+			fee: Amount::from_sat(u64::try_from(fee_sats)?),
 			htlc_vtxos,
 			movement_id,
 			preimage: row.get::<_, Option<String>>("preimage")?
