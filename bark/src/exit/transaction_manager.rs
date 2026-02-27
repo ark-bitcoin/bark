@@ -384,19 +384,30 @@ impl ExitTransactionManager {
 				ExitTxOrigin::Block { confirmed_in: status.confirmed_in().unwrap() }
 			} else {
 				debug!("Getting mempool ancestor information for exit {}", txid);
-				let info = self.chain_source
-					.mempool_ancestor_info(*txid)
-					.await
-					.map_err(|e| ExitError::AncestorRetrievalFailure {
-						txid: *txid, error: e.to_string(),
-					})?;
-				let fee_rate = info.effective_fee_rate()
-					.ok_or_else(|| ExitError::AncestorRetrievalFailure {
-						txid: *txid,
-						error: format!("unable to calculate fee rate for {}", txid),
-					})?;
-				ExitTxOrigin::Mempool {
-					fee_rate, total_fee: info.total_fee,
+				match self.chain_source.mempool_ancestor_info(*txid).await {
+					Ok(info) => {
+						let fee_rate = info.effective_fee_rate()
+							.ok_or_else(|| ExitError::AncestorRetrievalFailure {
+								txid: *txid,
+								error: format!("unable to calculate fee rate for {}", txid),
+							})?;
+						ExitTxOrigin::Mempool {
+							fee_rate, total_fee: info.total_fee,
+						}
+					},
+					Err(e) => {
+						// The tx may have been confirmed between when we checked its
+						// status and now. Re-check before treating this as a real error.
+						let new_status = self.get_tx_status(*txid).await?;
+						if let Some(block) = new_status.confirmed_in() {
+							debug!("Child tx {} was confirmed while querying mempool info", txid);
+							ExitTxOrigin::Block { confirmed_in: block }
+						} else {
+							return Err(ExitError::AncestorRetrievalFailure {
+								txid: *txid, error: e.to_string(),
+							});
+						}
+					},
 				}
 			};
 
