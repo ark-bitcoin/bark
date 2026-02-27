@@ -1,7 +1,7 @@
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::str::FromStr;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use ark::fees::{
@@ -12,7 +12,7 @@ use bark::BarkNetwork;
 use bitcoin::{Amount, FeeRate, Network, Txid};
 use bitcoincore_rpc::RpcApi;
 use futures::future::join_all;
-use log::{info, trace};
+use log::{debug, info, trace};
 use server::vtxopool::VtxoTarget;
 use server::Server;
 use tokio::{fs, join};
@@ -29,6 +29,7 @@ use crate::{
 	btc, constants, sat, Bark, Bitcoind, BitcoindConfig, Captaind, Electrs, ElectrsConfig,
 	Lightningd, LightningdConfig,
 };
+use crate::daemon::bitcoind::BitcoindRpcHandle;
 
 pub struct LightningPaymentSetup {
 	pub receiver: Lightningd,
@@ -66,6 +67,11 @@ pub struct TestContext {
 
 	pub bitcoind: Option<Bitcoind>,
 
+	/// RPC handles for secondary bitcoind nodes that are p2p-connected to the
+	/// central one. Used by [`await_block_count_sync`] to ensure blocks have
+	/// propagated to all nodes.
+	secondary_bitcoinds: Mutex<Vec<BitcoindRpcHandle>>,
+
 	// use a central Electrs for the Esplora and mempool.space API if necessary
 	pub electrs: Option<Electrs>,
 
@@ -89,6 +95,7 @@ impl TestContext {
 			test_name,
 			datadir,
 			bitcoind: None,
+			secondary_bitcoinds: Mutex::new(Vec::new()),
 			electrs: None,
 			postgres_manager: None,
 		}
@@ -190,6 +197,7 @@ impl TestContext {
 		if wallet {
 			bitcoind.init_wallet().await;
 		}
+		self.secondary_bitcoinds.lock().unwrap().push(bitcoind.rpc_handle());
 		bitcoind
 	}
 
@@ -553,18 +561,40 @@ impl TestContext {
 		).unwrap()
 	}
 
-	/// Wait until electrs has fully indexed up to bitcoind's current tip.
+	/// Wait until all secondary bitcoind nodes and electrs have synced to
+	/// the central bitcoind's current tip.
 	///
-	/// Polls the Prometheus `tip_height` metric rather than the REST API
-	/// height, because the REST height can update before the history
-	/// (address) index is ready — causing BDK wallet syncs to miss txs.
+	/// For electrs, polls the Prometheus `tip_height` metric rather than
+	/// the REST API height, because the REST height can update before the
+	/// history (address) index is ready — causing BDK wallet syncs to miss txs.
 	pub async fn await_block_count_sync(&self) {
-		match (self.bitcoind.as_ref(), self.electrs.as_ref()) {
-			(Some(bitcoind), Some(electrs)) => {
-				let height = bitcoind.get_block_count().await as u32;
-				electrs.await_tip_synced(height).await;
-			},
-			_ => {}
+		let Some(bitcoind) = self.bitcoind.as_ref() else { return };
+		let height = bitcoind.get_block_count().await;
+
+		// Wait for all secondary bitcoind nodes to reach the same height.
+		let handles: Vec<_> = self.secondary_bitcoinds.lock().unwrap()
+			.iter()
+			.map(|h| (h.name.clone(), h.client()))
+			.collect();
+		for (name, client) in &handles {
+			loop {
+				match client.get_block_count() {
+					Ok(current) if current >= height => break,
+					Ok(current) => {
+						trace!("Waiting for {} to reach height {} (at {})", name, height, current);
+					}
+					// Node was shut down mid-test (e.g. server restart tests).
+					Err(e) => {
+						debug!("Skipping sync for {} (node unreachable: {})", name, e);
+						break;
+					}
+				}
+				tokio::time::sleep(Duration::from_millis(100)).await;
+			}
+		}
+
+		if let Some(electrs) = self.electrs.as_ref() {
+			electrs.await_tip_synced(height as u32).await;
 		}
 	}
 
