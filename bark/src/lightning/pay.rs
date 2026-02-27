@@ -295,7 +295,11 @@ impl Wallet {
 			.map(|r| r.into_inner().payment_status);
 
 		let tip = self.chain.tip().await?;
-		let expired = tip > policy.htlc_expiry;
+		let min_vtxo_expiry = payment.htlc_vtxos.iter()
+			.map(|v| v.vtxo.expiry_height())
+			.min().context("no HTLC VTXOs for expiry check")?;
+		let expired = tip > policy.htlc_expiry
+			|| tip > min_vtxo_expiry.saturating_sub(self.config().vtxo_refresh_expiry_threshold);
 
 		let should_revoke = match response {
 			Ok(Some(PaymentStatus::Success(status))) => {
@@ -332,13 +336,8 @@ impl Wallet {
 				// if one of the htlc is about to expire, we exit all of them.
 				// Maybe we want a different behavior here, but we have to decide whether
 				// htlc vtxos revocation is a all or nothing process.
-				let min_expiry = payment.htlc_vtxos.iter()
-					.filter_map(|v|
-						v.vtxo.policy().as_server_htlc_send().and_then(|p| Some(p.htlc_expiry))
-					).min().context("no HTLC VTXOs for expiry check")?;
-
-				if tip > min_expiry {
-					warn!("Some HTLC VTXOs for payment {} are about to expire soon, marking to exit", payment_hash);
+				if tip > min_vtxo_expiry.saturating_sub(self.config().vtxo_refresh_expiry_threshold) {
+					warn!("HTLC VTXOs for payment {} are near VTXO expiry, marking to exit", payment_hash);
 
 					let vtxos = payment.htlc_vtxos
 						.iter()

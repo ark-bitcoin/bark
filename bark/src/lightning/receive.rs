@@ -12,7 +12,6 @@ use ark::{ProtocolEncoding, Vtxo, VtxoPolicy};
 use ark::challenges::{LightningReceiveChallenge};
 use ark::fees::validate_and_subtract_fee;
 use ark::lightning::{PaymentHash, Preimage};
-use ark::util::IteratorExt;
 use bitcoin_ext::{AmountExt, BlockDelta, BlockHeight};
 use server_rpc::protos;
 use server_rpc::protos::prepare_lightning_receive_claim_request::LightningReceiveAntiDos;
@@ -113,22 +112,16 @@ impl Wallet {
 		Ok(self.db.fetch_lightning_receive_by_payment_hash(payment.into()).await?)
 	}
 
-	/// Claim incoming lightning payment with the given [PaymentHash].
+	/// Claim given incoming lightning payment.
 	///
 	/// This function reveals the preimage of the lightning payment in
 	/// exchange of getting pubkey VTXOs from HTLC ones
-	///
-	/// # Arguments
-	///
-	/// * `payment_hash` - The [PaymentHash] of the lightning payment
-	/// to wait for.
-	/// * `vtxos` - The list of HTLC VTXOs that were previously granted
-	/// by the Server, with the hash lock clause matching payment hash.
 	///
 	/// # Returns
 	///
 	/// Returns an `anyhow::Result<()>`, which is:
 	/// * `Ok(())` if the process completes successfully.
+	///   the receive object is also updated correctly
 	/// * `Err` if an error occurs at any stage of the operation.
 	///
 	/// # Remarks
@@ -141,8 +134,8 @@ impl Wallet {
 	///   to obtain fresh cosign signatures.
 	async fn claim_lightning_receive(
 		&self,
-		receive: &LightningReceive,
-	) -> anyhow::Result<LightningReceive> {
+		receive: &mut LightningReceive,
+	) -> anyhow::Result<()> {
 		let movement_id = receive.movement_id
 			.context("No movement created for lightning receive")?;
 		let (mut srv, _) = self.require_server().await?;
@@ -218,11 +211,11 @@ impl Wallet {
 		).await?;
 
 		self.db.finish_pending_lightning_receive(receive.payment_hash).await?;
-		let receive = self.db.fetch_lightning_receive_by_payment_hash(receive.payment_hash).await
+		*receive = self.db.fetch_lightning_receive_by_payment_hash(receive.payment_hash).await
 			.context("Database error")?
 			.context("Receive not found")?;
 
-		Ok(receive)
+		Ok(())
 	}
 
 	async fn compute_lightning_receive_anti_dos(
@@ -430,6 +423,36 @@ impl Wallet {
 		Ok(Some(receive))
 	}
 
+	/// Exit HTLC-recv VTXOs when preimage has been disclosed but the claim failed.
+	///
+	/// NOTE: Calling this function will always result in the HTLC VTXO being exited
+	/// regardless of the presence of the `preimage_revealed_at` field of
+	/// the `lightning_receive` struct.
+	async fn exit_lightning_receive(
+		&self,
+		lightning_receive: &LightningReceive,
+	) -> anyhow::Result<()> {
+		let vtxos = lightning_receive.htlc_vtxos.as_ref()
+			.context("no HTLC VTXOs to exit")?
+			.iter().map(|v| &v.vtxo).collect::<Vec<_>>();
+
+		info!("Exiting HTLC VTXOs for lightning_receive with payment hash {}", lightning_receive.payment_hash);
+		self.exit.write().await.start_exit_for_vtxos(&vtxos).await?;
+
+		if let Some(movement_id) = lightning_receive.movement_id {
+			self.movements.finish_movement_with_update(
+				movement_id,
+				MovementStatus::Failed,
+				MovementUpdate::new().exited_vtxos(vtxos),
+			).await?;
+		} else {
+			error!("movement id is missing but we disclosed preimage: {}", lightning_receive.payment_hash);
+		}
+
+		self.db.finish_pending_lightning_receive(lightning_receive.payment_hash).await?;
+		Ok(())
+	}
+
 	async fn exit_or_cancel_lightning_receive(
 		&self,
 		lightning_receive: &LightningReceive,
@@ -438,19 +461,8 @@ impl Wallet {
 			.map(|v| v.iter().map(|v| &v.vtxo).collect::<Vec<_>>());
 
 		let update_opt = match (vtxos, lightning_receive.preimage_revealed_at) {
-			(Some(vtxos), Some(_)) => {
-				warn!("LN receive is being canceled but preimage has been disclosed. Exiting");
-				self.exit.write().await.start_exit_for_vtxos(&vtxos).await?;
-				if let Some(movement_id) = lightning_receive.movement_id {
-					Some((
-						movement_id,
-						MovementUpdate::new().exited_vtxos(vtxos),
-						MovementStatus::Failed,
-					))
-				} else {
-					error!("movement id is missing but we disclosed preimage: {}", lightning_receive.payment_hash);
-					None
-				}
+			(Some(_), Some(_)) => {
+				return self.exit_lightning_receive(lightning_receive).await;
 			}
 			(Some(vtxos), None) => {
 				warn!("HTLC-recv VTXOs are about to expire, but preimage has not been disclosed yet. Canceling");
@@ -546,11 +558,9 @@ impl Wallet {
 		wait: bool,
 		token: Option<&str>,
 	) -> anyhow::Result<LightningReceive> {
-		let (_, ark_info) = self.require_server().await?;
-
 		// check_lightning_receive returns None if there is no incoming payment (yet)
 		// In that case we just return and don't try to claim
-		let receive = match self.check_lightning_receive(payment_hash, wait, token).await? {
+		let mut receive = match self.check_lightning_receive(payment_hash, wait, token).await? {
 			Some(receive) => receive,
 			None => {
 				return self.db.fetch_lightning_receive_by_payment_hash(payment_hash).await?
@@ -564,34 +574,19 @@ impl Wallet {
 
 		// No need to claim anything if there
 		// are no htlcs yet
-		let vtxos = match receive.htlc_vtxos.as_ref() {
-			None => return Ok(receive),
-			Some(vtxos) => vtxos
-		};
+		if receive.htlc_vtxos.is_none() {
+			return Ok(receive);
+		}
 
-		match self.claim_lightning_receive(&receive).await {
-			Ok(receive) => Ok(receive),
+		match self.claim_lightning_receive(&mut receive).await {
+			Ok(()) => Ok(receive),
 			Err(e) => {
-				error!("Failed to claim htlcs for payment_hash {}: {:#}", receive.payment_hash, e);
-
-				let tip = self.chain.tip().await?;
-
-				let (policy, exit_delta) = vtxos.iter()
-					.all_same(|v| (v.vtxo.policy(), v.vtxo.exit_delta()))
-					.context("all htlc vtxos should have the same policy and exit delta")?;
-
-				let vtxo_htlc_expiry = policy.as_server_htlc_recv()
-					.expect("only server htlc recv vtxos can be pending lightning recv").htlc_expiry;
-
-				let safe_exit_margin = exit_delta +
-					ark_info.htlc_expiry_delta +
-					self.config.vtxo_exit_margin;
-
-				if tip > vtxo_htlc_expiry.saturating_sub(safe_exit_margin as BlockHeight) {
-					warn!("HTLC-recv VTXOs are about to expire, interupting lightning receive");
-					self.exit_or_cancel_lightning_receive(&receive).await?;
-				}
-
+				error!("Failed to claim htlcs for payment_hash: {}", receive.payment_hash);
+				// We're now in a our havoc era. Just exit. The server prepared our HTLCs,
+				// but then later refused to / couldn't allow our claim. This shoul be quite
+				// rare.
+				warn!("Exiting lightning receive VTXOs");
+				self.exit_lightning_receive(&receive).await?;
 				return Err(e)
 			}
 		}
