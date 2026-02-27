@@ -33,6 +33,7 @@ pub type MailboxClient = rpc::mailbox::MailboxServiceClient<tonic::transport::Ch
 pub type WalletAdminClient = rpc::admin::WalletAdminServiceClient<tonic::transport::Channel>;
 pub type RoundAdminClient = rpc::admin::RoundAdminServiceClient<tonic::transport::Channel>;
 pub type SweepAdminClient = rpc::admin::SweepAdminServiceClient<tonic::transport::Channel>;
+pub type HealthClient = tonic_health::pb::health_client::HealthClient<tonic::transport::Channel>;
 
 
 pub const CAPTAIND_CONFIG_FILE: &str = "config.toml";
@@ -212,6 +213,15 @@ impl Captaind {
 
 	pub async fn get_sweep_rpc(&self) -> SweepAdminClient {
 		SweepAdminClient::connect(self.inner.admin_url()).await.expect("can't connect server wallet rpc")
+	}
+
+	pub async fn get_health_rpc(&self) -> HealthClient {
+		let channel = tonic::transport::Channel::from_shared(self.ark_url())
+			.expect("invalid server url")
+			.connect()
+			.await
+			.expect("can't connect server health rpc");
+		HealthClient::new(channel)
 	}
 
 	pub async fn ark_info(&self) -> ark::ArkInfo {

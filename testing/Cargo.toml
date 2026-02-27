@@ -40,6 +40,7 @@ rand.workspace = true
 tokio = { workspace = true, features = [ "process" ] }
 tokio-stream.workspace = true
 tonic.workspace = true
+tonic-health.workspace = true
 futures.workspace = true
 async-trait.workspace = true
 tokio-postgres.workspace = true

@@ -184,6 +184,7 @@ dependencies = [
  "tokio-stream",
  "toml 0.8.23",
  "tonic 0.14.2",
+ "tonic-health",
  "uuid",
  "which",
 ]
@@ -493,6 +494,7 @@ dependencies = [
  "tokio-util",
  "toml 0.8.23",
  "tonic 0.14.2",
+ "tonic-health",
  "tonic-tracing-opentelemetry",
  "tower",
  "tracing",
@@ -4294,6 +4296,19 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
+]
+
+[[package]]
+name = "tonic-health"
+version = "0.14.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f4ff0636fef47afb3ec02818f5bceb4377b8abb9d6a386aeade18bd6212f8eb7"
+dependencies = [
+ "prost 0.14.1",
+ "tokio",
+ "tokio-stream",
+ "tonic 0.14.2",
+ "tonic-prost",
 ]
 
 [[package]]

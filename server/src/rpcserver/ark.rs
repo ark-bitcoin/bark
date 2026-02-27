@@ -671,9 +671,12 @@ pub async fn run_rpc_server(srv: Arc<Server>) -> anyhow::Result<()> {
 	let addr = srv.config.rpc.public_address;
 	info!("Starting public gRPC service on address {}", addr);
 
+	let (_, health_server) = tonic_health::server::health_reporter();
+
 	let routes = tonic::service::Routes::default()
 		.add_service(rpc::server::ArkServiceServer::from_arc(srv.clone()))
-		.add_service(rpc::server::MailboxServiceServer::from_arc(srv.clone()));
+		.add_service(rpc::server::MailboxServiceServer::from_arc(srv.clone()))
+		.add_service(health_server);
 
 	tonic::transport::Server::builder()
 		.layer(OtelGrpcLayer::default())

@@ -64,6 +64,7 @@ bdk_bitcoind_rpc.workspace = true
 lightning.workspace = true
 
 tonic = { workspace = true, features = ["tls-ring"] }
+tonic-health.workspace = true
 tower.workspace = true
 hyper.workspace = true
 http.workspace = true

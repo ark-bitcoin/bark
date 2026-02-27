@@ -2245,3 +2245,19 @@ async fn initiate_lightning_payment_fails_without_register_vtxos() {
 	assert!(err.to_string().contains("does not exist") || err.to_string().contains("NULL signed_tx"),
 		"Expected error about missing or unsigned transaction, got: {err}");
 }
+
+#[tokio::test]
+async fn grpc_health_check() {
+	let ctx = TestContext::new("server/grpc_health_check").await;
+	let srv = ctx.new_captaind("server", None).await;
+
+	let mut health_client = srv.get_health_rpc().await;
+
+	// Check overall server health (empty service name = overall health)
+	let req = tonic_health::pb::HealthCheckRequest { service: String::new() };
+	let resp = health_client.check(req).await.expect("health check failed");
+	assert_eq!(
+		resp.into_inner().status,
+		tonic_health::pb::health_check_response::ServingStatus::Serving as i32,
+	);
+}
