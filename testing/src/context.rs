@@ -496,8 +496,8 @@ impl TestContext {
 
 		trace!("Funding all lightning-nodes");
 		self.fund_lightning(&sender, btc(10)).await;
-		self.generate_blocks(6).await;
-		sender.wait_for_block_sync().await;
+		let height = self.generate_blocks(6).await;
+		sender.wait_for_block(height).await;
 
 		LightningPaymentSetup { receiver, sender }
 	}
@@ -610,11 +610,9 @@ impl TestContext {
 
 		self.bitcoind().generate(block_num).await;
 
-		// Give blocks time to propagate
-		tokio::join!(
-			self.await_block_count_sync(),
-			tokio::time::sleep(Duration::from_millis(500)),
-		);
+		// Wait untill all blocks are propagated
+		self.await_block_count_sync().await;
+
 		let height = self.bitcoind().get_block_count().await;
 		info!("New chain tip: {}", height);
 		height
