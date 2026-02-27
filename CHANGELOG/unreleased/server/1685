@@ -1,0 +1,2 @@
+- Fix incorrect structured log for lightning receive
+  [#1685](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1685)
