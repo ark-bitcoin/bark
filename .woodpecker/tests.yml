@@ -123,8 +123,6 @@ steps:
     image: registry.2nd.dev/build:27
     volumes:
       - /data:/host/data
-    tmpfs:
-      - /dev/shm:size=10g
     environment:
       CHAIN_SOURCE: esplora
       TEST_DIRECTORY: ./test/esplora
@@ -145,8 +143,6 @@ steps:
     image: registry.2nd.dev/build:27
     volumes:
       - /data:/host/data
-    tmpfs:
-      - /dev/shm:size=10g
     environment:
       CHAIN_SOURCE: mempool
       TEST_DIRECTORY: ./test/mempool
@@ -167,8 +163,6 @@ steps:
     image: registry.2nd.dev/build:27
     volumes:
       - /data:/host/data
-    tmpfs:
-      - /dev/shm:size=10g
     environment:
       TEST_DIRECTORY: ./test/btc30
       NEXTEST_TEST_THREADS: 2
