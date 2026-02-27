@@ -2,6 +2,7 @@ use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::Arc;
 
+use bark_cli::VERSION_DIRTY;
 use bark_json::web::{BarkNetwork, BitcoindAuth, ChainSourceConfig, CreateWalletRequest};
 use bark_rest::error::ContextExt;
 use clap::Parser;
@@ -169,9 +170,14 @@ async fn main() -> anyhow::Result<()>{
 	let datadir = PathBuf::from_str(&cli.datadir).unwrap();
 
 	init_logging(cli.verbose, cli.quiet, &datadir);
-	info!("Starting barkd daemon with version {}", FULL_VERSION);
 
+	info!("Starting barkd daemon with version {}", FULL_VERSION);
 	let _pid_lock = PidLock::acquire(&datadir)?;
+
+	if env!("BARK_VERSION") == VERSION_DIRTY {
+		warn!("You're running a custom build of barkd, which might cause unexpected issues. \
+			Consider building at one of the tagged versions or using the release builds.");
+	}
 
 	let (wallet_opt, daemon_opt) = if let Some((wallet, onchain)) = open_wallet(&datadir).await? {
 		let wallet = Arc::new(wallet);

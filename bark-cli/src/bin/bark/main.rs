@@ -12,6 +12,7 @@ use std::path::PathBuf;
 use std::str::FromStr;
 
 use anyhow::Context;
+use bark_cli::VERSION_DIRTY;
 use bitcoin::{Amount};
 use clap::builder::BoolishValueParser;
 use clap::Parser;
@@ -266,11 +267,16 @@ enum Command {
 
 async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 	let datadir = PathBuf::from_str(&cli.datadir).unwrap();
-	debug!("Using bark datadir at {}", datadir.display());
 
 	init_logging(cli.verbose, cli.quiet, &datadir);
 
+	info!("Using bark datadir at {}", datadir.display());
 	let _pid_lock = PidLock::acquire(&datadir)?;
+
+	if env!("BARK_VERSION") == VERSION_DIRTY {
+		warn!("You're running a custom build of bark, which might cause unexpected issues. \
+			Consider building at one of the tagged versions or using the release builds.");
+	}
 
 	// Handle create command differently.
 	if let Command::Create(opts) = cli.command {
