@@ -17,7 +17,7 @@ clone:
 
 steps:
   - name: tar-and-print-test-data
-    image: registry.2nd.dev/build:27
+    image: registry.2nd.dev/build:28
     volumes:
       - /data:/host/data
     commands:
@@ -38,7 +38,7 @@ steps:
   - name: tar-and-print-codecov-data
     when:
       - evaluate: CI_CODECOV_PIPELINE == "true"
-    image: registry.2nd.dev/build:27
+    image: registry.2nd.dev/build:28
     volumes:
       - /data:/host/data
     commands:
@@ -60,7 +60,7 @@ steps:
     when:
       - evaluate: 'CI_PIPELINE_EVENT == "push" && CI_COMMIT_BRANCH == "master" && CI_REPO_URL == "https://gitlab.com/ark-bitcoin/bark"'
     failure: ignore
-    image: registry.2nd.dev/build:27
+    image: registry.2nd.dev/build:28
     volumes:
       - /data:/host/data
     commands:
@@ -73,7 +73,7 @@ steps:
   - name: check-versions
     when:
       - event: tag
-    image: registry.2nd.dev/build:27
+    image: registry.2nd.dev/build:28
     commands:
       - sudo chown -R nixuser:nixbld /woodpecker
       - bash ./contrib/check-versions.sh "${CI_COMMIT_TAG}"
@@ -81,7 +81,7 @@ steps:
   - name: check-gitlab-release
     when:
       - event: tag
-    image: registry.2nd.dev/build:27
+    image: registry.2nd.dev/build:28
     commands:
       - sudo chown -R nixuser:nixbld /woodpecker
       - bash ./contrib/check-gitlab-release.sh "${CI_COMMIT_TAG}"
