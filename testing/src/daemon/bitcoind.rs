@@ -48,6 +48,22 @@ pub struct BitcoindState {
 
 pub type Bitcoind = Daemon<BitcoindHelper>;
 
+/// A lightweight handle for polling a bitcoind node's block height.
+///
+/// Unlike [`Bitcoind`], this can be stored without holding onto the
+/// child process or daemon state.
+pub struct BitcoindRpcHandle {
+	pub name: String,
+	url: String,
+	auth: rpc::Auth,
+}
+
+impl BitcoindRpcHandle {
+	pub fn client(&self) -> rpc::BitcoinRpcClient {
+		rpc::BitcoinRpcClient::new(&self.url, self.auth.clone()).unwrap()
+	}
+}
+
 impl std::fmt::Debug for Bitcoind {
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
 		write!(f, "bitcoind in {}", self.inner.datadir().display())
@@ -73,6 +89,14 @@ impl Bitcoind {
 
 	pub fn sync_client(&self) -> bitcoin_ext::rpc::BitcoinRpcClient {
 		bitcoin_ext::rpc::BitcoinRpcClient::new(&self.rpc_url(), self.auth()).unwrap()
+	}
+
+	pub fn rpc_handle(&self) -> BitcoindRpcHandle {
+		BitcoindRpcHandle {
+			name: self.name.clone(),
+			url: self.rpc_url(),
+			auth: self.auth(),
+		}
 	}
 
 	pub fn rpc_cookie(&self) -> PathBuf {

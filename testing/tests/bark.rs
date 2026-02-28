@@ -305,7 +305,6 @@ async fn large_round() {
 
 	let srv = ctx.new_captaind_with_cfg("server", None, |cfg| {
 		cfg.round_interval = Duration::from_secs(3600);
-		cfg.round_submit_time = Duration::from_millis(100 * N as u64);
 		cfg.round_sign_time = Duration::from_millis(1000 * N as u64);
 	}).await;
 	ctx.fund_captaind(&srv, btc(10)).await;
