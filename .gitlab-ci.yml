@@ -3,7 +3,7 @@ stages:
 
 woodpecker:
   stage: build
-  image: registry.2nd.dev/build:27
+  image: registry.2nd.dev/build:28
   script:
     - set +e
     - |

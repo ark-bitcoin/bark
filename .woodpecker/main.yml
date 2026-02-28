@@ -43,7 +43,7 @@ steps:
         from_secret: CODEBERG_LOGIN_TOKEN
 
   - name: prechecks
-    image: registry.2nd.dev/build:27
+    image: registry.2nd.dev/build:28
     volumes:
       - /data:/host/data
     commands:

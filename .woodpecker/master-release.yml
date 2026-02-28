@@ -11,7 +11,7 @@ clone:
 
 steps:
   - name: parse-versions
-    image: registry.2nd.dev/build:27
+    image: registry.2nd.dev/build:28
     commands:
       - sudo chown -R nixuser:nixbld /woodpecker
       - git rev-parse HEAD > VERSION
@@ -19,7 +19,7 @@ steps:
 
   - name: build-server
     depends_on: parse-versions
-    image: registry.2nd.dev/build:27
+    image: registry.2nd.dev/build:28
     environment:
       SDKROOT: /usr/local/osxcross/SDK/MacOSX15.4.sdk
     commands:
