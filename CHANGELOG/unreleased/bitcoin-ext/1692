@@ -1,0 +1,5 @@
+- Fix untrusted UTXO detection for external deposits
+  External deposits were incorrectly treated as trusted when BDK happened
+  to know about the parent transaction. Now checks that each input actually
+  spends a wallet-owned output.
+  [#1692](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1692)

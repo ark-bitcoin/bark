@@ -110,7 +110,16 @@ pub trait WalletExt: BorrowMut<Wallet> {
 			// but we should be careful not to start doing this.
 			let txid = utxo.outpoint.txid;
 			if let Some(tx) = w.get_tx(txid) {
-				if tx.tx_node.tx.input.iter().all(|i| w.get_tx(i.previous_output.txid).is_some()) {
+				let all_inputs_ours = tx.tx_node.tx.input.iter().all(|i| {
+					let prev = i.previous_output;
+					if let Some(prev_tx) = w.get_tx(prev.txid) {
+						if let Some(txout) = prev_tx.tx_node.tx.output.get(prev.vout as usize) {
+							return w.is_mine(txout.script_pubkey.clone());
+						}
+					}
+					false
+				});
+				if all_inputs_ours {
 					continue;
 				}
 			}
