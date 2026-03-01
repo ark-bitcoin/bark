@@ -3701,14 +3701,11 @@
             "description": "The timestamp at which the lightning receive was finished"
           },
           "htlc_vtxos": {
-            "type": [
-              "array",
-              "null"
-            ],
+            "type": "array",
             "items": {
               "$ref": "#/components/schemas/WalletVtxoInfo"
             },
-            "description": "The HTLC VTXOs granted by the server for the lightning receive\n\nOnly present if the lightning HTLC has been received by the server."
+            "description": "The HTLC VTXOs granted by the server for the lightning receive\n\nEmpty if the lightning HTLC has not yet been received by the server."
           },
           "invoice": {
             "type": "string",

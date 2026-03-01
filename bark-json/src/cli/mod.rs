@@ -643,9 +643,10 @@ pub struct LightningReceiveInfo {
 	pub invoice: String,
 	/// The HTLC VTXOs granted by the server for the lightning receive
 	///
-	/// Only present if the lightning HTLC has been received by the server.
-	#[cfg_attr(feature = "utoipa", schema(value_type = Vec<WalletVtxoInfo>, nullable = true))]
-	pub htlc_vtxos: Option<Vec<WalletVtxoInfo>>,
+	/// Empty if the lightning HTLC has not yet been received by the server.
+	#[serde(default, deserialize_with = "serde_utils::null_as_default")]
+	#[cfg_attr(feature = "utoipa", schema(required = true))]
+	pub htlc_vtxos: Vec<WalletVtxoInfo>,
 }
 
 impl From<bark::persist::models::LightningReceive> for LightningReceiveInfo {
@@ -655,8 +656,8 @@ impl From<bark::persist::models::LightningReceive> for LightningReceiveInfo {
 			payment_preimage: v.payment_preimage,
 			preimage_revealed_at: v.preimage_revealed_at,
 			invoice: v.invoice.to_string(),
-			htlc_vtxos: v.htlc_vtxos.map(|vtxos| vtxos.into_iter()
-				.map(crate::primitives::WalletVtxoInfo::from).collect()),
+			htlc_vtxos: v.htlc_vtxos.into_iter()
+				.map(crate::primitives::WalletVtxoInfo::from).collect(),
 			amount: v.invoice.amount_milli_satoshis().map(Amount::from_msat_floor)
 				.unwrap_or(Amount::ZERO),
 			finished_at: v.finished_at,

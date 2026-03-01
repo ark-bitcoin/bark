@@ -39,9 +39,7 @@ impl Wallet {
 
 		let mut total = Amount::ZERO;
 		for receive in receives {
-			if let Some(htlc_vtxos) = receive.htlc_vtxos {
-				total += htlc_vtxos.iter().map(|v| v.amount()).sum::<Amount>();
-			}
+			total += receive.htlc_vtxos.iter().map(|v| v.amount()).sum::<Amount>();
 		}
 
 		Ok(total)
@@ -142,9 +140,8 @@ impl Wallet {
 
 		// order inputs by vtxoid before we generate nonces
 		let inputs = {
-			let htlc_vtxos = receive.htlc_vtxos.as_ref()
-				.context("no HTLC VTXOs set on record yet")?;
-			let mut ret = htlc_vtxos.iter().map(|v| &v.vtxo).collect::<Vec<_>>();
+			ensure!(!receive.htlc_vtxos.is_empty(), "no HTLC VTXOs set on record yet");
+			let mut ret = receive.htlc_vtxos.iter().map(|v| &v.vtxo).collect::<Vec<_>>();
 			ret.sort_by_key(|v| v.id());
 			ret
 		};
@@ -284,7 +281,7 @@ impl Wallet {
 			.context("no pending lightning receive found for payment hash, might already be claimed")?;
 
 		// If we have already HTLC VTXOs stored, we can return them without asking the server
-		if receive.htlc_vtxos.is_some() {
+		if !receive.htlc_vtxos.is_empty() {
 			return Ok(Some(receive))
 		}
 
@@ -417,7 +414,7 @@ impl Wallet {
 			wallet_vtxos.push(v);
 		}
 
-		receive.htlc_vtxos = Some(wallet_vtxos);
+		receive.htlc_vtxos = wallet_vtxos;
 		receive.movement_id = Some(movement_id);
 
 		Ok(Some(receive))
@@ -432,9 +429,8 @@ impl Wallet {
 		&self,
 		lightning_receive: &LightningReceive,
 	) -> anyhow::Result<()> {
-		let vtxos = lightning_receive.htlc_vtxos.as_ref()
-			.context("no HTLC VTXOs to exit")?
-			.iter().map(|v| &v.vtxo).collect::<Vec<_>>();
+		ensure!(!lightning_receive.htlc_vtxos.is_empty(), "no HTLC VTXOs to exit");
+		let vtxos = lightning_receive.htlc_vtxos.iter().map(|v| &v.vtxo).collect::<Vec<_>>();
 
 		info!("Exiting HTLC VTXOs for lightning_receive with payment hash {}", lightning_receive.payment_hash);
 		self.exit.write().await.start_exit_for_vtxos(&vtxos).await?;
@@ -457,14 +453,13 @@ impl Wallet {
 		&self,
 		lightning_receive: &LightningReceive,
 	) -> anyhow::Result<()> {
-		let vtxos = lightning_receive.htlc_vtxos.as_ref()
-			.map(|v| v.iter().map(|v| &v.vtxo).collect::<Vec<_>>());
+		let vtxos = &lightning_receive.htlc_vtxos;
 
-		let update_opt = match (vtxos, lightning_receive.preimage_revealed_at) {
-			(Some(_), Some(_)) => {
+		let update_opt = match (vtxos.is_empty(), lightning_receive.preimage_revealed_at) {
+			(false, Some(_)) => {
 				return self.exit_lightning_receive(lightning_receive).await;
 			}
-			(Some(vtxos), None) => {
+			(false, None) => {
 				warn!("HTLC-recv VTXOs are about to expire, but preimage has not been disclosed yet. Canceling");
 				self.mark_vtxos_as_spent(vtxos).await?;
 				if let Some(movement_id) = lightning_receive.movement_id {
@@ -479,7 +474,7 @@ impl Wallet {
 					None
 				}
 			}
-			(None, Some(_)) => {
+			(true, Some(_)) => {
 				error!("No HTLC vtxos set on ln receive but preimage has been disclosed. Canceling");
 				lightning_receive.movement_id.map(|id| (id,
 					MovementUpdate::new()
@@ -487,7 +482,7 @@ impl Wallet {
 					MovementStatus::Canceled,
 				))
 			}
-			(None, None) => None,
+			(true, None) => None,
 		};
 
 		if let Some((movement_id, update, status)) = update_opt {
@@ -574,7 +569,7 @@ impl Wallet {
 
 		// No need to claim anything if there
 		// are no htlcs yet
-		if receive.htlc_vtxos.is_none() {
+		if receive.htlc_vtxos.is_empty() {
 			return Ok(receive);
 		}
 
