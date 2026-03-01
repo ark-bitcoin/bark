@@ -669,6 +669,37 @@ mod test {
 	use bitcoin::FeeRate;
 	use super::*;
 
+	fn lightning_receive_base_json() -> serde_json::Value {
+		serde_json::json!({
+			"amount_sat": 1000,
+			"payment_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+			"payment_preimage": "0000000000000000000000000000000000000000000000000000000000000000",
+			"preimage_revealed_at": null,
+			"finished_at": null,
+			"invoice": "lnbc1",
+		})
+	}
+
+	#[test]
+	fn deserialize_lightning_receive_htlc_vtxos_missing() {
+		let json = lightning_receive_base_json();
+		serde_json::from_value::<LightningReceiveInfo>(json).unwrap();
+	}
+
+	#[test]
+	fn deserialize_lightning_receive_htlc_vtxos_null() {
+		let mut json = lightning_receive_base_json();
+		json["htlc_vtxos"] = serde_json::json!(null);
+		serde_json::from_value::<LightningReceiveInfo>(json).unwrap();
+	}
+
+	#[test]
+	fn deserialize_lightning_receive_htlc_vtxos_empty() {
+		let mut json = lightning_receive_base_json();
+		json["htlc_vtxos"] = serde_json::json!([]);
+		serde_json::from_value::<LightningReceiveInfo>(json).unwrap();
+	}
+
 	#[test]
 	fn ark_info_fields() {
 		//! the purpose of this test is to fail if we add a field to
