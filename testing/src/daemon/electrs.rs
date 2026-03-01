@@ -265,6 +265,15 @@ impl DaemonHelper for ElectrsHelper {
 			"--monitoring-addr", &format!("127.0.0.1:{}", self.monitoring_port()),
 			"--http-addr", &format!("127.0.0.1:{}", self.rest_port()),
 		]);
+
+		// Use ZMQ for instant block notifications instead of slow polling.
+		// Only esplora-electrs supports this; mempool-electrs crashes with --zmq-addr.
+		if matches!(self.electrs_type, ElectrsType::Esplora) {
+			cmd.args([
+				"--zmq-addr", &format!("tcp://127.0.0.1:{}", self.config.bitcoin_zmq_port),
+			]);
+		}
+
 		Ok(cmd)
 	}
 
