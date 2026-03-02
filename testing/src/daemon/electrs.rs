@@ -270,7 +270,7 @@ impl DaemonHelper for ElectrsHelper {
 		// Only esplora-electrs supports this; mempool-electrs crashes with --zmq-addr.
 		if matches!(self.electrs_type, ElectrsType::Esplora) {
 			cmd.args([
-				"--zmq-addr", &format!("tcp://127.0.0.1:{}", self.config.bitcoin_zmq_port),
+				"--zmq-addr", &format!("127.0.0.1:{}", self.config.bitcoin_zmq_port),
 			]);
 		}
 
