@@ -11,7 +11,7 @@ use anyhow::Context;
 use bitcoin::Amount;
 use bitcoin::hex::DisplayHex;
 use bitcoin::secp256k1::Keypair;
-use log::{debug, error, info};
+use log::{debug, error, info, trace};
 
 use ark::{ProtocolEncoding, Vtxo};
 use ark::mailbox::MailboxAuthorization;
@@ -122,21 +122,12 @@ impl Wallet {
 				continue;
 			}
 
-			info!("Received valid arkoor VTXO {}", vtxo.serialize_hex());
 			valid_vtxos.push(vtxo);
 		}
 
 		// We log all invalid VTXOs to keep track
 		if !invalid_vtxos.is_empty() {
 			error!("Received {} invalid arkoor VTXOs out of {} from server", invalid_vtxos.len(), raw_vtxos.len());
-		}
-
-		// We log all valid VTXOs to keep track
-		if !valid_vtxos.is_empty() {
-			for vtxo in &valid_vtxos {
-				info!("Valid arkoor VTXO: {}", vtxo.serialize_hex());
-			}
-			info!("Received {} valid arkoor VTXOs out of {} from server", valid_vtxos.len(), raw_vtxos.len());
 		}
 
 		valid_vtxos
@@ -153,10 +144,11 @@ impl Wallet {
 		for vtxo in &vtxos {
 			// Skip if already in wallet
 			if self.db.get_wallet_vtxo(vtxo.id()).await?.is_some() {
-				info!("Ignoring duplicate arkoor VTXO {}", vtxo.id());
+				debug!("Ignoring duplicate arkoor VTXO {}", vtxo.id());
 				continue;
 			}
 
+			trace!("Received arkoor VTXO {} for {} (checkpoint {:?})", vtxo.id(), vtxo.amount(), checkpoint);
 			new_vtxos.push(vtxo);
 		}
 
@@ -184,7 +176,7 @@ impl Wallet {
 			.map(|(addr, amount)| MovementDestination::ark(addr, amount))
 			.collect();
 
-		self.movements.new_finished_movement(
+		let movement_id = self.movements.new_finished_movement(
 			Subsystem::ARKOOR,
 			ArkoorMovement::Receive.to_string(),
 			MovementStatus::Successful,
@@ -193,6 +185,8 @@ impl Wallet {
 				.intended_and_effective_balance(balance)
 				.received_on(received_on),
 		).await?;
+
+		info!("Received arkoor (movement {}) for {}", movement_id, balance);
 
 		if let Some(checkpoint) = checkpoint {
 			self.store_mailbox_checkpoint(checkpoint).await?;
