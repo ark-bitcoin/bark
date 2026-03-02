@@ -11,6 +11,8 @@ VERBOSE=0
 LOOP=0
 DAEMON=0
 USE_CORPUS=""
+JOBS=""
+MINIMIZE=0
 
 usage() {
     cat <<EOF
@@ -34,6 +36,8 @@ OPTIONS:
     -v, --verbose           Enable verbose output
     -l, --loop              Run continuously until killed (restarts after --time)
     -d, --daemon            Run in background, prints PID and exits
+    -j, --jobs <N>          Number of CPUs/threads to use (default: honggfuzz default)
+    --minimize              Minimize corpus only
     --use-corpus <PATH>     Use corpus from a cloned bark-qa repo at PATH
 
 ENVIRONMENT VARIABLES:
@@ -87,6 +91,14 @@ while [[ $# -gt 0 ]]; do
             ;;
         -d|--daemon)
             DAEMON=1
+            shift
+            ;;
+        -j|--jobs)
+            JOBS="$2"
+            shift 2
+            ;;
+        --minimize)
+            MINIMIZE=1
             shift
             ;;
         --use-corpus)
@@ -168,6 +180,14 @@ run_fuzzing() {
 
             if [ "$VERBOSE" = "1" ]; then
                 HFUZZ_RUN_ARGS="$HFUZZ_RUN_ARGS -v"
+            fi
+
+            if [ -n "$JOBS" ]; then
+                HFUZZ_RUN_ARGS="$HFUZZ_RUN_ARGS -n $JOBS"
+            fi
+
+            if [ "$MINIMIZE" = "1" ]; then
+                HFUZZ_RUN_ARGS="$HFUZZ_RUN_ARGS -M"
             fi
 
             # Determine input corpus path
