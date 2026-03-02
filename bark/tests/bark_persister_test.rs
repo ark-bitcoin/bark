@@ -345,7 +345,7 @@ fn dummy_lightning_receive() -> LightningReceive {
 		payment_preimage: Preimage::from_slice(&[]).unwrap(),
 		invoice: Bolt11Invoice::from_str("bob").unwrap(),
 		preimage_revealed_at: None,
-		htlc_vtxos: None,
+		htlc_vtxos: vec![],
 		htlc_recv_cltv_delta: 0,
 		movement_id: Some(MovementId::new(0)),
 		finished_at: None,

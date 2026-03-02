@@ -761,7 +761,7 @@ pub fn store_lightning_receive(
 	Ok(())
 }
 
-fn get_htlc_vtxos(conn: &Connection, row: &Row<'_>) -> anyhow::Result<Option<Vec<WalletVtxo>>> {
+fn get_htlc_vtxos(conn: &Connection, row: &Row<'_>) -> anyhow::Result<Vec<WalletVtxo>> {
 	match row.get::<_, Option<String>>("htlc_vtxo_ids")? {
 		Some(vtxo_ids_str) => {
 			let vtxo_ids = serde_json::from_str::<Vec<VtxoId>>(&vtxo_ids_str)?;
@@ -769,9 +769,9 @@ fn get_htlc_vtxos(conn: &Connection, row: &Row<'_>) -> anyhow::Result<Option<Vec
 			for vtxo_id in vtxo_ids {
 				vtxos.push(get_wallet_vtxo_by_id(conn, vtxo_id)?.context("no vtxo found")?);
 			}
-			Ok(Some(vtxos))
+			Ok(vtxos)
 		},
-		None => Ok(None),
+		None => Ok(Vec::new()),
 	}
 }
 

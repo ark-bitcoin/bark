@@ -1,0 +1,4 @@
+- `htlc_vtxos` in `LightningReceiveInfo` is now always returned as a list
+  REST API clients no longer need to handle a missing or nullable field.
+  [#1669](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1669)
+  - **BREAKING:** `htlc_vtxos` is now `[]` instead of `null` when no VTXOs are present
