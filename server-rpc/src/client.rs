@@ -252,7 +252,6 @@ impl ServerConnection {
 			.max_decoding_message_size(64 * 1024 * 1024); // 64MB limit
 
 		let info = client.ark_info(network).await?;
-		info!("Ark info: {:?}", info);
 
 		let mailbox_client = mailbox::MailboxServiceClient::with_interceptor(channel, interceptor)
 			.max_decoding_message_size(64 * 1024 * 1024); // 64MB limit
