@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use bark::BarkNetwork;
 
 use ark_testing::{Bark, TestContext};
@@ -40,7 +42,7 @@ async fn bark_create_force_flag() {
 
 	// Attempt to create with force_create should succeed
 	let datadir = ctx.datadir.join("bark");
-	let bitcoind = ctx.new_bitcoind("bark_bitcoind").await;
+	let bitcoind = Arc::new(ctx.new_bitcoind("bark_bitcoind").await);
 	let cfg = ctx.bark_default_cfg(&srv, Some(&bitcoind));
 	Bark::try_new_with_create_opts(
 		"bark", datadir, BarkNetwork::Regtest, cfg, Some(bitcoind), None, None, true,

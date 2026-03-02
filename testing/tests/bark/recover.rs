@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use tokio::fs;
 
 use bark::BarkNetwork;
@@ -28,12 +30,12 @@ async fn recover_mnemonic() {
 
 	// first ensure we need to set a birthday for bitcoin core
 	let bitcoind = if ctx.electrs.is_none() {
-		Some(ctx.new_bitcoind("bark_recovered_no_birthday_bitcoind").await)
+		Some(Arc::new(ctx.new_bitcoind("bark_recovered_no_birthday_bitcoind").await))
 	} else {
 		None
 	};
 	let datadir = ctx.datadir.join("bark_recovered_no_birthday");
-	let cfg = ctx.bark_default_cfg(&srv, bitcoind.as_ref());
+	let cfg = ctx.bark_default_cfg(&srv, bitcoind.as_deref());
 	let result = Bark::try_new_with_create_opts(
 		"bark_recovered_no_birthday",
 		datadir,
@@ -63,12 +65,12 @@ async fn recover_mnemonic() {
 
 	// Now check that specifying a birthday height always succeeds
 	let bitcoind = if ctx.electrs.is_none() {
-		Some(ctx.new_bitcoind("bark_recovered_no_birthday_bitcoind").await)
+		Some(Arc::new(ctx.new_bitcoind("bark_recovered_no_birthday_bitcoind").await))
 	} else {
 		None
 	};
 	let datadir = ctx.datadir.join("bark_recovered_with_birthday");
-	let cfg = ctx.bark_default_cfg(&srv, bitcoind.as_ref());
+	let cfg = ctx.bark_default_cfg(&srv, bitcoind.as_deref());
 	let recovered = Bark::try_new_with_create_opts(
 		"bark_recovered_with_birthday",
 		datadir,

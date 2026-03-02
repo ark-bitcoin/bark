@@ -44,7 +44,7 @@ pub struct Bark {
 	config: Config,
 	counter: AtomicUsize,
 	timeout: Option<Duration>,
-	_bitcoind: Option<Bitcoind>,
+	_bitcoind: Option<Arc<Bitcoind>>,
 	command_log: Mutex<fs::File>,
 }
 
@@ -77,13 +77,13 @@ impl Bark {
 		version.to_string()
 	}
 
-	/// Creates Bark client with a dedicated bitcoind daemon.
+	/// Creates Bark client with an optional bitcoind daemon.
 	pub async fn new(
 		name: impl AsRef<str>,
 		datadir: impl AsRef<Path>,
 		network: BarkNetwork,
 		config: Config,
-		bitcoind: Option<Bitcoind>,
+		bitcoind: Option<Arc<Bitcoind>>,
 	) -> Bark {
 		Self::try_new(name, datadir, network, config, bitcoind).await.unwrap()
 	}
@@ -93,7 +93,7 @@ impl Bark {
 		datadir: impl AsRef<Path>,
 		network: BarkNetwork,
 		config: Config,
-		bitcoind: Option<Bitcoind>,
+		bitcoind: Option<Arc<Bitcoind>>,
 	) -> anyhow::Result<Bark> {
 		Self::try_new_with_create_opts(name, datadir, network, config, bitcoind, None, None, false).await
 	}
@@ -103,7 +103,7 @@ impl Bark {
 		datadir: impl AsRef<Path>,
 		network: BarkNetwork,
 		config: Config,
-		bitcoind: Option<Bitcoind>,
+		bitcoind: Option<Arc<Bitcoind>>,
 		mnemonic: Option<String>,
 		birthday: Option<BlockHeight>,
 		force: bool,
@@ -265,7 +265,7 @@ impl Bark {
 	}
 
 	pub fn bitcoind(&self) -> Option<&Bitcoind> {
-		self._bitcoind.as_ref()
+		self._bitcoind.as_deref()
 	}
 
 	pub fn command_log_file(&self) -> PathBuf {
