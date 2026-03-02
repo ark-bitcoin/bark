@@ -1485,15 +1485,18 @@ impl Wallet {
 		&self,
 		participation: &mut RoundParticipation,
 	) -> anyhow::Result<()> {
-		let excluded_ids = participation.inputs.iter().map(|v| v.vtxo_id())
-			.collect::<HashSet<_>>();
-
 		// Get VTXOs that need and should be refreshed, then filter out any duplicates before
 		// adjusting the round participation.
 		let tip = self.chain.tip().await?;
 		let mut vtxos_to_refresh = self.spendable_vtxos_with(
 			&RefreshStrategy::should_refresh(self, tip, self.chain.fee_rates().await.fast),
 		).await?;
+		if vtxos_to_refresh.is_empty() {
+			return Ok(());
+		}
+
+		let excluded_ids = participation.inputs.iter().map(|v| v.vtxo_id())
+			.collect::<HashSet<_>>();
 		let mut total_amount = Amount::ZERO;
 		for i in (0..vtxos_to_refresh.len()).rev() {
 			let vtxo = &vtxos_to_refresh[i];
@@ -1502,6 +1505,10 @@ impl Wallet {
 				continue;
 			}
 			total_amount += vtxo.amount();
+		}
+		if vtxos_to_refresh.is_empty() {
+			// VTXOs are already included in the round participation.
+			return Ok(());
 		}
 
 		// We need to verify that the output we add won't end up below the dust limit when fees are
