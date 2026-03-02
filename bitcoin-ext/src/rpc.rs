@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use bdk_bitcoind_rpc::bitcoincore_rpc::Result as RpcResult;
 use bitcoin::address::NetworkUnchecked;
 use bitcoin::hex::FromHex;
-use bitcoin::{Address, Amount, Transaction};
+use bitcoin::{Address, Amount, FeeRate, Transaction};
 use serde::{self, Deserialize, Serialize};
 use serde::de::Error as SerdeError;
 
@@ -371,6 +371,62 @@ pub trait BitcoinRpcExt: RpcApi {
 			.map(|t| bitcoin::consensus::encode::serialize_hex(t.borrow()))
 			.collect::<Vec<_>>();
 		self.call("submitpackage", &[hexes.into()])
+	}
+
+	/// Get the transaction currently spending a given outpoint from the mempool.
+	///
+	/// Returns None if the outpoint is not being spent by any mempool transaction.
+	fn get_mempool_spending_tx(
+		&self,
+		outpoint: bitcoin::OutPoint,
+	) -> Result<Option<bitcoin::Txid>, Error> {
+		// Get all mempool txids
+		let mempool_txids: Vec<bitcoin::Txid> = self.call("getrawmempool", &[false.into()])?;
+
+		for txid in mempool_txids {
+			let tx = self.get_raw_transaction(&txid, None)?;
+			for input in &tx.input {
+				if input.previous_output == outpoint {
+					return Ok(Some(txid));
+				}
+			}
+		}
+		Ok(None)
+	}
+
+	/// Estimate the effective feerate of a mempool transaction.
+	///
+	/// Returns the effective feerate considering ancestors and CPFP from direct descendants.
+	/// Returns None if the transaction is not in the mempool.
+	fn estimate_mempool_feerate(
+		&self,
+		txid: bitcoin::Txid,
+	) -> RpcResult<Option<FeeRate>> {
+		let entry = match self.get_mempool_entry(&txid) {
+			Ok(e) => e,
+			Err(e) if e.is_not_found() => return Ok(None),
+			Err(e) => return Err(e),
+		};
+
+		// Compute ancestor fee rate: sat/kwu = sat * 1000 / (vbytes * 4) = sat * 250 / vbytes
+		let ancestor_feerate = |e: &json::GetMempoolEntryResult| -> Result<FeeRate, Error> {
+			Ok(FeeRate::from_sat_per_kwu(
+				e.fees.ancestor.to_sat() * 250u64.checked_div(e.ancestor_size)
+					.ok_or_else(|| Error::UnexpectedStructure)?
+			))
+		};
+
+		// Start with this tx's ancestor fee rate
+		let mut feerate = ancestor_feerate(&entry)?;
+
+		// Check direct descendants - if any has better ancestor rate, use that (CPFP)
+		for descendant_txid in &entry.spent_by {
+			if let Ok(desc_entry) = self.get_mempool_entry(descendant_txid) {
+				feerate = std::cmp::max(feerate, ancestor_feerate(&desc_entry)?);
+			}
+		}
+
+		Ok(Some(feerate))
 	}
 }
 

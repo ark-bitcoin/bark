@@ -68,3 +68,18 @@ pub mod duration_millis {
 		Ok(Duration::from_millis(millis))
 	}
 }
+
+pub mod fee_rate {
+	use serde::{Deserialize, Deserializer, Serializer};
+	use bitcoin::FeeRate;
+	use bitcoin_ext::FeeRateExt;
+
+	pub fn serialize<S: Serializer>(v: &FeeRate, s: S) -> Result<S::Ok, S::Error> {
+		s.serialize_u64(v.to_sat_per_kvb())
+	}
+
+	pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<FeeRate, D::Error> {
+		let sat_kvb = u64::deserialize(d)?;
+		Ok(FeeRate::from_sat_per_kvb_ceil(sat_kvb))
+	}
+}

@@ -18,14 +18,15 @@ use bitcoin::secp256k1::Keypair;
 use tracing::info;
 use bitcoin_ext::rpc::{BitcoinRpcClient, BitcoinRpcExt, RpcApi};
 
-use crate::{database, fee_estimator, telemetry, wallet, SECP};
-use crate::database::BlockTable;
-use crate::sync::SyncManager;
+use crate::{fee_estimator, secret::Secret, telemetry, wallet, SECP};
 use crate::config::watchmand::Config;
+use crate::database::{self, BlockTable};
+use crate::sync::{ChainEventListener, SyncManager};
 use crate::system::RuntimeManager;
 use crate::txindex::TxIndex;
 use crate::txindex::broadcast::TxNursery;
 use crate::wallet::{PersistedWallet, WalletKind, MNEMONIC_FILE};
+use crate::watchman::{VtxoExitFrontier, Watchman, WatchmanSigner};
 
 
 /// The HD keypath to use for the server key.
@@ -41,6 +42,8 @@ pub struct Daemon {
 	pub tx_nursery: TxNursery,
 	#[allow(unused)]
 	watchman_wallet: Arc<tokio::sync::Mutex<PersistedWallet>>,
+	#[allow(unused)]
+	frontier: Arc<tokio::sync::RwLock<VtxoExitFrontier>>,
 }
 
 impl Daemon {
@@ -152,7 +155,7 @@ impl Daemon {
 			cfg.transaction_rebroadcast_interval,
 		);
 
-		let _fee_estimator = fee_estimator::start(
+		let fee_estimator = fee_estimator::start(
 			rtmgr.clone(),
 			cfg.fee_estimator.clone(),
 			bitcoind.clone(),
@@ -163,17 +166,49 @@ impl Daemon {
 		).await.context("error loading watchman wallet")?;
 		let watchman_wallet = Arc::new(tokio::sync::Mutex::new(watchman_wallet));
 
+		let frontier = Arc::new(tokio::sync::RwLock::new(VtxoExitFrontier::init(db.clone()).await?));
+
+		let listeners: Vec<Box<dyn ChainEventListener>> = vec![
+			Box::new(frontier.clone()),
+		];
+
 		let sync_manager = SyncManager::start(
 			rtmgr.clone(),
 			bitcoind.clone(),
 			db.clone(),
-			vec![],
+			listeners,
 			deep_tip,
 			cfg.sync_manager_block_poll_interval,
 			BlockTable::Watchmand,
 		).await.context("Failed to start SyncManager")?;
 
-		Ok(Self { rtmgr, sync_manager, txindex, tx_nursery, watchman_wallet })
+		// Start the Watchman VTXO processor
+		let drain_address = cfg.sweep_address
+			.context("sweep_address is required for watchman")?
+			.require_network(cfg.network)
+			.context("sweep_address network mismatch")?;
+		let signer = WatchmanSigner::new(Secret::new(server_key), db.clone());
+		let sync_height_watcher = sync_manager.sync_height_watcher();
+
+		let watchman = Watchman::new(
+			cfg.watchman,
+			signer,
+			bitcoind.clone(),
+			db,
+			BlockTable::Watchmand,
+			fee_estimator,
+			drain_address,
+			watchman_wallet.clone(),
+			frontier.clone(),
+			sync_height_watcher,
+		);
+
+		let rtmgr2 = rtmgr.clone();
+		tokio::spawn(async move {
+			watchman.run(rtmgr2).await;
+		});
+
+		Ok(Self { rtmgr, sync_manager, txindex, tx_nursery, watchman_wallet, frontier })
 	}
 
 	/// Waits for server to terminate.

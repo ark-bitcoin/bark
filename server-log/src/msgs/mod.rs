@@ -19,6 +19,8 @@ mod vtxopool;
 pub use self::vtxopool::*;
 mod wallet;
 pub use self::wallet::*;
+mod watchman;
+pub use self::watchman::*;
 
 
 use ark::VtxoId;

@@ -822,6 +822,11 @@ fn decode_vtxo_policy<R: io::Read + ?Sized>(
 			let htlc_expiry_delta = r.read_u16()?;
 			Ok(VtxoPolicy::ServerHtlcRecv(ServerHtlcRecvVtxoPolicy { user_pubkey, payment_hash, htlc_expiry, htlc_expiry_delta }))
 		},
+
+		// IMPORTANT:
+		// When adding a new user vtxo policy variant, don't forget
+		// to also add it to the ServerVtxoPolicy decode match arm.
+
 		v => Err(ProtocolDecodingError::invalid(format_args!(
 			"invalid VtxoPolicy type byte: {v:#x}",
 		))),
