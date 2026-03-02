@@ -1350,51 +1350,53 @@ impl Wallet {
 	/// Sync pending rounds that have finished but are waiting for confirmations
 	pub async fn sync_pending_rounds(&self) -> anyhow::Result<()> {
 		let states = self.db.load_round_states().await?;
-		if !states.is_empty() {
-			debug!("Syncing {} pending round states...", states.len());
-
-			tokio_stream::iter(states).for_each_concurrent(10, |mut state| async move {
-				// not processing events here
-				if state.state.ongoing_participation() {
-					return;
-				}
-
-				let status = state.state.sync(self).await;
-				trace!("Synced round #{}, status: {:?}", state.id, status);
-				match status {
-					Ok(RoundStatus::Confirmed { funding_txid }) => {
-						info!("Round confirmed. Funding tx {}", funding_txid);
-						if let Err(e) = self.db.remove_round_state(&state).await {
-							warn!("Error removing confirmed round state from db: {:#}", e);
-						}
-					},
-					Ok(RoundStatus::Unconfirmed { funding_txid }) => {
-						info!("Waiting for confirmations for round funding tx {}", funding_txid);
-						if let Err(e) = self.db.update_round_state(&state).await {
-							warn!("Error updating pending round state in db: {:#}", e);
-						}
-					},
-					Ok(RoundStatus::Pending) => {
-						if let Err(e) = self.db.update_round_state(&state).await {
-							warn!("Error updating pending round state in db: {:#}", e);
-						}
-					},
-					Ok(RoundStatus::Failed { error }) => {
-						error!("Round failed: {}", error);
-						if let Err(e) = self.db.remove_round_state(&state).await {
-							warn!("Error removing failed round state from db: {:#}", e);
-						}
-					},
-					Ok(RoundStatus::Canceled) => {
-						error!("Round canceled");
-						if let Err(e) = self.db.remove_round_state(&state).await {
-							warn!("Error removing canceled round state from db: {:#}", e);
-						}
-					},
-					Err(e) => warn!("Error syncing round: {:#}", e),
-				}
-			}).await;
+		if states.is_empty() {
+			return Ok(());
 		}
+
+		debug!("Syncing {} pending round states...", states.len());
+
+		tokio_stream::iter(states).for_each_concurrent(10, |mut state| async move {
+			// not processing events here
+			if state.state.ongoing_participation() {
+				return;
+			}
+
+			let status = state.state.sync(self).await;
+			trace!("Synced round #{}, status: {:?}", state.id, status);
+			match status {
+				Ok(RoundStatus::Confirmed { funding_txid }) => {
+					info!("Round confirmed. Funding tx {}", funding_txid);
+					if let Err(e) = self.db.remove_round_state(&state).await {
+						warn!("Error removing confirmed round state from db: {:#}", e);
+					}
+				},
+				Ok(RoundStatus::Unconfirmed { funding_txid }) => {
+					info!("Waiting for confirmations for round funding tx {}", funding_txid);
+					if let Err(e) = self.db.update_round_state(&state).await {
+						warn!("Error updating pending round state in db: {:#}", e);
+					}
+				},
+				Ok(RoundStatus::Pending) => {
+					if let Err(e) = self.db.update_round_state(&state).await {
+						warn!("Error updating pending round state in db: {:#}", e);
+					}
+				},
+				Ok(RoundStatus::Failed { error }) => {
+					error!("Round failed: {}", error);
+					if let Err(e) = self.db.remove_round_state(&state).await {
+						warn!("Error removing failed round state from db: {:#}", e);
+					}
+				},
+				Ok(RoundStatus::Canceled) => {
+					error!("Round canceled");
+					if let Err(e) = self.db.remove_round_state(&state).await {
+						warn!("Error removing canceled round state from db: {:#}", e);
+					}
+				},
+				Err(e) => warn!("Error syncing round: {:#}", e),
+			}
+		}).await;
 
 		Ok(())
 	}
