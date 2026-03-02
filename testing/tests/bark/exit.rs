@@ -30,8 +30,8 @@ use ark_testing::exit::complete_exit;
 async fn simple_exit() {
 	// Initialize the test
 	let ctx = TestContext::new("exit/simple_exit").await;
-	let srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
-	let bark = ctx.new_bark_with_funds("bark1".to_string(), &srv, sat(1_000_000)).await;
+	let srv = ctx.captaind("server").funded(btc(10)).create().await;
+	let bark = ctx.bark("bark1", &srv).funded(sat(1_000_000)).create().await;
 	ctx.generate_blocks(1).await;
 
 	bark.board(sat(500_000)).await;
@@ -55,15 +55,15 @@ async fn simple_exit() {
 async fn exit_round() {
 	// Initialize the test
 	let ctx = TestContext::new("exit/exit_round").await;
-	let srv = ctx.new_captaind("server", None).await;
+	let srv = ctx.captaind("server").create().await;
 
 	// Fund the server
 	ctx.fund_captaind(&srv, btc(10)).await;
 
 	// Create a few clients
-	let create_bark = |name: &str| ctx.try_new_bark_with_cfg(name.to_string(), &srv, |cfg| {
+	let create_bark = |name: &str| ctx.bark(name, &srv).cfg(|cfg| {
 		cfg.fallback_fee_rate = Some(FeeRate::from_sat_per_kwu(250 + random::<u64>() % 24_750)); // 1 to 100 sats/vB
-	});
+	}).try_create();
 	let bark1 = create_bark("bark1").await.unwrap();
 	let bark2 = create_bark("bark2").await.unwrap();
 	let bark3 = create_bark("bark3").await.unwrap();
@@ -170,9 +170,9 @@ async fn exit_round() {
 #[tokio::test]
 async fn exit_vtxo() {
 	let ctx = TestContext::new("exit/exit_vtxo").await;
-	let srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
+	let srv = ctx.captaind("server").funded(btc(10)).create().await;
 
-	let bark = ctx.new_bark_with_funds("bark", &srv, sat(1_000_000)).await;
+	let bark = ctx.bark("bark", &srv).funded(sat(1_000_000)).create().await;
 
 	ctx.generate_blocks(1).await;
 
@@ -202,9 +202,9 @@ async fn exit_vtxo() {
 #[tokio::test]
 async fn exit_and_send_vtxo() {
 	let ctx = TestContext::new("exit/exit_and_send_vtxo").await;
-	let srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
+	let srv = ctx.captaind("server").funded(btc(10)).create().await;
 
-	let bark = ctx.new_bark_with_funds("bark", &srv, sat(1_000_000)).await;
+	let bark = ctx.bark("bark", &srv).funded(sat(1_000_000)).create().await;
 
 	ctx.generate_blocks(1).await;
 
@@ -241,10 +241,10 @@ async fn exit_and_send_vtxo() {
 #[tokio::test]
 async fn exit_after_board() {
 	let ctx = TestContext::new("exit/exit_after_board").await;
-	let srv = ctx.new_captaind("server", None).await;
+	let srv = ctx.captaind("server").create().await;
 
 	// Fund the bark instance
-	let bark = ctx.new_bark_with_funds("bark", &srv, sat(1_000_000)).await;
+	let bark = ctx.bark("bark", &srv).funded(sat(1_000_000)).create().await;
 
 	// board funds
 	bark.board(sat(900_000)).await;
@@ -264,12 +264,12 @@ async fn exit_after_board() {
 #[tokio::test]
 async fn exit_oor() {
 	let ctx = TestContext::new("exit/exit_oor").await;
-	let srv = ctx.new_captaind("server", None).await;
+	let srv = ctx.captaind("server").create().await;
 
 	// Bark1 will pay bark2 oor.
 	// Bark2 will attempt an exit
-	let bark1 = ctx.new_bark_with_funds("bark1", &srv, sat(1_000_000)).await;
-	let bark2 = ctx.new_bark_with_funds("bark2", &srv, sat(1_000_000)).await;
+	let bark1 = ctx.bark("bark1", &srv).funded(sat(1_000_000)).create().await;
+	let bark2 = ctx.bark("bark2", &srv).funded(sat(1_000_000)).create().await;
 
 	ctx.generate_blocks(1).await;
 
@@ -301,10 +301,10 @@ async fn exit_oor() {
 #[tokio::test]
 async fn double_exit_call() {
 	let ctx = TestContext::new("exit/double_exit_call").await;
-	let srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
-	let bark1 = ctx.new_bark_with_funds("bark1", &srv, sat(1_000_000)).await;
-	let bark2 = ctx.new_bark_with_funds("bark2", &srv, sat(1_000_000)).await;
-	let bark3 = ctx.new_bark_with_funds("bark3", &srv, sat(1_000_000)).await;
+	let srv = ctx.captaind("server").funded(btc(10)).create().await;
+	let bark1 = ctx.bark("bark1", &srv).funded(sat(1_000_000)).create().await;
+	let bark2 = ctx.bark("bark2", &srv).funded(sat(1_000_000)).create().await;
+	let bark3 = ctx.bark("bark3", &srv).funded(sat(1_000_000)).create().await;
 
 	bark1.board(sat(200_000)).await;
 	bark2.board(sat(500_000)).await;
@@ -384,10 +384,10 @@ async fn exit_bolt11_change() {
 	let lightning = ctx.new_lightning_setup("lightningd").await;
 
 	// Start a server and link it to our cln installation
-	let srv = ctx.new_captaind("server", Some(&lightning.sender)).await;
+	let srv = ctx.captaind("server").lightningd(&lightning.sender).create().await;
 
 	// Start a bark and create a VTXO
-	let bark_1 = ctx.new_bark_with_funds("bark-1", &srv, btc(7)).await;
+	let bark_1 = ctx.bark("bark-1", &srv).funded(btc(7)).create().await;
 
 	let board_amount = btc(5);
 	bark_1.board(board_amount).await;
@@ -425,12 +425,12 @@ async fn exit_revoked_lightning_payment() {
 	// No channels are created so that payment will fail
 
 	// Start a server and link it to our cln installation
-	let srv = ctx.new_captaind("server", Some(&lightning.sender)).await;
+	let srv = ctx.captaind("server").lightningd(&lightning.sender).create().await;
 
 	// Start a bark and create a VTXO
 	let onchain_amount = btc(3);
 	let board_amount = btc(2);
-	let bark_1 = ctx.new_bark_with_funds("bark-1", &srv, onchain_amount).await;
+	let bark_1 = ctx.bark("bark-1", &srv).funded(onchain_amount).create().await;
 
 	// Board funds into the Ark
 	bark_1.board_and_confirm_and_register(&ctx, board_amount).await;
@@ -473,9 +473,9 @@ async fn bark_should_exit_a_pending_board() {
 		}
 	}
 
-	let srv = ctx.new_captaind("server", None).await;
+	let srv = ctx.captaind("server").create().await;
 	let proxy = srv.start_proxy_no_mailbox(InvalidSigProxy).await;
-	let bark = ctx.new_bark_with_funds("bark1", &proxy.address, sat(1_000_000)).await;
+	let bark = ctx.bark("bark1", &proxy.address).funded(sat(1_000_000)).create().await;
 	let board_amount = sat(500_000);
 	let res = bark.try_board(board_amount).await;
 	assert!(res.is_ok(), "board should succeed");
@@ -574,7 +574,7 @@ async fn bark_should_exit_a_failed_htlc_out_that_server_refuse_to_revoke() {
 	// No channels are created so that payment will fail
 
 	// Start a server and link it to our cln installation
-	let srv = ctx.new_captaind_with_funds("server", Some(&lightning.sender), btc(10)).await;
+	let srv = ctx.captaind("server").lightningd(&lightning.sender).funded(btc(10)).create().await;
 
 	/// This proxy will refuse to revoke the htlc out.
 	#[derive(Clone)]
@@ -600,7 +600,7 @@ async fn bark_should_exit_a_failed_htlc_out_that_server_refuse_to_revoke() {
 	// Start a bark and create a VTXO
 	let onchain_amount = btc(3);
 	let board_amount = btc(2);
-	let bark_1 = ctx.new_bark_with_funds("bark-1", &proxy.address, onchain_amount).await;
+	let bark_1 = ctx.bark("bark-1", &proxy.address).funded(onchain_amount).create().await;
 
 	// Board funds into the Ark
 	bark_1.board(board_amount).await;
@@ -700,7 +700,7 @@ async fn bark_should_exit_a_pending_htlc_out_that_server_refuse_to_revoke() {
 	// No channels are created so that payment will fail
 
 	// Start a server and link it to our cln installation
-	let srv = ctx.new_captaind_with_funds("server", Some(&lightning.sender), btc(10)).await;
+	let srv = ctx.captaind("server").lightningd(&lightning.sender).funded(btc(10)).create().await;
 
 	/// This proxy will refuse to revoke the htlc out.
 	#[derive(Clone)]
@@ -736,7 +736,7 @@ async fn bark_should_exit_a_pending_htlc_out_that_server_refuse_to_revoke() {
 	// Start a bark and create a VTXO
 	let onchain_amount = btc(3);
 	let board_amount = btc(2);
-	let bark_1 = ctx.new_bark_with_funds("bark-1", &proxy.address, onchain_amount).await;
+	let bark_1 = ctx.bark("bark-1", &proxy.address).funded(onchain_amount).create().await;
 
 	// Board funds into the Ark
 	bark_1.board(board_amount).await;
@@ -833,10 +833,10 @@ async fn bark_should_exit_a_pending_htlc_out_that_server_refuse_to_revoke() {
 #[tokio::test]
 async fn bark_claim_specific_exit_in_low_fee_market() {
 	let ctx = TestContext::new("exit/bark_claim_specific_exit_in_low_fee_market").await;
-	let srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
-	let bark = ctx.try_new_bark_with_cfg("bark", &srv, |cfg| {
+	let srv = ctx.captaind("server").funded(btc(10)).create().await;
+	let bark = ctx.bark("bark", &srv).cfg(|cfg| {
 		cfg.fallback_fee_rate = Some(FeeRate::from_sat_per_vb(1).unwrap());
-	}).await.unwrap();
+	}).try_create().await.unwrap();
 	ctx.fund_bark(&bark, sat(10_000_000)).await;
 
 	// Create multiple VTXOs
@@ -867,10 +867,10 @@ async fn bark_claim_specific_exit_in_low_fee_market() {
 #[tokio::test]
 async fn bark_claim_all_exits_in_low_fee_market() {
 	let ctx = TestContext::new("exit/bark_claim_all_exits_in_low_fee_market").await;
-	let srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
-	let bark = ctx.try_new_bark_with_cfg("bark", &srv, |cfg| {
+	let srv = ctx.captaind("server").funded(btc(10)).create().await;
+	let bark = ctx.bark("bark", &srv).cfg(|cfg| {
 		cfg.fallback_fee_rate = Some(FeeRate::from_sat_per_vb(1).unwrap());
-	}).await.unwrap();
+	}).try_create().await.unwrap();
 	ctx.fund_bark(&bark, sat(10_000_000)).await;
 
 	// Create multiple VTXOs
@@ -900,10 +900,10 @@ async fn bark_claim_all_exits_in_low_fee_market() {
 #[tokio::test]
 async fn exit_spend_anchor_single_utxo_required() {
 	let ctx = TestContext::new("exit/exit_spend_anchor_single_utxo_required").await;
-	let srv = ctx.new_captaind("server", None).await;
+	let srv = ctx.captaind("server").create().await;
 
 	// We need to complete an exit whilst only using one UTXO to spend the anchor output
-	let bark = ctx.new_bark_with_funds("bark", &srv, sat(1_000_000)).await;
+	let bark = ctx.bark("bark", &srv).funded(sat(1_000_000)).create().await;
 	bark.board_and_confirm_and_register(&ctx, sat(500_000)).await;
 
 	bark.start_exit_all().await;
@@ -926,10 +926,10 @@ async fn exit_spend_anchor_single_utxo_required() {
 #[tokio::test]
 async fn exit_spend_anchor_multiple_utxos_required() {
 	let ctx = TestContext::new("exit/exit_spend_anchor_multiple_utxos_required").await;
-	let srv = ctx.new_captaind("server", None).await;
+	let srv = ctx.captaind("server").create().await;
 
 	// We need to complete an exit whilst using multiple UTXOs to spend the anchor output
-	let bark = ctx.new_bark_with_funds("bark", &srv, sat(1_000_000)).await;
+	let bark = ctx.bark("bark", &srv).funded(sat(1_000_000)).create().await;
 	bark.board_all().await;
 	ctx.fund_bark(&bark, sat(777)).await;
 	ctx.fund_bark(&bark, sat(562)).await;
@@ -956,14 +956,14 @@ async fn exit_spend_anchor_multiple_utxos_required() {
 #[tokio::test]
 async fn exit_oor_ping_pong_then_rbf_tx() {
 	let ctx = TestContext::new("exit/exit_oor_ping_pong_then_rbf_tx").await;
-	let srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
+	let srv = ctx.captaind("server").funded(btc(10)).create().await;
 
-	let mut bark1 = ctx.try_new_bark_with_cfg("bark1", &srv, |cfg| {
+	let mut bark1 = ctx.bark("bark1", &srv).cfg(|cfg| {
 		cfg.fallback_fee_rate = Some(FeeRate::from_sat_per_vb_unchecked(1));
-	}).await.unwrap();
-	let mut bark2 = ctx.try_new_bark_with_cfg("bark2", &srv, |cfg| {
+	}).try_create().await.unwrap();
+	let mut bark2 = ctx.bark("bark2", &srv).cfg(|cfg| {
 		cfg.fallback_fee_rate = Some(FeeRate::from_sat_per_vb_unchecked(100));
-	}).await.unwrap();
+	}).try_create().await.unwrap();
 	bark1.set_timeout(Duration::from_secs(2 * 60));
 	bark2.set_timeout(Duration::from_secs(2 * 60));
 
@@ -1041,7 +1041,7 @@ async fn bark_should_exit_a_htlc_recv_that_server_refuse_to_cosign() {
 	let lightning = ctx.new_lightning_setup("lightningd").await;
 
 	// Start a server and link it to our cln installation
-	let srv = ctx.new_captaind_with_funds("srv", Some(&lightning.receiver), btc(10)).await;
+	let srv = ctx.captaind("srv").lightningd(&lightning.receiver).funded(btc(10)).create().await;
 
 	/// This proxy will refuse to revoke the htlc out.
 	#[derive(Clone)]
@@ -1061,7 +1061,7 @@ async fn bark_should_exit_a_htlc_recv_that_server_refuse_to_cosign() {
 	let proxy = srv.start_proxy_no_mailbox(Proxy).await;
 
 	// Start a bark and create a VTXO to be able to board
-	let bark = ctx.new_bark_with_funds("bark", &proxy.address, btc(2.1)).await;
+	let bark = ctx.bark("bark", &proxy.address).funded(btc(2.1)).create().await;
 	bark.board(btc(2)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 
