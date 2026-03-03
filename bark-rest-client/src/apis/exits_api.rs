@@ -80,7 +80,7 @@ pub enum GetExitStatusByVtxoIdError {
 /// Sweeps all claimable exit outputs into a single on-chain transaction sent to the specified address. Unlike `progress`, the daemon does not claim automatically—this endpoint must be called manually. Poll the `status` endpoint or call `progress` and check for `done: true` to know when VTXOs are ready to claim. This is the final step of the emergency exit process—the bitcoin is not considered back on-chain until this transaction confirms.
 pub async fn exit_claim_all(configuration: &configuration::Configuration, exit_claim_all_request: models::ExitClaimAllRequest) -> Result<models::ExitClaimResponse, Error<ExitClaimAllError>> {
     // add a prefix to parameters to efficiently prevent name collisions
-    let p_exit_claim_all_request = exit_claim_all_request;
+    let p_body_exit_claim_all_request = exit_claim_all_request;
 
     let uri_str = format!("{}/api/v1/exits/claim/all", configuration.base_path);
     let mut req_builder = configuration.client.request(reqwest::Method::POST, &uri_str);
@@ -88,7 +88,7 @@ pub async fn exit_claim_all(configuration: &configuration::Configuration, exit_c
     if let Some(ref user_agent) = configuration.user_agent {
         req_builder = req_builder.header(reqwest::header::USER_AGENT, user_agent.clone());
     }
-    req_builder = req_builder.json(&p_exit_claim_all_request);
+    req_builder = req_builder.json(&p_body_exit_claim_all_request);
 
     let req = req_builder.build()?;
     let resp = configuration.client.execute(req).await?;
@@ -118,7 +118,7 @@ pub async fn exit_claim_all(configuration: &configuration::Configuration, exit_c
 /// Sweeps the specified claimable exit outputs into a single on-chain transaction sent to the specified address. Unlike `progress`, the daemon does not claim automatically—this endpoint must be called manually. Poll the `status` endpoint or call `progress` and check for `done: true` to know when VTXOs are ready to claim. This is the final step of the emergency exit process—the bitcoin is not considered back on-chain until this transaction confirms.
 pub async fn exit_claim_vtxos(configuration: &configuration::Configuration, exit_claim_vtxos_request: models::ExitClaimVtxosRequest) -> Result<models::ExitClaimResponse, Error<ExitClaimVtxosError>> {
     // add a prefix to parameters to efficiently prevent name collisions
-    let p_exit_claim_vtxos_request = exit_claim_vtxos_request;
+    let p_body_exit_claim_vtxos_request = exit_claim_vtxos_request;
 
     let uri_str = format!("{}/api/v1/exits/claim/vtxos", configuration.base_path);
     let mut req_builder = configuration.client.request(reqwest::Method::POST, &uri_str);
@@ -126,7 +126,7 @@ pub async fn exit_claim_vtxos(configuration: &configuration::Configuration, exit
     if let Some(ref user_agent) = configuration.user_agent {
         req_builder = req_builder.header(reqwest::header::USER_AGENT, user_agent.clone());
     }
-    req_builder = req_builder.json(&p_exit_claim_vtxos_request);
+    req_builder = req_builder.json(&p_body_exit_claim_vtxos_request);
 
     let req = req_builder.build()?;
     let resp = configuration.client.execute(req).await?;
@@ -156,7 +156,7 @@ pub async fn exit_claim_vtxos(configuration: &configuration::Configuration, exit
 /// Triggers all in-progress exits to advance by one step. The daemon already progresses exits automatically in the background—use this endpoint when you want immediate progress rather than waiting for the next automatic cycle. On each call, the endpoint checks whether previously broadcast transactions have confirmed and, if so, creates and broadcasts the next transaction in the sequence. The on-chain wallet must have sufficient bitcoin to cover transaction fees.
 pub async fn exit_progress(configuration: &configuration::Configuration, exit_progress_request: models::ExitProgressRequest) -> Result<models::ExitProgressResponse, Error<ExitProgressError>> {
     // add a prefix to parameters to efficiently prevent name collisions
-    let p_exit_progress_request = exit_progress_request;
+    let p_body_exit_progress_request = exit_progress_request;
 
     let uri_str = format!("{}/api/v1/exits/progress", configuration.base_path);
     let mut req_builder = configuration.client.request(reqwest::Method::POST, &uri_str);
@@ -164,7 +164,7 @@ pub async fn exit_progress(configuration: &configuration::Configuration, exit_pr
     if let Some(ref user_agent) = configuration.user_agent {
         req_builder = req_builder.header(reqwest::header::USER_AGENT, user_agent.clone());
     }
-    req_builder = req_builder.json(&p_exit_progress_request);
+    req_builder = req_builder.json(&p_body_exit_progress_request);
 
     let req = req_builder.build()?;
     let resp = configuration.client.execute(req).await?;
@@ -229,7 +229,7 @@ pub async fn exit_start_all(configuration: &configuration::Configuration, ) -> R
 /// Registers the specified VTXOs for emergency exit. The daemon automatically progresses registered exits in the background at the cadence defined by `SLOW_INTERVAL`, creating and broadcasting the required transactions in sequence. Once all exit transactions are confirmed and the timelock has elapsed, call `claim` to sweep the resulting outputs to an on-chain address.
 pub async fn exit_start_vtxos(configuration: &configuration::Configuration, exit_start_request: models::ExitStartRequest) -> Result<models::ExitStartResponse, Error<ExitStartVtxosError>> {
     // add a prefix to parameters to efficiently prevent name collisions
-    let p_exit_start_request = exit_start_request;
+    let p_body_exit_start_request = exit_start_request;
 
     let uri_str = format!("{}/api/v1/exits/start/vtxos", configuration.base_path);
     let mut req_builder = configuration.client.request(reqwest::Method::POST, &uri_str);
@@ -237,7 +237,7 @@ pub async fn exit_start_vtxos(configuration: &configuration::Configuration, exit
     if let Some(ref user_agent) = configuration.user_agent {
         req_builder = req_builder.header(reqwest::header::USER_AGENT, user_agent.clone());
     }
-    req_builder = req_builder.json(&p_exit_start_request);
+    req_builder = req_builder.json(&p_body_exit_start_request);
 
     let req = req_builder.build()?;
     let resp = configuration.client.execute(req).await?;
@@ -267,16 +267,16 @@ pub async fn exit_start_vtxos(configuration: &configuration::Configuration, exit
 /// Returns the current state of every emergency exit in the wallet. Each entry includes which phase the exit is in (start, processing, awaiting-delta, claimable, claim-in-progress, or claimed), and optionally the full state transition history and the exit transaction packages with their CPFP children.
 pub async fn get_all_exit_status(configuration: &configuration::Configuration, history: Option<bool>, transactions: Option<bool>) -> Result<Vec<models::ExitTransactionStatus>, Error<GetAllExitStatusError>> {
     // add a prefix to parameters to efficiently prevent name collisions
-    let p_history = history;
-    let p_transactions = transactions;
+    let p_query_history = history;
+    let p_query_transactions = transactions;
 
     let uri_str = format!("{}/api/v1/exits/status", configuration.base_path);
     let mut req_builder = configuration.client.request(reqwest::Method::GET, &uri_str);
 
-    if let Some(ref param_value) = p_history {
+    if let Some(ref param_value) = p_query_history {
         req_builder = req_builder.query(&[("history", &param_value.to_string())]);
     }
-    if let Some(ref param_value) = p_transactions {
+    if let Some(ref param_value) = p_query_transactions {
         req_builder = req_builder.query(&[("transactions", &param_value.to_string())]);
     }
     if let Some(ref user_agent) = configuration.user_agent {
@@ -311,17 +311,17 @@ pub async fn get_all_exit_status(configuration: &configuration::Configuration, h
 /// Returns the current state of an emergency exit for the specified VTXO, including which phase the exit is in (start, processing, awaiting-delta, claimable, claim-in-progress, or claimed). Optionally includes the full state transition history and the exit transaction packages with their CPFP children.
 pub async fn get_exit_status_by_vtxo_id(configuration: &configuration::Configuration, vtxo_id: &str, history: Option<bool>, transactions: Option<bool>) -> Result<models::ExitTransactionStatus, Error<GetExitStatusByVtxoIdError>> {
     // add a prefix to parameters to efficiently prevent name collisions
-    let p_vtxo_id = vtxo_id;
-    let p_history = history;
-    let p_transactions = transactions;
+    let p_path_vtxo_id = vtxo_id;
+    let p_query_history = history;
+    let p_query_transactions = transactions;
 
-    let uri_str = format!("{}/api/v1/exits/status/{vtxo_id}", configuration.base_path, vtxo_id=crate::apis::urlencode(p_vtxo_id));
+    let uri_str = format!("{}/api/v1/exits/status/{vtxo_id}", configuration.base_path, vtxo_id=crate::apis::urlencode(p_path_vtxo_id));
     let mut req_builder = configuration.client.request(reqwest::Method::GET, &uri_str);
 
-    if let Some(ref param_value) = p_history {
+    if let Some(ref param_value) = p_query_history {
         req_builder = req_builder.query(&[("history", &param_value.to_string())]);
     }
-    if let Some(ref param_value) = p_transactions {
+    if let Some(ref param_value) = p_query_transactions {
         req_builder = req_builder.query(&[("transactions", &param_value.to_string())]);
     }
     if let Some(ref user_agent) = configuration.user_agent {
