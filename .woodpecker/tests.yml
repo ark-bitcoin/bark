@@ -52,6 +52,7 @@ steps:
       - bash contrib/check-clean-diff.sh bark/schema.sql
       - bash contrib/check-clean-diff.sh server/schema.sql
       - bash contrib/check-clean-diff.sh bark-rest/openapi.json
+      - bash contrib/check-clean-diff.sh bark-rest-client/
 
   - name: test-unit
     depends_on: build
