@@ -12,7 +12,7 @@ use bitcoin::secp256k1::{schnorr, PublicKey};
 use tracing::{error, info, trace};
 use uuid::Uuid;
 
-use ark::{Vtxo, VtxoId, VtxoPolicy, ServerVtxo};
+use ark::{Vtxo, VtxoId, VtxoPolicy, VtxoRequest, ServerVtxo};
 use ark::arkoor::ArkoorDestination;
 use ark::arkoor::package::{ArkoorPackageCosignRequest, ArkoorPackageCosignResponse};
 use ark::challenges::LightningReceiveChallenge;
@@ -611,7 +611,10 @@ impl Server {
 			return badarg!("preimage doesn't match payment hash");
 		}
 
-		slog!(LightningReceiveClaimRequested, payment_hash, payment_preimage);
+		let vtxo_policy = cosign_request.requests.first()
+			.and_then(|r| r.outputs.first())
+			.map(|o| o.policy.clone()).context("no destination VTXO policy present")?;
+		slog!(LightningReceiveClaimRequested, payment_hash, payment_preimage, vtxo_policy: vtxo_policy.clone());
 
 		let sub = self.db.get_htlc_subscription_by_payment_hash(payment_hash).await?
 			.not_found([payment_hash], "no pending payment with this payment hash")?;
@@ -659,7 +662,11 @@ impl Server {
 			.context("could not settle invoice")?;
 
 		let builder = self.cosign_oor_with_builder(builder).await?;
-		slog!(LightningReceiveClaimed, payment_hash, payment_preimage, amount: sub.amount());
+		let vtxo_request = VtxoRequest {
+			amount: sub.amount(),
+			policy: vtxo_policy,
+		};
+		slog!(LightningReceiveClaimed, payment_hash, payment_preimage, vtxo_request);
 
 		Ok(builder.cosign_response())
 	}
