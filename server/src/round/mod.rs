@@ -382,10 +382,7 @@ impl CollectingPayments {
 			nb_outputs: vtxo_requests.len(),
 		);
 
-		// If we're adding inputs for the first time, also add them to locked_inputs.
-		if self.first_attempt() {
-			self.locked_inputs.absorb(flux_guard);
-		}
+		self.locked_inputs.absorb(flux_guard);
 
 		let input_ids = inputs.iter().map(|v| v.id()).collect::<Vec<_>>();
 		self.all_inputs.extend(inputs.into_iter().map(|v| (v.id(), v)));
@@ -435,10 +432,7 @@ impl CollectingPayments {
 			nb_outputs: vtxo_requests.len(),
 		);
 
-		// If we're adding inputs for the first time, also add them to locked_inputs.
-		if self.first_attempt() {
-			self.locked_inputs.absorb(flux_guard);
-		}
+		self.locked_inputs.absorb(flux_guard);
 
 		self.all_inputs.extend(inputs.into_iter().map(|v| (v.id(), v)));
 
@@ -1372,6 +1366,7 @@ async fn perform_round(
 				continue;
 			},
 			RoundAttemptResult::Finished(result) => {
+				// NB dropping the state releases the vtxo flux guard
 				return result;
 			},
 		}
