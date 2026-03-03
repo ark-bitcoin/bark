@@ -1,0 +1,6 @@
+- simplify the hArk forfeit protocol
+  - reduce to a single tx and signature
+  - remove `signed_forfeit_claim_tx` column from round participation input table
+  [#1698](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1698)
+- handle hArk forfeit txs in sweeper
+  [#1698](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1698)
