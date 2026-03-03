@@ -10,6 +10,7 @@ readme = "README.md"
 
 [features]
 default = ["rand"]
+pid_lock = []
 onchain_bdk = ["bdk_wallet", "bark-bitcoin-ext/bdk"]
 tls-native-roots = ["tonic/tls-native-roots"]
 tls-webpki-roots = ["tonic/tls-webpki-roots"]
