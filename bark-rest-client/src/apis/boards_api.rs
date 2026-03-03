@@ -78,7 +78,7 @@ pub async fn board_all(configuration: &configuration::Configuration, ) -> Result
 /// Moves the specified amount of bitcoin in the on-chain wallet onto the Ark protocol. Creates and broadcasts a funding transaction, then returns the pending board details. The resulting VTXO is not spendable off-chain until the funding transaction reaches the number of on-chain confirmations required by the Ark server.
 pub async fn board_amount(configuration: &configuration::Configuration, board_request: models::BoardRequest) -> Result<models::PendingBoardInfo, Error<BoardAmountError>> {
     // add a prefix to parameters to efficiently prevent name collisions
-    let p_board_request = board_request;
+    let p_body_board_request = board_request;
 
     let uri_str = format!("{}/api/v1/boards/board-amount", configuration.base_path);
     let mut req_builder = configuration.client.request(reqwest::Method::POST, &uri_str);
@@ -86,7 +86,7 @@ pub async fn board_amount(configuration: &configuration::Configuration, board_re
     if let Some(ref user_agent) = configuration.user_agent {
         req_builder = req_builder.header(reqwest::header::USER_AGENT, user_agent.clone());
     }
-    req_builder = req_builder.json(&p_board_request);
+    req_builder = req_builder.json(&p_body_board_request);
 
     let req = req_builder.build()?;
     let resp = configuration.client.execute(req).await?;
