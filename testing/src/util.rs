@@ -115,7 +115,7 @@ pub async fn test_data_directory() -> PathBuf {
 }
 
 /// The root of the current cargo workspace
-fn get_cargo_workspace() -> PathBuf {
+pub fn get_cargo_workspace() -> PathBuf {
 	let output = std::process::Command::new("cargo")
 		.args(["locate-project", "--workspace", "--message-format=plain"])
 		.output()

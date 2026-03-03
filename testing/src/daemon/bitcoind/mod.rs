@@ -1,3 +1,4 @@
+pub mod snapshot;
 
 use std::fmt;
 use std::path::PathBuf;
@@ -36,7 +37,9 @@ pub struct BitcoindConfig {
 	pub txindex: bool,
 	pub network: Network,
 	pub fallback_fee: FeeRate,
-	pub relay_fee: Option<FeeRate>
+	pub relay_fee: Option<FeeRate>,
+	/// If set, the snapshot's regtest dir is copied into the datadir before starting.
+	pub snapshot_dir: Option<PathBuf>,
 }
 
 #[derive(Clone, Default)]
@@ -71,7 +74,7 @@ impl std::fmt::Debug for Bitcoind {
 }
 
 impl Bitcoind {
-	fn exec() -> PathBuf {
+	pub fn exec() -> PathBuf {
 		if let Ok(e) = std::env::var(&BITCOIND_EXEC) {
 			resolve_path(e).expect("failed to resolve BITCOIND_EXEC")
 		} else if let Ok(e) = which::which("bitcoind") {
@@ -79,6 +82,14 @@ impl Bitcoind {
 		} else {
 			panic!("BITCOIND_EXEC env not set")
 		}
+	}
+
+	pub fn version() -> String {
+		let output = std::process::Command::new(Self::exec())
+			.arg("--version")
+			.output()
+			.expect("failed to run bitcoind --version");
+		String::from_utf8(output.stdout).expect("invalid utf8 in bitcoind --version")
 	}
 
 	pub fn new(name: String, config: BitcoindConfig, add_node: Option<String>) -> Self {
@@ -324,6 +335,20 @@ impl DaemonHelper for BitcoindHelper {
 	async fn prepare(&self) -> anyhow::Result<()> {
 		debug!("Creating bitcoind datadir in {:?}", self.config.datadir.clone());
 		std::fs::create_dir_all(self.config.datadir.clone())?;
+
+		let regtest_dir = self.config.datadir.join("regtest");
+		if !regtest_dir.exists() {
+			if let Some(snapshot_dir) = &self.config.snapshot_dir {
+				debug!("Copying snapshot from {:?}", snapshot_dir);
+				let status = Command::new("cp")
+					.arg("-a")
+					.arg(snapshot_dir.join("regtest"))
+					.arg(&self.config.datadir)
+					.status().await?;
+				anyhow::ensure!(status.success(), "failed to copy bitcoind snapshot");
+			}
+		}
+
 		Ok(())
 	}
 

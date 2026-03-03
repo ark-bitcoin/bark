@@ -21,16 +21,18 @@ use tonic::transport::Uri;
 use server::config::{self, Config, HodlInvoiceClnPlugin};
 use server_rpc as rpc;
 
+use crate::daemon::bitcoind::BitcoindRpcHandle;
+use crate::daemon::bitcoind::snapshot;
 use crate::daemon::captaind::proxy::ArkRpcProxyServer;
 use crate::postgres::{self, PostgresDatabaseManager};
 use crate::util::{
-	get_bark_chain_source_from_env, test_data_directory, FutureExt, TestContextChainSource,
+	get_bark_chain_source_from_env, get_cargo_workspace, test_data_directory,
+	FutureExt, TestContextChainSource,
 };
 use crate::{
 	btc, constants, sat, Bark, Bitcoind, BitcoindConfig, Captaind, Electrs, ElectrsConfig,
 	Lightningd, LightningdConfig,
 };
-use crate::daemon::bitcoind::BitcoindRpcHandle;
 
 pub struct LightningPaymentSetup {
 	pub receiver: Lightningd,
@@ -114,6 +116,8 @@ impl TestContext {
 
 	pub fn bitcoind_default_cfg(&self, name: impl AsRef<str>) -> BitcoindConfig {
 		let datadir = self.datadir.join(name.as_ref());
+		let snapshot_dir = std::env::var(constants::env::BITCOIND_SNAPSHOT_DIR)
+			.map(PathBuf::from).ok();
 		BitcoindConfig {
 			datadir,
 			wallet: false,
@@ -121,10 +125,19 @@ impl TestContext {
 			network: Network::Regtest,
 			fallback_fee: FeeRate::from_sat_per_vb(1).unwrap(),
 			relay_fee: None,
+			snapshot_dir,
 		}
 	}
 
 	pub async fn init_central_bitcoind(&mut self) {
+		let snapshot_dir = std::env::var(constants::env::BITCOIND_SNAPSHOT_DIR)
+			.map(PathBuf::from)
+			.unwrap_or_else(|_| {
+				get_cargo_workspace().join("test/_bitcoind_snapshot")
+			});
+
+		snapshot::ensure_snapshot(&snapshot_dir).await;
+
 		let mut bitcoind = Bitcoind::new(
 			"bitcoind".to_string(),
 			BitcoindConfig {
@@ -134,12 +147,12 @@ impl TestContext {
 				network: Network::Regtest,
 				fallback_fee: FeeRate::from_sat_per_vb(1).unwrap(),
 				relay_fee: None,
+				snapshot_dir: Some(snapshot_dir),
 			},
 			None,
 		);
 		bitcoind.start().await.unwrap();
-		bitcoind.create_wallet("central").await;
-		bitcoind.prepare_funds().await;
+		bitcoind.load_wallet("central").await;
 
 		self.bitcoind = Some(bitcoind);
 	}
