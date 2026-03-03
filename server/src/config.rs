@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::Context;
-use bitcoin::{Amount, FeeRate};
+use bitcoin::Amount;
 use config::{Environment, File, Value};
 use serde::{Deserialize, Serialize};
 use tonic::transport::{Certificate, Channel, ClientTlsConfig, Identity};
@@ -396,21 +396,23 @@ pub struct Config {
 	/// when preparing a lightning claim.
 	pub ln_receive_anti_dos_required: bool,
 
-	/// The feerate to use and charge for offboards
-	//
-	// NB when we change this to be dynamic at-runtime, we should be careful
-	// because clients rely on deterministic feerates to prepare change VTXOs.
-	// We should always accept a feerate for at least some time (like 15mins) after
-	// announcing so that we don't screw over clients.
-	#[serde(with = "utils::serde::fee_rate")]
-	pub offboard_feerate: FeeRate,
-
 	/// The time after which an offboard session times out and will be removed
 	///
 	/// This is the time a user has to to sign their forfeit txs.
 	/// This is also the duration during which UTXOs stay locked in offboard sessions.
 	#[serde(with = "utils::serde::duration")]
 	pub offboard_session_timeout: Duration,
+
+	/// The time in which a fee rate is considered valid for performing an offboard.
+	///
+	/// This allows us to handle the case where clients don't receive up-to-date fee rates due to
+	/// caching, so we allow a grace period in which we honor historical fee rates when they
+	/// request an offboard.
+	///
+	/// Note: Setting this lower than [fee_estimator::Config::history_duration] will result in the
+	/// duration being limited by that.
+	#[serde(with = "utils::serde::duration")]
+	pub offboard_acceptable_fee_rate_duration: Duration,
 
 	/// The maximum number of items we return to mailbox queries
 	#[serde(alias = "read_mailbox_max_items")]
