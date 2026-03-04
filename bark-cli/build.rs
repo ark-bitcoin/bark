@@ -31,8 +31,8 @@ fn main() {
 		let version = tags.lines()
 			.find(|line| line.starts_with("bark-"))
 			.and_then(|tag| tag.strip_prefix("bark-"))
-			.map(|v| v.to_string())
-			.unwrap_or_else(|| "DIRTY".into());
+			.map(|v| v)
+			.unwrap_or_else(|| "DIRTY");
 
 		println!("cargo:rustc-env=BARK_VERSION={}", version);
 	}
