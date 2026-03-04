@@ -259,14 +259,23 @@ pub trait BarkPersister: Send + Sync + 'static {
 	/// - returns an error of the existing round state could not be found or removed
 	async fn remove_round_state(&self, round_state: &StoredRoundState) -> anyhow::Result<()>;
 
-	/// Load all pending round states from the db
+	/// Load a single round state by its id
 	///
 	/// Returns:
-	/// - `Vec<StoredRoundState>`: unordered vector with all stored round states
+	/// - `Option<StoredRoundState>`: the stored round state if found, `None` otherwise
 	///
 	/// Errors:
 	/// - returns an error of the states could not be succesfully retrieved
-	async fn load_round_states(&self) -> anyhow::Result<Vec<StoredRoundState>>;
+	async fn get_round_state_by_id(&self, id: RoundStateId) -> anyhow::Result<Option<StoredRoundState>>;
+
+	/// Load all pending round states from the db
+	///
+	/// Returns:
+	/// - `Vec<RoundStateId>`: unordered vector with all stored round state ids
+	///
+	/// Errors:
+	/// - returns an error of the ids could not be succesfully retrieved
+	async fn get_pending_round_state_ids(&self) -> anyhow::Result<Vec<RoundStateId>>;
 
 	/// Stores VTXOs with their initial state.
 	///

@@ -290,11 +290,13 @@ impl BarkPersister for Dummy {
 		Ok(())
 	}
 
-	async fn load_round_states(&self) -> anyhow::Result<Vec<StoredRoundState>> {
-		Ok(vec![StoredRoundState {
-			id: RoundStateId(5),
-			state: rmp_serde::from_slice::<SerdeRoundState>(&[]).unwrap().into(),
-		}])
+	async fn get_round_state_by_id(&self, _id: RoundStateId) -> anyhow::Result<Option<StoredRoundState>> {
+		let state = rmp_serde::from_slice::<SerdeRoundState>(&[]).unwrap().into();
+		Ok(Some(StoredRoundState { id: RoundStateId(5), state }))
+	}
+
+	async fn get_pending_round_state_ids(&self) -> anyhow::Result<Vec<RoundStateId>> {
+		Ok(vec![RoundStateId(5)])
 	}
 
 	async fn create_new_movement(

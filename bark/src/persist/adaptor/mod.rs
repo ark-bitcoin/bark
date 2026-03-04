@@ -529,16 +529,28 @@ impl <S: StorageAdaptor> BarkPersister for StorageAdaptorWrapper<S> {
 		Ok(())
 	}
 
-	async fn load_round_states(&self) -> anyhow::Result<Vec<StoredRoundState>> {
+	async fn get_round_state_by_id(&self, _id: RoundStateId) -> anyhow::Result<Option<StoredRoundState>> {
+		let record = self.inner.read().await
+			.get(partition::ROUND_STATE, &_id.to_bytes()).await?;
+		match record {
+			Some(r) => {
+				let pk_slice: [u8; 4] = r.pk[..4].try_into().expect("4 bytes shouldn't fail");
+				Ok(Some(StoredRoundState {
+					id: RoundStateId(u32::from_be_bytes(pk_slice)),
+					state: r.to_data::<SerdeRoundState>()?.into(),
+				}))
+			},
+			None => Ok(None),
+		}
+	}
+
+	async fn get_pending_round_state_ids(&self) -> anyhow::Result<Vec<RoundStateId>> {
 		let records = self.inner.read().await
 			.query(Query::new(partition::ROUND_STATE)).await?;
 		records.into_iter()
 			.map(|r| {
 				let pk_slice: [u8; 4] = r.pk[..4].try_into().expect("4 bytes shouldn't fail");
-				Ok(StoredRoundState {
-					id: RoundStateId(u32::from_be_bytes(pk_slice)),
-					state: r.to_data::<SerdeRoundState>()?.into(),
-				})
+				Ok(RoundStateId(u32::from_be_bytes(pk_slice)))
 			})
 			.collect()
 	}

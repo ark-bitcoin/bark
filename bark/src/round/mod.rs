@@ -1317,13 +1317,20 @@ impl Wallet {
 
 	/// Get all pending round states
 	pub async fn pending_round_states(&self) -> anyhow::Result<Vec<StoredRoundState>> {
-		self.db.load_round_states().await
+		let ids = self.db.get_pending_round_state_ids().await?;
+		let mut states = Vec::with_capacity(ids.len());
+		for id in ids {
+			if let Some(state) = self.db.get_round_state_by_id(id).await? {
+				states.push(state);
+			}
+		}
+		Ok(states)
 	}
 
 	/// Balance locked in pending rounds
 	pub async fn pending_round_balance(&self) -> anyhow::Result<Amount> {
 		let mut ret = Amount::ZERO;
-		for round in self.db.load_round_states().await? {
+		for round in self.pending_round_states().await? {
 			ret += round.state.pending_balance();
 		}
 		Ok(ret)
@@ -1335,7 +1342,7 @@ impl Wallet {
 	/// been created.
 	pub async fn pending_round_input_vtxos(&self) -> anyhow::Result<Vec<WalletVtxo>> {
 		let mut ret = Vec::new();
-		for round in self.db.load_round_states().await? {
+		for round in self.pending_round_states().await? {
 			let inputs = round.state.locked_pending_inputs();
 			ret.reserve(inputs.len());
 			for input in inputs {
@@ -1349,7 +1356,7 @@ impl Wallet {
 
 	/// Sync pending rounds that have finished but are waiting for confirmations
 	pub async fn sync_pending_rounds(&self) -> anyhow::Result<()> {
-		let states = self.db.load_round_states().await?;
+		let states = self.pending_round_states().await?;
 		if states.is_empty() {
 			return Ok(());
 		}
@@ -1449,7 +1456,7 @@ impl Wallet {
 		&self,
 		last_round_event: Option<&RoundEvent>,
 	) -> anyhow::Result<()> {
-		let mut states = self.db.load_round_states().await?;
+		let mut states = self.pending_round_states().await?;
 		info!("Processing {} rounds...", states.len());
 
 		let mut last_round_event = last_round_event.map(|e| Cow::Borrowed(e));
@@ -1489,7 +1496,7 @@ impl Wallet {
 	///
 	/// Returns only once a round has happened on the server.
 	pub async fn participate_ongoing_rounds(&self) -> anyhow::Result<()> {
-		let mut states = self.db.load_round_states().await?;
+		let mut states = self.pending_round_states().await?;
 		states.retain(|s| s.state.ongoing_participation());
 
 		if states.is_empty() {
@@ -1521,7 +1528,7 @@ impl Wallet {
 	/// All rounds that have not started yet can safely be canceled,
 	/// as well as rounds where we have not yet signed any forfeit txs.
 	pub async fn cancel_all_pending_rounds(&self) -> anyhow::Result<()> {
-		let states = self.db.load_round_states().await?;
+		let states = self.pending_round_states().await?;
 		for mut state in states {
 			match state.state.try_cancel(self).await {
 				Ok(true) => {
@@ -1538,7 +1545,7 @@ impl Wallet {
 
 	/// Try to cancel the given round
 	pub async fn cancel_pending_round(&self, id: RoundStateId) -> anyhow::Result<()> {
-		let states = self.db.load_round_states().await?;
+		let states = self.pending_round_states().await?;
 		for mut state in states {
 			if state.id != id {
 				continue;

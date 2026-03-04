@@ -187,9 +187,14 @@ impl BarkPersister for SqliteClient {
 		Ok(())
 	}
 
-	async fn load_round_states(&self) -> anyhow::Result<Vec<StoredRoundState>> {
+	async fn get_round_state_by_id(&self, id: RoundStateId) -> anyhow::Result<Option<StoredRoundState>> {
 		let conn = self.connect()?;
-		query::load_round_states(&conn)
+		query::get_round_state_by_id(&conn, id)
+	}
+
+	async fn get_pending_round_state_ids(&self) -> anyhow::Result<Vec<RoundStateId>> {
+		let conn = self.connect()?;
+		query::get_pending_round_state_ids(&conn)
 	}
 
 	async fn store_vtxos(

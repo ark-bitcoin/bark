@@ -347,19 +347,34 @@ pub fn remove_round_state(
 	Ok(())
 }
 
-pub fn load_round_states(
+pub fn get_round_state_by_id(
 	conn: &Connection,
-) -> anyhow::Result<Vec<StoredRoundState>> {
-	let mut stmt = conn.prepare("SELECT id, state FROM bark_round_state")?;
+	id: RoundStateId,
+) -> anyhow::Result<Option<StoredRoundState>> {
+	let mut stmt = conn.prepare("SELECT id, state FROM bark_round_state WHERE id = :id")?;
+	let mut rows = stmt.query(named_params! {
+		":id": id.0 as i64,
+	})?;
+
+	match rows.next()? {
+		Some(row) => {
+			let state = rmp_serde::from_slice::<SerdeRoundState>(&row.get::<_, Vec<u8>>(1)?)?;
+			let id = RoundStateId(row.get::<_, i64>(0)? as u32);
+			Ok(Some(StoredRoundState { id, state: state.into() }))
+		},
+		None => Ok(None),
+	}
+}
+
+pub fn get_pending_round_state_ids(
+	conn: &Connection,
+) -> anyhow::Result<Vec<RoundStateId>> {
+	let mut stmt = conn.prepare("SELECT id FROM bark_round_state")?;
 	let mut rows = stmt.query([])?;
 
 	let mut ret = Vec::new();
 	while let Some(row) = rows.next()? {
-		let state = rmp_serde::from_slice::<SerdeRoundState>(&row.get::<_, Vec<u8>>(1)?)?;
-		ret.push(StoredRoundState {
-			id: RoundStateId(row.get::<_, i64>(0)? as u32),
-			state: state.into(),
-		});
+		ret.push(RoundStateId(row.get::<_, i64>(0)? as u32));
 	}
 	Ok(ret)
 }
