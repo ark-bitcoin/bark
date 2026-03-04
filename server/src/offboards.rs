@@ -13,7 +13,7 @@ use ark::{musig, VtxoId};
 use ark::challenges::OffboardRequestChallenge;
 use ark::fees::{validate_and_subtract_fee_min_dust, VtxoFeeInfo};
 use ark::offboard::{OffboardForfeitContext, OffboardRequest};
-use bitcoin_ext::{BlockHeight, P2TR_DUST};
+use bitcoin_ext::P2TR_DUST;
 use bitcoin_ext::rpc::RpcApi;
 
 use crate::{Server, SECP};
@@ -189,11 +189,7 @@ impl Server {
 
 		let mut wallet_guard = self.rounds_wallet.lock().await;
 		let offboard_tx = {
-			let trusted_height = match self.config.round_tx_untrusted_input_confirmations {
-				0 => None,
-				n => Some(tip.saturating_sub(n as BlockHeight - 1)),
-			};
-			let unavailable = wallet_guard.unavailable_outputs(trusted_height);
+			let unavailable = wallet_guard.unavailable_outputs(self.config.min_trusted_confs);
 			let mut b = wallet_guard.build_tx();
 			b.ordering(bdk_wallet::TxOrdering::Untouched);
 			b.current_height(tip);

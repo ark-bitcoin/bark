@@ -749,13 +749,9 @@ impl CollectingPayments {
 
 		// Build round tx.
 		//TODO(stevenroose) think about if we can release lock sooner
-		let trusted_height = match srv.config.round_tx_untrusted_input_confirmations {
-			0 => None,
-			n => Some(tip.saturating_sub(n as BlockHeight - 1)),
-		};
 		let mut wallet_lock = srv.rounds_wallet.clone().lock_owned().await;
 		let round_tx_psbt = {
-			let unavailable = wallet_lock.unavailable_outputs(trusted_height);
+			let unavailable = wallet_lock.unavailable_outputs(srv.config.min_trusted_confs);
 			let mut b = wallet_lock.build_tx();
 			b.ordering(bdk_wallet::TxOrdering::Untouched);
 			b.current_height(tip);

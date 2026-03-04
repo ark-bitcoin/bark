@@ -247,6 +247,7 @@ impl Server {
 		for wallet in [WalletKind::Rounds, WalletKind::Watchman] {
 			let _wallet = PersistedWallet::load_derive_from_master_xpriv(
 				db.clone(), cfg.network, &master_xpriv, wallet, deep_tip,
+				cfg.min_trusted_confs,
 			);
 		}
 
@@ -341,6 +342,7 @@ impl Server {
 		).expect("can't error");
 		let rounds_wallet = PersistedWallet::load_from_xpriv(
 			db.clone(), cfg.network, &wallet_xpriv, WalletKind::Rounds, deep_tip,
+			cfg.min_trusted_confs,
 		).await.context("error loading rounds wallet")?;
 
 		let ephemeral_master_key = {
@@ -382,6 +384,7 @@ impl Server {
 		let watchman_deps = if let Some(watchman_cfg) = cfg.watchman.enabled() {
 			let watchman_wallet = PersistedWallet::load_derive_from_master_xpriv(
 				db.clone(), cfg.network, &master_xpriv, WalletKind::Watchman, deep_tip,
+				cfg.min_trusted_confs,
 			).await.context("error loading watchman wallet")?;
 			let watchman_wallet = Arc::new(tokio::sync::Mutex::new(watchman_wallet));
 

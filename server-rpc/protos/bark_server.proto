@@ -559,9 +559,8 @@ service SweepAdminService {
 message WalletStatus {
 	string address = 1;
 	uint64 total_balance = 2;
-	uint64 trusted_pending_balance = 3;
-	uint64 untrusted_pending_balance = 4;
-	uint64 confirmed_balance = 5;
+	uint64 trusted_balance = 3;
+	uint64 untrusted_balance = 4;
 	repeated string confirmed_utxos = 6;
 	repeated string unconfirmed_utxos = 7;
 }

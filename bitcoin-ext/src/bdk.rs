@@ -15,6 +15,21 @@ use crate::{BlockHeight, TransactionExt};
 use crate::cpfp::MakeCpfpFees;
 use crate::fee::FEE_ANCHOR_SPEND_WEIGHT;
 
+/// Balance categorized by our recursive trust model.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct TrustedBalance {
+	/// Funds in UTXOs we trust (confirmed or all-ours unconfirmed chains).
+	pub trusted: Amount,
+	/// Funds in UTXOs we don't trust.
+	pub untrusted: Amount,
+}
+
+impl TrustedBalance {
+	pub fn total(&self) -> Amount {
+		self.trusted + self.untrusted
+	}
+}
+
 /// The [bdk_wallet::KeychainKind] that is always used, because we only use a single keychain.
 pub const KEYCHAIN: bdk_wallet::KeychainKind = bdk_wallet::KeychainKind::External;
 
@@ -88,45 +103,52 @@ pub trait WalletExt: BorrowMut<Wallet> {
 		})
 	}
 
-	/// Return all UTXOs that are untrusted: unconfirmed and not change.
-	fn untrusted_utxos(&self, confirmed_height: Option<BlockHeight>) -> Vec<OutPoint> {
+	/// Check whether a UTXO can be trusted for spending.
+	///
+	/// Delegates to [WalletExt::is_trusted_tx] on the creating transaction.
+	fn is_trusted_utxo(&self, outpoint: OutPoint, min_confs: u32) -> bool {
+		self.is_trusted_tx(outpoint.txid, min_confs)
+	}
+
+	/// Check whether a transaction can be trusted to confirm on chain.
+	///
+	/// A transaction is trusted if:
+	/// - `min_confs` is 0 (unconditionally trusted), or
+	/// - it has at least `min_confs` confirmations, or
+	/// - all its inputs are ours and their creating transactions are also
+	///   trusted (checked recursively).
+	///
+	/// To keep the check cheap, at most 100 ancestor transactions are visited.
+	/// If the budget is exhausted the transaction is considered untrusted.
+	fn is_trusted_tx(&self, txid: Txid, min_confs: u32) -> bool {
 		let w = self.borrow();
-		let mut ret = Vec::new();
-		for utxo in w.list_unspent() {
-			// We trust confirmed utxos if they are confirmed enough.
-			if let Some(h) = utxo.chain_position.confirmation_height_upper_bound() {
-				if let Some(min) = confirmed_height {
-					if h <= min {
-						continue;
-					}
-				} else {
-					continue;
-				}
-			}
+		let tip = w.latest_checkpoint().height();
+		let mut budget = 100u32;
+		is_trusted_tx_inner(w, txid, min_confs, tip, &mut budget)
+	}
 
-			// For unconfirmed, we only trust txs from which all inputs are ours.
-			// NB this is still not 100% safe, because this can mark a tx that spends
-			// an untrusted tx as trusted. We don't create such txs in our codebase,
-			// but we should be careful not to start doing this.
-			let txid = utxo.outpoint.txid;
-			if let Some(tx) = w.get_tx(txid) {
-				let all_inputs_ours = tx.tx_node.tx.input.iter().all(|i| {
-					let prev = i.previous_output;
-					if let Some(prev_tx) = w.get_tx(prev.txid) {
-						if let Some(txout) = prev_tx.tx_node.tx.output.get(prev.vout as usize) {
-							return w.is_mine(txout.script_pubkey.clone());
-						}
-					}
-					false
-				});
-				if all_inputs_ours {
-					continue;
-				}
+	/// Compute the wallet balance using our recursive trust model.
+	fn trusted_balance(&self, min_confs: u32) -> TrustedBalance {
+		let mut trusted = Amount::ZERO;
+		let mut untrusted = Amount::ZERO;
+		for utxo in self.borrow().list_unspent() {
+			if self.is_trusted_utxo(utxo.outpoint, min_confs) {
+				trusted += utxo.txout.value;
+			} else {
+				untrusted += utxo.txout.value;
 			}
-
-			ret.push(utxo.outpoint);
 		}
-		ret
+		TrustedBalance { trusted, untrusted }
+	}
+
+	/// Return all UTXOs that are untrusted.
+	///
+	/// Delegates to [WalletExt::is_trusted_utxo] for each UTXO.
+	fn untrusted_utxos(&self, min_confs: u32) -> Vec<OutPoint> {
+		self.borrow().list_unspent()
+			.filter(|utxo| !self.is_trusted_utxo(utxo.outpoint, min_confs))
+			.map(|utxo| utxo.outpoint)
+			.collect()
 	}
 
 	/// Insert a checkpoint into the wallet.
@@ -255,3 +277,38 @@ pub trait WalletExt: BorrowMut<Wallet> {
 }
 
 impl WalletExt for Wallet {}
+
+fn is_trusted_tx_inner(
+	w: &Wallet, txid: Txid, min_confs: u32, tip: BlockHeight, budget: &mut u32,
+) -> bool {
+	if *budget == 0 {
+		return false;
+	}
+	*budget -= 1;
+
+	let Some(tx) = w.get_tx(txid) else {
+		return false;
+	};
+
+	// Trust transactions with enough confirmations (unconfirmed = 0 confs).
+	let nb_confs = match tx.chain_position.confirmation_height_upper_bound() {
+		Some(h) => tip.saturating_sub(h) + 1,
+		None => 0,
+	};
+	if nb_confs >= min_confs {
+		return true;
+	}
+
+	// Recursively check that all inputs are ours and come from trusted transactions.
+	tx.tx_node.tx.input.iter().all(|input| {
+		let prev = input.previous_output;
+		let Some(prev_tx) = w.get_tx(prev.txid) else {
+			return false;
+		};
+		let Some(txout) = prev_tx.tx_node.tx.output.get(prev.vout as usize) else {
+			return false;
+		};
+		w.is_mine(txout.script_pubkey.clone())
+			&& is_trusted_tx_inner(w, prev.txid, min_confs, tip, budget)
+	})
+}

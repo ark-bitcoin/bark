@@ -1,15 +1,15 @@
 
 use std::{time::Duration, borrow::Cow};
 
-use bdk_wallet::Balance;
 use bitcoin::{Amount, OutPoint, Txid};
 use bitcoin::address::{Address, NetworkUnchecked};
+use bitcoin_ext::bdk::TrustedBalance;
 
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WalletBalanceUnchanged {
 	pub wallet: Cow<'static, str>,
-	pub balance: Balance,
+	pub balance: TrustedBalance,
 	pub block_height: u32,
 }
 impl_slog!(WalletBalanceUnchanged, TRACE, "Wallet balance has not unchanged since the previous sync");
@@ -17,7 +17,7 @@ impl_slog!(WalletBalanceUnchanged, TRACE, "Wallet balance has not unchanged sinc
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WalletBalanceUpdated {
 	pub wallet: Cow<'static, str>,
-	pub balance: Balance,
+	pub balance: TrustedBalance,
 	pub block_height: u32,
 }
 impl_slog!(WalletBalanceUpdated, INFO, "Wallet balance has changed");

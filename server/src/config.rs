@@ -275,8 +275,8 @@ pub struct Config {
 	pub max_arkoor_fanout: usize,
 	/// Number of confirmations needed for board vtxos to be spend in rounds.
 	pub required_board_confirmations: usize,
-	/// Number of confirmations untrusted inputs of the round tx need to have.
-	pub round_tx_untrusted_input_confirmations: usize,
+	/// Minimum number of confirmations for a UTXO to be considered trusted.
+	pub min_trusted_confs: u32,
 
 	#[serde(with = "utils::serde::duration")]
 	pub round_interval: Duration,
@@ -521,6 +521,9 @@ pub mod watchmand {
 		// The interval used to rebroadcast transactions
 		#[serde(with = "utils::serde::duration")]
 		pub transaction_rebroadcast_interval: Duration,
+
+		/// Minimum number of confirmations for a UTXO to be considered trusted.
+		pub min_trusted_confs: u32,
 
 		pub postgres: Postgres,
 
