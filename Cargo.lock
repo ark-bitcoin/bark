@@ -157,6 +157,7 @@ dependencies = [
  "bark-bitcoin-ext",
  "bark-cln-rpc",
  "bark-json",
+ "bark-rest-client",
  "bark-server",
  "bark-server-log",
  "bark-server-rpc",

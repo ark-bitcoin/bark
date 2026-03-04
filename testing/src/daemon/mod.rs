@@ -1,5 +1,6 @@
 pub mod captaind;
 pub mod bitcoind;
+pub mod barkd;
 pub mod electrs;
 pub mod lightningd;
 pub mod postgres;
