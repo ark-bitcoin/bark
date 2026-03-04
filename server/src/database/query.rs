@@ -96,11 +96,14 @@ pub async fn get_first_unsigned_virtual_transaction<T: GenericClient>(
 	}
 }
 
-pub async fn upsert_vtxos<T, V: Borrow<ServerVtxo<Full>>>(
+pub async fn upsert_vtxos<G, T, V>(
 	client: &T,
 	vtxos: impl IntoIterator<Item = V>,
 ) -> Result<(), tokio_postgres::Error>
-	where T: GenericClient
+where
+	T: GenericClient,
+	V: Borrow<ServerVtxo<G>>,
+	ServerVtxo<G>: ProtocolEncoding,
 {
 	let statement = client.prepare_typed("
 		INSERT INTO vtxo (
@@ -430,14 +433,15 @@ pub async fn set_round_id_for_participations(
 	Ok(())
 }
 
-pub async fn update_virtual_transaction_tree<'a, V>(
+pub async fn update_virtual_transaction_tree<'a, G, V>(
 	tx: &PgTransaction<'_>,
 	new_virtual_txs: impl IntoIterator<Item = VirtualTransaction<'a>>,
 	new_vtxos: impl IntoIterator<Item = V>,
 	spend_info: impl IntoIterator<Item = (VtxoId, Txid)>,
 ) -> anyhow::Result<()>
 where
-	V: Borrow<ServerVtxo<Full>>,
+	V: Borrow<ServerVtxo<G>>,
+	ServerVtxo<G>: ProtocolEncoding,
 {
 	for vtx in new_virtual_txs {
 		upsert_virtual_transaction(

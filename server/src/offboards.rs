@@ -275,7 +275,7 @@ impl Server {
 		let vtxos = self.db.get_user_vtxos_by_id(input_vtxos).await?;
 		let forfeit_ctx = OffboardForfeitContext::new(&vtxos, &state.offboard_tx.unsigned_tx);
 
-		let _forfeit_txs = forfeit_ctx.check_finalize_transactions(
+		let forfeit_txs = forfeit_ctx.finish(
 			self.server_key.leak_ref(),
 			&state.connector_key,
 			&state.forfeit_pub_nonces,
@@ -283,13 +283,6 @@ impl Server {
 			user_pub_nonces,
 			user_partial_sigs,
 		).badarg("invalid partial forfeit signatures")?;
-
-		//TODO(stevenroose) use the forfeit txs here with sweeper
-
-		// Mark transactions as having server-owned descendants before completing offboard
-		let txids = vtxos.iter().flat_map(|v| v.vtxo.transactions().map(|i| i.tx.compute_txid()));
-		self.db.mark_server_may_own_descendants(txids).await
-			.context("virtual tx update failed, user might not have called register_vtxos")?;
 
 		let mut wallet_guard = self.rounds_wallet.lock().await;
 		let signed_tx = wallet_guard.finish_tx(state.offboard_tx)
@@ -313,20 +306,14 @@ impl Server {
 			wallet_utxos: state.wallet_input_guard.utxos().to_vec(),
 		);
 
-		// nb catch the error and don't print it, as it might contain the signed offboard tx
-		if let Err(e) = self.db.register_offboard(
-			input_vtxos.iter().copied(),
-			&signed_tx,
-		).await {
+		// nb catch the error and don't return it, as it might contain the signed offboard tx
+		let vtxo_refs = vtxos.iter().map(|v| &v.vtxo).collect::<Vec<_>>();
+		if let Err(e) = self.db.register_offboard(&vtxo_refs, &signed_tx, &forfeit_txs).await {
 			error!("Failed to register offboard {} in db: {:#}", offboard_txid, e);
 			bail!("failed to register offboard in db, please start over");
 		}
 
-		if let Err(e) = self.commit_offboard(
-			&mut wallet_guard,
-			&signed_tx,
-			offboard_txid,
-		).await {
+		if let Err(e) = self.commit_offboard(&mut wallet_guard, &signed_tx, offboard_txid).await {
 			// we will later retry
 			slog!(CommitOffboardFailed, offboard_txid, error: format!("{:#}", e),
 				input_vtxos: input_vtxos.to_vec(),
