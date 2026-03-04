@@ -1,0 +1,6 @@
+- Use our recursive trust model for all balance reporting
+  BDK's built-in balance categories used a shallow trust heuristic that
+  could misclassify unconfirmed UTXOs. The server now uses `is_trusted_utxo`
+  everywhere: wallet sync, admin RPC, telemetry gauges, and the CPFP
+  funds check.
+  [#1705](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1705)

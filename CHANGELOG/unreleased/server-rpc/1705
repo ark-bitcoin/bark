@@ -1,0 +1,4 @@
+- Simplify `WalletStatus` balance fields to trusted/untrusted
+  [#1705](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1705)
+  - **BREAKING:** `trusted_pending_balance`, `untrusted_pending_balance`, and
+    `confirmed_balance` replaced by `trusted_balance` and `untrusted_balance`
