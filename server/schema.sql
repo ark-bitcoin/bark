@@ -1004,8 +1004,7 @@ ALTER SEQUENCE public.round_id_seq OWNED BY public.round.id;
 CREATE TABLE public.round_part_input (
     participation_id bigint NOT NULL,
     vtxo_id text NOT NULL,
-    signed_forfeit_tx bytea,
-    signed_forfeit_claim_tx bytea
+    signed_forfeit_tx bytea
 );
 
 

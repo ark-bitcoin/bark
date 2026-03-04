@@ -1,45 +1,38 @@
 
+use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 
 use anyhow::Context;
+use bitcoin::Amount;
 use bitcoin::secp256k1::Keypair;
-use bitcoin::{Amount, OutPoint};
 
 use ark::{musig, VtxoId};
-use ark::forfeit::{HashLockedForfeitBundle, HashLockedForfeitNonces};
+use ark::forfeit::HashLockedForfeitBundle;
 use ark::tree::signed::{UnlockHash, UnlockPreimage};
 
+use crate::database::VirtualTransaction;
 use crate::Server;
 use crate::error::ContextExt;
 
 
 pub struct HarkForfeitNonces {
 	unlock_hash: UnlockHash,
-	forfeit_tx_nonces: (musig::SecretNonce, musig::PublicNonce),
-	claim_tx_nonces: (musig::SecretNonce, musig::PublicNonce),
+	sec_nonce: musig::SecretNonce,
+	pub_nonce: musig::PublicNonce,
 }
 
 impl HarkForfeitNonces {
 	pub fn generate(key: &Keypair, unlock_hash: UnlockHash) -> Self {
-		Self {
-			unlock_hash,
-			forfeit_tx_nonces: musig::nonce_pair(key),
-			claim_tx_nonces: musig::nonce_pair(key),
-		}
+		let (sec_nonce, pub_nonce) = musig::nonce_pair(key);
+		Self { unlock_hash, sec_nonce, pub_nonce }
 	}
 
-	pub fn public_nonces(&self) -> HashLockedForfeitNonces {
-		HashLockedForfeitNonces {
-			forfeit_tx_nonce: self.forfeit_tx_nonces.1,
-			forfeit_claim_tx_nonce: self.claim_tx_nonces.1,
-		}
+	pub fn public_nonce(&self) -> musig::PublicNonce {
+		self.pub_nonce
 	}
 
-	pub fn into_secret_nonces(self) -> [musig::SecretNonce; 2] {
-		[
-			self.forfeit_tx_nonces.0,
-			self.claim_tx_nonces.0,
-		]
+	pub fn into_secret_nonce(self) -> musig::SecretNonce {
+		self.sec_nonce
 	}
 }
 
@@ -51,13 +44,13 @@ impl Server {
 		&self,
 		unlock_hash: UnlockHash,
 		vtxos: &[VtxoId],
-	) -> anyhow::Result<Vec<HashLockedForfeitNonces>> {
+	) -> anyhow::Result<Vec<musig::PublicNonce>> {
 		let mut ret = Vec::with_capacity(vtxos.len());
 		for vtxo in vtxos {
 			// nb this call is quite expensive computationally, so we don't want to
 			// keep the lock while doing it
 			let nonces = HarkForfeitNonces::generate(self.server_key.leak_ref(), unlock_hash);
-			ret.push(nonces.public_nonces());
+			ret.push(nonces.public_nonce());
 			self.forfeit_nonces.lock().insert_some(*vtxo, nonces);
 		}
 		Ok(ret)
@@ -104,6 +97,9 @@ impl Server {
 		}
 
 		// then do the expensive verification and create final sigs
+		let mut ff_txs = Vec::with_capacity(forfeits.len());
+		let mut ff_txids = Vec::with_capacity(forfeits.len());
+		let mut ff_vtxos = Vec::with_capacity(forfeits.len());
 		for vtxo_ff in forfeits {
 			let input = part.inputs.iter().find(|i| i.vtxo_id == vtxo_ff.vtxo_id)
 				.expect("checked this before");
@@ -115,37 +111,42 @@ impl Server {
 					nonces.unlock_hash, unlock_hash,
 				);
 			}
-			let pub_nonces = nonces.public_nonces();
+			let pub_nonce = nonces.public_nonce();
 			let vtxo = self.db.get_user_vtxo_by_id(input.vtxo_id).await?;
-			if let Err(e) = vtxo_ff.verify(&vtxo.vtxo, &pub_nonces) {
+			if let Err(e) = vtxo_ff.verify(&vtxo.vtxo, &pub_nonce) {
 				return badarg!("forfeit validation failed for vtxo {}: {}", input.vtxo_id, e);
 			}
-			let [ff_sig, claim_sig] = vtxo_ff.finish(
+			let (_ff_sig, ff_tx, ff_vtxo) = vtxo_ff.finish(
 				&vtxo.vtxo,
-				&pub_nonces,
-				nonces.into_secret_nonces(),
+				&pub_nonce,
+				nonces.into_secret_nonce(),
 				self.server_key.leak_ref(),
 			);
-			let ff_tx = ark::forfeit::create_hark_forfeit_tx(
-				&vtxo.vtxo, unlock_hash, Some(&ff_sig),
-			);
-			let ff_point = OutPoint::new(ff_tx.compute_txid(), 0);
-			let witness = (&claim_sig, part.unlock_preimage.leak_owned());
-			let claim_tx = ark::forfeit::create_hark_forfeit_claim_tx(
-				&vtxo.vtxo, ff_point, unlock_hash, Some(witness),
-			);
+			let ff_txid = ff_tx.compute_txid();
 
 			// NB if some succeed and others don't, we just don't respond the preimage and
 			// the user has to do the same dance over again
-			self.db.set_forfeit_transactions(unlock_hash, input.vtxo_id, &ff_tx, &claim_tx).await
+			self.db.set_forfeit_transactions(unlock_hash, input.vtxo_id, &ff_tx).await
 				.context("error storing signed forfeit txs")?;
+
+			ff_txs.push(VirtualTransaction {
+				txid: ff_txid,
+				signed_tx: Some(Cow::Owned(ff_tx)),
+				is_funding: false,
+				server_may_own_descendant_since: None,
+			});
+			ff_txids.push(ff_txid);
+			ff_vtxos.push(ff_vtxo);
 		}
 
 		// Mark transactions as having server-owned descendants after storing forfeits
-		let txids = vtxos.values()
-			.flat_map(|v| v.vtxo.transactions().map(|item| item.tx.compute_txid()))
-			.collect::<Vec<_>>();
-		self.db.mark_server_may_own_descendants(&txids).await
+		// NB we don't put any spend info here because the set_forfeit_transactions already updates
+		// that for each individual forfeit
+		self.db.update_virtual_transaction_tree(ff_txs, &ff_vtxos, []).await
+			.context("failed to update_virtual_transaction_tree")?;
+		let txids = vtxos.values().flat_map(|v| v.vtxo.transactions().map(|i| i.tx.compute_txid()))
+			.chain(ff_txids);
+		self.db.mark_server_may_own_descendants(txids).await
 			.context("failed to mark server_may_own_descendants")?;
 
 		Ok(part.unlock_preimage.leak_owned())

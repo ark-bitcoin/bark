@@ -243,7 +243,7 @@ pub async fn complete_round_participation(
 	let part_id = part_row.get::<_, i64>("id");
 
 	let input_rows = tx.query(
-		"SELECT vtxo_id, signed_forfeit_tx, signed_forfeit_claim_tx \
+		"SELECT vtxo_id, signed_forfeit_tx \
 			FROM round_part_input WHERE participation_id = $1",
 		&[&part_id],
 	).await?;
@@ -255,16 +255,10 @@ pub async fn complete_round_participation(
 				.context("invalid round input signed_forfeit_tx")
 		).transpose()?;
 
-		let signed_forfeit_claim_tx = row.get::<_, Option<&[u8]>>("signed_forfeit_claim_tx").map(|b|
-			bitcoin::consensus::deserialize::<bitcoin::Transaction>(b)
-				.context("invalid round input signed_forfeit_claim_tx")
-		).transpose()?;
-
 		inputs.push(StoredRoundInput {
 			vtxo_id: VtxoId::from_str(&row.get::<_, &str>("vtxo_id"))
 				.context("invalid round input vtxoid")?,
 			signed_forfeit_tx,
-			signed_forfeit_claim_tx,
 		});
 	}
 
@@ -315,15 +309,15 @@ pub async fn complete_round_participation(
 /// 4. Does not overwrite existing server_may_own_descendant_since values
 ///
 /// Returns an error if any transaction doesn't exist or has NULL signed_tx.
-pub async fn mark_server_may_own_descendants<T: GenericClient>(
-	client: &T,
-	txids: &[Txid],
+pub async fn mark_server_may_own_descendants<C: GenericClient>(
+	client: &C,
+	txids: impl IntoIterator<Item = impl Borrow<Txid>>,
 ) -> anyhow::Result<()> {
-	if txids.is_empty() {
+	let txid_strings = txids.into_iter().map(|t| t.borrow().to_string()).collect::<Vec<_>>();
+
+	if txid_strings.is_empty() {
 		return Ok(());
 	}
-
-	let txid_strings = txids.iter().map(|t| t.to_string()).collect::<Vec<_>>();
 
 	// Check that all txids exist and have signed_tx set
 	// Returns the first txid that either doesn't exist or has NULL signed_tx

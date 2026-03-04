@@ -98,6 +98,13 @@ fn decide_action_expiry(params: &ActionParams) -> Action {
 	}
 }
 
+/// Determine the action for an HarkForfeit policy
+///
+/// Always claim
+fn decide_action_hark_forfeit(params: &ActionParams) -> Action {
+	Action::Claim { deadline: Some(params.confirmed_at + BlockHeight::from(params.exit_delta)) }
+}
+
 /// Determine action for Pubkey policy
 ///
 /// We should continue with checkpoint tx if we own an ancestor, otherwise
@@ -188,6 +195,9 @@ impl ActionContextFetcher<'_> {
 				// all these three are just an expiry for us, we can sweep them
 				// when they expire and don't have to do anything otherwise
 				decide_action_expiry(&params)
+			},
+			ServerVtxoPolicy::HarkForfeit(_) => {
+				decide_action_hark_forfeit(&params)
 			},
 			ServerVtxoPolicy::User(VtxoPolicy::Pubkey(..)) => {
 				let params = params.with_policy_extras(PubkeyExtra {

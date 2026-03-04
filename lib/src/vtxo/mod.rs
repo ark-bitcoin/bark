@@ -87,6 +87,7 @@ use bitcoin::taproot::TapTweakHash;
 
 use bitcoin_ext::{fee, BlockDelta, BlockHeight, TxOutExt};
 
+use crate::vtxo::policy::HarkForfeitVtxoPolicy;
 use crate::{musig, scripts};
 use crate::encode::{
 	LengthPrefixedVector, OversizedVectorError, ProtocolDecodingError, ProtocolEncoding, ReadExt,
@@ -765,6 +766,9 @@ const VTXO_POLICY_EXPIRY: u8 = 0x04;
 /// The byte used to encode the [ServerVtxoPolicy::HarkLeaf] output type.
 const VTXO_POLICY_HARK_LEAF: u8 = 0x05;
 
+/// The byte used to encode the [ServerVtxoPolicy::HarkForfeit] output type.
+const VTXO_POLICY_HARK_FORFEIT: u8 = 0x06;
+
 impl ProtocolEncoding for VtxoPolicy {
 	fn encode<W: io::Write + ?Sized>(&self, w: &mut W) -> Result<(), io::Error> {
 		match self {
@@ -850,6 +854,11 @@ impl ProtocolEncoding for ServerVtxoPolicy {
 				user_pubkey.encode(w)?;
 				unlock_hash.encode(w)?;
 			},
+			Self::HarkForfeit(HarkForfeitVtxoPolicy { user_pubkey, unlock_hash }) => {
+				w.emit_u8(VTXO_POLICY_HARK_FORFEIT)?;
+				user_pubkey.encode(w)?;
+				unlock_hash.encode(w)?;
+			},
 		}
 		Ok(())
 	}
@@ -872,6 +881,11 @@ impl ProtocolEncoding for ServerVtxoPolicy {
 				let user_pubkey = PublicKey::decode(r)?;
 				let unlock_hash = sha256::Hash::decode(r)?;
 				Ok(Self::HarkLeaf(HarkLeafVtxoPolicy { user_pubkey, unlock_hash }))
+			},
+			VTXO_POLICY_HARK_FORFEIT => {
+				let user_pubkey = PublicKey::decode(r)?;
+				let unlock_hash = sha256::Hash::decode(r)?;
+				Ok(Self::HarkForfeit(HarkForfeitVtxoPolicy { user_pubkey, unlock_hash }))
 			},
 			v => Err(ProtocolDecodingError::invalid(format_args!(
 				"invalid ServerVtxoPolicy type byte: {v:#x}",

@@ -13,7 +13,7 @@ use ark::arkoor::package::{ArkoorPackageCosignRequest, ArkoorPackageCosignRespon
 use ark::board::BoardCosignResponse;
 use ark::challenges::RoundAttemptChallenge;
 use ark::fees::PpmFeeRate;
-use ark::forfeit::{HashLockedForfeitBundle, HashLockedForfeitNonces};
+use ark::forfeit::HashLockedForfeitBundle;
 use ark::lightning::{PaymentHash, Preimage};
 use ark::mailbox::BlindedMailboxIdentifier;
 use ark::offboard::OffboardRequest;
@@ -112,7 +112,6 @@ impl_try_from_bytes_protocol!(OutPoint, "outpoint");
 impl_try_from_bytes_protocol!(Vtxo, "VTXO");
 impl_try_from_bytes_protocol!(VtxoPolicy, "VTXO policy");
 impl_try_from_bytes_protocol!(BlindedMailboxIdentifier, "a blinded VTXO mailbox identifier");
-impl_try_from_bytes_protocol!(HashLockedForfeitNonces, "hArk forfeit nonces");
 impl_try_from_bytes_protocol!(HashLockedForfeitBundle, "hArk forfeit bundle");
 
 macro_rules! impl_try_from_bytes_bitcoin {

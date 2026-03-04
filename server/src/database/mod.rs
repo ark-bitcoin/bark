@@ -289,7 +289,7 @@ impl Db {
 	/// 3. Does not overwrite existing server_may_own_descendant_since values
 	pub async fn mark_server_may_own_descendants(
 		&self,
-		txids: &[Txid],
+		txids: impl IntoIterator<Item = impl Borrow<Txid>>,
 	) -> anyhow::Result<()> {
 		let conn = self.get_conn().await.context("failed to connect to db")?;
 		query::mark_server_may_own_descendants(&*conn, txids).await

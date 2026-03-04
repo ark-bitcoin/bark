@@ -1,18 +1,19 @@
 
 
-use bitcoin::{OutPoint, ScriptBuf, Sequence, TapLeafHash, Transaction, TxIn, TxOut, Witness};
+use bitcoin::{Amount, OutPoint, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Txid, Witness};
 use bitcoin::hashes::Hash;
 use bitcoin::secp256k1::{schnorr, Keypair, PublicKey};
 use bitcoin::sighash::{self, SighashCache, TapSighash, TapSighashType};
-use bitcoin::taproot::{self, LeafVersion, TaprootSpendInfo};
+use bitcoin::taproot::{self, TaprootSpendInfo};
 
 use bitcoin_ext::{fee, TaprootSpendInfoExt, P2TR_DUST};
 
-use crate::{musig, Vtxo, VtxoId, SECP};
+use crate::vtxo::genesis::ArkoorGenesis;
+use crate::{musig, ServerVtxo, ServerVtxoPolicy, Vtxo, VtxoId, SECP};
 use crate::connectors::ConnectorChain;
 use crate::encode::{ProtocolDecodingError, ProtocolEncoding, ReadExt, WriteExt};
-use crate::tree::signed::{unlock_clause, UnlockHash, UnlockPreimage};
-use crate::vtxo::exit_clause;
+use crate::tree::signed::{unlock_clause, UnlockHash};
+use crate::vtxo::{exit_clause, GenesisItem, GenesisTransition};
 
 
 /// The taproot for the policy of the output of the hArk forfeit tx
@@ -27,11 +28,11 @@ pub fn hark_forfeit_claim_taproot(
 	let agg_pk = vtxo.forfeit_agg_pubkey();
 	taproot::TaprootBuilder::new()
 		.add_leaf(1, exit_clause(vtxo.user_pubkey(), vtxo.exit_delta())).unwrap()
-		.add_leaf(1, unlock_clause(agg_pk, unlock_hash)).unwrap()
+		.add_leaf(1, unlock_clause(vtxo.server_pubkey().x_only_public_key().0, unlock_hash)).unwrap()
 		.finalize(&SECP, agg_pk).unwrap()
 }
 
-/// Construct the first tx in the hArk forfeit protocol
+/// Construct the forfeit tx in the hArk forfeit protocol
 #[inline]
 pub fn create_hark_forfeit_tx(
 	vtxo: &Vtxo,
@@ -60,51 +61,8 @@ pub fn create_hark_forfeit_tx(
 	}
 }
 
-/// Construct the second tx in the hArk forfeit protocol
 #[inline]
-pub fn create_hark_forfeit_claim_tx(
-	vtxo: &Vtxo,
-	forfeit_point: OutPoint,
-	unlock_hash: UnlockHash,
-	witness: Option<(&schnorr::Signature, UnlockPreimage)>,
-) -> Transaction {
-	Transaction {
-		version: bitcoin::transaction::Version(3),
-		lock_time: bitcoin::absolute::LockTime::ZERO,
-		input: vec![
-			TxIn {
-				previous_output: forfeit_point,
-				sequence: Sequence::MAX,
-				script_sig: ScriptBuf::new(),
-				witness: witness.map(|(signature, unlock_preimage)| {
-					let taproot = hark_forfeit_claim_taproot(vtxo, unlock_hash);
-					let agg_pk = taproot.internal_key();
-					debug_assert_eq!(agg_pk, vtxo.forfeit_agg_pubkey());
-					let clause = unlock_clause(agg_pk, unlock_hash);
-					let script_leaf = (clause, LeafVersion::TapScript);
-					let cb = taproot.control_block(&script_leaf)
-						.expect("unlock clause not found in hArk forfeit claim taproot");
-					Witness::from_slice(&[
-						&signature.serialize()[..],
-						&unlock_preimage[..],
-						&script_leaf.0.as_bytes(),
-						&cb.serialize()[..],
-					])
-				}).unwrap_or_default(),
-			},
-		],
-		output: vec![
-			TxOut {
-				value: vtxo.amount(),
-				script_pubkey: ScriptBuf::new_p2tr(&SECP, vtxo.server_pubkey().into(), None),
-			},
-			fee::fee_anchor(),
-		],
-	}
-}
-
-#[inline]
-pub fn hark_forfeit_sighash(
+fn hark_forfeit_sighash(
 	vtxo: &Vtxo,
 	unlock_hash: UnlockHash,
 ) -> (TapSighash, Transaction) {
@@ -116,88 +74,73 @@ pub fn hark_forfeit_sighash(
 	(sighash, tx)
 }
 
-#[inline]
-pub fn hark_forfeit_claim_sighash(
-	vtxo: &Vtxo,
-	forfeit_point: OutPoint,
-	unlock_hash: UnlockHash,
-) -> (TapSighash, Transaction) {
-	let claim_taproot = hark_forfeit_claim_taproot(vtxo, unlock_hash);
-	let claim_txout = TxOut {
-		script_pubkey: claim_taproot.script_pubkey(),
-		value: vtxo.amount(),
-	};
-	let tx = create_hark_forfeit_claim_tx(vtxo, forfeit_point, unlock_hash, None);
-	let agg_pk = claim_taproot.internal_key();
-	debug_assert_eq!(agg_pk, vtxo.forfeit_agg_pubkey());
-	let clause = unlock_clause(agg_pk, unlock_hash);
-	let leaf = TapLeafHash::from_script(&clause, LeafVersion::TapScript);
-	let sighash = SighashCache::new(&tx).taproot_script_spend_signature_hash(
-		0, &sighash::Prevouts::All(&[claim_txout]), leaf, TapSighashType::Default,
-	).expect("sighash error");
-	(sighash, tx)
-}
-
-/// Set of nonces for a hArk forfeit
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct HashLockedForfeitNonces {
-	pub forfeit_tx_nonce: musig::PublicNonce,
-	pub forfeit_claim_tx_nonce: musig::PublicNonce,
-}
-
-impl ProtocolEncoding for HashLockedForfeitNonces {
-	fn encode<W: std::io::Write + ?Sized>(&self, w: &mut W) -> Result<(), std::io::Error> {
-		self.forfeit_tx_nonce.encode(w)?;
-		self.forfeit_claim_tx_nonce.encode(w)?;
-		Ok(())
-	}
-
-	fn decode<R: std::io::Read + ?Sized>(r: &mut R) -> Result<Self, ProtocolDecodingError> {
-		Ok(Self {
-			forfeit_tx_nonce: ProtocolEncoding::decode(r)?,
-			forfeit_claim_tx_nonce: ProtocolEncoding::decode(r)?,
-		})
-	}
-}
-
-/// A bundle of signatures that forfeits a user's VTXO
-/// conditional on the server revealing a secret preimage
+/// Construct the internal VTXO that represents the forfeit output
 ///
-/// In hArk, the forfeit protocol actually consists of two steps.
-/// First there is a tx that sends the money to an output that the
-/// server can claim if he provides the preimage, but that still
-/// has a timeout back to the user, to force the server to actually
-/// reveal the preimage before the new hArk VTXO expires.
-/// This output policy also has to contain the user's pubkey, so the
-/// user that forfeits will have to provide a partial signature for
-/// both the spend from his VTXO to the forfeit tx and on a tx that
-/// spends the forfeit tx to the server's wallet.
+/// The `forfeit_txid` argument is optional and will be calculated if not present.
+#[inline]
+fn build_internal_forfeit_vtxo(
+	vtxo: &Vtxo,
+	unlock_hash: UnlockHash,
+	forfeit_tx_sig: schnorr::Signature,
+	forfeit_txid: Option<Txid>,
+) -> ServerVtxo {
+	let ff_txid = forfeit_txid.unwrap_or_else(|| {
+		create_hark_forfeit_tx(vtxo, unlock_hash, None).compute_txid()
+	});
+	debug_assert_eq!(ff_txid, create_hark_forfeit_tx(vtxo, unlock_hash, None).compute_txid());
+
+	Vtxo {
+		point: OutPoint::new(ff_txid, 0),
+		policy: ServerVtxoPolicy::new_hark_forfeit(vtxo.user_pubkey(), unlock_hash),
+		genesis: vtxo.genesis.iter().cloned().chain([
+			GenesisItem {
+				transition: GenesisTransition::Arkoor(ArkoorGenesis {
+					client_cosigners: vec![vtxo.user_pubkey()],
+					tap_tweak: vtxo.output_taproot().tap_tweak(),
+					signature: Some(forfeit_tx_sig),
+				}),
+				output_idx: 0,
+				other_outputs: vec![],
+				fee_amount: Amount::ZERO,
+			}
+		]).collect(),
+
+		amount: vtxo.amount,
+		expiry_height: vtxo.expiry_height,
+		server_pubkey: vtxo.server_pubkey,
+		exit_delta: vtxo.exit_delta,
+		anchor_point: vtxo.anchor_point,
+	}
+}
+
+/// A bundle of a signature and metadata that forfeits a user's VTXO
+/// conditional on the server revealing a secret preimage
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HashLockedForfeitBundle {
 	pub vtxo_id: VtxoId,
 	pub unlock_hash: UnlockHash,
-	pub user_nonces: HashLockedForfeitNonces,
+	pub user_nonce: musig::PublicNonce,
 	/// User's partial signature on the forfeit tx
-	pub forfeit_tx_part_sig: musig::PartialSignature,
-	/// User's partial signature on the forfeit claim tx
-	pub forfeit_claim_tx_part_sig: musig::PartialSignature,
+	pub part_sig: musig::PartialSignature,
 }
 
 impl HashLockedForfeitBundle {
 	/// Create a new [HashLockedForfeitBundle] for the given VTXO
-	pub fn forfeit_vtxo(
+	///
+	/// This is used to forfeit the VTXO to the server conditional on receiving
+	/// the unlock preimage corresponding to the given unlock hash.
+	pub fn new(
 		vtxo: &Vtxo,
 		unlock_hash: UnlockHash,
 		user_key: &Keypair,
-		server_nonces: &HashLockedForfeitNonces,
+		server_nonce: &musig::PublicNonce,
 	) -> Self {
 		let vtxo_exit_taproot = vtxo.output_taproot();
-		let (ff_sighash, ff_tx) = hark_forfeit_sighash(vtxo, unlock_hash);
+		let (ff_sighash, _) = hark_forfeit_sighash(vtxo, unlock_hash);
 		let (ff_sec_nonce, ff_pub_nonce) = musig::nonce_pair_with_msg(
 			user_key, &ff_sighash.to_byte_array(),
 		);
-		let ff_agg_nonce = musig::nonce_agg(&[&ff_pub_nonce, &server_nonces.forfeit_tx_nonce]);
-		let ff_point = OutPoint::new(ff_tx.compute_txid(), 0);
+		let ff_agg_nonce = musig::nonce_agg(&[&ff_pub_nonce, &server_nonce]);
 		let (ff_part_sig, _sig) = musig::partial_sign(
 			[vtxo.user_pubkey(), vtxo.server_pubkey()],
 			ff_agg_nonce,
@@ -208,120 +151,74 @@ impl HashLockedForfeitBundle {
 			None,
 		);
 
-		let (claim_sighash, _tx) = hark_forfeit_claim_sighash(vtxo, ff_point, unlock_hash);
-		let (claim_sec_nonce, claim_pub_nonce) = musig::nonce_pair_with_msg(
-			user_key, &claim_sighash.to_byte_array(),
-		);
-		let claim_agg_nonce = musig::nonce_agg(
-			&[&claim_pub_nonce, &server_nonces.forfeit_claim_tx_nonce],
-		);
-		let (claim_part_sig, _sig) = musig::partial_sign(
-			[vtxo.user_pubkey(), vtxo.server_pubkey()],
-			claim_agg_nonce,
-			user_key,
-			claim_sec_nonce,
-			claim_sighash.to_byte_array(),
-			None,
-			None,
-		);
-
 		Self {
 			vtxo_id: vtxo.id(),
 			unlock_hash: unlock_hash,
-			user_nonces: HashLockedForfeitNonces {
-				forfeit_tx_nonce: ff_pub_nonce,
-				forfeit_claim_tx_nonce: claim_pub_nonce,
-			},
-			forfeit_tx_part_sig: ff_part_sig,
-			forfeit_claim_tx_part_sig: claim_part_sig,
+			user_nonce: ff_pub_nonce,
+			part_sig: ff_part_sig,
 		}
 	}
 
-	/// Used by the server to verify if the partial signatures in the bundle are
-	/// valid
+	/// Used by the server to verify if the partial signature in the bundle
+	/// is valid
 	pub fn verify(
 		&self,
 		vtxo: &Vtxo,
-		server_nonces: &HashLockedForfeitNonces,
+		server_nonce: &musig::PublicNonce,
 	) -> Result<(), &'static str> {
 		if vtxo.id() != self.vtxo_id {
 			return Err("VTXO mismatch");
 		}
 
 		let ff_agg_nonce = musig::nonce_agg(
-			&[&self.user_nonces.forfeit_tx_nonce, &server_nonces.forfeit_tx_nonce],
+			&[&self.user_nonce, &server_nonce],
 		);
 		let vtxo_exit_taproot = vtxo.output_taproot();
-		let (ff_sighash, ff_tx) = hark_forfeit_sighash(vtxo, self.unlock_hash);
+		let (ff_sighash, _) = hark_forfeit_sighash(vtxo, self.unlock_hash);
 		let (ff_key_agg, _) = musig::tweaked_key_agg(
 			[vtxo.user_pubkey(), vtxo.server_pubkey()],
 			vtxo_exit_taproot.tap_tweak().to_byte_array(),
 		);
-		let ff_point = OutPoint::new(ff_tx.compute_txid(), 0);
 		let ff_session = musig::Session::new(
 			&ff_key_agg,
 			ff_agg_nonce,
 			&ff_sighash.to_byte_array(),
 		);
 		let success = ff_session.partial_verify(
-			&ff_key_agg,
-			&self.forfeit_tx_part_sig,
-			&self.user_nonces.forfeit_tx_nonce,
-			musig::pubkey_to(vtxo.user_pubkey()),
+			&ff_key_agg, &self.part_sig, &self.user_nonce, musig::pubkey_to(vtxo.user_pubkey()),
 		);
 		if !success {
 			return Err("invalid partial sig for forfeit tx");
 		}
-
-		let claim_agg_nonce = musig::nonce_agg(
-			&[&self.user_nonces.forfeit_claim_tx_nonce, &server_nonces.forfeit_claim_tx_nonce],
-		);
-		let (claim_sighash, _tx) = hark_forfeit_claim_sighash(vtxo, ff_point, self.unlock_hash);
-		let claim_key_agg = musig::key_agg([vtxo.user_pubkey(), vtxo.server_pubkey()]);
-		let claim_session = musig::Session::new(
-			&claim_key_agg,
-			claim_agg_nonce,
-			&claim_sighash.to_byte_array(),
-		);
-		let success = claim_session.partial_verify(
-			&claim_key_agg,
-			&self.forfeit_claim_tx_part_sig,
-			&self.user_nonces.forfeit_claim_tx_nonce,
-			musig::pubkey_to(vtxo.user_pubkey()),
-		);
-		if !success {
-			return Err("invalid partial sig for forfeit claim tx");
-		}
 		Ok(())
 	}
 
-	/// Used by the server to finish the forfeit signatures using its own
-	/// nonces.
+	/// Used by the server to finish the forfeit signature using its own
+	/// nonce
 	///
-	/// NB users don't need to know these signatures.
+	/// NB users don't need to know this signature
 	pub fn finish(
 		&self,
 		vtxo: &Vtxo,
-		server_pub_nonces: &HashLockedForfeitNonces,
-		[ff_sec_nonce, claim_sec_nonce]: [musig::SecretNonce; 2],
+		server_pub_nonce: &musig::PublicNonce,
+		server_sec_nonce: musig::SecretNonce,
 		server_key: &Keypair,
-	) -> [schnorr::Signature; 2] {
+	) -> (schnorr::Signature, Transaction, ServerVtxo) {
 		assert_eq!(vtxo.id(), self.vtxo_id);
 
 		let ff_agg_nonce = musig::nonce_agg(
-			&[&self.user_nonces.forfeit_tx_nonce, &server_pub_nonces.forfeit_tx_nonce],
+			&[&self.user_nonce, &server_pub_nonce],
 		);
 		let vtxo_exit_taproot = vtxo.output_taproot();
-		let (ff_sighash, ff_tx) = hark_forfeit_sighash(vtxo, self.unlock_hash);
-		let ff_point = OutPoint::new(ff_tx.compute_txid(), 0);
+		let (ff_sighash, mut ff_tx) = hark_forfeit_sighash(vtxo, self.unlock_hash);
 		let (_ff_part_sig, ff_sig) = musig::partial_sign(
 			[vtxo.user_pubkey(), vtxo.server_pubkey()],
 			ff_agg_nonce,
 			server_key,
-			ff_sec_nonce,
+			server_sec_nonce,
 			ff_sighash.to_byte_array(),
 			Some(vtxo_exit_taproot.tap_tweak().to_byte_array()),
-			Some(&[&self.forfeit_tx_part_sig]),
+			Some(&[&self.part_sig]),
 		);
 		let ff_sig = ff_sig.expect("forfeit tx sig error");
 		debug_assert!({
@@ -337,7 +234,7 @@ impl HashLockedForfeitBundle {
 			ff_session.partial_verify(
 				&ff_key_agg,
 				&_ff_part_sig,
-				&server_pub_nonces.forfeit_tx_nonce,
+				&server_pub_nonce,
 				musig::pubkey_to(vtxo.server_pubkey()),
 			)
 		});
@@ -345,54 +242,27 @@ impl HashLockedForfeitBundle {
 			&ff_sig, &ff_sighash.into(), &vtxo_exit_taproot.output_key().to_x_only_public_key(),
 		));
 
-		let claim_agg_nonce = musig::nonce_agg(
-			&[&self.user_nonces.forfeit_claim_tx_nonce, &server_pub_nonces.forfeit_claim_tx_nonce],
-		);
-		let claim_taproot = hark_forfeit_claim_taproot(vtxo, self.unlock_hash);
-		let (claim_sighash, _tx) = hark_forfeit_claim_sighash(vtxo, ff_point, self.unlock_hash);
-		let (_claim_part_sig, claim_sig) = musig::partial_sign(
-			[vtxo.user_pubkey(), vtxo.server_pubkey()],
-			claim_agg_nonce,
-			server_key,
-			claim_sec_nonce,
-			claim_sighash.to_byte_array(),
-			None,
-			Some(&[&self.forfeit_claim_tx_part_sig]),
-		);
-		let claim_sig = claim_sig.expect("forfeit claim tx sig error");
-		debug_assert!({
-			let claim_key_agg = musig::key_agg([vtxo.user_pubkey(), vtxo.server_pubkey()]);
-			let claim_session = musig::Session::new(
-				&claim_key_agg,
-				claim_agg_nonce,
-				&claim_sighash.to_byte_array(),
-			);
-			claim_session.partial_verify(
-				&claim_key_agg,
-				&_claim_part_sig,
-				&server_pub_nonces.forfeit_claim_tx_nonce,
-				musig::pubkey_to(vtxo.server_pubkey()),
-			)
-		});
-		debug_assert_eq!(Ok(()), SECP.verify_schnorr(
-			&claim_sig, &claim_sighash.into(), &claim_taproot.internal_key(),
-		));
+		// fill in the signature in the tx
+		ff_tx.input[0].witness = Witness::from_slice(&[&ff_sig[..]]);
+		debug_assert_eq!(ff_tx, create_hark_forfeit_tx(vtxo, self.unlock_hash, Some(&ff_sig)));
 
-		[ff_sig, claim_sig]
+		let ff_txid = ff_tx.compute_txid();
+		let ff_vtxo = build_internal_forfeit_vtxo(vtxo, self.unlock_hash, ff_sig, Some(ff_txid));
+
+		(ff_sig, ff_tx, ff_vtxo)
 	}
 }
 
 /// The serialization version of [HashLockedForfeitBundle].
-const HASH_LOCKED_FORFEIT_BUNDLE_VERSION: u8 = 0x00;
+const HASH_LOCKED_FORFEIT_BUNDLE_VERSION: u8 = 0x01;
 
 impl ProtocolEncoding for HashLockedForfeitBundle {
 	fn encode<W: std::io::Write + ?Sized>(&self, w: &mut W) -> Result<(), std::io::Error> {
 		w.emit_u8(HASH_LOCKED_FORFEIT_BUNDLE_VERSION)?;
 		self.vtxo_id.encode(w)?;
 		self.unlock_hash.encode(w)?;
-		self.user_nonces.encode(w)?;
-		self.forfeit_tx_part_sig.encode(w)?;
-		self.forfeit_claim_tx_part_sig.encode(w)?;
+		self.user_nonce.encode(w)?;
+		self.part_sig.encode(w)?;
 		Ok(())
 	}
 
@@ -404,9 +274,8 @@ impl ProtocolEncoding for HashLockedForfeitBundle {
 		Ok(Self {
 			vtxo_id: ProtocolEncoding::decode(r)?,
 			unlock_hash: ProtocolEncoding::decode(r)?,
-			user_nonces: ProtocolEncoding::decode(r)?,
-			forfeit_tx_part_sig: ProtocolEncoding::decode(r)?,
-			forfeit_claim_tx_part_sig: ProtocolEncoding::decode(r)?,
+			user_nonce: ProtocolEncoding::decode(r)?,
+			part_sig: ProtocolEncoding::decode(r)?,
 		})
 	}
 }
@@ -490,78 +359,58 @@ pub fn connector_forfeit_sighash_connector(
 
 #[cfg(test)]
 mod test {
+	use std::str::FromStr;
 	use bitcoin::hex::{DisplayHex, FromHex};
 	use crate::test_util::{verify_tx, VTXO_VECTORS};
+	use crate::tree::signed::UnlockPreimage;
 	use super::*;
 
 	fn verify_hark_forfeits(
 		vtxo: &Vtxo,
 		unlock_preimage: UnlockPreimage,
-		server_sec_nonces: [musig::SecretNonce; 2],
-		server_pub_nonces: &HashLockedForfeitNonces,
+		server_sec_nonce: musig::SecretNonce,
+		server_pub_nonce: &musig::PublicNonce,
 		bundle: HashLockedForfeitBundle,
 	) {
 		let unlock_hash = UnlockHash::hash(&unlock_preimage);
-		assert_eq!(Ok(()), bundle.verify(vtxo, server_pub_nonces));
+		assert_eq!(Ok(()), bundle.verify(vtxo, server_pub_nonce));
 
 		// finish it which triggers debug asserts on partial sigs
-		let sigs = bundle.finish(vtxo, server_pub_nonces, server_sec_nonces, &VTXO_VECTORS.server_key);
+		let (sig, tx, _vtxo) = bundle.finish(vtxo, server_pub_nonce, server_sec_nonce, &VTXO_VECTORS.server_key);
 
 		let (ff_sighash, ff_tx) = hark_forfeit_sighash(vtxo, unlock_hash);
 		SECP.verify_schnorr(
-			&sigs[0],
+			&sig,
 			&ff_sighash.into(),
 			&vtxo.output_taproot().output_key().to_x_only_public_key(),
 		).expect("forfeit tx sig check failed");
 		let ff_point = OutPoint::new(ff_tx.compute_txid(), 0);
-		let claim_taproot = hark_forfeit_claim_taproot(vtxo, unlock_hash);
-		let (claim_sighash, _tx) = hark_forfeit_claim_sighash(vtxo, ff_point, unlock_hash);
-		SECP.verify_schnorr(
-			&sigs[1],
-			&claim_sighash.into(),
-			&claim_taproot.internal_key(),
-		).expect("forfeit claim tx sig check failed");
 
 		// validate the actual txs
 		let ff_input = vtxo.txout();
-		let ff_tx = create_hark_forfeit_tx(vtxo, unlock_hash, Some(&sigs[0]));
-		verify_tx(&[ff_input], 0, &ff_tx).expect("forfeit tx error");
-		assert_eq!(ff_tx.compute_txid(), ff_point.txid);
-
-		let claim_input = ff_tx.output[0].clone();
-		let claim_tx = create_hark_forfeit_claim_tx(
-			vtxo, ff_point, unlock_hash, Some((&sigs[1], unlock_preimage)),
-		);
-		verify_tx(&[claim_input], 0, &claim_tx).expect("claim tx error");
+		let ff_tx_expected = create_hark_forfeit_tx(vtxo, unlock_hash, Some(&sig));
+		assert_eq!(ff_tx_expected, tx);
+		verify_tx(&[ff_input], 0, &ff_tx_expected).expect("forfeit tx error");
+		assert_eq!(ff_tx_expected.compute_txid(), ff_point.txid);
 	}
 
 	#[test]
 	fn test_hark_forfeits() {
-		let server_ff_nonces = musig::nonce_pair(&VTXO_VECTORS.server_key);
-		let server_claim_nonces = musig::nonce_pair(&VTXO_VECTORS.server_key);
+		let (server_sec_nonce, server_pub_nonce) = musig::nonce_pair(&VTXO_VECTORS.server_key);
 		// we need to go through some hoops to print the secret nonces
-		let server_ff_sec_bytes = server_ff_nonces.0.dangerous_into_bytes();
-		let server_claim_sec_bytes = server_claim_nonces.0.dangerous_into_bytes();
-		println!("server ff sec nonce: {}", server_ff_sec_bytes.as_hex());
-		println!("server claim sec nonce: {}", server_claim_sec_bytes.as_hex());
-		let server_sec_nonces = [
-			musig::SecretNonce::dangerous_from_bytes(server_ff_sec_bytes),
-			musig::SecretNonce::dangerous_from_bytes(server_claim_sec_bytes),
-		];
-		let server_nonces = HashLockedForfeitNonces {
-			forfeit_tx_nonce: server_ff_nonces.1,
-			forfeit_claim_tx_nonce: server_claim_nonces.1,
-		};
-		println!("server pub nonces: {}", server_nonces.serialize_hex());
+		let server_sec_bytes = server_sec_nonce.dangerous_into_bytes();
+		println!("server ff sec nonce: {}", server_sec_bytes.as_hex());
+		let server_sec_nonce = musig::SecretNonce::dangerous_from_bytes(server_sec_bytes);
+		println!("server pub nonces: {}", server_pub_nonce.serialize_hex());
 
 		let vtxo = &VTXO_VECTORS.arkoor3_vtxo;
 		let unlock_preimage = UnlockPreimage::from_hex("c65f29e65dbc6cbad3e7f35c41986487c74ed513aeb37778354d42f3b0714645").unwrap();
 		let unlock_hash = UnlockHash::hash(&unlock_preimage);
-		let bundle = HashLockedForfeitBundle::forfeit_vtxo(
+		let bundle = HashLockedForfeitBundle::new(
 			vtxo,
 			unlock_hash,
 			&VTXO_VECTORS.arkoor3_user_key,
-			&server_nonces,
+			&server_pub_nonce,
 		);
 
 		// test encoding round trip
@@ -573,35 +422,24 @@ mod test {
 
 		println!("verifying generated forfeits");
 		verify_hark_forfeits(
-			vtxo, unlock_preimage, server_sec_nonces, &server_nonces, bundle.clone(),
+			vtxo, unlock_preimage, server_sec_nonce, &server_pub_nonce, bundle.clone(),
 		);
 
 		let (_sec, bad_nonce) = musig::nonce_pair(&VTXO_VECTORS.server_key);
 		assert_eq!(
-			bundle.verify(vtxo, &HashLockedForfeitNonces {
-				forfeit_tx_nonce: server_nonces.forfeit_tx_nonce,
-				forfeit_claim_tx_nonce: bad_nonce,
-			}),
-			Err("invalid partial sig for forfeit claim tx"),
-		);
-		assert_eq!(
-			bundle.verify(vtxo, &HashLockedForfeitNonces {
-				forfeit_tx_nonce: bad_nonce,
-				forfeit_claim_tx_nonce: server_nonces.forfeit_claim_tx_nonce,
-			}),
+			bundle.verify(vtxo, &bad_nonce),
 			Err("invalid partial sig for forfeit tx"),
 		);
 
 
 		// verify a hard-coded example from a previous run of this test
-		let server_sec_nonces = [
-			musig::SecretNonce::dangerous_from_bytes(FromHex::from_hex("220edcf1da44b6cc84c3c65258e6ed9c8d2c55550e9f6609b6193343b16f13ab6f63adc9d562325233121e80861822c63f408895e78a2f1ed0fedd7c1ffdc3fea4240c8c622bf70a8243580d1879746ffe940588c5ad9d478d1b46e2bb9318743312a8657f684b47f963f7a0e95927b2c71005112d8edc5821a3f6f0f7bd6354947ff8ac").unwrap()),
-			musig::SecretNonce::dangerous_from_bytes(FromHex::from_hex("220edcf1e588918982400caaf3aeef938bb1e2347ca666bd69ca150fc87fc6fdd536a4f574addbb6924d46214f0e1ba6e89a30360d0f8ea6d521cc778758aa90ed7c28e7622bf70a8243580d1879746ffe940588c5ad9d478d1b46e2bb9318743312a8657f684b47f963f7a0e95927b2c71005112d8edc5821a3f6f0f7bd6354947ff8ac").unwrap()),
-		];
-		let server_nonces = HashLockedForfeitNonces::deserialize_hex("030ca8be9e96f5ae3625b61c31d548243ef3b3bba7dd7e578118eaee24c273c8e20329b9def95225f95618972590dac83154b0b21d1b1eccf1988e923e12d2f926e102c465f28ddc1f864686d897be9fc3a4476fec1a43c359509bea8bd70ddbd4b6f3035dd60b80b10401fbc2457dbad40451ce6f67c38b0fa9ef805b92d2f3256d8df4").unwrap();
-		let bundle = HashLockedForfeitBundle::deserialize_hex("00016422a562a4826f26ff351ecb5b1122e0d27958053fd6595a9424a0305fad07000000003d5491373df6a016f78b3f46d65a4fc6948824c43a59620404e8719cfee05d1a02b35f8a030a5b7bbee5509390ae25165b713f6b99caf052f52d0d4711871f43d7032e97b05b0699059d162d335f5c5cc8a62b67e47ab73c396da4559b816bf76338025c210c3e6febfcaf673abc5310fbbd3c3e1bb33e5013e7798732fd67e89f3bcc02bf0437c4adccd3aa39189a21c862fddfd007c905d52f41d1794a8480bc78f9d42d824cd6825ec2ff4fd88b1a4eb963c284683ec93fe4992c788886393138f3f7b5cb2fa7368bb44f6a75f3721b33fe57734f1aa8ec3b3daf6c2151ad6d0103c9").unwrap();
+		let server_sec_nonce = musig::SecretNonce::dangerous_from_bytes(FromHex::from_hex(
+			"220edcf12f794b5d53011980f30395d02c65805b7aac1e6e5c25e894b8554530c226cd931c096f6ee6fb3619f60ff9c1ff84d4e8df94204ca08ac77abd6a4cfc0f30609a622bf70a8243580d1879746ffe940588c5ad9d478d1b46e2bb9318743312a8657f684b47f963f7a0e95927b2c71005112d8edc5821a3f6f0f7bd6354947ff8ac",
+		).unwrap());
+		let server_pub_nonce = musig::PublicNonce::from_str("02856551afd4ccdc7f5748fb6b41a51837a95d7f239c2a4cabaa82a09c8f2a43bc038f0b2826a264f0bb12825e997abcb02c0ab6a6acbd96d4567abd57a75b68f9b9").unwrap();
+		let bundle = HashLockedForfeitBundle::deserialize_hex("01016422a562a4826f26ff351ecb5b1122e0d27958053fd6595a9424a0305fad07000000003d5491373df6a016f78b3f46d65a4fc6948824c43a59620404e8719cfee05d1a02048e8b6aa30a6cd9fb8860b86c3cd9b0705769d049207dec0835056eee9e0857036f62d32ebcb8426ac8092a63f33dfb8bbe4e5ad8403f9b67d70bd326ee7a6e3120b75e5638f4d5fe4a47b0240293e045078da800ba4e24bd2d3b9879c6f534d6").unwrap();
 
 		println!("verifying hard-coded forfeits");
-		verify_hark_forfeits(vtxo, unlock_preimage, server_sec_nonces, &server_nonces, bundle);
+		verify_hark_forfeits(vtxo, unlock_preimage, server_sec_nonce, &server_pub_nonce, bundle);
 	}
 }

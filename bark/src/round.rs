@@ -22,7 +22,7 @@ use futures::{Stream, StreamExt};
 use log::{debug, error, info, trace, warn};
 
 use ark::{ProtocolEncoding, SignedVtxoRequest, Vtxo, VtxoRequest};
-use ark::forfeit::{HashLockedForfeitBundle, HashLockedForfeitNonces};
+use ark::forfeit::HashLockedForfeitBundle;
 use ark::musig::{self, DangerousSecretNonce, PublicNonce, SecretNonce};
 use ark::rounds::{
 	RoundAttempt, RoundEvent, RoundFinished, RoundSeq, MIN_ROUND_TX_OUTPUTS,
@@ -748,7 +748,7 @@ async fn hark_vtxo_swap(
 		.context("request forfeits nonces call failed")
 		.map_err(HarkForfeitError::Err)?
 		.into_inner().public_nonces.into_iter()
-		.map(|b| HashLockedForfeitNonces::from_bytes(b))
+		.map(|b| musig::PublicNonce::from_bytes(b))
 		.collect::<Result<Vec<_>, _>>()
 		.context("invalid forfeit nonces")
 		.map_err(HarkForfeitError::Err)?;
@@ -766,7 +766,7 @@ async fn hark_vtxo_swap(
 			.ok().flatten().with_context(|| format!(
 				"failed to fetch keypair for vtxo user pubkey {}", input.user_pubkey(),
 			)).map_err(HarkForfeitError::Err)?.1;
-		forfeit_bundles.push(HashLockedForfeitBundle::forfeit_vtxo(
+		forfeit_bundles.push(HashLockedForfeitBundle::new(
 			&input, unlock_hash, &user_key, &nonces,
 		))
 	}

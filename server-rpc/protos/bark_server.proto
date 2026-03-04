@@ -524,7 +524,7 @@ message ForfeitNoncesRequest {
 }
 
 message ForfeitNoncesResponse {
-	// list of nonces, two for each vtxo requested
+	// list of nonces, one for each vtxo requested
 	repeated bytes public_nonces = 1;
 }
 
