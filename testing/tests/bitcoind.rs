@@ -17,13 +17,6 @@ async fn start_bitcoind()  {
 async fn fund_bitcoind() {
 	let ctx = TestContext::new("bitcoind/fund_bitcoind").await;
 
-	// We can initialize the wallet twice
-	ctx.bitcoind().init_wallet().await;
-	ctx.bitcoind().init_wallet().await;
-
-	// We can fund the wallet
-	ctx.bitcoind().prepare_funds().await;
-
 	// Check the balance
 	let client = ctx.bitcoind().sync_client();
 	let amount = client.get_balance(Some(6), None).unwrap();

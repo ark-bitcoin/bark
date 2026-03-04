@@ -38,6 +38,9 @@ pub mod env {
 	/// Use filestore (JSON file) persistence instead of SQLite for bark wallets.
 	/// Set to "1" to enable.
 	pub const USE_FILESTORE: &str = "USE_FILESTORE";
+	/// Path to a pre-generated bitcoind snapshot directory.
+	/// When set, tests copy the snapshot instead of generating blocks from scratch.
+	pub const BITCOIND_SNAPSHOT_DIR: &str = "BITCOIND_SNAPSHOT_DIR";
 }
 
 pub mod bitcoind {
