@@ -1,0 +1,98 @@
+# Nightly release pipeline - triggered by schedule
+
+.nightly-rules:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+
+check-master-status:
+  stage: prechecks
+  extends: .nightly-rules
+  script:
+    - |
+      RESPONSE=$(curl -s -X GET 'https://gitlab.com/api/v4/projects/75519706/pipelines?ref=master&order_by=updated_at&sort=desc&per_page=2')
+      echo "Response from API: $RESPONSE"
+      if echo "$RESPONSE" | jq -e '.[0].status == "running" and .[1].status == "success"' >/dev/null; then
+        echo "Master branch CI is in a successful state."
+      else
+        echo "Master branch CI is NOT in a successful state. Aborting pipeline."
+        exit 1
+      fi
+
+assign-version:
+  stage: prechecks
+  extends: .nightly-rules
+  script:
+    - echo "nightly-$(date -d '1 minute ago' +%Y-%m-%d)" > VERSION
+    - bash ./contrib/assign-nightly-version.sh "$(cat VERSION)"
+    - cat VERSION
+  artifacts:
+    paths:
+      - VERSION
+    expire_in: 1 day
+  needs:
+    - job: check-master-status
+
+build-nightly:
+  stage: build
+  extends: .nightly-rules
+  script:
+    - cat VERSION
+    - just build
+    - just release-bark-linux
+    - cp ./target/x86_64-unknown-linux-gnu/release/bark       bark-linux-x86_64
+    - cp ./target/x86_64-unknown-linux-gnu/release/barkd      barkd-linux-x86_64
+    - cp ./target/aarch64-unknown-linux-gnu/release/bark      bark-linux-aarch64
+    - cp ./target/aarch64-unknown-linux-gnu/release/barkd     barkd-linux-aarch64
+    - cp ./target/armv7-unknown-linux-gnueabihf/release/bark  bark-linux-armv7
+    - cp ./target/armv7-unknown-linux-gnueabihf/release/barkd barkd-linux-armv7
+    - just release-server
+    - cp ./target/x86_64-unknown-linux-gnu/release/captaind   captaind-linux-x86_64
+    - cp ./target/x86_64-unknown-linux-gnu/release/watchmand  watchmand-linux-x86_64
+  artifacts:
+    paths:
+      - bark-*
+      - barkd-*
+      - captaind-*
+      - watchmand-*
+      - VERSION
+    expire_in: 1 day
+  needs:
+    - job: assign-version
+      artifacts: true
+
+build-and-push-to-docker-nightly:
+  stage: release
+  image: quay.io/buildah/stable:latest
+  variables:
+    DOCKER_LOGIN_TOKEN: $DOCKER_LOGIN_TOKEN
+  script:
+    - cat VERSION
+    - echo $DOCKER_LOGIN_TOKEN | buildah login -u secondark --password-stdin docker.io
+    # Build the containers
+    - buildah build -f ./.gitlab/images/releases/bark/linux_amd64.Dockerfile --tag docker.io/secondark/bark:linux-amd64 .
+    - buildah build -f ./.gitlab/images/releases/bark/linux_arm64.Dockerfile --tag docker.io/secondark/bark:linux-arm64 .
+    - buildah build -f ./.gitlab/images/releases/bark/linux_armv7.Dockerfile --tag docker.io/secondark/bark:linux-armv7 .
+    - buildah build -f ./.gitlab/images/releases/captaind/Dockerfile         --tag docker.io/secondark/captaind:latest  .
+    # Tag containers with a specific version number for docker.io/secondark
+    - buildah tag docker.io/secondark/bark:linux-amd64 "docker.io/secondark/bark:linux-amd64-$(cat VERSION)"
+    - buildah tag docker.io/secondark/bark:linux-arm64 "docker.io/secondark/bark:linux-arm64-$(cat VERSION)"
+    - buildah tag docker.io/secondark/bark:linux-armv7 "docker.io/secondark/bark:linux-armv7-$(cat VERSION)"
+    - buildah tag docker.io/secondark/captaind:latest  "docker.io/secondark/captaind:$(cat VERSION)"
+    # Push containers with a specific version number to docker.io/secondark
+    - buildah push "docker.io/secondark/bark:linux-amd64-$(cat VERSION)"
+    - buildah push "docker.io/secondark/bark:linux-arm64-$(cat VERSION)"
+    - buildah push "docker.io/secondark/bark:linux-armv7-$(cat VERSION)"
+    - buildah push "docker.io/secondark/captaind:$(cat VERSION)"
+    # Create and push multi-arch docker manifest with versioned tag to docker.io/secondark
+    - buildah manifest create     "bark-multiarch-$(cat VERSION)"
+    - buildah manifest add        "bark-multiarch-$(cat VERSION)" "docker://docker.io/secondark/bark:linux-amd64-$(cat VERSION)"
+    - buildah manifest add        "bark-multiarch-$(cat VERSION)" "docker://docker.io/secondark/bark:linux-arm64-$(cat VERSION)"
+    - buildah manifest add        "bark-multiarch-$(cat VERSION)" "docker://docker.io/secondark/bark:linux-armv7-$(cat VERSION)"
+    - buildah manifest push --all "bark-multiarch-$(cat VERSION)" "docker://docker.io/secondark/bark:$(cat VERSION)"
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule" && $CI_PROJECT_URL == "https://gitlab.com/ark-bitcoin/bark"
+  needs:
+    - job: build-nightly
+      artifacts: true
+  tags:
+    - privileged

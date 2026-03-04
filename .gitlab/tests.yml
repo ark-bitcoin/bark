@@ -1,0 +1,223 @@
+# Test pipeline - build and integration tests
+
+.test-rules:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_PIPELINE_SOURCE == "web"
+    - if: $CI_COMMIT_TAG =~ /^bark-/
+    - if: $CI_COMMIT_TAG =~ /^server-/
+    - if: $CI_COMMIT_BRANCH == "master" && $CI_PROJECT_URL == "https://gitlab.com/ark-bitcoin/bark"
+    - if: $CI_CODECOV_PIPELINE == "true"
+
+check-commits:
+  stage: build
+  extends: .test-rules
+  script:
+    - date +"%Y%m%d-%H%M%S" > RUN_DATETIME
+    - git log --oneline -1
+    - |
+      if [ -z "$CI_COMMIT_TAG" ]; then
+        nix develop .#default --command bash -c "just check-commits"
+      else
+        echo "Skipping check-commits for tag event"
+      fi
+    - git log --oneline -1
+  artifacts:
+    paths:
+      - RUN_DATETIME
+    expire_in: 1 day
+  needs:
+    - job: prechecks
+
+build:
+  stage: build
+  extends: .test-rules
+  script:
+    - git log --oneline -1
+    - nix develop .#default --command bash -c "just build"
+  needs:
+    - job: check-commits
+
+compare-static-files:
+  stage: build
+  extends: .test-rules
+  script:
+    - nix develop .#default --command bash -c "just generate-static-files"
+    - bash contrib/check-clean-diff.sh bark/schema.sql
+    - bash contrib/check-clean-diff.sh server/schema.sql
+    - bash contrib/check-clean-diff.sh bark-rest/openapi.json
+    - bash contrib/check-clean-diff.sh bark-rest-client/
+  needs:
+    - job: build
+
+test-unit:
+  stage: test
+  extends: .test-rules
+  script:
+    - git log --oneline -1
+    - nix develop .#default --command bash -c "just test-unit"
+  needs:
+    - job: build
+
+use-bark-as-dependency:
+  stage: test
+  extends: .test-rules
+  script:
+    - |
+      nix develop .#default --command bash -c "
+        cargo init barktest &&
+        cd barktest &&
+        cargo add bark-wallet &&
+        cargo update &&
+        cargo build
+      "
+  needs:
+    - job: test-unit
+
+bark-as-libs:
+  stage: test
+  extends: .test-rules
+  script:
+    - |
+      nix develop .#default --command bash -c "
+        cargo build -p bark-wallet      --no-default-features --features=\"\" &&
+        cargo build -p bark-bitcoin-ext --no-default-features --features=\"\" &&
+        cargo build -p ark-lib          --no-default-features --features=\"\"
+      "
+  needs:
+    - job: test-unit
+
+lib-wasm:
+  stage: test
+  extends: .test-rules
+  script:
+    - |
+      nix develop .#default --command bash -c "
+        cd lib/ &&
+        cargo build --lib --release --target \"wasm32-unknown-unknown\" --features wasm-js
+      "
+  needs:
+    - job: test-unit
+
+lib-msrv:
+  stage: test
+  extends: .test-rules
+  script:
+    - |
+      nix develop .#msrv-lib --command bash -c "
+        cd testing/msrv-lib &&
+        cargo build
+      "
+  needs:
+    - job: test-unit
+
+check-release:
+  stage: test
+  extends: .test-rules
+  script:
+    - |
+      nix develop .#default --command bash -c "
+        cargo check --release -p bark-cli &&
+        cargo check --release -p bark-server
+      "
+  needs:
+    - job: test-unit
+
+test-integration-esplora:
+  stage: test
+  variables:
+    CHAIN_SOURCE: esplora
+    TEST_DIRECTORY: ./test/esplora
+    NEXTEST_TEST_THREADS: "2"
+    BARK_COMMAND_TIMEOUT_MILLIS: "120000"
+    TX_PROPAGATION_TIMEOUT: "30000"
+    CARGO_TARGET_DIR: target-esplora
+  script:
+    - git log --oneline -1
+    - export RUN_DATETIME=$(cat RUN_DATETIME)
+    - export CAPTAIND_EXEC=${CI_PROJECT_DIR}/target-esplora/debug/captaind
+    - export BARK_EXEC=${CI_PROJECT_DIR}/target-esplora/debug/bark
+    - bash ./contrib/ci-run-test.sh test-integration
+  rules:
+    - if: $CI_COMMIT_BRANCH == "master"
+  needs:
+    - job: bark-as-libs
+    - job: check-commits
+      artifacts: true
+  tags:
+    - integration
+
+test-integration-mempool:
+  stage: test
+  variables:
+    CHAIN_SOURCE: mempool
+    TEST_DIRECTORY: ./test/mempool
+    NEXTEST_TEST_THREADS: "2"
+    BARK_COMMAND_TIMEOUT_MILLIS: "120000"
+    TX_PROPAGATION_TIMEOUT: "30000"
+    CARGO_TARGET_DIR: target-mempool
+  script:
+    - git log --oneline -1
+    - export RUN_DATETIME=$(cat RUN_DATETIME)
+    - export CAPTAIND_EXEC=${CI_PROJECT_DIR}/target-mempool/debug/captaind
+    - export BARK_EXEC=${CI_PROJECT_DIR}/target-mempool/debug/bark
+    - bash ./contrib/ci-run-test.sh test-integration
+  extends: .test-rules
+  needs:
+    - job: bark-as-libs
+    - job: check-commits
+      artifacts: true
+  allow_failure: true
+  tags:
+    - integration
+
+test-integration-btc30:
+  stage: test
+  variables:
+    TEST_DIRECTORY: ./test/btc30
+    NEXTEST_TEST_THREADS: "2"
+    BARK_COMMAND_TIMEOUT_MILLIS: "120000"
+    TX_PROPAGATION_TIMEOUT: "30000"
+    CARGO_TARGET_DIR: target-btc30
+  script:
+    - git log --oneline -1
+    - export RUN_DATETIME=$(cat RUN_DATETIME)
+    - export CAPTAIND_EXEC=${CI_PROJECT_DIR}/target-btc30/debug/captaind
+    - export BARK_EXEC=${CI_PROJECT_DIR}/target-btc30/debug/bark
+    - bash ./contrib/ci-run-test.sh test-integration-client
+  extends: .test-rules
+  needs:
+    - job: bark-as-libs
+    - job: check-commits
+      artifacts: true
+  tags:
+    - integration
+
+test-integration-filestore:
+  stage: test
+  variables:
+    CHAIN_SOURCE: mempool
+    USE_FILESTORE: "1"
+    TEST_DIRECTORY: ./test/filestore
+    NEXTEST_TEST_THREADS: "2"
+    BARK_COMMAND_TIMEOUT_MILLIS: "120000"
+    TX_PROPAGATION_TIMEOUT: "30000"
+  script:
+    - git log --oneline -1
+    - export RUN_DATETIME=$(cat RUN_DATETIME)
+    - export CAPTAIND_EXEC=${CI_PROJECT_DIR}/target/debug/captaind
+    - export BARK_EXEC=${CI_PROJECT_DIR}/target/debug/bark
+    - bash ./contrib/ci-run-test.sh test-integration-client
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      changes:
+        - bark/src/persist/**/*
+    - if: $CI_COMMIT_BRANCH == "master"
+      changes:
+        - bark/src/persist/**/*
+  needs:
+    - job: bark-as-libs
+    - job: check-commits
+      artifacts: true
+  tags:
+    - integration

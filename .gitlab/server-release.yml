@@ -1,0 +1,124 @@
+# Server release pipeline - triggered on server-* tags
+
+.server-release-rules:
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^server-/
+
+parse-versions-server:
+  stage: build
+  extends: .server-release-rules
+  script:
+    - bash ./contrib/parse-versions.sh "${CI_COMMIT_TAG}" > VERSION
+    - cat VERSION
+  artifacts:
+    paths:
+      - VERSION
+    expire_in: 1 day
+
+build-server:
+  stage: build
+  extends: .server-release-rules
+  variables:
+    SDKROOT: /usr/local/osxcross/SDK/MacOSX15.4.sdk
+  script:
+    - cat VERSION
+    - just release-server
+    - cp ./target/x86_64-unknown-linux-gnu/release/captaind captaind-linux-x86_64
+    - cp ./target/x86_64-unknown-linux-gnu/release/watchmand watchmand-linux-x86_64
+  artifacts:
+    paths:
+      - captaind-linux-x86_64
+      - watchmand-linux-x86_64
+      - VERSION
+      - target/
+    expire_in: 1 day
+  needs:
+    - job: parse-versions-server
+      artifacts: true
+
+build-and-push-captaind-to-registry:
+  stage: release
+  extends: .server-release-rules
+  image: quay.io/buildah/stable:latest
+  variables:
+    REGISTRY_LOGIN_TOKEN: $REGISTRY_LOGIN_TOKEN
+  script:
+    - cat VERSION
+    - echo $REGISTRY_LOGIN_TOKEN | buildah login -u registry --password-stdin registry.2nd.dev
+    # Build the containers
+    - buildah build -f ./.gitlab/images/releases/captaind/Dockerfile --tag registry.2nd.dev/captaind:latest .
+    # Push containers to registry.2nd.dev
+    - buildah push registry.2nd.dev/captaind:latest
+    # Tag containers with specific version number for registry.2nd.dev
+    - buildah tag registry.2nd.dev/captaind:latest "registry.2nd.dev/captaind:$(cat VERSION)"
+    # Push containers with specific version number to registry.2nd.dev
+    - buildah push "registry.2nd.dev/captaind:$(cat VERSION)"
+  needs:
+    - job: build-server
+      artifacts: true
+  allow_failure: true
+  tags:
+    - privileged
+
+push-captaind-to-docker:
+  stage: release
+  image: quay.io/buildah/stable:latest
+  variables:
+    REGISTRY_LOGIN_TOKEN: $REGISTRY_LOGIN_TOKEN
+    DOCKER_LOGIN_TOKEN: $DOCKER_LOGIN_TOKEN
+  script:
+    - cat VERSION
+    - echo $DOCKER_LOGIN_TOKEN | buildah login -u secondark --password-stdin docker.io
+    - echo $REGISTRY_LOGIN_TOKEN | buildah login -u registry --password-stdin registry.2nd.dev
+    # Pull containers from registry.2nd.dev
+    - buildah pull registry.2nd.dev/captaind:latest
+    # Tag containers for docker.io
+    - buildah tag registry.2nd.dev/captaind:latest docker.io/secondark/captaind:latest
+    # Push containers to docker.io
+    - buildah push docker.io/secondark/captaind:latest
+    # Tag containers with specific version number for docker.io
+    - buildah tag registry.2nd.dev/captaind:latest "docker.io/secondark/captaind:$(cat VERSION)"
+    # Push containers with specific version number to docker.io
+    - buildah push "docker.io/secondark/captaind:$(cat VERSION)"
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^server-/ && $CI_PROJECT_URL == "https://gitlab.com/ark-bitcoin/bark"
+  needs:
+    - job: build-and-push-captaind-to-registry
+    - job: build-server
+      artifacts: true
+  allow_failure: true
+  tags:
+    - privileged
+
+release-server:
+  stage: release
+  extends: .server-release-rules
+  script:
+    - cat VERSION
+    - cd ./target
+    - cp x86_64-unknown-linux-gnu/release/captaind "captaind-$(cat ../VERSION)-linux-x86_64"
+    - cp x86_64-unknown-linux-gnu/release/watchmand "watchmand-$(cat ../VERSION)-linux-x86_64"
+    - sha256sum "captaind-$(cat ../VERSION)-linux-x86_64" > SHA256SUMS
+    - sha256sum "watchmand-$(cat ../VERSION)-linux-x86_64" >> SHA256SUMS
+  artifacts:
+    paths:
+      - target/captaind-*
+      - target/watchmand-*
+      - target/SHA256SUMS
+      - VERSION
+    expire_in: 1 week
+  needs:
+    - job: build-server
+      artifacts: true
+
+publish-server-gitlab:
+  stage: release
+  variables:
+    GITLAB_RELEASE_TOKEN: $GITLAB_RELEASE_TOKEN
+  script:
+    - bash ./contrib/ci-gitlab-release.sh "./target/captaind-*-linux-x86_64 ./target/watchmand-*-linux-x86_64 ./target/SHA256SUMS"
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^server-/ && $CI_PROJECT_URL == "https://gitlab.com/ark-bitcoin/bark"
+  needs:
+    - job: release-server
+      artifacts: true

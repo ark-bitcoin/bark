@@ -1,0 +1,86 @@
+# Helper jobs - post-test tasks, rustdocs, version checks
+
+.helpers-rules:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_PIPELINE_SOURCE == "web"
+    - if: $CI_COMMIT_TAG =~ /^bark-/
+    - if: $CI_COMMIT_TAG =~ /^server-/
+    - if: $CI_COMMIT_BRANCH == "master" && $CI_PROJECT_URL == "https://gitlab.com/ark-bitcoin/bark"
+
+tar-and-print-test-data:
+  stage: helpers
+  extends: .helpers-rules
+  script:
+    - |
+      SRC="/host/data/test/${CI_COMMIT_SHA}"
+      DST="/host/data/test/${CI_COMMIT_SHA}.tar.gz"
+      if [ -d "$SRC" ]; then
+        echo "Tarring test data: $SRC"
+        tar -czf "$DST" "$SRC/"
+        sudo mv "$DST" "$SRC/"
+        echo "Test data tar.gz     -> https://ci.2nd.dev/testdata/${CI_COMMIT_SHA}/${CI_COMMIT_SHA}.tar.gz"
+        echo "Test data URL        -> https://ci.2nd.dev/testdata/${CI_COMMIT_SHA}/"
+      else
+        echo "Warning: Test data directory $SRC does not exist – skipping tar"
+      fi
+  needs:
+    - job: test-integration-mempool
+      optional: true
+    - job: test-integration-btc30
+      optional: true
+
+tar-and-print-codecov-data:
+  stage: helpers
+  rules:
+    - if: $CI_CODECOV_PIPELINE == "true"
+  script:
+    - |
+      SRC="/host/data/codecov/${CI_COMMIT_SHA}"
+      DST="/host/data/codecov/${CI_COMMIT_SHA}.tar.gz"
+      if [ -d "$SRC" ]; then
+        echo "Tarring codecov data: $SRC"
+        tar -czf "$DST" "$SRC/"
+        sudo mv "$DST" "$SRC/"
+        echo "Code Coverage tar.gz -> https://ci.2nd.dev/codecov/${CI_COMMIT_SHA}/${CI_COMMIT_SHA}.tar.gz"
+        echo "Code Coverage URL    -> https://ci.2nd.dev/codecov/${CI_COMMIT_SHA}/html/index.html"
+      else
+        echo "Warning: Codecov directory $SRC does not exist – skipping tar"
+      fi
+  needs:
+    - job: code-coverage
+      optional: true
+
+generate-rustdocs:
+  stage: helpers
+  script:
+    - nix develop .#default --command bash -c "just rustdocs"
+    - sudo cp -r rustdocs/doc/ /host/data/doc/
+    - bash contrib/generate-index.sh /host/data/rustdocs/doc
+    - echo "rustdocs -> https://rustdocs.2nd.dev/master/"
+  rules:
+    - if: $CI_COMMIT_BRANCH == "master" && $CI_PROJECT_URL == "https://gitlab.com/ark-bitcoin/bark"
+  allow_failure: true
+  needs:
+    - job: test-unit
+      optional: true
+
+check-versions:
+  stage: helpers
+  script:
+    - bash ./contrib/check-versions.sh "${CI_COMMIT_TAG}"
+  rules:
+    - if: $CI_COMMIT_TAG
+  needs:
+    - job: test-unit
+      optional: true
+
+check-gitlab-release:
+  stage: helpers
+  script:
+    - bash ./contrib/check-gitlab-release.sh "${CI_COMMIT_TAG}"
+  rules:
+    - if: $CI_COMMIT_TAG
+  needs:
+    - job: test-unit
+      optional: true

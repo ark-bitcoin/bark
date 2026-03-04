@@ -25,7 +25,7 @@ the bark repository:
 ## Manual setup
 
 A good starting point for the dev dependencies for bark and the server is to
-look at the [CI Dockerfile](./.woodpecker/images/tests/Dockerfile). The dependencies
+look at the [CI Dockerfile](./.gitlab/images/tests/Dockerfile). The dependencies
 for Debian should be listed there.
 
 (Below commands might be outdated, the Dockerfile linked above is the better
