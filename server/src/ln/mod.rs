@@ -507,7 +507,7 @@ impl Server {
 		let received_amount = sub.amount();
 		let fee = self.config.fees.lightning_receive.calculate(received_amount)
 			.context("fee overflowed")?;
-		let amount = validate_and_subtract_fee(received_amount, fee)?;
+		let htlc_amount = validate_and_subtract_fee(received_amount, fee)?;
 
 		let vtxos = {
 			// We compare requested htlc expiry height with the lowest LN HTLC expiry height
@@ -531,7 +531,7 @@ impl Server {
 			};
 
 			let dest = ArkoorDestination {
-				total_amount: amount,
+				total_amount: htlc_amount,
 				policy: VtxoPolicy::new_server_htlc_recv(
 					user_pubkey, payment_hash, expiry, self.config.htlc_expiry_delta,
 				),
@@ -548,7 +548,7 @@ impl Server {
 		sub.htlc_vtxos = vtxos.iter().map(|v| v.id()).collect();
 
 		let htlc_vtxo_ids = vtxos.iter().map(|v| v.id()).collect::<Vec<_>>();
-		slog!(LightningReceivePrepared, payment_hash, htlc_vtxo_ids, htlc_amount: received_amount, fee);
+		slog!(LightningReceivePrepared, payment_hash, htlc_vtxo_ids, htlc_amount, fee);
 
 		Ok((sub, vtxos))
 	}
