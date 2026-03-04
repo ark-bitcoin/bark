@@ -62,7 +62,6 @@ build-nightly:
 
 build-and-push-to-docker-nightly:
   stage: release
-  image: quay.io/buildah/stable:latest
   variables:
     DOCKER_LOGIN_TOKEN: $DOCKER_LOGIN_TOKEN
   script:

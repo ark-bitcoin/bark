@@ -39,7 +39,6 @@ build-server:
 build-and-push-captaind-to-registry:
   stage: release
   extends: .server-release-rules
-  image: quay.io/buildah/stable:latest
   variables:
     REGISTRY_LOGIN_TOKEN: $REGISTRY_LOGIN_TOKEN
   script:
@@ -62,7 +61,6 @@ build-and-push-captaind-to-registry:
 
 push-captaind-to-docker:
   stage: release
-  image: quay.io/buildah/stable:latest
   variables:
     REGISTRY_LOGIN_TOKEN: $REGISTRY_LOGIN_TOKEN
     DOCKER_LOGIN_TOKEN: $DOCKER_LOGIN_TOKEN

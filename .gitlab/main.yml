@@ -2,30 +2,28 @@
 
 push-github-mirror:
   stage: prechecks
-  image: appleboy/drone-git-push:latest
-  variables:
-    PLUGIN_REMOTE: git@github.com:ark-bitcoin/bark.git
-    PLUGIN_BRANCH: master
-    PLUGIN_LOCAL_BRANCH: master
-    PLUGIN_FORCE: "true"
-    PLUGIN_SSH_KEY: $GITHUB_LOGIN_TOKEN
+  before_script:
+    - eval $(ssh-agent -s)
+    - echo "$GITHUB_LOGIN_TOKEN" | tr -d '\r' | ssh-add -
+    - mkdir -p ~/.ssh && chmod 700 ~/.ssh
+    - ssh-keyscan github.com >> ~/.ssh/known_hosts
   script:
-    - /bin/drone-git-push
+    - git remote add github git@github.com:ark-bitcoin/bark.git || git remote set-url github git@github.com:ark-bitcoin/bark.git
+    - git push --force github HEAD:master
   rules:
     - if: $CI_COMMIT_BRANCH == "master" && $CI_PROJECT_URL == "https://gitlab.com/ark-bitcoin/bark"
   allow_failure: true
 
 push-codeberg-mirror:
   stage: prechecks
-  image: appleboy/drone-git-push:latest
-  variables:
-    PLUGIN_REMOTE: git@codeberg.org:ark-bitcoin/bark.git
-    PLUGIN_BRANCH: master
-    PLUGIN_LOCAL_BRANCH: master
-    PLUGIN_FORCE: "true"
-    PLUGIN_SSH_KEY: $CODEBERG_LOGIN_TOKEN
+  before_script:
+    - eval $(ssh-agent -s)
+    - echo "$CODEBERG_LOGIN_TOKEN" | tr -d '\r' | ssh-add -
+    - mkdir -p ~/.ssh && chmod 700 ~/.ssh
+    - ssh-keyscan codeberg.org >> ~/.ssh/known_hosts
   script:
-    - /bin/drone-git-push
+    - git remote add codeberg git@codeberg.org:ark-bitcoin/bark.git || git remote set-url codeberg git@codeberg.org:ark-bitcoin/bark.git
+    - git push --force codeberg HEAD:master
   rules:
     - if: $CI_COMMIT_BRANCH == "master" && $CI_PROJECT_URL == "https://gitlab.com/ark-bitcoin/bark"
   allow_failure: true

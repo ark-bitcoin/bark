@@ -49,7 +49,6 @@ build-bark:
 build-and-push-bark-to-registry:
   stage: release
   extends: .bark-release-rules
-  image: quay.io/buildah/stable:latest
   variables:
     REGISTRY_LOGIN_TOKEN: $REGISTRY_LOGIN_TOKEN
   script:
@@ -92,7 +91,6 @@ build-and-push-bark-to-registry:
 
 push-bark-to-docker:
   stage: release
-  image: quay.io/buildah/stable:latest
   variables:
     REGISTRY_LOGIN_TOKEN: $REGISTRY_LOGIN_TOKEN
     DOCKER_LOGIN_TOKEN: $DOCKER_LOGIN_TOKEN
