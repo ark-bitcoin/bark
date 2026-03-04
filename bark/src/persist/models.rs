@@ -9,9 +9,10 @@
 //! - Enable forward/backward compatibility when schema migrations occur.
 
 use std::borrow::Cow;
+use std::fmt;
 
 use bitcoin::{Amount, Transaction};
-use bitcoin::secp256k1::Keypair;
+use bitcoin::secp256k1::{Keypair, PublicKey};
 use lightning_invoice::Bolt11Invoice;
 
 use ark::{Vtxo, VtxoId, VtxoPolicy, VtxoRequest};
@@ -22,21 +23,78 @@ use ark::rounds::RoundSeq;
 use bitcoin_ext::BlockDelta;
 
 use crate::WalletVtxo;
-use crate::exit::{ExitVtxo, ExitState};
+use crate::exit::{ExitState, ExitTxOrigin, ExitVtxo};
 use crate::movement::MovementId;
 use crate::round::{AttemptState, RoundFlowState, RoundParticipation, RoundState};
+use crate::vtxo::VtxoState;
+
+/// VTXO with state history for persistence.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SerdeVtxo {
+	#[serde(with = "ark::encode::serde")]
+	pub vtxo: Vtxo,
+	/// VTXO states, sorted from oldest to newest.
+	pub states: Vec<VtxoState>,
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error("vtxo has no state")]
+pub struct MissingStateError;
+
+impl SerdeVtxo {
+	pub fn current_state(&self) -> Option<&VtxoState> {
+		self.states.last()
+	}
+
+	pub fn to_wallet_vtxo(&self) -> Result<WalletVtxo, MissingStateError> {
+		Ok(WalletVtxo {
+			vtxo: self.vtxo.clone(),
+			state: self.current_state().cloned().ok_or(MissingStateError)?,
+		})
+	}
+}
+
+/// VTXO key mapping for persistence.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SerdeVtxoKey {
+	pub index: u32,
+	pub public_key: PublicKey,
+}
+
+/// Identifier for a stored [RoundState].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RoundStateId(pub u32);
+
+impl RoundStateId {
+	pub fn to_bytes(&self) -> [u8; 4] {
+		self.0.to_be_bytes()
+	}
+}
+
+impl fmt::Display for RoundStateId {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+	    fmt::Display::fmt(&self.0, f)
+	}
+}
+
+pub struct StoredRoundState {
+	pub id: RoundStateId,
+	pub state: RoundState,
+}
 
 /// Persisted representation of a pending board.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PendingBoard {
 	/// This is the [bitcoin::Transaction] that has to
 	/// be confirmed onchain for the board to succeed.
+	#[serde(with = "bitcoin_ext::serde::encodable")]
 	pub funding_tx: Transaction,
 	/// The id of VTXOs being boarded.
 	///
 	/// Currently, this is always a vector of length 1
 	pub vtxos: Vec<VtxoId>,
 	/// The amount of the board.
+	#[serde(with = "bitcoin::amount::serde::as_sat")]
 	pub amount: Amount,
 	/// The [MovementId] associated with this board.
 	pub movement_id: MovementId,
@@ -45,11 +103,12 @@ pub struct PendingBoard {
 /// Persisted representation of a lightning send.
 ///
 /// Created after the HTLCs from client to server are constructed.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LightningSend {
 	/// The Lightning invoice being paid.
 	pub invoice: Invoice,
 	/// The amount being sent.
+	#[serde(with = "bitcoin::amount::serde::as_sat")]
 	pub amount: Amount,
 	/// The fee paid for making the lightning payment.
 	pub fee: Amount,
@@ -74,7 +133,7 @@ pub struct LightningSend {
 /// and tracks whether the preimage has been revealed.
 ///
 /// Note: the record should be removed when the receive is completed or failed.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LightningReceive {
 	pub payment_hash: PaymentHash,
 	pub payment_preimage: Preimage,
@@ -90,6 +149,7 @@ pub struct LightningReceive {
 ///
 /// `StoredExit` is a lightweight data transfer object tailored for storage backends. It captures
 /// the VTXO ID, the current state, and the full history of the unilateral exit.
+#[derive(Serialize, Deserialize)]
 pub struct StoredExit {
 	/// Identifier of the VTXO being exited.
 	pub vtxo_id: VtxoId,
@@ -108,6 +168,14 @@ impl StoredExit {
 			history: exit.history().clone(),
 		}
 	}
+}
+
+/// Exit child transaction for persistence.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SerdeExitChildTx {
+	#[serde(with = "bitcoin_ext::serde::encodable")]
+	pub child_tx: Transaction,
+	pub origin: ExitTxOrigin,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

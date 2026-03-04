@@ -64,7 +64,8 @@ mod test {
 	use ark::lightning::{Bolt12Invoice, Bolt12InvoiceExt, Invoice};
 	use lightning_invoice::Bolt11Invoice;
 
-	use crate::{Config, SqliteClient, Wallet};
+	use crate::{Config, Wallet};
+	use crate::persist::sqlite::SqliteClient;
 
 	#[allow(unused)] // just exists for compile check
 	async fn pay_lightning_invoice_argument() {

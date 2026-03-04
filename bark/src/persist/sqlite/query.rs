@@ -17,7 +17,7 @@ use bitcoin_ext::BlockDelta;
 
 use crate::{Vtxo, VtxoId, WalletProperties};
 use crate::exit::{ExitState, ExitTxOrigin};
-use crate::movement::{Movement, MovementId, MovementStatus, MovementSubsystem, PaymentMethod};
+use crate::movement::{Movement, MovementId, MovementStatus, MovementSubsystem};
 use crate::persist::{RoundStateId, StoredRoundState};
 use crate::persist::models::{
 	LightningReceive, LightningSend, PendingBoard, SerdeRoundState, StoredExit
@@ -91,24 +91,6 @@ pub (crate) fn fetch_properties(conn: &Connection) -> anyhow::Result<Option<Wall
 	} else {
 		Ok(None)
 	}
-}
-
-pub fn check_recipient_exists(
-	conn: &Connection,
-	recipient: &PaymentMethod,
-) -> anyhow::Result<bool> {
-	let exists: bool = conn.query_row(
-		"SELECT EXISTS(
-			SELECT 1
-			FROM bark_movements m
-			INNER JOIN bark_movements_sent_to st ON m.id = st.movement_id
-			WHERE m.status = ?1 AND st.destination = ?2
-		)",
-		params!(MovementStatus::Successful.as_str(), serde_json::to_string(recipient)?),
-		|row| row.get(0)
-	)?;
-
-	Ok(exists)
 }
 
 pub fn create_new_movement(

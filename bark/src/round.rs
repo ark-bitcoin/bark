@@ -35,7 +35,7 @@ use server_rpc::{protos, ServerConnection, TryFromBytes};
 use crate::{SECP, Wallet, WalletVtxo};
 use crate::movement::{MovementId, MovementStatus};
 use crate::movement::update::MovementUpdate;
-use crate::persist::{RoundStateId, StoredRoundState};
+use crate::persist::models::{RoundStateId, StoredRoundState};
 use crate::subsystem::{RoundMovement, Subsystem};
 
 

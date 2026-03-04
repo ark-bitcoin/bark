@@ -2,7 +2,8 @@ use std::sync::Arc;
 
 use bitcoin::Network;
 
-use bark::{Config, SqliteClient, Wallet};
+use bark::{Config, Wallet};
+use bark::persist::sqlite::SqliteClient;
 
 async fn example() -> anyhow::Result<()> {
 	let mnemonic = "super secret ...".parse()?;

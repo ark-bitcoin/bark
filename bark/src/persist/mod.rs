@@ -17,11 +17,11 @@
 //!   storage expectations without depending on a specific database.
 //! - A default rusqlite implementation is provided by [sqlite::SqliteClient].
 
+pub mod adaptor;
 pub mod models;
+#[cfg(feature = "sqlite")]
 pub mod sqlite;
 
-
-use std::fmt;
 
 use bitcoin::{Amount, Transaction, Txid};
 use bitcoin::secp256k1::PublicKey;
@@ -36,25 +36,13 @@ use bitcoin_ext::BlockDelta;
 
 use crate::WalletProperties;
 use crate::exit::ExitTxOrigin;
-use crate::movement::{Movement, MovementId, MovementStatus, MovementSubsystem, PaymentMethod};
-use crate::persist::models::{LightningReceive, LightningSend, PendingBoard, StoredExit};
+use crate::movement::{Movement, MovementId, MovementStatus, MovementSubsystem};
+use crate::persist::models::{
+	LightningReceive, LightningSend, PendingBoard, StoredExit,
+	StoredRoundState, RoundStateId,
+};
 use crate::round::RoundState;
 use crate::vtxo::{VtxoState, VtxoStateKind, WalletVtxo};
-
-/// Identifier for a stored [RoundState].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct RoundStateId(pub u32);
-
-impl fmt::Display for RoundStateId {
-	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-	    fmt::Display::fmt(&self.0, f)
-	}
-}
-
-pub struct StoredRoundState {
-	pub id: RoundStateId,
-	pub state: RoundState,
-}
 
 /// Storage interface for Bark wallets.
 ///
@@ -146,22 +134,6 @@ pub trait BarkPersister: Send + Sync + 'static {
 	/// Errors:
 	/// - Returns an error if the update fails.
 	async fn set_server_pubkey(&self, server_pubkey: PublicKey) -> anyhow::Result<()>;
-
-	/// Check whether a recipient identifier already exists.
-	///
-	/// Useful to avoid storing duplicate recipients for the same logical payee or duplicated
-	/// lightning invoice payments (unsafe)
-	///
-	/// Parameters:
-	/// - recipient: A recipient identifier (e.g., invoice).
-	///
-	/// Returns:
-	/// - `Ok(true)` if the recipient exists,
-	/// - `Ok(false)` otherwise.
-	///
-	/// Errors:
-	/// - Returns an error if the lookup fails.
-	async fn check_recipient_exists(&self, recipient: &PaymentMethod) -> anyhow::Result<bool>;
 
 	/// Creates a new movement in the given state, ready to be updated.
 	///

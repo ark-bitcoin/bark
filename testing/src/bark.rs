@@ -1,5 +1,4 @@
 
-use bark::{BarkNetwork, Config};
 pub use bark_json::cli as json;
 
 use std::{env, fmt};
@@ -20,6 +19,11 @@ use tokio::process::Command as TokioCommand;
 use tokio::sync::Mutex;
 
 use ark::VtxoId;
+use bark::{BarkNetwork, Config};
+use bark::persist::BarkPersister;
+use bark::persist::adaptor::StorageAdaptorWrapper;
+use bark::persist::adaptor::filestore::FileStorageAdaptor;
+use bark::persist::sqlite::SqliteClient;
 use bark_json::cli::{InvoiceInfo, LightningReceiveInfo, RoundStatus};
 use bark_json::primitives::{UtxoInfo, WalletVtxoInfo};
 use bitcoin_ext::{BlockHeight, FeeRateExt};
@@ -27,7 +31,7 @@ use bitcoin_ext::{BlockHeight, FeeRateExt};
 use crate::constants::BOARD_CONFIRMATIONS;
 use crate::{Bitcoind, TestContext};
 use crate::context::ToArkUrl;
-use crate::constants::env::{BARK_COMMAND_TIMEOUT_MILLIS, BARK_EXEC};
+use crate::constants::env::{BARK_COMMAND_TIMEOUT_MILLIS, BARK_EXEC, USE_FILESTORE};
 use crate::util::resolve_path;
 
 const COMMAND_LOG_FILE: &str = "commands.log";
@@ -111,6 +115,9 @@ impl Bark {
 		if force {
 			cmd.arg("--force");
 		}
+		if env::var(USE_FILESTORE).map(|v| v == "1").unwrap_or(false) {
+			cmd.arg("--use-filestore");
+		}
 
 		let output = cmd.output().await?;
 		if !output.status.success() {
@@ -167,6 +174,7 @@ impl Bark {
 	pub async fn try_client(&self) -> anyhow::Result<bark::Wallet> {
 		const MNEMONIC_FILE: &str = "mnemonic";
 		const DB_FILE: &str = "db.sqlite";
+		const FILESTORE_FILE: &str = "wallet.json";
 		const CONFIG_FILE: &str = "config.toml";
 
 		// read mnemonic file
@@ -182,9 +190,16 @@ impl Bark {
 		let config: bark::Config = toml::from_str(&config_str)
 			.with_context(|| format!("Failed to parse config file at {}", config_path.display()))?;
 
-		let db = bark::SqliteClient::open(self.datadir.join(DB_FILE))?;
+		let use_filestore = self.datadir.join(FILESTORE_FILE).exists();
+		let db: Arc<dyn BarkPersister + Send + Sync> = if use_filestore {
+			let filestore = self.datadir.join(FILESTORE_FILE);
+			let adaptor = FileStorageAdaptor::open(filestore).await?;
+			Arc::new(StorageAdaptorWrapper::new(adaptor))
+		} else {
+			Arc::new(SqliteClient::open(self.datadir.join(DB_FILE))?)
+		};
 
-		Ok(bark::Wallet::open(&mnemonic, Arc::new(db), config).await?)
+		Ok(bark::Wallet::open(&mnemonic, db, config).await?)
 	}
 
 	pub async fn client(&self) -> bark::Wallet {

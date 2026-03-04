@@ -49,6 +49,14 @@ impl VtxoStateKind {
 		}
 	}
 
+	pub fn as_byte(&self) -> u8 {
+		match self {
+			VtxoStateKind::Spendable => 0,
+			VtxoStateKind::Locked { .. } => 1,
+			VtxoStateKind::Spent => 2,
+		}
+	}
+
 	/// List of all existing states
 	pub const ALL: &[VtxoStateKind] = &[
 		VtxoStateKind::Spendable,
@@ -81,30 +89,31 @@ impl fmt::Debug for VtxoStateKind {
 pub enum VtxoState {
 	/// The [Vtxo] is available and can be spent in a future round.
 	Spendable,
-	/// The [Vtxo] has been consumed.
-	Spent,
 	/// The [Vtxo] is currently locked in an action.
 	Locked {
 		/// The ID of the associated [Movement](crate::movement::Movement) that locked this VTXO.
 		movement_id: Option<MovementId>,
 	},
+	/// The [Vtxo] has been consumed.
+	Spent,
 }
 
 impl VtxoState {
 	/// Returns the compact [VtxoStateKind] discriminator for this rich state.
 	pub fn kind(&self) -> VtxoStateKind {
 		match self {
-			VtxoState::Locked { .. } => VtxoStateKind::Locked,
 			VtxoState::Spendable => VtxoStateKind::Spendable,
+			VtxoState::Locked { .. } => VtxoStateKind::Locked,
 			VtxoState::Spent => VtxoStateKind::Spent,
 		}
 	}
 }
 
 /// A wallet-owned [Vtxo] paired with its current tracked state.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WalletVtxo {
 	/// The underlying [Vtxo].
+	#[serde(with = "ark::encode::serde")]
 	pub vtxo: Vtxo,
 	/// The current tracked state for [WalletVtxo::into_vtxo].
 	pub state: VtxoState,

@@ -63,7 +63,8 @@
 //! use std::path::PathBuf;
 //! use std::sync::Arc;
 //! use tokio::fs;
-//! use bark::{Config, onchain, SqliteClient, Wallet};
+//! use bark::{Config, onchain, Wallet};
+//! use bark::persist::sqlite::SqliteClient;
 //!
 //! const MNEMONIC_FILE : &str = "mnemonic";
 //! const DB_FILE: &str = "db.sqlite";
@@ -112,7 +113,8 @@
 //! # use bip39;
 //! # use tokio::fs;
 //! #
-//! # use bark::{Config, SqliteClient, Wallet};
+//! # use bark::{Config, Wallet};
+//! # use bark::persist::sqlite::SqliteClient;
 //! #
 //! const MNEMONIC_FILE : &str = "mnemonic";
 //! const DB_FILE: &str = "db.sqlite";
@@ -148,7 +150,8 @@
 //! #
 //! # use tokio::fs;
 //! #
-//! # use bark::{Config, Wallet, SqliteClient};
+//! # use bark::{Config, Wallet};
+//! # use bark::persist::sqlite::SqliteClient;
 //! #
 //! # const MNEMONIC_FILE : &str = "mnemonic";
 //! # const DB_FILE: &str = "db.sqlite";
@@ -188,7 +191,8 @@
 //! #
 //! # use tokio::fs;
 //! #
-//! # use bark::{Config, SqliteClient, Wallet};
+//! # use bark::{Config, Wallet};
+//! # use bark::persist::sqlite::SqliteClient;
 //! #
 //! # const MNEMONIC_FILE : &str = "mnemonic";
 //! # const DB_FILE: &str = "db.sqlite";
@@ -242,7 +246,8 @@
 //! #
 //! # use tokio::fs;
 //! #
-//! # use bark::{Config, Wallet, SqliteClient};
+//! # use bark::{Config, Wallet};
+//! # use bark::persist::sqlite::SqliteClient;
 //! #
 //! # const MNEMONIC_FILE : &str = "mnemonic";
 //! # const DB_FILE: &str = "db.sqlite";
@@ -314,7 +319,6 @@ pub use self::arkoor::ArkoorCreateResult;
 pub use self::config::{BarkNetwork, Config};
 pub use self::daemon::DaemonHandle;
 pub use self::fees::FeeEstimate;
-pub use self::persist::sqlite::SqliteClient;
 pub use self::vtxo::WalletVtxo;
 
 use std::collections::HashSet;
@@ -345,7 +349,8 @@ use crate::movement::Movement;
 use crate::movement::manager::MovementManager;
 use crate::movement::update::MovementUpdate;
 use crate::onchain::{DaemonizableOnchainWallet, ExitUnilaterally, PreparePsbt, SignPsbt, Utxo};
-use crate::persist::{BarkPersister, RoundStateId, StoredRoundState};
+use crate::persist::BarkPersister;
+use crate::persist::models::{RoundStateId, StoredRoundState};
 use crate::round::{RoundParticipation, RoundStatus};
 use crate::subsystem::{ArkoorMovement, RoundMovement};
 use crate::vtxo::{FilterVtxos, RefreshStrategy, VtxoFilter, VtxoStateKind};
@@ -450,7 +455,7 @@ pub struct OffchainBalance {
 }
 
 /// Read-only properties of the Bark wallet.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WalletProperties {
 	/// The Bitcoin network to run Bark on.
 	///
@@ -579,9 +584,9 @@ impl WalletSeed {
 /// # #[cfg(any(test, doc))]
 /// # async fn demo() -> anyhow::Result<()> {
 /// # use std::sync::Arc;
-/// # use bark::{Config, SqliteClient, Wallet};
+/// # use bark::{Config, Wallet};
 /// # use bark::onchain::OnchainWallet;
-/// # use bark::persist::BarkPersister;
+/// # use bark::persist::{BarkPersister, SqliteClient};
 /// # use bark::persist::sqlite::helpers::in_memory_db;
 /// # use bip39::Mnemonic;
 /// # use bitcoin::Network;

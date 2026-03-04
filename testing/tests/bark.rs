@@ -16,7 +16,7 @@ use ark::{ProtocolEncoding, Vtxo, VtxoPolicy, VtxoRequest};
 use ark::rounds::RoundEvent;
 use ark::vtxo::policy::PubkeyVtxoPolicy;
 use bark::BarkNetwork;
-use bark::persist::StoredRoundState;
+use bark::persist::models::StoredRoundState;
 use bark::round::RoundParticipation;
 use bark::subsystem::RoundMovement;
 use bark_json::cli::{MovementDestination, PaymentMethod};

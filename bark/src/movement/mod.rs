@@ -26,7 +26,7 @@ const MOVEMENT_FAILED: &'static str = "failed";
 const MOVEMENT_CANCELED: &'static str = "canceled";
 
 /// Describes an attempted movement of offchain funds within the [Wallet](crate::Wallet).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Movement {
 	/// The internal ID of the movement.
 	pub id: MovementId,
@@ -40,14 +40,17 @@ pub struct Movement {
 	pub metadata: HashMap<String, serde_json::Value>,
 	/// How much the movement was expected to increase or decrease the balance by. This is always an
 	/// estimate and often discounts any applicable fees.
+	#[serde(with = "bitcoin::amount::serde::as_sat")]
 	pub intended_balance: SignedAmount,
 	/// How much the wallet balance actually changed by. Positive numbers indicate an increase and
 	/// negative numbers indicate a decrease. This is often inclusive of applicable fees, and it
 	/// should be the most accurate number.
+	#[serde(with = "bitcoin::amount::serde::as_sat")]
 	pub effective_balance: SignedAmount,
 	/// How much the movement cost the user in offchain fees. If there are applicable onchain fees
 	/// they will not be included in this value but, depending on the subsystem, could be found in
 	/// the metadata.
+	#[serde(with = "bitcoin::amount::serde::as_sat")]
 	pub offchain_fee: Amount,
 	/// A list of external recipients that received funds from this movement.
 	pub sent_to: Vec<MovementDestination>,
@@ -69,6 +72,35 @@ pub struct Movement {
 	pub time: MovementTimestamp,
 }
 
+impl Movement {
+	pub fn new(
+		id: MovementId,
+		status: MovementStatus,
+		subsystem: &MovementSubsystem,
+		time: DateTime<chrono::Local>,
+	) -> Self {
+		Self {
+			id,
+			status,
+			subsystem: subsystem.clone(),
+			time: MovementTimestamp {
+				created_at: time,
+				updated_at: time,
+				completed_at: None,
+			},
+			metadata: HashMap::new(),
+			intended_balance: SignedAmount::ZERO,
+			effective_balance: SignedAmount::ZERO,
+			offchain_fee: Amount::ZERO,
+			sent_to: vec![],
+			received_on: vec![],
+			input_vtxos: vec![],
+			output_vtxos: vec![],
+			exited_vtxos: vec![],
+		}
+	}
+}
+
 /// A unique identifier for a movement.
 #[derive(Clone, Copy, Eq, Hash, PartialEq, Deserialize, Serialize)]
 pub struct MovementId(pub u32);
@@ -76,6 +108,10 @@ pub struct MovementId(pub u32);
 impl MovementId {
 	pub fn new(id: u32) -> Self {
 		Self(id)
+	}
+
+	pub fn to_bytes(&self) -> [u8; 4] {
+		self.0.to_be_bytes()
 	}
 }
 
@@ -178,6 +214,7 @@ pub struct MovementDestination {
 	/// An address, invoice or any other identifier to distinguish the recipient.
 	pub destination: PaymentMethod,
 	/// How many sats the recipient received.
+	#[serde(with = "bitcoin::amount::serde::as_sat")]
 	pub amount: Amount,
 }
 
@@ -222,7 +259,7 @@ pub struct MovementSubsystem {
 }
 
 /// Contains the times at which the movement was created, updated and completed.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct MovementTimestamp {
 	/// When the movement was first created.
 	pub created_at: DateTime<chrono::Local>,

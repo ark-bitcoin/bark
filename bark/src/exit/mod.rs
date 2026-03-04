@@ -66,8 +66,9 @@
 //! # use bitcoin::Network;
 //! # use tokio::fs;
 //! #
-//! # use bark::{Config, Wallet, SqliteClient};
+//! # use bark::{Config, Wallet};
 //! # use bark::onchain::OnchainWallet;
+//! # use bark::persist::sqlite::SqliteClient;
 //! #
 //! # async fn get_wallets() -> (Wallet, OnchainWallet) {
 //! #   let datadir = PathBuf::from("./bark");
