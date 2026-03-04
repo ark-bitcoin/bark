@@ -188,6 +188,7 @@ impl ActionContextFetcher<'_> {
 		let params = self.build_params(vtxo, confirmed_at).await;
 
 		let action = match vtxo.policy() {
+			ServerVtxoPolicy::ServerOwned => Action::Claim { deadline: None },
 			ServerVtxoPolicy::Expiry(_)
 				| ServerVtxoPolicy::Checkpoint(_)
 				| ServerVtxoPolicy::HarkLeaf(_)

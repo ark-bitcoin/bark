@@ -795,6 +795,9 @@ const VTXO_POLICY_HARK_LEAF: u8 = 0x05;
 /// The byte used to encode the [ServerVtxoPolicy::HarkForfeit] output type.
 const VTXO_POLICY_HARK_FORFEIT: u8 = 0x06;
 
+/// The byte used to encode the [ServerVtxoPolicy::ServerOwned] output type.
+const VTXO_POLICY_SERVER_OWNED: u8 = 0x07;
+
 impl ProtocolEncoding for VtxoPolicy {
 	fn encode<W: io::Write + ?Sized>(&self, w: &mut W) -> Result<(), io::Error> {
 		match self {
@@ -867,6 +870,9 @@ impl ProtocolEncoding for ServerVtxoPolicy {
 	fn encode<W: io::Write + ?Sized>(&self, w: &mut W) -> Result<(), io::Error> {
 		match self {
 			Self::User(p) => p.encode(w)?,
+			Self::ServerOwned => {
+				w.emit_u8(VTXO_POLICY_SERVER_OWNED)?;
+			},
 			Self::Checkpoint(CheckpointVtxoPolicy { user_pubkey }) => {
 				w.emit_u8(VTXO_POLICY_CHECKPOINT)?;
 				user_pubkey.encode(w)?;
@@ -895,6 +901,7 @@ impl ProtocolEncoding for ServerVtxoPolicy {
 			VTXO_POLICY_PUBKEY | VTXO_POLICY_SERVER_HTLC_SEND | VTXO_POLICY_SERVER_HTLC_RECV => {
 				Ok(Self::User(decode_vtxo_policy(type_byte, r)?))
 			},
+			VTXO_POLICY_SERVER_OWNED => Ok(Self::ServerOwned),
 			VTXO_POLICY_CHECKPOINT => {
 				let user_pubkey = PublicKey::decode(r)?;
 				Ok(Self::Checkpoint(CheckpointVtxoPolicy { user_pubkey }))

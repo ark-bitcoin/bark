@@ -65,13 +65,15 @@ pub trait Policy: Clone + Send + Sync + 'static {
 pub enum VtxoPolicyKind {
 	/// Standard VTXO output protected with a public key.
 	Pubkey,
-	/// A public policy that grants bitcoin back to the server after expiry
-	/// It is used to construct checkpoint transactions
-	Checkpoint,
 	/// A VTXO that represents an HTLC with the Ark server to send money.
 	ServerHtlcSend,
 	/// A VTXO that represents an HTLC with the Ark server to receive money.
 	ServerHtlcRecv,
+	/// Simple VTXO owned by the server key
+	ServerOwned,
+	/// A public policy that grants bitcoin back to the server after expiry
+	/// It is used to construct checkpoint transactions
+	Checkpoint,
 	/// Server-only policy where coins can only be swept by the server after expiry.
 	Expiry,
 	/// hArk leaf output policy (intermediate outputs spent by leaf txs).
@@ -84,9 +86,10 @@ impl fmt::Display for VtxoPolicyKind {
 	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
 		match self {
 			Self::Pubkey => f.write_str("pubkey"),
-			Self::Checkpoint => f.write_str("checkpoint"),
 			Self::ServerHtlcSend => f.write_str("server-htlc-send"),
 			Self::ServerHtlcRecv => f.write_str("server-htlc-receive"),
+			Self::ServerOwned => f.write_str("server-owned"),
+			Self::Checkpoint => f.write_str("checkpoint"),
 			Self::Expiry => f.write_str("expiry"),
 			Self::HarkLeaf => f.write_str("hark-leaf"),
 			Self::HarkForfeit => f.write_str("hark-forfeit"),
@@ -99,9 +102,10 @@ impl FromStr for VtxoPolicyKind {
 	fn from_str(s: &str) -> Result<Self, Self::Err> {
 		Ok(match s {
 			"pubkey" => Self::Pubkey,
-			"checkpoint" => Self::Checkpoint,
 			"server-htlc-send" => Self::ServerHtlcSend,
 			"server-htlc-receive" => Self::ServerHtlcRecv,
+			"server-owned" => Self::ServerOwned,
+			"checkpoint" => Self::Checkpoint,
 			"expiry" => Self::Expiry,
 			"hark-leaf" => Self::HarkLeaf,
 			"hark-forfeit" => Self::HarkForfeit,
@@ -723,6 +727,8 @@ impl VtxoPolicy {
 pub enum ServerVtxoPolicy {
 	/// Wraps any user-facing policy.
 	User(VtxoPolicy),
+	/// Simple output owned only by the server key
+	ServerOwned,
 	/// A policy which returns all coins to the server after expiry.
 	Checkpoint(CheckpointVtxoPolicy),
 	/// Server-only policy where coins can only be swept by the server after expiry.
@@ -746,6 +752,10 @@ impl From<HarkLeafVtxoPolicy> for ServerVtxoPolicy {
 }
 
 impl ServerVtxoPolicy {
+	pub fn new_server_owned() -> Self {
+		Self::ServerOwned
+	}
+
 	pub fn new_checkpoint(user_pubkey: PublicKey) -> Self {
 		Self::Checkpoint(CheckpointVtxoPolicy { user_pubkey })
 	}
@@ -766,6 +776,7 @@ impl ServerVtxoPolicy {
 	pub fn policy_type(&self) -> VtxoPolicyKind {
 		match self {
 			Self::User(p) => p.policy_type(),
+			Self::ServerOwned => VtxoPolicyKind::ServerOwned,
 			Self::Checkpoint { .. } => VtxoPolicyKind::Checkpoint,
 			Self::Expiry { .. } => VtxoPolicyKind::Expiry,
 			Self::HarkLeaf { .. } => VtxoPolicyKind::HarkLeaf,
@@ -777,6 +788,7 @@ impl ServerVtxoPolicy {
 	pub fn is_arkoor_compatible(&self) -> bool {
 		match self {
 			Self::User(p) => p.is_arkoor_compatible(),
+			Self::ServerOwned => false,
 			Self::Checkpoint { .. } => true,
 			Self::Expiry { .. } => false,
 			Self::HarkLeaf { .. } => false,
@@ -788,6 +800,7 @@ impl ServerVtxoPolicy {
 	pub fn user_pubkey(&self) -> Option<PublicKey> {
 		match self {
 			Self::User(p) => Some(p.user_pubkey()),
+			Self::ServerOwned => None,
 			Self::Checkpoint(CheckpointVtxoPolicy { user_pubkey }) => Some(*user_pubkey),
 			Self::Expiry { .. } => None,
 			Self::HarkLeaf(HarkLeafVtxoPolicy { user_pubkey, .. }) => Some(*user_pubkey),
@@ -803,6 +816,10 @@ impl ServerVtxoPolicy {
 	) -> taproot::TaprootSpendInfo {
 		match self {
 			Self::User(p) => p.taproot(server_pubkey, exit_delta, expiry_height),
+			Self::ServerOwned => {
+				taproot::TaprootBuilder::new()
+					.finalize(&SECP, server_pubkey.x_only_public_key().0).unwrap()
+			},
 			Self::Checkpoint(policy) => policy.taproot(server_pubkey, expiry_height),
 			Self::Expiry(policy) => policy.taproot(server_pubkey, expiry_height),
 			Self::HarkLeaf(policy) => policy.taproot(server_pubkey, expiry_height),
@@ -827,6 +844,7 @@ impl ServerVtxoPolicy {
 	) -> Vec<VtxoClause> {
 		match self {
 			Self::User(p) => p.clauses(exit_delta, expiry_height, server_pubkey),
+			Self::ServerOwned => vec![], // only keyspend
 			Self::Checkpoint(policy) => policy.clauses(expiry_height, server_pubkey),
 			Self::Expiry(policy) => policy.clauses(expiry_height, server_pubkey),
 			Self::HarkLeaf(policy) => policy.clauses(expiry_height, server_pubkey),
