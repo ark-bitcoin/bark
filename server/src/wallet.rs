@@ -7,14 +7,14 @@ use std::str::FromStr;
 use std::time::{SystemTime, UNIX_EPOCH, Instant};
 
 use anyhow::Context;
-use bdk_wallet::{Balance, Wallet};
+use bdk_wallet::Wallet;
 use bip39::Mnemonic;
 use bitcoin::{bip32, Address, Amount, FeeRate, Network, OutPoint, ScriptBuf};
 use bitcoin::{hex::DisplayHex, Psbt, Transaction};
 use tracing::{error, trace};
 
 use bitcoin_ext::BlockRef;
-use bitcoin_ext::bdk::{WalletExt, KEYCHAIN};
+use bitcoin_ext::bdk::{TrustedBalance, WalletExt, KEYCHAIN};
 use bitcoin_ext::rpc::{BitcoinRpcExt, RpcApi};
 
 use crate::{database, telemetry, SECP};
@@ -84,6 +84,7 @@ pub struct PersistedWallet {
 	kind: WalletKind,
 	db: database::Db,
 	locked_outputs: LockedWalletUtxosIndex,
+	min_trusted_confs: u32,
 }
 
 impl PersistedWallet {
@@ -94,6 +95,7 @@ impl PersistedWallet {
 		xpriv: &bip32::Xpriv,
 		kind: WalletKind,
 		deep_tip: BlockRef,
+		min_trusted_confs: u32,
 	) -> anyhow::Result<Self> {
 		let init = db.read_aggregate_changeset(kind).await?;
 		let fresh = init.is_none();
@@ -120,7 +122,7 @@ impl PersistedWallet {
 			db.store_changeset(kind, &cs).await.context("error storing initial wallet state")?;
 		}
 
-		Ok(Self { wallet, kind, db, locked_outputs: LockedWalletUtxosIndex::new() })
+		Ok(Self { wallet, kind, db, locked_outputs: LockedWalletUtxosIndex::new(), min_trusted_confs })
 	}
 
 	/// Load a wallet from the database, deriving the wallet's xpriv using the master xpriv
@@ -131,10 +133,11 @@ impl PersistedWallet {
 		master_xpriv: &bip32::Xpriv,
 		kind: WalletKind,
 		deep_tip: BlockRef,
+		min_trusted_confs: u32,
 	) -> anyhow::Result<Self> {
 		let wallet_xpriv = master_xpriv.derive_priv(&*SECP, &[kind.child_number()])
 			.expect("can't error");
-		Self::load_from_xpriv(db, network, &wallet_xpriv, kind, deep_tip).await
+		Self::load_from_xpriv(db, network, &wallet_xpriv, kind, deep_tip, min_trusted_confs).await
 	}
 
 	/// Persist the committed wallet changes to the database.
@@ -155,7 +158,7 @@ impl PersistedWallet {
 		&mut self,
 		bitcoind: &impl RpcApi,
 		mempool: bool,
-	) -> anyhow::Result<Balance> {
+	) -> anyhow::Result<TrustedBalance> {
 		let start_time = Instant::now();
 
 		let prev_tip = self.latest_checkpoint();
@@ -233,9 +236,8 @@ impl PersistedWallet {
 		let balance = self.balance();
 		server_rpc::WalletStatus {
 			total_balance: balance.total(),
-			trusted_pending_balance: balance.trusted_pending,
-			untrusted_pending_balance: balance.untrusted_pending,
-			confirmed_balance: balance.confirmed,
+			trusted_balance: balance.trusted,
+			untrusted_balance: balance.untrusted,
 			address: address.into_unchecked(),
 			confirmed_utxos: confirmed.into_iter().map(|u| u.outpoint).collect(),
 			unconfirmed_utxos: unconfirmed.into_iter().map(|u| u.outpoint).collect(),
@@ -337,9 +339,14 @@ impl PersistedWallet {
 		self.kind
 	}
 
-	/// Check if the wallet has at least the given amount of confirmed funds.
-	pub fn has_confirmed_funds(&self, amount: Amount) -> bool {
-		self.balance().confirmed >= amount
+	/// Compute the wallet balance using our recursive trust model.
+	pub fn balance(&self) -> TrustedBalance {
+		self.wallet.trusted_balance(self.min_trusted_confs)
+	}
+
+	/// Check if the wallet has at least the given amount of trusted funds.
+	pub fn has_trusted_balance(&self, amount: Amount) -> bool {
+		self.balance().trusted >= amount
 	}
 }
 

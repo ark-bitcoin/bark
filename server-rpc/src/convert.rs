@@ -411,9 +411,8 @@ impl From<crate::WalletStatus> for protos::WalletStatus {
 		protos::WalletStatus {
 			address: s.address.assume_checked().to_string(),
 			total_balance: s.total_balance.to_sat(),
-			trusted_pending_balance: s.trusted_pending_balance.to_sat(),
-			untrusted_pending_balance: s.untrusted_pending_balance.to_sat(),
-			confirmed_balance: s.confirmed_balance.to_sat(),
+			trusted_balance: s.trusted_balance.to_sat(),
+			untrusted_balance: s.untrusted_balance.to_sat(),
 			confirmed_utxos: s.confirmed_utxos.iter().map(|u| u.to_string()).collect(),
 			unconfirmed_utxos: s.unconfirmed_utxos.iter().map(|u| u.to_string()).collect(),
 		}
@@ -426,9 +425,8 @@ impl TryFrom<protos::WalletStatus> for crate::WalletStatus {
 		Ok(crate::WalletStatus {
 			address: s.address.parse().map_err(|_| "invalid address")?,
 			total_balance: Amount::from_sat(s.total_balance),
-			trusted_pending_balance: Amount::from_sat(s.trusted_pending_balance),
-			untrusted_pending_balance: Amount::from_sat(s.untrusted_pending_balance),
-			confirmed_balance: Amount::from_sat(s.confirmed_balance),
+			trusted_balance: Amount::from_sat(s.trusted_balance),
+			untrusted_balance: Amount::from_sat(s.untrusted_balance),
 			confirmed_utxos: s.confirmed_utxos.iter().map(|u| {
 				u.parse().map_err(|_| "invalid outpoint")
 			}).collect::<Result<_, _>>()?,

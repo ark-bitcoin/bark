@@ -279,6 +279,7 @@ async fn inner_main() -> anyhow::Result<()> {
 				&master_xpriv,
 				server::wallet::WalletKind::Rounds,
 				bitcoind.deep_tip().context("failed to query node for deep tip")?,
+				cfg.min_trusted_confs,
 			).await?;
 
 			let tx = w.drain(address, &bitcoind).await?;
@@ -491,12 +492,11 @@ struct WalletStatus(rpc::WalletStatus);
 impl serde::Serialize for WalletStatus {
 	fn serialize<S: serde::Serializer>(&self, ser: S) -> Result<S::Ok, S::Error> {
 		use serde::ser::SerializeStruct;
-		let mut s = ser.serialize_struct("", 7)?;
+		let mut s = ser.serialize_struct("", 6)?;
 		s.serialize_field("address", &self.0.address)?;
 		s.serialize_field("total_balance", &self.0.total_balance.to_sat())?;
-		s.serialize_field("trusted_pending_balance", &self.0.trusted_pending_balance.to_sat())?;
-		s.serialize_field("untrusted_pending_balance", &self.0.untrusted_pending_balance.to_sat())?;
-		s.serialize_field("confirmed_balance", &self.0.confirmed_balance.to_sat())?;
+		s.serialize_field("trusted_balance", &self.0.trusted_balance.to_sat())?;
+		s.serialize_field("untrusted_balance", &self.0.untrusted_balance.to_sat())?;
 		s.serialize_field("confirmed_utxos", &self.0.confirmed_utxos)?;
 		s.serialize_field("unconfirmed_utxos", &self.0.unconfirmed_utxos)?;
 		s.end()

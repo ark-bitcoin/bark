@@ -522,6 +522,9 @@ pub mod watchmand {
 		#[serde(with = "utils::serde::duration")]
 		pub transaction_rebroadcast_interval: Duration,
 
+		/// Minimum number of confirmations for a UTXO to be considered trusted.
+		pub min_trusted_confs: u32,
+
 		pub postgres: Postgres,
 
 		pub bitcoind: Bitcoind,

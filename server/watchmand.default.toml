@@ -18,6 +18,9 @@ sync_manager_block_poll_interval = "100ms"
 # The interval to rebroadcast transactions
 transaction_rebroadcast_interval = "1m"
 
+# Minimum number of confirmations for a UTXO to be considered trusted
+min_trusted_confs = 1
+
 # The name of your deployment used by OpenTelemetry
 otel_deployment_name = "my_regtest"
 

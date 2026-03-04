@@ -532,9 +532,9 @@ impl Watchman {
 
 		//TODO(stevenroose) consider a safe strategy for batching here as well
 		for (progress_txid, vtxo) in txs {
-			if !wallet.has_confirmed_funds(self.config.min_cpfp_amount) {
+			if !wallet.has_trusted_balance(self.config.min_cpfp_amount) {
 				slog!(NoMoreConfirmedFunds, wallet: wallet.kind().name().into(),
-					balance: wallet.balance().confirmed,
+					balance: wallet.balance().trusted,
 				);
 				break;
 			}

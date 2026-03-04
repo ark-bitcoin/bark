@@ -4,9 +4,9 @@ use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
-use bdk_wallet::Balance;
 use bitcoin::secp256k1::PublicKey;
 use bitcoin::{Amount, Network};
+use bitcoin_ext::bdk::TrustedBalance;
 use bitcoin::hex::DisplayHex;
 use bitcoin_ext::BlockHeight;
 use opentelemetry::global::BoxedSpan;
@@ -620,31 +620,19 @@ pub fn count_protocol_version(pver: u64) {
 	}
 }
 
-pub fn set_wallet_balance(wallet_kind: WalletKind, wallet_balance: Balance) {
+pub fn set_wallet_balance(wallet_kind: WalletKind, wallet_balance: TrustedBalance) {
 	if let Some(m) = TELEMETRY.get() {
-		let confirmed_attrs = m.with_global_labels([
-			KeyValue::new(ATTRIBUTE_KIND, wallet_kind.to_string()),
-			KeyValue::new(ATTRIBUTE_TYPE, "confirmed"),
-		]);
-		m.wallet_balance_gauge.record(wallet_balance.confirmed.to_sat(), &confirmed_attrs);
-
-		let immature_attrs = m.with_global_labels([
-			KeyValue::new(ATTRIBUTE_KIND, wallet_kind.to_string()),
-			KeyValue::new(ATTRIBUTE_TYPE, "immature"),
-		]);
-		m.wallet_balance_gauge.record(wallet_balance.immature.to_sat(), &immature_attrs);
-
 		let trusted_attrs = m.with_global_labels([
 			KeyValue::new(ATTRIBUTE_KIND, wallet_kind.to_string()),
-			KeyValue::new(ATTRIBUTE_TYPE, "trusted_pending"),
+			KeyValue::new(ATTRIBUTE_TYPE, "trusted"),
 		]);
-		m.wallet_balance_gauge.record(wallet_balance.trusted_pending.to_sat(), &trusted_attrs);
+		m.wallet_balance_gauge.record(wallet_balance.trusted.to_sat(), &trusted_attrs);
 
 		let untrusted_attrs = m.with_global_labels([
 			KeyValue::new(ATTRIBUTE_KIND, wallet_kind.to_string()),
-			KeyValue::new(ATTRIBUTE_TYPE, "untrusted_pending"),
+			KeyValue::new(ATTRIBUTE_TYPE, "untrusted"),
 		]);
-		m.wallet_balance_gauge.record(wallet_balance.untrusted_pending.to_sat(), &untrusted_attrs);
+		m.wallet_balance_gauge.record(wallet_balance.untrusted.to_sat(), &untrusted_attrs);
 	}
 }
 

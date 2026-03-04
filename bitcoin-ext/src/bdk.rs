@@ -15,6 +15,21 @@ use crate::{BlockHeight, TransactionExt};
 use crate::cpfp::MakeCpfpFees;
 use crate::fee::FEE_ANCHOR_SPEND_WEIGHT;
 
+/// Balance categorized by our recursive trust model.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct TrustedBalance {
+	/// Funds in UTXOs we trust (confirmed or all-ours unconfirmed chains).
+	pub trusted: Amount,
+	/// Funds in UTXOs we don't trust.
+	pub untrusted: Amount,
+}
+
+impl TrustedBalance {
+	pub fn total(&self) -> Amount {
+		self.trusted + self.untrusted
+	}
+}
+
 /// The [bdk_wallet::KeychainKind] that is always used, because we only use a single keychain.
 pub const KEYCHAIN: bdk_wallet::KeychainKind = bdk_wallet::KeychainKind::External;
 
@@ -110,6 +125,20 @@ pub trait WalletExt: BorrowMut<Wallet> {
 		let tip = w.latest_checkpoint().height();
 		let mut budget = 100u32;
 		is_trusted_tx_inner(w, txid, min_confs, tip, &mut budget)
+	}
+
+	/// Compute the wallet balance using our recursive trust model.
+	fn trusted_balance(&self, min_confs: u32) -> TrustedBalance {
+		let mut trusted = Amount::ZERO;
+		let mut untrusted = Amount::ZERO;
+		for utxo in self.borrow().list_unspent() {
+			if self.is_trusted_utxo(utxo.outpoint, min_confs) {
+				trusted += utxo.txout.value;
+			} else {
+				untrusted += utxo.txout.value;
+			}
+		}
+		TrustedBalance { trusted, untrusted }
 	}
 
 	/// Return all UTXOs that are untrusted.

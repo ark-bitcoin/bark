@@ -88,6 +88,7 @@ impl Daemon {
 			.expect("can't error");
 		let _wallet = PersistedWallet::load_from_xpriv(
 			db.clone(), cfg.network, &wallet_xpriv, WalletKind::Watchman, deep_tip,
+			cfg.min_trusted_confs,
 		);
 
 		Ok(())
@@ -163,6 +164,7 @@ impl Daemon {
 
 		let watchman_wallet = PersistedWallet::load_derive_from_master_xpriv(
 			db.clone(), cfg.network, &master_xpriv, WalletKind::Watchman, deep_tip,
+			cfg.min_trusted_confs,
 		).await.context("error loading watchman wallet")?;
 		let watchman_wallet = Arc::new(tokio::sync::Mutex::new(watchman_wallet));
 

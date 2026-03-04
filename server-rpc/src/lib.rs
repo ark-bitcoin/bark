@@ -99,9 +99,8 @@ pub const PROTOCOL_VERSION_HEADER: &str = "pver";
 pub struct WalletStatus {
 	pub address: Address<NetworkUnchecked>,
 	pub total_balance: Amount,
-	pub trusted_pending_balance: Amount,
-	pub untrusted_pending_balance: Amount,
-	pub confirmed_balance: Amount,
+	pub trusted_balance: Amount,
+	pub untrusted_balance: Amount,
 	pub confirmed_utxos: Vec<OutPoint>,
 	pub unconfirmed_utxos: Vec<OutPoint>,
 }
