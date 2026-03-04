@@ -65,13 +65,14 @@ mod test {
 	use lightning_invoice::Bolt11Invoice;
 
 	use crate::{Config, Wallet};
-	use crate::persist::sqlite::SqliteClient;
+	use crate::persist::adaptor::StorageAdaptorWrapper;
+	use crate::persist::adaptor::memory::MemoryStorageAdaptor;
 
 	#[allow(unused)] // just exists for compile check
 	async fn pay_lightning_invoice_argument() {
 		//! Check the different possible argument for pay_lightning_invoice
 
-		let db = Arc::new(SqliteClient::open("").unwrap());
+		let db = Arc::new(StorageAdaptorWrapper::new(MemoryStorageAdaptor::new()));
 		let w = Wallet::open(
 			&"".parse().unwrap(), db, Config::network_default(Network::Regtest),
 		).await.unwrap();

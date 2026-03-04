@@ -53,9 +53,9 @@
 //! the configuration. The example below configures
 //!
 //! You will also need a place to store all [ark::Vtxo]s on the users device.
-//! We have implemented [SqliteClient] which is a sane default on most devices.
-//! However, it is possible to implement a [BarkPersister] if you have other
-//! requirements.
+//! We have implemented [SqliteClient] which is a sane default on most devices
+//! (requires the `sqlite` feature). However, it is possible to implement a
+//! [BarkPersister] if you have other requirements.
 //!
 //! The code-snippet below shows how you can create a [Wallet].
 //!

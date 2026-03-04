@@ -9,7 +9,7 @@ edition = "2024"
 readme = "README.md"
 
 [features]
-default = ["rand", "sqlite"]
+default = ["rand"]
 pid-lock = []
 onchain-bdk = ["bdk_wallet", "bark-bitcoin-ext/bdk"]
 tls-native-roots = ["tonic/tls-native-roots"]
