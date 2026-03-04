@@ -38,7 +38,6 @@ build-server-master:
 build-and-push-captaind-to-registry-master:
   stage: release
   extends: .master-release-rules
-  image: quay.io/buildah/stable:latest
   variables:
     REGISTRY_LOGIN_TOKEN: $REGISTRY_LOGIN_TOKEN
   script:
