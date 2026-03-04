@@ -378,6 +378,10 @@ pub async fn open_wallet(datadir: &Path) -> anyhow::Result<Option<(BarkWallet, O
 		return Ok(None);
 	}
 
+	if !tokio::fs::try_exists(&mnemonic_path).await? {
+		return Ok(None);
+	}
+
 	let mnemonic_str = tokio::fs::read_to_string(&mnemonic_path).await
 		.with_context(|| format!("failed to read mnemonic file at {}", mnemonic_path.display()))?;
 	let mnemonic = bip39::Mnemonic::from_str(&mnemonic_str).context("broken mnemonic")?;
