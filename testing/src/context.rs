@@ -260,7 +260,7 @@ impl TestContext {
 			nb_round_nonces: 8,
 			round_forfeit_nonces_timeout: Duration::from_secs(30),
 			required_board_confirmations: constants::BOARD_CONFIRMATIONS as usize,
-			round_tx_untrusted_input_confirmations: 1,
+			min_trusted_confs: 1,
 			max_vtxo_amount: None,
 			max_arkoor_depth: 5,
 			max_arkoor_fanout: 4,

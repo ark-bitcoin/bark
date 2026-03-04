@@ -13,7 +13,7 @@ use bitcoin::{bip32, Address, Amount, FeeRate, Network, OutPoint, ScriptBuf};
 use bitcoin::{hex::DisplayHex, Psbt, Transaction};
 use tracing::{error, trace};
 
-use bitcoin_ext::{BlockHeight, BlockRef};
+use bitcoin_ext::BlockRef;
 use bitcoin_ext::bdk::{WalletExt, KEYCHAIN};
 use bitcoin_ext::rpc::{BitcoinRpcExt, RpcApi};
 
@@ -272,7 +272,7 @@ impl PersistedWallet {
 		amount: Amount,
 		fee_rate: FeeRate,
 	) -> anyhow::Result<Transaction> {
-		let unavailable = self.unavailable_outputs(None);
+		let unavailable = self.unavailable_outputs(0);
 		let mut b = self.build_tx();
 		b.unspendable(unavailable);
 		b.add_recipient(script_pubkey, amount);
@@ -312,8 +312,8 @@ impl PersistedWallet {
 		Ok(tx)
 	}
 
-	pub fn unavailable_outputs(&self, confirmed_height: Option<BlockHeight>) -> Vec<OutPoint> {
-		self.untrusted_utxos(confirmed_height).into_iter()
+	pub fn unavailable_outputs(&self, min_confs: u32) -> Vec<OutPoint> {
+		self.untrusted_utxos(min_confs).into_iter()
 			.chain(self.locked_outputs.utxos())
 			.collect::<Vec<_>>()
 	}

@@ -112,45 +112,14 @@ pub trait WalletExt: BorrowMut<Wallet> {
 		is_trusted_tx_inner(w, txid, min_confs, tip, &mut budget)
 	}
 
-	/// Return all UTXOs that are untrusted: unconfirmed and not change.
-	fn untrusted_utxos(&self, confirmed_height: Option<BlockHeight>) -> Vec<OutPoint> {
-		let w = self.borrow();
-		let mut ret = Vec::new();
-		for utxo in w.list_unspent() {
-			// We trust confirmed utxos if they are confirmed enough.
-			if let Some(h) = utxo.chain_position.confirmation_height_upper_bound() {
-				if let Some(min) = confirmed_height {
-					if h <= min {
-						continue;
-					}
-				} else {
-					continue;
-				}
-			}
-
-			// For unconfirmed, we only trust txs from which all inputs are ours.
-			// NB this is still not 100% safe, because this can mark a tx that spends
-			// an untrusted tx as trusted. We don't create such txs in our codebase,
-			// but we should be careful not to start doing this.
-			let txid = utxo.outpoint.txid;
-			if let Some(tx) = w.get_tx(txid) {
-				let all_inputs_ours = tx.tx_node.tx.input.iter().all(|i| {
-					let prev = i.previous_output;
-					if let Some(prev_tx) = w.get_tx(prev.txid) {
-						if let Some(txout) = prev_tx.tx_node.tx.output.get(prev.vout as usize) {
-							return w.is_mine(txout.script_pubkey.clone());
-						}
-					}
-					false
-				});
-				if all_inputs_ours {
-					continue;
-				}
-			}
-
-			ret.push(utxo.outpoint);
-		}
-		ret
+	/// Return all UTXOs that are untrusted.
+	///
+	/// Delegates to [WalletExt::is_trusted_utxo] for each UTXO.
+	fn untrusted_utxos(&self, min_confs: u32) -> Vec<OutPoint> {
+		self.borrow().list_unspent()
+			.filter(|utxo| !self.is_trusted_utxo(utxo.outpoint, min_confs))
+			.map(|utxo| utxo.outpoint)
+			.collect()
 	}
 
 	/// Insert a checkpoint into the wallet.

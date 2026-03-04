@@ -32,8 +32,8 @@ max_arkoor_fanout = 4
 # Number of confirmation required for a board tx to be accepted as a VTXO
 required_board_confirmations = 3
 
-# Number of confirmations we require when using externally received UTXOs
-round_tx_untrusted_input_confirmations = 2
+# Minimum number of confirmations for a UTXO to be considered trusted.
+min_trusted_confs = 2
 
 # Whether to provide rich errors and stacktraces in RPC error returns
 rpc_rich_errors = true

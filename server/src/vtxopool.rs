@@ -421,7 +421,7 @@ impl Process {
 			warn!("Wallet sync error before funding vtxo pool issuance tx: {:#}", e);
 		}
 		let funding_psbt = {
-			let unavailable = wallet.unavailable_outputs(None);
+			let unavailable = wallet.unavailable_outputs(self.srv.config.min_trusted_confs);
 			let mut b = wallet.build_tx();
 			b.unspendable(unavailable);
 			b.add_recipient(funding_txout.script_pubkey.clone(), funding_txout.value);

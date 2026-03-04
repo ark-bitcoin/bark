@@ -183,7 +183,7 @@ async fn cant_spend_untrusted() {
 
 	// Use a long round interval to disable automatic rounds, then trigger manually
 	let srv = ctx.new_captaind_with_cfg("server", None, |cfg| {
-		cfg.round_tx_untrusted_input_confirmations = NEED_CONFS as usize;
+		cfg.min_trusted_confs = NEED_CONFS as u32;
 		cfg.round_interval = Duration::from_secs(3600);
 	}).await;
 
