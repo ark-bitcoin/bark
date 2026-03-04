@@ -1,0 +1,59 @@
+# Code coverage pipeline
+
+.codecov-rules:
+  rules:
+    - if: $CI_CODECOV_PIPELINE == "true"
+
+test-unit-codecov:
+  stage: test
+  extends: .codecov-rules
+  variables:
+    NEXTEST_TEST_THREADS: "1"
+  script:
+    - git log --oneline -1
+    - nix develop .#default --command bash -c "just test-unit-codecov"
+  needs:
+    - job: check-commits
+
+build-codecov:
+  stage: build
+  extends: .codecov-rules
+  variables:
+    NEXTEST_TEST_THREADS: "1"
+  script:
+    - git log --oneline -1
+    - nix develop .#default --command bash -c "just build-codecov"
+  needs:
+    - job: check-commits
+
+test-integration-btc30-codecov:
+  stage: test
+  extends: .codecov-rules
+  variables:
+    TEST_DIRECTORY: ./test/btc30-codecov
+    NEXTEST_TEST_THREADS: "1"
+    BARK_COMMAND_TIMEOUT_MILLIS: "120000"
+    TX_PROPAGATION_TIMEOUT: "30000"
+  script:
+    - git log --oneline -1
+    - export RUN_DATETIME=$(cat RUN_DATETIME)
+    - export CAPTAIND_EXEC=${CI_PROJECT_DIR}/target/debug/captaind
+    - export BARK_EXEC=${CI_PROJECT_DIR}/target/debug/bark
+    - bash ./contrib/ci-run-test.sh test-integration-codecov
+  needs:
+    - job: build-codecov
+    - job: check-commits
+      artifacts: true
+  tags:
+    - integration
+
+code-coverage:
+  stage: post-test
+  extends: .codecov-rules
+  script:
+    - nix develop .#default --command bash -c "just codecov-report"
+    - mkdir -p "/host/data/codecov/${CI_COMMIT_SHA}/"
+    - cp -r target/debug/codecov/* "/host/data/codecov/${CI_COMMIT_SHA}/"
+    - echo "Coverage -> https://ci.2nd.dev/codecov/${CI_COMMIT_SHA}/html/index.html"
+  needs:
+    - job: test-integration-btc30-codecov

@@ -1,68 +1,35 @@
-stages:
-  - build
+include:
+  - local: '.gitlab/main.yml'
+  - local: '.gitlab/tests.yml'
+  - local: '.gitlab/tests-codecov.yml'
+  - local: '.gitlab/helpers.yml'
+  - local: '.gitlab/master-release.yml'
+  - local: '.gitlab/bark-release.yml'
+  - local: '.gitlab/server-release.yml'
+  - local: '.gitlab/nightly-release.yml'
 
-woodpecker:
-  stage: build
-  image: registry.2nd.dev/build:28
-  script:
-    - set +e
-    - |
-      echo "Waiting for Woodpecker CI result (branch ${CI_COMMIT_REF_NAME})..."
-      echo "Sleeping for 15s, so woodpecker can get started."
-      sleep 15
-      REPO_ID=6
-      LINK_PRINTED=false
-      COUNTER=0
-      LAST_STATUS=""
-      CURRENT_INDICATOR=""
-      while true; do
-        RESPONSE=$(curl -s "https://ci.2nd.dev/api/repos/${REPO_ID}/pipelines?branch=${CI_COMMIT_REF_NAME}")
-        if [[ "$RESPONSE" == "[]" || -z "$RESPONSE" ]]; then
-          printf '.' >&2
-          sleep 1
-          continue
-        fi
+variables:
+  GIT_DEPTH: 100
+  GIT_STRATEGY: clone
 
-        if [[ "$LINK_PRINTED" == false ]]; then
-          PIPELINE_NUMBER=$(echo "${RESPONSE}" | jq -r 'sort_by(.started) | reverse | .[0].number // empty')
-          echo -e "\nPipeline started: https://ci.2nd.dev/repos/${REPO_ID}/pipeline/$PIPELINE_NUMBER"
-          LINK_PRINTED=true
-        fi
-
-        LATEST_STATUS=$(echo "${RESPONSE}" | jq -r 'sort_by(.started) | reverse | .[0].status // empty')
-        if [[ "$LATEST_STATUS" == "pending" || "$LATEST_STATUS" == "running" ]]; then
-          if [[ "$LATEST_STATUS" == "pending" ]]; then
-            CURRENT_INDICATOR="p"
-          else
-            CURRENT_INDICATOR="r"
-          fi
-
-          if [[ "$LAST_STATUS" == "pending" && "$LATEST_STATUS" == "running" ]]; then
-            echo
-            COUNTER=0
-          fi
-
-          printf '%s' "$CURRENT_INDICATOR" >&2
-          ((COUNTER++))
-
-          if (( COUNTER % 30 == 0 )); then
-            echo
-          fi
-
-          LAST_STATUS="$LATEST_STATUS"
-          sleep 10
-          continue
-        fi
-
-        case "${LATEST_STATUS}" in
-          success)              echo -e "\nSuccess!"; exit 0 ;;
-          failure|killed|error) echo -e "\nFailed!"; exit 1 ;;
-        esac
-
-        echo -e "\nUnexpected status: ${LATEST_STATUS}, \n\n${RESPONSE}, \n\nretrying..."
-        sleep 10
-      done
+workflow:
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
-    - if: $CI_PIPELINE_SOURCE == "push"
-  timeout: 240m
+    - if: $CI_COMMIT_TAG =~ /^bark-/
+    - if: $CI_COMMIT_TAG =~ /^server-/
+    - if: $CI_COMMIT_BRANCH == "master" && $CI_PROJECT_URL == "https://gitlab.com/ark-bitcoin/bark"
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+    - if: $CI_PIPELINE_SOURCE == "web"
+
+stages:
+  - prechecks
+  - build
+  - test
+  - post-test
+  - release
+  - helpers
+
+default:
+  image: registry.2nd.dev/build:28
+  before_script:
+    - sudo chown -R nixuser:nixbld "$CI_PROJECT_DIR" || true

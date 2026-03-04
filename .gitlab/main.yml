@@ -1,0 +1,47 @@
+# Main pipeline - prechecks and mirror pushes
+
+push-github-mirror:
+  stage: prechecks
+  image: appleboy/drone-git-push:latest
+  variables:
+    PLUGIN_REMOTE: git@github.com:ark-bitcoin/bark.git
+    PLUGIN_BRANCH: master
+    PLUGIN_LOCAL_BRANCH: master
+    PLUGIN_FORCE: "true"
+    PLUGIN_SSH_KEY: $GITHUB_LOGIN_TOKEN
+  script:
+    - /bin/drone-git-push
+  rules:
+    - if: $CI_COMMIT_BRANCH == "master" && $CI_PROJECT_URL == "https://gitlab.com/ark-bitcoin/bark"
+  allow_failure: true
+
+push-codeberg-mirror:
+  stage: prechecks
+  image: appleboy/drone-git-push:latest
+  variables:
+    PLUGIN_REMOTE: git@codeberg.org:ark-bitcoin/bark.git
+    PLUGIN_BRANCH: master
+    PLUGIN_LOCAL_BRANCH: master
+    PLUGIN_FORCE: "true"
+    PLUGIN_SSH_KEY: $CODEBERG_LOGIN_TOKEN
+  script:
+    - /bin/drone-git-push
+  rules:
+    - if: $CI_COMMIT_BRANCH == "master" && $CI_PROJECT_URL == "https://gitlab.com/ark-bitcoin/bark"
+  allow_failure: true
+
+prechecks:
+  stage: prechecks
+  script:
+    - git log --oneline -1
+    - echo "Cleaning up..."
+    - rm -rf "/host/data/test/${CI_COMMIT_SHA}/" || true
+    - rm -rf "/host/data/codecov/${CI_COMMIT_SHA}/" || true
+    - echo "Running prechecks..."
+    - nix develop .#default --command bash -c "just prechecks"
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_PIPELINE_SOURCE == "web"
+    - if: $CI_COMMIT_TAG =~ /^bark-/
+    - if: $CI_COMMIT_TAG =~ /^server-/
+    - if: $CI_COMMIT_BRANCH == "master" && $CI_PROJECT_URL == "https://gitlab.com/ark-bitcoin/bark"

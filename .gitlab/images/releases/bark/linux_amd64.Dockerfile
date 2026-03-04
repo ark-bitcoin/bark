@@ -8,7 +8,7 @@ RUN apt-get update && \
 
 COPY ./bark-linux-x86_64 /usr/local/bin/bark
 COPY ./barkd-linux-x86_64 /usr/local/bin/barkd
-COPY ./.woodpecker/images/releases/bark/run.sh /run.sh
+COPY ./.gitlab/images/releases/bark/run.sh /run.sh
 
 RUN chmod a+x /usr/local/bin/bark && \
     chmod a+x /usr/local/bin/barkd && \

@@ -1,0 +1,57 @@
+# Master branch release - builds and pushes captaind on master push
+
+.master-release-rules:
+  rules:
+    - if: $CI_COMMIT_BRANCH == "master" && $CI_PROJECT_URL == "https://gitlab.com/ark-bitcoin/bark"
+
+parse-versions-master:
+  stage: build
+  extends: .master-release-rules
+  script:
+    - git rev-parse HEAD > VERSION
+    - cat VERSION
+  artifacts:
+    paths:
+      - VERSION
+    expire_in: 1 day
+
+build-server-master:
+  stage: build
+  extends: .master-release-rules
+  variables:
+    SDKROOT: /usr/local/osxcross/SDK/MacOSX15.4.sdk
+  script:
+    - cat VERSION
+    - just release-server
+    - cp ./target/x86_64-unknown-linux-gnu/release/captaind captaind-linux-x86_64
+    - cp ./target/x86_64-unknown-linux-gnu/release/watchmand watchmand-linux-x86_64
+  artifacts:
+    paths:
+      - captaind-linux-x86_64
+      - watchmand-linux-x86_64
+      - VERSION
+    expire_in: 1 day
+  needs:
+    - job: parse-versions-master
+      artifacts: true
+
+build-and-push-captaind-to-registry-master:
+  stage: release
+  extends: .master-release-rules
+  image: quay.io/buildah/stable:latest
+  variables:
+    REGISTRY_LOGIN_TOKEN: $REGISTRY_LOGIN_TOKEN
+  script:
+    - cat VERSION
+    - echo $REGISTRY_LOGIN_TOKEN | buildah login -u registry --password-stdin registry.2nd.dev
+    # Build the containers
+    - buildah build -f ./.gitlab/images/releases/captaind/Dockerfile --tag "registry.2nd.dev/captaind:$(cat VERSION)" .
+    # Push containers to registry.2nd.dev
+    - buildah push "registry.2nd.dev/captaind:$(cat VERSION)"
+    - curl "http://192.168.2.10:7777/zulip?topic=deployment&type=bell&message=captaind%20$(cat VERSION)%20is%20ready%20for%20deployment."
+  needs:
+    - job: build-server-master
+      artifacts: true
+  allow_failure: true
+  tags:
+    - privileged

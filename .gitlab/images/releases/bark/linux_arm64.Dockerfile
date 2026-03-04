@@ -1,4 +1,4 @@
-FROM --platform=linux/arm/v7 debian:bookworm-slim
+FROM --platform=linux/arm64 debian:bookworm-slim
 
 RUN apt-get update && \
     apt-get upgrade -y && \
@@ -6,9 +6,9 @@ RUN apt-get update && \
         telnet \
         && apt-get clean && rm -rf /var/lib/apt/lists/*
 
-COPY ./bark-linux-armv7 /usr/local/bin/bark
-COPY ./barkd-linux-armv7 /usr/local/bin/barkd
-COPY ./.woodpecker/images/releases/bark/run.sh /run.sh
+COPY ./bark-linux-aarch64 /usr/local/bin/bark
+COPY ./barkd-linux-aarch64 /usr/local/bin/barkd
+COPY ./.gitlab/images/releases/bark/run.sh /run.sh
 
 RUN chmod a+x /usr/local/bin/bark && \
     chmod a+x /usr/local/bin/barkd && \

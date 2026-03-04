@@ -21,10 +21,10 @@ RUN apt-get update && \
         && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 RUN mkdir -p /root/captaind/
-COPY ./captaind-linux-x86_64                              /usr/local/bin/captaind
-COPY ./watchmand-linux-x86_64                             /usr/local/bin/watchmand
-COPY ./.woodpecker/images/releases/captaind/start.sh      /root/captaind/start.sh
-COPY ./.woodpecker/images/releases/captaind/captaind.toml /root/captaind/captaind.toml
+COPY ./captaind-linux-x86_64                          /usr/local/bin/captaind
+COPY ./watchmand-linux-x86_64                         /usr/local/bin/watchmand
+COPY ./.gitlab/images/releases/captaind/start.sh      /root/captaind/start.sh
+COPY ./.gitlab/images/releases/captaind/captaind.toml /root/captaind/captaind.toml
 
 RUN chmod a+x /usr/local/bin/captaind && \
     chmod a+x /usr/local/bin/watchmand && \
