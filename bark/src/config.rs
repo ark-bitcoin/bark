@@ -118,6 +118,19 @@ pub struct Config {
 	/// Default value: 18
 	pub htlc_recv_claim_delta: BlockDelta,
 
+	/// Optional SOCKS5 proxy URL for network traffic.
+	///
+	/// The proxy is automatically bypassed for localhost addresses
+	/// (127.0.0.1, localhost, ::1), so a local bitcoind works without
+	/// extra configuration.
+	///
+	/// Use `socks5h://` to resolve DNS through the proxy which is required for .onion addresses
+	/// and to prevent DNS leaks. We don't allow `socks5://` to be used to preserve privacy.
+	///
+	/// Example: `socks5h://127.0.0.1:9050` for a local Tor daemon.
+	#[cfg(feature = "socks5-proxy")]
+	pub socks5_proxy: Option<String>,
+
 	/// A fallback fee rate to use in sat/kWu when we fail to retrieve a fee rate from the
 	/// configured bitcoind/esplora connection.
 	///
@@ -150,6 +163,8 @@ impl Config {
 			bitcoind_cookiefile: None,
 			bitcoind_user: None,
 			bitcoind_pass: None,
+			#[cfg(feature = "socks5-proxy")]
+			socks5_proxy: None,
 			vtxo_refresh_expiry_threshold: 144,
 			vtxo_exit_margin: 12,
 			htlc_recv_claim_delta: 18,

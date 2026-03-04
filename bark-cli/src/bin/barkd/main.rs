@@ -130,6 +130,7 @@ fn wallet_create_request_to_create_opts(req: CreateWalletRequest) -> anyhow::Res
 		bitcoind_cookie: None,
 		bitcoind_user: None,
 		bitcoind_pass: None,
+		socks5_proxy: None,
 	};
 
 	match req.chain_source {

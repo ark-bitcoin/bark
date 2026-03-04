@@ -440,6 +440,7 @@ impl TestContext {
 			bitcoind_cookiefile: bitcoind.map(|b| b.rpc_cookie()),
 			bitcoind_user: None,
 			bitcoind_pass: None,
+			socks5_proxy: None,
 
 			vtxo_refresh_expiry_threshold: 24,
 			vtxo_exit_margin: 12,

@@ -311,9 +311,11 @@ mod config;
 mod daemon;
 mod fees;
 mod lightning;
-mod offboard;
-mod psbtext;
 mod mailbox;
+mod offboard;
+#[cfg(feature = "socks5-proxy")]
+mod proxy;
+mod psbtext;
 mod utils;
 
 pub use self::arkoor::ArkoorCreateResult;
@@ -353,9 +355,14 @@ use crate::onchain::{ExitUnilaterally, PreparePsbt, SignPsbt, Utxo};
 use crate::onchain::DaemonizableOnchainWallet;
 use crate::persist::BarkPersister;
 use crate::persist::models::{PendingOffboard, RoundStateId, StoredRoundState, Unlocked};
+#[cfg(feature = "socks5-proxy")]
+use crate::proxy::proxy_for_url;
 use crate::round::{RoundParticipation, RoundStateLockIndex, RoundStatus};
 use crate::subsystem::{ArkoorMovement, RoundMovement};
 use crate::vtxo::{FilterVtxos, RefreshStrategy, VtxoFilter, VtxoState, VtxoStateKind};
+
+#[cfg(all(feature = "wasm-web", feature = "socks5-proxy"))]
+compile_error!("features `wasm-web` does not support feature `socks5-proxy");
 
 /// Derivation index for Bark usage
 const BARK_PURPOSE_INDEX: u32 = 350;
