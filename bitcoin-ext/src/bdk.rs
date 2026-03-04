@@ -88,6 +88,30 @@ pub trait WalletExt: BorrowMut<Wallet> {
 		})
 	}
 
+	/// Check whether a UTXO can be trusted for spending.
+	///
+	/// Delegates to [WalletExt::is_trusted_tx] on the creating transaction.
+	fn is_trusted_utxo(&self, outpoint: OutPoint, min_confs: u32) -> bool {
+		self.is_trusted_tx(outpoint.txid, min_confs)
+	}
+
+	/// Check whether a transaction can be trusted to confirm on chain.
+	///
+	/// A transaction is trusted if:
+	/// - `min_confs` is 0 (unconditionally trusted), or
+	/// - it has at least `min_confs` confirmations, or
+	/// - all its inputs are ours and their creating transactions are also
+	///   trusted (checked recursively).
+	///
+	/// To keep the check cheap, at most 100 ancestor transactions are visited.
+	/// If the budget is exhausted the transaction is considered untrusted.
+	fn is_trusted_tx(&self, txid: Txid, min_confs: u32) -> bool {
+		let w = self.borrow();
+		let tip = w.latest_checkpoint().height();
+		let mut budget = 100u32;
+		is_trusted_tx_inner(w, txid, min_confs, tip, &mut budget)
+	}
+
 	/// Return all UTXOs that are untrusted: unconfirmed and not change.
 	fn untrusted_utxos(&self, confirmed_height: Option<BlockHeight>) -> Vec<OutPoint> {
 		let w = self.borrow();
@@ -255,3 +279,38 @@ pub trait WalletExt: BorrowMut<Wallet> {
 }
 
 impl WalletExt for Wallet {}
+
+fn is_trusted_tx_inner(
+	w: &Wallet, txid: Txid, min_confs: u32, tip: BlockHeight, budget: &mut u32,
+) -> bool {
+	if *budget == 0 {
+		return false;
+	}
+	*budget -= 1;
+
+	let Some(tx) = w.get_tx(txid) else {
+		return false;
+	};
+
+	// Trust transactions with enough confirmations (unconfirmed = 0 confs).
+	let nb_confs = match tx.chain_position.confirmation_height_upper_bound() {
+		Some(h) => tip.saturating_sub(h) + 1,
+		None => 0,
+	};
+	if nb_confs >= min_confs {
+		return true;
+	}
+
+	// Recursively check that all inputs are ours and come from trusted transactions.
+	tx.tx_node.tx.input.iter().all(|input| {
+		let prev = input.previous_output;
+		let Some(prev_tx) = w.get_tx(prev.txid) else {
+			return false;
+		};
+		let Some(txout) = prev_tx.tx_node.tx.output.get(prev.vout as usize) else {
+			return false;
+		};
+		w.is_mine(txout.script_pubkey.clone())
+			&& is_trusted_tx_inner(w, prev.txid, min_confs, tip, budget)
+	})
+}
