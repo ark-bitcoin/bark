@@ -35,3 +35,4 @@ default:
   image: registry.2nd.dev/build:28
   before_script:
     - sudo chown -R nixuser:nixbld "$CI_PROJECT_DIR" || true
+    - git config --global --add safe.directory "$CI_PROJECT_DIR"
