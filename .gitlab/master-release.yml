@@ -38,11 +38,9 @@ build-server-master:
 build-and-push-captaind-to-registry-master:
   stage: release
   extends: .master-release-rules
-  variables:
-    REGISTRY_LOGIN_TOKEN: $REGISTRY_LOGIN_TOKEN
   script:
     - cat VERSION
-    - echo $REGISTRY_LOGIN_TOKEN | buildah login -u registry --password-stdin registry.2nd.dev
+    - buildah login -u registry -p "$REGISTRY_LOGIN_TOKEN" registry.2nd.dev
     # Build the containers
     - buildah build -f ./.gitlab/images/releases/captaind/Dockerfile --tag "registry.2nd.dev/captaind:$(cat VERSION)" .
     # Push containers to registry.2nd.dev

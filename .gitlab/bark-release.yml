@@ -49,11 +49,9 @@ build-bark:
 build-and-push-bark-to-registry:
   stage: release
   extends: .bark-release-rules
-  variables:
-    REGISTRY_LOGIN_TOKEN: $REGISTRY_LOGIN_TOKEN
   script:
     - cat VERSION
-    - echo $REGISTRY_LOGIN_TOKEN | buildah login -u registry --password-stdin registry.2nd.dev
+    - buildah login -u registry -p "$REGISTRY_LOGIN_TOKEN" registry.2nd.dev
     # Build the containers
     - buildah build -f ./.gitlab/images/releases/bark/linux_amd64.Dockerfile --tag registry.2nd.dev/bark:linux-amd64 .
     - buildah build -f ./.gitlab/images/releases/bark/linux_arm64.Dockerfile --tag registry.2nd.dev/bark:linux-arm64 .
@@ -91,13 +89,10 @@ build-and-push-bark-to-registry:
 
 push-bark-to-docker:
   stage: release
-  variables:
-    REGISTRY_LOGIN_TOKEN: $REGISTRY_LOGIN_TOKEN
-    DOCKER_LOGIN_TOKEN: $DOCKER_LOGIN_TOKEN
   script:
     - cat VERSION
-    - echo $DOCKER_LOGIN_TOKEN | buildah login -u secondark --password-stdin docker.io
-    - echo $REGISTRY_LOGIN_TOKEN | buildah login -u registry --password-stdin registry.2nd.dev
+    - buildah login -u secondark -p "$DOCKER_LOGIN_TOKEN" docker.io
+    - buildah login -u registry -p "$REGISTRY_LOGIN_TOKEN" registry.2nd.dev
     # Pull containers from registry.2nd.dev
     - buildah pull registry.2nd.dev/bark:linux-amd64
     - buildah pull registry.2nd.dev/bark:linux-arm64
@@ -183,8 +178,6 @@ release-bark:
 
 publish-bark-gitlab:
   stage: release
-  variables:
-    GITLAB_RELEASE_TOKEN: $GITLAB_RELEASE_TOKEN
   script:
     - bash ./contrib/ci-gitlab-release.sh "./target/bark*-linux-* ./target/bark*-windows-x86_64.exe ./target/bark*-apple-* ./target/SHA256SUMS"
   rules:
