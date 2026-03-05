@@ -66,8 +66,7 @@ use crate::movement::{
 };
 use crate::persist::BarkPersister;
 use crate::persist::models::{
-	LightningReceive, LightningSend, PendingBoard, SerdeRoundState, SerdeVtxo, StoredExit,
-	SerdeVtxoKey, SerdeExitChildTx, StoredRoundState, RoundStateId,
+	LightningReceive, LightningSend, PendingBoard, RoundStateId, SerdeExitChildTx, SerdeRoundState, SerdeVtxo, SerdeVtxoKey, StoredExit, StoredRoundState, Unlocked
 };
 use crate::round::RoundState;
 use crate::vtxo::{VtxoState, VtxoStateKind};
@@ -513,11 +512,11 @@ impl <S: StorageAdaptor> BarkPersister for StorageAdaptorWrapper<S> {
 	}
 
 	async fn update_round_state(&self, round_state: &StoredRoundState) -> anyhow::Result<()> {
-		let serde_state = SerdeRoundState::from(&round_state.state);
+		let serde_state = SerdeRoundState::from(round_state.state());
 		let record = Record::from_data(
 			partition::ROUND_STATE,
-			&round_state.id.to_bytes(),
-			Some(sort::SortKey::u32_asc(round_state.id.0)),
+			&round_state.id().to_bytes(),
+			Some(sort::SortKey::u32_asc(round_state.id().0)),
 			&serde_state,
 		)?;
 		self.inner.write().await.put(record).await
@@ -525,20 +524,31 @@ impl <S: StorageAdaptor> BarkPersister for StorageAdaptorWrapper<S> {
 
 	async fn remove_round_state(&self, round_state: &StoredRoundState) -> anyhow::Result<()> {
 		self.inner.write().await
-			.delete(partition::ROUND_STATE, &round_state.id.to_bytes()).await?;
+			.delete(partition::ROUND_STATE, &round_state.id().to_bytes()).await?;
 		Ok(())
 	}
 
-	async fn load_round_states(&self) -> anyhow::Result<Vec<StoredRoundState>> {
+	async fn get_round_state_by_id(&self, _id: RoundStateId) -> anyhow::Result<Option<StoredRoundState<Unlocked>>> {
+		let record = self.inner.read().await
+			.get(partition::ROUND_STATE, &_id.to_bytes()).await?;
+		match record {
+			Some(r) => {
+				let pk_slice: [u8; 4] = r.pk[..4].try_into().expect("4 bytes shouldn't fail");
+				let id = RoundStateId(u32::from_be_bytes(pk_slice));
+				let state = r.to_data::<SerdeRoundState>()?.into();
+				Ok(Some(StoredRoundState::new(id, state)))
+			},
+			None => Ok(None),
+		}
+	}
+
+	async fn get_pending_round_state_ids(&self) -> anyhow::Result<Vec<RoundStateId>> {
 		let records = self.inner.read().await
 			.query(Query::new(partition::ROUND_STATE)).await?;
 		records.into_iter()
 			.map(|r| {
 				let pk_slice: [u8; 4] = r.pk[..4].try_into().expect("4 bytes shouldn't fail");
-				Ok(StoredRoundState {
-					id: RoundStateId(u32::from_be_bytes(pk_slice)),
-					state: r.to_data::<SerdeRoundState>()?.into(),
-				})
+				Ok(RoundStateId(u32::from_be_bytes(pk_slice)))
 			})
 			.collect()
 	}

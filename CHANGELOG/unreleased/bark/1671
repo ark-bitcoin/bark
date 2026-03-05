@@ -1,0 +1,4 @@
+- Fix race condition when processing round states concurrently
+  Round states are now locked in memory while being processed, preventing
+  multiple tasks from operating on the same round state simultaneously.
+  [#1671](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1671)

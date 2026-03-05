@@ -350,8 +350,8 @@ use crate::movement::manager::MovementManager;
 use crate::movement::update::MovementUpdate;
 use crate::onchain::{DaemonizableOnchainWallet, ExitUnilaterally, PreparePsbt, SignPsbt, Utxo};
 use crate::persist::BarkPersister;
-use crate::persist::models::{RoundStateId, StoredRoundState};
-use crate::round::{RoundParticipation, RoundStatus};
+use crate::persist::models::{RoundStateId, StoredRoundState, Unlocked};
+use crate::round::{RoundParticipation, RoundStateLockIndex, RoundStatus};
 use crate::subsystem::{ArkoorMovement, RoundMovement};
 use crate::vtxo::{FilterVtxos, RefreshStrategy, VtxoFilter, VtxoStateKind};
 
@@ -672,6 +672,9 @@ pub struct Wallet {
 	/// Tracks payment hashes of lightning payments currently being processed.
 	/// Used to prevent concurrent payment attempts for the same invoice.
 	inflight_lightning_payments: Mutex<HashSet<PaymentHash>>,
+
+	/// Index of round states that are currently locked.
+	round_state_lock_index: RoundStateLockIndex,
 }
 
 impl Wallet {
@@ -962,6 +965,7 @@ impl Wallet {
 			server,
 			chain,
 			inflight_lightning_payments: Mutex::new(HashSet::new()),
+			round_state_lock_index: RoundStateLockIndex::new(),
 		})
 	}
 
@@ -1342,7 +1346,7 @@ impl Wallet {
 
 		info!("Scheduling maintenance refresh ({} vtxos)", participation.inputs.len());
 		let state = self.join_next_round(participation, Some(RoundMovement::Refresh)).await?;
-		Ok(Some(state.id))
+		Ok(Some(state.id()))
 	}
 
 	/// Checks VTXOs that are due to be refreshed, and schedules a delegated refresh if any
@@ -1367,7 +1371,7 @@ impl Wallet {
 
 		info!("Scheduling delegated maintenance refresh ({} vtxos)", participation.inputs.len());
 		let state = self.join_next_round_delegated(participation, Some(RoundMovement::Refresh)).await?;
-		Ok(Some(state.id))
+		Ok(Some(state.id()))
 	}
 
 	/// Performs an interactive refresh of all VTXOs that are due to be refreshed, if any
@@ -1636,7 +1640,7 @@ impl Wallet {
 	pub async fn refresh_vtxos_delegated<V: VtxoRef>(
 		&self,
 		vtxos: impl IntoIterator<Item = V>,
-	) -> anyhow::Result<Option<StoredRoundState>> {
+	) -> anyhow::Result<Option<StoredRoundState<Unlocked>>> {
 		let mut part = match self.build_refresh_participation(vtxos).await? {
 			Some(participation) => participation,
 			None => return Ok(None),

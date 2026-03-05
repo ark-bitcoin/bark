@@ -392,7 +392,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 			if delegated {
 				if let Some(res) = wallet.refresh_vtxos_delegated(vtxos).await? {
 					output_json(&json::RoundStateInfo {
-						round_state_id: res.id.0,
+						round_state_id: res.id().0,
 					});
 				} else {
 					info!("No round happened");

@@ -29,7 +29,7 @@ use bitcoin_ext::BlockDelta;
 use crate::{Vtxo, VtxoId, WalletProperties};
 use crate::exit::ExitTxOrigin;
 use crate::movement::{Movement, MovementId, MovementStatus, MovementSubsystem};
-use crate::persist::{BarkPersister, RoundStateId, StoredRoundState};
+use crate::persist::{BarkPersister, RoundStateId, StoredRoundState, Unlocked};
 use crate::persist::models::{LightningReceive, LightningSend, PendingBoard, StoredExit};
 use crate::round::RoundState;
 use crate::vtxo::{VtxoState, VtxoStateKind, WalletVtxo};
@@ -183,13 +183,18 @@ impl BarkPersister for SqliteClient {
 
 	async fn remove_round_state(&self, round_state: &StoredRoundState) -> anyhow::Result<()> {
 		let conn = self.connect()?;
-		query::remove_round_state(&conn, round_state.id)?;
+		query::remove_round_state(&conn, round_state.id())?;
 		Ok(())
 	}
 
-	async fn load_round_states(&self) -> anyhow::Result<Vec<StoredRoundState>> {
+	async fn get_round_state_by_id(&self, id: RoundStateId) -> anyhow::Result<Option<StoredRoundState<Unlocked>>> {
 		let conn = self.connect()?;
-		query::load_round_states(&conn)
+		query::get_round_state_by_id(&conn, id)
+	}
+
+	async fn get_pending_round_state_ids(&self) -> anyhow::Result<Vec<RoundStateId>> {
+		let conn = self.connect()?;
+		query::get_pending_round_state_ids(&conn)
 	}
 
 	async fn store_vtxos(

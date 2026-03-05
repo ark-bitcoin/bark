@@ -25,7 +25,7 @@ use bitcoin_ext::BlockDelta;
 use crate::WalletVtxo;
 use crate::exit::{ExitState, ExitTxOrigin, ExitVtxo};
 use crate::movement::MovementId;
-use crate::round::{AttemptState, RoundFlowState, RoundParticipation, RoundState};
+use crate::round::{AttemptState, RoundFlowState, RoundParticipation, RoundState, RoundStateGuard};
 use crate::vtxo::VtxoState;
 
 /// VTXO with state history for persistence.
@@ -62,7 +62,7 @@ pub struct SerdeVtxoKey {
 }
 
 /// Identifier for a stored [RoundState].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct RoundStateId(pub u32);
 
 impl RoundStateId {
@@ -77,9 +77,44 @@ impl fmt::Display for RoundStateId {
 	}
 }
 
-pub struct StoredRoundState {
-	pub id: RoundStateId,
-	pub state: RoundState,
+pub type Locked = RoundStateGuard;
+
+pub type Unlocked = ();
+
+pub struct StoredRoundState<G = Locked> {
+	id: RoundStateId,
+	state: RoundState,
+	_guard: G
+}
+
+impl<G> StoredRoundState<G> {
+	pub fn id(&self) -> RoundStateId {
+		self.id
+	}
+
+	pub fn state(&self) -> &RoundState {
+		&self.state
+	}
+}
+
+impl StoredRoundState<Unlocked> {
+	pub fn new(id: RoundStateId, state: RoundState) -> Self {
+		Self { id, state, _guard: () }
+	}
+
+	pub fn lock(self, guard: RoundStateGuard) -> StoredRoundState {
+		StoredRoundState { id: self.id, state: self.state, _guard: guard }
+	}
+}
+
+impl StoredRoundState {
+	pub fn state_mut(&mut self) -> &mut RoundState {
+		&mut self.state
+	}
+
+	pub fn unlock(self) -> StoredRoundState<Unlocked> {
+		StoredRoundState { id: self.id, state: self.state, _guard: () }
+	}
 }
 
 /// Persisted representation of a pending board.

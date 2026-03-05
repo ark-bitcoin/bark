@@ -16,9 +16,10 @@ use ark::{ProtocolEncoding, Vtxo, VtxoPolicy, VtxoRequest};
 use ark::rounds::RoundEvent;
 use ark::vtxo::policy::PubkeyVtxoPolicy;
 use bark::BarkNetwork;
-use bark::persist::models::StoredRoundState;
+use bark::persist::models::{StoredRoundState, Unlocked};
 use bark::round::RoundParticipation;
 use bark::subsystem::RoundMovement;
+use bark::vtxo::VtxoState;
 use bark_json::cli::{MovementDestination, PaymentMethod};
 use bark_json::primitives::VtxoStateInfo;
 use server_log::{AttemptingRound, RestartMissingVtxoSigs, RoundFinished, RoundUserVtxoNotAllowed};
@@ -1364,11 +1365,11 @@ async fn bark_can_claim_all_claimable_lightning_receives() {
 	assert_eq!(bark.spendable_balance().await, btc(4));
 }
 
-async fn print_pending_rounds(wallet: &bark::Wallet) -> Vec<StoredRoundState> {
+async fn print_pending_rounds(wallet: &bark::Wallet) -> Vec<StoredRoundState<Unlocked>> {
 	let states = wallet.pending_round_states().await.unwrap();
 	info!("Wallet has {} pending round states:", states.len());
 	for state in &states {
-		info!("  - {}", state.id);
+		info!("  - {}", state.id());
 	}
 	states
 }
@@ -1405,10 +1406,10 @@ async fn stepwise_round() {
 			amount: inputs[0].vtxo.amount(),
 		}],
 	};
-	let state = bark.join_next_round(participation, Some(RoundMovement::Refresh)).await.unwrap();
-	let state_id = state.id;
 
-	info!("Signed up for round, state_id={}", state.id);
+	let state_id = bark.join_next_round(participation, Some(RoundMovement::Refresh)).await.unwrap().id();
+
+	info!("Signed up for round, state_id={}", state_id);
 	print_pending_rounds(&bark).await;
 	assert_eq!(bark.balance().await.unwrap().pending_in_round, sat(800_000));
 
@@ -1427,13 +1428,14 @@ async fn stepwise_round() {
 		bark.progress_pending_rounds(Some(&event)).await.unwrap();
 
 		let states = print_pending_rounds(&bark).await;
-		if let Some(mut ours) = states.into_iter().find(|s| s.id == state_id) {
-			if !ours.state.ongoing_participation() {
+		if let Some(ours) = states.into_iter().find(|s| s.id() == state_id) {
+			let mut ours = bark.lock_wait_round_state(ours.id()).await.unwrap().unwrap();
+			if !ours.state().ongoing_participation() {
 				info!("Round finished");
 				break;
 			} else {
 				if let RoundEvent::Finished(_) = event {
-					let status = ours.state.sync(&bark).await.unwrap();
+					let status = ours.state_mut().sync(&bark).await.unwrap();
 					panic!("Our round state says ongoing participation but we just got round \
 						finished event. status: {:?}", status,
 					);
@@ -1455,8 +1457,9 @@ async fn stepwise_round() {
 		bark.sync_pending_rounds().await.unwrap();
 
 		let states = print_pending_rounds(&bark).await;
-		if let Some(mut ours) = states.into_iter().find(|s| s.id == state_id) {
-			debug!("Result: {:#?}", ours.state.sync(&bark).await);
+		if let Some(ours) = states.into_iter().find(|s| s.id() == state_id) {
+			let mut ours = bark.lock_wait_round_state(ours.id()).await.unwrap().unwrap();
+			debug!("Result: {:#?}", ours.state_mut().sync(&bark).await);
 		} else {
 			info!("Our state is gone!");
 			break;
@@ -1466,4 +1469,273 @@ async fn stepwise_round() {
 	}
 
 	//TODO(stevenroose) test new vtxo state and movement
+}
+
+#[tokio::test]
+async fn multiple_round_participations_dont_race() {
+	let ctx = TestContext::new("bark/multiple_round_participations_dont_race").await;
+	let srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
+	let bark = ctx.new_bark_with_funds("bark", &srv, sat(1_000_000)).await;
+
+	// Board some sats and wait for confirmation
+	bark.board_and_confirm_and_register(&ctx, sat(800_000)).await;
+
+	let wallet = bark.client().await;
+
+	// Record the initial vtxo before refresh
+	let [old_vtxo] = wallet.spendable_vtxos().await.unwrap()
+		.try_into().expect("should have exactly one spendable vtxo");
+	let old_vtxo_id = old_vtxo.vtxo.id();
+
+	// Build participation and join the round once, locking the vtxo.
+	let participation = wallet.build_refresh_participation(vec![old_vtxo_id]).await
+		.unwrap().expect("should build participation");
+	wallet.join_next_round(participation, Some(RoundMovement::Refresh)).await.unwrap();
+
+	// Now fire 100 concurrent participate_ongoing_rounds together with a
+	// round trigger. All 100 load the same stored round state and race on
+	// processing the same round events, bypassing the vtxo lock.
+	let ongoing_futs = (0..100).map(|_| wallet.participate_ongoing_rounds());
+
+	let (_, results) = tokio::join!(
+		srv.trigger_round(),
+		join_all(ongoing_futs).wait_millis(20_000),
+	);
+
+	// Verify all participations completed without error
+	for (i, r) in results.iter().enumerate() {
+		r.as_ref().unwrap_or_else(|e| panic!("participation {} failed: {:#}", i, e));
+	}
+
+	// Confirm the round and sync the wallet
+	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
+	wallet.sync().await;
+
+	// Verify old vtxo is spent
+	let old_vtxo = wallet.get_vtxo_by_id(old_vtxo_id).await.unwrap();
+	assert_eq!(old_vtxo.state, VtxoState::Spent, "old vtxo should be spent");
+
+	// Verify a new vtxo was created and it is different from the old one
+	let [new_vtxo] = wallet.spendable_vtxos().await.unwrap()
+		.try_into().expect("should have exactly one spendable vtxo after refresh");
+	assert_ne!(old_vtxo_id, new_vtxo.vtxo.id(), "old and new vtxo should not be the same");
+
+	// Offboard the new vtxo to prove it is spendable
+	let address = ctx.bitcoind().get_new_address();
+	wallet.offboard_all(address.clone()).await.unwrap();
+	ctx.generate_blocks(1).await;
+
+	let received = ctx.bitcoind().get_received_by_address(&address);
+	assert!(received > Amount::ZERO, "should have received sats from offboard");
+	info!("Offboarded successfully, received {} on-chain", received);
+}
+
+#[tokio::test]
+async fn refresh_vtxos_and_participate_ongoing_rounds_dont_race() {
+	let ctx = TestContext::new("bark/refresh_vtxos_and_participate_ongoing_rounds_dont_race").await;
+	let srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
+	let bark = ctx.new_bark_with_funds("bark", &srv, sat(1_000_000)).await;
+
+	// Board some sats and wait for confirmation
+	bark.board_and_confirm_and_register(&ctx, sat(800_000)).await;
+
+	let wallet = bark.client().await;
+
+	// Record the initial vtxo before refresh
+	let [old_vtxo] = wallet.spendable_vtxos().await.unwrap()
+		.try_into().expect("should have exactly one spendable vtxo");
+	let old_vtxo_id = old_vtxo.vtxo.id();
+
+	let refresh_fut = wallet.refresh_vtxos(vec![old_vtxo_id]);
+
+	// Now fire 100 concurrent participate_ongoing_rounds together with a
+	// round trigger. All 100 load the same stored round state and race on
+	// processing the same round events, bypassing the vtxo lock.
+	let ongoing_futs = (0..100).map(|_| wallet.participate_ongoing_rounds());
+
+	let (_, _, results) = tokio::join!(
+		srv.trigger_round(),
+		refresh_fut,
+		join_all(ongoing_futs).wait_millis(20_000),
+	);
+
+	// Verify all participations completed without error
+	for (i, r) in results.iter().enumerate() {
+		r.as_ref().unwrap_or_else(|e| panic!("participation {} failed: {:#}", i, e));
+	}
+
+	// Confirm the round and sync the wallet
+	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
+	wallet.sync().await;
+
+	// Verify old vtxo is spent
+	let old_vtxo = wallet.get_vtxo_by_id(old_vtxo_id).await.unwrap();
+	assert_eq!(old_vtxo.state, VtxoState::Spent, "old vtxo should be spent");
+
+	// Verify a new vtxo was created and it is different from the old one
+	let [new_vtxo] = wallet.spendable_vtxos().await.unwrap()
+		.try_into().expect("should have exactly one spendable vtxo after refresh");
+	assert_ne!(old_vtxo_id, new_vtxo.vtxo.id(), "old and new vtxo should not be the same");
+
+	// Offboard the new vtxo to prove it is spendable
+	let address = ctx.bitcoind().get_new_address();
+	wallet.offboard_all(address.clone()).await.unwrap();
+	ctx.generate_blocks(1).await;
+
+	let received = ctx.bitcoind().get_received_by_address(&address);
+	assert!(received > Amount::ZERO, "should have received sats from offboard");
+	info!("Offboarded successfully, received {} on-chain", received);
+}
+
+/// Test that a user-initiated participate_ongoing_rounds and
+/// progress_pending_rounds(None) don't race on the same round state
+/// (participate_ongoing_rounds locks the round state).
+#[tokio::test]
+async fn participate_round_and_progress_pending_dont_race() {
+	let ctx = TestContext::new("bark/participate_round_and_progress_pending_dont_race").await;
+	let srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
+	let bark = ctx.new_bark_with_funds("bark", &srv, sat(1_000_000)).await;
+
+	// Board some sats and wait for confirmation
+	bark.board_and_confirm_and_register(&ctx, sat(800_000)).await;
+
+	let wallet = Arc::new(bark.client().await);
+
+	// Record the initial vtxo before refresh
+	let [old_vtxo] = wallet.spendable_vtxos().await.unwrap()
+		.try_into().expect("should have exactly one spendable vtxo");
+	let old_vtxo_id = old_vtxo.vtxo.id();
+
+	// Build participation and join the round once, locking the vtxo.
+	let participation = wallet.build_refresh_participation(vec![old_vtxo_id]).await
+		.unwrap().expect("should build participation");
+	wallet.join_next_round(participation, Some(RoundMovement::Refresh)).await.unwrap();
+
+	// Race: one participate_ongoing_rounds (user-initiated path) against
+	// many progress_pending_rounds(None) poll loops (daemon-style path).
+	//
+	// Either side may win the round state lock: participate_ongoing_rounds
+	// acquires and holds the lock for the full round, while each progress
+	// call briefly acquires the lock for one poll iteration.
+	//
+	// Progress tasks loop until the round state is fully removed from the
+	// DB, ensuring the round completes regardless of who drives it.
+	let mut progress_handles = Vec::new();
+	for _ in 0..100 {
+		let w = wallet.clone();
+		progress_handles.push(tokio::spawn(async move {
+			while w.pending_round_states().await?.iter()
+				.any(|s| s.state().ongoing_participation())
+			{
+				w.progress_pending_rounds(None).await?;
+				tokio::time::sleep(Duration::from_millis(100)).await;
+			}
+			Ok::<_, anyhow::Error>(())
+		}));
+	}
+
+	let (ongoing_result, _, _) = tokio::join!(
+		wallet.participate_ongoing_rounds(),
+		srv.trigger_round(),
+		join_all(progress_handles),
+	);
+	ongoing_result.expect("participate_ongoing_rounds should succeed");
+
+	// Confirm the round and sync the wallet
+	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
+	wallet.sync().await;
+
+	// Verify old vtxo is spent
+	let old_vtxo = wallet.get_vtxo_by_id(old_vtxo_id).await.unwrap();
+	assert_eq!(old_vtxo.state, VtxoState::Spent, "old vtxo should be spent");
+
+	// Verify a new vtxo was created and it is different from the old one
+	let [new_vtxo] = wallet.spendable_vtxos().await.unwrap()
+		.try_into().expect("should have exactly one spendable vtxo after refresh");
+	assert_ne!(old_vtxo_id, new_vtxo.vtxo.id(), "old and new vtxo should not be the same");
+
+	// Offboard the new vtxo to prove it is spendable
+	let address = ctx.bitcoind().get_new_address();
+	wallet.offboard_all(address.clone()).await.unwrap();
+	ctx.generate_blocks(1).await;
+
+	let received = ctx.bitcoind().get_received_by_address(&address);
+	assert!(received > Amount::ZERO, "should have received sats from offboard");
+	info!("Offboarded successfully, received {} on-chain", received);
+}
+
+/// Test that a user-initiated participate_ongoing_rounds and daemon-style
+/// event stream consumers (subscribe + progress on each event) don't race
+/// on the same round state (participate_ongoing_rounds locks the round state).
+#[tokio::test]
+async fn participate_round_and_event_stream_processing_dont_race() {
+	let ctx = TestContext::new("bark/participate_round_and_event_stream_processing_dont_race").await;
+	let srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
+	let bark = ctx.new_bark_with_funds("bark", &srv, sat(1_000_000)).await;
+
+	// Board some sats and wait for confirmation
+	bark.board_and_confirm_and_register(&ctx, sat(800_000)).await;
+
+	let wallet = Arc::new(bark.client().await);
+
+	// Record the initial vtxo before refresh
+	let [old_vtxo] = wallet.spendable_vtxos().await.unwrap()
+		.try_into().expect("should have exactly one spendable vtxo");
+	let old_vtxo_id = old_vtxo.vtxo.id();
+
+	// Build participation and join the round once, locking the vtxo.
+	let participation = wallet.build_refresh_participation(vec![old_vtxo_id]).await
+		.unwrap().expect("should build participation");
+	wallet.join_next_round(participation, Some(RoundMovement::Refresh)).await.unwrap();
+
+	// Spawn 100 daemon-style event stream consumers: each subscribes to the
+	// round event stream and calls progress_pending_rounds on every received
+	// event, exactly like inner_process_pending_rounds in daemon.rs.
+	let mut daemon_handles = Vec::new();
+	for _ in 0..100 {
+		let w = wallet.clone();
+		daemon_handles.push(tokio::spawn(async move {
+			let mut events = w.subscribe_round_events().await?;
+			while let Some(event) = events.next().await {
+				let event = event?;
+				w.progress_pending_rounds(Some(&event)).await?;
+			}
+			Ok::<_, anyhow::Error>(())
+		}));
+	}
+
+	// Also run one user-initiated participate_ongoing_rounds racing with
+	// all the daemon consumers.
+	let (ongoing_result, _) = tokio::join!(
+		wallet.participate_ongoing_rounds(),
+		srv.trigger_round(),
+	);
+
+	ongoing_result.expect("participate_ongoing_rounds should succeed");
+
+	// Confirm the round and sync the wallet
+	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
+	wallet.sync().await;
+
+	// Verify old vtxo is spent
+	let old_vtxo = wallet.get_vtxo_by_id(old_vtxo_id).await.unwrap();
+	assert_eq!(old_vtxo.state, VtxoState::Spent, "old vtxo should be spent");
+
+	// Verify a new vtxo was created and it is different from the old one
+	let [new_vtxo] = wallet.spendable_vtxos().await.unwrap()
+		.try_into().expect("should have exactly one spendable vtxo after refresh");
+	assert_ne!(old_vtxo_id, new_vtxo.vtxo.id(), "old and new vtxo should not be the same");
+
+	// Offboard the new vtxo to prove it is spendable
+	let address = ctx.bitcoind().get_new_address();
+	wallet.offboard_all(address.clone()).await.unwrap();
+	ctx.generate_blocks(1).await;
+
+	let received = ctx.bitcoind().get_received_by_address(&address);
+	assert!(received > Amount::ZERO, "should have received sats from offboard");
+	info!("Offboarded successfully, received {} on-chain", received);
+
+	for h in daemon_handles {
+		h.abort();
+	}
 }
