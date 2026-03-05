@@ -77,9 +77,10 @@ impl fmt::Display for RoundStateId {
 	}
 }
 
-pub type Locked = RoundStateGuard;
+#[allow(unused)]
+pub struct Locked(RoundStateGuard);
 
-pub type Unlocked = ();
+pub struct Unlocked;
 
 pub struct StoredRoundState<G = Locked> {
 	id: RoundStateId,
@@ -99,11 +100,11 @@ impl<G> StoredRoundState<G> {
 
 impl StoredRoundState<Unlocked> {
 	pub fn new(id: RoundStateId, state: RoundState) -> Self {
-		Self { id, state, _guard: () }
+		Self { id, state, _guard: Unlocked }
 	}
 
 	pub fn lock(self, guard: RoundStateGuard) -> StoredRoundState {
-		StoredRoundState { id: self.id, state: self.state, _guard: guard }
+		StoredRoundState { id: self.id, state: self.state, _guard: Locked(guard) }
 	}
 }
 
@@ -113,7 +114,7 @@ impl StoredRoundState {
 	}
 
 	pub fn unlock(self) -> StoredRoundState<Unlocked> {
-		StoredRoundState { id: self.id, state: self.state, _guard: () }
+		StoredRoundState { id: self.id, state: self.state, _guard: Unlocked }
 	}
 }
 

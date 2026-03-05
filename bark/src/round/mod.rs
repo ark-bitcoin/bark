@@ -1479,7 +1479,7 @@ impl Wallet {
 		&self,
 		last_round_event: Option<&RoundEvent>,
 	) -> anyhow::Result<()> {
-		let states: Vec<StoredRoundState<()>> = self.pending_round_states().await?;
+		let states = self.pending_round_states().await?;
 		info!("Processing {} rounds...", states.len());
 
 		let mut last_round_event = last_round_event.map(|e| Cow::Borrowed(e));
