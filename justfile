@@ -14,7 +14,7 @@ BARK_OPENAPI_SCHEMA_PATH := "bark-rest/openapi.json"
 BARK_REST_CLIENT_DIR := "bark-rest-client"
 BARK_REST_VERSION := `grep '^version = ' bark-rest/Cargo.toml | sed -E 's/^version = "([^"]+)"/\1/'`
 
-EXAMPLES_DIR := CARGO_TARGET / "debug" / "examples"
+EXAMPLES_DIR := env("EXAMPLES_DIR", CARGO_TARGET / "debug" / "examples")
 
 precheck CHECK:
 	bash contrib/prechecks.sh {{CHECK}}
@@ -36,6 +36,10 @@ check-commits:
 build:
 	cargo version
 	cargo build --workspace
+
+build-ci:
+	cargo version
+	cargo build --profile ci --workspace --bins --examples
 
 build-bins:
 	cargo build --workspace --bins

@@ -17,6 +17,14 @@ members = [
 
 resolver = "2"
 
+# CI profile: reduces binary size so that nextest archives are small enough
+# for gitlab to handle as artifacts.
+[profile.ci]
+inherits = "dev"
+debug = 0
+strip = "symbols"
+opt-level = "z"
+
 # TODO(stevenroose) at some point probably move these inline
 [workspace.dependencies]
 
