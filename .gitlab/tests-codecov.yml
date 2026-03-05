@@ -7,6 +7,7 @@
 test-unit-codecov:
   stage: test
   extends: .codecov-rules
+  interruptible: true
   variables:
     NEXTEST_TEST_THREADS: "1"
   script:
@@ -18,6 +19,7 @@ test-unit-codecov:
 build-codecov:
   stage: build
   extends: .codecov-rules
+  interruptible: true
   variables:
     NEXTEST_TEST_THREADS: "1"
   script:
@@ -29,6 +31,7 @@ build-codecov:
 test-integration-btc30-codecov:
   stage: test
   extends: .codecov-rules
+  interruptible: true
   variables:
     TEST_DIRECTORY: ./test/btc30-codecov
     NEXTEST_TEST_THREADS: "1"
@@ -50,6 +53,7 @@ test-integration-btc30-codecov:
 code-coverage:
   stage: post-test
   extends: .codecov-rules
+  interruptible: true
   script:
     - nix develop .#default --command bash -c "just codecov-report"
     - mkdir -p "/host/data/codecov/${CI_COMMIT_SHA}/"

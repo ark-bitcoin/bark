@@ -11,6 +11,7 @@
 tar-and-print-test-data:
   stage: helpers
   extends: .helpers-rules
+  interruptible: true
   script:
     - |
       SRC="/host/data/test/${CI_COMMIT_SHA}"
@@ -32,6 +33,7 @@ tar-and-print-test-data:
 
 tar-and-print-codecov-data:
   stage: helpers
+  interruptible: true
   rules:
     - if: $CI_CODECOV_PIPELINE == "true"
   script:
@@ -53,6 +55,7 @@ tar-and-print-codecov-data:
 
 generate-rustdocs:
   stage: helpers
+  interruptible: true
   script:
     - nix develop .#default --command bash -c "just rustdocs"
     - sudo cp -r rustdocs/doc/ /host/data/doc/
@@ -67,6 +70,7 @@ generate-rustdocs:
 
 check-versions:
   stage: helpers
+  interruptible: true
   script:
     - bash ./contrib/check-versions.sh "${CI_COMMIT_TAG}"
   rules:
@@ -77,6 +81,7 @@ check-versions:
 
 check-gitlab-release:
   stage: helpers
+  interruptible: true
   script:
     - bash ./contrib/check-gitlab-release.sh "${CI_COMMIT_TAG}"
   rules:

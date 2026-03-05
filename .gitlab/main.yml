@@ -30,6 +30,7 @@ push-codeberg-mirror:
 
 prechecks:
   stage: prechecks
+  interruptible: true
   script:
     - git log --oneline -1
     - echo "Cleaning up..."
