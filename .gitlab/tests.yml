@@ -167,7 +167,6 @@ test-integration-mempool:
     - job: bark-as-libs
     - job: check-commits
       artifacts: true
-  allow_failure: true
   tags:
     - integration
 
