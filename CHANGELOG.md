@@ -6,6 +6,276 @@ https://docs.second.tech/changelog/changelog/
 
 Below is a more concise summary for each version.
 
+# v0.1.0-beta.8
+
+- `ark-lib`
+  - Add FeeSchedule to ArkInfo struct.
+    This contains details and methods to calculate fees for board, offboard, send-onchain, refresh, and lightning
+    operations.
+    [#1500](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1500)
+  - Move ArkInfo.offboard_fixed_fee_vb to FeeSchedule.offboard.fixed_additional_vb.
+    This contains details and methods to calculate fees for board, offboard, send-onchain, refresh, and lightning
+    operations.
+  - Remove `VtxoDelivery::ServerBuiltin` variant
+    Only `VtxoDelivery::ServerMailbox` delivery is now supported for addresses.
+    **BREAKING**: Old addresses using builtin delivery are no longer valid.
+    [#1502](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1502)
+  - Add fee amount as a field on GenesisItem.
+    The benefit of this is that it allows us bundling fees for board and arkoor operations into the VTXO itself. This is
+    backwards compatible.
+    [#1535](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1535)
+  - Add BoardFundingError to BoardBuilder.
+    When setting funding details for the BoardBuilder, it will return errors if the amount and fee values don't validate.
+    [#1535](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1535)
+  - Improve the ability for servers to track their vtxos when hosting a round
+    [#1569](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1569)
+    - Introduced `HarkLeafVtxoPolicy`
+    - Added `spend_info` to show which vtxo is spent by which tx
+    - Added `internal_vtxos` to give insight into ServerVtxos
+    - Added `unsigned_leaf_txs` and `build_signed_node_txs`
+  - prevent a malicious VTXO encoding from crashing the decoder
+    [#1573](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1573)
+  - update the encoding of `SignedVtxoTreeSpec` with backwards compatible decoding
+    [#1573](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1573)
+  - rename `Vtxo::is_fully_signed` to `has_all_witnesses`
+    [#1596](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1596)
+  - Add `into_vtxo()` method to `VtxoRef` trait that returns `Vtxo` by value
+    Allows the trait to provide VTXOs either by reference (`vtxo_ref()`) or by value (`into_vtxo()`),
+    reducing unnecessary clones in some contexts.
+    [#1614](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1614)
+    - **BREAKING:** `VtxoRef::vtxo()` became `VtxoRef::vtxo_ref()`
+  - re-license under the MIT license
+    [#1621](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1621)
+  - make our HTLC-like clause lightning-agnostic
+    [#1629](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1629)
+  - simplify the hArk forfeit protocol
+    - reduce to a single tx and signature
+    - change the HarkForfeitBundle serialization
+    [#1698](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1698)
+  - add `ServerVtxoPolicy::HarkForfeit` and eq policy kind
+    [#1698](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1698)
+
+- `bark`
+  - Exit boards which fail to register before expiration.
+    [#1500](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1500)
+  - Configure bark to use the new FeeSchedule in ArkInfo.
+    Fees will be applied to board, offboard, refresh and lightning operations.
+    [#1500](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1500)
+  - Add fee estimation API for various operations.
+    Allows developers to provide fee estimates and VTXO choices to users in advance.
+    [#1500](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1500)
+  - Remove legacy arkoor mailbox sync
+    The `sync_oors` method has been removed. Use `sync_mailbox` instead.
+    [#1502](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1502)
+  - Remove unused `check_recipient_exists` method from `BarkPersister` trait
+    [#1530](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1530)
+  - Fail when refreshing dust VTXOs before waiting for a round
+    Validate VTXO amount before waiting for a round, giving immediate feedback instead of waiting ~30 seconds for rejection.
+    [#1576](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1576)
+  - `bark`: Disallow creating and paying 0 sat lightning invoices
+    Prevents users from creating invoices for 0 sats and from paying invoices
+    that resolve to 0 sats, which are not useful and could cause issues.
+  - Movements for lightning sends and receives now include the preimage when known
+    [#1579](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1579)
+  - Reject dust VTXOs during exit initiation
+    Validate VTXO amount before starting an exit to avoid delayed rejection
+    during round processing.
+    [#1580](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1580)
+  - Fix mailbox checkpoint not advancing due to SQL syntax error
+    [#1584](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1584)
+  - reduce the default number of required confirmations for round txs to 2 (1 for signet)
+    [#1586](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1586)
+  - change CLI output for delegated round participations
+    [#1588](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1588)
+  - Run all maintenance tasks regardless of error
+    Previously when you ran any maintenance method, and an error was produced, the maintenance would early-out so some
+    steps such as the maintenance refresh never ran. This behavior has been changed so that errors will be logged but the
+    methods will not early-out. If an error does occur then an `anyhow::Error` will still be returned, however the full
+    maintenance procedure will be attempted.
+    [#1592](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1592)
+  - Progress exits when any maintenance method is called
+    Previously the exit system would be synced but no TRUC packages would be produced or broadcast. Now, bark will attempt
+    to progress each exit each time a maintenance method is called.
+    [#1592](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1592)
+  - Add ability to manually import VTXOs into the wallet
+    Allows importing serialized VTXOs via `bark dev vtxo import` CLI command
+    or the `/import-vtxo` REST endpoint. Useful for recovering VTXOs.
+    [#1607](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1607)
+  - Populate `received_on` field for arkoor receive movements
+    Previously, the `received_on` field was always empty for arkoor receives. Now it contains the Ark address(es) the
+    VTXOs were received on, aggregated by address with the total amount received on each.
+    [#1610](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1610)
+  - Persist server pubkey and detect if it changes
+    The wallet now stores the server's public key on first connection and verifies it on subsequent
+    connections. If the server pubkey changes unexpectedly, the wallet will refuse to interact with
+    the server and suggest the user manually exit their VTXOs. This protects against accidentally
+    connecting to a different or compromised server.
+    [#1611](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1611)
+  - Refactor wallet code to extract functionality into dedicated modules
+    Board, lightning send, lightning receive, and round balance functions have been moved from
+    the main `lib.rs` into their respective modules (`board.rs`, `lightning/pay.rs`,
+    `lightning/receive.rs`, and `round.rs`), improving code organization and modularity.
+    [#1612](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1612)
+  - Optimize `build_refresh_participation` to reduce allocations and database reads
+    [#1614](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1614)
+    - `build_refresh_participation` now checks if `VtxoRef` items can optionally provide
+      the `Vtxo` directly, avoiding redundant database lookups
+    - Internal implementation reduces memory allocations by pre-allocating vectors
+  - Add `RefreshStrategy::should_refresh_exclusive` and `RefreshStrategy::should_refresh_if_must`
+    variants for more granular VTXO refresh filtering
+    [#1614](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1614)
+    - `should_refresh_exclusive`: matches VTXOs that _should_ refresh but excludes those that
+      _must_ refresh
+    - `should_refresh_if_must`: only matches VTXOs (both _must_ or _should_) if at least one
+      VTXO meets the _must_ refresh criteria
+  - Add dust VTXO detection to refresh criteria
+    VTXOs with amounts below P2TR dust threshold are now flagged for refresh.
+    [#1614](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1614)
+  - re-license under the MIT license
+    [#1621](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1621)
+  - add `Wallet::mailbox_authorization` method to create a new authorization for your server mailbox
+    [#1625](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1625)
+  - Report round failures as errors in the CLI
+    Previously, when a round failed (e.g. due to a borked VTXO), `participate_round`
+    returned `Ok(RoundStatus::Failed)` which caused the CLI to exit silently with
+    no error. Now round failures and cancellations are properly propagated as errors.
+    [#1640](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1640)
+  - Add `PidLock` for exclusive datadir access
+    Prevents multiple processes from operating on the same datadir
+    concurrently by writing a `LOCK` file at startup. Available
+    behind the `pid_lock` feature flag.
+    [#1651](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1651)
+  - only have `bark --version` return version when built on version tag,
+    otherwise return `DIRTY` (alongside the commit hash)
+    [#1653](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1653)
+  - rename all feerate fields in JSON outputs
+    - new fields have `_sat_per_kvb` suffix and are expressed as such
+    - old fields are deprecated but still present
+    [#1654](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1654)
+  - `htlc_vtxos` in `LightningReceive` is now always a `Vec` instead of `Option<Vec>`
+    [#1669](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1669)
+    - **BREAKING:** `LightningReceive.htlc_vtxos` changed from `Option<Vec<WalletVtxo>>` to `Vec<WalletVtxo>`
+    - **BREAKING:** `htlc_vtxos` in CLI/REST JSON output is now `[]` instead of `null` when no VTXOs are present
+  - Fix race condition when processing round states concurrently
+    Round states are now locked in memory while being processed, preventing
+    multiple tasks from operating on the same round state simultaneously.
+    [#1671](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1671)
+  - Loosen restrictions on lightning receive overpayment
+    If the server overpays the client we should allow this instead of bailing.
+    [#1685](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1685)
+  - Warn on inconsistent fee accounting for failed Lightning payments
+    Bark now logs a warning when revoked or exited failed Lightning payments do not net to a zero effective fee, making unexpected balance deltas visible.
+    Pending Lightning send records are also validated during SQLite loading by using checked conversions for `amount_sats` and `fee_sats`.
+    [#1686](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1686)
+
+- `bark-rest`
+  - Add FeeSchedule to ArkInfo response.
+    The REST API now includes a complete fee schedule for all operations (board, offboard, refresh, lightning send/receive).
+    Clients can use this to calculate and display fees to users before performing operations.
+    [#1500](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1500)
+    - **BREAKING:** `offboard_fixed_fee_vb` field removed from ArkInfo, moved to `fees.offboard.fixed_additional_vb`
+    - New types: `FeeSchedule`, `BoardFees`, `OffboardFees`, `RefreshFees`, `LightningReceiveFees`, `LightningSendFees`, `PpmExpiryFeeEntry`
+  - Fix OpenAPI spec and generated clients for address endpoints
+    The response type for `/addresses/next` and `/addresses/{index}` was
+    incorrectly annotated, causing the generated Rust client to error on
+    deserialization.
+    [#1660](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1660)
+  - `htlc_vtxos` in `LightningReceiveInfo` is now always returned as a list
+    REST API clients no longer need to handle a missing or nullable field.
+    [#1669](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1669)
+    - **BREAKING:** `htlc_vtxos` is now `[]` instead of `null` when no VTXOs are present
+
+- `bitcoin-ext`
+  - Add workaround for creating P2A CPFPs when fee anchors contain a non-zero value.
+    Allows for exiting VTXOs when fees are stored in the fee anchor.
+    [#1500](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1500)
+
+  - Fix BlockRef JSON serialization to output proper object format
+    BlockRef fields are now serialized as a JSON object with `height` and `hash`
+    fields instead of a concatenated string like `"502:hash"`.
+    [#1598](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1598)
+  - Fix untrusted UTXO detection for external deposits
+    External deposits were incorrectly treated as trusted when BDK happened
+    to know about the parent transaction. Now checks that each input actually
+    spends a wallet-owned output.
+    [#1692](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1692)
+  - Add `TrustedBalance` struct and `WalletExt::trusted_balance()`
+    Computes wallet balance using the recursive `is_trusted_utxo` check,
+    categorizing funds as trusted or untrusted.
+    [#1705](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1705)
+
+- `captaind`
+  - Disallow creating and paying 0 sat lightning invoices
+    These are not useful and could cause issues.
+  - Standardize config option naming to use `max_` prefix style
+    Config options now follow a consistent naming pattern. The old names
+    are still accepted as aliases for backward compatibility.
+    [#1616](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1616)
+
+- `server`
+  - Implement fees for board, offboard, refresh and lightning operations.
+    Fees are configured via the config file and are communicated to clients using ArkInfo. Fees are validated on the
+    server side and require clients also calculate the same fee values.
+    [#1500](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1500)
+  - Move offboard_fixed_fee_vb to fees.fixed_additional_vb in the server config.
+    [#1500](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1500)
+  - Update the offboard fee based on network conditions.
+    Data from the fee estimator is used to calculate the offboard fee which is communicated to clients via ArkInfo.
+    [#1509](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1509)
+  - Permit historical offboard fee rates when clients attempt to perform an offboard request.
+    When receiving an offboard request the client provides the fee rate they used to calculate the fees for the offboard.
+    The server will check if this is a valid fee rate by consulting the new fee estimator history. If it's valid the
+    offboard will be honored at the given fee rate, if not it will be rejected as an error.
+    [#1509](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1509)
+  - Add a Watchman which sweeps coins and will publish forfeits
+    [#1560](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1560)
+  - Restore round event replay for new subscribers
+    Clients subscribing to round events now receive the current Attempt event,
+    allowing them to join rounds during the signup phase. This fixes a
+    regression where clients waking from push notifications would miss the
+    Attempt event. Empty rounds no longer replay stale events.
+    [#1572](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1572)
+  - Make `claim_lightning_receive` idempotent
+    Bark can now retry a lightning receive claim if something goes wrong,
+    avoiding a forced on-chain exit.
+    [#1605](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1605)
+  - re-license under the MIT license
+    [#1621](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1621)
+  - no longer schedule a round right after startup, but wait until the first round interval passes
+    [#1643](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1643)
+  - rename the forfeit wallet to watchman wallet (in admin RPC interface)
+    [#1646](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1646)
+  - Fix incorrect structured log for lightning receive
+    [#1685](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1685)
+  - simplify the hArk forfeit protocol
+    - reduce to a single tx and signature
+    - remove `signed_forfeit_claim_tx` column from round participation input table
+    [#1698](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1698)
+  - handle hArk forfeit txs in sweeper
+    [#1698](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1698)
+  - fix a bug where VTXOs weren't correctly locked during rounds
+    [#1701](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1701)
+  - Use our recursive trust model for all balance reporting
+    BDK's built-in balance categories used a shallow trust heuristic that
+    could misclassify unconfirmed UTXOs. The server now uses `is_trusted_utxo`
+    everywhere: wallet sync, admin RPC, telemetry gauges, and the CPFP
+    funds check.
+    [#1705](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1705)
+
+- `server-rpc`
+  - Add FeeSchedule and related fee messages to protobuf schema.
+    ArkInfo now includes a complete fee schedule for all operations.
+    [#1500](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1500)
+    - New messages: `FeeSchedule`, `BoardFees`, `OffboardFees`, `RefreshFees`, `LightningReceiveFees`, `LightningSendFees`, `PpmExpiryFeeEntry`
+    - `ArkInfo.offboard_fixed_fee_vb` moved to `FeeSchedule.offboard.fixed_additional_vb`
+  - Remove deprecated legacy mailbox gRPC methods
+    Removed `PostArkoorPackageMailbox` and `EmptyArkoorMailbox` methods.
+    Use the new mailbox service (`PostVtxosMailbox`, `ReadMailbox`, `SubscribeMailbox`) instead.
+    [#1502](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1502)
+  - Simplify `WalletStatus` balance fields to trusted/untrusted
+    [#1705](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1705)
+    - **BREAKING:** `trusted_pending_balance`, `untrusted_pending_balance`, and
+      `confirmed_balance` replaced by `trusted_balance` and `untrusted_balance`
 # v0.1.0-beta.7
 
 - `ark-lib`

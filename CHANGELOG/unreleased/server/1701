@@ -1,2 +1,0 @@
-- fix a bug where VTXOs weren't correctly locked during rounds
-  [#1701](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1701)

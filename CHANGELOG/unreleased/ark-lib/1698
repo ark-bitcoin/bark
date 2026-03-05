@@ -1,6 +1,0 @@
-- simplify the hArk forfeit protocol
-  - reduce to a single tx and signature
-  - change the HarkForfeitBundle serialization
-  [#1698](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1698)
-- add `ServerVtxoPolicy::HarkForfeit` and eq policy kind
-  [#1698](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1698)
