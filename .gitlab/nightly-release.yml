@@ -62,11 +62,9 @@ build-nightly:
 
 build-and-push-to-docker-nightly:
   stage: release
-  variables:
-    DOCKER_LOGIN_TOKEN: $DOCKER_LOGIN_TOKEN
   script:
     - cat VERSION
-    - echo $DOCKER_LOGIN_TOKEN | buildah login -u secondark --password-stdin docker.io
+    - buildah login -u secondark -p "$DOCKER_LOGIN_TOKEN" docker.io
     # Build the containers
     - buildah build -f ./.gitlab/images/releases/bark/linux_amd64.Dockerfile --tag docker.io/secondark/bark:linux-amd64 .
     - buildah build -f ./.gitlab/images/releases/bark/linux_arm64.Dockerfile --tag docker.io/secondark/bark:linux-arm64 .
