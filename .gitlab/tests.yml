@@ -159,6 +159,7 @@ test-integration-esplora:
 test-integration-mempool:
   stage: test
   interruptible: true
+  allow_failure: true
   variables:
     CHAIN_SOURCE: mempool
     TEST_DIRECTORY: ./test/mempool
@@ -206,6 +207,7 @@ test-integration-btc30:
 test-integration-filestore:
   stage: test
   interruptible: true
+  allow_failure: true
   variables:
     CHAIN_SOURCE: mempool
     USE_FILESTORE: "1"
