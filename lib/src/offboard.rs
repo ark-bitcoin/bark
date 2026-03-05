@@ -225,7 +225,7 @@ where
 		let connector_prev = OutPoint::new(offboard_txid, OFFBOARD_TX_CONNECTOR_VOUT as u32);
 		let connector_txout = self.offboard_tx.output.get(OFFBOARD_TX_CONNECTOR_VOUT)
 			.expect("invalid offboard tx");
-		let tweaked_connector_key = connector_key.for_keyspend(&*SECP);
+		let tweaked_connector_key = connector_key.for_keyspend_only(&*SECP);
 
 		let mut ret = Vec::with_capacity(self.input_vtxos.len());
 		if self.input_vtxos.len() == 1 {

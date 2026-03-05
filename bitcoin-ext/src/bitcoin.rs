@@ -3,7 +3,7 @@ use std::borrow::Borrow;
 use std::collections::BTreeMap;
 
 use bitcoin::{
-	taproot, Amount, Denomination, FeeRate, OutPoint, ScriptBuf, Transaction, TxOut, Weight,
+	taproot, Amount, Denomination, FeeRate, OutPoint, ScriptBuf, TapNodeHash, Transaction, TxOut, Weight
 };
 use bitcoin::taproot::ControlBlock;
 use bitcoin::secp256k1::{self, Keypair, Secp256k1};
@@ -12,13 +12,22 @@ use crate::{fee, P2PKH_DUST, P2SH_DUST, P2TR_DUST, P2WPKH_DUST, P2WSH_DUST};
 
 /// Extension trait for [Keypair].
 pub trait KeypairExt: Borrow<Keypair> {
-	/// Adapt this key pair to be used in a key-spend-only taproot.
-	fn for_keyspend(&self, secp: &Secp256k1<impl secp256k1::Verification>) -> Keypair {
+	/// Adapt this key pair to be used in a key-spend using the given MAST root
+	fn for_keyspend(
+		&self,
+		secp: &Secp256k1<impl secp256k1::Verification>,
+		tap_merkle_root: Option<TapNodeHash>,
+	) -> Keypair {
 		let tweak = taproot::TapTweakHash::from_key_and_tweak(
 			self.borrow().x_only_public_key().0,
-			None, // keyspend has no script merkle root
+			tap_merkle_root,
 		);
 		self.borrow().add_xonly_tweak(secp, &tweak.to_scalar()).expect("hashed values")
+	}
+
+	/// Adapt this key pair to be used in a key-spend-only taproot
+	fn for_keyspend_only(&self, secp: &Secp256k1<impl secp256k1::Verification>) -> Keypair {
+		self.for_keyspend(secp, None)
 	}
 }
 impl KeypairExt for Keypair {}
