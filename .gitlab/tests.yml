@@ -126,8 +126,7 @@ check-release:
   script:
     - |
       nix develop .#default --command bash -c "
-        cargo check --release -p bark-cli &&
-        cargo check --release -p bark-server
+        cargo check --release -p bark-cli -p bark-server
       "
   needs:
     - job: test-unit
