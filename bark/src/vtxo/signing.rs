@@ -1,8 +1,11 @@
 
-use bitcoin::{TapSighash, Witness, taproot};
+use bitcoin::secp256k1::schnorr;
+use bitcoin::{taproot, TapSighash, Witness};
 use bitcoin::key::Keypair;
+use log::error;
 
-use ark::vtxo::{TapScriptClause, VtxoClause};
+use ark::VtxoPolicy;
+use ark::vtxo::{TapScriptClause, Vtxo, VtxoClause};
 use ark::vtxo::policy::signing::VtxoSigner;
 
 use crate::{SECP, Wallet};
@@ -18,6 +21,18 @@ impl Wallet {
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl VtxoSigner for Wallet {
+	async fn sign_keyspend<G: Sync + Send>(
+		&self,
+		vtxo: &Vtxo<G, VtxoPolicy>,
+		_sighash: TapSighash,
+	) -> Option<schnorr::Signature> {
+		error!(
+			"CODE BUG: wallet was asked to sign a keyspend clause but that should never happen \
+				(VTXO ID: {}; policy type: {})", vtxo.id(), vtxo.policy_type(),
+		);
+		None
+	}
+
 	async fn witness(
 		&self,
 		clause: &VtxoClause,
