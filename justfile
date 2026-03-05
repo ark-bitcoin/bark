@@ -14,6 +14,8 @@ BARK_OPENAPI_SCHEMA_PATH := "bark-rest/openapi.json"
 BARK_REST_CLIENT_DIR := "bark-rest-client"
 BARK_REST_VERSION := `grep '^version = ' bark-rest/Cargo.toml | sed -E 's/^version = "([^"]+)"/\1/'`
 
+EXAMPLES_DIR := CARGO_TARGET / "debug" / "examples"
+
 precheck CHECK:
 	bash contrib/prechecks.sh {{CHECK}}
 prechecks:
@@ -185,7 +187,7 @@ clippy LINT:
 
 
 dump-server-sql-schema: ensure-build-examples
-	cargo run --example dump-server-postgres-schema > {{SERVER_SQL_SCHEMA_PATH}}
+	{{EXAMPLES_DIR}}/dump-server-postgres-schema > {{SERVER_SQL_SCHEMA_PATH}}
 	# Use sed to remove lines that are hard to reproduce across different systems
 	sed '/^-- Dumped by .*$/d' {{SERVER_SQL_SCHEMA_PATH}} \
 	  | sed '/^-- Dumped from .*$/d' \
@@ -195,12 +197,12 @@ dump-server-sql-schema: ensure-build-examples
 	chmod 644 bark/schema.sql
 
 dump-bark-sql-schema: ensure-build-examples
-	cargo run --example dump-sqlite-schema > {{BARK_SQL_SCHEMA_PATH}}
+	{{EXAMPLES_DIR}}/dump-sqlite-schema > {{BARK_SQL_SCHEMA_PATH}}
 	echo "bark SQL schema written to {{BARK_SQL_SCHEMA_PATH}}"
 	chmod 644 bark/schema.sql
 
 dump-bark-rest-openapi-schema: ensure-build-examples
-	cargo run --package bark-rest --example dump_api_docs > {{BARK_OPENAPI_SCHEMA_PATH}}
+	{{EXAMPLES_DIR}}/dump_api_docs > {{BARK_OPENAPI_SCHEMA_PATH}}
 	chmod 644 bark-rest/openapi.json
 
 generate-bark-rest-client: dump-bark-rest-openapi-schema
