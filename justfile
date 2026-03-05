@@ -41,6 +41,12 @@ build-ci:
 	cargo version
 	cargo build --profile ci --workspace --bins --examples
 
+build-unit-tests-ci:
+	cargo nextest archive --cargo-profile ci --workspace --exclude ark-testing --archive-file {{CARGO_TARGET}}/ci/unit-tests.tar.zst --zstd-level 19
+
+build-integration-tests-ci:
+	cargo nextest archive --cargo-profile ci --package ark-testing --archive-file {{CARGO_TARGET}}/ci/integration-tests.tar.zst --zstd-level 19
+
 build-bins:
 	cargo build --workspace --bins
 

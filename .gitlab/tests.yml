@@ -56,10 +56,17 @@ build:
     - check-commits
   script:
     - git log --oneline -1
-    - nix develop .#default --command bash -c "just build"
+    - nix develop .#default --command bash -c "just build-ci"
+    - nix develop .#default --command bash -c "just build-unit-tests-ci"
+    - nix develop .#default --command bash -c "just build-integration-tests-ci"
   artifacts:
     paths:
-      - target/debug/examples/
+      - target/ci/examples/
+      - target/ci/captaind
+      - target/ci/bark
+      - target/ci/barkd
+      - target/ci/unit-tests.tar.zst
+      - target/ci/integration-tests.tar.zst
     expire_in: 1 day
 
 compare-static-files:
@@ -70,6 +77,7 @@ compare-static-files:
     - build
   variables:
     ASSUME_BUILT: "1"
+    EXAMPLES_DIR: target/ci/examples
   script:
     - nix develop .#default --command bash -c "just generate-static-files"
     - bash contrib/check-clean-diff.sh bark/schema.sql
