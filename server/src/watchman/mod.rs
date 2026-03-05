@@ -28,7 +28,7 @@ use bitcoin::Txid;
 use tokio::sync::watch;
 use tracing::{info, warn};
 
-use ark::{ServerVtxo, VtxoId};
+use ark::{ServerVtxo, ServerVtxoPolicy, VtxoId};
 use ark::vtxo::policy::signing::VtxoSigner;
 use bitcoin_ext::{fee, BlockHeight, BlockRef, TxStatus, P2TR_DUST};
 use bitcoin_ext::bdk::WalletExt;
@@ -426,23 +426,40 @@ impl Watchman {
 		let mut total_input_amount = Amount::ZERO;
 
 		for vtxo in vtxos {
-			let clause = self.signer.find_signable_clause(vtxo).await
-				.context(vtxo.id())
-				.context("no signable clause for vtxo")?;
+			//TODO(stevenroose) try remove this special case
+			if *vtxo.policy() == ServerVtxoPolicy::ServerOwned {
+				let input = TxIn {
+					previous_output: vtxo.point(),
+					script_sig: ScriptBuf::new(),
+					sequence: Sequence::ZERO,
+					witness: Witness::new(),
+				};
 
-			let input = TxIn {
-				previous_output: vtxo.point(),
-				script_sig: ScriptBuf::new(),
-				sequence: clause.sequence().unwrap_or(Sequence::ZERO),
-				witness: Witness::new(),
-			};
+				// TxIn base weight (non-witness) + witness weight
+				total_input_weight += 4 * input.base_size() + (1 + 1 + 64); // nb items + sig
+				total_input_amount += vtxo.amount();
 
-			// TxIn base weight (non-witness) + witness weight
-			total_input_weight += 4 * input.base_size() + clause.witness_size(vtxo);
-			total_input_amount += vtxo.amount();
+				inputs.push(input);
+				clauses.push(None);
+			} else {
+				let clause = self.signer.find_signable_clause(vtxo).await
+					.context(vtxo.id())
+					.context("no signable clause for vtxo")?;
 
-			inputs.push(input);
-			clauses.push(clause);
+				let input = TxIn {
+					previous_output: vtxo.point(),
+					script_sig: ScriptBuf::new(),
+					sequence: clause.sequence().unwrap_or(Sequence::ZERO),
+					witness: Witness::new(),
+				};
+
+				// TxIn base weight (non-witness) + witness weight
+				total_input_weight += 4 * input.base_size() + clause.witness_size(vtxo);
+				total_input_amount += vtxo.amount();
+
+				inputs.push(input);
+				clauses.push(Some(clause));
+			}
 
 			slog!(PreparingVtxoClaim, vtxo_id: vtxo.id(), policy: vtxo.policy().policy_type(),
 				value: vtxo.amount(),
@@ -492,13 +509,24 @@ impl Watchman {
 
 		let mut sighash_cache = sighash::SighashCache::new(&mut tx);
 		for (input_idx, (vtxo, clause)) in vtxos.iter().zip(&clauses).enumerate() {
-			let witness = self.signer.sign_input_with_clause(
-				vtxo, clause, input_idx, &mut sighash_cache, &prevouts,
-			).await.with_context(|| format!(
-				"failed to sign input {} of tx {}",
-				input_idx, sighash_cache.transaction().compute_txid(),
-			))?;
-			*sighash_cache.witness_mut(input_idx).unwrap() = witness;
+			if let Some(clause) = clause {
+				let witness = self.signer.sign_input_with_clause(
+					vtxo, clause, input_idx, &mut sighash_cache, &prevouts,
+				).await.with_context(|| format!(
+					"failed to sign script-spend input {} of tx {}",
+					input_idx, sighash_cache.transaction().compute_txid(),
+				))?;
+				*sighash_cache.witness_mut(input_idx).unwrap() = witness;
+			} else {
+				// keyspend
+				let witness = self.signer.sign_input_with_keyspend(
+					vtxo, input_idx, &mut sighash_cache, &prevouts,
+				).await.with_context(|| format!(
+					"failed to sign key-spend input {} of tx {}",
+					input_idx, sighash_cache.transaction().compute_txid(),
+				))?;
+				*sighash_cache.witness_mut(input_idx).unwrap() = witness;
+			}
 		}
 
 		Ok(tx)

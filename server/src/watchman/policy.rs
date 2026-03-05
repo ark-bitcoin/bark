@@ -87,6 +87,19 @@ fn try_progress<T>(
 	Some(Action::Progress { txid, deadline: Some(deadline) })
 }
 
+/// Determine the action for an ServerOwned policy
+///
+/// We only want to sweep server owned after the expiry.
+/// We do this so that we can mark connectors with the time they can
+/// be swept.
+fn decide_server_owned(params: &ActionParams) -> Action {
+	if params.chain_tip_height >= params.expiry_height {
+		Action::Claim { deadline: None }
+	} else {
+		Action::Wait
+	}
+}
+
 /// Determine the action for an Expiry policy
 ///
 /// Claim if expired, otherwise wait
@@ -188,7 +201,9 @@ impl ActionContextFetcher<'_> {
 		let params = self.build_params(vtxo, confirmed_at).await;
 
 		let action = match vtxo.policy() {
-			ServerVtxoPolicy::ServerOwned => Action::Claim { deadline: None },
+			ServerVtxoPolicy::ServerOwned => {
+				decide_server_owned(&params)
+			},
 			ServerVtxoPolicy::Expiry(_)
 				| ServerVtxoPolicy::Checkpoint(_)
 				| ServerVtxoPolicy::HarkLeaf(_)
