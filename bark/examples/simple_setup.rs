@@ -3,16 +3,17 @@ use std::sync::Arc;
 use bitcoin::Network;
 
 use bark::{Config, Wallet};
-use bark::persist::sqlite::SqliteClient;
 
 async fn example() -> anyhow::Result<()> {
+	use bark::persist::adaptor::StorageAdaptorWrapper;
+
 	let mnemonic = "super secret ...".parse()?;
 	let cfg = Config {
 		server_address: "https://ark.signet.2nd.dev".into(),
 		esplora_address: Some("https://esplora.signet.2nd.dev".into()),
 		..Config::network_default(Network::Signet)
 	};
-	let db = Arc::new(SqliteClient::open("./bark_db")?);
+	let db = Arc::new(StorageAdaptorWrapper::new_memory());
 	let wallet = Wallet::create(&mnemonic, Network::Signet, cfg, db, false).await?;
 
 	let address = wallet.new_address().await?;

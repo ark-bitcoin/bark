@@ -6,7 +6,7 @@
 
 use std::collections::{BTreeMap, HashMap};
 
-use crate::persist::adaptor::{StorageAdaptor, Query, Record};
+use crate::persist::adaptor::{Query, Record, StorageAdaptor, StorageAdaptorWrapper};
 
 /// In-memory storage adaptor for testing and simple use cases.
 ///
@@ -21,10 +21,9 @@ use crate::persist::adaptor::{StorageAdaptor, Query, Record};
 /// # use bark::WalletProperties;
 /// # use bark::persist::BarkPersister;
 /// # use bark::persist::adaptor::StorageAdaptorWrapper;
-/// # use bark::persist::adaptor::memory::MemoryStorageAdaptor;
 ///
 /// # async fn example() -> anyhow::Result<()> {
-/// let storage = StorageAdaptorWrapper::new(MemoryStorageAdaptor::new());
+/// let storage = StorageAdaptorWrapper::new_memory();
 /// let properties = WalletProperties {
 ///		network: Network::Testnet,
 ///		fingerprint: Fingerprint::default(),
@@ -49,6 +48,12 @@ impl MemoryStorageAdaptor {
 
 	pub fn partitions(&self) -> &HashMap<u8, BTreeMap<Vec<u8>, Record>> {
 		&self.partitions
+	}
+}
+
+impl StorageAdaptorWrapper<MemoryStorageAdaptor> {
+	pub fn new_memory() -> Self {
+		Self::new(MemoryStorageAdaptor::new())
 	}
 }
 
