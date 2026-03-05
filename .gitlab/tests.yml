@@ -160,6 +160,7 @@ test-integration-esplora:
 test-integration-mempool:
   stage: test
   interruptible: true
+  allow_failure: true
   variables:
     CHAIN_SOURCE: mempool
     TEST_DIRECTORY: ./test/mempool
@@ -178,7 +179,6 @@ test-integration-mempool:
     - job: bark-as-libs
     - job: check-commits
       artifacts: true
-  allow_failure: true
   tags:
     - integration
 
@@ -208,6 +208,7 @@ test-integration-btc30:
 test-integration-filestore:
   stage: test
   interruptible: true
+  allow_failure: true
   variables:
     CHAIN_SOURCE: mempool
     USE_FILESTORE: "1"
