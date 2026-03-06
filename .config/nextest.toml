@@ -1,0 +1,12 @@
+# Warns after `period`, kills after `terminate-after` additional periods.
+# e.g. period = "60s", terminate-after = 3 => warns at 60s, kills at 4*60s = 240s.
+
+[profile.default]
+slow-timeout = { period = "60s", terminate-after = 3 }
+
+[profile.ci]
+slow-timeout = { period = "60s", terminate-after = 5 }
+
+[profile.ci-merge-train]
+slow-timeout = { period = "60s", terminate-after = 5 }
+retries = 3
