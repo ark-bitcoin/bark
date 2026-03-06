@@ -94,7 +94,7 @@ release-server:
       - captaind-*
       - watchmand-*
       - SHA256SUMS
-    expire_in: 1 week
+    expire_in: 1 day
   needs:
     - parse-versions-server
     - build-server
