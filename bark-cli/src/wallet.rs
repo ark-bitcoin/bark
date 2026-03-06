@@ -63,6 +63,11 @@ const CONFIG_FILE: &str = "config.toml";
 /// File name of the debug log file.
 const DEBUG_LOG_FILE: &str = "debug.log";
 
+/// Process log files that may be written into the datadir by the daemon
+/// framework during testing; they should be ignored like debug.log.
+const STDOUT_LOG_FILE: &str = "stdout.log";
+const STDERR_LOG_FILE: &str = "stderr.log";
+
 /// Options to define the initial bark config
 #[derive(Clone, PartialEq, Eq, Default, clap::Args)]
 pub struct ConfigOpts {
@@ -233,7 +238,10 @@ async fn check_clean_datadir(datadir: &Path, clean: bool) -> anyhow::Result<bool
 				has_config = true;
 				continue;
 			}
-			if item.file_name() == DEBUG_LOG_FILE {
+			if item.file_name() == DEBUG_LOG_FILE
+				|| item.file_name() == STDOUT_LOG_FILE
+				|| item.file_name() == STDERR_LOG_FILE
+			{
 				continue;
 			}
 			if item.file_name() == LOCK_FILE {
@@ -375,6 +383,10 @@ pub async fn open_wallet(datadir: &Path) -> anyhow::Result<Option<(BarkWallet, O
 	let mnemonic_path = datadir.join(MNEMONIC_FILE);
 
 	if !tokio::fs::try_exists(datadir).await? {
+		return Ok(None);
+	}
+
+	if !tokio::fs::try_exists(&mnemonic_path).await? {
 		return Ok(None);
 	}
 

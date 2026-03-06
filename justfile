@@ -3,6 +3,7 @@ CARGO_TARGET := `cargo metadata --format-version 1 --no-deps | jq -r '.target_di
 JUSTFILE_DIR := justfile_directory()
 export CAPTAIND_EXEC := CARGO_TARGET / "debug" / "captaind"
 export BARK_EXEC := CARGO_TARGET / "debug" / "bark"
+export BARKD_EXEC := CARGO_TARGET / "debug" / "barkd"
 export BITCOIND_SNAPSHOT_DIR := JUSTFILE_DIR / "test" / "_bitcoind_snapshot"
 
 NEXTEST_PROFILE := env("NEXTEST_PROFILE", "default")

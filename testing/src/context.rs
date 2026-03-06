@@ -30,9 +30,10 @@ use crate::util::{
 	FutureExt, TestContextChainSource,
 };
 use crate::{
-	btc, constants, sat, Bark, Bitcoind, BitcoindConfig, Captaind, Electrs, ElectrsConfig,
+	btc, constants, sat, Bark, Barkd, Bitcoind, BitcoindConfig, Captaind, Electrs, ElectrsConfig,
 	Lightningd, LightningdConfig,
 };
+use crate::daemon::barkd::BarkdChainSource;
 
 pub struct LightningPaymentSetup {
 	pub receiver: Lightningd,
@@ -480,6 +481,29 @@ impl TestContext {
 		self.try_new_bark(name, srv).await.unwrap()
 	}
 
+	/// Creates a new barkd daemon connected to the given Ark server.
+	///
+	/// Uses esplora (electrs) as chain source when available, otherwise
+	/// creates a dedicated bitcoind.
+	pub async fn new_barkd(&self, name: impl AsRef<str>, srv: &Captaind) -> Barkd {
+		let (chain_source, bitcoind) = if let Some(electrs) = &self.electrs {
+			(BarkdChainSource::Esplora(electrs.rest_url()), None)
+		} else {
+			let bd = self.new_bitcoind(format!("{}_bitcoind", name.as_ref())).await;
+			let chain_source = BarkdChainSource::Bitcoind {
+				url: bd.rpc_url(),
+				cookie: bd.rpc_cookie(),
+			};
+			(chain_source, Some(bd))
+		};
+
+		let datadir = self.datadir.join(name.as_ref());
+		let mut daemon = Barkd::new(name, datadir, srv.ark_url(), chain_source, bitcoind);
+		daemon.start().await.expect("failed to start barkd");
+		daemon.create_wallet().await.expect("failed to create barkd wallet");
+		daemon
+	}
+
 	/// Creates new bark and immediately funds it. Waits until the bark's bitcoind
 	/// receives funding transaction.
 	pub async fn new_bark_with_funds(&self, name: impl AsRef<str>, srv: &dyn ToArkUrl, amount: Amount) -> Bark {
@@ -566,6 +590,15 @@ impl TestContext {
 	pub async fn fund_bark(&self, bark: &Bark, amount: Amount) -> Txid {
 		info!("Fund {} {}", bark.name(), amount);
 		let address = bark.get_onchain_address().await;
+		let txid = self.bitcoind().fund_addr(address, amount).await;
+		self.bitcoind().generate(1).await;
+		self.await_block_count_sync().await;
+		txid
+	}
+
+	pub async fn fund_barkd(&self, barkd: &Barkd, amount: Amount) -> Txid {
+		info!("Fund barkd {} {}", barkd.name, amount);
+		let address = barkd.onchain_address().await;
 		let txid = self.bitcoind().fund_addr(address, amount).await;
 		self.bitcoind().generate(1).await;
 		self.await_block_count_sync().await;
