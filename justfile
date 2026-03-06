@@ -5,6 +5,8 @@ export CAPTAIND_EXEC := CARGO_TARGET / "debug" / "captaind"
 export BARK_EXEC := CARGO_TARGET / "debug" / "bark"
 export BITCOIND_SNAPSHOT_DIR := JUSTFILE_DIR / "test" / "_bitcoind_snapshot"
 
+NEXTEST_PROFILE := env("NEXTEST_PROFILE", "default")
+
 SERVER_SQL_SCHEMA_PATH := "server/schema.sql"
 BARK_SQL_SCHEMA_PATH := "bark/schema.sql"
 BARK_OPENAPI_SCHEMA_PATH := "bark-rest/openapi.json"
@@ -43,26 +45,26 @@ docker-pull:
 	if [ -n "${LIGHTNINGD_DOCKER_IMAGE-""}" ]; then docker image inspect "$LIGHTNINGD_DOCKER_IMAGE" > /dev/null 2>&1 && echo "Image already exists locally." || (echo "Image not found locally. Pulling..." && docker pull "$LIGHTNINGD_DOCKER_IMAGE"); fi
 
 test-unit TEST="":
-	cargo nextest run --no-fail-fast --workspace --exclude ark-testing {{TEST}}
+	cargo nextest run --no-fail-fast --profile {{NEXTEST_PROFILE}} --workspace --exclude ark-testing {{TEST}}
 alias unit := test-unit
 
 test-unit-codecov TEST="":
-	cargo llvm-cov nextest --workspace --exclude ark-testing --no-report {{TEST}}
+	cargo llvm-cov nextest --profile {{NEXTEST_PROFILE}} --workspace --exclude ark-testing --no-report {{TEST}}
 
 test-integration TEST="": build docker-pull
-	cargo nextest run --no-fail-fast --package ark-testing {{TEST}}
+	cargo nextest run --no-fail-fast --profile {{NEXTEST_PROFILE}} --package ark-testing {{TEST}}
 alias int := test-integration
 
 # run integration tests for bark, movement, exit and lightning test files only
 test-integration-client: build docker-pull
-	cargo nextest run --no-fail-fast --package ark-testing --test bark --test movement --test exit --test lightningd
+	cargo nextest run --no-fail-fast --profile {{NEXTEST_PROFILE}} --package ark-testing --test bark --test movement --test exit --test lightningd
 alias int-client := test-integration-client
 
 test-integration-codecov TEST="": docker-pull
 	#!/usr/bin/env bash
 	set -euo pipefail
 	source <(cargo llvm-cov show-env --export-prefix)
-	cargo nextest run --package ark-testing {{TEST}}
+	cargo nextest run --profile {{NEXTEST_PROFILE}} --package ark-testing {{TEST}}
 alias int-cov := test-integration-codecov
 
 test-integration-esplora TEST="": build docker-pull
@@ -73,7 +75,7 @@ test-integration-esplora-codecov TEST="": docker-pull
 	#!/usr/bin/env bash
 	set -euo pipefail
 	source <(cargo llvm-cov show-env --export-prefix)
-	CHAIN_SOURCE=esplora cargo nextest run --package ark-testing {{TEST}}
+	CHAIN_SOURCE=esplora cargo nextest run --profile {{NEXTEST_PROFILE}} --package ark-testing {{TEST}}
 
 test-integration-mempool TEST="": build docker-pull
 	CHAIN_SOURCE=mempool just int "{{TEST}}"
@@ -83,7 +85,7 @@ test-integration-mempool-codecov TEST="": docker-pull
 	#!/usr/bin/env bash
 	set -euo pipefail
 	source <(cargo llvm-cov show-env --export-prefix)
-	CHAIN_SOURCE=mempool cargo nextest run --package ark-testing {{TEST}}
+	CHAIN_SOURCE=mempool cargo nextest run --profile {{NEXTEST_PROFILE}} --package ark-testing {{TEST}}
 
 test-integration-all-codecov: docker-pull
 	just test-integration-codecov

@@ -11,11 +11,15 @@ include:
 variables:
   GIT_DEPTH: 100
   GIT_STRATEGY: clone
+  NEXTEST_PROFILE: ci
 
 workflow:
   auto_cancel:
     on_new_commit: interruptible
   rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_EVENT_TYPE == "merge_train"
+      variables:
+        NEXTEST_PROFILE: ci-merge-train
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
     - if: $CI_COMMIT_TAG =~ /^bark-/
     - if: $CI_COMMIT_TAG =~ /^server-/
