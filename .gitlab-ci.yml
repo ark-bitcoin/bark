@@ -31,8 +31,8 @@ stages:
   - release
   - helpers
 
+# Specifying a default image for all steps. If you specify a new before_script in a step, then this will be ignored.
 default:
   image: registry.2nd.dev/build:28
   before_script:
     - sudo chown -R nixuser:nixbld "$CI_PROJECT_DIR" || true
-    - git config --global --add safe.directory "$CI_PROJECT_DIR"
