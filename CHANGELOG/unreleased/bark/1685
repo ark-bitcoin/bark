@@ -1,3 +1,0 @@
-- Loosen restrictions on lightning receive overpayment
-  If the server overpays the client we should allow this instead of bailing.
-  [#1685](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1685)

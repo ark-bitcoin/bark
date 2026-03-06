@@ -1,4 +1,0 @@
-- Add `TrustedBalance` struct and `WalletExt::trusted_balance()`
-  Computes wallet balance using the recursive `is_trusted_utxo` check,
-  categorizing funds as trusted or untrusted.
-  [#1705](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1705)
