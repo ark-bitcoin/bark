@@ -1,5 +1,4 @@
 include:
-  - local: '.gitlab/main.yml'
   - local: '.gitlab/tests.yml'
   - local: '.gitlab/tests-codecov.yml'
   - local: '.gitlab/helpers.yml'
@@ -33,7 +32,8 @@ stages:
   - test
   - post-test
   - release
-  - helpers
+  - publish
+  - mirror
 
 # Specifying a default image for all steps. If you specify a new before_script in a step, then this will be ignored.
 default:

@@ -5,33 +5,38 @@
     - if: $CI_CODECOV_PIPELINE == "true"
 
 test-unit-codecov:
+  interruptible: true
   stage: test
   extends: .codecov-rules
-  interruptible: true
+  needs:
+    - check-commits
   variables:
     NEXTEST_TEST_THREADS: "1"
   script:
     - git log --oneline -1
     - nix develop .#default --command bash -c "just test-unit-codecov"
-  needs:
-    - job: check-commits
 
 build-codecov:
+  interruptible: true
   stage: build
   extends: .codecov-rules
-  interruptible: true
+  needs:
+    - check-commits
   variables:
     NEXTEST_TEST_THREADS: "1"
   script:
     - git log --oneline -1
     - nix develop .#default --command bash -c "just build-codecov"
-  needs:
-    - job: check-commits
 
 test-integration-btc30-codecov:
-  stage: test
-  extends: .codecov-rules
   interruptible: true
+  stage: test
+  tags:
+    - integration
+  extends: .codecov-rules
+  needs:
+    - build-codecov
+    - check-commits
   variables:
     TEST_DIRECTORY: ./test/btc30-codecov
     NEXTEST_TEST_THREADS: "1"
@@ -43,21 +48,36 @@ test-integration-btc30-codecov:
     - export CAPTAIND_EXEC=${CI_PROJECT_DIR}/target/debug/captaind
     - export BARK_EXEC=${CI_PROJECT_DIR}/target/debug/bark
     - bash ./contrib/ci-run-test.sh test-integration-codecov
-  needs:
-    - job: build-codecov
-    - job: check-commits
-      artifacts: true
-  tags:
-    - integration
 
 code-coverage:
+  interruptible: true
   stage: post-test
   extends: .codecov-rules
-  interruptible: true
+  needs:
+    - test-integration-btc30-codecov
   script:
     - nix develop .#default --command bash -c "just codecov-report"
     - mkdir -p "/host/data/codecov/${CI_COMMIT_SHA}/"
     - cp -r target/debug/codecov/* "/host/data/codecov/${CI_COMMIT_SHA}/"
     - echo "Coverage -> https://ci.2nd.dev/codecov/${CI_COMMIT_SHA}/html/index.html"
+
+tar-and-print-codecov-data:
+  interruptible: true
+  stage: post-test
+  extends: .codecov-rules
   needs:
-    - job: test-integration-btc30-codecov
+    - job: code-coverage
+      optional: true
+  script:
+    - |
+      SRC="/host/data/codecov/${CI_COMMIT_SHA}"
+      DST="/host/data/codecov/${CI_COMMIT_SHA}.tar.gz"
+      if [ -d "$SRC" ]; then
+        echo "Tarring codecov data: $SRC"
+        tar -czf "$DST" "$SRC/"
+        sudo mv "$DST" "$SRC/"
+        echo "Code Coverage tar.gz -> https://ci.2nd.dev/codecov/${CI_COMMIT_SHA}/${CI_COMMIT_SHA}.tar.gz"
+        echo "Code Coverage URL    -> https://ci.2nd.dev/codecov/${CI_COMMIT_SHA}/html/index.html"
+      else
+        echo "Warning: Codecov directory $SRC does not exist – skipping tar"
+      fi
