@@ -62,6 +62,7 @@ build:
       - target/ci/captaind
       - target/ci/bark
       - target/ci/barkd
+      - target/ci/pid-lock-holder
     expire_in: 1 day
 
 build-test-archives:
