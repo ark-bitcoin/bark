@@ -20,6 +20,6 @@ glab auth login --token "${GITLAB_RELEASE_TOKEN}"
 glab release create "${CI_COMMIT_TAG}" ${FILE_NAMES} \
 	--repo ark-bitcoin/bark \
 	--use-package-registry \
-	--notes "Automated release ${CI_COMMIT_TAG} from Woodpecker CI"
+	--notes "Automated release ${CI_COMMIT_TAG} from GitLab CI"
 
 echo "GitLab release: https://gitlab.com/ark-bitcoin/bark/-/releases/${CI_COMMIT_TAG}"
