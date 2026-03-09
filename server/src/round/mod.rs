@@ -1014,10 +1014,11 @@ impl SigningVtxoTree {
 		).expect("failed to combine partial vtxo cosign signatures: should have checked partials");
 		debug_assert_eq!(self.unsigned_vtxo_tree.verify_cosign_sigs(&cosign_sigs), Ok(()));
 
-		// Then construct the final signed vtxo tree and sign on-chain tx.
-		let (signed_vtxos, signed_round_tx) = sign_on_chain_transaction(
-			&mut self, cosign_sigs
-		).await?;
+		// Construct the final signed vtxo tree.
+		let signed_vtxos = create_signed_vtxo_tree(&mut self, cosign_sigs);
+
+		// Sign the funding tx.
+		let signed_round_tx = sign_funding_tx(&mut self).await?;
 
 		// Broadcast the transaction.
 		let signed_round_tx = broadcast_on_chain_transaction(
@@ -1038,18 +1039,10 @@ impl SigningVtxoTree {
 	}
 }
 
-#[tracing::instrument(
-	skip(state, cosign_sigs),
-	name = "SignOnChainTransaction",
-	fields(
-		{ telemetry::ATTRIBUTE_ROUND_SEQ } = %state.round_step.round_seq(),
-		{ telemetry::ATTRIBUTE_ATTEMPT_SEQ } = state.round_step.attempt_seq(),
-	)
-)]
-async fn sign_on_chain_transaction(
+fn create_signed_vtxo_tree(
 	state: &mut SigningVtxoTree,
 	cosign_sigs: Vec<bitcoin::secp256k1::schnorr::Signature>,
-) -> Result<(CachedSignedVtxoTree, bitcoin::Transaction), RoundError> {
+) -> CachedSignedVtxoTree {
 	let round_step = state.next_step(RoundStep::SignOnChainTransaction);
 
 	let signed_vtxos = state.unsigned_vtxo_tree
@@ -1062,10 +1055,23 @@ async fn sign_on_chain_transaction(
 	);
 	telemetry::set_round_step_duration(round_step);
 
-	// Sign the on-chain tx.
+	signed_vtxos
+}
+
+#[tracing::instrument(
+	skip(state),
+	name = "SignFundingTx",
+	fields(
+		{ telemetry::ATTRIBUTE_ROUND_SEQ } = %state.round_step.round_seq(),
+		{ telemetry::ATTRIBUTE_ATTEMPT_SEQ } = state.round_step.attempt_seq(),
+	)
+)]
+async fn sign_funding_tx(
+	state: &mut SigningVtxoTree,
+) -> Result<bitcoin::Transaction, RoundError> {
 	let signed_round_tx = match state.wallet_lock.finish_tx(state.round_tx_psbt.clone()) {
 		Ok(tx) => tx,
-		Err(e) => return Err(RoundError::Recoverable(e.context("round tx signing error"))),
+		Err(e) => return Err(RoundError::Recoverable(e.context("funding tx signing error"))),
 	};
 	state.wallet_lock.commit_tx(&signed_round_tx);
 	if let Err(e) = state.wallet_lock.persist().await {
@@ -1075,7 +1081,7 @@ async fn sign_on_chain_transaction(
 		warn!("Failed to persist BDK wallet to db: {:?}", e);
 	}
 
-	Ok((signed_vtxos, signed_round_tx))
+	Ok(signed_round_tx)
 }
 
 #[tracing::instrument(
