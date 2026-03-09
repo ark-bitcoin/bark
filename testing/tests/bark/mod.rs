@@ -1,3 +1,8 @@
+mod chain_source;
+mod exit;
+mod fees;
+mod lightning;
+mod movement;
 
 use std::io::{self, BufRead};
 use std::sync::Arc;
