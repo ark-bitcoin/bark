@@ -1,0 +1,6 @@
+- Silence noisy log when should-refresh VTXOs can't cover fees
+  When VTXOs in the "should refresh" zone were too small to produce an
+  output above the dust limit after fees, a warning was logged on every
+  refresh attempt. This is a normal condition, not an error. The message
+  is now only emitted at trace level.
+  [#1739](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1739)
