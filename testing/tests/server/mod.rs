@@ -23,6 +23,7 @@ use ark::{
 };
 use ark::arkoor::ArkoorDestination;
 use ark::arkoor::package::ArkoorPackageBuilder;
+use ark::attestations::ArkoorCosignAttestation;
 use ark::mailbox::{MailboxAuthorization, MailboxIdentifier, MailboxType};
 use ark::rounds::{Challenge, RoundAttemptAttestation, RoundSeq};
 use ark::tree::signed::builder::SignedTreeBuilder;
@@ -496,24 +497,16 @@ async fn double_spend_arkoor() {
 	).unwrap();
 
 	// And the corresponding requests to the server
-	use protos::ArkoorPackageCosignRequest;
-	let req1: ArkoorPackageCosignRequest = builder1
-		.generate_user_nonces(&[vtxo_keypair]).unwrap()
-		.cosign_request()
-		.convert_vtxo(|vtxo| vtxo.id())
-		.into();
+	let sign_cosign_request = |builder: ArkoorPackageBuilder<_>| {
+		let cosign_request = builder
+			.generate_user_nonces(&[vtxo_keypair]).unwrap()
+			.cosign_request();
+		protos::ArkoorPackageCosignRequest::from(cosign_request)
+	};
 
-	let req2: ArkoorPackageCosignRequest = builder2
-		.generate_user_nonces(&[vtxo_keypair]).unwrap()
-		.cosign_request()
-		.convert_vtxo(|vtxo| vtxo.id())
-		.into();
-
-	let req3: ArkoorPackageCosignRequest = builder3
-		.generate_user_nonces(&[vtxo_keypair]).unwrap()
-		.cosign_request()
-		.convert_vtxo(|vtxo| vtxo.id())
-		.into();
+	let req1 = sign_cosign_request(builder1);
+	let req2 = sign_cosign_request(builder2);
+	let req3 = sign_cosign_request(builder3);
 
 	// Create 3 rpc-clients so we can send 3 requests in paralel
 	let mut rpc1 = srv.get_public_rpc().await;
@@ -1542,6 +1535,99 @@ async fn test_cosign_vtxo_tree() {
 }
 
 #[tokio::test]
+async fn should_refuse_oor_with_invalid_attestation() {
+	let ctx = TestContext::new("server/should_refuse_oor_with_invalid_attestation").await;
+	let srv = ctx.new_captaind("server", None).await;
+
+	let bark = ctx.new_bark_with_funds("bark", &srv, sat(1_000_000)).await;
+	let bark2 = ctx.new_bark("bark2", &srv).await;
+
+	bark.board(sat(800_000)).await;
+	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
+
+	// Proxy that tampers with per-part ownership proofs
+	#[derive(Clone)]
+	struct TamperOwnershipProofs;
+	#[async_trait::async_trait]
+	impl captaind::proxy::ArkRpcProxy for TamperOwnershipProofs {
+		async fn request_arkoor_cosign(
+			&self, upstream: &mut ArkClient, mut req: protos::ArkoorPackageCosignRequest,
+		) -> Result<protos::ArkoorPackageCosignResponse, tonic::Status> {
+			for part in req.parts.iter_mut() {
+				let wrong_key = Keypair::new(&SECP, &mut thread_rng());
+				let vtxo_id = VtxoId::from_slice(&part.input_vtxo_id).unwrap();
+				let outputs = part.outputs.iter()
+					.map(|o| ArkoorDestination::try_from(o.clone()).unwrap())
+					.collect::<Vec<_>>();
+				part.attestation = Some(ArkoorCosignAttestation::new(
+					vtxo_id,
+					&outputs.iter().collect::<Vec<_>>(),
+					&wrong_key,
+				).serialize().to_vec());
+			}
+			Ok(upstream.request_arkoor_cosign(req).await?.into_inner())
+		}
+	}
+
+	let addr = bark2.address().await;
+
+	// Wrong-key signature should be rejected
+	let proxy = srv.start_proxy_no_mailbox(TamperOwnershipProofs).await;
+	bark.set_ark_url(&proxy.address).await;
+
+	let err = bark.try_send_oor(&addr, sat(100_000), true).await
+		.expect_err("Server should refuse oor with wrong-key attestation").to_alt_string();
+	assert!(err.contains("Invalid attestation"), "err: {err}");
+}
+
+#[tokio::test]
+async fn should_refuse_ln_pay_with_invalid_attestation() {
+	let ctx = TestContext::new("server/should_refuse_ln_pay_with_invalid_attestation").await;
+
+	let lightningd = ctx.new_lightningd("lightningd").await;
+	let srv = ctx.new_captaind("server", Some(&lightningd)).await;
+
+	let bark = ctx.new_bark_with_funds("bark", &srv, sat(1_000_000)).await;
+
+	bark.board(sat(800_000)).await;
+	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
+
+	// Proxy that tampers with per-part ownership proofs
+	#[derive(Clone)]
+	struct TamperOwnershipProofs;
+	#[async_trait::async_trait]
+	impl captaind::proxy::ArkRpcProxy for TamperOwnershipProofs {
+		async fn request_lightning_pay_htlc_cosign(
+			&self, upstream: &mut ArkClient, mut req: protos::LightningPayHtlcCosignRequest,
+		) -> Result<protos::ArkoorPackageCosignResponse, tonic::Status> {
+			for part in req.parts.iter_mut() {
+				let wrong_key = Keypair::new(&SECP, &mut thread_rng());
+				let vtxo_id = VtxoId::from_slice(&part.input_vtxo_id).unwrap();
+				let outputs = part.outputs.iter()
+					.map(|o| ArkoorDestination::try_from(o.clone()).unwrap())
+					.collect::<Vec<_>>();
+				part.attestation = Some(ArkoorCosignAttestation::new(
+					vtxo_id,
+					&outputs.iter().collect::<Vec<_>>(),
+					&wrong_key,
+				).serialize().to_vec());
+			}
+			Ok(upstream.request_lightning_pay_htlc_cosign(req).await?.into_inner())
+		}
+	}
+
+	// Wrong-key signature should be rejected
+	let proxy = srv.start_proxy_no_mailbox(TamperOwnershipProofs).await;
+	bark.set_ark_url(&proxy.address).await;
+
+	let invoice = lightningd.invoice(Some(sat(100_000)), "test invoice", "test").await;
+
+	let err = bark.try_pay_lightning(&invoice, None, false).await
+		.expect_err("Server should refuse ln pay with wrong-key attestation").to_alt_string();
+	assert!(err.contains("Invalid attestation"), "err: {err}");
+}
+
+#[tokio::test]
 async fn should_refuse_oor_input_vtxo_that_is_being_exited() {
 	let ctx = TestContext::new("server/should_refuse_oor_input_vtxo_that_is_being_exited").await;
 	let srv = ctx.new_captaind("server", None).await;
@@ -1566,18 +1652,31 @@ async fn should_refuse_oor_input_vtxo_that_is_being_exited() {
 	assert_eq!(bark.onchain_balance().await, sat(596_429));
 
 	#[derive(Clone)]
-	struct Proxy(VtxoId);
+	struct Proxy(Arc<Wallet>, WalletVtxoInfo);
 	#[async_trait::async_trait]
 	impl captaind::proxy::ArkRpcProxy for Proxy {
 		async fn request_arkoor_cosign(
 			&self, upstream: &mut ArkClient, mut req: protos::ArkoorPackageCosignRequest,
 		) -> Result<protos::ArkoorPackageCosignResponse, tonic::Status> {
-			req.parts[0].input_vtxo_id = self.0.to_bytes().to_vec();
+			let (_, keypair) = self.0.pubkey_keypair(&self.1.user_pubkey).await.unwrap().unwrap();
+
+			let outputs = req.parts[0].outputs.iter()
+				.chain(&req.parts[0].isolated_outputs)
+				.map(|o| ArkoorDestination::try_from(o.clone()).unwrap())
+				.collect::<Vec<_>>();
+			let output_refs = outputs.iter().collect::<Vec<_>>();
+
+			let sig = ArkoorCosignAttestation::new(self.1.id, &output_refs, &keypair);
+
+			req.parts[0].input_vtxo_id = self.1.id.to_bytes().to_vec();
+			req.parts[0].attestation = Some(sig.serialize().to_vec());
 			Ok(upstream.request_arkoor_cosign(req).await?.into_inner())
 		}
 	}
 
-	let proxy = srv.start_proxy_no_mailbox(Proxy(vtxo_a.id)).await;
+	let proxy = srv.start_proxy_no_mailbox(
+		Proxy(Arc::new(bark.client().await), vtxo_a.clone())
+	).await;
 
 	bark.set_ark_url(&proxy.address).await;
 
@@ -1742,18 +1841,31 @@ async fn should_refuse_ln_pay_input_vtxo_that_is_being_exited() {
 	assert_eq!(bark.onchain_balance().await, sat(596_429));
 
 	#[derive(Clone)]
-	struct Proxy(VtxoId);
+	struct Proxy(Arc<Wallet>, WalletVtxoInfo);
 	#[async_trait::async_trait]
 	impl captaind::proxy::ArkRpcProxy for Proxy {
 		async fn request_lightning_pay_htlc_cosign(
 			&self, upstream: &mut ArkClient, mut req: protos::LightningPayHtlcCosignRequest,
 		) -> Result<protos::ArkoorPackageCosignResponse, tonic::Status> {
-			req.parts[0].input_vtxo_id = self.0.to_bytes().to_vec();
+			let (_, keypair) = self.0.pubkey_keypair(&self.1.user_pubkey).await.unwrap().unwrap();
+
+			let outputs = req.parts[0].outputs.iter()
+				.chain(&req.parts[0].isolated_outputs)
+				.map(|o| ArkoorDestination::try_from(o.clone()).unwrap())
+				.collect::<Vec<_>>();
+			let output_refs = outputs.iter().collect::<Vec<_>>();
+
+			let sig = ArkoorCosignAttestation::new(self.1.id, &output_refs, &keypair);
+
+			req.parts[0].input_vtxo_id = self.1.id.to_bytes().to_vec();
+			req.parts[0].attestation = Some(sig.serialize().to_vec());
 			Ok(upstream.request_lightning_pay_htlc_cosign(req).await?.into_inner())
 		}
 	}
 
-	let proxy = srv.start_proxy_no_mailbox(Proxy(vtxo_a.id)).await;
+	let proxy = srv.start_proxy_no_mailbox(
+		Proxy(Arc::new(bark.client().await), vtxo_a.clone())
+	).await;
 
 	bark.set_ark_url(&proxy.address).await;
 
