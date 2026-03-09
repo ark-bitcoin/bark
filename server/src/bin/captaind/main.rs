@@ -17,7 +17,9 @@ use ark::integration::{TokenStatus, TokenType};
 use bitcoin_ext::rpc::{BitcoinRpcClient, BitcoinRpcExt};
 use uuid::Uuid;
 
+use ark::VtxoId;
 use server::{filters, Config, Server, CAPTAIND_CLI_API_KEY};
+use server::utils::block_duration;
 use server_rpc::{self as rpc, protos};
 
 /// Defaults to our default port on localhost.
@@ -98,6 +100,10 @@ enum RpcCommand {
 	/// Start a new round
 	#[command()]
 	TriggerRound,
+
+	/// Manage vtxo bans
+	#[command(subcommand)]
+	Ban(BanCommand),
 }
 
 #[derive(clap::Subcommand)]
@@ -214,6 +220,30 @@ enum DataCommand {
 	FillVtxos,
 }
 
+#[derive(clap::Subcommand)]
+enum BanCommand {
+	/// Ban a vtxo for a duration or number of blocks
+	#[command()]
+	Ban {
+		/// The vtxo id to ban
+		vtxo_id: VtxoId,
+		/// How long to ban the vtxo, e.g. "2days", "12h"
+		#[arg(long, group = "ban_length")]
+		duration: Option<humantime::Duration>,
+		/// Number of blocks to ban the vtxo for
+		#[arg(long, group = "ban_length")]
+		blocks: Option<u32>,
+	},
+	/// Unban a vtxo
+	#[command()]
+	Unban {
+		/// The vtxo id to unban
+		vtxo_id: VtxoId,
+	},
+	/// List all banned vtxos
+	#[command()]
+	List,
+}
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq, Args)]
 pub struct Filters {
 	#[arg(long, num_args = 0..)]
@@ -505,6 +535,45 @@ async fn run_rpc(addr: &str, cmd: RpcCommand) -> anyhow::Result<()> {
 				.await.context("failed to connect to rpc")?;
 
 			rpc.trigger_round(protos::Empty {}).await?.into_inner();
+		}
+		RpcCommand::Ban(cmd) => {
+			let mut rpc = rpc::admin::BanAdminServiceClient::connect(endpoint)
+				.await.context("failed to connect to rpc")?;
+
+			match cmd {
+				BanCommand::Ban { vtxo_id, duration, blocks } => {
+					let ban_blocks = match (duration, blocks) {
+						(Some(d), None) => block_duration::duration_to_blocks(*d),
+						(None, Some(b)) => b,
+						_ => bail!("provide either --duration or --blocks"),
+					};
+					rpc.ban_vtxo(protos::BanVtxoRequest {
+						vtxo_id: vtxo_id.to_bytes().to_vec(),
+						ban_blocks,
+					}).await?;
+					let dur = block_duration::blocks_to_duration(ban_blocks);
+					println!("Banned vtxo {} for ~{}", vtxo_id, humantime::format_duration(dur));
+				}
+				BanCommand::Unban { vtxo_id } => {
+					rpc.unban_vtxo(protos::UnbanVtxoRequest {
+						vtxo_id: vtxo_id.to_bytes().to_vec(),
+					}).await?;
+					println!("Unbanned vtxo {}", vtxo_id);
+				}
+				BanCommand::List => {
+					let res = rpc.list_banned_vtxos(protos::Empty {}).await?.into_inner();
+					if res.banned_vtxos.is_empty() {
+						println!("No banned vtxos");
+					} else {
+						for v in &res.banned_vtxos {
+							let vtxo_id = VtxoId::from_slice(&v.vtxo_id)
+								.expect("invalid vtxo id from server");
+							let until = v.banned_until_height;
+							println!("{} — banned until block {}", vtxo_id, until);
+						}
+					}
+				}
+			}
 		}
 	}
 	Ok(())

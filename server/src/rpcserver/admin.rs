@@ -116,7 +116,7 @@ impl rpc::server::BanAdminService for Server {
 		let vtxo_id = VtxoId::from_slice(&req.vtxo_id)
 			.badarg("invalid vtxo id")?;
 		let chain_tip = self.chain_tip().height;
-		let until_height = chain_tip + req.ban_blocks;
+		let until_height = chain_tip.saturating_add(req.ban_blocks);
 		self.db.ban_vtxo(vtxo_id, until_height).await.to_status()?;
 		Ok(tonic::Response::new(protos::Empty {}))
 	}
