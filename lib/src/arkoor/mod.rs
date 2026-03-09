@@ -103,6 +103,8 @@ pub enum ArkoorConstructionError {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, thiserror::Error)]
 pub enum ArkoorSigningError {
+	#[error("Invalid attestation")]
+	InvalidAttestation(AttestationError),
 	#[error("An error occurred while building arkoor: {0}")]
 	ArkoorConstructionError(ArkoorConstructionError),
 	#[error("Wrong number of user nonces provided. Expected {expected}, got {got}")]
@@ -1313,6 +1315,9 @@ impl<'a> ArkoorBuilder<state::ServerCanCosign> {
 	pub fn from_cosign_request(
 		cosign_request: ArkoorCosignRequest<Vtxo<Full>>,
 	) -> Result<ArkoorBuilder<state::ServerCanCosign>, ArkoorSigningError> {
+		cosign_request.verify_attestation()
+			.map_err(ArkoorSigningError::InvalidAttestation)?;
+
 		let ret = ArkoorBuilder::new(
 			cosign_request.input,
 			cosign_request.outputs,

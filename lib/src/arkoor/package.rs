@@ -5,7 +5,7 @@ use bitcoin::Txid;
 use bitcoin::secp256k1::Keypair;
 
 use crate::{Vtxo, VtxoId, VtxoPolicy, ServerVtxo, Amount};
-use crate::arkoor::{ArkoorDestination, AttestationError};
+use crate::arkoor::ArkoorDestination;
 use crate::arkoor::{
 	ArkoorBuilder, ArkoorConstructionError, state, ArkoorCosignResponse,
 	ArkoorSigningError, ArkoorCosignRequest,
@@ -95,18 +95,6 @@ impl ArkoorPackageCosignRequest<VtxoId> {
 		};
 
 		Ok(package)
-	}
-}
-
-impl ArkoorPackageCosignRequest<Vtxo> {
-	/// Verify attestations against the given vtxos.
-	pub fn verify_attestations(
-		&self,
-	) -> Result<(), (usize, AttestationError)> {
-		for (i, req) in self.requests.iter().enumerate() {
-			req.verify_attestation().map_err(|e| (i, e))?;
-		}
-		Ok(())
 	}
 }
 
@@ -373,11 +361,12 @@ impl ArkoorPackageBuilder<state::UserSigned> {
 impl ArkoorPackageBuilder<state::ServerCanCosign> {
 	pub fn from_cosign_request(
 		cosign_request: ArkoorPackageCosignRequest<Vtxo<Full>>,
-	) -> Result<Self, ArkoorSigningError> {
+	) -> Result<Self, (usize, ArkoorSigningError)> {
 		let request_iter = cosign_request.requests.into_iter();
 		let mut packages = Vec::with_capacity(request_iter.size_hint().0);
-		for request in request_iter {
-			packages.push(ArkoorBuilder::from_cosign_request(request)?);
+		for (idx, request) in request_iter.enumerate() {
+			packages.push(ArkoorBuilder::from_cosign_request(request)
+				.map_err(|e| (idx, e))?);
 		}
 
 		Ok(Self { builders: packages })
