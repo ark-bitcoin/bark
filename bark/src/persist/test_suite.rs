@@ -14,6 +14,9 @@ use ark::VtxoId;
 
 use super::BarkPersister;
 use crate::movement::{MovementStatus, MovementSubsystem};
+use crate::persist::models::{SerdeRoundState, StoredRoundState, Unlocked};
+use crate::round::RoundStateLockIndex;
+use crate::round::{RoundFlowState, RoundParticipation, RoundState};
 use crate::vtxo::{VtxoState, VtxoStateKind};
 use crate::WalletProperties;
 
@@ -74,6 +77,26 @@ fn test_time() -> chrono::DateTime<chrono::Local> {
 }
 
 // ---------------------------------------------------------------------------
+// Round state comparison helper
+// ---------------------------------------------------------------------------
+
+/// Compare two `StoredRoundState<Unlocked>` values for equality.
+///
+/// `RoundState` does not derive `PartialEq` or `Serialize` because
+/// `RoundFlowState` contains `Keypair` and `DangerousSecretNonce`.  We compare
+/// the fields that are observable in tests and that backends actually store.
+fn round_states_match(a: &StoredRoundState<Unlocked>, b: &StoredRoundState<Unlocked>) -> bool {
+	if a.id() != b.id() {
+		return false;
+	}
+	let a_json = serde_json::to_string(&SerdeRoundState::from(a.state()))
+		.expect("SerdeRoundState serialization failed for a");
+	let b_json = serde_json::to_string(&SerdeRoundState::from(b.state()))
+		.expect("SerdeRoundState serialization failed for b");
+	a_json == b_json
+}
+
+// ---------------------------------------------------------------------------
 // Entry point
 // ---------------------------------------------------------------------------
 
@@ -89,6 +112,7 @@ pub async fn run_all<A: BarkPersister, B: BarkPersister>(a: &A, b: &B) {
 	vtxo_lifecycle::run(a, b).await;
 	movements::run(a, b).await;
 	pending_boards::run(a, b).await;
+	round_states::run(a, b).await;
 }
 
 // ---------------------------------------------------------------------------
@@ -480,5 +504,152 @@ mod pending_boards {
 		let rb = b.get_pending_board_by_vtxo_id(vtxo.id()).await
 			.expect("b: get_pending_board_by_vtxo_id after removal");
 		assert_eq!(ra, rb, "get_pending_board_by_vtxo_id after removal mismatch");
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Group: round states
+// ---------------------------------------------------------------------------
+
+mod round_states {
+	use super::*;
+
+	fn empty_round_state() -> RoundState {
+		RoundState {
+			done: false,
+			participation: RoundParticipation { inputs: vec![], outputs: vec![] },
+			flow: RoundFlowState::InteractivePending,
+			new_vtxos: vec![],
+			sent_forfeit_sigs: false,
+			movement_id: None,
+		}
+	}
+
+	pub async fn run<A: BarkPersister, B: BarkPersister>(a: &A, b: &B) {
+		test_store_and_get_round_state(a, b).await;
+		test_store_round_state_with_vtxo_locking(a, b).await;
+		test_update_round_state(a, b).await;
+		test_remove_round_state(a, b).await;
+	}
+
+	async fn test_store_round_state_with_vtxo_locking<A: BarkPersister, B: BarkPersister>(a: &A, b: &B) {
+		// arkoor3_vtxo was removed by vtxo_lifecycle::test_remove_vtxo, so it is
+		// absent from both backends.  Re-inserting it gives us a fresh Spendable
+		// vtxo to use as round input, which exercises the locking loop inside
+		// store_round_state_lock_vtxos.
+		let vtxo = &VTXO_VECTORS.arkoor3_vtxo;
+
+		a.store_vtxos(&[(vtxo, &VtxoState::Spendable)]).await.expect("a: store_vtxos for locking test");
+		b.store_vtxos(&[(vtxo, &VtxoState::Spendable)]).await.expect("b: store_vtxos for locking test");
+
+		let state = RoundState {
+			done: false,
+			participation: RoundParticipation { inputs: vec![vtxo.as_ref().clone()], outputs: vec![] },
+			flow: RoundFlowState::InteractivePending,
+			new_vtxos: vec![],
+			sent_forfeit_sigs: false,
+			movement_id: None,
+		};
+
+		let id_a = a.store_round_state_lock_vtxos(&state).await.expect("a: store_round_state_lock_vtxos");
+		let id_b = b.store_round_state_lock_vtxos(&state).await.expect("b: store_round_state_lock_vtxos");
+		assert_eq!(id_a, id_b, "store_round_state_lock_vtxos id mismatch");
+
+		// Both backends must have transitioned the vtxo to Locked.
+		let ra = a.get_wallet_vtxo(vtxo.id()).await.expect("a: get_wallet_vtxo after lock");
+		let rb = b.get_wallet_vtxo(vtxo.id()).await.expect("b: get_wallet_vtxo after lock");
+		assert_eq!(ra, rb, "get_wallet_vtxo after lock mismatch");
+		assert!(
+			matches!(ra.as_ref().map(|w| &w.state), Some(VtxoState::Locked { .. })),
+			"vtxo should be Locked after store_round_state_lock_vtxos",
+		);
+	}
+
+	async fn test_store_and_get_round_state<A: BarkPersister, B: BarkPersister>(a: &A, b: &B) {
+		let state = empty_round_state();
+
+		let id_a = a.store_round_state_lock_vtxos(&state).await.expect("a: store_round_state");
+		let id_b = b.store_round_state_lock_vtxos(&state).await.expect("b: store_round_state");
+		assert_eq!(id_a, id_b, "store_round_state id mismatch");
+
+		let mut ra = a.get_pending_round_state_ids().await.expect("a: get_pending_round_state_ids");
+		let mut rb = b.get_pending_round_state_ids().await.expect("b: get_pending_round_state_ids");
+		ra.sort_by_key(|id| id.0);
+		rb.sort_by_key(|id| id.0);
+		assert_eq!(ra, rb, "get_pending_round_state_ids mismatch");
+
+		let ra = a.get_round_state_by_id(id_a).await.expect("a: get_round_state_by_id");
+		let rb = b.get_round_state_by_id(id_b).await.expect("b: get_round_state_by_id");
+		assert_eq!(ra.is_some(), rb.is_some(), "get_round_state_by_id: presence mismatch");
+		assert!(
+			round_states_match(ra.as_ref().unwrap(), rb.as_ref().unwrap()),
+			"get_round_state_by_id: content mismatch",
+		);
+	}
+
+	async fn test_update_round_state<A: BarkPersister, B: BarkPersister>(a: &A, b: &B) {
+		// Each backend gets its own lock index: id_a == id_b numerically but
+		// they guard different backends, so they must not share a lock index.
+		let lock_index_a = RoundStateLockIndex::new();
+		let lock_index_b = RoundStateLockIndex::new();
+
+		let id_a = a.store_round_state_lock_vtxos(&empty_round_state()).await.expect("a: store_round_state");
+		let id_b = b.store_round_state_lock_vtxos(&empty_round_state()).await.expect("b: store_round_state");
+		assert_eq!(id_a, id_b, "store_round_state id mismatch");
+
+		let unlocked_a = a.get_round_state_by_id(id_a).await.expect("a: get_round_state_by_id").unwrap();
+		let unlocked_b = b.get_round_state_by_id(id_b).await.expect("b: get_round_state_by_id").unwrap();
+
+		let guard_a = lock_index_a.try_lock(id_a).expect("a: lock should succeed");
+		let guard_b = lock_index_b.try_lock(id_b).expect("b: lock should succeed");
+		let mut stored_a = unlocked_a.lock(guard_a);
+		let mut stored_b = unlocked_b.lock(guard_b);
+		stored_a.state_mut().done = true;
+		stored_b.state_mut().done = true;
+
+		let ra = a.update_round_state(&stored_a).await;
+		let rb = b.update_round_state(&stored_b).await;
+		assert_eq!(ra.is_ok(), rb.is_ok(), "update_round_state: ok/err mismatch");
+
+		let ra = a.get_round_state_by_id(id_a).await.expect("a: get_round_state_by_id after update");
+		let rb = b.get_round_state_by_id(id_b).await.expect("b: get_round_state_by_id after update");
+		assert_eq!(ra.is_some(), rb.is_some(), "get_round_state_by_id: presence mismatch after update");
+		assert!(
+			round_states_match(ra.as_ref().unwrap(), rb.as_ref().unwrap()),
+			"get_round_state_by_id: content mismatch after update",
+		);
+	}
+
+	async fn test_remove_round_state<A: BarkPersister, B: BarkPersister>(a: &A, b: &B) {
+		let lock_index_a = RoundStateLockIndex::new();
+		let lock_index_b = RoundStateLockIndex::new();
+
+		let id_a = a.store_round_state_lock_vtxos(&empty_round_state()).await.expect("a: store_round_state");
+		let id_b = b.store_round_state_lock_vtxos(&empty_round_state()).await.expect("b: store_round_state");
+		assert_eq!(id_a, id_b, "store_round_state id mismatch");
+
+		let unlocked_a = a.get_round_state_by_id(id_a).await.expect("a: get_round_state_by_id").unwrap();
+		let unlocked_b = b.get_round_state_by_id(id_b).await.expect("b: get_round_state_by_id").unwrap();
+
+		let guard_a = lock_index_a.try_lock(id_a).expect("a: lock should succeed");
+		let guard_b = lock_index_b.try_lock(id_b).expect("b: lock should succeed");
+		let stored_a = unlocked_a.lock(guard_a);
+		let stored_b = unlocked_b.lock(guard_b);
+
+		let ra = a.remove_round_state(&stored_a).await;
+		let rb = b.remove_round_state(&stored_b).await;
+		assert_eq!(ra.is_ok(), rb.is_ok(), "remove_round_state: ok/err mismatch");
+
+		let ra = a.get_round_state_by_id(id_a).await.expect("a: get_round_state_by_id after remove");
+		let rb = b.get_round_state_by_id(id_b).await.expect("b: get_round_state_by_id after remove");
+		assert!(ra.is_none() && rb.is_none(), "get_round_state_by_id should be None after remove");
+
+		let mut ra = a.get_pending_round_state_ids().await
+			.expect("a: get_pending_round_state_ids after remove");
+		let mut rb = b.get_pending_round_state_ids().await
+			.expect("b: get_pending_round_state_ids after remove");
+		ra.sort_by_key(|id| id.0);
+		rb.sort_by_key(|id| id.0);
+		assert_eq!(ra, rb, "get_pending_round_state_ids after remove mismatch");
 	}
 }
