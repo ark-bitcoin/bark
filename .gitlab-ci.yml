@@ -28,6 +28,7 @@ workflow:
     - if: $CI_PIPELINE_SOURCE == "web"
 
 stages:
+  - mirror
   - prechecks
   - check-commits
   - build
@@ -36,7 +37,6 @@ stages:
   - post-test
   - release
   - publish
-  - mirror
 
 # Specifying a default image for all steps. If you specify a new before_script in a step, then this will be ignored.
 default:
