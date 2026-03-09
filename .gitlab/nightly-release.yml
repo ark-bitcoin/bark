@@ -19,8 +19,10 @@ check-master-status:
       fi
 
 assign-version:
-  stage: prechecks
+  stage: build
   extends: .nightly-rules
+  needs:
+    - check-master-status
   script:
     - echo "nightly-$(date -d '1 minute ago' +%Y-%m-%d)" > VERSION
     - bash ./contrib/assign-nightly-version.sh "$(cat VERSION)"
@@ -29,12 +31,12 @@ assign-version:
     paths:
       - VERSION
     expire_in: 1 day
-  needs:
-    - job: check-master-status
 
 build-nightly:
   stage: build
   extends: .nightly-rules
+  needs:
+    - assign-version
   script:
     - cat VERSION
     - just build
@@ -54,27 +56,25 @@ build-nightly:
       - barkd-*
       - captaind-*
       - watchmand-*
-      - VERSION
     expire_in: 1 day
-  needs:
-    - job: assign-version
-      artifacts: true
 
 build-and-push-to-docker-nightly:
   stage: release
+  tags:
+    - privileged
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule" && $CI_PROJECT_URL == "https://gitlab.com/ark-bitcoin/bark"
+  needs:
+    - assign-version
+    - build-nightly
   script:
     - cat VERSION
     - buildah login -u secondark -p "$DOCKER_LOGIN_TOKEN" docker.io
     # Build the containers
-    - buildah build -f ./.gitlab/images/releases/bark/linux_amd64.Dockerfile --tag docker.io/secondark/bark:linux-amd64 .
-    - buildah build -f ./.gitlab/images/releases/bark/linux_arm64.Dockerfile --tag docker.io/secondark/bark:linux-arm64 .
-    - buildah build -f ./.gitlab/images/releases/bark/linux_armv7.Dockerfile --tag docker.io/secondark/bark:linux-armv7 .
-    - buildah build -f ./.gitlab/images/releases/captaind/Dockerfile         --tag docker.io/secondark/captaind:latest  .
-    # Tag containers with a specific version number for docker.io/secondark
-    - buildah tag docker.io/secondark/bark:linux-amd64 "docker.io/secondark/bark:linux-amd64-$(cat VERSION)"
-    - buildah tag docker.io/secondark/bark:linux-arm64 "docker.io/secondark/bark:linux-arm64-$(cat VERSION)"
-    - buildah tag docker.io/secondark/bark:linux-armv7 "docker.io/secondark/bark:linux-armv7-$(cat VERSION)"
-    - buildah tag docker.io/secondark/captaind:latest  "docker.io/secondark/captaind:$(cat VERSION)"
+    - buildah build -f ./.gitlab/images/releases/bark/linux_amd64.Dockerfile --tag "docker.io/secondark/bark:linux-amd64-$(cat VERSION)" .
+    - buildah build -f ./.gitlab/images/releases/bark/linux_arm64.Dockerfile --tag "docker.io/secondark/bark:linux-arm64-$(cat VERSION)" .
+    - buildah build -f ./.gitlab/images/releases/bark/linux_armv7.Dockerfile --tag "docker.io/secondark/bark:linux-armv7-$(cat VERSION)" .
+    - buildah build -f ./.gitlab/images/releases/captaind/Dockerfile         --tag "docker.io/secondark/captaind:$(cat VERSION)"  .
     # Push containers with a specific version number to docker.io/secondark
     - buildah push "docker.io/secondark/bark:linux-amd64-$(cat VERSION)"
     - buildah push "docker.io/secondark/bark:linux-arm64-$(cat VERSION)"
@@ -86,10 +86,3 @@ build-and-push-to-docker-nightly:
     - buildah manifest add        "bark-multiarch-$(cat VERSION)" "docker://docker.io/secondark/bark:linux-arm64-$(cat VERSION)"
     - buildah manifest add        "bark-multiarch-$(cat VERSION)" "docker://docker.io/secondark/bark:linux-armv7-$(cat VERSION)"
     - buildah manifest push --all "bark-multiarch-$(cat VERSION)" "docker://docker.io/secondark/bark:$(cat VERSION)"
-  rules:
-    - if: $CI_PIPELINE_SOURCE == "schedule" && $CI_PROJECT_URL == "https://gitlab.com/ark-bitcoin/bark"
-  needs:
-    - job: build-nightly
-      artifacts: true
-  tags:
-    - privileged

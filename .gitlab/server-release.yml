@@ -4,6 +4,10 @@
   rules:
     - if: $CI_COMMIT_TAG =~ /^server-/
 
+.server-release-rules-gitlab:
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^server-/ && $CI_PROJECT_URL == "https://gitlab.com/ark-bitcoin/bark"
+
 parse-versions-server:
   stage: build
   extends: .server-release-rules
@@ -18,27 +22,30 @@ parse-versions-server:
 build-server:
   stage: build
   extends: .server-release-rules
+  needs:
+    - parse-versions-server
   variables:
     SDKROOT: /usr/local/osxcross/SDK/MacOSX15.4.sdk
   script:
     - cat VERSION
     - just release-server
-    - cp ./target/x86_64-unknown-linux-gnu/release/captaind captaind-linux-x86_64
+    - cp ./target/x86_64-unknown-linux-gnu/release/captaind  captaind-linux-x86_64
     - cp ./target/x86_64-unknown-linux-gnu/release/watchmand watchmand-linux-x86_64
   artifacts:
     paths:
       - captaind-linux-x86_64
       - watchmand-linux-x86_64
-      - VERSION
-      - target/
     expire_in: 1 day
-  needs:
-    - job: parse-versions-server
-      artifacts: true
 
 build-and-push-captaind-to-registry:
+  allow_failure: true
   stage: release
+  tags:
+    - privileged
   extends: .server-release-rules
+  needs:
+    - parse-versions-server
+    - build-server
   script:
     - cat VERSION
     - buildah login -u registry -p "$REGISTRY_LOGIN_TOKEN" registry.2nd.dev
@@ -50,15 +57,17 @@ build-and-push-captaind-to-registry:
     - buildah tag registry.2nd.dev/captaind:latest "registry.2nd.dev/captaind:$(cat VERSION)"
     # Push containers with specific version number to registry.2nd.dev
     - buildah push "registry.2nd.dev/captaind:$(cat VERSION)"
-  needs:
-    - job: build-server
-      artifacts: true
-  allow_failure: true
-  tags:
-    - privileged
 
 push-captaind-to-docker:
+  allow_failure: true
   stage: release
+  tags:
+    - privileged
+  extends: .server-release-rules-gitlab
+  needs:
+    - parse-versions-server
+    - build-server
+    - build-and-push-captaind-to-registry
   script:
     - cat VERSION
     - buildah login -u secondark -p "$DOCKER_LOGIN_TOKEN" docker.io
@@ -73,43 +82,33 @@ push-captaind-to-docker:
     - buildah tag registry.2nd.dev/captaind:latest "docker.io/secondark/captaind:$(cat VERSION)"
     # Push containers with specific version number to docker.io
     - buildah push "docker.io/secondark/captaind:$(cat VERSION)"
-  rules:
-    - if: $CI_COMMIT_TAG =~ /^server-/ && $CI_PROJECT_URL == "https://gitlab.com/ark-bitcoin/bark"
-  needs:
-    - job: build-and-push-captaind-to-registry
-    - job: build-server
-      artifacts: true
-  allow_failure: true
-  tags:
-    - privileged
 
 release-server:
   stage: release
-  extends: .server-release-rules
+  extends: .server-release-rules-gitlab
+  needs:
+    - parse-versions-server
+    - build-server
   script:
     - cat VERSION
-    - cd ./target
-    - cp x86_64-unknown-linux-gnu/release/captaind "captaind-$(cat ../VERSION)-linux-x86_64"
-    - cp x86_64-unknown-linux-gnu/release/watchmand "watchmand-$(cat ../VERSION)-linux-x86_64"
-    - sha256sum "captaind-$(cat ../VERSION)-linux-x86_64" > SHA256SUMS
-    - sha256sum "watchmand-$(cat ../VERSION)-linux-x86_64" >> SHA256SUMS
+    - cp captaind-linux-x86_64  "captaind-$(cat VERSION)-linux-x86_64"
+    - cp watchmand-linux-x86_64 "watchmand-$(cat VERSION)-linux-x86_64"
+    - sha256sum "captaind-$(cat VERSION)-linux-x86_64" > SHA256SUMS
+    - sha256sum "watchmand-$(cat VERSION)-linux-x86_64" >> SHA256SUMS
   artifacts:
     paths:
-      - target/captaind-*
-      - target/watchmand-*
-      - target/SHA256SUMS
-      - VERSION
-    expire_in: 1 week
-  needs:
-    - job: build-server
-      artifacts: true
+      - captaind-*
+      - watchmand-*
+      - SHA256SUMS
+    expire_in: 1 day
 
 publish-server-gitlab:
   stage: release
-  script:
-    - bash ./contrib/ci-gitlab-release.sh "./target/captaind-*-linux-x86_64 ./target/watchmand-*-linux-x86_64 ./target/SHA256SUMS"
-  rules:
-    - if: $CI_COMMIT_TAG =~ /^server-/ && $CI_PROJECT_URL == "https://gitlab.com/ark-bitcoin/bark"
+  extends: .server-release-rules-gitlab
   needs:
-    - job: release-server
-      artifacts: true
+    - parse-versions-server
+    - build-server
+    - release-server
+  script:
+    - cat VERSION
+    - bash ./contrib/ci-gitlab-release.sh "./captaind-$(cat VERSION)-linux-x86_64 ./watchmand-$(cat VERSION)-linux-x86_64 ./SHA256SUMS"

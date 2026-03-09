@@ -4,8 +4,12 @@
   rules:
     - if: $CI_COMMIT_TAG =~ /^bark-/
 
+.bark-release-rules-gitlab:
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^bark-/ && $CI_PROJECT_URL == "https://gitlab.com/ark-bitcoin/bark"
+
 parse-versions-bark:
-  stage: build
+  stage: prechecks
   extends: .bark-release-rules
   script:
     - bash ./contrib/parse-versions.sh "${CI_COMMIT_TAG}" > VERSION
@@ -18,6 +22,8 @@ parse-versions-bark:
 build-bark:
   stage: build
   extends: .bark-release-rules
+  needs:
+    - parse-versions-bark
   variables:
     SDKROOT: /usr/local/osxcross/SDK/MacOSX15.4.sdk
   script:
@@ -39,16 +45,17 @@ build-bark:
     paths:
       - bark-*
       - barkd-*
-      - VERSION
-      - target/
     expire_in: 1 day
-  needs:
-    - job: parse-versions-bark
-      artifacts: true
 
 build-and-push-bark-to-registry:
+  allow_failure: true
   stage: release
+  tags:
+    - privileged
   extends: .bark-release-rules
+  needs:
+    - parse-versions-bark
+    - build-bark
   script:
     - cat VERSION
     - buildah login -u registry -p "$REGISTRY_LOGIN_TOKEN" registry.2nd.dev
@@ -80,15 +87,17 @@ build-and-push-bark-to-registry:
     - buildah manifest add        "bark-multiarch-$(cat VERSION)" "docker://registry.2nd.dev/bark:linux-arm64-$(cat VERSION)"
     - buildah manifest add        "bark-multiarch-$(cat VERSION)" "docker://registry.2nd.dev/bark:linux-armv7-$(cat VERSION)"
     - buildah manifest push --all "bark-multiarch-$(cat VERSION)" "docker://registry.2nd.dev/bark:$(cat VERSION)"
-  needs:
-    - job: build-bark
-      artifacts: true
-  allow_failure: true
-  tags:
-    - privileged
 
 push-bark-to-docker:
+  allow_failure: true
   stage: release
+  tags:
+    - privileged
+  extends: .bark-release-rules-gitlab
+  needs:
+    - parse-versions-bark
+    - build-and-push-bark-to-registry
+    - build-bark
   script:
     - cat VERSION
     - buildah login -u secondark -p "$DOCKER_LOGIN_TOKEN" docker.io
@@ -125,63 +134,52 @@ push-bark-to-docker:
     - buildah manifest add        "bark-multiarch-docker-$(cat VERSION)" "docker://docker.io/secondark/bark:linux-arm64-$(cat VERSION)"
     - buildah manifest add        "bark-multiarch-docker-$(cat VERSION)" "docker://docker.io/secondark/bark:linux-armv7-$(cat VERSION)"
     - buildah manifest push --all "bark-multiarch-docker-$(cat VERSION)" "docker://docker.io/secondark/bark:$(cat VERSION)"
-  rules:
-    - if: $CI_COMMIT_TAG =~ /^bark-/ && $CI_PROJECT_URL == "https://gitlab.com/ark-bitcoin/bark"
-  needs:
-    - job: build-and-push-bark-to-registry
-    - job: build-bark
-      artifacts: true
-  allow_failure: true
-  tags:
-    - privileged
 
 release-bark:
   stage: release
-  extends: .bark-release-rules
+  extends: .bark-release-rules-gitlab
+  needs:
+    - parse-versions-bark
+    - build-bark
   script:
     - cat VERSION
-    - cd ./target
-    - cp x86_64-unknown-linux-gnu/release/bark        "bark-$(cat ../VERSION)-linux-x86_64"
-    - cp x86_64-unknown-linux-gnu/release/barkd       "barkd-$(cat ../VERSION)-linux-x86_64"
-    - cp aarch64-unknown-linux-gnu/release/bark       "bark-$(cat ../VERSION)-linux-arm64"
-    - cp aarch64-unknown-linux-gnu/release/barkd      "barkd-$(cat ../VERSION)-linux-arm64"
-    - cp armv7-unknown-linux-gnueabihf/release/bark   "bark-$(cat ../VERSION)-linux-armv7"
-    - cp armv7-unknown-linux-gnueabihf/release/barkd  "barkd-$(cat ../VERSION)-linux-armv7"
-    - cp x86_64-pc-windows-gnu/release/bark.exe       "bark-$(cat ../VERSION)-windows-x86_64.exe"
-    - cp x86_64-pc-windows-gnu/release/barkd.exe      "barkd-$(cat ../VERSION)-windows-x86_64.exe"
-    - cp x86_64-apple-darwin/release/bark             "bark-$(cat ../VERSION)-apple-x86_64"
-    - cp x86_64-apple-darwin/release/barkd            "barkd-$(cat ../VERSION)-apple-x86_64"
-    - cp aarch64-apple-darwin/release/bark            "bark-$(cat ../VERSION)-apple-aarch64"
-    - cp aarch64-apple-darwin/release/barkd           "barkd-$(cat ../VERSION)-apple-aarch64"
-    - sha256sum "bark-$(cat ../VERSION)-linux-x86_64"        > SHA256SUMS
-    - sha256sum "barkd-$(cat ../VERSION)-linux-x86_64"       >> SHA256SUMS
-    - sha256sum "bark-$(cat ../VERSION)-linux-arm64"         >> SHA256SUMS
-    - sha256sum "barkd-$(cat ../VERSION)-linux-arm64"        >> SHA256SUMS
-    - sha256sum "bark-$(cat ../VERSION)-linux-armv7"         >> SHA256SUMS
-    - sha256sum "barkd-$(cat ../VERSION)-linux-armv7"        >> SHA256SUMS
-    - sha256sum "bark-$(cat ../VERSION)-windows-x86_64.exe"  >> SHA256SUMS
-    - sha256sum "barkd-$(cat ../VERSION)-windows-x86_64.exe" >> SHA256SUMS
-    - sha256sum "bark-$(cat ../VERSION)-apple-x86_64"        >> SHA256SUMS
-    - sha256sum "barkd-$(cat ../VERSION)-apple-x86_64"       >> SHA256SUMS
-    - sha256sum "bark-$(cat ../VERSION)-apple-aarch64"       >> SHA256SUMS
-    - sha256sum "barkd-$(cat ../VERSION)-apple-aarch64"      >> SHA256SUMS
+    - cp bark-linux-x86_64        "bark-$(cat VERSION)-linux-x86_64"
+    - cp barkd-linux-x86_64       "barkd-$(cat VERSION)-linux-x86_64"
+    - cp bark-linux-aarch64       "bark-$(cat VERSION)-linux-arm64"
+    - cp barkd-linux-aarch64      "barkd-$(cat VERSION)-linux-arm64"
+    - cp bark-linux-armv7         "bark-$(cat VERSION)-linux-armv7"
+    - cp barkd-linux-armv7        "barkd-$(cat VERSION)-linux-armv7"
+    - cp bark-windows-x86_64.exe  "bark-$(cat VERSION)-windows-x86_64.exe"
+    - cp barkd-windows-x86_64.exe "barkd-$(cat VERSION)-windows-x86_64.exe"
+    - cp bark-apple-x86_64        "bark-$(cat VERSION)-apple-x86_64"
+    - cp barkd-apple-x86_64       "barkd-$(cat VERSION)-apple-x86_64"
+    - cp bark-apple-aarch64       "bark-$(cat VERSION)-apple-aarch64"
+    - cp barkd-apple-aarch64      "barkd-$(cat VERSION)-apple-aarch64"
+    - sha256sum "bark-$(cat VERSION)-linux-x86_64"        > SHA256SUMS
+    - sha256sum "barkd-$(cat VERSION)-linux-x86_64"       >> SHA256SUMS
+    - sha256sum "bark-$(cat VERSION)-linux-arm64"         >> SHA256SUMS
+    - sha256sum "barkd-$(cat VERSION)-linux-arm64"        >> SHA256SUMS
+    - sha256sum "bark-$(cat VERSION)-linux-armv7"         >> SHA256SUMS
+    - sha256sum "barkd-$(cat VERSION)-linux-armv7"        >> SHA256SUMS
+    - sha256sum "bark-$(cat VERSION)-windows-x86_64.exe"  >> SHA256SUMS
+    - sha256sum "barkd-$(cat VERSION)-windows-x86_64.exe" >> SHA256SUMS
+    - sha256sum "bark-$(cat VERSION)-apple-x86_64"        >> SHA256SUMS
+    - sha256sum "barkd-$(cat VERSION)-apple-x86_64"       >> SHA256SUMS
+    - sha256sum "bark-$(cat VERSION)-apple-aarch64"       >> SHA256SUMS
+    - sha256sum "barkd-$(cat VERSION)-apple-aarch64"      >> SHA256SUMS
   artifacts:
     paths:
-      - target/bark-*
-      - target/barkd-*
-      - target/SHA256SUMS
-      - VERSION
-    expire_in: 1 week
-  needs:
-    - job: build-bark
-      artifacts: true
+      - bark-*
+      - barkd-*
+      - SHA256SUMS
+    expire_in: 1 day
 
 publish-bark-gitlab:
   stage: release
-  script:
-    - bash ./contrib/ci-gitlab-release.sh "./target/bark*-linux-* ./target/bark*-windows-x86_64.exe ./target/bark*-apple-* ./target/SHA256SUMS"
-  rules:
-    - if: $CI_COMMIT_TAG =~ /^bark-/ && $CI_PROJECT_URL == "https://gitlab.com/ark-bitcoin/bark"
+  extends: .bark-release-rules-gitlab
   needs:
-    - job: release-bark
-      artifacts: true
+    - parse-versions-bark
+    - release-bark
+  script:
+    - cat VERSION
+    - bash ./contrib/ci-gitlab-release.sh "./bark*$(cat VERSION)*-linux-* ./bark*$(cat VERSION)*-windows-x86_64.exe ./bark*$(cat VERSION)*-apple-* ./SHA256SUMS"
