@@ -1,11 +1,12 @@
 use std::str::FromStr;
 use std::sync::{atomic, Arc};
 
+use ark::VtxoId;
 use tonic_tracing_opentelemetry::middleware::server::OtelGrpcLayer;
 use tracing::{info, trace, warn};
 use server_rpc::{self as rpc, protos};
 
-use crate::rpcserver::{middleware, ToStatusResult, RPC_RICH_ERRORS};
+use crate::rpcserver::{middleware, StatusContext, ToStatusResult, RPC_RICH_ERRORS};
 use crate::Server;
 
 #[async_trait]
@@ -104,6 +105,51 @@ impl rpc::server::SweepAdminService for Server {
 	}
 }
 
+#[async_trait]
+impl rpc::server::BanAdminService for Server {
+	#[tracing::instrument(skip(self, req))]
+	async fn ban_vtxo(
+		&self,
+		req: tonic::Request<protos::BanVtxoRequest>,
+	) -> Result<tonic::Response<protos::Empty>, tonic::Status> {
+		let req = req.into_inner();
+		let vtxo_id = VtxoId::from_slice(&req.vtxo_id)
+			.badarg("invalid vtxo id")?;
+		let chain_tip = self.chain_tip().height;
+		let until_height = chain_tip + req.ban_blocks;
+		self.db.ban_vtxo(vtxo_id, until_height).await.to_status()?;
+		Ok(tonic::Response::new(protos::Empty {}))
+	}
+
+	#[tracing::instrument(skip(self, req))]
+	async fn unban_vtxo(
+		&self,
+		req: tonic::Request<protos::UnbanVtxoRequest>,
+	) -> Result<tonic::Response<protos::Empty>, tonic::Status> {
+		let req = req.into_inner();
+		let vtxo_id = VtxoId::from_slice(&req.vtxo_id)
+			.badarg("invalid vtxo id")?;
+		self.db.unban_vtxo(vtxo_id).await.to_status()?;
+		Ok(tonic::Response::new(protos::Empty {}))
+	}
+
+	#[tracing::instrument(skip(self, _req))]
+	async fn list_banned_vtxos(
+		&self,
+		_req: tonic::Request<protos::Empty>,
+	) -> Result<tonic::Response<protos::ListBannedVtxosResponse>, tonic::Status> {
+		let chain_tip = self.sync_manager.chain_tip().height;
+		let banned = self.db.list_banned_vtxos(chain_tip).await.to_status()?;
+		let banned_vtxos = banned.into_iter().map(|v| {
+			protos::BannedVtxo {
+				vtxo_id: v.vtxo_id.to_bytes().to_vec(),
+				banned_until_height: v.banned_until_height.unwrap_or(0),
+			}
+		}).collect();
+		Ok(tonic::Response::new(protos::ListBannedVtxosResponse { banned_vtxos }))
+	}
+}
+
 /// Run the public gRPC endpoint.
 pub async fn run_rpc_server(srv: Arc<Server>) -> anyhow::Result<()> {
 	RPC_RICH_ERRORS.store(srv.config.rpc_rich_errors, atomic::Ordering::Relaxed);
@@ -117,7 +163,8 @@ pub async fn run_rpc_server(srv: Arc<Server>) -> anyhow::Result<()> {
 		.add_service(rpc::server::WalletAdminServiceServer::from_arc(srv.clone()))
 		.add_service(rpc::server::RoundAdminServiceServer::from_arc(srv.clone()))
 		.add_service(rpc::server::LightningAdminServiceServer::from_arc(srv.clone()))
-		.add_service(rpc::server::SweepAdminServiceServer::from_arc(srv.clone()));
+		.add_service(rpc::server::SweepAdminServiceServer::from_arc(srv.clone()))
+		.add_service(rpc::server::BanAdminServiceServer::from_arc(srv.clone()));
 
 	tonic::transport::Server::builder()
 		.layer(OtelGrpcLayer::default())
