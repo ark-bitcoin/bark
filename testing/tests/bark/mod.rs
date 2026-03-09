@@ -8,26 +8,19 @@ mod lightning;
 mod mailbox;
 mod movement;
 mod onchain;
+mod recover;
 mod round;
 
-use std::sync::Arc;
-use std::sync::atomic::{self, AtomicBool};
 use std::time::Duration;
 
 use bitcoin::Amount;
 use bitcoin_ext::P2TR_DUST_SAT;
-use tokio::fs;
 
-use bark::BarkNetwork;
 use bark_json::cli::{MovementDestination, PaymentMethod};
-use server_rpc::protos;
 
-use ark_testing::{btc, sat, signed_sat, Bark, TestContext};
+use ark_testing::{btc, sat, signed_sat, TestContext};
 use ark_testing::constants::{BOARD_CONFIRMATIONS, ROUND_CONFIRMATIONS};
-use ark_testing::daemon::captaind::{self, ArkClient};
-use ark_testing::util::{
-	get_bark_chain_source_from_env, FutureExt, TestContextChainSource, ToAltString,
-};
+use ark_testing::util::{FutureExt, ToAltString};
 
 #[tokio::test]
 async fn bark_version() {
@@ -502,128 +495,6 @@ async fn drop_vtxos() {
 	let balance = bark1.spendable_balance_no_sync().await;
 
 	assert_eq!(balance, Amount::ZERO);
-}
-
-#[ignore] // we removed this functionality, might be added again later
-#[tokio::test]
-async fn recover_mnemonic() {
-	let ctx = TestContext::new("bark/recover_mnemonic").await;
-	let srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
-	let bark = ctx.new_bark_with_funds("bark", &srv, sat(2_000_000)).await;
-	bark.board(sat(800_000)).await;
-	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
-
-	// make sure we have a round and an board vtxo (arkoor doesn't work)
-	bark.refresh_all().await;
-	bark.board(sat(800_000)).await;
-	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
-	let onchain = bark.onchain_balance().await;
-	let _offchain = bark.spendable_balance().await;
-
-	const MNEMONIC_FILE: &str = "mnemonic";
-	let mnemonic = fs::read_to_string(bark.datadir().join(MNEMONIC_FILE)).await.unwrap();
-	let _ = bip39::Mnemonic::parse(&mnemonic).expect("invalid mnemonic?");
-
-	// first ensure we need to set a birthday for bitcoin core
-	let bitcoind = if ctx.electrs.is_none() {
-		Some(ctx.new_bitcoind("bark_recovered_no_birthday_bitcoind").await)
-	} else {
-		None
-	};
-	let datadir = ctx.datadir.join("bark_recovered_no_birthday");
-	let cfg = ctx.bark_default_cfg(&srv, bitcoind.as_ref());
-	let result = Bark::try_new_with_create_opts(
-		"bark_recovered_no_birthday",
-		datadir,
-		BarkNetwork::Regtest,
-		cfg,
-		bitcoind,
-		Some(mnemonic.to_string()),
-		None,
-		true,
-	).await;
-
-	match get_bark_chain_source_from_env() {
-		TestContextChainSource::BitcoinCore => {
-			// it's not easy to get a grip of what the actual error was
-			assert!(result.expect_err("--birthday-height should be required").to_string().contains(
-				"You need to set the --birthday-height field when recovering from mnemonic.",
-			));
-		}
-		_ => {
-			let balance = result
-				.expect("mnemonic should work without birthday")
-				.onchain_balance()
-				.await;
-			assert_eq!(onchain, balance);
-		}
-	}
-
-	// Now check that specifying a birthday height always succeeds
-	let bitcoind = if ctx.electrs.is_none() {
-		Some(ctx.new_bitcoind("bark_recovered_no_birthday_bitcoind").await)
-	} else {
-		None
-	};
-	let datadir = ctx.datadir.join("bark_recovered_with_birthday");
-	let cfg = ctx.bark_default_cfg(&srv, bitcoind.as_ref());
-	let recovered = Bark::try_new_with_create_opts(
-		"bark_recovered_with_birthday",
-		datadir,
-		BarkNetwork::Regtest,
-		cfg,
-		bitcoind,
-		Some(mnemonic.to_string()),
-		Some(0),
-		true,
-	).await.expect("mnemonic + birthday should work");
-	assert_eq!(onchain, recovered.onchain_balance().await);
-	//TODO(stevenroose) implement offchain recovery
-	// assert_eq!(offchain, recovered.offchain_balance().await);
-}
-
-#[tokio::test]
-async fn bark_recover_unregistered_board() {
-	let ctx = TestContext::new("bark/recover_unregistered_board").await;
-
-	// Set up the server.
-	// The server misbehaves and drops the first request to register_board_vtxo
-	let srv = ctx.new_captaind_with_funds("server", None, btc(1)).await;
-
-	/// This proxy will drop the very first request to register_board
-	#[derive(Clone)]
-	struct Proxy(Arc<AtomicBool>);
-
-	#[async_trait::async_trait]
-	impl captaind::proxy::ArkRpcProxy for Proxy {
-		async fn register_board_vtxo(
-			&self, upstream: &mut ArkClient, req: protos::BoardVtxoRequest,
-		) -> Result<protos::Empty, tonic::Status> {
-			if self.0.swap(false, atomic::Ordering::Relaxed) {
-				Err(tonic::Status::from_error(
-					"Nope! I do not register on the first attempt!".into(),
-				))
-			} else {
-				Ok(upstream.register_board_vtxo(req).await?.into_inner())
-			}
-		}
-	}
-
-	let proxy = srv.start_proxy_no_mailbox(Proxy(Arc::new(AtomicBool::new(true)))).await;
-
-	let bark = ctx.new_bark_with_funds("bark", &proxy.address, sat(1_000_00)).await;
-	// Only asks server to cosign, not register a board.
-	bark.board_all().await;
-	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
-	// Triggers maintenance under the hood
-	//
-	// The board registration should have failed and the pending board balance should still be greater than 0.
-	assert!(bark.pending_board_balance().await > Amount::ZERO);
-	assert_eq!(bark.vtxos().await.len(), 1);
-
-	ctx.generate_blocks(12).await;
-	// The board registration will succeed during maintenance her and the pending board balance should be 0.
-	assert_eq!(bark.pending_board_balance().await, Amount::ZERO);
 }
 
 #[tokio::test]
