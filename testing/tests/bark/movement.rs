@@ -492,3 +492,64 @@ async fn movement_send_onchain() {
 		.map(|v| serde_json::from_value::<Vec<VtxoId>>(v.clone()).unwrap()).unwrap().len(), 1,
 	);
 }
+
+#[tokio::test]
+async fn list_movements() {
+	// Initialize the test
+	let ctx = TestContext::new("bark/list_movements").await;
+
+	let srv = ctx.new_captaind_with_cfg("server", None, |cfg| {
+		cfg.round_interval = Duration::from_secs(3600);
+	}).await;
+	ctx.fund_captaind(&srv, btc(10)).await;
+
+	let bark1 = ctx.new_bark_with_funds("bark1", &srv, sat(1_000_000)).await;
+	let bark2 = ctx.new_bark_with_funds("bark2", &srv, sat(1_000_000)).await;
+
+	bark2.board(sat(800_000)).await;
+	bark1.board(sat(300_000)).await;
+	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
+	bark1.sync().await;
+	bark2.sync().await;
+	let movements = bark1.history().await;
+	assert_eq!(movements.len(), 1);
+	assert_eq!(movements.last().unwrap().input_vtxos.len(), 0);
+	assert_eq!(movements.last().unwrap().output_vtxos.len(), 1);
+	assert_eq!(movements.last().unwrap().effective_balance, signed_sat(300_000));
+	assert_eq!(movements.last().unwrap().offchain_fee, Amount::ZERO);
+	assert!(movements.last().unwrap().sent_to.first().is_none());
+
+	// oor change
+	bark1.send_oor(&bark2.address().await, sat(150_000)).await;
+	let movements = bark1.history().await;
+	assert_eq!(movements.len(), 2);
+	assert_eq!(movements.last().unwrap().effective_balance, signed_sat(-150_000));
+	assert_eq!(movements.last().unwrap().input_vtxos.len(), 1);
+	assert_eq!(movements.last().unwrap().output_vtxos.len(), 1);
+	assert_eq!(movements.last().unwrap().sent_to[0].amount, sat(150_000));
+	assert_eq!(movements.last().unwrap().offchain_fee, Amount::ZERO);
+
+	// refresh vtxos - trigger round manually
+	ctx.refresh_all(&srv, std::slice::from_ref(&bark1)).await;
+	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
+
+	let movements = bark1.history().await;
+	assert_eq!(movements.len(), 3);
+	assert_eq!(movements.last().unwrap().effective_balance, signed_sat(0));
+	assert_eq!(movements.last().unwrap().input_vtxos.len(), 1);
+	assert_eq!(movements.last().unwrap().output_vtxos.len(), 1);
+	assert_eq!(movements.last().unwrap().offchain_fee, Amount::ZERO);
+	assert_eq!(movements.last().unwrap().sent_to.len(), 0);
+	assert_eq!(movements.last().unwrap().received_on.len(), 0);
+
+	// oor vtxo
+	bark2.send_oor(&bark1.address().await, sat(330_000)).await;
+	let movements = bark1.history().await;
+
+	assert_eq!(movements.len(), 4);
+	assert_eq!(movements.last().unwrap().input_vtxos.len(), 0);
+	assert_eq!(movements.last().unwrap().output_vtxos.len(), 1);
+	assert_eq!(movements.last().unwrap().effective_balance, signed_sat(330_000));
+	assert_eq!(movements.last().unwrap().offchain_fee, Amount::ZERO);
+	assert!(movements.last().unwrap().sent_to.first().is_none());
+}
