@@ -1,3 +1,4 @@
+mod postgres;
 
 use std::iter;
 use std::str::FromStr;
