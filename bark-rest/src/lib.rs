@@ -2,7 +2,7 @@
 #[macro_use]
 extern crate anyhow;
 
-pub(crate) mod api;
+pub mod api;
 pub mod config;
 pub mod error;
 
@@ -96,12 +96,22 @@ impl ServerWallet {
 }
 
 #[derive(Clone)]
-pub(crate) struct ServerState {
+pub struct ServerState {
 	wallet: Arc<parking_lot::RwLock<Option<ServerWallet>>>,
 	on_wallet_create: Option<Arc<OnWalletCreate>>,
 }
 
 impl ServerState {
+	pub fn new(
+		wallet: Option<ServerWallet>,
+		on_wallet_create: Option<Arc<OnWalletCreate>>,
+	) -> Self {
+		Self {
+			wallet: Arc::new(parking_lot::RwLock::new(wallet)),
+			on_wallet_create,
+		}
+	}
+
 	pub fn require_wallet(&self) -> anyhow::Result<Arc<Wallet>> {
 		let wallet = self.wallet.read().as_ref()
 			.ok_or_else(|| anyhow!("No wallet set"))?.wallet.clone();
