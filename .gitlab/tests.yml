@@ -93,7 +93,7 @@ test-unit:
     - build
   script:
     - git log --oneline -1
-    - nix develop .#default --command bash -c "just test-unit"
+    - nix develop .#default --command bash -c "cargo nextest run --archive-file target/ci/unit-tests.tar.zst"
 
 use-bark-as-dependency:
   interruptible: true
