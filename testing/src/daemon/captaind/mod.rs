@@ -33,6 +33,7 @@ pub type MailboxClient = rpc::mailbox::MailboxServiceClient<tonic::transport::Ch
 pub type WalletAdminClient = rpc::admin::WalletAdminServiceClient<tonic::transport::Channel>;
 pub type RoundAdminClient = rpc::admin::RoundAdminServiceClient<tonic::transport::Channel>;
 pub type SweepAdminClient = rpc::admin::SweepAdminServiceClient<tonic::transport::Channel>;
+pub type BanAdminClient = rpc::admin::BanAdminServiceClient<tonic::transport::Channel>;
 pub type HealthClient = tonic_health::pb::health_client::HealthClient<tonic::transport::Channel>;
 
 
@@ -213,6 +214,32 @@ impl Captaind {
 
 	pub async fn get_sweep_rpc(&self) -> SweepAdminClient {
 		SweepAdminClient::connect(self.inner.admin_url()).await.expect("can't connect server wallet rpc")
+	}
+
+	pub async fn get_ban_rpc(&self) -> BanAdminClient {
+		BanAdminClient::connect(self.inner.admin_url()).await.expect("can't connect server ban rpc")
+	}
+
+	pub async fn ban_vtxo(&self, vtxo_id: ark::VtxoId, ban_blocks: u32) {
+		self.get_ban_rpc().await
+			.ban_vtxo(protos::BanVtxoRequest {
+				vtxo_id: vtxo_id.to_bytes().to_vec(),
+				ban_blocks,
+			}).await.expect("ban_vtxo rpc failed");
+	}
+
+	pub async fn unban_vtxo(&self, vtxo_id: ark::VtxoId) {
+		self.get_ban_rpc().await
+			.unban_vtxo(protos::UnbanVtxoRequest {
+				vtxo_id: vtxo_id.to_bytes().to_vec(),
+			}).await.expect("unban_vtxo rpc failed");
+	}
+
+	pub async fn list_banned_vtxos(&self) -> Vec<protos::BannedVtxo> {
+		self.get_ban_rpc().await
+			.list_banned_vtxos(protos::Empty {}).await
+			.expect("list_banned_vtxos rpc failed")
+			.into_inner().banned_vtxos
 	}
 
 	pub async fn get_health_rpc(&self) -> HealthClient {
