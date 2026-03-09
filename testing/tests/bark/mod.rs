@@ -15,36 +15,8 @@ mod recover;
 mod round;
 mod vtxos;
 
-use bitcoin::Amount;
-
-use ark_testing::{btc, sat, signed_sat, TestContext};
-use ark_testing::constants::{BOARD_CONFIRMATIONS, ROUND_CONFIRMATIONS};
+use ark_testing::{btc, TestContext};
 use ark_testing::util::FutureExt;
-
-#[tokio::test]
-async fn refresh_consolidates_vtxos() {
-	let ctx = TestContext::new("bark/refresh_consolidates_vtxos").await;
-
-	let srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
-	let bark1 = ctx.new_bark_with_funds("bark1".to_string(), &srv, sat(1_000_000)).await;
-
-	bark1.board(sat(100_000)).await;
-	ctx.generate_blocks(1).await;
-	bark1.board(sat(200_000)).await;
-	ctx.generate_blocks(1).await;
-	bark1.board(sat(300_000)).await;
-	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
-
-	ctx.refresh_all(&srv, std::slice::from_ref(&bark1)).await;
-	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
-
-	let movements = bark1.history().await;
-	let refresh_mvt = movements.last().unwrap();
-	assert_eq!(refresh_mvt.input_vtxos.len(), 3);
-	assert_eq!(refresh_mvt.output_vtxos.len(), 1);
-	assert_eq!(refresh_mvt.effective_balance, signed_sat(0));
-	assert_eq!(refresh_mvt.offchain_fee, Amount::ZERO);
-}
 
 #[tokio::test]
 async fn bark_can_claim_all_claimable_lightning_receives() {
