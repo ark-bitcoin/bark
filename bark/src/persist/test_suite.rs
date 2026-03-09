@@ -18,8 +18,9 @@ use ark::test_util::VTXO_VECTORS;
 use ark::VtxoId;
 
 use super::BarkPersister;
+use crate::exit::{ExitState, ExitTxOrigin};
 use crate::movement::{MovementStatus, MovementSubsystem};
-use crate::persist::models::{SerdeRoundState, StoredRoundState, Unlocked};
+use crate::persist::models::{SerdeRoundState, StoredExit, StoredRoundState, Unlocked};
 use crate::round::RoundStateLockIndex;
 use crate::round::{RoundFlowState, RoundParticipation, RoundState};
 use crate::vtxo::{VtxoState, VtxoStateKind};
@@ -143,6 +144,7 @@ pub async fn run_all<A: BarkPersister, B: BarkPersister>(a: &A, b: &B) {
 	pending_boards::run(a, b).await;
 	round_states::run(a, b).await;
 	lightning::run(a, b).await;
+	exit::run(a, b).await;
 }
 
 // ---------------------------------------------------------------------------
@@ -854,5 +856,80 @@ mod lightning {
 		ra.sort_by_key(|r| r.payment_hash);
 		rb.sort_by_key(|r| r.payment_hash);
 		assert_eq!(ra, rb, "get_all_pending_lightning_receives after finish mismatch");
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Group: exit
+// ---------------------------------------------------------------------------
+
+mod exit {
+	use bitcoin::hashes::Hash;
+
+	use super::*;
+
+	fn test_exit_vtxo_id() -> VtxoId {
+		VtxoId::from_slice(&[0xeeu8; 36]).unwrap()
+	}
+
+	fn test_exit_txid() -> bitcoin::Txid {
+		bitcoin::Txid::from_slice(&[0xffu8; 32]).unwrap()
+	}
+
+	pub async fn run<A: BarkPersister, B: BarkPersister>(a: &A, b: &B) {
+		test_exit_vtxo_entry_roundtrip(a, b).await;
+		test_exit_child_tx_roundtrip(a, b).await;
+	}
+
+	async fn test_exit_vtxo_entry_roundtrip<A: BarkPersister, B: BarkPersister>(a: &A, b: &B) {
+		let vtxo_id = test_exit_vtxo_id();
+		let entry = StoredExit {
+			vtxo_id,
+			state: ExitState::Start(crate::exit::ExitStartState { tip_height: 100 }),
+			history: vec![],
+		};
+
+		let ra = a.store_exit_vtxo_entry(&entry).await;
+		let rb = b.store_exit_vtxo_entry(&entry).await;
+		assert_eq!(ra.is_ok(), rb.is_ok(), "store_exit_vtxo_entry: ok/err mismatch");
+
+		let mut ra = a.get_exit_vtxo_entries().await.expect("a: get_exit_vtxo_entries");
+		let mut rb = b.get_exit_vtxo_entries().await.expect("b: get_exit_vtxo_entries");
+		ra.sort_by_key(|e| e.vtxo_id);
+		rb.sort_by_key(|e| e.vtxo_id);
+		assert_eq!(ra, rb, "get_exit_vtxo_entries mismatch");
+
+		let ra = a.remove_exit_vtxo_entry(&vtxo_id).await;
+		let rb = b.remove_exit_vtxo_entry(&vtxo_id).await;
+		assert_eq!(ra.is_ok(), rb.is_ok(), "remove_exit_vtxo_entry: ok/err mismatch");
+
+		let mut ra = a.get_exit_vtxo_entries().await.expect("a: get_exit_vtxo_entries after remove");
+		let mut rb = b.get_exit_vtxo_entries().await.expect("b: get_exit_vtxo_entries after remove");
+		ra.sort_by_key(|e| e.vtxo_id);
+		rb.sort_by_key(|e| e.vtxo_id);
+		assert_eq!(ra, rb, "get_exit_vtxo_entries after remove mismatch");
+	}
+
+	async fn test_exit_child_tx_roundtrip<A: BarkPersister, B: BarkPersister>(a: &A, b: &B) {
+		let txid = test_exit_txid();
+		let child_tx = empty_tx();
+		let origin = ExitTxOrigin::Wallet { confirmed_in: None };
+
+		let ra = a.store_exit_child_tx(txid, &child_tx, origin.clone()).await;
+		let rb = b.store_exit_child_tx(txid, &child_tx, origin.clone()).await;
+		assert_eq!(ra.is_ok(), rb.is_ok(), "store_exit_child_tx: ok/err mismatch");
+
+		let ra = a.get_exit_child_tx(txid).await.expect("a: get_exit_child_tx");
+		let rb = b.get_exit_child_tx(txid).await.expect("b: get_exit_child_tx");
+		assert_eq!(
+			ra.as_ref().map(|(tx, _)| tx),
+			rb.as_ref().map(|(tx, _)| tx),
+			"get_exit_child_tx transaction mismatch",
+		);
+		assert_eq!(
+			ra.as_ref().map(|(_, o)| o),
+			rb.as_ref().map(|(_, o)| o),
+			"get_exit_child_tx origin mismatch",
+		);
 	}
 }

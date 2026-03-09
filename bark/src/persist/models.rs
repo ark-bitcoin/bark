@@ -185,7 +185,7 @@ pub struct LightningReceive {
 ///
 /// `StoredExit` is a lightweight data transfer object tailored for storage backends. It captures
 /// the VTXO ID, the current state, and the full history of the unilateral exit.
-#[derive(PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StoredExit {
 	/// Identifier of the VTXO being exited.
 	pub vtxo_id: VtxoId,
