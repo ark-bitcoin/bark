@@ -20,6 +20,10 @@ path = "tests/bark/mod.rs"
 name = "barkd"
 path = "tests/barkd/mod.rs"
 
+[[test]]
+name = "core"
+path = "tests/core/mod.rs"
+
 [features]
 slow_test = []
 
