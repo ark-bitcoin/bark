@@ -1,4 +1,7 @@
+use std::collections::HashMap;
+
 use anyhow::Context;
+use bitcoin::Txid;
 
 use ark::util::IteratorExt;
 use ark::{Vtxo, VtxoId, VtxoPolicy, ServerVtxo};
@@ -123,12 +126,11 @@ impl Server {
 		request: ArkoorPackageCosignRequest<VtxoId>
 	) -> anyhow::Result<ArkoorPackageCosignResponse> {
 		let input_vtxo_ids = request.inputs().cloned().collect::<Vec<VtxoId>>();
-		let input_vtxos = self.db.get_user_vtxos_by_id(&input_vtxo_ids).await?
-			.into_iter().map(|v| v.vtxo).collect::<Vec<_>>();
+		let input_vtxo_states = self.db.get_user_vtxos_by_id(&input_vtxo_ids).await?;
 
-		// Validate the inputs
-		for vtxo in &input_vtxos {
-			match vtxo.policy() {
+		// Validate policies
+		for v in &input_vtxo_states {
+			match v.vtxo.policy() {
 				VtxoPolicy::Pubkey( ..) => {},
 				VtxoPolicy::ServerHtlcSend( ..) => bail!("server htlc send vtxo not supported"),
 				VtxoPolicy::ServerHtlcRecv( ..) => bail!("server htlc recv vtxo not supported"),
@@ -139,7 +141,7 @@ impl Server {
 		// We don't want users to be able to lock other
 		// peoples VTXOs
 
-		let request = request.set_vtxos(input_vtxos)?;
+		let request = request.set_vtxos(input_vtxo_states.into_iter().map(|v| v.vtxo))?;
 
 		let validation = ArkoorCosignRequestValidationParams {
 			use_checkpoints: true,
@@ -148,6 +150,18 @@ impl Server {
 		};
 		let builder = self.validate_cosign_request(validation, request)
 			.badarg("invalid cosign request")?;
+
+		// Check spendability now that we have the spending txids from the
+		// builder. We use check_spendable_for_oor which allows a vtxo that
+		// is already OOR-spent by the same tx (idempotent retry).
+		let chain_tip = self.chain_tip().height;
+		let spend_map: HashMap<VtxoId, Txid> = builder.spend_info().collect();
+		let input_vtxo_states = self.db.get_user_vtxos_by_id(&input_vtxo_ids).await?;
+		for v in &input_vtxo_states {
+			let spending_txid = spend_map.get(&v.vtxo_id)
+				.context("missing spend info for input vtxo")?;
+			v.check_spendable_for_oor(chain_tip, *spending_txid)?;
+		}
 
 		let builder = self.cosign_oor_with_builder(builder).await?;
 

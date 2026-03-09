@@ -157,11 +157,10 @@ impl Server {
 
 		slog!(LightningPaymentInitRequested, invoice_payment_hash, htlc_vtxo_ids);
 
+		let chain_tip = self.sync_manager.chain_tip().height;
 		let mut vtxos = vec![];
 		for htlc_vtxo in htlc_vtxos {
-			if !htlc_vtxo.is_spendable() {
-				return badarg!("input vtxo is already spent");
-			}
+			htlc_vtxo.check_spendable(chain_tip)?;
 
 			let vtxo = htlc_vtxo.vtxo.clone();
 
@@ -568,9 +567,8 @@ impl Server {
 
 					let vtxos = self.db.get_user_vtxos_by_id(&[vtxo_id]).await?;
 					let vtxo = vtxos.first().badarg("vtxo for proof not found")?;
-					if !vtxo.is_spendable() {
-						return badarg!("vtxo for proof is not spendable");
-					}
+					let chain_tip = self.sync_manager.chain_tip().height;
+					vtxo.check_spendable(chain_tip)?;
 
 					challenge.verify_input_vtxo_sig(&vtxo.vtxo, &ownership_proof).context("vtxo ownership proof invalid")?;
 				},
