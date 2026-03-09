@@ -12,6 +12,10 @@ path = "src/bin/pid-lock-holder.rs"
 name = "server"
 path = "tests/server/mod.rs"
 
+[[test]]
+name = "bark"
+path = "tests/bark/mod.rs"
+
 [features]
 slow_test = []
 
