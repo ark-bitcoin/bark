@@ -169,7 +169,7 @@ pub struct LightningSend {
 /// and tracks whether the preimage has been revealed.
 ///
 /// Note: the record should be removed when the receive is completed or failed.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LightningReceive {
 	pub payment_hash: PaymentHash,
 	pub payment_preimage: Preimage,
@@ -185,7 +185,7 @@ pub struct LightningReceive {
 ///
 /// `StoredExit` is a lightweight data transfer object tailored for storage backends. It captures
 /// the VTXO ID, the current state, and the full history of the unilateral exit.
-#[derive(Serialize, Deserialize)]
+#[derive(PartialEq, Eq, Serialize, Deserialize)]
 pub struct StoredExit {
 	/// Identifier of the VTXO being exited.
 	pub vtxo_id: VtxoId,

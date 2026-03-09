@@ -455,7 +455,7 @@ pub struct OffchainBalance {
 }
 
 /// Read-only properties of the Bark wallet.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WalletProperties {
 	/// The Bitcoin network to run Bark on.
 	///

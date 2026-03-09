@@ -26,7 +26,7 @@ const MOVEMENT_FAILED: &'static str = "failed";
 const MOVEMENT_CANCELED: &'static str = "canceled";
 
 /// Describes an attempted movement of offchain funds within the [Wallet](crate::Wallet).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Movement {
 	/// The internal ID of the movement.
 	pub id: MovementId,
