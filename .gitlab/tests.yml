@@ -53,14 +53,15 @@ build:
   extends: .build-rules
   needs:
     - prechecks
-    - check-commits
   script:
+    - date +"%Y%m%d-%H%M%S" > RUN_DATETIME
     - git log --oneline -1
     - nix develop .#default --command bash -c "just build-ci"
     - nix develop .#default --command bash -c "just build-unit-tests-ci"
     - nix develop .#default --command bash -c "just build-integration-tests-ci"
   artifacts:
     paths:
+      - RUN_DATETIME
       - target/ci/examples/
       - target/ci/captaind
       - target/ci/bark
@@ -100,7 +101,7 @@ use-bark-as-dependency:
   stage: test
   extends: .test-and-codecov-rules-no-tags
   needs:
-    - test-unit
+    - prechecks
   script:
     - |
       nix develop .#default --command bash -c "
@@ -116,7 +117,7 @@ bark-as-libs:
   stage: test
   extends: .test-and-codecov-rules-no-tags
   needs:
-    - test-unit
+    - prechecks
   script:
     - |
       nix develop .#default --command bash -c "
@@ -130,7 +131,7 @@ lib-wasm:
   stage: test
   extends: .test-and-codecov-rules-no-tags
   needs:
-    - test-unit
+    - prechecks
   script:
     - |
       nix develop .#default --command bash -c "
@@ -143,7 +144,7 @@ lib-msrv:
   stage: test
   extends: .test-and-codecov-rules-no-tags
   needs:
-    - test-unit
+    - prechecks
   script:
     - |
       nix develop .#msrv-lib --command bash -c "
@@ -156,7 +157,7 @@ check-release:
   stage: test
   extends: .test-and-codecov-rules-no-tags
   needs:
-    - test-unit
+    - prechecks
   script:
     - |
       nix develop .#default --command bash -c "

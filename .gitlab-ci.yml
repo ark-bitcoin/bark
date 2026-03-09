@@ -28,7 +28,9 @@ workflow:
 
 stages:
   - prechecks
+  - check-commits
   - build
+  - bark-test-builds
   - test
   - post-test
   - release
