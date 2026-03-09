@@ -106,7 +106,7 @@ impl Wallet {
 			.generate_user_nonces(&htlc_keypairs)?;
 
 		let cosign_request = protos::ArkoorPackageCosignRequest::from(
-			builder.cosign_request().convert_vtxo(|vtxo| vtxo.id())
+			builder.cosign_request(),
 		);
 
 		let response = srv.client
@@ -596,13 +596,13 @@ impl Wallet {
 			.generate_user_nonces(&input_keypairs)
 			.context("invalid nb of keypairs")?;
 
+		let package_cosign_request = protos::ArkoorPackageCosignRequest::from(
+			builder.cosign_request(),
+		);
 		let cosign_request = protos::LightningPayHtlcCosignRequest {
 			invoice: invoice.to_string(),
 			payment_amount_sat: amount.to_sat(),
-			parts: builder.cosign_request()
-				.convert_vtxo(|vtxo| vtxo.id())
-				.requests.into_iter()
-				.map(|r| r.into()).collect(),
+			parts: package_cosign_request.parts,
 		};
 
 		let response = srv.client.request_lightning_pay_htlc_cosign(cosign_request).await

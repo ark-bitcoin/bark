@@ -5,7 +5,7 @@ use bitcoin::Txid;
 use bitcoin::secp256k1::Keypair;
 
 use crate::{Vtxo, VtxoId, VtxoPolicy, ServerVtxo, Amount};
-use crate::arkoor::ArkoorDestination;
+use crate::arkoor::{ArkoorDestination, AttestationError};
 use crate::arkoor::{
 	ArkoorBuilder, ArkoorConstructionError, state, ArkoorCosignResponse,
 	ArkoorSigningError, ArkoorCosignRequest,
@@ -41,9 +41,9 @@ impl<V> ArkoorPackageCosignRequest<V> {
 					outputs: r.outputs,
 					isolated_outputs: r.isolated_outputs,
 					use_checkpoint: r.use_checkpoint,
+					attestation: r.attestation,
 				}
-
-			}).collect::<Vec<_>>()
+			}).collect::<Vec<_>>(),
 		}
 	}
 
@@ -89,6 +89,7 @@ impl ArkoorPackageCosignRequest<VtxoId> {
 					outputs: r.outputs,
 					isolated_outputs: r.isolated_outputs,
 					use_checkpoint: r.use_checkpoint,
+					attestation: r.attestation,
 				})
 			}).collect::<Result<Vec<_>, _>>()?,
 		};
@@ -97,6 +98,17 @@ impl ArkoorPackageCosignRequest<VtxoId> {
 	}
 }
 
+impl ArkoorPackageCosignRequest<Vtxo> {
+	/// Verify attestations against the given vtxos.
+	pub fn verify_attestations(
+		&self,
+	) -> Result<(), (usize, AttestationError)> {
+		for (i, req) in self.requests.iter().enumerate() {
+			req.verify_attestation().map_err(|e| (i, e))?;
+		}
+		Ok(())
+	}
+}
 
 #[derive(Debug, Clone)]
 pub struct ArkoorPackageCosignResponse {

@@ -79,7 +79,8 @@ use bitcoin_ext::{fee, P2TR_DUST, TxOutExt};
 use secp256k1_musig::musig::PublicNonce;
 
 use crate::{musig, scripts, Vtxo, VtxoId, ServerVtxo};
-use crate::vtxo::{Full, ServerVtxoPolicy, VtxoPolicy};
+use crate::attestations::ArkoorCosignAttestation;
+use crate::vtxo::{Full, ServerVtxoPolicy, VtxoPolicy, VtxoRef};
 use crate::vtxo::genesis::{GenesisItem, GenesisTransition};
 
 pub use package::ArkoorPackageBuilder;
@@ -164,15 +165,18 @@ pub struct ArkoorCosignRequest<V> {
 	pub outputs: Vec<ArkoorDestination>,
 	pub isolated_outputs: Vec<ArkoorDestination>,
 	pub use_checkpoint: bool,
+	// TODO: remove option after 0.1.0-beta-9
+	pub attestation: Option<ArkoorCosignAttestation>,
 }
 
 impl<V> ArkoorCosignRequest<V> {
-	pub fn new(
+	pub fn new_with_attestation(
 		user_pub_nonces: Vec<musig::PublicNonce>,
 		input: V,
 		outputs: Vec<ArkoorDestination>,
 		isolated_outputs: Vec<ArkoorDestination>,
 		use_checkpoint: bool,
+		attestation: Option<ArkoorCosignAttestation>,
 	) -> Self {
 		Self {
 			user_pub_nonces,
@@ -180,11 +184,35 @@ impl<V> ArkoorCosignRequest<V> {
 			outputs,
 			isolated_outputs,
 			use_checkpoint,
+			attestation,
 		}
 	}
 
 	pub fn all_outputs(&self) -> impl Iterator<Item = &ArkoorDestination> + Clone {
 		self.outputs.iter().chain(&self.isolated_outputs)
+	}
+}
+
+impl<V: VtxoRef> ArkoorCosignRequest<V> {
+	pub fn new(
+		user_pub_nonces: Vec<musig::PublicNonce>,
+		input: V,
+		outputs: Vec<ArkoorDestination>,
+		isolated_outputs: Vec<ArkoorDestination>,
+		use_checkpoint: bool,
+		keypair: &Keypair,
+	) -> Self {
+		let all_outputs = &outputs.iter().chain(&isolated_outputs).collect::<Vec<_>>();
+		let attestation = ArkoorCosignAttestation::new(input.vtxo_id(), all_outputs, keypair);
+
+		Self::new_with_attestation(
+			user_pub_nonces,
+			input,
+			outputs,
+			isolated_outputs,
+			use_checkpoint,
+			Some(attestation),
+		)
 	}
 }
 
@@ -194,16 +222,33 @@ impl ArkoorCosignRequest<VtxoId> {
 			return Err("Input vtxo id does not match the provided vtxo id")
 		}
 
-		Ok(ArkoorCosignRequest::new(
+		Ok(ArkoorCosignRequest::new_with_attestation(
 			self.user_pub_nonces,
 			vtxo,
 			self.outputs,
 			self.isolated_outputs,
 			self.use_checkpoint,
+			self.attestation,
 		))
 	}
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, Hash)]
+#[error("invalid attestation")]
+pub struct AttestationError;
+
+impl ArkoorCosignRequest<Vtxo> {
+	pub fn verify_attestation(&self) -> Result<(), AttestationError> {
+		let outputs = self.all_outputs().collect::<Vec<_>>();
+		// TODO: remove option after 0.1.0-beta-9
+		if let Some(attestation) = &self.attestation {
+			attestation.verify(&self.input, &outputs)
+				.map_err(|_| AttestationError)
+		} else {
+			Ok(())
+		}
+	}
+}
 
 pub mod state {
 	/// There are two paths that a can be followed
@@ -280,6 +325,8 @@ pub struct ArkoorBuilder<S: state::BuilderState> {
 	//  These variables are filled in when the state progresses
 	/// We need 1 signature for the checkpoint transaction
 	/// We need n signatures. This is one for each arkoor tx
+	/// The keypair used to generate nonces and the attestation
+	user_keypair: Option<Keypair>,
 	/// `1+n` public nonces created by the user
 	user_pub_nonces: Option<Vec<musig::PublicNonce>>,
 	/// `1+n` secret nonces created by the user
@@ -993,6 +1040,7 @@ impl<S: state::BuilderState> ArkoorBuilder<S> {
 			sighashes: self.sighashes,
 			input_tweak: self.input_tweak,
 			checkpoint_policy_tweak: self.checkpoint_policy_tweak,
+			user_keypair: self.user_keypair,
 			user_pub_nonces: self.user_pub_nonces,
 			user_sec_nonces: self.user_sec_nonces,
 			server_pub_nonces: self.server_pub_nonces,
@@ -1205,6 +1253,7 @@ impl ArkoorBuilder<state::Initial> {
 			unsigned_arkoor_txs: unsigned_arkoor_txs,
 			unsigned_isolation_fanout_tx,
 			new_vtxo_ids: new_vtxo_ids,
+			user_keypair: None,
 			user_pub_nonces: None,
 			user_sec_nonces: None,
 			server_pub_nonces: None,
@@ -1231,6 +1280,7 @@ impl ArkoorBuilder<state::Initial> {
 			user_sec_nonces.push(sec_nonce);
 		}
 
+		self.user_keypair = Some(user_keypair);
 		self.user_pub_nonces = Some(user_pub_nonces);
 		self.user_sec_nonces = Some(user_sec_nonces);
 
@@ -1333,13 +1383,14 @@ impl ArkoorBuilder<state::UserGeneratedNonces> {
 	}
 
 	pub fn cosign_request(&self) -> ArkoorCosignRequest<Vtxo<Full>> {
-		ArkoorCosignRequest {
-			user_pub_nonces: self.user_pub_nonces().to_vec(),
-			input: self.input.clone(),
-			outputs: self.outputs.clone(),
-			isolated_outputs: self.isolated_outputs.clone(),
-			use_checkpoint: self.checkpoint_data.is_some(),
-		}
+		ArkoorCosignRequest::new(
+			self.user_pub_nonces().to_vec(),
+			self.input.clone(),
+			self.outputs.clone(),
+			self.isolated_outputs.clone(),
+			self.checkpoint_data.is_some(),
+			self.user_keypair.as_ref().expect("State invariant"),
+		)
 	}
 
 	fn validate_server_cosign_response(

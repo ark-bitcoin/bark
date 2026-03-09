@@ -6,6 +6,7 @@ use bitcoin::key::Keypair;
 use bitcoin::secp256k1::{self, schnorr, Message};
 
 use crate::{SignedVtxoRequest, Vtxo, VtxoId, VtxoRequest, SECP};
+use crate::arkoor::ArkoorDestination;
 use crate::encode::{ProtocolEncoding, ProtocolDecodingError};
 use crate::lightning::PaymentHash;
 use crate::offboard::OffboardRequest;
@@ -355,6 +356,60 @@ impl ProtocolEncoding for OffboardRequestAttestation {
 	}
 }
 
+/// Attestation for proving ownership of a VTXO when requesting an arkoor cosign.
+///
+/// Commits to the input VTXO ID and all output destinations, binding the
+/// attestation to the specific transaction the user intends. One
+/// attestation is created per input VTXO / part.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Ord, PartialOrd)]
+pub struct ArkoorCosignAttestation {
+	signature: schnorr::Signature,
+}
+
+impl ArkoorCosignAttestation {
+	const CHALLENGE_MESSAGE_PREFIX: &'static [u8; 32] = b"arkoor cosign attestation       ";
+
+	pub fn new(
+		vtxo_id: VtxoId,
+		outputs: &[&ArkoorDestination],
+		vtxo_keypair: &Keypair,
+	) -> Self {
+		let msg = Self::compute_message(vtxo_id, outputs);
+		let signature = SECP.sign_schnorr_with_aux_rand(&msg, vtxo_keypair, &rand::random());
+		Self { signature }
+	}
+
+	/// Verify the attestation against a VTXO and outputs
+	pub fn verify(&self, vtxo: &Vtxo, outputs: &[&ArkoorDestination]) -> Result<(), secp256k1::Error> {
+		let msg = Self::compute_message(vtxo.id(), outputs);
+		SECP.verify_schnorr(&self.signature, &msg, &vtxo.user_pubkey().x_only_public_key().0)
+	}
+
+	fn compute_message(vtxo_id: VtxoId, outputs: &[&ArkoorDestination]) -> Message {
+		let mut eng = sha256::Hash::engine();
+		eng.input(Self::CHALLENGE_MESSAGE_PREFIX);
+		eng.input(&vtxo_id.to_bytes());
+
+		eng.emit_u32(outputs.len() as u32).unwrap();
+		for output in outputs {
+			eng.emit_u64(output.total_amount.to_sat()).unwrap();
+			output.policy.encode(&mut eng).unwrap();
+		}
+		Message::from_digest(sha256::Hash::from_engine(eng).to_byte_array())
+	}
+}
+
+impl ProtocolEncoding for ArkoorCosignAttestation {
+	fn encode<W: io::Write + ?Sized>(&self, writer: &mut W) -> Result<(), io::Error> {
+		self.signature.encode(writer)
+	}
+
+	fn decode<R: io::Read + ?Sized>(reader: &mut R) -> Result<Self, ProtocolDecodingError> {
+		let signature = schnorr::Signature::decode(reader)?;
+		Ok(Self { signature })
+	}
+}
+
 #[cfg(test)]
 mod tests {
 	use super::*;
@@ -484,6 +539,31 @@ mod tests {
 		let hardcoded = VtxoStatusAttestation::deserialize_hex(&vector)
 			.expect("valid attestation");
 		hardcoded.verify(&vtxo).expect("hardcoded verification failed");
+	}
+
+	#[test]
+	fn test_arkoor_cosign_attestation() {
+		let spec = DummyTestVtxoSpec::default();
+		let (_tx, vtxo) = spec.build();
+
+		let vtxo_id = vtxo.id();
+
+		let dest = ArkoorDestination {
+			total_amount: Amount::from_sat(50_000),
+			policy: VtxoPolicy::Pubkey(PubkeyVtxoPolicy {
+				user_pubkey: DUMMY_USER_KEY.public_key(),
+			}),
+		};
+		let outputs = vec![&dest];
+
+		let attestation = ArkoorCosignAttestation::new(
+			vtxo_id,
+			&outputs,
+			&DUMMY_USER_KEY,
+		);
+		println!("ArkoorCosignAttestation hex: {}", attestation.serialize().as_hex());
+		encoding_roundtrip(&attestation);
+		attestation.verify(&vtxo, &outputs).expect("verification failed");
 	}
 
 	#[test]
