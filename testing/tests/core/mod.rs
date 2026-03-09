@@ -9,5 +9,6 @@
 //! process locking, and chain setup utilities.
 
 mod bitcoind;
+mod lightning;
 mod pid_lock;
 mod wallet_ext;
