@@ -1,3 +1,4 @@
+mod block_index;
 mod postgres;
 
 use std::iter;
