@@ -375,11 +375,11 @@ impl Db {
 				DELETE FROM round_participation WHERE unlock_hash = $1
 				RETURNING id
 			),
-			_ AS (
+			_inputs AS (
 				DELETE FROM round_part_input
 				WHERE participation_id IN (SELECT id FROM deleted)
 			),
-			_ AS (
+			_outputs AS (
 				DELETE FROM round_part_output
 				WHERE participation_id IN (SELECT id FROM deleted)
 			)
