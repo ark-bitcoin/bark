@@ -38,12 +38,6 @@ fn test_properties() -> WalletProperties {
 	}
 }
 
-fn test_pubkey() -> bitcoin::secp256k1::PublicKey {
-	let secp = Secp256k1::new();
-	let sk = SecretKey::from_slice(&[1u8; 32]).unwrap();
-	Keypair::from_secret_key(&secp, &sk).public_key()
-}
-
 // A known-valid BOLT11 invoice on signet (from test data in payment_method.rs)
 const TEST_INVOICE_STR: &str = "lntbs100u1p5j0x82sp5d0rwfh7tgrrlwsegy9rx3tzpt36cqwjqza5x4wvcjxjzscfaf6jspp5d8q7354dg3p8h0kywhqq5dq984r8f5en98hf9ln85ug0w8fx6hhsdqqcqzpc9qyysgqyk54v7tpzprxll7e0jyvtxcpgwttzk84wqsfjsqvcdtq47zt2wssxsmtjhz8dka62mdnf9jafhu3l4cpyfnsx449v4wstrwzzql2w5qqs8uh7p";
 
@@ -92,6 +86,12 @@ fn empty_tx_2() -> Transaction {
 		input: vec![],
 		output: vec![],
 	}
+}
+
+fn test_pubkey() -> bitcoin::secp256k1::PublicKey {
+	let secp = Secp256k1::new();
+	let sk = SecretKey::from_slice(&[1u8; 32]).unwrap();
+	Keypair::from_secret_key(&secp, &sk).public_key()
 }
 
 /// Returns `now` truncated to millisecond precision.
@@ -372,7 +372,7 @@ mod vtxo_lifecycle {
 		let rb = b.has_spent_vtxo(spent.id()).await.expect("b: has_spent_vtxo");
 		assert_eq!(ra, rb, "has_spent_vtxo mismatch");
 
-		let unknown_id = VtxoId::from_slice(&[0u8; 36]).unwrap();
+		let unknown_id = ark::VtxoId::from_slice(&[0u8; 36]).unwrap();
 		let ra = a.has_spent_vtxo(unknown_id).await.expect("a: has_spent_vtxo (unknown)");
 		let rb = b.has_spent_vtxo(unknown_id).await.expect("b: has_spent_vtxo (unknown)");
 		assert_eq!(ra, rb, "has_spent_vtxo (unknown) mismatch");
