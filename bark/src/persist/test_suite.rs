@@ -9,7 +9,11 @@ use bitcoin::bip32::Fingerprint;
 use bitcoin::secp256k1::{Keypair, Secp256k1, SecretKey};
 use bitcoin::Network;
 
+use ark::test_util::VTXO_VECTORS;
+use ark::VtxoId;
+
 use super::BarkPersister;
+use crate::vtxo::{VtxoState, VtxoStateKind};
 use crate::WalletProperties;
 
 // ---------------------------------------------------------------------------
@@ -43,6 +47,7 @@ fn test_pubkey() -> bitcoin::secp256k1::PublicKey {
 pub async fn run_all<A: BarkPersister, B: BarkPersister>(a: &A, b: &B) {
 	wallet_properties::run(a, b).await;
 	vtxo_keys::run(a, b).await;
+	vtxo_lifecycle::run(a, b).await;
 }
 
 // ---------------------------------------------------------------------------
@@ -157,5 +162,139 @@ mod vtxo_keys {
 		let ra = a.get_mailbox_checkpoint().await.expect("a: get_mailbox_checkpoint");
 		let rb = b.get_mailbox_checkpoint().await.expect("b: get_mailbox_checkpoint");
 		assert_eq!(ra, rb, "get_mailbox_checkpoint mismatch");
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Group: VTXO lifecycle
+// ---------------------------------------------------------------------------
+
+mod vtxo_lifecycle {
+	use super::*;
+
+	pub async fn run<A: BarkPersister, B: BarkPersister>(a: &A, b: &B) {
+		test_store_and_get_vtxo(a, b).await;
+		test_get_vtxos_by_state(a, b).await;
+		test_vtxo_state_transition_ok(a, b).await;
+		test_vtxo_state_transition_rejected(a, b).await;
+		test_remove_vtxo(a, b).await;
+		test_has_spent_vtxo(a, b).await;
+		test_store_vtxos_idempotent(a, b).await;
+	}
+
+	async fn test_store_and_get_vtxo<A: BarkPersister, B: BarkPersister>(a: &A, b: &B) {
+		let vtxo = &VTXO_VECTORS.board_vtxo;
+
+		let ra = a.store_vtxos(&[(vtxo, &VtxoState::Spendable)]).await;
+		let rb = b.store_vtxos(&[(vtxo, &VtxoState::Spendable)]).await;
+		assert_eq!(ra.is_ok(), rb.is_ok(), "store_vtxos: ok/err mismatch");
+
+		let ra = a.get_wallet_vtxo(vtxo.id()).await.expect("a: get_wallet_vtxo");
+		let rb = b.get_wallet_vtxo(vtxo.id()).await.expect("b: get_wallet_vtxo");
+		assert_eq!(ra, rb, "get_wallet_vtxo mismatch");
+
+		let mut ra = a.get_all_vtxos().await.expect("a: get_all_vtxos");
+		let mut rb = b.get_all_vtxos().await.expect("b: get_all_vtxos");
+		ra.sort_by_key(|v| v.vtxo.id());
+		rb.sort_by_key(|v| v.vtxo.id());
+		assert_eq!(ra, rb, "get_all_vtxos mismatch");
+	}
+
+	async fn test_get_vtxos_by_state<A: BarkPersister, B: BarkPersister>(a: &A, b: &B) {
+		let spendable = &VTXO_VECTORS.arkoor_htlc_out_vtxo;
+		let spent = &VTXO_VECTORS.arkoor2_vtxo;
+
+		let ra = a.store_vtxos(&[
+			(spendable, &VtxoState::Spendable),
+			(spent, &VtxoState::Spent),
+		]).await;
+		let rb = b.store_vtxos(&[
+			(spendable, &VtxoState::Spendable),
+			(spent, &VtxoState::Spent),
+		]).await;
+		assert_eq!(ra.is_ok(), rb.is_ok(), "store_vtxos: ok/err mismatch");
+
+		let mut ra = a.get_vtxos_by_state(&[VtxoStateKind::Spendable]).await
+			.expect("a: get_vtxos_by_state");
+		let mut rb = b.get_vtxos_by_state(&[VtxoStateKind::Spendable]).await
+			.expect("b: get_vtxos_by_state");
+		ra.sort_by_key(|v| v.vtxo.id());
+		rb.sort_by_key(|v| v.vtxo.id());
+		assert_eq!(ra, rb, "get_vtxos_by_state mismatch");
+	}
+
+	async fn test_vtxo_state_transition_ok<A: BarkPersister, B: BarkPersister>(a: &A, b: &B) {
+		let vtxo = &VTXO_VECTORS.round1_vtxo;
+
+		a.store_vtxos(&[(vtxo, &VtxoState::Spendable)]).await.expect("a: store_vtxos");
+		b.store_vtxos(&[(vtxo, &VtxoState::Spendable)]).await.expect("b: store_vtxos");
+
+		let ra = a.update_vtxo_state_checked(vtxo.id(), VtxoState::Spent, VtxoStateKind::UNSPENT_STATES).await;
+		let rb = b.update_vtxo_state_checked(vtxo.id(), VtxoState::Spent, VtxoStateKind::UNSPENT_STATES).await;
+		assert_eq!(ra.is_ok(), rb.is_ok(), "update_vtxo_state_checked: ok/err mismatch");
+		assert_eq!(ra.unwrap(), rb.unwrap(), "update_vtxo_state_checked result mismatch");
+	}
+
+	async fn test_vtxo_state_transition_rejected<A: BarkPersister, B: BarkPersister>(a: &A, b: &B) {
+		let vtxo = &VTXO_VECTORS.round2_vtxo;
+
+		a.store_vtxos(&[(vtxo, &VtxoState::Spendable)]).await.expect("a: store_vtxos");
+		b.store_vtxos(&[(vtxo, &VtxoState::Spendable)]).await.expect("b: store_vtxos");
+
+		let ra = a.update_vtxo_state_checked(vtxo.id(), VtxoState::Spent, &[VtxoStateKind::Spent]).await;
+		let rb = b.update_vtxo_state_checked(vtxo.id(), VtxoState::Spent, &[VtxoStateKind::Spent]).await;
+		assert_eq!(ra.is_ok(), rb.is_ok(), "update_vtxo_state_checked (rejected): ok/err mismatch");
+		assert!(ra.is_err(), "transition from Spendable with only Spent allowed should be rejected");
+	}
+
+	async fn test_remove_vtxo<A: BarkPersister, B: BarkPersister>(a: &A, b: &B) {
+		let vtxo = &VTXO_VECTORS.arkoor3_vtxo;
+
+		a.store_vtxos(&[(vtxo, &VtxoState::Spendable)]).await.expect("a: store_vtxos");
+		b.store_vtxos(&[(vtxo, &VtxoState::Spendable)]).await.expect("b: store_vtxos");
+
+		let ra = a.remove_vtxo(vtxo.id()).await.expect("a: remove_vtxo");
+		let rb = b.remove_vtxo(vtxo.id()).await.expect("b: remove_vtxo");
+		assert_eq!(ra, rb, "remove_vtxo result mismatch");
+
+		let ra = a.get_wallet_vtxo(vtxo.id()).await.expect("a: get_wallet_vtxo after remove");
+		let rb = b.get_wallet_vtxo(vtxo.id()).await.expect("b: get_wallet_vtxo after remove");
+		assert_eq!(ra, rb, "get_wallet_vtxo after remove mismatch");
+	}
+
+	async fn test_has_spent_vtxo<A: BarkPersister, B: BarkPersister>(a: &A, b: &B) {
+		let spent = &VTXO_VECTORS.arkoor2_vtxo;
+
+		// Ensure the vtxo is in Spent state before querying.  store_vtxos uses
+		// INSERT OR IGNORE semantics, so this is a no-op if the vtxo was already
+		// stored by an earlier test.
+		a.store_vtxos(&[(spent, &VtxoState::Spent)]).await.expect("a: store_vtxos");
+		b.store_vtxos(&[(spent, &VtxoState::Spent)]).await.expect("b: store_vtxos");
+
+		let ra = a.has_spent_vtxo(spent.id()).await.expect("a: has_spent_vtxo");
+		let rb = b.has_spent_vtxo(spent.id()).await.expect("b: has_spent_vtxo");
+		assert_eq!(ra, rb, "has_spent_vtxo mismatch");
+
+		let unknown_id = VtxoId::from_slice(&[0u8; 36]).unwrap();
+		let ra = a.has_spent_vtxo(unknown_id).await.expect("a: has_spent_vtxo (unknown)");
+		let rb = b.has_spent_vtxo(unknown_id).await.expect("b: has_spent_vtxo (unknown)");
+		assert_eq!(ra, rb, "has_spent_vtxo (unknown) mismatch");
+	}
+
+	async fn test_store_vtxos_idempotent<A: BarkPersister, B: BarkPersister>(a: &A, b: &B) {
+		let vtxo = &VTXO_VECTORS.board_vtxo;
+
+		// First store — ensures the vtxo exists regardless of prior test state.
+		a.store_vtxos(&[(vtxo, &VtxoState::Spendable)]).await.expect("a: initial store_vtxos");
+		b.store_vtxos(&[(vtxo, &VtxoState::Spendable)]).await.expect("b: initial store_vtxos");
+
+		// Second store with the same state — this is the idempotency check.
+		let ra = a.store_vtxos(&[(vtxo, &VtxoState::Spendable)]).await;
+		let rb = b.store_vtxos(&[(vtxo, &VtxoState::Spendable)]).await;
+		assert_eq!(ra.is_ok(), rb.is_ok(), "store_vtxos (idempotent): ok/err mismatch");
+
+		let ra = a.get_wallet_vtxo(vtxo.id()).await.expect("a: get_wallet_vtxo after idempotent store");
+		let rb = b.get_wallet_vtxo(vtxo.id()).await.expect("b: get_wallet_vtxo after idempotent store");
+		assert_eq!(ra, rb, "get_wallet_vtxo after idempotent store mismatch");
 	}
 }
