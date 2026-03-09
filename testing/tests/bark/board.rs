@@ -1,10 +1,15 @@
+use std::sync::Arc;
+use std::sync::atomic::{self, AtomicBool};
+
 use bitcoin::Amount;
 use bitcoin_ext::P2TR_DUST_SAT;
 
 use bark_json::primitives::VtxoStateInfo;
+use server_rpc::protos;
 
 use ark_testing::{btc, sat, TestContext};
 use ark_testing::constants::BOARD_CONFIRMATIONS;
+use ark_testing::daemon::captaind::{self, ArkClient};
 
 #[tokio::test]
 async fn board_bark() {
@@ -110,4 +115,48 @@ async fn bark_rejects_boarding_below_minimum_board_amount() {
 	assert!(res.unwrap_err().to_string().contains(&format!(
 		"board amount of 0.00029999 BTC is less than minimum board amount required by server (0.00030000 BTC)",
 	)));
+}
+
+#[tokio::test]
+async fn bark_recover_unregistered_board() {
+	let ctx = TestContext::new("bark/recover_unregistered_board").await;
+
+	// Set up the server.
+	// The server misbehaves and drops the first request to register_board_vtxo
+	let srv = ctx.new_captaind_with_funds("server", None, btc(1)).await;
+
+	/// This proxy will drop the very first request to register_board
+	#[derive(Clone)]
+	struct Proxy(Arc<AtomicBool>);
+
+	#[async_trait::async_trait]
+	impl captaind::proxy::ArkRpcProxy for Proxy {
+		async fn register_board_vtxo(
+			&self, upstream: &mut ArkClient, req: protos::BoardVtxoRequest,
+		) -> Result<protos::Empty, tonic::Status> {
+			if self.0.swap(false, atomic::Ordering::Relaxed) {
+				Err(tonic::Status::from_error(
+					"Nope! I do not register on the first attempt!".into(),
+				))
+			} else {
+				Ok(upstream.register_board_vtxo(req).await?.into_inner())
+			}
+		}
+	}
+
+	let proxy = srv.start_proxy_no_mailbox(Proxy(Arc::new(AtomicBool::new(true)))).await;
+
+	let bark = ctx.new_bark_with_funds("bark", &proxy.address, sat(1_000_00)).await;
+	// Only asks server to cosign, not register a board.
+	bark.board_all().await;
+	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
+	// Triggers maintenance under the hood
+	//
+	// The board registration should have failed and the pending board balance should still be greater than 0.
+	assert!(bark.pending_board_balance().await > Amount::ZERO);
+	assert_eq!(bark.vtxos().await.len(), 1);
+
+	ctx.generate_blocks(12).await;
+	// The board registration will succeed during maintenance her and the pending board balance should be 0.
+	assert_eq!(bark.pending_board_balance().await, Amount::ZERO);
 }
