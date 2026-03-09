@@ -58,6 +58,8 @@ build-and-push-bark-to-registry:
     - build-bark
   script:
     - cat VERSION
+    - chmod a+x ./bark*
+    - chmod a+x ./.gitlab/images/releases/bark/run.sh
     - buildah login -u registry -p "$REGISTRY_LOGIN_TOKEN" registry.2nd.dev
     # Build the containers
     - buildah build -f ./.gitlab/images/releases/bark/linux_amd64.Dockerfile --tag registry.2nd.dev/bark:linux-amd64 .
