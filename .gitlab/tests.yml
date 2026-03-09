@@ -54,18 +54,28 @@ build:
   needs:
     - prechecks
   script:
-    - date +"%Y%m%d-%H%M%S" > RUN_DATETIME
     - git log --oneline -1
     - nix develop .#default --command bash -c "just build-ci"
-    - nix develop .#default --command bash -c "just build-unit-tests-ci"
-    - nix develop .#default --command bash -c "just build-integration-tests-ci"
   artifacts:
     paths:
-      - RUN_DATETIME
       - target/ci/examples/
       - target/ci/captaind
       - target/ci/bark
       - target/ci/barkd
+    expire_in: 1 day
+
+build-test-archives:
+  interruptible: true
+  stage: build
+  extends: .test-and-codecov-rules-no-tags
+  needs:
+    - prechecks
+  script:
+    - git log --oneline -1
+    - nix develop .#default --command bash -c "just build-unit-tests-ci"
+    - nix develop .#default --command bash -c "just build-integration-tests-ci"
+  artifacts:
+    paths:
       - target/ci/unit-tests.tar.zst
       - target/ci/integration-tests.tar.zst
     expire_in: 1 day
@@ -91,7 +101,7 @@ test-unit:
   stage: test
   extends: .test-and-codecov-rules-no-tags
   needs:
-    - build
+    - build-test-archives
   script:
     - git log --oneline -1
     - nix develop .#default --command bash -c "cargo nextest run --archive-file target/ci/unit-tests.tar.zst"
@@ -174,6 +184,7 @@ test-integration-esplora:
   needs:
     - check-commits
     - build
+    - build-test-archives
   variables:
     CHAIN_SOURCE: esplora
     TEST_DIRECTORY: ./test/esplora
@@ -198,6 +209,7 @@ test-integration-mempool:
   needs:
     - check-commits
     - build
+    - build-test-archives
   variables:
     CHAIN_SOURCE: mempool
     TEST_DIRECTORY: ./test/mempool
@@ -221,6 +233,7 @@ test-integration-btc30:
   needs:
     - check-commits
     - build
+    - build-test-archives
   variables:
     TEST_DIRECTORY: ./test/btc30
     NEXTEST_TEST_THREADS: "2"
@@ -252,6 +265,7 @@ test-integration-filestore:
   needs:
     - check-commits
     - build
+    - build-test-archives
   variables:
     CHAIN_SOURCE: mempool
     USE_FILESTORE: "1"
