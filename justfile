@@ -1,9 +1,9 @@
 # Find the target directory
 CARGO_TARGET := `cargo metadata --format-version 1 --no-deps | jq -r '.target_directory'`
 JUSTFILE_DIR := justfile_directory()
-export CAPTAIND_EXEC := CARGO_TARGET / "debug" / "captaind"
-export BARK_EXEC := CARGO_TARGET / "debug" / "bark"
-export BARKD_EXEC := CARGO_TARGET / "debug" / "barkd"
+export CAPTAIND_EXEC := env("CAPTAIND_EXEC", CARGO_TARGET / "debug" / "captaind")
+export BARK_EXEC := env("BARK_EXEC", CARGO_TARGET / "debug" / "bark")
+export BARKD_EXEC := env("BARKD_EXEC", CARGO_TARGET / "debug" / "barkd")
 export BITCOIND_SNAPSHOT_DIR := JUSTFILE_DIR / "test" / "_bitcoind_snapshot"
 
 NEXTEST_PROFILE := env("NEXTEST_PROFILE", "default")
@@ -13,6 +13,8 @@ BARK_SQL_SCHEMA_PATH := "bark/schema.sql"
 BARK_OPENAPI_SCHEMA_PATH := "bark-rest/openapi.json"
 BARK_REST_CLIENT_DIR := "bark-rest-client"
 BARK_REST_VERSION := `grep '^version = ' bark-rest/Cargo.toml | sed -E 's/^version = "([^"]+)"/\1/'`
+
+EXAMPLES_DIR := env("EXAMPLES_DIR", CARGO_TARGET / "debug" / "examples")
 
 precheck CHECK:
 	bash contrib/prechecks.sh {{CHECK}}
@@ -35,6 +37,40 @@ build:
 	cargo version
 	cargo build --workspace
 
+build-ci:
+	cargo version
+	cargo build --profile ci --workspace --bins --examples
+
+build-unit-tests-ci:
+	cargo nextest archive --cargo-profile ci --workspace --exclude ark-testing --archive-file {{CARGO_TARGET}}/ci/unit-tests.tar.zst --zstd-level 19
+
+build-integration-tests-ci:
+	cargo nextest archive --cargo-profile ci --package ark-testing --archive-file {{CARGO_TARGET}}/ci/integration-tests.tar.zst --zstd-level 19
+
+build-bins:
+	cargo build --workspace --bins
+
+build-examples:
+	cargo build --workspace --examples
+
+ensure-build-bins:
+	#!/usr/bin/env bash
+	set -euo pipefail
+	if [ -z "${ASSUME_BUILT:-}" ]; then
+		just build-bins
+	else
+		echo "ASSUME_BUILT is set, skipping build"
+	fi
+
+ensure-build-examples:
+	#!/usr/bin/env bash
+	set -euo pipefail
+	if [ -z "${ASSUME_BUILT:-}" ]; then
+		just build-examples
+	else
+		echo "ASSUME_BUILT is set, skipping build"
+	fi
+
 build-codecov:
 	#!/usr/bin/env bash
 	set -euo pipefail
@@ -52,14 +88,20 @@ alias unit := test-unit
 test-unit-codecov TEST="":
 	cargo llvm-cov nextest --profile {{NEXTEST_PROFILE}} --workspace --exclude ark-testing --no-report {{TEST}}
 
-test-integration TEST="": build docker-pull
+test-integration TEST="": ensure-build-bins docker-pull
 	cargo nextest run --no-fail-fast --profile {{NEXTEST_PROFILE}} --package ark-testing {{TEST}}
 alias int := test-integration
 
 # run integration tests for bark, movement, exit and lightning test files only
-test-integration-client: build docker-pull
+test-integration-client: ensure-build-bins docker-pull
 	cargo nextest run --no-fail-fast --profile {{NEXTEST_PROFILE}} --package ark-testing --test bark --test movement --test exit --test lightningd
 alias int-client := test-integration-client
+
+test-integration-prebuilt TEST="": docker-pull
+	cargo nextest run --archive-file {{CARGO_TARGET}}/ci/integration-tests.tar.zst {{TEST}}
+
+test-integration-client-prebuilt: docker-pull
+	cargo nextest run --archive-file {{CARGO_TARGET}}/ci/integration-tests.tar.zst -E 'binary(bark) + binary(movement) + binary(exit) + binary(lightningd)'
 
 test-integration-codecov TEST="": docker-pull
 	#!/usr/bin/env bash
@@ -68,7 +110,7 @@ test-integration-codecov TEST="": docker-pull
 	cargo nextest run --profile {{NEXTEST_PROFILE}} --package ark-testing {{TEST}}
 alias int-cov := test-integration-codecov
 
-test-integration-esplora TEST="": build docker-pull
+test-integration-esplora TEST="": ensure-build-bins docker-pull
 	CHAIN_SOURCE=esplora just int "{{TEST}}"
 alias int-esplora := test-integration-esplora
 
@@ -78,7 +120,7 @@ test-integration-esplora-codecov TEST="": docker-pull
 	source <(cargo llvm-cov show-env --export-prefix)
 	CHAIN_SOURCE=esplora cargo nextest run --profile {{NEXTEST_PROFILE}} --package ark-testing {{TEST}}
 
-test-integration-mempool TEST="": build docker-pull
+test-integration-mempool TEST="": ensure-build-bins docker-pull
 	CHAIN_SOURCE=mempool just int "{{TEST}}"
 alias int-mempool := test-integration-mempool
 
@@ -160,8 +202,8 @@ clippy LINT:
 	cargo clippy -- -A clippy::all -W clippy::{{LINT}}
 
 
-dump-server-sql-schema:
-	cargo run --example dump-server-postgres-schema > {{SERVER_SQL_SCHEMA_PATH}}
+dump-server-sql-schema: ensure-build-examples
+	{{EXAMPLES_DIR}}/dump-server-postgres-schema > {{SERVER_SQL_SCHEMA_PATH}}
 	# Use sed to remove lines that are hard to reproduce across different systems
 	sed '/^-- Dumped by .*$/d' {{SERVER_SQL_SCHEMA_PATH}} \
 	  | sed '/^-- Dumped from .*$/d' \
@@ -170,13 +212,13 @@ dump-server-sql-schema:
 	echo "bark-server SQL schema written to {{SERVER_SQL_SCHEMA_PATH}}"
 	chmod 644 bark/schema.sql
 
-dump-bark-sql-schema:
-	cargo run --example dump-sqlite-schema > {{BARK_SQL_SCHEMA_PATH}}
+dump-bark-sql-schema: ensure-build-examples
+	{{EXAMPLES_DIR}}/dump-sqlite-schema > {{BARK_SQL_SCHEMA_PATH}}
 	echo "bark SQL schema written to {{BARK_SQL_SCHEMA_PATH}}"
 	chmod 644 bark/schema.sql
 
-dump-bark-rest-openapi-schema:
-	cargo run --package bark-rest --example dump_api_docs > {{BARK_OPENAPI_SCHEMA_PATH}}
+dump-bark-rest-openapi-schema: ensure-build-examples
+	{{EXAMPLES_DIR}}/dump_api_docs > {{BARK_OPENAPI_SCHEMA_PATH}}
 	chmod 644 bark-rest/openapi.json
 
 generate-bark-rest-client: dump-bark-rest-openapi-schema

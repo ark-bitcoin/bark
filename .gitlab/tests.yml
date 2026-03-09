@@ -55,7 +55,31 @@ build:
     - prechecks
   script:
     - git log --oneline -1
-    - nix develop .#default --command bash -c "just build"
+    - nix develop .#default --command bash -c "just build-ci"
+  artifacts:
+    paths:
+      - target/ci/examples/
+      - target/ci/captaind
+      - target/ci/bark
+      - target/ci/barkd
+      - target/ci/pid-lock-holder
+    expire_in: 1 day
+
+build-test-archives:
+  interruptible: true
+  stage: build
+  extends: .test-and-codecov-rules-no-tags
+  needs:
+    - prechecks
+  script:
+    - git log --oneline -1
+    - nix develop .#default --command bash -c "just build-unit-tests-ci"
+    - nix develop .#default --command bash -c "just build-integration-tests-ci"
+  artifacts:
+    paths:
+      - target/ci/unit-tests.tar.zst
+      - target/ci/integration-tests.tar.zst
+    expire_in: 1 day
 
 compare-static-files:
   interruptible: true
@@ -63,6 +87,9 @@ compare-static-files:
   extends: .test-and-codecov-rules-no-tags
   needs:
     - build
+  variables:
+    ASSUME_BUILT: "1"
+    EXAMPLES_DIR: target/ci/examples
   script:
     - nix develop .#default --command bash -c "just generate-static-files"
     - bash contrib/check-clean-diff.sh bark/schema.sql
@@ -75,17 +102,17 @@ test-unit:
   stage: test
   extends: .test-and-codecov-rules-no-tags
   needs:
-    - build
+    - build-test-archives
   script:
     - git log --oneline -1
-    - nix develop .#default --command bash -c "just test-unit"
+    - nix develop .#default --command bash -c "cargo nextest run --archive-file target/ci/unit-tests.tar.zst"
 
 use-bark-as-dependency:
   interruptible: true
   stage: test
   extends: .test-and-codecov-rules-no-tags
   needs:
-    - test-unit
+    - prechecks
   script:
     - |
       nix develop .#default --command bash -c "
@@ -101,7 +128,7 @@ bark-as-libs:
   stage: test
   extends: .test-and-codecov-rules-no-tags
   needs:
-    - test-unit
+    - prechecks
   script:
     - |
       nix develop .#default --command bash -c "
@@ -115,7 +142,7 @@ lib-wasm:
   stage: test
   extends: .test-and-codecov-rules-no-tags
   needs:
-    - test-unit
+    - prechecks
   script:
     - |
       nix develop .#default --command bash -c "
@@ -128,7 +155,7 @@ lib-msrv:
   stage: test
   extends: .test-and-codecov-rules-no-tags
   needs:
-    - test-unit
+    - prechecks
   script:
     - |
       nix develop .#msrv-lib --command bash -c "
@@ -141,7 +168,7 @@ check-release:
   stage: test
   extends: .test-and-codecov-rules-no-tags
   needs:
-    - test-unit
+    - prechecks
   script:
     - |
       nix develop .#default --command bash -c "
@@ -156,21 +183,22 @@ test-integration-esplora:
   rules:
     - if: $CI_COMMIT_BRANCH == "master" && $CI_PROJECT_URL == "https://gitlab.com/ark-bitcoin/bark"
   needs:
-    - bark-as-libs
     - check-commits
+    - build
+    - build-test-archives
   variables:
     CHAIN_SOURCE: esplora
     TEST_DIRECTORY: ./test/esplora
     NEXTEST_TEST_THREADS: "2"
     BARK_COMMAND_TIMEOUT_MILLIS: "120000"
     TX_PROPAGATION_TIMEOUT: "30000"
-    CARGO_TARGET_DIR: target-esplora
   script:
     - git log --oneline -1
     - export RUN_DATETIME=$(cat RUN_DATETIME)
-    - export CAPTAIND_EXEC=${CI_PROJECT_DIR}/target-esplora/debug/captaind
-    - export BARK_EXEC=${CI_PROJECT_DIR}/target-esplora/debug/bark
-    - bash ./contrib/ci-run-test.sh test-integration
+    - export CAPTAIND_EXEC=${CI_PROJECT_DIR}/target/ci/captaind
+    - export BARK_EXEC=${CI_PROJECT_DIR}/target/ci/bark
+    - export BARKD_EXEC=${CI_PROJECT_DIR}/target/ci/barkd
+    - bash ./contrib/ci-run-test.sh test-integration-prebuilt
 
 test-integration-mempool:
   interruptible: true
@@ -180,21 +208,22 @@ test-integration-mempool:
     - integration
   extends: .test-rules-no-tags
   needs:
-    - bark-as-libs
     - check-commits
+    - build
+    - build-test-archives
   variables:
     CHAIN_SOURCE: mempool
     TEST_DIRECTORY: ./test/mempool
     NEXTEST_TEST_THREADS: "2"
     BARK_COMMAND_TIMEOUT_MILLIS: "120000"
     TX_PROPAGATION_TIMEOUT: "30000"
-    CARGO_TARGET_DIR: target-mempool
   script:
     - git log --oneline -1
     - export RUN_DATETIME=$(cat RUN_DATETIME)
-    - export CAPTAIND_EXEC=${CI_PROJECT_DIR}/target-mempool/debug/captaind
-    - export BARK_EXEC=${CI_PROJECT_DIR}/target-mempool/debug/bark
-    - bash ./contrib/ci-run-test.sh test-integration
+    - export CAPTAIND_EXEC=${CI_PROJECT_DIR}/target/ci/captaind
+    - export BARK_EXEC=${CI_PROJECT_DIR}/target/ci/bark
+    - export BARKD_EXEC=${CI_PROJECT_DIR}/target/ci/barkd
+    - bash ./contrib/ci-run-test.sh test-integration-prebuilt
 
 test-integration-btc30:
   interruptible: true
@@ -203,20 +232,21 @@ test-integration-btc30:
     - integration
   extends: .test-rules-no-tags
   needs:
-    - bark-as-libs
     - check-commits
+    - build
+    - build-test-archives
   variables:
     TEST_DIRECTORY: ./test/btc30
     NEXTEST_TEST_THREADS: "2"
     BARK_COMMAND_TIMEOUT_MILLIS: "120000"
     TX_PROPAGATION_TIMEOUT: "30000"
-    CARGO_TARGET_DIR: target-btc30
   script:
     - git log --oneline -1
     - export RUN_DATETIME=$(cat RUN_DATETIME)
-    - export CAPTAIND_EXEC=${CI_PROJECT_DIR}/target-btc30/debug/captaind
-    - export BARK_EXEC=${CI_PROJECT_DIR}/target-btc30/debug/bark
-    - bash ./contrib/ci-run-test.sh test-integration-client
+    - export CAPTAIND_EXEC=${CI_PROJECT_DIR}/target/ci/captaind
+    - export BARK_EXEC=${CI_PROJECT_DIR}/target/ci/bark
+    - export BARKD_EXEC=${CI_PROJECT_DIR}/target/ci/barkd
+    - bash ./contrib/ci-run-test.sh test-integration-client-prebuilt
 
 test-integration-filestore:
   interruptible: true
@@ -234,8 +264,9 @@ test-integration-filestore:
       changes:
         - bark/src/persist/**/*
   needs:
-    - bark-as-libs
     - check-commits
+    - build
+    - build-test-archives
   variables:
     CHAIN_SOURCE: mempool
     USE_FILESTORE: "1"
@@ -246,9 +277,10 @@ test-integration-filestore:
   script:
     - git log --oneline -1
     - export RUN_DATETIME=$(cat RUN_DATETIME)
-    - export CAPTAIND_EXEC=${CI_PROJECT_DIR}/target/debug/captaind
-    - export BARK_EXEC=${CI_PROJECT_DIR}/target/debug/bark
-    - bash ./contrib/ci-run-test.sh test-integration-client
+    - export CAPTAIND_EXEC=${CI_PROJECT_DIR}/target/ci/captaind
+    - export BARK_EXEC=${CI_PROJECT_DIR}/target/ci/bark
+    - export BARKD_EXEC=${CI_PROJECT_DIR}/target/ci/barkd
+    - bash ./contrib/ci-run-test.sh test-integration-client-prebuilt
 
 tar-and-print-test-data:
   interruptible: true

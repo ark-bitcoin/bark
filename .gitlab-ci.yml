@@ -15,6 +15,7 @@ variables:
 workflow:
   auto_cancel:
     on_new_commit: interruptible
+    on_job_failure: all
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_EVENT_TYPE == "merge_train"
       variables:
@@ -27,13 +28,15 @@ workflow:
     - if: $CI_PIPELINE_SOURCE == "web"
 
 stages:
+  - mirror
   - prechecks
+  - check-commits
   - build
+  - bark-test-builds
   - test
   - post-test
   - release
   - publish
-  - mirror
 
 # Specifying a default image for all steps. If you specify a new before_script in a step, then this will be ignored.
 default:

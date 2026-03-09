@@ -8,7 +8,6 @@ rust_no_spaces_for_indent() {
 		gen=$(echo "$filename" | git check-attr --stdin linguist-generated)
 		case "$gen" in
 			*"linguist-generated: set"*)
-				echo "skipping file: $filename"
 				continue ;;
 		esac
 
@@ -39,7 +38,6 @@ rust_no_whitespace_on_empty_lines() {
 		gen=$(echo "$filename" | git check-attr --stdin linguist-generated)
 		case "$gen" in
 			*"linguist-generated: set"*)
-				echo "skipping file: $filename"
 				continue ;;
 		esac
 
