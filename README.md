@@ -18,7 +18,7 @@
 
 [![Release](https://img.shields.io/gitlab/pipeline-status/ark-bitcoin/bark?branch=master&gitlab_url=https%3A%2F%2Fgitlab.com)](https://gitlab.com/ark-bitcoin/bark/tags)
 [![Project Status](https://img.shields.io/badge/status-experimental-red.svg)](https://gitlab.com/ark-bitcoin/bark)
-[![License](https://img.shields.io/badge/license-CC0--1.0-blue.svg)](LICENSE)
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen?logo=git)](CONTRIBUTING.md)
 [![Community](https://img.shields.io/badge/community-forum-blue?logo=discourse)](https://community.second.tech)
 
@@ -105,4 +105,4 @@ If you happen to find a vulnerability we invite you to [file a public issue](htt
 
 ## License
 
-Released under the **CC0 1.0 Universal** license-see the [LICENSE](LICENSE) file for details.
+Released under the **MIT** license-see the [LICENSE](LICENSE) file for details.
