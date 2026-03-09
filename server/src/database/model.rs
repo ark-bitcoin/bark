@@ -36,6 +36,10 @@ pub struct VtxoState<G = Full, P: Policy = VtxoPolicy> {
 	/// If this VTXO was offboarded, the offboard tx's txid
 	pub offboarded_in: Option<Txid>,
 
+	/// If this vtxo is banned, the block height until which it is banned
+	// NB keep this type explicit as u32 instead of BlockHeight to ensure encoding is stable
+	pub banned_until_height: Option<u32>,
+
 	/// If this is a board vtxo, the time at which it was swept.
 	pub created_at: DateTime<Local>,
 	pub updated_at: DateTime<Local>,
@@ -53,6 +57,7 @@ impl VtxoState<Full, ServerVtxoPolicy> {
 					oor_spent_txid: self.oor_spent_txid,
 					spent_in_round: self.spent_in_round,
 					offboarded_in: self.offboarded_in,
+					banned_until_height: self.banned_until_height,
 					created_at: self.created_at,
 					updated_at: self.updated_at,
 				})
@@ -66,6 +71,7 @@ impl VtxoState<Full, ServerVtxoPolicy> {
 					oor_spent_txid: self.oor_spent_txid,
 					spent_in_round: self.spent_in_round,
 					offboarded_in: self.offboarded_in,
+					banned_until_height: self.banned_until_height,
 					created_at: self.created_at,
 					updated_at: self.updated_at,
 				})
@@ -110,6 +116,9 @@ impl<P: Policy + ProtocolEncoding> TryFrom<Row> for VtxoState<Full, P> {
 				.get::<_, Option<&str>>("offboarded_in")
 				.map(|txid| Txid::from_str(txid))
 				.transpose()?,
+			banned_until_height: row.get::<_, Option<i32>>("banned_until_height")
+				.map(|h| u32::try_from(h))
+				.transpose()?,
 			created_at: row.get("created_at"),
 			updated_at: row.get("updated_at"),
 		})
@@ -148,6 +157,10 @@ impl<P: Policy + ProtocolEncoding> TryFrom<Row> for VtxoState<Bare, P> {
 			offboarded_in: row
 				.get::<_, Option<&str>>("offboarded_in")
 				.map(|txid| Txid::from_str(txid))
+				.transpose()?,
+			banned_until_height: row
+				.get::<_, Option<i32>>("banned_until_height")
+				.map(|h| u32::try_from(h))
 				.transpose()?,
 			created_at: row.get("created_at"),
 			updated_at: row.get("updated_at"),

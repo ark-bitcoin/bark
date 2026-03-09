@@ -4,6 +4,7 @@ mod embedded {
 	embed_migrations!("src/database/migrations");
 }
 
+mod ban;
 pub mod block;
 pub mod data_migrations;
 pub mod watchman;
@@ -246,7 +247,6 @@ impl Db {
 			Err(v) => bail!("requested VTXO {} is not a user VTXO", v.vtxo_id),
 		}).collect::<anyhow::Result<_, _>>()?)
 	}
-
 
 	/// Updates the virtual transaction tree.
 	/// This method will
