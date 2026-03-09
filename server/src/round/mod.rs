@@ -31,7 +31,7 @@ use ark::rounds::{
 use ark::tree::signed::{
 	CachedSignedVtxoTree, UnlockHash, UnlockPreimage, UnsignedVtxoTree, VtxoLeafSpec, VtxoTreeSpec,
 };
-use server_log::{LogMsg, RoundVtxoCreated};
+use server_log::{BroadcastRoundFundingTx, LogMsg, RoundVtxoCreated};
 
 use crate::database::rounds::StoredRoundParticipation;
 use crate::{telemetry, Server, SECP};
@@ -1017,23 +1017,39 @@ impl SigningVtxoTree {
 		// Construct the final signed vtxo tree.
 		let signed_vtxos = create_signed_vtxo_tree(&mut self, cosign_sigs);
 
+		// Persist round to database before signing and broadcasting.
+		persist_round(&mut self, srv, &signed_vtxos).await?;
+
 		// Sign the funding tx.
 		let signed_round_tx = sign_funding_tx(&mut self).await?;
 
-		// Broadcast the transaction.
-		let signed_round_tx = broadcast_on_chain_transaction(
-			&mut self, srv, signed_round_tx
-		).await?;
+		// Persist the signed funding tx to the database.
+		srv.db.upsert_virtual_transaction(
+			self.round_txid, Some(&signed_round_tx), true, None,
+		).await.map_err(|e| RoundError::Fatal(e.context("failed to upsert signed funding tx")))?;
 
 		let finished = RoundFinished {
 			round_seq: self.round_step.round_seq(),
 			attempt_seq: self.round_step.attempt_seq(),
 			cosign_sigs: signed_vtxos.spec.cosign_sigs.clone(),
-			signed_round_tx: signed_round_tx.tx.clone(),
+			signed_round_tx: signed_round_tx.clone(),
 		};
 
-		// Persist round to database.
-		persist_round(&mut self, srv, signed_vtxos, signed_round_tx).await?;
+		// Persist the signed tx to BDK wallet.
+		self.wallet_lock.commit_tx(&signed_round_tx);
+		if let Err(e) = self.wallet_lock.persist().await {
+			warn!("Failed to persist BDK wallet to db: {:?}", e);
+		}
+
+		// Broadcast the transaction.
+		if let Err(e) = srv.tx_nursery.broadcast_tx(signed_round_tx).await {
+			warn!("Failed to broadcast round tx: {:?}", e);
+		}
+
+		server_rslog!(BroadcastRoundFundingTx, self.round_step,
+			txid: self.round_txid,
+			round_tx_fee: self.round_tx_fee,
+		);
 
 		Ok(finished)
 	}
@@ -1073,49 +1089,12 @@ async fn sign_funding_tx(
 		Ok(tx) => tx,
 		Err(e) => return Err(RoundError::Recoverable(e.context("funding tx signing error"))),
 	};
-	state.wallet_lock.commit_tx(&signed_round_tx);
-	if let Err(e) = state.wallet_lock.persist().await {
-		// Failing to persist the tx data at this point means that we might
-		// accidentally re-use certain inputs if we reboot the server.
-		// We keep the change set in the wallet if this happens.
-		warn!("Failed to persist BDK wallet to db: {:?}", e);
-	}
 
 	Ok(signed_round_tx)
 }
 
 #[tracing::instrument(
-	skip(state, srv, signed_round_tx),
-	name = "BroadcastOnChainTransaction",
-	fields(
-		{ telemetry::ATTRIBUTE_ROUND_SEQ } = %state.round_step.round_seq(),
-		{ telemetry::ATTRIBUTE_ATTEMPT_SEQ } = state.round_step.attempt_seq(),
-		{ telemetry::ATTRIBUTE_ROUND_ID } = %state.round_txid,
-	)
-)]
-async fn broadcast_on_chain_transaction(
-	state: &mut SigningVtxoTree,
-	srv: &Server,
-	signed_round_tx: bitcoin::Transaction,
-) -> Result<crate::txindex::Tx, RoundError> {
-	let round_step = state.round_step.proceed(RoundStep::BroadcastOnChainTransaction);
-	state.round_step = round_step;
-
-	// Note: wallet_lock will be dropped naturally at end of state's lifetime
-	let signed_round_tx = srv.tx_nursery.broadcast_tx(signed_round_tx).await
-		.map_err(|err| RoundError::Fatal(err.context("failed to broadcast round")))?;
-
-	server_rslog!(BroadcastRoundFundingTx, round_step,
-		txid: state.round_txid,
-		round_tx_fee: state.round_tx_fee,
-	);
-	telemetry::set_round_step_duration(round_step);
-
-	Ok(signed_round_tx)
-}
-
-#[tracing::instrument(
-	skip(state, srv, signed_vtxos, signed_round_tx),
+	skip(state, srv, signed_vtxos),
 	name = "Persist",
 	fields(
 		{ telemetry::ATTRIBUTE_ROUND_SEQ } = %state.round_step.round_seq(),
@@ -1127,11 +1106,13 @@ async fn broadcast_on_chain_transaction(
 async fn persist_round(
 	state: &mut SigningVtxoTree,
 	srv: &Server,
-	signed_vtxos: CachedSignedVtxoTree,
-	signed_round_tx: crate::txindex::Tx,
+	signed_vtxos: &CachedSignedVtxoTree,
 ) -> Result<(), RoundError> {
 	let round_step = state.round_step.proceed(RoundStep::Persist);
 	state.round_step = round_step;
+
+	let unsigned_funding_tx = state.round_tx_psbt.clone().extract_tx()
+		.expect("failed to extract unsigned funding tx from psbt");
 
 	trace!("Storing round result");
 	if tracing::enabled!(RoundVtxoCreated::LEVEL) {
@@ -1144,16 +1125,16 @@ async fn persist_round(
 	}
 	let result = srv.db.finish_round(
 		round_step.round_seq(),
-		&signed_round_tx.tx,
+		&unsigned_funding_tx,
 		state.all_inputs.keys().copied(),
-		&signed_vtxos,
+		signed_vtxos,
 		&state.interactive_participants,
 	).await;
 	telemetry::set_round_step_duration(round_step);
 	if let Err(e) = result {
 		server_rslog!(FatalStoringRound, round_step,
 			error: format!("{:?}", e),
-			signed_tx: serialize(&signed_round_tx.tx),
+			unsigned_funding_tx: serialize(&unsigned_funding_tx),
 			vtxo_tree: signed_vtxos.spec.serialize(),
 			input_vtxos: state.all_inputs.keys().copied().collect(),
 		);
