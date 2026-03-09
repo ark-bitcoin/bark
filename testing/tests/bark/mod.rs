@@ -120,10 +120,8 @@ async fn compute_balance() {
 }
 
 #[tokio::test]
-async fn multiple_spends_in_payment() {
-	// TODO: This test does not do what its name suggests.
-	// Initialize the test
-	let ctx = TestContext::new("bark/multiple_spends_in_payment").await;
+async fn refresh_consolidates_vtxos() {
+	let ctx = TestContext::new("bark/refresh_consolidates_vtxos").await;
 
 	let srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
 	let bark1 = ctx.new_bark_with_funds("bark1".to_string(), &srv, sat(1_000_000)).await;
