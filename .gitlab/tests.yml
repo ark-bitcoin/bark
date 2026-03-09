@@ -53,9 +53,14 @@ build:
   extends: .build-rules
   needs:
     - prechecks
+    - check-commits
   script:
     - git log --oneline -1
     - nix develop .#default --command bash -c "just build"
+  artifacts:
+    paths:
+      - target/debug/examples/
+    expire_in: 1 day
 
 compare-static-files:
   interruptible: true
@@ -63,6 +68,8 @@ compare-static-files:
   extends: .test-and-codecov-rules-no-tags
   needs:
     - build
+  variables:
+    ASSUME_BUILT: "1"
   script:
     - nix develop .#default --command bash -c "just generate-static-files"
     - bash contrib/check-clean-diff.sh bark/schema.sql
