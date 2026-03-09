@@ -7,12 +7,13 @@
 
 use bitcoin::bip32::Fingerprint;
 use bitcoin::secp256k1::{Keypair, Secp256k1, SecretKey};
-use bitcoin::Network;
+use bitcoin::{Network, Transaction};
 
 use ark::test_util::VTXO_VECTORS;
 use ark::VtxoId;
 
 use super::BarkPersister;
+use crate::movement::{MovementStatus, MovementSubsystem};
 use crate::vtxo::{VtxoState, VtxoStateKind};
 use crate::WalletProperties;
 
@@ -34,6 +35,44 @@ fn test_pubkey() -> bitcoin::secp256k1::PublicKey {
 	Keypair::from_secret_key(&secp, &sk).public_key()
 }
 
+fn test_subsystem() -> MovementSubsystem {
+	MovementSubsystem {
+		name: "test-subsystem".into(),
+		kind: "test-kind".into(),
+	}
+}
+
+fn empty_tx() -> Transaction {
+	Transaction {
+		version: bitcoin::transaction::Version::TWO,
+		lock_time: bitcoin::locktime::absolute::LockTime::ZERO,
+		input: vec![],
+		output: vec![],
+	}
+}
+
+/// A second distinct transaction to avoid UNIQUE constraint collisions.
+fn empty_tx_2() -> Transaction {
+	Transaction {
+		version: bitcoin::transaction::Version::ONE,
+		lock_time: bitcoin::locktime::absolute::LockTime::ZERO,
+		input: vec![],
+		output: vec![],
+	}
+}
+
+/// Returns `now` truncated to millisecond precision.
+///
+/// SQLite stores timestamps as `%Y-%m-%d %H:%M:%f` (millisecond precision).
+/// The memory backend stores nanoseconds.  Using a pre-truncated value ensures
+/// both backends round-trip identically so `assert_eq!` on timestamps holds.
+fn test_time() -> chrono::DateTime<chrono::Local> {
+	let ms = chrono::Local::now().timestamp_millis();
+	chrono::DateTime::from_timestamp_millis(ms)
+		.unwrap()
+		.with_timezone(&chrono::Local)
+}
+
 // ---------------------------------------------------------------------------
 // Entry point
 // ---------------------------------------------------------------------------
@@ -48,6 +87,8 @@ pub async fn run_all<A: BarkPersister, B: BarkPersister>(a: &A, b: &B) {
 	wallet_properties::run(a, b).await;
 	vtxo_keys::run(a, b).await;
 	vtxo_lifecycle::run(a, b).await;
+	movements::run(a, b).await;
+	pending_boards::run(a, b).await;
 }
 
 // ---------------------------------------------------------------------------
@@ -296,5 +337,148 @@ mod vtxo_lifecycle {
 		let ra = a.get_wallet_vtxo(vtxo.id()).await.expect("a: get_wallet_vtxo after idempotent store");
 		let rb = b.get_wallet_vtxo(vtxo.id()).await.expect("b: get_wallet_vtxo after idempotent store");
 		assert_eq!(ra, rb, "get_wallet_vtxo after idempotent store mismatch");
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Group: movements
+// ---------------------------------------------------------------------------
+
+mod movements {
+	use super::*;
+
+	pub async fn run<A: BarkPersister, B: BarkPersister>(a: &A, b: &B) {
+		test_create_and_get_movement(a, b).await;
+		test_update_movement(a, b).await;
+		test_get_all_movements(a, b).await;
+	}
+
+	async fn test_create_and_get_movement<A: BarkPersister, B: BarkPersister>(a: &A, b: &B) {
+		let subsystem = test_subsystem();
+		let time = test_time();
+
+		let id_a = a.create_new_movement(MovementStatus::Pending, &subsystem, time).await
+			.expect("a: create_new_movement");
+		let id_b = b.create_new_movement(MovementStatus::Pending, &subsystem, time).await
+			.expect("b: create_new_movement");
+		assert_eq!(id_a, id_b, "create_new_movement id mismatch");
+
+		let ra = a.get_movement_by_id(id_a).await.expect("a: get_movement_by_id");
+		let rb = b.get_movement_by_id(id_b).await.expect("b: get_movement_by_id");
+		assert_eq!(ra, rb, "get_movement_by_id mismatch");
+	}
+
+	async fn test_update_movement<A: BarkPersister, B: BarkPersister>(a: &A, b: &B) {
+		let time = test_time();
+		let id_a = a.create_new_movement(MovementStatus::Pending, &test_subsystem(), time).await
+			.expect("a: create_new_movement");
+		let id_b = b.create_new_movement(MovementStatus::Pending, &test_subsystem(), time).await
+			.expect("b: create_new_movement");
+		assert_eq!(id_a, id_b, "create_new_movement id mismatch");
+
+		let mut movement_a = a.get_movement_by_id(id_a).await.expect("a: get_movement_by_id");
+		let mut movement_b = b.get_movement_by_id(id_b).await.expect("b: get_movement_by_id");
+		movement_a.status = MovementStatus::Successful;
+		movement_a.intended_balance = bitcoin::SignedAmount::from_sat(1000);
+		movement_b.status = MovementStatus::Successful;
+		movement_b.intended_balance = bitcoin::SignedAmount::from_sat(1000);
+
+		let ra = a.update_movement(&movement_a).await;
+		let rb = b.update_movement(&movement_b).await;
+		assert_eq!(ra.is_ok(), rb.is_ok(), "update_movement: ok/err mismatch");
+
+		let ra = a.get_movement_by_id(id_a).await.expect("a: get_movement_by_id after update");
+		let rb = b.get_movement_by_id(id_b).await.expect("b: get_movement_by_id after update");
+		assert_eq!(ra, rb, "get_movement_by_id after update mismatch");
+	}
+
+	async fn test_get_all_movements<A: BarkPersister, B: BarkPersister>(a: &A, b: &B) {
+		let subsystem = test_subsystem();
+		let time = test_time();
+
+		a.create_new_movement(MovementStatus::Pending, &subsystem, time).await
+			.expect("a: create_new_movement 1");
+		b.create_new_movement(MovementStatus::Pending, &subsystem, time).await
+			.expect("b: create_new_movement 1");
+		a.create_new_movement(MovementStatus::Failed, &subsystem, time).await
+			.expect("a: create_new_movement 2");
+		b.create_new_movement(MovementStatus::Failed, &subsystem, time).await
+			.expect("b: create_new_movement 2");
+
+		let mut ra = a.get_all_movements().await.expect("a: get_all_movements");
+		let mut rb = b.get_all_movements().await.expect("b: get_all_movements");
+		ra.sort_by_key(|m| m.id.0);
+		rb.sort_by_key(|m| m.id.0);
+		assert_eq!(ra, rb, "get_all_movements mismatch");
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Group: pending boards
+// ---------------------------------------------------------------------------
+
+mod pending_boards {
+	use super::*;
+
+	pub async fn run<A: BarkPersister, B: BarkPersister>(a: &A, b: &B) {
+		test_store_and_get_pending_board(a, b).await;
+		test_get_all_pending_board_ids(a, b).await;
+		test_remove_pending_board(a, b).await;
+	}
+
+	async fn test_store_and_get_pending_board<A: BarkPersister, B: BarkPersister>(a: &A, b: &B) {
+		let vtxo = &VTXO_VECTORS.board_vtxo;
+		let funding_tx = empty_tx();
+		let time = test_time();
+
+		let id_a = a.create_new_movement(MovementStatus::Pending, &test_subsystem(), time).await
+			.expect("a: create_new_movement");
+		let id_b = b.create_new_movement(MovementStatus::Pending, &test_subsystem(), time).await
+			.expect("b: create_new_movement");
+		assert_eq!(id_a, id_b, "create_new_movement id mismatch");
+
+		let ra = a.store_pending_board(vtxo, &funding_tx, id_a).await;
+		let rb = b.store_pending_board(vtxo, &funding_tx, id_b).await;
+		assert_eq!(ra.is_ok(), rb.is_ok(), "store_pending_board: ok/err mismatch");
+
+		let ra = a.get_pending_board_by_vtxo_id(vtxo.id()).await
+			.expect("a: get_pending_board_by_vtxo_id");
+		let rb = b.get_pending_board_by_vtxo_id(vtxo.id()).await
+			.expect("b: get_pending_board_by_vtxo_id");
+		assert_eq!(ra, rb, "get_pending_board_by_vtxo_id mismatch");
+	}
+
+	async fn test_get_all_pending_board_ids<A: BarkPersister, B: BarkPersister>(a: &A, b: &B) {
+		let vtxo2 = &VTXO_VECTORS.round2_vtxo;
+		let time = test_time();
+
+		let id_a = a.create_new_movement(MovementStatus::Pending, &test_subsystem(), time).await
+			.expect("a: create_new_movement");
+		let id_b = b.create_new_movement(MovementStatus::Pending, &test_subsystem(), time).await
+			.expect("b: create_new_movement");
+		assert_eq!(id_a, id_b, "create_new_movement id mismatch");
+
+		a.store_pending_board(vtxo2, &empty_tx_2(), id_a).await.expect("a: store_pending_board");
+		b.store_pending_board(vtxo2, &empty_tx_2(), id_b).await.expect("b: store_pending_board");
+
+		let mut ra = a.get_all_pending_board_ids().await.expect("a: get_all_pending_board_ids");
+		let mut rb = b.get_all_pending_board_ids().await.expect("b: get_all_pending_board_ids");
+		ra.sort();
+		rb.sort();
+		assert_eq!(ra, rb, "get_all_pending_board_ids mismatch");
+	}
+
+	async fn test_remove_pending_board<A: BarkPersister, B: BarkPersister>(a: &A, b: &B) {
+		let vtxo = &VTXO_VECTORS.board_vtxo;
+
+		let ra = a.remove_pending_board(&vtxo.id()).await;
+		let rb = b.remove_pending_board(&vtxo.id()).await;
+		assert_eq!(ra.is_ok(), rb.is_ok(), "remove_pending_board: ok/err mismatch");
+
+		let ra = a.get_pending_board_by_vtxo_id(vtxo.id()).await
+			.expect("a: get_pending_board_by_vtxo_id after removal");
+		let rb = b.get_pending_board_by_vtxo_id(vtxo.id()).await
+			.expect("b: get_pending_board_by_vtxo_id after removal");
+		assert_eq!(ra, rb, "get_pending_board_by_vtxo_id after removal mismatch");
 	}
 }
