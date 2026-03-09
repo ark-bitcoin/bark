@@ -1,9 +1,9 @@
 # Find the target directory
 CARGO_TARGET := `cargo metadata --format-version 1 --no-deps | jq -r '.target_directory'`
 JUSTFILE_DIR := justfile_directory()
-export CAPTAIND_EXEC := CARGO_TARGET / "debug" / "captaind"
-export BARK_EXEC := CARGO_TARGET / "debug" / "bark"
-export BARKD_EXEC := CARGO_TARGET / "debug" / "barkd"
+export CAPTAIND_EXEC := env("CAPTAIND_EXEC", CARGO_TARGET / "debug" / "captaind")
+export BARK_EXEC := env("BARK_EXEC", CARGO_TARGET / "debug" / "bark")
+export BARKD_EXEC := env("BARKD_EXEC", CARGO_TARGET / "debug" / "barkd")
 export BITCOIND_SNAPSHOT_DIR := JUSTFILE_DIR / "test" / "_bitcoind_snapshot"
 
 NEXTEST_PROFILE := env("NEXTEST_PROFILE", "default")
@@ -96,6 +96,12 @@ alias int := test-integration
 test-integration-client: ensure-build-bins docker-pull
 	cargo nextest run --no-fail-fast --profile {{NEXTEST_PROFILE}} --package ark-testing --test bark --test movement --test exit --test lightningd
 alias int-client := test-integration-client
+
+test-integration-prebuilt TEST="": docker-pull
+	cargo nextest run --archive-file {{CARGO_TARGET}}/ci/integration-tests.tar.zst {{TEST}}
+
+test-integration-client-prebuilt: docker-pull
+	cargo nextest run --archive-file {{CARGO_TARGET}}/ci/integration-tests.tar.zst -E 'binary(bark) + binary(movement) + binary(exit) + binary(lightningd)'
 
 test-integration-codecov TEST="": docker-pull
 	#!/usr/bin/env bash
