@@ -211,8 +211,17 @@ Below is a more concise summary for each version.
     Config options now follow a consistent naming pattern. The old names
     are still accepted as aliases for backward compatibility.
     [#1616](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1616)
+  - Add `captaind rpc ban` commands to ban/unban/list vtxos
+    Allows operators to temporarily ban vtxos by duration or block count.
+    Banned vtxos cannot be used in OOR sends, rounds, offboards, or lightning.
+    [#1733](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1733)
 
 - `server`
+  - Add vtxo banning: temporarily ban vtxos by block height
+    Banned vtxos are rejected in all spending flows (OOR, rounds, offboards, lightning)
+    with a descriptive error including the remaining ban duration. Bans are stored as
+    `banned_until_height` on the vtxo table and expire automatically.
+    [#1733](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1733)
   - Implement fees for board, offboard, refresh and lightning operations.
     Fees are configured via the config file and are communicated to clients using ArkInfo. Fees are validated on the
     server side and require clients also calculate the same fee values.
