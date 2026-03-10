@@ -1530,22 +1530,26 @@ impl Wallet {
 			vtxos_to_refresh.iter().map(|wv| VtxoFeeInfo::from_vtxo_and_tip(&wv.vtxo, tip)),
 		).context("fee overflowed")?;
 
-		// Finally, ensure the output is more than dust.
-		let output_amount = validate_and_subtract_fee_min_dust(total_amount, fee)?;
-		if output_amount >= P2TR_DUST {
-			info!(
-				"Adding {} extra VTXOs to round participation total = {}, fee = {}, output = {}",
-				vtxos_to_refresh.len(), total_amount, fee, output_amount,
-			);
-			let (user_keypair, _) = self.derive_store_next_keypair().await?;
-			let req = VtxoRequest {
-				policy: VtxoPolicy::new_pubkey(user_keypair.public_key()),
-				amount: output_amount,
-			};
-			participation.inputs.reserve(vtxos_to_refresh.len());
-			participation.inputs.extend(vtxos_to_refresh.into_iter().map(|wv| wv.vtxo));
-			participation.outputs.push(req);
-		}
+		// Only add these VTXOs if the output amount would be above dust after fees.
+		let output_amount = match validate_and_subtract_fee_min_dust(total_amount, fee) {
+			Ok(amount) => amount,
+			Err(e) => {
+				trace!("Cannot add should-refresh VTXOs: {}", e);
+				return Ok(());
+			},
+		};
+		info!(
+			"Adding {} extra VTXOs to round participation total = {}, fee = {}, output = {}",
+			vtxos_to_refresh.len(), total_amount, fee, output_amount,
+		);
+		let (user_keypair, _) = self.derive_store_next_keypair().await?;
+		let req = VtxoRequest {
+			policy: VtxoPolicy::new_pubkey(user_keypair.public_key()),
+			amount: output_amount,
+		};
+		participation.inputs.reserve(vtxos_to_refresh.len());
+		participation.inputs.extend(vtxos_to_refresh.into_iter().map(|wv| wv.vtxo));
+		participation.outputs.push(req);
 
 		Ok(())
 	}
