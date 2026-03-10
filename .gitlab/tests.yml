@@ -175,7 +175,7 @@ check-release:
         cargo check --release -p bark-cli -p bark-server
       "
 
-test-integration-esplora:
+bark-esplora:
   interruptible: true
   stage: test
   tags:
@@ -198,9 +198,9 @@ test-integration-esplora:
     - export CAPTAIND_EXEC=${CI_PROJECT_DIR}/target/ci/captaind
     - export BARK_EXEC=${CI_PROJECT_DIR}/target/ci/bark
     - export BARKD_EXEC=${CI_PROJECT_DIR}/target/ci/barkd
-    - bash ./contrib/ci-run-test.sh test-integration-prebuilt
+    - bash ./contrib/ci-run-test.sh test-integration-bark-prebuilt
 
-test-integration-mempool:
+bark-mempool:
   interruptible: true
   allow_failure: true
   stage: test
@@ -223,9 +223,9 @@ test-integration-mempool:
     - export CAPTAIND_EXEC=${CI_PROJECT_DIR}/target/ci/captaind
     - export BARK_EXEC=${CI_PROJECT_DIR}/target/ci/bark
     - export BARKD_EXEC=${CI_PROJECT_DIR}/target/ci/barkd
-    - bash ./contrib/ci-run-test.sh test-integration-prebuilt
+    - bash ./contrib/ci-run-test.sh test-integration-bark-prebuilt
 
-test-integration-btc30:
+bark-btc30:
   interruptible: true
   stage: test
   tags:
@@ -246,9 +246,9 @@ test-integration-btc30:
     - export CAPTAIND_EXEC=${CI_PROJECT_DIR}/target/ci/captaind
     - export BARK_EXEC=${CI_PROJECT_DIR}/target/ci/bark
     - export BARKD_EXEC=${CI_PROJECT_DIR}/target/ci/barkd
-    - bash ./contrib/ci-run-test.sh test-integration-client-prebuilt
+    - bash ./contrib/ci-run-test.sh test-integration-bark-prebuilt
 
-test-integration-filestore:
+bark-filestore:
   interruptible: true
   allow_failure: true
   stage: test
@@ -280,20 +280,45 @@ test-integration-filestore:
     - export CAPTAIND_EXEC=${CI_PROJECT_DIR}/target/ci/captaind
     - export BARK_EXEC=${CI_PROJECT_DIR}/target/ci/bark
     - export BARKD_EXEC=${CI_PROJECT_DIR}/target/ci/barkd
-    - bash ./contrib/ci-run-test.sh test-integration-client-prebuilt
+    - bash ./contrib/ci-run-test.sh test-integration-bark-prebuilt
+
+core-server:
+  interruptible: true
+  stage: test
+  tags:
+    - integration
+  extends: .test-rules-no-tags
+  needs:
+    - check-commits
+    - build
+    - build-test-archives
+  variables:
+    TEST_DIRECTORY: ./test/core-server
+    NEXTEST_TEST_THREADS: "2"
+    BARK_COMMAND_TIMEOUT_MILLIS: "120000"
+    TX_PROPAGATION_TIMEOUT: "30000"
+  script:
+    - git log --oneline -1
+    - export RUN_DATETIME=$(cat RUN_DATETIME)
+    - export CAPTAIND_EXEC=${CI_PROJECT_DIR}/target/ci/captaind
+    - export BARK_EXEC=${CI_PROJECT_DIR}/target/ci/bark
+    - export BARKD_EXEC=${CI_PROJECT_DIR}/target/ci/barkd
+    - bash ./contrib/ci-run-test.sh test-integration-core-prebuilt
 
 tar-and-print-test-data:
   interruptible: true
   stage: post-test
   extends: .test-rules-no-tags
   needs:
-    - job: test-integration-esplora
+    - job: bark-esplora
       optional: true
-    - job: test-integration-mempool
+    - job: bark-mempool
       optional: true
-    - job: test-integration-btc30
+    - job: bark-btc30
       optional: true
-    - job: test-integration-filestore
+    - job: bark-filestore
+      optional: true
+    - job: core-server
       optional: true
   script:
     - |

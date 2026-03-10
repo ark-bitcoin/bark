@@ -8,6 +8,22 @@ edition = "2024"
 name = "pid-lock-holder"
 path = "src/bin/pid-lock-holder.rs"
 
+[[test]]
+name = "server"
+path = "tests/server/mod.rs"
+
+[[test]]
+name = "bark"
+path = "tests/bark/mod.rs"
+
+[[test]]
+name = "barkd"
+path = "tests/barkd/mod.rs"
+
+[[test]]
+name = "core"
+path = "tests/core/mod.rs"
+
 [features]
 slow_test = []
 

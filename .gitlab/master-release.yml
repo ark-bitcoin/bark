@@ -37,8 +37,8 @@ generate-rustdocs:
   stage: publish
   extends: .master-release-rules
   needs:
-    - test-integration-mempool
-    - test-integration-btc30
+    - bark-mempool
+    - bark-btc30
   script:
     - nix develop .#default --command bash -c "just rustdocs"
     - sudo cp -r rustdocs/doc/ /host/data/doc/

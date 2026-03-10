@@ -92,16 +92,24 @@ test-integration TEST="": ensure-build-bins docker-pull
 	cargo nextest run --no-fail-fast --profile {{NEXTEST_PROFILE}} --package ark-testing {{TEST}}
 alias int := test-integration
 
-# run integration tests for bark, movement, exit and lightning test files only
-test-integration-client: ensure-build-bins docker-pull
-	cargo nextest run --no-fail-fast --profile {{NEXTEST_PROFILE}} --package ark-testing --test bark --test movement --test exit --test lightningd
-alias int-client := test-integration-client
+# run integration tests for bark and barkd test files only
+test-integration-bark: ensure-build-bins docker-pull
+	cargo nextest run --no-fail-fast --profile {{NEXTEST_PROFILE}} --package ark-testing --test bark --test barkd
+alias int-bark := test-integration-bark
+
+# run integration tests for core and server test files only
+test-integration-core: ensure-build-bins docker-pull
+	cargo nextest run --no-fail-fast --profile {{NEXTEST_PROFILE}} --package ark-testing --test core --test server
+alias int-core := test-integration-core
 
 test-integration-prebuilt TEST="": docker-pull
 	cargo nextest run --archive-file {{CARGO_TARGET}}/ci/integration-tests.tar.zst {{TEST}}
 
-test-integration-client-prebuilt: docker-pull
-	cargo nextest run --archive-file {{CARGO_TARGET}}/ci/integration-tests.tar.zst -E 'binary(bark) + binary(movement) + binary(exit) + binary(lightningd)'
+test-integration-bark-prebuilt: docker-pull
+	cargo nextest run --archive-file {{CARGO_TARGET}}/ci/integration-tests.tar.zst -E 'binary(bark) + binary(barkd)'
+
+test-integration-core-prebuilt: docker-pull
+	cargo nextest run --archive-file {{CARGO_TARGET}}/ci/integration-tests.tar.zst -E 'binary(core) + binary(server)'
 
 test-integration-codecov TEST="": docker-pull
 	#!/usr/bin/env bash
