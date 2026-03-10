@@ -10,12 +10,12 @@ use chrono::DateTime;
 use lightning_invoice::Bolt11Invoice;
 use rusqlite::{self, named_params, params, Connection, Row, ToSql, Transaction};
 
-use ark::ProtocolEncoding;
+use ark::{ProtocolEncoding, Vtxo};
 use ark::lightning::{Invoice, PaymentHash, Preimage};
-use ark::vtxo::VtxoRef;
+use ark::vtxo::{Full, VtxoRef};
 use bitcoin_ext::BlockDelta;
 
-use crate::{Vtxo, VtxoId, WalletProperties};
+use crate::{VtxoId, WalletProperties};
 use crate::exit::{ExitState, ExitTxOrigin};
 use crate::movement::{Movement, MovementId, MovementStatus, MovementSubsystem};
 use crate::persist::{RoundStateId, StoredRoundState};
@@ -242,7 +242,7 @@ pub fn get_pending_board_by_vtxo_id(
 
 pub fn store_new_pending_board(
 	tx: &Transaction,
-	vtxo: &Vtxo,
+	vtxo: &Vtxo<Full>,
 	funding_tx: &bitcoin::Transaction,
 	movement_id: MovementId,
 ) -> anyhow::Result<()> {
@@ -339,7 +339,7 @@ pub fn remove_pending_offboard(
 
 pub fn store_vtxo_with_initial_state(
 	tx: &Transaction,
-	vtxo: &Vtxo,
+	vtxo: &Vtxo<Full>,
 	state: &VtxoState,
 ) -> anyhow::Result<()> {
 	// Store the vtxo, ignoring if it already exists (idempotent)
@@ -645,7 +645,7 @@ pub fn get_vtxos_by_state(
 pub fn delete_vtxo(
 	tx: &rusqlite::Transaction,
 	id: VtxoId
-) -> anyhow::Result<Option<Vtxo>> {
+) -> anyhow::Result<Option<Vtxo<Full>>> {
 	// Delete all vtxo-states
 	let query = "DELETE FROM bark_vtxo_state WHERE vtxo_id = ?1";
 	tx.execute(query, [id.to_string()])?;
@@ -656,7 +656,7 @@ pub fn delete_vtxo(
 	let vtxo = statement
 		.query_and_then(
 			[id.to_string()],
-			|row| -> anyhow::Result<Vtxo> {
+			|row| -> anyhow::Result<Vtxo<Full>> {
 				let raw_vtxo : Vec<u8> = row.get(0)?;
 				Ok(Vtxo::deserialize(&raw_vtxo)?)
 			})?
@@ -897,7 +897,7 @@ pub fn update_lightning_receive(
 	let mut vtxo_ids = Vec::new();
 	for v in htlc_vtxo_ids {
 		get_wallet_vtxo_by_id(conn, *v)?.context("no vtxo found")?;
-		vtxo_ids.push(v.vtxo_id().to_string());
+		vtxo_ids.push(v.to_string());
 	}
 
 	statement.execute(named_params! {

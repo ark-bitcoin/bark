@@ -5,6 +5,7 @@ use bitcoin::{Network, Transaction, Txid};
 use log::{debug, error, info, trace};
 use tokio::sync::RwLock;
 
+use ark::vtxo::Full;
 use ark::Vtxo;
 use bitcoin_ext::{BlockHeight, TransactionExt, TxStatus, DEEPLY_CONFIRMED};
 
@@ -41,7 +42,7 @@ impl ExitTransactionManager {
 
 	pub async fn track_vtxo_exits(
 		&mut self,
-		vtxo: &Vtxo,
+		vtxo: &Vtxo<Full>,
 		onchain: &dyn ExitUnilaterally,
 	) -> anyhow::Result<Vec<Txid>, ExitError> {
 		let exit_txs = vtxo.transactions();

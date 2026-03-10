@@ -9,6 +9,7 @@ use bitcoin::secp256k1::Keypair;
 use bitcoin_ext::{BlockHeight, BlockDelta};
 
 use crate::Vtxo;
+use crate::vtxo::Full;
 use crate::board::BoardBuilder;
 
 lazy_static! {
@@ -47,7 +48,7 @@ impl Default for DummyTestVtxoSpec {
 }
 
 impl DummyTestVtxoSpec {
-	pub fn build(&self) -> (Transaction, Vtxo) {
+	pub fn build(&self) -> (Transaction, Vtxo<Full>) {
 		// The board-builder that is used by the user
 		let user_builder = BoardBuilder::new(
 			self.user_keypair.public_key(),

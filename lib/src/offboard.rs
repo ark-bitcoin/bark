@@ -13,6 +13,7 @@ use bitcoin::sighash::{Prevouts, SighashCache};
 use bitcoin_ext::{fee, KeypairExt, TxOutExt, P2TR_DUST};
 
 use crate::connectors::construct_multi_connector_tx;
+use crate::vtxo::Full;
 use crate::{musig, Vtxo, VtxoId, SECP};
 
 
@@ -95,7 +96,7 @@ pub struct OffboardForfeitContext<'a, V> {
 
 impl<'a, V> OffboardForfeitContext<'a, V>
 where
-	V: AsRef<Vtxo>,
+	V: AsRef<Vtxo<Full>>,
 {
 	/// Create a new [OffboardForfeitContext] with given input VTXOs and offboard tx
 	///
@@ -279,8 +280,8 @@ where
 	}
 }
 
-fn user_sign_vtxo_forfeit_input(
-	vtxo: &Vtxo,
+fn user_sign_vtxo_forfeit_input<G: Sync + Send>(
+	vtxo: &Vtxo<G>,
 	key: &Keypair,
 	connector: OutPoint,
 	connector_txout: &TxOut,
@@ -324,8 +325,8 @@ fn user_sign_vtxo_forfeit_input(
 /// Check the user's partial signature, then finalize the forfeit tx
 ///
 /// Returns `None` only if the user's partial signature is invalid.
-fn server_check_finalize_forfeit_tx(
-	vtxo: &Vtxo,
+fn server_check_finalize_forfeit_tx<G: Sync + Send>(
+	vtxo: &Vtxo<G>,
 	server_key: &Keypair,
 	tweaked_connector_key: &Keypair,
 	connector: OutPoint,
@@ -405,8 +406,8 @@ fn server_check_finalize_forfeit_tx(
 	Some(tx)
 }
 
-fn create_offboard_forfeit_tx(
-	vtxo: &Vtxo,
+fn create_offboard_forfeit_tx<G: Sync + Send>(
+	vtxo: &Vtxo<G>,
 	connector: OutPoint,
 	vtxo_sig: Option<&schnorr::Signature>,
 	conn_sig: Option<&schnorr::Signature>,

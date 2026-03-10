@@ -24,7 +24,7 @@ use bitcoin_ext::{BlockDelta, BlockHeight, TaprootSpendInfoExt};
 use crate::error::IncorrectSigningKeyError;
 use crate::{musig, scripts, SECP};
 use crate::tree::signed::cosign_taproot;
-use crate::vtxo::{self, Vtxo, VtxoId, VtxoPolicy, ServerVtxo, ServerVtxoPolicy, GenesisItem, GenesisTransition};
+use crate::vtxo::{self, Full, Vtxo, VtxoId, VtxoPolicy, ServerVtxo, ServerVtxoPolicy, GenesisItem, GenesisTransition};
 
 use self::state::BuilderState;
 
@@ -301,7 +301,7 @@ impl BoardBuilder<state::CanGenerateNonces> {
 	/// has to call [Vtxo::validate] before using this
 	/// constructor.
 	pub fn new_from_vtxo(
-		vtxo: &Vtxo,
+		vtxo: &Vtxo<Full>,
 		funding_tx: &Transaction,
 		server_pubkey: PublicKey,
 	) -> Result<Self, BoardFromVtxoError> {
@@ -319,13 +319,13 @@ impl BoardBuilder<state::CanGenerateNonces> {
 			})
 		}
 
-		if vtxo.genesis.len() != 1 {
+		if vtxo.genesis.items.len() != 1 {
 			return Err(BoardFromVtxoError::IncorrectGenesisItemCount {
-				genesis_count: vtxo.genesis.len(),
+				genesis_count: vtxo.genesis.items.len(),
 			});
 		}
 
-		let fee = vtxo.genesis.first().unwrap().fee_amount;
+		let fee = vtxo.genesis.items.first().unwrap().fee_amount;
 		let exit_data = compute_exit_data(
 			vtxo.user_pubkey(),
 			server_pubkey,
@@ -379,7 +379,7 @@ impl BoardBuilder<state::CanGenerateNonces> {
 	/// Returns two VTXOs:
 	/// 1. An expiry VTXO with empty genesis (for server tracking)
 	/// 2. A pubkey VTXO with an arkoor genesis transition
-	pub fn build_internal_unsigned_vtxos(&self) -> Vec<ServerVtxo> {
+	pub fn build_internal_unsigned_vtxos(&self) -> Vec<ServerVtxo<Full>> {
 		let amount = self.amount.expect("state invariant");
 		let fee = self.fee.expect("state invariant");
 		let exit_data = self.exit_data.as_ref().expect("state invariant");
@@ -395,7 +395,7 @@ impl BoardBuilder<state::CanGenerateNonces> {
 				server_pubkey: self.server_pubkey,
 				exit_delta: self.exit_delta,
 				anchor_point: self.utxo.expect("state invariant"),
-				genesis: vec![],
+				genesis: Full { items: vec![] },
 				point: self.utxo.expect("state invariant"),
 			},
 			Vtxo {
@@ -405,18 +405,20 @@ impl BoardBuilder<state::CanGenerateNonces> {
 				server_pubkey: self.server_pubkey,
 				exit_delta: self.exit_delta,
 				anchor_point: self.utxo.expect("state invariant"),
-				genesis: vec![
-					GenesisItem {
-						transition: GenesisTransition::new_arkoor(
-							vec![self.user_pubkey],
-							tap_tweak,
-							None,
-						),
-						output_idx: 0,
-						other_outputs: vec![],
-						fee_amount: fee,
-					}
-				],
+				genesis: Full {
+					items: vec![
+						GenesisItem {
+							transition: GenesisTransition::new_arkoor(
+								vec![self.user_pubkey],
+								tap_tweak,
+								None,
+							),
+							output_idx: 0,
+							other_outputs: vec![],
+							fee_amount: fee,
+						}
+					],
+				},
 				point: OutPoint::new(exit_txid, BOARD_FUNDING_TX_VTXO_VOUT),
 			},
 		]
@@ -502,7 +504,7 @@ impl BoardBuilder<state::CanFinish> {
 		mut self,
 		server_cosign: &BoardCosignResponse,
 		user_key: &Keypair,
-	) -> Result<Vtxo, IncorrectSigningKeyError> {
+	) -> Result<Vtxo<Full>, IncorrectSigningKeyError> {
 		if user_key.public_key() != self.user_pubkey {
 			return Err(IncorrectSigningKeyError {
 				required: Some(self.user_pubkey),
@@ -554,15 +556,17 @@ impl BoardBuilder<state::CanFinish> {
 			server_pubkey: self.server_pubkey,
 			exit_delta: self.exit_delta,
 			anchor_point: self.utxo.expect("state invariant"),
-			genesis: vec![GenesisItem {
-				transition: GenesisTransition::new_cosigned(
-					vec![self.user_pubkey, self.server_pubkey],
-					Some(final_sig),
-				),
-				output_idx: 0,
-				other_outputs: vec![],
-				fee_amount: fee,
-			}],
+			genesis: Full {
+				items: vec![GenesisItem {
+					transition: GenesisTransition::new_cosigned(
+						vec![self.user_pubkey, self.server_pubkey],
+						Some(final_sig),
+					),
+					output_idx: 0,
+					other_outputs: vec![],
+					fee_amount: fee,
+				}],
+			},
 			policy: VtxoPolicy::new_pubkey(self.user_pubkey),
 			point: OutPoint::new(exit_txid, BOARD_FUNDING_TX_VTXO_VOUT),
 		})
@@ -632,7 +636,7 @@ mod test {
 	}
 
 	/// Helper to create a valid vtxo and funding tx for testing new_from_vtxo
-	fn create_board_vtxo() -> (Vtxo, Transaction, Keypair, Keypair) {
+	fn create_board_vtxo() -> (Vtxo<Full>, Transaction, Keypair, Keypair) {
 		let user_key = Keypair::from_str("5255d132d6ec7d4fc2a41c8f0018bb14343489ddd0344025cc60c7aa2b3fda6a").unwrap();
 		let server_key = Keypair::from_str("1fb316e653eec61de11c6b794636d230379509389215df1ceb520b65313e5426").unwrap();
 

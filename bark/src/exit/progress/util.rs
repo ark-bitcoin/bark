@@ -3,7 +3,7 @@ use std::collections::HashMap;
 
 use bitcoin::{Amount, FeeRate, Weight};
 
-use ark::Vtxo;
+use ark::{vtxo::Full, Vtxo};
 
 use crate::exit::models::{ExitTx, ExitTxStatus};
 
@@ -29,7 +29,7 @@ pub(crate) fn count_confirmed(status: &[ExitTx]) -> usize {
 /// We estimate the CPFP part by multiplying the exit tx weight by 2.
 pub(crate) fn estimate_exit_cost<'a, I>(vtxos: I, fee_rate: FeeRate) -> Amount
 where
-	I: IntoIterator<Item = &'a Vtxo>
+	I: IntoIterator<Item = &'a Vtxo<Full>>
 {
 	let mut all_txs = HashMap::with_capacity(10);
 	for vtxo in vtxos {

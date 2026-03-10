@@ -55,7 +55,7 @@ use tokio_stream::wrappers::errors::BroadcastStreamRecvError;
 use tracing::{info, trace, warn};
 
 use ark::{ServerVtxo, Vtxo, VtxoId, VtxoRequest};
-use ark::vtxo::VtxoRef;
+use ark::vtxo::{Full, VtxoRef};
 use ark::board::BoardBuilder;
 use ark::fees::validate_and_subtract_fee;
 use ark::mailbox::{BlindedMailboxIdentifier, MailboxIdentifier};
@@ -695,7 +695,7 @@ impl Server {
 	/// - The VTXO is fully valid
 	/// - The VTXO is actually a board (not another VTXO type)
 	#[tracing::instrument(skip(self, vtxo))]
-	pub async fn register_board(&self, vtxo: Vtxo) -> anyhow::Result<()> {
+	pub async fn register_board(&self, vtxo: Vtxo<Full>) -> anyhow::Result<()> {
 		let funding_txid = vtxo.chain_anchor().txid;
 		let tx_info = self.bitcoind.custom_get_raw_transaction_info(&funding_txid, None)
 			.with_context(|| format!("failed to fetch funding tx {funding_txid}"))?
@@ -761,7 +761,7 @@ impl Server {
 	/// - Extracts transactions and updates virtual_transaction table
 	pub async fn register_vtxo_transactions(
 		&self,
-		vtxos: impl IntoIterator<Item = impl AsRef<Vtxo>>,
+		vtxos: impl IntoIterator<Item = impl AsRef<Vtxo<Full>>>,
 	) -> anyhow::Result<()> {
 		for vtxo in vtxos {
 			let vtxo = vtxo.as_ref();
@@ -903,7 +903,7 @@ impl Server {
 	pub fn cosign_hashlocked_leaf(
 		&self,
 		request: &LeafVtxoCosignRequest,
-		vtxo: &Vtxo,
+		vtxo: &Vtxo<Full>,
 		funding_tx: &Transaction,
 	) -> LeafVtxoCosignResponse {
 		// NB there is no danger in doing this multiple times
@@ -935,10 +935,13 @@ impl Server {
 	///
 	/// This should only be called once we trust that the root of the tree
 	/// will confirm.
-	pub async fn register_vtxos<V: Borrow<ServerVtxo>>(
+	pub async fn register_vtxos<V>(
 		&self,
 		vtxos: impl IntoIterator<Item = V>,
-	) -> anyhow::Result<()> {
+	) -> anyhow::Result<()>
+	where
+		V: Borrow<ServerVtxo<Full>>,
+	{
 		self.db.upsert_vtxos(vtxos).await.context("db error occurred")
 	}
 }

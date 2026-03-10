@@ -23,10 +23,12 @@ use lightning_invoice::Bolt11Invoice;
 use log::debug;
 use rusqlite::Connection;
 
+use ark::{Vtxo, VtxoId};
 use ark::lightning::{Invoice, PaymentHash, Preimage};
+use ark::vtxo::Full;
 use bitcoin_ext::BlockDelta;
 
-use crate::{Vtxo, VtxoId, WalletProperties};
+use crate::WalletProperties;
 use crate::exit::ExitTxOrigin;
 use crate::movement::{Movement, MovementId, MovementStatus, MovementSubsystem};
 use crate::persist::{BarkPersister, RoundStateId, StoredRoundState, Unlocked};
@@ -130,7 +132,7 @@ impl BarkPersister for SqliteClient {
 
 	async fn store_pending_board(
 		&self,
-		vtxo: &Vtxo,
+		vtxo: &Vtxo<Full>,
 		funding_tx: &bitcoin::Transaction,
 		movement_id: MovementId,
 	) -> anyhow::Result<()> {
@@ -199,7 +201,7 @@ impl BarkPersister for SqliteClient {
 
 	async fn store_vtxos(
 		&self,
-		vtxos: &[(&Vtxo, &VtxoState)],
+		vtxos: &[(&Vtxo<Full>, &VtxoState)],
 	) -> anyhow::Result<()> {
 		let mut conn = self.connect()?;
 		let tx = conn.transaction()?;
@@ -234,7 +236,7 @@ impl BarkPersister for SqliteClient {
 		Ok(result)
 	}
 
-	async fn remove_vtxo(&self, id: VtxoId) -> anyhow::Result<Option<Vtxo>> {
+	async fn remove_vtxo(&self, id: VtxoId) -> anyhow::Result<Option<Vtxo<Full>>> {
 		let mut conn = self.connect()?;
 		let tx = conn.transaction().context("Failed to start transaction")?;
 		let result = query::delete_vtxo(&tx, id);

@@ -8,13 +8,13 @@ use bitcoin::secp256k1::PublicKey;
 use utoipa::ToSchema;
 
 use ark::{Vtxo, VtxoId};
-use ark::vtxo::VtxoPolicyKind;
+use ark::vtxo::{Bare, Full, VtxoPolicyKind};
 use bark::movement::MovementId;
 use bark::vtxo::VtxoState;
 use bitcoin_ext::{BlockDelta, BlockHeight};
 
 /// Reference to a block in the blockchain.
-/// 
+///
 /// Contains the block height and hash. Serializes as an object with `height` and `hash` fields.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
 #[cfg_attr(feature = "utoipa", derive(ToSchema))]
@@ -135,11 +135,11 @@ pub struct VtxoInfo {
 	/// The number of off-chain transactions in this VTXO. Each must
 	/// be broadcast and confirmed on-chain in sequence during an
 	/// emergency exit.
-	pub exit_depth: u16,
+	pub exit_depth: Option<u16>,
 }
 
-impl<'a> From<&'a Vtxo> for VtxoInfo {
-	fn from(v: &'a Vtxo) -> VtxoInfo {
+impl<'a> From<&'a Vtxo<Bare>> for VtxoInfo {
+	fn from(v: &'a Vtxo<Bare>) -> VtxoInfo {
 		VtxoInfo {
 			id: v.id(),
 			amount: v.amount(),
@@ -149,13 +149,35 @@ impl<'a> From<&'a Vtxo> for VtxoInfo {
 			expiry_height: v.expiry_height(),
 			exit_delta: v.exit_delta(),
 			chain_anchor: v.chain_anchor(),
-			exit_depth: v.exit_depth(),
+			exit_depth: None,
 		}
 	}
 }
 
-impl From<Vtxo> for VtxoInfo {
-	fn from(v: Vtxo) -> VtxoInfo {
+impl<'a> From<&'a Vtxo<Full>> for VtxoInfo {
+	fn from(v: &'a Vtxo<Full>) -> VtxoInfo {
+		VtxoInfo {
+			id: v.id(),
+			amount: v.amount(),
+			policy_type: v.policy().policy_type(),
+			user_pubkey: v.user_pubkey(),
+			server_pubkey: v.server_pubkey(),
+			expiry_height: v.expiry_height(),
+			exit_delta: v.exit_delta(),
+			chain_anchor: v.chain_anchor(),
+			exit_depth: Some(v.exit_depth()),
+		}
+	}
+}
+
+impl From<Vtxo<Bare>> for VtxoInfo {
+	fn from(v: Vtxo<Bare>) -> VtxoInfo {
+		VtxoInfo::from(&v)
+	}
+}
+
+impl From<Vtxo<Full>> for VtxoInfo {
+	fn from(v: Vtxo<Full>) -> VtxoInfo {
 		VtxoInfo::from(&v)
 	}
 }

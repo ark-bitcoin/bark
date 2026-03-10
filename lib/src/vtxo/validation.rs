@@ -3,7 +3,7 @@ use std::borrow::Cow;
 
 use bitcoin::{Amount, OutPoint, Transaction, TxOut};
 
-use crate::vtxo::{Policy, Vtxo, VtxoPolicyKind};
+use crate::vtxo::{Full, Policy, Vtxo, VtxoPolicyKind};
 use crate::vtxo::genesis::{GenesisTransition, TransitionKind};
 
 #[derive(Debug, PartialEq, Eq, thiserror::Error)]
@@ -50,18 +50,18 @@ impl VtxoValidationError {
 #[inline]
 #[allow(unused_variables)]
 fn verify_transition<P: Policy>(
-	vtxo: &Vtxo<P>,
+	vtxo: &Vtxo<Full, P>,
 	genesis_idx: usize,
 	prev_tx: &Transaction,
 	prev_vout: usize,
 	next_amount: Amount,
 	check_signatures: bool,
 ) -> Result<Transaction, &'static str> {
-	let item = vtxo.genesis.get(genesis_idx).expect("genesis_idx out of range");
+	let item = vtxo.genesis.items.get(genesis_idx).expect("genesis_idx out of range");
 
 	let prev_txout = prev_tx.output.get(prev_vout).ok_or_else(|| "output idx out of range")?;
 
-	let next_output = vtxo.genesis.get(genesis_idx + 1).map(|item| {
+	let next_output = vtxo.genesis.items.get(genesis_idx + 1).map(|item| {
 		item.transition.input_txout(
 			next_amount, vtxo.server_pubkey, vtxo.expiry_height, vtxo.exit_delta,
 		)
@@ -103,7 +103,7 @@ fn verify_transition<P: Policy>(
 }
 
 fn validate_inner<P: Policy>(
-	vtxo: &Vtxo<P>,
+	vtxo: &Vtxo<Full, P>,
 	chain_anchor_tx: &Transaction,
 	check_signatures: bool,
 ) -> Result<(), VtxoValidationError> {
@@ -112,7 +112,7 @@ fn validate_inner<P: Policy>(
 		.ok_or(VtxoValidationError::Invalid("chain anchor vout out of range"))?;
 
 	// For empty genesis, validate that the chain anchor output matches the policy's txout
-	if vtxo.genesis.is_empty() {
+	if vtxo.genesis.items.is_empty() {
 		let expected_anchor_txout = vtxo.policy.txout(
 			vtxo.amount(),
 			vtxo.server_pubkey(),
@@ -131,7 +131,7 @@ fn validate_inner<P: Policy>(
 	// For non-empty genesis, validate using the first genesis item's transition
 	let onchain_amount = vtxo.chain_anchor_amount()
 		.ok_or_else(|| VtxoValidationError::Invalid("onchain amount overflow"))?;
-	let expected_anchor_txout = vtxo.genesis.get(0).unwrap().transition.input_txout(
+	let expected_anchor_txout = vtxo.genesis.items.get(0).unwrap().transition.input_txout(
 		onchain_amount, vtxo.server_pubkey(), vtxo.expiry_height(), vtxo.exit_delta(),
 	);
 	if *anchor_txout != expected_anchor_txout {
@@ -142,14 +142,14 @@ fn validate_inner<P: Policy>(
 	}
 
 	let mut prev = (Cow::Borrowed(chain_anchor_tx), vtxo.chain_anchor().vout as usize, onchain_amount);
-	for (idx, item) in vtxo.genesis.iter().enumerate() {
+	for (idx, item) in vtxo.genesis.items.iter().enumerate() {
 		let output_sum = item.other_output_sum()
 			.ok_or(VtxoValidationError::Invalid("output sum overflow"))?;
 		let next_amount = prev.2.checked_sub(output_sum)
 			.ok_or(VtxoValidationError::Invalid("insufficient onchain amount"))?;
 		let next_tx = verify_transition(&vtxo, idx, prev.0.as_ref(), prev.1, next_amount, check_signatures)
 			.map_err(|e| VtxoValidationError::transition(
-				idx, vtxo.genesis.len(), item.transition.kind(), e,
+				idx, vtxo.genesis.items.len(), item.transition.kind(), e,
 			))?;
 		prev = (Cow::Owned(next_tx), item.output_idx as usize, next_amount);
 	}
@@ -169,7 +169,7 @@ fn validate_inner<P: Policy>(
 /// General checks and chain-anchor related checks are performed first,
 /// transitions are checked last.
 pub fn validate<P: Policy>(
-	vtxo: &Vtxo<P>,
+	vtxo: &Vtxo<Full, P>,
 	chain_anchor_tx: &Transaction,
 ) -> Result<(), VtxoValidationError> {
 	validate_inner(vtxo, chain_anchor_tx, true)
@@ -177,7 +177,7 @@ pub fn validate<P: Policy>(
 
 /// Validate VTXO structure without checking signatures.
 pub fn validate_unsigned<P: Policy>(
-	vtxo: &Vtxo<P>,
+	vtxo: &Vtxo<Full, P>,
 	chain_anchor_tx: &Transaction,
 ) -> Result<(), VtxoValidationError> {
 	validate_inner(vtxo, chain_anchor_tx, false)

@@ -58,6 +58,7 @@ use serde::{de::DeserializeOwned, Serialize};
 
 use ark::lightning::{Invoice, PaymentHash, Preimage};
 use ark::{Vtxo, VtxoId};
+use ark::vtxo::Full;
 use bitcoin_ext::BlockDelta;
 
 use crate::exit::ExitTxOrigin;
@@ -427,7 +428,7 @@ impl <S: StorageAdaptor> BarkPersister for StorageAdaptorWrapper<S> {
 
 	async fn store_pending_board(
 		&self,
-		vtxo: &Vtxo,
+		vtxo: &Vtxo<Full>,
 		funding_tx: &Transaction,
 		movement_id: MovementId,
 	) -> anyhow::Result<()> {
@@ -554,7 +555,7 @@ impl <S: StorageAdaptor> BarkPersister for StorageAdaptorWrapper<S> {
 			.collect()
 	}
 
-	async fn store_vtxos(&self, vtxos: &[(&Vtxo, &VtxoState)]) -> anyhow::Result<()> {
+	async fn store_vtxos(&self, vtxos: &[(&Vtxo<Full>, &VtxoState)]) -> anyhow::Result<()> {
 		let mut lock = self.inner.write().await;
 
 		for (vtxo, state) in vtxos {
@@ -640,7 +641,7 @@ impl <S: StorageAdaptor> BarkPersister for StorageAdaptorWrapper<S> {
 		Ok(records)
 	}
 
-	async fn remove_vtxo(&self, id: VtxoId) -> anyhow::Result<Option<Vtxo>> {
+	async fn remove_vtxo(&self, id: VtxoId) -> anyhow::Result<Option<Vtxo<Full>>> {
 		match self.inner.write().await.delete(partition::VTXO, &id.to_bytes()).await? {
 			Some(record) => Ok(Some(record.to_data::<SerdeVtxo>()?.vtxo)),
 			None => Ok(None),

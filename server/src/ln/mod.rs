@@ -14,6 +14,7 @@ use uuid::Uuid;
 
 use ark::{Vtxo, VtxoId, VtxoPolicy, VtxoRequest, ServerVtxo};
 use ark::arkoor::ArkoorDestination;
+use ark::vtxo::Full;
 use ark::arkoor::package::{ArkoorPackageCosignRequest, ArkoorPackageCosignResponse};
 use ark::challenges::LightningReceiveChallenge;
 use ark::fees::{validate_and_subtract_fee, VtxoFeeInfo};
@@ -472,7 +473,7 @@ impl Server {
 		user_pubkey: PublicKey,
 		htlc_recv_expiry: BlockHeight,
 		anti_dos: Option<protos::prepare_lightning_receive_claim_request::LightningReceiveAntiDos>,
-	) -> anyhow::Result<(LightningHtlcSubscription, Vec<Vtxo>)> {
+	) -> anyhow::Result<(LightningHtlcSubscription, Vec<Vtxo<Full>>)> {
 		let mut sub = self.db.get_htlc_subscription_by_payment_hash(payment_hash).await?
 			.not_found([payment_hash], "no pending payment with this payment hash")?;
 

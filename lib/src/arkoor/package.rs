@@ -10,6 +10,7 @@ use crate::arkoor::{
 	ArkoorBuilder, ArkoorConstructionError, state, ArkoorCosignResponse,
 	ArkoorSigningError, ArkoorCosignRequest,
 };
+use crate::vtxo::Full;
 
 
 /// A builder struct for creating arkoor packages
@@ -71,8 +72,8 @@ pub struct InputMismatchError {
 impl ArkoorPackageCosignRequest<VtxoId> {
 	pub fn set_vtxos(
 		self,
-		vtxos: impl IntoIterator<Item = Vtxo>,
-	) -> Result<ArkoorPackageCosignRequest<Vtxo>, InputMismatchError> {
+		vtxos: impl IntoIterator<Item = Vtxo<Full>>,
+	) -> Result<ArkoorPackageCosignRequest<Vtxo<Full>>, InputMismatchError> {
 		let package = ArkoorPackageCosignRequest {
 			requests: self.requests.into_iter().zip(vtxos).map(|(r, vtxo)| {
 				if r.input != vtxo.id() {
@@ -108,15 +109,15 @@ impl ArkoorPackageBuilder<state::Initial> {
 	/// Distributes outputs across inputs in order, splitting outputs when needed
 	/// to match input amounts exactly. Dust fragments are allowed.
 	fn allocate_outputs_to_inputs(
-		inputs: impl IntoIterator<Item = Vtxo>,
+		inputs: impl IntoIterator<Item = Vtxo<Full>>,
 		outputs: Vec<ArkoorDestination>,
-	) -> Result<Vec<(Vtxo, Vec<ArkoorDestination>)>, ArkoorConstructionError> {
+	) -> Result<Vec<(Vtxo<Full>, Vec<ArkoorDestination>)>, ArkoorConstructionError> {
 		let total_output = outputs.iter().map(|r| r.total_amount).sum::<Amount>();
 		if outputs.is_empty() || total_output == Amount::ZERO {
 			return Err(ArkoorConstructionError::NoOutputs);
 		}
 
-		let mut allocations: Vec<(Vtxo, Vec<ArkoorDestination>)> = Vec::new();
+		let mut allocations: Vec<(Vtxo<Full>, Vec<ArkoorDestination>)> = Vec::new();
 
 		let mut output_iter = outputs.into_iter();
 		let mut current_output = output_iter.next();
@@ -185,7 +186,7 @@ impl ArkoorPackageBuilder<state::Initial> {
 
 	/// Create builder with checkpoints for multiple outputs
 	pub fn new_with_checkpoints(
-		inputs: impl IntoIterator<Item = Vtxo>,
+		inputs: impl IntoIterator<Item = Vtxo<Full>>,
 		outputs: Vec<ArkoorDestination>,
 	) -> Result<Self, ArkoorConstructionError> {
 		Self::new(inputs, outputs, true)
@@ -193,7 +194,7 @@ impl ArkoorPackageBuilder<state::Initial> {
 
 	/// Create builder without checkpoints for multiple outputs
 	pub fn new_without_checkpoints(
-		inputs: impl IntoIterator<Item = Vtxo>,
+		inputs: impl IntoIterator<Item = Vtxo<Full>>,
 		outputs: Vec<ArkoorDestination>,
 	) -> Result<Self, ArkoorConstructionError> {
 		Self::new(inputs, outputs, false)
@@ -204,7 +205,7 @@ impl ArkoorPackageBuilder<state::Initial> {
 	/// Calculates change amount and creates appropriate output
 	/// (backward-compatible with old API)
 	pub fn new_single_output_with_checkpoints(
-		inputs: impl IntoIterator<Item = Vtxo>,
+		inputs: impl IntoIterator<Item = Vtxo<Full>>,
 		output: ArkoorDestination,
 		change_policy: VtxoPolicy,
 	) -> Result<Self, ArkoorConstructionError> {
@@ -235,7 +236,7 @@ impl ArkoorPackageBuilder<state::Initial> {
 
 	/// Convenience constructor for single output that claims all inputs
 	pub fn new_claim_all_with_checkpoints(
-		inputs: impl IntoIterator<Item = Vtxo>,
+		inputs: impl IntoIterator<Item = Vtxo<Full>>,
 		output_policy: VtxoPolicy,
 	) -> Result<Self, ArkoorConstructionError> {
 		// Calculate total input amount
@@ -252,7 +253,7 @@ impl ArkoorPackageBuilder<state::Initial> {
 
 	/// Convenience constructor for single output that claims all inputs
 	pub fn new_claim_all_without_checkpoints(
-		inputs: impl IntoIterator<Item = Vtxo>,
+		inputs: impl IntoIterator<Item = Vtxo<Full>>,
 		output_policy: VtxoPolicy,
 	) -> Result<Self, ArkoorConstructionError> {
 		// Calculate total input amount
@@ -268,7 +269,7 @@ impl ArkoorPackageBuilder<state::Initial> {
 	}
 
 	fn new(
-		inputs: impl IntoIterator<Item = Vtxo>,
+		inputs: impl IntoIterator<Item = Vtxo<Full>>,
 		outputs: Vec<ArkoorDestination>,
 		use_checkpoint: bool,
 	) -> Result<Self, ArkoorConstructionError> {
@@ -339,7 +340,7 @@ impl ArkoorPackageBuilder<state::UserGeneratedNonces> {
 		Ok(ArkoorPackageBuilder { builders: packages })
 	}
 
-	pub fn cosign_request(&self) -> ArkoorPackageCosignRequest<Vtxo> {
+	pub fn cosign_request(&self) -> ArkoorPackageCosignRequest<Vtxo<Full>> {
 		let requests = self.builders.iter()
 			.map(|package| package.cosign_request())
 			.collect::<Vec<_>>();
@@ -349,7 +350,7 @@ impl ArkoorPackageBuilder<state::UserGeneratedNonces> {
 }
 
 impl ArkoorPackageBuilder<state::UserSigned> {
-	pub fn build_signed_vtxos(self) -> Vec<Vtxo> {
+	pub fn build_signed_vtxos(self) -> Vec<Vtxo<Full>> {
 		self.builders.into_iter()
 			.map(|b| b.build_signed_vtxos())
 			.flatten()
@@ -359,7 +360,7 @@ impl ArkoorPackageBuilder<state::UserSigned> {
 
 impl ArkoorPackageBuilder<state::ServerCanCosign> {
 	pub fn from_cosign_request(
-		cosign_request: ArkoorPackageCosignRequest<Vtxo>,
+		cosign_request: ArkoorPackageCosignRequest<Vtxo<Full>>,
 	) -> Result<Self, ArkoorSigningError> {
 		let request_iter = cosign_request.requests.into_iter();
 		let mut packages = Vec::with_capacity(request_iter.size_hint().0);
@@ -398,7 +399,7 @@ impl<S: state::BuilderState> ArkoorPackageBuilder<S> {
 		self.builders.iter().map(|b| b.input().id())
 	}
 
-	pub fn build_unsigned_vtxos<'a>(&'a self) -> impl Iterator<Item = Vtxo> + 'a {
+	pub fn build_unsigned_vtxos<'a>(&'a self) -> impl Iterator<Item = Vtxo<Full>> + 'a {
 		self.builders.iter()
 			.map(|b| b.build_unsigned_vtxos())
 			.flatten()
@@ -408,7 +409,7 @@ impl<S: state::BuilderState> ArkoorPackageBuilder<S> {
 	///
 	/// Returns the checkpoint outputs (if checkpoints are used) and the
 	/// dust isolation output (if dust isolation is used).
-	pub fn build_unsigned_internal_vtxos<'a>(&'a self) -> impl Iterator<Item = ServerVtxo> + 'a {
+	pub fn build_unsigned_internal_vtxos<'a>(&'a self) -> impl Iterator<Item = ServerVtxo<Full>> + 'a {
 		self.builders.iter()
 			.map(|b| b.build_unsigned_internal_vtxos())
 			.flatten()
@@ -463,7 +464,7 @@ mod test {
 		bob_keypair().public_key()
 	}
 
-	fn dummy_vtxo_for_amount(amt: Amount) -> (Transaction, Vtxo) {
+	fn dummy_vtxo_for_amount(amt: Amount) -> (Transaction, Vtxo<Full>) {
 		DummyTestVtxoSpec {
 			amount: amt + P2TR_DUST,
 			fee: P2TR_DUST,
@@ -562,7 +563,7 @@ mod test {
 		).expect("Valid package");
 
 		// We should generate 3 vtxos: 670 and 230 for Bob, 100 dust change for Alice
-		let vtxos: Vec<Vtxo> = package_builder.build_unsigned_vtxos().collect();
+		let vtxos: Vec<Vtxo<Full>> = package_builder.build_unsigned_vtxos().collect();
 		assert_eq!(vtxos.len(), 3);
 		assert_eq!(vtxos[0].amount(), Amount::from_sat(670));
 		assert_eq!(vtxos[0].policy().user_pubkey(), bob_public_key());
@@ -589,7 +590,7 @@ mod test {
 			VtxoPolicy::new_pubkey(alice_public_key())
 		).expect("Valid package");
 
-		let vtxos: Vec<Vtxo> = package.build_unsigned_vtxos().collect();
+		let vtxos: Vec<Vtxo<Full>> = package.build_unsigned_vtxos().collect();
 		assert_eq!(vtxos.len(), 3);
 		assert_eq!(vtxos[0].amount(), Amount::from_sat(10_000));
 		assert_eq!(vtxos[1].amount(), Amount::from_sat(5_000));
@@ -627,7 +628,7 @@ mod test {
 			VtxoPolicy::new_pubkey(alice_public_key())
 		).expect("Valid package");
 
-		let vtxos: Vec<Vtxo> = package.build_unsigned_vtxos().collect();
+		let vtxos: Vec<Vtxo<Full>> = package.build_unsigned_vtxos().collect();
 		assert_eq!(vtxos.len(), 4);
 		assert_eq!(vtxos[0].amount(), Amount::from_sat(10_000));
 		assert_eq!(vtxos[1].amount(), Amount::from_sat(5_000));
@@ -668,7 +669,7 @@ mod test {
 			VtxoPolicy::new_pubkey(alice_public_key())
 		).expect("Valid package");
 
-		let vtxos: Vec<Vtxo> = package.build_unsigned_vtxos().collect();
+		let vtxos: Vec<Vtxo<Full>> = package.build_unsigned_vtxos().collect();
 		assert_eq!(vtxos.len(), 4);
 		assert_eq!(vtxos[0].amount(), Amount::from_sat(5_000));
 		assert_eq!(vtxos[0].policy().user_pubkey(), bob_public_key());
@@ -784,7 +785,7 @@ mod test {
 			outputs,
 		).expect("Valid package");
 
-		let vtxos: Vec<Vtxo> = package.build_unsigned_vtxos().collect();
+		let vtxos: Vec<Vtxo<Full>> = package.build_unsigned_vtxos().collect();
 		assert_eq!(vtxos.len(), 3);
 		assert_eq!(vtxos[0].amount(), Amount::from_sat(4_000));
 		assert_eq!(vtxos[1].amount(), Amount::from_sat(3_000));
@@ -835,7 +836,7 @@ mod test {
 			outputs,
 		).expect("Valid package");
 
-		let vtxos: Vec<Vtxo> = package.build_unsigned_vtxos().collect();
+		let vtxos: Vec<Vtxo<Full>> = package.build_unsigned_vtxos().collect();
 		assert_eq!(vtxos.len(), 3);
 		assert_eq!(vtxos[0].amount(), Amount::from_sat(600));
 		assert_eq!(vtxos[0].policy().user_pubkey(), bob_public_key());
@@ -868,7 +869,7 @@ mod test {
 			outputs,
 		).expect("Valid package");
 
-		let vtxos: Vec<Vtxo> = package.build_unsigned_vtxos().collect();
+		let vtxos: Vec<Vtxo<Full>> = package.build_unsigned_vtxos().collect();
 		assert_eq!(vtxos.len(), 3);
 		assert_eq!(vtxos[0].amount(), Amount::from_sat(500));
 		assert_eq!(vtxos[1].amount(), Amount::from_sat(250)); // sub-dust!
@@ -944,7 +945,7 @@ mod test {
 			outputs,
 		).expect("Valid package");
 
-		let vtxos: Vec<Vtxo> = package.build_unsigned_vtxos().collect();
+		let vtxos: Vec<Vtxo<Full>> = package.build_unsigned_vtxos().collect();
 		assert_eq!(vtxos.len(), 4);
 		// input[0] 1000 -> output[0]
 		// input[1] 2000 -> output[0] 1500, output[1] 500
@@ -976,7 +977,7 @@ mod test {
 			outputs,
 		).expect("Valid package");
 
-		let vtxos: Vec<Vtxo> = package.build_unsigned_vtxos().collect();
+		let vtxos: Vec<Vtxo<Full>> = package.build_unsigned_vtxos().collect();
 		assert_eq!(vtxos.len(), 4);
 		assert_eq!(vtxos[0].amount(), Amount::from_sat(100));
 		assert_eq!(vtxos[1].amount(), Amount::from_sat(100));
@@ -1019,7 +1020,7 @@ mod test {
 			outputs,
 		).expect("Valid package");
 
-		let vtxos: Vec<Vtxo> = package.build_unsigned_vtxos().collect();
+		let vtxos: Vec<Vtxo<Full>> = package.build_unsigned_vtxos().collect();
 		assert_eq!(vtxos.len(), 5);
 		assert_eq!(vtxos[0].amount(), Amount::from_sat(100));
 		assert_eq!(vtxos[1].amount(), Amount::from_sat(200));
@@ -1051,7 +1052,7 @@ mod test {
 			outputs,
 		).expect("Valid package");
 
-		let vtxos: Vec<Vtxo> = package.build_unsigned_vtxos().collect();
+		let vtxos: Vec<Vtxo<Full>> = package.build_unsigned_vtxos().collect();
 		assert_eq!(vtxos.len(), 2);
 		assert_eq!(vtxos[0].amount(), Amount::from_sat(1000));
 		assert_eq!(vtxos[1].amount(), Amount::from_sat(500));
@@ -1068,7 +1069,7 @@ mod test {
 		];
 
 		let result = ArkoorPackageBuilder::new_with_checkpoints(
-			Vec::<Vtxo>::new(),
+			Vec::<Vtxo<Full>>::new(),
 			outputs,
 		);
 
@@ -1112,7 +1113,7 @@ mod test {
 			outputs,
 		).expect("Valid package");
 
-		let vtxos: Vec<Vtxo> = package.build_unsigned_vtxos().collect();
+		let vtxos: Vec<Vtxo<Full>> = package.build_unsigned_vtxos().collect();
 		assert_eq!(vtxos.len(), 5);
 		// input[0] 300 -> output[0] 300
 		assert_eq!(vtxos[0].amount(), Amount::from_sat(300));

@@ -228,11 +228,13 @@ impl Wallet {
 		let (mut srv, _) = self.require_server().await?;
 
 		// Get the vtxo and funding transaction from the database
-		let vtxo = match vtxo.vtxo_ref() {
+		let wallet_vtxo;
+		let vtxo = match vtxo.as_full_vtxo() {
 			Some(v) => v,
 			None => {
-				&self.db.get_wallet_vtxo(vtxo.vtxo_id()).await?
-					.with_context(|| format!("VTXO doesn't exist: {}", vtxo.vtxo_id()))?
+				wallet_vtxo = self.db.get_wallet_vtxo(vtxo.vtxo_id()).await?
+					.with_context(|| format!("VTXO doesn't exist: {}", vtxo.vtxo_id()))?;
+				&wallet_vtxo.vtxo
 			},
 		};
 

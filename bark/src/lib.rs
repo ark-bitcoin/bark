@@ -338,7 +338,7 @@ use ark::{ArkInfo, ProtocolEncoding, Vtxo, VtxoId, VtxoPolicy, VtxoRequest};
 use ark::address::VtxoDelivery;
 use ark::fees::{validate_and_subtract_fee_min_dust, VtxoFeeInfo};
 use ark::mailbox::MailboxIdentifier;
-use ark::vtxo::{PubkeyVtxoPolicy, VtxoRef};
+use ark::vtxo::{Full, PubkeyVtxoPolicy, VtxoRef};
 use ark::vtxo::policy::signing::VtxoSigner;
 use bitcoin_ext::{BlockHeight, P2TR_DUST, TxStatus};
 use server_rpc::{protos, ServerConnection};
@@ -781,11 +781,8 @@ impl Wallet {
 	/// * `Err(anyhow::Error)` - If the corresponding public key doesn't exist
 	///   in the database or a database error occurred.
 	pub async fn get_vtxo_key(&self, vtxo: impl VtxoRef) -> anyhow::Result<Keypair> {
-		let vtxo = match vtxo.vtxo_ref() {
-			Some(v) => v,
-			None => &self.get_vtxo_by_id(vtxo.vtxo_id()).await?,
-		};
-		let pubkey = self.find_signable_clause(vtxo).await
+		let wallet_vtxo = self.get_vtxo_by_id(vtxo.vtxo_id()).await?;
+		let pubkey = self.find_signable_clause(&wallet_vtxo.vtxo).await
 			.context("VTXO is not signable by wallet")?
 			.pubkey();
 		let idx = self.db.get_public_key_idx(&pubkey).await?
@@ -1114,7 +1111,7 @@ impl Wallet {
 	}
 
 	/// Fetches [Vtxo]'s funding transaction and validates the VTXO against it.
-	pub async fn validate_vtxo(&self, vtxo: &Vtxo) -> anyhow::Result<()> {
+	pub async fn validate_vtxo(&self, vtxo: &Vtxo<Full>) -> anyhow::Result<()> {
 		let tx = self.chain.get_tx(&vtxo.chain_anchor().txid).await
 			.context("could not fetch chain tx")?;
 
@@ -1136,7 +1133,7 @@ impl Wallet {
 	/// Returns an error if:
 	/// - The VTXO's chain anchor is not found or invalid
 	/// - The wallet doesn't own a signable clause for the VTXO
-	pub async fn import_vtxo(&self, vtxo: &Vtxo) -> anyhow::Result<()> {
+	pub async fn import_vtxo(&self, vtxo: &Vtxo<Full>) -> anyhow::Result<()> {
 		if self.db.get_wallet_vtxo(vtxo.id()).await?.is_some() {
 			info!("VTXO {} already exists in wallet, skipping import", vtxo.id());
 			return Ok(());
@@ -1618,7 +1615,7 @@ impl Wallet {
 	///
 	/// An arkoor vtxo is considered to have some counterparty risk
 	/// if it is (directly or not) based on round VTXOs that aren't owned by the wallet
-	async fn has_counterparty_risk(&self, vtxo: &Vtxo) -> anyhow::Result<bool> {
+	async fn has_counterparty_risk(&self, vtxo: &Vtxo<Full>) -> anyhow::Result<bool> {
 		for past_pks in vtxo.past_arkoor_pubkeys() {
 			let mut owns_any = false;
 			for past_pk in past_pks {
@@ -1709,7 +1706,7 @@ impl Wallet {
 		let (vtxos, total_amount) = {
 			let iter = vtxos.into_iter();
 			let size_hint = iter.size_hint();
-			let mut vtxos = Vec::<Vtxo>::with_capacity(size_hint.1.unwrap_or(size_hint.0));
+			let mut vtxos = Vec::<Vtxo<Full>>::with_capacity(size_hint.1.unwrap_or(size_hint.0));
 			let mut amount = Amount::ZERO;
 			for vref in iter {
 				// We use a Vec here instead of a HashMap or a HashSet of IDs because for the kinds
@@ -1720,7 +1717,7 @@ impl Wallet {
 				if vtxos.iter().any(|v| v.id() == id) {
 					bail!("duplicate VTXO id: {}", id);
 				}
-				let vtxo = if let Some(vtxo) = vref.into_vtxo() {
+				let vtxo = if let Some(vtxo) = vref.into_full_vtxo() {
 					vtxo
 				} else {
 					self.get_vtxo_by_id(id).await
@@ -1929,7 +1926,10 @@ impl Wallet {
 	/// Registers VTXOs with the server by sending their signed transaction chains.
 	/// This should be called before spending VTXOs to ensure the server can
 	/// publish forfeits if needed.
-	pub async fn register_vtxos_with_server(&self, vtxos: &[impl AsRef<Vtxo>]) -> anyhow::Result<()> {
+	pub async fn register_vtxos_with_server(
+		&self,
+		vtxos: &[impl AsRef<Vtxo<Full>>],
+	) -> anyhow::Result<()> {
 		if vtxos.is_empty() {
 			return Ok(());
 		}

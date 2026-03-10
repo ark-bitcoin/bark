@@ -3,7 +3,7 @@ use std::str::FromStr;
 
 use anyhow::Context;
 
-use ark::vtxo::Policy;
+use ark::vtxo::{Full, Policy};
 use bitcoin::{Transaction, Txid};
 use bitcoin::consensus::deserialize;
 use chrono::{DateTime, Local};
@@ -22,7 +22,7 @@ pub struct VtxoState<P: Policy = VtxoPolicy> {
 	pub vtxo_id: VtxoId,
 
 	/// The raw vtxo encoded.
-	pub vtxo: Vtxo<P>,
+	pub vtxo: Vtxo<Full, P>,
 	// NB keep this type explicit as u32 instead of BlockHeight to ensure encoding is stable
 	pub expiry: u32,
 
@@ -81,8 +81,8 @@ impl<P: Policy> VtxoState<P> {
 	}
 }
 
-impl<P: Policy> AsRef<Vtxo<P>> for VtxoState<P> {
-	fn as_ref(&self) -> &Vtxo<P> {
+impl<P: Policy> AsRef<Vtxo<Full, P>> for VtxoState<P> {
+	fn as_ref(&self) -> &Vtxo<Full, P> {
 	    &self.vtxo
 	}
 }

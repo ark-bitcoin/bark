@@ -11,7 +11,7 @@ use ark::arkoor::ArkoorDestination;
 use ark::challenges::OffboardRequestChallenge;
 use ark::fees::{validate_and_subtract_fee_min_dust, VtxoFeeInfo};
 use ark::offboard::{OffboardForfeitContext, OffboardRequest};
-use ark::vtxo::VtxoRef;
+use ark::vtxo::{Full, VtxoRef};
 use bitcoin_ext::P2TR_DUST;
 use server_rpc::{protos, ServerConnection, TryFromBytes};
 
@@ -28,7 +28,7 @@ impl Wallet {
 	async fn offboard_inner(
 		&self,
 		srv: &mut ServerConnection,
-		vtxos: &[impl AsRef<Vtxo>],
+		vtxos: &[impl AsRef<Vtxo<Full>>],
 		vtxo_keys: &[Keypair],
 		req: &OffboardRequest,
 	) -> anyhow::Result<Transaction> {

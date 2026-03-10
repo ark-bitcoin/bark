@@ -250,10 +250,10 @@ pub struct VtxoFeeInfo {
 
 impl VtxoFeeInfo {
 	/// Constructs a [VtxoFeeInfo] instance from the given [Vtxo] and tip [BlockHeight]
-	pub fn from_vtxo_and_tip(vtxo: &Vtxo, tip: BlockHeight) -> Self {
+	pub fn from_vtxo_and_tip<G>(vtxo: &Vtxo<G>, tip: BlockHeight) -> Self {
 		Self {
-			amount: vtxo.amount,
-			expiry_blocks: vtxo.expiry_height.saturating_sub(tip),
+			amount: vtxo.amount(),
+			expiry_blocks: vtxo.expiry_height().saturating_sub(tip),
 		}
 	}
 }

@@ -380,7 +380,7 @@ impl<'a> RefreshStrategy<'a> {
 
 	fn check_must_refresh(&self, vtxo: &WalletVtxo) -> anyhow::Result<bool> {
 		let threshold = self.wallet.config().vtxo_refresh_expiry_threshold;
-		if self.tip > vtxo.spec().expiry_height.saturating_sub(threshold) {
+		if self.tip > vtxo.expiry_height().saturating_sub(threshold) {
 			warn!("VTXO {} is about to expire soon, must be refreshed", vtxo.id());
 			return Ok(true);
 		}
@@ -390,7 +390,7 @@ impl<'a> RefreshStrategy<'a> {
 
 	fn check_should_refresh(&self, vtxo: &WalletVtxo) -> anyhow::Result<bool> {
 		let soft_threshold = self.wallet.config().vtxo_refresh_expiry_threshold + 28;
-		if self.tip > vtxo.spec().expiry_height.saturating_sub(soft_threshold) {
+		if self.tip > vtxo.expiry_height().saturating_sub(soft_threshold) {
 			warn!("VTXO {} is about to expire, should be refreshed on next opportunity",
 				vtxo.id(),
 			);

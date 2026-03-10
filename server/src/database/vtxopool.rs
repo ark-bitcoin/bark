@@ -5,30 +5,31 @@ use futures::{Stream, TryStreamExt};
 use postgres_types::Type;
 use tokio_postgres::Row;
 use ark::{ProtocolEncoding, Vtxo, VtxoId};
+use ark::vtxo::Full;
 
 use crate::database::{Db, OwnedRowStream, NOARG};
 
 
 /// A struct reprensenting a vtxo currently in the vtxo pool.
 #[derive(Debug, Clone)]
-pub struct PoolVtxo(Vtxo);
+pub struct PoolVtxo(Vtxo<Full>);
 
 impl PoolVtxo {
-	pub fn new(vtxo: Vtxo) -> Self {
+	pub fn new(vtxo: Vtxo<Full>) -> Self {
 		PoolVtxo(vtxo)
 	}
 
-	pub fn inner(&self) -> &Vtxo {
+	pub fn inner(&self) -> &Vtxo<Full> {
 		&self.0
 	}
 
-	pub fn into_inner(self) -> Vtxo {
+	pub fn into_inner(self) -> Vtxo<Full> {
 		self.0
 	}
 }
 
 impl Deref for PoolVtxo {
-	type Target = Vtxo;
+	type Target = Vtxo<Full>;
 
 	fn deref(&self) -> &Self::Target {
 		&self.0

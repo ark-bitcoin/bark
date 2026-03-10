@@ -3,6 +3,7 @@ use std::borrow::BorrowMut;
 use bitcoin::psbt;
 
 use ark::{ProtocolEncoding, Vtxo};
+use ark::vtxo::Full;
 
 const PROP_KEY_PREFIX: &'static [u8] = "bark".as_bytes();
 
@@ -22,11 +23,11 @@ lazy_static::lazy_static! {
 // within internal use, if we ever share them for communication or in a db,
 // they need to return errors
 pub trait PsbtInputExt: BorrowMut<psbt::Input> {
-	fn set_exit_claim_input(&mut self, input: &Vtxo) {
+	fn set_exit_claim_input(&mut self, input: &Vtxo<Full>) {
 		self.borrow_mut().proprietary.insert(PROP_KEY_CLAIM_INPUT.clone(), input.serialize());
 	}
 
-	fn get_exit_claim_input(&self) -> Option<Vtxo> {
+	fn get_exit_claim_input(&self) -> Option<Vtxo<Full>> {
 		self.borrow().proprietary.get(&*PROP_KEY_CLAIM_INPUT)
 			.map(|e| Vtxo::deserialize(&e).expect("corrupt psbt"))
 	}

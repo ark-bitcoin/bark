@@ -13,6 +13,7 @@ use tracing::{info, warn};
 
 use ark::{ServerVtxo, Vtxo, VtxoId, VtxoPolicy, VtxoRequest};
 use ark::arkoor::ArkoorDestination;
+use ark::vtxo::Full;
 use ark::arkoor::package::ArkoorPackageBuilder;
 use ark::tree::signed::{LeafVtxoCosignContext, UnlockPreimage};
 use ark::tree::signed::builder::SignedTreeBuilder;
@@ -245,7 +246,7 @@ impl VtxoPool {
 		srv: &Server,
 		dest: ArkoorDestination,
 		inputs: &[(VtxoId, BlockHeight, Amount)],
-	) -> anyhow::Result<Vec<Vtxo>> {
+	) -> anyhow::Result<Vec<Vtxo<Full>>> {
 		let input_ids = inputs.iter().map(|v| v.0).collect::<Vec<_>>();
 		let input_vtxos = srv.db.get_pool_vtxos_by_ids(&input_ids).await?;
 
@@ -313,7 +314,7 @@ impl VtxoPool {
 		&self,
 		srv: &Server,
 		dest: ArkoorDestination,
-	) -> anyhow::Result<Vec<Vtxo>> {
+	) -> anyhow::Result<Vec<Vtxo<Full>>> {
 		let inputs = self.data.lock().take_inputs(dest.total_amount);
 		if inputs.is_empty() {
 			bail!("vtxo pool is empty");
