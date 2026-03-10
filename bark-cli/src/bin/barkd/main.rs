@@ -55,10 +55,10 @@ struct Cli {
 	#[arg(long, env = "BARKD_DATADIR", default_value_t = default_datadir())]
 	datadir: String,
 	/// The port to listen on
-	#[arg(long, env = "BARKD_PORT")]
+	#[arg(long, env = "BARKD_BIND_PORT")]
 	port: Option<u16>,
 	/// The host to listen on
-	#[arg(long, env = "BARKD_HOST")]
+	#[arg(long, env = "BARKD_BIND_HOST")]
 	host: Option<String>,
 }
 
