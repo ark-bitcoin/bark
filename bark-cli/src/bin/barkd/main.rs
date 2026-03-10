@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use bark_cli::VERSION_DIRTY;
 use bark_json::web::{BarkNetwork, BitcoindAuth, ChainSourceConfig, CreateWalletRequest};
+use bark_rest::auth::AuthToken;
 use bark_rest::error::ContextExt;
 use clap::Parser;
 use clap::builder::BoolishValueParser;
@@ -223,7 +224,12 @@ async fn main() -> anyhow::Result<()>{
 		}
 	});
 
-	let server = RestServer::start(&cli.to_config(), wallet_opt, Some(on_wallet_create)).await?;
+	// TODO: generate a random auth token
+	let auth_token = AuthToken::new([0u8; 32]);
+
+	let server = RestServer::start(
+		&cli.to_config(), auth_token, wallet_opt, Some(on_wallet_create)
+	).await?;
 
 	run_shutdown_signal_listener().await;
 

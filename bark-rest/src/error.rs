@@ -101,6 +101,21 @@ pub(crate) use badarg;
 
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct UnauthorizedError {
+	pub message: String,
+}
+
+#[allow(unused)]
+macro_rules! unauthorized {
+	($($arg:tt)*) => {
+		return Err($crate::error::ErrorResponse::Unauthorized($crate::error::UnauthorizedError {
+			message: format!($($arg)*),
+		}))
+	};
+}
+pub(crate) use unauthorized;
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct InternalServerError {
 	pub message: String,
 }
@@ -109,6 +124,7 @@ pub struct InternalServerError {
 #[derive(Debug, Clone, Serialize, ToSchema)]
 #[serde(untagged)]
 pub enum ErrorResponse {
+	Unauthorized(UnauthorizedError),
 	BadRequest(BadRequestError),
 	NotFound(NotFoundError),
 	Internal(InternalServerError),
@@ -117,6 +133,7 @@ pub enum ErrorResponse {
 impl ErrorResponse {
 	pub fn status_code(&self) -> StatusCode {
 		match self {
+			Self::Unauthorized(_) => StatusCode::UNAUTHORIZED,
 			Self::BadRequest(_) => StatusCode::BAD_REQUEST,
 			Self::NotFound(_) => StatusCode::NOT_FOUND,
 			Self::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,

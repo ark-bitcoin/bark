@@ -5,11 +5,13 @@ use std::time::Duration;
 
 use anyhow::Context;
 use bitcoin::{Amount, Network};
+use bitcoin::secp256k1::rand::{self, RngCore};
 use log::info;
 use tokio::process::Command;
 
 use bark_json::cli::{ArkInfo, Balance, NextRoundStart, PendingBoardInfo};
 use bark_json::cli::onchain::{Address, OnchainBalance};
+use bark_rest::auth::AuthToken;
 use bark_json::primitives::{TransactionInfo, UtxoInfo};
 use bark_json::web::{BarkNetwork, BitcoindAuth, ChainSourceConfig, ConnectedResponse, CreateWalletRequest, TipResponse};
 use bark_rest_client::apis::configuration::Configuration;
@@ -20,6 +22,8 @@ use crate::constants::env::BARKD_EXEC;
 use crate::util::resolve_path;
 
 pub type Barkd = Daemon<BarkdHelper>;
+
+const AUTH_TOKEN_FILE: &str = "auth_token";
 
 /// Chain source configuration for barkd.
 pub enum BarkdChainSource {
@@ -35,6 +39,7 @@ pub struct BarkdHelper {
 	/// Optional dedicated bitcoind kept alive for the duration of the test.
 	_bitcoind: Option<Bitcoind>,
 	port: u16,
+	auth_token: AuthToken,
 }
 
 impl Barkd {
@@ -51,6 +56,9 @@ impl Barkd {
 		chain_source: BarkdChainSource,
 		bitcoind: Option<Bitcoind>,
 	) -> Self {
+		let mut secret = [0u8; 32];
+		rand::thread_rng().fill_bytes(&mut secret);
+
 		let helper = BarkdHelper {
 			name: name.as_ref().to_string(),
 			datadir,
@@ -58,6 +66,7 @@ impl Barkd {
 			chain_source,
 			_bitcoind: bitcoind,
 			port: 0,
+			auth_token: AuthToken::new(secret),
 		};
 		Daemon::wrap(helper)
 	}
@@ -67,8 +76,21 @@ impl Barkd {
 	}
 
 	fn client_config(&self) -> Configuration {
+		let mut headers = reqwest::header::HeaderMap::new();
+		headers.insert(
+			reqwest::header::AUTHORIZATION,
+			reqwest::header::HeaderValue::from_str(&format!("Bearer {}", self.inner.auth_token.encode()))
+				.expect("invalid auth token header value"),
+		);
+
+		let client = reqwest::Client::builder()
+			.default_headers(headers)
+			.build()
+			.expect("failed to build reqwest client");
+
 		Configuration {
 			base_path: self.base_url(),
+			client,
 			..Configuration::default()
 		}
 	}
@@ -213,6 +235,10 @@ impl DaemonHelper for BarkdHelper {
 
 	async fn prepare(&self) -> anyhow::Result<()> {
 		std::fs::create_dir_all(&self.datadir)?;
+		std::fs::write(
+			self.datadir.join(AUTH_TOKEN_FILE),
+			self.auth_token.encode(),
+		)?;
 		Ok(())
 	}
 
