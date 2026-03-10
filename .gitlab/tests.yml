@@ -132,7 +132,7 @@ bark-as-libs:
   script:
     - |
       nix develop .#default --command bash -c "
-        cargo build -p bark-wallet      --no-default-features --features=\"\" &&
+        cargo build -p bark-wallet                                            &&
         cargo build -p bark-bitcoin-ext --no-default-features --features=\"\" &&
         cargo build -p ark-lib          --no-default-features --features=\"\"
       "
