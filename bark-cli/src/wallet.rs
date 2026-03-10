@@ -64,6 +64,9 @@ const CONFIG_FILE: &str = "config.toml";
 /// File name of the debug log file.
 const DEBUG_LOG_FILE: &str = "debug.log";
 
+/// File name used to persist the auth token in the datadir.
+pub const AUTH_TOKEN_FILE: &str = "auth_token";
+
 /// Process log files that may be written into the datadir by the daemon
 /// framework during testing; they should be ignored like debug.log.
 const STDOUT_LOG_FILE: &str = "stdout.log";
@@ -262,6 +265,9 @@ async fn check_clean_datadir(datadir: &Path, clean: bool) -> anyhow::Result<bool
 				continue;
 			}
 			if item.file_name() == LOCK_FILE {
+				continue;
+			}
+			if item.file_name() == AUTH_TOKEN_FILE {
 				continue;
 			}
 
