@@ -9,6 +9,7 @@ use bitcoin::{secp256k1::PublicKey, ScriptBuf};
 
 use bitcoin_ext::{BlockDelta, BlockHeight};
 
+use crate::lightning::{PaymentHash, Preimage};
 use crate::vtxo::policy::Policy;
 use crate::Vtxo;
 use crate::scripts;
@@ -228,6 +229,29 @@ impl HashDelaySignClause {
 	/// Returns the input sequence for this clause.
 	pub fn sequence(&self) -> Sequence {
 		Sequence::from_height(self.block_delta)
+	}
+
+	/// Try to extract the preimage from a witness that spends this clause.
+	///
+	/// Witness layout: `[signature, preimage, tapscript, control_block]`.
+	/// Returns the preimage if it is 32 bytes and hashes to the given payment hash.
+	pub fn extract_preimage_from_witness(
+		witness: &Witness,
+		payment_hash: PaymentHash,
+	) -> Option<Preimage> {
+		if witness.len() != 4 {
+			return None;
+		}
+
+		let bytes = witness.nth(1)?;
+		let bytes: [u8; 32] = bytes.try_into().ok()?;
+
+		let preimage = Preimage::from(bytes);
+		if preimage.compute_payment_hash() != payment_hash {
+			return None;
+		}
+
+		Some(preimage)
 	}
 }
 
@@ -606,6 +630,60 @@ mod tests {
 
 		// We verify the transaction
 		verify_tx(&[tx_in], 0, &tx).expect("transaction is invalid");
+	}
+
+	#[test]
+	fn test_extract_preimage_from_witness() {
+		let preimage_bytes = [42u8; 32];
+		let payment_hash = sha256::Hash::hash(&preimage_bytes);
+
+		let clause = HashDelaySignClause {
+			pubkey: USER_KEYPAIR.public_key(),
+			hash: payment_hash,
+			block_delta: 24,
+		};
+
+		// Build a valid witness via the clause
+		let (taproot, cb) = taproot_material(clause.tapscript());
+		let tx_in = TxOut {
+			script_pubkey: taproot.script_pubkey(),
+			value: Amount::from_sat(1_000_000),
+		};
+
+		let mut tx = transaction();
+		tx.input.push(TxIn {
+			previous_output: OutPoint::new(Txid::all_zeros(), 0),
+			script_sig: ScriptBuf::default(),
+			sequence: clause.sequence(),
+			witness: Witness::new(),
+		});
+
+		let sig = signature(&tx, &tx_in, clause.tapscript());
+		let witness = clause.witness(&(sig, preimage_bytes), &cb);
+
+		// Extract should succeed with correct payment hash
+		let extracted = HashDelaySignClause::extract_preimage_from_witness(
+			&witness,
+			payment_hash.into(),
+		);
+		assert!(extracted.is_some());
+		assert_eq!(extracted.unwrap().as_ref(), &preimage_bytes);
+
+		// Extract should fail with wrong payment hash
+		let wrong_hash = sha256::Hash::hash(&[0u8; 32]);
+		let extracted = HashDelaySignClause::extract_preimage_from_witness(
+			&witness,
+			wrong_hash.into(),
+		);
+		assert!(extracted.is_none());
+
+		// Extract should fail with wrong witness length
+		let short_witness = Witness::from_slice(&[&sig[..], &preimage_bytes[..]]);
+		let extracted = HashDelaySignClause::extract_preimage_from_witness(
+			&short_witness,
+			payment_hash.into(),
+		);
+		assert!(extracted.is_none());
 	}
 
 	#[test]
