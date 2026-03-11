@@ -1,5 +1,6 @@
 mod ban;
 mod block_index;
+mod lightning;
 mod postgres;
 mod postgres_migrations;
 
@@ -2381,3 +2382,4 @@ async fn grpc_health_check() {
 		tonic_health::pb::health_check_response::ServingStatus::Serving as i32,
 	);
 }
+

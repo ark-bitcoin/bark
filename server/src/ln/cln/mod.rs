@@ -1151,7 +1151,14 @@ impl database::Db {
 		let is_last_attempt_finalized = li.last_attempt_status
 			.map(|a| a.is_final()).unwrap_or(false);
 
-		if li.preimage.is_some() || is_last_attempt_finalized {
+		// Both conditions required: the on-chain settlement path records
+		// the preimage (via the settler) before CLN finalizes the payment
+		// attempt. If we skipped on preimage alone, the subsequent CLN
+		// status update would be dropped and the attempt would stay
+		// non-final forever. Normal off-chain settlement is unaffected
+		// because the first successful update writes both the preimage
+		// and the final attempt status in one call.
+		if li.preimage.is_some() && is_last_attempt_finalized {
 			debug!("Lightning invoice update for {payment_hash}: Skipped update because the \
 				payment is already in a final state.");
 			return Ok(false);
