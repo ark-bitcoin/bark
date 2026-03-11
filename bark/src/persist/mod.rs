@@ -36,10 +36,11 @@ use bitcoin_ext::BlockDelta;
 
 use crate::WalletProperties;
 use crate::exit::ExitTxOrigin;
-use crate::movement::{Movement, MovementId, MovementStatus, MovementSubsystem};
 use crate::persist::models::{
-	LightningReceive, LightningSend, PendingBoard, RoundStateId, StoredExit, StoredRoundState, Unlocked
+	LightningReceive, LightningSend, PendingBoard, RoundStateId, StoredExit, StoredRoundState, Unlocked,
+	PendingOffboard,
 };
+use crate::movement::{Movement, MovementId, MovementStatus, MovementSubsystem};
 use crate::round::RoundState;
 use crate::vtxo::{VtxoState, VtxoStateKind, WalletVtxo};
 
@@ -628,4 +629,34 @@ pub trait BarkPersister: Send + Sync + 'static {
 		new_state: VtxoState,
 		allowed_old_states: &[VtxoStateKind],
 	) -> anyhow::Result<WalletVtxo>;
+
+	/// Store a pending offboard record.
+	///
+	/// Parameters:
+	/// - pending: The [PendingOffboard] to store.
+	///
+	/// Errors:
+	/// - Returns an error if the record cannot be stored.
+	async fn store_pending_offboard(
+		&self,
+		pending: &PendingOffboard,
+	) -> anyhow::Result<()>;
+
+	/// Get all pending offboard records.
+	///
+	/// Returns:
+	/// - `Ok(Vec<PendingOffboard>)` possibly empty.
+	///
+	/// Errors:
+	/// - Returns an error if the query fails.
+	async fn get_pending_offboards(&self) -> anyhow::Result<Vec<PendingOffboard>>;
+
+	/// Remove a pending offboard record by its [MovementId].
+	///
+	/// Parameters:
+	/// - movement_id: The [MovementId] to remove.
+	///
+	/// Errors:
+	/// - Returns an error if the record cannot be removed.
+	async fn remove_pending_offboard(&self, movement_id: MovementId) -> anyhow::Result<()>;
 }

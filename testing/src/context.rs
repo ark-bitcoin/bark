@@ -446,6 +446,7 @@ impl TestContext {
 			htlc_recv_claim_delta: 18,
 			fallback_fee_rate: Some(FeeRate::from_sat_per_vb_unchecked(5)),
 			round_tx_required_confirmations: constants::ROUND_CONFIRMATIONS,
+			offboard_required_confirmations: constants::OFFBOARD_CONFIRMATIONS,
 		}
 	}
 

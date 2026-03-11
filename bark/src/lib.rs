@@ -340,20 +340,20 @@ use ark::fees::{validate_and_subtract_fee_min_dust, VtxoFeeInfo};
 use ark::mailbox::MailboxIdentifier;
 use ark::vtxo::{PubkeyVtxoPolicy, VtxoRef};
 use ark::vtxo::policy::signing::VtxoSigner;
-use bitcoin_ext::{BlockHeight, P2TR_DUST};
+use bitcoin_ext::{BlockHeight, P2TR_DUST, TxStatus};
 use server_rpc::{protos, ServerConnection};
 
 use crate::chain::{ChainSource, ChainSourceSpec};
 use crate::exit::Exit;
-use crate::movement::Movement;
+use crate::movement::{Movement, MovementStatus};
 use crate::movement::manager::MovementManager;
 use crate::movement::update::MovementUpdate;
 use crate::onchain::{DaemonizableOnchainWallet, ExitUnilaterally, PreparePsbt, SignPsbt, Utxo};
 use crate::persist::BarkPersister;
-use crate::persist::models::{RoundStateId, StoredRoundState, Unlocked};
+use crate::persist::models::{PendingOffboard, RoundStateId, StoredRoundState, Unlocked};
 use crate::round::{RoundParticipation, RoundStateLockIndex, RoundStatus};
 use crate::subsystem::{ArkoorMovement, RoundMovement};
-use crate::vtxo::{FilterVtxos, RefreshStrategy, VtxoFilter, VtxoStateKind};
+use crate::vtxo::{FilterVtxos, RefreshStrategy, VtxoFilter, VtxoState, VtxoStateKind};
 
 /// Derivation index for Bark usage
 const BARK_PURPOSE_INDEX: u32 = 350;
@@ -1220,6 +1220,149 @@ impl Wallet {
 		Ok(self.spendable_vtxos_with(&filter).await?)
 	}
 
+	/// Checks pending offboard transactions for confirmation status.
+	///
+	/// - On confirmation with enough confs (or mempool with 0 required confs): finalize as successful.
+	/// - On `NotFound`: wait at least 1 hour before canceling, in case the chain backend is slow.
+	/// - On error (e.g. network drop): log and keep waiting — don't cancel due to transient failures.
+	pub async fn sync_pending_offboards(&self) -> anyhow::Result<()> {
+		let pending_offboards: Vec<PendingOffboard> = self.db.get_pending_offboards().await?;
+
+		if pending_offboards.is_empty() {
+			return Ok(());
+		}
+
+		let current_height = self.chain.tip().await?;
+		let required_confs = self.config.offboard_required_confirmations;
+
+		trace!("Checking {} pending offboard transaction(s)", pending_offboards.len());
+
+		for pending in pending_offboards {
+			let status = self.chain.tx_status(pending.offboard_txid).await;
+
+			match status {
+				Ok(TxStatus::Confirmed(block_ref)) => {
+					let confs = current_height - (block_ref.height - 1);
+					if confs < required_confs as BlockHeight {
+						trace!(
+							"Offboard tx {} has {}/{} confirmations, waiting...",
+							pending.offboard_txid, confs, required_confs,
+						);
+						continue;
+					}
+
+					info!(
+						"Offboard tx {} confirmed, finalizing movement {}",
+						pending.offboard_txid, pending.movement_id,
+					);
+
+					// Mark VTXOs as spent
+					for vtxo_id in &pending.vtxo_ids {
+						if let Err(e) = self.db.update_vtxo_state_checked(
+							*vtxo_id,
+							VtxoState::Spent,
+							&[VtxoStateKind::Locked],
+						).await {
+							warn!("Failed to mark vtxo {} as spent: {:#}", vtxo_id, e);
+						}
+					}
+
+					// Finish the movement as successful
+					if let Err(e) = self.movements.finish_movement(
+						pending.movement_id,
+						MovementStatus::Successful,
+					).await {
+						warn!("Failed to finish movement {}: {:#}", pending.movement_id, e);
+					}
+
+					self.db.remove_pending_offboard(pending.movement_id).await?;
+				}
+				Ok(TxStatus::Mempool) => {
+					if required_confs == 0 {
+						info!(
+							"Offboard tx {} in mempool with 0 required confirmations, \
+							finalizing movement {}",
+							pending.offboard_txid, pending.movement_id,
+						);
+
+						// Mark VTXOs as spent
+						for vtxo_id in &pending.vtxo_ids {
+							if let Err(e) = self.db.update_vtxo_state_checked(
+								*vtxo_id,
+								VtxoState::Spent,
+								&[VtxoStateKind::Locked],
+							).await {
+								warn!("Failed to mark vtxo {} as spent: {:#}", vtxo_id, e);
+							}
+						}
+
+						// Finish the movement as successful
+						if let Err(e) = self.movements.finish_movement(
+							pending.movement_id,
+							MovementStatus::Successful,
+						).await {
+							warn!("Failed to finish movement {}: {:#}", pending.movement_id, e);
+						}
+
+						self.db.remove_pending_offboard(pending.movement_id).await?;
+					} else {
+						trace!(
+							"Offboard tx {} still in mempool, waiting...",
+							pending.offboard_txid,
+						);
+					}
+				}
+				Ok(TxStatus::NotFound) => {
+					// Don't cancel immediately — the chain backend might be slow
+					// or temporarily out of sync. Wait at least 1 hour before
+					// treating the tx as truly lost.
+					let age = chrono::Local::now() - pending.created_at;
+					if age < chrono::Duration::hours(1) {
+						trace!(
+							"Offboard tx {} not found, but only {} minutes old — waiting...",
+							pending.offboard_txid, age.num_minutes(),
+						);
+						continue;
+					}
+
+					warn!(
+						"Offboard tx {} not found after {} minutes, canceling movement {}",
+						pending.offboard_txid, age.num_minutes(), pending.movement_id,
+					);
+
+					// Restore VTXOs to spendable
+					for vtxo_id in &pending.vtxo_ids {
+						if let Err(e) = self.db.update_vtxo_state_checked(
+							*vtxo_id,
+							VtxoState::Spendable,
+							&[VtxoStateKind::Locked],
+						).await {
+							warn!("Failed to restore vtxo {} to spendable: {:#}", vtxo_id, e);
+						}
+					}
+
+					// Finish the movement as failed
+					if let Err(e) = self.movements.finish_movement(
+						pending.movement_id,
+						MovementStatus::Failed,
+					).await {
+						warn!("Failed to fail movement {}: {:#}", pending.movement_id, e);
+					}
+
+					self.db.remove_pending_offboard(pending.movement_id).await?;
+				}
+				Err(e) => {
+					warn!(
+						"Failed to check status of offboard tx {}: {:#}",
+						pending.offboard_txid, e,
+					);
+				}
+			}
+		}
+
+		Ok(())
+	}
+
 	/// Performs maintenance tasks and performs refresh interactively until finished when needed.
 	/// This risks spending users' funds because refreshing may cost fees.
 	///
@@ -1428,6 +1571,11 @@ impl Wallet {
 			async {
 				if let Err(e) = self.sync_pending_boards().await {
 					warn!("Error syncing pending boards: {:#}", e);
+				}
+			},
+			async {
+				if let Err(e) = self.sync_pending_offboards().await {
+					warn!("Error syncing pending offboards: {:#}", e);
 				}
 			}
 		);

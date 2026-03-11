@@ -66,7 +66,7 @@ use crate::movement::{
 };
 use crate::persist::BarkPersister;
 use crate::persist::models::{
-	LightningReceive, LightningSend, PendingBoard, RoundStateId, SerdeExitChildTx, SerdeRoundState, SerdeVtxo, SerdeVtxoKey, StoredExit, StoredRoundState, Unlocked
+	LightningReceive, LightningSend, PendingBoard, PendingOffboard, RoundStateId, SerdeExitChildTx, SerdeRoundState, SerdeVtxo, SerdeVtxoKey, StoredExit, StoredRoundState, Unlocked,
 };
 use crate::round::RoundState;
 use crate::vtxo::{VtxoState, VtxoStateKind};
@@ -85,6 +85,7 @@ pub mod partition {
 	pub const EXIT_VTXO: u8 = 9;
 	pub const EXIT_CHILD_TX: u8 = 10;
 	pub const MAILBOX_CHECKPOINT: u8 = 11;
+	pub const PENDING_OFFBOARD: u8 = 12;
 
 	pub const LAST_IDS: u8 = u8::MAX;
 }
@@ -943,6 +944,28 @@ impl <S: StorageAdaptor> BarkPersister for StorageAdaptorWrapper<S> {
 			&lightning_receive,
 		)?;
 		lock.put(updated_record).await
+	}
+
+	async fn store_pending_offboard(&self, pending: &PendingOffboard) -> anyhow::Result<()> {
+		let record = Record::from_data(
+			partition::PENDING_OFFBOARD,
+			&pending.movement_id.to_bytes(),
+			None,
+			pending,
+		)?;
+		self.inner.write().await.put(record).await
+	}
+
+	async fn get_pending_offboards(&self) -> anyhow::Result<Vec<PendingOffboard>> {
+		let records = self.inner.read().await
+			.query(Query::new(partition::PENDING_OFFBOARD)).await?;
+		records.into_iter().map(|r| r.to_data()).collect()
+	}
+
+	async fn remove_pending_offboard(&self, movement_id: MovementId) -> anyhow::Result<()> {
+		self.inner.write().await
+			.delete(partition::PENDING_OFFBOARD, &movement_id.to_bytes()).await?;
+		Ok(())
 	}
 
 	async fn store_exit_vtxo_entry(&self, exit: &StoredExit) -> anyhow::Result<()> {

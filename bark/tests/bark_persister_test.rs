@@ -31,7 +31,7 @@ use bark::movement::{
 use bark::persist::BarkPersister;
 use bark::persist::models::{
 	LightningReceive, LightningSend, PendingBoard, StoredExit, StoredRoundState,
-	Unlocked, RoundStateId, SerdeRoundState
+	Unlocked, RoundStateId, SerdeRoundState, PendingOffboard,
 };
 use bark::round::RoundState;
 use bark::vtxo::{VtxoState, VtxoStateKind};
@@ -276,6 +276,21 @@ impl BarkPersister for Dummy {
 			vtxo: Vtxo::deserialize(&[])?,
 			state: VtxoState::Spent,
 		}]).pop().unwrap())
+	}
+
+	async fn store_pending_offboard(
+		&self,
+		_pending: &PendingOffboard,
+	) -> anyhow::Result<()> {
+		Ok(())
+	}
+
+	async fn get_pending_offboards(&self) -> anyhow::Result<Vec<PendingOffboard>> {
+		Ok(vec![])
+	}
+
+	async fn remove_pending_offboard(&self, _movement_id: MovementId) -> anyhow::Result<()> {
+		Ok(())
 	}
 
 	async fn store_round_state_lock_vtxos(&self, _round_state: &RoundState) -> anyhow::Result<RoundStateId> {
