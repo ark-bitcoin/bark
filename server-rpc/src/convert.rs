@@ -10,14 +10,17 @@ use bitcoin::{self, Amount, FeeRate, OutPoint, ScriptBuf, Transaction, Txid};
 use ark::{musig, ProtocolEncoding, SignedVtxoRequest, Vtxo, VtxoId, VtxoPolicy, VtxoRequest};
 use ark::arkoor::{ArkoorCosignRequest, ArkoorCosignResponse, ArkoorDestination};
 use ark::arkoor::package::{ArkoorPackageCosignRequest, ArkoorPackageCosignResponse};
+use ark::attestations::{
+	LightningReceiveAttestation, DelegatedRoundParticipationAttestation,
+	OffboardRequestAttestation, RoundAttemptAttestation, VtxoStatusAttestation,
+};
 use ark::board::BoardCosignResponse;
-use ark::challenges::RoundAttemptChallenge;
 use ark::fees::PpmFeeRate;
 use ark::forfeit::HashLockedForfeitBundle;
 use ark::lightning::{PaymentHash, Preimage};
 use ark::mailbox::BlindedMailboxIdentifier;
 use ark::offboard::OffboardRequest;
-use ark::rounds::RoundId;
+use ark::rounds::{Challenge, RoundId};
 use ark::tree::signed::{LeafVtxoCosignRequest, LeafVtxoCosignResponse, VtxoTreeSpec};
 use ark::vtxo::{Bare, Full, VtxoRef};
 
@@ -114,6 +117,13 @@ impl_try_from_bytes_protocol!(Vtxo<Full>, "full VTXO (with genesis)");
 impl_try_from_bytes_protocol!(VtxoPolicy, "VTXO policy");
 impl_try_from_bytes_protocol!(BlindedMailboxIdentifier, "a blinded VTXO mailbox identifier");
 impl_try_from_bytes_protocol!(HashLockedForfeitBundle, "hArk forfeit bundle");
+impl_try_from_bytes_protocol!(RoundAttemptAttestation, "round attempt attestation");
+impl_try_from_bytes_protocol!(DelegatedRoundParticipationAttestation,
+	"delegated round participation attestation"
+);
+impl_try_from_bytes_protocol!(LightningReceiveAttestation, "lightning receive attestation");
+impl_try_from_bytes_protocol!(VtxoStatusAttestation, "VTXO status attestation");
+impl_try_from_bytes_protocol!(OffboardRequestAttestation, "offboard request attestation");
 
 macro_rules! impl_try_from_bytes_bitcoin {
 	($ty:path, $exp:expr) => {
@@ -379,7 +389,7 @@ impl TryFrom<protos::RoundEvent> for ark::rounds::RoundEvent {
 				ark::rounds::RoundEvent::Attempt(ark::rounds::RoundAttempt {
 					round_seq: m.round_seq.into(),
 					attempt_seq: m.attempt_seq as usize,
-					challenge: RoundAttemptChallenge::new(
+					challenge: Challenge::new(
 						m.round_attempt_challenge.try_into().map_err(|_| "invalid challenge")?
 					),
 				})

@@ -359,7 +359,7 @@ message CheckLightningReceiveResponse {
 message PrepareOffboardRequest {
 	OffboardRequest offboard = 1;
 	repeated bytes input_vtxo_ids = 2;
-	repeated bytes input_vtxo_ownership_proofs = 3;
+	repeated bytes attestation = 3;
 }
 
 message PrepareOffboardResponse {
@@ -431,7 +431,7 @@ message RoundEvent {
 message InputVtxo {
 	// vtxo id of input vtxos
 	bytes vtxo_id = 1;
-	bytes ownership_proof = 2;
+	bytes attestation = 2;
 }
 
 message SignedVtxoRequest {

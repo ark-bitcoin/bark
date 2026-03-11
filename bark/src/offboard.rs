@@ -6,9 +6,9 @@ use bitcoin::hex::DisplayHex;
 use bitcoin::secp256k1::Keypair;
 use log::info;
 
-use ark::{musig, Vtxo, VtxoPolicy};
+use ark::{musig, ProtocolEncoding, Vtxo, VtxoPolicy};
 use ark::arkoor::ArkoorDestination;
-use ark::challenges::OffboardRequestChallenge;
+use ark::attestations::OffboardRequestAttestation;
 use ark::fees::{validate_and_subtract_fee_min_dust, VtxoFeeInfo};
 use ark::offboard::{OffboardForfeitContext, OffboardRequest};
 use ark::vtxo::{Full, VtxoRef};
@@ -35,14 +35,14 @@ impl Wallet {
 		// Register VTXOs with server before offboarding
 		self.register_vtxos_with_server(&vtxos).await?;
 
-		let challenge = OffboardRequestChallenge::new(req, vtxos.iter().map(|v| v.as_ref().id()));
+		let input_ids = vtxos.iter().map(|v| v.as_ref().id()).collect::<Vec<_>>();
 		let prep_resp = srv.client.prepare_offboard(protos::PrepareOffboardRequest {
 			offboard: Some(req.into()),
-			input_vtxo_ids: vtxos.iter()
-				.map(|v| v.as_ref().id().to_bytes().to_vec())
+			input_vtxo_ids: input_ids.iter()
+				.map(|id| id.to_bytes().to_vec())
 				.collect(),
-			input_vtxo_ownership_proofs: vtxo_keys.iter()
-				.map(|k| challenge.sign_with(k).serialize().to_vec())
+			attestation: vtxo_keys.iter()
+				.map(|k| OffboardRequestAttestation::new(req, &input_ids, k).serialize())
 				.collect(),
 		}).await.context("prepare offboard request failed")?.into_inner();
 		let unsigned_offboard_tx = bitcoin::consensus::deserialize::<Transaction>(

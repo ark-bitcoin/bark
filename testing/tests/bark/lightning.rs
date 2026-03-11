@@ -1096,7 +1096,7 @@ async fn server_rejects_claim_receive_for_bad_vtxo_proof() {
 			let bad_anti_dos = match req.lightning_receive_anti_dos.unwrap() {
 				LightningReceiveAntiDos::Token(_) => panic!("unexpected token"),
 				LightningReceiveAntiDos::InputVtxo(mut input) => {
-					input.ownership_proof = vec![0; 64];
+					input.attestation = vec![0; 64];
 					LightningReceiveAntiDos::InputVtxo(input)
 				},
 			};
@@ -1142,7 +1142,7 @@ async fn server_rejects_claim_receive_for_bad_vtxo_proof() {
 	}
 
 	let err = err.expect("should fail").to_alt_string();
-	assert!(err.contains("vtxo ownership proof invalid"), "{err}");
+	assert!(err.contains("vtxo attestation invalid"), "{err}");
 
 	assert_eq!(bark.spendable_balance().await, btc(2));
 }

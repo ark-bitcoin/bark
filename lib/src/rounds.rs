@@ -1,4 +1,4 @@
-pub use crate::challenges::RoundAttemptChallenge;
+pub use crate::attestations::{Challenge, RoundAttemptAttestation};
 
 use std::fmt;
 use std::str::FromStr;
@@ -145,7 +145,7 @@ impl<'de> serde::Deserialize<'de> for RoundId {
 pub struct RoundAttempt {
 	pub round_seq: RoundSeq,
 	pub attempt_seq: usize,
-	pub challenge: RoundAttemptChallenge,
+	pub challenge: Challenge,
 }
 
 #[derive(Debug, Clone)]

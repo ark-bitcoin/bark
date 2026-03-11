@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use anyhow::Context;
 use bitcoin::Amount;
 use bitcoin::hex::DisplayHex;
-use bitcoin::secp256k1::{schnorr, PublicKey};
+use bitcoin::secp256k1::PublicKey;
 use tracing::{error, info, trace};
 use uuid::Uuid;
 
@@ -16,7 +16,7 @@ use ark::{Vtxo, VtxoId, VtxoPolicy, VtxoRequest, ServerVtxo};
 use ark::arkoor::ArkoorDestination;
 use ark::vtxo::Full;
 use ark::arkoor::package::{ArkoorPackageCosignRequest, ArkoorPackageCosignResponse};
-use ark::challenges::LightningReceiveChallenge;
+use ark::attestations::LightningReceiveAttestation;
 use ark::fees::{validate_and_subtract_fee, VtxoFeeInfo};
 use ark::integration::TokenStatus;
 use ark::lightning::{Bolt12Invoice, Invoice, Offer, PaymentHash, PaymentStatus, Preimage};
@@ -561,10 +561,10 @@ impl Server {
 		if let Some(anti_dos) = anti_dos {
 			// Always verify anti-DoS proof or token if provided
 			match anti_dos {
-				LightningReceiveAntiDos::InputVtxo(InputVtxo { vtxo_id, ownership_proof }) => {
-					let challenge = LightningReceiveChallenge::new(payment_hash);
+				LightningReceiveAntiDos::InputVtxo(InputVtxo { vtxo_id, attestation }) => {
 					let vtxo_id = VtxoId::from_bytes(vtxo_id)?;
-					let ownership_proof = schnorr::Signature::from_bytes(ownership_proof)?;
+					let attestation = LightningReceiveAttestation::from_bytes(attestation)
+						.context("invalid attestation")?;
 
 					let vtxos = self.db.get_user_vtxos_by_id(&[vtxo_id]).await?;
 					let vtxo = vtxos.first().badarg("vtxo for proof not found")?;
@@ -572,7 +572,7 @@ impl Server {
 						return badarg!("vtxo for proof is not spendable");
 					}
 
-					challenge.verify_input_vtxo_sig(&vtxo.vtxo, &ownership_proof).context("vtxo ownership proof invalid")?;
+					attestation.verify(payment_hash, &vtxo.vtxo).context("vtxo attestation invalid")?;
 				},
 				LightningReceiveAntiDos::Token(token_string) => {
 					let api_key = self.db.get_integration_api_key_by_api_key(Uuid::parse_str(CAPTAIND_API_KEY)
