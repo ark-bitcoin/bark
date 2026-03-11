@@ -122,12 +122,12 @@ RUN cd /tmp/ && \
 	export PATH=$PATH:/usr/local/osxcross/bin && \
 	ls -alh /usr/local/osxcross/bin
 
-#RUN echo "Installing sccache"
-#RUN cargo install --locked sccache
+RUN echo "Installing sccache"
+RUN cargo install --locked sccache
+ENV SCCACHE_MEMCACHED=tcp://host.containers.internal:11211
+ENV SCCACHE_DIRECT=true
 RUN echo "Installing just"
 RUN cargo install --locked just
-#RUN mkdir -p /home/nixuser/.cargo && \
-#	echo "[build]\nrustc-wrapper = \"sccache\"\n[target.x86_64-pc-windows-gnu]\nlinker = \"x86_64-w64-mingw32-gcc\"\n[target.i686-pc-windows-gnu]\nlinker = \"i686-w64-mingw32-gcc\"\n[target.x86_64-apple-darwin]\nlinker = \"/usr/local/osxcross/bin/x86_64-apple-darwin${MACOS_DARWIN_VERSION}-clang\"\nar = \"/usr/local/osxcross/bin/x86_64-apple-darwin${MACOS_DARWIN_VERSION}-ar\"\n[target.aarch64-apple-darwin]\nlinker = \"/usr/local/osxcross/bin/aarch64-apple-darwin${MACOS_DARWIN_VERSION}-clang\"\nar = \"/usr/local/osxcross/bin/aarch64-apple-darwin${MACOS_DARWIN_VERSION}-ar\"\n" > /home/nixuser/.cargo/config.toml
 RUN mkdir -p /home/nixuser/.cargo && \
 	echo "[target.x86_64-pc-windows-gnu]\nlinker = \"x86_64-w64-mingw32-gcc\"\n[target.i686-pc-windows-gnu]\nlinker = \"i686-w64-mingw32-gcc\"\n[target.x86_64-apple-darwin]\nlinker = \"/usr/local/osxcross/bin/x86_64-apple-darwin${MACOS_DARWIN_VERSION}-clang\"\nar = \"/usr/local/osxcross/bin/x86_64-apple-darwin${MACOS_DARWIN_VERSION}-ar\"\n[target.aarch64-apple-darwin]\nlinker = \"/usr/local/osxcross/bin/aarch64-apple-darwin${MACOS_DARWIN_VERSION}-clang\"\nar = \"/usr/local/osxcross/bin/aarch64-apple-darwin${MACOS_DARWIN_VERSION}-ar\"\n" > /home/nixuser/.cargo/config.toml
 RUN cat /home/nixuser/.cargo/config.toml
@@ -135,6 +135,11 @@ RUN cat /home/nixuser/.cargo/config.toml
 RUN sudo mkdir -p /etc/containers && \
 	echo '[storage]'      | sudo tee    /etc/containers/storage.conf && \
 	echo 'driver = "vfs"' | sudo tee -a /etc/containers/storage.conf
+
+RUN mkdir -p /home/nixuser/.config/containers
+COPY registry-auth.json /home/nixuser/.config/containers/auth.json
+RUN buildah login --authfile /home/nixuser/.config/containers/auth.json registry.2nd.dev
+RUN buildah login --authfile /home/nixuser/.config/containers/auth.json docker.io
 
 RUN echo "clone bark" && \
 	git clone -b master https://gitlab.com/ark-bitcoin/bark.git
@@ -171,6 +176,3 @@ RUN echo "build bark" && \
 		cargo run --example dump-server-postgres-schema" && \
 	nix develop .#msrv-lib --command bash -c "cd testing/msrv-lib && cargo build" && \
 	nix develop .#default  --command bash -c "cd lib/ && cargo build --lib --release --target \"wasm32-unknown-unknown\" --features wasm-js"
-
-RUN mkdir -p ~/.config/containers
-COPY registry-auth.json ~/.config/containers/auth.json

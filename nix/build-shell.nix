@@ -12,7 +12,8 @@ let
 			pkgs.sqlite
 			postgresql.lib
 		];
-
+		SCCACHE_MEMCACHED="tcp://host.containers.internal:11211";
+		SCCACHE_DIRECT=true;
 		RUST_SRC_PATH = "${rustToolchain.rust-src}/lib/rustlib/src/rust/library";
 		RUSTDOCS_STDLIB = "${rustToolchain.rust-docs}/share/doc/rust/html/std/index.html";
 	};
@@ -47,6 +48,9 @@ in {
 
 			# to access just targets
 			pkgs.just
+
+			# compiler cache
+			pkgs.sccache
 		] ++ lib.optionals (!isDarwin) [ # honggfuzz deps (Linux only)
 			pkgs.binutils-unwrapped
 			pkgs.libunwind
