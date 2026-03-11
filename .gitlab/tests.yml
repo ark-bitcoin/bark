@@ -7,7 +7,6 @@
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
     - if: $CI_PIPELINE_SOURCE == "web"
     - if: $CI_COMMIT_BRANCH == "master" && $CI_PROJECT_URL == "https://gitlab.com/ark-bitcoin/bark"
-    - if: $CI_CODECOV_PIPELINE == "true"
 
 .test-rules-no-tags:
   rules:
@@ -17,19 +16,10 @@
     - if: $CI_PIPELINE_SOURCE == "web"
     - if: $CI_COMMIT_BRANCH == "master" && $CI_PROJECT_URL == "https://gitlab.com/ark-bitcoin/bark"
 
-.test-and-codecov-rules-no-tags:
-  rules:
-    - if: $CI_COMMIT_TAG
-      when: never
-    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
-    - if: $CI_PIPELINE_SOURCE == "web"
-    - if: $CI_COMMIT_BRANCH == "master" && $CI_PROJECT_URL == "https://gitlab.com/ark-bitcoin/bark"
-    - if: $CI_CODECOV_PIPELINE == "true"
-
 check-commits:
   interruptible: true
   stage: prechecks
-  extends: .test-and-codecov-rules-no-tags
+  extends: .test-rules-no-tags
   needs:
     - prechecks
   script:
@@ -68,7 +58,7 @@ build:
 build-test-archives:
   interruptible: true
   stage: build
-  extends: .test-and-codecov-rules-no-tags
+  extends: .test-rules-no-tags
   needs:
     - prechecks
   script:
@@ -84,7 +74,7 @@ build-test-archives:
 compare-static-files:
   interruptible: true
   stage: test
-  extends: .test-and-codecov-rules-no-tags
+  extends: .test-rules-no-tags
   needs:
     - build
   variables:
@@ -100,7 +90,7 @@ compare-static-files:
 test-unit:
   interruptible: true
   stage: test
-  extends: .test-and-codecov-rules-no-tags
+  extends: .test-rules-no-tags
   needs:
     - build-test-archives
   script:
@@ -110,7 +100,7 @@ test-unit:
 use-bark-as-dependency:
   interruptible: true
   stage: test
-  extends: .test-and-codecov-rules-no-tags
+  extends: .test-rules-no-tags
   needs:
     - prechecks
   script:
@@ -126,7 +116,7 @@ use-bark-as-dependency:
 bark-as-libs:
   interruptible: true
   stage: test
-  extends: .test-and-codecov-rules-no-tags
+  extends: .test-rules-no-tags
   needs:
     - prechecks
   script:
@@ -140,7 +130,7 @@ bark-as-libs:
 lib-wasm:
   interruptible: true
   stage: test
-  extends: .test-and-codecov-rules-no-tags
+  extends: .test-rules-no-tags
   needs:
     - prechecks
   script:
@@ -153,7 +143,7 @@ lib-wasm:
 lib-msrv:
   interruptible: true
   stage: test
-  extends: .test-and-codecov-rules-no-tags
+  extends: .test-rules-no-tags
   needs:
     - prechecks
   script:
@@ -166,7 +156,7 @@ lib-msrv:
 check-release:
   interruptible: true
   stage: test
-  extends: .test-and-codecov-rules-no-tags
+  extends: .test-rules-no-tags
   needs:
     - prechecks
   script:

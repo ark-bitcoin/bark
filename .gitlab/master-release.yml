@@ -4,6 +4,12 @@
   rules:
     - if: $CI_COMMIT_BRANCH == "master" && $CI_PROJECT_URL == "https://gitlab.com/ark-bitcoin/bark"
 
+.master-and-mr-release-rules:
+  rules:
+    - if: $CI_COMMIT_BRANCH == "master" && $CI_PROJECT_URL == "https://gitlab.com/ark-bitcoin/bark"
+    - if: $CI_MERGE_REQUEST_RELEASE_PIPELINE == "true"
+
+
 push-github-mirror:
   allow_failure: true
   stage: mirror
@@ -45,9 +51,9 @@ generate-rustdocs:
     - bash contrib/generate-index.sh /host/data/rustdocs/doc
     - echo "rustdocs -> https://rustdocs.2nd.dev/master/"
 
-parse-versions-master:
+parse-server-githash:
   stage: build
-  extends: .master-release-rules
+  extends: .master-and-mr-release-rules
   script:
     - git rev-parse HEAD > VERSION
     - cat VERSION
@@ -56,17 +62,15 @@ parse-versions-master:
       - VERSION
     expire_in: 1 day
 
-build-server-master:
+build-server-githash:
   stage: build
-  extends: .master-release-rules
+  extends: .master-and-mr-release-rules
   needs:
-    - parse-versions-master
-  variables:
-    SDKROOT: /usr/local/osxcross/SDK/MacOSX15.4.sdk
+    - parse-server-githash
   script:
     - cat VERSION
     - just release-server
-    - cp ./target/x86_64-unknown-linux-gnu/release/captaind captaind-linux-x86_64
+    - cp ./target/x86_64-unknown-linux-gnu/release/captaind  captaind-linux-x86_64
     - cp ./target/x86_64-unknown-linux-gnu/release/watchmand watchmand-linux-x86_64
   artifacts:
     paths:
@@ -74,20 +78,23 @@ build-server-master:
       - watchmand-linux-x86_64
     expire_in: 1 day
 
-build-and-push-captaind-to-registry-master:
+build-and-push-server-to-registry-githash:
   allow_failure: true
   stage: release
   tags:
     - privileged
-  extends: .master-release-rules
+  extends: .master-and-mr-release-rules
   needs:
-    - parse-versions-master
-    - build-server-master
+    - parse-server-githash
+    - build-server-githash
   script:
     - cat VERSION
     - buildah login -u registry -p "$REGISTRY_LOGIN_TOKEN" registry.2nd.dev
     # Build the containers
-    - buildah build -f ./.gitlab/images/releases/captaind/Dockerfile --tag "registry.2nd.dev/captaind:$(cat VERSION)" .
+    - buildah build -f ./.gitlab/images/releases/captaind/Dockerfile  --tag "registry.2nd.dev/captaind:$(cat VERSION)" .
+    - buildah build -f ./.gitlab/images/releases/watchmand/Dockerfile --tag "registry.2nd.dev/watchmand:$(cat VERSION)" .
     # Push containers to registry.2nd.dev
     - buildah push "registry.2nd.dev/captaind:$(cat VERSION)"
+    - buildah push "registry.2nd.dev/watchmand:$(cat VERSION)"
     - curl "http://192.168.2.10:7777/zulip?topic=deployment&type=bell&message=captaind%20$(cat VERSION)%20is%20ready%20for%20deployment."
+    - curl "http://192.168.2.10:7777/zulip?topic=deployment&type=bell&message=watchmand%20$(cat VERSION)%20is%20ready%20for%20deployment."
