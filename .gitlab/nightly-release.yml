@@ -68,7 +68,7 @@ build-and-push-to-docker-nightly:
     - assign-version
     - build-nightly
   before_script:
-    - podman run --privileged --rm tonistiigi/binfmt --install all
+    - podman run --privileged --rm docker.io/tonistiigi/binfmt --install all
   script:
     - cat VERSION
     - chmod a+x ./bark*
