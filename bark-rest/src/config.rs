@@ -12,7 +12,7 @@ impl Default for Config {
 	fn default() -> Self {
 		Self {
 			port: 3000,
-			host: "0.0.0.0".parse().expect("Invalid ip address"),
+			host: "127.0.0.1".parse().expect("Invalid ip address"),
 		}
 	}
 }
