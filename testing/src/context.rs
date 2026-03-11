@@ -334,6 +334,7 @@ impl TestContext {
 			invoice_check_base_delay: Duration::from_secs(2),
 			max_invoice_check_delay: Duration::from_secs(10),
 			invoice_poll_interval: Duration::from_secs(10),
+			htlc_settlement_poll_interval: Duration::from_secs(5),
 			track_all_base_delay: Duration::from_secs(1),
 			max_track_all_delay: Duration::from_secs(60),
 			htlc_expiry_delta: 6,

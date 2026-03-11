@@ -37,12 +37,15 @@ use bitcoin::secp256k1::PublicKey;
 use bitcoin_ext::{AmountExt, BlockDelta, BlockHeight};
 use cln_rpc::plugins::hold::{self as hold_plugin, hold_client::HoldClient};
 use lightning_invoice::Bolt11Invoice;
+use futures::Stream;
 use tokio::sync::{broadcast, Notify, mpsc, oneshot};
+use tokio_stream::StreamExt;
 use tonic::transport::{Channel, Uri};
 use tracing::{debug, error, info, trace, warn};
 use ark::lightning::{Bolt12Invoice, Bolt12InvoiceExt, Invoice, Offer, PaymentHash, PaymentStatus, Preimage};
 use cln_rpc::node_client::NodeClient;
 
+use crate::Server;
 use crate::error::ContextExt;
 use crate::sync::SyncManager;
 use crate::system::RuntimeManager;
@@ -305,6 +308,107 @@ impl ClnManager {
 	pub fn disable(&self, uri: Uri) {
 		self.send_ctrl(Ctrl::DisableCln(uri));
 	}
+
+	/// Spawn a background task that settles CLN hold invoices when new
+	/// preimages appear in the settler's WAL.
+	///
+	/// Design notes:
+	///
+	/// - Idempotent: skips subscriptions not in HtlcsReady state.
+	///   Multiple paths write to the settler (cooperative claim_lightning_receive,
+	///   on-chain preimage extraction via the frontier). The settler is the
+	///   single source of truth for preimages, and this subscriber is the
+	///   sole path that settles CLN hold invoices.
+	///
+	/// - Retry on failure: each batch processes all entries, but the cursor
+	///   only advances past contiguously successful entries. Failed entries
+	///   (and anything after them) are re-fetched on the next iteration.
+	///   Entries after a failure that succeed are harmlessly re-processed (the
+	///   HtlcsReady check makes them no-ops). This ensures a single stuck
+	///   settlement doesn't block others, while still retrying failures.
+	///
+	/// - Cross-process: the watch channel only carries in-process notifications.
+	///   When captaind and watchmand run as separate processes, a preimage
+	///   written by watchmand won't fire captaind's watch channel. A 1-minute
+	///   DB poll acts as a fallback so those preimages are still picked up.
+	///
+	/// - Backoff: sleeps 5s after any error to avoid busy-looping when CLN or
+	///   the database is persistently unavailable. The preimage is safe in the
+	///   WAL regardless.
+	///
+	/// - Resume cursor: the caller provides the starting checkpoint via
+	///   the `since` parameter. The recommended value comes from
+	///   [database::Db::get_htlc_settlement_resume_checkpoint], which finds the
+	///   earliest WAL entry whose subscription is still in HtlcsReady
+	///   (i.e. needs CLN settlement), or MAX(id) when everything is
+	///   already settled. This avoids a full table scan on restart
+	///   while still retrying any entries written to the WAL but not
+	///   yet settled through CLN.
+	pub fn spawn_hold_settler(
+		&self,
+		srv: Arc<Server>,
+		settlement_stream: impl Stream<Item = super::settler::Settlement> + Send + 'static,
+	) {
+		tokio::spawn(run_hold_settler(srv, settlement_stream));
+	}
+}
+
+async fn run_hold_settler(
+	srv: Arc<Server>,
+	settlement_stream: impl Stream<Item = super::settler::Settlement>,
+) {
+	let _worker = srv.rtmgr.spawn_critical("HoldSettler");
+	tokio::pin!(settlement_stream);
+
+	loop {
+		let item = tokio::select! {
+			item = settlement_stream.next() => item,
+			_ = srv.rtmgr.shutdown_signal() => return,
+		};
+
+		let Some(settlement) = item else { break };
+		let (payment_hash, preimage) = (settlement.hash, settlement.preimage);
+
+		while !try_settle_hold_invoice(&srv, payment_hash, preimage).await {
+			tokio::select! {
+				_ = tokio::time::sleep(Duration::from_secs(5)) => {},
+				_ = srv.rtmgr.shutdown_signal() => return,
+			}
+		}
+	}
+	error!("Hold settler exited: hold invoices will no longer be settled automatically");
+}
+
+/// Try to settle a single hold invoice. Returns true if the entry was
+/// handled (or can be skipped), false if it should be retried.
+async fn try_settle_hold_invoice(
+	srv: &Server,
+	payment_hash: PaymentHash,
+	preimage: Preimage,
+) -> bool {
+	let sub = match srv.db.get_htlc_subscription_by_payment_hash(payment_hash).await {
+		Ok(Some(sub)) => sub,
+		Ok(None) => return true, // no subscription, nothing to settle
+		Err(e) => {
+			warn!("Failed to look up HTLC subscription for {}, will retry: {:#}", payment_hash, e);
+			return false;
+		}
+	};
+
+	if !matches!(sub.status, LightningHtlcSubscriptionStatus::HtlcsReady) {
+		// Safe to skip: a preimage in the WAL implies HTLCs were already
+		// locked (HtlcsReady was reached before the preimage was learned),
+		// so the only other states here are Settled or the cooperative
+		// path already handled it.
+		return true;
+	}
+
+	if let Err(e) = srv.cln.settle_invoice(sub.id, preimage).await {
+		warn!("Hold invoice settlement failed for {}, will retry: {:#}", payment_hash, e);
+		return false;
+	}
+
+	true
 }
 
 #[derive(Debug)]

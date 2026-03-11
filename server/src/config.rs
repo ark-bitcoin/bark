@@ -347,6 +347,9 @@ pub struct Config {
 	pub max_invoice_check_delay: Duration,
 	#[serde(with = "utils::serde::duration")]
 	pub invoice_poll_interval: Duration,
+	/// The interval at which the HtlcSettler polls for cross-process settlements.
+	#[serde(with = "utils::serde::duration")]
+	pub htlc_settlement_poll_interval: Duration,
 	/// Base delay for TrackAll stream reconnection backoff (e.g., 1 second)
 	#[serde(with = "utils::serde::duration")]
 	pub track_all_base_delay: Duration,
@@ -521,6 +524,10 @@ pub mod watchmand {
 		// The interval used to rebroadcast transactions
 		#[serde(with = "utils::serde::duration")]
 		pub transaction_rebroadcast_interval: Duration,
+
+		/// The interval at which the HtlcSettler polls for cross-process settlements.
+		#[serde(with = "utils::serde::duration")]
+		pub htlc_settlement_poll_interval: Duration,
 
 		/// Minimum number of confirmations for a UTXO to be considered trusted.
 		pub min_trusted_confs: u32,

@@ -17,6 +17,8 @@ sync_manager_block_poll_interval = "100ms"
 
 # The interval to rebroadcast transactions
 transaction_rebroadcast_interval = "1m"
+# Interval at which the settler polls for cross-process HTLC settlements
+htlc_settlement_poll_interval = "60s"
 
 # Minimum number of confirmations for a UTXO to be considered trusted
 min_trusted_confs = 1

@@ -73,6 +73,7 @@ use crate::error::ContextExt;
 use crate::watchman::VtxoExitFrontier;
 use crate::flux::VtxosInFlux;
 use crate::ln::cln::ClnManager;
+use crate::ln::settler::HtlcSettler;
 use crate::mailbox_manager::MailboxManager;
 use crate::fee_estimator::FeeEstimator;
 use crate::round::RoundInput;
@@ -193,6 +194,7 @@ pub struct Server {
 	/// (Plus a small buffer to optimize allocations.)
 	vtxos_in_flux: VtxosInFlux,
 	cln: ClnManager,
+	htlc_settler: Arc<HtlcSettler>,
 	vtxopool: VtxoPool,
 	pending_offboards: parking_lot::Mutex<TimedEntryMap<Txid, Option<offboards::PendingOffboard>>>,
 	fee_estimator: Arc<FeeEstimator>,
@@ -372,6 +374,10 @@ impl Server {
 			bitcoind.clone(),
 		);
 
+		let htlc_settler = Arc::new(HtlcSettler::start(
+			db.clone(), rtmgr.clone(), cfg.htlc_settlement_poll_interval,
+		));
+
 		let mut listeners: Vec<Box<dyn ChainEventListener>> = vec![];
 		let watchman_deps = if let Some(watchman_cfg) = cfg.watchman.enabled() {
 			let watchman_wallet = PersistedWallet::load_derive_from_master_xpriv(
@@ -380,7 +386,7 @@ impl Server {
 			).await.context("error loading watchman wallet")?;
 			let watchman_wallet = Arc::new(tokio::sync::Mutex::new(watchman_wallet));
 
-			let frontier = VtxoExitFrontier::init(db.clone()).await?;
+			let frontier = VtxoExitFrontier::init(db.clone(), htlc_settler.clone()).await?;
 			let frontier = Arc::new(tokio::sync::RwLock::new(frontier));
 			listeners.push(Box::new(frontier.clone()));
 
@@ -470,12 +476,26 @@ impl Server {
 			rtmgr,
 			tx_nursery: tx_nursery.clone(),
 			cln,
+			htlc_settler,
 			vtxopool,
 			pending_offboards: parking_lot::Mutex::new(TimedEntryMap::new()),
 			fee_estimator,
 		};
 
 		let srv = Arc::new(srv);
+
+		// Hold invoice settlement subscriber
+		//
+		// Tails the htlc_settlement WAL via the settler's stream and
+		// settles CLN hold invoices when preimages appear.
+		//
+		let resume_cp = srv.db.get_htlc_settlement_resume_checkpoint().await
+			.unwrap_or_else(|e| {
+				warn!("Failed to query HTLC settlement resume checkpoint, starting from 0: {:#}", e);
+				0
+			});
+		let settlement_stream = srv.htlc_settler.subscribe(resume_cp);
+		srv.cln.spawn_hold_settler(srv.clone(), settlement_stream);
 
 		srv.clone().start_offboard_retry_task().await;
 
