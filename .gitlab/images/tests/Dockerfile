@@ -31,7 +31,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 	libpq-dev \
 	sudo \
 	podman \
+	buildah \
 	gnupg2 \
+	openssh-client \
 	&& rm -rf /var/lib/apt/lists/*
 
 COPY wakemeops.gpg /etc/apt/trusted.gpg.d/
@@ -51,6 +53,8 @@ ENV RUST_BACKTRACE=1 \
 	MACOS_SDK_VERSION=15.4 \
 	MACOS_DARWIN_VERSION=24.4 \
 	ZIG_VERSION=0.13.0
+RUN echo '* soft nproc 65535' >> /etc/security/limits.conf && \
+	echo '* hard nproc 65535' >> /etc/security/limits.conf
 
 RUN mkdir -p /nix && \
 	groupadd -r nixbld -g 30000 && \
@@ -65,7 +69,7 @@ WORKDIR /home/nixuser
 
 RUN sudo chown -R nixuser:nixbld /nix
 
-# When changing SWAGGER_UI_DOWNLOAD_URL one should also change the env vars for the woodpecker server.
+# When changing SWAGGER_UI_DOWNLOAD_URL one should also change the env vars in CI.
 RUN mkdir -p /home/nixuser/assets/swagger-ui && \
 	wget -O /home/nixuser/assets/swagger-ui/v5.30.2.zip https://github.com/swagger-api/swagger-ui/archive/refs/tags/v5.30.2.zip && \
 	export SWAGGER_UI_DOWNLOAD_URL=file:///home/nixuser/assets/swagger-ui/v5.30.2.zip
@@ -128,6 +132,10 @@ RUN mkdir -p /home/nixuser/.cargo && \
 	echo "[target.x86_64-pc-windows-gnu]\nlinker = \"x86_64-w64-mingw32-gcc\"\n[target.i686-pc-windows-gnu]\nlinker = \"i686-w64-mingw32-gcc\"\n[target.x86_64-apple-darwin]\nlinker = \"/usr/local/osxcross/bin/x86_64-apple-darwin${MACOS_DARWIN_VERSION}-clang\"\nar = \"/usr/local/osxcross/bin/x86_64-apple-darwin${MACOS_DARWIN_VERSION}-ar\"\n[target.aarch64-apple-darwin]\nlinker = \"/usr/local/osxcross/bin/aarch64-apple-darwin${MACOS_DARWIN_VERSION}-clang\"\nar = \"/usr/local/osxcross/bin/aarch64-apple-darwin${MACOS_DARWIN_VERSION}-ar\"\n" > /home/nixuser/.cargo/config.toml
 RUN cat /home/nixuser/.cargo/config.toml
 
+RUN sudo mkdir -p /etc/containers && \
+	echo '[storage]'      | sudo tee    /etc/containers/storage.conf && \
+	echo 'driver = "vfs"' | sudo tee -a /etc/containers/storage.conf
+
 RUN echo "clone bark" && \
 	git clone -b master https://gitlab.com/ark-bitcoin/bark.git
 
@@ -161,4 +169,8 @@ RUN echo "build bark" && \
 		cargo install --locked --path server && \
 		cargo run --example dump-sqlite-schema && \
 		cargo run --example dump-server-postgres-schema" && \
-    nix develop .#msrv-lib --command bash -c "cd testing/msrv-lib && cargo build"
+	nix develop .#msrv-lib --command bash -c "cd testing/msrv-lib && cargo build" && \
+	nix develop .#default  --command bash -c "cd lib/ && cargo build --lib --release --target \"wasm32-unknown-unknown\" --features wasm-js"
+
+RUN mkdir -p ~/.config/containers
+COPY registry-auth.json ~/.config/containers/auth.json

@@ -73,7 +73,6 @@ build-and-push-to-docker-nightly:
     - cat VERSION
     - chmod a+x ./bark*
     - chmod a+x ./.gitlab/images/releases/bark/run.sh
-    - buildah login -u secondark -p "$DOCKER_LOGIN_TOKEN" docker.io
     # Build the containers
     - buildah build -f ./.gitlab/images/releases/bark/linux_amd64.Dockerfile --tag "docker.io/secondark/bark:linux-amd64-$(cat VERSION)" .
     - buildah build -f ./.gitlab/images/releases/bark/linux_arm64.Dockerfile --tag "docker.io/secondark/bark:linux-arm64-$(cat VERSION)" .
