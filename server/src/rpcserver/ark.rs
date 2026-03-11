@@ -12,6 +12,7 @@ use bitcoin::hashes::Hash;
 use bitcoin::secp256k1::{rand, schnorr, PublicKey};
 use tokio::sync::oneshot;
 use tokio_stream::{Stream, StreamExt};
+use tower_http::cors::CorsLayer;
 use tonic_tracing_opentelemetry::middleware::server::OtelGrpcLayer;
 use tracing::info;
 
@@ -679,6 +680,9 @@ pub async fn run_rpc_server(srv: Arc<Server>) -> anyhow::Result<()> {
 		.add_service(health_server);
 
 	tonic::transport::Server::builder()
+		.accept_http1(true)
+		.layer(CorsLayer::permissive())
+		.layer(tonic_web::GrpcWebLayer::new())
 		.layer(OtelGrpcLayer::default())
 		.layer(middleware::TelemetryMetricsLayer)
 		.add_routes(routes)
