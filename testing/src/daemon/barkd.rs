@@ -1,4 +1,5 @@
 
+use std::collections::HashMap;
 use std::env;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -15,8 +16,9 @@ use bark_rest::auth::AuthToken;
 use bark_json::primitives::{TransactionInfo, UtxoInfo, WalletVtxoInfo};
 use bark_json::web::EncodedVtxoResponse;
 use bark_json::web::{BarkNetwork, BitcoindAuth, ChainSourceConfig, ConnectedResponse, CreateWalletRequest, TipResponse};
+use bark_json::web::{FeeEstimateResponse, OnchainFeeRatesResponse};
 use bark_rest_client::apis::configuration::Configuration;
-use bark_rest_client::apis::{bitcoin_api, boards_api, default_api, onchain_api, wallet_api};
+use bark_rest_client::apis::{bitcoin_api, boards_api, default_api, fees_api, onchain_api, wallet_api};
 
 use crate::{Bitcoind, Daemon, DaemonHelper};
 use crate::constants::env::{BARKD_EXEC, BARK_TOKIO_WORKER_THREADS};
@@ -41,6 +43,8 @@ pub struct BarkdHelper {
 	_bitcoind: Option<Bitcoind>,
 	port: u16,
 	auth_token: AuthToken,
+	/// Extra environment variables passed to the barkd process.
+	envs: HashMap<String, String>,
 }
 
 impl Barkd {
@@ -68,8 +72,14 @@ impl Barkd {
 			_bitcoind: bitcoind,
 			port: 0,
 			auth_token: AuthToken::new(secret),
+			envs: HashMap::new(),
 		};
 		Daemon::wrap(helper)
+	}
+
+	/// Set an environment variable that will be passed to the barkd process.
+	pub fn set_env(&mut self, key: impl Into<String>, value: impl Into<String>) {
+		self.inner.envs.insert(key.into(), value.into());
 	}
 
 	pub fn base_url(&self) -> String {
@@ -179,11 +189,24 @@ impl Barkd {
 			.expect("failed to list barkd onchain transactions")
 	}
 
-	/// Sync the on-chain wallet, then return the balance.
-	pub async fn onchain_balance(&self) -> Amount {
+	/// Sync the wallet with the Ark server and chain state.
+	pub async fn sync(&self) {
+		let config = self.client_config();
+		wallet_api::sync(&config).await
+			.expect("failed to sync barkd wallet");
+	}
+
+	/// Sync the on-chain wallet with the chain source.
+	pub async fn onchain_sync(&self) {
 		let config = self.client_config();
 		onchain_api::onchain_sync(&config).await
 			.expect("failed to sync barkd onchain wallet");
+	}
+
+	/// Sync the on-chain wallet, then return the balance.
+	pub async fn onchain_balance(&self) -> Amount {
+		self.onchain_sync().await;
+		let config = self.client_config();
 		let balance: OnchainBalance = onchain_api::onchain_balance(&config).await
 			.expect("failed to get barkd onchain balance");
 		balance.total
@@ -191,18 +214,10 @@ impl Barkd {
 
 	/// Sync the wallet then return the bark (off-chain) balance.
 	pub async fn bark_balance(&self) -> Balance {
+		self.sync().await;
 		let config = self.client_config();
-		wallet_api::sync(&config).await
-			.expect("failed to sync barkd wallet");
 		wallet_api::balance(&config).await
 			.expect("failed to get barkd bark balance")
-	}
-
-	/// Sync the wallet state.
-	pub async fn sync(&self) {
-		let config = self.client_config();
-		wallet_api::sync(&config).await
-			.expect("failed to sync barkd wallet");
 	}
 
 	/// List VTXOs in the wallet.
@@ -237,11 +252,42 @@ impl Barkd {
 	/// Sync the on-chain wallet then board all funds into Ark.
 	pub async fn board_all(&self) -> PendingBoardInfo {
 		info!("{}: Boarding all on-chain funds via REST", self.name);
+		self.onchain_sync().await;
 		let config = self.client_config();
-		onchain_api::onchain_sync(&config).await
-			.expect("failed to sync barkd onchain wallet before board_all");
 		boards_api::board_all(&config).await
 			.expect("barkd board_all failed")
+	}
+
+	/// Sync the on-chain wallet then board the specified amount into Ark.
+	pub async fn board_amount(&self, amount: Amount) -> PendingBoardInfo {
+		use bark_rest_client::models::BoardRequest;
+		info!("{}: Boarding {} via REST", self.name, amount);
+		self.onchain_sync().await;
+		let config = self.client_config();
+		boards_api::board_amount(&config, BoardRequest { amount_sat: amount.to_sat() }).await
+			.expect("barkd board_amount failed")
+	}
+
+	/// Return all pending boards (funding transactions not yet confirmed).
+	pub async fn get_pending_boards(&self) -> Vec<PendingBoardInfo> {
+		self.sync().await;
+		let config = self.client_config();
+		boards_api::get_pending_boards(&config).await
+			.expect("failed to get barkd pending boards")
+	}
+
+	/// Estimate the board fee for the given amount.
+	pub async fn board_fee(&self, amount: Amount) -> FeeEstimateResponse {
+		let config = self.client_config();
+		fees_api::board_fee(&config, amount.to_sat() as i64).await
+			.expect("failed to get barkd board fee estimate")
+	}
+
+	/// Get on-chain fee rates.
+	pub async fn onchain_fee_rates(&self) -> OnchainFeeRatesResponse {
+		let config = self.client_config();
+		fees_api::onchain_fee_rates(&config).await
+			.expect("failed to get barkd onchain fee rates")
 	}
 }
 
@@ -267,6 +313,9 @@ impl DaemonHelper for BarkdHelper {
 			"--port", &self.port.to_string(),
 			"--verbose",
 		]);
+		for (k, v) in &self.envs {
+			cmd.env(k, v);
+		}
 		Ok(cmd)
 	}
 
