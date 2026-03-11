@@ -1,5 +1,6 @@
 
 pub mod cln;
+pub mod settler;
 
 
 use std::cmp;

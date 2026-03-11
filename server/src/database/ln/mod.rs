@@ -3,6 +3,8 @@ mod model;
 pub use model::*;
 
 
+use std::str::FromStr;
+
 use anyhow::Context;
 use bitcoin::secp256k1::PublicKey;
 use chrono::{DateTime, Local};
@@ -13,7 +15,7 @@ use ark::lightning::{Invoice, PaymentHash, Preimage};
 use bitcoin_ext::BlockHeight;
 use cln_rpc::listsendpays_request::ListsendpaysIndex;
 
-use crate::database::Db;
+use crate::database::{Checkpoint, Db};
 
 /// Identifier by which CLN nodes are stored in the database.
 pub type ClnNodeId = i64;
@@ -760,5 +762,152 @@ impl Db {
 		} else {
 			Ok(None)
 		}
+	}
+
+	// **********************
+	// * htlc settlement    *
+	// **********************
+
+	/// Record an HTLC settlement (preimage reveal) in the WAL table.
+	///
+	/// Returns the checkpoint assigned to this settlement, or `None` if this
+	/// payment hash was already settled (duplicate preimage).
+	pub async fn store_htlc_settlement(
+		&self,
+		preimage: Preimage,
+	) -> anyhow::Result<Option<Checkpoint>> {
+		let conn = self.get_conn().await?;
+		let payment_hash = preimage.compute_payment_hash();
+
+		// ON CONFLICT DO NOTHING makes this idempotent: if an HTLC tx
+		// gets unconfirmed and re-confirmed in a reorg, the duplicate
+		// insert is safely ignored.
+		let stmt = conn.prepare("
+			INSERT INTO htlc_settlement (payment_hash, preimage, created_at)
+			VALUES ($1, $2, NOW())
+			ON CONFLICT (payment_hash) DO NOTHING
+			RETURNING id;
+		").await?;
+
+		let row = conn.query_opt(
+			&stmt,
+			&[&payment_hash.to_string(), &&preimage.as_ref()[..]],
+		).await.context("failed to store htlc settlement")?;
+
+		match row {
+			Some(row) => Ok(Some(u64::try_from(row.get::<_, i64>("id"))?)),
+			None => Ok(None),
+		}
+	}
+
+	/// Look up whether a payment hash has been settled.
+	///
+	/// Returns the preimage if the settlement exists.
+	pub async fn get_htlc_settlement_by_payment_hash(
+		&self,
+		payment_hash: PaymentHash,
+	) -> anyhow::Result<Option<Preimage>> {
+		let conn = self.get_conn().await?;
+
+		let stmt = conn.prepare("
+			SELECT preimage
+			FROM htlc_settlement
+			WHERE payment_hash = $1;
+		").await?;
+
+		let row = conn.query_opt(&stmt, &[&payment_hash.to_string()]).await
+			.context("failed to query htlc settlement")?;
+
+		if let Some(row) = row {
+			let preimage = Preimage::from_slice(row.get::<_, &[u8]>("preimage"))
+				.context("invalid preimage in htlc_settlement table")?;
+			Ok(Some(preimage))
+		} else {
+			Ok(None)
+		}
+	}
+
+	/// Return a safe cursor to resume hold invoice settlement from.
+	///
+	/// Finds the checkpoint just before the earliest WAL entry whose
+	/// HTLC subscription is still in `htlcs-ready` state (i.e. the
+	/// hold invoice has not been settled yet). If no such entry exists,
+	/// returns `MAX(id)` so only new entries trigger processing.
+	/// Returns 0 for an empty table.
+	pub async fn get_htlc_settlement_resume_checkpoint(
+		&self,
+	) -> anyhow::Result<Checkpoint> {
+		let conn = self.get_conn().await?;
+
+		// Single query: find the earliest unsettled entry, or fall back
+		// to MAX(id) when everything is already settled.
+		let stmt = conn.prepare("
+			SELECT COALESCE(
+				(SELECT hs.id - 1
+				 FROM htlc_settlement hs
+				 JOIN lightning_invoice li ON li.payment_hash = decode(hs.payment_hash, 'hex')
+				 JOIN lightning_htlc_subscription sub
+				   ON sub.lightning_invoice_id = li.id
+				 WHERE sub.status = 'htlcs-ready'::lightning_htlc_subscription_status
+				 ORDER BY hs.id ASC
+				 LIMIT 1),
+				(SELECT COALESCE(MAX(id), 0) FROM htlc_settlement)
+			) AS resume_cp;
+		").await?;
+
+		let row = conn.query_one(&stmt, &[]).await
+			.context("failed to query htlc settlement resume checkpoint")?;
+		let cp = u64::try_from(row.get::<_, i64>("resume_cp"))
+			.context("negative checkpoint")?;
+		Ok(cp)
+	}
+
+	/// Retrieve settlements after the given row id, ordered by id.
+	pub async fn get_htlc_settlements_since(
+		&self,
+		after_id: Checkpoint,
+		limit: usize,
+	) -> anyhow::Result<Vec<crate::ln::settler::Settlement>> {
+		let conn = self.get_conn().await?;
+
+		let stmt = conn.prepare("
+			SELECT id, payment_hash, preimage
+			FROM htlc_settlement
+			WHERE id > $1
+			ORDER BY id ASC
+			LIMIT $2;
+		").await?;
+
+		let rows = conn.query(
+			&stmt,
+			&[&i64::try_from(after_id)?, &i64::try_from(limit)?],
+		).await.context("failed to query htlc settlements since checkpoint")?;
+
+		let mut results = Vec::with_capacity(rows.len());
+		for row in rows {
+			let cp = u64::try_from(row.get::<_, i64>("id"))?;
+			let payment_hash = PaymentHash::from_str(row.get::<_, &str>("payment_hash"))
+				.context("invalid payment_hash in htlc_settlement table")?;
+			let preimage = Preimage::from_slice(row.get::<_, &[u8]>("preimage"))
+				.context("invalid preimage in htlc_settlement table")?;
+			results.push(crate::ln::settler::Settlement { checkpoint: cp, hash: payment_hash, preimage });
+		}
+
+		Ok(results)
+	}
+
+	/// Return the maximum checkpoint (row id) in the htlc_settlement table,
+	/// or 0 if the table is empty.
+	pub async fn get_htlc_settlement_max_checkpoint(
+		&self,
+	) -> anyhow::Result<Checkpoint> {
+		let conn = self.get_conn().await?;
+		let row = conn.query_one(
+			"SELECT COALESCE(MAX(id), 0) AS cp FROM htlc_settlement;",
+			&[],
+		).await.context("failed to query max htlc settlement checkpoint")?;
+		let cp = u64::try_from(row.get::<_, i64>("cp"))
+			.context("negative checkpoint")?;
+		Ok(cp)
 	}
 }
