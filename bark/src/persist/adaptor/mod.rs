@@ -145,9 +145,6 @@ pub struct Query {
 	/// Partition to query (required).
 	pub partition: u8,
 
-	/// Include historical records. Default: `false` (current records only).
-	pub include_history: bool,
-
 	/// Maximum number of records to return.
 	pub limit: Option<usize>,
 
@@ -165,12 +162,6 @@ impl Query {
 			partition,
 			..Default::default()
 		}
-	}
-
-	/// Includes historical records in the results.
-	pub fn include_history(mut self) -> Self {
-		self.include_history = true;
-		self
 	}
 
 	/// Limits the number of results.
@@ -1035,13 +1026,11 @@ mod tests {
 	#[test]
 	fn storage_query_builder() {
 		let query = Query::new(0)
-			.include_history()
 			.limit(10)
 			.start(SortKey::u32_asc(100))
 			.end(SortKey::u32_asc(200));
 
 		assert_eq!(query.partition, 0);
-		assert!(query.include_history);
 		assert_eq!(query.limit, Some(10));
 		assert_eq!(query.start, Some(SortKey::u32_asc(100)));
 		assert_eq!(query.end, Some(SortKey::u32_asc(200)));
@@ -1070,7 +1059,7 @@ pub mod test_suite {
 
 	async fn clear_partitions<S: StorageAdaptor>(storage: &mut S, partitions: &[u8]) -> anyhow::Result<()> {
 		for partition in partitions {
-			let records = storage.query(Query::new(*partition).include_history()).await?;
+			let records = storage.query(Query::new(*partition)).await?;
 			for record in records {
 				storage.delete(record.partition, &record.pk).await?;
 			}
