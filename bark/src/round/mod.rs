@@ -283,6 +283,14 @@ impl RoundState {
 			RoundFlowState::InteractiveOngoing { round_seq, attempt_seq, ref mut state } => {
 				// here we catch the cases where we're in a wrong flow
 
+				if let RoundEvent::Failed(e) = event && e.round_seq == round_seq {
+					warn!("Round {} failed by server", round_seq);
+					self.flow = RoundFlowState::Failed {
+						error: format!("round {} failed by server", round_seq),
+					};
+					return true;
+				}
+
 				if event.round_seq() > round_seq {
 					// new round started, we don't support multiple parallel rounds,
 					// this means we failed

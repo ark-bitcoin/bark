@@ -27,17 +27,17 @@ use crate::round::InteractiveParticipation;
 
 
 impl Db {
-	#[tracing::instrument(skip(self, round_tx, input_vtxos, signed_tree, interactive_participations))]
+	#[tracing::instrument(skip(self, unsigned_funding_tx, input_vtxos, signed_tree, interactive_participations))]
 	pub async fn finish_round(
 		&self,
 		round_seq: RoundSeq,
-		round_tx: &Transaction,
+		unsigned_funding_tx: &Transaction,
 		input_vtxos: impl IntoIterator<Item = VtxoId>,
 		signed_tree: &CachedSignedVtxoTree,
 		interactive_participations: &HashMap<UnlockHash, InteractiveParticipation>,
 	) -> anyhow::Result<()> {
-		let round_txid = round_tx.compute_txid();
-		info!("Storing finished round with round funding txid {}", round_txid);
+		let funding_txid = unsigned_funding_tx.compute_txid();
+		info!("Storing finished round with funding txid {}", funding_txid);
 
 		let mut conn = self.get_conn().await?;
 		let tx = conn.transaction().await?;
@@ -53,8 +53,8 @@ impl Db {
 			&stmt,
 			&[
 				&(round_seq.inner() as i64),
-				&round_txid.to_string(),
-				&serialize(&round_tx),
+				&funding_txid.to_string(),
+				&serialize(&unsigned_funding_tx),
 				&signed_tree.spec.serialize(),
 				&(signed_tree.spec.spec.expiry_height as i32)
 			]
@@ -109,10 +109,11 @@ impl Db {
 
 		// update the hark round participations, both non-interactive and interactive
 		let hark_unlock_hashes = signed_tree.spec.spec.vtxos.iter().map(|v| v.unlock_hash);
-		query::set_round_id_for_participations(&tx, hark_unlock_hashes, round_txid).await?;
+		query::set_round_id_for_participations(&tx, hark_unlock_hashes, funding_txid).await?;
 
 		// Finally insert new vtxos.
-		let funding_tx = VirtualTransaction::new_signed_ref(&round_tx).as_funding();
+		// The funding tx is not yet signed at this point, so we store it as unsigned.
+		let funding_tx = VirtualTransaction::new_unsigned(funding_txid).as_funding();
 		let unsigned_vtxs = signed_tree.unsigned_leaf_txs().iter()
 			.map(Transaction::compute_txid)
 			.map(VirtualTransaction::new_unsigned);
@@ -135,8 +136,8 @@ impl Db {
 			signed_tree.spend_info(),
 		).await?;
 
-		// and the virtual txs
-		query::upsert_virtual_transaction(&tx, round_txid, Some(round_tx), true, None).await?;
+		// and the virtual txs (unsigned at this point, signed tx will be set after signing)
+		query::upsert_virtual_transaction(&tx, funding_txid, None, true, None).await?;
 
 		tx.commit().await?;
 		Ok(())

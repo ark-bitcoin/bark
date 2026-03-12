@@ -357,6 +357,13 @@ impl<'a> From<&'a ark::rounds::RoundEvent> for protos::RoundEvent {
 						signed_round_tx: bitcoin::consensus::serialize(&signed_round_tx),
 					})
 				},
+				ark::rounds::RoundEvent::Failed(ark::rounds::RoundFailed {
+					round_seq,
+				}) => {
+					protos::round_event::Event::Failed(protos::RoundFailed {
+						round_seq: (*round_seq).into(),
+					})
+				},
 			})
 		}
 	}
@@ -399,6 +406,11 @@ impl TryFrom<protos::RoundEvent> for ark::rounds::RoundEvent {
 					}).collect::<Result<_, _>>()?,
 					signed_round_tx: bitcoin::consensus::deserialize(&m.signed_round_tx)
 						.map_err(|_| "invalid signed_round_tx")?,
+				})
+			},
+			protos::round_event::Event::Failed(m) => {
+				ark::rounds::RoundEvent::Failed(ark::rounds::RoundFailed {
+					round_seq: m.round_seq.into(),
 				})
 			},
 		})

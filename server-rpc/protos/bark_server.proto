@@ -412,11 +412,16 @@ message RoundFinished {
 	repeated bytes vtxo_cosign_signatures = 4;
 }
 
+message RoundFailed {
+	uint64 round_seq = 1;
+}
+
 message RoundEvent {
 	oneof event {
 		RoundAttempt attempt = 1;
 		VtxoProposal vtxo_proposal = 2;
 		RoundFinished finished = 4;
+		RoundFailed failed = 5;
 
 		// old variants:
 		//RoundProposal round_proposal = 3;

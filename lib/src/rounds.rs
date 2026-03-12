@@ -166,10 +166,16 @@ pub struct RoundFinished {
 }
 
 #[derive(Debug, Clone)]
+pub struct RoundFailed {
+	pub round_seq: RoundSeq,
+}
+
+#[derive(Debug, Clone)]
 pub enum RoundEvent {
 	Attempt(RoundAttempt),
 	VtxoProposal(VtxoProposal),
 	Finished(RoundFinished),
+	Failed(RoundFailed),
 }
 
 impl RoundEvent {
@@ -179,6 +185,7 @@ impl RoundEvent {
 			Self::Attempt(_) => "RoundAttempt",
 			Self::VtxoProposal { .. } => "VtxoProposal",
 			Self::Finished { .. } => "Finished",
+			Self::Failed { .. } => "Failed",
 		}
 	}
 
@@ -187,6 +194,7 @@ impl RoundEvent {
 			Self::Attempt(e) => e.round_seq,
 			Self::VtxoProposal(e) => e.round_seq,
 			Self::Finished(e) => e.round_seq,
+			Self::Failed(e) => e.round_seq,
 		}
 	}
 
@@ -195,6 +203,7 @@ impl RoundEvent {
 			Self::Attempt(e) => e.attempt_seq,
 			Self::VtxoProposal(e) => e.attempt_seq,
 			Self::Finished(e) => e.attempt_seq,
+			Self::Failed(_) => 0,
 		}
 	}
 }
@@ -224,6 +233,11 @@ impl fmt::Display for RoundEvent {
 					.field("round_seq", round_seq)
 					.field("attempt_seq", attempt_seq)
 					.field("signed_round_txid", &signed_round_tx.compute_txid())
+					.finish()
+			},
+			Self::Failed(RoundFailed { round_seq }) => {
+				f.debug_struct("Failed")
+					.field("round_seq", round_seq)
 					.finish()
 			},
 		}

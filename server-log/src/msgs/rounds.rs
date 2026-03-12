@@ -370,7 +370,7 @@ pub struct FatalStoringRound {
 	pub attempt_seq: usize,
 	pub error: String,
 	#[serde(with = "crate::serde_utils::hex")]
-	pub signed_tx: Vec<u8>,
+	pub unsigned_funding_tx: Vec<u8>,
 	#[serde(with = "crate::serde_utils::hex")]
 	pub vtxo_tree: Vec<u8>,
 	pub input_vtxos: Vec<VtxoId>,
