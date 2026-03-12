@@ -28,7 +28,8 @@ async fn reject_arkoor_with_bad_signature() {
 			let mut vtxo = match message {
 				Message::Arkoor(message) => {
 					Vtxo::deserialize(&message.vtxos[0]).unwrap()
-				}
+				},
+				_ => panic!("unexpected message type"),
 			};
 			vtxo.invalidate_final_sig();
 			let message = ArkoorMessage { vtxos: vec![vtxo.serialize()] };

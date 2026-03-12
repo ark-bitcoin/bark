@@ -1,5 +1,5 @@
 use std::pin::Pin;
-
+use bitcoin::hashes::Hash;
 use futures::Stream;
 use tracing::{error, warn};
 use ark::{ProtocolEncoding, Vtxo};
@@ -22,6 +22,19 @@ fn new_mailbox_msg(entry: MailboxEntry) -> protos::mailbox_server::MailboxMessag
 				)),
 				checkpoint: entry.checkpoint.into(),
 				mailbox_type: MailboxType::ArkoorReceive as i32,
+			}
+		}
+		MailboxType::RoundParticipationCompleted => {
+			protos::mailbox_server::MailboxMessage {
+				message: Some(protos::mailbox_server::mailbox_message::Message::RoundParticipationCompleted(
+					protos::mailbox_server::RoundParticipationCompleted {
+						payment_hashes: entry.payment_hashes.into_iter()
+							.map(|h| h.as_byte_array().to_vec())
+							.collect(),
+					}
+				)),
+				checkpoint: entry.checkpoint.into(),
+				mailbox_type: MailboxType::RoundParticipationCompleted as i32,
 			}
 		}
 	}
@@ -117,15 +130,15 @@ impl rpc::server::MailboxService for crate::Server {
 			self::badarg!("invalid mailbox authorization signature");
 		}
 		let limit = self.config.max_read_mailbox_items;
-		let vtxos_by_checkpoint = self.db.get_vtxos_mailbox(
+		let entries_by_checkpoint = self.db.get_mailbox_entries(
 			unblinded_id,
 			req.checkpoint,
 			limit,
 		).await.to_status()?;
 
 		let response = protos::mailbox_server::MailboxMessages {
-			have_more: vtxos_by_checkpoint.len() >= limit,
-			messages: vtxos_by_checkpoint.into_iter().map(|entry| {
+			have_more: entries_by_checkpoint.len() >= limit,
+			messages: entries_by_checkpoint.into_iter().map(|entry| {
 				new_mailbox_msg(entry)
 			}).collect(),
 		};
@@ -188,7 +201,7 @@ impl rpc::server::MailboxService for crate::Server {
 
 				'fetching:
 				loop {
-					match db.get_vtxos_mailbox(mailbox_id, processed_cp, ret_limit).await {
+					match db.get_mailbox_entries(mailbox_id, processed_cp, ret_limit).await {
 						Ok(entries) => {
 							let done = entries.len() < ret_limit;
 							for entry in entries {

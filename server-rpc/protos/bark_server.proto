@@ -429,6 +429,9 @@ message SubmitPaymentRequest {
 	repeated InputVtxo input_vtxos = 2;
 	repeated SignedVtxoRequest vtxo_requests = 3;
 	repeated OffboardRequest offboard_requests = 4 [ deprecated = true ];
+	// Optional unblinded mailbox identifier for VTXO delivery.
+	// The server will post the created VTXO to this mailbox after the round completes.
+	optional bytes unblinded_mailbox_id = 5;
 }
 
 message SubmitPaymentResponse {
@@ -450,6 +453,9 @@ message VtxoSignaturesRequest {
 message RoundParticipationRequest {
 	repeated InputVtxo input_vtxos = 2;
 	repeated VtxoRequest vtxo_requests = 3;
+	// Optional unblinded mailbox identifier for VTXO delivery.
+	// The server will post the created VTXO to this mailbox after the round completes.
+	optional bytes unblinded_mailbox_id = 4;
 }
 
 message RoundParticipationResponse {

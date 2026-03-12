@@ -7,12 +7,26 @@ use chrono::{DateTime, Local};
 use tokio_postgres::Row;
 
 use ark::{ProtocolEncoding, VtxoId, VtxoRequest};
+use ark::mailbox::MailboxIdentifier;
 use ark::rounds::{RoundId, RoundSeq};
 use ark::tree::signed::{SignedVtxoTreeSpec, UnlockHash, UnlockPreimage};
 use bitcoin_ext::BlockHeight;
 
 use crate::secret::Secret;
 
+
+/// Output in a stored round participation.
+#[derive(Debug, Clone)]
+pub struct StoredRoundOutput {
+	pub vtxo_request: VtxoRequest,
+	pub unblinded_mailbox_id: Option<MailboxIdentifier>,
+}
+
+impl AsRef<VtxoRequest> for StoredRoundOutput {
+	fn as_ref(&self) -> &VtxoRequest {
+		&self.vtxo_request
+	}
+}
 
 pub struct StoredRoundInput {
 	pub vtxo_id: VtxoId,
@@ -30,7 +44,7 @@ pub struct StoredRoundParticipation {
 	pub unlock_hash: UnlockHash,
 	pub unlock_preimage: Secret<UnlockPreimage>,
 	pub inputs: Vec<StoredRoundInput>,
-	pub outputs: Vec<VtxoRequest>,
+	pub outputs: Vec<StoredRoundOutput>,
 	pub round_id: Option<RoundId>,
 }
 

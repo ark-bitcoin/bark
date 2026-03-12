@@ -17,6 +17,7 @@ use lightning_invoice::Bolt11Invoice;
 
 use ark::{Vtxo, VtxoId, VtxoPolicy, VtxoRequest};
 use ark::vtxo::Full;
+use ark::mailbox::MailboxIdentifier;
 use ark::musig::DangerousSecretNonce;
 use ark::tree::signed::{UnlockHash, VtxoTreeSpec};
 use ark::lightning::{Invoice, PaymentHash, Preimage};
@@ -267,6 +268,8 @@ struct SerdeRoundParticipation<'a> {
 	#[serde(with = "ark::encode::serde::cow::vec")]
 	inputs: Cow<'a, [Vtxo<Full>]>,
 	outputs: Vec<SerdeVtxoRequest<'a>>,
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	unblinded_mailbox_id: Option<MailboxIdentifier>,
 }
 
 impl<'a> From<&'a RoundParticipation> for SerdeRoundParticipation<'a> {
@@ -274,6 +277,7 @@ impl<'a> From<&'a RoundParticipation> for SerdeRoundParticipation<'a> {
 	    Self {
 			inputs: Cow::Borrowed(&v.inputs),
 			outputs: v.outputs.iter().map(|v| v.into()).collect(),
+			unblinded_mailbox_id: v.unblinded_mailbox_id,
 		}
 	}
 }
@@ -283,6 +287,7 @@ impl<'a> From<SerdeRoundParticipation<'a>> for RoundParticipation {
 		Self {
 			inputs: v.inputs.into_owned(),
 			outputs: v.outputs.into_iter().map(|v| v.into()).collect(),
+			unblinded_mailbox_id: v.unblinded_mailbox_id,
 		}
 	}
 }

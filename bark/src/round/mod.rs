@@ -28,6 +28,7 @@ use log::{debug, error, info, trace, warn};
 use ark::{ProtocolEncoding, SignedVtxoRequest, Vtxo, VtxoRequest};
 use ark::vtxo::Full;
 use ark::attestations::{DelegatedRoundParticipationAttestation, RoundAttemptAttestation};
+use ark::mailbox::MailboxIdentifier;
 use ark::forfeit::HashLockedForfeitBundle;
 use ark::musig::{self, DangerousSecretNonce, PublicNonce, SecretNonce};
 use ark::rounds::{RoundAttempt, RoundEvent, RoundFinished, RoundSeq, ROUND_TX_VTXO_TREE_VOUT};
@@ -53,6 +54,9 @@ pub struct RoundParticipation {
 	/// The output VTXOs that we request in the round,
 	/// including change
 	pub outputs: Vec<VtxoRequest>,
+	/// Optional mailbox identifier for round completion notification
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub unblinded_mailbox_id: Option<MailboxIdentifier>,
 }
 
 impl RoundParticipation {
@@ -636,6 +640,8 @@ async fn start_attempt(
 		participation.inputs.len(), participation.outputs.len(),
 	);
 
+	// Build signed requests with mailbox IDs
+	let unblinded_mailbox_id = wallet.mailbox_identifier();
 	let signed_reqs = participation.outputs.iter()
 		.zip(cosign_keys.iter())
 		.zip(cosign_nonces.iter())
@@ -672,6 +678,7 @@ async fn start_attempt(
 		vtxo_requests: signed_reqs.into_iter().map(Into::into).collect(),
 		#[allow(deprecated)]
 		offboard_requests: vec![],
+		unblinded_mailbox_id: Some(unblinded_mailbox_id.to_vec()),
 	}).await.context("Ark server refused our payment submission")?;
 
 	Ok(AttemptState::AwaitingUnsignedVtxoTree {
@@ -1289,6 +1296,9 @@ impl Wallet {
 			None
 		};
 
+		// Get mailbox identifier for VTXO delivery
+		let unblinded_mailbox_id = self.mailbox_identifier();
+
 		// Generate attestations for input vtxos
 		let mut input_vtxos = Vec::with_capacity(participation.inputs.len());
 		for vtxo in participation.inputs.iter() {
@@ -1305,13 +1315,20 @@ impl Wallet {
 			});
 		}
 
+		// Build proto VtxoRequests
+		let vtxo_requests = participation.outputs.iter()
+			.map(|req|
+				protos::VtxoRequest {
+					policy: req.policy.serialize(),
+					amount: req.amount.to_sat(),
+			})
+			.collect::<Vec<_>>();
+
 		// Submit participation to server and get unlock_hash
 		let resp = srv.client.submit_round_participation(protos::RoundParticipationRequest {
 			input_vtxos,
-			vtxo_requests: participation.outputs.iter().map(|r| protos::VtxoRequest {
-				policy: r.policy.serialize(),
-				amount: r.amount.to_sat(),
-			}).collect(),
+			vtxo_requests,
+			unblinded_mailbox_id: Some(unblinded_mailbox_id.to_vec()),
 		}).await.context("error submitting round participation to server")?.into_inner();
 
 		let unlock_hash = UnlockHash::from_bytes(resp.unlock_hash)

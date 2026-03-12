@@ -531,6 +531,7 @@ impl From<ark::mailbox::MailboxType> for protos::mailbox_server::MailboxType {
 	fn from(value: ark::mailbox::MailboxType) -> Self {
 		match value {
 			ark::mailbox::MailboxType::ArkoorReceive => protos::mailbox_server::MailboxType::ArkoorReceive,
+			ark::mailbox::MailboxType::RoundParticipationCompleted => protos::mailbox_server::MailboxType::RoundParticipationCompleted,
 		}
 	}
 }
@@ -539,6 +540,7 @@ impl From<protos::mailbox_server::MailboxType> for ark::mailbox::MailboxType {
 	fn from(value: protos::mailbox_server::MailboxType) -> Self {
 		match value {
 			protos::mailbox_server::MailboxType::ArkoorReceive => ark::mailbox::MailboxType::ArkoorReceive,
+			protos::mailbox_server::MailboxType::RoundParticipationCompleted => ark::mailbox::MailboxType::RoundParticipationCompleted,
 		}
 	}
 }

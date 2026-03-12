@@ -14,7 +14,7 @@ use bitcoin::consensus::serialize;
 use tokio_postgres::types::Type;
 use tracing::{debug, info, trace};
 
-use ark::{ServerVtxo, VtxoId, VtxoRequest};
+use ark::{ServerVtxo, VtxoId};
 use ark::encode::ProtocolEncoding;
 use ark::rounds::{RoundId, RoundSeq};
 use ark::tree::signed::{CachedSignedVtxoTree, UnlockHash, UnlockPreimage};
@@ -294,7 +294,7 @@ impl Db {
 		chain_tip: BlockHeight,
 		unlock_preimage: UnlockPreimage,
 		inputs: &[VtxoId],
-		outputs: impl IntoIterator<Item = &VtxoRequest>,
+		outputs: impl IntoIterator<Item = &StoredRoundOutput>,
 	) -> anyhow::Result<()> {
 		let mut conn = self.get_conn().await?;
 		let tx = conn.transaction().await?;

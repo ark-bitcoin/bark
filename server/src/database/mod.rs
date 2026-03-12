@@ -36,6 +36,7 @@ use bb8_postgres::PostgresConnectionManager;
 use bdk_wallet::{chain::Merge, ChangeSet};
 use bitcoin::{Transaction, Txid};
 use bitcoin::consensus::{serialize, deserialize};
+use bitcoin::hashes::sha256;
 use bitcoin::secp256k1::{self, PublicKey};
 use chrono::Local;
 use futures::Stream;
@@ -67,6 +68,7 @@ pub struct MailboxEntry {
 	pub checkpoint: Checkpoint,
 	pub mailbox_type: MailboxType,
 	pub vtxos: Vec<Vtxo<Full>>,
+	pub payment_hashes: Vec<sha256::Hash>,
 }
 
 #[derive(Clone)]
@@ -337,7 +339,7 @@ impl Db {
 		let mailbox_type = String::from(mailbox_type);
 
 		let statement = conn.prepare("
-			INSERT INTO vtxo_mailbox (unblinded_mailbox_id, vtxo_id, vtxo, checkpoint, mailbox_type, created_at)
+			INSERT INTO mailbox (unblinded_mailbox_id, vtxo_id, vtxo, checkpoint, mailbox_type, created_at)
 			VALUES ($1, $2, $3, $4, $5::TEXT::mailbox_type, NOW());
 		").await?;
 		for vtxo in vtxos {
@@ -356,7 +358,7 @@ impl Db {
 		Ok(Some(u64::try_from(checkpoint)?))
 	}
 
-	pub async fn get_vtxos_mailbox(
+	pub async fn get_mailbox_entries(
 		&self,
 		mailbox_id: MailboxIdentifier,
 		checkpoint: Checkpoint,
@@ -364,8 +366,8 @@ impl Db {
 	) -> anyhow::Result<Vec<MailboxEntry>> {
 		let conn = self.get_conn().await?;
 		let statement = conn.prepare(&format!("
-			SELECT vtxo_id, vtxo, checkpoint, mailbox_type::TEXT AS mailbox_type
-			FROM vtxo_mailbox
+			SELECT vtxo_id, vtxo, payment_hash, checkpoint, mailbox_type::TEXT AS mailbox_type
+			FROM mailbox
 			WHERE unblinded_mailbox_id = $1 AND checkpoint > $2
 			ORDER BY checkpoint ASC
 			LIMIT {limit};
@@ -379,34 +381,80 @@ impl Db {
 			return Ok(vec![]);
 		}
 
-		let mut checkpoints = BTreeMap::<Checkpoint, (MailboxType, Vec<Vtxo>)>::new();
+		let mut checkpoints = BTreeMap::<Checkpoint, (MailboxType, Vec<Vtxo>, Vec<sha256::Hash>)>::new();
 		for row in &rows {
 			let checkpoint = row.get::<_, i64>("checkpoint") as u64;
 			let mailbox_type = row.get::<_, &str>("mailbox_type").parse::<MailboxType>()
 				.expect("invalid mailbox_type in database");
 
-			let vtxo = Vtxo::<Full>::deserialize(row.get("vtxo"))?;
-			debug_assert_eq!(vtxo.id().to_string(), row.get::<_, String>("vtxo_id"));
+			let vtxo = row.get::<_, Option<&[u8]>>("vtxo")
+				.map(|bytes| Vtxo::<Full>::deserialize(bytes))
+				.transpose()?;
+			let payment_hash = row.get::<_, Option<&str>>("payment_hash")
+				.map(|s| s.parse::<sha256::Hash>().expect("invalid payment_hash in database"));
 
-			if let Some((mb_type, vtxos)) = checkpoints.get_mut(&checkpoint) {
-				debug_assert_eq!(&mailbox_type, mb_type, "a checekpoint cannot contain multiple mailbox types");
-				vtxos.push(vtxo);
+			if let Some((mb_type, vtxos, payment_hashes)) = checkpoints.get_mut(&checkpoint) {
+				debug_assert_eq!(&mailbox_type, mb_type, "a checkpoint cannot contain multiple mailbox types");
+				if let Some(v) = vtxo {
+					vtxos.push(v);
+				}
+				if let Some(h) = payment_hash {
+					payment_hashes.push(h);
+				}
 			} else {
-				checkpoints.insert(checkpoint, (mailbox_type, vec![vtxo]));
+				checkpoints.insert(checkpoint, (
+					mailbox_type,
+					vtxo.into_iter().collect(),
+					payment_hash.into_iter().collect(),
+				));
 			}
 		}
 
 		let mut res = Vec::new();
-		for (checkpoint, (mailbox_type, vtxos)) in checkpoints {
-			telemetry::set_mailbox_metric("get", vtxos.len());
+		for (checkpoint, (mailbox_type, vtxos, payment_hashes)) in checkpoints {
+			telemetry::set_mailbox_metric("get", vtxos.len() + payment_hashes.len());
 			res.push(MailboxEntry {
 				checkpoint,
 				mailbox_type,
 				vtxos,
+				payment_hashes,
 			});
 		}
 
 		Ok(res)
+	}
+
+	pub async fn store_payment_hashes_in_mailbox(
+		&self,
+		mailbox_type: MailboxType,
+		mailbox_id: MailboxIdentifier,
+		payment_hashes: &[sha256::Hash],
+	) -> anyhow::Result<Option<Checkpoint>> {
+		if payment_hashes.len() == 0 {
+			return Ok(None);
+		}
+
+		let conn = self.get_conn().await?;
+		let statement = conn.prepare("SELECT next_checkpoint();").await?;
+		let checkpoint = conn.query_one(&statement, &[]).await?;
+		let checkpoint = checkpoint.get::<_, i64>(0);
+		let mailbox_type = String::from(mailbox_type);
+
+		let statement = conn.prepare("
+			INSERT INTO mailbox (unblinded_mailbox_id, payment_hash, checkpoint, mailbox_type, created_at)
+			VALUES ($1, $2, $3, $4::TEXT::mailbox_type, NOW());
+		").await?;
+		for payment_hash in payment_hashes {
+			let rows_updated = conn.execute(&statement, &[
+				&mailbox_id.to_string(),
+				&payment_hash.to_string(),
+				&checkpoint,
+				&mailbox_type,
+			]).await?;
+			debug_assert_eq!(rows_updated, 1);
+		}
+
+		Ok(Some(u64::try_from(checkpoint)?))
 	}
 
 	/**

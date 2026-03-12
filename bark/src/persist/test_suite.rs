@@ -611,7 +611,11 @@ mod round_states {
 	fn empty_round_state() -> RoundState {
 		RoundState {
 			done: false,
-			participation: RoundParticipation { inputs: vec![], outputs: vec![] },
+			participation: RoundParticipation {
+				inputs: vec![],
+				outputs: vec![],
+				unblinded_mailbox_id: None,
+			},
 			flow: RoundFlowState::InteractivePending,
 			new_vtxos: vec![],
 			sent_forfeit_sigs: false,
@@ -638,7 +642,11 @@ mod round_states {
 
 		let state = RoundState {
 			done: false,
-			participation: RoundParticipation { inputs: vec![vtxo.as_ref().clone()], outputs: vec![] },
+			participation: RoundParticipation {
+				inputs: vec![vtxo.as_ref().clone()],
+				outputs: vec![],
+				unblinded_mailbox_id: None,
+			},
 			flow: RoundFlowState::InteractivePending,
 			new_vtxos: vec![],
 			sent_forfeit_sigs: false,

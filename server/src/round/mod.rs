@@ -24,6 +24,7 @@ use ark::{
 };
 use ark::attestations::{Challenge, DelegatedRoundParticipationAttestation};
 use ark::fees::{RefreshFees, VtxoFeeInfo};
+use ark::mailbox::MailboxType;
 use ark::musig::{self, PublicNonce, SecretNonce};
 use ark::rounds::{
 	RoundAttempt, RoundAttemptAttestation, RoundEvent, RoundFinished, RoundSeq, VtxoProposal,
@@ -34,7 +35,7 @@ use ark::tree::signed::{
 };
 use server_log::{LogMsg, RoundVtxoCreated};
 
-use crate::database::rounds::StoredRoundParticipation;
+use crate::database::rounds::{StoredRoundOutput, StoredRoundParticipation};
 use crate::{telemetry, Server, SECP};
 use crate::error::{ContextExt, NotFound};
 use crate::flux::{VtxoFluxGuard, OwnedVtxoFluxGuard};
@@ -97,6 +98,9 @@ pub enum RoundInput {
 pub struct VtxoParticipant {
 	pub req: VtxoLeafSpec,
 	pub nonces: Option<Vec<PublicNonce>>,
+	/// Mailbox ID for VTXO delivery after round completion.
+	/// None for server-generated padding VTXOs.
+	pub unblinded_mailbox_id: Option<ark::mailbox::MailboxIdentifier>,
 }
 
 impl VtxoParticipant {
@@ -108,10 +112,15 @@ impl VtxoParticipant {
 				unlock_hash: unlock_hash,
 			},
 			nonces: Some(req.nonces),
+			unblinded_mailbox_id: None,
 		}
 	}
 
-	pub fn new_non_interactive(req: VtxoRequest, unlock_hash: UnlockHash) -> VtxoParticipant {
+	pub fn new_non_interactive(
+		req: VtxoRequest,
+		unlock_hash: UnlockHash,
+		unblinded_mailbox_id: Option<ark::mailbox::MailboxIdentifier>,
+	) -> VtxoParticipant {
 		VtxoParticipant {
 			req: VtxoLeafSpec {
 				vtxo: req,
@@ -119,6 +128,7 @@ impl VtxoParticipant {
 				unlock_hash: unlock_hash,
 			},
 			nonces: None,
+			unblinded_mailbox_id,
 		}
 	}
 }
@@ -133,7 +143,7 @@ pub struct RoundData {
 pub struct InteractiveParticipation {
 	pub(crate) unlock_preimage: UnlockPreimage,
 	pub(crate) inputs: Vec<VtxoId>,
-	pub(crate) outputs: Vec<VtxoRequest>,
+	pub(crate) outputs: Vec<StoredRoundOutput>,
 }
 
 pub struct CollectingPayments {
@@ -412,7 +422,10 @@ impl CollectingPayments {
 		assert!(self.interactive_participants.insert(unlock_hash, InteractiveParticipation {
 			unlock_preimage: unlock_preimage,
 			inputs: input_ids,
-			outputs: vtxo_requests.into_iter().map(|r| r.vtxo).collect(),
+			outputs: vtxo_requests.into_iter().map(|r| StoredRoundOutput {
+				vtxo_request: r.vtxo,
+				unblinded_mailbox_id: None,
+			}).collect(),
 		}).is_none(), "duplicate unlock hash");
 
 		// Check whether our round is full.
@@ -426,7 +439,7 @@ impl CollectingPayments {
 	}
 
 	#[tracing::instrument(
-		skip(self, flux_guard, inputs, vtxo_requests, unlock_hash),
+		skip(self, flux_guard, inputs, outputs, unlock_hash),
 		fields(
 			{ telemetry::ATTRIBUTE_ROUND_SEQ } = %self.round_step.round_seq(),
 			{ telemetry::ATTRIBUTE_ATTEMPT_SEQ } = self.round_step.attempt_seq(),
@@ -436,20 +449,24 @@ impl CollectingPayments {
 		&mut self,
 		flux_guard: VtxoFluxGuard,
 		inputs: Vec<Vtxo<Full>>,
-		vtxo_requests: Vec<VtxoRequest>,
+		outputs: Vec<StoredRoundOutput>,
 		unlock_hash: UnlockHash,
 	) {
 		client_rslog!(RoundPaymentRegistered, self.round_step, unlock_hash,
 			nb_inputs: inputs.len(),
-			nb_outputs: vtxo_requests.len(),
+			nb_outputs: outputs.len(),
 		);
 
 		self.locked_inputs.absorb(flux_guard);
 
 		self.all_inputs.extend(inputs.into_iter().map(|v| (v.id(), v)));
 
-		for req in vtxo_requests {
-			self.all_outputs.push(VtxoParticipant::new_non_interactive(req, unlock_hash));
+		for output in outputs {
+			self.all_outputs.push(VtxoParticipant::new_non_interactive(
+				output.vtxo_request,
+				unlock_hash,
+				output.unblinded_mailbox_id,
+			));
 		}
 
 		// Check whether our round is full.
@@ -556,9 +573,9 @@ impl CollectingPayments {
 
 		for output in &participation.outputs {
 			if let Some(max) = self.round_data.max_vtxo_amount {
-				if output.amount > max {
+				if output.vtxo_request.amount > max {
 					client_rslog!(RoundUserBadOutputAmount, self.round_step,
-						amount: output.amount,
+						amount: output.vtxo_request.amount,
 					);
 					return Err(ProcessHarkParticipationError::BadParticipation(
 						anyhow!("output exceeds maximum vtxo amount of {max}")
@@ -749,6 +766,7 @@ impl CollectingPayments {
 			self.all_outputs.push(VtxoParticipant {
 				req: req.clone(),
 				nonces: None,
+				unblinded_mailbox_id: None,
 			});
 		}
 
@@ -856,6 +874,11 @@ impl CollectingPayments {
 		server_rslog!(SendVtxoProposal, round_step);
 		telemetry::set_round_step_duration(round_step);
 
+		// Collect mailbox IDs in same order as outputs for later delivery
+		let output_mailbox_ids = self.all_outputs.iter()
+			.map(|p| p.unblinded_mailbox_id)
+			.collect::<Vec<_>>();
+
 		Ok(SigningVtxoTree {
 			round_data: self.round_data,
 			expiry_height,
@@ -874,6 +897,7 @@ impl CollectingPayments {
 			round_tx_fee,
 			user_cosign_nonces,
 			inputs_per_cosigner: self.inputs_per_cosigner,
+			output_mailbox_ids,
 			common_round_tx_input,
 			round_step,
 			proceed,
@@ -914,6 +938,10 @@ pub struct SigningVtxoTree {
 	/// All inputs that have participated, but might have dropped out.
 	locked_inputs: OwnedVtxoFluxGuard,
 	interactive_participants: HashMap<UnlockHash, InteractiveParticipation>,
+	/// Mailbox IDs for each output VTXO (in same order as vtxo tree leaves).
+	/// Used to post VTXOs to mailboxes after round finalization for wallet recovery.
+	/// None for server-generated padding VTXOs which don't need mailbox delivery.
+	output_mailbox_ids: Vec<Option<ark::mailbox::MailboxIdentifier>>,
 
 	common_round_tx_input: WalletUtxoGuard,
 
@@ -1158,6 +1186,30 @@ async fn persist_round(
 		vtxo_expiry_block_height: state.expiry_height,
 		nb_input_vtxos: state.all_inputs.len(),
 	);
+
+	// Post VTXOs to mailboxes for wallet recovery support.
+	// This is done after the round is persisted so VTXOs exist in the DB.
+	// Skip padding VTXOs which have None for their unblinded_mailbox_id.
+	for (vtxo, unblinded_mailbox_id) in signed_vtxos.output_vtxos().zip(state.output_mailbox_ids.iter()) {
+		let Some(unblinded_mailbox_id) = unblinded_mailbox_id else {
+			continue; // Skip padding VTXOs
+		};
+		let Some(unlock_hash) = vtxo.unlock_hash() else {
+			continue; // Skip VTXOs without unlock hash
+		};
+		match srv.db.store_payment_hashes_in_mailbox(MailboxType::RoundParticipationCompleted, *unblinded_mailbox_id, &[unlock_hash]).await {
+			Ok(checkpoint) => {
+				if let Some(cp) = checkpoint {
+					srv.mailbox_manager.notify(*unblinded_mailbox_id, cp);
+				}
+				trace!("Posted round VTXO {} to mailbox", vtxo.id());
+			}
+			Err(e) => {
+				// Log but don't fail the round - mailbox delivery is best-effort
+				warn!("Failed to post round VTXO {} to mailbox: {:#}", vtxo.id(), e);
+			}
+		}
+	}
 
 	Ok(())
 }
@@ -1725,7 +1777,7 @@ impl Server {
 	pub async fn register_non_interactive_round_participation(
 		&self,
 		inputs: Vec<DelegatedInput>,
-		vtxo_requests: Vec<VtxoRequest>,
+		outputs: Vec<StoredRoundOutput>,
 	) -> anyhow::Result<UnlockHash> {
 		let input_ids = inputs.iter().map(|i| i.vtxo_id).collect::<Vec<_>>();
 
@@ -1738,9 +1790,12 @@ impl Server {
 		};
 
 		// check input proofs
+		let outputs_for_verify = outputs.iter()
+			.map(|o| o.vtxo_request.clone())
+			.collect::<Vec<_>>();
 		let vtxos = self.db.get_user_vtxos_by_id(&input_ids).await?;
 		for (input, vtxo) in inputs.iter().zip(&vtxos) {
-			input.attestation.verify(&vtxo.vtxo, &vtxo_requests)
+			input.attestation.verify(&vtxo.vtxo, &outputs_for_verify)
 				.with_badarg(|| format!("attestation for vtxo {} failed", input.vtxo_id))?;
 		}
 
@@ -1749,7 +1804,7 @@ impl Server {
 
 		let chain_tip = self.chain_tip().height;
 		self.db.try_store_round_participation(
-			chain_tip, unlock_preimage, &input_ids, &vtxo_requests,
+			chain_tip, unlock_preimage, &input_ids, &outputs,
 		).await?;
 
 		Ok(unlock_hash)
