@@ -299,11 +299,35 @@ impl Exit {
 	/// It's recommended to sync the wallet, by using something like [Wallet::maintenance] being
 	/// doing this.
 	pub async fn start_exit_for_entire_wallet(&mut self) -> anyhow::Result<()> {
-		let vtxos = self.persister.get_vtxos_by_state(&VtxoStateKind::UNSPENT_STATES).await?.into_iter()
-			.map(|v| v.vtxo)
-			.filter(|v| v.amount() >= P2TR_DUST)
-			.collect::<Vec<_>>();
-		self.start_exit_for_vtxos(&vtxos).await?;
+		let all_vtxos = self.persister.get_vtxos_by_state(&VtxoStateKind::UNSPENT_STATES).await?.into_iter()
+			.map(|v| v.vtxo);
+
+		// Partition: separate eligible VTXO from dust
+		let (eligible, dust) = all_vtxos.partition::<Vec<_>, _>(|v| v.amount() >= P2TR_DUST);
+
+		// Warn for each dust VTXO individually
+		for vtxo in &dust {
+			warn!(
+				"Skipping dust VTXO {}: {} sats is below the dust limit ({} sats).",
+				vtxo.id(), vtxo.amount().to_sat(), P2TR_DUST.to_sat()
+			);
+		}
+
+		// If everything is dust.
+		if eligible.is_empty() && !dust.is_empty() {
+			warn!(
+				"Exit not started: all {} VTXOs (total {}) are below the dust limit. \
+				To exit and consolidate dust, you need to refresh your VTXOs first \
+				(requires total balance >= {})",
+				dust.len(), 
+				dust.iter().map(|v| v.amount()).sum::<Amount>(), 
+				P2TR_DUST,
+			);
+			return Ok(());
+		}
+
+		// Proceed with exiting eligible VTXOs
+		self.start_exit_for_vtxos(&eligible).await?;
 
 		Ok(())
 	}
