@@ -127,7 +127,7 @@ where
 					KeyValue::new(telemetry::ATTRIBUTE_ERROR, "body_error"),
 				]);
 
-				debug!(
+				trace!(
 					"gRPC call {} failed with body error: {} (after {:?})",
 					self.rpc_method_details.format_path(),
 					e,
@@ -299,7 +299,7 @@ where
 					]);
 
 					let protocol_error = format!("{:?}", err);
-					debug!("Completed gRPC call: {} in {:?}, protocol_error: {}",
+					trace!("Completed gRPC call: {} in {:?}, protocol_error: {}",
 						rpc_method_details.format_path(), duration, protocol_error,
 					);
 					Err(err)
