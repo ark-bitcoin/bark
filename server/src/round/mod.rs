@@ -32,7 +32,7 @@ use ark::rounds::{
 use ark::tree::signed::{
 	CachedSignedVtxoTree, UnlockHash, UnlockPreimage, UnsignedVtxoTree, VtxoLeafSpec, VtxoTreeSpec,
 };
-use server_log::{BroadcastRoundFundingTx, LogMsg, RoundVtxoCreated};
+use server_log::{LogMsg, RoundVtxoCreated};
 
 use crate::database::rounds::StoredRoundParticipation;
 use crate::{telemetry, Server, SECP};
