@@ -2,6 +2,9 @@
 let
 	isDarwin = pkgs.stdenv.hostPlatform.isDarwin;
 	postgresql = pkgs.postgresql_16;
+	sccache = pkgs.sccache.overrideAttrs (old: {
+    cargoBuildFeatures = (old.cargoBuildFeatures or []) ++ [ "memcached" ];
+  });
 
 	env = {
 		LIBCLANG_PATH = "${pkgs.llvmPackages.clang-unwrapped.lib}/lib/";
@@ -14,6 +17,7 @@ let
 		];
 		SCCACHE_MEMCACHED="tcp://host.containers.internal:11211";
 		SCCACHE_DIRECT=true;
+		RUSTC_WRAPPER="sccache";
 		RUST_SRC_PATH = "${rustToolchain.rust-src}/lib/rustlib/src/rust/library";
 		RUSTDOCS_STDLIB = "${rustToolchain.rust-docs}/share/doc/rust/html/std/index.html";
 	};
@@ -50,7 +54,7 @@ in {
 			pkgs.just
 
 			# compiler cache
-			pkgs.sccache
+			sccache
 		] ++ lib.optionals (!isDarwin) [ # honggfuzz deps (Linux only)
 			pkgs.binutils-unwrapped
 			pkgs.libunwind
