@@ -16,7 +16,6 @@ use tokio::sync::RwLock;
 
 use bitcoin_ext::{BlockHeight, BlockRef, FeeRateExt, TxStatus};
 use bitcoin_ext::rpc::{self, BitcoinRpcExt, BitcoinRpcErrorExt, RpcApi};
-use bitcoin_ext::esplora::EsploraClientExt;
 
 const FEE_RATE_TARGET_CONF_FAST: u16 = 1;
 const FEE_RATE_TARGET_CONF_REGULAR: u16 = 3;
