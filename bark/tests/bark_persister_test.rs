@@ -19,6 +19,7 @@ use chrono::{DateTime, Local};
 use lightning_invoice::Bolt11Invoice;
 
 use ark::{ProtocolEncoding, Vtxo, VtxoId};
+use ark::vtxo::Full;
 use ark::lightning::{Invoice, PaymentHash, Preimage};
 use bitcoin_ext::{BlockDelta, BlockRef};
 
@@ -69,7 +70,7 @@ impl BarkPersister for Dummy {
 
 	async fn store_pending_board(
 		&self,
-		_vtxo: &Vtxo,
+		_vtxo: &Vtxo<Full>,
 		_funding_tx: &Transaction,
 		_movement_id: MovementId,
 	) -> anyhow::Result<()> {
@@ -111,7 +112,7 @@ impl BarkPersister for Dummy {
 		}]))
 	}
 
-	async fn remove_vtxo(&self, _id: VtxoId) -> anyhow::Result<Option<Vtxo>> {
+	async fn remove_vtxo(&self, _id: VtxoId) -> anyhow::Result<Option<Vtxo<Full>>> {
 		Ok(Some(Vtxo::deserialize(&[])?))
 	}
 
@@ -337,7 +338,7 @@ impl BarkPersister for Dummy {
 
 	async fn store_vtxos(
 		&self,
-		_vtxos: &[(&Vtxo, &VtxoState)],
+		_vtxos: &[(&Vtxo<Full>, &VtxoState)],
 	) -> anyhow::Result<()> {
 		Ok(())
 	}

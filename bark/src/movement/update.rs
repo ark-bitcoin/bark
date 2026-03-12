@@ -57,7 +57,7 @@ impl MovementUpdate {
 	}
 
 	pub fn consumed_vtxo(self, vtxo: impl VtxoRef) -> Self {
-		self.consumed_vtxos([vtxo.vtxo_id()])
+		self.consumed_vtxos([vtxo])
 	}
 
 	pub fn consumed_vtxo_if_some(self, vtxo: Option<impl VtxoRef>) -> Self {
@@ -83,7 +83,7 @@ impl MovementUpdate {
 	}
 
 	pub fn exited_vtxo(self, vtxo: impl VtxoRef) -> Self {
-		self.exited_vtxos([vtxo.vtxo_id()])
+		self.exited_vtxos([vtxo])
 	}
 
 	pub fn exited_vtxo_if_some(self, vtxo: Option<impl VtxoRef>) -> Self {

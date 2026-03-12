@@ -138,6 +138,7 @@ use bitcoin::consensus::Params;
 use log::{error, info, trace, warn};
 
 use ark::{Vtxo, VtxoId};
+use ark::vtxo::Full;
 use ark::vtxo::policy::signing::VtxoSigner;
 use bitcoin_ext::{BlockHeight, P2TR_DUST};
 
@@ -340,7 +341,7 @@ impl Exit {
 	/// doing this.
 	pub async fn start_exit_for_vtxos<'a>(
 		&mut self,
-		vtxos: &[impl Borrow<Vtxo>],
+		vtxos: &[impl Borrow<Vtxo<Full>>],
 	) -> anyhow::Result<()> {
 		if vtxos.is_empty() {
 			return Ok(());

@@ -7,6 +7,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use ark::rounds::RoundSeq;
+use ark::vtxo::Full;
 use bitcoin::hex::FromHex;
 use bitcoin::{absolute, transaction, Address, Amount, Network, OutPoint, Transaction};
 use bitcoin::hashes::Hash;
@@ -1200,12 +1201,12 @@ async fn server_returned_htlc_recv_vtxos_should_be_identical_cln() {
 	};
 	let vtxos_1 = client.prepare_lightning_receive_claim(req_1.clone()).await.unwrap()
 		.into_inner().htlc_vtxos.into_iter().map(|b| Vtxo::deserialize(&b))
-		.collect::<Result<Vec<Vtxo>, _>>().unwrap();
+		.collect::<Result<Vec<Vtxo<Full>>, _>>().unwrap();
 
 	// We test once again with the same request
 	let vtxos_2 = client.prepare_lightning_receive_claim(req_1).await.unwrap()
 		.into_inner().htlc_vtxos.into_iter().map(|b| Vtxo::deserialize(&b))
-		.collect::<Result<Vec<Vtxo>, _>>().unwrap();
+		.collect::<Result<Vec<Vtxo<Full>>, _>>().unwrap();
 
 	// we change keypair to make sure server don't use it on second request
 	let keypair = Keypair::new(&SECP, &mut bip39::rand::thread_rng());
@@ -1218,7 +1219,7 @@ async fn server_returned_htlc_recv_vtxos_should_be_identical_cln() {
 
 	let vtxos_3 = client.prepare_lightning_receive_claim(req_2).await.unwrap()
 		.into_inner().htlc_vtxos.into_iter().map(|b| Vtxo::deserialize(&b))
-		.collect::<Result<Vec<Vtxo>, _>>().unwrap();
+		.collect::<Result<Vec<Vtxo<Full>>, _>>().unwrap();
 
 	assert_eq!(vtxos_1, vtxos_2, "should have the same VTXOs");
 	assert_eq!(vtxos_1, vtxos_3, "should have the same VTXOs");
@@ -1266,12 +1267,12 @@ async fn server_returned_htlc_recv_vtxos_should_be_identical_intra_ark() {
 	};
 	let vtxos_1 = client.prepare_lightning_receive_claim(req_1.clone()).await.unwrap()
 		.into_inner().htlc_vtxos.into_iter().map(|b| Vtxo::deserialize(&b))
-		.collect::<Result<Vec<Vtxo>, _>>().unwrap();
+		.collect::<Result<Vec<Vtxo<Full>>, _>>().unwrap();
 
 	// We test once again with the same request
 	let vtxos_2 = client.prepare_lightning_receive_claim(req_1).await.unwrap()
 		.into_inner().htlc_vtxos.into_iter().map(|b| Vtxo::deserialize(&b))
-		.collect::<Result<Vec<Vtxo>, _>>().unwrap();
+		.collect::<Result<Vec<Vtxo<Full>>, _>>().unwrap();
 
 	// we change keypair to make sure server don't use it on second request
 	let keypair = Keypair::new(&SECP, &mut bip39::rand::thread_rng());
@@ -1284,7 +1285,7 @@ async fn server_returned_htlc_recv_vtxos_should_be_identical_intra_ark() {
 
 	let vtxos_3 = client.prepare_lightning_receive_claim(req_2).await.unwrap()
 		.into_inner().htlc_vtxos.into_iter().map(|b| Vtxo::deserialize(&b))
-		.collect::<Result<Vec<Vtxo>, _>>().unwrap();
+		.collect::<Result<Vec<Vtxo<Full>>, _>>().unwrap();
 
 	assert_eq!(vtxos_1, vtxos_2, "should have the same VTXOs");
 	assert_eq!(vtxos_1, vtxos_3, "should have the same VTXOs");
@@ -1536,7 +1537,7 @@ async fn test_cosign_vtxo_tree() {
 	}
 
 	let vtxos = vtxos.into_iter().map(ServerVtxo::from).collect::<Vec<_>>();
-	srv.register_vtxos(&vtxos).await.unwrap();
+	srv.register_vtxos(vtxos).await.unwrap();
 }
 
 #[tokio::test]
@@ -1626,7 +1627,7 @@ async fn mailbox_post_and_process_with_auth() {
 	let sent_amount = sat(100_000);
 	bark.send_oor(addr, sent_amount).await;
 
-	let mut read_vtxo = None::<Vtxo<VtxoPolicy>>;
+	let mut read_vtxo = None::<Vtxo<Full, VtxoPolicy>>;
 
 	trace!("reading mailbox");
 	let mailbox_msgs = mb_rpc.read_mailbox(read_mailbox).await.unwrap().into_inner();
@@ -1634,7 +1635,7 @@ async fn mailbox_post_and_process_with_auth() {
 	match mailbox_msgs.messages[0].message.as_ref().unwrap() {
 		Message::Arkoor(arkoor) => {
 			assert_eq!(arkoor.vtxos.len(), 1);
-			let vtxo = Vtxo::<VtxoPolicy>::deserialize(&arkoor.vtxos[0]).unwrap();
+			let vtxo = Vtxo::<Full, VtxoPolicy>::deserialize(&arkoor.vtxos[0]).unwrap();
 			assert_eq!(vtxo.amount(), sent_amount);
 			let _ = read_vtxo.insert(vtxo);
 		},
@@ -1701,7 +1702,7 @@ async fn mailbox_post_and_process_with_auth() {
 				match message.unwrap() {
 					Message::Arkoor(arkoor) => {
 						assert_eq!(arkoor.vtxos.len(), 1);
-						let vtxo = Vtxo::<VtxoPolicy>::deserialize(&arkoor.vtxos[0]).unwrap();
+						let vtxo = Vtxo::<Full, VtxoPolicy>::deserialize(&arkoor.vtxos[0]).unwrap();
 						assert_eq!(read_vtxo.unwrap(), vtxo);
 					},
 				}

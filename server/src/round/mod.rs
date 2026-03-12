@@ -18,6 +18,7 @@ use bitcoin_ext::{BlockHeight, P2TR_DUST, P2WSH_DUST};
 use tokio::sync::{mpsc, oneshot, OwnedMutexGuard};
 use tracing::{debug, error, info, trace, warn};
 
+use ark::vtxo::Full;
 use ark::{
 	ProtocolEncoding, SignedVtxoRequest, Vtxo, VtxoId, VtxoIdInput, VtxoPolicy, VtxoRequest,
 };
@@ -133,7 +134,7 @@ pub struct CollectingPayments {
 
 	cosign_key: Keypair,
 	allowed_inputs: Option<HashSet<VtxoId>>,
-	all_inputs: HashMap<VtxoId, Vtxo>,
+	all_inputs: HashMap<VtxoId, Vtxo<Full>>,
 	all_outputs: Vec<VtxoParticipant>,
 	/// Keep track of which input vtxos belong to which inputs.
 	inputs_per_cosigner: HashMap<PublicKey, Vec<VtxoId>>,
@@ -201,7 +202,7 @@ impl CollectingPayments {
 
 	fn validate_payment_amounts(
 		&self,
-		inputs: &[Vtxo],
+		inputs: &[Vtxo<Full>],
 		outputs: impl IntoIterator<Item = impl AsRef<VtxoRequest>>,
 		fees: &RefreshFees,
 		current_height: BlockHeight,
@@ -343,7 +344,7 @@ impl CollectingPayments {
 		&self,
 		srv: &Server,
 		inputs: &[VtxoId],
-	) -> anyhow::Result<Vec<Vtxo>> {
+	) -> anyhow::Result<Vec<Vtxo<Full>>> {
 		let mut ret  = Vec::with_capacity(inputs.len());
 		match srv.db.get_user_vtxos_by_id(&inputs).await {
 			Ok(vtxos) => {
@@ -373,7 +374,7 @@ impl CollectingPayments {
 	fn register_interactive_participation(
 		&mut self,
 		flux_guard: VtxoFluxGuard,
-		inputs: Vec<Vtxo>,
+		inputs: Vec<Vtxo<Full>>,
 		vtxo_requests: Vec<SignedVtxoRequest>,
 		unlock_preimage: UnlockPreimage,
 	) {
@@ -424,7 +425,7 @@ impl CollectingPayments {
 	fn register_non_interactive_participation(
 		&mut self,
 		flux_guard: VtxoFluxGuard,
-		inputs: Vec<Vtxo>,
+		inputs: Vec<Vtxo<Full>>,
 		vtxo_requests: Vec<VtxoRequest>,
 		unlock_hash: UnlockHash,
 	) {
@@ -896,7 +897,7 @@ pub struct SigningVtxoTree {
 	round_tx_fee: Amount,
 
 	// data from earlier
-	all_inputs: HashMap<VtxoId, Vtxo>,
+	all_inputs: HashMap<VtxoId, Vtxo<Full>>,
 	user_cosign_nonces: HashMap<PublicKey, Vec<musig::PublicNonce>>,
 	inputs_per_cosigner: HashMap<PublicKey, Vec<VtxoId>>,
 	/// All inputs that have participated, but might have dropped out.

@@ -19,7 +19,7 @@ use ark::mailbox::BlindedMailboxIdentifier;
 use ark::offboard::OffboardRequest;
 use ark::rounds::RoundId;
 use ark::tree::signed::{LeafVtxoCosignRequest, LeafVtxoCosignResponse, VtxoTreeSpec};
-use ark::vtxo::VtxoRef;
+use ark::vtxo::{Bare, Full, VtxoRef};
 
 use crate::protos;
 
@@ -109,7 +109,8 @@ macro_rules! impl_try_from_bytes_protocol {
 	};
 }
 impl_try_from_bytes_protocol!(OutPoint, "outpoint");
-impl_try_from_bytes_protocol!(Vtxo, "VTXO");
+impl_try_from_bytes_protocol!(Vtxo<Bare>, "bare VTXO");
+impl_try_from_bytes_protocol!(Vtxo<Full>, "full VTXO (with genesis)");
 impl_try_from_bytes_protocol!(VtxoPolicy, "VTXO policy");
 impl_try_from_bytes_protocol!(BlindedMailboxIdentifier, "a blinded VTXO mailbox identifier");
 impl_try_from_bytes_protocol!(HashLockedForfeitBundle, "hArk forfeit bundle");

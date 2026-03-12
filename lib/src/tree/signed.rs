@@ -19,7 +19,7 @@ use crate::encode::{
 };
 use crate::error::IncorrectSigningKeyError;
 use crate::tree::{self, Tree};
-use crate::vtxo::{self, GenesisItem, GenesisTransition, MaybePreimage, ServerVtxo};
+use crate::vtxo::{self, Full, GenesisItem, GenesisTransition, MaybePreimage, ServerVtxo};
 
 
 /// Hash to lock hArk VTXOs from users before forfeits
@@ -947,7 +947,7 @@ impl CachedSignedVtxoTree {
 	/// The index corresponds to the prevout of self.txs[index]
 	///
 	/// Panics if `node_idx` is out of range.
-	fn build_internal_vtxo(&self, node_idx: usize) -> ServerVtxo {
+	fn build_internal_vtxo(&self, node_idx: usize) -> ServerVtxo<Full> {
 		let tree = Tree::new(self.spec.spec.nb_leaves());
 		assert!(node_idx < tree.nb_nodes(), "node_idx out of range");
 
@@ -985,7 +985,7 @@ impl CachedSignedVtxoTree {
 			server_pubkey: self.spec.spec.server_pubkey,
 			exit_delta: self.spec.spec.exit_delta,
 			anchor_point: self.spec.utxo,
-			genesis,
+			genesis: Full { items: genesis },
 			point,
 		}
 	}
@@ -993,7 +993,7 @@ impl CachedSignedVtxoTree {
 	/// Construct the VTXO at the given leaf index.
 	///
 	/// Panics if `leaf_idx` is out of range.
-	pub fn build_vtxo(&self, leaf_idx: usize) -> Vtxo {
+	pub fn build_vtxo(&self, leaf_idx: usize) -> Vtxo<Full> {
 		let req = self.spec.spec.vtxos.get(leaf_idx).expect("index is not a leaf");
 
 		let genesis = {
@@ -1015,7 +1015,7 @@ impl CachedSignedVtxoTree {
 			server_pubkey: self.spec.spec.server_pubkey,
 			exit_delta: self.spec.spec.exit_delta,
 			anchor_point: self.spec.utxo,
-			genesis: genesis,
+			genesis: Full { items: genesis },
 			policy: req.vtxo.policy.clone(),
 			point: {
 				let leaf_tx = self.txs.get(leaf_idx).expect("leaf idx exists");
@@ -1025,12 +1025,12 @@ impl CachedSignedVtxoTree {
 	}
 
 	/// Construct all ServerVtxos
-	pub fn internal_vtxos(&self) -> impl Iterator<Item = ServerVtxo> + ExactSizeIterator + '_ {
+	pub fn internal_vtxos(&self) -> impl Iterator<Item = ServerVtxo<Full>> + ExactSizeIterator + '_ {
 		(0..self.nb_nodes()).map(|idx| self.build_internal_vtxo(idx))
 	}
 
 	/// Construct all individual vtxos from this round.
-	pub fn output_vtxos(&self) -> impl Iterator<Item = Vtxo> + ExactSizeIterator + '_ {
+	pub fn output_vtxos(&self) -> impl Iterator<Item = Vtxo<Full>> + ExactSizeIterator + '_ {
 		(0..self.nb_leaves()).map(|idx| self.build_vtxo(idx))
 	}
 
@@ -1071,11 +1071,11 @@ pub fn hashlocked_leaf_sighash(
 /// both user and server to cosign the leaf input script-spend before
 /// exchanging forfeit signatures for the unlock preimage.
 fn hashlocked_leaf_sighash_from_vtxo(
-	vtxo: &Vtxo,
+	vtxo: &Vtxo<Full>,
 	chain_anchor: &Transaction,
 ) -> TapSighash {
 	assert_eq!(chain_anchor.compute_txid(), vtxo.chain_anchor().txid);
-	let last_genesis = vtxo.genesis.last().expect("at least one genesis item");
+	let last_genesis = vtxo.genesis.items.last().expect("at least one genesis item");
 	let (user_pubkey, unlock_hash) = match &last_genesis.transition {
 		GenesisTransition::HashLockedCosigned(inner) => {
 			(inner.user_pubkey, inner.unlock.hash())
@@ -1125,7 +1125,7 @@ impl<'a> LeafVtxoCosignContext<'a> {
 	/// Panics if the chain_anchor tx is incorrect or if this VTXO is not a
 	/// hArk leaf VTXO.
 	pub fn new(
-		vtxo: &Vtxo,
+		vtxo: &Vtxo<Full>,
 		chain_anchor: &Transaction,
 		key: &'a Keypair,
 	) -> (Self, LeafVtxoCosignRequest) {
@@ -1140,7 +1140,7 @@ impl<'a> LeafVtxoCosignContext<'a> {
 	/// Finalize the VTXO using the response from the server
 	pub fn finalize(
 		self,
-		vtxo: &mut Vtxo,
+		vtxo: &mut Vtxo<Full>,
 		response: LeafVtxoCosignResponse,
 	) -> bool {
 		let agg_nonce = musig::nonce_agg(&[&self.pub_nonce, &response.public_nonce]);
@@ -1181,7 +1181,7 @@ impl LeafVtxoCosignResponse {
 	/// Cosign a [LeafVtxoCosignRequest]
 	pub fn new_cosign(
 		request: &LeafVtxoCosignRequest,
-		vtxo: &Vtxo,
+		vtxo: &Vtxo<Full>,
 		chain_anchor: &Transaction,
 		server_key: &Keypair,
 	) -> Self {

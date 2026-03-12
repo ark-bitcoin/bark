@@ -5,10 +5,11 @@ use bitcoin::hashes::{sha256, Hash, HashEngine};
 use bitcoin::key::Keypair;
 use bitcoin::secp256k1::{self, schnorr, Message};
 
-use crate::{SignedVtxoRequest, Vtxo, VtxoId, VtxoRequest, SECP};
+use crate::{SignedVtxoRequest, VtxoId, VtxoRequest, SECP};
 use crate::encode::ProtocolEncoding;
 use crate::lightning::PaymentHash;
 use crate::offboard::OffboardRequest;
+use crate::Vtxo;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RoundAttemptChallenge([u8; 32]);
@@ -60,14 +61,15 @@ impl RoundAttemptChallenge {
 		SECP.sign_schnorr_with_aux_rand(&msg, &vtxo_keypair, &rand::random())
 	}
 
-	pub fn verify_input_vtxo_sig(
+	pub fn verify_input_vtxo_sig<G>(
 		&self,
-		vtxo: &Vtxo,
+		vtxo: &Vtxo<G>,
 		vtxo_reqs: &[SignedVtxoRequest],
 		sig: &schnorr::Signature,
 	) -> Result<(), secp256k1::Error> {
+
 		let msg = self.as_signable_message(vtxo.id(), vtxo_reqs);
-		SECP.verify_schnorr( sig, &msg, &vtxo.user_pubkey().x_only_public_key().0)
+		SECP.verify_schnorr(sig, &msg, &vtxo.user_pubkey().x_only_public_key().0)
 	}
 }
 
@@ -106,11 +108,12 @@ impl NonInteractiveRoundParticipationChallenge {
 		SECP.sign_schnorr_with_aux_rand(&msg, &vtxo_keypair, &rand::random())
 	}
 
-	pub fn verify_input_vtxo_sig(
-		vtxo: &Vtxo,
+	pub fn verify_input_vtxo_sig<G>(
+		vtxo: &Vtxo<G>,
 		vtxo_reqs: &[VtxoRequest],
 		sig: &schnorr::Signature,
 	) -> Result<(), secp256k1::Error> {
+
 		let msg = Self::signable_message(vtxo.id(), vtxo_reqs);
 		SECP.verify_schnorr( sig, &msg, &vtxo.user_pubkey().x_only_public_key().0)
 	}
@@ -156,11 +159,12 @@ impl LightningReceiveChallenge {
 		)
 	}
 
-	pub fn verify_input_vtxo_sig(
+	pub fn verify_input_vtxo_sig<G>(
 		&self,
-		vtxo: &Vtxo,
+		vtxo: &Vtxo<G>,
 		sig: &schnorr::Signature,
 	) -> Result<(), secp256k1::Error> {
+
 		SECP.verify_schnorr(
 			sig,
 			&Self::as_signable_message(self, vtxo.id()),
@@ -213,11 +217,12 @@ impl VtxoStatusChallenge {
 		)
 	}
 
-	pub fn verify_input_vtxo_sig(
+	pub fn verify_input_vtxo_sig<G>(
 		&self,
-		vtxo: &Vtxo,
+		vtxo: &Vtxo<G>,
 		sig: &schnorr::Signature,
 	) -> Result<(), secp256k1::Error> {
+
 		SECP.verify_schnorr(
 			sig,
 			&Self::as_signable_message(self, vtxo.id()),
@@ -264,11 +269,12 @@ impl OffboardRequestChallenge {
 		)
 	}
 
-	pub fn verify_input_vtxo_sig(
+	pub fn verify_input_vtxo_sig<G>(
 		&self,
-		vtxo: &Vtxo,
+		vtxo: &Vtxo<G>,
 		sig: &schnorr::Signature,
 	) -> Result<(), secp256k1::Error> {
+
 		SECP.verify_schnorr(
 			sig,
 			&self.message,

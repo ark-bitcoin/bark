@@ -7,7 +7,7 @@ use log::{info, error};
 use ark::{VtxoPolicy, ProtocolEncoding};
 use ark::arkoor::ArkoorDestination;
 use ark::arkoor::package::{ArkoorPackageBuilder, ArkoorPackageCosignResponse};
-use ark::vtxo::{Vtxo, VtxoId};
+use ark::vtxo::{Full, Vtxo, VtxoId};
 use server_rpc::protos;
 
 use crate::subsystem::Subsystem;
@@ -18,8 +18,8 @@ use crate::movement::manager::OnDropStatus;
 /// The result of creating an arkoor transaction
 pub struct ArkoorCreateResult {
 	pub inputs: Vec<VtxoId>,
-	pub created: Vec<Vtxo>,
-	pub change: Vec<Vtxo>,
+	pub created: Vec<Vtxo<Full>>,
+	pub change: Vec<Vtxo<Full>>,
 }
 
 impl Wallet {
@@ -145,7 +145,7 @@ impl Wallet {
 		&self,
 		destination: &ark::Address,
 		amount: Amount,
-	) -> anyhow::Result<Vec<Vtxo>> {
+	) -> anyhow::Result<Vec<Vtxo<Full>>> {
 		let (mut srv, _) = self.require_server().await?;
 
 		self.validate_arkoor_address(&destination).await

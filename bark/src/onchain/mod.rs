@@ -41,6 +41,7 @@ use bitcoin::{
 };
 
 use ark::Vtxo;
+use ark::vtxo::Full;
 use bitcoin_ext::{BlockHeight, BlockRef};
 
 use crate::chain::ChainSource;
@@ -74,7 +75,7 @@ pub struct LocalUtxo {
 #[derive(Debug, Clone)]
 pub struct SpendableExit {
 	/// The VTXO being exited.
-	pub vtxo: Vtxo,
+	pub vtxo: Vtxo<Full>,
 	/// The block height associated with the exits' validity window.
 	pub height: BlockHeight,
 }

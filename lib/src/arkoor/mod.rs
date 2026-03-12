@@ -79,7 +79,7 @@ use bitcoin_ext::{fee, P2TR_DUST, TxOutExt};
 use secp256k1_musig::musig::PublicNonce;
 
 use crate::{musig, scripts, Vtxo, VtxoId, ServerVtxo};
-use crate::vtxo::{VtxoPolicy, ServerVtxoPolicy};
+use crate::vtxo::{Full, ServerVtxoPolicy, VtxoPolicy};
 use crate::vtxo::genesis::{GenesisItem, GenesisTransition};
 
 pub use package::ArkoorPackageBuilder;
@@ -189,7 +189,7 @@ impl<V> ArkoorCosignRequest<V> {
 }
 
 impl ArkoorCosignRequest<VtxoId> {
-	pub fn with_vtxo(self, vtxo: Vtxo) -> Result<ArkoorCosignRequest<Vtxo>, &'static str> {
+	pub fn with_vtxo(self, vtxo: Vtxo<Full>) -> Result<ArkoorCosignRequest<Vtxo<Full>>, &'static str> {
 		if self.input != vtxo.id() {
 			return Err("Input vtxo id does not match the provided vtxo id")
 		}
@@ -249,7 +249,7 @@ pub mod state {
 pub struct ArkoorBuilder<S: state::BuilderState> {
 	// These variables are provided by the user
 	/// The input vtxo to be spent
-	input: Vtxo,
+	input: Vtxo<Full>,
 	/// Regular output vtxos
 	outputs: Vec<ArkoorDestination>,
 	/// Isolated outputs that will go through an isolation tx
@@ -296,7 +296,7 @@ pub struct ArkoorBuilder<S: state::BuilderState> {
 
 impl<S: state::BuilderState> ArkoorBuilder<S> {
 	/// Access the input VTXO
-	pub fn input(&self) -> &Vtxo {
+	pub fn input(&self) -> &Vtxo<Full> {
 		&self.input
 	}
 
@@ -321,7 +321,7 @@ impl<S: state::BuilderState> ArkoorBuilder<S> {
 		&self,
 		output_idx: usize,
 		checkpoint_sig: Option<schnorr::Signature>
-	) -> ServerVtxo {
+	) -> ServerVtxo<Full> {
 		let output = &self.outputs[output_idx];
 		let (checkpoint_tx, checkpoint_txid) = self.checkpoint_data.as_ref()
 			.expect("called checkpoint_vtxo_at in context without checkpoints");
@@ -334,59 +334,12 @@ impl<S: state::BuilderState> ArkoorBuilder<S> {
 			exit_delta: self.input.exit_delta,
 			point: OutPoint::new(*checkpoint_txid, output_idx as u32),
 			anchor_point: self.input.anchor_point,
-			genesis: self.input.genesis.clone().into_iter().chain([
-				GenesisItem {
-					transition: GenesisTransition::new_arkoor(
-						vec![self.input.user_pubkey()],
-						self.input.policy().taproot(
-							self.input.server_pubkey,
-							self.input.exit_delta,
-							self.input.expiry_height,
-						).tap_tweak(),
-						checkpoint_sig,
-					),
-					output_idx: output_idx as u8,
-					other_outputs: checkpoint_tx.output
-						.iter().enumerate()
-						.filter_map(|(i, txout)| {
-							if i == (output_idx as usize) || txout.is_p2a_fee_anchor() {
-								None
-							} else {
-								Some(txout.clone())
-							}
-						})
-						.collect(),
-					fee_amount: Amount::ZERO,
-				},
-			]).collect(),
-		}
-	}
-
-	fn build_vtxo_at(
-		&self,
-		output_idx: usize,
-		checkpoint_sig: Option<schnorr::Signature>,
-		arkoor_sig: Option<schnorr::Signature>,
-	) -> Vtxo {
-		let output = &self.outputs[output_idx];
-
-		if let Some((checkpoint_tx, _txid)) = &self.checkpoint_data {
-			// Two-transition genesis: Input → Checkpoint → Arkoor
-			let checkpoint_policy = ServerVtxoPolicy::new_checkpoint(self.input.user_pubkey());
-
-			Vtxo {
-				amount: output.total_amount,
-				policy: output.policy.clone(),
-				expiry_height: self.input.expiry_height,
-				server_pubkey: self.input.server_pubkey,
-				exit_delta: self.input.exit_delta,
-				point: self.new_vtxo_ids[output_idx].utxo(),
-				anchor_point: self.input.anchor_point,
-				genesis: self.input.genesis.iter().cloned().chain([
+			genesis: Full {
+				items: self.input.genesis.items.clone().into_iter().chain([
 					GenesisItem {
 						transition: GenesisTransition::new_arkoor(
 							vec![self.input.user_pubkey()],
-							self.input.policy.taproot(
+							self.input.policy().taproot(
 								self.input.server_pubkey,
 								self.input.exit_delta,
 								self.input.expiry_height,
@@ -406,21 +359,72 @@ impl<S: state::BuilderState> ArkoorBuilder<S> {
 							.collect(),
 						fee_amount: Amount::ZERO,
 					},
-					GenesisItem {
-						transition: GenesisTransition::new_arkoor(
-							vec![self.input.user_pubkey()],
-							checkpoint_policy.taproot(
-								self.input.server_pubkey,
-								self.input.exit_delta,
-								self.input.expiry_height,
-							).tap_tweak(),
-							arkoor_sig,
-						),
-						output_idx: 0,
-						other_outputs: vec![],
-						fee_amount: Amount::ZERO,
-					}
 				]).collect(),
+			},
+		}
+	}
+
+	fn build_vtxo_at(
+		&self,
+		output_idx: usize,
+		checkpoint_sig: Option<schnorr::Signature>,
+		arkoor_sig: Option<schnorr::Signature>,
+	) -> Vtxo<Full> {
+		let output = &self.outputs[output_idx];
+
+		if let Some((checkpoint_tx, _txid)) = &self.checkpoint_data {
+			// Two-transition genesis: Input → Checkpoint → Arkoor
+			let checkpoint_policy = ServerVtxoPolicy::new_checkpoint(self.input.user_pubkey());
+
+			Vtxo {
+				amount: output.total_amount,
+				policy: output.policy.clone(),
+				expiry_height: self.input.expiry_height,
+				server_pubkey: self.input.server_pubkey,
+				exit_delta: self.input.exit_delta,
+				point: self.new_vtxo_ids[output_idx].utxo(),
+				anchor_point: self.input.anchor_point,
+				genesis: Full {
+					items: self.input.genesis.items.iter().cloned().chain([
+						GenesisItem {
+							transition: GenesisTransition::new_arkoor(
+								vec![self.input.user_pubkey()],
+								self.input.policy.taproot(
+									self.input.server_pubkey,
+									self.input.exit_delta,
+									self.input.expiry_height,
+								).tap_tweak(),
+								checkpoint_sig,
+							),
+							output_idx: output_idx as u8,
+							other_outputs: checkpoint_tx.output
+								.iter().enumerate()
+								.filter_map(|(i, txout)| {
+									if i == (output_idx as usize) || txout.is_p2a_fee_anchor() {
+										None
+									} else {
+										Some(txout.clone())
+									}
+								})
+								.collect(),
+							fee_amount: Amount::ZERO,
+						},
+						GenesisItem {
+							transition: GenesisTransition::new_arkoor(
+								vec![self.input.user_pubkey()],
+								checkpoint_policy.taproot(
+									self.input.server_pubkey,
+									self.input.exit_delta,
+									self.input.expiry_height,
+								).tap_tweak(),
+								arkoor_sig,
+							),
+							output_idx: 0,
+							other_outputs: vec![],
+							fee_amount: Amount::ZERO,
+						}
+					]).collect(),
+				},
 			}
 		} else {
 			// Single-transition genesis: Input → Arkoor
@@ -434,31 +438,33 @@ impl<S: state::BuilderState> ArkoorBuilder<S> {
 				exit_delta: self.input.exit_delta,
 				point: OutPoint::new(arkoor_tx.compute_txid(), output_idx as u32),
 				anchor_point: self.input.anchor_point,
-				genesis: self.input.genesis.iter().cloned().chain([
-					GenesisItem {
-						transition: GenesisTransition::new_arkoor(
-							vec![self.input.user_pubkey()],
-							self.input.policy.taproot(
-								self.input.server_pubkey,
-								self.input.exit_delta,
-								self.input.expiry_height,
-							).tap_tweak(),
-							arkoor_sig,
-						),
-						output_idx: output_idx as u8,
-						other_outputs: arkoor_tx.output
-							.iter().enumerate()
-							.filter_map(|(idx, txout)| {
-								if idx == output_idx || txout.is_p2a_fee_anchor() {
-									None
-								} else {
-									Some(txout.clone())
-								}
-							})
-							.collect(),
-						fee_amount: Amount::ZERO,
-					}
-				]).collect(),
+				genesis: Full {
+					items: self.input.genesis.items.iter().cloned().chain([
+						GenesisItem {
+							transition: GenesisTransition::new_arkoor(
+								vec![self.input.user_pubkey()],
+								self.input.policy.taproot(
+									self.input.server_pubkey,
+									self.input.exit_delta,
+									self.input.expiry_height,
+								).tap_tweak(),
+								arkoor_sig,
+							),
+							output_idx: output_idx as u8,
+							other_outputs: arkoor_tx.output
+								.iter().enumerate()
+								.filter_map(|(idx, txout)| {
+									if idx == output_idx || txout.is_p2a_fee_anchor() {
+										None
+									} else {
+										Some(txout.clone())
+									}
+								})
+								.collect(),
+							fee_amount: Amount::ZERO,
+						}
+					]).collect(),
+				},
 			}
 		}
 	}
@@ -475,7 +481,7 @@ impl<S: state::BuilderState> ArkoorBuilder<S> {
 		isolated_idx: usize,
 		pre_fanout_tx_sig: Option<schnorr::Signature>,
 		isolation_fanout_tx_sig: Option<schnorr::Signature>,
-	) -> Vtxo {
+	) -> Vtxo<Full> {
 		let output = &self.isolated_outputs[isolated_idx];
 		let checkpoint_policy = ServerVtxoPolicy::new_checkpoint(self.input.user_pubkey());
 
@@ -495,60 +501,63 @@ impl<S: state::BuilderState> ArkoorBuilder<S> {
 				exit_delta: self.input.exit_delta,
 				point: OutPoint::new(fanout_tx.compute_txid(), isolated_idx as u32),
 				anchor_point: self.input.anchor_point,
-				genesis: self.input.genesis.iter().cloned().chain([
-					// Transition 1: input -> checkpoint
-					GenesisItem {
-						transition: GenesisTransition::new_arkoor(
-							vec![self.input.user_pubkey()],
-							self.input.policy.taproot(
-								self.input.server_pubkey,
-								self.input.exit_delta,
-								self.input.expiry_height,
-							).tap_tweak(),
-							pre_fanout_tx_sig,
-						),
-						output_idx: dust_isolation_output_idx as u8,
-						// other outputs are the normal outputs
-						// (we skip our combined dust output and fee anchor)
-						other_outputs: checkpoint_tx.output
-							.iter().enumerate()
-							.filter_map(|(idx, txout)| {
-								if idx == dust_isolation_output_idx || txout.is_p2a_fee_anchor() {
-									None
-								} else {
-									Some(txout.clone())
-								}
-							})
-							.collect(),
-						fee_amount: Amount::ZERO,
-					},
-					// Transition 2: checkpoint -> isolation fanout tx (final vtxo)
-					GenesisItem {
-						transition: GenesisTransition::new_arkoor(
-							vec![self.input.user_pubkey()],
-							checkpoint_policy.taproot(
-								self.input.server_pubkey,
-								self.input.exit_delta,
-								self.input.expiry_height,
-							).tap_tweak(),
-							isolation_fanout_tx_sig,
-						),
-						output_idx: isolated_idx as u8,
-						// other outputs are the other isolated outputs
-						// (we skip our output and fee anchor)
-						other_outputs: fanout_tx.output
-							.iter().enumerate()
-							.filter_map(|(idx, txout)| {
-								if idx == isolated_idx || txout.is_p2a_fee_anchor() {
-									None
-								} else {
-									Some(txout.clone())
-								}
-							})
-							.collect(),
-						fee_amount: Amount::ZERO,
-					},
-				]).collect(),
+				genesis: Full {
+					items: self.input.genesis.items.iter().cloned().chain([
+						// Transition 1: input -> checkpoint
+						GenesisItem {
+							transition: GenesisTransition::new_arkoor(
+								vec![self.input.user_pubkey()],
+								self.input.policy.taproot(
+									self.input.server_pubkey,
+									self.input.exit_delta,
+									self.input.expiry_height,
+								).tap_tweak(),
+								pre_fanout_tx_sig,
+							),
+							output_idx: dust_isolation_output_idx as u8,
+							// other outputs are the normal outputs
+							// (we skip our combined dust output and fee anchor)
+							other_outputs: checkpoint_tx.output
+								.iter().enumerate()
+								.filter_map(|(idx, txout)| {
+									let is_p2a = txout.is_p2a_fee_anchor();
+									if idx == dust_isolation_output_idx || is_p2a {
+										None
+									} else {
+										Some(txout.clone())
+									}
+								})
+								.collect(),
+							fee_amount: Amount::ZERO,
+						},
+						// Transition 2: checkpoint -> isolation fanout tx (final vtxo)
+						GenesisItem {
+							transition: GenesisTransition::new_arkoor(
+								vec![self.input.user_pubkey()],
+								checkpoint_policy.taproot(
+									self.input.server_pubkey,
+									self.input.exit_delta,
+									self.input.expiry_height,
+								).tap_tweak(),
+								isolation_fanout_tx_sig,
+							),
+							output_idx: isolated_idx as u8,
+							// other outputs are the other isolated outputs
+							// (we skip our output and fee anchor)
+							other_outputs: fanout_tx.output
+								.iter().enumerate()
+								.filter_map(|(idx, txout)| {
+									if idx == isolated_idx || txout.is_p2a_fee_anchor() {
+										None
+									} else {
+										Some(txout.clone())
+									}
+								})
+								.collect(),
+							fee_amount: Amount::ZERO,
+						},
+					]).collect(),
+				},
 			}
 		} else {
 			// Two transitions: Input → Arkoor (with isolation output) → Fanout (final vtxo)
@@ -562,56 +571,58 @@ impl<S: state::BuilderState> ArkoorBuilder<S> {
 				exit_delta: self.input.exit_delta,
 				point: OutPoint::new(fanout_tx.compute_txid(), isolated_idx as u32),
 				anchor_point: self.input.anchor_point,
-				genesis: self.input.genesis.iter().cloned().chain([
-					// Transition 1: input -> arkoor tx (which includes isolation output)
-					GenesisItem {
-						transition: GenesisTransition::new_arkoor(
-							vec![self.input.user_pubkey()],
-							self.input.policy.taproot(
-								self.input.server_pubkey,
-								self.input.exit_delta,
-								self.input.expiry_height,
-							).tap_tweak(),
-							pre_fanout_tx_sig,
-						),
-						output_idx: dust_isolation_output_idx as u8,
-						other_outputs: arkoor_tx.output
-							.iter().enumerate()
-							.filter_map(|(idx, txout)| {
-								if idx == dust_isolation_output_idx || txout.is_p2a_fee_anchor() {
-									None
-								} else {
-									Some(txout.clone())
-								}
-							})
-							.collect(),
-						fee_amount: Amount::ZERO,
-					},
-					// Transition 2: isolation output -> isolation fanout tx (final vtxo)
-					GenesisItem {
-						transition: GenesisTransition::new_arkoor(
-							vec![self.input.user_pubkey()],
-							checkpoint_policy.taproot(
-								self.input.server_pubkey,
-								self.input.exit_delta,
-								self.input.expiry_height,
-							).tap_tweak(),
-							isolation_fanout_tx_sig,
-						),
-						output_idx: isolated_idx as u8,
-						other_outputs: fanout_tx.output
-							.iter().enumerate()
-							.filter_map(|(idx, txout)| {
-								if idx == isolated_idx || txout.is_p2a_fee_anchor() {
-									None
-								} else {
-									Some(txout.clone())
-								}
-							})
-							.collect(),
-						fee_amount: Amount::ZERO,
-					},
-				]).collect(),
+				genesis: Full {
+					items: self.input.genesis.items.iter().cloned().chain([
+						// Transition 1: input -> arkoor tx (which includes isolation output)
+						GenesisItem {
+							transition: GenesisTransition::new_arkoor(
+								vec![self.input.user_pubkey()],
+								self.input.policy.taproot(
+									self.input.server_pubkey,
+									self.input.exit_delta,
+									self.input.expiry_height,
+								).tap_tweak(),
+								pre_fanout_tx_sig,
+							),
+							output_idx: dust_isolation_output_idx as u8,
+							other_outputs: arkoor_tx.output
+								.iter().enumerate()
+								.filter_map(|(idx, txout)| {
+									if idx == dust_isolation_output_idx || txout.is_p2a_fee_anchor() {
+										None
+									} else {
+										Some(txout.clone())
+									}
+								})
+								.collect(),
+							fee_amount: Amount::ZERO,
+						},
+						// Transition 2: isolation output -> isolation fanout tx (final vtxo)
+						GenesisItem {
+							transition: GenesisTransition::new_arkoor(
+								vec![self.input.user_pubkey()],
+								checkpoint_policy.taproot(
+									self.input.server_pubkey,
+									self.input.exit_delta,
+									self.input.expiry_height,
+								).tap_tweak(),
+								isolation_fanout_tx_sig,
+							),
+							output_idx: isolated_idx as u8,
+							other_outputs: fanout_tx.output
+								.iter().enumerate()
+								.filter_map(|(idx, txout)| {
+									if idx == isolated_idx || txout.is_p2a_fee_anchor() {
+										None
+									} else {
+										Some(txout.clone())
+									}
+								})
+								.collect(),
+							fee_amount: Amount::ZERO,
+						},
+					]).collect(),
+				},
 			}
 		}
 	}
@@ -630,7 +641,7 @@ impl<S: state::BuilderState> ArkoorBuilder<S> {
 		}
 	}
 
-	pub fn build_unsigned_vtxos<'a>(&'a self) -> impl Iterator<Item = Vtxo> + 'a {
+	pub fn build_unsigned_vtxos<'a>(&'a self) -> impl Iterator<Item = Vtxo<Full>> + 'a {
 		let regular = (0..self.outputs.len()).map(|i| self.build_vtxo_at(i, None, None));
 		let isolated = (0..self.isolated_outputs.len())
 			.map(|i| self.build_isolated_vtxo_at(i, None, None));
@@ -641,7 +652,7 @@ impl<S: state::BuilderState> ArkoorBuilder<S> {
 	///
 	/// Returns the checkpoint outputs (if checkpoinst are used) and the
 	/// dust isolation output (if dust isolation is used).
-	pub fn build_unsigned_internal_vtxos<'a>(&'a self) -> impl Iterator<Item = ServerVtxo> + 'a {
+	pub fn build_unsigned_internal_vtxos<'a>(&'a self) -> impl Iterator<Item = ServerVtxo<Full>> + 'a {
 		let checkpoint_vtxos = {
 			let range = if self.checkpoint_data.is_some() {
 				0..self.outputs.len()
@@ -672,26 +683,28 @@ impl<S: state::BuilderState> ArkoorBuilder<S> {
 				exit_delta: self.input.exit_delta,
 				point: OutPoint::new(int_txid, output_idx as u32),
 				anchor_point: self.input.anchor_point,
-				genesis: self.input.genesis.clone().into_iter().chain([
-					GenesisItem {
-						transition: GenesisTransition::new_arkoor(
-							vec![self.input.user_pubkey()],
-							self.input_tweak,
-							None,
-						),
-						output_idx: output_idx as u8,
-						other_outputs: int_tx.output.iter().enumerate()
-							.filter_map(|(i, txout)| {
-								if i == output_idx || txout.is_p2a_fee_anchor() {
-									None
-								} else {
-									Some(txout.clone())
-								}
-							})
-							.collect(),
-						fee_amount: Amount::ZERO,
-					},
-				]).collect(),
+				genesis: Full {
+					items: self.input.genesis.items.clone().into_iter().chain([
+						GenesisItem {
+							transition: GenesisTransition::new_arkoor(
+								vec![self.input.user_pubkey()],
+								self.input_tweak,
+								None,
+							),
+							output_idx: output_idx as u8,
+							other_outputs: int_tx.output.iter().enumerate()
+								.filter_map(|(i, txout)| {
+									if i == output_idx || txout.is_p2a_fee_anchor() {
+										None
+									} else {
+										Some(txout.clone())
+									}
+								})
+								.collect(),
+							fee_amount: Amount::ZERO,
+						},
+					]).collect(),
+				},
 			})
 		} else {
 			None
@@ -784,11 +797,12 @@ impl<S: state::BuilderState> ArkoorBuilder<S> {
 	///
 	/// When dust isolation is needed, `combined_dust_amount` should be Some
 	/// with the total dust amount.
-	fn construct_unsigned_checkpoint_tx(
-		input: &Vtxo,
+	fn construct_unsigned_checkpoint_tx<G>(
+		input: &Vtxo<G>,
 		outputs: &[ArkoorDestination],
 		dust_isolation_amount: Option<Amount>,
 	) -> Transaction {
+
 		// All outputs on the checkpoint transaction will use exactly the same policy.
 		let output_policy = ServerVtxoPolicy::new_checkpoint(input.user_pubkey());
 		let checkpoint_spk = output_policy
@@ -820,12 +834,13 @@ impl<S: state::BuilderState> ArkoorBuilder<S> {
 		}
 	}
 
-	fn construct_unsigned_arkoor_txs(
-		input: &Vtxo,
+	fn construct_unsigned_arkoor_txs<G>(
+		input: &Vtxo<G>,
 		outputs: &[ArkoorDestination],
 		checkpoint_txid: Option<Txid>,
 		dust_isolation_amount: Option<Amount>,
 	) -> Vec<Transaction> {
+
 		if let Some(checkpoint_txid) = checkpoint_txid {
 			// Checkpoint mode: create separate arkoor tx for each output
 			let mut arkoor_txs = Vec::with_capacity(outputs.len());
@@ -898,25 +913,12 @@ impl<S: state::BuilderState> ArkoorBuilder<S> {
 	/// Called only when dust isolation is needed.
 	///
 	/// `parent_txid` is either the checkpoint txid (checkpoint mode) or arkoor txid (direct mode)
-	fn construct_unsigned_isolation_fanout_tx(
-		input: &Vtxo,
+	fn construct_unsigned_isolation_fanout_tx<G>(
+		input: &Vtxo<G>,
 		isolated_outputs: &[ArkoorDestination],
 		parent_txid: Txid,  // Either checkpoint txid or arkoor txid
 		dust_isolation_output_vout: u32,  // Output index containing the dust isolation output
 	) -> Transaction {
-		let mut tx_outputs: Vec<TxOut> = isolated_outputs.iter().map(|o| {
-			TxOut {
-				value: o.total_amount,
-				script_pubkey: o.policy.script_pubkey(
-					input.server_pubkey(),
-					input.exit_delta(),
-					input.expiry_height(),
-				),
-			}
-		}).collect();
-
-		// Add fee anchor
-		tx_outputs.push(fee::fee_anchor());
 
 		Transaction {
 			version: bitcoin::transaction::Version(3),
@@ -927,15 +929,25 @@ impl<S: state::BuilderState> ArkoorBuilder<S> {
 				sequence: Sequence::ZERO,
 				witness: Witness::new(),
 			}],
-			output: tx_outputs,
+			output: isolated_outputs.iter().map(|o| {
+				TxOut {
+					value: o.total_amount,
+					script_pubkey: o.policy.script_pubkey(
+						input.server_pubkey(),
+						input.exit_delta(),
+						input.expiry_height(),
+					),
+				}
+			}).chain([fee::fee_anchor()]).collect(),
 		}
 	}
 
-	fn validate_amounts(
-		input: &Vtxo,
+	fn validate_amounts<G>(
+		input: &Vtxo<G>,
 		outputs: &[ArkoorDestination],
 		isolation_outputs: &[ArkoorDestination],
 	) -> Result<(), ArkoorConstructionError> {
+
 		// Check if inputs and outputs are balanced
 		// We need to build transactions that pay exactly 0 in onchain fees
 		// to ensure our transaction with an ephemeral anchor is standard.
@@ -994,7 +1006,7 @@ impl<S: state::BuilderState> ArkoorBuilder<S> {
 impl ArkoorBuilder<state::Initial> {
 	/// Create builder with checkpoint transaction
 	pub fn new_with_checkpoint(
-		input: Vtxo,
+		input: Vtxo<Full>,
 		outputs: Vec<ArkoorDestination>,
 		isolated_outputs: Vec<ArkoorDestination>,
 	) -> Result<Self, ArkoorConstructionError> {
@@ -1003,7 +1015,7 @@ impl ArkoorBuilder<state::Initial> {
 
 	/// Create builder without checkpoint transaction
 	pub fn new_without_checkpoint(
-		input: Vtxo,
+		input: Vtxo<Full>,
 		outputs: Vec<ArkoorDestination>,
 		isolated_outputs: Vec<ArkoorDestination>,
 	) -> Result<Self, ArkoorConstructionError> {
@@ -1015,14 +1027,14 @@ impl ArkoorBuilder<state::Initial> {
 	/// This constructor takes a single list of outputs and automatically
 	/// determines the best strategy for handling dust.
 	pub fn new_with_checkpoint_isolate_dust(
-		input: Vtxo,
+		input: Vtxo<Full>,
 		outputs: Vec<ArkoorDestination>,
 	) -> Result<Self, ArkoorConstructionError> {
 		Self::new_isolate_dust(input, outputs, true)
 	}
 
 	pub(crate) fn new_isolate_dust(
-		input: Vtxo,
+		input: Vtxo<Full>,
 		outputs: Vec<ArkoorDestination>,
 		use_checkpoints: bool,
 	) -> Result<Self, ArkoorConstructionError> {
@@ -1080,7 +1092,7 @@ impl ArkoorBuilder<state::Initial> {
 	}
 
 	pub(crate) fn new(
-		input: Vtxo,
+		input: Vtxo<Full>,
 		outputs: Vec<ArkoorDestination>,
 		isolated_outputs: Vec<ArkoorDestination>,
 		use_checkpoint: bool,
@@ -1249,7 +1261,7 @@ impl ArkoorBuilder<state::Initial> {
 
 impl<'a> ArkoorBuilder<state::ServerCanCosign> {
 	pub fn from_cosign_request(
-		cosign_request: ArkoorCosignRequest<Vtxo>,
+		cosign_request: ArkoorCosignRequest<Vtxo<Full>>,
 	) -> Result<ArkoorBuilder<state::ServerCanCosign>, ArkoorSigningError> {
 		let ret = ArkoorBuilder::new(
 			cosign_request.input,
@@ -1320,7 +1332,7 @@ impl ArkoorBuilder<state::UserGeneratedNonces> {
 		self.user_pub_nonces.as_ref().expect("State invariant")
 	}
 
-	pub fn cosign_request(&self) -> ArkoorCosignRequest<Vtxo> {
+	pub fn cosign_request(&self) -> ArkoorCosignRequest<Vtxo<Full>> {
 		ArkoorCosignRequest {
 			user_pub_nonces: self.user_pub_nonces().to_vec(),
 			input: self.input.clone(),
@@ -1418,7 +1430,7 @@ impl ArkoorBuilder<state::UserGeneratedNonces> {
 
 
 impl<'a> ArkoorBuilder<state::UserSigned> {
-	pub fn build_signed_vtxos(&self) -> Vec<Vtxo> {
+	pub fn build_signed_vtxos(&self) -> Vec<Vtxo<Full>> {
 		let sigs = self.full_signatures.as_ref().expect("state invariant");
 		let mut ret = Vec::with_capacity(self.outputs.len() + self.isolated_outputs.len());
 
@@ -1496,7 +1508,7 @@ mod test {
 	/// Verify properties of spend_info(), build_unsigned_internal_vtxos(), and final vtxos.
 	fn verify_builder<S: state::BuilderState>(
 		builder: &ArkoorBuilder<S>,
-		input: &Vtxo,
+		input: &Vtxo<Full>,
 		outputs: &[ArkoorDestination],
 		isolated_outputs: &[ArkoorDestination],
 	) {
@@ -1512,8 +1524,8 @@ mod test {
 		assert_eq!(spend_vtxo_ids.len(), spend_info.len());
 
 		// all intermediate vtxos are spent and use checkpoint policy for efficient cosigning
-		let internal_vtxos: Vec<ServerVtxo> = builder.build_unsigned_internal_vtxos().collect();
-		let internal_vtxo_ids: HashSet<VtxoId> = internal_vtxos.iter().map(|v| v.id()).collect();
+		let internal_vtxos = builder.build_unsigned_internal_vtxos().collect::<Vec<_>>();
+		let internal_vtxo_ids = internal_vtxos.iter().map(|v| v.id()).collect::<HashSet<_>>();
 		for internal_vtxo in &internal_vtxos {
 			assert!(spend_vtxo_ids.contains(&internal_vtxo.id()));
 			assert!(matches!(internal_vtxo.policy(), ServerVtxoPolicy::Checkpoint(_)));
@@ -1534,15 +1546,15 @@ mod test {
 		}
 
 		// final vtxos are unspent outputs that recipients receive
-		let final_vtxos: Vec<Vtxo> = builder.build_unsigned_vtxos().collect();
+		let final_vtxos = builder.build_unsigned_vtxos().collect::<Vec<_>>();
 		for final_vtxo in &final_vtxos {
 			assert!(!spend_vtxo_ids.contains(&final_vtxo.id()));
 		}
 
 		// final vtxos match requested destinations
-		let all_destinations: Vec<&ArkoorDestination> = outputs.iter()
+		let all_destinations = outputs.iter()
 			.chain(isolated_outputs.iter())
-			.collect();
+			.collect::<Vec<&_>>();
 		for (vtxo, dest) in final_vtxos.iter().zip(all_destinations.iter()) {
 			assert_eq!(vtxo.amount(), dest.total_amount);
 			assert_eq!(vtxo.policy, dest.policy);

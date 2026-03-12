@@ -10,6 +10,7 @@ use log::{debug, info};
 
 use ark::{ArkInfo, Vtxo, VtxoId};
 use ark::encode::ProtocolEncoding;
+use ark::vtxo::Full;
 use bark_json::primitives::{VtxoInfo, WalletVtxoInfo};
 use server_rpc as rpc;
 
@@ -87,7 +88,7 @@ pub enum VtxoCommand {
 async fn execute_vtxo_command(datadir: &Path, command: VtxoCommand) -> anyhow::Result<()> {
 	match command {
 		VtxoCommand::Decode { vtxo } => {
-			let vtxo = Vtxo::deserialize_hex(&vtxo).context("invalid vtxo")?;
+			let vtxo = <Vtxo<Full>>::deserialize_hex(&vtxo).context("invalid vtxo")?;
 			// for --verbose print the debug format as well
 			debug!("{:#?}", vtxo);
 			let info = VtxoInfo::from(vtxo);

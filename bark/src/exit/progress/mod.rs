@@ -7,6 +7,7 @@ use bitcoin::{Amount, FeeRate, Transaction, Txid};
 use log::{debug, error, warn};
 
 use ark::Vtxo;
+use ark::vtxo::Full;
 use bitcoin_ext::{BlockHeight, BlockRef, TxStatus};
 use bitcoin_ext::cpfp::{CpfpError, MakeCpfpFees};
 
@@ -83,7 +84,7 @@ impl From<ExitError> for ExitProgressError {
 }
 
 pub(crate) struct ProgressContext<'a> {
-	pub vtxo: &'a Vtxo,
+	pub vtxo: &'a Vtxo<Full>,
 	pub exit_txids: &'a Vec<Txid>,
 	pub wallet: &'a Wallet,
 	pub fee_rate: FeeRate,

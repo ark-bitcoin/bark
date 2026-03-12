@@ -13,6 +13,7 @@ use bitcoin::{Amount, FeeRate, Txid};
 use log::{debug, trace};
 
 use ark::{Vtxo, VtxoId};
+use ark::vtxo::Full;
 
 use crate::exit::models::{ExitError, ExitState};
 use crate::exit::progress::{ExitStateProgress, ProgressContext, ProgressStep};
@@ -48,7 +49,7 @@ impl ExitVtxo {
 	/// # Parameters
 	/// - `vtxo_id`: the [VtxoId] being exited.
 	/// - `tip`: current chain tip used to initialize the starting state.
-	pub fn new(vtxo: &Vtxo, tip: u32) -> Self {
+	pub fn new(vtxo: &Vtxo<Full>, tip: u32) -> Self {
 		Self {
 			vtxo_id: vtxo.id(),
 			amount: vtxo.amount(),
@@ -64,7 +65,7 @@ impl ExitVtxo {
 	/// # Parameters
 	/// - `entry`: The persisted data to reconstruct this instance from.
 	/// - `vtxo`: The [Vtxo] that this exit is tracking.
-	pub fn from_entry(entry: StoredExit, vtxo: &Vtxo) -> Self {
+	pub fn from_entry(entry: StoredExit, vtxo: &WalletVtxo) -> Self {
 		assert_eq!(entry.vtxo_id, vtxo.id());
 		ExitVtxo {
 			vtxo_id: entry.vtxo_id,

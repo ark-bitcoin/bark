@@ -8,7 +8,7 @@ pub use self::state::{VtxoState, VtxoStateKind, WalletVtxo};
 
 use log::{debug, error, trace};
 use ark::{ProtocolEncoding, Vtxo};
-use ark::vtxo::VtxoRef;
+use ark::vtxo::{Full, VtxoRef};
 
 use crate::Wallet;
 use crate::movement::MovementId;
@@ -112,7 +112,7 @@ impl Wallet {
 	/// - `vtxos`: The VTXOs to store in the wallet.
 	pub async fn store_locked_vtxos<'a>(
 		&self,
-		vtxos: impl IntoIterator<Item = &'a Vtxo>,
+		vtxos: impl IntoIterator<Item = &'a Vtxo<Full>>,
 		movement_id: Option<MovementId>,
 	) -> anyhow::Result<()> {
 		self.store_vtxos(vtxos, &VtxoState::Locked { movement_id }).await
@@ -127,7 +127,7 @@ impl Wallet {
 	/// - `vtxos`: The VTXOs to store in the wallet.
 	pub async fn store_spendable_vtxos<'a>(
 		&self,
-		vtxos: impl IntoIterator<Item = &'a Vtxo>,
+		vtxos: impl IntoIterator<Item = &'a Vtxo<Full>>,
 	) -> anyhow::Result<()> {
 		self.store_vtxos(vtxos, &VtxoState::Spendable).await
 	}
@@ -141,7 +141,7 @@ impl Wallet {
 	/// - `vtxos`: The VTXOs to store in the wallet.
 	pub async fn store_spent_vtxos<'a>(
 		&self,
-		vtxos: impl IntoIterator<Item = &'a Vtxo>,
+		vtxos: impl IntoIterator<Item = &'a Vtxo<Full>>,
 	) -> anyhow::Result<()> {
 		self.store_vtxos(vtxos, &VtxoState::Spent).await
 	}
@@ -155,7 +155,7 @@ impl Wallet {
 	/// - `state`: The initial state of the VTXOs.
 	pub async fn store_vtxos<'a>(
 		&self,
-		vtxos: impl IntoIterator<Item = &'a Vtxo>,
+		vtxos: impl IntoIterator<Item = &'a Vtxo<Full>>,
 		state: &VtxoState,
 	) -> anyhow::Result<()> {
 		let vtxos = vtxos.into_iter().map(|v| (v, state)).collect::<Vec<_>>();

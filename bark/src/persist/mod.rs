@@ -32,6 +32,7 @@ use bdk_wallet::ChangeSet;
 
 use ark::{Vtxo, VtxoId};
 use ark::lightning::{Invoice, PaymentHash, Preimage};
+use ark::vtxo::Full;
 use bitcoin_ext::BlockDelta;
 
 use crate::WalletProperties;
@@ -208,7 +209,7 @@ pub trait BarkPersister: Send + Sync + 'static {
 	/// - Returns an error if the board cannot be stored.
 	async fn store_pending_board(
 		&self,
-		vtxo: &Vtxo,
+		vtxo: &Vtxo<Full>,
 		funding_tx: &Transaction,
 		movement_id: MovementId,
 	) -> anyhow::Result<()>;
@@ -307,7 +308,7 @@ pub trait BarkPersister: Send + Sync + 'static {
 	/// - Returns an error if the storage operation fails.
 	async fn store_vtxos(
 		&self,
-		vtxos: &[(&Vtxo, &VtxoState)],
+		vtxos: &[(&Vtxo<Full>, &VtxoState)],
 	) -> anyhow::Result<()>;
 
 	/// Fetch a wallet [Vtxo] with its current state by ID.
@@ -355,7 +356,7 @@ pub trait BarkPersister: Send + Sync + 'static {
 	///
 	/// Errors:
 	/// - Returns an error if the delete operation fails.
-	async fn remove_vtxo(&self, id: VtxoId) -> anyhow::Result<Option<Vtxo>>;
+	async fn remove_vtxo(&self, id: VtxoId) -> anyhow::Result<Option<Vtxo<Full>>>;
 
 	/// Check whether a [Vtxo] is already marked spent.
 	///

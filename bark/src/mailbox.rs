@@ -15,6 +15,7 @@ use log::{debug, error, info, trace};
 
 use ark::{ProtocolEncoding, Vtxo};
 use ark::mailbox::MailboxAuthorization;
+use ark::vtxo::Full;
 use server_rpc::protos;
 use server_rpc::protos::mailbox_server::{mailbox_message, ArkoorMessage};
 use crate::movement::{MovementDestination, MovementStatus};
@@ -102,12 +103,12 @@ impl Wallet {
 	async fn process_raw_vtxos(
 		&self,
 		raw_vtxos: Vec<Vec<u8>>,
-	) -> Vec<Vtxo> {
+	) -> Vec<Vtxo<Full>> {
 		let mut invalid_vtxos = Vec::with_capacity(raw_vtxos.len());
 		let mut valid_vtxos = Vec::with_capacity(raw_vtxos.len());
 
 		for bytes in &raw_vtxos {
-			let vtxo = match Vtxo::deserialize(&bytes) {
+			let vtxo = match Vtxo::<Full>::deserialize(&bytes) {
 				Ok(vtxo) => vtxo,
 				Err(e) => {
 					error!("Failed to deserialize arkoor VTXO: {}: {}", bytes.as_hex(), e);

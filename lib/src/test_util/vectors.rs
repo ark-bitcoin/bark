@@ -19,7 +19,7 @@ use crate::encode::ProtocolEncoding;
 use crate::lightning::PaymentHash;
 use crate::tree::signed::{UnlockHash, UnlockPreimage, VtxoLeafSpec, VtxoTreeSpec};
 use crate::test_util::encoding_roundtrip;
-use crate::vtxo::{PubkeyVtxoPolicy, ServerHtlcSendVtxoPolicy};
+use crate::vtxo::{Full, PubkeyVtxoPolicy, ServerHtlcSendVtxoPolicy};
 
 #[allow(unused)]
 #[macro_export]
@@ -40,17 +40,17 @@ pub struct VtxoTestVectors {
 	pub server_key: Keypair,
 
 	pub anchor_tx: Transaction,
-	pub board_vtxo: Vtxo,
+	pub board_vtxo: Vtxo<Full>,
 
-	pub arkoor_htlc_out_vtxo: Vtxo,
-	pub arkoor2_vtxo: Vtxo,
+	pub arkoor_htlc_out_vtxo: Vtxo<Full>,
+	pub arkoor2_vtxo: Vtxo<Full>,
 
 	pub round_tx: Transaction,
-	pub round1_vtxo: Vtxo,
-	pub round2_vtxo: Vtxo,
+	pub round1_vtxo: Vtxo<Full>,
+	pub round2_vtxo: Vtxo<Full>,
 
 	pub arkoor3_user_key: Keypair,
-	pub arkoor3_vtxo: Vtxo,
+	pub arkoor3_vtxo: Vtxo<Full>,
 }
 
 impl VtxoTestVectors {

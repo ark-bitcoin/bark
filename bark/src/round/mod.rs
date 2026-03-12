@@ -26,6 +26,7 @@ use futures::{Stream, StreamExt};
 use log::{debug, error, info, trace, warn};
 
 use ark::{ProtocolEncoding, SignedVtxoRequest, Vtxo, VtxoRequest};
+use ark::vtxo::Full;
 use ark::forfeit::HashLockedForfeitBundle;
 use ark::musig::{self, DangerousSecretNonce, PublicNonce, SecretNonce};
 use ark::rounds::{
@@ -50,7 +51,7 @@ const HARK_TRANSITION_KIND: &str = "hash-locked-cosigned";
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RoundParticipation {
 	#[serde(with = "ark::encode::serde::vec")]
-	pub inputs: Vec<Vtxo>,
+	pub inputs: Vec<Vtxo<Full>>,
 	/// The output VTXOs that we request in the round,
 	/// including change
 	pub outputs: Vec<VtxoRequest>,
@@ -140,7 +141,7 @@ pub struct RoundState {
 	///
 	/// After we finish the interactive part, we fill this with the uncompleted
 	/// VTXOs which we then try to complete with the unlock preimage.
-	pub(crate) new_vtxos: Vec<Vtxo>,
+	pub(crate) new_vtxos: Vec<Vtxo<Full>>,
 
 	/// Whether we sent our forfeit signatures to the server
 	///
@@ -463,7 +464,7 @@ impl RoundState {
 
 	/// Once we know the signed round funding tx, this returns the output VTXOs
 	/// for this round.
-	pub fn output_vtxos(&self) -> Option<&[Vtxo]> {
+	pub fn output_vtxos(&self) -> Option<&[Vtxo<Full>]> {
 		if self.new_vtxos.is_empty() {
 			None
 		} else {
@@ -473,7 +474,7 @@ impl RoundState {
 
 	/// Returns the input VTXOs that are locked in this round, but only
 	/// if no output VTXOs were issued yet.
-	pub fn locked_pending_inputs(&self) -> &[Vtxo] {
+	pub fn locked_pending_inputs(&self) -> &[Vtxo<Full>] {
 		//TODO(stevenroose) consider if we can't just drop the state after forfeit exchange
 		match self.flow {
 			RoundFlowState::NonInteractivePending { .. }
@@ -587,7 +588,7 @@ impl AttemptState {
 enum AttemptProgressResult {
 	Finished {
 		funding_tx: Transaction,
-		vtxos: Vec<Vtxo>,
+		vtxos: Vec<Vtxo<Full>>,
 		unlock_hash: UnlockHash,
 	},
 	Failed(anyhow::Error),
@@ -700,7 +701,7 @@ async fn hark_cosign_leaf(
 	wallet: &Wallet,
 	srv: &mut ServerConnection,
 	funding_tx: &Transaction,
-	vtxo: &mut Vtxo,
+	vtxo: &mut Vtxo<Full>,
 ) -> anyhow::Result<()> {
 	let key = wallet.pubkey_keypair(&vtxo.user_pubkey()).await
 		.context("error fetching keypair").map_err(HarkForfeitError::Err)?
@@ -733,7 +734,7 @@ async fn hark_cosign_leaf(
 async fn hark_vtxo_swap(
 	wallet: &Wallet,
 	participation: &RoundParticipation,
-	output_vtxos: &mut [Vtxo],
+	output_vtxos: &mut [Vtxo<Full>],
 	funding_tx: &Transaction,
 	unlock_hash: UnlockHash,
 ) -> Result<(), HarkForfeitError> {
@@ -778,7 +779,7 @@ async fn hark_vtxo_swap(
 				"failed to fetch keypair for vtxo user pubkey {}", input.user_pubkey(),
 			)).map_err(HarkForfeitError::Err)?.1;
 		forfeit_bundles.push(HashLockedForfeitBundle::new(
-			&input, unlock_hash, &user_key, &nonces,
+			input, unlock_hash, &user_key, &nonces,
 		))
 	}
 
@@ -808,7 +809,7 @@ async fn hark_vtxo_swap(
 	Ok(())
 }
 
-fn check_vtxo_fails_hash_lock(funding_tx: &Transaction, vtxo: &Vtxo) -> anyhow::Result<()> {
+fn check_vtxo_fails_hash_lock(funding_tx: &Transaction, vtxo: &Vtxo<Full>) -> anyhow::Result<()> {
 	match vtxo.validate(funding_tx) {
 		Err(VtxoValidationError::GenesisTransition {
 			genesis_idx, genesis_len, transition_kind, ..
@@ -822,7 +823,7 @@ fn check_vtxo_fails_hash_lock(funding_tx: &Transaction, vtxo: &Vtxo) -> anyhow::
 
 fn check_round_matches_participation(
 	part: &RoundParticipation,
-	new_vtxos: &[Vtxo],
+	new_vtxos: &[Vtxo<Full>],
 	funding_tx: &Transaction,
 ) -> anyhow::Result<()> {
 	ensure!(new_vtxos.len() == part.outputs.len(),
@@ -899,7 +900,7 @@ enum HarkProgressResult {
 	},
 	Ok {
 		funding_tx: Transaction,
-		new_vtxos: Vec<Vtxo>,
+		new_vtxos: Vec<Vtxo<Full>>,
 	},
 }
 
@@ -954,7 +955,7 @@ async fn progress_non_interactive(
 	}
 
 	let mut new_vtxos = resp.output_vtxos.into_iter()
-		.map(|v| Vtxo::from_bytes(v))
+		.map(|v| <Vtxo<Full>>::deserialize(&v))
 		.collect::<Result<Vec<_>, _>>()
 		.context("invalid output VTXOs from server")
 		.map_err(HarkForfeitError::Err)?;
@@ -1118,7 +1119,7 @@ async fn construct_new_vtxos(
 	unsigned_round_tx: &Transaction,
 	vtxo_tree: &VtxoTreeSpec,
 	vtxo_cosign_sigs: &[schnorr::Signature],
-) -> anyhow::Result<Vec<Vtxo>> {
+) -> anyhow::Result<Vec<Vtxo<Full>>> {
 	let round_txid = unsigned_round_tx.compute_txid();
 	let vtxos_utxo = OutPoint::new(round_txid, ROUND_TX_VTXO_TREE_VOUT);
 	let vtxo_tree = vtxo_tree.clone().into_unsigned_tree(vtxos_utxo);
@@ -1173,7 +1174,7 @@ async fn persist_round_success(
 	wallet: &Wallet,
 	participation: &RoundParticipation,
 	movement_id: Option<MovementId>,
-	new_vtxos: &[Vtxo],
+	new_vtxos: &[Vtxo<Full>],
 	funding_tx: &Transaction,
 ) -> anyhow::Result<()> {
 	debug!("Persisting newly finished round. {} new vtxos, movement ID {:?}",

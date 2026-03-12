@@ -84,10 +84,10 @@ impl Wallet {
 
 	/// Estimate fees for an offboard operation. `FeeEstimate::net_amount` is the onchain amount the
 	/// user can expect to receive by offboarding `FeeEstimate::vtxos_used`.
-	pub async fn estimate_offboard(
+	pub async fn estimate_offboard<G>(
 		&self,
 		address: &bitcoin::Address,
-		vtxos: impl IntoIterator<Item = impl AsRef<Vtxo>>,
+		vtxos: impl IntoIterator<Item = impl AsRef<Vtxo<G>>>,
 	) -> Result<FeeEstimate> {
 		let (_, ark_info) = self.require_server().await?;
 		let script_buf = address.script_pubkey();
@@ -98,10 +98,11 @@ impl Wallet {
 		let mut vtxo_ids = Vec::with_capacity(capacity);
 		let mut fee_info = Vec::with_capacity(capacity);
 		let mut amount = Amount::ZERO;
-		for v in vtxos {
-			vtxo_ids.push(v.as_ref().id());
-			fee_info.push(VtxoFeeInfo::from_vtxo_and_tip(v.as_ref(), current_height));
-			amount = amount + v.as_ref().amount();
+		for vtxo in vtxos {
+			let vtxo = vtxo.as_ref();
+			vtxo_ids.push(vtxo.id());
+			fee_info.push(VtxoFeeInfo::from_vtxo_and_tip(vtxo, current_height));
+			amount = amount + vtxo.amount();
 		}
 
 		let fee = ark_info.fees.offboard.calculate(
@@ -117,9 +118,9 @@ impl Wallet {
 
 	/// Estimate fees for a refresh operation (round participation). `FeeEstimate::net_amount` is
 	/// the sum of the newly refreshed VTXOs.
-	pub async fn estimate_refresh_fee(
+	pub async fn estimate_refresh_fee<G>(
 		&self,
-		vtxos: impl IntoIterator<Item = impl AsRef<Vtxo>>,
+		vtxos: impl IntoIterator<Item = impl AsRef<Vtxo<G>>>,
 	) -> Result<FeeEstimate> {
 		let (_, ark_info) = self.require_server().await?;
 		let current_height = self.chain.tip().await?;

@@ -27,6 +27,7 @@ use std::pin::Pin;
 use std::time::Duration;
 
 use anyhow::Context;
+use ark::vtxo::Full;
 use bb8::{ManageConnection, Pool, PooledConnection};
 use bb8_postgres::PostgresConnectionManager;
 use bdk_wallet::{chain::Merge, ChangeSet};
@@ -182,10 +183,13 @@ impl Db {
 	///
 	/// If one or more vtxo's is already present in the database
 	/// the query will succeed.
-	pub async fn upsert_vtxos<V: Borrow<ServerVtxo>>(
+	pub async fn upsert_vtxos<V>(
 		&self,
 		vtxos: impl IntoIterator<Item = V>,
-	) -> anyhow::Result<()> {
+	) -> anyhow::Result<()>
+	where
+		V: Borrow<ServerVtxo<Full>>,
+	{
 		let mut conn = self.get_conn().await?;
 		let tx = conn.transaction().await?;
 
@@ -236,12 +240,15 @@ impl Db {
 	///
 	/// This method will fail
 	/// - if a database error occurred
-	pub async fn update_virtual_transaction_tree<'a, V : Borrow<ServerVtxo>>(
+	pub async fn update_virtual_transaction_tree<'a, V>(
 		&self,
 		new_virtual_txs: impl IntoIterator<Item = VirtualTransaction<'a>>,
 		new_vtxos: impl IntoIterator<Item = V>,
 		spend_info: impl IntoIterator<Item = (VtxoId, Txid)>,
-	) -> anyhow::Result<()> {
+	) -> anyhow::Result<()>
+	where
+		V: Borrow<ServerVtxo<Full>>,
+	{
 		let mut conn = self.get_conn().await.context("failed to connect to db")?;
 		let tx = conn.transaction().await.context("failed to start db transaction")?;
 
@@ -304,7 +311,7 @@ impl Db {
 		&self,
 		pubkey: PublicKey,
 		arkoor_package_id: &[u8; 32],
-		vtxo: Vtxo,
+		vtxo: Vtxo<Full>,
 	) -> anyhow::Result<()> {
 		let conn = self.get_conn().await?;
 		let statement = conn.prepare("
@@ -330,7 +337,7 @@ impl Db {
 	pub async fn pull_oors(
 		&self,
 		pubkeys: &[PublicKey],
-	) -> anyhow::Result<HashMap<[u8; 32], Vec<Vtxo>>> {
+	) -> anyhow::Result<HashMap<[u8; 32], Vec<Vtxo::<Full>>>> {
 		let conn = self.get_conn().await?;
 		let statement = conn.prepare("
 			SELECT vtxo, arkoor_package_id
@@ -345,7 +352,7 @@ impl Db {
 
 		let mut vtxos_by_package_id = HashMap::<_, Vec<_>>::new();
 		for row in &rows {
-			let vtxo = Vtxo::deserialize(row.get("vtxo"))?;
+			let vtxo = Vtxo::<Full>::deserialize(row.get("vtxo"))?;
 			let package_id = row.get::<_, Vec<u8>>("arkoor_package_id")
 				.try_into().expect("invalid arkoor package id");
 
@@ -367,7 +374,7 @@ impl Db {
 	pub async fn store_vtxos_in_mailbox(
 		&self,
 		mailbox_id: MailboxIdentifier,
-		vtxos: &[Vtxo],
+		vtxos: &[Vtxo<Full>],
 	) -> anyhow::Result<Option<Checkpoint>> {
 		if vtxos.len() == 0 {
 			return Ok(None);
@@ -402,7 +409,7 @@ impl Db {
 		mailbox_id: MailboxIdentifier,
 		checkpoint: Checkpoint,
 		limit: usize,
-	) -> anyhow::Result<Vec<(Checkpoint, Vec<Vtxo>)>> {
+	) -> anyhow::Result<Vec<(Checkpoint, Vec<Vtxo<Full>>)>> {
 		let conn = self.get_conn().await?;
 		let statement = conn.prepare(&format!("
 			SELECT vtxo_id, vtxo, checkpoint
@@ -435,7 +442,7 @@ impl Db {
 				last_checkpoint = checkpoint;
 			}
 
-			let vtxo = Vtxo::deserialize(row.get("vtxo"))?;
+			let vtxo = Vtxo::<Full>::deserialize(row.get("vtxo"))?;
 			debug_assert_eq!(vtxo.id().to_string(), row.get::<_, String>("vtxo_id"));
 			vtxos.push(vtxo);
 		}

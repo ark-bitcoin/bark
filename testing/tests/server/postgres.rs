@@ -4,11 +4,11 @@ use bitcoin::secp256k1::PublicKey;
 use bitcoin::Transaction;
 use chrono::Local;
 
-use ark::ServerVtxo;
+use ark::{ServerVtxo, VtxoId};
 use ark::integration::{TokenStatus, TokenType};
 use ark::lightning::Invoice;
 use ark::test_util::VTXO_VECTORS;
-
+use ark::vtxo::Full;
 use bark::lightning_invoice::Bolt11Invoice;
 use bitcoin_ext::BlockRef;
 use cln_rpc::listsendpays_request::ListsendpaysIndex;
@@ -34,12 +34,12 @@ async fn upsert_vtxo() {
 	let vtxo2 = ServerVtxo::from(VTXO_VECTORS.round1_vtxo.clone());
 	let vtxo3 = ServerVtxo::from(VTXO_VECTORS.arkoor_htlc_out_vtxo.clone());
 
-	db.upsert_vtxos(&[vtxo1.clone(), vtxo2.clone()]).await.expect("Query succeeded");
+	db.upsert_vtxos([vtxo1.clone(), vtxo2.clone()]).await.expect("Query succeeded");
 	db.get_user_vtxos_by_id(&[vtxo1.id(), vtxo2.id()]).await.expect("Query succeeded");
 	db.get_user_vtxos_by_id(&[vtxo3.id()]).await.expect_err("Query Failed because 3 isn't in the db yet");
 
 	// It shouldn't complain if vtxo2 is already present
-	db.upsert_vtxos(&[vtxo2.into(), vtxo3.clone()]).await.expect("Query succeeded");
+	db.upsert_vtxos([vtxo2.into(), vtxo3.clone()]).await.expect("Query succeeded");
 }
 
 
@@ -540,7 +540,7 @@ async fn upsert_vtxos_with_txid() {
 	let vtxo = ServerVtxo::from(VTXO_VECTORS.board_vtxo.clone());
 
 	// Upsert vtxos
-	db.upsert_vtxos(&[vtxo.clone()]).await.expect("Failed to upsert vtxo");
+	db.upsert_vtxos([vtxo.clone()]).await.expect("Failed to upsert vtxo");
 
 	// Retrieve vtxos and verify they exist
 	let vtxos = db.get_user_vtxos_by_id(&[vtxo.id()]).await.expect("Failed to get vtxo");
@@ -594,7 +594,7 @@ async fn update_virtual_transaction_tree_atomic() {
 	db.update_virtual_transaction_tree(
 		[vtx],
 		[vtxo.clone()],
-		std::iter::empty::<(ark::VtxoId, bitcoin::Txid)>(),
+		std::iter::empty::<(VtxoId, bitcoin::Txid)>(),
 	).await.expect("Failed to update tree");
 
 	// Verify virtual tx was inserted
@@ -623,8 +623,8 @@ async fn update_virtual_transaction_tree_empty_inputs() {
 	// Test 1: All empty - should succeed
 	db.update_virtual_transaction_tree(
 		std::iter::empty::<VirtualTransaction>(),
-		std::iter::empty::<ark::ServerVtxo>(),
-		std::iter::empty::<(ark::VtxoId, bitcoin::Txid)>(),
+		std::iter::empty::<ServerVtxo<Full>>(),
+		std::iter::empty::<(VtxoId, bitcoin::Txid)>(),
 	).await.expect("Empty inputs should succeed");
 
 	// Test 2: Only virtual_txs populated
@@ -644,8 +644,8 @@ async fn update_virtual_transaction_tree_empty_inputs() {
 
 	db.update_virtual_transaction_tree(
 		[vtx],
-		std::iter::empty::<ark::ServerVtxo>(),
-		std::iter::empty::<(ark::VtxoId, bitcoin::Txid)>(),
+		std::iter::empty::<ServerVtxo<Full>>(),
+		std::iter::empty::<(VtxoId, bitcoin::Txid)>(),
 	).await.expect("Only virtual_txs should succeed");
 
 	// Verify it was inserted
@@ -657,7 +657,7 @@ async fn update_virtual_transaction_tree_empty_inputs() {
 	db.update_virtual_transaction_tree(
 		std::iter::empty::<VirtualTransaction>(),
 		[vtxo.clone()],
-		std::iter::empty::<(ark::VtxoId, bitcoin::Txid)>(),
+		std::iter::empty::<(VtxoId, bitcoin::Txid)>(),
 	).await.expect("Only vtxos should succeed");
 
 	// Verify it was inserted

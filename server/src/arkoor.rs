@@ -2,6 +2,7 @@ use anyhow::Context;
 
 use ark::util::IteratorExt;
 use ark::{Vtxo, VtxoId, VtxoPolicy, ServerVtxo};
+use ark::vtxo::Full;
 use ark::arkoor::state::{ServerCanCosign, ServerSigned};
 use ark::arkoor::package::{
 	ArkoorPackageCosignRequest, ArkoorPackageCosignResponse, ArkoorPackageBuilder,
@@ -28,7 +29,7 @@ impl Server {
 	pub(crate) fn validate_cosign_request(
 		&self,
 		params: ArkoorCosignRequestValidationParams,
-		cosign_req: ArkoorPackageCosignRequest<Vtxo>,
+		cosign_req: ArkoorPackageCosignRequest<Vtxo<Full>>,
 	) -> anyhow::Result<ArkoorPackageBuilder<ServerCanCosign>> {
 		// this we can check before creating the builder
 

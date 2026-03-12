@@ -17,9 +17,8 @@
 use std::fmt;
 use std::ops::Deref;
 
-use ark::vtxo::VtxoRef;
-
 use ark::Vtxo;
+use ark::vtxo::{Bare, Full, VtxoRef};
 use crate::movement::MovementId;
 
 const SPENDABLE: &'static str = "Spendable";
@@ -114,33 +113,39 @@ impl VtxoState {
 pub struct WalletVtxo {
 	/// The underlying [Vtxo].
 	#[serde(with = "ark::encode::serde")]
-	pub vtxo: Vtxo,
+	pub vtxo: Vtxo<Full>,
 	/// The current tracked state for [WalletVtxo::into_vtxo].
 	pub state: VtxoState,
 }
 
 impl VtxoRef for WalletVtxo {
 	fn vtxo_id(&self) -> ark::VtxoId { self.vtxo.id() }
-	fn vtxo_ref(&self) -> Option<&Vtxo> { Some(&self.vtxo) }
-	fn into_vtxo(self) -> Option<Vtxo> { Some(self.vtxo) }
+	fn as_bare_vtxo(&self) -> Option<std::borrow::Cow<'_, Vtxo<Bare>>> {
+		Some(std::borrow::Cow::Owned(self.vtxo.to_bare()))
+	}
+	fn as_full_vtxo(&self) -> Option<&Vtxo<Full>> { Some(&self.vtxo) }
+	fn into_full_vtxo(self) -> Option<Vtxo<Full>> { Some(self.vtxo) }
 }
 
 impl<'a> VtxoRef for &'a WalletVtxo {
 	fn vtxo_id(&self) -> ark::VtxoId { self.vtxo.id() }
-	fn vtxo_ref(&self) -> Option<&Vtxo> { Some(&self.vtxo) }
-	fn into_vtxo(self) -> Option<Vtxo> { Some(self.vtxo.clone()) }
+	fn as_bare_vtxo(&self) -> Option<std::borrow::Cow<'_, Vtxo<Bare>>> {
+		Some(std::borrow::Cow::Owned(self.vtxo.to_bare()))
+	}
+	fn as_full_vtxo(&self) -> Option<&Vtxo<Full>> { Some(&self.vtxo) }
+	fn into_full_vtxo(self) -> Option<Vtxo<Full>> { Some(self.vtxo.clone()) }
 }
 
-impl AsRef<Vtxo> for WalletVtxo {
-	fn as_ref(&self) -> &Vtxo {
+impl AsRef<Vtxo<Full>> for WalletVtxo {
+	fn as_ref(&self) -> &Vtxo<Full> {
 		&self.vtxo
 	}
 }
 
 impl Deref for WalletVtxo {
-	type Target = Vtxo;
+	type Target = Vtxo<Full>;
 
-	fn deref(&self) -> &Vtxo {
+	fn deref(&self) -> &Vtxo<Full> {
 		&self.vtxo
 	}
 }

@@ -71,8 +71,9 @@ pub use self::policy::clause::{
 };
 
 /// Type alias for a server-internal VTXO that may have policies without user pubkeys.
-pub type ServerVtxo = Vtxo<ServerVtxoPolicy>;
+pub type ServerVtxo<G = Bare> = Vtxo<G, ServerVtxoPolicy>;
 
+use std::borrow::Cow;
 use std::iter::FusedIterator;
 use std::{fmt, io};
 use std::str::FromStr;
@@ -88,7 +89,7 @@ use bitcoin::taproot::TapTweakHash;
 use bitcoin_ext::{fee, BlockDelta, BlockHeight, TxOutExt};
 
 use crate::vtxo::policy::HarkForfeitVtxoPolicy;
-use crate::{musig, scripts};
+use crate::scripts;
 use crate::encode::{
 	LengthPrefixedVector, OversizedVectorError, ProtocolDecodingError, ProtocolEncoding, ReadExt,
 	WriteExt,
@@ -283,7 +284,7 @@ pub struct VtxoTxIterItem {
 
 /// Iterator returned by [Vtxo::transactions].
 pub struct VtxoTxIter<'a, P: Policy = VtxoPolicy> {
-	vtxo: &'a Vtxo<P>,
+	vtxo: &'a Vtxo<Full, P>,
 
 	prev: OutPoint,
 	genesis_idx: usize,
@@ -291,7 +292,7 @@ pub struct VtxoTxIter<'a, P: Policy = VtxoPolicy> {
 }
 
 impl<'a, P: Policy> VtxoTxIter<'a, P> {
-	fn new(vtxo: &'a Vtxo<P>) -> VtxoTxIter<'a, P> {
+	fn new(vtxo: &'a Vtxo<Full, P>) -> VtxoTxIter<'a, P> {
 		// Add all the amounts that go into the other outputs.
 		let onchain_amount = vtxo.chain_anchor_amount()
 			.expect("This should only fail if the VTXO is invalid.");
@@ -308,12 +309,12 @@ impl<'a, P: Policy> Iterator for VtxoTxIter<'a, P> {
 	type Item = VtxoTxIterItem;
 
 	fn next(&mut self) -> Option<Self::Item> {
-		let item = self.vtxo.genesis.get(self.genesis_idx)?;
+		let item = self.vtxo.genesis.items.get(self.genesis_idx)?;
 		let next_amount = self.current_amount.checked_sub(
 			item.other_output_sum().expect("we calculated this amount beforehand")
 		).expect("we calculated this amount beforehand");
 
-		let next_output = if let Some(item) = self.vtxo.genesis.get(self.genesis_idx + 1) {
+		let next_output = if let Some(item) = self.vtxo.genesis.items.get(self.genesis_idx + 1) {
 			item.transition.input_txout(
 				next_amount,
 				self.vtxo.server_pubkey,
@@ -339,7 +340,7 @@ impl<'a, P: Policy> Iterator for VtxoTxIter<'a, P> {
 	}
 
 	fn size_hint(&self) -> (usize, Option<usize>) {
-		let len = self.vtxo.genesis.len().saturating_sub(self.genesis_idx);
+		let len = self.vtxo.genesis.items.len().saturating_sub(self.genesis_idx);
 		(len, Some(len))
 	}
 }
@@ -347,32 +348,14 @@ impl<'a, P: Policy> Iterator for VtxoTxIter<'a, P> {
 impl<'a, P: Policy> ExactSizeIterator for VtxoTxIter<'a, P> {}
 impl<'a, P: Policy> FusedIterator for VtxoTxIter<'a, P> {}
 
+/// Representing "bare" VTXOs that are just output details without genesis
+#[derive(Debug, Clone)]
+pub struct Bare;
 
-/// Information that specifies a VTXO, independent of its origin.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct VtxoSpec<P = VtxoPolicy> {
-	pub policy: P,
-	pub amount: Amount,
-	pub expiry_height: BlockHeight,
-	pub server_pubkey: PublicKey,
-	pub exit_delta: BlockDelta,
-}
-
-impl<P: Policy> VtxoSpec<P> {
-	/// The taproot spend info for the output of this [Vtxo].
-	pub fn output_taproot(&self) -> taproot::TaprootSpendInfo {
-		self.policy.taproot(self.server_pubkey, self.exit_delta, self.expiry_height)
-	}
-
-	/// The scriptPubkey of the output of this [Vtxo].
-	pub fn output_script_pubkey(&self) -> ScriptBuf {
-		self.policy.script_pubkey(self.server_pubkey, self.exit_delta, self.expiry_height)
-	}
-
-	/// The transaction output (eventual UTXO) of this [Vtxo].
-	pub fn txout(&self) -> TxOut {
-		self.policy.txout(self.amount, self.server_pubkey, self.exit_delta, self.expiry_height)
-	}
+/// Representing "full" VTXOs that contain the full genesis
+#[derive(Debug, Clone)]
+pub struct Full {
+	pub(crate) items: Vec<genesis::GenesisItem>,
 }
 
 /// Represents a VTXO in the Ark.
@@ -389,7 +372,7 @@ impl<P: Policy> VtxoSpec<P> {
 /// Implementations of [PartialEq], [Eq], [PartialOrd], [Ord] and [Hash] are
 /// proxied to the implementation on [Vtxo::id].
 #[derive(Debug, Clone)]
-pub struct Vtxo<P = VtxoPolicy> {
+pub struct Vtxo<G = Full, P = VtxoPolicy> {
 	pub(crate) policy: P,
 	pub(crate) amount: Amount,
 	pub(crate) expiry_height: BlockHeight,
@@ -398,7 +381,8 @@ pub struct Vtxo<P = VtxoPolicy> {
 	pub(crate) exit_delta: BlockDelta,
 
 	pub(crate) anchor_point: OutPoint,
-	pub(crate) genesis: Vec<genesis::GenesisItem>,
+	/// The genesis is generic and can be either present or not
+	pub(crate) genesis: G,
 
 	/// The resulting actual "point" of the VTXO. I.e. the output of the last
 	/// exit tx of this VTXO.
@@ -409,7 +393,7 @@ pub struct Vtxo<P = VtxoPolicy> {
 	pub(crate) point: OutPoint,
 }
 
-impl<P: Policy> Vtxo<P> {
+impl<G, P: Policy> Vtxo<G, P> {
 	/// Get the identifier for this [Vtxo].
 	///
 	/// This is the same as [Vtxo::point] but encoded as a byte array.
@@ -461,29 +445,6 @@ impl<P: Policy> Vtxo<P> {
 		self.exit_delta
 	}
 
-	/// Returns the total exit depth (including OOR depth) of the vtxo.
-	pub fn exit_depth(&self) -> u16 {
-		self.genesis.len() as u16
-	}
-
-	/// Iterate over all oor transitions in this VTXO
-	///
-	/// The outer `Vec` cointains one element for each transition.
-	/// The inner `Vec` contains all pubkeys within that transition.
-	///
-	/// This does not include the current arkoor pubkey, for that use
-	/// [Vtxo::arkoor_pubkey].
-	pub fn past_arkoor_pubkeys(&self) -> Vec<Vec<PublicKey>> {
-		self.genesis.iter().filter_map(|g| {
-			match &g.transition {
-				// NB in principle, a genesis item's transition MUST have
-				// an arkoor pubkey, otherwise the vtxo is invalid
-				GenesisTransition::Arkoor(inner) => Some(inner.client_cosigners().collect()),
-				_ => None,
-			}
-		}).collect()
-	}
-
 	/// The taproot spend info for the output of this [Vtxo].
 	pub fn output_taproot(&self) -> taproot::TaprootSpendInfo {
 		self.policy.taproot(self.server_pubkey, self.exit_delta, self.expiry_height)
@@ -499,12 +460,65 @@ impl<P: Policy> Vtxo<P> {
 		self.policy.txout(self.amount, self.server_pubkey, self.exit_delta, self.expiry_height)
 	}
 
+	/// Convert to a bare VTXO, [Vtxo<Bare>]
+	pub fn to_bare(&self) -> Vtxo<Bare, P> {
+		Vtxo {
+			point: self.point,
+			policy: self.policy.clone(),
+			amount: self.amount,
+			expiry_height: self.expiry_height,
+			server_pubkey: self.server_pubkey,
+			exit_delta: self.exit_delta,
+			anchor_point: self.anchor_point,
+			genesis: Bare,
+		}
+	}
+
+	/// Convert into a bare VTXO, [Vtxo<Bare>]
+	pub fn into_bare(self) -> Vtxo<Bare, P> {
+		Vtxo {
+			point: self.point,
+			policy: self.policy,
+			amount: self.amount,
+			expiry_height: self.expiry_height,
+			server_pubkey: self.server_pubkey,
+			exit_delta: self.exit_delta,
+			anchor_point: self.anchor_point,
+			genesis: Bare,
+		}
+	}
+}
+
+impl<P: Policy> Vtxo<Full, P> {
+	/// Returns the total exit depth (including OOR depth) of the vtxo.
+	pub fn exit_depth(&self) -> u16 {
+		self.genesis.items.len() as u16
+	}
+
+	/// Iterate over all oor transitions in this VTXO
+	///
+	/// The outer `Vec` cointains one element for each transition.
+	/// The inner `Vec` contains all pubkeys within that transition.
+	///
+	/// This does not include the current arkoor pubkey, for that use
+	/// [Vtxo::arkoor_pubkey].
+	pub fn past_arkoor_pubkeys(&self) -> Vec<Vec<PublicKey>> {
+		self.genesis.items.iter().filter_map(|g| {
+			match &g.transition {
+				// NB in principle, a genesis item's transition MUST have
+				// an arkoor pubkey, otherwise the vtxo is invalid
+				GenesisTransition::Arkoor(inner) => Some(inner.client_cosigners().collect()),
+				_ => None,
+			}
+		}).collect()
+	}
+
 	/// Whether all transaction witnesses are present
 	///
 	/// It is possible to represent unsigned or otherwise unfinished VTXOs,
 	/// for which this method will return false.
 	pub fn has_all_witnesses(&self) -> bool {
-		self.genesis.iter().all(|g| g.transition.has_all_witnesses())
+		self.genesis.items.iter().all(|g| g.transition.has_all_witnesses())
 	}
 
 	/// Check if this VTXO is standard for relay purposes
@@ -514,13 +528,13 @@ impl<P: Policy> Vtxo<P> {
 	/// - all sibling outputs in the exit path are standard
 	/// - each part of the exit path should have a P2A output
 	pub fn is_standard(&self) -> bool {
-		self.txout().is_standard() && self.genesis.iter()
+		self.txout().is_standard() && self.genesis.items.iter()
 			.all(|i| i.other_outputs.iter().all(|o| o.is_standard()))
 	}
 
 	/// Returns the "hArk" unlock hash if this is a hArk leaf VTXO
 	pub fn unlock_hash(&self) -> Option<UnlockHash> {
-		match self.genesis.last()?.transition {
+		match self.genesis.items.last()?.transition {
 			GenesisTransition::HashLockedCosigned(ref inner) => Some(inner.unlock.hash()),
 			_ => None,
 		}
@@ -530,7 +544,7 @@ impl<P: Policy> Vtxo<P> {
 	///
 	/// Returns true if this VTXO was an unfinalized hArk VTXO.
 	pub fn provide_unlock_signature(&mut self, signature: schnorr::Signature) -> bool {
-		match self.genesis.last_mut().map(|g| &mut g.transition) {
+		match self.genesis.items.last_mut().map(|g| &mut g.transition) {
 			Some(GenesisTransition::HashLockedCosigned(inner)) => {
 				inner.signature.replace(signature);
 				true
@@ -543,7 +557,7 @@ impl<P: Policy> Vtxo<P> {
 	///
 	/// Returns true if this VTXO was an unfinalized hArk VTXO and the preimage matched.
 	pub fn provide_unlock_preimage(&mut self, preimage: UnlockPreimage) -> bool {
-		match self.genesis.last_mut().map(|g| &mut g.transition) {
+		match self.genesis.items.last_mut().map(|g| &mut g.transition) {
 			Some(GenesisTransition::HashLockedCosigned(ref mut inner)) => {
 				if inner.unlock.hash() == UnlockHash::hash(&preimage) {
 					inner.unlock = MaybePreimage::Preimage(preimage);
@@ -553,17 +567,6 @@ impl<P: Policy> Vtxo<P> {
 				}
 			},
 			_ => false,
-		}
-	}
-
-	/// Get the spec for this VTXO.
-	pub fn spec(&self) -> VtxoSpec<P> {
-		VtxoSpec {
-			policy: self.policy.clone(),
-			amount: self.amount,
-			expiry_height: self.expiry_height,
-			server_pubkey: self.server_pubkey,
-			exit_delta: self.exit_delta,
 		}
 	}
 
@@ -595,13 +598,13 @@ impl<P: Policy> Vtxo<P> {
 	///
 	/// Returns `None` if any overflow occurs. This should be impossible for any VTXO that is valid.
 	pub(crate) fn chain_anchor_amount(&self) -> Option<Amount> {
-		self.amount.checked_add(self.genesis.iter().try_fold(Amount::ZERO, |sum, i| {
+		self.amount.checked_add(self.genesis.items.iter().try_fold(Amount::ZERO, |sum, i| {
 			i.other_output_sum().and_then(|amt| sum.checked_add(amt))
 		})?)
 	}
 }
 
-impl Vtxo {
+impl<G> Vtxo<G, VtxoPolicy> {
 	/// Returns the user pubkey associated with this [Vtxo].
 	pub fn user_pubkey(&self) -> PublicKey {
 		self.policy.user_pubkey()
@@ -613,16 +616,9 @@ impl Vtxo {
 	pub fn arkoor_pubkey(&self) -> Option<PublicKey> {
 		self.policy.arkoor_pubkey()
 	}
+}
 
-	/// Return the aggregate pubkey of the user and server pubkey used in
-	/// hArk forfeit transactions
-	pub(crate) fn forfeit_agg_pubkey(&self) -> XOnlyPublicKey {
-		let ret = musig::combine_keys([self.user_pubkey(), self.server_pubkey()])
-			.x_only_public_key().0;
-		debug_assert_eq!(ret, self.output_taproot().internal_key());
-		ret
-	}
-
+impl Vtxo<Full, VtxoPolicy> {
 	/// Shortcut to fully finalize a hark leaf using both keys
 	#[cfg(any(test, feature = "test-util"))]
 	pub fn finalize_hark_leaf(
@@ -643,11 +639,11 @@ impl Vtxo {
 	}
 }
 
-impl Vtxo<ServerVtxoPolicy> {
+impl<G> Vtxo<G, ServerVtxoPolicy> {
 	/// Try to convert into a user [Vtxo]
 	///
 	/// Returns the original value on failure.
-	pub fn try_into_user_vtxo(self) -> Result<Vtxo, ServerVtxo> {
+	pub fn try_into_user_vtxo(self) -> Result<Vtxo<G, VtxoPolicy>, ServerVtxo<G>> {
 		if let Some(p) = self.policy.clone().into_user_policy() {
 			Ok(Vtxo {
 				policy: p,
@@ -665,40 +661,40 @@ impl Vtxo<ServerVtxoPolicy> {
 	}
 }
 
-impl<P: Policy> PartialEq for Vtxo<P> {
+impl<G, P: Policy> PartialEq for Vtxo<G, P> {
 	fn eq(&self, other: &Self) -> bool {
 		PartialEq::eq(&self.id(), &other.id())
 	}
 }
 
-impl<P: Policy> Eq for Vtxo<P> {}
+impl<G, P: Policy> Eq for Vtxo<G, P> {}
 
-impl<P: Policy> PartialOrd for Vtxo<P> {
+impl<G, P: Policy> PartialOrd for Vtxo<G, P> {
 	fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
 		PartialOrd::partial_cmp(&self.id(), &other.id())
 	}
 }
 
-impl<P: Policy> Ord for Vtxo<P> {
+impl<G, P: Policy> Ord for Vtxo<G, P> {
 	fn cmp(&self, other: &Self) -> std::cmp::Ordering {
 		Ord::cmp(&self.id(), &other.id())
 	}
 }
 
-impl<P: Policy> std::hash::Hash for Vtxo<P> {
+impl<G, P: Policy> std::hash::Hash for Vtxo<G, P> {
 	fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
 		std::hash::Hash::hash(&self.id(), state)
 	}
 }
 
-impl AsRef<Vtxo> for Vtxo {
-	fn as_ref(&self) -> &Vtxo {
+impl<G, P: Policy> AsRef<Vtxo<G, P>> for Vtxo<G, P> {
+	fn as_ref(&self) -> &Vtxo<G, P> {
 	    self
 	}
 }
 
-impl From<Vtxo> for ServerVtxo {
-	fn from(vtxo: Vtxo) -> ServerVtxo {
+impl<G> From<Vtxo<G>> for ServerVtxo<G> {
+	fn from(vtxo: Vtxo<G>) -> ServerVtxo<G> {
 		ServerVtxo {
 			policy: vtxo.policy.into(),
 			amount: vtxo.amount,
@@ -713,39 +709,54 @@ impl From<Vtxo> for ServerVtxo {
 }
 
 /// Implemented on anything that is kinda a [Vtxo]
-pub trait VtxoRef {
+pub trait VtxoRef<P: Policy = VtxoPolicy> {
 	/// The [VtxoId] of the VTXO
 	fn vtxo_id(&self) -> VtxoId;
 
-	/// If the [Vtxo] can be provided, provides it by reference
-	fn vtxo_ref(&self) -> Option<&Vtxo> { None }
+	/// If the bare [Vtxo] can be provided, provides it by reference
+	fn as_bare_vtxo(&self) -> Option<Cow<'_, Vtxo<Bare, P>>> { None }
 
-	/// If the [Vtxo] can be provided, provides it by value, either directly or via cloning
-	fn into_vtxo(self) -> Option<Vtxo> where Self: Sized;
+	/// If the bare [Vtxo] can be provided, provides it by reference
+	fn as_full_vtxo(&self) -> Option<&Vtxo<Full, P>> { None }
+
+	/// If the bare [Vtxo] can be provided, provides it by value, either directly or via cloning
+	fn into_full_vtxo(self) -> Option<Vtxo<Full, P>> where Self: Sized;
 }
 
-impl VtxoRef for VtxoId {
+impl<P: Policy> VtxoRef<P> for VtxoId {
 	fn vtxo_id(&self) -> VtxoId { *self }
-	fn vtxo_ref(&self) -> Option<&Vtxo> { None }
-	fn into_vtxo(self) -> Option<Vtxo> { None }
+	fn into_full_vtxo(self) -> Option<Vtxo<Full, P>> { None }
 }
 
-impl<'a> VtxoRef for &'a VtxoId {
+impl<'a, P: Policy> VtxoRef<P> for &'a VtxoId {
 	fn vtxo_id(&self) -> VtxoId { **self }
-	fn vtxo_ref(&self) -> Option<&Vtxo> { None }
-	fn into_vtxo(self) -> Option<Vtxo> { None }
+	fn into_full_vtxo(self) -> Option<Vtxo<Full, P>> { None }
 }
 
-impl VtxoRef for Vtxo {
+impl<P: Policy> VtxoRef<P> for Vtxo<Bare, P> {
 	fn vtxo_id(&self) -> VtxoId { self.id() }
-	fn vtxo_ref(&self) -> Option<&Vtxo> { Some(self) }
-	fn into_vtxo(self) -> Option<Vtxo> { Some(self) }
+	fn as_bare_vtxo(&self) -> Option<Cow<'_, Vtxo<Bare, P>>> { Some(Cow::Borrowed(self)) }
+	fn into_full_vtxo(self) -> Option<Vtxo<Full, P>> { None }
 }
 
-impl<'a> VtxoRef for &'a Vtxo {
+impl<'a, P: Policy> VtxoRef<P> for &'a Vtxo<Bare, P> {
 	fn vtxo_id(&self) -> VtxoId { self.id() }
-	fn vtxo_ref(&self) -> Option<&Vtxo> { Some(*self) }
-	fn into_vtxo(self) -> Option<Vtxo> { Some(self.clone()) }
+	fn as_bare_vtxo(&self) -> Option<Cow<'_, Vtxo<Bare, P>>> { Some(Cow::Borrowed(*self)) }
+	fn into_full_vtxo(self) -> Option<Vtxo<Full, P>> { None }
+}
+
+impl<P: Policy> VtxoRef<P> for Vtxo<Full, P> {
+	fn vtxo_id(&self) -> VtxoId { self.id() }
+	fn as_bare_vtxo(&self) -> Option<Cow<'_, Vtxo<Bare, P>>> { Some(Cow::Owned(self.to_bare())) }
+	fn as_full_vtxo(&self) -> Option<&Vtxo<Full, P>> { Some(self) }
+	fn into_full_vtxo(self) -> Option<Vtxo<Full, P>> { Some(self) }
+}
+
+impl<'a, P: Policy> VtxoRef<P> for &'a Vtxo<Full, P> {
+	fn vtxo_id(&self) -> VtxoId { self.id() }
+	fn as_bare_vtxo(&self) -> Option<Cow<'_, Vtxo<Bare, P>>> { Some(Cow::Owned(self.to_bare())) }
+	fn as_full_vtxo(&self) -> Option<&Vtxo<Full, P>> { Some(*self) }
+	fn into_full_vtxo(self) -> Option<Vtxo<Full, P>> { Some(self.clone()) }
 }
 
 /// The byte used to encode the [VtxoPolicy::Pubkey] output type.
@@ -968,17 +979,39 @@ impl ProtocolEncoding for GenesisTransition {
 	}
 }
 
-impl<P: Policy + ProtocolEncoding> ProtocolEncoding for Vtxo<P> {
-	fn encode<W: io::Write + ?Sized>(&self, w: &mut W) -> Result<(), io::Error> {
-		w.emit_u16(VTXO_ENCODING_VERSION)?;
-		w.emit_u64(self.amount.to_sat())?;
-		w.emit_u32(self.expiry_height)?;
-		self.server_pubkey.encode(w)?;
-		w.emit_u16(self.exit_delta)?;
-		self.anchor_point.encode(w)?;
+/// A private trait for VTXO sub-objects that have different encodings dependent on
+/// the VTXO encoding version
+trait VtxoVersionedEncoding: Sized {
+	fn encode<W: io::Write + ?Sized>(&self, w: &mut W, version: u16) -> Result<(), io::Error>;
 
-		w.emit_compact_size(self.genesis.len() as u64)?;
-		for item in &self.genesis {
+	fn decode<R: io::Read + ?Sized>(
+		r: &mut R,
+		version: u16,
+	) -> Result<Self, ProtocolDecodingError>;
+}
+
+impl VtxoVersionedEncoding for Bare {
+	fn encode<W: io::Write + ?Sized>(&self, w: &mut W, _version: u16) -> Result<(), io::Error> {
+		w.emit_compact_size(0u64)?;
+		Ok(())
+	}
+
+	fn decode<R: io::Read + ?Sized>(
+		r: &mut R,
+		version: u16,
+	) -> Result<Self, ProtocolDecodingError> {
+		// We want to be comaptible with [Full] encoded VTXOs, so we just ignore
+		// whatever genesis there might be.
+		let _full = Full::decode(r, version)?;
+
+		Ok(Bare)
+	}
+}
+
+impl VtxoVersionedEncoding for Full {
+	fn encode<W: io::Write + ?Sized>(&self, w: &mut W, _version: u16) -> Result<(), io::Error> {
+		w.emit_compact_size(self.items.len() as u64)?;
+		for item in &self.items {
 			item.transition.encode(w)?;
 			let nb_outputs = item.other_outputs.len() + 1;
 			w.emit_u8(nb_outputs.try_into()
@@ -989,26 +1022,13 @@ impl<P: Policy + ProtocolEncoding> ProtocolEncoding for Vtxo<P> {
 			}
 			w.emit_u64(item.fee_amount.to_sat())?;
 		}
-
-		self.policy.encode(w)?;
-		self.point.encode(w)?;
 		Ok(())
 	}
 
-	fn decode<R: io::Read + ?Sized>(r: &mut R) -> Result<Self, ProtocolDecodingError> {
-		let version = r.read_u16()?;
-		if version != VTXO_ENCODING_VERSION && version != VTXO_NO_FEE_AMOUNT_VERSION {
-			return Err(ProtocolDecodingError::invalid(format_args!(
-				"invalid Vtxo encoding version byte: {version:#x}",
-			)));
-		}
-
-		let amount = Amount::from_sat(r.read_u64()?);
-		let expiry_height = r.read_u32()?;
-		let server_pubkey = PublicKey::decode(r)?;
-		let exit_delta = r.read_u16()?;
-		let anchor_point = OutPoint::decode(r)?;
-
+	fn decode<R: io::Read + ?Sized>(
+		r: &mut R,
+		version: u16,
+	) -> Result<Self, ProtocolDecodingError> {
 		let nb_genesis_items = r.read_compact_size()? as usize;
 		OversizedVectorError::check::<GenesisItem>(nb_genesis_items)?;
 		let mut genesis = Vec::with_capacity(nb_genesis_items);
@@ -1030,6 +1050,42 @@ impl<P: Policy + ProtocolEncoding> ProtocolEncoding for Vtxo<P> {
 			};
 			genesis.push(GenesisItem { transition, output_idx, other_outputs, fee_amount });
 		}
+		Ok(Full { items: genesis })
+	}
+}
+
+impl<G: VtxoVersionedEncoding, P: Policy + ProtocolEncoding> ProtocolEncoding for Vtxo<G, P> {
+	fn encode<W: io::Write + ?Sized>(&self, w: &mut W) -> Result<(), io::Error> {
+		let version = VTXO_ENCODING_VERSION;
+		w.emit_u16(version)?;
+		w.emit_u64(self.amount.to_sat())?;
+		w.emit_u32(self.expiry_height)?;
+		self.server_pubkey.encode(w)?;
+		w.emit_u16(self.exit_delta)?;
+		self.anchor_point.encode(w)?;
+
+		self.genesis.encode(w, version)?;
+
+		self.policy.encode(w)?;
+		self.point.encode(w)?;
+		Ok(())
+	}
+
+	fn decode<R: io::Read + ?Sized>(r: &mut R) -> Result<Self, ProtocolDecodingError> {
+		let version = r.read_u16()?;
+		if version != VTXO_ENCODING_VERSION && version != VTXO_NO_FEE_AMOUNT_VERSION {
+			return Err(ProtocolDecodingError::invalid(format_args!(
+				"invalid Vtxo encoding version byte: {version:#x}",
+			)));
+		}
+
+		let amount = Amount::from_sat(r.read_u64()?);
+		let expiry_height = r.read_u32()?;
+		let server_pubkey = PublicKey::decode(r)?;
+		let exit_delta = r.read_u16()?;
+		let anchor_point = OutPoint::decode(r)?;
+
+		let genesis = VtxoVersionedEncoding::decode(r, version)?;
 
 		let policy = P::decode(r)?;
 		let point = OutPoint::decode(r)?;
@@ -1121,17 +1177,17 @@ mod test {
 		// version, then, when we serialize the VTXOs, we should use the newest version. If you
 		// deserialize a VTXO with the latest version and serialize it, you should get the same
 		// result.
-		let board_vtxo: Vtxo = ProtocolEncoding::deserialize_hex(&board_hex).unwrap();
+		let board_vtxo = Vtxo::<Full>::deserialize_hex(&board_hex).unwrap();
 		assert_eq!(board_vtxo.serialize().as_hex().to_string(), board_hex);
-		let arkoor_htlc_out_vtxo: Vtxo = ProtocolEncoding::deserialize_hex(&arkoor_htlc_out_vtxo_hex).unwrap();
+		let arkoor_htlc_out_vtxo = Vtxo::<Full>::deserialize_hex(&arkoor_htlc_out_vtxo_hex).unwrap();
 		assert_eq!(arkoor_htlc_out_vtxo.serialize().as_hex().to_string(), arkoor_htlc_out_vtxo_hex);
-		let arkoor2_vtxo: Vtxo = ProtocolEncoding::deserialize_hex(&arkoor2_vtxo_hex).unwrap();
+		let arkoor2_vtxo = Vtxo::<Full>::deserialize_hex(&arkoor2_vtxo_hex).unwrap();
 		assert_eq!(arkoor2_vtxo.serialize().as_hex().to_string(), arkoor2_vtxo_hex);
-		let round1_vtxo: Vtxo = ProtocolEncoding::deserialize_hex(&round1_vtxo_hex).unwrap();
+		let round1_vtxo = Vtxo::<Full>::deserialize_hex(&round1_vtxo_hex).unwrap();
 		assert_eq!(round1_vtxo.serialize().as_hex().to_string(), round1_vtxo_hex);
-		let round2_vtxo: Vtxo = ProtocolEncoding::deserialize_hex(&round2_vtxo_hex).unwrap();
+		let round2_vtxo = Vtxo::<Full>::deserialize_hex(&round2_vtxo_hex).unwrap();
 		assert_eq!(round2_vtxo.serialize().as_hex().to_string(), round2_vtxo_hex);
-		let arkoor3_vtxo: Vtxo = ProtocolEncoding::deserialize_hex(&arkoor3_vtxo_hex).unwrap();
+		let arkoor3_vtxo = Vtxo::<Full>::deserialize_hex(&arkoor3_vtxo_hex).unwrap();
 		assert_eq!(arkoor3_vtxo.serialize().as_hex().to_string(), arkoor3_vtxo_hex);
 	}
 
@@ -1161,27 +1217,29 @@ mod test {
 
 	#[test]
 	fn test_genesis_length_257() {
-		let vtxo = Vtxo {
+		let vtxo: Vtxo<Full> = Vtxo {
 			policy: VtxoPolicy::new_pubkey(DUMMY_USER_KEY.public_key()),
 			amount: Amount::from_sat(10_000),
 			expiry_height: 101_010,
 			server_pubkey: DUMMY_SERVER_KEY.public_key(),
 			exit_delta: 2016,
 			anchor_point: OutPoint::new(Txid::from_slice(&[1u8; 32]).unwrap(), 1),
-			genesis: (0..257).map(|_| {
-				GenesisItem {
-					transition: GenesisTransition::new_cosigned(
-						vec![DUMMY_USER_KEY.public_key()],
-						Some(schnorr::Signature::from_slice(&[2u8; 64]).unwrap()),
-					),
-					output_idx: 0,
-					other_outputs: vec![],
-					fee_amount: Amount::ZERO,
-				}
-			}).collect(),
+			genesis: Full {
+				items: (0..257).map(|_| {
+					GenesisItem {
+						transition: GenesisTransition::new_cosigned(
+							vec![DUMMY_USER_KEY.public_key()],
+							Some(schnorr::Signature::from_slice(&[2u8; 64]).unwrap()),
+						),
+						output_idx: 0,
+						other_outputs: vec![],
+						fee_amount: Amount::ZERO,
+					}
+				}).collect(),
+			},
 			point: OutPoint::new(Txid::from_slice(&[3u8; 32]).unwrap(), 3),
 		};
-		assert_eq!(vtxo.genesis.len(), 257);
+		assert_eq!(vtxo.genesis.items.len(), 257);
 		encoding_roundtrip(&vtxo);
 	}
 

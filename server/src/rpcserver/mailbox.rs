@@ -1,5 +1,6 @@
 use std::pin::Pin;
 
+use ark::vtxo::Full;
 use futures::Stream;
 use tracing::{error, warn};
 use ark::{ProtocolEncoding, Vtxo};
@@ -10,7 +11,10 @@ use crate::database::Checkpoint;
 use crate::rpcserver::{StatusContext, ToStatus, ToStatusResult};
 use crate::rpcserver::macros::badarg;
 
-fn new_mailbox_msg(checkpoint: Checkpoint, vtxos: Vec<Vtxo>) -> protos::mailbox_server::MailboxMessage {
+fn new_mailbox_msg(
+	checkpoint: Checkpoint,
+	vtxos: Vec<Vtxo<Full>>,
+) -> protos::mailbox_server::MailboxMessage {
 	protos::mailbox_server::MailboxMessage {
 		message: Some(protos::mailbox_server::mailbox_message::Message::Arkoor(
 			protos::mailbox_server::ArkoorMessage {

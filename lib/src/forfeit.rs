@@ -8,12 +8,12 @@ use bitcoin::taproot::{self, TaprootSpendInfo};
 
 use bitcoin_ext::{fee, TaprootSpendInfoExt, P2TR_DUST};
 
-use crate::vtxo::genesis::ArkoorGenesis;
 use crate::{musig, ServerVtxo, ServerVtxoPolicy, Vtxo, VtxoId, SECP};
 use crate::connectors::ConnectorChain;
 use crate::encode::{ProtocolDecodingError, ProtocolEncoding, ReadExt, WriteExt};
 use crate::tree::signed::{unlock_clause, UnlockHash};
-use crate::vtxo::{exit_clause, GenesisItem, GenesisTransition};
+use crate::vtxo::{exit_clause, Full, GenesisItem, GenesisTransition};
+use crate::vtxo::genesis::ArkoorGenesis;
 
 
 /// The taproot for the policy of the output of the hArk forfeit tx
@@ -21,11 +21,13 @@ use crate::vtxo::{exit_clause, GenesisItem, GenesisTransition};
 /// This policy allows the server to spend by revealing the unlock preimage,
 /// but still has a timeout to the user after exit delta.
 #[inline]
-pub fn hark_forfeit_claim_taproot(
-	vtxo: &Vtxo,
+pub fn hark_forfeit_claim_taproot<G>(
+	vtxo: &Vtxo<G>,
 	unlock_hash: UnlockHash,
 ) -> TaprootSpendInfo {
-	let agg_pk = vtxo.forfeit_agg_pubkey();
+	let agg_pk = musig::combine_keys([vtxo.user_pubkey(), vtxo.server_pubkey()])
+		.x_only_public_key().0;
+	debug_assert_eq!(agg_pk, vtxo.output_taproot().internal_key());
 	taproot::TaprootBuilder::new()
 		.add_leaf(1, exit_clause(vtxo.user_pubkey(), vtxo.exit_delta())).unwrap()
 		.add_leaf(1, unlock_clause(vtxo.server_pubkey().x_only_public_key().0, unlock_hash)).unwrap()
@@ -34,8 +36,8 @@ pub fn hark_forfeit_claim_taproot(
 
 /// Construct the forfeit tx in the hArk forfeit protocol
 #[inline]
-pub fn create_hark_forfeit_tx(
-	vtxo: &Vtxo,
+pub fn create_hark_forfeit_tx<G>(
+	vtxo: &Vtxo<G>,
 	unlock_hash: UnlockHash,
 	signature: Option<&schnorr::Signature>,
 ) -> Transaction {
@@ -62,8 +64,8 @@ pub fn create_hark_forfeit_tx(
 }
 
 #[inline]
-fn hark_forfeit_sighash(
-	vtxo: &Vtxo,
+fn hark_forfeit_sighash<G>(
+	vtxo: &Vtxo<G>,
 	unlock_hash: UnlockHash,
 ) -> (TapSighash, Transaction) {
 	let exit_prevout = vtxo.txout();
@@ -79,11 +81,11 @@ fn hark_forfeit_sighash(
 /// The `forfeit_txid` argument is optional and will be calculated if not present.
 #[inline]
 fn build_internal_forfeit_vtxo(
-	vtxo: &Vtxo,
+	vtxo: &Vtxo<Full>,
 	unlock_hash: UnlockHash,
 	forfeit_tx_sig: schnorr::Signature,
 	forfeit_txid: Option<Txid>,
-) -> ServerVtxo {
+) -> ServerVtxo<Full> {
 	let ff_txid = forfeit_txid.unwrap_or_else(|| {
 		create_hark_forfeit_tx(vtxo, unlock_hash, None).compute_txid()
 	});
@@ -92,18 +94,20 @@ fn build_internal_forfeit_vtxo(
 	Vtxo {
 		point: OutPoint::new(ff_txid, 0),
 		policy: ServerVtxoPolicy::new_hark_forfeit(vtxo.user_pubkey(), unlock_hash),
-		genesis: vtxo.genesis.iter().cloned().chain([
-			GenesisItem {
-				transition: GenesisTransition::Arkoor(ArkoorGenesis {
-					client_cosigners: vec![vtxo.user_pubkey()],
-					tap_tweak: vtxo.output_taproot().tap_tweak(),
-					signature: Some(forfeit_tx_sig),
-				}),
-				output_idx: 0,
-				other_outputs: vec![],
-				fee_amount: Amount::ZERO,
-			}
-		]).collect(),
+		genesis: Full {
+			items: vtxo.genesis.items.iter().cloned().chain([
+				GenesisItem {
+					transition: GenesisTransition::Arkoor(ArkoorGenesis {
+						client_cosigners: vec![vtxo.user_pubkey()],
+						tap_tweak: vtxo.output_taproot().tap_tweak(),
+						signature: Some(forfeit_tx_sig),
+					}),
+					output_idx: 0,
+					other_outputs: vec![],
+					fee_amount: Amount::ZERO,
+				}
+			]).collect(),
+		},
 
 		amount: vtxo.amount,
 		expiry_height: vtxo.expiry_height,
@@ -129,8 +133,8 @@ impl HashLockedForfeitBundle {
 	///
 	/// This is used to forfeit the VTXO to the server conditional on receiving
 	/// the unlock preimage corresponding to the given unlock hash.
-	pub fn new(
-		vtxo: &Vtxo,
+	pub fn new<G>(
+		vtxo: &Vtxo<G>,
 		unlock_hash: UnlockHash,
 		user_key: &Keypair,
 		server_nonce: &musig::PublicNonce,
@@ -161,9 +165,9 @@ impl HashLockedForfeitBundle {
 
 	/// Used by the server to verify if the partial signature in the bundle
 	/// is valid
-	pub fn verify(
+	pub fn verify<G>(
 		&self,
-		vtxo: &Vtxo,
+		vtxo: &Vtxo<G>,
 		server_nonce: &musig::PublicNonce,
 	) -> Result<(), &'static str> {
 		if vtxo.id() != self.vtxo_id {
@@ -199,11 +203,11 @@ impl HashLockedForfeitBundle {
 	/// NB users don't need to know this signature
 	pub fn finish(
 		&self,
-		vtxo: &Vtxo,
+		vtxo: &Vtxo<Full>,
 		server_pub_nonce: &musig::PublicNonce,
 		server_sec_nonce: musig::SecretNonce,
 		server_key: &Keypair,
-	) -> (schnorr::Signature, Transaction, ServerVtxo) {
+	) -> (schnorr::Signature, Transaction, ServerVtxo<Full>) {
 		assert_eq!(vtxo.id(), self.vtxo_id);
 
 		let ff_agg_nonce = musig::nonce_agg(
@@ -281,8 +285,8 @@ impl ProtocolEncoding for HashLockedForfeitBundle {
 }
 
 #[inline]
-pub fn create_connector_forfeit_tx(
-	vtxo: &Vtxo,
+pub fn create_connector_forfeit_tx<G>(
+	vtxo: &Vtxo<G>,
 	connector: OutPoint,
 	forfeit_sig: Option<&schnorr::Signature>,
 	connector_sig: Option<&schnorr::Signature>,
@@ -317,8 +321,8 @@ pub fn create_connector_forfeit_tx(
 }
 
 #[inline]
-fn connector_forfeit_input_sighash(
-	vtxo: &Vtxo,
+fn connector_forfeit_input_sighash<G>(
+	vtxo: &Vtxo<G>,
 	connector: OutPoint,
 	connector_pk: PublicKey,
 	input_idx: usize,
@@ -339,8 +343,8 @@ fn connector_forfeit_input_sighash(
 
 /// The sighash of the exit tx input of a forfeit tx.
 #[inline]
-pub fn connector_forfeit_sighash_exit(
-	vtxo: &Vtxo,
+pub fn connector_forfeit_sighash_exit<G>(
+	vtxo: &Vtxo<G>,
 	connector: OutPoint,
 	connector_pk: PublicKey,
 ) -> (TapSighash, Transaction) {
@@ -349,8 +353,8 @@ pub fn connector_forfeit_sighash_exit(
 
 /// The sighash of the connector input of a forfeit tx.
 #[inline]
-pub fn connector_forfeit_sighash_connector(
-	vtxo: &Vtxo,
+pub fn connector_forfeit_sighash_connector<G>(
+	vtxo: &Vtxo<G>,
 	connector: OutPoint,
 	connector_pk: PublicKey,
 ) -> (TapSighash, Transaction) {
@@ -366,7 +370,7 @@ mod test {
 	use super::*;
 
 	fn verify_hark_forfeits(
-		vtxo: &Vtxo,
+		vtxo: &Vtxo<Full>,
 		unlock_preimage: UnlockPreimage,
 		server_sec_nonce: musig::SecretNonce,
 		server_pub_nonce: &musig::PublicNonce,

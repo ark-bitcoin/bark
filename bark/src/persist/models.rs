@@ -16,6 +16,7 @@ use bitcoin::secp256k1::{Keypair, PublicKey};
 use lightning_invoice::Bolt11Invoice;
 
 use ark::{Vtxo, VtxoId, VtxoPolicy, VtxoRequest};
+use ark::vtxo::Full;
 use ark::musig::DangerousSecretNonce;
 use ark::tree::signed::{UnlockHash, VtxoTreeSpec};
 use ark::lightning::{Invoice, PaymentHash, Preimage};
@@ -32,7 +33,7 @@ use crate::vtxo::VtxoState;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SerdeVtxo {
 	#[serde(with = "ark::encode::serde")]
-	pub vtxo: Vtxo,
+	pub vtxo: Vtxo<Full>,
 	/// VTXO states, sorted from oldest to newest.
 	pub states: Vec<VtxoState>,
 }
@@ -264,7 +265,7 @@ impl<'a> From<SerdeVtxoRequest<'a>> for VtxoRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct SerdeRoundParticipation<'a> {
 	#[serde(with = "ark::encode::serde::cow::vec")]
-	inputs: Cow<'a, [Vtxo]>,
+	inputs: Cow<'a, [Vtxo<Full>]>,
 	outputs: Vec<SerdeVtxoRequest<'a>>,
 }
 
@@ -450,7 +451,7 @@ pub struct SerdeRoundState<'a> {
 	movement_id: Option<MovementId>,
 	flow: SerdeRoundFlowState<'a>,
 	#[serde(with = "ark::encode::serde::cow::vec")]
-	new_vtxos: Cow<'a, [Vtxo]>,
+	new_vtxos: Cow<'a, [Vtxo<Full>]>,
 	sent_forfeit_sigs: bool,
 }
 

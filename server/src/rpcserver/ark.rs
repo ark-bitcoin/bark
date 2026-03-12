@@ -24,6 +24,7 @@ use ark::forfeit::HashLockedForfeitBundle;
 use ark::lightning::{Bolt12InvoiceExt, Invoice, Offer, OfferAmount, PaymentHash, Preimage};
 use ark::tree::signed::{LeafVtxoCosignRequest, UnlockHash, UnlockPreimage};
 use ark::rounds::RoundId;
+use ark::vtxo::Full;
 use bitcoin_ext::{AmountExt, BlockDelta, BlockHeight};
 use server_rpc::{self as rpc, protos, TryFromBytes};
 
@@ -148,7 +149,8 @@ impl rpc::server::ArkService for Server {
 	) -> Result<tonic::Response<protos::Empty>, tonic::Status> {
 		let req = req.into_inner();
 
-		let vtxo = Vtxo::from_bytes(&req.board_vtxo)?;
+		let vtxo = <Vtxo<Full>>::deserialize(&req.board_vtxo[..])
+			.map_err(|e| tonic::Status::invalid_argument(format!("invalid vtxo: {}", e)))?;
 		self.register_board(vtxo).await.to_status()?;
 
 		Ok(tonic::Response::new(protos::Empty {}))
@@ -168,7 +170,10 @@ impl rpc::server::ArkService for Server {
 			macros::badarg!("no vtxos provided");
 		}
 
-		let vtxos = req.vtxos.iter().map(|v| Vtxo::from_bytes(v)).collect::<Result<Vec<_>, _>>()?;
+		let vtxos = req.vtxos.iter()
+			.map(|v| <Vtxo<Full>>::deserialize(&v[..]))
+			.collect::<Result<Vec<_>, _>>()
+			.map_err(|e| tonic::Status::invalid_argument(format!("invalid vtxo: {}", e)))?;
 
 		self.register_vtxo_transactions(&vtxos).await.to_status()?;
 

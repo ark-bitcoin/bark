@@ -25,7 +25,7 @@ pub trait VtxoSigner<P: Policy = VtxoPolicy> {
 	) -> Option<Witness>;
 
 	/// Returns true if the clause is signable, otherwise false.
-	async fn can_sign(&self, clause: &VtxoClause, vtxo: &Vtxo<P>) -> bool {
+	async fn can_sign<G: Sync + Send>(&self, clause: &VtxoClause, vtxo: &Vtxo<G, P>) -> bool {
 		// NB: We won't use the witness after this, so we can use all zeros
 		let sighash = TapSighash::all_zeros();
 		let cb = clause.control_block(vtxo);
@@ -34,7 +34,7 @@ pub trait VtxoSigner<P: Policy = VtxoPolicy> {
 
 	/// Returns the first signable clause from [Vtxo]'s policy.
 	/// If no clause is signable, returns [None].
-	async fn find_signable_clause(&self, vtxo: &Vtxo<P>) -> Option<VtxoClause> {
+	async fn find_signable_clause<G: Sync + Send>(&self, vtxo: &Vtxo<G, P>) -> Option<VtxoClause> {
 		let exit_delta = vtxo.exit_delta();
 		let expiry_height = vtxo.expiry_height();
 		let server_pubkey = vtxo.server_pubkey();
@@ -55,9 +55,9 @@ pub trait VtxoSigner<P: Policy = VtxoPolicy> {
 	/// # Errors
 	///
 	/// Returns [CannotSignVtxoError] if no clause is signable.
-	async fn sign_input(
+	async fn sign_input<G: Sync + Send>(
 		&self,
-		vtxo: &Vtxo<P>,
+		vtxo: &Vtxo<G, P>,
 		input_idx: usize,
 		sighash_cache: &mut sighash::SighashCache<impl Borrow<Transaction> + Send + Sync>,
 		prevouts: &sighash::Prevouts<impl Borrow<TxOut> + Send + Sync>,
@@ -72,9 +72,9 @@ pub trait VtxoSigner<P: Policy = VtxoPolicy> {
 	/// # Errors
 	///
 	/// Returns [CannotSignVtxoError] if the clause is not signable.
-	async fn sign_input_with_clause(
+	async fn sign_input_with_clause<G: Sync + Send>(
 		&self,
-		vtxo: &Vtxo<P>,
+		vtxo: &Vtxo<G, P>,
 		clause: &VtxoClause,
 		input_idx: usize,
 		sighash_cache: &mut sighash::SighashCache<impl Borrow<Transaction> + Send + Sync>,

@@ -17,9 +17,10 @@ use bitcoin::{Amount, Transaction, Txid};
 use tokio_postgres::{GenericClient, Row, Transaction as PgTransaction};
 use tokio_postgres::types::Type;
 
-use ark::{ProtocolEncoding, ServerVtxo, ServerVtxoPolicy, VtxoId, VtxoRequest};
+use ark::{ProtocolEncoding, ServerVtxo, ServerVtxoPolicy, VtxoId, VtxoPolicy, VtxoRequest};
 use ark::rounds::RoundId;
 use ark::tree::signed::{UnlockHash, UnlockPreimage};
+use ark::vtxo::Full;
 
 use crate::database::model::{VirtualTransaction, VtxoState};
 use crate::database::oor;
@@ -95,7 +96,7 @@ pub async fn get_first_unsigned_virtual_transaction<T: GenericClient>(
 	}
 }
 
-pub async fn upsert_vtxos<T, V: Borrow<ServerVtxo>>(
+pub async fn upsert_vtxos<T, V: Borrow<ServerVtxo<Full>>>(
 	client: &T,
 	vtxos: impl IntoIterator<Item = V>,
 ) -> Result<(), tokio_postgres::Error>
@@ -272,7 +273,7 @@ pub async fn complete_round_participation(
 		let policy_bytes = row.get::<_, &[u8]>("policy");
 		let amount = row.get::<_, i64>("amount");
 		outputs.push(VtxoRequest {
-			policy: ark::VtxoPolicy::deserialize(policy_bytes)
+			policy: VtxoPolicy::deserialize(policy_bytes)
 				.context("invalid vtxo policy in round outputs")?,
 			amount: Amount::from_sat(amount as u64),
 		});
@@ -381,12 +382,15 @@ pub async fn set_round_id_for_participations(
 	Ok(())
 }
 
-pub async fn update_virtual_transaction_tree<'a, V: Borrow<ServerVtxo>>(
+pub async fn update_virtual_transaction_tree<'a, V>(
 	tx: &PgTransaction<'_>,
 	new_virtual_txs: impl IntoIterator<Item = VirtualTransaction<'a>>,
 	new_vtxos: impl IntoIterator<Item = V>,
 	spend_info: impl IntoIterator<Item = (VtxoId, Txid)>,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<()>
+where
+	V: Borrow<ServerVtxo<Full>>,
+{
 	for vtx in new_virtual_txs {
 		upsert_virtual_transaction(
 			tx, vtx.txid, vtx.signed_tx(), vtx.is_funding, vtx.server_may_own_descendant_since,
