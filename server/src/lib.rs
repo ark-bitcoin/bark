@@ -435,11 +435,14 @@ impl Server {
 			});
 		}
 
+		let mailbox_manager = Arc::new(MailboxManager::new());
+
 		let cln = ClnManager::start(
 			rtmgr.clone(),
 			&cfg,
 			db.clone(),
 			sync_manager.clone(),
+			mailbox_manager.clone(),
 		).await.context("failed to start ClnManager")?;
 
 		let vtxopool = VtxoPool::new(cfg.vtxopool.clone(), &db).await
@@ -448,7 +451,6 @@ impl Server {
 		let (round_event_tx, _rx) = broadcast::channel(8);
 		let (round_input_tx, round_input_rx) = tokio::sync::mpsc::unbounded_channel();
 		let (round_trigger_tx, round_trigger_rx) = tokio::sync::mpsc::channel(1);
-		let mailbox_manager = Arc::new(MailboxManager::new());
 
 		let srv = Server {
 			rounds_wallet: Arc::new(tokio::sync::Mutex::new(rounds_wallet)),
