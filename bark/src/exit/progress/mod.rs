@@ -19,7 +19,8 @@ use crate::Wallet;
 /// depending on the contents of the users wallet, the mempool or the blockchain. E.g. Calling
 /// [ExitStateProgress::progress] on [json::exit::states::ExitStartState] should return an
 /// [json::exit::states::ExitProcessingState] if the VTXO can be exited.
-#[async_trait]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 pub(crate) trait ExitStateProgress {
 	async fn progress(
 		self,

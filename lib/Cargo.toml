@@ -13,7 +13,7 @@ crate-type = ["cdylib", "rlib"]
 
 [features]
 test-util = [ "serde_json" ]
-wasm-js = [ "getrandom/wasm_js" ]
+wasm-web = [ "getrandom/wasm_js", "js-sys" ]
 
 [dependencies]
 
@@ -36,6 +36,8 @@ hex-conservative = "0.3.0"
 
 # testing
 serde_json = { workspace = true, optional = true }
+
+js-sys = { version = "0.3.85", optional = true }
 
 # using PR branch for musig2 code
 [dependencies.secp256k1-musig]

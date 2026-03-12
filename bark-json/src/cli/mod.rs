@@ -1,5 +1,5 @@
 pub mod fees;
-#[cfg(feature = "onchain_bdk")]
+#[cfg(feature = "onchain-bdk")]
 pub mod onchain;
 
 use std::borrow::Borrow;

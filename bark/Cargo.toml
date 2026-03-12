@@ -9,16 +9,18 @@ edition = "2024"
 readme = "README.md"
 
 [features]
-default = ["rand", "sqlite"]
-pid_lock = []
-onchain_bdk = ["bdk_wallet", "bark-bitcoin-ext/bdk"]
+default = ["rand", "native"]
+pid-lock = []
+onchain-bdk = ["bdk_wallet", "bark-bitcoin-ext/bdk"]
 tls-native-roots = ["tonic/tls-native-roots"]
 tls-webpki-roots = ["tonic/tls-webpki-roots"]
 rand = ["bitcoin/rand", "bip39/rand"]
+native = ["bark-server-rpc/tonic-native"]
+wasm-web = ["bark-server-rpc/tonic-web", "bark-bitcoin-ext/wasm-web", "ark-lib/wasm-web", "wasm-bindgen-futures", "getrandom"]
 
 sqlite = ["rusqlite", "bdk_wallet/rusqlite"]
-# Used for testingn, enables testing storage adaptor implementation
-filestore = []
+# Used for testing, enables testing storage adaptor implementation
+filestore = ["tokio/fs"]
 
 [lib]
 name = "bark"
@@ -31,7 +33,7 @@ ark-lib = { version = "0.1.0-beta.8", path = "../lib" }
 bark-bitcoin-ext = { version = "0.1.0-beta.8", path = "../bitcoin-ext", default-features = false, features = [
 	"bdk", "esplora", "rpc",
 ]}
-bark-server-rpc = { version = "0.1.0-beta.8", path = "../server-rpc" }
+bark-server-rpc = { version = "0.1.0-beta.8", path = "../server-rpc", default-features = false }
 
 # EXPORTED
 bitcoin.workspace = true
@@ -59,17 +61,21 @@ bdk_bitcoind_rpc = { workspace = true }
 bdk_esplora = { workspace = true }
 lightning.workspace = true
 
-tonic.workspace = true
+tonic = { version = "0.14.2", default-features = false }
 tokio.workspace = true
 tokio-stream.workspace = true
 futures.workspace = true
 parking_lot.workspace = true
 
-# Prebuilt BDK Wallet only
+# Only used for built-in BDK Wallet
 bdk_wallet = { workspace = true, optional = true }
 
 # Storage clients crates
 rusqlite = { version = "0.31.0", features = ["chrono"], optional = true }
+
+wasm-bindgen-futures = { version = "0.4.56", optional = true }
+# needed to force dependencies to use js features
+getrandom = { version = "0.3.0", features = ["wasm_js"], optional = true }
 
 [dev-dependencies]
 ark-lib = { path = "../lib", features = [ "test-util" ] }

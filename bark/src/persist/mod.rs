@@ -27,7 +27,7 @@ use bitcoin::{Amount, Transaction, Txid};
 use bitcoin::secp256k1::PublicKey;
 use chrono::DateTime;
 use lightning_invoice::Bolt11Invoice;
-#[cfg(feature = "onchain_bdk")]
+#[cfg(feature = "onchain-bdk")]
 use bdk_wallet::ChangeSet;
 
 use ark::{Vtxo, VtxoId};
@@ -56,7 +56,7 @@ use crate::vtxo::{VtxoState, VtxoStateKind, WalletVtxo};
 /// - Persist the last synchronized Ark block height.
 ///
 /// Feature integration:
-/// - With the `onchain_bdk` feature, methods are provided to initialize and persist a BDK
+/// - With the `onchain-bdk` feature, methods are provided to initialize and persist a BDK
 ///   wallet ChangeSet in the same storage.
 ///
 /// Notes for implementors:
@@ -66,8 +66,21 @@ use crate::vtxo::{VtxoState, VtxoStateKind, WalletVtxo};
 /// - If your backend is not thread-safe, prefer a short-lived connection per call or use
 ///   an internal pool with checked-out connections per operation.
 /// - Return precise errors so callers can surface actionable diagnostics.
-#[async_trait]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 pub trait BarkPersister: Send + Sync + 'static {
+	/// Check if the wallet is initialized.
+	///
+	/// Returns:
+	/// - `Ok(true)` if the wallet is initialized.
+	/// - `Ok(false)` if the wallet is not initialized.
+	///
+	/// Errors:
+	/// - Returns an error if the query fails.
+	async fn is_initialized(&self) -> anyhow::Result<bool> {
+		Ok(self.read_properties().await?.is_some())
+	}
+
 	/// Initialize a wallet in storage with the provided properties.
 	///
 	/// Call exactly once per wallet database. Subsequent calls should fail to prevent
@@ -87,14 +100,14 @@ pub trait BarkPersister: Send + Sync + 'static {
 	///
 	/// Must be called before storing any new BDK changesets to bootstrap the BDK state.
 	///
-	/// Feature: only available with `onchain_bdk`.
+	/// Feature: only available with `onchain-bdk`.
 	///
 	/// Returns:
 	/// - `Ok(ChangeSet)` containing the previously persisted BDK state (possibly empty).
 	///
 	/// Errors:
 	/// - Returns an error if the BDK state cannot be created or loaded.
-	#[cfg(feature = "onchain_bdk")]
+	#[cfg(feature = "onchain-bdk")]
 	async fn initialize_bdk_wallet(&self) -> anyhow::Result<ChangeSet>;
 
 	/// Persist an incremental BDK ChangeSet.
@@ -102,14 +115,14 @@ pub trait BarkPersister: Send + Sync + 'static {
 	/// The changeset should be applied atomically. Callers typically obtain the changeset
 	/// from a BDK wallet instance after mutating wallet state (e.g., sync).
 	///
-	/// Feature: only available with `onchain_bdk`.
+	/// Feature: only available with `onchain-bdk`.
 	///
 	/// Parameters:
 	/// - changeset: The BDK ChangeSet to persist.
 	///
 	/// Errors:
 	/// - Returns an error if the changeset cannot be written.
-	#[cfg(feature = "onchain_bdk")]
+	#[cfg(feature = "onchain-bdk")]
 	async fn store_bdk_wallet_changeset(&self, changeset: &ChangeSet) -> anyhow::Result<()>;
 
 	/// Read wallet properties from storage.

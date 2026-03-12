@@ -8,7 +8,7 @@
 use std::collections::HashMap;
 use std::str::FromStr;
 
-#[cfg(feature = "onchain_bdk")]
+#[cfg(feature = "onchain-bdk")]
 use bdk_wallet::ChangeSet;
 use bitcoin::consensus::deserialize;
 use bitcoin::{Amount, BlockHash, Network, SignedAmount, Transaction, Txid};
@@ -45,12 +45,12 @@ impl BarkPersister for Dummy {
 		Ok(())
 	}
 
-	#[cfg(feature = "onchain_bdk")]
+	#[cfg(feature = "onchain-bdk")]
 	async fn initialize_bdk_wallet(&self) -> anyhow::Result<ChangeSet> {
 		Ok(ChangeSet::default())
 	}
 
-	#[cfg(feature = "onchain_bdk")]
+	#[cfg(feature = "onchain-bdk")]
 	async fn store_bdk_wallet_changeset(&self, _changeset: &ChangeSet) -> anyhow::Result<()> {
 		Ok(())
 	}

@@ -29,20 +29,82 @@
 use std::cmp;
 use std::convert::TryFrom;
 use std::ops::Deref;
-use std::str::FromStr;
 use std::sync::Arc;
-use std::time::{Duration, SystemTime};
 
 use bitcoin::Network;
-use log::{info, warn};
+use log::warn;
 use tokio::sync::RwLock;
 use tonic::service::interceptor::InterceptedService;
-use tonic::transport::Channel;
 
 use ark::ArkInfo;
 
 use crate::{protos, ArkServiceClient, ConvertError, RequestExt};
 use crate::mailbox;
+
+#[cfg(all(feature = "tonic-native", feature = "tonic-web"))]
+compile_error!("features `tonic-native` and `tonic-web` are mutually exclusive");
+
+#[cfg(not(any(feature = "tonic-native", feature = "tonic-web")))]
+compile_error!("either `tonic-native` or `tonic-web` feature must be enabled");
+
+#[cfg(feature = "tonic-native")]
+mod transport {
+	use std::str::FromStr;
+	use std::time::Duration;
+
+	use log::info;
+	use tonic::transport::Channel;
+
+	use super::CreateEndpointError;
+
+	pub type Transport = Channel;
+
+	/// Build a tonic endpoint from a server address, configuring timeouts and TLS if required.
+	///
+	/// - Supports `http` and `https` URIs. Any other scheme results in an error.
+	/// - Uses a 10-minute keep-alive and overall request timeout to accommodate long-running RPCs.
+	/// - When `https` is used, the crate-configured root CAs are enabled and the SNI domain is set.
+	pub async fn connect(address: &str) -> Result<Transport, CreateEndpointError> {
+		let uri = tonic::transport::Uri::from_str(address)?;
+
+		let scheme = uri.scheme_str().unwrap_or("");
+		if scheme != "http" && scheme != "https" {
+			return Err(CreateEndpointError::InvalidScheme(scheme.to_string()));
+		}
+
+		let mut endpoint = tonic::transport::Channel::builder(uri.clone())
+			.keep_alive_timeout(Duration::from_secs(600))
+			.timeout(Duration::from_secs(600));
+
+		if scheme == "https" {
+			info!("Connecting to Ark server using TLS...");
+			let uri_auth = uri.clone().into_parts().authority
+				.ok_or(CreateEndpointError::MissingAuthority)?;
+			let domain = uri_auth.host();
+
+			let tls_config = tonic::transport::ClientTlsConfig::new()
+				.with_enabled_roots()
+				.domain_name(domain);
+			endpoint = endpoint.tls_config(tls_config)
+				.map_err(CreateEndpointError::Transport)?;
+		} else {
+			info!("Connecting to Ark server without TLS...");
+		};
+		Ok(endpoint.connect().await?)
+	}
+}
+
+#[cfg(feature = "tonic-web")]
+mod transport {
+	use super::CreateEndpointError;
+	use tonic_web_wasm_client::Client as WasmClient;
+
+	pub type Transport = WasmClient;
+
+	pub async fn connect(address: &str) -> Result<Transport, CreateEndpointError> {
+		Ok(tonic_web_wasm_client::Client::new(address.to_string()))
+	}
+}
 
 /// The minimum protocol version supported by the client.
 ///
@@ -57,7 +119,7 @@ pub const MAX_PROTOCOL_VERSION: u64 = 1;
 /// The time to live for the Ark info.
 ///
 /// The Ark info is refreshed every 10 minutes.
-pub const ARK_INFO_TTL: u32 = 10 * 60;
+pub const ARK_INFO_TTL_SECS: u64 = 10 * 60;
 
 #[derive(Debug, thiserror::Error)]
 #[error("failed to create gRPC endpoint: {msg}")]
@@ -68,8 +130,9 @@ pub enum CreateEndpointError {
 	InvalidScheme(String),
 	#[error("Ark server URI is missing an authority part")]
 	MissingAuthority,
-	#[error("TLS config error: {0}")]
-	TlsConfig(#[from] tonic::transport::Error),
+	#[cfg(feature = "tonic-native")]
+	#[error(transparent)]
+	Transport(#[from] tonic::transport::Error),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -77,8 +140,6 @@ pub enum CreateEndpointError {
 pub enum ConnectError {
 	#[error(transparent)]
 	CreateEndpoint(#[from] CreateEndpointError),
-	#[error(transparent)]
-	Connect(#[from] tonic::transport::Error),
 	#[error("handshake request failed: {0}")]
 	Handshake(tonic::Status),
 	#[error("version mismatch. Client max is: {client_max}, server min is: {server_min}")]
@@ -135,34 +196,32 @@ pub struct ServerInfo {
 	pub pver: u64,
 	/// Server-side configuration and network parameters returned after connection.
 	pub info: ArkInfo,
-	/// Informations contained in this struct will be considered outdated after this time.
-	pub refresh_at: SystemTime,
+	/// Informations contained in this struct will be considered outdated after this timestamp.
+	pub refresh_at_secs: u64,
 }
 
 impl ServerInfo {
 	/// Compute the time at which the Ark info will be considered outdated.
-	fn ttl() -> SystemTime {
-		SystemTime::now() + Duration::from_secs(ARK_INFO_TTL as u64)
+	fn ttl() -> u64 {
+		ark::time::timestamp_secs() + ARK_INFO_TTL_SECS
 	}
 
 	pub fn new(pver: u64, info: ArkInfo) -> Self {
-		Self { pver, info, refresh_at: Self::ttl() }
+		Self { pver, info, refresh_at_secs: Self::ttl() }
 	}
 
 	pub fn update(&mut self, info: ArkInfo) {
 		self.info = info;
-		self.refresh_at = Self::ttl();
+		self.refresh_at_secs = Self::ttl();
 	}
 
 	/// Checks if the information contained in this struct is outdated.
 	pub fn is_outdated(&self) -> bool {
-		SystemTime::now() > self.refresh_at
+		ark::time::timestamp_secs() > self.refresh_at_secs
 	}
 }
 
 /// A managed connection to the Ark server.
-///
-/// Note: it is not clonable on purpose, to avoid keeping an outdated connection.
 ///
 /// This type encapsulates:
 /// - `pver`: The negotiated protocol version for the current session.
@@ -172,9 +231,9 @@ impl ServerInfo {
 pub struct ServerConnection {
 	info: Arc<RwLock<ServerInfo>>,
 	/// The gRPC client to call Ark RPCs.
-	pub client: ArkServiceClient<InterceptedService<Channel, ProtocolVersionInterceptor>>,
+	pub client: ArkServiceClient<InterceptedService<transport::Transport, ProtocolVersionInterceptor>>,
 	/// The mailbox gRPC client to call mailbox RPCs.
-	pub mailbox_client: mailbox::MailboxServiceClient<InterceptedService<Channel, ProtocolVersionInterceptor>>,
+	pub mailbox_client: mailbox::MailboxServiceClient<InterceptedService<transport::Transport, ProtocolVersionInterceptor>>,
 }
 
 impl ServerConnection {
@@ -182,39 +241,6 @@ impl ServerConnection {
 		protos::HandshakeRequest {
 			bark_version: Some(env!("CARGO_PKG_VERSION").into()),
 		}
-	}
-
-	/// Build a tonic endpoint from a server address, configuring timeouts and TLS if required.
-	///
-	/// - Supports `http` and `https` URIs. Any other scheme results in an error.
-	/// - Uses a 10-minute keep-alive and overall request timeout to accommodate long-running RPCs.
-	/// - When `https` is used, the crate-configured root CAs are enabled and the SNI domain is set.
-	fn create_endpoint(address: &str) -> Result<tonic::transport::Endpoint, CreateEndpointError> {
-		let uri = tonic::transport::Uri::from_str(address)?;
-
-		let scheme = uri.scheme_str().unwrap_or("");
-		if scheme != "http" && scheme != "https" {
-			return Err(CreateEndpointError::InvalidScheme(scheme.to_string()));
-		}
-
-		let mut endpoint = tonic::transport::Channel::builder(uri.clone())
-			.keep_alive_timeout(Duration::from_secs(600))
-			.timeout(Duration::from_secs(600));
-
-		if scheme == "https" {
-			info!("Connecting to Ark server using TLS...");
-			let uri_auth = uri.clone().into_parts().authority
-				.ok_or(CreateEndpointError::MissingAuthority)?;
-			let domain = uri_auth.host();
-
-			let tls_config = tonic::transport::ClientTlsConfig::new()
-				.with_enabled_roots()
-				.domain_name(domain);
-			endpoint = endpoint.tls_config(tls_config)?;
-		} else {
-			info!("Connecting to Ark server without TLS...");
-		};
-		Ok(endpoint)
 	}
 
 	/// Establish a connection to an Ark server and perform protocol negotiation.
@@ -238,22 +264,21 @@ impl ServerConnection {
 		address: &str,
 		network: Network,
 	) -> Result<ServerConnection, ConnectError> {
-		let endpoint = ServerConnection::create_endpoint(address)?;
-		let channel = endpoint.connect().await?;
+		let transport = transport::connect(address).await?;
 
-		let mut handshake_client = ArkServiceClient::new(channel.clone());
+		let mut handshake_client = ArkServiceClient::new(transport.clone());
 		let handshake = handshake_client.handshake(Self::handshake_req()).await
 			.map_err(ConnectError::Handshake)?.into_inner();
 
 		let pver = check_handshake(handshake)?;
 
 		let interceptor = ProtocolVersionInterceptor { pver };
-		let mut client = ArkServiceClient::with_interceptor(channel.clone(), interceptor.clone())
+		let mut client = ArkServiceClient::with_interceptor(transport.clone(), interceptor.clone())
 			.max_decoding_message_size(64 * 1024 * 1024); // 64MB limit
 
 		let info = client.ark_info(network).await?;
 
-		let mailbox_client = mailbox::MailboxServiceClient::with_interceptor(channel, interceptor)
+		let mailbox_client = mailbox::MailboxServiceClient::with_interceptor(transport, interceptor)
 			.max_decoding_message_size(64 * 1024 * 1024); // 64MB limit
 
 		let info = Arc::new(RwLock::new(ServerInfo::new(pver, info)));
@@ -296,7 +321,7 @@ trait ArkServiceClientExt {
 	async fn ark_info(&mut self, network: Network) -> Result<ArkInfo, ConnectError>;
 }
 
-impl ArkServiceClientExt for ArkServiceClient<InterceptedService<Channel, ProtocolVersionInterceptor>> {
+impl ArkServiceClientExt for ArkServiceClient<InterceptedService<transport::Transport, ProtocolVersionInterceptor>> {
 	async fn ark_info(&mut self, network: Network) -> Result<ArkInfo, ConnectError> {
 		let res = self.get_ark_info(protos::Empty {}).await
 			.map_err(ConnectError::GetArkInfo)?;

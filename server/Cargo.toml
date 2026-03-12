@@ -71,7 +71,7 @@ hyper.workspace = true
 http.workspace = true
 http-body.workspace = true
 parking_lot.workspace = true
-tokio.workspace = true
+tokio = { workspace = true, features = ["signal", "rt-multi-thread"] }
 tokio-util.workspace = true
 tokio-stream.workspace = true
 opentelemetry.workspace = true

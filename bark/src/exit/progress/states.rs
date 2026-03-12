@@ -10,7 +10,8 @@ use crate::exit::progress::{ExitProgressError, ExitStateProgress, ProgressContex
 use crate::exit::progress::util::{count_broadcast, count_confirmed, estimate_exit_cost};
 use crate::onchain::ExitUnilaterally;
 
-#[async_trait]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl ExitStateProgress for ExitState {
 	async fn progress(
 		self,
@@ -28,7 +29,8 @@ impl ExitStateProgress for ExitState {
 	}
 }
 
-#[async_trait]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl ExitStateProgress for ExitStartState {
 	async fn progress(
 		self,
@@ -62,7 +64,8 @@ impl ExitStateProgress for ExitStartState {
 	}
 }
 
-#[async_trait]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl ExitStateProgress for ExitProcessingState {
 	async fn progress(
 		self,
@@ -290,7 +293,8 @@ async fn progress_exit_tx(
 	}
 }
 
-#[async_trait]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl ExitStateProgress for ExitAwaitingDeltaState {
 	async fn progress(
 		self,
@@ -323,7 +327,8 @@ impl ExitStateProgress for ExitAwaitingDeltaState {
 	}
 }
 
-#[async_trait]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl ExitStateProgress for ExitClaimableState {
 	async fn progress(
 		self,
@@ -382,7 +387,8 @@ impl ExitStateProgress for ExitClaimableState {
 	}
 }
 
-#[async_trait]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl ExitStateProgress for ExitClaimInProgressState {
 	async fn progress(
 		self,
@@ -410,7 +416,8 @@ impl ExitStateProgress for ExitClaimInProgressState {
 	}
 }
 
-#[async_trait]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl ExitStateProgress for ExitClaimedState {
 	async fn progress(
 		self,

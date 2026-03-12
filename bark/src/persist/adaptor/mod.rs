@@ -48,9 +48,9 @@ use anyhow::Context;
 use bitcoin::{Amount, Transaction, Txid};
 use bitcoin::secp256k1::PublicKey;
 use bitcoin::hashes::Hash;
-#[cfg(feature = "onchain_bdk")]
+#[cfg(feature = "onchain-bdk")]
 use bdk_core::Merge;
-#[cfg(feature = "onchain_bdk")]
+#[cfg(feature = "onchain-bdk")]
 use bdk_wallet::ChangeSet;
 use chrono::{DateTime, Local};
 use lightning_invoice::Bolt11Invoice;
@@ -74,6 +74,7 @@ use crate::{WalletProperties, WalletVtxo};
 
 pub mod partition {
 	pub const PROPERTIES: u8 = 0;
+	#[allow(unused)]
 	pub const BDK_CHANGESET: u8 = 1;
 	pub const VTXO: u8 = 2;
 	pub const PUBLIC_KEY: u8 = 3;
@@ -222,7 +223,8 @@ impl Query {
 /// WHERE partition = :partition
 /// ORDER BY :sort_key DESC
 /// ```
-#[async_trait]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 pub trait StorageAdaptor: Send + Sync + 'static {
 	/// Stores a record, inserting or updating by primary key.
 	async fn put(&mut self, record: Record) -> anyhow::Result<()>;
@@ -326,7 +328,8 @@ impl<S: StorageAdaptor> StorageAdaptorWrapper<S> {
 }
 
 /// Blanket implementation of `BarkPersister` for any type implementing `StorageAdaptor`.
-#[async_trait]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl <S: StorageAdaptor> BarkPersister for StorageAdaptorWrapper<S> {
 	async fn init_wallet(&self, properties: &WalletProperties) -> anyhow::Result<()> {
 		let record = Record::from_data(
@@ -358,7 +361,7 @@ impl <S: StorageAdaptor> BarkPersister for StorageAdaptorWrapper<S> {
 		self.inner.write().await.put(record).await
 	}
 
-	#[cfg(feature = "onchain_bdk")]
+	#[cfg(feature = "onchain-bdk")]
 	async fn initialize_bdk_wallet(&self) -> anyhow::Result<ChangeSet> {
 		match self.inner.read().await.get(partition::BDK_CHANGESET, &[]).await? {
 			Some(record) => record.to_data(),
@@ -366,7 +369,7 @@ impl <S: StorageAdaptor> BarkPersister for StorageAdaptorWrapper<S> {
 		}
 	}
 
-	#[cfg(feature = "onchain_bdk")]
+	#[cfg(feature = "onchain-bdk")]
 	async fn store_bdk_wallet_changeset(&self, changeset: &ChangeSet) -> anyhow::Result<()> {
 		let mut current = self.initialize_bdk_wallet().await?;
 		current.merge(changeset.clone());

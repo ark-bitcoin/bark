@@ -16,22 +16,22 @@
 //! - [ExitUnilaterally]: a convenience trait that aggregates the required capabilities a
 //!   wallet must provide to support unilateral exits.
 //!
-//! A reference implementation based on BDK is available behind the `onchain_bdk`
+//! A reference implementation based on BDK is available behind the `onchain-bdk`
 //! cargo feature. Enable it to use the provided [OnchainWallet] implementation.
 //! You can use all features from BDK because [bdk_wallet] is re-exported.
 
-#[cfg(feature = "onchain_bdk")]
+#[cfg(feature = "onchain-bdk")]
 mod bdk;
 
-#[cfg(feature = "onchain_bdk")]
+#[cfg(feature = "onchain-bdk")]
 pub use bdk_wallet;
 
 pub use bitcoin_ext::cpfp::{CpfpError, MakeCpfpFees};
 
 /// BDK-backed onchain wallet implementation.
 ///
-/// Available only when the `onchain_bdk` feature is enabled.
-#[cfg(feature = "onchain_bdk")]
+/// Available only when the `onchain-bdk` feature is enabled.
+#[cfg(feature = "onchain-bdk")]
 pub use crate::onchain::bdk::{OnchainWallet, TxBuilderExt};
 
 use std::sync::Arc;
@@ -83,7 +83,8 @@ pub struct SpendableExit {
 ///
 /// Wallets should apply all necessary signatures and finalize inputs according
 /// to their internal key management and policies.
-#[async_trait]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 pub trait SignPsbt {
 	/// Consume a [Psbt] and return a fully signed and finalized [Transaction].
 	async fn finish_tx(&mut self, psbt: Psbt) -> anyhow::Result<Transaction>;
@@ -140,7 +141,8 @@ pub trait GetSpendingTx {
 }
 
 /// Ability to create and persist CPFP transactions for spending P2A outputs.
-#[async_trait]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 pub trait MakeCpfp {
 	/// Creates a signed Child Pays for Parent (CPFP) transaction using a Pay-to-Anchor (P2A) output
 	/// to broadcast unilateral exits and other TRUC transactions.
@@ -216,7 +218,8 @@ impl <W: GetBalance +
 	Send + Sync> ExitUnilaterally for W {}
 
 /// Ability to sync the wallet with the onchain network.
-#[async_trait]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 pub trait ChainSync {
 	/// Sync the wallet with the onchain network.
 	async fn sync(&mut self, chain: &ChainSource) -> anyhow::Result<()>;

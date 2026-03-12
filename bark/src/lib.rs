@@ -53,9 +53,9 @@
 //! the configuration. The example below configures
 //!
 //! You will also need a place to store all [ark::Vtxo]s on the users device.
-//! We have implemented [SqliteClient] which is a sane default on most devices.
-//! However, it is possible to implement a [BarkPersister] if you have other
-//! requirements.
+//! We have implemented [SqliteClient] which is a sane default on most devices
+//! (requires the `sqlite` feature). However, it is possible to implement a
+//! [BarkPersister] if you have other requirements.
 //!
 //! The code-snippet below shows how you can create a [Wallet].
 //!
@@ -302,7 +302,7 @@ pub mod round;
 pub mod subsystem;
 pub mod vtxo;
 
-#[cfg(feature = "pid_lock")]
+#[cfg(feature = "pid-lock")]
 pub mod pid_lock;
 
 mod arkoor;
@@ -314,6 +314,7 @@ mod lightning;
 mod offboard;
 mod psbtext;
 mod mailbox;
+mod utils;
 
 pub use self::arkoor::ArkoorCreateResult;
 pub use self::config::{BarkNetwork, Config};
@@ -348,7 +349,8 @@ use crate::exit::Exit;
 use crate::movement::{Movement, MovementStatus};
 use crate::movement::manager::MovementManager;
 use crate::movement::update::MovementUpdate;
-use crate::onchain::{DaemonizableOnchainWallet, ExitUnilaterally, PreparePsbt, SignPsbt, Utxo};
+use crate::onchain::{ExitUnilaterally, PreparePsbt, SignPsbt, Utxo};
+use crate::onchain::DaemonizableOnchainWallet;
 use crate::persist::BarkPersister;
 use crate::persist::models::{PendingOffboard, RoundStateId, StoredRoundState, Unlocked};
 use crate::round::{RoundParticipation, RoundStateLockIndex, RoundStatus};
@@ -883,7 +885,7 @@ impl Wallet {
 	}
 
 	/// Create a new wallet with an onchain backend. This enables full Ark functionality. A default
-	/// implementation of an onchain wallet when the `onchain_bdk` feature is enabled. See
+	/// implementation of an onchain wallet when the `onchain-bdk` feature is enabled. See
 	/// [onchain::OnchainWallet] for more details. Alternatively, implement [ExitUnilaterally] if
 	/// you have your own onchain wallet implementation.
 	///
@@ -1540,7 +1542,7 @@ impl Wallet {
 	/// Notes:
 	/// - The exit system will not be synced as doing so requires the onchain wallet.
 	pub async fn sync(&self) {
-		tokio::join!(
+		futures::join!(
 			async {
 				// NB: order matters here, if syncing call fails,
 				// we still want to update the fee rates

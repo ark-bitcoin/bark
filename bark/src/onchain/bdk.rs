@@ -1,8 +1,8 @@
 use std::ops::{Deref, DerefMut};
-use std::time::{SystemTime, UNIX_EPOCH};
 use std::sync::Arc;
 
 use anyhow::Context;
+use ark::time::timestamp_secs;
 use bdk_esplora::EsploraAsyncExt;
 use bdk_wallet::chain::{ChainPosition, CheckPoint};
 use bdk_wallet::Wallet as BdkWallet;
@@ -47,7 +47,8 @@ impl From<LocalOutput> for LocalUtxo {
 ///
 /// When used, the resulting PSBT should be signed using
 /// [crate::exit::Exit::sign_exit_claim_inputs].
-#[async_trait]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 pub trait TxBuilderExt: Send + Sync {
 	async fn add_exit_claim_inputs(
 		&mut self,
@@ -56,7 +57,8 @@ pub trait TxBuilderExt: Send + Sync {
 	) -> anyhow::Result<()>;
 }
 
-#[async_trait]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl<Cs: Send + Sync> TxBuilderExt for TxBuilder<'_, Cs> {
 	async fn add_exit_claim_inputs(
 		&mut self,
@@ -105,7 +107,8 @@ impl <W: Deref<Target = BdkWallet>> GetBalance for W {
 	}
 }
 
-#[async_trait]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl SignPsbt for BdkWallet {
 	async fn finish_tx(&mut self, mut psbt: Psbt) -> anyhow::Result<Transaction> {
 		#[allow(deprecated)]
@@ -117,8 +120,7 @@ impl SignPsbt for BdkWallet {
 		let finalized = self.sign(&mut psbt, opts).context("signing error")?;
 		assert!(finalized);
 		let tx = psbt.extract_tx()?;
-		let unix = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
-		self.apply_unconfirmed_txs([(tx.clone(), unix)]);
+		self.apply_unconfirmed_txs([(tx.clone(), timestamp_secs())]);
 		Ok(tx)
 	}
 }
@@ -182,7 +184,8 @@ impl <W: Deref<Target = BdkWallet>> GetSpendingTx for W {
 	}
 }
 
-#[async_trait]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl MakeCpfp for BdkWallet {
 	fn make_signed_p2a_cpfp(
 		&mut self,
@@ -208,11 +211,7 @@ impl MakeCpfp for BdkWallet {
 	}
 
 	async fn store_signed_p2a_cpfp(&mut self, tx: &Transaction) -> anyhow::Result<(), CpfpError> {
-		let unix = SystemTime::now().duration_since(UNIX_EPOCH)
-			.map_err(|e| CpfpError::InternalError(
-				format!("Unable to calculate time since UNIX epoch: {}", e.to_string()))
-			)?.as_secs();
-		self.apply_unconfirmed_txs([(tx.clone(), unix)]);
+		self.apply_unconfirmed_txs([(tx.clone(), timestamp_secs())]);
 		trace!("Unconfirmed txs: {:?}", self.unconfirmed_txids().collect::<Vec<_>>());
 		Ok(())
 	}
@@ -266,7 +265,8 @@ impl OnchainWallet {
 	}
 }
 
-#[async_trait]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl MakeCpfp for OnchainWallet {
 	fn make_signed_p2a_cpfp(
 		&mut self,
@@ -283,7 +283,8 @@ impl MakeCpfp for OnchainWallet {
 	}
 }
 
-#[async_trait]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl SignPsbt for OnchainWallet {
 	async fn finish_tx(&mut self, psbt: Psbt) -> anyhow::Result<Transaction> {
 		let tx = self.inner.finish_tx(psbt).await?;
@@ -292,13 +293,13 @@ impl SignPsbt for OnchainWallet {
 	}
 }
 
-#[async_trait]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl ChainSync for OnchainWallet {
 	async fn sync(&mut self, chain: &ChainSource) -> anyhow::Result<()> {
 		debug!("Starting wallet sync...");
 		debug!("Starting balance: {}", self.inner.balance());
 		trace!("Starting unconfirmed txs: {:?}", self.unconfirmed_txids().collect::<Vec<_>>());
-		let now = SystemTime::now().duration_since(UNIX_EPOCH).expect("now").as_secs();
 
 		match chain.inner() {
 			ChainSourceClient::Bitcoind(bitcoind) => {
@@ -320,7 +321,7 @@ impl ChainSync for OnchainWallet {
 
 		debug!("Current balance: {}", self.inner.balance());
 		trace!("Current unconfirmed txs: {:?}", self.unconfirmed_txids().collect::<Vec<_>>());
-		self.rebroadcast_txs(chain, now).await?;
+		self.rebroadcast_txs(chain, timestamp_secs()).await?;
 
 		Ok(())
 	}
@@ -448,7 +449,6 @@ impl OnchainWallet {
 	) -> anyhow::Result<Amount> {
 		info!("Starting initial wallet sync...");
 		debug!("Starting balance: {}", self.inner.balance());
-		let now = SystemTime::now().duration_since(UNIX_EPOCH).expect("now").as_secs();
 
 		match chain.inner() {
 			ChainSourceClient::Bitcoind(bitcoind) => {
@@ -470,7 +470,7 @@ impl OnchainWallet {
 		}
 
 		debug!("Current balance: {}", self.inner.balance());
-		self.rebroadcast_txs(chain, now).await
+		self.rebroadcast_txs(chain, timestamp_secs()).await
 	}
 
 
