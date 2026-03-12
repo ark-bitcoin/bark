@@ -48,7 +48,6 @@ build-and-push-captaind-to-registry:
     - build-server
   script:
     - cat VERSION
-    - buildah login -u registry -p "$REGISTRY_LOGIN_TOKEN" registry.2nd.dev
     # Build the containers
     - buildah build -f ./.gitlab/images/releases/captaind/Dockerfile --tag registry.2nd.dev/captaind:latest .
     # Push containers to registry.2nd.dev
@@ -70,8 +69,6 @@ push-captaind-to-docker:
     - build-and-push-captaind-to-registry
   script:
     - cat VERSION
-    - buildah login -u secondark -p "$DOCKER_LOGIN_TOKEN" docker.io
-    - buildah login -u registry -p "$REGISTRY_LOGIN_TOKEN" registry.2nd.dev
     # Pull containers from registry.2nd.dev
     - buildah pull registry.2nd.dev/captaind:latest
     # Tag containers for docker.io

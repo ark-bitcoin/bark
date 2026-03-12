@@ -11,6 +11,8 @@ variables:
   GIT_DEPTH: 100
   GIT_STRATEGY: clone
   NEXTEST_PROFILE: ci
+  SCCACHE_MEMCACHED: tcp://host.containers.internal:11211
+  SCCACHE_DIRECT: true
 
 workflow:
   auto_cancel:
@@ -40,6 +42,6 @@ stages:
 
 # Specifying a default image for all steps. If you specify a new before_script in a step, then this will be ignored.
 default:
-  image: registry.2nd.dev/build:28
+  image: registry.2nd.dev/build:29
   before_script:
     - sudo chown -R nixuser:nixbld "$CI_PROJECT_DIR" || true
