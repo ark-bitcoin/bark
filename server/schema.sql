@@ -387,14 +387,18 @@ CREATE FUNCTION public.vtxo_update_trigger() RETURNS trigger
     AS $$
 BEGIN
 	INSERT INTO vtxo_history (
-		id, vtxo_id, vtxo_txid, vtxo, expiry, oor_spent_txid, spent_in_round,
+		id, vtxo_id, vtxo_txid, vtxo, expiry, exit_delta, policy_type, policy,
+		server_pubkey, amount, anchor_point,
+		oor_spent_txid, spent_in_round,
 		created_at, updated_at
 	) VALUES (
-		OLD.id, OLD.vtxo_id, OLD.vtxo_txid, OLD.vtxo, OLD.expiry, OLD.oor_spent_txid, OLD.spent_in_round,
+		OLD.id, OLD.vtxo_id, OLD.vtxo_txid, OLD.vtxo, OLD.expiry, OLD.exit_delta, OLD.policy_type, OLD.policy,
+		OLD.server_pubkey, OLD.amount, OLD.anchor_point,
+		OLD.oor_spent_txid, OLD.spent_in_round,
 		OLD.created_at, OLD.updated_at
 	);
 
-	IF NEW.updated_at = OLD.updated_at AND new.updated_AT <> NOW() THEN
+	IF NEW.updated_at = OLD.updated_at AND new.updated_at <> NOW() THEN
 		RAISE EXCEPTION 'updated_at must be updated';
 	END IF;
 
@@ -1127,7 +1131,13 @@ CREATE TABLE public.vtxo (
     updated_at timestamp with time zone NOT NULL,
     lightning_htlc_subscription_id bigint,
     offboarded_in text,
-    vtxo_txid text
+    vtxo_txid text,
+    exit_delta integer,
+    policy_type text,
+    policy bytea,
+    server_pubkey text,
+    amount bigint,
+    anchor_point text
 );
 
 
@@ -1146,7 +1156,13 @@ CREATE TABLE public.vtxo_history (
     updated_at timestamp with time zone NOT NULL,
     history_created_at timestamp with time zone DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC'::text) NOT NULL,
     offboarded_in text,
-    vtxo_txid text
+    vtxo_txid text,
+    exit_delta integer,
+    policy_type text,
+    policy bytea,
+    server_pubkey text,
+    amount bigint,
+    anchor_point text
 );
 
 

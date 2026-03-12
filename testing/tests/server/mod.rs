@@ -1,5 +1,6 @@
 mod block_index;
 mod postgres;
+mod postgres_migrations;
 
 use std::iter;
 use std::str::FromStr;
