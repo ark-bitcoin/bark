@@ -33,7 +33,7 @@ pub fn keypair_to(kp: &Keypair) -> secpm::Keypair {
 }
 
 pub fn keypair_from(kp: &secpm::Keypair) -> Keypair {
-	Keypair::from_seckey_slice(&crate::SECP, &kp.secret_bytes()).unwrap()
+	Keypair::from_seckey_slice(&crate::SECP, &kp.to_secret_bytes()).unwrap()
 }
 
 pub fn sig_from(s: secpm::schnorr::Signature) -> schnorr::Signature {
