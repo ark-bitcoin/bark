@@ -7,6 +7,7 @@ use log::{info, error};
 use ark::{VtxoPolicy, ProtocolEncoding};
 use ark::arkoor::ArkoorDestination;
 use ark::arkoor::package::{ArkoorPackageBuilder, ArkoorPackageCosignResponse};
+use ark::mailbox::MailboxType;
 use ark::vtxo::{Full, Vtxo, VtxoId};
 use server_rpc::protos;
 
@@ -178,6 +179,7 @@ impl Wallet {
 				VtxoDelivery::ServerMailbox { blinded_id } => {
 					let req = protos::mailbox_server::PostVtxosMailboxRequest {
 						blinded_id: blinded_id.to_vec(),
+						mailbox_type: u32::from(MailboxType::ArkoorReceive) as i32,
 						vtxos: arkoor.created.iter().map(|v| v.serialize().to_vec()).collect(),
 					};
 

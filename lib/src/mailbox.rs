@@ -2,14 +2,72 @@
 //!
 //! For more information on the mailbox, check the `docs/mailbox.md` file.
 
-use std::io;
-
+use std::{fmt, io};
+use std::str::FromStr;
 use bitcoin::hashes::{sha256, Hash, HashEngine};
 use bitcoin::secp256k1::{ecdh, schnorr, Keypair, Message, PublicKey};
 use bitcoin::secp256k1::constants::PUBLIC_KEY_SIZE;
 
 use crate::SECP;
 use crate::encode::{ProtocolDecodingError, ProtocolEncoding, ReadExt, WriteExt};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MailboxType {
+	ArkoorReceive,
+}
+
+impl MailboxType {
+	#[inline]
+	pub const fn as_str(self) -> &'static str {
+		match self {
+			MailboxType::ArkoorReceive => "arkoor-receive",
+		}
+	}
+
+}
+
+impl fmt::Display for MailboxType {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		f.write_str(self.as_str())
+	}
+}
+
+impl TryFrom<u32> for MailboxType {
+	type Error = &'static str;
+
+	fn try_from(i: u32) -> Result<Self, Self::Error> {
+		match i {
+			0 => Ok(MailboxType::ArkoorReceive),
+			_ => Err("invalid mailbox type"),
+		}
+	}
+}
+
+impl From<MailboxType> for u32 {
+	fn from(t: MailboxType) -> Self {
+		match t {
+			MailboxType::ArkoorReceive => 0,
+		}
+	}
+}
+
+impl From<MailboxType> for String {
+	fn from(t: MailboxType) -> Self {
+		t.as_str().to_string()
+	}
+}
+
+impl FromStr for MailboxType {
+	type Err = &'static str;
+
+	fn from_str(s: &str) -> Result<Self, Self::Err> {
+		match s {
+			v if v == MailboxType::ArkoorReceive.as_str() => Ok(MailboxType::ArkoorReceive),
+			_ => Err("invalid mailbox type"),
+		}
+	}
+}
+
 
 /// Identifier for a mailbox
 ///
@@ -249,6 +307,37 @@ mod test {
 		assert_eq!(decoded.expiry, 1761818819);
 		assert_eq!(decoded.id.to_string(), "023f6712126b93bd479baec93fa4b6e6eb7aa8100b2e818954a351e2eb459ccbea");
 		assert!(decoded.verify());
+	}
+
+	#[test]
+	fn mailbox_type_round_trip() {
+		let ar = MailboxType::ArkoorReceive;
+
+		let cases = [
+			(ar, u32::from(ar), ar.as_str()),
+		];
+
+		let mut seen_u32 = std::collections::HashSet::new();
+
+		for (variant, expected_u32, expected_str) in cases {
+			let actual = u32::from(variant);
+			assert_eq!(actual, expected_u32, "wrong u32 for {:?}", variant);
+
+			let actual = String::from(variant);
+			assert_eq!(actual, expected_str, "wrong str for {:?}", variant);
+
+			let round_trip = actual.parse::<MailboxType>().unwrap();
+			assert_eq!(round_trip, variant);
+
+			assert!(seen_u32.insert(expected_u32), "duplicate u32 value: {}", expected_u32);
+		}
+
+		assert!(MailboxType::try_from(cases.len() as u32).is_err());
+		assert!(MailboxType::try_from(u32::MAX).is_err());
+		assert!(MailboxType::try_from(999_999).is_err());
+		assert!(MailboxType::from_str("arkor_receive").is_err()); // typo
+		assert!(MailboxType::from_str("").is_err());
+		assert!(MailboxType::from_str("ARKOOR_RECEIVE").is_err()); // case-sensitive
 	}
 }
 

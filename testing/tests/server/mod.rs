@@ -24,7 +24,7 @@ use ark::{
 use ark::arkoor::ArkoorDestination;
 use ark::arkoor::package::ArkoorPackageBuilder;
 use ark::challenges::RoundAttemptChallenge;
-use ark::mailbox::{MailboxAuthorization, MailboxIdentifier};
+use ark::mailbox::{MailboxAuthorization, MailboxIdentifier, MailboxType};
 use ark::tree::signed::builder::SignedTreeBuilder;
 use ark::tree::signed::{LeafVtxoCosignContext, UnlockPreimage};
 use bark::Wallet;
@@ -1667,8 +1667,8 @@ async fn mailbox_post_and_process_with_auth() {
 	let expired_authorization = Some(expired_mailbox_auth.serialize().to_vec());
 
 	let expired_read_mailbox = protos::mailbox_server::MailboxRequest {
-		authorization: expired_authorization.clone(),
 		unblinded_id: unblinded_id.clone(),
+		authorization: expired_authorization.clone(),
 		checkpoint: 0,
 	};
 
@@ -1682,8 +1682,8 @@ async fn mailbox_post_and_process_with_auth() {
 
 	// Now we check that the server rejects requests with no authorization
 	let no_auth_read_mailbox = protos::mailbox_server::MailboxRequest {
-		authorization: None,
 		unblinded_id: unblinded_id.clone(),
+		authorization: None,
 		checkpoint: 0,
 	};
 
@@ -1698,7 +1698,7 @@ async fn mailbox_post_and_process_with_auth() {
 	trace!("processing mailbox");
 	loop {
 		match stream.next().await.unwrap().unwrap() {
-			protos::mailbox_server::MailboxMessage { checkpoint, message } => {
+			protos::mailbox_server::MailboxMessage { mailbox_type, checkpoint, message } => {
 				match message.unwrap() {
 					Message::Arkoor(arkoor) => {
 						assert_eq!(arkoor.vtxos.len(), 1);
@@ -1706,6 +1706,7 @@ async fn mailbox_post_and_process_with_auth() {
 						assert_eq!(read_vtxo.unwrap(), vtxo);
 					},
 				}
+				assert_eq!(mailbox_type, MailboxType::ArkoorReceive as i32);
 				assert_ne!(checkpoint, 0);
 				return
 			},

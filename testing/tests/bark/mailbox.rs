@@ -33,6 +33,7 @@ async fn reject_arkoor_with_bad_signature() {
 
 			Ok(protos::mailbox_server::MailboxMessages {
 				messages: vec![protos::mailbox_server::MailboxMessage {
+					mailbox_type: protos::mailbox_server::MailboxType::ArkoorReceive as i32,
 					message: Some(mailbox_message::Message::Arkoor(message)),
 					checkpoint: 0,
 				}],
