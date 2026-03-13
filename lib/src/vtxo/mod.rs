@@ -489,6 +489,21 @@ impl<G, P: Policy> Vtxo<G, P> {
 	}
 }
 
+impl<P: Policy> Vtxo<Bare, P> {
+	/// Construct a bare VTXO from its individual fields.
+	pub fn new(
+		point: OutPoint,
+		policy: P,
+		amount: Amount,
+		expiry_height: BlockHeight,
+		server_pubkey: PublicKey,
+		exit_delta: BlockDelta,
+		anchor_point: OutPoint,
+	) -> Self {
+		Vtxo { point, policy, amount, expiry_height, server_pubkey, exit_delta, anchor_point, genesis: Bare }
+	}
+}
+
 impl<P: Policy> Vtxo<Full, P> {
 	/// Returns the total exit depth (including OOR depth) of the vtxo.
 	pub fn exit_depth(&self) -> u16 {
