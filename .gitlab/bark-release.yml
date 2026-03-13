@@ -60,8 +60,6 @@ build-and-push-bark-to-registry:
     - podman run --privileged --rm docker.io/tonistiigi/binfmt --install all
   script:
     - cat VERSION
-    - chmod a+x ./bark*
-    - chmod a+x ./.gitlab/images/releases/bark/run.sh
     # Build the containers
     - buildah build -f ./.gitlab/images/releases/bark/linux_amd64.Dockerfile --tag registry.2nd.dev/bark:linux-amd64 .
     - buildah build -f ./.gitlab/images/releases/bark/linux_arm64.Dockerfile --tag registry.2nd.dev/bark:linux-arm64 .
