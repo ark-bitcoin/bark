@@ -10,4 +10,8 @@ COPY ./bark-linux-aarch64 /usr/local/bin/bark
 COPY ./barkd-linux-aarch64 /usr/local/bin/barkd
 COPY ./.gitlab/images/releases/bark/run.sh /run.sh
 
+RUN chmod a+x /usr/local/bin/bark && \
+    chmod a+x /usr/local/bin/barkd && \
+    chmod a+x /run.sh
+
 CMD ["/run.sh"]
