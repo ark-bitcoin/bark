@@ -13,6 +13,7 @@ variables:
   NEXTEST_PROFILE: ci
   SCCACHE_MEMCACHED: tcp://host.containers.internal:11211
   SCCACHE_DIRECT: true
+  SWAGGER_UI_DOWNLOAD_URL: file:///home/nixuser/assets/swagger-ui/v5.30.2.zip
 
 workflow:
   auto_cancel:
