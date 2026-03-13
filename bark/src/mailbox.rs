@@ -211,7 +211,14 @@ impl Wallet {
 				if let Err(e) = self.sync_pending_rounds().await {
 					error!("Error syncing pending rounds: {:#}", e);
 				}
-			}
+			},
+			Some(protos::mailbox_server::mailbox_message::Message::IncomingLightningPayment(_)) => {
+				// Will be handled in a follow-up commit
+				debug!("Received lightning receive notification, not yet handled");
+				if let Err(e) = self.store_mailbox_checkpoint(mailbox_msg.checkpoint).await {
+					error!("Error storing mailbox checkpoint: {:#}", e);
+				}
+			},
 			None => {
 				warn!("Received unknown mailbox message, ignoring");
 			}

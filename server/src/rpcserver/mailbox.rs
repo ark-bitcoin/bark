@@ -37,6 +37,9 @@ fn new_mailbox_msg(entry: MailboxEntry) -> protos::mailbox_server::MailboxMessag
 				mailbox_type: MailboxType::RoundParticipationCompleted as i32,
 			}
 		}
+		MailboxType::LnRecvPendingPayment => {
+			todo!();
+		}
 	}
 }
 

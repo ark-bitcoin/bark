@@ -532,6 +532,7 @@ impl From<ark::mailbox::MailboxType> for protos::mailbox_server::MailboxType {
 		match value {
 			ark::mailbox::MailboxType::ArkoorReceive => protos::mailbox_server::MailboxType::ArkoorReceive,
 			ark::mailbox::MailboxType::RoundParticipationCompleted => protos::mailbox_server::MailboxType::RoundParticipationCompleted,
+			ark::mailbox::MailboxType::LnRecvPendingPayment => protos::mailbox_server::MailboxType::LnRecvPendingPayment,
 		}
 	}
 }
@@ -541,6 +542,7 @@ impl From<protos::mailbox_server::MailboxType> for ark::mailbox::MailboxType {
 		match value {
 			protos::mailbox_server::MailboxType::ArkoorReceive => ark::mailbox::MailboxType::ArkoorReceive,
 			protos::mailbox_server::MailboxType::RoundParticipationCompleted => ark::mailbox::MailboxType::RoundParticipationCompleted,
+			protos::mailbox_server::MailboxType::LnRecvPendingPayment => ark::mailbox::MailboxType::LnRecvPendingPayment,
 		}
 	}
 }
