@@ -40,7 +40,8 @@ impl RoundAttemptChallenge {
 		engine.write_all(&self.0).unwrap();
 		engine.write_all(&vtxo_id.to_bytes()).unwrap();
 
-		engine.write_all(&vtxo_reqs.len().to_be_bytes()).unwrap();
+		// BUG: usize is 4 bytes on wasm32 vs 8 bytes on x86_64, causing hash mismatch between WASM clients and native server
+		engine.write_all(&(vtxo_reqs.len() as u64).to_be_bytes()).unwrap();
 		for req in vtxo_reqs {
 			engine.write_all(&req.vtxo.amount.to_sat().to_be_bytes()).unwrap();
 			req.vtxo.policy.encode(&mut engine).unwrap();
@@ -89,7 +90,8 @@ impl NonInteractiveRoundParticipationChallenge {
 		engine.write_all(Self::CHALLENGE_MESSAGE_PREFIX).unwrap();
 		engine.write_all(&vtxo_id.to_bytes()).unwrap();
 
-		engine.write_all(&vtxo_reqs.len().to_be_bytes()).unwrap();
+		// BUG: usize is 4 bytes on wasm32 vs 8 bytes on x86_64, causing hash mismatch between WASM clients and native server
+		engine.write_all(&(vtxo_reqs.len() as u64).to_be_bytes()).unwrap();
 		for req in vtxo_reqs {
 			engine.write_all(&req.amount.to_sat().to_be_bytes()).unwrap();
 			req.policy.encode(&mut engine).unwrap();
