@@ -3,8 +3,9 @@ use std::str::FromStr;
 
 use anyhow::Context;
 
-use ark::vtxo::{Full, Policy};
-use bitcoin::{Transaction, Txid};
+use ark::vtxo::{Bare, Full, Policy};
+use bitcoin::{Amount, OutPoint, Transaction, Txid};
+use bitcoin::secp256k1::PublicKey;
 use bitcoin::consensus::deserialize;
 use chrono::{DateTime, Local};
 use tokio_postgres::Row;
@@ -16,13 +17,13 @@ use ark::{ProtocolEncoding, ServerVtxoPolicy, Vtxo, VtxoId, VtxoPolicy};
 pub type Checkpoint = u64;
 
 #[derive(Debug)]
-pub struct VtxoState<P: Policy = VtxoPolicy> {
+pub struct VtxoState<G = Full, P: Policy = VtxoPolicy> {
 	pub id: i64,
 	/// The id of the VTXO
 	pub vtxo_id: VtxoId,
 
-	/// The raw vtxo encoded.
-	pub vtxo: Vtxo<Full, P>,
+	/// The vtxo.
+	pub vtxo: Vtxo<G, P>,
 	// NB keep this type explicit as u32 instead of BlockHeight to ensure encoding is stable
 	pub expiry: u32,
 
@@ -40,8 +41,8 @@ pub struct VtxoState<P: Policy = VtxoPolicy> {
 	pub updated_at: DateTime<Local>,
 }
 
-impl VtxoState<ServerVtxoPolicy> {
-	pub fn try_into_user_vtxo_state(self) -> Result<VtxoState<VtxoPolicy>, Self> {
+impl VtxoState<Full, ServerVtxoPolicy> {
+	pub fn try_into_user_vtxo_state(self) -> Result<VtxoState<Full, VtxoPolicy>, Self> {
 		match self.vtxo.try_into_user_vtxo() {
 			Ok(v) => {
 				Ok(VtxoState {
@@ -73,7 +74,7 @@ impl VtxoState<ServerVtxoPolicy> {
 	}
 }
 
-impl<P: Policy> VtxoState<P> {
+impl<G, P: Policy> VtxoState<G, P> {
 	pub fn is_spendable(&self) -> bool {
 		self.oor_spent_txid.is_none()
 			&& self.spent_in_round.is_none()
@@ -81,13 +82,13 @@ impl<P: Policy> VtxoState<P> {
 	}
 }
 
-impl<P: Policy> AsRef<Vtxo<Full, P>> for VtxoState<P> {
+impl<P: Policy> AsRef<Vtxo<Full, P>> for VtxoState<Full, P> {
 	fn as_ref(&self) -> &Vtxo<Full, P> {
 	    &self.vtxo
 	}
 }
 
-impl<P: Policy + ProtocolEncoding> TryFrom<Row> for VtxoState<P> {
+impl<P: Policy + ProtocolEncoding> TryFrom<Row> for VtxoState<Full, P> {
 	type Error = anyhow::Error;
 
 	fn try_from(row: Row) -> Result<Self, Self::Error> {
@@ -100,6 +101,45 @@ impl<P: Policy + ProtocolEncoding> TryFrom<Row> for VtxoState<P> {
 			vtxo_id,
 			vtxo,
 			expiry: u32::try_from(row.get::<_, i32>("expiry"))?,
+			oor_spent_txid: row
+				.get::<_, Option<&str>>("oor_spent_txid")
+				.map(|txid| Txid::from_str(txid))
+				.transpose()?,
+			spent_in_round: row.get("spent_in_round"),
+			offboarded_in: row
+				.get::<_, Option<&str>>("offboarded_in")
+				.map(|txid| Txid::from_str(txid))
+				.transpose()?,
+			created_at: row.get("created_at"),
+			updated_at: row.get("updated_at"),
+		})
+	}
+}
+
+impl<P: Policy + ProtocolEncoding> TryFrom<Row> for VtxoState<Bare, P> {
+	type Error = anyhow::Error;
+
+	fn try_from(row: Row) -> Result<Self, Self::Error> {
+		let vtxo_id = VtxoId::from_str(row.get::<_, &str>("vtxo_id"))?;
+		let point = vtxo_id.utxo();
+
+		let exit_delta = row.get::<_, i32>("exit_delta") as u16;
+		let policy = P::deserialize(row.get::<_, &[u8]>("policy"))?;
+		let server_pubkey = PublicKey::from_str(row.get::<_, &str>("server_pubkey"))?;
+		let amount = Amount::from_sat(row.get::<_, i64>("amount") as u64);
+		let anchor_point = OutPoint::from_str(row.get::<_, &str>("anchor_point"))
+			.context("invalid anchor_point")?;
+		let expiry = u32::try_from(row.get::<_, i32>("expiry"))?;
+
+		let vtxo = Vtxo::new(
+			point, policy, amount, expiry, server_pubkey, exit_delta, anchor_point,
+		);
+
+		Ok(Self {
+			id: row.get("id"),
+			vtxo_id,
+			vtxo,
+			expiry,
 			oor_spent_txid: row
 				.get::<_, Option<&str>>("oor_spent_txid")
 				.map(|txid| Txid::from_str(txid))

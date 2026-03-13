@@ -20,7 +20,7 @@ use tokio_postgres::types::Type;
 use ark::{ProtocolEncoding, ServerVtxo, ServerVtxoPolicy, VtxoId, VtxoPolicy, VtxoRequest};
 use ark::rounds::RoundId;
 use ark::tree::signed::{UnlockHash, UnlockPreimage};
-use ark::vtxo::Full;
+use ark::vtxo::{Bare, Full};
 
 use crate::database::model::{VirtualTransaction, VtxoState};
 use crate::database::oor;
@@ -159,7 +159,7 @@ pub async fn upsert_vtxos<T, V: Borrow<ServerVtxo<Full>>>(
 pub async fn get_vtxo_by_id<T>(
 	client: &T,
 	id: VtxoId,
-) -> anyhow::Result<VtxoState<ServerVtxoPolicy>>
+) -> anyhow::Result<VtxoState<Full, ServerVtxoPolicy>>
 	where T : GenericClient + Sized
 {
 	let stmt = client.prepare_typed("
@@ -183,7 +183,7 @@ pub async fn get_vtxo_by_id<T>(
 pub async fn get_vtxos_by_id<T>(
 	client: &T,
 	ids: &[VtxoId],
-) -> anyhow::Result<Vec<VtxoState<ServerVtxoPolicy>>>
+) -> anyhow::Result<Vec<VtxoState<Full, ServerVtxoPolicy>>>
 	where T: GenericClient + Sized
 {
 	let statement = client.prepare_typed("
@@ -213,6 +213,30 @@ pub async fn get_vtxos_by_id<T>(
 	}
 
 	Ok(ids.iter().map(|id| vtxos.remove(id).unwrap()).collect())
+}
+
+/// Get a bare VTXO by id, constructed from the metadata columns
+/// without deserializing the full vtxo blob.
+pub async fn get_bare_vtxo_by_id<T>(
+	client: &T,
+	id: VtxoId,
+) -> anyhow::Result<VtxoState<Bare, ServerVtxoPolicy>>
+	where T: GenericClient + Sized
+{
+	let stmt = client.prepare_typed("
+		SELECT id, vtxo_id, expiry, exit_delta, policy_type, policy,
+			server_pubkey, amount, anchor_point,
+			oor_spent_txid, spent_in_round, offboarded_in,
+			created_at, updated_at
+		FROM vtxo
+		WHERE vtxo_id = $1;
+	", &[Type::TEXT]).await?;
+
+	let row = client.query_opt(&stmt, &[&id.to_string()]).await
+		.context("Query get_bare_vtxo_by_id failed")?
+		.not_found([id], "VTXO not found")?;
+
+	Ok(VtxoState::try_from(row)?)
 }
 
 pub async fn store_round_participation(
