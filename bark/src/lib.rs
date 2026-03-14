@@ -864,13 +864,13 @@ impl Wallet {
 
 		// Try to connect to the server and get its pubkey
 		let server_pubkey = if !force {
-			match ServerConnection::connect(&config.server_address, network).await {
+			match Self::connect_to_server(&config, network).await {
 				Ok(conn) => {
 					let ark_info = conn.ark_info().await?;
 					Some(ark_info.server_pubkey)
 				}
 				Err(err) => {
-					bail!("Failed to connect to provided server (if you are sure use the --force flag): {}", err);
+					bail!("Failed to connect to provided server (if you are sure use the --force flag): {:#}", err);
 				}
 			}
 		} else {
@@ -958,12 +958,10 @@ impl Wallet {
 		).await?;
 		let chain = Arc::new(chain_source_client);
 
-		let server = match ServerConnection::connect(
-			&config.server_address, properties.network,
-		).await {
+		let server = match Self::connect_to_server(&config, properties.network).await {
 			Ok(s) => Some(s),
 			Err(e) => {
-				warn!("Ark server handshake failed: {}", e);
+				warn!("Ark server handshake failed: {:#}", e);
 				None
 			}
 		};
@@ -1014,6 +1012,20 @@ impl Wallet {
 		self.seed.fingerprint()
 	}
 
+	async fn connect_to_server(
+		config: &Config,
+		network: Network,
+	) -> anyhow::Result<ServerConnection> {
+		let address = &config.server_address;
+		#[cfg(feature = "socks5-proxy")]
+		if let Some(proxy) = proxy_for_url(&config.socks5_proxy, address)? {
+			return ServerConnection::connect_via_proxy(address, network, &proxy).await
+				.context("Failed to connect Ark server via proxy");
+		}
+		ServerConnection::connect(address, network).await
+			.context("Failed to connect to Ark server")
+	}
+
 	async fn require_server(&self) -> anyhow::Result<(ServerConnection, ArkInfo)> {
 		let conn = self.server.read().clone()
 			.context("You should be connected to Ark server to perform this action")?;
@@ -1057,10 +1069,7 @@ impl Wallet {
 
 			srv
 		} else {
-			let srv_address = &self.config.server_address;
-			let network = properties.network;
-
-			let conn = ServerConnection::connect(srv_address, network).await?;
+			let conn = Self::connect_to_server(&self.config, properties.network).await?;
 			let ark_info = conn.ark_info().await?;
 			ark_info.fees.validate().context("invalid fee schedule")?;
 

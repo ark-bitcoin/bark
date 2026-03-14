@@ -16,10 +16,16 @@ default = ["tonic-native"]
 server = []
 intman = []
 
-tonic-native = ["tonic/transport"]
-tonic-web = ["dep:tonic-web-wasm-client", "getrandom/js", "ark-lib/wasm-web"]
+# TLS implementations
 tls-native-roots = ["tonic/tls-native-roots"]
 tls-webpki-roots = ["tonic/tls-webpki-roots"]
+
+# Native target features
+tonic-native = ["tonic/transport"]
+socks5-proxy = ["hyper-util", "hyper-socks2"]
+
+# Web target features
+tonic-web = ["dep:tonic-web-wasm-client", "getrandom/js", "ark-lib/wasm-web"]
 
 [dependencies]
 # OWN
@@ -31,6 +37,8 @@ getrandom = { version = "0.2", optional = true }
 # INTERNAL
 log.workspace = true
 http.workspace = true
+hyper-util = { workspace = true, optional = true }
+hyper-socks2 = { workspace = true, optional = true }
 prost.workspace = true
 tonic-prost.workspace = true
 tokio = { version = "1.35", default-features = false }
