@@ -120,6 +120,10 @@ impl Captaind {
 		&mut self.inner.cfg
 	}
 
+	pub fn rpc_port(&self) -> u16 {
+		self.inner.cfg.rpc.public_address.port()
+	}
+
 	/// The maximum time it can take for a user to wait for the next round to finish,
 	/// counting for max one failed attempt
 	pub fn max_round_delay(&self) -> Duration {

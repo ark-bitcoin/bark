@@ -20,6 +20,7 @@ pub use daemon::electrs::{Electrs, ElectrsConfig};
 pub use daemon::captaind::Captaind;
 pub use daemon::barkd::Barkd;
 pub use daemon::lightningd::{Lightningd, LightningdConfig};
+pub use daemon::tor::{Tor, TorConfig, HiddenServiceConfig};
 pub use bark::Bark;
 
 

@@ -43,6 +43,7 @@ pub mod env {
 	/// Path to a pre-generated bitcoind snapshot directory.
 	/// When set, tests copy the snapshot instead of generating blocks from scratch.
 	pub const BITCOIND_SNAPSHOT_DIR: &str = "BITCOIND_SNAPSHOT_DIR";
+	pub const TOR_EXEC: &str = "TOR_EXEC";
 }
 
 pub mod bitcoind {
