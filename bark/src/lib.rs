@@ -953,8 +953,11 @@ impl Wallet {
 			bail!("Need to either provide esplora or bitcoind info");
 		};
 
+		#[cfg(feature = "socks5-proxy")]
+		let chain_proxy = proxy_for_url(&config.socks5_proxy, chain_source.url())?;
 		let chain_source_client = ChainSource::new(
 			chain_source, properties.network, config.fallback_fee_rate,
+			#[cfg(feature = "socks5-proxy")] chain_proxy.as_deref(),
 		).await?;
 		let chain = Arc::new(chain_source_client);
 

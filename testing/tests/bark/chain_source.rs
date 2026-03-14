@@ -24,7 +24,7 @@ async fn setup_chain_source(name: impl AsRef<str>) -> (TestContext, ChainSource)
 			ctx.electrs.as_ref().expect("electrs is not started").chain_source()
 		}
 	};
-	(ctx, ChainSource::new(chain_source, Network::Regtest, None).await
+	(ctx, ChainSource::new(chain_source, Network::Regtest, None, None).await
 		.expect("failed to create chain source client"))
 }
 

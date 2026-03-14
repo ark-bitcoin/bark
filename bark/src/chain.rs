@@ -49,6 +49,15 @@ pub enum ChainSourceSpec {
 	},
 }
 
+impl ChainSourceSpec {
+	pub(crate) fn url(&self) -> &String {
+		match self {
+			ChainSourceSpec::Bitcoind { url, .. } => url,
+			ChainSourceSpec::Esplora { url } => url,
+		}
+	}
+}
+
 pub enum ChainSourceClient {
 	Bitcoind(rpc::Client),
 	Esplora(esplora_client::AsyncClient),
@@ -176,7 +185,12 @@ impl ChainSource {
 	/// * `Ok(Self)` - If the object is successfully created with all necessary configurations.
 	/// * `Err(anyhow::Error)` - If there is an error in initializing the chain source client or
 	///   verifying the network.
-	pub async fn new(spec: ChainSourceSpec, network: Network, fallback_fee: Option<FeeRate>) -> anyhow::Result<Self> {
+	pub async fn new(
+		spec: ChainSourceSpec,
+		network: Network,
+		fallback_fee: Option<FeeRate>,
+		#[cfg(feature = "socks5-proxy")] proxy: Option<&str>,
+	) -> anyhow::Result<Self> {
 		let inner = match spec {
 			ChainSourceSpec::Bitcoind { url, auth } => ChainSourceClient::Bitcoind(
 				rpc::Client::new(&url, auth)
@@ -185,7 +199,12 @@ impl ChainSource {
 			ChainSourceSpec::Esplora { url } => ChainSourceClient::Esplora({
 				// the esplora client doesn't deal well with trailing slash in url
 				let url = url.strip_suffix("/").unwrap_or(&url);
-				esplora_client::Builder::new(url).build_async()
+				let mut builder = esplora_client::Builder::new(url);
+				#[cfg(feature = "socks5-proxy")]
+				if let Some(proxy) = proxy {
+					builder = builder.proxy(proxy);
+				}
+				builder.build_async()
 					.with_context(|| format!("failed to create esplora client for url {}", url))?
 			}),
 		};
