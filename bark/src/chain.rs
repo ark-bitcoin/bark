@@ -193,8 +193,11 @@ impl ChainSource {
 	) -> anyhow::Result<Self> {
 		let inner = match spec {
 			ChainSourceSpec::Bitcoind { url, auth } => ChainSourceClient::Bitcoind(
-				rpc::Client::new(&url, auth)
-					.context("failed to create bitcoind rpc client")?
+				rpc::create_client(
+					&url,
+					auth,
+					#[cfg(feature = "socks5-proxy")] proxy,
+				).context("failed to create bitcoind rpc client")?
 			),
 			ChainSourceSpec::Esplora { url } => ChainSourceClient::Esplora({
 				// the esplora client doesn't deal well with trailing slash in url
