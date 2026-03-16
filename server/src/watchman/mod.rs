@@ -194,7 +194,7 @@ impl Watchman {
 		let mut frontier = self.frontier.write().await;
 
 		for txid in txids {
-			let confirmed_height = match self.bitcoind.tx_status(&txid)? {
+			let confirmed_height = match self.bitcoind.tx_status(txid)? {
 				// Only use confirmed_height if the block is on the synced chain.
 				// Otherwise, add as unconfirmed and it will confirm during the next sync.
 				TxStatus::Confirmed(b) if self.db.get_block_by_height(

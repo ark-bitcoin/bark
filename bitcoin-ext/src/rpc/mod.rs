@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use bdk_bitcoind_rpc::bitcoincore_rpc::Result as RpcResult;
 use bitcoin::address::NetworkUnchecked;
 use bitcoin::hex::FromHex;
-use bitcoin::{Address, Amount, FeeRate, Transaction};
+use bitcoin::{Address, Amount, FeeRate, Transaction, Txid};
 use serde::{self, Deserialize, Serialize};
 use serde::de::Error as SerdeError;
 
@@ -124,7 +124,7 @@ pub struct GetRawTransactionResultVin {
 	#[serde(default, with = "serde_hex::opt")]
 	pub coinbase: Option<Vec<u8>>,
 	/// Not provided for coinbase txs.
-	pub txid: Option<bitcoin::Txid>,
+	pub txid: Option<Txid>,
 	/// Not provided for coinbase txs.
 	pub vout: Option<u32>,
 	/// The scriptSig in case of a non-coinbase tx.
@@ -184,7 +184,7 @@ pub struct GetRawTransactionResult {
 	pub in_active_chain: Option<bool>,
 	#[serde(with = "serde_hex")]
 	pub hex: Vec<u8>,
-	pub txid: bitcoin::Txid,
+	pub txid: Txid,
 	pub hash: bitcoin::Wtxid,
 	pub size: usize,
 	pub vsize: usize,
@@ -209,7 +209,7 @@ pub struct SubmitPackageResult {
 /// Per-transaction result from the `submitpackage` RPC call.
 #[derive(Clone, Debug, Deserialize)]
 pub struct SubmitPackageTxResult {
-	pub txid: bitcoin::Txid,
+	pub txid: Txid,
 	pub error: Option<String>,
 }
 
@@ -317,7 +317,7 @@ impl BitcoinRpcErrorExt for Error {}
 pub trait BitcoinRpcExt: RpcApi {
 	fn custom_get_raw_transaction_info(
 		&self,
-		txid: &bitcoin::Txid,
+		txid: Txid,
 		block_hash: Option<&bitcoin::BlockHash>,
 	) -> RpcResult<Option<GetRawTransactionResult>> {
 		let mut args = [into_json(txid)?, into_json(true)?, opt_into_json(block_hash)?];
@@ -354,7 +354,7 @@ pub trait BitcoinRpcExt: RpcApi {
 		Ok(BlockRef { height, hash })
 	}
 
-	fn tx_status(&self, txid: &bitcoin::Txid) -> Result<TxStatus, Error> {
+	fn tx_status(&self, txid: Txid) -> Result<TxStatus, Error> {
 		match self.custom_get_raw_transaction_info(txid, None)? {
 			Some(tx) => match tx.blockhash {
 				Some(hash) => {
@@ -384,9 +384,9 @@ pub trait BitcoinRpcExt: RpcApi {
 	fn get_mempool_spending_tx(
 		&self,
 		outpoint: bitcoin::OutPoint,
-	) -> Result<Option<bitcoin::Txid>, Error> {
+	) -> Result<Option<Txid>, Error> {
 		// Get all mempool txids
-		let mempool_txids: Vec<bitcoin::Txid> = self.call("getrawmempool", &[false.into()])?;
+		let mempool_txids: Vec<Txid> = self.call("getrawmempool", &[false.into()])?;
 
 		for txid in mempool_txids {
 			let tx = self.get_raw_transaction(&txid, None)?;
@@ -405,7 +405,7 @@ pub trait BitcoinRpcExt: RpcApi {
 	/// Returns None if the transaction is not in the mempool.
 	fn estimate_mempool_feerate(
 		&self,
-		txid: bitcoin::Txid,
+		txid: Txid,
 	) -> RpcResult<Option<FeeRate>> {
 		let entry = match self.get_mempool_entry(&txid) {
 			Ok(e) => e,

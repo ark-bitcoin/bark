@@ -157,6 +157,13 @@ pub enum TxStatus {
 }
 
 impl TxStatus {
+	pub fn is_confirmed(&self) -> bool {
+		match self {
+			TxStatus::Confirmed(_) => true,
+			_ => false,
+		}
+	}
+
 	pub fn confirmed_height(&self) -> Option<BlockHeight> {
 		match self {
 			TxStatus::Confirmed(block_ref) => Some(block_ref.height),

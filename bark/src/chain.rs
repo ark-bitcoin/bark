@@ -533,7 +533,7 @@ impl ChainSource {
 	/// Returns the status of the given transaction, including the block height if it is confirmed
 	pub async fn tx_status(&self, txid: Txid) -> anyhow::Result<TxStatus> {
 		match self.inner() {
-			ChainSourceClient::Bitcoind(bitcoind) => Ok(bitcoind.tx_status(&txid)?),
+			ChainSourceClient::Bitcoind(bitcoind) => Ok(bitcoind.tx_status(txid)?),
 			ChainSourceClient::Esplora(esplora) => {
 				match esplora.get_tx_info(&txid).await? {
 					Some(info) => match (info.status.block_height, info.status.block_hash) {
