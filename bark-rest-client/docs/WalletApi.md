@@ -15,7 +15,7 @@ Method | HTTP request | Description
 [**next_round**](WalletApi.md#next_round) | **GET** /api/v1/wallet/next-round | Get next round time
 [**offboard_all**](WalletApi.md#offboard_all) | **POST** /api/v1/wallet/offboard/all | Offboard all VTXOs
 [**offboard_vtxos**](WalletApi.md#offboard_vtxos) | **POST** /api/v1/wallet/offboard/vtxos | Offboard specific VTXOs
-[**peak_address**](WalletApi.md#peak_address) | **GET** /api/v1/wallet/addresses/index/{index} | Get Ark address by index
+[**peek_address**](WalletApi.md#peek_address) | **GET** /api/v1/wallet/addresses/index/{index} | Get Ark address by index
 [**pending_rounds**](WalletApi.md#pending_rounds) | **GET** /api/v1/wallet/rounds | List round participations
 [**refresh_all**](WalletApi.md#refresh_all) | **POST** /api/v1/wallet/refresh/all | Refresh all VTXOs
 [**refresh_counterparty**](WalletApi.md#refresh_counterparty) | **POST** /api/v1/wallet/refresh/counterparty | Refresh received VTXOs
@@ -336,9 +336,9 @@ No authorization required
 [[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
 
 
-## peak_address
+## peek_address
 
-> models::ArkAddressResponse peak_address(index)
+> models::ArkAddressResponse peek_address(index)
 Get Ark address by index
 
 Returns a previously generated Ark address by its derivation index. Only addresses that have already been generated are available.

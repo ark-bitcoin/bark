@@ -27,7 +27,7 @@ pub fn router() -> Router<ServerState> {
 		.route("/ark-info", get(ark_info))
 		.route("/next-round", get(next_round))
 		.route("/addresses/next", post(address))
-		.route("/addresses/index/{index}", get(peak_address))
+		.route("/addresses/index/{index}", get(peek_address))
 		.route("/balance", get(balance))
 		.route("/vtxos", get(vtxos))
 		.route("/movements", get(movements))
@@ -52,7 +52,7 @@ pub fn router() -> Router<ServerState> {
 		ark_info,
 		next_round,
 		address,
-		peak_address,
+		peek_address,
 		balance,
 		vtxos,
 		movements,
@@ -238,7 +238,7 @@ pub async fn address(
 	tag = "wallet"
 )]
 #[debug_handler]
-pub async fn peak_address(
+pub async fn peek_address(
 	State(state): State<ServerState>,
 	Path(index): Path<u32>,
 ) -> HandlerResult<Json<bark_json::web::ArkAddressResponse>> {
