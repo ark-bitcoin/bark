@@ -606,14 +606,15 @@ impl Wallet {
 	/// # Returns
 	///
 	/// Returns an `anyhow::Result<()>`, which is:
-	/// * `Ok(())` if at least one claim succeeded or there were no pending receives.
+	/// * `Ok(Vec<LightningReceive>)` contains the successfully claimed receives, if at least one
+	/// claim succeeded, or an empty vector if no claim succeeded.
 	/// * `Err` if all claim attempts failed.
-	pub async fn try_claim_all_lightning_receives(&self, wait: bool) -> anyhow::Result<()> {
+	pub async fn try_claim_all_lightning_receives(&self, wait: bool) -> anyhow::Result<Vec<LightningReceive>> {
 		let pending = self.pending_lightning_receives().await?;
 		let total = pending.len();
 
 		if total == 0 {
-			return Ok(());
+			return Ok(vec![]);
 		}
 
 		let results: Vec<_> = tokio_stream::iter(pending)
@@ -624,26 +625,30 @@ impl Wallet {
 			.collect()
 			.await;
 
-		let succeeded = results.iter().filter(|r| r.is_ok()).count();
-		let failed = total - succeeded;
+		let mut claimed = vec![];
+		let mut failed = 0;
 
-		for result in &results {
-			if let Err(e) = result {
-				error!("Error claiming lightning receive: {:#}", e);
+		for result in results {
+			match result {
+				Ok(receive) => claimed.push(receive),
+				Err(e) => {
+					error!("Error claiming lightning receive: {:#}", e);
+					failed += 1;
+				}
 			}
 		}
 
 		if failed > 0 {
 			info!(
 				"Lightning receive claims: {} succeeded, {} failed out of {} pending",
-				succeeded, failed, total
+				claimed.len(), failed, total
 			);
 		}
 
-		if succeeded == 0 {
+		if claimed.is_empty() {
 			anyhow::bail!("All {} lightning receive claim(s) failed", failed);
 		}
 
-		Ok(())
+		Ok(claimed)
 	}
 }
