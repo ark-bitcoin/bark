@@ -20,7 +20,7 @@ use tokio_postgres::types::Type;
 use ark::{ProtocolEncoding, ServerVtxo, ServerVtxoPolicy, VtxoId, VtxoPolicy, VtxoRequest};
 use ark::rounds::RoundId;
 use ark::tree::signed::{UnlockHash, UnlockPreimage};
-use ark::vtxo::Full;
+use ark::vtxo::{Bare, Full};
 
 use crate::database::model::{VirtualTransaction, VtxoState};
 use crate::database::oor;
@@ -103,27 +103,51 @@ pub async fn upsert_vtxos<T, V: Borrow<ServerVtxo<Full>>>(
 	where T: GenericClient
 {
 	let statement = client.prepare_typed("
-		INSERT INTO vtxo (vtxo_id, vtxo_txid, vtxo, expiry, created_at, updated_at) VALUES (
-			UNNEST($1), UNNEST($2), UNNEST($3), UNNEST($4), NOW(), NOW())
+		INSERT INTO vtxo (
+			vtxo_id, vtxo_txid, vtxo, expiry, exit_delta, policy_type, policy,
+			server_pubkey, amount, anchor_point, created_at, updated_at
+		) VALUES (
+			UNNEST($1), UNNEST($2), UNNEST($3), UNNEST($4), UNNEST($5), UNNEST($6),
+			UNNEST($7), UNNEST($8), UNNEST($9), UNNEST($10), NOW(), NOW()
+		)
 		ON CONFLICT DO NOTHING
-	", &[Type::TEXT_ARRAY, Type::TEXT_ARRAY, Type::BYTEA_ARRAY, Type::INT4_ARRAY]).await?;
+	", &[
+		Type::TEXT_ARRAY, Type::TEXT_ARRAY, Type::BYTEA_ARRAY, Type::INT4_ARRAY,
+		Type::INT4_ARRAY, Type::TEXT_ARRAY, Type::BYTEA_ARRAY, Type::TEXT_ARRAY,
+		Type::INT8_ARRAY, Type::TEXT_ARRAY,
+	]).await?;
 
 	let vtxos = vtxos.into_iter();
 	let mut vtxo_ids = Vec::with_capacity(vtxos.size_hint().0);
 	let mut vtxo_txids = Vec::with_capacity(vtxos.size_hint().0);
 	let mut data = Vec::with_capacity(vtxos.size_hint().0);
 	let mut expiry = Vec::with_capacity(vtxos.size_hint().0);
+	let mut exit_deltas = Vec::with_capacity(vtxos.size_hint().0);
+	let mut policy_types = Vec::with_capacity(vtxos.size_hint().0);
+	let mut policies = Vec::with_capacity(vtxos.size_hint().0);
+	let mut server_pubkeys = Vec::with_capacity(vtxos.size_hint().0);
+	let mut amounts = Vec::with_capacity(vtxos.size_hint().0);
+	let mut anchor_points = Vec::with_capacity(vtxos.size_hint().0);
 	for vtxo in vtxos {
 		let vtxo = vtxo.borrow();
 		vtxo_ids.push(vtxo.id().to_string());
 		vtxo_txids.push(vtxo.point().txid.to_string());
 		data.push(vtxo.serialize());
 		expiry.push(vtxo.expiry_height() as i32);
+		exit_deltas.push(vtxo.exit_delta() as i32);
+		policy_types.push(vtxo.policy_type().to_string());
+		policies.push(vtxo.policy().serialize());
+		server_pubkeys.push(vtxo.server_pubkey().to_string());
+		amounts.push(vtxo.amount().to_sat() as i64);
+		anchor_points.push(vtxo.chain_anchor().to_string());
 	}
 
 	client.execute(
 		&statement,
-		&[&vtxo_ids, &vtxo_txids, &data, &expiry]
+		&[
+			&vtxo_ids, &vtxo_txids, &data, &expiry, &exit_deltas, &policy_types,
+			&policies, &server_pubkeys, &amounts, &anchor_points,
+		]
 	).await?;
 
 	Ok(())
@@ -135,7 +159,7 @@ pub async fn upsert_vtxos<T, V: Borrow<ServerVtxo<Full>>>(
 pub async fn get_vtxo_by_id<T>(
 	client: &T,
 	id: VtxoId,
-) -> anyhow::Result<VtxoState<ServerVtxoPolicy>>
+) -> anyhow::Result<VtxoState<Full, ServerVtxoPolicy>>
 	where T : GenericClient + Sized
 {
 	let stmt = client.prepare_typed("
@@ -159,7 +183,7 @@ pub async fn get_vtxo_by_id<T>(
 pub async fn get_vtxos_by_id<T>(
 	client: &T,
 	ids: &[VtxoId],
-) -> anyhow::Result<Vec<VtxoState<ServerVtxoPolicy>>>
+) -> anyhow::Result<Vec<VtxoState<Full, ServerVtxoPolicy>>>
 	where T: GenericClient + Sized
 {
 	let statement = client.prepare_typed("
@@ -189,6 +213,30 @@ pub async fn get_vtxos_by_id<T>(
 	}
 
 	Ok(ids.iter().map(|id| vtxos.remove(id).unwrap()).collect())
+}
+
+/// Get a bare VTXO by id, constructed from the metadata columns
+/// without deserializing the full vtxo blob.
+pub async fn get_bare_vtxo_by_id<T>(
+	client: &T,
+	id: VtxoId,
+) -> anyhow::Result<VtxoState<Bare, ServerVtxoPolicy>>
+	where T: GenericClient + Sized
+{
+	let stmt = client.prepare_typed("
+		SELECT id, vtxo_id, expiry, exit_delta, policy_type, policy,
+			server_pubkey, amount, anchor_point,
+			oor_spent_txid, spent_in_round, offboarded_in,
+			created_at, updated_at
+		FROM vtxo
+		WHERE vtxo_id = $1;
+	", &[Type::TEXT]).await?;
+
+	let row = client.query_opt(&stmt, &[&id.to_string()]).await
+		.context("Query get_bare_vtxo_by_id failed")?
+		.not_found([id], "VTXO not found")?;
+
+	Ok(VtxoState::try_from(row)?)
 }
 
 pub async fn store_round_participation(

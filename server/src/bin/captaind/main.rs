@@ -79,7 +79,14 @@ enum Command {
 	Integration {
 		#[command(subcommand)]
 		cmd: IntegrationCommand,
-	}
+	},
+
+	/// Run data migration commands
+	#[command()]
+	Data {
+		#[command(subcommand)]
+		cmd: DataCommand,
+	},
 }
 
 #[derive(clap::Subcommand)]
@@ -200,6 +207,13 @@ enum IntegrationCommand {
 	},
 }
 
+#[derive(clap::Subcommand)]
+enum DataCommand {
+	/// Backfill vtxo metadata columns from the vtxo blob
+	#[command()]
+	FillVtxos,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq, Args)]
 pub struct Filters {
 	#[arg(long, num_args = 0..)]
@@ -288,6 +302,15 @@ async fn inner_main() -> anyhow::Result<()> {
 		Command::GetMnemonic => {
 			info!("Running with config: {:#?}", cfg);
 			println!("{}", server::wallet::read_mnemonic_from_datadir(&cfg.data_dir)?);
+		}
+		Command::Data { cmd } => {
+			let db = server::database::Db::connect(&cfg.postgres).await?;
+			match cmd {
+				DataCommand::FillVtxos => {
+					let count = server::database::data_migrations::fill_vtxo_data::run(&db).await?;
+					println!("Backfilled {} vtxos", count);
+				}
+			}
 		}
 		Command::Integration { cmd } => {
 			info!("Running with config: {:#?}", cfg);
