@@ -8,11 +8,12 @@ use bitcoin::{Amount, Network};
 use log::info;
 use tokio::process::Command;
 
-use bark_json::cli::{Balance, PendingBoardInfo};
+use bark_json::cli::{ArkInfo, Balance, NextRoundStart, PendingBoardInfo};
 use bark_json::cli::onchain::{Address, OnchainBalance};
-use bark_json::web::{BarkNetwork, BitcoindAuth, ChainSourceConfig, CreateWalletRequest};
+use bark_json::primitives::{TransactionInfo, UtxoInfo};
+use bark_json::web::{BarkNetwork, BitcoindAuth, ChainSourceConfig, ConnectedResponse, CreateWalletRequest, TipResponse};
 use bark_rest_client::apis::configuration::Configuration;
-use bark_rest_client::apis::{boards_api, default_api, onchain_api, wallet_api};
+use bark_rest_client::apis::{bitcoin_api, boards_api, default_api, onchain_api, wallet_api};
 
 use crate::{Bitcoind, Daemon, DaemonHelper};
 use crate::constants::env::BARKD_EXEC;
@@ -104,6 +105,55 @@ impl Barkd {
 		let addr: Address = onchain_api::onchain_address(&config).await
 			.expect("failed to get barkd onchain address");
 		addr.address.require_network(Network::Regtest).unwrap()
+	}
+
+	/// Ping the barkd REST server.
+	pub async fn ping(&self) {
+		let config = self.client_config();
+		default_api::ping(&config).await
+			.expect("barkd ping failed");
+	}
+
+	/// Query the chain source for the current best block height.
+	pub async fn tip(&self) -> TipResponse {
+		let config = self.client_config();
+		bitcoin_api::tip(&config).await
+			.expect("failed to get barkd tip")
+	}
+
+	/// Return whether the wallet is connected to the Ark server.
+	pub async fn connected(&self) -> ConnectedResponse {
+		let config = self.client_config();
+		wallet_api::connected(&config).await
+			.expect("failed to check barkd connection")
+	}
+
+	/// Return Ark server configuration parameters.
+	pub async fn ark_info(&self) -> ArkInfo {
+		let config = self.client_config();
+		wallet_api::ark_info(&config).await
+			.expect("failed to get barkd ark info")
+	}
+
+	/// Return the next scheduled Ark round start time.
+	pub async fn next_round(&self) -> NextRoundStart {
+		let config = self.client_config();
+		wallet_api::next_round(&config).await
+			.expect("failed to get barkd next round")
+	}
+
+	/// List UTXOs in the on-chain wallet without syncing first.
+	pub async fn onchain_utxos(&self) -> Vec<UtxoInfo> {
+		let config = self.client_config();
+		onchain_api::onchain_utxos(&config).await
+			.expect("failed to list barkd onchain utxos")
+	}
+
+	/// List transactions in the on-chain wallet without syncing first.
+	pub async fn onchain_transactions(&self) -> Vec<TransactionInfo> {
+		let config = self.client_config();
+		onchain_api::onchain_transactions(&config).await
+			.expect("failed to list barkd onchain transactions")
 	}
 
 	/// Sync the on-chain wallet, then return the balance.
