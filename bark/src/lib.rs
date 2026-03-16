@@ -524,7 +524,7 @@ impl WalletSeed {
 ///   - address generation (Ark addresses/keys)
 ///     - [Wallet::new_address],
 ///     - [Wallet::new_address_with_index],
-///     - [Wallet::peak_address],
+///     - [Wallet::peek_address],
 ///     - [Wallet::validate_arkoor_address]
 ///   - boarding onchain funds into Ark from an onchain wallet (see [onchain::OnchainWallet])
 ///     - [Wallet::board_amount],
@@ -792,10 +792,15 @@ impl Wallet {
 		Ok(self.seed.derive_vtxo_keypair(idx))
 	}
 
-	/// Peak for a mailbox [ark::Address] at the given key index.
+	#[deprecated(note = "use peek_address instead")]
+	pub async fn peak_address(&self, index: u32) -> anyhow::Result<ark::Address> {
+		self.peek_address(index).await
+	}
+
+	/// Peek for an [ark::Address] at the given key index.
 	///
 	/// May return an error if the address at the given index has not been derived yet.
-	pub async fn peak_address(&self, index: u32) -> anyhow::Result<ark::Address> {
+	pub async fn peek_address(&self, index: u32) -> anyhow::Result<ark::Address> {
 		let (_, ark_info) = &self.require_server().await?;
 		let network = self.properties().await?.network;
 		let keypair = self.peak_keypair(index).await?;
@@ -817,7 +822,7 @@ impl Wallet {
 	/// This derives and stores the keypair directly after currently last revealed one.
 	pub async fn new_address_with_index(&self) -> anyhow::Result<(ark::Address, u32)> {
 		let (_, index) = self.derive_store_next_keypair().await?;
-		let addr = self.peak_address(index).await?;
+		let addr = self.peek_address(index).await?;
 		Ok((addr, index))
 	}
 
