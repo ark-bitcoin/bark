@@ -11,6 +11,7 @@ variables:
   GIT_DEPTH: 100
   GIT_STRATEGY: clone
   NEXTEST_PROFILE: ci
+  RUSTC_WRAPPER: sccache
   SCCACHE_MEMCACHED: tcp://host.containers.internal:11211
   SCCACHE_DIRECT: true
   SWAGGER_UI_DOWNLOAD_URL: file:///home/nixuser/assets/swagger-ui/v5.30.2.zip
@@ -43,6 +44,13 @@ stages:
 
 # Specifying a default image for all steps. If you specify a new before_script in a step, then this will be ignored.
 default:
-  image: registry.2nd.dev/build:29
+  tags:
+    - privileged
+  image:
+    name: registry.2nd.dev/build:29
+    pull_policy: if-not-present
   before_script:
     - sudo chown -R nixuser:nixbld "$CI_PROJECT_DIR" || true
+    - git config --global --add safe.directory $CI_PROJECT_DIR
+    - git config user.name "GitLab CI"
+    - git config user.email "ci@second.tech"
