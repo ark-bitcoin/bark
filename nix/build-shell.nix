@@ -2,9 +2,6 @@
 let
 	isDarwin = pkgs.stdenv.hostPlatform.isDarwin;
 	postgresql = pkgs.postgresql_16;
-	sccache = pkgs.sccache.overrideAttrs (old: {
-    cargoBuildFeatures = (old.cargoBuildFeatures or []) ++ [ "memcached" ];
-  });
 
 	env = {
 		LIBCLANG_PATH = "${pkgs.llvmPackages.clang-unwrapped.lib}/lib/";
@@ -49,9 +46,6 @@ in {
 
 			# to access just targets
 			pkgs.just
-
-			# compiler cache
-			sccache
 		] ++ lib.optionals (!isDarwin) [ # honggfuzz deps (Linux only)
 			pkgs.binutils-unwrapped
 			pkgs.libunwind

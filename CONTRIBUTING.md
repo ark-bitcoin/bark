@@ -20,6 +20,9 @@ the bark repository:
     ```
     use flake
     watch_file nix/*.nix
+
+    # Enable sccache compilation caching
+    #export RUSTC_WRAPPER=sccache
     ```
 
 ## Manual setup
