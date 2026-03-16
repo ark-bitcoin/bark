@@ -9,8 +9,6 @@ pub mod fee;
 
 #[cfg(feature = "bdk")]
 pub mod bdk;
-#[cfg(feature = "esplora")]
-pub mod esplora;
 #[cfg(feature = "rpc")]
 pub mod rpc;
 pub mod serde;
