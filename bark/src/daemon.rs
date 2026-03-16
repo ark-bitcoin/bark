@@ -100,10 +100,24 @@ impl DaemonProcess {
 		}
 	}
 
-	/// Check for incoming arkoors
-	async fn sync_mailbox(&self) {
-		if let Err(e) = self.wallet.sync_mailbox().await {
-			warn!("An error occurred while syncing mailbox: {e:#}");
+	/// Recursively resubscribe to mailbox message stream by waiting and
+	/// calling [Wallet::subscribe_store_mailbox_messages] again until
+	/// the daemon is shutdown.
+	async fn run_mailbox_messages_process(&self) {
+		loop {
+			if self.connected.load(Ordering::Relaxed) {
+				if let Err(e) = self.wallet.subscribe_process_mailbox_messages(None).await {
+					warn!("An error occured while processing mailbox messages: {e:#}");
+				}
+			}
+
+			futures::select! {
+				_ = tokio::time::sleep(SLOW_INTERVAL).fuse() => {},
+				_ = self.shutdown.cancelled().fuse() => {
+					info!("Shutdown signal received! Shutting mailbox messages process...");
+					break;
+				},
+			}
 		}
 	}
 
@@ -241,7 +255,6 @@ impl DaemonProcess {
 						continue;
 					}
 
-					self.sync_mailbox().await;
 					self.run_boards_sync().await;
 					self.run_offboards_sync().await;
 					medium_interval.reset();
@@ -272,6 +285,7 @@ impl DaemonProcess {
 			self.run_round_events_process(),
 			self.run_sync_processes(),
 			self.run_maintenance_refresh_process(),
+			self.run_mailbox_messages_process(),
 		);
 
 		info!("Daemon gracefully stopped");

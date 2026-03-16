@@ -11,13 +11,14 @@ use anyhow::Context;
 use bitcoin::Amount;
 use bitcoin::hex::DisplayHex;
 use bitcoin::secp256k1::Keypair;
+use futures::{Stream, StreamExt};
 use log::{debug, error, info, trace};
 
 use ark::{ProtocolEncoding, Vtxo};
 use ark::mailbox::MailboxAuthorization;
 use ark::vtxo::Full;
 use server_rpc::protos;
-use server_rpc::protos::mailbox_server::{mailbox_message, ArkoorMessage};
+use server_rpc::protos::mailbox_server::{ArkoorMessage, MailboxMessage, mailbox_message};
 use crate::movement::{MovementDestination, MovementStatus};
 use crate::movement::update::MovementUpdate;
 use crate::Wallet;
@@ -52,6 +53,60 @@ impl Wallet {
 		Ok(MailboxAuthorization::new(&self.mailbox_keypair()?, authorization_expiry))
 	}
 
+	/// Subscribe to mailbox message stream.
+	///
+	/// If `since` is `None`, the stream will start from the last checkpoint stored in the database.
+	///
+	/// Returns a stream of mailbox messages.
+	pub async fn subscribe_mailbox_messages(&self, since: Option<u64>) -> anyhow::Result<impl Stream<Item = anyhow::Result<MailboxMessage>> + Unpin> {
+		let (mut srv, _) = self.require_server().await?;
+
+		let checkpoint = if let Some(since) = since {
+			since
+		} else {
+			self.get_mailbox_checkpoint().await?
+		};
+
+		// we just need a short authorization for the stream initialization
+		let expiry = chrono::Local::now() + std::time::Duration::from_secs(10);
+		let auth = self.mailbox_authorization(expiry)?;
+		let mailbox_id = auth.mailbox();
+
+		let req = protos::mailbox_server::MailboxRequest {
+			unblinded_id: mailbox_id.to_vec(),
+			authorization: Some(auth.serialize()),
+			checkpoint: checkpoint,
+		};
+
+		let stream = srv.mailbox_client.subscribe_mailbox(req).await?.into_inner().map(|m| {
+			let m = m.context("received error on mailbox message stream")?;
+			Ok::<_, anyhow::Error>(m)
+		});
+
+		Ok(stream)
+	}
+
+	/// Subscribe to mailbox message stream and process each incoming message.
+	///
+	/// If `since` is `None`, the stream will start from the last checkpoint stored in the database.
+	///
+	/// Returns only once the stream is closed.
+	pub async fn subscribe_process_mailbox_messages(&self, since: Option<u64>) -> anyhow::Result<()> {
+		let mut stream = self.subscribe_mailbox_messages(since).await?;
+		while let Some(message) = stream.next().await {
+			let message = if let Ok(message) = message {
+				message
+			} else {
+				error!("Error receiving mailbox message: {:#}", message.unwrap_err());
+				continue;
+			};
+
+			self.process_mailbox_message(message).await;
+		}
+
+		Ok(())
+	}
+
 	/// Sync with the mailbox on the Ark server and look for out-of-round received VTXOs.
 	pub async fn sync_mailbox(&self) -> anyhow::Result<()> {
 		let (mut srv, _) = self.require_server().await?;
@@ -74,16 +129,7 @@ impl Wallet {
 			debug!("Ark server has {} mailbox messages for us", mailbox_resp.messages.len());
 
 			for mailbox_msg in mailbox_resp.messages {
-				match mailbox_msg.message {
-					Some(mailbox_message::Message::Arkoor(ArkoorMessage { vtxos })) => {
-						let result = self
-							.process_received_arkoor_package(vtxos, Some(mailbox_msg.checkpoint)).await;
-						if let Err(e) = result {
-							error!("Error processing received arkoor package: {:#}", e);
-						}
-					},
-					None => debug!("Unknown mailbox message: {:?}", mailbox_msg),
-				}
+				self.process_mailbox_message(mailbox_msg).await;
 			}
 
 			if !mailbox_resp.have_more {
@@ -132,6 +178,22 @@ impl Wallet {
 		}
 
 		valid_vtxos
+	}
+
+	async fn process_mailbox_message(
+		&self,
+		mailbox_msg: MailboxMessage,
+	) {
+		match mailbox_msg.message {
+			Some(mailbox_message::Message::Arkoor(ArkoorMessage { vtxos })) => {
+				let result = self
+					.process_received_arkoor_package(vtxos, Some(mailbox_msg.checkpoint)).await;
+				if let Err(e) = result {
+					error!("Error processing received arkoor package: {:#}", e);
+				}
+			},
+			None => debug!("Unknown mailbox message: {:?}", mailbox_msg),
+		};
 	}
 
 	async fn process_received_arkoor_package(
