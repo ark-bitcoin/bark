@@ -1,0 +1,6 @@
+- Silence noisy log when invoice is open but not yet paid
+  When a lightning invoice was open and the sender had not yet initiated
+  the payment, the background daemon logged a warning every second while
+  polling. This is expected behaviour, so the message is now only emitted
+  at trace level.
+  [#1747](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1747)
