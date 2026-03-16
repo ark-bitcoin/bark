@@ -172,6 +172,8 @@ in {
 				rustToolchain.rust-analyzer
 				rustTargetWasm
 			])
+			# compiler cache
+			pkgs.sccache
 
 			slog-tools
 
