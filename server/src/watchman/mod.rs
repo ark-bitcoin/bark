@@ -233,6 +233,7 @@ impl Watchman {
 		let ctx = ActionContextFetcher {
 			config: &self.config,
 			db: &self.db,
+			bitcoind: &self.bitcoind,
 			chain_tip_height: self.sync_height().height,
 		};
 		for (vtxo, confirmed_at) in frontier.get() {
@@ -543,16 +544,16 @@ impl Watchman {
 	/// is the pre-computed progress transaction that should be broadcast.
 	async fn process_progress_txs(&self, mut txs: Vec<(Txid, ServerVtxo)>) -> anyhow::Result<()> {
 		//TODO(stevenroose) adapt feerate to how close the deadline is
-		let min_feerate = self.fee_estimator.regular();
+		let min_fee_rate = self.fee_estimator.regular();
 
 		// make sure we always increment with the minimum incremental feerate
-		let mut feerate = min_feerate;
+		let mut fee_rate = min_fee_rate;
 
-		// filter txs to progress
+		// filter txs that are already in the mempool with sufficient fee
 		txs.retain(|(_, v)| match self.get_mempool_spend(v.id()) {
 			None => true,
-			Some(spend) => if spend.fee_rate < min_feerate {
-				feerate = feerate.max(saturating_add_feerates(
+			Some(spend) => if spend.fee_rate < min_fee_rate {
+				fee_rate = fee_rate.max(saturating_add_feerates(
 					spend.fee_rate, self.config.incremental_relay_fee,
 				));
 				true
@@ -572,7 +573,9 @@ impl Watchman {
 				break;
 			}
 
-			if let Err(e) = self.process_progress_tx(&mut wallet, progress_txid, &vtxo).await {
+			if let Err(e) = self.process_progress_tx(
+				&mut wallet, progress_txid, &vtxo, fee_rate,
+			).await {
 				slog!(ProgressCpfpFailure, vtxo_id: vtxo.id(), txid: progress_txid,
 					error: e.to_string(),
 				);
@@ -591,6 +594,7 @@ impl Watchman {
 		wallet: &mut PersistedWallet,
 		txid: Txid,
 		vtxo: &ServerVtxo,
+		fee_rate: FeeRate,
 	) -> anyhow::Result<()> {
 		// Get the progress transaction from the database
 		let vtx = self.db.get_virtual_transaction_by_txid(txid).await?
@@ -601,7 +605,7 @@ impl Watchman {
 
 		// Create a CPFP transaction to pay fees for the progress tx
 		//TODO(stevenroose) adapt feerate to how close the deadline is
-		let fees = MakeCpfpFees::Effective(self.fee_estimator.regular());
+		let fees = MakeCpfpFees::Effective(fee_rate);
 		let cpfp_tx = wallet.make_signed_p2a_cpfp(&progress_tx, fees)
 			.with_context(|| format!("failed to create CPFP for vtx {}", txid))?;
 
