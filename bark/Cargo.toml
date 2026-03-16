@@ -9,18 +9,28 @@ edition = "2024"
 readme = "README.md"
 
 [features]
-default = ["rand", "native"]
+default = ["rand", "sqlite", "native", "tls-native-roots"]
+
 pid-lock = []
 onchain-bdk = ["bdk_wallet", "bark-bitcoin-ext/bdk"]
-tls-native-roots = ["tonic/tls-native-roots"]
-tls-webpki-roots = ["tonic/tls-webpki-roots"]
-rand = ["bitcoin/rand", "bip39/rand"]
-native = ["bark-server-rpc/tonic-native"]
-wasm-web = ["bark-server-rpc/tonic-web", "bark-bitcoin-ext/wasm-web", "ark-lib/wasm-web", "wasm-bindgen-futures", "getrandom"]
 
+# The default persistence
 sqlite = ["rusqlite", "bdk_wallet/rusqlite"]
 # Used for testing, enables testing storage adaptor implementation
 filestore = ["tokio/fs"]
+
+rand = ["bitcoin/rand", "bip39/rand"]
+
+tls-native-roots = ["bark-server-rpc/tls-native-roots"]
+tls-webpki-roots = ["bark-server-rpc/tls-webpki-roots"]
+native = ["bark-server-rpc/tonic-native"]
+wasm-web = [
+	"ark-lib/wasm-web",
+	"bark-server-rpc/tonic-web",
+	"bark-bitcoin-ext/wasm-web",
+	"getrandom",
+	"wasm-bindgen-futures",
+]
 
 [lib]
 name = "bark"
