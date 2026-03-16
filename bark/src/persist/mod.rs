@@ -21,6 +21,8 @@ pub mod adaptor;
 pub mod models;
 #[cfg(feature = "sqlite")]
 pub mod sqlite;
+#[cfg(test)]
+pub(crate) mod test_suite;
 
 
 use bitcoin::{Amount, Transaction, Txid};

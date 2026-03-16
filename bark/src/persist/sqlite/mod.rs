@@ -567,4 +567,14 @@ mod test {
 		// This ensures the database isn't dropped during the test
 		conn.close().unwrap();
 	}
+
+	#[tokio::test]
+	async fn differential_bark_persister_suite() {
+		let (cs, _conn) = helpers::in_memory_db();
+		let sqlite = SqliteClient::open(cs).unwrap();
+		let memory = crate::persist::adaptor::StorageAdaptorWrapper::new(
+			crate::persist::adaptor::memory::MemoryStorageAdaptor::new(),
+		);
+		crate::persist::test_suite::run_all(&sqlite, &memory).await;
+	}
 }
