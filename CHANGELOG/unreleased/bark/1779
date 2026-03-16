@@ -1,0 +1,4 @@
+- Add mailbox message subscription for real-time arkoor delivery
+  Bark now subscribes to a server-side mailbox stream instead of polling,
+  allowing incoming arkoors to be processed as soon as they arrive.
+  [#1779](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1779)
