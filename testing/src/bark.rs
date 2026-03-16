@@ -55,6 +55,28 @@ impl Bark {
 		TokioCommand::new(exec)
 	}
 
+	/// Extract the version from the BARK_EXEC binary.
+	///
+	/// Returns the version string, e.g. "0.1.0-beta.8" or "DIRTY".
+	pub async fn version() -> String {
+		let output = Self::cmd()
+			.arg("--version")
+			.output()
+			.await
+			.expect("failed to run bark --version");
+		assert!(output.status.success(), "bark --version failed");
+
+		// Output format: "bark 0.1.0-beta.8 (hash)"
+		let stdout = String::from_utf8(output.stdout).expect("invalid utf8 in bark --version");
+		let version = stdout.trim()
+			.strip_prefix("bark ")
+			.expect("unexpected bark --version format")
+			.split_whitespace()
+			.next()
+			.expect("no version found in bark --version output");
+		version.to_string()
+	}
+
 	/// Creates Bark client with a dedicated bitcoind daemon.
 	pub async fn new(
 		name: impl AsRef<str>,
