@@ -231,10 +231,16 @@ pub trait StorageAdaptor: Send + Sync + 'static {
 	/// Returns the deleted record if it existed, `None` otherwise.
 	async fn delete(&mut self, partition: u8, pk: &[u8]) -> anyhow::Result<Option<Record>>;
 
-	/// Queries records in a partition
+	/// Queries records in a partition.
 	///
-	/// Results are ordered by sort key. Records without a sort key appear last.
+	/// Results are ordered by sort key.
+	/// Records without a sort key must not be returned.
 	async fn query(&self, query: Query) -> anyhow::Result<Vec<Record>>;
+
+	/// Get all records in a partition.
+	///
+	/// No ordering guarantees are made.
+	async fn get_all(&self, partition: u8) -> anyhow::Result<Vec<Record>>;
 
 	/// Increments the last partition id, then stores and returns the new id.
 	async fn incremental_id(&mut self, partition: u8) -> anyhow::Result<u32> {
@@ -1059,7 +1065,7 @@ pub mod test_suite {
 
 	async fn clear_partitions<S: StorageAdaptor>(storage: &mut S, partitions: &[u8]) -> anyhow::Result<()> {
 		for partition in partitions {
-			let records = storage.query(Query::new(*partition)).await?;
+			let records = storage.get_all(*partition).await?;
 			for record in records {
 				storage.delete(record.partition, &record.pk).await?;
 			}
@@ -1093,6 +1099,12 @@ pub mod test_suite {
 		test_query_null_sort_key_ordering(storage).await;
 		test_query_partition_isolation(storage).await;
 		test_query_range(storage).await;
+
+		// get_all tests
+		test_get_all_empty_partition(storage).await;
+		test_get_all_returns_all_records(storage).await;
+		test_get_all_includes_records_without_sort_key(storage).await;
+		test_get_all_partition_isolation(storage).await;
 
 		// incremental_id tests
 		test_incremental_id_starts_at_one(storage).await;
@@ -1430,7 +1442,7 @@ pub mod test_suite {
 		);
 	}
 
-	/// Tests that records without sort keys are ordered last (or first when reversed).
+	/// Tests that records without sort keys don't appear in query
 	pub async fn test_query_null_sort_key_ordering<S: StorageAdaptor>(storage: &mut S) {
 		clear_partitions(storage, &[0]).await.unwrap();
 		// Records with sort keys
@@ -1459,16 +1471,25 @@ pub mod test_suite {
 		storage.put(without_key).await.expect("put should succeed");
 		storage.put(with_key_2).await.expect("put should succeed");
 
-		// Ascending: nulls last
-		let results_asc = storage
-			.query(Query::new(0))
-			.await
+		// query should only return records with sort keys
+		let results_query = storage.query(Query::new(0)).await
 			.expect("query should succeed");
+		assert_eq!(results_query.len(), 2, "query should only return records with sort keys");
+		assert_eq!(results_query[0].data, b"with_key_1".to_vec());
+		assert_eq!(results_query[1].data, b"with_key_2".to_vec());
 
-		assert_eq!(results_asc.len(), 3);
-		assert_eq!(results_asc[0].data, b"with_key_1".to_vec());
-		assert_eq!(results_asc[1].data, b"with_key_2".to_vec());
-		assert_eq!(results_asc[2].data, b"no_key".to_vec(), "null sort key should be last");
+		// get_all should return all records
+		let results_all = storage.get_all(0).await
+			.expect("get_all should succeed");
+		assert_eq!(results_all.len(), 3, "get_all should return all records including those without sort keys");
+
+		// Verify all three records are present (order not guaranteed for get_all)
+		let has_with_key_1 = results_all.iter().any(|r| r.data == b"with_key_1".to_vec());
+		let has_with_key_2 = results_all.iter().any(|r| r.data == b"with_key_2".to_vec());
+		let has_without_key = results_all.iter().any(|r| r.data == b"no_key".to_vec());
+		assert!(has_with_key_1, "get_all should include with_key_1");
+		assert!(has_with_key_2, "get_all should include with_key_2");
+		assert!(has_without_key, "get_all should include record without sort key");
 	}
 
 	/// Tests that query only returns records from the specified partition.
@@ -1703,5 +1724,149 @@ pub mod test_suite {
 		// Continue generating - should pick up where we left off
 		let id3 = storage.incremental_id(0).await.expect("incremental_id should succeed");
 		assert_eq!(id3, 3);
+	}
+
+	/// Tests that get_all returns empty results for empty partition.
+	pub async fn test_get_all_empty_partition<S: StorageAdaptor>(storage: &mut S) {
+		clear_partitions(storage, &[0]).await.unwrap();
+		let results = storage
+			.get_all(0)
+			.await
+			.expect("get_all should succeed");
+
+		assert!(results.is_empty(), "get_all should return empty for empty partition");
+	}
+
+	/// Tests that get_all returns all records in a partition.
+	pub async fn test_get_all_returns_all_records<S: StorageAdaptor>(storage: &mut S) {
+		clear_partitions(storage, &[0]).await.unwrap();
+
+		// Insert records with sort keys
+		for i in 0..5 {
+			let record = Record {
+				pk: format!("get_all_{}", i).into(),
+				partition: 0,
+				sort_key: Some(SortKey::u32_asc(i)),
+				data: format!("record_{}", i).as_bytes().to_vec(),
+			};
+			storage.put(record).await.expect("put should succeed");
+		}
+
+		let results = storage
+			.get_all(0)
+			.await
+			.expect("get_all should succeed");
+
+		assert_eq!(results.len(), 5, "get_all should return all 5 records");
+
+		// Verify all records are present (order not guaranteed)
+		for i in 0..5 {
+			let expected_data = format!("record_{}", i).as_bytes().to_vec();
+			let found = results.iter().any(|r| r.data == expected_data);
+			assert!(found, "get_all should include record_{}", i);
+		}
+	}
+
+	/// Tests that get_all includes records without sort keys.
+	pub async fn test_get_all_includes_records_without_sort_key<S: StorageAdaptor>(storage: &mut S) {
+		clear_partitions(storage, &[0]).await.unwrap();
+
+		// Insert records with sort keys
+		let with_key_1 = Record {
+			pk: "get_all_with_1".into(),
+			partition: 0,
+			sort_key: Some(SortKey::u32_asc(1)),
+			data: b"with_key_1".to_vec(),
+		};
+		let with_key_2 = Record {
+			pk: "get_all_with_2".into(),
+			partition: 0,
+			sort_key: Some(SortKey::u32_asc(2)),
+			data: b"with_key_2".to_vec(),
+		};
+
+		// Insert records without sort keys
+		let without_key_1 = Record {
+			pk: "get_all_without_1".into(),
+			partition: 0,
+			sort_key: None,
+			data: b"without_key_1".to_vec(),
+		};
+		let without_key_2 = Record {
+			pk: "get_all_without_2".into(),
+			partition: 0,
+			sort_key: None,
+			data: b"without_key_2".to_vec(),
+		};
+
+		storage.put(with_key_1).await.expect("put should succeed");
+		storage.put(without_key_1).await.expect("put should succeed");
+		storage.put(with_key_2).await.expect("put should succeed");
+		storage.put(without_key_2).await.expect("put should succeed");
+
+		let results = storage
+			.get_all(0)
+			.await
+			.expect("get_all should succeed");
+
+		assert_eq!(results.len(), 4, "get_all should return all 4 records");
+
+		// Verify all records are present
+		let has_with_1 = results.iter().any(|r| r.data == b"with_key_1");
+		let has_with_2 = results.iter().any(|r| r.data == b"with_key_2");
+		let has_without_1 = results.iter().any(|r| r.data == b"without_key_1");
+		let has_without_2 = results.iter().any(|r| r.data == b"without_key_2");
+
+		assert!(has_with_1, "get_all should include with_key_1");
+		assert!(has_with_2, "get_all should include with_key_2");
+		assert!(has_without_1, "get_all should include without_key_1");
+		assert!(has_without_2, "get_all should include without_key_2");
+
+		// Verify that query excludes records without sort keys
+		let query_results = storage
+			.query(Query::new(0))
+			.await
+			.expect("query should succeed");
+
+		assert_eq!(query_results.len(), 2, "query should only return records with sort keys");
+		let query_has_without = query_results.iter().any(|r| r.sort_key.is_none());
+		assert!(!query_has_without, "query should not include records without sort keys");
+	}
+
+	/// Tests that get_all only returns records from the specified partition.
+	pub async fn test_get_all_partition_isolation<S: StorageAdaptor>(storage: &mut S) {
+		clear_partitions(storage, &[0, 1]).await.unwrap();
+
+		// Insert records in partition 0
+		for i in 0..3 {
+			let record = Record {
+				pk: format!("partition_0_{}", i).into(),
+				partition: 0,
+				sort_key: Some(SortKey::u32_asc(i)),
+				data: format!("p0_record_{}", i).as_bytes().to_vec(),
+			};
+			storage.put(record).await.expect("put should succeed");
+		}
+
+		// Insert records in partition 1
+		for i in 0..2 {
+			let record = Record {
+				pk: format!("partition_1_{}", i).into(),
+				partition: 1,
+				sort_key: Some(SortKey::u32_asc(i)),
+				data: format!("p1_record_{}", i).as_bytes().to_vec(),
+			};
+			storage.put(record).await.expect("put should succeed");
+		}
+
+		// get_all partition 0
+		let results_0 = storage.get_all(0).await.expect("get_all should succeed");
+		assert_eq!(results_0.len(), 3, "partition 0 should have 3 records");
+		assert!(results_0.iter().all(|r| r.partition == 0), "all records should be from partition 0");
+
+		// get_all partition 1
+		let results_1 = storage.get_all(1).await.expect("get_all should succeed");
+		assert_eq!(results_1.len(), 2, "partition 1 should have 2 records");
+		assert!(results_1.iter().all(|r| r.partition == 1), "all records should be from partition 1");
 	}
 }

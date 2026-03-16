@@ -64,6 +64,10 @@ impl StorageAdaptor for FileStorageAdaptor {
 	async fn query(&self, query: Query) -> anyhow::Result<Vec<Record>> {
 		self.data.query(query).await
 	}
+
+	async fn get_all(&self, partition: u8) -> anyhow::Result<Vec<Record>> {
+		self.data.get_all(partition).await
+	}
 }
 
 #[cfg(test)]

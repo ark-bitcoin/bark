@@ -91,18 +91,17 @@ impl StorageAdaptor for MemoryStorageAdaptor {
 		let mut results: Vec<_> = partition
 			.values()
 			.filter(|r| {
+				// Records without sort keys are excluded from query results
+				let Some(sort_key) = &r.sort_key else {
+					return false;
+				};
+
 				let matches_start = if let Some(start) = &query.start {
-					match &r.sort_key {
-						Some(sort_key) => sort_key.cmp(start) >= std::cmp::Ordering::Equal,
-						None => false,
-					}
+					sort_key.cmp(start) >= std::cmp::Ordering::Equal
 				} else { true };
 
 				let matches_end = if let Some(end) = &query.end {
-					match &r.sort_key {
-						Some(sort_key) => sort_key.cmp(end) <= std::cmp::Ordering::Equal,
-						None => false,
-					}
+					sort_key.cmp(end) <= std::cmp::Ordering::Equal
 				} else { true };
 
 				matches_start && matches_end
@@ -110,13 +109,11 @@ impl StorageAdaptor for MemoryStorageAdaptor {
 			.cloned()
 			.collect();
 
-		// Sort by sort key
+		// Sort by sort key (all records have sort keys at this point)
 		results.sort_by(|a, b| {
 			match (&a.sort_key, &b.sort_key) {
 				(Some(ka), Some(kb)) => ka.cmp(kb),
-				(Some(_), None) => std::cmp::Ordering::Less,
-				(None, Some(_)) => std::cmp::Ordering::Greater,
-				(None, None) => std::cmp::Ordering::Equal,
+				_ => std::cmp::Ordering::Equal, // Should not happen
 			}
 		});
 
@@ -126,6 +123,14 @@ impl StorageAdaptor for MemoryStorageAdaptor {
 		}
 
 		Ok(results)
+	}
+
+	async fn get_all(&self, partition: u8) -> anyhow::Result<Vec<Record>> {
+		let Some(partition_map) = self.partitions.get(&partition) else {
+			return Ok(Vec::new());
+		};
+
+		Ok(partition_map.values().cloned().collect())
 	}
 }
 
