@@ -210,6 +210,7 @@ in {
 
 			# for WASM development
 			pkgs.wasm-pack
+			pkgs.chromium
 
 		] ++ (
 			if isDarwin then [
