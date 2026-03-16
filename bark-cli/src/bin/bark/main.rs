@@ -308,7 +308,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 		},
 		Command::Address { index } => {
 			if let Some(index) = index {
-				println!("{}", wallet.peak_address(index).await?)
+				println!("{}", wallet.peek_address(index).await?)
 			} else {
 				println!("{}", wallet.new_address().await?)
 			}

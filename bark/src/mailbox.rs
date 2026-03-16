@@ -229,7 +229,7 @@ impl Wallet {
 		let mut received_by_address = HashMap::<ark::Address, Amount>::new();
 		for vtxo in &vtxos {
 			if let Ok(Some((index, _))) = self.pubkey_keypair(&vtxo.user_pubkey()).await {
-				if let Ok(address) = self.peak_address(index).await {
+				if let Ok(address) = self.peek_address(index).await {
 					*received_by_address.entry(address).or_default() += vtxo.amount();
 				}
 			}

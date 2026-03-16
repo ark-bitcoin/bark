@@ -243,7 +243,7 @@ pub async fn peak_address(
 	Path(index): Path<u32>,
 ) -> HandlerResult<Json<bark_json::web::ArkAddressResponse>> {
 	let wallet = state.require_wallet()?;
-	let ark_address = wallet.peak_address(index).await
+	let ark_address = wallet.peek_address(index).await
 		.with_context(|| format!("Failed to get address at index {}", index))?;
 
 	Ok(axum::Json(bark_json::web::ArkAddressResponse {

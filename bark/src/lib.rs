@@ -730,6 +730,11 @@ impl Wallet {
 		Ok((keypair, index))
 	}
 
+	#[deprecated(note = "use peek_keypair instead")]
+	pub async fn peak_keypair(&self, index: u32) -> anyhow::Result<Keypair> {
+		self.peek_keypair(index).await
+	}
+
 	/// Retrieves a keypair based on the provided index and checks if the corresponding public key
 	/// exists in the [Vtxo] database.
 	///
@@ -743,7 +748,7 @@ impl Wallet {
 	///   database.
 	/// * `Err(anyhow::Error)` - If the public key does not exist in the database or if an error
 	///   occurs during the database query.
-	pub async fn peak_keypair(&self, index: u32) -> anyhow::Result<Keypair> {
+	pub async fn peek_keypair(&self, index: u32) -> anyhow::Result<Keypair> {
 		let keypair = self.seed.derive_vtxo_keypair(index);
 		if self.db.get_public_key_idx(&keypair.public_key()).await?.is_some() {
 			Ok(keypair)
@@ -803,7 +808,7 @@ impl Wallet {
 	pub async fn peek_address(&self, index: u32) -> anyhow::Result<ark::Address> {
 		let (_, ark_info) = &self.require_server().await?;
 		let network = self.properties().await?.network;
-		let keypair = self.peak_keypair(index).await?;
+		let keypair = self.peek_keypair(index).await?;
 
 		let mailbox_kp = self.mailbox_keypair()?;
 		let mailbox = MailboxIdentifier::from_pubkey(mailbox_kp.public_key());
