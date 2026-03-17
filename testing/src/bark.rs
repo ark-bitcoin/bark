@@ -383,7 +383,7 @@ impl Bark {
 		let destination = destination.to_string();
 		let amount_str = amount.map(|a| a.to_string());
 
-		let mut args = vec!["lightning", "pay", &destination, "--verbose"];
+		let mut args = vec!["lightning", "pay", "invoice", &destination, "--verbose"];
 		if let Some(amount) = amount_str.as_ref() {
 			args.push(amount);
 		}
@@ -463,7 +463,7 @@ impl Bark {
 	pub async fn lightning_receive_status(&self, filter: impl fmt::Display)
 		-> Option<LightningReceiveInfo>
 	{
-		let res = self.run(["lightning", "status", &filter.to_string()]).await;
+		let res = self.run(["lightning", "receive", "status", &filter.to_string()]).await;
 		if res.is_empty() { return None; }
 		serde_json::from_str(&res).expect("json error")
 	}

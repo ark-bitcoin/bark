@@ -10,15 +10,58 @@ use log::info;
 
 use ark::lightning::{PaymentHash, Preimage};
 use bark::Wallet;
-use bark_json::cli::{InvoiceInfo, LightningReceiveInfo};
+use bark_json::cli::{InvoiceInfo, LightningReceiveInfo, LightningSendInfo};
 
 use bark_cli::util::output_json;
 
 #[derive(clap::Subcommand)]
 pub enum LightningCommand {
-	/// pay a bolt11 invoice
+	/// Pay a bolt11 invoice or check payment status
+	#[command(subcommand)]
+	Pay(PayCommand),
+	/// Get the status of an incoming lightning payment
+	#[command(subcommand)]
+	Receive(ReceiveCommand),
+	/// Creates a bolt11 invoice with the provided amount
+	///
+	/// Provided value must match format `<amount> <unit>`, where unit can be any amount denomination. Example: `250000 sats`.
 	#[command()]
-	Pay {
+	Invoice {
+		amount: Amount,
+		/// Wait for the incoming payment to settle
+		#[arg(long)]
+		wait: bool,
+		/// Provide a lightning receive token for authentication of this claim if the server requires one
+		/// and there are no existing spendable VTXOs to prove ownership of
+		#[arg(long)]
+		token: Option<String>,
+	},
+	/// List all generated invoices
+	#[command()]
+	Invoices,
+	/// Claim the receipt of an invoice
+	#[command()]
+	Claim {
+		/// payment hash or invoice to claim; claiming all pending payments if absent
+		payment: Option<String>,
+		/// Wait for the incoming payment to settle
+		#[arg(long)]
+		wait: bool,
+		/// Skip syncing wallet
+		#[arg(long)]
+		no_sync: bool,
+		/// Provide a lightning receive token for authentication of this claim if the server requires one
+		/// and there are no existing spendable VTXOs to prove ownership of
+		#[arg(long)]
+		token: Option<String>,
+	},
+}
+
+#[derive(clap::Subcommand)]
+pub enum PayCommand {
+	/// Pay a bolt11 invoice
+	#[command()]
+	Invoice {
 		/// The invoice to pay
 		invoice: String,
 		/// Conditionnally required if invoice doesn't have amount defined
@@ -34,21 +77,7 @@ pub enum LightningCommand {
 		#[arg(long)]
 		wait: bool,
 	},
-	/// creates a bolt11 invoice with the provided amount
-	///
-	/// Provided value must match format `<amount> <unit>`, where unit can be any amount denomination. Example: `250000 sats`.
-	#[command()]
-	Invoice {
-		amount: Amount,
-		/// Wait for the incoming payment to settle
-		#[arg(long)]
-		wait: bool,
-		/// Provide a lightning receive token for authentication of this claim if the server requires one
-		/// and there are no existing spendable VTXOs to prove ownership of
-		#[arg(long)]
-		token: Option<String>,
-	},
-	/// get the status of an invoice
+	/// Get the status of an outgoing lightning payment
 	#[command()]
 	Status {
 		#[clap(flatten)]
@@ -57,24 +86,18 @@ pub enum LightningCommand {
 		#[arg(long)]
 		no_sync: bool,
 	},
-	/// list all generated invoices
+}
+
+#[derive(clap::Subcommand)]
+pub enum ReceiveCommand {
+	/// Get the status of an incoming lightning payment
 	#[command()]
-	Invoices,
-	/// claim the receipt of an invoice
-	#[command()]
-	Claim {
-		/// payment hash or invoice to claim; claiming all pending payments if absent
-		payment: Option<String>,
-		/// Wait for the incoming payment to settle
-		#[arg(long)]
-		wait: bool,
+	Status {
+		#[clap(flatten)]
+		filter_args: LightningStatusFilterGroup,
 		/// Skip syncing wallet
 		#[arg(long)]
 		no_sync: bool,
-		/// Provide a lightning receive token for authentication of this claim if the server requires one
-		/// and there are no existing spendable VTXOs to prove ownership of
-		#[arg(long)]
-		token: Option<String>,
 	},
 }
 
@@ -103,34 +126,11 @@ pub async fn execute_lightning_command(
 	wallet: &mut Wallet,
 ) -> anyhow::Result<()> {
 	match lightning_command {
-		LightningCommand::Pay { invoice, amount, comment, no_sync, wait } => {
-			if !no_sync {
-				info!("Syncing wallet...");
-				wallet.sync().await;
-			}
-
-			let payment = if let Ok(invoice) = Bolt11Invoice::from_str(&invoice) {
-				if comment.is_some() {
-					bail!("comment is not supported for BOLT-11 invoices");
-				}
-				wallet.pay_lightning_invoice(invoice, amount).await?
-			} else if let Ok(offer) = Offer::from_str(&invoice) {
-				if comment.is_some() {
-					bail!("comment is not supported for BOLT-12 offers");
-				}
-				wallet.pay_lightning_offer(offer, amount).await?
-			} else if let Ok(lnaddr) = LightningAddress::from_str(&invoice) {
-				let amount = amount.context("amount is required for Lightning addresses")?;
-				wallet.pay_lightning_address(&lnaddr, amount, comment).await?
-			} else {
-				bail!("argument is not a valid BOLT-11 invoice, BOLT-12 offer or \
-					Lightning address");
-			};
-
-			if wait {
-				let payment_hash = payment.invoice.payment_hash();
-				wallet.check_lightning_payment(payment_hash, true).await?;
-			}
+		LightningCommand::Pay(pay_cmd) => {
+			execute_pay_command(pay_cmd, wallet).await?;
+		},
+		LightningCommand::Receive(receive_cmd) => {
+			execute_receive_command(receive_cmd, wallet).await?;
 		},
 		LightningCommand::Invoice { amount, wait, token } => {
 			let invoice = wallet.bolt11_invoice(amount).await?;
@@ -138,24 +138,6 @@ pub async fn execute_lightning_command(
 			if wait {
 				let token = token.as_ref().map(|c| c.as_str());
 				wallet.try_claim_lightning_receive(invoice.into(), true, token).await?;
-			}
-		},
-		LightningCommand::Status { filter_args: LightningStatusFilterGroup { filter, preimage }, no_sync } => {
-			if !no_sync {
-				info!("Syncing wallet...");
-				wallet.sync().await;
-			}
-
-			let payment_hash = match (filter, preimage) {
-				(Some(filter), None) => payment_hash_from_filter(&filter)?,
-				(None, Some(p)) => p.into(),
-				(None, None) => bail!("need to provide a filter"),
-				(Some(_), Some(_)) => bail!("cannot provide both filter and preimage"),
-			};
-			if let Some(ret) = wallet.lightning_receive_status(payment_hash).await? {
-				output_json(&LightningReceiveInfo::from(ret));
-			} else {
-				info!("No invoice found");
 			}
 		},
 		LightningCommand::Invoices => {
@@ -184,6 +166,93 @@ pub async fn execute_lightning_command(
 			} else {
 				info!("no invoice provided, trying to claim all open invoices");
 				wallet.try_claim_all_lightning_receives(wait).await?;
+			}
+		},
+	}
+
+	Ok(())
+}
+
+async fn execute_pay_command(
+	pay_command: PayCommand,
+	wallet: &mut Wallet,
+) -> anyhow::Result<()> {
+	match pay_command {
+		PayCommand::Invoice { invoice, amount, comment, no_sync, wait } => {
+			if !no_sync {
+				info!("Syncing wallet...");
+				wallet.sync().await;
+			}
+
+			let payment = if let Ok(invoice) = Bolt11Invoice::from_str(&invoice) {
+				if comment.is_some() {
+					bail!("comment is not supported for BOLT-11 invoices");
+				}
+				wallet.pay_lightning_invoice(invoice, amount).await?
+			} else if let Ok(offer) = Offer::from_str(&invoice) {
+				if comment.is_some() {
+					bail!("comment is not supported for BOLT-12 offers");
+				}
+				wallet.pay_lightning_offer(offer, amount).await?
+			} else if let Ok(lnaddr) = LightningAddress::from_str(&invoice) {
+				let amount = amount.context("amount is required for Lightning addresses")?;
+				wallet.pay_lightning_address(&lnaddr, amount, comment).await?
+			} else {
+				bail!("argument is not a valid BOLT-11 invoice, BOLT-12 offer or \
+					Lightning address");
+			};
+
+			if wait {
+				let payment_hash = payment.invoice.payment_hash();
+				wallet.check_lightning_payment(payment_hash, true).await?;
+			}
+		},
+		PayCommand::Status { filter_args: LightningStatusFilterGroup { filter, preimage }, no_sync } => {
+			if !no_sync {
+				info!("Syncing wallet...");
+				wallet.sync().await;
+			}
+
+			let payment_hash = match (filter, preimage) {
+				(Some(filter), None) => payment_hash_from_filter(&filter)?,
+				(None, Some(p)) => p.into(),
+				(None, None) => bail!("need to provide a filter"),
+				(Some(_), Some(_)) => bail!("cannot provide both filter and preimage"),
+			};
+
+			if let Some(ret) = wallet.check_lightning_payment(payment_hash, false).await? {
+				output_json(&LightningSendInfo::from(ret));
+			} else {
+				info!("No outgoing payment found for this payment hash");
+			}
+		},
+	}
+
+	Ok(())
+}
+
+async fn execute_receive_command(
+	receive_command: ReceiveCommand,
+	wallet: &mut Wallet,
+) -> anyhow::Result<()> {
+	match receive_command {
+		ReceiveCommand::Status { filter_args: LightningStatusFilterGroup { filter, preimage }, no_sync } => {
+			if !no_sync {
+				info!("Syncing wallet...");
+				wallet.sync().await;
+			}
+
+			let payment_hash = match (filter, preimage) {
+				(Some(filter), None) => payment_hash_from_filter(&filter)?,
+				(None, Some(p)) => p.into(),
+				(None, None) => bail!("need to provide a filter"),
+				(Some(_), Some(_)) => bail!("cannot provide both filter and preimage"),
+			};
+
+			if let Some(ret) = wallet.lightning_receive_status(payment_hash).await? {
+				output_json(&LightningReceiveInfo::from(ret));
+			} else {
+				info!("No incoming payment found for this payment hash");
 			}
 		},
 	}

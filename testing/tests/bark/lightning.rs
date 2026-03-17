@@ -195,9 +195,11 @@ async fn bark_check_lightning_payment_twice_succeeds() {
 	let bolt11 = Bolt11Invoice::from_str(&invoice).unwrap();
 	let payment_hash = PaymentHash::from(&bolt11);
 
-	// Second check should succeed and return preimage, not error
+	// Second check should succeed and return payment info with preimage, not error
 	let result = wallet.check_lightning_payment(payment_hash, false).await.expect("check_lightning_payment should not error on second call");
-	assert_eq!(result.unwrap().compute_payment_hash(), payment_hash, "should return correct preimage on second call");
+	let lightning_send = result.expect("should return LightningSend on second call");
+	let preimage = lightning_send.preimage.expect("should have preimage after successful payment");
+	assert_eq!(preimage.compute_payment_hash(), payment_hash, "should return correct preimage on second call");
 }
 
 #[tokio::test]
