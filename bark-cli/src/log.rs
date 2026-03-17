@@ -50,7 +50,9 @@ pub fn init_logging(verbose: bool, quiet: bool, datadir: &Path) {
 		builder
 			.filter_module("rusqlite", log::LevelFilter::Warn)
 			.filter_module("rustls", log::LevelFilter::Warn)
-			.filter_module("reqwest", log::LevelFilter::Warn);
+			.filter_module("reqwest", log::LevelFilter::Warn)
+			.filter_module("ureq", log::LevelFilter::Warn)
+			.filter_module("ureq_proto", log::LevelFilter::Warn);
 		builder
 	}
 

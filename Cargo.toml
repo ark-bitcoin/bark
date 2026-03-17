@@ -43,6 +43,8 @@ serde = { version = "1.0.219" }
 tonic = { version = "0.14.2", features = [ "tls-webpki-roots", "gzip" ] }
 tower = "0.5.2"
 hyper = "1.6.0"
+hyper-socks2 = { version = "0.9.1", default-features = false }
+hyper-util = { version = "0.1.20", features = ["tokio", "client-legacy"] }
 http = "1.2.0"
 http-body = "1.0.1"
 

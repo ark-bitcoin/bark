@@ -153,6 +153,7 @@ let
 		LIGHTNINGD_EXEC = if isDarwin then null else "${clightning}/bin/lightningd";
 		LIGHTNINGD_DOCKER_IMAGE = if isDarwin then "docker.io/secondark/cln-hold:v${lightningVersion}" else null;
 		LIGHTNINGD_PLUGIN_DIR = if isDarwin then "/plugins" else "${cln-plugins}";
+		TOR_EXEC = "${pkgs.tor}/bin/tor";
 	};
 
 in {
@@ -194,6 +195,7 @@ in {
 			pkgs.python3 # for clightning
 			esploraElectrs
 			mempoolElectrs
+			pkgs.tor
 
 			# For CI images
 			pkgs.coreutils

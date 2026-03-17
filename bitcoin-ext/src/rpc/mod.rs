@@ -1,3 +1,5 @@
+#[cfg(feature = "rpc-socks5-proxy")]
+mod socks5_transport;
 
 pub use bdk_bitcoind_rpc::bitcoincore_rpc::{self, json, jsonrpc, Auth, Client, Error, RpcApi};
 
@@ -12,6 +14,9 @@ use serde::{self, Deserialize, Serialize};
 use serde::de::Error as SerdeError;
 
 use crate::{BlockHeight, BlockRef, TxStatus, DEEPLY_CONFIRMED};
+
+#[cfg(all(feature = "wasm-web", feature = "rpc-socks5-proxy"))]
+compile_error!("`wasm-web` does not support the `rpc-socks5-proxy` feature");
 
 /// Error code for RPC_VERIFY_ALREADY_IN_UTXO_SET.
 const RPC_VERIFY_ALREADY_IN_UTXO_SET: i32 = -27;
@@ -431,3 +436,25 @@ pub trait BitcoinRpcExt: RpcApi {
 }
 
 impl <T: RpcApi> BitcoinRpcExt for T {}
+
+/// Creates a bitcoind RPC client, optionally routing through a SOCKS5 proxy.
+///
+/// When no proxy is set, the standard transport is used.
+/// When a proxy is set, a ureq-based transport routes traffic through the SOCKS5 proxy.
+pub fn create_client(
+	url: &str,
+	auth: Auth,
+	#[cfg(feature = "rpc-socks5-proxy")]
+	socks5_proxy: Option<&str>,
+) -> Result<Client, Error> {
+	#[cfg(feature = "rpc-socks5-proxy")]
+	if let Some(proxy) = socks5_proxy {
+		let (user, pass) = auth.get_user_pass()?;
+		let rpc_auth = user.map(|u| (u, pass));
+		let transport = socks5_transport::Socks5Transport::new(url, proxy, rpc_auth)
+			.map_err(|e| Error::JsonRpc(jsonrpc::Error::Transport(e.into())))?;
+
+		return Ok(Client::from_jsonrpc(jsonrpc::Client::with_transport(transport)));
+	}
+	Client::new(url, auth)
+}

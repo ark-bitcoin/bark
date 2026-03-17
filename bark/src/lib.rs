@@ -311,9 +311,11 @@ mod config;
 mod daemon;
 mod fees;
 mod lightning;
-mod offboard;
-mod psbtext;
 mod mailbox;
+mod offboard;
+#[cfg(feature = "socks5-proxy")]
+mod proxy;
+mod psbtext;
 mod utils;
 
 pub use self::arkoor::ArkoorCreateResult;
@@ -353,9 +355,14 @@ use crate::onchain::{ExitUnilaterally, PreparePsbt, SignPsbt, Utxo};
 use crate::onchain::DaemonizableOnchainWallet;
 use crate::persist::BarkPersister;
 use crate::persist::models::{PendingOffboard, RoundStateId, StoredRoundState, Unlocked};
+#[cfg(feature = "socks5-proxy")]
+use crate::proxy::proxy_for_url;
 use crate::round::{RoundParticipation, RoundStateLockIndex, RoundStatus};
 use crate::subsystem::{ArkoorMovement, RoundMovement};
 use crate::vtxo::{FilterVtxos, RefreshStrategy, VtxoFilter, VtxoState, VtxoStateKind};
+
+#[cfg(all(feature = "wasm-web", feature = "socks5-proxy"))]
+compile_error!("features `wasm-web` does not support feature `socks5-proxy");
 
 /// Derivation index for Bark usage
 const BARK_PURPOSE_INDEX: u32 = 350;
@@ -857,13 +864,13 @@ impl Wallet {
 
 		// Try to connect to the server and get its pubkey
 		let server_pubkey = if !force {
-			match ServerConnection::connect(&config.server_address, network).await {
+			match Self::connect_to_server(&config, network).await {
 				Ok(conn) => {
 					let ark_info = conn.ark_info().await?;
 					Some(ark_info.server_pubkey)
 				}
 				Err(err) => {
-					bail!("Failed to connect to provided server (if you are sure use the --force flag): {}", err);
+					bail!("Failed to connect to provided server (if you are sure use the --force flag): {:#}", err);
 				}
 			}
 		} else {
@@ -946,17 +953,18 @@ impl Wallet {
 			bail!("Need to either provide esplora or bitcoind info");
 		};
 
+		#[cfg(feature = "socks5-proxy")]
+		let chain_proxy = proxy_for_url(&config.socks5_proxy, chain_source.url())?;
 		let chain_source_client = ChainSource::new(
 			chain_source, properties.network, config.fallback_fee_rate,
+			#[cfg(feature = "socks5-proxy")] chain_proxy.as_deref(),
 		).await?;
 		let chain = Arc::new(chain_source_client);
 
-		let server = match ServerConnection::connect(
-			&config.server_address, properties.network,
-		).await {
+		let server = match Self::connect_to_server(&config, properties.network).await {
 			Ok(s) => Some(s),
 			Err(e) => {
-				warn!("Ark server handshake failed: {}", e);
+				warn!("Ark server handshake failed: {:#}", e);
 				None
 			}
 		};
@@ -1007,6 +1015,20 @@ impl Wallet {
 		self.seed.fingerprint()
 	}
 
+	async fn connect_to_server(
+		config: &Config,
+		network: Network,
+	) -> anyhow::Result<ServerConnection> {
+		let address = &config.server_address;
+		#[cfg(feature = "socks5-proxy")]
+		if let Some(proxy) = proxy_for_url(&config.socks5_proxy, address)? {
+			return ServerConnection::connect_via_proxy(address, network, &proxy).await
+				.context("Failed to connect Ark server via proxy");
+		}
+		ServerConnection::connect(address, network).await
+			.context("Failed to connect to Ark server")
+	}
+
 	async fn require_server(&self) -> anyhow::Result<(ServerConnection, ArkInfo)> {
 		let conn = self.server.read().clone()
 			.context("You should be connected to Ark server to perform this action")?;
@@ -1050,10 +1072,7 @@ impl Wallet {
 
 			srv
 		} else {
-			let srv_address = &self.config.server_address;
-			let network = properties.network;
-
-			let conn = ServerConnection::connect(srv_address, network).await?;
+			let conn = Self::connect_to_server(&self.config, properties.network).await?;
 			let ark_info = conn.ark_info().await?;
 			ark_info.fees.validate().context("invalid fee schedule")?;
 

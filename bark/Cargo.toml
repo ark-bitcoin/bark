@@ -21,9 +21,15 @@ filestore = ["tokio/fs"]
 
 rand = ["bitcoin/rand", "bip39/rand"]
 
+# TLS implementations
 tls-native-roots = ["bark-server-rpc/tls-native-roots"]
 tls-webpki-roots = ["bark-server-rpc/tls-webpki-roots"]
+
+# Native features
 native = ["bark-server-rpc/tonic-native"]
+socks5-proxy = ["bark-bitcoin-ext/rpc-socks5-proxy", "bark-server-rpc/socks5-proxy", "http"]
+
+# Web features
 wasm-web = [
 	"ark-lib/wasm-web",
 	"bark-server-rpc/tonic-web",
@@ -78,6 +84,7 @@ tokio.workspace = true
 tokio-stream.workspace = true
 futures.workspace = true
 parking_lot.workspace = true
+http = { workspace = true, optional = true }
 
 # Only used for built-in BDK Wallet
 bdk_wallet = { workspace = true, optional = true }

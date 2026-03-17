@@ -14,6 +14,7 @@ name = "bitcoin_ext"
 default = ["bdk", "rpc", "all-related-utxos"]
 bdk = ["bdk_wallet", "log"]
 rpc = ["bdk_bitcoind_rpc"]
+rpc-socks5-proxy = ["rpc", "jsonrpc", "ureq", "base64"]
 # temporary feature to gate the TransactionExt::all_related_utxos function that
 # requires a Rust version newer than the rust-bitcoin MSRV.
 all-related-utxos = []
@@ -32,6 +33,9 @@ thiserror = { workspace = true }
 
 # rpc
 bdk_bitcoind_rpc = { workspace = true, optional = true }
+jsonrpc = { version = "0.18", features = ["simple_http"], optional = true }
+ureq = { version = "3", features = ["socks-proxy"], optional = true }
+base64 = { version = "0.22", optional = true }
 reqwest = { version = "0.12.18", features = [ "rustls-tls" ], default-features = false, optional = true }
 async-trait = { version = "0.1.88", optional = true }
 

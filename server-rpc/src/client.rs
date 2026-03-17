@@ -38,8 +38,7 @@ use tonic::service::interceptor::InterceptedService;
 
 use ark::ArkInfo;
 
-use crate::{protos, ArkServiceClient, ConvertError, RequestExt};
-use crate::mailbox;
+use crate::{mailbox, protos, ArkServiceClient, ConvertError, RequestExt};
 
 #[cfg(all(feature = "tonic-native", feature = "tonic-web"))]
 compile_error!("features `tonic-native` and `tonic-web` are mutually exclusive");
@@ -47,13 +46,17 @@ compile_error!("features `tonic-native` and `tonic-web` are mutually exclusive")
 #[cfg(not(any(feature = "tonic-native", feature = "tonic-web")))]
 compile_error!("either `tonic-native` or `tonic-web` feature must be enabled");
 
+#[cfg(all(feature = "tonic-web", feature = "socks5-proxy"))]
+compile_error!("`tonic-web` does not support the `socks5-proxy` feature");
+
 #[cfg(feature = "tonic-native")]
 mod transport {
 	use std::str::FromStr;
 	use std::time::Duration;
 
+	use http::Uri;
 	use log::info;
-	use tonic::transport::Channel;
+	use tonic::transport::{Channel, ClientTlsConfig, Endpoint};
 
 	use super::CreateEndpointError;
 
@@ -65,14 +68,47 @@ mod transport {
 	/// - Uses a 10-minute keep-alive and overall request timeout to accommodate long-running RPCs.
 	/// - When `https` is used, the crate-configured root CAs are enabled and the SNI domain is set.
 	pub async fn connect(address: &str) -> Result<Transport, CreateEndpointError> {
-		let uri = tonic::transport::Uri::from_str(address)?;
+		Ok(create_endpoint(address)?.connect().await?)
+	}
+
+	/// Similar to [connect] but the HTTP/HTTPS connection is wrapped with a SOCKS5 proxy.
+	#[cfg(feature = "socks5-proxy")]
+	pub async fn connect_with_proxy(
+		address: &str,
+		proxy: &str,
+	) -> Result<Transport, CreateEndpointError> {
+		use hyper_socks2::SocksConnector;
+		use hyper_util::client::legacy::connect::HttpConnector;
+
+		let endpoint = create_endpoint(address)?;
+		let proxy_uri = proxy.parse::<Uri>().map_err(CreateEndpointError::InvalidProxyUri)?;
+		let connector = {
+			// TLS is handled by tonic's `tls_config()` on the endpoint, so this connector only
+			// needs to establish the SOCKS5 tunnel.
+			let mut http = HttpConnector::new();
+			http.enforce_http(false);
+			SocksConnector {
+				proxy_addr: proxy_uri,
+				auth: None,
+				connector: http,
+			}
+		};
+		info!("Connecting to Ark server via SOCKS5 proxy {}...", proxy);
+		Ok(endpoint.connect_with_connector(connector).await?)
+	}
+
+	/// Creates an endpoint for the given server address which the application can use to create a
+	/// connection. Any required TLS configuration will be added so both HTTP and HTTPS are
+	/// supported.
+	fn create_endpoint(address: &str) -> Result<Endpoint, CreateEndpointError> {
+		let uri = Uri::from_str(address)?;
 
 		let scheme = uri.scheme_str().unwrap_or("");
 		if scheme != "http" && scheme != "https" {
 			return Err(CreateEndpointError::InvalidScheme(scheme.to_string()));
 		}
 
-		let mut endpoint = tonic::transport::Channel::builder(uri.clone())
+		let mut endpoint = Channel::builder(uri.clone())
 			.keep_alive_timeout(Duration::from_secs(600))
 			.timeout(Duration::from_secs(600));
 
@@ -82,15 +118,15 @@ mod transport {
 				.ok_or(CreateEndpointError::MissingAuthority)?;
 			let domain = uri_auth.host();
 
-			let tls_config = tonic::transport::ClientTlsConfig::new()
+			let tls_config = ClientTlsConfig::new()
 				.with_enabled_roots()
 				.domain_name(domain);
 			endpoint = endpoint.tls_config(tls_config)
 				.map_err(CreateEndpointError::Transport)?;
 		} else {
 			info!("Connecting to Ark server without TLS...");
-		};
-		Ok(endpoint.connect().await?)
+		}
+		Ok(endpoint)
 	}
 }
 
@@ -133,6 +169,9 @@ pub enum CreateEndpointError {
 	#[cfg(feature = "tonic-native")]
 	#[error(transparent)]
 	Transport(#[from] tonic::transport::Error),
+	#[cfg(feature = "socks5-proxy")]
+	#[error("invalid SOCKS5 proxy URI: {0:#}")]
+	InvalidProxyUri(http::uri::InvalidUri),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -265,7 +304,24 @@ impl ServerConnection {
 		network: Network,
 	) -> Result<ServerConnection, ConnectError> {
 		let transport = transport::connect(address).await?;
+		Self::connect_inner(transport, network).await
+	}
 
+	/// Similar to [ServerConnection::connect] but the connection is established through a SOCKS5 proxy.
+	#[cfg(feature = "socks5-proxy")]
+	pub async fn connect_via_proxy(
+		address: &str,
+		network: Network,
+		proxy: &str,
+	) -> Result<ServerConnection, ConnectError> {
+		let transport = transport::connect_with_proxy(address, proxy).await?;
+		Self::connect_inner(transport, network).await
+	}
+
+	async fn connect_inner(
+		transport: transport::Transport,
+		network: Network,
+	) -> Result<ServerConnection, ConnectError> {
 		let mut handshake_client = ArkServiceClient::new(transport.clone());
 		let handshake = handshake_client.handshake(Self::handshake_req()).await
 			.map_err(ConnectError::Handshake)?.into_inner();

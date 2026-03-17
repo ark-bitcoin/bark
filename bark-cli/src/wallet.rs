@@ -37,6 +37,7 @@ use bark::persist::adaptor::StorageAdaptorWrapper;
 use bitcoin::Network;
 use clap::Args;
 use log::{debug, info, warn};
+use tonic::transport::Uri;
 
 use bark::{BarkNetwork, Config, Wallet as BarkWallet};
 use bark::onchain::OnchainWallet;
@@ -104,6 +105,11 @@ pub struct ConfigOpts {
 	/// Only used with `bitcoind_address`.
 	#[arg(long)]
 	pub bitcoind_pass: Option<String>,
+
+	/// SOCKS5 proxy URL (e.g. socks5h://127.0.0.1:9050 for Tor).
+	/// Automatically bypassed for localhost connections.
+	#[arg(long)]
+	pub socks5_proxy: Option<String>,
 }
 
 impl ConfigOpts {
@@ -142,6 +148,14 @@ impl ConfigOpts {
 			_ => bail!("When providing --bitcoind, you need to provide auth args as well."),
 		}
 
+		if let Some(ref proxy) = self.socks5_proxy {
+			let uri = proxy.parse::<Uri>().context("invalid socks5 proxy URI")?;
+			let scheme = uri.scheme_str().context("invalid socks5 proxy URI scheme")?;
+			if scheme != "socks5h" {
+				bail!("Only socks5h:// proxies are supported");
+			}
+		}
+
 		Ok(())
 	}
 
@@ -172,6 +186,9 @@ impl ConfigOpts {
 		}
 		if let Some(ref v) = self.bitcoind_pass {
 			writeln!(conf, "bitcoind_pass = \"{}\"", v).unwrap();
+		}
+		if let Some(ref v) = self.socks5_proxy {
+			writeln!(conf, "socks5_proxy = \"{}\"", v).unwrap();
 		}
 
 		let path = path.as_ref();
