@@ -46,34 +46,6 @@
         }
       }
     },
-    "/api/v1/boards/": {
-      "get": {
-        "tags": [
-          "boards"
-        ],
-        "summary": "List pending boards",
-        "description": "Returns all boards whose funding transactions have not yet reached the number of on-chain confirmations required by the Ark server.",
-        "operationId": "get_pending_boards",
-        "responses": {
-          "200": {
-            "description": "Returns all pending boards",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/PendingBoardInfo"
-                  }
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "Internal server error"
-          }
-        }
-      }
-    },
     "/api/v1/boards/board-all": {
       "post": {
         "tags": [
@@ -144,6 +116,34 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "/api/v1/boards/pending": {
+      "get": {
+        "tags": [
+          "boards"
+        ],
+        "summary": "List pending boards",
+        "description": "Returns all boards whose funding transactions have not yet reached the number of on-chain confirmations required by the Ark server.",
+        "operationId": "get_pending_boards",
+        "responses": {
+          "200": {
+            "description": "Returns all pending boards",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/PendingBoardInfo"
+                  }
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error"
           }
         }
       }

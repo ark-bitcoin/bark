@@ -6,7 +6,7 @@ Method | HTTP request | Description
 ------------- | ------------- | -------------
 [**board_all**](BoardsApi.md#board_all) | **POST** /api/v1/boards/board-all | Board all on-chain bitcoin
 [**board_amount**](BoardsApi.md#board_amount) | **POST** /api/v1/boards/board-amount | Board a specific amount
-[**get_pending_boards**](BoardsApi.md#get_pending_boards) | **GET** /api/v1/boards/ | List pending boards
+[**get_pending_boards**](BoardsApi.md#get_pending_boards) | **GET** /api/v1/boards/pending | List pending boards
 
 
 

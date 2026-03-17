@@ -122,7 +122,7 @@ pub async fn board_amount(configuration: &configuration::Configuration, board_re
 /// Returns all boards whose funding transactions have not yet reached the number of on-chain confirmations required by the Ark server.
 pub async fn get_pending_boards(configuration: &configuration::Configuration, ) -> Result<Vec<models::PendingBoardInfo>, Error<GetPendingBoardsError>> {
 
-    let uri_str = format!("{}/api/v1/boards/", configuration.base_path);
+    let uri_str = format!("{}/api/v1/boards/pending", configuration.base_path);
     let mut req_builder = configuration.client.request(reqwest::Method::GET, &uri_str);
 
     if let Some(ref user_agent) = configuration.user_agent {
