@@ -1,0 +1,5 @@
+- Rename `boards/` endpoint to `boards/pending`
+  The boards endpoint now more accurately reflects that it returns pending
+  boards, not all boards. The REST client has been regenerated accordingly.
+  [#1753](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1753)
+  - **BREAKING:** `GET /boards` is now `GET /boards/pending`
