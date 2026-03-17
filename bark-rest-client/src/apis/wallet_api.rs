@@ -108,10 +108,10 @@ pub enum OffboardVtxosError {
     UnknownValue(serde_json::Value),
 }
 
-/// struct for typed errors of method [`peak_address`]
+/// struct for typed errors of method [`peek_address`]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
-pub enum PeakAddressError {
+pub enum PeekAddressError {
     Status500(models::InternalServerError),
     UnknownValue(serde_json::Value),
 }
@@ -583,7 +583,7 @@ pub async fn offboard_vtxos(configuration: &configuration::Configuration, offboa
 }
 
 /// Returns a previously generated Ark address by its derivation index. Only addresses that have already been generated are available.
-pub async fn peak_address(configuration: &configuration::Configuration, index: i32) -> Result<models::ArkAddressResponse, Error<PeakAddressError>> {
+pub async fn peek_address(configuration: &configuration::Configuration, index: i32) -> Result<models::ArkAddressResponse, Error<PeekAddressError>> {
     // add a prefix to parameters to efficiently prevent name collisions
     let p_path_index = index;
 
@@ -614,7 +614,7 @@ pub async fn peak_address(configuration: &configuration::Configuration, index: i
         }
     } else {
         let content = resp.text().await?;
-        let entity: Option<PeakAddressError> = serde_json::from_str(&content).ok();
+        let entity: Option<PeekAddressError> = serde_json::from_str(&content).ok();
         Err(Error::ResponseError(ResponseContent { status, content, entity }))
     }
 }

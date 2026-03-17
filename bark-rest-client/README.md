@@ -65,7 +65,7 @@ Class | Method | HTTP request | Description
 *WalletApi* | [**next_round**](docs/WalletApi.md#next_round) | **GET** /api/v1/wallet/next-round | Get next round time
 *WalletApi* | [**offboard_all**](docs/WalletApi.md#offboard_all) | **POST** /api/v1/wallet/offboard/all | Offboard all VTXOs
 *WalletApi* | [**offboard_vtxos**](docs/WalletApi.md#offboard_vtxos) | **POST** /api/v1/wallet/offboard/vtxos | Offboard specific VTXOs
-*WalletApi* | [**peak_address**](docs/WalletApi.md#peak_address) | **GET** /api/v1/wallet/addresses/index/{index} | Get Ark address by index
+*WalletApi* | [**peek_address**](docs/WalletApi.md#peek_address) | **GET** /api/v1/wallet/addresses/index/{index} | Get Ark address by index
 *WalletApi* | [**pending_rounds**](docs/WalletApi.md#pending_rounds) | **GET** /api/v1/wallet/rounds | List round participations
 *WalletApi* | [**refresh_all**](docs/WalletApi.md#refresh_all) | **POST** /api/v1/wallet/refresh/all | Refresh all VTXOs
 *WalletApi* | [**refresh_counterparty**](docs/WalletApi.md#refresh_counterparty) | **POST** /api/v1/wallet/refresh/counterparty | Refresh received VTXOs

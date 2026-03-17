@@ -998,7 +998,7 @@
         ],
         "summary": "Get Ark address by index",
         "description": "Returns a previously generated Ark address by its derivation index. Only addresses that have already been generated are available.",
-        "operationId": "peak_address",
+        "operationId": "peek_address",
         "parameters": [
           {
             "name": "index",
