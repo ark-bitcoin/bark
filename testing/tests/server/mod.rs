@@ -8,8 +8,6 @@ use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 
-use ark::rounds::RoundSeq;
-use ark::vtxo::Full;
 use bitcoin::hex::FromHex;
 use bitcoin::{absolute, transaction, Address, Amount, Network, OutPoint, Transaction};
 use bitcoin::hashes::Hash;
@@ -25,10 +23,11 @@ use ark::{
 };
 use ark::arkoor::ArkoorDestination;
 use ark::arkoor::package::ArkoorPackageBuilder;
-use ark::challenges::RoundAttemptChallenge;
 use ark::mailbox::{MailboxAuthorization, MailboxIdentifier, MailboxType};
+use ark::rounds::{Challenge, RoundAttemptAttestation, RoundSeq};
 use ark::tree::signed::builder::SignedTreeBuilder;
 use ark::tree::signed::{LeafVtxoCosignContext, UnlockPreimage};
+use ark::vtxo::Full;
 use bark::Wallet;
 use bark::lightning_invoice::Bolt11Invoice;
 use bark_json::primitives::WalletVtxoInfo;
@@ -759,7 +758,7 @@ async fn bad_round_input() {
 		match stream.next().await.unwrap().unwrap() {
 			protos::RoundEvent { event: Some(event) } => match event {
 				protos::round_event::Event::Attempt(a) => {
-					break RoundAttemptChallenge::new(a.round_attempt_challenge.try_into().unwrap());
+					break Challenge::new(a.round_attempt_challenge.try_into().unwrap());
 				},
 				_ => {},
 			},
@@ -781,9 +780,9 @@ async fn bad_round_input() {
 
 	let input = protos::InputVtxo {
 		vtxo_id: vtxo.id().to_bytes().to_vec(),
-		ownership_proof: challenge
-			.sign_with(vtxo.id(), &[vtxo_req.clone()], &key)
-			.serialize().to_vec(),
+		attestation: RoundAttemptAttestation::new(
+			challenge, vtxo.id(), &[vtxo_req.clone()], &key,
+		).serialize(),
 	};
 
 	// let's fire some bad attempts
@@ -830,9 +829,9 @@ async fn bad_round_input() {
 	let fake_vtxo = VtxoId::from_slice(&rand::random::<[u8; 36]>()[..]).unwrap();
 	let fake_input = protos::InputVtxo {
 		vtxo_id: fake_vtxo.to_bytes().to_vec(),
-		ownership_proof: challenge.sign_with(
-			vtxo.id(), &[vtxo_req.clone()], &key,
-		).serialize().to_vec(),
+		attestation: RoundAttemptAttestation::new(
+			challenge, vtxo.id(), &[vtxo_req.clone()], &key,
+		).serialize(),
 	};
 	let err = rpc.submit_payment(protos::SubmitPaymentRequest {
 		input_vtxos: vec![fake_input],
@@ -935,7 +934,7 @@ async fn reject_dust_vtxo_request() {
 	struct Proxy {
 		vtxo: WalletVtxoInfo,
 		wallet: Arc<Wallet>,
-		challenge:  Arc<Mutex<Option<RoundAttemptChallenge>>>
+		challenge:  Arc<Mutex<Option<Challenge>>>
 	}
 	#[async_trait::async_trait]
 	impl captaind::proxy::ArkRpcProxy for Proxy {
@@ -950,7 +949,7 @@ async fn reject_dust_vtxo_request() {
 
 			let s = stream.inspect_ok(move |event| {
 				if let Some(protos::round_event::Event::Attempt(m)) = &event.event {
-					let challenge = RoundAttemptChallenge::new(m.round_attempt_challenge.clone().try_into().unwrap());
+					let challenge = Challenge::new(m.round_attempt_challenge.clone().try_into().unwrap());
 					shared.try_lock().unwrap().replace(challenge);
 				}
 			});
@@ -975,10 +974,10 @@ async fn reject_dust_vtxo_request() {
 			// Spending input boarded with first derivation
 			let (_, keypair) = self.wallet.pubkey_keypair(&self.vtxo.user_pubkey).await.unwrap().unwrap();
 
-			let sig = self.challenge.lock().await.as_ref().unwrap()
-				.sign_with(self.vtxo.id, &vtxo_requests, &keypair);
-
-			req.input_vtxos.get_mut(0).unwrap().ownership_proof = sig.serialize().to_vec();
+			let challenge = *self.challenge.lock().await.as_ref().unwrap();
+			req.input_vtxos.get_mut(0).unwrap().attestation = RoundAttemptAttestation::new(
+				challenge, self.vtxo.id, &vtxo_requests, &keypair,
+			).serialize();
 
 			Ok(upstream.submit_payment(req).await?.into_inner())
 		}
@@ -1796,7 +1795,7 @@ async fn should_refuse_round_input_vtxo_that_is_being_exited() {
 	#[derive(Clone)]
 	struct Proxy {
 		pub wallet: Arc<Wallet>,
-		pub challenge: Arc<Mutex<Option<RoundAttemptChallenge>>>,
+		pub challenge: Arc<Mutex<Option<Challenge>>>,
 		pub vtxo: WalletVtxoInfo
 	}
 	#[async_trait::async_trait]
@@ -1810,7 +1809,7 @@ async fn should_refuse_round_input_vtxo_that_is_being_exited() {
 			let stream = upstream.subscribe_rounds(req).await?.into_inner()
 				.inspect_ok(move |event| {
 					if let Some(protos::round_event::Event::Attempt(m)) = &event.event {
-						let challenge = RoundAttemptChallenge::new(m.round_attempt_challenge.clone().try_into().unwrap());
+						let challenge = Challenge::new(m.round_attempt_challenge.clone().try_into().unwrap());
 						shared.try_lock().unwrap().replace(challenge);
 					}
 				});
@@ -1832,12 +1831,14 @@ async fn should_refuse_round_input_vtxo_that_is_being_exited() {
 				}
 			}).collect::<Vec<_>>();
 
-			let sig = self.challenge.lock().await.as_ref().unwrap()
-				.sign_with(self.vtxo.id, &vtxo_requests, &keypair);
+			let challenge = *self.challenge.lock().await.as_ref().unwrap();
+			let attestation = RoundAttemptAttestation::new(
+				challenge, self.vtxo.id, &vtxo_requests, &keypair,
+			);
 
 			*req.input_vtxos.get_mut(0).unwrap() = protos::InputVtxo {
 				vtxo_id: self.vtxo.id.to_bytes().to_vec(),
-				ownership_proof: sig.serialize().to_vec(),
+				attestation: attestation.serialize(),
 			};
 
 			Ok(upstream.submit_payment(req).await?.into_inner())

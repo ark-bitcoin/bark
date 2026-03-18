@@ -27,6 +27,7 @@ use log::{debug, error, info, trace, warn};
 
 use ark::{ProtocolEncoding, SignedVtxoRequest, Vtxo, VtxoRequest};
 use ark::vtxo::Full;
+use ark::attestations::{DelegatedRoundParticipationAttestation, RoundAttemptAttestation};
 use ark::forfeit::HashLockedForfeitBundle;
 use ark::musig::{self, DangerousSecretNonce, PublicNonce, SecretNonce};
 use ark::rounds::{
@@ -656,10 +657,11 @@ async fn start_attempt(
 			.map_err(HarkForfeitError::Err)?;
 		input_vtxos.push(protos::InputVtxo {
 			vtxo_id: vtxo.id().to_bytes().to_vec(),
-			ownership_proof: {
-				let sig = event.challenge
-					.sign_with(vtxo.id(), &signed_reqs, &keypair);
-				sig.serialize().to_vec()
+			attestation: {
+				let attestation = RoundAttemptAttestation::new(
+					event.challenge, vtxo.id(), &signed_reqs, &keypair,
+				);
+				attestation.serialize()
 			},
 		});
 	}
@@ -1296,18 +1298,18 @@ impl Wallet {
 			None
 		};
 
-		// Generate ownership proofs for input vtxos
+		// Generate attestations for input vtxos
 		let mut input_vtxos = Vec::with_capacity(participation.inputs.len());
 		for vtxo in participation.inputs.iter() {
 			let keypair = self.get_vtxo_key(vtxo).await
 				.context("failed to get vtxo keypair")?;
 			input_vtxos.push(protos::InputVtxo {
 				vtxo_id: vtxo.id().to_bytes().to_vec(),
-				ownership_proof: {
-					let sig = ark::challenges::NonInteractiveRoundParticipationChallenge::sign_with(
+				attestation: {
+					let attestation = DelegatedRoundParticipationAttestation::new(
 						vtxo.id(), &participation.outputs, &keypair,
 					);
-					sig.serialize().to_vec()
+					attestation.serialize()
 				},
 			});
 		}

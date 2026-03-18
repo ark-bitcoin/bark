@@ -1,0 +1,2 @@
+- rename all the `Challenge` types to `Attestation` and make the attestation the object
+  [#1757](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1757)

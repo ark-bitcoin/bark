@@ -9,7 +9,7 @@ use lightning_invoice::Bolt11Invoice;
 use log::{trace, debug, info, warn};
 
 use ark::{ProtocolEncoding, Vtxo, VtxoPolicy};
-use ark::challenges::{LightningReceiveChallenge};
+use ark::attestations::{LightningReceiveAttestation};
 use ark::fees::validate_and_subtract_fee;
 use ark::lightning::{Bolt11InvoiceExt, PaymentHash, Preimage};
 use bitcoin_ext::{BlockDelta, BlockHeight};
@@ -223,17 +223,16 @@ impl Wallet {
 		Ok(if let Some(token) = token {
 			LightningReceiveAntiDos::Token(token.to_string())
 		} else {
-			let challenge = LightningReceiveChallenge::new(payment_hash);
 			// We get an existing VTXO as an anti-dos measure.
 			let vtxo = self.select_vtxos_to_cover(Amount::ONE_SAT).await
-				.and_then(|vtxos| vtxos.into_iter().next().ok_or_else(|| anyhow!("have no spendable vtxo to prove ownership of")))?;
+				.and_then(|vtxos| vtxos.into_iter().next()
+					.context("have no spendable vtxo to prove ownership of")
+				)?;
 			let vtxo_keypair = self.get_vtxo_key(&vtxo).await.expect("owned vtxo should be in database");
+			let attestation = LightningReceiveAttestation::new(payment_hash, vtxo.id(), &vtxo_keypair);
 			LightningReceiveAntiDos::InputVtxo(protos::InputVtxo {
 				vtxo_id: vtxo.id().to_bytes().to_vec(),
-				ownership_proof: {
-					let sig = challenge.sign_with(vtxo.id(), &vtxo_keypair);
-					sig.serialize().to_vec()
-				}
+				attestation: attestation.serialize(),
 			})
 		})
 	}

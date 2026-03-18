@@ -5,20 +5,21 @@ use std::sync::atomic;
 use std::time::Duration;
 use std::time::UNIX_EPOCH;
 
+use ark::attestations::DelegatedRoundParticipationAttestation;
+use ark::attestations::OffboardRequestAttestation;
+use ark::rounds::RoundAttemptAttestation;
 use bitcoin::consensus::serialize;
 use bitcoin::Txid;
 use bitcoin::{Amount, OutPoint};
 use bitcoin::hashes::Hash;
-use bitcoin::secp256k1::{rand, schnorr, PublicKey};
+use bitcoin::secp256k1::{rand, PublicKey};
 use tokio::sync::oneshot;
 use tokio_stream::{Stream, StreamExt};
 use tower_http::cors::CorsLayer;
 use tonic_tracing_opentelemetry::middleware::server::OtelGrpcLayer;
 use tracing::info;
 
-use ark::{
-	musig, ProtocolEncoding, Vtxo, VtxoId, VtxoIdInput,
-};
+use ark::{musig, ProtocolEncoding, Vtxo, VtxoId};
 use ark::arkoor::package::ArkoorPackageCosignRequest;
 use ark::forfeit::HashLockedForfeitBundle;
 use ark::lightning::{Bolt12InvoiceExt, Invoice, Offer, OfferAmount, PaymentHash, Preimage};
@@ -28,6 +29,8 @@ use ark::vtxo::Full;
 use bitcoin_ext::{AmountExt, BlockDelta, BlockHeight};
 use server_rpc::{self as rpc, protos, TryFromBytes};
 
+use crate::round::DelegatedInput;
+use crate::round::SelfSignedInput;
 use crate::Server;
 use crate::rpcserver::{
 	middleware,
@@ -431,8 +434,8 @@ impl rpc::server::ArkService for Server {
 
 		let inputs =  req.input_vtxos.iter().map(|input| {
 			let vtxo_id = VtxoId::from_bytes(&input.vtxo_id)?;
-			let ownership_proof = schnorr::Signature::from_bytes(&input.ownership_proof)?;
-			Ok(VtxoIdInput { vtxo_id, ownership_proof })
+			let attestation = RoundAttemptAttestation::from_bytes(&input.attestation)?;
+			Ok(SelfSignedInput { vtxo_id, attestation })
 		}).collect::<Result<_, tonic::Status>>()?;
 
 		let mut vtxo_requests = Vec::with_capacity(req.vtxo_requests.len());
@@ -501,8 +504,10 @@ impl rpc::server::ArkService for Server {
 
 		let inputs =  req.input_vtxos.iter().map(|input| {
 			let vtxo_id = VtxoId::from_bytes(&input.vtxo_id)?;
-			let ownership_proof = schnorr::Signature::from_bytes(&input.ownership_proof)?;
-			Ok(VtxoIdInput { vtxo_id, ownership_proof })
+			let attestation = DelegatedRoundParticipationAttestation::from_bytes(
+				&input.attestation,
+			)?;
+			Ok(DelegatedInput { vtxo_id, attestation })
 		}).collect::<Result<_, tonic::Status>>()?;
 
 		let mut vtxo_requests = Vec::with_capacity(req.vtxo_requests.len());
@@ -632,10 +637,10 @@ impl rpc::server::ArkService for Server {
 			.badarg("invalid offboard request")?;
 		let input_vtxos = req.input_vtxo_ids.iter().map(|v| VtxoId::from_bytes(v))
 			.collect::<Result<Vec<_>, _>>()?;
-		let ownership_proofs = req.input_vtxo_ownership_proofs.iter()
-			.map(|v| schnorr::Signature::from_bytes(v))
+		let attestation = req.attestation.iter()
+			.map(|v| OffboardRequestAttestation::from_bytes(v))
 			.collect::<Result<Vec<_>, _>>()?;
-		let resp = self.prepare_offboard(request, input_vtxos, ownership_proofs).await.to_status()?;
+		let resp = self.prepare_offboard(request, input_vtxos, attestation).await.to_status()?;
 
 		Ok(tonic::Response::new(protos::PrepareOffboardResponse {
 			offboard_tx: serialize(&resp.offboard_tx),

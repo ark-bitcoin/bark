@@ -6,11 +6,11 @@ use std::time::Duration;
 
 use anyhow::Context;
 use bitcoin::{Amount, FeeRate, OutPoint, Psbt, ScriptBuf, Transaction, Txid};
-use bitcoin::secp256k1::{schnorr, Keypair};
+use bitcoin::secp256k1::Keypair;
 use tracing::{error, warn};
 
 use ark::{musig, VtxoId};
-use ark::challenges::OffboardRequestChallenge;
+use ark::attestations::OffboardRequestAttestation;
 use ark::fees::{validate_and_subtract_fee_min_dust, VtxoFeeInfo};
 use ark::offboard::{OffboardForfeitContext, OffboardRequest};
 use bitcoin_ext::P2TR_DUST;
@@ -92,12 +92,12 @@ impl Server {
 		});
 	}
 
-	#[tracing::instrument(skip(self, request, input_vtxos, ownership_proofs))]
+	#[tracing::instrument(skip(self, request, input_vtxos, attestations))]
 	pub async fn prepare_offboard(
 		&self,
 		request: OffboardRequest,
 		input_vtxos: Vec<VtxoId>,
-		ownership_proofs: Vec<schnorr::Signature>,
+		attestations: Vec<OffboardRequestAttestation>,
 	) -> anyhow::Result<OffboardResponse> {
 		request.validate().badarg("invalid offboard request")?;
 		let valid_fee_duration = self.config.offboard_acceptable_fee_rate_duration;
@@ -124,8 +124,8 @@ impl Server {
 			return badarg!("duplicate input vtxo");
 		}
 
-		if ownership_proofs.len() != input_vtxos.len() {
-			return badarg!("wrong number of ownership proofs");
+		if attestations.len() != input_vtxos.len() {
+			return badarg!("wrong number of attestations");
 		}
 
 		let vtxos = self.db.get_user_vtxos_by_id(&input_vtxos).await?;
@@ -172,11 +172,11 @@ impl Server {
 			request.net_amount
 		};
 
-		// check ownership proofs
-		let challenge = OffboardRequestChallenge::new(&request, input_vtxos.iter().copied());
-		for (input, proof) in vtxos.iter().zip(&ownership_proofs) {
-			challenge.verify_input_vtxo_sig(&input.vtxo, proof)
-				.with_badarg(|| format!("invalid ownership proof for vtxo {}", input.vtxo.id()))?;
+		// check attestations
+		let input_ids = input_vtxos.iter().copied().collect::<Vec<VtxoId>>();
+		for (input, attestation) in vtxos.iter().zip(&attestations) {
+			attestation.verify(&request, &input_ids, &input.vtxo)
+				.with_badarg(|| format!("invalid attestations for vtxo {}", input.vtxo.id()))?;
 		}
 
 		// Even if we need multiple connectors, we just need a single output now,
