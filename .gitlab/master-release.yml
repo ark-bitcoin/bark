@@ -47,7 +47,7 @@ generate-rustdocs:
     - bark-btc30
   script:
     - nix develop .#default --command bash -c "just rustdocs"
-    - sudo cp -r rustdocs/doc/ /host/data/doc/
+    - sudo cp -r rustdocs/doc/ /host/data/rustdocs/doc/
     - bash contrib/generate-index.sh /host/data/rustdocs/doc
     - echo "rustdocs -> https://rustdocs.2nd.dev/master/"
 
