@@ -3,6 +3,8 @@
 prechecks:
   interruptible: true
   stage: prechecks
+  tags:
+    - datastore
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
     - if: $CI_PIPELINE_SOURCE == "web"
