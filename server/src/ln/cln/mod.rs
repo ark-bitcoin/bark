@@ -65,6 +65,7 @@ use crate::database::ln::{
 	LightningPaymentStatus,
 };
 use self::node::{ClnNodeMonitor, ClnNodeMonitorConfig};
+use self::xpay::{ClnXpay, ClnXpayConfig};
 use crate::telemetry;
 
 type ClnGrpcClient = NodeClient<Channel>;
@@ -99,13 +100,15 @@ impl ClnManager {
 
 		let node_monitor_config = ClnNodeMonitorConfig {
 			invoice_check_interval: config.invoice_check_interval,
-			invoice_recheck_delay: config.invoice_recheck_delay,
-			invoice_expiry: config.invoice_expiry,
 			receive_htlc_forward_timeout: config.receive_htlc_forward_timeout,
-			check_base_delay: config.invoice_check_base_delay,
-			max_check_delay: config.max_invoice_check_delay,
 			track_all_base_delay: config.track_all_base_delay,
 			max_track_all_delay: config.max_track_all_delay,
+		};
+		let xpay_config = ClnXpayConfig {
+			invoice_check_interval: config.invoice_check_interval,
+			invoice_recheck_delay: config.invoice_recheck_delay,
+			check_base_delay: config.invoice_check_base_delay,
+			max_check_delay: config.max_invoice_check_delay,
 		};
 		let proc = ClnManagerProcess {
 			db: db.clone(),
@@ -114,6 +117,8 @@ impl ClnManager {
 
 			ctrl_rx,
 			node_monitor_config,
+			xpay_config,
+			invoice_expiry: config.invoice_expiry,
 			sync_manager,
 
 			payment_update_tx: payment_update_tx.clone(),
@@ -322,6 +327,7 @@ pub struct ClnNodeOnlineState {
 	hold_rpc: Option<HoldClient<Channel>>,
 	// option so we can take() when marking as down
 	monitor: Option<ClnNodeMonitor>,
+	xpay: Option<ClnXpay>,
 }
 
 #[derive(Debug)]
@@ -434,6 +440,7 @@ impl ClnNodeInfo {
 		db: &database::Db,
 		expected_network: bitcoin::Network,
 		monitor_config: &ClnNodeMonitorConfig,
+		xpay_config: &ClnXpayConfig,
 		payment_update_tx: &broadcast::Sender<PaymentHash>,
 		rtmgr: &RuntimeManager,
 		waker: &Arc<Notify>,
@@ -466,13 +473,26 @@ impl ClnNodeInfo {
 			db.clone(),
 			payment_update_tx.clone(),
 			id,
-			rpc.clone(),
 			hold_rpc.clone(),
 			monitor_config.clone(),
 			sync_manager.clone(),
 		).await.context("failed to start ClnNodeMonitor")?;
 
-		let online = ClnNodeOnlineState { id, pubkey, rpc, hold_rpc, monitor: Some(monitor) };
+		let xpay = ClnXpay::start(
+			rtmgr.clone(),
+			waker.clone(),
+			db.clone(),
+			payment_update_tx.clone(),
+			id,
+			rpc.clone(),
+			xpay_config.clone(),
+		).await.context("failed to start ClnXpay")?;
+
+		let online = ClnNodeOnlineState {
+			id, pubkey, rpc, hold_rpc,
+			monitor: Some(monitor),
+			xpay: Some(xpay),
+		};
 		let new_state = ClnNodeState::Online(online);
 		telemetry::set_lightning_node_state(
 			self.uri.clone(), Some(id), Some(pubkey), new_state.kind(),
@@ -524,6 +544,8 @@ struct ClnManagerProcess {
 	nodes: HashMap<Uri, ClnNodeInfo>,
 	node_by_id: HashMap<ClnNodeId, Uri>,
 	node_monitor_config: ClnNodeMonitorConfig,
+	xpay_config: ClnXpayConfig,
+	invoice_expiry: Duration,
 	sync_manager: Arc<SyncManager>,
 
 	htlc_expiry_delta: BlockDelta,
@@ -563,7 +585,7 @@ impl ClnManagerProcess {
 		for (uri, node) in self.nodes.iter_mut() {
 			match node.state {
 				ClnNodeState::Online(ref mut rt) => {
-					// we check if the monitor is still running
+					// check if the monitor is still running
 					if !rt.monitor.as_ref().expect("online").is_running() {
 						match rt.monitor.take().unwrap().wait().await {
 							Ok(Err(e)) => {
@@ -583,8 +605,36 @@ impl ClnManagerProcess {
 							},
 							Err(e) => {
 								if e.is_panic() {
-									// unfortunately we don't have much more info we can show here
 									error!("ClnNodeMonitor for {uri} thread paniced!");
+								}
+								let new_state = ClnNodeState::error(e);
+								telemetry::set_lightning_node_state(
+									uri.clone(), Some(rt.id), Some(rt.pubkey), new_state.kind(),
+								);
+								node.set_state(new_state);
+							},
+						}
+					// check if xpay is still running
+					} else if !rt.xpay.as_ref().expect("online").is_running() {
+						match rt.xpay.take().unwrap().wait().await {
+							Ok(Err(e)) => {
+								let new_state = ClnNodeState::error(format!("{:?}", e));
+								telemetry::set_lightning_node_state(
+									uri.clone(), Some(rt.id), Some(rt.pubkey), new_state.kind(),
+								);
+								node.set_state(new_state)
+							},
+							Ok(Ok(())) => {
+								error!("ClnXpay for {uri} unexpectedly exited without error");
+								let new_state = ClnNodeState::Offline;
+								telemetry::set_lightning_node_state(
+									uri.clone(), Some(rt.id), Some(rt.pubkey), new_state.kind(),
+								);
+								node.set_state(new_state);
+							},
+							Err(e) => {
+								if e.is_panic() {
+									error!("ClnXpay for {uri} thread paniced!");
 								}
 								let new_state = ClnNodeState::error(e);
 								telemetry::set_lightning_node_state(
@@ -601,6 +651,7 @@ impl ClnManagerProcess {
 						&self.db,
 						self.network,
 						&self.node_monitor_config,
+						&self.xpay_config,
 						&self.payment_update_tx,
 						&self.rtmgr,
 						&self.waker,
@@ -791,14 +842,11 @@ impl ClnManagerProcess {
 		// (grpc-connection problems or time-outs).
 		// We keep the error-around but will verify if the payment actually failed.
 		trace!("Bolt11 invoice payment of {:?} sent to CLN: {}", user_amount, invoice);
-		tokio::spawn(xpay::handle_pay_invoice(
-			self.db.clone(),
-			self.payment_update_tx.clone(),
-			node.rpc.clone(),
+		node.xpay.as_ref().context("xpay not running")?.pay(
 			invoice,
 			user_amount,
 			max_cltv_expiry_delta as BlockDelta,
-		));
+		);
 
 		Ok(())
 	}
@@ -837,7 +885,7 @@ impl ClnManagerProcess {
 			payment_hash: payment_hash.to_vec(),
 			amount_msat: amount.to_msat(),
 			min_final_cltv_expiry: Some(cltv_delta as u64),
-			expiry: Some(self.node_monitor_config.invoice_expiry.as_secs()),
+			expiry: Some(self.invoice_expiry.as_secs()),
 			routing_hints: vec![],
 			description: None,
 		}).await?.into_inner();
