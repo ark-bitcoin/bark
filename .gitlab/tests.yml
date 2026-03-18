@@ -172,6 +172,7 @@ bark-esplora:
   stage: test
   tags:
     - integration
+    - datastore
   rules:
     - if: $CI_COMMIT_BRANCH == "master" && $CI_PROJECT_URL == "https://gitlab.com/ark-bitcoin/bark"
   needs:
@@ -198,6 +199,7 @@ bark-mempool:
   stage: test
   tags:
     - integration
+    - datastore
   extends: .test-rules-no-tags
   needs:
     - check-commits
@@ -222,6 +224,7 @@ bark-btc30:
   stage: test
   tags:
     - integration
+    - datastore
   extends: .test-rules-no-tags
   needs:
     - check-commits
@@ -246,6 +249,7 @@ bark-filestore:
   stage: test
   tags:
     - integration
+    - datastore
   rules:
     - if: $CI_COMMIT_TAG
       when: never
@@ -279,6 +283,7 @@ core-server:
   stage: test
   tags:
     - integration
+    - datastore
   extends: .test-rules-no-tags
   needs:
     - check-commits
@@ -300,6 +305,8 @@ core-server:
 tar-and-print-test-data:
   interruptible: true
   stage: post-test
+  tags:
+    - datastore
   extends: .test-rules-no-tags
   needs:
     - job: bark-esplora

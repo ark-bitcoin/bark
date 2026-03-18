@@ -33,6 +33,7 @@ test-integration-btc30-codecov:
   stage: test
   tags:
     - integration
+    - datastore
   extends: .codecov-rules
   needs:
     - build-codecov
@@ -52,6 +53,8 @@ test-integration-btc30-codecov:
 code-coverage:
   interruptible: true
   stage: post-test
+  tags:
+    - datastore
   extends: .codecov-rules
   needs:
     - test-integration-btc30-codecov
@@ -64,6 +67,8 @@ code-coverage:
 tar-and-print-codecov-data:
   interruptible: true
   stage: post-test
+  tags:
+    - datastore
   extends: .codecov-rules
   needs:
     - job: code-coverage

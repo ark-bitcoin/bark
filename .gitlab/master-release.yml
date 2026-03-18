@@ -41,6 +41,8 @@ push-codeberg-mirror:
 generate-rustdocs:
   allow_failure: true
   stage: publish
+  tags:
+    - datastore
   extends: .master-release-rules
   needs:
     - bark-mempool
