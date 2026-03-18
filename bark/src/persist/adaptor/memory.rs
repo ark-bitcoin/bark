@@ -6,7 +6,7 @@
 
 use std::collections::{BTreeMap, HashMap};
 
-use crate::persist::adaptor::{Query, Record, StorageAdaptor, StorageAdaptorWrapper};
+use crate::persist::adaptor::{Query, QueryRange, Record, StorageAdaptor, StorageAdaptorWrapper};
 
 /// In-memory storage adaptor for testing and simple use cases.
 ///
@@ -83,7 +83,7 @@ impl StorageAdaptor for MemoryStorageAdaptor {
 		Ok(None)
 	}
 
-	async fn query(&self, query: Query) -> anyhow::Result<Vec<Record>> {
+	async fn query_sorted<R: QueryRange>(&self, query: Query<R>) -> anyhow::Result<Vec<Record>> {
 		let Some(partition) = self.partitions.get(&query.partition) else {
 			return Ok(Vec::new());
 		};
@@ -96,15 +96,7 @@ impl StorageAdaptor for MemoryStorageAdaptor {
 					return false;
 				};
 
-				let matches_start = if let Some(start) = &query.start {
-					sort_key.cmp(start) >= std::cmp::Ordering::Equal
-				} else { true };
-
-				let matches_end = if let Some(end) = &query.end {
-					sort_key.cmp(end) <= std::cmp::Ordering::Equal
-				} else { true };
-
-				matches_start && matches_end
+				query.range.contains(sort_key)
 			})
 			.cloned()
 			.collect();
@@ -113,7 +105,7 @@ impl StorageAdaptor for MemoryStorageAdaptor {
 		results.sort_by(|a, b| {
 			match (&a.sort_key, &b.sort_key) {
 				(Some(ka), Some(kb)) => ka.cmp(kb),
-				_ => std::cmp::Ordering::Equal, // Should not happen
+				_ => unreachable!("all records should have sort keys after filtering"),
 			}
 		});
 
