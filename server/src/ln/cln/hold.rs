@@ -13,7 +13,7 @@ use chrono::Local;
 use cln_rpc::plugins::hold::{self, InvoiceState};
 use futures::Stream;
 use lightning_invoice::Bolt11Invoice;
-use tokio::sync::{broadcast, mpsc, Notify};
+use tokio::sync::{broadcast, Notify};
 use tokio::task::JoinHandle;
 use tokio_stream::StreamExt;
 use tonic::transport::Channel;
@@ -27,7 +27,7 @@ use crate::system::RuntimeManager;
 use crate::telemetry;
 
 #[derive(Debug, Clone)]
-pub struct ClnNodeMonitorConfig {
+pub struct ClnHoldConfig {
 	pub invoice_check_interval: Duration,
 	pub receive_htlc_forward_timeout: Duration,
 	/// Base delay for TrackAll reconnection backoff (e.g., 1 second)
@@ -36,12 +36,11 @@ pub struct ClnNodeMonitorConfig {
 	pub max_track_all_delay: Duration,
 }
 
-pub struct ClnNodeMonitor {
-	ctrl_tx: mpsc::Sender<Ctrl>,
+pub struct ClnHold {
 	jh: JoinHandle<anyhow::Result<()>>,
 }
 
-impl ClnNodeMonitor {
+impl ClnHold {
 	pub async fn start(
 		rtmgr: RuntimeManager,
 		mgr_waker: Arc<Notify>,
@@ -49,12 +48,11 @@ impl ClnNodeMonitor {
 		payment_update_tx: broadcast::Sender<PaymentHash>,
 		node_id: ClnNodeId,
 		hold_rpc: Option<HoldClient<Channel>>,
-		config: ClnNodeMonitorConfig,
+		config: ClnHoldConfig,
 		sync_manager: Arc<SyncManager>,
-	) -> anyhow::Result<ClnNodeMonitor> {
-		let (ctrl_tx, ctrl_rx) = mpsc::channel(4);
-		let proc = ClnNodeMonitorProcess {
-			config, db, payment_update_tx, ctrl_rx, node_id,
+	) -> anyhow::Result<ClnHold> {
+		let proc = ClnHoldProcess {
+			config, db, payment_update_tx, node_id,
 			hold_rpc,
 			sync_manager,
 		};
@@ -62,12 +60,12 @@ impl ClnNodeMonitor {
 		let jh = tokio::spawn(async {
 			let ret = proc.run(rtmgr, mgr_waker).await;
 			if let Err(ref e) = ret {
-				error!("ClnNodeMonitor exited with error: {:?}", e);
+				error!("ClnHold exited with error: {:?}", e);
 			}
 			ret
 		});
 
-		Ok(ClnNodeMonitor { ctrl_tx, jh })
+		Ok(ClnHold { jh })
 	}
 
 	pub fn is_running(&self) -> bool {
@@ -75,29 +73,15 @@ impl ClnNodeMonitor {
 	}
 
 	/// Wait for the process to end.
-	///
-	/// Note that if [ClnNodeMonitor::stop] is not called,
-	/// it won't stop until an error occurs.
 	pub async fn wait(self) -> Result<anyhow::Result<()>, tokio::task::JoinError> {
 		Ok(self.jh.await?)
 	}
-
-	/// Stop the monitor process and wait for it to end.
-	#[allow(unused)]
-	pub async fn stop(self) -> anyhow::Result<()> {
-		self.ctrl_tx.send(Ctrl::Stop).await?;
-		self.wait().await?
-	}
 }
 
-impl fmt::Debug for ClnNodeMonitor {
+impl fmt::Debug for ClnHold {
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-	    f.write_str("ClnNodeMonitor")
+		f.write_str("ClnHold")
 	}
-}
-
-enum Ctrl {
-	Stop,
 }
 
 /// Manages the lifecycle of the TrackAll gRPC stream
@@ -112,11 +96,10 @@ enum TrackAllStreamState {
 	NeedsConnect,
 }
 
-struct ClnNodeMonitorProcess {
-	config: ClnNodeMonitorConfig,
+struct ClnHoldProcess {
+	config: ClnHoldConfig,
 	db: database::Db,
 	payment_update_tx: broadcast::Sender<PaymentHash>,
-	ctrl_rx: mpsc::Receiver<Ctrl>,
 
 	node_id: ClnNodeId,
 
@@ -124,7 +107,7 @@ struct ClnNodeMonitorProcess {
 	sync_manager: Arc<SyncManager>,
 }
 
-impl ClnNodeMonitorProcess {
+impl ClnHoldProcess {
 	/// For each subscription, verifies if incoming HTLCs have been accepted.
 	/// - If so, it updates the status to accepted.
 	/// - After a delay, it cancels the subscription on the plugin and updates
@@ -443,7 +426,7 @@ impl ClnNodeMonitorProcess {
 	}
 
 	async fn run(mut self, rtmgr: RuntimeManager, mgr_waker: Arc<Notify>) -> anyhow::Result<()> {
-		let _worker = rtmgr.spawn(format!("ClnNodeMonitor({})", self.node_id))
+		let _worker = rtmgr.spawn(format!("ClnHold({})", self.node_id))
 			.with_notify(mgr_waker);
 
 		let mut invoice_interval = tokio::time::interval(self.config.invoice_check_interval);
@@ -522,9 +505,6 @@ impl ClnNodeMonitorProcess {
 			loop {
 				tokio::select! {
 					_ = rtmgr.shutdown_signal() => return Ok(()),
-					ctrl = self.ctrl_rx.recv() => match ctrl {
-						None | Some(Ctrl::Stop) => return Ok(()),
-					},
 					event = track_all_stream.next() => {
 						match event {
 							Some(Ok(resp)) => {

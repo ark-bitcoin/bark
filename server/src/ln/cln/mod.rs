@@ -22,7 +22,7 @@
 //!
 //! ## The CLN listsendpay stream
 //!
-//! For each running cln node, we have a [ClnNodeMonitor] that will be subscribed
+//! For each running cln node, we have a [ClnHold] that will be subscribed
 //! to all updates regarding payments on the node. On each message we do the neccesary
 //! logging to the database and send a message on the payment update channel.
 //!
@@ -33,7 +33,7 @@
 //!
 //!
 
-pub(crate) mod node;
+pub(crate) mod hold;
 pub(crate) mod xpay;
 
 use std::fmt;
@@ -47,7 +47,7 @@ use bitcoin::Amount;
 use bitcoin::hex::DisplayHex;
 use bitcoin::secp256k1::PublicKey;
 use bitcoin_ext::{AmountExt, BlockDelta, BlockHeight};
-use cln_rpc::plugins::hold::{self, hold_client::HoldClient};
+use cln_rpc::plugins::hold::{self as hold_plugin, hold_client::HoldClient};
 use lightning_invoice::Bolt11Invoice;
 use tokio::sync::{broadcast, Notify, mpsc, oneshot};
 use tonic::transport::{Channel, Uri};
@@ -64,7 +64,7 @@ use crate::database::ln::{
 	ClnNodeId, LightningHtlcSubscription, LightningHtlcSubscriptionStatus, LightningPaymentAttempt,
 	LightningPaymentStatus,
 };
-use self::node::{ClnNodeMonitor, ClnNodeMonitorConfig};
+use self::hold::{ClnHold, ClnHoldConfig};
 use self::xpay::{ClnXpay, ClnXpayConfig};
 use crate::telemetry;
 
@@ -98,7 +98,7 @@ impl ClnManager {
 		let (ctrl_tx, ctrl_rx) = mpsc::unbounded_channel();
 		let (payment_update_tx, payment_update_rx) = broadcast::channel(256);
 
-		let node_monitor_config = ClnNodeMonitorConfig {
+		let node_monitor_config = ClnHoldConfig {
 			invoice_check_interval: config.invoice_check_interval,
 			receive_htlc_forward_timeout: config.receive_htlc_forward_timeout,
 			track_all_base_delay: config.track_all_base_delay,
@@ -326,7 +326,7 @@ pub struct ClnNodeOnlineState {
 	rpc: ClnGrpcClient,
 	hold_rpc: Option<HoldClient<Channel>>,
 	// option so we can take() when marking as down
-	monitor: Option<ClnNodeMonitor>,
+	monitor: Option<ClnHold>,
 	xpay: Option<ClnXpay>,
 }
 
@@ -439,7 +439,7 @@ impl ClnNodeInfo {
 		&mut self,
 		db: &database::Db,
 		expected_network: bitcoin::Network,
-		monitor_config: &ClnNodeMonitorConfig,
+		monitor_config: &ClnHoldConfig,
 		xpay_config: &ClnXpayConfig,
 		payment_update_tx: &broadcast::Sender<PaymentHash>,
 		rtmgr: &RuntimeManager,
@@ -467,7 +467,7 @@ impl ClnNodeInfo {
 		let (id, _) = db.register_lightning_node(&pubkey).await?;
 
 		info!("Succesfully connected to cln node with uri {}", self.uri);
-		let monitor = ClnNodeMonitor::start(
+		let monitor = ClnHold::start(
 			rtmgr.clone(),
 			waker.clone(),
 			db.clone(),
@@ -476,7 +476,7 @@ impl ClnNodeInfo {
 			hold_rpc.clone(),
 			monitor_config.clone(),
 			sync_manager.clone(),
-		).await.context("failed to start ClnNodeMonitor")?;
+		).await.context("failed to start ClnHold")?;
 
 		let xpay = ClnXpay::start(
 			rtmgr.clone(),
@@ -543,7 +543,7 @@ struct ClnManagerProcess {
 	network: bitcoin::Network,
 	nodes: HashMap<Uri, ClnNodeInfo>,
 	node_by_id: HashMap<ClnNodeId, Uri>,
-	node_monitor_config: ClnNodeMonitorConfig,
+	node_monitor_config: ClnHoldConfig,
 	xpay_config: ClnXpayConfig,
 	invoice_expiry: Duration,
 	sync_manager: Arc<SyncManager>,
@@ -596,7 +596,7 @@ impl ClnManagerProcess {
 								node.set_state(new_state)
 							},
 							Ok(Ok(())) => {
-								error!("ClnNodeMonitor for {uri} unexpectedly exited without error");
+								error!("ClnHold for {uri} unexpectedly exited without error");
 								let new_state = ClnNodeState::Offline;
 								telemetry::set_lightning_node_state(
 									uri.clone(), Some(rt.id), Some(rt.pubkey), new_state.kind(),
@@ -605,7 +605,7 @@ impl ClnManagerProcess {
 							},
 							Err(e) => {
 								if e.is_panic() {
-									error!("ClnNodeMonitor for {uri} thread paniced!");
+									error!("ClnHold for {uri} thread paniced!");
 								}
 								let new_state = ClnNodeState::error(e);
 								telemetry::set_lightning_node_state(
@@ -872,7 +872,7 @@ impl ClnManagerProcess {
 		if let Ok(Some(existing)) = self.db.get_lightning_invoice_by_payment_hash(payment_hash).await {
 			trace!("Found invoice but no subscription, creating new one");
 
-			hold_client.inject(hold::InjectRequest {
+			hold_client.inject(hold_plugin::InjectRequest {
 				invoice: existing.invoice.to_string(),
 				min_cltv_expiry: None,
 			}).await?;
@@ -881,7 +881,7 @@ impl ClnManagerProcess {
 			return Ok(existing.invoice.into_bolt11().expect("invoice is not bolt11"))
 		}
 
-		let res = hold_client.invoice(hold::InvoiceRequest {
+		let res = hold_client.invoice(hold_plugin::InvoiceRequest {
 			payment_hash: payment_hash.to_vec(),
 			amount_msat: amount.to_msat(),
 			min_final_cltv_expiry: Some(cltv_delta as u64),
@@ -911,7 +911,7 @@ impl ClnManagerProcess {
 			.context("invoice cannot be settled: node is now offline")?
 			.hold_rpc.clone().context("node doesn't support hold anymore")?;
 
-		hold_client.settle(hold::SettleRequest {
+		hold_client.settle(hold_plugin::SettleRequest {
 			payment_preimage: preimage.to_vec(),
 		}).await?;
 
@@ -926,7 +926,7 @@ impl ClnManagerProcess {
 			.hold_rpc.clone().context("node doesn't support hold anymore")?;
 
 		let payment_hash = PaymentHash::from(*subscription.invoice.payment_hash());
-		hold_client.cancel(hold::CancelRequest {
+		hold_client.cancel(hold_plugin::CancelRequest {
 			payment_hash: payment_hash.to_vec(),
 		}).await?;
 
