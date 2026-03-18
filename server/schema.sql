@@ -398,12 +398,14 @@ BEGIN
 	INSERT INTO vtxo_history (
 		id, vtxo_id, vtxo_txid, vtxo, expiry, exit_delta, policy_type, policy,
 		server_pubkey, amount, anchor_point,
-		oor_spent_txid, spent_in_round,
+		oor_spent_txid, spent_in_round, offboarded_in,
+		lightning_htlc_subscription_id, banned_until_height,
 		created_at, updated_at
 	) VALUES (
 		OLD.id, OLD.vtxo_id, OLD.vtxo_txid, OLD.vtxo, OLD.expiry, OLD.exit_delta, OLD.policy_type, OLD.policy,
 		OLD.server_pubkey, OLD.amount, OLD.anchor_point,
-		OLD.oor_spent_txid, OLD.spent_in_round,
+		OLD.oor_spent_txid, OLD.spent_in_round, OLD.offboarded_in,
+		OLD.lightning_htlc_subscription_id, OLD.banned_until_height,
 		OLD.created_at, OLD.updated_at
 	);
 
@@ -1146,7 +1148,8 @@ CREATE TABLE public.vtxo (
     policy bytea,
     server_pubkey text,
     amount bigint,
-    anchor_point text
+    anchor_point text,
+    banned_until_height integer
 );
 
 
@@ -1171,7 +1174,9 @@ CREATE TABLE public.vtxo_history (
     policy bytea,
     server_pubkey text,
     amount bigint,
-    anchor_point text
+    anchor_point text,
+    lightning_htlc_subscription_id bigint,
+    banned_until_height integer
 );
 
 

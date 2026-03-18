@@ -164,7 +164,7 @@ pub async fn get_vtxo_by_id<T>(
 {
 	let stmt = client.prepare_typed("
 		SELECT id, vtxo_id, vtxo, expiry, oor_spent_txid, spent_in_round, offboarded_in,
-			created_at, updated_at
+			banned_until_height, created_at, updated_at
 		FROM vtxo
 		WHERE vtxo_id = $1;
 	", &[Type::TEXT]).await?;
@@ -188,7 +188,7 @@ pub async fn get_vtxos_by_id<T>(
 {
 	let statement = client.prepare_typed("
 		SELECT id, vtxo_id, vtxo, expiry, oor_spent_txid, spent_in_round, offboarded_in,
-			created_at, updated_at
+			banned_until_height, created_at, updated_at
 		FROM vtxo
 		WHERE vtxo_id = ANY($1);
 	", &[Type::TEXT_ARRAY]).await?;
@@ -227,7 +227,7 @@ pub async fn get_bare_vtxo_by_id<T>(
 		SELECT id, vtxo_id, expiry, exit_delta, policy_type, policy,
 			server_pubkey, amount, anchor_point,
 			oor_spent_txid, spent_in_round, offboarded_in,
-			created_at, updated_at
+			banned_until_height, created_at, updated_at
 		FROM vtxo
 		WHERE vtxo_id = $1;
 	", &[Type::TEXT]).await?;

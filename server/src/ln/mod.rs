@@ -46,8 +46,7 @@ impl Server {
 		let invoice_payment_hash = invoice.payment_hash();
 
 		let input_vtxo_ids = request.inputs().cloned().collect::<Vec<VtxoId>>();
-		let input_vtxos = self.db.get_user_vtxos_by_id(&input_vtxo_ids).await?
-			.into_iter().map(|v| v.vtxo).collect::<Vec<_>>();
+		let input_vtxos = self.db.get_user_vtxos_by_id(&input_vtxo_ids).await?;
 
 		let htlc_vtxos = request.all_outputs()
 			.filter(|v| matches!(v.policy, VtxoPolicy::ServerHtlcSend(..)))
@@ -76,7 +75,7 @@ impl Server {
 		// Validate lightning send fees
 		let tip = self.sync_manager.chain_tip();
 		let vtxo_fee_infos = input_vtxos.iter()
-			.map(|v| VtxoFeeInfo::from_vtxo_and_tip(v, tip.height));
+			.map(|v| VtxoFeeInfo::from_vtxo_and_tip(&v.vtxo, tip.height));
 		let fee = self.config.fees.lightning_send.calculate(amount, vtxo_fee_infos)
 			.context("fee overflowed")?;
 
@@ -95,7 +94,7 @@ impl Server {
 
 		// Convert the PackageCosignRequest<VtxoId> into PackageCosignRequest<Vtxo>
 		// We will mask the old value
-		let request = request.set_vtxos(input_vtxos)?;
+		let request = request.set_vtxos(input_vtxos.iter().map(|v| v.vtxo.clone()))?;
 
 		// Bail early if this invoice was already paid to avoid setting up HTLCs
 		// just to have them revoked some time later.
@@ -136,6 +135,16 @@ impl Server {
 		let builder = self.validate_cosign_request(validation, request)
 			.badarg("invalid cosign request")?;
 
+		// Check that the input vtxos are actually spendable
+		// We have to do this at the end to ensure idempotency
+		let chain_tip = self.sync_manager.chain_tip().height;
+		let spend_map = builder.spend_info().collect::<HashMap<VtxoId, bitcoin::Txid>>();
+		for vtxo in input_vtxos {
+			let spending_txid = spend_map.get(&vtxo.vtxo_id)
+				.context("missing spend info for input vtxo")?;
+			vtxo.check_spendable_for_oor(chain_tip, *spending_txid)?;
+		}
+
 		slog!(LightningPayHtlcsRequested, invoice_payment_hash, amount, fee, expiry);
 
 		let builder = self.cosign_oor_with_builder(builder).await?;
@@ -157,11 +166,10 @@ impl Server {
 
 		slog!(LightningPaymentInitRequested, invoice_payment_hash, htlc_vtxo_ids);
 
+		let chain_tip = self.sync_manager.chain_tip().height;
 		let mut vtxos = vec![];
 		for htlc_vtxo in htlc_vtxos {
-			if !htlc_vtxo.is_spendable() {
-				return badarg!("input vtxo is already spent");
-			}
+			htlc_vtxo.check_spendable(chain_tip)?;
 
 			let vtxo = htlc_vtxo.vtxo.clone();
 
@@ -568,9 +576,8 @@ impl Server {
 
 					let vtxos = self.db.get_user_vtxos_by_id(&[vtxo_id]).await?;
 					let vtxo = vtxos.first().badarg("vtxo for proof not found")?;
-					if !vtxo.is_spendable() {
-						return badarg!("vtxo for proof is not spendable");
-					}
+					let chain_tip = self.sync_manager.chain_tip().height;
+					vtxo.check_spendable(chain_tip)?;
 
 					challenge.verify_input_vtxo_sig(&vtxo.vtxo, &ownership_proof).context("vtxo ownership proof invalid")?;
 				},

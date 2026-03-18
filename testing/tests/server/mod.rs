@@ -1,3 +1,4 @@
+mod ban;
 mod block_index;
 mod postgres;
 mod postgres_migrations;

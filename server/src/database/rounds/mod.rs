@@ -291,6 +291,7 @@ impl Db {
 	/// Will check that the input vtxos are spendable.
 	pub async fn try_store_round_participation(
 		&self,
+		chain_tip: BlockHeight,
 		unlock_preimage: UnlockPreimage,
 		inputs: &[VtxoId],
 		outputs: impl IntoIterator<Item = &VtxoRequest>,
@@ -305,9 +306,7 @@ impl Db {
 
 		// check that all inputs are free
 		for vtxo in query::get_vtxos_by_id(&tx, inputs).await? {
-			if !vtxo.is_spendable() {
-				return badarg!("input vtxo {} is not spendable", vtxo.vtxo_id);
-			}
+			vtxo.check_spendable(chain_tip)?;
 		}
 
 		query::store_round_participation(

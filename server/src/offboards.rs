@@ -129,12 +129,12 @@ impl Server {
 		}
 
 		let vtxos = self.db.get_user_vtxos_by_id(&input_vtxos).await?;
-		if let Some(v) = vtxos.iter().find(|v| !v.is_spendable()) {
-			return badarg!("VTXO {} is already spent", v.vtxo_id);
+		let tip = self.chain_tip().height;
+		for v in &vtxos {
+			v.check_spendable(tip)?;
 		}
 
 		// Validate the request parameters
-		let tip = self.chain_tip().height;
 		let fee_info = vtxos.iter().map(|v| VtxoFeeInfo::from_vtxo_and_tip(&v.vtxo, tip));
 		let gross_amount = vtxos.iter().map(|v| v.vtxo.amount()).sum::<Amount>();
 

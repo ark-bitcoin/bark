@@ -561,6 +561,30 @@ service SweepAdminService {
 	rpc TriggerSweep(core.Empty) returns (core.Empty) {}
 }
 
+service BanAdminService {
+	rpc BanVtxo(BanVtxoRequest) returns (core.Empty) {}
+	rpc UnbanVtxo(UnbanVtxoRequest) returns (core.Empty) {}
+	rpc ListBannedVtxos(core.Empty) returns (ListBannedVtxosResponse) {}
+}
+
+message BanVtxoRequest {
+	bytes vtxo_id = 1;
+	uint32 ban_blocks = 2;
+}
+
+message UnbanVtxoRequest {
+	bytes vtxo_id = 1;
+}
+
+message BannedVtxo {
+	bytes vtxo_id = 1;
+	uint32 banned_until_height = 2;
+}
+
+message ListBannedVtxosResponse {
+	repeated BannedVtxo banned_vtxos = 1;
+}
+
 message WalletStatus {
 	string address = 1;
 	uint64 total_balance = 2;

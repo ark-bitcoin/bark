@@ -29,7 +29,7 @@ mod offboards;
 mod round;
 pub mod telemetry;
 mod txindex;
-mod utils;
+pub mod utils;
 
 
 use crate::database::{BlockTable, VirtualTransaction};

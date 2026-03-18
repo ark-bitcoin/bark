@@ -899,3 +899,57 @@ async fn block_table_independence() {
 	assert_eq!(db.get_lowest_block(BlockTable::Captaind).await.unwrap().unwrap().height, 100);
 	assert_eq!(db.get_lowest_block(BlockTable::Watchmand).await.unwrap().unwrap().height, 100);
 }
+
+#[tokio::test]
+async fn ban_vtxo() {
+	let mut ctx = TestContext::new_minimal("postgresd/ban_vtxo").await;
+	ctx.init_central_postgres().await;
+	let postgres_cfg = ctx.new_postgres(&ctx.test_name).await;
+
+	Db::create(&postgres_cfg).await.expect("Database created");
+	let db = Db::connect(&postgres_cfg).await.expect("Connected to database");
+
+	// Insert a vtxo
+	let vtxo = ServerVtxo::from(VTXO_VECTORS.board_vtxo.clone());
+	let vtxo_id = vtxo.id();
+	db.upsert_vtxos(&[vtxo]).await.expect("upsert succeeded");
+
+	// Initially no vtxos are banned
+	let banned = db.list_banned_vtxos(100).await.expect("list succeeded");
+	assert!(banned.is_empty(), "no vtxos should be banned initially");
+
+	// The vtxo should not have a ban set
+	let state = db.get_user_vtxos_by_id(&[vtxo_id]).await.expect("get succeeded")
+		.into_iter().next().expect("vtxo found");
+	assert!(state.banned_until_height.is_none());
+	assert!(state.is_spendable(100));
+
+	// Ban the vtxo until block 200
+	db.ban_vtxo(vtxo_id, 200).await.expect("ban succeeded");
+
+	// The vtxo should now be banned
+	let state = db.get_user_vtxos_by_id(&[vtxo_id]).await.expect("get succeeded")
+		.into_iter().next().expect("vtxo found");
+	assert_eq!(state.banned_until_height, Some(200));
+	assert!(!state.is_spendable(100)); // tip 100 < ban 200
+	assert!(state.is_spendable(200)); // tip 200 >= ban 200
+
+	// Should appear in the banned list
+	let banned = db.list_banned_vtxos(100).await.expect("list succeeded");
+	assert_eq!(banned.len(), 1);
+	assert_eq!(banned[0].vtxo_id, vtxo_id);
+	assert_eq!(banned[0].banned_until_height, Some(200));
+
+	// Unban the vtxo
+	db.unban_vtxo(vtxo_id).await.expect("unban succeeded");
+
+	// The vtxo should no longer be banned
+	let state = db.get_user_vtxos_by_id(&[vtxo_id]).await.expect("get succeeded")
+		.into_iter().next().expect("vtxo found");
+	assert!(state.banned_until_height.is_none());
+	assert!(state.is_spendable(100));
+
+	// Banned list should be empty again
+	let banned = db.list_banned_vtxos(100).await.expect("list succeeded");
+	assert!(banned.is_empty());
+}

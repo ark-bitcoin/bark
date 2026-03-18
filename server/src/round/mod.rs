@@ -345,15 +345,13 @@ impl CollectingPayments {
 		srv: &Server,
 		inputs: &[VtxoId],
 	) -> anyhow::Result<Vec<Vtxo<Full>>> {
+		let chain_tip = srv.sync_manager.chain_tip().height;
 		let mut ret  = Vec::with_capacity(inputs.len());
 		match srv.db.get_user_vtxos_by_id(&inputs).await {
 			Ok(vtxos) => {
 				// Check if the input vtxos exist, unspent and owned by user.
 				for v in vtxos {
-					if !v.is_spendable() {
-						trace!("trying to submit unspendable vtxo to round: {:?}", v);
-						bail!("vtxo {} is not spendable", v.vtxo_id)
-					}
+					v.check_spendable(chain_tip)?;
 					ret.push(v.vtxo);
 				}
 				Ok(ret)
@@ -1738,8 +1736,9 @@ impl Server {
 		let unlock_preimage = rand::random::<UnlockPreimage>();
 		let unlock_hash = UnlockHash::hash(&unlock_preimage);
 
+		let chain_tip = self.chain_tip().height;
 		self.db.try_store_round_participation(
-			unlock_preimage, &input_ids, &vtxo_requests,
+			chain_tip, unlock_preimage, &input_ids, &vtxo_requests,
 		).await?;
 
 		Ok(unlock_hash)
