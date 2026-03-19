@@ -1,0 +1,5 @@
+- Add wallet notification stream for arkoor receives
+  External applications can now subscribe to real-time wallet events via
+  `Wallet::subscribe_notifications()`. Each arkoor payment emits an
+  `ArkReceive` notification with the amount, address, and movement ID.
+  [#1793](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1793)
