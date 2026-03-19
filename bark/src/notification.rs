@@ -1,15 +1,22 @@
 use std::pin::Pin;
 
+use bitcoin::Amount;
 use futures::stream::{Stream, unfold};
 use tokio::sync::broadcast;
 
 use crate::Wallet;
+use crate::movement::MovementId;
 
 /// A notification emitted by the wallet.
-///
-/// Notification content will be defined later.
 #[derive(Debug, Clone)]
-pub enum WalletNotification {}
+pub enum WalletNotification {
+	/// A new arkoor payment was received.
+	ArkReceive {
+		amount: Amount,
+		address: ark::Address,
+		movement_id: MovementId,
+	},
+}
 
 /// Handle for subscribing to wallet notifications.
 pub struct NotificationHandle {

@@ -21,7 +21,7 @@ use server_rpc::protos;
 use server_rpc::protos::mailbox_server::{ArkoorMessage, MailboxMessage, mailbox_message};
 use crate::movement::{MovementDestination, MovementStatus};
 use crate::movement::update::MovementUpdate;
-use crate::Wallet;
+use crate::{Wallet, WalletNotification};
 use crate::subsystem::{ArkoorMovement, Subsystem};
 
 
@@ -235,8 +235,8 @@ impl Wallet {
 			}
 		}
 		let received_on: Vec<_> = received_by_address
-			.into_iter()
-			.map(|(addr, amount)| MovementDestination::ark(addr, amount))
+			.iter()
+			.map(|(addr, amount)| MovementDestination::ark(addr.clone(), *amount))
 			.collect();
 
 		let movement_id = self.movements.new_finished_movement(
@@ -250,6 +250,14 @@ impl Wallet {
 		).await?;
 
 		info!("Received arkoor (movement {}) for {}", movement_id, balance);
+
+		for (address, amount) in received_by_address {
+			self.notifications.send(WalletNotification::ArkReceive {
+				amount,
+				address,
+				movement_id,
+			});
+		}
 
 		if let Some(checkpoint) = checkpoint {
 			self.store_mailbox_checkpoint(checkpoint).await?;
