@@ -1,6 +1,8 @@
 use ark_testing::{btc, sat, TestContext};
 use ark_testing::constants::BOARD_CONFIRMATIONS;
-use ark_testing::util::ToAltString;
+use ark_testing::util::{FutureExt, ToAltString};
+use bark::WalletNotification;
+use futures::StreamExt;
 
 #[tokio::test]
 async fn send_simple_arkoor() {
@@ -11,8 +13,21 @@ async fn send_simple_arkoor() {
 
 	bark1.board_and_confirm_and_register(&ctx, sat(80_000)).await;
 
+	// Open a wallet client for bark2 and subscribe to notifications before the send
+	let bark2_wallet = bark2.client().await;
+	let mut notifications = bark2_wallet.subscribe_notifications();
+
 	let addr2 = bark2.address().await;
-	bark1.send_oor(addr2, sat(20_000)).await;
+	bark1.send_oor(&addr2, sat(20_000)).await;
+
+	// Sync bark2 via the wallet client and receive the notification that the arkoor payment was received
+	bark2_wallet.sync().await;
+	match notifications.next().ready().await.unwrap()  {
+		WalletNotification::ArkReceive { amount, address, .. } => {
+			assert_eq!(amount, sat(20_000));
+			assert_eq!(addr2, address.to_string());
+		}
+	}
 
 	assert_eq!(60_000, bark1.spendable_balance().await.to_sat());
 	assert_eq!(20_000, bark2.spendable_balance().await.to_sat());
