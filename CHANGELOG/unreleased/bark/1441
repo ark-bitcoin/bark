@@ -1,0 +1,6 @@
+- Don't advance wallet key index when no change output is created
+  When creating an arkoor transaction spending the full VTXO amount, no change output is
+  needed. Previously the wallet would still derive and persist a new keypair, unnecessarily
+  advancing the key index. The key index is now only advanced when a change VTXO is actually
+  produced.
+  [#1441](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1441)

@@ -552,7 +552,7 @@ impl Wallet {
 			bail!("Cannot pay invoice for 0 sats (0 sat invoices are not any-amount invoices)");
 		}
 
-		let (user_keypair, _) = self.derive_store_next_keypair().await?;
+		let (change_keypair, _) = self.derive_store_next_keypair().await?;
 
 		let (inputs, fee) = self.select_vtxos_to_cover_with_fee(
 			amount, |a, v| ark_info.fees.lightning_send.calculate(a, v).context("fee overflowed"),
@@ -574,7 +574,7 @@ impl Wallet {
 
 		let expiry = tip + ark_info.htlc_send_expiry_delta as BlockHeight;
 		let policy = VtxoPolicy::new_server_htlc_send(
-			user_keypair.public_key(), invoice.payment_hash(), expiry,
+			change_keypair.public_key(), invoice.payment_hash(), expiry,
 		);
 
 		let input_amount = inputs.iter().map(|v| v.amount()).sum::<Amount>();
@@ -584,7 +584,7 @@ impl Wallet {
 		} else {
 			let change_dest = ArkoorDestination {
 				total_amount: input_amount - total_amount,
-				policy: VtxoPolicy::new_pubkey(user_keypair.public_key()),
+				policy: VtxoPolicy::new_pubkey(change_keypair.public_key()),
 			};
 			vec![pay_dest, change_dest]
 		};
