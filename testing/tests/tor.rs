@@ -1,6 +1,4 @@
 
-use bitcoincore_rpc::Auth;
-
 use ark_testing::{btc, sat, Bark, Captaind, TestContext, Tor, TorConfig, HiddenServiceConfig};
 use ark_testing::constants::{BOARD_CONFIRMATIONS};
 use ark_testing::context::LightningPaymentSetup;
@@ -40,46 +38,12 @@ async fn setup(test_name: &str) -> (TestContext, Captaind, Tor, LightningPayment
 	(ctx, srv, tor, lightning)
 }
 
-async fn new_tor_bark(
-	ctx: &TestContext,
-	name: &str,
-	srv: &Captaind,
-	tor: &Tor,
-	onion_server: bool,
-	onion_chain: bool,
-) -> Bark {
-	let socks = tor.socks_address();
-	let server_onion = format!(
-		"http://{}:{}", tor.onion_address("server"), SERVER_VIRTUAL_PORT,
-	);
-	let chain_onion = format!(
-		"http://{}:{}", tor.onion_address("chain"), CHAIN_VIRTUAL_PORT,
-	);
-	ctx.try_new_bark_with_cfg(name, srv, |cfg| {
-		if onion_server {
-			cfg.server_address = server_onion.clone();
-		}
-		if onion_chain {
-			if cfg.esplora_address.is_some() {
-				cfg.esplora_address = Some(chain_onion.clone());
-			} else {
-				cfg.bitcoind_address = Some(chain_onion.clone());
-				match ctx.bitcoind().auth() {
-					Auth::UserPass(u, p) => {
-						cfg.bitcoind_user = Some(u.clone());
-						cfg.bitcoind_pass = Some(p.clone());
-					}
-					Auth::CookieFile(path) => {
-						cfg.bitcoind_cookiefile = Some(path.clone());
-					}
-					a => panic!("unexpected bitcoind auth: {:?}", a),
-				}
-			}
-		}
-		if onion_server || onion_chain {
-			cfg.socks5_proxy = Some(socks.clone());
-		}
-	}).await.expect("failed to create bark")
+fn server_onion(tor: &Tor) -> String {
+	format!("http://{}:{}", tor.onion_address("server"), SERVER_VIRTUAL_PORT)
+}
+
+fn chain_onion(tor: &Tor) -> String {
+	format!("http://{}:{}", tor.onion_address("chain"), CHAIN_VIRTUAL_PORT)
 }
 
 async fn smoke_test(
@@ -149,31 +113,50 @@ async fn smoke_test(
 #[tokio::test]
 async fn tor_onion_server_clearnet_chain() {
 	let (ctx, srv, tor, lightning) = setup("tor/onion_server_clearnet_chain").await;
-	let bark1 = new_tor_bark(&ctx, "bark1", &srv, &tor, true, false).await;
-	let bark2 = new_tor_bark(&ctx, "bark2", &srv, &tor, false, false).await;
+	let bark1 = ctx.bark("bark1", &srv)
+		.server_address(server_onion(&tor))
+		.socks5_proxy(tor.socks_address())
+		.create().await;
+	let bark2 = ctx.bark("bark2", &srv).create().await;
 	smoke_test(&ctx, &srv, lightning, bark1, bark2).await;
 }
 
 #[tokio::test]
 async fn tor_clearnet_server_onion_chain() {
 	let (ctx, srv, tor, lightning) = setup("tor/clearnet_server_onion_chain").await;
-	let bark1 = new_tor_bark(&ctx, "bark1", &srv, &tor, false, true).await;
-	let bark2 = new_tor_bark(&ctx, "bark2", &srv, &tor, false, false).await;
+	let bark1 = ctx.bark("bark1", &srv)
+		.chain_address(chain_onion(&tor))
+		.socks5_proxy(tor.socks_address())
+		.create().await;
+	let bark2 = ctx.bark("bark2", &srv).create().await;
 	smoke_test(&ctx, &srv, lightning, bark1, bark2).await;
 }
 
 #[tokio::test]
 async fn tor_onion_server_onion_chain() {
 	let (ctx, srv, tor, lightning) = setup("tor/onion_server_onion_chain").await;
-	let bark1 = new_tor_bark(&ctx, "bark1", &srv, &tor, true, true).await;
-	let bark2 = new_tor_bark(&ctx, "bark2", &srv, &tor, false, false).await;
+	let bark1 = ctx.bark("bark1", &srv)
+		.server_address(server_onion(&tor))
+		.chain_address(chain_onion(&tor))
+		.socks5_proxy(tor.socks_address())
+		.create().await;
+	let bark2 = ctx.bark("bark2", &srv).create().await;
 	smoke_test(&ctx, &srv, lightning, bark1, bark2).await;
 }
 
 #[tokio::test]
 async fn tor_double_onion_server_onion_chain() {
 	let (ctx, srv, tor, lightning) = setup("tor/tor_double_onion_server_onion_chain").await;
-	let bark1 = new_tor_bark(&ctx, "bark1", &srv, &tor, true, true).await;
-	let bark2 = new_tor_bark(&ctx, "bark2", &srv, &tor, true, true).await;
+	let socks = tor.socks_address();
+	let bark1 = ctx.bark("bark1", &srv)
+		.server_address(server_onion(&tor))
+		.chain_address(chain_onion(&tor))
+		.socks5_proxy(&socks)
+		.create().await;
+	let bark2 = ctx.bark("bark2", &srv)
+		.server_address(server_onion(&tor))
+		.chain_address(chain_onion(&tor))
+		.socks5_proxy(&socks)
+		.create().await;
 	smoke_test(&ctx, &srv, lightning, bark1, bark2).await;
 }

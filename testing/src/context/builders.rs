@@ -83,6 +83,9 @@ pub struct BarkBuilder<'a> {
 	srv: &'a dyn super::ToArkUrl,
 	own_bitcoind: bool,
 	fund_amount: Option<Amount>,
+	server_address: Option<String>,
+	chain_address: Option<String>,
+	socks5_proxy: Option<String>,
 	mod_cfg: Option<Box<dyn FnOnce(&mut bark::Config)>>,
 }
 
@@ -94,6 +97,9 @@ impl<'a> BarkBuilder<'a> {
 			srv,
 			own_bitcoind: false,
 			fund_amount: None,
+			server_address: None,
+			chain_address: None,
+			socks5_proxy: None,
 			mod_cfg: None,
 		}
 	}
@@ -105,6 +111,25 @@ impl<'a> BarkBuilder<'a> {
 
 	pub fn funded(mut self, amount: Amount) -> Self {
 		self.fund_amount = Some(amount);
+		self
+	}
+
+	/// Override the Ark server address (e.g. with a .onion address).
+	pub fn server_address(mut self, addr: impl Into<String>) -> Self {
+		self.server_address = Some(addr.into());
+		self
+	}
+
+	/// Override the chain source address (esplora or bitcoind, whichever
+	/// the test context uses) with e.g. a .onion address.
+	pub fn chain_address(mut self, addr: impl Into<String>) -> Self {
+		self.chain_address = Some(addr.into());
+		self
+	}
+
+	/// Route non-local traffic through a SOCKS5 proxy.
+	pub fn socks5_proxy(mut self, proxy: impl Into<String>) -> Self {
+		self.socks5_proxy = Some(proxy.into());
 		self
 	}
 
@@ -127,6 +152,18 @@ impl<'a> BarkBuilder<'a> {
 		};
 
 		let mut cfg = self.ctx.bark_default_cfg(self.srv, bitcoind.as_deref());
+
+		if let Some(addr) = self.server_address {
+			cfg.server_address = addr;
+		}
+		if let Some(addr) = self.chain_address {
+			if cfg.esplora_address.is_some() {
+				cfg.esplora_address = Some(addr);
+			} else {
+				cfg.bitcoind_address = Some(addr);
+			}
+		}
+		cfg.socks5_proxy = self.socks5_proxy;
 
 		if let Some(mod_cfg) = self.mod_cfg {
 			mod_cfg(&mut cfg);
