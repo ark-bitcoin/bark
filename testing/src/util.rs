@@ -6,6 +6,7 @@ use std::time::Duration;
 
 use anyhow::Context;
 use log::error;
+use semver::Version;
 use tokio::fs;
 use tokio::process::Child;
 
@@ -235,6 +236,60 @@ impl<T> ReceiverExt<T> for tokio::sync::mpsc::UnboundedReceiver<T> {
 
 	fn clear(&mut self) {
 		while let Ok(_) = self.try_recv() {}
+	}
+}
+
+/// A bark version that is either a semver version or DIRTY (an unreleased build).
+///
+/// DIRTY is considered greater than any semver version, so that version
+/// checks like `require_version >= "0.1.0-beta.8"` pass on dev builds.
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub enum BarkVersion {
+	Release(Version),
+	Dirty,
+}
+
+impl BarkVersion {
+	pub fn parse(s: &str) -> BarkVersion {
+		if s == "DIRTY" {
+			BarkVersion::Dirty
+		} else {
+			BarkVersion::Release(Version::parse(s).expect("invalid semver version"))
+		}
+	}
+
+	pub fn is_dirty(&self) -> bool {
+		matches!(self, BarkVersion::Dirty)
+	}
+
+	pub fn is_release(&self) -> bool {
+		matches!(self, BarkVersion::Release(_))
+	}
+}
+
+impl fmt::Display for BarkVersion {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		match self {
+			BarkVersion::Dirty => write!(f, "DIRTY"),
+			BarkVersion::Release(v) => write!(f, "{}", v),
+		}
+	}
+}
+
+impl Ord for BarkVersion {
+	fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+		match (self, other) {
+			(BarkVersion::Dirty, BarkVersion::Dirty) => std::cmp::Ordering::Equal,
+			(BarkVersion::Dirty, _) => std::cmp::Ordering::Greater,
+			(_, BarkVersion::Dirty) => std::cmp::Ordering::Less,
+			(BarkVersion::Release(a), BarkVersion::Release(b)) => a.cmp(b),
+		}
+	}
+}
+
+impl PartialOrd for BarkVersion {
+	fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+		Some(self.cmp(other))
 	}
 }
 

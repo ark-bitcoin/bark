@@ -55,6 +55,28 @@ impl Bark {
 		TokioCommand::new(exec)
 	}
 
+	/// Extract the version from the BARK_EXEC binary.
+	///
+	/// Returns the version string, e.g. "0.1.0-beta.8" or "DIRTY".
+	pub async fn version() -> String {
+		let output = Self::cmd()
+			.arg("--version")
+			.output()
+			.await
+			.expect("failed to run bark --version");
+		assert!(output.status.success(), "bark --version failed");
+
+		// Output format: "bark 0.1.0-beta.8 (hash)"
+		let stdout = String::from_utf8(output.stdout).expect("invalid utf8 in bark --version");
+		let version = stdout.trim()
+			.strip_prefix("bark ")
+			.expect("unexpected bark --version format")
+			.split_whitespace()
+			.next()
+			.expect("no version found in bark --version output");
+		version.to_string()
+	}
+
 	/// Creates Bark client with a dedicated bitcoind daemon.
 	pub async fn new(
 		name: impl AsRef<str>,
@@ -383,7 +405,15 @@ impl Bark {
 		let destination = destination.to_string();
 		let amount_str = amount.map(|a| a.to_string());
 
-		let mut args = vec!["lightning", "pay", "invoice", &destination, "--verbose"];
+		// In 0.1.0-beta.8 and before the command was `lightning pay <invoice>`.
+		// Since 0.1.0-beta.9 and onwards it is `lightning pay invoice <invoice>`.
+		let version = crate::util::BarkVersion::parse(&Bark::version().await);
+		let cutoff = crate::util::BarkVersion::parse("0.1.0-beta.8");
+		let mut args = if version > cutoff {
+			vec!["lightning", "pay", "invoice", &destination, "--verbose"]
+		} else {
+			vec!["lightning", "pay", &destination, "--verbose"]
+		};
 		if let Some(amount) = amount_str.as_ref() {
 			args.push(amount);
 		}
@@ -463,7 +493,17 @@ impl Bark {
 	pub async fn lightning_receive_status(&self, filter: impl fmt::Display)
 		-> Option<LightningReceiveInfo>
 	{
-		let res = self.run(["lightning", "receive", "status", &filter.to_string()]).await;
+		// In 0.1.0-beta.8 and before the command was `lightning status <filter>`.
+		// Since 0.1.0-beta.9 and onwards it is `lightning receive status <filter>`.
+		let version = crate::util::BarkVersion::parse(&Bark::version().await);
+		let cutoff = crate::util::BarkVersion::parse("0.1.0-beta.8");
+		let filter = filter.to_string();
+		let args: Vec<&str> = if version > cutoff {
+			vec!["lightning", "receive", "status", &filter]
+		} else {
+			vec!["lightning", "status", &filter]
+		};
+		let res = self.run(args).await;
 		if res.is_empty() { return None; }
 		serde_json::from_str(&res).expect("json error")
 	}

@@ -20,8 +20,8 @@ enum MailboxType {
 message PostVtxosMailboxRequest {
 	// The blinded mailbox ID
 	bytes blinded_id = 1;
-	MailboxType mailbox_type = 2;
-	repeated bytes vtxos = 3;
+	repeated bytes vtxos = 2;
+	MailboxType mailbox_type = 3;
 }
 
 message MailboxRequest {
@@ -34,12 +34,12 @@ message MailboxRequest {
 }
 
 message MailboxMessage {
-	MailboxType mailbox_type = 1;
 	oneof message {
-		ArkoorMessage arkoor = 2;
+		ArkoorMessage arkoor = 1;
 	}
 	// Strictly ascending time based number.
-	uint64 checkpoint = 3;
+	uint64 checkpoint = 2;
+	MailboxType mailbox_type = 3;
 }
 
 message ArkoorMessage {

@@ -1,4 +1,4 @@
-use ark_testing::TestContext;
+use ark_testing::{TestContext, require_bark_version};
 
 #[tokio::test]
 async fn bark_version() {
@@ -20,6 +20,8 @@ async fn bark_ark_info() {
 
 #[tokio::test]
 async fn bark_config_json() {
+	// We don't test backward compatibility for `bark config`.
+	require_bark_version!(== "DIRTY");
 	let ctx = TestContext::new("bark/bark_config_json").await;
 	let srv = ctx.new_captaind("server", None).await;
 	let bark1 = ctx.new_bark("bark1", &srv).await;
