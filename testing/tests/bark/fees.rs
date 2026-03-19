@@ -8,12 +8,19 @@ use ark::fees::{
 	PpmFeeRate, RefreshFees,
 };
 use bark_json::cli::{MovementDestination, PaymentMethod};
-use bitcoin_ext::FeeRateExt;
-
+use bitcoin_ext::{FeeRateExt, P2TR_DUST};
 use ark_testing::{btc, sat, TestContext};
 use ark_testing::constants::{BOARD_CONFIRMATIONS, ROUND_CONFIRMATIONS};
 use ark_testing::exit::complete_exit;
 use ark_testing::util::{FutureExt, ToAltString};
+
+fn assert_eq_unordered<T: Ord + Clone + std::fmt::Debug>(a: &[T], b: &[T]) {
+	let mut a = a.to_vec();
+	let mut b = b.to_vec();
+	a.sort();
+	b.sort();
+	assert_eq!(a, b, "unordered comparison failed");
+}
 
 #[tokio::test]
 async fn exit_fee_anchor_only_covers_cost() {
@@ -123,6 +130,10 @@ async fn board_fee_base_and_ppm() {
 	ctx.fund_captaind(&srv, btc(1)).await;
 
 	let bark = ctx.new_bark_with_funds("bark1", &srv, sat(1_000_000)).await;
+
+	// Estimate before performing the operation
+	let estimate = bark.estimate_board_offchain_fee(sat(100_000)).await;
+
 	bark.board_and_confirm_and_register(&ctx, sat(100_000)).await;
 
 	// Fee = base(100) + 100,000 * 10,000 / 1,000,000 = 100 + 1,000 = 1,100
@@ -140,6 +151,12 @@ async fn board_fee_base_and_ppm() {
 	assert_eq!(board_mvt.offchain_fee, expected_fee);
 	assert_eq!(board_mvt.intended_balance, sat(100_000).to_signed().unwrap());
 	assert_eq!(board_mvt.effective_balance, expected_vtxo_amount.to_signed().unwrap());
+
+	// Verify estimate matches actual
+	assert_eq!(estimate.fee, board_mvt.offchain_fee);
+	assert_eq!(estimate.gross_amount, board_mvt.intended_balance.to_unsigned().unwrap());
+	assert_eq!(estimate.net_amount, board_mvt.effective_balance.to_unsigned().unwrap());
+	assert_eq_unordered(&estimate.vtxos_spent, &board_mvt.input_vtxos);
 }
 
 #[tokio::test]
@@ -155,6 +172,10 @@ async fn board_fee_min_fee_applies() {
 	ctx.fund_captaind(&srv, btc(1)).await;
 
 	let bark = ctx.new_bark_with_funds("bark1", &srv, sat(1_000_000)).await;
+
+	// Estimate before performing the operation
+	let estimate = bark.estimate_board_offchain_fee(sat(100_000)).await;
+
 	bark.board_and_confirm_and_register(&ctx, sat(100_000)).await;
 
 	// Fee = max(5,000, 0 + 0) = 5,000
@@ -169,6 +190,12 @@ async fn board_fee_min_fee_applies() {
 	assert_eq!(movements.len(), 1);
 	assert_eq!(movements[0].offchain_fee, expected_fee);
 	assert_eq!(movements[0].effective_balance, expected_vtxo_amount.to_signed().unwrap());
+
+	// Verify estimate matches actual
+	assert_eq!(estimate.fee, movements[0].offchain_fee);
+	assert_eq!(estimate.gross_amount, movements[0].intended_balance.to_unsigned().unwrap());
+	assert_eq!(estimate.net_amount, movements[0].effective_balance.to_unsigned().unwrap());
+	assert_eq_unordered(&estimate.vtxos_spent, &movements[0].input_vtxos);
 }
 
 #[tokio::test]
@@ -185,8 +212,13 @@ async fn board_fee_rejects_when_fee_exceeds_amount() {
 
 	let bark = ctx.new_bark_with_funds("bark1", &srv, sat(1_000_000)).await;
 
+	// Estimate should succeed even though the operation will fail
+	let estimate = bark.estimate_board_offchain_fee(sat(30_000)).await;
+	assert_eq!(estimate.fee, sat(50_000), "fee should exceed amount");
+	assert_eq!(estimate.net_amount, Amount::ZERO);
+
 	// Board 30,000 sats (above min_board_amount=20,000 but fee=50,000 > amount)
-	let err = bark.try_board(sat(50_000)).await.unwrap_err();
+	let err = bark.try_board(sat(30_000)).await.unwrap_err();
 	assert!(
 		err.to_alt_string().contains("exceeds amount"),
 		"Expected fee exceeds amount error, got: {:#}", err,
@@ -212,6 +244,9 @@ async fn refresh_fee_base_only() {
 	bark.board_and_confirm_and_register(&ctx, sat(100_000)).await;
 	assert_eq!(bark.spendable_balance().await, sat(100_000));
 
+	// Estimate before refresh
+	let estimate = bark.estimate_refresh_all().await;
+
 	ctx.refresh_all(&srv, std::slice::from_ref(&bark)).await;
 	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
 
@@ -224,6 +259,12 @@ async fn refresh_fee_base_only() {
 	let refresh_mvt = movements.last().unwrap();
 	assert_eq!(refresh_mvt.offchain_fee, expected_fee);
 	assert_eq!(refresh_mvt.effective_balance, -expected_fee.to_signed().unwrap());
+
+	// Verify estimate matches actual
+	assert_eq!(estimate.fee, refresh_mvt.offchain_fee);
+	assert_eq!(estimate.gross_amount, sat(100_000));
+	assert_eq!(estimate.net_amount, sat(100_000) - refresh_mvt.offchain_fee);
+	assert_eq_unordered(&estimate.vtxos_spent, &refresh_mvt.input_vtxos);
 }
 
 #[tokio::test]
@@ -244,6 +285,9 @@ async fn refresh_fee_with_ppm_expiry() {
 	let bark = ctx.new_bark_with_funds("bark1", &srv, sat(1_000_000)).await;
 	bark.board_and_confirm_and_register(&ctx, sat(100_000)).await;
 
+	// Estimate before refresh
+	let estimate = bark.estimate_refresh_all().await;
+
 	// VTXOs have ~134-140 blocks until expiry (vtxo_lifetime=144 minus blocks generated).
 	// This exceeds the 50-block threshold, so 1% ppm applies.
 	// Fee = base(200) + 100,000 * 10,000 / 1,000,000 = 200 + 1,000 = 1,200
@@ -256,6 +300,12 @@ async fn refresh_fee_with_ppm_expiry() {
 	let refresh_mvt = movements.last().unwrap();
 	assert_eq!(refresh_mvt.offchain_fee, expected_fee);
 	assert_eq!(refresh_mvt.effective_balance, -expected_fee.to_signed().unwrap());
+
+	// Verify estimate matches actual
+	assert_eq!(estimate.fee, refresh_mvt.offchain_fee);
+	assert_eq!(estimate.gross_amount, sat(100_000));
+	assert_eq!(estimate.net_amount, sat(100_000) - refresh_mvt.offchain_fee);
+	assert_eq_unordered(&estimate.vtxos_spent, &refresh_mvt.input_vtxos);
 }
 
 #[tokio::test]
@@ -281,6 +331,9 @@ async fn refresh_fee_with_multiple_vtxos() {
 	assert_eq!(bark.vtxos().await.len(), 3);
 	assert_eq!(bark.spendable_balance().await, sat(600_000));
 
+	// Estimate before refresh
+	let estimate = bark.estimate_refresh_all().await;
+
 	// Refresh all VTXOs (consolidates into one)
 	ctx.refresh_all(&srv, std::slice::from_ref(&bark)).await;
 	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
@@ -297,6 +350,12 @@ async fn refresh_fee_with_multiple_vtxos() {
 	let refresh_mvt = movements.last().unwrap();
 	assert_eq!(refresh_mvt.offchain_fee, expected_fee);
 	assert_eq!(refresh_mvt.effective_balance, -expected_fee.to_signed().unwrap());
+
+	// Verify estimate matches actual
+	assert_eq!(estimate.fee, refresh_mvt.offchain_fee);
+	assert_eq!(estimate.gross_amount, sat(600_000));
+	assert_eq!(estimate.net_amount, sat(600_000) - refresh_mvt.offchain_fee);
+	assert_eq_unordered(&estimate.vtxos_spent, &refresh_mvt.input_vtxos);
 }
 
 #[tokio::test]
@@ -461,6 +520,10 @@ async fn refresh_fee_rejects_dust_output() {
 	let bark = ctx.new_bark_with_funds("bark1", &srv, sat(1_000_000)).await;
 	bark.board_and_confirm_and_register(&ctx, sat(100_000)).await;
 
+	// Estimate should succeed even though the operation will fail
+	let estimate = bark.estimate_refresh_all().await;
+	assert!(estimate.net_amount < P2TR_DUST);
+
 	// Refresh should fail: output (100,000 - 99,800 = 200) < P2TR_DUST (330)
 	let (_, refresh) = tokio::join!(
 		srv.trigger_round(),
@@ -493,6 +556,10 @@ async fn offboard_fee_base_deducted() {
 	bark.board_and_confirm_and_register(&ctx, sat(100_000)).await;
 
 	let address = ctx.bitcoind().get_new_address();
+
+	// Estimate before offboard
+	let estimate = bark.estimate_offboard_all(&address).await;
+
 	tokio::join!(
 		srv.trigger_round(),
 		bark.offboard_all(&address),
@@ -521,6 +588,12 @@ async fn offboard_fee_base_deducted() {
 	ctx.generate_blocks(1).await;
 	let received = ctx.bitcoind().get_received_by_address(&address);
 	assert_eq!(received, sat(100_000) - fee);
+
+	// Verify estimate matches actual
+	assert_eq!(estimate.fee, offb_mvt.offchain_fee);
+	assert_eq!(estimate.gross_amount, sat(100_000));
+	assert_eq!(estimate.net_amount, sat(100_000) - offb_mvt.offchain_fee);
+	assert_eq_unordered(&estimate.vtxos_spent, &offb_mvt.input_vtxos);
 }
 
 #[tokio::test]
@@ -536,6 +609,9 @@ async fn offboard_fee_with_ppm_expiry() {
 				PpmExpiryFeeEntry {
 					expiry_blocks_threshold: 50, ppm: PpmFeeRate(20_000), // 2%
 				},
+				PpmExpiryFeeEntry {
+					expiry_blocks_threshold: u32::MAX, ppm: PpmFeeRate(50_000), // 5%
+				},
 			],
 		};
 	}).await;
@@ -545,6 +621,10 @@ async fn offboard_fee_with_ppm_expiry() {
 	bark.board_and_confirm_and_register(&ctx, sat(500_000)).await;
 
 	let address = ctx.bitcoind().get_new_address();
+
+	// Estimate before offboard
+	let estimate = bark.estimate_offboard_all(&address).await;
+
 	tokio::join!(
 		srv.trigger_round(),
 		bark.offboard_all(&address),
@@ -553,6 +633,7 @@ async fn offboard_fee_with_ppm_expiry() {
 	let movements = bark.history().await;
 	let offb_mvt = movements.last().unwrap();
 
+	// VTXO expiry can never reach u32::MAX, so the 2% middle tier applies (not 5%).
 	// PPM fee on 500,000 at 2% = 10,000, plus weight fee
 	assert_eq!(offb_mvt.offchain_fee, sat(10_854),
 		"offchain fee should include ppm component, got {}", offb_mvt.offchain_fee,
@@ -561,6 +642,12 @@ async fn offboard_fee_with_ppm_expiry() {
 	ctx.generate_blocks(1).await;
 	let received = ctx.bitcoind().get_received_by_address(&address);
 	assert_eq!(received, sat(500_000) - offb_mvt.offchain_fee);
+
+	// Verify estimate matches actual
+	assert_eq!(estimate.fee, offb_mvt.offchain_fee);
+	assert_eq!(estimate.gross_amount, sat(500_000));
+	assert_eq!(estimate.net_amount, sat(500_000) - offb_mvt.offchain_fee);
+	assert_eq_unordered(&estimate.vtxos_spent, &offb_mvt.input_vtxos);
 }
 
 #[tokio::test]
@@ -580,9 +667,13 @@ async fn offboard_all_rejects_dust_output() {
 	let bark = ctx.new_bark_with_funds("bark1", &srv, sat(1_000_000)).await;
 	bark.board_and_confirm_and_register(&ctx, sat(20_000)).await;
 
+	// Estimate should succeed even though the operation will fail
+	let address = ctx.bitcoind().get_new_address();
+	let estimate = bark.estimate_offboard_all(&address).await;
+	assert!(estimate.net_amount < P2TR_DUST);
+
 	// Offboard fee = base(19,600) + weight_fee(22 vb * 7 sat/vb = 154) = 19,754
 	// Amount after fee = 20,000 - 19,754 = 246 < P2TR_DUST (330) → rejected
-	let address = ctx.bitcoind().get_new_address();
 	let err = bark.try_offboard_all(&address).await.unwrap_err();
 	assert!(
 		err.to_alt_string().contains("dust"),
@@ -613,6 +704,10 @@ async fn send_onchain_fee_deducted() {
 
 	let send_amount = sat(300_000);
 	let addr = bark2.get_onchain_address().await;
+
+	// Estimate before send
+	let estimate = bark1.estimate_send_onchain(&addr, send_amount).await;
+
 	bark1.send_onchain(&addr, send_amount).await;
 	ctx.generate_blocks(2).await;
 
@@ -639,6 +734,12 @@ async fn send_onchain_fee_deducted() {
 	// Verify on-chain receipt
 	ctx.generate_blocks(1).await;
 	assert_eq!(bark2.onchain_balance().await, send_amount);
+
+	// Verify estimate matches actual
+	assert_eq!(estimate.fee, send_mvt.offchain_fee);
+	assert_eq!(estimate.gross_amount, send_mvt.effective_balance.unsigned_abs());
+	assert_eq!(estimate.net_amount, send_mvt.intended_balance.unsigned_abs());
+	assert_eq_unordered(&estimate.vtxos_spent, &send_mvt.input_vtxos);
 }
 
 #[tokio::test]
@@ -659,8 +760,11 @@ async fn lightning_receive_fee_deducted() {
 	let board_amount = btc(2);
 	bark.board_and_confirm_and_register(&ctx, board_amount).await;
 
-	// Create a lightning invoice and receive payment
+	// Estimate before receiving
 	let pay_amount = sat(1_000_000);
+	let estimate = bark.estimate_lightning_receive_fee(pay_amount).await;
+
+	// Create a lightning invoice and receive payment
 	let invoice_info = bark.bolt11_invoice(pay_amount).await;
 
 	let cloned_invoice_info = invoice_info.clone();
@@ -686,6 +790,12 @@ async fn lightning_receive_fee_deducted() {
 	assert_eq!(ln_mvt.offchain_fee, expected_fee);
 	assert_eq!(ln_mvt.intended_balance, pay_amount.to_signed().unwrap());
 	assert_eq!(ln_mvt.effective_balance, (pay_amount - expected_fee).to_signed().unwrap());
+
+	// Verify estimate matches actual
+	assert_eq!(estimate.fee, ln_mvt.offchain_fee);
+	assert_eq!(estimate.gross_amount, ln_mvt.intended_balance.to_unsigned().unwrap());
+	assert_eq!(estimate.net_amount, ln_mvt.effective_balance.to_unsigned().unwrap());
+	assert_eq_unordered(&estimate.vtxos_spent, &ln_mvt.input_vtxos);
 }
 
 #[tokio::test]
@@ -705,6 +815,11 @@ async fn lightning_receive_fee_rejects_when_fee_exceeds_amount() {
 
 	let bark = ctx.new_bark_with_funds("bark", &srv, btc(3)).await;
 	bark.board_and_confirm_and_register(&ctx, btc(2)).await;
+
+	// Estimate should succeed even though the operation will fail
+	let estimate = bark.estimate_lightning_receive_fee(sat(50_000)).await;
+	assert_eq!(estimate.fee, sat(50_000), "fee should exceed amount");
+	assert_eq!(estimate.net_amount, Amount::ZERO);
 
 	// Try to create an invoice for 50,000 sats when fee is 50,000
 	let err = bark.try_bolt11_invoice(sat(50_000)).await.unwrap_err();
@@ -735,8 +850,11 @@ async fn lightning_send_fee_deducted() {
 
 	lightning.sync().await;
 
-	// Pay 2 BTC via lightning with a 5,000 sat base_fee (no ppm)
+	// Estimate before sending
 	let pay_amount = btc(2);
+	let estimate = bark.estimate_lightning_send_fee(pay_amount).await;
+
+	// Pay 2 BTC via lightning with a 5,000 sat base_fee (no ppm)
 	let invoice = lightning.receiver.invoice(Some(pay_amount), "test_fee_payment", "fee test").await;
 	bark.pay_lightning_wait(invoice, None).await;
 
@@ -753,6 +871,12 @@ async fn lightning_send_fee_deducted() {
 		"lightning_send_fee_deducted: offchain_fee mismatch");
 	assert_eq!(send_mvt.intended_balance, -pay_amount.to_signed().unwrap(),
 		"lightning_send_fee_deducted: intended_balance mismatch");
+
+	// Verify estimate matches actual
+	assert_eq!(estimate.fee, send_mvt.offchain_fee);
+	assert_eq!(estimate.gross_amount, send_mvt.effective_balance.unsigned_abs());
+	assert_eq!(estimate.net_amount, send_mvt.intended_balance.unsigned_abs());
+	assert_eq_unordered(&estimate.vtxos_spent, &send_mvt.input_vtxos);
 }
 
 #[tokio::test]
@@ -776,8 +900,11 @@ async fn lightning_send_fee_min_fee_applies() {
 
 	lightning.sync().await;
 
-	// Pay 1 BTC via lightning: base(100) + ppm(0) = 100, but min_fee = 10,000
+	// Estimate before sending
 	let pay_amount = btc(1);
+	let estimate = bark.estimate_lightning_send_fee(pay_amount).await;
+
+	// Pay 1 BTC via lightning: base(100) + ppm(0) = 100, but min_fee = 10,000
 	let invoice = lightning.receiver.invoice(Some(pay_amount), "test_min_fee", "min fee test").await;
 	bark.pay_lightning_wait(invoice, None).await;
 
@@ -793,6 +920,12 @@ async fn lightning_send_fee_min_fee_applies() {
 		"lightning_send_fee_min_fee_applies: offchain_fee mismatch");
 	assert_eq!(send_mvt.intended_balance, -pay_amount.to_signed().unwrap(),
 		"lightning_send_fee_min_fee_applies: intended_balance mismatch");
+
+	// Verify estimate matches actual
+	assert_eq!(estimate.fee, send_mvt.offchain_fee);
+	assert_eq!(estimate.gross_amount, send_mvt.effective_balance.unsigned_abs());
+	assert_eq!(estimate.net_amount, send_mvt.intended_balance.unsigned_abs());
+	assert_eq_unordered(&estimate.vtxos_spent, &send_mvt.input_vtxos);
 }
 
 #[tokio::test]
@@ -809,6 +942,7 @@ async fn lightning_send_fee_ppm_expiry_table() {
 			ppm_expiry_table: vec![
 				PpmExpiryFeeEntry { expiry_blocks_threshold: 0, ppm: PpmFeeRate::ZERO },
 				PpmExpiryFeeEntry { expiry_blocks_threshold: 50, ppm: PpmFeeRate::ONE_PERCENT },
+				PpmExpiryFeeEntry { expiry_blocks_threshold: u32::MAX, ppm: PpmFeeRate(50_000) }, // 5%
 			],
 		};
 	}).await;
@@ -820,10 +954,13 @@ async fn lightning_send_fee_ppm_expiry_table() {
 
 	lightning.sync().await;
 
-	// Pay 2 BTC via lightning. VTXO has ~130+ blocks until expiry, exceeding the
-	// 50-block threshold, so 1% ppm applies.
-	// Fee = base(1,000) + ppm_expiry(2 BTC × 1%) = 1,000 + 2,000,000 = 2,001,000
+	// Estimate before sending
 	let pay_amount = btc(2);
+	let estimate = bark.estimate_lightning_send_fee(pay_amount).await;
+
+	// Pay 2 BTC via lightning. VTXO expiry can never reach u32::MAX, so the 1% middle tier applies
+	// (not 5%).
+	// Fee = base(1,000) + ppm_expiry(2 BTC × 1%) = 1,000 + 2,000,000 = 2,001,000
 	let invoice = lightning.receiver.invoice(Some(pay_amount), "test_ppm_expiry", "ppm expiry test").await;
 	bark.pay_lightning_wait(invoice, None).await;
 
@@ -838,4 +975,10 @@ async fn lightning_send_fee_ppm_expiry_table() {
 	assert_eq!(send_mvt.offchain_fee, expected_fee);
 	assert_eq!(send_mvt.intended_balance, -pay_amount.to_signed().unwrap());
 	assert_eq!(send_mvt.effective_balance, -(pay_amount + expected_fee).to_signed().unwrap());
+
+	// Verify estimate matches actual
+	assert_eq!(estimate.fee, send_mvt.offchain_fee);
+	assert_eq!(estimate.gross_amount, send_mvt.effective_balance.unsigned_abs());
+	assert_eq!(estimate.net_amount, send_mvt.intended_balance.unsigned_abs());
+	assert_eq_unordered(&estimate.vtxos_spent, &send_mvt.input_vtxos);
 }

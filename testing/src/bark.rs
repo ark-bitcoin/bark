@@ -228,6 +228,42 @@ impl Bark {
 		self.try_client().await.expect("failed to create bark::Wallet client")
 	}
 
+	pub async fn estimate_board_offchain_fee(&self, amount: Amount) -> bark::FeeEstimate {
+		let wallet = self.client().await;
+		wallet.estimate_board_offchain_fee(amount).await.unwrap()
+	}
+
+	pub async fn estimate_lightning_receive_fee(&self, amount: Amount) -> bark::FeeEstimate {
+		let wallet = self.client().await;
+		wallet.estimate_lightning_receive_fee(amount).await.unwrap()
+	}
+
+	pub async fn estimate_lightning_send_fee(&self, amount: Amount) -> bark::FeeEstimate {
+		let wallet = self.client().await;
+		wallet.estimate_lightning_send_fee(amount).await.unwrap()
+	}
+
+	pub async fn estimate_refresh_all(&self) -> bark::FeeEstimate {
+		let wallet = self.client().await;
+		let vtxos = wallet.vtxos().await.unwrap();
+		wallet.estimate_refresh_fee(&vtxos).await.unwrap()
+	}
+
+	pub async fn estimate_offboard_all(&self, address: &Address) -> bark::FeeEstimate {
+		let wallet = self.client().await;
+		let vtxos = wallet.vtxos().await.unwrap();
+		wallet.estimate_offboard(address, &vtxos).await.unwrap()
+	}
+
+	pub async fn estimate_send_onchain(
+		&self,
+		address: &Address,
+		amount: Amount,
+	) -> bark::FeeEstimate {
+		let wallet = self.client().await;
+		wallet.estimate_send_onchain(address, amount).await.unwrap()
+	}
+
 	pub fn bitcoind(&self) -> Option<&Bitcoind> {
 		self._bitcoind.as_ref()
 	}
