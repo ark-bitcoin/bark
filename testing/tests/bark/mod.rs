@@ -9,6 +9,7 @@ mod board;
 mod chain_source;
 mod create;
 mod dust;
+mod estimate;
 mod exit;
 mod fees;
 mod lightning;
