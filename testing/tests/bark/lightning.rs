@@ -1494,3 +1494,62 @@ async fn bark_can_claim_all_claimable_lightning_receives() {
 
 	assert_eq!(bark.spendable_balance().await, btc(4));
 }
+
+/// Verify that lightning receives are claimed via the mailbox notification path
+/// (sync_mailbox → handle_lightning_receive_notification) without explicitly
+/// calling `lightning claim`.
+///
+/// Creates two invoices that are paid and should be claimed via notifications.
+/// The notification is just a signal that a payment arrived — the client comes
+/// online and claims.
+#[tokio::test]
+async fn bark_lightning_receive_via_mailbox_notification() {
+	let ctx = TestContext::new("lightningd/bark_lightning_receive_via_mailbox_notification").await;
+
+	let lightning = ctx.new_lightning_setup("lightningd").await;
+
+	let srv = ctx.new_captaind_with_cfg("server", Some(&lightning.receiver), |cfg| {
+		cfg.invoice_check_interval = Duration::from_secs(1);
+	}).await;
+	ctx.fund_captaind(&srv, btc(10)).await;
+	srv.wait_for_vtxopool(&ctx).await;
+
+	let bark = Arc::new(ctx.new_bark_with_funds("bark", &srv, btc(5)).await);
+
+	let board_amount = btc(3);
+	bark.board_and_confirm_and_register(&ctx, board_amount).await;
+
+	let amount_1 = sat(500_000);
+	let amount_2 = sat(300_000);
+	let invoice_1 = bark.bolt11_invoice(amount_1).await;
+	let invoice_2 = bark.bolt11_invoice(amount_2).await;
+
+	let cloned_1 = invoice_1.clone();
+	let cloned_2 = invoice_2.clone();
+	let pay_handle = tokio::spawn(async move {
+		tokio::join!(
+			lightning.sender.pay_bolt11(cloned_1.invoice),
+			lightning.sender.pay_bolt11(cloned_2.invoice),
+		)
+	});
+
+	// Poll balance via sync() — do NOT call `lightning claim`.
+	// sync_mailbox processes the notifications and triggers claims.
+	let expected_balance = board_amount + amount_1 + amount_2;
+	let mut claimed = false;
+	for _ in 0..30 {
+		tokio::time::sleep(Duration::from_secs(1)).await;
+
+		if bark.spendable_balance().await == expected_balance {
+			claimed = true;
+			break;
+		}
+	}
+
+	assert!(claimed, "both lightning receives should be claimed via mailbox notification");
+
+	pay_handle.wait(Duration::from_secs(5)).await.unwrap();
+
+	let receives = bark.list_lightning_receives().await;
+	assert!(receives.is_empty(), "no pending receives should remain after claims");
+}
