@@ -1816,7 +1816,10 @@
           "200": {
             "description": "Returns pong"
           }
-        }
+        },
+        "security": [
+          {}
+        ]
       }
     }
   },
@@ -4749,8 +4752,21 @@
         "format": "int32",
         "minimum": 0
       }
+    },
+    "securitySchemes": {
+      "bearer": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "AuthToken",
+        "description": "Base64url-encoded auth token"
+      }
     }
   },
+  "security": [
+    {
+      "bearer": []
+    }
+  ],
   "tags": [
     {
       "name": "boards",

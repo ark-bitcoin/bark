@@ -3,9 +3,11 @@
 extern crate anyhow;
 
 pub mod api;
+pub mod auth;
 pub mod config;
 pub mod error;
 
+use crate::auth::AuthToken;
 pub use crate::config::Config;
 
 
@@ -20,7 +22,8 @@ use tokio::sync::RwLock;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use tower_http::cors::CorsLayer;
-use utoipa::OpenApi;
+use utoipa::{Modify, OpenApi};
+use utoipa::openapi::security::{HttpAuthScheme, HttpBuilder, SecurityScheme};
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_swagger_ui::SwaggerUi;
 
@@ -60,9 +63,31 @@ All endpoints return JSON. Amounts are denominated in satoshis.";
 		title = "barkd REST API",
 		version = CRATE_VERSION,
 		description = API_DESCRIPTION,
-	)
+	),
+	security(
+		("bearer" = []),
+	),
+	modifiers(&BearerSecurity),
 )]
 pub struct ApiDoc;
+
+struct BearerSecurity;
+
+impl Modify for BearerSecurity {
+	fn modify(&self, openapi: &mut utoipa::openapi::OpenApi) {
+		let components = openapi.components.get_or_insert_with(Default::default);
+		components.add_security_scheme(
+			"bearer",
+			SecurityScheme::Http(
+				HttpBuilder::new()
+					.scheme(HttpAuthScheme::Bearer)
+					.bearer_format("AuthToken")
+					.description(Some("Base64url-encoded auth token"))
+					.build(),
+			),
+		);
+	}
+}
 
 async fn shutdown_signal(shutdown: CancellationToken) {
 	shutdown.cancelled().await;
@@ -91,19 +116,10 @@ impl ServerWallet {
 pub struct ServerState {
 	wallet: Arc<parking_lot::RwLock<Option<ServerWallet>>>,
 	on_wallet_create: Option<Arc<OnWalletCreate>>,
+	auth_token: AuthToken,
 }
 
 impl ServerState {
-	pub fn new(
-		wallet: Option<ServerWallet>,
-		on_wallet_create: Option<Arc<OnWalletCreate>>,
-	) -> Self {
-		Self {
-			wallet: Arc::new(parking_lot::RwLock::new(wallet)),
-			on_wallet_create,
-		}
-	}
-
 	pub fn require_wallet(&self) -> anyhow::Result<Arc<Wallet>> {
 		let wallet = self.wallet.read().as_ref()
 			.ok_or_else(|| anyhow!("No wallet set"))?.wallet.clone();
@@ -115,14 +131,21 @@ impl ServerState {
 			.ok_or_else(|| anyhow!("No onchain set"))?.onchain.clone();
 		Ok(onchain)
 	}
+
+	pub fn auth_token(&self) -> &AuthToken {
+		&self.auth_token
+	}
 }
 
 impl RestServer {
 	/// Start a new [RestServer] with the given config and an optional [ServerWallet]
 	///
-	/// If no wallet is provided, the server will reject any action
+	/// If no wallet is provided, the server will reject any action.
+	/// If `auth_secrets` is non-empty, token-based authentication is
+	/// enforced on all `/api/v1` routes.
 	pub async fn start(
 		config: &Config,
+		auth_token: AuthToken,
 		wallet: Option<ServerWallet>,
 		on_wallet_create: Option<Arc<OnWalletCreate>>,
 	) -> anyhow::Result<Self> {
@@ -132,12 +155,15 @@ impl RestServer {
 		let socket_addr = config.socket_addr();
 
 		let wallet = Arc::new(parking_lot::RwLock::new(wallet));
-		let state = ServerState { wallet, on_wallet_create };
+		let state = ServerState { wallet, on_wallet_create, auth_token };
 
-		// Build our application with routes
+		// /ping stays outside the auth layer.
+		let authed_api = api::v1::router()
+			.route_layer(axum::middleware::from_fn_with_state(state.clone(), auth::guard_auth));
+
 		let router = router
 			.route("/ping", get(ping))
-			.nest("/api/v1", api::v1::router())
+			.nest("/api/v1", authed_api)
 			.merge(SwaggerUi::new("/swagger-ui").url("/api-docs/openapi.json", api.clone()))
 			.layer(CorsLayer::permissive())
 			.with_state(state)
@@ -182,6 +208,7 @@ impl RestServer {
 	get,
 	path = "/ping",
 	summary = "Ping",
+	security(()),
 	responses(
 		(status = 200, description = "Returns pong")
 	)

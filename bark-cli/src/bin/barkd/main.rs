@@ -2,24 +2,29 @@ use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::Arc;
 
-use bark_cli::VERSION_DIRTY;
-use bark_json::web::{BarkNetwork, BitcoindAuth, ChainSourceConfig, CreateWalletRequest};
-use bark_rest::error::ContextExt;
-use clap::Parser;
+use anyhow::Context;
+use bitcoin::hex::FromHex;
+use bitcoin::secp256k1::rand::{self, RngCore};
+use clap::{Parser, Subcommand};
 use clap::builder::BoolishValueParser;
 use log::{info, warn};
 use tokio::sync::RwLock;
 
 use bark::pid_lock::PidLock;
+use bark_json::web::{BarkNetwork, BitcoindAuth, ChainSourceConfig, CreateWalletRequest};
 use bark_rest::{Config, OnWalletCreate, RestServer, ServerWallet};
+use bark_rest::error::ContextExt;
+use bark_rest::auth::AuthToken;
 
+use bark_cli::VERSION_DIRTY;
 use bark_cli::log::init_logging;
-use bark_cli::wallet::{ConfigOpts, CreateOpts, create_wallet, open_wallet};
+use bark_cli::wallet::{ConfigOpts, CreateOpts, create_wallet, open_wallet, AUTH_TOKEN_FILE};
 
 
 /// The full version string we show in our binary.
 /// (BARK_VERSION and GIT_HASH are set in build.rs)
 const FULL_VERSION: &str = concat!(env!("BARK_VERSION"), " (", env!("GIT_HASH"), ")");
+
 
 fn default_datadir() -> String {
 	home::home_dir().or_else(|| {
@@ -52,14 +57,43 @@ struct Cli {
 	quiet: bool,
 
 	/// The datadir of the bark wallet
-	#[arg(long, env = "BARKD_DATADIR", default_value_t = default_datadir())]
+	#[arg(long, env = "BARKD_DATADIR", global = true, default_value_t = default_datadir())]
 	datadir: String,
+
+	#[command(subcommand)]
+	command: Option<Command>,
+
 	/// The port to listen on
 	#[arg(long, env = "BARKD_BIND_PORT")]
 	port: Option<u16>,
 	/// The host to listen on
 	#[arg(long, env = "BARKD_BIND_HOST")]
 	host: Option<String>,
+}
+
+#[derive(Subcommand)]
+enum Command {
+	/// Manage auth secrets
+	Secret {
+		#[command(subcommand)]
+		action: SecretCommand,
+	},
+}
+
+fn parse_hex_secret(s: &str) -> Result<[u8; 32], String> {
+	<[u8; 32]>::from_hex(s)
+		.map_err(|_| "must be exactly 64 hex characters (32 bytes)".to_string())
+}
+
+#[derive(Subcommand)]
+enum SecretCommand {
+	/// Regenerate the default auth secret and print the bearer token.
+	/// If --secret is provided, use that instead of generating a random one.
+	Refresh {
+		/// Optional 32-byte hex secret to use instead of a random one
+		#[arg(long, value_parser = parse_hex_secret)]
+		secret: Option<[u8; 32]>,
+	},
 }
 
 impl Cli {
@@ -114,6 +148,36 @@ async fn run_shutdown_signal_listener() {
 			Err(e) => panic!("failed to listen to ctrl-c signal: {e}"),
 		},
 	}
+}
+
+/// Load the auth token from the datadir. Returns `None` if the file
+/// doesn't exist.
+fn load_auth_token(datadir: &PathBuf) -> anyhow::Result<Option<AuthToken>> {
+	let path = datadir.join(AUTH_TOKEN_FILE);
+	if !path.exists() {
+		return Ok(None);
+	}
+
+	let str = std::fs::read_to_string(&path)
+		.with_context(|| format!("failed to read {}", path.display()))?;
+	Ok(Some(AuthToken::decode(&str)?))
+}
+
+/// Write the auth token to the datadir.
+fn store_auth_token(datadir: &PathBuf, token: &AuthToken) -> anyhow::Result<()> {
+	let path = datadir.join(AUTH_TOKEN_FILE);
+	std::fs::write(&path, token.encode())
+		.with_context(|| format!("failed to write {}", path.display()))?;
+	Ok(())
+}
+
+/// Generate a random auth token and persist it to the datadir.
+fn generate_store_auth_token(datadir: &PathBuf) -> anyhow::Result<AuthToken> {
+	let mut secret = [0u8; 32];
+	rand::thread_rng().fill_bytes(&mut secret);
+	let token = AuthToken::new(secret);
+	store_auth_token(datadir, &token)?;
+	Ok(token)
 }
 
 fn wallet_create_request_to_create_opts(req: CreateWalletRequest) -> anyhow::Result<CreateOpts> {
@@ -172,6 +236,27 @@ async fn main() -> anyhow::Result<()>{
 
 	init_logging(cli.verbose, cli.quiet, &datadir);
 
+	// Handle subcommands that don't start the daemon.
+	if let Some(command) = &cli.command {
+		if cli.port.is_some() || cli.host.is_some() {
+			warn!("--port and --host are only used when running the daemon, ignoring");
+		}
+
+		match command {
+			Command::Secret { action: SecretCommand::Refresh { secret: user_secret } } => {
+				let token = if let Some(bytes) = user_secret {
+					let token = AuthToken::new(*bytes);
+					store_auth_token(&datadir, &token)?;
+					token
+				} else {
+					generate_store_auth_token(&datadir)?
+				};
+				println!("{}", token.encode());
+				return Ok(());
+			},
+		}
+	}
+
 	info!("Starting barkd daemon with version {}", FULL_VERSION);
 	let _pid_lock = PidLock::acquire(&datadir)?;
 
@@ -179,6 +264,15 @@ async fn main() -> anyhow::Result<()>{
 		warn!("You're running a custom build of barkd, which might cause unexpected issues. \
 			Consider building at one of the tagged versions or using the release builds.");
 	}
+
+	let auth_token = match load_auth_token(&datadir)? {
+		Some(token) => token,
+		None => {
+			let token = generate_store_auth_token(&datadir)?;
+			eprintln!("No auth tokens found — generated default token: {}", token.encode());
+			token
+		},
+	};
 
 	let (wallet_opt, daemon_opt) = if let Some((wallet, onchain)) = open_wallet(&datadir).await? {
 		let wallet = Arc::new(wallet);
@@ -223,7 +317,9 @@ async fn main() -> anyhow::Result<()>{
 		}
 	});
 
-	let server = RestServer::start(&cli.to_config(), wallet_opt, Some(on_wallet_create)).await?;
+	let server = RestServer::start(
+		&cli.to_config(), auth_token, wallet_opt, Some(on_wallet_create),
+	).await?;
 
 	run_shutdown_signal_listener().await;
 
