@@ -68,14 +68,24 @@ impl Wallet {
 	/// Uses the same iterative approach as `make_lightning_payment` to account for
 	/// VTXO expiry-based fees.
 	///
-	/// Will fail to estimate fees if there aren't enough funds in the wallet to make the payment.
+	/// If the wallet is lacking enough funds to send `amount` via lightning, then the estimate will
+	/// be the maximum possible fee, assuming the user acquires enough funds to cover the payment.
 	pub async fn estimate_lightning_send_fee(&self, amount: Amount) -> Result<FeeEstimate> {
 		let (_, ark_info) = self.require_server().await?;
 
-		let (inputs, fee) = self.select_vtxos_to_cover_with_fee(
+		let (inputs, fee) = match self.select_vtxos_to_cover_with_fee(
 			amount, |a, v| ark_info.fees.lightning_send.calculate(a, v).context("fee overflowed"),
-		).await?;
-
+		).await {
+			Ok((inputs, fee)) => (inputs, fee),
+			Err(_) => {
+				// We choose to ignore every error, even those which are not due to insufficient
+				// funds.
+				let info = [VtxoFeeInfo { amount, expiry_blocks: u32::MAX }];
+				let fee = ark_info.fees.lightning_send.calculate(amount, info)
+					.context("fee overflowed")?;
+				(Vec::new(), fee)
+			},
+		};
 		let total_cost = amount.checked_add(fee).unwrap_or(Amount::MAX);
 		let vtxo_ids = inputs.into_iter().map(|v| v.id()).collect();
 
@@ -149,7 +159,8 @@ impl Wallet {
 	///
 	/// Uses the same iterative approach as `send_onchain` to account for VTXO expiry-based fees.
 	///
-	/// Will fail to estimate fees if there aren't enough funds in the wallet to make the payment.
+	/// If the wallet is lacking enough funds to send `amount` onchain, then the estimate will be
+	/// the maximum possible fee, assuming the user acquires enough funds to cover the payment.
 	pub async fn estimate_send_onchain(
 		&self,
 		address: &bitcoin::Address,
@@ -158,11 +169,22 @@ impl Wallet {
 		let (_, ark_info) = self.require_server().await?;
 		let script_buf = address.script_pubkey();
 
-		let (inputs, fee) = self.select_vtxos_to_cover_with_fee(
+		let (inputs, fee) = match self.select_vtxos_to_cover_with_fee(
 			amount, |a, v|
 				ark_info.fees.offboard.calculate(&script_buf, a, ark_info.offboard_feerate, v)
 					.ok_or_else(|| anyhow!("Error whilst calculating fee"))
-		).await?;
+		).await {
+			Ok((inputs, fee)) => (inputs, fee),
+			Err(_) => {
+				// We choose to ignore every error, even those which are not due to insufficient
+				// funds.
+				let info = [VtxoFeeInfo { amount, expiry_blocks: u32::MAX }];
+				let fee = ark_info.fees.offboard.calculate(
+					&script_buf, amount, ark_info.offboard_feerate, info,
+				).context("fee overflowed")?;
+				(Vec::new(), fee)
+			}
+		};
 
 		let total_cost = amount.checked_add(fee).unwrap_or(Amount::MAX);
 		let vtxo_ids = inputs.into_iter().map(|v| v.id()).collect();
