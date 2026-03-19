@@ -312,6 +312,7 @@ mod daemon;
 mod fees;
 mod lightning;
 mod mailbox;
+mod notification;
 mod offboard;
 #[cfg(feature = "socks5-proxy")]
 mod proxy;
@@ -322,6 +323,7 @@ pub use self::arkoor::ArkoorCreateResult;
 pub use self::config::{BarkNetwork, Config};
 pub use self::daemon::DaemonHandle;
 pub use self::fees::FeeEstimate;
+pub use self::notification::WalletNotification;
 pub use self::vtxo::WalletVtxo;
 
 use std::collections::HashSet;
@@ -666,6 +668,9 @@ pub struct Wallet {
 	/// Allows easy creation of and management of wallet fund movements.
 	pub movements: Arc<MovementManager>,
 
+	/// Handle for subscribing to wallet notifications.
+	notifications: notification::NotificationHandle,
+
 	/// Active runtime configuration for networking, fees, policies and thresholds.
 	config: Config,
 
@@ -986,6 +991,7 @@ impl Wallet {
 			seed,
 			exit,
 			movements,
+			notifications: notification::NotificationHandle::new(),
 			server,
 			chain,
 			inflight_lightning_payments: Mutex::new(HashSet::new()),
