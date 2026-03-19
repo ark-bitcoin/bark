@@ -316,7 +316,7 @@ impl TestContext {
 			required_board_confirmations: constants::BOARD_CONFIRMATIONS as usize,
 			min_trusted_confs: 1,
 			max_vtxo_amount: None,
-			max_arkoor_depth: 5,
+			max_vtxo_exit_depth: 50,
 			max_arkoor_fanout: 4,
 			rpc_rich_errors: true,
 			txindex_check_interval: Duration::from_millis(500),

@@ -11,6 +11,7 @@ Name | Type | Description | Notes
 **mailbox_pubkey** | **String** | The pubkey used for blinding unified mailbox IDs | 
 **max_user_invoice_cltv_delta** | **i32** | Maximum CLTV delta server will allow clients to request an invoice generation with. | 
 **max_vtxo_amount** | **i64** | Maximum amount of a VTXO | 
+**max_vtxo_exit_depth** | **i32** | Maximum exit depth (genesis chain length) allowed for a VTXO. Once a VTXO's exit depth reaches this value the server will refuse to cosign further OOR transactions spending it. Clients should refresh their VTXOs into a round before this limit is reached. | 
 **min_board_amount_sat** | **i64** | Minimum amount for a board the server will cosign | 
 **nb_round_nonces** | **i32** | Number of nonces per round | 
 **network** | **String** | The bitcoin network the server operates on | 

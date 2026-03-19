@@ -278,8 +278,11 @@ pub struct Config {
 	/// Minimum amount required for board transactions.
 	#[serde(with = "utils::serde::string")]
 	pub min_board_amount: Amount,
-	/// Maximum number of OOR transition after VTXO tree leaf
-	pub max_arkoor_depth: u16,
+	/// Maximum exit depth (genesis chain length) allowed for a VTXO.
+	/// Once a VTXO's exit depth reaches this value the server will refuse to
+	/// cosign further OOR transactions spending it. Clients should refresh
+	/// their VTXOs into a round before this limit is reached.
+	pub max_vtxo_exit_depth: u16,
 	/// The maximum number of outputs per input of an arkoor tx
 	pub max_arkoor_fanout: usize,
 	/// Number of confirmations needed for board vtxos to be spend in rounds.

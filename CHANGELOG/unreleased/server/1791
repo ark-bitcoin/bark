@@ -1,0 +1,7 @@
+- Enforce maximum VTXO exit depth to prevent DDoS vector
+  This prevents database bloat and mobile client strain caused by chained OOR
+  transactions where many small payments cause exit depth to balloon unboundedly.
+  [#1791](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1791)
+  - Added `max_input_exit_depth` validation to all cosign request paths (OOR, lightning pay/receive/revocation)
+  - Exposed `max_arkoor_depth` in `ArkInfo` RPC so clients can check limits
+  - Added regression test verifying exit depth limits are enforced

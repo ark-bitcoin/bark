@@ -23,6 +23,10 @@ pub(crate) struct ArkoorCosignRequestValidationParams {
 	pub max_outputs_per_input: usize,
 	/// Don't allow mixing dust and non-dust outputs when not necessary
 	pub disallow_unnecessary_dust: bool,
+	/// maximum allowed exit depth (genesis items) of each input VTXO;
+	/// requests where any input exceeds this are rejected to prevent
+	/// unbounded genesis chain growth
+	pub max_input_exit_depth: u16,
 }
 
 impl Server {
@@ -58,6 +62,15 @@ impl Server {
 		};
 
 		for (idx, b) in ret.builders.iter().enumerate() {
+			let depth = b.input().exit_depth();
+			if depth >= params.max_input_exit_depth {
+				bail!(
+					"input VTXO {} (#{}) exit depth {} meets or exceeds the maximum of {}; \
+					 refresh the VTXO in a round before making further OOR payments",
+					b.input().id(), idx, depth, params.max_input_exit_depth,
+				);
+			}
+
 			let nb_outputs = b.all_outputs().count();
 			if nb_outputs > params.max_outputs_per_input {
 				bail!("too many outputs for input {} (#{}) ({} > {})",
@@ -148,6 +161,7 @@ impl Server {
 			use_checkpoints: true,
 			max_outputs_per_input: self.config.max_arkoor_fanout,
 			disallow_unnecessary_dust: true,
+			max_input_exit_depth: self.config.max_vtxo_exit_depth,
 		};
 		let builder = self.validate_cosign_request(validation, request)
 			.badarg("invalid cosign request")?;

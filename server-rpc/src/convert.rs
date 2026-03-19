@@ -156,6 +156,7 @@ impl From<ark::ArkInfo> for protos::ArkInfo {
 			offboard_feerate_sat_vkb: v.offboard_feerate.to_sat_per_kwu() * 4,
 			ln_receive_anti_dos_required: v.ln_receive_anti_dos_required,
 			fees: Some(v.fees.into()),
+			max_vtxo_exit_depth: v.max_vtxo_exit_depth as u32,
 		}
 	}
 }
@@ -187,6 +188,8 @@ impl TryFrom<protos::ArkInfo> for ark::ArkInfo {
 			offboard_feerate: FeeRate::from_sat_per_kwu(v.offboard_feerate_sat_vkb / 4),
 			ln_receive_anti_dos_required: v.ln_receive_anti_dos_required,
 			fees: v.fees.ok_or("missing fees")?.try_into()?,
+			max_vtxo_exit_depth: v.max_vtxo_exit_depth.try_into()
+				.map_err(|_| "invalid max_vtxo_exit_depth")?,
 		})
 	}
 }

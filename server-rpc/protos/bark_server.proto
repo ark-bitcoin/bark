@@ -101,8 +101,9 @@ message ArkInfo {
 	// permanent into another struct for bark to check
 	uint64 offboard_feerate_sat_vkb = 14;
 	FeeSchedule fees = 18;
+	uint32 max_vtxo_exit_depth = 19;
 
-	// last index: 18
+	// last index: 19
 }
 
 message FeeSchedule {

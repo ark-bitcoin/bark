@@ -2437,7 +2437,8 @@
           "min_board_amount_sat",
           "offboard_feerate_sat_per_kvb",
           "ln_receive_anti_dos_required",
-          "fees"
+          "fees",
+          "max_vtxo_exit_depth"
         ],
         "properties": {
           "fees": {
@@ -2470,6 +2471,12 @@
             "type": "integer",
             "format": "int64",
             "description": "Maximum amount of a VTXO",
+            "minimum": 0
+          },
+          "max_vtxo_exit_depth": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Maximum exit depth (genesis chain length) allowed for a VTXO.\nOnce a VTXO's exit depth reaches this value the server will refuse to\ncosign further OOR transactions spending it. Clients should refresh\ntheir VTXOs into a round before this limit is reached.",
             "minimum": 0
           },
           "min_board_amount_sat": {
