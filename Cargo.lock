@@ -1326,7 +1326,6 @@ dependencies = [
  "bitcoin",
  "hex-conservative 0.2.2",
  "log",
- "minreq",
  "reqwest",
  "serde",
  "serde_json",
@@ -2404,7 +2403,6 @@ version = "2.14.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "05015102dad0f7d61691ca347e9d9d9006685a64aefb3d79eecf62665de2153d"
 dependencies = [
- "base64 0.22.1",
  "serde",
  "serde_json",
 ]
