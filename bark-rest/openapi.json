@@ -991,6 +991,84 @@
         }
       }
     },
+    "/api/v1/wallet": {
+      "get": {
+        "tags": [
+          "wallet"
+        ],
+        "operationId": "wallet_exists",
+        "responses": {
+          "200": {
+            "description": "Wallet existence status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WalletExistsResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternalServerError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "wallet"
+        ],
+        "operationId": "wallet_delete",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WalletDeleteRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Wallet deletion status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WalletDeleteResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternalServerError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/wallet/addresses/index/{index}": {
       "get": {
         "tags": [
@@ -4718,6 +4796,47 @@
               "null"
             ],
             "description": "Return all VTXOs regardless of their state (including spent ones)"
+          }
+        }
+      },
+      "WalletDeleteRequest": {
+        "type": "object",
+        "required": [
+          "dangerous",
+          "fingerprint"
+        ],
+        "properties": {
+          "dangerous": {
+            "type": "boolean"
+          },
+          "fingerprint": {
+            "type": "string"
+          }
+        }
+      },
+      "WalletDeleteResponse": {
+        "type": "object",
+        "required": [
+          "deleted",
+          "message"
+        ],
+        "properties": {
+          "deleted": {
+            "type": "boolean"
+          },
+          "message": {
+            "type": "string"
+          }
+        }
+      },
+      "WalletExistsResponse": {
+        "type": "object",
+        "properties": {
+          "fingerprint": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         }
       },

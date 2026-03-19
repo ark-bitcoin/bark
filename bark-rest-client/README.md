@@ -74,6 +74,8 @@ Class | Method | HTTP request | Description
 *WalletApi* | [**send_onchain**](docs/WalletApi.md#send_onchain) | **POST** /api/v1/wallet/send-onchain | Send on-chain from Ark balance
 *WalletApi* | [**sync**](docs/WalletApi.md#sync) | **POST** /api/v1/wallet/sync | Sync wallet
 *WalletApi* | [**vtxos**](docs/WalletApi.md#vtxos) | **GET** /api/v1/wallet/vtxos | List VTXOs
+*WalletApi* | [**wallet_delete**](docs/WalletApi.md#wallet_delete) | **DELETE** /api/v1/wallet | 
+*WalletApi* | [**wallet_exists**](docs/WalletApi.md#wallet_exists) | **GET** /api/v1/wallet | 
 
 
 ## Documentation For Models
@@ -218,6 +220,9 @@ Class | Method | HTTP request | Description
  - [VtxoStateInfoOneOf1](docs/VtxoStateInfoOneOf1.md)
  - [VtxoStateInfoOneOf2](docs/VtxoStateInfoOneOf2.md)
  - [VtxosQuery](docs/VtxosQuery.md)
+ - [WalletDeleteRequest](docs/WalletDeleteRequest.md)
+ - [WalletDeleteResponse](docs/WalletDeleteResponse.md)
+ - [WalletExistsResponse](docs/WalletExistsResponse.md)
  - [WalletVtxoInfo](docs/WalletVtxoInfo.md)
 
 
