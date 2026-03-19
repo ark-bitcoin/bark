@@ -343,7 +343,7 @@ pub struct RoundParticipationInfo {
 
 impl<'a> From<&'a bark::round::RoundParticipation> for RoundParticipationInfo {
 	fn from(v: &'a bark::round::RoundParticipation) -> Self {
-	    Self {
+		Self {
 			inputs: v.inputs.iter().map(|v| v.id()).collect(),
 			outputs: v.outputs.iter().map(Into::into).collect(),
 		}
@@ -388,3 +388,24 @@ impl PendingRoundInfo {
 		}
 	}
 }
+
+#[derive(Serialize, Deserialize)]
+#[cfg_attr(feature = "utoipa", derive(ToSchema))]
+pub struct WalletExistsResponse {
+	pub fingerprint: Option<String>,
+}
+
+#[derive(Serialize, Deserialize)]
+#[cfg_attr(feature = "utoipa", derive(ToSchema))]
+pub struct WalletDeleteRequest {
+	pub dangerous: bool,
+	pub fingerprint: String,
+}
+
+#[derive(Serialize, Deserialize)]
+#[cfg_attr(feature = "utoipa", derive(ToSchema))]
+pub struct WalletDeleteResponse {
+	pub deleted: bool,
+	pub message: String,
+}
+

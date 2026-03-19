@@ -24,6 +24,8 @@ Method | HTTP request | Description
 [**send_onchain**](WalletApi.md#send_onchain) | **POST** /api/v1/wallet/send-onchain | Send on-chain from Ark balance
 [**sync**](WalletApi.md#sync) | **POST** /api/v1/wallet/sync | Sync wallet
 [**vtxos**](WalletApi.md#vtxos) | **GET** /api/v1/wallet/vtxos | List VTXOs
+[**wallet_delete**](WalletApi.md#wallet_delete) | **DELETE** /api/v1/wallet | 
+[**wallet_exists**](WalletApi.md#wallet_exists) | **GET** /api/v1/wallet | 
 
 
 
@@ -581,6 +583,59 @@ Name | Type | Description  | Required | Notes
 ### Return type
 
 [**Vec<models::WalletVtxoInfo>**](WalletVtxoInfo.md)
+
+### Authorization
+
+[bearer](../README.md#bearer)
+
+### HTTP request headers
+
+- **Content-Type**: Not defined
+- **Accept**: application/json
+
+[[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
+
+
+## wallet_delete
+
+> models::WalletDeleteResponse wallet_delete(wallet_delete_request)
+
+
+### Parameters
+
+
+Name | Type | Description  | Required | Notes
+------------- | ------------- | ------------- | ------------- | -------------
+**wallet_delete_request** | [**WalletDeleteRequest**](WalletDeleteRequest.md) |  | [required] |
+
+### Return type
+
+[**models::WalletDeleteResponse**](WalletDeleteResponse.md)
+
+### Authorization
+
+[bearer](../README.md#bearer)
+
+### HTTP request headers
+
+- **Content-Type**: application/json
+- **Accept**: application/json
+
+[[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
+
+
+## wallet_exists
+
+> models::WalletExistsResponse wallet_exists()
+
+
+### Parameters
+
+This endpoint does not need any parameter.
+
+### Return type
+
+[**models::WalletExistsResponse**](WalletExistsResponse.md)
 
 ### Authorization
 

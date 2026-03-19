@@ -22,6 +22,7 @@ use crate::error::{ContextExt, HandlerResult, badarg, not_found};
 pub fn router() -> Router<ServerState> {
 	#[allow(deprecated)]
 	Router::new()
+		.route("/", get(wallet_exists).post(create_wallet).delete(wallet_delete))
 		.route("/connected", get(connected))
 		.route("/create", post(create_wallet))
 		.route("/ark-info", get(ark_info))
@@ -47,6 +48,8 @@ pub fn router() -> Router<ServerState> {
 #[derive(OpenApi)]
 #[openapi(
 	paths(
+		wallet_exists,
+		wallet_delete,
 		connected,
 		create_wallet,
 		ark_info,
@@ -70,6 +73,9 @@ pub fn router() -> Router<ServerState> {
 	),
 	components(schemas(
 		bark_json::web::ArkAddressResponse,
+		bark_json::web::WalletExistsResponse,
+		bark_json::web::WalletDeleteRequest,
+		bark_json::web::WalletDeleteResponse,
 		bark_json::web::ConnectedResponse,
 		bark_json::web::CreateWalletRequest,
 		bark_json::web::CreateWalletResponse,
@@ -120,6 +126,65 @@ pub async fn connected(State(state): State<ServerState>) -> HandlerResult<Json<b
 }
 
 #[utoipa::path(
+	get,
+	path = "",
+	responses(
+		(status = 200, description = "Wallet existence status", body = bark_json::web::WalletExistsResponse),
+		(status = 500, description = "Internal server error", body = error::InternalServerError)
+	),
+	tag = "wallet"
+)]
+#[debug_handler]
+pub async fn wallet_exists(State(state): State<ServerState>) -> HandlerResult<Json<bark_json::web::WalletExistsResponse>> {
+	let wallet = state.wallet.read();
+	Ok(Json(bark_json::web::WalletExistsResponse { 
+		fingerprint: wallet.as_ref().map(|w| w.wallet.fingerprint().to_string()),
+	}))
+}
+
+#[utoipa::path(
+	delete,
+	path = "",
+	request_body = bark_json::web::WalletDeleteRequest,
+	responses(
+		(status = 200, description = "Wallet deletion status", body = bark_json::web::WalletDeleteResponse),
+		(status = 400, description = "Invalid request", body = error::BadRequestError),
+		(status = 500, description = "Internal server error", body = error::InternalServerError)
+	),
+	tag = "wallet"
+)]
+#[debug_handler]
+pub async fn wallet_delete(State(state): State<ServerState>, Json(req): Json<bark_json::web::WalletDeleteRequest>) -> HandlerResult<Json<bark_json::web::WalletDeleteResponse>> {
+	if !req.dangerous {
+		badarg!("deletion not confirmed: set dangerous=true");
+	}
+
+	{
+		let wallet = state.wallet.read();
+		let Some(w) = wallet.as_ref() else {
+			return Ok(Json(bark_json::web::WalletDeleteResponse {
+				deleted: false,
+				message: "No wallet to delete".to_string(),
+			}));
+		};
+		if w.wallet.fingerprint().to_string() != req.fingerprint {
+			badarg!("Fingerprint does not match the loaded wallet");
+		}
+	}
+
+	let Some(hook) = state.on_wallet_delete.as_ref() else {
+		badarg!("No wallet deletion hook configured");
+	};
+	hook().await.context("Couldn't delete wallet")?;
+	state.wallet.write().take();
+	Ok(Json(bark_json::web::WalletDeleteResponse {
+		deleted: true,
+		message: "Wallet deleted".to_string(),
+	}))
+}
+
+
+#[utoipa::path(
 	post,
 	path = "/create",
 	summary = "Create a wallet",
@@ -138,7 +203,7 @@ pub async fn create_wallet(
 	Json(req): Json<bark_json::web::CreateWalletRequest>,
 ) -> HandlerResult<Json<bark_json::web::CreateWalletResponse>> {
 	if state.wallet.read().is_some() {
-		return Err(anyhow!("Wallet already set").into());
+		badarg!("Wallet already set");
 	}
 
 	if let Some(on_wallet_create) = state.on_wallet_create.as_ref() {
@@ -148,7 +213,7 @@ pub async fn create_wallet(
 
 		Ok(axum::Json(bark_json::web::CreateWalletResponse { fingerprint }))
 	} else {
-		Err(anyhow!("No wallet creation hook set").into())
+		badarg!("No wallet creation hook set");
 	}
 }
 

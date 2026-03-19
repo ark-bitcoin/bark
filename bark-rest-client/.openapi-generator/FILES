@@ -150,6 +150,9 @@ docs/VtxoStateInfoOneOf1.md
 docs/VtxoStateInfoOneOf2.md
 docs/VtxosQuery.md
 docs/WalletApi.md
+docs/WalletDeleteRequest.md
+docs/WalletDeleteResponse.md
+docs/WalletExistsResponse.md
 docs/WalletVtxoInfo.md
 git_push.sh
 src/apis/bitcoin_api.rs
@@ -303,4 +306,7 @@ src/models/vtxo_state_info_one_of.rs
 src/models/vtxo_state_info_one_of_1.rs
 src/models/vtxo_state_info_one_of_2.rs
 src/models/vtxos_query.rs
+src/models/wallet_delete_request.rs
+src/models/wallet_delete_response.rs
+src/models/wallet_exists_response.rs
 src/models/wallet_vtxo_info.rs
