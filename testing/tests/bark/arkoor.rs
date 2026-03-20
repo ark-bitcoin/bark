@@ -1,4 +1,4 @@
-use ark_testing::{btc, sat, TestContext};
+use ark_testing::{btc, require_bark_version, sat, signed_sat, TestContext};
 use ark_testing::constants::BOARD_CONFIRMATIONS;
 use ark_testing::util::{FutureExt, ToAltString};
 use bark::movement::{MovementDestination, PaymentMethod};
@@ -26,12 +26,32 @@ async fn send_simple_arkoor() {
 	bark2_wallet.sync().await;
 	let movement = notifications.movements().next().ready().await.unwrap();
 	assert_eq!(movement.received_on[0], MovementDestination {
-		destination: PaymentMethod::Ark(addr2),
+		destination: PaymentMethod::Ark(addr2.clone()),
 		amount: sat(20_000),
 	});
 
 	assert_eq!(60_000, bark1.spendable_balance().await.to_sat());
 	assert_eq!(20_000, bark2_wallet.balance().await.unwrap().spendable.to_sat());
+
+	// Address lookup is only supported in beta.9 and later
+	require_bark_version!(>= "0.1.0-beta.9");
+
+	// send a second payment to the same address
+	bark1.send_oor(&addr2, sat(30_000)).await;
+
+	// Look up receives for the address that received a payment
+	bark2.sync().await;
+	let movements = bark2.history_by_arkoor_addr(&addr2).await;
+	assert_eq!(movements.len(), 2);
+	assert_eq!(movements[0].intended_balance, signed_sat(20_000));
+	assert_eq!(movements[0].received_on[0].destination, PaymentMethod::Ark(addr2.clone()).into());
+	assert_eq!(movements[1].intended_balance, signed_sat(30_000));
+	assert_eq!(movements[1].received_on[0].destination, PaymentMethod::Ark(addr2.clone()).into());
+
+	// Look up receives for a bark2 address that has no payments
+	let addr2_unused = bark2.address().await;
+	let movements = bark2.history_by_arkoor_addr(&addr2_unused).await;
+	assert!(movements.is_empty());
 }
 
 #[tokio::test]

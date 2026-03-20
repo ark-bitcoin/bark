@@ -403,6 +403,13 @@ impl Bark {
 		self.run(["address", "--index", &idx.to_string()]).await
 	}
 
+	pub async fn history_by_arkoor_addr(
+		&self,
+		address: impl fmt::Display,
+	) -> Vec<bark_json::cli::Movement> {
+		self.run_json(["address", "lookup", "--address", &address.to_string()]).await
+	}
+
 	/// Use bark wallet to send bitcoin onchain
 	pub async fn try_send_onchain(
 		&self,
