@@ -15,6 +15,78 @@ use utoipa::ToSchema;
 use crate::cli::RoundStatus;
 
 
+/// Query parameters for fee estimates that only require an amount.
+#[derive(Serialize, Deserialize)]
+#[cfg_attr(feature = "utoipa", derive(ToSchema))]
+pub struct FeeEstimateQuery {
+	/// The amount in satoshis to estimate fees for
+	pub amount_sat: u64,
+}
+
+/// Query parameters for send-onchain fee estimates.
+#[derive(Serialize, Deserialize)]
+#[cfg_attr(feature = "utoipa", derive(ToSchema))]
+pub struct SendOnchainFeeEstimateQuery {
+	/// The amount in satoshis to send
+	pub amount_sat: u64,
+	/// The destination Bitcoin address
+	pub address: String,
+}
+
+/// Query parameters for offboard-all fee estimates.
+#[derive(Serialize, Deserialize)]
+#[cfg_attr(feature = "utoipa", derive(ToSchema))]
+pub struct OffboardAllFeeEstimateQuery {
+	/// The destination Bitcoin address
+	pub address: String,
+}
+
+/// A fee estimate for an Ark wallet operation.
+#[derive(Serialize, Deserialize)]
+#[cfg_attr(feature = "utoipa", derive(ToSchema))]
+pub struct FeeEstimateResponse {
+	/// The total amount including fees (in satoshis)
+	#[serde(rename = "gross_amount_sat", with = "bitcoin::amount::serde::as_sat")]
+	#[cfg_attr(feature = "utoipa", schema(value_type = u64))]
+	pub gross_amount: Amount,
+	/// The fee portion (in satoshis)
+	#[serde(rename = "fee_sat", with = "bitcoin::amount::serde::as_sat")]
+	#[cfg_attr(feature = "utoipa", schema(value_type = u64))]
+	pub fee: Amount,
+	/// The amount excluding fees (in satoshis). For sends, this is the amount
+	/// the recipient receives. For receives, this is the amount the user gets.
+	#[serde(rename = "net_amount_sat", with = "bitcoin::amount::serde::as_sat")]
+	#[cfg_attr(feature = "utoipa", schema(value_type = u64))]
+	pub net_amount: Amount,
+	/// The VTXOs that would be spent for this operation
+	#[cfg_attr(feature = "utoipa", schema(value_type = Vec<String>))]
+	pub vtxos_spent: Vec<VtxoId>,
+}
+
+impl From<bark::FeeEstimate> for FeeEstimateResponse {
+	fn from(estimate: bark::FeeEstimate) -> Self {
+		FeeEstimateResponse {
+			gross_amount: estimate.gross_amount,
+			fee: estimate.fee,
+			net_amount: estimate.net_amount,
+			vtxos_spent: estimate.vtxos_spent,
+		}
+	}
+}
+
+/// Mempool fee rates for on-chain transactions.
+#[derive(Serialize, Deserialize)]
+#[cfg_attr(feature = "utoipa", derive(ToSchema))]
+pub struct OnchainFeeRatesResponse {
+	/// Fee rate targeting ~1 block confirmation (sat/vB)
+	pub fast_sat_per_vb: u64,
+	/// Fee rate targeting ~3 block confirmation (sat/vB)
+	pub regular_sat_per_vb: u64,
+	/// Fee rate targeting ~6 block confirmation (sat/vB)
+	pub slow_sat_per_vb: u64,
+}
+
+
 #[derive(Serialize, Deserialize)]
 #[cfg_attr(feature = "utoipa", derive(ToSchema))]
 pub struct TipResponse {
