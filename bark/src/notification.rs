@@ -19,7 +19,7 @@ pub enum WalletNotification {
 }
 
 /// Handle for subscribing to wallet notifications.
-pub struct NotificationHandle {
+pub(crate) struct NotificationHandle {
 	tx: broadcast::Sender<WalletNotification>,
 }
 
