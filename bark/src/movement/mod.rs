@@ -104,7 +104,7 @@ impl Movement {
 }
 
 /// A unique identifier for a movement.
-#[derive(Clone, Copy, Eq, Hash, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Copy, Eq, Hash, PartialEq, Deserialize, Serialize, Ord, PartialOrd)]
 pub struct MovementId(pub u32);
 
 impl MovementId {
