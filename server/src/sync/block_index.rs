@@ -54,6 +54,10 @@ impl BlockIndex {
 
 		let chain_tip = bitcoind.tip().context("Failed to get bitcoind tip")?;
 
+		// Initialize telemetry with current values
+		telemetry::set_block_height(chain_tip.height);
+		telemetry::set_sync_height(sync_tip.height);
+
 		let (chain_tip_tx, _) = watch::channel(chain_tip);
 		let (sync_height_tx, _ ) = watch::channel(sync_tip);
 		Ok(Self { chain_tip_tx, sync_height_tx, bitcoind, db, listeners, block_table })
