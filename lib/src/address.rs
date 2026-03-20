@@ -566,39 +566,40 @@ mod test {
 	fn address_roundtrip() {
 		let ark = PublicKey::from_str("02037188bdd7579a0cd0b22a51110986df1ea08e30192658fe0e219590e4a723d3").unwrap();
 		let ark_id = ArkId::from_server_pubkey(ark);
-		let usr = PublicKey::from_str("032217b6ccba4fa98cc433abe4be1ceaf41ea61fd83fcefd27384ca4612ce19512").unwrap();
+		let ark_mailbox_pk = PublicKey::from_str("02165c883d8c2e3fe0887800191503beb27c9896d7ff5dfdfc5e9b9dcb25da04c1").unwrap();
+		let usr_sk = Keypair::from_str("6b0f024af54172a9aed9a0f044689175787676c469ff2aa75024cae5445c7a02").unwrap();
+		let usr = usr_sk.public_key();
+		let usr_mailbox_id = MailboxIdentifier::from_str("025d1404cf97bcbc81d0d387cd3416238aeb5362b3877fc54c0ae9b6c1f925ced1").unwrap();
 		println!("ark pk: {} (id {})", ark, ark_id);
 		println!("usr pk: {}", usr);
 		let policy = VtxoPolicy::new_pubkey(usr);
-		let blinded_id = BlindedMailboxIdentifier::from_pubkey(usr);
-		let delivery = VtxoDelivery::ServerMailbox { blinded_id };
 
-		// no delivery
+		// mailbox delivery
 		let addr = Address::builder()
 			.server_pubkey(ark)
 			.pubkey_policy(usr)
-			.delivery(delivery.clone())
+			.mailbox(ark_mailbox_pk, usr_mailbox_id, &usr_sk).unwrap()
 			.into_address().unwrap();
-		assert_eq!(addr.to_string(), "ark1pwh9vsmezqqpjy9akejayl2vvcse6he97rn40g84xrlvrlnhayuuyefrp9nse2y3zqypjy9akejayl2vvcse6he97rn40g84xrlvrlnhayuuyefrp9nse2ysl2dy60");
+		assert_eq!(addr.to_string(), "ark1pwh9vsmezqqpharv69q4z8m6x364d5m5prnmcalcalq9pdmzw0y7mpveck4pcfhezqypczkrrj3lkx5ue4qrf4jc7ztpt9htdttmh2judhqnu7aue8p0y9mqkr4cf5");
 
 		let parsed = test_roundtrip(&addr);
 		assert_eq!(parsed.ark_id, ark_id);
 		assert_eq!(parsed.policy, policy);
-		assert_eq!(parsed.delivery, vec![delivery.clone()]);
+		assert!(matches!(parsed.delivery[0], VtxoDelivery::ServerMailbox { .. }));
 
-		// no delivery testnet
+		// mailbox delivery testnet
 		let addr = Address::builder()
 			.testnet(true)
 			.server_pubkey(ark)
 			.pubkey_policy(usr)
-			.delivery(delivery.clone())
+			.mailbox(ark_mailbox_pk, usr_mailbox_id, &usr_sk).unwrap()
 			.into_address().unwrap();
-		assert_eq!(addr.to_string(), "tark1pwh9vsmezqqpjy9akejayl2vvcse6he97rn40g84xrlvrlnhayuuyefrp9nse2y3zqypjy9akejayl2vvcse6he97rn40g84xrlvrlnhayuuyefrp9nse2ysuh20ke");
+		assert_eq!(addr.to_string(), "tark1pwh9vsmezqqpharv69q4z8m6x364d5m5prnmcalcalq9pdmzw0y7mpveck4pcfhezqypczkrrj3lkx5ue4qrf4jc7ztpt9htdttmh2judhqnu7aue8p0y9mq47jn9z");
 
 		let parsed = test_roundtrip(&addr);
 		assert_eq!(parsed.ark_id, ArkId::from_server_pubkey(ark));
 		assert_eq!(parsed.policy, policy);
-		assert_eq!(parsed.delivery, vec![delivery.clone()]);
+		assert!(matches!(parsed.delivery[0], VtxoDelivery::ServerMailbox { .. }));
 	}
 
 	#[test]
