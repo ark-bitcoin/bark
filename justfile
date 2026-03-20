@@ -237,7 +237,8 @@ generate-bark-rest-client: dump-bark-rest-openapi-schema
 		-o {{BARK_REST_CLIENT_DIR}} \
 		--package-name bark-rest-client \
 		--artifact-version "{{BARK_REST_VERSION}}" \
-		--additional-properties packageVersion="{{BARK_REST_VERSION}}"
+		--additional-properties packageVersion="{{BARK_REST_VERSION}}" \
+		--additional-properties reqwestDefaultFeatures="rustls-tls"
 	cargo add --package bark-rest-client --path bark-json
 	cargo add --package bark-rest-client --path bark-rest
 	rm {{BARK_REST_CLIENT_DIR}}/src/models/*.rs
