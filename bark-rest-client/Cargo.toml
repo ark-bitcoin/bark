@@ -6,6 +6,11 @@ description = "A simple REST API for barkd, a wallet daemon for integrating bitc
 license = "MIT"
 edition = "2021"
 
+[features]
+default = ["rustls-tls"]
+native-tls = ["reqwest/native-tls"]
+rustls-tls = ["reqwest/rustls-tls"]
+
 [dependencies]
 serde = { version = "^1.0", features = ["derive"] }
 serde_with = { version = "^3.8", default-features = false, features = ["base64", "std", "macros"] }
@@ -15,8 +20,3 @@ url = "^2.5"
 reqwest = { version = "^0.12", default-features = false, features = ["json", "multipart"] }
 bark-json = { version = "0.1.0-beta.8", path = "../bark-json" }
 bark-rest = { version = "0.1.0-beta.8", path = "../bark-rest" }
-
-[features]
-default = ["native-tls"]
-native-tls = ["reqwest/native-tls"]
-rustls-tls = ["reqwest/rustls-tls"]
