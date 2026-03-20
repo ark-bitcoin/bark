@@ -203,3 +203,7 @@ CREATE VIEW bark_movements_view AS
 					) AS exited_vtxos
 				FROM bark_movements m
 /* bark_movements_view(id,status,subsystem_name,movement_kind,metadata,intended_balance,effective_balance,offchain_fee,created_at,updated_at,completed_at,sent_to,received_on,input_vtxos,output_vtxos,exited_vtxos) */;
+CREATE INDEX movements_sent_to_idx
+				ON bark_movements_sent_to (destination_type, destination_value);
+CREATE INDEX movements_received_on_idx
+				ON bark_movements_received_on (destination_type, destination_value);

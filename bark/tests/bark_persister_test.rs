@@ -31,8 +31,8 @@ use bark::movement::{
 };
 use bark::persist::BarkPersister;
 use bark::persist::models::{
-	LightningReceive, LightningSend, PendingBoard, StoredExit, StoredRoundState,
-	Unlocked, RoundStateId, SerdeRoundState, PendingOffboard,
+	LightningReceive, LightningSend, PendingBoard, StoredExit, StoredRoundState, Unlocked,
+	RoundStateId, SerdeRoundState, PendingOffboard,
 };
 use bark::round::RoundState;
 use bark::vtxo::{VtxoState, VtxoStateKind};
@@ -334,6 +334,13 @@ impl BarkPersister for Dummy {
 
 	async fn get_all_movements(&self) -> anyhow::Result<Vec<Movement>> {
 		Ok(vec![dummy_movement(MovementStatus::Failed)])
+	}
+
+	async fn get_movements_by_payment_method(
+		&self,
+		_payment_method: &PaymentMethod,
+	) -> anyhow::Result<Vec<Movement>> {
+		Ok(vec![])
 	}
 
 	async fn store_vtxos(

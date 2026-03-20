@@ -118,6 +118,12 @@ impl Migration for Migration0027 {
 						WHERE movement_id = m.id
 					) AS exited_vtxos
 				FROM bark_movements m;
+
+				CREATE INDEX movements_sent_to_idx
+				ON bark_movements_sent_to (destination_type, destination_value);
+
+				CREATE INDEX movements_received_on_idx
+				ON bark_movements_received_on (destination_type, destination_value);
 		").context("failed to split destination columns")?;
 
 		Ok(())

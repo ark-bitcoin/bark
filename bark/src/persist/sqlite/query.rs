@@ -17,7 +17,7 @@ use bitcoin_ext::BlockDelta;
 
 use crate::{VtxoId, WalletProperties};
 use crate::exit::{ExitState, ExitTxOrigin};
-use crate::movement::{Movement, MovementId, MovementStatus, MovementSubsystem};
+use crate::movement::{Movement, MovementId, MovementStatus, MovementSubsystem, PaymentMethod};
 use crate::persist::{RoundStateId, StoredRoundState};
 use crate::persist::models::{
 	LightningReceive, LightningSend, PendingBoard, SerdeRoundState, StoredExit, Unlocked,
@@ -204,6 +204,29 @@ pub fn get_movement_by_id(conn: &Connection, id: MovementId) -> anyhow::Result<M
 	} else {
 		Err(anyhow!("Movement {} not found", id))
 	}
+}
+
+pub fn get_movements_by_payment_method(
+	conn: &Connection,
+	payment_method: &PaymentMethod,
+) -> anyhow::Result<Vec<Movement>> {
+	let mut statement = conn.prepare(
+		"SELECT mv.* FROM bark_movements_view mv
+		WHERE mv.id IN (
+			SELECT movement_id FROM bark_movements_sent_to
+				WHERE destination_type = ?1 AND destination_value = ?2
+			UNION
+			SELECT movement_id FROM bark_movements_received_on
+				WHERE destination_type = ?1 AND destination_value = ?2
+		);"
+	)?;
+	let pm = payment_method.value_string();
+	let mut rows = statement.query(&[payment_method.type_str(), &pm])?;
+	let mut results = Vec::new();
+	while let Some(row) = rows.next()? {
+		results.push(row_to_movement(row)?);
+	}
+	Ok(results)
 }
 
 pub fn get_all_pending_boards_ids(conn: &Connection) -> anyhow::Result<Vec<VtxoId>> {
@@ -1053,7 +1076,6 @@ pub fn get_exit_child_tx(
 		Err(e) => Err(format_err!("Unable to deserialize child tx for exit {}: {}", exit_txid, e)),
 	}
 }
-
 
 
 #[cfg(test)]
