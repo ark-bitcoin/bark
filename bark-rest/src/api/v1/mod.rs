@@ -1,4 +1,5 @@
 pub mod exits;
+pub mod fees;
 pub mod lightning;
 pub mod onchain;
 pub mod boards;
@@ -15,6 +16,7 @@ pub fn router() -> Router<ServerState> {
 		.nest("/onchain", onchain::router())
 		.nest("/boards", boards::router())
 		.nest("/exits", exits::router())
+		.nest("/fees", fees::router())
 		.nest("/wallet", wallet::router())
 		.nest("/bitcoin", bitcoin::router())
 }

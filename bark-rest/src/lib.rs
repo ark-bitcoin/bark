@@ -59,6 +59,7 @@ All endpoints return JSON. Amounts are denominated in satoshis.";
 	nest(
 		(path = "/api/v1/boards", api = api::v1::boards::BoardsApiDoc),
 		(path = "/api/v1/exits", api = api::v1::exits::ExitsApiDoc),
+		(path = "/api/v1/fees", api = api::v1::fees::FeesApiDoc),
 		(path = "/api/v1/lightning", api = api::v1::lightning::LightningApiDoc),
 		(path = "/api/v1/onchain", api = api::v1::onchain::OnchainApiDoc),
 		(path = "/api/v1/wallet", api = api::v1::wallet::WalletApiDoc),
