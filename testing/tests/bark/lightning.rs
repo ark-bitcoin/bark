@@ -12,7 +12,7 @@ use bark_json::movements::{MovementDestination, MovementStatus, PaymentMethod};
 use bark_json::primitives::VtxoStateInfo;
 use log::{info, trace};
 
-use ark_testing::{Captaind, TestContext, btc, lightning_test, require_bark_version, sat};
+use ark_testing::{Captaind, Lightningd, TestContext, btc, lightning_test, require_bark_version, sat};
 use ark_testing::constants::{BOARD_CONFIRMATIONS, ROUND_CONFIRMATIONS};
 use ark_testing::daemon::captaind::{self, ArkClient};
 use ark_testing::util::{FutureExt, ToAltString};
@@ -1455,4 +1455,74 @@ async fn bark_cannot_cancel_lightning_receive_after_preimage_revealed() {
 	let err = bark.try_cancel_lightning_receive(&invoice_info.invoice).await.unwrap_err();
 	assert!(err.to_string().contains("cannot cancel: preimage has already been revealed"),
 		"expected preimage-revealed error, got: {err}");
+}
+
+/// Test bolt11 receive over a 5-hop lightning route.
+///
+/// Topology: sender → hop1 → hop2 → ... → hop4 → receiver
+/// (5 nodes total, 4 channels)
+#[tokio::test]
+async fn bark_can_receive_lightning_long_route() {
+	let ctx = TestContext::new("lightningd/bark_can_receive_lightning_long_route").await;
+
+	const NUM_HOPS: usize = 5;
+
+	// Create all nodes. The receiver has offers disabled for bolt12.
+	let receiver = ctx.lightningd("ln_node_0").create().await;
+	let mut nodes: Vec<Arc<Lightningd>> = vec![Arc::new(receiver)];
+
+	for i in 1..NUM_HOPS - 1 {
+		let node = ctx.lightningd(format!("ln_node_{}", i)).create().await;
+		nodes.push(Arc::new(node));
+	}
+	let sender = Arc::new(ctx.lightningd(format!("ln_node_{}", NUM_HOPS - 1)).create().await);
+	nodes.push(sender.clone());
+
+	// Fund all nodes except receiver (index 0)
+	for node in &nodes[1..] {
+		ctx.fund_lightning(node, btc(10)).await;
+	}
+	let height = ctx.generate_blocks(6).await;
+	for node in &nodes {
+		node.wait_for_block(height).await;
+	}
+
+	// Connect and fund channels: node[0] <-> node[1] <-> ... <-> node[N-1]
+	for i in 0..NUM_HOPS - 1 {
+		nodes[i + 1].connect(&nodes[i]).await;
+		let funding_txid = nodes[i + 1].fund_channel(&nodes[i], btc(5)).await;
+		ctx.await_transaction(funding_txid).await;
+	}
+
+	// Confirm all channel funding txs
+	ctx.generate_blocks(6).await;
+
+	// Wait for gossip to propagate the full route
+	// The sender needs to see all channels to find the route
+	sender.wait_for_gossip(NUM_HOPS - 1).await;
+
+	// Server linked to receiver CLN
+	let srv = ctx.captaind("server").lightningd(&nodes[0]).funded(btc(10)).create().await;
+
+	let bark = Arc::new(ctx.bark("bark", &srv).funded(btc(10)).create().await);
+	bark.board_and_confirm_and_register(&ctx, btc(8)).await;
+
+	// ---- Bolt11 receive over the long route ----
+	info!("=== Bolt11 receive over {}-hop route ===", NUM_HOPS);
+	let bolt11_amount = sat(500_000);
+	let invoice_info = bark.bolt11_invoice(bolt11_amount).await;
+
+	let invoice_str = invoice_info.invoice.clone();
+	let sender_clone = sender.clone();
+	let bolt11_pay = tokio::spawn(async move {
+		sender_clone.pay_bolt11(invoice_str).await
+	});
+
+	srv.wait_for_vtxopool(&ctx).await;
+
+	bark.lightning_receive(&invoice_info.invoice).wait_millis(10_000).await;
+	bolt11_pay.ready().await.unwrap();
+
+	assert_eq!(bark.spendable_balance().await, btc(8) + bolt11_amount);
+	info!("Bolt11 receive over long route succeeded");
 }
