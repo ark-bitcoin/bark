@@ -14,12 +14,21 @@ path = "src/bin/bark/main.rs"
 name = "barkd"
 path = "src/bin/barkd/main.rs"
 
+[features]
+default = ["tls-native-roots"]
+
+# TLS certificate verification options (pick one)
+tls-native-roots = ["bark-wallet/tls-native-roots", "bark-server-rpc/tls-native-roots"]
+# Use this feature for cross-compilation. It uses rustls with bundled Mozilla
+# CA certificates instead of the system's native TLS and certificate store.
+tls-webpki-roots = ["bark-wallet/tls-webpki-roots", "bark-server-rpc/tls-webpki-roots"]
+
 [dependencies]
 ark-lib = { version = "0.1.0-beta.8", path = "../lib" }
 bark-json = { version = "0.1.0-beta.8", path = "../bark-json" }
-bark-wallet = { version = "0.1.0-beta.8", path = "../bark", features = [ "onchain-bdk", "sqlite", "filestore", "pid-lock", "socks5-proxy" ] }
+bark-wallet = { version = "0.1.0-beta.8", path = "../bark", default-features = false, features = [ "onchain-bdk", "sqlite", "filestore", "pid-lock", "socks5-proxy", "rand", "native" ] }
 bark-bitcoin-ext = { version = "0.1.0-beta.8", path = "../bitcoin-ext", features = ["rpc-socks5-proxy"] }
-bark-server-rpc = { version = "0.1.0-beta.8", path = "../server-rpc", features = ["socks5-proxy"] }
+bark-server-rpc = { version = "0.1.0-beta.8", path = "../server-rpc", default-features = false, features = ["tonic-native", "socks5-proxy"] }
 bark-rest = { version = "0.1.0-beta.8", path = "../bark-rest" }
 
 anyhow.workspace = true
