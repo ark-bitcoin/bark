@@ -111,14 +111,19 @@ pub struct VtxosQuery {
 #[derive(Serialize, Deserialize)]
 #[cfg_attr(feature = "utoipa", derive(ToSchema))]
 pub struct RefreshRequest {
-	/// List of VTXO IDs to refresh
+	/// List of VTXO IDs to refresh. The sum of the VTXOs being refreshed must be
+	/// >= [P2TR_DUST](bitcoin_ext::P2TR_DUST). Keep in mind that fees set out in
+	/// [RefreshFees](crate::cli::RefreshFees) will be deducted from the newly created VTXO, this
+	/// value must also be >= [P2TR_DUST](bitcoin_ext::P2TR_DUST).
 	pub vtxos: Vec<String>,
 }
 
 #[derive(Serialize, Deserialize)]
 #[cfg_attr(feature = "utoipa", derive(ToSchema))]
 pub struct BoardRequest {
-	/// Amount of on-chain funds to board (in satoshis)
+	/// An amount of onchain funds to board (in satoshis). For a board operation to be successful,
+	/// this value, with any server-configured [BoardFees](crate::cli::BoardFees) deducted, must be
+	/// >= [P2TR_DUST](bitcoin_ext::P2TR_DUST).
 	pub amount_sat: u64,
 }
 
@@ -127,7 +132,9 @@ pub struct BoardRequest {
 pub struct SendRequest {
 	/// The destination can be an Ark address, a BOLT11-invoice, LNURL or a lightning address
 	pub destination: String,
-	/// The amount to send (in satoshis). Optional for bolt11 invoices
+	/// The amount to send (in satoshis). Optional for bolt11 invoices. Depending on the
+	/// `destination`, the wallet must contain this amount plus any fees configured by the server in
+	/// [FeeSchedule](crate::cli::FeeSchedule).
 	pub amount_sat: Option<u64>,
 	/// An optional comment, only supported when paying to lightning addresses
 	pub comment: Option<String>,
@@ -145,7 +152,9 @@ pub struct SendResponse {
 pub struct SendOnchainRequest {
 	/// The destination Bitcoin address
 	pub destination: String,
-	/// The amount to send (in satoshis)
+	/// The amount (in satoshis) to be received by `destination` onchain. Must be
+	/// >= [P2TR_DUST](bitcoin_ext::P2TR_DUST). Server-configured fees laid out in
+	/// [OffboardFees](crate::cli::OffboardFees) will be added on top of this amount.
 	pub amount_sat: u64,
 }
 
@@ -154,7 +163,9 @@ pub struct SendOnchainRequest {
 pub struct OffboardVtxosRequest {
 	/// Optional Bitcoin address to send to. If not provided, uses the onchain wallet's address
 	pub address: Option<String>,
-	/// List of VTXO IDs to offboard
+	/// List of VTXO IDs to offboard. The sum of the VTXOs being refreshed must be
+	/// >= [P2TR_DUST](bitcoin_ext::P2TR_DUST) after the server-configured
+	/// [OffboardFees](crate::cli::OffboardFees) are deducted.
 	pub vtxos: Vec<String>,
 }
 
@@ -175,7 +186,9 @@ pub struct ImportVtxoRequest {
 #[derive(Serialize, Deserialize)]
 #[cfg_attr(feature = "utoipa", derive(ToSchema))]
 pub struct LightningInvoiceRequest {
-	/// The amount to create invoice for (in satoshis)
+	/// The amount to create invoice for (in satoshis). This is the amount the payee will pay but
+	/// the final amount received by the client will have any server-configured
+	/// [LightningReceiveFees](crate::cli::LightningReceiveFees) deducted.
 	pub amount_sat: u64,
 }
 
@@ -184,7 +197,10 @@ pub struct LightningInvoiceRequest {
 pub struct LightningPayRequest {
 	/// The invoice, offer, or lightning address to pay
 	pub destination: String,
-	/// The amount to send (in satoshis). Optional for bolt11 invoices with amount
+	/// The amount to send (in satoshis). Optional for bolt11 invoices with amount. This must be
+	/// higher than the minimum fee laid out in server-configured
+	/// [LightningSendFees](crate::cli::LightningSendFees). The wallet must also contain enough
+	/// funds to cover the amount plus any fees.
 	pub amount_sat: Option<u64>,
 	/// An optional comment, only supported when paying to lightning addresses
 	pub comment: Option<String>,
