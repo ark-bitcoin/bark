@@ -4,6 +4,7 @@
 //! it will contain interfaces allowing for developers to add their own
 //! subsystems which Bark can use.
 
+use std::collections::HashMap;
 use std::fmt;
 
 use bitcoin::consensus::encode::serialize_hex;
@@ -181,6 +182,11 @@ impl LightningMovement {
 				serde_json::to_value(payment_preimage).expect("payment preimage can serde"),
 			),
 		]
+	}
+
+	/// Extract the payment hash from a movement's metadata
+	pub fn get_payment_hash(metadata: &HashMap<String, serde_json::Value>) -> Option<PaymentHash> {
+		metadata.get("payment_hash").and_then(|v| v.as_str()?.parse().ok())
 	}
 }
 

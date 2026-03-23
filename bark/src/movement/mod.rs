@@ -5,6 +5,8 @@ pub mod manager;
 pub mod update;
 mod payment_method;
 
+use crate::subsystem::Subsystem;
+
 pub use self::payment_method::PaymentMethod;
 
 use std::collections::HashMap;
@@ -256,6 +258,13 @@ pub struct MovementSubsystem {
 	pub name: String,
 	/// The action responsible for registering the movement.
 	pub kind: String,
+}
+
+impl MovementSubsystem {
+	/// Check whether this subsytem matches the given subsystem
+	pub fn is_subsystem(&self, subsystem: Subsystem) -> bool {
+		self.name.as_str() == subsystem.as_name()
+	}
 }
 
 /// Contains the times at which the movement was created, updated and completed.
