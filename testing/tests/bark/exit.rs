@@ -12,7 +12,7 @@ use rand::random;
 use ark::VtxoPolicy;
 use ark::lightning::{Invoice, PaymentHash};
 use ark::vtxo::{VtxoId, VtxoPolicyKind};
-use bark_json::cli::{MovementDestination, MovementStatus, PaymentMethod};
+use bark_json::movements::{MovementDestination, MovementStatus, PaymentMethod};
 use bark_json::exit::ExitState;
 use bark_json::exit::states::ExitStartState;
 use bark_json::primitives::VtxoStateInfo;

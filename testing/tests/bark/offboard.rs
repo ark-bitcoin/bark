@@ -1,7 +1,7 @@
 use bitcoin::Amount;
 use bitcoin_ext::P2TR_DUST_SAT;
 
-use bark_json::cli::{MovementDestination, PaymentMethod};
+use bark_json::movements::{MovementDestination, PaymentMethod};
 
 use ark_testing::{btc, sat, TestContext};
 use ark_testing::constants::{BOARD_CONFIRMATIONS, ROUND_CONFIRMATIONS};

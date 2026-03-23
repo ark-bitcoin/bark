@@ -7,7 +7,7 @@ use ark::VtxoId;
 use ark::lightning::{Invoice, PaymentHash};
 use ark::vtxo::VtxoPolicyKind;
 use bark::lightning_invoice::Bolt11Invoice;
-use bark_json::cli::{MovementDestination, MovementStatus, PaymentMethod};
+use bark_json::movements::{MovementDestination, MovementStatus, PaymentMethod};
 use bark_json::primitives::VtxoStateInfo;
 use bitcoin::{Amount, OutPoint};
 use log::{info, trace};

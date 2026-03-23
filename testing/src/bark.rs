@@ -1,5 +1,5 @@
 
-pub use bark_json::cli as json;
+pub use bark_json as json;
 
 use std::{env, fmt};
 use std::path::{Path, PathBuf};
@@ -291,13 +291,13 @@ impl Bark {
 		file.write(config_str.as_bytes()).await.expect("Failed to write config to config.toml");
 	}
 
-	pub async fn ark_info(&self) -> json::ArkInfo {
+	pub async fn ark_info(&self) -> json::cli::ArkInfo {
 		self.try_run_json(["ark-info"]).await.expect("ark-info command failed")
 	}
 
 	pub async fn onchain_balance(&self) -> Amount {
 		let balance_output = self.run(["onchain", "balance"]).await;
-		let balance = serde_json::from_str::<json::onchain::OnchainBalance>(&balance_output).unwrap();
+		let balance = serde_json::from_str::<json::cli::onchain::OnchainBalance>(&balance_output).unwrap();
 		balance.total
 	}
 
@@ -306,34 +306,34 @@ impl Bark {
 		serde_json::from_str::<Vec<bark_json::primitives::UtxoInfo>>(&output).unwrap()
 	}
 
-	pub async fn offchain_balance(&self) -> json::Balance {
+	pub async fn offchain_balance(&self) -> json::cli::Balance {
 		let json = self.run(["balance"]).await;
-		serde_json::from_str::<json::Balance>(&json).unwrap()
+		serde_json::from_str::<json::cli::Balance>(&json).unwrap()
 	}
 
 	pub async fn spendable_balance(&self) -> Amount {
 		let json = self.run(["balance"]).await;
-		serde_json::from_str::<json::Balance>(&json).unwrap().spendable
+		serde_json::from_str::<json::cli::Balance>(&json).unwrap().spendable
 	}
 
 	pub async fn spendable_balance_no_sync(&self) -> Amount {
 		let json = self.run(["balance", "--no-sync"]).await;
-		serde_json::from_str::<json::Balance>(&json).unwrap().spendable
+		serde_json::from_str::<json::cli::Balance>(&json).unwrap().spendable
 	}
 
 	pub async fn pending_board_balance(&self) -> Amount {
 		let json = self.run(["balance"]).await;
-		serde_json::from_str::<json::Balance>(&json).unwrap().pending_board
+		serde_json::from_str::<json::cli::Balance>(&json).unwrap().pending_board
 	}
 
 	pub async fn inround_balance(&self) -> Amount {
 		let json = self.run(["balance"]).await;
-		serde_json::from_str::<json::Balance>(&json).unwrap().pending_in_round
+		serde_json::from_str::<json::cli::Balance>(&json).unwrap().pending_in_round
 	}
 
 	pub async fn get_onchain_address(&self) -> Address {
 		let output = self.run(["onchain", "address"]).await.trim().to_string();
-		let parsed = serde_json::from_str::<json::onchain::Address>(&output).unwrap();
+		let parsed = serde_json::from_str::<json::cli::onchain::Address>(&output).unwrap();
 		parsed.address.require_network(Network::Regtest).unwrap()
 	}
 
@@ -390,7 +390,7 @@ impl Bark {
 		serde_json::from_str(&res).expect("json error")
 	}
 
-	pub async fn history(&self) -> Vec<json::Movement> {
+	pub async fn history(&self) -> Vec<json::movements::Movement> {
 		let res = self.run(["history"]).await;
 		serde_json::from_str(&res).expect("json error")
 	}
@@ -406,7 +406,7 @@ impl Bark {
 	pub async fn history_by_arkoor_addr(
 		&self,
 		address: impl fmt::Display,
-	) -> Vec<bark_json::cli::Movement> {
+	) -> Vec<bark_json::movements::Movement> {
 		self.run_json(["address", "lookup", "--address", &address.to_string()]).await
 	}
 
@@ -415,13 +415,13 @@ impl Bark {
 		&self,
 		destination: impl fmt::Display,
 		amount: Amount,
-	) -> anyhow::Result<json::OffboardResult> {
+	) -> anyhow::Result<json::cli::OffboardResult> {
 		let destination = destination.to_string();
 		let amount = amount.to_string();
 		self.try_run_json(["send-onchain", &destination, &amount, "--verbose"]).await
 	}
 
-	pub async fn send_onchain(&self, destination: impl fmt::Display, amount: Amount) -> json::OffboardResult {
+	pub async fn send_onchain(&self, destination: impl fmt::Display, amount: Amount) -> json::cli::OffboardResult {
 		self.try_send_onchain(destination, amount).await.unwrap()
 	}
 
@@ -559,20 +559,20 @@ impl Bark {
 		serde_json::from_str(&res).expect("json error")
 	}
 
-	pub async fn try_board(&self, amount: Amount) -> anyhow::Result<json::PendingBoardInfo> {
+	pub async fn try_board(&self, amount: Amount) -> anyhow::Result<json::cli::PendingBoardInfo> {
 		info!("{}: Board {}", self.name, amount);
 		self.try_run_json(["board", &amount.to_string()]).await
 	}
 
-	pub async fn board(&self, amount: Amount) -> json::PendingBoardInfo {
+	pub async fn board(&self, amount: Amount) -> json::cli::PendingBoardInfo {
 		self.try_board(amount).await.expect("board command failed")
 	}
 
-	pub async fn board_all(&self) -> json::PendingBoardInfo {
+	pub async fn board_all(&self) -> json::cli::PendingBoardInfo {
 		self.try_board_all().await.expect("board command failed")
 	}
 
-	pub async fn try_board_all(&self) -> anyhow::Result<json::PendingBoardInfo> {
+	pub async fn try_board_all(&self) -> anyhow::Result<json::cli::PendingBoardInfo> {
 		info!("{}: Boarding all on-chain funds", self.name);
 		self.try_run_json(["board", "--all"]).await
 	}
@@ -650,13 +650,13 @@ impl Bark {
 		self.run(["refresh", "--counterparty"]).await;
 	}
 
-	pub async fn try_offboard_all(&self, address: impl fmt::Display) -> anyhow::Result<json::OffboardResult> {
+	pub async fn try_offboard_all(&self, address: impl fmt::Display) -> anyhow::Result<json::cli::OffboardResult> {
 		Ok(self.try_run_json(
 			["offboard", "--all", "--address", &address.to_string()],
 		).await.context("running offboard --all command failed")?)
 	}
 
-	pub async fn offboard_all(&self, address: impl fmt::Display) -> json::OffboardResult {
+	pub async fn offboard_all(&self, address: impl fmt::Display) -> json::cli::OffboardResult {
 		self.try_offboard_all(address).await.expect("offboard --all command failed")
 	}
 
@@ -664,7 +664,7 @@ impl Bark {
 		&self,
 		vtxo: impl fmt::Display,
 		address: impl fmt::Display,
-	) -> json::OffboardResult {
+	) -> json::cli::OffboardResult {
 		self.run_json([
 			"offboard", "--vtxo", &vtxo.to_string(), "--address", &address.to_string(),
 		]).await
@@ -687,11 +687,11 @@ impl Bark {
 		self.try_import_vtxos(vtxo_hexes).await.expect("import_vtxos failed")
 	}
 
-	pub async fn progress_exit(&self) -> json::ExitProgressResponse {
+	pub async fn progress_exit(&self) -> json::cli::ExitProgressResponse {
 		self.run_json(["exit", "progress"]).await
 	}
 
-	pub async fn progress_exit_with_fee_rate(&self, fee_rate: FeeRate) -> json::ExitProgressResponse {
+	pub async fn progress_exit_with_fee_rate(&self, fee_rate: FeeRate) -> json::cli::ExitProgressResponse {
 		self.run_json(
 			["exit", "progress", "--fee-rate", &fee_rate.to_btc_per_kvb()],
 		).await
@@ -714,19 +714,19 @@ impl Bark {
 		self.run(command).await;
 	}
 
-	pub async fn list_exits(&self) -> Vec<json::ExitTransactionStatus> {
+	pub async fn list_exits(&self) -> Vec<json::cli::ExitTransactionStatus> {
 		self.run_json(["exit", "list"]).await
 	}
 
-	pub async fn list_exits_no_sync(&self) -> Vec<json::ExitTransactionStatus> {
+	pub async fn list_exits_no_sync(&self) -> Vec<json::cli::ExitTransactionStatus> {
 		self.run_json(["exit", "list", "--no-sync"]).await
 	}
 
-	pub async fn list_exits_with_details(&self) -> Vec<json::ExitTransactionStatus> {
+	pub async fn list_exits_with_details(&self) -> Vec<json::cli::ExitTransactionStatus> {
 		self.run_json(["exit", "list", "--transactions", "--history"]).await
 	}
 
-	pub async fn list_exits_with_details_no_sync(&self) -> Vec<json::ExitTransactionStatus> {
+	pub async fn list_exits_with_details_no_sync(&self) -> Vec<json::cli::ExitTransactionStatus> {
 		self.run_json(["exit", "list", "--transactions", "--history", "--no-sync"]).await
 	}
 

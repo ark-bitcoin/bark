@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use ark::{VtxoId, VtxoPolicy};
 use ark::lightning::{Invoice, PaymentHash, Preimage};
-use bark_json::cli::{MovementDestination, MovementStatus, PaymentMethod};
+use bark_json::movements::{MovementDestination, MovementStatus, PaymentMethod};
 use bitcoin::consensus::encode::deserialize_hex;
 use bitcoin::{Address, Amount, OutPoint, Transaction, Txid};
 use bitcoin::params::Params;
