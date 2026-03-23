@@ -93,7 +93,7 @@ impl ExitTransactionManager {
 	}
 
 	pub async fn sync(&mut self) -> anyhow::Result<(), ExitError> {
-		info!("Syncing exit transaction manager");
+		trace!("Syncing exit transaction manager");
 		let tip = self.tip().await?;
 
 		let keys = self.status.keys().cloned().collect::<Vec<_>>();
