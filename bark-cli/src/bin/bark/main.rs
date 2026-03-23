@@ -7,6 +7,7 @@ mod onchain;
 mod round;
 
 use std::cmp::Ordering;
+use std::sync::Arc;
 use std::{env, process};
 use std::path::PathBuf;
 use std::str::FromStr;
@@ -17,10 +18,12 @@ use bark_cli::VERSION_DIRTY;
 use bitcoin::{Amount};
 use clap::builder::BoolishValueParser;
 use clap::Parser;
+use futures::StreamExt;
 use ::lightning::offers::offer::Offer;
 use lightning_invoice::Bolt11Invoice;
 use lnurl::lightning_address::LightningAddress;
 use log::{debug, info, warn};
+use tokio::sync::RwLock;
 
 use ark::VtxoId;
 use ark::lightning::PaymentHash;
@@ -271,6 +274,10 @@ enum Command {
 	/// round-related commands
 	#[command(subcommand)]
 	Round(round::RoundCommand),
+
+	/// Watch the wallet for updates
+	#[command()]
+	Watch,
 
 	/// Run wallet maintenence
 	///
@@ -576,6 +583,17 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 		},
 		Command::Round(cmd) => {
 			round::execute_round_command(cmd, &mut wallet).await?;
+		},
+		Command::Watch => {
+			let wallet = Arc::new(wallet);
+			let onchain = Arc::new(RwLock::new(onchain));
+			let mut stream = wallet.subscribe_notifications();
+			let _daemon = wallet.run_daemon(Some(onchain))
+				.context("failed to start bark daemon")?;
+			while let Some(notif) = stream.next().await {
+				output_json(&json::notifications::WalletNotification::from(notif));
+			}
+			info!("Notification stream closed");
 		},
 		Command::Maintain { delegated } => {
 			if delegated {
