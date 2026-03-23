@@ -15,7 +15,7 @@ use futures::{Stream, StreamExt};
 use log::{debug, error, info, trace};
 
 use ark::{ProtocolEncoding, Vtxo};
-use ark::mailbox::MailboxAuthorization;
+use ark::mailbox::{MailboxAuthorization, MailboxIdentifier};
 use ark::vtxo::Full;
 use server_rpc::protos;
 use server_rpc::protos::mailbox_server::{ArkoorMessage, MailboxMessage, mailbox_message};
@@ -37,9 +37,15 @@ use crate::subsystem::{ArkoorMovement, Subsystem};
 const MAX_MAILBOX_REQUEST_BURST: usize = 10;
 
 impl Wallet {
-	/// Fetch the mailbox keypair.
-	pub fn mailbox_keypair(&self) -> anyhow::Result<Keypair> {
-		Ok(self.seed.to_mailbox_keypair())
+	/// Get the keypair used for the server mailbox
+	pub fn mailbox_keypair(&self) -> Keypair {
+		self.seed.to_mailbox_keypair()
+	}
+
+	/// Get this wallet's server mailbox ID
+	pub fn mailbox_identifier(&self) -> MailboxIdentifier {
+		let mailbox_kp = self.mailbox_keypair();
+		MailboxIdentifier::from_pubkey(mailbox_kp.public_key())
 	}
 
 	/// Create a mailbox authorization that is valid until the given expiry time
@@ -49,8 +55,8 @@ impl Wallet {
 	pub fn mailbox_authorization(
 		&self,
 		authorization_expiry: chrono::DateTime<chrono::Local>,
-	) -> anyhow::Result<MailboxAuthorization> {
-		Ok(MailboxAuthorization::new(&self.mailbox_keypair()?, authorization_expiry))
+	) -> MailboxAuthorization {
+		MailboxAuthorization::new(&self.mailbox_keypair(), authorization_expiry)
 	}
 
 	/// Subscribe to mailbox message stream.
@@ -58,10 +64,13 @@ impl Wallet {
 	/// If `since` is `None`, the stream will start from the last checkpoint stored in the database.
 	///
 	/// Returns a stream of mailbox messages.
-	pub async fn subscribe_mailbox_messages(&self, since: Option<u64>) -> anyhow::Result<impl Stream<Item = anyhow::Result<MailboxMessage>> + Unpin> {
+	pub async fn subscribe_mailbox_messages(
+		&self,
+		since_checkpoint: Option<u64>,
+	) -> anyhow::Result<impl Stream<Item = anyhow::Result<MailboxMessage>> + Unpin> {
 		let (mut srv, _) = self.require_server().await?;
 
-		let checkpoint = if let Some(since) = since {
+		let checkpoint = if let Some(since) = since_checkpoint {
 			since
 		} else {
 			self.get_mailbox_checkpoint().await?
@@ -69,7 +78,7 @@ impl Wallet {
 
 		// we just need a short authorization for the stream initialization
 		let expiry = chrono::Local::now() + std::time::Duration::from_secs(10);
-		let auth = self.mailbox_authorization(expiry)?;
+		let auth = self.mailbox_authorization(expiry);
 		let mailbox_id = auth.mailbox();
 
 		let req = protos::mailbox_server::MailboxRequest {
@@ -91,8 +100,11 @@ impl Wallet {
 	/// If `since` is `None`, the stream will start from the last checkpoint stored in the database.
 	///
 	/// Returns only once the stream is closed.
-	pub async fn subscribe_process_mailbox_messages(&self, since: Option<u64>) -> anyhow::Result<()> {
-		let mut stream = self.subscribe_mailbox_messages(since).await?;
+	pub async fn subscribe_process_mailbox_messages(
+		&self,
+		since_checkpoint: Option<u64>,
+	) -> anyhow::Result<()> {
+		let mut stream = self.subscribe_mailbox_messages(since_checkpoint).await?;
 		while let Some(message) = stream.next().await {
 			let message = if let Ok(message) = message {
 				message
@@ -113,7 +125,7 @@ impl Wallet {
 
 		// we should be able to do all our syncing in 10 minutes
 		let expiry = chrono::Local::now() + std::time::Duration::from_secs(10 * 60);
-		let auth = self.mailbox_authorization(expiry)?;
+		let auth = self.mailbox_authorization(expiry);
 		let mailbox_id = auth.mailbox();
 
 		for _ in 0..MAX_MAILBOX_REQUEST_BURST {

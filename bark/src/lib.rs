@@ -342,7 +342,6 @@ use ark::lightning::PaymentHash;
 use ark::{ArkInfo, ProtocolEncoding, Vtxo, VtxoId, VtxoPolicy, VtxoRequest};
 use ark::address::VtxoDelivery;
 use ark::fees::{validate_and_subtract_fee_min_dust, VtxoFeeInfo};
-use ark::mailbox::MailboxIdentifier;
 use ark::vtxo::{Full, PubkeyVtxoPolicy, VtxoRef};
 use ark::vtxo::policy::signing::VtxoSigner;
 use bitcoin_ext::{BlockHeight, P2TR_DUST, TxStatus};
@@ -828,9 +827,7 @@ impl Wallet {
 		let (_, ark_info) = &self.require_server().await?;
 		let network = self.properties().await?.network;
 		let keypair = self.peek_keypair(index).await?;
-
-		let mailbox_kp = self.mailbox_keypair()?;
-		let mailbox = MailboxIdentifier::from_pubkey(mailbox_kp.public_key());
+		let mailbox = self.mailbox_identifier();
 
 		Ok(ark::Address::builder()
 			.testnet(network != bitcoin::Network::Bitcoin)
