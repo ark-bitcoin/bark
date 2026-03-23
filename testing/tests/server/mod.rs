@@ -1599,7 +1599,7 @@ async fn mailbox_post_and_process_with_auth() {
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 
 	let bark2 = ctx.new_bark("bark2", &srv).await;
-	let bark2_mailbox_kp = bark2.client().await.mailbox_keypair().unwrap();
+	let bark2_mailbox_kp = bark2.client().await.mailbox_keypair();
 
 	let mut mb_rpc = srv.get_mailbox_public_rpc().await;
 
