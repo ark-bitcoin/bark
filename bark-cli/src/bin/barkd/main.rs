@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::Arc;
 
-use anyhow::Context;
+use anyhow::{bail, Context};
 use bitcoin::hex::FromHex;
 use bitcoin::secp256k1::rand::{self, RngCore};
 use clap::{Parser, Subcommand};
@@ -13,6 +13,7 @@ use tokio::sync::RwLock;
 use bark::pid_lock::PidLock;
 use bark_json::web::{BarkNetwork, BitcoindAuth, ChainSourceConfig, CreateWalletRequest};
 use bark_rest::{Config, OnWalletCreate, OnWalletDelete, RestServer, ServerWallet};
+use bark_rest::http::HeaderValue;
 use bark_rest::error::ContextExt;
 use bark_rest::auth::AuthToken;
 
@@ -69,6 +70,11 @@ struct Cli {
 	/// The host to listen on
 	#[arg(long, env = "BARKD_BIND_HOST")]
 	host: Option<String>,
+
+	/// Comma-separated list of allowed CORS origins (e.g. "http://localhost:3001,https://myapp.example.com").
+	/// If not set, all cross-origin requests are denied.
+	#[arg(long, env = "BARKD_ALLOWED_ORIGINS", value_delimiter = ',')]
+	allowed_origins: Vec<String>,
 }
 
 #[derive(Subcommand)]
@@ -97,15 +103,31 @@ enum SecretCommand {
 }
 
 impl Cli {
-	fn to_config(&self) -> Config {
+	fn to_config(&self) -> anyhow::Result<Config> {
 		let mut cfg = Config::default();
 		if let Some(port) = &self.port {
 			cfg.port = *port;
 		}
 		if let Some(host) = &self.host {
-			cfg.host = host.parse().unwrap();
+			cfg.host = host.parse()
+				.with_context(|| format!("invalid bind host: {host}"))?;
 		}
-		cfg
+		// Validate that each origin is a well-formed origin (scheme://host[:port]).
+		for origin in &self.allowed_origins {
+			origin.parse::<HeaderValue>()
+				.with_context(|| format!("invalid CORS origin: {origin}"))?;
+			let valid = (origin.starts_with("http://") || origin.starts_with("https://"))
+				&& !origin.ends_with('/')
+				&& origin.matches("://").count() == 1;
+			if !valid {
+				bail!(
+					"invalid CORS origin: {origin} \
+					(expected format: http://host[:port] or https://host[:port])"
+				);
+			}
+		}
+		cfg.allowed_origins = self.allowed_origins.clone();
+		Ok(cfg)
 	}
 }
 
@@ -337,7 +359,7 @@ async fn main() -> anyhow::Result<()>{
 	});
 
 	let server = RestServer::start(
-		&cli.to_config(), auth_token, wallet_opt, Some(on_wallet_create), Some(on_wallet_delete),
+		&cli.to_config()?, auth_token, wallet_opt, Some(on_wallet_create), Some(on_wallet_delete),
 	).await?;
 
 	run_shutdown_signal_listener().await;
