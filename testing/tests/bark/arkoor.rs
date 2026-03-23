@@ -15,9 +15,11 @@ async fn send_simple_arkoor() {
 
 	// Open a wallet client for bark2 and subscribe to notifications before the send
 	let bark2_wallet = bark2.client().await;
+	// NB: only use `bark2_wallet` from now since we can't have 2 wallets on same persistence yet
+
 	let mut notifications = bark2_wallet.subscribe_notifications();
 
-	let addr2 = bark2.address().await;
+	let addr2 = bark2_wallet.new_address().await.unwrap();
 	bark1.send_oor(&addr2, sat(20_000)).await;
 
 	// Sync bark2 via the wallet client and receive the notification that the arkoor payment was received
@@ -25,12 +27,12 @@ async fn send_simple_arkoor() {
 	match notifications.next().ready().await.unwrap()  {
 		WalletNotification::ArkReceive { amount, address, .. } => {
 			assert_eq!(amount, sat(20_000));
-			assert_eq!(addr2, address.to_string());
+			assert_eq!(addr2, address);
 		}
 	}
 
 	assert_eq!(60_000, bark1.spendable_balance().await.to_sat());
-	assert_eq!(20_000, bark2.spendable_balance().await.to_sat());
+	assert_eq!(20_000, bark2_wallet.balance().await.unwrap().spendable.to_sat());
 }
 
 #[tokio::test]
