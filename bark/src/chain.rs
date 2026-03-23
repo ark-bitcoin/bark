@@ -114,8 +114,10 @@ impl ChainSourceClient {
 /// };
 /// let network = Network::Bitcoin;
 /// let fallback_fee = FeeRate::from_sat_per_vb(5);
+/// #[cfg(feature = "socks5-proxy")]
+/// let socks5 = Some("socks5h://127.0.0.1:9050");
 ///
-/// let instance = ChainSource::new(spec, network, fallback_fee).await.unwrap();
+/// let instance = ChainSource::new(spec, network, fallback_fee, socks5).await.unwrap();
 /// # }
 /// ```
 pub struct ChainSource {
