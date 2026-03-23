@@ -1491,6 +1491,10 @@ impl Wallet {
 		last_round_event: Option<&RoundEvent>,
 	) -> anyhow::Result<()> {
 		let states = self.pending_round_states().await?;
+		if states.is_empty() {
+			return Ok(());
+		}
+
 		info!("Processing {} rounds...", states.len());
 
 		let mut last_round_event = last_round_event.map(|e| Cow::Borrowed(e));
