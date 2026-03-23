@@ -160,6 +160,11 @@ impl Watchman {
 				},
 			}
 
+			// Sync the watchman wallet to update balance and detect confirmed UTXOs.
+			if let Err(e) = self.watchman_wallet.lock().await.sync(&self.bitcoind, false).await {
+				warn!("Error syncing watchman wallet: {:#}", e);
+			}
+
 			//TODO(stevenroose) this call seems expensive and really not urgent
 			// we only realistically need to do this once every hour, or maybe half exit delta or so
 			if let Err(e) = self.sync_unfrontiered_funding().await {
