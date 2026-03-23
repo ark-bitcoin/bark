@@ -1,6 +1,7 @@
 
 mod core;
 mod onchain;
+mod vtxo;
 
 use ark_testing::{sat, TestContext};
 use ark_testing::constants::BOARD_CONFIRMATIONS;

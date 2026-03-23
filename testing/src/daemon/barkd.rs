@@ -12,7 +12,8 @@ use tokio::process::Command;
 use bark_json::cli::{ArkInfo, Balance, NextRoundStart, PendingBoardInfo};
 use bark_json::cli::onchain::{Address, OnchainBalance};
 use bark_rest::auth::AuthToken;
-use bark_json::primitives::{TransactionInfo, UtxoInfo};
+use bark_json::primitives::{TransactionInfo, UtxoInfo, WalletVtxoInfo};
+use bark_json::web::EncodedVtxoResponse;
 use bark_json::web::{BarkNetwork, BitcoindAuth, ChainSourceConfig, ConnectedResponse, CreateWalletRequest, TipResponse};
 use bark_rest_client::apis::configuration::Configuration;
 use bark_rest_client::apis::{bitcoin_api, boards_api, default_api, onchain_api, wallet_api};
@@ -195,6 +196,42 @@ impl Barkd {
 			.expect("failed to sync barkd wallet");
 		wallet_api::balance(&config).await
 			.expect("failed to get barkd bark balance")
+	}
+
+	/// Sync the wallet state.
+	pub async fn sync(&self) {
+		let config = self.client_config();
+		wallet_api::sync(&config).await
+			.expect("failed to sync barkd wallet");
+	}
+
+	/// List VTXOs in the wallet.
+	pub async fn vtxos(&self, all: Option<bool>) -> Vec<WalletVtxoInfo> {
+		let config = self.client_config();
+		wallet_api::vtxos(&config, all).await
+			.expect("failed to list barkd vtxos")
+	}
+
+	/// Get a single VTXO by id.
+	pub async fn get_vtxo(&self, id: &str) -> WalletVtxoInfo {
+		let config = self.client_config();
+		wallet_api::get_vtxo(&config, id).await
+			.expect("failed to get barkd vtxo")
+	}
+
+	/// Get the hex-encoded serialization of a VTXO.
+	pub async fn get_vtxo_encoded(&self, id: &str) -> EncodedVtxoResponse {
+		let config = self.client_config();
+		wallet_api::get_vtxo_encoded(&config, id).await
+			.expect("failed to get encoded barkd vtxo")
+	}
+
+	/// Import VTXOs from hex-encoded strings.
+	pub async fn import_vtxo(&self, vtxo_hexes: Vec<String>) -> Vec<WalletVtxoInfo> {
+		let config = self.client_config();
+		let req = bark_json::web::ImportVtxoRequest { vtxos: vtxo_hexes };
+		wallet_api::import_vtxo(&config, req).await
+			.expect("failed to import barkd vtxos")
 	}
 
 	/// Sync the on-chain wallet then board all funds into Ark.
