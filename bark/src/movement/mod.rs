@@ -101,6 +101,16 @@ impl Movement {
 			exited_vtxos: vec![],
 		}
 	}
+
+	/// Checks whether this movement received the given payment method
+	pub fn received_on(&self, payment_method: &PaymentMethod) -> bool {
+		self.received_on.iter().any(|d| d.destination == *payment_method)
+	}
+
+	/// Checks whether this movement sent to the given payment method
+	pub fn sent_to(&self, payment_method: &PaymentMethod) -> bool {
+		self.sent_to.iter().any(|d| d.destination == *payment_method)
+	}
 }
 
 /// A unique identifier for a movement.
