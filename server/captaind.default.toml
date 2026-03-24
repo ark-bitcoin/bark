@@ -150,7 +150,7 @@ invoice_expiry = "48h"
 # waiting for a user to claim a lightning receive.
 # After this timeout the server will fail the HTLC(s) back to the sender and
 # also cancel the hold invoice.
-receive_htlc_forward_timeout = "30s"
+receive_htlc_forward_timeout = "3min"
 
 # Indicates whether the Ark server requires clients to either
 # provide a VTXO ownership proof, or a lightning receive token
