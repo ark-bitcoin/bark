@@ -1,39 +1,28 @@
+//! Manages CLN node connections and proxies requests to [`ClnHold`] and [`ClnXpay`].
 //!
-//! Lightning logic based on our CLN node.
+//! ## Node lifecycle
 //!
-//! ## A high-level summary of the payment flow.
+//! Each configured CLN node is tracked as a [`ClnNodeInfo`] with a state machine:
+//! `Offline ↔ Online ↔ Error`, where `Invalid` and `Disabled` are terminal states.
+//! The manager periodically reconnects offline/errored nodes and monitors online nodes
+//! for crashed sub-monitors ([`ClnHold`], [`ClnXpay`]). When multiple nodes are online,
+//! the highest-priority node is selected for operations.
 //!
-//! * User makes a payment over grpc, server calls [ClnManager::pay_invoice].
-//! * The payment request is sent over the payment channel to the processor.
-//! * The calling thread will then subscribe to the payment update channel,
-//!   - and wait for a msg with its payment hash, or
-//!   - periodically poll the db for any progress.
+//! ## Actor pattern
 //!
-//! Meanwhile the [ClnManagerProcess] receives the payment request on the channel.
-//! * It calls [ClnManagerProcess::start_payment], which will
-//! * store the payment request in the db
-//! * pick the highest priority online CLN node from our list
-//! * calls [handle_pay_invoice] which calls the cln node's RPC `pay` endpoint.
-//!   - on any progress it sends a message on the payment update channel
-//!     - on error it stores the error data in the database
-//!       (this is necessary because on some errors, we don't get a listsendpay update)
-//!     - on success it does nothing extra, the listsendpay thread will eventually
-//!       receive an update too and correctly log in the db
+//! [`ClnManager`] is the public handle held by the rest of the server. It sends [`Ctrl`]
+//! messages over an mpsc channel to [`ClnManagerProcess`], which runs as a tokio task.
+//! Responses come back via oneshot channels embedded in the control messages.
 //!
-//! ## The CLN listsendpay stream
+//! ## Routing
 //!
-//! For each running cln node, we have a [ClnNodeMonitor] that will be subscribed
-//! to all updates regarding payments on the node. On each message we do the neccesary
-//! logging to the database and send a message on the payment update channel.
-//!
-//!
-//!
-//!
-//!
-//!
-//!
+//! `generate_invoice`/`settle_invoice`/`cancel_invoice` route to [`ClnHold`].
+//! `pay` routes to [`ClnXpay`]. `fetch_bolt12` calls CLN gRPC directly.
+//! Intra-Ark payments short-circuit both paths: the manager updates the DB and
+//! broadcasts the result without making a CLN round-trip.
 
-pub(crate) mod node;
+pub(crate) mod hold;
+pub(crate) mod xpay;
 
 use std::fmt;
 use std::collections::HashMap;
@@ -46,7 +35,7 @@ use bitcoin::Amount;
 use bitcoin::hex::DisplayHex;
 use bitcoin::secp256k1::PublicKey;
 use bitcoin_ext::{AmountExt, BlockDelta, BlockHeight};
-use cln_rpc::plugins::hold::{self, hold_client::HoldClient};
+use cln_rpc::plugins::hold::{self as hold_plugin, hold_client::HoldClient};
 use lightning_invoice::Bolt11Invoice;
 use tokio::sync::{broadcast, Notify, mpsc, oneshot};
 use tonic::transport::{Channel, Uri};
@@ -63,7 +52,8 @@ use crate::database::ln::{
 	ClnNodeId, LightningHtlcSubscription, LightningHtlcSubscriptionStatus, LightningPaymentAttempt,
 	LightningPaymentStatus,
 };
-use self::node::{ClnNodeMonitor, ClnNodeMonitorConfig};
+use self::hold::{ClnHold, ClnHoldConfig};
+use self::xpay::{ClnXpay, ClnXpayConfig};
 use crate::telemetry;
 
 type ClnGrpcClient = NodeClient<Channel>;
@@ -96,15 +86,17 @@ impl ClnManager {
 		let (ctrl_tx, ctrl_rx) = mpsc::unbounded_channel();
 		let (payment_update_tx, payment_update_rx) = broadcast::channel(256);
 
-		let node_monitor_config = ClnNodeMonitorConfig {
+		let hold_config = ClnHoldConfig {
 			invoice_check_interval: config.invoice_check_interval,
-			invoice_recheck_delay: config.invoice_recheck_delay,
-			invoice_expiry: config.invoice_expiry,
 			receive_htlc_forward_timeout: config.receive_htlc_forward_timeout,
-			check_base_delay: config.invoice_check_base_delay,
-			max_check_delay: config.max_invoice_check_delay,
 			track_all_base_delay: config.track_all_base_delay,
 			max_track_all_delay: config.max_track_all_delay,
+		};
+		let xpay_config = ClnXpayConfig {
+			invoice_check_interval: config.invoice_check_interval,
+			invoice_recheck_delay: config.invoice_recheck_delay,
+			check_base_delay: config.invoice_check_base_delay,
+			max_check_delay: config.max_invoice_check_delay,
 		};
 		let proc = ClnManagerProcess {
 			db: db.clone(),
@@ -112,7 +104,9 @@ impl ClnManager {
 			waker: Arc::new(Notify::new()),
 
 			ctrl_rx,
-			node_monitor_config,
+			hold_config,
+			xpay_config,
+			invoice_expiry: config.invoice_expiry,
 			sync_manager,
 
 			payment_update_tx: payment_update_tx.clone(),
@@ -320,7 +314,8 @@ pub struct ClnNodeOnlineState {
 	rpc: ClnGrpcClient,
 	hold_rpc: Option<HoldClient<Channel>>,
 	// option so we can take() when marking as down
-	monitor: Option<ClnNodeMonitor>,
+	monitor: Option<ClnHold>,
+	xpay: Option<ClnXpay>,
 }
 
 #[derive(Debug)]
@@ -432,7 +427,8 @@ impl ClnNodeInfo {
 		&mut self,
 		db: &database::Db,
 		expected_network: bitcoin::Network,
-		monitor_config: &ClnNodeMonitorConfig,
+		monitor_config: &ClnHoldConfig,
+		xpay_config: &ClnXpayConfig,
 		payment_update_tx: &broadcast::Sender<PaymentHash>,
 		rtmgr: &RuntimeManager,
 		waker: &Arc<Notify>,
@@ -459,19 +455,32 @@ impl ClnNodeInfo {
 		let (id, _) = db.register_lightning_node(&pubkey).await?;
 
 		info!("Succesfully connected to cln node with uri {}", self.uri);
-		let monitor = ClnNodeMonitor::start(
+		let monitor = ClnHold::start(
+			rtmgr.clone(),
+			waker.clone(),
+			db.clone(),
+			payment_update_tx.clone(),
+			id,
+			hold_rpc.clone(),
+			monitor_config.clone(),
+			sync_manager.clone(),
+		).await.context("failed to start ClnHold")?;
+
+		let xpay = ClnXpay::start(
 			rtmgr.clone(),
 			waker.clone(),
 			db.clone(),
 			payment_update_tx.clone(),
 			id,
 			rpc.clone(),
-			hold_rpc.clone(),
-			monitor_config.clone(),
-			sync_manager.clone(),
-		).await.context("failed to start ClnNodeMonitor")?;
+			xpay_config.clone(),
+		).await.context("failed to start ClnXpay")?;
 
-		let online = ClnNodeOnlineState { id, pubkey, rpc, hold_rpc, monitor: Some(monitor) };
+		let online = ClnNodeOnlineState {
+			id, pubkey, rpc, hold_rpc,
+			monitor: Some(monitor),
+			xpay: Some(xpay),
+		};
 		let new_state = ClnNodeState::Online(online);
 		telemetry::set_lightning_node_state(
 			self.uri.clone(), Some(id), Some(pubkey), new_state.kind(),
@@ -522,7 +531,9 @@ struct ClnManagerProcess {
 	network: bitcoin::Network,
 	nodes: HashMap<Uri, ClnNodeInfo>,
 	node_by_id: HashMap<ClnNodeId, Uri>,
-	node_monitor_config: ClnNodeMonitorConfig,
+	hold_config: ClnHoldConfig,
+	xpay_config: ClnXpayConfig,
+	invoice_expiry: Duration,
 	sync_manager: Arc<SyncManager>,
 
 	htlc_expiry_delta: BlockDelta,
@@ -562,7 +573,7 @@ impl ClnManagerProcess {
 		for (uri, node) in self.nodes.iter_mut() {
 			match node.state {
 				ClnNodeState::Online(ref mut rt) => {
-					// we check if the monitor is still running
+					// check if the monitor is still running
 					if !rt.monitor.as_ref().expect("online").is_running() {
 						match rt.monitor.take().unwrap().wait().await {
 							Ok(Err(e)) => {
@@ -573,7 +584,7 @@ impl ClnManagerProcess {
 								node.set_state(new_state)
 							},
 							Ok(Ok(())) => {
-								error!("ClnNodeMonitor for {uri} unexpectedly exited without error");
+								error!("ClnHold for {uri} unexpectedly exited without error");
 								let new_state = ClnNodeState::Offline;
 								telemetry::set_lightning_node_state(
 									uri.clone(), Some(rt.id), Some(rt.pubkey), new_state.kind(),
@@ -582,8 +593,36 @@ impl ClnManagerProcess {
 							},
 							Err(e) => {
 								if e.is_panic() {
-									// unfortunately we don't have much more info we can show here
-									error!("ClnNodeMonitor for {uri} thread paniced!");
+									error!("ClnHold for {uri} thread paniced!");
+								}
+								let new_state = ClnNodeState::error(e);
+								telemetry::set_lightning_node_state(
+									uri.clone(), Some(rt.id), Some(rt.pubkey), new_state.kind(),
+								);
+								node.set_state(new_state);
+							},
+						}
+					// check if xpay is still running
+					} else if !rt.xpay.as_ref().expect("online").is_running() {
+						match rt.xpay.take().unwrap().wait().await {
+							Ok(Err(e)) => {
+								let new_state = ClnNodeState::error(format!("{:?}", e));
+								telemetry::set_lightning_node_state(
+									uri.clone(), Some(rt.id), Some(rt.pubkey), new_state.kind(),
+								);
+								node.set_state(new_state)
+							},
+							Ok(Ok(())) => {
+								error!("ClnXpay for {uri} unexpectedly exited without error");
+								let new_state = ClnNodeState::Offline;
+								telemetry::set_lightning_node_state(
+									uri.clone(), Some(rt.id), Some(rt.pubkey), new_state.kind(),
+								);
+								node.set_state(new_state);
+							},
+							Err(e) => {
+								if e.is_panic() {
+									error!("ClnXpay for {uri} thread paniced!");
 								}
 								let new_state = ClnNodeState::error(e);
 								telemetry::set_lightning_node_state(
@@ -599,7 +638,8 @@ impl ClnManagerProcess {
 					match node.try_connect(
 						&self.db,
 						self.network,
-						&self.node_monitor_config,
+						&self.hold_config,
+						&self.xpay_config,
 						&self.payment_update_tx,
 						&self.rtmgr,
 						&self.waker,
@@ -790,14 +830,11 @@ impl ClnManagerProcess {
 		// (grpc-connection problems or time-outs).
 		// We keep the error-around but will verify if the payment actually failed.
 		trace!("Bolt11 invoice payment of {:?} sent to CLN: {}", user_amount, invoice);
-		tokio::spawn(handle_pay_invoice(
-			self.db.clone(),
-			self.payment_update_tx.clone(),
-			node.rpc.clone(),
+		node.xpay.as_ref().context("xpay not running")?.pay(
 			invoice,
 			user_amount,
 			max_cltv_expiry_delta as BlockDelta,
-		));
+		);
 
 		Ok(())
 	}
@@ -823,7 +860,7 @@ impl ClnManagerProcess {
 		if let Ok(Some(existing)) = self.db.get_lightning_invoice_by_payment_hash(payment_hash).await {
 			trace!("Found invoice but no subscription, creating new one");
 
-			hold_client.inject(hold::InjectRequest {
+			hold_client.inject(hold_plugin::InjectRequest {
 				invoice: existing.invoice.to_string(),
 				min_cltv_expiry: None,
 			}).await?;
@@ -832,11 +869,11 @@ impl ClnManagerProcess {
 			return Ok(existing.invoice.into_bolt11().expect("invoice is not bolt11"))
 		}
 
-		let res = hold_client.invoice(hold::InvoiceRequest {
+		let res = hold_client.invoice(hold_plugin::InvoiceRequest {
 			payment_hash: payment_hash.to_vec(),
 			amount_msat: amount.to_msat(),
 			min_final_cltv_expiry: Some(cltv_delta as u64),
-			expiry: Some(self.node_monitor_config.invoice_expiry.as_secs()),
+			expiry: Some(self.invoice_expiry.as_secs()),
 			routing_hints: vec![],
 			description: None,
 		}).await?.into_inner();
@@ -862,7 +899,7 @@ impl ClnManagerProcess {
 			.context("invoice cannot be settled: node is now offline")?
 			.hold_rpc.clone().context("node doesn't support hold anymore")?;
 
-		hold_client.settle(hold::SettleRequest {
+		hold_client.settle(hold_plugin::SettleRequest {
 			payment_preimage: preimage.to_vec(),
 		}).await?;
 
@@ -877,7 +914,7 @@ impl ClnManagerProcess {
 			.hold_rpc.clone().context("node doesn't support hold anymore")?;
 
 		let payment_hash = PaymentHash::from(*subscription.invoice.payment_hash());
-		hold_client.cancel(hold::CancelRequest {
+		hold_client.cancel(hold_plugin::CancelRequest {
 			payment_hash: payment_hash.to_vec(),
 		}).await?;
 
@@ -992,95 +1029,6 @@ impl ClnManagerProcess {
 				},
 			};
 		}
-	}
-}
-
-/// Handles calling the pay cln endpoint and processing the response.
-async fn handle_pay_invoice(
-	db: database::Db,
-	payment_update_tx: broadcast::Sender<PaymentHash>,
-	mut rpc: ClnGrpcClient,
-	invoice: Box<Invoice>,
-	amount: Option<Amount>,
-	max_cltv_expiry_delta: BlockDelta,
-) {
-	let payment_hash = invoice.payment_hash();
-	match call_xpay(&mut rpc, &invoice, amount, max_cltv_expiry_delta).await {
-		Ok(preimage) => {
-			// NB we don't do db stuff when it's succesful, because
-			// it will happen in the sendpay stream of the monitor process
-			trace!("Payment successful, preimage: {} for payment hash {}",
-				preimage.as_hex(), payment_hash.as_hex(),
-			);
-		},
-		// Fetch and store the attempt as failed.
-		Err(pay_err) => {
-			error!("Error calling pay-command: {}", pay_err);
-			match db.get_open_lightning_payment_attempt_by_payment_hash(payment_hash).await {
-				Ok(Some(attempt)) => match db.verify_and_update_invoice(
-					payment_hash,
-					&attempt,
-					LightningPaymentStatus::Submitted,
-					Some(&format!("pay rpc call error: {}", pay_err)),
-					None,
-					None,
-				).await {
-					Ok(_) => {},
-					Err(e) => error!("Error updating invoice after pay error: {e:#}"),
-				}
-				Ok(None) => error!("Failed to find attempt for invoice just started \
-					payment_hash={payment_hash}"),
-				Err(e) => error!("Error querying attempt for invoice just started \
-					payment_hash={payment_hash}: {e:#}"),
-			}
-			let _ = payment_update_tx.send(payment_hash);
-		},
-	}
-}
-
-/// Calls the xpay-command over gRPC.
-/// If the payment completes successfully it will return the pre-image
-/// Otherwise, an error will be returned
-async fn call_xpay(
-	rpc: &mut ClnGrpcClient,
-	invoice: &Invoice,
-	user_amount: Option<Amount>,
-	max_cltv_expiry_delta: BlockDelta,
-) -> anyhow::Result<Preimage> {
-	match (user_amount, invoice.amount_msat()) {
-		(Some(user), Some(inv)) => {
-			let inv = Amount::from_msat_ceil(inv);
-			if user != inv {
-				bail!("invoice amount {inv} and given amount {user} don't match");
-			}
-		},
-		(None, None) => {
-			bail!("Amount not encoded in invoice nor provided by user. Please provide amount");
-		},
-		_ => {},
-	}
-
-	// Call the xpay command
-	let pay_response = rpc.xpay(cln_rpc::XpayRequest {
-		invstring: invoice.to_string(),
-		amount_msat: {
-			if invoice.amount_msat().is_none() {
-				Some(user_amount.unwrap().into())
-			} else {
-				None
-			}
-		},
-		maxdelay: Some(max_cltv_expiry_delta as u32),
-		maxfee: None,
-		retry_for: None,
-		partial_msat: None,
-		layers: vec![],
-	}).await?.into_inner();
-
-	if pay_response.payment_preimage.len() > 0 {
-		Ok(pay_response.payment_preimage.try_into().ok().context("invalid preimage not 32 bytes")?)
-	} else {
-		bail!("xpay returned invalid preimage: {}", pay_response.payment_preimage.as_hex());
 	}
 }
 

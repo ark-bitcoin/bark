@@ -1,6 +1,25 @@
+//! Manages incoming HTLCs via CLN's hold invoice plugin.
+//!
+//! ## HTLC subscription lifecycle
+//!
+//! Hold invoices defer settlement: HTLCs arrive and are held until we reveal the
+//! preimage (settle) or explicitly cancel. Each invoice gets a DB subscription:
+//! `Created → Accepted → Settled/Canceled`. On acceptance, the incoming HTLC
+//! expiry is validated against the chain tip.
+//!
+//! ## TrackAll stream
+//!
+//! When available, a `TrackAll` gRPC stream pushes real-time invoice state changes.
+//! On (re)connect, polls all open subscriptions to reconcile missed events.
+//! Reconnects with exponential backoff on disconnect.
+//!
+//! ## Timeout and expiry enforcement
+//!
+//! Periodically checks all open subscriptions for accepted HTLCs held too long
+//! (`receive_htlc_forward_timeout`) and expired invoices. Both result in cancellation.
 
 use std::str::FromStr;
-use std::{cmp, fmt ,str};
+use std::fmt;
 use std::collections::HashMap;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -8,22 +27,17 @@ use std::time::Duration;
 
 use anyhow::Context;
 use bitcoin::hashes::{sha256, Hash};
-use bitcoin::hex::DisplayHex;
 use bitcoin_ext::BlockHeight;
-use chrono::{DateTime, Local};
+use chrono::Local;
 use cln_rpc::plugins::hold::{self, InvoiceState};
-use cln_rpc::ClnGrpcClient;
 use futures::Stream;
 use lightning_invoice::Bolt11Invoice;
-use tokio::sync::{broadcast, mpsc, Notify};
+use tokio::sync::{broadcast, Notify};
 use tokio::task::JoinHandle;
 use tokio_stream::StreamExt;
 use tonic::transport::Channel;
-use tracing::{debug, error, info, trace, warn};
+use tracing::{debug, error, info, warn};
 use ark::lightning::PaymentHash;
-use cln_rpc::listpays_pays::ListpaysPaysStatus;
-use cln_rpc::listsendpays_request::ListsendpaysIndex;
-use cln_rpc::node_client::NodeClient;
 use cln_rpc::plugins::hold::hold_client::HoldClient;
 use crate::database;
 use crate::database::ln::{ClnNodeId, LightningHtlcSubscription, LightningHtlcSubscriptionStatus, LightningPaymentStatus};
@@ -32,70 +46,45 @@ use crate::system::RuntimeManager;
 use crate::telemetry;
 
 #[derive(Debug, Clone)]
-pub struct ClnNodeMonitorConfig {
+pub struct ClnHoldConfig {
 	pub invoice_check_interval: Duration,
-	pub invoice_recheck_delay: Duration,
-	pub invoice_expiry: Duration,
 	pub receive_htlc_forward_timeout: Duration,
-	pub check_base_delay: Duration,
-	pub max_check_delay: Duration,
 	/// Base delay for TrackAll reconnection backoff (e.g., 1 second)
 	pub track_all_base_delay: Duration,
 	/// Maximum delay for TrackAll reconnection backoff (e.g., 60 seconds)
 	pub max_track_all_delay: Duration,
 }
 
-pub struct ClnNodeMonitor {
-	ctrl_tx: mpsc::Sender<Ctrl>,
+pub struct ClnHold {
 	jh: JoinHandle<anyhow::Result<()>>,
 }
 
-impl ClnNodeMonitor {
+impl ClnHold {
 	pub async fn start(
 		rtmgr: RuntimeManager,
 		mgr_waker: Arc<Notify>,
 		db: database::Db,
 		payment_update_tx: broadcast::Sender<PaymentHash>,
 		node_id: ClnNodeId,
-		node_rpc: ClnGrpcClient,
 		hold_rpc: Option<HoldClient<Channel>>,
-		config: ClnNodeMonitorConfig,
+		config: ClnHoldConfig,
 		sync_manager: Arc<SyncManager>,
-	) -> anyhow::Result<ClnNodeMonitor> {
-		let payment_idxs = db.get_lightning_payment_indexes(node_id).await
-			.with_context(|| format!("failed to fetch payment indices for {}", node_id))?
-			.unwrap_or_default();
-
-		info!("Start managing payments for node with id {} with created_index={}, updated_index={}",
-			node_id, payment_idxs.created_index, payment_idxs.updated_index,
-		);
-
-		let (ctrl_tx, ctrl_rx) = mpsc::channel(4);
-		let proc = ClnNodeMonitorProcess {
-			config, db, payment_update_tx, ctrl_rx, node_id,
-			rpc: node_rpc,
+	) -> anyhow::Result<ClnHold> {
+		let proc = ClnHoldProcess {
+			config, db, payment_update_tx, node_id,
 			hold_rpc,
 			sync_manager,
-			created_index: match payment_idxs.created_index {
-				0 => None,
-				i => Some(i),
-			},
-			updated_index: match payment_idxs.updated_index {
-				0 => None,
-				i => Some(i),
-			},
-			invoice_next_check_at: HashMap::new(),
 		};
 
 		let jh = tokio::spawn(async {
 			let ret = proc.run(rtmgr, mgr_waker).await;
 			if let Err(ref e) = ret {
-				error!("ClnNodeMonitor exited with error: {:?}", e);
+				error!("ClnHold exited with error: {:?}", e);
 			}
 			ret
 		});
 
-		Ok(ClnNodeMonitor { ctrl_tx, jh })
+		Ok(ClnHold { jh })
 	}
 
 	pub fn is_running(&self) -> bool {
@@ -103,29 +92,15 @@ impl ClnNodeMonitor {
 	}
 
 	/// Wait for the process to end.
-	///
-	/// Note that if [ClnNodeMonitor::stop] is not called,
-	/// it won't stop until an error occurs.
 	pub async fn wait(self) -> Result<anyhow::Result<()>, tokio::task::JoinError> {
 		Ok(self.jh.await?)
 	}
-
-	/// Stop the monitor process and wait for it to end.
-	#[allow(unused)]
-	pub async fn stop(self) -> anyhow::Result<()> {
-		self.ctrl_tx.send(Ctrl::Stop).await?;
-		self.wait().await?
-	}
 }
 
-impl fmt::Debug for ClnNodeMonitor {
+impl fmt::Debug for ClnHold {
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-	    f.write_str("ClnNodeMonitor")
+		f.write_str("ClnHold")
 	}
-}
-
-enum Ctrl {
-	Stop,
 }
 
 /// Manages the lifecycle of the TrackAll gRPC stream
@@ -140,297 +115,18 @@ enum TrackAllStreamState {
 	NeedsConnect,
 }
 
-struct ClnNodeMonitorProcess {
-	config: ClnNodeMonitorConfig,
+struct ClnHoldProcess {
+	config: ClnHoldConfig,
 	db: database::Db,
 	payment_update_tx: broadcast::Sender<PaymentHash>,
-	ctrl_rx: mpsc::Receiver<Ctrl>,
 
 	node_id: ClnNodeId,
 
-	rpc: NodeClient<Channel>,
 	hold_rpc: Option<HoldClient<Channel>>,
 	sync_manager: Arc<SyncManager>,
-
-	/// last seen sendpay created index, or 0 for none seen
-	created_index: Option<u64>,
-	/// last seen sendpay updated index, or 0 for none seen
-	updated_index: Option<u64>,
-
-	/// Map from invoice id to number of attempts and time of last update.
-	invoice_next_check_at: HashMap<i64, (usize, DateTime<Local>)>,
 }
 
-impl ClnNodeMonitorProcess {
-	async fn process_sendpay(&mut self, kind: ListsendpaysIndex)-> anyhow::Result<()> {
-		let start_index = match kind {
-			ListsendpaysIndex::Created => self.created_index.map(|i| i + 1).unwrap_or(0),
-			ListsendpaysIndex::Updated => self.updated_index.map(|i| i + 1).unwrap_or(0),
-		};
-
-		trace!("Querying lightning payment ({}) with start index {} for node {}",
-			kind.as_str_name(), start_index, self.node_id,
-		);
-		let updates = self.rpc.list_pays(cln_rpc::ListpaysRequest {
-			bolt11: None,
-			payment_hash: None,
-			status: None,
-			index: Some(kind as i32),
-			start: Some(start_index),
-			limit: None
-		}).await?.into_inner();
-
-		let mut max_index = start_index;
-		for update in updates.pays {
-			let updated_index = update.updated_index();
-			max_index = cmp::max(max_index, updated_index);
-
-			let payment_hash = PaymentHash::try_from(update.payment_hash.clone())
-				.expect("payment hash must be 32 bytes");
-
-			let attempt = match self.db.get_open_lightning_payment_attempt_by_payment_hash(payment_hash).await? {
-				Some(r) => r,
-				None => continue, // NB this is unrelated traffic on cln node
-			};
-
-			match update.status() {
-				ListpaysPaysStatus::Pending => {
-					if attempt.status == LightningPaymentStatus::Requested {
-						debug!("Lightning payment's first update received from CLN since \
-							requesting for payment hash {}.", payment_hash,
-						);
-
-						let status = LightningPaymentStatus::Submitted;
-						let ok = self.db.verify_and_update_invoice(
-							payment_hash, &attempt, status, None, None, None,
-						).await?;
-						if ok {
-							self.payment_update_tx.send(payment_hash)?;
-						}
-					}
-				}
-				ListpaysPaysStatus::Failed => {
-					debug!("Lightning payment failed for payment hash {}.", payment_hash);
-
-					let error_string = update.erroronion.as_ref().map(|b| {
-						str::from_utf8(b).unwrap_or_else(|e| {
-							warn!("Failed to decode erroronion from cln: '{}', {}", b.as_hex(), e);
-							"failed to decode erroronion field"
-						})
-					});
-
-					let status = LightningPaymentStatus::Failed;
-					let ok = self.db.verify_and_update_invoice(
-						payment_hash, &attempt, status, error_string,  None, None,
-					).await?;
-					if ok {
-						self.payment_update_tx.send(payment_hash)?;
-					}
-				}
-				ListpaysPaysStatus::Complete => {
-					debug!("Lightning payment succeeded for payment hash {}.", payment_hash);
-
-					let final_msat = update.amount_sent_msat
-						.context("should have amount send on complete pay")?.msat;
-					let preimage = update.preimage
-						.context("should have preimage send on complete pay")?
-						.try_into().ok().context("invalid preimage not 32 bytes")?;
-
-					let status = LightningPaymentStatus::Succeeded;
-					let ok = self.db.verify_and_update_invoice(
-						payment_hash, &attempt, status, None, Some(final_msat), Some(preimage),
-					).await?;
-					if ok {
-						self.payment_update_tx.send(payment_hash)?;
-					}
-				}
-			}
-		}
-
-		if max_index > start_index {
-			trace!("Processing lightning payment done ({}) new start index {} for node {}",
-				kind.as_str_name(), max_index, self.node_id,
-			);
-			self.db.store_lightning_payment_index(self.node_id, kind, max_index).await?;
-		}
-		match kind {
-			ListsendpaysIndex::Created => self.created_index = Some(max_index),
-			ListsendpaysIndex::Updated => self.updated_index = Some(max_index),
-		}
-
-		Ok(())
-	}
-
-	fn update_next_invoice_check(&mut self, invoice_id: i64) {
-		let (attempts, next_check) = self.invoice_next_check_at.entry(invoice_id)
-			.or_insert((0, Local::now()));
-		*attempts += 1;
-
-		// Calculate delay: grows with each attempt
-		// e.g. base 10 seconds, doubling each time, capped to a max delay
-		let base_delay_secs = self.config.check_base_delay.as_secs();
-		let max_delay_secs = self.config.max_check_delay.as_secs();
-		let delay_secs = (base_delay_secs * 2u64.pow(*attempts as u32 - 1)).min(max_delay_secs);
-
-		*next_check = Local::now() + Duration::from_secs(delay_secs);
-
-		trace!("Lightning invoice ({}): Check {} done, updated next check to {}.",
-			invoice_id, attempts, next_check,
-		);
-	}
-
-	async fn process_payment_attempts(&mut self) -> anyhow::Result<()> {
-		let open_attempts = self.db.get_open_lightning_payment_attempts(self.node_id).await?;
-
-		for attempt in open_attempts {
-			if attempt.is_self_payment {
-				trace!("Lightning invoice ({}): Skipping since it is a self payment.",
-					attempt.lightning_invoice_id,
-				);
-
-				continue;
-			}
-
-			if attempt.created_at > Local::now() - self.config.invoice_recheck_delay {
-				trace!("Lightning invoice ({}): Skipping since it was just created.",
-					attempt.lightning_invoice_id,
-				);
-
-				continue;
-			}
-
-			let next_check = self.invoice_next_check_at.get(&attempt.lightning_invoice_id);
-			if next_check.is_some() && next_check.unwrap().1 > Local::now() {
-				trace!("Lightning invoice ({}): Skipping since it was checked recently.",
-					attempt.lightning_invoice_id,
-				);
-
-				continue;
-			}
-
-			let invoice = self.db.get_lightning_invoice_by_id(attempt.lightning_invoice_id).await?;
-			debug!("Lightning invoice ({}): with payment hash {} is being verified.",
-				invoice.id, invoice.payment_hash,
-			);
-
-			let mut updated = false;
-
-			telemetry::add_invoice_verification(attempt.lightning_node_id, attempt.status);
-
-			let req = cln_rpc::ListpaysRequest {
-				bolt11: None,
-				payment_hash: Some(invoice.payment_hash.to_vec()),
-				status: None,
-				index: None,
-				limit: None,
-				start: None,
-			};
-			let listpays_response = self.rpc.list_pays(req).await
-				.context("Could not fetch cln payments")?
-				.into_inner();
-			if listpays_response.pays.is_empty() {
-				match attempt.status {
-					LightningPaymentStatus::Succeeded => {
-						error!("Lightning invoice ({}): Payment attempt flagged succeeded \
-							when it cannot be found in CLN for payment hash {}",
-							invoice.id, invoice.payment_hash,
-						);
-					},
-					LightningPaymentStatus::Failed => {
-						error!("Lightning invoice ({}): Payment attempt flagged failed \
-							when it cannot be found in CLN for payment hash {}",
-							invoice.id, invoice.payment_hash,
-						)
-					},
-					LightningPaymentStatus::Requested
-						| LightningPaymentStatus::Submitted =>
-					{
-						self.db.update_lightning_payment_attempt_status(
-							&attempt,
-							LightningPaymentStatus::Failed,
-							None,
-						).await?;
-
-						telemetry::add_lightning_payment(
-							attempt.lightning_node_id,
-							attempt.amount_msat,
-							LightningPaymentStatus::Failed,
-						);
-
-						updated = true;
-					},
-				}
-			} else {
-				let latest = listpays_response.pays.into_iter().max_by_key(|p| {
-					p.created_index.expect("should have index")
-				}).expect("we have at least one");
-
-				let desired_status = match latest.status() {
-					ListpaysPaysStatus::Pending => LightningPaymentStatus::Submitted,
-					ListpaysPaysStatus::Complete => {
-						if latest.preimage.is_none() {
-							error!("Lightning invoice ({}): Payment completed but no preimage \
-								specified for payment hash {}",
-								invoice.id, invoice.payment_hash,
-							);
-							LightningPaymentStatus::Submitted
-						} else {
-							LightningPaymentStatus::Succeeded
-						}
-					},
-					ListpaysPaysStatus::Failed => LightningPaymentStatus::Failed,
-				};
-
-				let error_string = latest.erroronion.as_ref().map(|b| {
-					str::from_utf8(b).unwrap_or_else(|e| {
-						warn!("Failed to decode erroronion from cln: '{}', {}", b.as_hex(), e);
-						"failed to decode erroronion field"
-					})
-				});
-
-				if attempt.status != desired_status {
-					if attempt.status.is_final() {
-						error!("Lightning invoice ({}): payment attempt flagged {} when it \
-							actually {} for payment hash {}",
-							invoice.id, attempt.status, desired_status,
-							invoice.payment_hash,
-						);
-					} else {
-						let preimage = latest.preimage.map(|b| b.try_into().expect("invalid preimage not 32 bytes"));
-
-						updated = self.db.verify_and_update_invoice(
-							invoice.payment_hash,
-							&attempt,
-							desired_status,
-							error_string,
-							None,
-							preimage,
-						).await?;
-					}
-				}
-			}
-
-			if updated {
-				trace!("Lightning invoice ({}): status updated for payment hash {}.",
-					invoice.id, invoice.payment_hash,
-				);
-
-				self.payment_update_tx.send(invoice.payment_hash)?;
-			}
-
-			self.update_next_invoice_check(invoice.id);
-		}
-
-		self.invoice_next_check_at.retain(|_, &mut (_, datetime)| datetime > Local::now());
-
-		telemetry::set_pending_invoice_verifications(
-			self.node_id,
-			self.invoice_next_check_at.len(),
-		);
-
-		Ok(())
-	}
-
+impl ClnHoldProcess {
 	/// For each subscription, verifies if incoming HTLCs have been accepted.
 	/// - If so, it updates the status to accepted.
 	/// - After a delay, it cancels the subscription on the plugin and updates
@@ -749,11 +445,10 @@ impl ClnNodeMonitorProcess {
 	}
 
 	async fn run(mut self, rtmgr: RuntimeManager, mgr_waker: Arc<Notify>) -> anyhow::Result<()> {
-		let _worker = rtmgr.spawn(format!("ClnNodeMonitor({})", self.node_id))
+		let _worker = rtmgr.spawn(format!("ClnHold({})", self.node_id))
 			.with_notify(mgr_waker);
 
 		let mut invoice_interval = tokio::time::interval(self.config.invoice_check_interval);
-		let (mut rpc1, mut rpc2) = (self.rpc.clone(), self.rpc.clone()); // circumvent &mut
 
 		// Initialize TrackAll state based on whether hold_rpc is available
 		let mut track_all_state = if self.hold_rpc.is_some() {
@@ -769,19 +464,6 @@ impl ClnNodeMonitorProcess {
 		// we have two nested loops so that we can keep the various streams
 		// alive while we receive messages over all channels
 		'requests: loop {
-			let created_request = rpc1.wait(cln_rpc::WaitRequest {
-				subsystem: cln_rpc::wait_request::WaitSubsystem::Sendpays as i32,
-				indexname: cln_rpc::wait_request::WaitIndexname::Created as i32,
-				nextvalue: self.created_index.map(|i| i + 1).unwrap_or(0),
-			});
-			tokio::pin!(created_request);
-			let updated_request = rpc2.wait(cln_rpc::WaitRequest {
-				subsystem: cln_rpc::wait_request::WaitSubsystem::Sendpays as i32,
-				indexname: cln_rpc::wait_request::WaitIndexname::Updated as i32,
-				nextvalue: self.updated_index.map(|i| i + 1).unwrap_or(0),
-			});
-			tokio::pin!(updated_request);
-
 			// Attempt TrackAll connection if needed
 			match track_all_state {
 				TrackAllStreamState::NeedsConnect => {
@@ -842,19 +524,6 @@ impl ClnNodeMonitorProcess {
 			loop {
 				tokio::select! {
 					_ = rtmgr.shutdown_signal() => return Ok(()),
-					ctrl = self.ctrl_rx.recv() => match ctrl {
-						None | Some(Ctrl::Stop) => return Ok(()),
-					},
-					_ = &mut created_request => {
-						self.process_sendpay(ListsendpaysIndex::Created).await
-							.context("error processing created events")?;
-						continue 'requests;
-					},
-					_ = &mut updated_request => {
-						self.process_sendpay(ListsendpaysIndex::Updated).await
-							.context("error processing updated events")?;
-						continue 'requests;
-					},
 					event = track_all_stream.next() => {
 						match event {
 							Some(Ok(resp)) => {
@@ -879,7 +548,6 @@ impl ClnNodeMonitorProcess {
 						continue 'requests;
 					},
 					_ = invoice_interval.tick() => {
-						self.process_payment_attempts().await?;
 						if interval_handle_subscriptions {
 							self.process_htlc_subscriptions().await?;
 						} else {
