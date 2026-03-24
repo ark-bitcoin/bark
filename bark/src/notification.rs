@@ -4,6 +4,7 @@ use std::task::Poll;
 use futures::stream::Stream;
 use futures::TryStreamExt;
 use tokio::sync::broadcast;
+use tokio_stream::wrappers::errors::BroadcastStreamRecvError;
 use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::StreamExt;
 
@@ -24,6 +25,11 @@ pub enum WalletNotification {
 	MovementUpdated {
 		movement: Movement,
 	},
+	/// You have missed some notifications because the channel was full
+	///
+	/// This happens when you are not consuming the notifications fast enough and
+	/// the buffer filled up.
+	ChannelLagging,
 }
 
 /// A stream that yields all wallet notifications
@@ -31,7 +37,7 @@ pub enum WalletNotification {
 /// The stream has various utility methods to convert and filter the stream.
 ///
 /// If the stream's buffer is full and notifications are not handled fast enough,
-/// they will be silently dropped.
+/// a [WalletNotification::ChannelLagging] notification will be produced.
 pub struct NotificationStream {
 	rx: BroadcastStream<WalletNotification>,
 }
@@ -48,6 +54,7 @@ impl NotificationStream {
 		self.filter_map(|n| match n {
 			WalletNotification::MovementCreated { movement } => Some(movement),
 			WalletNotification::MovementUpdated { movement } => Some(movement),
+			WalletNotification::ChannelLagging => None,
 		})
 	}
 
@@ -117,8 +124,11 @@ impl Stream for NotificationStream {
 	) -> Poll<Option<Self::Item>> {
 		match self.rx.try_poll_next_unpin(cx) {
 			Poll::Pending => Poll::Pending,
-			Poll::Ready(None) | Poll::Ready(Some(Err(_))) => Poll::Ready(None),
+			Poll::Ready(None) => Poll::Ready(None),
 			Poll::Ready(Some(Ok(m))) => Poll::Ready(Some(m)),
+			Poll::Ready(Some(Err(BroadcastStreamRecvError::Lagged(_)))) => {
+				Poll::Ready(Some(WalletNotification::ChannelLagging))
+			},
 		}
 	}
 }
