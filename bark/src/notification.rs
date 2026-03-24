@@ -16,9 +16,11 @@ use crate::subsystem::{LightningMovement, Subsystem};
 /// A notification emitted by the wallet.
 #[derive(Debug, Clone)]
 pub enum WalletNotification {
+	/// A new movement was created
 	MovementCreated {
 		movement: Movement,
 	},
+	/// An existing movement was updated
 	MovementUpdated {
 		movement: Movement,
 	},
@@ -28,7 +30,7 @@ pub enum WalletNotification {
 ///
 /// The stream has various utility methods to convert and filter the stream.
 ///
-/// If the stream's buffer is full and notifications are not handles fast enough,
+/// If the stream's buffer is full and notifications are not handled fast enough,
 /// they will be silently dropped.
 pub struct NotificationStream {
 	rx: BroadcastStream<WalletNotification>,
