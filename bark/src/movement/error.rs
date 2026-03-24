@@ -3,9 +3,6 @@ use crate::subsystem::Subsystem;
 
 #[derive(Debug, thiserror::Error)]
 pub enum MovementError {
-	#[error("Movement Cache Error: Movement missing from cache ({id})")]
-	CacheError { id: MovementId },
-
 	#[error("Movement Creation Error: {e}")]
 	CreationError { e: anyhow::Error },
 

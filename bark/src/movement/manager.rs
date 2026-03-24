@@ -2,7 +2,7 @@ use std::cmp::PartialEq;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use tokio::sync::RwLock;
+use tokio::sync::{Mutex, OwnedMutexGuard, RwLock};
 
 use crate::movement::{Movement, MovementId, MovementStatus, MovementSubsystem};
 use crate::movement::error::MovementError;
@@ -16,7 +16,7 @@ use crate::subsystem::Subsystem;
 pub struct MovementManager {
 	db: Arc<dyn BarkPersister>,
 	subsystem_ids: RwLock<HashSet<Subsystem>>,
-	active_movements: RwLock<HashMap<MovementId, Arc<RwLock<Movement>>>>,
+	active_movements: RwLock<HashMap<MovementId, Arc<Mutex<Movement>>>>,
 	notifications: NotificationDispatch,
 }
 
@@ -238,21 +238,20 @@ impl MovementManager {
 		update: MovementUpdate,
 	) -> anyhow::Result<(), MovementError> {
 		// Ensure the movement is loaded.
-		self.load_movement_into_cache(id).await?;
+		let mut guard = self.get_cached_movement(id).await?;
 
 		// Apply the update to the movement.
-		update.apply_to(&mut *self.get_movement_lock(id).await?.write().await, chrono::Local::now());
+		update.apply_to(&mut *guard, chrono::Local::now());
 
 		// Persist the changes using a read lock.
-		let lock = self.get_movement_lock(id).await?;
-		let movement = lock.read().await;
-		self.db.update_movement(&movement).await
+		self.db.update_movement(&guard).await
 			.map_err(|e| MovementError::PersisterError { id, e })?;
 
-		self.notifications.dispatch_movement_updated(movement.clone());
+		self.notifications.dispatch_movement_updated(guard.clone());
 
 		// Drop the movement if it's in a finished state as this was likely a one-time update.
-		if movement.status != MovementStatus::Pending {
+		if guard.status != MovementStatus::Pending {
+			drop(guard);
 			self.unload_movement_from_cache(id).await?;
 		}
 		Ok(())
@@ -282,18 +281,17 @@ impl MovementManager {
 		}
 
 		// Ensure the movement is loaded.
-		self.load_movement_into_cache(id).await?;
+		let mut guard = self.get_cached_movement(id).await?;
 
 		// Update the status and persist it.
-		let lock = self.get_movement_lock(id).await?;
-		let mut movement = lock.write().await;
-		movement.status = new_status;
-		movement.time.completed_at = Some(chrono::Local::now());
-		self.db.update_movement(&*movement).await
+		guard.status = new_status;
+		guard.time.completed_at = Some(chrono::Local::now());
+		self.db.update_movement(&*guard).await
 			.map_err(|e| MovementError::PersisterError { id, e })?;
 
-		self.notifications.dispatch_movement_updated(movement.clone());
+		self.notifications.dispatch_movement_updated(guard.clone());
 
+		drop(guard);
 		self.unload_movement_from_cache(id).await
 	}
 
@@ -321,10 +319,8 @@ impl MovementManager {
 			return Err(MovementError::IncorrectPendingStatus);
 		}
 
-		self.load_movement_into_cache(id).await?;
+		let mut guard = self.get_cached_movement(id).await?;
 
-		let lock = self.get_movement_lock(id).await?;
-		let mut guard = lock.write().await;
 		update.apply_to(&mut *guard, chrono::Local::now());
 		guard.status = new_status;
 		guard.time.completed_at = Some(chrono::Local::now());
@@ -333,34 +329,31 @@ impl MovementManager {
 
 		self.notifications.dispatch_movement_updated(guard.clone());
 
+		drop(guard);
 		self.unload_movement_from_cache(id).await
 	}
 
-	async fn get_movement_lock(
+	async fn get_cached_movement(
 		&self,
 		id: MovementId,
-	) -> anyhow::Result<Arc<RwLock<Movement>>, MovementError> {
-		self.active_movements
-			.read()
-			.await
-			.get(&id)
-			.cloned()
-			.ok_or(MovementError::CacheError { id })
-	}
+	) -> anyhow::Result<OwnedMutexGuard<Movement>, MovementError> {
+		if let Some(lock) = self.active_movements.read().await.get(&id).cloned() {
+			return Ok(lock.lock_owned().await);
+		}
 
-	async fn load_movement_into_cache(&self, id: MovementId) -> anyhow::Result<(), MovementError> {
-		if self.active_movements.read().await.contains_key(&id) {
-			return Ok(());
-		}
-		// Acquire a write lock and check if another thread already loaded the movement.
-		let mut movements = self.active_movements.write().await;
-		if movements.contains_key(&id) {
-			return Ok(());
-		}
-		let movement = self.db.get_movement_by_id(id).await
-			.map_err(|e| MovementError::LoadError { id, e })?;
-		movements.insert(id, Arc::new(RwLock::new(movement)));
-		Ok(())
+		let movement_lock = {
+			// Acquire a write lock and check if another thread already loaded the movement.
+			let active_guard = self.active_movements.write().await;
+			if let Some(lock) = active_guard.get(&id).cloned() {
+				lock
+			} else {
+				Arc::new(Mutex::new(
+					self.db.get_movement_by_id(id).await
+						.map_err(|e| MovementError::LoadError { id, e })?
+				))
+			}
+		};
+		Ok(movement_lock.lock_owned().await)
 	}
 
 	async fn unload_movement_from_cache(&self, id: MovementId) -> anyhow::Result<(), MovementError> {
