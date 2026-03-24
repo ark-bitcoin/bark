@@ -49,7 +49,9 @@ impl MovementManager {
 	}
 
 	/// Persists the new movement to the db
-	pub async fn persist_new_movement(
+	///
+	/// This is a helper for the constructors but doesn't emit a notification.
+	async fn persist_new_movement(
 		&self,
 		subsystem_id: Subsystem,
 		movement_kind: impl Into<String>,
