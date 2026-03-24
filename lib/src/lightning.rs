@@ -85,6 +85,44 @@ impl PaymentHash {
 	}
 }
 
+/// Trait to capture any type that is associated with a Lightning payment hash
+pub trait AsPaymentHash {
+	/// Get the payment hash associated with this item
+	// NB names "as_payment_hash" to avoid collision with the native "payment_hash" methods
+	fn as_payment_hash(&self) -> PaymentHash;
+}
+
+impl AsPaymentHash for PaymentHash {
+	fn as_payment_hash(&self) -> PaymentHash { *self }
+}
+
+impl AsPaymentHash for Preimage {
+	fn as_payment_hash(&self) -> PaymentHash { self.compute_payment_hash() }
+}
+
+impl AsPaymentHash for Bolt11Invoice {
+	fn as_payment_hash(&self) -> PaymentHash { PaymentHash::from(*self.payment_hash()) }
+}
+
+impl AsPaymentHash for Bolt12Invoice {
+	fn as_payment_hash(&self) -> PaymentHash { self.payment_hash().into() }
+}
+
+impl AsPaymentHash for Invoice {
+	fn as_payment_hash(&self) -> PaymentHash {
+	    match self {
+			Invoice::Bolt11(i) => AsPaymentHash::as_payment_hash(i),
+			Invoice::Bolt12(i) => AsPaymentHash::as_payment_hash(i),
+		}
+	}
+}
+
+impl<'a, T: AsPaymentHash> AsPaymentHash for &'a T {
+	fn as_payment_hash(&self) -> PaymentHash {
+		AsPaymentHash::as_payment_hash(*self)
+	}
+}
+
 #[derive(Debug, Clone)]
 pub enum PaymentStatus {
 	Pending,

@@ -1,0 +1,10 @@
+- Add `Wallet::subscribe_notifications` that returns a stream of `WalletNotification` objects:
+  - Current variants are `MovementCreated` and `MovementUpdated` and they are emitted whenever
+	a new movement is added or an existing movement is updated.
+  - Utility functions exist on the stream type to get a single movement stream or to filter
+	for specific movements.
+  [#1793](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1793)
+  + [#1807](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1807)
+
+
+

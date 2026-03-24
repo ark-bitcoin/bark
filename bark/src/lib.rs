@@ -323,7 +323,7 @@ pub use self::arkoor::ArkoorCreateResult;
 pub use self::config::{BarkNetwork, Config};
 pub use self::daemon::DaemonHandle;
 pub use self::fees::FeeEstimate;
-pub use self::notification::WalletNotification;
+pub use self::notification::{WalletNotification, NotificationStream};
 pub use self::vtxo::WalletVtxo;
 
 use std::collections::HashSet;
@@ -352,6 +352,7 @@ use crate::exit::Exit;
 use crate::movement::{Movement, MovementStatus};
 use crate::movement::manager::MovementManager;
 use crate::movement::update::MovementUpdate;
+use crate::notification::NotificationDispatch;
 use crate::onchain::{ExitUnilaterally, PreparePsbt, SignPsbt, Utxo};
 use crate::onchain::DaemonizableOnchainWallet;
 use crate::persist::BarkPersister;
@@ -667,8 +668,8 @@ pub struct Wallet {
 	/// Allows easy creation of and management of wallet fund movements.
 	pub movements: Arc<MovementManager>,
 
-	/// Handle for subscribing to wallet notifications.
-	notifications: notification::NotificationHandle,
+	/// Dispatch for wallet notifications
+	notifications: NotificationDispatch,
 
 	/// Active runtime configuration for networking, fees, policies and thresholds.
 	config: Config,
@@ -979,18 +980,12 @@ impl Wallet {
 		};
 		let server = parking_lot::RwLock::new(server);
 
-		let movements = Arc::new(MovementManager::new(db.clone()));
+		let notifications = NotificationDispatch::new();
+		let movements = Arc::new(MovementManager::new(db.clone(), notifications.clone()));
 		let exit = RwLock::new(Exit::new(db.clone(), chain.clone(), movements.clone()).await?);
 
 		Ok(Wallet {
-			config,
-			db,
-			seed,
-			exit,
-			movements,
-			notifications: notification::NotificationHandle::new(),
-			server,
-			chain,
+			config, db, seed, exit, movements, notifications, server, chain,
 			inflight_lightning_payments: Mutex::new(HashSet::new()),
 			round_state_lock_index: RoundStateLockIndex::new(),
 		})
