@@ -83,3 +83,11 @@ pub struct LightningReceiveClaimed {
 }
 impl_slog!(LightningReceiveClaimed, INFO, "claimed lightning receive");
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct XpayStarted {
+	pub node_id: i64,
+	pub created_index: u64,
+	pub updated_index: u64,
+}
+impl_slog!(XpayStarted, INFO, "Start managing xpay");
+

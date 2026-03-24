@@ -32,7 +32,7 @@ use chrono::{DateTime, Local};
 use tokio::sync::{broadcast, Notify};
 use tokio::task::JoinHandle;
 use tonic::transport::Channel;
-use tracing::{debug, error, info, trace, warn};
+use tracing::{debug, error, trace, warn};
 use ark::lightning::{Invoice, PaymentHash, Preimage};
 use cln_rpc::listpays_pays::ListpaysPaysStatus;
 use cln_rpc::listsendpays_request::ListsendpaysIndex;
@@ -77,8 +77,10 @@ impl ClnXpay {
 			.with_context(|| format!("failed to fetch payment indices for {}", node_id))?
 			.unwrap_or_default();
 
-		info!("Start managing xpay for node with id {} with created_index={}, updated_index={}",
-			node_id, payment_idxs.created_index, payment_idxs.updated_index,
+		slog!(XpayStarted,
+			node_id: node_id,
+			created_index: payment_idxs.created_index,
+			updated_index: payment_idxs.updated_index,
 		);
 
 		let proc = ClnXpayProcess {
