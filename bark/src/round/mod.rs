@@ -30,10 +30,7 @@ use ark::vtxo::Full;
 use ark::attestations::{DelegatedRoundParticipationAttestation, RoundAttemptAttestation};
 use ark::forfeit::HashLockedForfeitBundle;
 use ark::musig::{self, DangerousSecretNonce, PublicNonce, SecretNonce};
-use ark::rounds::{
-	RoundAttempt, RoundEvent, RoundFinished, RoundSeq, MIN_ROUND_TX_OUTPUTS,
-	ROUND_TX_VTXO_TREE_VOUT,
-};
+use ark::rounds::{RoundAttempt, RoundEvent, RoundFinished, RoundSeq, ROUND_TX_VTXO_TREE_VOUT};
 use ark::tree::signed::{LeafVtxoCosignContext, UnlockHash, VtxoTreeSpec};
 use bitcoin_ext::TxStatus;
 use server_rpc::{protos, ServerConnection, TryFromBytes};
@@ -1068,12 +1065,6 @@ async fn sign_vtxo_tree(
 	cosign_agg_nonces: &[musig::AggregatedNonce],
 ) -> anyhow::Result<()> {
 	let (srv, _) = wallet.require_server().await.context("server not available")?;
-
-	if unsigned_round_tx.output.len() < MIN_ROUND_TX_OUTPUTS {
-		bail!("server sent round tx with less than 2 outputs: {}",
-			serialize_hex(&unsigned_round_tx),
-		);
-	}
 
 	let vtxos_utxo = OutPoint::new(unsigned_round_tx.compute_txid(), ROUND_TX_VTXO_TREE_VOUT);
 
