@@ -535,8 +535,17 @@ async fn call_xpay(
 		_ => {},
 	}
 
-	// Call the xpay command
-	let pay_response = rpc.xpay(cln_rpc::XpayRequest {
+	let amount = user_amount.unwrap_or_else(|| Amount::from_msat_ceil(invoice.amount_msat().unwrap()));
+	let payment_hash = invoice.payment_hash();
+
+	slog!(XpayRpcCalled,
+		payment_hash: payment_hash,
+		amount: amount,
+		invoice: invoice.to_string(),
+		max_delay: max_cltv_expiry_delta as u32,
+	);
+
+	let pay_result = rpc.xpay(cln_rpc::XpayRequest {
 		invstring: invoice.to_string(),
 		amount_msat: {
 			if invoice.amount_msat().is_none() {
@@ -550,11 +559,25 @@ async fn call_xpay(
 		retry_for: None,
 		partial_msat: None,
 		layers: vec![],
-	}).await?.into_inner();
+	}).await;
 
-	if pay_response.payment_preimage.len() > 0 {
-		Ok(pay_response.payment_preimage.try_into().ok().context("invalid preimage not 32 bytes")?)
-	} else {
-		bail!("xpay returned invalid preimage: {}", pay_response.payment_preimage.as_hex());
-	}
+	let result = match pay_result {
+		Err(e) => Err(e.into()),
+		Ok(resp) => {
+			let bytes = resp.into_inner().payment_preimage;
+			if bytes.is_empty() {
+				Err(anyhow::anyhow!("missing preimage"))
+			} else {
+				bytes.try_into().ok().context("invalid preimage not 32 bytes")
+			}
+		}
+	};
+
+	slog!(XpayRpcReturned,
+		payment_hash: payment_hash,
+		preimage: result.as_ref().ok().copied(),
+		error: result.as_ref().err().map(|e| e.to_string()),
+	);
+
+	result
 }
