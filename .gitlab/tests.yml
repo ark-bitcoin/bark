@@ -97,6 +97,16 @@ test-unit:
     - git log --oneline -1
     - nix develop .#default --command bash -c "cargo nextest run --archive-file target/ci/unit-tests.tar.zst"
 
+test-doctests:
+  interruptible: true
+  stage: test
+  extends: .test-rules-no-tags
+  needs:
+    - prechecks
+  script:
+    - git log --oneline -1
+    - nix develop .#default --command bash -c "cargo test --doc"
+
 use-bark-as-dependency:
   interruptible: true
   stage: test
