@@ -91,3 +91,10 @@ pub struct XpayStarted {
 }
 impl_slog!(XpayStarted, INFO, "Start managing xpay");
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct XpayStopped {
+	pub node_id: i64,
+	pub error: String,
+}
+impl_slog!(XpayStopped, ERROR, "Xpay exited with error");
+

@@ -100,10 +100,10 @@ impl ClnXpay {
 			invoice_next_check_at: HashMap::new(),
 		};
 
-		let jh = tokio::spawn(async {
+		let jh = tokio::spawn(async move {
 			let ret = proc.run(rtmgr, mgr_waker).await;
 			if let Err(ref e) = ret {
-				error!("ClnXpay exited with error: {:?}", e);
+				slog!(XpayStopped, node_id: node_id, error: format!("{:?}", e));
 			}
 			ret
 		});
