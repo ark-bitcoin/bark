@@ -30,8 +30,8 @@
 //! storage.put(record).await?;
 //!
 //! // Query with efficient index scan
-//! let query = Query::new(0).limit(10);
-//! let records = storage.query(query).await?;
+//! let query = Query::new_full_range(0).limit(10);
+//! let records = storage.query_sorted(query).await?;
 //! # Ok(())
 //! # }
 //! ```
@@ -41,6 +41,8 @@ mod sort;
 #[cfg(feature = "filestore")]
 pub mod filestore;
 pub mod memory;
+
+use std::ops::RangeBounds;
 
 pub use sort::SortKey;
 
@@ -139,60 +141,65 @@ impl Record {
 	}
 }
 
-/// Query specification for retrieving records from a partition.
-#[derive(Debug, Clone, Default)]
-pub struct Query {
+/// A range of sort keys.
+pub trait QueryRange: RangeBounds<SortKey> + Send {}
+
+impl<R: RangeBounds<SortKey> + Send> QueryRange for R {}
+
+/// Query specification for retrieving sorted records from a partition.
+#[derive(Debug, Clone)]
+pub struct Query<R: QueryRange> {
 	/// Partition to query (required).
 	pub partition: u8,
 
+	/// Range of sort keys to query.
+	pub range: R,
+
 	/// Maximum number of records to return.
 	pub limit: Option<usize>,
-
-	/// Inclusive start key for the query.
-	pub start: Option<SortKey>,
-
-	/// Exclusive end key for the query.
-	pub end: Option<SortKey>,
 }
 
-impl Query {
+impl<R: QueryRange> Query<R> {
 	/// Creates a new query for the given partition.
-	pub fn new(partition: u8) -> Self {
+	pub fn new(partition: u8, range: R) -> Self {
 		Self {
 			partition,
-			..Default::default()
+			range,
+			limit: None,
 		}
 	}
 
-	/// Limits the number of results.
-	pub fn limit(mut self, n: usize) -> Self {
-		self.limit = Some(n);
+	/// Sets the maximum number of records to return.
+	///
+	/// If the range is greater than the limit, the query will
+	/// return the first `limit` records.
+	pub fn limit(mut self, limit: usize) -> Self {
+		self.limit = Some(limit);
 		self
 	}
+}
 
-	/// Sets the start key for the query (inclusive).
-	pub fn start(mut self, start: SortKey) -> Self {
-		self.start = Some(start);
-		self
-	}
-
-	/// Sets the end key for the query (exclusive).
-	pub fn end(mut self, end: SortKey) -> Self {
-		self.end = Some(end);
-		self
+impl Query<std::ops::RangeFull> {
+	pub fn new_full_range(partition: u8) -> Self {
+		Self::new(partition, ..)
 	}
 }
 
 /// Storage adaptor trait for persistence backends.
 ///
-/// This trait provides a minimal interface (4 methods) that can be efficiently
+/// This trait provides a minimal interface (5 methods) that can be efficiently
 /// implemented on various storage backends while enabling query optimization.
 ///
 /// # Implementor's Guide
 ///
 /// ## Simple backends (memory, file-based)
 ///
-/// Store records in a map/list and implement `query` by filtering in memory.
+/// Store records in a map/list keyed by `(partition, pk)`.
+///
+/// - `query_sorted`: query sorted records by partition, excluding those without
+///	  a sort key defined.
+/// - `get_all`: return every record in the partition regardless of whether it
+///   has a sort key. No ordering is guaranteed.
 ///
 /// ## Database backends (Postgres, MongoDB, Firebase, IndexedDB, etc.)
 ///
@@ -211,9 +218,18 @@ impl Query {
 /// Translate [`Query`] to SQL:
 ///
 /// ```sql
+/// -- query_sorted: only returns records with a sort key
+/// SELECT * FROM storage
+/// WHERE partition = :partition AND sort_key IS NOT NULL
+/// ORDER BY sort_key DESC
+/// ```
+///
+/// Translate [`get_all`](StorageAdaptor::get_all) to SQL:
+///
+/// ```sql
+/// -- get_all: returns all records in the partition, no ordering
 /// SELECT * FROM storage
 /// WHERE partition = :partition
-/// ORDER BY :sort_key DESC
 /// ```
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
@@ -231,10 +247,18 @@ pub trait StorageAdaptor: Send + Sync + 'static {
 	/// Returns the deleted record if it existed, `None` otherwise.
 	async fn delete(&mut self, partition: u8, pk: &[u8]) -> anyhow::Result<Option<Record>>;
 
-	/// Queries records in a partition
+	/// Queries sorted records from a partition.
 	///
-	/// Results are ordered by sort key. Records without a sort key appear last.
-	async fn query(&self, query: Query) -> anyhow::Result<Vec<Record>>;
+	/// Results are ordered by sort key.
+	/// Records without a sort key must not be returned, to query all
+	/// records use [`StorageAdaptor::get_all`].
+	async fn query_sorted<R: QueryRange>(&self, query: Query<R>)
+		-> anyhow::Result<Vec<Record>>;
+
+	/// Get all records in a partition.
+	///
+	/// No ordering guarantees are made.
+	async fn get_all(&self, partition: u8) -> anyhow::Result<Vec<Record>>;
 
 	/// Increments the last partition id, then stores and returns the new id.
 	async fn incremental_id(&mut self, partition: u8) -> anyhow::Result<u32> {
@@ -254,15 +278,15 @@ pub trait StorageAdaptor: Send + Sync + 'static {
 	}
 }
 
-async fn get_vtxo(adaptor: &dyn StorageAdaptor, id: VtxoId) -> anyhow::Result<Option<SerdeVtxo>> {
+async fn get_vtxo<S: StorageAdaptor>(adaptor: &S, id: VtxoId) -> anyhow::Result<Option<SerdeVtxo>> {
 	match adaptor.get(partition::VTXO, &id.to_bytes()).await? {
 		Some(record) => Ok(Some(record.to_data::<SerdeVtxo>()?)),
 		None => Ok(None),
 	}
 }
 
-async fn get_check_vtxo_state(
-	adaptor: &dyn StorageAdaptor,
+async fn get_check_vtxo_state<S: StorageAdaptor>(
+	adaptor: &S,
 	vtxo_id: VtxoId,
 	allowed_states: &[VtxoStateKind],
 ) -> anyhow::Result<SerdeVtxo> {
@@ -279,8 +303,8 @@ async fn get_check_vtxo_state(
 	Ok(vtxo)
 }
 
-async fn update_vtxo_state_checked(
-	adaptor: &mut dyn StorageAdaptor,
+async fn update_vtxo_state_checked<S: StorageAdaptor>(
+	adaptor: &mut S,
 	vtxo_id: VtxoId,
 	new_state: VtxoState,
 	allowed_old_states: &[VtxoStateKind],
@@ -416,7 +440,8 @@ impl <S: StorageAdaptor> BarkPersister for StorageAdaptorWrapper<S> {
 	}
 
 	async fn get_all_movements(&self) -> anyhow::Result<Vec<Movement>> {
-		let records = self.inner.read().await.query(Query::new(partition::MOVEMENT)).await?;
+		let records = self.inner.read().await
+			.query_sorted(Query::new_full_range(partition::MOVEMENT)).await?;
 		records.into_iter().map(|r| r.to_data()).collect()
 	}
 
@@ -449,13 +474,11 @@ impl <S: StorageAdaptor> BarkPersister for StorageAdaptorWrapper<S> {
 	}
 
 	async fn get_all_pending_board_ids(&self) -> anyhow::Result<Vec<VtxoId>> {
-		let records = self
-			.inner.read().await.query(Query::new(partition::PENDING_BOARD))
-			.await?;
+		let records = self.inner.read().await.get_all(partition::PENDING_BOARD).await?;
 		records
 			.into_iter()
 			.map(|r| {
-				let board: PendingBoard = r.to_data()?;
+				let board = r.to_data::<PendingBoard>()?;
 				Ok(board.vtxos.into_iter().next().context("empty vtxos")?)
 			})
 			.collect()
@@ -540,7 +563,7 @@ impl <S: StorageAdaptor> BarkPersister for StorageAdaptorWrapper<S> {
 
 	async fn get_pending_round_state_ids(&self) -> anyhow::Result<Vec<RoundStateId>> {
 		let records = self.inner.read().await
-			.query(Query::new(partition::ROUND_STATE)).await?;
+			.get_all(partition::ROUND_STATE).await?;
 		records.into_iter()
 			.map(|r| {
 				let pk_slice: [u8; 4] = r.pk[..4].try_into().expect("4 bytes shouldn't fail");
@@ -585,7 +608,7 @@ impl <S: StorageAdaptor> BarkPersister for StorageAdaptorWrapper<S> {
 
 	async fn get_all_vtxos(&self) -> anyhow::Result<Vec<WalletVtxo>> {
 		let records = self.inner.read().await
-			.query(Query::new(partition::VTXO)).await?;
+			.query_sorted(Query::new_full_range(partition::VTXO)).await?;
 
 		records
 			.into_iter()
@@ -618,9 +641,9 @@ impl <S: StorageAdaptor> BarkPersister for StorageAdaptorWrapper<S> {
 		let mut records = Vec::new();
 		for state in states {
 			let (start, end) = range(*state);
-			let query = Query::new(partition::VTXO).start(start).end(end);
+			let query = Query::new(partition::VTXO, start..=end);
 
-			for record in lock.query(query).await? {
+			for record in lock.query_sorted(query).await? {
 				let serde_vtxo = record.to_data::<SerdeVtxo>()?;
 				let current_state = serde_vtxo.current_state()
 					.context("vtxo has no current state")?.clone();
@@ -671,9 +694,9 @@ impl <S: StorageAdaptor> BarkPersister for StorageAdaptorWrapper<S> {
 	}
 
 	async fn get_last_vtxo_key_index(&self) -> anyhow::Result<Option<u32>> {
-		// Query with reverse order and limit 1 to get the highest index
-		let query = Query::new(partition::PUBLIC_KEY).limit(1);
-		let records = self.inner.read().await.query(query).await?;
+		// pks are sorted descending, so the first one is the highest index
+		let query = Query::new_full_range(partition::PUBLIC_KEY).limit(1);
+		let records = self.inner.read().await.query_sorted(query).await?;
 
 		match records.into_iter().next() {
 			Some(record) => {
@@ -757,11 +780,11 @@ impl <S: StorageAdaptor> BarkPersister for StorageAdaptorWrapper<S> {
 
 	async fn get_all_pending_lightning_send(&self) -> anyhow::Result<Vec<LightningSend>> {
 		let records = self.inner.read().await
-			.query(Query::new(partition::LIGHTNING_SEND)).await?;
+			.get_all(partition::LIGHTNING_SEND).await?;
 		records
 			.into_iter()
 			.filter_map(|r| {
-				let send: LightningSend = r.to_data().ok()?;
+				let send = r.to_data::<LightningSend>().ok()?;
 				if send.finished_at.is_none() {
 					Some(Ok(send))
 				} else {
@@ -843,12 +866,11 @@ impl <S: StorageAdaptor> BarkPersister for StorageAdaptorWrapper<S> {
 
 	async fn get_all_pending_lightning_receives(&self) -> anyhow::Result<Vec<LightningReceive>> {
 		let records = self.inner.read().await
-			.query(Query::new(partition::LIGHTNING_RECEIVE))
-			.await?;
+			.get_all(partition::LIGHTNING_RECEIVE).await?;
 		records
 			.into_iter()
 			.filter_map(|r| {
-				let receive: LightningReceive = r.to_data().ok()?;
+				let receive = r.to_data::<LightningReceive>().ok()?;
 				if receive.finished_at.is_none() {
 					Some(Ok(receive))
 				} else {
@@ -953,7 +975,7 @@ impl <S: StorageAdaptor> BarkPersister for StorageAdaptorWrapper<S> {
 
 	async fn get_pending_offboards(&self) -> anyhow::Result<Vec<PendingOffboard>> {
 		let records = self.inner.read().await
-			.query(Query::new(partition::PENDING_OFFBOARD)).await?;
+			.get_all(partition::PENDING_OFFBOARD).await?;
 		records.into_iter().map(|r| r.to_data()).collect()
 	}
 
@@ -979,8 +1001,7 @@ impl <S: StorageAdaptor> BarkPersister for StorageAdaptorWrapper<S> {
 	}
 
 	async fn get_exit_vtxo_entries(&self) -> anyhow::Result<Vec<StoredExit>> {
-		let records = self.inner.read().await
-			.query(Query::new(partition::EXIT_VTXO)).await?;
+		let records = self.inner.read().await.get_all(partition::EXIT_VTXO).await?;
 		records.into_iter().map(|r| r.to_data()).collect()
 	}
 
@@ -1025,15 +1046,11 @@ mod tests {
 
 	#[test]
 	fn storage_query_builder() {
-		let query = Query::new(0)
-			.limit(10)
-			.start(SortKey::u32_asc(100))
-			.end(SortKey::u32_asc(200));
+		let query = Query::new_full_range(0).limit(10);
 
 		assert_eq!(query.partition, 0);
 		assert_eq!(query.limit, Some(10));
-		assert_eq!(query.start, Some(SortKey::u32_asc(100)));
-		assert_eq!(query.end, Some(SortKey::u32_asc(200)));
+		assert_eq!(query.range, ..);
 	}
 }
 
@@ -1059,7 +1076,7 @@ pub mod test_suite {
 
 	async fn clear_partitions<S: StorageAdaptor>(storage: &mut S, partitions: &[u8]) -> anyhow::Result<()> {
 		for partition in partitions {
-			let records = storage.query(Query::new(*partition)).await?;
+			let records = storage.get_all(*partition).await?;
 			for record in records {
 				storage.delete(record.partition, &record.pk).await?;
 			}
@@ -1090,9 +1107,18 @@ pub mod test_suite {
 		test_query_returns_partition_records(storage).await;
 		test_query_ordering(storage).await;
 		test_query_with_limit(storage).await;
-		test_query_null_sort_key_ordering(storage).await;
+		test_query_null_sort_key_excluded(storage).await;
 		test_query_partition_isolation(storage).await;
 		test_query_range(storage).await;
+		test_query_exclusive_end_range(storage).await;
+		test_query_full_range_limit_one(storage).await;
+
+		// get_all tests
+		test_get_all_empty_partition(storage).await;
+		test_get_all_returns_all_records(storage).await;
+		test_get_all_includes_records_without_sort_key(storage).await;
+		test_get_all_partition_isolation(storage).await;
+		test_get_all_after_delete(storage).await;
 
 		// incremental_id tests
 		test_incremental_id_starts_at_one(storage).await;
@@ -1120,7 +1146,7 @@ pub mod test_suite {
 
 		assert_eq!(retrieved.pk, b"put_insert_1");
 		assert_eq!(retrieved.partition, 0);
-		assert_eq!(retrieved.data, b"test data".to_vec());
+		assert_eq!(retrieved.data, b"test data");
 	}
 
 	/// Tests that put updates an existing record (upsert behavior).
@@ -1150,7 +1176,7 @@ pub mod test_suite {
 			.expect("get should succeed")
 			.expect("record should exist");
 
-		assert_eq!(retrieved.data, b"updated".to_vec(), "data should be updated");
+		assert_eq!(retrieved.data, b"updated", "data should be updated");
 	}
 
 	/// Tests that put correctly stores the sort key.
@@ -1246,7 +1272,7 @@ pub mod test_suite {
 		let retrieved = retrieved.unwrap();
 		assert_eq!(retrieved.pk, b"get_existing_1");
 		assert_eq!(retrieved.partition, 0);
-		assert_eq!(retrieved.data, b"test".to_vec());
+		assert_eq!(retrieved.data, b"test");
 
 		// superset of the key
 		assert!(storage.get(0, b"get_existing_1_").await.unwrap().is_none());
@@ -1281,7 +1307,7 @@ pub mod test_suite {
 			.expect("get should succeed")
 			.expect("record should exist");
 
-		assert_eq!(retrieved.data, b"version2".to_vec());
+		assert_eq!(retrieved.data, b"version2");
 	}
 
 	/// Tests that delete removes an existing record and returns it.
@@ -1348,7 +1374,7 @@ pub mod test_suite {
 	pub async fn test_query_empty_partition<S: StorageAdaptor>(storage: &mut S) {
 		clear_partitions(storage, &[0]).await.unwrap();
 		let results = storage
-			.query(Query::new(0))
+			.query_sorted(Query::new_full_range(0))
 			.await
 			.expect("query should succeed");
 
@@ -1369,7 +1395,7 @@ pub mod test_suite {
 		}
 
 		let results = storage
-			.query(Query::new(0))
+			.query_sorted(Query::new_full_range(0))
 			.await
 			.expect("query should succeed");
 
@@ -1391,7 +1417,7 @@ pub mod test_suite {
 		}
 
 		let results = storage
-			.query(Query::new(0))
+			.query_sorted(Query::new_full_range(0))
 			.await
 			.expect("query should succeed");
 
@@ -1417,7 +1443,7 @@ pub mod test_suite {
 		}
 
 		let results = storage
-			.query(Query::new(0).limit(3))
+			.query_sorted(Query::new_full_range(0).limit(3))
 			.await
 			.expect("query should succeed");
 
@@ -1430,8 +1456,8 @@ pub mod test_suite {
 		);
 	}
 
-	/// Tests that records without sort keys are ordered last (or first when reversed).
-	pub async fn test_query_null_sort_key_ordering<S: StorageAdaptor>(storage: &mut S) {
+	/// Tests that records without sort keys don't appear in query
+	pub async fn test_query_null_sort_key_excluded<S: StorageAdaptor>(storage: &mut S) {
 		clear_partitions(storage, &[0]).await.unwrap();
 		// Records with sort keys
 		let with_key_1 = Record {
@@ -1459,16 +1485,25 @@ pub mod test_suite {
 		storage.put(without_key).await.expect("put should succeed");
 		storage.put(with_key_2).await.expect("put should succeed");
 
-		// Ascending: nulls last
-		let results_asc = storage
-			.query(Query::new(0))
-			.await
+		// query should only return records with sort keys
+		let results_query = storage.query_sorted(Query::new_full_range(0)).await
 			.expect("query should succeed");
+		assert_eq!(results_query.len(), 2, "query should only return records with sort keys");
+		assert_eq!(results_query[0].data, b"with_key_1");
+		assert_eq!(results_query[1].data, b"with_key_2");
 
-		assert_eq!(results_asc.len(), 3);
-		assert_eq!(results_asc[0].data, b"with_key_1".to_vec());
-		assert_eq!(results_asc[1].data, b"with_key_2".to_vec());
-		assert_eq!(results_asc[2].data, b"no_key".to_vec(), "null sort key should be last");
+		// get_all should return all records
+		let results_all = storage.get_all(0).await
+			.expect("get_all should succeed");
+		assert_eq!(results_all.len(), 3, "get_all should return all records including those without sort keys");
+
+		// Verify all three records are present (order not guaranteed for get_all)
+		let has_with_key_1 = results_all.iter().any(|r| r.data == b"with_key_1");
+		let has_with_key_2 = results_all.iter().any(|r| r.data == b"with_key_2");
+		let has_without_key = results_all.iter().any(|r| r.data == b"no_key");
+		assert!(has_with_key_1, "get_all should include with_key_1");
+		assert!(has_with_key_2, "get_all should include with_key_2");
+		assert!(has_without_key, "get_all should include record without sort key");
 	}
 
 	/// Tests that query only returns records from the specified partition.
@@ -1497,12 +1532,12 @@ pub mod test_suite {
 		}
 
 		let results_a = storage
-			.query(Query::new(0))
+			.query_sorted(Query::new_full_range(0))
 			.await
 			.expect("query should succeed");
 
 		let results_b = storage
-			.query(Query::new(1))
+			.query_sorted(Query::new_full_range(1))
 			.await
 			.expect("query should succeed");
 
@@ -1537,7 +1572,7 @@ pub mod test_suite {
 
 		// Query with start key only (>= 5)
 		let results_start = storage
-			.query(Query::new(0).start(SortKey::u32_asc(5)))
+			.query_sorted(Query::new(0, SortKey::u32_asc(5)..))
 			.await
 			.expect("query should succeed");
 
@@ -1558,7 +1593,7 @@ pub mod test_suite {
 
 		// Query with end key only (<= 3)
 		let results_end = storage
-			.query(Query::new(0).end(SortKey::u32_asc(3)))
+			.query_sorted(Query::new(0, ..=SortKey::u32_asc(3)))
 			.await
 			.expect("query should succeed");
 
@@ -1576,7 +1611,7 @@ pub mod test_suite {
 
 		// Query with both start and end keys (3 <= x <= 7)
 		let results_range = storage
-			.query(Query::new(0).start(SortKey::u32_asc(3)).end(SortKey::u32_asc(7)))
+			.query_sorted(Query::new(0, SortKey::u32_asc(3)..=SortKey::u32_asc(7)))
 			.await
 			.expect("query should succeed");
 
@@ -1596,7 +1631,7 @@ pub mod test_suite {
 
 		// Query range with limit
 		let results_range_limit = storage
-			.query(Query::new(0).start(SortKey::u32_asc(2)).end(SortKey::u32_asc(8)).limit(3))
+			.query_sorted(Query::new(0, SortKey::u32_asc(2)..=SortKey::u32_asc(8)).limit(3))
 			.await
 			.expect("query should succeed");
 
@@ -1614,11 +1649,84 @@ pub mod test_suite {
 
 		// Query range that matches no records
 		let results_empty = storage
-			.query(Query::new(0).start(SortKey::u32_asc(100)).end(SortKey::u32_asc(200)))
+			.query_sorted(Query::new(0, SortKey::u32_asc(100)..=SortKey::u32_asc(200)))
 			.await
 			.expect("query should succeed");
 
 		assert!(results_empty.is_empty(), "should return no records for out-of-range query");
+	}
+
+	/// Tests that exclusive end ranges (start..end) exclude the end bound.
+	pub async fn test_query_exclusive_end_range<S: StorageAdaptor>(storage: &mut S) {
+		clear_partitions(storage, &[0]).await.unwrap();
+
+		for i in 1..=10u32 {
+			let record = Record {
+				pk: format!("query_excl_{}", i).into(),
+				partition: 0,
+				sort_key: Some(SortKey::u32_asc(i)),
+				data: format!("record_{}", i).as_bytes().to_vec(),
+			};
+			storage.put(record).await.expect("put should succeed");
+		}
+
+		// Exclusive end: 3 <= x < 7 (should return records 3, 4, 5, 6)
+		let results = storage
+			.query_sorted(Query::new(0, SortKey::u32_asc(3)..SortKey::u32_asc(7)))
+			.await
+			.expect("query should succeed");
+
+		assert_eq!(results.len(), 4, "exclusive end should not include record_7");
+		let values: Vec<_> = results.iter().map(|r| r.data.clone()).collect();
+		assert_eq!(
+			values,
+			vec![
+				b"record_3".to_vec(),
+				b"record_4".to_vec(),
+				b"record_5".to_vec(),
+				b"record_6".to_vec(),
+			],
+		);
+
+		// Exclusive end only: x < 4 (should return records 1, 2, 3)
+		let results = storage
+			.query_sorted(Query::new(0, ..SortKey::u32_asc(4)))
+			.await
+			.expect("query should succeed");
+
+		assert_eq!(results.len(), 3, "exclusive upper bound should not include record_4");
+		let values: Vec<_> = results.iter().map(|r| r.data.clone()).collect();
+		assert_eq!(
+			values,
+			vec![
+				b"record_1".to_vec(),
+				b"record_2".to_vec(),
+				b"record_3".to_vec(),
+			],
+		);
+	}
+
+	/// Tests that full-range query with limit 1 returns the first sorted record.
+	pub async fn test_query_full_range_limit_one<S: StorageAdaptor>(storage: &mut S) {
+		clear_partitions(storage, &[0]).await.unwrap();
+
+		for i in [5u32, 2, 8, 1, 9] {
+			let record = Record {
+				pk: format!("query_limit1_{}", i).into(),
+				partition: 0,
+				sort_key: Some(SortKey::u32_asc(i)),
+				data: format!("record_{}", i).as_bytes().to_vec(),
+			};
+			storage.put(record).await.expect("put should succeed");
+		}
+
+		let results = storage
+			.query_sorted(Query::new_full_range(0).limit(1))
+			.await
+			.expect("query should succeed");
+
+		assert_eq!(results.len(), 1);
+		assert_eq!(results[0].data, b"record_1".to_vec(), "limit 1 should return the first record in sort order");
 	}
 
 	/// Tests that incremental_id returns 1 for the first call on a partition.
@@ -1703,5 +1811,172 @@ pub mod test_suite {
 		// Continue generating - should pick up where we left off
 		let id3 = storage.incremental_id(0).await.expect("incremental_id should succeed");
 		assert_eq!(id3, 3);
+	}
+
+	/// Tests that get_all returns empty results for empty partition.
+	pub async fn test_get_all_empty_partition<S: StorageAdaptor>(storage: &mut S) {
+		clear_partitions(storage, &[0]).await.unwrap();
+		let results = storage
+			.get_all(0)
+			.await
+			.expect("get_all should succeed");
+
+		assert!(results.is_empty(), "get_all should return empty for empty partition");
+	}
+
+	/// Tests that get_all returns all records in a partition.
+	pub async fn test_get_all_returns_all_records<S: StorageAdaptor>(storage: &mut S) {
+		clear_partitions(storage, &[0]).await.unwrap();
+
+		// Insert records with sort keys
+		for i in 0..5 {
+			let record = Record {
+				pk: format!("get_all_{}", i).into(),
+				partition: 0,
+				sort_key: Some(SortKey::u32_asc(i)),
+				data: format!("record_{}", i).as_bytes().to_vec(),
+			};
+			storage.put(record).await.expect("put should succeed");
+		}
+
+		let results = storage
+			.get_all(0)
+			.await
+			.expect("get_all should succeed");
+
+		assert_eq!(results.len(), 5, "get_all should return all 5 records");
+
+		// Verify all records are present (order not guaranteed)
+		for i in 0..5 {
+			let expected_data = format!("record_{}", i).as_bytes().to_vec();
+			let found = results.iter().any(|r| r.data == expected_data);
+			assert!(found, "get_all should include record_{}", i);
+		}
+	}
+
+	/// Tests that get_all includes records without sort keys.
+	pub async fn test_get_all_includes_records_without_sort_key<S: StorageAdaptor>(storage: &mut S) {
+		clear_partitions(storage, &[0]).await.unwrap();
+
+		// Insert records with sort keys
+		let with_key_1 = Record {
+			pk: "get_all_with_1".into(),
+			partition: 0,
+			sort_key: Some(SortKey::u32_asc(1)),
+			data: b"with_key_1".to_vec(),
+		};
+		let with_key_2 = Record {
+			pk: "get_all_with_2".into(),
+			partition: 0,
+			sort_key: Some(SortKey::u32_asc(2)),
+			data: b"with_key_2".to_vec(),
+		};
+
+		// Insert records without sort keys
+		let without_key_1 = Record {
+			pk: "get_all_without_1".into(),
+			partition: 0,
+			sort_key: None,
+			data: b"without_key_1".to_vec(),
+		};
+		let without_key_2 = Record {
+			pk: "get_all_without_2".into(),
+			partition: 0,
+			sort_key: None,
+			data: b"without_key_2".to_vec(),
+		};
+
+		storage.put(with_key_1).await.expect("put should succeed");
+		storage.put(without_key_1).await.expect("put should succeed");
+		storage.put(with_key_2).await.expect("put should succeed");
+		storage.put(without_key_2).await.expect("put should succeed");
+
+		let results = storage
+			.get_all(0)
+			.await
+			.expect("get_all should succeed");
+
+		assert_eq!(results.len(), 4, "get_all should return all 4 records");
+
+		// Verify all records are present
+		let has_with_1 = results.iter().any(|r| r.data == b"with_key_1");
+		let has_with_2 = results.iter().any(|r| r.data == b"with_key_2");
+		let has_without_1 = results.iter().any(|r| r.data == b"without_key_1");
+		let has_without_2 = results.iter().any(|r| r.data == b"without_key_2");
+
+		assert!(has_with_1, "get_all should include with_key_1");
+		assert!(has_with_2, "get_all should include with_key_2");
+		assert!(has_without_1, "get_all should include without_key_1");
+		assert!(has_without_2, "get_all should include without_key_2");
+
+		// Verify that query excludes records without sort keys
+		let query_results = storage
+			.query_sorted(Query::new_full_range(0))
+			.await
+			.expect("query should succeed");
+
+		assert_eq!(query_results.len(), 2, "query should only return records with sort keys");
+		let query_has_without = query_results.iter().any(|r| r.sort_key.is_none());
+		assert!(!query_has_without, "query should not include records without sort keys");
+	}
+
+	/// Tests that get_all only returns records from the specified partition.
+	pub async fn test_get_all_partition_isolation<S: StorageAdaptor>(storage: &mut S) {
+		clear_partitions(storage, &[0, 1]).await.unwrap();
+
+		// Insert records in partition 0
+		for i in 0..3 {
+			let record = Record {
+				pk: format!("partition_0_{}", i).into(),
+				partition: 0,
+				sort_key: Some(SortKey::u32_asc(i)),
+				data: format!("p0_record_{}", i).as_bytes().to_vec(),
+			};
+			storage.put(record).await.expect("put should succeed");
+		}
+
+		// Insert records in partition 1
+		for i in 0..2 {
+			let record = Record {
+				pk: format!("partition_1_{}", i).into(),
+				partition: 1,
+				sort_key: Some(SortKey::u32_asc(i)),
+				data: format!("p1_record_{}", i).as_bytes().to_vec(),
+			};
+			storage.put(record).await.expect("put should succeed");
+		}
+
+		// get_all partition 0
+		let results_0 = storage.get_all(0).await.expect("get_all should succeed");
+		assert_eq!(results_0.len(), 3, "partition 0 should have 3 records");
+		assert!(results_0.iter().all(|r| r.partition == 0), "all records should be from partition 0");
+
+		// get_all partition 1
+		let results_1 = storage.get_all(1).await.expect("get_all should succeed");
+		assert_eq!(results_1.len(), 2, "partition 1 should have 2 records");
+		assert!(results_1.iter().all(|r| r.partition == 1), "all records should be from partition 1");
+	}
+
+	/// Tests that get_all reflects deletions.
+	pub async fn test_get_all_after_delete<S: StorageAdaptor>(storage: &mut S) {
+		clear_partitions(storage, &[0]).await.unwrap();
+
+		for i in 0..3u32 {
+			let record = Record {
+				pk: format!("get_all_del_{}", i).into(),
+				partition: 0,
+				sort_key: Some(SortKey::u32_asc(i)),
+				data: format!("record_{}", i).as_bytes().to_vec(),
+			};
+			storage.put(record).await.expect("put should succeed");
+		}
+
+		storage.delete(0, b"get_all_del_1").await.expect("delete should succeed");
+
+		let results = storage.get_all(0).await.expect("get_all should succeed");
+		assert_eq!(results.len(), 2, "get_all should reflect the deletion");
+
+		let has_deleted = results.iter().any(|r| r.data == b"record_1".to_vec());
+		assert!(!has_deleted, "deleted record should not appear");
 	}
 }

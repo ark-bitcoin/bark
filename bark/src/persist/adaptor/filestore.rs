@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use tokio::fs;
 
-use crate::persist::adaptor::{Query, Record, StorageAdaptor};
+use crate::persist::adaptor::{Query, QueryRange, Record, StorageAdaptor};
 
 use super::memory::MemoryStorageAdaptor;
 
@@ -61,8 +61,12 @@ impl StorageAdaptor for FileStorageAdaptor {
 		Ok(deleted_record)
 	}
 
-	async fn query(&self, query: Query) -> anyhow::Result<Vec<Record>> {
-		self.data.query(query).await
+	async fn query_sorted<R: QueryRange>(&self, query: Query<R>) -> anyhow::Result<Vec<Record>> {
+		self.data.query_sorted(query).await
+	}
+
+	async fn get_all(&self, partition: u8) -> anyhow::Result<Vec<Record>> {
+		self.data.get_all(partition).await
 	}
 }
 
