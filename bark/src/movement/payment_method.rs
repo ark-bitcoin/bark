@@ -1,3 +1,4 @@
+use std::fmt;
 use std::str::FromStr;
 
 use anyhow::Context;
@@ -156,6 +157,20 @@ impl PaymentMethod {
 				Ok(PaymentMethod::Custom(value.to_string()))
 			},
 			_ => bail!("unknown payment method type: {}", type_str),
+		}
+	}
+}
+
+impl fmt::Display for PaymentMethod {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+	    match self {
+			PaymentMethod::Ark(a) => fmt::Display::fmt(a, f),
+			PaymentMethod::Bitcoin(b) => fmt::Display::fmt(b.assume_checked_ref(), f),
+			PaymentMethod::OutputScript(o) => fmt::Display::fmt(&o.as_bytes().as_hex(), f),
+			PaymentMethod::Invoice(i) => fmt::Display::fmt(i, f),
+			PaymentMethod::Offer(o) => fmt::Display::fmt(o, f),
+			PaymentMethod::LightningAddress(a) => fmt::Display::fmt(a, f),
+			PaymentMethod::Custom(v) => fmt::Display::fmt(v, f),
 		}
 	}
 }
