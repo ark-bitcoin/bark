@@ -1,37 +1,25 @@
+//! Manages CLN node connections and proxies requests to [`ClnHold`] and [`ClnXpay`].
 //!
-//! Lightning logic based on our CLN node.
+//! ## Node lifecycle
 //!
-//! ## A high-level summary of the payment flow.
+//! Each configured CLN node is tracked as a [`ClnNodeInfo`] with a state machine:
+//! `Offline ↔ Online ↔ Error`, where `Invalid` and `Disabled` are terminal states.
+//! The manager periodically reconnects offline/errored nodes and monitors online nodes
+//! for crashed sub-monitors ([`ClnHold`], [`ClnXpay`]). When multiple nodes are online,
+//! the highest-priority node is selected for operations.
 //!
-//! * User makes a payment over grpc, server calls [ClnManager::pay_invoice].
-//! * The payment request is sent over the payment channel to the processor.
-//! * The calling thread will then subscribe to the payment update channel,
-//!   - and wait for a msg with its payment hash, or
-//!   - periodically poll the db for any progress.
+//! ## Actor pattern
 //!
-//! Meanwhile the [ClnManagerProcess] receives the payment request on the channel.
-//! * It calls [ClnManagerProcess::start_payment], which will
-//! * store the payment request in the db
-//! * pick the highest priority online CLN node from our list
-//! * calls [handle_pay_invoice] which calls the cln node's RPC `pay` endpoint.
-//!   - on any progress it sends a message on the payment update channel
-//!     - on error it stores the error data in the database
-//!       (this is necessary because on some errors, we don't get a listsendpay update)
-//!     - on success it does nothing extra, the listsendpay thread will eventually
-//!       receive an update too and correctly log in the db
+//! [`ClnManager`] is the public handle held by the rest of the server. It sends [`Ctrl`]
+//! messages over an mpsc channel to [`ClnManagerProcess`], which runs as a tokio task.
+//! Responses come back via oneshot channels embedded in the control messages.
 //!
-//! ## The CLN listsendpay stream
+//! ## Routing
 //!
-//! For each running cln node, we have a [ClnHold] that will be subscribed
-//! to all updates regarding payments on the node. On each message we do the neccesary
-//! logging to the database and send a message on the payment update channel.
-//!
-//!
-//!
-//!
-//!
-//!
-//!
+//! `generate_invoice`/`settle_invoice`/`cancel_invoice` route to [`ClnHold`].
+//! `pay` routes to [`ClnXpay`]. `fetch_bolt12` calls CLN gRPC directly.
+//! Intra-Ark payments short-circuit both paths: the manager updates the DB and
+//! broadcasts the result without making a CLN round-trip.
 
 pub(crate) mod hold;
 pub(crate) mod xpay;
@@ -98,7 +86,7 @@ impl ClnManager {
 		let (ctrl_tx, ctrl_rx) = mpsc::unbounded_channel();
 		let (payment_update_tx, payment_update_rx) = broadcast::channel(256);
 
-		let node_monitor_config = ClnHoldConfig {
+		let hold_config = ClnHoldConfig {
 			invoice_check_interval: config.invoice_check_interval,
 			receive_htlc_forward_timeout: config.receive_htlc_forward_timeout,
 			track_all_base_delay: config.track_all_base_delay,
@@ -116,7 +104,7 @@ impl ClnManager {
 			waker: Arc::new(Notify::new()),
 
 			ctrl_rx,
-			node_monitor_config,
+			hold_config,
 			xpay_config,
 			invoice_expiry: config.invoice_expiry,
 			sync_manager,
@@ -543,7 +531,7 @@ struct ClnManagerProcess {
 	network: bitcoin::Network,
 	nodes: HashMap<Uri, ClnNodeInfo>,
 	node_by_id: HashMap<ClnNodeId, Uri>,
-	node_monitor_config: ClnHoldConfig,
+	hold_config: ClnHoldConfig,
 	xpay_config: ClnXpayConfig,
 	invoice_expiry: Duration,
 	sync_manager: Arc<SyncManager>,
@@ -650,7 +638,7 @@ impl ClnManagerProcess {
 					match node.try_connect(
 						&self.db,
 						self.network,
-						&self.node_monitor_config,
+						&self.hold_config,
 						&self.xpay_config,
 						&self.payment_update_tx,
 						&self.rtmgr,

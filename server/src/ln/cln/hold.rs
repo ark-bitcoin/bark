@@ -1,3 +1,22 @@
+//! Manages incoming HTLCs via CLN's hold invoice plugin.
+//!
+//! ## HTLC subscription lifecycle
+//!
+//! Hold invoices defer settlement: HTLCs arrive and are held until we reveal the
+//! preimage (settle) or explicitly cancel. Each invoice gets a DB subscription:
+//! `Created → Accepted → Settled/Canceled`. On acceptance, the incoming HTLC
+//! expiry is validated against the chain tip.
+//!
+//! ## TrackAll stream
+//!
+//! When available, a `TrackAll` gRPC stream pushes real-time invoice state changes.
+//! On (re)connect, polls all open subscriptions to reconcile missed events.
+//! Reconnects with exponential backoff on disconnect.
+//!
+//! ## Timeout and expiry enforcement
+//!
+//! Periodically checks all open subscriptions for accepted HTLCs held too long
+//! (`receive_htlc_forward_timeout`) and expired invoices. Both result in cancellation.
 
 use std::str::FromStr;
 use std::fmt;

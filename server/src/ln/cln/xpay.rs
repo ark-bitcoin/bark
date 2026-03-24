@@ -1,3 +1,23 @@
+//! Manages outbound Lightning payments. Sends payments via CLN's `xpay` RPC
+//! and tracks their status via `listsendpays` streams.
+//!
+//! ## Payment lifecycle
+//!
+//! [`ClnXpay::pay`] is fire-and-forget: it spawns a task that calls `xpay` over gRPC.
+//! On success, the sendpay stream picks up the result. On RPC error, the spawned task
+//! marks the attempt as `Submitted` with the error so the monitor can reconcile later.
+//!
+//! ## Sendpay stream
+//!
+//! The main loop `wait`s on CLN for new `created` and `updated` sendpay events.
+//! Each event is matched against open payment attempts in the DB and transitions
+//! them through `Requested → Submitted → Succeeded/Failed`.
+//!
+//! ## Payment reconciliation
+//!
+//! On a periodic interval, queries `listpays` for all open attempts to catch anything
+//! the stream missed (e.g. events during downtime). Uses exponential backoff per
+//! invoice to avoid hammering CLN.
 
 use std::{cmp, fmt, str};
 use std::collections::HashMap;
