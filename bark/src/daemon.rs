@@ -12,9 +12,6 @@ use tokio_util::sync::CancellationToken;
 use crate::Wallet;
 use crate::onchain::DaemonizableOnchainWallet;
 
-const FAST_INTERVAL: Duration = Duration::from_secs(1);
-const MEDIUM_INTERVAL: Duration = Duration::from_secs(30);
-const SLOW_INTERVAL: Duration = Duration::from_secs(60);
 
 /// A handle to a running background daemon
 #[cfg(not(feature = "wasm-web"))]
@@ -87,6 +84,14 @@ impl DaemonProcess {
 		}
 	}
 
+	fn fast_interval(&self) -> Duration {
+		Duration::from_secs(self.wallet.config().daemon_fast_sync_interval_secs)
+	}
+
+	fn slow_interval(&self) -> Duration {
+		Duration::from_secs(self.wallet.config().daemon_slow_sync_interval_secs)
+	}
+
 	/// Run lightning sync process
 	/// - Try to claim all pending lightning receives
 	/// - Sync pending lightning sends
@@ -112,7 +117,7 @@ impl DaemonProcess {
 			}
 
 			futures::select! {
-				_ = tokio::time::sleep(SLOW_INTERVAL).fuse() => {},
+				_ = tokio::time::sleep(self.slow_interval()).fuse() => {},
 				_ = self.shutdown.cancelled().fuse() => {
 					info!("Shutdown signal received! Shutting mailbox messages process...");
 					break;
@@ -196,7 +201,7 @@ impl DaemonProcess {
 			}
 
 			futures::select! {
-				_ = tokio::time::sleep(SLOW_INTERVAL).fuse() => {},
+				_ = tokio::time::sleep(self.slow_interval()).fuse() => {},
 				_ = self.shutdown.cancelled().fuse() => {
 					info!("Shutdown signal received! Shutting round events process...");
 					break;
@@ -209,7 +214,7 @@ impl DaemonProcess {
 	async fn run_server_connection_check_process(&self) {
 		loop {
 			futures::select! {
-				_ = tokio::time::sleep(FAST_INTERVAL).fuse() => {},
+				_ = tokio::time::sleep(self.fast_interval()).fuse() => {},
 				_ = self.shutdown.cancelled().fuse() => {
 					info!("Shutdown signal received! Shutting server connection check process...");
 					break;
@@ -222,11 +227,9 @@ impl DaemonProcess {
 	}
 
 	async fn run_sync_processes(&self) {
-		let mut fast_interval = tokio::time::interval(FAST_INTERVAL);
+		let mut fast_interval = tokio::time::interval(self.fast_interval());
 		fast_interval.reset();
-		let mut medium_interval = tokio::time::interval(MEDIUM_INTERVAL);
-		medium_interval.reset();
-		let mut slow_interval = tokio::time::interval(SLOW_INTERVAL);
+		let mut slow_interval = tokio::time::interval(self.slow_interval());
 		slow_interval.reset();
 
 		loop {
@@ -239,20 +242,13 @@ impl DaemonProcess {
 					self.run_lightning_sync().await;
 					fast_interval.reset();
 				},
-				_ = medium_interval.tick().fuse() => {
+				_ = slow_interval.tick().fuse() => {
 					if !self.connected.load(Ordering::Relaxed) {
 						continue;
 					}
 
 					self.run_boards_sync().await;
 					self.run_offboards_sync().await;
-					medium_interval.reset();
-				},
-				_ = slow_interval.tick().fuse() => {
-					if !self.connected.load(Ordering::Relaxed) {
-						continue;
-					}
-
 					self.run_maintenance_refresh_process().await;
 					self.run_onchain_sync().await;
 					self.run_exits().await;

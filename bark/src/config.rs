@@ -149,6 +149,21 @@ pub struct Config {
 	///
 	/// Default value: 2 for mainnet
 	pub offboard_required_confirmations: BlockHeight,
+
+	/// Daemon sync interval in seconds for fast tasks (lightning sync).
+	///
+	/// This should be significantly smaller than the server's
+	/// `receive_htlc_forward_timeout` (default 30s). If the sync interval is
+	/// too close to the timeout, lightning receives are more likely to fail
+	/// because the client may not claim the HTLC in time.
+	///
+	/// Default value: 1
+	pub daemon_fast_sync_interval_secs: u64,
+
+	/// Daemon sync interval in seconds for slow tasks (onchain, exits, boards, offboards, maintenance, rounds, mailbox).
+	///
+	/// Default value: 60
+	pub daemon_slow_sync_interval_secs: u64,
 }
 
 impl Config {
@@ -171,6 +186,8 @@ impl Config {
 			fallback_fee_rate: None,
 			round_tx_required_confirmations: 2,
 			offboard_required_confirmations: 2,
+			daemon_fast_sync_interval_secs: 1,
+			daemon_slow_sync_interval_secs: 60,
 		};
 
 		if network != Network::Bitcoin {
