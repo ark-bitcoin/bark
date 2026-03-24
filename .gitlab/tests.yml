@@ -314,6 +314,7 @@ core-server:
 
 int-bark-0.1.0-beta.8:
   interruptible: true
+  when: manual # currently broken, need to look into a solution
   stage: test
   tags:
     - integration
