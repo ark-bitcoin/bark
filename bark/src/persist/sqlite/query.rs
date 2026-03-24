@@ -151,10 +151,16 @@ pub fn update_movement(tx: &Transaction, movement: &Movement) -> anyhow::Result<
 		for dest in vec {
 			tx.execute(
 				&format!(
-					"INSERT INTO {} (movement_id, destination, amount) VALUES (?1, ?2, ?3)",
+					"INSERT INTO {} (movement_id, destination_type, destination_value, amount) \
+					VALUES (?1, ?2, ?3, ?4)",
 					table,
 				),
-				params![id, &serde_json::to_string(&dest.destination)?, dest.amount.to_sat()],
+				params![
+					id,
+					dest.destination.type_str(),
+					&dest.destination.value_string(),
+					dest.amount.to_sat(),
+				],
 			)?;
 		}
 	}

@@ -24,6 +24,7 @@ mod m0023_mailbox;
 mod m0024_server_pubkey;
 mod m0025_fees;
 mod m0026_pending_offboard;
+mod m0027_split_destination;
 
 use anyhow::Context;
 use log::debug;
@@ -55,6 +56,7 @@ use m0023_mailbox::Migration0023;
 use m0024_server_pubkey::Migration0024;
 use m0025_fees::Migration0025;
 use m0026_pending_offboard::Migration0026;
+use m0027_split_destination::Migration0027;
 
 pub struct MigrationContext {}
 
@@ -98,6 +100,7 @@ impl MigrationContext {
 		self.try_migration(conn, &Migration0024{})?;
 		self.try_migration(conn, &Migration0025{})?;
 		self.try_migration(conn, &Migration0026{})?;
+		self.try_migration(conn, &Migration0027{})?;
 
 		Ok(())
 	}
@@ -252,7 +255,7 @@ mod test {
 
 		// Perform the migrations and confirm it took effect
 		migs.do_all_migrations(&mut conn).unwrap();
-		assert_current_version(&conn, 26).unwrap();
+		assert_current_version(&conn, 27).unwrap();
 
 		assert!(table_exists(&conn, "bark_vtxo").unwrap());
 		assert!(table_exists(&conn, "bark_vtxo_state").unwrap());
