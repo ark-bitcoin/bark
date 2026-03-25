@@ -49,7 +49,7 @@ build-and-push-captaind-to-registry:
   script:
     - cat VERSION
     # Build the containers
-    - buildah build -f ./.gitlab/images/releases/captaind/Dockerfile --tag registry.2nd.dev/captaind:latest .
+    - buildah build --network=host -f ./.gitlab/images/releases/captaind/Dockerfile --tag registry.2nd.dev/captaind:latest .
     # Push containers to registry.2nd.dev
     - buildah push registry.2nd.dev/captaind:latest
     # Tag containers with specific version number for registry.2nd.dev
