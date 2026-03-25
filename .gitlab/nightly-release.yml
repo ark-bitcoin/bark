@@ -72,10 +72,10 @@ build-and-push-to-docker-nightly:
   script:
     - cat VERSION
     # Build the containers
-    - buildah build -f ./.gitlab/images/releases/bark/linux_amd64.Dockerfile --tag "docker.io/secondark/bark:linux-amd64-$(cat VERSION)" .
-    - buildah build -f ./.gitlab/images/releases/bark/linux_arm64.Dockerfile --tag "docker.io/secondark/bark:linux-arm64-$(cat VERSION)" .
-    - buildah build -f ./.gitlab/images/releases/bark/linux_armv7.Dockerfile --tag "docker.io/secondark/bark:linux-armv7-$(cat VERSION)" .
-    - buildah build -f ./.gitlab/images/releases/captaind/Dockerfile         --tag "docker.io/secondark/captaind:$(cat VERSION)"  .
+    - buildah build --network=host -f ./.gitlab/images/releases/bark/linux_amd64.Dockerfile --tag "docker.io/secondark/bark:linux-amd64-$(cat VERSION)" .
+    - buildah build --network=host -f ./.gitlab/images/releases/bark/linux_arm64.Dockerfile --tag "docker.io/secondark/bark:linux-arm64-$(cat VERSION)" .
+    - buildah build --network=host -f ./.gitlab/images/releases/bark/linux_armv7.Dockerfile --tag "docker.io/secondark/bark:linux-armv7-$(cat VERSION)" .
+    - buildah build --network=host -f ./.gitlab/images/releases/captaind/Dockerfile         --tag "docker.io/secondark/captaind:$(cat VERSION)"  .
     # Push containers with a specific version number to docker.io/secondark
     - buildah push "docker.io/secondark/bark:linux-amd64-$(cat VERSION)"
     - buildah push "docker.io/secondark/bark:linux-arm64-$(cat VERSION)"
