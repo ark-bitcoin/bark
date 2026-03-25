@@ -132,9 +132,17 @@ bark-as-libs:
   script:
     - |
       nix develop .#default --command bash -c "
-        cargo build -p bark-wallet                                            &&
-        cargo build -p bark-bitcoin-ext --no-default-features --features=\"\" &&
-        cargo build -p ark-lib          --no-default-features --features=\"\"
+        cargo check -p ark-lib                                               &&
+        cargo check -p ark-lib --no-default-features                         &&
+        cargo check -p bark-bitcoin-ext                                      &&
+        cargo check -p bark-bitcoin-ext --no-default-features                &&
+        cargo check -p bark-wallet                                           &&
+        cargo check -p bark-wallet -F wasm-web --no-default-features         &&
+        cargo check -p bark-wallet -F native --no-default-features           &&
+        cargo check -p bark-json                                             &&
+        cargo check -p bark-rest                                             &&
+        cargo check -p bark-rest-client                                      &&
+        echo DONE
       "
 
 bark-wasm:
