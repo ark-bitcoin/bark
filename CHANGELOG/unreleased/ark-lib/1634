@@ -1,5 +1,0 @@
-- Add `MailboxType` enum
-  Introduces a typed mailbox system to distinguish different kinds of mailbox
-  entries (e.g., `ArkoorReceive`). This enables better organization and future
-  extensibility of the mailbox protocol.
-  [#1634](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1634)

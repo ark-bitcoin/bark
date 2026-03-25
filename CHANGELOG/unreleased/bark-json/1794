@@ -1,5 +1,0 @@
-- Add missing fee information for amount parameters
-  API request type documentation now describes applicable fees and dust
-  thresholds for each endpoint, helping integrators understand the true
-  cost of operations before submitting them.
-  [#1794](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1794)

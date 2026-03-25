@@ -1,6 +1,0 @@
-- Add movement lookup by payment method.
-  All movements are now indexed per payment method. Users can look up
-  all movements for a given payment method via `Wallet::history_by_payment_method()`.
-  For the CLI, we added `bark address lookup --address <addr>` / `bark address lookup --index <n>`
-  to lookup movements by arkoor address.
-  [#1798](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1798)

@@ -1,3 +1,0 @@
-- add a generic to the `Vtxo` type in order to support "bare" `Vtxo`s that do not contains
-  the full genesis transaction chain, but purely output into
-  [#1746](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1746)

@@ -1,7 +1,0 @@
-- WASM and browser support for bark
-  The bark wallet library now compiles to `wasm32-unknown-unknown`, enabling
-  browser-based Ark wallets. Includes gRPC-web transport via the `tonic-web`
-  feature flag, web-compatible async traits, and `spawn_local` on wasm targets.
-  [#1709](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1709)
-  - **BREAKING:** `sqlite` is no longer a default feature; enable it explicitly
-  - **BREAKING:** `onchain_bdk` feature renamed to `onchain-bdk`

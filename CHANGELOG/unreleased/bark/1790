@@ -1,6 +1,0 @@
-- Fee estimation no longer errors when the wallet has no funds
-  `estimate_lightning_send_fee` and `estimate_send_onchain` now return a
-  worst-case estimate instead of failing when the wallet lacks sufficient VTXOs.
-  This lets callers display fee information before the user has funded their
-  wallet.
-  [#1790](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1790)

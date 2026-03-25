@@ -1,4 +1,0 @@
-- Prove VTXO ownership on arkoor cosign requests
-  Arkoor cosign requests now include a signed attestation, preventing
-  a malicious user from locking someone else's VTXOs.
-  [#1735](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1735)

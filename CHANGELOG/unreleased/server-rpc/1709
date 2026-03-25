@@ -1,4 +1,0 @@
-- Add `tonic-web` feature for gRPC-web transport
-  Enables browser-based clients to connect to the Ark server via gRPC-web.
-  The `tonic-native` feature (default) provides the existing HTTP/2 transport.
-  [#1709](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1709)
