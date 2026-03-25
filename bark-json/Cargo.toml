@@ -7,7 +7,8 @@ description = "JSON definitions for the bark APIs"
 edition = "2024"
 
 [features]
-default = ["onchain-bdk"]
+default = ["onchain-bdk", "native"]
+native = ["bark-wallet/native", "bark-wallet/tls-native-roots"]
 onchain-bdk = ["bark-wallet/onchain-bdk", "bark-bitcoin-ext/bdk"]
 
 [dependencies]

@@ -12,6 +12,7 @@ name = "bitcoin_ext"
 
 [features]
 default = ["bdk", "rpc", "all-related-utxos"]
+
 bdk = ["bdk_wallet", "log"]
 rpc = ["bdk_bitcoind_rpc"]
 rpc-socks5-proxy = ["rpc", "jsonrpc", "ureq", "base64"]
