@@ -1,4 +1,0 @@
-- Store mailbox type in database
-  Mailbox entries now include a type field, allowing the server to distinguish
-  between different kinds of mailbox messages.
-  [#1634](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1634)

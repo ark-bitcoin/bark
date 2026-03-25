@@ -1,9 +1,0 @@
-- Add `get_all` method to `StorageAdaptor` and refine query semantics
-  `query` is renamed to `query_sorted` and now requires an explicit sort key
-  range, making it clear that only sorted records are returned. A new `get_all`
-  method retrieves all unordered records in a partition without requiring a
-  sort key.
-  [#1786](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1786)
-  - **BREAKING:** `StorageAdaptor::query` renamed to `query_sorted`
-  - **BREAKING:** `Query::new` now requires a range parameter; use `Query::new_full_range` for the previous default behavior
-  - **BREAKING:** New required method `StorageAdaptor::get_all`

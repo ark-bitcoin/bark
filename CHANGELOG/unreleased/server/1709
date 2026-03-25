@@ -1,4 +1,0 @@
-- Add gRPC-web layer to the server
-  Browser-based clients can now connect to the Ark server using gRPC-web
-  transport, enabling web wallet implementations.
-  [#1709](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1709)

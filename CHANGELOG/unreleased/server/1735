@@ -1,5 +1,0 @@
-- Verify arkoor cosign attestations
-  The server now verifies that each arkoor cosign request includes a valid
-  attestation, rejecting requests where the caller cannot prove they
-  own the input VTXO.
-  [#1735](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1735)

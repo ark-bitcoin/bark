@@ -6,6 +6,195 @@ https://docs.second.tech/changelog/changelog/
 
 Below is a more concise summary for each version.
 
+# v0.1.0-beta.9
+
+- `ark-lib`
+  - Add `MailboxType` enum
+    Introduces a typed mailbox system to distinguish different kinds of mailbox
+    entries (e.g., `ArkoorReceive`). This enables better organization and future
+    extensibility of the mailbox protocol.
+  - add a generic to the `Vtxo` type in order to support "bare" `Vtxo`s that do not contains
+    the full genesis transaction chain, but purely output into
+    [#1746](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1746)
+  - rename all the `Challenge` types to `Attestation` and make the attestation the object
+    [#1757](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1757)
+
+- `bark`
+  - Don't advance wallet key index when no change output is created
+    When creating an arkoor transaction spending the full VTXO amount, no change output is
+    needed. Previously the wallet would still derive and persist a new keypair, unnecessarily
+    advancing the key index. The key index is now only advanced when a change VTXO is actually
+    produced.
+    [#1441](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1441)
+  - Wait for offboard tx confirmations before marking movement successful
+    Offboard movements now remain pending until the transaction confirms on-chain,
+    allowing recovery if the transaction fails to confirm.
+    [#1618](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1618)
+  - Log warning when exiting only dust VTXOs
+
+    `exit --all` now logs a warning instead of silently succeeding when all
+    VTXOs are below the dust limit. Suggests consolidating funds to meet
+    the dust limit.
+
+  - WASM and browser support for bark
+    The bark wallet library now compiles to `wasm32-unknown-unknown`, enabling
+    browser-based Ark wallets. Includes gRPC-web transport via the `tonic-web`
+    feature flag, web-compatible async traits, and `spawn_local` on wasm targets.
+    [#1709](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1709)
+    - **BREAKING:** `sqlite` is no longer a default feature; enable it explicitly
+    - **BREAKING:** `onchain_bdk` feature renamed to `onchain-bdk`
+  - Add SOCKS5 proxy support for Tor connectivity
+    New `socks5-proxy` feature allows routing traffic through a SOCKS5 proxy
+    (e.g. Tor), configured via the `socks5-proxy` config option. Local addresses
+    automatically bypass the proxy.
+    [#1720](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1720)
+  - Prove VTXO ownership on arkoor cosign requests
+    Arkoor cosign requests now include a signed attestation, preventing
+    a malicious user from locking someone else's VTXOs.
+    [#1735](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1735)
+  - Silence noisy log when should-refresh VTXOs can't cover fees
+    When VTXOs in the "should refresh" zone were too small to produce an
+    output above the dust limit after fees, a warning was logged on every
+    refresh attempt. This is a normal condition, not an error. The message
+    is now only emitted at trace level.
+    [#1739](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1739)
+  - Silence noisy log when invoice is open but not yet paid
+    When a lightning invoice was open and the sender had not yet initiated
+    the payment, the background daemon logged a warning every second while
+    polling. This is expected behaviour, so the message is now only emitted
+    at trace level.
+    [#1747](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1747)
+  - Fix typo in `bark-ffi` repository URL in README
+    [#1763](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1763)
+  - Return claimed lightning receives from `try_claim_all_lightning_receives`
+    The claim-all API now returns the list of successfully claimed receives
+    instead of `()`, making it easier for callers to act on claimed payments.
+    [#1773](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1773)
+  - Add mailbox message subscription for real-time arkoor delivery
+    Bark now subscribes to a server-side mailbox stream instead of polling,
+    allowing incoming arkoors to be processed as soon as they arrive.
+    [#1779](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1779)
+  - Add `get_all` method to `StorageAdaptor` and refine query semantics
+    `query` is renamed to `query_sorted` and now requires an explicit sort key
+    range, making it clear that only sorted records are returned. A new `get_all`
+    method retrieves all unordered records in a partition without requiring a
+    sort key.
+    [#1786](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1786)
+    - **BREAKING:** `StorageAdaptor::query` renamed to `query_sorted`
+    - **BREAKING:** `Query::new` now requires a range parameter; use `Query::new_full_range` for the previous default behavior
+    - **BREAKING:** New required method `StorageAdaptor::get_all`
+  - Fee estimation no longer errors when the wallet has no funds
+    `estimate_lightning_send_fee` and `estimate_send_onchain` now return a
+    worst-case estimate instead of failing when the wallet lacks sufficient VTXOs.
+    This lets callers display fee information before the user has funded their
+    wallet.
+    [#1790](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1790)
+  - Add movement lookup by payment method.
+    All movements are now indexed per payment method. Users can look up
+    all movements for a given payment method via `Wallet::history_by_payment_method()`.
+    For the CLI, we added `bark address lookup --address <addr>` / `bark address lookup --index <n>`
+    to lookup movements by arkoor address.
+    [#1798](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1798)
+  - add `Wallet::mailbox_identifier` and simplify mailbox related APIs
+    [#1802](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1802)
+  - Add `Wallet::subscribe_notifications` that returns a stream of `WalletNotification` objects:
+    - Current variants are `MovementCreated` and `MovementUpdated` and they are emitted whenever
+  	a new movement is added or an existing movement is updated.
+    - Utility functions exist on the stream type to get a single movement stream or to filter
+  	for specific movements.
+    [#1793](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1793)
+    + [#1807](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1807)
+
+
+
+  - Replace permissive CORS with deny-all default in barkd
+    Cross-origin requests are now denied unless explicitly allowed via `--allowed-origins`
+    or `BARKD_ALLOWED_ORIGINS`.
+    [#1808](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1808)
+    - **BREAKING:** CORS is no longer permissive by default. Set `BARKD_ALLOWED_ORIGINS` to
+      re-enable cross-origin access for specific origins.
+
+- `bark-cli`
+
+  * Fix `ln status` can't find payment hash for outgoing payments
+    [PR #1466](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1466)
+    - Split `ln status` into `ln pay status` (outgoing) and `ln receive status` (incoming)
+    - Add `LightningSendInfo` struct to display outgoing payment status
+    - Include `finished_at` field to detect when a payment has failed or succeeded
+  - Add wallet deletion support to `barkd`
+
+    `barkd` now stops background tasks and wipes the wallet directory
+    when `DELETE /api/v1/wallet` is called.
+
+    [#1663](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1663)
+  - Add auth token management to barkd
+    On first start, barkd auto-generates an auth token and prints it to
+    stderr. Use `barkd secret refresh` to regenerate or set a custom token.
+    [#1756](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1756)
+
+- `bark-json`
+  - Add `WalletExistsResponse`, `WalletDeleteResponse`, and `WalletDeleteRequest` types
+
+    [#1663](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1663)
+  - Add missing fee information for amount parameters
+    API request type documentation now describes applicable fees and dust
+    thresholds for each endpoint, helping integrators understand the true
+    cost of operations before submitting them.
+
+- `bark-rest`
+  - Add `GET /api/v1/wallet` and `DELETE /api/v1/wallet` endpoints with fingerprint verification
+
+    Allows clients to check wallet existence and delete wallet data
+    via the REST API.
+
+    [#1663](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1663)
+  - Add token-based authentication middleware
+    New `auth` module with `AuthToken` type and `guard_auth` middleware that
+    protects all `/api/v1` routes. Tokens use a versioned wire format
+    (base64url-encoded) and can be passed via `auth-token` or
+    `Authorization: AuthToken <token>` headers.
+    [#1756](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1756)
+    - **BREAKING:** `RestServer::start` now requires an `AuthToken` parameter
+  - Add missing fee information for amount parameters in OpenAPI spec
+    Parameter descriptions in the OpenAPI schema and generated client docs
+    now document applicable fees and dust thresholds for each endpoint.
+
+- `bitcoin-ext`
+  - Make bitcoin-ext compatible with wasm targets
+    [#1709](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1709)
+  - Add SOCKS5 proxy transport for bitcoind RPC
+    New `rpc-socks5-proxy` feature enables routing bitcoind JSON-RPC calls through
+    a SOCKS5 proxy, using `ureq` with its `socks-proxy` feature for the HTTP transport.
+    [#1720](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1720)
+
+- `server`
+  - Store mailbox type in database
+    Mailbox entries now include a type field, allowing the server to distinguish
+    between different kinds of mailbox messages.
+  - Add gRPC-web layer to the server
+    Browser-based clients can now connect to the Ark server using gRPC-web
+    transport, enabling web wallet implementations.
+    [#1709](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1709)
+  - Verify arkoor cosign attestations
+    The server now verifies that each arkoor cosign request includes a valid
+    attestation, rejecting requests where the caller cannot prove they
+    own the input VTXO.
+    [#1735](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1735)
+  - Add gRPC-web layer to the server
+    Browser-based clients can now connect to the Ark server using gRPC-web
+    transport, enabling web wallet implementations.
+    [#1749](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1749)
+
+- `server-rpc`
+  - Add `tonic-web` feature for gRPC-web transport
+    Enables browser-based clients to connect to the Ark server via gRPC-web.
+    The `tonic-native` feature (default) provides the existing HTTP/2 transport.
+    [#1709](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1709)
+  - Add SOCKS5 proxy support for server gRPC connection
+    New `socks5-proxy` feature enables routing the gRPC connection to the Ark
+    server through a SOCKS5 proxy, using `hyper-socks2` as the connector.
+    [#1720](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1720)
+
 # v0.1.0-beta.8
 
 - `ark-lib`
@@ -285,6 +474,7 @@ Below is a more concise summary for each version.
     [#1705](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1705)
     - **BREAKING:** `trusted_pending_balance`, `untrusted_pending_balance`, and
       `confirmed_balance` replaced by `trusted_balance` and `untrusted_balance`
+
 # v0.1.0-beta.7
 
 - `ark-lib`

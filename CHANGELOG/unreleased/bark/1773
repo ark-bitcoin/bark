@@ -1,4 +1,0 @@
-- Return claimed lightning receives from `try_claim_all_lightning_receives`
-  The claim-all API now returns the list of successfully claimed receives
-  instead of `()`, making it easier for callers to act on claimed payments.
-  [#1773](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1773)

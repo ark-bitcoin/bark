@@ -1,2 +1,0 @@
-- add `Wallet::mailbox_identifier` and simplify mailbox related APIs
-  [#1802](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1802)

@@ -1,7 +1,0 @@
-- Add token-based authentication middleware
-  New `auth` module with `AuthToken` type and `guard_auth` middleware that
-  protects all `/api/v1` routes. Tokens use a versioned wire format
-  (base64url-encoded) and can be passed via `auth-token` or
-  `Authorization: AuthToken <token>` headers.
-  [#1756](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1756)
-  - **BREAKING:** `RestServer::start` now requires an `AuthToken` parameter

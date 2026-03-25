@@ -1,4 +1,0 @@
-- Add missing fee information for amount parameters in OpenAPI spec
-  Parameter descriptions in the OpenAPI schema and generated client docs
-  now document applicable fees and dust thresholds for each endpoint.
-  [#1794](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1794)

@@ -1,4 +1,0 @@
-- Add auth token management to barkd
-  On first start, barkd auto-generates an auth token and prints it to
-  stderr. Use `barkd secret refresh` to regenerate or set a custom token.
-  [#1756](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1756)
