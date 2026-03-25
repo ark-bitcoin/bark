@@ -142,6 +142,20 @@ pub struct ServerState {
 }
 
 impl ServerState {
+	pub fn new(
+		wallet: Option<ServerWallet>,
+		auth_token: AuthToken,
+		on_wallet_create: Option<Arc<OnWalletCreate>>,
+		on_wallet_delete: Option<Arc<OnWalletDelete>>,
+	) -> Self {
+		ServerState {
+			wallet: Arc::new(parking_lot::RwLock::new(wallet)),
+			on_wallet_create,
+			auth_token,
+			on_wallet_delete,
+		}
+	}
+
 	pub fn require_wallet(&self) -> anyhow::Result<Arc<Wallet>> {
 		let wallet = self.wallet.read().as_ref()
 			.ok_or_else(|| anyhow!("No wallet set"))?.wallet.clone();
@@ -177,8 +191,7 @@ impl RestServer {
 
 		let socket_addr = config.socket_addr();
 
-		let wallet = Arc::new(parking_lot::RwLock::new(wallet));
-		let state = ServerState { wallet, on_wallet_create, auth_token, on_wallet_delete };
+		let state = ServerState::new(wallet, auth_token, on_wallet_create, on_wallet_delete);
 
 		// /ping stays outside the auth layer.
 		let authed_api = api::v1::router()
