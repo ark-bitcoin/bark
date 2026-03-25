@@ -155,14 +155,6 @@ impl RoundHandle {
 	pub fn last_event(&self) -> Option<Arc<RoundEvent>> {
 		self.last_round_event.lock().clone()
 	}
-
-	/// Clear the last round event.
-	///
-	/// Called when an empty round times out to prevent replaying stale
-	/// Attempt events to new subscribers.
-	pub fn clear_last_event(&self) {
-		*self.last_round_event.lock() = None;
-	}
 }
 
 impl RoundHandle {
