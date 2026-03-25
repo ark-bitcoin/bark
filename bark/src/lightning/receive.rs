@@ -167,11 +167,13 @@ impl Wallet {
 
 		info!("Claiming arkoor against payment preimage");
 		self.db.set_preimage_revealed(receive.payment_hash).await?;
-		let cosign_request = builder.cosign_request();
+		let package_cosign_request = protos::ArkoorPackageCosignRequest::from(
+			builder.cosign_request(),
+		);
 		let resp = srv.client.claim_lightning_receive(protos::ClaimLightningReceiveRequest {
 			payment_hash: receive.payment_hash.to_byte_array().to_vec(),
 			payment_preimage: receive.payment_preimage.to_vec(),
-			cosign_request: Some(cosign_request.into()),
+			cosign_request: Some(package_cosign_request),
 		}).await?.into_inner();
 		let cosign_resp = resp.try_into().context("invalid cosign response")?;
 

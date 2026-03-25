@@ -191,9 +191,7 @@ impl rpc::server::ArkService for Server {
 		&self,
 		req: tonic::Request<protos::ArkoorPackageCosignRequest>,
 	) -> Result<tonic::Response<protos::ArkoorPackageCosignResponse>, tonic::Status> {
-		let req = req.into_inner();
-
-		let request = ArkoorPackageCosignRequest::try_from(req)
+		let request = ArkoorPackageCosignRequest::try_from(req.into_inner())
 			.context("Failed to parse request")?;
 
 		let response = self.cosign_oor(request).await.to_status()?;
@@ -259,9 +257,7 @@ impl rpc::server::ArkService for Server {
 		&self,
 		req: tonic::Request<protos::ArkoorPackageCosignRequest>
 	) -> Result<tonic::Response<protos::ArkoorPackageCosignResponse>, tonic::Status> {
-		let req = req.into_inner();
-
-		let cosign_requests = ArkoorPackageCosignRequest::try_from(req.clone())
+		let cosign_requests = ArkoorPackageCosignRequest::try_from(req.into_inner())
 			.context("Failed to parse request")?;
 
 		let cosign_resp = self.revoke_lightning_pay_htlcs(cosign_requests).await

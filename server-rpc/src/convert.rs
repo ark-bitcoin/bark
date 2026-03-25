@@ -11,8 +11,7 @@ use ark::{musig, ProtocolEncoding, SignedVtxoRequest, Vtxo, VtxoId, VtxoPolicy, 
 use ark::arkoor::{ArkoorCosignRequest, ArkoorCosignResponse, ArkoorDestination};
 use ark::arkoor::package::{ArkoorPackageCosignRequest, ArkoorPackageCosignResponse};
 use ark::attestations::{
-	LightningReceiveAttestation, DelegatedRoundParticipationAttestation,
-	OffboardRequestAttestation, RoundAttemptAttestation, VtxoStatusAttestation,
+	ArkoorCosignAttestation, DelegatedRoundParticipationAttestation, LightningReceiveAttestation, OffboardRequestAttestation, RoundAttemptAttestation, VtxoStatusAttestation
 };
 use ark::board::BoardCosignResponse;
 use ark::fees::PpmFeeRate;
@@ -616,6 +615,7 @@ impl<V: VtxoRef> From<ArkoorCosignRequest<V>> for protos::ArkoorCosignRequest {
 				.map(|output| output.into())
 				.collect::<Vec<_>>(),
 			use_checkpoint: v.use_checkpoint,
+			attestation: v.attestation.map(|a| a.serialize().to_vec()),
 		}
 	}
 }
@@ -624,7 +624,13 @@ impl<V: VtxoRef> From<ArkoorCosignRequest<V>> for protos::ArkoorCosignRequest {
 impl TryFrom<protos::ArkoorCosignRequest> for ArkoorCosignRequest<VtxoId> {
 	type Error = ConvertError;
 	fn try_from(v: protos::ArkoorCosignRequest) -> Result<Self, Self::Error> {
-		Ok(Self::new(
+		let attestation = match v.attestation {
+			Some(a) => Some(ArkoorCosignAttestation::deserialize(&mut a.as_ref())
+				.map_err(|_| "invalid attestation")?),
+			None => None,
+		};
+
+		let req = Self::new_with_attestation(
 			v.user_pub_nonces.into_iter()
 				.map(|n| musig::PublicNonce::from_bytes(&n))
 				.collect::<Result<Vec<_>, _>>()?,
@@ -636,14 +642,16 @@ impl TryFrom<protos::ArkoorCosignRequest> for ArkoorCosignRequest<VtxoId> {
 				.map(|output| ArkoorDestination::try_from(output))
 				.collect::<Result<Vec<_>, _>>()?,
 			v.use_checkpoint,
-		))
+			attestation,
+		);
+		Ok(req)
 	}
 }
 
 impl<V: VtxoRef> From<ArkoorPackageCosignRequest<V>> for protos::ArkoorPackageCosignRequest {
 	fn from(v: ArkoorPackageCosignRequest<V>) -> Self {
 		Self {
-			parts: v.requests.into_iter().map(|p| p.into()).collect::<Vec<_>>(),
+			parts: v.requests.into_iter().map(|p| p.into()).collect(),
 		}
 	}
 }

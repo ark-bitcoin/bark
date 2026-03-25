@@ -50,8 +50,13 @@ impl Server {
 		}
 
 		// then we create the builder
-		let ret = ArkoorPackageBuilder::from_cosign_request(cosign_req)
-			.context("error creating ArkoorPackageBuilder from ArkoorCosignRequest")?;
+		let ret = match ArkoorPackageBuilder::from_cosign_request(cosign_req) {
+			Ok(ret) => ret,
+			Err((idx, e)) => {
+				return badarg!("invalid cosign request at index #{idx}: {e}");
+			}
+		};
+
 		for (idx, b) in ret.builders.iter().enumerate() {
 			let nb_outputs = b.all_outputs().count();
 			if nb_outputs > params.max_outputs_per_input {
@@ -123,7 +128,7 @@ impl Server {
 
 	pub async fn cosign_oor(
 		&self,
-		request: ArkoorPackageCosignRequest<VtxoId>
+		request: ArkoorPackageCosignRequest<VtxoId>,
 	) -> anyhow::Result<ArkoorPackageCosignResponse> {
 		let input_vtxo_ids = request.inputs().cloned().collect::<Vec<VtxoId>>();
 		let input_vtxo_states = self.db.get_user_vtxos_by_id(&input_vtxo_ids).await?;
@@ -137,10 +142,6 @@ impl Server {
 			}
 		}
 
-		// TODO: Check if the client actually owns the VTXO
-		// We don't want users to be able to lock other
-		// peoples VTXOs
-
 		let request = request.set_vtxos(input_vtxo_states.into_iter().map(|v| v.vtxo))?;
 
 		let validation = ArkoorCosignRequestValidationParams {
@@ -152,7 +153,7 @@ impl Server {
 			.badarg("invalid cosign request")?;
 
 		// Check spendability now that we have the spending txids from the
-		// builder. We use check_spendable_for_oor which allows a vtxo that
+		// builder. We use check_spendable_for_oor which allows a vtxo that&
 		// is already OOR-spent by the same tx (idempotent retry).
 		let chain_tip = self.chain_tip().height;
 		let spend_map: HashMap<VtxoId, Txid> = builder.spend_info().collect();

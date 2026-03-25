@@ -41,9 +41,9 @@ impl<V> ArkoorPackageCosignRequest<V> {
 					outputs: r.outputs,
 					isolated_outputs: r.isolated_outputs,
 					use_checkpoint: r.use_checkpoint,
+					attestation: r.attestation,
 				}
-
-			}).collect::<Vec<_>>()
+			}).collect::<Vec<_>>(),
 		}
 	}
 
@@ -89,6 +89,7 @@ impl ArkoorPackageCosignRequest<VtxoId> {
 					outputs: r.outputs,
 					isolated_outputs: r.isolated_outputs,
 					use_checkpoint: r.use_checkpoint,
+					attestation: r.attestation,
 				})
 			}).collect::<Result<Vec<_>, _>>()?,
 		};
@@ -96,7 +97,6 @@ impl ArkoorPackageCosignRequest<VtxoId> {
 		Ok(package)
 	}
 }
-
 
 #[derive(Debug, Clone)]
 pub struct ArkoorPackageCosignResponse {
@@ -361,11 +361,12 @@ impl ArkoorPackageBuilder<state::UserSigned> {
 impl ArkoorPackageBuilder<state::ServerCanCosign> {
 	pub fn from_cosign_request(
 		cosign_request: ArkoorPackageCosignRequest<Vtxo<Full>>,
-	) -> Result<Self, ArkoorSigningError> {
+	) -> Result<Self, (usize, ArkoorSigningError)> {
 		let request_iter = cosign_request.requests.into_iter();
 		let mut packages = Vec::with_capacity(request_iter.size_hint().0);
-		for request in request_iter {
-			packages.push(ArkoorBuilder::from_cosign_request(request)?);
+		for (idx, request) in request_iter.enumerate() {
+			packages.push(ArkoorBuilder::from_cosign_request(request)
+				.map_err(|e| (idx, e))?);
 		}
 
 		Ok(Self { builders: packages })
