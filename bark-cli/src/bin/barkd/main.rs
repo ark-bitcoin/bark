@@ -359,7 +359,7 @@ async fn main() -> anyhow::Result<()>{
 	});
 
 	let server = RestServer::start(
-		&cli.to_config()?, auth_token, wallet_opt, Some(on_wallet_create), Some(on_wallet_delete),
+		&cli.to_config()?, Some(auth_token), wallet_opt, Some(on_wallet_create), Some(on_wallet_delete),
 	).await?;
 
 	run_shutdown_signal_listener().await;

@@ -18,7 +18,7 @@ use std::sync::Arc;
 use anyhow::Context;
 use axum::routing::get;
 use bark_json::web::CreateWalletRequest;
-use log::{error, info};
+use log::{error, warn, info};
 use tokio::sync::RwLock;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
@@ -38,7 +38,7 @@ type BoxFuture<T> =
 pub type OnWalletCreate = dyn Fn(CreateWalletRequest)
 	-> BoxFuture<anyhow::Result<ServerWallet>> + Send + Sync;
 
-pub type OnWalletDelete = dyn Fn() 
+pub type OnWalletDelete = dyn Fn()
 	-> BoxFuture<anyhow::Result<()>> + Send + Sync;
 
 const CRATE_VERSION : &'static str = env!("CARGO_PKG_VERSION");
@@ -137,14 +137,14 @@ impl ServerWallet {
 pub struct ServerState {
 	wallet: Arc<parking_lot::RwLock<Option<ServerWallet>>>,
 	on_wallet_create: Option<Arc<OnWalletCreate>>,
-	auth_token: AuthToken,
+	auth_token: Option<AuthToken>,
 	on_wallet_delete: Option<Arc<OnWalletDelete>>,
 }
 
 impl ServerState {
 	pub fn new(
 		wallet: Option<ServerWallet>,
-		auth_token: AuthToken,
+		auth_token: Option<AuthToken>,
 		on_wallet_create: Option<Arc<OnWalletCreate>>,
 		on_wallet_delete: Option<Arc<OnWalletDelete>>,
 	) -> Self {
@@ -168,8 +168,8 @@ impl ServerState {
 		Ok(onchain)
 	}
 
-	pub fn auth_token(&self) -> &AuthToken {
-		&self.auth_token
+	pub fn auth_token(&self) -> Option<&AuthToken> {
+		self.auth_token.as_ref()
 	}
 }
 
@@ -181,7 +181,7 @@ impl RestServer {
 	/// enforced on all `/api/v1` routes.
 	pub async fn start(
 		config: &Config,
-		auth_token: AuthToken,
+		auth_token: Option<AuthToken>,
 		wallet: Option<ServerWallet>,
 		on_wallet_create: Option<Arc<OnWalletCreate>>,
 		on_wallet_delete: Option<Arc<OnWalletDelete>>,
@@ -190,6 +190,10 @@ impl RestServer {
 			.split_for_parts();
 
 		let socket_addr = config.socket_addr();
+
+		if auth_token.is_none() {
+			warn!("No auth token configured — all authentication is disabled");
+		}
 
 		let state = ServerState::new(wallet, auth_token, on_wallet_create, on_wallet_delete);
 
