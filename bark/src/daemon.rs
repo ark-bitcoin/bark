@@ -145,19 +145,8 @@ impl DaemonProcess {
 
 	/// Perform library built-in maintenance refresh
 	async fn run_maintenance_refresh_process(&self) {
-		loop {
-			if let Err(e) = self.wallet.maintenance_refresh().await {
-				warn!("An error occured while performing maintenance refresh: {e:#}");
-			}
-
-			futures::select! {
-				_ = tokio::time::sleep(SLOW_INTERVAL).fuse() => {},
-
-				_ = self.shutdown.cancelled().fuse() => {
-					info!("Shutdown signal received! Shutting maintenance refresh process...");
-					break;
-				},
-			}
+		if let Err(e) = self.wallet.maintenance_refresh().await {
+			warn!("An error occured while performing maintenance refresh: {e:#}");
 		}
 	}
 
@@ -264,6 +253,7 @@ impl DaemonProcess {
 						continue;
 					}
 
+					self.run_maintenance_refresh_process().await;
 					self.run_onchain_sync().await;
 					self.run_exits().await;
 					slow_interval.reset();
@@ -284,7 +274,6 @@ impl DaemonProcess {
 			self.run_server_connection_check_process(),
 			self.run_round_events_process(),
 			self.run_sync_processes(),
-			self.run_maintenance_refresh_process(),
 			self.run_mailbox_messages_process(),
 		);
 
