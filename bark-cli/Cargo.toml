@@ -1,6 +1,6 @@
 [package]
 name = "bark-cli"
-version = "0.1.0-beta.8"
+version = "0.1.0-beta.9"
 edition = "2024"
 license = "MIT"
 description = "CLI for the bitcoin Ark protocol built by Second"
@@ -24,12 +24,12 @@ tls-native-roots = ["bark-wallet/tls-native-roots", "bark-server-rpc/tls-native-
 tls-webpki-roots = ["bark-wallet/tls-webpki-roots", "bark-server-rpc/tls-webpki-roots"]
 
 [dependencies]
-ark-lib = { version = "0.1.0-beta.8", path = "../lib" }
-bark-json = { version = "0.1.0-beta.8", path = "../bark-json" }
-bark-wallet = { version = "0.1.0-beta.8", path = "../bark", default-features = false, features = [ "onchain-bdk", "sqlite", "filestore", "pid-lock", "socks5-proxy", "rand", "native" ] }
-bark-bitcoin-ext = { version = "0.1.0-beta.8", path = "../bitcoin-ext", features = ["rpc-socks5-proxy"] }
-bark-server-rpc = { version = "0.1.0-beta.8", path = "../server-rpc", default-features = false, features = ["tonic-native", "socks5-proxy"] }
-bark-rest = { version = "0.1.0-beta.8", path = "../bark-rest" }
+ark-lib = { version = "0.1.0-beta.9", path = "../lib" }
+bark-json = { version = "0.1.0-beta.9", path = "../bark-json" }
+bark-wallet = { version = "0.1.0-beta.9", path = "../bark", default-features = false, features = [ "onchain-bdk", "sqlite", "filestore", "pid-lock", "socks5-proxy", "rand", "native" ] }
+bark-bitcoin-ext = { version = "0.1.0-beta.9", path = "../bitcoin-ext", features = ["rpc-socks5-proxy"] }
+bark-server-rpc = { version = "0.1.0-beta.9", path = "../server-rpc", default-features = false, features = ["tonic-native", "socks5-proxy"] }
+bark-rest = { version = "0.1.0-beta.9", path = "../bark-rest" }
 
 anyhow.workspace = true
 bitcoin.workspace = true

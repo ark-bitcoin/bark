@@ -11,7 +11,7 @@
       "name": "MIT",
       "identifier": "MIT"
     },
-    "version": "0.1.0-beta.8"
+    "version": "0.1.0-beta.9"
   },
   "paths": {
     "/api/v1/bitcoin/tip": {

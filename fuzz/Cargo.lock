@@ -13,7 +13,7 @@ dependencies = [
 
 [[package]]
 name = "ark-lib"
-version = "0.1.0-beta.8"
+version = "0.1.0-beta.9"
 dependencies = [
  "async-trait",
  "bark-bitcoin-ext",
@@ -55,7 +55,7 @@ checksum = "c08606f8c3cbf4ce6ec8e28fb0014a2c086708fe954eaa885384a6165172e7e8"
 
 [[package]]
 name = "bark-bitcoin-ext"
-version = "0.1.0-beta.8"
+version = "0.1.0-beta.9"
 dependencies = [
  "bitcoin",
  "lazy_static",

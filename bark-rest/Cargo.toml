@@ -1,6 +1,6 @@
 [package]
 name = "bark-rest"
-version = "0.1.0-beta.8"
+version = "0.1.0-beta.9"
 edition = "2024"
 authors = ["Second Team <hello@second.tech>"]
 repository = "https://gitlab.com/ark-bitcoin/bark"
@@ -27,8 +27,8 @@ utoipa = { version = "5.4.0", features = ["axum_extras", "chrono", "uuid"] }
 utoipa-axum = "0.2.0"
 utoipa-swagger-ui = { version = "9.0.2", features = ["axum"] }
 
-ark-lib = { version = "0.1.0-beta.8", path = "../lib" }
-bark-wallet = { version = "0.1.0-beta.8", path = "../bark", default-features = false, features = ["onchain-bdk"] }
-bark-json = { version = "0.1.0-beta.8", path = "../bark-json", features = ["utoipa"] }
-bark-bitcoin-ext = { version = "0.1.0-beta.8", path = "../bitcoin-ext" }
+ark-lib = { version = "0.1.0-beta.9", path = "../lib" }
+bark-wallet = { version = "0.1.0-beta.9", path = "../bark", default-features = false, features = ["onchain-bdk"] }
+bark-json = { version = "0.1.0-beta.9", path = "../bark-json", features = ["utoipa"] }
+bark-bitcoin-ext = { version = "0.1.0-beta.9", path = "../bitcoin-ext" }
 
