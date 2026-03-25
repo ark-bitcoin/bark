@@ -83,3 +83,36 @@ pub struct LightningReceiveClaimed {
 }
 impl_slog!(LightningReceiveClaimed, INFO, "claimed lightning receive");
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct XpayStarted {
+	pub node_id: i64,
+	pub created_index: u64,
+	pub updated_index: u64,
+}
+impl_slog!(XpayStarted, INFO, "Start managing xpay");
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct XpayStopped {
+	pub node_id: i64,
+	pub error: String,
+}
+impl_slog!(XpayStopped, ERROR, "Xpay exited with error");
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct XpayRpcCalled {
+	pub payment_hash: PaymentHash,
+	#[serde(with = "bitcoin::amount::serde::as_sat")]
+	pub amount: Amount,
+	pub invoice: String,
+	pub max_delay: u32,
+}
+impl_slog!(XpayRpcCalled, DEBUG, "Calling xpay gRPC");
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct XpayRpcReturned {
+	pub payment_hash: PaymentHash,
+	pub preimage: Option<Preimage>,
+	pub error: Option<String>,
+}
+impl_slog!(XpayRpcReturned, DEBUG, "Xpay gRPC returned");
+
