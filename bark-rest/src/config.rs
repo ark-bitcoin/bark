@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 pub struct Config {
 	pub port: u16,
 	pub host: IpAddr,
+	pub allowed_origins: Vec<String>,
 }
 
 impl Default for Config {
@@ -13,6 +14,7 @@ impl Default for Config {
 		Self {
 			port: 3000,
 			host: "127.0.0.1".parse().expect("Invalid ip address"),
+			allowed_origins: Vec::new(),
 		}
 	}
 }

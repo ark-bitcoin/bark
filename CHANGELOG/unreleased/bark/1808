@@ -1,0 +1,6 @@
+- Replace permissive CORS with deny-all default in barkd
+  Cross-origin requests are now denied unless explicitly allowed via `--allowed-origins`
+  or `BARKD_ALLOWED_ORIGINS`.
+  [#1808](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1808)
+  - **BREAKING:** CORS is no longer permissive by default. Set `BARKD_ALLOWED_ORIGINS` to
+    re-enable cross-origin access for specific origins.

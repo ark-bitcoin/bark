@@ -6,6 +6,7 @@ pub mod api;
 pub mod auth;
 pub mod config;
 pub mod error;
+pub use axum::http;
 
 use crate::auth::AuthToken;
 pub use crate::config::Config;
@@ -21,6 +22,7 @@ use log::{error, info};
 use tokio::sync::RwLock;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
+use axum::http::{header, Method, HeaderValue};
 use tower_http::cors::CorsLayer;
 use utoipa::{Modify, OpenApi};
 use utoipa::openapi::security::{HttpAuthScheme, HttpBuilder, SecurityScheme};
@@ -90,6 +92,22 @@ impl Modify for BearerSecurity {
 			),
 		);
 	}
+}
+
+fn cors_layer(config: &Config) -> CorsLayer {
+	if config.allowed_origins.is_empty() {
+		return CorsLayer::new(); // deny all cross-origin
+	}
+
+	// Origins are validated at config construction time.
+	let origins: Vec<HeaderValue> = config.allowed_origins.iter()
+		.map(|o| o.parse().expect("pre-validated"))
+		.collect();
+
+	CorsLayer::new()
+		.allow_origin(origins)
+		.allow_methods([Method::GET, Method::POST, Method::DELETE])
+		.allow_headers([header::CONTENT_TYPE, header::AUTHORIZATION])
 }
 
 async fn shutdown_signal(shutdown: CancellationToken) {
@@ -170,7 +188,7 @@ impl RestServer {
 			.route("/ping", get(ping))
 			.nest("/api/v1", authed_api)
 			.merge(SwaggerUi::new("/swagger-ui").url("/api-docs/openapi.json", api.clone()))
-			.layer(CorsLayer::permissive())
+			.layer(cors_layer(config))
 			.with_state(state)
 			.fallback(error::route_not_found);
 
