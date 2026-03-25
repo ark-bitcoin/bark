@@ -279,7 +279,7 @@ async fn main() -> anyhow::Result<()>{
 		}
 	}
 
-	info!("Starting barkd daemon with version {}", FULL_VERSION);
+	info!("Starting barkd version {} with datadir {}", FULL_VERSION, datadir.display());
 	let _pid_lock = PidLock::acquire(&datadir)?;
 
 	if env!("BARK_VERSION") == VERSION_DIRTY {

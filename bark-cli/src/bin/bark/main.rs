@@ -294,7 +294,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 
 	init_logging(cli.verbose, cli.quiet, &datadir);
 
-	info!("Using bark datadir at {}", datadir.display());
+	info!("Starting bark version {} with datadir {}", FULL_VERSION, datadir.display());
 	let _pid_lock = PidLock::acquire(&datadir)?;
 
 	if env!("BARK_VERSION") == VERSION_DIRTY {
