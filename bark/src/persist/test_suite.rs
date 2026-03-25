@@ -401,12 +401,15 @@ mod vtxo_lifecycle {
 // ---------------------------------------------------------------------------
 
 mod movements {
+	use bitcoin::ScriptBuf;
+	use crate::movement::{MovementDestination, PaymentMethod};
 	use super::*;
 
 	pub async fn run<A: BarkPersister, B: BarkPersister>(a: &A, b: &B) {
 		test_create_and_get_movement(a, b).await;
 		test_update_movement(a, b).await;
 		test_get_all_movements(a, b).await;
+		test_get_movements_by_payment_method(a, b).await;
 	}
 
 	async fn test_create_and_get_movement<A: BarkPersister, B: BarkPersister>(a: &A, b: &B) {
@@ -466,6 +469,65 @@ mod movements {
 		ra.sort_by_key(|m| m.id.0);
 		rb.sort_by_key(|m| m.id.0);
 		assert_eq!(ra, rb, "get_all_movements mismatch");
+	}
+
+	/// An ark address
+	const ARK_ADDR: &str = "tark1pwh9vsmezqqpharv69q4z8m6x364d5m5prnmcalcalq9pdmzw0y7mpveck4pcfhezqypczkrrj3lkx5ue4qrf4jc7ztpt9htdttmh2judhqnu7aue8p0y9mq47jn9z";
+
+	async fn test_get_movements_by_payment_method<A: BarkPersister, B: BarkPersister>(a: &A, b: &B) {
+		let subsystem = test_subsystem();
+		let time = test_time();
+
+		let addr = ark::Address::from_str(ARK_ADDR).unwrap();
+
+		let id_a_1 = a.create_new_movement(MovementStatus::Pending, &subsystem, time).await.unwrap();
+		let mut m = a.get_movement_by_id(id_a_1).await.unwrap();
+		m.received_on = vec![MovementDestination {
+			destination: PaymentMethod::Ark(addr.clone()),
+			amount: Amount::ONE_BTC,
+		}];
+		a.update_movement(&m).await.unwrap();
+
+		let id_b_1 = b.create_new_movement(MovementStatus::Pending, &subsystem, time).await.unwrap();
+		let mut m = b.get_movement_by_id(id_b_1).await.unwrap();
+		m.received_on = vec![MovementDestination {
+			destination: PaymentMethod::Ark(addr.clone()),
+			amount: Amount::ONE_BTC,
+		}];
+		b.update_movement(&m).await.unwrap();
+
+		let id_a_2 = a.create_new_movement(MovementStatus::Pending, &subsystem, time).await.unwrap();
+		let mut m = a.get_movement_by_id(id_a_2).await.unwrap();
+		m.received_on = vec![MovementDestination {
+			destination: PaymentMethod::OutputScript(ScriptBuf::new_p2a()),
+			amount: Amount::ONE_BTC,
+		}];
+		a.update_movement(&m).await.unwrap();
+
+		let id_b_2 = b.create_new_movement(MovementStatus::Pending, &subsystem, time).await.unwrap();
+		let mut m = b.get_movement_by_id(id_b_2).await.unwrap();
+		m.received_on = vec![MovementDestination {
+			destination: PaymentMethod::OutputScript(ScriptBuf::new_p2a()),
+			amount: Amount::ONE_BTC,
+		}];
+		b.update_movement(&m).await.unwrap();
+
+
+		let ra = a.get_movements_by_payment_method(&PaymentMethod::Ark(addr.clone())).await.unwrap();
+		let [m] = ra.try_into().unwrap();
+		assert_eq!(m.id, id_a_1);
+
+		let rb = b.get_movements_by_payment_method(&PaymentMethod::Ark(addr.clone())).await.unwrap();
+		let [m] = rb.try_into().unwrap();
+		assert_eq!(m.id, id_b_1);
+
+		let ra = a.get_movements_by_payment_method(&PaymentMethod::OutputScript(ScriptBuf::new_p2a())).await.unwrap();
+		let [m] = ra.try_into().unwrap();
+		assert_eq!(m.id, id_a_2);
+
+		let rb = b.get_movements_by_payment_method(&PaymentMethod::OutputScript(ScriptBuf::new_p2a())).await.unwrap();
+		let [m] = rb.try_into().unwrap();
+		assert_eq!(m.id, id_b_2);
 	}
 }
 

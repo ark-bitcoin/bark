@@ -115,16 +115,6 @@ CREATE TABLE IF NOT EXISTS "bark_movements" (
 					updated_at        DATETIME NOT NULL,
 					completed_at      DATETIME
 				);
-CREATE TABLE bark_movements_sent_to (
-					movement_id INTEGER NOT NULL REFERENCES bark_movements(id),
-					destination TEXT    NOT NULL,
-					amount      INTEGER NOT NULL
-				);
-CREATE TABLE bark_movements_received_on (
-					movement_id INTEGER NOT NULL REFERENCES bark_movements(id),
-					destination TEXT    NOT NULL,
-					amount      INTEGER NOT NULL
-				);
 CREATE TABLE bark_movements_input_vtxos (
 					movement_id INTEGER NOT NULL REFERENCES bark_movements(id),
 					vtxo_id     TEXT    NOT NULL,
@@ -140,52 +130,6 @@ CREATE TABLE bark_movements_exited_vtxos (
 					vtxo_id     TEXT    NOT NULL,
 					UNIQUE(movement_id, vtxo_id)
 				);
-CREATE VIEW bark_movements_view AS
-					SELECT
-						m.id,
-						m.status,
-						m.subsystem_name,
-						m.movement_kind,
-						m.metadata,
-						m.intended_balance,
-						m.effective_balance,
-						m.offchain_fee,
-						m.created_at,
-						m.updated_at,
-						m.completed_at,
-						(
-							SELECT JSON_GROUP_ARRAY(JSON_OBJECT(
-								'destination', JSON(destination),
-								'amount', amount
-							))
-							FROM bark_movements_sent_to
-							WHERE movement_id = m.id
-						) AS sent_to,
-						(
-							SELECT JSON_GROUP_ARRAY(JSON_OBJECT(
-								'destination', JSON(destination),
-								'amount', amount
-							))
-							FROM bark_movements_received_on
-							WHERE movement_id = m.id
-						) AS received_on,
-						(
-							SELECT JSON_GROUP_ARRAY(vtxo_id)
-							FROM bark_movements_input_vtxos
-							WHERE movement_id = m.id
-						) AS input_vtxos,
-						(
-							SELECT JSON_GROUP_ARRAY(vtxo_id)
-							FROM bark_movements_output_vtxos
-							WHERE movement_id = m.id
-						) AS output_vtxos,
-						(
-							SELECT JSON_GROUP_ARRAY(vtxo_id)
-							FROM bark_movements_exited_vtxos
-							WHERE movement_id = m.id
-						) AS exited_vtxos
-					FROM bark_movements m
-/* bark_movements_view(id,status,subsystem_name,movement_kind,metadata,intended_balance,effective_balance,offchain_fee,created_at,updated_at,completed_at,sent_to,received_on,input_vtxos,output_vtxos,exited_vtxos) */;
 CREATE TABLE bark_mailbox_checkpoint (
 				id INTEGER PRIMARY KEY CHECK (id = 1),
 				checkpoint INTEGER NOT NULL,
@@ -199,3 +143,67 @@ CREATE TABLE bark_pending_offboard (
 				created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now')),
 				destination TEXT NOT NULL
 			);
+CREATE TABLE IF NOT EXISTS "bark_movements_sent_to" (
+				movement_id      INTEGER NOT NULL REFERENCES bark_movements(id),
+				destination_type  TEXT    NOT NULL,
+				destination_value TEXT    NOT NULL,
+				amount            INTEGER NOT NULL
+			);
+CREATE TABLE IF NOT EXISTS "bark_movements_received_on" (
+				movement_id      INTEGER NOT NULL REFERENCES bark_movements(id),
+				destination_type  TEXT    NOT NULL,
+				destination_value TEXT    NOT NULL,
+				amount            INTEGER NOT NULL
+			);
+CREATE VIEW bark_movements_view AS
+				SELECT
+					m.id,
+					m.status,
+					m.subsystem_name,
+					m.movement_kind,
+					m.metadata,
+					m.intended_balance,
+					m.effective_balance,
+					m.offchain_fee,
+					m.created_at,
+					m.updated_at,
+					m.completed_at,
+					(
+						SELECT JSON_GROUP_ARRAY(JSON_OBJECT(
+							'destination_type', destination_type,
+							'destination_value', destination_value,
+							'amount', amount
+						))
+						FROM bark_movements_sent_to
+						WHERE movement_id = m.id
+					) AS sent_to,
+					(
+						SELECT JSON_GROUP_ARRAY(JSON_OBJECT(
+							'destination_type', destination_type,
+							'destination_value', destination_value,
+							'amount', amount
+						))
+						FROM bark_movements_received_on
+						WHERE movement_id = m.id
+					) AS received_on,
+					(
+						SELECT JSON_GROUP_ARRAY(vtxo_id)
+						FROM bark_movements_input_vtxos
+						WHERE movement_id = m.id
+					) AS input_vtxos,
+					(
+						SELECT JSON_GROUP_ARRAY(vtxo_id)
+						FROM bark_movements_output_vtxos
+						WHERE movement_id = m.id
+					) AS output_vtxos,
+					(
+						SELECT JSON_GROUP_ARRAY(vtxo_id)
+						FROM bark_movements_exited_vtxos
+						WHERE movement_id = m.id
+					) AS exited_vtxos
+				FROM bark_movements m
+/* bark_movements_view(id,status,subsystem_name,movement_kind,metadata,intended_balance,effective_balance,offchain_fee,created_at,updated_at,completed_at,sent_to,received_on,input_vtxos,output_vtxos,exited_vtxos) */;
+CREATE INDEX movements_sent_to_idx
+				ON bark_movements_sent_to (destination_type, destination_value);
+CREATE INDEX movements_received_on_idx
+				ON bark_movements_received_on (destination_type, destination_value);

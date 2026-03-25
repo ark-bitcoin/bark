@@ -620,11 +620,10 @@ async fn bark_should_exit_a_failed_htlc_out_that_server_refuse_to_revoke() {
 	// We need to ensure the HTLC expires so an exit will be triggered.
 	let tip = ctx.bitcoind().sync_client().tip().unwrap();
 	let desired_height = {
-		let bark = bark_1.client().await;
-		let htlc = bark.vtxos().await.unwrap().into_iter().find(
-			|v| v.policy_type() == VtxoPolicyKind::ServerHtlcSend
+		let htlc = bark_1.vtxos().await.into_iter().find(
+			|v| v.policy_type == VtxoPolicyKind::ServerHtlcSend
 		).unwrap();
-		htlc.expiry_height() - bark.config().vtxo_refresh_expiry_threshold + 1
+		htlc.expiry_height - bark_1.config().vtxo_refresh_expiry_threshold + 1
 	};
 	ctx.generate_blocks(desired_height - tip.height).await;
 	bark_1.sync().await;

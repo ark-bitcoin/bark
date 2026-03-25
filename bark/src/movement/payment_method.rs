@@ -1,4 +1,9 @@
+use std::fmt;
+use std::str::FromStr;
+
+use anyhow::Context;
 use bitcoin::address::{NetworkChecked, NetworkUnchecked};
+use bitcoin::hex::DisplayHex;
 use lightning::offers::invoice::Bolt12Invoice;
 use lightning::offers::offer::Offer;
 use lightning_invoice::Bolt11Invoice;
@@ -16,15 +21,6 @@ const PAYMENT_METHOD_INVOICE: &str = "invoice";
 const PAYMENT_METHOD_OFFER: &str = "offer";
 const PAYMENT_METHOD_LIGHTNING_ADDRESS: &str = "lightning-address";
 const PAYMENT_METHOD_CUSTOM: &str = "custom";
-const PAYMENT_METHODS: [&str; 7] = [
-	PAYMENT_METHOD_ARK,
-	PAYMENT_METHOD_BITCOIN,
-	PAYMENT_METHOD_OUTPUT_SCRIPT,
-	PAYMENT_METHOD_INVOICE,
-	PAYMENT_METHOD_OFFER,
-	PAYMENT_METHOD_LIGHTNING_ADDRESS,
-	PAYMENT_METHOD_CUSTOM,
-];
 
 /// Provides a typed mechanism for describing the recipient in a
 /// [MovementDestination](crate::movement::MovementDestination).
@@ -96,6 +92,87 @@ impl PaymentMethod {
 			PaymentMethod::Custom(_) => false,
 		}
 	}
+
+	/// Returns the type tag string for this payment method.
+	pub fn type_str(&self) -> &'static str {
+		match self {
+			PaymentMethod::Ark(_) => PAYMENT_METHOD_ARK,
+			PaymentMethod::Bitcoin(_) => PAYMENT_METHOD_BITCOIN,
+			PaymentMethod::OutputScript(_) => PAYMENT_METHOD_OUTPUT_SCRIPT,
+			PaymentMethod::Invoice(_) => PAYMENT_METHOD_INVOICE,
+			PaymentMethod::Offer(_) => PAYMENT_METHOD_OFFER,
+			PaymentMethod::LightningAddress(_) => PAYMENT_METHOD_LIGHTNING_ADDRESS,
+			PaymentMethod::Custom(_) => PAYMENT_METHOD_CUSTOM,
+		}
+	}
+
+	/// Returns the value as a plain string for this payment method.
+	pub fn value_string(&self) -> String {
+		match self {
+			PaymentMethod::Ark(addr) => addr.to_string(),
+			PaymentMethod::Bitcoin(addr) => addr.assume_checked_ref().to_string(),
+			PaymentMethod::OutputScript(script) => script.as_bytes().to_lower_hex_string(),
+			PaymentMethod::Invoice(invoice) => invoice.to_string(),
+			PaymentMethod::Offer(offer) => offer.to_string(),
+			PaymentMethod::LightningAddress(addr) => addr.to_string(),
+			PaymentMethod::Custom(custom) => custom.clone(),
+		}
+	}
+
+	/// Construct a PaymentMethod from a type tag and value string.
+	pub fn from_type_value(type_str: &str, value: &str) -> anyhow::Result<Self> {
+		match type_str {
+			PAYMENT_METHOD_ARK => {
+				let addr = ark::Address::from_str(value)
+					.context("invalid ark address")?;
+				Ok(PaymentMethod::Ark(addr))
+			},
+			PAYMENT_METHOD_BITCOIN => {
+				let addr = bitcoin::Address::from_str(value)
+					.context("invalid bitcoin address")?;
+				Ok(PaymentMethod::Bitcoin(addr))
+			},
+			PAYMENT_METHOD_OUTPUT_SCRIPT => {
+				let script = bitcoin::ScriptBuf::from_hex(value)
+					.context("invalid output script hex")?;
+				Ok(PaymentMethod::OutputScript(script))
+			},
+			PAYMENT_METHOD_INVOICE => {
+				let invoice = Invoice::from_str(value)
+					.context("invalid invoice")?;
+				Ok(PaymentMethod::Invoice(invoice))
+			},
+			PAYMENT_METHOD_OFFER => {
+				let offer = value.parse()
+					.map_err(|e| anyhow!("{:?}", e))
+					.context("invalid offer")?;
+				Ok(PaymentMethod::Offer(offer))
+			},
+			PAYMENT_METHOD_LIGHTNING_ADDRESS => {
+				let addr = LightningAddress::from_str(value)
+					.context("invalid lightning address")?;
+				Ok(PaymentMethod::LightningAddress(addr))
+			},
+			PAYMENT_METHOD_CUSTOM => {
+				Ok(PaymentMethod::Custom(value.to_string()))
+			},
+			_ => bail!("unknown payment method type: {}", type_str),
+		}
+	}
+}
+
+impl fmt::Display for PaymentMethod {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+	    match self {
+			PaymentMethod::Ark(a) => fmt::Display::fmt(a, f),
+			PaymentMethod::Bitcoin(b) => fmt::Display::fmt(b.assume_checked_ref(), f),
+			PaymentMethod::OutputScript(o) => fmt::Display::fmt(&o.as_bytes().as_hex(), f),
+			PaymentMethod::Invoice(i) => fmt::Display::fmt(i, f),
+			PaymentMethod::Offer(o) => fmt::Display::fmt(o, f),
+			PaymentMethod::LightningAddress(a) => fmt::Display::fmt(a, f),
+			PaymentMethod::Custom(v) => fmt::Display::fmt(v, f),
+		}
+	}
 }
 
 impl From<ark::Address> for PaymentMethod {
@@ -153,38 +230,8 @@ impl Serialize for PaymentMethod {
 	{
 		use serde::ser::SerializeStruct;
 		let mut state = serializer.serialize_struct("PaymentMethod", 2)?;
-
-		match self {
-			PaymentMethod::Ark(addr) => {
-				state.serialize_field(PAYMENT_METHOD_TAG, PAYMENT_METHOD_ARK)?;
-				state.serialize_field(PAYMENT_METHOD_VALUE, addr)?;
-			}
-			PaymentMethod::Bitcoin(addr) => {
-				state.serialize_field(PAYMENT_METHOD_TAG, PAYMENT_METHOD_BITCOIN)?;
-				state.serialize_field(PAYMENT_METHOD_VALUE, addr)?;
-			}
-			PaymentMethod::OutputScript(script_pubkey) => {
-				state.serialize_field(PAYMENT_METHOD_TAG, PAYMENT_METHOD_OUTPUT_SCRIPT)?;
-				state.serialize_field(PAYMENT_METHOD_VALUE, script_pubkey)?;
-			}
-			PaymentMethod::Invoice(invoice) => {
-				state.serialize_field(PAYMENT_METHOD_TAG, PAYMENT_METHOD_INVOICE)?;
-				state.serialize_field(PAYMENT_METHOD_VALUE, invoice)?;
-			}
-			PaymentMethod::Offer(offer) => {
-				state.serialize_field(PAYMENT_METHOD_TAG, PAYMENT_METHOD_OFFER)?;
-				state.serialize_field(PAYMENT_METHOD_VALUE, &offer.to_string())?;
-			}
-			PaymentMethod::LightningAddress(addr) => {
-				state.serialize_field(PAYMENT_METHOD_TAG, PAYMENT_METHOD_LIGHTNING_ADDRESS)?;
-				state.serialize_field(PAYMENT_METHOD_VALUE, addr)?;
-			}
-			PaymentMethod::Custom(custom) => {
-				state.serialize_field(PAYMENT_METHOD_TAG, PAYMENT_METHOD_CUSTOM)?;
-				state.serialize_field(PAYMENT_METHOD_VALUE, custom)?;
-			}
-		}
-
+		state.serialize_field(PAYMENT_METHOD_TAG, self.type_str())?;
+		state.serialize_field(PAYMENT_METHOD_VALUE, &self.value_string())?;
 		state.end()
 	}
 }
@@ -213,7 +260,7 @@ impl<'de> Deserialize<'de> for PaymentMethod {
 				A: MapAccess<'de>,
 			{
 				let mut type_value: Option<String> = None;
-				let mut value_value: Option<serde_json::Value> = None;
+				let mut value_string: Option<String> = None;
 
 				while let Some(key) = map.next_key::<String>()? {
 					match key.as_str() {
@@ -224,52 +271,21 @@ impl<'de> Deserialize<'de> for PaymentMethod {
 							type_value = Some(map.next_value()?);
 						}
 						PAYMENT_METHOD_VALUE => {
-							if value_value.is_some() {
+							if value_string.is_some() {
 								return Err(de::Error::duplicate_field(PAYMENT_METHOD_VALUE));
 							}
-							value_value = Some(map.next_value()?);
+							value_string = Some(map.next_value()?);
 						}
 						_ => {
-							let _: serde_json::Value = map.next_value()?;
+							let _: de::IgnoredAny = map.next_value()?;
 						}
 					}
 				}
 
 				let type_str = type_value.ok_or_else(|| de::Error::missing_field(PAYMENT_METHOD_TAG))?;
-				let value = value_value.ok_or_else(|| de::Error::missing_field(PAYMENT_METHOD_VALUE))?;
+				let value = value_string.ok_or_else(|| de::Error::missing_field(PAYMENT_METHOD_VALUE))?;
 
-				match type_str.as_str() {
-					PAYMENT_METHOD_ARK => {
-						let addr = serde_json::from_value(value).map_err(de::Error::custom)?;
-						Ok(PaymentMethod::Ark(addr))
-					}
-					PAYMENT_METHOD_BITCOIN => {
-						let addr = serde_json::from_value(value).map_err(de::Error::custom)?;
-						Ok(PaymentMethod::Bitcoin(addr))
-					}
-					PAYMENT_METHOD_OUTPUT_SCRIPT => {
-						let script = serde_json::from_value(value).map_err(de::Error::custom)?;
-						Ok(PaymentMethod::OutputScript(script))
-					}
-					PAYMENT_METHOD_INVOICE => {
-						let invoice = serde_json::from_value(value).map_err(de::Error::custom)?;
-						Ok(PaymentMethod::Invoice(invoice))
-					}
-					PAYMENT_METHOD_OFFER => {
-						let s: String = serde_json::from_value(value).map_err(de::Error::custom)?;
-						let offer = s.parse().map_err(|e| de::Error::custom(format!("{:?}", e)))?;
-						Ok(PaymentMethod::Offer(offer))
-					}
-					PAYMENT_METHOD_LIGHTNING_ADDRESS => {
-						let addr = serde_json::from_value(value).map_err(de::Error::custom)?;
-						Ok(PaymentMethod::LightningAddress(addr))
-					}
-					PAYMENT_METHOD_CUSTOM => {
-						let custom = serde_json::from_value(value).map_err(de::Error::custom)?;
-						Ok(PaymentMethod::Custom(custom))
-					}
-					_ => Err(de::Error::unknown_variant(&type_str, &PAYMENT_METHODS)),
-				}
+				PaymentMethod::from_type_value(&type_str, &value).map_err(de::Error::custom)
 			}
 		}
 

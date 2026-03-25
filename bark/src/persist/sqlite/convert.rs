@@ -13,7 +13,10 @@ use serde::Deserialize;
 use ark::{ProtocolEncoding, Vtxo};
 
 use crate::WalletVtxo;
-use crate::movement::{Movement, MovementId, MovementStatus, MovementSubsystem, MovementTimestamp};
+use crate::movement::{
+	MovementDestination, Movement, MovementId, MovementStatus, MovementSubsystem, MovementTimestamp,
+	PaymentMethod,
+};
 use crate::vtxo::VtxoState;
 
 #[allow(unused)]
@@ -61,8 +64,8 @@ pub(crate) fn row_to_movement(row: &Row) -> anyhow::Result<Movement> {
 		intended_balance: SignedAmount::from_sat(row.get("intended_balance")?),
 		effective_balance: SignedAmount::from_sat(row.get("effective_balance")?),
 		offchain_fee: Amount::from_sat(row.get("offchain_fee")?),
-		sent_to: from_json_text_to_vec(row.get("sent_to")?)?,
-		received_on: from_json_text_to_vec(row.get("received_on")?)?,
+		sent_to: destinations_from_json(row.get("sent_to")?)?,
+		received_on: destinations_from_json(row.get("received_on")?)?,
 		input_vtxos: from_json_text_to_vec(row.get("input_vtxos")?)?,
 		output_vtxos: from_json_text_to_vec(row.get("output_vtxos")?)?,
 		exited_vtxos: from_json_text_to_vec(row.get("exited_vtxos")?)?,
@@ -75,6 +78,25 @@ pub(crate) fn row_to_movement(row: &Row) -> anyhow::Result<Movement> {
 				.map(|ts| ts.with_timezone(&chrono::Local)),
 		},
 	})
+}
+
+#[derive(Deserialize)]
+struct SqlDestination {
+	destination_type: String,
+	destination_value: String,
+	amount: u64,
+}
+
+fn destinations_from_json(json: String) -> anyhow::Result<Vec<MovementDestination>> {
+	if json == "null" {
+		return Ok(Vec::new());
+	}
+	let rows: Vec<SqlDestination> = serde_json::from_str(&json)?;
+	rows.into_iter().map(|row| {
+		let destination = PaymentMethod::from_type_value(&row.destination_type, &row.destination_value)?;
+		let amount = Amount::from_sat(row.amount);
+		Ok(MovementDestination { destination, amount })
+	}).collect()
 }
 
 pub (crate) fn row_to_wallet_vtxo(row: &Row<'_>) -> anyhow::Result<WalletVtxo> {

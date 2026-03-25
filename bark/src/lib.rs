@@ -349,7 +349,7 @@ use server_rpc::{protos, ServerConnection};
 
 use crate::chain::{ChainSource, ChainSourceSpec};
 use crate::exit::Exit;
-use crate::movement::{Movement, MovementStatus};
+use crate::movement::{Movement, MovementStatus, PaymentMethod};
 use crate::movement::manager::MovementManager;
 use crate::movement::update::MovementUpdate;
 use crate::notification::NotificationDispatch;
@@ -1209,6 +1209,16 @@ impl Wallet {
 	/// Fetches all wallet fund movements ordered from newest to oldest.
 	pub async fn history(&self) -> anyhow::Result<Vec<Movement>> {
 		Ok(self.db.get_all_movements().await?)
+	}
+
+	/// Query the wallet history by the given payment method
+	pub async fn history_by_payment_method(
+		&self,
+		payment_method: &PaymentMethod,
+	) -> anyhow::Result<Vec<Movement>> {
+		let mut ret = self.db.get_movements_by_payment_method(payment_method).await?;
+		ret.sort_by_key(|m| m.id);
+		Ok(ret)
 	}
 
 	/// Returns all VTXOs from the database.

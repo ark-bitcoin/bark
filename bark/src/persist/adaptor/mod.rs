@@ -41,10 +41,10 @@ mod sort;
 #[cfg(feature = "filestore")]
 pub mod filestore;
 pub mod memory;
+pub use self::sort::SortKey;
+
 
 use std::ops::RangeBounds;
-
-pub use sort::SortKey;
 
 use anyhow::Context;
 use bitcoin::{Amount, Transaction, Txid};
@@ -65,15 +65,18 @@ use bitcoin_ext::BlockDelta;
 
 use crate::exit::ExitTxOrigin;
 use crate::movement::{
-	Movement, MovementId, MovementStatus, MovementSubsystem,
+	Movement, MovementId, MovementStatus, MovementSubsystem, PaymentMethod,
 };
 use crate::persist::BarkPersister;
 use crate::persist::models::{
-	LightningReceive, LightningSend, PendingBoard, PendingOffboard, RoundStateId, SerdeExitChildTx, SerdeRoundState, SerdeVtxo, SerdeVtxoKey, StoredExit, StoredRoundState, Unlocked,
+	LightningReceive, LightningSend, PendingBoard, PendingOffboard,
+	RoundStateId, SerdeExitChildTx, SerdeRoundState, SerdeVtxo, SerdeVtxoKey, StoredExit,
+	StoredRoundState, Unlocked,
 };
 use crate::round::RoundState;
 use crate::vtxo::{VtxoState, VtxoStateKind};
 use crate::{WalletProperties, WalletVtxo};
+
 
 pub mod partition {
 	pub const PROPERTIES: u8 = 0;
@@ -90,6 +93,8 @@ pub mod partition {
 	pub const EXIT_CHILD_TX: u8 = 10;
 	pub const MAILBOX_CHECKPOINT: u8 = 11;
 	pub const PENDING_OFFBOARD: u8 = 12;
+	/// An index table for payment method to movement
+	pub const MOVEMENT_PAYMENT_METHOD: u8 = 13;
 
 	pub const LAST_IDS: u8 = u8::MAX;
 }
@@ -183,6 +188,18 @@ impl Query<std::ops::RangeFull> {
 	pub fn new_full_range(partition: u8) -> Self {
 		Self::new(partition, ..)
 	}
+}
+
+fn serialize_payment_method(pm: &PaymentMethod) -> Vec<u8> {
+	let body = pm.value_string();
+
+	let mut buf = Vec::with_capacity(pm.type_str().len() + 1 + body.len());
+	buf.extend(pm.type_str().as_bytes().iter().copied());
+	// nb we need to separate with a non-utf8 byte
+	// we use 0xfe so that we can easily query on prefix from <type>0xfe .. <type>0xff
+	buf.push(0xfe);
+	buf.extend(body.into_bytes());
+	buf
 }
 
 /// Storage adaptor trait for persistence backends.
@@ -423,13 +440,38 @@ impl <S: StorageAdaptor> BarkPersister for StorageAdaptorWrapper<S> {
 	}
 
 	async fn update_movement(&self, movement: &Movement) -> anyhow::Result<()> {
+		let mut guard = self.inner.write().await;
+
 		let record = Record::from_data(
 			partition::MOVEMENT,
 			&movement.id.to_bytes(),
 			Some(sort::movement_sort_key(&movement.time.created_at)),
 			movement,
 		)?;
-		self.inner.write().await.put(record).await
+		guard.put(record).await?;
+
+		// then add records for each payment method
+		let sent = movement.sent_to.iter().map(|d| &d.destination);
+		let rcvd = movement.received_on.iter().map(|d| &d.destination);
+		for pm in sent.chain(rcvd) {
+			let pm_bytes = serialize_payment_method(pm);
+			let primary_key = {
+				// We just need a unique key, but we will never query using this
+				let mut buf = Vec::with_capacity(pm_bytes.len() + 4);
+				buf.extend(pm_bytes.iter().copied());
+				buf.extend(movement.id.to_bytes());
+				buf
+			};
+			let record = Record::from_data(
+				partition::MOVEMENT_PAYMENT_METHOD,
+				&primary_key,
+				Some(SortKey::from_bytes(pm_bytes)),
+				&movement.id.0,
+			)?;
+			guard.put(record).await?;
+		}
+
+		Ok(())
 	}
 
 	async fn get_movement_by_id(&self, movement_id: MovementId) -> anyhow::Result<Movement> {
@@ -443,6 +485,34 @@ impl <S: StorageAdaptor> BarkPersister for StorageAdaptorWrapper<S> {
 		let records = self.inner.read().await
 			.query_sorted(Query::new_full_range(partition::MOVEMENT)).await?;
 		records.into_iter().map(|r| r.to_data()).collect()
+	}
+
+	async fn get_movements_by_payment_method(
+		&self,
+		payment_method: &PaymentMethod,
+	) -> anyhow::Result<Vec<Movement>> {
+		let pm_bytes = serialize_payment_method(payment_method);
+		let sort_key = SortKey::from_bytes(pm_bytes);
+
+		let guard = self.inner.read().await;
+		let idx_recs = guard.query_sorted(Query::new(
+			partition::MOVEMENT_PAYMENT_METHOD,
+			sort_key.clone()..=sort_key,
+		)).await?;
+
+		let mut ret = Vec::with_capacity(idx_recs.len());
+		for idx_rec in idx_recs {
+			let id = MovementId::new(idx_rec.to_data::<u32>()
+				.context("corrupt db: movement payment method index value")?);
+
+			ret.push(
+				guard.get(partition::MOVEMENT, &id.to_bytes()).await?
+					.context("corrupt db: movement payment method entry for unknown movement")?
+					.to_data()
+					.context("corrupt db: invalid movement record")?
+			);
+		}
+		Ok(ret)
 	}
 
 	async fn store_pending_board(

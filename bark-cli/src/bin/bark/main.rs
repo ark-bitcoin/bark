@@ -12,6 +12,7 @@ use std::path::PathBuf;
 use std::str::FromStr;
 
 use anyhow::Context;
+use bark::movement::PaymentMethod;
 use bark_cli::VERSION_DIRTY;
 use bitcoin::{Amount};
 use clap::builder::BoolishValueParser;
@@ -78,6 +79,26 @@ struct Cli {
 }
 
 
+#[derive(clap::Args)]
+#[group(required = true, multiple = false)]
+struct AddressLookupFilter {
+	/// The Ark address to look up
+	#[arg(long)]
+	address: Option<ark::Address>,
+	/// Address pubkey index to look up
+	#[arg(long)]
+	index: Option<u32>,
+}
+
+#[derive(clap::Subcommand)]
+enum AddressCommand {
+	/// Look up receives for an Ark address
+	Lookup {
+		#[clap(flatten)]
+		filter: AddressLookupFilter,
+	},
+}
+
 #[derive(clap::Subcommand)]
 enum Command {
 	/// Create a new wallet
@@ -98,9 +119,12 @@ enum Command {
 	/// Get an address to receive VTXOs
 	#[command()]
 	Address {
-		/// address pubkey index to peak
+		/// Address pubkey index to peek
 		#[arg(long)]
 		index: Option<u32>,
+
+		#[command(subcommand)]
+		subcommand: Option<AddressCommand>,
 	},
 
 	/// Get the wallet balance
@@ -306,11 +330,29 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 				warn!("Could not connect with Ark server.")
 			}
 		},
-		Command::Address { index } => {
-			if let Some(index) = index {
-				println!("{}", wallet.peek_address(index).await?)
-			} else {
-				println!("{}", wallet.new_address().await?)
+		Command::Address { index, subcommand } => {
+			match subcommand {
+				Some(AddressCommand::Lookup { filter: AddressLookupFilter { address, index } }) => {
+					let address = if let Some(address) = address {
+						address
+					} else if let Some(index) = index {
+						wallet.peek_address(index).await?
+					} else {
+						unreachable!("clap requires --address or --index");
+					};
+					let pm = PaymentMethod::Ark(address);
+					let movements = wallet.history_by_payment_method(&pm).await?.into_iter()
+						.map(json::Movement::from)
+						.collect::<Vec<_>>();
+					output_json(&movements);
+				},
+				None => {
+					if let Some(index) = index {
+						println!("{}", wallet.peek_address(index).await?)
+					} else {
+						println!("{}", wallet.new_address().await?)
+					}
+				},
 			}
 		},
 		Command::Balance { no_sync } => {

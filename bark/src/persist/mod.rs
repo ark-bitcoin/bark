@@ -40,10 +40,10 @@ use bitcoin_ext::BlockDelta;
 use crate::WalletProperties;
 use crate::exit::ExitTxOrigin;
 use crate::persist::models::{
-	LightningReceive, LightningSend, PendingBoard, RoundStateId, StoredExit, StoredRoundState, Unlocked,
-	PendingOffboard,
+	LightningReceive, LightningSend, PendingBoard, RoundStateId, StoredExit, StoredRoundState,
+	Unlocked, PendingOffboard,
 };
-use crate::movement::{Movement, MovementId, MovementStatus, MovementSubsystem};
+use crate::movement::{Movement, MovementId, MovementStatus, MovementSubsystem, PaymentMethod};
 use crate::round::RoundState;
 use crate::vtxo::{VtxoState, VtxoStateKind, WalletVtxo};
 
@@ -199,6 +199,21 @@ pub trait BarkPersister: Send + Sync + 'static {
 	/// Errors:
 	/// - If retrieving the movements fails.
 	async fn get_all_movements(&self) -> anyhow::Result<Vec<Movement>>;
+
+	/// Get all movements for a given payment method
+	///
+	/// Parameters:
+	/// - `payment_method`: The [PaymentMethod] to look up.
+	///
+	/// Returns:
+	/// - `Ok(movements)` containing all relevant movements, empty if none exist.
+	///
+	/// Errors:
+	/// - Returns an error if the query fails.
+	async fn get_movements_by_payment_method(
+		&self,
+		payment_method: &PaymentMethod,
+	) -> anyhow::Result<Vec<Movement>>;
 
 	/// Store a pending board.
 	///
