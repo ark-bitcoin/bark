@@ -113,7 +113,7 @@ mod transport {
 			.timeout(Duration::from_secs(600));
 
 		if scheme == "https" {
-			info!("Connecting to Ark server using TLS...");
+			info!("Connecting to Ark server at {} using TLS...", address);
 			let uri_auth = uri.clone().into_parts().authority
 				.ok_or(CreateEndpointError::MissingAuthority)?;
 			let domain = uri_auth.host();
@@ -124,7 +124,7 @@ mod transport {
 			endpoint = endpoint.tls_config(tls_config)
 				.map_err(CreateEndpointError::Transport)?;
 		} else {
-			info!("Connecting to Ark server without TLS...");
+			info!("Connecting to Ark server at {} without TLS...", address);
 		}
 		Ok(endpoint)
 	}

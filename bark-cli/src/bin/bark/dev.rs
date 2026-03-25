@@ -159,7 +159,7 @@ fn create_server_endpoint(address: &str) -> anyhow::Result<tonic::transport::End
 		.timeout(Duration::from_secs(600));
 
 	if scheme == "https" {
-		info!("Connecting to Ark server using TLS...");
+		info!("Connecting to Ark server at {} using TLS...", address);
 		let uri_auth = uri.clone().into_parts().authority
 			.context("Ark server URI is missing an authority part")?;
 		let domain = uri_auth.host();
@@ -169,7 +169,7 @@ fn create_server_endpoint(address: &str) -> anyhow::Result<tonic::transport::End
 			.domain_name(domain);
 		endpoint = endpoint.tls_config(tls_config)?
 	} else {
-		info!("Connecting to Ark server without TLS...");
+		info!("Connecting to Ark server at {} without TLS...", address);
 	};
 	Ok(endpoint)
 }
