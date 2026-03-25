@@ -12,7 +12,7 @@ onchain-bdk = ["bark-wallet/onchain-bdk", "bark-bitcoin-ext/bdk"]
 
 [dependencies]
 # OWN
-bark-wallet = { version = "0.1.0-beta.8", path = "../bark" }
+bark-wallet = { version = "0.1.0-beta.8", path = "../bark", default-features = false }
 ark-lib = { version = "0.1.0-beta.8", path = "../lib" }
 bark-bitcoin-ext = { version = "0.1.0-beta.8", path = "../bitcoin-ext", default-features = false }
 
