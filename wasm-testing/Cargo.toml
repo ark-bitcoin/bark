@@ -13,6 +13,7 @@ default = ["dep:tokio", "dep:ark-testing"]
 wasm = [
 	"bark-wallet/wasm-web",
 	"bark-wallet/indexed-db",
+	"bark-wallet/onchain-bdk",
 	"bark-server-rpc/tonic-web",
 	"dep:gloo-net",
 ]
