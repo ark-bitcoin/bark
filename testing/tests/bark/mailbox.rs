@@ -7,6 +7,7 @@ use server_rpc::protos;
 use ark_testing::{btc, sat, TestContext};
 use ark_testing::constants::BOARD_CONFIRMATIONS;
 use ark_testing::daemon::captaind::{self, MailboxClient};
+use server_rpc::protos::mailbox_server::mailbox_message::Message;
 
 #[tokio::test]
 async fn reject_arkoor_with_bad_signature() {
@@ -23,19 +24,23 @@ async fn reject_arkoor_with_bad_signature() {
 			use protos::mailbox_server::{mailbox_message, ArkoorMessage};
 
 			let response = upstream.read_mailbox(req).await?.into_inner();
-			let message = match response.messages[0].message.as_ref().unwrap() {
-				mailbox_message::Message::Arkoor(ArkoorMessage { vtxos }) => {
-					let mut vtxo = Vtxo::deserialize(&vtxos[0]).unwrap();
-					vtxo.invalidate_final_sig();
-					ArkoorMessage { vtxos: vec![vtxo.serialize()] }
-				},
+			let message = response.messages[0].message.as_ref().unwrap();
+			let mut vtxo = match message {
+				Message::Arkoor(message) => {
+					Vtxo::deserialize(&message.vtxos[0]).unwrap()
+				}
+				_ => {
+					return Err(tonic::Status::invalid_argument("invalid message type"));
+				}
 			};
+			vtxo.invalidate_final_sig();
+			let message = ArkoorMessage { vtxos: vec![vtxo.serialize()] };
 
 			Ok(protos::mailbox_server::MailboxMessages {
 				messages: vec![protos::mailbox_server::MailboxMessage {
-					mailbox_type: protos::mailbox_server::MailboxType::ArkoorReceive as i32,
 					message: Some(mailbox_message::Message::Arkoor(message)),
 					checkpoint: 0,
+					mailbox_type: protos::mailbox_server::MailboxType::ArkoorReceive as i32,
 				}],
 				have_more: false,
 			})

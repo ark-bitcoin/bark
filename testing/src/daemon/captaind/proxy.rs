@@ -408,8 +408,8 @@ impl<T: ArkRpcProxy> rpc::server::ArkService for ArkRpcProxyWrapper<T> {
 /// Trait used to easily implement mailbox proxy interfaces.
 #[async_trait]
 pub trait MailboxRpcProxy: Send + Sync + Clone + 'static {
-	async fn post_vtxos_mailbox(&self, upstream: &mut MailboxClient, req: protos::mailbox_server::PostVtxosMailboxRequest) -> Result<protos::core::Empty, tonic::Status> {
-		Ok(upstream.post_vtxos_mailbox(req).await?.into_inner())
+	async fn post_arkoor_message(&self, upstream: &mut MailboxClient, req: protos::mailbox_server::PostArkoorMessageRequest) -> Result<protos::core::Empty, tonic::Status> {
+		Ok(upstream.post_arkoor_message(req).await?.into_inner())
 	}
 
 	async fn read_mailbox(&self, upstream: &mut MailboxClient, req: protos::mailbox_server::MailboxRequest) -> Result<protos::mailbox_server::MailboxMessages, tonic::Status> {
@@ -421,6 +421,11 @@ pub trait MailboxRpcProxy: Send + Sync + Clone + 'static {
 	>, tonic::Status> {
 		Ok(Box::new(upstream.subscribe_mailbox(req).await?.into_inner()))
 	}
+
+	#[allow(deprecated)]
+	async fn post_vtxos_mailbox(&self, upstream: &mut MailboxClient, req: protos::mailbox_server::PostVtxosMailboxRequest) -> Result<protos::core::Empty, tonic::Status> {
+		Ok(upstream.post_vtxos_mailbox(req).await?.into_inner())
+	}
 }
 
 /// A wrapper struct around a proxy implementation to run a tonic server.
@@ -431,10 +436,10 @@ struct MailboxRpcProxyWrapper<T: MailboxRpcProxy> {
 
 #[async_trait]
 impl<T: MailboxRpcProxy> rpc::server::MailboxService for MailboxRpcProxyWrapper<T> {
-	async fn post_vtxos_mailbox(
-		&self, req: tonic::Request<protos::mailbox_server::PostVtxosMailboxRequest>,
+	async fn post_arkoor_message(
+		&self, req: tonic::Request<protos::mailbox_server::PostArkoorMessageRequest>,
 	) -> Result<tonic::Response<protos::core::Empty>, tonic::Status> {
-		Ok(tonic::Response::new(MailboxRpcProxy::post_vtxos_mailbox(&self.proxy, &mut self.upstream.clone(), req.into_inner()).await?))
+		Ok(tonic::Response::new(MailboxRpcProxy::post_arkoor_message(&self.proxy, &mut self.upstream.clone(), req.into_inner()).await?))
 	}
 
 	async fn read_mailbox(
@@ -451,6 +456,12 @@ impl<T: MailboxRpcProxy> rpc::server::MailboxService for MailboxRpcProxyWrapper<
 		&self, req: tonic::Request<protos::mailbox_server::MailboxRequest>,
 	) -> Result<tonic::Response<Self::SubscribeMailboxStream>, tonic::Status> {
 		Ok(tonic::Response::new(MailboxRpcProxy::subscribe_mailbox(&self.proxy, &mut self.upstream.clone(), req.into_inner()).await?))
+	}
+
+	async fn post_vtxos_mailbox(
+		&self, req: tonic::Request<protos::mailbox_server::PostVtxosMailboxRequest>,
+	) -> Result<tonic::Response<protos::core::Empty>, tonic::Status> {
+		Ok(tonic::Response::new(MailboxRpcProxy::post_vtxos_mailbox(&self.proxy, &mut self.upstream.clone(), req.into_inner()).await?))
 	}
 }
 

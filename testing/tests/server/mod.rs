@@ -744,6 +744,7 @@ async fn bad_round_input() {
 		.unwrap().try_into().unwrap();
 
 	let ark_info = srv.ark_info().await;
+	let mailbox_id = bark.client().await.mailbox_identifier();
 	let mut rpc = srv.get_public_rpc().await;
 	let mut stream = rpc.subscribe_rounds(protos::Empty {}).await.unwrap().into_inner();
 	srv.trigger_round().await;
@@ -1739,6 +1740,7 @@ async fn mailbox_post_and_process_with_auth() {
 			assert_eq!(vtxo.amount(), sent_amount);
 			let _ = read_vtxo.insert(vtxo);
 		},
+		_ => panic!("unexpected message type"),
 	}
 
 	// Now we check that the server rejects requests with incorrect authorization
@@ -1798,17 +1800,17 @@ async fn mailbox_post_and_process_with_auth() {
 	trace!("processing mailbox");
 	loop {
 		match stream.next().await.unwrap().unwrap() {
-			protos::mailbox_server::MailboxMessage { mailbox_type, checkpoint, message } => {
-				match message.unwrap() {
-					Message::Arkoor(arkoor) => {
-						assert_eq!(arkoor.vtxos.len(), 1);
-						let vtxo = Vtxo::<Full, VtxoPolicy>::deserialize(&arkoor.vtxos[0]).unwrap();
+			protos::mailbox_server::MailboxMessage { checkpoint, message, .. } => {
+				match message.as_ref().unwrap() {
+					Message::Arkoor(arkoor_msg) => {
+						assert_eq!(arkoor_msg.vtxos.len(), 1);
+						let vtxo = Vtxo::<Full, VtxoPolicy>::deserialize(&arkoor_msg.vtxos[0]).unwrap();
 						assert_eq!(read_vtxo.unwrap(), vtxo);
-					},
+						assert_ne!(checkpoint, 0);
+						return
+					}
+					_ => panic!("unexpected message type"),
 				}
-				assert_eq!(mailbox_type, MailboxType::ArkoorReceive as i32);
-				assert_ne!(checkpoint, 0);
-				return
 			},
 		}
 	}

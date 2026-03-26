@@ -18,7 +18,7 @@ use ark::{ProtocolEncoding, Vtxo};
 use ark::mailbox::{MailboxAuthorization, MailboxIdentifier};
 use ark::vtxo::Full;
 use server_rpc::protos;
-use server_rpc::protos::mailbox_server::{ArkoorMessage, MailboxMessage, mailbox_message};
+use server_rpc::protos::mailbox_server::MailboxMessage;
 
 use crate::Wallet;
 use crate::movement::{MovementDestination, MovementStatus};
@@ -198,15 +198,17 @@ impl Wallet {
 		mailbox_msg: MailboxMessage,
 	) {
 		match mailbox_msg.message {
-			Some(mailbox_message::Message::Arkoor(ArkoorMessage { vtxos })) => {
+			Some(protos::mailbox_server::mailbox_message::Message::Arkoor(msg)) => {
 				let result = self
-					.process_received_arkoor_package(vtxos, Some(mailbox_msg.checkpoint)).await;
+					.process_received_arkoor_package(msg.vtxos, Some(mailbox_msg.checkpoint)).await;
 				if let Err(e) = result {
 					error!("Error processing received arkoor package: {:#}", e);
 				}
-			},
-			None => debug!("Unknown mailbox message: {:?}", mailbox_msg),
-		};
+			}
+			None => {
+				trace!("Received empty mailbox message, ignoring");
+			}
+		}
 	}
 
 	async fn process_received_arkoor_package(

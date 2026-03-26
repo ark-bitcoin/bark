@@ -6,7 +6,6 @@ use log::{info, error};
 use ark::{VtxoPolicy, ProtocolEncoding};
 use ark::arkoor::ArkoorDestination;
 use ark::arkoor::package::{ArkoorPackageBuilder, ArkoorPackageCosignResponse};
-use ark::mailbox::MailboxType;
 use ark::vtxo::{Full, Vtxo, VtxoId};
 use server_rpc::protos;
 
@@ -178,13 +177,12 @@ impl Wallet {
 		for delivery in destination.delivery() {
 			match delivery {
 				VtxoDelivery::ServerMailbox { blinded_id } => {
-					let req = protos::mailbox_server::PostVtxosMailboxRequest {
+					let req = protos::mailbox_server::PostArkoorMessageRequest {
 						blinded_id: blinded_id.to_vec(),
-						mailbox_type: u32::from(MailboxType::ArkoorReceive) as i32,
 						vtxos: arkoor.created.iter().map(|v| v.serialize().to_vec()).collect(),
 					};
 
-					if let Err(e) = srv.mailbox_client.post_vtxos_mailbox(req).await {
+					if let Err(e) = srv.mailbox_client.post_arkoor_message(req).await {
 						error!("Failed to post the vtxos to the destination's mailbox: '{:#}'", e);
 						//NB we will continue to at least not lose our own change
 					} else {
