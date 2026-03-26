@@ -783,8 +783,9 @@ impl Db {
 		// gets unconfirmed and re-confirmed in a reorg, the duplicate
 		// insert is safely ignored.
 		let stmt = conn.prepare("
+			WITH lock AS (SELECT pg_advisory_xact_lock(hashtext('htlc_settlement.write')))
 			INSERT INTO htlc_settlement (payment_hash, preimage, created_at)
-			VALUES ($1, $2, NOW())
+			SELECT $1, $2, NOW() FROM lock
 			ON CONFLICT (payment_hash) DO NOTHING
 			RETURNING id;
 		").await?;
