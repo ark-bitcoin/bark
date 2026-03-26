@@ -2,16 +2,28 @@
 
 ## Step 1: Download CI Artifacts
 
+The download script has two modes:
+
+**Pipeline mode** — downloads logs and artifacts for all failed jobs in a
+pipeline:
+
 ```bash
-bash ./contrib/agents/download-ci-artifacts.sh <ci-url>
+python3 ./contrib/agents/download-ci-artifacts.py --pipeline <pipeline-id>
 ```
 
-Any CI URL works — the script downloads all failed steps in the pipeline.
+**Job mode** — downloads logs and artifacts for a single job (regardless of
+its status):
 
-Artifacts save to `./contrib/agents/ci-debugging/<pipeline>-<step_name>/`:
-- `raw.log` — full decoded build log
-- `testdata/<commit>/btc30/bark/<test_name>/` — per-test artifacts
-  (server logs, bark logs, configs, databases)
+```bash
+python3 ./contrib/agents/download-ci-artifacts.py --job <job-id>
+```
+
+The script uses `glab` for authentication and API access.
+
+Artifacts save to `./contrib/agents/ci-debugging/<pipeline_id>-<job_name>/`:
+- `raw.log` — full build log
+- `btc30/bark/<test_name>/` — per-test artifacts (server logs, bark logs,
+  configs, databases)
 
 ## Step 2: Check Out the CI Commit
 
