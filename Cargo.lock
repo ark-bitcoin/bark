@@ -5575,6 +5575,7 @@ dependencies = [
  "bip39",
  "bitcoin",
  "console_log 0.2.2",
+ "futures",
  "gloo-net",
  "log",
  "tokio",

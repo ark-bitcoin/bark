@@ -31,5 +31,6 @@ gloo-net = { version = "0.6", default-features = false, features = ["http"], opt
 
 [dev-dependencies]
 bip39.workspace = true
+futures.workspace = true
 wasm-bindgen-test = "0.3"
 console_log = "0.2"
