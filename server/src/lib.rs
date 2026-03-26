@@ -20,11 +20,11 @@ pub mod wallet;
 pub mod watchman;
 
 pub(crate) mod flux;
-pub(crate) mod system;
+pub mod system;
 
 mod bitcoind;
 mod intman;
-mod ln;
+pub mod ln;
 mod offboards;
 mod round;
 pub mod telemetry;

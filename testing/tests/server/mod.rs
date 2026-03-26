@@ -3,6 +3,7 @@ mod block_index;
 mod lightning;
 mod postgres;
 mod postgres_migrations;
+mod settler;
 
 use std::iter;
 use std::str::FromStr;
