@@ -250,7 +250,8 @@ async fn restart_key_stability() {
 	//! but gives new on-chain addresses.
 
 	let ctx = TestContext::new("server/restart_key_stability").await;
-	let srv = ctx.captaind("server").create().await;
+	let bitcoind = ctx.bitcoind_arc();
+	let srv = ctx.captaind("server").bitcoind(bitcoind.clone()).create().await;
 
 	let server_key1 = srv.ark_info().await.server_pubkey;
 	let addr1 = srv.wallet_status().await.rounds.address.require_network(Network::Regtest).unwrap();
@@ -264,7 +265,7 @@ async fn restart_key_stability() {
 
 	let new_cfg = srv.config().clone();
 	// reiniting the daemon should not call the create command if the datadir exists
-	let srv = ctx.captaind("server").cfg(move |cfg| {
+	let srv = ctx.captaind("server").bitcoind(bitcoind).cfg(move |cfg| {
 		*cfg = new_cfg;
 	}).create().await;
 	let server_key2 = srv.ark_info().await.server_pubkey;
