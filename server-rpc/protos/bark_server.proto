@@ -224,25 +224,6 @@ message ArkoorPackageCosignResponse {
 }
 
 
-// mailbox
-
-message ArkoorVtxo {
-	option deprecated = true;
-	bytes pubkey = 1;
-	bytes vtxo = 2;
-}
-
-message ArkoorVtxosRequest {
-	option deprecated = true;
-	repeated bytes pubkeys = 1;
-}
-
-message ArkoorMailboxPackage {
-	option deprecated = true;
-	bytes arkoor_package_id = 1;
-	repeated bytes vtxos = 2;
-}
-
 // lightning
 
 message LightningPayHtlcCosignRequest {

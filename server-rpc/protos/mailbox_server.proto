@@ -8,20 +8,19 @@ import "core.proto";
 /// Public mailbox service.
 service MailboxService {
 	/// Deposits your VTXOs into the mailbox (blinded ID is unblinded with the VTXOs’ shared user pubkey; all VTXOs must have identical user pubkeys).
-	rpc PostVtxosMailbox(PostVtxosMailboxRequest) returns (core.Empty) {};
+	rpc PostArkoorMessage(PostArkoorMessageRequest) returns (core.Empty) {};
 	rpc SubscribeMailbox(MailboxRequest) returns (stream MailboxMessage);
 	rpc ReadMailbox(MailboxRequest) returns (MailboxMessages);
+	/// Deprecated, please use PostArkoorMessage.
+	rpc PostVtxosMailbox(PostVtxosMailboxRequest) returns (core.Empty) {
+		option deprecated = true;
+	}
 }
 
-enum MailboxType {
-	ARKOOR_RECEIVE = 0;
-}
-
-message PostVtxosMailboxRequest {
+message PostArkoorMessageRequest {
 	// The blinded mailbox ID
 	bytes blinded_id = 1;
 	repeated bytes vtxos = 2;
-	MailboxType mailbox_type = 3;
 }
 
 message MailboxRequest {
@@ -39,7 +38,7 @@ message MailboxMessage {
 	}
 	// Strictly ascending time based number.
 	uint64 checkpoint = 2;
-	MailboxType mailbox_type = 3;
+	MailboxType mailbox_type = 3 [ deprecated = true ];
 }
 
 message ArkoorMessage {
@@ -50,4 +49,18 @@ message MailboxMessages {
 	repeated MailboxMessage messages = 1;
 	/// Whether the server has more messages for you
 	bool have_more = 2;
+}
+
+/* deprecated things */
+enum MailboxType {
+	option deprecated = true;
+	ARKOOR_RECEIVE = 0;
+}
+
+message PostVtxosMailboxRequest {
+	option deprecated = true;
+	// The blinded mailbox ID
+	bytes blinded_id = 1;
+	repeated bytes vtxos = 2;
+	MailboxType mailbox_type = 3;
 }

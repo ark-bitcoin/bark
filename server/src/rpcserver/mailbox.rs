@@ -10,20 +10,56 @@ use crate::database::{Checkpoint, MailboxEntry};
 use crate::rpcserver::{StatusContext, ToStatus, ToStatusResult};
 use crate::rpcserver::macros::badarg;
 
+#[allow(deprecated)]
 fn new_mailbox_msg(entry: MailboxEntry) -> protos::mailbox_server::MailboxMessage {
-	protos::mailbox_server::MailboxMessage {
-		mailbox_type: u32::try_from(entry.mailbox_type).unwrap() as i32,
-		message: Some(protos::mailbox_server::mailbox_message::Message::Arkoor(
-			protos::mailbox_server::ArkoorMessage {
-				vtxos: entry.vtxos.into_iter().map(|v| v.serialize()).collect(),
+	match entry.mailbox_type {
+		MailboxType::ArkoorReceive => {
+			protos::mailbox_server::MailboxMessage {
+				message: Some(protos::mailbox_server::mailbox_message::Message::Arkoor(
+					protos::mailbox_server::ArkoorMessage {
+						vtxos: entry.vtxos.into_iter().map(|v| v.serialize()).collect(),
+					}
+				)),
+				checkpoint: entry.checkpoint.into(),
+				mailbox_type: MailboxType::ArkoorReceive as i32,
 			}
-		)),
-		checkpoint: entry.checkpoint.into(),
+		}
 	}
 }
 
 #[async_trait]
 impl rpc::server::MailboxService for crate::Server {
+	#[tracing::instrument(skip(self, req))]
+	async fn post_arkoor_message(
+		&self,
+		req: tonic::Request<protos::mailbox_server::PostArkoorMessageRequest>,
+	) -> Result<tonic::Response<protos::core::Empty>, tonic::Status> {
+		let req = req.into_inner();
+
+		let vtxos = req.vtxos.into_iter()
+			.map(|v| Vtxo::from_bytes(v))
+			.collect::<Result<Vec<_>, _>>()?;
+		if vtxos.is_empty() {
+			self::badarg!("no vtxos provided");
+		}
+
+		let blinded_mailbox_id = BlindedMailboxIdentifier::from_bytes(&req.blinded_id.as_slice())?;
+		// should all have same pubkey
+		let vtxo_pubkey = vtxos[0].user_pubkey();
+		if !vtxos.iter().skip(1).all(|v| v.user_pubkey() == vtxo_pubkey) {
+			self::badarg!("all vtxos should share vtxo pubkey when mailbox is provided");
+		}
+
+		let mailbox_id = self.unblind_mailbox_id(blinded_mailbox_id, vtxo_pubkey);
+
+		let checkpoint = self.db.store_vtxos_in_mailbox(MailboxType::ArkoorReceive, mailbox_id, vtxos.as_slice()).await.to_status()?
+			.badarg("nothing was stored")?;
+
+		self.mailbox_manager.notify(mailbox_id, checkpoint);
+
+		Ok(tonic::Response::new(protos::core::Empty{}))
+	}
+
 	#[tracing::instrument(skip(self, req))]
 	async fn post_vtxos_mailbox(
 		&self,
