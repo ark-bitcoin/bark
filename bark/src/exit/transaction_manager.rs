@@ -63,11 +63,15 @@ impl ExitTransactionManager {
 			return Ok(txid);
 		}
 
+		trace!("Tracking exit tx {}", txid);
+
 		// We should check the wallet/database to see if we have a child transaction stored locally
 		let package = {
 			let info = TransactionInfo { txid, tx };
+			let child = self.find_child_locally(&info, onchain).await?;
+			trace!("Found local child for exit tx {}: {}", txid, child.is_some());
 			ExitTransactionPackage {
-				child: self.find_child_locally(&info, onchain).await?,
+				child,
 				exit: info,
 			}
 		};
@@ -284,9 +288,13 @@ impl ExitTransactionManager {
 		exit_info: &TransactionInfo,
 		onchain: &dyn ExitUnilaterally,
 	) -> anyhow::Result<Option<ChildTransactionInfo>, ExitError> {
+		trace!("Looking for child in wallet for exit tx {}", exit_info.txid);
+
 		// Check if we have a CPFP tx in our wallet
 		let (outpoint, _) = exit_info.tx.fee_anchor()
 			.ok_or_else(|| ExitError::InternalError { error: format!("Exit tx {} has no P2A output", exit_info.txid) })?;
+
+		trace!("Checking wallet for spending tx of {}:{}", outpoint.txid, outpoint.vout);
 
 		if let Some(child_tx) = onchain.get_spending_tx(outpoint) {
 			// Check the wallet to see if it's confirmed
@@ -310,8 +318,10 @@ impl ExitTransactionManager {
 		&self,
 		exit_info: &TransactionInfo,
 	) -> Result<Option<ChildTransactionInfo>, ExitError> {
+		trace!("Looking for child in database for exit tx {}", exit_info.txid);
 		let result = self.persister.get_exit_child_tx(exit_info.txid).await
 			.map_err(|e| ExitError::DatabaseChildRetrievalFailure { error: e.to_string() })?;
+		trace!("Database lookup complete for exit tx {}", exit_info.txid);
 
 		if let Some((tx, origin)) = result {
 			Ok(Some(ChildTransactionInfo {
