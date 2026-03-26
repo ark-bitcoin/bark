@@ -61,9 +61,9 @@ build-and-push-bark-to-registry:
   script:
     - cat VERSION
     # Build the containers
-    - buildah build --network=host -f ./.gitlab/images/releases/bark/linux_amd64.Dockerfile --tag registry.2nd.dev/bark:linux-amd64 .
-    - buildah build --network=host -f ./.gitlab/images/releases/bark/linux_arm64.Dockerfile --tag registry.2nd.dev/bark:linux-arm64 .
-    - buildah build --network=host -f ./.gitlab/images/releases/bark/linux_armv7.Dockerfile --tag registry.2nd.dev/bark:linux-armv7 .
+    - buildah build --platform linux/amd64  --network=host -f ./.gitlab/images/releases/bark/linux_amd64.Dockerfile --tag registry.2nd.dev/bark:linux-amd64 .
+    - buildah build --platform linux/arm64  --network=host -f ./.gitlab/images/releases/bark/linux_arm64.Dockerfile --tag registry.2nd.dev/bark:linux-arm64 .
+    - buildah build --platform linux/arm/v7 --network=host -f ./.gitlab/images/releases/bark/linux_armv7.Dockerfile --tag registry.2nd.dev/bark:linux-armv7 .
     # Push containers to registry.2nd.dev
     - buildah push registry.2nd.dev/bark:linux-amd64
     - buildah push registry.2nd.dev/bark:linux-arm64
