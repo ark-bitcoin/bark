@@ -171,7 +171,7 @@ bark-wasm-indexed-db-tests:
   script:
     - |
       nix develop .#default --command bash -c "
-        wasm-pack test --headless --chrome bark --no-default-features --features 'indexed-db wasm-web' --lib
+        wasm-pack test --headless --firefox bark --no-default-features --features 'indexed-db wasm-web' --lib
       "
 
 lib-msrv:

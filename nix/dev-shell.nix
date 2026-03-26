@@ -154,6 +154,10 @@ let
 		LIGHTNINGD_DOCKER_IMAGE = if isDarwin then "docker.io/secondark/cln-hold:v${lightningVersion}" else null;
 		LIGHTNINGD_PLUGIN_DIR = if isDarwin then "/plugins" else "${cln-plugins}";
 		TOR_EXEC = "${pkgs.tor}/bin/tor";
+		# For CC crate to compile C code to WASM
+		CC_wasm32_unknown_unknown = "${pkgs.llvmPackages.clang-unwrapped}/bin/clang";
+		AR_wasm32_unknown_unknown = "${pkgs.llvmPackages.bintools-unwrapped}/bin/llvm-ar";
+		CFLAGS_wasm32_unknown_unknown = "--target=wasm32-unknown-unknown";
 	};
 
 in {
@@ -210,7 +214,9 @@ in {
 
 			# for WASM development
 			pkgs.wasm-pack
-			pkgs.chromium
+			pkgs.wabt
+			pkgs.firefox
+			pkgs.geckodriver
 
 		] ++ (
 			if isDarwin then [
