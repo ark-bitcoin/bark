@@ -383,7 +383,7 @@ impl TryFrom<protos::RoundEvent> for ark::rounds::RoundEvent {
 	type Error = ConvertError;
 
 	fn try_from(m: protos::RoundEvent) -> Result<ark::rounds::RoundEvent, Self::Error> {
-		Ok(match m.event.unwrap() {
+		Ok(match m.event.ok_or("unknown round event")? {
 			protos::round_event::Event::Attempt(m) => {
 				ark::rounds::RoundEvent::Attempt(ark::rounds::RoundAttempt {
 					round_seq: m.round_seq.into(),
@@ -513,7 +513,7 @@ impl From<SignedVtxoRequest> for protos::SignedVtxoRequest {
 impl TryFrom<protos::SignedVtxoRequest> for SignedVtxoRequest {
 	type Error = ConvertError;
 	fn try_from(v: protos::SignedVtxoRequest) -> Result<Self, Self::Error> {
-		let vtxo = v.vtxo.unwrap();
+		let vtxo = v.vtxo.ok_or("vtxo field missing")?;
 		Ok(SignedVtxoRequest {
 			vtxo: VtxoRequest {
 				amount: Amount::from_sat(vtxo.amount),
