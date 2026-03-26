@@ -19,7 +19,7 @@ variables:
 workflow:
   auto_cancel:
     on_new_commit: interruptible
-    on_job_failure: all
+    on_job_failure: none
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_EVENT_TYPE == "merge_train"
       variables:
