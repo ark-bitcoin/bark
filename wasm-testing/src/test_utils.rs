@@ -61,3 +61,11 @@ pub async fn trigger_round() {
 		.expect("failed to reach control server");
 	assert!(resp.ok(), "trigger_round failed: {}", resp.status());
 }
+
+/// Get a new on-chain bitcoin address from the test bitcoind.
+pub async fn get_new_address() -> String {
+	let url = format!("{}/get_new_address", env!("ARK_CONTROL_URL"));
+	let resp = gloo_net::http::Request::get(&url).send().await
+		.expect("failed to reach control server");
+	resp.text().await.expect("failed to read response").trim().to_string()
+}

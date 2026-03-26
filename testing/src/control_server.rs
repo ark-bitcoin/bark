@@ -58,6 +58,7 @@ impl ControlServer {
 			.route("/generate_blocks", get(generate_blocks))
 			.route("/fund_address", get(fund_address))
 			.route("/trigger_round", get(trigger_round))
+			.route("/get_new_address", get(get_new_address))
 			.route("/esplora/{*rest}", any(esplora))
 			.with_state(self.state)
 			.layer(SetResponseHeaderLayer::overriding(
@@ -143,6 +144,10 @@ async fn esplora(
 async fn trigger_round(State(state): State<AppState>) -> &'static str {
 	state.srv.trigger_round().await;
 	"ok"
+}
+
+async fn get_new_address(State(state): State<AppState>) -> String {
+	state.ctx.bitcoind().get_new_address().to_string()
 }
 
 /// Forward an HTTP request to a local esplora URL.
