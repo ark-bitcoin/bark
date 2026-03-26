@@ -1,3 +1,4 @@
+
 use std::sync::Arc;
 
 use axum::Router;
@@ -13,11 +14,12 @@ use tokio::net::{TcpListener, TcpStream};
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::set_header::SetResponseHeaderLayer;
 
-use crate::TestContext;
+use crate::{Captaind, TestContext};
 
 #[derive(Clone)]
 struct AppState {
 	ctx: Arc<TestContext>,
+	srv: Arc<Captaind>,
 	/// The real electrs URL (not the proxy URL returned by [super::esplora_url]).
 	upstream_esplora: Arc<str>,
 }
@@ -28,7 +30,7 @@ pub struct ControlServer {
 }
 
 impl ControlServer {
-	pub fn new(ctx: Arc<TestContext>) -> Self {
+	pub fn new(ctx: Arc<TestContext>, srv: Arc<Captaind>) -> Self {
 		let upstream_esplora = ctx.electrs.as_ref()
 			.expect("wasm tests require esplora; set CHAIN_SOURCE=esplora")
 			.rest_url()
@@ -36,7 +38,7 @@ impl ControlServer {
 			.into();
 		let port = portpicker::pick_unused_port()
 			.expect("no free TCP port for control server");
-		Self { state: AppState { ctx, upstream_esplora }, port }
+		Self { state: AppState { ctx, srv, upstream_esplora }, port }
 	}
 
 	pub fn url(&self) -> String {
@@ -55,6 +57,7 @@ impl ControlServer {
 		let app = Router::new()
 			.route("/generate_blocks", get(generate_blocks))
 			.route("/fund_address", get(fund_address))
+			.route("/trigger_round", get(trigger_round))
 			.route("/esplora/{*rest}", any(esplora))
 			.with_state(self.state)
 			.layer(SetResponseHeaderLayer::overriding(
@@ -135,6 +138,11 @@ async fn esplora(
 		},
 		Err(e) => (StatusCode::BAD_GATEWAY, e.to_string()).into_response(),
 	}
+}
+
+async fn trigger_round(State(state): State<AppState>) -> &'static str {
+	state.srv.trigger_round().await;
+	"ok"
 }
 
 /// Forward an HTTP request to a local esplora URL.

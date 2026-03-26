@@ -54,3 +54,10 @@ pub async fn fund_address(address: &str, sats: u64) {
 		.expect("failed to reach control server");
 	assert!(resp.ok(), "fund_address failed: {}", resp.status());
 }
+
+pub async fn trigger_round() {
+	let url = format!("{}/trigger_round", env!("ARK_CONTROL_URL"));
+	let resp = gloo_net::http::Request::get(&url).send().await
+		.expect("failed to reach control server");
+	assert!(resp.ok(), "trigger_round failed: {}", resp.status());
+}

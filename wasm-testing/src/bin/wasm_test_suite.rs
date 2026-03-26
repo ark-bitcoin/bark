@@ -30,7 +30,7 @@ async fn main() {
 
 	let server_url = srv.ark_url().replace("0.0.0.0", "127.0.0.1");
 
-	let control = control_server::ControlServer::new(ctx.clone());
+	let control = control_server::ControlServer::new(ctx.clone(), srv);
 	let control_url = control.url();
 	let esplora_url = format!("{}/esplora", control_url);
 	control.spawn();
