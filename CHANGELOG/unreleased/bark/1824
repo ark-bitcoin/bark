@@ -1,0 +1,4 @@
+- Add ability to cancel pending lightning receives
+  Users can now cancel a pending inbound lightning payment via
+  `Wallet::cancel_lightning_receive` or the `bark lightning receive cancel` CLI command.
+  [#1824](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1824)

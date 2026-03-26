@@ -1,0 +1,4 @@
+- Add gRPC endpoint to cancel a pending lightning receive
+  The server now exposes `CancelLightningReceive` allowing clients to cancel
+  an in-flight inbound lightning payment by payment hash.
+  [#1824](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1824)
