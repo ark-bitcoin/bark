@@ -320,9 +320,8 @@ core-server:
     - export BARKD_EXEC=${CI_PROJECT_DIR}/target/ci/barkd
     - bash ./contrib/ci-run-test.sh test-integration-core-prebuilt
 
-int-bark-0.1.0-beta.8:
+int-bark-0.1.0-beta.9:
   interruptible: true
-  when: manual # currently broken, need to look into a solution
   stage: test
   tags:
     - integration
@@ -333,14 +332,14 @@ int-bark-0.1.0-beta.8:
     - build
     - build-test-archives
   variables:
-    TEST_DIRECTORY: ./test/bark-0.1.0-beta.8
+    TEST_DIRECTORY: ./test/bark-0.1.0-beta.9
     NEXTEST_TEST_THREADS: "2"
     BARK_COMMAND_TIMEOUT_MILLIS: "120000"
     TX_PROPAGATION_TIMEOUT: "30000"
-    BARK_RELEASE_URL: https://gitlab.com/ark-bitcoin/bark/-/releases/bark-0.1.0-beta.8/downloads/bark-0.1.0-beta.8-linux-x86_64
-    BARK_RELEASE_SHA256: 2d3884d47b29ae67d8559ff064399b8f3eb568af14d072cd25db3190d216adb9
+    BARK_RELEASE_URL: https://gitlab.com/ark-bitcoin/bark/-/releases/bark-0.1.0-beta.9/downloads/bark-0.1.0-beta.9-linux-x86_64
+    BARK_RELEASE_SHA256: 649ebffa7a5aa2dd6a6b3c2b09ec8ea94b54e1d78385683b1933c3e856ab2a30
   cache:
-    key: bark-0.1.0-beta.8
+    key: bark-0.1.0-beta.9
     paths:
       - .bark-release-cache/
   script:
@@ -372,7 +371,7 @@ tar-and-print-test-data:
       optional: true
     - job: core-server
       optional: true
-    - job: int-bark-0.1.0-beta.8
+    - job: int-bark-0.1.0-beta.9
       optional: true
   script:
     - |

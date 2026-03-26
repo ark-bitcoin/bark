@@ -99,6 +99,12 @@ fn inner_guard_auth(
 	State(state): State<ServerState>,
 	req: &Request<Body>,
 ) -> Result<(), ErrorResponse> {
+	// If no auth token is configured, allow unauthenticated access.
+	let expected = match state.auth_token() {
+		Some(t) => t,
+		None => return Ok(()),
+	};
+
 	let token_str = match extract_auth_token(req) {
 		Ok(Some(t)) => t,
 		Ok(None) => unauthorized!("missing auth token"),
@@ -110,7 +116,7 @@ fn inner_guard_auth(
 		Err(e) => unauthorized!("{}", e.to_string()),
 	};
 
-	if token != *state.auth_token() {
+	if token != *expected {
 		unauthorized!("invalid auth token");
 	}
 
@@ -142,7 +148,7 @@ mod tests {
 		State(ServerState {
 			wallet: Arc::new(parking_lot::RwLock::new(None)),
 			on_wallet_create: None,
-			auth_token: token,
+			auth_token: Some(token),
 			on_wallet_delete: None,
 		})
 	}
