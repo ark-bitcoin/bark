@@ -55,7 +55,7 @@ uuid = { version = "1.17.0", features = ["v4"] }
 
 anyhow.workspace = true
 lazy_static.workspace = true
-serde.workspace = true
+serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 toml.workspace = true
 bitcoin.workspace = true
@@ -77,3 +77,6 @@ async-trait.workspace = true
 tokio-postgres.workspace = true
 semver.workspace = true
 parking_lot.workspace = true
+
+axum = { version = "0.8.4", features = ["macros", "tokio", "query"], default-features = false }
+tower-http = { version = "0.5", features = ["cors", "set-header"] }

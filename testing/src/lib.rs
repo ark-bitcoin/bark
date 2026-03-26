@@ -13,6 +13,7 @@ pub mod util;
 pub mod bark;
 pub mod postgres;
 pub mod exit;
+pub mod control_server;
 
 pub use context::TestContext;
 pub use daemon::{Daemon, DaemonHelper};

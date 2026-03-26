@@ -4,12 +4,17 @@ version = "0.0.0"
 license = "MIT"
 edition = "2024"
 
+[[bin]]
+name = "wasm-test-suite"
+path = "src/bin/wasm_test_suite.rs"
+
 [features]
 default = ["dep:tokio", "dep:ark-testing"]
 wasm = [
 	"bark-wallet/wasm-web",
 	"bark-wallet/indexed-db",
 	"bark-server-rpc/tonic-web",
+	"dep:gloo-net",
 ]
 
 [dependencies]
@@ -17,9 +22,11 @@ ark-testing = { path = "../testing", optional = true }
 bark-wallet = { path = "../bark", default-features = false }
 bark-server-rpc = { path = "../server-rpc", default-features = false }
 
+anyhow = { workspace = true, optional = true }
 bitcoin.workspace = true
 log.workspace = true
 tokio = { workspace = true, features = ["process", "signal", "macros", "rt-multi-thread"], optional = true }
+gloo-net = { version = "0.6", default-features = false, features = ["http"], optional = true }
 
 [dev-dependencies]
 bip39.workspace = true
