@@ -201,6 +201,7 @@ in {
 			pkgs.coreutils
 			pkgs.which
 			pkgs.git
+			pkgs.glab
 			pkgs.gnugrep
 
 			# for rust-bitcoinkernel build
