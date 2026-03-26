@@ -99,6 +99,12 @@ pub enum ReceiveCommand {
 		#[arg(long)]
 		no_sync: bool,
 	},
+	/// Cancel a pending lightning receive
+	#[command()]
+	Cancel {
+		/// payment hash or invoice to cancel
+		payment: String,
+	},
 }
 
 #[derive(clap::Args)]
@@ -254,6 +260,11 @@ async fn execute_receive_command(
 			} else {
 				info!("No incoming payment found for this payment hash");
 			}
+		},
+		ReceiveCommand::Cancel { payment } => {
+			let payment_hash = payment_hash_from_filter(&payment)?;
+			wallet.cancel_lightning_receive(payment_hash).await?;
+			info!("Lightning receive canceled successfully");
 		},
 	}
 

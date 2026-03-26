@@ -20,6 +20,7 @@ use crate::ServerState;
 		generate_invoice,
 		get_receive_status,
 		list_receive_statuses,
+		cancel_receive,
 		pay,
 	),
 	components(schemas(
@@ -36,7 +37,7 @@ pub struct LightningApiDoc;
 pub fn router() -> Router<ServerState> {
 	Router::new()
 		.route("/receives/invoice", post(generate_invoice))
-		.route("/receives/{identifier}", get(get_receive_status))
+		.route("/receives/{identifier}", get(get_receive_status).delete(cancel_receive))
 		.route("/receives", get(list_receive_statuses))
 		.route("/pay", post(pay))
 }
@@ -144,6 +145,45 @@ pub async fn list_receive_statuses(
 		.map(bark_json::cli::LightningReceiveInfo::from).collect::<Vec<_>>();
 
 	Ok(axum::Json(receives))
+}
+
+#[utoipa::path(
+	delete,
+	path = "/receives/{identifier}",
+	summary = "Cancel a pending receive",
+	params(
+		("identifier" = String, Path, description = "Payment hash or invoice string"),
+	),
+	responses(
+		(status = 200, description = "Receive canceled successfully"),
+		(status = 400, description = "Bad request", body = error::BadRequestError),
+		(status = 404, description = "Not found", body = error::NotFoundError),
+		(status = 500, description = "Internal server error", body = error::InternalServerError)
+	),
+	description = "Cancels a pending Lightning receive identified by its payment hash or \
+		invoice string. The server will refuse cancellation if HTLC-recv VTXOs have already \
+		been granted. Bark also prevents cancellation when the preimage has been revealed.",
+	tag = "lightning"
+)]
+#[debug_handler]
+pub async fn cancel_receive(
+	State(state): State<ServerState>,
+	Path(identifier): Path<String>,
+) -> HandlerResult<()> {
+	let wallet = state.require_wallet()?;
+
+	let payment_hash = if let Ok(h) = ark::lightning::PaymentHash::from_str(&identifier) {
+		h
+	} else if let Ok(i) = Bolt11Invoice::from_str(&identifier) {
+		i.into()
+	} else {
+		badarg!("identifier is not a valid payment hash or invoice");
+	};
+
+	wallet.cancel_lightning_receive(payment_hash).await
+		.context("Failed to cancel lightning receive")?;
+
+	Ok(())
 }
 
 #[utoipa::path(
