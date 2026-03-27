@@ -536,6 +536,15 @@ impl Bark {
 		self.try_lightning_receive_all().await.unwrap();
 	}
 
+	pub async fn try_cancel_lightning_receive(&self, payment: &str) -> anyhow::Result<()> {
+		self.try_run(["lightning", "receive", "cancel", payment]).await?;
+		Ok(())
+	}
+
+	pub async fn cancel_lightning_receive(&self, payment: &str) {
+		self.try_cancel_lightning_receive(payment).await.unwrap();
+	}
+
 	pub async fn list_lightning_receives(&self) -> Vec<LightningReceiveInfo> {
 		let res = self.run(["lightning", "invoices"]).await;
 		serde_json::from_str(&res).expect("json error")
