@@ -649,7 +649,7 @@ async fn should_refuse_ln_pay_input_vtxo_that_is_being_exited() {
 			let sig = ArkoorCosignAttestation::new(self.1.id, &output_refs, &keypair);
 
 			req.parts[0].input_vtxo_id = self.1.id.to_bytes().to_vec();
-			req.parts[0].attestation = Some(sig.serialize().to_vec());
+			req.parts[0].attestation = sig.serialize().to_vec();
 			Ok(upstream.request_lightning_pay_htlc_cosign(req).await?.into_inner())
 		}
 	}

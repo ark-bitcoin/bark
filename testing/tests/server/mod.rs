@@ -1099,11 +1099,11 @@ async fn should_refuse_oor_with_invalid_attestation() {
 				let outputs = part.outputs.iter()
 					.map(|o| ArkoorDestination::try_from(o.clone()).unwrap())
 					.collect::<Vec<_>>();
-				part.attestation = Some(ArkoorCosignAttestation::new(
+				part.attestation = ArkoorCosignAttestation::new(
 					vtxo_id,
 					&outputs.iter().collect::<Vec<_>>(),
 					&wrong_key,
-				).serialize().to_vec());
+				).serialize().to_vec();
 			}
 			Ok(upstream.request_arkoor_cosign(req).await?.into_inner())
 		}
@@ -1146,11 +1146,11 @@ async fn should_refuse_ln_pay_with_invalid_attestation() {
 				let outputs = part.outputs.iter()
 					.map(|o| ArkoorDestination::try_from(o.clone()).unwrap())
 					.collect::<Vec<_>>();
-				part.attestation = Some(ArkoorCosignAttestation::new(
+				part.attestation = ArkoorCosignAttestation::new(
 					vtxo_id,
 					&outputs.iter().collect::<Vec<_>>(),
 					&wrong_key,
-				).serialize().to_vec());
+				).serialize().to_vec();
 			}
 			Ok(upstream.request_lightning_pay_htlc_cosign(req).await?.into_inner())
 		}
@@ -1209,7 +1209,7 @@ async fn should_refuse_oor_input_vtxo_that_is_being_exited() {
 			let sig = ArkoorCosignAttestation::new(self.1.id, &output_refs, &keypair);
 
 			req.parts[0].input_vtxo_id = self.1.id.to_bytes().to_vec();
-			req.parts[0].attestation = Some(sig.serialize().to_vec());
+			req.parts[0].attestation = sig.serialize().to_vec();
 			Ok(upstream.request_arkoor_cosign(req).await?.into_inner())
 		}
 	}

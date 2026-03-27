@@ -206,8 +206,7 @@ message ArkoorCosignRequest {
 	// outputs used for dust isolation
 	repeated ArkoorDestination isolated_outputs = 4;
 	bool use_checkpoint = 5;
-	// TODO: remove option after 0.1.0-beta-9
-	optional bytes attestation = 6;
+	bytes attestation = 6;
 }
 
 message ArkoorPackageCosignRequest {

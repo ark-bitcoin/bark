@@ -615,7 +615,7 @@ impl<V: VtxoRef> From<ArkoorCosignRequest<V>> for protos::ArkoorCosignRequest {
 				.map(|output| output.into())
 				.collect::<Vec<_>>(),
 			use_checkpoint: v.use_checkpoint,
-			attestation: v.attestation.map(|a| a.serialize().to_vec()),
+			attestation: v.attestation.serialize().to_vec(),
 		}
 	}
 }
@@ -624,12 +624,6 @@ impl<V: VtxoRef> From<ArkoorCosignRequest<V>> for protos::ArkoorCosignRequest {
 impl TryFrom<protos::ArkoorCosignRequest> for ArkoorCosignRequest<VtxoId> {
 	type Error = ConvertError;
 	fn try_from(v: protos::ArkoorCosignRequest) -> Result<Self, Self::Error> {
-		let attestation = match v.attestation {
-			Some(a) => Some(ArkoorCosignAttestation::deserialize(&mut a.as_ref())
-				.map_err(|_| "invalid attestation")?),
-			None => None,
-		};
-
 		let req = Self::new_with_attestation(
 			v.user_pub_nonces.into_iter()
 				.map(|n| musig::PublicNonce::from_bytes(&n))
@@ -642,7 +636,8 @@ impl TryFrom<protos::ArkoorCosignRequest> for ArkoorCosignRequest<VtxoId> {
 				.map(|output| ArkoorDestination::try_from(output))
 				.collect::<Result<Vec<_>, _>>()?,
 			v.use_checkpoint,
-			attestation,
+			ArkoorCosignAttestation::deserialize(&v.attestation)
+				.map_err(|_| "Failed to parse attestation")?,
 		);
 		Ok(req)
 	}
