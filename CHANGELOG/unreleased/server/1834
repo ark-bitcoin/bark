@@ -1,0 +1,6 @@
+- Make arkoor ownership attestation mandatory
+  The attestation field on arkoor and lightning send cosign requests is now required.
+  It was previously left optional for backward compatibility.
+  [#1834](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1834)
+  - **BREAKING:** `ArkoorCosignRequest.attestation` is no longer optional
+  - Remove deprecated `PaymentStatus` enum and `LightningPaymentResult` message from gRPC
