@@ -1,7 +1,7 @@
 
 use std::convert::Infallible;
 
-use bitcoin::Txid;
+use bitcoin::{Transaction, Txid};
 use bitcoin::secp256k1::Keypair;
 
 use crate::{Vtxo, VtxoId, VtxoPolicy, ServerVtxo, Amount};
@@ -307,6 +307,28 @@ impl ArkoorPackageBuilder<state::Initial> {
 		}
 		Ok(ArkoorPackageBuilder { builders: builder })
 	}
+
+	/// Sign as both server and user in a single step.
+	///
+	/// See [ArkoorBuilder::cosign_both].
+	pub fn cosign_both(
+		self,
+		user_keypairs: &[Keypair],
+		server_keypair: &Keypair,
+	) -> Result<ArkoorPackageBuilder<state::UserSigned>, ArkoorSigningError> {
+		if user_keypairs.len() != self.builders.len() {
+			return Err(ArkoorSigningError::InvalidNbKeypairs {
+				expected: self.builders.len(),
+				got: user_keypairs.len(),
+			})
+		}
+
+		let mut packages = Vec::with_capacity(self.builders.len());
+		for (idx, pkg) in self.builders.into_iter().enumerate() {
+			packages.push(pkg.cosign_both(&user_keypairs[idx], server_keypair)?);
+		}
+		Ok(ArkoorPackageBuilder { builders: packages })
+	}
 }
 
 impl ArkoorPackageBuilder<state::UserGeneratedNonces> {
@@ -347,6 +369,7 @@ impl ArkoorPackageBuilder<state::UserGeneratedNonces> {
 
 		ArkoorPackageCosignRequest { requests }
 	}
+
 }
 
 impl ArkoorPackageBuilder<state::UserSigned> {
@@ -355,6 +378,21 @@ impl ArkoorPackageBuilder<state::UserSigned> {
 			.map(|b| b.build_signed_vtxos())
 			.flatten()
 			.collect::<Vec<_>>()
+	}
+
+	/// Builds the signed internal VTXOs, each paired with the txid
+	/// of the transaction that spends it.
+	pub fn build_signed_internal_vtxos(&self) -> Vec<(ServerVtxo<Full>, Txid)> {
+		self.builders.iter()
+			.map(|b| b.build_signed_internal_vtxos())
+			.flatten()
+			.collect()
+	}
+
+	pub fn signed_virtual_transactions(&self) -> Vec<Transaction> {
+		self.builders.iter()
+			.flat_map(|b| b.signed_virtual_transactions())
+			.collect()
 	}
 }
 
