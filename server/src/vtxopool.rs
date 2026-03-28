@@ -261,6 +261,12 @@ impl VtxoPool {
 		let input_ids = inputs.iter().map(|v| v.0).collect::<Vec<_>>();
 		let input_vtxos = srv.db.get_pool_vtxos_by_ids(&input_ids).await?;
 
+		// Validate that the inputs are still usable and unlocked
+		let _vtxo_guard = srv.vtxos_in_flux.try_lock(&input_ids).map_err(|e| {
+			anyhow::anyhow!("some VTXO is already locked by another process: {}", e.id)
+		})?;
+		srv.check_vtxos_not_exited(&input_ids).await?;
+
 		let keys = {
 			let mut ret = Vec::with_capacity(input_vtxos.len());
 			for v in &input_vtxos {
@@ -285,19 +291,20 @@ impl VtxoPool {
 			input_vtxos.into_iter().map(|v| v.into_inner()),
 			vec![dest.clone(), change_dest],
 		).context("arkoor builder error")?;
-		let builder = builder.generate_user_nonces(&keys).context("invalid arkoor cosign keys")?;
+		let builder = builder.cosign_both(&keys, srv.server_key.leak_ref())
+			.context("error cosigning arkoor")?;
 
-		// then we create the builder
-		let builder_ret = ArkoorPackageBuilder::from_cosign_request(builder.cosign_request());
-		let server_builder = match builder_ret {
-			Ok(ret) => ret,
-			Err((idx, e)) => bail!("invalid cosign request at index #{idx}: {e}")
-		};
-		let cosign_resp = srv.cosign_oor_with_builder(server_builder).await?.cosign_response();
+		let signed_vtxs = builder.signed_virtual_transactions();
+		let internal_vtxos = builder.build_signed_internal_vtxos();
+		let input_spend_info = builder.input_spend_info().collect::<Vec<_>>();
+		let output_vtxos = builder.build_signed_vtxos();
 
-		let output_vtxos = builder.user_cosign(&keys, cosign_resp)
-			.context("error cosigning our own arkoor")?
-			.build_signed_vtxos();
+		let update = VtxoTreeUpdate::new()
+			.upsert_signed_tx(signed_vtxs)
+			.insert_oor_spent_vtxos(internal_vtxos)
+			.insert_spendable_vtxos(output_vtxos.iter().cloned().map(ServerVtxo::from))
+			.mark_vtxos_oor_spent(input_spend_info);
+		srv.db.execute_vtxo_tree_update(update).await?;
 
 		let (sent, change) = output_vtxos.into_iter()
 			.partition::<Vec<_>, _>(|v| *v.policy() == dest.policy);
