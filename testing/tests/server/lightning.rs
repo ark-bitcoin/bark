@@ -340,11 +340,13 @@ async fn server_returned_htlc_recv_vtxos_identical(
 			let vtxos_1 = client.prepare_lightning_receive_claim(req_1.clone()).await.unwrap()
 				.into_inner().htlc_vtxos.into_iter().map(|b| Vtxo::deserialize(&b))
 				.collect::<Result<Vec<Vtxo<Full>>, _>>().unwrap();
+			assert!(vtxos_1.iter().all(|v| v.has_all_witnesses()), "first call vtxos should be fully signed");
 
 			// We test once again with the same request
 			let vtxos_2 = client.prepare_lightning_receive_claim(req_1).await.unwrap()
 				.into_inner().htlc_vtxos.into_iter().map(|b| Vtxo::deserialize(&b))
 				.collect::<Result<Vec<Vtxo<Full>>, _>>().unwrap();
+			assert!(vtxos_2.iter().all(|v| v.has_all_witnesses()), "retry call vtxos should be fully signed");
 
 			// we change keypair to make sure server don't use it on second request
 			let keypair = Keypair::new(&SECP, &mut bip39::rand::thread_rng());
@@ -358,6 +360,7 @@ async fn server_returned_htlc_recv_vtxos_identical(
 			let vtxos_3 = client.prepare_lightning_receive_claim(req_2).await.unwrap()
 				.into_inner().htlc_vtxos.into_iter().map(|b| Vtxo::deserialize(&b))
 				.collect::<Result<Vec<Vtxo<Full>>, _>>().unwrap();
+			assert!(vtxos_3.iter().all(|v| v.has_all_witnesses()), "third call vtxos should be fully signed");
 
 			assert_eq!(vtxos_1, vtxos_2, "should have the same VTXOs");
 			assert_eq!(vtxos_1, vtxos_3, "should have the same VTXOs");
