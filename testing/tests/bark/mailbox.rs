@@ -29,9 +29,6 @@ async fn reject_arkoor_with_bad_signature() {
 				Message::Arkoor(message) => {
 					Vtxo::deserialize(&message.vtxos[0]).unwrap()
 				}
-				_ => {
-					return Err(tonic::Status::invalid_argument("invalid message type"));
-				}
 			};
 			vtxo.invalidate_final_sig();
 			let message = ArkoorMessage { vtxos: vec![vtxo.serialize()] };
@@ -40,6 +37,7 @@ async fn reject_arkoor_with_bad_signature() {
 				messages: vec![protos::mailbox_server::MailboxMessage {
 					message: Some(mailbox_message::Message::Arkoor(message)),
 					checkpoint: 0,
+					#[allow(deprecated)]
 					mailbox_type: protos::mailbox_server::MailboxType::ArkoorReceive as i32,
 				}],
 				have_more: false,

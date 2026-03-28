@@ -24,7 +24,7 @@ use ark::{
 use ark::arkoor::ArkoorDestination;
 use ark::arkoor::package::ArkoorPackageBuilder;
 use ark::attestations::ArkoorCosignAttestation;
-use ark::mailbox::{MailboxAuthorization, MailboxIdentifier, MailboxType};
+use ark::mailbox::{MailboxAuthorization, MailboxIdentifier};
 use ark::rounds::{Challenge, RoundAttemptAttestation, RoundSeq};
 use ark::tree::signed::builder::SignedTreeBuilder;
 use ark::tree::signed::{LeafVtxoCosignContext, UnlockPreimage};
@@ -744,7 +744,6 @@ async fn bad_round_input() {
 		.unwrap().try_into().unwrap();
 
 	let ark_info = srv.ark_info().await;
-	let mailbox_id = bark.client().await.mailbox_identifier();
 	let mut rpc = srv.get_public_rpc().await;
 	let mut stream = rpc.subscribe_rounds(protos::Empty {}).await.unwrap().into_inner();
 	srv.trigger_round().await;
@@ -1740,7 +1739,6 @@ async fn mailbox_post_and_process_with_auth() {
 			assert_eq!(vtxo.amount(), sent_amount);
 			let _ = read_vtxo.insert(vtxo);
 		},
-		_ => panic!("unexpected message type"),
 	}
 
 	// Now we check that the server rejects requests with incorrect authorization
@@ -1809,7 +1807,6 @@ async fn mailbox_post_and_process_with_auth() {
 						assert_ne!(checkpoint, 0);
 						return
 					}
-					_ => panic!("unexpected message type"),
 				}
 			},
 		}
