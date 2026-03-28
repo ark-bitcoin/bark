@@ -1611,6 +1611,20 @@ mod test {
 	use crate::test_util::dummy::DummyTestVtxoSpec;
 	use crate::vtxo::VtxoId;
 
+	/// Verify that all signed internal vtxos pass validation.
+	fn verify_signed_internal_vtxos(
+		builder: &ArkoorBuilder<state::UserSigned>,
+		funding_tx: &Transaction,
+	) {
+		let signed = builder.build_signed_internal_vtxos();
+		let unsigned = builder.build_unsigned_internal_vtxos();
+		assert_eq!(signed.len(), unsigned.len());
+
+		for (vtxo, _spending_txid) in &signed {
+			vtxo.validate(funding_tx).expect("signed internal vtxo must be valid");
+		}
+	}
+
 	/// Verify properties of spend_info(), build_unsigned_internal_vtxos(), and final vtxos.
 	fn verify_builder<S: state::BuilderState>(
 		builder: &ArkoorBuilder<S>,
@@ -1725,10 +1739,11 @@ mod test {
 		let cosign_data = server_builder.cosign_response();
 
 		// The user will cosign the request and construct their vtxos
-		let vtxos = user_builder
+		let signed_builder = user_builder
 			.user_cosign(&alice_keypair, &cosign_data)
-			.expect("Valid cosign data and correct key")
-			.build_signed_vtxos();
+			.expect("Valid cosign data and correct key");
+		verify_signed_internal_vtxos(&signed_builder, &funding_tx);
+		let vtxos = signed_builder.build_signed_vtxos();
 
 		for vtxo in vtxos.into_iter() {
 			// Check if the vtxo is considered valid
@@ -1816,10 +1831,11 @@ mod test {
 		let cosign_data = server_builder.cosign_response();
 
 		// The user will cosign the request and construct their vtxos
-		let vtxos = user_builder
+		let signed_builder = user_builder
 			.user_cosign(&alice_keypair, &cosign_data)
-			.expect("Valid cosign data and correct key")
-			.build_signed_vtxos();
+			.expect("Valid cosign data and correct key");
+		verify_signed_internal_vtxos(&signed_builder, &funding_tx);
+		let vtxos = signed_builder.build_signed_vtxos();
 
 		// Should have 3 vtxos: 1 non-dust + 2 dust
 		assert_eq!(vtxos.len(), 3);
@@ -1893,10 +1909,11 @@ mod test {
 		let cosign_data = server_builder.cosign_response();
 
 		// The user will cosign the request and construct their vtxos
-		let vtxos = user_builder
+		let signed_builder = user_builder
 			.user_cosign(&alice_keypair, &cosign_data)
-			.expect("Valid cosign data and correct key")
-			.build_signed_vtxos();
+			.expect("Valid cosign data and correct key");
+		verify_signed_internal_vtxos(&signed_builder, &funding_tx);
+		let vtxos = signed_builder.build_signed_vtxos();
 
 		for vtxo in vtxos.into_iter() {
 			// Check if the vtxo is considered valid
@@ -1985,10 +2002,11 @@ mod test {
 		let cosign_data = server_builder.cosign_response();
 
 		// The user will cosign the request and construct their vtxos
-		let vtxos = user_builder
+		let signed_builder = user_builder
 			.user_cosign(&alice_keypair, &cosign_data)
-			.expect("Valid cosign data and correct key")
-			.build_signed_vtxos();
+			.expect("Valid cosign data and correct key");
+		verify_signed_internal_vtxos(&signed_builder, &funding_tx);
+		let vtxos = signed_builder.build_signed_vtxos();
 
 		// Should have 3 vtxos: 1 non-dust + 2 dust
 		assert_eq!(vtxos.len(), 3);
@@ -2210,10 +2228,11 @@ mod test {
 		let cosign_data = server_builder.cosign_response();
 
 		// The user will cosign the request and construct their vtxos
-		let vtxos = user_builder
+		let signed_builder = user_builder
 			.user_cosign(&alice_keypair, &cosign_data)
-			.expect("Valid cosign data and correct key")
-			.build_signed_vtxos();
+			.expect("Valid cosign data and correct key");
+		verify_signed_internal_vtxos(&signed_builder, &funding_tx);
+		let vtxos = signed_builder.build_signed_vtxos();
 
 		// Should have 2 vtxos
 		assert_eq!(vtxos.len(), 2);
@@ -2300,10 +2319,11 @@ mod test {
 		let cosign_data = server_builder.cosign_response();
 
 		// The user will cosign the request and construct their vtxos
-		let vtxos = user_builder
+		let signed_builder = user_builder
 			.user_cosign(&alice_keypair, &cosign_data)
-			.expect("Valid cosign data and correct key")
-			.build_signed_vtxos();
+			.expect("Valid cosign data and correct key");
+		verify_signed_internal_vtxos(&signed_builder, &funding_tx);
+		let vtxos = signed_builder.build_signed_vtxos();
 
 		// Should have 2 vtxos
 		assert_eq!(vtxos.len(), 2);
