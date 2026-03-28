@@ -1,5 +1,6 @@
 
 pub mod cln;
+pub mod settler;
 
 
 use std::cmp;
@@ -664,8 +665,12 @@ impl Server {
 		let builder = self.validate_cosign_request(validation, cosign_request)
 			.badarg("invalid cosign request")?;
 
-		self.cln.settle_invoice(sub.id, payment_preimage).await
-			.context("could not settle invoice")?;
+		// Record the preimage in the settler so the watchman signer/policy
+		// can find it if this VTXO ends up being claimed on-chain.
+		// The settler is the single source of truth for preimages; all
+		// settlement paths (cooperative and on-chain) converge here.
+		self.htlc_settler.settle(payment_preimage).await
+			.context("could not record htlc settlement")?;
 
 		let builder = self.cosign_oor_with_builder(builder).await?;
 		let vtxo_request = VtxoRequest {

@@ -26,6 +26,7 @@ use crate::system::RuntimeManager;
 use crate::txindex::TxIndex;
 use crate::txindex::broadcast::TxNursery;
 use crate::wallet::{PersistedWallet, WalletKind, MNEMONIC_FILE};
+use crate::ln::settler::HtlcSettler;
 use crate::watchman::{VtxoExitFrontier, Watchman, WatchmanSigner};
 
 
@@ -168,7 +169,17 @@ impl Daemon {
 		).await.context("error loading watchman wallet")?;
 		let watchman_wallet = Arc::new(tokio::sync::Mutex::new(watchman_wallet));
 
-		let frontier = Arc::new(tokio::sync::RwLock::new(VtxoExitFrontier::init(db.clone()).await?));
+		// The settler writes preimages to the htlc_settlement WAL table but
+		// does NOT spawn a CLN settlement subscriber — watchmand has no CLN
+		// access. Captaind's settler polls the shared table periodically and
+		// settles the corresponding hold invoices.
+		let htlc_settler = Arc::new(HtlcSettler::start(
+			db.clone(), rtmgr.clone(), cfg.htlc_settlement_poll_interval,
+		));
+
+		let frontier = Arc::new(tokio::sync::RwLock::new(
+			VtxoExitFrontier::init(db.clone(), htlc_settler.clone()).await?,
+		));
 
 		let listeners: Vec<Box<dyn ChainEventListener>> = vec![
 			Box::new(frontier.clone()),

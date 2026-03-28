@@ -538,6 +538,37 @@ ALTER SEQUENCE public.ephemeral_tweak_id_seq OWNED BY public.ephemeral_tweak.id;
 
 
 --
+-- Name: htlc_settlement; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.htlc_settlement (
+    id bigint NOT NULL,
+    payment_hash text NOT NULL,
+    preimage bytea NOT NULL,
+    created_at timestamp with time zone NOT NULL
+);
+
+
+--
+-- Name: htlc_settlement_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.htlc_settlement_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: htlc_settlement_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.htlc_settlement_id_seq OWNED BY public.htlc_settlement.id;
+
+
+--
 -- Name: integration; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -1335,6 +1366,13 @@ ALTER TABLE ONLY public.ephemeral_tweak ALTER COLUMN id SET DEFAULT nextval('pub
 
 
 --
+-- Name: htlc_settlement id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.htlc_settlement ALTER COLUMN id SET DEFAULT nextval('public.htlc_settlement_id_seq'::regclass);
+
+
+--
 -- Name: integration id; Type: DEFAULT; Schema: public; Owner: -
 --
 
@@ -1500,6 +1538,22 @@ ALTER TABLE ONLY public.ephemeral_tweak
 
 ALTER TABLE ONLY public.ephemeral_tweak
     ADD CONSTRAINT ephemeral_tweak_pubkey_key UNIQUE (pubkey);
+
+
+--
+-- Name: htlc_settlement htlc_settlement_payment_hash_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.htlc_settlement
+    ADD CONSTRAINT htlc_settlement_payment_hash_key UNIQUE (payment_hash);
+
+
+--
+-- Name: htlc_settlement htlc_settlement_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.htlc_settlement
+    ADD CONSTRAINT htlc_settlement_pkey PRIMARY KEY (id);
 
 
 --
@@ -1698,6 +1752,13 @@ CREATE INDEX arkoor_mailbox_pubkey_ix ON public.arkoor_mailbox USING btree (pubk
 --
 
 CREATE UNIQUE INDEX arkoor_mailbox_vtxo_id_uix ON public.arkoor_mailbox USING btree (vtxo_id);
+
+
+--
+-- Name: htlc_settlement_payment_hash_ix; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX htlc_settlement_payment_hash_ix ON public.htlc_settlement USING btree (payment_hash);
 
 
 --

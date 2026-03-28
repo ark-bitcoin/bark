@@ -1,0 +1,9 @@
+- Extract HTLC preimages from on-chain VTXO spends
+  When a user claims an HTLC VTXO on-chain (emergency exit), the server
+  now extracts the preimage from the spending witness and settles the
+  corresponding CLN hold invoice automatically.
+  [#1706](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1706)
+- Add `htlc_settlement_poll_interval` config option
+  Controls how often the settler polls for cross-process HTLC settlements
+  (e.g. preimages written by watchmand). Defaults to 60s.
+  [#1706](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1706)
