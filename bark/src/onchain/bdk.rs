@@ -122,6 +122,19 @@ impl SignPsbt for BdkWallet {
 		self.apply_unconfirmed_txs([(tx.clone(), timestamp_secs())]);
 		Ok(tx)
 	}
+
+	async fn finish_psbt(&mut self, mut psbt: Psbt) -> anyhow::Result<Psbt> {
+		#[allow(deprecated)]
+		let opts = bdk_wallet::SignOptions {
+			trust_witness_utxo: true,
+			..Default::default()
+		};
+
+		let finalized = self.sign(&mut psbt, opts).context("signing error")?;
+		assert!(finalized);
+		Ok(psbt)
+	}
+
 }
 
 impl <W: Deref<Target = BdkWallet>> GetWalletTx for W {
@@ -290,6 +303,13 @@ impl SignPsbt for OnchainWallet {
 		self.persist().await?;
 		Ok(tx)
 	}
+
+	async fn finish_psbt(&mut self, psbt: Psbt) -> anyhow::Result<Psbt> {
+		let tx = self.inner.finish_psbt(psbt).await?;
+		self.persist().await?;
+		Ok(tx)
+	}
+
 }
 
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]

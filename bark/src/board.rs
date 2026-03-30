@@ -1,7 +1,7 @@
 use anyhow::Context;
 use bdk_esplora::esplora_client::Amount;
 use bitcoin::key::Keypair;
-use bitcoin::OutPoint;
+use bitcoin::{Address, OutPoint, Psbt};
 use log::{error, info, trace, warn};
 
 use ark::ProtocolEncoding;
@@ -141,8 +141,28 @@ impl Wallet {
 		amount: Option<Amount>,
 		user_keypair: Keypair,
 	) -> anyhow::Result<PendingBoard> {
-		let (mut srv, ark_info) = self.require_server().await?;
+		let (addr, expiry_height) = self.board_funding_address(&user_keypair).await?;
+		let fee_rate = self.chain.fee_rates().await.regular;
 
+		let board_psbt = if let Some(amount) = amount {
+			wallet.prepare_tx(&[(addr, amount)], fee_rate)?
+		} else {
+			wallet.prepare_drain_tx(addr, fee_rate)?
+		};
+
+		let signed_psbt = wallet.finish_psbt(board_psbt).await?;
+		self.board_tx(signed_psbt, user_keypair, expiry_height).await
+	}
+
+	/// Returns the funding address for a board with the given keypair.
+	///
+	/// The caller can use this address to build a funding transaction, then pass it
+	/// to [Wallet::board_tx] to complete the board setup.
+	pub async fn board_funding_address(
+		&self,
+		user_keypair: &Keypair,
+	) -> anyhow::Result<(Address, BlockHeight)> {
+		let (_, ark_info) = self.require_server().await?;
 		let properties = self.db.read_properties().await?.context("Missing config")?;
 		let current_height = self.chain.tip().await?;
 
@@ -159,17 +179,36 @@ impl Wallet {
 			properties.network,
 		)?;
 
-		// We create the board tx template, but don't sign it yet.
-		let fee_rate = self.chain.fee_rates().await.regular;
-		let (board_psbt, amount) = if let Some(amount) = amount {
-			let psbt = wallet.prepare_tx(&[(addr, amount)], fee_rate)?;
-			(psbt, amount)
-		} else {
-			let psbt = wallet.prepare_drain_tx(addr, fee_rate)?;
-			assert_eq!(psbt.unsigned_tx.output.len(), 1);
-			let amount = psbt.unsigned_tx.output[0].value;
-			(psbt, amount)
-		};
+		Ok((addr, expiry_height))
+	}
+
+	/// Board a [Vtxo] using a signed funding PSBT.
+	///
+	/// The PSBT must be signed and send funds to the address returned by
+	/// [Wallet::board_funding_address] at output index [BOARD_FUNDING_TX_VTXO_VOUT].
+	pub async fn board_tx(
+		&self,
+		board_psbt: Psbt,
+		user_keypair: Keypair,
+		expiry_height: BlockHeight,
+	) -> anyhow::Result<PendingBoard> {
+		let (mut srv, ark_info) = self.require_server().await?;
+
+		let builder = BoardBuilder::new(
+			user_keypair.public_key(),
+			expiry_height,
+			ark_info.server_pubkey,
+			ark_info.vtxo_exit_delta,
+		);
+
+		let board_output = &board_psbt.unsigned_tx.output[BOARD_FUNDING_TX_VTXO_VOUT as usize];
+		let expected_script = builder.funding_script_pubkey();
+		ensure!(
+			board_output.script_pubkey == expected_script,
+			"PSBT output does not pay to the expected board funding address",
+		);
+
+		let amount = board_output.value;
 		ensure!(amount >= ark_info.min_board_amount,
 			"board amount of {amount} is less than minimum board amount required by server ({})",
 			ark_info.min_board_amount,
@@ -212,7 +251,7 @@ impl Wallet {
 		).await?;
 		self.store_locked_vtxos([&vtxo], Some(movement_id)).await?;
 
-		let tx = wallet.finish_tx(board_psbt).await?;
+		let tx = board_psbt.extract_tx()?;
 		self.db.store_pending_board(&vtxo, &tx, movement_id).await?;
 
 		trace!("Broadcasting board tx: {}", bitcoin::consensus::encode::serialize_hex(&tx));
