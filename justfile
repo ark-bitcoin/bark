@@ -42,10 +42,12 @@ build-ci:
 	cargo build --profile ci --workspace --bins --examples
 
 build-unit-tests-ci:
-	cargo nextest archive --cargo-profile ci --workspace --exclude ark-testing --archive-file {{CARGO_TARGET}}/ci/unit-tests.tar.zst --zstd-level 19
+	cargo nextest archive --cargo-profile ci --workspace --exclude ark-testing \
+		--archive-file {{CARGO_TARGET}}/ci/unit-tests.tar.zst --zstd-level 19
 
 build-integration-tests-ci:
-	cargo nextest archive --cargo-profile ci --package ark-testing --archive-file {{CARGO_TARGET}}/ci/integration-tests.tar.zst --zstd-level 19
+	cargo nextest archive --cargo-profile ci --package ark-testing \
+		--archive-file {{CARGO_TARGET}}/ci/integration-tests.tar.zst --zstd-level 19
 
 build-bins:
 	cargo build --workspace --bins
@@ -82,11 +84,13 @@ docker-pull:
 	if [ -n "${LIGHTNINGD_DOCKER_IMAGE-""}" ]; then docker image inspect "$LIGHTNINGD_DOCKER_IMAGE" > /dev/null 2>&1 && echo "Image already exists locally." || (echo "Image not found locally. Pulling..." && docker pull "$LIGHTNINGD_DOCKER_IMAGE"); fi
 
 test-unit TEST="":
-	cargo nextest run --no-fail-fast --profile {{NEXTEST_PROFILE}} --workspace --exclude ark-testing {{TEST}}
+	cargo nextest run --no-fail-fast --profile {{NEXTEST_PROFILE}} --workspace \
+		--exclude ark-testing {{TEST}}
 alias unit := test-unit
 
 test-unit-codecov TEST="":
-	cargo llvm-cov nextest --profile {{NEXTEST_PROFILE}} --workspace --exclude ark-testing --no-report {{TEST}}
+	cargo llvm-cov nextest --profile {{NEXTEST_PROFILE}} --workspace \
+		--exclude ark-testing --no-report {{TEST}}
 
 test-integration TEST="": ensure-build-bins docker-pull
 	cargo nextest run --no-fail-fast --profile {{NEXTEST_PROFILE}} --package ark-testing {{TEST}}
@@ -94,22 +98,26 @@ alias int := test-integration
 
 # run integration tests for bark and barkd test files only
 test-integration-bark: ensure-build-bins docker-pull
-	cargo nextest run --no-fail-fast --profile {{NEXTEST_PROFILE}} --package ark-testing --test bark --test barkd
+	cargo nextest run --no-fail-fast --profile {{NEXTEST_PROFILE}} --package ark-testing \
+		--test bark --test barkd
 alias int-bark := test-integration-bark
 
 # run integration tests for core and server test files only
 test-integration-core: ensure-build-bins docker-pull
-	cargo nextest run --no-fail-fast --profile {{NEXTEST_PROFILE}} --package ark-testing --test core --test server
+	cargo nextest run --no-fail-fast --profile {{NEXTEST_PROFILE}} --package ark-testing \
+		--test core --test server
 alias int-core := test-integration-core
 
 test-integration-prebuilt TEST="": docker-pull
 	cargo nextest run --archive-file {{CARGO_TARGET}}/ci/integration-tests.tar.zst {{TEST}}
 
 test-integration-bark-prebuilt: docker-pull
-	cargo nextest run --archive-file {{CARGO_TARGET}}/ci/integration-tests.tar.zst -E 'binary(bark) + binary(barkd)'
+	cargo nextest run --archive-file {{CARGO_TARGET}}/ci/integration-tests.tar.zst \
+		-E 'binary(bark) + binary(barkd)'
 
 test-integration-core-prebuilt: docker-pull
-	cargo nextest run --archive-file {{CARGO_TARGET}}/ci/integration-tests.tar.zst -E 'binary(core) + binary(server)'
+	cargo nextest run --archive-file {{CARGO_TARGET}}/ci/integration-tests.tar.zst \
+		-E 'binary(core) + binary(server)'
 
 test-integration-codecov TEST="": docker-pull
 	#!/usr/bin/env bash
@@ -126,7 +134,8 @@ test-integration-esplora-codecov TEST="": docker-pull
 	#!/usr/bin/env bash
 	set -euo pipefail
 	source <(cargo llvm-cov show-env --export-prefix)
-	CHAIN_SOURCE=esplora cargo nextest run --profile {{NEXTEST_PROFILE}} --package ark-testing {{TEST}}
+	CHAIN_SOURCE=esplora cargo nextest run --profile {{NEXTEST_PROFILE}} \
+		--package ark-testing {{TEST}}
 
 test-integration-mempool TEST="": ensure-build-bins docker-pull
 	CHAIN_SOURCE=mempool just int "{{TEST}}"
@@ -136,7 +145,8 @@ test-integration-mempool-codecov TEST="": docker-pull
 	#!/usr/bin/env bash
 	set -euo pipefail
 	source <(cargo llvm-cov show-env --export-prefix)
-	CHAIN_SOURCE=mempool cargo nextest run --profile {{NEXTEST_PROFILE}} --package ark-testing {{TEST}}
+	CHAIN_SOURCE=mempool cargo nextest run --profile {{NEXTEST_PROFILE}} \
+		--package ark-testing {{TEST}}
 
 test-integration-all-codecov: docker-pull
 	just test-integration-codecov
@@ -156,14 +166,24 @@ release-server:
 		--manifest-path server/Cargo.toml --target x86_64-unknown-linux-gnu
 
 release-bark-linux:
-	cargo build --release --target x86_64-unknown-linux-gnu                        --locked --manifest-path bark-cli/Cargo.toml
-	RUSTC_WRAPPER= cargo zigbuild --release --target aarch64-unknown-linux-gnu     --locked --manifest-path bark-cli/Cargo.toml --no-default-features --features tls-webpki-roots
-	RUSTC_WRAPPER= cargo zigbuild --release --target armv7-unknown-linux-gnueabihf --locked --manifest-path bark-cli/Cargo.toml --no-default-features --features tls-webpki-roots
+	cargo build --release --target x86_64-unknown-linux-gnu                        \
+		--locked --manifest-path bark-cli/Cargo.toml
+	RUSTC_WRAPPER= cargo zigbuild --release --target aarch64-unknown-linux-gnu     \
+		--locked --manifest-path bark-cli/Cargo.toml \
+		--no-default-features --features tls-webpki-roots
+	RUSTC_WRAPPER= cargo zigbuild --release --target armv7-unknown-linux-gnueabihf \
+		--locked --manifest-path bark-cli/Cargo.toml \
+		--no-default-features --features tls-webpki-roots
 
 release-bark: release-bark-linux
-	cargo build --release --target x86_64-pc-windows-gnu                  --locked --manifest-path bark-cli/Cargo.toml
-	RUSTC_WRAPPER= cargo zigbuild --release --target x86_64-apple-darwin  --locked --manifest-path bark-cli/Cargo.toml --no-default-features --features tls-webpki-roots
-	RUSTC_WRAPPER= cargo zigbuild --release --target aarch64-apple-darwin --locked --manifest-path bark-cli/Cargo.toml --no-default-features --features tls-webpki-roots
+	cargo build --release --target x86_64-pc-windows-gnu                  \
+		--locked --manifest-path bark-cli/Cargo.toml
+	RUSTC_WRAPPER= cargo zigbuild --release --target x86_64-apple-darwin  \
+		--locked --manifest-path bark-cli/Cargo.toml \
+		--no-default-features --features tls-webpki-roots
+	RUSTC_WRAPPER= cargo zigbuild --release --target aarch64-apple-darwin \
+		--locked --manifest-path bark-cli/Cargo.toml \
+		--no-default-features --features tls-webpki-roots
 
 
 RUSTDOCSDIR := justfile_directory() / "rustdocs"
@@ -184,8 +204,11 @@ rustdocs ARG="":
 	# sed is converting C:\path\to\justfile_folder into /c/path/to/justfile_folder
 	mkdir -p $(echo "{{JUSTFILE_DIR}}" | sed 's|\\\\|/|g' | sed 's|^\([a-zA-Z]\):|/\L\1|')/rustdocs
 	cargo doc --locked --all --lib --examples --keep-going {{ARG}} \
-		--target-dir $(echo "{{JUSTFILE_DIR}}" | sed 's|\\\\|/|g' | sed 's|^\([a-zA-Z]\):|/\L\1|')/rustdocs
-	echo "Open Rust docs at file://$(echo "{{JUSTFILE_DIR}}" | sed 's|\\\\|/|g' | sed 's|^\([a-zA-Z]\):|/\L\1|')/rustdocs/doc/{{DEFAULT_DOCS_PATH}}"
+		--target-dir $(echo "{{JUSTFILE_DIR}}" \
+		| sed 's|\\\\|/|g' \
+		| sed 's|^\([a-zA-Z]\):|/\L\1|')/rustdocs
+	echo "Open Rust docs at file://$(echo "{{JUSTFILE_DIR}}" | sed 's|\\\\|/|g' \
+		| sed 's|^\([a-zA-Z]\):|/\L\1|')/rustdocs/doc/{{DEFAULT_DOCS_PATH}}"
 
 rustdocs-internal:
 	@just rustdocs --document-private-items
@@ -214,9 +237,10 @@ dump-server-sql-schema: ensure-build-examples
 	{{EXAMPLES_DIR}}/dump-server-postgres-schema > {{SERVER_SQL_SCHEMA_PATH}}
 	# Use sed to remove lines that are hard to reproduce across different systems
 	sed '/^-- Dumped by .*$/d' {{SERVER_SQL_SCHEMA_PATH}} \
-	  | sed '/^-- Dumped from .*$/d' \
-	  | sed '/^\\restrict.*$/d' \
-	  | sed '/^\\unrestrict.*$/d' > {{SERVER_SQL_SCHEMA_PATH}}.tmp && mv {{SERVER_SQL_SCHEMA_PATH}}.tmp {{SERVER_SQL_SCHEMA_PATH}}
+		| sed '/^-- Dumped from .*$/d' \
+		| sed '/^\\restrict.*$/d' \
+		| sed '/^\\unrestrict.*$/d' > {{SERVER_SQL_SCHEMA_PATH}}.tmp \
+			&& mv {{SERVER_SQL_SCHEMA_PATH}}.tmp {{SERVER_SQL_SCHEMA_PATH}}
 	echo "bark-server SQL schema written to {{SERVER_SQL_SCHEMA_PATH}}"
 	chmod 644 bark/schema.sql
 
