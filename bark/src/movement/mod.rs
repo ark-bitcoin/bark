@@ -5,7 +5,7 @@ pub mod manager;
 pub mod update;
 mod payment_method;
 
-use crate::subsystem::Subsystem;
+use crate::subsystem::{LightningMovement, Subsystem};
 
 pub use self::payment_method::PaymentMethod;
 
@@ -20,7 +20,7 @@ use lnurllib::lightning_address::LightningAddress;
 use serde::{Deserialize, Serialize};
 
 use ark::VtxoId;
-use ark::lightning::Invoice;
+use ark::lightning::{Invoice, PaymentHash};
 
 const MOVEMENT_PENDING: &'static str = "pending";
 const MOVEMENT_SUCCESSFUL: &'static str = "successful";
@@ -110,6 +110,52 @@ impl Movement {
 	/// Checks whether this movement sent to the given payment method
 	pub fn sent_to(&self, payment_method: &PaymentMethod) -> bool {
 		self.sent_to.iter().any(|d| d.destination == *payment_method)
+	}
+
+	/// Get the Lightning invoice associated with this movement
+	///
+	/// Returns `None` for movements that don't have an invoice.
+	pub fn lightning_invoice(&self) -> Option<&Invoice> {
+		for dest in &self.received_on {
+			if let PaymentMethod::Invoice(ref i) = dest.destination {
+				return Some(i);
+			}
+		}
+
+		for dest in &self.sent_to {
+			if let PaymentMethod::Invoice(ref i) = dest.destination {
+				return Some(i);
+			}
+		}
+
+		None
+	}
+
+	/// Get the Lightning offer associated with this movement
+	///
+	/// Returns `None` for movements that don't have an offer.
+	pub fn lightning_offer(&self) -> Option<&Offer> {
+		for dest in &self.received_on {
+			if let PaymentMethod::Offer(ref o) = dest.destination {
+				return Some(o);
+			}
+		}
+
+		for dest in &self.sent_to {
+			if let PaymentMethod::Offer(ref o) = dest.destination {
+				return Some(o);
+			}
+		}
+
+		None
+	}
+
+	/// Get the Lightning payment hash associated with this movement
+	///
+	/// Returns `None` for movements that are not Lightning payments.
+	pub fn lightning_payment_hash(&self) -> Option<PaymentHash> {
+		LightningMovement::get_payment_hash(&self.metadata)
+			.or_else(|| self.lightning_invoice().map(|i| i.payment_hash()))
 	}
 }
 
