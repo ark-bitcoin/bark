@@ -514,6 +514,320 @@
         }
       }
     },
+    "/api/v1/fees/board": {
+      "get": {
+        "tags": [
+          "fees"
+        ],
+        "summary": "Estimate board fee",
+        "description": "Estimates the Ark protocol fee for boarding the specified amount of on-chain bitcoin. The net amount is what the user receives as a VTXO. Does not include the on-chain transaction fee for the board anchor transaction.",
+        "operationId": "board_fee",
+        "parameters": [
+          {
+            "name": "amount_sat",
+            "in": "query",
+            "description": "The amount in satoshis to board",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Returns the fee estimate",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FeeEstimateResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid amount",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternalServerError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/fees/lightning/pay": {
+      "get": {
+        "tags": [
+          "fees"
+        ],
+        "summary": "Estimate Lightning send fee",
+        "description": "Estimates the fee for sending the specified amount over Lightning. The net amount is what the recipient receives. The fee depends on the VTXOs selected and their expiry. If the wallet has insufficient funds, returns a worst-case fee estimate assuming the user acquires enough funds to cover the payment.",
+        "operationId": "lightning_send_fee",
+        "parameters": [
+          {
+            "name": "amount_sat",
+            "in": "query",
+            "description": "The amount in satoshis to send over Lightning",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Returns the fee estimate",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FeeEstimateResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid amount",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternalServerError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/fees/lightning/receive": {
+      "get": {
+        "tags": [
+          "fees"
+        ],
+        "summary": "Estimate Lightning receive fee",
+        "description": "Estimates the fee for receiving the specified amount over Lightning. The gross amount is the Lightning payment amount, and the net amount is what the user receives as a VTXO after the Ark server deducts its fee.",
+        "operationId": "lightning_receive_fee",
+        "parameters": [
+          {
+            "name": "amount_sat",
+            "in": "query",
+            "description": "The amount in satoshis to receive over Lightning",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Returns the fee estimate",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FeeEstimateResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid amount",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternalServerError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/fees/offboard-all": {
+      "get": {
+        "tags": [
+          "fees"
+        ],
+        "summary": "Estimate offboard-all fee",
+        "description": "Estimates the fee for offboarding the entire Ark balance to the given on-chain address. The gross amount is the total spendable balance, and the net amount is what the user receives on-chain after fees. The fee depends on the destination address type, current fee rates, and VTXO expiry.",
+        "operationId": "offboard_all_fee",
+        "parameters": [
+          {
+            "name": "address",
+            "in": "query",
+            "description": "The destination Bitcoin address",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Returns the fee estimate",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FeeEstimateResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternalServerError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/fees/onchain": {
+      "get": {
+        "tags": [
+          "fees"
+        ],
+        "summary": "Get on-chain fee rates",
+        "description": "Returns the current mempool fee rates from the chain source at three confirmation targets: fast (~1 block), regular (~3 blocks), and slow (~6 blocks). Rates are in sat/vB, rounded up.",
+        "operationId": "onchain_fee_rates",
+        "responses": {
+          "200": {
+            "description": "Returns current mempool fee rates",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OnchainFeeRatesResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternalServerError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/fees/send-onchain": {
+      "get": {
+        "tags": [
+          "fees"
+        ],
+        "summary": "Estimate send-onchain fee",
+        "description": "Estimates the total fee for sending bitcoin from the Ark wallet to an on-chain address. The fee depends on the destination address type and current fee rates. The gross amount is what the user pays (including VTXOs spent), and the net amount is what the recipient receives on-chain.",
+        "operationId": "send_onchain_fee",
+        "parameters": [
+          {
+            "name": "amount_sat",
+            "in": "query",
+            "description": "The amount in satoshis to send on-chain",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "address",
+            "in": "query",
+            "description": "The destination Bitcoin address",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Returns the fee estimate",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FeeEstimateResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid amount or address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternalServerError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/lightning/pay": {
       "post": {
         "tags": [
@@ -3615,6 +3929,58 @@
           }
         ]
       },
+      "FeeEstimateQuery": {
+        "type": "object",
+        "description": "Query parameters for fee estimates that only require an amount.",
+        "required": [
+          "amount_sat"
+        ],
+        "properties": {
+          "amount_sat": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The amount in satoshis to estimate fees for",
+            "minimum": 0
+          }
+        }
+      },
+      "FeeEstimateResponse": {
+        "type": "object",
+        "description": "A fee estimate for an Ark wallet operation.",
+        "required": [
+          "gross_amount_sat",
+          "fee_sat",
+          "net_amount_sat",
+          "vtxos_spent"
+        ],
+        "properties": {
+          "fee_sat": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The fee portion (in satoshis)",
+            "minimum": 0
+          },
+          "gross_amount_sat": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The total amount including fees (in satoshis)",
+            "minimum": 0
+          },
+          "net_amount_sat": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The amount excluding fees (in satoshis). For sends, this is the amount\nthe recipient receives. For receives, this is the amount the user gets.",
+            "minimum": 0
+          },
+          "vtxos_spent": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The VTXOs that would be spent for this operation"
+          }
+        }
+      },
       "FeeSchedule": {
         "type": "object",
         "description": "Complete fee schedule for all operations.",
@@ -4046,6 +4412,19 @@
           }
         }
       },
+      "OffboardAllFeeEstimateQuery": {
+        "type": "object",
+        "description": "Query parameters for offboard-all fee estimates.",
+        "required": [
+          "address"
+        ],
+        "properties": {
+          "address": {
+            "type": "string",
+            "description": "The destination Bitcoin address"
+          }
+        }
+      },
       "OffboardAllRequest": {
         "type": "object",
         "properties": {
@@ -4180,6 +4559,35 @@
           "destination": {
             "type": "string",
             "description": "The destination Bitcoin address"
+          }
+        }
+      },
+      "OnchainFeeRatesResponse": {
+        "type": "object",
+        "description": "Mempool fee rates for on-chain transactions.",
+        "required": [
+          "fast_sat_per_vb",
+          "regular_sat_per_vb",
+          "slow_sat_per_vb"
+        ],
+        "properties": {
+          "fast_sat_per_vb": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Fee rate targeting ~1 block confirmation (sat/vB)",
+            "minimum": 0
+          },
+          "regular_sat_per_vb": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Fee rate targeting ~3 block confirmation (sat/vB)",
+            "minimum": 0
+          },
+          "slow_sat_per_vb": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Fee rate targeting ~6 block confirmation (sat/vB)",
+            "minimum": 0
           }
         }
       },
@@ -4531,6 +4939,26 @@
         "properties": {
           "txid": {
             "type": "string"
+          }
+        }
+      },
+      "SendOnchainFeeEstimateQuery": {
+        "type": "object",
+        "description": "Query parameters for send-onchain fee estimates.",
+        "required": [
+          "amount_sat",
+          "address"
+        ],
+        "properties": {
+          "address": {
+            "type": "string",
+            "description": "The destination Bitcoin address"
+          },
+          "amount_sat": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The amount in satoshis to send",
+            "minimum": 0
           }
         }
       },
@@ -4894,6 +5322,10 @@
     {
       "name": "exits",
       "description": "Move bitcoin back on-chain without server cooperation."
+    },
+    {
+      "name": "fees",
+      "description": "Estimate fees for wallet operations before executing them."
     },
     {
       "name": "lightning",

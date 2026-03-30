@@ -94,7 +94,10 @@ docs/ExitTxStatusOneOf4.md
 docs/ExitTxStatusOneOf5.md
 docs/ExitTxStatusOneOf6.md
 docs/ExitsApi.md
+docs/FeeEstimateQuery.md
+docs/FeeEstimateResponse.md
 docs/FeeSchedule.md
+docs/FeesApi.md
 docs/ImportVtxoRequest.md
 docs/InternalServerError.md
 docs/InvoiceInfo.md
@@ -112,6 +115,7 @@ docs/MovementSubsystem.md
 docs/MovementTimestamp.md
 docs/NextRoundStart.md
 docs/NotFoundError.md
+docs/OffboardAllFeeEstimateQuery.md
 docs/OffboardAllRequest.md
 docs/OffboardFees.md
 docs/OffboardResult.md
@@ -119,6 +123,7 @@ docs/OffboardVtxosRequest.md
 docs/OnchainApi.md
 docs/OnchainBalance.md
 docs/OnchainDrainRequest.md
+docs/OnchainFeeRatesResponse.md
 docs/OnchainSendManyRequest.md
 docs/OnchainSendRequest.md
 docs/PaymentMethod.md
@@ -136,6 +141,7 @@ docs/RoundStatusOneOf3.md
 docs/RoundStatusOneOf4.md
 docs/RoundStatusOneOf5.md
 docs/Send.md
+docs/SendOnchainFeeEstimateQuery.md
 docs/SendOnchainRequest.md
 docs/SendRequest.md
 docs/SendResponse.md
@@ -160,6 +166,7 @@ src/apis/boards_api.rs
 src/apis/configuration.rs
 src/apis/default_api.rs
 src/apis/exits_api.rs
+src/apis/fees_api.rs
 src/apis/lightning_api.rs
 src/apis/mod.rs
 src/apis/onchain_api.rs
@@ -252,6 +259,8 @@ src/models/exit_tx_status_one_of_3.rs
 src/models/exit_tx_status_one_of_4.rs
 src/models/exit_tx_status_one_of_5.rs
 src/models/exit_tx_status_one_of_6.rs
+src/models/fee_estimate_query.rs
+src/models/fee_estimate_response.rs
 src/models/fee_schedule.rs
 src/models/import_vtxo_request.rs
 src/models/internal_server_error.rs
@@ -270,12 +279,14 @@ src/models/movement_subsystem.rs
 src/models/movement_timestamp.rs
 src/models/next_round_start.rs
 src/models/not_found_error.rs
+src/models/offboard_all_fee_estimate_query.rs
 src/models/offboard_all_request.rs
 src/models/offboard_fees.rs
 src/models/offboard_result.rs
 src/models/offboard_vtxos_request.rs
 src/models/onchain_balance.rs
 src/models/onchain_drain_request.rs
+src/models/onchain_fee_rates_response.rs
 src/models/onchain_send_many_request.rs
 src/models/onchain_send_request.rs
 src/models/payment_method.rs
@@ -293,6 +304,7 @@ src/models/round_status_one_of_3.rs
 src/models/round_status_one_of_4.rs
 src/models/round_status_one_of_5.rs
 src/models/send.rs
+src/models/send_onchain_fee_estimate_query.rs
 src/models/send_onchain_request.rs
 src/models/send_request.rs
 src/models/send_response.rs
