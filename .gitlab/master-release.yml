@@ -2,11 +2,11 @@
 
 .master-release-rules:
   rules:
-    - if: $CI_COMMIT_BRANCH == "master" && $CI_PROJECT_URL == "https://gitlab.com/ark-bitcoin/bark"
+    - if: $CI_COMMIT_BRANCH == "master" && $CI_PROJECT_URL =~ /^https:\/\/gitlab\.com\/ark-bitcoin\/bark($|-)/
 
 .master-and-mr-release-rules:
   rules:
-    - if: $CI_COMMIT_BRANCH == "master" && $CI_PROJECT_URL == "https://gitlab.com/ark-bitcoin/bark"
+    - if: $CI_COMMIT_BRANCH == "master" && $CI_PROJECT_URL =~ /^https:\/\/gitlab\.com\/ark-bitcoin\/bark($|-)/
     - if: $CI_MERGE_REQUEST_RELEASE_PIPELINE == "true"
 
 
