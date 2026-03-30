@@ -1,0 +1,6 @@
+- Add fee estimation endpoints to barkd REST API
+  Integrators can now estimate fees before executing transactions via six new
+  `/api/v1/fees/` endpoints: board, send-onchain, offboard-all, lightning pay,
+  lightning receive, and on-chain fee rates. Each returns gross/net amounts and
+  the fee breakdown so users can preview costs up front.
+  [#1787](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1787)
