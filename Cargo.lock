@@ -5579,6 +5579,8 @@ dependencies = [
  "gloo-net",
  "log",
  "tokio",
+ "tokio-util",
+ "wasm-bindgen-futures",
  "wasm-bindgen-test",
 ]
 

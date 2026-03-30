@@ -16,6 +16,7 @@ wasm = [
 	"bark-wallet/onchain-bdk",
 	"bark-server-rpc/tonic-web",
 	"dep:gloo-net",
+	"dep:wasm-bindgen-futures",
 ]
 
 [dependencies]
@@ -27,7 +28,9 @@ anyhow = { workspace = true, optional = true }
 bitcoin.workspace = true
 log.workspace = true
 tokio = { workspace = true, features = ["process", "signal", "macros", "rt-multi-thread"], optional = true }
+tokio-util.workspace = true
 gloo-net = { version = "0.6", default-features = false, features = ["http"], optional = true }
+wasm-bindgen-futures = { version = "0.4.56", optional = true }
 
 [dev-dependencies]
 bip39.workspace = true
