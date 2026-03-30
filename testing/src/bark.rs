@@ -31,7 +31,7 @@ use bitcoin_ext::{BlockHeight, FeeRateExt};
 use crate::constants::BOARD_CONFIRMATIONS;
 use crate::{Bitcoind, TestContext};
 use crate::context::ToArkUrl;
-use crate::constants::env::{BARK_COMMAND_TIMEOUT_MILLIS, BARK_EXEC, USE_FILESTORE};
+use crate::constants::env::{BARK_COMMAND_TIMEOUT_MILLIS, BARK_EXEC, BARK_TOKIO_WORKER_THREADS, USE_FILESTORE};
 use crate::util::resolve_path;
 
 const COMMAND_LOG_FILE: &str = "commands.log";
@@ -747,6 +747,11 @@ impl Bark {
 		let args: Vec<String> = args.into_iter().map(|x| x.as_ref().to_string()).collect();
 
 		let mut command = Bark::cmd();
+
+		if let Ok(nb) = env::var(BARK_TOKIO_WORKER_THREADS) {
+			command.env("TOKIO_WORKER_THREADS", nb);
+		}
+
 		command.args(&[
 			"--verbose",
 			"--datadir",

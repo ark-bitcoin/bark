@@ -27,6 +27,8 @@ pub mod env {
 	// If a bark command doesn't return in BARK_COMMAND_TIMEOUT_MILLIS
 	// the test will fail
 	pub const BARK_COMMAND_TIMEOUT_MILLIS: &str = "BARK_COMMAND_TIMEOUT_MILLIS";
+	/// The number of worker threads bark and barkd are allowed to use
+	pub const BARK_TOKIO_WORKER_THREADS: &str = "BARK_TOKIO_WORKER_THREADS";
 	// The maximum time to wait for a transaction to be propagated to a node, in milliseconds.
 	pub const TX_PROPAGATION_TIMEOUT_MILLIS: &str = "TX_PROPAGATION_TIMEOUT_MILLIS";
 	/// The env var to reach postgres binaries folder

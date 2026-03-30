@@ -18,7 +18,7 @@ use bark_rest_client::apis::configuration::Configuration;
 use bark_rest_client::apis::{bitcoin_api, boards_api, default_api, onchain_api, wallet_api};
 
 use crate::{Bitcoind, Daemon, DaemonHelper};
-use crate::constants::env::BARKD_EXEC;
+use crate::constants::env::{BARKD_EXEC, BARK_TOKIO_WORKER_THREADS};
 use crate::util::resolve_path;
 
 pub type Barkd = Daemon<BarkdHelper>;
@@ -220,6 +220,11 @@ impl DaemonHelper for BarkdHelper {
 
 	async fn get_command(&self) -> anyhow::Result<Command> {
 		let mut cmd = Barkd::base_cmd();
+
+		if let Ok(nb) = env::var(BARK_TOKIO_WORKER_THREADS) {
+			cmd.env("TOKIO_WORKER_THREADS", nb);
+		}
+
 		cmd.args([
 			"--datadir", self.datadir.to_str().expect("non-UTF-8 datadir"),
 			"--port", &self.port.to_string(),
