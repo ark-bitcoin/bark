@@ -229,6 +229,7 @@ bark-mempool:
     NEXTEST_TEST_THREADS: "2"
     BARK_COMMAND_TIMEOUT_MILLIS: "120000"
     TX_PROPAGATION_TIMEOUT: "30000"
+    BARK_TOKIO_WORKER_THREADS: "1"
   script:
     - git log --oneline -1
     - export RUN_DATETIME=$(cat RUN_DATETIME)
