@@ -265,6 +265,33 @@ impl Bark {
 		wallet.estimate_send_onchain(address, amount).await.unwrap()
 	}
 
+	pub async fn onchain_wallet(&self) -> bark::onchain::OnchainWallet {
+		const MNEMONIC_FILE: &str = "mnemonic";
+		const DB_FILE: &str = "db.sqlite";
+		const FILESTORE_FILE: &str = "wallet.json";
+
+		let mnemonic_path = self.datadir.join(MNEMONIC_FILE);
+		let mnemonic_str = fs::read_to_string(&mnemonic_path).await
+			.expect("failed to read mnemonic file");
+		let mnemonic = bip39::Mnemonic::from_str(&mnemonic_str).expect("broken mnemonic");
+		let seed = mnemonic.to_seed("");
+
+		let use_filestore = self.datadir.join(FILESTORE_FILE).exists();
+		let db: Arc<dyn BarkPersister + Send + Sync> = if use_filestore {
+			let filestore = self.datadir.join(FILESTORE_FILE);
+			let adaptor = FileStorageAdaptor::open(filestore).await.expect("failed to open filestore");
+			Arc::new(StorageAdaptorWrapper::new(adaptor))
+		} else {
+			Arc::new(SqliteClient::open(self.datadir.join(DB_FILE)).expect("failed to open sqlite"))
+		};
+
+		let properties = db.read_properties().await
+			.expect("failed to read properties")
+			.expect("wallet not initialised");
+		bark::onchain::OnchainWallet::load_or_create(properties.network, seed, db).await
+			.expect("failed to create OnchainWallet")
+	}
+
 	pub fn bitcoind(&self) -> Option<&Bitcoind> {
 		self.bitcoind.as_deref()
 	}
