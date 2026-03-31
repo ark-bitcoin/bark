@@ -44,6 +44,8 @@ impl VtxoExitFrontier {
 			self.db.register_vtxo_confirmation(vtxo_id, height).await?;
 		}
 
+		slog!(WatchmanAddedVtxo, id: vtxo_id);
+
 		Ok(())
 	}
 
