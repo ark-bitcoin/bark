@@ -6,7 +6,7 @@
     - if: $CI_COMMIT_TAG =~ /^server-/
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
     - if: $CI_PIPELINE_SOURCE == "web"
-    - if: $CI_COMMIT_BRANCH == "master" && $CI_PROJECT_URL == "https://gitlab.com/ark-bitcoin/bark"
+    - if: $CI_COMMIT_BRANCH == "master" && $CI_PROJECT_URL =~ /^https:\/\/gitlab\.com\/ark-bitcoin\/bark($|-)/
 
 .test-rules-no-tags:
   rules:
@@ -14,7 +14,7 @@
       when: never
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
     - if: $CI_PIPELINE_SOURCE == "web"
-    - if: $CI_COMMIT_BRANCH == "master" && $CI_PROJECT_URL == "https://gitlab.com/ark-bitcoin/bark"
+    - if: $CI_COMMIT_BRANCH == "master" && $CI_PROJECT_URL =~ /^https:\/\/gitlab\.com\/ark-bitcoin\/bark($|-)/
 
 check-commits:
   interruptible: true
@@ -192,7 +192,7 @@ bark-esplora:
     - integration
     - datastore
   rules:
-    - if: $CI_COMMIT_BRANCH == "master" && $CI_PROJECT_URL == "https://gitlab.com/ark-bitcoin/bark"
+    - if: $CI_COMMIT_BRANCH == "master" && $CI_PROJECT_URL =~ /^https:\/\/gitlab\.com\/ark-bitcoin\/bark($|-)/
   needs:
     - check-commits
     - build
