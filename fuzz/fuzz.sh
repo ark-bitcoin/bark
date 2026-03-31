@@ -132,6 +132,8 @@ if [ -n "$USE_CORPUS" ]; then
     USE_CORPUS=$(cd "$USE_CORPUS" && pwd)
 fi
 
+trap 'exit 130' INT
+
 run_fuzzing() {
     # Enable command tracing if verbose
     if [ "$VERBOSE" = "1" ]; then
