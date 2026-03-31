@@ -40,6 +40,21 @@ impl<T> OptionalService<T> {
 	}
 }
 
+impl<T: Default> OptionalService<T> {
+	/// Set the service to enabled if disabled and return the inner value
+	///
+	/// The inner value is set to [Default::default()] if previously disabled.
+	pub fn set_enabled(&mut self) -> &mut T {
+		match self {
+			Self::Enabled(c) => c,
+			Self::Disabled => {
+				*self = Self::Enabled(T::default());
+				self.enabled_mut().unwrap()
+			},
+		}
+	}
+}
+
 impl<T> From<T> for OptionalService<T> {
 	fn from(cfg: T) -> Self {
 	    Self::Enabled(cfg)
