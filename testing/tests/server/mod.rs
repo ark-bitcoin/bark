@@ -4,6 +4,7 @@ mod lightning;
 mod postgres;
 mod postgres_migrations;
 mod settler;
+mod watchman;
 
 use std::iter;
 use std::str::FromStr;
