@@ -1179,13 +1179,13 @@ CREATE TABLE public.vtxo (
     updated_at timestamp with time zone NOT NULL,
     lightning_htlc_subscription_id bigint,
     offboarded_in text,
-    vtxo_txid text,
-    exit_delta integer,
-    policy_type text,
-    policy bytea,
-    server_pubkey text,
-    amount bigint,
-    anchor_point text,
+    vtxo_txid text NOT NULL,
+    exit_delta integer NOT NULL,
+    policy_type text NOT NULL,
+    policy bytea NOT NULL,
+    server_pubkey text NOT NULL,
+    amount bigint NOT NULL,
+    anchor_point text NOT NULL,
     banned_until_height integer
 );
 
