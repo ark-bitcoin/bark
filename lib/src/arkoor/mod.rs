@@ -167,8 +167,7 @@ pub struct ArkoorCosignRequest<V> {
 	pub outputs: Vec<ArkoorDestination>,
 	pub isolated_outputs: Vec<ArkoorDestination>,
 	pub use_checkpoint: bool,
-	// TODO: remove option after 0.1.0-beta-9
-	pub attestation: Option<ArkoorCosignAttestation>,
+	pub attestation: ArkoorCosignAttestation,
 }
 
 impl<V> ArkoorCosignRequest<V> {
@@ -178,7 +177,7 @@ impl<V> ArkoorCosignRequest<V> {
 		outputs: Vec<ArkoorDestination>,
 		isolated_outputs: Vec<ArkoorDestination>,
 		use_checkpoint: bool,
-		attestation: Option<ArkoorCosignAttestation>,
+		attestation: ArkoorCosignAttestation,
 	) -> Self {
 		Self {
 			user_pub_nonces,
@@ -213,7 +212,7 @@ impl<V: VtxoRef> ArkoorCosignRequest<V> {
 			outputs,
 			isolated_outputs,
 			use_checkpoint,
-			Some(attestation),
+			attestation,
 		)
 	}
 }
@@ -242,13 +241,8 @@ pub struct AttestationError;
 impl ArkoorCosignRequest<Vtxo> {
 	pub fn verify_attestation(&self) -> Result<(), AttestationError> {
 		let outputs = self.all_outputs().collect::<Vec<_>>();
-		// TODO: remove option after 0.1.0-beta-9
-		if let Some(attestation) = &self.attestation {
-			attestation.verify(&self.input, &outputs)
-				.map_err(|_| AttestationError)
-		} else {
-			Ok(())
-		}
+		self.attestation.verify(&self.input, &outputs)
+			.map_err(|_| AttestationError)
 	}
 }
 

@@ -206,8 +206,7 @@ message ArkoorCosignRequest {
 	// outputs used for dust isolation
 	repeated ArkoorDestination isolated_outputs = 4;
 	bool use_checkpoint = 5;
-	// TODO: remove option after 0.1.0-beta-9
-	optional bytes attestation = 6;
+	bytes attestation = 6;
 }
 
 message ArkoorPackageCosignRequest {
@@ -241,21 +240,6 @@ message InitiateLightningPaymentRequest {
 message CheckLightningPaymentRequest {
 	bytes hash = 1;
 	bool wait = 2;
-}
-
-// TODO: Remove this once we hit 0.1.0-beta.6 or higher
-enum PaymentStatus {
-	PENDING = 0;
-	FAILED = 1;
-	SUCCESS = 2;
-}
-
-// TODO: Remove this once we hit 0.1.0-beta.6 or higher
-message LightningPaymentResult {
-	string progress_message = 1;
-	PaymentStatus status = 2;
-	bytes payment_hash = 3;
-	optional bytes payment_preimage = 4;
 }
 
 message PaymentSuccessStatus {
