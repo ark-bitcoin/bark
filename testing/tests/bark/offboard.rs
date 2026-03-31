@@ -18,7 +18,7 @@ async fn offboard_all() {
 	bark2.board(sat(800_000)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 
-	ctx.refresh_all(&srv, std::slice::from_ref(&bark1)).await;
+	ctx.refresh_all(&srv, &[&bark1]).await;
 	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
 	bark1.board_and_confirm_and_register(&ctx, sat(300_000)).await;
 
@@ -69,7 +69,7 @@ async fn offboard_vtxos() {
 	// refresh vtxo
 	bark1.board(sat(200_000)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
-	ctx.refresh_all(&srv, std::slice::from_ref(&bark1)).await;
+	ctx.refresh_all(&srv, &[&bark1]).await;
 	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
 
 	// board vtxo

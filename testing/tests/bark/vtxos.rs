@@ -16,7 +16,7 @@ async fn list_vtxos() {
 	bark1.board(sat(200_000)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 
-	ctx.refresh_all(&srv, std::slice::from_ref(&bark1)).await;
+	ctx.refresh_all(&srv, &[&bark1]).await;
 	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
 
 	// board vtxo
@@ -54,7 +54,7 @@ async fn compute_balance() {
 	// refresh vtxo
 	bark1.board(sat(200_000)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
-	ctx.refresh_all(&srv, std::slice::from_ref(&bark1)).await;
+	ctx.refresh_all(&srv, &[&bark1]).await;
 	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
 
 	// board vtxo
@@ -99,7 +99,7 @@ async fn drop_vtxos() {
 	// refresh vtxo
 	bark1.board(sat(200_000)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
-	ctx.refresh_all(&srv, std::slice::from_ref(&bark1)).await;
+	ctx.refresh_all(&srv, &[&bark1]).await;
 	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
 
 	bark1.drop_vtxos().await;

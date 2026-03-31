@@ -51,7 +51,8 @@ async fn large_round() {
 	}
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 
-	ctx.refresh_all(&srv, &barks).await;
+	let bark_refs = barks.iter().collect::<Vec<_>>();
+	ctx.refresh_all(&srv, &bark_refs).await;
 }
 
 #[tokio::test]
@@ -64,7 +65,7 @@ async fn refresh_all() {
 	bark1.board(sat(400_000)).await;
 	bark2.board(sat(800_000)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
-	ctx.refresh_all(&srv, std::slice::from_ref(&bark1)).await;
+	ctx.refresh_all(&srv, &[&bark1]).await;
 	bark1.board_and_confirm_and_register(&ctx, sat(400_000)).await;
 
 	// We want bark2 to have a refresh, board, round and oor vtxo
@@ -76,7 +77,7 @@ async fn refresh_all() {
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 
 	assert_eq!(3, bark2.vtxos().await.len());
-	ctx.refresh_all(&srv, std::slice::from_ref(&bark2)).await;
+	ctx.refresh_all(&srv, &[&bark2]).await;
 	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
 	assert_eq!(1, bark2.vtxos().await.len());
 	assert_eq!(bark2.inround_balance().await, sat(0));
@@ -94,7 +95,7 @@ async fn refresh_counterparty() {
 	// refresh vtxo
 	bark1.board(sat(200_000)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
-	ctx.refresh_all(&srv, std::slice::from_ref(&bark1)).await;
+	ctx.refresh_all(&srv, &[&bark1]).await;
 	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
 
 	// board vtxo
@@ -667,7 +668,7 @@ async fn refresh_consolidates_vtxos() {
 	bark1.board(sat(300_000)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 
-	ctx.refresh_all(&srv, std::slice::from_ref(&bark1)).await;
+	ctx.refresh_all(&srv, &[&bark1]).await;
 	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
 
 	let movements = bark1.history().await;

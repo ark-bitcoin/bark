@@ -351,11 +351,11 @@ async fn restart_server_with_payments() {
 	bark2.board(sat(800_000)).await;
 	bark1.board(sat(200_000)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
-	ctx.refresh_all(&srv, std::slice::from_ref(&bark1)).await;
+	ctx.refresh_all(&srv, &[&bark1]).await;
 	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
 
 	bark2.send_oor(&bark1.address().await, sat(330_000)).await;
-	ctx.refresh_all(&srv, std::slice::from_ref(&bark2)).await;
+	ctx.refresh_all(&srv, &[&bark2]).await;
 	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
 
 	bark1.send_oor(&bark2.address().await, sat(350_000)).await;
@@ -957,7 +957,7 @@ async fn captaind_config_change(){
 	bark2.board(sat(800_000)).await;
 	bark1.board(sat(200_000)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
-	ctx.refresh_all(&srv, std::slice::from_ref(&bark1)).await;
+	ctx.refresh_all(&srv, &[&bark1]).await;
 	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
 
 	srv.stop().await.unwrap();
@@ -981,7 +981,7 @@ async fn captaind_config_change(){
 	// transactions still work
 
 	bark2.send_oor(&bark1.address().await, sat(330_000)).await;
-	ctx.refresh_all(&srv, std::slice::from_ref(&bark1)).await;
+	ctx.refresh_all(&srv, &[&bark1]).await;
 	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
 	bark1.send_oor(&bark2.address().await, sat(350_000)).await;
 
