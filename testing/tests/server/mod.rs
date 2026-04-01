@@ -62,6 +62,38 @@ async fn check_captaind_version() {
 }
 
 #[tokio::test]
+async fn get_vtxo() {
+	let ctx = TestContext::new("server/get_vtxo").await;
+	let srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
+	let bark = ctx.new_bark_with_funds("bark", &srv, sat(1_000_000)).await;
+
+	bark.board(sat(100_000)).await;
+	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
+	bark.sync().await;
+
+	let vtxo_ids = bark.vtxo_ids().await;
+	assert_eq!(vtxo_ids.len(), 1);
+	let vtxo_id = vtxo_ids[0];
+
+	let mut rpc = srv.get_public_rpc().await;
+
+	// Fetch the vtxo
+	let resp = rpc.get_vtxo(protos::GetVtxoRequest {
+		vtxo_id: vtxo_id.to_bytes().to_vec(),
+	}).await.unwrap().into_inner();
+
+	let vtxo = <Vtxo<Full>>::deserialize(&resp.vtxo).expect("valid vtxo");
+	assert_eq!(vtxo.id(), vtxo_id);
+	assert_eq!(vtxo.amount(), sat(100_000));
+
+	// Not-found case
+	let err = rpc.get_vtxo(protos::GetVtxoRequest {
+		vtxo_id: vec![0u8; 36],
+	}).await.unwrap_err();
+	assert_eq!(err.code(), tonic::Code::NotFound);
+}
+
+#[tokio::test]
 async fn integration() {
 	let ctx = TestContext::new("server/integration").await;
 	let srv = ctx.new_captaind("server", None).await;
