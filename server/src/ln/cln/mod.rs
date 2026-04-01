@@ -32,7 +32,6 @@ use std::time::Duration;
 
 use anyhow::Context;
 use bitcoin::Amount;
-use bitcoin::hex::DisplayHex;
 use bitcoin::secp256k1::PublicKey;
 use bitcoin_ext::{AmountExt, BlockDelta, BlockHeight};
 use cln_rpc::plugins::hold::{self as hold_plugin, hold_client::HoldClient};
@@ -220,11 +219,12 @@ impl ClnManager {
 				if status == LightningPaymentStatus::Succeeded {
 					let preimage = invoice.preimage
 						.context("missing preimage on bolt11 success")?;
-					debug!("Done, preimage: {} for invoice {}", preimage.as_hex(), invoice.invoice);
+					debug!(payment_hash = %payment_hash, preimage = %preimage, "CheckLightningPayment responding with success");
 					return Ok(PaymentStatus::Success(preimage));
 				}
 
 				if status == LightningPaymentStatus::Failed {
+					debug!(payment_hash = %payment_hash, "CheckLightningPayment responding with failed");
 					return Ok(PaymentStatus::Failed);
 				}
 			} else {
@@ -234,6 +234,7 @@ impl ClnManager {
 			}
 
 			if !wait {
+				trace!(payment_hash = %payment_hash, "CheckLightningPayment responding with pending");
 				return Ok(PaymentStatus::Pending);
 			}
 			// Continue loop, wait for next trigger or timeout
