@@ -9,6 +9,7 @@ use log::error;
 use semver::Version;
 use tokio::fs;
 use tokio::process::Child;
+use tokio::time::Instant;
 
 use crate::constants::env::{CHAIN_SOURCE, TEST_DIRECTORY, TX_PROPAGATION_TIMEOUT_MILLIS};
 use crate::daemon::electrs::ElectrsType;
@@ -217,19 +218,44 @@ pub trait FutureExt: Future {
 impl<T: Future> FutureExt for T {}
 
 /// Extension trait for channel receivers.
+#[async_trait]
 pub trait ReceiverExt<T> {
 	/// Collect all pending items in a Vec.
 	fn collect(&mut self) -> Vec<T>;
+
+	/// Collect all items that show up within the given time
+	async fn collect_for(&mut self, duration: Duration) -> Vec<T>;
 
 	/// Empty all pending items.
 	fn clear(&mut self);
 }
 
-impl<T> ReceiverExt<T> for tokio::sync::mpsc::UnboundedReceiver<T> {
+#[async_trait]
+impl<T: Send> ReceiverExt<T> for tokio::sync::mpsc::UnboundedReceiver<T> {
 	fn collect(&mut self) -> Vec<T> {
 		let mut ret = Vec::new();
 		while let Ok(v) = self.try_recv() {
 			ret.push(v);
+		}
+		ret
+	}
+
+	async fn collect_for(&mut self, duration: Duration) -> Vec<T> {
+		let timeout = tokio::time::sleep_until(Instant::now() + duration);
+		tokio::pin! { timeout }
+
+		// first collect all already ready items
+		let mut ret = self.collect();
+
+		loop {
+			tokio::select! {
+				item = self.recv() => {
+					if let Some(i) = item {
+						ret.push(i);
+					}
+				}
+				_ = &mut timeout => break,
+			}
 		}
 		ret
 	}
