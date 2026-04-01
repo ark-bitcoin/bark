@@ -8,11 +8,11 @@ use tokio_stream::wrappers::errors::BroadcastStreamRecvError;
 use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::StreamExt;
 
-use ark::lightning::AsPaymentHash;
+use ark::lightning::{AsPaymentHash, Invoice, Offer, PaymentHash};
 
 use crate::Wallet;
 use crate::movement::{Movement, PaymentMethod};
-use crate::subsystem::{LightningMovement, Subsystem};
+use crate::subsystem::Subsystem;
 
 /// A notification emitted by the wallet.
 #[derive(Debug, Clone)]
@@ -30,6 +30,38 @@ pub enum WalletNotification {
 	/// This happens when you are not consuming the notifications fast enough and
 	/// the buffer filled up.
 	ChannelLagging,
+}
+
+impl WalletNotification {
+	/// Get the movement for this notification if it's movement-related
+	pub fn movement(&self) -> Option<&Movement> {
+		match self {
+			Self::MovementCreated { movement } => Some(movement),
+			Self::MovementUpdated { movement } => Some(movement),
+			Self::ChannelLagging => None,
+		}
+	}
+
+	/// Get the Lightning invoice associated with this notification
+	///
+	/// Returns `None` for notifications that are not Lightning payments.
+	pub fn lightning_invoice(&self) -> Option<&Invoice> {
+		self.movement().and_then(|m| m.lightning_invoice())
+	}
+
+	/// Get the Lightning offer associated with this notification
+	///
+	/// Returns `None` for notifications that don't have an offer.
+	pub fn lightning_offer(&self) -> Option<&Offer> {
+		self.movement().and_then(|m| m.lightning_offer())
+	}
+
+	/// Get the Lightning payment hash associated with this notification
+	///
+	/// Returns `None` for notifications that are not Lightning payments.
+	pub fn lightning_payment_hash(&self) -> Option<PaymentHash> {
+		self.movement().and_then(|m| m.lightning_payment_hash())
+	}
 }
 
 /// A stream that yields all wallet notifications
@@ -83,28 +115,7 @@ impl NotificationStream {
 		payment: impl AsPaymentHash,
 	) -> impl Stream<Item = Movement> + Unpin + Send {
 		let payment_hash = payment.as_payment_hash();
-		self.movements().filter(move |m| {
-			if !m.subsystem.is_subsystem(Subsystem::LIGHTNING_RECEIVE)
-				&& !m.subsystem.is_subsystem(Subsystem::LIGHTNING_SEND)
-			{
-				return false;
-			}
-
-			if LightningMovement::get_payment_hash(&m.metadata) == Some(payment_hash) {
-				return true;
-			}
-
-			for d in &m.received_on {
-				match d.destination {
-					PaymentMethod::Invoice(ref i) if i.payment_hash() == payment_hash => {
-						return true;
-					},
-					_ => {},
-				}
-			}
-
-			false
-		})
+		self.movements().filter(move |m| m.lightning_payment_hash() == Some(payment_hash))
 	}
 
 	/// Convert into the raw [BroadcastStream]

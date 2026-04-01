@@ -2,7 +2,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 
-use ark::{ProtocolEncoding, Vtxo, VtxoId, SECP};
+use ark::{ProtocolEncoding, Vtxo, SECP};
 use ark::arkoor::ArkoorDestination;
 use ark::attestations::ArkoorCosignAttestation;
 use ark::vtxo::Full;
