@@ -50,6 +50,7 @@ build:
     paths:
       - target/ci/examples/
       - target/ci/captaind
+      - target/ci/watchmand
       - target/ci/bark
       - target/ci/barkd
       - target/ci/pid-lock-holder
@@ -207,6 +208,7 @@ bark-esplora:
     - git log --oneline -1
     - export RUN_DATETIME=$(cat RUN_DATETIME)
     - export CAPTAIND_EXEC=${CI_PROJECT_DIR}/target/ci/captaind
+    - export WATCHMAND_EXEC=${CI_PROJECT_DIR}/target/ci/watchmand
     - export BARK_EXEC=${CI_PROJECT_DIR}/target/ci/bark
     - export BARKD_EXEC=${CI_PROJECT_DIR}/target/ci/barkd
     - bash ./contrib/ci-run-test.sh test-integration-bark-prebuilt
@@ -234,6 +236,7 @@ bark-mempool:
     - git log --oneline -1
     - export RUN_DATETIME=$(cat RUN_DATETIME)
     - export CAPTAIND_EXEC=${CI_PROJECT_DIR}/target/ci/captaind
+    - export WATCHMAND_EXEC=${CI_PROJECT_DIR}/target/ci/watchmand
     - export BARK_EXEC=${CI_PROJECT_DIR}/target/ci/bark
     - export BARKD_EXEC=${CI_PROJECT_DIR}/target/ci/barkd
     - bash ./contrib/ci-run-test.sh test-integration-bark-prebuilt
@@ -258,6 +261,7 @@ bark-btc30:
     - git log --oneline -1
     - export RUN_DATETIME=$(cat RUN_DATETIME)
     - export CAPTAIND_EXEC=${CI_PROJECT_DIR}/target/ci/captaind
+    - export WATCHMAND_EXEC=${CI_PROJECT_DIR}/target/ci/watchmand
     - export BARK_EXEC=${CI_PROJECT_DIR}/target/ci/bark
     - export BARKD_EXEC=${CI_PROJECT_DIR}/target/ci/barkd
     - bash ./contrib/ci-run-test.sh test-integration-bark-prebuilt
@@ -293,6 +297,7 @@ bark-filestore:
     - git log --oneline -1
     - export RUN_DATETIME=$(cat RUN_DATETIME)
     - export CAPTAIND_EXEC=${CI_PROJECT_DIR}/target/ci/captaind
+    - export WATCHMAND_EXEC=${CI_PROJECT_DIR}/target/ci/watchmand
     - export BARK_EXEC=${CI_PROJECT_DIR}/target/ci/bark
     - export BARKD_EXEC=${CI_PROJECT_DIR}/target/ci/barkd
     - bash ./contrib/ci-run-test.sh test-integration-bark-prebuilt
@@ -317,6 +322,7 @@ core-server:
     - git log --oneline -1
     - export RUN_DATETIME=$(cat RUN_DATETIME)
     - export CAPTAIND_EXEC=${CI_PROJECT_DIR}/target/ci/captaind
+    - export WATCHMAND_EXEC=${CI_PROJECT_DIR}/target/ci/watchmand
     - export BARK_EXEC=${CI_PROJECT_DIR}/target/ci/bark
     - export BARKD_EXEC=${CI_PROJECT_DIR}/target/ci/barkd
     - bash ./contrib/ci-run-test.sh test-integration-core-prebuilt
@@ -347,6 +353,7 @@ int-bark-0.1.0-beta.9:
     - git log --oneline -1
     - export RUN_DATETIME=$(cat RUN_DATETIME)
     - export CAPTAIND_EXEC=${CI_PROJECT_DIR}/target/ci/captaind
+    - export WATCHMAND_EXEC=${CI_PROJECT_DIR}/target/ci/watchmand
     - export BARKD_EXEC=${CI_PROJECT_DIR}/target/ci/barkd
     - >-
       export BARK_EXEC=$(python3 contrib/fetch-bark-release.py
