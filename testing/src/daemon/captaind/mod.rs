@@ -103,7 +103,7 @@ impl SlogHandler for Arc<parking_lot::Mutex<State>> {
 pub struct CaptaindHelper {
 	name: String,
 	cfg: Config,
-	bitcoind: Bitcoind,
+	bitcoind: Arc<Bitcoind>,
 	slog_handler_tx: parking_lot::Mutex<Option<mpsc::Sender<Box<dyn SlogHandler>>>>,
 	state: Arc<parking_lot::Mutex<State>>,
 }
@@ -144,8 +144,8 @@ impl Captaind {
 		Command::new(exec)
 	}
 
-	/// Creates server with a dedicated bitcoind daemon.
-	pub fn new(name: impl AsRef<str>, bitcoind: Bitcoind, cfg: Config) -> Self {
+	/// Creates server with a bitcoind daemon.
+	pub fn new(name: impl AsRef<str>, bitcoind: Arc<Bitcoind>, cfg: Config) -> Self {
 		let helper = CaptaindHelper {
 			name: name.as_ref().to_string(),
 			cfg,

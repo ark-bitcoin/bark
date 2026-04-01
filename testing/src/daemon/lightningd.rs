@@ -108,7 +108,7 @@ pub struct LightningdConfig {
 pub struct LightningDHelper {
 	name: String,
 	config: LightningdConfig,
-	bitcoind: Bitcoind,
+	bitcoind: Arc<Bitcoind>,
 	state: Arc<Mutex<LightningDHelperState>>
 }
 
@@ -345,7 +345,7 @@ impl DaemonHelper for LightningDHelper {
 }
 
 impl Lightningd {
-	pub fn new(name: impl AsRef<str>, bitcoind: Bitcoind, config: LightningdConfig) -> Self {
+	pub fn new(name: impl AsRef<str>, bitcoind: Arc<Bitcoind>, config: LightningdConfig) -> Self {
 		let inner = LightningDHelper {
 			name: name.as_ref().to_owned(),
 			config,

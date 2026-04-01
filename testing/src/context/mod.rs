@@ -35,6 +35,8 @@ use crate::{
 };
 use crate::daemon::barkd::BarkdChainSource;
 
+pub mod builders;
+
 pub struct LightningPaymentSetup {
 	pub receiver: Lightningd,
 	pub sender: Lightningd,
@@ -69,7 +71,7 @@ pub struct TestContext {
 	pub test_name: String,
 	pub datadir: PathBuf,
 
-	pub bitcoind: Option<Bitcoind>,
+	pub bitcoind: Option<Arc<Bitcoind>>,
 
 	/// RPC handles for secondary bitcoind nodes that are p2p-connected to the
 	/// central one. Used by [`await_block_count_sync`] to ensure blocks have
@@ -155,7 +157,7 @@ impl TestContext {
 		bitcoind.start().await.unwrap();
 		bitcoind.load_wallet("central").await;
 
-		self.bitcoind = Some(bitcoind);
+		self.bitcoind = Some(Arc::new(bitcoind));
 	}
 
 	pub async fn init_central_electrs(&mut self) {
@@ -190,12 +192,34 @@ impl TestContext {
 		}
 	}
 
-	/// Returns the `Bitcoind` which is central to this `TextContext`
+	/// Returns the `Bitcoind` which is central to this `TestContext`
 	/// Will panic if no central `BitcoinD` is present
 	pub fn bitcoind(&self) -> &Bitcoind {
-		self.bitcoind.as_ref()
+		self.bitcoind.as_deref()
 			.expect("The central bitcoind hasn't been initialized. Call init_central_bitcoind first")
 	}
+
+	/// Returns a cloned `Arc<Bitcoind>` for shared ownership.
+	pub fn bitcoind_arc(&self) -> Arc<Bitcoind> {
+		Arc::clone(self.bitcoind.as_ref()
+			.expect("The central bitcoind hasn't been initialized. Call init_central_bitcoind first"))
+	}
+
+	// ── Builders ────────────────────────────────────────────────────
+
+	pub fn captaind(&self, name: impl AsRef<str>) -> builders::CaptaindBuilder<'_> {
+		builders::CaptaindBuilder::new(self, name)
+	}
+
+	pub fn bark<'a>(&'a self, name: impl AsRef<str>, srv: &'a dyn ToArkUrl) -> builders::BarkBuilder<'a> {
+		builders::BarkBuilder::new(self, name, srv)
+	}
+
+	pub fn lightningd(&self, name: impl AsRef<str>) -> builders::LightningdBuilder<'_> {
+		builders::LightningdBuilder::new(self, name)
+	}
+
+	// ── Direct constructors (legacy wrappers) ───────────────────
 
 	pub async fn new_bitcoind(&self, name: impl AsRef<str>) -> Bitcoind {
 		self.new_bitcoind_with_cfg(name.as_ref(), self.bitcoind_default_cfg(name.as_ref())).await
@@ -379,7 +403,7 @@ impl TestContext {
 		lightningd: Option<&Lightningd>,
 		mod_cfg: impl FnOnce(&mut server::Config),
 	) -> Captaind {
-		let bitcoind = self.new_bitcoind(format!("{}_bitcoind", name.as_ref())).await;
+		let bitcoind = self.bitcoind_arc();
 		let mut cfg = self.captaind_default_cfg(name.as_ref(), &bitcoind, lightningd).await;
 		mod_cfg(&mut cfg);
 
@@ -459,12 +483,12 @@ impl TestContext {
 		mod_cfg: impl FnOnce(&mut bark::Config),
 	) -> anyhow::Result<Bark> {
 		let bitcoind = if self.electrs.is_none() {
-			Some(self.new_bitcoind(format!("{}_bitcoind", name.as_ref())).await)
+			Some(self.bitcoind_arc())
 		} else {
 			None
 		};
 
-		let mut cfg = self.bark_default_cfg(srv, bitcoind.as_ref());
+		let mut cfg = self.bark_default_cfg(srv, bitcoind.as_deref());
 		mod_cfg(&mut cfg);
 
 		let datadir = self.datadir.join(name.as_ref());
@@ -518,7 +542,7 @@ impl TestContext {
 	pub async fn new_lightningd(&self, name: impl AsRef<str>) -> Lightningd {
 		let datadir = self.datadir.join(name.as_ref());
 
-		let bitcoind = self.new_bitcoind(format!("{}_bitcoind", name.as_ref())).await;
+		let bitcoind = self.bitcoind_arc();
 
 		let cfg = LightningdConfig {
 			network: String::from("regtest"),
