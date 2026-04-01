@@ -25,7 +25,7 @@ use ark::util::IteratorExt;
 use server_rpc::protos::{self, InputVtxo, lightning_payment_status};
 use server_rpc::protos::prepare_lightning_receive_claim_request::LightningReceiveAntiDos;
 use server_rpc::TryFromBytes;
-use bitcoin_ext::{AmountExt, BlockDelta, BlockHeight};
+use bitcoin_ext::{BlockDelta, BlockHeight};
 
 use crate::arkoor::ArkoorCosignRequestValidationParams;
 use crate::database::VirtualTransaction;
@@ -37,15 +37,11 @@ use crate::{Server, CAPTAIND_API_KEY};
 
 
 impl Server {
-	#[tracing::instrument(skip(self, invoice, request))]
+	#[tracing::instrument(skip(self, request))]
 	pub async fn request_lightning_pay_htlc_cosign(
 		&self,
-		invoice: Invoice,
-		payment_amount: Amount,
 		request: ArkoorPackageCosignRequest<VtxoId>,
 	) -> anyhow::Result<ArkoorPackageCosignResponse> {
-		let invoice_payment_hash = invoice.payment_hash();
-
 		let input_vtxo_ids = request.inputs().cloned().collect::<Vec<VtxoId>>();
 		let input_vtxos = self.db.get_user_vtxos_by_id(&input_vtxo_ids).await?;
 
@@ -63,35 +59,7 @@ impl Server {
 			.as_server_htlc_send().expect("we filtered above")
 			.clone();
 
-		//TODO(stevenroose) check that vtxos are valid
-
-		// Check if the provided requests are sufficient to pay the invoice
-		let amount = invoice.get_final_amount(Some(payment_amount))
-			.badarg("missing or invalid user amount")?;
-
-		if amount == Amount::ZERO {
-			return badarg!("Cannot pay invoice for 0 sats (0 sat invoices are not any-amount invoices)");
-		}
-
-		// Validate lightning send fees
-		let tip = self.sync_manager.chain_tip();
-		let vtxo_fee_infos = input_vtxos.iter()
-			.map(|v| VtxoFeeInfo::from_vtxo_and_tip(&v.vtxo, tip.height));
-		let fee = self.config.fees.lightning_send.calculate(amount, vtxo_fee_infos)
-			.context("fee overflowed")?;
-
-		let expected_htlc_amount = amount.checked_add(fee).context("validation overflow")?;
-		let htlc_amount = htlc_vtxos.iter().map(|v| v.total_amount).sum::<Amount>();
-		if expected_htlc_amount > htlc_amount {
-			return badarg!(
-				"insufficient lightning send: expected at least {}, got {}",
-				expected_htlc_amount,
-				htlc_amount,
-			);
-		}
-
-		// should be checked above, but let's be cautious
-		ensure!(amount.to_msat() >= invoice.amount_msat().unwrap_or_default());
+		let payment_hash = requested_policy.payment_hash;
 
 		// Convert the PackageCosignRequest<VtxoId> into PackageCosignRequest<Vtxo>
 		// We will mask the old value
@@ -100,7 +68,7 @@ impl Server {
 		// Bail early if this invoice was already paid to avoid setting up HTLCs
 		// just to have them revoked some time later.
 		if let Some(invoice) = self.db.get_lightning_invoice_by_payment_hash(
-			invoice_payment_hash,
+			payment_hash,
 		).await? {
 			if invoice.preimage.is_some() {
 				return badarg!("invoice has already been paid");
@@ -109,7 +77,7 @@ impl Server {
 
 		// Verify that the proposed expiry makes sense for us
 		let tip = self.sync_manager.chain_tip().height;
-		let expiry =  tip + self.config.htlc_send_expiry_delta as BlockHeight;
+		let expiry = tip + self.config.htlc_send_expiry_delta as BlockHeight;
 		if requested_policy.htlc_expiry < expiry - 1 {
 			return badarg!(
 				"requested expiry is too low. our tip is {tip}. \
@@ -117,12 +85,8 @@ impl Server {
 			);
 		}
 
-		if requested_policy.payment_hash != invoice_payment_hash {
-			return badarg!("provided HTLCs are for incorrect payment hash");
-		}
-
 		if self.db.get_open_lightning_payment_attempt_by_payment_hash(
-			invoice_payment_hash,
+			payment_hash,
 		).await?.is_some()
 		{
 			return badarg!("payment already in progress for this invoice");
@@ -146,7 +110,7 @@ impl Server {
 			vtxo.check_spendable_for_oor(chain_tip, *spending_txid)?;
 		}
 
-		slog!(LightningPayHtlcsRequested, invoice_payment_hash, amount, fee, expiry);
+		slog!(LightningPayHtlcsRequested, payment_hash, expiry);
 
 		let builder = self.cosign_oor_with_builder(builder).await?;
 		Ok(builder.cosign_response())
