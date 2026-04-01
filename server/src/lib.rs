@@ -709,7 +709,7 @@ impl Server {
 	#[tracing::instrument(skip(self, vtxo))]
 	pub async fn register_board(&self, vtxo: Vtxo<Full>) -> anyhow::Result<()> {
 		let funding_txid = vtxo.chain_anchor().txid;
-		let tx_info = self.bitcoind.custom_get_raw_transaction_info(&funding_txid, None)
+		let tx_info = self.bitcoind.custom_get_raw_transaction_info(funding_txid, None)
 			.with_context(|| format!("failed to fetch funding tx {funding_txid}"))?
 			.with_context(|| format!("funding tx not found: {funding_txid}"))?;
 
@@ -824,7 +824,7 @@ impl Server {
 		for vtxo in vtxos {
 			let vtxo_id = vtxo.vtxo_id();
 			let txid = vtxo_id.utxo().txid;
-			let status = self.bitcoind.tx_status(&txid)?;
+			let status = self.bitcoind.tx_status(txid)?;
 
 			match status {
 				TxStatus::Confirmed(_) => {

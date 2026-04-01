@@ -1,16 +1,20 @@
 
 use bitcoin::hashes::sha256;
+use bitcoin::secp256k1::schnorr;
 use bitcoin::secp256k1::Keypair;
 use bitcoin::taproot::ControlBlock;
 use bitcoin::TapSighash;
 use bitcoin::Witness;
+use tracing::error;
 
-use ark::ServerVtxoPolicy;
+use ark::{ServerVtxoPolicy, Vtxo};
 use ark::vtxo::policy::clause::{TapScriptClause, VtxoClause};
 use ark::vtxo::policy::signing::VtxoSigner;
+use bitcoin_ext::KeypairExt;
 
 use crate::database::Db;
 use crate::secret::Secret;
+use crate::SECP;
 
 /// Signer for server-side VTXO spending (claims).
 ///
@@ -62,6 +66,22 @@ impl WatchmanSigner {
 
 #[async_trait::async_trait]
 impl VtxoSigner<ServerVtxoPolicy> for WatchmanSigner {
+	async fn sign_keyspend<G: Sync + Send>(
+		&self,
+		vtxo: &Vtxo<G, ServerVtxoPolicy>,
+		sighash: TapSighash,
+	) -> Option<schnorr::Signature> {
+		let tap_merkle_root = vtxo.output_taproot().merkle_root();
+		let key = self.server_keypair.leak_ref().for_keyspend(&*SECP, tap_merkle_root);
+		if vtxo.output_taproot().internal_key() != key.public_key().x_only_public_key().0 {
+			error!("Watchman asked to sign VTXO {} which has internal key {} but our key is {}",
+				vtxo.id(), vtxo.output_taproot().internal_key(), key.public_key(),
+			);
+			return None;
+		}
+		Some(ark::SECP.sign_schnorr(&sighash.into(), &key))
+	}
+
 	async fn witness(
 		&self,
 		clause: &VtxoClause,

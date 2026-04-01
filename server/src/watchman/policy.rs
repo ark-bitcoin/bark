@@ -3,12 +3,19 @@ use bitcoin::Txid;
 
 use ark::{ServerVtxo, ServerVtxoPolicy, VtxoId, VtxoPolicy};
 use ark::lightning::PaymentHash;
+use bitcoin_ext::rpc::{BitcoinRpcClient, BitcoinRpcExt};
 use bitcoin_ext::{BlockDelta, BlockHeight};
 use server_log::slog;
-use tracing::warn;
+use tracing::{error, warn};
 
 use crate::database::Db;
 use super::{Action, Config};
+
+#[derive(Debug, Clone, Copy)]
+struct ProgressSpec {
+	next_txid: Txid,
+	is_signed: bool,
+}
 
 struct ActionParams<T = ()> {
 	vtxo_id: VtxoId,
@@ -41,21 +48,21 @@ impl ActionParams<()> {
 
 struct PubkeyExtra {
 	/// The next transaction, if any. The bool indicates whether the signature is known.
-	next_tx: Option<(Txid, bool)>,
+	next_tx: Option<ProgressSpec>,
 	/// Whether the server may own an ancestor of this VTXO.
 	server_may_own_ancestor: bool,
 }
 
 struct HtlcSendExtra {
 	/// The next transaction, if any. The bool indicates whether the signature is known.
-	next_tx: Option<(Txid, bool)>,
+	next_tx: Option<ProgressSpec>,
 	htlc_expiry: BlockHeight,
 	has_preimage: bool,
 }
 
 struct HtlcRecvExtra {
 	/// The next transaction, if any. The bool indicates whether the signature is known.
-	next_tx: Option<(Txid, bool)>,
+	next_tx: Option<ProgressSpec>,
 	htlc_expiry: BlockHeight,
 	htlc_expiry_delta: BlockDelta,
 }
@@ -66,13 +73,13 @@ struct HtlcRecvExtra {
 /// and then a `Progress` action
 fn try_progress<T>(
 	params: &ActionParams<T>,
-	next_tx: Option<(Txid, bool)>,
+	next_tx: Option<ProgressSpec>,
 	deadline: BlockHeight,
 ) -> Option<Action> {
 	let txid = match next_tx {
-		Some((txid, true)) => txid,
-		Some((txid, false)) => {
-			slog!(ProgressMissingSignature, vtxo_id: params.vtxo_id, txid);
+		Some(s) if s.is_signed => s.next_txid,
+		Some(s) /* !s.is_signed */ => {
+			slog!(ProgressMissingSignature, vtxo_id: params.vtxo_id, txid: s.next_txid);
 			return None;
 		},
 		None => return None,
@@ -85,6 +92,19 @@ fn try_progress<T>(
 	}
 
 	Some(Action::Progress { txid, deadline: Some(deadline) })
+}
+
+/// Determine the action for an ServerOwned policy
+///
+/// We only want to sweep server owned after the expiry.
+/// We do this so that we can mark connectors with the time they can
+/// be swept.
+fn decide_server_owned(params: &ActionParams) -> Action {
+	if params.chain_tip_height >= params.expiry_height {
+		Action::Claim { deadline: None }
+	} else {
+		Action::Wait
+	}
 }
 
 /// Determine the action for an Expiry policy
@@ -172,6 +192,7 @@ fn decide_action_server_htlc_recv(params: &ActionParams<HtlcRecvExtra>) -> Actio
 pub struct ActionContextFetcher<'a> {
 	pub config: &'a Config,
 	pub db: &'a Db,
+	pub bitcoind: &'a BitcoinRpcClient,
 	pub chain_tip_height: BlockHeight,
 }
 
@@ -188,6 +209,9 @@ impl ActionContextFetcher<'_> {
 		let params = self.build_params(vtxo, confirmed_at).await;
 
 		let action = match vtxo.policy() {
+			ServerVtxoPolicy::ServerOwned => {
+				decide_server_owned(&params)
+			},
 			ServerVtxoPolicy::Expiry(_)
 				| ServerVtxoPolicy::Checkpoint(_)
 				| ServerVtxoPolicy::HarkLeaf(_)
@@ -263,7 +287,7 @@ impl ActionContextFetcher<'_> {
 	}
 
 	/// Fetch the next tx in the offchain tx chain for this VTXO and whether it is signed
-	async fn fetch_progress(&self, vtxo: &ServerVtxo) -> Option<(Txid, bool)> {
+	async fn fetch_progress(&self, vtxo: &ServerVtxo) -> Option<ProgressSpec> {
 		let vtxo_state = self.db.get_server_vtxo_by_id(vtxo.id()).await
 			.inspect_err(|e| warn!("DB error: {:#}", e))
 			.ok()?;
@@ -271,8 +295,48 @@ impl ActionContextFetcher<'_> {
 		let vtx = self.db.get_virtual_transaction_by_txid(oor_txid).await
 			.inspect_err(|e| warn!("DB error: {:#}", e))
 			.ok()??;
-		let has_sig = vtx.signed_tx.is_some();
-		Some((oor_txid, has_sig))
+
+		// For forfeit txs with connector inputs, we check if we should broadcast
+		// the connector tx first.
+		if let Some(ref tx) = vtx.signed_tx {
+			let tx = tx.as_ref();
+			if tx.input.len() > 1 {
+				let child_txid = tx.compute_txid();
+
+				if tx.input.len() > 2 {
+					error!("progress tx with more than 2 inputs: {}", child_txid);
+				}
+
+				let parent_txid = tx.input[1].previous_output.txid;
+				let status = self.bitcoind.tx_status(parent_txid).inspect_err(|e| {
+					warn!("bitcoind rpc error fetching parent progress tx {} for {}: {:#}",
+						parent_txid, child_txid, e,
+					);
+				}).ok()?;
+				if !status.is_confirmed() {
+					let vtx = self.db.get_virtual_transaction_by_txid(parent_txid).await
+						.inspect_err(|e| warn!("DB error: {:#}", e)).ok()??;
+					if vtx.signed_tx.is_none() {
+						// connector txs should be signed
+						error!("Progress {} depends on (connector) tx {} without signed_tx",
+							child_txid, parent_txid,
+						);
+					}
+
+					slog!(BroadcastingDependentTx, child_txid, parent_txid);
+
+					return Some(ProgressSpec {
+						next_txid: parent_txid,
+						is_signed: vtx.signed_tx.is_some(),
+					});
+				}
+			}
+		}
+
+		Some(ProgressSpec {
+			next_txid: oor_txid,
+			is_signed: vtx.signed_tx.is_some(),
+		})
 	}
 
 	async fn check_have_payment_preimage(&self, payment_hash: PaymentHash) -> bool {
@@ -333,7 +397,7 @@ mod tests {
 			exit_delta: 144,
 			confirmed_at: 100,
 			policy_extras: PubkeyExtra {
-				next_tx: Some((txid, true)),
+				next_tx: Some(ProgressSpec { next_txid: txid, is_signed: true }),
 				server_may_own_ancestor: true,
 			},
 		};
@@ -373,7 +437,7 @@ mod tests {
 			confirmed_at: 100,
 			policy_extras: PubkeyExtra {
 				server_may_own_ancestor: true,
-				next_tx: Some((txid, false)),
+				next_tx: Some(ProgressSpec { next_txid: txid, is_signed: false }),
 			},
 		};
 		assert_eq!(decide_action_pubkey(&params), Action::Wait);
@@ -391,7 +455,7 @@ mod tests {
 			exit_delta: 144,
 			confirmed_at: 100,
 			policy_extras: PubkeyExtra {
-				next_tx: Some((txid, true)),
+				next_tx: Some(ProgressSpec { next_txid: txid, is_signed: true }),
 				server_may_own_ancestor: false,
 			},
 		};
@@ -412,7 +476,7 @@ mod tests {
 			exit_delta: 144,
 			confirmed_at: 100,
 			policy_extras: HtlcSendExtra {
-				next_tx: Some((txid, true)),
+				next_tx: Some(ProgressSpec { next_txid: txid, is_signed: true }),
 				htlc_expiry: 500,
 				has_preimage: false,
 			},
@@ -433,7 +497,7 @@ mod tests {
 			exit_delta: 144,
 			confirmed_at: 100,
 			policy_extras: HtlcSendExtra {
-				next_tx: Some((txid, true)),
+				next_tx: Some(ProgressSpec { next_txid: txid, is_signed: true }),
 				htlc_expiry: 500,
 				has_preimage: false,
 			},
@@ -516,7 +580,7 @@ mod tests {
 			exit_delta: 144,
 			confirmed_at: 100,
 			policy_extras: HtlcRecvExtra {
-				next_tx: Some((txid, true)),
+				next_tx: Some(ProgressSpec { next_txid: txid, is_signed: true }),
 				htlc_expiry: 500,
 				htlc_expiry_delta: 40,
 			},
@@ -537,13 +601,16 @@ mod tests {
 			exit_delta: 144,
 			confirmed_at: 100,
 			policy_extras: HtlcRecvExtra {
-				next_tx: Some((txid, true)),
+				next_tx: Some(ProgressSpec { next_txid: txid, is_signed: true }),
 				htlc_expiry: 500,
 				htlc_expiry_delta: 40,
 			},
 		};
 		// deadline = confirmed_at + htlc_expiry_delta + exit_delta = 100 + 40 + 144 = 284
-		assert_eq!(decide_action_server_htlc_recv(&params), Action::Progress { txid, deadline: Some(284) });
+		assert_eq!(
+			decide_action_server_htlc_recv(&params),
+			Action::Progress { txid, deadline: Some(284) },
+		);
 	}
 
 	/// Server must wait until the claim height before it can claim.

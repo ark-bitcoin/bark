@@ -2,7 +2,8 @@
 use std::borrow::Borrow;
 
 use bitcoin::hashes::Hash;
-use bitcoin::{TapSighash, Transaction, TxOut, Witness, sighash, taproot};
+use bitcoin::secp256k1::schnorr;
+use bitcoin::{sighash, taproot, TapSighash, Transaction, TxOut, Witness};
 
 use crate::Vtxo;
 use crate::vtxo::policy::{Policy, VtxoPolicy};
@@ -16,6 +17,13 @@ pub struct CannotSignVtxoError;
 #[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
 #[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
 pub trait VtxoSigner<P: Policy = VtxoPolicy> {
+	/// Sign a keyspend input
+	async fn sign_keyspend<G: Sync + Send>(
+		&self,
+		vtxo: &Vtxo<G, P>,
+		sighash: TapSighash,
+	) -> Option<schnorr::Signature>;
+
 	/// Returns the witness for a [VtxoClause] if it is signable, otherwise [None].
 	async fn witness(
 		&self,
@@ -65,6 +73,25 @@ pub trait VtxoSigner<P: Policy = VtxoPolicy> {
 		let clause = self.find_signable_clause(vtxo).await
 			.ok_or(CannotSignVtxoError)?;
 		self.sign_input_with_clause(vtxo, &clause, input_idx, sighash_cache, prevouts).await
+	}
+
+	/// Return the full witness for a [Vtxo] using keyspend
+	async fn sign_input_with_keyspend<G: Sync + Send>(
+		&self,
+		vtxo: &Vtxo<G, P>,
+		input_idx: usize,
+		sighash_cache: &mut sighash::SighashCache<impl Borrow<Transaction> + Send + Sync>,
+		prevouts: &sighash::Prevouts<impl Borrow<TxOut> + Send + Sync>,
+	) -> Result<Witness, CannotSignVtxoError> {
+		let sighash = sighash_cache.taproot_key_spend_signature_hash(
+			input_idx, &prevouts, sighash::TapSighashType::Default,
+		).expect("all prevouts provided");
+
+		let sig = self.sign_keyspend(vtxo, sighash).await
+			.ok_or(CannotSignVtxoError)?;
+		let witness = Witness::from_slice(&[&sig[..]]);
+
+		Ok(witness)
 	}
 
 	/// Return the full witness for a [Vtxo] using the specified clause.

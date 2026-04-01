@@ -346,7 +346,7 @@ impl TxIndex {
 		let txid = tx.compute_txid();
 		self.db.upsert_bitcoin_transaction(txid, &tx).await
 			.context("failed to store bitcoin tx in db")?;
-		let status = self.rpc.tx_status(&txid)
+		let status = self.rpc.tx_status(txid)
 			.context("failed to get bitcoin tx status")?;
 		Ok(self.data.register_as(tx, status.into()).await)
 	}
@@ -361,7 +361,7 @@ impl TxIndex {
 	async fn dump_transaction(&self, txid: Txid, tx: Transaction) -> anyhow::Result<Tx> {
 		self.db.upsert_bitcoin_transaction(txid, &tx).await
 			.context("failed to store bitcoin tx in db")?;
-		let status = self.rpc.tx_status(&txid)?;
+		let status = self.rpc.tx_status(txid)?;
 		let indexed_tx = self.data.get_or_insert(&txid, || (tx, status.into())).await;
 		Ok(indexed_tx)
 	}
@@ -373,7 +373,7 @@ impl TxIndex {
 		match db_tx {
 			None => Ok(None),
 			Some(tx) => {
-				let status = self.rpc.tx_status(&txid)
+				let status = self.rpc.tx_status(txid)
 					.context("failed to get bitcoin tx status")?;
 				let indexed_tx = self.data.get_or_insert(&txid, || (tx, status.into())).await;
 				Ok(Some(indexed_tx))

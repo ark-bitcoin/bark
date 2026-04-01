@@ -1,26 +1,38 @@
+//!
+//! # Offboard mechanism using connector-swaps
+//!
+//!
+//! ## Connector VTXOs
+//!
+//! We create internal "ServerVtxo"s for the connector outputs. Because they must not
+//! be swept before they are no longer required (i.e. when the input VTXO expires),
+//! we use the expiry height on the VTXO to indicate when they can be swept.
+//!
 
 use std::borrow::Borrow;
 
 use bitcoin::{
-	Amount, FeeRate, OutPoint, ScriptBuf, Sequence, TapSighashType, Transaction, TxIn, TxOut,
-	Witness,
+	Amount, FeeRate, OutPoint, ScriptBuf, Sequence, TapSighashType, Transaction, TxIn, TxOut, Txid, Witness
 };
 use bitcoin::hashes::Hash;
 use bitcoin::hex::DisplayHex;
-use bitcoin::secp256k1::{Keypair, schnorr};
+use bitcoin::secp256k1::{schnorr, Keypair, PublicKey};
 use bitcoin::sighash::{Prevouts, SighashCache};
 
-use bitcoin_ext::{fee, KeypairExt, TxOutExt, P2TR_DUST};
+use bitcoin_ext::{fee, BlockDelta, BlockHeight, KeypairExt, TxOutExt, P2TR_DUST};
 
+use crate::{musig, ServerVtxo, ServerVtxoPolicy, Vtxo, VtxoId, SECP};
 use crate::connectors::construct_multi_connector_tx;
-use crate::vtxo::Full;
-use crate::{musig, Vtxo, VtxoId, SECP};
+use crate::vtxo::{Bare, Full};
 
 
 /// The output index of the offboard output in the offboard tx
 pub const OFFBOARD_TX_OFFBOARD_VOUT: usize = 0;
 /// The output index of the connector output in the offboard tx
 pub const OFFBOARD_TX_CONNECTOR_VOUT: usize = 1;
+
+/// Additional number of blocks after the input VTXO expiry we wait to sweep connectors
+const CONNECTOR_EXPIRY_DELTA: BlockDelta = 144;
 
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, thiserror::Error)]
@@ -87,6 +99,36 @@ pub struct InvalidUserPartialSignatureError {
 pub struct OffboardForfeitSignatures {
 	pub public_nonces: Vec<musig::PublicNonce>,
 	pub partial_signatures: Vec<musig::PartialSignature>,
+}
+
+pub struct OffboardForfeitResult {
+	pub forfeit_txs: Vec<Transaction>,
+	pub forfeit_vtxos: Vec<ServerVtxo>,
+	pub connector_tx: Option<Transaction>,
+	pub connector_vtxos: Vec<ServerVtxo>,
+}
+
+impl OffboardForfeitResult {
+	pub fn spend_info<'a>(
+		&'a self,
+		inputs: impl Iterator<Item = VtxoId> + 'a,
+		offboard_txid: Txid,
+	) -> impl Iterator<Item = (VtxoId, Txid)> + 'a {
+		// We need:
+		// - each input vtxo spent by forfeit
+		// for not single:
+		// - connector root output spent by connector tx
+
+		let vtxos_to_ff = inputs.zip(self.forfeit_txs.iter().map(|t| t.compute_txid()));
+
+		let connector = if let Some(ref conn_tx) = self.connector_tx {
+			Some((OutPoint::new(offboard_txid, 1).into(), conn_tx.compute_txid()))
+		} else {
+			None
+		};
+
+		vtxos_to_ff.chain(connector)
+	}
 }
 
 pub struct OffboardForfeitContext<'a, V> {
@@ -206,7 +248,7 @@ where
 	///
 	/// Panics if wrong number of secret nonces or partial signatures, or if [Self::validate_offboard_tx]
 	/// would have returned an error. The caller should call that method first.
-	pub fn check_finalize_transactions(
+	pub fn finish(
 		&self,
 		server_key: &Keypair,
 		connector_key: &Keypair,
@@ -214,7 +256,7 @@ where
 		server_sec_nonces: Vec<musig::SecretNonce>,
 		user_pub_nonces: &[musig::PublicNonce],
 		user_partial_sigs: &[musig::PartialSignature],
-	) -> Result<Vec<Transaction>, InvalidUserPartialSignatureError> {
+	) -> Result<OffboardForfeitResult, InvalidUserPartialSignatureError> {
 		assert_eq!(self.input_vtxos.len(), server_pub_nonces.len());
 		assert_eq!(self.input_vtxos.len(), server_sec_nonces.len());
 		assert_eq!(self.input_vtxos.len(), user_pub_nonces.len());
@@ -225,9 +267,15 @@ where
 		let connector_prev = OutPoint::new(offboard_txid, OFFBOARD_TX_CONNECTOR_VOUT as u32);
 		let connector_txout = self.offboard_tx.output.get(OFFBOARD_TX_CONNECTOR_VOUT)
 			.expect("invalid offboard tx");
-		let tweaked_connector_key = connector_key.for_keyspend(&*SECP);
+		let tweaked_connector_key = connector_key.for_keyspend_only(&*SECP);
 
-		let mut ret = Vec::with_capacity(self.input_vtxos.len());
+		let mut ret = OffboardForfeitResult {
+			forfeit_txs: Vec::with_capacity(self.input_vtxos.len()),
+			forfeit_vtxos: Vec::with_capacity(self.input_vtxos.len()),
+			connector_tx: None,
+			connector_vtxos: Vec::new(),
+		};
+
 		if self.input_vtxos.len() == 1 {
 			let vtxo = self.input_vtxos[0].as_ref();
 			let tx = server_check_finalize_forfeit_tx(
@@ -240,7 +288,9 @@ where
 				&user_pub_nonces[0],
 				&user_partial_sigs[0],
 			).ok_or_else(|| InvalidUserPartialSignatureError { vtxo: vtxo.id() })?;
-			ret.push(tx);
+			ret.forfeit_vtxos = vec![construct_forfeit_vtxo(vtxo, &tx)];
+			ret.forfeit_txs.push(tx);
+			ret.connector_vtxos = vec![construct_connector_vtxo_single(vtxo, offboard_txid)];
 		} else {
 			// here we will create a deterministic intermediate connector tx and
 			// sign forfeit txs with the outputs of that tx
@@ -250,6 +300,15 @@ where
 			);
 			let connector_txid = connector_tx.compute_txid();
 
+			ret.connector_tx = Some(connector_tx);
+			ret.connector_vtxos = Vec::with_capacity(self.input_vtxos.len() + 1);
+			ret.connector_vtxos.push(construct_connector_vtxo_fanout_root(
+				offboard_txid,
+				self.input_vtxos.iter().map(|v| v.as_ref().expiry_height()).max().unwrap(),
+				self.input_vtxos[0].as_ref().server_pubkey(), // should be the same, any will do
+				self.input_vtxos.len(),
+			));
+
 			// NB all connector txouts are identical, we copy the one from the offboard tx
 			let iter = self.input_vtxos.iter()
 				.zip(server_pub_nonces)
@@ -257,9 +316,10 @@ where
 				.zip(user_pub_nonces)
 				.zip(user_partial_sigs);
 			for (i, ((((vtxo, server_pub), server_sec), user_pub), user_part)) in iter.enumerate() {
+				let vtxo = vtxo.as_ref();
 				let connector = OutPoint::new(connector_txid, i as u32);
-				match server_check_finalize_forfeit_tx(
-					vtxo.as_ref(),
+				let tx = server_check_finalize_forfeit_tx(
+					vtxo,
 					server_key,
 					&tweaked_connector_key,
 					connector,
@@ -267,16 +327,99 @@ where
 					(server_pub, server_sec),
 					user_pub,
 					user_part,
-				) {
-					Some(tx) => ret.push(tx),
-					None => return Err(InvalidUserPartialSignatureError {
-						vtxo: vtxo.as_ref().id(),
-					}),
-				}
+				).ok_or_else(|| InvalidUserPartialSignatureError { vtxo: vtxo.as_ref().id() })?;
+
+				ret.forfeit_vtxos.push(construct_forfeit_vtxo(vtxo, &tx));
+				ret.forfeit_txs.push(tx);
+				ret.connector_vtxos.push(construct_connector_vtxo_fanout_leaf(
+					vtxo, i, offboard_txid, connector_txid,
+				));
 			}
 		}
 
 		Ok(ret)
+	}
+}
+
+fn construct_forfeit_vtxo<G>(
+	input: &Vtxo<G>,
+	forfeit_tx: &Transaction,
+) -> ServerVtxo<Bare> {
+	ServerVtxo {
+		point: OutPoint::new(forfeit_tx.compute_txid(), 0),
+		policy: ServerVtxoPolicy::ServerOwned,
+		amount: input.amount,
+		anchor_point: input.anchor_point,
+		server_pubkey: input.server_pubkey,
+		expiry_height: input.expiry_height,
+		exit_delta: input.exit_delta,
+		genesis: Bare,
+	}
+}
+
+/// Create the connector VTXO for the connector used to offboard a single VTXO
+///
+/// This connector is just a single 330 sat output on the offboard tx.
+fn construct_connector_vtxo_single<G>(
+	input: &Vtxo<G>,
+	offboard_txid: Txid,
+) -> ServerVtxo<Bare> {
+	let point = OutPoint::new(offboard_txid, 1);
+	ServerVtxo {
+		// NB they are the same here because this VTXO goes straight onchain
+		anchor_point: point.clone(),
+		point: point,
+		policy: ServerVtxoPolicy::ServerOwned,
+		amount: P2TR_DUST,
+		server_pubkey: input.server_pubkey,
+		expiry_height: input.expiry_height + CONNECTOR_EXPIRY_DELTA as u32,
+		exit_delta: 0,
+		genesis: Bare,
+	}
+}
+
+/// Create the connector VTXO for the fanout output into multi connector tx
+///
+/// This connector is the fanout output on the offboard tx and is spent by the fanout
+/// tx that creates a connector for each input.
+fn construct_connector_vtxo_fanout_root(
+	offboard_txid: Txid,
+	max_expiry_height: BlockHeight,
+	server_pubkey: PublicKey,
+	nb_vtxos: usize,
+) -> ServerVtxo<Bare> {
+	let point = OutPoint::new(offboard_txid, 1);
+	ServerVtxo {
+		// NB they are the same here because this VTXO goes straight onchain
+		anchor_point: point.clone(),
+		point: point,
+		policy: ServerVtxoPolicy::ServerOwned,
+		amount: P2TR_DUST * nb_vtxos as u64,
+		server_pubkey: server_pubkey,
+		expiry_height: max_expiry_height + CONNECTOR_EXPIRY_DELTA as u32,
+		exit_delta: 0,
+		genesis: Bare,
+	}
+}
+
+/// Create the connector VTXO on the connector fanout tx
+///
+/// This connector is an output of the connector fanout tx.
+fn construct_connector_vtxo_fanout_leaf<G>(
+	input: &Vtxo<G>,
+	input_idx: usize,
+	offboard_txid: Txid,
+	connector_txid: Txid,
+) -> ServerVtxo<Bare> {
+	ServerVtxo {
+		point: OutPoint::new(connector_txid, input_idx as u32),
+		anchor_point: OutPoint::new(offboard_txid, 1),
+		policy: ServerVtxoPolicy::ServerOwned,
+		amount: P2TR_DUST,
+		server_pubkey: input.server_pubkey,
+		expiry_height: input.expiry_height + CONNECTOR_EXPIRY_DELTA as u32,
+		exit_delta: 0,
+		genesis: Bare,
 	}
 }
 
@@ -522,7 +665,7 @@ mod test {
 
 		let user_sigs = ctx.user_sign_forfeits(&[&input1_key, &input2_key], &server_pub_nonces);
 
-		ctx.check_finalize_transactions(
+		ctx.finish(
 			&server_key,
 			&conn_key,
 			&server_pub_nonces,

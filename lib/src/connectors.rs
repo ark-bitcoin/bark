@@ -174,7 +174,7 @@ impl ConnectorChain {
 		if self.spk == ConnectorChain::output_script(sign_key.public_key()) {
 			Ok(ConnectorTxIter {
 				chain: Cow::Borrowed(self),
-				sign_key: Some(sign_key.for_keyspend(&*SECP)),
+				sign_key: Some(sign_key.for_keyspend_only(&*SECP)),
 				prev: self.utxo,
 				idx: 0,
 			})

@@ -95,6 +95,13 @@ pub struct ProgressCpfpFailure {
 impl_slog!(ProgressCpfpFailure, WARN, "Failed to create CPFP for a progress tx");
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BroadcastingDependentTx {
+	pub child_txid: Txid,
+	pub parent_txid: Txid,
+}
+impl_slog!(BroadcastingDependentTx, DEBUG, "Broadcasting a dependent tx for a progress tx");
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProgressBroadcast {
 	pub txid: Txid,
 	pub cpfp_txid: Txid,

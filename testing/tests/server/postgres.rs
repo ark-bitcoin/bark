@@ -5,6 +5,7 @@ use bitcoin::Transaction;
 use chrono::Local;
 
 use ark::{ServerVtxo, VtxoId, VtxoPolicy, VtxoRequest};
+use ark::offboard::OffboardForfeitResult;
 use ark::integration::{TokenStatus, TokenType};
 use ark::lightning::{Invoice, Preimage};
 use ark::mailbox::{MailboxIdentifier, MailboxType};
@@ -1019,8 +1020,17 @@ async fn pending_sweeps() {
 	assert!(sweeps.is_empty(), "all sweeps resolved");
 }
 
+fn dummy_tx(num: u32) -> Transaction {
+	Transaction {
+		version: bitcoin::transaction::Version::TWO,
+		lock_time: bitcoin::absolute::LockTime::from_height(num).unwrap(),
+		input: vec![],
+		output: vec![],
+	}
+}
+
 #[tokio::test]
-async fn offboards() {
+async fn postgres_offboards() {
 	let mut ctx = TestContext::new_minimal("postgresd/offboards").await;
 	ctx.init_central_postgres().await;
 	let postgres_cfg = ctx.new_postgres(&ctx.test_name).await;
@@ -1031,33 +1041,42 @@ async fn offboards() {
 	let vtxo = ServerVtxo::from(VTXO_VECTORS.board_vtxo.clone());
 	db.upsert_vtxos(&[vtxo.clone()]).await.unwrap();
 
+	// Register the vtxo's transactions in the virtual transaction tree
+	for tx_item in vtxo.transactions() {
+		db.upsert_virtual_transaction(tx_item.tx.compute_txid(), Some(&tx_item.tx), false, None)
+			.await
+			.unwrap();
+	}
+
 	// Initially no uncommitted offboards
 	let uncommitted = db.get_uncommitted_offboards().await.unwrap();
 	assert!(uncommitted.is_empty());
 
-	let offboard_tx = Transaction {
-		version: bitcoin::transaction::Version::non_standard(10),
-		lock_time: bitcoin::absolute::LockTime::ZERO,
-		input: vec![],
-		output: vec![],
-	};
+	let offboard_tx = dummy_tx(1);
 	let offboard_txid = offboard_tx.compute_txid();
 
 	// Register the offboard
-	db.register_offboard([vtxo.id()], &offboard_tx).await.unwrap();
+	let forfeit_result = OffboardForfeitResult {
+		forfeit_txs: vec![dummy_tx(2)],
+		forfeit_vtxos: vec![],
+		connector_tx: None,
+		connector_vtxos: vec![],
+	};
+	db.register_offboard(&[&vtxo], &offboard_tx, &forfeit_result).await.unwrap();
 
 	let uncommitted = db.get_uncommitted_offboards().await.unwrap();
 	assert_eq!(uncommitted.len(), 1, "one uncommitted offboard");
 	assert_eq!(uncommitted[0].txid, offboard_txid);
 
 	// Mark the vtxo is spent (offboarded_in set), trying to offboard again should fail
-	let offboard_tx2 = Transaction {
-		version: bitcoin::transaction::Version::non_standard(11),
-		lock_time: bitcoin::absolute::LockTime::ZERO,
-		input: vec![],
-		output: vec![],
+	let offboard_tx2 = dummy_tx(3);
+	let forfeit_result2 = OffboardForfeitResult {
+		forfeit_txs: vec![dummy_tx(4)],
+		forfeit_vtxos: vec![],
+		connector_tx: None,
+		connector_vtxos: vec![],
 	};
-	let result = db.register_offboard([vtxo.id()], &offboard_tx2).await;
+	let result = db.register_offboard(&[&vtxo], &offboard_tx2, &forfeit_result2).await;
 	assert!(result.is_err(), "double-offboard should fail");
 
 	// Commit the offboard

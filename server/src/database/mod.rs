@@ -29,6 +29,7 @@ use std::pin::Pin;
 use std::time::Duration;
 
 use anyhow::Context;
+use ark::offboard::OffboardForfeitResult;
 use ark::vtxo::{Bare, Full};
 use bb8::{ManageConnection, Pool, PooledConnection};
 use bb8_postgres::PostgresConnectionManager;
@@ -477,12 +478,22 @@ impl Db {
 	// *************
 
 	/// Store the offboard (as unbroadcast) and mark VTXOs as spent
-	pub async fn register_offboard(
+	///
+	/// Inputs:
+	/// - spent input vtxos
+	/// - the offboard tx that will go on-chain with delivery output and connector output
+	/// - the forfeit txs, one for each input vtxo
+	pub async fn register_offboard<'a, P>(
 		&self,
-		input_vtxos: impl IntoIterator<Item = VtxoId>,
+		input_vtxos: &[&'a Vtxo<Full, P>],
 		offboard_tx: &Transaction,
-	) -> anyhow::Result<()> {
-		let offboard_txid = offboard_tx.compute_txid().to_string();
+		forfeit_result: &OffboardForfeitResult,
+	) -> anyhow::Result<()>
+	where
+		P: ark::vtxo::Policy,
+	{
+		let offboard_txid = offboard_tx.compute_txid();
+		let offboard_txid_str = offboard_txid.to_string();
 		let offboard_tx_bytes = bitcoin::consensus::serialize(offboard_tx);
 
 		let mut conn = self.get_conn().await?;
@@ -492,20 +503,48 @@ impl Db {
 			"INSERT INTO offboards (txid, signed_tx, wallet_commit, created_at)
 			VALUES ($1, $2, FALSE, NOW());",
 			&[Type::TEXT, Type::BYTEA]).await?;
-		tx.execute(&stmt, &[&offboard_txid, &offboard_tx_bytes]).await?;
+		tx.execute(&stmt, &[&offboard_txid_str, &offboard_tx_bytes]).await?;
 
+		// update the virtual tx tree
+		let funding_tx = VirtualTransaction::new_signed_ref(&offboard_tx).as_funding();
+		let forfeit_vtxs = forfeit_result.forfeit_txs.iter()
+			.map(VirtualTransaction::new_signed_ref);
+		let connector_vtx = forfeit_result.connector_tx.as_ref()
+			.map(VirtualTransaction::new_signed_ref);
+		// I have no clue why I need to collect them into vec first
+		// but it makes the compiler happy
+		let vtxs = [funding_tx].into_iter()
+			.chain(forfeit_vtxs)
+			.chain(connector_vtx)
+			.collect::<Vec<_>>();
+		let server_vtxos = forfeit_result.forfeit_vtxos.iter()
+			.chain(&forfeit_result.connector_vtxos)
+			.collect::<Vec<_>>();
+		let spend_info = forfeit_result.spend_info(
+			input_vtxos.iter().map(|v| v.id()),
+			offboard_txid,
+		).collect::<Vec<_>>();
+		query::update_virtual_transaction_tree(&tx, vtxs, server_vtxos, spend_info).await?;
+
+		// we already check for spendableness in the above call
+		// we can't check here again because the above call sets "oor_spent_in" column
 		let stmt = tx.prepare_typed(
-			"UPDATE vtxo SET offboarded_in = $2, updated_at = NOW()
-			WHERE vtxo_id = $1 AND
-				spent_in_round IS NULL AND oor_spent_txid IS NULL AND offboarded_in IS NULL;",
+			"UPDATE vtxo SET offboarded_in = $2, updated_at = NOW() WHERE vtxo_id = $1;",
 			&[Type::TEXT, Type::TEXT],
 		).await?;
 		for vtxo in input_vtxos {
-			let rows_affected = tx.execute(&stmt, &[&vtxo.to_string(), &offboard_txid]).await?;
+			let id = vtxo.id();
+			let rows_affected = tx.execute(&stmt, &[&id.to_string(), &offboard_txid_str]).await?;
 			if rows_affected == 0 {
-				bail!("VTXO {} is already spent", vtxo);
+				bail!("VTXO {} is already spent", id);
 			}
 		}
+
+		// Mark transactions as having server-owned descendants before completing offboard
+		let txids = input_vtxos.iter()
+			.flat_map(|v| v.transactions().map(|i| i.tx.compute_txid()));
+		query::mark_server_may_own_descendants(&tx, txids).await
+			.context("virtual tx update failed, user might not have called register_vtxos")?;
 
 		tx.commit().await?;
 		Ok(())

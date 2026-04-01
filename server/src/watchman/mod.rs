@@ -28,7 +28,7 @@ use bitcoin::Txid;
 use tokio::sync::watch;
 use tracing::{info, warn};
 
-use ark::{ServerVtxo, VtxoId};
+use ark::{ServerVtxo, ServerVtxoPolicy, VtxoId};
 use ark::vtxo::policy::signing::VtxoSigner;
 use bitcoin_ext::{fee, BlockHeight, BlockRef, TxStatus, P2TR_DUST};
 use bitcoin_ext::bdk::WalletExt;
@@ -194,7 +194,7 @@ impl Watchman {
 		let mut frontier = self.frontier.write().await;
 
 		for txid in txids {
-			let confirmed_height = match self.bitcoind.tx_status(&txid)? {
+			let confirmed_height = match self.bitcoind.tx_status(txid)? {
 				// Only use confirmed_height if the block is on the synced chain.
 				// Otherwise, add as unconfirmed and it will confirm during the next sync.
 				TxStatus::Confirmed(b) if self.db.get_block_by_height(
@@ -233,6 +233,7 @@ impl Watchman {
 		let ctx = ActionContextFetcher {
 			config: &self.config,
 			db: &self.db,
+			bitcoind: &self.bitcoind,
 			chain_tip_height: self.sync_height().height,
 		};
 		for (vtxo, confirmed_at) in frontier.get() {
@@ -426,23 +427,40 @@ impl Watchman {
 		let mut total_input_amount = Amount::ZERO;
 
 		for vtxo in vtxos {
-			let clause = self.signer.find_signable_clause(vtxo).await
-				.context(vtxo.id())
-				.context("no signable clause for vtxo")?;
+			//TODO(stevenroose) try remove this special case
+			if *vtxo.policy() == ServerVtxoPolicy::ServerOwned {
+				let input = TxIn {
+					previous_output: vtxo.point(),
+					script_sig: ScriptBuf::new(),
+					sequence: Sequence::ZERO,
+					witness: Witness::new(),
+				};
 
-			let input = TxIn {
-				previous_output: vtxo.point(),
-				script_sig: ScriptBuf::new(),
-				sequence: clause.sequence().unwrap_or(Sequence::ZERO),
-				witness: Witness::new(),
-			};
+				// TxIn base weight (non-witness) + witness weight
+				total_input_weight += 4 * input.base_size() + (1 + 1 + 64); // nb items + sig
+				total_input_amount += vtxo.amount();
 
-			// TxIn base weight (non-witness) + witness weight
-			total_input_weight += 4 * input.base_size() + clause.witness_size(vtxo);
-			total_input_amount += vtxo.amount();
+				inputs.push(input);
+				clauses.push(None);
+			} else {
+				let clause = self.signer.find_signable_clause(vtxo).await
+					.context(vtxo.id())
+					.context("no signable clause for vtxo")?;
 
-			inputs.push(input);
-			clauses.push(clause);
+				let input = TxIn {
+					previous_output: vtxo.point(),
+					script_sig: ScriptBuf::new(),
+					sequence: clause.sequence().unwrap_or(Sequence::ZERO),
+					witness: Witness::new(),
+				};
+
+				// TxIn base weight (non-witness) + witness weight
+				total_input_weight += 4 * input.base_size() + clause.witness_size(vtxo);
+				total_input_amount += vtxo.amount();
+
+				inputs.push(input);
+				clauses.push(Some(clause));
+			}
 
 			slog!(PreparingVtxoClaim, vtxo_id: vtxo.id(), policy: vtxo.policy().policy_type(),
 				value: vtxo.amount(),
@@ -492,13 +510,24 @@ impl Watchman {
 
 		let mut sighash_cache = sighash::SighashCache::new(&mut tx);
 		for (input_idx, (vtxo, clause)) in vtxos.iter().zip(&clauses).enumerate() {
-			let witness = self.signer.sign_input_with_clause(
-				vtxo, clause, input_idx, &mut sighash_cache, &prevouts,
-			).await.with_context(|| format!(
-				"failed to sign input {} of tx {}",
-				input_idx, sighash_cache.transaction().compute_txid(),
-			))?;
-			*sighash_cache.witness_mut(input_idx).unwrap() = witness;
+			if let Some(clause) = clause {
+				let witness = self.signer.sign_input_with_clause(
+					vtxo, clause, input_idx, &mut sighash_cache, &prevouts,
+				).await.with_context(|| format!(
+					"failed to sign script-spend input {} of tx {}",
+					input_idx, sighash_cache.transaction().compute_txid(),
+				))?;
+				*sighash_cache.witness_mut(input_idx).unwrap() = witness;
+			} else {
+				// keyspend
+				let witness = self.signer.sign_input_with_keyspend(
+					vtxo, input_idx, &mut sighash_cache, &prevouts,
+				).await.with_context(|| format!(
+					"failed to sign key-spend input {} of tx {}",
+					input_idx, sighash_cache.transaction().compute_txid(),
+				))?;
+				*sighash_cache.witness_mut(input_idx).unwrap() = witness;
+			}
 		}
 
 		Ok(tx)
@@ -515,16 +544,16 @@ impl Watchman {
 	/// is the pre-computed progress transaction that should be broadcast.
 	async fn process_progress_txs(&self, mut txs: Vec<(Txid, ServerVtxo)>) -> anyhow::Result<()> {
 		//TODO(stevenroose) adapt feerate to how close the deadline is
-		let min_feerate = self.fee_estimator.regular();
+		let min_fee_rate = self.fee_estimator.regular();
 
 		// make sure we always increment with the minimum incremental feerate
-		let mut feerate = min_feerate;
+		let mut fee_rate = min_fee_rate;
 
-		// filter txs to progress
+		// filter txs that are already in the mempool with sufficient fee
 		txs.retain(|(_, v)| match self.get_mempool_spend(v.id()) {
 			None => true,
-			Some(spend) => if spend.fee_rate < min_feerate {
-				feerate = feerate.max(saturating_add_feerates(
+			Some(spend) => if spend.fee_rate < min_fee_rate {
+				fee_rate = fee_rate.max(saturating_add_feerates(
 					spend.fee_rate, self.config.incremental_relay_fee,
 				));
 				true
@@ -544,7 +573,9 @@ impl Watchman {
 				break;
 			}
 
-			if let Err(e) = self.process_progress_tx(&mut wallet, progress_txid, &vtxo).await {
+			if let Err(e) = self.process_progress_tx(
+				&mut wallet, progress_txid, &vtxo, fee_rate,
+			).await {
 				slog!(ProgressCpfpFailure, vtxo_id: vtxo.id(), txid: progress_txid,
 					error: e.to_string(),
 				);
@@ -563,6 +594,7 @@ impl Watchman {
 		wallet: &mut PersistedWallet,
 		txid: Txid,
 		vtxo: &ServerVtxo,
+		fee_rate: FeeRate,
 	) -> anyhow::Result<()> {
 		// Get the progress transaction from the database
 		let vtx = self.db.get_virtual_transaction_by_txid(txid).await?
@@ -573,7 +605,7 @@ impl Watchman {
 
 		// Create a CPFP transaction to pay fees for the progress tx
 		//TODO(stevenroose) adapt feerate to how close the deadline is
-		let fees = MakeCpfpFees::Effective(self.fee_estimator.regular());
+		let fees = MakeCpfpFees::Effective(fee_rate);
 		let cpfp_tx = wallet.make_signed_p2a_cpfp(&progress_tx, fees)
 			.with_context(|| format!("failed to create CPFP for vtx {}", txid))?;
 
