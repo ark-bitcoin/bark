@@ -80,10 +80,14 @@ impl Wallet {
 		info!("Start bolt11 board with preimage / payment hash: {} / {}",
 			preimage.as_hex(), payment_hash.as_hex());
 
+		let mailbox_kp = self.seed.to_mailbox_keypair();
+		let mailbox_id = ark::mailbox::MailboxIdentifier::from_pubkey(mailbox_kp.public_key());
+
 		let req = protos::StartLightningReceiveRequest {
 			payment_hash: payment_hash.to_vec(),
 			amount_sat: amount.to_sat(),
 			min_cltv_delta: requested_min_cltv_delta as u32,
+			mailbox_id: Some(mailbox_id.to_vec()),
 		};
 
 		let resp = srv.client.start_lightning_receive(req).await?.into_inner();
@@ -456,7 +460,7 @@ impl Wallet {
 		Ok(())
 	}
 
-	async fn exit_or_cancel_lightning_receive(
+	pub(crate) async fn exit_or_cancel_lightning_receive(
 		&self,
 		lightning_receive: &LightningReceive,
 	) -> anyhow::Result<()> {

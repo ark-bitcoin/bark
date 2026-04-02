@@ -328,10 +328,16 @@ impl rpc::server::ArkService for Server {
 		let payment_hash = PaymentHash::from_bytes(req.payment_hash)?;
 		let amount = Amount::from_sat(req.amount_sat);
 
+		let mailbox_id = req.mailbox_id.as_deref()
+			.map(ark::mailbox::MailboxIdentifier::from_slice)
+			.transpose()
+			.map_err(|_| tonic::Status::invalid_argument("invalid mailbox_id"))?;
+
 		let resp = self.start_lightning_receive(
 			payment_hash,
 			amount,
-			req.min_cltv_delta as BlockDelta
+			req.min_cltv_delta as BlockDelta,
+			mailbox_id,
 		).await.to_status()?;
 
 		Ok(tonic::Response::new(resp))
