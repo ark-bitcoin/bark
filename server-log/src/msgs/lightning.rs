@@ -116,3 +116,9 @@ pub struct XpayRpcReturned {
 }
 impl_slog!(XpayRpcReturned, DEBUG, "Xpay gRPC returned");
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HtlcSettled {
+	pub payment_hash: PaymentHash,
+	pub preimage: Preimage,
+}
+impl_slog!(HtlcSettled, DEBUG, "an HTLC was settled");

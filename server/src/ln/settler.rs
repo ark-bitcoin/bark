@@ -80,6 +80,7 @@ impl HtlcSettler {
 	/// If this preimage was already recorded, this is a no-op.
 	pub async fn settle(&self, preimage: Preimage) -> anyhow::Result<()> {
 		if let Some(checkpoint) = self.db.store_htlc_settlement(preimage).await? {
+			slog!(HtlcSettled, payment_hash: preimage.compute_payment_hash(), preimage);
 			self.watch.update(checkpoint);
 		}
 		Ok(())
