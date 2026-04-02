@@ -323,10 +323,12 @@ mod test {
 	fn mailbox_type_round_trip() {
 		let ar = MailboxType::ArkoorReceive;
 		let rpc = MailboxType::RoundParticipationCompleted;
+		let ln = MailboxType::LnRecvPendingPayment;
 
 		let cases = [
 			(ar, u32::from(ar), ar.as_str()),
 			(rpc, u32::from(rpc), rpc.as_str()),
+			(ln, u32::from(ln), ln.as_str()),
 		];
 
 		let mut seen_u32 = std::collections::HashSet::new();

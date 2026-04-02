@@ -6,29 +6,29 @@ use ark::{ProtocolEncoding, Vtxo};
 use ark::mailbox::{BlindedMailboxIdentifier, MailboxAuthorization, MailboxIdentifier, MailboxType};
 use server_rpc::{self as rpc, protos, TryFromBytes};
 
-use crate::database::{Checkpoint, MailboxEntry};
+use crate::database::{Checkpoint, MailboxEntry, MailboxPayload};
 use crate::rpcserver::{StatusContext, ToStatus, ToStatusResult};
 use crate::rpcserver::macros::badarg;
 
 #[allow(deprecated)]
 fn new_mailbox_msg(entry: MailboxEntry) -> protos::mailbox_server::MailboxMessage {
-	match entry.mailbox_type {
-		MailboxType::ArkoorReceive => {
+	match entry.payload {
+		MailboxPayload::Arkoor { vtxos } => {
 			protos::mailbox_server::MailboxMessage {
 				message: Some(protos::mailbox_server::mailbox_message::Message::Arkoor(
 					protos::mailbox_server::ArkoorMessage {
-						vtxos: entry.vtxos.into_iter().map(|v| v.serialize()).collect(),
+						vtxos: vtxos.into_iter().map(|v| v.serialize()).collect(),
 					}
 				)),
 				checkpoint: entry.checkpoint.into(),
 				mailbox_type: MailboxType::ArkoorReceive as i32,
 			}
 		}
-		MailboxType::RoundParticipationCompleted => {
+		MailboxPayload::RoundParticipationCompleted { unlock_hashes } => {
 			protos::mailbox_server::MailboxMessage {
 				message: Some(protos::mailbox_server::mailbox_message::Message::RoundParticipationCompleted(
 					protos::mailbox_server::RoundParticipationCompleted {
-						payment_hashes: entry.payment_hashes.into_iter()
+						payment_hashes: unlock_hashes.into_iter()
 							.map(|h| h.as_byte_array().to_vec())
 							.collect(),
 					}
@@ -37,7 +37,7 @@ fn new_mailbox_msg(entry: MailboxEntry) -> protos::mailbox_server::MailboxMessag
 				mailbox_type: MailboxType::RoundParticipationCompleted as i32,
 			}
 		}
-		MailboxType::LnRecvPendingPayment => {
+		MailboxPayload::LightningReceive { .. } => {
 			todo!();
 		}
 	}

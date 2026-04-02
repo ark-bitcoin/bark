@@ -9,7 +9,7 @@ use ark::{ProtocolEncoding, ServerVtxo, SECP};
 use ark::mailbox::{MailboxAuthorization, MailboxIdentifier};
 use ark::test_util::dummy::DummyTestVtxoSpec;
 
-use server::database::Db;
+use server::database::{Db, MailboxPayload};
 use server_rpc::protos;
 
 use ark_testing::TestContext;
@@ -119,7 +119,10 @@ async fn mailbox_checkpoint_visibility_gap() {
 
 	// Sanity: all 100 writes landed in the database.
 	let all = db.get_mailbox_entries(mailbox_id, 0, 10_000).await.unwrap();
-	let total: usize = all.iter().map(|e| e.vtxos.len()).sum();
+	let total: usize = all.iter().map(|e| match &e.payload {
+		MailboxPayload::Arkoor { vtxos } => vtxos.len(),
+		_ => 0,
+	}).sum();
 	assert_eq!(total, 100, "all 100 VTXOs should be in the mailbox");
 
 	// Every reader should have seen all 100 messages. If any reader missed

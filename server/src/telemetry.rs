@@ -29,7 +29,7 @@ use tracing_subscriber::fmt::format::Writer;
 use tracing_subscriber::fmt::time::FormatTime;
 use tracing_subscriber::EnvFilter;
 use smallvec::SmallVec;
-
+use ark::mailbox::MailboxType;
 use ark::VtxoId;
 use ark::rounds::RoundSeq;
 
@@ -791,10 +791,19 @@ pub fn set_forfeit_metrics(
 	}
 }
 
-pub fn set_mailbox_metric(tp: &'static str, count: usize) {
+pub fn set_mailbox_put_metric(mailbox_type: MailboxType, count: usize) {
+	set_mailbox_metric("put", mailbox_type, count);
+}
+
+pub fn set_mailbox_get_metric(mailbox_type: MailboxType, count: usize) {
+	set_mailbox_metric("get", mailbox_type, count);
+}
+
+fn set_mailbox_metric(tp: &'static str, mailbox_type: MailboxType, count: usize) {
 	if let Some(m) = TELEMETRY.get() {
 		let attrs = m.with_global_labels([
-			KeyValue::new(ATTRIBUTE_TYPE, tp),
+			KeyValue::new(ATTRIBUTE_KIND, tp),
+			KeyValue::new(ATTRIBUTE_TYPE, mailbox_type.as_str()),
 		]);
 		m.mailbox_counter.add(count as u64, &attrs);
 	}

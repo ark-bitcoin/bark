@@ -13,7 +13,6 @@ use tokio_postgres::Row;
 
 use ark::{ProtocolEncoding, ServerVtxoPolicy, Vtxo, VtxoId, VtxoPolicy};
 
-
 // Used by mailbox as an always increasing number for data sorting.
 pub type Checkpoint = u64;
 

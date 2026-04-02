@@ -19,7 +19,7 @@ use bark::lightning_invoice::Bolt11Invoice;
 use bitcoin_ext::BlockRef;
 use cln_rpc::listsendpays_request::ListsendpaysIndex;
 
-use server::database::{BlockTable, Db};
+use server::database::{BlockTable, Db, MailboxPayload};
 use server::database::ln::LightningHtlcSubscriptionStatus;
 use server::database::vtxopool::PoolVtxo;
 use server::filters;
@@ -1188,9 +1188,11 @@ async fn vtxo_mailbox() {
 	// Fetch from checkpoint 0 – should return vtxo1
 	let batches = db.get_mailbox_entries(mailbox_id.clone(), 0, 10).await.unwrap();
 	assert_eq!(batches.len(), 1);
-	let returned_cp = &batches[0].checkpoint;
-	let vtxos = &batches[0].vtxos;
-	assert_eq!(*returned_cp, cp1);
+	assert_eq!(batches[0].checkpoint, cp1);
+	let vtxos = match &batches[0].payload {
+		MailboxPayload::Arkoor { vtxos } => vtxos,
+		other => panic!("expected Arkoor payload, got {:?}", other),
+	};
 	assert_eq!(vtxos.len(), 1);
 	assert_eq!(vtxos[0].id(), vtxo1.id());
 
@@ -1202,9 +1204,11 @@ async fn vtxo_mailbox() {
 	// Fetch from checkpoint cp1 – should only return vtxo2 (beyond cp1)
 	let batches = db.get_mailbox_entries(mailbox_id.clone(), cp1, 10).await.unwrap();
 	assert_eq!(batches.len(), 1);
-	let returned_cp2 = &batches[0].checkpoint;
-	let vtxos2 = &batches[0].vtxos;
-	assert_eq!(*returned_cp2, cp2);
+	assert_eq!(batches[0].checkpoint, cp2);
+	let vtxos2 = match &batches[0].payload {
+		MailboxPayload::Arkoor { vtxos } => vtxos,
+		other => panic!("expected Arkoor payload, got {:?}", other),
+	};
 	assert_eq!(vtxos2[0].id(), vtxo2.id());
 }
 

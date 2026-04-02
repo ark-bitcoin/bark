@@ -22,21 +22,23 @@ pub use self::model::*;
 
 
 use std::borrow::Borrow;
+use std::str::FromStr;
 use std::task;
 use std::backtrace::Backtrace;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 use std::pin::Pin;
 use std::time::Duration;
 
 use anyhow::Context;
 use ark::offboard::OffboardForfeitResult;
+use ark::tree::signed::UnlockHash;
 use ark::vtxo::{Bare, Full};
 use bb8::{ManageConnection, Pool, PooledConnection};
 use bb8_postgres::PostgresConnectionManager;
 use bdk_wallet::{chain::Merge, ChangeSet};
 use bitcoin::{Transaction, Txid};
 use bitcoin::consensus::{serialize, deserialize};
-use bitcoin::hashes::sha256;
+use bitcoin::hashes::{sha256, Hash};
 use bitcoin::secp256k1::{self, PublicKey};
 use chrono::Local;
 use futures::Stream;
@@ -44,6 +46,7 @@ use tokio_postgres::{Client, NoTls, GenericClient, RowStream};
 use tokio_postgres::types::Type;
 use tracing::{info, warn};
 use ark::{ServerVtxo, ServerVtxoPolicy, Vtxo, VtxoId};
+use ark::lightning::PaymentHash;
 use ark::mailbox::{MailboxIdentifier, MailboxType};
 use ark::encode::ProtocolEncoding;
 
@@ -62,13 +65,45 @@ pub struct StoredBitcoinTx {
 	pub tx: Transaction,
 }
 
-/// A stored mailbox entry
+/// A stored mailbox entry.
 #[derive(Clone, Debug)]
 pub struct MailboxEntry {
 	pub checkpoint: Checkpoint,
-	pub mailbox_type: MailboxType,
-	pub vtxos: Vec<Vtxo<Full>>,
-	pub payment_hashes: Vec<sha256::Hash>,
+	pub payload: MailboxPayload,
+}
+
+impl MailboxEntry {
+	fn mailbox_type(&self) -> MailboxType {
+		match self.payload {
+			MailboxPayload::Arkoor { .. } => MailboxType::ArkoorReceive,
+			MailboxPayload::RoundParticipationCompleted { .. } => {
+				MailboxType::RoundParticipationCompleted
+			},
+			MailboxPayload::LightningReceive { .. } => MailboxType::LnRecvPendingPayment,
+		}
+	}
+
+	/// the length of the payload in items, used in telemetry
+	fn len(&self) -> usize {
+		match &self.payload {
+			MailboxPayload::Arkoor { vtxos } => vtxos.len(),
+			MailboxPayload::RoundParticipationCompleted { unlock_hashes } => unlock_hashes.len(),
+			MailboxPayload::LightningReceive { .. } => 1,
+		}
+	}
+}
+
+#[derive(Clone, Debug)]
+pub enum MailboxPayload {
+	Arkoor {
+		vtxos: Vec<Vtxo<Full>>,
+	},
+	RoundParticipationCompleted {
+		unlock_hashes: Vec<UnlockHash>,
+	},
+	LightningReceive {
+		payment_hash: PaymentHash,
+	},
 }
 
 #[derive(Clone)]
@@ -359,9 +394,7 @@ impl Db {
 		}
 
 		tx.commit().await?;
-
-		telemetry::set_mailbox_metric("add", vtxos.len());
-
+		telemetry::set_mailbox_put_metric(mailbox_type, vtxos.len());
 		Ok(Some(checkpoint as u64))
 	}
 
@@ -371,61 +404,111 @@ impl Db {
 		checkpoint: Checkpoint,
 		limit: usize,
 	) -> anyhow::Result<Vec<MailboxEntry>> {
+		let entries = self.get_mailbox_messages(mailbox_id, checkpoint, limit).await?;
+		Ok(entries.into_iter()
+			.filter(|e| matches!(e.payload, MailboxPayload::Arkoor { .. }))
+			.collect())
+	}
+
+	/// Retrieve mailbox messages (both arkoor VTXOs and lightning receive
+	/// notifications) for a given mailbox, ordered by checkpoint.
+	pub async fn get_mailbox_messages(
+		&self,
+		mailbox_id: MailboxIdentifier,
+		checkpoint: Checkpoint,
+		limit: usize,
+	) -> anyhow::Result<Vec<MailboxEntry>> {
 		let conn = self.get_conn().await?;
+
 		let statement = conn.prepare(&format!("
-			SELECT vtxo_id, vtxo, payment_hash, checkpoint, mailbox_type::TEXT AS mailbox_type
+			SELECT vtxo_id, vtxo, payment_hash, checkpoint, mailbox_type::TEXT AS entry_type
 			FROM mailbox
 			WHERE unblinded_mailbox_id = $1 AND checkpoint > $2
-			ORDER BY checkpoint ASC
+			ORDER BY checkpoint ASC, entry_type ASC
 			LIMIT {limit};
 		")).await?;
 
 		let checkpoint = checkpoint as i64;
-		let mailbox_id = mailbox_id.to_string();
-
-		let rows = conn.query(&statement, &[&mailbox_id, &checkpoint]).await?;
+		let mailbox_id_str = mailbox_id.to_string();
+		let rows = conn.query(&statement, &[&mailbox_id_str, &checkpoint]).await?;
 		if rows.is_empty() {
 			return Ok(vec![]);
 		}
 
-		let mut checkpoints = BTreeMap::<Checkpoint, (MailboxType, Vec<Vtxo>, Vec<sha256::Hash>)>::new();
+		let mut res = Vec::new();
+		let mut current_entry = Option::<MailboxEntry>::None;
 		for row in &rows {
-			let checkpoint = row.get::<_, i64>("checkpoint") as u64;
-			let mailbox_type = row.get::<_, &str>("mailbox_type").parse::<MailboxType>()
-				.expect("invalid mailbox_type in database");
+			let cp = row.get::<_, i64>("checkpoint") as u64;
+			let mailbox_type = MailboxType::from_str(row.get("entry_type")).expect("invalid mailbox entry type");
 
-			let vtxo = row.get::<_, Option<&[u8]>>("vtxo")
-				.map(|bytes| Vtxo::<Full>::deserialize(bytes))
-				.transpose()?;
-			let payment_hash = row.get::<_, Option<&str>>("payment_hash")
-				.map(|s| s.parse::<sha256::Hash>().expect("invalid payment_hash in database"));
+			// if we had an ongoing entry and checkpoint increased, we flush it
+			if current_entry.as_ref().is_some_and(|e| e.checkpoint != cp) {
+				let entry = current_entry.take().unwrap();
+				telemetry::set_mailbox_get_metric(mailbox_type, entry.len());
+				res.push(entry);
+			}
 
-			if let Some((mb_type, vtxos, payment_hashes)) = checkpoints.get_mut(&checkpoint) {
-				debug_assert_eq!(&mailbox_type, mb_type, "a checkpoint cannot contain multiple mailbox types");
-				if let Some(v) = vtxo {
-					vtxos.push(v);
+			// then look out for entry types that are single-row
+			match mailbox_type {
+				MailboxType::LnRecvPendingPayment => {
+					ensure!(res.last().map(|e| e.checkpoint) != Some(cp),
+						"corrupt db: incorrect checkpoint {}", cp,
+					);
+					let hash_str: String = row.get("payment_hash");
+					let payment_hash = PaymentHash::from_str(&hash_str)
+						.context("invalid payment hash in mailbox notification")?;
+					res.push(MailboxEntry {
+						checkpoint: cp,
+						payload: MailboxPayload::LightningReceive { payment_hash },
+					});
+					telemetry::set_mailbox_get_metric(mailbox_type, 1);
+					continue;
+				},
+				MailboxType::ArkoorReceive | MailboxType::RoundParticipationCompleted => {},
+			}
+
+			// so now we are in a mailbox type that is multi-row
+			// we check if we have an item ongoing
+			let entry = current_entry.get_or_insert_with(|| MailboxEntry {
+				checkpoint: cp,
+				payload: match mailbox_type {
+					MailboxType::ArkoorReceive => MailboxPayload::Arkoor { vtxos: vec![], },
+					MailboxType::RoundParticipationCompleted => {
+						MailboxPayload::RoundParticipationCompleted {
+							unlock_hashes: vec![],
+						}
+					},
+					MailboxType::LnRecvPendingPayment => {
+						unreachable!("continued in match above")
+					},
 				}
-				if let Some(h) = payment_hash {
-					payment_hashes.push(h);
-				}
-			} else {
-				checkpoints.insert(checkpoint, (
-					mailbox_type,
-					vtxo.into_iter().collect(),
-					payment_hash.into_iter().collect(),
-				));
+			});
+
+			match entry.payload {
+				MailboxPayload::Arkoor { ref mut vtxos } => {
+					ensure!(mailbox_type == MailboxType::ArkoorReceive);
+
+					let vtxo = Vtxo::<Full>::deserialize(row.get("vtxo"))?;
+					debug_assert_eq!(
+						vtxo.id().to_string(),
+						row.get::<_, Option<String>>("vtxo_id").expect("arkoor row has vtxo_id"),
+					);
+					vtxos.push(vtxo);
+				},
+				MailboxPayload::RoundParticipationCompleted { ref mut unlock_hashes } => {
+					ensure!(mailbox_type == MailboxType::RoundParticipationCompleted);
+
+					let payment_hash = sha256::Hash::from_slice(row.get("payment_hash"))?;
+					unlock_hashes.push(payment_hash);
+				},
+				MailboxPayload::LightningReceive { .. } => unreachable!("continued in match above"),
 			}
 		}
 
-		let mut res = Vec::new();
-		for (checkpoint, (mailbox_type, vtxos, payment_hashes)) in checkpoints {
-			telemetry::set_mailbox_metric("get", vtxos.len() + payment_hashes.len());
-			res.push(MailboxEntry {
-				checkpoint,
-				mailbox_type,
-				vtxos,
-				payment_hashes,
-			});
+		// Flush remaining entry
+		if let Some(entry) = current_entry.take() {
+			telemetry::set_mailbox_get_metric(entry.mailbox_type(), entry.len());
+			res.push(entry);
 		}
 
 		Ok(res)
@@ -469,6 +552,42 @@ impl Db {
 		tx.commit().await?;
 
 		Ok(Some(checkpoint as u64))
+	}
+
+	/// Store a lightning receive notification in the mailbox.
+	/// Returns the checkpoint assigned to this notification.
+	pub async fn store_lightning_receive_notification(
+		&self,
+		mailbox_id: MailboxIdentifier,
+		payment_hash: &str,
+	) -> anyhow::Result<Checkpoint> {
+		let mut conn = self.get_conn().await?;
+		let tx = conn.transaction().await?;
+
+		// Acquire advisory lock to serialize all mailbox writes.
+		// This prevents race conditions where checkpoints could be committed out of order.
+		// Lock is automatically released when transaction commits/rolls back.
+		tx.execute("SELECT pg_advisory_xact_lock(hashtext('mailbox_write'))", &[]).await?;
+
+		let checkpoint: i64 = tx.query_one("SELECT next_checkpoint()", &[]).await?.get(0);
+		let mailbox_type = String::from(MailboxType::LnRecvPendingPayment);
+		let mailbox_type_str = String::from(mailbox_type);
+
+		let statement = tx.prepare("
+			INSERT INTO mailbox (unblinded_mailbox_id, payment_hash, checkpoint, mailbox_type, created_at)
+			VALUES ($1, $2, $3, $4::TEXT::mailbox_type, NOW());
+		").await?;
+		let rows_updated = tx.execute(&statement, &[
+			&mailbox_id.to_string(),
+			&payment_hash.to_string(),
+			&checkpoint,
+			&mailbox_type_str,
+		]).await?;
+		debug_assert_eq!(rows_updated, 1);
+
+		tx.commit().await?;
+
+		Ok(checkpoint as u64)
 	}
 
 	/**

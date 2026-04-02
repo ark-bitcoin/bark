@@ -46,7 +46,8 @@ CREATE TYPE public.lightning_payment_status AS ENUM (
 
 CREATE TYPE public.mailbox_type AS ENUM (
     'arkoor-receive',
-    'round-participation-completed'
+    'round-participation-completed',
+    'ln-recv-pending'
 );
 
 
@@ -811,7 +812,8 @@ CREATE TABLE public.lightning_invoice (
     final_amount_msat bigint,
     preimage bytea,
     created_at timestamp with time zone NOT NULL,
-    updated_at timestamp with time zone NOT NULL
+    updated_at timestamp with time zone NOT NULL,
+    mailbox_id text
 );
 
 

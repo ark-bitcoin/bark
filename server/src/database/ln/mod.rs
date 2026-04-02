@@ -725,6 +725,54 @@ impl Db {
 		}
 	}
 
+	/// Store a mailbox ID for a lightning invoice identified by payment hash.
+	pub async fn store_lightning_invoice_mailbox_id(
+		&self,
+		payment_hash: PaymentHash,
+		mailbox_id: &ark::mailbox::MailboxIdentifier,
+	) -> anyhow::Result<()> {
+		let conn = self.get_conn().await?;
+
+		let stmt = conn.prepare("
+			UPDATE lightning_invoice
+			SET mailbox_id = $2, updated_at = NOW()
+			WHERE payment_hash = $1;
+		").await?;
+		conn.execute(&stmt, &[&payment_hash.to_vec(), &mailbox_id.to_string()]).await?;
+
+		Ok(())
+	}
+
+	/// Retrieve the mailbox ID associated with a lightning invoice by payment hash.
+	pub async fn get_lightning_invoice_mailbox_id(
+		&self,
+		payment_hash: PaymentHash,
+	) -> anyhow::Result<Option<ark::mailbox::MailboxIdentifier>> {
+		let conn = self.get_conn().await?;
+
+		let stmt = conn.prepare("
+			SELECT mailbox_id
+			FROM lightning_invoice
+			WHERE payment_hash = $1;
+		").await?;
+		let row = conn.query_opt(&stmt, &[&payment_hash.to_vec()]).await?;
+
+		match row {
+			Some(row) => {
+				let id: Option<String> = row.get("mailbox_id");
+				match id {
+					Some(s) => {
+						let id = ark::mailbox::MailboxIdentifier::from_str(&s)
+							.context("corrupt mailbox_id in lightning_invoice")?;
+						Ok(Some(id))
+					},
+					None => Ok(None),
+				}
+			},
+			None => Ok(None),
+		}
+	}
+
 	/// Retrieve an open HTLC subscription for a specific node by payment hash.
 	///
 	/// This is used by TrackAll event handling to look up subscriptions
