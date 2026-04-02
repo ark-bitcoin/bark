@@ -65,6 +65,8 @@ Class | Method | HTTP request | Description
 *WalletApi* | [**balance**](docs/WalletApi.md#balance) | **GET** /api/v1/wallet/balance | Get wallet balance
 *WalletApi* | [**connected**](docs/WalletApi.md#connected) | **GET** /api/v1/wallet/connected | Check server connection
 *WalletApi* | [**create_wallet**](docs/WalletApi.md#create_wallet) | **POST** /api/v1/wallet/create | Create a wallet
+*WalletApi* | [**get_vtxo**](docs/WalletApi.md#get_vtxo) | **GET** /api/v1/wallet/vtxos/{id} | Get VTXO detail
+*WalletApi* | [**get_vtxo_encoded**](docs/WalletApi.md#get_vtxo_encoded) | **GET** /api/v1/wallet/vtxos/{id}/encoded | Get encoded VTXO
 *WalletApi* | [**history**](docs/WalletApi.md#history) | **GET** /api/v1/wallet/history | Get wallet history
 *WalletApi* | [**import_vtxo**](docs/WalletApi.md#import_vtxo) | **POST** /api/v1/wallet/import-vtxo | Import a VTXO
 *WalletApi* | [**movements**](docs/WalletApi.md#movements) | **GET** /api/v1/wallet/movements | List movements (deprecated)
@@ -109,6 +111,7 @@ Class | Method | HTTP request | Description
  - [ConnectedResponse](docs/ConnectedResponse.md)
  - [CreateWalletRequest](docs/CreateWalletRequest.md)
  - [CreateWalletResponse](docs/CreateWalletResponse.md)
+ - [EncodedVtxoResponse](docs/EncodedVtxoResponse.md)
  - [ExitAwaitingDeltaState](docs/ExitAwaitingDeltaState.md)
  - [ExitClaimAllRequest](docs/ExitClaimAllRequest.md)
  - [ExitClaimInProgressState](docs/ExitClaimInProgressState.md)

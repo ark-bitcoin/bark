@@ -173,6 +173,17 @@ pub struct ArkAddressResponse {
 	pub address: String,
 }
 
+/// Response for the encoded-VTXO endpoint.
+///
+/// Wraps the hex-encoded VTXO in a named field so clients can easily
+/// extract it.
+#[derive(Serialize, Deserialize)]
+#[cfg_attr(feature = "utoipa", derive(ToSchema))]
+pub struct EncodedVtxoResponse {
+	/// Hex-encoded serialized VTXO.
+	pub encoded: crate::primitives::EncodedVtxo,
+}
+
 #[derive(Serialize, Deserialize)]
 #[cfg_attr(feature = "utoipa", derive(ToSchema))]
 pub struct VtxosQuery {

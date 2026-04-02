@@ -202,6 +202,14 @@ impl From<bark::WalletVtxo> for WalletVtxoInfo {
 	}
 }
 
+/// Hex-encoded serialized VTXO.
+///
+/// Serializes as a plain hex string. Can be passed to
+/// `POST /wallet/import-vtxo` to re-import this VTXO.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[cfg_attr(feature = "utoipa", derive(ToSchema))]
+pub struct EncodedVtxo(pub String);
+
 impl Deref for WalletVtxoInfo {
 	type Target = VtxoInfo;
 

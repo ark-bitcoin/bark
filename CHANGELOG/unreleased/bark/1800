@@ -1,0 +1,5 @@
+- Add encoded VTXO endpoint to barkd REST API
+  VTXOs can now be retrieved in hex-serialized form via `GET /vtxos/{id}/encoded`,
+  making it easy to export and import VTXOs between wallets. The import endpoint
+  also returns the encoded form for round-trip convenience.
+  [#1800](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1800)

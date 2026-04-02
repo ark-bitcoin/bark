@@ -9,6 +9,7 @@ use bitcoin::Amount;
 use tracing::info;
 use utoipa::OpenApi;
 
+use ark::VtxoId;
 use ark::lightning::{Bolt11Invoice, Offer};
 use ark::ProtocolEncoding;
 use bark::lnurllib::lightning_address::LightningAddress;
@@ -31,6 +32,8 @@ pub fn router() -> Router<ServerState> {
 		.route("/addresses/index/{index}", get(peek_address))
 		.route("/balance", get(balance))
 		.route("/vtxos", get(vtxos))
+		.route("/vtxos/{id}", get(get_vtxo))
+		.route("/vtxos/{id}/encoded", get(get_vtxo_encoded))
 		.route("/movements", get(movements))
 		.route("/history", get(history))
 		.route("/send", post(send))
@@ -58,6 +61,8 @@ pub fn router() -> Router<ServerState> {
 		peek_address,
 		balance,
 		vtxos,
+		get_vtxo,
+		get_vtxo_encoded,
 		movements,
 		history,
 		send,
@@ -84,6 +89,7 @@ pub fn router() -> Router<ServerState> {
 		bark_json::web::VtxosQuery,
 		bark_json::cli::Balance,
 		bark_json::primitives::WalletVtxoInfo,
+		bark_json::web::EncodedVtxoResponse,
 		bark_json::cli::Movement,
 		bark_json::web::SendRequest,
 		bark_json::web::SendResponse,
@@ -370,16 +376,73 @@ pub async fn vtxos(
 	};
 
 	let vtxo_infos = wallet_vtxos
-		.iter()
-		.map(|vtxo| bark_json::primitives::WalletVtxoInfo {
-			vtxo: vtxo.vtxo.clone().into(),
-			state: vtxo.state.clone().into(),
-		})
+		.into_iter()
+		.map(bark_json::primitives::WalletVtxoInfo::from)
 		.collect::<Vec<_>>();
 
 	Ok(axum::Json(vtxo_infos))
 }
 
+#[utoipa::path(
+	get,
+	path = "/vtxos/{id}",
+	summary = "Get VTXO detail",
+	params(
+		("id" = String, Path, description = "VTXO identifier formatted as `txid:vout`.")
+	),
+	responses(
+		(status = 200, description = "Returns the VTXO detail", body = bark_json::primitives::WalletVtxoInfo),
+		(status = 400, description = "Invalid VTXO id", body = error::BadRequestError),
+		(status = 404, description = "VTXO not found", body = error::NotFoundError),
+		(status = 500, description = "Internal server error", body = error::InternalServerError)
+	),
+	description = "Returns detail for a single VTXO. To get the hex-encoded serialization \
+		use `GET /vtxos/{id}/encoded`.",
+	tag = "wallet"
+)]
+#[debug_handler]
+pub async fn get_vtxo(
+	State(state): State<ServerState>,
+	Path(id): Path<String>,
+) -> HandlerResult<Json<bark_json::primitives::WalletVtxoInfo>> {
+	let wallet = state.require_wallet()?;
+	let vtxo_id = VtxoId::from_str(&id).badarg("Invalid VTXO id")?;
+	let wallet_vtxo = wallet.get_vtxo_by_id(vtxo_id).await
+		.not_found([vtxo_id], "VTXO not found")?;
+
+	Ok(axum::Json(wallet_vtxo.into()))
+}
+
+#[utoipa::path(
+	get,
+	path = "/vtxos/{id}/encoded",
+	summary = "Get encoded VTXO",
+	params(
+		("id" = String, Path, description = "VTXO identifier formatted as `txid:vout`.")
+	),
+	responses(
+		(status = 200, description = "Returns the hex-encoded serialized VTXO", body = bark_json::web::EncodedVtxoResponse),
+		(status = 400, description = "Invalid VTXO id", body = error::BadRequestError),
+		(status = 404, description = "VTXO not found", body = error::NotFoundError),
+		(status = 500, description = "Internal server error", body = error::InternalServerError)
+	),
+	description = "Returns the hex-encoded serialization of a VTXO. The `encoded` field \
+		can be passed to `POST /wallet/import-vtxo` to re-import this VTXO.",
+	tag = "wallet"
+)]
+#[debug_handler]
+pub async fn get_vtxo_encoded(
+	State(state): State<ServerState>,
+	Path(id): Path<String>,
+) -> HandlerResult<Json<bark_json::web::EncodedVtxoResponse>> {
+	let wallet = state.require_wallet()?;
+	let vtxo_id = VtxoId::from_str(&id).badarg("Invalid VTXO id")?;
+	let wallet_vtxo = wallet.get_vtxo_by_id(vtxo_id).await
+		.not_found([vtxo_id], "VTXO not found")?;
+
+	let encoded = bark_json::primitives::EncodedVtxo(wallet_vtxo.vtxo.serialize_hex());
+	Ok(axum::Json(bark_json::web::EncodedVtxoResponse { encoded }))
+}
 
 #[utoipa::path(
 	get,

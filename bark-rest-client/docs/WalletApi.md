@@ -9,6 +9,8 @@ Method | HTTP request | Description
 [**balance**](WalletApi.md#balance) | **GET** /api/v1/wallet/balance | Get wallet balance
 [**connected**](WalletApi.md#connected) | **GET** /api/v1/wallet/connected | Check server connection
 [**create_wallet**](WalletApi.md#create_wallet) | **POST** /api/v1/wallet/create | Create a wallet
+[**get_vtxo**](WalletApi.md#get_vtxo) | **GET** /api/v1/wallet/vtxos/{id} | Get VTXO detail
+[**get_vtxo_encoded**](WalletApi.md#get_vtxo_encoded) | **GET** /api/v1/wallet/vtxos/{id}/encoded | Get encoded VTXO
 [**history**](WalletApi.md#history) | **GET** /api/v1/wallet/history | Get wallet history
 [**import_vtxo**](WalletApi.md#import_vtxo) | **POST** /api/v1/wallet/import-vtxo | Import a VTXO
 [**movements**](WalletApi.md#movements) | **GET** /api/v1/wallet/movements | List movements (deprecated)
@@ -162,6 +164,66 @@ Name | Type | Description  | Required | Notes
 ### HTTP request headers
 
 - **Content-Type**: application/json
+- **Accept**: application/json
+
+[[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
+
+
+## get_vtxo
+
+> models::WalletVtxoInfo get_vtxo(id)
+Get VTXO detail
+
+Returns detail for a single VTXO. To get the hex-encoded serialization use `GET /vtxos/{id}/encoded`.
+
+### Parameters
+
+
+Name | Type | Description  | Required | Notes
+------------- | ------------- | ------------- | ------------- | -------------
+**id** | **String** | VTXO identifier formatted as `txid:vout`. | [required] |
+
+### Return type
+
+[**models::WalletVtxoInfo**](WalletVtxoInfo.md)
+
+### Authorization
+
+[bearer](../README.md#bearer)
+
+### HTTP request headers
+
+- **Content-Type**: Not defined
+- **Accept**: application/json
+
+[[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
+
+
+## get_vtxo_encoded
+
+> models::EncodedVtxoResponse get_vtxo_encoded(id)
+Get encoded VTXO
+
+Returns the hex-encoded serialization of a VTXO. The `encoded` field can be passed to `POST /wallet/import-vtxo` to re-import this VTXO.
+
+### Parameters
+
+
+Name | Type | Description  | Required | Notes
+------------- | ------------- | ------------- | ------------- | -------------
+**id** | **String** | VTXO identifier formatted as `txid:vout`. | [required] |
+
+### Return type
+
+[**models::EncodedVtxoResponse**](EncodedVtxoResponse.md)
+
+### Authorization
+
+[bearer](../README.md#bearer)
+
+### HTTP request headers
+
+- **Content-Type**: Not defined
 - **Accept**: application/json
 
 [[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)

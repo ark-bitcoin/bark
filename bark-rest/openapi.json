@@ -2199,6 +2199,132 @@
         }
       }
     },
+    "/api/v1/wallet/vtxos/{id}": {
+      "get": {
+        "tags": [
+          "wallet"
+        ],
+        "summary": "Get VTXO detail",
+        "description": "Returns detail for a single VTXO. To get the hex-encoded serialization use `GET /vtxos/{id}/encoded`.",
+        "operationId": "get_vtxo",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "VTXO identifier formatted as `txid:vout`.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Returns the VTXO detail",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WalletVtxoInfo"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid VTXO id",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "VTXO not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotFoundError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternalServerError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/wallet/vtxos/{id}/encoded": {
+      "get": {
+        "tags": [
+          "wallet"
+        ],
+        "summary": "Get encoded VTXO",
+        "description": "Returns the hex-encoded serialization of a VTXO. The `encoded` field can be passed to `POST /wallet/import-vtxo` to re-import this VTXO.",
+        "operationId": "get_vtxo_encoded",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "VTXO identifier formatted as `txid:vout`.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Returns the hex-encoded serialized VTXO",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EncodedVtxoResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid VTXO id",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "VTXO not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotFoundError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternalServerError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/ping": {
       "get": {
         "tags": [],
@@ -2642,6 +2768,23 @@
         "properties": {
           "fingerprint": {
             "type": "string"
+          }
+        }
+      },
+      "EncodedVtxo": {
+        "type": "string",
+        "description": "Hex-encoded serialized VTXO.\n\nSerializes as a plain hex string. Can be passed to\n`POST /wallet/import-vtxo` to re-import this VTXO."
+      },
+      "EncodedVtxoResponse": {
+        "type": "object",
+        "description": "Response for the encoded-VTXO endpoint.\n\nWraps the hex-encoded VTXO in a named field so clients can easily\nextract it.",
+        "required": [
+          "encoded"
+        ],
+        "properties": {
+          "encoded": {
+            "$ref": "#/components/schemas/EncodedVtxo",
+            "description": "Hex-encoded serialized VTXO."
           }
         }
       },

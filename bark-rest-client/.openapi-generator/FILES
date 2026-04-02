@@ -29,6 +29,7 @@ docs/ConnectedResponse.md
 docs/CreateWalletRequest.md
 docs/CreateWalletResponse.md
 docs/DefaultApi.md
+docs/EncodedVtxoResponse.md
 docs/ExitAwaitingDeltaState.md
 docs/ExitClaimAllRequest.md
 docs/ExitClaimInProgressState.md
@@ -195,6 +196,7 @@ src/models/child_transaction_info.rs
 src/models/connected_response.rs
 src/models/create_wallet_request.rs
 src/models/create_wallet_response.rs
+src/models/encoded_vtxo_response.rs
 src/models/exit_awaiting_delta_state.rs
 src/models/exit_claim_all_request.rs
 src/models/exit_claim_in_progress_state.rs
