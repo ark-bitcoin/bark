@@ -6,7 +6,7 @@ use ark_testing::{sat, TestContext};
 async fn onchain_address_and_balance_barkd() {
 	let ctx = TestContext::new("barkd/onchain_address_and_balance_barkd").await;
 
-	let srv = ctx.new_captaind("server", None).await;
+	let srv = ctx.captaind("server").create().await;
 	let barkd = ctx.new_barkd("barkd1", &srv).await;
 
 	let funded = sat(100_000);
@@ -26,7 +26,7 @@ async fn onchain_address_and_balance_barkd() {
 async fn onchain_utxos_and_transactions_barkd() {
 	let ctx = TestContext::new("barkd/onchain_utxos_and_transactions_barkd").await;
 
-	let srv = ctx.new_captaind("server", None).await;
+	let srv = ctx.captaind("server").create().await;
 	let barkd = ctx.new_barkd("barkd1", &srv).await;
 
 	let funded = sat(50_000);

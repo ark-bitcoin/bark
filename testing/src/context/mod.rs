@@ -9,7 +9,6 @@ use ark::fees::{
 	BoardFees, FeeSchedule, LightningReceiveFees, LightningSendFees, OffboardFees, PpmFeeRate,
 	RefreshFees,
 };
-use bark::BarkNetwork;
 use bitcoin::{Amount, FeeRate, Network, Txid};
 use bitcoin_ext::FeeRateExt;
 use bitcoincore_rpc::RpcApi;
@@ -27,11 +26,11 @@ use crate::daemon::captaind::proxy::ArkRpcProxyServer;
 use crate::postgres::{self, PostgresDatabaseManager};
 use crate::util::{
 	get_bark_chain_source_from_env, get_cargo_workspace, test_data_directory,
-	FutureExt, TestContextChainSource,
+	TestContextChainSource,
 };
 use crate::{
 	btc, constants, sat, Bark, Barkd, Bitcoind, BitcoindConfig, Captaind, Electrs, ElectrsConfig,
-	Lightningd, LightningdConfig,
+	Lightningd,
 };
 use crate::daemon::barkd::BarkdChainSource;
 
@@ -244,7 +243,7 @@ impl TestContext {
 		builders::LightningdBuilder::new(self, name)
 	}
 
-	// ── Direct constructors (legacy wrappers) ───────────────────
+	// ── Direct constructors ────────────────────────────────────
 
 	pub async fn new_bitcoind(&self, name: impl AsRef<str>) -> Bitcoind {
 		self.new_bitcoind_with_cfg(name.as_ref(), self.bitcoind_default_cfg(name.as_ref())).await
@@ -472,44 +471,6 @@ impl TestContext {
 		}
 	}
 
-	pub async fn new_captaind_with_cfg(
-		&self,
-		name: impl AsRef<str>,
-		lightningd: Option<&Lightningd>,
-		mod_cfg: impl FnOnce(&mut server::Config),
-	) -> Captaind {
-		let bitcoind = self.bitcoind_arc();
-		let mut cfg = self.captaind_default_cfg(name.as_ref(), &bitcoind, lightningd).await;
-		mod_cfg(&mut cfg);
-
-		let mut ret = Captaind::new(name, bitcoind, cfg);
-		ret.start().await.unwrap();
-
-		ret
-	}
-
-	/// Creates new captaind without any funds.
-	pub async fn new_captaind(
-		&self,
-		name: impl AsRef<str>,
-		lightningd: Option<&Lightningd>,
-	) -> Captaind {
-		self.new_captaind_with_cfg(name, lightningd, |_| {}).await
-	}
-
-	/// Creates new captaind and immediately funds it. Waits until the captaind's bitcoind
-	/// receives funding transaction.
-	pub async fn new_captaind_with_funds(
-		&self,
-		name: impl AsRef<str>,
-		lightningd: Option<&Lightningd>,
-		amount: Amount
-	) -> Captaind {
-		let srv = self.new_captaind(name, lightningd).await;
-		let _txid = self.fund_captaind(&srv, amount).await;
-		srv
-	}
-
 	pub async fn new_server_with_cfg(
 		&self,
 		name: impl AsRef<str>,
@@ -553,38 +514,6 @@ impl TestContext {
 		}
 	}
 
-	pub async fn try_new_bark_with_cfg(
-		&self,
-		name: impl AsRef<str>,
-		srv: &dyn ToArkUrl,
-		mod_cfg: impl FnOnce(&mut bark::Config),
-	) -> anyhow::Result<Bark> {
-		let bitcoind = if self.electrs.is_none() {
-			Some(self.bitcoind_arc())
-		} else {
-			None
-		};
-
-		let mut cfg = self.bark_default_cfg(srv, bitcoind.as_deref());
-		mod_cfg(&mut cfg);
-
-		let datadir = self.datadir.join(name.as_ref());
-		Bark::try_new(name, datadir, BarkNetwork::Regtest, cfg, bitcoind).await
-	}
-
-	pub async fn try_new_bark(
-		&self,
-		name: impl AsRef<str>,
-		srv: &dyn ToArkUrl,
-	) -> anyhow::Result<Bark> {
-		self.try_new_bark_with_cfg(name, srv, |_| {}).await
-	}
-
-	/// Creates new bark without any funds.
-	pub async fn new_bark(&self, name: impl AsRef<str>, srv: &dyn ToArkUrl) -> Bark {
-		self.try_new_bark(name, srv).await.unwrap()
-	}
-
 	/// Creates a new barkd daemon connected to the given Ark server.
 	///
 	/// Uses esplora (electrs) as chain source when available, otherwise
@@ -614,54 +543,12 @@ impl TestContext {
 		Barkd::new(name, datadir, srv.ark_url(), chain_source, bitcoind)
 	}
 
-	/// Creates new bark and immediately funds it. Waits until the bark's bitcoind
-	/// receives funding transaction.
-	pub async fn new_bark_with_funds(&self, name: impl AsRef<str>, srv: &dyn ToArkUrl, amount: Amount) -> Bark {
-		let bark = self.try_new_bark(name, srv).await.unwrap();
-		let _txid = self.fund_bark(&bark, amount).await;
-		bark
-	}
-
-	pub async fn new_lightningd(&self, name: impl AsRef<str>) -> Lightningd {
-		let datadir = self.datadir.join(name.as_ref());
-
-		let bitcoind = self.bitcoind_arc();
-
-		// Generate a block with a fresh timestamp so bitcoind exits
-		// initialblockdownload mode. Without this, CLN reports
-		// "Bitcoind is not up-to-date with network." indefinitely
-		// when started from a stale snapshot.
-		bitcoind.generate(1).await;
-
-		let cfg = LightningdConfig {
-			network: String::from("regtest"),
-			bitcoin_dir: bitcoind.datadir(),
-			bitcoin_rpcport: bitcoind.rpc_port(),
-			lightning_dir: datadir.clone()
-		};
-
-		let mut ret = Lightningd::new(name, bitcoind, cfg);
-		ret.start().await.unwrap();
-		// wait for grpc to be available
-		async {
-			loop {
-				if ret.try_grpc_client().await.is_ok() {
-					break;
-				} else {
-					tokio::time::sleep(Duration::from_millis(200)).await;
-				}
-			}
-		}.wait_millis(5000).await;
-		ret
-	}
-
-
 	/// Creates one sender and one receiver lightningd node and funds sender,
 	/// but does not create a channel between them.
 	pub async fn new_lightning_setup_no_channel(&self, name: impl AsRef<str>) -> LightningPaymentSetup {
 		trace!("Start receiver and sender lightningd nodes");
-		let internal = self.new_lightningd(format!("{}_internal", name.as_ref())).await;
-		let external = self.new_lightningd(format!("{}_external", name.as_ref())).await;
+		let internal = self.lightningd(format!("{}_internal", name.as_ref())).create().await;
+		let external = self.lightningd(format!("{}_external", name.as_ref())).create().await;
 
 		trace!("Funding all lightning-nodes");
 		self.fund_lightning(&internal, btc(12)).await;

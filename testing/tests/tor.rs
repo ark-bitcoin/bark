@@ -10,7 +10,7 @@ const CHAIN_VIRTUAL_PORT: u16 = 8080;
 async fn setup(test_name: &str) -> (TestContext, Captaind, Tor, LightningPaymentSetup) {
 	let ctx = TestContext::new(test_name).await;
 	let lightning = ctx.new_lightning_setup("lightningd").await;
-	let srv = ctx.new_captaind_with_funds("server", Some(&lightning.internal), btc(10)).await;
+	let srv = ctx.captaind("server").lightningd(&lightning.internal).funded(btc(10)).create().await;
 
 	let chain_target_port = if let Some(ref electrs) = ctx.electrs {
 		electrs.rest_port()

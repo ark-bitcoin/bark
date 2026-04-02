@@ -47,8 +47,8 @@ async fn reject_arkoor_with_bad_signature() {
 		}
 	}
 
-	let srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
-	let bark1 = ctx.new_bark_with_funds("bark1", &srv, sat(1_000_000)).await;
+	let srv = ctx.captaind("server").funded(btc(10)).create().await;
+	let bark1 = ctx.bark("bark1", &srv).funded(sat(1_000_000)).create().await;
 
 	// refresh vtxo
 	bark1.board(sat(200_000)).await;
@@ -58,7 +58,7 @@ async fn reject_arkoor_with_bad_signature() {
 	let proxy = srv.start_proxy_with_mailbox((), InvalidSigProxy).await;
 
 	// create a third wallet to receive the invalid arkoor
-	let bark2 = ctx.new_bark("bark2".to_string(), &proxy.address).await;
+	let bark2 = ctx.bark("bark2".to_string(), &proxy.address).create().await;
 	let bark2_addr = bark2.address().await;
 
 	// Send arkoor package to mailbox
@@ -82,14 +82,14 @@ async fn reject_arkoor_with_bad_signature() {
 #[tokio::test]
 async fn accept_mailbox() {
 	let ctx = TestContext::new("bark/accept_mailbox").await;
-	let srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
+	let srv = ctx.captaind("server").funded(btc(10)).create().await;
 
-	let bark = ctx.new_bark_with_funds("bark".to_string(), &srv, sat(1_000_000)).await;
+	let bark = ctx.bark("bark".to_string(), &srv).funded(sat(1_000_000)).create().await;
 
 	let _board = bark.board(sat(400_000)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 
-	let bark2 = ctx.new_bark("bark2", &srv).await;
+	let bark2 = ctx.bark("bark2", &srv).create().await;
 	bark.send_oor(bark2.address().await, sat(100_000)).await;
 
 	bark2.maintain().await;
@@ -107,7 +107,7 @@ async fn accept_mailbox() {
 	let err = bark.try_import_vtxos(&[&vtxo_hex]).await.unwrap_err();
 	assert!(err.to_string().contains("signable clause") || err.to_string().contains("not owned"), "expected ownership error, got: {}", err);
 
-	let bark3 = ctx.new_bark("bark3", &srv).await;
+	let bark3 = ctx.bark("bark3", &srv).create().await;
 	bark.send_oor(bark3.address().await, sat(50_000)).await;
 	bark.send_oor(bark3.address().await, sat(60_000)).await;
 
@@ -128,7 +128,7 @@ async fn accept_mailbox() {
 	assert_eq!(imported.len(), 2, "should have imported 2 VTXOs");
 	assert_eq!(bark3.vtxos().await.len(), 2, "bark3 should have 2 VTXOs after bulk import");
 
-	let bark4 = ctx.new_bark("bark4", &srv).await;
+	let bark4 = ctx.bark("bark4", &srv).create().await;
 	bark.send_oor(bark4.address().await, sat(40_000)).await;
 	bark4.maintain().await;
 	assert_eq!(bark4.vtxos().await.len(), 1, "bark4 should have 1 VTXO");
@@ -185,10 +185,10 @@ async fn recovery_mailbox_receives_vtxo_ids() {
 	// Vtxo id based recovery is only supported later than beta.9
 	require_bark_version!(> "0.1.0-beta.9");
 	let ctx = TestContext::new("bark/recovery_mailbox_receives_vtxo_ids").await;
-	let srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
+	let srv = ctx.captaind("server").funded(btc(10)).create().await;
 
-	let bark1 = ctx.new_bark_with_funds("bark1", &srv, sat(1_000_000)).await;
-	let bark2 = ctx.new_bark("bark2", &srv).await;
+	let bark1 = ctx.bark("bark1", &srv).funded(sat(1_000_000)).create().await;
+	let bark2 = ctx.bark("bark2", &srv).create().await;
 
 	let mut mb_rpc = srv.get_mailbox_public_rpc().await;
 
@@ -238,10 +238,10 @@ async fn recovery_mailbox_lightning_send_change() {
 	let lightning = ctx.new_lightning_setup("lightningd").await;
 
 	// Start a server linked to our cln installation
-	let srv = ctx.new_captaind("server", Some(&lightning.internal)).await;
+	let srv = ctx.captaind("server").lightningd(&lightning.internal).create().await;
 
 	// Start a bark and board
-	let bark = ctx.new_bark_with_funds("bark", &srv, btc(3)).await;
+	let bark = ctx.bark("bark", &srv).funded(btc(3)).create().await;
 	bark.board_and_confirm_and_register(&ctx, btc(2)).await;
 
 	let mut mb_rpc = srv.get_mailbox_public_rpc().await;
@@ -280,11 +280,11 @@ async fn recovery_mailbox_lightning_send_revoke() {
 	let lightning = ctx.new_lightning_setup_no_channel("lightningd").await;
 
 	// Start a server linked to our cln installation
-	let srv = ctx.new_captaind_with_funds("server", Some(&lightning.internal), btc(10)).await;
+	let srv = ctx.captaind("server").lightningd(&lightning.internal).funded(btc(10)).create().await;
 	srv.wait_for_vtxopool(&ctx).await;
 
 	// Start a bark and board
-	let bark = ctx.new_bark_with_funds("bark", &srv, btc(3)).await;
+	let bark = ctx.bark("bark", &srv).funded(btc(3)).create().await;
 	bark.board(btc(2)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 	bark.sync().await;
@@ -327,10 +327,10 @@ async fn recovery_mailbox_lightning_receive() {
 	let lightning = ctx.new_lightning_setup("lightningd").await;
 
 	// Start a server linked to the receiver lightning node (for incoming payments)
-	let srv = ctx.new_captaind_with_funds("server", Some(&lightning.internal), btc(10)).await;
+	let srv = ctx.captaind("server").lightningd(&lightning.internal).funded(btc(10)).create().await;
 
 	// Start a bark and board to be able to receive lightning
-	let bark = Arc::new(ctx.new_bark_with_funds("bark", &srv, btc(3)).await);
+	let bark = Arc::new(ctx.bark("bark", &srv).funded(btc(3)).create().await);
 	bark.board_and_confirm_and_register(&ctx, btc(2)).await;
 
 	let mut mb_rpc = srv.get_mailbox_public_rpc().await;

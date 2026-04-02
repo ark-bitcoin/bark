@@ -7,7 +7,7 @@ use ark_testing::{btc, sat, TestContext};
 #[tokio::test]
 async fn estimate_lightning_send_fee_without_funds() {
 	let ctx = TestContext::new("bark/estimate_lightning_send_fee_without_funds").await;
-	let srv = ctx.new_captaind_with_cfg("server", None, |cfg| {
+	let srv = ctx.captaind("server").cfg(|cfg| {
 		cfg.fees.lightning_send = LightningSendFees {
 			min_fee: Amount::ZERO,
 			base_fee: sat(1_000),
@@ -16,10 +16,10 @@ async fn estimate_lightning_send_fee_without_funds() {
 				PpmExpiryFeeEntry { expiry_blocks_threshold: u32::MAX, ppm: PpmFeeRate::ONE_PERCENT },
 			],
 		};
-	}).await;
+	}).create().await;
 	ctx.fund_captaind(&srv, btc(1)).await;
 
-	let bark = ctx.new_bark("bark1", &srv).await;
+	let bark = ctx.bark("bark1", &srv).create().await;
 
 	// Without funds the fallback uses expiry_blocks=u32::MAX, which matches the u32::MAX
 	// threshold so the 1% top tier applies. With real VTXOs this tier is unreachable.
@@ -36,7 +36,7 @@ async fn estimate_lightning_send_fee_without_funds() {
 #[tokio::test]
 async fn estimate_send_onchain_fee_without_funds() {
 	let ctx = TestContext::new("bark/estimate_send_onchain_fee_without_funds").await;
-	let srv = ctx.new_captaind_with_cfg("server", None, |cfg| {
+	let srv = ctx.captaind("server").cfg(|cfg| {
 		cfg.fees.offboard = OffboardFees {
 			base_fee: sat(1_000),
 			fixed_additional_vb: 100,
@@ -45,10 +45,10 @@ async fn estimate_send_onchain_fee_without_funds() {
 				PpmExpiryFeeEntry { expiry_blocks_threshold: u32::MAX, ppm: PpmFeeRate::ONE_PERCENT },
 			],
 		};
-	}).await;
+	}).create().await;
 	ctx.fund_captaind(&srv, btc(1)).await;
 
-	let bark = ctx.new_bark("bark1", &srv).await;
+	let bark = ctx.bark("bark1", &srv).create().await;
 	let address = ctx.bitcoind().get_new_address();
 
 	// Without funds the fallback uses expiry_blocks=u32::MAX, which matches the u32::MAX

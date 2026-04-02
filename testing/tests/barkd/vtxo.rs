@@ -7,7 +7,7 @@ use ark_testing::constants::BOARD_CONFIRMATIONS;
 async fn get_vtxo_barkd() {
 	let ctx = TestContext::new("barkd/get_vtxo_barkd").await;
 
-	let srv = ctx.new_captaind("server", None).await;
+	let srv = ctx.captaind("server").create().await;
 	let barkd = ctx.new_barkd("barkd1", &srv).await;
 
 	ctx.fund_barkd(&barkd, sat(100_000)).await;
@@ -29,7 +29,7 @@ async fn get_vtxo_barkd() {
 async fn get_vtxo_encoded_barkd() {
 	let ctx = TestContext::new("barkd/get_vtxo_encoded_barkd").await;
 
-	let srv = ctx.new_captaind("server", None).await;
+	let srv = ctx.captaind("server").create().await;
 	let barkd = ctx.new_barkd("barkd1", &srv).await;
 
 	ctx.fund_barkd(&barkd, sat(100_000)).await;
@@ -49,7 +49,7 @@ async fn get_vtxo_encoded_barkd() {
 async fn import_vtxo_barkd() {
 	let ctx = TestContext::new("barkd/import_vtxo_barkd").await;
 
-	let srv = ctx.new_captaind("server", None).await;
+	let srv = ctx.captaind("server").create().await;
 	let barkd = ctx.new_barkd("barkd1", &srv).await;
 
 	ctx.fund_barkd(&barkd, sat(100_000)).await;

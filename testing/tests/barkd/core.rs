@@ -6,7 +6,7 @@ use ark_testing::TestContext;
 async fn ping_barkd() {
 	let ctx = TestContext::new("barkd/ping_barkd").await;
 
-	let srv = ctx.new_captaind("server", None).await;
+	let srv = ctx.captaind("server").create().await;
 	let barkd = ctx.new_barkd("barkd1", &srv).await;
 
 	// `wait_for_init` (called internally by start) already proved ping works;
@@ -19,7 +19,7 @@ async fn ping_barkd() {
 async fn bitcoin_tip_barkd() {
 	let ctx = TestContext::new("barkd/bitcoin_tip_barkd").await;
 
-	let srv = ctx.new_captaind("server", None).await;
+	let srv = ctx.captaind("server").create().await;
 	let barkd = ctx.new_barkd("barkd1", &srv).await;
 
 	let height = ctx.bitcoind().get_block_count().await;
@@ -36,7 +36,7 @@ async fn bitcoin_tip_barkd() {
 async fn wallet_connected_barkd() {
 	let ctx = TestContext::new("barkd/wallet_connected_barkd").await;
 
-	let srv = ctx.new_captaind("server", None).await;
+	let srv = ctx.captaind("server").create().await;
 	let barkd = ctx.new_barkd("barkd1", &srv).await;
 
 	let resp = barkd.connected().await;
@@ -48,7 +48,7 @@ async fn wallet_connected_barkd() {
 async fn wallet_ark_info_barkd() {
 	let ctx = TestContext::new("barkd/wallet_ark_info_barkd").await;
 
-	let srv = ctx.new_captaind("server", None).await;
+	let srv = ctx.captaind("server").create().await;
 	let barkd = ctx.new_barkd("barkd1", &srv).await;
 
 	let expected = srv.ark_info().await;
@@ -68,7 +68,7 @@ async fn wallet_ark_info_barkd() {
 async fn wallet_next_round_barkd() {
 	let ctx = TestContext::new("barkd/wallet_next_round_barkd").await;
 
-	let srv = ctx.new_captaind("server", None).await;
+	let srv = ctx.captaind("server").create().await;
 	let barkd = ctx.new_barkd("barkd1", &srv).await;
 
 	let next_round = barkd.next_round().await;

@@ -12,8 +12,8 @@ use ark_testing::util::{get_bark_chain_source_from_env, TestContextChainSource};
 #[tokio::test]
 async fn recover_mnemonic() {
 	let ctx = TestContext::new("bark/recover_mnemonic").await;
-	let srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
-	let bark = ctx.new_bark_with_funds("bark", &srv, sat(2_000_000)).await;
+	let srv = ctx.captaind("server").funded(btc(10)).create().await;
+	let bark = ctx.bark("bark", &srv).funded(sat(2_000_000)).create().await;
 	bark.board(sat(800_000)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 

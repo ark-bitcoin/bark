@@ -6,9 +6,9 @@ use ark_testing::constants::{BOARD_CONFIRMATIONS, ROUND_CONFIRMATIONS};
 #[tokio::test]
 async fn list_vtxos() {
 	let ctx = TestContext::new("bark/list_vtxos").await;
-	let srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
-	let bark1 = ctx.new_bark_with_funds("bark1", &srv, sat(1_000_000)).await;
-	let bark2 = ctx.new_bark_with_funds("bark2", &srv, sat(1_000_000)).await;
+	let srv = ctx.captaind("server").funded(btc(10)).create().await;
+	let bark1 = ctx.bark("bark1", &srv).funded(sat(1_000_000)).create().await;
+	let bark2 = ctx.bark("bark2", &srv).funded(sat(1_000_000)).create().await;
 
 	bark2.board(sat(800_000)).await;
 
@@ -45,9 +45,9 @@ async fn list_vtxos() {
 #[tokio::test]
 async fn compute_balance() {
 	let ctx = TestContext::new("bark/compute_balance").await;
-	let srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
-	let bark1 = ctx.new_bark_with_funds("bark1", &srv, sat(1_000_000)).await;
-	let bark2 = ctx.new_bark_with_funds("bark2", &srv, sat(1_000_000)).await;
+	let srv = ctx.captaind("server").funded(btc(10)).create().await;
+	let bark1 = ctx.bark("bark1", &srv).funded(sat(1_000_000)).create().await;
+	let bark2 = ctx.bark("bark2", &srv).funded(sat(1_000_000)).create().await;
 
 	bark2.board(sat(800_000)).await;
 
@@ -77,8 +77,8 @@ async fn compute_balance() {
 #[tokio::test]
 async fn bark_balance_shows_pending_board_sats_until_deeply_confirmed() {
 	let ctx = TestContext::new("bark/bark_balance_shows_pending_board_sats_until_deeply_confirmed").await;
-	let srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
-	let bark1 = ctx.new_bark_with_funds("bark1", &srv, sat(1_000_000)).await;
+	let srv = ctx.captaind("server").funded(btc(10)).create().await;
+	let bark1 = ctx.bark("bark1", &srv).funded(sat(1_000_000)).create().await;
 
 	let board_amount = sat(800_000);
 	bark1.board(board_amount).await;
@@ -93,8 +93,8 @@ async fn bark_balance_shows_pending_board_sats_until_deeply_confirmed() {
 #[tokio::test]
 async fn drop_vtxos() {
 	let ctx = TestContext::new("bark/drop_vtxos").await;
-	let srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
-	let bark1 = ctx.new_bark_with_funds("bark1", &srv, sat(1_000_000)).await;
+	let srv = ctx.captaind("server").funded(btc(10)).create().await;
+	let bark1 = ctx.bark("bark1", &srv).funded(sat(1_000_000)).create().await;
 
 	// refresh vtxo
 	bark1.board(sat(200_000)).await;

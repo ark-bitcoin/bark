@@ -7,9 +7,9 @@ use futures::StreamExt;
 #[tokio::test]
 async fn send_simple_arkoor() {
 	let ctx = TestContext::new("bark/send_simple_arkoor").await;
-	let srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
-	let bark1 = ctx.new_bark_with_funds("bark1", &srv, sat(90_000)).await;
-	let bark2 = ctx.new_bark_with_funds("bark2", &srv, sat(5_000)).await;
+	let srv = ctx.captaind("server").funded(btc(10)).create().await;
+	let bark1 = ctx.bark("bark1", &srv).funded(sat(90_000)).create().await;
+	let bark2 = ctx.bark("bark2", &srv).funded(sat(5_000)).create().await;
 
 	bark1.board_and_confirm_and_register(&ctx, sat(80_000)).await;
 
@@ -57,9 +57,9 @@ async fn send_simple_arkoor() {
 #[tokio::test]
 async fn send_full_arkoor() {
 	let ctx = TestContext::new("bark/send_full_arkoor").await;
-	let srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
-	let bark1 = ctx.new_bark_with_funds("bark1", &srv, sat(90_000)).await;
-	let bark2 = ctx.new_bark_with_funds("bark2", &srv, sat(5_000)).await;
+	let srv = ctx.captaind("server").funded(btc(10)).create().await;
+	let bark1 = ctx.bark("bark1", &srv).funded(sat(90_000)).create().await;
+	let bark2 = ctx.bark("bark2", &srv).funded(sat(5_000)).create().await;
 	bark1.board(sat(80_000)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 
@@ -73,9 +73,9 @@ async fn send_full_arkoor() {
 #[tokio::test]
 async fn send_arkoor_package() {
 	let ctx = TestContext::new("bark/send_arkoor_package").await;
-	let srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
-	let bark1 = ctx.new_bark_with_funds("bark1", &srv, sat(90_000)).await;
-	let bark2 = ctx.new_bark_with_funds("bark2", &srv, sat(5_000)).await;
+	let srv = ctx.captaind("server").funded(btc(10)).create().await;
+	let bark1 = ctx.bark("bark1", &srv).funded(sat(90_000)).create().await;
+	let bark2 = ctx.bark("bark2", &srv).funded(sat(5_000)).create().await;
 	bark1.board(sat(20_000)).await;
 	bark1.board(sat(20_000)).await;
 	bark1.board(sat(20_000)).await;
@@ -100,11 +100,11 @@ async fn send_arkoor_package() {
 async fn test_ark_address_other_ark() {
 	let ctx = TestContext::new("bark/test_ark_address_other_ark").await;
 
-	let srv1 = ctx.new_captaind_with_funds("server1", None, btc(1)).await;
-	let srv2 = ctx.new_captaind_with_funds("server2", None, btc(1)).await;
+	let srv1 = ctx.captaind("server1").funded(btc(1)).create().await;
+	let srv2 = ctx.captaind("server2").funded(btc(1)).create().await;
 
-	let bark1 = ctx.new_bark_with_funds("bark1", &srv1, sat(1_000_000)).await;
-	let bark2 = ctx.new_bark_with_funds("bark2", &srv2, sat(1_000_000)).await;
+	let bark1 = ctx.bark("bark1", &srv1).funded(sat(1_000_000)).create().await;
+	let bark2 = ctx.bark("bark2", &srv2).funded(sat(1_000_000)).create().await;
 
 	bark1.board(sat(800_000)).await;
 	bark2.board(sat(800_000)).await;

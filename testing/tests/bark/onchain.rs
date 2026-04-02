@@ -7,8 +7,8 @@ use ark_testing::constants::{BOARD_CONFIRMATIONS, ROUND_CONFIRMATIONS};
 #[tokio::test]
 async fn bark_address_changes() {
 	let ctx = TestContext::new("bark/bark_address_changes").await;
-	let srv = ctx.new_captaind("server", None).await;
-	let bark1 = ctx.new_bark("bark1", &srv).await;
+	let srv = ctx.captaind("server").create().await;
+	let bark1 = ctx.bark("bark1", &srv).create().await;
 
 	let addr1 = bark1.address().await;
 	let addr2 = bark1.address().await;
@@ -22,8 +22,8 @@ async fn bark_address_changes() {
 async fn list_utxos() {
 	let ctx = TestContext::new("bark/list_utxos").await;
 
-	let srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
-	let bark = ctx.new_bark_with_funds("bark", &srv, sat(1_000_000)).await;
+	let srv = ctx.captaind("server").funded(btc(10)).create().await;
+	let bark = ctx.bark("bark", &srv).funded(sat(1_000_000)).create().await;
 
 	bark.board(sat(200_000)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
@@ -51,9 +51,9 @@ async fn list_utxos() {
 #[tokio::test]
 async fn onchain_send() {
 	let ctx = TestContext::new("bark/onchain_send").await;
-	let srv = ctx.new_captaind_with_funds("server", None, btc(1)).await;
-	let sender = ctx.new_bark_with_funds("bark_sender", &srv, sat(1_000_000)).await;
-	let recipient = ctx.new_bark("bark_recipient", &srv).await;
+	let srv = ctx.captaind("server").funded(btc(1)).create().await;
+	let sender = ctx.bark("bark_sender", &srv).funded(sat(1_000_000)).create().await;
+	let recipient = ctx.bark("bark_recipient", &srv).create().await;
 
 	sender.onchain_send(recipient.get_onchain_address().await, sat(200_000)).await;
 	ctx.generate_blocks(1).await;
@@ -73,9 +73,9 @@ async fn onchain_send() {
 #[tokio::test]
 async fn onchain_send_many() {
 	let ctx = TestContext::new("bark/onchain_send_many").await;
-	let srv = ctx.new_captaind_with_funds("server", None, btc(1)).await;
-	let sender = ctx.new_bark_with_funds("bark_sender", &srv, sat(10_000_000)).await;
-	let recipient = ctx.new_bark("bark_recipient", &srv).await;
+	let srv = ctx.captaind("server").funded(btc(1)).create().await;
+	let sender = ctx.bark("bark_sender", &srv).funded(sat(10_000_000)).create().await;
+	let recipient = ctx.bark("bark_recipient", &srv).create().await;
 	let addresses = [
 		recipient.get_onchain_address().await,
 		recipient.get_onchain_address().await,
@@ -113,9 +113,9 @@ async fn onchain_send_many() {
 #[tokio::test]
 async fn onchain_drain() {
 	let ctx = TestContext::new("bark/onchain_drain").await;
-	let srv = ctx.new_captaind_with_funds("server", None, btc(1)).await;
-	let sender = ctx.new_bark_with_funds("bark_sender", &srv, sat(1_000_000)).await;
-	let recipient = ctx.new_bark("bark_recipient", &srv).await;
+	let srv = ctx.captaind("server").funded(btc(1)).create().await;
+	let sender = ctx.bark("bark_sender", &srv).funded(sat(1_000_000)).create().await;
+	let recipient = ctx.bark("bark_recipient", &srv).create().await;
 
 	sender.onchain_drain(recipient.get_onchain_address().await).await;
 	ctx.generate_blocks(1).await;

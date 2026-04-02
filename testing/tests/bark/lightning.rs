@@ -31,12 +31,12 @@ async fn bark_pay_ln_succeeds() {
 	let lightning = ctx.new_lightning_setup("lightningd").await;
 
 	// Start a server and link it to our cln installation
-	let srv = ctx.new_captaind("server", Some(&lightning.internal)).await;
+	let srv = ctx.captaind("server").lightningd(&lightning.internal).create().await;
 
 	// Start a bark and create a VTXO
 	let onchain_amount = btc(7);
 	let board_amount = btc(5);
-	let bark_1 = ctx.new_bark_with_funds("bark-1", &srv, onchain_amount).await;
+	let bark_1 = ctx.bark("bark-1", &srv).funded(onchain_amount).create().await;
 
 	bark_1.board_and_confirm_and_register(&ctx, board_amount).await;
 
@@ -79,11 +79,11 @@ async fn bark_pay_ln_with_multiple_inputs() {
 	let lightning = ctx.new_lightning_setup("lightningd").await;
 
 	// Start a server and link it to our cln installation
-	let srv = ctx.new_captaind_with_funds("server", Some(&lightning.internal), btc(10)).await;
+	let srv = ctx.captaind("server").lightningd(&lightning.internal).funded(btc(10)).create().await;
 
 	// Start a bark and create a VTXO
-	let bark_1 = ctx.new_bark_with_funds("bark-1", &srv, btc(10)).await;
-	let bark_2 = ctx.new_bark_with_funds("bark-2", &srv, btc(10)).await;
+	let bark_1 = ctx.bark("bark-1", &srv).funded(btc(10)).create().await;
+	let bark_2 = ctx.bark("bark-2", &srv).funded(btc(10)).create().await;
 
 	bark_1.board(btc(1)).await;
 	bark_2.board(btc(2)).await;
@@ -116,10 +116,10 @@ async fn bark_pay_invoice_twice() {
 	let lightning = ctx.new_lightning_setup("lightningd").await;
 
 	// Start a server and link it to our cln installation
-	let srv = ctx.new_captaind("server", Some(&lightning.internal)).await;
+	let srv = ctx.captaind("server").lightningd(&lightning.internal).create().await;
 
 	// Start a bark and create a VTXO
-	let bark_1 = ctx.new_bark_with_funds("bark-1", &srv, btc(7)).await;
+	let bark_1 = ctx.bark("bark-1", &srv).funded(btc(7)).create().await;
 
 	bark_1.board_and_confirm_and_register(&ctx, btc(5)).await;
 
@@ -146,11 +146,11 @@ async fn another_bark_pays_invoice_after_first() {
 	let lightning = ctx.new_lightning_setup("lightningd").await;
 
 	// Start a server and link it to our cln installation
-	let srv = ctx.new_captaind("server", Some(&lightning.internal)).await;
+	let srv = ctx.captaind("server").lightningd(&lightning.internal).create().await;
 
 	// Start a bark and create a VTXO
-	let bark_1 = ctx.new_bark_with_funds("bark-1", &srv, btc(4)).await;
-	let bark_2 = ctx.new_bark_with_funds("bark-2", &srv, btc(4)).await;
+	let bark_1 = ctx.bark("bark-1", &srv).funded(btc(4)).create().await;
+	let bark_2 = ctx.bark("bark-2", &srv).funded(btc(4)).create().await;
 
 	bark_1.board_and_confirm_and_register(&ctx, btc(3)).await;
 	bark_2.board_and_confirm_and_register(&ctx, btc(3)).await;
@@ -177,9 +177,9 @@ async fn bark_check_lightning_payment_twice_succeeds() {
 
 	let lightning = ctx.new_lightning_setup("lightningd").await;
 
-	let srv = ctx.new_captaind("server", Some(&lightning.internal)).await;
+	let srv = ctx.captaind("server").lightningd(&lightning.internal).create().await;
 
-	let bark_1 = ctx.new_bark_with_funds("bark-1", &srv, btc(7)).await;
+	let bark_1 = ctx.bark("bark-1", &srv).funded(btc(7)).create().await;
 
 	bark_1.board_and_confirm_and_register(&ctx, btc(5)).await;
 
@@ -210,12 +210,12 @@ async fn two_barks_try_to_pay_same_invoice() {
 	let lightning = ctx.new_lightning_setup("lightningd").await;
 
 	// Start a server and link it to our cln installation
-	let srv = ctx.new_captaind("server", Some(&lightning.internal)).await;
+	let srv = ctx.captaind("server").lightningd(&lightning.internal).create().await;
 
 	// Start a bark and create a VTXO
-	let bark_1 = ctx.new_bark_with_funds("bark-1", &srv, btc(4)).await;
-	let bark_2 = ctx.new_bark_with_funds("bark-2", &srv, btc(4)).await;
-	let bark_receiver = ctx.new_bark_with_funds("bark-receiver", &srv, btc(2)).await;
+	let bark_1 = ctx.bark("bark-1", &srv).funded(btc(4)).create().await;
+	let bark_2 = ctx.bark("bark-2", &srv).funded(btc(4)).create().await;
+	let bark_receiver = ctx.bark("bark-receiver", &srv).funded(btc(2)).create().await;
 
 	bark_1.board_and_confirm_and_register(&ctx, btc(3)).await;
 	bark_2.board_and_confirm_and_register(&ctx, btc(3)).await;
@@ -245,13 +245,13 @@ async fn bark_pay_ln_fails_then_succeeds() {
 	let lightning = ctx.new_lightning_setup_no_channel("lightningd").await;
 
 	// Start a server and link it to our cln installation
-	let srv = ctx.new_captaind_with_funds("server", Some(&lightning.internal), btc(10)).await;
+	let srv = ctx.captaind("server").lightningd(&lightning.internal).funded(btc(10)).create().await;
 	srv.wait_for_vtxopool(&ctx).await;
 
 	// Start a bark and create a VTXO
 	let onchain_amount = btc(3);
 	let board_amount = btc(2);
-	let bark = ctx.new_bark_with_funds("bark", &srv, onchain_amount).await;
+	let bark = ctx.bark("bark", &srv).funded(onchain_amount).create().await;
 
 	// Board funds into the Ark
 	bark.board(board_amount).await;
@@ -306,12 +306,12 @@ async fn bark_refresh_ln_change_vtxo() {
 	let lightning = ctx.new_lightning_setup("lightningd").await;
 
 	// Start a server and link it to our cln installation
-	let srv = ctx.new_captaind_with_funds("server", Some(&lightning.internal), btc(10)).await;
+	let srv = ctx.captaind("server").lightningd(&lightning.internal).funded(btc(10)).create().await;
 
 	// Start a bark and create a VTXO
 	let onchain_amount = btc(7);
 	let board_amount = btc(5);
-	let bark_1 = ctx.new_bark_with_funds("bark-1", &srv, onchain_amount).await;
+	let bark_1 = ctx.bark("bark-1", &srv).funded(onchain_amount).create().await;
 
 	bark_1.board(board_amount).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
@@ -344,12 +344,12 @@ async fn bark_refresh_payment_revocation() {
 	let lightning = ctx.new_lightning_setup_no_channel("lightningd").await;
 
 	// Start a server and link it to our cln installation
-	let srv = ctx.new_captaind_with_funds("server", Some(&lightning.internal), btc(10)).await;
+	let srv = ctx.captaind("server").lightningd(&lightning.internal).funded(btc(10)).create().await;
 
 	// Start a bark and create a VTXO
 	let onchain_amount = btc(3);
 	let board_amount = btc(2);
-	let bark_1 = ctx.new_bark_with_funds("bark-1", &srv, onchain_amount).await;
+	let bark_1 = ctx.bark("bark-1", &srv).funded(onchain_amount).create().await;
 
 	// Board funds into the Ark
 	bark_1.board(board_amount).await;
@@ -381,12 +381,12 @@ async fn bark_allows_sending_dust_bolt11_payment() {
 	let lightning = ctx.new_lightning_setup("lightningd").await;
 
 	// Start a server and link it to our cln installation
-	let srv = ctx.new_captaind("server", Some(&lightning.internal)).await;
+	let srv = ctx.captaind("server").lightningd(&lightning.internal).create().await;
 
 	// Start a bark and create a VTXO
 	let onchain_amount = btc(7);
 	let board_amount = btc(5);
-	let bark_1 = ctx.new_bark_with_funds("bark-1", &srv, onchain_amount).await;
+	let bark_1 = ctx.bark("bark-1", &srv).funded(onchain_amount).create().await;
 
 	bark_1.board_and_confirm_and_register(&ctx, board_amount).await;
 
@@ -410,12 +410,12 @@ async fn bark_can_send_full_balance_on_lightning() {
 	let lightning = ctx.new_lightning_setup("lightningd").await;
 
 	// Start a server and link it to our cln installation
-	let srv = ctx.new_captaind("server", Some(&lightning.internal)).await;
+	let srv = ctx.captaind("server").lightningd(&lightning.internal).create().await;
 
 	// Start a bark and create a VTXO
 	let onchain_amount = btc(2);
 	let board_amount = btc(1);
-	let bark_1 = ctx.new_bark_with_funds("bark-1", &srv, onchain_amount).await;
+	let bark_1 = ctx.bark("bark-1", &srv).funded(onchain_amount).create().await;
 
 	bark_1.board_and_confirm_and_register(&ctx, board_amount).await;
 
@@ -440,7 +440,7 @@ async fn bark_can_receive_lightning(
 	srv.wait_for_vtxopool(&ctx).await;
 
 	// Start a bark and create a VTXO to be able to board
-	let bark = Arc::new(ctx.new_bark_with_funds("bark", srv, btc(3)).await);
+	let bark = Arc::new(ctx.bark("bark", srv).funded(btc(3)).create().await);
 	let board_amount = btc(2);
 	bark.board_and_confirm_and_register(&ctx, board_amount).await;
 
@@ -534,7 +534,7 @@ async fn bark_check_lightning_receive_no_wait(
 	srv.wait_for_vtxopool(&ctx).await;
 
 	// Start a bark and create a VTXO to be able to board
-	let bark = Arc::new(ctx.new_bark_with_funds("bark", srv, btc(3)).await);
+	let bark = Arc::new(ctx.bark("bark", srv).funded(btc(3)).create().await);
 	let board_amount = btc(2);
 	bark.board_and_confirm_and_register(&ctx, board_amount).await;
 
@@ -587,7 +587,7 @@ async fn bark_can_pay_ark_invoice(
 ) {
 	srv.wait_for_vtxopool(&ctx).await;
 
-	let bark = Arc::new(ctx.new_bark_with_funds("bark-1", srv, btc(3)).await);
+	let bark = Arc::new(ctx.bark("bark-1", srv).funded(btc(3)).create().await);
 	let board_amount = btc(2);
 	bark.board_and_confirm_and_register(&ctx, board_amount).await;
 
@@ -621,16 +621,16 @@ async fn bark_can_revoke_on_intra_ark_timeout_invoice_pay_failure() {
 	let lightning = ctx.new_lightning_setup("lightningd").await;
 
 	// Start a server and link it to our cln installation
-	let srv = ctx.new_captaind_with_cfg("server", Some(&lightning.external), |cfg| {
+	let srv = ctx.captaind("server").lightningd(&lightning.external).cfg(|cfg| {
 		cfg.invoice_expiry = Duration::from_secs(0);
 		cfg.invoice_check_interval = Duration::from_secs(1);
-	}).await;
+	}).create().await;
 	ctx.fund_captaind(&srv, btc(10)).await;
 	srv.wait_for_vtxopool(&ctx).await;
 
 	// Start a bark and create a VTXO to be able to board
-	let bark_1 = Arc::new(ctx.new_bark_with_funds("bark-1", &srv, btc(3)).await);
-	let bark_2 = ctx.new_bark_with_funds("bark-2", &srv, btc(3)).await;
+	let bark_1 = Arc::new(ctx.bark("bark-1", &srv).funded(btc(3)).create().await);
+	let bark_2 = ctx.bark("bark-2", &srv).funded(btc(3)).create().await;
 
 	let board_amount = btc(2);
 	bark_1.board_and_confirm_and_register(&ctx, board_amount).await;
@@ -674,7 +674,7 @@ async fn bark_can_revoke_on_intra_ark_send_when_receiver_leaves() {
 	let lightning = ctx.new_lightning_setup("lightningd").await;
 
 	// Start a server and link it to our cln installation
-	let srv = ctx.new_captaind_with_cfg("server", Some(&lightning.external), |cfg| {
+	let srv = ctx.captaind("server").lightningd(&lightning.external).cfg(|cfg| {
 		// Short timeout for when HTLCs are held but receiver doesn't claim
 		cfg.receive_htlc_forward_timeout = Duration::from_secs(5);
 		// Speed up htlc subscription check
@@ -682,13 +682,13 @@ async fn bark_can_revoke_on_intra_ark_send_when_receiver_leaves() {
 		// Use a long poll interval to verify that cancellation notification works
 		// (without the notification, the sender would wait this long to discover failure)
 		cfg.invoice_poll_interval = Duration::from_secs(30);
-	}).await;
+	}).create().await;
 	ctx.fund_captaind(&srv, btc(10)).await;
 	srv.wait_for_vtxopool(&ctx).await;
 
 	// Start a bark and create a VTXO to be able to board
-	let bark_1 = ctx.new_bark_with_funds("bark-1", &srv, btc(3)).await;
-	let bark_2 = ctx.new_bark_with_funds("bark-2", &srv, btc(3)).await;
+	let bark_1 = ctx.bark("bark-1", &srv).funded(btc(3)).create().await;
+	let bark_2 = ctx.bark("bark-2", &srv).funded(btc(3)).create().await;
 
 	let board_amount = btc(2);
 	bark_1.board_and_confirm_and_register(&ctx, board_amount).await;
@@ -740,7 +740,7 @@ async fn bark_revoke_expired_pending_ln_payment() {
 	// No channels are created so that payment will fail
 
 	// Start a server and link it to our cln installation
-	let srv = ctx.new_captaind_with_funds("server", Some(&lightning.internal), btc(10)).await;
+	let srv = ctx.captaind("server").lightningd(&lightning.internal).funded(btc(10)).create().await;
 	/// This proxy will refuse to revoke the htlc out.
 	#[derive(Clone)]
 	struct Proxy;
@@ -771,7 +771,7 @@ async fn bark_revoke_expired_pending_ln_payment() {
 	// Start a bark and create a VTXO
 	let onchain_amount = btc(3);
 	let board_amount = btc(2);
-	let bark_1 = ctx.new_bark_with_funds("bark-1", &proxy.address, onchain_amount).await;
+	let bark_1 = ctx.bark("bark-1", &proxy.address).funded(onchain_amount).create().await;
 
 	// Board funds into the Ark
 	bark_1.board_and_confirm_and_register(&ctx, board_amount).await;
@@ -818,12 +818,12 @@ async fn bark_pay_ln_offer() {
 	let lightning = ctx.new_lightning_setup("lightningd").await;
 
 	// Start an Ark Server and link it to our cln installation
-	let srv = ctx.new_captaind("server", Some(&lightning.external)).await;
+	let srv = ctx.captaind("server").lightningd(&lightning.external).create().await;
 
 	// Start a bark and create a VTXO
 	let onchain_amount = btc(7);
 	let board_amount = btc(5);
-	let bark_1 = ctx.new_bark_with_funds("bark-1", &srv, onchain_amount).await;
+	let bark_1 = ctx.bark("bark-1", &srv).funded(onchain_amount).create().await;
 
 	bark_1.board_and_confirm_and_register(&ctx, board_amount).await;
 
@@ -861,12 +861,12 @@ async fn bark_pay_twice_ln_offer() {
 	let lightning = ctx.new_lightning_setup("lightningd").await;
 
 	// Start an Ark Server and link it to our cln installation
-	let srv = ctx.new_captaind("server", Some(&lightning.internal)).await;
+	let srv = ctx.captaind("server").lightningd(&lightning.internal).create().await;
 
 	// Start a bark and create a VTXO
 	let onchain_amount = btc(7);
 	let board_amount = btc(5);
-	let bark_1 = ctx.new_bark_with_funds("bark-1", &srv, onchain_amount).await;
+	let bark_1 = ctx.bark("bark-1", &srv).funded(onchain_amount).create().await;
 
 	bark_1.board_and_confirm_and_register(&ctx, board_amount).await;
 
@@ -901,7 +901,7 @@ async fn bark_sends_on_lightning_after_receiving_from_lightning(
 	pay: impl AsyncFn(String),
 ) {
 	// Start a bark and create a VTXO to be able to board
-	let bark = Arc::new(ctx.new_bark_with_funds("bark", srv, btc(3)).await);
+	let bark = Arc::new(ctx.bark("bark", srv).funded(btc(3)).create().await);
 
 	let pay_amount = btc(1);
 	let invoice_recv_info = bark.bolt11_invoice(pay_amount).await;
@@ -933,13 +933,13 @@ async fn server_allows_claim_receive_with_vtxo_proof() {
 	let lightning = ctx.new_lightning_setup("lightningd").await;
 
 	// Start a server with anti-dos enabled and link it to our cln installation
-	let srv = ctx.new_captaind_with_cfg("server", Some(&lightning.internal), |cfg| {
+	let srv = ctx.captaind("server").lightningd(&lightning.internal).cfg(|cfg| {
 		cfg.ln_receive_anti_dos_required = true;
-	}).await;
+	}).create().await;
 	ctx.fund_captaind(&srv, btc(10)).await;
 
 	// Start a bark and create a VTXO to be able to board
-	let bark = Arc::new(ctx.new_bark_with_funds("bark1", &srv, btc(3)).await);
+	let bark = Arc::new(ctx.bark("bark1", &srv).funded(btc(3)).create().await);
 	bark.board_and_confirm_and_register(&ctx, btc(2)).await;
 
 	let invoice_info = bark.bolt11_invoice(btc(1)).await;
@@ -985,9 +985,9 @@ async fn server_rejects_claim_receive_for_bad_vtxo_proof() {
 	let lightning = ctx.new_lightning_setup("lightningd").await;
 
 	// Start a server with anti-dos enabled and link it to our cln installation
-	let srv = ctx.new_captaind_with_cfg("server", Some(&lightning.internal), |cfg| {
+	let srv = ctx.captaind("server").lightningd(&lightning.internal).cfg(|cfg| {
 		cfg.ln_receive_anti_dos_required = true;
-	}).await;
+	}).create().await;
 	ctx.fund_captaind(&srv, btc(10)).await;
 	srv.wait_for_vtxopool(&ctx).await;
 
@@ -995,7 +995,7 @@ async fn server_rejects_claim_receive_for_bad_vtxo_proof() {
 	let proxy = srv.start_proxy_no_mailbox(InvalidVtxoProofProxy).await;
 
 	// Start a bark and create a VTXO to be able to board
-	let bark = Arc::new(ctx.new_bark_with_funds("bark1", &proxy.address, btc(3)).await);
+	let bark = Arc::new(ctx.bark("bark1", &proxy.address).funded(btc(3)).create().await);
 	bark.board_and_confirm_and_register(&ctx, btc(2)).await;
 
 	let invoice_info = bark.bolt11_invoice(btc(1)).await;
@@ -1031,9 +1031,9 @@ async fn server_allows_claim_receive_for_valid_token_but_not_for_invalid_or_used
 	let lightning = ctx.new_lightning_setup("lightningd").await;
 
 	// Start a server with anti-dos enabled and link it to our cln installation
-	let srv = ctx.new_captaind_with_cfg("server", Some(&lightning.internal), |cfg| {
+	let srv = ctx.captaind("server").lightningd(&lightning.internal).cfg(|cfg| {
 		cfg.ln_receive_anti_dos_required = true;
-	}).await;
+	}).create().await;
 	ctx.fund_captaind(&srv, btc(10)).await;
 
 	// Add integration `single-use-board` token configuration for "captaind" with 1 open token count and a 60 seconds activity.
@@ -1047,7 +1047,7 @@ async fn server_allows_claim_receive_for_valid_token_but_not_for_invalid_or_used
 	let token = parts.next().unwrap().trim().to_string();
 
 	// Start a bark and don't board anything
-	let bark = Arc::new(ctx.new_bark_with_funds("bark1", &srv, btc(3)).await);
+	let bark = Arc::new(ctx.bark("bark1", &srv).funded(btc(3)).create().await);
 
 	let invoice_info_1 = bark.bolt11_invoice(btc(1)).await;
 	let invoice_info_2 = bark.bolt11_invoice(btc(1)).await;
@@ -1089,7 +1089,7 @@ async fn stress_test_track_all_stream() {
 	let lightning = ctx.new_lightning_setup("lightningd").await;
 
 	// Start a server linked to the receiver lightning node (for incoming payments)
-	let srv = ctx.new_captaind_with_funds("server", Some(&lightning.internal), btc(50)).await;
+	let srv = ctx.captaind("server").lightningd(&lightning.internal).funded(btc(50)).create().await;
 	srv.wait_for_vtxopool(&ctx).await;
 
 	// Create a bark wallet that will receive multiple payments
@@ -1099,7 +1099,7 @@ async fn stress_test_track_all_stream() {
 
 	info!("Creating bark wallet with {} invoices", NUM_INVOICES);
 
-	let bark = Arc::new(ctx.new_bark_with_funds("bark", &srv, btc(3)).await);
+	let bark = Arc::new(ctx.bark("bark", &srv).funded(btc(3)).create().await);
 	bark.board_and_confirm_and_register(&ctx, board_amount).await;
 
 	// Create all invoices upfront
@@ -1205,12 +1205,12 @@ async fn concurrent_payment_attempts_same_invoice() {
 	let lightning = ctx.new_lightning_setup("lightningd").await;
 
 	// Start a server and link it to our cln installation
-	let srv = ctx.new_captaind("server", Some(&lightning.internal)).await;
+	let srv = ctx.captaind("server").lightningd(&lightning.internal).create().await;
 
 	// Start a bark with enough funds for multiple potential payments
 	let onchain_amount = btc(10);
 	let board_amount = btc(8);
-	let bark = ctx.new_bark_with_funds("bark", &srv, onchain_amount).await;
+	let bark = ctx.bark("bark", &srv).funded(onchain_amount).create().await;
 
 	bark.board_and_confirm_and_register(&ctx, board_amount).await;
 
@@ -1348,7 +1348,7 @@ async fn bark_can_claim_all_claimable_receives(
 	srv.wait_for_vtxopool(&ctx).await;
 
 	// Start a bark and create a VTXO to be able to board
-	let bark = ctx.new_bark_with_funds("bark1", srv, btc(3)).await;
+	let bark = ctx.bark("bark1", srv).funded(btc(3)).create().await;
 	bark.board_and_confirm_and_register(&ctx, btc(2)).await;
 
 	let invoice_info_1 = bark.bolt11_invoice(btc(1)).await;
@@ -1374,7 +1374,7 @@ async fn bark_ln_receive_via_mailbox(
 ) {
 	srv.wait_for_vtxopool(&ctx).await;
 
-	let bark = Arc::new(ctx.new_bark_with_funds("bark", srv, btc(5)).await);
+	let bark = Arc::new(ctx.bark("bark", srv).funded(btc(5)).create().await);
 	let bark_client = Arc::new(bark.client().await);
 
 	let board_amount = btc(3);
@@ -1450,10 +1450,10 @@ async fn bark_can_cancel_lightning_receive() {
 	let lightning = ctx.new_lightning_setup("lightningd").await;
 
 	// Start a server and link it to our cln installation
-	let srv = ctx.new_captaind_with_funds("server", Some(&lightning.internal), btc(10)).await;
+	let srv = ctx.captaind("server").lightningd(&lightning.internal).funded(btc(10)).create().await;
 
 	// Start a bark and create a VTXO to be able to board
-	let bark = ctx.new_bark_with_funds("bark", &srv, btc(3)).await;
+	let bark = ctx.bark("bark", &srv).funded(btc(3)).create().await;
 	let board_amount = btc(2);
 	bark.board_and_confirm_and_register(&ctx, board_amount).await;
 

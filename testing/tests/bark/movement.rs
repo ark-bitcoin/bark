@@ -25,9 +25,9 @@ fn assert_vec_unsorted_equal(mut a: Vec<VtxoId>, mut b: Vec<VtxoId>) {
 #[tokio::test]
 async fn arkoor_send_receive() {
 	let ctx = TestContext::new("movement/arkoor_send_receive").await;
-	let srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
-	let bark1 = ctx.new_bark_with_funds("bark1", &srv, sat(1_000_000)).await;
-	let bark2 = ctx.new_bark_with_funds("bark2", &srv, sat(1_000_000)).await;
+	let srv = ctx.captaind("server").funded(btc(10)).create().await;
+	let bark1 = ctx.bark("bark1", &srv).funded(sat(1_000_000)).create().await;
+	let bark2 = ctx.bark("bark2", &srv).funded(sat(1_000_000)).create().await;
 
 	bark1.board(sat(100_000)).await;
 	bark1.board(sat(100_000)).await;
@@ -87,8 +87,8 @@ async fn arkoor_send_receive() {
 #[tokio::test]
 async fn board_board() {
 	let ctx = TestContext::new("movement/board_board").await;
-	let srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
-	let bark = ctx.new_bark_with_funds("bark", &srv, sat(1_000_000)).await;
+	let srv = ctx.captaind("server").funded(btc(10)).create().await;
+	let bark = ctx.bark("bark", &srv).funded(sat(1_000_000)).create().await;
 
 	bark.board_and_confirm_and_register(&ctx, sat(100_000)).await;
 	let vtxos = bark.vtxo_ids().await;
@@ -123,8 +123,8 @@ async fn board_board() {
 #[tokio::test]
 async fn exit_start() {
 	let ctx = TestContext::new("movement/exit_start").await;
-	let srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
-	let bark = ctx.new_bark_with_funds("bark", &srv, sat(1_000_000)).await;
+	let srv = ctx.captaind("server").funded(btc(10)).create().await;
+	let bark = ctx.bark("bark", &srv).funded(sat(1_000_000)).create().await;
 
 	bark.board_and_confirm_and_register(&ctx, sat(100_000)).await;
 	let vtxos = bark.vtxos().await;
@@ -165,9 +165,9 @@ async fn exit_start() {
 async fn lightning_send_invoice_receive() {
 	let ctx = TestContext::new("movement/lightning_send_invoice_receive").await;
 	let ln = ctx.new_lightning_setup("ln").await;
-	let srv = ctx.new_captaind_with_funds("server", Some(&ln.internal), btc(10)).await;
-	let bark1 = ctx.new_bark_with_funds("bark1", &srv, sat(1_000_000)).await;
-	let bark2 = Arc::new(ctx.new_bark_with_funds("bark2", &srv, sat(1_000_000)).await);
+	let srv = ctx.captaind("server").lightningd(&ln.internal).funded(btc(10)).create().await;
+	let bark1 = ctx.bark("bark1", &srv).funded(sat(1_000_000)).create().await;
+	let bark2 = Arc::new(ctx.bark("bark2", &srv).funded(sat(1_000_000)).create().await);
 
 	bark1.board_and_confirm_and_register(&ctx, sat(100_000)).await;
 	let bark1_vtxos = bark1.vtxo_ids().await;
@@ -248,8 +248,8 @@ async fn lightning_send_invoice_receive() {
 async fn lightning_send_invoice_revoke() {
 	let ctx = TestContext::new("movement/lightning_send_invoice_revoke").await;
 	let ln = ctx.new_lightning_setup_no_channel("ln").await;
-	let srv = ctx.new_captaind_with_funds("server", Some(&ln.internal), btc(10)).await;
-	let bark = ctx.new_bark_with_funds("bark1", &srv, sat(1_000_000)).await;
+	let srv = ctx.captaind("server").lightningd(&ln.internal).funded(btc(10)).create().await;
+	let bark = ctx.bark("bark1", &srv).funded(sat(1_000_000)).create().await;
 
 	bark.board_and_confirm_and_register(&ctx, sat(100_000)).await;
 	let vtxos_pre_pay = bark.vtxo_ids().await;
@@ -295,8 +295,8 @@ async fn lightning_send_invoice_revoke() {
 async fn lightning_send_offer() {
 	let ctx = TestContext::new("movement/lightning_send_offer").await;
 	let ln = ctx.new_lightning_setup("ln").await;
-	let srv = ctx.new_captaind_with_funds("server", Some(&ln.internal), btc(10)).await;
-	let bark = ctx.new_bark_with_funds("bark1", &srv, sat(1_000_000)).await;
+	let srv = ctx.captaind("server").lightningd(&ln.internal).funded(btc(10)).create().await;
+	let bark = ctx.bark("bark1", &srv).funded(sat(1_000_000)).create().await;
 
 	bark.board_and_confirm_and_register(&ctx, sat(500_000)).await;
 
@@ -348,8 +348,8 @@ async fn lightning_send_offer() {
 #[tokio::test]
 async fn movement_offboard() {
 	let ctx = TestContext::new("movement/movement_offboard").await;
-	let srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
-	let bark = ctx.new_bark_with_funds("bark", &srv, sat(1_000_000)).await;
+	let srv = ctx.captaind("server").funded(btc(10)).create().await;
+	let bark = ctx.bark("bark", &srv).funded(sat(1_000_000)).create().await;
 
 	bark.board(sat(100_000)).await;
 	bark.board(sat(100_000)).await;
@@ -401,8 +401,8 @@ async fn movement_offboard() {
 #[tokio::test]
 async fn round_refresh() {
 	let ctx = TestContext::new("movement/round_refresh").await;
-	let srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
-	let bark = ctx.new_bark_with_funds("bark", &srv, sat(1_000_000)).await;
+	let srv = ctx.captaind("server").funded(btc(10)).create().await;
+	let bark = ctx.bark("bark", &srv).funded(sat(1_000_000)).create().await;
 
 	bark.board(sat(100_000)).await;
 	bark.board(sat(100_000)).await;
@@ -440,12 +440,12 @@ async fn round_refresh() {
 #[tokio::test]
 async fn movement_send_onchain() {
 	let ctx = TestContext::new("movement/movement_send_onchain").await;
-	let srv = ctx.new_captaind_with_cfg("server", None, |cfg| {
+	let srv = ctx.captaind("server").cfg(|cfg| {
 		cfg.round_interval = Duration::from_secs(3600);
-	}).await;
+	}).create().await;
 	ctx.fund_captaind(&srv, btc(10)).await;
 
-	let bark = ctx.new_bark_with_funds("bark", &srv, sat(1_000_000)).await;
+	let bark = ctx.bark("bark", &srv).funded(sat(1_000_000)).create().await;
 
 	bark.board_and_confirm_and_register(&ctx, sat(100_000)).await;
 
@@ -501,13 +501,13 @@ async fn list_movements() {
 	// Initialize the test
 	let ctx = TestContext::new("bark/list_movements").await;
 
-	let srv = ctx.new_captaind_with_cfg("server", None, |cfg| {
+	let srv = ctx.captaind("server").cfg(|cfg| {
 		cfg.round_interval = Duration::from_secs(3600);
-	}).await;
+	}).create().await;
 	ctx.fund_captaind(&srv, btc(10)).await;
 
-	let bark1 = ctx.new_bark_with_funds("bark1", &srv, sat(1_000_000)).await;
-	let bark2 = ctx.new_bark_with_funds("bark2", &srv, sat(1_000_000)).await;
+	let bark1 = ctx.bark("bark1", &srv).funded(sat(1_000_000)).create().await;
+	let bark2 = ctx.bark("bark2", &srv).funded(sat(1_000_000)).create().await;
 
 	bark2.board(sat(800_000)).await;
 	bark1.board(sat(300_000)).await;

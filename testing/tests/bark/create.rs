@@ -8,24 +8,24 @@ use ark_testing::util::ToAltString;
 #[tokio::test]
 async fn bark_create_is_atomic() {
 	let ctx = TestContext::new("bark/bark_create_is_atomic").await;
-	let srv = ctx.new_captaind("server", None).await;
+	let srv = ctx.captaind("server").create().await;
 
 	// Create a bark defines the folder
-	let _  = ctx.try_new_bark("bark_ok", &srv).await.expect("Can create bark");
+	let _  = ctx.bark("bark_ok", &srv).try_create().await.expect("Can create bark");
 	assert!(ctx.datadir.join("bark_ok").is_dir());
 
 	// You can't create a bark twice
 	// If you want to overwrite the folder you need force
-	let _ = ctx.try_new_bark("bark_twice", &srv).await.expect("Can create bark");
+	let _ = ctx.bark("bark_twice", &srv).try_create().await.expect("Can create bark");
 	assert!(ctx.datadir.join("bark_twice").is_dir());
 
-	let _ = ctx.try_new_bark("bark_twice", &srv).await.expect_err("Can create bark");
+	let _ = ctx.bark("bark_twice", &srv).try_create().await.expect_err("Can create bark");
 	assert!(ctx.datadir.join("bark_twice").is_dir());
 
 	// We stop the server
 	// This ensures that clients cannot be created
 	srv.stop().await.unwrap();
-	let err = ctx.try_new_bark("bark_fails", &srv).await.unwrap_err();
+	let err = ctx.bark("bark_fails", &srv).try_create().await.unwrap_err();
 	assert!(err.to_alt_string().contains(
 		"Failed to connect to provided server (if you are sure use the --force flag)"
 	), "{:?}", err);
@@ -35,7 +35,7 @@ async fn bark_create_is_atomic() {
 #[tokio::test]
 async fn bark_create_force_flag() {
 	let ctx = TestContext::new("bark/bark_create_force_flag").await;
-	let srv = ctx.new_captaind("server", None).await;
+	let srv = ctx.captaind("server").create().await;
 
 	// Stop the server to simulate unavailability
 	srv.stop().await.unwrap();

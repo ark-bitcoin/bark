@@ -67,7 +67,7 @@ async fn watchman_sweeps_boards() {
 	wm.add_slog_handler(failures.clone());
 
 	let mut log_claim = wm.subscribe_log::<ClaimBroadcast>();
-	let bark1 = ctx.new_bark_with_funds("bark1", &srv, sat(200_000)).await;
+	let bark1 = ctx.bark("bark1", &srv).funded(sat(200_000)).create().await;
 
 	let _ = bark1.board(sat(100_000)).await;
 	ctx.generate_blocks(100).await;
@@ -100,8 +100,8 @@ async fn watchman_sweeps_round_vtxos() {
 	wm.add_slog_handler(failures.clone());
 
 	let mut log_claim = wm.subscribe_log::<ClaimBroadcast>();
-	let bark1 = ctx.new_bark_with_funds("bark1", &srv, sat(500_000)).await;
-	let bark2 = ctx.new_bark_with_funds("bark2", &srv, sat(500_000)).await;
+	let bark1 = ctx.bark("bark1", &srv).funded(sat(500_000)).create().await;
+	let bark2 = ctx.bark("bark2", &srv).funded(sat(500_000)).create().await;
 
 	bark1.board_and_confirm_and_register(&ctx, sat(200_000)).await;
 	bark2.board_and_confirm_and_register(&ctx, sat(200_000)).await;
@@ -140,8 +140,8 @@ async fn watchman_sweeps_arkoor_vtxos_sender_exit() {
 	wm.add_slog_handler(failures.clone());
 
 	let mut log_claim = wm.subscribe_log::<ClaimBroadcast>();
-	let bark1 = Arc::new(ctx.new_bark_with_funds("bark1", &srv, sat(1_000_000)).await);
-	let bark2 = Arc::new(ctx.new_bark_with_funds("bark2", &srv, sat(1_000_000)).await);
+	let bark1 = Arc::new(ctx.bark("bark1", &srv).funded(sat(1_000_000)).create().await);
+	let bark2 = Arc::new(ctx.bark("bark2", &srv).funded(sat(1_000_000)).create().await);
 
 	bark1.board_and_confirm_and_register(&ctx, sat(300_000)).await;
 	bark2.board_and_confirm_and_register(&ctx, sat(300_000)).await;
@@ -181,8 +181,8 @@ async fn watchman_sweeps_arkoor_vtxos_receiver_exit() {
 	wm.add_slog_handler(failures.clone());
 
 	let mut log_claim = wm.subscribe_log::<ClaimBroadcast>();
-	let bark1 = Arc::new(ctx.new_bark_with_funds("bark1", &srv, sat(1_000_000)).await);
-	let bark2 = Arc::new(ctx.new_bark_with_funds("bark2", &srv, sat(1_000_000)).await);
+	let bark1 = Arc::new(ctx.bark("bark1", &srv).funded(sat(1_000_000)).create().await);
+	let bark2 = Arc::new(ctx.bark("bark2", &srv).funded(sat(1_000_000)).create().await);
 
 	bark1.board_and_confirm_and_register(&ctx, sat(300_000)).await;
 	bark2.board_and_confirm_and_register(&ctx, sat(300_000)).await;
@@ -227,8 +227,8 @@ async fn watchman_sweeps_lightning_vtxos() {
 	wm.add_slog_handler(failures.clone());
 
 	let mut log_claim = wm.subscribe_log::<ClaimBroadcast>();
-	let bark1 = Arc::new(ctx.new_bark_with_funds("bark1", &srv, sat(1_000_000)).await);
-	let bark2 = Arc::new(ctx.new_bark_with_funds("bark2", &srv, sat(1_000_000)).await);
+	let bark1 = Arc::new(ctx.bark("bark1", &srv).funded(sat(1_000_000)).create().await);
+	let bark2 = Arc::new(ctx.bark("bark2", &srv).funded(sat(1_000_000)).create().await);
 
 	bark1.board_and_confirm_and_register(&ctx, sat(300_000)).await;
 	bark2.board_and_confirm_and_register(&ctx, sat(300_000)).await;
@@ -277,7 +277,7 @@ async fn watchman_sweeps_round_leftovers_after_exits() {
 	// Create 10 barks
 	let mut barks = Vec::new();
 	for i in 0..10 {
-		let bark = ctx.new_bark_with_funds(&format!("bark{}", i), &srv, sat(500_000)).await;
+		let bark = ctx.bark(&format!("bark{}", i), &srv).funded(sat(500_000)).create().await;
 		bark.board(sat(200_000)).await;
 		barks.push(bark);
 	}
@@ -356,8 +356,8 @@ async fn watchman_sweeps_vtxopool_with_exit() {
 	wm.add_slog_handler(failures.clone());
 
 	let mut log_claim = wm.subscribe_log::<ClaimBroadcast>();
-	let bark1 = Arc::new(ctx.new_bark_with_funds("bark1", &srv, sat(1_000_000)).await);
-	let bark2 = Arc::new(ctx.new_bark_with_funds("bark2", &srv, sat(1_000_000)).await);
+	let bark1 = Arc::new(ctx.bark("bark1", &srv).funded(sat(1_000_000)).create().await);
+	let bark2 = Arc::new(ctx.bark("bark2", &srv).funded(sat(1_000_000)).create().await);
 
 	bark1.board_and_confirm_and_register(&ctx, sat(300_000)).await;
 	bark2.board_and_confirm_and_register(&ctx, sat(300_000)).await;

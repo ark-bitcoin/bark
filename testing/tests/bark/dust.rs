@@ -5,9 +5,9 @@ use ark_testing::{btc, sat, TestContext};
 #[tokio::test]
 async fn bark_allows_sending_dust_arkoor_but_errors_on_dust_refresh() {
 	let ctx = TestContext::new("bark/bark_allows_sending_dust_arkoor_but_errors_on_dust_refresh").await;
-	let srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
-	let bark1 = ctx.new_bark_with_funds("bark1", &srv, sat(1_000_000)).await;
-	let bark2 = ctx.new_bark_with_funds("bark2", &srv, sat(1_000_000)).await;
+	let srv = ctx.captaind("server").funded(btc(10)).create().await;
+	let bark1 = ctx.bark("bark1", &srv).funded(sat(1_000_000)).create().await;
+	let bark2 = ctx.bark("bark2", &srv).funded(sat(1_000_000)).create().await;
 
 	let board_amount = sat(800_000);
 	bark1.board_and_confirm_and_register(&ctx, board_amount).await;
