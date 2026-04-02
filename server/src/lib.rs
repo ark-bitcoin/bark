@@ -196,6 +196,7 @@ pub struct Server {
 	cln: ClnManager,
 	htlc_settler: Arc<HtlcSettler>,
 	vtxopool: VtxoPool,
+	watchman_handle: Option<watchman::WatchmanHandle>,
 	pending_offboards: parking_lot::Mutex<TimedEntryMap<Txid, Option<offboards::PendingOffboard>>>,
 	fee_estimator: Arc<FeeEstimator>,
 }
@@ -408,7 +409,7 @@ impl Server {
 		).await.context("Failed to start SyncManager")?);
 
 		// Start Watchman VTXO processor if enabled
-		if let Some((watchman_cfg, watchman_wallet, frontier)) = watchman_deps {
+		let watchman_handle = if let Some((watchman_cfg, watchman_wallet, frontier)) = watchman_deps {
 			let signer = watchman::WatchmanSigner::new(
 				Secret::new(Keypair::from_secret_key(&SECP, &server_key.secret_key())),
 				Secret::new(ephemeral_master_key),
@@ -430,11 +431,10 @@ impl Server {
 				sync_height_watcher,
 			);
 
-			let rtmgr2 = rtmgr.clone();
-			tokio::spawn(async move {
-				watchman.run(rtmgr2).await;
-			});
-		}
+			Some(watchman.start(rtmgr.clone()))
+		} else {
+			None
+		};
 
 		let mailbox_manager = Arc::new(MailboxManager::new());
 
@@ -483,6 +483,7 @@ impl Server {
 			cln,
 			htlc_settler,
 			vtxopool,
+			watchman_handle,
 			pending_offboards: parking_lot::Mutex::new(TimedEntryMap::new()),
 			fee_estimator,
 		};

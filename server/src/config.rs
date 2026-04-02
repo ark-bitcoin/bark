@@ -550,6 +550,10 @@ pub mod watchmand {
 		/// Minimum number of confirmations for a UTXO to be considered trusted.
 		pub min_trusted_confs: u32,
 
+		/// Address to expose the admin gRPC server on (e.g. "127.0.0.1:3538").
+		/// If absent, no admin RPC server is started.
+		pub admin_address: Option<std::net::SocketAddr>,
+
 		pub postgres: Postgres,
 
 		pub bitcoind: Bitcoind,

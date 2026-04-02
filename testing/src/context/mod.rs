@@ -468,6 +468,7 @@ impl TestContext {
 				rpc_pass: None,
 			},
 			htlc_settlement_poll_interval: Duration::from_secs(5),
+			admin_address: None,
 		}
 	}
 

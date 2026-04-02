@@ -15,11 +15,11 @@ use std::time::Duration;
 use anyhow::Context;
 use bitcoin::bip32;
 use bitcoin::secp256k1::Keypair;
-use tracing::info;
+use tracing::{error, info};
 use bitcoin_ext::rpc::{BitcoinRpcClient, BitcoinRpcExt, RpcApi};
 
 use crate::EPHEMERAL_KEY_PATH;
-use crate::{fee_estimator, secret::Secret, telemetry, wallet, SECP};
+use crate::{fee_estimator, rpcserver, secret::Secret, telemetry, wallet, SECP};
 use crate::config::watchmand::Config;
 use crate::database::{self, BlockTable};
 use crate::sync::{ChainEventListener, SyncManager};
@@ -28,7 +28,7 @@ use crate::txindex::TxIndex;
 use crate::txindex::broadcast::TxNursery;
 use crate::wallet::{PersistedWallet, WalletKind, MNEMONIC_FILE};
 use crate::ln::settler::HtlcSettler;
-use crate::watchman::{VtxoExitFrontier, Watchman, WatchmanSigner};
+use crate::watchman::{VtxoExitFrontier, Watchman, WatchmanHandle, WatchmanSigner};
 
 
 /// The HD keypath to use for the server key.
@@ -46,6 +46,7 @@ pub struct Daemon {
 	watchman_wallet: Arc<tokio::sync::Mutex<PersistedWallet>>,
 	#[allow(unused)]
 	frontier: Arc<tokio::sync::RwLock<VtxoExitFrontier>>,
+	watchman_handle: WatchmanHandle,
 }
 
 impl Daemon {
@@ -226,12 +227,13 @@ impl Daemon {
 			sync_height_watcher,
 		);
 
-		let rtmgr2 = rtmgr.clone();
-		tokio::spawn(async move {
-			watchman.run(rtmgr2).await;
-		});
+		let watchman_handle = watchman.start(rtmgr.clone());
 
-		Ok(Self { rtmgr, sync_manager, txindex, tx_nursery, watchman_wallet, frontier })
+		Ok(Self { rtmgr, sync_manager, txindex, tx_nursery, watchman_wallet, frontier, watchman_handle })
+	}
+
+	pub fn watchman_handle(&self) -> &WatchmanHandle {
+		&self.watchman_handle
 	}
 
 	/// Waits for server to terminate.
@@ -244,7 +246,22 @@ impl Daemon {
 	///
 	/// This is equivalent to calling [crate::Server::start] and [crate::Server::wait] in one go.
 	pub async fn run(cfg: Config) -> anyhow::Result<()> {
-		let srv = Self::start(cfg).await?;
+		let admin_address = cfg.admin_address;
+		let srv = Arc::new(Self::start(cfg).await?);
+
+		if let Some(addr) = admin_address {
+			let srv2 = srv.clone();
+			let rtmgr2 = srv.rtmgr.clone();
+			tokio::spawn(async move {
+				let res = rpcserver::admin::run_watchmand_admin_rpc_server(addr, srv2, rtmgr2)
+					.await.context("error running watchmand admin gRPC server");
+				match res {
+					Ok(()) => info!("Watchmand admin RPC server exited"),
+					Err(e) => error!("Watchmand admin RPC server exited with error: {:#}", e),
+				}
+			});
+		}
+
 		srv.wait().await;
 		Ok(())
 	}

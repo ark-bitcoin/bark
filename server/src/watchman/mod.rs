@@ -17,6 +17,23 @@ pub use self::daemon::Daemon;
 pub use self::frontier::VtxoExitFrontier;
 pub use self::signer::WatchmanSigner;
 
+/// Control messages that can be sent to a running [Watchman].
+pub enum Ctrl {
+	TriggerSweep,
+}
+
+/// Handle to a running [Watchman], used to send control messages.
+#[derive(Clone)]
+pub struct WatchmanHandle {
+	ctrl_tx: tokio::sync::mpsc::Sender<Ctrl>,
+}
+
+impl WatchmanHandle {
+	pub fn trigger_sweep(&self) {
+		let _ = self.ctrl_tx.try_send(Ctrl::TriggerSweep);
+	}
+}
+
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -142,11 +159,16 @@ impl Watchman {
 		*self.sync_height.borrow()
 	}
 
-	/// Run the watchman process loop.
-	///
-	/// Periodically processes all VTXOs in the frontier, handling claims
-	/// and progress txs as needed.
-	pub async fn run(&self, rtmgr: RuntimeManager) {
+	/// Spawn the watchman process loop and return a handle to control it
+	pub fn start(self, rtmgr: RuntimeManager) -> WatchmanHandle {
+		let (ctrl_tx, ctrl_rx) = tokio::sync::mpsc::channel(1);
+		tokio::spawn(async move {
+			self.run(rtmgr, ctrl_rx).await;
+		});
+		WatchmanHandle { ctrl_tx }
+	}
+
+	async fn run(&self, rtmgr: RuntimeManager, mut ctrl_rx: tokio::sync::mpsc::Receiver<Ctrl>) {
 		info!("Starting Watchman...");
 		let _worker = rtmgr.spawn_critical("Watchman");
 
@@ -154,6 +176,9 @@ impl Watchman {
 		loop {
 			tokio::select! {
 				_ = timer.tick() => {},
+				Some(ctrl) = ctrl_rx.recv() => match ctrl {
+					Ctrl::TriggerSweep => {},
+				},
 				_ = rtmgr.shutdown_signal() => {
 					info!("Shutdown signal received. Exiting Watchman...");
 					return;
