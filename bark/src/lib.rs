@@ -1804,6 +1804,7 @@ impl Wallet {
 		Ok(Some(RoundParticipation {
 			inputs: vtxos,
 			outputs: vec![req],
+			unblinded_mailbox_id: None,
 		}))
 	}
 

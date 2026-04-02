@@ -21,6 +21,7 @@ use tracing::info;
 
 use ark::{musig, ProtocolEncoding, Vtxo, VtxoId};
 use ark::arkoor::package::ArkoorPackageCosignRequest;
+use ark::mailbox::MailboxIdentifier;
 use ark::forfeit::HashLockedForfeitBundle;
 use ark::lightning::{Bolt12InvoiceExt, Invoice, Offer, OfferAmount, PaymentHash, Preimage};
 use ark::tree::signed::{LeafVtxoCosignRequest, UnlockHash, UnlockPreimage};
@@ -28,7 +29,7 @@ use ark::rounds::RoundId;
 use ark::vtxo::Full;
 use bitcoin_ext::{AmountExt, BlockDelta, BlockHeight};
 use server_rpc::{self as rpc, protos, TryFromBytes};
-
+use crate::database::rounds::StoredRoundOutput;
 use crate::round::DelegatedInput;
 use crate::round::SelfSignedInput;
 use crate::Server;
@@ -521,12 +522,20 @@ impl rpc::server::ArkService for Server {
 			Ok(DelegatedInput { vtxo_id, attestation })
 		}).collect::<Result<_, tonic::Status>>()?;
 
-		let mut vtxo_requests = Vec::with_capacity(req.vtxo_requests.len());
-		for r in req.vtxo_requests.clone() {
-			vtxo_requests.push(r.try_into().badarg("invalid vtxo request")?);
+		// Parse the request-level mailbox ID (applies to all outputs)
+		let unblinded_mailbox_id = req.unblinded_mailbox_id
+			.map(|b| MailboxIdentifier::try_from(b.as_slice()))
+			.transpose().badarg("invalid unblinded mailbox id")?;
+
+		let mut outputs = Vec::with_capacity(req.vtxo_requests.len());
+		for r in req.vtxo_requests {
+			outputs.push(StoredRoundOutput {
+				vtxo_request: r.try_into().badarg("invalid vtxo request")?,
+				unblinded_mailbox_id,
+			});
 		}
 
-		let unlock_hash = self.register_non_interactive_round_participation(inputs, vtxo_requests).await
+		let unlock_hash = self.register_non_interactive_round_participation(inputs, outputs).await
 			.to_status()?;
 
 		Ok(tonic::Response::new(protos::RoundParticipationResponse {
@@ -556,8 +565,8 @@ impl rpc::server::ArkService for Server {
 			let mut output_vtxos = Vec::with_capacity(part.outputs.len());
 			let tree = round.signed_tree.into_cached_tree();
 			for output in &part.outputs {
-				let idx = tree.spec.spec.leaf_idx_of_req(output)
-					.with_context(|| format!("output req {:?} not in round {}", output, round.id))?;
+				let idx = tree.spec.spec.leaf_idx_of_req(&output.vtxo_request)
+					.with_context(|| format!("output req {:?} not in round {}", output.vtxo_request, round.id))?;
 				output_vtxos.push(tree.build_vtxo(idx).serialize());
 			}
 

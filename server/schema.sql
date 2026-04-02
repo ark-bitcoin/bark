@@ -45,7 +45,8 @@ CREATE TYPE public.lightning_payment_status AS ENUM (
 --
 
 CREATE TYPE public.mailbox_type AS ENUM (
-    'arkoor-receive'
+    'arkoor-receive',
+    'round-participation-completed'
 );
 
 
@@ -965,6 +966,22 @@ ALTER SEQUENCE public.lightning_payment_attempt_lightning_payment_attempt_id_seq
 
 
 --
+-- Name: mailbox; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.mailbox (
+    id bigint NOT NULL,
+    unblinded_mailbox_id text NOT NULL,
+    vtxo_id text,
+    vtxo bytea,
+    checkpoint bigint NOT NULL,
+    created_at timestamp with time zone NOT NULL,
+    mailbox_type public.mailbox_type NOT NULL,
+    payment_hash text
+);
+
+
+--
 -- Name: offboards; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -1061,7 +1078,8 @@ CREATE TABLE public.round_part_input (
 CREATE TABLE public.round_part_output (
     participation_id bigint NOT NULL,
     policy bytea NOT NULL,
-    amount bigint NOT NULL
+    amount bigint NOT NULL,
+    unblinded_mailbox_id text
 );
 
 
@@ -1231,21 +1249,6 @@ ALTER SEQUENCE public.vtxo_id_seq OWNED BY public.vtxo.id;
 
 
 --
--- Name: vtxo_mailbox; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.vtxo_mailbox (
-    id bigint NOT NULL,
-    unblinded_mailbox_id text NOT NULL,
-    vtxo_id text NOT NULL,
-    vtxo bytea NOT NULL,
-    checkpoint bigint NOT NULL,
-    created_at timestamp with time zone NOT NULL,
-    mailbox_type public.mailbox_type NOT NULL
-);
-
-
---
 -- Name: vtxo_mailbox_id_seq; Type: SEQUENCE; Schema: public; Owner: -
 --
 
@@ -1261,7 +1264,7 @@ CREATE SEQUENCE public.vtxo_mailbox_id_seq
 -- Name: vtxo_mailbox_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
 --
 
-ALTER SEQUENCE public.vtxo_mailbox_id_seq OWNED BY public.vtxo_mailbox.id;
+ALTER SEQUENCE public.vtxo_mailbox_id_seq OWNED BY public.mailbox.id;
 
 
 --
@@ -1429,6 +1432,13 @@ ALTER TABLE ONLY public.lightning_payment_attempt ALTER COLUMN id SET DEFAULT ne
 
 
 --
+-- Name: mailbox id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.mailbox ALTER COLUMN id SET DEFAULT nextval('public.vtxo_mailbox_id_seq'::regclass);
+
+
+--
 -- Name: offboards id; Type: DEFAULT; Schema: public; Owner: -
 --
 
@@ -1461,13 +1471,6 @@ ALTER TABLE ONLY public.sweep ALTER COLUMN id SET DEFAULT nextval('public.sweep_
 --
 
 ALTER TABLE ONLY public.vtxo ALTER COLUMN id SET DEFAULT nextval('public.vtxo_id_seq'::regclass);
-
-
---
--- Name: vtxo_mailbox id; Type: DEFAULT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.vtxo_mailbox ALTER COLUMN id SET DEFAULT nextval('public.vtxo_mailbox_id_seq'::regclass);
 
 
 --
@@ -1685,10 +1688,10 @@ ALTER TABLE ONLY public.virtual_transaction
 
 
 --
--- Name: vtxo_mailbox vtxo_mailbox_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+-- Name: mailbox vtxo_mailbox_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.vtxo_mailbox
+ALTER TABLE ONLY public.mailbox
     ADD CONSTRAINT vtxo_mailbox_pkey PRIMARY KEY (id);
 
 
@@ -1933,14 +1936,14 @@ CREATE UNIQUE INDEX sweep_txid_pending_uix ON public.sweep USING btree (txid) IN
 -- Name: vtxo_mailbox_unblinded_mailbox_id_checkpoint_ix; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX vtxo_mailbox_unblinded_mailbox_id_checkpoint_ix ON public.vtxo_mailbox USING btree (unblinded_mailbox_id, checkpoint);
+CREATE INDEX vtxo_mailbox_unblinded_mailbox_id_checkpoint_ix ON public.mailbox USING btree (unblinded_mailbox_id, checkpoint);
 
 
 --
 -- Name: vtxo_mailbox_vtxo_id; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE UNIQUE INDEX vtxo_mailbox_vtxo_id ON public.vtxo_mailbox USING btree (vtxo_id);
+CREATE UNIQUE INDEX vtxo_mailbox_vtxo_id ON public.mailbox USING btree (vtxo_id);
 
 
 --
@@ -2216,10 +2219,10 @@ ALTER TABLE ONLY public.vtxo
 
 
 --
--- Name: vtxo_mailbox vtxo_mailbox_vtxo_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+-- Name: mailbox vtxo_mailbox_vtxo_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.vtxo_mailbox
+ALTER TABLE ONLY public.mailbox
     ADD CONSTRAINT vtxo_mailbox_vtxo_id_fkey FOREIGN KEY (vtxo_id) REFERENCES public.vtxo(vtxo_id);
 
 

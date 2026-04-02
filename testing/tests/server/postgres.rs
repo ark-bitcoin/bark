@@ -27,6 +27,7 @@ use server::filters::Filters;
 use server::wallet::WalletKind;
 
 use ark_testing::TestContext;
+use server::database::rounds::StoredRoundOutput;
 
 #[tokio::test]
 async fn upsert_vtxo() {
@@ -1177,7 +1178,7 @@ async fn vtxo_mailbox() {
 	]).await.unwrap();
 
 	// Empty mailbox returns nothing
-	let result = db.get_vtxos_mailbox(mailbox_id.clone(), 0, 10).await.unwrap();
+	let result = db.get_mailbox_entries(mailbox_id.clone(), 0, 10).await.unwrap();
 	assert!(result.is_empty());
 
 	// Store vtxo1 in mailbox (gets checkpoint 1)
@@ -1185,7 +1186,7 @@ async fn vtxo_mailbox() {
 		.expect("should return a checkpoint");
 
 	// Fetch from checkpoint 0 – should return vtxo1
-	let batches = db.get_vtxos_mailbox(mailbox_id.clone(), 0, 10).await.unwrap();
+	let batches = db.get_mailbox_entries(mailbox_id.clone(), 0, 10).await.unwrap();
 	assert_eq!(batches.len(), 1);
 	let returned_cp = &batches[0].checkpoint;
 	let vtxos = &batches[0].vtxos;
@@ -1199,7 +1200,7 @@ async fn vtxo_mailbox() {
 	assert!(cp2 > cp1, "checkpoints should be monotonically increasing");
 
 	// Fetch from checkpoint cp1 – should only return vtxo2 (beyond cp1)
-	let batches = db.get_vtxos_mailbox(mailbox_id.clone(), cp1, 10).await.unwrap();
+	let batches = db.get_mailbox_entries(mailbox_id.clone(), cp1, 10).await.unwrap();
 	assert_eq!(batches.len(), 1);
 	let returned_cp2 = &batches[0].checkpoint;
 	let vtxos2 = &batches[0].vtxos;
@@ -1521,9 +1522,12 @@ async fn round_participation() {
 
 	let unlock_preimage: UnlockPreimage = [1u8; 32];
 
-	let output = VtxoRequest {
-		policy: VtxoPolicy::new_pubkey(VTXO_VECTORS.board_vtxo.user_pubkey()),
-		amount: bitcoin::Amount::from_sat(1000),
+	let output = StoredRoundOutput {
+		vtxo_request: VtxoRequest {
+			policy: VtxoPolicy::new_pubkey(VTXO_VECTORS.board_vtxo.user_pubkey()),
+			amount: bitcoin::Amount::from_sat(1000),
+		},
+		unblinded_mailbox_id: None,
 	};
 
 	// No participations yet
@@ -1572,9 +1576,12 @@ async fn round_participation_same_vtxo_multiple_pending() {
 	let preimage1: UnlockPreimage = [1u8; 32];
 	let preimage2: UnlockPreimage = [2u8; 32];
 
-	let output = VtxoRequest {
-		policy: VtxoPolicy::new_pubkey(VTXO_VECTORS.board_vtxo.user_pubkey()),
-		amount: bitcoin::Amount::from_sat(500),
+	let output = StoredRoundOutput {
+		vtxo_request: VtxoRequest {
+			policy: VtxoPolicy::new_pubkey(VTXO_VECTORS.board_vtxo.user_pubkey()),
+			amount: bitcoin::Amount::from_sat(1000),
+		},
+		unblinded_mailbox_id: None,
 	};
 
 	// First participation succeeds

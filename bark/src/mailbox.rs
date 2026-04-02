@@ -12,7 +12,7 @@ use bitcoin::Amount;
 use bitcoin::hex::DisplayHex;
 use bitcoin::secp256k1::Keypair;
 use futures::{Stream, StreamExt};
-use log::{debug, error, info, trace};
+use log::{debug, error, info, trace, warn};
 
 use ark::{ProtocolEncoding, Vtxo};
 use ark::mailbox::{MailboxAuthorization, MailboxIdentifier};
@@ -205,8 +205,15 @@ impl Wallet {
 					error!("Error processing received arkoor package: {:#}", e);
 				}
 			}
+			Some(protos::mailbox_server::mailbox_message::Message::RoundParticipationCompleted(_)) => {
+				// Do we want to do custom code paths for progressing the round participations
+				// via the payment hashes returnded by the server?
+				if let Err(e) = self.sync_pending_rounds().await {
+					error!("Error syncing pending rounds: {:#}", e);
+				}
+			}
 			None => {
-				trace!("Received empty mailbox message, ignoring");
+				warn!("Received unknown mailbox message, ignoring");
 			}
 		}
 	}

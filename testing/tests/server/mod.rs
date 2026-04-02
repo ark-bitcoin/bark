@@ -10,7 +10,6 @@ use std::iter;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
-
 use bitcoin::hex::FromHex;
 use bitcoin::{absolute, transaction, Address, Amount, Network, OutPoint, Transaction};
 use bitcoin::secp256k1::{Keypair, PublicKey, rand::thread_rng};
@@ -662,6 +661,7 @@ async fn test_participate_round_wrong_step() {
 				vtxo_requests: vec![],
 				#[allow(deprecated)]
 				offboard_requests: vec![],
+				unblinded_mailbox_id: None,
 			}).await?;
 			Ok(protos::Empty{})
 		}
@@ -769,6 +769,7 @@ async fn bad_round_input() {
 		}],
 		#[allow(deprecated)]
 		offboard_requests: vec![],
+		unblinded_mailbox_id: None,
 	}).ready().await.unwrap_err();
 	assert_eq!(err.code(), tonic::Code::InvalidArgument, "[{}]: {}", err.code(), err.message());
 	let err = rpc.submit_payment(protos::SubmitPaymentRequest {
@@ -776,6 +777,7 @@ async fn bad_round_input() {
 		vtxo_requests: vec![],
 		#[allow(deprecated)]
 		offboard_requests: vec![],
+		unblinded_mailbox_id: None,
 	}).ready().await.unwrap_err();
 	assert_eq!(err.code(), tonic::Code::InvalidArgument, "[{}]: {}", err.code(), err.message());
 
@@ -785,6 +787,7 @@ async fn bad_round_input() {
 		vtxo_requests: vec![],
 		#[allow(deprecated)]
 		offboard_requests: vec![],
+		unblinded_mailbox_id: None,
 	}).ready().await.unwrap_err();
 	assert_eq!(err.code(), tonic::Code::InvalidArgument, "[{}]: {}", err.code(), err.message());
 	assert!(err.message().contains("invalid request: no outputs"),
@@ -814,6 +817,7 @@ async fn bad_round_input() {
 		}],
 		#[allow(deprecated)]
 		offboard_requests: vec![],
+		unblinded_mailbox_id: None,
 	}).ready().await.unwrap_err();
 	assert_eq!(err.code(), tonic::Code::NotFound, "[{}]: {}", err.code(), err.message());
 	assert_eq!(err.metadata().get("identifiers").unwrap().to_str().unwrap(), fake_vtxo.to_string());
@@ -1309,6 +1313,7 @@ async fn mailbox_post_and_process_with_auth() {
 			assert_eq!(vtxo.amount(), sent_amount);
 			let _ = read_vtxo.insert(vtxo);
 		},
+		_ => panic!("unexpected message type"),
 	}
 
 	// Now we check that the server rejects requests with incorrect authorization
@@ -1376,7 +1381,8 @@ async fn mailbox_post_and_process_with_auth() {
 						assert_eq!(read_vtxo.unwrap(), vtxo);
 						assert_ne!(checkpoint, 0);
 						return
-					}
+					},
+					_ => panic!("unexpected message type"),
 				}
 			},
 		}

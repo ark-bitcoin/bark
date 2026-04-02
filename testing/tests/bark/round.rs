@@ -319,6 +319,7 @@ async fn stepwise_round() {
 			}),
 			amount: inputs[0].vtxo.amount(),
 		}],
+		unblinded_mailbox_id: None,
 	};
 
 	let state_id = bark.join_next_round(participation, Some(RoundMovement::Refresh)).await.unwrap().id();

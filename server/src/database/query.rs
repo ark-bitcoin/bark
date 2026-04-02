@@ -17,14 +17,15 @@ use bitcoin::{Amount, Transaction, Txid};
 use tokio_postgres::{GenericClient, Row, Transaction as PgTransaction};
 use tokio_postgres::types::Type;
 
-use ark::{ProtocolEncoding, ServerVtxo, ServerVtxoPolicy, VtxoId, VtxoPolicy, VtxoRequest};
+use ark::{ProtocolEncoding, ServerVtxo, ServerVtxoPolicy, VtxoId, VtxoRequest};
+use ark::mailbox::MailboxIdentifier;
 use ark::rounds::RoundId;
 use ark::tree::signed::{UnlockHash, UnlockPreimage};
 use ark::vtxo::{Bare, Full};
 
 use crate::database::model::{VirtualTransaction, VtxoState};
 use crate::database::oor;
-use crate::database::rounds::{StoredRoundInput, StoredRoundParticipation};
+use crate::database::rounds::{StoredRoundInput, StoredRoundOutput, StoredRoundParticipation};
 use crate::error::ContextExt;
 use crate::secret::Secret;
 
@@ -247,7 +248,7 @@ pub async fn store_round_participation(
 	unlock_hash: UnlockHash,
 	unlock_preimage: UnlockPreimage,
 	inputs: &[VtxoId],
-	outputs: impl IntoIterator<Item = &VtxoRequest>,
+	outputs: impl IntoIterator<Item = &StoredRoundOutput>,
 ) -> anyhow::Result<()> {
 	let part_stmt = tx.prepare_typed(
 		"INSERT INTO round_participation (unlock_hash, unlock_preimage, created_at) \
@@ -271,16 +272,18 @@ pub async fn store_round_participation(
 	}
 
 	let output_stmt = tx.prepare_typed(
-		"INSERT INTO round_part_output (participation_id, policy, amount) \
-		VALUES ($1, $2, $3)",
-		&[Type::INT8, Type::BYTEA, Type::INT8]
+		"INSERT INTO round_part_output (participation_id, policy, amount, unblinded_mailbox_id) \
+		VALUES ($1, $2, $3, $4)",
+		&[Type::INT8, Type::BYTEA, Type::INT8, Type::TEXT]
 	).await?;
 
 	for output in outputs {
+		let unblinded_mailbox_id = output.unblinded_mailbox_id.map(|b| b.to_string());
 		tx.execute(&output_stmt, &[
 			&part_id,
-			&output.policy.serialize(),
-			&(output.amount.to_sat() as i64),
+			&output.vtxo_request.policy.serialize(),
+			&(output.vtxo_request.amount.to_sat() as i64),
+			&unblinded_mailbox_id,
 		]).await?;
 	}
 
@@ -315,7 +318,7 @@ pub async fn complete_round_participation(
 	}
 
 	let output_rows = tx.query(
-		"SELECT policy, amount FROM round_part_output WHERE participation_id = $1",
+		"SELECT policy, amount, unblinded_mailbox_id FROM round_part_output WHERE participation_id = $1",
 		&[&part_id],
 	).await?;
 
@@ -323,10 +326,15 @@ pub async fn complete_round_participation(
 	for row in output_rows {
 		let policy_bytes = row.get::<_, &[u8]>("policy");
 		let amount = row.get::<_, i64>("amount");
-		outputs.push(VtxoRequest {
-			policy: VtxoPolicy::deserialize(policy_bytes)
-				.context("invalid vtxo policy in round outputs")?,
-			amount: Amount::from_sat(amount as u64),
+		let unblinded_mailbox_id_str = row.get::<_, Option<&str>>("unblinded_mailbox_id");
+		outputs.push(StoredRoundOutput {
+			vtxo_request: VtxoRequest {
+				policy: ark::VtxoPolicy::deserialize(policy_bytes)
+					.context("invalid vtxo policy in round outputs")?,
+				amount: Amount::from_sat(amount as u64),
+			},
+			unblinded_mailbox_id: unblinded_mailbox_id_str.map(|id| MailboxIdentifier::from_str(id))
+				.transpose().context("invalid unblinded_mailbox_id in round outputs")?,
 		});
 	}
 

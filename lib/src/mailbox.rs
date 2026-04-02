@@ -14,6 +14,7 @@ use crate::encode::{ProtocolDecodingError, ProtocolEncoding, ReadExt, WriteExt};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MailboxType {
 	ArkoorReceive,
+	RoundParticipationCompleted,
 }
 
 impl MailboxType {
@@ -21,6 +22,7 @@ impl MailboxType {
 	pub const fn as_str(self) -> &'static str {
 		match self {
 			MailboxType::ArkoorReceive => "arkoor-receive",
+			MailboxType::RoundParticipationCompleted => "round-participation-completed",
 		}
 	}
 
@@ -38,6 +40,7 @@ impl TryFrom<u32> for MailboxType {
 	fn try_from(i: u32) -> Result<Self, Self::Error> {
 		match i {
 			0 => Ok(MailboxType::ArkoorReceive),
+			1 => Ok(MailboxType::RoundParticipationCompleted),
 			_ => Err("invalid mailbox type"),
 		}
 	}
@@ -47,6 +50,7 @@ impl From<MailboxType> for u32 {
 	fn from(t: MailboxType) -> Self {
 		match t {
 			MailboxType::ArkoorReceive => 0,
+			MailboxType::RoundParticipationCompleted => 1,
 		}
 	}
 }
@@ -63,6 +67,7 @@ impl FromStr for MailboxType {
 	fn from_str(s: &str) -> Result<Self, Self::Err> {
 		match s {
 			v if v == MailboxType::ArkoorReceive.as_str() => Ok(MailboxType::ArkoorReceive),
+			v if v == MailboxType::RoundParticipationCompleted.as_str() => Ok(MailboxType::RoundParticipationCompleted),
 			_ => Err("invalid mailbox type"),
 		}
 	}
@@ -312,9 +317,11 @@ mod test {
 	#[test]
 	fn mailbox_type_round_trip() {
 		let ar = MailboxType::ArkoorReceive;
+		let rpc = MailboxType::RoundParticipationCompleted;
 
 		let cases = [
 			(ar, u32::from(ar), ar.as_str()),
+			(rpc, u32::from(rpc), rpc.as_str()),
 		];
 
 		let mut seen_u32 = std::collections::HashSet::new();
