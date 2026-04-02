@@ -2,16 +2,18 @@ use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 
+use bitcoin::hashes::Hash;
+use bitcoin::hex::DisplayHex;
+use bitcoin::secp256k1::Keypair;
+use log::{info, trace};
+
 use ark::{ProtocolEncoding, Vtxo, SECP};
 use ark::arkoor::ArkoorDestination;
 use ark::attestations::ArkoorCosignAttestation;
 use ark::vtxo::Full;
-use bitcoin::hashes::Hash;
-use bitcoin::secp256k1::Keypair;
 use bark::Wallet;
 use bark::lightning_invoice::Bolt11Invoice;
 use bark_json::primitives::WalletVtxoInfo;
-use log::trace;
 use server_rpc::protos::{self, lightning_payment_status};
 use server::vtxopool::VtxoTarget;
 
@@ -19,8 +21,8 @@ use ark_testing::{TestContext, btc, sat};
 use ark_testing::constants::{BOARD_CONFIRMATIONS, ROUND_CONFIRMATIONS};
 use ark_testing::daemon::captaind::{self, ArkClient};
 use ark_testing::util::{FutureExt, ToAltString};
-
 use ark_testing::exit::complete_exit;
+
 
 /// Verify that the server extracts preimages from on-chain HTLC spends
 /// and uses them to settle invoices — both inter-ark (external CLN sender)
@@ -31,18 +33,18 @@ use ark_testing::exit::complete_exit;
 /// HtlcSettler extracts to settle the hold invoice.
 #[tokio::test]
 async fn server_settles_invoice_from_on_chain_htlc_preimage() {
-	let ctx = TestContext::new(
-		"server/server_settles_invoice_from_on_chain_htlc_preimage",
-	).await;
+	let ctx = TestContext::new("server/server_settles_invoice_from_on_chain_htlc_preimage").await;
 	let ctx = Arc::new(ctx);
 
 	let lightning = ctx.new_lightning_setup("lightningd").await;
 
-	// Use a long receive_htlc_forward_timeout so hold invoices stay alive
-	// while the exit is driven to completion on-chain.
 	let srv = ctx.new_captaind_with_cfg(
 		"srv", Some(&lightning.receiver), |cfg| {
-			cfg.receive_htlc_forward_timeout = Duration::from_secs(300);
+			// Use a long receive_htlc_forward_timeout so hold invoices stay alive
+			// while the exit is driven to completion on-chain.
+			cfg.receive_htlc_forward_timeout = Duration::from_secs(5 * 60);
+			// To make sure we don't sweep the vtxo before user can broadcast preimage
+			cfg.vtxopool.vtxo_lifetime = 2048;
 		},
 	).await;
 	ctx.fund_captaind(&srv, btc(10)).await;
@@ -56,8 +58,9 @@ async fn server_settles_invoice_from_on_chain_htlc_preimage() {
 		async fn claim_lightning_receive(
 			&self,
 			_upstream: &mut ArkClient,
-			_req: server_rpc::protos::ClaimLightningReceiveRequest,
+			req: server_rpc::protos::ClaimLightningReceiveRequest,
 		) -> Result<server_rpc::protos::ArkoorPackageCosignResponse, tonic::Status> {
+			info!("payment preimage: {}", req.payment_preimage.as_hex());
 			Err(tonic::Status::internal("Blocked cooperative settlement"))
 		}
 	}
@@ -90,6 +93,7 @@ async fn server_settles_invoice_from_on_chain_htlc_preimage() {
 	bark_recv.sync().await;
 	assert!(!bark_recv.list_exits().await.is_empty(), "Expected exit to be started");
 
+	info!("Doing first exit...");
 	complete_exit(&ctx, &bark_recv).await;
 
 	bark_recv.claim_all_exits(bark_recv.get_onchain_address().await).await;
@@ -97,6 +101,7 @@ async fn server_settles_invoice_from_on_chain_htlc_preimage() {
 
 	// The external CLN sender's payment completes — the server extracted
 	// the preimage from the on-chain spend and settled the hold invoice.
+	info!("Waiting for pay_handle...");
 	pay_handle.await.unwrap();
 
 	// ── Intra-ark: same-server bark sender ──────────────────────────
@@ -109,6 +114,7 @@ async fn server_settles_invoice_from_on_chain_htlc_preimage() {
 
 	let invoice_info = bark_recv.bolt11_invoice(btc(1)).await;
 
+	info!("Waiting for vtxopool...");
 	srv.wait_for_vtxopool(&ctx).await;
 
 	// Spawn receiver: proxy blocks cooperative settlement, so this will error
@@ -126,11 +132,13 @@ async fn server_settles_invoice_from_on_chain_htlc_preimage() {
 		bark_sender
 	});
 
+	info!("Waiting for recv_handle (2)...");
 	let bark_recv = recv_handle.await.unwrap();
 
 	bark_recv.sync().await;
 	assert!(!bark_recv.list_exits().await.is_empty(), "Expected exit to be started");
 
+	info!("Doing second exit...");
 	complete_exit(&ctx, &bark_recv).await;
 
 	bark_recv.claim_all_exits(bark_recv.get_onchain_address().await).await;
@@ -138,6 +146,7 @@ async fn server_settles_invoice_from_on_chain_htlc_preimage() {
 
 	// Sender's payment completes — pay_lightning_wait blocks until the
 	// server's HtlcSettler settles the invoice via payment_update_tx.
+	info!("Waiting for send_handle (2)...");
 	let bark_sender = send_handle.await.unwrap();
 
 	assert_eq!(

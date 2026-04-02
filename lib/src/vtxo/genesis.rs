@@ -236,7 +236,7 @@ impl HashLockedCosignedGenesis {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ArkoorGenesis {
-	/// The keys that are use dfor cosiging the keyspend.
+	/// The keys that are used for cosiging the keyspend.
 	/// This excludes the server_pubkey
 	pub client_cosigners: Vec<PublicKey>,
 	pub tap_tweak: taproot::TapTweakHash,

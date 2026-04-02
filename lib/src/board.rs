@@ -386,11 +386,13 @@ impl BoardBuilder<state::CanGenerateNonces> {
 		let exit_txid = exit_data.txid;
 		let tap_tweak = exit_data.funding_taproot.tap_tweak();
 
-		let expiry_policy = ServerVtxoPolicy::new_expiry(self.user_pubkey.x_only_public_key().0);
+		let combined_pubkey = musig::combine_keys([self.user_pubkey, self.server_pubkey])
+			.x_only_public_key().0;
+		let expiry_policy = ServerVtxoPolicy::new_expiry(combined_pubkey);
 		vec![
 			Vtxo {
 				policy: expiry_policy,
-				amount: amount - fee,
+				amount: amount,
 				expiry_height: self.expiry_height,
 				server_pubkey: self.server_pubkey,
 				exit_delta: self.exit_delta,
@@ -676,6 +678,9 @@ mod test {
 	fn test_new_from_vtxo_success() {
 		let (vtxo, funding_tx, _, server_key) = create_board_vtxo();
 
+		vtxo.validate(&funding_tx).unwrap();
+		println!("amount: {}", vtxo.amount());
+
 		// Should succeed with correct inputs
 		let builder = BoardBuilder::new_from_vtxo(&vtxo, &funding_tx, server_key.public_key())
 			.expect("Is valid");
@@ -683,7 +688,14 @@ mod test {
 		let server_vtxos = builder.build_internal_unsigned_vtxos();
 		assert_eq!(server_vtxos.len(), 2);
 		assert!(matches!(server_vtxos[0].policy(), ServerVtxoPolicy::Expiry(..)));
-		assert!(matches!(server_vtxos[1].policy(), ServerVtxoPolicy::User(VtxoPolicy::Pubkey{..})));
+		assert!(matches!(server_vtxos[1].policy(), ServerVtxoPolicy::User(VtxoPolicy::Pubkey {..})));
+		assert_eq!(server_vtxos[1].id(), vtxo.id());
+		assert_eq!(server_vtxos[1].txout(), vtxo.txout());
+		assert_eq!(server_vtxos[0].txout(), funding_tx.output[0]);
+		assert_eq!(
+			server_vtxos[1].transactions().nth(0).unwrap().tx.compute_txid(),
+			vtxo.transactions().nth(0).unwrap().tx.compute_txid(),
+		);
 	}
 
 	#[test]

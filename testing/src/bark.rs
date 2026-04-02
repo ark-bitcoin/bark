@@ -468,11 +468,19 @@ impl Bark {
 		Ok(())
 	}
 
-	pub async fn pay_lightning(&self, destination :impl fmt::Display, amount: Option<Amount>) -> () {
+	pub async fn pay_lightning(
+		&self,
+		destination: impl fmt::Display,
+		amount: Option<Amount>,
+	) -> () {
 		self.try_pay_lightning(destination, amount, false).await.unwrap();
 	}
 
-	pub async fn pay_lightning_wait(&self, destination :impl fmt::Display, amount: Option<Amount>) -> () {
+	pub async fn pay_lightning_wait(
+		&self,
+		destination: impl fmt::Display,
+		amount: Option<Amount>,
+	) -> () {
 		self.try_pay_lightning(destination, amount, true).await.unwrap();
 	}
 

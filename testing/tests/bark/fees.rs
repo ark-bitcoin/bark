@@ -247,7 +247,7 @@ async fn refresh_fee_base_only() {
 	// Estimate before refresh
 	let estimate = bark.estimate_refresh_all().await;
 
-	ctx.refresh_all(&srv, std::slice::from_ref(&bark)).await;
+	ctx.refresh_all(&srv, &[&bark]).await;
 	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
 
 	// After refresh, balance should be reduced by base_fee
@@ -292,7 +292,7 @@ async fn refresh_fee_with_ppm_expiry() {
 	// This exceeds the 50-block threshold, so 1% ppm applies.
 	// Fee = base(200) + 100,000 * 10,000 / 1,000,000 = 200 + 1,000 = 1,200
 	let expected_fee = sat(1_200);
-	ctx.refresh_all(&srv, std::slice::from_ref(&bark)).await;
+	ctx.refresh_all(&srv, &[&bark]).await;
 	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
 	assert_eq!(bark.spendable_balance().await, sat(100_000) - expected_fee);
 
@@ -335,7 +335,7 @@ async fn refresh_fee_with_multiple_vtxos() {
 	let estimate = bark.estimate_refresh_all().await;
 
 	// Refresh all VTXOs (consolidates into one)
-	ctx.refresh_all(&srv, std::slice::from_ref(&bark)).await;
+	ctx.refresh_all(&srv, &[&bark]).await;
 	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
 
 	// Fee = base_fee only (no ppm entries). Applied once for the whole refresh.

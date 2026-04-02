@@ -18,6 +18,7 @@ use bitcoin::secp256k1::Keypair;
 use tracing::info;
 use bitcoin_ext::rpc::{BitcoinRpcClient, BitcoinRpcExt, RpcApi};
 
+use crate::EPHEMERAL_KEY_PATH;
 use crate::{fee_estimator, secret::Secret, telemetry, wallet, SECP};
 use crate::config::watchmand::Config;
 use crate::database::{self, BlockTable};
@@ -200,7 +201,16 @@ impl Daemon {
 			.context("sweep_address is required for watchman")?
 			.require_network(cfg.network)
 			.context("sweep_address network mismatch")?;
-		let signer = WatchmanSigner::new(Secret::new(server_key), db.clone());
+		let ephemeral_master_key = {
+			let path = bip32::DerivationPath::from_str(EPHEMERAL_KEY_PATH).unwrap();
+			let xpriv = master_xpriv.derive_priv(&SECP, &path).unwrap();
+			Keypair::from_secret_key(&SECP, &xpriv.private_key)
+		};
+		let signer = WatchmanSigner::new(
+			Secret::new(server_key),
+			Secret::new(ephemeral_master_key),
+			db.clone(),
+		);
 		let sync_height_watcher = sync_manager.sync_height_watcher();
 
 		let watchman = Watchman::new(

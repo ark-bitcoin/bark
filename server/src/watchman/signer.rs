@@ -28,12 +28,17 @@ use crate::SECP;
 /// For HashDelaySign clauses, preimages are retrieved from the database.
 pub struct WatchmanSigner {
 	server_keypair: Secret<Keypair>,
+	ephemeral_master_key: Secret<Keypair>,
 	db: Db,
 }
 
 impl WatchmanSigner {
-	pub fn new(server_keypair: Secret<Keypair>, db: Db) -> Self {
-		Self { server_keypair, db }
+	pub fn new(
+		server_keypair: Secret<Keypair>,
+		ephemeral_master_key: Secret<Keypair>,
+		db: Db,
+	) -> Self {
+		Self { server_keypair, ephemeral_master_key, db }
 	}
 
 	/// Get the preimage for a hash from the database
@@ -89,12 +94,17 @@ impl VtxoSigner<ServerVtxoPolicy> for WatchmanSigner {
 		sighash: TapSighash,
 	) -> Option<Witness> {
 		// Only sign if the clause pubkey matches our server pubkey
-		if clause.pubkey() != self.server_keypair.leak_ref().public_key() {
-			return None;
-		}
+		let key = if clause.pubkey() == self.server_keypair.leak_ref().public_key() {
+			self.server_keypair.leak_owned()
+		} else {
+			let tweak = self.db.fetch_ephemeral_tweak(clause.pubkey()).await.ok()??;
+			let seckey = self.ephemeral_master_key.leak_ref().secret_key()
+				.add_tweak(&tweak).expect("tweak error");
+			Keypair::from_secret_key(&*SECP, &seckey)
+		};
 
 		// Sign the sighash
-		let signature = ark::SECP.sign_schnorr(&sighash.into(), self.server_keypair.leak_ref());
+		let signature = ark::SECP.sign_schnorr(&sighash.into(), &key);
 
 		// Construct witness based on clause type
 		match clause {

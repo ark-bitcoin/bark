@@ -5,6 +5,7 @@ pub mod electrs;
 pub mod lightningd;
 pub mod postgres;
 pub mod tor;
+pub mod watchmand;
 
 use std::fs;
 use std::path::{Path, PathBuf};

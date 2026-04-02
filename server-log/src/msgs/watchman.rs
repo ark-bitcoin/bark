@@ -37,6 +37,12 @@ pub struct ProgressDeadlineExceeded {
 impl_slog!(ProgressDeadlineExceeded, WARN, "progress deadline exceeded");
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WatchmanAddedVtxo {
+	pub id: VtxoId,
+}
+impl_slog!(WatchmanAddedVtxo, TRACE, "added VTXO to frontier");
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WatchmanAddedFundingTx {
 	pub txid: Txid,
 	pub nb_vtxos: usize,
@@ -74,7 +80,11 @@ pub struct ClaimBroadcast {
 	#[serde(with = "crate::serde_utils::fee_rate")]
 	pub fee_rate: FeeRate,
 	#[serde(with = "bitcoin::amount::serde::as_sat")]
-	pub total_value: Amount,
+	pub total_input_value: Amount,
+	#[serde(with = "bitcoin::amount::serde::as_sat")]
+	pub total_output_value: Amount,
+	#[serde(with = "bitcoin::amount::serde::as_sat")]
+	pub fee: Amount,
 }
 impl_slog!(ClaimBroadcast, INFO, "Broadcast claim transaction");
 
