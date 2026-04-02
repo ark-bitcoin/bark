@@ -1,6 +1,7 @@
 mod ban;
 mod block_index;
 mod lightning;
+mod mailbox;
 mod postgres;
 mod postgres_migrations;
 mod settler;
