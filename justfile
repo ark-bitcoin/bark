@@ -93,7 +93,8 @@ test-unit-codecov TEST="":
 		--exclude ark-testing --no-report {{TEST}}
 
 test-integration TEST="": ensure-build-bins docker-pull
-	cargo nextest run --no-fail-fast --profile {{NEXTEST_PROFILE}} --package ark-testing {{TEST}}
+	cargo nextest run --no-fail-fast --profile {{NEXTEST_PROFILE}} --package ark-testing \
+		-E 'not binary(tor)' {{TEST}}
 alias int := test-integration
 
 # run integration tests for bark and barkd test files only
@@ -101,6 +102,12 @@ test-integration-bark: ensure-build-bins docker-pull
 	cargo nextest run --no-fail-fast --profile {{NEXTEST_PROFILE}} --package ark-testing \
 		--test bark --test barkd
 alias int-bark := test-integration-bark
+
+# run tor integration tests
+test-integration-tor: ensure-build-bins docker-pull
+	cargo nextest run --no-fail-fast --profile {{NEXTEST_PROFILE}} --package ark-testing \
+		--test tor
+alias int-tor := test-integration-tor
 
 # run integration tests for core and server test files only
 test-integration-core: ensure-build-bins docker-pull
