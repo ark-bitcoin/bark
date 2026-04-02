@@ -706,7 +706,7 @@ async fn send_onchain_fee_deducted() {
 	let addr = bark2.get_onchain_address().await;
 
 	// Estimate before send
-	let estimate = bark1.estimate_send_onchain(&addr, send_amount).await;
+	let estimate = bark1.estimate_send_onchain_fee(&addr, send_amount).await;
 
 	bark1.send_onchain(&addr, send_amount).await;
 	ctx.generate_blocks(2).await;

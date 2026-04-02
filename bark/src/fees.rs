@@ -11,7 +11,7 @@ use crate::Wallet;
 /// Result of a fee estimation containing the total cost, fee amount, and VTXOs used. It's very
 /// important to consider that fees can change over time, so you should expect to renew this
 /// estimate frequently when presenting this information to users.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FeeEstimate {
 	/// The total amount including fees.
 	pub gross_amount: Amount,

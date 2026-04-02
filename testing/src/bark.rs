@@ -257,7 +257,7 @@ impl Bark {
 		wallet.estimate_offboard(address, &vtxos).await.unwrap()
 	}
 
-	pub async fn estimate_send_onchain(
+	pub async fn estimate_send_onchain_fee(
 		&self,
 		address: &Address,
 		amount: Amount,
