@@ -17,6 +17,7 @@ pub mod env {
 	pub const BARK_EXEC: &str = "BARK_EXEC";
 	pub const BARKD_EXEC: &str = "BARKD_EXEC";
 	pub const CAPTAIND_EXEC: &str = "CAPTAIND_EXEC";
+	pub const WATCHMAND_EXEC: &str = "WATCHMAND_EXEC";
 	pub const LIGHTNINGD_DOCKER_IMAGE: &str = "LIGHTNINGD_DOCKER_IMAGE";
 	pub const LIGHTNINGD_EXEC: &str = "LIGHTNINGD_EXEC";
 	pub const LIGHTNINGD_PLUGIN_DIR: &str = "LIGHTNINGD_PLUGIN_DIR";

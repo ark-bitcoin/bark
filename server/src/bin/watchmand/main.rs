@@ -68,7 +68,7 @@ async fn inner_main() -> anyhow::Result<()> {
 	match cli.command {
 		Command::Start => {
 			if let Err(e) = Daemon::run(cfg).await {
-				error!("Shutdown error from server {:?}", e);
+				eprintln!("Error from server {:?}", e);
 
 				process::exit(1);
 			};

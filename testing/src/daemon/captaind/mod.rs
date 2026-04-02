@@ -518,13 +518,13 @@ impl CaptaindHelper {
 		/// the slog handlers after parsing
 		struct Handler {
 			handlers: Vec<Box<dyn SlogHandler>>,
-			hadler_rx: mpsc::Receiver<Box<dyn SlogHandler>>,
+			handler_rx: mpsc::Receiver<Box<dyn SlogHandler>>,
 		}
 
 		impl LogHandler for Handler {
 			fn process_log(&mut self, line: &str) -> bool {
 				loop {
-					match self.hadler_rx.try_recv() {
+					match self.handler_rx.try_recv() {
 						Ok(h) => self.handlers.push(h),
 						Err(mpsc::error::TryRecvError::Empty) => break,
 						Err(mpsc::error::TryRecvError::Disconnected) => return true,
@@ -547,7 +547,7 @@ impl CaptaindHelper {
 		*self.slog_handler_tx.lock() = Some(tx);
 		Box::new(Handler {
 			handlers: vec![Box::new(self.state.clone())],
-			hadler_rx: rx,
+			handler_rx: rx,
 		})
 	}
 }

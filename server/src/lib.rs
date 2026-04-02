@@ -410,6 +410,7 @@ impl Server {
 		if let Some((watchman_cfg, watchman_wallet, frontier)) = watchman_deps {
 			let signer = watchman::WatchmanSigner::new(
 				Secret::new(Keypair::from_secret_key(&SECP, &server_key.secret_key())),
+				Secret::new(ephemeral_master_key),
 				db.clone(),
 			);
 			let drain_address = rounds_wallet.peek_next_address().address;

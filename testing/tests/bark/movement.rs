@@ -412,7 +412,7 @@ async fn round_refresh() {
 
 	let vtxos_pre_refresh = bark.vtxo_ids().await;
 	assert_eq!(vtxos_pre_refresh.len(), 3);
-	ctx.refresh_all(&srv, std::slice::from_ref(&bark)).await;
+	ctx.refresh_all(&srv, &[&bark]).await;
 	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
 	let vtxos_post_refresh = bark.vtxo_ids().await;
 
@@ -533,7 +533,7 @@ async fn list_movements() {
 	assert_eq!(movements.last().unwrap().offchain_fee, Amount::ZERO);
 
 	// refresh vtxos - trigger round manually
-	ctx.refresh_all(&srv, std::slice::from_ref(&bark1)).await;
+	ctx.refresh_all(&srv, &[&bark1]).await;
 	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
 
 	let movements = bark1.history().await;

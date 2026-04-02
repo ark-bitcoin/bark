@@ -37,7 +37,7 @@ async fn simple_exit() {
 	bark.board(sat(500_000)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 
-	ctx.refresh_all(&srv, std::slice::from_ref(&bark)).await;
+	ctx.refresh_all(&srv, &[&bark]).await;
 	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
 
 	srv.stop().await.unwrap();
@@ -178,7 +178,7 @@ async fn exit_vtxo() {
 
 	bark.board(sat(900_000)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
-	ctx.refresh_all(&srv, std::slice::from_ref(&bark)).await;
+	ctx.refresh_all(&srv, &[&bark]).await;
 	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
 
 	// By calling bark vtxos we ensure the wallet is synced
@@ -210,7 +210,7 @@ async fn exit_and_send_vtxo() {
 
 	bark.board(sat(900_000)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
-	ctx.refresh_all(&srv, std::slice::from_ref(&bark)).await;
+	ctx.refresh_all(&srv, &[&bark]).await;
 	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
 
 	// By calling bark vtxos we ensure the wallet is synced
@@ -312,7 +312,7 @@ async fn double_exit_call() {
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 
 	// refresh vtxo
-	ctx.refresh_all(&srv, std::slice::from_ref(&bark1)).await;
+	ctx.refresh_all(&srv, &[&bark1]).await;
 	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
 
 	// board vtxo
@@ -982,10 +982,8 @@ async fn exit_oor_ping_pong_then_rbf_tx() {
 	bark1.sync().await;
 	bark2.sync().await;
 
-	let both = [bark1, bark2];
-	ctx.refresh_all(&srv, &both).await;
+	ctx.refresh_all(&srv, &[&bark1, &bark2]).await;
 	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
-	let [bark1, bark2] = both;
 
 	// Exit the funds
 	srv.stop().await.unwrap();

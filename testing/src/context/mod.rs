@@ -1,3 +1,4 @@
+
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::str::FromStr;
@@ -18,7 +19,6 @@ use server::vtxopool::VtxoTarget;
 use server::Server;
 use tokio::{fs, join};
 use tonic::transport::Uri;
-use server::config::{self, Config, HodlInvoiceClnPlugin};
 use server_rpc as rpc;
 
 use crate::daemon::bitcoind::BitcoindRpcHandle;
@@ -215,6 +215,10 @@ impl TestContext {
 		builders::BarkBuilder::new(self, name, srv)
 	}
 
+	pub fn watchmand(&self, name: impl AsRef<str>) -> builders::WatchmandBuilder<'_> {
+		builders::WatchmandBuilder::new(self, name)
+	}
+
 	pub fn lightningd(&self, name: impl AsRef<str>) -> builders::LightningdBuilder<'_> {
 		builders::LightningdBuilder::new(self, name)
 	}
@@ -248,7 +252,7 @@ impl TestContext {
 		name: impl AsRef<str>,
 		bitcoind: &Bitcoind,
 		lightningd: Option<&Lightningd>,
-	) -> Config {
+	) -> server::config::Config {
 		let name = name.as_ref();
 		let data_dir = self.datadir.join(name);
 
@@ -256,13 +260,13 @@ impl TestContext {
 			let grpc_details = lnd.grpc_details().await;
 			let hold_details = lnd.hold_details().await;
 
-			let lightningd = config::Lightningd {
+			let lightningd = server::config::Lightningd {
 				uri: Uri::from_str(&grpc_details.uri).expect("failed to parse cln grpc uri"),
 				priority: 1,
 				server_cert_path: grpc_details.server_cert_path,
 				client_cert_path: grpc_details.client_cert_path,
 				client_key_path: grpc_details.client_key_path,
-				hold_invoice: Some(HodlInvoiceClnPlugin {
+				hold_invoice: Some(server::config::HodlInvoiceClnPlugin {
 					uri: Uri::from_str(&hold_details.uri).expect("failed to parse hold plugin uri"),
 					server_cert_path: hold_details.server_cert_path,
 					client_cert_path: hold_details.client_cert_path,
@@ -284,7 +288,7 @@ impl TestContext {
 
 		// NB we don't auto-complete `..Default::default()` here
 		// to force us to evaluate every value in test context.
-		Config {
+		server::config::Config {
 			data_dir: data_dir.clone(),
 			network: Network::Regtest,
 			vtxo_lifetime: 432,
@@ -314,7 +318,7 @@ impl TestContext {
 					claim_chunksize: 15.try_into().unwrap(),
 					incremental_relay_fee: FeeRate::from_sat_per_kvb_ceil(100),
 					min_cpfp_amount: Amount::from_sat(10_000),
-				}
+				},
 			),
 			watchman_min_balance: Amount::from_sat(1_000_000),
 			vtxopool: server::vtxopool::Config {
@@ -338,13 +342,13 @@ impl TestContext {
 				fallback_fee_rate_slow: FeeRate::from_sat_per_vb_unchecked(5),
 			},
 			transaction_rebroadcast_interval: std::time::Duration::from_secs(2),
-			rpc: config::Rpc {
+			rpc: server::config::Rpc {
 				// these will be overwritten on start, but can't be empty
 				public_address: SocketAddr::from_str("127.0.0.1:3535").unwrap(),
 				admin_address: None,
 				integration_address: None,
 			},
-			bitcoind: config::Bitcoind {
+			bitcoind: server::config::Bitcoind {
 				url: bitcoind.rpc_url(),
 				cookie: Some(bitcoind.rpc_cookie()),
 				rpc_user: None,
@@ -394,6 +398,55 @@ impl TestContext {
 					ppm_expiry_table: vec![],
 				},
 			},
+		}
+	}
+
+	async fn watchmand_default_cfg(
+		&self,
+		name: impl AsRef<str>,
+		bitcoind: &Bitcoind,
+		srv: &Captaind,
+	) -> server::config::watchmand::Config {
+		let sweep_address = srv.wallet_status().await.rounds.address.assume_checked();
+
+		let name = name.as_ref();
+		let data_dir = self.datadir.join(name);
+
+		// NB we don't auto-complete `..Default::default()` here
+		// to force us to evaluate every value in test context.
+		server::config::watchmand::Config {
+			postgres: srv.config().postgres.clone(),
+			watchman: server::watchman::Config {
+				process_interval: std::time::Duration::from_secs(1),
+				progress_grace_period: 2,
+				claim_chunksize: 15.try_into().unwrap(),
+				incremental_relay_fee: FeeRate::from_sat_per_kvb_ceil(100),
+				min_cpfp_amount: Amount::from_sat(10_000),
+			},
+			sweep_address: Some(sweep_address.to_string().parse().expect("invalid sweep address")),
+			data_dir: data_dir.clone(),
+			network: Network::Regtest,
+			min_trusted_confs: 1,
+			txindex_check_interval: Duration::from_millis(500),
+			sync_manager_block_poll_interval: Duration::from_millis(100),
+			otel_collector_endpoint: None,
+			otel_tracing_sampler: Some(1f64),
+			otel_deployment_name: format!("{}/{}", self.test_name, name),
+			fee_estimator: server::fee_estimator::Config {
+				update_interval: Duration::from_secs(60),
+				history_duration: Duration::from_secs(60 * 30),
+				fallback_fee_rate_fast: FeeRate::from_sat_per_vb_unchecked(25),
+				fallback_fee_rate_regular: FeeRate::from_sat_per_vb_unchecked(7),
+				fallback_fee_rate_slow: FeeRate::from_sat_per_vb_unchecked(5),
+			},
+			transaction_rebroadcast_interval: std::time::Duration::from_secs(2),
+			bitcoind: server::config::Bitcoind {
+				url: bitcoind.rpc_url(),
+				cookie: Some(bitcoind.rpc_cookie()),
+				rpc_user: None,
+				rpc_pass: None,
+			},
+			htlc_settlement_poll_interval: Duration::from_secs(5),
 		}
 	}
 
@@ -737,7 +790,7 @@ impl TestContext {
 	}
 
 	/// Triggers a round and refreshes all given barks concurrently.
-	pub async fn refresh_all(&self, srv: &Captaind, barks: &[Bark]) {
+	pub async fn refresh_all(&self, srv: &Captaind, barks: &[&Bark]) {
 		let futures = barks.iter().map(|b| b.try_refresh_all_no_retry());
 		let (results, _) = tokio::join!(
 			join_all(futures),

@@ -26,7 +26,7 @@ use bitcoin::absolute::LockTime;
 use bitcoin::{Address, Amount, FeeRate, Transaction, TxIn, TxOut, Sequence, ScriptBuf, Weight, Witness, sighash};
 use bitcoin::Txid;
 use tokio::sync::watch;
-use tracing::{info, warn};
+use tracing::{info, trace, warn};
 
 use ark::{ServerVtxo, ServerVtxoPolicy, VtxoId};
 use ark::vtxo::policy::signing::VtxoSigner;
@@ -119,7 +119,7 @@ impl Watchman {
 		block_table: BlockTable,
 		fee_estimator: Arc<FeeEstimator>,
 		drain_address: Address,
-		forfeit_wallet: Arc<tokio::sync::Mutex<PersistedWallet>>,
+		wallet: Arc<tokio::sync::Mutex<PersistedWallet>>,
 		frontier: Arc<tokio::sync::RwLock<VtxoExitFrontier>>,
 		sync_height: watch::Receiver<BlockRef>,
 	) -> Self {
@@ -131,7 +131,7 @@ impl Watchman {
 			block_table,
 			fee_estimator,
 			drain_spk: drain_address.script_pubkey(),
-			watchman_wallet: forfeit_wallet,
+			watchman_wallet: wallet,
 			frontier,
 			sync_height,
 			mempool_spends: parking_lot::RwLock::new(HashMap::new()),
@@ -190,6 +190,8 @@ impl Watchman {
 		if txids.is_empty() {
 			return Ok(());
 		}
+
+		trace!("We got {} unfrontiered funding txs", txids.len());
 
 		let mut frontier = self.frontier.write().await;
 
@@ -399,9 +401,12 @@ impl Watchman {
 		let txid = tx.compute_txid();
 		self.bitcoind.broadcast_tx(&tx)?;
 
-		let total_value = tx.output.iter().map(|o| o.value).sum();
-		slog!(ClaimBroadcast, txid, fee_rate, total_value,
-			vtxo_ids: vtxos.iter().map(|v| v.id()).collect(),
+		let total_output_value = tx.output.iter().map(|o| o.value).sum::<Amount>();
+		let total_input_value = vtxos.iter().map(|v| v.amount()).sum::<Amount>();
+		let fee = total_input_value.checked_sub(total_output_value)
+			.context("output larger than input amount")?;
+		slog!(ClaimBroadcast, txid, fee_rate, total_output_value, fee,
+			total_input_value, vtxo_ids: vtxos.iter().map(|v| v.id()).collect(),
 		);
 
 		let claim = MempoolSpend {

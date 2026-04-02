@@ -3,12 +3,14 @@ use std::time::Duration;
 
 use bark::BarkNetwork;
 use bitcoin::Amount;
+use server::wallet::MNEMONIC_FILE;
+use tokio::fs;
 
+use crate::daemon::watchmand::Watchmand;
 use crate::{Bark, Bitcoind, Captaind, Lightningd, LightningdConfig};
 use crate::util::FutureExt;
 use super::TestContext;
 
-// ── CaptaindBuilder ─────────────────────────────────────────────────
 
 pub struct CaptaindBuilder<'a> {
 	ctx: &'a TestContext,
@@ -70,6 +72,60 @@ impl<'a> CaptaindBuilder<'a> {
 		if let Some(amount) = self.fund_amount {
 			self.ctx.fund_captaind(&ret, amount).await;
 		}
+
+		ret
+	}
+}
+
+pub struct WatchmandBuilder<'a> {
+	ctx: &'a TestContext,
+	name: String,
+	bitcoind: Option<Arc<Bitcoind>>,
+	mod_cfg: Option<Box<dyn FnOnce(&mut server::config::watchmand::Config)>>,
+}
+
+impl<'a> WatchmandBuilder<'a> {
+	pub(super) fn new(ctx: &'a TestContext, name: impl AsRef<str>) -> Self {
+		WatchmandBuilder {
+			ctx,
+			name: name.as_ref().to_string(),
+			bitcoind: None,
+			mod_cfg: None,
+		}
+	}
+
+	pub fn bitcoind(mut self, bitcoind: Arc<Bitcoind>) -> Self {
+		self.bitcoind = Some(bitcoind);
+		self
+	}
+
+	pub fn cfg(mut self, f: impl FnOnce(&mut server::config::watchmand::Config) + 'static) -> Self {
+		self.mod_cfg = Some(Box::new(f));
+		self
+	}
+
+	pub async fn create(self, srv: &Captaind) -> Watchmand {
+		let bitcoind = match self.bitcoind {
+			Some(bitcoind) => bitcoind,
+			None => Arc::new(self.ctx.new_bitcoind(format!("{}_bitcoind", self.name)).await),
+		};
+
+		let mut cfg = self.ctx.watchmand_default_cfg(
+			&self.name, &bitcoind, srv,
+		).await;
+		if let Some(mod_cfg) = self.mod_cfg {
+			mod_cfg(&mut cfg);
+		}
+
+		// we need to create the datadir and copy the server mnemonic
+		fs::create_dir_all(&cfg.data_dir).await.expect("failed to create watchmand datadir");
+		fs::copy(
+			srv.config().data_dir.join(MNEMONIC_FILE),
+			cfg.data_dir.join(MNEMONIC_FILE),
+		).await.expect("failed to copy mnemonic file for watchmand");
+
+		let mut ret = Watchmand::new(&self.name, bitcoind, cfg);
+		ret.start().await.unwrap();
 
 		ret
 	}

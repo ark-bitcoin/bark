@@ -125,6 +125,12 @@ fn validate_inner<P: Policy>(
 				got: anchor_txout.clone(),
 			});
 		}
+
+		if vtxo.point != vtxo.chain_anchor() {
+			return Err(VtxoValidationError::Invalid(
+				"point of empty genesis vtxo doesn't match anchor point",
+			));
+		}
 		return Ok(());
 	}
 
