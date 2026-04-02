@@ -173,6 +173,19 @@ lib-msrv:
         cargo build
       "
 
+check-fuzz:
+  interruptible: true
+  allow_failure: true
+  stage: test
+  extends: .test-rules-no-tags
+  needs:
+    - prechecks
+  script:
+    - |
+      nix develop .#default --command bash -c "
+        cargo check --manifest-path fuzz/Cargo.toml
+      "
+
 check-release:
   interruptible: true
   stage: test
