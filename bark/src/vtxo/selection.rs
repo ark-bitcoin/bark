@@ -62,7 +62,7 @@ use std::collections::HashSet;
 
 use anyhow::Context;
 use bitcoin::FeeRate;
-use log::warn;
+use log::{debug, warn};
 
 use ark::VtxoId;
 use bitcoin_ext::{BlockHeight, P2TR_DUST};
@@ -383,8 +383,12 @@ impl<'a> RefreshStrategy<'a> {
 
 	fn check_must_refresh(&self, vtxo: &WalletVtxo) -> anyhow::Result<bool> {
 		let threshold = self.wallet.config().vtxo_refresh_expiry_threshold;
-		if self.tip > vtxo.expiry_height().saturating_sub(threshold) {
-			warn!("VTXO {} is about to expire soon, must be refreshed", vtxo.id());
+
+		if self.tip > vtxo.expiry_height() {
+			warn!("VTXO {} is expired, must be rereshed", vtxo.id());
+			return Ok(true)
+		} else if self.tip > vtxo.expiry_height().saturating_sub(threshold) {
+			debug!("VTXO {} is about to expire soon, must be refreshed", vtxo.id());
 			return Ok(true);
 		}
 
