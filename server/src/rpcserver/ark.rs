@@ -229,12 +229,8 @@ impl rpc::server::ArkService for Server {
 		let cosign_requests = ArkoorPackageCosignRequest::try_from(req.clone())
 			.context("Failed to parse request")?;
 
-		let invoice = Invoice::from_str(&req.invoice).badarg("invalid invoice")?;
-		invoice.check_signature().badarg("invalid invoice signature")?;
-
-		let resp = self.request_lightning_pay_htlc_cosign(
-			invoice, Amount::from_sat(req.payment_amount_sat), cosign_requests,
-		).await.context("error making payment")?;
+		let resp = self.request_lightning_pay_htlc_cosign(cosign_requests)
+			.await.context("error making payment")?;
 
 		Ok(tonic::Response::new(resp.into()))
 	}

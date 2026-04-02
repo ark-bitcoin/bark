@@ -235,9 +235,8 @@ message ArkoorPackageCosignResponse {
 // lightning
 
 message LightningPayHtlcCosignRequest {
-	string invoice = 1;
+	reserved 1, 3;
 	repeated ArkoorCosignRequest parts = 2;
-	uint64 payment_amount_sat = 3;
 }
 
 message InitiateLightningPaymentRequest {
