@@ -15,6 +15,7 @@ service ArkService {
 	// If no round given, gives all rounds in the past 1.5 x the VTXO lifetime.
 	rpc GetFreshRounds(FreshRoundsRequest) returns (FreshRounds) {}
 	rpc GetRound(RoundId) returns (RoundInfo) {}
+	rpc GetVtxo(GetVtxoRequest) returns (GetVtxoResponse) {}
 
 	// * BOARDING *
 
@@ -159,6 +160,14 @@ message RoundId {
 message RoundInfo {
 	bytes funding_tx = 1;
 	bytes signed_vtxos = 2;
+}
+
+message GetVtxoRequest {
+	bytes vtxo_id = 1;
+}
+
+message GetVtxoResponse {
+	bytes vtxo = 1;
 }
 
 

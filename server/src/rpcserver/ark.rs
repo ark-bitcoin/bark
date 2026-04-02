@@ -117,6 +117,25 @@ impl rpc::server::ArkService for Server {
 		Ok(tonic::Response::new(response))
 	}
 
+	#[tracing::instrument(skip(self, req))]
+	async fn get_vtxo(
+		&self,
+		req: tonic::Request<protos::GetVtxoRequest>,
+	) -> Result<tonic::Response<protos::GetVtxoResponse>, tonic::Status> {
+		let req = req.into_inner();
+
+		let id = VtxoId::from_bytes(req.vtxo_id)?;
+
+		let vtxo_state = self.db.get_server_vtxo_by_id(id).await
+			.to_status()?;
+
+		let response = protos::GetVtxoResponse {
+			vtxo: vtxo_state.vtxo.serialize(),
+		};
+
+		Ok(tonic::Response::new(response))
+	}
+
 	// boarding
 
 	#[tracing::instrument(skip(self, req), fields(
