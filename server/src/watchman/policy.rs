@@ -50,8 +50,8 @@ impl ActionParams<()> {
 struct PubkeyExtra {
 	/// The next transaction, if any. The bool indicates whether the signature is known.
 	next_tx: Option<ProgressSpec>,
-	/// Whether the server may own an ancestor of this VTXO.
-	server_may_own_ancestor: bool,
+	/// Whether the server may own a descendant of this VTXO.
+	server_may_own_descendant: bool,
 	/// we have the key in our db
 	server_knows_key: bool,
 }
@@ -130,7 +130,7 @@ fn decide_action_hark_forfeit(params: &ActionParams) -> Action {
 
 /// Determine action for Pubkey policy
 ///
-/// We should continue with checkpoint tx if we own an ancestor, otherwise
+/// We should continue with checkpoint tx if we own a descendant, otherwise
 /// do nothing, the VTXO is exit by the user and owned by him.
 fn decide_action_pubkey(params: &ActionParams<PubkeyExtra>) -> Action {
 	let after_exit_delta = params.confirmed_at + BlockHeight::from(params.exit_delta);
@@ -141,7 +141,7 @@ fn decide_action_pubkey(params: &ActionParams<PubkeyExtra>) -> Action {
 			Action::Wait
 		}
 	} else {
-		if !params.policy_extras.server_may_own_ancestor {
+		if !params.policy_extras.server_may_own_descendant {
 			Action::Wait
 		} else {
 			try_progress(
@@ -242,7 +242,7 @@ impl ActionContextFetcher<'_> {
 			ServerVtxoPolicy::User(VtxoPolicy::Pubkey(p)) => {
 				let params = params.with_policy_extras(PubkeyExtra {
 					next_tx: self.fetch_progress(vtxo).await,
-					server_may_own_ancestor: self.check_server_may_own_ancestor(vtxo).await,
+					server_may_own_descendant: self.check_server_may_own_descendant(vtxo).await,
 					server_knows_key: self.check_server_knows_pubkey(p.user_pubkey).await,
 				});
 
@@ -363,7 +363,7 @@ impl ActionContextFetcher<'_> {
 			.and_then(|i| i.preimage).is_some()
 	}
 
-	async fn check_server_may_own_ancestor(&self, vtxo: &ServerVtxo) -> bool {
+	async fn check_server_may_own_descendant(&self, vtxo: &ServerVtxo) -> bool {
 		let txid = vtxo.point().txid;
 		self.db.get_virtual_transaction_by_txid(txid).await
 			.inspect_err(|e| warn!("DB error: {:#}", e))
@@ -402,7 +402,7 @@ mod tests {
 			confirmed_at: 100,
 			policy_extras: PubkeyExtra {
 				next_tx: None,
-				server_may_own_ancestor: true,
+				server_may_own_descendant: true,
 				server_knows_key: false,
 			},
 		};
@@ -423,7 +423,7 @@ mod tests {
 			confirmed_at: 100,
 			policy_extras: PubkeyExtra {
 				next_tx: Some(ProgressSpec { next_txid: txid, is_signed: true }),
-				server_may_own_ancestor: true,
+				server_may_own_descendant: true,
 				server_knows_key: false,
 			},
 		};
@@ -444,7 +444,7 @@ mod tests {
 			confirmed_at: 100,
 			policy_extras: PubkeyExtra {
 				next_tx: None,
-				server_may_own_ancestor: true,
+				server_may_own_descendant: true,
 				server_knows_key: false,
 			},
 		};
@@ -463,7 +463,7 @@ mod tests {
 			exit_delta: 144,
 			confirmed_at: 100,
 			policy_extras: PubkeyExtra {
-				server_may_own_ancestor: true,
+				server_may_own_descendant: true,
 				next_tx: Some(ProgressSpec { next_txid: txid, is_signed: false }),
 				server_knows_key: false,
 			},
@@ -484,7 +484,7 @@ mod tests {
 			confirmed_at: 100,
 			policy_extras: PubkeyExtra {
 				next_tx: None,
-				server_may_own_ancestor: false,
+				server_may_own_descendant: false,
 				server_knows_key: true,
 			},
 		};
@@ -506,7 +506,7 @@ mod tests {
 			confirmed_at: 100,
 			policy_extras: PubkeyExtra {
 				next_tx: None,
-				server_may_own_ancestor: false,
+				server_may_own_descendant: false,
 				server_knows_key: true,
 			},
 		};
@@ -515,9 +515,9 @@ mod tests {
 		assert_eq!(decide_action_pubkey(&params), Action::Claim { deadline: None });
 	}
 
-	/// When server does not own an ancestor, it cannot attempt to progress.
+	/// When server does not own an descendant, it cannot attempt to progress.
 	#[test]
-	fn pubkey_waits_when_server_does_not_own_ancestor() {
+	fn pubkey_waits_when_server_does_not_own_descendant() {
 		let txid = Txid::from_byte_array([1; 32]);
 		let params = ActionParams {
 			vtxo_id: test_vtxo_id(),
@@ -528,11 +528,11 @@ mod tests {
 			confirmed_at: 100,
 			policy_extras: PubkeyExtra {
 				next_tx: Some(ProgressSpec { next_txid: txid, is_signed: true }),
-				server_may_own_ancestor: false,
+				server_may_own_descendant: false,
 				server_knows_key: false,
 			},
 		};
-		// Even with a valid progress tx, server_may_own_ancestor: false means we wait
+		// Even with a valid progress tx, server_may_own_descendant: false means we wait
 		assert_eq!(decide_action_pubkey(&params), Action::Wait);
 	}
 
