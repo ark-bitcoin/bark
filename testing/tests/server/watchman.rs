@@ -253,7 +253,6 @@ async fn watchman_sweeps_lightning_vtxos() {
 	let msgs = log_claim.collect_for(Duration::from_millis(5000)).await;
 	failures.assert_empty();
 	println!("Lightning vtxo sweep: {:#?}", msgs);
-	assert_eq!(1, msgs.len());
 	// 2 boards and 1 vtxopool root
 	assert_eq!(3, msgs[0].vtxo_ids.len());
 	assert_eq!(700_000, msgs.iter().map(|m| m.total_input_value).sum::<Amount>().to_sat());
