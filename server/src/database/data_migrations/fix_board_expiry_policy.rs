@@ -2,7 +2,6 @@ use anyhow::Context;
 use futures::StreamExt;
 use tokio::time::Instant;
 use tokio_postgres::types::Type;
-use tracing::{debug, info, warn};
 
 use bitcoin::consensus;
 use bitcoin::secp256k1::{PublicKey, Parity};
@@ -41,11 +40,11 @@ pub async fn run(db: &Db, bitcoind: &BitcoinRpcClient) -> anyhow::Result<u64> {
 	).await.context("counting board expiry vtxos")?.get(0);
 
 	if total == 0 {
-		info!("fix_board_expiry_policy: no board expiry vtxos found");
+		eprintln!("fix_board_expiry_policy: no board expiry vtxos found");
 		return Ok(0);
 	}
 
-	info!("fix_board_expiry_policy: checking {} board expiry vtxos", total);
+	eprintln!("fix_board_expiry_policy: checking {} board expiry vtxos", total);
 
 	let select = reader.prepare(
 		"SELECT id, vtxo_id, vtxo FROM vtxo WHERE anchor_point = vtxo_id",
@@ -84,7 +83,7 @@ pub async fn run(db: &Db, bitcoind: &BitcoinRpcClient) -> anyhow::Result<u64> {
 		let tx_info = match tx_info {
 			Some(info) => info,
 			None => {
-				warn!("fix_board_expiry_policy: funding tx {} not found for vtxo id={}, skipping",
+				eprintln!("fix_board_expiry_policy: funding tx {} not found for vtxo id={}, skipping",
 					anchor.txid, id);
 				skipped += 1;
 				continue;
@@ -97,7 +96,6 @@ pub async fn run(db: &Db, bitcoind: &BitcoinRpcClient) -> anyhow::Result<u64> {
 
 		// If the VTXO's txout already matches the funding tx, nothing to fix.
 		if vtxo.txout() == *funding_txout {
-			debug!("fix_board_expiry_policy: vtxo id={} already correct, skipping", id);
 			skipped += 1;
 			continue;
 		}
@@ -106,7 +104,7 @@ pub async fn run(db: &Db, bitcoind: &BitcoinRpcClient) -> anyhow::Result<u64> {
 		let internal_key = match vtxo.policy() {
 			ServerVtxoPolicy::Expiry(ExpiryVtxoPolicy { internal_key }) => *internal_key,
 			other => {
-				warn!(
+				eprintln!(
 					"fix_board_expiry_policy: vtxo id={} has unexpected policy {:?}, skipping",
 					id, other.policy_type(),
 				);
@@ -126,6 +124,7 @@ pub async fn run(db: &Db, bitcoind: &BitcoinRpcClient) -> anyhow::Result<u64> {
 		let mut raw = RawVtxo::deserialize(vtxo_bytes)
 			.with_context(|| format!("failed to deserialize raw vtxo id={}", id))?;
 		raw.policy = ServerVtxoPolicy::new_expiry(combined_pubkey);
+		raw.amount = funding_txout.value;
 
 		let new_policy_bytes = raw.policy.serialize();
 		let new_vtxo_bytes = raw.serialize();
@@ -134,7 +133,7 @@ pub async fn run(db: &Db, bitcoind: &BitcoinRpcClient) -> anyhow::Result<u64> {
 		let patched = ServerVtxo::<Full>::deserialize(&new_vtxo_bytes)
 			.with_context(|| format!("patched vtxo failed to deserialize for id={}", id))?;
 		if patched.txout() != *funding_txout {
-			warn!(
+			eprintln!(
 				"fix_board_expiry_policy: patched vtxo id={} still doesn't match funding tx output, skipping",
 				id,
 			);
@@ -142,7 +141,7 @@ pub async fn run(db: &Db, bitcoind: &BitcoinRpcClient) -> anyhow::Result<u64> {
 			continue;
 		}
 
-		info!("fix_board_expiry_policy: fixing vtxo id={} vtxo_id={}", id, vtxo_id);
+		eprintln!("fix_board_expiry_policy: fixing vtxo id={} vtxo_id={}", id, vtxo_id);
 
 		writer.execute(
 			&update,
@@ -153,11 +152,10 @@ pub async fn run(db: &Db, bitcoind: &BitcoinRpcClient) -> anyhow::Result<u64> {
 		fixed += 1;
 
 		if last_log.elapsed() >= std::time::Duration::from_secs(1) {
-			debug!("fix_board_expiry_policy: processed {} fixed, {} skipped", fixed, skipped);
 			last_log = Instant::now();
 		}
 	}
 
-	info!("fix_board_expiry_policy: done — fixed {}, skipped {}", fixed, skipped);
+	eprintln!("fix_board_expiry_policy: done — fixed {}, skipped {}", fixed, skipped);
 	Ok(fixed)
 }
