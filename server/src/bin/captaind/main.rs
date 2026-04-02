@@ -218,6 +218,9 @@ enum DataCommand {
 	/// Backfill vtxo metadata columns from the vtxo blob
 	#[command()]
 	FillVtxos,
+	/// Fix board expiry VTXOs with incorrect internal key
+	#[command()]
+	FixBoardExpiryPolicy,
 }
 
 #[derive(clap::Subcommand)]
@@ -339,6 +342,11 @@ async fn inner_main() -> anyhow::Result<()> {
 				DataCommand::FillVtxos => {
 					let count = server::database::data_migrations::fill_vtxo_data::run(&db).await?;
 					println!("Backfilled {} vtxos", count);
+				}
+				DataCommand::FixBoardExpiryPolicy => {
+					let bitcoind = BitcoinRpcClient::new(&cfg.bitcoind.url, cfg.bitcoind.auth())?;
+					let count = server::database::data_migrations::fix_board_expiry_policy::run(&db, &bitcoind).await?;
+					println!("Fixed {} board expiry vtxos", count);
 				}
 			}
 		}
