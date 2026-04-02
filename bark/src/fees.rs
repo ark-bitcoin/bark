@@ -13,11 +13,12 @@ use crate::Wallet;
 /// estimate frequently when presenting this information to users.
 #[derive(Debug, Clone)]
 pub struct FeeEstimate {
-	/// The gross amount that will be received/sent
+	/// The total amount including fees.
 	pub gross_amount: Amount,
 	/// The fee amount charged by the server.
 	pub fee: Amount,
-	/// The net amount that will be received/sent.
+	/// The amount excluding fees. For sends, this is the amount the recipient
+	/// receives. For receives, this is the amount the user gets.
 	pub net_amount: Amount,
 	/// The VTXOs that would be used for this operation, if necessary.
 	pub vtxos_spent: Vec<VtxoId>,
@@ -124,6 +125,16 @@ impl Wallet {
 
 		let net_amount = amount.checked_sub(fee).unwrap_or(Amount::ZERO);
 		Ok(FeeEstimate::new(amount, fee, net_amount, vtxo_ids))
+	}
+
+	/// Estimate fees for offboarding the entire Ark balance to a given address.
+	/// Uses the same fee calculation as `offboard_all`.
+	pub async fn estimate_offboard_all(
+		&self,
+		address: &bitcoin::Address,
+	) -> Result<FeeEstimate> {
+		let vtxos = self.spendable_vtxos().await?;
+		self.estimate_offboard(address, &vtxos).await
 	}
 
 	/// Estimate fees for a refresh operation (round participation). `FeeEstimate::net_amount` is

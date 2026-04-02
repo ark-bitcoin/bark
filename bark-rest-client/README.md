@@ -42,6 +42,12 @@ Class | Method | HTTP request | Description
 *ExitsApi* | [**exit_start_vtxos**](docs/ExitsApi.md#exit_start_vtxos) | **POST** /api/v1/exits/start/vtxos | Start exit for specific VTXOs
 *ExitsApi* | [**get_all_exit_status**](docs/ExitsApi.md#get_all_exit_status) | **GET** /api/v1/exits/status | List all exit statuses
 *ExitsApi* | [**get_exit_status_by_vtxo_id**](docs/ExitsApi.md#get_exit_status_by_vtxo_id) | **GET** /api/v1/exits/status/{vtxo_id} | Get exit status
+*FeesApi* | [**board_fee**](docs/FeesApi.md#board_fee) | **GET** /api/v1/fees/board | Estimate board fee
+*FeesApi* | [**lightning_receive_fee**](docs/FeesApi.md#lightning_receive_fee) | **GET** /api/v1/fees/lightning/receive | Estimate Lightning receive fee
+*FeesApi* | [**lightning_send_fee**](docs/FeesApi.md#lightning_send_fee) | **GET** /api/v1/fees/lightning/pay | Estimate Lightning send fee
+*FeesApi* | [**offboard_all_fee**](docs/FeesApi.md#offboard_all_fee) | **GET** /api/v1/fees/offboard-all | Estimate offboard-all fee
+*FeesApi* | [**onchain_fee_rates**](docs/FeesApi.md#onchain_fee_rates) | **GET** /api/v1/fees/onchain | Get on-chain fee rates
+*FeesApi* | [**send_onchain_fee**](docs/FeesApi.md#send_onchain_fee) | **GET** /api/v1/fees/send-onchain | Estimate send-onchain fee
 *LightningApi* | [**generate_invoice**](docs/LightningApi.md#generate_invoice) | **POST** /api/v1/lightning/receives/invoice | Create a BOLT11 invoice
 *LightningApi* | [**get_receive_status**](docs/LightningApi.md#get_receive_status) | **GET** /api/v1/lightning/receives/{identifier} | Get receive status
 *LightningApi* | [**list_receive_statuses**](docs/LightningApi.md#list_receive_statuses) | **GET** /api/v1/lightning/receives | List all pending receive statuses
@@ -167,6 +173,8 @@ Class | Method | HTTP request | Description
  - [ExitTxStatusOneOf4](docs/ExitTxStatusOneOf4.md)
  - [ExitTxStatusOneOf5](docs/ExitTxStatusOneOf5.md)
  - [ExitTxStatusOneOf6](docs/ExitTxStatusOneOf6.md)
+ - [FeeEstimateQuery](docs/FeeEstimateQuery.md)
+ - [FeeEstimateResponse](docs/FeeEstimateResponse.md)
  - [FeeSchedule](docs/FeeSchedule.md)
  - [ImportVtxoRequest](docs/ImportVtxoRequest.md)
  - [InternalServerError](docs/InternalServerError.md)
@@ -184,12 +192,14 @@ Class | Method | HTTP request | Description
  - [MovementTimestamp](docs/MovementTimestamp.md)
  - [NextRoundStart](docs/NextRoundStart.md)
  - [NotFoundError](docs/NotFoundError.md)
+ - [OffboardAllFeeEstimateQuery](docs/OffboardAllFeeEstimateQuery.md)
  - [OffboardAllRequest](docs/OffboardAllRequest.md)
  - [OffboardFees](docs/OffboardFees.md)
  - [OffboardResult](docs/OffboardResult.md)
  - [OffboardVtxosRequest](docs/OffboardVtxosRequest.md)
  - [OnchainBalance](docs/OnchainBalance.md)
  - [OnchainDrainRequest](docs/OnchainDrainRequest.md)
+ - [OnchainFeeRatesResponse](docs/OnchainFeeRatesResponse.md)
  - [OnchainSendManyRequest](docs/OnchainSendManyRequest.md)
  - [OnchainSendRequest](docs/OnchainSendRequest.md)
  - [PaymentMethod](docs/PaymentMethod.md)
@@ -207,6 +217,7 @@ Class | Method | HTTP request | Description
  - [RoundStatusOneOf4](docs/RoundStatusOneOf4.md)
  - [RoundStatusOneOf5](docs/RoundStatusOneOf5.md)
  - [Send](docs/Send.md)
+ - [SendOnchainFeeEstimateQuery](docs/SendOnchainFeeEstimateQuery.md)
  - [SendOnchainRequest](docs/SendOnchainRequest.md)
  - [SendRequest](docs/SendRequest.md)
  - [SendResponse](docs/SendResponse.md)
