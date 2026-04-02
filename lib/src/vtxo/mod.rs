@@ -54,6 +54,7 @@
 //   the VTXO's own output policy
 
 pub mod policy;
+pub mod raw;
 pub(crate) mod genesis;
 mod validation;
 
