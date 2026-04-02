@@ -202,7 +202,8 @@ DEFAULT_DOCS_PATH := "bark/struct.Wallet.html"
 [unix]
 rustdocs ARG="":
 	mkdir -p {{RUSTDOCSDIR}}
-	cargo doc --target-dir {{RUSTDOCSDIR}} --locked --all --lib --examples {{ARG}}
+	cargo doc --target-dir {{RUSTDOCSDIR}} --locked --all --lib --examples {{ARG}} \
+		--features "onchain-bdk indexed-db"
 	echo "Open Rust docs at file://{{RUSTDOCSDIR}}/doc/{{DEFAULT_DOCS_PATH}}"
 
 [windows]
