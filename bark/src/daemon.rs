@@ -140,6 +140,13 @@ impl DaemonProcess {
 		}
 	}
 
+	/// Update cached fee rates from the chain source
+	async fn run_fee_rate_update(&self) {
+		if let Err(e) = self.wallet.chain.update_fee_rates(self.wallet.config.fallback_fee_rate).await {
+			warn!("An error occured while updating fee rates: {e:#}");
+		}
+	}
+
 	/// Sync onchain wallet
 	async fn run_onchain_sync(&self) {
 		let mut onchain = self.onchain.write().await;
@@ -247,6 +254,7 @@ impl DaemonProcess {
 						continue;
 					}
 
+					self.run_fee_rate_update().await;
 					self.run_boards_sync().await;
 					self.run_offboards_sync().await;
 					self.run_maintenance_refresh_process().await;
