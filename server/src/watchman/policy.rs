@@ -1,4 +1,5 @@
 
+use bitcoin::secp256k1::PublicKey;
 use bitcoin::Txid;
 
 use ark::{ServerVtxo, ServerVtxoPolicy, VtxoId, VtxoPolicy};
@@ -51,6 +52,8 @@ struct PubkeyExtra {
 	next_tx: Option<ProgressSpec>,
 	/// Whether the server may own an ancestor of this VTXO.
 	server_may_own_ancestor: bool,
+	/// we have the key in our db
+	server_knows_key: bool,
 }
 
 struct HtlcSendExtra {
@@ -130,11 +133,24 @@ fn decide_action_hark_forfeit(params: &ActionParams) -> Action {
 /// We should continue with checkpoint tx if we own an ancestor, otherwise
 /// do nothing, the VTXO is exit by the user and owned by him.
 fn decide_action_pubkey(params: &ActionParams<PubkeyExtra>) -> Action {
-	if !params.policy_extras.server_may_own_ancestor {
-		return Action::Wait;
+	let after_exit_delta = params.confirmed_at + BlockHeight::from(params.exit_delta);
+	if params.policy_extras.server_knows_key {
+		if params.chain_tip_height >= after_exit_delta {
+			Action::Claim { deadline: None }
+		} else {
+			Action::Wait
+		}
+	} else {
+		if !params.policy_extras.server_may_own_ancestor {
+			Action::Wait
+		} else {
+			try_progress(
+				params,
+				params.policy_extras.next_tx,
+				after_exit_delta,
+			).unwrap_or(Action::Wait)
+		}
 	}
-	let deadline = params.confirmed_at + BlockHeight::from(params.exit_delta);
-	try_progress(params, params.policy_extras.next_tx, deadline).unwrap_or(Action::Wait)
 }
 
 /// Determine action for ServerHtlcSend (outgoing Lightning payment).
@@ -223,10 +239,11 @@ impl ActionContextFetcher<'_> {
 			ServerVtxoPolicy::HarkForfeit(_) => {
 				decide_action_hark_forfeit(&params)
 			},
-			ServerVtxoPolicy::User(VtxoPolicy::Pubkey(..)) => {
+			ServerVtxoPolicy::User(VtxoPolicy::Pubkey(p)) => {
 				let params = params.with_policy_extras(PubkeyExtra {
 					next_tx: self.fetch_progress(vtxo).await,
 					server_may_own_ancestor: self.check_server_may_own_ancestor(vtxo).await,
+					server_knows_key: self.check_server_knows_pubkey(p.user_pubkey).await,
 				});
 
 				decide_action_pubkey(&params)
@@ -353,6 +370,13 @@ impl ActionContextFetcher<'_> {
 			.ok().flatten()
 			.map(|vtx| vtx.server_may_own_descendant()).unwrap_or(false)
 	}
+
+	async fn check_server_knows_pubkey(&self, pk: PublicKey) -> bool {
+		match self.db.fetch_ephemeral_tweak(pk).await {
+			Ok(Some(_)) => true,
+			_ => false,
+		}
+	}
 }
 
 #[cfg(test)]
@@ -379,6 +403,7 @@ mod tests {
 			policy_extras: PubkeyExtra {
 				next_tx: None,
 				server_may_own_ancestor: true,
+				server_knows_key: false,
 			},
 		};
 		assert_eq!(decide_action_pubkey(&params), Action::Wait);
@@ -399,6 +424,7 @@ mod tests {
 			policy_extras: PubkeyExtra {
 				next_tx: Some(ProgressSpec { next_txid: txid, is_signed: true }),
 				server_may_own_ancestor: true,
+				server_knows_key: false,
 			},
 		};
 		// deadline = confirmed_at + exit_delta = 100 + 144 = 244
@@ -419,6 +445,7 @@ mod tests {
 			policy_extras: PubkeyExtra {
 				next_tx: None,
 				server_may_own_ancestor: true,
+				server_knows_key: false,
 			},
 		};
 		assert_eq!(decide_action_pubkey(&params), Action::Wait);
@@ -438,9 +465,54 @@ mod tests {
 			policy_extras: PubkeyExtra {
 				server_may_own_ancestor: true,
 				next_tx: Some(ProgressSpec { next_txid: txid, is_signed: false }),
+				server_knows_key: false,
 			},
 		};
 		assert_eq!(decide_action_pubkey(&params), Action::Wait);
+	}
+
+	/// When the server knows the key, it waits until the exit delta has passed
+	/// before claiming (even without ancestry info).
+	#[test]
+	fn pubkey_knows_key_waits_before_exit_delta() {
+		let params = ActionParams {
+			vtxo_id: test_vtxo_id(),
+			chain_tip_height: 243,
+			progress_grace_period: Some(6),
+			expiry_height: 1000,
+			exit_delta: 144,
+			confirmed_at: 100,
+			policy_extras: PubkeyExtra {
+				next_tx: None,
+				server_may_own_ancestor: false,
+				server_knows_key: true,
+			},
+		};
+		// after_exit_delta = confirmed_at + exit_delta = 100 + 144 = 244
+		// chain_tip (243) < after_exit_delta (244), so wait
+		assert_eq!(decide_action_pubkey(&params), Action::Wait);
+	}
+
+	/// When the server knows the key and the exit delta has passed, it claims
+	/// with no deadline (it owns the key directly, no competing expiry).
+	#[test]
+	fn pubkey_knows_key_claims_at_exit_delta() {
+		let params = ActionParams {
+			vtxo_id: test_vtxo_id(),
+			chain_tip_height: 244,
+			progress_grace_period: Some(6),
+			expiry_height: 1000,
+			exit_delta: 144,
+			confirmed_at: 100,
+			policy_extras: PubkeyExtra {
+				next_tx: None,
+				server_may_own_ancestor: false,
+				server_knows_key: true,
+			},
+		};
+		// after_exit_delta = 100 + 144 = 244, chain_tip >= after_exit_delta
+		// deadline is None: server owns the key directly, no competing expiry
+		assert_eq!(decide_action_pubkey(&params), Action::Claim { deadline: None });
 	}
 
 	/// When server does not own an ancestor, it cannot attempt to progress.
@@ -457,6 +529,7 @@ mod tests {
 			policy_extras: PubkeyExtra {
 				next_tx: Some(ProgressSpec { next_txid: txid, is_signed: true }),
 				server_may_own_ancestor: false,
+				server_knows_key: false,
 			},
 		};
 		// Even with a valid progress tx, server_may_own_ancestor: false means we wait
