@@ -328,34 +328,41 @@ impl Db {
 		mailbox_id: MailboxIdentifier,
 		vtxos: &[Vtxo<Full>],
 	) -> anyhow::Result<Option<Checkpoint>> {
-		if vtxos.len() == 0 {
+		if vtxos.is_empty() {
 			return Ok(None);
 		}
 
-		let conn = self.get_conn().await?;
-		let statement = conn.prepare("SELECT next_checkpoint();").await?;
-		let checkpoint = conn.query_one(&statement, &[]).await?;
-		let checkpoint = checkpoint.get::<_, i64>(0);
-		let mailbox_type = String::from(mailbox_type);
+		let mut conn = self.get_conn().await?;
+		let tx = conn.transaction().await?;
 
-		let statement = conn.prepare("
+		// Acquire advisory lock to serialize all mailbox writes.
+		// This prevents race conditions where checkpoints could be committed out of order.
+		// Lock is automatically released when transaction commits/rolls back.
+		tx.execute("SELECT pg_advisory_xact_lock(hashtext('mailbox_write'))", &[]).await?;
+
+		let checkpoint: i64 = tx.query_one("SELECT next_checkpoint()", &[]).await?.get(0);
+		let mailbox_type_str = String::from(mailbox_type);
+
+		let statement = tx.prepare("
 			INSERT INTO mailbox (unblinded_mailbox_id, vtxo_id, vtxo, checkpoint, mailbox_type, created_at)
 			VALUES ($1, $2, $3, $4, $5::TEXT::mailbox_type, NOW());
 		").await?;
 		for vtxo in vtxos {
-			let rows_updated = conn.execute(&statement, &[
+			let rows_updated = tx.execute(&statement, &[
 				&mailbox_id.to_string(),
 				&vtxo.id().to_string(),
 				&ProtocolEncoding::serialize(vtxo).to_vec(),
 				&checkpoint,
-				&mailbox_type,
+				&mailbox_type_str,
 			]).await?;
 			debug_assert_eq!(rows_updated, 1);
 		}
 
+		tx.commit().await?;
+
 		telemetry::set_mailbox_metric("add", vtxos.len());
 
-		Ok(Some(u64::try_from(checkpoint)?))
+		Ok(Some(checkpoint as u64))
 	}
 
 	pub async fn get_mailbox_entries(
@@ -430,31 +437,38 @@ impl Db {
 		mailbox_id: MailboxIdentifier,
 		payment_hashes: &[sha256::Hash],
 	) -> anyhow::Result<Option<Checkpoint>> {
-		if payment_hashes.len() == 0 {
+		if payment_hashes.is_empty() {
 			return Ok(None);
 		}
 
-		let conn = self.get_conn().await?;
-		let statement = conn.prepare("SELECT next_checkpoint();").await?;
-		let checkpoint = conn.query_one(&statement, &[]).await?;
-		let checkpoint = checkpoint.get::<_, i64>(0);
-		let mailbox_type = String::from(mailbox_type);
+		let mut conn = self.get_conn().await?;
+		let tx = conn.transaction().await?;
 
-		let statement = conn.prepare("
+		// Acquire advisory lock to serialize all mailbox writes.
+		// This prevents race conditions where checkpoints could be committed out of order.
+		// Lock is automatically released when transaction commits/rolls back.
+		tx.execute("SELECT pg_advisory_xact_lock(hashtext('mailbox_write'))", &[]).await?;
+
+		let checkpoint: i64 = tx.query_one("SELECT next_checkpoint()", &[]).await?.get(0);
+		let mailbox_type_str = String::from(mailbox_type);
+
+		let statement = tx.prepare("
 			INSERT INTO mailbox (unblinded_mailbox_id, payment_hash, checkpoint, mailbox_type, created_at)
 			VALUES ($1, $2, $3, $4::TEXT::mailbox_type, NOW());
 		").await?;
 		for payment_hash in payment_hashes {
-			let rows_updated = conn.execute(&statement, &[
+			let rows_updated = tx.execute(&statement, &[
 				&mailbox_id.to_string(),
 				&payment_hash.to_string(),
 				&checkpoint,
-				&mailbox_type,
+				&mailbox_type_str,
 			]).await?;
 			debug_assert_eq!(rows_updated, 1);
 		}
 
-		Ok(Some(u64::try_from(checkpoint)?))
+		tx.commit().await?;
+
+		Ok(Some(checkpoint as u64))
 	}
 
 	/**
