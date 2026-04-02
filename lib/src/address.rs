@@ -318,7 +318,7 @@ pub enum ParseAddressError {
 	Bech32(bech32::DecodeError),
 	#[error("invalid HRP: '{0}'")]
 	Hrp(bech32::Hrp),
-	#[error("address ins an Arkade address and cannot be used here")]
+	#[error("address is an Arkade address and cannot be used here")]
 	Arkade,
 	#[error("unknown version: '{version}'")]
 	UnknownVersion {
