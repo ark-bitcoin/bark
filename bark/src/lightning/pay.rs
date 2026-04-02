@@ -600,8 +600,6 @@ impl Wallet {
 			builder.cosign_request(),
 		);
 		let cosign_request = protos::LightningPayHtlcCosignRequest {
-			invoice: invoice.to_string(),
-			payment_amount_sat: amount.to_sat(),
 			parts: package_cosign_request.parts,
 		};
 
