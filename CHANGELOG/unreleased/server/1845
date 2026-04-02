@@ -1,0 +1,4 @@
+- Send payment hashes in RoundVtxos mailbox messages
+  When notifying clients about completed round participations, the server sends
+  payment hashes (unlock hashes) so clients can sync the relevant rounds.
+  [#1845](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1845)

@@ -2,7 +2,7 @@ use anyhow::Context;
 use bdk_esplora::esplora_client::Amount;
 use bitcoin::key::Keypair;
 use bitcoin::OutPoint;
-use log::{info, trace, warn};
+use log::{error, info, trace, warn};
 
 use ark::ProtocolEncoding;
 use ark::board::{BoardBuilder, BOARD_FUNDING_TX_VTXO_VOUT};
@@ -248,6 +248,11 @@ impl Wallet {
 		self.db.update_vtxo_state_checked(
 			vtxo.id(), VtxoState::Spendable, &VtxoStateKind::UNSPENT_STATES,
 		).await?;
+
+		// Post vtxo ID to server for recovery (non-critical, just log errors)
+		if let Err(e) = self.post_recovery_vtxo_ids([vtxo.id()]).await {
+			error!("Failed to post recovery vtxo ID to server: {:#}", e);
+		}
 
 		let board = self.db.get_pending_board_by_vtxo_id(vtxo.id()).await?
 			.context("pending board not found")?;

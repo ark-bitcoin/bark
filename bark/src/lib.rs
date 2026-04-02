@@ -372,6 +372,8 @@ const BARK_PURPOSE_INDEX: u32 = 350;
 const VTXO_KEYS_INDEX: u32 = 0;
 /// Derivation index used to generate keypair for the mailbox
 const MAILBOX_KEY_INDEX: u32 = 1;
+/// Derivation index used to generate keypair for the recovery mailbox
+const RECOVERY_MAILBOX_KEY_INDEX: u32 = 2;
 
 lazy_static::lazy_static! {
 	/// Global secp context.
@@ -522,6 +524,11 @@ impl WalletSeed {
 
 	fn to_mailbox_keypair(&self) -> Keypair {
 		let mailbox_path = [ChildNumber::from_hardened_idx(MAILBOX_KEY_INDEX).unwrap()];
+		self.master.derive_priv(&SECP, &mailbox_path).unwrap().to_keypair(&SECP)
+	}
+
+	fn to_recovery_mailbox_keypair(&self) -> Keypair {
+		let mailbox_path = [ChildNumber::from_hardened_idx(RECOVERY_MAILBOX_KEY_INDEX).unwrap()];
 		self.master.derive_priv(&SECP, &mailbox_path).unwrap().to_keypair(&SECP)
 	}
 }

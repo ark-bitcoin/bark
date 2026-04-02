@@ -1,0 +1,4 @@
+- Add `RoundVtxosMessage` with `payment_hashes` field for round notifications
+  The mailbox message for round vtxo notifications sends payment hashes
+  (unlock hashes) to notify clients that their round participations are ready.
+  [#1845](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1845)

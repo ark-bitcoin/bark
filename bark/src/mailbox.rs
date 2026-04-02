@@ -14,7 +14,7 @@ use bitcoin::secp256k1::Keypair;
 use futures::{Stream, StreamExt};
 use log::{debug, error, info, trace, warn};
 
-use ark::{ProtocolEncoding, Vtxo};
+use ark::{ProtocolEncoding, Vtxo, VtxoId};
 use ark::lightning::PaymentHash;
 use ark::mailbox::{MailboxAuthorization, MailboxIdentifier};
 use ark::vtxo::Full;
@@ -44,9 +44,20 @@ impl Wallet {
 		self.seed.to_mailbox_keypair()
 	}
 
+	/// Get the keypair used for the server recovery mailbox
+	pub fn recovery_mailbox_keypair(&self) -> Keypair {
+		self.seed.to_recovery_mailbox_keypair()
+	}
+
 	/// Get this wallet's server mailbox ID
 	pub fn mailbox_identifier(&self) -> MailboxIdentifier {
 		let mailbox_kp = self.mailbox_keypair();
+		MailboxIdentifier::from_pubkey(mailbox_kp.public_key())
+	}
+
+	/// Get this wallet's server recovery mailbox ID
+	pub fn recovery_mailbox_identifier(&self) -> MailboxIdentifier {
+		let mailbox_kp = self.recovery_mailbox_keypair();
 		MailboxIdentifier::from_pubkey(mailbox_kp.public_key())
 	}
 
@@ -309,6 +320,28 @@ impl Wallet {
 		}
 
 		self.store_mailbox_checkpoint(checkpoint).await?;
+		Ok(())
+	}
+
+	/// Post vtxo IDs to the server's recovery mailbox
+	pub async fn post_recovery_vtxo_ids(
+		&self,
+		vtxo_ids: impl IntoIterator<Item = VtxoId>,
+	) -> anyhow::Result<()> {
+		let vtxo_ids = vtxo_ids.into_iter().map(|id| id.to_bytes().to_vec()).collect::<Vec<_>>();
+		if vtxo_ids.is_empty() {
+			return Ok(());
+		}
+		let nb_vtxos = vtxo_ids.len();
+
+		let (mut srv, _) = self.require_server().await?;
+		let unblinded_id = self.recovery_mailbox_identifier().to_vec();
+		let req = protos::mailbox_server::PostRecoveryVtxoIdsRequest { unblinded_id, vtxo_ids };
+
+		srv.mailbox_client.post_recovery_vtxo_ids(req).await
+			.context("error posting recovery vtxo IDs to server")?;
+
+		debug!("Posted {} recovery vtxo IDs to server", nb_vtxos);
 		Ok(())
 	}
 
