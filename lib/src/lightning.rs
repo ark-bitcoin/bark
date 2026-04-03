@@ -420,6 +420,17 @@ pub trait Bolt12InvoiceExt: Borrow<Bolt12Invoice> {
 
 impl Bolt12InvoiceExt for Bolt12Invoice {}
 
+pub trait OfferAmountExt: Borrow<OfferAmount> {
+	fn to_bitcoin_amount(&self) -> Option<Amount> {
+		match self.borrow() {
+			OfferAmount::Bitcoin { amount_msats } => Some(Amount::from_msat_ceil(*amount_msats)),
+			OfferAmount::Currency { .. } => None,
+		}
+	}
+}
+
+impl OfferAmountExt for OfferAmount {}
+
 #[cfg(test)]
 mod test {
 	use super::*;
@@ -432,7 +443,7 @@ mod test {
 	use lightning::ln::inbound_payment::ExpandedKey;
 	use lightning::offers::nonce::Nonce;
 	use lightning::offers::invoice_request::InvoiceRequest;
-	use lightning::offers::offer::OfferBuilder;
+	use lightning::offers::offer::{CurrencyCode, OfferBuilder};
 	use lightning::sign::EntropySource;
 	use lightning::types::features::BlindedHopFeatures;
 
@@ -588,5 +599,20 @@ mod test {
 		// Validate the invoice was issued for this offer and verify its signature
 		invoice.validate_issuance(&offer).unwrap();
 		invoice.check_signature().unwrap();
+	}
+
+	#[test]
+	fn offer_amount_ext_to_bitcoin_amount() {
+		// Bitcoin amount converts (rounds up from msats)
+		let btc = OfferAmount::Bitcoin { amount_msats: 1_500 };
+		assert_eq!(btc.to_bitcoin_amount(), Some(Amount::from_sat(2)));
+
+		let btc_exact = OfferAmount::Bitcoin { amount_msats: 2_000 };
+		assert_eq!(btc_exact.to_bitcoin_amount(), Some(Amount::from_sat(2)));
+
+		// Currency amount returns None
+		let usd = CurrencyCode::from_str("USD").unwrap();
+		let currency = OfferAmount::Currency { iso4217_code: usd, amount: 100 };
+		assert_eq!(currency.to_bitcoin_amount(), None);
 	}
 }
