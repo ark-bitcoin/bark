@@ -52,6 +52,23 @@ impl Wallet {
 		Ok(FeeEstimate::new(board_amount, fee, net_amount, vec![]))
 	}
 
+	/// Estimate fees for an arkoor payment operation. Currently, this is a no-op as the server
+	/// does not charge any fees for arkoor payments.
+	pub async fn estimate_arkoor_payment_fee(&self, amount: Amount) -> Result<FeeEstimate> {
+		let zero_fee = Amount::ZERO;
+		let inputs = match self.select_vtxos_to_cover(amount).await {
+			Ok(inputs) => inputs,
+			Err(_) => {
+				// We choose to ignore every error, even those which are not due to insufficient
+				// funds.
+				vec![]
+			},
+		};
+
+		let vtxo_ids = inputs.into_iter().map(|v| v.id()).collect();
+		Ok(FeeEstimate::new(amount, zero_fee, amount, vtxo_ids))
+	}
+
 	/// Estimate fees for a lightning receive operation. `FeeEstimate::gross_amount` is the
 	/// lightning payment amount, `FeeEstimate::net_amount` is how much the end user will receive.
 	pub async fn estimate_lightning_receive_fee(&self, amount: Amount) -> Result<FeeEstimate> {
