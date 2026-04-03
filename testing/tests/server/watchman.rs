@@ -2,9 +2,9 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use bitcoin::Amount;
 use log::{error, warn};
 use parking_lot::Mutex;
+
 use server::config::OptionalService;
 use server::vtxopool::VtxoTarget;
 use server_log::{
@@ -15,7 +15,7 @@ use ark_testing::{TestContext, btc, sat};
 use ark_testing::constants::{BOARD_CONFIRMATIONS, ROUND_CONFIRMATIONS};
 use ark_testing::daemon::captaind::SlogHandler;
 use ark_testing::exit::complete_exit;
-use ark_testing::util::{FutureExt, ReceiverExt};
+use ark_testing::util::FutureExt;
 
 
 /// Struct that captures all watchman related failures so that we
@@ -62,7 +62,7 @@ async fn watchman_sweeps_boards() {
 	}).create().await;
 	let failures = WatchmanFailureCollector::default();
 	let wm = ctx.watchmand("watchman").cfg(|cfg| {
-		cfg.watchman.process_interval = Duration::from_millis(500);
+		cfg.watchman.process_interval = Duration::from_secs(15 * 60);
 	}).create(&srv).await;
 	wm.add_slog_handler(failures.clone());
 
@@ -70,19 +70,25 @@ async fn watchman_sweeps_boards() {
 	let bark1 = ctx.bark("bark1", &srv).funded(sat(200_000)).create().await;
 
 	let _ = bark1.board(sat(100_000)).await;
-	ctx.generate_blocks(100).await;
+	ctx.generate_blocks(2 * BOARD_CONFIRMATIONS).await;
 	let _ = bark1.offchain_balance().await;
 
 	ctx.refresh_all(&srv, &[&bark1]).await;
 
-	ctx.generate_blocks(50).await;
+	// expire only the board, not the refresh
+	let tip = ctx.generate_blocks(
+		srv.config().vtxo_lifetime as u32 - 2 * BOARD_CONFIRMATIONS + 2,
+	).await;
+	wm.wait_for_sync_height(tip as u32).await;
 
-	let msgs = log_claim.collect_for(Duration::from_millis(10000)).await;
+	wm.trigger_sweep().await;
+	let msg = log_claim.recv().wait_millis(15000).await.expect("no claim log");
 	failures.assert_empty();
-	println!("Board sweep: {:#?}", msgs);
-	assert_eq!(1, msgs.iter().map(|m| m.vtxo_ids.len()).sum::<usize>());
+	println!("Board sweep: {:#?}", msg);
+	assert_eq!(1, msg.vtxo_ids.len());
 	// rounds didnt' expire yet
-	assert_eq!(100_000, msgs.iter().map(|m| m.total_input_value).sum::<Amount>().to_sat());
+	assert_eq!(100_000, msg.total_input_value.to_sat());
+	assert_eq!(99_093, msg.total_output_value.to_sat());
 }
 
 #[tokio::test]
@@ -95,7 +101,7 @@ async fn watchman_sweeps_round_vtxos() {
 	}).create().await;
 	let failures = WatchmanFailureCollector::default();
 	let wm = ctx.watchmand("watchman").cfg(|cfg| {
-		cfg.watchman.process_interval = Duration::from_millis(500);
+		cfg.watchman.process_interval = Duration::from_secs(15 * 60);
 	}).create(&srv).await;
 	wm.add_slog_handler(failures.clone());
 
@@ -115,15 +121,18 @@ async fn watchman_sweeps_round_vtxos() {
 	bark2.sync().await;
 
 	// Wait for vtxos to expire (144 blocks from their creation)
-	ctx.generate_blocks(150).await;
+	let tip = ctx.generate_blocks(150).await;
+	wm.wait_for_sync_height(tip).await;
 
 	// Watchman should sweep the expired server-owned vtxos from the round
 	// (checkpoint vtxos or other intermediate vtxos created during round processing)
-	let msgs = log_claim.collect_for(Duration::from_millis(15000)).await;
+	wm.trigger_sweep().await;
+	let msg = log_claim.recv().wait_millis(15000).await.expect("no claim log");
 	failures.assert_empty();
-	println!("Round vtxo sweep: {:#?}", msgs);
-	assert_eq!(3, msgs.iter().map(|m| m.vtxo_ids.len()).sum::<usize>());
-	assert_eq!(800_000, msgs.iter().map(|m| m.total_input_value).sum::<Amount>().to_sat());
+	println!("Round vtxo sweep: {:#?}", msg);
+	assert_eq!(3, msg.vtxo_ids.len());
+	assert_eq!(800_000, msg.total_input_value.to_sat());
+	assert_eq!(798_029, msg.total_output_value.to_sat());
 }
 
 #[tokio::test]
@@ -135,7 +144,7 @@ async fn watchman_sweeps_arkoor_vtxos_sender_exit() {
 	}).create().await;
 	let failures = WatchmanFailureCollector::default();
 	let wm = ctx.watchmand("watchman").cfg(|cfg| {
-		cfg.watchman.process_interval = Duration::from_millis(500);
+		cfg.watchman.process_interval = Duration::from_secs(15 * 60);
 	}).create(&srv).await;
 	wm.add_slog_handler(failures.clone());
 
@@ -156,15 +165,18 @@ async fn watchman_sweeps_arkoor_vtxos_sender_exit() {
 	bark1.claim_all_exits(bark1.get_onchain_address().await).await;
 
 	// Wait for the HTLC vtxos to expire
-	ctx.generate_blocks(150).await;
+	let tip = ctx.generate_blocks(150).await;
+	wm.wait_for_sync_height(tip).await;
 
 	// Watchman should sweep the expired HTLC vtxos
-	let msgs = log_claim.collect_for(Duration::from_millis(5000)).await;
+	wm.trigger_sweep().await;
+	let msg = log_claim.recv().wait_millis(15000).await.expect("no claim log");
 	failures.assert_empty();
-	println!("arkoor vtxo sweep: {:#?}", msgs);
+	println!("arkoor vtxo sweep: {:#?}", msg);
 	// 1 boards and 1 change
-	assert_eq!(2, msgs[0].vtxo_ids.len());
-	assert_eq!(350_000, msgs.iter().map(|m| m.total_input_value).sum::<Amount>().to_sat());
+	assert_eq!(2, msg.vtxo_ids.len());
+	assert_eq!(350_000, msg.total_input_value.to_sat());
+	assert_eq!(348_561, msg.total_output_value.to_sat());
 }
 
 #[tokio::test]
@@ -176,7 +188,7 @@ async fn watchman_sweeps_arkoor_vtxos_receiver_exit() {
 	}).create().await;
 	let failures = WatchmanFailureCollector::default();
 	let wm = ctx.watchmand("watchman").cfg(|cfg| {
-		cfg.watchman.process_interval = Duration::from_millis(500);
+		cfg.watchman.process_interval = Duration::from_secs(15 * 60);
 	}).create(&srv).await;
 	wm.add_slog_handler(failures.clone());
 
@@ -197,15 +209,18 @@ async fn watchman_sweeps_arkoor_vtxos_receiver_exit() {
 	bark2.claim_all_exits(bark2.get_onchain_address().await).await;
 
 	// Wait for the HTLC vtxos to expire
-	ctx.generate_blocks(150).await;
+	let tip = ctx.generate_blocks(150).await;
+	wm.wait_for_sync_height(tip).await;
 
 	// Watchman should sweep the expired HTLC vtxos
-	let msgs = log_claim.collect_for(Duration::from_millis(5000)).await;
+	wm.trigger_sweep().await;
+	let msg = log_claim.recv().wait_millis(5000).await.expect("no claim log");
 	failures.assert_empty();
-	println!("arkoor vtxo sweep: {:#?}", msgs);
+	println!("arkoor vtxo sweep: {:#?}", msg);
 	// only change
-	assert_eq!(1, msgs[0].vtxo_ids.len());
-	assert_eq!(250_000, msgs.iter().map(|m| m.total_input_value).sum::<Amount>().to_sat());
+	assert_eq!(1, msg.vtxo_ids.len());
+	assert_eq!(250_000, msg.total_input_value.to_sat());
+	assert_eq!(249_093, msg.total_output_value.to_sat());
 }
 
 #[tokio::test]
@@ -222,7 +237,7 @@ async fn watchman_sweeps_lightning_vtxos() {
 	}).create().await;
 	let failures = WatchmanFailureCollector::default();
 	let wm = ctx.watchmand("watchman").cfg(|cfg| {
-		cfg.watchman.process_interval = Duration::from_millis(500);
+		cfg.watchman.process_interval = Duration::from_secs(15 * 60);
 	}).create(&srv).await;
 	wm.add_slog_handler(failures.clone());
 
@@ -247,15 +262,18 @@ async fn watchman_sweeps_lightning_vtxos() {
 	);
 
 	// Wait for the HTLC vtxos to expire
-	ctx.generate_blocks(150).await;
+	let tip = ctx.generate_blocks(150).await;
+	wm.wait_for_sync_height(tip).await;
 
 	// Watchman should sweep the expired HTLC vtxos
-	let msgs = log_claim.collect_for(Duration::from_millis(5000)).await;
+	wm.trigger_sweep().await;
+	let msg = log_claim.recv().wait_millis(5000).await.expect("no claim log");
 	failures.assert_empty();
-	println!("Lightning vtxo sweep: {:#?}", msgs);
+	println!("Lightning vtxo sweep: {:#?}", msg);
 	// 2 boards and 1 vtxopool root
-	assert_eq!(3, msgs[0].vtxo_ids.len());
-	assert_eq!(700_000, msgs.iter().map(|m| m.total_input_value).sum::<Amount>().to_sat());
+	assert_eq!(3, msg.vtxo_ids.len());
+	assert_eq!(700_000, msg.total_input_value.to_sat());
+	assert_eq!(698_029, msg.total_output_value.to_sat());
 }
 
 #[tokio::test]
@@ -268,7 +286,7 @@ async fn watchman_sweeps_round_leftovers_after_exits() {
 	}).create().await;
 	let failures = WatchmanFailureCollector::default();
 	let wm = ctx.watchmand("watchman").cfg(|cfg| {
-		cfg.watchman.process_interval = Duration::from_millis(500);
+		cfg.watchman.process_interval = Duration::from_secs(15 * 60);
 	}).create(&srv).await;
 	wm.add_slog_handler(failures.clone());
 
@@ -322,16 +340,17 @@ async fn watchman_sweeps_round_leftovers_after_exits() {
 	ctx.generate_blocks(1).await;
 
 	// Wait for remaining vtxos to expire
-	ctx.generate_blocks(150).await;
+	let tip = ctx.generate_blocks(150).await;
+	wm.wait_for_sync_height(tip).await;
 
 	// Watchman should sweep the expired server-owned vtxos from the round
 	// After exits, there are still server-side vtxos (checkpoints, connectors, etc.) to sweep
-	let msgs = log_claim.collect_for(Duration::from_millis(15000)).await;
+	wm.trigger_sweep().await;
+	let msg = log_claim.recv().wait_millis(15000).await.expect("no claim log");
 	failures.assert_empty();
-	println!("Round leftovers sweep: {:#?}", msgs);
-	assert_eq!(Amount::from_sat(3_600_000), msgs.iter().map(|m| m.total_input_value).sum::<Amount>(),
-		"Watchman should sweep expired vtxos after some users exit",
-	);
+	println!("Round leftovers sweep: {:#?}", msg);
+	assert_eq!(3_600_000, msg.total_input_value.to_sat());
+	assert_eq!(3_591_421, msg.total_output_value.to_sat());
 }
 
 #[tokio::test]
@@ -351,7 +370,7 @@ async fn watchman_sweeps_vtxopool_with_exit() {
 	}).create().await;
 	let failures = WatchmanFailureCollector::default();
 	let wm = ctx.watchmand("watchman").cfg(|cfg| {
-		cfg.watchman.process_interval = Duration::from_millis(500);
+		cfg.watchman.process_interval = Duration::from_secs(15 * 60);
 	}).create(&srv).await;
 	wm.add_slog_handler(failures.clone());
 
@@ -392,11 +411,14 @@ async fn watchman_sweeps_vtxopool_with_exit() {
 	);
 
 	// Wait for the HTLC vtxos to expire
-	ctx.generate_blocks(150).await;
+	let tip = ctx.generate_blocks(150).await;
+	wm.wait_for_sync_height(tip).await;
 
 	// Watchman should sweep the expired HTLC vtxos
-	let msgs = log_claim.collect_for(Duration::from_millis(10000)).await;
+	wm.trigger_sweep().await;
+	let msg = log_claim.recv().wait_millis(10000).await.expect("no claim log");
 	failures.assert_empty();
-	println!("Lightning vtxo sweep: {:#?}", msgs);
-	assert_eq!(300_099_000, msgs.iter().map(|m| m.total_input_value).sum::<Amount>().to_sat());
+	println!("Lightning vtxo sweep: {:#?}", msg);
+	assert_eq!(300_099_000, msg.total_input_value.to_sat());
+	assert_eq!(300_094_905, msg.total_output_value.to_sat());
 }
