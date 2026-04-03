@@ -125,9 +125,6 @@ pub enum PaymentMethodParsingError {
 	/// The Ark address is invalid.
 	#[error("invalid ark address: {0}")]
 	InvalidArkAddress(#[from] ArkoorAddressError),
-	/// An amount is required but was not provided and cannot be inferred.
-	#[error("amount required")]
-	MissingAmount,
 	/// The provided amount does not satisfy the payment target's requirements.
 	#[error("amount mismatch: expected {expected}, got {got}")]
 	AmountMismatch { expected: Amount, got: Amount },

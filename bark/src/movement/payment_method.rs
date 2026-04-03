@@ -11,7 +11,7 @@ use lnurllib::lightning_address::LightningAddress;
 use lnurllib::lnurl::LnUrl;
 use serde::{Deserialize, Serialize};
 
-use ark::lightning::Invoice;
+use ark::lightning::{Invoice, OfferAmountExt};
 
 const PAYMENT_METHOD_TAG: &str = "type";
 const PAYMENT_METHOD_VALUE: &str = "value";
@@ -138,6 +138,32 @@ impl PaymentMethod {
 			PaymentMethod::OutputScript(_) => false,
 			PaymentMethod::Invoice(_) => false,
 			PaymentMethod::Offer(_) => false,
+			PaymentMethod::LightningAddress(_) => true,
+			PaymentMethod::Lnurl(_) => true,
+			PaymentMethod::Custom(_) => false,
+		}
+	}
+
+	/// Returns whether the payment method needs an externally provided amount,
+	/// either because it cannot carry one itself or because it doesn't carry
+	/// one.
+	///
+	/// Invoices and offers can carry their own amount; only amountless ones
+	/// require an amount upfront. An offer denominated in a fiat currency has
+	/// no bitcoin amount, so it also requires one.
+	///
+	/// For [PaymentMethod::Custom] we can't tell whether an amount is needed,
+	/// so we never require one and leave it to whoever handles the custom
+	/// method.
+	pub fn requires_amount(&self) -> bool {
+		match self {
+			PaymentMethod::Ark(_) => true,
+			PaymentMethod::Bitcoin(_) => true,
+			PaymentMethod::OutputScript(_) => true,
+			PaymentMethod::Invoice(invoice) => invoice.amount_msat().is_none(),
+			PaymentMethod::Offer(offer) => {
+				offer.amount().and_then(|a| a.to_bitcoin_amount()).is_none()
+			},
 			PaymentMethod::LightningAddress(_) => true,
 			PaymentMethod::Lnurl(_) => true,
 			PaymentMethod::Custom(_) => false,
@@ -335,8 +361,61 @@ impl<'de> Deserialize<'de> for PaymentMethod {
 #[cfg(test)]
 mod test {
 	use std::str::FromStr;
+	use std::time::Duration;
+
+	use bitcoin::hashes::{sha256, Hash};
+	use bitcoin::secp256k1::{Message, PublicKey, Secp256k1, SecretKey};
+	use lightning::offers::offer::OfferBuilder;
+	use lightning_invoice::{Currency, InvoiceBuilder, PaymentSecret};
 
 	use super::*;
+
+	fn test_invoice(amount_msat: Option<u64>) -> Bolt11Invoice {
+		let secp = Secp256k1::new();
+		let secret = SecretKey::from_slice(&[2; 32]).unwrap();
+		let hash = sha256::Hash::hash(b"preimage");
+		let builder = InvoiceBuilder::new(Currency::Regtest)
+			.description("test".into())
+			.payment_hash(hash)
+			.payment_secret(PaymentSecret([42; 32]))
+			.duration_since_epoch(Duration::from_secs(1_700_000_000))
+			.min_final_cltv_expiry_delta(144);
+		let builder = match amount_msat {
+			Some(msat) => builder.amount_milli_satoshis(msat),
+			None => builder,
+		};
+		builder.build_signed(|hash: &Message| secp.sign_ecdsa_recoverable(hash, &secret)).unwrap()
+	}
+
+	#[test]
+	fn test_requires_amount() {
+		// Methods that cannot carry an amount always require one.
+		let ark_str = "tark1pwh9vsmezqqpjy9akejayl2vvcse6he97rn40g84xrlvrlnhayuuyefrp9nse2y3zqqpjy9akejayl2vvcse6he97rn40g84xrlvrlnhayuuyefrp9nse2yscufs5u";
+		assert!(PaymentMethod::Ark(ark::Address::from_str(ark_str).unwrap()).requires_amount());
+		let bitcoin_str = "1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa";
+		assert!(PaymentMethod::Bitcoin(bitcoin::Address::from_str(bitcoin_str).unwrap()).requires_amount());
+		let script = bitcoin::ScriptBuf::from_hex("6a0474657374").unwrap();
+		assert!(PaymentMethod::OutputScript(script).requires_amount());
+		let lnaddr = LightningAddress::from_str("byte@second.tech").unwrap();
+		assert!(PaymentMethod::LightningAddress(lnaddr).requires_amount());
+		let lnurl_str = "LNURL1DP68GURN8GHJ7UM9WFMXJCM99E3K7MF0V9CXJ0M385EKVCENXC6R2C35XVUKXEFCV5MKVV34X5EKZD3EV56NYD3HXQURZEPEXEJXXEPNXSCRVWFNV9NXZCN9XQ6XYEFHVGCXXCMYXYMNSERXFQ5FNS";
+		assert!(PaymentMethod::Lnurl(LnUrl::from_str(lnurl_str).unwrap()).requires_amount());
+
+		// An invoice only requires an amount when it is amountless.
+		assert!(PaymentMethod::from(test_invoice(None)).requires_amount());
+		assert!(!PaymentMethod::from(test_invoice(Some(100_000))).requires_amount());
+
+		// Same for offers.
+		let secp = Secp256k1::new();
+		let pubkey = PublicKey::from_secret_key(&secp, &SecretKey::from_slice(&[43; 32]).unwrap());
+		let amountless_offer = OfferBuilder::new(pubkey).build().unwrap();
+		assert!(PaymentMethod::Offer(amountless_offer).requires_amount());
+		let offer = OfferBuilder::new(pubkey).amount_msats(100_000).build().unwrap();
+		assert!(!PaymentMethod::Offer(offer).requires_amount());
+
+		// For custom methods we can't tell, so we never require an amount.
+		assert!(!PaymentMethod::Custom("custom".into()).requires_amount());
+	}
 
 	#[test]
 	fn test_serialization() {

@@ -12,9 +12,7 @@ use std::path::PathBuf;
 use std::str::FromStr;
 
 use anyhow::Context;
-use bark::ArkoorAddressError;
 use bark::movement::PaymentMethod;
-use bark::payment_request::ArkAddressType;
 use bark::secret::Secret;
 use bark_cli::VERSION_DIRTY;
 use bitcoin::{Amount};
@@ -22,14 +20,10 @@ use bitcoin::secp256k1;
 use clap::builder::BoolishValueParser;
 use clap::Parser;
 use futures::StreamExt;
-use ::lightning::offers::offer::Offer;
-use lightning_invoice::Bolt11Invoice;
-use lnurl::lightning_address::LightningAddress;
-use lnurl::lnurl::LnUrl;
 use log::{debug, info, warn};
 
 use ark::{ProtocolEncoding, VtxoId};
-use ark::lightning::PaymentHash;
+use bark::PaymentInitOutput;
 use bark::vtxo::{VtxoFilter, VtxoStateKind};
 use bark_json as json;
 use bark_json::primitives::WalletVtxoInfo;
@@ -286,10 +280,16 @@ enum Command {
 		no_sync: bool,
 	},
 
-	/// Send money using Ark
+	/// Send a payment to an Ark, Lightning, Bitcoin or BIP-321 destination
 	#[command()]
 	Send {
-		/// The destination can be an Ark address, a BOLT11-invoice, LNURL or a lightning address
+		/// Supported destinations are:
+		/// - Ark address
+		/// - BOLT11 invoice
+		/// - BOLT12 offer
+		/// - Lightning address
+		/// - Bitcoin address
+		/// - BIP321 payment URI
 		destination: String,
 		/// The amount to send (optional for bolt11)
 		///
@@ -302,7 +302,12 @@ enum Command {
 		no_sync: bool,
 		/// Wait for the payment to be completed
 		#[arg(long)]
-		wait: bool
+		wait: bool,
+		/// In case the BIP 321 payment URI has multiple valid payment methods,
+		/// select the method by index. Allow using this CLI in non-interactive
+		/// mode. It is ignored if the destination has only one valid payment method.
+		#[arg(long)]
+		method_index: Option<u32>,
 	},
 
 	/// Send money from your vtxo's to an onchain address
@@ -644,56 +649,102 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 			};
 			output_json(&json::cli::PendingBoardInfo::from(board));
 		},
-		Command::Send { destination, amount, comment, no_sync, wait } => {
+		Command::Send { destination, amount, comment, no_sync, wait, method_index } => {
 			if !no_sync {
 				info!("Syncing wallet...");
 				wallet.sync().await;
 			}
 
-			match ArkAddressType::from_str(&destination) {
-				Ok(ArkAddressType::Bark(addr)) => {
-					let amount = amount.context("amount missing")?;
-					if comment.is_some() {
-						bail!("comment not supported for Ark address");
-					}
+			let parsed_payment = wallet.parse_payment_request(&destination).await?;
+			let effective_amount = amount.or(parsed_payment.amount);
 
-					info!("Sending arkoor payment of {} to address {}", amount, addr);
-					wallet.send_arkoor_payment(&addr, amount).await?;
-					info!("Payment sent successfully!");
-					return Ok(());
-				},
-				// Explicitly handle Arkade addresses
-				Ok(ArkAddressType::Arkade(_)) => {
-					return Err(ArkoorAddressError::ServerMismatch.into());
-				},
-				// Ignore other errors, we want to check payment methods below
-				Err(_) => {}
+			let mut valid = Vec::with_capacity(parsed_payment.options.len());
+			let mut invalid = Vec::with_capacity(parsed_payment.options.len());
+
+			for option in parsed_payment.options {
+				let fee_str = if let Some(amt) = effective_amount {
+					match wallet.estimate_payment_fee(&option, amt).await {
+						Ok(fee) => format!("fee ~{}", fee.fee),
+						Err(_) => "unknown fee".to_string(),
+					}
+				} else {
+					"unknown fee".to_string()
+				};
+
+				let err_str = if option.errors.is_empty() {
+					String::new()
+				} else {
+					let msgs: Vec<_> = option.errors.iter()
+						.map(|e| e.to_string()).collect();
+					format!(" ({})", msgs.join(", "))
+				};
+
+				let label = format!("{} ({}){}", option.method.type_str(), fee_str, err_str);
+				if err_str.is_empty() {
+					valid.push((option, label));
+				} else {
+					invalid.push((option, label));
+				}
+			}
+
+			for (_, label) in invalid {
+				info!("Ignoring invalid payment method: {}", label);
+			}
+
+			if valid.is_empty() {
+				bail!("no valid payment methods found");
+			}
+
+			// If payment string has more than one valid method,
+			// prompt the user to select one.
+			let selected_method = if valid.len() == 1 {
+				info!("{} is only method supported, auto selected", valid[0].1);
+				&valid[0].0.method
+			} else if let Some(index) = method_index {
+				let (option, _) = &valid.get(index as usize)
+					.context("Could not pick method by index")?;
+				&option.method
+			} else {
+				let options = valid.iter()
+					.map(|(_, label)| label.clone())
+					.collect::<Vec<String>>();
+
+				let selection = dialoguer::Select::new()
+					.with_prompt("Select payment method")
+					.items(&options)
+					.default(0)
+					.interact()
+					.context("failed to read user selection")?;
+
+				let (option, _) = &valid[selection];
+				&option.method
 			};
 
-			if let Ok(inv) = Bolt11Invoice::from_str(&destination) {
-				if comment.is_some() {
-					bail!("comment is not supported for BOLT-11 invoices");
+			// Ask for an amount when the selected method needs one
+			// and none was provided.
+			let effective_amount = match effective_amount {
+				None if selected_method.requires_amount() => {
+					let amount = dialoguer::Input::<Amount>::new()
+						.with_prompt("Amount to send (e.g. 250000 sats)")
+						.interact_text()
+						.context("failed to read amount")?;
+					Some(amount)
+				},
+				other => other,
+			};
+
+			// Send the payment.
+			let output = wallet.send_payment(
+				selected_method, effective_amount, comment, wait
+			).await?;
+
+			// Wait for lightning payment settlement if requested.
+			if let PaymentInitOutput::Lightning(invoice) = output {
+				if wait {
+					info!("Payment completed: hash = {}", invoice.payment_hash());
+				} else {
+					info!("Payment initiated: hash = {}", invoice.payment_hash());
 				}
-				let invoice = wallet.pay_lightning_invoice(inv, amount, wait).await?;
-				log_lightning_send_outcome(invoice.payment_hash(), wait);
-			} else if let Ok(offer) = Offer::from_str(&destination) {
-				if comment.is_some() {
-					bail!("comment is not supported for BOLT-12 offers");
-				}
-				let invoice = wallet.pay_lightning_offer(offer, amount, wait).await?;
-				log_lightning_send_outcome(invoice.payment_hash(), wait);
-			} else if let Ok(addr) = LightningAddress::from_str(&destination) {
-				let amount = amount.context("amount is required for Lightning addresses")?;
-				let invoice = wallet.pay_lightning_address(&addr, amount, comment, wait).await?;
-				log_lightning_send_outcome(invoice.payment_hash(), wait);
-			} else if let Ok(lnurl) = LnUrl::from_str(&destination) {
-				let amount = amount.context("amount is required for LNURL")?;
-				let invoice = wallet.pay_lnurl(&lnurl, amount, comment, wait).await?;
-				log_lightning_send_outcome(invoice.payment_hash(), wait);
-			} else {
-				bail!("Argument is not a valid destination. Supported are: \
-					ark addresses, bolt11 invoices, bolt12 offers, lightning addresses and LNURL",
-				);
 			}
 		},
 		Command::SendOnchain { destination, amount, no_sync } => {
@@ -786,15 +837,6 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 		},
 	}
 	Ok(())
-}
-
-
-fn log_lightning_send_outcome(payment_hash: PaymentHash, waited: bool) {
-	if waited {
-		info!("Payment completed: hash = {}", payment_hash);
-	} else {
-		info!("Payment initiated: hash = {}", payment_hash);
-	}
 }
 
 #[tokio::main]
