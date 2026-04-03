@@ -67,6 +67,7 @@ pub async fn run(db: &Db, bitcoind: &BitcoinRpcClient) -> anyhow::Result<u64> {
 	let mut skipped: u64 = 0;
 	let mut last_log = Instant::now();
 
+	'rows:
 	while let Some(row) = rows.next().await {
 		let row = row.context("reading vtxo row")?;
 		let id: i64 = row.get("id");
@@ -114,46 +115,48 @@ pub async fn run(db: &Db, bitcoind: &BitcoinRpcClient) -> anyhow::Result<u64> {
 		};
 
 		// The buggy internal key is user_pubkey.x_only(). Recover it as a full
-		// pubkey (parity is irrelevant for musig key aggregation) and compute
-		// the correct combined key.
-		let user_pubkey = PublicKey::from_x_only_public_key(internal_key, Parity::Even);
-		let combined_pubkey = musig::combine_keys([user_pubkey, vtxo.server_pubkey()])
-			.x_only_public_key().0;
+		// pubkey and compute the correct combined key.
+		for parity in [Parity::Odd, Parity::Even] {
+			let user_pubkey = PublicKey::from_x_only_public_key(internal_key, parity);
+			let combined_pubkey = musig::combine_keys([user_pubkey, vtxo.server_pubkey()])
+				.x_only_public_key().0;
 
-		// Deserialize as RawVtxo, fix the policy, and re-serialize.
-		let mut raw = RawVtxo::deserialize(vtxo_bytes)
-			.with_context(|| format!("failed to deserialize raw vtxo id={}", id))?;
-		raw.policy = ServerVtxoPolicy::new_expiry(combined_pubkey);
-		raw.amount = funding_txout.value;
+			// Deserialize as RawVtxo, fix the policy, and re-serialize.
+			let mut raw = RawVtxo::deserialize(vtxo_bytes)
+				.with_context(|| format!("failed to deserialize raw vtxo id={}", id))?;
+			raw.policy = ServerVtxoPolicy::new_expiry(combined_pubkey);
+			raw.amount = funding_txout.value;
 
-		let new_policy_bytes = raw.policy.serialize();
-		let new_vtxo_bytes = raw.serialize();
+			let new_policy_bytes = raw.policy.serialize();
+			let new_vtxo_bytes = raw.serialize();
 
-		// Verify the patched VTXO's txout matches the funding tx.
-		let patched = ServerVtxo::<Full>::deserialize(&new_vtxo_bytes)
-			.with_context(|| format!("patched vtxo failed to deserialize for id={}", id))?;
-		if patched.txout() != *funding_txout {
-			eprintln!(
-				"fix_board_expiry_policy: patched vtxo id={} still doesn't match funding tx output, skipping",
-				id,
-			);
-			skipped += 1;
-			continue;
+			// Verify the patched VTXO's txout matches the funding tx.
+			let patched = ServerVtxo::<Full>::deserialize(&new_vtxo_bytes)
+				.with_context(|| format!("patched vtxo failed to deserialize for id={}", id))?;
+			if patched.txout() == *funding_txout {
+				eprintln!("fix_board_expiry_policy: fixing vtxo id={} vtxo_id={}", id, vtxo_id);
+
+				writer.execute(
+					&update,
+					&[&id, &new_vtxo_bytes.as_slice(), &new_policy_bytes.as_slice()],
+				).await
+					.with_context(|| format!("failed to update vtxo id={}", id))?;
+
+				fixed += 1;
+
+				if last_log.elapsed() >= std::time::Duration::from_secs(1) {
+					last_log = Instant::now();
+				}
+
+				continue 'rows;
+			}
 		}
 
-		eprintln!("fix_board_expiry_policy: fixing vtxo id={} vtxo_id={}", id, vtxo_id);
-
-		writer.execute(
-			&update,
-			&[&id, &new_vtxo_bytes.as_slice(), &new_policy_bytes.as_slice()],
-		).await
-			.with_context(|| format!("failed to update vtxo id={}", id))?;
-
-		fixed += 1;
-
-		if last_log.elapsed() >= std::time::Duration::from_secs(1) {
-			last_log = Instant::now();
-		}
+		eprintln!(
+			"fix_board_expiry_policy: patched vtxo id={} still doesn't match funding tx output, skipping",
+			id,
+		);
+		skipped += 1;
 	}
 
 	eprintln!("fix_board_expiry_policy: done — fixed {}, skipped {}", fixed, skipped);
