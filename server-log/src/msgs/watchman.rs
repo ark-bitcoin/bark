@@ -1,5 +1,6 @@
 
 use ark::vtxo::VtxoPolicyKind;
+use bitcoin::address::NetworkUnchecked;
 use bitcoin::{Amount, FeeRate, Txid};
 use bitcoin::hashes::sha256;
 
@@ -93,6 +94,7 @@ pub struct NoMoreConfirmedFunds {
 	pub wallet: String,
 	#[serde(with = "bitcoin::amount::serde::as_sat")]
 	pub balance: Amount,
+	pub address: bitcoin::Address<NetworkUnchecked>,
 }
 impl_slog!(NoMoreConfirmedFunds, WARN, "No more confirmed funds in wallet");
 
