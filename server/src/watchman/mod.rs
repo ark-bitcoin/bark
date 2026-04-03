@@ -31,7 +31,7 @@ use tracing::{info, trace, warn};
 use ark::{ServerVtxo, ServerVtxoPolicy, VtxoId};
 use ark::vtxo::policy::signing::VtxoSigner;
 use bitcoin_ext::{fee, BlockHeight, BlockRef, TxStatus, P2TR_DUST};
-use bitcoin_ext::bdk::WalletExt;
+use bitcoin_ext::bdk::{WalletExt, KEYCHAIN};
 use bitcoin_ext::cpfp::MakeCpfpFees;
 use bitcoin_ext::rpc::{BitcoinRpcClient, BitcoinRpcExt, RpcApi};
 
@@ -574,6 +574,7 @@ impl Watchman {
 			if !wallet.has_trusted_balance(self.config.min_cpfp_amount) {
 				slog!(NoMoreConfirmedFunds, wallet: wallet.kind().name().into(),
 					balance: wallet.balance().trusted,
+					address: wallet.next_unused_address(KEYCHAIN).address.into_unchecked(),
 				);
 				break;
 			}
