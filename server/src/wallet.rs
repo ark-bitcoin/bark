@@ -208,7 +208,7 @@ impl PersistedWallet {
 		let checkpoint = self.latest_checkpoint();
 		slog!(WalletSyncComplete, wallet: self.kind.name().into(), sync_time: start_time.elapsed(),
 			new_block_height: checkpoint.height(), previous_block_height: prev_tip.height(),
-			next_address: self.peek_next_address().address.into_unchecked(),
+			next_address: self.next_unused_address(KEYCHAIN).address.into_unchecked(),
 		);
 
 		let balance = self.balance();
