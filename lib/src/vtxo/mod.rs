@@ -1104,6 +1104,14 @@ impl<G: VtxoVersionedEncoding, P: Policy + ProtocolEncoding> ProtocolEncoding fo
 
 		let amount = Amount::from_sat(r.read_u64()?);
 		let expiry_height = r.read_u32()?;
+		// Values >= 500_000_000 (LOCK_TIME_THRESHOLD) are interpreted as
+		// unix timestamps by consensus, not block heights.
+		if LockTime::from_height(expiry_height).is_err() {
+			return Err(ProtocolDecodingError::invalid(format_args!(
+				"expiry_height {expiry_height} is not a valid block height \
+				(must be below consensus LOCK_TIME_THRESHOLD)"
+			)));
+		}
 		let server_pubkey = PublicKey::decode(r)?;
 		let exit_delta = r.read_u16()?;
 		let anchor_point = OutPoint::decode(r)?;
