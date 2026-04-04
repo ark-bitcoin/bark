@@ -107,13 +107,42 @@ impl DaemonProcess {
 		}
 	}
 
+	/// Subscribe to mailbox message stream and process each incoming message.
+	///
+	/// If `since` is `None`, the stream will start from the last checkpoint stored in the database.
+	///
+	/// Returns only once the stream is closed.
+	pub(crate) async fn subscribe_process_mailbox_messages(
+		&self,
+		since_checkpoint: Option<u64>,
+		shutdown: CancellationToken,
+	) -> anyhow::Result<()> {
+		let mut stream = self.wallet.subscribe_mailbox_messages(since_checkpoint).await?;
+
+		loop {
+			futures::select! {
+				message = stream.next().fuse() => {
+					if let Some(message) = message {
+						let message = message.context("error on mailbox message stream")?;
+						self.wallet.process_mailbox_message(message).await;
+					}
+				},
+				_ = shutdown.cancelled().fuse() => {
+					info!("Shutdown signal received! Shutting mailbox messages process...");
+					return Ok(());
+				},
+			}
+		}
+	}
+
 	/// Recursively resubscribe to mailbox message stream by waiting and
 	/// calling [Wallet::subscribe_store_mailbox_messages] again until
 	/// the daemon is shutdown.
 	async fn run_mailbox_messages_process(&self) {
 		loop {
+			let shutdown = self.shutdown.clone();
 			if self.connected.load(Ordering::Relaxed) {
-				if let Err(e) = self.wallet.subscribe_process_mailbox_messages(None).await {
+				if let Err(e) = self.subscribe_process_mailbox_messages(None, shutdown).await {
 					warn!("An error occured while processing mailbox messages: {e:#}");
 				}
 			}
