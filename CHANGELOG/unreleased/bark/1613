@@ -1,5 +1,0 @@
-- Add mailbox identifier to round participation.
-  Round participation now includes a mailbox identifier. The server notifies
-  the mailbox when non-interactive round participation completes via the new
-  `RoundParticipationCompleted` message type.
-  [#1613](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1613)

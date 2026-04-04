@@ -1,6 +1,0 @@
-- Add unit tests for all server database queries
-  Every database query in the server's database module now has a dedicated
-  unit test in `testing/tests/server/postgres.rs`. This catches SQL mistakes
-  early, before integration tests, and ensures query correctness is verified
-  at the level of individual database operations.
-  [#1755](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1755)

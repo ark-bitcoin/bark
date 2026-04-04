@@ -6,6 +6,92 @@ https://docs.second.tech/changelog/changelog/
 
 Below is a more concise summary for each version.
 
+# v0.1.0
+
+- `bark`
+  - Add mailbox identifier to round participation.
+    Round participation now includes a mailbox identifier. The server notifies
+    the mailbox when non-interactive round participation completes via the new
+    `RoundParticipationCompleted` message type.
+    [#1613](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1613)
+  - Add fee estimation endpoints to barkd REST API
+    Integrators can now estimate fees before executing transactions via six new
+    `/api/v1/fees/` endpoints: board, send-onchain, offboard-all, lightning pay,
+    lightning receive, and on-chain fee rates. Each returns gross/net amounts and
+    the fee breakdown so users can preview costs up front.
+    [#1787](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1787)
+  - Lightning receive notifications via mailbox
+    Bark now receives a notification through the mailbox when a lightning
+    payment arrives, prompting it to come online and claim. This replaces
+    the dedicated lightning-receive polling task, resulting in faster
+    payment detection.
+    [#1792](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1792)
+  - Add encoded VTXO endpoint to barkd REST API
+    VTXOs can now be retrieved in hex-serialized form via `GET /vtxos/{id}/encoded`,
+    making it easy to export and import VTXOs between wallets. The import endpoint
+    also returns the encoded form for round-trip convenience.
+    [#1800](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1800)
+  - Configurable daemon sync intervals
+    Operators can now tune barkd sync frequency via `config.toml` or `BARK_`
+    environment variables (`daemon_fast_sync_interval_secs`,
+    `daemon_slow_sync_interval_secs`).
+    [#1810](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1810)
+  - Drop `mailbox_type` from gRPC protocol
+    The mailbox type is now inferred from the key type rather than being explicitly specified.
+    [#1825](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1825)
+  - Process RoundVtxos mailbox messages to progress non-interactive round participations
+    When bark receives a `RoundVtxos` mailbox notification from the server, it now
+    automatically syncs pending rounds. This enables delegated/non-interactive round
+    participations to be progressed via mailbox notifications.
+    [#1845](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1845)
+
+- `server`
+  - Add mailbox support for non-interactive round participation.
+    The `vtxo_mailbox` table is renamed to `mailbox` and extended with a
+    `payment_hash` column. Round outputs now include a mailbox identifier,
+    and the server posts `RoundParticipationCompleted` messages to notify
+    clients when their non-interactive round participation completes.
+    [#1613](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1613)
+  - Extract HTLC preimages from on-chain VTXO spends
+    When a user claims an HTLC VTXO on-chain (emergency exit), the server
+    now extracts the preimage from the spending witness and settles the
+    corresponding CLN hold invoice automatically.
+    [#1706](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1706)
+  - Add `htlc_settlement_poll_interval` config option
+    Controls how often the settler polls for cross-process HTLC settlements
+    (e.g. preimages written by watchmand). Defaults to 60s.
+    [#1706](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1706)
+  - Add unit tests for all server database queries
+    Every database query in the server's database module now has a dedicated
+    unit test in `testing/tests/server/postgres.rs`. This catches SQL mistakes
+    early, before integration tests, and ensures query correctness is verified
+    at the level of individual database operations.
+    [#1755](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1755)
+  - Push lightning receive notifications to client mailboxes
+    The server now notifies clients via the mailbox when a lightning
+    payment arrives, enabling them to come online and claim without
+    polling.
+    [#1792](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1792)
+  - Drop `mailbox_type` from gRPC protocol
+    The mailbox type is now inferred from the key type rather than being explicitly specified.
+    [#1825](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1825)
+  - Make arkoor ownership attestation mandatory
+    The attestation field on arkoor and lightning send cosign requests is now required.
+    It was previously left optional for backward compatibility.
+    [#1834](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1834)
+    - **BREAKING:** `ArkoorCosignRequest.attestation` is no longer optional
+    - Remove deprecated `PaymentStatus` enum and `LightningPaymentResult` message from gRPC
+  - Send payment hashes in RoundVtxos mailbox messages
+    When notifying clients about completed round participations, the server sends
+    payment hashes (unlock hashes) so clients can sync the relevant rounds.
+    [#1845](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1845)
+
+- `server-rpc`
+  - Add `RoundVtxosMessage` with `payment_hashes` field for round notifications
+    The mailbox message for round vtxo notifications sends payment hashes
+    (unlock hashes) to notify clients that their round participations are ready.
+    [#1845](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1845)
+
 # v0.1.0-beta.9
 
 - `ark-lib`

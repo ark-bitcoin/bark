@@ -1,5 +1,0 @@
-- Configurable daemon sync intervals
-  Operators can now tune barkd sync frequency via `config.toml` or `BARK_`
-  environment variables (`daemon_fast_sync_interval_secs`,
-  `daemon_slow_sync_interval_secs`).
-  [#1810](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1810)
