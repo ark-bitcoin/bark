@@ -118,10 +118,24 @@ pub struct ConfigOpts {
 impl ConfigOpts {
 	/// Fill the default required config fields based on network
 	fn fill_network_defaults(&mut self, net: BarkNetwork) {
-		// Fallback to our default signet backend
-		// Only do it when the user did *not* specify either --esplora or --bitcoind.
-		if net == BarkNetwork::Signet && self.esplora.is_none() && self.bitcoind.is_none() {
-			self.esplora = Some("https://esplora.signet.2nd.dev/".to_owned());
+		// Fallback to our default mainnet
+		if net == BarkNetwork::Mainnet {
+			// Only do it when the user did *not* specify either --esplora or --bitcoind.
+			if self.esplora.is_none() && self.bitcoind.is_none() {
+				self.esplora = Some("https://mempool.second.tech/api".to_owned());
+			}
+		}
+
+		// Fallback to our default signet
+		if net == BarkNetwork::Signet {
+			// Only do it when the user did *not* specify either --esplora or --bitcoind.
+			if self.esplora.is_none() && self.bitcoind.is_none() {
+				self.esplora = Some("https://esplora.signet.2nd.dev/".to_owned());
+			}
+
+			if self.ark.is_none() {
+				self.ark = Some("https://ark.signet.2nd.dev/".to_owned());
+			}
 		}
 
 		// Fallback to Mutinynet community Esplora
