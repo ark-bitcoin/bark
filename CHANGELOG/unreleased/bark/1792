@@ -1,6 +1,0 @@
-- Lightning receive notifications via mailbox
-  Bark now receives a notification through the mailbox when a lightning
-  payment arrives, prompting it to come online and claim. This replaces
-  the dedicated lightning-receive polling task, resulting in faster
-  payment detection.
-  [#1792](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1792)

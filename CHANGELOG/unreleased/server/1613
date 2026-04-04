@@ -1,6 +1,0 @@
-- Add mailbox support for non-interactive round participation.
-  The `vtxo_mailbox` table is renamed to `mailbox` and extended with a
-  `payment_hash` column. Round outputs now include a mailbox identifier,
-  and the server posts `RoundParticipationCompleted` messages to notify
-  clients when their non-interactive round participation completes.
-  [#1613](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1613)
