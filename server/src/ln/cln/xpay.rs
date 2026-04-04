@@ -210,7 +210,7 @@ impl ClnXpayClient {
 						&attempt,
 						desired_status,
 						error_string,
-						None,
+						latest.amount_sent_msat.map(|v| v.msat),
 						preimage,
 					).await?;
 				}
