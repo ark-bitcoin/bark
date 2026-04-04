@@ -31,18 +31,205 @@ use bitcoin_ext::{AmountExt, BlockDelta};
 use chrono::{DateTime, Local};
 use tokio::sync::{broadcast, Notify};
 use tokio::task::JoinHandle;
-use tonic::transport::Channel;
 use tracing::{debug, error, trace, warn};
 use ark::lightning::{Invoice, PaymentHash, Preimage};
 use cln_rpc::listpays_pays::ListpaysPaysStatus;
-use cln_rpc::node_client::NodeClient;
 
 use crate::database;
-use crate::database::ln::{ClnNodeId, LightningPaymentStatus};
+use crate::database::ln::{ClnNodeId, LightningPaymentAttempt, LightningPaymentStatus};
 use crate::system::RuntimeManager;
 use crate::telemetry;
+
 use super::ClnGrpcClient;
 
+/// Shared client for sending xpay RPCs and reconciling payment status against CLN.
+///
+/// Wrapped in an `Arc` so both [`ClnXpay::pay`] (fire-and-forget spawned tasks)
+/// and [`ClnXpayProcess`] (periodic reconciliation) can use it concurrently.
+struct ClnXpayClient {
+	db: database::Db,
+	rpc: ClnGrpcClient,
+	/// Notifies [`ClnManager::get_payment_status`] when a payment reaches a final state.
+	payment_update_tx: broadcast::Sender<PaymentHash>,
+}
+
+impl ClnXpayClient {
+	pub async fn new(
+		db: database::Db,
+		payment_update_tx: broadcast::Sender<PaymentHash>,
+		rpc: ClnGrpcClient,
+	) -> Arc<Self> {
+		Arc::new(Self { db, payment_update_tx, rpc })
+	}
+
+	/// Calls xpay and then reconciles the attempt status against CLN.
+	///
+	/// On RPC success the sendpay stream will pick up the result, but we still
+	/// reconcile afterwards to handle edge cases (e.g. the stream missing an event).
+	/// On RPC error the reconciliation drives the attempt to its final state.
+	pub async fn pay(
+		&self,
+		invoice: Box<Invoice>,
+		user_amount: Option<Amount>,
+		max_cltv_expiry_delta: BlockDelta,
+		retry_for: Duration,
+	) {
+		let mut rpc = self.rpc.clone();
+		let payment_hash = invoice.payment_hash();
+		match call_xpay(&mut rpc, &invoice, user_amount, max_cltv_expiry_delta, retry_for).await {
+			Ok(preimage) => {
+				// NB we don't do db stuff when it's succesful, because
+				// it will happen in the sendpay stream of the monitor process
+				trace!("Payment successful, preimage: {} for payment hash {}",
+					preimage.as_hex(), payment_hash.as_hex(),
+				);
+			},
+			// Fetch and store the attempt as failed.
+			Err(pay_err) => {
+				error!("Error calling pay-command: {}", pay_err);
+			},
+		}
+
+		let attempt_res = self.db
+			.get_open_lightning_payment_attempt_by_payment_hash(payment_hash).await;
+
+		match attempt_res {
+			Ok(Some(attempt)) => {
+				if let Err(e) = self.sync_payment_attempt_status(attempt).await {
+					error!("Error syncing payment attempt status: {e:#}");
+				}
+			},
+			Ok(None) => {
+				error!("Attempt not found for payment hash after calling xpay: {}", payment_hash);
+			},
+			Err(e) => {
+				error!("Error getting open payment attempt by payment hash: {e:#}");
+			},
+		}
+	}
+
+	/// Queries CLN's `listpays` for the given attempt and updates the DB to match.
+	///
+	/// If CLN has no record of the payment and the attempt is still open, it is
+	/// marked `Failed`. If CLN reports a different status than the DB, the DB is
+	/// updated (unless the DB status is already final, which is logged as an error).
+	/// Sends on `payment_update_tx` when the status changes.
+	pub async fn sync_payment_attempt_status(&self, attempt: LightningPaymentAttempt) -> anyhow::Result<()> {
+		let invoice = self.db.get_lightning_invoice_by_id(attempt.lightning_invoice_id).await?;
+		debug!("Lightning invoice ({}): with payment hash {} is being verified.",
+			invoice.id, invoice.payment_hash,
+		);
+
+		let mut updated = false;
+
+		telemetry::add_invoice_verification(attempt.lightning_node_id, attempt.status);
+
+		let req = cln_rpc::ListpaysRequest {
+			bolt11: None,
+			payment_hash: Some(invoice.payment_hash.to_vec()),
+			status: None,
+			index: None,
+			limit: None,
+			start: None,
+		};
+		let listpays_response = self.rpc.clone().list_pays(req).await
+			.context("Could not fetch cln payments")?
+			.into_inner();
+		if listpays_response.pays.is_empty() {
+			match attempt.status {
+				LightningPaymentStatus::Succeeded => {
+					error!("Lightning invoice ({}): Payment attempt flagged succeeded \
+						when it cannot be found in CLN for payment hash {}",
+						invoice.id, invoice.payment_hash,
+					);
+				},
+				LightningPaymentStatus::Failed => {
+					error!("Lightning invoice ({}): Payment attempt flagged failed \
+						when it cannot be found in CLN for payment hash {}",
+						invoice.id, invoice.payment_hash,
+					)
+				},
+				LightningPaymentStatus::Requested
+					| LightningPaymentStatus::Submitted =>
+				{
+					self.db.update_lightning_payment_attempt_status(
+						&attempt,
+						LightningPaymentStatus::Failed,
+						None,
+					).await?;
+
+					telemetry::add_lightning_payment(
+						attempt.lightning_node_id,
+						attempt.amount_msat,
+						LightningPaymentStatus::Failed,
+					);
+
+					updated = true;
+				},
+			}
+		} else {
+			let latest = listpays_response.pays.into_iter().max_by_key(|p| {
+				p.created_index.expect("should have index")
+			}).expect("we have at least one");
+
+			let desired_status = match latest.status() {
+				ListpaysPaysStatus::Pending => LightningPaymentStatus::Submitted,
+				ListpaysPaysStatus::Complete => {
+					if latest.preimage.is_none() {
+						error!("Lightning invoice ({}): Payment completed but no preimage \
+							specified for payment hash {}",
+							invoice.id, invoice.payment_hash,
+						);
+						LightningPaymentStatus::Submitted
+					} else {
+						LightningPaymentStatus::Succeeded
+					}
+				},
+				ListpaysPaysStatus::Failed => LightningPaymentStatus::Failed,
+			};
+
+			let error_string = latest.erroronion.as_ref().map(|b| {
+				str::from_utf8(b).unwrap_or_else(|e| {
+					warn!("Failed to decode erroronion from cln: '{}', {}", b.as_hex(), e);
+					"failed to decode erroronion field"
+				})
+			});
+
+			if attempt.status != desired_status {
+				if attempt.status.is_final() {
+					error!("Lightning invoice ({}): payment attempt flagged {} when it \
+						actually {} for payment hash {}",
+						invoice.id, attempt.status, desired_status,
+						invoice.payment_hash,
+					);
+				} else {
+					let preimage = latest.preimage.map(|b| b.try_into().expect("invalid preimage not 32 bytes"));
+
+					updated = self.db.verify_and_update_invoice(
+						invoice.payment_hash,
+						&attempt,
+						desired_status,
+						error_string,
+						None,
+						preimage,
+					).await?;
+				}
+			}
+		}
+
+		if updated {
+			trace!("Lightning invoice ({}): status updated for payment hash {}.",
+				invoice.id, invoice.payment_hash,
+			);
+
+			self.payment_update_tx.send(invoice.payment_hash)?;
+		}
+
+		Ok(())
+	}
+}
+
+/// Timing knobs for the xpay monitor loop and reconciliation backoff.
 #[derive(Debug, Clone)]
 pub struct ClnXpayConfig {
 	pub invoice_check_interval: Duration,
@@ -56,13 +243,15 @@ pub struct ClnXpayConfig {
 /// Tracks outbound payment status via CLN's listsendpays streams
 /// and periodically verifies open payment attempts.
 pub struct ClnXpay {
-	db: database::Db,
-	payment_update_tx: broadcast::Sender<PaymentHash>,
-	rpc: ClnGrpcClient,
 	jh: JoinHandle<anyhow::Result<()>>,
+	client: Arc<ClnXpayClient>,
 }
 
 impl ClnXpay {
+	/// Spawns the background reconciliation loop and returns a handle.
+	///
+	/// Reads the current payment stream indices from the DB so the monitor
+	/// knows where to resume after a restart.
 	pub async fn start(
 		rtmgr: RuntimeManager,
 		mgr_waker: Arc<Notify>,
@@ -82,12 +271,11 @@ impl ClnXpay {
 			updated_index: payment_idxs.updated_index,
 		);
 
+		let client = ClnXpayClient::new(db.clone(), payment_update_tx, rpc).await;
+
 		let proc = ClnXpayProcess {
-			config,
-			db: db.clone(),
-			payment_update_tx: payment_update_tx.clone(),
-			node_id,
-			rpc: rpc.clone(),
+			config, db, node_id,
+			client: client.clone(),
 			invoice_next_check_at: HashMap::new(),
 		};
 
@@ -99,7 +287,7 @@ impl ClnXpay {
 			ret
 		});
 
-		Ok(ClnXpay { db, payment_update_tx, rpc, jh })
+		Ok(ClnXpay { jh, client })
 	}
 
 	pub fn is_running(&self) -> bool {
@@ -111,7 +299,7 @@ impl ClnXpay {
 		Ok(self.jh.await?)
 	}
 
-	/// Fire-and-forget: spawn a task that calls xpay and updates the DB.
+	/// Fire-and-forget: spawn a task that calls xpay and then updates the DB.
 	pub fn pay(
 		&self,
 		invoice: Box<Invoice>,
@@ -119,15 +307,10 @@ impl ClnXpay {
 		max_cltv_expiry_delta: BlockDelta,
 		retry_for: Duration,
 	) {
-		tokio::spawn(handle_pay_invoice(
-			self.db.clone(),
-			self.payment_update_tx.clone(),
-			self.rpc.clone(),
-			invoice,
-			user_amount,
-			max_cltv_expiry_delta,
-			retry_for,
-		));
+		let client = self.client.clone();
+		tokio::spawn(async move {
+			client.pay(invoice, user_amount, max_cltv_expiry_delta, retry_for).await;
+		});
 	}
 }
 
@@ -137,19 +320,30 @@ impl fmt::Debug for ClnXpay {
 	}
 }
 
+/// Background loop that periodically reconciles open payment attempts against CLN.
+///
+/// Runs on a fixed interval ([`ClnXpayConfig::invoice_check_interval`]) and,
+/// for each open attempt old enough to have finished xpay retries, queries
+/// `listpays` to drive the attempt to a final state. Uses exponential backoff
+/// per invoice to avoid hammering CLN for long-lived pending payments.
 struct ClnXpayProcess {
 	config: ClnXpayConfig,
 	db: database::Db,
-	payment_update_tx: broadcast::Sender<PaymentHash>,
 
 	node_id: ClnNodeId,
-	rpc: NodeClient<Channel>,
 
-	/// Map from invoice id to number of attempts and time of last update.
+	client: Arc<ClnXpayClient>,
+
+	/// Per-invoice backoff state: maps invoice id → (check count, earliest next check time).
+	/// Entries are pruned once their next-check time lapses.
 	invoice_next_check_at: HashMap<i64, (usize, DateTime<Local>)>,
 }
 
 impl ClnXpayProcess {
+	/// Bumps the backoff counter for `invoice_id` and schedules the next check.
+	///
+	/// Delay doubles each attempt starting from `check_base_delay`, capped at
+	/// `max_check_delay`.
 	fn update_next_invoice_check(&mut self, invoice_id: i64) {
 		let (attempts, next_check) = self.invoice_next_check_at.entry(invoice_id)
 			.or_insert((0, Local::now()));
@@ -168,6 +362,9 @@ impl ClnXpayProcess {
 		);
 	}
 
+	/// Iterates over all open payment attempts for this node and reconciles
+	/// each one that is old enough and not in backoff. Prunes expired backoff
+	/// entries afterwards.
 	async fn process_payment_attempts(&mut self) -> anyhow::Result<()> {
 		let open_attempts = self.db.get_open_lightning_payment_attempts(self.node_id).await?;
 
@@ -200,117 +397,13 @@ impl ClnXpayProcess {
 				continue;
 			}
 
-			let invoice = self.db.get_lightning_invoice_by_id(attempt.lightning_invoice_id).await?;
-			debug!("Lightning invoice ({}): with payment hash {} is being verified.",
-				invoice.id, invoice.payment_hash,
-			);
-
-			let mut updated = false;
-
-			telemetry::add_invoice_verification(attempt.lightning_node_id, attempt.status);
-
-			let req = cln_rpc::ListpaysRequest {
-				bolt11: None,
-				payment_hash: Some(invoice.payment_hash.to_vec()),
-				status: None,
-				index: None,
-				limit: None,
-				start: None,
-			};
-			let listpays_response = self.rpc.list_pays(req).await
-				.context("Could not fetch cln payments")?
-				.into_inner();
-			if listpays_response.pays.is_empty() {
-				match attempt.status {
-					LightningPaymentStatus::Succeeded => {
-						error!("Lightning invoice ({}): Payment attempt flagged succeeded \
-							when it cannot be found in CLN for payment hash {}",
-							invoice.id, invoice.payment_hash,
-						);
-					},
-					LightningPaymentStatus::Failed => {
-						error!("Lightning invoice ({}): Payment attempt flagged failed \
-							when it cannot be found in CLN for payment hash {}",
-							invoice.id, invoice.payment_hash,
-						)
-					},
-					LightningPaymentStatus::Requested
-						| LightningPaymentStatus::Submitted =>
-					{
-						self.db.update_lightning_payment_attempt_status(
-							&attempt,
-							LightningPaymentStatus::Failed,
-							None,
-						).await?;
-
-						telemetry::add_lightning_payment(
-							attempt.lightning_node_id,
-							attempt.amount_msat,
-							LightningPaymentStatus::Failed,
-						);
-
-						updated = true;
-					},
-				}
+			let lightning_invoice_id = attempt.lightning_invoice_id;
+			if let Err(e) = self.client.sync_payment_attempt_status(attempt).await {
+				error!("Error syncing payment attempt status: {e:#}");
 			} else {
-				let latest = listpays_response.pays.into_iter().max_by_key(|p| {
-					p.created_index.expect("should have index")
-				}).expect("we have at least one");
-
-				let desired_status = match latest.status() {
-					ListpaysPaysStatus::Pending => LightningPaymentStatus::Submitted,
-					ListpaysPaysStatus::Complete => {
-						if latest.preimage.is_none() {
-							error!("Lightning invoice ({}): Payment completed but no preimage \
-								specified for payment hash {}",
-								invoice.id, invoice.payment_hash,
-							);
-							LightningPaymentStatus::Submitted
-						} else {
-							LightningPaymentStatus::Succeeded
-						}
-					},
-					ListpaysPaysStatus::Failed => LightningPaymentStatus::Failed,
-				};
-
-				let error_string = latest.erroronion.as_ref().map(|b| {
-					str::from_utf8(b).unwrap_or_else(|e| {
-						warn!("Failed to decode erroronion from cln: '{}', {}", b.as_hex(), e);
-						"failed to decode erroronion field"
-					})
-				});
-
-				if attempt.status != desired_status {
-					if attempt.status.is_final() {
-						error!("Lightning invoice ({}): payment attempt flagged {} when it \
-							actually {} for payment hash {}",
-							invoice.id, attempt.status, desired_status,
-							invoice.payment_hash,
-						);
-					} else {
-						let preimage = latest.preimage.map(|b| b.try_into().expect("invalid preimage not 32 bytes"));
-
-						updated = self.db.verify_and_update_invoice(
-							invoice.payment_hash,
-							&attempt,
-							desired_status,
-							error_string,
-							None,
-							preimage,
-						).await?;
-					}
-				}
+				self.update_next_invoice_check(lightning_invoice_id);
 			}
 
-			if updated {
-				trace!("Lightning invoice ({}): status updated for payment hash {}.",
-					invoice.id, invoice.payment_hash,
-				);
-
-				self.payment_update_tx.send(invoice.payment_hash)?;
-			}
-
-			self.update_next_invoice_check(invoice.id);
 		}
 
 		self.invoice_next_check_at.retain(|_, &mut (_, datetime)| datetime > Local::now());
@@ -323,6 +416,8 @@ impl ClnXpayProcess {
 		Ok(())
 	}
 
+	/// Main select loop: runs [`process_payment_attempts`](Self::process_payment_attempts)
+	/// on every tick and exits cleanly on shutdown.
 	async fn run(mut self, rtmgr: RuntimeManager, mgr_waker: Arc<Notify>) -> anyhow::Result<()> {
 		let _worker = rtmgr.spawn(format!("ClnXpay({})", self.node_id))
 			.with_notify(mgr_waker);
@@ -337,50 +432,6 @@ impl ClnXpayProcess {
 				_ = rtmgr.shutdown_signal() => return Ok(()),
 			}
 		}
-	}
-}
-
-/// Handles calling the pay cln endpoint and processing the response.
-async fn handle_pay_invoice(
-	db: database::Db,
-	payment_update_tx: broadcast::Sender<PaymentHash>,
-	mut rpc: ClnGrpcClient,
-	invoice: Box<Invoice>,
-	amount: Option<Amount>,
-	max_cltv_expiry_delta: BlockDelta,
-	retry_for: Duration,
-) {
-	let payment_hash = invoice.payment_hash();
-	match call_xpay(&mut rpc, &invoice, amount, max_cltv_expiry_delta, retry_for).await {
-		Ok(preimage) => {
-			// NB we don't do db stuff when it's succesful, because
-			// it will happen in the sendpay stream of the monitor process
-			trace!("Payment successful, preimage: {} for payment hash {}",
-				preimage.as_hex(), payment_hash.as_hex(),
-			);
-		},
-		// Fetch and store the attempt as failed.
-		Err(pay_err) => {
-			error!("Error calling pay-command: {}", pay_err);
-			match db.get_open_lightning_payment_attempt_by_payment_hash(payment_hash).await {
-				Ok(Some(attempt)) => match db.verify_and_update_invoice(
-					payment_hash,
-					&attempt,
-					LightningPaymentStatus::Submitted,
-					Some(&format!("pay rpc call error: {}", pay_err)),
-					None,
-					None,
-				).await {
-					Ok(_) => {},
-					Err(e) => error!("Error updating invoice after pay error: {e:#}"),
-				}
-				Ok(None) => error!("Failed to find attempt for invoice just started \
-					payment_hash={payment_hash}"),
-				Err(e) => error!("Error querying attempt for invoice just started \
-					payment_hash={payment_hash}: {e:#}"),
-			}
-			let _ = payment_update_tx.send(payment_hash);
-		},
 	}
 }
 
