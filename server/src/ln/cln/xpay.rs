@@ -19,7 +19,7 @@
 //! the stream missed (e.g. events during downtime). Uses exponential backoff per
 //! invoice to avoid hammering CLN.
 
-use std::{cmp, fmt, str};
+use std::{fmt, str};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
@@ -35,7 +35,6 @@ use tonic::transport::Channel;
 use tracing::{debug, error, trace, warn};
 use ark::lightning::{Invoice, PaymentHash, Preimage};
 use cln_rpc::listpays_pays::ListpaysPaysStatus;
-use cln_rpc::listsendpays_request::ListsendpaysIndex;
 use cln_rpc::node_client::NodeClient;
 
 use crate::database;
@@ -89,14 +88,6 @@ impl ClnXpay {
 			payment_update_tx: payment_update_tx.clone(),
 			node_id,
 			rpc: rpc.clone(),
-			created_index: match payment_idxs.created_index {
-				0 => None,
-				i => Some(i),
-			},
-			updated_index: match payment_idxs.updated_index {
-				0 => None,
-				i => Some(i),
-			},
 			invoice_next_check_at: HashMap::new(),
 		};
 
@@ -154,115 +145,11 @@ struct ClnXpayProcess {
 	node_id: ClnNodeId,
 	rpc: NodeClient<Channel>,
 
-	/// last seen sendpay created index, or 0 for none seen
-	created_index: Option<u64>,
-	/// last seen sendpay updated index, or 0 for none seen
-	updated_index: Option<u64>,
-
 	/// Map from invoice id to number of attempts and time of last update.
 	invoice_next_check_at: HashMap<i64, (usize, DateTime<Local>)>,
 }
 
 impl ClnXpayProcess {
-	async fn process_sendpay(&mut self, kind: ListsendpaysIndex)-> anyhow::Result<()> {
-		let start_index = match kind {
-			ListsendpaysIndex::Created => self.created_index.map(|i| i + 1).unwrap_or(0),
-			ListsendpaysIndex::Updated => self.updated_index.map(|i| i + 1).unwrap_or(0),
-		};
-
-		trace!("Querying lightning payment ({}) with start index {} for node {}",
-			kind.as_str_name(), start_index, self.node_id,
-		);
-		let updates = self.rpc.list_pays(cln_rpc::ListpaysRequest {
-			bolt11: None,
-			payment_hash: None,
-			status: None,
-			index: Some(kind as i32),
-			start: Some(start_index),
-			limit: None
-		}).await?.into_inner();
-
-		let mut max_index = start_index;
-		for update in updates.pays {
-			let updated_index = update.updated_index();
-			max_index = cmp::max(max_index, updated_index);
-
-			let payment_hash = PaymentHash::try_from(update.payment_hash.clone())
-				.expect("payment hash must be 32 bytes");
-
-			let attempt = match self.db.get_open_lightning_payment_attempt_by_payment_hash(payment_hash).await? {
-				Some(r) => r,
-				None => continue, // NB this is unrelated traffic on cln node
-			};
-
-			match update.status() {
-				ListpaysPaysStatus::Pending => {
-					if attempt.status == LightningPaymentStatus::Requested {
-						debug!("Lightning payment's first update received from CLN since \
-							requesting for payment hash {}.", payment_hash,
-						);
-
-						let status = LightningPaymentStatus::Submitted;
-						let ok = self.db.verify_and_update_invoice(
-							payment_hash, &attempt, status, None, None, None,
-						).await?;
-						if ok {
-							self.payment_update_tx.send(payment_hash)?;
-						}
-					}
-				}
-				ListpaysPaysStatus::Failed => {
-					debug!("Lightning payment failed for payment hash {}.", payment_hash);
-
-					let error_string = update.erroronion.as_ref().map(|b| {
-						str::from_utf8(b).unwrap_or_else(|e| {
-							warn!("Failed to decode erroronion from cln: '{}', {}", b.as_hex(), e);
-							"failed to decode erroronion field"
-						})
-					});
-
-					let status = LightningPaymentStatus::Failed;
-					let ok = self.db.verify_and_update_invoice(
-						payment_hash, &attempt, status, error_string,  None, None,
-					).await?;
-					if ok {
-						self.payment_update_tx.send(payment_hash)?;
-					}
-				}
-				ListpaysPaysStatus::Complete => {
-					debug!("Lightning payment succeeded for payment hash {}.", payment_hash);
-
-					let final_msat = update.amount_sent_msat
-						.context("should have amount send on complete pay")?.msat;
-					let preimage = update.preimage
-						.context("should have preimage send on complete pay")?
-						.try_into().ok().context("invalid preimage not 32 bytes")?;
-
-					let status = LightningPaymentStatus::Succeeded;
-					let ok = self.db.verify_and_update_invoice(
-						payment_hash, &attempt, status, None, Some(final_msat), Some(preimage),
-					).await?;
-					if ok {
-						self.payment_update_tx.send(payment_hash)?;
-					}
-				}
-			}
-		}
-
-		if max_index > start_index {
-			trace!("Processing lightning payment done ({}) new start index {} for node {}",
-				kind.as_str_name(), max_index, self.node_id,
-			);
-			self.db.store_lightning_payment_index(self.node_id, kind, max_index).await?;
-		}
-		match kind {
-			ListsendpaysIndex::Created => self.created_index = Some(max_index),
-			ListsendpaysIndex::Updated => self.updated_index = Some(max_index),
-		}
-
-		Ok(())
-	}
-
 	fn update_next_invoice_check(&mut self, invoice_id: i64) {
 		let (attempts, next_check) = self.invoice_next_check_at.entry(invoice_id)
 			.or_insert((0, Local::now()));
@@ -441,35 +328,13 @@ impl ClnXpayProcess {
 			.with_notify(mgr_waker);
 
 		let mut check_interval = tokio::time::interval(self.config.invoice_check_interval);
-		let (mut rpc1, mut rpc2) = (self.rpc.clone(), self.rpc.clone());
 
 		loop {
-			let created_request = rpc1.wait(cln_rpc::WaitRequest {
-				subsystem: cln_rpc::wait_request::WaitSubsystem::Sendpays as i32,
-				indexname: cln_rpc::wait_request::WaitIndexname::Created as i32,
-				nextvalue: self.created_index.map(|i| i + 1).unwrap_or(0),
-			});
-			tokio::pin!(created_request);
-			let updated_request = rpc2.wait(cln_rpc::WaitRequest {
-				subsystem: cln_rpc::wait_request::WaitSubsystem::Sendpays as i32,
-				indexname: cln_rpc::wait_request::WaitIndexname::Updated as i32,
-				nextvalue: self.updated_index.map(|i| i + 1).unwrap_or(0),
-			});
-			tokio::pin!(updated_request);
-
 			tokio::select! {
-				_ = rtmgr.shutdown_signal() => return Ok(()),
-				_ = &mut created_request => {
-					self.process_sendpay(ListsendpaysIndex::Created).await
-						.context("error processing created events")?;
-				},
-				_ = &mut updated_request => {
-					self.process_sendpay(ListsendpaysIndex::Updated).await
-						.context("error processing updated events")?;
-				},
 				_ = check_interval.tick() => {
 					self.process_payment_attempts().await?;
 				},
+				_ = rtmgr.shutdown_signal() => return Ok(()),
 			}
 		}
 	}
