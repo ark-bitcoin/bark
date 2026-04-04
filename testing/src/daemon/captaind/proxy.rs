@@ -436,6 +436,10 @@ pub trait MailboxRpcProxy: Send + Sync + Clone + 'static {
 	async fn post_vtxos_mailbox(&self, upstream: &mut MailboxClient, req: protos::mailbox_server::PostVtxosMailboxRequest) -> Result<protos::core::Empty, tonic::Status> {
 		Ok(upstream.post_vtxos_mailbox(req).await?.into_inner())
 	}
+
+	async fn post_recovery_vtxo_ids(&self, upstream: &mut MailboxClient, req: protos::mailbox_server::PostRecoveryVtxoIdsRequest) -> Result<protos::core::Empty, tonic::Status> {
+		Ok(upstream.post_recovery_vtxo_ids(req).await?.into_inner())
+	}
 }
 
 /// A wrapper struct around a proxy implementation to run a tonic server.
@@ -472,6 +476,12 @@ impl<T: MailboxRpcProxy> rpc::server::MailboxService for MailboxRpcProxyWrapper<
 		&self, req: tonic::Request<protos::mailbox_server::PostVtxosMailboxRequest>,
 	) -> Result<tonic::Response<protos::core::Empty>, tonic::Status> {
 		Ok(tonic::Response::new(MailboxRpcProxy::post_vtxos_mailbox(&self.proxy, &mut self.upstream.clone(), req.into_inner()).await?))
+	}
+
+	async fn post_recovery_vtxo_ids(
+		&self, req: tonic::Request<protos::mailbox_server::PostRecoveryVtxoIdsRequest>,
+	) -> Result<tonic::Response<protos::core::Empty>, tonic::Status> {
+		Ok(tonic::Response::new(MailboxRpcProxy::post_recovery_vtxo_ids(&self.proxy, &mut self.upstream.clone(), req.into_inner()).await?))
 	}
 }
 

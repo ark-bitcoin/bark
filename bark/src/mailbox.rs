@@ -218,6 +218,9 @@ impl Wallet {
 					error!("Error handling lightning receive notification: {:#}", e);
 				}
 			},
+			Some(protos::mailbox_server::mailbox_message::Message::RecoveryVtxoIds(_)) => {
+				trace!("Received recovery VTXO IDs, ignoring");
+			}
 			None => {
 				warn!("Received unknown mailbox message, ignoring");
 			}

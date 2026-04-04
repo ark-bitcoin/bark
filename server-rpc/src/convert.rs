@@ -533,6 +533,7 @@ impl From<ark::mailbox::MailboxType> for protos::mailbox_server::MailboxType {
 			ark::mailbox::MailboxType::ArkoorReceive => protos::mailbox_server::MailboxType::ArkoorReceive,
 			ark::mailbox::MailboxType::RoundParticipationCompleted => protos::mailbox_server::MailboxType::RoundParticipationCompleted,
 			ark::mailbox::MailboxType::LnRecvPendingPayment => protos::mailbox_server::MailboxType::LnRecvPendingPayment,
+			ark::mailbox::MailboxType::RecoveryVtxoId => protos::mailbox_server::MailboxType::RecoveryVtxoIds,
 		}
 	}
 }
@@ -543,6 +544,7 @@ impl From<protos::mailbox_server::MailboxType> for ark::mailbox::MailboxType {
 			protos::mailbox_server::MailboxType::ArkoorReceive => ark::mailbox::MailboxType::ArkoorReceive,
 			protos::mailbox_server::MailboxType::RoundParticipationCompleted => ark::mailbox::MailboxType::RoundParticipationCompleted,
 			protos::mailbox_server::MailboxType::LnRecvPendingPayment => ark::mailbox::MailboxType::LnRecvPendingPayment,
+			protos::mailbox_server::MailboxType::RecoveryVtxoIds => ark::mailbox::MailboxType::RecoveryVtxoId,
 		}
 	}
 }
