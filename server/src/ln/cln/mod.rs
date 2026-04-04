@@ -936,7 +936,7 @@ impl ClnManagerProcess {
 
 		// Call pay over GRPC
 		// If it returns a pre-image we know the call succeeded,
-		//  however we ignore the response because it should get processed by the maintenance task.
+		// however we ignore the response because it should get processed by the maintenance task.
 		// This method might fail even if the payment will succeed
 		// (grpc-connection problems or time-outs).
 		// We keep the error-around but will verify if the payment actually failed.
@@ -945,6 +945,7 @@ impl ClnManagerProcess {
 			invoice,
 			user_amount,
 			max_cltv_expiry_delta as BlockDelta,
+			self.xpay_config.invoice_recheck_delay,
 		);
 
 		Ok(())

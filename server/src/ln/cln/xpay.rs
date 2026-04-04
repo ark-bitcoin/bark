@@ -126,6 +126,7 @@ impl ClnXpay {
 		invoice: Box<Invoice>,
 		user_amount: Option<Amount>,
 		max_cltv_expiry_delta: BlockDelta,
+		retry_for: Duration,
 	) {
 		tokio::spawn(handle_pay_invoice(
 			self.db.clone(),
@@ -134,6 +135,7 @@ impl ClnXpay {
 			invoice,
 			user_amount,
 			max_cltv_expiry_delta,
+			retry_for,
 		));
 	}
 }
@@ -291,7 +293,10 @@ impl ClnXpayProcess {
 				continue;
 			}
 
-			if attempt.created_at > Local::now() - self.config.invoice_recheck_delay {
+			// We don't want to go further if we aren't sure CLN didn't finished retrying payment attempts
+			let safe_delay_cln_stopped_retries = self.config.invoice_recheck_delay +
+				Duration::from_secs(5);
+			if attempt.created_at > Local::now() - safe_delay_cln_stopped_retries {
 				trace!("Lightning invoice ({}): Skipping since it was just created.",
 					attempt.lightning_invoice_id,
 				);
@@ -478,9 +483,10 @@ async fn handle_pay_invoice(
 	invoice: Box<Invoice>,
 	amount: Option<Amount>,
 	max_cltv_expiry_delta: BlockDelta,
+	retry_for: Duration,
 ) {
 	let payment_hash = invoice.payment_hash();
-	match call_xpay(&mut rpc, &invoice, amount, max_cltv_expiry_delta).await {
+	match call_xpay(&mut rpc, &invoice, amount, max_cltv_expiry_delta, retry_for).await {
 		Ok(preimage) => {
 			// NB we don't do db stuff when it's succesful, because
 			// it will happen in the sendpay stream of the monitor process
@@ -521,6 +527,7 @@ async fn call_xpay(
 	invoice: &Invoice,
 	user_amount: Option<Amount>,
 	max_cltv_expiry_delta: BlockDelta,
+	retry_for: Duration,
 ) -> anyhow::Result<Preimage> {
 	match (user_amount, invoice.amount_msat()) {
 		(Some(user), Some(inv)) => {
@@ -556,7 +563,7 @@ async fn call_xpay(
 		},
 		maxdelay: Some(max_cltv_expiry_delta as u32),
 		maxfee: None,
-		retry_for: None,
+		retry_for: Some(retry_for.as_secs() as u32),
 		partial_msat: None,
 		layers: vec![],
 	}).await;
