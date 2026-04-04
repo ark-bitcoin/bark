@@ -300,7 +300,7 @@ async fn main() -> anyhow::Result<()>{
 		let wallet = Arc::new(wallet);
 		let onchain = Arc::new(RwLock::new(onchain));
 
-		let daemon = wallet.run_daemon(onchain.clone()).await?;
+		let daemon = wallet.run_daemon(Some(onchain.clone()))?;
 		info!("Wallet loaded and daemon started");
 		let server_wallet = bark_rest::ServerWallet::new(wallet, onchain);
 
@@ -330,7 +330,7 @@ async fn main() -> anyhow::Result<()>{
 				let wallet = Arc::new(wallet);
 				let onchain = Arc::new(RwLock::new(onchain));
 
-				let daemon_handle = wallet.run_daemon(onchain.clone()).await?;
+				let daemon_handle = wallet.run_daemon(Some(onchain.clone()))?;
 				let _ = daemon.write().await.insert(daemon_handle);
 
 				let handle = ServerWallet::new(wallet, onchain);

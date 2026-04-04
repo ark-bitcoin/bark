@@ -595,7 +595,7 @@ impl WalletSeed {
 ///   It also initializes any internal state and connects to the [chain::ChainSource]. See
 ///   [onchain::OnchainWallet] for an implementation of an onchain wallet using BDK.
 ///   - [Wallet::create_with_onchain],
-///   - [Wallet::open_with_onchain]
+///   - [Wallet::open_with_daemon]
 ///
 /// Example
 /// ```
@@ -1009,6 +1009,25 @@ impl Wallet {
 		let mut wallet = Wallet::open(mnemonic, db, cfg).await?;
 		wallet.exit.get_mut().load(onchain).await?;
 		Ok(wallet)
+	}
+
+	/// Similar to [Wallet::open] however this also starts the daemon, optionally with an onchain
+	/// wallet, and returns a handle to the daemon.
+	pub async fn open_with_daemon(
+		mnemonic: &Mnemonic,
+		db: Arc<dyn BarkPersister>,
+		cfg: Config,
+		onchain: Option<Arc<RwLock<dyn DaemonizableOnchainWallet>>>,
+	) -> anyhow::Result<(Arc<Wallet>, DaemonHandle)> {
+		let wallet = Arc::new(Wallet::open(mnemonic, db, cfg).await?);
+		if let Some(onchain) = onchain.as_ref() {
+			let mut onchain = onchain.write().await;
+			wallet.exit.write().await.load(&mut *onchain).await?;
+		}
+
+		let daemon = wallet.clone().run_daemon(onchain)?;
+
+		Ok((wallet, daemon))
 	}
 
 	/// Returns the config used to create/load the bark [Wallet].
@@ -1968,9 +1987,9 @@ impl Wallet {
 	/// Note:
 	/// - This function doesn't check if a daemon is already running,
 	/// so it's possible to start multiple daemons by mistake.
-	pub async fn run_daemon(
+	pub fn run_daemon(
 		self: &Arc<Self>,
-		onchain: Arc<RwLock<dyn DaemonizableOnchainWallet>>,
+		onchain: Option<Arc<RwLock<dyn DaemonizableOnchainWallet>>>,
 	) -> anyhow::Result<DaemonHandle> {
 		// NB currently can't error but it's a pretty common method and quite likely that error
 		// cases will be introduces later
