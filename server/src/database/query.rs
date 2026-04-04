@@ -1,4 +1,5 @@
 use std::borrow::Borrow;
+use bitcoin::hex::FromHex;
 /// This module contains utilities to create
 /// database queries.
 ///
@@ -253,12 +254,12 @@ pub async fn store_round_participation(
 	let part_stmt = tx.prepare_typed(
 		"INSERT INTO round_participation (unlock_hash, unlock_preimage, created_at) \
 		VALUES ($1, $2, NOW()) RETURNING id",
-		&[Type::TEXT, Type::BYTEA]
+		&[Type::TEXT, Type::TEXT]
 	).await?;
 
 	let part_row = tx.query_one(&part_stmt, &[
 		&unlock_hash.to_string(),
-		&&unlock_preimage[..],
+		&unlock_preimage.to_lower_hex_string(),
 	]).await?;
 
 	let part_id = part_row.get::<_, i64>("id");
@@ -342,7 +343,7 @@ pub async fn complete_round_participation(
 		RoundId::from_str(id).context("invalid round id")
 	).transpose()?;
 
-	let unlock_preimage = UnlockPreimage::try_from(part_row.get::<_, &[u8]>("unlock_preimage"))
+	let unlock_preimage = UnlockPreimage::from_hex(part_row.get::<_, &str>("unlock_preimage"))
 		.context("invalid unlock_preimage")?;
 	let unlock_hash = UnlockHash::from_str(&part_row.get::<_, &str>("unlock_hash"))
 		.context("invalid unlock_hash")?;

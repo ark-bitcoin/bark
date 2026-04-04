@@ -177,7 +177,7 @@ impl Db {
 		let status_failed = LightningPaymentStatus::Failed;
 		let status_succeeded = LightningPaymentStatus::Succeeded;
 		let rows = conn.query(
-			&stmt, &[&payment_hash.to_vec(), &status_failed, &status_succeeded],
+			&stmt, &[&payment_hash.to_string(), &status_failed, &status_succeeded],
 		).await?;
 
 		if rows.is_empty() {
@@ -213,7 +213,7 @@ impl Db {
 		").await?;
 
 		let payment_hash = invoice.payment_hash();
-		let existing = tx.query_opt(&select_stmt, &[&&payment_hash.to_vec()[..]]).await?;
+		let existing = tx.query_opt(&select_stmt, &[&payment_hash.to_string()]).await?;
 
 		let lightning_invoice_id = if let Some(row) = existing {
 			row.get("id")
@@ -229,7 +229,7 @@ impl Db {
 			").await?;
 
 			let row = tx.query_one(
-				&stmt, &[&invoice.to_string(), &&payment_hash.to_vec()[..]],
+				&stmt, &[&invoice.to_string(), &payment_hash.to_string()],
 			).await?;
 
 			row.get("id")
@@ -349,10 +349,11 @@ impl Db {
 		").await?;
 
 		let final_amount_msat = new_final_amount_msat.map(|u| u as i64);
+		let preimage_str = new_preimage.as_ref().map(|p| p.to_string());
 		let row = conn.query_opt(&stmt, &[
 			&old_lightning_invoice.id,
 			&old_lightning_invoice.updated_at,
-			&new_preimage.as_ref().map(|p| &p.as_ref()[..]),
+			&preimage_str,
 			&final_amount_msat,
 		]).await?;
 
@@ -396,7 +397,7 @@ impl Db {
 			LEFT JOIN lightning_payment_attempt attempt
 			ON invoice.id = attempt.lightning_invoice_id
 			ORDER BY invoice.id, attempt.created_at DESC;",
-			&[&payment_hash.to_vec()],
+			&[&payment_hash.to_string()],
 		).await.context("error fetching lightning invoice by payment_hash")?;
 
 		if let Some(row) = res {
@@ -422,7 +423,7 @@ impl Db {
 		").await?;
 
 		let payment_hash = invoice.payment_hash();
-		let existing = tx.query_opt(&select_stmt, &[&&payment_hash[..]]).await?;
+		let existing = tx.query_opt(&select_stmt, &[&payment_hash.to_string()]).await?;
 
 		let lightning_invoice_id = if let Some(row) = existing {
 			row.get("id")
@@ -439,7 +440,7 @@ impl Db {
 			").await?;
 
 			let row = tx.query_one(
-				&stmt, &[&invoice.to_string(), &&payment_hash[..], &(amount_msat as i64)],
+				&stmt, &[&invoice.to_string(), &payment_hash.to_string(), &(amount_msat as i64)],
 			).await?;
 
 			row.get("id")
@@ -651,7 +652,7 @@ impl Db {
 		").await?;
 
 		let rows = conn.query(
-			&stmt, &[&payment_hash.to_vec()]
+			&stmt, &[&payment_hash.to_string()]
 		).await?;
 
 		Ok(rows.iter().map(TryInto::try_into).collect::<Result<Vec<_>, _>>()?)
@@ -689,7 +690,7 @@ impl Db {
 			LIMIT 1;
 		").await?;
 
-		let rows = conn.query(&stmt, &[&payment_hash.to_vec()]).await?;
+		let rows = conn.query(&stmt, &[&payment_hash.to_string()]).await?;
 		if let Some(row) = rows.get(0) {
 			Ok(Some(row.try_into()?))
 		} else {
@@ -738,7 +739,7 @@ impl Db {
 			SET mailbox_id = $2, updated_at = NOW()
 			WHERE payment_hash = $1;
 		").await?;
-		conn.execute(&stmt, &[&payment_hash.to_vec(), &mailbox_id.to_string()]).await?;
+		conn.execute(&stmt, &[&payment_hash.to_string(), &mailbox_id.to_string()]).await?;
 
 		Ok(())
 	}
@@ -755,7 +756,7 @@ impl Db {
 			FROM lightning_invoice
 			WHERE payment_hash = $1;
 		").await?;
-		let row = conn.query_opt(&stmt, &[&payment_hash.to_vec()]).await?;
+		let row = conn.query_opt(&stmt, &[&payment_hash.to_string()]).await?;
 
 		match row {
 			Some(row) => {
@@ -802,7 +803,7 @@ impl Db {
 		let status_canceled = LightningHtlcSubscriptionStatus::Canceled;
 		let row = conn.query_opt(
 			&stmt,
-			&[&payment_hash.to_vec(), &node_id, &status_settled, &status_canceled],
+			&[&payment_hash.to_string(), &node_id, &status_settled, &status_canceled],
 		).await?;
 
 		if let Some(ref row) = row {
@@ -840,7 +841,7 @@ impl Db {
 
 		let row = conn.query_opt(
 			&stmt,
-			&[&payment_hash.to_string(), &&preimage.as_ref()[..]],
+			&[&payment_hash.to_string(), &preimage.to_string()],
 		).await.context("failed to store htlc settlement")?;
 
 		match row {
@@ -868,7 +869,7 @@ impl Db {
 			.context("failed to query htlc settlement")?;
 
 		if let Some(row) = row {
-			let preimage = Preimage::from_slice(row.get::<_, &[u8]>("preimage"))
+			let preimage = Preimage::from_str(row.get::<_, &str>("preimage"))
 				.context("invalid preimage in htlc_settlement table")?;
 			Ok(Some(preimage))
 		} else {
@@ -894,7 +895,7 @@ impl Db {
 			SELECT COALESCE(
 				(SELECT hs.id - 1
 				 FROM htlc_settlement hs
-				 JOIN lightning_invoice li ON li.payment_hash = decode(hs.payment_hash, 'hex')
+				 JOIN lightning_invoice li ON li.payment_hash = hs.payment_hash
 				 JOIN lightning_htlc_subscription sub
 				   ON sub.lightning_invoice_id = li.id
 				 WHERE sub.status = 'htlcs-ready'::lightning_htlc_subscription_status
@@ -937,7 +938,7 @@ impl Db {
 			let cp = u64::try_from(row.get::<_, i64>("id"))?;
 			let payment_hash = PaymentHash::from_str(row.get::<_, &str>("payment_hash"))
 				.context("invalid payment_hash in htlc_settlement table")?;
-			let preimage = Preimage::from_slice(row.get::<_, &[u8]>("preimage"))
+			let preimage = Preimage::from_str(row.get::<_, &str>("preimage"))
 				.context("invalid preimage in htlc_settlement table")?;
 			results.push(crate::ln::settler::Settlement { checkpoint: cp, hash: payment_hash, preimage });
 		}
