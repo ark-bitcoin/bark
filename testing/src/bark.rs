@@ -196,24 +196,19 @@ impl Bark {
 		self.timeout = None;
 	}
 
-	pub async fn try_client(&self) -> anyhow::Result<bark::Wallet> {
+	async fn mnemonic(&self) -> anyhow::Result<bip39::Mnemonic> {
 		const MNEMONIC_FILE: &str = "mnemonic";
-		const DB_FILE: &str = "db.sqlite";
-		const FILESTORE_FILE: &str = "wallet.json";
-		const CONFIG_FILE: &str = "config.toml";
-
-		// read mnemonic file
 		let mnemonic_path = self.datadir.join(MNEMONIC_FILE);
+
 		let mnemonic_str = fs::read_to_string(&mnemonic_path).await
 			.with_context(|| format!("failed to read mnemonic file at {}", mnemonic_path.display()))?;
 		let mnemonic = bip39::Mnemonic::from_str(&mnemonic_str).context("broken mnemonic")?;
+		Ok(mnemonic)
+	}
 
-		// Read the config file
-		let config_path = self.datadir.join(CONFIG_FILE);
-		let config_str = fs::read_to_string(&config_path).await
-			.with_context(|| format!("Failed to read config file at {}", config_path.display()))?;
-		let config: bark::Config = toml::from_str(&config_str)
-			.with_context(|| format!("Failed to parse config file at {}", config_path.display()))?;
+	async fn db_client(&self) -> anyhow::Result<Arc<dyn BarkPersister + Send + Sync>> {
+		const DB_FILE: &str = "db.sqlite";
+		const FILESTORE_FILE: &str = "wallet.json";
 
 		let use_filestore = self.datadir.join(FILESTORE_FILE).exists();
 		let db: Arc<dyn BarkPersister + Send + Sync> = if use_filestore {
@@ -224,12 +219,45 @@ impl Bark {
 			Arc::new(SqliteClient::open(self.datadir.join(DB_FILE))?)
 		};
 
+		Ok(db)
+	}
+
+	pub async fn try_client(&self) -> anyhow::Result<bark::Wallet> {
+		const CONFIG_FILE: &str = "config.toml";
+
+		// read mnemonic file
+		let mnemonic = self.mnemonic().await?;
+
+		// read the config file
+		let config_path = self.datadir.join(CONFIG_FILE);
+		let config_str = fs::read_to_string(&config_path).await
+			.with_context(|| format!("Failed to read config file at {}", config_path.display()))?;
+		let config: bark::Config = toml::from_str(&config_str)
+			.with_context(|| format!("Failed to parse config file at {}", config_path.display()))?;
+
+		let db = self.db_client().await?;
+
 		let lock_manager = Box::new(MemoryLockManager::new());
 		Ok(bark::Wallet::open(&mnemonic, db, config, lock_manager).await?)
 	}
 
 	pub async fn client(&self) -> bark::Wallet {
 		self.try_client().await.expect("failed to create bark::Wallet client")
+	}
+
+	pub async fn try_onchain_client(&self) -> anyhow::Result<bark::onchain::OnchainWallet> {
+		let mnemonic = self.mnemonic().await?;
+		let db = self.db_client().await?;
+
+		Ok(bark::onchain::OnchainWallet::load_or_create(
+			Network::Regtest,
+			mnemonic.to_seed(""),
+			db,
+		).await?)
+	}
+
+	pub async fn onchain_client(&self) -> bark::onchain::OnchainWallet {
+		self.try_onchain_client().await.expect("failed to create bark::onchain::OnchainWallet client")
 	}
 
 	pub async fn estimate_board_offchain_fee(&self, amount: Amount) -> bark::FeeEstimate {
