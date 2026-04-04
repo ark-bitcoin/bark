@@ -26,7 +26,7 @@ tls-native-roots = ["bark-server-rpc/tls-native-roots"]
 tls-webpki-roots = ["bark-server-rpc/tls-webpki-roots"]
 
 # Native features
-native = ["bark-server-rpc/tonic-native", "bark-server-rpc/tls-native-roots"]
+native = ["bark-server-rpc/tonic-native"]
 socks5-proxy = ["bark-bitcoin-ext/rpc-socks5-proxy", "bark-server-rpc/socks5-proxy", "http"]
 
 # Web features
