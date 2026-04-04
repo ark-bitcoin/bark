@@ -56,7 +56,7 @@ mod transport {
 
 	use http::Uri;
 	use log::info;
-	use tonic::transport::{Channel, ClientTlsConfig, Endpoint};
+	use tonic::transport::{Channel, Endpoint};
 
 	use super::CreateEndpointError;
 
@@ -108,24 +108,34 @@ mod transport {
 			return Err(CreateEndpointError::InvalidScheme(scheme.to_string()));
 		}
 
+		// Unused when no TLS is configured
+		#[warn(unused_mut)]
 		let mut endpoint = Channel::builder(uri.clone())
 			.keep_alive_timeout(Duration::from_secs(600))
 			.timeout(Duration::from_secs(600));
 
+		#[cfg(any(feature = "tls-native-roots", feature = "tls-webpki-roots"))]
 		if scheme == "https" {
+			use tonic::transport::ClientTlsConfig;
+
 			info!("Connecting to Ark server at {} using TLS...", address);
 			let uri_auth = uri.clone().into_parts().authority
 				.ok_or(CreateEndpointError::MissingAuthority)?;
 			let domain = uri_auth.host();
 
 			let tls_config = ClientTlsConfig::new()
-				.with_enabled_roots()
-				.domain_name(domain);
-			endpoint = endpoint.tls_config(tls_config)
-				.map_err(CreateEndpointError::Transport)?;
-		} else {
-			info!("Connecting to Ark server at {} without TLS...", address);
+					.with_enabled_roots()
+					.domain_name(domain);
+			endpoint = endpoint.tls_config(tls_config).map_err(CreateEndpointError::Transport)?;
+			return Ok(endpoint);
 		}
+		#[cfg(not(any(feature = "tls-native-roots", feature = "tls-webpki-roots")))]
+		if scheme == "https" {
+			return Err(CreateEndpointError::InvalidScheme(
+				"Missing TLS roots, https is unsupported".to_owned(),
+			));
+		}
+		info!("Connecting to Ark server at {} without TLS...", address);
 		Ok(endpoint)
 	}
 }
