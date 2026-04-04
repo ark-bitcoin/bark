@@ -201,6 +201,7 @@ impl Wallet {
 
 		self.store_spendable_vtxos(&outputs).await?;
 		self.mark_vtxos_as_spent(inputs).await?;
+
 		info!("Got arkoors from lightning: {}",
 			outputs.iter().map(|v| v.id().to_string()).collect::<Vec<_>>().join(", ")
 		);

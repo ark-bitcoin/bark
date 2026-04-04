@@ -123,13 +123,22 @@ impl Wallet {
 	///
 	/// It does nothing if the VTXOs already exist.
 	///
+	/// Also posts the vtxo IDs to the server's recovery mailbox (non-critical, errors are logged).
+	///
 	/// # Parameters
 	/// - `vtxos`: The VTXOs to store in the wallet.
 	pub async fn store_spendable_vtxos<'a>(
 		&self,
-		vtxos: impl IntoIterator<Item = &'a Vtxo<Full>>,
+		vtxos: impl IntoIterator<Item = &'a Vtxo<Full>> + Clone,
 	) -> anyhow::Result<()> {
-		self.store_vtxos(vtxos, &VtxoState::Spendable).await
+		self.store_vtxos(vtxos.clone(), &VtxoState::Spendable).await?;
+
+		// Post vtxo IDs to server for recovery (non-critical, just log errors)
+		if let Err(e) = self.post_recovery_vtxo_ids(vtxos.into_iter().map(|v| v.id())).await {
+			error!("Failed to post recovery vtxo IDs to server: {:#}", e);
+		}
+
+		Ok(())
 	}
 
 	/// Stores the given collection of VTXOs in the wallet with an initial state of

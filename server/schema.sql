@@ -47,7 +47,8 @@ CREATE TYPE public.lightning_payment_status AS ENUM (
 CREATE TYPE public.mailbox_type AS ENUM (
     'arkoor-receive',
     'round-participation-completed',
-    'ln-recv-pending'
+    'ln-recv-pending',
+    'recovery-vtxo-id'
 );
 
 
@@ -1850,6 +1851,13 @@ CREATE UNIQUE INDEX lightning_payment_hash_uix ON public.lightning_invoice USING
 
 
 --
+-- Name: mailbox_mailbox_type_vtxo_id_uix; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX mailbox_mailbox_type_vtxo_id_uix ON public.mailbox USING btree (mailbox_type, vtxo_id);
+
+
+--
 -- Name: offboards_txid_uix; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -1924,13 +1932,6 @@ CREATE UNIQUE INDEX sweep_txid_pending_uix ON public.sweep USING btree (txid) IN
 --
 
 CREATE INDEX vtxo_mailbox_unblinded_mailbox_id_checkpoint_ix ON public.mailbox USING btree (unblinded_mailbox_id, checkpoint);
-
-
---
--- Name: vtxo_mailbox_vtxo_id; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE UNIQUE INDEX vtxo_mailbox_vtxo_id ON public.mailbox USING btree (vtxo_id);
 
 
 --

@@ -80,6 +80,7 @@ impl MailboxEntry {
 				MailboxType::RoundParticipationCompleted
 			},
 			MailboxPayload::LightningReceive { .. } => MailboxType::LnRecvPendingPayment,
+			MailboxPayload::RecoveryVtxoIds { .. } => MailboxType::RecoveryVtxoId,
 		}
 	}
 
@@ -89,6 +90,7 @@ impl MailboxEntry {
 			MailboxPayload::Arkoor { vtxos } => vtxos.len(),
 			MailboxPayload::RoundParticipationCompleted { unlock_hashes } => unlock_hashes.len(),
 			MailboxPayload::LightningReceive { .. } => 1,
+			MailboxPayload::RecoveryVtxoIds { vtxo_ids } => vtxo_ids.len(),
 		}
 	}
 }
@@ -103,6 +105,9 @@ pub enum MailboxPayload {
 	},
 	LightningReceive {
 		payment_hash: PaymentHash,
+	},
+	RecoveryVtxoIds {
+		vtxo_ids: Vec<VtxoId>,
 	},
 }
 
@@ -464,7 +469,9 @@ impl Db {
 					telemetry::set_mailbox_get_metric(mailbox_type, 1);
 					continue;
 				},
-				MailboxType::ArkoorReceive | MailboxType::RoundParticipationCompleted => {},
+				MailboxType::ArkoorReceive |
+				MailboxType::RoundParticipationCompleted |
+				MailboxType::RecoveryVtxoId => {},
 			}
 
 			// so now we are in a mailbox type that is multi-row
@@ -476,6 +483,11 @@ impl Db {
 					MailboxType::RoundParticipationCompleted => {
 						MailboxPayload::RoundParticipationCompleted {
 							unlock_hashes: vec![],
+						}
+					},
+					MailboxType::RecoveryVtxoId => {
+						MailboxPayload::RecoveryVtxoIds {
+							vtxo_ids: vec![],
 						}
 					},
 					MailboxType::LnRecvPendingPayment => {
@@ -501,6 +513,12 @@ impl Db {
 					let payment_hash = sha256::Hash::from_slice(row.get("payment_hash"))?;
 					unlock_hashes.push(payment_hash);
 				},
+				MailboxPayload::RecoveryVtxoIds { ref mut vtxo_ids } => {
+					ensure!(mailbox_type == MailboxType::RecoveryVtxoId);
+
+					let vtxo_id = VtxoId::from_str(row.get("vtxo_id"))?;
+					vtxo_ids.push(vtxo_id);
+				}
 				MailboxPayload::LightningReceive { .. } => unreachable!("continued in match above"),
 			}
 		}
@@ -588,6 +606,46 @@ impl Db {
 		tx.commit().await?;
 
 		Ok(checkpoint as u64)
+	}
+
+	pub async fn store_vtxo_ids_in_mailbox(
+		&self,
+		mailbox_type: MailboxType,
+		mailbox_id: MailboxIdentifier,
+		vtxo_ids: &[VtxoId],
+	) -> anyhow::Result<Option<Checkpoint>> {
+		if vtxo_ids.is_empty() {
+			return Ok(None);
+		}
+
+		let mut conn = self.get_conn().await?;
+		let tx = conn.transaction().await?;
+
+		// Acquire advisory lock to serialize all mailbox writes.
+		// This prevents race conditions where checkpoints could be committed out of order.
+		// Lock is automatically released when transaction commits/rolls back.
+		tx.execute("SELECT pg_advisory_xact_lock(hashtext('mailbox_write'))", &[]).await?;
+
+		let checkpoint: i64 = tx.query_one("SELECT next_checkpoint()", &[]).await?.get(0);
+		let mailbox_type_str = String::from(mailbox_type);
+
+		let statement = tx.prepare("
+			INSERT INTO mailbox (unblinded_mailbox_id, vtxo_id, checkpoint, mailbox_type, created_at)
+			VALUES ($1, $2, $3, $4::TEXT::mailbox_type, NOW());
+		").await?;
+		for vtxo_id in vtxo_ids {
+			let rows_updated = tx.execute(&statement, &[
+				&mailbox_id.to_string(),
+				&vtxo_id.to_string(),
+				&checkpoint,
+				&mailbox_type_str,
+			]).await?;
+			debug_assert_eq!(rows_updated, 1);
+		}
+
+		tx.commit().await?;
+
+		Ok(Some(checkpoint as u64))
 	}
 
 	/**

@@ -11,6 +11,8 @@ service MailboxService {
 	rpc PostArkoorMessage(PostArkoorMessageRequest) returns (core.Empty) {};
 	rpc SubscribeMailbox(MailboxRequest) returns (stream MailboxMessage);
 	rpc ReadMailbox(MailboxRequest) returns (MailboxMessages);
+	/// Deposits your VTXO IDs into your recovery mailbox.
+	rpc PostRecoveryVtxoIds(PostRecoveryVtxoIdsRequest) returns (core.Empty) {};
 	/// Deprecated, please use PostArkoorMessage.
 	rpc PostVtxosMailbox(PostVtxosMailboxRequest) returns (core.Empty) {
 		option deprecated = true;
@@ -37,6 +39,7 @@ message MailboxMessage {
 		ArkoorMessage arkoor = 1;
 		RoundParticipationCompleted round_participation_completed = 4;
 		IncomingLightningPaymentMessage incoming_lightning_payment = 5;
+		RecoveryVtxoIdsMessage recovery_vtxo_ids = 6;
 	}
 	// Strictly ascending time based number.
 	uint64 checkpoint = 2;
@@ -55,11 +58,22 @@ message IncomingLightningPaymentMessage {
 	bytes payment_hash = 1;
 }
 
+message RecoveryVtxoIdsMessage {
+	repeated bytes vtxo_ids = 1;
+}
+
 message MailboxMessages {
 	repeated MailboxMessage messages = 1;
 	/// Whether the server has more messages for you
 	bool have_more = 2;
 }
+
+message PostRecoveryVtxoIdsRequest {
+	// The unblinded recovery mailbox ID
+	bytes unblinded_id = 1;
+	repeated bytes vtxo_ids = 2;
+}
+
 
 /* deprecated things */
 enum MailboxType {
@@ -67,6 +81,7 @@ enum MailboxType {
 	ARKOOR_RECEIVE = 0;
 	ROUND_PARTICIPATION_COMPLETED = 1;
 	LN_RECV_PENDING_PAYMENT = 2;
+	RECOVERY_VTXO_IDS = 3;
 }
 
 message PostVtxosMailboxRequest {

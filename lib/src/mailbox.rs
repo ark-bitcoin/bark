@@ -16,6 +16,7 @@ pub enum MailboxType {
 	ArkoorReceive,
 	RoundParticipationCompleted,
 	LnRecvPendingPayment,
+	RecoveryVtxoId,
 }
 
 impl MailboxType {
@@ -25,6 +26,7 @@ impl MailboxType {
 			MailboxType::ArkoorReceive => "arkoor-receive",
 			MailboxType::RoundParticipationCompleted => "round-participation-completed",
 			MailboxType::LnRecvPendingPayment => "ln-recv-pending",
+			MailboxType::RecoveryVtxoId => "recovery-vtxo-id",
 		}
 	}
 
@@ -44,6 +46,7 @@ impl TryFrom<u32> for MailboxType {
 			0 => Ok(MailboxType::ArkoorReceive),
 			1 => Ok(MailboxType::RoundParticipationCompleted),
 			2 => Ok(MailboxType::LnRecvPendingPayment),
+			3 => Ok(MailboxType::RecoveryVtxoId),
 			_ => Err("invalid mailbox type"),
 		}
 	}
@@ -55,6 +58,7 @@ impl From<MailboxType> for u32 {
 			MailboxType::ArkoorReceive => 0,
 			MailboxType::RoundParticipationCompleted => 1,
 			MailboxType::LnRecvPendingPayment => 2,
+			MailboxType::RecoveryVtxoId => 3,
 		}
 	}
 }
@@ -73,6 +77,7 @@ impl FromStr for MailboxType {
 			v if v == MailboxType::ArkoorReceive.as_str() => Ok(MailboxType::ArkoorReceive),
 			v if v == MailboxType::RoundParticipationCompleted.as_str() => Ok(MailboxType::RoundParticipationCompleted),
 			v if v == MailboxType::LnRecvPendingPayment.as_str() => Ok(MailboxType::LnRecvPendingPayment),
+			v if v == MailboxType::RecoveryVtxoId.as_str() => Ok(MailboxType::RecoveryVtxoId),
 			_ => Err("invalid mailbox type"),
 		}
 	}
@@ -324,11 +329,13 @@ mod test {
 		let ar = MailboxType::ArkoorReceive;
 		let rpc = MailboxType::RoundParticipationCompleted;
 		let ln = MailboxType::LnRecvPendingPayment;
+		let rvi = MailboxType::RecoveryVtxoId;
 
 		let cases = [
 			(ar, u32::from(ar), ar.as_str()),
 			(rpc, u32::from(rpc), rpc.as_str()),
 			(ln, u32::from(ln), ln.as_str()),
+			(rvi, u32::from(rvi), rvi.as_str()),
 		];
 
 		let mut seen_u32 = std::collections::HashSet::new();

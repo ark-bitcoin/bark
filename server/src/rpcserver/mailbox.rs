@@ -2,7 +2,7 @@ use std::pin::Pin;
 use bitcoin::hashes::Hash;
 use futures::Stream;
 use tracing::{error, warn};
-use ark::{ProtocolEncoding, Vtxo};
+use ark::{ProtocolEncoding, Vtxo, VtxoId};
 use ark::mailbox::{BlindedMailboxIdentifier, MailboxAuthorization, MailboxIdentifier, MailboxType};
 use server_rpc::{self as rpc, protos, TryFromBytes};
 
@@ -46,6 +46,17 @@ fn new_mailbox_msg(entry: MailboxEntry) -> protos::mailbox_server::MailboxMessag
 				)),
 				checkpoint: entry.checkpoint.into(),
 				mailbox_type: 0, // deprecated, always default
+			}
+		},
+		MailboxPayload::RecoveryVtxoIds { vtxo_ids } => {
+			protos::mailbox_server::MailboxMessage {
+				message: Some(protos::mailbox_server::mailbox_message::Message::RecoveryVtxoIds(
+					protos::mailbox_server::RecoveryVtxoIdsMessage {
+						vtxo_ids: vtxo_ids.into_iter().map(|v| v.to_bytes().to_vec()).collect(),
+					}
+				)),
+				checkpoint: entry.checkpoint.into(),
+				mailbox_type: MailboxType::RecoveryVtxoId as i32,
 			}
 		},
 	}
@@ -236,4 +247,30 @@ impl rpc::server::MailboxService for crate::Server {
 
 		Ok(tonic::Response::new(Box::pin(stream)))
 	}
+
+	#[tracing::instrument(skip(self, req))]
+	async fn post_recovery_vtxo_ids(
+		&self,
+		req: tonic::Request<protos::mailbox_server::PostRecoveryVtxoIdsRequest>,
+	) -> Result<tonic::Response<protos::core::Empty>, tonic::Status> {
+		let req = req.into_inner();
+
+		let vtxo_ids = req.vtxo_ids.into_iter()
+			.map(|v| VtxoId::from_bytes(v))
+			.collect::<Result<Vec<_>, _>>()?;
+		if vtxo_ids.is_empty() {
+			self::badarg!("no vtxo ids provided");
+		}
+
+		let mailbox_id = MailboxIdentifier::from_slice(req.unblinded_id.as_slice())
+			.badarg("invalid unblinded mailbox id")?;
+
+		let checkpoint = self.db.store_vtxo_ids_in_mailbox(MailboxType::RecoveryVtxoId, mailbox_id, vtxo_ids.as_slice()).await.to_status()?
+			.badarg("nothing was stored")?;
+
+		self.mailbox_manager.notify(mailbox_id, checkpoint);
+
+		Ok(tonic::Response::new(protos::core::Empty{}))
+	}
+
 }

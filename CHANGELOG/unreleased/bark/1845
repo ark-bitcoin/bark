@@ -1,0 +1,5 @@
+- Process RoundVtxos mailbox messages to progress non-interactive round participations
+  When bark receives a `RoundVtxos` mailbox notification from the server, it now
+  automatically syncs pending rounds. This enables delegated/non-interactive round
+  participations to be progressed via mailbox notifications.
+  [#1845](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1845)
