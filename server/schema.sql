@@ -46,7 +46,8 @@ CREATE TYPE public.lightning_payment_status AS ENUM (
 
 CREATE TYPE public.mailbox_type AS ENUM (
     'arkoor-receive',
-    'round-participation-completed'
+    'round-participation-completed',
+    'ln-recv-pending'
 );
 
 
@@ -530,7 +531,7 @@ ALTER SEQUENCE public.ephemeral_tweak_id_seq OWNED BY public.ephemeral_tweak.id;
 CREATE TABLE public.htlc_settlement (
     id bigint NOT NULL,
     payment_hash text NOT NULL,
-    preimage bytea NOT NULL,
+    preimage text NOT NULL,
     created_at timestamp with time zone NOT NULL
 );
 
@@ -807,11 +808,12 @@ ALTER SEQUENCE public.lightning_htlc_subscription_lightning_htlc_subscription_id
 CREATE TABLE public.lightning_invoice (
     id bigint NOT NULL,
     invoice text NOT NULL,
-    payment_hash bytea NOT NULL,
+    payment_hash text NOT NULL,
     final_amount_msat bigint,
-    preimage bytea,
+    preimage text,
     created_at timestamp with time zone NOT NULL,
-    updated_at timestamp with time zone NOT NULL
+    updated_at timestamp with time zone NOT NULL,
+    mailbox_id text
 );
 
 
@@ -822,9 +824,9 @@ CREATE TABLE public.lightning_invoice (
 CREATE TABLE public.lightning_invoice_history (
     id bigint NOT NULL,
     invoice text NOT NULL,
-    payment_hash bytea NOT NULL,
+    payment_hash text NOT NULL,
     final_amount_msat bigint,
-    preimage bytea,
+    preimage text,
     created_at timestamp with time zone NOT NULL,
     updated_at timestamp with time zone NOT NULL,
     history_created_at timestamp with time zone DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC'::text) NOT NULL
@@ -1075,7 +1077,7 @@ CREATE TABLE public.round_part_output (
 CREATE TABLE public.round_participation (
     id bigint NOT NULL,
     unlock_hash text,
-    unlock_preimage bytea,
+    unlock_preimage text,
     round_id text,
     created_at timestamp without time zone NOT NULL
 );

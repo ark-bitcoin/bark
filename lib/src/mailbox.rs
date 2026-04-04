@@ -15,6 +15,7 @@ use crate::encode::{ProtocolDecodingError, ProtocolEncoding, ReadExt, WriteExt};
 pub enum MailboxType {
 	ArkoorReceive,
 	RoundParticipationCompleted,
+	LnRecvPendingPayment,
 }
 
 impl MailboxType {
@@ -23,6 +24,7 @@ impl MailboxType {
 		match self {
 			MailboxType::ArkoorReceive => "arkoor-receive",
 			MailboxType::RoundParticipationCompleted => "round-participation-completed",
+			MailboxType::LnRecvPendingPayment => "ln-recv-pending",
 		}
 	}
 
@@ -41,6 +43,7 @@ impl TryFrom<u32> for MailboxType {
 		match i {
 			0 => Ok(MailboxType::ArkoorReceive),
 			1 => Ok(MailboxType::RoundParticipationCompleted),
+			2 => Ok(MailboxType::LnRecvPendingPayment),
 			_ => Err("invalid mailbox type"),
 		}
 	}
@@ -51,6 +54,7 @@ impl From<MailboxType> for u32 {
 		match t {
 			MailboxType::ArkoorReceive => 0,
 			MailboxType::RoundParticipationCompleted => 1,
+			MailboxType::LnRecvPendingPayment => 2,
 		}
 	}
 }
@@ -68,6 +72,7 @@ impl FromStr for MailboxType {
 		match s {
 			v if v == MailboxType::ArkoorReceive.as_str() => Ok(MailboxType::ArkoorReceive),
 			v if v == MailboxType::RoundParticipationCompleted.as_str() => Ok(MailboxType::RoundParticipationCompleted),
+			v if v == MailboxType::LnRecvPendingPayment.as_str() => Ok(MailboxType::LnRecvPendingPayment),
 			_ => Err("invalid mailbox type"),
 		}
 	}
@@ -318,10 +323,12 @@ mod test {
 	fn mailbox_type_round_trip() {
 		let ar = MailboxType::ArkoorReceive;
 		let rpc = MailboxType::RoundParticipationCompleted;
+		let ln = MailboxType::LnRecvPendingPayment;
 
 		let cases = [
 			(ar, u32::from(ar), ar.as_str()),
 			(rpc, u32::from(rpc), rpc.as_str()),
+			(ln, u32::from(ln), ln.as_str()),
 		];
 
 		let mut seen_u32 = std::collections::HashSet::new();

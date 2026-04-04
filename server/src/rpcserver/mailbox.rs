@@ -6,29 +6,29 @@ use ark::{ProtocolEncoding, Vtxo};
 use ark::mailbox::{BlindedMailboxIdentifier, MailboxAuthorization, MailboxIdentifier, MailboxType};
 use server_rpc::{self as rpc, protos, TryFromBytes};
 
-use crate::database::{Checkpoint, MailboxEntry};
+use crate::database::{Checkpoint, MailboxEntry, MailboxPayload};
 use crate::rpcserver::{StatusContext, ToStatus, ToStatusResult};
 use crate::rpcserver::macros::badarg;
 
 #[allow(deprecated)]
 fn new_mailbox_msg(entry: MailboxEntry) -> protos::mailbox_server::MailboxMessage {
-	match entry.mailbox_type {
-		MailboxType::ArkoorReceive => {
+	match entry.payload {
+		MailboxPayload::Arkoor { vtxos } => {
 			protos::mailbox_server::MailboxMessage {
 				message: Some(protos::mailbox_server::mailbox_message::Message::Arkoor(
 					protos::mailbox_server::ArkoorMessage {
-						vtxos: entry.vtxos.into_iter().map(|v| v.serialize()).collect(),
+						vtxos: vtxos.into_iter().map(|v| v.serialize()).collect(),
 					}
 				)),
 				checkpoint: entry.checkpoint.into(),
 				mailbox_type: MailboxType::ArkoorReceive as i32,
 			}
-		}
-		MailboxType::RoundParticipationCompleted => {
+		},
+		MailboxPayload::RoundParticipationCompleted { unlock_hashes } => {
 			protos::mailbox_server::MailboxMessage {
 				message: Some(protos::mailbox_server::mailbox_message::Message::RoundParticipationCompleted(
 					protos::mailbox_server::RoundParticipationCompleted {
-						payment_hashes: entry.payment_hashes.into_iter()
+						payment_hashes: unlock_hashes.into_iter()
 							.map(|h| h.as_byte_array().to_vec())
 							.collect(),
 					}
@@ -36,7 +36,18 @@ fn new_mailbox_msg(entry: MailboxEntry) -> protos::mailbox_server::MailboxMessag
 				checkpoint: entry.checkpoint.into(),
 				mailbox_type: MailboxType::RoundParticipationCompleted as i32,
 			}
-		}
+		},
+		MailboxPayload::LightningReceive { payment_hash } => {
+			protos::mailbox_server::MailboxMessage {
+				message: Some(protos::mailbox_server::mailbox_message::Message::IncomingLightningPayment(
+					protos::mailbox_server::IncomingLightningPaymentMessage {
+						payment_hash: payment_hash.to_vec(),
+					}
+				)),
+				checkpoint: entry.checkpoint.into(),
+				mailbox_type: 0, // deprecated, always default
+			}
+		},
 	}
 }
 
@@ -130,7 +141,7 @@ impl rpc::server::MailboxService for crate::Server {
 			self::badarg!("invalid mailbox authorization signature");
 		}
 		let limit = self.config.max_read_mailbox_items;
-		let entries_by_checkpoint = self.db.get_mailbox_entries(
+		let entries_by_checkpoint = self.db.get_mailbox_messages(
 			unblinded_id,
 			req.checkpoint,
 			limit,
@@ -201,13 +212,14 @@ impl rpc::server::MailboxService for crate::Server {
 
 				'fetching:
 				loop {
-					match db.get_mailbox_entries(mailbox_id, processed_cp, ret_limit).await {
+					match db.get_mailbox_messages(mailbox_id, processed_cp, ret_limit).await {
 						Ok(entries) => {
 							let done = entries.len() < ret_limit;
 							for entry in entries {
+								let cp = entry.checkpoint;
 								let msg = new_mailbox_msg(entry.clone());
 								yield msg;
-								processed_cp = entry.checkpoint;
+								processed_cp = cp;
 							}
 							if done {
 								break 'fetching;

@@ -15,6 +15,7 @@ use futures::{Stream, StreamExt};
 use log::{debug, error, info, trace, warn};
 
 use ark::{ProtocolEncoding, Vtxo};
+use ark::lightning::PaymentHash;
 use ark::mailbox::{MailboxAuthorization, MailboxIdentifier};
 use ark::vtxo::Full;
 use server_rpc::protos;
@@ -211,7 +212,12 @@ impl Wallet {
 				if let Err(e) = self.sync_pending_rounds().await {
 					error!("Error syncing pending rounds: {:#}", e);
 				}
-			}
+			},
+			Some(protos::mailbox_server::mailbox_message::Message::IncomingLightningPayment(msg)) => {
+				if let Err(e) = self.handle_lightning_receive_notification(msg, mailbox_msg.checkpoint).await {
+					error!("Error handling lightning receive notification: {:#}", e);
+				}
+			},
 			None => {
 				warn!("Received unknown mailbox message, ignoring");
 			}
@@ -277,6 +283,29 @@ impl Wallet {
 			self.store_mailbox_checkpoint(checkpoint).await?;
 		}
 
+		Ok(())
+	}
+
+	/// Handle a lightning receive notification from the mailbox.
+	///
+	/// This is a signal that the server has received a lightning payment for us
+	/// and we should come online to claim it.
+	async fn handle_lightning_receive_notification(
+		&self,
+		notif: protos::mailbox_server::IncomingLightningPaymentMessage,
+		checkpoint: u64,
+	) -> anyhow::Result<()> {
+		let payment_hash = PaymentHash::try_from(notif.payment_hash)
+			.context("invalid payment hash in lightning receive notification")?;
+
+		debug!("Lightning receive notification: payment_hash={}", payment_hash);
+
+		match self.try_claim_lightning_receive(payment_hash, false, None).await {
+			Ok(_) => info!("Lightning receive claimed via mailbox notification for {}", payment_hash),
+			Err(e) => error!("Failed to claim lightning receive for {}: {:#}", payment_hash, e),
+		}
+
+		self.store_mailbox_checkpoint(checkpoint).await?;
 		Ok(())
 	}
 

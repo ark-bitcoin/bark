@@ -1,0 +1,5 @@
+- Push lightning receive notifications to client mailboxes
+  The server now notifies clients via the mailbox when a lightning
+  payment arrives, enabling them to come online and claim without
+  polling.
+  [#1792](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1792)

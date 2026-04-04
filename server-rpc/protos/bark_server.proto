@@ -275,6 +275,7 @@ message StartLightningReceiveRequest {
 	bytes payment_hash = 1;
 	uint64 amount_sat = 2;
 	uint32 min_cltv_delta = 3;
+	optional bytes mailbox_id = 4;
 }
 
 message StartLightningReceiveResponse {

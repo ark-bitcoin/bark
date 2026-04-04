@@ -36,6 +36,7 @@ message MailboxMessage {
 	oneof message {
 		ArkoorMessage arkoor = 1;
 		RoundParticipationCompleted round_participation_completed = 4;
+		IncomingLightningPaymentMessage incoming_lightning_payment = 5;
 	}
 	// Strictly ascending time based number.
 	uint64 checkpoint = 2;
@@ -50,6 +51,10 @@ message RoundParticipationCompleted {
 	repeated bytes payment_hashes = 1;
 }
 
+message IncomingLightningPaymentMessage {
+	bytes payment_hash = 1;
+}
+
 message MailboxMessages {
 	repeated MailboxMessage messages = 1;
 	/// Whether the server has more messages for you
@@ -61,6 +66,7 @@ enum MailboxType {
 	option deprecated = true;
 	ARKOOR_RECEIVE = 0;
 	ROUND_PARTICIPATION_COMPLETED = 1;
+	LN_RECV_PENDING_PAYMENT = 2;
 }
 
 message PostVtxosMailboxRequest {

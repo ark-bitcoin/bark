@@ -341,6 +341,7 @@ impl Server {
 		payment_hash: PaymentHash,
 		amount: Amount,
 		min_cltv_delta: BlockDelta,
+		mailbox_id: Option<ark::mailbox::MailboxIdentifier>,
 	) -> anyhow::Result<protos::StartLightningReceiveResponse> {
 		info!("Starting bolt11 board with payment_hash: {}", payment_hash.as_hex());
 
@@ -403,6 +404,11 @@ impl Server {
 		trace!("Hold invoice created. payment_hash: {}, amount: {}, {}",
 			payment_hash, amount, invoice.to_string(),
 		);
+
+		// Store the client's mailbox_id on the invoice for later notifications
+		if let Some(ref id) = mailbox_id {
+			self.db.store_lightning_invoice_mailbox_id(payment_hash, id).await?;
+		}
 
 		Ok(protos::StartLightningReceiveResponse {
 			bolt11: invoice.to_string()

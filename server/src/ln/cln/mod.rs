@@ -84,6 +84,7 @@ impl ClnManager {
 		config: &Config,
 		db: database::Db,
 		sync_manager: Arc<SyncManager>,
+		mailbox_manager: Arc<crate::mailbox_manager::MailboxManager>,
 	) -> anyhow::Result<ClnManager> {
 		let (ctrl_tx, ctrl_rx) = mpsc::unbounded_channel();
 		let (payment_update_tx, payment_update_rx) = broadcast::channel(256);
@@ -110,6 +111,7 @@ impl ClnManager {
 			xpay_config,
 			invoice_expiry: config.invoice_expiry,
 			sync_manager,
+			mailbox_manager,
 
 			payment_update_tx: payment_update_tx.clone(),
 
@@ -538,6 +540,7 @@ impl ClnNodeInfo {
 		rtmgr: &RuntimeManager,
 		waker: &Arc<Notify>,
 		sync_manager: &Arc<SyncManager>,
+		mailbox_manager: &Arc<crate::mailbox_manager::MailboxManager>,
 	) -> anyhow::Result<ClnNodeId> {
 		let mut rpc = self.config.build_grpc_client().await.context("failed to connect rpc")?;
 		let hold_rpc = self.config.build_hold_client().await.context("failed to connect hold rpc")?;
@@ -569,6 +572,7 @@ impl ClnNodeInfo {
 			hold_rpc.clone(),
 			monitor_config.clone(),
 			sync_manager.clone(),
+			mailbox_manager.clone(),
 		).await.context("failed to start ClnHold")?;
 
 		let xpay = ClnXpay::start(
@@ -640,6 +644,7 @@ struct ClnManagerProcess {
 	xpay_config: ClnXpayConfig,
 	invoice_expiry: Duration,
 	sync_manager: Arc<SyncManager>,
+	mailbox_manager: Arc<crate::mailbox_manager::MailboxManager>,
 
 	htlc_expiry_delta: BlockDelta,
 }
@@ -749,6 +754,7 @@ impl ClnManagerProcess {
 						&self.rtmgr,
 						&self.waker,
 						&self.sync_manager,
+						&self.mailbox_manager,
 					).await {
 						Ok(id) => {
 							info!("Successfully connected to CLN node at {}", uri);

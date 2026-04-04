@@ -7,6 +7,8 @@ use anyhow::Context;
 use futures::{FutureExt, StreamExt};
 use log::{info, warn};
 use tokio::sync::RwLock;
+#[cfg(not(feature = "wasm-web"))]
+use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
 use crate::Wallet;
@@ -17,7 +19,7 @@ use crate::onchain::DaemonizableOnchainWallet;
 #[cfg(not(feature = "wasm-web"))]
 pub struct DaemonHandle {
 	shutdown: CancellationToken,
-	jh: tokio::task::JoinHandle<()>,
+	jh: JoinHandle<()>,
 }
 
 /// A handle to a running background daemon for WASM

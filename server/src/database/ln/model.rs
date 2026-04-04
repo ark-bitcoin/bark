@@ -84,11 +84,11 @@ impl TryFrom<Row> for LightningInvoice {
 			id: row.get("id"),
 			invoice: Invoice::from_str(row.get("invoice"))
 				.context("error decoding invoice from db")?,
-			payment_hash: PaymentHash::try_from(row.get::<_, &[u8]>("payment_hash"))
+			payment_hash: PaymentHash::from_str(row.get::<_, &str>("payment_hash"))
 				.context("error decoding payment hash from db")?,
 			final_amount_msat: row.get::<_, Option<i64>>("final_amount_msat").map(|i| i as u64),
-			preimage: row.get::<_, Option<&[u8]>>("preimage").map(|b| {
-				b.try_into().context("invalid preimage, not 32 bytes")
+			preimage: row.get::<_, Option<&str>>("preimage").map(|b| {
+				Preimage::from_str(b).context("invalid preimage")
 			}).transpose()?,
 			last_attempt_status: row.get::<_, Option<LightningPaymentStatus>>("status"),
 			created_at: row.get("created_at"),
