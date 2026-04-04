@@ -293,6 +293,21 @@ impl Bark {
 			.expect("failed to create OnchainWallet")
 	}
 
+	pub async fn try_parse_payment_request(
+		&self,
+		payment_str: &str,
+	) -> anyhow::Result<bark::payment_request::PaymentRequest> {
+		let wallet = self.client().await;
+		wallet.parse_payment_request(payment_str).await
+	}
+
+	pub async fn parse_payment_request(
+		&self,
+		payment_str: &str,
+	) -> bark::payment_request::PaymentRequest {
+		self.try_parse_payment_request(payment_str).await.unwrap()
+	}
+
 	pub fn bitcoind(&self) -> Option<&Bitcoind> {
 		self.bitcoind.as_deref()
 	}
@@ -653,10 +668,11 @@ impl Bark {
 		self.run(["maintain", "--delegated"]).await;
 	}
 
-	pub async fn board_and_confirm_and_register(&self, ctx: &TestContext, amount: Amount) {
-		self.board(amount).await;
+	pub async fn board_and_confirm_and_register(&self, ctx: &TestContext, amount: Amount) -> Vec<VtxoId> {
+		let pending_board = self.board(amount).await;
 		ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 		self.sync().await;
+		pending_board.vtxos
 	}
 
 	pub async fn board_all_and_confirm_and_register(&self, ctx: &TestContext) {
