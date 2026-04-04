@@ -6,13 +6,14 @@ pub use model::*;
 use std::str::FromStr;
 
 use anyhow::Context;
+use bitcoin::Amount;
 use bitcoin::secp256k1::PublicKey;
 use chrono::{DateTime, Local};
 use lightning_invoice::Bolt11Invoice;
 use tracing::{trace, warn};
 use ark::VtxoId;
 use ark::lightning::{Invoice, PaymentHash, Preimage};
-use bitcoin_ext::BlockHeight;
+use bitcoin_ext::{AmountExt, BlockHeight};
 use cln_rpc::listsendpays_request::ListsendpaysIndex;
 
 use crate::database::{Checkpoint, Db};
@@ -203,7 +204,7 @@ impl Db {
 		&self,
 		node_id: ClnNodeId,
 		invoice: &Invoice,
-		amount_msat: u64,
+		amount: Amount,
 	) -> anyhow::Result<()> {
 		let mut conn = self.get_conn().await?;
 		let tx = conn.transaction().await?;
@@ -236,7 +237,7 @@ impl Db {
 		};
 
 		self.store_lightning_payment_attempt(
-			&tx, lightning_invoice_id, amount_msat, node_id,
+			&tx, lightning_invoice_id, amount, node_id,
 		).await?;
 
 		tx.commit().await?;
@@ -249,7 +250,7 @@ impl Db {
 		&self,
 		tx: &tokio_postgres::Transaction<'_>,
 		lightning_invoice_id: i64,
-		amount_msat: u64,
+		amount: Amount,
 		node_id: ClnNodeId,
 	) -> anyhow::Result<(i64, DateTime<Local>)> {
 		let requested_status = LightningPaymentStatus::Requested;
@@ -269,7 +270,7 @@ impl Db {
 		let row = tx
 			.query_one(
 				&stmt,
-				&[&lightning_invoice_id, &node_id, &(amount_msat as i64), &requested_status],
+				&[&lightning_invoice_id, &node_id, &(amount.to_msat() as i64), &requested_status],
 			).await?;
 
 		let payment_attempt_id = row.get("id");

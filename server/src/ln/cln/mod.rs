@@ -150,16 +150,10 @@ impl ClnManager {
 	pub async fn pay_invoice(
 		&self,
 		invoice: &Invoice,
-		htlc_amount: Amount,
+		payment_amount: Amount,
 		htlc_send_expiry_height: BlockHeight,
 	) -> anyhow::Result<()> {
 		invoice.check_signature().context("invalid invoice signature")?;
-
-		let user_amount = if invoice.amount_msat().is_none() {
-			Some(htlc_amount)
-		} else {
-			None
-		};
 
 		debug!("Sending payment to CLN for invoice: {}", invoice);
 
@@ -167,7 +161,7 @@ impl ClnManager {
 		self.send_ctrl(Ctrl::PaymentRequest {
 			result_tx,
 			invoice: Box::new(invoice.clone()),
-			user_amount,
+			amount: payment_amount,
 			htlc_expiry_height: htlc_send_expiry_height,
 		});
 
@@ -606,7 +600,7 @@ enum Ctrl {
 	DisableCln(Uri),
 	PaymentRequest {
 		invoice: Box<Invoice>,
-		user_amount: Option<Amount>,
+		amount: Amount,
 		htlc_expiry_height: BlockHeight,
 		result_tx: oneshot::Sender<anyhow::Result<()>>,
 	},
@@ -884,7 +878,7 @@ impl ClnManagerProcess {
 	async fn start_payment(
 		&self,
 		invoice: Box<Invoice>,
-		user_amount: Option<Amount>,
+		amount: Amount,
 		htlc_send_expiry_height: BlockHeight,
 	) -> anyhow::Result<()> {
 		let payment_hash = invoice.payment_hash();
@@ -893,16 +887,11 @@ impl ClnManagerProcess {
 			.context("failed to get info from rpc")?
 			.into_inner().blockheight;
 
-		let amount_msat = match invoice.amount_msat() {
-			Some(msat) => msat,
-			None => user_amount.context("user amount required for invoice without amount")?.to_msat(),
-		};
-
-		debug!("Selected cln node {} for bolt11 payment with payment hash {} and amount {}. Current block height is {}",
-			node.id, payment_hash, Amount::from_msat_floor(amount_msat), tip,
+		debug!("Selected cln node {} for bolt11 payment with payment hash {} and amount {}. \
+			Current block height is {}", node.id, payment_hash, amount, tip,
 		);
 
-		self.db.store_lightning_payment_start(node.id, &invoice, amount_msat).await?;
+		self.db.store_lightning_payment_start(node.id, &invoice, amount).await?;
 
 		// If there is an existing subscription, it's an intra-Ark lightning
 		// payment so we can directly mark it as accepted, then skip cln payment
@@ -940,10 +929,10 @@ impl ClnManagerProcess {
 		// This method might fail even if the payment will succeed
 		// (grpc-connection problems or time-outs).
 		// We keep the error-around but will verify if the payment actually failed.
-		trace!("Bolt11 invoice payment of {:?} sent to CLN: {}", user_amount, invoice);
+		trace!("Bolt11 invoice payment of {:?} sent to CLN: {}", amount, invoice);
 		node.xpay.as_ref().context("xpay not running")?.pay(
 			invoice,
-			user_amount,
+			amount,
 			max_cltv_expiry_delta as BlockDelta,
 			self.xpay_config.invoice_recheck_delay,
 		);
@@ -1086,14 +1075,16 @@ impl ClnManagerProcess {
 						Ctrl::DisableCln(uri) => {
 							self.disable_node(&uri).await;
 						},
-						Ctrl::PaymentRequest { invoice, user_amount, htlc_expiry_height, result_tx } => {
+						Ctrl::PaymentRequest {
+							invoice, amount, htlc_expiry_height, result_tx,
+						} => {
 							trace!("Payment request received: payment_hash={}",
 								invoice.payment_hash(),
 							);
 
 							let res = self.start_payment(
 								invoice,
-								user_amount,
+								amount,
 								htlc_expiry_height,
 							).await;
 

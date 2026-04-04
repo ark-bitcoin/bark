@@ -25,7 +25,7 @@ use ark::util::IteratorExt;
 use server_rpc::protos::{self, InputVtxo, lightning_payment_status};
 use server_rpc::protos::prepare_lightning_receive_claim_request::LightningReceiveAntiDos;
 use server_rpc::TryFromBytes;
-use bitcoin_ext::{BlockDelta, BlockHeight};
+use bitcoin_ext::{AmountExt, BlockDelta, BlockHeight};
 
 use crate::arkoor::ArkoorCosignRequestValidationParams;
 use crate::database::VirtualTransaction;
@@ -121,7 +121,7 @@ impl Server {
 	pub async fn initiate_lightning_payment(
 		&self,
 		invoice: Invoice,
-		requested_payment: Amount,
+		payment_amount: Amount,
 		htlc_vtxo_ids: Vec<VtxoId>,
 	) -> anyhow::Result<()> {
 		//TODO(stevenroose) validate vtxo generally (based on input)
@@ -168,12 +168,13 @@ impl Server {
 		}
 
 		// Verify against the invoice amount if applicable, disallowing underpayments.
-		let payment_amount = match invoice.get_payment_amount(Some(requested_payment)) {
-			Ok(amount) => amount,
-			Err(e) => return badarg!("requested payment amount too low for invoice: {:#}", e),
-		};
-		if requested_payment < payment_amount {
-			return badarg!("requested payment amount too low for invoice");
+		if let Some(invoice_msat) = invoice.amount_msat() {
+			if invoice_msat > payment_amount.to_msat() {
+				return badarg!("requested payment amount too low for invoice");
+			}
+			if invoice_msat < payment_amount.to_msat() / 2 {
+				return badarg!("requested payment amount more than double invoice amount");
+			}
 		}
 
 		// Verify we can actually perform the payment when fees are taken into account. If for some

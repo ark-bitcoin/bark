@@ -547,17 +547,17 @@ impl Wallet {
 
 		invoice.check_signature()?;
 
-		let amount = invoice.get_payment_amount(user_amount)?;
-		if amount == Amount::ZERO {
+		let payment_amount = invoice.get_payment_amount(user_amount)?;
+		if payment_amount == Amount::ZERO {
 			bail!("Cannot pay invoice for 0 sats (0 sat invoices are not any-amount invoices)");
 		}
 
 		let (change_keypair, _) = self.derive_store_next_keypair().await?;
 
 		let (inputs, fee) = self.select_vtxos_to_cover_with_fee(
-			amount, |a, v| ark_info.fees.lightning_send.calculate(a, v).context("fee overflowed"),
+			payment_amount, |a, v| ark_info.fees.lightning_send.calculate(a, v).context("fee overflowed"),
 		).await.context("Could not find enough suitable VTXOs to cover lightning payment")?;
-		let total_amount = amount + fee;
+		let total_amount = payment_amount + fee;
 
 		let mut secs = Vec::with_capacity(inputs.len());
 		let mut pubs = Vec::with_capacity(inputs.len());
@@ -628,11 +628,11 @@ impl Wallet {
 			Subsystem::LIGHTNING_SEND,
 			LightningSendMovement::Send.to_string(),
 			MovementUpdate::new()
-				.intended_balance(-amount.to_signed()?)
+				.intended_balance(-payment_amount.to_signed()?)
 				.effective_balance(-effective_balance.to_signed()?)
 				.fee(fee)
 				.consumed_vtxos(&inputs)
-				.sent_to([MovementDestination::new(original_payment_method, amount)])
+				.sent_to([MovementDestination::new(original_payment_method, payment_amount)])
 				.metadata(LightningMovement::metadata(invoice.payment_hash(), &htlc_vtxos, None))
 		).await?;
 		self.store_locked_vtxos(&htlc_vtxos, Some(movement_id)).await?;
@@ -658,7 +658,7 @@ impl Wallet {
 
 		let lightning_send = self.db.store_new_pending_lightning_send(
 			&invoice,
-			amount,
+			payment_amount,
 			fee,
 			&htlc_vtxos.iter().map(|v| v.id()).collect::<Vec<_>>(),
 			movement_id,
@@ -670,7 +670,7 @@ impl Wallet {
 		let req = protos::InitiateLightningPaymentRequest {
 			invoice: invoice.to_string(),
 			htlc_vtxo_ids: htlc_vtxos.iter().map(|v| v.id().to_bytes().to_vec()).collect(),
-			requested_payment_sat: amount.to_sat(),
+			payment_amount_sat: payment_amount.to_sat(),
 		};
 
 		srv.client.initiate_lightning_payment(req).await?;
