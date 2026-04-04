@@ -372,6 +372,7 @@ impl TestContext {
 			receive_htlc_forward_timeout: Duration::from_secs(30),
 			min_board_amount: Amount::from_sat(20_000),
 			ln_receive_anti_dos_required: false,
+			ln_max_fee_ppm: 900_000,
 			max_read_mailbox_items: 100,
 			fees: FeeSchedule {
 				board: BoardFees {

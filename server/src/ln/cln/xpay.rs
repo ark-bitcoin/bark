@@ -72,13 +72,14 @@ impl ClnXpayClient {
 		&self,
 		invoice: Box<Invoice>,
 		payment_amount: Amount,
+		max_routing_fee: Amount,
 		max_cltv_expiry_delta: BlockDelta,
 		retry_for: Duration,
 	) {
 		let mut rpc = self.rpc.clone();
 		let payment_hash = invoice.payment_hash();
 		match call_xpay(
-			&mut rpc, &invoice, payment_amount, max_cltv_expiry_delta, retry_for,
+			&mut rpc, &invoice, payment_amount, max_routing_fee, max_cltv_expiry_delta, retry_for,
 		).await {
 			Ok(preimage) => {
 				// NB we don't do db stuff when it's succesful, because
@@ -307,12 +308,19 @@ impl ClnXpay {
 		&self,
 		invoice: Box<Invoice>,
 		payment_amount: Amount,
+		max_routing_fee: Amount,
 		max_cltv_expiry_delta: BlockDelta,
 		retry_for: Duration,
 	) {
 		let client = self.client.clone();
 		tokio::spawn(async move {
-			client.pay(invoice, payment_amount, max_cltv_expiry_delta, retry_for).await;
+			client.pay(
+				invoice,
+				payment_amount,
+				max_routing_fee,
+				max_cltv_expiry_delta,
+				retry_for,
+			).await;
 		});
 	}
 }
@@ -445,13 +453,14 @@ async fn call_xpay(
 	rpc: &mut ClnGrpcClient,
 	invoice: &Invoice,
 	payment_amount: Amount,
+	max_routing_fee: Amount,
 	max_cltv_expiry_delta: BlockDelta,
 	retry_for: Duration,
 ) -> anyhow::Result<Preimage> {
 	let payment_hash = invoice.payment_hash();
 
 	slog!(XpayRpcCalled,
-		payment_hash, payment_amount,
+		payment_hash, payment_amount, max_routing_fee,
 		invoice: invoice.to_string(),
 		max_delay: max_cltv_expiry_delta as u32,
 	);
@@ -465,7 +474,7 @@ async fn call_xpay(
 			None
 		},
 		maxdelay: Some(max_cltv_expiry_delta as u32),
-		maxfee: None,
+		maxfee: Some(max_routing_fee.into()),
 		retry_for: Some(retry_for.as_secs() as u32),
 		partial_msat: None,
 		layers: vec![],

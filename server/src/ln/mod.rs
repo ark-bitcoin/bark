@@ -186,12 +186,17 @@ impl Server {
 		let fee = self.config.fees.lightning_send.calculate(payment_amount, vtxo_fee_infos)
 			.context("fee overflowed")?;
 		let amount_with_fee = payment_amount.checked_add(fee).context("validation overflow")?;
-		if amount_with_fee > htlc_vtxo_sum {
+
+		// the max routing fee is the configured fraction of our own fee,
+		// plus whatever additional the user pays
+		let max_routing_fee = if let Some(extra) = htlc_vtxo_sum.checked_sub(amount_with_fee) {
+			(fee * self.config.ln_max_fee_ppm as u64) / 1_000_000 + extra
+		} else {
 			return badarg!(
 				"HTLC VTXO sum of {} is less than the payment amount of {} plus fees of {}",
 				htlc_vtxo_sum, payment_amount, fee,
 			);
-		}
+		};
 
 		// Mark transactions as having server-owned descendants before initiating payment
 		let txids = vtxos.iter().flat_map(|v| v.transactions().map(|i| i.tx.compute_txid()));
@@ -203,6 +208,7 @@ impl Server {
 		self.cln.pay_invoice(
 			&invoice,
 			payment_amount,
+			max_routing_fee,
 			min_expiry_height
 		).await?;
 

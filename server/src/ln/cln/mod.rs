@@ -151,6 +151,7 @@ impl ClnManager {
 		&self,
 		invoice: &Invoice,
 		payment_amount: Amount,
+		max_routing_fee: Amount,
 		htlc_send_expiry_height: BlockHeight,
 	) -> anyhow::Result<()> {
 		invoice.check_signature().context("invalid invoice signature")?;
@@ -162,6 +163,7 @@ impl ClnManager {
 			result_tx,
 			invoice: Box::new(invoice.clone()),
 			amount: payment_amount,
+			max_routing_fee: max_routing_fee,
 			htlc_expiry_height: htlc_send_expiry_height,
 		});
 
@@ -601,6 +603,7 @@ enum Ctrl {
 	PaymentRequest {
 		invoice: Box<Invoice>,
 		amount: Amount,
+		max_routing_fee: Amount,
 		htlc_expiry_height: BlockHeight,
 		result_tx: oneshot::Sender<anyhow::Result<()>>,
 	},
@@ -879,6 +882,7 @@ impl ClnManagerProcess {
 		&self,
 		invoice: Box<Invoice>,
 		amount: Amount,
+		max_routing_fee: Amount,
 		htlc_send_expiry_height: BlockHeight,
 	) -> anyhow::Result<()> {
 		let payment_hash = invoice.payment_hash();
@@ -933,6 +937,7 @@ impl ClnManagerProcess {
 		node.xpay.as_ref().context("xpay not running")?.pay(
 			invoice,
 			amount,
+			max_routing_fee,
 			max_cltv_expiry_delta as BlockDelta,
 			self.xpay_config.invoice_recheck_delay,
 		);
@@ -1076,7 +1081,7 @@ impl ClnManagerProcess {
 							self.disable_node(&uri).await;
 						},
 						Ctrl::PaymentRequest {
-							invoice, amount, htlc_expiry_height, result_tx,
+							invoice, amount, max_routing_fee, htlc_expiry_height, result_tx,
 						} => {
 							trace!("Payment request received: payment_hash={}",
 								invoice.payment_hash(),
@@ -1085,6 +1090,7 @@ impl ClnManagerProcess {
 							let res = self.start_payment(
 								invoice,
 								amount,
+								max_routing_fee,
 								htlc_expiry_height,
 							).await;
 
