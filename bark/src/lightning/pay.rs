@@ -388,7 +388,7 @@ impl Wallet {
 		T::Error: std::error::Error + fmt::Display + Send + Sync + 'static,
 	{
 		let invoice = invoice.try_into().context("failed to parse invoice")?;
-		let amount = invoice.get_final_amount(user_amount)?;
+		let amount = invoice.get_payment_amount(user_amount)?;
 		info!("Sending bolt11 payment of {} to invoice {}", amount, invoice);
 		self.make_lightning_payment(&invoice, invoice.clone().into(), user_amount).await
 	}
@@ -547,7 +547,7 @@ impl Wallet {
 
 		invoice.check_signature()?;
 
-		let amount = invoice.get_final_amount(user_amount)?;
+		let amount = invoice.get_payment_amount(user_amount)?;
 		if amount == Amount::ZERO {
 			bail!("Cannot pay invoice for 0 sats (0 sat invoices are not any-amount invoices)");
 		}

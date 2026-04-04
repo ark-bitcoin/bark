@@ -168,7 +168,7 @@ impl Server {
 		}
 
 		// Verify against the invoice amount if applicable, disallowing underpayments.
-		let payment_amount = match invoice.get_final_amount(Some(requested_payment)) {
+		let payment_amount = match invoice.get_payment_amount(Some(requested_payment)) {
 			Ok(amount) => amount,
 			Err(e) => return badarg!("requested payment amount too low for invoice: {:#}", e),
 		};

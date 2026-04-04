@@ -370,7 +370,7 @@ impl Wallet {
 		// Check that the sum exceeds the invoice amount; we can't entirely trust the
 		// server-reported payment amount, so if there is a discrepancy, we should fall back to
 		// checking the invoice amount.
-		let invoice_amount = receive.invoice.get_final_amount(None)
+		let invoice_amount = receive.invoice.get_payment_amount(None)
 			.context("ln receive invoice should have amount")?;
 		let server_received_amount = res.receive.map(|r| Amount::from_sat(r.amount_sat));
 		let fee = {
