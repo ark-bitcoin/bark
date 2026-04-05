@@ -1,6 +1,0 @@
-- Remove `tls-native-roots` from `native` feature
-  The `native` feature now only enables gRPC transport without forcing a TLS
-  root certificate strategy. This fixes Android builds where `rustls-native-certs`
-  hangs because Android doesn't expose its certificate store via filesystem paths.
-  Mobile consumers should use `native` + `tls-webpki-roots` with `default-features = false`.
-  [#1870](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1870)

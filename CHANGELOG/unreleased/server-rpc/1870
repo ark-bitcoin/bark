@@ -1,5 +1,0 @@
-- Return an error when HTTPS is used without TLS roots configured
-  Previously, connecting to an HTTPS endpoint without `tls-native-roots` or
-  `tls-webpki-roots` enabled would silently hang. Now it returns a clear error
-  indicating that TLS roots are missing and HTTPS is unsupported.
-  [#1870](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1870)
