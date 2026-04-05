@@ -42,6 +42,10 @@ use crate::telemetry;
 
 use super::ClnGrpcClient;
 
+
+/// The buffer we add to the xpay timeout before we check invoice
+pub const XPAY_TIMEOUT_BUFFER: Duration = Duration::from_secs(15);
+
 /// Shared client for sending xpay RPCs and reconciling payment status against CLN.
 ///
 /// Wrapped in an `Arc` so both [`ClnXpay::pay`] (fire-and-forget spawned tasks)
@@ -233,7 +237,7 @@ impl ClnXpayClient {
 #[derive(Debug, Clone)]
 pub struct ClnXpayConfig {
 	pub invoice_check_interval: Duration,
-	pub invoice_recheck_delay: Duration,
+	pub cln_xpay_timeout: Duration,
 	pub check_base_delay: Duration,
 	pub max_check_delay: Duration,
 }
@@ -377,9 +381,10 @@ impl ClnXpayProcess {
 				continue;
 			}
 
-			// We don't want to go further if we aren't sure CLN didn't finished retrying payment attempts
-			let safe_delay_cln_stopped_retries = self.config.invoice_recheck_delay +
-				Duration::from_secs(5);
+			// We don't want to go further if we aren't sure CLN
+			// didn't finished retrying payment attempts
+			let safe_delay_cln_stopped_retries =
+				self.config.cln_xpay_timeout + XPAY_TIMEOUT_BUFFER;
 			if attempt.created_at > Local::now() - safe_delay_cln_stopped_retries {
 				trace!("Lightning invoice ({}): Skipping since it was just created.",
 					attempt.lightning_invoice_id,

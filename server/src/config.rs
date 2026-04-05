@@ -353,9 +353,9 @@ pub struct Config {
 	pub cln_reconnect_interval: Duration,
 	#[serde(with = "utils::serde::duration")]
 	pub invoice_check_interval: Duration,
-	/// The time for which not to manually recheck invoice state.
+	/// The time we give xpay to try finish a payment
 	#[serde(with = "utils::serde::duration")]
-	pub invoice_recheck_delay: Duration,
+	pub cln_xpay_timeout: Duration,
 	#[serde(with = "utils::serde::duration")]
 	pub invoice_check_base_delay: Duration,
 	#[serde(alias = "invoice_check_max_delay", with = "utils::serde::duration")]
