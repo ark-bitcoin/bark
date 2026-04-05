@@ -173,7 +173,13 @@ impl Data {
 
 	/// Prune all vtxos expiring before or on the threshold
 	pub fn prune_expiring(&mut self, threshold: BlockHeight) {
-		self.pool.retain(|expiration_height, _vtxo_map| { *expiration_height > threshold });
+		self.pool.retain(|expiration_height, _vtxo_map| {
+			let prune = *expiration_height > threshold;
+			if prune {
+				slog!(VtxoBucketPruned, threshold, expiration_height: *expiration_height);
+			}
+			prune
+		 });
 		telemetry::set_vtxo_pool_metrics(&self.pool);
 	}
 
@@ -542,6 +548,8 @@ impl Process {
 			}
 
 			if count * 100 < target.count * self.config.vtxo_target_issue_threshold as usize {
+				slog!(MustIssueVtxos, target_amount: target.amount,
+					target_count: target.count, current_count: count);
 				must_issue = true;
 			}
 		}
