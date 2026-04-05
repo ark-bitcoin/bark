@@ -102,11 +102,12 @@ impl Config {
 /// To make it clear what we are storing
 type ArkoorDepth = u16;
 
-#[derive(Default)]
 struct Data {
 	/// A quick manual index into the vtxo pool.
 	/// We first order by expiry height and then by amount.
 	pool: BTreeMap<BlockHeight, BTreeMap<Amount, Vec<VtxoId>>>,
+	/// Sorted target amounts, used for amount-bucket telemetry.
+	bucket_amounts: Vec<Amount>,
 }
 
 impl Data {
@@ -122,16 +123,16 @@ impl Data {
 		}
 	}
 
-	pub async fn load_from_db(db: &database::Db) -> anyhow::Result<Self> {
+	pub async fn load_from_db(db: &database::Db, bucket_amounts: Vec<Amount>) -> anyhow::Result<Self> {
 		let stream = db.load_vtxopool().await?;
 		tokio::pin!(stream);
 
-		let mut ret = Data::default();
+		let mut ret = Data { pool: BTreeMap::new(), bucket_amounts };
 		while let Some(v) = stream.try_next().await? {
 			ret.insert(v.id(), v.expiry_height(), v.amount());
 		}
 
-		telemetry::set_vtxo_pool_metrics(&ret.pool);
+		telemetry::set_vtxo_pool_metrics(&ret.pool, &ret.bucket_amounts);
 
 		Ok(ret)
 	}
@@ -171,7 +172,9 @@ impl Data {
 		debug_assert_eq!(before, self.len());
 	}
 
-	/// Prune all vtxos expiring before or on the threshold
+	/// Prune all vtxos expiring before or on the threshold.
+	///
+	/// Caller is responsible for updating telemetry afterwards.
 	pub fn prune_expiring(&mut self, threshold: BlockHeight) {
 		self.pool.retain(|expiration_height, _vtxo_map| {
 			let prune = *expiration_height > threshold;
@@ -180,7 +183,6 @@ impl Data {
 			}
 			prune
 		 });
-		telemetry::set_vtxo_pool_metrics(&self.pool);
 	}
 
 	/// Take inputs from the pool to match the required amount
@@ -231,12 +233,15 @@ impl Data {
 
 		self.prune();
 
-		telemetry::set_vtxo_pool_metrics(&self.pool);
-
 		ret
 	}
 }
 
+
+fn update_all_bucket_metrics(data: &parking_lot::Mutex<Data>) {
+	let data = data.lock();
+	telemetry::set_vtxo_pool_metrics(&data.pool, &data.bucket_amounts);
+}
 
 pub struct VtxoPool {
 	config: Config,
@@ -331,7 +336,10 @@ impl VtxoPool {
 
 		// we try, but if we fail, we place back the inputs
 		match self.prepare_arkoor(srv, dest, &inputs).await {
-			Ok(v) => Ok(v),
+			Ok(v) => {
+				update_all_bucket_metrics(&self.data);
+				Ok(v)
+			},
 			Err(e) => {
 				let mut guard = self.data.lock();
 				for (v, h, a) in inputs {
@@ -343,10 +351,18 @@ impl VtxoPool {
 	}
 
 	pub async fn new(config: Config, db: &database::Db) -> anyhow::Result<VtxoPool> {
+		// Compute sorted bucket amounts once
+		let mut bucket_amounts = config.vtxo_targets.iter()
+			.map(|t| t.amount)
+			.collect::<Vec<_>>();
+		bucket_amounts.sort();
+
+		let data = Data::load_from_db(db, bucket_amounts).await?;
+
 		Ok(VtxoPool {
 			config,
 			started: false.into(),
-			data: Arc::new(parking_lot::Mutex::new(Data::load_from_db(db).await?)),
+			data: Arc::new(parking_lot::Mutex::new(data)),
 		})
 	}
 
@@ -520,6 +536,7 @@ impl Process {
 			.map(|v| PoolVtxo::new(v)).collect::<Vec<_>>();
 		self.srv.db.store_vtxopool_vtxos(&pool_vtxos).await.context("storing pool vtxos")?;
 		self.data.lock().insert_vtxos(&pool_vtxos);
+		update_all_bucket_metrics(&self.data);
 		slog!(FinishedPoolIssuance, txid: funding_txid, total_count: requests.len(), total_amount);
 
 		self.srv.tx_nursery.broadcast_tx(tx).await
@@ -568,6 +585,7 @@ impl Process {
 		// NB this needs to be a different method because otherwise borrowck complains
 		// about the mutex not being send even if we add a manual `drop()`
 		let (issuance, must_issue) = self.calculate_required_issuance(threshold);
+		update_all_bucket_metrics(&self.data);
 
 		if must_issue {
 			self.issue_vtxos(issuance).await?;
@@ -653,7 +671,7 @@ mod test {
 		];
 		let len = vtxos.len();
 
-		let mut data = Data::default();
+		let mut data = Data { pool: BTreeMap::new(), bucket_amounts: vec![] };
 		for (v, h, a) in vtxos {
 			data.insert(v, h, a);
 		}

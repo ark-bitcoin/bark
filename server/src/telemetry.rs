@@ -257,9 +257,11 @@ struct Metrics {
 	lightning_invoice_verification_counter: Counter<u64>,
 	lightning_invoice_verification_queue_gauge: Gauge<u64>,
 	lightning_open_invoices_gauge: Gauge<u64>,
-	vtxo_pool_amount_gauge: Gauge<u64>,
-	vtxo_pool_amount_max_gauge: Gauge<u64>,
-	vtxo_pool_count_gauge: Gauge<u64>,
+	vtxo_pool_block_expiry_bucket_amount_gauge: Gauge<u64>,
+	vtxo_pool_block_expiry_bucket_amount_max_gauge: Gauge<u64>,
+	vtxo_pool_block_expiry_bucket_count_gauge: Gauge<u64>,
+	vtxo_pool_amount_bucket_count_gauge: Gauge<u64>,
+	vtxo_pool_amount_bucket_amount_gauge: Gauge<u64>,
 	grpc_in_progress_counter: UpDownCounter<i64>,
 	grpc_latency_histogram: Histogram<u64>,
 	grpc_request_counter: Counter<u64>,
@@ -463,9 +465,11 @@ impl Metrics {
 		let lightning_invoice_verification_counter = meter.u64_counter("lightning_invoice_verification_counter").build();
 		let lightning_invoice_verification_queue_gauge = meter.u64_gauge("lightning_invoice_verification_queue_gauge").build();
 		let lightning_open_invoices_gauge = meter.u64_gauge("lightning_open_invoices_gauge").build();
-		let vtxo_pool_amount_gauge = meter.u64_gauge("vtxo_pool_amount_gauge").build();
-		let vtxo_pool_amount_max_gauge = meter.u64_gauge("vtxo_pool_amount_max_gauge").build();
-		let vtxo_pool_count_gauge = meter.u64_gauge("vtxo_pool_count_gauge").build();
+		let vtxo_pool_block_expiry_bucket_amount_gauge = meter.u64_gauge("vtxo_pool_block_expiry_bucket_amount_gauge").build();
+		let vtxo_pool_block_expiry_bucket_amount_max_gauge = meter.u64_gauge("vtxo_pool_block_expiry_bucket_amount_max_gauge").build();
+		let vtxo_pool_block_expiry_bucket_count_gauge = meter.u64_gauge("vtxo_pool_block_expiry_bucket_count_gauge").build();
+		let vtxo_pool_amount_bucket_count_gauge = meter.u64_gauge("vtxo_pool_amount_bucket_count_gauge").build();
+		let vtxo_pool_amount_bucket_amount_gauge = meter.u64_gauge("vtxo_pool_amount_bucket_amount_gauge").build();
 		// gRPC metrics
 		let grpc_in_progress_counter = meter.i64_up_down_counter("grpc_requests_in_progress").build();
 		let grpc_latency_histogram = meter.u64_histogram("grpc_request_duration_ms").build();
@@ -531,9 +535,11 @@ impl Metrics {
 			lightning_invoice_verification_counter,
 			lightning_invoice_verification_queue_gauge,
 			lightning_open_invoices_gauge,
-			vtxo_pool_amount_gauge,
-			vtxo_pool_amount_max_gauge,
-			vtxo_pool_count_gauge,
+			vtxo_pool_block_expiry_bucket_amount_gauge,
+			vtxo_pool_block_expiry_bucket_amount_max_gauge,
+			vtxo_pool_block_expiry_bucket_count_gauge,
+			vtxo_pool_amount_bucket_count_gauge,
+			vtxo_pool_amount_bucket_amount_gauge,
 			grpc_in_progress_counter,
 			grpc_latency_histogram,
 			grpc_request_counter,
@@ -952,11 +958,14 @@ pub fn set_postgres_connection_pool_metrics(state: bb8::State) {
 	}
 }
 
-pub fn set_vtxo_pool_metrics(pool: &BTreeMap<BlockHeight, BTreeMap<Amount, Vec<VtxoId>>>) {
-	if TELEMETRY.get().is_none() { return; }
+pub fn set_vtxo_pool_metrics(
+	pool: &BTreeMap<BlockHeight, BTreeMap<Amount, Vec<VtxoId>>>,
+	bucket_amounts: &[Amount],
+) {
+	let Some(m) = TELEMETRY.get() else { return };
 
 	#[derive(Copy, Clone)]
-	struct Bucket {
+	struct ExpiryBucket {
 		total: u64,
 		max: u64,
 		count: u32,
@@ -972,42 +981,69 @@ pub fn set_vtxo_pool_metrics(pool: &BTreeMap<BlockHeight, BTreeMap<Amount, Vec<V
 		(u32::MAX, "288-*"),   // ≥ 48 hours
 	];
 
-	let mut lifetime_buckets = [Bucket { total: 0, max: 0, count: 0 }; 5];
+	let mut expiry_buckets = [ExpiryBucket { total: 0, max: 0, count: 0 }; 5];
+
+	let has_amount_buckets = !bucket_amounts.is_empty();
+	// For each bucket, we track the count and total amount
+	// Index 0 is the "undersized" bucket for VTXOs smaller than all targets
+	let mut amount_counts = vec![0u64; bucket_amounts.len() + 1];
+	let mut amount_totals = vec![0u64; bucket_amounts.len() + 1];
 
 	for (&expiry_height, vtxo_map) in pool {
 		let expiry_height_delta = expiry_height.saturating_sub(block_height_tip);
-
 		let bucket_ix = LIFETIME_BUCKETS.iter()
 			.position(|(upper, _)| expiry_height_delta < *upper)
-			.expect("Last bucket is u32::MAX, so this should never fail");
+			.expect("last bucket is u32::MAX");
+		let bucket_entry = &mut expiry_buckets[bucket_ix];
 
-		let bucket_entry = &mut lifetime_buckets[bucket_ix];
 		for (&amount, ids) in vtxo_map {
 			let sats = amount.to_sat();
 			let n = ids.len() as u32;
 
+			// expiry bucket
 			bucket_entry.total += sats.saturating_mul(n as u64);
 			bucket_entry.count += n;
 			bucket_entry.max = cmp::max(bucket_entry.max, sats);
+
+			// amount bucket
+			if has_amount_buckets {
+				let amt_ix = bucket_amounts.iter()
+					.rposition(|&b| amount >= b)
+					.map(|i| i + 1)
+					.unwrap_or(0);
+				let count = n as u64;
+				amount_counts[amt_ix] += count;
+				amount_totals[amt_ix] += sats.saturating_mul(count);
+			}
 		}
 	}
+
 	for (i, &(_, label)) in LIFETIME_BUCKETS.iter().enumerate() {
-		let bucket_entry = lifetime_buckets[i];
-		set_vtxo_pool_metric(label, bucket_entry.total, bucket_entry.max, bucket_entry.count);
+		let eb = expiry_buckets[i];
+		let attrs = m.with_global_labels([
+			KeyValue::new("blocks_until_expiry", label),
+		]);
+		m.vtxo_pool_block_expiry_bucket_amount_gauge.record(eb.total, &attrs);
+		m.vtxo_pool_block_expiry_bucket_amount_max_gauge.record(eb.max, &attrs);
+		m.vtxo_pool_block_expiry_bucket_count_gauge.record(eb.count as u64, &attrs);
 	}
-}
 
+	if has_amount_buckets {
+		let undersized_attrs = m.with_global_labels([
+			KeyValue::new("bucket_amount_sat", "0"),
+		]);
+		m.vtxo_pool_amount_bucket_count_gauge.record(amount_counts[0], &undersized_attrs);
+		m.vtxo_pool_amount_bucket_amount_gauge.record(amount_totals[0], &undersized_attrs);
 
-fn set_vtxo_pool_metric(block_delta_label: &'static str, amount_total: u64, amount_max: u64, count: u32) {
-	let Some(m) = TELEMETRY.get() else { return };
-
-	let attrs = m.with_global_labels([
-		KeyValue::new("blocks_until_expiry", block_delta_label),
-	]);
-
-	m.vtxo_pool_amount_gauge.record(amount_total, &attrs);
-	m.vtxo_pool_amount_max_gauge.record(amount_max, &attrs);
-	m.vtxo_pool_count_gauge.record(count as u64, &attrs);
+		for (i, &bucket_amount) in bucket_amounts.iter().enumerate() {
+			let label = bucket_amount.to_sat().to_string();
+			let attrs = m.with_global_labels([
+				KeyValue::new("bucket_amount_sat", label),
+			]);
+			m.vtxo_pool_amount_bucket_count_gauge.record(amount_counts[i + 1], &attrs);
+			m.vtxo_pool_amount_bucket_amount_gauge.record(amount_totals[i + 1], &attrs);
+		}
+	}
 }
 
 pub fn set_fee_estimator_metrics(
