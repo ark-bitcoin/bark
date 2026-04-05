@@ -160,6 +160,12 @@ receive_htlc_forward_timeout = "3min"
 # when preparing a lightning claim.
 ln_receive_anti_dos_required = false
 
+# The fraction of the fee we charge that we allow CLN to claim at most
+#
+# E.g. if a user wants to pay 1000 sat, we charge him 0.4%, so 4 sats,
+# and the ln_max_fee_ppm is set to 750000, we set CLN's maxfee to 3 sats.
+ln_max_fee_ppm = 900000
+
 # This allows you to configure one or more lightning nodes for the server to use. Just add as
 # many [[cln_array]] entries as you need!
 #[[cln_array]]

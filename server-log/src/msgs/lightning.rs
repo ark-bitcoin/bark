@@ -99,9 +99,11 @@ impl_slog!(XpayStopped, ERROR, "Xpay exited with error");
 pub struct XpayRpcCalled {
 	pub payment_hash: PaymentHash,
 	#[serde(with = "bitcoin::amount::serde::as_sat")]
-	pub amount: Amount,
+	pub payment_amount: Amount,
 	pub invoice: String,
 	pub max_delay: u32,
+	#[serde(with = "bitcoin::amount::serde::as_sat")]
+	pub max_routing_fee: Amount,
 }
 impl_slog!(XpayRpcCalled, DEBUG, "Calling xpay gRPC");
 

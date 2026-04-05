@@ -248,9 +248,9 @@ impl rpc::server::ArkService for Server {
 			.collect::<Result<Vec<_>, _>>()?;
 
 		let invoice = Invoice::from_str(&req.invoice).badarg("invalid invoice")?;
-		let requested_payment = Amount::from_sat(req.requested_payment_sat);
+		let payment_amount = Amount::from_sat(req.payment_amount_sat);
 
-		self.initiate_lightning_payment(invoice, requested_payment, htlc_vtxo_ids).await.to_status()?;
+		self.initiate_lightning_payment(invoice, payment_amount, htlc_vtxo_ids).await.to_status()?;
 		Ok(tonic::Response::new(protos::Empty {}))
 	}
 

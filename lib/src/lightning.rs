@@ -257,13 +257,13 @@ impl Invoice {
 	/// Get the amount to be paid. It checks both user and invoice
 	/// equality if both are provided, else it tries to return one
 	/// of them, or returns an error if neither are provided.
-	pub fn get_final_amount(
+	pub fn get_payment_amount(
 		&self,
 		user_amount: Option<Amount>,
 	) -> Result<Amount, CheckAmountError> {
 		match self {
-			Invoice::Bolt11(invoice) => invoice.get_final_amount(user_amount),
-			Invoice::Bolt12(invoice) => invoice.get_final_amount(user_amount),
+			Invoice::Bolt11(invoice) => invoice.get_payment_amount(user_amount),
+			Invoice::Bolt12(invoice) => invoice.get_payment_amount(user_amount),
 		}
 	}
 
@@ -304,7 +304,7 @@ impl fmt::Display for Invoice {
 /// Get the amount to be paid. It checks both user and invoice
 /// equality if both are provided, else it tries to return one
 /// of them, or returns an error if neither are provided.
-fn get_invoice_final_amount(invoice_amount: Option<Amount>, user_amount: Option<Amount>) -> Result<Amount, CheckAmountError> {
+fn get_invoice_payment_amount(invoice_amount: Option<Amount>, user_amount: Option<Amount>) -> Result<Amount, CheckAmountError> {
 	match (invoice_amount, user_amount) {
 		(Some(invoice_amount), Some(user_amount)) => {
 			// NB: If provided, the user amount must be at least the invoice amount
@@ -335,11 +335,11 @@ pub trait Bolt11InvoiceExt: Borrow<Bolt11Invoice> {
 	/// Get the amount to be paid. It checks both user and invoice
 	/// equality if both are provided, else it tries to return one
 	/// of them, or returns an error if neither are provided.
-	fn get_final_amount(&self, user_amount: Option<Amount>) -> Result<Amount, CheckAmountError> {
+	fn get_payment_amount(&self, user_amount: Option<Amount>) -> Result<Amount, CheckAmountError> {
 		let invoice_amount = self.borrow().amount_milli_satoshis()
 			.map(Amount::from_msat_ceil);
 
-		get_invoice_final_amount(invoice_amount, user_amount)
+		get_invoice_payment_amount(invoice_amount, user_amount)
 	}
 }
 
@@ -352,9 +352,9 @@ pub trait Bolt12InvoiceExt: Borrow<Bolt12Invoice> {
 	/// Get the amount to be paid. It checks both user and invoice
 	/// equality if both are provided, else it tries to return one
 	/// of them, or returns an error if neither are provided.
-	fn get_final_amount(&self, user_amount: Option<Amount>) -> Result<Amount, CheckAmountError> {
+	fn get_payment_amount(&self, user_amount: Option<Amount>) -> Result<Amount, CheckAmountError> {
 		let invoice_amount = Amount::from_msat_ceil(self.borrow().amount_msats());
-		get_invoice_final_amount(Some(invoice_amount), user_amount)
+		get_invoice_payment_amount(Some(invoice_amount), user_amount)
 	}
 
 	fn check_signature(&self) -> Result<(), CheckSignatureError> {

@@ -26,7 +26,7 @@ use server::filters;
 use server::filters::Filters;
 use server::wallet::WalletKind;
 
-use ark_testing::TestContext;
+use ark_testing::{sat, TestContext};
 use server::database::rounds::StoredRoundOutput;
 
 #[tokio::test]
@@ -95,7 +95,7 @@ async fn duplicated_lightning_invoice() {
 	let (lightning_node_id, _dt) = db.register_lightning_node(&dummy_public_key).await.unwrap();
 	assert_ne!(lightning_node_id, 0);
 
-	db.store_lightning_payment_start(lightning_node_id, &invoice, 1000).await.unwrap();
+	db.store_lightning_payment_start(lightning_node_id, &invoice, sat(1)).await.unwrap();
 
 	// We create a test db client because Db check lightning invoice uniqueness
 	let db_client = ctx.postgres_manager().database_client(Some(&ctx.test_name)).await;
@@ -1631,7 +1631,7 @@ async fn lightning_payment_attempt_lifecycle() {
 	).await.unwrap().is_none());
 
 	// Start a payment
-	db.store_lightning_payment_start(node_id, &invoice, 2000).await.unwrap();
+	db.store_lightning_payment_start(node_id, &invoice, sat(2)).await.unwrap();
 
 	// One open attempt
 	let attempts = db.get_open_lightning_payment_attempts(node_id).await.unwrap();
@@ -1683,7 +1683,7 @@ async fn lightning_payment_attempt_with_error() {
 	let bolt11 = Bolt11Invoice::from_str(BOLT11_INVOICE).unwrap();
 	let invoice = Invoice::Bolt11(bolt11);
 
-	db.store_lightning_payment_start(node_id, &invoice, 1000).await.unwrap();
+	db.store_lightning_payment_start(node_id, &invoice, sat(1)).await.unwrap();
 
 	let attempts = db.get_open_lightning_payment_attempts(node_id).await.unwrap();
 	assert_eq!(attempts.len(), 1);
@@ -1715,7 +1715,7 @@ async fn lightning_invoice_update() {
 	let bolt11 = Bolt11Invoice::from_str(BOLT11_INVOICE).unwrap();
 	let invoice = Invoice::Bolt11(bolt11.clone());
 
-	db.store_lightning_payment_start(node_id, &invoice, 1500).await.unwrap();
+	db.store_lightning_payment_start(node_id, &invoice, sat(1000)).await.unwrap();
 
 	let li = db.get_lightning_invoice_by_payment_hash(
 		(&bolt11).into()

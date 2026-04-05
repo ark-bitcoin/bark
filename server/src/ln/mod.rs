@@ -25,7 +25,7 @@ use ark::util::IteratorExt;
 use server_rpc::protos::{self, InputVtxo, lightning_payment_status};
 use server_rpc::protos::prepare_lightning_receive_claim_request::LightningReceiveAntiDos;
 use server_rpc::TryFromBytes;
-use bitcoin_ext::{BlockDelta, BlockHeight};
+use bitcoin_ext::{AmountExt, BlockDelta, BlockHeight};
 
 use crate::arkoor::ArkoorCosignRequestValidationParams;
 use crate::database::VirtualTransaction;
@@ -121,7 +121,7 @@ impl Server {
 	pub async fn initiate_lightning_payment(
 		&self,
 		invoice: Invoice,
-		requested_payment: Amount,
+		payment_amount: Amount,
 		htlc_vtxo_ids: Vec<VtxoId>,
 	) -> anyhow::Result<()> {
 		//TODO(stevenroose) validate vtxo generally (based on input)
@@ -168,12 +168,13 @@ impl Server {
 		}
 
 		// Verify against the invoice amount if applicable, disallowing underpayments.
-		let payment_amount = match invoice.get_final_amount(Some(requested_payment)) {
-			Ok(amount) => amount,
-			Err(e) => return badarg!("requested payment amount too low for invoice: {:#}", e),
-		};
-		if requested_payment < payment_amount {
-			return badarg!("requested payment amount too low for invoice");
+		if let Some(invoice_msat) = invoice.amount_msat() {
+			if invoice_msat > payment_amount.to_msat() {
+				return badarg!("requested payment amount too low for invoice");
+			}
+			if invoice_msat < payment_amount.to_msat() / 2 {
+				return badarg!("requested payment amount more than double invoice amount");
+			}
 		}
 
 		// Verify we can actually perform the payment when fees are taken into account. If for some
@@ -185,12 +186,17 @@ impl Server {
 		let fee = self.config.fees.lightning_send.calculate(payment_amount, vtxo_fee_infos)
 			.context("fee overflowed")?;
 		let amount_with_fee = payment_amount.checked_add(fee).context("validation overflow")?;
-		if amount_with_fee > htlc_vtxo_sum {
+
+		// the max routing fee is the configured fraction of our own fee,
+		// plus whatever additional the user pays
+		let max_routing_fee = if let Some(extra) = htlc_vtxo_sum.checked_sub(amount_with_fee) {
+			(fee * self.config.ln_max_fee_ppm as u64) / 1_000_000 + extra
+		} else {
 			return badarg!(
 				"HTLC VTXO sum of {} is less than the payment amount of {} plus fees of {}",
 				htlc_vtxo_sum, payment_amount, fee,
 			);
-		}
+		};
 
 		// Mark transactions as having server-owned descendants before initiating payment
 		let txids = vtxos.iter().flat_map(|v| v.transactions().map(|i| i.tx.compute_txid()));
@@ -202,6 +208,7 @@ impl Server {
 		self.cln.pay_invoice(
 			&invoice,
 			payment_amount,
+			max_routing_fee,
 			min_expiry_height
 		).await?;
 

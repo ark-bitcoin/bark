@@ -414,6 +414,12 @@ pub struct Config {
 	/// when preparing a lightning claim.
 	pub ln_receive_anti_dos_required: bool,
 
+	/// The fraction of the fee we charge that we allow CLN to claim at most
+	///
+	/// E.g. if a user wants to pay 1000 sat, we charge him 0.4%, so 4 sats,
+	/// and the ln_max_fee_ppm is set to 750 000, we set CLN's maxfee to 3 sats.
+	pub ln_max_fee_ppm: usize,
+
 	/// The time after which an offboard session times out and will be removed
 	///
 	/// This is the time a user has to to sign their forfeit txs.

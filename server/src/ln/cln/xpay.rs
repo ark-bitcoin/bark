@@ -27,12 +27,13 @@ use std::time::Duration;
 use anyhow::Context;
 use bitcoin::Amount;
 use bitcoin::hex::DisplayHex;
-use bitcoin_ext::{AmountExt, BlockDelta};
 use chrono::{DateTime, Local};
 use tokio::sync::{broadcast, Notify};
 use tokio::task::JoinHandle;
 use tracing::{debug, error, trace, warn};
+
 use ark::lightning::{Invoice, PaymentHash, Preimage};
+use bitcoin_ext::BlockDelta;
 use cln_rpc::listpays_pays::ListpaysPaysStatus;
 
 use crate::database;
@@ -74,13 +75,16 @@ impl ClnXpayClient {
 	pub async fn pay(
 		&self,
 		invoice: Box<Invoice>,
-		user_amount: Option<Amount>,
+		payment_amount: Amount,
+		max_routing_fee: Amount,
 		max_cltv_expiry_delta: BlockDelta,
 		retry_for: Duration,
 	) {
 		let mut rpc = self.rpc.clone();
 		let payment_hash = invoice.payment_hash();
-		match call_xpay(&mut rpc, &invoice, user_amount, max_cltv_expiry_delta, retry_for).await {
+		match call_xpay(
+			&mut rpc, &invoice, payment_amount, max_routing_fee, max_cltv_expiry_delta, retry_for,
+		).await {
 			Ok(preimage) => {
 				// NB we don't do db stuff when it's succesful, because
 				// it will happen in the sendpay stream of the monitor process
@@ -214,7 +218,7 @@ impl ClnXpayClient {
 						&attempt,
 						desired_status,
 						error_string,
-						None,
+						latest.amount_sent_msat.map(|v| v.msat),
 						preimage,
 					).await?;
 				}
@@ -307,13 +311,20 @@ impl ClnXpay {
 	pub fn pay(
 		&self,
 		invoice: Box<Invoice>,
-		user_amount: Option<Amount>,
+		payment_amount: Amount,
+		max_routing_fee: Amount,
 		max_cltv_expiry_delta: BlockDelta,
 		retry_for: Duration,
 	) {
 		let client = self.client.clone();
 		tokio::spawn(async move {
-			client.pay(invoice, user_amount, max_cltv_expiry_delta, retry_for).await;
+			client.pay(
+				invoice,
+				payment_amount,
+				max_routing_fee,
+				max_cltv_expiry_delta,
+				retry_for,
+			).await;
 		});
 	}
 }
@@ -446,44 +457,29 @@ impl ClnXpayProcess {
 async fn call_xpay(
 	rpc: &mut ClnGrpcClient,
 	invoice: &Invoice,
-	user_amount: Option<Amount>,
+	payment_amount: Amount,
+	max_routing_fee: Amount,
 	max_cltv_expiry_delta: BlockDelta,
 	retry_for: Duration,
 ) -> anyhow::Result<Preimage> {
-	match (user_amount, invoice.amount_msat()) {
-		(Some(user), Some(inv)) => {
-			let inv = Amount::from_msat_ceil(inv);
-			if user != inv {
-				bail!("invoice amount {inv} and given amount {user} don't match");
-			}
-		},
-		(None, None) => {
-			bail!("Amount not encoded in invoice nor provided by user. Please provide amount");
-		},
-		_ => {},
-	}
-
-	let amount = user_amount.unwrap_or_else(|| Amount::from_msat_ceil(invoice.amount_msat().unwrap()));
 	let payment_hash = invoice.payment_hash();
 
 	slog!(XpayRpcCalled,
-		payment_hash: payment_hash,
-		amount: amount,
+		payment_hash, payment_amount, max_routing_fee,
 		invoice: invoice.to_string(),
 		max_delay: max_cltv_expiry_delta as u32,
 	);
 
 	let pay_result = rpc.xpay(cln_rpc::XpayRequest {
 		invstring: invoice.to_string(),
-		amount_msat: {
-			if invoice.amount_msat().is_none() {
-				Some(user_amount.unwrap().into())
-			} else {
-				None
-			}
+		// cln doesn't allow tipping
+		amount_msat: if invoice.amount_msat().is_none() {
+			Some(payment_amount.into())
+		} else {
+			None
 		},
 		maxdelay: Some(max_cltv_expiry_delta as u32),
-		maxfee: None,
+		maxfee: Some(max_routing_fee.into()),
 		retry_for: Some(retry_for.as_secs() as u32),
 		partial_msat: None,
 		layers: vec![],
@@ -494,7 +490,7 @@ async fn call_xpay(
 		Ok(resp) => {
 			let bytes = resp.into_inner().payment_preimage;
 			if bytes.is_empty() {
-				Err(anyhow::anyhow!("missing preimage"))
+				Err(anyhow!("missing preimage"))
 			} else {
 				bytes.try_into().ok().context("invalid preimage not 32 bytes")
 			}
