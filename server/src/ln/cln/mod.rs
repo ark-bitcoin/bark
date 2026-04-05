@@ -97,7 +97,7 @@ impl ClnManager {
 		};
 		let xpay_config = ClnXpayConfig {
 			invoice_check_interval: config.invoice_check_interval,
-			invoice_recheck_delay: config.invoice_recheck_delay,
+			cln_xpay_timeout: config.cln_xpay_timeout,
 			check_base_delay: config.invoice_check_base_delay,
 			max_check_delay: config.max_invoice_check_delay,
 		};
@@ -945,7 +945,7 @@ impl ClnManagerProcess {
 			invoice,
 			user_amount,
 			max_cltv_expiry_delta as BlockDelta,
-			self.xpay_config.invoice_recheck_delay,
+			self.xpay_config.cln_xpay_timeout,
 		);
 
 		Ok(())
