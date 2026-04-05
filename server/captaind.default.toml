@@ -112,8 +112,10 @@ cln_reconnect_interval = "10s"
 # Interval to double check on pending invoices
 invoice_check_interval = "3s"
 
-# Minimum interval to keep between two consecutive checks of an invoice
-invoice_recheck_delay = "2s"
+# Minimum delay to wait before checking an invoice's payment attempt statuses
+#
+# This value is used as xpay's max_retry value
+invoice_recheck_delay = "60s"
 
 # FIXME
 invoice_check_base_delay = "10s"
