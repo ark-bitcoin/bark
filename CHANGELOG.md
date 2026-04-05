@@ -6,6 +6,34 @@ https://docs.second.tech/changelog/changelog/
 
 Below is a more concise summary for each version.
 
+
+# v0.1.1
+
+- `bark`
+  - Remove `tls-native-roots` from `native` feature
+    The `native` feature now only enables gRPC transport without forcing a TLS
+    root certificate strategy. This fixes Android builds where `rustls-native-certs`
+    hangs because Android doesn't expose its certificate store via filesystem paths.
+    Mobile consumers should use `native` + `tls-webpki-roots` with `default-features = false`.
+    [#1870](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1870)
+  - update the default bark config values for mainnet
+    [#1871](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1871)
+
+- `server`
+  - correctly limit routing fees for lightning payments
+    - add a `ln_max_fee_ppm` config to limit max fraction of fees that can go to routing
+    [#1875](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1875)
+  - `invoice_recheck_delay` config to `cln_xpay_timeout`
+    [#1877](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1877)
+
+
+- `server-rpc`
+  - Return an error when HTTPS is used without TLS roots configured
+    Previously, connecting to an HTTPS endpoint without `tls-native-roots` or
+    `tls-webpki-roots` enabled would silently hang. Now it returns a clear error
+    indicating that TLS roots are missing and HTTPS is unsupported.
+    [#1870](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1870)
+
 # v0.1.0
 
 - `bark`
