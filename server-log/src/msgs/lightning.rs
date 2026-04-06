@@ -121,3 +121,18 @@ pub struct HtlcSettled {
 	pub preimage: Preimage,
 }
 impl_slog!(HtlcSettled, DEBUG, "an HTLC was settled");
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VtxoBucketPruned {
+	pub threshold: BlockHeight,
+	pub expiration_height: BlockHeight,
+}
+impl_slog!(VtxoBucketPruned, DEBUG, "Pruning vtxo bucket");
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MustIssueVtxos {
+	pub target_amount: Amount,
+	pub current_count: usize,
+	pub target_count: usize,
+}
+impl_slog!(MustIssueVtxos, DEBUG, "Must issue vtxos for target");
