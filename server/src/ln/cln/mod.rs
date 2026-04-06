@@ -1119,9 +1119,10 @@ impl ClnManagerProcess {
 							}
 						},
 						Ctrl::RequestBolt12 { offer, amount, invoice_tx } => {
-							trace!("Fetch bolt12 invoice received: offer={:?}", offer);
+							trace!(offer = %offer, "requesting bolt12 invoice for offer");
 							match self.fetch_bolt12_invoice(&offer, amount).await {
 								Ok(invoice) => {
+									trace!(invoice = %Invoice::from(invoice.clone()), "fetched bolt12 invoice");
 									let _ = invoice_tx.send(invoice);
 								},
 								Err(e) => error!("Error fetching bolt12 invoice: {:#}", e),
