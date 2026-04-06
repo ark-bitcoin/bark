@@ -965,7 +965,8 @@ CREATE TABLE public.mailbox (
     checkpoint bigint NOT NULL,
     created_at timestamp with time zone NOT NULL,
     mailbox_type public.mailbox_type NOT NULL,
-    payment_hash text
+    payment_hash text,
+    unlock_hash text
 );
 
 

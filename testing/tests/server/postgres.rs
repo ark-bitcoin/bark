@@ -14,7 +14,7 @@ use ark::test_util::VTXO_VECTORS;
 use ark::vtxo::Full;
 use ark::tree::signed::{UnlockHash, UnlockPreimage};
 
-use bitcoin::hashes::Hash as _;
+use bitcoin::hashes::{sha256, Hash};
 use bark::lightning_invoice::Bolt11Invoice;
 use bitcoin_ext::BlockRef;
 use cln_rpc::listsendpays_request::ListsendpaysIndex;
@@ -1852,4 +1852,54 @@ async fn wallet_changeset() {
 	// Watchman wallet is independent
 	let cs_watchman = db.read_aggregate_changeset(WalletKind::Watchman).await.unwrap();
 	assert!(cs_watchman.is_none(), "watchman has no changesets");
+}
+
+#[tokio::test]
+async fn round_participation_mailbox() {
+	let mut ctx = TestContext::new_minimal("postgresd/round_participation_mailbox").await;
+	ctx.init_central_postgres().await;
+	let postgres_cfg = ctx.new_postgres(&ctx.test_name).await;
+
+	Db::create(&postgres_cfg).await.expect("Database created");
+	let db = Db::connect(&postgres_cfg).await.expect("Connected to database");
+
+	let mailbox_id = MailboxIdentifier::from_str(
+		"038f47dcd43ba6d97fc9ed2e3bba09b175a45fac55f0683e8cf771e8ced4572354"
+	).unwrap();
+
+	let hash1 = sha256::Hash::hash(b"unlock-hash-1");
+	let hash2 = sha256::Hash::hash(b"unlock-hash-2");
+
+	// Empty mailbox returns nothing
+	let messages = db.get_mailbox_messages(mailbox_id, 0, 10).await.unwrap();
+	assert!(messages.is_empty());
+
+	// Store hash1
+	let cp1 = db.store_round_participation_in_mailbox(mailbox_id, hash1).await
+		.unwrap().expect("should return a checkpoint");
+
+	// Fetch from checkpoint 0 – should return hash1
+	let messages = db.get_mailbox_messages(mailbox_id, 0, 10).await.unwrap();
+	assert_eq!(messages.len(), 1);
+	assert_eq!(messages[0].checkpoint, cp1);
+	let unlock_hash = match messages[0].payload {
+		MailboxPayload::RoundParticipationCompleted { unlock_hash } => unlock_hash,
+		ref other => panic!("expected RoundParticipationCompleted payload, got {:?}", other),
+	};
+	assert_eq!(unlock_hash, hash1);
+
+	// Store hash2
+	let cp2 = db.store_round_participation_in_mailbox(mailbox_id, hash2).await
+		.unwrap().expect("should return a checkpoint");
+	assert!(cp2 > cp1, "checkpoints should be monotonically increasing");
+
+	// Fetch from cp1 – should only return hash2
+	let messages = db.get_mailbox_messages(mailbox_id, cp1, 10).await.unwrap();
+	assert_eq!(messages.len(), 1);
+	assert_eq!(messages[0].checkpoint, cp2);
+	let unlock_hash = match messages[0].payload {
+		MailboxPayload::RoundParticipationCompleted { unlock_hash } => unlock_hash,
+		ref other => panic!("expected RoundParticipationCompleted payload, got {:?}", other),
+	};
+	assert_eq!(unlock_hash, hash2);
 }

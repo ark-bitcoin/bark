@@ -47,7 +47,10 @@ message ArkoorMessage {
 }
 
 message RoundParticipationCompleted {
-	repeated bytes payment_hashes = 1;
+	// compat for <= v0.1.1
+	repeated bytes payment_hashes = 1 [deprecated = true];
+	bytes unlock_hash = 2;
+
 }
 
 message IncomingLightningPaymentMessage {
