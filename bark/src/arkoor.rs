@@ -1,5 +1,5 @@
 use anyhow::Context;
-use bitcoin::Amount;
+use bitcoin::{Amount, NetworkKind};
 use bitcoin::hex::DisplayHex;
 use log::{info, error};
 
@@ -21,29 +21,51 @@ pub struct ArkoorCreateResult {
 	pub change: Vec<Vtxo<Full>>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum ArkoorAddressError {
+	#[error("Ark address is for different network")]
+	NetworkMismatch,
+	#[error("Ark address is for different server")]
+	ServerMismatch,
+	#[error("VTXO policy in address cannot be used for arkoor payment: {0:?}")]
+	PolicyNotSupported(VtxoPolicy),
+	#[error("No VTXO delivery mechanism provided in address")]
+	NoDeliveryMechanism,
+	#[error("Unknown delivery mechanism: {0}")]
+	UnknownDeliveryMechanism(String),
+	#[error("Other error: {0}")]
+	Other(String),
+}
+
 impl Wallet {
 	/// Validate if we can send arkoor payments to the given [ark::Address], for example an error
 	/// will be returned if the given [ark::Address] belongs to a different server (see
 	/// [ark::address::ArkId]).
-	pub async fn validate_arkoor_address(&self, address: &ark::Address) -> anyhow::Result<()> {
-		let (srv, _) = self.require_server().await?;
+	pub async fn validate_arkoor_address(&self, address: &ark::Address) -> Result<(), ArkoorAddressError> {
+		let network = self.network().await
+			.map_err(|e| ArkoorAddressError::Other(e.to_string()))?;
+		let (_, ark_info) = self.require_server().await
+			.map_err(|e| ArkoorAddressError::Other(e.to_string()))?;
 
-		if !address.ark_id().is_for_server(srv.ark_info().await?.server_pubkey) {
-			bail!("Ark address is for different server");
+		let network_kind = NetworkKind::from(network);
+		if address.is_testnet() == network_kind.is_mainnet() {
+			return Err(ArkoorAddressError::NetworkMismatch);
+		}
+
+		if !address.ark_id().is_for_server(ark_info.server_pubkey) {
+			return Err(ArkoorAddressError::ServerMismatch);
 		}
 
 		// Not all policies are supported for sending arkoor
 		match address.policy() {
 			VtxoPolicy::Pubkey(_) => {},
 			VtxoPolicy::ServerHtlcRecv(_) | VtxoPolicy::ServerHtlcSend(_) => {
-				bail!("VTXO policy in address cannot be used for arkoor payment: {}",
-					address.policy().policy_type(),
-				);
+				return Err(ArkoorAddressError::PolicyNotSupported(address.policy().clone()));
 			}
 		}
 
 		if address.delivery().is_empty() {
-			bail!("No VTXO delivery mechanism provided in address");
+			return Err(ArkoorAddressError::NoDeliveryMechanism);
 		}
 		// We first see if we know any of the deliveries, if not, we will log
 		// the unknown onces.
