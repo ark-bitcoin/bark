@@ -1507,6 +1507,7 @@ async fn bark_lightning_receive_via_mailbox_notification() {
 	let ctx = TestContext::new("lightningd/bark_lightning_receive_via_mailbox_notification").await;
 
 	let lightning = ctx.new_lightning_setup("lightningd").await;
+	let ln_sender = Arc::new(lightning.sender);
 
 	let srv = ctx.new_captaind_with_cfg("server", Some(&lightning.receiver), |cfg| {
 		cfg.invoice_check_interval = Duration::from_secs(1);
@@ -1526,10 +1527,11 @@ async fn bark_lightning_receive_via_mailbox_notification() {
 
 	let cloned_1 = invoice_1.clone();
 	let cloned_2 = invoice_2.clone();
+	let cloned_sender = ln_sender.clone();
 	let pay_handle = tokio::spawn(async move {
 		tokio::join!(
-			lightning.sender.pay_bolt11(cloned_1.invoice),
-			lightning.sender.pay_bolt11(cloned_2.invoice),
+			cloned_sender.pay_bolt11(cloned_1.invoice),
+			cloned_sender.pay_bolt11(cloned_2.invoice),
 		)
 	});
 
@@ -1552,4 +1554,22 @@ async fn bark_lightning_receive_via_mailbox_notification() {
 
 	let receives = bark.list_lightning_receives().await;
 	assert!(receives.is_empty(), "no pending receives should remain after claims");
+
+	// Test daemon automatically claims lightning receives
+	let bark_client = Arc::new(bark.client().await);
+	let daemon = bark_client.clone().run_daemon(None).expect("failed to start daemon");
+
+	let amount_3 = sat(100_000);
+	let invoice_3 = bark_client.bolt11_invoice(amount_3).await.unwrap();
+
+	// don't need to spawn another task, receiver has a daemon running that will claim the invoice
+	ln_sender.pay_bolt11(invoice_3.to_string()).ready().await;
+
+	let expected_balance = expected_balance + amount_3;
+	assert_eq!(bark.spendable_balance().await, expected_balance);
+
+	let receives = bark.list_lightning_receives().await;
+	assert!(receives.is_empty(), "no pending receives should remain after claims");
+
+	daemon.stop_wait().ready().await.unwrap();
 }

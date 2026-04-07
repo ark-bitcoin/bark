@@ -45,7 +45,7 @@ impl DaemonHandle {
 
 pub(crate) fn start_daemon(
 	wallet: Arc<Wallet>,
-	onchain: Arc<RwLock<dyn DaemonizableOnchainWallet>>,
+	onchain: Option<Arc<RwLock<dyn DaemonizableOnchainWallet>>>,
 ) -> DaemonHandle {
 	let shutdown = CancellationToken::new();
 	let proc = DaemonProcess::new(shutdown.clone(), wallet, onchain);
@@ -69,14 +69,14 @@ struct DaemonProcess {
 
 	connected: AtomicBool,
 	wallet: Arc<Wallet>,
-	onchain: Arc<RwLock<dyn DaemonizableOnchainWallet>>,
+	onchain: Option<Arc<RwLock<dyn DaemonizableOnchainWallet>>>,
 }
 
 impl DaemonProcess {
 	fn new(
 		shutdown: CancellationToken,
 		wallet: Arc<Wallet>,
-		onchain: Arc<RwLock<dyn DaemonizableOnchainWallet>>,
+		onchain: Option<Arc<RwLock<dyn DaemonizableOnchainWallet>>>,
 	) -> DaemonProcess {
 		DaemonProcess {
 			connected: AtomicBool::new(false),
@@ -107,13 +107,42 @@ impl DaemonProcess {
 		}
 	}
 
+	/// Subscribe to mailbox message stream and process each incoming message.
+	///
+	/// If `since` is `None`, the stream will start from the last checkpoint stored in the database.
+	///
+	/// Returns only once the stream is closed.
+	pub(crate) async fn subscribe_process_mailbox_messages(
+		&self,
+		since_checkpoint: Option<u64>,
+		shutdown: CancellationToken,
+	) -> anyhow::Result<()> {
+		let mut stream = self.wallet.subscribe_mailbox_messages(since_checkpoint).await?;
+
+		loop {
+			futures::select! {
+				message = stream.next().fuse() => {
+					if let Some(message) = message {
+						let message = message.context("error on mailbox message stream")?;
+						self.wallet.process_mailbox_message(message).await;
+					}
+				},
+				_ = shutdown.cancelled().fuse() => {
+					info!("Shutdown signal received! Shutting mailbox messages process...");
+					return Ok(());
+				},
+			}
+		}
+	}
+
 	/// Recursively resubscribe to mailbox message stream by waiting and
 	/// calling [Wallet::subscribe_store_mailbox_messages] again until
 	/// the daemon is shutdown.
 	async fn run_mailbox_messages_process(&self) {
 		loop {
+			let shutdown = self.shutdown.clone();
 			if self.connected.load(Ordering::Relaxed) {
-				if let Err(e) = self.wallet.subscribe_process_mailbox_messages(None).await {
+				if let Err(e) = self.subscribe_process_mailbox_messages(None, shutdown).await {
 					warn!("An error occured while processing mailbox messages: {e:#}");
 				}
 			}
@@ -151,9 +180,11 @@ impl DaemonProcess {
 
 	/// Sync onchain wallet
 	async fn run_onchain_sync(&self) {
-		let mut onchain = self.onchain.write().await;
-		if let Err(e) = onchain.sync(&self.wallet.chain).await {
-			warn!("An error occured while syncing onchain: {e:#}");
+		if let Some(onchain) = &self.onchain {
+			let mut onchain = onchain.write().await;
+			if let Err(e) = onchain.sync(&self.wallet.chain).await {
+				warn!("An error occured while syncing onchain: {e:#}");
+			}
 		}
 	}
 
@@ -166,15 +197,16 @@ impl DaemonProcess {
 
 	/// Progress any ongoing unilateral exits and sync the exit statuses
 	async fn run_exits(&self) {
-		let mut onchain = self.onchain.write().await;
+		if let Some(onchain) = &self.onchain {
+			let mut onchain = onchain.write().await;
+			let mut exit_lock = self.wallet.exit.write().await;
+			if let Err(e) = exit_lock.sync_no_progress(&*onchain).await {
+				warn!("An error occurred while syncing exits: {e:#}");
+			}
 
-		let mut exit_lock = self.wallet.exit.write().await;
-		if let Err(e) = exit_lock.sync_no_progress(&*onchain).await {
-			warn!("An error occurred while syncing exits: {e:#}");
-		}
-
-		if let Err(e) = exit_lock.progress_exits(&self.wallet, &mut *onchain, None).await {
-			warn!("An error occurred while progressing exits: {e:#}");
+			if let Err(e) = exit_lock.progress_exits(&self.wallet, &mut *onchain, None).await {
+				warn!("An error occurred while progressing exits: {e:#}");
+			}
 		}
 	}
 

@@ -108,30 +108,6 @@ impl Wallet {
 		Ok(stream)
 	}
 
-	/// Subscribe to mailbox message stream and process each incoming message.
-	///
-	/// If `since` is `None`, the stream will start from the last checkpoint stored in the database.
-	///
-	/// Returns only once the stream is closed.
-	pub async fn subscribe_process_mailbox_messages(
-		&self,
-		since_checkpoint: Option<u64>,
-	) -> anyhow::Result<()> {
-		let mut stream = self.subscribe_mailbox_messages(since_checkpoint).await?;
-		while let Some(message) = stream.next().await {
-			let message = if let Ok(message) = message {
-				message
-			} else {
-				error!("Error receiving mailbox message: {:#}", message.unwrap_err());
-				continue;
-			};
-
-			self.process_mailbox_message(message).await;
-		}
-
-		Ok(())
-	}
-
 	/// Sync with the mailbox on the Ark server and look for out-of-round received VTXOs.
 	pub async fn sync_mailbox(&self) -> anyhow::Result<()> {
 		let (mut srv, _) = self.require_server().await?;
@@ -205,7 +181,7 @@ impl Wallet {
 		valid_vtxos
 	}
 
-	async fn process_mailbox_message(
+	pub(crate) async fn process_mailbox_message(
 		&self,
 		mailbox_msg: MailboxMessage,
 	) {

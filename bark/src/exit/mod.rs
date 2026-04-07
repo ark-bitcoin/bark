@@ -320,8 +320,8 @@ impl Exit {
 				"Exit not started: all {} VTXOs (total {}) are below the dust limit. \
 				To exit and consolidate dust, you need to refresh your VTXOs first \
 				(requires total balance >= {})",
-				dust.len(), 
-				dust.iter().map(|v| v.amount()).sum::<Amount>(), 
+				dust.len(),
+				dust.iter().map(|v| v.amount()).sum::<Amount>(),
 				P2TR_DUST,
 			);
 			return Ok(());

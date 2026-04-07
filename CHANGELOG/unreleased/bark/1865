@@ -1,0 +1,11 @@
+- Add `Wallet::open_with_daemon` API to start the daemon when opening a wallet
+  Allows starting the daemon at wallet open time, optionally with an onchain
+  wallet. This simplifies the wallet setup flow by combining open and daemon
+  start into a single call.
+  [#1865](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1865)
+  - **BREAKING:** `Wallet::run_daemon` now takes `Option<Arc<RwLock<dyn DaemonizableOnchainWallet>>>` instead of `Arc<RwLock<dyn DaemonizableOnchainWallet>>`
+  - **BREAKING:** `Wallet::run_daemon` is no longer async
+- Fix mailbox subscription loop not responding to shutdown signal
+  The mailbox message processing loop now properly listens for the daemon
+  shutdown signal, preventing the daemon from hanging on shutdown.
+  [#1865](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1865)
