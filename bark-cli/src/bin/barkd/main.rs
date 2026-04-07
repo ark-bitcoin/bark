@@ -93,6 +93,8 @@ fn parse_hex_secret(s: &str) -> Result<[u8; 32], String> {
 
 #[derive(Subcommand)]
 enum SecretCommand {
+	/// Print the current bearer token.
+	Show,
 	/// Regenerate the default auth secret and print the bearer token.
 	/// If --secret is provided, use that instead of generating a random one.
 	Refresh {
@@ -265,6 +267,12 @@ async fn main() -> anyhow::Result<()>{
 		}
 
 		match command {
+			Command::Secret { action: SecretCommand::Show } => {
+				let token = load_auth_token(&datadir)?
+					.context("no auth token found — run `barkd secret refresh` to generate one")?;
+				println!("{}", token.encode());
+				return Ok(());
+			},
 			Command::Secret { action: SecretCommand::Refresh { secret: user_secret } } => {
 				let token = if let Some(bytes) = user_secret {
 					let token = AuthToken::new(*bytes);
@@ -273,6 +281,7 @@ async fn main() -> anyhow::Result<()>{
 				} else {
 					generate_store_auth_token(&datadir)?
 				};
+				eprintln!("Restart barkd for the new token to take effect.");
 				println!("{}", token.encode());
 				return Ok(());
 			},
