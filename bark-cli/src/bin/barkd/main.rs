@@ -192,6 +192,15 @@ fn store_auth_token(datadir: &PathBuf, token: &AuthToken) -> anyhow::Result<()> 
 	let path = datadir.join(AUTH_TOKEN_FILE);
 	std::fs::write(&path, token.encode())
 		.with_context(|| format!("failed to write {}", path.display()))?;
+
+	#[cfg(unix)]
+	{
+		use std::os::unix::fs::PermissionsExt;
+		let perms = std::fs::Permissions::from_mode(0o600);
+		std::fs::set_permissions(&path, perms)
+			.with_context(|| format!("failed to set permissions on {}", path.display()))?;
+	}
+
 	Ok(())
 }
 
