@@ -138,7 +138,11 @@ impl ProtocolEncoding for MailboxIdentifier {
 	}
 
 	fn decode<R: io::Read + ?Sized>(r: &mut R) -> Result<Self, ProtocolDecodingError> {
-		Ok(Self(r.read_byte_array()?))
+		let bytes: [u8; PUBLIC_KEY_SIZE] = r.read_byte_array()?;
+		PublicKey::from_slice(&bytes).map_err(|e| {
+			ProtocolDecodingError::invalid_err(e, "invalid mailbox identifier public key")
+		})?;
+		Ok(Self(bytes))
 	}
 }
 
@@ -190,7 +194,11 @@ impl ProtocolEncoding for BlindedMailboxIdentifier {
 	}
 
 	fn decode<R: io::Read + ?Sized>(r: &mut R) -> Result<Self, ProtocolDecodingError> {
-		Ok(Self(r.read_byte_array()?))
+		let bytes: [u8; PUBLIC_KEY_SIZE] = r.read_byte_array()?;
+		PublicKey::from_slice(&bytes).map_err(|e| {
+			ProtocolDecodingError::invalid_err(e, "invalid blinded mailbox identifier public key")
+		})?;
+		Ok(Self(bytes))
 	}
 }
 
