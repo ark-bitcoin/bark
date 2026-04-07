@@ -345,7 +345,7 @@ pub struct RoundForfeitNonceCleanup {
 	pub removed_unfinished: usize,
 	pub remaining: usize,
 }
-impl_slog!(RoundForfeitNonceCleanup, INFO, "cleaned up hArk round forfeit nonce sessions");
+impl_slog!(RoundForfeitNonceCleanup, DEBUG, "cleaned up hArk round forfeit nonce sessions");
 
 // ****************************************************************************
 // * general round
