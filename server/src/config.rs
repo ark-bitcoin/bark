@@ -117,7 +117,6 @@ impl<'de, T: serde::Deserialize<'de>> serde::Deserialize<'de> for OptionalServic
 
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
 pub struct Bitcoind {
 	/// the URL of the bitcoind RPC (mandatory)
 	pub url: String,
@@ -176,7 +175,6 @@ impl Bitcoind {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
 pub struct Rpc {
 	/// The socket to bind to for the public Ark gRPC.
 	pub public_address: SocketAddr,
@@ -187,7 +185,6 @@ pub struct Rpc {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
 pub struct HodlInvoiceClnPlugin {
 	#[serde(with = "utils::serde::string")]
 	pub uri: tonic::transport::Uri,
@@ -197,7 +194,6 @@ pub struct HodlInvoiceClnPlugin {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
 pub struct Lightningd {
 	#[serde(with = "utils::serde::string")]
 	pub uri: tonic::transport::Uri,
@@ -258,7 +254,6 @@ impl Lightningd {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
 pub struct Postgres {
 	pub host: String,
 	pub port: u16,
@@ -269,7 +264,6 @@ pub struct Postgres {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
 pub struct Config {
 	pub data_dir: PathBuf,
 	pub network: bitcoin::Network,

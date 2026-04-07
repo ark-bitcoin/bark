@@ -5,7 +5,6 @@ use bitcoin::{Amount, FeeRate};
 use bitcoin_ext::BlockDelta;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct Config {
 	/// Interval at which to process VTXOs.
 	#[serde(with = "crate::utils::serde::duration")]
