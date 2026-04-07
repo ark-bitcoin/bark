@@ -446,7 +446,7 @@ impl Wallet {
 
 		let ret = self.make_lightning_payment(&invoice.into(), offer.into(), None).await
 			.context("bolt12 payment error")?;
-		info!("Paid invoice: {:?}", ret.invoice);
+		info!("Paid invoice: {}", ret.invoice.to_string());
 
 		Ok(ret)
 	}
