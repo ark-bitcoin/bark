@@ -399,3 +399,174 @@ pub trait Bolt12InvoiceExt: Borrow<Bolt12Invoice> {
 }
 
 impl Bolt12InvoiceExt for Bolt12Invoice {}
+
+#[cfg(test)]
+mod test {
+	use super::*;
+
+	use hex_conservative::FromHex;
+	use bitcoin::secp256k1::{Keypair, Secp256k1, SecretKey};
+	use lightning::blinded_path::BlindedHop;
+	use lightning::blinded_path::payment::{BlindedPayInfo, BlindedPaymentPath};
+	use lightning::ln::channelmanager::PaymentId;
+	use lightning::ln::inbound_payment::ExpandedKey;
+	use lightning::offers::nonce::Nonce;
+	use lightning::offers::invoice_request::InvoiceRequest;
+	use lightning::offers::offer::OfferBuilder;
+	use lightning::sign::EntropySource;
+	use lightning::types::features::BlindedHopFeatures;
+
+	struct FixedEntropy;
+
+	impl EntropySource for FixedEntropy {
+		fn get_secure_random_bytes(&self) -> [u8; 32] { [42; 32] }
+	}
+
+	fn pubkey(byte: u8) -> bitcoin::secp256k1::PublicKey {
+		let secp = Secp256k1::new();
+		bitcoin::secp256k1::PublicKey::from_secret_key(
+			&secp,
+			&SecretKey::from_slice(&[byte; 32]).unwrap(),
+		)
+	}
+
+	fn payment_paths() -> Vec<BlindedPaymentPath> {
+		vec![BlindedPaymentPath::from_blinded_path_and_payinfo(
+			pubkey(40),
+			pubkey(41),
+			vec![
+				BlindedHop { blinded_node_id: pubkey(43), encrypted_payload: vec![0; 43] },
+				BlindedHop { blinded_node_id: pubkey(44), encrypted_payload: vec![0; 44] },
+			],
+			BlindedPayInfo {
+				fee_base_msat: 1,
+				fee_proportional_millionths: 1_000,
+				cltv_expiry_delta: 42,
+				htlc_minimum_msat: 100,
+				htlc_maximum_msat: 1_000_000_000_000,
+				features: BlindedHopFeatures::empty(),
+			},
+		)]
+	}
+
+	#[test]
+	fn offer_with_signing_pubkey_validate_invoice() {
+		let secp = Secp256k1::new();
+		let expanded_key = ExpandedKey::new([42; 32]);
+		let entropy = FixedEntropy;
+		let nonce = Nonce::from_entropy_source(&entropy);
+
+		// Recipient (offer issuer) keys
+		let recipient_keys = Keypair::from_secret_key(
+			&secp,
+			&SecretKey::from_slice(&[43; 32]).unwrap(),
+		);
+
+		// Build the offer
+		let offer = OfferBuilder::new(recipient_keys.public_key())
+			.amount_msats(1_000_000)
+			.build()
+			.unwrap();
+
+		assert_eq!(offer.amount(), Some(OfferAmount::Bitcoin { amount_msats: 1_000_000 }));
+		assert_eq!(offer.issuer_signing_pubkey(), Some(recipient_keys.public_key()));
+
+		// Build an invoice request from the offer
+		let payment_id = PaymentId([1; 32]);
+		let invoice_request = offer
+			.request_invoice(&expanded_key, nonce, &secp, payment_id)
+			.unwrap()
+			.build_and_sign()
+			.unwrap();
+
+		assert_eq!(invoice_request.issuer_signing_pubkey(), Some(recipient_keys.public_key()));
+
+		// Build and sign the invoice from the request
+		let payment_hash = lightning::types::payment::PaymentHash([99; 32]);
+		let unsigned_invoice = invoice_request
+			.respond_with(payment_paths(), payment_hash)
+			.unwrap()
+			.build()
+			.unwrap();
+
+		let invoice = unsigned_invoice
+			.sign(|msg: &lightning::offers::invoice::UnsignedBolt12Invoice| {
+				Ok(secp.sign_schnorr_no_aux_rand(msg.as_ref().as_digest(), &recipient_keys))
+			})
+			.unwrap();
+
+		// Verify the invoice
+		assert_eq!(invoice.payment_hash(), payment_hash);
+		assert_eq!(invoice.amount_msats(), 1_000_000);
+		assert_eq!(
+			invoice.issuer_signing_pubkey(),
+			Some(recipient_keys.public_key()),
+		);
+
+		let amount = invoice.get_payment_amount(None).unwrap();
+		assert_eq!(amount, Amount::from_sat(1_000));
+
+		invoice.check_signature().unwrap();
+		invoice.validate_issuance(&offer).unwrap();
+	}
+
+	#[test]
+	fn offer_no_signing_pubkey_validate_invoice() {
+		// An offer with no issuer signing pubkey
+		let offer_str = "lno1pqpzwyq2qe3k7enxv4j3pjgrrwzv24nmzfjypx2a8m264ws9vht3uxp5vpypnluuzl67n4waq78syn2tdngnvypje2da9t4emyq25n29m84dszkfggehf3z35uj56pmxqgp5vfme44926w23gc282xn3pp0j7y8pc7je8e8qxrhmtwrjrnj4kzcqyqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqjnrlnqdqf52q7jwgcnxgnuseav37nvs0zn06dyfs79hk7uk8lrxuqzqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq";
+		// An invoice request built from the offer above
+		let invoice_request_hex = "00208f483020855be2127df9a1b25963afbb633c183d06d3223cf31942a059fb861b080227100a06636f6666656510c9031b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078f024d4b6cd1361032ca9bd2aeb9d900aa4d45d9ead80ac9423374c451a7254d07660203462779ad4aad39514614751a71085f2f10e1c7a593e4e030efb5b8721ce55b0b0020000000000000000000000000000000000000000000000000000000000000000002531fe6068134503d2723133227c867ac8fa6c83c537e9a44c3c5bdbdcb1fe3370020000000000000000000000000000000000000000000000000000000000000000052022710582103d084805e2f4c2bcf5188e40e7baec8b8680a1554da028b3d4c25e8969869fbe5f0401404f55082e4499ad85ac9cef739909f61243800ba31e2718bd5e40f08b05be22181ec91a4ccdf8c2cbb1feae62a62cda13ea069ca0134add34b215e6019bc33";
+		// An invoice to return to invoice request emitter, still with no issuer signing pubkey
+		let invoice_hex = "00208f483020855be2127df9a1b25963afbb633c183d06d3223cf31942a059fb861b080227100a06636f6666656510c9031b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078f024d4b6cd1361032ca9bd2aeb9d900aa4d45d9ead80ac9423374c451a7254d07660203462779ad4aad39514614751a71085f2f10e1c7a593e4e030efb5b8721ce55b0b0020000000000000000000000000000000000000000000000000000000000000000002531fe6068134503d2723133227c867ac8fa6c83c537e9a44c3c5bdbdcb1fe3370020000000000000000000000000000000000000000000000000000000000000000052022710582103d084805e2f4c2bcf5188e40e7baec8b8680a1554da028b3d4c25e8969869fbe5a0c9031b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078f024d4b6cd1361032ca9bd2aeb9d900aa4d45d9ead80ac9423374c451a7254d07660203462779ad4aad39514614751a71085f2f10e1c7a593e4e030efb5b8721ce55b0b0020000000000000000000000000000000000000000000000000000000000000000002531fe6068134503d2723133227c867ac8fa6c83c537e9a44c3c5bdbdcb1fe33700200000000000000000000000000000000000000000000000000000000000000000a21c00000001000003e8002a0000000000000064000000e8d4a510000000a40469d570dfa820aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa022710b02102531fe6068134503d2723133227c867ac8fa6c83c537e9a44c3c5bdbdcb1fe337f0408f1efd3aafd2b200bb740b16b2311487312da67520b9d2977335074e27db8c8cdba9ea1c45f89f1c345ace60c48c1cd8cc149c184851cbc58d8221be4794db7b";
+		// An invoice issued for another offer
+		let other_offer_invoice_hex = "00202aa648ba07b96455928d4908f851c9e7f4bc1c4b44896ffa952bd116db27873e080213880a0374656110c90362c0a046dacce86ddd0343c6d3c7c79c2208ba0d9c9cf24a6d046d21d21f90f703f006a18d5653c4edf5391ff23a61f03ff83d237e880ee61187fa9f379a028e0a0203f991f944d1e1954a7fc8b9bf62e0d78f015f4c07762d505e20e6c45260a3661b0020000000000000000000000000000000000000000000000000000000000000000002989c0b76cb563971fdc9bef31ec06c3560f3249d6ee9e5d83c57625596e05f6f0020000000000000000000000000000000000000000000000000000000000000000052021388582103d9f3787be32e810bc0a72ebb252160b76da09c9adba45ee62aa94f048c8f12e1a0c90362c0a046dacce86ddd0343c6d3c7c79c2208ba0d9c9cf24a6d046d21d21f90f703f006a18d5653c4edf5391ff23a61f03ff83d237e880ee61187fa9f379a028e0a0203f991f944d1e1954a7fc8b9bf62e0d78f015f4c07762d505e20e6c45260a3661b0020000000000000000000000000000000000000000000000000000000000000000002989c0b76cb563971fdc9bef31ec06c3560f3249d6ee9e5d83c57625596e05f6f00200000000000000000000000000000000000000000000000000000000000000000a21c00000001000003e8002a0000000000000064000000e8d4a510000000a40469d5f147a820bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbaa021388b02102989c0b76cb563971fdc9bef31ec06c3560f3249d6ee9e5d83c57625596e05f6ff0407e645ece0602cddf966b5fcb99cf0829ca3952f5a2401d2c063be0e7895944d61409774afdea389c7486e5eadc74666347307f251444f9ea34f6eb2538848e65";
+		// An invoice issued from offer, with one additional path not leading to offer's node
+		let extra_path_invoice_hex = "00208f483020855be2127df9a1b25963afbb633c183d06d3223cf31942a059fb861b080227100a06636f6666656510c9031b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078f024d4b6cd1361032ca9bd2aeb9d900aa4d45d9ead80ac9423374c451a7254d07660203462779ad4aad39514614751a71085f2f10e1c7a593e4e030efb5b8721ce55b0b0020000000000000000000000000000000000000000000000000000000000000000002531fe6068134503d2723133227c867ac8fa6c83c537e9a44c3c5bdbdcb1fe3370020000000000000000000000000000000000000000000000000000000000000000052022710582103d084805e2f4c2bcf5188e40e7baec8b8680a1554da028b3d4c25e8969869fbe5a0fd0192031b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078f024d4b6cd1361032ca9bd2aeb9d900aa4d45d9ead80ac9423374c451a7254d07660203462779ad4aad39514614751a71085f2f10e1c7a593e4e030efb5b8721ce55b0b0020000000000000000000000000000000000000000000000000000000000000000002531fe6068134503d2723133227c867ac8fa6c83c537e9a44c3c5bdbdcb1fe3370020000000000000000000000000000000000000000000000000000000000000000003ff8adab52623bcb2717fc71d7edc6f55e98396e6c234dff01f307a12b2af1c9903d793631af7aa0e709439dd47fc001acd0b0727670b6670ea528ac83cb0127f4a0202a8397a935f0dfceba6ba9618f6451ef4d80637abf4e6af2669fbc9de6a8fd2ac002000000000000000000000000000000000000000000000000000000000000000000257eb3638f51f4dc5c8d5a7324b47df99e816cfcc5b5eb1245bc8c98029f9e67400200000000000000000000000000000000000000000000000000000000000000000a23800000001000003e8002a0000000000000064000000e8d4a51000000000000001000003e8002a0000000000000064000000e8d4a510000000a40469d5f704a820aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa022710b02102531fe6068134503d2723133227c867ac8fa6c83c537e9a44c3c5bdbdcb1fe337f04050faf92c0ac2aebd997ca25cee63f5b3186ef8a7e4dc977289f77130acb37894cc5fd48fb9875335f445b30359892f04954fe2b6623507aca7d403ebcc4ec938";
+
+		// Parse the offer
+		let offer = offer_str.parse::<Offer>().unwrap();
+		assert_eq!(offer.issuer_signing_pubkey(), None);
+		assert_eq!(offer.paths().len(), 1, "offer should have blinded paths");
+
+		// Last blinded hop keypair (the recipient behind the blinded path)
+		let secp = Secp256k1::new();
+		let recipient_secret = SecretKey::from_slice(&[0x03; 32]).unwrap();
+		let recipient_keys = Keypair::from_secret_key(&secp, &recipient_secret);
+		assert_eq!(
+			recipient_keys.public_key().to_string(),
+			"02531fe6068134503d2723133227c867ac8fa6c83c537e9a44c3c5bdbdcb1fe337",
+		);
+
+		// Parse the invoice request
+		let invoice_request_bytes = Vec::from_hex(invoice_request_hex).unwrap();
+		let invoice_request = InvoiceRequest::try_from(invoice_request_bytes).unwrap();
+		assert_eq!(invoice_request.issuer_signing_pubkey(), None);
+		assert_eq!(invoice_request.paths().len(), 1, "offer should have blinded paths");
+
+		// Parse the invoice
+		let invoice_bytes = Vec::from_hex(invoice_hex).unwrap();
+		let invoice = Bolt12Invoice::try_from(invoice_bytes).unwrap();
+
+		assert_eq!(invoice.amount_msats(), 10_000);
+		assert_eq!(invoice.payment_hash(), lightning::types::payment::PaymentHash([0xaa; 32]));
+
+		// Validate the invoice was issued for this offer and verify its signature
+		invoice.validate_issuance(&offer).unwrap();
+		invoice.check_signature().unwrap();
+
+		// Parse the other invoice
+		let invoice_bytes = Vec::from_hex(other_offer_invoice_hex).unwrap();
+		let invoice = Bolt12Invoice::try_from(invoice_bytes).unwrap();
+
+		let err = invoice.validate_issuance(&offer).unwrap_err();
+		assert!(err.to_string().contains("public keys mismatch"), "{:?}", err);
+
+		// Parse the extra path invoice
+		let invoice_bytes = Vec::from_hex(invoice_hex).unwrap();
+		let invoice = Bolt12Invoice::try_from(invoice_bytes).unwrap();
+
+		// Validate the invoice was issued for this offer and verify its signature
+		invoice.validate_issuance(&offer).unwrap();
+		invoice.check_signature().unwrap();
+	}
+}
