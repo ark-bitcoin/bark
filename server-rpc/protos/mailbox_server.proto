@@ -13,10 +13,6 @@ service MailboxService {
 	rpc ReadMailbox(MailboxRequest) returns (MailboxMessages);
 	/// Deposits your VTXO IDs into your recovery mailbox.
 	rpc PostRecoveryVtxoIds(PostRecoveryVtxoIdsRequest) returns (core.Empty) {};
-	/// Deprecated, please use PostArkoorMessage.
-	rpc PostVtxosMailbox(PostVtxosMailboxRequest) returns (core.Empty) {
-		option deprecated = true;
-	}
 }
 
 message PostArkoorMessageRequest {
@@ -35,6 +31,7 @@ message MailboxRequest {
 }
 
 message MailboxMessage {
+	reserved 3;
 	oneof message {
 		ArkoorMessage arkoor = 1;
 		RoundParticipationCompleted round_participation_completed = 4;
@@ -43,7 +40,6 @@ message MailboxMessage {
 	}
 	// Strictly ascending time based number.
 	uint64 checkpoint = 2;
-	MailboxType mailbox_type = 3 [ deprecated = true ];
 }
 
 message ArkoorMessage {
@@ -72,22 +68,4 @@ message PostRecoveryVtxoIdsRequest {
 	// The unblinded recovery mailbox ID
 	bytes unblinded_id = 1;
 	repeated bytes vtxo_ids = 2;
-}
-
-
-/* deprecated things */
-enum MailboxType {
-	option deprecated = true;
-	ARKOOR_RECEIVE = 0;
-	ROUND_PARTICIPATION_COMPLETED = 1;
-	LN_RECV_PENDING_PAYMENT = 2;
-	RECOVERY_VTXO_IDS = 3;
-}
-
-message PostVtxosMailboxRequest {
-	option deprecated = true;
-	// The blinded mailbox ID
-	bytes blinded_id = 1;
-	repeated bytes vtxos = 2;
-	MailboxType mailbox_type = 3;
 }

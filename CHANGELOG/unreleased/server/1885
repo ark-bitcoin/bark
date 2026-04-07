@@ -1,0 +1,7 @@
+- Remove deprecated `PostVtxosMailbox` RPC endpoint and `MailboxType` enum
+  Cleans up deprecated mailbox API that was replaced by `PostArkoorMessage`.
+  The `mailbox_type` field is no longer included in `MailboxMessage` responses.
+  [#1885](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1885)
+  - **BREAKING:** `PostVtxosMailbox` RPC endpoint removed
+  - **BREAKING:** `MailboxType` protobuf enum removed
+  - **BREAKING:** `mailbox_type` field removed from `MailboxMessage`

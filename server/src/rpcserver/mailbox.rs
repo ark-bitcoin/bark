@@ -21,7 +21,6 @@ fn new_mailbox_msg(entry: MailboxEntry) -> protos::mailbox_server::MailboxMessag
 					}
 				)),
 				checkpoint: entry.checkpoint.into(),
-				mailbox_type: MailboxType::ArkoorReceive as i32,
 			}
 		},
 		MailboxPayload::RoundParticipationCompleted { unlock_hashes } => {
@@ -34,7 +33,6 @@ fn new_mailbox_msg(entry: MailboxEntry) -> protos::mailbox_server::MailboxMessag
 					}
 				)),
 				checkpoint: entry.checkpoint.into(),
-				mailbox_type: MailboxType::RoundParticipationCompleted as i32,
 			}
 		},
 		MailboxPayload::LightningReceive { payment_hash } => {
@@ -45,7 +43,6 @@ fn new_mailbox_msg(entry: MailboxEntry) -> protos::mailbox_server::MailboxMessag
 					}
 				)),
 				checkpoint: entry.checkpoint.into(),
-				mailbox_type: 0, // deprecated, always default
 			}
 		},
 		MailboxPayload::RecoveryVtxoIds { vtxo_ids } => {
@@ -56,7 +53,6 @@ fn new_mailbox_msg(entry: MailboxEntry) -> protos::mailbox_server::MailboxMessag
 					}
 				)),
 				checkpoint: entry.checkpoint.into(),
-				mailbox_type: MailboxType::RecoveryVtxoId as i32,
 			}
 		},
 	}
@@ -88,39 +84,6 @@ impl rpc::server::MailboxService for crate::Server {
 		let mailbox_id = self.unblind_mailbox_id(blinded_mailbox_id, vtxo_pubkey);
 
 		let checkpoint = self.db.store_vtxos_in_mailbox(MailboxType::ArkoorReceive, mailbox_id, vtxos.as_slice()).await.to_status()?
-			.badarg("nothing was stored")?;
-
-		self.mailbox_manager.notify(mailbox_id, checkpoint);
-
-		Ok(tonic::Response::new(protos::core::Empty{}))
-	}
-
-	#[tracing::instrument(skip(self, req))]
-	async fn post_vtxos_mailbox(
-		&self,
-		req: tonic::Request<protos::mailbox_server::PostVtxosMailboxRequest>,
-	) -> Result<tonic::Response<protos::core::Empty>, tonic::Status> {
-		let req = req.into_inner();
-
-		let vtxos = req.vtxos.into_iter()
-			.map(|v| Vtxo::from_bytes(v))
-			.collect::<Result<Vec<_>, _>>()?;
-		if vtxos.is_empty() {
-			self::badarg!("no vtxos provided");
-		}
-
-		let mailbox_type = MailboxType::try_from(req.mailbox_type as u32)
-			.map_err(|_| tonic::Status::invalid_argument("invalid mailbox type"))?;
-		let blinded_mailbox_id = BlindedMailboxIdentifier::from_bytes(&req.blinded_id.as_slice())?;
-		// should all have same pubkey
-		let vtxo_pubkey = vtxos[0].user_pubkey();
-		if !vtxos.iter().skip(1).all(|v| v.user_pubkey() == vtxo_pubkey) {
-			self::badarg!("all vtxos should share vtxo pubkey when mailbox is provided");
-		}
-
-		let mailbox_id = self.unblind_mailbox_id(blinded_mailbox_id, vtxo_pubkey);
-
-		let checkpoint = self.db.store_vtxos_in_mailbox(mailbox_type, mailbox_id, vtxos.as_slice()).await.to_status()?
 			.badarg("nothing was stored")?;
 
 		self.mailbox_manager.notify(mailbox_id, checkpoint);
