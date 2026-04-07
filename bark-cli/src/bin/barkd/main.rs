@@ -93,6 +93,8 @@ fn parse_hex_secret(s: &str) -> Result<[u8; 32], String> {
 
 #[derive(Subcommand)]
 enum SecretCommand {
+	/// Print the current bearer token.
+	Show,
 	/// Regenerate the default auth secret and print the bearer token.
 	/// If --secret is provided, use that instead of generating a random one.
 	Refresh {
@@ -190,6 +192,15 @@ fn store_auth_token(datadir: &PathBuf, token: &AuthToken) -> anyhow::Result<()> 
 	let path = datadir.join(AUTH_TOKEN_FILE);
 	std::fs::write(&path, token.encode())
 		.with_context(|| format!("failed to write {}", path.display()))?;
+
+	#[cfg(unix)]
+	{
+		use std::os::unix::fs::PermissionsExt;
+		let perms = std::fs::Permissions::from_mode(0o600);
+		std::fs::set_permissions(&path, perms)
+			.with_context(|| format!("failed to set permissions on {}", path.display()))?;
+	}
+
 	Ok(())
 }
 
@@ -265,6 +276,12 @@ async fn main() -> anyhow::Result<()>{
 		}
 
 		match command {
+			Command::Secret { action: SecretCommand::Show } => {
+				let token = load_auth_token(&datadir)?
+					.context("no auth token found — run `barkd secret refresh` to generate one")?;
+				println!("{}", token.encode());
+				return Ok(());
+			},
 			Command::Secret { action: SecretCommand::Refresh { secret: user_secret } } => {
 				let token = if let Some(bytes) = user_secret {
 					let token = AuthToken::new(*bytes);
@@ -273,6 +290,7 @@ async fn main() -> anyhow::Result<()>{
 				} else {
 					generate_store_auth_token(&datadir)?
 				};
+				eprintln!("Restart barkd for the new token to take effect.");
 				println!("{}", token.encode());
 				return Ok(());
 			},
@@ -291,7 +309,7 @@ async fn main() -> anyhow::Result<()>{
 		Some(token) => token,
 		None => {
 			let token = generate_store_auth_token(&datadir)?;
-			eprintln!("No auth tokens found — generated default token: {}", token.encode());
+			eprintln!("No auth token found — generated a new one. Use `barkd secret show` to view it.");
 			token
 		},
 	};
