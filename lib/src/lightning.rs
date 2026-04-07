@@ -361,12 +361,9 @@ pub trait Bolt12InvoiceExt: Borrow<Bolt12Invoice> {
 		let message = Message::from_digest(self.borrow().signable_hash());
 		let signature = self.borrow().signature();
 
-		if let Some(pubkey) = self.borrow().issuer_signing_pubkey() {
-			Ok(SECP.verify_schnorr(&signature, &message, &pubkey.into())
-				.map_err(|_| CheckSignatureError("invalid signature".to_string()))?)
-		} else {
-			Err(CheckSignatureError("no pubkey on offer, cannot verify signature".to_string()))
-		}
+		let pubkey = self.borrow().signing_pubkey();
+		SECP.verify_schnorr(&signature, &message, &pubkey.into())
+			.map_err(|_| CheckSignatureError("invalid signature".to_string()))
 	}
 
 	fn bytes(&self) -> Vec<u8> {
@@ -380,10 +377,26 @@ pub trait Bolt12InvoiceExt: Borrow<Bolt12Invoice> {
 	}
 
 	fn validate_issuance(&self, offer: &Offer) -> Result<(), CheckSignatureError> {
-		if self.borrow().issuer_signing_pubkey() != offer.issuer_signing_pubkey() {
-			Err(CheckSignatureError("public keys mismatch".to_string()))
+		if let Some(issuer_signing_pubkey) = offer.issuer_signing_pubkey() {
+			if issuer_signing_pubkey != self.borrow().signing_pubkey() {
+				return Err(CheckSignatureError("public keys mismatch".to_string()));
+			}
+
+			self.check_signature()
 		} else {
-			Ok(())
+			for offer_path in offer.paths() {
+				let final_hop_pk = offer_path.blinded_hops().last()
+					.map(|hop| hop.blinded_node_id);
+
+				match final_hop_pk {
+					Some(final_hop_pk) if final_hop_pk == self.borrow().signing_pubkey() => {
+						return self.check_signature();
+					}
+					_ => {}
+				}
+			}
+
+			Err(CheckSignatureError("public keys mismatch".to_string()))
 		}
 	}
 
@@ -562,7 +575,7 @@ mod test {
 		assert!(err.to_string().contains("public keys mismatch"), "{:?}", err);
 
 		// Parse the extra path invoice
-		let invoice_bytes = Vec::from_hex(invoice_hex).unwrap();
+		let invoice_bytes = Vec::from_hex(extra_path_invoice_hex).unwrap();
 		let invoice = Bolt12Invoice::try_from(invoice_bytes).unwrap();
 
 		// Validate the invoice was issued for this offer and verify its signature
