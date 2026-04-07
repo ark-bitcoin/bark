@@ -309,7 +309,7 @@ async fn main() -> anyhow::Result<()>{
 		Some(token) => token,
 		None => {
 			let token = generate_store_auth_token(&datadir)?;
-			eprintln!("No auth tokens found — generated default token: {}", token.encode());
+			eprintln!("No auth token found — generated a new one. Use `barkd secret show` to view it.");
 			token
 		},
 	};
