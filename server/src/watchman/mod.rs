@@ -503,7 +503,7 @@ impl Watchman {
 		};
 
 		let mut tx = Transaction {
-			version: bitcoin::transaction::Version::non_standard(3),
+			version: bitcoin::transaction::Version::TWO,
 			lock_time,
 			input: inputs,
 			output: vec![output],
