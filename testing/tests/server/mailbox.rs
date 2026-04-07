@@ -17,17 +17,18 @@ use ark_testing::daemon::captaind::MailboxClient;
 
 /// Regression test for the checkpoint visibility gap in concurrent mailbox writes.
 ///
-/// When multiple writers call `PostVtxosMailbox` concurrently, `next_checkpoint()`
-/// commits before the INSERT. A higher checkpoint can become visible while a
-/// lower one is still in flight, causing readers that advance their cursor to
-/// permanently skip entries.
+/// When multiple writers call `PostVtxosMailbox` concurrently, without proper
+/// serialization a higher checkpoint can become visible while a lower one is
+/// still in flight, causing readers that advance their cursor to permanently
+/// skip entries.
+///
+/// The fix uses `pg_advisory_xact_lock` to serialize all mailbox writes,
+/// ensuring checkpoints are allocated and committed in strict order.
 ///
 /// Each individual reader has a low probability of polling in the exact window
 /// where a checkpoint is allocated but not yet inserted. Running 100 readers
 /// in parallel turns this into 1-(1-p)^100, making the race near-certain to
 /// be caught by at least one of them.
-///
-/// This test should fail until the bug is fixed.
 #[tokio::test]
 async fn mailbox_checkpoint_visibility_gap() {
 	let ctx = TestContext::new("server/mailbox_checkpoint_visibility_gap").await;
@@ -73,6 +74,7 @@ async fn mailbox_checkpoint_visibility_gap() {
 			let mut client = MailboxClient::connect(ark_url).await.unwrap();
 			let mut cursor: u64 = 0;
 			let mut seen: usize = 0;
+			let mut final_poll = false;
 
 			loop {
 				let resp = client.read_mailbox(protos::mailbox_server::MailboxRequest {
@@ -87,7 +89,10 @@ async fn mailbox_checkpoint_visibility_gap() {
 				}
 
 				if writers_done.load(Ordering::Acquire) && resp.messages.is_empty() {
-					break;
+					if final_poll {
+						break;
+					}
+					final_poll = true;
 				}
 			}
 
