@@ -381,6 +381,9 @@ impl RoundState {
 			RoundFlowState::NonInteractivePending { unlock_hash } => {
 				match progress_non_interactive(wallet, &self.participation, unlock_hash).await {
 					Ok(HarkProgressResult::RoundPending) => Ok(RoundStatus::Pending),
+					Ok(HarkProgressResult::RoundNotFound) => {
+						self.handle_round_not_found(wallet).await
+					},
 					Ok(HarkProgressResult::Ok { funding_tx, new_vtxos }) => {
 						let funding_txid = funding_tx.compute_txid();
 						self.new_vtxos = new_vtxos;
@@ -520,6 +523,28 @@ impl RoundState {
 				Amount::ZERO
 			},
 		}
+	}
+
+	/// Handle the case where the server reports our round participation as not found.
+	///
+	/// If we sent forfeit signatures (which only happens after the round was
+	/// confirmed), this is adversarial — trigger unilateral exit.
+	/// If we never sent forfeits, the server can't steal, so unlock the VTXOs
+	/// and verify with the server that they're still considered spendable.
+	async fn handle_round_not_found(
+		&mut self,
+		wallet: &Wallet,
+	) -> anyhow::Result<RoundStatus> {
+		info!("Server reports round participation not found (no forfeits sent)");
+		self.flow = RoundFlowState::Failed {
+			error: "server reports round participation not found".into(),
+		};
+		persist_round_failure(wallet, &self.participation, self.movement_id).await
+			.context("failed to persist round failure")?;
+
+		Ok(RoundStatus::Failed {
+			error: "server reports round participation not found".into(),
+		})
 	}
 }
 
@@ -901,6 +926,7 @@ async fn check_funding_tx_confirmations(
 
 enum HarkProgressResult {
 	RoundPending,
+	RoundNotFound,
 	FundingTxUnconfirmed {
 		funding_txid: Txid,
 	},
@@ -917,11 +943,19 @@ async fn progress_non_interactive(
 ) -> Result<HarkProgressResult, HarkForfeitError> {
 	let (mut srv, _) = wallet.require_server().await.map_err(HarkForfeitError::Err)?;
 
-	let resp = srv.client.round_participation_status(protos::RoundParticipationStatusRequest {
+	let resp = match srv.client.round_participation_status(protos::RoundParticipationStatusRequest {
 		unlock_hash: unlock_hash.to_byte_array().to_vec(),
-	}).await
-		.context("error checking round participation status")
-		.map_err(HarkForfeitError::Err)?.into_inner();
+	}).await {
+		Ok(resp) => resp.into_inner(),
+		Err(err) if err.code() == tonic::Code::NotFound => {
+			return Ok(HarkProgressResult::RoundNotFound);
+		},
+		Err(err) => {
+			return Err(HarkForfeitError::Err(
+				anyhow::Error::from(err).context("error checking round participation status"),
+			));
+		},
+	};
 	let status = protos::RoundParticipationStatus::try_from(resp.status)
 		.context("unknown status from server")
 		.map_err(HarkForfeitError::Err)	?;
