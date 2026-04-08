@@ -286,17 +286,7 @@ async fn bark_pay_ln_fails_then_succeeds() {
 
 	// Now if we create a channel and try pay the same invoice again, the payment should succeed.
 	// This tests if we're able to retry payments to invoices that are safe to retry.
-
-	// We need to await the channel funding transaction or else we get
-	// infinite 'Waiting for gossip...' below.
-	trace!("Creating channel between lightning nodes");
-	lightning.sender.connect(&lightning.receiver).await;
-	let funding_txid = lightning.sender.fund_channel(&lightning.receiver, btc(1)).await;
-	ctx.await_transaction(funding_txid).await;
-	// Default depth before channel_ready
-	ctx.generate_blocks(6).await;
-	lightning.sender.wait_for_block_sync().await;
-	lightning.receiver.wait_for_block_sync().await;
+	lightning.open_channel(&ctx, btc(1)).await;
 
 	trace!("Retrying send to same invoice after channel exists");
 	// Try send coins through lightning again with the same invoice

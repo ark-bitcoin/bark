@@ -43,6 +43,20 @@ pub struct LightningPaymentSetup {
 }
 
 impl LightningPaymentSetup {
+	pub async fn open_channel(&self, ctx: &TestContext, capacity: Amount) {
+		trace!("Creating channel between lightning nodes");
+		self.sender.connect(&self.receiver).await;
+		let funding_txid = self.sender.fund_channel(&self.receiver, capacity).await;
+
+		// We need to await the channel funding transaction or else we get
+		// infinite 'Waiting for gossip...' below.
+		ctx.await_transaction(funding_txid).await;
+		// Default depth before channel_ready
+		ctx.generate_blocks(6).await;
+
+		self.sender.wait_for_gossip(1).await;
+	}
+
 	pub async fn sync(&self) {
 		tokio::join!(
 			self.receiver.wait_for_block_sync(),
@@ -648,19 +662,7 @@ impl TestContext {
 	/// and creates a channel between them.
 	pub async fn new_lightning_setup(&self, name: impl AsRef<str>) -> LightningPaymentSetup {
 		let lightning = self.new_lightning_setup_no_channel(name).await;
-
-		trace!("Creating channel between lightning nodes");
-		lightning.sender.connect(&lightning.receiver).await;
-		let funding_txid = lightning.sender.fund_channel(&lightning.receiver, btc(8)).await;
-
-		// We need to await the channel funding transaction or else we get
-		// infinite 'Waiting for gossip...' below.
-		self.await_transaction(funding_txid).await;
-		// Default depth before channel_ready
-		self.generate_blocks(6).await;
-
-		lightning.sender.wait_for_gossip(1).await;
-
+		lightning.open_channel(self, btc(8)).await;
 		lightning
 	}
 
