@@ -364,6 +364,90 @@ impl Db {
 		Ok(())
 	}
 
+	pub async fn undo_round(&self, round_id: RoundId) -> anyhow::Result<()> {
+		let round = self.get_round(round_id).await?
+			.with_context(|| format!("round {} not found", round_id))?;
+
+		let cached_tree = round.signed_tree.into_cached_tree();
+
+		let user_vtxo_ids = cached_tree.output_vtxos()
+			.map(|v| v.id().to_string())
+			.collect::<Vec<_>>();
+		for id in &user_vtxo_ids {
+			info!("undo_round {}: removing user vtxo {}", round_id, id);
+		}
+
+		let output_vtxo_ids = cached_tree.internal_vtxos().map(|v| v.id().to_string())
+			.chain(user_vtxo_ids.iter().cloned())
+			.collect::<Vec<_>>();
+
+		let tree_txids = std::iter::once(round_id.as_round_txid())
+			.chain(cached_tree.unsigned_leaf_txs().iter().map(|t| t.compute_txid()))
+			.chain(cached_tree.internal_node_txs().iter().map(|t| t.compute_txid()))
+			.map(|txid| txid.to_string())
+			.collect::<Vec<_>>();
+
+		let round_id_str = round_id.to_string();
+
+		let mut conn = self.get_conn().await?;
+		let tx = conn.transaction().await?;
+
+		// Restore input vtxos: clear spent_in_round and oor_spent_txid.
+		// oor_spent_txid may have been set by set_forfeit_transactions after finish_round.
+		let stmt = tx.prepare_typed(
+			"UPDATE vtxo SET spent_in_round = NULL, oor_spent_txid = NULL, updated_at = NOW()
+			WHERE spent_in_round = $1",
+			&[Type::INT8],
+		).await?;
+		tx.execute(&stmt, &[&round.id]).await?;
+
+		// Delete round_part_input and round_part_output before round_participation (FK).
+		let stmt = tx.prepare_typed(
+			"DELETE FROM round_part_input WHERE participation_id IN
+			(SELECT id FROM round_participation WHERE round_id = $1)",
+			&[Type::TEXT],
+		).await?;
+		tx.execute(&stmt, &[&round_id_str]).await?;
+
+		let stmt = tx.prepare_typed(
+			"DELETE FROM round_part_output WHERE participation_id IN
+			(SELECT id FROM round_participation WHERE round_id = $1)",
+			&[Type::TEXT],
+		).await?;
+		tx.execute(&stmt, &[&round_id_str]).await?;
+
+		let stmt = tx.prepare_typed(
+			"DELETE FROM round_participation WHERE round_id = $1",
+			&[Type::TEXT],
+		).await?;
+		tx.execute(&stmt, &[&round_id_str]).await?;
+
+		// Delete vtxos that were created by this round (output and internal tree vtxos).
+		let stmt = tx.prepare_typed(
+			"DELETE FROM vtxo WHERE vtxo_id = ANY($1)",
+			&[Type::TEXT_ARRAY],
+		).await?;
+		tx.execute(&stmt, &[&output_vtxo_ids]).await?;
+
+		// Delete virtual transactions for this round's tx tree.
+		let stmt = tx.prepare_typed(
+			"DELETE FROM virtual_transaction WHERE txid = ANY($1)",
+			&[Type::TEXT_ARRAY],
+		).await?;
+		tx.execute(&stmt, &[&tree_txids]).await?;
+
+		// Delete the round row itself.
+		let stmt = tx.prepare_typed(
+			"DELETE FROM round WHERE funding_txid = $1",
+			&[Type::TEXT],
+		).await?;
+		tx.execute(&stmt, &[&round_id_str]).await?;
+
+		tx.commit().await?;
+		info!("Undid round {}", round_id);
+		Ok(())
+	}
+
 	pub async fn remove_round_participation(
 		&self,
 		unlock_hash: UnlockHash,

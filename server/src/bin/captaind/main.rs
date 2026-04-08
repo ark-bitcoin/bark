@@ -7,14 +7,16 @@ use std::path::PathBuf;
 use std::process;
 use std::str::FromStr;
 use anyhow::{bail, Context};
-use bitcoin::{bip32, Address};
+use bitcoin::consensus::serialize;
+use bitcoin::hex::DisplayHex;
+use bitcoin::{bip32, Address, Txid};
 use chrono::Local;
 use clap::{Args, Parser};
 use serde::{Deserialize, Serialize};
 use tonic::transport::Uri;
 use tracing::{debug, error, info};
 use ark::integration::{TokenStatus, TokenType};
-use bitcoin_ext::rpc::{BitcoinRpcClient, BitcoinRpcExt};
+use bitcoin_ext::rpc::{BitcoinRpcClient, BitcoinRpcExt, RpcApi};
 use uuid::Uuid;
 
 use ark::VtxoId;
@@ -88,6 +90,17 @@ enum Command {
 	Data {
 		#[command(subcommand)]
 		cmd: DataCommand,
+	},
+
+	/// undo a failed round
+	#[command()]
+	UndoRound {
+		funding_txid: Txid,
+		/// should explicitly set this flag
+		dangerous: bool,
+		/// skip checks on whether this round should actually be undone
+		#[arg(long)]
+		force: bool,
 	},
 }
 
@@ -503,7 +516,61 @@ async fn inner_main() -> anyhow::Result<()> {
 					println!("{}", integration_token.id);
 				}
 			}
-		}
+		},
+		Command::UndoRound { funding_txid, dangerous, force } => {
+			let db = server::database::Db::connect(&cfg.postgres).await?;
+			let round_id = ark::rounds::RoundId::new(funding_txid);
+
+			if !force {
+				let bitcoind = BitcoinRpcClient::new(&cfg.bitcoind.url, cfg.bitcoind.auth())?;
+
+				match bitcoind.tx_status(funding_txid).context("failed to query tx status")? {
+					bitcoin_ext::TxStatus::Confirmed(_) => bail!(
+						"funding tx {} is confirmed; use --force to undo anyway", funding_txid,
+					),
+					bitcoin_ext::TxStatus::Mempool => bail!(
+						"funding tx {} is in the mempool; use --force to undo anyway", funding_txid,
+					),
+					bitcoin_ext::TxStatus::NotFound => {}
+				}
+
+				// If we have the signed funding tx, check that the mempool would reject it.
+				let vtx = db.get_virtual_transaction_by_txid(funding_txid).await?
+					.context("funding tx not found in virtual tx table")?;
+				let signed_tx = vtx.signed_tx()
+					.context("no signed tx in virtual tx table for funding tx")?;
+				println!("Serialized round funding tx: {}", serialize(&signed_tx).as_hex());
+				let [accept] = bitcoind.test_mempool_accept(&[signed_tx])
+					.context("failed to query mempool")?.try_into().unwrap();
+				if accept.allowed {
+					bail!("mempool would accept funding tx {}; the round may still confirm, \
+						use --force to override", funding_txid);
+				}
+
+				// Check if any user-facing output vtxos have already been spent.
+				let round = db.get_round(round_id).await?.context("round not found")?;
+				let cached_tree = round.signed_tree.into_cached_tree();
+				let mut any_spent = false;
+				for vtxo in cached_tree.output_vtxos() {
+					let state = db.get_user_vtxo_by_id(vtxo.id()).await?;
+					if !state.is_unspent() {
+						println!("VTXO {} is already spent", vtxo.id());
+						any_spent = true;
+					}
+				}
+				if any_spent {
+					bail!("cannot undo round with already-spent output vtxos; use --force to override");
+				}
+			}
+
+			if !dangerous {
+				bail!("You are about to do something dangerou, \
+					acknowledge by setting the --dangerous flag");
+			}
+
+			db.undo_round(round_id).await?;
+			println!("Round {} undone successfully", funding_txid);
+		},
 	}
 
 	Ok(())

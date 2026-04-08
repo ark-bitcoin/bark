@@ -1,0 +1,2 @@
+- add `captaind undo-round` command to manually undo a failed round
+  [#1900](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1900)
