@@ -51,21 +51,21 @@ impl WatchmanSigner {
 		// in a LN payment in order to extract the secret on-chain,
 		// we refuse to act when a hash exists in multiple sources.
 
-		// first payment preimages for lightning receives
-		let htlc = self.db.get_lightning_invoice_by_payment_hash(hash.into()).await.ok()?;
+		// first payment preimages from the htlc settlement table
+		let settlement = self.db.get_htlc_settlement_by_payment_hash(hash.into()).await.ok()?;
 
 		// then hark unlock hashes
 		let hark = self.db.get_round_participation_by_unlock_hash(hash).await.ok()?;
 
-		if htlc.is_some() && hark.is_some() {
+		if settlement.is_some() && hark.is_some() {
 			slog!(DuplicateSecretHash, hash);
 			return None;
 		}
 
-		let htlc = htlc.and_then(|i| i.preimage.map(|p| Secret::new(p.into())));
+		let settlement = settlement.map(|p| Secret::new(p.into()));
 		let hark = hark.map(|p| p.unlock_preimage);
 
-		htlc.or(hark)
+		settlement.or(hark)
 	}
 }
 

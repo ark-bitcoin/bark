@@ -443,6 +443,7 @@ impl Server {
 			db.clone(),
 			sync_manager.clone(),
 			mailbox_manager.clone(),
+			htlc_settler.clone(),
 		).await.context("failed to start ClnManager")?;
 
 		let vtxopool = VtxoPool::new(cfg.vtxopool.clone(), &db).await

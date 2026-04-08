@@ -7,7 +7,7 @@ use chrono::Local;
 use ark::{ServerVtxo, VtxoId, VtxoPolicy, VtxoRequest};
 use ark::offboard::OffboardForfeitResult;
 use ark::integration::{TokenStatus, TokenType};
-use ark::lightning::{Invoice, Preimage};
+use ark::lightning::Invoice;
 use ark::mailbox::{MailboxIdentifier, MailboxType};
 use ark::rounds::RoundId;
 use ark::test_util::VTXO_VECTORS;
@@ -1721,10 +1721,8 @@ async fn lightning_invoice_update() {
 		(&bolt11).into()
 	).await.unwrap().expect("invoice present");
 	assert!(li.final_amount_msat.is_none());
-	assert!(li.preimage.is_none());
 
-	let preimage = Preimage::random();
-	let updated_at = db.update_lightning_invoice(li, Some(9999), Some(preimage)).await.unwrap();
+	let updated_at = db.update_lightning_invoice(li, Some(9999)).await.unwrap();
 	assert!(updated_at.is_some(), "update should return new updated_at");
 
 	// Verify changes persisted
@@ -1732,7 +1730,6 @@ async fn lightning_invoice_update() {
 		(&bolt11).into()
 	).await.unwrap().expect("invoice still present");
 	assert_eq!(li2.final_amount_msat, Some(9999));
-	assert!(li2.preimage.is_some());
 }
 
 #[tokio::test]

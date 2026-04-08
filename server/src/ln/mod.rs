@@ -67,12 +67,8 @@ impl Server {
 
 		// Bail early if this invoice was already paid to avoid setting up HTLCs
 		// just to have them revoked some time later.
-		if let Some(invoice) = self.db.get_lightning_invoice_by_payment_hash(
-			payment_hash,
-		).await? {
-			if invoice.preimage.is_some() {
-				return badarg!("invoice has already been paid");
-			}
+		if self.htlc_settler.is_settled(payment_hash).await?.is_some() {
+			return badarg!("invoice has already been paid");
 		}
 
 		// Verify that the proposed expiry makes sense for us
@@ -291,7 +287,7 @@ impl Server {
 			match invoice.last_attempt_status {
 				Some(status) if status == LightningPaymentStatus::Failed => {},
 				Some(status) if status == LightningPaymentStatus::Succeeded => {
-					if let Some(preimage) = invoice.preimage {
+					if let Some(preimage) = self.htlc_settler.is_settled(invoice_payment_hash).await? {
 						return badarg!("This lightning payment has completed. preimage: {}",
 							preimage.as_hex());
 					} else {

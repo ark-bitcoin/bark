@@ -11,7 +11,7 @@ use server_rpc::protos;
 use tokio_postgres::Row;
 
 use ark::VtxoId;
-use ark::lightning::{Invoice, PaymentHash, Preimage};
+use ark::lightning::{Invoice, PaymentHash};
 use bitcoin_ext::{AmountExt, BlockHeight};
 
 use super::ClnNodeId;
@@ -70,7 +70,6 @@ pub struct LightningInvoice {
 	pub invoice: Invoice,
 	pub payment_hash: PaymentHash,
 	pub final_amount_msat: Option<u64>,
-	pub preimage: Option<Preimage>,
 	pub last_attempt_status: Option<LightningPaymentStatus>,
 	pub created_at: DateTime<Local>,
 	pub updated_at: DateTime<Local>,
@@ -87,9 +86,6 @@ impl TryFrom<Row> for LightningInvoice {
 			payment_hash: PaymentHash::from_str(row.get::<_, &str>("payment_hash"))
 				.context("error decoding payment hash from db")?,
 			final_amount_msat: row.get::<_, Option<i64>>("final_amount_msat").map(|i| i as u64),
-			preimage: row.get::<_, Option<&str>>("preimage").map(|b| {
-				Preimage::from_str(b).context("invalid preimage")
-			}).transpose()?,
 			last_attempt_status: row.get::<_, Option<LightningPaymentStatus>>("status"),
 			created_at: row.get("created_at"),
 			updated_at: row.get("updated_at"),
