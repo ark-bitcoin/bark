@@ -1608,6 +1608,11 @@ impl ProtocolEncoding for VtxoTreeSpec {
 		let exit_delta = r.read_u16()?;
 		let global_cosign_pubkeys = LengthPrefixedVector::decode(r)?.into_inner();
 		let vtxos = LengthPrefixedVector::decode(r)?.into_inner();
+		if vtxos.is_empty() {
+			return Err(ProtocolDecodingError::invalid(
+				"vtxo tree spec must have at least one leaf",
+			));
+		}
 		Ok(VtxoTreeSpec { vtxos, expiry_height, server_pubkey, exit_delta, global_cosign_pubkeys })
 	}
 }
@@ -1931,6 +1936,37 @@ mod test {
 			unlock_hash: hash,
 		};
 		encoding_roundtrip(&spec_without_cosign);
+	}
+
+	#[test]
+	fn vtxo_tree_spec_rejects_empty_vtxos() {
+		let pk1: PublicKey = "020aceb65eed0ee5c512d3718e6f4bd868a7efb58ede7899ffd9bcba09555d4eb8"
+			.parse().unwrap();
+		let pk2: PublicKey = "02e4ed0ca35c3b8a2ff675b9b23f4961964b57e130afa607e32a83d2d9a510622b"
+			.parse().unwrap();
+		let hash = sha256::Hash::from_str(
+			"4bf5122f344554c53bde2ebb8cd2b7e3d1600ad631c385a5d7cce23c7785459a",
+		).unwrap();
+
+		// Build a valid spec and verify it roundtrips.
+		let leaf = VtxoLeafSpec {
+			vtxo: VtxoRequest {
+				amount: Amount::from_sat(100_000),
+				policy: VtxoPolicy::new_pubkey(pk1),
+			},
+			cosign_pubkey: Some(pk2),
+			unlock_hash: hash,
+		};
+		let spec = VtxoTreeSpec::new(vec![leaf], pk1, 100_000, 2016, vec![]);
+		encoding_roundtrip(&spec);
+
+		// Empty the vtxos and verify decode rejects it.
+		let empty_spec = VtxoTreeSpec { vtxos: vec![], ..spec };
+		let buf = empty_spec.serialize();
+		let err = VtxoTreeSpec::deserialize(&buf)
+			.expect_err("decoding a VtxoTreeSpec with zero vtxos must fail");
+		let msg = err.to_string();
+		assert!(msg.contains("at least one leaf"), "unexpected error message: {msg}");
 	}
 
 	#[test]
