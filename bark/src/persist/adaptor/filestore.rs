@@ -11,14 +11,16 @@ use super::memory::MemoryStorageAdaptor;
 #[derive(Debug)]
 pub struct FileStorageAdaptor {
 	file_path: PathBuf,
-	data: MemoryStorageAdaptor,
 }
 
 impl FileStorageAdaptor {
 	pub async fn open(file_path: impl AsRef<Path>) -> anyhow::Result<Self> {
 		let file_path = file_path.as_ref().to_path_buf();
+		Ok(Self { file_path })
+	}
 
-		let data = match fs::read_to_string(&file_path).await {
+	pub async fn read(&self) -> anyhow::Result<MemoryStorageAdaptor> {
+		let data = match fs::read_to_string(&self.file_path).await {
 			Ok(contents) => {
 				let records = serde_json::from_str::<Vec<Record>>(&contents)?;
 
@@ -32,11 +34,11 @@ impl FileStorageAdaptor {
 			Err(e) => return Err(e.into()),
 		};
 
-		Ok(Self { file_path, data })
+		Ok(data)
 	}
 
-	async fn persist(&self) -> anyhow::Result<()> {
-		let records = self.data.partitions().values()
+	async fn persist(&self, data: &MemoryStorageAdaptor) -> anyhow::Result<()> {
+		let records = data.partitions().values()
 			.map(|p| p.values())
 			.flatten().collect::<Vec<_>>();
 		fs::write(&self.file_path, serde_json::to_string(&records)?).await?;
@@ -47,26 +49,31 @@ impl FileStorageAdaptor {
 #[async_trait]
 impl StorageAdaptor for FileStorageAdaptor {
 	async fn put(&mut self, record: Record) -> anyhow::Result<()> {
-		self.data.put(record).await?;
-		self.persist().await
+		let mut data = self.read().await?;
+		data.put(record).await?;
+		self.persist(&data).await
 	}
 
 	async fn get(&self, partition: u8, pk: &[u8]) -> anyhow::Result<Option<Record>> {
-		self.data.get(partition, pk).await
+		let data = self.read().await?;
+		data.get(partition, pk).await
 	}
 
 	async fn delete(&mut self, partition: u8, pk: &[u8]) -> anyhow::Result<Option<Record>> {
-		let deleted_record = self.data.delete(partition, pk).await?;
-		self.persist().await?;
+		let mut data = self.read().await?;
+		let deleted_record = data.delete(partition, pk).await?;
+		self.persist(&data).await?;
 		Ok(deleted_record)
 	}
 
 	async fn query_sorted<R: QueryRange>(&self, query: Query<R>) -> anyhow::Result<Vec<Record>> {
-		self.data.query_sorted(query).await
+		let data = self.read().await?;
+		data.query_sorted(query).await
 	}
 
 	async fn get_all(&self, partition: u8) -> anyhow::Result<Vec<Record>> {
-		self.data.get_all(partition).await
+		let data = self.read().await?;
+		data.get_all(partition).await
 	}
 }
 
