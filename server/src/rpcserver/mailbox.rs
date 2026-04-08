@@ -23,13 +23,13 @@ fn new_mailbox_msg(entry: MailboxEntry) -> protos::mailbox_server::MailboxMessag
 				checkpoint: entry.checkpoint.into(),
 			}
 		},
-		MailboxPayload::RoundParticipationCompleted { unlock_hashes } => {
+		MailboxPayload::RoundParticipationCompleted { unlock_hash } => {
 			protos::mailbox_server::MailboxMessage {
 				message: Some(protos::mailbox_server::mailbox_message::Message::RoundParticipationCompleted(
 					protos::mailbox_server::RoundParticipationCompleted {
-						payment_hashes: unlock_hashes.into_iter()
-							.map(|h| h.as_byte_array().to_vec())
-							.collect(),
+						unlock_hash: unlock_hash.as_byte_array().to_vec(),
+						// compat for <= v0.1.1
+						payment_hashes: vec![unlock_hash.as_byte_array().to_vec()],
 					}
 				)),
 				checkpoint: entry.checkpoint.into(),

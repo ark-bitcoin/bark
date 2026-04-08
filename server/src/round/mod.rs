@@ -24,7 +24,6 @@ use ark::{
 };
 use ark::attestations::{Challenge, DelegatedRoundParticipationAttestation};
 use ark::fees::{RefreshFees, VtxoFeeInfo};
-use ark::mailbox::MailboxType;
 use ark::musig::{self, PublicNonce, SecretNonce};
 use ark::rounds::{
 	RoundAttempt, RoundAttemptAttestation, RoundEvent, RoundFinished, RoundSeq, VtxoProposal,
@@ -1197,7 +1196,9 @@ async fn persist_round(
 		let Some(unlock_hash) = vtxo.unlock_hash() else {
 			continue; // Skip VTXOs without unlock hash
 		};
-		match srv.db.store_payment_hashes_in_mailbox(MailboxType::RoundParticipationCompleted, *unblinded_mailbox_id, &[unlock_hash]).await {
+		match srv.db.store_round_participation_in_mailbox(
+			*unblinded_mailbox_id, unlock_hash,
+		).await {
 			Ok(checkpoint) => {
 				if let Some(cp) = checkpoint {
 					srv.mailbox_manager.notify(*unblinded_mailbox_id, cp);

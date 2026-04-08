@@ -8,6 +8,8 @@ pub extern crate lnurl as lnurllib;
 use std::collections::HashMap;
 
 use anyhow::Context;
+use ark::tree::signed::UnlockHash;
+use bitcoin::hashes::Hash;
 use bitcoin::Amount;
 use bitcoin::hex::DisplayHex;
 use bitcoin::secp256k1::Keypair;
@@ -185,27 +187,32 @@ impl Wallet {
 		&self,
 		mailbox_msg: MailboxMessage,
 	) {
+		use protos::mailbox_server::mailbox_message::Message;
+
 		match mailbox_msg.message {
-			Some(protos::mailbox_server::mailbox_message::Message::Arkoor(msg)) => {
+			Some(Message::Arkoor(msg)) => {
 				let result = self
 					.process_received_arkoor_package(msg.vtxos, Some(mailbox_msg.checkpoint)).await;
 				if let Err(e) = result {
 					error!("Error processing received arkoor package: {:#}", e);
 				}
 			}
-			Some(protos::mailbox_server::mailbox_message::Message::RoundParticipationCompleted(_)) => {
+			Some(Message::RoundParticipationCompleted(m)) => {
 				// Do we want to do custom code paths for progressing the round participations
 				// via the payment hashes returnded by the server?
+				info!("Server informed that round participation is ready, unlock_hash:{:?}",
+					UnlockHash::from_slice(&m.unlock_hash).ok(),
+				);
 				if let Err(e) = self.sync_pending_rounds().await {
 					error!("Error syncing pending rounds: {:#}", e);
 				}
 			},
-			Some(protos::mailbox_server::mailbox_message::Message::IncomingLightningPayment(msg)) => {
+			Some(Message::IncomingLightningPayment(msg)) => {
 				if let Err(e) = self.handle_lightning_receive_notification(msg, mailbox_msg.checkpoint).await {
 					error!("Error handling lightning receive notification: {:#}", e);
 				}
 			},
-			Some(protos::mailbox_server::mailbox_message::Message::RecoveryVtxoIds(_)) => {
+			Some(Message::RecoveryVtxoIds(_)) => {
 				trace!("Received recovery VTXO IDs, ignoring");
 			}
 			None => {

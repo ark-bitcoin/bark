@@ -38,7 +38,6 @@ use bb8_postgres::PostgresConnectionManager;
 use bdk_wallet::{chain::Merge, ChangeSet};
 use bitcoin::{Transaction, Txid};
 use bitcoin::consensus::{serialize, deserialize};
-use bitcoin::hashes::{sha256, Hash};
 use bitcoin::secp256k1::{self, PublicKey};
 use chrono::Local;
 use futures::Stream;
@@ -88,7 +87,7 @@ impl MailboxEntry {
 	fn len(&self) -> usize {
 		match &self.payload {
 			MailboxPayload::Arkoor { vtxos } => vtxos.len(),
-			MailboxPayload::RoundParticipationCompleted { unlock_hashes } => unlock_hashes.len(),
+			MailboxPayload::RoundParticipationCompleted { .. } => 1,
 			MailboxPayload::LightningReceive { .. } => 1,
 			MailboxPayload::RecoveryVtxoIds { vtxo_ids } => vtxo_ids.len(),
 		}
@@ -101,7 +100,7 @@ pub enum MailboxPayload {
 		vtxos: Vec<Vtxo<Full>>,
 	},
 	RoundParticipationCompleted {
-		unlock_hashes: Vec<UnlockHash>,
+		unlock_hash: UnlockHash,
 	},
 	LightningReceive {
 		payment_hash: PaymentHash,
@@ -426,7 +425,7 @@ impl Db {
 		let conn = self.get_conn().await?;
 
 		let statement = conn.prepare(&format!("
-			SELECT vtxo_id, vtxo, payment_hash, checkpoint, mailbox_type::TEXT AS entry_type
+			SELECT vtxo_id, vtxo, payment_hash, unlock_hash, checkpoint, mailbox_type::TEXT AS entry_type
 			FROM mailbox
 			WHERE unblinded_mailbox_id = $1 AND checkpoint > $2
 			ORDER BY checkpoint ASC, entry_type ASC
@@ -459,19 +458,39 @@ impl Db {
 					ensure!(res.last().map(|e| e.checkpoint) != Some(cp),
 						"corrupt db: incorrect checkpoint {}", cp,
 					);
-					let hash_str: String = row.get("payment_hash");
-					let payment_hash = PaymentHash::from_str(&hash_str)
+
+					let payment_hash = PaymentHash::from_str(&row.get::<_, &str>("payment_hash"))
 						.context("invalid payment hash in mailbox notification")?;
 					res.push(MailboxEntry {
 						checkpoint: cp,
 						payload: MailboxPayload::LightningReceive { payment_hash },
 					});
 					telemetry::set_mailbox_get_metric(mailbox_type, 1);
+
+					continue;
+				},
+				MailboxType::RoundParticipationCompleted => {
+					ensure!(res.last().map(|e| e.checkpoint) != Some(cp),
+						"corrupt db: incorrect checkpoint {}", cp,
+					);
+
+					// New rows use the dedicated unlock_hash column; old rows
+					// (written before the V40 migration, <=v0.1.1) fall back to payment_hash.
+					let hash_str = row.get::<_, Option<&str>>("unlock_hash")
+						.or_else(|| row.get::<_, Option<&str>>("payment_hash"))
+						.context("missing unlock_hash and payment_hash for RoundParticipationCompleted")?;
+					let unlock_hash = UnlockHash::from_str(hash_str)
+						.context("invalid unlock hash in mailbox")?;
+					res.push(MailboxEntry {
+						checkpoint: cp,
+						payload: MailboxPayload::RoundParticipationCompleted { unlock_hash },
+					});
+					telemetry::set_mailbox_get_metric(mailbox_type, 1);
+
 					continue;
 				},
 				MailboxType::ArkoorReceive |
-				MailboxType::RoundParticipationCompleted |
-				MailboxType::RecoveryVtxoId => {},
+					MailboxType::RecoveryVtxoId => {},
 			}
 
 			// so now we are in a mailbox type that is multi-row
@@ -480,18 +499,13 @@ impl Db {
 				checkpoint: cp,
 				payload: match mailbox_type {
 					MailboxType::ArkoorReceive => MailboxPayload::Arkoor { vtxos: vec![], },
-					MailboxType::RoundParticipationCompleted => {
-						MailboxPayload::RoundParticipationCompleted {
-							unlock_hashes: vec![],
-						}
-					},
 					MailboxType::RecoveryVtxoId => {
-						MailboxPayload::RecoveryVtxoIds {
-							vtxo_ids: vec![],
-						}
+						MailboxPayload::RecoveryVtxoIds { vtxo_ids: vec![] }
 					},
-					MailboxType::LnRecvPendingPayment => {
-						unreachable!("continued in match above")
+					MailboxType::RoundParticipationCompleted
+						| MailboxType::LnRecvPendingPayment =>
+					{
+						unreachable!("continued in match above");
 					},
 				}
 			});
@@ -507,19 +521,17 @@ impl Db {
 					);
 					vtxos.push(vtxo);
 				},
-				MailboxPayload::RoundParticipationCompleted { ref mut unlock_hashes } => {
-					ensure!(mailbox_type == MailboxType::RoundParticipationCompleted);
-
-					let payment_hash = sha256::Hash::from_slice(row.get("payment_hash"))?;
-					unlock_hashes.push(payment_hash);
-				},
 				MailboxPayload::RecoveryVtxoIds { ref mut vtxo_ids } => {
 					ensure!(mailbox_type == MailboxType::RecoveryVtxoId);
 
 					let vtxo_id = VtxoId::from_str(row.get("vtxo_id"))?;
 					vtxo_ids.push(vtxo_id);
 				}
-				MailboxPayload::LightningReceive { .. } => unreachable!("continued in match above"),
+				MailboxPayload::RoundParticipationCompleted { .. }
+					| MailboxPayload::LightningReceive { .. } =>
+				{
+					unreachable!("continued in match above");
+				}
 			}
 		}
 
@@ -532,16 +544,11 @@ impl Db {
 		Ok(res)
 	}
 
-	pub async fn store_payment_hashes_in_mailbox(
+	pub async fn store_round_participation_in_mailbox(
 		&self,
-		mailbox_type: MailboxType,
 		mailbox_id: MailboxIdentifier,
-		payment_hashes: &[sha256::Hash],
+		unlock_hash: UnlockHash,
 	) -> anyhow::Result<Option<Checkpoint>> {
-		if payment_hashes.is_empty() {
-			return Ok(None);
-		}
-
 		let mut conn = self.get_conn().await?;
 		let tx = conn.transaction().await?;
 
@@ -551,21 +558,18 @@ impl Db {
 		tx.execute("SELECT pg_advisory_xact_lock(hashtext('mailbox_write'))", &[]).await?;
 
 		let checkpoint: i64 = tx.query_one("SELECT next_checkpoint()", &[]).await?.get(0);
-		let mailbox_type_str = String::from(mailbox_type);
 
 		let statement = tx.prepare("
-			INSERT INTO mailbox (unblinded_mailbox_id, payment_hash, checkpoint, mailbox_type, created_at)
+			INSERT INTO mailbox (unblinded_mailbox_id, unlock_hash, checkpoint, mailbox_type, created_at)
 			VALUES ($1, $2, $3, $4::TEXT::mailbox_type, NOW());
 		").await?;
-		for payment_hash in payment_hashes {
-			let rows_updated = tx.execute(&statement, &[
-				&mailbox_id.to_string(),
-				&payment_hash.to_string(),
-				&checkpoint,
-				&mailbox_type_str,
-			]).await?;
-			debug_assert_eq!(rows_updated, 1);
-		}
+		let rows_updated = tx.execute(&statement, &[
+			&mailbox_id.to_string(),
+			&unlock_hash.to_string(),
+			&checkpoint,
+			&MailboxType::RoundParticipationCompleted.as_str(),
+		]).await?;
+		debug_assert_eq!(rows_updated, 1);
 
 		tx.commit().await?;
 
