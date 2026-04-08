@@ -393,7 +393,7 @@ pub struct UtxoAlreadyLockedError(pub OutPoint);
 ///
 /// Creating a guard will add the utxo to the locked index, and dropping
 /// the guard will remove it from the index.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct WalletUtxoGuard {
 	index: LockedWalletUtxosIndex,
 	utxo: OutPoint,
@@ -428,7 +428,7 @@ impl ops::Drop for WalletUtxoGuard {
 ///
 /// Creating a guard will add the utxos to the locked index, and dropping
 /// the guard will remove them from the index.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct WalletUtxosGuard {
 	index: LockedWalletUtxosIndex,
 	utxos: Vec<OutPoint>,
