@@ -165,8 +165,12 @@ impl PersistedWallet {
 		let prev_balance = self.balance();
 
 		slog!(WalletSyncStarting, wallet: self.kind.name().into(), block_height: prev_tip.height());
+		// NB We pass start_height=0 so the Emitter never skips blocks.
+		// Using prev_tip.height() would cause the Emitter to jump from the
+		// agreement point directly to prev_tip on the new chain after a deep
+		// reorg, producing a gap that BDK cannot merge.
 		let mut emitter = bdk_bitcoind_rpc::Emitter::new(
-			bitcoind, prev_tip.clone(), prev_tip.height(), self.wallet.unconfirmed_txs(),
+			bitcoind, prev_tip.clone(), 0, self.wallet.unconfirmed_txs(),
 		);
 		while let Some(em) = emitter.next_block()? {
 			self.apply_block_connected_to(&em.block, em.block_height(), em.connected_to())?;
