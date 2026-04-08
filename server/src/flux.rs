@@ -85,10 +85,10 @@ impl VtxosInFlux {
 		Ok(())
 	}
 
-	fn release<V: Borrow<VtxoId>>(&self, ids: impl IntoIterator<Item = V>) {
+	fn release<V: Borrow<VtxoId> + std::fmt::Display>(&self, ids: impl IntoIterator<Item = V>) {
 		let mut inner = self.inner.lock();
 		for id in ids {
-			inner.vtxos.remove(id.borrow());
+			assert!(inner.vtxos.remove(id.borrow()), "VtxoFluxGuard already unlocked; id={}", id);
 		}
 	}
 

@@ -50,7 +50,9 @@ pub struct RoundStateGuard {
 
 impl std::ops::Drop for RoundStateGuard {
 	fn drop(&mut self) {
-		self.index.locked.lock().remove(&self.round_state);
+		assert!(self.index.locked.lock().remove(&self.round_state),
+			"RoundStateGuard already unlocked",
+		);
 	}
 }
 

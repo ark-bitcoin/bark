@@ -419,7 +419,9 @@ impl WalletUtxoGuard {
 impl ops::Drop for WalletUtxoGuard {
 	fn drop(&mut self) {
 		let mut index_lock = self.index.0.lock();
-		index_lock.remove(&self.utxo);
+		assert!(index_lock.remove(&self.utxo),
+			"WalletUtxoGuard already unlocked; utxo={}", self.utxo,
+		);
 	}
 }
 
@@ -463,7 +465,7 @@ impl ops::Drop for WalletUtxosGuard {
 	fn drop(&mut self) {
 		let mut index_lock = self.index.0.lock();
 		for utxo in &self.utxos {
-			index_lock.remove(utxo);
+			assert!(index_lock.remove(utxo), "WalletUtxosGuard already unlocked; utxo={}", utxo);
 		}
 	}
 }
