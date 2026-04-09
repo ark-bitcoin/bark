@@ -33,7 +33,7 @@ Class | Method | HTTP request | Description
 *BitcoinApi* | [**tip**](docs/BitcoinApi.md#tip) | **GET** /api/v1/bitcoin/tip | Get bitcoin tip height
 *BoardsApi* | [**board_all**](docs/BoardsApi.md#board_all) | **POST** /api/v1/boards/board-all | Board all on-chain bitcoin
 *BoardsApi* | [**board_amount**](docs/BoardsApi.md#board_amount) | **POST** /api/v1/boards/board-amount | Board a specific amount
-*BoardsApi* | [**get_pending_boards**](docs/BoardsApi.md#get_pending_boards) | **GET** /api/v1/boards/ | List pending boards
+*BoardsApi* | [**get_pending_boards**](docs/BoardsApi.md#get_pending_boards) | **GET** /api/v1/boards/pending | List pending boards
 *DefaultApi* | [**ping**](docs/DefaultApi.md#ping) | **GET** /ping | Ping
 *ExitsApi* | [**exit_claim_all**](docs/ExitsApi.md#exit_claim_all) | **POST** /api/v1/exits/claim/all | Claim all exited VTXOs
 *ExitsApi* | [**exit_claim_vtxos**](docs/ExitsApi.md#exit_claim_vtxos) | **POST** /api/v1/exits/claim/vtxos | Claim specific exited VTXOs

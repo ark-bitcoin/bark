@@ -569,6 +569,15 @@ impl TestContext {
 	/// Uses esplora (electrs) as chain source when available, otherwise
 	/// creates a dedicated bitcoind.
 	pub async fn new_barkd(&self, name: impl AsRef<str>, srv: &Captaind) -> Barkd {
+		let mut daemon = self.new_barkd_unstarted(name,srv).await;
+		daemon.start().await.expect("failed to start barkd");
+		daemon.create_wallet().await.expect("failed to create barkd wallet");
+		daemon
+	}
+
+	/// Like [`new_barkd`](Self::new_barkd) but returns the daemon before starting,
+	/// so the caller can configure it (e.g. set environment variables) first.
+	pub async fn new_barkd_unstarted(&self, name: impl AsRef<str>, srv: &Captaind) -> Barkd {
 		let (chain_source, bitcoind) = if let Some(electrs) = &self.electrs {
 			(BarkdChainSource::Esplora(electrs.rest_url()), None)
 		} else {
@@ -581,10 +590,7 @@ impl TestContext {
 		};
 
 		let datadir = self.datadir.join(name.as_ref());
-		let mut daemon = Barkd::new(name, datadir, srv.ark_url(), chain_source, bitcoind);
-		daemon.start().await.expect("failed to start barkd");
-		daemon.create_wallet().await.expect("failed to create barkd wallet");
-		daemon
+		Barkd::new(name, datadir, srv.ark_url(), chain_source, bitcoind)
 	}
 
 	/// Creates new bark and immediately funds it. Waits until the bark's bitcoind

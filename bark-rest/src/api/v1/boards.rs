@@ -26,7 +26,7 @@ pub fn router() -> Router<ServerState> {
 	Router::new()
 		.route("/board-amount", post(board_amount))
 		.route("/board-all", post(board_all))
-		.route("/", get(get_pending_boards))
+		.route("/pending", get(get_pending_boards))
 }
 
 #[utoipa::path(
@@ -94,7 +94,7 @@ pub async fn board_all(
 
 #[utoipa::path(
 	get,
-	path = "/",
+	path = "/pending",
 	summary = "List pending boards",
 	responses(
 		(status = 200, description = "Returns all pending boards", body = Vec<bark_json::cli::PendingBoardInfo>),
