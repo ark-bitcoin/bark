@@ -1,7 +1,0 @@
-- Add arkoor address validation error type
-  `Wallet::validate_arkoor_address` now returns a typed `ArkoorAddressError`
-  instead of an opaque `anyhow::Error`, making it possible for callers to
-  distinguish between network mismatch, server mismatch, unsupported policy,
-  and missing delivery mechanism.
-  [#1893](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1893)
-  - **BREAKING:** `Wallet::validate_arkoor_address` returns `Result<(), ArkoorAddressError>` instead of `anyhow::Result<()>`

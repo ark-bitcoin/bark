@@ -1,11 +1,53 @@
 CHANGELOG
 =========
 
-For more elaborate changelogs, refer to our documentation:
+For more high-level changelogs, refer to our documentation:
 https://docs.second.tech/changelog/changelog/
 
-Below is a more concise summary for each version.
+Below is a more detailed summary for each version.
 
+
+# v0.1.2
+
+- `bark`
+  - Rename `boards/` endpoint to `boards/pending`
+    The boards endpoint now more accurately reflects that it returns pending
+    boards, not all boards. The REST client has been regenerated accordingly.
+    [#1753](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1753)
+    - **BREAKING:** `GET /boards` is now `GET /boards/pending`
+  - Add `Wallet::open_with_daemon` API to start the daemon when opening a wallet
+    Allows starting the daemon at wallet open time, optionally with an onchain
+    wallet. This simplifies the wallet setup flow by combining open and daemon
+    start into a single call.
+    [#1865](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1865)
+    - **BREAKING:** `Wallet::run_daemon` now takes `Option<Arc<RwLock<dyn DaemonizableOnchainWallet>>>` instead of `Arc<RwLock<dyn DaemonizableOnchainWallet>>`
+    - **BREAKING:** `Wallet::run_daemon` is no longer async
+  - Fix mailbox subscription loop not responding to shutdown signal
+    The mailbox message processing loop now properly listens for the daemon
+    shutdown signal, preventing the daemon from hanging on shutdown.
+    [#1865](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1865)
+  - Add arkoor address validation error type
+    `Wallet::validate_arkoor_address` now returns a typed `ArkoorAddressError`
+    instead of an opaque `anyhow::Error`, making it possible for callers to
+    distinguish between network mismatch, server mismatch, unsupported policy,
+    and missing delivery mechanism.
+    [#1893](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1893)
+    - **BREAKING:** `Wallet::validate_arkoor_address` returns `Result<(), ArkoorAddressError>` instead of `anyhow::Result<()>`
+
+- `server`
+  - Remove deprecated `PostVtxosMailbox` RPC endpoint and `MailboxType` enum
+    Cleans up deprecated mailbox API that was replaced by `PostArkoorMessage`.
+    The `mailbox_type` field is no longer included in `MailboxMessage` responses.
+    [#1885](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1885)
+    - **BREAKING:** `PostVtxosMailbox` RPC endpoint removed
+    - **BREAKING:** `MailboxType` protobuf enum removed
+    - **BREAKING:** `mailbox_type` field removed from `MailboxMessage`
+  - add `captaind undo-round` command to manually undo a failed round
+    [#1900](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1900)
+  - Fix missing mailbox notification for intra-ark lightning receives
+    When sender and receiver were on the same server, the receiver never got a
+    LightningReceive mailbox message, requiring manual sync to claim the payment.
+    [#1907](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1907)
 
 # v0.1.1
 
