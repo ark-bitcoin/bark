@@ -1,0 +1,2 @@
+- Make subscribe_process_mailbox_messages public again
+  [#1904](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1904)

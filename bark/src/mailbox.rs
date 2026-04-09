@@ -13,8 +13,9 @@ use bitcoin::hashes::Hash;
 use bitcoin::Amount;
 use bitcoin::hex::DisplayHex;
 use bitcoin::secp256k1::Keypair;
-use futures::{Stream, StreamExt};
+use futures::{FutureExt, Stream, StreamExt};
 use log::{debug, error, info, trace, warn};
+use tokio_util::sync::CancellationToken;
 
 use ark::{ProtocolEncoding, Vtxo, VtxoId};
 use ark::lightning::PaymentHash;
@@ -108,6 +109,37 @@ impl Wallet {
 		});
 
 		Ok(stream)
+	}
+
+	/// Similar to [Wallet::subscribe_mailbox_messages] but it will also process each mailbox
+	/// message indefinitely. This method won't stop until the given `shutdown` `CancellationToken`
+	/// is triggered.
+	///
+	/// If `since_checkpoint` is `None`, the stream will start from the last checkpoint stored in
+	/// the database.
+	///
+	/// Returns only once the stream is closed.
+	pub async fn subscribe_process_mailbox_messages(
+		&self,
+		since_checkpoint: Option<u64>,
+		shutdown: CancellationToken,
+	) -> anyhow::Result<()> {
+		let mut stream = self.subscribe_mailbox_messages(since_checkpoint).await?;
+
+		loop {
+			futures::select! {
+				message = stream.next().fuse() => {
+					if let Some(message) = message {
+						let message = message.context("error on mailbox message stream")?;
+						self.process_mailbox_message(message).await;
+					}
+				},
+				_ = shutdown.cancelled().fuse() => {
+					info!("Shutdown signal received! Shutting mailbox messages process...");
+					return Ok(());
+				},
+			}
+		}
 	}
 
 	/// Sync with the mailbox on the Ark server and look for out-of-round received VTXOs.
