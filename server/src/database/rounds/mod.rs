@@ -422,6 +422,13 @@ impl Db {
 		).await?;
 		tx.execute(&stmt, &[&round_id_str]).await?;
 
+		// Delete watchman frontier rows before vtxos (FK constraint).
+		let stmt = tx.prepare_typed(
+			"DELETE FROM watchman_vtxo_frontier WHERE vtxo_id = ANY($1)",
+			&[Type::TEXT_ARRAY],
+		).await?;
+		tx.execute(&stmt, &[&output_vtxo_ids]).await?;
+
 		// Delete vtxos that were created by this round (output and internal tree vtxos).
 		let stmt = tx.prepare_typed(
 			"DELETE FROM vtxo WHERE vtxo_id = ANY($1)",
