@@ -6,13 +6,15 @@ use bitcoin::secp256k1::{Keypair, rand::thread_rng};
 use futures::future::join_all;
 
 use ark::{ProtocolEncoding, ServerVtxo, SECP};
+use ark::lightning::PaymentHash;
 use ark::mailbox::{MailboxAuthorization, MailboxIdentifier};
 use ark::test_util::dummy::DummyTestVtxoSpec;
 
 use server::database::{Db, MailboxPayload};
 use server_rpc::protos;
+use server_rpc::protos::mailbox_server::mailbox_message::Message;
 
-use ark_testing::TestContext;
+use ark_testing::{btc, TestContext};
 use ark_testing::daemon::captaind::MailboxClient;
 
 /// Regression test for the checkpoint visibility gap in concurrent mailbox writes.
@@ -139,4 +141,72 @@ async fn mailbox_checkpoint_visibility_gap() {
 			 checkpoint visibility gap caused it to skip entries",
 		);
 	}
+}
+
+/// Test that an incoming lightning payment posts an IncomingLightningPayment
+/// notification to the receiver's mailbox with the payment hash.
+#[tokio::test]
+async fn mailbox_lightning_receive_pending() {
+	let ctx = TestContext::new("server/mailbox_lightning_receive_pending").await;
+
+	let lightning = ctx.new_lightning_setup("lightningd").await;
+
+	// Server must be linked to the receiver CLN to generate hold invoices
+	let srv = ctx.new_captaind_with_funds("server", Some(&lightning.receiver), btc(10)).await;
+	srv.wait_for_vtxopool(&ctx).await;
+
+	let bark = Arc::new(ctx.new_bark_with_funds("bark", &srv, btc(3)).await);
+	bark.board_and_confirm_and_register(&ctx, btc(2)).await;
+
+	let mut mb_rpc = srv.get_mailbox_public_rpc().await;
+	let bark_wallet = bark.client().await;
+
+	// Create an invoice and have the external sender pay it
+	let pay_amount = btc(1);
+	let invoice_info = bark.bolt11_invoice(pay_amount).await;
+
+	let cloned_invoice = invoice_info.invoice.clone();
+	let pay_handle = tokio::spawn(async move {
+		lightning.sender.pay_bolt11(cloned_invoice).await
+	});
+
+	// Read the receiver's main mailbox, retrying until the notification arrives.
+	let mailbox_kp = bark_wallet.mailbox_keypair();
+	let mailbox_id = MailboxIdentifier::from_pubkey(mailbox_kp.public_key());
+
+	let incoming = tokio::time::timeout(Duration::from_secs(15), async {
+		loop {
+			let expiry = chrono::Local::now() + Duration::from_secs(60);
+			let mailbox_auth = MailboxAuthorization::new(&mailbox_kp, expiry);
+
+			let read_req = protos::mailbox_server::MailboxRequest {
+				authorization: Some(mailbox_auth.serialize().to_vec()),
+				unblinded_id: mailbox_id.to_vec(),
+				checkpoint: 0,
+			};
+
+			let mailbox_msgs = mb_rpc.read_mailbox(read_req).await.unwrap().into_inner();
+
+			let found = mailbox_msgs.messages.iter().find_map(|msg| {
+				match msg.message.as_ref()? {
+					Message::IncomingLightningPayment(m) => Some(m.clone()),
+					_ => None,
+				}
+			});
+
+			if let Some(msg) = found {
+				break msg;
+			}
+			tokio::time::sleep(Duration::from_millis(200)).await;
+		}
+	}).await.expect("IncomingLightningPayment notification should arrive within 15s");
+
+	// Verify the payment hash is valid
+	PaymentHash::try_from(incoming.payment_hash.clone())
+		.expect("valid payment hash");
+
+	// We don't need to claim or await the payment — we only care that
+	// the notification arrived. Drop the handle to avoid a panic from
+	// the sender timing out on the unsettled hold invoice.
+	drop(pay_handle);
 }
