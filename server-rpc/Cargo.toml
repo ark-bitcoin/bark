@@ -1,6 +1,6 @@
 [package]
 name = "bark-server-rpc"
-version = "0.1.1"
+version = "0.1.2"
 license = "MIT"
 authors = [ "Team Second <hello@second.tech>" ]
 repository = "https://gitlab.com/ark-bitcoin/bark"
@@ -29,7 +29,7 @@ tonic-web = ["dep:tonic-web-wasm-client", "getrandom/js", "ark-lib/wasm-web"]
 
 [dependencies]
 # OWN
-ark-lib = { version = "0.1.1", path = "../lib" }
+ark-lib = { version = "0.1.2", path = "../lib" }
 bitcoin.workspace = true
 
 # EXPORTED
