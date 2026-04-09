@@ -97,6 +97,7 @@ enum Command {
 	UndoRound {
 		funding_txid: Txid,
 		/// should explicitly set this flag
+		#[arg(long)]
 		dangerous: bool,
 		/// skip checks on whether this round should actually be undone
 		#[arg(long)]
