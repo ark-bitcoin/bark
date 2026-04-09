@@ -808,8 +808,8 @@ impl CollectingPayments {
 			Err(e) => return Err(RoundError::Recoverable(e)),
 		};
 
-		let common_round_tx_input = match self.common_round_tx_input {
-			Some(ref input) => input.clone(),
+		let common_round_tx_input = match self.common_round_tx_input.take() {
+			Some(input) => input,
 			None => {
 				let common_round_tx_input = unsigned_round_tx.input.first()
 					.expect("funded round tx should have an input").previous_output;
