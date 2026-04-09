@@ -410,6 +410,35 @@ async fn try_settle_hold_invoice(
 	true
 }
 
+/// Post a lightning receive notification to the mailbox if the invoice has a
+/// mailbox_id associated with it. This notifies the client that a payment
+/// has arrived and they should come online to claim it.
+async fn post_lightning_receive_notification(
+	db: &database::Db,
+	mailbox_manager: &crate::mailbox_manager::MailboxManager,
+	payment_hash: PaymentHash,
+) {
+	let mailbox_id = match db.get_lightning_invoice_mailbox_id(payment_hash).await {
+		Ok(Some(id)) => id,
+		Ok(None) => return,
+		Err(e) => {
+			warn!("Failed to look up mailbox_id for {}: {:#}", payment_hash, e);
+			return;
+		},
+	};
+
+	match db.store_lightning_receive_notification(
+		mailbox_id, &payment_hash.to_string(),
+	).await {
+		Ok(checkpoint) => {
+			mailbox_manager.notify(mailbox_id, checkpoint);
+		},
+		Err(e) => {
+			warn!("Failed to store mailbox notification for {}: {:#}", payment_hash, e);
+		},
+	}
+}
+
 #[derive(Debug)]
 pub struct ClnNodeOnlineState {
 	id: ClnNodeId,
@@ -861,6 +890,12 @@ impl ClnManagerProcess {
 					LightningHtlcSubscriptionStatus::Accepted,
 					Some(htlc_send_expiry_height),
 				).await?;
+
+				// Post mailbox notification so the client knows to come online and claim
+				let payment_hash = PaymentHash::from(&subscription.invoice);
+				post_lightning_receive_notification(
+					&self.db, &self.mailbox_manager, payment_hash,
+				).await;
 
 				self.cancel_invoice(subscription.clone()).await?;
 			},
