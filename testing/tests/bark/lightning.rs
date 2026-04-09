@@ -1563,3 +1563,56 @@ async fn bark_lightning_receive_via_mailbox_notification() {
 
 	daemon.stop_wait().ready().await.unwrap();
 }
+
+/// Verify that intra-ark lightning payments (sender and receiver on same server)
+/// trigger a mailbox notification so the receiver can auto-claim via sync_mailbox.
+///
+/// This test specifically exercises the mailbox notification path, NOT the
+/// periodic lightning sync fallback. We use sync_mailbox() directly to ensure
+/// the claim happens only because the server posted a LightningReceive mailbox
+/// message for the intra-ark payment.
+#[tokio::test]
+async fn bark_intra_ark_lightning_receive_via_mailbox_notification() {
+	let ctx = TestContext::new("lightningd/bark_intra_ark_lightning_receive_via_mailbox_notification").await;
+
+	let lightning = ctx.new_lightning_setup("lightningd").await;
+
+	let srv = ctx.new_captaind_with_funds("server", Some(&lightning.receiver), btc(10)).await;
+	srv.wait_for_vtxopool(&ctx).await;
+
+	let bark_sender = Arc::new(ctx.new_bark_with_funds("bark-sender", &srv, btc(5)).await);
+	let bark_receiver = Arc::new(ctx.new_bark_with_funds("bark-receiver", &srv, btc(5)).await);
+
+	let board_amount = btc(2);
+	bark_sender.board_and_confirm_and_register(&ctx, board_amount).await;
+	bark_receiver.board_and_confirm_and_register(&ctx, board_amount).await;
+
+	// Use the library client for the receiver so we can call sync_mailbox directly
+	let receiver_client = bark_receiver.client().await;
+
+	let pay_amount = sat(500_000);
+	let invoice = receiver_client.bolt11_invoice(pay_amount).await.unwrap();
+
+	// Sender pays via intra-ark path (same server, no CLN round-trip)
+	bark_sender.pay_lightning(invoice.to_string(), None).await;
+
+	// Only call sync_mailbox — NOT full sync() which also runs
+	// try_claim_all_lightning_receives. This isolates the mailbox path.
+	let mut claimed = false;
+	for _ in 0..30 {
+		tokio::time::sleep(Duration::from_secs(1)).await;
+
+		receiver_client.sync_mailbox().await.unwrap();
+
+		let balance = receiver_client.balance().await.unwrap();
+		if balance.spendable == board_amount + pay_amount {
+			claimed = true;
+			break;
+		}
+	}
+
+	assert!(claimed, "intra-ark lightning receive should be claimed via mailbox notification");
+
+	let receives = receiver_client.pending_lightning_receives().await.unwrap();
+	assert!(receives.is_empty(), "no pending receives should remain after claim");
+}

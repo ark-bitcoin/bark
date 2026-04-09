@@ -292,7 +292,9 @@ impl ClnHoldProcess {
 
 			// Post mailbox notification so the client knows to come online and claim
 			let payment_hash = PaymentHash::from(*htlc_subscription.invoice.payment_hash());
-			self.post_lightning_receive_notification(payment_hash).await;
+			super::post_lightning_receive_notification(
+				&self.db, &self.mailbox_manager, payment_hash,
+			).await;
 
 			Ok(true)
 		} else {
@@ -449,34 +451,6 @@ impl ClnHoldProcess {
 		}
 
 		Ok(())
-	}
-
-	/// Post a lightning receive notification to the mailbox if the invoice has a
-	/// mailbox_id associated with it. This notifies the client that a payment
-	/// has arrived and they should come online to claim it.
-	async fn post_lightning_receive_notification(
-		&self,
-		payment_hash: PaymentHash,
-	) {
-		let mailbox_id = match self.db.get_lightning_invoice_mailbox_id(payment_hash).await {
-			Ok(Some(id)) => id,
-			Ok(None) => return, // no mailbox_id, nothing to notify
-			Err(e) => {
-				warn!("Failed to look up mailbox_id for {}: {:#}", payment_hash, e);
-				return;
-			},
-		};
-
-		match self.db.store_lightning_receive_notification(
-			mailbox_id, &payment_hash.to_string(),
-		).await {
-			Ok(checkpoint) => {
-				self.mailbox_manager.notify(mailbox_id, checkpoint);
-			},
-			Err(e) => {
-				warn!("Failed to store mailbox notification for {}: {:#}", payment_hash, e);
-			},
-		}
 	}
 
 	async fn run(mut self, rtmgr: RuntimeManager, mgr_waker: Arc<Notify>) -> anyhow::Result<()> {
