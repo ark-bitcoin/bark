@@ -1,4 +1,0 @@
-- Fix missing mailbox notification for intra-ark lightning receives
-  When sender and receiver were on the same server, the receiver never got a
-  LightningReceive mailbox message, requiring manual sync to claim the payment.
-  [#1907](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1907)
