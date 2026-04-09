@@ -34,7 +34,7 @@ use ark::vtxo::Full;
 use bark::Wallet;
 use bark_json::primitives::WalletVtxoInfo;
 use server::secret::Secret;
-use server_log::{FullRound, RoundError, RoundStarted, RoundUserVtxoAlreadyRegistered};
+use server_log::{FullRound, RoundError, RoundFinished, RoundStarted, RoundUserVtxoAlreadyRegistered, WatchmanAddedFundingTx};
 use server_rpc::protos::{self};
 
 use ark_testing::{Captaind, TestContext, btc, sat, secs};
@@ -1698,5 +1698,55 @@ async fn grpc_health_check() {
 		resp.into_inner().status,
 		tonic_health::pb::health_check_response::ServingStatus::Serving as i32,
 	);
+}
+
+#[tokio::test]
+async fn undo_round() {
+	let ctx = TestContext::new("server/undo_round").await;
+	let srv = ctx.captaind("server").funded(btc(10)).cfg(|cfg| {
+		cfg.round_interval = Duration::from_secs(3600);
+	}).create().await;
+
+	let bark1 = ctx.bark("bark1", &srv).funded(sat(1_000_000)).create().await;
+	let bark2 = ctx.bark("bark2", &srv).funded(sat(1_000_000)).create().await;
+
+	bark1.board(sat(800_000)).await;
+	bark2.board(sat(800_000)).await;
+	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
+	bark1.sync().await;
+	bark2.sync().await;
+
+	let mut log_round_finished = srv.subscribe_log::<RoundFinished>();
+	let mut log_watchman_frontier = srv.subscribe_log::<WatchmanAddedFundingTx>();
+
+	ctx.refresh_all(&srv, &[&bark1, &bark2]).await;
+
+	let finished = log_round_finished.recv().wait(Duration::from_secs(30)).await
+		.expect("timed out waiting for round to finish");
+	let funding_txid = finished.txid;
+	info!("Round finished with funding txid: {}", funding_txid);
+
+	// Wait for the watchman to register this specific round's vtxos in
+	// watchman_vtxo_frontier so that the FK constraint is exercised when
+	// undo-round deletes them. Filter by txid because the watchman also
+	// fires WatchmanAddedFundingTx for board transactions.
+	loop {
+		let msg = log_watchman_frontier.recv().wait(Duration::from_secs(30)).await
+			.expect("timed out waiting for watchman to add round funding tx to frontier");
+		if msg.txid == funding_txid {
+			break;
+		}
+	}
+
+	let output = srv.get_custom_command(&[
+		"undo-round", "--dangerous", "--force",
+		&funding_txid.to_string(),
+	]).await.unwrap().output().await.expect("failed to run undo-round");
+
+	let stdout = String::from_utf8(output.stdout).unwrap();
+	let stderr = String::from_utf8(output.stderr).unwrap();
+	info!("undo-round stdout: {}", stdout);
+	info!("undo-round stderr: {}", stderr);
+	assert!(output.status.success(), "undo-round exited with status {}", output.status);
 }
 
