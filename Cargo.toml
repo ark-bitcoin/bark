@@ -25,6 +25,14 @@ debug = 0
 strip = "symbols"
 opt-level = "z"
 
+# Profile for a fast bark and barkd that still have full debug info
+[profile.barkdebug]
+inherits = "release"
+debug = true
+strip = "none"
+debug-assertions = true
+
+
 # TODO(stevenroose) at some point probably move these inline
 [workspace.dependencies]
 
