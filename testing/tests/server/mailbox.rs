@@ -152,7 +152,7 @@ async fn mailbox_lightning_receive_pending() {
 	let lightning = ctx.new_lightning_setup("lightningd").await;
 
 	// Server must be linked to the receiver CLN to generate hold invoices
-	let srv = ctx.new_captaind_with_funds("server", Some(&lightning.receiver), btc(10)).await;
+	let srv = ctx.new_captaind_with_funds("server", Some(&lightning.internal), btc(10)).await;
 	srv.wait_for_vtxopool(&ctx).await;
 
 	let bark = Arc::new(ctx.new_bark_with_funds("bark", &srv, btc(3)).await);
@@ -167,7 +167,7 @@ async fn mailbox_lightning_receive_pending() {
 
 	let cloned_invoice = invoice_info.invoice.clone();
 	let pay_handle = tokio::spawn(async move {
-		lightning.sender.pay_bolt11(cloned_invoice).await
+		lightning.external.pay_bolt11(cloned_invoice).await
 	});
 
 	// Read the receiver's main mailbox, retrying until the notification arrives.

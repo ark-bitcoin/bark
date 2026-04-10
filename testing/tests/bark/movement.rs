@@ -165,7 +165,7 @@ async fn exit_start() {
 async fn lightning_send_invoice_receive() {
 	let ctx = TestContext::new("movement/lightning_send_invoice_receive").await;
 	let ln = ctx.new_lightning_setup("ln").await;
-	let srv = ctx.new_captaind_with_funds("server", Some(&ln.sender), btc(10)).await;
+	let srv = ctx.new_captaind_with_funds("server", Some(&ln.internal), btc(10)).await;
 	let bark1 = ctx.new_bark_with_funds("bark1", &srv, sat(1_000_000)).await;
 	let bark2 = Arc::new(ctx.new_bark_with_funds("bark2", &srv, sat(1_000_000)).await);
 
@@ -248,7 +248,7 @@ async fn lightning_send_invoice_receive() {
 async fn lightning_send_invoice_revoke() {
 	let ctx = TestContext::new("movement/lightning_send_invoice_revoke").await;
 	let ln = ctx.new_lightning_setup_no_channel("ln").await;
-	let srv = ctx.new_captaind_with_funds("server", Some(&ln.sender), btc(10)).await;
+	let srv = ctx.new_captaind_with_funds("server", Some(&ln.internal), btc(10)).await;
 	let bark = ctx.new_bark_with_funds("bark1", &srv, sat(1_000_000)).await;
 
 	bark.board_and_confirm_and_register(&ctx, sat(100_000)).await;
@@ -258,7 +258,7 @@ async fn lightning_send_invoice_revoke() {
 	assert_eq!(bark.history().await.len(), 1);
 
 	let invoice = Invoice::from_str(
-		&ln.receiver.invoice(Some(sat(10_000)), "movement_send_fail", "will fail").await,
+		&ln.external.invoice(Some(sat(10_000)), "movement_send_fail", "will fail").await,
 	).unwrap();
 	srv.wait_for_vtxopool(&ctx).await;
 	bark.pay_lightning_wait(&invoice, None).await;
@@ -295,7 +295,7 @@ async fn lightning_send_invoice_revoke() {
 async fn lightning_send_offer() {
 	let ctx = TestContext::new("movement/lightning_send_offer").await;
 	let ln = ctx.new_lightning_setup("ln").await;
-	let srv = ctx.new_captaind_with_funds("server", Some(&ln.sender), btc(10)).await;
+	let srv = ctx.new_captaind_with_funds("server", Some(&ln.internal), btc(10)).await;
 	let bark = ctx.new_bark_with_funds("bark1", &srv, sat(1_000_000)).await;
 
 	bark.board_and_confirm_and_register(&ctx, sat(500_000)).await;
@@ -305,7 +305,7 @@ async fn lightning_send_offer() {
 
 	let mut payment_hashes = HashSet::<PaymentHash>::new();
 	let mut htlc_vtxos = HashSet::<VtxoId>::new();
-	let offer = ln.receiver.offer(None, Some("movement_offer")).await;
+	let offer = ln.external.offer(None, Some("movement_offer")).await;
 	ln.sync().await;
 	srv.wait_for_vtxopool(&ctx).await;
 	for i in 1..5 {

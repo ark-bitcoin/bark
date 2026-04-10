@@ -38,15 +38,18 @@ use crate::daemon::barkd::BarkdChainSource;
 pub mod builders;
 
 pub struct LightningPaymentSetup {
-	pub receiver: Lightningd,
-	pub sender: Lightningd,
+	pub external: Lightningd,
+	pub internal: Lightningd,
 }
 
 impl LightningPaymentSetup {
+	/// Open a channel between the internal and external lightningd nodes, and
+	/// send half of the capacity to the other side to make sure both sides are
+	/// balanced.
 	pub async fn open_channel(&self, ctx: &TestContext, capacity: Amount) {
 		trace!("Creating channel between lightning nodes");
-		self.sender.connect(&self.receiver).await;
-		let funding_txid = self.sender.fund_channel(&self.receiver, capacity).await;
+		self.internal.connect(&self.external).await;
+		let funding_txid = self.internal.fund_channel(&self.external, capacity).await;
 
 		// We need to await the channel funding transaction or else we get
 		// infinite 'Waiting for gossip...' below.
@@ -54,13 +57,17 @@ impl LightningPaymentSetup {
 		// Default depth before channel_ready
 		ctx.generate_blocks(6).await;
 
-		self.sender.wait_for_gossip(1).await;
+		self.internal.wait_for_gossip(1).await;
+
+		// Send half of the capacity to the other side
+		let invoice = self.external.invoice(Some(capacity / 2), "balance", "balance channel").await;
+		self.internal.pay_bolt11(invoice).await;
 	}
 
 	pub async fn sync(&self) {
 		tokio::join!(
-			self.receiver.wait_for_block_sync(),
-			self.sender.wait_for_block_sync(),
+			self.external.wait_for_block_sync(),
+			self.internal.wait_for_block_sync(),
 		);
 	}
 }
@@ -653,22 +660,22 @@ impl TestContext {
 	/// but does not create a channel between them.
 	pub async fn new_lightning_setup_no_channel(&self, name: impl AsRef<str>) -> LightningPaymentSetup {
 		trace!("Start receiver and sender lightningd nodes");
-		let receiver = self.new_lightningd(format!("{}_receiver", name.as_ref())).await;
-		let sender = self.new_lightningd(format!("{}_sender", name.as_ref())).await;
+		let internal = self.new_lightningd(format!("{}_internal", name.as_ref())).await;
+		let external = self.new_lightningd(format!("{}_external", name.as_ref())).await;
 
 		trace!("Funding all lightning-nodes");
-		self.fund_lightning(&sender, btc(10)).await;
+		self.fund_lightning(&internal, btc(12)).await;
 		let height = self.generate_blocks(6).await;
-		sender.wait_for_block(height).await;
+		internal.wait_for_block(height).await;
 
-		LightningPaymentSetup { receiver, sender }
+		LightningPaymentSetup { internal, external }
 	}
 
 	/// Creates one sender and one receiver lightningd node and funds sender,
 	/// and creates a channel between them.
 	pub async fn new_lightning_setup(&self, name: impl AsRef<str>) -> LightningPaymentSetup {
 		let lightning = self.new_lightning_setup_no_channel(name).await;
-		lightning.open_channel(self, btc(8)).await;
+		lightning.open_channel(self, btc(10)).await;
 		lightning
 	}
 

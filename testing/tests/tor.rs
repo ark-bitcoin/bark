@@ -10,7 +10,7 @@ const CHAIN_VIRTUAL_PORT: u16 = 8080;
 async fn setup(test_name: &str) -> (TestContext, Captaind, Tor, LightningPaymentSetup) {
 	let ctx = TestContext::new(test_name).await;
 	let lightning = ctx.new_lightning_setup("lightningd").await;
-	let srv = ctx.new_captaind_with_funds("server", Some(&lightning.sender), btc(10)).await;
+	let srv = ctx.new_captaind_with_funds("server", Some(&lightning.internal), btc(10)).await;
 
 	let chain_target_port = if let Some(ref electrs) = ctx.electrs {
 		electrs.rest_port()
@@ -87,7 +87,7 @@ async fn smoke_test(
 	// LN send to external node
 	lightning.sync().await;
 	srv.wait_for_vtxopool(&ctx).await;
-	let invoice = lightning.receiver.invoice(Some(sat(10_000)), "ln_send_ext", "test").await;
+	let invoice = lightning.external.invoice(Some(sat(10_000)), "ln_send_ext", "test").await;
 	bark1.pay_lightning_wait(&invoice, None).await;
 	assert_eq!(bark1.spendable_balance().await, sat(489_062));
 

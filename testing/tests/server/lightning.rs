@@ -39,7 +39,7 @@ async fn server_settles_invoice_from_on_chain_htlc_preimage() {
 	let lightning = ctx.new_lightning_setup("lightningd").await;
 
 	let srv = ctx.new_captaind_with_cfg(
-		"srv", Some(&lightning.receiver), |cfg| {
+		"srv", Some(&lightning.external), |cfg| {
 			// Use a long receive_htlc_forward_timeout so hold invoices stay alive
 			// while the exit is driven to completion on-chain.
 			cfg.receive_htlc_forward_timeout = Duration::from_secs(5 * 60);
@@ -84,7 +84,7 @@ async fn server_settles_invoice_from_on_chain_htlc_preimage() {
 
 	let cloned_invoice = invoice_info.invoice.clone();
 	let pay_handle = tokio::spawn(async move {
-		lightning.sender.pay_bolt11(cloned_invoice).await;
+		lightning.internal.pay_bolt11(cloned_invoice).await;
 	});
 
 	// Proxy blocks cooperative settlement, so this errors
@@ -188,7 +188,7 @@ async fn reject_revocation_on_successful_lightning_payment() {
 	let lightning = ctx.new_lightning_setup("lightningd").await;
 
 	// Start a server and link it to our cln installation
-	let srv = ctx.new_captaind("server", Some(&lightning.sender)).await;
+	let srv = ctx.new_captaind("server", Some(&lightning.internal)).await;
 
 	// Start a bark and create a VTXO
 	let onchain_amount = btc(7);
@@ -202,7 +202,7 @@ async fn reject_revocation_on_successful_lightning_payment() {
 
 	// Create a payable invoice
 	let invoice_amount = btc(2);
-	let invoice = lightning.receiver.invoice(Some(invoice_amount), "test_payment", "A test payment").await;
+	let invoice = lightning.external.invoice(Some(invoice_amount), "test_payment", "A test payment").await;
 
 	lightning.sync().await;
 
@@ -218,7 +218,7 @@ async fn server_refuse_claim_invoice_not_settled() {
 	let lightning = ctx.new_lightning_setup("lightningd").await;
 
 	// Start a server and link it to our cln installation
-	let srv = ctx.new_captaind_with_funds("server", Some(&lightning.receiver), btc(10)).await;
+	let srv = ctx.new_captaind_with_funds("server", Some(&lightning.external), btc(10)).await;
 
 	#[derive(Clone)]
 	struct Proxy;
@@ -241,7 +241,7 @@ async fn server_refuse_claim_invoice_not_settled() {
 	let invoice_info = bark.bolt11_invoice(btc(1)).await;
 
 	let cloned = invoice_info.clone();
-	tokio::spawn(async move { lightning.sender.pay_bolt11(cloned.invoice).await; });
+	tokio::spawn(async move { lightning.internal.pay_bolt11(cloned.invoice).await; });
 	let err = bark.try_lightning_receive(&invoice_info.invoice).await.unwrap_err().to_alt_string();
 	assert!(err.contains("bad user input: preimage doesn't match payment hash"), "err: {err}");
 }
@@ -253,7 +253,7 @@ async fn server_should_release_hold_invoice_when_subscription_is_canceled() {
 
 	let lightning = ctx.new_lightning_setup("lightningd").await;
 
-	let srv = ctx.new_captaind_with_cfg("server", Some(&lightning.receiver), |cfg| {
+	let srv = ctx.new_captaind_with_cfg("server", Some(&lightning.external), |cfg| {
 		// Set the receive_htlc_forward_timeout very short so the subscription
 		// gets canceled quickly when the receiver doesn't prepare the claim
 		cfg.receive_htlc_forward_timeout = cfg_htlc_forward_timeout
@@ -268,7 +268,7 @@ async fn server_should_release_hold_invoice_when_subscription_is_canceled() {
 
 	// Spawn the payment - it will be held by the server until claimed or canceled
 	let cloned_invoice_info = invoice_info.clone();
-	let sender = Arc::new(lightning.sender);
+	let sender = Arc::new(lightning.internal);
 	let cloned_sender = sender.clone();
 	let payment_result = tokio::spawn(async move {
 		cloned_sender.try_pay_bolt11(cloned_invoice_info.invoice).await
@@ -293,7 +293,7 @@ async fn server_generated_invoice_has_configured_expiry() {
 
 	let lightning = ctx.new_lightning_setup("lightningd").await;
 
-	let srv = ctx.new_captaind_with_cfg("server", Some(&lightning.receiver), |cfg| {
+	let srv = ctx.new_captaind_with_cfg("server", Some(&lightning.external), |cfg| {
 		// Set invoice expiry very short so invoice expires quickly
 		cfg.invoice_expiry = cfg_invoice_expiry;
 	}).await;
@@ -320,7 +320,7 @@ async fn server_generated_invoice_has_configured_expiry() {
 		"expected CANCELED status, got {:?}", resp.status);
 
 	// Sender also rejects expired invoice, confirming expiry was set correctly in the invoice
-	let err = lightning.sender.try_pay_bolt11(invoice_info.invoice).await.unwrap_err().to_alt_string();
+	let err = lightning.internal.try_pay_bolt11(invoice_info.invoice).await.unwrap_err().to_alt_string();
 	assert!(err.contains("Invoice expired"), "err: {err}");
 }
 
@@ -331,7 +331,7 @@ async fn server_claim_lightning_receive_is_idempotent() {
 	let lightning = ctx.new_lightning_setup("lightningd").await;
 
 	// Start a server and link it to our cln installation
-	let srv = ctx.new_captaind_with_funds("server", Some(&lightning.receiver), btc(10)).await;
+	let srv = ctx.new_captaind_with_funds("server", Some(&lightning.external), btc(10)).await;
 
 	// Start a bark and create a VTXO to be able to board
 	let bark = Arc::new(ctx.new_bark_with_funds("bark-1", &srv, btc(3)).await);
@@ -341,7 +341,7 @@ async fn server_claim_lightning_receive_is_idempotent() {
 
 	let cloned_invoice_info = invoice_info.clone();
 	let res1 = tokio::spawn(async move {
-		lightning.sender.pay_bolt11(cloned_invoice_info.invoice).await
+		lightning.internal.pay_bolt11(cloned_invoice_info.invoice).await
 	});
 
 	bark.lightning_receive(&invoice_info.invoice).wait_millis(10_000).await;
@@ -378,7 +378,7 @@ async fn server_returned_htlc_recv_vtxos_should_be_identical_cln() {
 	let lightning = ctx.new_lightning_setup("lightningd").await;
 
 	// Start a server and link it to our cln installation
-	let srv = ctx.new_captaind_with_funds("server", Some(&lightning.receiver), btc(10)).await;
+	let srv = ctx.new_captaind_with_funds("server", Some(&lightning.external), btc(10)).await;
 
 	// Start a bark and create a VTXO to be able to board
 	let bark = ctx.new_bark_with_funds("bark-1", &srv, btc(3)).await;
@@ -393,7 +393,7 @@ async fn server_returned_htlc_recv_vtxos_should_be_identical_cln() {
 
 	// Need to initiate payment for server to return htlc vtxos
 	tokio::spawn(async move {
-		lightning.sender.pay_bolt11(cloned_invoice_info.invoice).await
+		lightning.internal.pay_bolt11(cloned_invoice_info.invoice).await
 	});
 
 	// Wait for the payment to be received
@@ -442,7 +442,7 @@ async fn server_returned_htlc_recv_vtxos_should_be_identical_intra_ark() {
 	let lightning = ctx.new_lightning_setup("lightningd").await;
 
 	// Start a server and link it to our cln installation
-	let srv = ctx.new_captaind_with_funds("server", Some(&lightning.receiver), btc(10)).await;
+	let srv = ctx.new_captaind_with_funds("server", Some(&lightning.external), btc(10)).await;
 
 	// Start a bark and create a VTXO to be able to board
 	let bark = ctx.new_bark_with_funds("bark-1", &srv, btc(3)).await;
@@ -508,7 +508,7 @@ async fn server_claim_lightning_receive_is_idempotent_intra_ark() {
 	trace!("Start lightningd-1");
 	let lightning = ctx.new_lightning_setup("lightningd").await;
 
-	let srv = ctx.new_captaind_with_funds("server", Some(&lightning.receiver), btc(10)).await;
+	let srv = ctx.new_captaind_with_funds("server", Some(&lightning.external), btc(10)).await;
 	srv.wait_for_vtxopool(&ctx).await;
 
 	let bark1 = ctx.new_bark_with_funds("bark1", &srv, sat(1_000_000)).await;
@@ -549,10 +549,10 @@ async fn should_refuse_paying_invoice_not_matching_htlcs() {
 
 	let lightning = ctx.new_lightning_setup("lightningd").await;
 
-	let dummy_invoice = lightning.receiver.invoice(None, "dummy_invoice", "A dummy invoice").await;
+	let dummy_invoice = lightning.external.invoice(None, "dummy_invoice", "A dummy invoice").await;
 
 	// Start a server and link it to our cln installation
-	let srv = ctx.new_captaind_with_funds("server", Some(&lightning.receiver), btc(10)).await;
+	let srv = ctx.new_captaind_with_funds("server", Some(&lightning.external), btc(10)).await;
 
 	#[derive(Clone)]
 	struct Proxy(String);
@@ -572,7 +572,7 @@ async fn should_refuse_paying_invoice_not_matching_htlcs() {
 	let bark_1 = ctx.new_bark_with_funds("bark-1", &proxy.address, btc(3)).await;
 	bark_1.board_and_confirm_and_register(&ctx, btc(2)).await;
 
-	let invoice = lightning.receiver.invoice(Some(btc(1)), "real invoice", "A real invoice").await;
+	let invoice = lightning.external.invoice(Some(btc(1)), "real invoice", "A real invoice").await;
 
 	let err = bark_1.try_pay_lightning(invoice, None, false).await.unwrap_err().to_alt_string();
 	assert!(err.contains("htlc payment hash doesn't match invoice"), "err: {err}");
@@ -585,7 +585,7 @@ async fn should_refuse_paying_invoice_whose_amount_is_higher_than_htlcs() {
 	let lightning = ctx.new_lightning_setup("lightningd").await;
 
 	// Start a server and link it to our cln installation
-	let srv = ctx.new_captaind_with_funds("server", Some(&lightning.receiver), btc(10)).await;
+	let srv = ctx.new_captaind_with_funds("server", Some(&lightning.external), btc(10)).await;
 
 	#[derive(Clone)]
 	struct Proxy;
@@ -608,7 +608,7 @@ async fn should_refuse_paying_invoice_whose_amount_is_higher_than_htlcs() {
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 	bark_1.sync().await;
 
-	let invoice = lightning.receiver.invoice(Some(btc(1)), "real invoice", "A real invoice").await;
+	let invoice = lightning.external.invoice(Some(btc(1)), "real invoice", "A real invoice").await;
 
 	let err = bark_1.try_pay_lightning(invoice, None, false).await.unwrap_err().to_alt_string();
 	assert!(err.contains("HTLC VTXO sum of") && err.contains("is less than the payment amount of"), "err: {err}");
@@ -737,7 +737,7 @@ async fn server_can_use_multi_input_from_vtxo_pool() {
 	let lightning = ctx.new_lightning_setup("lightningd").await;
 
 	// Start a server and link it to our cln installation
-	let srv = ctx.new_captaind_with_cfg("server", Some(&lightning.receiver), |cfg| {
+	let srv = ctx.new_captaind_with_cfg("server", Some(&lightning.external), |cfg| {
 		cfg.vtxopool.vtxo_targets = vec![
 			VtxoTarget { count: 5, amount: sat(100_000) },
 		];
@@ -757,7 +757,7 @@ async fn server_can_use_multi_input_from_vtxo_pool() {
 
 	let cloned_invoice_info = invoice_info.clone();
 	let res1 = tokio::spawn(async move {
-		lightning.sender.pay_bolt11(cloned_invoice_info.invoice).await
+		lightning.internal.pay_bolt11(cloned_invoice_info.invoice).await
 	});
 
 	bark.lightning_receive(&invoice_info.invoice).wait_millis(10_000).await;
@@ -778,7 +778,7 @@ async fn server_can_use_vtxo_pool_change_for_next_receive() {
 	let lightning = ctx.new_lightning_setup("lightningd").await;
 
 	// Start a server and link it to our cln installation
-	let srv = ctx.new_captaind_with_cfg("server", Some(&lightning.receiver), |cfg| {
+	let srv = ctx.new_captaind_with_cfg("server", Some(&lightning.external), |cfg| {
 		cfg.vtxopool.vtxo_targets = vec![
 			VtxoTarget { count: 5, amount: sat(100_000) },
 		];
@@ -795,7 +795,7 @@ async fn server_can_use_vtxo_pool_change_for_next_receive() {
 	let first_pay_amount = sat(50_000);
 	let second_pay_amount = sat(25_000);
 
-	let sender = Arc::new(lightning.sender);
+	let sender = Arc::new(lightning.internal);
 
 	// First block consumes only vtxo of the pool
 	{
@@ -842,7 +842,7 @@ async fn initiate_lightning_payment_fails_without_register_vtxos() {
 	let lightning = ctx.new_lightning_setup("lightningd").await;
 
 	// Start a server and link it to our cln installation
-	let srv = ctx.new_captaind_with_funds("server", Some(&lightning.sender), btc(10)).await;
+	let srv = ctx.new_captaind_with_funds("server", Some(&lightning.internal), btc(10)).await;
 
 	// Create a proxy that drops register_vtxos calls (returns success without calling upstream)
 	#[derive(Clone)]
@@ -863,7 +863,7 @@ async fn initiate_lightning_payment_fails_without_register_vtxos() {
 	let bark_1 = ctx.new_bark_with_funds("bark-1", &proxy.address, btc(3)).await;
 	bark_1.board_and_confirm_and_register(&ctx, btc(2)).await;
 
-	let invoice = lightning.receiver.invoice(Some(btc(1)), "test_payment", "A test payment").await;
+	let invoice = lightning.external.invoice(Some(btc(1)), "test_payment", "A test payment").await;
 
 	// The payment should fail because register_vtxos was dropped,
 	// so initiate_lightning_payment will fail when trying to mark server_may_own_descendants
