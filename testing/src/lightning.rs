@@ -13,22 +13,19 @@
 /// - `external` — inter-lightning-node: an external lightningd pays the invoice.
 /// - `intra` — intra-ark: a second bark on the same server pays the invoice.
 ///
-/// # Example
+/// An optional config closure can be passed to customize the server:
 ///
 /// ```ignore
-/// async fn bark_can_receive_lightning(
-///     ctx: &TestContext,
-///     lightning: &LightningPaymentSetup,
-///     srv: &Captaind,
-///     pay: impl AsyncFn(String),
-/// ) {
-///     // shared test body ...
-/// }
-/// lightning_test!(bark_can_receive_lightning);
+/// lightning_test!(my_test, |cfg| {
+///     cfg.invoice_check_interval = Duration::from_secs(1);
+/// });
 /// ```
 #[macro_export]
 macro_rules! lightning_test {
 	($test_fn:ident) => {
+		$crate::lightning_test!($test_fn, |_cfg| {});
+	};
+	($test_fn:ident, |$cfg:ident| $cfg_body:block) => {
 		mod $test_fn {
 			use super::*;
 
@@ -38,9 +35,10 @@ macro_rules! lightning_test {
 					concat!("lightningd/external_", stringify!($test_fn)),
 				).await;
 				let lightning = ctx.new_lightning_setup("lightningd").await;
-				let srv = ctx.new_captaind_with_funds(
-					"server", Some(&lightning.internal), btc(10),
+				let srv = ctx.new_captaind_with_cfg(
+					"server", Some(&lightning.internal), |$cfg| $cfg_body,
 				).await;
+				ctx.fund_captaind(&srv, btc(10)).await;
 
 				let pay = async |invoice: String| {
 					lightning.external.pay_bolt11(invoice).await;
@@ -55,9 +53,10 @@ macro_rules! lightning_test {
 					concat!("lightningd/intra_", stringify!($test_fn)),
 				).await;
 				let lightning = ctx.new_lightning_setup("lightningd").await;
-				let srv = ctx.new_captaind_with_funds(
-					"server", Some(&lightning.internal), btc(10),
+				let srv = ctx.new_captaind_with_cfg(
+					"server", Some(&lightning.internal), |$cfg| $cfg_body,
 				).await;
+				ctx.fund_captaind(&srv, btc(10)).await;
 
 				let bark_sender = Arc::new(
 					ctx.new_bark_with_funds("sender", &srv, btc(5)).await,
