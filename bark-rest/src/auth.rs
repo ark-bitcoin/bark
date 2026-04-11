@@ -12,6 +12,8 @@ use base64::Engine;
 use crate::ServerState;
 use crate::error::{ErrorResponse, unauthorized};
 
+const BEARER_PREFIX: &str = "Bearer ";
+
 /// A bearer token that is the 32-byte secret itself.
 ///
 /// The token grants full access when it matches any registered secret.
@@ -79,20 +81,30 @@ impl AuthToken {
 /// Extract the auth token from the `Authorization: Bearer <token>` header
 /// per RFC 6750.
 ///
-/// Returns `Ok(Some(token))` when a valid token string is found,
-/// `Ok(None)` when no auth header is present, or `Err(msg)` when
-/// a header is present but malformed.
+/// The `Bearer` prefix is matched case sensitively. Non-Bearer
+/// authorization headers are silently ignored (returns `Ok(None)`).
+///
+/// Returns `Ok(Some(token))` when a valid Bearer token is found,
+/// `Ok(None)` when no auth header is present or the scheme is not Bearer,
+/// or `Err(msg)` when headers are malformed (non-UTF-8 or duplicated).
 fn extract_auth_token(req: &Request<Body>) -> Result<Option<String>, &'static str> {
-	if let Some(val) = req.headers().get("authorization") {
-		let s = val.to_str().map_err(|_| "authorization header is not valid UTF-8")?;
-		let s = s.trim();
-		if let Some(token) = s.strip_prefix("Bearer ") {
-			return Ok(Some(token.trim().to_string()));
+	let auth_headers = req.headers().get_all("authorization");
+
+	let mut authorization_header = None;
+	for header in auth_headers {
+		if authorization_header.is_some() {
+			return Err("multiple authorization headers are not allowed");
 		}
-		return Err("unsupported authorization scheme; expected 'Bearer <token>'");
+
+		let header_str = header.to_str()
+			.map_err(|_| "authorization header is not valid UTF-8")?;
+
+		if let Some(token) = header_str.strip_prefix(BEARER_PREFIX) {
+			authorization_header = Some(token.to_string());
+		}
 	}
 
-	Ok(None)
+	Ok(authorization_header)
 }
 
 fn inner_guard_auth(
@@ -113,7 +125,7 @@ fn inner_guard_auth(
 
 	let token = match AuthToken::decode(&token_str) {
 		Ok(r) => r,
-		Err(e) => unauthorized!("{}", e.to_string()),
+		Err(_) => unauthorized!("invalid auth token"),
 	};
 
 	if token != *expected {
@@ -191,7 +203,7 @@ mod tests {
 		assert_eq!(extract_auth_token(&empty).unwrap(), None);
 
 		// unsupported scheme
-		assert!(extract_auth_token(&req("authorization", "Basic dXNlcjpwYXNz")).is_err());
+		assert_eq!(extract_auth_token(&req("authorization", "Basic dXNlcjpwYXNz")).unwrap(), None);
 	}
 
 	#[test]
@@ -204,7 +216,8 @@ mod tests {
 		};
 
 		// valid token passes
-		assert!(inner_guard_auth(make_state(token.clone()), &req(Some(&token.encode()))).is_ok());
+		let res = inner_guard_auth(make_state(token.clone()), &req(Some(&token.encode())));
+		assert!(res.is_ok(), "valid token should pass: {:?}", res);
 
 		// missing, wrong, and garbage tokens all fail
 		let state = make_state(token);
