@@ -115,7 +115,7 @@ impl Server {
 		// We are going to mark the update in the database
 		self.db.update_virtual_transaction_tree(
 			virtual_txs,
-			new_output_vtxos.chain(new_internal_vtxos),
+			new_output_vtxos.chain(new_internal_vtxos.into_iter().map(|(v, _)| v)),
 			spend_info,
 		).await?;
 		drop(vtxo_guard);

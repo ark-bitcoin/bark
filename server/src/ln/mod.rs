@@ -323,7 +323,7 @@ impl Server {
 					server_may_own_descendant_since: None,
 				}
 			}),
-			new_output_vtxos.chain(new_internal_vtxos),
+			new_output_vtxos.chain(new_internal_vtxos.into_iter().map(|(v, _)| v)),
 			spend_info,
 		).await?;
 
