@@ -20,7 +20,7 @@ use ark::tree::signed::builder::SignedTreeBuilder;
 use bitcoin_ext::{BlockDelta, BlockHeight};
 
 use crate::database::vtxopool::PoolVtxo;
-use crate::database::VirtualTransaction;
+use crate::database::tree::VtxoTreeUpdate;
 use crate::wallet::BdkWalletExt;
 use crate::{database, telemetry, Server, SECP};
 
@@ -494,30 +494,15 @@ impl Process {
 		// finish and broadcast the tx
 		let tx = wallet.finish_tx(funding_psbt).context("error finishing tree funding tx")?;
 
-		// Let's first create the vtxos and virtual_transactions in the database
-		// We want to ensure the tx can be swept by calling update_virtual_transaction_tree
-		// before we commit it to the database.
-		let leaf_txs = tree.unsigned_leaf_txs().iter()
-			.map(Transaction::compute_txid)
-			.map(VirtualTransaction::new_unsigned);
-
-		let node_txs = tree.internal_node_txs().iter()
-			.map(VirtualTransaction::new_signed_ref);
-
-		let funding_tx = VirtualTransaction::new_signed_ref(&tx).as_funding();
-
-		// Again, I don't understand why I need to collect them into
-		// a vec but it makes the compiler happy.
-		let vtxs = leaf_txs.into_iter()
-			.chain(node_txs)
-			.chain([funding_tx])
-			.collect::<Vec<_>>();
-
-		self.srv.db.update_virtual_transaction_tree(
-			vtxs,
-			tree.output_vtxos().map(ServerVtxo::from).chain(tree.internal_vtxos().map(|(v, _)| v)),
-			tree.spend_info(),
-		).await?;
+		// Create the vtxos and virtual transactions in the database
+		// before committing the funding tx to the wallet.
+		let update = VtxoTreeUpdate::new()
+			.upsert_funding_tx(&tx)
+			.upsert_signed_tx(tree.internal_node_txs().iter().cloned())
+			.upsert_unsigned_tx(tree.unsigned_leaf_txs().iter().map(Transaction::compute_txid))
+			.insert_oor_spent_vtxos(tree.internal_vtxos())
+			.insert_spendable_vtxos(tree.output_vtxos().map(ServerVtxo::from));
+		self.srv.db.execute_vtxo_tree_update(update).await?;
 
 		// Here we commit the transaction to the wallet
 		wallet.commit_tx(&tx);
@@ -525,10 +510,6 @@ impl Process {
 		drop(wallet);
 		let txid = tx.compute_txid();
 
-		// registre the funding tx
-		self.srv.db.upsert_virtual_transaction(
-			txid, Some(&tx), true, None,
-		).await.context("error storing vtxopool funding tx as virtual tx")?;
 		self.srv.db.upsert_bitcoin_transaction(txid, &tx).await
 			.context("error storing unbroadcasted vtxo issuance funding tx")?;
 		// store the new vtxos
