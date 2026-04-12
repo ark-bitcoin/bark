@@ -1,3 +1,5 @@
+mod tree;
+
 use std::str::FromStr;
 
 use bitcoin::secp256k1::PublicKey;

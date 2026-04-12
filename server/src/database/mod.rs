@@ -12,6 +12,7 @@ pub mod intman;
 pub mod ln;
 pub mod oor;
 pub mod rounds;
+pub mod tree;
 pub mod vtxopool;
 
 mod model;
@@ -311,6 +312,19 @@ impl Db {
 		let tx = conn.transaction().await.context("failed to start db transaction")?;
 
 		query::update_virtual_transaction_tree(&tx, new_virtual_txs, new_vtxos, spend_info).await?;
+
+		tx.commit().await?;
+		Ok(())
+	}
+
+	pub async fn execute_vtxo_tree_update(
+		&self,
+		update: tree::VtxoTreeUpdate,
+	) -> anyhow::Result<()> {
+		let mut conn = self.get_conn().await.context("failed to connect to db")?;
+		let tx = conn.transaction().await.context("failed to start db transaction")?;
+
+		tree::execute_vtxo_tree_update(&tx, update).await?;
 
 		tx.commit().await?;
 		Ok(())
