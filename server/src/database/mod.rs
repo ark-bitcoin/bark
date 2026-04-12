@@ -763,39 +763,20 @@ impl Db {
 		tx.execute(&stmt, &[&offboard_txid_str, &offboard_tx_bytes]).await?;
 
 		// update the virtual tx tree
-		let funding_tx = VirtualTransaction::new_signed_ref(&offboard_tx).as_funding();
-		let forfeit_vtxs = forfeit_result.forfeit_txs.iter()
-			.map(VirtualTransaction::new_signed_ref);
-		let connector_vtx = forfeit_result.connector_tx.as_ref()
-			.map(VirtualTransaction::new_signed_ref);
-		// I have no clue why I need to collect them into vec first
-		// but it makes the compiler happy
-		let vtxs = [funding_tx].into_iter()
-			.chain(forfeit_vtxs)
-			.chain(connector_vtx)
-			.collect::<Vec<_>>();
-		let server_vtxos = forfeit_result.forfeit_vtxos.iter()
-			.chain(&forfeit_result.connector_vtxos)
-			.collect::<Vec<_>>();
-		let spend_info = forfeit_result.spend_info(
-			input_vtxos.iter().map(|v| v.id()),
-			offboard_txid,
-		).collect::<Vec<_>>();
-		query::update_virtual_transaction_tree(&tx, vtxs, server_vtxos, spend_info).await?;
+		let connector_txs = forfeit_result.connector_tx.iter().cloned();
+		let forfeit_txs = forfeit_result.forfeit_txs.iter().cloned();
 
-		// we already check for spendableness in the above call
-		// we can't check here again because the above call sets "oor_spent_in" column
-		let stmt = tx.prepare_typed(
-			"UPDATE vtxo SET offboarded_in = $2, updated_at = NOW() WHERE vtxo_id = $1;",
-			&[Type::TEXT, Type::TEXT],
-		).await?;
-		for vtxo in input_vtxos {
-			let id = vtxo.id();
-			let rows_affected = tx.execute(&stmt, &[&id.to_string(), &offboard_txid_str]).await?;
-			if rows_affected == 0 {
-				bail!("VTXO {} is already spent", id);
-			}
-		}
+		// Each input is offboard-spent by offboard_tx and forfeited by its forfeit tx
+		let offboard_triples = input_vtxos.iter().zip(&forfeit_result.forfeit_txs)
+			.map(|(vtxo, ff_tx)| (vtxo.id(), offboard_txid, ff_tx.compute_txid()));
+
+		let update = tree::VtxoTreeUpdate::new()
+			.upsert_funding_tx(offboard_tx)
+			.upsert_signed_tx(connector_txs.chain(forfeit_txs))
+			.insert_spendable_bare_vtxos(&forfeit_result.forfeit_vtxos)
+			.insert_spendable_bare_vtxos(&forfeit_result.connector_vtxos)
+			.mark_vtxos_offboard_spent(offboard_triples);
+		tree::execute_vtxo_tree_update(&tx, update).await?;
 
 		// Mark transactions as having server-owned descendants before completing offboard
 		let txids = input_vtxos.iter()
