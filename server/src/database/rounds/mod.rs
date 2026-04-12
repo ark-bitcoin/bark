@@ -20,7 +20,7 @@ use ark::rounds::{RoundId, RoundSeq};
 use ark::tree::signed::{CachedSignedVtxoTree, UnlockHash, UnlockPreimage};
 use bitcoin_ext::BlockHeight;
 
-use crate::database::model::VirtualTransaction;
+use crate::database::tree;
 use crate::database::Db;
 use crate::database::query;
 use crate::round::InteractiveParticipation;
@@ -61,20 +61,6 @@ impl Db {
 		).await?;
 		let round_id = row.get::<_, i64>("id");
 
-		// mark the input vtxos as refreshed
-		let stmt = tx.prepare_typed(
-			"UPDATE vtxo SET spent_in_round = $2, updated_at = NOW()
-			WHERE vtxo_id = $1 AND
-				oor_spent_txid IS NULL AND spent_in_round IS NULL AND offboarded_in IS NULL;",
-			&[Type::TEXT, Type::INT8],
-		).await?;
-		for vtxo_id in input_vtxos {
-			let rows_affected = tx.execute(&stmt, &[&vtxo_id.to_string(), &round_id]).await?;
-			if rows_affected == 0 {
-				bail!("tried to mark unspendable vtxo {} as spent in round", vtxo_id);
-			}
-		}
-
 		// store round participations for the interactive participants
 		let remove_existing_stmt = tx.prepare_typed(
 			"DELETE FROM round_participation
@@ -111,33 +97,16 @@ impl Db {
 		let hark_unlock_hashes = signed_tree.spec.spec.vtxos.iter().map(|v| v.unlock_hash);
 		query::set_round_id_for_participations(&tx, hark_unlock_hashes, funding_txid).await?;
 
-		// Finally insert new vtxos.
-		// The funding tx is not yet signed at this point, so we store it as unsigned.
-		let funding_tx = VirtualTransaction::new_unsigned(funding_txid).as_funding();
-		let unsigned_vtxs = signed_tree.unsigned_leaf_txs().iter()
-			.map(Transaction::compute_txid)
-			.map(VirtualTransaction::new_unsigned);
-		let signed_internal_vtxs = signed_tree.internal_node_txs().into_iter()
-			.map(VirtualTransaction::new_signed_ref);
-
-		// I have no clue why I need to collect them into vec first
-		// but it makes the compiler happy
-		// EDIT: Me neither, async code ftw
-		let vtxs = [funding_tx].into_iter()
-			.chain(unsigned_vtxs)
-			.chain(signed_internal_vtxs)
-			.collect::<Vec<_>>();
-
-		query::update_virtual_transaction_tree(
-			&tx,
-			vtxs,
-			signed_tree.internal_vtxos().map(|(v, _)| v)
-				.chain(signed_tree.output_vtxos().map(ServerVtxo::from)),
-			signed_tree.spend_info(),
-		).await?;
-
-		// and the virtual txs (unsigned at this point, signed tx will be set after signing)
-		query::upsert_virtual_transaction(&tx, funding_txid, None, true, None).await?;
+		// Insert new vtxos and virtual transactions.
+		// The funding tx is not yet signed at this point.
+		let update = tree::VtxoTreeUpdate::new()
+			.upsert_unsigned_funding_tx(funding_txid)
+			.upsert_signed_tx(signed_tree.internal_node_txs().iter().cloned())
+			.upsert_unsigned_tx(signed_tree.unsigned_leaf_txs().iter().map(Transaction::compute_txid))
+			.insert_oor_spent_vtxos(signed_tree.internal_vtxos())
+			.insert_unclaimed_vtxos(signed_tree.output_vtxos().map(ServerVtxo::from))
+			.mark_vtxos_round_spent(input_vtxos.into_iter().map(|id| (id, round_id)));
+		tree::execute_vtxo_tree_update(&tx, update).await?;
 
 		tx.commit().await?;
 		Ok(())
