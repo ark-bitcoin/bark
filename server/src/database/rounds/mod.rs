@@ -131,7 +131,7 @@ impl Db {
 		query::update_virtual_transaction_tree(
 			&tx,
 			vtxs,
-			signed_tree.internal_vtxos()
+			signed_tree.internal_vtxos().map(|(v, _)| v)
 				.chain(signed_tree.output_vtxos().map(ServerVtxo::from)),
 			signed_tree.spend_info(),
 		).await?;
@@ -377,7 +377,7 @@ impl Db {
 			info!("undo_round {}: removing user vtxo {}", round_id, id);
 		}
 
-		let output_vtxo_ids = cached_tree.internal_vtxos().map(|v| v.id().to_string())
+		let output_vtxo_ids = cached_tree.internal_vtxos().map(|(v, _)| v.id().to_string())
 			.chain(user_vtxo_ids.iter().cloned())
 			.collect::<Vec<_>>();
 

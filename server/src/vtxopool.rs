@@ -515,7 +515,7 @@ impl Process {
 
 		self.srv.db.update_virtual_transaction_tree(
 			vtxs,
-			tree.output_vtxos().map(ServerVtxo::from).chain(tree.internal_vtxos()),
+			tree.output_vtxos().map(ServerVtxo::from).chain(tree.internal_vtxos().map(|(v, _)| v)),
 			tree.spend_info(),
 		).await?;
 
