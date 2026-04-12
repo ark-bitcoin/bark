@@ -680,7 +680,7 @@ impl TestContext {
 
 	/// Generated a block using the central bitcoind and ensures that electrs is synced with it.
 	/// Returns the new block height.
-	pub async fn generate_blocks(&self, block_num: u32) -> u64 {
+	pub async fn generate_blocks(&self, block_num: u32) -> u32 {
 		// Give transactions time to propagate
 		tokio::time::sleep(Duration::from_millis(1000)).await;
 
@@ -691,7 +691,7 @@ impl TestContext {
 
 		let height = self.bitcoind().get_block_count().await;
 		info!("New chain tip: {}", height);
-		height
+		height as u32
 	}
 
 	/// Generated a block using the central bitcoind without waiting for propagation

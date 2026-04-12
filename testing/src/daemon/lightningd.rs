@@ -9,7 +9,7 @@ use std::sync::Arc;
 use bitcoin::consensus::Decodable;
 use bitcoin::hex::DisplayHex;
 use bitcoin::{Amount, Network, Transaction};
-use bitcoin_ext::AmountExt;
+use bitcoin_ext::{AmountExt, BlockHeight};
 use log::{error, debug, trace, warn};
 use tokio::fs;
 use tokio::process::Command;
@@ -401,11 +401,11 @@ impl Lightningd {
 	}
 
 	/// Wait for block
-	pub async fn wait_for_block(&self, blockheight: u64) {
+	pub async fn wait_for_block(&self, blockheight: BlockHeight) {
 		trace!("{} - Wait for block {}", self.name, blockheight);
 		let mut client = self.grpc_client().await;
 		client.wait_block_height(cln_rpc::WaitblockheightRequest {
-			blockheight: u32::try_from(blockheight).unwrap(),
+			blockheight: blockheight,
 			timeout: None,
 		}).await.unwrap();
 	}
@@ -417,7 +417,7 @@ impl Lightningd {
 	/// Wait until lightnignd is synced with bitcoind
 	pub async fn wait_for_block_sync(&self) {
 		let height = self.bitcoind().get_block_count().await;
-		self.wait_for_block(height)	.await;
+		self.wait_for_block(height as BlockHeight).await;
 	}
 
 	pub async fn get_onchain_address(&self) -> bitcoin::Address {
