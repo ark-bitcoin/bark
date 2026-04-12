@@ -10,7 +10,6 @@ pub mod data_migrations;
 pub mod watchman;
 pub mod intman;
 pub mod ln;
-pub mod oor;
 pub mod rounds;
 pub mod tree;
 pub mod vtxopool;
@@ -289,32 +288,6 @@ impl Db {
 			Ok(v) => Ok(v),
 			Err(v) => bail!("requested VTXO {} is not a user VTXO", v.vtxo_id),
 		}).collect::<anyhow::Result<_, _>>()?)
-	}
-
-	/// Updates the virtual transaction tree.
-	/// This method will
-	/// - upsert new virtual transactions
-	/// - upsert new vtxos
-	/// - mark spends in the virtual transaction tree
-	///
-	/// This method will fail
-	/// - if a database error occurred
-	pub async fn update_virtual_transaction_tree<'a, V>(
-		&self,
-		new_virtual_txs: impl IntoIterator<Item = VirtualTransaction<'a>>,
-		new_vtxos: impl IntoIterator<Item = V>,
-		spend_info: impl IntoIterator<Item = (VtxoId, Txid)>,
-	) -> anyhow::Result<()>
-	where
-		V: Borrow<ServerVtxo<Full>>,
-	{
-		let mut conn = self.get_conn().await.context("failed to connect to db")?;
-		let tx = conn.transaction().await.context("failed to start db transaction")?;
-
-		query::update_virtual_transaction_tree(&tx, new_virtual_txs, new_vtxos, spend_info).await?;
-
-		tx.commit().await?;
-		Ok(())
 	}
 
 	pub async fn execute_vtxo_tree_update(

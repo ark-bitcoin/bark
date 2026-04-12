@@ -25,7 +25,6 @@ use ark::tree::signed::{UnlockHash, UnlockPreimage};
 use ark::vtxo::{Bare, Full};
 
 use crate::database::model::{VirtualTransaction, VtxoState};
-use crate::database::oor;
 use crate::database::rounds::{StoredRoundInput, StoredRoundOutput, StoredRoundParticipation};
 use crate::error::ContextExt;
 use crate::secret::Secret;
@@ -442,28 +441,3 @@ pub async fn set_round_id_for_participations(
 	Ok(())
 }
 
-pub async fn update_virtual_transaction_tree<'a, G, V>(
-	tx: &PgTransaction<'_>,
-	new_virtual_txs: impl IntoIterator<Item = VirtualTransaction<'a>>,
-	new_vtxos: impl IntoIterator<Item = V>,
-	spend_info: impl IntoIterator<Item = (VtxoId, Txid)>,
-) -> anyhow::Result<()>
-where
-	V: Borrow<ServerVtxo<G>>,
-	ServerVtxo<G>: ProtocolEncoding,
-{
-	for vtx in new_virtual_txs {
-		upsert_virtual_transaction(
-			tx, vtx.txid, vtx.signed_tx(), vtx.is_funding, vtx.server_may_own_descendant_since,
-		).await?;
-	}
-
-	upsert_vtxos(tx, new_vtxos).await
-		.context("failed to upsert VTXOs")?;
-
-	let (vtxos, txids) = spend_info.into_iter().collect::<(Vec<_>, Vec<_>)>();
-	oor::mark_package_spent(tx, &vtxos, &txids).await
-		.context("failed to mark VTXO as spent")?;
-
-	Ok(())
-}
