@@ -32,11 +32,12 @@ mod txindex;
 pub mod utils;
 
 
-use crate::database::{BlockTable, VirtualTransaction};
+use crate::database::BlockTable;
+use crate::database::tree::VtxoTreeUpdate;
 pub use crate::intman::{CAPTAIND_API_KEY, CAPTAIND_CLI_API_KEY};
 pub use crate::config::Config;
 
-use std::borrow::{Borrow, Cow};
+use std::borrow::Borrow;
 use std::collections::HashSet;
 use std::fs;
 use std::pin::Pin;
@@ -738,26 +739,12 @@ impl Server {
 		let builder = BoardBuilder::new_from_vtxo(&vtxo, &funding_tx, self.server_pubkey)
 			.badarg("vtxo is not a board")?;
 
-		let virtual_transactions = [
-			VirtualTransaction {
-				txid: funding_txid,
-				signed_tx: Some(Cow::Borrowed(&funding_tx)),
-				is_funding: true,
-				server_may_own_descendant_since: None,
-			},
-			VirtualTransaction {
-				txid: builder.exit_txid(),
-				signed_tx: None,
-				is_funding: false,
-				server_may_own_descendant_since: None,
-			},
-		];
-
-		self.db.update_virtual_transaction_tree(
-			virtual_transactions,
-			builder.build_internal_unsigned_vtxos(),
-			builder.spend_info(),
-		).await?;
+		let update = VtxoTreeUpdate::new()
+			.upsert_funding_tx(&funding_tx)
+			.upsert_unsigned_tx([builder.exit_txid()])
+			.insert_spendable_vtxos(builder.build_internal_unsigned_vtxos())
+			.mark_vtxos_oor_spent(builder.spend_info());
+		self.db.execute_vtxo_tree_update(update).await?;
 
 		slog!(RegisteredBoard,
 			onchain_utxo: vtxo.chain_anchor(),
