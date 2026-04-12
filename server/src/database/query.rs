@@ -110,10 +110,10 @@ where
 	let statement = client.prepare_typed("
 		INSERT INTO vtxo (
 			vtxo_id, vtxo_txid, vtxo, expiry, exit_delta, policy_type, policy,
-			server_pubkey, amount, anchor_point, created_at, updated_at
+			server_pubkey, amount, anchor_point, spend_state, created_at, updated_at
 		) VALUES (
 			UNNEST($1), UNNEST($2), UNNEST($3), UNNEST($4), UNNEST($5), UNNEST($6),
-			UNNEST($7), UNNEST($8), UNNEST($9), UNNEST($10), NOW(), NOW()
+			UNNEST($7), UNNEST($8), UNNEST($9), UNNEST($10), 'spendable', NOW(), NOW()
 		)
 		ON CONFLICT DO NOTHING
 	", &[

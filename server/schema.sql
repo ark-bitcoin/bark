@@ -53,6 +53,17 @@ CREATE TYPE public.mailbox_type AS ENUM (
 
 
 --
+-- Name: spend_state; Type: TYPE; Schema: public; Owner: -
+--
+
+CREATE TYPE public.spend_state AS ENUM (
+    'spendable',
+    'unclaimed',
+    'spent'
+);
+
+
+--
 -- Name: token_status; Type: TYPE; Schema: public; Owner: -
 --
 
@@ -388,12 +399,14 @@ BEGIN
 		server_pubkey, amount, anchor_point,
 		oor_spent_txid, spent_in_round, offboarded_in,
 		lightning_htlc_subscription_id, banned_until_height,
+		spend_state,
 		created_at, updated_at
 	) VALUES (
 		OLD.id, OLD.vtxo_id, OLD.vtxo_txid, OLD.vtxo, OLD.expiry, OLD.exit_delta, OLD.policy_type, OLD.policy,
 		OLD.server_pubkey, OLD.amount, OLD.anchor_point,
 		OLD.oor_spent_txid, OLD.spent_in_round, OLD.offboarded_in,
 		OLD.lightning_htlc_subscription_id, OLD.banned_until_height,
+		OLD.spend_state,
 		OLD.created_at, OLD.updated_at
 	);
 
@@ -1186,7 +1199,8 @@ CREATE TABLE public.vtxo (
     server_pubkey text NOT NULL,
     amount bigint NOT NULL,
     anchor_point text NOT NULL,
-    banned_until_height integer
+    banned_until_height integer,
+    spend_state public.spend_state NOT NULL
 );
 
 
@@ -1213,7 +1227,8 @@ CREATE TABLE public.vtxo_history (
     amount bigint,
     anchor_point text,
     lightning_htlc_subscription_id bigint,
-    banned_until_height integer
+    banned_until_height integer,
+    spend_state public.spend_state
 );
 
 
