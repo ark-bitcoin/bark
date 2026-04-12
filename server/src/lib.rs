@@ -37,7 +37,6 @@ use crate::database::tree::VtxoTreeUpdate;
 pub use crate::intman::{CAPTAIND_API_KEY, CAPTAIND_CLI_API_KEY};
 pub use crate::config::Config;
 
-use std::borrow::Borrow;
 use std::collections::HashSet;
 use std::fs;
 use std::pin::Pin;
@@ -55,7 +54,7 @@ use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::wrappers::errors::BroadcastStreamRecvError;
 use tracing::{info, trace, warn};
 
-use ark::{ServerVtxo, Vtxo, VtxoId, VtxoRequest};
+use ark::{Vtxo, VtxoId, VtxoRequest};
 use ark::vtxo::{Full, VtxoRef};
 use ark::board::BoardBuilder;
 use ark::fees::validate_and_subtract_fee;
@@ -934,17 +933,4 @@ impl Server {
 		Ok(self.cosign_hashlocked_leaf(request, &vtxo.vtxo, &round.funding_tx))
 	}
 
-	/// Register a set of new VTXOs
-	///
-	/// This should only be called once we trust that the root of the tree
-	/// will confirm.
-	pub async fn register_vtxos<V>(
-		&self,
-		vtxos: impl IntoIterator<Item = V>,
-	) -> anyhow::Result<()>
-	where
-		V: Borrow<ServerVtxo<Full>>,
-	{
-		self.db.upsert_vtxos(vtxos).await.context("db error occurred")
-	}
 }

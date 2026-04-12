@@ -18,7 +18,7 @@ use bitcoin::{Amount, Transaction, Txid};
 use tokio_postgres::{GenericClient, Row, Transaction as PgTransaction};
 use tokio_postgres::types::Type;
 
-use ark::{ProtocolEncoding, ServerVtxo, ServerVtxoPolicy, VtxoId, VtxoRequest};
+use ark::{ProtocolEncoding, ServerVtxoPolicy, VtxoId, VtxoRequest};
 use ark::mailbox::MailboxIdentifier;
 use ark::rounds::RoundId;
 use ark::tree::signed::{UnlockHash, UnlockPreimage};
@@ -97,65 +97,6 @@ pub async fn get_first_unsigned_virtual_transaction<T: GenericClient>(
 	}
 }
 
-pub async fn upsert_vtxos<G, T, V>(
-	client: &T,
-	vtxos: impl IntoIterator<Item = V>,
-) -> Result<(), tokio_postgres::Error>
-where
-	T: GenericClient,
-	V: Borrow<ServerVtxo<G>>,
-	ServerVtxo<G>: ProtocolEncoding,
-{
-	let statement = client.prepare_typed("
-		INSERT INTO vtxo (
-			vtxo_id, vtxo_txid, vtxo, expiry, exit_delta, policy_type, policy,
-			server_pubkey, amount, anchor_point, spend_state, created_at, updated_at
-		) VALUES (
-			UNNEST($1), UNNEST($2), UNNEST($3), UNNEST($4), UNNEST($5), UNNEST($6),
-			UNNEST($7), UNNEST($8), UNNEST($9), UNNEST($10), 'spendable', NOW(), NOW()
-		)
-		ON CONFLICT DO NOTHING
-	", &[
-		Type::TEXT_ARRAY, Type::TEXT_ARRAY, Type::BYTEA_ARRAY, Type::INT4_ARRAY,
-		Type::INT4_ARRAY, Type::TEXT_ARRAY, Type::BYTEA_ARRAY, Type::TEXT_ARRAY,
-		Type::INT8_ARRAY, Type::TEXT_ARRAY,
-	]).await?;
-
-	let vtxos = vtxos.into_iter();
-	let mut vtxo_ids = Vec::with_capacity(vtxos.size_hint().0);
-	let mut vtxo_txids = Vec::with_capacity(vtxos.size_hint().0);
-	let mut data = Vec::with_capacity(vtxos.size_hint().0);
-	let mut expiry = Vec::with_capacity(vtxos.size_hint().0);
-	let mut exit_deltas = Vec::with_capacity(vtxos.size_hint().0);
-	let mut policy_types = Vec::with_capacity(vtxos.size_hint().0);
-	let mut policies = Vec::with_capacity(vtxos.size_hint().0);
-	let mut server_pubkeys = Vec::with_capacity(vtxos.size_hint().0);
-	let mut amounts = Vec::with_capacity(vtxos.size_hint().0);
-	let mut anchor_points = Vec::with_capacity(vtxos.size_hint().0);
-	for vtxo in vtxos {
-		let vtxo = vtxo.borrow();
-		vtxo_ids.push(vtxo.id().to_string());
-		vtxo_txids.push(vtxo.point().txid.to_string());
-		data.push(vtxo.serialize());
-		expiry.push(vtxo.expiry_height() as i32);
-		exit_deltas.push(vtxo.exit_delta() as i32);
-		policy_types.push(vtxo.policy_type().to_string());
-		policies.push(vtxo.policy().serialize());
-		server_pubkeys.push(vtxo.server_pubkey().to_string());
-		amounts.push(vtxo.amount().to_sat() as i64);
-		anchor_points.push(vtxo.chain_anchor().to_string());
-	}
-
-	client.execute(
-		&statement,
-		&[
-			&vtxo_ids, &vtxo_txids, &data, &expiry, &exit_deltas, &policy_types,
-			&policies, &server_pubkeys, &amounts, &anchor_points,
-		]
-	).await?;
-
-	Ok(())
-}
 
 /// Get a VTXO by id
 ///

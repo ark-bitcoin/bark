@@ -230,24 +230,15 @@ impl Db {
 
 
 
-	/// Atomically insert the given vtxos.
-	///
-	/// If one or more vtxo's is already present in the database
-	/// the query will succeed.
-	pub async fn upsert_vtxos<V>(
+	/// Insert vtxos as spendable. Existing vtxos are silently skipped.
+	pub async fn upsert_vtxos(
 		&self,
-		vtxos: impl IntoIterator<Item = V>,
-	) -> anyhow::Result<()>
-	where
-		V: Borrow<ServerVtxo<Full>>,
-	{
-		let mut conn = self.get_conn().await?;
-		let tx = conn.transaction().await?;
-
-		query::upsert_vtxos(&tx, vtxos).await?;
-
-		tx.commit().await?;
-		Ok(())
+		vtxos: impl IntoIterator<Item = impl Borrow<ServerVtxo<Full>>>,
+	) -> anyhow::Result<()> {
+		let vtxos = vtxos.into_iter().map(|v| v.borrow().clone()).collect::<Vec<_>>();
+		let update = tree::VtxoTreeUpdate::new()
+			.insert_spendable_vtxos(vtxos);
+		self.execute_vtxo_tree_update(update).await
 	}
 
 	pub async fn get_server_vtxo_by_id(
