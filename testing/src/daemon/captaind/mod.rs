@@ -324,6 +324,29 @@ impl Captaind {
 		ret
 	}
 
+	/// Wait for an occurrence of the given log type that fulfills the predicate
+	pub async fn wait_for_log_and<L, F>(&self, mut predicate: F) -> L
+	where
+		L: LogMsg,
+		F: FnMut(&L) -> bool + Send + Sync + 'static,
+	{
+		info!("Waiting for log {} with predicate", L::LOGID);
+		let (tx, mut rx) = sync::mpsc::channel(1);
+		self.add_slog_handler(move |log: &ParsedRecord| {
+			if let Ok(m) = log.try_as::<L>() {
+				if predicate(&m) {
+					// if channel already closed, user is no longer interested
+					let _ = tx.try_send(log.try_as::<L>().unwrap());
+					return true;
+				}
+			}
+			false
+		});
+		let ret = rx.recv().await.expect("log wait channel closed");
+		info!("Got {} log matching predicate!", L::LOGID);
+		ret
+	}
+
 	/// Wait until the vtxopool is ready
 	pub async fn wait_for_vtxopool(&self, ctx: &TestContext) {
 		info!("Waiting for VtxoPool...");
