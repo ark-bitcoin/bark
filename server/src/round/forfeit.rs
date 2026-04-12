@@ -1,5 +1,4 @@
 
-use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 
 use anyhow::Context;
@@ -10,7 +9,7 @@ use ark::{musig, VtxoId};
 use ark::forfeit::HashLockedForfeitBundle;
 use ark::tree::signed::{UnlockHash, UnlockPreimage};
 
-use crate::database::VirtualTransaction;
+use crate::database::tree::VtxoTreeUpdate;
 use crate::Server;
 use crate::error::ContextExt;
 
@@ -129,21 +128,37 @@ impl Server {
 			self.db.set_forfeit_transactions(unlock_hash, input.vtxo_id, &ff_tx).await
 				.context("error storing signed forfeit txs")?;
 
-			ff_txs.push(VirtualTransaction {
-				txid: ff_txid,
-				signed_tx: Some(Cow::Owned(ff_tx)),
-				is_funding: false,
-				server_may_own_descendant_since: None,
-			});
+			ff_txs.push(ff_tx);
 			ff_txids.push(ff_txid);
 			ff_vtxos.push(ff_vtxo);
 		}
 
-		// Mark transactions as having server-owned descendants after storing forfeits
-		// NB we don't put any spend info here because the set_forfeit_transactions already updates
-		// that for each individual forfeit
-		self.db.update_virtual_transaction_tree(ff_txs, &ff_vtxos, []).await
-			.context("failed to update_virtual_transaction_tree")?;
+		// Transition the round output vtxos from 'unclaimed' to 'spendable' and
+		// record the forfeit txid on the round inputs.
+		let round_id = part.round_id.context("round participation has no round_id")?;
+		let round = self.db.get_round(round_id).await?
+			.context("round not found for participation")?;
+		let tree = round.signed_tree.into_cached_tree();
+		let output_vtxo_ids = part.outputs.iter()
+			.map(|output| {
+				let idx = tree.spec.spec.leaf_idx_of_req(&output.vtxo_request)
+					.with_context(|| format!("output req not in round {}", round_id))?;
+				Ok(tree.build_vtxo(idx).id())
+			})
+			.collect::<anyhow::Result<Vec<_>>>()?;
+
+		let input_forfeit_pairs = part.inputs.iter()
+			.zip(ff_txids.iter())
+			.map(|(input, txid)| (input.vtxo_id, *txid))
+			.collect::<Vec<_>>();
+
+		let update = VtxoTreeUpdate::new()
+			.upsert_signed_tx(ff_txs)
+			.insert_spendable_vtxos(ff_vtxos)
+			.mark_vtxos_round_forfeited(input_forfeit_pairs)
+			.mark_vtxos_claimed(output_vtxo_ids);
+		self.db.execute_vtxo_tree_update(update).await
+			.context("failed to execute vtxo tree update")?;
 		let txids = vtxos.values().flat_map(|v| v.vtxo.transactions().map(|i| i.tx.compute_txid()))
 			.chain(ff_txids);
 		self.db.mark_server_may_own_descendants(txids).await
