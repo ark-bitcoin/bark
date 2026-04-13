@@ -347,6 +347,35 @@ async fn max_vtxo_amount() {
 }
 
 #[tokio::test]
+async fn max_vtxo_exit_depth() {
+	let ctx = TestContext::new("server/max_vtxo_exit_depth").await;
+
+	// Board VTXOs start at exit depth 1. Each OOR adds +2 (checkpoint + arkoor),
+	// so after 5 arkoors the resulting VTXO has depth 9, sixth should fail.
+	let srv = ctx.new_captaind_with_cfg("server", None, |cfg| {
+		cfg.max_vtxo_exit_depth = 10;
+	}).await;
+	ctx.fund_captaind(&srv, btc(10)).await;
+
+	let bark1 = ctx.new_bark_with_funds("bark1", &srv, sat(1_000_000)).await;
+
+	bark1.board_and_confirm_and_register(&ctx, sat(800_000)).await;
+
+	for _ in 0..5 {
+		bark1.send_oor(&bark1.address().await, sat(100_000)).await;
+	}
+
+	// Sixth OOR should fail — the change VTXO from the first OOR has exit depth 9
+	// which meets the server maximum.
+	let err = bark1.try_send_oor(&bark1.address().await, sat(100_000), true).await
+		.unwrap_err().to_alt_string();
+	assert!(
+		err.contains("exit depth"),
+		"expected exit depth rejection, got: {err}",
+	);
+}
+
+#[tokio::test]
 async fn restart_fresh_server() {
 	let ctx = TestContext::new("server/restart_fresh_server").await;
 	let mut srv = ctx.new_captaind("server", None).await;
