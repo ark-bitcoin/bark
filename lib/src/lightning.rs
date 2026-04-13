@@ -357,15 +357,6 @@ pub trait Bolt12InvoiceExt: Borrow<Bolt12Invoice> {
 		get_invoice_payment_amount(Some(invoice_amount), user_amount)
 	}
 
-	fn check_signature(&self) -> Result<(), CheckSignatureError> {
-		let message = Message::from_digest(self.borrow().signable_hash());
-		let signature = self.borrow().signature();
-
-		let pubkey = self.borrow().signing_pubkey();
-		SECP.verify_schnorr(&signature, &message, &pubkey.into())
-			.map_err(|_| CheckSignatureError("invalid signature".to_string()))
-	}
-
 	fn bytes(&self) -> Vec<u8> {
 		let mut bytes = Vec::new();
 		self.borrow().write(&mut bytes).expect("Writing into a Vec is infallible");
@@ -376,6 +367,32 @@ pub trait Bolt12InvoiceExt: Borrow<Bolt12Invoice> {
 		Bolt12Invoice::try_from(bytes.to_vec())
 	}
 
+	fn from_str(s: &str) -> Result<Bolt12Invoice, Bolt12ParseError> {
+		let dec = CheckedHrpstring::new::<NoChecksum>(&s)?;
+		if dec.hrp().to_lowercase() != BECH32_BOLT12_INVOICE_HRP {
+			return Err(Bolt12ParseError::InvalidBech32Hrp);
+		}
+
+		let data = dec.byte_iter().collect::<Vec<_>>();
+		Bolt12Invoice::try_from(data)
+	}
+
+	/// Checks the signature of the invoice against the signing pubkey
+	///
+	/// To be fully secure, the signing pubkey should also be checked against the
+	/// offer's signing pubkey. This is done in [`Bolt12InvoiceExt::validate_issuance`].
+	fn check_signature(&self) -> Result<(), CheckSignatureError> {
+		let message = Message::from_digest(self.borrow().signable_hash());
+		let signature = self.borrow().signature();
+
+		let pubkey = self.borrow().signing_pubkey();
+		SECP.verify_schnorr(&signature, &message, &pubkey.into())
+			.map_err(|_| CheckSignatureError("invalid signature".to_string()))
+	}
+
+	/// Checks the invoice signing pubkey is the same as the offer's, then verifies the signature.
+	///
+	/// This method should be called before paying any invoice fetched from an offer.
 	fn validate_issuance(&self, offer: &Offer) -> Result<(), CheckSignatureError> {
 		if let Some(issuer_signing_pubkey) = offer.issuer_signing_pubkey() {
 			if issuer_signing_pubkey != self.borrow().signing_pubkey() {
@@ -398,16 +415,6 @@ pub trait Bolt12InvoiceExt: Borrow<Bolt12Invoice> {
 
 			Err(CheckSignatureError("public keys mismatch".to_string()))
 		}
-	}
-
-	fn from_str(s: &str) -> Result<Bolt12Invoice, Bolt12ParseError> {
-		let dec = CheckedHrpstring::new::<NoChecksum>(&s)?;
-		if dec.hrp().to_lowercase() != BECH32_BOLT12_INVOICE_HRP {
-			return Err(Bolt12ParseError::InvalidBech32Hrp);
-		}
-
-		let data = dec.byte_iter().collect::<Vec<_>>();
-		Bolt12Invoice::try_from(data)
 	}
 }
 
