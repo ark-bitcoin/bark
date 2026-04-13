@@ -24,8 +24,6 @@ pub struct VtxoState<G = Full, P: Policy = VtxoPolicy> {
 
 	/// The vtxo.
 	pub vtxo: Vtxo<G, P>,
-	// NB keep this type explicit as u32 instead of BlockHeight to ensure encoding is stable
-	pub expiry: u32,
 
 	/// If this vtxo was spent in an OOR tx, the txid of the OOR tx.
 	pub oor_spent_txid: Option<Txid>,
@@ -53,7 +51,6 @@ impl VtxoState<Full, ServerVtxoPolicy> {
 					id: self.id,
 					vtxo_id: self.vtxo_id,
 					vtxo: v,
-					expiry: self.expiry,
 					oor_spent_txid: self.oor_spent_txid,
 					spent_in_round: self.spent_in_round,
 					offboarded_in: self.offboarded_in,
@@ -67,7 +64,6 @@ impl VtxoState<Full, ServerVtxoPolicy> {
 					id: self.id,
 					vtxo_id: self.vtxo_id,
 					vtxo: v,
-					expiry: self.expiry,
 					oor_spent_txid: self.oor_spent_txid,
 					spent_in_round: self.spent_in_round,
 					offboarded_in: self.offboarded_in,
@@ -168,7 +164,6 @@ impl<P: Policy + ProtocolEncoding> TryFrom<Row> for VtxoState<Full, P> {
 			id: row.get("id"),
 			vtxo_id,
 			vtxo,
-			expiry: u32::try_from(row.get::<_, i32>("expiry"))?,
 			oor_spent_txid: row
 				.get::<_, Option<&str>>("oor_spent_txid")
 				.map(|txid| Txid::from_str(txid))
@@ -210,7 +205,6 @@ impl<P: Policy + ProtocolEncoding> TryFrom<Row> for VtxoState<Bare, P> {
 			id: row.get("id"),
 			vtxo_id,
 			vtxo,
-			expiry,
 			oor_spent_txid: row
 				.get::<_, Option<&str>>("oor_spent_txid")
 				.map(|txid| Txid::from_str(txid))
@@ -348,7 +342,6 @@ mod test {
 			id: 0,
 			vtxo_id: VtxoId::from_slice(&[0; 36]).unwrap(),
 			vtxo,
-			expiry: 0,
 			oor_spent_txid: None,
 			spent_in_round: None,
 			offboarded_in: None,
