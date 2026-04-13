@@ -18,7 +18,8 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::process::Command as TokioCommand;
 use tokio::sync::Mutex;
 
-use ark::VtxoId;
+use ark::{ProtocolEncoding, Vtxo, VtxoId};
+use ark::vtxo::Full;
 use bark::{BarkNetwork, Config};
 use bark::persist::BarkPersister;
 use bark::persist::adaptor::StorageAdaptorWrapper;
@@ -388,6 +389,11 @@ impl Bark {
 	pub async fn vtxos_no_sync(&self) -> Vec<WalletVtxoInfo> {
 		let res = self.run(["vtxos", "--no-sync"]).await;
 		serde_json::from_str(&res).expect("json error")
+	}
+
+	pub async fn raw_vtxo(&self, vtxo_id: VtxoId) -> Vtxo<Full> {
+		let hex = self.run(["raw-vtxo", &vtxo_id.to_string()]).await;
+		Vtxo::deserialize_hex(&hex).expect("invalid raw vtxo")
 	}
 
 	pub async fn history(&self) -> Vec<json::movements::Movement> {

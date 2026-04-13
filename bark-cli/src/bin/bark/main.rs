@@ -25,7 +25,7 @@ use lnurl::lightning_address::LightningAddress;
 use log::{debug, info, warn};
 use tokio::sync::RwLock;
 
-use ark::VtxoId;
+use ark::{ProtocolEncoding, VtxoId};
 use ark::lightning::PaymentHash;
 use bark::Wallet;
 use bark::onchain::ChainSync;
@@ -141,12 +141,18 @@ enum Command {
 	/// List the wallet's VTXOs
 	#[command()]
 	Vtxos {
-		/// Skip syncing before fetching VTXOs
-		#[arg(long)]
-		no_sync: bool,
 		/// Returns all VTXOs regardless of their state
 		#[arg(long)]
 		all: bool,
+		/// Skip syncing before fetching VTXOs
+		#[arg(long)]
+		no_sync: bool,
+	},
+
+	/// get a raw VTXO in hex
+	#[command()]
+	RawVtxo {
+		vtxo_id: String,
 	},
 
 	/// List the wallet's payments
@@ -393,6 +399,10 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 
 			output_json(&vtxos.into_iter().map(WalletVtxoInfo::from).collect::<Vec<_>>());
 		},
+		Command::RawVtxo { vtxo_id } => {
+			let v = wallet.get_vtxo_by_id(vtxo_id.parse().context("invalid VTXO ID")?).await?;
+			println!("{}", v.vtxo.serialize_hex());
+		}
 		Command::History { no_sync } => {
 			if !no_sync {
 				info!("Syncing wallet...");
