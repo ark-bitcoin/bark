@@ -4,7 +4,7 @@ let
 	bitcoinVersion = "30.2";
 	lightningVersion = "25.12.1";
 	holdPluginVersion = "0.3.3";
-	esploraElectrsRevision = "cb1054f689285523617300d4ae97a63965524b7c";
+	esploraElectrsRevision = "5852c0cf49380bed575d69d364d3cc0a47f00375";
 	mempoolElectrsRevision = "v3.3.0";
 
 	isDarwin = pkgs.stdenv.hostPlatform.isDarwin;
@@ -39,12 +39,12 @@ let
 
 	hal = rustPlatform.buildRustPackage rec {
 		pname = "hal";
-		version = "0.10.0";
+		version = "0.11.0";
 		src = pkgs.fetchCrate {
 			inherit pname version;
-			sha256 = "sha256-oRmSDQJJu8v7OzsOrFYTyBJcR7wPJtS6hxkta1qEVl0=";
+			sha256 = "sha256-itPsD6C4buTloUFa1YH1ebCCTRlCIHuZiGANifgrHbA=";
 		};
-		cargoHash = "sha256-GIcjlICjvu9VKbHlnqQMOqcSeiGLMAN+iF6zaK46Nok=";
+		cargoHash = "sha256-iSiqz62jZlZDQS95k+2o1jae0oCItB/RhHUpWvE05pY=";
 	};
 
 	esploraElectrs = rustPlatform.buildRustPackage rec {
@@ -54,7 +54,7 @@ let
 			owner = "Blockstream";
 			repo = "electrs";
 			rev = esploraElectrsRevision;
-			hash = "sha256-oCzXawzaZRDuOhsUOI1MzgP7VY+aQUlS3F8CgcdtK+I=";
+			hash = "sha256-SW8+qK6fGwUkaZFaxktdnTIlQXqB+AOA9Ww5Z3nUjgY=";
 		};
 
 		nativeBuildInputs = [ rustPlatform.bindgenHook ];
@@ -63,7 +63,7 @@ let
 		cargoLock.lockFile = "${src}/Cargo.lock";
 		cargoLock.outputHashes = {
 			"electrum-client-0.8.0" = "sha256-HDRdGS7CwWsPXkA1HdurwrVu4lhEx0Ay8vHi08urjZ0=";
-			"electrumd-0.1.0" = "sha256-QsoMD2uVDEITuYmYItfP6BJCq7ApoRztOCs7kdeRL9Y=";
+			"electrumd-0.1.0" = "sha256-Js4gc/XvokWpPGQGPnWcak2Bt6DNQcosT3CkY841z2c==";
 			"jsonrpc-0.12.0" = "sha256-lSNkkQttb8LnJej4Vfe7MrjiNPOuJ5A6w5iLstl9O1k=";
 		};
 	};
