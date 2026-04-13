@@ -216,23 +216,23 @@ CREATE FUNCTION public.lightning_invoice_update_trigger() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
 BEGIN
-    INSERT INTO lightning_invoice_history (
-        id, invoice, payment_hash, final_amount_msat, preimage,
-        created_at, updated_at
-    ) VALUES (
-        OLD.id, OLD.invoice, OLD.payment_hash, OLD.final_amount_msat, OLD.preimage,
-        OLD.created_at, OLD.updated_at
-    );
+	INSERT INTO lightning_invoice_history (
+		id, invoice, payment_hash, final_amount_msat,
+		created_at, updated_at
+	) VALUES (
+		OLD.id, OLD.invoice, OLD.payment_hash, OLD.final_amount_msat,
+		OLD.created_at, OLD.updated_at
+	);
 
-    IF NEW.updated_at = OLD.updated_at THEN
-        RAISE EXCEPTION 'updated_at must be updated';
-    END IF;
+	IF NEW.updated_at = OLD.updated_at THEN
+		RAISE EXCEPTION 'updated_at must be updated';
+	END IF;
 
-    IF NEW.created_at <> OLD.created_at THEN
-        RAISE EXCEPTION 'created_at cannot be updated';
-    END IF;
+	IF NEW.created_at <> OLD.created_at THEN
+		RAISE EXCEPTION 'created_at cannot be updated';
+	END IF;
 
-    RETURN NEW;
+	RETURN NEW;
 END;
 $$;
 
@@ -811,7 +811,6 @@ CREATE TABLE public.lightning_invoice (
     invoice text NOT NULL,
     payment_hash text NOT NULL,
     final_amount_msat bigint,
-    preimage text,
     created_at timestamp with time zone NOT NULL,
     updated_at timestamp with time zone NOT NULL,
     mailbox_id text
@@ -1602,14 +1601,6 @@ ALTER TABLE ONLY public.lightning_invoice
 
 ALTER TABLE ONLY public.lightning_invoice
     ADD CONSTRAINT lightning_invoice_pkey PRIMARY KEY (id);
-
-
---
--- Name: lightning_invoice lightning_invoice_preimage_key; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.lightning_invoice
-    ADD CONSTRAINT lightning_invoice_preimage_key UNIQUE (preimage);
 
 
 --

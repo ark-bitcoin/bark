@@ -38,6 +38,7 @@ use cln_rpc::listpays_pays::ListpaysPaysStatus;
 
 use crate::database;
 use crate::database::ln::{ClnNodeId, LightningPaymentAttempt, LightningPaymentStatus};
+use crate::ln::settler::HtlcSettler;
 use crate::system::RuntimeManager;
 use crate::telemetry;
 
@@ -54,6 +55,7 @@ pub const XPAY_TIMEOUT_BUFFER: Duration = Duration::from_secs(15);
 struct ClnXpayClient {
 	db: database::Db,
 	rpc: ClnGrpcClient,
+	settler: Arc<HtlcSettler>,
 	/// Notifies [`ClnManager::get_payment_status`] when a payment reaches a final state.
 	payment_update_tx: broadcast::Sender<PaymentHash>,
 }
@@ -63,8 +65,9 @@ impl ClnXpayClient {
 		db: database::Db,
 		payment_update_tx: broadcast::Sender<PaymentHash>,
 		rpc: ClnGrpcClient,
+		settler: Arc<HtlcSettler>,
 	) -> Arc<Self> {
-		Arc::new(Self { db, payment_update_tx, rpc })
+		Arc::new(Self { db, payment_update_tx, rpc, settler })
 	}
 
 	/// Calls xpay and then reconciles the attempt status against CLN.
@@ -211,7 +214,13 @@ impl ClnXpayClient {
 						invoice.payment_hash,
 					);
 				} else {
-					let preimage = latest.preimage.map(|b| b.try_into().expect("invalid preimage not 32 bytes"));
+					// Store the preimage in the settlement table so the
+					// watchman can use it to claim HTLC VTXOs on-chain.
+					if let Some(preimage_bytes) = latest.preimage {
+						let preimage: Preimage = preimage_bytes.try_into()
+							.context("CLN returned a preimage that is not 32 bytes")?;
+						self.settler.settle(preimage).await?;
+					}
 
 					updated = self.db.verify_and_update_invoice(
 						invoice.payment_hash,
@@ -219,7 +228,6 @@ impl ClnXpayClient {
 						desired_status,
 						error_string,
 						latest.amount_sent_msat.map(|v| v.msat),
-						preimage,
 					).await?;
 				}
 			}
@@ -268,6 +276,7 @@ impl ClnXpay {
 		node_id: ClnNodeId,
 		rpc: ClnGrpcClient,
 		config: ClnXpayConfig,
+		settler: Arc<HtlcSettler>,
 	) -> anyhow::Result<ClnXpay> {
 		let payment_idxs = db.get_lightning_payment_indexes(node_id).await
 			.with_context(|| format!("failed to fetch payment indices for {}", node_id))?
@@ -279,7 +288,7 @@ impl ClnXpay {
 			updated_index: payment_idxs.updated_index,
 		);
 
-		let client = ClnXpayClient::new(db.clone(), payment_update_tx, rpc).await;
+		let client = ClnXpayClient::new(db.clone(), payment_update_tx, rpc, settler).await;
 
 		let proc = ClnXpayProcess {
 			config, db, node_id,

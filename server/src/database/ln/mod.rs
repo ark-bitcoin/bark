@@ -336,25 +336,21 @@ impl Db {
 		&self,
 		old_lightning_invoice: LightningInvoice,
 		new_final_amount_msat: Option<u64>,
-		new_preimage: Option<Preimage>,
 	) -> anyhow::Result<Option<DateTime<Local>>> {
 		let conn = self.get_conn().await?;
 
 		let stmt = conn.prepare("
 			UPDATE lightning_invoice
-			SET preimage = $3,
-				final_amount_msat = $4,
+			SET final_amount_msat = $3,
 				updated_at = NOW()
 			WHERE id = $1 AND updated_at = $2
 			RETURNING updated_at;
 		").await?;
 
 		let final_amount_msat = new_final_amount_msat.map(|u| u as i64);
-		let preimage_str = new_preimage.as_ref().map(|p| p.to_string());
 		let row = conn.query_opt(&stmt, &[
 			&old_lightning_invoice.id,
 			&old_lightning_invoice.updated_at,
-			&preimage_str,
 			&final_amount_msat,
 		]).await?;
 

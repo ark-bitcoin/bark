@@ -357,10 +357,10 @@ impl ActionContextFetcher<'_> {
 	}
 
 	async fn check_have_payment_preimage(&self, payment_hash: PaymentHash) -> bool {
-		self.db.get_lightning_invoice_by_payment_hash(payment_hash).await
-			.inspect_err(|e| warn!("DB error: {:#}", e))
+		self.db.get_htlc_settlement_by_payment_hash(payment_hash).await
+			.inspect_err(|e| error!("DB error: {:#}", e))
 			.ok().flatten()
-			.and_then(|i| i.preimage).is_some()
+			.is_some()
 	}
 
 	async fn check_server_may_own_descendant(&self, vtxo: &ServerVtxo) -> bool {

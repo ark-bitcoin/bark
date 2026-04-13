@@ -46,6 +46,7 @@ use cln_rpc::node_client::NodeClient;
 
 use crate::Server;
 use crate::error::ContextExt;
+use crate::ln::settler::HtlcSettler;
 use crate::sync::SyncManager;
 use crate::system::RuntimeManager;
 use crate::config::{self, Config};
@@ -63,6 +64,7 @@ type ClnGrpcClient = NodeClient<Channel>;
 /// Handle for the cln manager process.
 pub struct ClnManager {
 	db: database::Db,
+	settler: Arc<HtlcSettler>,
 	invoice_poll_interval: Duration,
 
 	/// This channel is to manage individual CLN integrations.
@@ -85,6 +87,7 @@ impl ClnManager {
 		db: database::Db,
 		sync_manager: Arc<SyncManager>,
 		mailbox_manager: Arc<crate::mailbox_manager::MailboxManager>,
+		settler: Arc<HtlcSettler>,
 	) -> anyhow::Result<ClnManager> {
 		let (ctrl_tx, ctrl_rx) = mpsc::unbounded_channel();
 		let (payment_update_tx, payment_update_rx) = broadcast::channel(256);
@@ -112,6 +115,7 @@ impl ClnManager {
 			invoice_expiry: config.invoice_expiry,
 			sync_manager,
 			mailbox_manager,
+			settler: settler.clone(),
 
 			payment_update_tx: payment_update_tx.clone(),
 
@@ -130,6 +134,7 @@ impl ClnManager {
 
 		Ok(ClnManager {
 			db,
+			settler,
 			ctrl_tx,
 			payment_update_tx,
 			payment_update_rx,
@@ -215,8 +220,8 @@ impl ClnManager {
 				);
 
 				if status == LightningPaymentStatus::Succeeded {
-					let preimage = invoice.preimage
-						.context("missing preimage on bolt11 success")?;
+					let preimage = self.settler.is_settled(payment_hash).await?
+						.context("missing preimage in htlc_settlement on bolt11 success")?;
 					debug!(payment_hash = %payment_hash, preimage = %preimage, "CheckLightningPayment responding with success");
 					return Ok(PaymentStatus::Success(preimage));
 				}
@@ -250,7 +255,12 @@ impl ClnManager {
 		invoice_rx.await.context("an error occurred requesting a BOLT-11 invoice")
 	}
 
-	pub async fn settle_invoice(
+	/// Settle a hold invoice in CLN or, for intra-ark payments, mark the
+	/// invoice as succeeded directly.
+	///
+	/// The caller must ensure the preimage has already been recorded in
+	/// the [`HtlcSettler`] before calling this.
+	async fn settle_invoice(
 		&self,
 		subscription_id: i64,
 		preimage: Preimage,
@@ -258,13 +268,13 @@ impl ClnManager {
 		let payment_hash = preimage.compute_payment_hash();
 
 		// If an open payment attempt exists for the payment hash, it is an
-		// intra-Ark lightning payment so we can mark it as succeeded with
-		// preimage, then skip hold invoice settlement
+		// intra-Ark lightning payment so we can mark it as succeeded,
+		// then skip hold invoice settlement.
 		let attempt = self.db.get_open_lightning_payment_attempt_by_payment_hash(payment_hash).await?;
 		if let Some(attempt) = attempt {
 			let status = LightningPaymentStatus::Succeeded;
 			self.db.verify_and_update_invoice(
-				payment_hash, &attempt, status, None, None, Some(preimage),
+				payment_hash, &attempt, status, None, None,
 			).await?;
 
 			// NB: in case of intra-ark lightning payments, we need to notify the subscriber
@@ -380,6 +390,9 @@ async fn run_hold_settler(
 
 /// Try to settle a single hold invoice. Returns true if the entry was
 /// handled (or can be skipped), false if it should be retried.
+///
+/// The caller must ensure the preimage has already been recorded in
+/// the [`HtlcSettler`].
 async fn try_settle_hold_invoice(
 	srv: &Server,
 	payment_hash: PaymentHash,
@@ -566,6 +579,7 @@ impl ClnNodeInfo {
 		waker: &Arc<Notify>,
 		sync_manager: &Arc<SyncManager>,
 		mailbox_manager: &Arc<crate::mailbox_manager::MailboxManager>,
+		settler: &Arc<HtlcSettler>,
 	) -> anyhow::Result<ClnNodeId> {
 		let mut rpc = self.config.build_grpc_client().await.context("failed to connect rpc")?;
 		let hold_rpc = self.config.build_hold_client().await.context("failed to connect hold rpc")?;
@@ -608,6 +622,7 @@ impl ClnNodeInfo {
 			id,
 			rpc.clone(),
 			xpay_config.clone(),
+			settler.clone(),
 		).await.context("failed to start ClnXpay")?;
 
 		let online = ClnNodeOnlineState {
@@ -671,6 +686,7 @@ struct ClnManagerProcess {
 	invoice_expiry: Duration,
 	sync_manager: Arc<SyncManager>,
 	mailbox_manager: Arc<crate::mailbox_manager::MailboxManager>,
+	settler: Arc<HtlcSettler>,
 
 	htlc_expiry_delta: BlockDelta,
 }
@@ -781,6 +797,7 @@ impl ClnManagerProcess {
 						&self.waker,
 						&self.sync_manager,
 						&self.mailbox_manager,
+						&self.settler,
 					).await {
 						Ok(id) => {
 							info!("Successfully connected to CLN node at {}", uri);
@@ -1185,7 +1202,6 @@ impl database::Db {
 		status: LightningPaymentStatus,
 		payment_error: Option<&str>,
 		final_amount_msat: Option<u64>,
-		preimage: Option<Preimage>,
 	) -> anyhow::Result<bool> {
 		let li = self.get_lightning_invoice_by_payment_hash(payment_hash).await?
 			.not_found([payment_hash], "invoice not found")?;
@@ -1194,12 +1210,14 @@ impl database::Db {
 
 		// Both conditions required: the on-chain settlement path records
 		// the preimage (via the settler) before CLN finalizes the payment
-		// attempt. If we skipped on preimage alone, the subsequent CLN
+		// attempt. If we skipped on settlement alone, the subsequent CLN
 		// status update would be dropped and the attempt would stay
 		// non-final forever. Normal off-chain settlement is unaffected
-		// because the first successful update writes both the preimage
+		// because the first successful update writes both the settlement
 		// and the final attempt status in one call.
-		if li.preimage.is_some() && is_last_attempt_finalized {
+		let is_settled = self.get_htlc_settlement_by_payment_hash(payment_hash).await?
+			.is_some();
+		if is_settled && is_last_attempt_finalized {
 			debug!("Lightning invoice update for {payment_hash}: Skipped update because the \
 				payment is already in a final state.");
 			return Ok(false);
@@ -1213,7 +1231,7 @@ impl database::Db {
 
 		self.update_lightning_payment_attempt_status(attempt, status, payment_error).await?;
 
-		let updated_at = self.update_lightning_invoice(li, final_amount_msat, preimage).await?;
+		let updated_at = self.update_lightning_invoice(li, final_amount_msat).await?;
 
 		let amount_msat = final_amount_msat.unwrap_or(attempt.amount_msat);
 
