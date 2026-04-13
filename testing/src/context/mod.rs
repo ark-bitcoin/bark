@@ -678,14 +678,14 @@ impl TestContext {
 	pub async fn await_transactions_across_nodes(
 		&self,
 		txids: impl IntoIterator<Item = Txid>,
-		nodes: impl IntoIterator<Item = &Bitcoind>,
+		extra_nodes: impl IntoIterator<Item = &Bitcoind>,
 	) {
 		let txids = txids.into_iter().collect::<Vec<_>>();
 		let central_futures = async {
 			join_all(txids.iter().map(|txid| self.await_transaction(*txid))).await;
 		};
 		let nodes_future = async {
-			join_all(nodes.into_iter().flat_map(|b| {
+			join_all(extra_nodes.into_iter().flat_map(|b| {
 				txids.iter().map(|txid| b.await_transaction(*txid))
 			})).await
 		};

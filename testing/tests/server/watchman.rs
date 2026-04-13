@@ -8,13 +8,14 @@ use parking_lot::Mutex;
 use server::config::OptionalService;
 use server::vtxopool::VtxoTarget;
 use server_log::{
-	ClaimBroadcast, ClaimBroadcastFailure, ClaimChunkBroadcastFailure, ProgressCpfpFailure,
+	ClaimBroadcast, ClaimBroadcastFailure, ClaimChunkBroadcastFailure, ProgressBroadcast,
+	ProgressCpfpFailure,
 };
 
 use ark_testing::{TestContext, btc, sat};
 use ark_testing::constants::{BOARD_CONFIRMATIONS, ROUND_CONFIRMATIONS};
 use ark_testing::daemon::captaind::SlogHandler;
-use ark_testing::exit::complete_exit;
+use ark_testing::exit::{complete_exit, progress_exit_until_awaiting_delta};
 use ark_testing::util::FutureExt;
 
 
@@ -427,4 +428,140 @@ async fn watchman_sweeps_vtxopool_with_exit() {
 	println!("Lightning vtxo sweep: {:#?}", msg);
 	assert_eq!(300_099_000, msg.total_input_value.to_sat());
 	assert_eq!(300_094_905, msg.total_output_value.to_sat());
+}
+
+#[tokio::test]
+async fn watchman_sweeps_exit_after_forfeit() {
+	let ctx = TestContext::new("server/watchman_sweeps_exit_after_forfeit").await;
+	let srv = ctx.captaind("server").funded(btc(10)).cfg(|cfg| {
+		cfg.watchman = OptionalService::Disabled;
+		cfg.vtxopool.vtxo_targets = vec![];
+	}).create().await;
+	let failures = WatchmanFailureCollector::default();
+	let wm = ctx.watchmand("watchman").cfg(|cfg| {
+		cfg.watchman.process_interval = Duration::from_secs(15 * 60);
+	}).create(&srv).await;
+	wm.add_slog_handler(failures.clone());
+
+	let mut log_claim = wm.subscribe_log::<ClaimBroadcast>();
+
+	// Board some funds with bark1
+	let bark1 = ctx.bark("bark1", &srv).funded(sat(500_000)).create().await;
+	bark1.board_and_confirm_and_register(&ctx, sat(200_000)).await;
+
+	// fund the watchman
+	ctx.bitcoind().fund_addr(wm.wait_wallet_address().await, sat(100_000)).await;
+
+	// Clone bark1 before refresh — bark2 retains the stale board vtxo state
+	let bark1_old = bark1.full_clone("bark2").await;
+
+	// bark1 refreshes its board vtxo into a round vtxo
+	ctx.refresh_all(&srv, &[&bark1]).await;
+	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
+	bark1.sync().await;
+
+	// bark2, holding the stale board vtxo, starts a malicious exit
+	bark1_old.start_exit_all().await;
+
+	// Progress until the exit transaction is confirmed on-chain (AwaitingDelta state).
+	progress_exit_until_awaiting_delta(&ctx, &bark1_old).await;
+
+	// Advance past watchman's progress grace period
+	let tip = ctx.generate_blocks(wm.config().watchman.progress_grace_period as u32).await;
+	wm.wait_for_sync_height(tip).await;
+
+	// first sweep: the watchman broadcasts the forfeit (progress) transaction via CPFP.
+	let mut log_progress = wm.subscribe_log::<ProgressBroadcast>();
+	wm.trigger_sweep().await;
+	let progress_log = log_progress.recv().wait_millis(10_000).await
+		.expect("watchman should broadcast progress (forfeit) tx");
+
+	// Confirm the forfeit tx so the resulting HarkForfeit vtxo enters the frontier.
+	ctx.await_transactions_across_nodes([progress_log.cpfp_txid], [wm.bitcoind().as_ref()]).await;
+	let tip = ctx.generate_blocks(1).await;
+	wm.wait_for_sync_height(tip).await;
+
+	// third sweep: the watchman claims the HarkForfeit vtxo.
+	wm.trigger_sweep().await;
+	let msg = log_claim.recv().wait_millis(15_000).await.expect("no claim log");
+	failures.assert_empty();
+	println!("malicious exit sweep: {:#?}", msg);
+	assert_eq!(1, msg.vtxo_ids.len());
+	assert_eq!(msg.vtxo_ids[0].to_point().txid, progress_log.txid);
+}
+
+/// After bark1 and bark2 both board and refresh into round vtxos, bark1 gets cloned.
+/// One clone sends an OOR payment to bark2 and bark2 refreshes (forfeiting the OOR vtxo
+/// in a round), which makes the server store the signed OOR transaction and set
+/// server_may_own_descendant on bark1's round vtxo exit tx. The other clone (bark1_old)
+/// then attempts a malicious exit with its stale round vtxo. The watchman detects this
+/// and blocks the exit by broadcasting the OOR transaction as a progress step via CPFP.
+#[tokio::test]
+async fn watchman_sweeps_exit_after_oor_then_forfeit() {
+	let ctx = TestContext::new("server/watchman_sweeps_exit_after_oor_then_forfeit").await;
+	let srv = ctx.captaind("server").funded(btc(10)).cfg(|cfg| {
+		cfg.watchman = OptionalService::Disabled;
+		cfg.vtxopool.vtxo_targets = vec![];
+	}).create().await;
+	let failures = WatchmanFailureCollector::default();
+	let wm = ctx.watchmand("watchman").cfg(|cfg| {
+		cfg.watchman.process_interval = Duration::from_secs(15 * 60);
+	}).create(&srv).await;
+	wm.add_slog_handler(failures.clone());
+
+	// Fund the watchman wallet upfront so it can pay CPFP fees for the OOR tx progress
+	ctx.bitcoind().fund_addr(wm.wait_wallet_address().await, sat(100_000)).await;
+
+	// Both barks board and refresh together so both have confirmed round vtxos
+	let bark1 = ctx.bark("bark1", &srv).funded(sat(500_000)).create().await;
+	let bark2 = ctx.bark("bark2", &srv).funded(sat(500_000)).create().await;
+	bark1.board_and_confirm_and_register(&ctx, sat(200_000)).await;
+	bark2.board_and_confirm_and_register(&ctx, sat(200_000)).await;
+	ctx.refresh_all(&srv, &[&bark1, &bark2]).await;
+	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
+	bark1.sync().await;
+	bark2.sync().await;
+
+	// Clone bark1 before the OOR — bark1_old retains the stale round vtxo state
+	let bark1_old = bark1.full_clone("bark1_old").await;
+
+	// bark1 sends an OOR payment to bark2; the server co-signs and records the OOR tx,
+	// marking bark1's round vtxo as OOR-spent in the server DB
+	bark1.send_oor(bark2.address().await, sat(50_000)).await;
+	bark2.sync().await;
+
+	// bark2 refreshes its received OOR vtxo in a new round. Once the round tx confirms,
+	// bark2 syncs to complete the hArk forfeit protocol. During forfeit processing the
+	// server stores the signed OOR tx (via register_vtxos) and marks
+	// server_may_own_descendant on bark1's round vtxo exit tx.
+	ctx.refresh_all(&srv, &[&bark2]).await;
+	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
+	bark2.sync().await;
+
+	// bark1_old, holding the stale round vtxo, starts a malicious exit
+	bark1_old.start_exit_all().await;
+	progress_exit_until_awaiting_delta(&ctx, &bark1_old).await;
+
+	// Advance past watchman's progress grace period
+	let tip = ctx.generate_blocks(wm.config().watchman.progress_grace_period as u32).await;
+	wm.wait_for_sync_height(tip).await;
+
+	// The watchman should broadcast the checkpoint transaction as a progress step, spending
+	// bark1's round vtxo exit output on-chain and blocking the malicious exit.
+	let mut log_progress = wm.subscribe_log::<ProgressBroadcast>();
+	wm.trigger_sweep().await;
+	let progress = log_progress.recv().wait_millis(10_000).await.expect("no progress");
+	ctx.await_transactions_across_nodes([progress.cpfp_txid], [wm.bitcoind().as_ref()]).await;
+
+	// now let's expire the vtxo and claim the checkpoint
+	let mut log_claim = wm.subscribe_log::<ClaimBroadcast>();
+	let tip = ctx.generate_blocks(
+		srv.config().vtxo_lifetime as u32 - 2 * ROUND_CONFIRMATIONS + 3,
+	).await;
+	wm.wait_for_sync_height(tip).await;
+	wm.trigger_sweep().await;
+	let claim = log_claim.recv().wait_millis(10_000).await.expect("no claim");
+	assert!(claim.vtxo_ids.iter().any(|v| v.to_point().txid == progress.txid));
+
+	failures.assert_empty();
 }
