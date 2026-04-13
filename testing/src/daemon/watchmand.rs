@@ -14,7 +14,7 @@ use tokio::process::Command;
 
 use bitcoin_ext::BlockHeight;
 use server::config::watchmand::Config;
-use server_log::{parse_record, ParsedRecord, LogMsg, SyncedToHeight};
+use server_log::{parse_record, LogMsg, ParsedRecord, SyncedToHeight, WalletSyncComplete};
 use server_rpc::protos;
 
 use crate::{Bitcoind, Daemon, DaemonHelper};
@@ -32,6 +32,7 @@ pub const HUMAN_READABLE_LOGFILE: &str = "stdout.hr.log";
 #[derive(Debug, Default)]
 pub struct State {
 	sync_height: BlockHeight,
+	wallet_address: Option<bitcoin::Address>,
 }
 
 impl SlogHandler for Arc<parking_lot::Mutex<State>> {
@@ -39,6 +40,13 @@ impl SlogHandler for Arc<parking_lot::Mutex<State>> {
 		if log.is::<SyncedToHeight>() {
 			let sth = log.try_as::<SyncedToHeight>().unwrap();
 			self.lock().sync_height = sth.height;
+		}
+
+		if let Ok(m) = log.try_as::<WalletSyncComplete>() {
+			let mut state = self.lock();
+			if state.wallet_address.is_none() {
+				state.wallet_address = Some(m.next_address.assume_checked());
+			}
 		}
 
 		false
@@ -169,6 +177,17 @@ impl Watchmand {
 				return;
 			}
 			tokio::time::sleep(Duration::from_millis(50)).await;
+		}
+	}
+
+	/// Wait to get the watchman wallet address
+	pub async fn wait_wallet_address(&self) -> bitcoin::Address {
+		loop {
+			if let Some(ref addr) = self.inner.state.lock().wallet_address {
+				return addr.clone();
+			}
+			trace!("Waiting a bit to get watchmand wallet address...");
+			tokio::time::sleep(Duration::from_millis(100)).await;
 		}
 	}
 }
