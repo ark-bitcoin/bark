@@ -52,7 +52,7 @@ impl From<bark::onchain::bdk_wallet::Balance> for OnchainBalance {
 	fn from(b: bark::onchain::bdk_wallet::Balance) -> Self {
 		OnchainBalance {
 			total: b.total(),
-			trusted_spendable: b.trusted_pending,
+			trusted_spendable: b.trusted_spendable(),
 			immature: b.immature,
 			trusted_pending: b.trusted_pending,
 			untrusted_pending: b.untrusted_pending,
