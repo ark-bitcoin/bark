@@ -11,6 +11,8 @@ async fn bark_version() {
 
 #[tokio::test]
 async fn bark_ark_info() {
+	// We don't test backward compatibility for `bark ark-info`.
+	require_bark_version!(== "DIRTY");
 	let ctx = TestContext::new("bark/bark_ark_info").await;
 	let srv = ctx.new_captaind("server", None).await;
 	let bark1 = ctx.new_bark("bark1", &srv).await;
