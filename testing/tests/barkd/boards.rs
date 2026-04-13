@@ -225,3 +225,4 @@ async fn board_fee_estimate_barkd() {
 		"actual board amount should match the fee estimate net amount",
 	);
 }
+
