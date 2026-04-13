@@ -1,0 +1,8 @@
+- Fix BOLT12 invoice verification for offers identified only by blinded paths
+  `check_signature` now uses the invoice's `signing_pubkey` directly instead of
+  requiring `issuer_signing_pubkey`. `validate_issuance` now verifies the
+  invoice signature and, for offers without `issuer_signing_pubkey`, checks that
+  the invoice's `signing_pubkey` matches the offer's last blinded hop. This fixes
+  issues paying offers from Phoenix wallet, since they don't have an explicit
+  issuer signing pubkey
+  [#1891](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1891)
