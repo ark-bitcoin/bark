@@ -510,6 +510,8 @@ impl Process {
 		drop(wallet);
 		let txid = tx.compute_txid();
 
+		self.srv.db.add_funding_vtxos_to_frontier(txid, None).await
+			.context("failed to add vtxopool vtxos to frontier")?;
 		self.srv.db.upsert_bitcoin_transaction(txid, &tx).await
 			.context("error storing unbroadcasted vtxo issuance funding tx")?;
 		// store the new vtxos
@@ -518,6 +520,7 @@ impl Process {
 		self.srv.db.store_vtxopool_vtxos(&pool_vtxos).await.context("storing pool vtxos")?;
 		self.data.lock().insert_vtxos(&pool_vtxos);
 		update_all_bucket_metrics(&self.data);
+
 		slog!(FinishedPoolIssuance, txid: funding_txid, total_count: requests.len(), total_amount);
 
 		self.srv.tx_nursery.broadcast_tx(tx).await

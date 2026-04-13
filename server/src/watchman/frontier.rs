@@ -4,7 +4,7 @@ use std::sync::Arc;
 use anyhow::Context;
 use bitcoin::{OutPoint, Txid, Witness};
 use tokio::sync::RwLock;
-use tracing::{error, warn};
+use tracing::{error, trace, warn};
 
 use ark::{ServerVtxo, ServerVtxoPolicy, VtxoId, VtxoPolicy};
 use ark::vtxo::policy::clause::HashDelaySignClause;
@@ -23,28 +23,56 @@ pub struct VtxoExitFrontier {
 	db: Db,
 	htlc_settler: Arc<HtlcSettler>,
 	frontier: BTreeMap<VtxoId, (Option<BlockHeight>, ServerVtxo)>,
+	/// Timestamp of the last sync from the DB frontier table.
+	/// Used to query only recently-added entries on each block.
+	last_db_sync: chrono::DateTime<chrono::Utc>,
 }
 
 impl VtxoExitFrontier {
 	pub async fn init(db: Db, htlc_settler: Arc<HtlcSettler>) -> anyhow::Result<Self> {
 		let frontier = db.get_frontier().await?;
-		Ok(VtxoExitFrontier { db, htlc_settler, frontier })
+		Ok(VtxoExitFrontier {
+			db, htlc_settler, frontier,
+			last_db_sync: chrono::Utc::now(),
+		})
 	}
 
+	/// Sync new VTXOs recently added to the DB frontier into the in-memory frontier.
+	///
+	/// Should not be used for initial sync.
+	async fn sync_new_vtxos_from_db(&mut self) -> anyhow::Result<()> {
+		let since = self.last_db_sync - chrono::Duration::seconds(60);
+		let vtxos = self.db.get_frontier_vtxos_since(since).await?;
+		if !vtxos.is_empty() {
+			trace!("Syncing {} new frontier vtxos from DB", vtxos.len());
+			for (vtxo, db_confirmed_height) in vtxos {
+				self.register(vtxo, db_confirmed_height).await?;
+			}
+		}
+		self.last_db_sync = chrono::Utc::now();
+		Ok(())
+	}
+
+	/// Register a vtxo in the frontier only if it is not already present in memory.
+	///
+	/// The DB insert in register() is idempotent (ON CONFLICT DO NOTHING), so this
+	/// is safe to call even if the vtxo was pre-inserted by finish_round.
 	pub async fn register(
 		&mut self,
 		vtxo: ServerVtxo,
 		confirmed_height: Option<BlockHeight>,
 	) -> anyhow::Result<()> {
 		let vtxo_id = vtxo.id();
-		self.frontier.insert(vtxo.id(), (confirmed_height, vtxo));
-		self.db.add_vtxo_to_frontier(vtxo_id).await?;
+		if !self.frontier.contains_key(&vtxo_id) {
+			self.frontier.insert(vtxo_id, (confirmed_height, vtxo));
+			self.db.add_vtxo_to_frontier(vtxo_id).await?;
 
-		if let Some(height) = confirmed_height {
-			self.db.register_vtxo_confirmation(vtxo_id, height).await?;
+			if let Some(height) = confirmed_height {
+				self.db.register_vtxo_confirmation(vtxo_id, height).await?;
+			}
+
+			slog!(WatchmanAddedVtxo, id: vtxo_id);
 		}
-
-		slog!(WatchmanAddedVtxo, id: vtxo_id);
 
 		Ok(())
 	}
@@ -155,6 +183,11 @@ impl ChainEventListener for Arc<RwLock<VtxoExitFrontier>> {
 		let height = block.block_ref.height;
 		let mut frontier = self.write().await;
 
+		// Sync any vtxos added to the DB frontier since the last block
+		// (e.g. by finish_round, register_board, vtxopool) so that spend
+		// detection below works correctly for all frontier entries.
+		frontier.sync_new_vtxos_from_db().await?;
+
 		for tx in &block.block.txdata {
 			let txid = tx.compute_txid();
 
@@ -191,6 +224,11 @@ impl ChainEventListener for Arc<RwLock<VtxoExitFrontier>> {
 
 	async fn on_reorg(&self, block_ref: bitcoin_ext::BlockRef) -> anyhow::Result<()> {
 		let mut frontier = self.write().await;
+
+		// Sync any vtxos added to the DB frontier since the last block
+		// (e.g. by finish_round, register_board, vtxopool) so that spend
+		// detection below works correctly for all frontier entries.
+		frontier.sync_new_vtxos_from_db().await?;
 
 		// Rollback DB state above fork point.
 		//

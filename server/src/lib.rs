@@ -715,9 +715,15 @@ impl Server {
 	#[tracing::instrument(skip(self, vtxo))]
 	pub async fn register_board(&self, vtxo: Vtxo<Full>) -> anyhow::Result<()> {
 		let funding_txid = vtxo.chain_anchor().txid;
+		let funding_vout = vtxo.chain_anchor().vout;
 		let tx_info = self.bitcoind.custom_get_raw_transaction_info(funding_txid, None)
 			.with_context(|| format!("failed to fetch funding tx {funding_txid}"))?
 			.with_context(|| format!("funding tx not found: {funding_txid}"))?;
+
+		let confirmed_hash = tx_info.blockhash
+			.context("board funding tx still unconfirmed")?;
+		let confirmed_height = self.bitcoind.get_block_header_info(&confirmed_hash)?
+			.height as BlockHeight;
 
 		let confirmations = tx_info.confirmations.unwrap_or(0) as usize;
 		if confirmations < self.config.required_board_confirmations {
@@ -728,8 +734,17 @@ impl Server {
 			);
 		}
 
-		let funding_tx= bitcoin::consensus::deserialize::<Transaction>(&tx_info.hex)
+		let funding_tx = bitcoin::consensus::deserialize::<Transaction>(&tx_info.hex)
 			.context("failed to deserialize funding transaction")?;
+
+		// bitcoind rpc documents that if a mempool tx spends a utxo in the utxoset,
+		// if will not appear in gettxout when include_mempool is set to true
+		let is_spent = self.bitcoind.get_tx_out(&funding_txid, funding_vout, Some(true))
+			.context("failed to check board utxo spend status")?
+			.is_none();
+		if is_spent {
+			return badarg!("VTXO funding output is already spent, user exit in progress");
+		}
 
 		trace!("Funding tx {funding_txid} is sufficiently confirmed, registering board");
 
@@ -746,6 +761,9 @@ impl Server {
 			.insert_spendable_vtxos(builder.build_internal_unsigned_vtxos())
 			.mark_vtxos_oor_spent(builder.spend_info());
 		self.db.execute_vtxo_tree_update(update).await?;
+
+		self.db.add_funding_vtxos_to_frontier(funding_txid, Some(confirmed_height)).await
+			.context("failed to add board vtxos to frontier")?;
 
 		slog!(RegisteredBoard,
 			onchain_utxo: vtxo.chain_anchor(),

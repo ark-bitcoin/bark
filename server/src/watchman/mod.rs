@@ -172,6 +172,13 @@ impl Watchman {
 		info!("Starting Watchman...");
 		let _worker = rtmgr.spawn_critical("Watchman");
 
+		// TODO: remove this once all deployments have run with finish_round adding vtxos
+		// directly to the frontier. This handles any legacy unfrontiered vtxos that
+		// pre-date that change.
+		if let Err(e) = self.sync_unfrontiered_funding().await {
+			warn!("Error syncing legacy unfrontiered funding at startup: {:#}", e);
+		}
+
 		let mut timer = tokio::time::interval(self.config.process_interval);
 		loop {
 			tokio::select! {
@@ -190,12 +197,6 @@ impl Watchman {
 				warn!("Error syncing watchman wallet: {:#}", e);
 			}
 
-			//TODO(stevenroose) this call seems expensive and really not urgent
-			// we only realistically need to do this once every hour, or maybe half exit delta or so
-			if let Err(e) = self.sync_unfrontiered_funding().await {
-				warn!("Error syncing unfrontiered funding: {:#}", e);
-			}
-
 			if let Err(e) = self.process_all().await {
 				warn!("Error processing watchman: {:#}", e);
 			}
@@ -209,14 +210,17 @@ impl Watchman {
 	/// Queries the database for funding txids with vtxos not in frontier,
 	/// checks their confirmation status via bitcoind, and registers them.
 	/// Only marks as confirmed if the block is on the synced chain (in the block table).
+	///
+	/// TODO: remove this once all deployments have run with finish_round adding vtxos
+	/// directly to the frontier. Called only once at startup to handle legacy data.
 	pub async fn sync_unfrontiered_funding(&self) -> anyhow::Result<()> {
 		let txids = self.db.get_unfrontiered_funding_txids().await?;
+
+		trace!("We got {} unfrontiered funding txs", txids.len());
 
 		if txids.is_empty() {
 			return Ok(());
 		}
-
-		trace!("We got {} unfrontiered funding txs", txids.len());
 
 		let mut frontier = self.frontier.write().await;
 

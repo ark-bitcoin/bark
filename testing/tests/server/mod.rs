@@ -34,7 +34,7 @@ use ark::vtxo::Full;
 use bark::Wallet;
 use bark_json::primitives::WalletVtxoInfo;
 use server::secret::Secret;
-use server_log::{FullRound, RoundError, RoundFinished, RoundStarted, RoundUserVtxoAlreadyRegistered, WatchmanAddedFundingTx};
+use server_log::{FullRound, RoundError, RoundFinished, RoundStarted, RoundUserVtxoAlreadyRegistered};
 use server_rpc::protos::{self};
 
 use ark_testing::{Captaind, TestContext, btc, sat, secs};
@@ -1592,7 +1592,7 @@ async fn test_register_board() {
 
 	// Try to register the board before it's confirmed - should fail
 	let err = rpc.register_board_vtxo(register_request.clone()).await.unwrap_err();
-	assert!(err.message().contains("requires 6"), "err: {err}");
+	assert!(err.message().contains("unconfirmed"), "err: {err}");
 
 	// Try with 3 confirmations - should still fail (need 6)
 	let height = ctx.generate_blocks(3).await;
@@ -1744,7 +1744,6 @@ async fn undo_round() {
 	bark2.sync().await;
 
 	let mut log_round_finished = srv.subscribe_log::<RoundFinished>();
-	let mut log_watchman_frontier = srv.subscribe_log::<WatchmanAddedFundingTx>();
 
 	ctx.refresh_all(&srv, &[&bark1, &bark2]).await;
 
@@ -1752,18 +1751,6 @@ async fn undo_round() {
 		.expect("timed out waiting for round to finish");
 	let funding_txid = finished.txid;
 	info!("Round finished with funding txid: {}", funding_txid);
-
-	// Wait for the watchman to register this specific round's vtxos in
-	// watchman_vtxo_frontier so that the FK constraint is exercised when
-	// undo-round deletes them. Filter by txid because the watchman also
-	// fires WatchmanAddedFundingTx for board transactions.
-	loop {
-		let msg = log_watchman_frontier.recv().wait(Duration::from_secs(30)).await
-			.expect("timed out waiting for watchman to add round funding tx to frontier");
-		if msg.txid == funding_txid {
-			break;
-		}
-	}
 
 	let output = srv.get_custom_command(&[
 		"undo-round", "--dangerous", "--force",
