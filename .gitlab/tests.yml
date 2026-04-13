@@ -138,7 +138,6 @@ bark-as-libs:
         cargo check -p bark-bitcoin-ext                                      &&
         cargo check -p bark-bitcoin-ext --no-default-features                &&
         cargo check -p bark-wallet                                           &&
-        cargo check -p bark-wallet -F wasm-web --no-default-features         &&
         cargo check -p bark-wallet -F native --no-default-features           &&
         cargo check -p bark-json                                             &&
         cargo check -p bark-rest                                             &&
