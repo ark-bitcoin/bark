@@ -765,6 +765,8 @@ impl Server {
 		&self,
 		vtxos: impl IntoIterator<Item = impl AsRef<Vtxo<Full>>>,
 	) -> anyhow::Result<()> {
+		let mut signed_txs: Vec<Transaction> = Vec::new();
+		let mut seen_txids: HashSet<Txid> = HashSet::new();
 		for vtxo in vtxos {
 			let vtxo = vtxo.as_ref();
 			let vtxo_id = vtxo.id();
@@ -796,14 +798,20 @@ impl Server {
 				.context(vtxo_id)
 				.badarg("vtxo validation failed")?;
 
-			// Extract all transactions from the VTXO
+			// Collect all signed transactions from the VTXO, deduplicating
+			// by txid since different vtxos can share parent transactions.
 			for item in vtxo.transactions() {
 				let txid = item.tx.compute_txid();
-				trace!("Registering virtual tx {} for vtxo {}", txid, vtxo_id);
-				self.db.upsert_virtual_transaction(txid, Some(&item.tx), false, None).await?;
+				if seen_txids.insert(txid) {
+					trace!("Registering virtual tx {} for vtxo {}", txid, vtxo_id);
+					signed_txs.push(item.tx);
+				}
 			}
 		}
 
+		let update = VtxoTreeUpdate::new()
+			.upsert_signed_tx(signed_txs);
+		self.db.execute_vtxo_tree_update(update).await?;
 		Ok(())
 	}
 

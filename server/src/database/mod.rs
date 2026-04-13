@@ -294,18 +294,6 @@ impl Db {
 		Ok(())
 	}
 
-	pub async fn upsert_virtual_transaction(
-		&self,
-		txid: Txid,
-		signed_tx: Option<&Transaction>,
-		is_funding: bool,
-		server_may_own_descendant_since: Option<chrono::DateTime<chrono::Local>>,
-	) -> anyhow::Result<Txid> {
-		let conn = self.get_conn().await?;
-		let client = conn.client();
-		query::upsert_virtual_transaction(client, txid, signed_tx, is_funding, server_may_own_descendant_since).await
-	}
-
 	/// Queries a virtual transaction by txid
 	pub async fn get_virtual_transaction_by_txid(
 		&self,

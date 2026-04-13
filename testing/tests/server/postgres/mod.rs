@@ -20,7 +20,8 @@ use bark::lightning_invoice::Bolt11Invoice;
 use bitcoin_ext::BlockRef;
 use cln_rpc::listsendpays_request::ListsendpaysIndex;
 
-use server::database::{BlockTable, Db, MailboxPayload};
+use server::database::{BlockTable, Db, MailboxPayload, VirtualTransaction};
+use server::database::tree::VtxoTreeUpdate;
 use server::database::ln::LightningHtlcSubscriptionStatus;
 use server::database::vtxopool::PoolVtxo;
 use server::filters;
@@ -381,9 +382,10 @@ async fn get_first_unsigned_virtual_transaction() {
 	let txid_nonexistent = tx_nonexistent.compute_txid();
 
 	// tx1: signed, tx2: unsigned, tx3: signed
-	db.upsert_virtual_transaction(txid1, Some(&tx1), false, None).await.unwrap();
-	db.upsert_virtual_transaction(txid2, None, false, None).await.unwrap();
-	db.upsert_virtual_transaction(txid3, Some(&tx3), false, None).await.unwrap();
+	let update = VtxoTreeUpdate::new()
+		.upsert_signed_tx([tx1.clone(), tx3.clone()])
+		.upsert_unsigned_tx([txid2]);
+	db.execute_vtxo_tree_update(update).await.unwrap();
 
 	// Test case 1: [tx1, tx2, tx3] -> Some(tx2)
 	let result = db.get_first_unsigned_virtual_transaction(&[txid1, txid2, txid3]).await.unwrap();
@@ -479,8 +481,8 @@ async fn mark_server_may_own_descendants_all_signed() {
 	let txid2 = tx2.compute_txid();
 
 	// Insert both as signed
-	db.upsert_virtual_transaction(txid1, Some(&tx1), false, None).await.unwrap();
-	db.upsert_virtual_transaction(txid2, Some(&tx2), false, None).await.unwrap();
+	let update = VtxoTreeUpdate::new().upsert_signed_tx([tx1.clone(), tx2.clone()]);
+	db.execute_vtxo_tree_update(update).await.unwrap();
 
 	// Verify they don't have server_may_own_descendant_since set
 	let vtx1 = db.get_virtual_transaction_by_txid(txid1).await.unwrap().unwrap();
@@ -527,8 +529,10 @@ async fn mark_server_may_own_descendants_fails_for_unsigned() {
 	let txid_unsigned = tx_unsigned.compute_txid();
 
 	// Insert one signed and one unsigned
-	db.upsert_virtual_transaction(txid_signed, Some(&tx_signed), false, None).await.unwrap();
-	db.upsert_virtual_transaction(txid_unsigned, None, false, None).await.unwrap();
+	let update = VtxoTreeUpdate::new()
+		.upsert_signed_tx([tx_signed.clone()])
+		.upsert_unsigned_tx([txid_unsigned]);
+	db.execute_vtxo_tree_update(update).await.unwrap();
 
 	// Should fail because one is unsigned
 	let result = db.mark_server_may_own_descendants(&[txid_signed, txid_unsigned]).await;
@@ -563,7 +567,9 @@ async fn mark_server_may_own_descendants_does_not_overwrite() {
 
 	// Insert with server_may_own_descendant_since already set
 	let original_timestamp = Local::now() - chrono::Duration::days(1);
-	db.upsert_virtual_transaction(txid, Some(&tx), false, Some(original_timestamp)).await.unwrap();
+	let vtx = VirtualTransaction::new_signed_owned(tx.clone())
+		.as_server_owned_since(original_timestamp);
+	db.execute_vtxo_tree_update(VtxoTreeUpdate::new().upsert_virtual_txs([vtx])).await.unwrap();
 
 	// Verify it's set
 	let vtx = db.get_virtual_transaction_by_txid(txid).await.unwrap().unwrap();
@@ -808,11 +814,8 @@ async fn postgres_offboards() {
 	db.upsert_vtxos(&[vtxo.clone()]).await.unwrap();
 
 	// Register the vtxo's transactions in the virtual transaction tree
-	for tx_item in vtxo.transactions() {
-		db.upsert_virtual_transaction(tx_item.tx.compute_txid(), Some(&tx_item.tx), false, None)
-			.await
-			.unwrap();
-	}
+	let signed_txs: Vec<_> = vtxo.transactions().map(|item| item.tx).collect();
+	db.execute_vtxo_tree_update(VtxoTreeUpdate::new().upsert_signed_tx(signed_txs)).await.unwrap();
 
 	// Initially no uncommitted offboards
 	let uncommitted = db.get_uncommitted_offboards().await.unwrap();
@@ -1055,7 +1058,7 @@ async fn watchman_frontier() {
 
 	// Also store the funding virtual transaction that watchman queries for
 	let funding_txid = vtxo.point().txid;
-	db.upsert_virtual_transaction(funding_txid, None, true, None).await.unwrap();
+	db.execute_vtxo_tree_update(VtxoTreeUpdate::new().upsert_unsigned_funding_tx(funding_txid)).await.unwrap();
 
 	// Frontier starts empty
 	let frontier = db.get_frontier().await.unwrap();
@@ -1167,7 +1170,7 @@ async fn watchman_unfrontiered_funding_txids() {
 	let vtxo = ServerVtxo::from(VTXO_VECTORS.board_vtxo.clone());
 	db.upsert_vtxos(&[vtxo.clone()]).await.unwrap();
 	let funding_txid = vtxo.point().txid;
-	db.upsert_virtual_transaction(funding_txid, None, true, None).await.unwrap();
+	db.execute_vtxo_tree_update(VtxoTreeUpdate::new().upsert_unsigned_funding_tx(funding_txid)).await.unwrap();
 
 	// Now funding_txid is unfrontiered
 	let unfrontiered = db.get_unfrontiered_funding_txids().await.unwrap();
