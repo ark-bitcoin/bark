@@ -506,6 +506,40 @@ impl Wallet {
 		Ok(())
 	}
 
+	/// Cancel a pending lightning receive.
+	///
+	/// This asks the server to cancel the hold invoice. The server will
+	/// refuse if HTLC-recv vtxos have already been granted.
+	///
+	/// Bark additionally prevents cancellation when the preimage has
+	/// already been revealed, since revealing the preimage means the
+	/// sender's payment is in flight and cancelling would lose funds.
+	pub async fn cancel_lightning_receive(
+		&self,
+		payment_hash: PaymentHash,
+	) -> anyhow::Result<()> {
+		let receive = self.db.fetch_lightning_receive_by_payment_hash(payment_hash).await?
+			.context("no pending lightning receive found for this payment hash")?;
+
+		if receive.finished_at.is_some() {
+			bail!("lightning receive is already finished");
+		}
+
+		if receive.preimage_revealed_at.is_some() {
+			bail!("cannot cancel: preimage has already been revealed");
+		}
+
+		let (mut srv, _) = self.require_server().await?;
+		srv.client.cancel_lightning_receive(protos::CancelLightningReceiveRequest {
+			payment_hash: payment_hash.to_vec(),
+		}).await.context("server refused cancellation")?;
+
+		// Clean up local state: mark htlc vtxos as spent and finish the receive
+		self.exit_or_cancel_lightning_receive(&receive).await?;
+
+		Ok(())
+	}
+
 	/// Check and claim a Lightning receive
 	///
 	/// This function checks for an incoming lightning payment with the given [PaymentHash]

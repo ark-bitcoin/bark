@@ -12,7 +12,7 @@ use bark_json::primitives::VtxoStateInfo;
 use bitcoin::{Amount, OutPoint};
 use log::{info, trace};
 
-use ark_testing::{btc, sat, TestContext};
+use ark_testing::{btc, sat, require_bark_version, TestContext};
 use ark_testing::constants::{BOARD_CONFIRMATIONS, ROUND_CONFIRMATIONS};
 use ark_testing::daemon::captaind::{self, ArkClient};
 use ark_testing::util::{FutureExt, ToAltString};
@@ -1615,4 +1615,75 @@ async fn bark_intra_ark_lightning_receive_via_mailbox_notification() {
 
 	let receives = receiver_client.pending_lightning_receives().await.unwrap();
 	assert!(receives.is_empty(), "no pending receives should remain after claim");
+}
+
+#[tokio::test]
+async fn bark_can_cancel_lightning_receive() {
+	require_bark_version!(== "DIRTY");
+
+	let ctx = TestContext::new("lightningd/bark_can_cancel_lightning_receive").await;
+
+	let lightning = ctx.new_lightning_setup("lightningd").await;
+
+	// Start a server and link it to our cln installation
+	let srv = ctx.new_captaind_with_funds("server", Some(&lightning.receiver), btc(10)).await;
+
+	// Start a bark and create a VTXO to be able to board
+	let bark = ctx.new_bark_with_funds("bark", &srv, btc(3)).await;
+	let board_amount = btc(2);
+	bark.board_and_confirm_and_register(&ctx, board_amount).await;
+
+	// Create an invoice but don't pay it
+	let pay_amount = btc(1);
+	let invoice_info = bark.bolt11_invoice(pay_amount).await;
+
+	// The invoice should appear as a pending receive
+	let receives = bark.list_lightning_receives().await;
+	assert_eq!(receives.len(), 1);
+
+	// Cancel the pending receive
+	bark.cancel_lightning_receive(&invoice_info.invoice).await;
+
+	// The pending receive should be gone
+	let receives = bark.list_lightning_receives().await;
+	assert!(receives.is_empty(), "pending receive should be removed after cancellation");
+
+	// Balance should be unchanged
+	assert_eq!(bark.spendable_balance().await, board_amount);
+}
+
+#[tokio::test]
+async fn bark_cannot_cancel_lightning_receive_after_preimage_revealed() {
+	require_bark_version!(== "DIRTY");
+
+	let ctx = TestContext::new("lightningd/bark_cannot_cancel_after_preimage_revealed").await;
+
+	// Only need a single lightning node for the server to create invoices;
+	// no channel or sender needed since we never actually pay.
+	let lightningd = ctx.new_lightningd("lightningd").await;
+
+	let srv = ctx.new_captaind_with_funds("server", Some(&lightningd), btc(10)).await;
+
+	let bark = ctx.new_bark_with_funds("bark", &srv, btc(3)).await;
+	let board_amount = btc(2);
+	bark.board_and_confirm_and_register(&ctx, board_amount).await;
+
+	let pay_amount = btc(1);
+	let invoice_info = bark.bolt11_invoice(pay_amount).await;
+
+	// The invoice should appear as a pending receive
+	let receives = bark.list_lightning_receives().await;
+	assert_eq!(receives.len(), 1);
+
+	// Simulate preimage revelation by directly marking it in the database.
+	// In production, this happens during the claim flow right before the
+	// cooperative settlement RPC. We can't observe this state through the CLI
+	// because a failed claim automatically exits and finishes the receive.
+	let db = bark::persist::sqlite::SqliteClient::open(bark.datadir().join("db.sqlite")).unwrap();
+	bark::persist::BarkPersister::set_preimage_revealed(&db, receives[0].payment_hash).await.unwrap();
+
+	// Trying to cancel should fail because the preimage has been revealed
+	let err = bark.try_cancel_lightning_receive(&invoice_info.invoice).await.unwrap_err();
+	assert!(err.to_string().contains("cannot cancel: preimage has already been revealed"),
+		"expected preimage-revealed error, got: {err}");
 }

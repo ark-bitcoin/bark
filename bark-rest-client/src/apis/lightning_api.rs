@@ -15,6 +15,16 @@ use crate::{apis::ResponseContent, models};
 use super::{Error, configuration, ContentType};
 
 
+/// struct for typed errors of method [`cancel_receive`]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum CancelReceiveError {
+    Status400(models::BadRequestError),
+    Status404(models::NotFoundError),
+    Status500(models::InternalServerError),
+    UnknownValue(serde_json::Value),
+}
+
 /// struct for typed errors of method [`generate_invoice`]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
@@ -50,6 +60,35 @@ pub enum PayError {
     UnknownValue(serde_json::Value),
 }
 
+
+/// Cancels a pending Lightning receive identified by its payment hash or invoice string. The server will refuse cancellation if HTLC-recv VTXOs have already been granted. Bark also prevents cancellation when the preimage has been revealed.
+pub async fn cancel_receive(configuration: &configuration::Configuration, identifier: &str) -> Result<(), Error<CancelReceiveError>> {
+    // add a prefix to parameters to efficiently prevent name collisions
+    let p_path_identifier = identifier;
+
+    let uri_str = format!("{}/api/v1/lightning/receives/{identifier}", configuration.base_path, identifier=crate::apis::urlencode(p_path_identifier));
+    let mut req_builder = configuration.client.request(reqwest::Method::DELETE, &uri_str);
+
+    if let Some(ref user_agent) = configuration.user_agent {
+        req_builder = req_builder.header(reqwest::header::USER_AGENT, user_agent.clone());
+    }
+    if let Some(ref token) = configuration.bearer_access_token {
+        req_builder = req_builder.bearer_auth(token.to_owned());
+    };
+
+    let req = req_builder.build()?;
+    let resp = configuration.client.execute(req).await?;
+
+    let status = resp.status();
+
+    if !status.is_client_error() && !status.is_server_error() {
+        Ok(())
+    } else {
+        let content = resp.text().await?;
+        let entity: Option<CancelReceiveError> = serde_json::from_str(&content).ok();
+        Err(Error::ResponseError(ResponseContent { status, content, entity }))
+    }
+}
 
 /// Generates a new BOLT11 invoice for the specified amount via the Ark server, creating a pending Lightning receive.
 pub async fn generate_invoice(configuration: &configuration::Configuration, lightning_invoice_request: models::LightningInvoiceRequest) -> Result<models::InvoiceInfo, Error<GenerateInvoiceError>> {

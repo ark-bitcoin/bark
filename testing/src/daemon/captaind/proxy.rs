@@ -77,6 +77,14 @@ pub trait ArkRpcProxy: Send + Sync + Clone + 'static {
 		Ok(upstream.start_lightning_receive(req).await?.into_inner())
 	}
 
+	async fn cancel_lightning_receive(
+		&self,
+		upstream: &mut ArkClient,
+		req: protos::CancelLightningReceiveRequest,
+	) -> Result<protos::Empty, tonic::Status> {
+		Ok(upstream.cancel_lightning_receive(req).await?.into_inner())
+	}
+
 	async fn check_lightning_receive(
 		&self,
 		upstream: &mut ArkClient,
@@ -310,6 +318,13 @@ impl<T: ArkRpcProxy> rpc::server::ArkService for ArkRpcProxyWrapper<T> {
 		req: tonic::Request<protos::StartLightningReceiveRequest>,
 	) -> Result<tonic::Response<protos::StartLightningReceiveResponse>, tonic::Status> {
 		Ok(tonic::Response::new(ArkRpcProxy::start_lightning_receive(&self.proxy, &mut self.upstream.clone(), req.into_inner()).await?))
+	}
+
+	async fn cancel_lightning_receive(
+		&self,
+		req: tonic::Request<protos::CancelLightningReceiveRequest>,
+	) -> Result<tonic::Response<protos::Empty>, tonic::Status> {
+		Ok(tonic::Response::new(ArkRpcProxy::cancel_lightning_receive(&self.proxy, &mut self.upstream.clone(), req.into_inner()).await?))
 	}
 
 	async fn check_lightning_receive(

@@ -580,6 +580,42 @@ impl Server {
 		Ok(())
 	}
 
+	#[tracing::instrument(skip(self))]
+	pub async fn cancel_lightning_receive(
+		&self,
+		payment_hash: PaymentHash,
+	) -> anyhow::Result<()> {
+		let sub = self.db.get_htlc_subscription_by_payment_hash(payment_hash).await?
+			.not_found([payment_hash], "no pending payment with this payment hash")?;
+
+		match sub.status {
+			LightningHtlcSubscriptionStatus::Created |
+			LightningHtlcSubscriptionStatus::Accepted => {}, // allowed
+			LightningHtlcSubscriptionStatus::HtlcsReady => {
+				return badarg!("cannot cancel: HTLC-recv vtxos have already been granted");
+			},
+			LightningHtlcSubscriptionStatus::Settled => {
+				return badarg!("cannot cancel: payment already settled");
+			},
+			LightningHtlcSubscriptionStatus::Canceled => {
+				return Ok(()); // idempotent
+			},
+		}
+
+		slog!(LightningReceiveCanceled, payment_hash);
+
+		self.cln.cancel_invoice(sub.clone()).await
+			.context("could not cancel hold invoice")?;
+
+		self.db.store_lightning_htlc_subscription_status(
+			sub.id,
+			LightningHtlcSubscriptionStatus::Canceled,
+			None,
+		).await?;
+
+		Ok(())
+	}
+
 	#[tracing::instrument(skip(self, cosign_request))]
 	pub async fn claim_lightning_receive(
 		&self,

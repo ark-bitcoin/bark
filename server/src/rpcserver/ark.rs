@@ -401,6 +401,20 @@ impl rpc::server::ArkService for Server {
 		Ok(tonic::Response::new(cosign_resp.into()))
 	}
 
+	#[tracing::instrument(skip(self, req))]
+	async fn cancel_lightning_receive(
+		&self,
+		req: tonic::Request<protos::CancelLightningReceiveRequest>,
+	) -> Result<tonic::Response<protos::Empty>, tonic::Status> {
+		let req = req.into_inner();
+
+		let payment_hash = PaymentHash::from_bytes(req.payment_hash)?;
+
+		self.cancel_lightning_receive(payment_hash).await.to_status()?;
+
+		Ok(tonic::Response::new(protos::Empty {}))
+	}
+
 	// round
 
 	#[tracing::instrument(skip(self, _req))]

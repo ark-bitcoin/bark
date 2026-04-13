@@ -64,6 +64,12 @@ pub struct LightningReceivePrepared {
 impl_slog!(LightningReceivePrepared, INFO, "prepared HTLC VTXOs for lightning receive");
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LightningReceiveCanceled {
+	pub payment_hash: PaymentHash,
+}
+impl_slog!(LightningReceiveCanceled, INFO, "canceled lightning receive");
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LightningReceiveClaimRequested {
 	pub payment_hash: PaymentHash,
 	pub payment_preimage: Preimage,

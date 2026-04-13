@@ -299,6 +299,15 @@ impl ClnManager {
 
 	}
 
+	pub async fn cancel_invoice(
+		&self,
+		subscription: LightningHtlcSubscription,
+	) -> anyhow::Result<()> {
+		let (result_tx, result_rx) = oneshot::channel();
+		self.send_ctrl(Ctrl::CancelInvoice { subscription: Box::new(subscription), result_tx });
+		result_rx.await.context("an error occurred canceling an invoice")?
+	}
+
 	/// Fetches and parse an invoice from a bolt-12 offer
 	pub async fn fetch_bolt12_invoice(
 		&self,
@@ -666,6 +675,10 @@ enum Ctrl {
 		offer: Box<Offer>,
 		amount: Amount,
 		invoice_tx: oneshot::Sender<Bolt12Invoice>,
+	},
+	CancelInvoice {
+		subscription: Box<LightningHtlcSubscription>,
+		result_tx: oneshot::Sender<anyhow::Result<()>>,
 	},
 }
 
@@ -1170,6 +1183,21 @@ impl ClnManagerProcess {
 								},
 								Err(e) => {
 									debug!("Error settling invoice: {:#}", e);
+									let _ = result_tx.send(Err(e));
+								},
+							}
+						},
+						Ctrl::CancelInvoice { subscription, result_tx } => {
+							let payment_hash = PaymentHash::from(*subscription.invoice.payment_hash());
+							match self.cancel_invoice(*subscription).await {
+								Ok(()) => {
+									trace!("Invoice canceled successfully: payment_hash={}",
+										payment_hash,
+									);
+									let _ = result_tx.send(Ok(()));
+								},
+								Err(e) => {
+									debug!("Error canceling invoice: {:#}", e);
 									let _ = result_tx.send(Err(e));
 								},
 							}

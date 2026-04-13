@@ -48,6 +48,7 @@ Class | Method | HTTP request | Description
 *FeesApi* | [**offboard_all_fee**](docs/FeesApi.md#offboard_all_fee) | **GET** /api/v1/fees/offboard-all | Estimate offboard-all fee
 *FeesApi* | [**onchain_fee_rates**](docs/FeesApi.md#onchain_fee_rates) | **GET** /api/v1/fees/onchain | Get on-chain fee rates
 *FeesApi* | [**send_onchain_fee**](docs/FeesApi.md#send_onchain_fee) | **GET** /api/v1/fees/send-onchain | Estimate send-onchain fee
+*LightningApi* | [**cancel_receive**](docs/LightningApi.md#cancel_receive) | **DELETE** /api/v1/lightning/receives/{identifier} | Cancel a pending receive
 *LightningApi* | [**generate_invoice**](docs/LightningApi.md#generate_invoice) | **POST** /api/v1/lightning/receives/invoice | Create a BOLT11 invoice
 *LightningApi* | [**get_receive_status**](docs/LightningApi.md#get_receive_status) | **GET** /api/v1/lightning/receives/{identifier} | Get receive status
 *LightningApi* | [**list_receive_statuses**](docs/LightningApi.md#list_receive_statuses) | **GET** /api/v1/lightning/receives | List all pending receive statuses

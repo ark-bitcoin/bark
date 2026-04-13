@@ -1018,6 +1018,60 @@
             }
           }
         }
+      },
+      "delete": {
+        "tags": [
+          "lightning"
+        ],
+        "summary": "Cancel a pending receive",
+        "description": "Cancels a pending Lightning receive identified by its payment hash or invoice string. The server will refuse cancellation if HTLC-recv VTXOs have already been granted. Bark also prevents cancellation when the preimage has been revealed.",
+        "operationId": "cancel_receive",
+        "parameters": [
+          {
+            "name": "identifier",
+            "in": "path",
+            "description": "Payment hash or invoice string",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Receive canceled successfully"
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotFoundError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternalServerError"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/api/v1/onchain/addresses/next": {
