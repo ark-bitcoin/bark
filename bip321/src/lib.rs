@@ -40,7 +40,7 @@ pub use error::Bip321Error;
 pub use extension::{ExtensionHandler, NoExtensions};
 
 use std::collections::{HashMap, HashSet};
-use std::fmt;
+use std::fmt::{self, Write};
 use std::str::FromStr;
 
 use bitcoin::address::{NetworkChecked, NetworkUnchecked};
@@ -433,20 +433,6 @@ fn percent_decode(value: &str) -> Result<String, Bip321Error> {
 	Ok(decoded.into_owned())
 }
 
-/// Percent-encode a string for use as a query parameter value.
-fn percent_encode(value: &str) -> String {
-	utf8_percent_encode(value, QUERY_ENCODE_SET).to_string()
-}
-
-/// Write a parameter key with optional `req-` prefix.
-fn param_key(base: &str, required: bool) -> String {
-	if required {
-		format!("{}{}", REQUIRED_PREFIX, base)
-	} else {
-		base.to_string()
-	}
-}
-
 impl<E: ExtensionHandler> FromStr for Bip321Uri<E> {
 	type Err = Bip321Error;
 
@@ -630,6 +616,88 @@ impl<E: ExtensionHandler> FromStr for Bip321Uri<E> {
 		}
 
 		Ok(uri)
+	}
+}
+
+fn write_query_param(f: &mut String, key: &str, value: &str, required: bool) -> fmt::Result {
+	let separator = if f.is_empty() { "" } else { "&" };
+	let required_prefix = if required { "req-" } else { "" };
+	write!(f, "{}{}{}", separator, required_prefix, key)?;
+	write!(f, "={}", utf8_percent_encode(value, QUERY_ENCODE_SET))
+}
+
+impl<E: ExtensionHandler> fmt::Display for Bip321Uri<E> {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		write!(f, "bitcoin:")?;
+
+		if let Some(addr) = &self.address {
+			write!(f, "{}", addr)?;
+		}
+
+		let mut query_buf = String::new();
+
+		// amount
+		if let Some(amount_field) = &self.amount {
+			let value = amount_field.to_string_in(Denomination::Bitcoin);
+			write_query_param(&mut query_buf, "amount", &value, false)?;
+		}
+
+		// label
+		if let Some(label) = &self.label {
+			write_query_param(&mut query_buf, "label", label, false)?;
+		}
+
+		// message
+		if let Some(message) = &self.message {
+			write_query_param(&mut query_buf, "message", message, false)?;
+		}
+
+		// pop
+		if let Some(pop) = &self.pop {
+			write_query_param(&mut query_buf, "pop", &pop.uri_prefix, pop.required())?;
+		}
+
+		// standard payment instructions
+		for field in &self.lightning {
+			write_query_param(&mut query_buf, "lightning", &field.inner().to_string(), field.required())?;
+		}
+		for field in &self.lno {
+			write_query_param(&mut query_buf, "lno", &field.inner().to_string(), field.required())?;
+		}
+		for field in &self.sp {
+			write_query_param(&mut query_buf, "sp", &field.inner(), field.required())?;
+		}
+		for field in &self.pay {
+			write_query_param(&mut query_buf, "pay", &field.inner(), field.required())?;
+		}
+		for field in &self.bc {
+			write_query_param(&mut query_buf, "bc", &field.inner().to_string(), field.required())?;
+		}
+		for field in &self.tb {
+			write_query_param(&mut query_buf, "tb", &field.inner().to_string(), field.required())?;
+		}
+
+		// extension parameters
+		for (key, value) in self.extensions.serialize_params() {
+			write_query_param(&mut query_buf, &key, &value, false)?;
+		}
+
+		// custom parameters (sorted for determinism)
+		let mut custom_sorted: Vec<_> = self.custom.iter().collect();
+		custom_sorted.sort_by_key(|(k, _)| (*k).clone());
+		for (key, values) in custom_sorted {
+			let mut values_sorted = values.clone();
+			values_sorted.sort_by_key(|v| v.inner().clone());
+			for val_field in values_sorted.iter() {
+				write_query_param(&mut query_buf, &key, &val_field.inner(), val_field.required())?;
+			}
+		}
+
+		if !query_buf.is_empty() {
+			write!(f, "?{}", query_buf)?;
+		}
+
+		Ok(())
 	}
 }
 
