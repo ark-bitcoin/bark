@@ -169,21 +169,21 @@ pub trait WalletExt: BorrowMut<Wallet> {
 		fees: MakeCpfpFees,
 	) -> Result<Transaction, CpfpInternalError> {
 		let wallet = self.borrow_mut();
-		let (outpoint, txout) = tx.fee_anchor()
+		let (fee_anchor_point, fee_anchor_txout) = tx.fee_anchor()
 			.ok_or_else(|| CpfpInternalError::NoFeeAnchor(tx.compute_txid()))?;
 
 		// Since BDK doesn't support adding extra weight for fees, we have to loop to achieve the
 		// effective fee rate and potential minimum fee we need.
-		let p2a_weight = tx.weight();
-		let extra_fee_needed = p2a_weight * fees.effective();
+		let parent_weight = tx.weight();
+		let extra_fee_needed = parent_weight * fees.effective();
 
 		// Since BDK doesn't allow tx without recipients, we add a drain output.
-		let change_addr = wallet.reveal_next_address(KEYCHAIN);
+		let change_addr = wallet.next_unused_address(KEYCHAIN);
 		let dust_limit = change_addr.address.script_pubkey().minimal_non_dust();
 
 		// We will loop, constructing the transaction and signing it until we exceed the effective
 		// fee rate and meet any minimum fee requirements
-		let mut spend_weight = Weight::ZERO;
+		let mut final_child_weight = Weight::ZERO;
 		let mut fee_needed = extra_fee_needed;
 		for i in 0..100 {
 			// We need to account for a particularly annoying BDK bug when using foreign UTXOs when
@@ -192,9 +192,9 @@ pub trait WalletExt: BorrowMut<Wallet> {
 			// results in a coin selection error. Ideally, BDK would pull in an extra UTXO to ensure
 			// the change output is more than the dust limit; however, this seems to be an edge case
 			// with experimental foreign UTXOs.
-			if fee_needed < txout.value {
-				if txout.value - fee_needed < dust_limit {
-					fee_needed = txout.value + Amount::ONE_SAT;
+			if fee_needed < fee_anchor_txout.value {
+				if fee_anchor_txout.value - fee_needed < dust_limit {
+					fee_needed = fee_anchor_txout.value + Amount::ONE_SAT;
 				}
 			}
 
@@ -202,7 +202,7 @@ pub trait WalletExt: BorrowMut<Wallet> {
 			b.only_witness_utxo();
 			b.exclude_unconfirmed();
 			b.version(3); // for 1p1c package relay, all inputs must be confirmed
-			b.add_fee_anchor_spend(outpoint, txout);
+			b.add_fee_anchor_spend(fee_anchor_point, fee_anchor_txout);
 			b.drain_to(change_addr.address.script_pubkey());
 			b.fee_absolute(fee_needed);
 
@@ -223,19 +223,18 @@ pub trait WalletExt: BorrowMut<Wallet> {
 			}
 			let tx = psbt.extract_tx()
 				.map_err(|e| CpfpInternalError::Extract(e))?;
-			let anchor_weight = FEE_ANCHOR_SPEND_WEIGHT.to_wu();
-			assert!(tx.input.iter().any(|i| i.witness.size() as u64 == anchor_weight),
+			assert!(tx.input.iter().any(|i| i.previous_output == fee_anchor_point),
 				"Missing anchor spend, tx is {}", serialize_hex(&tx),
 			);
 
 			// We can finally check the fees and weight
 			let tx_weight = tx.weight();
-			let total_weight = tx_weight + p2a_weight;
-			if tx_weight != spend_weight {
+			let total_weight = tx_weight + parent_weight;
+			if tx_weight != final_child_weight {
 				// Since the weight changed, we can drop the transaction and recalculate the
 				// required fee amount.
 				wallet.cancel_tx(&tx);
-				spend_weight = tx_weight;
+				final_child_weight = tx_weight;
 				fee_needed = match fees {
 					MakeCpfpFees::Effective(fr) => total_weight * fr,
 					MakeCpfpFees::Rbf { min_effective_fee_rate, current_package_fee } => {
@@ -244,7 +243,7 @@ pub trait WalletExt: BorrowMut<Wallet> {
 						// then you must add mintxrelayfee * package_vbytes on top.
 						let min_tx_relay_fee = FeeRate::from_sat_per_vb(1).unwrap();
 						let min_package_fee = current_package_fee +
-							p2a_weight * min_tx_relay_fee +
+							parent_weight * min_tx_relay_fee +
 							tx_weight * min_tx_relay_fee;
 
 						// This is the fee we want to pay based on the given minimum effective fee
