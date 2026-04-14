@@ -632,3 +632,415 @@ impl<E: ExtensionHandler> FromStr for Bip321Uri<E> {
 		Ok(uri)
 	}
 }
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	fn parse_no_ext(s: &str) -> Result<Bip321Uri<NoExtensions>, Bip321Error> {
+		Bip321Uri::<NoExtensions>::from_str(s)
+	}
+
+	#[test]
+	fn just_address() {
+		let uri = parse_no_ext("bitcoin:1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa").unwrap();
+		assert!(uri.address.is_some());
+		assert!(uri.amount.is_none());
+		assert!(uri.label.is_none());
+		assert!(uri.message.is_none());
+		assert!(uri.pop.is_none());
+	}
+
+	#[test]
+	fn address_with_label() {
+		let uri = parse_no_ext("bitcoin:1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa?label=Luke-Jr")
+		.unwrap();
+		assert_eq!(uri.label().unwrap(), "Luke-Jr");
+	}
+
+	#[test]
+	fn address_with_amount_and_label() {
+		let uri = parse_no_ext("bitcoin:1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa?amount=20.3&label=Luke-Jr")
+		.unwrap();
+		assert_eq!(
+			uri.amount().unwrap(),
+			&Amount::from_btc(20.3).unwrap()
+		);
+		assert_eq!(uri.label().unwrap(), "Luke-Jr");
+	}
+
+	#[test]
+	fn address_with_amount_label_message() {
+		let uri = parse_no_ext("bitcoin:1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa?amount=50&label=Luke-Jr&message=Donation%20for%20project%20xyz")
+		.unwrap();
+		assert_eq!(
+			uri.amount().unwrap(),
+			&Amount::from_btc(50.0).unwrap()
+		);
+		assert_eq!(uri.label().unwrap(), "Luke-Jr");
+		assert_eq!(uri.message().unwrap(), "Donation for project xyz");
+	}
+
+	#[test]
+	fn amount_integer() {
+		let uri = parse_no_ext("bitcoin:1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa?amount=50").unwrap();
+		assert_eq!(
+			uri.amount().unwrap(),
+			&Amount::from_btc(50.0).unwrap()
+		);
+	}
+
+	#[test]
+	fn amount_decimal() {
+		let uri = parse_no_ext("bitcoin:1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa?amount=50.00").unwrap();
+		assert_eq!(
+			uri.amount().unwrap(),
+			&Amount::from_btc(50.0).unwrap()
+		);
+	}
+
+	#[test]
+	fn uppercase_scheme() {
+		let uri = parse_no_ext("BITCOIN:1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa").unwrap();
+		assert!(uri.address.is_some());
+	}
+
+	#[test]
+	fn mixed_case_scheme() {
+		let uri = parse_no_ext("BiTcOiN:1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa").unwrap();
+		assert!(uri.address.is_some());
+	}
+
+	#[test]
+	fn unknown_required_param_rejected() {
+		let err = parse_no_ext("bitcoin:1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa?req-somethingyoudontunderstand=50")
+		.unwrap_err();
+		assert_eq!(
+			err,
+			Bip321Error::UnsupportedRequiredParam("somethingyoudontunderstand".into())
+		);
+	}
+
+	#[test]
+	fn unknown_non_required_param_accepted() {
+		let uri = parse_no_ext("bitcoin:1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa?somethingyoudontunderstand=50&somethingelseyoudontget=999")
+		.unwrap();
+		assert_eq!(
+			uri.custom
+				.get("somethingyoudontunderstand")
+				.unwrap(),
+			&[FieldWithAttributes::new("50".to_string(), false)]
+		);
+		assert_eq!(
+			uri.custom
+				.get("somethingelseyoudontget")
+				.unwrap(),
+			&[FieldWithAttributes::new("999".to_string(), false)]
+		);
+	}
+
+	#[test]
+	fn unknown_multiple_params_accepted() {
+		let uri = parse_no_ext("bitcoin:1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa?somethingyoudontunderstand=50&somethingyoudontunderstand=60")
+		.unwrap();
+		assert_eq!(
+			uri.custom
+				.get("somethingyoudontunderstand")
+				.unwrap(),
+			&[
+				FieldWithAttributes::new("50".to_string(), false),
+				FieldWithAttributes::new("60".to_string(), false),
+			]
+		);
+	}
+
+	#[test]
+	fn reject_duplicate_label() {
+		let err = parse_no_ext("bitcoin:1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa?label=Luke-Jr&label=Matt")
+		.unwrap_err();
+		assert_eq!(err, Bip321Error::DuplicateParam("label".into()));
+	}
+
+	#[test]
+	fn reject_duplicate_amount() {
+		let err = parse_no_ext("bitcoin:1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa?amount=42&amount=10")
+		.unwrap_err();
+		assert_eq!(err, Bip321Error::DuplicateParam("amount".into()));
+	}
+
+	#[test]
+	fn reject_duplicate_message() {
+		let err = parse_no_ext("bitcoin:1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa?message=hello&message=world")
+		.unwrap_err();
+		assert_eq!(err, Bip321Error::DuplicateParam("message".into()));
+	}
+
+	#[test]
+	fn reject_duplicate_pop() {
+		let err = parse_no_ext("bitcoin:1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa?pop=myapp%3a&pop=otherapp%3a")
+		.unwrap_err();
+		assert_eq!(err, Bip321Error::DuplicateParam("pop".into()));
+	}
+
+	#[test]
+	fn reject_zero_amount() {
+		let err = parse_no_ext("bitcoin:1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa?amount=0").unwrap_err();
+		assert_eq!(err, Bip321Error::AmountZero);
+	}
+
+	#[test]
+	fn reject_comma_in_amount() {
+		let err = parse_no_ext("bitcoin:1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa?amount=1,000").unwrap_err();
+		assert_eq!(err, Bip321Error::MalformedParam("amount=1,000".to_string()));
+	}
+
+	#[test]
+	fn reject_empty_uri() {
+		let err = parse_no_ext("bitcoin:").unwrap_err();
+		assert_eq!(err, Bip321Error::NoPaymentDestination);
+	}
+
+	#[test]
+	fn reject_empty_uri_with_trailing_question() {
+		let err = parse_no_ext("bitcoin:?").unwrap_err();
+		assert_eq!(err, Bip321Error::NoPaymentDestination);
+	}
+
+	#[test]
+	fn reject_wrong_scheme() {
+		let err = parse_no_ext("litecoin:addr123").unwrap_err();
+		assert_eq!(err, Bip321Error::InvalidScheme);
+	}
+
+	#[test]
+	fn reject_too_short() {
+		let err = parse_no_ext("bit").unwrap_err();
+		assert_eq!(err, Bip321Error::TooShort);
+	}
+
+	#[test]
+	fn pop_basic() {
+		let uri = parse_no_ext("bitcoin:1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa?pop=initiatingapp%3A")
+		.unwrap();
+		let pop = uri.pop().unwrap();
+		assert_eq!(pop.uri_prefix(), "initiatingapp:");
+		assert!(!pop.required());
+	}
+
+	#[test]
+	fn pop_required() {
+		let uri = parse_no_ext("bitcoin:1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa?req-pop=initiatingapp%3A")
+			.unwrap();
+		let pop = uri.pop().unwrap();
+		assert_eq!(pop.uri_prefix(), "initiatingapp:");
+		assert!(pop.required());
+		assert!(pop.safe());
+	}
+
+	#[test]
+	fn pop_forbidden_http() {
+		let uri = parse_no_ext("bitcoin:1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa?pop=http%3A%2F%2Fevil.com")
+			.unwrap();
+		let pop = uri.pop().unwrap();
+		assert_eq!(pop.uri_prefix(), "http://evil.com");
+		assert!(!pop.required());
+		assert!(!pop.safe());
+	}
+
+	#[test]
+	fn pop_forbidden_https() {
+		let uri = parse_no_ext("bitcoin:1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa?pop=https%3A%2F%2Fevil.com")
+			.unwrap();
+		let pop = uri.pop().unwrap();
+		assert_eq!(pop.uri_prefix(), "https://evil.com");
+		assert!(!pop.required());
+		assert!(!pop.safe());
+	}
+
+	#[test]
+	fn pop_forbidden_javascript() {
+		let uri = parse_no_ext("bitcoin:1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa?pop=javascript%3Aalert(1)")
+			.unwrap();
+		let pop = uri.pop().unwrap();
+		assert_eq!(pop.uri_prefix(), "javascript:alert(1)");
+		assert!(!pop.required());
+		assert!(!pop.safe());
+	}
+
+	#[test]
+	fn pop_forbidden_file() {
+		let uri = parse_no_ext("bitcoin:1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa?pop=file%3Aalert(1)")
+			.unwrap();
+		let pop = uri.pop().unwrap();
+		assert_eq!(pop.uri_prefix(), "file:alert(1)");
+		assert!(!pop.required());
+		assert!(!pop.safe());
+	}
+
+	#[test]
+	fn pop_forbidden_mailto() {
+		let uri = parse_no_ext("bitcoin:1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa?pop=mailto%3Aalert(1)")
+			.unwrap();
+		let pop = uri.pop().unwrap();
+		assert_eq!(pop.uri_prefix(), "mailto:alert(1)");
+		assert!(!pop.required());
+		assert!(!pop.safe());
+	}
+
+	#[test]
+	fn reject_required_unsafe_pop() {
+		let err = parse_no_ext("bitcoin:1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa?req-pop=javascript%3Aalert(1)")
+			.unwrap_err();
+		assert_eq!(err, Bip321Error::RequiredUnsafePopScheme("javascript:alert(1)".into()));
+	}
+
+	#[test]
+	fn pop_callback_build() {
+		let pop = PopConfig::new("initiatingapp:".to_string(), false).unwrap();
+		let callback = pop.build_callback("onchain", "deadbeef");
+		assert_eq!(callback, "initiatingapp:onchain=deadbeef");
+	}
+
+	#[test]
+	fn label_with_spaces_and_special_chars() {
+		let uri = parse_no_ext("bitcoin:1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa?label=caf%C3%A9%20%26%20more%20%3D%20fun")
+		.unwrap();
+		assert_eq!(uri.label().unwrap(), "café & more = fun");
+	}
+
+	#[test]
+	fn message_with_unicode() {
+		let uri = parse_no_ext("bitcoin:1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa?message=%E4%B8%96%E7%95%8C")
+		.unwrap();
+		assert_eq!(uri.message().unwrap(), "世界");
+	}
+
+	#[test]
+	fn value_containing_equals() {
+		let uri = parse_no_ext("bitcoin:1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa?label=hello=world")
+		.unwrap();
+		assert_eq!(uri.label().unwrap(), "hello=world");
+	}
+
+	#[test]
+	fn empty_value() {
+		let uri = parse_no_ext("bitcoin:1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa?label=").unwrap();
+		assert_eq!(uri.label().unwrap(), "");
+	}
+
+	#[test]
+	fn param_without_equals_is_malformed() {
+		let err = parse_no_ext("bitcoin:1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa?foo").unwrap_err();
+		assert!(matches!(err, Bip321Error::MalformedParam(_)));
+	}
+
+	#[test]
+	fn bech32_address() {
+		let uri = parse_no_ext("bitcoin:bc1qar0srrr7xfkvy5l643lydnw9re59gtzzwf5mdq").unwrap();
+		assert!(uri.address.is_some());
+	}
+
+	fn parse(s: &str) -> Result<Bip321Uri, Bip321Error> {
+		Bip321Uri::from_str(s)
+	}
+
+	// ── Payment instruction tests ───────────────────────────────────
+
+	#[test]
+	fn lightning_with_fallback() {
+		let input = "bitcoin:1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa?lightning=lnbc20m1pvjluezsp5zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zygshp58yjmdan79s6qqdhdzgynm4zwqd5d7xmw5fk98klysy043l2ahrqspp5qqqsyqcyq5rqwzqfqqqsyqcyq5rqwzqfqqqsyqcyq5rqwzqfqypqfp4qrp33g0q5c5txsp9arysrx4k6zdkfs4nce4xj0gdcccefvpysxf3q9qrsgq9vlvyj8cqvq6ggvpwd53jncp9nwc47xlrsnenq2zp70fq83qlgesn4u3uyf4tesfkkwwfg3qs54qe426hp3tz7z6sweqdjg05axsrjqp9yrrwc";
+		let uri = parse(&input).unwrap();
+		assert!(uri.address.is_some());
+		assert_eq!(uri.lightning().len(), 1);
+	}
+
+	#[test]
+	fn bc_only() {
+		let input = "bitcoin:?bc=bc1qar0srrr7xfkvy5l643lydnw9re59gtzzwf5mdq";
+		let uri = parse(&input).unwrap();
+		assert!(uri.address.is_none());
+		assert_eq!(uri.bc().len(), 1);
+	}
+
+	#[test]
+	fn tb_only() {
+		let input = "bitcoin:?tb=tb1qghfhmd4zh7ncpmxl3qzhmq566jk8ckq4gafnmg";
+		let uri = parse(&input).unwrap();
+		assert!(uri.address.is_none());
+		assert_eq!(uri.tb().len(), 1);
+	}
+
+	#[test]
+	fn lno_only() {
+		let input = "bitcoin:?lno=lno1pqpzwyq2qe3k7enxv4j3pjgrrwzv24nmzfjypx2a8m264ws9vht3uxp5vpypnluuzl67n4waq78syn2tdngnvypje2da9t4emyq25n29m84dszkfggehf3z35uj56pmxqgp5vfme44926w23gc282xn3pp0j7y8pc7je8e8qxrhmtwrjrnj4kzcqyqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqjnrlnqdqf52q7jwgcnxgnuseav37nvs0zn06dyfs79hk7uk8lrxuqzqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq";
+		let uri = parse(&input).unwrap();
+		assert!(uri.address.is_none());
+		assert_eq!(uri.lno().len(), 1);
+	}
+
+	#[test]
+	fn sp_only() {
+		let input = "bitcoin:?sp=sp1qsilentpayment";
+		let uri = parse(input).unwrap();
+		assert!(uri.address.is_none());
+		assert_eq!(uri.sp()[0].inner(), "sp1qsilentpayment");
+	}
+
+	#[test]
+	fn pay_only() {
+		let input = "bitcoin:?pay=paynym1abc";
+		let uri = parse(input).unwrap();
+		assert!(uri.address.is_none());
+		assert_eq!(uri.pay()[0].inner(), "paynym1abc");
+	}
+
+	#[test]
+	fn required_lightning_accepted() {
+		let input = "bitcoin:1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa?req-lightning=lnbc20m1pvjluezsp5zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zygshp58yjmdan79s6qqdhdzgynm4zwqd5d7xmw5fk98klysy043l2ahrqspp5qqqsyqcyq5rqwzqfqqqsyqcyq5rqwzqfqqqsyqcyq5rqwzqfqypqfp4qrp33g0q5c5txsp9arysrx4k6zdkfs4nce4xj0gdcccefvpysxf3q9qrsgq9vlvyj8cqvq6ggvpwd53jncp9nwc47xlrsnenq2zp70fq83qlgesn4u3uyf4tesfkkwwfg3qs54qe426hp3tz7z6sweqdjg05axsrjqp9yrrwc";
+		let uri = parse(&input).unwrap();
+		assert_eq!(uri.lightning().len(), 1);
+		assert!(uri.lightning()[0].required());
+	}
+
+	#[test]
+	fn multiple_sp_params() {
+		let input = "bitcoin:1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa?sp=sp1first&sp=sp1second";
+		let uri = parse(input).unwrap();
+		assert_eq!(uri.sp().len(), 2);
+		assert_eq!(uri.sp()[0].inner(), "sp1first");
+		assert_eq!(uri.sp()[1].inner(), "sp1second");
+	}
+
+	// ── Network validation ──────────────────────────────────────────
+
+	#[test]
+	fn reject_testnet_address_in_body() {
+		let err = parse_no_ext("bitcoin:tb1qghfhmd4zh7ncpmxl3qzhmq566jk8ckq4gafnmg")
+			.unwrap_err();
+		assert_eq!(err, Bip321Error::NetworkKindMismatch { expected: NetworkKind::Main });
+	}
+
+	#[test]
+	fn reject_malformed_lightning_invoice() {
+		let err = parse("bitcoin:1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa?lightning=notaninvoice").unwrap_err();
+		assert!(matches!(err, Bip321Error::PaymentInstructionParseError { .. }));
+	}
+
+	#[test]
+	fn reject_malformed_lno_offer() {
+		let err = parse("bitcoin:1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa?lno=notanoffer").unwrap_err();
+		assert!(matches!(err, Bip321Error::PaymentInstructionParseError { .. }));
+	}
+
+	#[test]
+	fn reject_testnet_address_in_bc() {
+		let err = parse("bitcoin:1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa?bc=tb1qghfhmd4zh7ncpmxl3qzhmq566jk8ckq4gafnmg").unwrap_err();
+		assert_eq!(err, Bip321Error::NetworkKindMismatch { expected: NetworkKind::Main });
+	}
+
+	#[test]
+	fn reject_mainnet_address_in_tb() {
+		let err = parse("bitcoin:1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa?tb=bc1qar0srrr7xfkvy5l643lydnw9re59gtzzwf5mdq").unwrap_err();
+		assert_eq!(err, Bip321Error::NetworkKindMismatch { expected: NetworkKind::Test });
+	}
+}
