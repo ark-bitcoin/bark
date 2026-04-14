@@ -1482,29 +1482,41 @@ async fn bark_cannot_cancel_lightning_receive_after_preimage_revealed() {
 
 	let ctx = TestContext::new("lightningd/bark_cannot_cancel_after_preimage_revealed").await;
 
-	// Only need a single lightning node for the server to create invoices;
-	// no channel or sender needed since we never actually pay.
-	let lightningd = ctx.new_lightningd("lightningd").await;
+	let lightning = ctx.new_lightning_setup("lightningd").await;
 
-	let srv = ctx.new_captaind_with_funds("server", Some(&lightningd), btc(10)).await;
+	let srv = ctx.captaind("srv").lightningd(&lightning.internal).funded(btc(10)).create().await;
 
-	let bark = ctx.new_bark_with_funds("bark", &srv, btc(3)).await;
-	let board_amount = btc(2);
-	bark.board_and_confirm_and_register(&ctx, board_amount).await;
+	// Proxy drops claim_lightning_receive so the cooperative settlement fails,
+	// but the preimage has already been revealed locally before the RPC.
+	#[derive(Clone)]
+	struct DropClaim;
+	#[async_trait::async_trait]
+	impl captaind::proxy::ArkRpcProxy for DropClaim {
+		async fn claim_lightning_receive(
+			&self,
+			_upstream: &mut ArkClient,
+			_req: protos::ClaimLightningReceiveRequest,
+		) -> Result<protos::ArkoorPackageCosignResponse, tonic::Status> {
+			Err(tonic::Status::internal("blocked claim"))
+		}
+	}
 
-	let pay_amount = btc(1);
-	let invoice_info = bark.bolt11_invoice(pay_amount).await;
+	let proxy = srv.start_proxy_no_mailbox(DropClaim).await;
 
-	// The invoice should appear as a pending receive
-	let receives = bark.list_lightning_receives().await;
-	assert_eq!(receives.len(), 1);
+	let bark = ctx.bark("bark", &proxy.address).funded(btc(3)).create().await;
+	bark.board(btc(2)).await;
+	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 
-	// Simulate preimage revelation by directly marking it in the database.
-	// In production, this happens during the claim flow right before the
-	// cooperative settlement RPC. We can't observe this state through the CLI
-	// because a failed claim automatically exits and finishes the receive.
-	let db = bark::persist::sqlite::SqliteClient::open(bark.datadir().join("db.sqlite")).unwrap();
-	bark::persist::BarkPersister::set_preimage_revealed(&db, receives[0].payment_hash).await.unwrap();
+	let invoice_info = bark.bolt11_invoice(btc(1)).await;
+
+	let cloned_invoice = invoice_info.clone();
+	tokio::spawn(async move {
+		lightning.external.pay_bolt11(cloned_invoice.invoice).await;
+	});
+
+	// The claim will fail because the proxy drops claim_lightning_receive,
+	// but set_preimage_revealed has already been called locally.
+	let _ = bark.try_lightning_receive(&invoice_info.invoice).await;
 
 	// Trying to cancel should fail because the preimage has been revealed
 	let err = bark.try_cancel_lightning_receive(&invoice_info.invoice).await.unwrap_err();

@@ -521,12 +521,12 @@ impl Wallet {
 		let receive = self.db.fetch_lightning_receive_by_payment_hash(payment_hash).await?
 			.context("no pending lightning receive found for this payment hash")?;
 
-		if receive.finished_at.is_some() {
-			bail!("lightning receive is already finished");
-		}
-
 		if receive.preimage_revealed_at.is_some() {
 			bail!("cannot cancel: preimage has already been revealed");
+		}
+
+		if receive.finished_at.is_some() {
+			bail!("lightning receive is already finished");
 		}
 
 		let (mut srv, _) = self.require_server().await?;
