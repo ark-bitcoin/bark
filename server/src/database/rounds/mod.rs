@@ -361,14 +361,11 @@ impl Db {
 		let mut conn = self.get_conn().await?;
 		let tx = conn.transaction().await?;
 
-		// Restore input vtxos: clear spent_in_round and oor_spent_txid.
+		// Restore input vtxos: set them back to spendable.
 		// oor_spent_txid may have been set by set_forfeit_transactions after finish_round.
-		let stmt = tx.prepare_typed(
-			"UPDATE vtxo SET spent_in_round = NULL, oor_spent_txid = NULL, updated_at = NOW()
-			WHERE spent_in_round = $1",
-			&[Type::INT8],
-		).await?;
-		tx.execute(&stmt, &[&round.id]).await?;
+		let update = tree::VtxoTreeUpdate::new()
+			.undo_round(round.id);
+		tree::execute_vtxo_tree_update(&tx, update).await?;
 
 		// Delete round_part_input and round_part_output before round_participation (FK).
 		let stmt = tx.prepare_typed(
