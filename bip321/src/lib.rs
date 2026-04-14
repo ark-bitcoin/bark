@@ -34,8 +34,10 @@
 //! wallet-specific custom params).
 
 mod error;
+mod extension;
 
 pub use error::Bip321Error;
+pub use extension::{ExtensionHandler, NoExtensions};
 
 use percent_encoding::{AsciiSet, NON_ALPHANUMERIC};
 
