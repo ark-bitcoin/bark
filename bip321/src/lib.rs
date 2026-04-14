@@ -39,10 +39,12 @@ mod extension;
 pub use error::Bip321Error;
 pub use extension::{ExtensionHandler, NoExtensions};
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::fmt;
+use std::str::FromStr;
 
 use bitcoin::address::{NetworkChecked, NetworkUnchecked};
-use bitcoin::{Address, Amount, Network, NetworkKind};
+use bitcoin::{Address, Amount, Denomination, Network, NetworkKind};
 use lightning::offers::offer::Offer;
 use lightning_invoice::Bolt11Invoice;
 use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, percent_decode_str, utf8_percent_encode};
@@ -442,5 +444,191 @@ fn param_key(base: &str, required: bool) -> String {
 		format!("{}{}", REQUIRED_PREFIX, base)
 	} else {
 		base.to_string()
+	}
+}
+
+impl<E: ExtensionHandler> FromStr for Bip321Uri<E> {
+	type Err = Bip321Error;
+
+	fn from_str(input: &str) -> Result<Self, Self::Err> {
+		let input = input.trim();
+		const SCHEME: &str = "bitcoin:";
+
+		if input.len() < SCHEME.len() {
+			return Err(Bip321Error::TooShort);
+		}
+		if !input[..SCHEME.len()].eq_ignore_ascii_case(SCHEME) {
+			return Err(Bip321Error::InvalidScheme);
+		}
+
+		let body = &input[SCHEME.len()..];
+		let (address_str, query_str) = {
+			let mut split = body.splitn(2, '?');
+			(split.next().unwrap(), split.next())
+		};
+
+		let mut uri = Bip321Uri::<E>::new();
+
+		if !address_str.is_empty() {
+			let addr = Address::from_str(address_str)
+				.map_err(|_| Bip321Error::InvalidAddress(address_str.to_string()))?;
+			let addr = addr.require_network(Network::Bitcoin)
+				.map_err(|_| Bip321Error::NetworkKindMismatch { expected: NetworkKind::Main })?;
+			uri.address = Some(addr);
+		}
+
+		if let Some(qs) = query_str {
+			if !qs.is_empty() {
+				// Track seen singleton keys for duplicate detection
+				let mut seen_keys = HashSet::new();
+
+				for param in qs.split('&') {
+					if param.is_empty() {
+						continue;
+					}
+
+					let (raw_key, raw_value) = {
+						let mut split = param.splitn(2, '=');
+						let key = split.next()
+							.ok_or_else(|| Bip321Error::MalformedParam(param.to_string()))?;
+						let value = split.next()
+							.ok_or_else(|| Bip321Error::MalformedParam(param.to_string()))?;
+						(key, value)
+					};
+
+					// Determine if req- prefixed, and get the base key
+					let (required, base_key) =
+						match strip_prefix_ignore_case(raw_key, REQUIRED_PREFIX) {
+							Some(stripped) => (true, stripped),
+							None => (false, raw_key),
+						};
+
+					let base_key_lower = base_key.to_ascii_lowercase();
+
+					// NB: the req- prefix is intentionally not stored for
+					// amount, label, and message. Every BIP 321 parser must
+					// understand these fields, so req- carries no additional
+					// semantics for them.
+					match base_key_lower {
+						key if key == "amount" => {
+							if !seen_keys.insert(key) {
+								return Err(Bip321Error::DuplicateParam("amount".into()));
+							}
+
+							if raw_value.contains(',') {
+								return Err(Bip321Error::MalformedParam(param.to_string()));
+							}
+							let amount = Amount::from_str_in(raw_value, Denomination::Bitcoin)
+								.map_err(|_| {
+									Bip321Error::MalformedParam(param.to_string())
+								})?;
+							if amount == Amount::ZERO {
+								return Err(Bip321Error::AmountZero);
+							}
+							uri.amount = Some(amount);
+						}
+						key if key == "label" => {
+							if !seen_keys.insert(key) {
+								return Err(Bip321Error::DuplicateParam("label".into()));
+							}
+
+							let decoded = percent_decode(raw_value)?;
+							uri.label = Some(decoded);
+						}
+						key if key == "message" => {
+							if !seen_keys.insert(key) {
+								return Err(Bip321Error::DuplicateParam("message".into()));
+							}
+
+							let decoded = percent_decode(raw_value)?;
+							uri.message = Some(decoded);
+						}
+						key if key == "pop" => {
+							if !seen_keys.insert(key) {
+								return Err(Bip321Error::DuplicateParam("pop".into()));
+							}
+
+							let decoded = percent_decode(raw_value)?;
+							let pop = PopConfig::new(decoded, required)?;
+							uri.pop = Some(pop);
+						}
+						// Standard payment instructions (may appear multiple times)
+						key if key == "lightning" => {
+							let invoice = Bolt11Invoice::from_str(&raw_value)
+								.map_err(|e| Bip321Error::PaymentInstructionParseError {
+									key: key.to_string(), error: e.to_string(),
+								})?;
+							uri.lightning.push(FieldWithAttributes::new(invoice, required));
+						}
+						key if key == "lno" => {
+							let offer = Offer::from_str(&raw_value)
+								.map_err(|e| Bip321Error::PaymentInstructionParseError {
+									key: key.to_string(), error: format!("{:?}", e),
+								})?;
+							uri.lno.push(FieldWithAttributes::new(offer, required));
+						}
+						key if key == "sp" => {
+							uri.sp.push(FieldWithAttributes::new(raw_value.to_string(), required));
+						}
+						key if key == "pay" => {
+							uri.pay.push(FieldWithAttributes::new(raw_value.to_string(), required));
+						}
+						key if key == "bc" => {
+							let address = Address::from_str(&raw_value)
+								.map_err(|e| Bip321Error::PaymentInstructionParseError {
+									key: key.to_string(), error: e.to_string(),
+								})?;
+							let address = address.require_network(Network::Bitcoin)
+								.map_err(|_| Bip321Error::NetworkKindMismatch { expected: NetworkKind::Main })?;
+							uri.bc.push(FieldWithAttributes::new(address, required));
+						}
+						key if key == "tb" => {
+							let address = Address::from_str(&raw_value)
+								.map_err(|e| Bip321Error::PaymentInstructionParseError {
+									key: key.to_string(), error: e.to_string(),
+								})?;
+							if address.is_valid_for_network(Network::Bitcoin) {
+								return Err(Bip321Error::NetworkKindMismatch { expected: NetworkKind::Test });
+							}
+							uri.tb.push(FieldWithAttributes::new(
+								address.assume_checked(), required,
+							));
+						}
+						_ => {
+							// Try the extension handler first
+							let decoded = percent_decode(raw_value)?;
+							let handled = uri.extensions.handle_param(
+								&base_key_lower,
+								&decoded,
+								required,
+							)?;
+
+							if !handled {
+								// Unknown parameter
+								if required {
+									return Err(Bip321Error::UnsupportedRequiredParam(
+										base_key_lower.clone(),
+									));
+								}
+								// Store as custom (unknown non-required params)
+								uri.custom.entry(base_key_lower.clone()).or_insert_with(Vec::new).push(
+									FieldWithAttributes::new(decoded, false),
+								);
+							}
+						}
+					}
+				}
+			}
+		}
+
+		// ── Validate: must have at least one payment destination ─────
+		if uri.address.is_none()
+			&& !uri.has_payment_instruction()
+			&& uri.extensions.is_empty()
+		{
+			return Err(Bip321Error::NoPaymentDestination);
+		}
+
+		Ok(uri)
 	}
 }
