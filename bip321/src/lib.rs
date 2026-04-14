@@ -1008,6 +1008,67 @@ mod tests {
 		assert!(uri.address.is_some());
 	}
 
+	#[test]
+	fn roundtrip_address_only() {
+		let parsed = parse_no_ext("bitcoin:1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa").unwrap();
+		let serialized = parsed.to_string();
+		let reparsed = parse_no_ext(&serialized).unwrap();
+		assert_eq!(parsed, reparsed);
+	}
+
+	#[test]
+	fn roundtrip_with_amount_label_message() {
+		let parsed = parse_no_ext("bitcoin:1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa?amount=1.5&label=Test%20Label&message=Hello%20World").unwrap();
+		let serialized = parsed.to_string();
+		let reparsed = parse_no_ext(&serialized).unwrap();
+		assert_eq!(parsed, reparsed);
+	}
+
+	#[test]
+	fn roundtrip_with_special_chars_in_label() {
+		let parsed = parse_no_ext("bitcoin:1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa?label=caf%C3%A9%20%26%20more%20%3D%20fun").unwrap();
+		let serialized = parsed.to_string();
+		let reparsed = parse_no_ext(&serialized).unwrap();
+		assert_eq!(parsed, reparsed);
+	}
+
+	#[test]
+	fn roundtrip_with_pop() {
+		let parsed = parse_no_ext("bitcoin:1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa?pop=initiatingapp%3A").unwrap();
+		let serialized = parsed.to_string();
+		let reparsed = parse_no_ext(&serialized).unwrap();
+		assert_eq!(parsed, reparsed);
+	}
+
+	#[test]
+	fn builder_basic() {
+		let mut uri = Bip321Uri::<NoExtensions>::new();
+		let addr = Address::from_str("1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa").unwrap();
+		uri.set_address(addr).unwrap();
+		uri.set_amount(Amount::from_btc(1.0).unwrap()).unwrap();
+		uri.set_label("Test".to_string());
+		uri.validate().unwrap();
+
+		let s = uri.to_string();
+		assert!(s.starts_with("bitcoin:"));
+		assert!(s.contains("amount=1"));
+		assert!(s.contains("label=Test"));
+	}
+
+	#[test]
+	fn builder_reject_zero_amount() {
+		let mut uri = Bip321Uri::<NoExtensions>::new();
+		let err = uri.set_amount(Amount::ZERO).unwrap_err();
+		assert_eq!(err, Bip321Error::AmountZero);
+	}
+
+	#[test]
+	fn builder_reject_no_destination() {
+		let uri = Bip321Uri::<NoExtensions>::new();
+		let err = uri.validate().unwrap_err();
+		assert_eq!(err, Bip321Error::NoPaymentDestination);
+	}
+
 	fn parse(s: &str) -> Result<Bip321Uri, Bip321Error> {
 		Bip321Uri::from_str(s)
 	}
@@ -1068,6 +1129,15 @@ mod tests {
 		let uri = parse(&input).unwrap();
 		assert_eq!(uri.lightning().len(), 1);
 		assert!(uri.lightning()[0].required());
+	}
+
+	#[test]
+	fn lightning_roundtrip() {
+		let input = "bitcoin:1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa?lightning=lnbc20m1pvjluezsp5zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zygshp58yjmdan79s6qqdhdzgynm4zwqd5d7xmw5fk98klysy043l2ahrqspp5qqqsyqcyq5rqwzqfqqqsyqcyq5rqwzqfqqqsyqcyq5rqwzqfqypqfp4qrp33g0q5c5txsp9arysrx4k6zdkfs4nce4xj0gdcccefvpysxf3q9qrsgq9vlvyj8cqvq6ggvpwd53jncp9nwc47xlrsnenq2zp70fq83qlgesn4u3uyf4tesfkkwwfg3qs54qe426hp3tz7z6sweqdjg05axsrjqp9yrrwc&lno=lno1pqpzwyq2qe3k7enxv4j3pjgrrwzv24nmzfjypx2a8m264ws9vht3uxp5vpypnluuzl67n4waq78syn2tdngnvypje2da9t4emyq25n29m84dszkfggehf3z35uj56pmxqgp5vfme44926w23gc282xn3pp0j7y8pc7je8e8qxrhmtwrjrnj4kzcqyqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqjnrlnqdqf52q7jwgcnxgnuseav37nvs0zn06dyfs79hk7uk8lrxuqzqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq";
+		let parsed = parse(&input).unwrap();
+		let serialized = parsed.to_string();
+		let reparsed = parse(&serialized).unwrap();
+		assert_eq!(parsed, reparsed);
 	}
 
 	#[test]
