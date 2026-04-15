@@ -32,11 +32,11 @@ mod txindex;
 pub mod utils;
 
 
-use crate::database::{BlockTable, VirtualTransaction};
+use crate::database::BlockTable;
+use crate::database::tree::VtxoTreeUpdate;
 pub use crate::intman::{CAPTAIND_API_KEY, CAPTAIND_CLI_API_KEY};
 pub use crate::config::Config;
 
-use std::borrow::{Borrow, Cow};
 use std::collections::HashSet;
 use std::fs;
 use std::pin::Pin;
@@ -54,7 +54,7 @@ use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::wrappers::errors::BroadcastStreamRecvError;
 use tracing::{info, trace, warn};
 
-use ark::{ServerVtxo, Vtxo, VtxoId, VtxoRequest};
+use ark::{Vtxo, VtxoId, VtxoRequest};
 use ark::vtxo::{Full, VtxoRef};
 use ark::board::BoardBuilder;
 use ark::fees::validate_and_subtract_fee;
@@ -739,26 +739,12 @@ impl Server {
 		let builder = BoardBuilder::new_from_vtxo(&vtxo, &funding_tx, self.server_pubkey)
 			.badarg("vtxo is not a board")?;
 
-		let virtual_transactions = [
-			VirtualTransaction {
-				txid: funding_txid,
-				signed_tx: Some(Cow::Borrowed(&funding_tx)),
-				is_funding: true,
-				server_may_own_descendant_since: None,
-			},
-			VirtualTransaction {
-				txid: builder.exit_txid(),
-				signed_tx: None,
-				is_funding: false,
-				server_may_own_descendant_since: None,
-			},
-		];
-
-		self.db.update_virtual_transaction_tree(
-			virtual_transactions,
-			builder.build_internal_unsigned_vtxos(),
-			builder.spend_info(),
-		).await?;
+		let update = VtxoTreeUpdate::new()
+			.upsert_funding_tx(&funding_tx)
+			.upsert_unsigned_tx([builder.exit_txid()])
+			.insert_spendable_vtxos(builder.build_internal_unsigned_vtxos())
+			.mark_vtxos_oor_spent(builder.spend_info());
+		self.db.execute_vtxo_tree_update(update).await?;
 
 		slog!(RegisteredBoard,
 			onchain_utxo: vtxo.chain_anchor(),
@@ -780,6 +766,8 @@ impl Server {
 		&self,
 		vtxos: impl IntoIterator<Item = impl AsRef<Vtxo<Full>>>,
 	) -> anyhow::Result<()> {
+		let mut signed_txs: Vec<Transaction> = Vec::new();
+		let mut seen_txids: HashSet<Txid> = HashSet::new();
 		for vtxo in vtxos {
 			let vtxo = vtxo.as_ref();
 			let vtxo_id = vtxo.id();
@@ -811,14 +799,20 @@ impl Server {
 				.context(vtxo_id)
 				.badarg("vtxo validation failed")?;
 
-			// Extract all transactions from the VTXO
+			// Collect all signed transactions from the VTXO, deduplicating
+			// by txid since different vtxos can share parent transactions.
 			for item in vtxo.transactions() {
 				let txid = item.tx.compute_txid();
-				trace!("Registering virtual tx {} for vtxo {}", txid, vtxo_id);
-				self.db.upsert_virtual_transaction(txid, Some(&item.tx), false, None).await?;
+				if seen_txids.insert(txid) {
+					trace!("Registering virtual tx {} for vtxo {}", txid, vtxo_id);
+					signed_txs.push(item.tx);
+				}
 			}
 		}
 
+		let update = VtxoTreeUpdate::new()
+			.upsert_signed_tx(signed_txs);
+		self.db.execute_vtxo_tree_update(update).await?;
 		Ok(())
 	}
 
@@ -948,17 +942,4 @@ impl Server {
 		Ok(self.cosign_hashlocked_leaf(request, &vtxo.vtxo, &round.funding_tx))
 	}
 
-	/// Register a set of new VTXOs
-	///
-	/// This should only be called once we trust that the root of the tree
-	/// will confirm.
-	pub async fn register_vtxos<V>(
-		&self,
-		vtxos: impl IntoIterator<Item = V>,
-	) -> anyhow::Result<()>
-	where
-		V: Borrow<ServerVtxo<Full>>,
-	{
-		self.db.upsert_vtxos(vtxos).await.context("db error occurred")
-	}
 }

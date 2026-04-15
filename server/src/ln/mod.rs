@@ -28,7 +28,7 @@ use server_rpc::TryFromBytes;
 use bitcoin_ext::{AmountExt, BlockDelta, BlockHeight};
 
 use crate::arkoor::ArkoorCosignRequestValidationParams;
-use crate::database::VirtualTransaction;
+use crate::database::tree::VtxoTreeUpdate;
 use crate::database::ln::{
 	LightningHtlcSubscription, LightningHtlcSubscriptionStatus, LightningPaymentStatus,
 };
@@ -308,26 +308,12 @@ impl Server {
 			}
 		}
 
-		// We are going to compute all vtxos and spend-info
-		// and mark it into the database
-		let virtual_transactions = builder.virtual_transactions();
-		let new_output_vtxos = builder.build_unsigned_vtxos().map(ServerVtxo::from);
-		let new_internal_vtxos = builder.build_unsigned_internal_vtxos();
-		let spend_info = builder.spend_info();
-
-		// We are going to mark the update in the database
-		self.db.update_virtual_transaction_tree(
-			virtual_transactions.map(|txid| {
-				VirtualTransaction {
-					txid: txid,
-					signed_tx: None,
-					is_funding: false,
-					server_may_own_descendant_since: None,
-				}
-			}),
-			new_output_vtxos.chain(new_internal_vtxos),
-			spend_info,
-		).await?;
+		let update = VtxoTreeUpdate::new()
+			.upsert_unsigned_tx(builder.virtual_transactions())
+			.insert_oor_spent_vtxos(builder.build_unsigned_internal_vtxos())
+			.insert_spendable_vtxos(builder.build_unsigned_vtxos().map(ServerVtxo::from))
+			.mark_vtxos_oor_spent(builder.input_spend_info());
+		self.db.execute_vtxo_tree_update(update).await?;
 
 		let new_vtxo_ids = builder.build_unsigned_vtxos().map(|v| v.id()).collect::<Vec<_>>();
 

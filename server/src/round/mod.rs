@@ -35,6 +35,7 @@ use ark::tree::signed::{
 use server_log::{LogMsg, RoundVtxoCreated};
 
 use crate::database::rounds::{StoredRoundOutput, StoredRoundParticipation};
+use crate::database::tree::VtxoTreeUpdate;
 use crate::{telemetry, Server, SECP};
 use crate::error::{ContextExt, NotFound};
 use crate::flux::{VtxoFluxGuard, OwnedVtxoFluxGuard};
@@ -1063,9 +1064,10 @@ impl SigningVtxoTree {
 		let signed_round_tx = sign_funding_tx(&mut self).await?;
 
 		// Persist the signed funding tx to the database.
-		srv.db.upsert_virtual_transaction(
-			self.round_txid, Some(&signed_round_tx), true, None,
-		).await.map_err(|e| RoundError::Fatal(e.context("failed to upsert signed funding tx")))?;
+		let update = VtxoTreeUpdate::new()
+			.upsert_funding_tx(&signed_round_tx);
+		srv.db.execute_vtxo_tree_update(update).await
+			.map_err(|e| RoundError::Fatal(e.context("failed to upsert signed funding tx")))?;
 
 		let finished = RoundFinished {
 			round_seq: self.round_step.round_seq(),

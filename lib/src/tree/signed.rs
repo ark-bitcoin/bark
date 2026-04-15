@@ -1024,9 +1024,14 @@ impl CachedSignedVtxoTree {
 		}
 	}
 
-	/// Construct all ServerVtxos
-	pub fn internal_vtxos(&self) -> impl Iterator<Item = ServerVtxo<Full>> + ExactSizeIterator + '_ {
-		(0..self.nb_nodes()).map(|idx| self.build_internal_vtxo(idx))
+	/// Construct all internal ServerVtxos, each paired with the txid
+	/// of the transaction that spends it.
+	pub fn internal_vtxos(&self) -> impl Iterator<Item = (ServerVtxo<Full>, Txid)> + '_ {
+		(0..self.nb_nodes()).map(|idx| {
+			let vtxo = self.build_internal_vtxo(idx);
+			let spending_txid = self.txs[idx].compute_txid();
+			(vtxo, spending_txid)
+		})
 	}
 
 	/// Construct all individual vtxos from this round.
@@ -1035,12 +1040,8 @@ impl CachedSignedVtxoTree {
 	}
 
 	pub fn spend_info(&self) -> impl Iterator<Item = (VtxoId, Txid)> + '_ {
-		// This implementation is the easiest I could find
-		// It can be optimized to ensure we don't have to calculate
-		// the txids all the time.
 		self.internal_vtxos()
-			.enumerate()
-			.map(|(idx, vtxo)| (vtxo.id(), self.txs[idx].compute_txid()))
+			.map(|(vtxo, spending_txid)| (vtxo.id(), spending_txid))
 	}
 }
 
@@ -1887,7 +1888,7 @@ mod test {
 				vtxo.validate(&funding_tx).expect_err("but not fully valid anymore");
 			}
 
-			for (idx, vtxo) in tree.internal_vtxos().enumerate() {
+			for (idx, (vtxo, _spending_txid)) in tree.internal_vtxos().enumerate() {
 				// Verify transactions with consensus checks
 				let mut prev_txout = funding_tx.output[vtxo.chain_anchor().vout as usize].clone();
 

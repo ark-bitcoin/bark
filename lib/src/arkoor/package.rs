@@ -406,14 +406,18 @@ impl<S: state::BuilderState> ArkoorPackageBuilder<S> {
 			.flatten()
 	}
 
-	/// Builds the unsigned internal VTXOs
-	///
-	/// Returns the checkpoint outputs (if checkpoints are used) and the
-	/// dust isolation output (if dust isolation is used).
-	pub fn build_unsigned_internal_vtxos<'a>(&'a self) -> impl Iterator<Item = ServerVtxo<Full>> + 'a {
+	/// Builds the unsigned internal VTXOs, each paired with the txid
+	/// of the transaction that spends it.
+	pub fn build_unsigned_internal_vtxos(&self) -> Vec<(ServerVtxo<Full>, Txid)> {
 		self.builders.iter()
 			.map(|b| b.build_unsigned_internal_vtxos())
 			.flatten()
+			.collect()
+	}
+
+	/// Returns the (vtxo_id, spending_txid) for each input vtxo.
+	pub fn input_spend_info<'a>(&'a self) -> impl Iterator<Item = (VtxoId, Txid)> + 'a {
+		self.builders.iter().map(|b| b.input_spend_info())
 	}
 
 	/// Each [VtxoId] in the list is spent by [Txid]
@@ -1148,7 +1152,7 @@ mod test {
 		// Collect all internal VTXOs
 		let internal_vtxos: Vec<VtxoId> = package
 			.build_unsigned_internal_vtxos()
-			.map(|v| v.id())
+			.iter().map(|(v, _)| v.id())
 			.collect();
 
 		// Collect all spend_info entries
@@ -1200,7 +1204,7 @@ mod test {
 		// Collect all internal VTXOs (checkpoints + dust isolation)
 		let internal_vtxos: Vec<VtxoId> = package
 			.build_unsigned_internal_vtxos()
-			.map(|v| v.id())
+			.iter().map(|(v, _)| v.id())
 			.collect();
 
 		// Collect all spend_info entries
@@ -1253,7 +1257,7 @@ mod test {
 		// Collect all internal VTXOs
 		let internal_vtxos: Vec<VtxoId> = package
 			.build_unsigned_internal_vtxos()
-			.map(|v| v.id())
+			.iter().map(|(v, _)| v.id())
 			.collect();
 
 		// Collect all spend_info entries
@@ -1316,7 +1320,7 @@ mod test {
 		// Collect all internal VTXOs
 		let internal_vtxos: Vec<VtxoId> = package
 			.build_unsigned_internal_vtxos()
-			.map(|v| v.id())
+			.iter().map(|(v, _)| v.id())
 			.collect();
 
 		// Collect all spend_info entries

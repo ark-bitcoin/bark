@@ -10,8 +10,8 @@ pub mod data_migrations;
 pub mod watchman;
 pub mod intman;
 pub mod ln;
-pub mod oor;
 pub mod rounds;
+pub mod tree;
 pub mod vtxopool;
 
 mod model;
@@ -230,24 +230,15 @@ impl Db {
 
 
 
-	/// Atomically insert the given vtxos.
-	///
-	/// If one or more vtxo's is already present in the database
-	/// the query will succeed.
-	pub async fn upsert_vtxos<V>(
+	/// Insert vtxos as spendable. Existing vtxos are silently skipped.
+	pub async fn upsert_vtxos(
 		&self,
-		vtxos: impl IntoIterator<Item = V>,
-	) -> anyhow::Result<()>
-	where
-		V: Borrow<ServerVtxo<Full>>,
-	{
-		let mut conn = self.get_conn().await?;
-		let tx = conn.transaction().await?;
-
-		query::upsert_vtxos(&tx, vtxos).await?;
-
-		tx.commit().await?;
-		Ok(())
+		vtxos: impl IntoIterator<Item = impl Borrow<ServerVtxo<Full>>>,
+	) -> anyhow::Result<()> {
+		let vtxos = vtxos.into_iter().map(|v| v.borrow().clone()).collect::<Vec<_>>();
+		let update = tree::VtxoTreeUpdate::new()
+			.insert_spendable_vtxos(vtxos);
+		self.execute_vtxo_tree_update(update).await
 	}
 
 	pub async fn get_server_vtxo_by_id(
@@ -290,42 +281,17 @@ impl Db {
 		}).collect::<anyhow::Result<_, _>>()?)
 	}
 
-	/// Updates the virtual transaction tree.
-	/// This method will
-	/// - upsert new virtual transactions
-	/// - upsert new vtxos
-	/// - mark spends in the virtual transaction tree
-	///
-	/// This method will fail
-	/// - if a database error occurred
-	pub async fn update_virtual_transaction_tree<'a, V>(
+	pub async fn execute_vtxo_tree_update(
 		&self,
-		new_virtual_txs: impl IntoIterator<Item = VirtualTransaction<'a>>,
-		new_vtxos: impl IntoIterator<Item = V>,
-		spend_info: impl IntoIterator<Item = (VtxoId, Txid)>,
-	) -> anyhow::Result<()>
-	where
-		V: Borrow<ServerVtxo<Full>>,
-	{
+		update: tree::VtxoTreeUpdate,
+	) -> anyhow::Result<()> {
 		let mut conn = self.get_conn().await.context("failed to connect to db")?;
 		let tx = conn.transaction().await.context("failed to start db transaction")?;
 
-		query::update_virtual_transaction_tree(&tx, new_virtual_txs, new_vtxos, spend_info).await?;
+		tree::execute_vtxo_tree_update(&tx, update).await?;
 
 		tx.commit().await?;
 		Ok(())
-	}
-
-	pub async fn upsert_virtual_transaction(
-		&self,
-		txid: Txid,
-		signed_tx: Option<&Transaction>,
-		is_funding: bool,
-		server_may_own_descendant_since: Option<chrono::DateTime<chrono::Local>>,
-	) -> anyhow::Result<Txid> {
-		let conn = self.get_conn().await?;
-		let client = conn.client();
-		query::upsert_virtual_transaction(client, txid, signed_tx, is_funding, server_may_own_descendant_since).await
 	}
 
 	/// Queries a virtual transaction by txid
@@ -749,39 +715,20 @@ impl Db {
 		tx.execute(&stmt, &[&offboard_txid_str, &offboard_tx_bytes]).await?;
 
 		// update the virtual tx tree
-		let funding_tx = VirtualTransaction::new_signed_ref(&offboard_tx).as_funding();
-		let forfeit_vtxs = forfeit_result.forfeit_txs.iter()
-			.map(VirtualTransaction::new_signed_ref);
-		let connector_vtx = forfeit_result.connector_tx.as_ref()
-			.map(VirtualTransaction::new_signed_ref);
-		// I have no clue why I need to collect them into vec first
-		// but it makes the compiler happy
-		let vtxs = [funding_tx].into_iter()
-			.chain(forfeit_vtxs)
-			.chain(connector_vtx)
-			.collect::<Vec<_>>();
-		let server_vtxos = forfeit_result.forfeit_vtxos.iter()
-			.chain(&forfeit_result.connector_vtxos)
-			.collect::<Vec<_>>();
-		let spend_info = forfeit_result.spend_info(
-			input_vtxos.iter().map(|v| v.id()),
-			offboard_txid,
-		).collect::<Vec<_>>();
-		query::update_virtual_transaction_tree(&tx, vtxs, server_vtxos, spend_info).await?;
+		let connector_txs = forfeit_result.connector_tx.iter().cloned();
+		let forfeit_txs = forfeit_result.forfeit_txs.iter().cloned();
 
-		// we already check for spendableness in the above call
-		// we can't check here again because the above call sets "oor_spent_in" column
-		let stmt = tx.prepare_typed(
-			"UPDATE vtxo SET offboarded_in = $2, updated_at = NOW() WHERE vtxo_id = $1;",
-			&[Type::TEXT, Type::TEXT],
-		).await?;
-		for vtxo in input_vtxos {
-			let id = vtxo.id();
-			let rows_affected = tx.execute(&stmt, &[&id.to_string(), &offboard_txid_str]).await?;
-			if rows_affected == 0 {
-				bail!("VTXO {} is already spent", id);
-			}
-		}
+		// Each input is offboard-spent by offboard_tx and forfeited by its forfeit tx
+		let offboard_triples = input_vtxos.iter().zip(&forfeit_result.forfeit_txs)
+			.map(|(vtxo, ff_tx)| (vtxo.id(), offboard_txid, ff_tx.compute_txid()));
+
+		let update = tree::VtxoTreeUpdate::new()
+			.upsert_funding_tx(offboard_tx)
+			.upsert_signed_tx(connector_txs.chain(forfeit_txs))
+			.insert_spendable_bare_vtxos(&forfeit_result.forfeit_vtxos)
+			.insert_spendable_bare_vtxos(&forfeit_result.connector_vtxos)
+			.mark_vtxos_offboard_spent(offboard_triples);
+		tree::execute_vtxo_tree_update(&tx, update).await?;
 
 		// Mark transactions as having server-owned descendants before completing offboard
 		let txids = input_vtxos.iter()

@@ -1,17 +1,18 @@
+mod tree;
+
 use std::str::FromStr;
 
 use bitcoin::secp256k1::PublicKey;
 use bitcoin::Transaction;
 use chrono::Local;
 
-use ark::{ServerVtxo, VtxoId, VtxoPolicy, VtxoRequest};
+use ark::{ServerVtxo, VtxoPolicy, VtxoRequest};
 use ark::offboard::OffboardForfeitResult;
 use ark::integration::{TokenStatus, TokenType};
 use ark::lightning::Invoice;
 use ark::mailbox::{MailboxIdentifier, MailboxType};
 use ark::rounds::RoundId;
 use ark::test_util::VTXO_VECTORS;
-use ark::vtxo::Full;
 use ark::tree::signed::{UnlockHash, UnlockPreimage};
 
 use bitcoin::hashes::{sha256, Hash};
@@ -19,7 +20,8 @@ use bark::lightning_invoice::Bolt11Invoice;
 use bitcoin_ext::BlockRef;
 use cln_rpc::listsendpays_request::ListsendpaysIndex;
 
-use server::database::{BlockTable, Db, MailboxPayload};
+use server::database::{BlockTable, Db, MailboxPayload, VirtualTransaction};
+use server::database::tree::VtxoTreeUpdate;
 use server::database::ln::LightningHtlcSubscriptionStatus;
 use server::database::vtxopool::PoolVtxo;
 use server::filters;
@@ -316,139 +318,6 @@ async fn block_database_crud() {
 }
 
 #[tokio::test]
-async fn upsert_virtual_transaction() {
-	let mut ctx = TestContext::new_minimal("postgresd/virtual_transaction").await;
-	ctx.init_central_postgres().await;
-	let postgres_cfg = ctx.new_postgres(&ctx.test_name).await;
-
-	Db::create(&postgres_cfg).await.expect("Database created");
-	let db = Db::connect(&postgres_cfg).await.expect("Connected to database");
-
-	// Create a dummy transaction
-	let tx = Transaction {
-		version: bitcoin::transaction::Version::non_standard(3),
-		lock_time: bitcoin::absolute::LockTime::ZERO,
-		input: vec![],
-		output: vec![],
-	};
-	let txid = tx.compute_txid();
-
-	// Step 1: Insert an unsigned vtx
-	let returned_txid = db.upsert_virtual_transaction(txid, None, false, None).await
-		.expect("Failed to insert vtx");
-	assert_eq!(returned_txid, txid);
-
-	// Step 2: Verify retrieval returns correct fields with signed_tx = None
-	let vtx = db.get_virtual_transaction_by_txid(txid).await
-		.expect("Failed to get vtx").unwrap();
-	assert_eq!(vtx.txid, txid);
-	assert_eq!(vtx.signed_tx, None);
-	assert_eq!(vtx.is_funding, false);
-
-	// Step 3: Upsert same txid with signed_tx = Some(tx) (fill in signature)
-	let returned_txid2 = db.upsert_virtual_transaction(txid, Some(&tx), false, None).await
-		.expect("Failed to upsert signed vtx");
-	assert_eq!(returned_txid2, txid);
-
-	// Step 4: Verify signed_tx is now populated
-	let vtx_signed = db.get_virtual_transaction_by_txid(txid).await
-		.expect("Failed to get signed vtx").unwrap();
-	assert_eq!(vtx_signed.txid, txid);
-	assert_eq!(vtx_signed.signed_tx().unwrap(), &tx);
-
-	// Step 5: Upsert same txid with signed_tx = None again
-	let returned_txid3 = db.upsert_virtual_transaction(txid, None, false, None).await
-		.expect("Failed to upsert unsigned vtx again");
-	assert_eq!(returned_txid3, txid);
-
-	// Step 6: Verify signed_tx is STILL populated (COALESCE preserves existing)
-	let vtx_after_unsigned = db.get_virtual_transaction_by_txid(txid).await
-		.expect("Failed to get vtx after unsigned upsert").unwrap();
-	assert_eq!(vtx_after_unsigned.signed_tx().unwrap(), &tx);
-
-	// Step 7: Upsert multiple times (idempotency - no errors)
-	db.upsert_virtual_transaction(txid, Some(&tx), false, None).await
-		.expect("Idempotent upsert 1");
-	db.upsert_virtual_transaction(txid, Some(&tx), false, None).await
-		.expect("Idempotent upsert 2");
-}
-
-#[tokio::test]
-async fn upsert_virtual_transaction_server_may_own_descendant() {
-	let mut ctx = TestContext::new_minimal("postgresd/vtx_server_may_own_descendant").await;
-	ctx.init_central_postgres().await;
-	let postgres_cfg = ctx.new_postgres(&ctx.test_name).await;
-
-	Db::create(&postgres_cfg).await.expect("Database created");
-	let db = Db::connect(&postgres_cfg).await.expect("Connected to database");
-
-	let tx = Transaction {
-		version: bitcoin::transaction::Version::non_standard(3),
-		lock_time: bitcoin::absolute::LockTime::ZERO,
-		input: vec![],
-		output: vec![],
-	};
-	let txid = tx.compute_txid();
-
-	// Step 1: Insert vtx with server_may_own_descendant_since = None
-	db.upsert_virtual_transaction(txid, None, false, None).await
-		.expect("Failed to insert vtx");
-	let vtx = db.get_virtual_transaction_by_txid(txid).await.unwrap().unwrap();
-	assert!(vtx.server_may_own_descendant_since.is_none());
-
-	// Step 2: Upsert with server_may_own_descendant_since = Some(timestamp)
-	let timestamp = Local::now();
-	db.upsert_virtual_transaction(txid, None, false, Some(timestamp)).await
-		.expect("Failed to upsert with timestamp");
-
-	// Step 3: Verify timestamp is now set
-	let vtx = db.get_virtual_transaction_by_txid(txid).await.unwrap().unwrap();
-	assert!(vtx.server_may_own_descendant_since.is_some());
-
-	// Step 4: Upsert with server_may_own_descendant_since = None
-	db.upsert_virtual_transaction(txid, None, false, None).await
-		.expect("Failed to upsert with None");
-
-	// Step 5: Verify timestamp is STILL set (COALESCE preserves existing)
-	let vtx = db.get_virtual_transaction_by_txid(txid).await.unwrap().unwrap();
-	assert!(vtx.server_may_own_descendant_since.is_some(),
-		"COALESCE should preserve existing timestamp");
-}
-
-#[tokio::test]
-async fn upsert_virtual_transaction_is_funding_preserved() {
-	let mut ctx = TestContext::new_minimal("postgresd/vtx_is_funding_preserved").await;
-	ctx.init_central_postgres().await;
-	let postgres_cfg = ctx.new_postgres(&ctx.test_name).await;
-
-	Db::create(&postgres_cfg).await.expect("Database created");
-	let db = Db::connect(&postgres_cfg).await.expect("Connected to database");
-
-	let tx = Transaction {
-		version: bitcoin::transaction::Version::non_standard(3),
-		lock_time: bitcoin::absolute::LockTime::ZERO,
-		input: vec![],
-		output: vec![],
-	};
-	let txid = tx.compute_txid();
-
-	// Step 1: Insert vtx with is_funding = true
-	db.upsert_virtual_transaction(txid, None, true, None).await
-		.expect("Failed to insert vtx");
-	let vtx = db.get_virtual_transaction_by_txid(txid).await.unwrap().unwrap();
-	assert_eq!(vtx.is_funding, true);
-
-	// Step 2: Upsert same txid with is_funding = false
-	db.upsert_virtual_transaction(txid, None, false, None).await
-		.expect("Failed to upsert");
-
-	// Step 3: Verify is_funding is still true (not updated on conflict)
-	let vtx = db.get_virtual_transaction_by_txid(txid).await.unwrap().unwrap();
-	assert_eq!(vtx.is_funding, true,
-		"is_funding should be preserved from original INSERT");
-}
-
-#[tokio::test]
 async fn get_virtual_transaction_not_found() {
 	let mut ctx = TestContext::new_minimal("postgresd/vtx_not_found").await;
 	ctx.init_central_postgres().await;
@@ -513,9 +382,10 @@ async fn get_first_unsigned_virtual_transaction() {
 	let txid_nonexistent = tx_nonexistent.compute_txid();
 
 	// tx1: signed, tx2: unsigned, tx3: signed
-	db.upsert_virtual_transaction(txid1, Some(&tx1), false, None).await.unwrap();
-	db.upsert_virtual_transaction(txid2, None, false, None).await.unwrap();
-	db.upsert_virtual_transaction(txid3, Some(&tx3), false, None).await.unwrap();
+	let update = VtxoTreeUpdate::new()
+		.upsert_signed_tx([tx1.clone(), tx3.clone()])
+		.upsert_unsigned_tx([txid2]);
+	db.execute_vtxo_tree_update(update).await.unwrap();
 
 	// Test case 1: [tx1, tx2, tx3] -> Some(tx2)
 	let result = db.get_first_unsigned_virtual_transaction(&[txid1, txid2, txid3]).await.unwrap();
@@ -572,111 +442,6 @@ async fn upsert_vtxos_with_txid() {
 }
 
 #[tokio::test]
-async fn update_virtual_transaction_tree_atomic() {
-	use std::borrow::Cow;
-	use server::database::VirtualTransaction;
-
-	let mut ctx = TestContext::new_minimal("postgresd/vtx_tree_atomic").await;
-	ctx.init_central_postgres().await;
-	let postgres_cfg = ctx.new_postgres(&ctx.test_name).await;
-
-	Db::create(&postgres_cfg).await.expect("Database created");
-	let db = Db::connect(&postgres_cfg).await.expect("Connected to database");
-
-	// Create virtual transaction
-	let tx = Transaction {
-		version: bitcoin::transaction::Version::non_standard(42),
-		lock_time: bitcoin::absolute::LockTime::ZERO,
-		input: vec![],
-		output: vec![],
-	};
-	let txid = tx.compute_txid();
-	let vtx = VirtualTransaction {
-		txid,
-		signed_tx: Some(Cow::Borrowed(&tx)),
-		is_funding: true,
-		server_may_own_descendant_since: None,
-	};
-
-	// Create vtxo
-	let vtxo = ServerVtxo::from(VTXO_VECTORS.board_vtxo.clone());
-
-	// Call update_virtual_transaction_tree
-	db.update_virtual_transaction_tree(
-		[vtx],
-		[vtxo.clone()],
-		std::iter::empty::<(VtxoId, bitcoin::Txid)>(),
-	).await.expect("Failed to update tree");
-
-	// Verify virtual tx was inserted
-	let retrieved_vtx = db.get_virtual_transaction_by_txid(txid).await
-		.expect("Query failed").expect("Virtual tx not found");
-	assert_eq!(retrieved_vtx.txid, txid);
-	assert_eq!(retrieved_vtx.is_funding, true);
-
-	// Verify vtxo was inserted
-	let vtxos = db.get_user_vtxos_by_id(&[vtxo.id()]).await.expect("Query failed");
-	assert_eq!(vtxos.len(), 1);
-}
-
-#[tokio::test]
-async fn update_virtual_transaction_tree_empty_inputs() {
-	use std::borrow::Cow;
-	use server::database::VirtualTransaction;
-
-	let mut ctx = TestContext::new_minimal("postgresd/vtx_tree_empty").await;
-	ctx.init_central_postgres().await;
-	let postgres_cfg = ctx.new_postgres(&ctx.test_name).await;
-
-	Db::create(&postgres_cfg).await.expect("Database created");
-	let db = Db::connect(&postgres_cfg).await.expect("Connected to database");
-
-	// Test 1: All empty - should succeed
-	db.update_virtual_transaction_tree(
-		std::iter::empty::<VirtualTransaction>(),
-		std::iter::empty::<ServerVtxo<Full>>(),
-		std::iter::empty::<(VtxoId, bitcoin::Txid)>(),
-	).await.expect("Empty inputs should succeed");
-
-	// Test 2: Only virtual_txs populated
-	let tx = Transaction {
-		version: bitcoin::transaction::Version::non_standard(100),
-		lock_time: bitcoin::absolute::LockTime::ZERO,
-		input: vec![],
-		output: vec![],
-	};
-	let txid = tx.compute_txid();
-	let vtx = VirtualTransaction {
-		txid,
-		signed_tx: Some(Cow::Borrowed(&tx)),
-		is_funding: false,
-		server_may_own_descendant_since: None,
-	};
-
-	db.update_virtual_transaction_tree(
-		[vtx],
-		std::iter::empty::<ServerVtxo<Full>>(),
-		std::iter::empty::<(VtxoId, bitcoin::Txid)>(),
-	).await.expect("Only virtual_txs should succeed");
-
-	// Verify it was inserted
-	let retrieved = db.get_virtual_transaction_by_txid(txid).await.unwrap();
-	assert!(retrieved.is_some());
-
-	// Test 3: Only vtxos populated
-	let vtxo = ServerVtxo::from(VTXO_VECTORS.round1_vtxo.clone());
-	db.update_virtual_transaction_tree(
-		std::iter::empty::<VirtualTransaction>(),
-		[vtxo.clone()],
-		std::iter::empty::<(VtxoId, bitcoin::Txid)>(),
-	).await.expect("Only vtxos should succeed");
-
-	// Verify it was inserted
-	let vtxos = db.get_user_vtxos_by_id(&[vtxo.id()]).await.unwrap();
-	assert_eq!(vtxos.len(), 1);
-}
-
-#[tokio::test]
 async fn mark_server_may_own_descendants_empty_input() {
 	let mut ctx = TestContext::new_minimal("postgresd/mark_descendants_empty").await;
 	ctx.init_central_postgres().await;
@@ -716,8 +481,8 @@ async fn mark_server_may_own_descendants_all_signed() {
 	let txid2 = tx2.compute_txid();
 
 	// Insert both as signed
-	db.upsert_virtual_transaction(txid1, Some(&tx1), false, None).await.unwrap();
-	db.upsert_virtual_transaction(txid2, Some(&tx2), false, None).await.unwrap();
+	let update = VtxoTreeUpdate::new().upsert_signed_tx([tx1.clone(), tx2.clone()]);
+	db.execute_vtxo_tree_update(update).await.unwrap();
 
 	// Verify they don't have server_may_own_descendant_since set
 	let vtx1 = db.get_virtual_transaction_by_txid(txid1).await.unwrap().unwrap();
@@ -764,8 +529,10 @@ async fn mark_server_may_own_descendants_fails_for_unsigned() {
 	let txid_unsigned = tx_unsigned.compute_txid();
 
 	// Insert one signed and one unsigned
-	db.upsert_virtual_transaction(txid_signed, Some(&tx_signed), false, None).await.unwrap();
-	db.upsert_virtual_transaction(txid_unsigned, None, false, None).await.unwrap();
+	let update = VtxoTreeUpdate::new()
+		.upsert_signed_tx([tx_signed.clone()])
+		.upsert_unsigned_tx([txid_unsigned]);
+	db.execute_vtxo_tree_update(update).await.unwrap();
 
 	// Should fail because one is unsigned
 	let result = db.mark_server_may_own_descendants(&[txid_signed, txid_unsigned]).await;
@@ -800,7 +567,9 @@ async fn mark_server_may_own_descendants_does_not_overwrite() {
 
 	// Insert with server_may_own_descendant_since already set
 	let original_timestamp = Local::now() - chrono::Duration::days(1);
-	db.upsert_virtual_transaction(txid, Some(&tx), false, Some(original_timestamp)).await.unwrap();
+	let vtx = VirtualTransaction::new_signed_owned(tx.clone())
+		.as_server_owned_since(original_timestamp);
+	db.execute_vtxo_tree_update(VtxoTreeUpdate::new().upsert_virtual_txs([vtx])).await.unwrap();
 
 	// Verify it's set
 	let vtx = db.get_virtual_transaction_by_txid(txid).await.unwrap().unwrap();
@@ -1045,11 +814,8 @@ async fn postgres_offboards() {
 	db.upsert_vtxos(&[vtxo.clone()]).await.unwrap();
 
 	// Register the vtxo's transactions in the virtual transaction tree
-	for tx_item in vtxo.transactions() {
-		db.upsert_virtual_transaction(tx_item.tx.compute_txid(), Some(&tx_item.tx), false, None)
-			.await
-			.unwrap();
-	}
+	let signed_txs: Vec<_> = vtxo.transactions().map(|item| item.tx).collect();
+	db.execute_vtxo_tree_update(VtxoTreeUpdate::new().upsert_signed_tx(signed_txs)).await.unwrap();
 
 	// Initially no uncommitted offboards
 	let uncommitted = db.get_uncommitted_offboards().await.unwrap();
@@ -1292,7 +1058,7 @@ async fn watchman_frontier() {
 
 	// Also store the funding virtual transaction that watchman queries for
 	let funding_txid = vtxo.point().txid;
-	db.upsert_virtual_transaction(funding_txid, None, true, None).await.unwrap();
+	db.execute_vtxo_tree_update(VtxoTreeUpdate::new().upsert_unsigned_funding_tx(funding_txid)).await.unwrap();
 
 	// Frontier starts empty
 	let frontier = db.get_frontier().await.unwrap();
@@ -1404,7 +1170,7 @@ async fn watchman_unfrontiered_funding_txids() {
 	let vtxo = ServerVtxo::from(VTXO_VECTORS.board_vtxo.clone());
 	db.upsert_vtxos(&[vtxo.clone()]).await.unwrap();
 	let funding_txid = vtxo.point().txid;
-	db.upsert_virtual_transaction(funding_txid, None, true, None).await.unwrap();
+	db.execute_vtxo_tree_update(VtxoTreeUpdate::new().upsert_unsigned_funding_tx(funding_txid)).await.unwrap();
 
 	// Now funding_txid is unfrontiered
 	let unfrontiered = db.get_unfrontiered_funding_txids().await.unwrap();
@@ -1414,78 +1180,6 @@ async fn watchman_unfrontiered_funding_txids() {
 	db.add_vtxo_to_frontier(vtxo.id()).await.unwrap();
 	let unfrontiered = db.get_unfrontiered_funding_txids().await.unwrap();
 	assert!(unfrontiered.is_empty());
-}
-
-#[tokio::test]
-async fn oor_mark_package_spent() {
-	let mut ctx = TestContext::new_minimal("postgresd/oor_mark_spent").await;
-	ctx.init_central_postgres().await;
-	let postgres_cfg = ctx.new_postgres(&ctx.test_name).await;
-
-	Db::create(&postgres_cfg).await.expect("Database created");
-	let db = Db::connect(&postgres_cfg).await.expect("Connected to database");
-
-	let vtxo = ServerVtxo::from(VTXO_VECTORS.board_vtxo.clone());
-	db.upsert_vtxos(&[vtxo.clone()]).await.unwrap();
-
-	// Verify vtxo is spendable
-	let state = db.get_server_vtxo_by_id(vtxo.id()).await.unwrap();
-	assert!(state.is_spendable(0));
-
-	// Mark it as spent via OOR
-	let spend_tx = Transaction {
-		version: bitcoin::transaction::Version::non_standard(55),
-		lock_time: bitcoin::absolute::LockTime::ZERO,
-		input: vec![],
-		output: vec![],
-	};
-	let spend_txid = spend_tx.compute_txid();
-
-	// Use a transaction to call the query::mark_package_spent helper
-	let mut conn = db.get_conn().await.unwrap();
-	let pg_tx = conn.transaction().await.unwrap();
-	server::database::oor::mark_package_spent(&pg_tx, &[vtxo.id()], &[spend_txid])
-		.await.unwrap();
-	pg_tx.commit().await.unwrap();
-
-	// Check it is now marked as spent
-	let state = db.get_server_vtxo_by_id(vtxo.id()).await.unwrap();
-	assert_eq!(state.oor_spent_txid, Some(spend_txid));
-	assert!(!state.is_spendable(0));
-}
-
-#[tokio::test]
-async fn oor_mark_package_spent_idempotent() {
-	let mut ctx = TestContext::new_minimal("postgresd/oor_mark_spent_idem").await;
-	ctx.init_central_postgres().await;
-	let postgres_cfg = ctx.new_postgres(&ctx.test_name).await;
-
-	Db::create(&postgres_cfg).await.expect("Database created");
-	let db = Db::connect(&postgres_cfg).await.expect("Connected to database");
-
-	let vtxo = ServerVtxo::from(VTXO_VECTORS.round1_vtxo.clone());
-	db.upsert_vtxos(&[vtxo.clone()]).await.unwrap();
-
-	let spend_tx = Transaction {
-		version: bitcoin::transaction::Version::non_standard(56),
-		lock_time: bitcoin::absolute::LockTime::ZERO,
-		input: vec![],
-		output: vec![],
-	};
-	let spend_txid = spend_tx.compute_txid();
-
-	let mut conn = db.get_conn().await.unwrap();
-	let pg_tx = conn.transaction().await.unwrap();
-	server::database::oor::mark_package_spent(&pg_tx, &[vtxo.id()], &[spend_txid])
-		.await.unwrap();
-	pg_tx.commit().await.unwrap();
-
-	// Calling again with the same txid should be idempotent (no error)
-	let mut conn = db.get_conn().await.unwrap();
-	let pg_tx = conn.transaction().await.unwrap();
-	server::database::oor::mark_package_spent(&pg_tx, &[vtxo.id()], &[spend_txid])
-		.await.unwrap();
-	pg_tx.commit().await.unwrap();
 }
 
 #[tokio::test]

@@ -691,26 +691,22 @@ impl<S: state::BuilderState> ArkoorBuilder<S> {
 		regular.chain(isolated)
 	}
 
-	/// Builds the unsigned internal VTXOs
-	///
-	/// Returns the checkpoint outputs (if checkpoinst are used) and the
-	/// dust isolation output (if dust isolation is used).
-	pub fn build_unsigned_internal_vtxos<'a>(&'a self) -> impl Iterator<Item = ServerVtxo<Full>> + 'a {
-		let checkpoint_vtxos = {
-			let range = if self.checkpoint_data.is_some() {
-				0..self.outputs.len()
-			} else {
-				// none
-				0..0
-			};
-			range.map(|i| self.build_checkpoint_vtxo_at(i, None))
-		};
+	/// Builds the unsigned internal VTXOs, each paired with the txid
+	/// of the transaction that spends it.
+	pub fn build_unsigned_internal_vtxos(&self) -> Vec<(ServerVtxo<Full>, Txid)> {
+		let mut ret = Vec::new();
 
-		let isolation_vtxo = if !self.isolated_outputs.is_empty() {
-			// isolation comes after all normal outputs
+		if self.checkpoint_data.is_some() {
+			for idx in 0..self.outputs.len() {
+				let vtxo = self.build_checkpoint_vtxo_at(idx, None);
+				let spending_txid = self.unsigned_arkoor_txs[idx].compute_txid();
+				ret.push((vtxo, spending_txid));
+			}
+		}
+
+		if !self.isolated_outputs.is_empty() {
 			let output_idx = self.outputs.len();
 
-			// intermediate tx depends on checkpoint
 			let (int_tx, int_txid) = if let Some((tx, txid)) = &self.checkpoint_data {
 				(tx, *txid)
 			} else {
@@ -718,7 +714,7 @@ impl<S: state::BuilderState> ArkoorBuilder<S> {
 				(arkoor_tx, arkoor_tx.compute_txid())
 			};
 
-			Some(Vtxo {
+			let vtxo = Vtxo {
 				amount: self.isolated_outputs.iter().map(|o| o.total_amount).sum(),
 				policy: ServerVtxoPolicy::new_checkpoint(self.input.user_pubkey()),
 				expiry_height: self.input.expiry_height,
@@ -748,60 +744,32 @@ impl<S: state::BuilderState> ArkoorBuilder<S> {
 						},
 					]).collect(),
 				},
-			})
-		} else {
-			None
-		};
+			};
 
-		checkpoint_vtxos.chain(isolation_vtxo)
+			let spending_txid = self.unsigned_isolation_fanout_tx.as_ref()
+				.expect("isolation fanout tx must exist when isolated_outputs is non-empty")
+				.compute_txid();
+			ret.push((vtxo, spending_txid));
+		}
+
+		ret
+	}
+
+	/// Returns the (vtxo_id, spending_txid) for the input vtxo.
+	pub fn input_spend_info(&self) -> (VtxoId, Txid) {
+		if let Some((_tx, checkpoint_txid)) = &self.checkpoint_data {
+			(self.input.id(), *checkpoint_txid)
+		} else {
+			(self.input.id(), self.unsigned_arkoor_txs[0].compute_txid())
+		}
 	}
 
 	/// The returned [VtxoId] is spent out-of-round by [Txid]
 	pub fn spend_info(&self) -> Vec<(VtxoId, Txid)> {
-		let mut ret = Vec::with_capacity(1 + self.outputs.len());
-
-		if let Some((_tx, checkpoint_txid)) = &self.checkpoint_data {
-			// Input vtxo -> checkpoint tx
-			ret.push((self.input.id(), *checkpoint_txid));
-
-			// Non-isolated checkpoint outputs -> arkoor txs
-			for idx in 0..self.outputs.len() {
-				ret.push((
-					VtxoId::from(OutPoint::new(*checkpoint_txid, idx as u32)),
-					self.unsigned_arkoor_txs[idx].compute_txid()
-				));
-			}
-
-			// dust isolation paths (if active)
-			if let Some(fanout_tx) = &self.unsigned_isolation_fanout_tx {
-				let fanout_txid = fanout_tx.compute_txid();
-
-				// Combined isolation checkpoint output -> isolation fanout tx
-				let isolated_output_idx = self.outputs.len() as u32;
-				ret.push((
-					VtxoId::from(OutPoint::new(*checkpoint_txid, isolated_output_idx)),
-					fanout_txid,
-				));
-			}
-		} else {
-			let arkoor_txid = self.unsigned_arkoor_txs[0].compute_txid();
-
-			// Input vtxo -> arkoor tx
-			ret.push((self.input.id(), arkoor_txid));
-
-			// dust isolation paths (if active)
-			if let Some(fanout_tx) = &self.unsigned_isolation_fanout_tx {
-				let fanout_txid = fanout_tx.compute_txid();
-
-				// Isolation output in arkoor tx -> dust fanout
-				let isolation_output_idx = self.outputs.len() as u32;
-				ret.push((
-					VtxoId::from(OutPoint::new(arkoor_txid, isolation_output_idx)),
-					fanout_txid,
-				));
-			}
+		let mut ret = vec![self.input_spend_info()];
+		for (vtxo, spending_txid) in self.build_unsigned_internal_vtxos() {
+			ret.push((vtxo.id(), spending_txid));
 		}
-
 		ret
 	}
 
@@ -1574,9 +1542,9 @@ mod test {
 		assert_eq!(spend_vtxo_ids.len(), spend_info.len());
 
 		// all intermediate vtxos are spent and use checkpoint policy for efficient cosigning
-		let internal_vtxos = builder.build_unsigned_internal_vtxos().collect::<Vec<_>>();
-		let internal_vtxo_ids = internal_vtxos.iter().map(|v| v.id()).collect::<HashSet<_>>();
-		for internal_vtxo in &internal_vtxos {
+		let internal_vtxos = builder.build_unsigned_internal_vtxos();
+		let internal_vtxo_ids = internal_vtxos.iter().map(|(v, _)| v.id()).collect::<HashSet<_>>();
+		for (internal_vtxo, _spending_txid) in &internal_vtxos {
 			assert!(spend_vtxo_ids.contains(&internal_vtxo.id()));
 			assert!(matches!(internal_vtxo.policy(), ServerVtxoPolicy::Checkpoint(_)));
 		}
@@ -1588,7 +1556,7 @@ mod test {
 
 		// isolation vtxo holds combined value of all dust outputs
 		if has_isolation {
-			let isolation_vtxo = internal_vtxos.last().unwrap();
+			let (isolation_vtxo, _) = internal_vtxos.last().unwrap();
 			let expected_isolation_amount: Amount = isolated_outputs.iter()
 				.map(|o| o.total_amount)
 				.sum();

@@ -21,7 +21,7 @@ use log::{debug, info, trace};
 use tokio::sync::{mpsc, Mutex};
 
 use ark::{
-	musig, ProtocolEncoding, ServerVtxo, SignedVtxoRequest, Vtxo, VtxoId, VtxoPolicy, VtxoRequest, SECP
+	musig, ProtocolEncoding, SignedVtxoRequest, Vtxo, VtxoId, VtxoPolicy, VtxoRequest, SECP
 };
 use ark::arkoor::ArkoorDestination;
 use ark::arkoor::package::ArkoorPackageBuilder;
@@ -1134,8 +1134,6 @@ async fn test_cosign_vtxo_tree() {
 		assert!(ctx.finalize(vtxo, resp));
 	}
 
-	let vtxos = vtxos.into_iter().map(ServerVtxo::from).collect::<Vec<_>>();
-	srv.register_vtxos(vtxos).await.unwrap();
 }
 
 #[tokio::test]

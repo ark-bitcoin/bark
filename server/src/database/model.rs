@@ -1,4 +1,5 @@
 use std::borrow::Cow;
+use std::fmt;
 use std::str::FromStr;
 
 use anyhow::{Context, bail};
@@ -15,6 +16,46 @@ use ark::{ProtocolEncoding, ServerVtxoPolicy, Vtxo, VtxoId, VtxoPolicy};
 
 // Used by mailbox as an always increasing number for data sorting.
 pub type Checkpoint = u64;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SpendState {
+	/// The vtxo is available for spending.
+	Spendable,
+	/// The vtxo originates from a round but forfeits haven't been signed yet.
+	/// The server didn't release the unlock preimage yet.
+	Unclaimed,
+	/// The vtxo has been fully spent (via round, OOR, or offboard).
+	Spent,
+}
+
+impl SpendState {
+	pub fn as_str(&self) -> &'static str {
+		match self {
+			SpendState::Spendable => "spendable",
+			SpendState::Unclaimed => "unclaimed",
+			SpendState::Spent => "spent",
+		}
+	}
+}
+
+impl fmt::Display for SpendState {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		f.write_str(self.as_str())
+	}
+}
+
+impl FromStr for SpendState {
+	type Err = anyhow::Error;
+
+	fn from_str(s: &str) -> Result<Self, Self::Err> {
+		match s {
+			"spendable" => Ok(SpendState::Spendable),
+			"unclaimed" => Ok(SpendState::Unclaimed),
+			"spent" => Ok(SpendState::Spent),
+			other => bail!("invalid spend_state: {}", other),
+		}
+	}
+}
 
 #[derive(Debug)]
 pub struct VtxoState<G = Full, P: Policy = VtxoPolicy> {

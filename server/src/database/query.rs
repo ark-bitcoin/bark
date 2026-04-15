@@ -14,47 +14,21 @@ use std::str::FromStr;
 use anyhow::Context;
 use bitcoin::hashes::Hash;
 use bitcoin::hex::DisplayHex;
-use bitcoin::{Amount, Transaction, Txid};
+use bitcoin::{Amount, Txid};
 use tokio_postgres::{GenericClient, Row, Transaction as PgTransaction};
 use tokio_postgres::types::Type;
 
-use ark::{ProtocolEncoding, ServerVtxo, ServerVtxoPolicy, VtxoId, VtxoRequest};
+use ark::{ProtocolEncoding, ServerVtxoPolicy, VtxoId, VtxoRequest};
 use ark::mailbox::MailboxIdentifier;
 use ark::rounds::RoundId;
 use ark::tree::signed::{UnlockHash, UnlockPreimage};
 use ark::vtxo::{Bare, Full};
 
 use crate::database::model::{VirtualTransaction, VtxoState};
-use crate::database::oor;
 use crate::database::rounds::{StoredRoundInput, StoredRoundOutput, StoredRoundParticipation};
 use crate::error::ContextExt;
 use crate::secret::Secret;
 
-pub async fn upsert_virtual_transaction<T: GenericClient>(
-	client: &T,
-	txid: Txid,
-	signed_tx: Option<&Transaction>,
-	is_funding: bool,
-	server_may_own_descendant_since: Option<chrono::DateTime<chrono::Local>>,
-) -> anyhow::Result<Txid> {
-	let signed_tx_bytes = signed_tx.map(|tx| bitcoin::consensus::serialize(tx));
-
-	client.execute("
-		INSERT INTO virtual_transaction
-			(txid, signed_tx, is_funding, server_may_own_descendant_since, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, NOW(), NOW())
-		ON CONFLICT (txid) DO UPDATE SET
-			signed_tx = COALESCE(virtual_transaction.signed_tx, EXCLUDED.signed_tx),
-			server_may_own_descendant_since = COALESCE(
-				virtual_transaction.server_may_own_descendant_since,
-				EXCLUDED.server_may_own_descendant_since
-			),
-			updated_at = NOW()
-	", &[&txid.to_string(), &signed_tx_bytes, &is_funding, &server_may_own_descendant_since]).await
-		.context("Failed to upsert virtual_transaction")?;
-
-	Ok(txid)
-}
 
 pub async fn get_virtual_transaction_by_txid<T: GenericClient>(
 	client: &T,
@@ -98,65 +72,6 @@ pub async fn get_first_unsigned_virtual_transaction<T: GenericClient>(
 	}
 }
 
-pub async fn upsert_vtxos<G, T, V>(
-	client: &T,
-	vtxos: impl IntoIterator<Item = V>,
-) -> Result<(), tokio_postgres::Error>
-where
-	T: GenericClient,
-	V: Borrow<ServerVtxo<G>>,
-	ServerVtxo<G>: ProtocolEncoding,
-{
-	let statement = client.prepare_typed("
-		INSERT INTO vtxo (
-			vtxo_id, vtxo_txid, vtxo, expiry, exit_delta, policy_type, policy,
-			server_pubkey, amount, anchor_point, created_at, updated_at
-		) VALUES (
-			UNNEST($1), UNNEST($2), UNNEST($3), UNNEST($4), UNNEST($5), UNNEST($6),
-			UNNEST($7), UNNEST($8), UNNEST($9), UNNEST($10), NOW(), NOW()
-		)
-		ON CONFLICT DO NOTHING
-	", &[
-		Type::TEXT_ARRAY, Type::TEXT_ARRAY, Type::BYTEA_ARRAY, Type::INT4_ARRAY,
-		Type::INT4_ARRAY, Type::TEXT_ARRAY, Type::BYTEA_ARRAY, Type::TEXT_ARRAY,
-		Type::INT8_ARRAY, Type::TEXT_ARRAY,
-	]).await?;
-
-	let vtxos = vtxos.into_iter();
-	let mut vtxo_ids = Vec::with_capacity(vtxos.size_hint().0);
-	let mut vtxo_txids = Vec::with_capacity(vtxos.size_hint().0);
-	let mut data = Vec::with_capacity(vtxos.size_hint().0);
-	let mut expiry = Vec::with_capacity(vtxos.size_hint().0);
-	let mut exit_deltas = Vec::with_capacity(vtxos.size_hint().0);
-	let mut policy_types = Vec::with_capacity(vtxos.size_hint().0);
-	let mut policies = Vec::with_capacity(vtxos.size_hint().0);
-	let mut server_pubkeys = Vec::with_capacity(vtxos.size_hint().0);
-	let mut amounts = Vec::with_capacity(vtxos.size_hint().0);
-	let mut anchor_points = Vec::with_capacity(vtxos.size_hint().0);
-	for vtxo in vtxos {
-		let vtxo = vtxo.borrow();
-		vtxo_ids.push(vtxo.id().to_string());
-		vtxo_txids.push(vtxo.point().txid.to_string());
-		data.push(vtxo.serialize());
-		expiry.push(vtxo.expiry_height() as i32);
-		exit_deltas.push(vtxo.exit_delta() as i32);
-		policy_types.push(vtxo.policy_type().to_string());
-		policies.push(vtxo.policy().serialize());
-		server_pubkeys.push(vtxo.server_pubkey().to_string());
-		amounts.push(vtxo.amount().to_sat() as i64);
-		anchor_points.push(vtxo.chain_anchor().to_string());
-	}
-
-	client.execute(
-		&statement,
-		&[
-			&vtxo_ids, &vtxo_txids, &data, &expiry, &exit_deltas, &policy_types,
-			&policies, &server_pubkeys, &amounts, &anchor_points,
-		]
-	).await?;
-
-	Ok(())
-}
 
 /// Get a VTXO by id
 ///
@@ -442,28 +357,3 @@ pub async fn set_round_id_for_participations(
 	Ok(())
 }
 
-pub async fn update_virtual_transaction_tree<'a, G, V>(
-	tx: &PgTransaction<'_>,
-	new_virtual_txs: impl IntoIterator<Item = VirtualTransaction<'a>>,
-	new_vtxos: impl IntoIterator<Item = V>,
-	spend_info: impl IntoIterator<Item = (VtxoId, Txid)>,
-) -> anyhow::Result<()>
-where
-	V: Borrow<ServerVtxo<G>>,
-	ServerVtxo<G>: ProtocolEncoding,
-{
-	for vtx in new_virtual_txs {
-		upsert_virtual_transaction(
-			tx, vtx.txid, vtx.signed_tx(), vtx.is_funding, vtx.server_may_own_descendant_since,
-		).await?;
-	}
-
-	upsert_vtxos(tx, new_vtxos).await
-		.context("failed to upsert VTXOs")?;
-
-	let (vtxos, txids) = spend_info.into_iter().collect::<(Vec<_>, Vec<_>)>();
-	oor::mark_package_spent(tx, &vtxos, &txids).await
-		.context("failed to mark VTXO as spent")?;
-
-	Ok(())
-}
