@@ -326,6 +326,16 @@ impl Db {
 		query::mark_server_may_own_descendants(&*conn, txids).await
 	}
 
+	/// Assert that every given tx in the input VTXO chains has been registered
+	/// by the client via `register_vtxos`. See
+	/// [`query::check_vtxo_transactions_registered`].
+	pub async fn check_vtxo_transactions_registered(
+		&self,
+		txids: impl IntoIterator<Item = impl Borrow<Txid>>,
+	) -> anyhow::Result<()> {
+		let conn = self.get_conn().await.context("failed to connect to db")?;
+		query::check_vtxo_transactions_registered(&*conn, txids).await
+	}
 
 	pub async fn store_vtxos_in_mailbox(
 		&self,
