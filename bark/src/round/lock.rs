@@ -110,6 +110,7 @@ mod test {
 		assert!(cloned.try_lock(id).is_none(), "cloned index should prevent lock");
 	}
 
+	#[cfg(not(target_arch = "wasm32"))]
 	#[tokio::test]
 	async fn lock_wait_succeeds_after_guard_dropped() {
 		let index = RoundStateLockIndex::new();

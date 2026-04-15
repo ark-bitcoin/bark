@@ -1,3 +1,5 @@
+#![cfg(all(not(target_arch = "wasm32"), feature = "sqlite"))]
+
 use std::sync::Arc;
 
 use bitcoin::Network;
@@ -35,8 +37,8 @@ async fn example() -> anyhow::Result<()> {
 	Ok(())
 }
 
-
-#[tokio::main]
+#[tokio::main(flavor = "current_thread")]
 async fn main() {
 	example().await.unwrap();
 }
+

@@ -1,3 +1,4 @@
+#![cfg(all(not(target_arch = "wasm32"), feature = "sqlite"))]
 //!
 //! This "example" is used in dev and CI to dump sqlite db schema
 //! for the bark database to stdout.
@@ -6,7 +7,7 @@
 use std::{fs, process};
 use std::path::PathBuf;
 
-fn main() {
+fn dump_sqlite_schema() {
 	let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
 
 	let tmp_file = root.join("tmp-bark-schema.sqlite");
@@ -30,3 +31,6 @@ fn main() {
 	process::exit(status);
 }
 
+fn main() {
+	dump_sqlite_schema();
+}

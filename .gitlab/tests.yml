@@ -160,6 +160,19 @@ bark-wasm:
         cargo build -p bark-wallet --target "wasm32-unknown-unknown" --lib --no-default-features --features wasm-web
       "
 
+bark-wasm-indexed-db-tests:
+  interruptible: true
+  allow_failure: true
+  stage: test
+  extends: .test-rules-no-tags
+  needs:
+    - test-unit
+  script:
+    - |
+      nix develop .#default --command bash -c "
+        wasm-pack test --headless --firefox bark --no-default-features --features 'indexed-db wasm-web' --lib
+      "
+
 lib-msrv:
   interruptible: true
   stage: test

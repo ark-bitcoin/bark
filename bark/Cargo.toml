@@ -18,6 +18,7 @@ onchain-bdk = ["bdk_wallet", "bark-bitcoin-ext/bdk"]
 sqlite = ["rusqlite", "bdk_wallet/rusqlite"]
 # Used for testing, enables testing storage adaptor implementation
 filestore = ["tokio/fs"]
+indexed-db = ["dep:indexed-db", "dep:web-sys", "dep:serde-wasm-bindgen"]
 
 rand = ["bitcoin/rand", "bip39/rand"]
 
@@ -89,6 +90,10 @@ http = { workspace = true, optional = true }
 # Only used for built-in BDK Wallet
 bdk_wallet = { workspace = true, optional = true }
 
+indexed-db = { version = "0.4.2", optional = true }
+web-sys = { version = "0.3.83", optional = true }
+serde-wasm-bindgen = { version = "0.6.5", optional = true }
+
 # Storage clients crates
 rusqlite = { version = "0.31.0", features = ["chrono"], optional = true }
 
@@ -98,4 +103,11 @@ getrandom = { version = "0.3.0", features = ["wasm_js"], optional = true }
 
 [dev-dependencies]
 ark-lib = { path = "../lib", features = [ "test-util" ] }
+
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+wasm-bindgen-test = "0.3"
+console_log = "0.2"
+
+# tempfile doesn't work on WASM (no filesystem), only include for native tests
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 tempfile = "3"
