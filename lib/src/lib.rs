@@ -91,6 +91,12 @@ pub struct ArkInfo {
 
 	/// Fee schedule for all Ark operations
 	pub fees: FeeSchedule,
+
+	/// Maximum exit depth (genesis chain length) allowed for a VTXO.
+	/// Once a VTXO's exit depth reaches this value the server will refuse to
+	/// cosign further OOR transactions spending it. Clients should refresh
+	/// their VTXOs into a round before this limit is reached.
+	pub max_vtxo_exit_depth: u16,
 }
 
 /// Request for the creation of an vtxo.

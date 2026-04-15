@@ -65,11 +65,13 @@ use bitcoin::FeeRate;
 use log::{debug, warn};
 
 use ark::VtxoId;
-use bitcoin_ext::{BlockHeight, P2TR_DUST};
+use bitcoin_ext::{BlockDelta, BlockHeight, P2TR_DUST};
 
 use crate::Wallet;
 use crate::exit::progress::util::estimate_exit_cost;
 use crate::vtxo::state::{VtxoStateKind, WalletVtxo};
+
+const SOFT_REFRESH_EXPIRY_THRESHOLD: BlockDelta = 28;
 
 /// Trait needed to be implemented to filter wallet VTXOs.
 ///
@@ -282,6 +284,8 @@ impl<'a> RefreshStrategy<'a> {
 	///
 	/// A [WalletVtxo] is selected when at least one of the following strict conditions holds:
 	/// - It is within `vtxo_refresh_expiry_threshold` blocks of expiry at `tip`.
+	/// - Its exit depth has reached `max_vtxo_exit_depth` as advertised by the server, meaning the
+	///   server will refuse to cosign any further OOR payments spending it.
 	///
 	/// Parameters:
 	/// - `wallet`: [Wallet] context used to read configuration and Ark parameters.
@@ -322,6 +326,8 @@ impl<'a> RefreshStrategy<'a> {
 	///   relative to `tip`.
 	/// - It is uneconomical to unilaterally exit at the provided `fee_rate` (e.g., its amount is
 	///   lower than the estimated exit cost).
+	/// - Its exit depth has reached half of the server's `max_vtxo_exit_depth` limit
+	///   (ensuring proactive refresh well before hitting the hard ceiling).
 	///
 	/// Parameters:
 	/// - `wallet`: [Wallet] context used to read configuration and Ark parameters.
@@ -381,11 +387,30 @@ impl<'a> RefreshStrategy<'a> {
 		}
 	}
 
-	fn check_must_refresh(&self, vtxo: &WalletVtxo) -> anyhow::Result<bool> {
-		let threshold = self.wallet.config().vtxo_refresh_expiry_threshold;
+	/// Returns the `max_vtxo_exit_depth` advertised by the server, or `None` if the wallet
+	/// has no active server connection.
+	async fn server_max_arkoor_depth(&self) -> anyhow::Result<Option<u16>> {
+		Ok(self.wallet.ark_info().await?.map(|i| i.max_vtxo_exit_depth))
+	}
 
+	/// Checks if a VTXO must be refreshed based on its exit depth and expiry height.
+	async fn check_must_refresh(&self, vtxo: &WalletVtxo) -> anyhow::Result<bool> {
+		// Check if the VTXO's exit depth has reached the server maximum.
+		if let Some(max_depth) = self.server_max_arkoor_depth().await? {
+			if vtxo.exit_depth() >= max_depth {
+				warn!(
+					"VTXO {} exit depth {} has reached the server maximum of {}; \
+					 must be refreshed before further OOR payments are possible",
+					vtxo.id(), vtxo.exit_depth(), max_depth,
+				);
+				return Ok(true);
+			}
+		}
+
+		// Check if the VTXO's expiry height is within the refresh threshold.
+		let threshold = self.wallet.config().vtxo_refresh_expiry_threshold;
 		if self.tip > vtxo.expiry_height() {
-			warn!("VTXO {} is expired, must be rereshed", vtxo.id());
+			warn!("VTXO {} is expired, must be refreshed", vtxo.id());
 			return Ok(true)
 		} else if self.tip > vtxo.expiry_height().saturating_sub(threshold) {
 			debug!("VTXO {} is about to expire soon, must be refreshed", vtxo.id());
@@ -395,8 +420,28 @@ impl<'a> RefreshStrategy<'a> {
 		Ok(false)
 	}
 
-	fn check_should_refresh(&self, vtxo: &WalletVtxo) -> anyhow::Result<bool> {
-		let soft_threshold = self.wallet.config().vtxo_refresh_expiry_threshold + 28;
+	/// Checks if a VTXO should be refreshed based on its exit depth, expiry height
+	/// whether it is uneconomical to exit, or whether it is dust.
+	async fn check_should_refresh_depth(&self, vtxo: &WalletVtxo) -> anyhow::Result<bool> {
+		// Check if the VTXO's exit depth has reached the server maximum.
+		if let Some(max_depth) = self.server_max_arkoor_depth().await? {
+			// Trigger refresh when exit depth reaches half the server limit.
+			// This ensures the wallet stays well below the hard ceiling and
+			// avoids hitting it unexpectedly during normal usage.
+			let soft_depth_threshold = max_depth / 2;
+			if vtxo.exit_depth() >= soft_depth_threshold {
+				warn!(
+					"VTXO {} exit depth {} is approaching the server maximum of {}; \
+					 should be refreshed on next opportunity",
+					vtxo.id(), vtxo.exit_depth(), max_depth,
+				);
+				return Ok(true);
+			}
+		}
+
+		// Check if the VTXO's expiry height is within the refresh threshold.
+		let soft_threshold = self.wallet.config().vtxo_refresh_expiry_threshold
+			+ SOFT_REFRESH_EXPIRY_THRESHOLD as u32;
 		if self.tip > vtxo.expiry_height().saturating_sub(soft_threshold) {
 			warn!("VTXO {} is about to expire, should be refreshed on next opportunity",
 				vtxo.id(),
@@ -404,6 +449,7 @@ impl<'a> RefreshStrategy<'a> {
 			return Ok(true);
 		}
 
+		// Check if the VTXO's amount is uneconomical to exit.
 		let fr = self.fee_rate;
 		if vtxo.amount() < estimate_exit_cost(&[vtxo.vtxo.clone()], fr) {
 			warn!("VTXO {} is uneconomical to exit, should be refreshed on \
@@ -412,6 +458,7 @@ impl<'a> RefreshStrategy<'a> {
 			return Ok(true);
 		}
 
+		// Check if the VTXO's amount is below the dust threshold.
 		if vtxo.amount() < P2TR_DUST {
 			warn!("VTXO {} is dust, should be refreshed on next opportunity", vtxo.id());
 			return Ok(true);
@@ -426,11 +473,15 @@ impl<'a> RefreshStrategy<'a> {
 impl FilterVtxos for RefreshStrategy<'_> {
 	async fn matches(&self, vtxo: &WalletVtxo) -> anyhow::Result<bool> {
 		match self.inner {
-			InnerRefreshStrategy::MustRefresh => self.check_must_refresh(vtxo),
-			InnerRefreshStrategy::ShouldRefreshInclusive =>
-				Ok(self.check_must_refresh(vtxo)? || self.check_should_refresh(vtxo)?),
-			InnerRefreshStrategy::ShouldRefreshExclusive =>
-				Ok(!self.check_must_refresh(vtxo)? && self.check_should_refresh(vtxo)?),
+			InnerRefreshStrategy::MustRefresh => Ok(self.check_must_refresh(vtxo).await?),
+			InnerRefreshStrategy::ShouldRefreshInclusive => Ok(
+				self.check_must_refresh(vtxo).await? ||
+				self.check_should_refresh_depth(vtxo).await?
+			),
+			InnerRefreshStrategy::ShouldRefreshExclusive => Ok(
+				!self.check_must_refresh(vtxo).await? &&
+				self.check_should_refresh_depth(vtxo).await?
+			),
 			InnerRefreshStrategy::ShouldRefreshIfMustRefresh =>
 				bail!("FilterVtxos::matches called on RefreshStrategy::should_refresh_if_must"),
 		}
@@ -446,11 +497,12 @@ impl FilterVtxos for RefreshStrategy<'_> {
 				for i in (0..vtxos.len()).rev() {
 					let keep = {
 						let vtxo = vtxos[i].borrow();
-						if self.check_must_refresh(vtxo)? {
+						let is_must = self.check_must_refresh(vtxo).await?;
+						if is_must {
 							must_refresh = true;
 							true
 						} else {
-							self.check_should_refresh(vtxo)?
+							self.check_should_refresh_depth(vtxo).await?
 						}
 					};
 					if !keep {

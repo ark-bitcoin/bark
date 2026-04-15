@@ -274,6 +274,7 @@ impl Server {
 			offboard_feerate: self.offboard_feerate(),
 			ln_receive_anti_dos_required: self.config.ln_receive_anti_dos_required,
 			fees: self.config.fees.clone(),
+			max_vtxo_exit_depth: self.config.max_vtxo_exit_depth,
 		}
 	}
 

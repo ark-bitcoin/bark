@@ -73,6 +73,11 @@ pub struct ArkInfo {
 	pub ln_receive_anti_dos_required: bool,
 	/// The fee schedule outlining any fees that must be paid to interact with the Ark server.
 	pub fees: FeeSchedule,
+	/// Maximum exit depth (genesis chain length) allowed for a VTXO.
+	/// Once a VTXO's exit depth reaches this value the server will refuse to
+	/// cosign further OOR transactions spending it. Clients should refresh
+	/// their VTXOs into a round before this limit is reached.
+	pub max_vtxo_exit_depth: u16,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -102,6 +107,7 @@ impl<T: Borrow<ark::ArkInfo>> From<T> for ArkInfo {
 			offboard_feerate_sat_per_kvb: v.offboard_feerate.to_sat_per_kwu() * 4,
 			ln_receive_anti_dos_required: v.ln_receive_anti_dos_required,
 			fees: v.fees.clone().into(),
+			max_vtxo_exit_depth: v.max_vtxo_exit_depth,
 		}
 	}
 }
@@ -773,6 +779,7 @@ mod test {
 				offboard_feerate: FeeRate::from_sat_per_kwu(j.offboard_feerate_sat_per_kvb / 4),
 				ln_receive_anti_dos_required: j.ln_receive_anti_dos_required,
 				fees: j.fees.into(),
+				max_vtxo_exit_depth: j.max_vtxo_exit_depth,
 			}
 		}
 	}
