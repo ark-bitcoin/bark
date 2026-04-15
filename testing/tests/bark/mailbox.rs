@@ -238,7 +238,7 @@ async fn recovery_mailbox_lightning_send_change() {
 	let lightning = ctx.new_lightning_setup("lightningd").await;
 
 	// Start a server linked to our cln installation
-	let srv = ctx.new_captaind("server", Some(&lightning.sender)).await;
+	let srv = ctx.new_captaind("server", Some(&lightning.internal)).await;
 
 	// Start a bark and board
 	let bark = ctx.new_bark_with_funds("bark", &srv, btc(3)).await;
@@ -254,7 +254,7 @@ async fn recovery_mailbox_lightning_send_change() {
 	lightning.sync().await;
 
 	// Pay a lightning invoice - this creates change
-	let invoice = lightning.receiver.invoice(Some(btc(1)), "test_payment", "A test payment").await;
+	let invoice = lightning.external.invoice(Some(btc(1)), "test_payment", "A test payment").await;
 	bark.pay_lightning_wait(invoice, None).await;
 
 	// Get vtxos after payment - should have change vtxo
@@ -280,7 +280,7 @@ async fn recovery_mailbox_lightning_send_revoke() {
 	let lightning = ctx.new_lightning_setup_no_channel("lightningd").await;
 
 	// Start a server linked to our cln installation
-	let srv = ctx.new_captaind_with_funds("server", Some(&lightning.sender), btc(10)).await;
+	let srv = ctx.new_captaind_with_funds("server", Some(&lightning.internal), btc(10)).await;
 	srv.wait_for_vtxopool(&ctx).await;
 
 	// Start a bark and board
@@ -297,7 +297,7 @@ async fn recovery_mailbox_lightning_send_revoke() {
 	assert_eq!(initial_recovery_ids.len(), 1, "should have 1 vtxo_id from board");
 
 	// Create an invoice - payment will fail since no channel exists
-	let invoice = lightning.receiver.invoice(Some(btc(1)), "test_payment", "A test payment").await;
+	let invoice = lightning.external.invoice(Some(btc(1)), "test_payment", "A test payment").await;
 
 	// Pay lightning - this will fail and user gets revoked vtxos back
 	bark.pay_lightning_wait(invoice, None).await;
@@ -327,7 +327,7 @@ async fn recovery_mailbox_lightning_receive() {
 	let lightning = ctx.new_lightning_setup("lightningd").await;
 
 	// Start a server linked to the receiver lightning node (for incoming payments)
-	let srv = ctx.new_captaind_with_funds("server", Some(&lightning.receiver), btc(10)).await;
+	let srv = ctx.new_captaind_with_funds("server", Some(&lightning.internal), btc(10)).await;
 
 	// Start a bark and board to be able to receive lightning
 	let bark = Arc::new(ctx.new_bark_with_funds("bark", &srv, btc(3)).await);
@@ -347,7 +347,7 @@ async fn recovery_mailbox_lightning_receive() {
 	// Have sender pay the invoice
 	let cloned_invoice = invoice_info.invoice.clone();
 	let res = tokio::spawn(async move {
-		lightning.sender.pay_bolt11(cloned_invoice).await
+		lightning.external.pay_bolt11(cloned_invoice).await
 	});
 
 	srv.wait_for_vtxopool(&ctx).await;

@@ -384,7 +384,7 @@ async fn exit_bolt11_change() {
 	let lightning = ctx.new_lightning_setup("lightningd").await;
 
 	// Start a server and link it to our cln installation
-	let srv = ctx.captaind("server").lightningd(&lightning.sender).create().await;
+	let srv = ctx.captaind("server").lightningd(&lightning.internal).create().await;
 
 	// Start a bark and create a VTXO
 	let bark_1 = ctx.bark("bark-1", &srv).funded(btc(7)).create().await;
@@ -394,7 +394,7 @@ async fn exit_bolt11_change() {
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 
 	let invoice_amount = btc(2);
-	let invoice = lightning.receiver.invoice(Some(invoice_amount), "test_payment", "A test payment").await;
+	let invoice = lightning.external.invoice(Some(invoice_amount), "test_payment", "A test payment").await;
 
 	// Ensure receive node is synced
 	lightning.sync().await;
@@ -425,7 +425,7 @@ async fn exit_revoked_lightning_payment() {
 	// No channels are created so that payment will fail
 
 	// Start a server and link it to our cln installation
-	let srv = ctx.captaind("server").lightningd(&lightning.sender).create().await;
+	let srv = ctx.captaind("server").lightningd(&lightning.internal).create().await;
 
 	// Start a bark and create a VTXO
 	let onchain_amount = btc(3);
@@ -437,7 +437,7 @@ async fn exit_revoked_lightning_payment() {
 
 	// Create a payable invoice
 	let invoice_amount = btc(1);
-	let invoice = lightning.receiver.invoice(Some(invoice_amount), "test_payment", "A test payment").await;
+	let invoice = lightning.external.invoice(Some(invoice_amount), "test_payment", "A test payment").await;
 
 	// Try send coins through lightning
 	assert_eq!(bark_1.spendable_balance().await, board_amount);
@@ -574,7 +574,7 @@ async fn bark_should_exit_a_failed_htlc_out_that_server_refuse_to_revoke() {
 	// No channels are created so that payment will fail
 
 	// Start a server and link it to our cln installation
-	let srv = ctx.captaind("server").lightningd(&lightning.sender).funded(btc(10)).create().await;
+	let srv = ctx.captaind("server").lightningd(&lightning.internal).funded(btc(10)).create().await;
 
 	/// This proxy will refuse to revoke the htlc out.
 	#[derive(Clone)]
@@ -609,7 +609,7 @@ async fn bark_should_exit_a_failed_htlc_out_that_server_refuse_to_revoke() {
 	// Create a payable invoice
 	let invoice_amount = btc(1);
 	let invoice = Invoice::from_str(
-		&lightning.receiver.invoice(Some(invoice_amount), "test_payment", "A test payment").await,
+		&lightning.external.invoice(Some(invoice_amount), "test_payment", "A test payment").await,
 	).unwrap();
 
 	// Try to send coins through lightning
@@ -700,7 +700,7 @@ async fn bark_should_exit_a_pending_htlc_out_that_server_refuse_to_revoke() {
 	// No channels are created so that payment will fail
 
 	// Start a server and link it to our cln installation
-	let srv = ctx.captaind("server").lightningd(&lightning.sender).funded(btc(10)).create().await;
+	let srv = ctx.captaind("server").lightningd(&lightning.internal).funded(btc(10)).create().await;
 
 	/// This proxy will refuse to revoke the htlc out.
 	#[derive(Clone)]
@@ -745,7 +745,7 @@ async fn bark_should_exit_a_pending_htlc_out_that_server_refuse_to_revoke() {
 	// Create a payable invoice
 	let invoice_amount = btc(1);
 	let invoice = Invoice::from_str(
-		&lightning.receiver.invoice(Some(invoice_amount), "test_payment", "A test payment").await,
+		&lightning.external.invoice(Some(invoice_amount), "test_payment", "A test payment").await,
 	).unwrap();
 
 	// Try send coins through lightning
@@ -1039,7 +1039,7 @@ async fn bark_should_exit_a_htlc_recv_that_server_refuse_to_cosign() {
 	let lightning = ctx.new_lightning_setup("lightningd").await;
 
 	// Start a server and link it to our cln installation
-	let srv = ctx.captaind("srv").lightningd(&lightning.receiver).funded(btc(10)).create().await;
+	let srv = ctx.captaind("srv").lightningd(&lightning.internal).funded(btc(10)).create().await;
 
 	/// This proxy will refuse to revoke the htlc out.
 	#[derive(Clone)]
@@ -1068,7 +1068,7 @@ async fn bark_should_exit_a_htlc_recv_that_server_refuse_to_cosign() {
 
 	let cloned_invoice_info = invoice_info.clone();
 	let res1 = tokio::spawn(async move {
-		lightning.sender.pay_bolt11(cloned_invoice_info.invoice).await;
+		lightning.external.pay_bolt11(cloned_invoice_info.invoice).await;
 	});
 
 	let _ = bark.try_lightning_receive(&invoice_info.invoice).await;

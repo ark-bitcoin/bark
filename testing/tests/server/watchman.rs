@@ -212,7 +212,7 @@ async fn watchman_sweeps_arkoor_vtxos_receiver_exit() {
 async fn watchman_sweeps_lightning_vtxos() {
 	let ctx = TestContext::new("server/watchman_sweeps_lightning_vtxos").await;
 	let ln = ctx.new_lightning_setup("ln").await;
-	let srv = ctx.captaind("server").lightningd(&ln.sender).funded(btc(10)).cfg(|cfg| {
+	let srv = ctx.captaind("server").lightningd(&ln.internal).funded(btc(10)).cfg(|cfg| {
 		cfg.watchman = OptionalService::Disabled;
 		cfg.vtxo_lifetime = 144;
 		cfg.vtxopool.vtxo_lifetime = 144;
@@ -338,7 +338,7 @@ async fn watchman_sweeps_round_leftovers_after_exits() {
 async fn watchman_sweeps_vtxopool_with_exit() {
 	let ctx = TestContext::new("server/watchman_sweeps_vtxopool_with_exit").await;
 	let ln = ctx.new_lightning_setup("ln").await;
-	let srv = ctx.captaind("server").funded(btc(10)).lightningd(&ln.sender).cfg(|cfg| {
+	let srv = ctx.captaind("server").funded(btc(10)).lightningd(&ln.internal).cfg(|cfg| {
 		cfg.watchman = OptionalService::Disabled;
 		cfg.vtxo_lifetime = 144;
 		cfg.vtxopool.vtxo_targets = vec![

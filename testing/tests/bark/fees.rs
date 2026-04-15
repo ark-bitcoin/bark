@@ -748,7 +748,7 @@ async fn lightning_receive_fee_deducted() {
 
 	let lightning = ctx.new_lightning_setup("lightningd").await;
 
-	let srv = ctx.new_captaind_with_cfg("server", Some(&lightning.receiver), |cfg| {
+	let srv = ctx.new_captaind_with_cfg("server", Some(&lightning.internal), |cfg| {
 		cfg.fees.lightning_receive = LightningReceiveFees {
 			base_fee: sat(500),
 			ppm: PpmFeeRate::ONE_PERCENT,
@@ -769,7 +769,7 @@ async fn lightning_receive_fee_deducted() {
 
 	let cloned_invoice_info = invoice_info.clone();
 	let res = tokio::spawn(async move {
-		lightning.sender.pay_bolt11(cloned_invoice_info.invoice).await
+		lightning.external.pay_bolt11(cloned_invoice_info.invoice).await
 	});
 
 	srv.wait_for_vtxopool(&ctx).await;
@@ -804,7 +804,7 @@ async fn lightning_receive_fee_rejects_when_fee_exceeds_amount() {
 
 	let lightning = ctx.new_lightning_setup("lightningd").await;
 
-	let srv = ctx.new_captaind_with_cfg("server", Some(&lightning.receiver), |cfg| {
+	let srv = ctx.new_captaind_with_cfg("server", Some(&lightning.external), |cfg| {
 		// Set a very high base_fee so that small amounts are rejected
 		cfg.fees.lightning_receive = LightningReceiveFees {
 			base_fee: sat(50_000),
@@ -835,7 +835,7 @@ async fn lightning_send_fee_deducted() {
 
 	let lightning = ctx.new_lightning_setup("lightningd").await;
 
-	let srv = ctx.new_captaind_with_cfg("server", Some(&lightning.sender), |cfg| {
+	let srv = ctx.new_captaind_with_cfg("server", Some(&lightning.internal), |cfg| {
 		cfg.fees.lightning_send = LightningSendFees {
 			min_fee: Amount::ZERO,
 			base_fee: sat(5_000),
@@ -855,7 +855,7 @@ async fn lightning_send_fee_deducted() {
 	let estimate = bark.estimate_lightning_send_fee(pay_amount).await;
 
 	// Pay 2 BTC via lightning with a 5,000 sat base_fee (no ppm)
-	let invoice = lightning.receiver.invoice(Some(pay_amount), "test_fee_payment", "fee test").await;
+	let invoice = lightning.external.invoice(Some(pay_amount), "test_fee_payment", "fee test").await;
 	bark.pay_lightning_wait(invoice, None).await;
 
 	// Fee = base(5,000) + ppm(0) = 5,000
@@ -885,7 +885,7 @@ async fn lightning_send_fee_min_fee_applies() {
 
 	let lightning = ctx.new_lightning_setup("lightningd").await;
 
-	let srv = ctx.new_captaind_with_cfg("server", Some(&lightning.sender), |cfg| {
+	let srv = ctx.new_captaind_with_cfg("server", Some(&lightning.internal), |cfg| {
 		cfg.fees.lightning_send = LightningSendFees {
 			min_fee: sat(10_000),
 			base_fee: sat(100),
@@ -905,7 +905,7 @@ async fn lightning_send_fee_min_fee_applies() {
 	let estimate = bark.estimate_lightning_send_fee(pay_amount).await;
 
 	// Pay 1 BTC via lightning: base(100) + ppm(0) = 100, but min_fee = 10,000
-	let invoice = lightning.receiver.invoice(Some(pay_amount), "test_min_fee", "min fee test").await;
+	let invoice = lightning.external.invoice(Some(pay_amount), "test_min_fee", "min fee test").await;
 	bark.pay_lightning_wait(invoice, None).await;
 
 	// Fee = max(10,000, 100 + 0) = 10,000
@@ -934,7 +934,7 @@ async fn lightning_send_fee_ppm_expiry_table() {
 
 	let lightning = ctx.new_lightning_setup("lightningd").await;
 
-	let srv = ctx.new_captaind_with_cfg("server", Some(&lightning.sender), |cfg| {
+	let srv = ctx.new_captaind_with_cfg("server", Some(&lightning.internal), |cfg| {
 		cfg.vtxo_lifetime = 144;
 		cfg.fees.lightning_send = LightningSendFees {
 			min_fee: Amount::ZERO,
@@ -961,7 +961,7 @@ async fn lightning_send_fee_ppm_expiry_table() {
 	// Pay 2 BTC via lightning. VTXO expiry can never reach u32::MAX, so the 1% middle tier applies
 	// (not 5%).
 	// Fee = base(1,000) + ppm_expiry(2 BTC × 1%) = 1,000 + 2,000,000 = 2,001,000
-	let invoice = lightning.receiver.invoice(Some(pay_amount), "test_ppm_expiry", "ppm expiry test").await;
+	let invoice = lightning.external.invoice(Some(pay_amount), "test_ppm_expiry", "ppm expiry test").await;
 	bark.pay_lightning_wait(invoice, None).await;
 
 	let expected_fee = sat(2_001_000);
