@@ -1262,6 +1262,53 @@ async fn round_participation() {
 }
 
 #[tokio::test]
+async fn round_participation_forfeited_at() {
+	let mut ctx = TestContext::new_minimal("postgresd/round_part_forfeited_at").await;
+	ctx.init_central_postgres().await;
+	let postgres_cfg = ctx.new_postgres(&ctx.test_name).await;
+
+	Db::create(&postgres_cfg).await.expect("Database created");
+	let db = Db::connect(&postgres_cfg).await.expect("Connected to database");
+
+	let vtxo = ServerVtxo::from(VTXO_VECTORS.board_vtxo.clone());
+	db.upsert_vtxos(&[vtxo.clone()]).await.unwrap();
+
+	let unlock_preimage: UnlockPreimage = [2u8; 32];
+	let unlock_hash = UnlockHash::hash(&unlock_preimage);
+
+	let output = StoredRoundOutput {
+		vtxo_request: VtxoRequest {
+			policy: VtxoPolicy::new_pubkey(VTXO_VECTORS.board_vtxo.user_pubkey()),
+			amount: bitcoin::Amount::from_sat(1000),
+		},
+		unblinded_mailbox_id: None,
+	};
+
+	db.try_store_round_participation(0, unlock_preimage, &[vtxo.id()], std::iter::once(&output))
+		.await.unwrap();
+
+	// newly created participation is not forfeited
+	let part = db.get_round_participation_by_unlock_hash(unlock_hash).await.unwrap()
+		.expect("participation should exist");
+	assert!(part.forfeited_at.is_none(), "new participation should not be forfeited");
+
+	// mark it as forfeited
+	db.mark_participation_forfeited(unlock_hash).await.unwrap();
+
+	// now it should be forfeited and carry a timestamp
+	let part = db.get_round_participation_by_unlock_hash(unlock_hash).await.unwrap()
+		.expect("participation should exist");
+	let first_forfeited_at = part.forfeited_at.expect("participation should be marked as forfeited");
+
+	// marking again preserves the original timestamp
+	db.mark_participation_forfeited(unlock_hash).await.unwrap();
+	let part = db.get_round_participation_by_unlock_hash(unlock_hash).await.unwrap()
+		.expect("participation should exist");
+	assert_eq!(part.forfeited_at, Some(first_forfeited_at),
+		"re-marking should preserve the original forfeited_at timestamp");
+}
+
+#[tokio::test]
 async fn round_participation_same_vtxo_multiple_pending() {
 	let mut ctx = TestContext::new_minimal("postgresd/round_part_double_spend").await;
 	ctx.init_central_postgres().await;

@@ -83,6 +83,12 @@ impl Server {
 		let part = self.db.get_round_participation_by_unlock_hash(unlock_hash).await?
 			.badarg("unknown unlock hash")?;
 
+		// if this participation was already forfeited, skip the expensive work
+		// and return the preimage directly
+		if part.forfeited_at.is_some() {
+			return Ok(part.unlock_preimage.leak_owned());
+		}
+
 		// check that all inputs are present
 		let mut input_set = part.inputs.iter().map(|i| i.vtxo_id).collect::<HashSet<_>>();
 		for vtxo in forfeits {
@@ -163,6 +169,9 @@ impl Server {
 			.chain(ff_txids);
 		self.db.mark_server_may_own_descendants(txids).await
 			.context("failed to mark server_may_own_descendants")?;
+
+		self.db.mark_participation_forfeited(unlock_hash).await
+			.context("failed to mark participation as forfeited")?;
 
 		Ok(part.unlock_preimage.leak_owned())
 	}
