@@ -1,10 +1,10 @@
-use std::cell::{RefCell, RefMut};
 use std::collections::HashSet;
 use std::ops::Bound;
 
 use anyhow::Context;
 use bitcoin::hex::DisplayHex;
 use indexed_db::{Database, Factory, TransactionBuilder};
+use tokio::sync::{Mutex, MutexGuard};
 use web_sys::js_sys::JsString;
 use web_sys::wasm_bindgen::JsValue;
 
@@ -93,22 +93,22 @@ impl Drop for IndexedDbInner {
 }
 
 pub struct IndexedDbClient {
-	inner: RefCell<Option<IndexedDbInner>>,
+	inner: Mutex<Option<IndexedDbInner>>,
 }
 
 impl IndexedDbClient {
 	pub async fn open(db_name: &str) -> anyhow::Result<IndexedDbClient> {
 		Ok(IndexedDbClient {
-			inner: RefCell::new(Some(IndexedDbInner::new(db_name).await?)),
+			inner: Mutex::new(Some(IndexedDbInner::new(db_name).await?)),
 		})
 	}
 
-	fn inner(&self) -> anyhow::Result<RefMut<'_, IndexedDbInner>> {
-		let borrow = self.inner.borrow_mut();
-		if borrow.is_none() {
+	async fn inner(&self) -> anyhow::Result<MutexGuard<'_, Option<IndexedDbInner>>> {
+		let guard = self.inner.lock().await;
+		if guard.is_none() {
 			bail!("database connection already closed");
 		}
-		Ok(RefMut::map(borrow, |opt| opt.as_mut().unwrap()))
+		Ok(guard)
 	}
 }
 
@@ -125,7 +125,8 @@ impl StorageAdaptor for IndexedDbClient {
 		let pk = pk.to_lower_hex_string();
 		let partition_name = partition_name(partition);
 
-		let conn = self.inner()?.ensure_partition(&partition_name).await?;
+		let conn = self.inner().await?.as_mut().unwrap()
+			.ensure_partition(&partition_name).await?;
 		let value = conn.run(move |t| async move {
 			let store = t.object_store(&partition_name)?;
 			let key = JsString::from(pk);
@@ -149,7 +150,8 @@ impl StorageAdaptor for IndexedDbClient {
 		let value = serde_wasm_bindgen::to_value(&record)
 			.context("failed to serialize record")?;
 
-		let conn = self.inner()?.ensure_partition(&partition_name).await?;
+		let conn = self.inner().await?.as_mut().unwrap()
+			.ensure_partition(&partition_name).await?;
 		conn.rw().run(move |t| async move {
 			let store = t.object_store(&partition_name)?;
 			let key = JsString::from(pk);
@@ -163,7 +165,8 @@ impl StorageAdaptor for IndexedDbClient {
 		let pk = pk.to_lower_hex_string();
 		let partition_name = partition_name(partition);
 
-		let conn = self.inner()?.ensure_partition(&partition_name).await?;
+		let conn = self.inner().await?.as_mut().unwrap()
+			.ensure_partition(&partition_name).await?;
 		let value = conn.rw().run(move |t| async move {
 			let store = t.object_store(&partition_name)?;
 			let key = JsString::from(pk);
@@ -196,7 +199,8 @@ impl StorageAdaptor for IndexedDbClient {
 		let end_bound = query.range.end_bound().map(sort_key_to_js);
 
 		let partition_name = partition_name(query.partition);
-		let conn = self.inner()?.ensure_partition(&partition_name).await?;
+		let conn = self.inner().await?.as_mut().unwrap()
+			.ensure_partition(&partition_name).await?;
 
 		let values = conn.run(move |t| async move {
 			let store = t.object_store(&partition_name)?;
@@ -234,7 +238,8 @@ impl StorageAdaptor for IndexedDbClient {
 	async fn get_all(&self, partition: u8) -> anyhow::Result<Vec<Record>> {
 		let partition_name = partition_name(partition);
 
-		let conn = self.inner()?.ensure_partition(&partition_name).await?;
+		let conn = self.inner().await?.as_mut().unwrap()
+			.ensure_partition(&partition_name).await?;
 		let values = conn.run(move |t| async move {
 			let store = t.object_store(&partition_name)?;
 			let mut cursor = store.cursor().open().await?;
