@@ -220,7 +220,7 @@ impl Db {
 		let tx = conn.transaction().await?;
 
 		let part_opt = tx.query_opt(
-			"SELECT id, unlock_hash, unlock_preimage, round_id, created_at \
+			"SELECT id, unlock_hash, unlock_preimage, round_id, forfeited_at, created_at \
 			FROM round_participation \
 			WHERE unlock_hash = $1",
 			&[&unlock_hash.to_string()],
@@ -241,7 +241,7 @@ impl Db {
 		let tx = conn.transaction().await?;
 
 		let parts = tx.query(
-			"SELECT id, unlock_hash, unlock_preimage, round_id, created_at \
+			"SELECT id, unlock_hash, unlock_preimage, round_id, forfeited_at, created_at \
 			FROM round_participation \
 			WHERE round_id IS NULL",
 			&[],
@@ -330,6 +330,20 @@ impl Db {
 		);
 
 		tx.commit().await?;
+		Ok(())
+	}
+
+	pub async fn mark_participation_forfeited(
+		&self,
+		unlock_hash: UnlockHash,
+	) -> anyhow::Result<()> {
+		let conn = self.get_conn().await?;
+		let stmt = conn.prepare_typed(
+			"UPDATE round_participation SET forfeited_at = NOW() \
+			WHERE unlock_hash = $1 AND forfeited_at IS NULL",
+			&[Type::TEXT],
+		).await?;
+		conn.execute(&stmt, &[&unlock_hash.to_string()]).await?;
 		Ok(())
 	}
 

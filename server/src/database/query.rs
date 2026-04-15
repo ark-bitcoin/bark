@@ -267,12 +267,15 @@ pub async fn complete_round_participation(
 		unlock_hash, unlock_preimage.as_hex(),
 	);
 
+	let forfeited_at = part_row.get::<_, Option<chrono::DateTime<chrono::Local>>>("forfeited_at");
+
 	Ok(StoredRoundParticipation {
 		unlock_preimage: Secret::new(unlock_preimage),
 		unlock_hash,
 		inputs,
 		outputs,
 		round_id,
+		forfeited_at,
 	})
 }
 
