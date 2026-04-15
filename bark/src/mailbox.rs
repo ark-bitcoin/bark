@@ -268,8 +268,10 @@ impl Wallet {
 				trace!("Received recovery VTXO IDs, ignoring");
 				true
 			}
-			Some(Message::LightningSendFinished(_)) => {
-				trace!("Received lightning send finished, ignoring for now");
+			Some(Message::LightningSendFinished(msg)) => {
+				if let Err(e) = self.handle_lightning_send_finished(msg, mailbox_msg.checkpoint).await {
+					error!("Error handling lightning send finished notification: {:#}", e);
+				}
 				true
 			}
 			None => {
@@ -372,6 +374,36 @@ impl Wallet {
 			Err(e) => error!("Failed to claim lightning receive for {}: {:#}", payment_hash, e),
 		}
 
+		Ok(())
+	}
+
+	/// Handle a lightning send finished notification from the mailbox.
+	///
+	/// This notification indicates that the server has completed processing
+	/// a lightning payment we initiated, either successfully or with failure.
+	async fn handle_lightning_send_finished(
+		&self,
+		notif: protos::mailbox_server::LightningSendFinishedMessage,
+		checkpoint: u64,
+	) -> anyhow::Result<()> {
+		let payment_hash = PaymentHash::try_from(notif.payment_hash)
+			.context("invalid payment hash in lightning send finished notification")?;
+
+		if notif.preimage.is_some() {
+			debug!("Lightning send finished notification (success): payment_hash={}", payment_hash);
+		} else {
+			debug!("Lightning send finished notification (failed): payment_hash={}", payment_hash);
+		}
+
+		// Trigger the regular payment check flow which will handle success/revocation.
+		// Errors are logged but not propagated: we always advance the checkpoint
+		// to avoid re-processing the same notification on the next poll.
+		match self.check_lightning_payment(payment_hash, false).await {
+			Ok(_) => info!("Processed lightning send finished for {}", payment_hash),
+			Err(e) => error!("Failed to process lightning send finished for {}: {:#}", payment_hash, e),
+		}
+
+		self.store_mailbox_checkpoint(checkpoint).await?;
 		Ok(())
 	}
 

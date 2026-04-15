@@ -673,11 +673,12 @@ impl Wallet {
 			movement_id,
 		).await?;
 
+		let mailbox_id = self.mailbox_identifier();
 		let req = protos::InitiateLightningPaymentRequest {
 			invoice: invoice.to_string(),
 			htlc_vtxo_ids: htlc_vtxos.iter().map(|v| v.id().to_bytes().to_vec()).collect(),
 			payment_amount_sat: payment_amount.to_sat(),
-			mailbox_id: None,
+			mailbox_id: Some(mailbox_id.to_vec()),
 		};
 
 		srv.client.initiate_lightning_payment(req).await?;
