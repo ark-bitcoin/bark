@@ -50,8 +50,6 @@ impl ActionParams<()> {
 struct PubkeyExtra {
 	/// The next transaction, if any. The bool indicates whether the signature is known.
 	next_tx: Option<ProgressSpec>,
-	/// Whether the server may own a descendant of this VTXO.
-	server_may_own_descendant: bool,
 	/// we have the key in our db
 	server_knows_key: bool,
 }
@@ -128,10 +126,10 @@ fn decide_action_hark_forfeit(params: &ActionParams) -> Action {
 	Action::Claim { deadline: Some(params.confirmed_at + BlockHeight::from(params.exit_delta)) }
 }
 
-/// Determine action for Pubkey policy
+/// Determine action for Pubkey policy.
 ///
-/// We should continue with checkpoint tx if we own a descendant, otherwise
-/// do nothing, the VTXO is exit by the user and owned by him.
+/// If we know the user's key, claim after the exit delta. Otherwise progress
+/// the next checkpoint tx if one is signed; nothing to do if not.
 fn decide_action_pubkey(params: &ActionParams<PubkeyExtra>) -> Action {
 	let after_exit_delta = params.confirmed_at + BlockHeight::from(params.exit_delta);
 	if params.policy_extras.server_knows_key {
@@ -141,15 +139,11 @@ fn decide_action_pubkey(params: &ActionParams<PubkeyExtra>) -> Action {
 			Action::Wait
 		}
 	} else {
-		if !params.policy_extras.server_may_own_descendant {
-			Action::Wait
-		} else {
-			try_progress(
-				params,
-				params.policy_extras.next_tx,
-				after_exit_delta,
-			).unwrap_or(Action::Wait)
-		}
+		try_progress(
+			params,
+			params.policy_extras.next_tx,
+			after_exit_delta,
+		).unwrap_or(Action::Wait)
 	}
 }
 
@@ -242,7 +236,6 @@ impl ActionContextFetcher<'_> {
 			ServerVtxoPolicy::User(VtxoPolicy::Pubkey(p)) => {
 				let params = params.with_policy_extras(PubkeyExtra {
 					next_tx: self.fetch_progress(vtxo).await,
-					server_may_own_descendant: self.check_server_may_own_descendant(vtxo).await,
 					server_knows_key: self.check_server_knows_pubkey(p.user_pubkey).await,
 				});
 
@@ -363,14 +356,6 @@ impl ActionContextFetcher<'_> {
 			.is_some()
 	}
 
-	async fn check_server_may_own_descendant(&self, vtxo: &ServerVtxo) -> bool {
-		let txid = vtxo.point().txid;
-		self.db.get_virtual_transaction_by_txid(txid).await
-			.inspect_err(|e| warn!("DB error: {:#}", e))
-			.ok().flatten()
-			.map(|vtx| vtx.server_may_own_descendant()).unwrap_or(false)
-	}
-
 	async fn check_server_knows_pubkey(&self, pk: PublicKey) -> bool {
 		match self.db.fetch_ephemeral_tweak(pk).await {
 			Ok(Some(_)) => true,
@@ -402,7 +387,6 @@ mod tests {
 			confirmed_at: 100,
 			policy_extras: PubkeyExtra {
 				next_tx: None,
-				server_may_own_descendant: true,
 				server_knows_key: false,
 			},
 		};
@@ -423,7 +407,6 @@ mod tests {
 			confirmed_at: 100,
 			policy_extras: PubkeyExtra {
 				next_tx: Some(ProgressSpec { next_txid: txid, is_signed: true }),
-				server_may_own_descendant: true,
 				server_knows_key: false,
 			},
 		};
@@ -444,7 +427,6 @@ mod tests {
 			confirmed_at: 100,
 			policy_extras: PubkeyExtra {
 				next_tx: None,
-				server_may_own_descendant: true,
 				server_knows_key: false,
 			},
 		};
@@ -463,7 +445,6 @@ mod tests {
 			exit_delta: 144,
 			confirmed_at: 100,
 			policy_extras: PubkeyExtra {
-				server_may_own_descendant: true,
 				next_tx: Some(ProgressSpec { next_txid: txid, is_signed: false }),
 				server_knows_key: false,
 			},
@@ -484,7 +465,6 @@ mod tests {
 			confirmed_at: 100,
 			policy_extras: PubkeyExtra {
 				next_tx: None,
-				server_may_own_descendant: false,
 				server_knows_key: true,
 			},
 		};
@@ -506,7 +486,6 @@ mod tests {
 			confirmed_at: 100,
 			policy_extras: PubkeyExtra {
 				next_tx: None,
-				server_may_own_descendant: false,
 				server_knows_key: true,
 			},
 		};
@@ -515,9 +494,10 @@ mod tests {
 		assert_eq!(decide_action_pubkey(&params), Action::Claim { deadline: None });
 	}
 
-	/// When server does not own an descendant, it cannot attempt to progress.
+	/// A signed checkpoint tx is broadcast once the grace period passes,
+	/// regardless of any bookkeeping flag.
 	#[test]
-	fn pubkey_waits_when_server_does_not_own_descendant() {
+	fn pubkey_progresses_on_unilateral_exit() {
 		let txid = Txid::from_byte_array([1; 32]);
 		let params = ActionParams {
 			vtxo_id: test_vtxo_id(),
@@ -528,12 +508,11 @@ mod tests {
 			confirmed_at: 100,
 			policy_extras: PubkeyExtra {
 				next_tx: Some(ProgressSpec { next_txid: txid, is_signed: true }),
-				server_may_own_descendant: false,
 				server_knows_key: false,
 			},
 		};
-		// Even with a valid progress tx, server_may_own_descendant: false means we wait
-		assert_eq!(decide_action_pubkey(&params), Action::Wait);
+		// deadline = confirmed_at + exit_delta = 100 + 144 = 244
+		assert_eq!(decide_action_pubkey(&params), Action::Progress { txid, deadline: Some(244) });
 	}
 
 	/// Server waits for the safety margin before broadcasting progress,
