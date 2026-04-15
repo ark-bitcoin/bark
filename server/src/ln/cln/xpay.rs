@@ -126,9 +126,9 @@ impl ClnXpayClient {
 	/// updated (unless the DB status is already final, which is logged as an error).
 	/// Sends on `payment_update_tx` when the status changes.
 	pub async fn sync_payment_attempt_status(&self, attempt: LightningPaymentAttempt) -> anyhow::Result<()> {
-		let invoice = self.db.get_lightning_invoice_by_id(attempt.lightning_invoice_id).await?;
-		debug!("Lightning invoice ({}): with payment hash {} is being verified.",
-			invoice.id, invoice.payment_hash,
+		let payment_hash = attempt.payment_hash;
+		debug!("Lightning payment attempt ({}): with payment hash {} is being verified.",
+			attempt.id, payment_hash,
 		);
 
 		let mut updated = false;
@@ -137,7 +137,7 @@ impl ClnXpayClient {
 
 		let req = cln_rpc::ListpaysRequest {
 			bolt11: None,
-			payment_hash: Some(invoice.payment_hash.to_vec()),
+			payment_hash: Some(payment_hash.to_vec()),
 			status: None,
 			index: None,
 			limit: None,
@@ -149,15 +149,15 @@ impl ClnXpayClient {
 		if listpays_response.pays.is_empty() {
 			match attempt.status {
 				LightningPaymentStatus::Succeeded => {
-					error!("Lightning invoice ({}): Payment attempt flagged succeeded \
+					error!("Lightning payment attempt ({}): flagged succeeded \
 						when it cannot be found in CLN for payment hash {}",
-						invoice.id, invoice.payment_hash,
+						attempt.id, payment_hash,
 					);
 				},
 				LightningPaymentStatus::Failed => {
-					error!("Lightning invoice ({}): Payment attempt flagged failed \
+					error!("Lightning payment attempt ({}): flagged failed \
 						when it cannot be found in CLN for payment hash {}",
-						invoice.id, invoice.payment_hash,
+						attempt.id, payment_hash,
 					)
 				},
 				LightningPaymentStatus::Requested
@@ -187,9 +187,9 @@ impl ClnXpayClient {
 				ListpaysPaysStatus::Pending => LightningPaymentStatus::Submitted,
 				ListpaysPaysStatus::Complete => {
 					if latest.preimage.is_none() {
-						error!("Lightning invoice ({}): Payment completed but no preimage \
+						error!("Lightning payment attempt ({}): completed but no preimage \
 							specified for payment hash {}",
-							invoice.id, invoice.payment_hash,
+							attempt.id, payment_hash,
 						);
 						LightningPaymentStatus::Submitted
 					} else {
@@ -208,22 +208,23 @@ impl ClnXpayClient {
 
 			if attempt.status != desired_status {
 				if attempt.status.is_final() {
-					error!("Lightning invoice ({}): payment attempt flagged {} when it \
+					error!("Lightning payment attempt ({}): flagged {} when it \
 						actually {} for payment hash {}",
-						invoice.id, attempt.status, desired_status,
-						invoice.payment_hash,
+						attempt.id, attempt.status, desired_status,
+						payment_hash,
 					);
 				} else {
+					let preimage: Option<Preimage> = latest.preimage.map(|b| b.try_into())
+						.transpose()
+						.context("CLN returned a preimage that is not 32 bytes")?;
+
 					// Store the preimage in the settlement table so the
 					// watchman can use it to claim HTLC VTXOs on-chain.
-					if let Some(preimage_bytes) = latest.preimage {
-						let preimage: Preimage = preimage_bytes.try_into()
-							.context("CLN returned a preimage that is not 32 bytes")?;
+					if let Some(preimage) = preimage {
 						self.settler.settle(preimage).await?;
 					}
 
-					updated = self.db.verify_and_update_invoice(
-						invoice.payment_hash,
+					updated = self.db.verify_and_update_payment_attempt(
 						&attempt,
 						desired_status,
 						error_string,
@@ -234,11 +235,11 @@ impl ClnXpayClient {
 		}
 
 		if updated {
-			trace!("Lightning invoice ({}): status updated for payment hash {}.",
-				invoice.id, invoice.payment_hash,
+			trace!("Lightning payment attempt ({}): status updated for payment hash {}.",
+				attempt.id, payment_hash,
 			);
 
-			self.payment_update_tx.send(invoice.payment_hash)?;
+			self.payment_update_tx.send(payment_hash)?;
 		}
 
 		Ok(())
@@ -293,7 +294,7 @@ impl ClnXpay {
 		let proc = ClnXpayProcess {
 			config, db, node_id,
 			client: client.clone(),
-			invoice_next_check_at: HashMap::new(),
+			attempt_next_check_at: HashMap::new(),
 		};
 
 		let jh = tokio::spawn(async move {
@@ -369,31 +370,31 @@ struct ClnXpayProcess {
 
 	client: Arc<ClnXpayClient>,
 
-	/// Per-invoice backoff state: maps invoice id → (check count, earliest next check time).
+	/// Per-attempt backoff state: maps attempt id → (check count, earliest next check time).
 	/// Entries are pruned once their next-check time lapses.
-	invoice_next_check_at: HashMap<i64, (usize, DateTime<Local>)>,
+	attempt_next_check_at: HashMap<i64, (usize, DateTime<Local>)>,
 }
 
 impl ClnXpayProcess {
-	/// Bumps the backoff counter for `invoice_id` and schedules the next check.
+	/// Bumps the backoff counter for `attempt_id` and schedules the next check.
 	///
-	/// Delay doubles each attempt starting from `check_base_delay`, capped at
+	/// Delay doubles each check starting from `check_base_delay`, capped at
 	/// `max_check_delay`.
-	fn update_next_invoice_check(&mut self, invoice_id: i64) {
-		let (attempts, next_check) = self.invoice_next_check_at.entry(invoice_id)
+	fn update_next_attempt_check(&mut self, attempt_id: i64) {
+		let (checks, next_check) = self.attempt_next_check_at.entry(attempt_id)
 			.or_insert((0, Local::now()));
-		*attempts += 1;
+		*checks += 1;
 
-		// Calculate delay: grows with each attempt
+		// Calculate delay: grows with each check
 		// e.g. base 10 seconds, doubling each time, capped to a max delay
 		let base_delay_secs = self.config.check_base_delay.as_secs();
 		let max_delay_secs = self.config.max_check_delay.as_secs();
-		let delay_secs = (base_delay_secs * 2u64.pow(*attempts as u32 - 1)).min(max_delay_secs);
+		let delay_secs = (base_delay_secs * 2u64.pow(*checks as u32 - 1)).min(max_delay_secs);
 
 		*next_check = Local::now() + Duration::from_secs(delay_secs);
 
-		trace!("Lightning invoice ({}): Check {} done, updated next check to {}.",
-			invoice_id, attempts, next_check,
+		trace!("Lightning payment attempt ({}): Check {} done, updated next check to {}.",
+			attempt_id, checks, next_check,
 		);
 	}
 
@@ -405,8 +406,8 @@ impl ClnXpayProcess {
 
 		for attempt in open_attempts {
 			if attempt.is_self_payment {
-				trace!("Lightning invoice ({}): Skipping since it is a self payment.",
-					attempt.lightning_invoice_id,
+				trace!("Lightning payment attempt ({}): Skipping since it is a self payment.",
+					attempt.id,
 				);
 
 				continue;
@@ -417,36 +418,36 @@ impl ClnXpayProcess {
 			let safe_delay_cln_stopped_retries =
 				self.config.cln_xpay_timeout + XPAY_TIMEOUT_BUFFER;
 			if attempt.created_at > Local::now() - safe_delay_cln_stopped_retries {
-				trace!("Lightning invoice ({}): Skipping since it was just created.",
-					attempt.lightning_invoice_id,
+				trace!("Lightning payment attempt ({}): Skipping since it was just created.",
+					attempt.id,
 				);
 
 				continue;
 			}
 
-			let next_check = self.invoice_next_check_at.get(&attempt.lightning_invoice_id);
+			let next_check = self.attempt_next_check_at.get(&attempt.id);
 			if next_check.is_some() && next_check.unwrap().1 > Local::now() {
-				trace!("Lightning invoice ({}): Skipping since it was checked recently.",
-					attempt.lightning_invoice_id,
+				trace!("Lightning payment attempt ({}): Skipping since it was checked recently.",
+					attempt.id,
 				);
 
 				continue;
 			}
 
-			let lightning_invoice_id = attempt.lightning_invoice_id;
+			let attempt_id = attempt.id;
 			if let Err(e) = self.client.sync_payment_attempt_status(attempt).await {
 				error!("Error syncing payment attempt status: {e:#}");
 			} else {
-				self.update_next_invoice_check(lightning_invoice_id);
+				self.update_next_attempt_check(attempt_id);
 			}
 
 		}
 
-		self.invoice_next_check_at.retain(|_, &mut (_, datetime)| datetime > Local::now());
+		self.attempt_next_check_at.retain(|_, &mut (_, datetime)| datetime > Local::now());
 
 		telemetry::set_pending_invoice_verifications(
 			self.node_id,
-			self.invoice_next_check_at.len(),
+			self.attempt_next_check_at.len(),
 		);
 
 		Ok(())

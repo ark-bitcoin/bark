@@ -210,7 +210,7 @@ impl Server {
 			&invoice,
 			payment_amount,
 			max_routing_fee,
-			min_expiry_height
+			min_expiry_height,
 		).await?;
 
 		slog!(LightningPaymentInitiated, invoice_payment_hash, amount: payment_amount, fee,
@@ -286,13 +286,13 @@ impl Server {
 		let builder = self.validate_cosign_request(validation, cosign_request)
 			.badarg("invalid cosign request")?;
 
-		let invoice = db.get_lightning_invoice_by_payment_hash(invoice_payment_hash).await?;
+		let attempt = db.get_latest_payment_attempt_by_payment_hash(invoice_payment_hash).await?;
 
 		// If payment not found but input vtxos are found, we can allow revoke
-		if let Some(invoice) = invoice {
-			match invoice.last_attempt_status {
-				Some(status) if status == LightningPaymentStatus::Failed => {},
-				Some(status) if status == LightningPaymentStatus::Succeeded => {
+		if let Some(attempt) = attempt {
+			match attempt.status {
+				LightningPaymentStatus::Failed => {},
+				LightningPaymentStatus::Succeeded => {
 					if let Some(preimage) = self.htlc_settler.is_settled(invoice_payment_hash).await? {
 						return badarg!("This lightning payment has completed. preimage: {}",
 							preimage.as_hex());
@@ -396,15 +396,12 @@ impl Server {
 		// between last lightning htlc and htlc-recv vtxo one
 		let ln_cltv_delta = min_cltv_delta + self.config.htlc_expiry_delta;
 
-		let invoice = self.cln.generate_invoice(payment_hash, amount, ln_cltv_delta, description).await?;
+		let invoice = self.cln.generate_invoice(
+			payment_hash, amount, ln_cltv_delta, description, mailbox_id,
+		).await?;
 		trace!("Hold invoice created. payment_hash: {}, amount: {}, {}",
 			payment_hash, amount, invoice.to_string(),
 		);
-
-		// Store the client's mailbox_id on the invoice for later notifications
-		if let Some(ref id) = mailbox_id {
-			self.db.store_lightning_invoice_mailbox_id(payment_hash, id).await?;
-		}
 
 		Ok(protos::StartLightningReceiveResponse {
 			bolt11: invoice.to_string()

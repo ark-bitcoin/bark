@@ -42,6 +42,7 @@ use tokio_stream::StreamExt;
 use tonic::transport::{Channel, Uri};
 use tracing::{debug, error, info, trace, warn};
 use ark::lightning::{Bolt12Invoice, Bolt12InvoiceExt, Invoice, Offer, PaymentHash, PaymentStatus, Preimage};
+use ark::mailbox::MailboxIdentifier;
 use cln_rpc::node_client::NodeClient;
 
 use crate::Server;
@@ -220,30 +221,24 @@ impl ClnManager {
 				},
 			}
 
-			let invoice = self.db.get_lightning_invoice_by_payment_hash(payment_hash).await?
-				.not_found([payment_hash], "invoice not found")?;
+			let attempt = self.db.get_latest_payment_attempt_by_payment_hash(payment_hash).await?
+				.not_found([payment_hash], "payment attempt not found")?;
 
-			if let Some(status) = invoice.last_attempt_status {
-				// In both cases, check payment status
-				trace!("Bolt11 invoice status for payment {}: {}",
-					invoice.invoice.payment_hash(), status,
-				);
+			// Check payment status
+			trace!("Payment attempt status for payment {}: {}",
+				payment_hash, attempt.status,
+			);
 
-				if status == LightningPaymentStatus::Succeeded {
-					let preimage = self.settler.is_settled(payment_hash).await?
-						.context("missing preimage in htlc_settlement on bolt11 success")?;
-					debug!(payment_hash = %payment_hash, preimage = %preimage, "CheckLightningPayment responding with success");
-					return Ok(PaymentStatus::Success(preimage));
-				}
+			if attempt.status == LightningPaymentStatus::Succeeded {
+				let preimage = self.settler.is_settled(payment_hash).await?
+					.context("missing preimage on payment success")?;
+				debug!(payment_hash = %payment_hash, preimage = %preimage, "CheckLightningPayment responding with success");
+				return Ok(PaymentStatus::Success(preimage));
+			}
 
-				if status == LightningPaymentStatus::Failed {
-					debug!(payment_hash = %payment_hash, "CheckLightningPayment responding with failed");
-					return Ok(PaymentStatus::Failed);
-				}
-			} else {
-				warn!("Bolt11 invoice status for payment {}: no attempt on invoice",
-					invoice.invoice.payment_hash(),
-				);
+			if attempt.status == LightningPaymentStatus::Failed {
+				debug!(payment_hash = %payment_hash, "CheckLightningPayment responding with failed");
+				return Ok(PaymentStatus::Failed);
 			}
 
 			if !wait {
@@ -260,9 +255,12 @@ impl ClnManager {
 		amount: Amount,
 		cltv_delta: BlockDelta,
 		description: Option<String>,
+		receiver_mailbox_id: Option<MailboxIdentifier>,
 	) -> anyhow::Result<Bolt11Invoice> {
 		let (invoice_tx, invoice_rx) = oneshot::channel();
-		self.send_ctrl(Ctrl::GenerateInvoice { payment_hash, amount, cltv_delta, description, invoice_tx });
+		self.send_ctrl(Ctrl::GenerateInvoice {
+			payment_hash, amount, cltv_delta, description, receiver_mailbox_id, invoice_tx,
+		});
 		invoice_rx.await.context("an error occurred requesting a BOLT-11 invoice")
 	}
 
@@ -284,8 +282,8 @@ impl ClnManager {
 		let attempt = self.db.get_open_lightning_payment_attempt_by_payment_hash(payment_hash).await?;
 		if let Some(attempt) = attempt {
 			let status = LightningPaymentStatus::Succeeded;
-			self.db.verify_and_update_invoice(
-				payment_hash, &attempt, status, None, None,
+			self.db.verify_and_update_payment_attempt(
+				&attempt, status, None, None,
 			).await?;
 		} else {
 			let (result_tx, result_rx) = oneshot::channel();
@@ -459,7 +457,7 @@ async fn post_lightning_receive_notification(
 	mailbox_manager: &crate::mailbox_manager::MailboxManager,
 	payment_hash: PaymentHash,
 ) {
-	let mailbox_id = match db.get_lightning_invoice_mailbox_id(payment_hash).await {
+	let mailbox_id = match db.get_lightning_receiver_mailbox_id(payment_hash).await {
 		Ok(Some(id)) => id,
 		Ok(None) => return,
 		Err(e) => {
@@ -684,6 +682,7 @@ enum Ctrl {
 		amount: Amount,
 		cltv_delta: BlockDelta,
 		description: Option<String>,
+		receiver_mailbox_id: Option<MailboxIdentifier>,
 		invoice_tx: oneshot::Sender<Bolt11Invoice>,
 	},
 	SettleInvoice {
@@ -1048,20 +1047,24 @@ impl ClnManagerProcess {
 		amount: Amount,
 		cltv_delta: BlockDelta,
 		description: Option<String>,
+		receiver_mailbox_id: Option<&MailboxIdentifier>,
 	) -> anyhow::Result<Bolt11Invoice> {
 		let node = self.get_hold_active_node().context("no active hold-compatible cln node")?;
 		let mut hold_client = node.hold_rpc.clone().expect("active node not hold enabled");
 
-		if let Ok(Some(existing)) = self.db.get_lightning_invoice_by_payment_hash(payment_hash).await {
-			trace!("Found invoice but no subscription, creating new one");
+		// Check for an existing subscription (e.g. from a previous canceled attempt)
+		// to reuse the bolt11 invoice.
+		let existing_subs = self.db.get_htlc_subscriptions_by_payment_hash(payment_hash).await?;
+		if let Some(existing) = existing_subs.first() {
+			trace!("Found existing subscription, creating new one with same invoice");
 
 			hold_client.inject(hold_plugin::InjectRequest {
 				invoice: existing.invoice.to_string(),
 				min_cltv_expiry: None,
 			}).await?;
 
-			self.db.store_lightning_htlc_subscription(node.id, existing.id).await?;
-			return Ok(existing.invoice.into_bolt11().expect("invoice is not bolt11"))
+			self.db.store_lightning_htlc_subscription(node.id, payment_hash, &existing.invoice).await?;
+			return Ok(existing.invoice.clone())
 		}
 
 		let res = hold_client.invoice(hold_plugin::InvoiceRequest {
@@ -1074,7 +1077,9 @@ impl ClnManagerProcess {
 		}).await?.into_inner();
 
 		let invoice = Bolt11Invoice::from_str(&res.bolt11)?;
-		let _ = self.db.store_generated_lightning_invoice(node.id, &invoice, amount.to_msat()).await?;
+		self.db.store_generated_lightning_receive(
+			node.id, &invoice, amount.to_msat(), receiver_mailbox_id,
+		).await?;
 
 		Ok(invoice)
 	}
@@ -1185,9 +1190,9 @@ impl ClnManagerProcess {
 
 							let _ = result_tx.send(res);
 						},
-						Ctrl::GenerateInvoice { payment_hash, amount, cltv_delta, description, invoice_tx } => {
+						Ctrl::GenerateInvoice { payment_hash, amount, cltv_delta, description, receiver_mailbox_id, invoice_tx } => {
 							trace!("Invoice generation received: payment_hash={:?}", payment_hash);
-							match self.generate_invoice(payment_hash, amount, cltv_delta, description).await {
+							match self.generate_invoice(payment_hash, amount, cltv_delta, description, receiver_mailbox_id.as_ref()).await {
 								Ok(invoice) => {
 									trace!("Invoice generation successful: payment_hash={}",
 										payment_hash,
@@ -1247,43 +1252,28 @@ impl ClnManagerProcess {
 }
 
 impl database::Db {
-	async fn verify_and_update_invoice(
+	async fn verify_and_update_payment_attempt(
 		&self,
-		payment_hash: PaymentHash,
 		attempt: &LightningPaymentAttempt,
 		status: LightningPaymentStatus,
 		payment_error: Option<&str>,
 		final_amount_msat: Option<u64>,
 	) -> anyhow::Result<bool> {
-		let li = self.get_lightning_invoice_by_payment_hash(payment_hash).await?
-			.not_found([payment_hash], "invoice not found")?;
-		let is_last_attempt_finalized = li.last_attempt_status
-			.map(|a| a.is_final()).unwrap_or(false);
+		let payment_hash = attempt.payment_hash;
 
-		// Both conditions required: the on-chain settlement path records
-		// the preimage (via the settler) before CLN finalizes the payment
-		// attempt. If we skipped on settlement alone, the subsequent CLN
-		// status update would be dropped and the attempt would stay
-		// non-final forever. Normal off-chain settlement is unaffected
-		// because the first successful update writes both the settlement
-		// and the final attempt status in one call.
-		let is_settled = self.get_htlc_settlement_by_payment_hash(payment_hash).await?
-			.is_some();
-		if is_settled && is_last_attempt_finalized {
-			debug!("Lightning invoice update for {payment_hash}: Skipped update because the \
+		// Skip if the attempt is already in a final state. The on-chain
+		// settlement path records the preimage (via the settler) before
+		// CLN finalizes the payment attempt; checking only the DB status
+		// here is sufficient because the preimage lives in htlc_settlement.
+		if attempt.status.is_final() {
+			debug!("Lightning payment attempt update for {payment_hash}: Skipped update because the \
 				payment is already in a final state.");
 			return Ok(false);
 		}
 
-		if li.id != attempt.lightning_invoice_id {
-			error!("Lightning invoice update for {payment_hash}: Skipped update because of \
-				incorrect payment hash matching.");
-			return Ok(false);
-		}
-
-		self.update_lightning_payment_attempt_status(attempt, status, payment_error).await?;
-
-		let updated_at = self.update_lightning_invoice(li, final_amount_msat).await?;
+		let updated_at = self.update_lightning_payment_attempt_result(
+			attempt, status, payment_error, final_amount_msat,
+		).await?;
 
 		let amount_msat = final_amount_msat.unwrap_or(attempt.amount_msat);
 
@@ -1308,6 +1298,6 @@ mod test {
 		assert_eq!(std::mem::size_of::<Invoice>(), 1616);
 		assert_eq!(std::mem::size_of::<Bolt11Invoice>(), 168);
 		assert_eq!(std::mem::size_of::<Bolt12Invoice>(), 1616);
-		assert_eq!(std::mem::size_of::<Ctrl>(), 96, "Ctrl type size changed");
+		assert_eq!(std::mem::size_of::<Ctrl>(), 112, "Ctrl type size changed");
 	}
 }
