@@ -8,7 +8,7 @@ use ark::lightning::{Invoice, PaymentHash};
 use ark::vtxo::VtxoPolicyKind;
 use ark_testing::context::LightningPaymentSetup;
 use bark::lightning_invoice::Bolt11Invoice;
-use bark_json::cli::{MovementDestination, MovementStatus, PaymentMethod};
+use bark_json::movements::{MovementDestination, MovementStatus, PaymentMethod};
 use bark_json::primitives::VtxoStateInfo;
 use log::{info, trace};
 

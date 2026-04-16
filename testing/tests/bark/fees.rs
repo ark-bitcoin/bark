@@ -7,7 +7,7 @@ use ark::fees::{
 	BoardFees, LightningReceiveFees, LightningSendFees, OffboardFees, PpmExpiryFeeEntry,
 	PpmFeeRate, RefreshFees,
 };
-use bark_json::cli::{MovementDestination, PaymentMethod};
+use bark_json::movements::{MovementDestination, PaymentMethod};
 use bitcoin_ext::{FeeRateExt, P2TR_DUST};
 use ark_testing::{btc, sat, TestContext};
 use ark_testing::constants::{BOARD_CONFIRMATIONS, ROUND_CONFIRMATIONS};

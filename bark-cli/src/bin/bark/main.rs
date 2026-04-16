@@ -7,6 +7,7 @@ mod onchain;
 mod round;
 
 use std::cmp::Ordering;
+use std::sync::Arc;
 use std::{env, process};
 use std::path::PathBuf;
 use std::str::FromStr;
@@ -17,10 +18,12 @@ use bark_cli::VERSION_DIRTY;
 use bitcoin::{Amount};
 use clap::builder::BoolishValueParser;
 use clap::Parser;
+use futures::StreamExt;
 use ::lightning::offers::offer::Offer;
 use lightning_invoice::Bolt11Invoice;
 use lnurl::lightning_address::LightningAddress;
 use log::{debug, info, warn};
+use tokio::sync::RwLock;
 
 use ark::VtxoId;
 use ark::lightning::PaymentHash;
@@ -28,7 +31,7 @@ use bark::Wallet;
 use bark::onchain::ChainSync;
 use bark::pid_lock::PidLock;
 use bark::vtxo::{VtxoFilter, VtxoStateKind};
-use bark_json::{cli as json};
+use bark_json as json;
 use bark_json::primitives::WalletVtxoInfo;
 
 use bark_cli::wallet::{CreateOpts, create_wallet, open_wallet};
@@ -272,6 +275,10 @@ enum Command {
 	#[command(subcommand)]
 	Round(round::RoundCommand),
 
+	/// Watch the wallet for updates
+	#[command()]
+	Watch,
+
 	/// Run wallet maintenence
 	///
 	/// This includes onchain sync, offchain sync, registering boards with the server,
@@ -342,7 +349,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 					};
 					let pm = PaymentMethod::Ark(address);
 					let movements = wallet.history_by_payment_method(&pm).await?.into_iter()
-						.map(json::Movement::from)
+						.map(json::movements::Movement::from)
 						.collect::<Vec<_>>();
 					output_json(&movements);
 				},
@@ -362,7 +369,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 			}
 
 			let balance = wallet.balance().await?;
-			output_json(&json::Balance::from(balance));
+			output_json(&json::cli::Balance::from(balance));
 		},
 		Command::Vtxos { all, no_sync } => {
 			if !no_sync {
@@ -393,7 +400,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 			}
 
 			let mut movements = wallet.history().await?.into_iter()
-				.map(json::Movement::try_from)
+				.map(json::movements::Movement::try_from)
 				.collect::<Result<Vec<_>, _>>()?;
 
 			// Movements are ordered from newest to oldest, so we reverse them to ensure the last
@@ -433,7 +440,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 			info!("Refreshing {} vtxos...", vtxos.len());
 			if delegated {
 				if let Some(res) = wallet.refresh_vtxos_delegated(vtxos).await? {
-					output_json(&json::RoundStateInfo {
+					output_json(&json::cli::RoundStateInfo {
 						round_state_id: res.id().0,
 					});
 				} else {
@@ -441,7 +448,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 				}
 			} else {
 				if let Some(res) = wallet.refresh_vtxos(vtxos).await? {
-					output_json(&json::RoundStatus::from(res));
+					output_json(&json::cli::RoundStatus::from(res));
 				} else {
 					info!("No round happened");
 				}
@@ -466,7 +473,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 				},
 				_ => bail!("please provide either an amount or --all"),
 			};
-			output_json(&json::PendingBoardInfo::from(board));
+			output_json(&json::cli::PendingBoardInfo::from(board));
 		},
 		Command::Send { destination, amount, comment, no_sync, wait } => {
 			if !no_sync {
@@ -518,7 +525,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 
 				info!("Sending on-chain payment of {} to {}", amount, addr);
 				let offboard_txid = wallet.send_onchain(addr, amount).await?;
-				output_json(&json::OffboardResult { offboard_txid });
+				output_json(&json::cli::OffboardResult { offboard_txid });
 			} else {
 				bail!("Invalid destination");
 			}
@@ -563,7 +570,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 			} else {
 				bail!("Either --vtxos or --all argument must be provided to offboard");
 			};
-			output_json(&json::OffboardResult { offboard_txid });
+			output_json(&json::cli::OffboardResult { offboard_txid });
 		},
 		Command::Onchain(onchain_command) => {
 			onchain::execute_onchain_command(onchain_command, &mut wallet, &mut onchain).await?;
@@ -576,6 +583,17 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 		},
 		Command::Round(cmd) => {
 			round::execute_round_command(cmd, &mut wallet).await?;
+		},
+		Command::Watch => {
+			let wallet = Arc::new(wallet);
+			let onchain = Arc::new(RwLock::new(onchain));
+			let mut stream = wallet.subscribe_notifications();
+			let _daemon = wallet.run_daemon(Some(onchain))
+				.context("failed to start bark daemon")?;
+			while let Some(notif) = stream.next().await {
+				output_json(&json::notifications::WalletNotification::from(notif));
+			}
+			info!("Notification stream closed");
 		},
 		Command::Maintain { delegated } => {
 			if delegated {

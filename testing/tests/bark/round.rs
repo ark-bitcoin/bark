@@ -242,7 +242,7 @@ async fn delegated_maintenance_refresh() {
 	let refresh_movement = movements.iter().find(|m| {
 		m.subsystem.name == "bark.round" &&
 		m.subsystem.kind == "refresh" &&
-		m.status == bark_json::cli::MovementStatus::Pending
+		m.status == bark_json::movements::MovementStatus::Pending
 	}).expect("should have pending refresh movement");
 	let movement_id = refresh_movement.id;
 
@@ -258,7 +258,7 @@ async fn delegated_maintenance_refresh() {
 		let movements = bark.history().await;
 		if let Some(movement) = movements.iter().find(|m| m.id == movement_id) {
 			info!("Movement status: {:?}", movement.status);
-			if movement.status == bark_json::cli::MovementStatus::Successful {
+			if movement.status == bark_json::movements::MovementStatus::Successful {
 				success = true;
 				break;
 			}
