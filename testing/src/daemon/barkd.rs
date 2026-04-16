@@ -43,8 +43,6 @@ pub struct BarkdHelper {
 	_bitcoind: Option<Bitcoind>,
 	port: u16,
 	auth_token: AuthToken,
-	/// Extra environment variables passed to the barkd process.
-	envs: HashMap<String, String>,
 }
 
 impl Barkd {
@@ -72,14 +70,8 @@ impl Barkd {
 			_bitcoind: bitcoind,
 			port: 0,
 			auth_token: AuthToken::new(secret),
-			envs: HashMap::new(),
 		};
 		Daemon::wrap(helper)
-	}
-
-	/// Set an environment variable that will be passed to the barkd process.
-	pub fn set_env(&mut self, key: impl Into<String>, value: impl Into<String>) {
-		self.inner.envs.insert(key.into(), value.into());
 	}
 
 	pub fn base_url(&self) -> String {
@@ -276,6 +268,13 @@ impl Barkd {
 			.expect("failed to get barkd pending boards")
 	}
 
+	/// Same as get_pending_boards but without explicit sync
+	pub async fn get_pending_boards_no_sync(&self) -> Vec<PendingBoardInfo> {
+		let config = self.client_config();
+		boards_api::get_pending_boards(&config).await
+			.expect("failed to get barkd pending boards")
+	}
+
 	/// Estimate the board fee for the given amount.
 	pub async fn board_fee(&self, amount: Amount) -> FeeEstimateResponse {
 		let config = self.client_config();
@@ -313,9 +312,6 @@ impl DaemonHelper for BarkdHelper {
 			"--port", &self.port.to_string(),
 			"--verbose",
 		]);
-		for (k, v) in &self.envs {
-			cmd.env(k, v);
-		}
 		Ok(cmd)
 	}
 

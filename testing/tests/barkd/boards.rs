@@ -120,9 +120,7 @@ async fn board_auto_sync_barkd() {
 	let srv = ctx.new_captaind("server", None).await;
 
 	// Use a short slow-sync interval so the test doesn't wait for the 60s default.
-	let slow_sync_secs: u64 = 5;
 	let mut barkd = ctx.new_barkd_unstarted("barkd1", &srv).await;
-	barkd.set_env("BARK_DAEMON_SLOW_SYNC_INTERVAL_SECS", slow_sync_secs.to_string());
 	barkd.start().await.expect("failed to start barkd");
 	barkd.create_wallet().await.expect("failed to create barkd wallet");
 
@@ -142,13 +140,13 @@ async fn board_auto_sync_barkd() {
 
 	// Do NOT call barkd.sync() or barkd.bark_balance() — let the daemon's
 	// background run_boards_sync handle registration.
-	// Poll get_pending_boards() which does not trigger a sync.
-	let timeout = Duration::from_secs(slow_sync_secs * 3);
+	// Poll get_pending_boards_no_sync() which does not trigger a sync.
+	let timeout = Duration::from_secs(15);
 	let poll_interval = Duration::from_secs(1);
 	let start = std::time::Instant::now();
 
 	loop {
-		let pending = barkd.get_pending_boards().await;
+		let pending = barkd.get_pending_boards_no_sync().await;
 		if pending.is_empty() {
 			break;
 		}
