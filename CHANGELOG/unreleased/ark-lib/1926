@@ -1,0 +1,2 @@
+- deprecated `VtxoId::utxo` and replace with `VtxoId::to_point`
+  [#1926](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1926)

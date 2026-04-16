@@ -841,7 +841,7 @@ impl Server {
 	) -> anyhow::Result<()> {
 		for vtxo in vtxos {
 			let vtxo_id = vtxo.vtxo_id();
-			let txid = vtxo_id.utxo().txid;
+			let txid = vtxo_id.to_point().txid;
 			let status = self.bitcoind.tx_status(txid)?;
 
 			match status {

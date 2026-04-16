@@ -360,7 +360,7 @@ impl Watchman {
 		let cached = self.mempool_spends.read().get(&vtxo_id).cloned();
 
 		// Check what's currently spending this vtxo in the mempool
-		let spending_txid = match self.bitcoind.get_mempool_spending_tx(vtxo_id.utxo()) {
+		let spending_txid = match self.bitcoind.get_mempool_spending_tx(vtxo_id.to_point()) {
 			Ok(Some(txid)) => txid,
 			Ok(None) => {
 				self.mempool_spends.write().remove(&vtxo_id);
