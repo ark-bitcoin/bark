@@ -34,6 +34,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 	buildah \
 	gnupg2 \
 	openssh-client \
+	qemu-user-static \
+	passt \
 	&& rm -rf /var/lib/apt/lists/*
 
 COPY wakemeops.gpg /etc/apt/trusted.gpg.d/
@@ -90,7 +92,8 @@ RUN curl -L https://nixos.org/nix/install | bash -s -- --daemon && \
 	nix-env --version
 
 RUN mkdir -p ~/.config/nix && \
-	echo "experimental-features = nix-command flakes" >> ~/.config/nix/nix.conf
+	echo "experimental-features = nix-command flakes" >> ~/.config/nix/nix.conf && \
+	echo "sandbox = false" >> ~/.config/nix/nix.conf
 
 RUN mkdir -p /nix/var/nix/profiles/per-user/nixuser/channels
 
@@ -151,13 +154,13 @@ RUN echo "pre-build bark" && \
 	cargo install cargo-zigbuild && \
 	export SDKROOT=/usr/local/osxcross/SDK/MacOSX${MACOS_SDK_VERSION}.sdk && \
 	cd ~/bark && \
-	RUSTFLAGS="-C debuginfo=2" cargo build --release --target x86_64-unknown-linux-gnu --locked --manifest-path server/Cargo.toml && \
-	cargo build --release --target x86_64-unknown-linux-gnu         --locked --manifest-path bark-cli/Cargo.toml && \
-	cargo build --release --target x86_64-pc-windows-gnu            --locked --manifest-path bark-cli/Cargo.toml && \
-	RUSTC_WRAPPER= cargo zigbuild --release --target aarch64-unknown-linux-gnu     --locked --manifest-path bark-cli/Cargo.toml --no-default-features --features tls-webpki-roots && \
-	RUSTC_WRAPPER= cargo zigbuild --release --target armv7-unknown-linux-gnueabihf --locked --manifest-path bark-cli/Cargo.toml --no-default-features --features tls-webpki-roots && \
-	RUSTC_WRAPPER= cargo zigbuild --release --target x86_64-apple-darwin           --locked --manifest-path bark-cli/Cargo.toml --no-default-features --features tls-webpki-roots && \
-	RUSTC_WRAPPER= cargo zigbuild --release --target aarch64-apple-darwin          --locked --manifest-path bark-cli/Cargo.toml --no-default-features --features tls-webpki-roots
+	RUSTFLAGS="-C debuginfo=2" cargo build --release --target x86_64-unknown-linux-gnu      --locked --manifest-path server/Cargo.toml && \
+	cargo build                            --release --target x86_64-unknown-linux-gnu      --locked --manifest-path bark-cli/Cargo.toml && \
+	cargo build                            --release --target x86_64-pc-windows-gnu         --locked --manifest-path bark-cli/Cargo.toml && \
+	RUSTC_WRAPPER= cargo zigbuild          --release --target aarch64-unknown-linux-gnu     --locked --manifest-path bark-cli/Cargo.toml --no-default-features --features tls-webpki-roots && \
+	RUSTC_WRAPPER= cargo zigbuild          --release --target armv7-unknown-linux-gnueabihf --locked --manifest-path bark-cli/Cargo.toml --no-default-features --features tls-webpki-roots && \
+	RUSTC_WRAPPER= cargo zigbuild          --release --target x86_64-apple-darwin           --locked --manifest-path bark-cli/Cargo.toml --no-default-features --features tls-webpki-roots && \
+	RUSTC_WRAPPER= cargo zigbuild          --release --target aarch64-apple-darwin          --locked --manifest-path bark-cli/Cargo.toml --no-default-features --features tls-webpki-roots
 
 RUN echo "build nix devShell" && \
 	. /etc/profile.d/nix.sh && \
