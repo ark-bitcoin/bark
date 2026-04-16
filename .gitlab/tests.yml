@@ -293,7 +293,6 @@ bark-btc30:
 
 bark-filestore:
   interruptible: true
-  allow_failure: true
   stage: test
   tags:
     - integration
