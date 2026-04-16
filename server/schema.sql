@@ -1093,7 +1093,8 @@ CREATE TABLE public.round_participation (
     unlock_hash text,
     unlock_preimage text,
     round_id text,
-    created_at timestamp without time zone NOT NULL
+    created_at timestamp without time zone NOT NULL,
+    forfeited_at timestamp with time zone
 );
 
 

@@ -46,6 +46,7 @@ pub struct StoredRoundParticipation {
 	pub inputs: Vec<StoredRoundInput>,
 	pub outputs: Vec<StoredRoundOutput>,
 	pub round_id: Option<RoundId>,
+	pub forfeited_at: Option<DateTime<Local>>,
 }
 
 #[derive(Debug, Clone)]
