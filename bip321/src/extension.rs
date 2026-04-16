@@ -60,3 +60,73 @@ impl ExtensionHandler for NoExtensions {
 		Vec::new()
 	}
 }
+
+#[cfg(test)]
+mod test {
+	use std::str::FromStr;
+
+	use crate::{Bip321Error, Bip321Uri, ExtensionHandler, FieldWithAttributes};
+
+	const MAINNET_P2PKH: &str = "1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa";
+
+	#[derive(Debug, Clone, Default, PartialEq, Eq)]
+	struct DummyExt {
+		value: Option<FieldWithAttributes<String>>,
+	}
+
+	impl ExtensionHandler for DummyExt {
+		fn handle_param(
+			&mut self,
+			key: &str,
+			value: &str,
+			required: bool,
+		) -> Result<bool, Bip321Error> {
+			if key == "dummy" {
+				self.value = Some(FieldWithAttributes::new(value.to_string(), required));
+				Ok(true)
+			} else {
+				Ok(false)
+			}
+		}
+
+		fn is_empty(&self) -> bool {
+			self.value.is_none()
+		}
+
+		fn serialize_params(&self) -> Vec<(String, String)> {
+			match &self.value {
+				Some(v) => {
+					let key = if v.required() { "req-dummy" } else { "dummy" };
+					vec![(key.to_string(), v.inner().clone())]
+				}
+				None => Vec::new(),
+			}
+		}
+	}
+
+	#[test]
+	fn extension_handler_claims_param() {
+		let input = format!("bitcoin:{}?dummy=hello", MAINNET_P2PKH);
+		let uri = Bip321Uri::<DummyExt>::from_str(&input).unwrap();
+		let ext = uri.extensions();
+		assert!(!ext.is_empty());
+		assert_eq!(ext.value.as_ref().unwrap().inner(), "hello");
+	}
+
+	#[test]
+	fn extension_only_satisfies_validation() {
+		let input = "bitcoin:?dummy=hello";
+		let uri = Bip321Uri::<DummyExt>::from_str(input).unwrap();
+		assert!(uri.address.is_none());
+		assert!(!uri.extensions().is_empty());
+	}
+
+	#[test]
+	fn extension_roundtrip() {
+		let input = format!("bitcoin:{}?dummy=hello", MAINNET_P2PKH);
+		let parsed = Bip321Uri::<DummyExt>::from_str(&input).unwrap();
+		let serialized = parsed.to_string();
+		let reparsed = Bip321Uri::<DummyExt>::from_str(&serialized).unwrap();
+		assert_eq!(parsed, reparsed);
+	}
+}
