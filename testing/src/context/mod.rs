@@ -9,8 +9,13 @@ use ark::fees::{
 	BoardFees, FeeSchedule, LightningReceiveFees, LightningSendFees, OffboardFees, PpmFeeRate,
 	RefreshFees,
 };
-use bitcoin::{Amount, FeeRate, Network, Txid};
-use bitcoin_ext::FeeRateExt;
+use bitcoin::{Amount, FeeRate, Network, OutPoint, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Txid, Witness};
+use bitcoin::absolute::LockTime;
+use bitcoin::transaction::Version;
+use bitcoin_ext::{FeeRateExt, TxOutExt};
+use bitcoin_ext::fee::P2A_SCRIPT;
+use bitcoin_ext::rpc::BitcoinRpcExt;
+use bitcoincore_rpc::json::SignRawTransactionInput;
 use bitcoincore_rpc::RpcApi;
 use futures::future::join_all;
 use log::{debug, info, trace};
@@ -468,6 +473,7 @@ impl TestContext {
 				rpc_pass: None,
 			},
 			htlc_settlement_poll_interval: Duration::from_secs(5),
+			admin_address: None,
 		}
 	}
 
@@ -679,7 +685,7 @@ impl TestContext {
 
 	/// Generated a block using the central bitcoind and ensures that electrs is synced with it.
 	/// Returns the new block height.
-	pub async fn generate_blocks(&self, block_num: u32) -> u64 {
+	pub async fn generate_blocks(&self, block_num: u32) -> u32 {
 		// Give transactions time to propagate
 		tokio::time::sleep(Duration::from_millis(1000)).await;
 
@@ -690,12 +696,80 @@ impl TestContext {
 
 		let height = self.bitcoind().get_block_count().await;
 		info!("New chain tip: {}", height);
-		height
+		height as u32
 	}
 
 	/// Generated a block using the central bitcoind without waiting for propagation
 	pub async fn generate_blocks_unsynced(&self, block_num: u32) {
 		self.bitcoind().generate(block_num).await;
+	}
+
+	/// Broadcast a zero-fee parent transaction using CPFP via its P2A anchor.
+	///
+	/// Assumes the last output of `parent` is a P2A (pay-to-anchor) output.
+	/// Builds a v3 child transaction that spends the anchor plus a funded UTXO
+	/// from the test bitcoind wallet, submits the package, and returns the child txid.
+	pub async fn broadcast_cpfp(&self, parent: &Transaction) -> Txid {
+		let client = self.bitcoind().sync_client();
+
+		let parent_txid = parent.compute_txid();
+		let p2a_vout = parent.output.iter().position(|o| o.is_p2a_fee_anchor())
+			.expect("parent tx doesn't have a fee anchor") as u32;
+		let p2a_outpoint = OutPoint::new(parent_txid, p2a_vout);
+
+		let utxos = client.list_unspent(Some(1), None, None, None, None)
+			.expect("list_unspent failed");
+		let utxo = utxos.into_iter().next().expect("test bitcoind wallet should have a UTXO");
+		let fee = Amount::from_sat(2_000);
+		let change = utxo.amount.checked_sub(fee).expect("UTXO too small to cover CPFP fee");
+		let change_addr = client.get_new_address(None, None).unwrap().assume_checked();
+
+		let child_unsigned = Transaction {
+			version: Version(3),
+			lock_time: LockTime::ZERO,
+			input: vec![
+				TxIn {
+					previous_output: p2a_outpoint,
+					script_sig: ScriptBuf::new(),
+					sequence: Sequence::ZERO,
+					witness: Witness::new(),
+				},
+				TxIn {
+					previous_output: OutPoint::new(utxo.txid, utxo.vout),
+					script_sig: ScriptBuf::new(),
+					sequence: Sequence::ZERO,
+					witness: Witness::new(),
+				},
+			],
+			output: vec![TxOut {
+				value: change,
+				script_pubkey: change_addr.script_pubkey(),
+			}],
+		};
+
+		// Provide the P2A prevout explicitly so bitcoind can sign without looking
+		// it up in the UTXO set (the parent may be unconfirmed or not yet broadcast).
+		let p2a_prevout = SignRawTransactionInput {
+			txid: parent_txid,
+			vout: p2a_vout,
+			script_pub_key: P2A_SCRIPT.clone(),
+			redeem_script: None,
+			amount: Some(parent.output[p2a_vout as usize].value),
+		};
+		let child = client.sign_raw_transaction_with_wallet(
+			&child_unsigned,
+			Some(&[p2a_prevout]),
+			None,
+		).expect("sign_raw_transaction_with_wallet failed").transaction()
+			.expect("failed to deserialize signed child tx");
+
+		let child_txid = child.compute_txid();
+		client.submit_package(&[parent, &child])
+			.expect("submit_package of parent + CPFP child should succeed");
+
+		self.await_transaction(child_txid).await;
+
+		child_txid
 	}
 
 	/// Triggers a round and refreshes all given barks concurrently.

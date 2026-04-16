@@ -17,6 +17,23 @@ pub use self::daemon::Daemon;
 pub use self::frontier::VtxoExitFrontier;
 pub use self::signer::WatchmanSigner;
 
+/// Control messages that can be sent to a running [Watchman].
+pub enum Ctrl {
+	TriggerSweep,
+}
+
+/// Handle to a running [Watchman], used to send control messages.
+#[derive(Clone)]
+pub struct WatchmanHandle {
+	ctrl_tx: tokio::sync::mpsc::Sender<Ctrl>,
+}
+
+impl WatchmanHandle {
+	pub fn trigger_sweep(&self) {
+		let _ = self.ctrl_tx.try_send(Ctrl::TriggerSweep);
+	}
+}
+
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -142,18 +159,33 @@ impl Watchman {
 		*self.sync_height.borrow()
 	}
 
-	/// Run the watchman process loop.
-	///
-	/// Periodically processes all VTXOs in the frontier, handling claims
-	/// and progress txs as needed.
-	pub async fn run(&self, rtmgr: RuntimeManager) {
+	/// Spawn the watchman process loop and return a handle to control it
+	pub fn start(self, rtmgr: RuntimeManager) -> WatchmanHandle {
+		let (ctrl_tx, ctrl_rx) = tokio::sync::mpsc::channel(1);
+		tokio::spawn(async move {
+			self.run(rtmgr, ctrl_rx).await;
+		});
+		WatchmanHandle { ctrl_tx }
+	}
+
+	async fn run(&self, rtmgr: RuntimeManager, mut ctrl_rx: tokio::sync::mpsc::Receiver<Ctrl>) {
 		info!("Starting Watchman...");
 		let _worker = rtmgr.spawn_critical("Watchman");
+
+		// TODO: remove this once all deployments have run with finish_round adding vtxos
+		// directly to the frontier. This handles any legacy unfrontiered vtxos that
+		// pre-date that change.
+		if let Err(e) = self.sync_unfrontiered_funding().await {
+			warn!("Error syncing legacy unfrontiered funding at startup: {:#}", e);
+		}
 
 		let mut timer = tokio::time::interval(self.config.process_interval);
 		loop {
 			tokio::select! {
 				_ = timer.tick() => {},
+				Some(ctrl) = ctrl_rx.recv() => match ctrl {
+					Ctrl::TriggerSweep => {},
+				},
 				_ = rtmgr.shutdown_signal() => {
 					info!("Shutdown signal received. Exiting Watchman...");
 					return;
@@ -163,12 +195,6 @@ impl Watchman {
 			// Sync the watchman wallet to update balance and detect confirmed UTXOs.
 			if let Err(e) = self.watchman_wallet.lock().await.sync(&self.bitcoind, false).await {
 				warn!("Error syncing watchman wallet: {:#}", e);
-			}
-
-			//TODO(stevenroose) this call seems expensive and really not urgent
-			// we only realistically need to do this once every hour, or maybe half exit delta or so
-			if let Err(e) = self.sync_unfrontiered_funding().await {
-				warn!("Error syncing unfrontiered funding: {:#}", e);
 			}
 
 			if let Err(e) = self.process_all().await {
@@ -184,14 +210,17 @@ impl Watchman {
 	/// Queries the database for funding txids with vtxos not in frontier,
 	/// checks their confirmation status via bitcoind, and registers them.
 	/// Only marks as confirmed if the block is on the synced chain (in the block table).
+	///
+	/// TODO: remove this once all deployments have run with finish_round adding vtxos
+	/// directly to the frontier. Called only once at startup to handle legacy data.
 	pub async fn sync_unfrontiered_funding(&self) -> anyhow::Result<()> {
 		let txids = self.db.get_unfrontiered_funding_txids().await?;
+
+		trace!("We got {} unfrontiered funding txs", txids.len());
 
 		if txids.is_empty() {
 			return Ok(());
 		}
-
-		trace!("We got {} unfrontiered funding txs", txids.len());
 
 		let mut frontier = self.frontier.write().await;
 

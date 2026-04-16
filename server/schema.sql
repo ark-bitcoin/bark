@@ -1935,6 +1935,13 @@ CREATE UNIQUE INDEX sweep_txid_pending_uix ON public.sweep USING btree (txid) IN
 
 
 --
+-- Name: vtxo_created_at_ix; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX vtxo_created_at_ix ON public.vtxo USING btree (created_at);
+
+
+--
 -- Name: vtxo_mailbox_unblinded_mailbox_id_checkpoint_ix; Type: INDEX; Schema: public; Owner: -
 --
 

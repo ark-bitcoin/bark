@@ -12,6 +12,7 @@ use std::sync::atomic::{self, AtomicBool};
 
 use tokio::sync::oneshot;
 use tracing::trace;
+
 use server_rpc::RequestExt;
 
 use crate::error::{BadArgument, NotFound};
@@ -170,3 +171,4 @@ fn validate_pver<T>(req: &tonic::Request<T>) -> Result<u64, tonic::Status> {
 
 	Ok(pver)
 }
+

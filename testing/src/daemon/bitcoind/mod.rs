@@ -12,7 +12,7 @@ use log::{debug, info};
 use tokio::process::Command;
 
 use bark::chain::ChainSourceSpec;
-use bitcoin_ext::FeeRateExt;
+use bitcoin_ext::{BlockHeight, FeeRateExt};
 use bitcoin_ext::rpc::{self, RpcApi};
 
 use crate::constants::bitcoind::BITCOINRPC_TEST_AUTH;
@@ -207,9 +207,9 @@ impl Bitcoind {
 		client.get_block_count().unwrap()
 	}
 
-	pub async fn wait_for_blockheight(&self, height: u64) {
+	pub async fn wait_for_blockheight(&self, height: BlockHeight) {
 		loop {
-			let current = self.get_block_count().await;
+			let current = self.get_block_count().await as BlockHeight;
 			if current >= height {
 				break;
 			}

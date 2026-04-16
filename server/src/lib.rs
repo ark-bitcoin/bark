@@ -196,6 +196,7 @@ pub struct Server {
 	cln: ClnManager,
 	htlc_settler: Arc<HtlcSettler>,
 	vtxopool: VtxoPool,
+	watchman_handle: Option<watchman::WatchmanHandle>,
 	pending_offboards: parking_lot::Mutex<TimedEntryMap<Txid, Option<offboards::PendingOffboard>>>,
 	fee_estimator: Arc<FeeEstimator>,
 }
@@ -408,7 +409,7 @@ impl Server {
 		).await.context("Failed to start SyncManager")?);
 
 		// Start Watchman VTXO processor if enabled
-		if let Some((watchman_cfg, watchman_wallet, frontier)) = watchman_deps {
+		let watchman_handle = if let Some((watchman_cfg, watchman_wallet, frontier)) = watchman_deps {
 			let signer = watchman::WatchmanSigner::new(
 				Secret::new(Keypair::from_secret_key(&SECP, &server_key.secret_key())),
 				Secret::new(ephemeral_master_key),
@@ -430,11 +431,10 @@ impl Server {
 				sync_height_watcher,
 			);
 
-			let rtmgr2 = rtmgr.clone();
-			tokio::spawn(async move {
-				watchman.run(rtmgr2).await;
-			});
-		}
+			Some(watchman.start(rtmgr.clone()))
+		} else {
+			None
+		};
 
 		let mailbox_manager = Arc::new(MailboxManager::new());
 
@@ -483,6 +483,7 @@ impl Server {
 			cln,
 			htlc_settler,
 			vtxopool,
+			watchman_handle,
 			pending_offboards: parking_lot::Mutex::new(TimedEntryMap::new()),
 			fee_estimator,
 		};
@@ -714,9 +715,15 @@ impl Server {
 	#[tracing::instrument(skip(self, vtxo))]
 	pub async fn register_board(&self, vtxo: Vtxo<Full>) -> anyhow::Result<()> {
 		let funding_txid = vtxo.chain_anchor().txid;
+		let funding_vout = vtxo.chain_anchor().vout;
 		let tx_info = self.bitcoind.custom_get_raw_transaction_info(funding_txid, None)
 			.with_context(|| format!("failed to fetch funding tx {funding_txid}"))?
 			.with_context(|| format!("funding tx not found: {funding_txid}"))?;
+
+		let confirmed_hash = tx_info.blockhash
+			.context("board funding tx still unconfirmed")?;
+		let confirmed_height = self.bitcoind.get_block_header_info(&confirmed_hash)?
+			.height as BlockHeight;
 
 		let confirmations = tx_info.confirmations.unwrap_or(0) as usize;
 		if confirmations < self.config.required_board_confirmations {
@@ -727,8 +734,17 @@ impl Server {
 			);
 		}
 
-		let funding_tx= bitcoin::consensus::deserialize::<Transaction>(&tx_info.hex)
+		let funding_tx = bitcoin::consensus::deserialize::<Transaction>(&tx_info.hex)
 			.context("failed to deserialize funding transaction")?;
+
+		// bitcoind rpc documents that if a mempool tx spends a utxo in the utxoset,
+		// if will not appear in gettxout when include_mempool is set to true
+		let is_spent = self.bitcoind.get_tx_out(&funding_txid, funding_vout, Some(true))
+			.context("failed to check board utxo spend status")?
+			.is_none();
+		if is_spent {
+			return badarg!("VTXO funding output is already spent, user exit in progress");
+		}
 
 		trace!("Funding tx {funding_txid} is sufficiently confirmed, registering board");
 
@@ -745,6 +761,9 @@ impl Server {
 			.insert_spendable_vtxos(builder.build_internal_unsigned_vtxos())
 			.mark_vtxos_oor_spent(builder.spend_info());
 		self.db.execute_vtxo_tree_update(update).await?;
+
+		self.db.add_funding_vtxos_to_frontier(funding_txid, Some(confirmed_height)).await
+			.context("failed to add board vtxos to frontier")?;
 
 		slog!(RegisteredBoard,
 			onchain_utxo: vtxo.chain_anchor(),

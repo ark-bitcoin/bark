@@ -108,6 +108,14 @@ impl Db {
 			.mark_vtxos_round_spent(input_vtxos.into_iter().map(|id| (id, round_id)));
 		tree::execute_vtxo_tree_update(&tx, update).await?;
 
+		// register the funding output vtxos directly into the frontier
+		tx.execute(
+			"INSERT INTO watchman_vtxo_frontier (vtxo_id) \
+			SELECT vtxo_id FROM vtxo WHERE vtxo_txid = $1 \
+			ON CONFLICT DO NOTHING",
+			&[&funding_txid.to_string()],
+		).await?;
+
 		tx.commit().await?;
 		Ok(())
 	}

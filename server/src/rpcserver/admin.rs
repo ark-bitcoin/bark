@@ -1,3 +1,4 @@
+use std::net::SocketAddr;
 use std::str::FromStr;
 use std::sync::{atomic, Arc};
 
@@ -7,6 +8,7 @@ use tracing::{info, trace, warn};
 use server_rpc::{self as rpc, protos};
 
 use crate::rpcserver::{middleware, StatusContext, ToStatusResult, RPC_RICH_ERRORS};
+use crate::system::RuntimeManager;
 use crate::Server;
 
 #[async_trait]
@@ -101,7 +103,26 @@ impl rpc::server::SweepAdminService for Server {
 		_req: tonic::Request<protos::Empty>,
 	) -> Result<tonic::Response<protos::Empty>, tonic::Status> {
 
-		Err(tonic::Status::unavailable("VtxoSweeper disabled"))
+		match &self.watchman_handle {
+			Some(handle) => {
+				handle.trigger_sweep();
+				Ok(tonic::Response::new(protos::Empty {}))
+			},
+			None => Err(tonic::Status::unavailable("watchman not enabled")),
+		}
+	}
+}
+
+#[async_trait]
+impl rpc::server::SweepAdminService for crate::watchman::Daemon {
+	#[tracing::instrument(skip(self, _req))]
+	async fn trigger_sweep(
+		&self,
+		_req: tonic::Request<protos::Empty>,
+	) -> Result<tonic::Response<protos::Empty>, tonic::Status> {
+
+		self.watchman_handle().trigger_sweep();
+		Ok(tonic::Response::new(protos::Empty {}))
 	}
 }
 
@@ -173,6 +194,29 @@ pub async fn run_rpc_server(srv: Arc<Server>) -> anyhow::Result<()> {
 		.serve_with_shutdown(addr, srv.rtmgr.shutdown_signal()).await?;
 
 	info!("Terminated admin gRPC service on address {}", addr);
+
+	Ok(())
+}
+
+/// Run the watchmand admin gRPC server, exposing only [SweepAdminService].
+pub async fn run_watchmand_admin_rpc_server(
+	addr: SocketAddr,
+	daemon: Arc<crate::watchman::Daemon>,
+	rtmgr: RuntimeManager,
+) -> anyhow::Result<()> {
+	info!("Starting watchmand admin gRPC service on address {}", addr);
+
+	let routes = tonic::service::Routes::default()
+		.add_service(rpc::server::SweepAdminServiceServer::from_arc(daemon));
+
+	tonic::transport::Server::builder()
+		.layer(OtelGrpcLayer::default())
+		.layer(middleware::TelemetryMetricsLayer)
+		.add_routes(routes)
+		.serve_with_shutdown(addr, rtmgr.shutdown_signal())
+		.await?;
+
+	info!("Terminated watchmand admin gRPC service on address {}", addr);
 
 	Ok(())
 }

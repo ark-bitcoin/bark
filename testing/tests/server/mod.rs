@@ -34,10 +34,10 @@ use ark::vtxo::Full;
 use bark::Wallet;
 use bark_json::primitives::WalletVtxoInfo;
 use server::secret::Secret;
-use server_log::{FullRound, RoundError, RoundFinished, RoundStarted, RoundUserVtxoAlreadyRegistered, WatchmanAddedFundingTx};
+use server_log::{FullRound, RoundError, RoundFinished, RoundStarted, RoundUserVtxoAlreadyRegistered};
 use server_rpc::protos::{self};
 
-use ark_testing::{Captaind, TestContext, btc, sat, secs};
+use ark_testing::{btc, require_bark_version, sat, secs, Captaind, TestContext};
 use ark_testing::constants::{BOARD_CONFIRMATIONS, ROUND_CONFIRMATIONS};
 use ark_testing::constants::bitcoind::{BITCOINRPC_TEST_PASSWORD, BITCOINRPC_TEST_USER};
 use ark_testing::daemon::captaind::{self, ArkClient};
@@ -1592,7 +1592,7 @@ async fn test_register_board() {
 
 	// Try to register the board before it's confirmed - should fail
 	let err = rpc.register_board_vtxo(register_request.clone()).await.unwrap_err();
-	assert!(err.message().contains("requires 6"), "err: {err}");
+	assert!(err.message().contains("unconfirmed"), "err: {err}");
 
 	// Try with 3 confirmations - should still fail (need 6)
 	let height = ctx.generate_blocks(3).await;
@@ -1744,7 +1744,6 @@ async fn undo_round() {
 	bark2.sync().await;
 
 	let mut log_round_finished = srv.subscribe_log::<RoundFinished>();
-	let mut log_watchman_frontier = srv.subscribe_log::<WatchmanAddedFundingTx>();
 
 	ctx.refresh_all(&srv, &[&bark1, &bark2]).await;
 
@@ -1752,18 +1751,6 @@ async fn undo_round() {
 		.expect("timed out waiting for round to finish");
 	let funding_txid = finished.txid;
 	info!("Round finished with funding txid: {}", funding_txid);
-
-	// Wait for the watchman to register this specific round's vtxos in
-	// watchman_vtxo_frontier so that the FK constraint is exercised when
-	// undo-round deletes them. Filter by txid because the watchman also
-	// fires WatchmanAddedFundingTx for board transactions.
-	loop {
-		let msg = log_watchman_frontier.recv().wait(Duration::from_secs(30)).await
-			.expect("timed out waiting for watchman to add round funding tx to frontier");
-		if msg.txid == funding_txid {
-			break;
-		}
-	}
 
 	let output = srv.get_custom_command(&[
 		"undo-round", "--dangerous", "--force",
@@ -1775,5 +1762,61 @@ async fn undo_round() {
 	info!("undo-round stdout: {}", stdout);
 	info!("undo-round stderr: {}", stderr);
 	assert!(output.status.success(), "undo-round exited with status {}", output.status);
+}
+
+/// Verify that broadcasting the board vtxo's exit tx (outside of bark) causes
+/// board registration to fail when bark tries to register via sync().
+///
+/// The exit tx spends the board funding output, so the server sees it as already
+/// spent and rejects the register_board_vtxo call.
+#[tokio::test]
+async fn board_exit_tx_prevents_registration() {
+	require_bark_version!(> "0.1.2");
+
+	let ctx = TestContext::new("server/board_exit_tx_prevents_registration").await;
+	let srv = ctx.captaind("server").funded(btc(1)).create().await;
+	let bark = ctx.bark("bark1", &srv).funded(sat(200_000)).create().await;
+
+	// Board some funds.
+	let board = bark.board(sat(90_000)).await;
+	let vtxo_id = board.vtxos[0];
+
+	// Confirm the board transaction so it meets the required confirmations.
+	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
+
+	// Get the full vtxo (including genesis with exit tx) before calling sync(),
+	// so the board is still pending in the DB.
+	// vtxos_no_sync() returns vtxos in Locked state (pending boards are locked),
+	// and with --hex flag includes the raw vtxo bytes.
+	let vtxo = bark.raw_vtxo(vtxo_id).await;
+
+	// A board vtxo has exactly one genesis item; its tx is the exit tx
+	// that spends the board funding output.
+	let exit_tx = vtxo.transactions().next().expect("board vtxo should have one exit tx").tx;
+	// Broadcast the exit tx from the test framework – bark is not aware of this.
+	// The exit tx has 0 fee (default test config), so we use CPFP via its P2A anchor.
+	let child_txid = ctx.broadcast_cpfp(&exit_tx).await;
+	srv.bitcoind().await_transaction(child_txid).await;
+
+	// Now bark tries to register the board via sync().
+	// The server calls gettxout on the board funding output; because the exit tx is
+	// now in the mempool the output is already spent, so it rejects the registration
+	// with "VTXO funding output is already spent".  sync_pending_boards handles the
+	// error gracefully (logs a warning) so sync() itself does not panic.
+	bark.sync().await;
+
+	// Board registration failed – the vtxo should still be in Locked (pending) state,
+	// not Spendable. Spendable balance must be zero.
+	let vtxos = bark.vtxos_no_sync().await;
+	let vtxo_info = vtxos.iter()
+		.find(|v| v.vtxo.id == vtxo_id)
+		.expect("vtxo should still be in the wallet (locked, pending registration)");
+	assert!(
+		matches!(vtxo_info.state, bark_json::primitives::VtxoStateInfo::Locked { .. }),
+		"board vtxo should be Locked (not Spendable) after failed registration",
+	);
+
+	let balance = bark.spendable_balance_no_sync().await;
+	assert_eq!(balance, Amount::ZERO, "spendable balance should be zero since board was not registered");
 }
 

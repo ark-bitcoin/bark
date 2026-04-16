@@ -1,22 +1,25 @@
 
+use std::net::SocketAddr;
+use std::str::FromStr;
 use std::sync::Arc;
 use std::{env, fs};
 use std::time::Duration;
 use std::path::PathBuf;
 
 use anyhow::Context;
-use bitcoin_ext::BlockHeight;
 use log::{error, info, trace, warn};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
 use tokio::sync::{self, mpsc};
 use tokio::process::Command;
 
+use bitcoin_ext::BlockHeight;
+use server::config::watchmand::Config;
 use server_log::{parse_record, ParsedRecord, LogMsg, SyncedToHeight};
-pub use server::config::watchmand::{self, Config};
+use server_rpc::protos;
 
 use crate::{Bitcoind, Daemon, DaemonHelper};
 use crate::daemon::{LogHandler, STDOUT_LOGFILE};
-use crate::daemon::captaind::SlogHandler;
+use crate::daemon::captaind::{SlogHandler, SweepAdminClient};
 use crate::constants::env::WATCHMAND_EXEC;
 use crate::util::resolve_path;
 
@@ -91,6 +94,14 @@ impl Watchmand {
 		self.inner.get_custom_command(args).await
 	}
 
+	pub async fn get_sweep_rpc(&self) -> SweepAdminClient {
+		SweepAdminClient::connect(self.inner.admin_url()).await.expect("can't connect sweep rpc")
+	}
+
+	pub async fn trigger_sweep(&self) {
+		self.get_sweep_rpc().await.trigger_sweep(protos::Empty {}).await.unwrap();
+	}
+
 	pub fn add_slog_handler<L: SlogHandler>(&self, handler: L) {
 		self.inner.slog_handler_tx.lock().as_ref().expect("not started yet")
 			.try_send(Box::new(handler)).expect("too many slog handlers pending");
@@ -124,6 +135,29 @@ impl Watchmand {
 		});
 		let ret = rx.recv().await.expect("log wait channel closed");
 		info!("Got {} log!", L::LOGID);
+		ret
+	}
+
+	/// Wait for an occurrence of the given log type that fulfills the predicate
+	pub async fn wait_for_log_and<L, F>(&self, mut predicate: F) -> L
+	where
+		L: LogMsg,
+		F: FnMut(&L) -> bool + Send + Sync + 'static,
+	{
+		info!("Waiting for log {} with predicate", L::LOGID);
+		let (tx, mut rx) = sync::mpsc::channel(1);
+		self.add_slog_handler(move |log: &ParsedRecord| {
+			if let Ok(m) = log.try_as::<L>() {
+				if predicate(&m) {
+					// if channel already closed, user is no longer interested
+					let _ = tx.try_send(log.try_as::<L>().unwrap());
+					return true;
+				}
+			}
+			false
+		});
+		let ret = rx.recv().await.expect("log wait channel closed");
+		info!("Got {} log matching predicate!", L::LOGID);
 		ret
 	}
 
@@ -165,6 +199,10 @@ impl DaemonHelper for WatchmandHelper {
 	}
 
 	async fn make_reservations(&mut self) -> anyhow::Result<()> {
+		let admin_port = portpicker::pick_unused_port().expect("No ports free");
+		let admin_address = format!("127.0.0.1:{}", admin_port);
+		trace!("admin rpc address: {}", admin_address.to_string());
+		self.cfg.admin_address = Some(SocketAddr::from_str(admin_address.as_str())?);
 		Ok(())
 	}
 
@@ -235,6 +273,10 @@ impl WatchmandHelper {
 
 	async fn get_config_file(&self) -> PathBuf {
 		self.datadir().join(WATCHMAND_CONFIG_FILE)
+	}
+
+	pub fn admin_url(&self) -> String {
+		format!("http://{}", self.cfg.admin_address.expect("missing admin addr"))
 	}
 
 	/// Initialize the [LogHandler] that will drive slog handlers
