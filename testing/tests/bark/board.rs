@@ -15,8 +15,8 @@ use ark_testing::daemon::captaind::{self, ArkClient};
 async fn board_bark() {
 	const BOARD_AMOUNT: u64 = 90_000;
 	let ctx = TestContext::new("bark/board_bark").await;
-	let srv = ctx.new_captaind("server", None).await;
-	let bark1 = ctx.new_bark_with_funds("bark1", &srv, sat(100_000)).await;
+	let srv = ctx.captaind("server").create().await;
+	let bark1 = ctx.bark("bark1", &srv).funded(sat(100_000)).create().await;
 
 	let board = bark1.board(sat(BOARD_AMOUNT)).await;
 
@@ -35,8 +35,8 @@ async fn board_bark() {
 async fn board_twice_bark() {
 	const BOARD_AMOUNT: u64 = 90_000;
 	let ctx = TestContext::new("bark/board_twice_bark").await;
-	let srv = ctx.new_captaind("server", None).await;
-	let bark1 = ctx.new_bark_with_funds("bark1", &srv, sat(200_000)).await;
+	let srv = ctx.captaind("server").create().await;
+	let bark1 = ctx.bark("bark1", &srv).funded(sat(200_000)).create().await;
 
 	let board_a = bark1.board(sat(BOARD_AMOUNT)).await;
 	let board_b = bark1.board(sat(BOARD_AMOUNT)).await;
@@ -58,8 +58,8 @@ async fn board_twice_bark() {
 async fn board_all_bark() {
 	let ctx = TestContext::new("bark/board_all_bark").await;
 
-	let srv = ctx.new_captaind("server", None).await;
-	let bark1 = ctx.new_bark("bark1", &srv).await;
+	let srv = ctx.captaind("server").create().await;
+	let bark1 = ctx.bark("bark1", &srv).create().await;
 
 	// Get the bark-address and fund it
 	ctx.fund_bark(&bark1, sat(100_000)).await;
@@ -89,8 +89,8 @@ async fn board_all_bark() {
 #[tokio::test]
 async fn bark_rejects_boarding_subdust_amount() {
 	let ctx = TestContext::new("bark/bark_rejects_boarding_subdust_amount").await;
-	let srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
-	let bark1 = ctx.new_bark_with_funds("bark1", &srv, sat(1_000_000)).await;
+	let srv = ctx.captaind("server").funded(btc(10)).create().await;
+	let bark1 = ctx.bark("bark1", &srv).funded(sat(1_000_000)).create().await;
 
 	let board_amount = sat(P2TR_DUST_SAT - 1);
 	let res = bark1.try_board(board_amount).await;
@@ -104,10 +104,10 @@ async fn bark_rejects_boarding_below_minimum_board_amount() {
 	let ctx = TestContext::new("bark/bark_rejects_boarding_below_minimum_board_amount").await;
 	// Set up server with `min_board_amount` of 30 000 sats
 	const MIN_BOARD_AMOUNT_SATS: u64 = 30_000;
-	let srv = ctx.new_captaind_with_cfg("server", None, |cfg| {
+	let srv = ctx.captaind("server").cfg(|cfg| {
 		cfg.min_board_amount = sat(MIN_BOARD_AMOUNT_SATS);
-	}).await;
-	let bark1 = ctx.new_bark_with_funds("bark1", &srv, sat(1_000_000)).await;
+	}).create().await;
+	let bark1 = ctx.bark("bark1", &srv).funded(sat(1_000_000)).create().await;
 
 	let board_amount = sat(MIN_BOARD_AMOUNT_SATS - 1);
 	let res = bark1.try_board(board_amount).await;
@@ -123,7 +123,7 @@ async fn bark_recover_unregistered_board() {
 
 	// Set up the server.
 	// The server misbehaves and drops the first request to register_board_vtxo
-	let srv = ctx.new_captaind_with_funds("server", None, btc(1)).await;
+	let srv = ctx.captaind("server").funded(btc(1)).create().await;
 
 	/// This proxy will drop the very first request to register_board
 	#[derive(Clone)]
@@ -146,7 +146,7 @@ async fn bark_recover_unregistered_board() {
 
 	let proxy = srv.start_proxy_no_mailbox(Proxy(Arc::new(AtomicBool::new(true)))).await;
 
-	let bark = ctx.new_bark_with_funds("bark", &proxy.address, sat(1_000_00)).await;
+	let bark = ctx.bark("bark", &proxy.address).funded(sat(1_000_00)).create().await;
 	// Only asks server to cosign, not register a board.
 	bark.board_all().await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;

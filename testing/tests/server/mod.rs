@@ -65,8 +65,8 @@ async fn check_captaind_version() {
 #[tokio::test]
 async fn get_vtxo() {
 	let ctx = TestContext::new("server/get_vtxo").await;
-	let srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
-	let bark = ctx.new_bark_with_funds("bark", &srv, sat(1_000_000)).await;
+	let srv = ctx.captaind("server").funded(btc(10)).create().await;
+	let bark = ctx.bark("bark", &srv).funded(sat(1_000_000)).create().await;
 
 	bark.board(sat(100_000)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
@@ -97,7 +97,7 @@ async fn get_vtxo() {
 #[tokio::test]
 async fn integration() {
 	let ctx = TestContext::new("server/integration").await;
-	let srv = ctx.new_captaind("server", None).await;
+	let srv = ctx.captaind("server").create().await;
 
 	// Add integration "third".
 	let stdout = srv.integration_cmd(&["add", "third"]).await;
@@ -153,11 +153,11 @@ async fn integration() {
 async fn bitcoind_auth_connection() {
 	let ctx = TestContext::new("server/bitcoind_auth_connection").await;
 
-	let srv = ctx.new_captaind_with_cfg("server", None, |cfg| {
+	let srv = ctx.captaind("server").cfg(|cfg| {
 		cfg.bitcoind.cookie = None;
 		cfg.bitcoind.rpc_user = Some(BITCOINRPC_TEST_USER.to_string());
 		cfg.bitcoind.rpc_pass = Some(Secret::new(BITCOINRPC_TEST_PASSWORD.to_string()));
-	}).await;
+	}).create().await;
 	ctx.fund_captaind(&srv, sat(1_000_000)).await;
 
 	assert_eq!(srv.wallet_status().await.total().to_sat(), 1_000_000);
@@ -166,14 +166,14 @@ async fn bitcoind_auth_connection() {
 #[tokio::test]
 async fn bitcoind_cookie_connection() {
 	let ctx = TestContext::new("server/bitcoind_cookie_connection").await;
-	let srv = ctx.new_captaind_with_funds("server", None, btc(0.01)).await;
+	let srv = ctx.captaind("server").funded(btc(0.01)).create().await;
 	assert_eq!(srv.wallet_status().await.total().to_sat(), 1_000_000);
 }
 
 #[tokio::test]
 async fn round_started_log_can_be_captured() {
 	let ctx = TestContext::new("server/capture_log").await;
-	let srv = ctx.new_captaind("server", None).await;
+	let srv = ctx.captaind("server").create().await;
 
 	let mut last_log_seq = RoundSeq::new(0);
 
@@ -199,7 +199,7 @@ async fn round_started_log_can_be_captured() {
 #[tokio::test]
 async fn fund_captaind() {
 	let ctx = TestContext::new("server/fund_captaind").await;
-	let srv = ctx.new_captaind("server", None).await;
+	let srv = ctx.captaind("server").create().await;
 
 	// Query the wallet balance of the server
 	assert_eq!(srv.wallet_status().await.total().to_sat(), 0);
@@ -219,12 +219,12 @@ async fn cant_spend_untrusted() {
 	const NEED_CONFS: u32 = 2;
 
 	// Use a long round interval to disable automatic rounds, then trigger manually
-	let srv = ctx.new_captaind_with_cfg("server", None, |cfg| {
+	let srv = ctx.captaind("server").cfg(|cfg| {
 		cfg.min_trusted_confs = NEED_CONFS as u32;
 		cfg.round_interval = Duration::from_secs(3600);
-	}).await;
+	}).create().await;
 
-	let bark = ctx.new_bark_with_funds("bark", &srv, sat(1_000_000)).await;
+	let bark = ctx.bark("bark", &srv).funded(sat(1_000_000)).create().await;
 
 	bark.board(sat(200_000)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
@@ -311,11 +311,11 @@ async fn restart_key_stability() {
 #[tokio::test]
 async fn max_vtxo_amount() {
 	let ctx = TestContext::new("server/max_vtxo_amount").await;
-	let srv = ctx.new_captaind_with_cfg("server", None, |cfg| {
+	let srv = ctx.captaind("server").cfg(|cfg| {
 		cfg.max_vtxo_amount = Some(Amount::from_sat(500_000));
-	}).await;
+	}).create().await;
 	ctx.fund_captaind(&srv, Amount::from_int_btc(10)).await;
-	let mut bark1 = ctx.new_bark_with_funds("bark1", &srv, Amount::from_sat(1_500_000)).await;
+	let mut bark1 = ctx.bark("bark1", &srv).funded(Amount::from_sat(1_500_000)).create().await;
 
 	let cfg_max_amount = bark1.ark_info().await.max_vtxo_amount.unwrap();
 
@@ -352,12 +352,12 @@ async fn max_vtxo_exit_depth() {
 
 	// Board VTXOs start at exit depth 1. Each OOR adds +2 (checkpoint + arkoor),
 	// so after 5 arkoors the resulting VTXO has depth 9, sixth should fail.
-	let srv = ctx.new_captaind_with_cfg("server", None, |cfg| {
+	let srv = ctx.captaind("server").cfg(|cfg| {
 		cfg.max_vtxo_exit_depth = 10;
-	}).await;
+	}).create().await;
 	ctx.fund_captaind(&srv, btc(10)).await;
 
-	let bark1 = ctx.new_bark_with_funds("bark1", &srv, sat(1_000_000)).await;
+	let bark1 = ctx.bark("bark1", &srv).funded(sat(1_000_000)).create().await;
 
 	bark1.board_and_confirm_and_register(&ctx, sat(800_000)).await;
 
@@ -378,7 +378,7 @@ async fn max_vtxo_exit_depth() {
 #[tokio::test]
 async fn restart_fresh_server() {
 	let ctx = TestContext::new("server/restart_fresh_server").await;
-	let mut srv = ctx.new_captaind("server", None).await;
+	let mut srv = ctx.captaind("server").create().await;
 	srv.stop().await.unwrap();
 	srv.start().await.unwrap();
 }
@@ -386,7 +386,7 @@ async fn restart_fresh_server() {
 #[tokio::test]
 async fn restart_funded_server() {
 	let ctx = TestContext::new("server/restart_funded_server").await;
-	let mut srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
+	let mut srv = ctx.captaind("server").funded(btc(10)).create().await;
 	srv.stop().await.unwrap();
 	srv.start().await.unwrap();
 }
@@ -394,9 +394,9 @@ async fn restart_funded_server() {
 #[tokio::test]
 async fn restart_custom_cfg_server() {
 	let ctx = TestContext::new("server/restart_custom_cfg_server").await;
-	let mut srv = ctx.new_captaind_with_cfg("server", None, |cfg| {
+	let mut srv = ctx.captaind("server").cfg(|cfg| {
 		cfg.vtxo_exit_delta = 24;
-	}).await;
+	}).create().await;
 	srv.stop().await.unwrap();
 	srv.start().await.unwrap();
 }
@@ -404,9 +404,9 @@ async fn restart_custom_cfg_server() {
 #[tokio::test]
 async fn restart_server_with_payments() {
 	let ctx = TestContext::new("server/restart_server_with_payments").await;
-	let mut srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
-	let bark1 = ctx.new_bark("bark1", &srv).await;
-	let bark2 = ctx.new_bark("bark2", &srv).await;
+	let mut srv = ctx.captaind("server").funded(btc(10)).create().await;
+	let bark1 = ctx.bark("bark1", &srv).create().await;
+	let bark2 = ctx.bark("bark2", &srv).create().await;
 	ctx.fund_bark(&bark1, sat(1_000_000)).await;
 	ctx.fund_bark(&bark2, sat(1_000_000)).await;
 
@@ -428,13 +428,13 @@ async fn restart_server_with_payments() {
 #[tokio::test]
 async fn full_round() {
 	let ctx = TestContext::new("server/full_round").await;
-	let srv = ctx.new_captaind_with_cfg("server", None, |cfg| {
+	let srv = ctx.captaind("server").cfg(|cfg| {
 		cfg.round_interval = Duration::from_millis(100_000_000);
 		cfg.round_submit_time = Duration::from_millis(15_000);
 		cfg.round_sign_time = Duration::from_millis(10_000);
 		cfg.nb_round_nonces = 2;
 		cfg.min_board_amount = sat(0);
-	}).await;
+	}).create().await;
 	ctx.fund_captaind(&srv, btc(10)).await;
 
 	// based on nb_round_nonces
@@ -447,7 +447,7 @@ async fn full_round() {
 
 	let barks = join_all((1..=NB_BARKS).map(|i| {
 		let name = format!("bark{}", i);
-		ctx.new_bark_with_funds(name, &srv, sat(40_000))
+		ctx.bark(name, &srv).funded(sat(40_000)).create()
 	})).await;
 	ctx.generate_blocks(1).await;
 
@@ -510,10 +510,10 @@ async fn full_round() {
 #[tokio::test]
 async fn double_spend_arkoor() {
 	let ctx = TestContext::new("server/double_spend_arkoor").await;
-	let srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
+	let srv = ctx.captaind("server").funded(btc(10)).create().await;
 
 	// Instantiate bark
-	let bark = ctx.new_bark_with_funds("bark".to_string(), &srv, sat(1_000_000)).await;
+	let bark = ctx.bark("bark".to_string(), &srv).funded(sat(1_000_000)).create().await;
 	bark.board(sat(800_000)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 
@@ -629,10 +629,10 @@ async fn double_spend_round() {
 		}
 	}
 
-	let srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
+	let srv = ctx.captaind("server").funded(btc(10)).create().await;
 	let proxy = srv.start_proxy_no_mailbox(Proxy).await;
 
-	let bark = ctx.new_bark_with_funds("bark".to_string(), &proxy.address, sat(1_000_000)).await;
+	let bark = ctx.bark("bark".to_string(), &proxy.address).funded(sat(1_000_000)).create().await;
 	bark.board(sat(800_000)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 
@@ -648,8 +648,8 @@ async fn double_spend_round() {
 async fn test_participate_round_wrong_step() {
 	let ctx = TestContext::new("server/test_participate_round_wrong_step").await;
 
-	let srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
-	let mut bark = ctx.new_bark_with_funds("bark".to_string(), &srv, sat(1_000_000)).await;
+	let srv = ctx.captaind("server").funded(btc(10)).create().await;
+	let mut bark = ctx.bark("bark".to_string(), &srv).funded(sat(1_000_000)).create().await;
 	bark.board(Amount::from_sat(800_000)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 
@@ -720,10 +720,10 @@ async fn spend_unregistered_board() {
 		}
 	}
 
-	let srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
+	let srv = ctx.captaind("server").funded(btc(10)).create().await;
 	let proxy = srv.start_proxy_no_mailbox(Proxy).await;
 
-	let bark = ctx.new_bark_with_funds("bark".to_string(), &proxy.address, sat(1_000_000)).await;
+	let bark = ctx.bark("bark".to_string(), &proxy.address).funded(sat(1_000_000)).create().await;
 	bark.board(sat(800_000)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 
@@ -737,11 +737,11 @@ async fn spend_unregistered_board() {
 #[tokio::test]
 async fn bad_round_input() {
 	let ctx = TestContext::new("server/bad_round_input").await;
-	let srv = ctx.new_captaind_with_cfg("server", None, |cfg| {
+	let srv = ctx.captaind("server").cfg(|cfg| {
 		cfg.round_interval = Duration::from_secs(10000000);
 		cfg.round_submit_time = Duration::from_secs(30);
-	}).await;
-	let bark = ctx.new_bark_with_funds("bark", &srv, btc(1)).await;
+	}).create().await;
+	let bark = ctx.bark("bark", &srv).funded(btc(1)).create().await;
 	bark.board_and_confirm_and_register(&ctx, btc(0.5)).await;
 	let [vtxo] = bark.client().await.spendable_vtxos().await
 		.unwrap().try_into().unwrap();
@@ -858,9 +858,9 @@ async fn reject_dust_board_cosign() {
 	let ctx = TestContext::new("server/reject_dust_board_cosign").await;
 	// Need to set the `min_board_amount` less than dust to check we
 	// reject signing on dust always.
-	let srv = ctx.new_captaind_with_cfg("server", None, |cfg| {
+	let srv = ctx.captaind("server").cfg(|cfg| {
 		cfg.min_board_amount = sat(0);
-	}).await;
+	}).create().await;
 
 	#[derive(Clone)]
 	struct Proxy;
@@ -875,7 +875,7 @@ async fn reject_dust_board_cosign() {
 	}
 
 	let proxy = srv.start_proxy_no_mailbox(Proxy).await;
-	let bark = ctx.new_bark_with_funds("bark", &proxy.address, sat(1_000_000)).await;
+	let bark = ctx.bark("bark", &proxy.address).funded(sat(1_000_000)).create().await;
 
 	let err = bark.try_board_all().await.unwrap_err().to_alt_string();
 	assert!(err.contains(
@@ -890,9 +890,9 @@ async fn reject_below_minimum_board_cosign() {
 	// Set up server with `min_board_amount` of 30 000 sats
 	const MIN_BOARD_AMOUNT_SATS: u64 = 30_000;
 
-	let srv = ctx.new_captaind_with_cfg("server", None, |cfg| {
+	let srv = ctx.captaind("server").cfg(|cfg| {
 		cfg.min_board_amount = sat(MIN_BOARD_AMOUNT_SATS);
-	}).await;
+	}).create().await;
 
 	// We need to modify the client's requested amount to board via a proxy as the client
 	// side check would prevent a board below the minimum.
@@ -909,7 +909,7 @@ async fn reject_below_minimum_board_cosign() {
 	}
 
 	let proxy = srv.start_proxy_no_mailbox(Proxy).await;
-	let bark = ctx.new_bark_with_funds("bark", &proxy.address, sat(100_000)).await;
+	let bark = ctx.bark("bark", &proxy.address).funded(sat(100_000)).create().await;
 
 	let err = bark.try_board_all().await.unwrap_err().to_alt_string();
 	assert!(err.contains(
@@ -920,9 +920,9 @@ async fn reject_below_minimum_board_cosign() {
 #[tokio::test]
 async fn reject_dust_vtxo_request() {
 	let ctx = TestContext::new("server/reject_dust_vtxo_request").await;
-	let srv = ctx.new_captaind("server", None).await;
+	let srv = ctx.captaind("server").create().await;
 
-	let mut bark = ctx.new_bark_with_funds("bark", &srv, sat(1_000_000)).await;
+	let mut bark = ctx.bark("bark", &srv).funded(sat(1_000_000)).create().await;
 
 	bark.board_all_and_confirm_and_register(&ctx).await;
 
@@ -1005,19 +1005,19 @@ async fn reject_dust_vtxo_request() {
 #[tokio::test]
 async fn run_two_captainds() {
 	let ctx = TestContext::new("server/run_two_captainds").await;
-	let _srv1 = ctx.new_captaind("server1", None).await;
-	let _srv2 = ctx.new_captaind("server2", None).await;
+	let _srv1 = ctx.captaind("server1").create().await;
+	let _srv2 = ctx.captaind("server2").create().await;
 }
 
 #[tokio::test]
 async fn captaind_config_change(){
 	let ctx = TestContext::new("server/captaind_config_change").await;
-	let mut srv = ctx.new_captaind_with_cfg("server", None, |cfg| {
+	let mut srv = ctx.captaind("server").cfg(|cfg| {
 		cfg.vtxo_exit_delta = 12;
-	}).await;
+	}).create().await;
 	ctx.fund_captaind(&srv, btc(10)).await;
-	let bark1 = ctx.new_bark("bark1", &srv).await;
-	let bark2 = ctx.new_bark("bark2", &srv).await;
+	let bark1 = ctx.bark("bark1", &srv).create().await;
+	let bark2 = ctx.bark("bark2", &srv).create().await;
 	ctx.fund_bark(&bark1, sat(1_000_000)).await;
 	ctx.fund_bark(&bark2, sat(1_000_000)).await;
 
@@ -1139,10 +1139,10 @@ async fn test_cosign_vtxo_tree() {
 #[tokio::test]
 async fn should_refuse_oor_with_invalid_attestation() {
 	let ctx = TestContext::new("server/should_refuse_oor_with_invalid_attestation").await;
-	let srv = ctx.new_captaind("server", None).await;
+	let srv = ctx.captaind("server").create().await;
 
-	let bark = ctx.new_bark_with_funds("bark", &srv, sat(1_000_000)).await;
-	let bark2 = ctx.new_bark("bark2", &srv).await;
+	let bark = ctx.bark("bark", &srv).funded(sat(1_000_000)).create().await;
+	let bark2 = ctx.bark("bark2", &srv).create().await;
 
 	bark.board(sat(800_000)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
@@ -1186,10 +1186,10 @@ async fn should_refuse_oor_with_invalid_attestation() {
 async fn should_refuse_ln_pay_with_invalid_attestation() {
 	let ctx = TestContext::new("server/should_refuse_ln_pay_with_invalid_attestation").await;
 
-	let lightningd = ctx.new_lightningd("lightningd").await;
-	let srv = ctx.new_captaind("server", Some(&lightningd)).await;
+	let lightningd = ctx.lightningd("lightningd").create().await;
+	let srv = ctx.captaind("server").lightningd(&lightningd).create().await;
 
-	let bark = ctx.new_bark_with_funds("bark", &srv, sat(1_000_000)).await;
+	let bark = ctx.bark("bark", &srv).funded(sat(1_000_000)).create().await;
 
 	bark.board(sat(800_000)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
@@ -1232,10 +1232,10 @@ async fn should_refuse_ln_pay_with_invalid_attestation() {
 #[tokio::test]
 async fn should_refuse_oor_input_vtxo_that_is_being_exited() {
 	let ctx = TestContext::new("server/should_refuse_oor_input_vtxo_that_is_being_exited").await;
-	let srv = ctx.new_captaind("server", None).await;
+	let srv = ctx.captaind("server").create().await;
 
-	let bark = ctx.new_bark_with_funds("bark", &srv, sat(1_000_000)).await;
-	let bark2 = ctx.new_bark("bark2", &srv).await;
+	let bark = ctx.bark("bark", &srv).funded(sat(1_000_000)).create().await;
+	let bark2 = ctx.bark("bark2", &srv).create().await;
 
 
 	bark.board(sat(400_000)).await;
@@ -1292,14 +1292,14 @@ async fn should_refuse_oor_input_vtxo_that_is_being_exited() {
 #[tokio::test]
 async fn mailbox_post_and_process_with_auth() {
 	let ctx = TestContext::new("server/mailbox_post_and_process_with_auth").await;
-	let srv = ctx.new_captaind("server", None).await;
+	let srv = ctx.captaind("server").create().await;
 
-	let bark = ctx.new_bark_with_funds("bark", &srv, sat(1_000_000)).await;
+	let bark = ctx.bark("bark", &srv).funded(sat(1_000_000)).create().await;
 
 	let _board = bark.board(sat(400_000)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 
-	let bark2 = ctx.new_bark("bark2", &srv).await;
+	let bark2 = ctx.bark("bark2", &srv).create().await;
 	let bark2_mailbox_kp = bark2.client().await.mailbox_keypair();
 
 	let mut mb_rpc = srv.get_mailbox_public_rpc().await;
@@ -1422,11 +1422,11 @@ async fn should_refuse_round_input_vtxo_that_is_being_exited() {
 	let ctx = TestContext::new("server/should_refuse_round_input_vtxo_that_is_being_exited").await;
 
 	trace!("Start lightningd-1");
-	let lightningd = ctx.new_lightningd("lightningd-1").await;
+	let lightningd = ctx.lightningd("lightningd-1").create().await;
 
-	let srv = ctx.new_captaind("server", Some(&lightningd)).await;
+	let srv = ctx.captaind("server").lightningd(&lightningd).create().await;
 
-	let mut bark = ctx.new_bark_with_funds("bark", &srv, sat(1_000_000)).await;
+	let mut bark = ctx.bark("bark", &srv).funded(sat(1_000_000)).create().await;
 
 	bark.board(sat(400_000)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
@@ -1527,9 +1527,9 @@ async fn should_refuse_round_input_vtxo_that_is_being_exited() {
 #[tokio::test]
 async fn test_register_board() {
 	let ctx = TestContext::new("server/test_register_board").await;
-	let srv = ctx.new_captaind_with_cfg("server", None, |cfg| {
+	let srv = ctx.captaind("server").cfg(|cfg| {
 		cfg.required_board_confirmations = 6;
-	}).await;
+	}).create().await;
 
 	// Create keypair for the board cosigning
 	let client_cosign_keypair = Keypair::new(&*SECP, &mut thread_rng());
@@ -1689,10 +1689,10 @@ async fn empty_round_does_not_replay_stale_attempt() {
 	//! 3. When a fresh round starts, subscribers receive the new Attempt
 
 	let ctx = TestContext::new("server/empty_round_does_not_replay_stale_attempt").await;
-	let srv = ctx.new_captaind_with_cfg("server", None, |cfg| {
+	let srv = ctx.captaind("server").cfg(|cfg| {
 		cfg.round_interval = Duration::from_secs(3600);
 		cfg.round_submit_time = Duration::from_millis(500); // Short signup window
-	}).await;
+	}).create().await;
 
 	// Now subscribe to round events via gRPC - after the empty round finished.
 	// At this point, last_round_event should be cleared.
@@ -1714,7 +1714,7 @@ async fn empty_round_does_not_replay_stale_attempt() {
 #[tokio::test]
 async fn grpc_health_check() {
 	let ctx = TestContext::new("server/grpc_health_check").await;
-	let srv = ctx.new_captaind("server", None).await;
+	let srv = ctx.captaind("server").create().await;
 
 	let mut health_client = srv.get_health_rpc().await;
 

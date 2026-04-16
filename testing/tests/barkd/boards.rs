@@ -10,7 +10,7 @@ use bitcoin::Amount;
 async fn board_all_barkd() {
 	let ctx = TestContext::new("barkd/board_all_barkd").await;
 
-	let srv = ctx.new_captaind("server", None).await;
+	let srv = ctx.captaind("server").create().await;
 	let barkd = ctx.new_barkd("barkd1", &srv).await;
 
 	ctx.fund_barkd(&barkd, sat(100_000)).await;
@@ -47,7 +47,7 @@ async fn board_all_barkd() {
 async fn board_amount_barkd() {
 	let ctx = TestContext::new("barkd/board_amount_barkd").await;
 
-	let srv = ctx.new_captaind("server", None).await;
+	let srv = ctx.captaind("server").create().await;
 	let barkd = ctx.new_barkd("barkd1", &srv).await;
 
 	ctx.fund_barkd(&barkd, sat(200_000)).await;
@@ -82,7 +82,7 @@ async fn board_amount_barkd() {
 async fn pending_boards_barkd() {
 	let ctx = TestContext::new("barkd/pending_boards_barkd").await;
 
-	let srv = ctx.new_captaind("server", None).await;
+	let srv = ctx.captaind("server").create().await;
 	let barkd = ctx.new_barkd("barkd1", &srv).await;
 
 	// Fund enough for two separate boards.
@@ -117,7 +117,7 @@ async fn pending_boards_barkd() {
 async fn board_auto_sync_barkd() {
 	let ctx = TestContext::new("barkd/board_auto_sync_barkd").await;
 
-	let srv = ctx.new_captaind("server", None).await;
+	let srv = ctx.captaind("server").create().await;
 
 	// Use a short slow-sync interval so the test doesn't wait for the 60s default.
 	let slow_sync_secs: u64 = 5;
@@ -185,13 +185,13 @@ async fn board_auto_sync_barkd() {
 async fn board_fee_estimate_barkd() {
 	let ctx = TestContext::new("barkd/board_fee_estimate_barkd").await;
 
-	let srv = ctx.new_captaind_with_cfg("server", None, |cfg| {
+	let srv = ctx.captaind("server").cfg(|cfg| {
 		cfg.fees.board = BoardFees {
 			min_fee: Amount::ZERO,
 			base_fee: sat(100),
 			ppm: PpmFeeRate::ONE_PERCENT,
 		};
-	}).await;
+	}).create().await;
 	let barkd = ctx.new_barkd("barkd1", &srv).await;
 
 	// Fee rates should be available even without funds.

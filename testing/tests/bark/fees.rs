@@ -25,16 +25,16 @@ fn assert_eq_unordered<T: Ord + Clone + std::fmt::Debug>(a: &[T], b: &[T]) {
 #[tokio::test]
 async fn exit_fee_anchor_only_covers_cost() {
 	let ctx = TestContext::new("exit/exit_fee_anchor_only_covers_cost").await;
-	let srv = ctx.new_captaind_with_cfg("server", None, |cfg| {
+	let srv = ctx.captaind("server").cfg(|cfg| {
 		cfg.fees.board = BoardFees {
 			min_fee: sat(10_000),
 			base_fee: Amount::ZERO,
 			ppm: PpmFeeRate::ZERO,
 		};
-	}).await;
-	let bark = ctx.try_new_bark_with_cfg("bark1".to_string(), &srv, |cfg| {
+	}).create().await;
+	let bark = ctx.bark("bark1".to_string(), &srv).cfg(|cfg| {
 		cfg.fallback_fee_rate = Some(FeeRate::from_sat_per_kvb_ceil(100));
-	}).await.unwrap();
+	}).try_create().await.unwrap();
 	ctx.fund_captaind(&srv, btc(1)).await;
 	ctx.fund_bark(&bark, sat(100_013)).await;
 	ctx.generate_blocks(1).await;
@@ -72,16 +72,16 @@ async fn exit_fee_anchor_only_covers_cost() {
 #[tokio::test]
 async fn exit_fee_anchor_no_dust_change_error() {
 	let ctx = TestContext::new("exit/exit_fee_anchor_no_dust_change_error").await;
-	let srv = ctx.new_captaind_with_cfg("server", None, |cfg| {
+	let srv = ctx.captaind("server").cfg(|cfg| {
 		cfg.fees.board = BoardFees {
 			min_fee: sat(330),
 			base_fee: Amount::ZERO,
 			ppm: PpmFeeRate::ZERO,
 		};
-	}).await;
-	let bark = ctx.try_new_bark_with_cfg("bark1".to_string(), &srv, |cfg| {
+	}).create().await;
+	let bark = ctx.bark("bark1".to_string(), &srv).cfg(|cfg| {
 		cfg.fallback_fee_rate = Some(FeeRate::from_sat_per_kvb_ceil(100));
-	}).await.unwrap();
+	}).try_create().await.unwrap();
 	ctx.fund_captaind(&srv, btc(1)).await;
 	ctx.fund_bark(&bark, sat(100_013)).await;
 	ctx.generate_blocks(1).await;
@@ -120,16 +120,16 @@ async fn exit_fee_anchor_no_dust_change_error() {
 #[tokio::test]
 async fn board_fee_base_and_ppm() {
 	let ctx = TestContext::new("fees/board_fee_base_and_ppm").await;
-	let srv = ctx.new_captaind_with_cfg("server", None, |cfg| {
+	let srv = ctx.captaind("server").cfg(|cfg| {
 		cfg.fees.board = BoardFees {
 			min_fee: Amount::ZERO,
 			base_fee: sat(100),
 			ppm: PpmFeeRate::ONE_PERCENT,
 		};
-	}).await;
+	}).create().await;
 	ctx.fund_captaind(&srv, btc(1)).await;
 
-	let bark = ctx.new_bark_with_funds("bark1", &srv, sat(1_000_000)).await;
+	let bark = ctx.bark("bark1", &srv).funded(sat(1_000_000)).create().await;
 
 	// Estimate before performing the operation
 	let estimate = bark.estimate_board_offchain_fee(sat(100_000)).await;
@@ -162,16 +162,16 @@ async fn board_fee_base_and_ppm() {
 #[tokio::test]
 async fn board_fee_min_fee_applies() {
 	let ctx = TestContext::new("fees/board_fee_min_fee_applies").await;
-	let srv = ctx.new_captaind_with_cfg("server", None, |cfg| {
+	let srv = ctx.captaind("server").cfg(|cfg| {
 		cfg.fees.board = BoardFees {
 			min_fee: sat(5_000),
 			base_fee: Amount::ZERO,
 			ppm: PpmFeeRate::ZERO,
 		};
-	}).await;
+	}).create().await;
 	ctx.fund_captaind(&srv, btc(1)).await;
 
-	let bark = ctx.new_bark_with_funds("bark1", &srv, sat(1_000_000)).await;
+	let bark = ctx.bark("bark1", &srv).funded(sat(1_000_000)).create().await;
 
 	// Estimate before performing the operation
 	let estimate = bark.estimate_board_offchain_fee(sat(100_000)).await;
@@ -201,16 +201,16 @@ async fn board_fee_min_fee_applies() {
 #[tokio::test]
 async fn board_fee_rejects_when_fee_exceeds_amount() {
 	let ctx = TestContext::new("fees/board_fee_rejects_when_fee_exceeds_amount").await;
-	let srv = ctx.new_captaind_with_cfg("server", None, |cfg| {
+	let srv = ctx.captaind("server").cfg(|cfg| {
 		cfg.fees.board = BoardFees {
 			min_fee: sat(50_000),
 			base_fee: Amount::ZERO,
 			ppm: PpmFeeRate::ZERO,
 		};
-	}).await;
+	}).create().await;
 	ctx.fund_captaind(&srv, btc(1)).await;
 
-	let bark = ctx.new_bark_with_funds("bark1", &srv, sat(1_000_000)).await;
+	let bark = ctx.bark("bark1", &srv).funded(sat(1_000_000)).create().await;
 
 	// Estimate should succeed even though the operation will fail
 	let estimate = bark.estimate_board_offchain_fee(sat(30_000)).await;
@@ -231,16 +231,16 @@ async fn board_fee_rejects_when_fee_exceeds_amount() {
 #[tokio::test]
 async fn refresh_fee_base_only() {
 	let ctx = TestContext::new("fees/refresh_fee_base_only").await;
-	let srv = ctx.new_captaind_with_cfg("server", None, |cfg| {
+	let srv = ctx.captaind("server").cfg(|cfg| {
 		cfg.round_interval = Duration::from_secs(3600);
 		cfg.fees.refresh = RefreshFees {
 			base_fee: sat(1_000),
 			ppm_expiry_table: vec![],
 		};
-	}).await;
+	}).create().await;
 	ctx.fund_captaind(&srv, btc(10)).await;
 
-	let bark = ctx.new_bark_with_funds("bark1", &srv, sat(1_000_000)).await;
+	let bark = ctx.bark("bark1", &srv).funded(sat(1_000_000)).create().await;
 	bark.board_and_confirm_and_register(&ctx, sat(100_000)).await;
 	assert_eq!(bark.spendable_balance().await, sat(100_000));
 
@@ -270,7 +270,7 @@ async fn refresh_fee_base_only() {
 #[tokio::test]
 async fn refresh_fee_with_ppm_expiry() {
 	let ctx = TestContext::new("fees/refresh_fee_with_ppm_expiry").await;
-	let srv = ctx.new_captaind_with_cfg("server", None, |cfg| {
+	let srv = ctx.captaind("server").cfg(|cfg| {
 		cfg.round_interval = Duration::from_secs(3600);
 		cfg.fees.refresh = RefreshFees {
 			base_fee: sat(200),
@@ -279,10 +279,10 @@ async fn refresh_fee_with_ppm_expiry() {
 				PpmExpiryFeeEntry { expiry_blocks_threshold: 50, ppm: PpmFeeRate::ONE_PERCENT },
 			],
 		};
-	}).await;
+	}).create().await;
 	ctx.fund_captaind(&srv, btc(10)).await;
 
-	let bark = ctx.new_bark_with_funds("bark1", &srv, sat(1_000_000)).await;
+	let bark = ctx.bark("bark1", &srv).funded(sat(1_000_000)).create().await;
 	bark.board_and_confirm_and_register(&ctx, sat(100_000)).await;
 
 	// Estimate before refresh
@@ -311,16 +311,16 @@ async fn refresh_fee_with_ppm_expiry() {
 #[tokio::test]
 async fn refresh_fee_with_multiple_vtxos() {
 	let ctx = TestContext::new("fees/refresh_fee_with_multiple_vtxos").await;
-	let srv = ctx.new_captaind_with_cfg("server", None, |cfg| {
+	let srv = ctx.captaind("server").cfg(|cfg| {
 		cfg.round_interval = Duration::from_secs(3600);
 		cfg.fees.refresh = RefreshFees {
 			base_fee: sat(500),
 			ppm_expiry_table: vec![],
 		};
-	}).await;
+	}).create().await;
 	ctx.fund_captaind(&srv, btc(10)).await;
 
-	let bark = ctx.new_bark_with_funds("bark1", &srv, sat(1_000_000)).await;
+	let bark = ctx.bark("bark1", &srv).funded(sat(1_000_000)).create().await;
 
 	// Board three separate VTXOs
 	bark.board(sat(100_000)).await;
@@ -361,7 +361,7 @@ async fn refresh_fee_with_multiple_vtxos() {
 #[tokio::test]
 async fn refresh_should_refresh_vtxos() {
 	let ctx = TestContext::new("fees/refresh_should_refresh_vtxos").await;
-	let srv = ctx.new_captaind_with_cfg("server", None, |cfg| {
+	let srv = ctx.captaind("server").cfg(|cfg| {
 		cfg.round_interval = Duration::from_secs(3600);
 		cfg.vtxo_lifetime = 144;
 		cfg.fees.refresh = RefreshFees {
@@ -370,10 +370,10 @@ async fn refresh_should_refresh_vtxos() {
 				PpmExpiryFeeEntry { expiry_blocks_threshold: 0, ppm: PpmFeeRate::ONE_PERCENT },
 			],
 		};
-	}).await;
+	}).create().await;
 	ctx.fund_captaind(&srv, btc(10)).await;
 
-	let bark = ctx.new_bark_with_funds("bark1", &srv, sat(1_000_000)).await;
+	let bark = ctx.bark("bark1", &srv).funded(sat(1_000_000)).create().await;
 
 	// Board VTXO A
 	bark.board(sat(100_000)).await;
@@ -434,7 +434,7 @@ async fn refresh_should_refresh_vtxos() {
 #[tokio::test]
 async fn refresh_should_refresh_vtxos_no_dust() {
 	let ctx = TestContext::new("fees/refresh_should_refresh_vtxos_no_dust").await;
-	let srv = ctx.new_captaind_with_cfg("server", None, |cfg| {
+	let srv = ctx.captaind("server").cfg(|cfg| {
 		cfg.round_interval = Duration::from_secs(3600);
 		cfg.vtxo_lifetime = 144;
 		cfg.fees.refresh = RefreshFees {
@@ -443,11 +443,11 @@ async fn refresh_should_refresh_vtxos_no_dust() {
 				PpmExpiryFeeEntry { expiry_blocks_threshold: 0, ppm: PpmFeeRate::ONE_PERCENT },
 			],
 		};
-	}).await;
+	}).create().await;
 	ctx.fund_captaind(&srv, btc(10)).await;
 
-	let bark1 = ctx.new_bark_with_funds("bark1", &srv, sat(1_000_000)).await;
-	let bark2 = ctx.new_bark_with_funds("bark2", &srv, sat(1_000_000)).await;
+	let bark1 = ctx.bark("bark1", &srv).funded(sat(1_000_000)).create().await;
+	let bark2 = ctx.bark("bark2", &srv).funded(sat(1_000_000)).create().await;
 
 	// Board VTXO A
 	bark1.board(sat(100_000)).await;
@@ -507,17 +507,17 @@ async fn refresh_should_refresh_vtxos_no_dust() {
 #[tokio::test]
 async fn refresh_fee_rejects_dust_output() {
 	let ctx = TestContext::new("fees/refresh_fee_rejects_dust_output").await;
-	let srv = ctx.new_captaind_with_cfg("server", None, |cfg| {
+	let srv = ctx.captaind("server").cfg(|cfg| {
 		cfg.round_interval = Duration::from_secs(3600);
 		// Fee so high that the output would be below dust (330 sats)
 		cfg.fees.refresh = RefreshFees {
 			base_fee: sat(99_800),
 			ppm_expiry_table: vec![],
 		};
-	}).await;
+	}).create().await;
 	ctx.fund_captaind(&srv, btc(10)).await;
 
-	let bark = ctx.new_bark_with_funds("bark1", &srv, sat(1_000_000)).await;
+	let bark = ctx.bark("bark1", &srv).funded(sat(1_000_000)).create().await;
 	bark.board_and_confirm_and_register(&ctx, sat(100_000)).await;
 
 	// Estimate should succeed even though the operation will fail
@@ -542,17 +542,17 @@ async fn refresh_fee_rejects_dust_output() {
 #[tokio::test]
 async fn offboard_fee_base_deducted() {
 	let ctx = TestContext::new("fees/offboard_fee_base_deducted").await;
-	let srv = ctx.new_captaind_with_cfg("server", None, |cfg| {
+	let srv = ctx.captaind("server").cfg(|cfg| {
 		cfg.round_interval = Duration::from_secs(3600);
 		cfg.fees.offboard = OffboardFees {
 			base_fee: sat(5_000),
 			fixed_additional_vb: 100,
 			ppm_expiry_table: vec![],
 		};
-	}).await;
+	}).create().await;
 	ctx.fund_captaind(&srv, btc(10)).await;
 
-	let bark = ctx.new_bark_with_funds("bark1", &srv, sat(1_000_000)).await;
+	let bark = ctx.bark("bark1", &srv).funded(sat(1_000_000)).create().await;
 	bark.board_and_confirm_and_register(&ctx, sat(100_000)).await;
 
 	let address = ctx.bitcoind().get_new_address();
@@ -599,7 +599,7 @@ async fn offboard_fee_base_deducted() {
 #[tokio::test]
 async fn offboard_fee_with_ppm_expiry() {
 	let ctx = TestContext::new("fees/offboard_fee_with_ppm_expiry").await;
-	let srv = ctx.new_captaind_with_cfg("server", None, |cfg| {
+	let srv = ctx.captaind("server").cfg(|cfg| {
 		cfg.round_interval = Duration::from_secs(3600);
 		cfg.fees.offboard = OffboardFees {
 			base_fee: Amount::ZERO,
@@ -614,10 +614,10 @@ async fn offboard_fee_with_ppm_expiry() {
 				},
 			],
 		};
-	}).await;
+	}).create().await;
 	ctx.fund_captaind(&srv, btc(10)).await;
 
-	let bark = ctx.new_bark_with_funds("bark1", &srv, sat(1_000_000)).await;
+	let bark = ctx.bark("bark1", &srv).funded(sat(1_000_000)).create().await;
 	bark.board_and_confirm_and_register(&ctx, sat(500_000)).await;
 
 	let address = ctx.bitcoind().get_new_address();
@@ -653,7 +653,7 @@ async fn offboard_fee_with_ppm_expiry() {
 #[tokio::test]
 async fn offboard_all_rejects_dust_output() {
 	let ctx = TestContext::new("fees/offboard_all_rejects_dust_output").await;
-	let srv = ctx.new_captaind_with_cfg("server", None, |cfg| {
+	let srv = ctx.captaind("server").cfg(|cfg| {
 		cfg.round_interval = Duration::from_secs(3600);
 		cfg.fee_estimator.fallback_fee_rate_regular = FeeRate::from_sat_per_vb(7).unwrap();
 		cfg.fees.offboard = OffboardFees {
@@ -661,10 +661,10 @@ async fn offboard_all_rejects_dust_output() {
 			fixed_additional_vb: 0,
 			ppm_expiry_table: vec![],
 		};
-	}).await;
+	}).create().await;
 	ctx.fund_captaind(&srv, btc(10)).await;
 
-	let bark = ctx.new_bark_with_funds("bark1", &srv, sat(1_000_000)).await;
+	let bark = ctx.bark("bark1", &srv).funded(sat(1_000_000)).create().await;
 	bark.board_and_confirm_and_register(&ctx, sat(20_000)).await;
 
 	// Estimate should succeed even though the operation will fail
@@ -687,17 +687,17 @@ async fn offboard_all_rejects_dust_output() {
 #[tokio::test]
 async fn send_onchain_fee_deducted() {
 	let ctx = TestContext::new("fees/send_onchain_fee_deducted").await;
-	let srv = ctx.new_captaind_with_cfg("server", None, |cfg| {
+	let srv = ctx.captaind("server").cfg(|cfg| {
 		cfg.fees.offboard = OffboardFees {
 			base_fee: sat(3_000),
 			fixed_additional_vb: 100,
 			ppm_expiry_table: vec![],
 		};
-	}).await;
+	}).create().await;
 	ctx.fund_captaind(&srv, btc(10)).await;
 
-	let bark1 = ctx.new_bark_with_funds("bark1", &srv, sat(1_000_000)).await;
-	let bark2 = ctx.new_bark("bark2", &srv).await;
+	let bark1 = ctx.bark("bark1", &srv).funded(sat(1_000_000)).create().await;
+	let bark2 = ctx.bark("bark2", &srv).create().await;
 
 	bark1.board_and_confirm_and_register(&ctx, sat(800_000)).await;
 	let [input_vtxo] = bark1.vtxos().await.try_into().expect("should have one vtxo");
@@ -748,15 +748,15 @@ async fn lightning_receive_fee_deducted() {
 
 	let lightning = ctx.new_lightning_setup("lightningd").await;
 
-	let srv = ctx.new_captaind_with_cfg("server", Some(&lightning.internal), |cfg| {
+	let srv = ctx.captaind("server").lightningd(&lightning.internal).cfg(|cfg| {
 		cfg.fees.lightning_receive = LightningReceiveFees {
 			base_fee: sat(500),
 			ppm: PpmFeeRate::ONE_PERCENT,
 		};
-	}).await;
+	}).create().await;
 	ctx.fund_captaind(&srv, btc(10)).await;
 
-	let bark = Arc::new(ctx.new_bark_with_funds("bark", &srv, btc(3)).await);
+	let bark = Arc::new(ctx.bark("bark", &srv).funded(btc(3)).create().await);
 	let board_amount = btc(2);
 	bark.board_and_confirm_and_register(&ctx, board_amount).await;
 
@@ -804,16 +804,16 @@ async fn lightning_receive_fee_rejects_when_fee_exceeds_amount() {
 
 	let lightning = ctx.new_lightning_setup("lightningd").await;
 
-	let srv = ctx.new_captaind_with_cfg("server", Some(&lightning.external), |cfg| {
+	let srv = ctx.captaind("server").lightningd(&lightning.external).cfg(|cfg| {
 		// Set a very high base_fee so that small amounts are rejected
 		cfg.fees.lightning_receive = LightningReceiveFees {
 			base_fee: sat(50_000),
 			ppm: PpmFeeRate::ZERO,
 		};
-	}).await;
+	}).create().await;
 	ctx.fund_captaind(&srv, btc(10)).await;
 
-	let bark = ctx.new_bark_with_funds("bark", &srv, btc(3)).await;
+	let bark = ctx.bark("bark", &srv).funded(btc(3)).create().await;
 	bark.board_and_confirm_and_register(&ctx, btc(2)).await;
 
 	// Estimate should succeed even though the operation will fail
@@ -835,16 +835,16 @@ async fn lightning_send_fee_deducted() {
 
 	let lightning = ctx.new_lightning_setup("lightningd").await;
 
-	let srv = ctx.new_captaind_with_cfg("server", Some(&lightning.internal), |cfg| {
+	let srv = ctx.captaind("server").lightningd(&lightning.internal).cfg(|cfg| {
 		cfg.fees.lightning_send = LightningSendFees {
 			min_fee: Amount::ZERO,
 			base_fee: sat(5_000),
 			ppm_expiry_table: vec![],
 		};
-	}).await;
+	}).create().await;
 	ctx.fund_captaind(&srv, btc(10)).await;
 
-	let bark = ctx.new_bark_with_funds("bark", &srv, btc(7)).await;
+	let bark = ctx.bark("bark", &srv).funded(btc(7)).create().await;
 	let board_amount = btc(5);
 	bark.board_and_confirm_and_register(&ctx, board_amount).await;
 
@@ -885,16 +885,16 @@ async fn lightning_send_fee_min_fee_applies() {
 
 	let lightning = ctx.new_lightning_setup("lightningd").await;
 
-	let srv = ctx.new_captaind_with_cfg("server", Some(&lightning.internal), |cfg| {
+	let srv = ctx.captaind("server").lightningd(&lightning.internal).cfg(|cfg| {
 		cfg.fees.lightning_send = LightningSendFees {
 			min_fee: sat(10_000),
 			base_fee: sat(100),
 			ppm_expiry_table: vec![],
 		};
-	}).await;
+	}).create().await;
 	ctx.fund_captaind(&srv, btc(10)).await;
 
-	let bark = ctx.new_bark_with_funds("bark", &srv, btc(7)).await;
+	let bark = ctx.bark("bark", &srv).funded(btc(7)).create().await;
 	let board_amount = btc(5);
 	bark.board_and_confirm_and_register(&ctx, board_amount).await;
 
@@ -934,7 +934,7 @@ async fn lightning_send_fee_ppm_expiry_table() {
 
 	let lightning = ctx.new_lightning_setup("lightningd").await;
 
-	let srv = ctx.new_captaind_with_cfg("server", Some(&lightning.internal), |cfg| {
+	let srv = ctx.captaind("server").lightningd(&lightning.internal).cfg(|cfg| {
 		cfg.vtxo_lifetime = 144;
 		cfg.fees.lightning_send = LightningSendFees {
 			min_fee: Amount::ZERO,
@@ -945,10 +945,10 @@ async fn lightning_send_fee_ppm_expiry_table() {
 				PpmExpiryFeeEntry { expiry_blocks_threshold: u32::MAX, ppm: PpmFeeRate(50_000) }, // 5%
 			],
 		};
-	}).await;
+	}).create().await;
 	ctx.fund_captaind(&srv, btc(10)).await;
 
-	let bark = ctx.new_bark_with_funds("bark", &srv, btc(7)).await;
+	let bark = ctx.bark("bark", &srv).funded(btc(7)).create().await;
 	let board_amount = btc(5);
 	bark.board_and_confirm_and_register(&ctx, board_amount).await;
 

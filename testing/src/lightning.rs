@@ -35,9 +35,7 @@ macro_rules! lightning_test {
 					concat!("lightningd/external_", stringify!($test_fn)),
 				).await;
 				let lightning = ctx.new_lightning_setup("lightningd").await;
-				let srv = ctx.new_captaind_with_cfg(
-					"server", Some(&lightning.internal), |$cfg| $cfg_body,
-				).await;
+				let srv = ctx.captaind("server").lightningd(&lightning.internal).cfg(|$cfg| $cfg_body).create().await;
 				ctx.fund_captaind(&srv, btc(10)).await;
 
 				let pay = async |invoice: String| {
@@ -53,13 +51,11 @@ macro_rules! lightning_test {
 					concat!("lightningd/intra_", stringify!($test_fn)),
 				).await;
 				let lightning = ctx.new_lightning_setup("lightningd").await;
-				let srv = ctx.new_captaind_with_cfg(
-					"server", Some(&lightning.internal), |$cfg| $cfg_body,
-				).await;
+				let srv = ctx.captaind("server").lightningd(&lightning.internal).cfg(|$cfg| $cfg_body).create().await;
 				ctx.fund_captaind(&srv, btc(10)).await;
 
 				let bark_sender = Arc::new(
-					ctx.new_bark_with_funds("sender", &srv, btc(5)).await,
+					ctx.bark("sender", &srv).funded(btc(5)).create().await,
 				);
 				bark_sender.board_and_confirm_and_register(&ctx, btc(3)).await;
 

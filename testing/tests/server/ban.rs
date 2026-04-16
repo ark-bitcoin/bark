@@ -6,9 +6,9 @@ use ark_testing::constants::BOARD_CONFIRMATIONS;
 #[tokio::test]
 async fn banned_vtxo_cannot_be_spent() {
 	let ctx = TestContext::new("ban/spend").await;
-	let srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
-	let bark1 = ctx.new_bark_with_funds("bark1", &srv, sat(1_000_000)).await;
-	let bark2 = ctx.new_bark_with_funds("bark2", &srv, sat(1_000_000)).await;
+	let srv = ctx.captaind("server").funded(btc(10)).create().await;
+	let bark1 = ctx.bark("bark1", &srv).funded(sat(1_000_000)).create().await;
+	let bark2 = ctx.bark("bark2", &srv).funded(sat(1_000_000)).create().await;
 
 	bark1.board(sat(100_000)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;

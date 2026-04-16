@@ -34,9 +34,9 @@ use ark_testing::daemon::captaind::MailboxClient;
 #[tokio::test]
 async fn mailbox_checkpoint_visibility_gap() {
 	let ctx = TestContext::new("server/mailbox_checkpoint_visibility_gap").await;
-	let srv = ctx.new_captaind_with_cfg("server", None, |cfg| {
+	let srv = ctx.captaind("server").cfg(|cfg| {
 		cfg.postgres.max_connections = 100;
-	}).await;
+	}).create().await;
 
 	let db = Db::connect(&srv.config().postgres).await.expect("connect to captaind's postgres");
 
@@ -152,10 +152,10 @@ async fn mailbox_lightning_receive_pending() {
 	let lightning = ctx.new_lightning_setup("lightningd").await;
 
 	// Server must be linked to the receiver CLN to generate hold invoices
-	let srv = ctx.new_captaind_with_funds("server", Some(&lightning.internal), btc(10)).await;
+	let srv = ctx.captaind("server").lightningd(&lightning.internal).funded(btc(10)).create().await;
 	srv.wait_for_vtxopool(&ctx).await;
 
-	let bark = Arc::new(ctx.new_bark_with_funds("bark", &srv, btc(3)).await);
+	let bark = Arc::new(ctx.bark("bark", &srv).funded(btc(3)).create().await);
 	bark.board_and_confirm_and_register(&ctx, btc(2)).await;
 
 	let mut mb_rpc = srv.get_mailbox_public_rpc().await;

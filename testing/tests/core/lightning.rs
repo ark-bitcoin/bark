@@ -11,7 +11,7 @@ async fn start_lightningd() {
 	ctx.generate_blocks(100).await;
 
 	// Start an instance of lightningd
-	let lightningd_1 = ctx.new_lightningd("lightningd-1").await;
+	let lightningd_1 = ctx.lightningd("lightningd-1").create().await;
 	let mut client = lightningd_1.grpc_client().await;
 	let result = client.getinfo(rpc::GetinfoRequest{}).await.unwrap();
 	let info = result.into_inner();

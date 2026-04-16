@@ -31,15 +31,15 @@ async fn large_round() {
 
 	info!("Running multiple_round_test with N set to {}", N);
 
-	let srv = ctx.new_captaind_with_cfg("server", None, |cfg| {
+	let srv = ctx.captaind("server").cfg(|cfg| {
 		cfg.round_interval = Duration::from_secs(3600);
 		cfg.round_sign_time = Duration::from_millis(1000 * N as u64);
-	}).await;
+	}).create().await;
 	ctx.fund_captaind(&srv, btc(10)).await;
 
 	let barks = join_all((0..N).map(|i| {
 		let name = format!("bark{}", i);
-		ctx.new_bark_with_funds(name, &srv, sat(90_000))
+		ctx.bark(name, &srv).funded(sat(90_000)).create()
 	})).await;
 	ctx.generate_blocks(1).await;
 
@@ -58,9 +58,9 @@ async fn large_round() {
 #[tokio::test]
 async fn refresh_all() {
 	let ctx = TestContext::new("bark/refresh_all").await;
-	let srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
-	let bark1 = ctx.new_bark_with_funds("bark1", &srv, sat(1_000_000)).await;
-	let bark2 = ctx.new_bark_with_funds("bark2", &srv, sat(1_000_000)).await;
+	let srv = ctx.captaind("server").funded(btc(10)).create().await;
+	let bark1 = ctx.bark("bark1", &srv).funded(sat(1_000_000)).create().await;
+	let bark2 = ctx.bark("bark2", &srv).funded(sat(1_000_000)).create().await;
 
 	bark1.board(sat(400_000)).await;
 	bark2.board(sat(800_000)).await;
@@ -86,9 +86,9 @@ async fn refresh_all() {
 #[tokio::test]
 async fn refresh_counterparty() {
 	let ctx = TestContext::new("bark/refresh_counterparty").await;
-	let srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
-	let bark1 = ctx.new_bark_with_funds("bark1", &srv, sat(1_000_000)).await;
-	let bark2 = ctx.new_bark_with_funds("bark2", &srv, sat(1_000_000)).await;
+	let srv = ctx.captaind("server").funded(btc(10)).create().await;
+	let bark1 = ctx.bark("bark1", &srv).funded(sat(1_000_000)).create().await;
+	let bark2 = ctx.bark("bark2", &srv).funded(sat(1_000_000)).create().await;
 
 	bark2.board(sat(800_000)).await;
 
@@ -143,15 +143,15 @@ async fn second_round_attempt() {
 	}
 
 	let ctx = TestContext::new("bark/second_round_attempt").await;
-	let srv = ctx.new_captaind_with_cfg("server", None, |cfg| {
+	let srv = ctx.captaind("server").cfg(|cfg| {
 		cfg.round_interval = Duration::from_secs(3600);
-	}).await;
+	}).create().await;
 	ctx.fund_captaind(&srv, btc(10)).await;
 
-	let bark1 = ctx.new_bark_with_funds("bark1".to_string(), &srv, sat(1_000_000)).await;
+	let bark1 = ctx.bark("bark1".to_string(), &srv).funded(sat(1_000_000)).create().await;
 	bark1.board_and_confirm_and_register(&ctx, sat(800_000)).await;
 
-	let bark2 = ctx.new_bark("bark2".to_string(), &srv).await;
+	let bark2 = ctx.bark("bark2".to_string(), &srv).create().await;
 	let bark2_addr = bark2.address().await;
 
 	// Send arkoor package to mailbox
@@ -191,12 +191,12 @@ async fn bark_can_sign_up_to_round_during_signup_phase() {
 	//! wasn't listening when the round started.
 
 	let ctx = TestContext::new("bark/bark_can_sign_up_to_round_during_signup_phase").await;
-	let srv = ctx.new_captaind_with_cfg("server", None, |cfg| {
+	let srv = ctx.captaind("server").cfg(|cfg| {
 		cfg.round_interval = Duration::from_secs(3600);
-	}).await;
+	}).create().await;
 	ctx.fund_captaind(&srv, btc(10)).await;
 
-	let bark = ctx.new_bark_with_funds("bark", &srv, sat(1_000_000)).await;
+	let bark = ctx.bark("bark", &srv).funded(sat(1_000_000)).create().await;
 	bark.board_and_confirm_and_register(&ctx, sat(800_000)).await;
 
 	// Subscribe to logs before triggering
@@ -222,8 +222,8 @@ async fn bark_can_sign_up_to_round_during_signup_phase() {
 #[tokio::test]
 async fn delegated_maintenance_refresh() {
 	let ctx = TestContext::new("bark/delegated_maintenance_refresh").await;
-	let srv = ctx.new_captaind_with_funds("server", None, btc(1)).await;
-	let bark = ctx.new_bark_with_funds("bark", &srv, sat(1_000_000)).await;
+	let srv = ctx.captaind("server").funded(btc(1)).create().await;
+	let bark = ctx.bark("bark", &srv).funded(sat(1_000_000)).create().await;
 
 	// Board funds and confirm
 	bark.board_and_confirm_and_register(&ctx, sat(800_000)).await;
@@ -294,12 +294,12 @@ async fn stepwise_round() {
 	//! in rounds stepwise by manually feeding events into the wallet
 
 	let ctx = TestContext::new("bark/stepwise_round").await;
-	let srv = ctx.new_captaind_with_cfg("server", None, |cfg| {
+	let srv = ctx.captaind("server").cfg(|cfg| {
 		cfg.round_interval = Duration::from_secs(3600);
-	}).await;
+	}).create().await;
 	ctx.fund_captaind(&srv, btc(1)).await;
 
-	let bark = ctx.new_bark_with_funds("bark", &srv, sat(1_000_000)).await;
+	let bark = ctx.bark("bark", &srv).funded(sat(1_000_000)).create().await;
 	bark.board_and_confirm_and_register(&ctx, sat(800_000)).await;
 
 	// let vtxo almost expire
@@ -389,8 +389,8 @@ async fn stepwise_round() {
 #[tokio::test]
 async fn multiple_round_participations_dont_race() {
 	let ctx = TestContext::new("bark/multiple_round_participations_dont_race").await;
-	let srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
-	let bark = ctx.new_bark_with_funds("bark", &srv, sat(1_000_000)).await;
+	let srv = ctx.captaind("server").funded(btc(10)).create().await;
+	let bark = ctx.bark("bark", &srv).funded(sat(1_000_000)).create().await;
 
 	// Board some sats and wait for confirmation
 	bark.board_and_confirm_and_register(&ctx, sat(800_000)).await;
@@ -448,8 +448,8 @@ async fn multiple_round_participations_dont_race() {
 #[tokio::test]
 async fn refresh_vtxos_and_participate_ongoing_rounds_dont_race() {
 	let ctx = TestContext::new("bark/refresh_vtxos_and_participate_ongoing_rounds_dont_race").await;
-	let srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
-	let bark = ctx.new_bark_with_funds("bark", &srv, sat(1_000_000)).await;
+	let srv = ctx.captaind("server").funded(btc(10)).create().await;
+	let bark = ctx.bark("bark", &srv).funded(sat(1_000_000)).create().await;
 
 	// Board some sats and wait for confirmation
 	bark.board_and_confirm_and_register(&ctx, sat(800_000)).await;
@@ -508,8 +508,8 @@ async fn refresh_vtxos_and_participate_ongoing_rounds_dont_race() {
 #[tokio::test]
 async fn participate_round_and_progress_pending_dont_race() {
 	let ctx = TestContext::new("bark/participate_round_and_progress_pending_dont_race").await;
-	let srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
-	let bark = ctx.new_bark_with_funds("bark", &srv, sat(1_000_000)).await;
+	let srv = ctx.captaind("server").funded(btc(10)).create().await;
+	let bark = ctx.bark("bark", &srv).funded(sat(1_000_000)).create().await;
 
 	// Board some sats and wait for confirmation
 	bark.board_and_confirm_and_register(&ctx, sat(800_000)).await;
@@ -585,8 +585,8 @@ async fn participate_round_and_progress_pending_dont_race() {
 #[tokio::test]
 async fn participate_round_and_event_stream_processing_dont_race() {
 	let ctx = TestContext::new("bark/participate_round_and_event_stream_processing_dont_race").await;
-	let srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
-	let bark = ctx.new_bark_with_funds("bark", &srv, sat(1_000_000)).await;
+	let srv = ctx.captaind("server").funded(btc(10)).create().await;
+	let bark = ctx.bark("bark", &srv).funded(sat(1_000_000)).create().await;
 
 	// Board some sats and wait for confirmation
 	bark.board_and_confirm_and_register(&ctx, sat(800_000)).await;
@@ -659,8 +659,8 @@ async fn participate_round_and_event_stream_processing_dont_race() {
 async fn refresh_consolidates_vtxos() {
 	let ctx = TestContext::new("bark/refresh_consolidates_vtxos").await;
 
-	let srv = ctx.new_captaind_with_funds("server", None, btc(10)).await;
-	let bark1 = ctx.new_bark_with_funds("bark1".to_string(), &srv, sat(1_000_000)).await;
+	let srv = ctx.captaind("server").funded(btc(10)).create().await;
+	let bark1 = ctx.bark("bark1".to_string(), &srv).funded(sat(1_000_000)).create().await;
 
 	bark1.board(sat(100_000)).await;
 	ctx.generate_blocks(1).await;

@@ -265,6 +265,12 @@ impl<'a> LightningdBuilder<'a> {
 			self.ctx.bitcoind_arc()
 		};
 
+		// Generate a block with a fresh timestamp so bitcoind exits
+		// initialblockdownload mode. Without this, CLN reports
+		// "Bitcoind is not up-to-date with network." indefinitely
+		// when started from a stale snapshot.
+		bitcoind.generate(1).await;
+
 		let cfg = LightningdConfig {
 			network: String::from("regtest"),
 			bitcoin_dir: bitcoind.datadir(),
