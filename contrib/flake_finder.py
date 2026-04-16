@@ -15,6 +15,7 @@ import os
 
 import logging
 import shutil
+from threading import Lock
 
 # Create a basic logger
 logging.basicConfig(level=logging.DEBUG)
@@ -22,6 +23,10 @@ logger = logging.getLogger(__name__)
 
 NB_WORKERS = int(os.environ.get("NB_WORKERS", 5))
 NB_JOBS = int(os.environ.get("NB_JOBS", 10))
+EXIT_ON_FAILURE = bool(os.environ.get("EXIT_ON_FAILURE", True))
+
+_active_procs: List[subprocess.Popen] = []
+_active_procs_lock = Lock()
 
 
 @dataclass
@@ -45,16 +50,28 @@ class Job:
         stdout_path = self.test_directory.joinpath("stdout")
         stderr_path = self.test_directory.joinpath("stderr")
         with open(stdout_path, "w") as out_fh, open(stderr_path, "w") as err_fh:
-            proc = subprocess.Popen(
-                self.command,
-                env=new_env,
-                stdout=out_fh,
-                stderr=err_fh,
-            )
+            with _active_procs_lock:
+                proc = subprocess.Popen(
+                    self.command,
+                    env=new_env,
+                    stdout=out_fh,
+                    stderr=err_fh,
+                )
+                _active_procs.append(proc)
             proc.wait()
+            with _active_procs_lock:
+                _active_procs.remove(proc)
 
             if proc.returncode != 0:
                 logger.warning("Test failed in job %s", self.job_id)
+                if EXIT_ON_FAILURE:
+                    logger.info("Found flake in job %s, see dir %s",
+                        self.job_id, self.test_directory,
+                    )
+                    with _active_procs_lock:
+                        for p in _active_procs:
+                            p.kill()
+                        os._exit(0)
             else:
                 # To save some disk space
                 logger.debug("Successfully executed %s", self.job_id)
@@ -127,6 +144,10 @@ if __name__ == "__main__":
         print("python flake_finder.py just int")
         print("Will run all integration tests")
         exit(1)
+
+    logger.info("Starting with NB_JOBS:%d, NB_WORKERS=%d, EXIT_ON_FAILURE=%s",
+        NB_JOBS, NB_WORKERS, EXIT_ON_FAILURE,
+    )
 
     jobs = create_jobs(num_jobs=NB_JOBS, command=other_args)
     app = App(num_workers=NB_WORKERS, jobs=jobs)
