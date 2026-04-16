@@ -1,5 +1,4 @@
 
-use std::collections::HashMap;
 use std::env;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -15,7 +14,7 @@ use bark_json::cli::onchain::{Address, OnchainBalance};
 use bark_rest::auth::AuthToken;
 use bark_json::primitives::{TransactionInfo, UtxoInfo, WalletVtxoInfo};
 use bark_json::web::EncodedVtxoResponse;
-use bark_json::web::{BarkNetwork, BitcoindAuth, ChainSourceConfig, ConnectedResponse, CreateWalletRequest, TipResponse};
+use bark_json::web::{BarkNetwork, ConnectedResponse, CreateWalletRequest, TipResponse};
 use bark_json::web::{FeeEstimateResponse, OnchainFeeRatesResponse};
 use bark_rest_client::apis::configuration::Configuration;
 use bark_rest_client::apis::{bitcoin_api, boards_api, default_api, fees_api, onchain_api, wallet_api};
@@ -37,7 +36,9 @@ pub enum BarkdChainSource {
 pub struct BarkdHelper {
 	name: String,
 	datadir: PathBuf,
+	#[allow(dead_code)]
 	ark_server_url: String,
+	#[allow(dead_code)]
 	chain_source: BarkdChainSource,
 	/// Optional dedicated bitcoind kept alive for the duration of the test.
 	_bitcoind: Option<Bitcoind>,
@@ -99,20 +100,15 @@ impl Barkd {
 	}
 
 	/// Create the barkd wallet via REST. Call this once after the daemon has started.
+	///
+	/// Expects a config.toml to already exist in the datadir (written by
+	/// [`TestContext::new_barkd_unstarted`]). The request omits `ark_server`
+	/// and `chain_source` so that `create_wallet` loads them from the file,
+	/// mirroring the `bark create` CLI pattern.
 	pub async fn create_wallet(&self) -> anyhow::Result<()> {
-		let chain_source = match &self.inner.chain_source {
-			BarkdChainSource::Esplora(url) => ChainSourceConfig::Esplora { url: url.clone() },
-			BarkdChainSource::Bitcoind { url, cookie } => ChainSourceConfig::Bitcoind {
-				bitcoind: url.clone(),
-				bitcoind_auth: BitcoindAuth::Cookie {
-					cookie: cookie.to_string_lossy().into_owned(),
-				},
-			},
-		};
-
 		let req = CreateWalletRequest {
-			ark_server: self.inner.ark_server_url.clone(),
-			chain_source,
+			ark_server: None,
+			chain_source: None,
 			mnemonic: None,
 			network: BarkNetwork::Regtest,
 			birthday_height: None,

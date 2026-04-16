@@ -2786,14 +2786,15 @@
       "CreateWalletRequest": {
         "type": "object",
         "required": [
-          "ark_server",
-          "chain_source",
           "network"
         ],
         "properties": {
           "ark_server": {
-            "type": "string",
-            "description": "The Ark server to use for the wallet"
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The Ark server to use for the wallet.\nOptional when a config.toml already exists in the datadir."
           },
           "birthday_height": {
             "type": [
@@ -2805,8 +2806,15 @@
             "minimum": 0
           },
           "chain_source": {
-            "$ref": "#/components/schemas/ChainSourceConfig",
-            "description": "The chain source to use for the wallet"
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ChainSourceConfig",
+                "description": "The chain source to use for the wallet.\nOptional when a config.toml already exists in the datadir."
+              }
+            ]
           },
           "mnemonic": {
             "type": [

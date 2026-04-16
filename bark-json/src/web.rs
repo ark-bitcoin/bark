@@ -96,10 +96,12 @@ pub struct TipResponse {
 #[derive(Serialize, Deserialize)]
 #[cfg_attr(feature = "utoipa", derive(ToSchema))]
 pub struct CreateWalletRequest {
-	/// The Ark server to use for the wallet
-	pub ark_server: String,
-	/// The chain source to use for the wallet
-	pub chain_source: ChainSourceConfig,
+	/// The Ark server to use for the wallet.
+	/// Optional when a config.toml already exists in the datadir.
+	pub ark_server: Option<String>,
+	/// The chain source to use for the wallet.
+	/// Optional when a config.toml already exists in the datadir.
+	pub chain_source: Option<ChainSourceConfig>,
 	/// The optional mnemonic to use for the wallet
 	pub mnemonic: Option<String>,
 	/// The network to use for the wallet
