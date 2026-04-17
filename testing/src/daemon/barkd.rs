@@ -9,18 +9,25 @@ use bitcoin::secp256k1::rand::{self, RngCore};
 use log::info;
 use tokio::process::Command;
 
-use bark_json::cli::{ArkInfo, Balance, NextRoundStart, PendingBoardInfo};
+use bark_json::cli::{
+	ArkInfo, Balance, ExitProgressResponse, ExitTransactionStatus,
+	NextRoundStart, PendingBoardInfo,
+};
 use bark_json::cli::onchain::{Address, OnchainBalance};
 use bark_json::notifications::WalletNotification;
 use bark_json::primitives::{TransactionInfo, UtxoInfo, WalletVtxoInfo};
 use bark_json::web::{
 	BarkNetwork, ConnectedResponse, CreateWalletRequest, EncodedVtxoResponse,
-	FeeEstimateResponse, OnchainFeeRatesResponse, TipResponse,
+	ExitStartResponse, FeeEstimateResponse, OnchainFeeRatesResponse,
+	PendingRoundInfo, TipResponse,
 };
 use bark_rest::auth::AuthToken;
 use bark_rest_client::apis::configuration::Configuration;
-use bark_rest_client::apis::{bitcoin_api, boards_api, default_api, fees_api, onchain_api, wallet_api};
-use bark_rest_client::models::BoardRequest;
+use bark_rest_client::apis::{bitcoin_api, boards_api, default_api, exits_api, fees_api, onchain_api, wallet_api};
+use bark_rest_client::models::{
+	BoardRequest, ExitClaimAllRequest, ExitClaimVtxosRequest, ExitProgressRequest,
+	ExitStartRequest, RefreshRequest,
+};
 use futures::{Stream, StreamExt};
 use tokio_tungstenite::tungstenite::Message;
 
@@ -84,7 +91,7 @@ impl Barkd {
 		format!("http://127.0.0.1:{}", self.inner.port)
 	}
 
-	fn client_config(&self) -> Configuration {
+	pub fn client_config(&self) -> Configuration {
 		let mut headers = reqwest::header::HeaderMap::new();
 		headers.insert(
 			reqwest::header::AUTHORIZATION,
@@ -318,6 +325,77 @@ impl Barkd {
 			.expect("failed to get barkd onchain fee rates")
 	}
 
+	/// Refresh all VTXOs in the next round.
+	pub async fn refresh_all(&self) -> PendingRoundInfo {
+		let config = self.client_config();
+		wallet_api::refresh_all(&config).await
+			.expect("barkd refresh_all failed")
+	}
+
+	/// Refresh specific VTXOs by ID.
+	pub async fn refresh_vtxos(&self, vtxo_ids: Vec<String>) -> PendingRoundInfo {
+		let config = self.client_config();
+		wallet_api::refresh_vtxos(&config, RefreshRequest {
+			vtxos: vtxo_ids,
+		}).await.expect("barkd refresh_vtxos failed")
+	}
+
+	/// List pending rounds.
+	pub async fn pending_rounds(&self) -> Vec<PendingRoundInfo> {
+		let config = self.client_config();
+		wallet_api::pending_rounds(&config).await
+			.expect("failed to get barkd pending rounds")
+	}
+
+	/// Start emergency exit for all VTXOs.
+	pub async fn exit_start_all(&self) -> ExitStartResponse {
+		let config = self.client_config();
+		exits_api::exit_start_all(&config).await
+			.expect("barkd exit_start_all failed")
+	}
+
+	/// Start emergency exit for specific VTXOs.
+	pub async fn exit_start_vtxos(&self, vtxo_ids: Vec<String>) -> ExitStartResponse {
+		let config = self.client_config();
+		exits_api::exit_start_vtxos(&config, ExitStartRequest {
+			vtxos: vtxo_ids,
+		}).await.expect("barkd exit_start_vtxos failed")
+	}
+
+	/// Progress all in-flight exits by one step.
+	pub async fn exit_progress(&self) -> ExitProgressResponse {
+		let config = self.client_config();
+		exits_api::exit_progress(&config, ExitProgressRequest {
+			wait: None,
+			fee_rate: None,
+		}).await.expect("barkd exit_progress failed")
+	}
+
+	/// Return the status of all emergency exits.
+	pub async fn get_all_exit_status(&self, history: Option<bool>, transactions: Option<bool>) -> Vec<ExitTransactionStatus> {
+		let config = self.client_config();
+		exits_api::get_all_exit_status(&config, history, transactions).await
+			.expect("failed to get barkd exit status")
+	}
+
+	/// Claim all claimable exit outputs to an on-chain address.
+	pub async fn exit_claim_all(&self, destination: &str) -> bark_json::web::ExitClaimResponse {
+		let config = self.client_config();
+		exits_api::exit_claim_all(&config, ExitClaimAllRequest {
+			destination: destination.to_string(),
+			fee_rate: None,
+		}).await.expect("barkd exit_claim_all failed")
+	}
+
+	/// Claim specific exit outputs to an on-chain address.
+	pub async fn exit_claim_vtxos(&self, destination: &str, vtxo_ids: Vec<String>) -> bark_json::web::ExitClaimResponse {
+		let config = self.client_config();
+		exits_api::exit_claim_vtxos(&config, ExitClaimVtxosRequest {
+			destination: destination.to_string(),
+			vtxos: vtxo_ids,
+			fee_rate: None,
+		}).await.expect("barkd exit_claim_vtxos failed")
+	}
 }
 
 #[async_trait]
