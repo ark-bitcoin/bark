@@ -132,6 +132,8 @@ impl SignPsbt for BdkWallet {
 
 		let finalized = self.sign(&mut psbt, opts).context("signing error")?;
 		assert!(finalized);
+		let tx = psbt.clone().extract_tx()?;
+		self.apply_unconfirmed_txs([(tx, timestamp_secs())]);
 		Ok(psbt)
 	}
 
