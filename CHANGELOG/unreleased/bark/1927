@@ -1,0 +1,5 @@
+- add support for private servers with access token
+  [#1927](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1927)
+  - add config field `server_access_token`
+  - add create option `--access-token`
+  - add support for setting `ark-access-token` HTTP header
