@@ -12,13 +12,15 @@ use tokio::process::Command;
 use bark_json::cli::{ArkInfo, Balance, NextRoundStart, PendingBoardInfo};
 use bark_json::cli::onchain::{Address, OnchainBalance};
 use bark_json::notifications::WalletNotification;
-use bark_rest::auth::AuthToken;
 use bark_json::primitives::{TransactionInfo, UtxoInfo, WalletVtxoInfo};
-use bark_json::web::EncodedVtxoResponse;
-use bark_json::web::{BarkNetwork, ConnectedResponse, CreateWalletRequest, TipResponse};
-use bark_json::web::{FeeEstimateResponse, OnchainFeeRatesResponse};
+use bark_json::web::{
+	BarkNetwork, ConnectedResponse, CreateWalletRequest, EncodedVtxoResponse,
+	FeeEstimateResponse, OnchainFeeRatesResponse, TipResponse,
+};
+use bark_rest::auth::AuthToken;
 use bark_rest_client::apis::configuration::Configuration;
 use bark_rest_client::apis::{bitcoin_api, boards_api, default_api, fees_api, onchain_api, wallet_api};
+use bark_rest_client::models::BoardRequest;
 use futures::{Stream, StreamExt};
 use tokio_tungstenite::tungstenite::Message;
 
@@ -235,32 +237,16 @@ impl Barkd {
 			.expect("failed to list barkd onchain transactions")
 	}
 
-	/// Sync the wallet with the Ark server and chain state.
-	pub async fn sync(&self) {
-		let config = self.client_config();
-		wallet_api::sync(&config).await
-			.expect("failed to sync barkd wallet");
-	}
-
-	/// Sync the on-chain wallet with the chain source.
-	pub async fn onchain_sync(&self) {
-		let config = self.client_config();
-		onchain_api::onchain_sync(&config).await
-			.expect("failed to sync barkd onchain wallet");
-	}
-
-	/// Sync the on-chain wallet, then return the balance.
+	/// Return the on-chain balance without syncing first.
 	pub async fn onchain_balance(&self) -> Amount {
-		self.onchain_sync().await;
 		let config = self.client_config();
 		let balance: OnchainBalance = onchain_api::onchain_balance(&config).await
 			.expect("failed to get barkd onchain balance");
 		balance.total
 	}
 
-	/// Sync the wallet then return the bark (off-chain) balance.
+	/// Return the bark (off-chain) balance without syncing first.
 	pub async fn bark_balance(&self) -> Balance {
-		self.sync().await;
 		let config = self.client_config();
 		wallet_api::balance(&config).await
 			.expect("failed to get barkd bark balance")
@@ -295,20 +281,17 @@ impl Barkd {
 			.expect("failed to import barkd vtxos")
 	}
 
-	/// Sync the on-chain wallet then board all funds into Ark.
+	/// Board all on-chain funds into Ark.
 	pub async fn board_all(&self) -> PendingBoardInfo {
 		info!("{}: Boarding all on-chain funds via REST", self.name);
-		self.onchain_sync().await;
 		let config = self.client_config();
 		boards_api::board_all(&config).await
 			.expect("barkd board_all failed")
 	}
 
-	/// Sync the on-chain wallet then board the specified amount into Ark.
+	/// Board the specified amount into Ark.
 	pub async fn board_amount(&self, amount: Amount) -> PendingBoardInfo {
-		use bark_rest_client::models::BoardRequest;
 		info!("{}: Boarding {} via REST", self.name, amount);
-		self.onchain_sync().await;
 		let config = self.client_config();
 		boards_api::board_amount(&config, BoardRequest { amount_sat: amount.to_sat() }).await
 			.expect("barkd board_amount failed")
@@ -316,14 +299,6 @@ impl Barkd {
 
 	/// Return all pending boards (funding transactions not yet confirmed).
 	pub async fn get_pending_boards(&self) -> Vec<PendingBoardInfo> {
-		self.sync().await;
-		let config = self.client_config();
-		boards_api::get_pending_boards(&config).await
-			.expect("failed to get barkd pending boards")
-	}
-
-	/// Same as get_pending_boards but without explicit sync
-	pub async fn get_pending_boards_no_sync(&self) -> Vec<PendingBoardInfo> {
 		let config = self.client_config();
 		boards_api::get_pending_boards(&config).await
 			.expect("failed to get barkd pending boards")
@@ -342,6 +317,7 @@ impl Barkd {
 		fees_api::onchain_fee_rates(&config).await
 			.expect("failed to get barkd onchain fee rates")
 	}
+
 }
 
 #[async_trait]
