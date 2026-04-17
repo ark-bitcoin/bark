@@ -12,6 +12,12 @@ use crate::util::FutureExt;
 /// Trait used to easily implement Ark proxy interfaces.
 #[async_trait]
 pub trait ArkRpcProxy: Send + Sync + Clone + 'static {
+	/// Called for every incoming request before forwarding to the handler.
+	/// Override to inspect request metadata (e.g. HTTP headers like `authorization`).
+	async fn on_request(&self, _metadata: &tonic::metadata::MetadataMap) -> Result<(), tonic::Status> {
+		Ok(())
+	}
+
 	async fn handshake(&self, upstream: &mut ArkClient, req: protos::HandshakeRequest) -> Result<protos::HandshakeResponse, tonic::Status> {
 		Ok(upstream.handshake(req).await?.into_inner())
 	}
@@ -236,60 +242,70 @@ impl<T: ArkRpcProxy> rpc::server::ArkService for ArkRpcProxyWrapper<T> {
 	async fn get_ark_info(
 		&self, req: tonic::Request<protos::Empty>,
 	) -> Result<tonic::Response<protos::ArkInfo>, tonic::Status> {
+		self.proxy.on_request(req.metadata()).await?;
 		Ok(tonic::Response::new(ArkRpcProxy::get_ark_info(&self.proxy, &mut self.upstream.clone(), req.into_inner()).await?))
 	}
 
 	async fn get_fresh_rounds(
 		&self, req: tonic::Request<protos::FreshRoundsRequest>,
 	) -> Result<tonic::Response<protos::FreshRounds>, tonic::Status> {
+		self.proxy.on_request(req.metadata()).await?;
 		Ok(tonic::Response::new(ArkRpcProxy::get_fresh_rounds(&self.proxy, &mut self.upstream.clone(), req.into_inner()).await?))
 	}
 
 	async fn get_round(
 		&self, req: tonic::Request<protos::RoundId>,
 	) -> Result<tonic::Response<protos::RoundInfo>, tonic::Status> {
+		self.proxy.on_request(req.metadata()).await?;
 		Ok(tonic::Response::new(ArkRpcProxy::get_round(&self.proxy, &mut self.upstream.clone(), req.into_inner()).await?))
 	}
 
 	async fn get_vtxo(
 		&self, req: tonic::Request<protos::GetVtxoRequest>,
 	) -> Result<tonic::Response<protos::GetVtxoResponse>, tonic::Status> {
+		self.proxy.on_request(req.metadata()).await?;
 		Ok(tonic::Response::new(ArkRpcProxy::get_vtxo(&self.proxy, &mut self.upstream.clone(), req.into_inner()).await?))
 	}
 
 	async fn request_board_cosign(
 		&self, req: tonic::Request<protos::BoardCosignRequest>,
 	) -> Result<tonic::Response<protos::BoardCosignResponse>, tonic::Status> {
+		self.proxy.on_request(req.metadata()).await?;
 		Ok(tonic::Response::new(ArkRpcProxy::request_board_cosign(&self.proxy, &mut self.upstream.clone(), req.into_inner()).await?))
 	}
 
 	async fn register_board_vtxo(
 		&self, req: tonic::Request<protos::BoardVtxoRequest>,
 	) -> Result<tonic::Response<protos::Empty>, tonic::Status> {
+		self.proxy.on_request(req.metadata()).await?;
 		Ok(tonic::Response::new(ArkRpcProxy::register_board_vtxo(&self.proxy, &mut self.upstream.clone(), req.into_inner()).await?))
 	}
 
 	async fn register_vtxos(
 		&self, req: tonic::Request<protos::RegisterVtxosRequest>,
 	) -> Result<tonic::Response<protos::Empty>, tonic::Status> {
+		self.proxy.on_request(req.metadata()).await?;
 		Ok(tonic::Response::new(ArkRpcProxy::register_vtxos(&self.proxy, &mut self.upstream.clone(), req.into_inner()).await?))
 	}
 
 	async fn request_arkoor_cosign(
 		&self, req: tonic::Request<protos::ArkoorPackageCosignRequest>,
 	) -> Result<tonic::Response<protos::ArkoorPackageCosignResponse>, tonic::Status> {
+		self.proxy.on_request(req.metadata()).await?;
 		Ok(tonic::Response::new(ArkRpcProxy::request_arkoor_cosign(&self.proxy, &mut self.upstream.clone(), req.into_inner()).await?))
 	}
 
 	async fn request_lightning_pay_htlc_cosign(
 		&self, req: tonic::Request<protos::LightningPayHtlcCosignRequest>,
 	) -> Result<tonic::Response<protos::ArkoorPackageCosignResponse>, tonic::Status> {
+		self.proxy.on_request(req.metadata()).await?;
 		Ok(tonic::Response::new(ArkRpcProxy::request_lightning_pay_htlc_cosign(&self.proxy, &mut self.upstream.clone(), req.into_inner()).await?))
 	}
 
 	async fn initiate_lightning_payment(
 		&self, req: tonic::Request<protos::InitiateLightningPaymentRequest>,
 	) -> Result<tonic::Response<protos::Empty>, tonic::Status> {
+		self.proxy.on_request(req.metadata()).await?;
 		#[allow(deprecated)]
 		Ok(tonic::Response::new(ArkRpcProxy::initiate_lightning_payment(&self.proxy, &mut self.upstream.clone(), req.into_inner()).await?))
 	}
@@ -297,6 +313,7 @@ impl<T: ArkRpcProxy> rpc::server::ArkService for ArkRpcProxyWrapper<T> {
 	async fn check_lightning_payment(
 		&self, req: tonic::Request<protos::CheckLightningPaymentRequest>,
 	) -> Result<tonic::Response<protos::LightningPaymentStatus>, tonic::Status> {
+		self.proxy.on_request(req.metadata()).await?;
 		#[allow(deprecated)]
 		Ok(tonic::Response::new(ArkRpcProxy::check_lightning_payment(&self.proxy, &mut self.upstream.clone(), req.into_inner()).await?))
 	}
@@ -304,12 +321,14 @@ impl<T: ArkRpcProxy> rpc::server::ArkService for ArkRpcProxyWrapper<T> {
 	async fn request_lightning_pay_htlc_revocation(
 		&self, req: tonic::Request<protos::ArkoorPackageCosignRequest>,
 	) -> Result<tonic::Response<protos::ArkoorPackageCosignResponse>, tonic::Status> {
+		self.proxy.on_request(req.metadata()).await?;
 		Ok(tonic::Response::new(ArkRpcProxy::request_lightning_pay_htlc_revocation(&self.proxy, &mut self.upstream.clone(), req.into_inner()).await?))
 	}
 
 	async fn fetch_bolt12_invoice(
 		&self, req: tonic::Request<protos::FetchBolt12InvoiceRequest>,
 	) -> Result<tonic::Response<protos::FetchBolt12InvoiceResponse>, tonic::Status> {
+		self.proxy.on_request(req.metadata()).await?;
 		Ok(tonic::Response::new(ArkRpcProxy::fetch_bolt12_invoice(&self.proxy, &mut self.upstream.clone(), req.into_inner()).await?))
 	}
 
@@ -317,6 +336,7 @@ impl<T: ArkRpcProxy> rpc::server::ArkService for ArkRpcProxyWrapper<T> {
 		&self,
 		req: tonic::Request<protos::StartLightningReceiveRequest>,
 	) -> Result<tonic::Response<protos::StartLightningReceiveResponse>, tonic::Status> {
+		self.proxy.on_request(req.metadata()).await?;
 		Ok(tonic::Response::new(ArkRpcProxy::start_lightning_receive(&self.proxy, &mut self.upstream.clone(), req.into_inner()).await?))
 	}
 
@@ -324,6 +344,7 @@ impl<T: ArkRpcProxy> rpc::server::ArkService for ArkRpcProxyWrapper<T> {
 		&self,
 		req: tonic::Request<protos::CancelLightningReceiveRequest>,
 	) -> Result<tonic::Response<protos::Empty>, tonic::Status> {
+		self.proxy.on_request(req.metadata()).await?;
 		Ok(tonic::Response::new(ArkRpcProxy::cancel_lightning_receive(&self.proxy, &mut self.upstream.clone(), req.into_inner()).await?))
 	}
 
@@ -331,24 +352,28 @@ impl<T: ArkRpcProxy> rpc::server::ArkService for ArkRpcProxyWrapper<T> {
 		&self,
 		req: tonic::Request<protos::CheckLightningReceiveRequest>,
 	) -> Result<tonic::Response<protos::CheckLightningReceiveResponse>, tonic::Status> {
+		self.proxy.on_request(req.metadata()).await?;
 		Ok(tonic::Response::new(ArkRpcProxy::check_lightning_receive(&self.proxy, &mut self.upstream.clone(), req.into_inner()).await?))
 	}
 
 	async fn prepare_lightning_receive_claim(
 		&self, req: tonic::Request<protos::PrepareLightningReceiveClaimRequest>,
 	) -> Result<tonic::Response<protos::PrepareLightningReceiveClaimResponse>, tonic::Status> {
+		self.proxy.on_request(req.metadata()).await?;
 		Ok(tonic::Response::new(ArkRpcProxy::prepare_lightning_receive_claim(&self.proxy, &mut self.upstream.clone(), req.into_inner()).await?))
 	}
 
 	async fn claim_lightning_receive(
 		&self, req: tonic::Request<protos::ClaimLightningReceiveRequest>,
 	) -> Result<tonic::Response<protos::ArkoorPackageCosignResponse>, tonic::Status> {
+		self.proxy.on_request(req.metadata()).await?;
 		Ok(tonic::Response::new(ArkRpcProxy::claim_lightning_receive(&self.proxy, &mut self.upstream.clone(), req.into_inner()).await?))
 	}
 
 	async fn next_round_time(
 		&self, req: tonic::Request<protos::Empty>,
 	) -> Result<tonic::Response<protos::NextRoundTimeResponse>, tonic::Status> {
+		self.proxy.on_request(req.metadata()).await?;
 		Ok(tonic::Response::new(ArkRpcProxy::next_round_time(&self.proxy, &mut self.upstream.clone(), req.into_inner()).await?))
 	}
 
@@ -359,24 +384,28 @@ impl<T: ArkRpcProxy> rpc::server::ArkService for ArkRpcProxyWrapper<T> {
 	async fn subscribe_rounds(
 		&self, req: tonic::Request<protos::Empty>,
 	) -> Result<tonic::Response<Self::SubscribeRoundsStream>, tonic::Status> {
+		self.proxy.on_request(req.metadata()).await?;
 		Ok(tonic::Response::new(ArkRpcProxy::subscribe_rounds(&self.proxy, &mut self.upstream.clone(), req.into_inner()).await?))
 	}
 
 	async fn last_round_event(
 		&self, req: tonic::Request<protos::Empty>,
 	) -> Result<tonic::Response<protos::RoundEvent>, tonic::Status> {
+		self.proxy.on_request(req.metadata()).await?;
 		Ok(tonic::Response::new(ArkRpcProxy::last_round_event(&self.proxy, &mut self.upstream.clone(), req.into_inner()).await?))
 	}
 
 	async fn submit_payment(
 		&self, req: tonic::Request<protos::SubmitPaymentRequest>,
 	) -> Result<tonic::Response<protos::SubmitPaymentResponse>, tonic::Status> {
+		self.proxy.on_request(req.metadata()).await?;
 		Ok(tonic::Response::new(ArkRpcProxy::submit_payment(&self.proxy, &mut self.upstream.clone(), req.into_inner()).await?))
 	}
 
 	async fn provide_vtxo_signatures(
 		&self, req: tonic::Request<protos::VtxoSignaturesRequest>,
 	) -> Result<tonic::Response<protos::Empty>, tonic::Status> {
+		self.proxy.on_request(req.metadata()).await?;
 		Ok(tonic::Response::new(ArkRpcProxy::provide_vtxo_signatures(&self.proxy, &mut self.upstream.clone(), req.into_inner()).await?))
 	}
 
@@ -384,6 +413,7 @@ impl<T: ArkRpcProxy> rpc::server::ArkService for ArkRpcProxyWrapper<T> {
 		&self,
 		req: tonic::Request<protos::RoundParticipationRequest>,
 	) -> Result<tonic::Response<protos::RoundParticipationResponse>, tonic::Status> {
+		self.proxy.on_request(req.metadata()).await?;
 		Ok(tonic::Response::new(ArkRpcProxy::submit_round_participation(&self.proxy, &mut self.upstream.clone(), req.into_inner()).await?))
 	}
 
@@ -391,6 +421,7 @@ impl<T: ArkRpcProxy> rpc::server::ArkService for ArkRpcProxyWrapper<T> {
 		&self,
 		req: tonic::Request<protos::RoundParticipationStatusRequest>,
 	) -> Result<tonic::Response<protos::RoundParticipationStatusResponse>, tonic::Status> {
+		self.proxy.on_request(req.metadata()).await?;
 		Ok(tonic::Response::new(ArkRpcProxy::round_participation_status(&self.proxy, &mut self.upstream.clone(), req.into_inner()).await?))
 	}
 
@@ -398,6 +429,7 @@ impl<T: ArkRpcProxy> rpc::server::ArkService for ArkRpcProxyWrapper<T> {
 		&self,
 		req: tonic::Request<protos::LeafVtxoCosignRequest>,
 	) -> Result<tonic::Response<protos::LeafVtxoCosignResponse>, tonic::Status> {
+		self.proxy.on_request(req.metadata()).await?;
 		Ok(tonic::Response::new(ArkRpcProxy::request_leaf_vtxo_cosign(&self.proxy, &mut self.upstream.clone(), req.into_inner()).await?))
 	}
 
@@ -405,6 +437,7 @@ impl<T: ArkRpcProxy> rpc::server::ArkService for ArkRpcProxyWrapper<T> {
 		&self,
 		req: tonic::Request<protos::ForfeitNoncesRequest>,
 	) -> Result<tonic::Response<protos::ForfeitNoncesResponse>, tonic::Status> {
+		self.proxy.on_request(req.metadata()).await?;
 		Ok(tonic::Response::new(ArkRpcProxy::request_forfeit_nonces(&self.proxy, &mut self.upstream.clone(), req.into_inner()).await?))
 	}
 
@@ -412,6 +445,7 @@ impl<T: ArkRpcProxy> rpc::server::ArkService for ArkRpcProxyWrapper<T> {
 		&self,
 		req: tonic::Request<protos::ForfeitVtxosRequest>,
 	) -> Result<tonic::Response<protos::ForfeitVtxosResponse>, tonic::Status> {
+		self.proxy.on_request(req.metadata()).await?;
 		Ok(tonic::Response::new(ArkRpcProxy::forfeit_vtxos(&self.proxy, &mut self.upstream.clone(), req.into_inner()).await?))
 	}
 
@@ -419,6 +453,7 @@ impl<T: ArkRpcProxy> rpc::server::ArkService for ArkRpcProxyWrapper<T> {
 		&self,
 		req: tonic::Request<protos::PrepareOffboardRequest>,
 	) -> Result<tonic::Response<protos::PrepareOffboardResponse>, tonic::Status> {
+		self.proxy.on_request(req.metadata()).await?;
 		Ok(tonic::Response::new(ArkRpcProxy::prepare_offboard(&self.proxy, &mut self.upstream.clone(), req.into_inner()).await?))
 	}
 
@@ -426,6 +461,7 @@ impl<T: ArkRpcProxy> rpc::server::ArkService for ArkRpcProxyWrapper<T> {
 		&self,
 		req: tonic::Request<protos::FinishOffboardRequest>,
 	) -> Result<tonic::Response<protos::FinishOffboardResponse>, tonic::Status> {
+		self.proxy.on_request(req.metadata()).await?;
 		Ok(tonic::Response::new(ArkRpcProxy::finish_offboard(&self.proxy, &mut self.upstream.clone(), req.into_inner()).await?))
 	}
 }
@@ -433,6 +469,12 @@ impl<T: ArkRpcProxy> rpc::server::ArkService for ArkRpcProxyWrapper<T> {
 /// Trait used to easily implement mailbox proxy interfaces.
 #[async_trait]
 pub trait MailboxRpcProxy: Send + Sync + Clone + 'static {
+	/// Called for every incoming request before forwarding to the handler.
+	/// Override to inspect request metadata (e.g. HTTP headers like `authorization`).
+	async fn on_request(&self, _metadata: &tonic::metadata::MetadataMap) -> Result<(), tonic::Status> {
+		Ok(())
+	}
+
 	async fn post_arkoor_message(&self, upstream: &mut MailboxClient, req: protos::mailbox_server::PostArkoorMessageRequest) -> Result<protos::core::Empty, tonic::Status> {
 		Ok(upstream.post_arkoor_message(req).await?.into_inner())
 	}
@@ -463,12 +505,14 @@ impl<T: MailboxRpcProxy> rpc::server::MailboxService for MailboxRpcProxyWrapper<
 	async fn post_arkoor_message(
 		&self, req: tonic::Request<protos::mailbox_server::PostArkoorMessageRequest>,
 	) -> Result<tonic::Response<protos::core::Empty>, tonic::Status> {
+		self.proxy.on_request(req.metadata()).await?;
 		Ok(tonic::Response::new(MailboxRpcProxy::post_arkoor_message(&self.proxy, &mut self.upstream.clone(), req.into_inner()).await?))
 	}
 
 	async fn read_mailbox(
 		&self, req: tonic::Request<protos::mailbox_server::MailboxRequest>,
 	) -> Result<tonic::Response<protos::mailbox_server::MailboxMessages>, tonic::Status> {
+		self.proxy.on_request(req.metadata()).await?;
 		Ok(tonic::Response::new(MailboxRpcProxy::read_mailbox(&self.proxy, &mut self.upstream.clone(), req.into_inner()).await?))
 	}
 
@@ -479,12 +523,14 @@ impl<T: MailboxRpcProxy> rpc::server::MailboxService for MailboxRpcProxyWrapper<
 	async fn subscribe_mailbox(
 		&self, req: tonic::Request<protos::mailbox_server::MailboxRequest>,
 	) -> Result<tonic::Response<Self::SubscribeMailboxStream>, tonic::Status> {
+		self.proxy.on_request(req.metadata()).await?;
 		Ok(tonic::Response::new(MailboxRpcProxy::subscribe_mailbox(&self.proxy, &mut self.upstream.clone(), req.into_inner()).await?))
 	}
 
 	async fn post_recovery_vtxo_ids(
 		&self, req: tonic::Request<protos::mailbox_server::PostRecoveryVtxoIdsRequest>,
 	) -> Result<tonic::Response<protos::core::Empty>, tonic::Status> {
+		self.proxy.on_request(req.metadata()).await?;
 		Ok(tonic::Response::new(MailboxRpcProxy::post_recovery_vtxo_ids(&self.proxy, &mut self.upstream.clone(), req.into_inner()).await?))
 	}
 }
