@@ -1,6 +1,6 @@
 //! Fee estimation for various wallet operations.
 
-use anyhow::{Context, Result};
+use anyhow::Context;
 use bitcoin::Amount;
 
 use ark::{Vtxo, VtxoId};
@@ -44,8 +44,23 @@ impl Wallet {
 	/// Estimate fees for a board operation. `FeeEstimate::net_amount` will be the amount of the
 	/// newly boarded VTXO. Note: This doesn't include the onchain cost of creating the chain
 	/// anchor transaction.
-	pub async fn estimate_board_offchain_fee(&self, board_amount: Amount) -> Result<FeeEstimate> {
+	pub async fn estimate_board_offchain_fee(
+		&self,
+		board_amount: Amount,
+	) -> anyhow::Result<FeeEstimate> {
 		let (_, ark_info) = self.require_server().await?;
+
+		if board_amount < ark_info.min_board_amount {
+			bail!("board amount of {} does not meet minimum value of {}",
+				board_amount, ark_info.min_board_amount,
+			);
+		}
+		if let Some(max) = ark_info.max_vtxo_amount {
+			if board_amount > max {
+				bail!("board amount of {} exceeds maximum value of {}", board_amount, max);
+			}
+		}
+
 		let fee = ark_info.fees.board.calculate(board_amount).context("fee overflowed")?;
 		let net_amount = board_amount.checked_sub(fee).unwrap_or(Amount::ZERO);
 
@@ -54,7 +69,7 @@ impl Wallet {
 
 	/// Estimate fees for an arkoor payment operation. Currently, this is a no-op as the server
 	/// does not charge any fees for arkoor payments.
-	pub async fn estimate_arkoor_payment_fee(&self, amount: Amount) -> Result<FeeEstimate> {
+	pub async fn estimate_arkoor_payment_fee(&self, amount: Amount) -> anyhow::Result<FeeEstimate> {
 		let zero_fee = Amount::ZERO;
 		let inputs = match self.select_vtxos_to_cover(amount).await {
 			Ok(inputs) => inputs,
@@ -71,8 +86,17 @@ impl Wallet {
 
 	/// Estimate fees for a lightning receive operation. `FeeEstimate::gross_amount` is the
 	/// lightning payment amount, `FeeEstimate::net_amount` is how much the end user will receive.
-	pub async fn estimate_lightning_receive_fee(&self, amount: Amount) -> Result<FeeEstimate> {
+	pub async fn estimate_lightning_receive_fee(
+		&self,
+		amount: Amount,
+	) -> anyhow::Result<FeeEstimate> {
 		let (_, ark_info) = self.require_server().await?;
+
+		if let Some(max) = ark_info.max_vtxo_amount {
+			if amount > max {
+				bail!("amount of {} exceeds maximum value of {}", amount, max);
+			}
+		}
 
 		let fee = ark_info.fees.lightning_receive.calculate(amount).context("fee overflowed")?;
 		let net_amount = amount.checked_sub(fee).unwrap_or(Amount::ZERO);
@@ -88,7 +112,7 @@ impl Wallet {
 	///
 	/// If the wallet is lacking enough funds to send `amount` via lightning, then the estimate will
 	/// be the maximum possible fee, assuming the user acquires enough funds to cover the payment.
-	pub async fn estimate_lightning_send_fee(&self, amount: Amount) -> Result<FeeEstimate> {
+	pub async fn estimate_lightning_send_fee(&self, amount: Amount) -> anyhow::Result<FeeEstimate> {
 		let (_, ark_info) = self.require_server().await?;
 
 		let (inputs, fee) = match self.select_vtxos_to_cover_with_fee(
@@ -116,7 +140,7 @@ impl Wallet {
 		&self,
 		address: &bitcoin::Address,
 		vtxos: impl IntoIterator<Item = impl AsRef<Vtxo<G>>>,
-	) -> Result<FeeEstimate> {
+	) -> anyhow::Result<FeeEstimate> {
 		let (_, ark_info) = self.require_server().await?;
 		let script_buf = address.script_pubkey();
 		let current_height = self.chain.tip().await?;
@@ -149,7 +173,7 @@ impl Wallet {
 	pub async fn estimate_offboard_all(
 		&self,
 		address: &bitcoin::Address,
-	) -> Result<FeeEstimate> {
+	) -> anyhow::Result<FeeEstimate> {
 		let vtxos = self.spendable_vtxos().await?;
 		self.estimate_offboard(address, &vtxos).await
 	}
@@ -159,7 +183,7 @@ impl Wallet {
 	pub async fn estimate_refresh_fee<G>(
 		&self,
 		vtxos: impl IntoIterator<Item = impl AsRef<Vtxo<G>>>,
-	) -> Result<FeeEstimate> {
+	) -> anyhow::Result<FeeEstimate> {
 		let (_, ark_info) = self.require_server().await?;
 		let current_height = self.chain.tip().await?;
 
@@ -173,6 +197,12 @@ impl Wallet {
 			vtxo_ids.push(vtxo.id());
 			vtxo_fee_infos.push(VtxoFeeInfo::from_vtxo_and_tip(vtxo, current_height));
 			total_amount = total_amount + vtxo.amount();
+		}
+
+		if let Some(max) = ark_info.max_vtxo_amount {
+			if total_amount > max {
+				bail!("total refresh amount of {} exceeds maximum value of {}", total_amount, max);
+			}
 		}
 
 		// Calculate refresh fees
@@ -193,7 +223,7 @@ impl Wallet {
 		&self,
 		address: &bitcoin::Address,
 		amount: Amount,
-	) -> Result<FeeEstimate> {
+	) -> anyhow::Result<FeeEstimate> {
 		let (_, ark_info) = self.require_server().await?;
 		let script_buf = address.script_pubkey();
 
