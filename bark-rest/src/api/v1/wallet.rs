@@ -527,8 +527,10 @@ pub async fn pending_rounds(
 		.context("Failed to get pending rounds")?;
 	let mut infos = Vec::with_capacity(round_state_ids.len());
 	for id in round_state_ids {
-		let mut round = wallet.lock_wait_round_state(id).await?
-			.context("Failed to lock round state")?;
+		let Some(mut round) = wallet.lock_wait_round_state(id).await?
+		else {
+			continue;
+		};
 
 		let sync = round.state_mut().sync(&wallet).await;
 		infos.push(PendingRoundInfo::new(&round, sync));
