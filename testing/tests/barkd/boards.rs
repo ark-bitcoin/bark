@@ -10,7 +10,13 @@ use super::helpers::{wait_for_boards_synced, wait_for_onchain_balance};
 async fn board_all_barkd() {
 	let ctx = TestContext::new("barkd/board_all_barkd").await;
 
-	let srv = ctx.captaind("server").create().await;
+	let srv = ctx.captaind("server").cfg(|cfg| {
+		cfg.fees.board = BoardFees {
+			min_fee: Amount::ZERO,
+			base_fee: sat(100),
+			ppm: PpmFeeRate::ONE_PERCENT,
+		};
+	}).create().await;
 	let barkd = ctx.new_barkd("barkd1", &srv).await;
 
 	ctx.fund_barkd(&barkd, sat(100_000)).await;
@@ -22,11 +28,16 @@ async fn board_all_barkd() {
 
 	let board = barkd.board_all().await;
 
+	// board_all drains the onchain wallet; the gross board amount is the
+	// funded amount minus the onchain tx fee. With deterministic regtest
+	// fees the resulting net amount (after Ark fees) is fixed.
+	let expected_net = sat(98_349);
+	assert_eq!(board.amount, expected_net, "board_all net amount should match expected");
+
 	let balance_after = barkd.bark_balance().await;
-	assert_ne!(balance_after.pending_board, Amount::ZERO, "bark balance should be non-zero after boarding");
+	assert_eq!(balance_after.pending_board, board.amount, "pending board should match board amount");
 
 	assert_eq!(board.vtxos.len(), 1, "board should produce one VTXO");
-	assert_eq!(board.amount, balance_after.pending_board, "board amount should match pending balance");
 
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 	wait_for_boards_synced(&barkd).await;
@@ -44,16 +55,23 @@ async fn board_all_barkd() {
 async fn board_amount_barkd() {
 	let ctx = TestContext::new("barkd/board_amount_barkd").await;
 
-	let srv = ctx.captaind("server").create().await;
+	let srv = ctx.captaind("server").cfg(|cfg| {
+		cfg.fees.board = BoardFees {
+			min_fee: Amount::ZERO,
+			base_fee: sat(100),
+			ppm: PpmFeeRate::ONE_PERCENT,
+		};
+	}).create().await;
 	let barkd = ctx.new_barkd("barkd1", &srv).await;
 
 	ctx.fund_barkd(&barkd, sat(200_000)).await;
 	wait_for_onchain_balance(&barkd, sat(200_000)).await;
 
-	let board = barkd.board_amount(sat(100_000)).await;
+	let estimate = barkd.board_fee(sat(100_000)).await;
+	assert_eq!(estimate.net_amount, sat(98_900), "net amount should be gross minus fees");
 
-	assert!(board.amount > Amount::ZERO, "board amount should be positive");
-	assert!(board.amount <= sat(100_000), "board amount should not exceed requested amount");
+	let board = barkd.board_amount(sat(100_000)).await;
+	assert_eq!(board.amount, estimate.net_amount, "board amount should match fee estimate");
 
 	let pending = barkd.get_pending_boards().await;
 	assert_eq!(pending.len(), 1, "should have one pending board before confirmation");
@@ -63,7 +81,7 @@ async fn board_amount_barkd() {
 	wait_for_boards_synced(&barkd).await;
 
 	let balance = barkd.bark_balance().await;
-	assert_eq!(balance.spendable, board.amount, "spendable balance should match boarded amount after confirmation");
+	assert_eq!(balance.spendable, estimate.net_amount, "spendable balance should match net amount after confirmation");
 	assert_eq!(balance.pending_board, Amount::ZERO, "pending board should be cleared after confirmation");
 
 	let pending_after = barkd.get_pending_boards().await;
@@ -76,21 +94,29 @@ async fn board_amount_barkd() {
 async fn pending_boards_barkd() {
 	let ctx = TestContext::new("barkd/pending_boards_barkd").await;
 
-	let srv = ctx.captaind("server").create().await;
+	let srv = ctx.captaind("server").cfg(|cfg| {
+		cfg.fees.board = BoardFees {
+			min_fee: Amount::ZERO,
+			base_fee: sat(100),
+			ppm: PpmFeeRate::ONE_PERCENT,
+		};
+	}).create().await;
 	let barkd = ctx.new_barkd("barkd1", &srv).await;
 
 	ctx.fund_barkd(&barkd, sat(300_000)).await;
 	wait_for_onchain_balance(&barkd, sat(300_000)).await;
 
+	let estimate = barkd.board_fee(sat(100_000)).await;
+	assert_eq!(estimate.net_amount, sat(98_900), "net amount should be gross minus fees");
+
 	let board1 = barkd.board_amount(sat(100_000)).await;
 	let board2 = barkd.board_amount(sat(100_000)).await;
 
+	assert_eq!(board1.amount, estimate.net_amount, "first board should match fee estimate");
+	assert_eq!(board2.amount, estimate.net_amount, "second board should match fee estimate");
+
 	let pending = barkd.get_pending_boards().await;
 	assert_eq!(pending.len(), 2, "should have two pending boards before confirmation");
-
-	let amounts: Vec<Amount> = pending.iter().map(|b| b.amount).collect();
-	assert!(amounts.contains(&board1.amount), "first board amount should be in pending list");
-	assert!(amounts.contains(&board2.amount), "second board amount should be in pending list");
 
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 	wait_for_boards_synced(&barkd).await;
@@ -99,8 +125,8 @@ async fn pending_boards_barkd() {
 	assert!(pending_after.is_empty(), "pending boards should be empty after confirmation");
 
 	let balance = barkd.bark_balance().await;
-	let expected = board1.amount + board2.amount;
-	assert_eq!(balance.spendable, expected, "spendable balance should equal sum of both boarded amounts");
+	let expected = estimate.net_amount + estimate.net_amount;
+	assert_eq!(balance.spendable, expected, "spendable balance should equal sum of both net amounts");
 }
 
 /// Verify that the daemon's background `run_boards_sync` automatically registers
@@ -109,7 +135,13 @@ async fn pending_boards_barkd() {
 async fn board_auto_sync_barkd() {
 	let ctx = TestContext::new("barkd/board_auto_sync_barkd").await;
 
-	let srv = ctx.captaind("server").create().await;
+	let srv = ctx.captaind("server").cfg(|cfg| {
+		cfg.fees.board = BoardFees {
+			min_fee: Amount::ZERO,
+			base_fee: sat(100),
+			ppm: PpmFeeRate::ONE_PERCENT,
+		};
+	}).create().await;
 
 	let mut barkd = ctx.new_barkd_unstarted("barkd1", &srv).await;
 	barkd.start().await.expect("failed to start barkd");
@@ -118,8 +150,11 @@ async fn board_auto_sync_barkd() {
 	ctx.fund_barkd(&barkd, sat(100_000)).await;
 	wait_for_onchain_balance(&barkd, sat(100_000)).await;
 
+	let estimate = barkd.board_fee(sat(50_000)).await;
+	assert_eq!(estimate.net_amount, sat(49_400), "net amount should be gross minus fees");
+
 	let board = barkd.board_amount(sat(50_000)).await;
-	assert!(board.amount > Amount::ZERO, "board amount should be positive");
+	assert_eq!(board.amount, estimate.net_amount, "board amount should match fee estimate");
 
 	let pending = barkd.get_pending_boards().await;
 	assert_eq!(pending.len(), 1, "should have one pending board");
@@ -130,8 +165,8 @@ async fn board_auto_sync_barkd() {
 
 	let balance = barkd.bark_balance().await;
 	assert_eq!(
-		balance.spendable, board.amount,
-		"spendable balance should match boarded amount after auto-sync",
+		balance.spendable, estimate.net_amount,
+		"spendable balance should match net amount after auto-sync",
 	);
 	assert_eq!(
 		balance.pending_board, Amount::ZERO,
