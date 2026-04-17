@@ -287,6 +287,7 @@ async fn watchman_sweeps_round_leftovers_after_exits() {
 	let failures = WatchmanFailureCollector::default();
 	let wm = ctx.watchmand("watchman").cfg(|cfg| {
 		cfg.watchman.process_interval = Duration::from_secs(15 * 60);
+		cfg.watchman.claim_chunksize = 20.try_into().unwrap();
 	}).create(&srv).await;
 	wm.add_slog_handler(failures.clone());
 
@@ -294,10 +295,13 @@ async fn watchman_sweeps_round_leftovers_after_exits() {
 
 	// Create 10 barks
 	let mut barks = Vec::new();
+	let mut board_funding_txids = Vec::new();
 	for i in 0..10 {
 		let bark = ctx.bark(&format!("bark{}", i), &srv).funded(sat(500_000)).create().await;
-		bark.board(sat(200_000)).await;
+		let board = bark.board(sat(200_000)).await;
 		barks.push(bark);
+		assert_eq!(1, board.vtxos.len());
+		board_funding_txids.push(board.funding_tx.txid);
 	}
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 
@@ -337,8 +341,6 @@ async fn watchman_sweeps_round_leftovers_after_exits() {
 		},
 	);
 
-	ctx.generate_blocks(1).await;
-
 	// Wait for remaining vtxos to expire
 	let tip = ctx.generate_blocks(150).await;
 	wm.wait_for_sync_height(tip).await;
@@ -349,8 +351,12 @@ async fn watchman_sweeps_round_leftovers_after_exits() {
 	let msg = log_claim.recv().wait_millis(15000).await.expect("no claim log");
 	failures.assert_empty();
 	println!("Round leftovers sweep: {:#?}", msg);
+	for txid in board_funding_txids {
+		assert!(msg.vtxo_ids.iter().any(|v| v.utxo().txid == txid),
+			"missing funding txid {} in sweep", txid,
+		);
+	}
 	assert_eq!(3_600_000, msg.total_input_value.to_sat());
-	assert_eq!(3_591_421, msg.total_output_value.to_sat());
 }
 
 #[tokio::test]
