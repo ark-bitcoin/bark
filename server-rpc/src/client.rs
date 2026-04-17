@@ -34,11 +34,14 @@ use std::sync::Arc;
 use bitcoin::Network;
 use log::warn;
 use tokio::sync::RwLock;
-use tonic::service::interceptor::InterceptedService;
+use tonic::metadata::AsciiMetadataValue;
+use tonic::metadata::errors::InvalidMetadataValue;
+use tonic::service::interceptor::{InterceptedService, Interceptor};
 
 use ark::ArkInfo;
 
 use crate::{mailbox, protos, ArkServiceClient, ConvertError, RequestExt};
+
 
 #[cfg(all(feature = "tonic-native", feature = "tonic-web"))]
 compile_error!("features `tonic-native` and `tonic-web` are mutually exclusive");
@@ -48,6 +51,11 @@ compile_error!("either `tonic-native` or `tonic-web` feature must be enabled");
 
 #[cfg(all(feature = "tonic-web", feature = "socks5-proxy"))]
 compile_error!("`tonic-web` does not support the `socks5-proxy` feature");
+
+
+/// The HTTP header used for private server access tokens
+pub const ACCESS_TOKEN_HEADER: &str = "ark-access-token";
+
 
 #[cfg(feature = "tonic-native")]
 mod transport {
@@ -187,6 +195,10 @@ pub enum CreateEndpointError {
 #[derive(Debug, thiserror::Error)]
 #[error("failed to connect to Ark server: {msg}")]
 pub enum ConnectError {
+	#[error("missing info '{0}' to connect")]
+	MissingInfo(&'static str),
+	#[error("invalid access token: {0}")]
+	InvalidAccessToken(#[from] #[source] InvalidMetadataValue),
 	#[error(transparent)]
 	CreateEndpoint(#[from] CreateEndpointError),
 	#[error("handshake request failed: {0}")]
@@ -211,13 +223,38 @@ pub enum ConnectError {
 /// interceptor injects it into the outgoing request metadata so the server can
 /// process calls according to the agreed wire format and semantics.
 #[derive(Clone)]
+#[deprecated(since = "0.1.3", note = "should not be used directly")]
 pub struct ProtocolVersionInterceptor {
 	pver: u64,
 }
 
+#[allow(deprecated)]
 impl tonic::service::Interceptor for ProtocolVersionInterceptor {
 	fn call(&mut self, mut req: tonic::Request<()>) -> Result<tonic::Request<()>, tonic::Status> {
+		#[allow(deprecated)]
 		req.set_pver(self.pver);
+		Ok(req)
+	}
+}
+
+/// A gRPC interceptor that attaches ark-specific headers to each request
+///
+/// - pver: the negotiated protocol version
+/// - access_token: the access token to use for private servers
+#[derive(Clone)]
+pub struct ArkServiceInterceptor {
+	pver: Option<u64>,
+	access_token: Option<AsciiMetadataValue>,
+}
+
+impl tonic::service::Interceptor for ArkServiceInterceptor {
+	fn call(&mut self, mut req: tonic::Request<()>) -> Result<tonic::Request<()>, tonic::Status> {
+		if let Some(pver) = self.pver {
+			req.set_pver(pver);
+		}
+		if let Some(ref access_token) = self.access_token {
+			req.metadata_mut().insert(ACCESS_TOKEN_HEADER, access_token.clone());
+		}
 		Ok(req)
 	}
 }
@@ -270,6 +307,42 @@ impl ServerInfo {
 	}
 }
 
+#[derive(Default)]
+pub struct ServerConnectionBuilder {
+	address: Option<String>,
+	network: Option<Network>,
+	#[cfg(feature = "socks5-proxy")]
+	proxy: Option<String>,
+	access_token: Option<String>,
+}
+
+impl ServerConnectionBuilder {
+	pub fn address(mut self, address: impl Into<String>) -> Self {
+		self.address = Some(address.into());
+		self
+	}
+
+	pub fn network(mut self, network: Network) -> Self {
+		self.network = Some(network);
+		self
+	}
+
+	#[cfg(feature = "socks5-proxy")]
+	pub fn proxy(mut self, proxy: impl Into<String>) -> Self {
+		self.proxy = Some(proxy.into());
+		self
+	}
+
+	pub fn access_token(mut self, access_token: impl Into<String>) -> Self {
+		self.access_token = Some(access_token.into());
+		self
+	}
+
+	pub async fn connect(self) -> Result<ServerConnection, ConnectError> {
+		ServerConnection::inner_connect(self).await
+	}
+}
+
 /// A managed connection to the Ark server.
 ///
 /// This type encapsulates:
@@ -280,9 +353,9 @@ impl ServerInfo {
 pub struct ServerConnection {
 	info: Arc<RwLock<ServerInfo>>,
 	/// The gRPC client to call Ark RPCs.
-	pub client: ArkServiceClient<InterceptedService<transport::Transport, ProtocolVersionInterceptor>>,
+	pub client: ArkServiceClient<InterceptedService<transport::Transport, ArkServiceInterceptor>>,
 	/// The mailbox gRPC client to call mailbox RPCs.
-	pub mailbox_client: mailbox::MailboxServiceClient<InterceptedService<transport::Transport, ProtocolVersionInterceptor>>,
+	pub mailbox_client: mailbox::MailboxServiceClient<InterceptedService<transport::Transport, ArkServiceInterceptor>>,
 }
 
 impl ServerConnection {
@@ -309,36 +382,36 @@ impl ServerConnection {
 	///
 	/// Errors if the server cannot be reached, handshake fails, protocol versions
 	/// are incompatible, or the server's network does not match `network`.
-	pub async fn connect(
-		address: &str,
-		network: Network,
-	) -> Result<ServerConnection, ConnectError> {
-		let transport = transport::connect(address).await?;
-		Self::connect_inner(transport, network).await
+	pub fn builder() -> ServerConnectionBuilder {
+		ServerConnectionBuilder::default()
 	}
 
-	/// Similar to [ServerConnection::connect] but the connection is established through a SOCKS5 proxy.
-	#[cfg(feature = "socks5-proxy")]
-	pub async fn connect_via_proxy(
-		address: &str,
-		network: Network,
-		proxy: &str,
-	) -> Result<ServerConnection, ConnectError> {
-		let transport = transport::connect_with_proxy(address, proxy).await?;
-		Self::connect_inner(transport, network).await
-	}
+	//TODO(stevenroose) can rename to connect once original removed
+	async fn inner_connect(builder: ServerConnectionBuilder) -> Result<ServerConnection, ConnectError> {
+		let address = builder.address.ok_or(ConnectError::MissingInfo("address"))?;
+		let network = builder.network.ok_or(ConnectError::MissingInfo("network"))?;
 
-	async fn connect_inner(
-		transport: transport::Transport,
-		network: Network,
-	) -> Result<ServerConnection, ConnectError> {
-		let mut handshake_client = ArkServiceClient::new(transport.clone());
+		#[cfg(feature = "socks5-proxy")]
+		let transport = if let Some(proxy) = builder.proxy {
+			transport::connect_with_proxy(&address, &proxy).await?
+		} else {
+			transport::connect(&address).await?
+		};
+		#[cfg(not(feature = "socks5-proxy"))]
+		let transport = transport::connect(&address).await?;
+
+		let mut interceptor = ArkServiceInterceptor {
+			pver: None,
+			access_token: builder.access_token.map(|t| t.try_into()).transpose()?,
+		};
+
+		let mut handshake_client = ArkServiceClient::with_interceptor(transport.clone(), interceptor.clone());
 		let handshake = handshake_client.handshake(Self::handshake_req()).await
 			.map_err(ConnectError::Handshake)?.into_inner();
 
 		let pver = check_handshake(handshake)?;
+		interceptor.pver = Some(pver);
 
-		let interceptor = ProtocolVersionInterceptor { pver };
 		let mut client = ArkServiceClient::with_interceptor(transport.clone(), interceptor.clone())
 			.max_decoding_message_size(64 * 1024 * 1024); // 64MB limit
 
@@ -353,6 +426,24 @@ impl ServerConnection {
 			client,
 			mailbox_client,
 		})
+	}
+
+	#[deprecated(since = "0.1.3", note = "use builder() instead")]
+	pub async fn connect(
+		address: &str,
+		network: Network,
+	) -> Result<ServerConnection, ConnectError> {
+		Self::builder().address(address).network(network).connect().await
+	}
+
+	#[cfg(feature = "socks5-proxy")]
+	#[deprecated(since = "0.1.3", note = "use builder() instead")]
+	pub async fn connect_via_proxy(
+		address: &str,
+		network: Network,
+		proxy: &str,
+	) -> Result<ServerConnection, ConnectError> {
+		Self::builder().address(address).network(network).proxy(proxy).connect().await
 	}
 
 	/// Checks the connection to the Ark server by performing an handshake request.
@@ -387,7 +478,7 @@ trait ArkServiceClientExt {
 	async fn ark_info(&mut self, network: Network) -> Result<ArkInfo, ConnectError>;
 }
 
-impl ArkServiceClientExt for ArkServiceClient<InterceptedService<transport::Transport, ProtocolVersionInterceptor>> {
+impl<I: Interceptor> ArkServiceClientExt for ArkServiceClient<InterceptedService<transport::Transport, I>> {
 	async fn ark_info(&mut self, network: Network) -> Result<ArkInfo, ConnectError> {
 		let res = self.get_ark_info(protos::Empty {}).await
 			.map_err(ConnectError::GetArkInfo)?;
