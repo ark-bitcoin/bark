@@ -498,6 +498,7 @@ impl TestContext {
 	) -> bark::Config {
 		bark::Config {
 			server_address: srv.ark_url(),
+			server_access_token: None,
 			esplora_address: if bitcoind.is_none() {
 				Some(self.electrs.as_ref().expect("need either bitcoind or electrs").rest_url())
 			} else {
