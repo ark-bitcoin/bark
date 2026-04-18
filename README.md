@@ -75,7 +75,7 @@ Perfect for users who want self-custody without the hassle, and developers who w
 
 The Ark protocol enables multiple users to share control of a single bitcoin UTXO through a tree of pre-signed, off-chain transactions. This allows instant, off-chain payments while maintaining self-custody-users can always withdraw their bitcoin either cooperatively with the Ark server or unilaterally on-chain.
 
-For a detailed technical explanation, see our [protocol documentation](https://docs.second.tech/protocol/intro).
+For a detailed technical explanation, see our [protocol documentation](https://second.tech/docs/learn/intro).
 
 ![An example of an Ark transaction tree from a refresh](assets/tx-tree-refresh.jpg)
 _A transaction tree showing how Ark enables multiple users to share control of a single UTXO through pre-signed transactions._
