@@ -12,7 +12,7 @@ CREATE TYPE spend_state AS ENUM ('spendable', 'unclaimed', 'spent');
 ALTER TABLE vtxo ADD COLUMN spend_state spend_state;
 
 -- Backfill based on existing spend columns
-UPDATE vtxo SET spend_state = CASE
+UPDATE vtxo SET updated_at = NOW(), spend_state = CASE
 	WHEN oor_spent_txid IS NULL AND spent_in_round IS NULL AND offboarded_in IS NULL
 		THEN 'spendable'
 	ELSE 'spent'
