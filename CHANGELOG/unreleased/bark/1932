@@ -1,0 +1,2 @@
+- produce errors on fee estimation requests for amounts that are not allowed
+  [#1932](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1932)
