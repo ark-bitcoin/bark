@@ -221,7 +221,7 @@ fn wallet_create_request_to_create_opts(req: CreateWalletRequest) -> anyhow::Res
 	};
 
 	let mut config = ConfigOpts {
-		ark: Some(req.ark_server),
+		ark: req.ark_server,
 		esplora: None,
 		bitcoind: None,
 		bitcoind_cookie: None,
@@ -230,22 +230,24 @@ fn wallet_create_request_to_create_opts(req: CreateWalletRequest) -> anyhow::Res
 		socks5_proxy: None,
 	};
 
-	match req.chain_source {
-		ChainSourceConfig::Esplora { url } => {
-			config.esplora = Some(url);
-		},
-		ChainSourceConfig::Bitcoind { bitcoind, bitcoind_auth } => {
-			config.bitcoind = Some(bitcoind);
-			match bitcoind_auth {
-				BitcoindAuth::Cookie { cookie } => {
-					config.bitcoind_cookie = Some(cookie);
-				},
-				BitcoindAuth::UserPass { user, pass } => {
-					config.bitcoind_user = Some(user);
-					config.bitcoind_pass = Some(pass);
-				},
-			}
-		},
+	if let Some(chain_source) = req.chain_source {
+		match chain_source {
+			ChainSourceConfig::Esplora { url } => {
+				config.esplora = Some(url);
+			},
+			ChainSourceConfig::Bitcoind { bitcoind, bitcoind_auth } => {
+				config.bitcoind = Some(bitcoind);
+				match bitcoind_auth {
+					BitcoindAuth::Cookie { cookie } => {
+						config.bitcoind_cookie = Some(cookie);
+					},
+					BitcoindAuth::UserPass { user, pass } => {
+						config.bitcoind_user = Some(user);
+						config.bitcoind_pass = Some(pass);
+					},
+				}
+			},
+		}
 	}
 
 	Ok(CreateOpts {

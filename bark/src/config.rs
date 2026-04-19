@@ -214,7 +214,7 @@ impl Config {
 		Ok(config::Config::builder()
 			.add_source(default)
 			.add_source(config::File::from(path.as_ref()).required(false))
-			.add_source(config::Environment::with_prefix("BARK").separator("_"))
+			.add_source(config::Environment::with_prefix("BARK"))
 			.build().context("error building config")?
 			.try_deserialize::<Config>().context("error parsing config")?)
 	}

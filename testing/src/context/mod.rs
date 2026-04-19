@@ -516,7 +516,7 @@ impl TestContext {
 			round_tx_required_confirmations: constants::ROUND_CONFIRMATIONS,
 			offboard_required_confirmations: constants::OFFBOARD_CONFIRMATIONS,
 			daemon_fast_sync_interval_secs: 1,
-			daemon_slow_sync_interval_secs: 60,
+			daemon_slow_sync_interval_secs: 3,
 		}
 	}
 
@@ -546,6 +546,14 @@ impl TestContext {
 		};
 
 		let datadir = self.datadir.join(name.as_ref());
+
+		// Write config.toml with test-appropriate sync intervals so that barkd
+		// picks them up instead of falling back to the 60s default.
+		let cfg = self.bark_default_cfg(srv, bitcoind.as_ref().map(|b| b as &Bitcoind));
+		std::fs::create_dir_all(&datadir).unwrap();
+		let config_toml = toml::to_string(&cfg).unwrap();
+		std::fs::write(datadir.join("config.toml"), config_toml).unwrap();
+
 		Barkd::new(name, datadir, srv.ark_url(), chain_source, bitcoind)
 	}
 

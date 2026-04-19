@@ -1,5 +1,4 @@
 
-use std::collections::HashMap;
 use std::env;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -15,7 +14,7 @@ use bark_json::cli::onchain::{Address, OnchainBalance};
 use bark_rest::auth::AuthToken;
 use bark_json::primitives::{TransactionInfo, UtxoInfo, WalletVtxoInfo};
 use bark_json::web::EncodedVtxoResponse;
-use bark_json::web::{BarkNetwork, BitcoindAuth, ChainSourceConfig, ConnectedResponse, CreateWalletRequest, TipResponse};
+use bark_json::web::{BarkNetwork, ConnectedResponse, CreateWalletRequest, TipResponse};
 use bark_json::web::{FeeEstimateResponse, OnchainFeeRatesResponse};
 use bark_rest_client::apis::configuration::Configuration;
 use bark_rest_client::apis::{bitcoin_api, boards_api, default_api, fees_api, onchain_api, wallet_api};
@@ -37,14 +36,14 @@ pub enum BarkdChainSource {
 pub struct BarkdHelper {
 	name: String,
 	datadir: PathBuf,
+	#[allow(dead_code)]
 	ark_server_url: String,
+	#[allow(dead_code)]
 	chain_source: BarkdChainSource,
 	/// Optional dedicated bitcoind kept alive for the duration of the test.
 	_bitcoind: Option<Bitcoind>,
 	port: u16,
 	auth_token: AuthToken,
-	/// Extra environment variables passed to the barkd process.
-	envs: HashMap<String, String>,
 }
 
 impl Barkd {
@@ -72,14 +71,8 @@ impl Barkd {
 			_bitcoind: bitcoind,
 			port: 0,
 			auth_token: AuthToken::new(secret),
-			envs: HashMap::new(),
 		};
 		Daemon::wrap(helper)
-	}
-
-	/// Set an environment variable that will be passed to the barkd process.
-	pub fn set_env(&mut self, key: impl Into<String>, value: impl Into<String>) {
-		self.inner.envs.insert(key.into(), value.into());
 	}
 
 	pub fn base_url(&self) -> String {
@@ -107,20 +100,15 @@ impl Barkd {
 	}
 
 	/// Create the barkd wallet via REST. Call this once after the daemon has started.
+	///
+	/// Expects a config.toml to already exist in the datadir (written by
+	/// [`TestContext::new_barkd_unstarted`]). The request omits `ark_server`
+	/// and `chain_source` so that `create_wallet` loads them from the file,
+	/// mirroring the `bark create` CLI pattern.
 	pub async fn create_wallet(&self) -> anyhow::Result<()> {
-		let chain_source = match &self.inner.chain_source {
-			BarkdChainSource::Esplora(url) => ChainSourceConfig::Esplora { url: url.clone() },
-			BarkdChainSource::Bitcoind { url, cookie } => ChainSourceConfig::Bitcoind {
-				bitcoind: url.clone(),
-				bitcoind_auth: BitcoindAuth::Cookie {
-					cookie: cookie.to_string_lossy().into_owned(),
-				},
-			},
-		};
-
 		let req = CreateWalletRequest {
-			ark_server: self.inner.ark_server_url.clone(),
-			chain_source,
+			ark_server: None,
+			chain_source: None,
 			mnemonic: None,
 			network: BarkNetwork::Regtest,
 			birthday_height: None,
@@ -276,6 +264,13 @@ impl Barkd {
 			.expect("failed to get barkd pending boards")
 	}
 
+	/// Same as get_pending_boards but without explicit sync
+	pub async fn get_pending_boards_no_sync(&self) -> Vec<PendingBoardInfo> {
+		let config = self.client_config();
+		boards_api::get_pending_boards(&config).await
+			.expect("failed to get barkd pending boards")
+	}
+
 	/// Estimate the board fee for the given amount.
 	pub async fn board_fee(&self, amount: Amount) -> FeeEstimateResponse {
 		let config = self.client_config();
@@ -313,9 +308,6 @@ impl DaemonHelper for BarkdHelper {
 			"--port", &self.port.to_string(),
 			"--verbose",
 		]);
-		for (k, v) in &self.envs {
-			cmd.env(k, v);
-		}
 		Ok(cmd)
 	}
 
