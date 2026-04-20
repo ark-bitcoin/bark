@@ -58,6 +58,7 @@ struct ClnXpayClient {
 	settler: Arc<HtlcSettler>,
 	/// Notifies [`ClnManager::get_payment_status`] when a payment reaches a final state.
 	payment_update_tx: broadcast::Sender<PaymentHash>,
+	mailbox_manager: Arc<crate::mailbox_manager::MailboxManager>,
 }
 
 impl ClnXpayClient {
@@ -66,8 +67,9 @@ impl ClnXpayClient {
 		payment_update_tx: broadcast::Sender<PaymentHash>,
 		rpc: ClnGrpcClient,
 		settler: Arc<HtlcSettler>,
+		mailbox_manager: Arc<crate::mailbox_manager::MailboxManager>,
 	) -> Arc<Self> {
-		Arc::new(Self { db, payment_update_tx, rpc, settler })
+		Arc::new(Self { db, payment_update_tx, rpc, settler, mailbox_manager })
 	}
 
 	/// Calls xpay and then reconciles the attempt status against CLN.
@@ -132,6 +134,8 @@ impl ClnXpayClient {
 		);
 
 		let mut updated = false;
+		let mut send_finished = false;
+		let mut preimage = Option::<Preimage>::None;
 
 		telemetry::add_invoice_verification(attempt.lightning_node_id, attempt.status);
 
@@ -175,6 +179,7 @@ impl ClnXpayClient {
 						LightningPaymentStatus::Failed,
 					);
 
+					send_finished = true;
 					updated = true;
 				},
 			}
@@ -214,7 +219,7 @@ impl ClnXpayClient {
 						payment_hash,
 					);
 				} else {
-					let preimage: Option<Preimage> = latest.preimage.map(|b| b.try_into())
+					preimage = latest.preimage.map(|b| b.try_into())
 						.transpose()
 						.context("CLN returned a preimage that is not 32 bytes")?;
 
@@ -230,6 +235,10 @@ impl ClnXpayClient {
 						error_string,
 						latest.amount_sent_msat.map(|v| v.msat),
 					).await?;
+
+					if updated && desired_status.is_final() {
+						send_finished = true;
+					}
 				}
 			}
 		}
@@ -240,6 +249,12 @@ impl ClnXpayClient {
 			);
 
 			self.payment_update_tx.send(payment_hash)?;
+
+			// NB: for intra-ark payments, settle_invoice may also post this
+			// notification. The client handles duplicates gracefully.
+			if send_finished {
+				super::post_lightning_send_finished(&self.db, &self.mailbox_manager, payment_hash, preimage).await;
+			}
 		}
 
 		Ok(())
@@ -278,6 +293,7 @@ impl ClnXpay {
 		rpc: ClnGrpcClient,
 		config: ClnXpayConfig,
 		settler: Arc<HtlcSettler>,
+		mailbox_manager: Arc<crate::mailbox_manager::MailboxManager>,
 	) -> anyhow::Result<ClnXpay> {
 		let payment_idxs = db.get_lightning_payment_indexes(node_id).await
 			.with_context(|| format!("failed to fetch payment indices for {}", node_id))?
@@ -289,7 +305,7 @@ impl ClnXpay {
 			updated_index: payment_idxs.updated_index,
 		);
 
-		let client = ClnXpayClient::new(db.clone(), payment_update_tx, rpc, settler).await;
+		let client = ClnXpayClient::new(db.clone(), payment_update_tx, rpc, settler, mailbox_manager).await;
 
 		let proc = ClnXpayProcess {
 			config, db, node_id,

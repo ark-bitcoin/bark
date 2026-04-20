@@ -122,6 +122,7 @@ impl Server {
 		invoice: Invoice,
 		payment_amount: Amount,
 		htlc_vtxo_ids: Vec<VtxoId>,
+		mailbox_id: Option<ark::mailbox::MailboxIdentifier>,
 	) -> anyhow::Result<()> {
 		//TODO(stevenroose) validate vtxo generally (based on input)
 		let invoice_payment_hash = invoice.payment_hash();
@@ -211,6 +212,7 @@ impl Server {
 			payment_amount,
 			max_routing_fee,
 			min_expiry_height,
+			mailbox_id,
 		).await?;
 
 		slog!(LightningPaymentInitiated, invoice_payment_hash, amount: payment_amount, fee,

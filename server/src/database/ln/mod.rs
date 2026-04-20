@@ -204,6 +204,7 @@ impl Db {
 		node_id: ClnNodeId,
 		invoice: &Invoice,
 		amount: Amount,
+		sender_mailbox_id: Option<&MailboxIdentifier>,
 	) -> anyhow::Result<()> {
 		let mut conn = self.get_conn().await?;
 		let tx = conn.transaction().await?;
@@ -233,17 +234,19 @@ impl Db {
 				lightning_node_id,
 				payment_hash,
 				amount_msat,
+				sender_mailbox_id,
 				status,
 				created_at,
 				updated_at
-			) VALUES ($1, $2, $3, $4, NOW(), NOW())
+			) VALUES ($1, $2, $3, $4, $5, NOW(), NOW())
 			RETURNING id, updated_at;
 		").await?;
 
 		let requested_status = LightningPaymentStatus::Requested;
+		let mailbox_str = sender_mailbox_id.map(|id| id.to_string());
 		let row = tx.query_one(
 			&stmt,
-			&[&node_id, &payment_hash.to_string(), &(amount.to_msat() as i64), &requested_status],
+			&[&node_id, &payment_hash.to_string(), &(amount.to_msat() as i64), &mailbox_str, &requested_status],
 		).await?;
 
 		let payment_attempt_id: i64 = row.get("id");
@@ -683,6 +686,37 @@ impl Db {
 					Some(s) => {
 						let id = ark::mailbox::MailboxIdentifier::from_str(&s)
 							.context("corrupt receiver_mailbox_id in lightning_htlc_subscription")?;
+						Ok(Some(id))
+					},
+					None => Ok(None),
+				}
+			},
+			None => Ok(None),
+		}
+	}
+
+	/// Retrieve the sender's mailbox ID for a lightning payment.
+	pub async fn get_lightning_sender_mailbox_id(
+		&self,
+		payment_hash: PaymentHash,
+	) -> anyhow::Result<Option<ark::mailbox::MailboxIdentifier>> {
+		let conn = self.get_conn().await?;
+
+		let stmt = conn.prepare(
+			"SELECT sender_mailbox_id FROM lightning_payment_attempt
+			WHERE payment_hash = $1
+			ORDER BY created_at DESC
+			LIMIT 1"
+		).await?;
+		let row = conn.query_opt(&stmt, &[&payment_hash.to_string()]).await?;
+
+		match row {
+			Some(row) => {
+				let id = row.get::<_, Option<String>>("sender_mailbox_id");
+				match id {
+					Some(s) => {
+						let id = ark::mailbox::MailboxIdentifier::from_str(&s)
+							.context("corrupt sender_mailbox_id in lightning_payment_attempt")?;
 						Ok(Some(id))
 					},
 					None => Ok(None),

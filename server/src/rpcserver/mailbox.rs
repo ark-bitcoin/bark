@@ -55,6 +55,17 @@ fn new_mailbox_msg(entry: MailboxEntry) -> protos::mailbox_server::MailboxMessag
 				checkpoint: entry.checkpoint.into(),
 			}
 		},
+		MailboxPayload::LightningSendFinished { payment_hash, preimage } => {
+			protos::mailbox_server::MailboxMessage {
+				message: Some(protos::mailbox_server::mailbox_message::Message::LightningSendFinished(
+					protos::mailbox_server::LightningSendFinishedMessage {
+						payment_hash: payment_hash.to_vec(),
+						preimage: preimage.map(|p| p.to_vec()),
+					}
+				)),
+				checkpoint: entry.checkpoint.into(),
+			}
+		},
 	}
 }
 

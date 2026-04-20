@@ -268,6 +268,10 @@ impl Wallet {
 				trace!("Received recovery VTXO IDs, ignoring");
 				true
 			}
+			Some(Message::LightningSendFinished(_)) => {
+				trace!("Received lightning send finished, ignoring for now");
+				true
+			}
 			None => {
 				warn!("Received unknown mailbox message kind at checkpoint {}; bark may need to be upgraded",
 					mailbox_msg.checkpoint);

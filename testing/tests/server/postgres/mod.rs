@@ -1385,7 +1385,7 @@ async fn lightning_payment_attempt_lifecycle() {
 	).await.unwrap().is_none());
 
 	// Start a payment
-	db.store_lightning_payment_start(node_id, &invoice, sat(2)).await.unwrap();
+	db.store_lightning_payment_start(node_id, &invoice, sat(2), None).await.unwrap();
 
 	// One open attempt
 	let attempts = db.get_open_lightning_payment_attempts(node_id).await.unwrap();
@@ -1431,7 +1431,7 @@ async fn lightning_payment_attempt_with_error() {
 	let bolt11 = Bolt11Invoice::from_str(BOLT11_INVOICE).unwrap();
 	let invoice = Invoice::Bolt11(bolt11);
 
-	db.store_lightning_payment_start(node_id, &invoice, sat(1)).await.unwrap();
+	db.store_lightning_payment_start(node_id, &invoice, sat(1), None).await.unwrap();
 
 	let attempts = db.get_open_lightning_payment_attempts(node_id).await.unwrap();
 	assert_eq!(attempts.len(), 1);
@@ -1465,7 +1465,7 @@ async fn lightning_payment_attempt_result_update() {
 	let bolt11 = Bolt11Invoice::from_str(BOLT11_INVOICE).unwrap();
 	let invoice = Invoice::Bolt11(bolt11.clone());
 
-	db.store_lightning_payment_start(node_id, &invoice, sat(1000)).await.unwrap();
+	db.store_lightning_payment_start(node_id, &invoice, sat(1000), None).await.unwrap();
 
 	let attempt = db.get_open_lightning_payment_attempt_by_payment_hash(
 		(&bolt11).into()
@@ -1653,3 +1653,48 @@ async fn round_participation_mailbox() {
 	assert_eq!(unlock_hash, hash2);
 }
 
+#[tokio::test]
+async fn lightning_send_finished_mailbox_notification() {
+	let mut ctx = TestContext::new_minimal("postgresd/lightning_send_finished_mailbox").await;
+	ctx.init_central_postgres().await;
+	let postgres_cfg = ctx.new_postgres(&ctx.test_name).await;
+
+	Db::create(&postgres_cfg).await.expect("Database created");
+	let db = Db::connect(&postgres_cfg).await.expect("Connected to database");
+
+	let mailbox_id = MailboxIdentifier::from_pubkey(
+		PublicKey::from_str(DUMMY_PUBKEY).unwrap()
+	);
+	let payment_hash: ark::lightning::PaymentHash = Bolt11Invoice::from_str(BOLT11_INVOICE)
+		.unwrap().payment_hash().as_byte_array().clone().into();
+
+	// Store a failed payment notification (no preimage)
+	let cp1 = db.store_lightning_send_finished(mailbox_id, payment_hash, None).await.unwrap();
+
+	let messages = db.get_mailbox_messages(mailbox_id, 0, 10).await.unwrap();
+	assert_eq!(messages.len(), 1);
+	assert_eq!(messages[0].checkpoint, cp1);
+	match &messages[0].payload {
+		MailboxPayload::LightningSendFinished { payment_hash: ph, preimage } => {
+			assert_eq!(*ph, payment_hash);
+			assert!(preimage.is_none(), "failed payment should have no preimage");
+		},
+		other => panic!("expected LightningSendFinished payload, got {:?}", other),
+	}
+
+	// Store a successful payment notification (with preimage)
+	let test_preimage = Preimage::random();
+	let success_hash: ark::lightning::PaymentHash = test_preimage.compute_payment_hash();
+	let cp2 = db.store_lightning_send_finished(mailbox_id, success_hash, Some(test_preimage)).await.unwrap();
+	assert!(cp2 > cp1, "checkpoints should be monotonically increasing");
+
+	let messages = db.get_mailbox_messages(mailbox_id, cp1, 10).await.unwrap();
+	assert_eq!(messages.len(), 1);
+	match &messages[0].payload {
+		MailboxPayload::LightningSendFinished { payment_hash: ph, preimage } => {
+			assert_eq!(*ph, success_hash);
+			assert_eq!(preimage.as_ref(), Some(&test_preimage), "success should include preimage");
+		},
+		other => panic!("expected LightningSendFinished payload, got {:?}", other),
+	}
+}

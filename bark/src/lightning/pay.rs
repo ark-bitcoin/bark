@@ -677,6 +677,7 @@ impl Wallet {
 			invoice: invoice.to_string(),
 			htlc_vtxo_ids: htlc_vtxos.iter().map(|v| v.id().to_bytes().to_vec()).collect(),
 			payment_amount_sat: payment_amount.to_sat(),
+			mailbox_id: None,
 		};
 
 		srv.client.initiate_lightning_payment(req).await?;

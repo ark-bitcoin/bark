@@ -17,6 +17,7 @@ pub enum MailboxType {
 	RoundParticipationCompleted,
 	LnRecvPendingPayment,
 	RecoveryVtxoId,
+	LnSendFinished,
 }
 
 impl MailboxType {
@@ -27,6 +28,7 @@ impl MailboxType {
 			MailboxType::RoundParticipationCompleted => "round-participation-completed",
 			MailboxType::LnRecvPendingPayment => "ln-recv-pending",
 			MailboxType::RecoveryVtxoId => "recovery-vtxo-id",
+			MailboxType::LnSendFinished => "ln-send-finished",
 		}
 	}
 
@@ -47,6 +49,7 @@ impl TryFrom<u32> for MailboxType {
 			1 => Ok(MailboxType::RoundParticipationCompleted),
 			2 => Ok(MailboxType::LnRecvPendingPayment),
 			3 => Ok(MailboxType::RecoveryVtxoId),
+			4 => Ok(MailboxType::LnSendFinished),
 			_ => Err("invalid mailbox type"),
 		}
 	}
@@ -59,6 +62,7 @@ impl From<MailboxType> for u32 {
 			MailboxType::RoundParticipationCompleted => 1,
 			MailboxType::LnRecvPendingPayment => 2,
 			MailboxType::RecoveryVtxoId => 3,
+			MailboxType::LnSendFinished => 4,
 		}
 	}
 }
@@ -78,6 +82,7 @@ impl FromStr for MailboxType {
 			v if v == MailboxType::RoundParticipationCompleted.as_str() => Ok(MailboxType::RoundParticipationCompleted),
 			v if v == MailboxType::LnRecvPendingPayment.as_str() => Ok(MailboxType::LnRecvPendingPayment),
 			v if v == MailboxType::RecoveryVtxoId.as_str() => Ok(MailboxType::RecoveryVtxoId),
+			v if v == MailboxType::LnSendFinished.as_str() => Ok(MailboxType::LnSendFinished),
 			_ => Err("invalid mailbox type"),
 		}
 	}
@@ -338,12 +343,14 @@ mod test {
 		let rpc = MailboxType::RoundParticipationCompleted;
 		let ln = MailboxType::LnRecvPendingPayment;
 		let rvi = MailboxType::RecoveryVtxoId;
+		let lsf = MailboxType::LnSendFinished;
 
 		let cases = [
 			(ar, u32::from(ar), ar.as_str()),
 			(rpc, u32::from(rpc), rpc.as_str()),
 			(ln, u32::from(ln), ln.as_str()),
 			(rvi, u32::from(rvi), rvi.as_str()),
+			(lsf, u32::from(lsf), lsf.as_str()),
 		];
 
 		let mut seen_u32 = std::collections::HashSet::new();

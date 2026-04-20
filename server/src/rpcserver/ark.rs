@@ -262,7 +262,12 @@ impl rpc::server::ArkService for Server {
 		let invoice = Invoice::from_str(&req.invoice).badarg("invalid invoice")?;
 		let payment_amount = Amount::from_sat(req.payment_amount_sat);
 
-		self.initiate_lightning_payment(invoice, payment_amount, htlc_vtxo_ids).await.to_status()?;
+		let mailbox_id = req.mailbox_id.as_deref()
+			.map(ark::mailbox::MailboxIdentifier::from_slice)
+			.transpose()
+			.map_err(|_| tonic::Status::invalid_argument("invalid mailbox_id"))?;
+
+		self.initiate_lightning_payment(invoice, payment_amount, htlc_vtxo_ids, mailbox_id).await.to_status()?;
 		Ok(tonic::Response::new(protos::Empty {}))
 	}
 

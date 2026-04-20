@@ -60,6 +60,36 @@ use self::hold::{ClnHold, ClnHoldConfig};
 use self::xpay::{ClnXpay, ClnXpayConfig};
 use crate::telemetry;
 
+/// Post a lightning send finished notification to the sender's mailbox.
+///
+/// Shared between [`ClnManagerProcess`] and [`ClnXpayClient`].
+pub(super) async fn post_lightning_send_finished(
+	db: &database::Db,
+	mailbox_manager: &crate::mailbox_manager::MailboxManager,
+	payment_hash: PaymentHash,
+	preimage: Option<Preimage>,
+) {
+	let mailbox_id = match db.get_lightning_sender_mailbox_id(payment_hash).await {
+		Ok(Some(id)) => id,
+		Ok(None) => return,
+		Err(e) => {
+			warn!("Failed to look up mailbox_id for {}: {:#}", payment_hash, e);
+			return;
+		},
+	};
+
+	match db.store_lightning_send_finished(
+		mailbox_id, payment_hash, preimage,
+	).await {
+		Ok(checkpoint) => {
+			mailbox_manager.notify(mailbox_id, checkpoint);
+		},
+		Err(e) => {
+			warn!("Failed to store send finished notification for {}: {:#}", payment_hash, e);
+		},
+	}
+}
+
 type ClnGrpcClient = NodeClient<Channel>;
 
 /// Handle for the cln manager process.
@@ -67,6 +97,7 @@ pub struct ClnManager {
 	db: database::Db,
 	settler: Arc<HtlcSettler>,
 	invoice_poll_interval: Duration,
+	mailbox_manager: Arc<crate::mailbox_manager::MailboxManager>,
 
 	/// This channel is to manage individual CLN integrations.
 	ctrl_tx: mpsc::UnboundedSender<Ctrl>,
@@ -115,7 +146,7 @@ impl ClnManager {
 			xpay_config,
 			invoice_expiry: config.invoice_expiry,
 			sync_manager,
-			mailbox_manager,
+			mailbox_manager: mailbox_manager.clone(),
 			settler: settler.clone(),
 
 			payment_update_tx: payment_update_tx.clone(),
@@ -136,6 +167,7 @@ impl ClnManager {
 		Ok(ClnManager {
 			db,
 			settler,
+			mailbox_manager,
 			ctrl_tx,
 			payment_update_tx,
 			payment_update_rx,
@@ -169,6 +201,7 @@ impl ClnManager {
 		payment_amount: Amount,
 		max_routing_fee: Amount,
 		htlc_send_expiry_height: BlockHeight,
+		sender_mailbox_id: Option<MailboxIdentifier>,
 	) -> anyhow::Result<()> {
 		invoice.check_signature().context("invalid invoice signature")?;
 
@@ -181,6 +214,7 @@ impl ClnManager {
 			amount: payment_amount,
 			max_routing_fee: max_routing_fee,
 			htlc_expiry_height: htlc_send_expiry_height,
+			sender_mailbox_id,
 		});
 
 		if let Err(e) = result_rx.await.context("channel closed")? {
@@ -285,6 +319,14 @@ impl ClnManager {
 			self.db.verify_and_update_payment_attempt(
 				&attempt, status, None, None,
 			).await?;
+
+			// Notify the sender's mailbox that the payment completed.
+			// NB: the xpay reconciliation loop may also fire this notification
+			// for the same payment hash. The client handles duplicates gracefully
+			// since check_lightning_payment is idempotent.
+			post_lightning_send_finished(
+				&self.db, &self.mailbox_manager, payment_hash, Some(preimage),
+			).await;
 		} else {
 			let (result_tx, result_rx) = oneshot::channel();
 			self.send_ctrl(Ctrl::SettleInvoice { subscription_id, preimage, result_tx });
@@ -649,6 +691,7 @@ impl ClnNodeInfo {
 			rpc.clone(),
 			xpay_config.clone(),
 			settler.clone(),
+			mailbox_manager.clone(),
 		).await.context("failed to start ClnXpay")?;
 
 		let online = ClnNodeOnlineState {
@@ -675,6 +718,7 @@ enum Ctrl {
 		amount: Amount,
 		max_routing_fee: Amount,
 		htlc_expiry_height: BlockHeight,
+		sender_mailbox_id: Option<MailboxIdentifier>,
 		result_tx: oneshot::Sender<anyhow::Result<()>>,
 	},
 	GenerateInvoice {
@@ -971,6 +1015,7 @@ impl ClnManagerProcess {
 		amount: Amount,
 		max_routing_fee: Amount,
 		htlc_send_expiry_height: BlockHeight,
+		sender_mailbox_id: Option<&MailboxIdentifier>,
 	) -> anyhow::Result<()> {
 		let payment_hash = invoice.payment_hash();
 		let node = self.get_active_node().context("no active cln node")?;
@@ -982,7 +1027,7 @@ impl ClnManagerProcess {
 			Current block height is {}", node.id, payment_hash, amount, tip,
 		);
 
-		self.db.store_lightning_payment_start(node.id, &invoice, amount).await?;
+		self.db.store_lightning_payment_start(node.id, &invoice, amount, sender_mailbox_id).await?;
 
 		// If there is an existing subscription, it's an intra-Ark lightning
 		// payment so we can directly mark it as accepted, then skip cln payment
@@ -1003,6 +1048,7 @@ impl ClnManagerProcess {
 					Some(&e.to_string()),
 				).await?;
 
+				post_lightning_send_finished(&self.db, &self.mailbox_manager, payment_hash, None).await;
 				return Err(e);
 			}
 
@@ -1175,7 +1221,7 @@ impl ClnManagerProcess {
 							self.disable_node(&uri).await;
 						},
 						Ctrl::PaymentRequest {
-							invoice, amount, max_routing_fee, htlc_expiry_height, result_tx,
+							invoice, amount, max_routing_fee, htlc_expiry_height, sender_mailbox_id, result_tx,
 						} => {
 							trace!("Payment request received: payment_hash={}",
 								invoice.payment_hash(),
@@ -1186,6 +1232,7 @@ impl ClnManagerProcess {
 								amount,
 								max_routing_fee,
 								htlc_expiry_height,
+								sender_mailbox_id.as_ref(),
 							).await;
 
 							let _ = result_tx.send(res);
