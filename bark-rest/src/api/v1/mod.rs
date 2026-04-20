@@ -2,11 +2,11 @@ pub mod exits;
 pub mod fees;
 pub mod history;
 pub mod lightning;
+pub mod notifications;
 pub mod onchain;
 pub mod boards;
 pub mod wallet;
 pub mod bitcoin;
-pub mod notifications;
 
 use axum::Router;
 

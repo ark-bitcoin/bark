@@ -73,7 +73,7 @@ All endpoints return JSON. Amounts are denominated in satoshis.";
 		(path = "/api/v1/onchain", api = api::v1::onchain::OnchainApiDoc),
 		(path = "/api/v1/wallet", api = api::v1::wallet::WalletApiDoc),
 		(path = "/api/v1/bitcoin", api = api::v1::bitcoin::BitcoinApiDoc),
-		(path = "/api/v1/notifications", api = api::v1::notifications::NotificationApiDoc),
+		(path = "/api/v1/notifications", api = api::v1::notifications::NotificationsApiDoc),
 	),
 	info(
 		title = "barkd REST API",
@@ -255,6 +255,14 @@ impl ServerState {
 			unprocessable!("No onchain wallet configured");
 		};
 		Ok(onchain.clone())
+	}
+
+	pub fn require_notifications(&self) -> Result<NotificationManager, ErrorResponse> {
+		let notification_mngr_opt = self.notification_mngr.read();
+		let Some(notification_mngr) = notification_mngr_opt.as_ref() else {
+			unprocessable!("No notification manager set")
+		};
+		Ok(notification_mngr.clone())
 	}
 
 	pub fn auth_token(&self) -> Option<&AuthToken> {

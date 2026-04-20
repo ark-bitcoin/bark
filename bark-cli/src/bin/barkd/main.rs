@@ -370,13 +370,11 @@ async fn main() -> anyhow::Result<()>{
 		None
 	};
 
-	let cloned_shutdown = shutdown.clone();
 	let on_wallet_create: Arc<OnWalletCreate> = Arc::new({
 		let datadir = datadir.clone();
 
 		move |req: CreateWalletRequest| {
 			let datadir = datadir.clone();
-			let shutdown = cloned_shutdown.clone();
 
 			Box::pin(async move {
 				let create_opts = wallet_create_request_to_create_opts(req)?;

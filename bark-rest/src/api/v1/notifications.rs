@@ -6,9 +6,8 @@ use axum::extract::{Query, Request, State, WebSocketUpgrade};
 use axum::response::Response;
 use axum::routing::get;
 use axum::{debug_handler, Json, Router};
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use bitcoin::hashes::hex::DisplayHex;
-use log::error;
 use serde::{Deserialize, Serialize};
 use utoipa::{OpenApi, ToSchema};
 
@@ -16,31 +15,46 @@ use bark_json::notifications::WalletNotification;
 use bark::bip39::rand::{self, Rng};
 use futures::{SinkExt, StreamExt};
 
-use crate::ServerState;
+use crate::{ServerState, error};
 use crate::auth::authenticate_request;
 use crate::error::{HandlerResult, unauthorized};
 
+/// The expiration time for a websocket ticket in minutes
 const WEBSOCKET_TICKET_EXPIRATION_MINUTES: u64 = 10;
+
+/// The timeout for the long-poll `wait` endpoint, in seconds
+#[cfg(not(test))]
+const NOTIFICATION_WAIT_REQUEST_TIMEOUT_SECONDS: u64 = 30;
+#[cfg(test)]
+const NOTIFICATION_WAIT_REQUEST_TIMEOUT_SECONDS: u64 = 5;
 
 #[derive(OpenApi)]
 #[openapi(
 	paths(
 		websocket_ticket,
+		wait_notification,
 	),
 	components(schemas(
 		HandshakeParams,
+		bark_json::notifications::WalletNotification,
+		bark_json::movements::Movement,
+		WaitNotificationQuery,
+		WaitNotificationResponse,
+		error::InternalServerError,
+		error::BadRequestError,
 	)),
 	components(schemas(
 		bark_json::notifications::WalletNotification,
 	)),
 	tags((name = "notifications", description = "Receive real-time notifications from barkd."))
 )]
-pub struct NotificationApiDoc;
+pub struct NotificationsApiDoc;
 
 pub fn router() -> Router<ServerState> {
 	Router::new()
 		.route("/ws/ticket", get(websocket_ticket))
 		.route("/ws", get(websocket_handshake))
+		.route("/wait", get(wait_notification))
 }
 
 #[utoipa::path(
@@ -159,3 +173,78 @@ async fn handle_socket(socket: WebSocket, state: ServerState) {
 	}
 }
 
+/// Query parameters for the long-poll `wait` endpoint.
+#[derive(Serialize, Deserialize, ToSchema)]
+pub struct WaitNotificationQuery {
+	/// The timestamp to start waiting for notifications from. Defaults to now.
+	pub since: Option<DateTime<Utc>>,
+}
+
+/// Response payload for the long-poll `wait` endpoint.
+#[derive(Serialize, Deserialize, ToSchema)]
+pub struct WaitNotificationResponse {
+	/// Notifications received during the long-poll window. Empty if the
+	/// timeout elapsed without any notifications. Sorted by timestamp
+	/// in ascending order.
+	pub notifications: Vec<WalletNotification>,
+	/// The timestamp of the last notification pushed to the client.
+	pub last_pushed_at: Option<DateTime<Utc>>,
+}
+
+#[utoipa::path(
+	get,
+	path = "/wait",
+	summary = "Long-poll for wallet notifications",
+	params(
+		("since" = Option<DateTime<Utc>>, Query,
+			description = "The timestamp to start waiting for notifications from. \
+				If not provided, returns all notifications in the buffer."),
+	),
+	responses(
+		(status = 200, description = "Returns notifications received during the \
+			long-poll window if any. Otherwise returns an empty array with \
+			provided `since` argument as `last_pushed_at` field", body = WaitNotificationResponse),
+		(status = 400, description = "Invalid query parameters", body = error::BadRequestError),
+		(status = 500, description = "Internal server error", body = error::InternalServerError),
+	),
+	description = "Long-polls for wallet notifications. Returns all notifications \
+		received since the given timestamp. If no timestamp is provided, returns all \
+		notifications in the buffer. Returned notifications are sorted by timestamp \
+		in ascending order.",
+	tag = "notifications",
+)]
+#[debug_handler]
+pub async fn wait_notification(
+	state: State<ServerState>,
+	Query(query): Query<WaitNotificationQuery>,
+	req: Request<Body>,
+) -> HandlerResult<Json<WaitNotificationResponse>> {
+	authenticate_request(state.clone(), &req)?;
+
+	let notif_mngr = state.require_notifications()?;
+
+	tokio::select! {
+		_ = tokio::time::sleep(Duration::from_secs(NOTIFICATION_WAIT_REQUEST_TIMEOUT_SECONDS)) => {
+			return Ok(Json(WaitNotificationResponse {
+				notifications: Vec::new(),
+				last_pushed_at: query.since,
+			}));
+		}
+		notif_handle = notif_mngr.wait_notifications(query.since) => {
+			if let Some((last_pushed_at, notifications)) = notif_handle {
+				let notifications = notifications
+					.into_iter()
+					.map(WalletNotification::from)
+					.collect::<Vec<_>>();
+
+				return Ok(Json(WaitNotificationResponse {
+					notifications,
+					last_pushed_at: Some(last_pushed_at),
+				}));
+			} else {
+				return Err(anyhow!("Notification manager returned nothing. \
+					Server might be shutting down.").into());
+			}
+		}
+	}
+}
