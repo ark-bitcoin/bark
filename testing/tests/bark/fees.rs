@@ -451,11 +451,12 @@ async fn refresh_should_refresh_vtxos_no_dust() {
 
 	// Board VTXO A
 	bark1.board(sat(100_000)).await;
-	ctx.generate_blocks(100).await;
+	bark1.sync().await;
 
 	// Board VTXO B
 	bark2.board(sat(200_000)).await;
 	ctx.generate_blocks(50).await;
+	bark2.sync().await;
 
 	// Create VTXO A'
 	bark1.send_oor(bark2.address().await, sat(331)).await;
