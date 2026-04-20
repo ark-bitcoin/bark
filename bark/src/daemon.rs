@@ -242,9 +242,7 @@ impl DaemonProcess {
 
 	async fn run_sync_processes(&self) {
 		let mut fast_interval = tokio::time::interval(self.fast_interval());
-		fast_interval.reset();
 		let mut slow_interval = tokio::time::interval(self.slow_interval());
-		slow_interval.reset();
 
 		loop {
 			futures::select! {
