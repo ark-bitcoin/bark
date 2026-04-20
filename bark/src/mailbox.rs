@@ -18,7 +18,7 @@ use log::{debug, error, info, trace, warn};
 use tokio_util::sync::CancellationToken;
 
 use ark::{ProtocolEncoding, Vtxo, VtxoId};
-use ark::lightning::PaymentHash;
+use ark::lightning::{PaymentHash, Preimage};
 use ark::mailbox::{MailboxAuthorization, MailboxIdentifier};
 use ark::vtxo::Full;
 use server_rpc::protos;
@@ -389,16 +389,20 @@ impl Wallet {
 		let payment_hash = PaymentHash::try_from(notif.payment_hash)
 			.context("invalid payment hash in lightning send finished notification")?;
 
-		if notif.preimage.is_some() {
+		let known_preimage = notif.preimage
+			.and_then(|bytes| Preimage::try_from(bytes).ok());
+
+		if known_preimage.is_some() {
 			debug!("Lightning send finished notification (success): payment_hash={}", payment_hash);
 		} else {
 			debug!("Lightning send finished notification (failed): payment_hash={}", payment_hash);
 		}
 
-		// Trigger the regular payment check flow which will handle success/revocation.
+		// Trigger the payment check flow which will handle success/revocation.
+		// When we already have the preimage, this skips the server RPC.
 		// Errors are logged but not propagated: we always advance the checkpoint
 		// to avoid re-processing the same notification on the next poll.
-		match self.check_lightning_payment(payment_hash, false).await {
+		match self.check_lightning_payment_with_preimage(payment_hash, known_preimage).await {
 			Ok(_) => info!("Processed lightning send finished for {}", payment_hash),
 			Err(e) => error!("Failed to process lightning send finished for {}: {:#}", payment_hash, e),
 		}
