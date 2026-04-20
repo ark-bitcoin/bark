@@ -228,10 +228,13 @@ impl rpc::server::MailboxService for crate::Server {
 		let mailbox_id = MailboxIdentifier::from_slice(req.unblinded_id.as_slice())
 			.badarg("invalid unblinded mailbox id")?;
 
-		let checkpoint = self.db.store_vtxo_ids_in_mailbox(MailboxType::RecoveryVtxoId, mailbox_id, vtxo_ids.as_slice()).await.to_status()?
-			.badarg("nothing was stored")?;
+		let checkpoint = self.db.store_vtxo_ids_in_mailbox(
+			MailboxType::RecoveryVtxoId, mailbox_id, vtxo_ids.as_slice(),
+		).await.to_status()?;
 
-		self.mailbox_manager.notify(mailbox_id, checkpoint);
+		if let Some(checkpoint) = checkpoint {
+			self.mailbox_manager.notify(mailbox_id, checkpoint);
+		}
 
 		Ok(tonic::Response::new(protos::core::Empty{}))
 	}

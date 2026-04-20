@@ -601,16 +601,21 @@ impl Db {
 
 		let statement = tx.prepare("
 			INSERT INTO mailbox (unblinded_mailbox_id, vtxo_id, checkpoint, mailbox_type, created_at)
-			VALUES ($1, $2, $3, $4::TEXT::mailbox_type, NOW());
+			VALUES ($1, $2, $3, $4::TEXT::mailbox_type, NOW())
+			ON CONFLICT (mailbox_type, vtxo_id) DO NOTHING;
 		").await?;
+		let mut total_inserted = 0u64;
 		for vtxo_id in vtxo_ids {
-			let rows_updated = tx.execute(&statement, &[
+			total_inserted += tx.execute(&statement, &[
 				&mailbox_id.to_string(),
 				&vtxo_id.to_string(),
 				&checkpoint,
 				&mailbox_type_str,
 			]).await?;
-			debug_assert_eq!(rows_updated, 1);
+		}
+
+		if total_inserted == 0 {
+			return Ok(None);
 		}
 
 		tx.commit().await?;
