@@ -284,9 +284,16 @@ impl DaemonProcess {
 		}
 	}
 
-	pub async fn run(self) {
+	/// Run processes that only need to be run once on startup
+	async fn run_startup_tasks(&self) {
 		let connected = self.wallet.server.read().is_some();
 		self.connected.store(connected, Ordering::Relaxed);
+
+		self.wallet.sync().await;
+	}
+
+	pub async fn run(self) {
+		self.run_startup_tasks().await;
 
 		let _ = futures::join!(
 			self.run_server_connection_check_process(),
