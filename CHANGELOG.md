@@ -6,6 +6,47 @@ https://docs.second.tech/changelog/changelog/
 
 Below is a more detailed summary for each version.
 
+# v0.1.3
+
+- `ark-lib`
+  - Fix BOLT12 invoice verification for offers identified only by blinded paths
+    `check_signature` now uses the invoice's `signing_pubkey` directly instead of
+    requiring `issuer_signing_pubkey`. `validate_issuance` now verifies the
+    invoice signature and, for offers without `issuer_signing_pubkey`, checks that
+    the invoice's `signing_pubkey` matches the offer's last blinded hop. This fixes
+    issues paying offers from Phoenix wallet, since they don't have an explicit
+    issuer signing pubkey
+    [#18
+  - deprecated `VtxoId::utxo` and replace with `VtxoId::to_point`
+    [#1926](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1926)91](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1891)
+
+- `bark`
+  - Add ability to cancel pending lightning receives
+    Users can now cancel a pending inbound lightning payment via
+    `Wallet::cancel_lightning_receive` or the `bark lightning receive cancel` CLI command.
+    [#1824](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1824)
+  - add support for private servers with access token
+    [#1927](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1927)
+    - add config field `server_access_token`
+    - add create option `--access-token`
+    - add support for setting `ark-access-token` HTTP header
+  - produce errors on fee estimation requests for amounts that are not allowed
+    [#1932](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1932)
+  - add `watch` command to stream wallet notifications
+    [#1809](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1809)
+
+- `server`
+  - Enforce maximum VTXO exit depth to prevent DDoS vector
+    This prevents database bloat and mobile client strain caused by chained OOR
+    transactions where many small payments cause exit depth to balloon unboundedly.
+    [#1791](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1791)
+    - Added `max_input_exit_depth` validation to all cosign request paths (OOR, lightning pay/receive/revocation)
+    - Exposed `max_arkoor_depth` in `ArkInfo` RPC so clients can check limits
+    - Added regression test verifying exit depth limits are enforced
+  - Add gRPC endpoint to cancel a pending lightning receive
+    The server now exposes `CancelLightningReceive` allowing clients to cancel
+    an in-flight inbound lightning payment by payment hash.
+    [#1824](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1824)
 
 # v0.1.2
 
@@ -33,6 +74,8 @@ Below is a more detailed summary for each version.
     and missing delivery mechanism.
     [#1893](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1893)
     - **BREAKING:** `Wallet::validate_arkoor_address` returns `Result<(), ArkoorAddressError>` instead of `anyhow::Result<()>`
+    - Make `subscribe_process_mailbox_messages` public again
+    [#1904](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1904)
 
 - `server`
   - Remove deprecated `PostVtxosMailbox` RPC endpoint and `MailboxType` enum

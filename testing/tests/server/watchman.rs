@@ -352,7 +352,7 @@ async fn watchman_sweeps_round_leftovers_after_exits() {
 	failures.assert_empty();
 	println!("Round leftovers sweep: {:#?}", msg);
 	for txid in board_funding_txids {
-		assert!(msg.vtxo_ids.iter().any(|v| v.utxo().txid == txid),
+		assert!(msg.vtxo_ids.iter().any(|v| v.to_point().txid == txid),
 			"missing funding txid {} in sweep", txid,
 		);
 	}
