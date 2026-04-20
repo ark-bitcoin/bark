@@ -21,7 +21,9 @@ Below is a more detailed summary for each version.
     [#1926](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1926)91](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1891)
 
 - `bark`
-  - Add ability to cancel pending lightning receives
+  - add IndexedDB persistence adaptor
+    [#1776](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1776)
+  - add ability to cancel pending lightning receives
     Users can now cancel a pending inbound lightning payment via
     `Wallet::cancel_lightning_receive` or the `bark lightning receive cancel` CLI command.
     [#1824](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1824)
