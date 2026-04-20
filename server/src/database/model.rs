@@ -228,7 +228,7 @@ impl<P: Policy + ProtocolEncoding> TryFrom<Row> for VtxoState<Bare, P> {
 
 	fn try_from(row: Row) -> Result<Self, Self::Error> {
 		let vtxo_id = VtxoId::from_str(row.get::<_, &str>("vtxo_id"))?;
-		let point = vtxo_id.utxo();
+		let point = vtxo_id.to_point();
 
 		let exit_delta = row.get::<_, i32>("exit_delta") as u16;
 		let policy = P::deserialize(row.get::<_, &[u8]>("policy"))?;

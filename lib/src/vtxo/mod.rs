@@ -118,6 +118,7 @@ impl VtxoId {
 	/// Size in bytes of an encoded [VtxoId].
 	pub const ENCODE_SIZE: usize = 36;
 
+	/// Parse from bytes
 	pub fn from_slice(b: &[u8]) -> Result<VtxoId, VtxoIdParseError> {
 		if b.len() == 36 {
 			let mut ret = [0u8; 36];
@@ -128,11 +129,20 @@ impl VtxoId {
 		}
 	}
 
-	pub fn utxo(self) -> OutPoint {
-		let vout = [self.0[32], self.0[33], self.0[34], self.0[35]];
-		OutPoint::new(Txid::from_slice(&self.0[0..32]).unwrap(), u32::from_le_bytes(vout))
+	/// Get the [OutPoint] representation of this [VtxoId]
+	pub fn to_point(&self) -> OutPoint {
+		let txid = Txid::from_byte_array(self.0[0..32].try_into().expect("32 bytes"));
+		let vout_bytes = [self.0[32], self.0[33], self.0[34], self.0[35]];
+		let vout = u32::from_le_bytes(vout_bytes);
+		OutPoint::new(txid, vout)
 	}
 
+	#[deprecated(since = "0.1.3", note = "use to_point instead")]
+	pub fn utxo(self) -> OutPoint {
+		self.to_point()
+	}
+
+	/// Serialize to bytes
 	pub fn to_bytes(self) -> [u8; 36] {
 		self.0
 	}
@@ -155,7 +165,7 @@ impl AsRef<[u8]> for VtxoId {
 
 impl fmt::Display for VtxoId {
 	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-		fmt::Display::fmt(&self.utxo(), f)
+		fmt::Display::fmt(&self.to_point(), f)
 	}
 }
 

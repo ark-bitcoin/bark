@@ -425,7 +425,7 @@ impl<S: state::BuilderState> ArkoorBuilder<S> {
 				expiry_height: self.input.expiry_height,
 				server_pubkey: self.input.server_pubkey,
 				exit_delta: self.input.exit_delta,
-				point: self.new_vtxo_ids[output_idx].utxo(),
+				point: self.new_vtxo_ids[output_idx].to_point(),
 				anchor_point: self.input.anchor_point,
 				genesis: Full {
 					items: self.input.genesis.items.iter().cloned().chain([
