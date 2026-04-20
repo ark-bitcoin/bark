@@ -1,0 +1,7 @@
+- Let `bark-server-rpc` build without selecting `tonic-native` or `tonic-web`
+  Generated gRPC client types now remain available in transportless builds, and
+  connection attempts fail early with a clear error telling developers to enable
+  `bark-server-rpc/tonic-native` or `bark-server-rpc/tonic-web`.
+  [#1872](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1872)
+  - Mobile builds now reject `tls-native-roots` on both Android and iOS and
+    direct users to `tls-webpki-roots` instead.

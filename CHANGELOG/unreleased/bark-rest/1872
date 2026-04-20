@@ -1,0 +1,4 @@
+- Make `bark-rest` opt into native wallet transport explicitly
+  The REST server no longer relies on `bark-json` feature unification to pull in
+  wallet RPC support, which makes its server-only runtime requirements clearer.
+  [#1872](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1872)
