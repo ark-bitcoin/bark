@@ -198,13 +198,9 @@ impl RestServer {
 
 		let state = ServerState::new(wallet, auth_token, on_wallet_create, on_wallet_delete);
 
-		// /ping stays outside the auth layer.
-		let authed_api = api::v1::router()
-			.route_layer(axum::middleware::from_fn_with_state(state.clone(), auth::guard_auth));
-
 		let router = router
 			.route("/ping", get(ping))
-			.nest("/api/v1", authed_api)
+			.nest("/api/v1", api::v1::router(&state))
 			.merge(SwaggerUi::new("/swagger-ui").url("/api-docs/openapi.json", api.clone()))
 			.layer(cors_layer(config))
 			.with_state(state)

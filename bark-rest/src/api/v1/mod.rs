@@ -9,14 +9,15 @@ pub mod bitcoin;
 use axum::Router;
 
 use crate::ServerState;
+use crate::auth::authed_router;
 
-pub fn router() -> Router<ServerState> {
+pub fn router(state: &ServerState) -> Router<ServerState> {
 	Router::new()
-		.nest("/lightning", lightning::router())
-		.nest("/onchain", onchain::router())
-		.nest("/boards", boards::router())
-		.nest("/exits", exits::router())
-		.nest("/fees", fees::router())
-		.nest("/wallet", wallet::router())
-		.nest("/bitcoin", bitcoin::router())
+		.nest("/lightning", authed_router(state, lightning::router()))
+		.nest("/onchain", authed_router(state, onchain::router()))
+		.nest("/boards", authed_router(state, boards::router()))
+		.nest("/exits", authed_router(state, exits::router()))
+		.nest("/fees", authed_router(state, fees::router()))
+		.nest("/wallet", authed_router(state, wallet::router()))
+		.nest("/bitcoin", authed_router(state, bitcoin::router()))
 }

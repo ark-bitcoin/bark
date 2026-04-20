@@ -1,6 +1,7 @@
 
 use std::fmt;
 
+use axum::Router;
 use axum::body::Body;
 use axum::extract::State;
 use axum::http::Request;
@@ -13,6 +14,10 @@ use crate::ServerState;
 use crate::error::{ErrorResponse, unauthorized};
 
 const BEARER_PREFIX: &str = "Bearer ";
+
+pub fn authed_router(state: &ServerState, router: Router<ServerState>) -> Router<ServerState> {
+	router.route_layer(axum::middleware::from_fn_with_state(state.clone(), guard_auth))
+}
 
 /// A bearer token that is the 32-byte secret itself.
 ///
