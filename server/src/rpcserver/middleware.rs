@@ -2,8 +2,9 @@ use std::future::Future;
 use std::pin::Pin;
 use std::str::FromStr;
 use std::task::{Context, Poll};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
+use http::HeaderMap;
 use http_body::Body as HttpBody;
 use opentelemetry::KeyValue;
 use server_rpc::lookup_grpc_method;
@@ -82,6 +83,63 @@ where
 	}
 }
 
+fn report_grpc_status(
+	headers: &HeaderMap,
+	rpc_method_details: &RpcMethodDetails,
+	duration: Duration,
+) {
+	let code = headers
+		.get("grpc-status")
+		.and_then(|v| v.to_str().ok())
+		.and_then(|s| s.parse::<i32>().ok());
+
+	match code {
+		Some(0) => {
+			trace!(
+				"Completed gRPC call: {} in {:?}, status: OK",
+				rpc_method_details.format_path(),
+				duration,
+			);
+		}
+		Some(code) => {
+			telemetry::add_grpc_error(&[
+				KeyValue::new(telemetry::RPC_SYSTEM, rpc_method_details.system),
+				KeyValue::new(telemetry::RPC_SERVICE, rpc_method_details.service),
+				KeyValue::new(telemetry::RPC_METHOD, rpc_method_details.method),
+				KeyValue::new(telemetry::ATTRIBUTE_ERROR, tonic::Code::from_i32(code).to_string()),
+			]);
+
+			let grpc_message = headers
+				.get("grpc-message")
+				.and_then(|v| v.to_str().ok())
+				.unwrap_or("unknown error");
+
+			debug!(
+				"Completed gRPC call: {} in {:?}, status={}, message={}",
+				rpc_method_details.format_path(),
+				duration,
+				tonic::Code::from_i32(code),
+				grpc_message,
+			);
+		}
+		None => {
+			// Trailers frame arrived without grpc-status — protocol violation.
+			telemetry::add_grpc_error(&[
+				KeyValue::new(telemetry::RPC_SYSTEM, rpc_method_details.system),
+				KeyValue::new(telemetry::RPC_SERVICE, rpc_method_details.service),
+				KeyValue::new(telemetry::RPC_METHOD, rpc_method_details.method),
+				KeyValue::new(telemetry::ATTRIBUTE_ERROR, "missing_grpc_status"),
+			]);
+
+			debug!(
+				"Completed gRPC call: {} in {:?}, error: missing or unparseable grpc-status in trailers",
+				rpc_method_details.format_path(),
+				duration,
+			);
+		}
+	}
+}
+
 /// A wrapper around a response body that captures gRPC trailers for telemetry
 pub struct TrailerCapturingBody<B> {
 	inner: B,
@@ -129,65 +187,16 @@ where
 
 				trace!(
 					"gRPC call {} failed with body error: {} (after {:?})",
-					self.rpc_method_details.format_path(),
-					e,
-					self.start_time.elapsed(),
+					self.rpc_method_details.format_path(), e, self.start_time.elapsed(),
 				);
 			}
-			// Check if this is the trailers frame
+			// Check if this is the trailers frame. Called unconditionally so
+			// that a missing grpc-status is treated as a protocol error.
 			Poll::Ready(Some(Ok(frame))) => {
 				if let Some(trailers) = frame.trailers_ref() {
-					// Extract gRPC status from trailers
-					let grpc_status_code = trailers
-						.get("grpc-status")
-						.and_then(|v| v.to_str().ok())
-						.and_then(|s| s.parse::<i32>().ok());
-
-					match grpc_status_code {
-						Some(0) => {
-							trace!(
-								"Completed gRPC call: {} in {:?}, status: OK",
-								self.rpc_method_details.format_path(),
-								self.start_time.elapsed(),
-							);
-						}
-						Some(code) => {
-							telemetry::add_grpc_error(&[
-								KeyValue::new(telemetry::RPC_SYSTEM, self.rpc_method_details.system),
-								KeyValue::new(telemetry::RPC_SERVICE, self.rpc_method_details.service),
-								KeyValue::new(telemetry::RPC_METHOD, self.rpc_method_details.method),
-								KeyValue::new(telemetry::ATTRIBUTE_ERROR, tonic::Code::from_i32(code).to_string()),
-							]);
-
-							let grpc_message = trailers
-								.get("grpc-message")
-								.and_then(|v| v.to_str().ok())
-								.unwrap_or("unknown error");
-
-							debug!(
-								"Completed gRPC call: {} in {:?}, status={}, message={}",
-								self.rpc_method_details.format_path(),
-								self.start_time.elapsed(),
-								tonic::Code::from_i32(code),
-								grpc_message,
-							);
-						}
-						None => {
-							// Missing or unparseable grpc-status is a protocol error
-							telemetry::add_grpc_error(&[
-								KeyValue::new(telemetry::RPC_SYSTEM, self.rpc_method_details.system),
-								KeyValue::new(telemetry::RPC_SERVICE, self.rpc_method_details.service),
-								KeyValue::new(telemetry::RPC_METHOD, self.rpc_method_details.method),
-								KeyValue::new(telemetry::ATTRIBUTE_ERROR, "missing_grpc_status"),
-							]);
-
-							debug!(
-								"Completed gRPC call: {} in {:?}, error: missing or unparseable grpc-status in trailers",
-								self.rpc_method_details.format_path(),
-								self.start_time.elapsed(),
-							);
-						}
-					}
+					report_grpc_status(
+						trailers, &self.rpc_method_details, self.start_time.elapsed(),
+					);
 				}
 			}
 			// Other cases (Pending, Ready(None)) don't need special handling
@@ -304,15 +313,24 @@ where
 					);
 					Err(err)
 				}
-				// Wrap the response body to capture gRPC status from trailers
+				// Wrap the response body to capture gRPC status from trailers.
+				// For error responses tonic uses a trailers-only response: the
+				// grpc-status lives in the HTTP response headers (no body frames
+				// are ever sent), so check there first before falling through to
+				// the body-trailer path.
 				Ok(response) => {
 					let (parts, body) = response.into_parts();
-					let wrapped_body = TrailerCapturingBody::new(
-						body,
-						rpc_method_details,
-						start_time,
-					);
-					Ok(http::Response::from_parts(parts, wrapped_body))
+
+					// Trailers-only response (tonic error path): grpc-status is
+					// in the HTTP response headers rather than a body trailer frame.
+					// Only call report_grpc_status when the header is present;
+					// absence here is normal and means status will arrive via body.
+					if parts.headers.contains_key("grpc-status") {
+						report_grpc_status(&parts.headers, &rpc_method_details, duration);
+					}
+
+					let wrapped = TrailerCapturingBody::new(body, rpc_method_details, start_time);
+					Ok(http::Response::from_parts(parts, wrapped))
 				}
 			}
 		})
