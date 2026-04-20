@@ -107,7 +107,7 @@ fn extract_auth_token(req: &Request<Body>) -> Result<Option<String>, &'static st
 	Ok(authorization_header)
 }
 
-fn inner_guard_auth(
+pub fn authenticate_request(
 	State(state): State<ServerState>,
 	req: &Request<Body>,
 ) -> Result<(), ErrorResponse> {
@@ -140,7 +140,7 @@ pub(crate) async fn guard_auth(
 	req: Request<Body>,
 	next: Next,
 ) -> Response {
-	match inner_guard_auth(state, &req) {
+	match authenticate_request(state, &req) {
 		Ok(()) => next.run(req).await,
 		Err(e) => e.into_response(),
 	}
@@ -216,14 +216,14 @@ mod tests {
 		};
 
 		// valid token passes
-		let res = inner_guard_auth(make_state(token.clone()), &req(Some(&token.encode())));
+		let res = authenticate_request(make_state(token.clone()), &req(Some(&token.encode())));
 		assert!(res.is_ok(), "valid token should pass: {:?}", res);
 
 		// missing, wrong, and garbage tokens all fail
 		let state = make_state(token);
 		let no_hdr = Request::builder().body(Body::empty()).unwrap();
-		assert!(inner_guard_auth(state.clone(), &no_hdr).is_err());
-		assert!(inner_guard_auth(state.clone(), &req(Some(&AuthToken::new([0u8; 32]).encode()))).is_err());
-		assert!(inner_guard_auth(state, &req(Some("not-a-valid-token"))).is_err());
+		assert!(authenticate_request(state.clone(), &no_hdr).is_err());
+		assert!(authenticate_request(state.clone(), &req(Some(&AuthToken::new([0u8; 32]).encode()))).is_err());
+		assert!(authenticate_request(state, &req(Some("not-a-valid-token"))).is_err());
 	}
 }
