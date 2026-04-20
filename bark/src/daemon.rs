@@ -163,8 +163,17 @@ impl DaemonProcess {
 
 	/// Perform library built-in maintenance refresh
 	async fn run_maintenance_refresh_process(&self) {
-		if let Err(e) = self.wallet.maintenance_refresh().await {
-			warn!("An error occured while performing maintenance refresh: {e:#}");
+		match self.wallet.maybe_schedule_maintenance_refresh().await {
+			Ok(Some(round_state_id)) => {
+				info!("Performing maintenance refresh in round {}",
+					round_state_id,
+				);
+				// Round participation is created, it will be picked up by the round events process
+			},
+			Ok(None) => {},
+			Err(e) => {
+				warn!("An error occured while scheduling maintenance refresh: {e:#}");
+			},
 		}
 	}
 
