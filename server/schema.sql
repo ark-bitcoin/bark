@@ -205,23 +205,52 @@ CREATE FUNCTION public.lightning_htlc_subscription_update_trigger() RETURNS trig
     LANGUAGE plpgsql
     AS $$
 BEGIN
-    INSERT INTO lightning_htlc_subscription_history (
-        id, lightning_node_id, payment_hash, invoice, final_amount_msat,
-        receiver_mailbox_id, status, accepted_at, created_at, updated_at
-    ) VALUES (
-        OLD.id, OLD.lightning_node_id, OLD.payment_hash, OLD.invoice, OLD.final_amount_msat,
-        OLD.receiver_mailbox_id, OLD.status, OLD.accepted_at, OLD.created_at, OLD.updated_at
-    );
+	INSERT INTO lightning_htlc_subscription_history (
+		id, lightning_node_id, payment_hash, invoice, final_amount_msat,
+		receiver_mailbox_id, status, accepted_at, created_at, updated_at
+	) VALUES (
+		OLD.id, OLD.lightning_node_id, OLD.payment_hash, OLD.invoice, OLD.final_amount_msat,
+		OLD.receiver_mailbox_id, OLD.status, OLD.accepted_at, OLD.created_at, OLD.updated_at
+	);
 
-    IF NEW.updated_at = OLD.updated_at THEN
-        RAISE EXCEPTION 'updated_at must be updated';
-    END IF;
+	IF NEW.updated_at = OLD.updated_at THEN
+		RAISE EXCEPTION 'updated_at must be updated';
+	END IF;
 
-    IF NEW.created_at <> OLD.created_at THEN
-        RAISE EXCEPTION 'created_at cannot be updated';
-    END IF;
+	IF NEW.created_at <> OLD.created_at THEN
+		RAISE EXCEPTION 'created_at cannot be updated';
+	END IF;
 
-    RETURN NEW;
+	RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: lightning_invoice_update_trigger(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.lightning_invoice_update_trigger() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+	INSERT INTO lightning_invoice_history (
+		id, invoice, payment_hash, final_amount_msat,
+		created_at, updated_at
+	) VALUES (
+		OLD.id, OLD.invoice, OLD.payment_hash, OLD.final_amount_msat,
+		OLD.created_at, OLD.updated_at
+	);
+
+	IF NEW.updated_at = OLD.updated_at THEN
+		RAISE EXCEPTION 'updated_at must be updated';
+	END IF;
+
+	IF NEW.created_at <> OLD.created_at THEN
+		RAISE EXCEPTION 'created_at cannot be updated';
+	END IF;
+
+	RETURN NEW;
 END;
 $$;
 
@@ -271,15 +300,15 @@ BEGIN
 		OLD.sender_mailbox_id, OLD.status, OLD.error, OLD.created_at, OLD.updated_at
 	);
 
-    IF NEW.updated_at = OLD.updated_at THEN
-        RAISE EXCEPTION 'updated_at must be updated';
-    END IF;
+	IF NEW.updated_at = OLD.updated_at THEN
+		RAISE EXCEPTION 'updated_at must be updated';
+	END IF;
 
-    IF NEW.created_at <> OLD.created_at THEN
-        RAISE EXCEPTION 'created_at cannot be updated';
-    END IF;
+	IF NEW.created_at <> OLD.created_at THEN
+		RAISE EXCEPTION 'created_at cannot be updated';
+	END IF;
 
-    RETURN NEW;
+	RETURN NEW;
 END;
 $$;
 
@@ -797,6 +826,56 @@ CREATE SEQUENCE public.lightning_htlc_subscription_lightning_htlc_subscription_i
 --
 
 ALTER SEQUENCE public.lightning_htlc_subscription_lightning_htlc_subscription_id_seq OWNED BY public.lightning_htlc_subscription.id;
+
+
+--
+-- Name: lightning_invoice; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.lightning_invoice (
+    id bigint NOT NULL,
+    invoice text NOT NULL,
+    payment_hash text NOT NULL,
+    final_amount_msat bigint,
+    created_at timestamp with time zone NOT NULL,
+    updated_at timestamp with time zone NOT NULL,
+    mailbox_id text
+);
+
+
+--
+-- Name: lightning_invoice_history; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.lightning_invoice_history (
+    id bigint NOT NULL,
+    invoice text NOT NULL,
+    payment_hash text NOT NULL,
+    final_amount_msat bigint,
+    preimage text,
+    created_at timestamp with time zone NOT NULL,
+    updated_at timestamp with time zone NOT NULL,
+    history_created_at timestamp with time zone DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC'::text) NOT NULL
+);
+
+
+--
+-- Name: lightning_invoice_lightning_invoice_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.lightning_invoice_lightning_invoice_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: lightning_invoice_lightning_invoice_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.lightning_invoice_lightning_invoice_id_seq OWNED BY public.lightning_invoice.id;
 
 
 --
@@ -1352,6 +1431,13 @@ ALTER TABLE ONLY public.lightning_htlc_subscription ALTER COLUMN id SET DEFAULT 
 
 
 --
+-- Name: lightning_invoice id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.lightning_invoice ALTER COLUMN id SET DEFAULT nextval('public.lightning_invoice_lightning_invoice_id_seq'::regclass);
+
+
+--
 -- Name: lightning_node id; Type: DEFAULT; Schema: public; Owner: -
 --
 
@@ -1531,6 +1617,22 @@ ALTER TABLE ONLY public.integration_token
 
 ALTER TABLE ONLY public.lightning_htlc_subscription
     ADD CONSTRAINT lightning_htlc_subscription_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: lightning_invoice lightning_invoice_payment_hash_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.lightning_invoice
+    ADD CONSTRAINT lightning_invoice_payment_hash_key UNIQUE (payment_hash);
+
+
+--
+-- Name: lightning_invoice lightning_invoice_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.lightning_invoice
+    ADD CONSTRAINT lightning_invoice_pkey PRIMARY KEY (id);
 
 
 --
@@ -1752,6 +1854,13 @@ CREATE INDEX lightning_htlc_subscription_status_node_ix ON public.lightning_htlc
 
 
 --
+-- Name: lightning_invoice_invoice_uix; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX lightning_invoice_invoice_uix ON public.lightning_invoice USING btree (invoice) INCLUDE (id);
+
+
+--
 -- Name: lightning_node_public_key_uix; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -1777,6 +1886,20 @@ CREATE INDEX lightning_payment_attempt_payment_hash_ix ON public.lightning_payme
 --
 
 CREATE INDEX lightning_payment_attempt_status_node_ix ON public.lightning_payment_attempt USING btree (status, lightning_node_id);
+
+
+--
+-- Name: lightning_payment_hash_uix; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX lightning_payment_hash_uix ON public.lightning_invoice USING btree (payment_hash) INCLUDE (id);
+
+
+--
+-- Name: mailbox_mailbox_type_payment_hash_uix; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX mailbox_mailbox_type_payment_hash_uix ON public.mailbox USING btree (mailbox_type, payment_hash);
 
 
 --
@@ -1945,6 +2068,13 @@ CREATE TRIGGER integration_token_update BEFORE UPDATE ON public.integration_toke
 --
 
 CREATE TRIGGER lightning_htlc_subscription_update BEFORE UPDATE ON public.lightning_htlc_subscription FOR EACH ROW EXECUTE FUNCTION public.lightning_htlc_subscription_update_trigger();
+
+
+--
+-- Name: lightning_invoice lightning_invoice_update; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER lightning_invoice_update BEFORE UPDATE ON public.lightning_invoice FOR EACH ROW EXECUTE FUNCTION public.lightning_invoice_update_trigger();
 
 
 --

@@ -251,7 +251,7 @@ impl ClnXpayClient {
 			self.payment_update_tx.send(payment_hash)?;
 
 			// NB: for intra-ark payments, settle_invoice may also post this
-			// notification. The client handles duplicates gracefully.
+			// notification. The DB insert is idempotent (ON CONFLICT DO NOTHING).
 			if send_finished {
 				super::post_lightning_send_finished(&self.db, &self.mailbox_manager, payment_hash, preimage).await;
 			}

@@ -640,13 +640,15 @@ impl Db {
 	}
 
 	/// Store a lightning send finished notification in the mailbox.
-	/// Returns the checkpoint assigned to this notification.
+	///
+	/// Returns the checkpoint assigned to this notification, or `None` if a
+	/// notification for this payment hash already exists.
 	pub async fn store_lightning_send_finished(
 		&self,
 		mailbox_id: MailboxIdentifier,
 		payment_hash: PaymentHash,
 		preimage: Option<Preimage>,
-	) -> anyhow::Result<Checkpoint> {
+	) -> anyhow::Result<Option<Checkpoint>> {
 		let mut conn = self.get_conn().await?;
 		let tx = conn.transaction().await?;
 
@@ -662,20 +664,24 @@ impl Db {
 
 		let statement = tx.prepare("
 			INSERT INTO mailbox (unblinded_mailbox_id, payment_hash, preimage, checkpoint, mailbox_type, created_at)
-			VALUES ($1, $2, $3, $4, $5::TEXT::mailbox_type, NOW());
+			VALUES ($1, $2, $3, $4, $5::TEXT::mailbox_type, NOW())
+			ON CONFLICT (mailbox_type, payment_hash) DO NOTHING;
 		").await?;
-		let rows_updated = tx.execute(&statement, &[
+		let rows_inserted = tx.execute(&statement, &[
 			&mailbox_id.to_string(),
 			&payment_hash_str,
 			&preimage_str,
 			&checkpoint,
 			&mailbox_type_str,
 		]).await?;
-		debug_assert_eq!(rows_updated, 1);
 
 		tx.commit().await?;
 
-		Ok(checkpoint as u64)
+		if rows_inserted == 1 {
+			Ok(Some(checkpoint as u64))
+		} else {
+			Ok(None)
+		}
 	}
 
 	pub async fn store_vtxo_ids_in_mailbox(

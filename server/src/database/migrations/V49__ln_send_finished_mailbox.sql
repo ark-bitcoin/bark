@@ -4,6 +4,8 @@ ALTER TYPE mailbox_type ADD VALUE 'ln-send-finished';
 -- Add a column for preimage (used by ln-send-finished, present only on success)
 ALTER TABLE mailbox ADD COLUMN preimage TEXT;
 
+CREATE UNIQUE INDEX mailbox_mailbox_type_payment_hash_uix ON mailbox (mailbox_type, payment_hash);
+
 -- Add lightning_invoice columns to lightning_payment_attempt (send side)
 ALTER TABLE lightning_payment_attempt ADD COLUMN payment_hash TEXT;
 ALTER TABLE lightning_payment_attempt ADD COLUMN final_amount_msat BIGINT;

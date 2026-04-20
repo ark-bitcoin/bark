@@ -81,9 +81,10 @@ pub(super) async fn post_lightning_send_finished(
 	match db.store_lightning_send_finished(
 		mailbox_id, payment_hash, preimage,
 	).await {
-		Ok(checkpoint) => {
+		Ok(Some(checkpoint)) => {
 			mailbox_manager.notify(mailbox_id, checkpoint);
 		},
+		Ok(None) => {},
 		Err(e) => {
 			warn!("Failed to store send finished notification for {}: {:#}", payment_hash, e);
 		},
@@ -321,9 +322,8 @@ impl ClnManager {
 			).await?;
 
 			// Notify the sender's mailbox that the payment completed.
-			// NB: the xpay reconciliation loop may also fire this notification
-			// for the same payment hash. The client handles duplicates gracefully
-			// since check_lightning_payment is idempotent.
+			// NB: the xpay reconciliation loop may also post this for the same
+			// payment hash. The DB insert is idempotent (ON CONFLICT DO NOTHING).
 			post_lightning_send_finished(
 				&self.db, &self.mailbox_manager, payment_hash, Some(preimage),
 			).await;

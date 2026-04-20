@@ -1669,7 +1669,8 @@ async fn lightning_send_finished_mailbox_notification() {
 		.unwrap().payment_hash().as_byte_array().clone().into();
 
 	// Store a failed payment notification (no preimage)
-	let cp1 = db.store_lightning_send_finished(mailbox_id, payment_hash, None).await.unwrap();
+	let cp1 = db.store_lightning_send_finished(mailbox_id, payment_hash, None).await.unwrap()
+		.expect("first insert should succeed");
 
 	let messages = db.get_mailbox_messages(mailbox_id, 0, 10).await.unwrap();
 	assert_eq!(messages.len(), 1);
@@ -1682,10 +1683,15 @@ async fn lightning_send_finished_mailbox_notification() {
 		other => panic!("expected LightningSendFinished payload, got {:?}", other),
 	}
 
+	// Duplicate insert for the same payment hash should be a no-op
+	let dup = db.store_lightning_send_finished(mailbox_id, payment_hash, None).await.unwrap();
+	assert!(dup.is_none(), "duplicate insert should return None");
+
 	// Store a successful payment notification (with preimage)
 	let test_preimage = Preimage::random();
 	let success_hash: ark::lightning::PaymentHash = test_preimage.compute_payment_hash();
-	let cp2 = db.store_lightning_send_finished(mailbox_id, success_hash, Some(test_preimage)).await.unwrap();
+	let cp2 = db.store_lightning_send_finished(mailbox_id, success_hash, Some(test_preimage)).await.unwrap()
+		.expect("first insert should succeed");
 	assert!(cp2 > cp1, "checkpoints should be monotonically increasing");
 
 	let messages = db.get_mailbox_messages(mailbox_id, cp1, 10).await.unwrap();
