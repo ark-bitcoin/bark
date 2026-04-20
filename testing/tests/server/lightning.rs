@@ -692,7 +692,7 @@ async fn initiate_lightning_payment_fails_without_register_vtxos() {
 	let invoice = lightning.external.invoice(Some(btc(1)), "test_payment", "A test payment").await;
 
 	// The payment should fail because register_vtxos was dropped, so the
-	// early check in request_lightning_pay_htlc_cosign rejects the request.
+	// early check in initiate_lightning_payment rejects the request.
 	let err = bark_1.try_pay_lightning(invoice, None, false).await.unwrap_err();
 	assert!(err.to_string().contains("does not exist") || err.to_string().contains("NULL signed_tx"),
 		"Expected error about missing or unsigned transaction, got: {err}");

@@ -48,21 +48,21 @@ impl ActionParams<()> {
 }
 
 struct PubkeyExtra {
-	/// The next transaction, if any. The bool indicates whether the signature is known.
+	/// The next transaction in the chain, if any.
 	next_tx: Option<ProgressSpec>,
 	/// we have the key in our db
 	server_knows_key: bool,
 }
 
 struct HtlcSendExtra {
-	/// The next transaction, if any. The bool indicates whether the signature is known.
+	/// The next transaction in the chain, if any.
 	next_tx: Option<ProgressSpec>,
 	htlc_expiry: BlockHeight,
 	has_preimage: bool,
 }
 
 struct HtlcRecvExtra {
-	/// The next transaction, if any. The bool indicates whether the signature is known.
+	/// The next transaction in the chain, if any.
 	next_tx: Option<ProgressSpec>,
 	htlc_expiry: BlockHeight,
 	htlc_expiry_delta: BlockDelta,
