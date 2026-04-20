@@ -140,7 +140,9 @@ bark-as-libs:
         cargo check -p bark-wallet                                           &&
         cargo check -p bark-wallet -F native --no-default-features           &&
         cargo check -p bark-json                                             &&
+        cargo check -p bark-json --no-default-features                       &&
         cargo check -p bark-rest                                             &&
+        cargo check -p bark-rest --no-default-features                       &&
         cargo check -p bark-rest-client                                      &&
         echo DONE
       "
