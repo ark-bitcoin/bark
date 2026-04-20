@@ -129,7 +129,7 @@ let
 			rev = "v${holdPluginVersion}";
 			hash = "sha256-AIqYN1z91oUfCxM2MALUpduviEzX4mj87GcdFkXnNdQ=";
 		};
-		nativeBuildInputs = [ rustBuildToolchain pkgs.protobuf ];
+		nativeBuildInputs = [ rustBuildToolchain pkgs.protobuf rustPlatform.bindgenHook pkgs.go pkgs.git pkgs.perl ];
 		buildInputs = [
 			pkgs.sqlite
 			postgresql
