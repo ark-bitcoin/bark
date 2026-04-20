@@ -222,6 +222,7 @@ fn wallet_create_request_to_create_opts(req: CreateWalletRequest) -> anyhow::Res
 
 	let mut config = ConfigOpts {
 		ark: req.ark_server,
+		access_token: req.ark_server_access_token,
 		esplora: None,
 		bitcoind: None,
 		bitcoind_cookie: None,

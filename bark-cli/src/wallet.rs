@@ -79,6 +79,10 @@ pub struct ConfigOpts {
 	#[arg(long)]
 	pub ark: Option<String>,
 
+	/// The access token for a private server
+	#[arg(long)]
+	pub access_token: Option<String>,
+
 	/// The address of the Esplora HTTP server to use.
 	///
 	/// Either this or the `bitcoind_address` field has to be provided.
@@ -187,6 +191,9 @@ impl ConfigOpts {
 			.context("invalid ark server URL")?;
 		writeln!(conf, "server_address = \"{}\"", ark).unwrap();
 
+		if let Some(ref v) = self.access_token {
+			writeln!(conf, "server_access_token = \"{}\"", v).unwrap();
+		}
 		if let Some(ref v) = self.esplora {
 			let url = util::default_scheme("https", v).context("invalid esplora URL")?;
 			writeln!(conf, "esplora_address = \"{}\"", url).unwrap();

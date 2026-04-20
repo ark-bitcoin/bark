@@ -1050,14 +1050,20 @@ impl Wallet {
 		config: &Config,
 		network: Network,
 	) -> anyhow::Result<ServerConnection> {
-		let address = &config.server_address;
+		let mut builder = ServerConnection::builder()
+			.address(&config.server_address)
+			.network(network);
+
 		#[cfg(feature = "socks5-proxy")]
-		if let Some(proxy) = proxy_for_url(&config.socks5_proxy, address)? {
-			return ServerConnection::connect_via_proxy(address, network, &proxy).await
-				.context("Failed to connect Ark server via proxy");
+		if let Some(proxy) = proxy_for_url(&config.socks5_proxy, &config.server_address)? {
+			builder = builder.proxy(&proxy)
 		}
-		ServerConnection::connect(address, network).await
-			.context("Failed to connect to Ark server")
+
+		if let Some(ref token) = config.server_access_token {
+			builder = builder.access_token(token);
+		}
+
+		builder.connect().await.context("Failed to connect to Ark server")
 	}
 
 	async fn require_server(&self) -> anyhow::Result<(ServerConnection, ArkInfo)> {

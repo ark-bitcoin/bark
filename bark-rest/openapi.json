@@ -2796,6 +2796,13 @@
             ],
             "description": "The Ark server to use for the wallet.\nOptional when a config.toml already exists in the datadir."
           },
+          "ark_server_access_token": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "An access token for a private Ark server"
+          },
           "birthday_height": {
             "type": [
               "integer",

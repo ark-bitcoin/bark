@@ -3,6 +3,7 @@
 //! In CI these tests run under different configurations such as
 //! filestore backends and chain sources.
 
+mod access_token;
 mod arkoor;
 mod base;
 mod board;

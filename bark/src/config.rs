@@ -76,6 +76,9 @@ pub struct Config {
 	/// The address of your ark server.
 	pub server_address: String,
 
+	/// An access token used to access a private server
+	pub server_access_token: Option<String>,
+
 	/// The address of the Esplora HTTP REST server to use.
 	///
 	/// Either this or the `bitcoind_address` field has to be provided.
@@ -173,6 +176,7 @@ impl Config {
 	pub fn network_default(network: Network) -> Self {
 		let mut ret = Self {
 			server_address: "http://127.0.0.1:3535".to_owned(),
+			server_access_token: None,
 			esplora_address: None,
 			bitcoind_address: None,
 			bitcoind_cookiefile: None,

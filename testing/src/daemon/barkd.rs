@@ -108,6 +108,7 @@ impl Barkd {
 	pub async fn create_wallet(&self) -> anyhow::Result<()> {
 		let req = CreateWalletRequest {
 			ark_server: None,
+			ark_server_access_token: None,
 			chain_source: None,
 			mnemonic: None,
 			network: BarkNetwork::Regtest,
