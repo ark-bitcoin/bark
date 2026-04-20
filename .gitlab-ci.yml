@@ -48,7 +48,7 @@ default:
   tags:
     - privileged
   image:
-    name: registry.2nd.dev/build:30
+    name: registry.2nd.dev/build:31
     pull_policy: if-not-present
   before_script:
     - sudo chown -R nixuser:nixbld "$CI_PROJECT_DIR" || true
