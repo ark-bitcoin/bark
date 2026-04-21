@@ -7,6 +7,7 @@ use std::time::{Duration, Instant};
 use http::HeaderMap;
 use http_body::Body as HttpBody;
 use opentelemetry::KeyValue;
+use server_rpc::client::ACCESS_TOKEN_HEADER;
 use server_rpc::lookup_grpc_method;
 use tonic::transport::server::TcpConnectInfo;
 use tower::{Layer, Service};
@@ -285,6 +286,8 @@ where
 			{ telemetry::RPC_SYSTEM } = rpc_method_details.system,
 			{ telemetry::RPC_SERVICE } = rpc_method_details.service,
 			{ telemetry::RPC_METHOD } = rpc_method_details.method,
+			{ telemetry::RPC_ACCESS_TOKEN } = req.headers().get(ACCESS_TOKEN_HEADER)
+				.and_then(|v| v.to_str().ok()),
 		);
 		let future = self.inner.call(req);
 
