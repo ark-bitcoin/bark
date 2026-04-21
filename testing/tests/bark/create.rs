@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use bark::BarkNetwork;
 
-use ark_testing::{Bark, TestContext};
+use ark_testing::{Bark, TestContext, require_bark_version};
 use ark_testing::util::ToAltString;
 
 #[tokio::test]
@@ -30,6 +30,29 @@ async fn bark_create_is_atomic() {
 		"Failed to connect to provided server (if you are sure use the --force flag)"
 	), "{:?}", err);
 	assert!(!ctx.datadir.join("bark_fails").is_dir());
+}
+
+#[tokio::test]
+async fn bark_address_works_offline() {
+	require_bark_version!(> "0.1.3");
+
+	let ctx = TestContext::new("bark/bark_address_works_offline").await;
+	let srv = ctx.captaind("server").create().await;
+	let bark = ctx.bark("bark", &srv).create().await;
+
+	// Derive idx 0 with the server up so the key exists in the DB.
+	let addr_with_server = bark.address().await;
+
+	srv.stop().await.unwrap();
+
+	let addr_without_server = bark.address_at_idx(0).await;
+	assert_eq!(addr_with_server, addr_without_server,
+		"address at idx 0 should match whether or not the server is reachable");
+
+	// Derive a brand-new address with the server down.
+	let new_addr_without_server = bark.address().await;
+	assert_ne!(new_addr_without_server, addr_with_server,
+		"new address should use a freshly derived key");
 }
 
 #[tokio::test]

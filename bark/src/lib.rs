@@ -384,10 +384,11 @@ lazy_static::lazy_static! {
 	static ref SECP: secp256k1::Secp256k1<secp256k1::All> = secp256k1::Secp256k1::new();
 }
 
-/// Logs an error message for when the server public key has changed.
+/// Log that the server public key has changed.
 ///
-/// This warns the user that the server pubkey has changed and recommends
-/// performing an emergency exit to recover their funds on-chain.
+/// Recommends that the user perform an emergency exit to recover their
+/// funds on-chain, since a rotated server pubkey makes the original VTXO
+/// spend/exit conditions unreachable.
 fn log_server_pubkey_changed_error(expected: PublicKey, got: PublicKey) {
 	error!(
 	    "
@@ -404,6 +405,30 @@ For safety, this wallet will not connect to the server until you
 resolve this. You can recover your funds on-chain by doing an emergency exit.
 
 This will exit your VTXOs to on-chain Bitcoin without needing the server's cooperation.
+
+Expected: {expected}
+Got:      {got}")
+}
+
+/// Log that the server mailbox pubkey has changed.
+fn log_server_mailbox_pubkey_changed_error(expected: PublicKey, got: PublicKey) {
+	error!(
+	    "
+Server mailbox public key has changed!
+
+The Ark server's mailbox public key is different from the one stored when this
+wallet was created. This typically happens when:
+
+	- The server operator has rotated their keys
+	- You are connecting to a different server
+	- The server has been replaced
+
+For safety, this wallet will not connect to the server until you resolve this.
+
+Unlike a server pubkey change, your VTXOs are not at risk - the mailbox pubkey
+only affects address receive semantics. Any Ark addresses you previously
+shared will stop receiving new payments; you will need to share new addresses
+after reconnecting.
 
 Expected: {expected}
 Got:      {got}")
@@ -491,6 +516,15 @@ pub struct WalletProperties {
 	/// changes, the wallet will refuse to connect and warn the user
 	/// to perform an emergency exit.
 	pub server_pubkey: Option<PublicKey>,
+
+	/// The server's mailbox public key.
+	///
+	/// Stored so that Ark addresses can be generated without a live
+	/// connection to the Ark server. `None` indicates a wallet created
+	/// before this field was added; the value is populated on the first
+	/// successful handshake. If the key changes, the wallet refuses to
+	/// connect until the user resolves the rotation.
+	pub server_mailbox_pubkey: Option<PublicKey>,
 }
 
 /// Struct representing an extended private key derived from a
@@ -836,16 +870,24 @@ impl Wallet {
 	///
 	/// May return an error if the address at the given index has not been derived yet.
 	pub async fn peek_address(&self, index: u32) -> anyhow::Result<ark::Address> {
-		let (_, ark_info) = &self.require_server().await?;
-		let network = self.properties().await?.network;
+		let properties = self.properties().await?;
+		let network = properties.network;
 		let keypair = self.peek_keypair(index).await?;
 		let mailbox = self.mailbox_identifier();
 
+		let (server_pubkey, mailbox_pubkey) =
+			if let (Some(spk), Some(mpk)) = (properties.server_pubkey, properties.server_mailbox_pubkey) {
+				(spk, mpk)
+			} else {
+				let (_, ark_info) = self.require_server().await?;
+				(ark_info.server_pubkey, ark_info.mailbox_pubkey)
+			};
+
 		Ok(ark::Address::builder()
 			.testnet(network != bitcoin::Network::Bitcoin)
-			.server_pubkey(ark_info.server_pubkey)
+			.server_pubkey(server_pubkey)
 			.pubkey_policy(keypair.public_key())
-			.mailbox(ark_info.mailbox_pubkey, mailbox, &keypair)
+			.mailbox(mailbox_pubkey, mailbox, &keypair)
 			.expect("Failed to assign mailbox")
 			.into_address().unwrap())
 	}
@@ -884,18 +926,18 @@ impl Wallet {
 		}
 
 		// Try to connect to the server and get its pubkey
-		let server_pubkey = if !force {
+		let (server_pubkey, mailbox_pubkey) = if !force {
 			match Self::connect_to_server(&config, network).await {
 				Ok(conn) => {
 					let ark_info = conn.ark_info().await?;
-					Some(ark_info.server_pubkey)
+					(Some(ark_info.server_pubkey), Some(ark_info.mailbox_pubkey))
 				}
 				Err(err) => {
 					bail!("Failed to connect to provided server (if you are sure use the --force flag): {:#}", err);
 				}
 			}
 		} else {
-			None
+			(None, None)
 		};
 
 		let wallet_fingerprint = WalletSeed::new(network, &mnemonic.to_seed("")).fingerprint();
@@ -903,6 +945,7 @@ impl Wallet {
 			network,
 			fingerprint: wallet_fingerprint,
 			server_pubkey,
+			server_mailbox_pubkey: mailbox_pubkey,
 		};
 
 		// write the config to db
@@ -1076,64 +1119,62 @@ impl Wallet {
 			.context("You should be connected to Ark server to perform this action")?;
 		let ark_info = conn.ark_info().await?;
 
-		// Check if server pubkey has changed
-		if let Some(stored_pubkey) = self.properties().await?.server_pubkey {
-			if stored_pubkey != ark_info.server_pubkey {
-				log_server_pubkey_changed_error(stored_pubkey, ark_info.server_pubkey);
-				bail!("Server public key has changed. You should exit all your VTXOs!");
-			}
-		} else {
-			// First time connecting after upgrade - store the server pubkey
-			self.db.set_server_pubkey(ark_info.server_pubkey).await?;
-			info!("Stored server pubkey for existing wallet: {}", ark_info.server_pubkey);
-		}
+		self.check_and_store_server_keys(&ark_info).await?;
 
 		Ok((conn, ark_info))
 	}
 
 	pub async fn refresh_server(&self) -> anyhow::Result<()> {
 		let server = self.server.read().clone();
-		let properties = self.properties().await?;
 
 		let srv = if let Some(srv) = server {
 			srv.check_connection().await?;
 			let ark_info = srv.ark_info().await?;
 			ark_info.fees.validate().context("invalid fee schedule")?;
-
-			// Check if server pubkey has changed
-			if let Some(stored_pubkey) = properties.server_pubkey {
-				if stored_pubkey != ark_info.server_pubkey {
-					log_server_pubkey_changed_error(stored_pubkey, ark_info.server_pubkey);
-					bail!("Server public key has changed. You should exit all your VTXOs!");
-				}
-			} else {
-				// First time connecting after upgrade - store the server pubkey
-				self.db.set_server_pubkey(ark_info.server_pubkey).await?;
-				info!("Stored server pubkey for existing wallet: {}", ark_info.server_pubkey);
-			}
-
+			self.check_and_store_server_keys(&ark_info).await?;
 			srv
 		} else {
+			let properties = self.properties().await?;
 			let conn = Self::connect_to_server(&self.config, properties.network).await?;
 			let ark_info = conn.ark_info().await?;
 			ark_info.fees.validate().context("invalid fee schedule")?;
-
-			// Check if server pubkey has changed
-			if let Some(stored_pubkey) = properties.server_pubkey {
-				if stored_pubkey != ark_info.server_pubkey {
-					log_server_pubkey_changed_error(stored_pubkey, ark_info.server_pubkey);
-					bail!("Server public key has changed. You should exit all your VTXOs!");
-				}
-			} else {
-				// First time connecting after upgrade - store the server pubkey
-				self.db.set_server_pubkey(ark_info.server_pubkey).await?;
-				info!("Stored server pubkey for existing wallet: {}", ark_info.server_pubkey);
-			}
-
+			self.check_and_store_server_keys(&ark_info).await?;
 			conn
 		};
 
 		let _ = self.server.write().insert(srv);
+
+		Ok(())
+	}
+
+	/// Validate that the server's public keys match what we have stored,
+	/// and persist them if this is the first time connecting after an upgrade.
+	///
+	/// Returns an error (via `bail!`) if either the server pubkey or mailbox
+	/// pubkey differs from the stored value; callers must not proceed with
+	/// server operations on error.
+	async fn check_and_store_server_keys(&self, ark_info: &ArkInfo) -> anyhow::Result<()> {
+		let properties = self.properties().await?;
+
+		if let Some(stored_pubkey) = properties.server_pubkey {
+			if stored_pubkey != ark_info.server_pubkey {
+				log_server_pubkey_changed_error(stored_pubkey, ark_info.server_pubkey);
+				bail!("Server public key has changed. You should exit all your VTXOs!");
+			}
+		} else {
+			self.db.set_server_pubkey(ark_info.server_pubkey).await?;
+			info!("Stored server pubkey for existing wallet: {}", ark_info.server_pubkey);
+		}
+
+		if let Some(stored_mailbox_pubkey) = properties.server_mailbox_pubkey {
+			if stored_mailbox_pubkey != ark_info.mailbox_pubkey {
+				log_server_mailbox_pubkey_changed_error(stored_mailbox_pubkey, ark_info.mailbox_pubkey);
+				bail!("Server mailbox public key has changed.");
+			}
+		} else {
+			self.db.set_server_mailbox_pubkey(ark_info.mailbox_pubkey).await?;
+			info!("Stored server mailbox pubkey for existing wallet: {}", ark_info.mailbox_pubkey);
+		}
 
 		Ok(())
 	}

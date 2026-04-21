@@ -1,6 +1,6 @@
 use std::str::FromStr;
 
-use anyhow::Context;
+use anyhow::{Context, ensure};
 use bitcoin::{Amount, Network, SignedAmount, Txid};
 use bitcoin::consensus;
 use bitcoin::bip32::Fingerprint;
@@ -35,14 +35,15 @@ pub (crate) fn set_properties(
 	properties: &WalletProperties,
 ) -> anyhow::Result<()> {
 	let query =
-		"INSERT INTO bark_properties (id, network, fingerprint, server_pubkey)
-		VALUES (1, :network, :fingerprint, :server_pubkey)";
+		"INSERT INTO bark_properties (id, network, fingerprint, server_pubkey, server_mailbox_pubkey)
+		VALUES (1, :network, :fingerprint, :server_pubkey, :server_mailbox_pubkey)";
 	let mut statement = conn.prepare(query)?;
 
 	statement.execute(named_params! {
 		":network": properties.network.to_string(),
 		":fingerprint": properties.fingerprint.to_string(),
 		":server_pubkey": properties.server_pubkey.map(|pk| pk.to_string()),
+		":server_mailbox_pubkey": properties.server_mailbox_pubkey.map(|pk| pk.to_string()),
 	})?;
 
 	Ok(())
@@ -60,9 +61,28 @@ pub (crate) fn set_server_pubkey(
 		WHERE id = 1 AND server_pubkey IS NULL";
 	let mut statement = conn.prepare(query)?;
 
-	statement.execute(named_params! {
+	let rows = statement.execute(named_params! {
 		":server_pubkey": server_pubkey.to_string(),
 	})?;
+	ensure!(rows == 1, "failed to store server pubkey: \
+		expected 1 row updated, got {rows} (already set?)");
+
+	Ok(())
+}
+
+pub (crate) fn set_server_mailbox_pubkey(
+	conn: &Connection,
+	server_mailbox_pubkey: &PublicKey,
+) -> anyhow::Result<()> {
+	let query = "UPDATE bark_properties SET server_mailbox_pubkey = :server_mailbox_pubkey
+		WHERE id = 1 AND server_mailbox_pubkey IS NULL";
+	let mut statement = conn.prepare(query)?;
+
+	let rows = statement.execute(named_params! {
+		":server_mailbox_pubkey": server_mailbox_pubkey.to_string(),
+	})?;
+	ensure!(rows == 1, "failed to store server mailbox pubkey: \
+		expected 1 row updated, got {rows} (already set?)");
 
 	Ok(())
 }
@@ -76,17 +96,24 @@ pub (crate) fn fetch_properties(conn: &Connection) -> anyhow::Result<Option<Wall
 		let network: String = row.get("network")?;
 		let fingerprint: String = row.get("fingerprint")?;
 		let server_pubkey: Option<String> = row.get("server_pubkey")?;
+		let server_mailbox_pubkey: Option<String> = row.get("server_mailbox_pubkey")?;
 
 		let server_pubkey = server_pubkey
 			.map(|s| PublicKey::from_str(&s))
 			.transpose()
 			.context("invalid server pubkey")?;
 
+		let server_mailbox_pubkey = server_mailbox_pubkey
+			.map(|s| PublicKey::from_str(&s))
+			.transpose()
+			.context("invalid server mailbox pubkey")?;
+
 		Ok(Some(
 			WalletProperties {
 				network: Network::from_str(&network).context("invalid network")?,
 				fingerprint: Fingerprint::from_str(&fingerprint).context("invalid fingerprint")?,
 				server_pubkey,
+				server_mailbox_pubkey,
 			}
 		))
 	} else {

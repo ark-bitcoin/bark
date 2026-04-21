@@ -102,6 +102,12 @@ impl BarkPersister for SqliteClient {
 		Ok(())
 	}
 
+	async fn set_server_mailbox_pubkey(&self, server_mailbox_pubkey: PublicKey) -> anyhow::Result<()> {
+		let conn = self.connect()?;
+		query::set_server_mailbox_pubkey(&conn, &server_mailbox_pubkey)?;
+		Ok(())
+	}
+
 	async fn create_new_movement(&self,
 		status: MovementStatus,
 		subsystem: &MovementSubsystem,

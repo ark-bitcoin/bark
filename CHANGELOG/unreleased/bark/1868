@@ -1,0 +1,4 @@
+- `bark address` no longer requires a connection to the Ark server
+  The server public key and mailbox public key are now persisted in the local
+  database after the first connection, so address generation works fully offline.
+  [#1868](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1868)
