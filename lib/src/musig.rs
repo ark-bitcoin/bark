@@ -181,6 +181,43 @@ pub fn deterministic_partial_sign(
 	(pub_nonce, sig)
 }
 
+/// Sign a 2-of-2 musig when you hold both keypairs.
+///
+/// This is stupid: there is no point in doing musig if you have access
+/// to both keys. We need it because the vtxopool owns VTXOs that are
+/// locked under a user+server musig key, and we need to spend them
+/// without changing the key structure. So we do the full musig2 dance
+/// with ourselves.
+pub fn cosign_both(
+	user_keypair: &Keypair,
+	server_keypair: &Keypair,
+	msg: [u8; 32],
+	tweak: Option<[u8; 32]>,
+) -> schnorr::Signature {
+	let (user_sec_nonce, user_pub_nonce) = nonce_pair(user_keypair);
+
+	let (server_pub_nonce, server_partial_sig) = deterministic_partial_sign(
+		server_keypair,
+		[user_keypair.public_key()],
+		&[&user_pub_nonce],
+		msg,
+		tweak,
+	);
+
+	let agg_nonce = nonce_agg(&[&user_pub_nonce, &server_pub_nonce]);
+	let (_partial, full_sig) = partial_sign(
+		[user_keypair.public_key(), server_keypair.public_key()],
+		agg_nonce,
+		user_keypair,
+		user_sec_nonce,
+		msg,
+		tweak,
+		Some(&[&server_partial_sig]),
+	);
+
+	full_sig.expect("full sig must exist when server partial is provided")
+}
+
 //TODO(stevenroose) probably get rid of all this by having native byte serializers in secp
 pub mod serde {
 	use super::*;

@@ -691,14 +691,20 @@ impl<S: state::BuilderState> ArkoorBuilder<S> {
 		regular.chain(isolated)
 	}
 
-	/// Builds the unsigned internal VTXOs, each paired with the txid
-	/// of the transaction that spends it.
-	pub fn build_unsigned_internal_vtxos(&self) -> Vec<(ServerVtxo<Full>, Txid)> {
+	/// Builds the internal VTXOs (checkpoints and dust isolation),
+	/// each paired with the txid of the transaction that spends it.
+	///
+	/// Pass `None` for unsigned, or `Some(sig)` to embed the intermediate
+	/// transaction signature in the genesis data.
+	fn build_internal_vtxos(
+		&self,
+		intermediate_sig: Option<schnorr::Signature>,
+	) -> Vec<(ServerVtxo<Full>, Txid)> {
 		let mut ret = Vec::new();
 
 		if self.checkpoint_data.is_some() {
 			for idx in 0..self.outputs.len() {
-				let vtxo = self.build_checkpoint_vtxo_at(idx, None);
+				let vtxo = self.build_checkpoint_vtxo_at(idx, intermediate_sig);
 				let spending_txid = self.unsigned_arkoor_txs[idx].compute_txid();
 				ret.push((vtxo, spending_txid));
 			}
@@ -728,7 +734,7 @@ impl<S: state::BuilderState> ArkoorBuilder<S> {
 							transition: GenesisTransition::new_arkoor(
 								vec![self.input.user_pubkey()],
 								self.input_tweak,
-								None,
+								intermediate_sig,
 							),
 							output_idx: output_idx as u8,
 							other_outputs: int_tx.output.iter().enumerate()
@@ -762,6 +768,12 @@ impl<S: state::BuilderState> ArkoorBuilder<S> {
 		} else {
 			(self.input.id(), self.unsigned_arkoor_txs[0].compute_txid())
 		}
+	}
+
+	/// Builds the unsigned internal VTXOs, each paired with the txid
+	/// of the transaction that spends it.
+	pub fn build_unsigned_internal_vtxos(&self) -> Vec<(ServerVtxo<Full>, Txid)> {
+		self.build_internal_vtxos(None)
 	}
 
 	/// The returned [VtxoId] is spent out-of-round by [Txid]
@@ -1271,6 +1283,42 @@ impl ArkoorBuilder<state::Initial> {
 		self.user_pub_nonces = Some(user_pub_nonces);
 		Ok(self.to_state::<state::ServerCanCosign>())
 	}
+
+	/// Sign as both server and user in a single step.
+	///
+	/// This is used when the caller controls both keypairs (e.g. the
+	/// vtxopool spending its own VTXOs).
+	pub fn cosign_both(
+		mut self,
+		user_keypair: &Keypair,
+		server_keypair: &Keypair,
+	) -> Result<ArkoorBuilder<state::UserSigned>, ArkoorSigningError> {
+		if user_keypair.public_key() != self.input.user_pubkey() {
+			return Err(ArkoorSigningError::IncorrectKey {
+				expected: self.input.user_pubkey(),
+				got: user_keypair.public_key(),
+			});
+		}
+		if server_keypair.public_key() != self.input.server_pubkey() {
+			return Err(ArkoorSigningError::IncorrectKey {
+				expected: self.input.server_pubkey(),
+				got: server_keypair.public_key(),
+			});
+		}
+
+		let mut sigs = Vec::with_capacity(self.nb_sigs());
+		for idx in 0..self.nb_sigs() {
+			sigs.push(musig::cosign_both(
+				user_keypair,
+				server_keypair,
+				self.sighashes[idx].to_byte_array(),
+				Some(self.taptweak_at(idx).to_byte_array()),
+			));
+		}
+
+		self.full_signatures = Some(sigs);
+		Ok(self.to_state::<state::UserSigned>())
+	}
 }
 
 impl<'a> ArkoorBuilder<state::ServerCanCosign> {
@@ -1499,6 +1547,46 @@ impl<'a> ArkoorBuilder<state::UserSigned> {
 
 		ret
 	}
+
+	/// Returns signed copies of all intermediate transactions.
+	///
+	/// Same order as [virtual_transactions]: checkpoint tx (if any),
+	/// arkoor txs, isolation fanout tx (if any).
+	pub fn signed_virtual_transactions(&self) -> Vec<Transaction> {
+		let sigs = self.full_signatures.as_ref().expect("state invariant");
+		let mut ret = Vec::new();
+		let mut sig_idx = 0;
+		if let Some((tx, _)) = &self.checkpoint_data {
+			let mut tx = tx.clone();
+			tx.input[0].witness.push(&sigs[sig_idx][..]);
+			ret.push(tx);
+			sig_idx += 1;
+		}
+		for tx in &self.unsigned_arkoor_txs {
+			let mut tx = tx.clone();
+			tx.input[0].witness.push(&sigs[sig_idx][..]);
+			ret.push(tx);
+			sig_idx += 1;
+		}
+		if let Some(tx) = &self.unsigned_isolation_fanout_tx {
+			let mut tx = tx.clone();
+			tx.input[0].witness.push(&sigs[sig_idx][..]);
+			ret.push(tx);
+		}
+		ret
+	}
+
+	/// Builds the signed internal VTXOs (checkpoints and dust isolation),
+	/// each paired with the txid of the transaction that spends it.
+	pub fn build_signed_internal_vtxos(&self) -> Vec<(ServerVtxo<Full>, Txid)> {
+		let sigs = self.full_signatures.as_ref().expect("state invariant");
+		let intermediate_sig = if self.checkpoint_data.is_some() || !self.isolated_outputs.is_empty() {
+			Some(sigs[0])
+		} else {
+			None
+		};
+		self.build_internal_vtxos(intermediate_sig)
+	}
 }
 
 fn arkoor_sighash(prevout: &TxOut, arkoor_tx: &Transaction) -> TapSighash {
@@ -1522,6 +1610,20 @@ mod test {
 	use crate::SECP;
 	use crate::test_util::dummy::DummyTestVtxoSpec;
 	use crate::vtxo::VtxoId;
+
+	/// Verify that all signed internal vtxos pass validation.
+	fn verify_signed_internal_vtxos(
+		builder: &ArkoorBuilder<state::UserSigned>,
+		funding_tx: &Transaction,
+	) {
+		let signed = builder.build_signed_internal_vtxos();
+		let unsigned = builder.build_unsigned_internal_vtxos();
+		assert_eq!(signed.len(), unsigned.len());
+
+		for (vtxo, _spending_txid) in &signed {
+			vtxo.validate(funding_tx).expect("signed internal vtxo must be valid");
+		}
+	}
 
 	/// Verify properties of spend_info(), build_unsigned_internal_vtxos(), and final vtxos.
 	fn verify_builder<S: state::BuilderState>(
@@ -1637,10 +1739,11 @@ mod test {
 		let cosign_data = server_builder.cosign_response();
 
 		// The user will cosign the request and construct their vtxos
-		let vtxos = user_builder
+		let signed_builder = user_builder
 			.user_cosign(&alice_keypair, &cosign_data)
-			.expect("Valid cosign data and correct key")
-			.build_signed_vtxos();
+			.expect("Valid cosign data and correct key");
+		verify_signed_internal_vtxos(&signed_builder, &funding_tx);
+		let vtxos = signed_builder.build_signed_vtxos();
 
 		for vtxo in vtxos.into_iter() {
 			// Check if the vtxo is considered valid
@@ -1728,10 +1831,11 @@ mod test {
 		let cosign_data = server_builder.cosign_response();
 
 		// The user will cosign the request and construct their vtxos
-		let vtxos = user_builder
+		let signed_builder = user_builder
 			.user_cosign(&alice_keypair, &cosign_data)
-			.expect("Valid cosign data and correct key")
-			.build_signed_vtxos();
+			.expect("Valid cosign data and correct key");
+		verify_signed_internal_vtxos(&signed_builder, &funding_tx);
+		let vtxos = signed_builder.build_signed_vtxos();
 
 		// Should have 3 vtxos: 1 non-dust + 2 dust
 		assert_eq!(vtxos.len(), 3);
@@ -1805,10 +1909,11 @@ mod test {
 		let cosign_data = server_builder.cosign_response();
 
 		// The user will cosign the request and construct their vtxos
-		let vtxos = user_builder
+		let signed_builder = user_builder
 			.user_cosign(&alice_keypair, &cosign_data)
-			.expect("Valid cosign data and correct key")
-			.build_signed_vtxos();
+			.expect("Valid cosign data and correct key");
+		verify_signed_internal_vtxos(&signed_builder, &funding_tx);
+		let vtxos = signed_builder.build_signed_vtxos();
 
 		for vtxo in vtxos.into_iter() {
 			// Check if the vtxo is considered valid
@@ -1897,10 +2002,11 @@ mod test {
 		let cosign_data = server_builder.cosign_response();
 
 		// The user will cosign the request and construct their vtxos
-		let vtxos = user_builder
+		let signed_builder = user_builder
 			.user_cosign(&alice_keypair, &cosign_data)
-			.expect("Valid cosign data and correct key")
-			.build_signed_vtxos();
+			.expect("Valid cosign data and correct key");
+		verify_signed_internal_vtxos(&signed_builder, &funding_tx);
+		let vtxos = signed_builder.build_signed_vtxos();
 
 		// Should have 3 vtxos: 1 non-dust + 2 dust
 		assert_eq!(vtxos.len(), 3);
@@ -2122,10 +2228,11 @@ mod test {
 		let cosign_data = server_builder.cosign_response();
 
 		// The user will cosign the request and construct their vtxos
-		let vtxos = user_builder
+		let signed_builder = user_builder
 			.user_cosign(&alice_keypair, &cosign_data)
-			.expect("Valid cosign data and correct key")
-			.build_signed_vtxos();
+			.expect("Valid cosign data and correct key");
+		verify_signed_internal_vtxos(&signed_builder, &funding_tx);
+		let vtxos = signed_builder.build_signed_vtxos();
 
 		// Should have 2 vtxos
 		assert_eq!(vtxos.len(), 2);
@@ -2212,10 +2319,11 @@ mod test {
 		let cosign_data = server_builder.cosign_response();
 
 		// The user will cosign the request and construct their vtxos
-		let vtxos = user_builder
+		let signed_builder = user_builder
 			.user_cosign(&alice_keypair, &cosign_data)
-			.expect("Valid cosign data and correct key")
-			.build_signed_vtxos();
+			.expect("Valid cosign data and correct key");
+		verify_signed_internal_vtxos(&signed_builder, &funding_tx);
+		let vtxos = signed_builder.build_signed_vtxos();
 
 		// Should have 2 vtxos
 		assert_eq!(vtxos.len(), 2);
