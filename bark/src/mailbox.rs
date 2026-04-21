@@ -276,6 +276,17 @@ impl Wallet {
 			return Ok(());
 		}
 
+		// Redundantly re-register the received vtxos with the server. An
+		// up-to-date sender already does this after cosign, but older
+		// senders may not, so we do it on receive too to make sure the
+		// server has signed_tx rows for our spendable vtxos. Any failure
+		// is logged and swallowed: the receive must still proceed so we
+		// don't lose track of the vtxos locally, and later spends will
+		// retry registration if still needed.
+		if let Err(e) = self.register_vtxos_with_server(&new_vtxos).await {
+			warn!("Failed to register received arkoor vtxos with server: {:#}", e);
+		}
+
 		let balance = vtxos
 			.iter()
 			.map(|vtxo| vtxo.amount()).sum::<Amount>()
