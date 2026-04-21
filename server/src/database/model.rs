@@ -293,10 +293,6 @@ pub struct VirtualTransaction<'a> {
 	pub signed_tx: Option<Cow<'a, Transaction>>,
 	/// True if this is a funding transaction
 	pub is_funding: bool,
-	/// The datetime when an descendant became server-owned, or `None` if all
-	/// descendants are client-owned. When set, the server MUST ensure `signed_tx`
-	/// is populated.
-	pub server_may_own_descendant_since: Option<DateTime<Local>>,
 }
 
 impl<'a> VirtualTransaction<'a> {
@@ -304,13 +300,8 @@ impl<'a> VirtualTransaction<'a> {
 		self.signed_tx.as_deref()
 	}
 
-	/// Returns true if an descendant of this transaction is owned by the server.
-	pub fn server_may_own_descendant(&self) -> bool {
-		self.server_may_own_descendant_since.is_some()
-	}
-
 	pub fn new_unsigned(txid: Txid) -> Self {
-		Self { txid, signed_tx: None, is_funding: false, server_may_own_descendant_since: None }
+		Self { txid, signed_tx: None, is_funding: false }
 	}
 
 	pub fn new_signed_ref(tx: &'a Transaction) -> Self {
@@ -318,7 +309,6 @@ impl<'a> VirtualTransaction<'a> {
 			txid: tx.compute_txid(),
 			signed_tx: Some(Cow::Borrowed(tx)),
 			is_funding: false,
-			server_may_own_descendant_since: None,
 		}
 	}
 
@@ -327,17 +317,11 @@ impl<'a> VirtualTransaction<'a> {
 			txid: tx.compute_txid(),
 			signed_tx: Some(Cow::Owned(tx)),
 			is_funding: false,
-			server_may_own_descendant_since: None,
 		}
 	}
 
 	pub fn as_funding(mut self) -> Self {
 		self.is_funding = true;
-		self
-	}
-
-	pub fn as_server_owned_since(mut self, since: DateTime<Local>) -> Self {
-		self.server_may_own_descendant_since = Some(since);
 		self
 	}
 }
@@ -357,10 +341,8 @@ impl TryFrom<Row> for VirtualTransaction<'static> {
 			.with_context(|| format!("Failed to parse signed_tx for txid {}", txid))?
 			.map(|tx| Cow::Owned(tx));
 		let is_funding: bool = row.get("is_funding");
-		let server_may_own_descendant_since: Option<DateTime<Local>> =
-			row.get("server_may_own_descendant_since");
 
-		Ok(Self { txid, signed_tx, is_funding, server_may_own_descendant_since })
+		Ok(Self { txid, signed_tx, is_funding })
 	}
 }
 

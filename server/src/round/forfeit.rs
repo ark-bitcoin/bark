@@ -162,10 +162,6 @@ impl Server {
 			.mark_vtxos_claimed(output_vtxo_ids);
 		self.db.execute_vtxo_tree_update(update).await
 			.context("failed to execute vtxo tree update")?;
-		let txids = vtxos.values().flat_map(|v| v.vtxo.transactions().map(|i| i.tx.compute_txid()))
-			.chain(ff_txids);
-		self.db.mark_server_may_own_descendants(txids).await
-			.context("failed to mark server_may_own_descendants")?;
 
 		self.db.mark_participation_forfeited(unlock_hash).await
 			.context("failed to mark participation as forfeited")?;

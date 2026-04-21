@@ -180,8 +180,7 @@ impl VtxoTreeUpdate {
 	// -- virtual tx upserts --
 	//
 	// All virtual tx upserts are idempotent. Inserting the same txid twice
-	// will update signed_tx and server_may_own_descendant_since if they
-	// were previously NULL. Never fails on conflict.
+	// will update signed_tx if it was previously NULL. Never fails on conflict.
 
 	/// Upsert a signed funding transaction.
 	pub fn upsert_funding_tx(mut self, tx: &Transaction) -> Self {
@@ -396,27 +395,21 @@ async fn upsert_virtual_transactions<T: GenericClient>(
 	let mut txids = Vec::with_capacity(txs.len());
 	let mut signed_txs: Vec<Option<Vec<u8>>> = Vec::with_capacity(txs.len());
 	let mut is_funding = Vec::with_capacity(txs.len());
-	let mut owned_since: Vec<Option<chrono::DateTime<chrono::Local>>> = Vec::with_capacity(txs.len());
 	for vtx in txs {
 		txids.push(vtx.txid.to_string());
 		signed_txs.push(vtx.signed_tx().map(bitcoin::consensus::serialize));
 		is_funding.push(vtx.is_funding);
-		owned_since.push(vtx.server_may_own_descendant_since);
 	}
 	client.execute("
 		INSERT INTO virtual_transaction
-			(txid, signed_tx, is_funding, server_may_own_descendant_since, created_at, updated_at)
-		SELECT txid, signed_tx, is_funding, owned_since, NOW(), NOW()
-		FROM UNNEST($1::text[], $2::bytea[], $3::bool[], $4::timestamptz[])
-			AS u(txid, signed_tx, is_funding, owned_since)
+			(txid, signed_tx, is_funding, created_at, updated_at)
+		SELECT txid, signed_tx, is_funding, NOW(), NOW()
+		FROM UNNEST($1::text[], $2::bytea[], $3::bool[])
+			AS u(txid, signed_tx, is_funding)
 		ON CONFLICT (txid) DO UPDATE SET
 			signed_tx = COALESCE(virtual_transaction.signed_tx, EXCLUDED.signed_tx),
-			server_may_own_descendant_since = COALESCE(
-				virtual_transaction.server_may_own_descendant_since,
-				EXCLUDED.server_may_own_descendant_since
-			),
 			updated_at = NOW()
-	", &[&txids, &signed_txs, &is_funding, &owned_since]).await
+	", &[&txids, &signed_txs, &is_funding]).await
 		.context("failed to upsert virtual transactions")?;
 	Ok(())
 }

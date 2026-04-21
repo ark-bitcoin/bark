@@ -195,10 +195,12 @@ impl Server {
 			);
 		};
 
-		// Mark transactions as having server-owned descendants before initiating payment
-		let txids = vtxos.iter().flat_map(|v| v.transactions().map(|i| i.tx.compute_txid()));
-		self.db.mark_server_may_own_descendants(txids).await
-			.context("failed to mark server_may_own_descendants")?;
+		// Verify register_vtxos was called for the input VTXOs before
+		// initiating the payment. Fails early if the client skipped it.
+		let txids = vtxos.iter()
+			.flat_map(|v| v.transactions().map(|i| i.tx.compute_txid()));
+		self.db.check_vtxo_transactions_registered(txids).await
+			.context("register_vtxos not called for input VTXOs")?;
 
 		// Spawn a task that performs the payment, keep the difference between the payment amount
 		// and the VTXO sum as a fee.

@@ -368,9 +368,9 @@ CREATE FUNCTION public.virtual_transaction_history_trigger() RETURNS trigger
     AS $$
 BEGIN
 	INSERT INTO virtual_transaction_history (
-		txid, signed_tx, is_funding, server_may_own_descendant_since, created_at, updated_at
+		txid, signed_tx, is_funding, created_at, updated_at
 	) VALUES (
-		OLD.txid, OLD.signed_tx, OLD.is_funding, OLD.server_may_own_descendant_since, OLD.created_at, OLD.updated_at
+		OLD.txid, OLD.signed_tx, OLD.is_funding, OLD.created_at, OLD.updated_at
 	);
 
 	IF NEW.updated_at = OLD.updated_at AND NEW.updated_at <> NOW() THEN
@@ -1158,7 +1158,6 @@ CREATE TABLE public.virtual_transaction (
     txid text NOT NULL,
     signed_tx bytea,
     is_funding boolean NOT NULL,
-    server_may_own_descendant_since timestamp with time zone,
     created_at timestamp without time zone NOT NULL,
     updated_at timestamp without time zone NOT NULL
 );
@@ -1172,7 +1171,6 @@ CREATE TABLE public.virtual_transaction_history (
     txid text,
     signed_tx bytea,
     is_funding boolean,
-    server_may_own_descendant_since timestamp with time zone,
     created_at timestamp without time zone,
     updated_at timestamp without time zone
 );
