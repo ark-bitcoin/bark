@@ -188,6 +188,7 @@ dependencies = [
  "tokio",
  "tokio-postgres",
  "tokio-stream",
+ "tokio-tungstenite",
  "toml 0.8.23",
  "tonic 0.14.2",
  "tonic-health",
