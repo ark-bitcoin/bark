@@ -128,16 +128,16 @@ impl Server {
 			);
 			let ff_txid = ff_tx.compute_txid();
 
-			// NB if some succeed and others don't, we just don't respond the preimage and
-			// the user has to do the same dance over again
-			self.db.set_forfeit_transactions(unlock_hash, input.vtxo_id, &ff_tx).await
-				.context("error storing signed forfeit txs")?;
-
 			ff_txs.push(ff_tx);
 			ff_txids.push(ff_txid);
 			ff_vtxos.push(ff_vtxo);
 			input_forfeit_pairs.push((input.vtxo_id, ff_txid));
 		}
+
+		// Persist all signed forfeit txs in a single batch. Either all succeed or
+		// none do; on a partial failure the user retries with the same bundles.
+		self.db.set_forfeit_transactions(unlock_hash, &vtxo_ids, &ff_txs, &ff_txids).await
+			.context("error storing signed forfeit txs")?;
 
 		// Transition the round output vtxos from 'unclaimed' to 'spendable' and
 		// record the forfeit txid on the round inputs.

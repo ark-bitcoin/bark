@@ -1319,21 +1319,19 @@ async fn set_forfeit_transactions_is_idempotent() {
 		).await.unwrap();
 	}
 
-	// Build one distinct forfeit tx per input. Using distinct txs also lets us
-	// check that set_forfeit_transactions only touches the one vtxo row it
-	// was told about — the other rows' oor_spent_txid should stay untouched
-	// until their own call runs.
+	// Build one distinct forfeit tx per input. Using distinct txs lets us
+	// check that each vtxo row ends up with its own oor_spent_txid and not
+	// some other input's — i.e. that the batched UNNEST join pairs vtxo_ids
+	// and forfeit txs by position.
 	let forfeit_txs = [dummy_tx(100), dummy_tx(101), dummy_tx(102)];
 	let forfeit_txids = forfeit_txs.iter().map(|t| t.compute_txid()).collect::<Vec<_>>();
 
-	// First pass: forfeit every input once.
-	for (vtxo, ff_tx) in input_vtxos.iter().zip(forfeit_txs.iter()) {
-		db.set_forfeit_transactions(unlock_hash, vtxo.id(), ff_tx).await
-			.expect("first call should succeed");
-	}
+	// First call: batch-forfeit all inputs in one db transaction.
+	db.set_forfeit_transactions(unlock_hash, &input_vtxo_ids, &forfeit_txs, &forfeit_txids).await
+		.expect("first call should succeed");
 
-	// Helper: read back the state into a (vtxo_id -> forfeit_txid) map and
-	// assert both the input-side and vtxo-side rows have the expected values.
+	// Helper: read back the state and assert both the input-side and
+	// vtxo-side rows have the expected values for every input.
 	let assert_all_forfeited = || async {
 		let part = db.get_round_participation_by_unlock_hash(unlock_hash).await.unwrap()
 			.expect("participation should exist");
@@ -1355,14 +1353,12 @@ async fn set_forfeit_transactions_is_idempotent() {
 
 	assert_all_forfeited().await;
 
-	// Second pass: replay the exact same calls. Each UPDATE rewrites the same
-	// row with the same value, so the rows_affected guards still hold and the
-	// observable state must be unchanged. This is the idempotency property
-	// that lets a client safely retry after a transient failure.
-	for (vtxo, ff_tx) in input_vtxos.iter().zip(forfeit_txs.iter()) {
-		db.set_forfeit_transactions(unlock_hash, vtxo.id(), ff_tx).await
-			.expect("repeat call with same args should succeed");
-	}
+	// Second call: replay the exact same batch. Each UPDATE rewrites the same
+	// rows with the same values, so the rows_affected guards still hold and
+	// the observable state must be unchanged. This is the idempotency
+	// property that lets a client safely retry after a transient failure.
+	db.set_forfeit_transactions(unlock_hash, &input_vtxo_ids, &forfeit_txs, &forfeit_txids).await
+		.expect("repeat call with same args should succeed");
 
 	assert_all_forfeited().await;
 }
