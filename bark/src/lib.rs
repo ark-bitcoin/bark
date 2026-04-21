@@ -1025,14 +1025,7 @@ impl Wallet {
 		).await?;
 		let chain = Arc::new(chain_source_client);
 
-		let server = match Self::connect_to_server(&config, properties.network).await {
-			Ok(s) => Some(s),
-			Err(e) => {
-				warn!("Ark server handshake failed: {:#}", e);
-				None
-			}
-		};
-		let server = parking_lot::RwLock::new(server);
+		let server = parking_lot::RwLock::new(None);
 
 		let notifications = NotificationDispatch::new();
 		let movements = Arc::new(MovementManager::new(db.clone(), notifications.clone()));
@@ -1115,6 +1108,14 @@ impl Wallet {
 	}
 
 	async fn require_server(&self) -> anyhow::Result<(ServerConnection, ArkInfo)> {
+		// Connect lazily if not yet connected.
+		if self.server.read().is_none() {
+			let network = self.properties().await?.network;
+			let conn = Self::connect_to_server(&self.config, network).await
+				.context("You should be connected to Ark server to perform this action")?;
+			let _ = self.server.write().insert(conn);
+		}
+
 		let conn = self.server.read().clone()
 			.context("You should be connected to Ark server to perform this action")?;
 		let ark_info = conn.ark_info().await?;
@@ -1186,6 +1187,16 @@ impl Wallet {
 			Some(srv) => Ok(Some(srv.ark_info().await?)),
 			_ => Ok(None),
 		}
+	}
+
+	/// Return [ArkInfo], connecting lazily if not yet connected.
+	///
+	/// Errors if the server cannot be reached or if the server's pubkey
+	/// or mailbox pubkey no longer matches what was stored at wallet
+	/// creation.
+	pub async fn require_ark_info(&self) -> anyhow::Result<ArkInfo> {
+		let (_, ark_info) = self.require_server().await?;
+		Ok(ark_info)
 	}
 
 	/// Return the [Balance] of the wallet.

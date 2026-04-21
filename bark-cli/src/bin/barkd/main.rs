@@ -351,6 +351,13 @@ async fn main() -> anyhow::Result<()>{
 				let wallet = Arc::new(wallet);
 				let onchain = Arc::new(RwLock::new(onchain));
 
+				// Warm up `wallet.server` before spawning the daemon so
+				// that subsequent REST requests don't race with the daemon's
+				// first connection check.
+				if let Err(e) = wallet.refresh_server().await {
+					warn!("Ark server handshake failed on wallet creation: {:#}", e);
+				}
+
 				let daemon_handle = wallet.run_daemon(Some(onchain.clone()))?;
 				let _ = daemon.write().await.insert(daemon_handle);
 
