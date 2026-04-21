@@ -105,6 +105,7 @@ impl Server {
 		let mut ff_txs = Vec::with_capacity(forfeits.len());
 		let mut ff_txids = Vec::with_capacity(forfeits.len());
 		let mut ff_vtxos = Vec::with_capacity(forfeits.len());
+		let mut input_forfeit_pairs = Vec::with_capacity(forfeits.len());
 		for vtxo_ff in forfeits {
 			let input = part.inputs.iter().find(|i| i.vtxo_id == vtxo_ff.vtxo_id)
 				.expect("checked this before");
@@ -137,6 +138,7 @@ impl Server {
 			ff_txs.push(ff_tx);
 			ff_txids.push(ff_txid);
 			ff_vtxos.push(ff_vtxo);
+			input_forfeit_pairs.push((input.vtxo_id, ff_txid));
 		}
 
 		// Transition the round output vtxos from 'unclaimed' to 'spendable' and
@@ -152,11 +154,6 @@ impl Server {
 				Ok(tree.build_vtxo(idx).id())
 			})
 			.collect::<anyhow::Result<Vec<_>>>()?;
-
-		let input_forfeit_pairs = part.inputs.iter()
-			.zip(ff_txids.iter())
-			.map(|(input, txid)| (input.vtxo_id, *txid))
-			.collect::<Vec<_>>();
 
 		let update = VtxoTreeUpdate::new()
 			.upsert_signed_tx(ff_txs)
