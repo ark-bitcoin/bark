@@ -1,8 +1,7 @@
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 use anyhow::Context;
-use bitcoin::Amount;
 use bitcoin::secp256k1::Keypair;
 
 use ark::{musig, VtxoId};
@@ -59,25 +58,25 @@ impl Server {
 		&self,
 		forfeits: &[HashLockedForfeitBundle],
 	) -> anyhow::Result<UnlockPreimage> {
-		// fetch vtxos and perform some checks on the bundles
-		let mut total_amount = Amount::ZERO;
-		let mut vtxos = HashMap::with_capacity(forfeits.len());
+		// validate bundles and collect vtxo ids before hitting the database,
+		// so the batch fetch below sees a clean set of ids.
 		let mut unlock_hash = None;
+		let mut vtxo_ids = Vec::with_capacity(forfeits.len());
+		let mut seen = HashSet::with_capacity(forfeits.len());
 		for bundle in forfeits {
-			let vtxo_id = bundle.vtxo_id;
 			if *unlock_hash.get_or_insert(bundle.unlock_hash) != bundle.unlock_hash {
 				return badarg!("not all forfeit bundles have same unlock hash");
 			}
-
-			let vtxo = self.db.get_user_vtxo_by_id(vtxo_id).await?;
-			total_amount += vtxo.vtxo.amount();
-
-			if vtxos.insert(vtxo_id, vtxo).is_some() {
-				return badarg!("duplicate vtxo with id {}", vtxo_id);
+			if !seen.insert(bundle.vtxo_id) {
+				return badarg!("duplicate vtxo with id {}", bundle.vtxo_id);
 			}
+			vtxo_ids.push(bundle.vtxo_id);
 		}
 
 		let unlock_hash = unlock_hash.badarg("zero forfeit bundles provided")?;
+
+		// fetch all input vtxos in a single query; result is in the same order as vtxo_ids
+		let vtxos = self.db.get_user_vtxos_by_id(&vtxo_ids).await?;
 
 		// fetch the round participation
 		let part = self.db.get_round_participation_by_unlock_hash(unlock_hash).await?
@@ -106,7 +105,7 @@ impl Server {
 		let mut ff_txids = Vec::with_capacity(forfeits.len());
 		let mut ff_vtxos = Vec::with_capacity(forfeits.len());
 		let mut input_forfeit_pairs = Vec::with_capacity(forfeits.len());
-		for vtxo_ff in forfeits {
+		for (vtxo_ff, vtxo) in forfeits.iter().zip(&vtxos) {
 			let input = part.inputs.iter().find(|i| i.vtxo_id == vtxo_ff.vtxo_id)
 				.expect("checked this before");
 			let nonces = self.forfeit_nonces.lock().take(&input.vtxo_id).with_badarg(||
@@ -118,7 +117,6 @@ impl Server {
 				);
 			}
 			let pub_nonce = nonces.public_nonce();
-			let vtxo = self.db.get_user_vtxo_by_id(input.vtxo_id).await?;
 			if let Err(e) = vtxo_ff.verify(&vtxo.vtxo, &pub_nonce) {
 				return badarg!("forfeit validation failed for vtxo {}: {}", input.vtxo_id, e);
 			}
