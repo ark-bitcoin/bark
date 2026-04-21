@@ -1,0 +1,8 @@
+- Add `bip321` crate for BIP 321 bitcoin payment URI parsing and serialization
+  Implements the `bitcoin:` URI scheme for encoding payment instructions in
+  clickable links and QR codes. Supports the standard payment parameters
+  (`lightning`, `lno`, `sp`, `pay`, `bc`/`tb`) as well as a pluggable
+  `ExtensionHandler` trait for custom or wallet-specific parameters. Handles
+  `req-` prefixed required parameters per the spec, rejecting URIs whose
+  mandatory extensions are unrecognised.
+  [#1921](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1921)
