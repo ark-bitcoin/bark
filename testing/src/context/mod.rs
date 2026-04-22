@@ -1,6 +1,7 @@
 
 use std::net::SocketAddr;
 use std::path::PathBuf;
+use std::pin::Pin;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -17,6 +18,7 @@ use bitcoin_ext::fee::P2A_SCRIPT;
 use bitcoin_ext::rpc::BitcoinRpcExt;
 use bitcoincore_rpc::json::SignRawTransactionInput;
 use bitcoincore_rpc::RpcApi;
+use ::futures::future::always_ready;
 use futures::future::join_all;
 use log::{debug, info, trace};
 use server::vtxopool::VtxoTarget;
@@ -608,41 +610,51 @@ impl TestContext {
 		).unwrap()
 	}
 
-	/// Wait until all secondary bitcoind nodes and electrs have synced to
-	/// the central bitcoind's current tip.
+	/// Wait until all secondary bitcoind nodes, electrs and the central captaind
+	/// have synced to the central bitcoind's current tip.
 	///
 	/// For electrs, polls the Prometheus `tip_height` metric rather than
 	/// the REST API height, because the REST height can update before the
 	/// history (address) index is ready — causing BDK wallet syncs to miss txs.
 	pub async fn await_block_count_sync(&self) {
 		let Some(bitcoind) = self.bitcoind.as_ref() else { return };
-		let height = bitcoind.get_block_count().await;
+		let tip = bitcoind.get_block_count().await;
+		trace!("Awaiting block count sync until {tip}...");
 
 		// Wait for all secondary bitcoind nodes to reach the same height.
-		let handles: Vec<_> = self.secondary_bitcoinds.lock().unwrap()
-			.iter()
-			.map(|h| (h.name.clone(), h.client()))
-			.collect();
-		for (name, client) in &handles {
+		let bitcoinds = self.secondary_bitcoinds.lock().unwrap().clone();
+		let bitcoinds = join_all(bitcoinds.into_iter().map(|b| async move {
+			let client = b.client();
 			loop {
 				match client.get_block_count() {
-					Ok(current) if current >= height => break,
+					Ok(current) if current >= tip => break,
 					Ok(current) => {
-						trace!("Waiting for {} to reach height {} (at {})", name, height, current);
+						trace!("Waiting for {} to reach height {} (at {})", b.name, tip, current);
 					}
 					// Node was shut down mid-test (e.g. server restart tests).
 					Err(e) => {
-						debug!("Skipping sync for {} (node unreachable: {})", name, e);
+						debug!("Skipping sync for {} (node unreachable: {})", b.name, e);
 						break;
 					}
 				}
 				tokio::time::sleep(Duration::from_millis(100)).await;
 			}
-		}
+		}));
 
-		if let Some(electrs) = self.electrs.as_ref() {
-			electrs.await_tip_synced(height as u32).await;
-		}
+		let electrs: Pin<Box<dyn Future<Output = ()>>> = if let Some(electrs) = self.electrs.as_ref() {
+			Box::pin(electrs.await_tip_synced(tip as u32))
+		} else {
+			Box::pin(always_ready(|| ()))
+		};
+
+		// wait for all captainds to catch up
+		let captainds = self.captainds.lock().unwrap().clone();
+		let captainds = join_all(captainds.into_iter().map(|srv| async move {
+			srv.wait_for_sync_height(tip as u32).await
+		}));
+
+		// then join all futures
+		join!(bitcoinds, electrs, captainds);
 	}
 
 	/// Waits for the given transaction ID to be available in both the central bitcoind and electrs
