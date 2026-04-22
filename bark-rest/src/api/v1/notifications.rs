@@ -119,14 +119,17 @@ async fn handle_socket(socket: WebSocket, state: ServerState) {
 	// Spawn a task to forward notifications from the channel to the websocket
 	let mut send_task = tokio::spawn(async move {
 		loop {
-			if let Some(notification) = notification_rx.next().await {
-				let notification = WalletNotification::from(notification);
-				let json = serde_json::to_string(&notification).unwrap();
+			match notification_rx.next().await {
+				Some(notification) => {
+					let notification = WalletNotification::from(notification);
+					let json = serde_json::to_string(&notification).unwrap();
 
-				// Send the notification as a text message
-				if sender.send(Message::Text(json.into())).await.is_err() {
-					break;
+					// Send the notification as a text message
+					if sender.send(Message::Text(json.into())).await.is_err() {
+						break;
+					}
 				}
+				None => break,
 			}
 		}
 	});
