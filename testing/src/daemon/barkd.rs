@@ -11,6 +11,7 @@ use tokio::process::Command;
 
 use bark_json::cli::{ArkInfo, Balance, NextRoundStart, PendingBoardInfo};
 use bark_json::cli::onchain::{Address, OnchainBalance};
+use bark_json::notifications::WalletNotification;
 use bark_rest::auth::AuthToken;
 use bark_json::primitives::{TransactionInfo, UtxoInfo, WalletVtxoInfo};
 use bark_json::web::EncodedVtxoResponse;
@@ -18,6 +19,8 @@ use bark_json::web::{BarkNetwork, ConnectedResponse, CreateWalletRequest, TipRes
 use bark_json::web::{FeeEstimateResponse, OnchainFeeRatesResponse};
 use bark_rest_client::apis::configuration::Configuration;
 use bark_rest_client::apis::{bitcoin_api, boards_api, default_api, fees_api, onchain_api, wallet_api};
+use futures::{Stream, StreamExt};
+use tokio_tungstenite::tungstenite::Message;
 
 use crate::{Bitcoind, Daemon, DaemonHelper};
 use crate::constants::env::{BARKD_EXEC, BARK_TOKIO_WORKER_THREADS};
@@ -127,6 +130,60 @@ impl Barkd {
 		let addr: Address = onchain_api::onchain_address(&config).await
 			.expect("failed to get barkd onchain address");
 		addr.address.require_network(Network::Regtest).unwrap()
+	}
+
+	/// Generate a new Ark receiving address.
+	pub async fn ark_address(&self) -> String {
+		let config = self.client_config();
+		let resp = wallet_api::address(&config).await
+			.expect("failed to get barkd ark address");
+		resp.address
+	}
+
+	/// Request a short-lived websocket authentication ticket.
+	async fn create_ws_ticket(&self) -> String {
+		// The ticket endpoint is exercised directly via reqwest rather than the
+		// generated bark-rest-client because its ticket + websocket flow can't
+		// be represented in OpenAPI and we need a raw websocket handshake
+		// afterwards anyway.
+		let url = format!("{}/api/v1/notifications/ws/ticket", self.base_url());
+		let resp = reqwest::Client::new()
+			.get(&url)
+			.bearer_auth(self.inner.auth_token.encode())
+			.send()
+			.await
+			.expect("barkd ws ticket request failed")
+			.error_for_status()
+			.expect("barkd ws ticket non-success status");
+		resp.json::<String>().await.expect("barkd ws ticket decode failed")
+	}
+
+	/// Open a websocket connection to `/notifications/ws` and return a stream
+	/// of [`WalletNotification`]s pushed by the daemon.
+	///
+	/// Subscribe *before* triggering the event you want to observe — the
+	/// underlying broadcast channel does not buffer messages for late
+	/// subscribers.
+	pub async fn notification_websocket(&self)
+		-> impl Stream<Item = WalletNotification> + Unpin + Send
+	{
+		let ticket = self.create_ws_ticket().await;
+		let url = format!(
+			"ws://127.0.0.1:{}/api/v1/notifications/ws?ticket={}",
+			self.inner.port, ticket,
+		);
+		let (ws, _resp) = tokio_tungstenite::connect_async(&url).await
+			.expect("failed to open barkd websocket");
+		let (_sink, stream) = ws.split();
+		Box::pin(stream.filter_map(|msg| async move {
+			match msg.ok()? {
+				Message::Text(txt) => Some(
+					serde_json::from_str::<WalletNotification>(&txt)
+						.expect("invalid WalletNotification json"),
+				),
+				_ => None,
+			}
+		}))
 	}
 
 	/// Ping the barkd REST server.

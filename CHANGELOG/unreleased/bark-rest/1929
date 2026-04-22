@@ -1,0 +1,7 @@
+- Expose a websocket gateway for real-time wallet notifications
+  Clients can request a short-lived ticket from
+  `/api/v1/notifications/ws/ticket` and upgrade to a long-lived websocket
+  connection at `/api/v1/notifications/ws` to receive `WalletNotification`
+  messages as they are emitted by the wallet, avoiding the need to poll
+  REST endpoints for updates.
+  [#1929](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1929)

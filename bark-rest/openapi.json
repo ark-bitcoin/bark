@@ -1074,6 +1074,37 @@
         }
       }
     },
+    "/api/v1/notifications/ws/ticket": {
+      "get": {
+        "tags": [
+          "notifications"
+        ],
+        "summary": "Create a new websocket ticket. You can call then `ws://<host>/api/v1/notifications/ws?ticket=<ticket>` to subscribe to notifications",
+        "operationId": "websocket_ticket",
+        "responses": {
+          "200": {
+            "description": "Returns the websocket ticket. Valid to open a websocket connection in the next 10 minutes.",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/onchain/addresses/next": {
       "post": {
         "tags": [
@@ -5487,6 +5518,64 @@
           }
         }
       },
+      "WalletNotification": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "A new movement was created",
+            "required": [
+              "movement",
+              "type"
+            ],
+            "properties": {
+              "movement": {
+                "$ref": "#/components/schemas/Movement"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "movement-created"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "An existing movement was updated",
+            "required": [
+              "movement",
+              "type"
+            ],
+            "properties": {
+              "movement": {
+                "$ref": "#/components/schemas/Movement"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "movement-updated"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Some notifications were lost because they are not handled fast enough",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "channel-lagging"
+                ]
+              }
+            }
+          }
+        ],
+        "description": "A notification of something happening in the wallet"
+      },
       "WalletVtxoInfo": {
         "allOf": [
           {
@@ -5561,6 +5650,10 @@
     {
       "name": "bitcoin",
       "description": "Query bitcoin network data."
+    },
+    {
+      "name": "notifications",
+      "description": "Receive real-time notifications from barkd."
     }
   ]
 }

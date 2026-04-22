@@ -117,6 +117,7 @@ pub mod default_api;
 pub mod exits_api;
 pub mod fees_api;
 pub mod lightning_api;
+pub mod notifications_api;
 pub mod onchain_api;
 pub mod wallet_api;
 

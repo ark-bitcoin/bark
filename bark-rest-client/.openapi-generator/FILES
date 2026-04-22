@@ -116,6 +116,7 @@ docs/MovementSubsystem.md
 docs/MovementTimestamp.md
 docs/NextRoundStart.md
 docs/NotFoundError.md
+docs/NotificationsApi.md
 docs/OffboardAllFeeEstimateQuery.md
 docs/OffboardAllRequest.md
 docs/OffboardFees.md
@@ -160,6 +161,10 @@ docs/WalletApi.md
 docs/WalletDeleteRequest.md
 docs/WalletDeleteResponse.md
 docs/WalletExistsResponse.md
+docs/WalletNotification.md
+docs/WalletNotificationOneOf.md
+docs/WalletNotificationOneOf1.md
+docs/WalletNotificationOneOf2.md
 docs/WalletVtxoInfo.md
 git_push.sh
 src/apis/bitcoin_api.rs
@@ -170,6 +175,7 @@ src/apis/exits_api.rs
 src/apis/fees_api.rs
 src/apis/lightning_api.rs
 src/apis/mod.rs
+src/apis/notifications_api.rs
 src/apis/onchain_api.rs
 src/apis/wallet_api.rs
 src/lib.rs
@@ -323,4 +329,8 @@ src/models/vtxos_query.rs
 src/models/wallet_delete_request.rs
 src/models/wallet_delete_response.rs
 src/models/wallet_exists_response.rs
+src/models/wallet_notification.rs
+src/models/wallet_notification_one_of.rs
+src/models/wallet_notification_one_of_1.rs
+src/models/wallet_notification_one_of_2.rs
 src/models/wallet_vtxo_info.rs
