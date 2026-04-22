@@ -1,4 +1,6 @@
 
+use std::sync::Arc;
+
 use ark_testing::{btc, sat, Bark, Captaind, TestContext, Tor, TorConfig, HiddenServiceConfig};
 use ark_testing::constants::{BOARD_CONFIRMATIONS};
 use ark_testing::context::LightningPaymentSetup;
@@ -7,7 +9,7 @@ use ark_testing::util::FutureExt;
 const SERVER_VIRTUAL_PORT: u16 = 3535;
 const CHAIN_VIRTUAL_PORT: u16 = 8080;
 
-async fn setup(test_name: &str) -> (TestContext, Captaind, Tor, LightningPaymentSetup) {
+async fn setup(test_name: &str) -> (TestContext, Arc<Captaind>, Tor, LightningPaymentSetup) {
 	let ctx = TestContext::new(test_name).await;
 	let lightning = ctx.new_lightning_setup("lightningd").await;
 	let srv = ctx.captaind("server").lightningd(&lightning.internal).funded(btc(10)).create().await;
@@ -48,7 +50,7 @@ fn chain_onion(tor: &Tor) -> String {
 
 async fn smoke_test(
 	ctx: &TestContext,
-	srv: &Captaind,
+	srv: &Arc<Captaind>,
 	lightning: LightningPaymentSetup,
 	bark1: Bark,
 	bark2: Bark,

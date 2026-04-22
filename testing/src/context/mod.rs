@@ -90,12 +90,17 @@ impl ToArkUrl for str {
 impl ToArkUrl for ArkRpcProxyServer {
 	fn ark_url(&self) -> String { self.address.clone() }
 }
+impl<T: ToArkUrl> ToArkUrl for Arc<T> {
+	fn ark_url(&self) -> String { <T as ToArkUrl>::ark_url(self.as_ref()) }
+}
 
 pub struct TestContext {
 	pub test_name: String,
 	pub datadir: PathBuf,
 
 	pub bitcoind: Option<Arc<Bitcoind>>,
+	/// the main captaind instance for the test
+	pub captainds: Mutex<Vec<Arc<Captaind>>>,
 
 	/// RPC handles for secondary bitcoind nodes that are p2p-connected to the
 	/// central one. Used by [`await_block_count_sync`] to ensure blocks have
@@ -125,6 +130,7 @@ impl TestContext {
 			test_name,
 			datadir,
 			bitcoind: None,
+			captainds: Mutex::new(Vec::new()),
 			secondary_bitcoinds: Mutex::new(Vec::new()),
 			electrs: None,
 			postgres_manager: None,
@@ -233,6 +239,10 @@ impl TestContext {
 
 	pub fn captaind(&self, name: impl AsRef<str>) -> builders::CaptaindBuilder<'_> {
 		builders::CaptaindBuilder::new(self, name)
+	}
+
+	pub fn register_test_captaind(&self, captaind: Arc<Captaind>) {
+		self.captainds.lock().unwrap().push(captaind);
 	}
 
 	pub fn bark<'a>(&'a self, name: impl AsRef<str>, srv: &'a dyn ToArkUrl) -> builders::BarkBuilder<'a> {

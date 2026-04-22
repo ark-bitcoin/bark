@@ -54,7 +54,8 @@ impl<'a> CaptaindBuilder<'a> {
 		self
 	}
 
-	pub async fn create(self) -> Captaind {
+	/// Create the server but do not register it as the main server for the test
+	pub async fn create_unregistered(self) -> Captaind {
 		let bitcoind = match self.bitcoind {
 			Some(bitcoind) => bitcoind,
 			None => Arc::new(self.ctx.new_bitcoind(format!("{}_bitcoind", self.name)).await),
@@ -74,6 +75,14 @@ impl<'a> CaptaindBuilder<'a> {
 			self.ctx.fund_captaind(&ret, amount).await;
 		}
 
+		ret
+	}
+
+	/// Create the server and register it as the main server for the test
+	pub async fn create(self) -> Arc<Captaind> {
+		let ctx = self.ctx;
+		let ret = Arc::new(self.create_unregistered().await);
+		ctx.register_test_captaind(ret.clone());
 		ret
 	}
 }

@@ -378,7 +378,7 @@ async fn max_vtxo_exit_depth() {
 #[tokio::test]
 async fn restart_fresh_server() {
 	let ctx = TestContext::new("server/restart_fresh_server").await;
-	let mut srv = ctx.captaind("server").create().await;
+	let mut srv = ctx.captaind("server").create_unregistered().await;
 	srv.stop().await.unwrap();
 	srv.start().await.unwrap();
 }
@@ -386,7 +386,7 @@ async fn restart_fresh_server() {
 #[tokio::test]
 async fn restart_funded_server() {
 	let ctx = TestContext::new("server/restart_funded_server").await;
-	let mut srv = ctx.captaind("server").funded(btc(10)).create().await;
+	let mut srv = ctx.captaind("server").funded(btc(10)).create_unregistered().await;
 	srv.stop().await.unwrap();
 	srv.start().await.unwrap();
 }
@@ -396,7 +396,7 @@ async fn restart_custom_cfg_server() {
 	let ctx = TestContext::new("server/restart_custom_cfg_server").await;
 	let mut srv = ctx.captaind("server").cfg(|cfg| {
 		cfg.vtxo_exit_delta = 24;
-	}).create().await;
+	}).create_unregistered().await;
 	srv.stop().await.unwrap();
 	srv.start().await.unwrap();
 }
@@ -404,7 +404,7 @@ async fn restart_custom_cfg_server() {
 #[tokio::test]
 async fn restart_server_with_payments() {
 	let ctx = TestContext::new("server/restart_server_with_payments").await;
-	let mut srv = ctx.captaind("server").funded(btc(10)).create().await;
+	let mut srv = ctx.captaind("server").funded(btc(10)).create_unregistered().await;
 	let bark1 = ctx.bark("bark1", &srv).create().await;
 	let bark2 = ctx.bark("bark2", &srv).create().await;
 	ctx.fund_bark(&bark1, sat(1_000_000)).await;
@@ -1014,7 +1014,7 @@ async fn captaind_config_change(){
 	let ctx = TestContext::new("server/captaind_config_change").await;
 	let mut srv = ctx.captaind("server").cfg(|cfg| {
 		cfg.vtxo_exit_delta = 12;
-	}).create().await;
+	}).create_unregistered().await;
 	ctx.fund_captaind(&srv, btc(10)).await;
 	let bark1 = ctx.bark("bark1", &srv).create().await;
 	let bark2 = ctx.bark("bark2", &srv).create().await;
