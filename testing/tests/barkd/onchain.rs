@@ -1,6 +1,8 @@
 
 use ark_testing::{sat, TestContext};
 
+use super::helpers::wait_for_onchain_balance;
+
 /// Verify that `POST /onchain/addresses/next` and `GET /onchain/balance` work end-to-end.
 #[tokio::test]
 async fn onchain_address_and_balance_barkd() {
@@ -11,12 +13,11 @@ async fn onchain_address_and_balance_barkd() {
 
 	let funded = sat(100_000);
 
-	// onchain_address() calls POST /onchain/addresses/next
 	let address = barkd.onchain_address().await;
 	ctx.bitcoind().fund_addr(address, funded).await;
 	ctx.generate_blocks(1).await;
 
-	// onchain_balance() calls POST /onchain/sync then GET /onchain/balance
+	wait_for_onchain_balance(&barkd, funded).await;
 	let balance = barkd.onchain_balance().await;
 	assert_eq!(balance, funded, "on-chain balance should equal funded amount");
 }
@@ -31,11 +32,8 @@ async fn onchain_utxos_and_transactions_barkd() {
 
 	let funded = sat(50_000);
 
-	// Fund via the helper (which calls POST /onchain/addresses/next internally).
 	ctx.fund_barkd(&barkd, funded).await;
-
-	// onchain_balance() syncs the wallet so the subsequent reads see the funded UTXO.
-	barkd.onchain_balance().await;
+	wait_for_onchain_balance(&barkd, funded).await;
 
 	let utxos = barkd.onchain_utxos().await;
 	assert_eq!(utxos.len(), 1, "should have exactly one UTXO after funding");
