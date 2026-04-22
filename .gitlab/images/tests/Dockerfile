@@ -45,7 +45,7 @@ RUN cat /etc/apt/trusted.gpg.d/wakemeops.gpg | gpg --dearmor > /etc/apt/trusted.
 	apt-get install -y --no-install-recommends glab && \
 	rm -rf /var/lib/apt/lists/*
 
-ENV RUST_BACKTRACE=1 \
+ENV RUST_BACKTRACE=full \
 	RUSTUP_TOOLCHAIN_VERSION=1.90 \
 	CARGO_PROFILE_RELEASE_BUILD_OVERRIDE_DEBUG=true \
 	DEBIAN_FRONTEND=noninteractive \
