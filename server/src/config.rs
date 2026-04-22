@@ -261,6 +261,23 @@ pub struct Postgres {
 	pub user: Option<String>,
 	pub password: Option<Secret<String>>,
 	pub max_connections: u32,
+	/// Timeout in seconds for acquiring a connection from the pool.
+	/// If a connection cannot be obtained within this time, the request fails.
+	#[serde(default = "defaults::connection_timeout_secs")]
+	pub connection_timeout_secs: u64,
+	/// Idle connections are removed from the pool after this many seconds.
+	/// This prevents zombie connections from accumulating.
+	#[serde(default = "defaults::idle_timeout_secs")]
+	pub idle_timeout_secs: u64,
+}
+
+mod defaults {
+	/// 10 seconds — short enough to fail fast on zombie connections,
+	/// long enough for normal pool contention.
+	pub fn connection_timeout_secs() -> u64 { 10 }
+
+	/// 10 minutes — recycle idle connections before they go stale.
+	pub fn idle_timeout_secs() -> u64 { 600 }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

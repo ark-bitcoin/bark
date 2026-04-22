@@ -26,6 +26,8 @@ pub fn host_base_config() -> config::Postgres {
 		user: Some("postgres".into()),
 		password: Some(Secret::new("postgres".into())),
 		max_connections: 10,
+		connection_timeout_secs: 10,
+		idle_timeout_secs: 600,
 	}
 }
 
@@ -92,6 +94,8 @@ impl PostgresHelper {
 			user: None,
 			password: None,
 			max_connections: 10,
+			connection_timeout_secs: 10,
+			idle_timeout_secs: 600,
 		}
 	}
 
