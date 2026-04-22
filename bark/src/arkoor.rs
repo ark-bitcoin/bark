@@ -1,7 +1,7 @@
 use anyhow::Context;
 use bitcoin::{Amount, NetworkKind};
 use bitcoin::hex::DisplayHex;
-use log::{info, error};
+use log::{info, warn, error};
 
 use ark::{VtxoPolicy, ProtocolEncoding};
 use ark::arkoor::ArkoorDestination;
@@ -83,17 +83,6 @@ impl Wallet {
 		Ok(())
 	}
 
-	pub(crate) async fn create_checkpointed_arkoor(
-		&self,
-		arkoor_dest: ArkoorDestination,
-	) -> anyhow::Result<ArkoorCreateResult> {
-		let inputs = self.select_vtxos_to_cover(arkoor_dest.total_amount).await?;
-		self.create_checkpointed_arkoor_with_vtxos(
-			arkoor_dest,
-			inputs.into_iter(),
-		).await
-	}
-
 	pub(crate) async fn create_checkpointed_arkoor_with_vtxos(
 		&self,
 		arkoor_dest: ArkoorDestination,
@@ -104,6 +93,14 @@ impl Wallet {
 		let (input_ids, inputs) = inputs.into_iter()
 			.map(|v| (v.id(), v))
 			.collect::<(Vec<_>, Vec<_>)>();
+
+		// Pre-register the input chains so the post-cosign register call
+		// for the outputs finds a signed chain anchor: register_vtxos
+		// validates a vtxo against its anchor's signed_tx in the DB,
+		// and boarded inputs sit unsigned in virtual_transaction (see
+		// register_board) until a register_vtxos call backfills them.
+		self.register_vtxos_with_server(&inputs).await
+			.context("failed to register arkoor input vtxos with server")?;
 
 		// Peek at a potential change keypair without storing it yet.
 		// We'll only store it if change is actually created.
@@ -182,8 +179,24 @@ impl Wallet {
 		let negative_amount = -amount.to_signed().context("Amount out-of-range")?;
 
 		let dest = ArkoorDestination { total_amount: amount, policy: destination.policy().clone() };
-		let arkoor = self.create_checkpointed_arkoor(dest.clone())
+		let inputs = self.select_vtxos_to_cover(dest.total_amount).await?;
+		let arkoor = self.create_checkpointed_arkoor_with_vtxos(dest.clone(), inputs.into_iter())
 			.await.context("failed to create arkoor transaction")?;
+
+		// Register destination and change after cosign so the server
+		// gets signed_tx rows for the shared checkpoint and both leaves:
+		// the watchman needs the checkpoint signed to rebroadcast on
+		// exit, and a later guarded spend (offboard, lightning pay) of
+		// either leaf needs the full chain signed. Failure is logged
+		// and swallowed: the receiver also re-registers on receive, and
+		// later spends will retry registration if the server still
+		// needs it.
+		let to_register = arkoor.created.iter()
+			.chain(arkoor.change.iter())
+			.collect::<Vec<_>>();
+		if let Err(e) = self.register_vtxos_with_server(&to_register).await {
+			warn!("Failed to register arkoor output vtxos with server: {:#}", e);
+		}
 
 		let mut movement = self.movements.new_guarded_movement_with_update(
 			Subsystem::ARKOOR,

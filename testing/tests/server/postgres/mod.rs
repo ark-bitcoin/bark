@@ -3,7 +3,7 @@ mod tree;
 use std::str::FromStr;
 
 use bitcoin::secp256k1::PublicKey;
-use bitcoin::Transaction;
+use bitcoin::{Transaction, Txid};
 use chrono::Local;
 
 use ark::{ServerVtxo, VtxoPolicy, VtxoRequest};
@@ -20,7 +20,7 @@ use bark::lightning_invoice::Bolt11Invoice;
 use bitcoin_ext::BlockRef;
 use cln_rpc::listsendpays_request::ListsendpaysIndex;
 
-use server::database::{BlockTable, Db, MailboxPayload, VirtualTransaction};
+use server::database::{BlockTable, Db, MailboxPayload};
 use server::database::tree::VtxoTreeUpdate;
 use server::database::ln::LightningHtlcSubscriptionStatus;
 use server::database::vtxopool::PoolVtxo;
@@ -409,6 +409,117 @@ async fn get_first_unsigned_virtual_transaction() {
 }
 
 #[tokio::test]
+async fn check_vtxo_transactions_registered_empty_input() {
+	let mut ctx = TestContext::new_minimal("postgresd/check_registered_empty").await;
+	ctx.init_central_postgres().await;
+	let postgres_cfg = ctx.new_postgres(&ctx.test_name).await;
+
+	Db::create(&postgres_cfg).await.expect("Database created");
+	let db = Db::connect(&postgres_cfg).await.expect("Connected to database");
+
+	// Fail closed: a caller with nothing to assert is a bug.
+	let err = db.check_vtxo_transactions_registered(Vec::<Txid>::new()).await
+		.expect_err("Empty input should fail");
+	assert!(err.to_string().contains("empty txid list"),
+		"Error should mention empty txid list: {}", err);
+}
+
+#[tokio::test]
+async fn check_vtxo_transactions_registered_all_signed() {
+	let mut ctx = TestContext::new_minimal("postgresd/check_registered_all_signed").await;
+	ctx.init_central_postgres().await;
+	let postgres_cfg = ctx.new_postgres(&ctx.test_name).await;
+
+	Db::create(&postgres_cfg).await.expect("Database created");
+	let db = Db::connect(&postgres_cfg).await.expect("Connected to database");
+
+	let tx1 = Transaction {
+		version: bitcoin::transaction::Version::non_standard(1),
+		lock_time: bitcoin::absolute::LockTime::ZERO,
+		input: vec![],
+		output: vec![],
+	};
+	let tx2 = Transaction {
+		version: bitcoin::transaction::Version::non_standard(2),
+		lock_time: bitcoin::absolute::LockTime::ZERO,
+		input: vec![],
+		output: vec![],
+	};
+	let txid1 = tx1.compute_txid();
+	let txid2 = tx2.compute_txid();
+
+	let update = VtxoTreeUpdate::new().upsert_signed_tx([tx1, tx2]);
+	db.execute_vtxo_tree_update(update).await.unwrap();
+
+	db.check_vtxo_transactions_registered([txid1, txid2]).await
+		.expect("All-signed input should succeed");
+}
+
+#[tokio::test]
+async fn check_vtxo_transactions_registered_fails_for_unsigned() {
+	let mut ctx = TestContext::new_minimal("postgresd/check_registered_unsigned").await;
+	ctx.init_central_postgres().await;
+	let postgres_cfg = ctx.new_postgres(&ctx.test_name).await;
+
+	Db::create(&postgres_cfg).await.expect("Database created");
+	let db = Db::connect(&postgres_cfg).await.expect("Connected to database");
+
+	let tx_signed = Transaction {
+		version: bitcoin::transaction::Version::non_standard(1),
+		lock_time: bitcoin::absolute::LockTime::ZERO,
+		input: vec![],
+		output: vec![],
+	};
+	let tx_unsigned = Transaction {
+		version: bitcoin::transaction::Version::non_standard(2),
+		lock_time: bitcoin::absolute::LockTime::ZERO,
+		input: vec![],
+		output: vec![],
+	};
+	let txid_signed = tx_signed.compute_txid();
+	let txid_unsigned = tx_unsigned.compute_txid();
+
+	let update = VtxoTreeUpdate::new()
+		.upsert_signed_tx([tx_signed])
+		.upsert_unsigned_tx([txid_unsigned]);
+	db.execute_vtxo_tree_update(update).await.unwrap();
+
+	let err = db.check_vtxo_transactions_registered([txid_signed, txid_unsigned]).await
+		.expect_err("Should fail when one tx is unsigned");
+	let msg = err.to_string();
+	assert!(msg.contains("NULL signed_tx"),
+		"Error should mention NULL signed_tx: {}", msg);
+	assert!(msg.contains(&txid_unsigned.to_string()),
+		"Error should name the unsigned txid: {}", msg);
+}
+
+#[tokio::test]
+async fn check_vtxo_transactions_registered_fails_for_nonexistent() {
+	let mut ctx = TestContext::new_minimal("postgresd/check_registered_nonexistent").await;
+	ctx.init_central_postgres().await;
+	let postgres_cfg = ctx.new_postgres(&ctx.test_name).await;
+
+	Db::create(&postgres_cfg).await.expect("Database created");
+	let db = Db::connect(&postgres_cfg).await.expect("Connected to database");
+
+	let tx_nonexistent = Transaction {
+		version: bitcoin::transaction::Version::non_standard(99),
+		lock_time: bitcoin::absolute::LockTime::ZERO,
+		input: vec![],
+		output: vec![],
+	};
+	let txid_nonexistent = tx_nonexistent.compute_txid();
+
+	let err = db.check_vtxo_transactions_registered([txid_nonexistent]).await
+		.expect_err("Should fail when tx does not exist");
+	let msg = err.to_string();
+	assert!(msg.contains("does not exist"),
+		"Error should mention 'does not exist': {}", msg);
+	assert!(msg.contains(&txid_nonexistent.to_string()),
+		"Error should name the non-existent txid: {}", msg);
+}
+
+#[tokio::test]
 async fn upsert_vtxos_with_txid() {
 	let mut ctx = TestContext::new_minimal("postgresd/vtxos_with_txid").await;
 	ctx.init_central_postgres().await;
@@ -439,178 +550,6 @@ async fn upsert_vtxos_with_txid() {
 	// Verify value matches vtxo.point().txid
 	assert_eq!(vtxo_txid, vtxo.point().txid.to_string(),
 		"vtxo_txid should match vtxo.point().txid");
-}
-
-#[tokio::test]
-async fn mark_server_may_own_descendants_empty_input() {
-	let mut ctx = TestContext::new_minimal("postgresd/mark_descendants_empty").await;
-	ctx.init_central_postgres().await;
-	let postgres_cfg = ctx.new_postgres(&ctx.test_name).await;
-
-	Db::create(&postgres_cfg).await.expect("Database created");
-	let db = Db::connect(&postgres_cfg).await.expect("Connected to database");
-
-	// Empty input should succeed
-	db.mark_server_may_own_descendants(&[]).await
-		.expect("Empty input should succeed");
-}
-
-#[tokio::test]
-async fn mark_server_may_own_descendants_all_signed() {
-	let mut ctx = TestContext::new_minimal("postgresd/mark_descendants_signed").await;
-	ctx.init_central_postgres().await;
-	let postgres_cfg = ctx.new_postgres(&ctx.test_name).await;
-
-	Db::create(&postgres_cfg).await.expect("Database created");
-	let db = Db::connect(&postgres_cfg).await.expect("Connected to database");
-
-	// Create signed transactions
-	let tx1 = Transaction {
-		version: bitcoin::transaction::Version::non_standard(1),
-		lock_time: bitcoin::absolute::LockTime::ZERO,
-		input: vec![],
-		output: vec![],
-	};
-	let tx2 = Transaction {
-		version: bitcoin::transaction::Version::non_standard(2),
-		lock_time: bitcoin::absolute::LockTime::ZERO,
-		input: vec![],
-		output: vec![],
-	};
-	let txid1 = tx1.compute_txid();
-	let txid2 = tx2.compute_txid();
-
-	// Insert both as signed
-	let update = VtxoTreeUpdate::new().upsert_signed_tx([tx1.clone(), tx2.clone()]);
-	db.execute_vtxo_tree_update(update).await.unwrap();
-
-	// Verify they don't have server_may_own_descendant_since set
-	let vtx1 = db.get_virtual_transaction_by_txid(txid1).await.unwrap().unwrap();
-	let vtx2 = db.get_virtual_transaction_by_txid(txid2).await.unwrap().unwrap();
-	assert!(vtx1.server_may_own_descendant_since.is_none());
-	assert!(vtx2.server_may_own_descendant_since.is_none());
-
-	// Mark them as server may own descendants
-	db.mark_server_may_own_descendants(&[txid1, txid2]).await
-		.expect("Should succeed for signed transactions");
-
-	// Verify server_may_own_descendant_since is now set
-	let vtx1 = db.get_virtual_transaction_by_txid(txid1).await.unwrap().unwrap();
-	let vtx2 = db.get_virtual_transaction_by_txid(txid2).await.unwrap().unwrap();
-	assert!(vtx1.server_may_own_descendant_since.is_some(),
-		"server_may_own_descendant_since should be set for tx1");
-	assert!(vtx2.server_may_own_descendant_since.is_some(),
-		"server_may_own_descendant_since should be set for tx2");
-}
-
-#[tokio::test]
-async fn mark_server_may_own_descendants_fails_for_unsigned() {
-	let mut ctx = TestContext::new_minimal("postgresd/mark_descendants_unsigned").await;
-	ctx.init_central_postgres().await;
-	let postgres_cfg = ctx.new_postgres(&ctx.test_name).await;
-
-	Db::create(&postgres_cfg).await.expect("Database created");
-	let db = Db::connect(&postgres_cfg).await.expect("Connected to database");
-
-	// Create one signed and one unsigned transaction
-	let tx_signed = Transaction {
-		version: bitcoin::transaction::Version::non_standard(1),
-		lock_time: bitcoin::absolute::LockTime::ZERO,
-		input: vec![],
-		output: vec![],
-	};
-	let tx_unsigned = Transaction {
-		version: bitcoin::transaction::Version::non_standard(2),
-		lock_time: bitcoin::absolute::LockTime::ZERO,
-		input: vec![],
-		output: vec![],
-	};
-	let txid_signed = tx_signed.compute_txid();
-	let txid_unsigned = tx_unsigned.compute_txid();
-
-	// Insert one signed and one unsigned
-	let update = VtxoTreeUpdate::new()
-		.upsert_signed_tx([tx_signed.clone()])
-		.upsert_unsigned_tx([txid_unsigned]);
-	db.execute_vtxo_tree_update(update).await.unwrap();
-
-	// Should fail because one is unsigned
-	let result = db.mark_server_may_own_descendants(&[txid_signed, txid_unsigned]).await;
-	assert!(result.is_err(), "Should fail when one transaction is unsigned");
-	let err_msg = result.unwrap_err().to_string();
-	assert!(err_msg.contains("NULL signed_tx"), "Error should mention NULL signed_tx: {}", err_msg);
-	assert!(err_msg.contains(&txid_unsigned.to_string()),
-		"Error should mention the unsigned txid: {}", err_msg);
-
-	// Verify neither transaction was updated (atomic failure)
-	let vtx_signed = db.get_virtual_transaction_by_txid(txid_signed).await.unwrap().unwrap();
-	assert!(vtx_signed.server_may_own_descendant_since.is_none(),
-		"signed tx should not be updated when operation fails");
-}
-
-#[tokio::test]
-async fn mark_server_may_own_descendants_does_not_overwrite() {
-	let mut ctx = TestContext::new_minimal("postgresd/mark_descendants_no_overwrite").await;
-	ctx.init_central_postgres().await;
-	let postgres_cfg = ctx.new_postgres(&ctx.test_name).await;
-
-	Db::create(&postgres_cfg).await.expect("Database created");
-	let db = Db::connect(&postgres_cfg).await.expect("Connected to database");
-
-	let tx = Transaction {
-		version: bitcoin::transaction::Version::non_standard(1),
-		lock_time: bitcoin::absolute::LockTime::ZERO,
-		input: vec![],
-		output: vec![],
-	};
-	let txid = tx.compute_txid();
-
-	// Insert with server_may_own_descendant_since already set
-	let original_timestamp = Local::now() - chrono::Duration::days(1);
-	let vtx = VirtualTransaction::new_signed_owned(tx.clone())
-		.as_server_owned_since(original_timestamp);
-	db.execute_vtxo_tree_update(VtxoTreeUpdate::new().upsert_virtual_txs([vtx])).await.unwrap();
-
-	// Verify it's set
-	let vtx = db.get_virtual_transaction_by_txid(txid).await.unwrap().unwrap();
-	let original_stored = vtx.server_may_own_descendant_since.unwrap();
-
-	// Call mark_server_may_own_descendants again
-	db.mark_server_may_own_descendants(&[txid]).await
-		.expect("Should succeed");
-
-	// Verify the timestamp was NOT overwritten
-	let vtx = db.get_virtual_transaction_by_txid(txid).await.unwrap().unwrap();
-	let after_mark = vtx.server_may_own_descendant_since.unwrap();
-	assert_eq!(original_stored, after_mark,
-		"server_may_own_descendant_since should not be overwritten");
-}
-
-#[tokio::test]
-async fn mark_server_may_own_descendants_fails_for_nonexistent() {
-	let mut ctx = TestContext::new_minimal("postgresd/mark_descendants_nonexistent").await;
-	ctx.init_central_postgres().await;
-	let postgres_cfg = ctx.new_postgres(&ctx.test_name).await;
-
-	Db::create(&postgres_cfg).await.expect("Database created");
-	let db = Db::connect(&postgres_cfg).await.expect("Connected to database");
-
-	// Create txid that doesn't exist in database
-	let tx_nonexistent = Transaction {
-		version: bitcoin::transaction::Version::non_standard(99),
-		lock_time: bitcoin::absolute::LockTime::ZERO,
-		input: vec![],
-		output: vec![],
-	};
-	let txid_nonexistent = tx_nonexistent.compute_txid();
-
-	// Should fail for non-existent txids
-	let result = db.mark_server_may_own_descendants(&[txid_nonexistent]).await;
-	assert!(result.is_err(), "Should fail when transaction doesn't exist");
-	let err_msg = result.unwrap_err().to_string();
-	assert!(err_msg.contains("does not exist"), "Error should mention 'does not exist': {}", err_msg);
-	assert!(err_msg.contains(&txid_nonexistent.to_string()),
-		"Error should mention the non-existent txid: {}", err_msg);
 }
 
 #[tokio::test]

@@ -312,20 +312,16 @@ impl Db {
 		query::get_first_unsigned_virtual_transaction(client, txids).await
 	}
 
-	/// Marks virtual transactions as having server-owned descendants.
-	///
-	/// This function:
-	/// 1. Fails if any of the txids have NULL signed_tx (returns the first offending txid)
-	/// 2. Updates server_may_own_descendant_since only where it's currently NULL
-	/// 3. Does not overwrite existing server_may_own_descendant_since values
-	pub async fn mark_server_may_own_descendants(
+	/// Assert that every given tx in the input VTXO chains has been registered
+	/// by the client via `register_vtxos`. See
+	/// [`query::check_vtxo_transactions_registered`].
+	pub async fn check_vtxo_transactions_registered(
 		&self,
 		txids: impl IntoIterator<Item = impl Borrow<Txid>>,
 	) -> anyhow::Result<()> {
 		let conn = self.get_conn().await.context("failed to connect to db")?;
-		query::mark_server_may_own_descendants(&*conn, txids).await
+		query::check_vtxo_transactions_registered(&*conn, txids).await
 	}
-
 
 	pub async fn store_vtxos_in_mailbox(
 		&self,
@@ -733,7 +729,7 @@ impl Db {
 		// Mark transactions as having server-owned descendants before completing offboard
 		let txids = input_vtxos.iter()
 			.flat_map(|v| v.transactions().map(|i| i.tx.compute_txid()));
-		query::mark_server_may_own_descendants(&tx, txids).await
+		query::check_vtxo_transactions_registered(&tx, txids).await
 			.context("virtual tx update failed, user might not have called register_vtxos")?;
 
 		tx.commit().await?;

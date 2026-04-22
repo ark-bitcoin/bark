@@ -35,7 +35,7 @@ pub async fn get_virtual_transaction_by_txid<T: GenericClient>(
 	txid: Txid,
 ) -> anyhow::Result<Option<VirtualTransaction<'static>>> {
 	let stmt = client.prepare(
-		"SELECT txid, signed_tx, is_funding, server_may_own_descendant_since
+		"SELECT txid, signed_tx, is_funding
 			FROM virtual_transaction
 			WHERE txid = $1").await?;
 
@@ -279,28 +279,45 @@ pub async fn complete_round_participation(
 	})
 }
 
-/// Marks virtual transactions as having server-owned descendants.
+/// Assert that every given txid exists in `virtual_transaction` with
+/// `signed_tx IS NOT NULL`: i.e. the client called `register_vtxos` for
+/// the entire transaction chain before attempting to spend.
 ///
-/// This function:
-/// 1. Fails if any of the txids don't exist in the database
-/// 2. Fails if any of the txids have NULL signed_tx
-/// 3. Updates server_may_own_descendant_since only where it's currently NULL
-/// 4. Does not overwrite existing server_may_own_descendant_since values
-///
-/// Returns an error if any transaction doesn't exist or has NULL signed_tx.
-pub async fn mark_server_may_own_descendants<C: GenericClient>(
+/// Callers pass every tx in each input VTXO's chain (see
+/// `Vtxo::transactions()`). Bails on the first missing or unsigned tx,
+/// and bails on an empty input: the guard's purpose is to assert a
+/// pre-condition, so a caller with nothing to assert is a bug.
+pub async fn check_vtxo_transactions_registered<C: GenericClient>(
 	client: &C,
 	txids: impl IntoIterator<Item = impl Borrow<Txid>>,
 ) -> anyhow::Result<()> {
-	let txid_strings = txids.into_iter().map(|t| t.borrow().to_string()).collect::<Vec<_>>();
+	let mut txid_strings = txids.into_iter()
+		.map(|t| t.borrow().to_string())
+		.collect::<Vec<_>>();
 
 	if txid_strings.is_empty() {
+		bail!("register_vtxos guard called with empty txid list");
+	}
+
+	// Dedupe so the count comparison below is against a unique set: input
+	// vtxos can share parents/checkpoints, producing duplicate txids.
+	txid_strings.sort();
+	txid_strings.dedup();
+	let expected = txid_strings.len() as i64;
+
+	let stmt = client.prepare_typed("
+		SELECT count(*)::BIGINT AS count
+		FROM virtual_transaction
+		WHERE txid = ANY($1::TEXT[]) AND signed_tx IS NOT NULL
+	", &[Type::TEXT_ARRAY]).await?;
+
+	let count: i64 = client.query_one(&stmt, &[&txid_strings]).await?.get("count");
+	if count == expected {
 		return Ok(());
 	}
 
-	// Check that all txids exist and have signed_tx set
-	// Returns the first txid that either doesn't exist or has NULL signed_tx
-	let stmt = client.prepare_typed("
+	// Fast path failed: walk the inputs to produce a precise error.
+	let diag_stmt = client.prepare_typed("
 		WITH input_txids AS (
 			SELECT unnest($1::TEXT[]) AS txid
 		)
@@ -311,31 +328,19 @@ pub async fn mark_server_may_own_descendants<C: GenericClient>(
 		LIMIT 1
 	", &[Type::TEXT_ARRAY]).await?;
 
-	if let Some(row) = client.query_opt(&stmt, &[&txid_strings]).await? {
+	if let Some(row) = client.query_opt(&diag_stmt, &[&txid_strings]).await? {
 		let txid_str: &str = row.get("txid");
 		let exists: bool = row.get("exists");
 		let txid = Txid::from_str(txid_str).context("invalid txid")?;
 
 		if !exists {
-			// Transaction doesn't exist (LEFT JOIN returned NULL)
-			bail!("Cannot mark server_may_own_descendants: transaction {} does not exist", txid);
+			bail!("register_vtxos not called: transaction {} does not exist", txid);
 		} else {
-			// Transaction exists but has NULL signed_tx
-			bail!("Cannot mark server_may_own_descendants: transaction {} has NULL signed_tx", txid);
+			bail!("register_vtxos not called: transaction {} has NULL signed_tx", txid);
 		}
 	}
 
-	// Update server_may_own_descendant_since only where it's currently NULL
-	let stmt = client.prepare_typed("
-		UPDATE virtual_transaction
-		SET server_may_own_descendant_since = NOW(), updated_at = NOW()
-		WHERE txid = ANY($1) AND server_may_own_descendant_since IS NULL
-	", &[Type::TEXT_ARRAY]).await?;
-
-	client.execute(&stmt, &[&txid_strings]).await
-		.context("Failed to mark server_may_own_descendants")?;
-
-	Ok(())
+	bail!("register_vtxos guard count mismatch: expected {}, got {}", expected, count);
 }
 
 pub async fn set_round_id_for_participations(
