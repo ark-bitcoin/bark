@@ -28,7 +28,6 @@ use tower_http::cors::CorsLayer;
 use utoipa::{Modify, OpenApi};
 use utoipa::openapi::security::{HttpAuthScheme, HttpBuilder, SecurityScheme};
 use utoipa_axum::router::OpenApiRouter;
-use utoipa_swagger_ui::SwaggerUi;
 
 use bark::Wallet;
 use bark::onchain::OnchainWallet;
@@ -265,7 +264,7 @@ impl RestServer {
 	///
 	/// Build the state via [`ServerState::builder`].
 	pub async fn start(config: &Config, state: ServerState) -> anyhow::Result<Self> {
-		let (router, api) = OpenApiRouter::with_openapi(ApiDoc::openapi())
+		let (router, _api) = OpenApiRouter::with_openapi(ApiDoc::openapi())
 			.split_for_parts();
 
 		let socket_addr = config.socket_addr();
@@ -276,8 +275,13 @@ impl RestServer {
 
 		let router = router
 			.route("/ping", get(ping))
-			.nest("/api/v1", api::v1::router(&state))
-			.merge(SwaggerUi::new("/swagger-ui").url("/api-docs/openapi.json", api.clone()))
+			.nest("/api/v1", api::v1::router(&state));
+		#[cfg(feature = "swagger-ui")]
+		let router = router
+			.merge(utoipa_swagger_ui::SwaggerUi::new("/swagger-ui")
+				.url("/api-docs/openapi.json", _api.clone()),
+			);
+		let router = router
 			.layer(cors_layer(config))
 			.with_state(state)
 			.fallback(error::route_not_found);
