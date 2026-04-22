@@ -491,14 +491,34 @@ impl Bark {
 	}
 
 	pub async fn try_bolt11_invoice(&self, amount: Amount) -> anyhow::Result<InvoiceInfo> {
-		let res = self.try_run([
-			"lightning", "invoice", &amount.to_string(), "--verbose"
-		]).await?;
-		Ok(serde_json::from_str(&res).expect("json error"))
+		self.try_bolt11_invoice_with_description(amount, None).await
 	}
 
 	pub async fn bolt11_invoice(&self, amount: Amount) -> InvoiceInfo {
 		self.try_bolt11_invoice(amount).await.expect("bolt11 invoice command failed")
+	}
+
+	pub async fn try_bolt11_invoice_with_description(
+		&self,
+		amount: Amount,
+		description: Option<&str>,
+	) -> anyhow::Result<InvoiceInfo> {
+		let amount = amount.to_string();
+		let mut args: Vec<&str> = vec!["lightning", "invoice", &amount, "--verbose"];
+		if let Some(desc) = description {
+			args.extend(["--description", desc]);
+		}
+		let res = self.try_run(args).await?;
+		Ok(serde_json::from_str(&res).expect("json error"))
+	}
+
+	pub async fn bolt11_invoice_with_description(
+		&self,
+		amount: Amount,
+		description: &str,
+	) -> InvoiceInfo {
+		self.try_bolt11_invoice_with_description(amount, Some(description)).await
+			.expect("bolt11 invoice command failed")
 	}
 
 	pub async fn try_lightning_receive(&self, invoice: &str) -> anyhow::Result<()> {
