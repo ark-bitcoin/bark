@@ -45,8 +45,17 @@ impl Wallet {
 		Ok(total)
 	}
 
-	/// Create, store and return a [Bolt11Invoice] for offchain boarding
-	pub async fn bolt11_invoice(&self, amount: Amount) -> anyhow::Result<Bolt11Invoice> {
+	/// Create, store and return a [Bolt11Invoice] for offchain boarding.
+	///
+	/// An optional `description` is embedded in the invoice as its memo. Note
+	/// that on retry for the same payment hash, the description of the
+	/// originally-generated invoice is preserved (the server returns the
+	/// previously-issued invoice).
+	pub async fn bolt11_invoice(
+		&self,
+		amount: Amount,
+		description: Option<String>,
+	) -> anyhow::Result<Bolt11Invoice> {
 		if amount == Amount::ZERO {
 			bail!("Cannot create invoice for 0 sats (this would create an explicit 0 sat invoice, not an any-amount invoice)");
 		}
@@ -88,7 +97,7 @@ impl Wallet {
 			amount_sat: amount.to_sat(),
 			min_cltv_delta: requested_min_cltv_delta as u32,
 			mailbox_id: Some(mailbox_id.to_vec()),
-			description: None,
+			description,
 		};
 
 		let resp = srv.client.start_lightning_receive(req).await?.into_inner();

@@ -285,6 +285,9 @@ pub struct LightningInvoiceRequest {
 	/// the final amount received by the client will have any server-configured
 	/// [LightningReceiveFees](crate::cli::LightningReceiveFees) deducted.
 	pub amount_sat: u64,
+	/// Optional description embedded in the invoice as its memo.
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub description: Option<String>,
 }
 
 #[derive(Serialize, Deserialize)]

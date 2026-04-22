@@ -4341,6 +4341,13 @@
             "format": "int64",
             "description": "The amount to create invoice for (in satoshis). This is the amount the payee will pay but\nthe final amount received by the client will have any server-configured\n[LightningReceiveFees](crate::cli::LightningReceiveFees) deducted.",
             "minimum": 0
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Optional description embedded in the invoice as its memo."
           }
         }
       },
