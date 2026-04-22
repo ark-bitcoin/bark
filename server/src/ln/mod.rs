@@ -335,6 +335,7 @@ impl Server {
 		amount: Amount,
 		min_cltv_delta: BlockDelta,
 		mailbox_id: Option<ark::mailbox::MailboxIdentifier>,
+		description: Option<String>,
 	) -> anyhow::Result<protos::StartLightningReceiveResponse> {
 		info!("Starting bolt11 board with payment_hash: {}", payment_hash.as_hex());
 
@@ -393,7 +394,7 @@ impl Server {
 		// between last lightning htlc and htlc-recv vtxo one
 		let ln_cltv_delta = min_cltv_delta + self.config.htlc_expiry_delta;
 
-		let invoice = self.cln.generate_invoice(payment_hash, amount, ln_cltv_delta).await?;
+		let invoice = self.cln.generate_invoice(payment_hash, amount, ln_cltv_delta, description).await?;
 		trace!("Hold invoice created. payment_hash: {}, amount: {}, {}",
 			payment_hash, amount, invoice.to_string(),
 		);

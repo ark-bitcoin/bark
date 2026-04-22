@@ -249,9 +249,10 @@ impl ClnManager {
 		payment_hash: PaymentHash,
 		amount: Amount,
 		cltv_delta: BlockDelta,
+		description: Option<String>,
 	) -> anyhow::Result<Bolt11Invoice> {
 		let (invoice_tx, invoice_rx) = oneshot::channel();
-		self.send_ctrl(Ctrl::GenerateInvoice { payment_hash, amount, cltv_delta, invoice_tx });
+		self.send_ctrl(Ctrl::GenerateInvoice { payment_hash, amount, cltv_delta, description, invoice_tx });
 		invoice_rx.await.context("an error occurred requesting a BOLT-11 invoice")
 	}
 
@@ -664,6 +665,7 @@ enum Ctrl {
 		payment_hash: PaymentHash,
 		amount: Amount,
 		cltv_delta: BlockDelta,
+		description: Option<String>,
 		invoice_tx: oneshot::Sender<Bolt11Invoice>,
 	},
 	SettleInvoice {
@@ -1024,6 +1026,7 @@ impl ClnManagerProcess {
 		payment_hash: PaymentHash,
 		amount: Amount,
 		cltv_delta: BlockDelta,
+		description: Option<String>,
 	) -> anyhow::Result<Bolt11Invoice> {
 		let node = self.get_hold_active_node().context("no active hold-compatible cln node")?;
 		let mut hold_client = node.hold_rpc.clone().expect("active node not hold enabled");
@@ -1046,7 +1049,7 @@ impl ClnManagerProcess {
 			min_final_cltv_expiry: Some(cltv_delta as u64),
 			expiry: Some(self.invoice_expiry.as_secs()),
 			routing_hints: vec![],
-			description: None,
+			description: description.map(hold_plugin::invoice_request::Description::Memo),
 		}).await?.into_inner();
 
 		let invoice = Bolt11Invoice::from_str(&res.bolt11)?;
@@ -1161,9 +1164,9 @@ impl ClnManagerProcess {
 
 							let _ = result_tx.send(res);
 						},
-						Ctrl::GenerateInvoice { payment_hash, amount, cltv_delta, invoice_tx } => {
+						Ctrl::GenerateInvoice { payment_hash, amount, cltv_delta, description, invoice_tx } => {
 							trace!("Invoice generation received: payment_hash={:?}", payment_hash);
-							match self.generate_invoice(payment_hash, amount, cltv_delta).await {
+							match self.generate_invoice(payment_hash, amount, cltv_delta, description).await {
 								Ok(invoice) => {
 									trace!("Invoice generation successful: payment_hash={}",
 										payment_hash,

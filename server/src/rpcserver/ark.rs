@@ -338,6 +338,7 @@ impl rpc::server::ArkService for Server {
 			amount,
 			req.min_cltv_delta as BlockDelta,
 			mailbox_id,
+			req.description,
 		).await.to_status()?;
 
 		Ok(tonic::Response::new(resp))

@@ -88,6 +88,7 @@ impl Wallet {
 			amount_sat: amount.to_sat(),
 			min_cltv_delta: requested_min_cltv_delta as u32,
 			mailbox_id: Some(mailbox_id.to_vec()),
+			description: None,
 		};
 
 		let resp = srv.client.start_lightning_receive(req).await?.into_inner();
