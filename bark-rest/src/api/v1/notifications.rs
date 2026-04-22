@@ -45,7 +45,11 @@ pub fn router() -> Router<ServerState> {
 #[utoipa::path(
 	get,
 	path = "/ws/ticket",
-	summary = "Create a new websocket ticket. You can call then `ws://<host>/api/v1/notifications/ws?ticket=<ticket>` to subscribe to notifications",
+	summary = "Create a websocket ticket",
+	description = "Creates a single-use ticket that authenticates a websocket connection \
+		at `ws://<host>/api/v1/notifications/ws?ticket=<ticket>`. The ticket must be \
+		used within 10 minutes of creation; the resulting websocket connection is \
+		long-lived.",
 	responses(
 		(status = 200, description = "Returns the websocket ticket. Valid to open a websocket connection in the next 10 minutes.", body = String),
 		(status = 401, description = "Unauthorized", body = String)
