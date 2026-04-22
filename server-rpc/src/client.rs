@@ -46,15 +46,15 @@ use crate::{mailbox, protos, ArkServiceClient, ConvertError, RequestExt};
 #[cfg(all(feature = "tonic-native", feature = "tonic-web"))]
 compile_error!("features `tonic-native` and `tonic-web` are mutually exclusive");
 
-#[cfg(not(any(feature = "tonic-native", feature = "tonic-web")))]
-compile_error!("either `tonic-native` or `tonic-web` feature must be enabled");
-
-#[cfg(all(feature = "tonic-web", feature = "socks5-proxy"))]
-compile_error!("`tonic-web` does not support the `socks5-proxy` feature");
+#[cfg(all(feature = "socks5-proxy", not(feature = "tonic-native")))]
+compile_error!("the `socks5-proxy` feature is only usable in conjunction with `tonic-native`");
 
 
 /// The HTTP header used for private server access tokens
 pub const ACCESS_TOKEN_HEADER: &str = "ark-access-token";
+/// Error text used when no Ark RPC transport backend was compiled into the binary.
+pub const NO_TRANSPORT_BACKEND_MESSAGE: &str =
+	"no Ark RPC transport backend compiled in this build; enable `bark-server-rpc/tonic-native` or `bark-server-rpc/tonic-web`";
 
 
 #[cfg(feature = "tonic-native")]
@@ -116,8 +116,7 @@ mod transport {
 			return Err(CreateEndpointError::InvalidScheme(scheme.to_string()));
 		}
 
-		// Unused when no TLS is configured
-		#[warn(unused_mut)]
+		#[cfg_attr(not(any(feature = "tls-native-roots", feature = "tls-webpki-roots")), allow(unused_mut))]
 		let mut endpoint = Channel::builder(uri.clone())
 			.keep_alive_timeout(Duration::from_secs(600))
 			.timeout(Duration::from_secs(600));
@@ -160,6 +159,45 @@ mod transport {
 	}
 }
 
+/// Dummy transport used so the generated tonic clients still have a concrete transport type in
+/// transportless builds. `connect()` rejects these builds before any RPC is attempted, but
+/// if a client somehow does call into this transport we still return a clean gRPC error.
+#[cfg(not(any(feature = "tonic-native", feature = "tonic-web")))]
+mod transport {
+	use std::convert::Infallible;
+	use std::future::{ready, Ready};
+	use std::task::{Context, Poll};
+
+	use http::{Request, Response};
+	use tonic::Status;
+	use tonic::body::Body;
+	use tonic::codegen::Service;
+
+	use super::NO_TRANSPORT_BACKEND_MESSAGE;
+
+	pub async fn connect(_address: &str) -> Result<Transport, crate::client::CreateEndpointError> {
+		Err(crate::client::CreateEndpointError::NoTransportBackend)
+	}
+
+	#[derive(Debug, Clone, Default)]
+	pub struct Transport;
+
+	impl Service<Request<Body>> for Transport {
+		type Response = Response<Body>;
+		type Error = Infallible;
+		type Future = Ready<Result<Self::Response, Self::Error>>;
+
+		fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+			Poll::Ready(Ok(()))
+		}
+
+		fn call(&mut self, _req: Request<Body>) -> Self::Future {
+			let status = Status::failed_precondition(NO_TRANSPORT_BACKEND_MESSAGE);
+			ready(Ok(status.into_http::<Body>()))
+		}
+	}
+}
+
 /// The minimum protocol version supported by the client.
 ///
 /// For info on protocol versions, see [server_rpc](crate) module documentation.
@@ -178,6 +216,8 @@ pub const ARK_INFO_TTL_SECS: u64 = 10 * 60;
 #[derive(Debug, thiserror::Error)]
 #[error("failed to create gRPC endpoint: {msg}")]
 pub enum CreateEndpointError {
+	#[error("{NO_TRANSPORT_BACKEND_MESSAGE}")]
+	NoTransportBackend,
 	#[error("failed to parse Ark server as a URI")]
 	InvalidUri(#[from] http::uri::InvalidUri),
 	#[error("Ark server scheme must be either http or https. Found: {0}")]
@@ -513,4 +553,17 @@ fn check_handshake(handshake: protos::HandshakeResponse) -> Result<u64, ConnectE
 	assert!((handshake.min_protocol_version..=handshake.max_protocol_version).contains(&pver));
 
 	Ok(pver)
+}
+
+#[cfg(test)]
+mod tests {
+	use super::{CreateEndpointError, NO_TRANSPORT_BACKEND_MESSAGE};
+
+	#[test]
+	fn no_transport_backend_error_mentions_feature_selection() {
+		let err = CreateEndpointError::NoTransportBackend;
+		assert_eq!(err.to_string(), NO_TRANSPORT_BACKEND_MESSAGE);
+		assert!(err.to_string().contains("bark-server-rpc/tonic-native"));
+		assert!(err.to_string().contains("bark-server-rpc/tonic-web"));
+	}
 }

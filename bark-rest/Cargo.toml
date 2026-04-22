@@ -7,6 +7,10 @@ repository = "https://gitlab.com/ark-bitcoin/bark"
 license = "MIT"
 description = "a REST server built on top of the bark-wallet crate"
 
+[features]
+default = ["native"]
+native = ["bark-wallet/native"]
+
 [dependencies]
 anyhow.workspace = true
 base64.workspace = true

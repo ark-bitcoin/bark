@@ -1,0 +1,8 @@
+- Let `bark-wallet` compile without a selected Ark RPC transport backend
+  Type-sharing consumers can now depend on `bark-wallet` without implicitly
+  selecting `native` or `wasm-web`, and server-backed wallet operations now
+  return a clear error that points developers to `bark-wallet/native` or
+  `bark-wallet/wasm-web` when no transport backend was compiled in.
+  [#1872](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1872)
+  - Mobile builds now reject `tls-native-roots` on both Android and iOS and
+    direct users to `tls-webpki-roots` instead.

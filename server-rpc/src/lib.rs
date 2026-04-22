@@ -27,6 +27,9 @@
 //!
 //! * `1`: initial version
 
+#[cfg(all(any(target_os = "android", target_os = "ios"), feature = "tls-native-roots"))]
+compile_error!("feature `tls-native-roots` can't be used on Android or iOS, use `tls-webpki-roots` instead");
+
 pub extern crate tonic;
 
 // Generated gRPC method lookup from proto files (server-only)

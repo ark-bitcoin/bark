@@ -1,0 +1,4 @@
+- Stop `bark-json` from selecting wallet transport features by default
+  JSON-only consumers can now use `bark-json` for shared Bark types without
+  implicitly enabling `bark-wallet/native` or a TLS root strategy.
+  [#1872](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1872)

@@ -281,7 +281,8 @@
 //! }
 //! ```
 
-
+#[cfg(all(any(target_os = "android", target_os = "ios"), feature = "tls-native-roots"))]
+compile_error!("feature `tls-native-roots` can't be used on Android or iOS, use `tls-webpki-roots` instead");
 
 pub extern crate ark;
 
@@ -346,6 +347,7 @@ use ark::vtxo::{Full, PubkeyVtxoPolicy, VtxoRef};
 use ark::vtxo::policy::signing::VtxoSigner;
 use bitcoin_ext::{BlockHeight, P2TR_DUST, TxStatus};
 use server_rpc::{protos, ServerConnection};
+use server_rpc::client::{ConnectError, CreateEndpointError};
 
 use crate::chain::{ChainSource, ChainSourceSpec};
 use crate::exit::Exit;
@@ -374,6 +376,8 @@ const VTXO_KEYS_INDEX: u32 = 0;
 const MAILBOX_KEY_INDEX: u32 = 1;
 /// Derivation index used to generate keypair for the recovery mailbox
 const RECOVERY_MAILBOX_KEY_INDEX: u32 = 2;
+const MISSING_SERVER_TRANSPORT_HELP: &str =
+	"This build of bark-wallet does not include an Ark server transport backend. Enable feature `bark-wallet/native` or `bark-wallet/wasm-web` to use server-backed wallet functionality.";
 
 lazy_static::lazy_static! {
 	/// Global secp context.
@@ -1063,7 +1067,8 @@ impl Wallet {
 			builder = builder.access_token(token);
 		}
 
-		builder.connect().await.context("Failed to connect to Ark server")
+		builder.connect().await.map_err(wrap_server_connect_error)
+			.context("Failed to connect to Ark server")
 	}
 
 	async fn require_server(&self) -> anyhow::Result<(ServerConnection, ArkInfo)> {
@@ -2019,5 +2024,28 @@ impl Wallet {
 		}).await.context("failed to register vtxos")?;
 
 		Ok(())
+	}
+}
+
+fn wrap_server_connect_error(err: ConnectError) -> anyhow::Error {
+	match err {
+		ConnectError::CreateEndpoint(CreateEndpointError::NoTransportBackend) => {
+			anyhow!(MISSING_SERVER_TRANSPORT_HELP)
+		},
+		other => anyhow::Error::from(other),
+	}
+}
+
+#[cfg(test)]
+mod tests {
+	use server_rpc::client::CreateEndpointError;
+
+	use super::{wrap_server_connect_error, MISSING_SERVER_TRANSPORT_HELP};
+
+	#[test]
+	fn no_transport_connect_error_is_reworded_for_wallet_users() {
+		let err = wrap_server_connect_error(CreateEndpointError::NoTransportBackend.into());
+		assert!(err.to_string().contains(MISSING_SERVER_TRANSPORT_HELP));
+		assert!(err.to_string().contains("feature `bark-wallet/native` or `bark-wallet/wasm-web`"));
 	}
 }
