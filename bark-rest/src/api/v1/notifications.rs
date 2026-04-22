@@ -8,6 +8,7 @@ use axum::routing::get;
 use axum::{debug_handler, Json, Router};
 use chrono::Utc;
 use bitcoin::hashes::hex::DisplayHex;
+use log::error;
 use serde::{Deserialize, Serialize};
 use utoipa::{OpenApi, ToSchema};
 
@@ -104,7 +105,13 @@ async fn websocket_handshake(
 async fn handle_socket(socket: WebSocket, state: ServerState) {
 	let (mut sender, mut receiver) = socket.split();
 
-	let wallet = state.require_wallet().unwrap();
+	let wallet = match state.require_wallet() {
+		Ok(w) => w,
+		Err(e) => {
+			error!("websocket handler: no wallet available: {:#}", e);
+			return;
+		}
+	};
 
 	// Create a new subscription to the notification channel
 	let mut notification_rx = wallet.subscribe_notifications();
