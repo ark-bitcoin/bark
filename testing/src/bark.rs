@@ -45,7 +45,7 @@ pub struct Bark {
 	config: Config,
 	counter: AtomicUsize,
 	timeout: Option<Duration>,
-	_bitcoind: Option<Arc<Bitcoind>>,
+	bitcoind: Option<Arc<Bitcoind>>,
 	command_log: Mutex<fs::File>,
 }
 
@@ -160,7 +160,7 @@ impl Bark {
 		}
 
 		Ok(Bark {
-			_bitcoind: bitcoind,
+			bitcoind,
 			config: config,
 			name: name.as_ref().to_string(),
 			counter: AtomicUsize::new(0),
@@ -266,7 +266,7 @@ impl Bark {
 	}
 
 	pub fn bitcoind(&self) -> Option<&Bitcoind> {
-		self._bitcoind.as_deref()
+		self.bitcoind.as_deref()
 	}
 
 	pub fn command_log_file(&self) -> PathBuf {
@@ -880,6 +880,41 @@ impl Bark {
 		S: AsRef<str>,
 	{
 		self.try_run_json(args).await.expect("json command failed")
+	}
+
+	/// Make a full clone of this bark wallet with a new datadir.
+	///
+	/// Copies the entire data directory so the clone has an identical wallet
+	/// state (same keys, vtxos, exit entries, etc.).
+	pub async fn full_clone(&self, new_name: &str) -> Bark {
+		let datadir = {
+			let mut buf = self.datadir.clone();
+			assert!(buf.pop());
+			buf.join(new_name)
+		};
+
+		// Copy the entire datadir to the new path.
+		let output = TokioCommand::new("cp")
+			.arg("-r").arg(&self.datadir).arg(&datadir)
+			.output().await.expect("failed to run cp");
+		assert!(output.status.success(),
+			"cp -r failed: {}", String::from_utf8_lossy(&output.stderr));
+
+		let bitcoind = self.bitcoind.clone().expect("can only clone bark with bitcoind");
+		let cfg = self.config.clone();
+
+		Bark {
+			bitcoind: Some(bitcoind),
+			config: cfg,
+			name: new_name.to_string(),
+			counter: AtomicUsize::new(0),
+			timeout: None,
+			command_log: Mutex::new(
+				fs::File::create(datadir.join(COMMAND_LOG_FILE)).await
+					.expect("failed to create command log"),
+			),
+			datadir,
+		}
 	}
 }
 

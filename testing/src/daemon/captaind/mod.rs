@@ -298,9 +298,9 @@ impl Captaind {
 		trace!("Subscribing to {} tracing logs", L::LOGID);
 		let (tx, rx) = sync::mpsc::unbounded_channel();
 		self.add_slog_handler(move |log: &ParsedRecord| {
-			if log.is::<L>() {
-				trace!("Captured {} log", L::LOGID);
-				return tx.send(log.try_as::<L>().unwrap()).is_err();
+			if let Ok(m) = log.try_as::<L>() {
+				trace!("Captured {} log: {:?}", L::LOGID, m);
+				return tx.send(m).is_err();
 			}
 			false
 		});
@@ -312,15 +312,15 @@ impl Captaind {
 		info!("Waiting for log {}", L::LOGID);
 		let (tx, mut rx) = sync::mpsc::channel(1);
 		self.add_slog_handler(move |log: &ParsedRecord| {
-			if log.is::<L>() {
+			if let Ok(m) = log.try_as::<L>() {
 				// if channel already closed, user is no longer interested
-				let _ = tx.try_send(log.try_as::<L>().unwrap());
+				let _ = tx.try_send(m);
 				return true;
 			}
 			false
 		});
 		let ret = rx.recv().await.expect("log wait channel closed");
-		info!("Got {} log!", L::LOGID);
+		info!("Got {} log: {:?}", L::LOGID, ret);
 		ret
 	}
 
