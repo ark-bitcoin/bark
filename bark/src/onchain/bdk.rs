@@ -308,7 +308,7 @@ impl ChainSync for OnchainWallet {
 			},
 			ChainSourceClient::Esplora(client) => {
 				debug!("Syncing with esplora...");
-				let request = self.inner.start_sync_with_revealed_spks()
+				let request = self.inner.start_sync_with_revealed_spks_at(timestamp_secs())
 					.outpoints(self.list_unspent().iter().map(|o| o.outpoint).collect::<Vec<_>>())
 					.txids(self.inner.transactions().map(|tx| tx.tx_node.txid).collect::<Vec<_>>());
 
@@ -465,7 +465,7 @@ impl OnchainWallet {
 			// Esplora can't do a full scan from a given block height, so we can ignore start_height
 			ChainSourceClient::Esplora(client) => {
 				debug!("Starting full scan with esplora...");
-				let request = self.inner.start_full_scan();
+				let request = self.inner.start_full_scan_at(timestamp_secs());
 				let update = client.full_scan(request, STOP_GAP, PARALLEL_REQS).await?;
 				self.inner.apply_update(update)?;
 				self.persist().await?;
