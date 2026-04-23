@@ -9,6 +9,7 @@ use bitcoin::FeeRate;
 use tracing::info;
 use utoipa::OpenApi;
 
+use bark::onchain::ChainSync;
 use bark::vtxo::{FilterVtxos, VtxoFilter};
 use bitcoin_ext::FeeRateExt;
 
@@ -256,7 +257,12 @@ pub async fn exit_progress(
 
 	let fee_rate = body.fee_rate.map(FeeRate::from_sat_per_kvb_ceil);
 
+	onchain_lock.sync(&wallet.chain).await
+		.context("error syncing on-chain wallet")?;
+
 	let mut exit = wallet.exit.write().await;
+	exit.sync_no_progress(&*onchain_lock).await
+		.context("error syncing exit state")?;
 	let result = exit.progress_exits(&wallet, &mut *onchain_lock, fee_rate).await
 		.context("error making progress on exit process")?;
 

@@ -144,6 +144,13 @@ impl DaemonProcess {
 		}
 	}
 
+	/// Sync pending rounds, check for confirmations and finalize VTXOs
+	async fn run_rounds_sync(&self) {
+		if let Err(e) = self.wallet.sync_pending_rounds().await {
+			warn!("An error occured while syncing pending rounds: {e:#}");
+		}
+	}
+
 	/// Update cached fee rates from the chain source
 	async fn run_fee_rate_update(&self) {
 		if let Err(e) = self.wallet.chain.update_fee_rates(self.wallet.config.fallback_fee_rate).await {
@@ -264,15 +271,14 @@ impl DaemonProcess {
 					fast_interval.reset();
 				},
 				_ = slow_interval.tick().fuse() => {
-					if !self.connected.load(Ordering::Relaxed) {
-						continue;
+					if self.connected.load(Ordering::Relaxed) {
+						self.run_fee_rate_update().await;
+						self.run_boards_sync().await;
+						self.run_offboards_sync().await;
+						self.run_maintenance_refresh_process().await;
 					}
-
-					self.run_fee_rate_update().await;
-					self.run_boards_sync().await;
-					self.run_offboards_sync().await;
-					self.run_maintenance_refresh_process().await;
 					self.run_onchain_sync().await;
+					self.run_rounds_sync().await;
 					self.run_exits().await;
 					slow_interval.reset();
 				},
