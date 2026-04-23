@@ -167,6 +167,15 @@ pub struct Config {
 	///
 	/// Default value: 60
 	pub daemon_slow_sync_interval_secs: u64,
+
+	/// When set, the daemon skips all automatic wallet syncing — startup
+	/// sync, the fast/slow sync intervals, round event subscription, and
+	/// the mailbox subscription. Only the server connection heartbeat
+	/// keeps running. The operator is responsible for triggering syncs
+	/// via the REST API (e.g. `POST /sync`).
+	///
+	/// Default value: false
+	pub daemon_manual_sync: bool,
 }
 
 impl Config {
@@ -192,6 +201,7 @@ impl Config {
 			offboard_required_confirmations: 2,
 			daemon_fast_sync_interval_secs: 1,
 			daemon_slow_sync_interval_secs: 60,
+			daemon_manual_sync: false,
 		};
 
 		if network != Network::Bitcoin {
