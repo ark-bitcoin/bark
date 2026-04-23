@@ -146,6 +146,7 @@ pub struct TrailerCapturingBody<B> {
 	inner: B,
 	rpc_method_details: RpcMethodDetails,
 	start_time: Instant,
+	skip_telemetry: bool,
 }
 
 impl<B> TrailerCapturingBody<B> {
@@ -158,6 +159,19 @@ impl<B> TrailerCapturingBody<B> {
 			inner,
 			rpc_method_details,
 			start_time,
+			skip_telemetry: false,
+		}
+	}
+
+	/// Wrap a body without capturing trailers or emitting telemetry.
+	fn noop(inner: B) -> Self {
+		Self {
+			inner,
+			rpc_method_details: RpcMethodDetails {
+				system: RPC_SYSTEM_GRPC, service: "health", method: "check",
+			},
+			start_time: Instant::now(),
+			skip_telemetry: true,
 		}
 	}
 }
@@ -175,6 +189,10 @@ where
 		cx: &mut Context<'_>,
 	) -> Poll<Option<Result<http_body::Frame<Self::Data>, Self::Error>>> {
 		let result = Pin::new(&mut self.inner).poll_frame(cx);
+
+		if self.skip_telemetry {
+			return result;
+		}
 
 		match &result {
 			// Handle body/framing errors
@@ -249,6 +267,12 @@ where
 	}
 
 	fn call(&mut self, req: http::Request<B>) -> Self::Future {
+		// Health check probes bypass telemetry
+		if req.uri().path() == "/grpc.health.v1.Health/Check" {
+			let future = self.inner.call(req);
+			return Box::pin(async { future.await.map(|r| r.map(|b| TrailerCapturingBody::noop(b))) });
+		}
+
 		let is_grpc = req.headers().get("content-type")
 			.map_or(false, |ct| ct == "application/grpc");
 
@@ -350,3 +374,4 @@ impl<S> tower::Layer<S> for TelemetryMetricsLayer {
 		TelemetryMetricsService::new(inner)
 	}
 }
+
