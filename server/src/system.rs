@@ -190,4 +190,20 @@ mod tests {
 		assert!(mgr.shutdown_requested());
 		assert!(mgr.shutdown_complete());
 	}
+
+	#[test]
+	fn test_non_critical_worker_doesnt_trigger_shutdown() {
+		let mgr = RuntimeManager::new();
+		let guard1 = mgr.spawn("worker-1");
+		let guard2 = mgr.spawn("worker-2");
+		assert_eq!(mgr.worker_count(), 2);
+
+		drop(guard1);
+		assert_eq!(mgr.worker_count(), 1);
+		assert!(!mgr.shutdown_requested());
+
+		drop(guard2);
+		assert_eq!(mgr.worker_count(), 0);
+		assert!(!mgr.shutdown_requested());
+	}
 }
