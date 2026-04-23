@@ -160,6 +160,8 @@ impl Db {
 		let manager = PostgresConnectionManager::new(config, NoTls);
 		Ok(Pool::builder()
 			.max_size(postgres_config.max_connections)
+			.connection_timeout(Duration::from_secs(postgres_config.connection_timeout_secs))
+			.idle_timeout(Some(Duration::from_secs(postgres_config.idle_timeout_secs)))
 			.error_sink(Box::new(PoolErrorSink))
 			.build(manager).await?)
 	}

@@ -312,6 +312,10 @@ port = 5432
 name = "bark-server-db"
 # Maximum parallel connections to maintain in our connection pool
 max_connections = 10
+# Timeout in seconds for acquiring a connection from the pool (default: 10)
+#connection_timeout_secs = 10
+# Idle connections are recycled after this many seconds (default: 600)
+#idle_timeout_secs = 600
 
 
 ############

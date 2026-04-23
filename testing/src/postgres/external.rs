@@ -48,6 +48,8 @@ impl ExternallyManagedPostgres {
 			user: self.user.clone(),
 			password: self.password.as_ref().map(|x| Secret::new(String::from(x))),
 			max_connections: self.max_connections,
+			connection_timeout_secs: 10,
+			idle_timeout_secs: 600,
 		}
 	}
 
