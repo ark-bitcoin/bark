@@ -56,7 +56,7 @@ pub struct ClnHoldConfig {
 }
 
 pub struct ClnHold {
-	jh: JoinHandle<anyhow::Result<()>>,
+	jh: Option<JoinHandle<anyhow::Result<()>>>,
 }
 
 impl ClnHold {
@@ -86,16 +86,27 @@ impl ClnHold {
 			ret
 		});
 
-		Ok(ClnHold { jh })
+		Ok(ClnHold { jh: Some(jh) })
 	}
 
 	pub fn is_running(&self) -> bool {
-		!self.jh.is_finished()
+		self.jh.as_ref().is_some_and(|jh| !jh.is_finished())
 	}
 
 	/// Wait for the process to end.
-	pub async fn wait(self) -> Result<anyhow::Result<()>, tokio::task::JoinError> {
-		Ok(self.jh.await?)
+	pub async fn wait(mut self) -> Result<anyhow::Result<()>, tokio::task::JoinError> {
+		match self.jh.take() {
+			Some(jh) => Ok(jh.await?),
+			None => Ok(Ok(())),
+		}
+	}
+}
+
+impl Drop for ClnHold {
+	fn drop(&mut self) {
+		if let Some(jh) = self.jh.take() {
+			jh.abort();
+		}
 	}
 }
 

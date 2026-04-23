@@ -259,7 +259,7 @@ pub struct ClnXpayConfig {
 /// Tracks outbound payment status via CLN's listsendpays streams
 /// and periodically verifies open payment attempts.
 pub struct ClnXpay {
-	jh: JoinHandle<anyhow::Result<()>>,
+	jh: Option<JoinHandle<anyhow::Result<()>>>,
 	client: Arc<ClnXpayClient>,
 }
 
@@ -304,16 +304,19 @@ impl ClnXpay {
 			ret
 		});
 
-		Ok(ClnXpay { jh, client })
+		Ok(ClnXpay { jh: Some(jh), client })
 	}
 
 	pub fn is_running(&self) -> bool {
-		!self.jh.is_finished()
+		self.jh.as_ref().is_some_and(|jh| !jh.is_finished())
 	}
 
 	/// Wait for the process to end.
-	pub async fn wait(self) -> Result<anyhow::Result<()>, tokio::task::JoinError> {
-		Ok(self.jh.await?)
+	pub async fn wait(mut self) -> Result<anyhow::Result<()>, tokio::task::JoinError> {
+		match self.jh.take() {
+			Some(jh) => Ok(jh.await?),
+			None => Ok(Ok(())),
+		}
 	}
 
 	/// Fire-and-forget: spawn a task that calls xpay and then updates the DB.
@@ -335,6 +338,14 @@ impl ClnXpay {
 				retry_for,
 			).await;
 		});
+	}
+}
+
+impl Drop for ClnXpay {
+	fn drop(&mut self) {
+		if let Some(jh) = self.jh.take() {
+			jh.abort();
+		}
 	}
 }
 
