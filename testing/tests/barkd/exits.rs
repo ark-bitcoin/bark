@@ -14,10 +14,9 @@ async fn exit_start_all_and_progress_barkd() {
 	let ctx = TestContext::new("barkd/exit_start_all_and_progress_barkd").await;
 
 	let srv = ctx.captaind("server").funded(btc(10)).create().await;
-	let barkd = ctx.new_barkd("barkd1", &srv).await;
+	let barkd = ctx.barkd("barkd1", &srv).funded(sat(500_000)).create().await;
 
-	// Fund, board, confirm, then refresh into a round so the VTXO is fully in-round.
-	ctx.fund_barkd(&barkd, sat(500_000)).await;
+	// Board, confirm, then refresh into a round so the VTXO is fully in-round.
 	wait_for_onchain_balance(&barkd, sat(500_000)).await;
 	barkd.board_all().await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
@@ -50,9 +49,8 @@ async fn exit_claim_all_barkd() {
 	let ctx = TestContext::new("barkd/exit_claim_all_barkd").await;
 
 	let srv = ctx.captaind("server").funded(btc(10)).create().await;
-	let barkd = ctx.new_barkd("barkd1", &srv).await;
+	let barkd = ctx.barkd("barkd1", &srv).funded(sat(500_000)).create().await;
 
-	ctx.fund_barkd(&barkd, sat(500_000)).await;
 	wait_for_onchain_balance(&barkd, sat(500_000)).await;
 	barkd.board_all().await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
@@ -88,10 +86,9 @@ async fn exit_start_vtxos_barkd() {
 	let ctx = TestContext::new("barkd/exit_start_vtxos_barkd").await;
 
 	let srv = ctx.captaind("server").funded(btc(10)).create().await;
-	let barkd = ctx.new_barkd("barkd1", &srv).await;
+	let barkd = ctx.barkd("barkd1", &srv).funded(sat(300_000)).create().await;
 
 	// Create two VTXOs.
-	ctx.fund_barkd(&barkd, sat(300_000)).await;
 	wait_for_onchain_balance(&barkd, sat(300_000)).await;
 	barkd.board_amount(sat(100_000)).await;
 	barkd.board_amount(sat(100_000)).await;
@@ -121,9 +118,8 @@ async fn exit_claim_vtxos_barkd() {
 	let ctx = TestContext::new("barkd/exit_claim_vtxos_barkd").await;
 
 	let srv = ctx.captaind("server").funded(btc(10)).create().await;
-	let barkd = ctx.new_barkd("barkd1", &srv).await;
+	let barkd = ctx.barkd("barkd1", &srv).funded(sat(300_000)).create().await;
 
-	ctx.fund_barkd(&barkd, sat(300_000)).await;
 	wait_for_onchain_balance(&barkd, sat(300_000)).await;
 	barkd.board_amount(sat(100_000)).await;
 	barkd.board_amount(sat(100_000)).await;
@@ -169,10 +165,9 @@ async fn exit_auto_progress_disconnected_barkd() {
 	let ctx = TestContext::new("barkd/exit_auto_progress_disconnected_barkd").await;
 
 	let srv = ctx.captaind("server").funded(btc(10)).create().await;
-	let barkd = ctx.new_barkd("barkd1", &srv).await;
+	let barkd = ctx.barkd("barkd1", &srv).funded(sat(500_000)).create().await;
 
-	// Setup: fund, board, confirm, refresh into round.
-	ctx.fund_barkd(&barkd, sat(500_000)).await;
+	// Setup: board, confirm, refresh into round.
 	wait_for_onchain_balance(&barkd, sat(500_000)).await;
 	barkd.board_all().await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;

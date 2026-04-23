@@ -6,6 +6,7 @@ use bitcoin::Amount;
 use server::wallet::MNEMONIC_FILE;
 use tokio::fs;
 
+use crate::daemon::barkd::{Barkd, BarkdChainSource};
 use crate::daemon::watchmand::Watchmand;
 use crate::{Bark, Bitcoind, Captaind, Lightningd, LightningdConfig};
 use crate::util::FutureExt;
@@ -128,6 +129,77 @@ impl<'a> WatchmandBuilder<'a> {
 		ret.start().await.unwrap();
 
 		ret
+	}
+}
+
+// ── BarkdBuilder ────────────────────────────────────────────────────
+
+pub struct BarkdBuilder<'a> {
+	ctx: &'a TestContext,
+	name: String,
+	srv: &'a Captaind,
+	mod_cfg: Option<Box<dyn FnOnce(&mut bark::Config)>>,
+	fund_amount: Option<Amount>,
+}
+
+impl<'a> BarkdBuilder<'a> {
+	pub(super) fn new(
+		ctx: &'a TestContext,
+		name: impl AsRef<str>,
+		srv: &'a Captaind,
+	) -> Self {
+		BarkdBuilder {
+			ctx,
+			name: name.as_ref().to_string(),
+			srv,
+			mod_cfg: None,
+			fund_amount: None,
+		}
+	}
+
+	pub fn cfg(mut self, f: impl FnOnce(&mut bark::Config) + 'static) -> Self {
+		self.mod_cfg = Some(Box::new(f));
+		self
+	}
+
+	/// Fund the daemon's onchain wallet with `amount` after the wallet has
+	/// been created.
+	pub fn funded(mut self, amount: Amount) -> Self {
+		self.fund_amount = Some(amount);
+		self
+	}
+
+	pub async fn create(self) -> Barkd {
+		let (chain_source, bitcoind) = if let Some(electrs) = &self.ctx.electrs {
+			(BarkdChainSource::Esplora(electrs.rest_url()), None)
+		} else {
+			let bd = self.ctx.new_bitcoind(format!("{}_bitcoind", self.name)).await;
+			let chain_source = BarkdChainSource::Bitcoind {
+				url: bd.rpc_url(),
+				cookie: bd.rpc_cookie(),
+			};
+			(chain_source, Some(bd))
+		};
+
+		let datadir = self.ctx.datadir.join(&self.name);
+
+		let mut cfg = self.ctx.bark_default_cfg(self.srv, bitcoind.as_ref().map(|b| b as &Bitcoind));
+		if let Some(mod_cfg) = self.mod_cfg {
+			mod_cfg(&mut cfg);
+		}
+		std::fs::create_dir_all(&datadir).unwrap();
+		let config_toml = toml::to_string(&cfg).unwrap();
+		std::fs::write(datadir.join("config.toml"), config_toml).unwrap();
+
+		let mut daemon = Barkd::new(
+			&self.name, datadir, self.srv.ark_url(), chain_source, bitcoind,
+		);
+		daemon.start().await.expect("failed to start barkd");
+		daemon.create_wallet().await.expect("failed to create barkd wallet");
+		if let Some(amount) = self.fund_amount {
+			self.ctx.fund_barkd(&daemon, amount).await;
+		}
+		daemon
 	}
 }
 

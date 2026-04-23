@@ -17,9 +17,8 @@ async fn board_all_barkd() {
 			ppm: PpmFeeRate::ONE_PERCENT,
 		};
 	}).create().await;
-	let barkd = ctx.new_barkd("barkd1", &srv).await;
+	let barkd = ctx.barkd("barkd1", &srv).funded(sat(100_000)).create().await;
 
-	ctx.fund_barkd(&barkd, sat(100_000)).await;
 	wait_for_onchain_balance(&barkd, sat(100_000)).await;
 
 	let balance_before = barkd.bark_balance().await;
@@ -62,9 +61,8 @@ async fn board_amount_barkd() {
 			ppm: PpmFeeRate::ONE_PERCENT,
 		};
 	}).create().await;
-	let barkd = ctx.new_barkd("barkd1", &srv).await;
+	let barkd = ctx.barkd("barkd1", &srv).funded(sat(200_000)).create().await;
 
-	ctx.fund_barkd(&barkd, sat(200_000)).await;
 	wait_for_onchain_balance(&barkd, sat(200_000)).await;
 
 	let estimate = barkd.board_fee(sat(100_000)).await;
@@ -101,9 +99,8 @@ async fn pending_boards_barkd() {
 			ppm: PpmFeeRate::ONE_PERCENT,
 		};
 	}).create().await;
-	let barkd = ctx.new_barkd("barkd1", &srv).await;
+	let barkd = ctx.barkd("barkd1", &srv).funded(sat(300_000)).create().await;
 
-	ctx.fund_barkd(&barkd, sat(300_000)).await;
 	wait_for_onchain_balance(&barkd, sat(300_000)).await;
 
 	let estimate = barkd.board_fee(sat(100_000)).await;
@@ -143,11 +140,8 @@ async fn board_auto_sync_barkd() {
 		};
 	}).create().await;
 
-	let mut barkd = ctx.new_barkd_unstarted("barkd1", &srv).await;
-	barkd.start().await.expect("failed to start barkd");
-	barkd.create_wallet().await.expect("failed to create barkd wallet");
+	let barkd = ctx.barkd("barkd1", &srv).funded(sat(100_000)).create().await;
 
-	ctx.fund_barkd(&barkd, sat(100_000)).await;
 	wait_for_onchain_balance(&barkd, sat(100_000)).await;
 
 	let estimate = barkd.board_fee(sat(50_000)).await;
@@ -187,7 +181,7 @@ async fn board_fee_estimate_barkd() {
 			ppm: PpmFeeRate::ONE_PERCENT,
 		};
 	}).create().await;
-	let barkd = ctx.new_barkd("barkd1", &srv).await;
+	let barkd = ctx.barkd("barkd1", &srv).funded(sat(200_000)).create().await;
 
 	let rates = barkd.onchain_fee_rates().await;
 	assert!(rates.fast_sat_per_vb > 0, "fast fee rate should be positive");
@@ -205,7 +199,6 @@ async fn board_fee_estimate_barkd() {
 		"gross should equal net + fee",
 	);
 
-	ctx.fund_barkd(&barkd, sat(200_000)).await;
 	wait_for_onchain_balance(&barkd, sat(200_000)).await;
 
 	let board = barkd.board_amount(sat(100_000)).await;

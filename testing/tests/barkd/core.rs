@@ -7,7 +7,7 @@ async fn ping_barkd() {
 	let ctx = TestContext::new("barkd/ping_barkd").await;
 
 	let srv = ctx.captaind("server").create().await;
-	let barkd = ctx.new_barkd("barkd1", &srv).await;
+	let barkd = ctx.barkd("barkd1", &srv).create().await;
 
 	// `wait_for_init` (called internally by start) already proved ping works;
 	// this test provides explicit REST-level coverage.
@@ -20,7 +20,7 @@ async fn bitcoin_tip_barkd() {
 	let ctx = TestContext::new("barkd/bitcoin_tip_barkd").await;
 
 	let srv = ctx.captaind("server").create().await;
-	let barkd = ctx.new_barkd("barkd1", &srv).await;
+	let barkd = ctx.barkd("barkd1", &srv).create().await;
 
 	let height = ctx.bitcoind().get_block_count().await;
 
@@ -37,7 +37,7 @@ async fn wallet_connected_barkd() {
 	let ctx = TestContext::new("barkd/wallet_connected_barkd").await;
 
 	let srv = ctx.captaind("server").create().await;
-	let barkd = ctx.new_barkd("barkd1", &srv).await;
+	let barkd = ctx.barkd("barkd1", &srv).create().await;
 
 	let resp = barkd.connected().await;
 	assert!(resp.connected, "wallet should be connected to the Ark server after creation");
@@ -49,7 +49,7 @@ async fn wallet_ark_info_barkd() {
 	let ctx = TestContext::new("barkd/wallet_ark_info_barkd").await;
 
 	let srv = ctx.captaind("server").create().await;
-	let barkd = ctx.new_barkd("barkd1", &srv).await;
+	let barkd = ctx.barkd("barkd1", &srv).create().await;
 
 	let expected = srv.ark_info().await;
 	let info = barkd.ark_info().await;
@@ -69,7 +69,7 @@ async fn wallet_next_round_barkd() {
 	let ctx = TestContext::new("barkd/wallet_next_round_barkd").await;
 
 	let srv = ctx.captaind("server").create().await;
-	let barkd = ctx.new_barkd("barkd1", &srv).await;
+	let barkd = ctx.barkd("barkd1", &srv).create().await;
 
 	let next_round = barkd.next_round().await;
 	let now = chrono::Local::now();

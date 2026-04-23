@@ -12,7 +12,7 @@ async fn barkd_pushes_notification_on_arkoor_received() {
 
 	let srv = ctx.captaind("server").funded(btc(10)).create().await;
 	let sender = ctx.bark("sender", &srv).funded(sat(90_000)).create().await;
-	let receiver = ctx.new_barkd("receiver", &srv).await;
+	let receiver = ctx.barkd("receiver", &srv).create().await;
 
 	sender.board_and_confirm_and_register(&ctx, sat(80_000)).await;
 
