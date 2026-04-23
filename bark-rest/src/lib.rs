@@ -9,6 +9,7 @@ pub mod error;
 
 use crate::auth::AuthToken;
 pub use crate::config::Config;
+use crate::error::{ErrorResponse, unprocessable};
 pub use axum::http;
 use chrono::{DateTime, Utc};
 
@@ -228,13 +229,20 @@ impl ServerState {
 		ServerStateBuilder::new()
 	}
 
-	pub fn require_wallet(&self) -> anyhow::Result<Wallet> {
-		self.wallet.read().clone().context("No wallet set")
+	pub fn require_wallet(&self) -> Result<Wallet, ErrorResponse> {
+		let wallet_opt = self.wallet.read();
+		let Some(wallet) = wallet_opt.as_ref() else {
+			unprocessable!("No wallet set");
+		};
+		Ok(wallet.clone())
 	}
 
-	pub fn require_onchain(&self) -> anyhow::Result<Arc<tokio::sync::RwLock<dyn OnchainWalletTrait>>> {
-		self.wallet.read().as_ref().context("No wallet set")?
-			.onchain().context("No onchain wallet configured")
+	pub fn require_onchain(&self) -> Result<Arc<tokio::sync::RwLock<dyn OnchainWalletTrait>>, ErrorResponse> {
+		let onchain_opt = self.require_wallet()?.onchain();
+		let Some(onchain) = onchain_opt.as_ref() else {
+			unprocessable!("No onchain wallet configured");
+		};
+		Ok(onchain.clone())
 	}
 
 	pub fn auth_token(&self) -> Option<&AuthToken> {
