@@ -119,7 +119,8 @@ fn sort_key_to_js(sk: &SortKey) -> JsValue {
 /// IndexedDbClient is single-threaded, so it is safe to send and sync.
 unsafe impl Sync for IndexedDbClient {}
 
-#[async_trait(?Send)]
+#[cfg(target_arch = "wasm32")]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl StorageAdaptor for IndexedDbClient {
 	async fn get(&self, partition: u8, pk: &[u8]) -> anyhow::Result<Option<Record>> {
 		let pk = pk.to_lower_hex_string();
