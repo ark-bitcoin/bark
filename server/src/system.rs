@@ -175,3 +175,19 @@ impl RuntimeManager {
 		self.inner.shutdown.cancelled()
 	}
 }
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	#[test]
+	fn test_empty_runtime_manager_shutdown() {
+		let mgr = RuntimeManager::new();
+		assert!(!mgr.shutdown_requested());
+		assert!(!mgr.shutdown_complete());
+
+		mgr.shutdown();
+		assert!(mgr.shutdown_requested());
+		assert!(mgr.shutdown_complete());
+	}
+}
