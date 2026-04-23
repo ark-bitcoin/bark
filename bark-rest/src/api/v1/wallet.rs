@@ -45,6 +45,7 @@ pub fn router() -> Router<ServerState> {
 		.route("/send-onchain", post(send_onchain))
 		.route("/rounds", get(pending_rounds))
 		.route("/sync", post(sync))
+		.route("/sync/mailbox", post(sync_mailbox))
 		.route("/import-vtxo", post(import_vtxo))
 }
 
@@ -74,6 +75,7 @@ pub fn router() -> Router<ServerState> {
 		send_onchain,
 		pending_rounds,
 		sync,
+		sync_mailbox,
 		import_vtxo,
 	),
 	components(schemas(
@@ -97,6 +99,7 @@ pub fn router() -> Router<ServerState> {
 		bark_json::web::OffboardVtxosRequest,
 		bark_json::web::OffboardAllRequest,
 		bark_json::web::ImportVtxoRequest,
+		bark_json::web::MailboxSyncResponse,
 		bark_json::web::PendingRoundInfo,
 		bark_json::cli::RoundStatus,
 		error::InternalServerError,
@@ -900,6 +903,34 @@ pub async fn sync(State(state): State<ServerState>) -> HandlerResult<()> {
 	let wallet = state.require_wallet()?;
 	wallet.sync().await;
 	Ok(())
+}
+
+#[utoipa::path(
+	post,
+	path = "/sync/mailbox",
+	summary = "Sync mailbox only",
+	responses(
+		(status = 200, description = "Returns the mailbox tip after sync", body = bark_json::web::MailboxSyncResponse),
+		(status = 500, description = "Internal server error", body = error::InternalServerError)
+	),
+	description = "Triggers an immediate mailbox sync without running any of the other \
+		off-chain sync steps. Fetches any pending mailbox messages from the Ark server, \
+		processes them (incoming arkoor payments, lightning receive notifications), and \
+		returns the new mailbox checkpoint (tip). Useful in `daemon_manual_sync` mode \
+		where background mailbox subscription is disabled and the operator needs a \
+		granular way to pull incoming events.",
+	tag = "wallet"
+)]
+#[debug_handler]
+pub async fn sync_mailbox(
+	State(state): State<ServerState>,
+) -> HandlerResult<Json<bark_json::web::MailboxSyncResponse>> {
+	let wallet = state.require_wallet()?;
+	wallet.sync_mailbox().await
+		.context("failed to sync mailbox")?;
+	let checkpoint = wallet.get_mailbox_checkpoint().await
+		.context("failed to read mailbox checkpoint")?;
+	Ok(axum::Json(bark_json::web::MailboxSyncResponse { checkpoint }))
 }
 
 #[utoipa::path(

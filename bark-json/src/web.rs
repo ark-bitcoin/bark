@@ -95,6 +95,14 @@ pub struct TipResponse {
 
 #[derive(Serialize, Deserialize)]
 #[cfg_attr(feature = "utoipa", derive(ToSchema))]
+pub struct MailboxSyncResponse {
+	/// The mailbox checkpoint (tip) the wallet has consumed up to after
+	/// the sync. Monotonically non-decreasing across successful syncs.
+	pub checkpoint: u64,
+}
+
+#[derive(Serialize, Deserialize)]
+#[cfg_attr(feature = "utoipa", derive(ToSchema))]
 pub struct CreateWalletRequest {
 	/// The Ark server to use for the wallet.
 	/// Optional when a config.toml already exists in the datadir.
