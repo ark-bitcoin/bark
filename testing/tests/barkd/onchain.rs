@@ -9,13 +9,8 @@ async fn onchain_address_and_balance_barkd() {
 	let ctx = TestContext::new("barkd/onchain_address_and_balance_barkd").await;
 
 	let srv = ctx.captaind("server").create().await;
-	let barkd = ctx.new_barkd("barkd1", &srv).await;
-
 	let funded = sat(100_000);
-
-	let address = barkd.onchain_address().await;
-	ctx.bitcoind().fund_addr(address, funded).await;
-	ctx.generate_blocks(1).await;
+	let barkd = ctx.barkd("barkd1", &srv).funded(funded).create().await;
 
 	wait_for_onchain_balance(&barkd, funded).await;
 	let balance = barkd.onchain_balance().await;
@@ -28,11 +23,9 @@ async fn onchain_utxos_and_transactions_barkd() {
 	let ctx = TestContext::new("barkd/onchain_utxos_and_transactions_barkd").await;
 
 	let srv = ctx.captaind("server").create().await;
-	let barkd = ctx.new_barkd("barkd1", &srv).await;
-
 	let funded = sat(50_000);
+	let barkd = ctx.barkd("barkd1", &srv).funded(funded).create().await;
 
-	ctx.fund_barkd(&barkd, funded).await;
 	wait_for_onchain_balance(&barkd, funded).await;
 
 	let utxos = barkd.onchain_utxos().await;

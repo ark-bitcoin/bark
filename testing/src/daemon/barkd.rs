@@ -114,9 +114,10 @@ impl Barkd {
 	/// Create the barkd wallet via REST. Call this once after the daemon has started.
 	///
 	/// Expects a config.toml to already exist in the datadir (written by
-	/// [`TestContext::new_barkd_unstarted`]). The request omits `ark_server`
-	/// and `chain_source` so that `create_wallet` loads them from the file,
-	/// mirroring the `bark create` CLI pattern.
+	/// [`BarkdBuilder::create`](crate::context::builders::BarkdBuilder::create)).
+	/// The request omits `ark_server` and `chain_source` so that
+	/// `create_wallet` loads them from the file, mirroring the
+	/// `bark create` CLI pattern.
 	pub async fn create_wallet(&self) -> anyhow::Result<()> {
 		let req = CreateWalletRequest {
 			ark_server: None,

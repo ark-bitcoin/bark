@@ -10,9 +10,8 @@ async fn get_vtxo_barkd() {
 	let ctx = TestContext::new("barkd/get_vtxo_barkd").await;
 
 	let srv = ctx.captaind("server").create().await;
-	let barkd = ctx.new_barkd("barkd1", &srv).await;
+	let barkd = ctx.barkd("barkd1", &srv).funded(sat(100_000)).create().await;
 
-	ctx.fund_barkd(&barkd, sat(100_000)).await;
 	wait_for_onchain_balance(&barkd, sat(100_000)).await;
 	barkd.board_all().await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
@@ -34,9 +33,8 @@ async fn get_vtxo_encoded_barkd() {
 	let ctx = TestContext::new("barkd/get_vtxo_encoded_barkd").await;
 
 	let srv = ctx.captaind("server").create().await;
-	let barkd = ctx.new_barkd("barkd1", &srv).await;
+	let barkd = ctx.barkd("barkd1", &srv).funded(sat(100_000)).create().await;
 
-	ctx.fund_barkd(&barkd, sat(100_000)).await;
 	wait_for_onchain_balance(&barkd, sat(100_000)).await;
 	barkd.board_all().await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
@@ -56,9 +54,8 @@ async fn import_vtxo_barkd() {
 	let ctx = TestContext::new("barkd/import_vtxo_barkd").await;
 
 	let srv = ctx.captaind("server").create().await;
-	let barkd = ctx.new_barkd("barkd1", &srv).await;
+	let barkd = ctx.barkd("barkd1", &srv).funded(sat(100_000)).create().await;
 
-	ctx.fund_barkd(&barkd, sat(100_000)).await;
 	wait_for_onchain_balance(&barkd, sat(100_000)).await;
 	barkd.board_all().await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;

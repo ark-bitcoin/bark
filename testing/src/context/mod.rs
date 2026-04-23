@@ -37,7 +37,6 @@ use crate::{
 	btc, constants, sat, Bark, Barkd, Bitcoind, BitcoindConfig, Captaind, Electrs, ElectrsConfig,
 	Lightningd,
 };
-use crate::daemon::barkd::BarkdChainSource;
 
 pub mod builders;
 
@@ -521,41 +520,17 @@ impl TestContext {
 		}
 	}
 
-	/// Creates a new barkd daemon connected to the given Ark server.
+	/// Build a new barkd daemon connected to the given Ark server.
+	/// [`BarkdBuilder::create`] starts the daemon and creates its wallet.
 	///
 	/// Uses esplora (electrs) as chain source when available, otherwise
 	/// creates a dedicated bitcoind.
-	pub async fn new_barkd(&self, name: impl AsRef<str>, srv: &Captaind) -> Barkd {
-		let mut daemon = self.new_barkd_unstarted(name,srv).await;
-		daemon.start().await.expect("failed to start barkd");
-		daemon.create_wallet().await.expect("failed to create barkd wallet");
-		daemon
-	}
-
-	/// Like [`new_barkd`](Self::new_barkd) but returns the daemon before starting,
-	/// so the caller can configure it (e.g. set environment variables) first.
-	pub async fn new_barkd_unstarted(&self, name: impl AsRef<str>, srv: &Captaind) -> Barkd {
-		let (chain_source, bitcoind) = if let Some(electrs) = &self.electrs {
-			(BarkdChainSource::Esplora(electrs.rest_url()), None)
-		} else {
-			let bd = self.new_bitcoind(format!("{}_bitcoind", name.as_ref())).await;
-			let chain_source = BarkdChainSource::Bitcoind {
-				url: bd.rpc_url(),
-				cookie: bd.rpc_cookie(),
-			};
-			(chain_source, Some(bd))
-		};
-
-		let datadir = self.datadir.join(name.as_ref());
-
-		// Write config.toml with test-appropriate sync intervals so that barkd
-		// picks them up instead of falling back to the 60s default.
-		let cfg = self.bark_default_cfg(srv, bitcoind.as_ref().map(|b| b as &Bitcoind));
-		std::fs::create_dir_all(&datadir).unwrap();
-		let config_toml = toml::to_string(&cfg).unwrap();
-		std::fs::write(datadir.join("config.toml"), config_toml).unwrap();
-
-		Barkd::new(name, datadir, srv.ark_url(), chain_source, bitcoind)
+	pub fn barkd<'a>(
+		&'a self,
+		name: impl AsRef<str>,
+		srv: &'a Captaind,
+	) -> builders::BarkdBuilder<'a> {
+		builders::BarkdBuilder::new(self, name, srv)
 	}
 
 	/// Creates one sender and one receiver lightningd node and funds sender,
@@ -602,8 +577,9 @@ impl TestContext {
 		txid
 	}
 
+	/// Send `amount` to an onchain address of this barkd daemon.
 	pub async fn fund_barkd(&self, barkd: &Barkd, amount: Amount) -> Txid {
-		info!("Fund barkd {} {}", barkd.name, amount);
+		info!("Fund {} {}", barkd.name(), amount);
 		let address = barkd.onchain_address().await;
 		let txid = self.bitcoind().fund_addr(address, amount).await;
 		self.bitcoind().generate(1).await;
