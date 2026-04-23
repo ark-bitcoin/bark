@@ -445,6 +445,7 @@ async fn full_round() {
 
 	// Since we can have 16 outputs, we will create 17 barks with 1 output each.
 
+	ctx.generate_blocks(1).await;
 	let barks = join_all((1..=NB_BARKS).map(|i| {
 		let name = format!("bark{}", i);
 		ctx.bark(name, &srv).funded(sat(40_000)).create()
@@ -456,6 +457,10 @@ async fn full_round() {
 		bark.board(sat(1_000)).await;
 	})).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
+	futures::future::join_all(barks.iter().map(|bark| async {
+		bark.sync().await;
+	})).await;
+	ctx.generate_blocks(1).await;
 
 	let (tx, mut rx) = mpsc::unbounded_channel();
 

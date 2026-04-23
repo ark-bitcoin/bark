@@ -469,21 +469,20 @@ async fn refresh_should_refresh_vtxos_no_dust() {
 	let id = vtxo.id.to_string();
 	assert_eq!(bark2.spendable_balance().await, sat(200_331));
 
-	// Advance 60 more blocks so that:
-	// - VTXO A' is in must_refresh zone (blocks_left < 24)
-	// - VTXO B is not in any refresh zone (blocks_left > 52)
+	// Advance 90 more blocks so that VTXO A' (expiry inherited from bark1's board)
+	// is in must_refresh zone and will expire after ROUND_CONFIRMATIONS.
+	ctx.generate_blocks(90).await;
 	let (_, result) = tokio::join!(
 		srv.trigger_round(),
 		bark2.try_run(["refresh", "--vtxo", id.as_str()]),
 	);
 	result.expect("refresh command failed");
-	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
+	let tip = ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
 
 	let vtxos = bark2.vtxos().await;
 	assert_eq!(vtxos.len(), 2, "Should have 2 VTXOs: 1 refresh output, 1 expired VTXO");
 
 	let expected_fee = sat(200_000) * PpmFeeRate::ONE_PERCENT;
-	let tip = ctx.bitcoind().get_block_count().await as u32;
 	assert_eq!(
 		vtxos.iter().filter(|v| v.amount == sat(198_000)).count(), 1,
 		"One VTXO which was explicitly refreshed",
