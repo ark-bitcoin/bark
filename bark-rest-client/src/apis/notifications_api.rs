@@ -24,6 +24,7 @@ pub enum WebsocketTicketError {
 }
 
 
+/// Creates a single-use ticket that authenticates a websocket connection at `ws://<host>/api/v1/notifications/ws?ticket=<ticket>`. The ticket must be used within 10 minutes of creation; the resulting websocket connection is long-lived.
 pub async fn websocket_ticket(configuration: &configuration::Configuration, ) -> Result<String, Error<WebsocketTicketError>> {
 
     let uri_str = format!("{}/api/v1/notifications/ws/ticket", configuration.base_path);
