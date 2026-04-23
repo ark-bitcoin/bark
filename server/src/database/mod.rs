@@ -135,6 +135,12 @@ impl Db {
 			pg_config.password(password.leak_ref());
 		}
 
+		// Enable TCP keepalives so the OS detects dead connections
+		// (e.g. container network dropping idle connections silently).
+		// Default keepalives_idle is 2 hours which is far too long.
+		pg_config.keepalives(true);
+		pg_config.keepalives_idle(Duration::from_secs(60));
+
 		pg_config
 	}
 
