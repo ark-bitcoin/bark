@@ -10,7 +10,7 @@ use tracing::{error, info};
 use crate::telemetry;
 
 /// A struct to be held in scope while a process is working.
-pub struct RuntimeWorker {
+pub struct WorkerGuard {
 	mgr: RuntimeManager,
 	name: String,
 	critical: bool,
@@ -18,14 +18,14 @@ pub struct RuntimeWorker {
 	extra_notify: Option<Arc<Notify>>,
 }
 
-impl RuntimeWorker {
+impl WorkerGuard {
 	pub fn with_notify(mut self, notify: Arc<Notify>) -> Self {
 		self.extra_notify = Some(notify);
 		self
 	}
 }
 
-impl std::ops::Drop for RuntimeWorker {
+impl std::ops::Drop for WorkerGuard {
 	fn drop(&mut self) {
 		if let Some(ref notify) = self.extra_notify {
 			notify.notify_waiters();
@@ -107,7 +107,7 @@ impl RuntimeManager {
 		}
 	}
 
-	fn inner_spawn(&self, name: impl AsRef<str>, critical: bool) -> RuntimeWorker {
+	fn inner_spawn(&self, name: impl AsRef<str>, critical: bool) -> WorkerGuard {
 		let _old = self.inner.workers.fetch_add(1, atomic::Ordering::SeqCst);
 		self.inner.notify.notify_waiters();
 
@@ -116,7 +116,7 @@ impl RuntimeManager {
 
 		telemetry::worker_spawned(name);
 
-		RuntimeWorker {
+		WorkerGuard {
 			mgr: self.clone(),
 			name: name.into(),
 			critical,
@@ -125,14 +125,14 @@ impl RuntimeManager {
 	}
 
 	/// Create a worker that will inform the [RuntimeManager] when it goes out of scope.
-	pub fn spawn(&self, name: impl AsRef<str>) -> RuntimeWorker {
+	pub fn spawn(&self, name: impl AsRef<str>) -> WorkerGuard {
 		self.inner_spawn(name, false)
 	}
 
 	/// Create a worker that will inform the [RuntimeManager] when it goes out of scope.
 	///
 	/// When a critical worker ends, shutdown will be triggered.
-	pub fn spawn_critical(&self, name: impl AsRef<str>) -> RuntimeWorker {
+	pub fn spawn_critical(&self, name: impl AsRef<str>) -> WorkerGuard {
 		self.inner_spawn(name, true)
 	}
 
