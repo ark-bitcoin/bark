@@ -61,7 +61,7 @@ impl RuntimeManager {
 	///
 	/// Upon receipt, it will
 	/// - call the [RuntimeManager::shutdown] method.
-	/// - If [RuntimeManager::shutdown_done] does not return true within
+	/// - If [RuntimeManager::shutdown_complete] does not return true within
 	///   the `timeout` duration, it will exit the process forcibly.
 	pub fn run_shutdown_signal_listener(&self, timeout: Duration) {
 		let rt = self.clone();
@@ -79,7 +79,7 @@ impl RuntimeManager {
 
 			let _ = rt.shutdown();
 			let deadline = Instant::now() + timeout;
-			while !rt.shutdown_done() {
+			while !rt.shutdown_complete() {
 				let now = Instant::now();
 				if let Some(time_left) = deadline.checked_duration_since(now) {
 					info!("Forced exit in {} seconds...", time_left.as_secs());
@@ -141,14 +141,24 @@ impl RuntimeManager {
 		self.inner.shutdown.cancel();
 	}
 
-	pub fn shutdown_done(&self) -> bool {
-		self.inner.workers.load(atomic::Ordering::SeqCst) == 0
+	pub fn shutdown_complete(&self) -> bool {
+		self.shutdown_requested() && self.worker_count() == 0
+	}
+
+	/// Whether [RuntimeManager::shutdown] has been called.
+	pub fn shutdown_requested(&self) -> bool {
+		self.inner.shutdown.is_cancelled()
+	}
+
+	/// Number of currently live workers.
+	pub fn worker_count(&self) -> usize {
+		self.inner.workers.load(atomic::Ordering::SeqCst)
 	}
 
 	/// Wait for shutdown to finish.
 	pub async fn wait(&self) {
 		loop {
-			if self.shutdown_done() {
+			if self.shutdown_complete() {
 				return;
 			}
 			self.inner.notify.notified().await;
