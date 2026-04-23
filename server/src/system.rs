@@ -207,6 +207,25 @@ mod tests {
 		assert!(!mgr.shutdown_requested());
 	}
 
+	#[test]
+	fn test_duplicate_worker_names_are_independent() {
+		let mgr = RuntimeManager::new();
+		let guard1 = mgr.spawn("worker");
+		let guard2 = mgr.spawn("worker");
+		let guard3 = mgr.spawn("worker");
+		assert_eq!(mgr.worker_count(), 3);
+
+		drop(guard1);
+		assert_eq!(mgr.worker_count(), 2);
+
+		drop(guard2);
+		assert_eq!(mgr.worker_count(), 1);
+
+		drop(guard3);
+		assert_eq!(mgr.worker_count(), 0);
+		assert!(!mgr.shutdown_requested());
+	}
+
 	#[tokio::test]
 	async fn test_critical_worker_triggers_shutdown() {
 		let mgr = RuntimeManager::new();
