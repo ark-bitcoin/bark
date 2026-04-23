@@ -217,15 +217,44 @@ impl Db {
 	}
 
 	pub async fn get_conn(&self) -> anyhow::Result<PooledConnection<'_, PostgresConnectionManager<NoTls>>> {
+		let before = self.pool.state();
 		telemetry::set_postgres_connection_pool_metrics(self.pool.state());
+		let start = std::time::Instant::now();
 		match self.pool.get().await {
 			Ok(conn) => {
 				Ok(conn)
 			},
 			Err(e) => {
+				let elapsed_ms = start.elapsed().as_millis() as u64;
+				let after = self.pool.state();
 				slog!(PostgresConnectionPoolConnectionFailure,
 					err: e.to_string(),
 					backtrace: Backtrace::capture().to_string(),
+					elapsed_ms,
+					before_connections: before.connections,
+					before_idle: before.idle_connections,
+					before_get_started: before.statistics.get_started,
+					before_get_direct: before.statistics.get_direct,
+					before_get_waited: before.statistics.get_waited,
+					before_get_timed_out: before.statistics.get_timed_out,
+					before_pending_gets: before.statistics.pending_gets(),
+					before_connections_created: before.statistics.connections_created,
+					before_connections_closed_broken: before.statistics.connections_closed_broken,
+					before_connections_closed_invalid: before.statistics.connections_closed_invalid,
+					before_connections_closed_idle_timeout: before.statistics.connections_closed_idle_timeout,
+					before_connections_closed_max_lifetime: before.statistics.connections_closed_max_lifetime,
+					after_connections: after.connections,
+					after_idle: after.idle_connections,
+					after_get_started: after.statistics.get_started,
+					after_get_direct: after.statistics.get_direct,
+					after_get_waited: after.statistics.get_waited,
+					after_get_timed_out: after.statistics.get_timed_out,
+					after_pending_gets: after.statistics.pending_gets(),
+					after_connections_created: after.statistics.connections_created,
+					after_connections_closed_broken: after.statistics.connections_closed_broken,
+					after_connections_closed_invalid: after.statistics.connections_closed_invalid,
+					after_connections_closed_idle_timeout: after.statistics.connections_closed_idle_timeout,
+					after_connections_closed_max_lifetime: after.statistics.connections_closed_max_lifetime,
 				);
 				Err(e.into())
 			}

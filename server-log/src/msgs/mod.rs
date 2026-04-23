@@ -37,6 +37,34 @@ use chrono::Local;
 pub struct PostgresConnectionPoolConnectionFailure {
 	pub err: String,
 	pub backtrace: String,
+	/// How long pool.get() took before failing (ms).
+	pub elapsed_ms: u64,
+	/// Pool state when get_conn() was called.
+	pub before_connections: u32,
+	pub before_idle: u32,
+	pub before_get_started: u64,
+	pub before_get_direct: u64,
+	pub before_get_waited: u64,
+	pub before_get_timed_out: u64,
+	pub before_pending_gets: u64,
+	pub before_connections_created: u64,
+	pub before_connections_closed_broken: u64,
+	pub before_connections_closed_invalid: u64,
+	pub before_connections_closed_idle_timeout: u64,
+	pub before_connections_closed_max_lifetime: u64,
+	/// Pool state after pool.get() returned the error.
+	pub after_connections: u32,
+	pub after_idle: u32,
+	pub after_get_started: u64,
+	pub after_get_direct: u64,
+	pub after_get_waited: u64,
+	pub after_get_timed_out: u64,
+	pub after_pending_gets: u64,
+	pub after_connections_created: u64,
+	pub after_connections_closed_broken: u64,
+	pub after_connections_closed_invalid: u64,
+	pub after_connections_closed_idle_timeout: u64,
+	pub after_connections_closed_max_lifetime: u64,
 }
 impl_slog!(PostgresConnectionPoolConnectionFailure, ERROR, "postgres connection pool failed to provide a connection");
 
