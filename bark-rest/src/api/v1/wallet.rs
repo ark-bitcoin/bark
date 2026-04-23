@@ -20,6 +20,7 @@ use bark::subsystem::RoundMovement;
 use bark::vtxo::VtxoFilter;
 use bark_json::web::PendingRoundInfo;
 
+use crate::notifications::NotificationManager;
 use crate::{ServerState, error};
 use crate::error::{ContextExt, HandlerResult, badarg, not_found};
 
@@ -228,8 +229,11 @@ pub async fn create_wallet(
 
 	if let Some(on_wallet_create) = state.on_wallet_create.as_ref() {
 		let wallet = on_wallet_create(req).await?;
+		let notification_mngr = NotificationManager::start(wallet.clone(), state.shutdown.clone());
+
 		let fingerprint = wallet.fingerprint().to_string();
 		let _ = state.wallet.write().insert(wallet);
+		let _ = state.notification_mngr.write().insert(notification_mngr);
 
 		Ok(axum::Json(bark_json::web::CreateWalletResponse { fingerprint }))
 	} else {

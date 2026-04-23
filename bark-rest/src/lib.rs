@@ -7,19 +7,22 @@ pub mod auth;
 pub mod config;
 pub mod error;
 
-use crate::auth::AuthToken;
+mod notifications;
+
 pub use crate::config::Config;
-use crate::error::{ErrorResponse, unprocessable};
+use crate::notifications::NotificationManager;
 pub use axum::http;
-use chrono::{DateTime, Utc};
 
+use crate::auth::AuthToken;
+use crate::error::{ErrorResponse, unprocessable};
 
-use std::collections::{HashMap};
+use std::collections::HashMap;
 use std::pin::Pin;
 use std::sync::Arc;
 
 use anyhow::Context;
 use axum::routing::get;
+use chrono::{DateTime, Utc};
 use log::{error, warn, info};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
@@ -134,6 +137,8 @@ pub struct RestServer {
 #[derive(Clone)]
 pub struct ServerState {
 	wallet: Arc<parking_lot::RwLock<Option<Wallet>>>,
+	notification_mngr: Arc<parking_lot::RwLock<Option<NotificationManager>>>,
+	shutdown: CancellationToken,
 	auth_token: Option<AuthToken>,
 
 	/// A hook to be called when a wallet is created, returning a
@@ -206,9 +211,16 @@ impl ServerStateBuilder {
 		self
 	}
 
-	pub fn build(self) -> ServerState {
+	pub fn build(self, shutdown: CancellationToken) -> ServerState {
+		let notification_mngr = match &self.wallet {
+			Some(wallet) => Some(NotificationManager::start(wallet.clone(), shutdown.clone())),
+			None => None,
+		};
+
 		ServerState {
 			wallet: Arc::new(parking_lot::RwLock::new(self.wallet)),
+			notification_mngr: Arc::new(parking_lot::RwLock::new(notification_mngr)),
+			shutdown: shutdown,
 			auth_token: self.auth_token,
 			on_wallet_create: self.on_wallet_create,
 			on_wallet_delete: self.on_wallet_delete,
@@ -254,7 +266,7 @@ impl RestServer {
 	/// Start a new [RestServer] with the given config and [ServerState].
 	///
 	/// Build the state via [`ServerState::builder`].
-	pub async fn start(config: &Config, state: ServerState) -> anyhow::Result<Self> {
+	pub async fn start(config: &Config, state: ServerState, shutdown: CancellationToken) -> anyhow::Result<Self> {
 		let (router, _api) = OpenApiRouter::with_openapi(ApiDoc::openapi())
 			.split_for_parts();
 
@@ -282,8 +294,6 @@ impl RestServer {
 
 		let listener = tokio::net::TcpListener::bind(socket_addr).await
 			.context("Failed to bind to address")?;
-
-		let shutdown = CancellationToken::new();
 
 		let shutdown2 = shutdown.clone();
 		let jh = tokio::spawn(async move {

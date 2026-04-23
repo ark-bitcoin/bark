@@ -153,6 +153,8 @@ pub(crate) async fn guard_auth(
 
 #[cfg(test)]
 mod tests {
+	use tokio_util::sync::CancellationToken;
+
 	use super::*;
 
 	fn test_token() -> AuthToken {
@@ -160,7 +162,8 @@ mod tests {
 	}
 
 	fn make_state(token: AuthToken) -> State<ServerState> {
-		State(ServerState::builder().auth_token(token).build())
+		let shutdown = CancellationToken::new();
+		State(ServerState::builder().auth_token(token).build(shutdown))
 	}
 
 	#[test]

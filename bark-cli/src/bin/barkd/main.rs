@@ -20,6 +20,7 @@ use bark::fs_perms;
 use bark_cli::VERSION_DIRTY;
 use bark_cli::log::init_logging;
 use bark_cli::wallet::{ConfigOpts, CreateOpts, create_wallet, open_wallet, read_mnemonic, AUTH_TOKEN_FILE};
+use tokio_util::sync::CancellationToken;
 
 
 /// The full version string we show in our binary.
@@ -164,7 +165,7 @@ impl Cli {
 
 /// Runs a thread that will watch for SIGTERM and ctrl-c signals and
 /// returns when a signal is received
-async fn run_shutdown_signal_listener() {
+async fn run_shutdown_signal_listener(shutdown: CancellationToken) {
 	async fn signal_recv() {
 		#[cfg(unix)]
 		{
@@ -201,6 +202,8 @@ async fn run_shutdown_signal_listener() {
 			Err(e) => panic!("failed to listen to ctrl-c signal: {e}"),
 		},
 	}
+
+	shutdown.cancel();
 }
 
 /// Load the auth token from the datadir. Returns `None` if the file
@@ -331,6 +334,8 @@ async fn main() -> anyhow::Result<()>{
 		}
 	}
 
+	let shutdown = CancellationToken::new();
+
 	info!("Starting barkd version {} with datadir {}", FULL_VERSION, datadir.display());
 
 	if env!("BARK_VERSION") == VERSION_DIRTY {
@@ -365,11 +370,13 @@ async fn main() -> anyhow::Result<()>{
 		None
 	};
 
+	let cloned_shutdown = shutdown.clone();
 	let on_wallet_create: Arc<OnWalletCreate> = Arc::new({
 		let datadir = datadir.clone();
 
 		move |req: CreateWalletRequest| {
 			let datadir = datadir.clone();
+			let shutdown = cloned_shutdown.clone();
 
 			Box::pin(async move {
 				let create_opts = wallet_create_request_to_create_opts(req)?;
@@ -385,7 +392,6 @@ async fn main() -> anyhow::Result<()>{
 				}
 
 				wallet.start_daemon()?;
-
 				Ok::<_, anyhow::Error>(wallet)
 			})
 		}
@@ -426,10 +432,10 @@ async fn main() -> anyhow::Result<()>{
 		.on_wallet_create(on_wallet_create)
 		.on_wallet_delete(on_wallet_delete)
 		.on_get_mnemonic(on_get_mnemonic)
-		.build();
-	let server = RestServer::start(&cli.to_config()?, state).await?;
+		.build(shutdown.clone());
+	let server = RestServer::start(&cli.to_config()?, state, shutdown.clone()).await?;
 
-	run_shutdown_signal_listener().await;
+	run_shutdown_signal_listener(shutdown.clone()).await;
 
 	if let Some(wallet) = inner_wallet {
 		wallet.stop_daemon();
