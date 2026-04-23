@@ -6,6 +6,7 @@ use bitcoin::Amount;
 use server::wallet::MNEMONIC_FILE;
 use tokio::fs;
 
+use crate::constants::BOARD_CONFIRMATIONS;
 use crate::daemon::barkd::{Barkd, BarkdChainSource};
 use crate::daemon::watchmand::Watchmand;
 use crate::{Bark, Bitcoind, Captaind, Lightningd, LightningdConfig};
@@ -149,6 +150,7 @@ pub struct BarkdBuilder<'a> {
 	srv: &'a Captaind,
 	mod_cfg: Option<Box<dyn FnOnce(&mut bark::Config)>>,
 	fund_amount: Option<Amount>,
+	board_amount: Option<Amount>,
 }
 
 impl<'a> BarkdBuilder<'a> {
@@ -163,6 +165,7 @@ impl<'a> BarkdBuilder<'a> {
 			srv,
 			mod_cfg: None,
 			fund_amount: None,
+			board_amount: None,
 		}
 	}
 
@@ -175,6 +178,14 @@ impl<'a> BarkdBuilder<'a> {
 	/// been created.
 	pub fn funded(mut self, amount: Amount) -> Self {
 		self.fund_amount = Some(amount);
+		self
+	}
+
+	/// Provide `amount` of on-chain coins to the daemon's wallet and then
+	/// board it all into Ark. Returns once the board tx is confirmed and
+	/// the resulting VTXO has been registered with the Ark server.
+	pub fn boarded(mut self, amount: Amount) -> Self {
+		self.board_amount = Some(amount);
 		self
 	}
 
@@ -205,9 +216,21 @@ impl<'a> BarkdBuilder<'a> {
 		);
 		daemon.start().await.expect("failed to start barkd");
 		daemon.create_wallet().await.expect("failed to create barkd wallet");
+
+		if let Some(amount) = self.board_amount {
+			self.ctx.fund_barkd(&daemon, amount).await;
+			// Force an onchain sync so the funding tx is visible before
+			// board_all tries to spend it.
+			daemon.onchain_sync().await;
+			daemon.board_all().await;
+			self.ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
+			daemon.sync().await;
+		}
+
 		if let Some(amount) = self.fund_amount {
 			self.ctx.fund_barkd(&daemon, amount).await;
 		}
+
 		daemon
 	}
 }
