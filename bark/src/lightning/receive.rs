@@ -185,6 +185,9 @@ impl Wallet {
 			.context("claim arkoor cosign failed with user response")?
 			.build_signed_vtxos();
 
+		// Register the claim output so it is spendable for any later flow.
+		self.register_vtxos_with_server(&outputs).await?;
+
 		let mut effective_balance = Amount::ZERO;
 		for vtxo in &outputs {
 			// NB: bailing here results in vtxos not being registered despite the
