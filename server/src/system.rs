@@ -206,4 +206,32 @@ mod tests {
 		assert_eq!(mgr.worker_count(), 0);
 		assert!(!mgr.shutdown_requested());
 	}
+
+	#[tokio::test]
+	async fn test_critical_worker_triggers_shutdown() {
+		let mgr = RuntimeManager::new();
+		let guard1 = mgr.spawn_critical("critical-1");
+		let guard2 = mgr.spawn_critical("critical-2");
+		let guard3 = mgr.spawn_critical("critical-3");
+		assert_eq!(mgr.worker_count(), 3);
+		assert!(!mgr.shutdown_requested());
+
+		let mgr2 = mgr.clone();
+		tokio::spawn(async move {
+			mgr2.shutdown_signal().await;
+			drop(guard2);
+		});
+		let mgr3 = mgr.clone();
+		tokio::spawn(async move {
+			mgr3.shutdown_signal().await;
+			drop(guard3);
+		});
+
+		drop(guard1);
+		assert!(mgr.shutdown_requested());
+
+		mgr.wait().await;
+		assert_eq!(mgr.worker_count(), 0);
+		assert!(mgr.shutdown_complete());
+	}
 }
