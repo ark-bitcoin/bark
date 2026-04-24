@@ -559,6 +559,11 @@ impl Wallet {
 		).await.context("Could not find enough suitable VTXOs to cover lightning payment")?;
 		let total_amount = payment_amount + fee;
 
+		// Ensure that all inputs are fully registered so the server will
+		// accept them.
+		self.register_vtxos_with_server(&inputs).await
+			.context("failed to register lightning-send input vtxos with server")?;
+
 		let mut secs = Vec::with_capacity(inputs.len());
 		let mut pubs = Vec::with_capacity(inputs.len());
 		let mut input_keypairs = Vec::with_capacity(inputs.len());
@@ -614,6 +619,10 @@ impl Wallet {
 			.context("Failed to cosign vtxos")?
 			.build_signed_vtxos();
 
+		// Ensure both htlcs and change are registered. We must register
+		// change before initiating the lightning payment.
+		self.register_vtxos_with_server(&vtxos).await?;
+
 		let (htlc_vtxos, change_vtxos) = vtxos.into_iter()
 			.partition::<Vec<_>, _>(|v| matches!(v.policy(), VtxoPolicy::ServerHtlcSend(_)));
 
@@ -663,9 +672,6 @@ impl Wallet {
 			&htlc_vtxos.iter().map(|v| v.id()).collect::<Vec<_>>(),
 			movement_id,
 		).await?;
-
-		// Register HTLC VTXOs with server before initiating payment
-		self.register_vtxos_with_server(&htlc_vtxos).await?;
 
 		let req = protos::InitiateLightningPaymentRequest {
 			invoice: invoice.to_string(),
