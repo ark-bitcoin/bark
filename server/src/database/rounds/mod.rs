@@ -297,44 +297,63 @@ impl Db {
 	pub async fn set_forfeit_transactions(
 		&self,
 		unlock_hash: UnlockHash,
-		vtxo_id: VtxoId,
-		signed_forfeit_tx: &Transaction,
+		vtxo_ids: &[VtxoId],
+		forfeits: &[Transaction],
+		txids: &[Txid],
 	) -> anyhow::Result<()> {
+		ensure!(
+			vtxo_ids.len() == forfeits.len() && vtxo_ids.len() == txids.len(),
+			"set_forfeit_transactions: mismatched slice lengths: \
+				vtxo_ids={}, forfeits={}, txids={}",
+			vtxo_ids.len(), forfeits.len(), txids.len(),
+		);
+		if vtxo_ids.is_empty() {
+			return Ok(());
+		}
+
+		let vtxo_id_strs = vtxo_ids.iter().map(|id| id.to_string()).collect::<Vec<_>>();
+		let serialized = forfeits.iter().map(|ff| serialize(ff)).collect::<Vec<_>>();
+		let txid_strs = txids.iter().map(|t| t.to_string()).collect::<Vec<_>>();
+
 		let mut conn = self.get_conn().await?;
 		let tx = conn.transaction().await?;
 
 		let stmt = tx.prepare_typed(
-			"UPDATE round_part_input SET signed_forfeit_tx = $3 FROM round_participation \
+			"UPDATE round_part_input SET signed_forfeit_tx = u.signed_tx \
+			FROM round_participation, UNNEST($2::text[], $3::bytea[]) AS u(vtxo_id, signed_tx) \
 			WHERE round_part_input.participation_id = round_participation.id \
 				AND round_participation.unlock_hash = $1 \
 				AND round_participation.round_id IS NOT NULL \
-				AND round_part_input.vtxo_id = $2",
-			&[Type::TEXT, Type::TEXT, Type::BYTEA]
+				AND round_part_input.vtxo_id = u.vtxo_id",
+			&[Type::TEXT, Type::TEXT_ARRAY, Type::BYTEA_ARRAY]
 		).await.context("error preparing participation query")?;
 
 		let rows_affected = tx.execute(&stmt, &[
 			&unlock_hash.to_string(),
-			&vtxo_id.to_string(),
-			&serialize(signed_forfeit_tx),
+			&vtxo_id_strs,
+			&serialized,
 		]).await.context("error executing participation query")?;
 
-		if rows_affected == 0 {
-			return badarg!("no matching round participation input found for \
-				unlock_hash {} and vtxo_id {}", unlock_hash, vtxo_id,
+		if rows_affected as usize != vtxo_ids.len() {
+			return badarg!("round participation inputs not fully matched for \
+				unlock_hash {}: expected {} updates, got {}",
+				unlock_hash, vtxo_ids.len(), rows_affected,
 			);
 		}
 
 		let stmt = tx.prepare_typed(
-			"UPDATE vtxo SET oor_spent_txid = $2, updated_at = NOW() WHERE vtxo_id = $1",
-			&[Type::TEXT, Type::TEXT],
+			"UPDATE vtxo SET oor_spent_txid = u.txid, updated_at = NOW() \
+			FROM UNNEST($1::text[], $2::text[]) AS u(vtxo_id, txid) \
+			WHERE vtxo.vtxo_id = u.vtxo_id",
+			&[Type::TEXT_ARRAY, Type::TEXT_ARRAY],
 		).await.context("error preparing vtxo query")?;
 		let rows_affected = tx.execute(&stmt, &[
-			&vtxo_id.to_string(),
-			&signed_forfeit_tx.compute_txid().to_string(),
+			&vtxo_id_strs,
+			&txid_strs,
 		]).await.context("error executing vtxo query")?;
-		ensure!(rows_affected == 1,
-			"corrupt db: should have 1 vtxo matching id {}, have {}",
-			vtxo_id, rows_affected,
+		ensure!(rows_affected as usize == vtxo_ids.len(),
+			"corrupt db: expected {} vtxos updated, got {}",
+			vtxo_ids.len(), rows_affected,
 		);
 
 		tx.commit().await?;

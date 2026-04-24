@@ -1247,6 +1247,122 @@ async fn round_participation_forfeited_at() {
 		"re-marking should preserve the original forfeited_at timestamp");
 }
 
+/// `set_forfeit_transactions` must be idempotent under retry.
+///
+/// The server calls `set_forfeit_transactions` from `register_vtxo_forfeit`
+/// while a user is submitting signed forfeit txs for a round. If the round
+/// coordinator bails between the db write and the user's ack, the user will
+/// resubmit the same forfeit tx and the server will call this query again
+/// with identical arguments. Re-running it must not fail and must not change
+/// the persisted state.
+///
+/// Internally the function runs two UPDATEs in one db transaction:
+///   1. `round_part_input.signed_forfeit_tx` — set to the serialized tx
+///   2. `vtxo.oor_spent_txid`                — set to the forfeit txid
+/// Both UPDATEs target the same row a second time around with the same
+/// values, so idempotency reduces to "neither UPDATE raises and neither
+/// changes the observable row contents".
+#[tokio::test]
+async fn set_forfeit_transactions_is_idempotent() {
+	let mut ctx = TestContext::new_minimal("postgresd/set_forfeit_transactions_idempotent").await;
+	ctx.init_central_postgres().await;
+	let postgres_cfg = ctx.new_postgres(&ctx.test_name).await;
+
+	Db::create(&postgres_cfg).await.expect("Database created");
+	let db = Db::connect(&postgres_cfg).await.expect("Connected to database");
+
+	// We will create a few vtxos
+	let input_vtxos = [
+		ServerVtxo::from(VTXO_VECTORS.board_vtxo.clone()),
+		ServerVtxo::from(VTXO_VECTORS.round1_vtxo.clone()),
+		ServerVtxo::from(VTXO_VECTORS.round2_vtxo.clone()),
+	];
+
+	let input_vtxo_ids = input_vtxos.iter().map(|v| v.id()).collect::<Vec<_>>();
+
+	db.upsert_vtxos(input_vtxos.clone()).await.unwrap();
+
+
+	// We will create a round participation that spends all three vtxos.
+	let unlock_preimage: UnlockPreimage = [7u8; 32];
+	let unlock_hash = UnlockHash::hash(&unlock_preimage);
+
+	let output = StoredRoundOutput {
+		vtxo_request: VtxoRequest {
+			policy: VtxoPolicy::new_pubkey(VTXO_VECTORS.board_vtxo.user_pubkey()),
+			amount: bitcoin::Amount::from_sat(1000),
+		},
+		unblinded_mailbox_id: None,
+	};
+	db.try_store_round_participation(0, unlock_preimage, &input_vtxo_ids, std::iter::once(&output))
+		.await.unwrap();
+
+	// `set_forfeit_transactions`'s join filters on `round_id IS NOT NULL`, so
+	// it only matches participations that have already been attached to a
+	// finalized round. In the real code path `finish_round` does that; here
+	// we short-circuit by inserting a stub round row and pointing the
+	// participation at it via raw SQL, so the test stays scoped to the query
+	// under test instead of dragging in a full round finalization.
+	// Note: `round_participation.round_id` is a TEXT column holding the
+	// funding txid, not the numeric `round.id`.
+	let funding_txid = dummy_tx(42).compute_txid();
+	{
+		let conn = db.get_conn().await.unwrap();
+		conn.execute(
+			"INSERT INTO round (seq, funding_txid, funding_tx, signed_tree, expiry, created_at)
+			VALUES (0, $1, '\\x00', '\\x00', 1000, NOW())",
+			&[&funding_txid.to_string()],
+		).await.unwrap();
+		conn.execute(
+			"UPDATE round_participation SET round_id = $1 WHERE unlock_hash = $2",
+			&[&funding_txid.to_string(), &unlock_hash.to_string()],
+		).await.unwrap();
+	}
+
+	// Build one distinct forfeit tx per input. Using distinct txs lets us
+	// check that each vtxo row ends up with its own oor_spent_txid and not
+	// some other input's — i.e. that the batched UNNEST join pairs vtxo_ids
+	// and forfeit txs by position.
+	let forfeit_txs = [dummy_tx(100), dummy_tx(101), dummy_tx(102)];
+	let forfeit_txids = forfeit_txs.iter().map(|t| t.compute_txid()).collect::<Vec<_>>();
+
+	// First call: batch-forfeit all inputs in one db transaction.
+	db.set_forfeit_transactions(unlock_hash, &input_vtxo_ids, &forfeit_txs, &forfeit_txids).await
+		.expect("first call should succeed");
+
+	// Helper: read back the state and assert both the input-side and
+	// vtxo-side rows have the expected values for every input.
+	let assert_all_forfeited = || async {
+		let part = db.get_round_participation_by_unlock_hash(unlock_hash).await.unwrap()
+			.expect("participation should exist");
+		assert_eq!(part.inputs.len(), input_vtxos.len());
+
+		for (vtxo, expected_ff_txid) in input_vtxos.iter().zip(forfeit_txids.iter()) {
+			let input = part.inputs.iter().find(|i| i.vtxo_id == vtxo.id())
+				.expect("input row should exist for each vtxo");
+			let stored = input.signed_forfeit_tx.as_ref()
+				.expect("forfeit tx should be stored");
+			assert_eq!(stored.compute_txid(), *expected_ff_txid,
+				"input row should carry the forfeit tx it was given");
+
+			let state = db.get_user_vtxo_by_id(vtxo.id()).await.expect("vtxo exists");
+			assert_eq!(state.oor_spent_txid, Some(*expected_ff_txid),
+				"vtxo row should carry the forfeit txid it was given");
+		}
+	};
+
+	assert_all_forfeited().await;
+
+	// Second call: replay the exact same batch. Each UPDATE rewrites the same
+	// rows with the same values, so the rows_affected guards still hold and
+	// the observable state must be unchanged. This is the idempotency
+	// property that lets a client safely retry after a transient failure.
+	db.set_forfeit_transactions(unlock_hash, &input_vtxo_ids, &forfeit_txs, &forfeit_txids).await
+		.expect("repeat call with same args should succeed");
+
+	assert_all_forfeited().await;
+}
+
 #[tokio::test]
 async fn round_participation_same_vtxo_multiple_pending() {
 	let mut ctx = TestContext::new_minimal("postgresd/round_part_double_spend").await;
