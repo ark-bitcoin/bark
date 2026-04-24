@@ -109,6 +109,7 @@ docs/LightningPayResponse.md
 docs/LightningReceiveFees.md
 docs/LightningReceiveInfo.md
 docs/LightningSendFees.md
+docs/MailboxSyncResponse.md
 docs/Movement.md
 docs/MovementDestination.md
 docs/MovementStatus.md
@@ -279,6 +280,7 @@ src/models/lightning_pay_response.rs
 src/models/lightning_receive_fees.rs
 src/models/lightning_receive_info.rs
 src/models/lightning_send_fees.rs
+src/models/mailbox_sync_response.rs
 src/models/mod.rs
 src/models/movement.rs
 src/models/movement_destination.rs

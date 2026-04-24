@@ -517,6 +517,7 @@ impl TestContext {
 			offboard_required_confirmations: constants::OFFBOARD_CONFIRMATIONS,
 			daemon_fast_sync_interval_secs: 1,
 			daemon_slow_sync_interval_secs: 3,
+			daemon_manual_sync: false,
 		}
 	}
 

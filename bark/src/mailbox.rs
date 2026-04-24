@@ -371,7 +371,10 @@ impl Wallet {
 		Ok(())
 	}
 
-	async fn get_mailbox_checkpoint(&self) -> anyhow::Result<u64> {
+	/// Return the stored mailbox checkpoint — the tip position the wallet
+	/// has consumed up to. After a successful [`sync_mailbox`], this value
+	/// reflects the server's latest advertised tip.
+	pub async fn get_mailbox_checkpoint(&self) -> anyhow::Result<u64> {
 		Ok(self.db.get_mailbox_checkpoint().await?)
 	}
 

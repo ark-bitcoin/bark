@@ -310,18 +310,27 @@ impl DaemonProcess {
 		let connected = self.wallet.server.read().is_some();
 		self.connected.store(connected, Ordering::Relaxed);
 
-		self.wallet.sync().await;
+		if !self.wallet.config.daemon_manual_sync {
+			self.wallet.sync().await;
+		}
 	}
 
 	pub async fn run(self) {
 		self.run_startup_tasks().await;
 
-		let _ = futures::join!(
-			self.run_server_connection_check_process(),
-			self.run_round_events_process(),
-			self.run_sync_processes(),
-			self.run_mailbox_messages_process(),
-		);
+		if self.wallet.config.daemon_manual_sync {
+			// In manual-sync mode only the server connection heartbeat keeps
+			// running; everything else must be triggered via the REST API.
+			info!("Daemon running in manual-sync mode; background sync disabled");
+			let _ = self.run_server_connection_check_process().await;
+		} else {
+			let _ = futures::join!(
+				self.run_server_connection_check_process(),
+				self.run_round_events_process(),
+				self.run_sync_processes(),
+				self.run_mailbox_messages_process(),
+			);
+		}
 
 		info!("Daemon gracefully stopped");
 	}

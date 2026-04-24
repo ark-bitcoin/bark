@@ -11,22 +11,25 @@ use tokio::process::Command;
 
 use bark_json::cli::{
 	ArkInfo, Balance, ExitProgressResponse, ExitTransactionStatus,
-	NextRoundStart, PendingBoardInfo,
+	InvoiceInfo, LightningReceiveInfo, NextRoundStart, PendingBoardInfo,
 };
 use bark_json::cli::onchain::{Address, OnchainBalance};
 use bark_json::notifications::WalletNotification;
 use bark_json::primitives::{TransactionInfo, UtxoInfo, WalletVtxoInfo};
 use bark_json::web::{
 	BarkNetwork, ConnectedResponse, CreateWalletRequest, EncodedVtxoResponse,
-	ExitStartResponse, FeeEstimateResponse, OnchainFeeRatesResponse,
+	ExitStartResponse, FeeEstimateResponse, MailboxSyncResponse, OnchainFeeRatesResponse,
 	PendingRoundInfo, TipResponse,
 };
 use bark_rest::auth::AuthToken;
 use bark_rest_client::apis::configuration::Configuration;
-use bark_rest_client::apis::{bitcoin_api, boards_api, default_api, exits_api, fees_api, onchain_api, wallet_api};
+use bark_rest_client::apis::{
+	bitcoin_api, boards_api, default_api, exits_api, fees_api, lightning_api,
+	onchain_api, wallet_api,
+};
 use bark_rest_client::models::{
 	BoardRequest, ExitClaimAllRequest, ExitClaimVtxosRequest, ExitProgressRequest,
-	ExitStartRequest, RefreshRequest,
+	ExitStartRequest, LightningInvoiceRequest, RefreshRequest,
 };
 use futures::{Stream, StreamExt};
 use tokio_tungstenite::tungstenite::Message;
@@ -396,6 +399,46 @@ impl Barkd {
 			vtxos: vtxo_ids,
 			fee_rate: None,
 		}).await.expect("barkd exit_claim_vtxos failed")
+	}
+
+	/// Force a full off-chain sync via `POST /sync`. Updates fee rates,
+	/// pulls the mailbox, and progresses rounds / lightning / boards /
+	/// offboards. Does not sync the on-chain BDK wallet — use
+	/// [`Barkd::onchain_sync`] for that.
+	pub async fn sync(&self) {
+		let config = self.client_config();
+		wallet_api::sync(&config).await.expect("barkd /sync failed");
+	}
+
+	/// Sync the on-chain BDK wallet via `POST /onchain/sync` so barkd
+	/// picks up new UTXOs and confirmations.
+	pub async fn onchain_sync(&self) {
+		let config = self.client_config();
+		onchain_api::onchain_sync(&config).await.expect("barkd /onchain/sync failed");
+	}
+
+	/// Trigger a mailbox-only sync via `POST /sync/mailbox` and return the
+	/// new mailbox tip.
+	pub async fn sync_mailbox(&self) -> MailboxSyncResponse {
+		let config = self.client_config();
+		wallet_api::sync_mailbox(&config).await
+			.expect("barkd /sync/mailbox failed")
+	}
+
+	/// Create a BOLT11 invoice for the given amount.
+	pub async fn lightning_invoice(&self, amount: Amount) -> InvoiceInfo {
+		info!("{}: Create lightning invoice for {}", self.name, amount);
+		let config = self.client_config();
+		let req = LightningInvoiceRequest { amount_sat: amount.to_sat() };
+		lightning_api::generate_invoice(&config, req).await
+			.expect("failed to generate lightning invoice via barkd")
+	}
+
+	/// Return all pending (not-yet-finished) lightning receives.
+	pub async fn pending_lightning_receives(&self) -> Vec<LightningReceiveInfo> {
+		let config = self.client_config();
+		lightning_api::list_receive_statuses(&config).await
+			.expect("failed to list pending lightning receives via barkd")
 	}
 }
 

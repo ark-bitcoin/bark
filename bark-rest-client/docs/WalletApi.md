@@ -25,6 +25,7 @@ Method | HTTP request | Description
 [**send**](WalletApi.md#send) | **POST** /api/v1/wallet/send | Send a payment
 [**send_onchain**](WalletApi.md#send_onchain) | **POST** /api/v1/wallet/send-onchain | Send on-chain from Ark balance
 [**sync**](WalletApi.md#sync) | **POST** /api/v1/wallet/sync | Sync wallet
+[**sync_mailbox**](WalletApi.md#sync_mailbox) | **POST** /api/v1/wallet/sync/mailbox | Sync mailbox only
 [**vtxos**](WalletApi.md#vtxos) | **GET** /api/v1/wallet/vtxos | List VTXOs
 [**wallet_delete**](WalletApi.md#wallet_delete) | **DELETE** /api/v1/wallet | 
 [**wallet_exists**](WalletApi.md#wallet_exists) | **GET** /api/v1/wallet | 
@@ -624,6 +625,33 @@ This endpoint does not need any parameter.
 
 - **Content-Type**: Not defined
 - **Accept**: Not defined
+
+[[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
+
+
+## sync_mailbox
+
+> models::MailboxSyncResponse sync_mailbox()
+Sync mailbox only
+
+Triggers an immediate mailbox sync without running any of the other off-chain sync steps. Fetches any pending mailbox messages from the Ark server, processes them (incoming arkoor payments, lightning receive notifications), and returns the new mailbox checkpoint (tip). Useful in `daemon_manual_sync` mode where background mailbox subscription is disabled and the operator needs a granular way to pull incoming events.
+
+### Parameters
+
+This endpoint does not need any parameter.
+
+### Return type
+
+[**models::MailboxSyncResponse**](MailboxSyncResponse.md)
+
+### Authorization
+
+[bearer](../README.md#bearer)
+
+### HTTP request headers
+
+- **Content-Type**: Not defined
+- **Accept**: application/json
 
 [[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
 

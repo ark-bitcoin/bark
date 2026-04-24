@@ -2239,6 +2239,38 @@
         }
       }
     },
+    "/api/v1/wallet/sync/mailbox": {
+      "post": {
+        "tags": [
+          "wallet"
+        ],
+        "summary": "Sync mailbox only",
+        "description": "Triggers an immediate mailbox sync without running any of the other off-chain sync steps. Fetches any pending mailbox messages from the Ark server, processes them (incoming arkoor payments, lightning receive notifications), and returns the new mailbox checkpoint (tip). Useful in `daemon_manual_sync` mode where background mailbox subscription is disabled and the operator needs a granular way to pull incoming events.",
+        "operationId": "sync_mailbox",
+        "responses": {
+          "200": {
+            "description": "Returns the mailbox tip after sync",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MailboxSyncResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternalServerError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/wallet/vtxos": {
       "get": {
         "tags": [
@@ -4454,6 +4486,20 @@
               "$ref": "#/components/schemas/PpmExpiryFeeEntry"
             },
             "description": "A table mapping how soon a VTXO will expire to a PPM (parts per million) fee rate.\nThe table should be sorted by each `expiry_blocks_threshold` value in ascending order."
+          }
+        }
+      },
+      "MailboxSyncResponse": {
+        "type": "object",
+        "required": [
+          "checkpoint"
+        ],
+        "properties": {
+          "checkpoint": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The mailbox checkpoint (tip) the wallet has consumed up to after\nthe sync. Monotonically non-decreasing across successful syncs.",
+            "minimum": 0
           }
         }
       },

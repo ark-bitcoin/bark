@@ -83,6 +83,7 @@ Class | Method | HTTP request | Description
 *WalletApi* | [**send**](docs/WalletApi.md#send) | **POST** /api/v1/wallet/send | Send a payment
 *WalletApi* | [**send_onchain**](docs/WalletApi.md#send_onchain) | **POST** /api/v1/wallet/send-onchain | Send on-chain from Ark balance
 *WalletApi* | [**sync**](docs/WalletApi.md#sync) | **POST** /api/v1/wallet/sync | Sync wallet
+*WalletApi* | [**sync_mailbox**](docs/WalletApi.md#sync_mailbox) | **POST** /api/v1/wallet/sync/mailbox | Sync mailbox only
 *WalletApi* | [**vtxos**](docs/WalletApi.md#vtxos) | **GET** /api/v1/wallet/vtxos | List VTXOs
 *WalletApi* | [**wallet_delete**](docs/WalletApi.md#wallet_delete) | **DELETE** /api/v1/wallet | 
 *WalletApi* | [**wallet_exists**](docs/WalletApi.md#wallet_exists) | **GET** /api/v1/wallet | 
@@ -190,6 +191,7 @@ Class | Method | HTTP request | Description
  - [LightningReceiveFees](docs/LightningReceiveFees.md)
  - [LightningReceiveInfo](docs/LightningReceiveInfo.md)
  - [LightningSendFees](docs/LightningSendFees.md)
+ - [MailboxSyncResponse](docs/MailboxSyncResponse.md)
  - [Movement](docs/Movement.md)
  - [MovementDestination](docs/MovementDestination.md)
  - [MovementStatus](docs/MovementStatus.md)
