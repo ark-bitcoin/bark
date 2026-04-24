@@ -117,10 +117,10 @@ pub(crate) mod progress;
 pub(crate) mod transaction_manager;
 
 pub use self::models::{
-	ExitTransactionPackage, TransactionInfo, ChildTransactionInfo, ExitError, ExitState,
-	ExitTx, ExitTxStatus, ExitTxOrigin, ExitStartState, ExitProcessingState, ExitAwaitingDeltaState,
-	ExitClaimableState, ExitClaimInProgressState, ExitClaimedState, ExitProgressStatus,
-	ExitTransactionStatus,
+	ExitCpfpRequest, ExitTransactionPackage, TransactionInfo, ChildTransactionInfo, ExitError,
+	ExitState, ExitTx, ExitTxStatus, ExitTxOrigin, ExitStartState, ExitProcessingState,
+	ExitAwaitingDeltaState, ExitClaimableState, ExitClaimInProgressState, ExitClaimedState,
+	ExitProgressStatus, ExitTransactionStatus,
 };
 pub use self::vtxo::ExitVtxo;
 

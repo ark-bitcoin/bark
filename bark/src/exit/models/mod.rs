@@ -3,7 +3,7 @@ mod error;
 mod package;
 mod states;
 
-pub use self::package::{ExitTransactionPackage, TransactionInfo, ChildTransactionInfo};
+pub use self::package::{ExitCpfpRequest, ExitTransactionPackage, TransactionInfo, ChildTransactionInfo};
 pub use self::error::ExitError;
 pub use self::states::{
 	ExitTx, ExitTxStatus, ExitTxOrigin, ExitStartState, ExitProcessingState, ExitAwaitingDeltaState,

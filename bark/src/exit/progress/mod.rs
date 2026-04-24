@@ -44,8 +44,8 @@ impl ProgressStep {
 					match &tx.status {
 						ExitTxStatus::VerifyInputs => true,
 						ExitTxStatus::AwaitingInputConfirmation { .. } => false,
-						ExitTxStatus::NeedsSignedPackage => true,
-						ExitTxStatus::NeedsReplacementPackage { .. } => true,
+						ExitTxStatus::NeedsSignedPackage => false,
+						ExitTxStatus::NeedsReplacementPackage { .. } => false,
 						ExitTxStatus::NeedsBroadcasting { .. } => true,
 						ExitTxStatus::BroadcastWithCpfp { .. } => false,
 						// We don't need to handle the case when every transaction is confirmed as

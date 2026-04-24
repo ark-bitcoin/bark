@@ -1,6 +1,24 @@
-use bitcoin::{Transaction, Txid};
+use bitcoin::{Amount, FeeRate, Transaction, Txid};
+
+use ark::VtxoId;
 
 use crate::exit::models::states::ExitTxOrigin;
+
+/// Describes an exit transaction that needs a CPFP child to be confirmed.
+///
+/// Returned by [crate::exit::Exit::exits_needing_cpfp]. The caller creates a child
+/// transaction spending the P2A anchor of [ExitCpfpRequest::exit_tx] and submits it
+/// via [crate::exit::Exit::provide_cpfp_tx].
+#[derive(Clone, Debug)]
+pub struct ExitCpfpRequest {
+	/// The VTXO being exited.
+	pub vtxo_id: VtxoId,
+	/// The exit transaction whose P2A anchor output must be spent by the CPFP child.
+	pub exit_tx: Transaction,
+	/// If set, this is an RBF replacement: the suggested minimum fee rate and total fee
+	/// the child must pay to replace the existing package. Wallets may pay more.
+	pub min_fee_for_rbf: Option<(FeeRate, Amount)>,
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ExitTransactionPackage {
