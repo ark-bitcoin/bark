@@ -337,10 +337,9 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 			output_json(&wallet.config())
 		},
 		Command::ArkInfo => {
-			if let Some(info) = wallet.ark_info().await? {
-				output_json(&bark_json::cli::ArkInfo::from(info));
-			} else {
-				warn!("Could not connect with Ark server.")
+			match wallet.require_ark_info().await {
+				Ok(info) => output_json(&bark_json::cli::ArkInfo::from(info)),
+				Err(_) => warn!("Could not connect with Ark server."),
 			}
 		},
 		Command::Address { index, subcommand } => {

@@ -35,6 +35,7 @@ fn test_properties() -> WalletProperties {
 		network: Network::Regtest,
 		fingerprint: Fingerprint::default(),
 		server_pubkey: None,
+		server_mailbox_pubkey: None,
 	}
 }
 
@@ -157,6 +158,7 @@ mod wallet_properties {
 	pub async fn run<A: BarkPersister, B: BarkPersister>(a: &A, b: &B) {
 		test_init_and_read_properties(a, b).await;
 		test_set_server_pubkey(a, b).await;
+		test_set_server_mailbox_pubkey(a, b).await;
 	}
 
 	async fn test_init_and_read_properties<A: BarkPersister, B: BarkPersister>(a: &A, b: &B) {
@@ -181,6 +183,18 @@ mod wallet_properties {
 		let ra = a.read_properties().await.expect("a: read_properties after set_server_pubkey");
 		let rb = b.read_properties().await.expect("b: read_properties after set_server_pubkey");
 		assert_eq!(ra, rb, "read_properties after set_server_pubkey mismatch");
+	}
+
+	async fn test_set_server_mailbox_pubkey<A: BarkPersister, B: BarkPersister>(a: &A, b: &B) {
+		let pk = test_pubkey();
+
+		let ra = a.set_server_mailbox_pubkey(pk).await;
+		let rb = b.set_server_mailbox_pubkey(pk).await;
+		assert_eq!(ra.is_ok(), rb.is_ok(), "set_server_mailbox_pubkey: ok/err mismatch");
+
+		let ra = a.read_properties().await.expect("a: read_properties after set_server_mailbox_pubkey");
+		let rb = b.read_properties().await.expect("b: read_properties after set_server_mailbox_pubkey");
+		assert_eq!(ra, rb, "read_properties after set_server_mailbox_pubkey mismatch");
 	}
 }
 

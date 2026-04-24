@@ -151,6 +151,19 @@ pub trait BarkPersister: Send + Sync + 'static {
 	/// - Returns an error if the update fails.
 	async fn set_server_pubkey(&self, server_pubkey: PublicKey) -> anyhow::Result<()>;
 
+	/// Set the server's mailbox public key in wallet properties.
+	///
+	/// This is used to store the server mailbox pubkey for existing wallets that were
+	/// created before mailbox pubkey tracking was added. Once set, Ark addresses
+	/// can be generated offline without a live server connection.
+	///
+	/// Parameters:
+	/// - server_mailbox_pubkey: The server's mailbox public key to store.
+	///
+	/// Errors:
+	/// - Returns an error if the update fails.
+	async fn set_server_mailbox_pubkey(&self, server_mailbox_pubkey: PublicKey) -> anyhow::Result<()>;
+
 	/// Creates a new movement in the given state, ready to be updated.
 	///
 	/// Parameters:

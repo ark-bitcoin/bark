@@ -251,7 +251,14 @@ impl DaemonProcess {
 				},
 			}
 
-			let connected = self.wallet.refresh_server().await.is_ok();
+			let was_connected = self.connected.load(Ordering::Relaxed);
+			let result = self.wallet.refresh_server().await;
+			let connected = result.is_ok();
+			match (was_connected, &result) {
+				(true, Err(e)) => warn!("Ark server refresh failed: {:#}", e),
+				(false, Ok(())) => info!("Ark server reconnected"),
+				_ => {},
+			}
 			self.connected.store(connected, Ordering::Relaxed);
 		}
 	}
@@ -292,6 +299,14 @@ impl DaemonProcess {
 
 	/// Run processes that only need to be run once on startup
 	async fn run_startup_tasks(&self) {
+		// Eagerly refresh the server connection before starting the other
+		// daemon tasks so they don't race the first connection check and
+		// skip their initial iteration with `connected = false` (which
+		// would delay mailbox subscription by `slow_interval`).
+		let result = self.wallet.refresh_server().await;
+		if let Err(ref e) = result {
+			warn!("Ark server refresh failed: {:#}", e);
+		}
 		let connected = self.wallet.server.read().is_some();
 		self.connected.store(connected, Ordering::Relaxed);
 
