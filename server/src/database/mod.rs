@@ -140,6 +140,8 @@ impl Db {
 		// Default keepalives_idle is 2 hours which is far too long.
 		pg_config.keepalives(true);
 		pg_config.keepalives_idle(Duration::from_secs(60));
+		pg_config.keepalives_interval(Duration::from_secs(10));
+		pg_config.keepalives_retries(6);
 
 		pg_config
 	}
