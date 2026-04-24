@@ -1541,7 +1541,7 @@ async fn test_register_board() {
 
 	// Get server info and calculate expiry height
 	let ark_info = srv.ark_info().await;
-	let current_height = ctx.bitcoind().get_block_count().await as u32;
+	let current_height = ctx.generate_blocks(1).await;
 	let expiry_height = current_height + ark_info.vtxo_expiry_delta as u32;
 
 	// Create a board builder to get the funding script
@@ -1591,6 +1591,7 @@ async fn test_register_board() {
 	let register_request = protos::BoardVtxoRequest {
 		board_vtxo: vtxo.serialize(),
 	};
+	srv.wait_for_sync_height(current_height).await;
 
 	// Wait for the funding tx to propagate to server's bitcoind
 	srv.bitcoind().await_transaction(funding_txid).await;
