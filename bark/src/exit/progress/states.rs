@@ -147,58 +147,39 @@ async fn progress_exit_tx(
 			);
 			ctx.check_status_from_inputs(exit, &txids).await
 		}
-		ExitTxStatus::NeedsSignedPackage => {
+		ExitTxStatus::AwaitingCpfpBroadcast => {
 			// Check whether another party has already broadcast this transaction before
 			// we pause and wait for the caller to provide a CPFP via provide_cpfp_tx.
 			ctx.get_exit_tx_status(exit).await
-		}
-		ExitTxStatus::NeedsReplacementPackage { .. } => {
-			// Re-check status in case the situation has changed since we last evaluated.
-			ctx.get_exit_tx_status(exit).await
 		},
-		ExitTxStatus::NeedsBroadcasting { child_txid, .. } => {
-			debug!("Checking if exit tx {} has been broadcast with CPFP tx {}",
-				exit.txid, child_txid,
-			);
-			let status = ctx.get_exit_child_status(&exit, *child_txid).await?;
-			match status {
-				ExitTxStatus::NeedsBroadcasting { child_txid: new_child_txid, .. } => {
-					if new_child_txid != *child_txid {
-						warn!("Exit tx {} has a different child txid. Expected: {} Found: {}",
-							exit.txid, child_txid, new_child_txid,
-						);
-					}
-					debug!("Attempting to broadcast exit tx {} with child tx {}",
-						exit.txid, child_txid,
+		ExitTxStatus::AwaitingConfirmation { child_txid, .. } => {
+			let child_status = ctx.tx_manager.get_child_status(exit.txid).await?;
+			match child_status {
+				None => {
+					error!("Exit CPFP tx {} for exit tx {} has disappeared", child_txid, exit.txid);
+					Ok(ExitTxStatus::AwaitingCpfpBroadcast)
+				},
+				Some(ref c) if c.txid != *child_txid => {
+					warn!("Exit CPFP tx {} for exit tx {} has been replaced by {}",
+						child_txid, exit.txid, c.txid,
 					);
+					ctx.get_exit_tx_status(exit).await
+				},
+				Some(ref c) if c.status == TxStatus::NotFound => {
+					debug!("Exit CPFP tx {} fell out of mempool, rebroadcasting", child_txid);
 					let package = ctx.tx_manager.get_package(exit.txid)?;
 					let guard = package.read().await;
-					let _status = ctx.tx_manager.broadcast_package(&*guard).await?;
-
-					// Go to the next state
-					ctx.get_exit_child_status(&exit, new_child_txid).await
+					ctx.tx_manager.broadcast_package(&*guard).await?;
+					ctx.get_exit_tx_status(exit).await
 				},
-				_ => {
-					debug!("Exit tx {} needed broadcasting but has changed status to: {}",
-						exit.txid, status,
-					);
-					Ok(status)
+				Some(_) => {
+					ctx.get_exit_tx_status(exit).await
 				},
 			}
-		},
-		ExitTxStatus::BroadcastWithCpfp { child_txid, .. } => {
-			let new_status = ctx.get_exit_child_status(exit, *child_txid).await?;
-			match new_status {
-				ExitTxStatus::Confirmed { block, .. } => {
-					debug!("Exit tx {} confirmed at height {}", exit.txid, block.height);
-				}
-				_ => {}
-			}
-			Ok(new_status)
 		},
 		ExitTxStatus::Confirmed { child_txid, block, .. } => {
 			// Handle cases where we might get a block-reorg so our transaction may unconfirm
-			let new_status = ctx.get_exit_child_status(exit, *child_txid).await?;
+			let new_status = ctx.get_exit_tx_status(exit).await?;
 			match &new_status {
 				ExitTxStatus::Confirmed { child_txid: new_txid, block: new_block, .. } => {
 					if new_block != block || new_txid != child_txid {

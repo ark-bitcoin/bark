@@ -3,12 +3,12 @@ pub(crate) mod util;
 
 use std::collections::HashSet;
 
-use bitcoin::{FeeRate, Txid};
-use log::{debug, error, warn};
+use bitcoin::Txid;
+use log::debug;
 
 use bitcoin_ext::{BlockHeight, BlockRef, TxStatus};
 
-use crate::exit::models::{ExitError, ExitState, ExitTx, ExitTxOrigin, ExitTxStatus};
+use crate::exit::models::{ExitError, ExitState, ExitTx, ExitTxStatus};
 use crate::exit::transaction_manager::ExitTransactionManager;
 use crate::{Wallet, WalletVtxo};
 
@@ -41,10 +41,8 @@ impl ProgressStep {
 					match &tx.status {
 						ExitTxStatus::VerifyInputs => true,
 						ExitTxStatus::AwaitingInputConfirmation { .. } => false,
-						ExitTxStatus::NeedsSignedPackage => false,
-						ExitTxStatus::NeedsReplacementPackage { .. } => false,
-						ExitTxStatus::NeedsBroadcasting { .. } => true,
-						ExitTxStatus::BroadcastWithCpfp { .. } => false,
+						ExitTxStatus::AwaitingCpfpBroadcast => false,
+						ExitTxStatus::AwaitingConfirmation { .. } => false,
 						// We don't need to handle the case when every transaction is confirmed as
 						// we should no longer be in this state
 						ExitTxStatus::Confirmed { .. } => false,
@@ -82,7 +80,6 @@ pub(crate) struct ProgressContext<'a> {
 	pub vtxo: &'a WalletVtxo,
 	pub exit_txids: &'a Vec<Txid>,
 	pub wallet: &'a Wallet,
-	pub fee_rate: FeeRate,
 	pub tx_manager: &'a mut ExitTransactionManager,
 }
 
@@ -106,7 +103,7 @@ impl<'a> ProgressContext<'a> {
 		}
 		if txids.is_empty() {
 			debug!("All inputs are confirmed for exit tx {}", exit.txid);
-			Ok(ExitTxStatus::NeedsSignedPackage)
+			Ok(ExitTxStatus::AwaitingCpfpBroadcast)
 		} else {
 			debug!("Exit tx {} has {} unconfirmed inputs: {:?}", exit.txid, txids.len(), txids);
 			Ok(ExitTxStatus::AwaitingInputConfirmation { txids })
@@ -118,61 +115,19 @@ impl<'a> ProgressContext<'a> {
 			.map_err(|e| ExitError::BlockRetrievalFailure { height, error: e.to_string() })
 	}
 
-	pub async fn get_exit_child_status(
-		&mut self,
-		exit: &ExitTx,
-		child_txid: Txid,
-	) -> anyhow::Result<ExitTxStatus, ExitError> {
-		let current_child_txid = self.tx_manager.get_child_txid(exit.txid).await?;
-		if let Some(current) = current_child_txid {
-			if current != child_txid {
-				warn!("Exit CPFP tx {} for exit tx {} has been replaced by {}", child_txid, exit.txid, current);
-			}
-			debug!("Updating CPFP tx status {} for exit tx {}", current, exit.txid);
-			self.get_exit_tx_status(exit).await
-		} else {
-			error!("Exit CPFP tx {} for exit tx {} has disappeared", child_txid, exit.txid);
-			Ok(ExitTxStatus::NeedsSignedPackage)
-		}
-	}
-
+	/// Returns the current status of the exit tx package by querying the chain.
+	/// Reports what it observes — no fee rate policy decisions are made here.
 	pub async fn get_exit_tx_status(
 		&mut self,
 		exit: &ExitTx,
 	) -> anyhow::Result<ExitTxStatus, ExitError> {
 		if let Some(child) = self.tx_manager.get_child_status(exit.txid).await? {
 			match child.status {
-				TxStatus::NotFound => Ok(ExitTxStatus::NeedsBroadcasting {
-					child_txid: child.txid,
-					origin: child.origin,
-				}),
-				TxStatus::Mempool => {
-					// Check if we need to RBF
-					match child.origin {
-						ExitTxOrigin::Wallet { .. } => {
-							Ok(ExitTxStatus::BroadcastWithCpfp {
-								child_txid: child.txid,
-								origin: child.origin,
-							})
-						},
-						ExitTxOrigin::Mempool { fee_rate, total_fee } => {
-							if fee_rate < self.fee_rate {
-								Ok(ExitTxStatus::NeedsReplacementPackage {
-									min_fee_rate: fee_rate,
-									min_fee: total_fee,
-								})
-							} else {
-								Ok(ExitTxStatus::BroadcastWithCpfp {
-									child_txid: child.txid,
-									origin: child.origin,
-								})
-							}
-						},
-						ExitTxOrigin::Block { .. } => Err(ExitError::InternalError {
-							error: format!("TxStatus was {:?} when origin is {}, this should never happen", child.status, child.origin),
-						})
-					}
-
+				TxStatus::NotFound | TxStatus::Mempool => {
+					Ok(ExitTxStatus::AwaitingConfirmation {
+						child_txid: child.txid,
+						origin: child.origin,
+					})
 				},
 				TxStatus::Confirmed(b) => Ok(ExitTxStatus::Confirmed {
 					child_txid: child.txid,
@@ -181,7 +136,7 @@ impl<'a> ProgressContext<'a> {
 				})
 			}
 		} else {
-			Ok(ExitTxStatus::NeedsSignedPackage)
+			Ok(ExitTxStatus::AwaitingCpfpBroadcast)
 		}
 	}
 

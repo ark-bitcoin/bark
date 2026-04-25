@@ -9,7 +9,7 @@
 //!
 //! See [ExitModel] for persisting the state machine in a database.
 
-use bitcoin::{Amount, FeeRate, Txid};
+use bitcoin::{Amount, Txid};
 use log::{debug, trace};
 
 use ark::{Vtxo, VtxoId};
@@ -137,13 +137,10 @@ impl ExitVtxo {
 	///   or if an exit transaction fails to broadcast; if the error includes a newer state, it will
 	///   be committed before returning.
 	///
-	/// Notes:
-	/// - If `fee_rate_override` is `None`, a suitable fee rate will be calculated.
 	pub async fn progress(
 		&mut self,
 		wallet: &Wallet,
 		tx_manager: &mut ExitTransactionManager,
-		fee_rate_override: Option<FeeRate>,
 		continue_until_finished: bool,
 	) -> anyhow::Result<(), ExitError> {
 		if self.txids.is_none() {
@@ -159,7 +156,6 @@ impl ExitVtxo {
 				vtxo: &vtxo,
 				exit_txids: self.txids.as_ref().unwrap(),
 				wallet,
-				fee_rate: fee_rate_override.unwrap_or(wallet.inner.chain.fee_rates().await.fast),
 				tx_manager,
 			};
 			// Attempt to move to the next state, which may or may not generate a new state
@@ -210,7 +206,7 @@ impl ExitVtxo {
 			})
 	}
 
-	async fn update_state_if_newer(
+	pub(crate) async fn update_state_if_newer(
 		&mut self,
 		new: ExitState,
 		persister: &dyn BarkPersister,

@@ -2099,7 +2099,7 @@ pub async fn run_exits_with_bdk(
 	onchain: &mut dyn ExitUnilaterally,
 	fee_rate_override: Option<FeeRate>,
 ) -> anyhow::Result<Option<Vec<ExitProgressStatus>>> {
-	exit.progress_exits(wallet, fee_rate_override).await?;
+	exit.progress_exits(wallet).await?;
 
 	let fee_rate = fee_rate_override.unwrap_or(wallet.chain().fee_rates().await.fast);
 	for req in exit.exits_needing_cpfp().await {
@@ -2127,10 +2127,10 @@ pub async fn run_exits_with_bdk(
 		};
 		onchain.store_signed_p2a_cpfp(&child_tx).await?;
 		let exit_txid = req.exit_tx.compute_txid();
-		exit.provide_cpfp_tx(exit_txid, child_tx).await?;
+		exit.provide_cpfp_tx(wallet, exit_txid, child_tx).await?;
 	}
 
-	exit.progress_exits(wallet, fee_rate_override).await
+	exit.progress_exits(wallet).await
 }
 
 fn wrap_server_connect_error(err: ConnectError) -> anyhow::Error {

@@ -55,7 +55,7 @@ pub async fn progress_exit_until_awaiting_delta(ctx: &TestContext, bark: &Bark) 
 		if response.exits.iter().any(|e| match &e.state {
 			ExitState::Processing(s) => s.transactions.iter().any(|t| matches!(
 				t.status,
-				ExitTxStatus::AwaitingInputConfirmation { .. } | ExitTxStatus::BroadcastWithCpfp { .. }
+				ExitTxStatus::AwaitingInputConfirmation { .. } | ExitTxStatus::AwaitingConfirmation { .. }
 			)),
 			_ => false,
 		}) {
@@ -81,7 +81,7 @@ fn check_exit_requires_confirmations(exit: &ExitProgressStatus) -> bool {
 		ExitState::Processing(s) => {
 			s.transactions.iter().any(|s| match s.status {
 				ExitTxStatus::AwaitingInputConfirmation { .. } => true,
-				ExitTxStatus::BroadcastWithCpfp { .. } => true,
+				ExitTxStatus::AwaitingConfirmation { .. } => true,
 				_ => false,
 			})
 		},

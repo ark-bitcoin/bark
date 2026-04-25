@@ -21,16 +21,8 @@ pub enum ExitTxStatus {
 	AwaitingInputConfirmation {
 		txids: HashSet<Txid>
 	},
-	NeedsSignedPackage,
-	NeedsReplacementPackage {
-		min_fee_rate: FeeRate,
-		min_fee: Amount,
-	},
-	NeedsBroadcasting {
-		child_txid: Txid,
-		origin: ExitTxOrigin,
-	},
-	BroadcastWithCpfp {
+	AwaitingCpfpBroadcast,
+	AwaitingConfirmation {
 		child_txid: Txid,
 		origin: ExitTxOrigin,
 	},
@@ -44,8 +36,7 @@ pub enum ExitTxStatus {
 impl ExitTxStatus {
 	pub fn child_txid(&self) -> Option<&Txid> {
 		match self {
-			ExitTxStatus::NeedsBroadcasting { child_txid, .. } => Some(child_txid),
-			ExitTxStatus::BroadcastWithCpfp { child_txid, .. } => Some(child_txid),
+			ExitTxStatus::AwaitingConfirmation { child_txid, .. } => Some(child_txid),
 			ExitTxStatus::Confirmed { child_txid, .. } => Some(child_txid),
 			_ => None,
 		}

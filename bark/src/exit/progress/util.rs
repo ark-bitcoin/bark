@@ -7,7 +7,7 @@ use crate::WalletVtxo;
 /// Counts how many of the given ExitTx objects exist in either the mempool or the blockchain
 pub(crate) fn count_broadcast(status: &[ExitTx]) -> usize {
 	status.iter().filter(|s| match s.status {
-		ExitTxStatus::BroadcastWithCpfp { .. } => true,
+		ExitTxStatus::AwaitingConfirmation { .. } => true,
 		ExitTxStatus::Confirmed { .. } => true,
 		_ => false,
 	}).count()

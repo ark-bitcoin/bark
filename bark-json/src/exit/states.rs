@@ -27,23 +27,8 @@ pub enum ExitTxStatus {
 		#[cfg_attr(feature = "utoipa", schema(value_type = Vec<String>))]
 		txids: HashSet<Txid>
 	},
-	NeedsSignedPackage,
-	NeedsReplacementPackage {
-		#[serde(rename = "min_fee_rate_sat_per_kvb", with = "crate::serde_utils::fee_rate_sat_per_kvb")]
-		#[cfg_attr(feature = "utoipa", schema(value_type = u64))]
-		min_fee_rate: FeeRate,
-		#[deprecated(note = "use min_fee_rate_sat_per_kvb instead")]
-		#[cfg_attr(feature = "utoipa", schema(value_type = u64))]
-		min_fee_rate_kwu: u64,
-		#[cfg_attr(feature = "utoipa", schema(value_type = u64))]
-		min_fee: Amount,
-	},
-	NeedsBroadcasting {
-		#[cfg_attr(feature = "utoipa", schema(value_type = String))]
-		child_txid: Txid,
-		origin: ExitTxOrigin,
-	},
-	BroadcastWithCpfp {
+	AwaitingCpfpBroadcast,
+	AwaitingConfirmation {
 		#[cfg_attr(feature = "utoipa", schema(value_type = String))]
 		child_txid: Txid,
 		origin: ExitTxOrigin,
@@ -71,18 +56,11 @@ impl From<bark::exit::ExitTxStatus> for ExitTxStatus {
 			bark::exit::ExitTxStatus::AwaitingInputConfirmation { txids } => {
 				ExitTxStatus::AwaitingInputConfirmation { txids }
 			},
-			bark::exit::ExitTxStatus::NeedsSignedPackage => {
-				ExitTxStatus::NeedsSignedPackage
+			bark::exit::ExitTxStatus::AwaitingCpfpBroadcast => {
+				ExitTxStatus::AwaitingCpfpBroadcast
 			},
-			bark::exit::ExitTxStatus::NeedsReplacementPackage { min_fee_rate, min_fee } => {
-				let min_fee_rate_kwu = min_fee_rate.to_sat_per_kwu();
-				ExitTxStatus::NeedsReplacementPackage { min_fee_rate, min_fee, min_fee_rate_kwu }
-			},
-			bark::exit::ExitTxStatus::NeedsBroadcasting { child_txid, origin } => {
-				ExitTxStatus::NeedsBroadcasting { child_txid, origin: origin.into() }
-			},
-			bark::exit::ExitTxStatus::BroadcastWithCpfp { child_txid, origin } => {
-				ExitTxStatus::BroadcastWithCpfp { child_txid, origin: origin.into() }
+			bark::exit::ExitTxStatus::AwaitingConfirmation { child_txid, origin } => {
+				ExitTxStatus::AwaitingConfirmation { child_txid, origin: origin.into() }
 			},
 			bark::exit::ExitTxStatus::Confirmed { child_txid, block, origin } => {
 				ExitTxStatus::Confirmed { child_txid, block: block.into(), origin: origin.into() }

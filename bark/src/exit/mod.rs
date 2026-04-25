@@ -486,15 +486,9 @@ impl Exit {
 	/// Iterates over each registered VTXO and attempts to progress their unilateral exit. Note that
 	/// [Exit::sync] or [Exit::sync_no_progress] should be called before calling this method.
 	///
-	/// # Parameters
-	///
-	/// - `fee_rate_override` sets the desired fee-rate in sats/kvB to use broadcasting exit
-	///   transactions. Note that due to rules imposed by the network with regard to RBF fee bumping,
-	///   replaced transactions may have a higher fee rate than you specify here.
-	///
 	/// If you need to create CPFP transactions using a BDK-backed wallet, call
 	/// [Exit::exits_needing_cpfp] after this, supply the signed CPFPs via [Exit::provide_cpfp_tx],
-	/// then call this method again to advance the state past [ExitTxStatus::NeedsSignedPackage].
+	/// then call this method again to advance the state past [ExitTxStatus::AwaitingCpfpBroadcast].
 	///
 	/// # Returns
 	///
@@ -502,7 +496,6 @@ impl Exit {
 	pub async fn progress_exits(
 		&self,
 		wallet: &Wallet,
-		fee_rate_override: Option<FeeRate>,
 	) -> anyhow::Result<Option<Vec<ExitProgressStatus>>> {
 		let mut guard = self.inner.write().await;
 		let mut exit_vtxos = std::mem::take(&mut guard.exit_vtxos);
@@ -518,7 +511,6 @@ impl Exit {
 			let error = match ev.progress(
 				wallet,
 				&mut guard.tx_manager,
-				fee_rate_override,
 				true,
 			).await {
 				Ok(_) => None,
@@ -561,7 +553,7 @@ impl Exit {
 			// If the exit is waiting for new blocks, we should trigger an update
 			if exit.state().requires_network_update() {
 				if let Err(e) = exit.progress(
-					wallet, &mut guard.tx_manager, None, false,
+					wallet, &mut guard.tx_manager, false,
 				).await {
 					error!("Error syncing exit for VTXO {}: {}", exit.id(), e);
 				}
@@ -579,8 +571,12 @@ impl Exit {
 		guard.sync_no_progress().await
 	}
 
-	/// Returns one [ExitCpfpRequest] for each exit transaction that is currently waiting for a
-	/// CPFP child transaction. Call [Exit::provide_cpfp_tx] to submit the signed child.
+	/// Returns one [ExitCpfpRequest] for each exit transaction that needs a CPFP child.
+	///
+	/// A request with `min_fee_for_rbf = None` means no CPFP exists yet. A request with
+	/// `min_fee_for_rbf = Some(...)` means a third-party CPFP is already in the mempool;
+	/// the caller can optionally provide a replacement with a higher fee rate.
+	/// Call [Exit::provide_cpfp_tx] to submit the child.
 	pub async fn exits_needing_cpfp(&self) -> Vec<ExitCpfpRequest> {
 		let guard = self.inner.read().await;
 		let mut requests = Vec::new();
@@ -588,9 +584,9 @@ impl Exit {
 			let ExitState::Processing(s) = ev.state() else { continue };
 			for tx in &s.transactions {
 				let min_fee_for_rbf = match &tx.status {
-					ExitTxStatus::NeedsSignedPackage => None,
-					ExitTxStatus::NeedsReplacementPackage { min_fee_rate, min_fee } => {
-						Some((*min_fee_rate, *min_fee))
+					ExitTxStatus::AwaitingCpfpBroadcast => None,
+					ExitTxStatus::AwaitingConfirmation { origin: ExitTxOrigin::Mempool { fee_rate, total_fee }, .. } => {
+						Some((*fee_rate, *total_fee))
 					},
 					_ => continue,
 				};
@@ -612,15 +608,51 @@ impl Exit {
 	/// Submit a signed CPFP child transaction for a given exit transaction.
 	///
 	/// The child must spend the P2A anchor output of the parent exit transaction identified by
-	/// `exit_txid`. The child is persisted immediately so it survives restarts.
+	/// `exit_txid`. The package is broadcast immediately and the state advances to
+	/// [ExitTxStatus::AwaitingConfirmation]. The child is persisted so it survives restarts.
+	///
+	/// # TODO
+	/// `wallet` is required here only because [ExitVtxo::progress] calls `get_vtxo(&wallet.db)`
+	/// and `tip_height()` unconditionally, even though neither is needed for the
+	/// `AwaitingCpfpBroadcast → AwaitingConfirmation` transition. The fix is to make [ExitVtxo::progress]
+	/// take `persister` and `chain_source` separately instead of the full wallet, and call
+	/// `tip_height()` lazily only where needed.
 	pub async fn provide_cpfp_tx(
 		&self,
+		wallet: &Wallet,
 		exit_txid: Txid,
 		child_tx: Transaction,
 	) -> anyhow::Result<(), ExitError> {
 		let origin = ExitTxOrigin::Wallet { confirmed_in: None };
 		let mut guard = self.inner.write().await;
-		guard.tx_manager.set_wallet_child_tx(exit_txid, child_tx, origin).await.map(|_| ())
+		let inner = &mut *guard;
+		inner.tx_manager.set_wallet_child_tx(exit_txid, child_tx, origin).await?;
+
+		let package = inner.tx_manager.get_package(exit_txid)?;
+		let pkg_guard = package.read().await;
+		match inner.tx_manager.broadcast_package(&*pkg_guard).await {
+			Ok(_) => {},
+			Err(ExitError::ExitPackageBroadcastFailure { ref error, .. })
+				if is_mempool_conflict(error) =>
+			{
+				warn!("CPFP broadcast conflict for {}: {} — another CPFP may already be in mempool", exit_txid, error);
+			},
+			Err(e) => return Err(e),
+		}
+		drop(pkg_guard);
+
+		for ev in inner.exit_vtxos.iter_mut() {
+			let ExitState::Processing(s) = ev.state() else { continue };
+			let has_tx = s.transactions.iter().any(|tx| tx.txid == exit_txid);
+			if has_tx {
+				if let Err(e) = ev.progress(wallet, &mut inner.tx_manager, false).await {
+					warn!("Failed to progress exit for {} after CPFP: {}", exit_txid, e);
+				}
+				break;
+			}
+		}
+
+		Ok(())
 	}
 
 	/// Lists all exits that are claimable
@@ -748,4 +780,14 @@ impl Exit {
 		// Now create the final signed PSBT
 		create_psbt(tx).await
 	}
+}
+
+/// Returns true if the broadcast error is a mempool conflict rather than an invalid transaction.
+///
+/// These errors occur when another CPFP or replacement is already in the mempool — not a sign
+/// that our transaction is invalid.
+fn is_mempool_conflict(error: &str) -> bool {
+	error.contains("txn-already-known")
+		|| error.contains("bad-txns-inputs-missingorspent")
+		|| error.contains("insufficient fee, rejecting replacement")
 }

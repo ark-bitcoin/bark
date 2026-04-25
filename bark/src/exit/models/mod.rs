@@ -112,7 +112,7 @@ impl ExitState {
 			ExitState::Processing(s) => {
 				s.transactions.iter().any(|s| match s.status {
 					ExitTxStatus::AwaitingInputConfirmation { .. } => true,
-					ExitTxStatus::BroadcastWithCpfp { .. } => true,
+					ExitTxStatus::AwaitingConfirmation { .. } => true,
 					_ => false,
 				})
 			},
@@ -129,7 +129,7 @@ impl ExitState {
 			// If all transactions are either confirmed or already broadcast we can count Processing
 			// as requiring network updates since we don't need to create more exit packages.
 			ExitState::Processing(s) => s.transactions.iter().all(|s| match s.status {
-				ExitTxStatus::BroadcastWithCpfp { .. } => true,
+				ExitTxStatus::AwaitingConfirmation { .. } => true,
 				ExitTxStatus::Confirmed { .. } => true,
 				_ => false,
 			}),
