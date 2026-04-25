@@ -18,7 +18,6 @@ use ark::vtxo::{Bare, Full};
 use crate::exit::models::{ExitError, ExitState};
 use crate::exit::progress::{ExitStateProgress, ProgressContext, ProgressStep};
 use crate::exit::transaction_manager::ExitTransactionManager;
-use crate::onchain::ExitUnilaterally;
 use crate::persist::BarkPersister;
 use crate::persist::models::StoredExit;
 use crate::{Wallet, WalletVtxo};
@@ -118,11 +117,10 @@ impl ExitVtxo {
 		&mut self,
 		tx_manager: &mut ExitTransactionManager,
 		persister: &dyn BarkPersister,
-		onchain: &dyn ExitUnilaterally,
 	) -> anyhow::Result<(), ExitError> {
 		trace!("Initializing VTXO for exit {}", self.vtxo_id);
 		let vtxo = self.get_full_vtxo(persister).await?;
-		self.txids = Some(tx_manager.track_vtxo_exits(&vtxo, onchain).await?);
+		self.txids = Some(tx_manager.track_vtxo_exits(&vtxo).await?);
 		Ok(())
 	}
 
@@ -145,7 +143,6 @@ impl ExitVtxo {
 		&mut self,
 		wallet: &Wallet,
 		tx_manager: &mut ExitTransactionManager,
-		onchain: &mut dyn ExitUnilaterally,
 		fee_rate_override: Option<FeeRate>,
 		continue_until_finished: bool,
 	) -> anyhow::Result<(), ExitError> {
@@ -167,7 +164,7 @@ impl ExitVtxo {
 			};
 			// Attempt to move to the next state, which may or may not generate a new state
 			trace!("Progressing VTXO {} at height {}", self.id(), wallet.inner.chain.tip().await.unwrap());
-			match self.state.clone().progress(&mut context, onchain).await {
+			match self.state.clone().progress(&mut context).await {
 				Ok(new_state) => {
 					self.update_state_if_newer(new_state, &*wallet.inner.db).await?;
 					if !continue_until_finished {

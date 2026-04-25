@@ -3,28 +3,25 @@ pub(crate) mod util;
 
 use std::collections::HashSet;
 
-use bitcoin::{Amount, FeeRate, Transaction, Txid};
+use bitcoin::{FeeRate, Txid};
 use log::{debug, error, warn};
 
 use bitcoin_ext::{BlockHeight, BlockRef, TxStatus};
-use bitcoin_ext::cpfp::{CpfpError, MakeCpfpFees};
 
 use crate::exit::models::{ExitError, ExitState, ExitTx, ExitTxOrigin, ExitTxStatus};
 use crate::exit::transaction_manager::ExitTransactionManager;
-use crate::onchain::ExitUnilaterally;
 use crate::{Wallet, WalletVtxo};
 
 /// A trait which allows [ExitState] objects to transition from their current state to a new state
-/// depending on the contents of the users wallet, the mempool or the blockchain. E.g. Calling
-/// [ExitStateProgress::progress] on [json::exit::states::ExitStartState] should return an
-/// [json::exit::states::ExitProcessingState] if the VTXO can be exited.
+/// depending on the mempool or the blockchain. The state machine is wallet-agnostic; callers
+/// use [crate::exit::Exit::exits_needing_cpfp] to query what CPFPs are needed and
+/// [crate::exit::Exit::provide_cpfp_tx] to supply them.
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 pub(crate) trait ExitStateProgress {
 	async fn progress(
 		self,
 		ctx: &mut ProgressContext<'_>,
-		onchain: &mut dyn ExitUnilaterally,
 	) -> anyhow::Result<ExitState, ExitProgressError>;
 }
 
@@ -114,37 +111,6 @@ impl<'a> ProgressContext<'a> {
 			debug!("Exit tx {} has {} unconfirmed inputs: {:?}", exit.txid, txids.len(), txids);
 			Ok(ExitTxStatus::AwaitingInputConfirmation { txids })
 		}
-	}
-
-	pub fn create_exit_cpfp_tx(
-		&mut self,
-		exit_tx: &Transaction,
-		onchain: &mut dyn ExitUnilaterally,
-		min_rbf_fees: Option<(FeeRate, Amount)>,
-	) -> anyhow::Result<Transaction, ExitError> {
-		let fees = if let Some((min_fee_rate, min_fee)) = min_rbf_fees {
-			MakeCpfpFees::Rbf {
-				min_effective_fee_rate: if min_fee_rate < self.fee_rate {
-					self.fee_rate
-				} else {
-					min_fee_rate
-				},
-				current_package_fee: min_fee,
-			}
-		} else {
-			MakeCpfpFees::Effective(self.fee_rate)
-		};
-		onchain.make_signed_p2a_cpfp(&exit_tx, fees)
-			.map_err(|e| match e {
-				// An exit transaction must have a fee anchor, if not we can't create a CPFP package.
-				CpfpError::NoFeeAnchor(_) => ExitError::InternalError { error: e.to_string() },
-				// This is thrown when the wallet doesn't have any confirmed UTXOs to use.
-				CpfpError::InsufficientConfirmedFunds { needed, available } => {
-					ExitError::InsufficientConfirmedFunds { needed, available }
-				},
-				// Something broken that users can't be expected to fix
-				e => ExitError::ExitPackageFinalizeFailure { error: e.to_string() },
-			})
 	}
 
 	pub async fn get_block_ref(&self, height: BlockHeight) -> anyhow::Result<BlockRef, ExitError> {

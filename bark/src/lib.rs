@@ -346,7 +346,7 @@ use std::time::Duration;
 
 use anyhow::{bail, Context};
 use bip39::Mnemonic;
-use bitcoin::{Amount, Network, OutPoint};
+use bitcoin::{Amount, FeeRate, Network, OutPoint};
 use bitcoin::bip32::{self, ChildNumber, Fingerprint};
 use bitcoin::secp256k1::{self, Keypair, PublicKey};
 use log::{trace, info, warn, error};
@@ -360,13 +360,13 @@ use bitcoin_ext::{BlockHeight, P2TR_DUST};
 use server_rpc::{protos, ServerConnection};
 use server_rpc::client::{ConnectError, CreateEndpointError};
 use crate::chain::{ChainSource, ChainSourceSpec};
-use crate::exit::Exit;
+use crate::exit::{Exit, ExitProgressStatus};
 use crate::lock_manager::LockManager;
 use crate::movement::{Movement, MovementId, PaymentMethod};
 use crate::movement::manager::MovementManager;
 use crate::movement::update::MovementUpdate;
 use crate::notification::NotificationDispatch;
-use crate::onchain::{ExitUnilaterally, PreparePsbt, SignPsbt, Utxo};
+use crate::onchain::{CpfpError, ExitUnilaterally, MakeCpfpFees, PreparePsbt, SignPsbt, Utxo};
 use crate::onchain::DaemonizableOnchainWallet;
 use crate::persist::BarkPersister;
 use crate::persist::models::{RoundStateId, StoredRoundState, Unlocked};
@@ -751,7 +751,7 @@ struct WalletInner {
 /// wallet.sync().await?;
 /// wallet.sync_pending_lightning_send_vtxos().await?;
 /// wallet.register_all_confirmed_boards(&mut onchain_wallet).await?;
-/// wallet.sync_exits(&mut onchain_wallet).await?;
+/// wallet.sync_exits().await?;
 /// wallet.maintenance_refresh().await?;
 ///
 /// // Generate a new Ark address to receive funds via arkoor
@@ -1022,11 +1022,11 @@ impl Wallet {
 		config: Config,
 		db: Arc<dyn BarkPersister>,
 		lock_manager: Box<dyn LockManager>,
-		onchain: &dyn ExitUnilaterally,
+		_onchain: &dyn ExitUnilaterally,
 		force: bool,
 	) -> anyhow::Result<Wallet> {
 		let wallet = Wallet::create(mnemonic, network, config, db, lock_manager, force).await?;
-		wallet.inner.exit.load(onchain).await?;
+		wallet.inner.exit.load().await?;
 		Ok(wallet)
 	}
 
@@ -1094,12 +1094,12 @@ impl Wallet {
 	pub async fn open_with_onchain(
 		mnemonic: &Mnemonic,
 		db: Arc<dyn BarkPersister>,
-		onchain: &dyn ExitUnilaterally,
+		_onchain: &dyn ExitUnilaterally,
 		cfg: Config,
 		lock_manager: Box<dyn LockManager>,
 	) -> anyhow::Result<Wallet> {
 		let wallet = Wallet::open(mnemonic, db, cfg, lock_manager).await?;
-		wallet.inner.exit.load(onchain).await?;
+		wallet.inner.exit.load().await?;
 		Ok(wallet)
 	}
 
@@ -1113,9 +1113,8 @@ impl Wallet {
 		lock_manager: Box<dyn LockManager>,
 	) -> anyhow::Result<Wallet> {
 		let wallet = Wallet::open(mnemonic, db, cfg, lock_manager).await?;
-		if let Some(onchain) = onchain.as_ref() {
-			let mut onchain = onchain.write().await;
-			wallet.inner.exit.load(&mut *onchain).await?;
+		if onchain.is_some() {
+			wallet.inner.exit.load().await?;
 		}
 
 		wallet.start_daemon(onchain)?;
@@ -1514,11 +1513,13 @@ impl Wallet {
 		let maintenance = self.maintenance().await;
 
 		// NB: order matters here, after syncing lightning, we might have new exits to start
-		let exit_sync = self.sync_exits(onchain).await;
+		let exit_sync = self.sync_exits().await;
 		if let Err(e) = exit_sync.as_ref() {
 			warn!("Error syncing exits: {:#}", e);
 		}
-		let exit_progress = self.exit_mgr().progress_exits(&self, onchain, None).await;
+		let exit_progress = run_exits_with_bdk(
+			self.exit_mgr(), self, onchain, None,
+		).await;
 		if let Err(e) = exit_progress.as_ref() {
 			warn!("Error progressing exits: {:#}", e);
 		}
@@ -1544,11 +1545,13 @@ impl Wallet {
 		let maintenance = self.maintenance_delegated().await;
 
 		// NB: order matters here, after syncing lightning, we might have new exits to start
-		let exit_sync = self.sync_exits(onchain).await;
+		let exit_sync = self.sync_exits().await;
 		if let Err(e) = exit_sync.as_ref() {
 			warn!("Error syncing exits: {:#}", e);
 		}
-		let exit_progress = self.exit_mgr().progress_exits(&self, onchain, None).await;
+		let exit_progress = run_exits_with_bdk(
+			self.exit_mgr(), self, onchain, None,
+		).await;
 		if let Err(e) = exit_progress.as_ref() {
 			warn!("Error progressing exits: {:#}", e);
 		}
@@ -1675,11 +1678,8 @@ impl Wallet {
 	/// This will not progress the unilateral exits in any way, it will merely check the
 	/// transaction status of each transaction as well as check whether any exits have become
 	/// claimable or have been claimed.
-	pub async fn sync_exits(
-		&self,
-		onchain: &mut dyn ExitUnilaterally,
-	) -> anyhow::Result<()> {
-		self.exit_mgr().sync(&self, onchain).await?;
+	pub async fn sync_exits(&self) -> anyhow::Result<()> {
+		self.exit_mgr().sync(&self).await?;
 		Ok(())
 	}
 
@@ -2084,6 +2084,53 @@ impl Wallet {
 
 		Ok(())
 	}
+}
+
+/// Drive unilateral exits forward using a BDK-backed onchain wallet to create CPFP transactions.
+///
+/// Runs the exit state machine, creates CPFP transactions for any exits that need them using
+/// `onchain`, then runs the state machine again so exits advance past [ExitTxStatus::AwaitingCpfpBroadcast].
+///
+/// External or hardware wallets should instead call [Exit::exits_needing_cpfp] and
+/// [Exit::provide_cpfp_tx] directly.
+pub async fn run_exits_with_bdk(
+	exit: &Exit,
+	wallet: &Wallet,
+	onchain: &mut dyn ExitUnilaterally,
+	fee_rate_override: Option<FeeRate>,
+) -> anyhow::Result<Option<Vec<ExitProgressStatus>>> {
+	exit.progress_exits(wallet, fee_rate_override).await?;
+
+	let fee_rate = fee_rate_override.unwrap_or(wallet.chain().fee_rates().await.fast);
+	for req in exit.exits_needing_cpfp().await {
+		let fees = match req.min_fee_for_rbf {
+			None => MakeCpfpFees::Effective(fee_rate),
+			Some((min_fee_rate, min_fee)) => {
+				// Only RBF if we can improve the fee rate; equal or lower rates are rejected
+				// by Bitcoin Core's RBF policy ("new feerate must be strictly greater").
+				if fee_rate <= min_fee_rate {
+					continue;
+				}
+				MakeCpfpFees::Rbf {
+					min_effective_fee_rate: fee_rate,
+					current_package_fee: min_fee,
+				}
+			},
+		};
+		let child_tx = match onchain.make_signed_p2a_cpfp(&req.exit_tx, fees) {
+			Ok(tx) => tx,
+			Err(CpfpError::InsufficientConfirmedFunds { needed, available }) => {
+				warn!("Insufficient funds for exit CPFP: needed {} available {}", needed, available);
+				continue;
+			},
+			Err(e) => return Err(e.into()),
+		};
+		onchain.store_signed_p2a_cpfp(&child_tx).await?;
+		let exit_txid = req.exit_tx.compute_txid();
+		exit.provide_cpfp_tx(exit_txid, child_tx).await?;
+	}
+
+	exit.progress_exits(wallet, fee_rate_override).await
 }
 
 fn wrap_server_connect_error(err: ConnectError) -> anyhow::Error {

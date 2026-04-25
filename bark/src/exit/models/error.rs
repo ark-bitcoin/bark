@@ -47,6 +47,9 @@ pub enum ExitError {
 	#[error("Database Retrieval Failure: Unable to get child tx: {error}")]
 	DatabaseChildRetrievalFailure { error: String },
 
+	#[error("Database Store Failure: Unable to store child tx: {error}")]
+	DatabaseChildStoreFailure { error: String },
+
 	#[error("Dust Limit Error: The dust limit for a VTXO is {dust} but the balance is only {vtxo}")]
 	DustLimit {
 		vtxo: Amount,

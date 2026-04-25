@@ -10,6 +10,7 @@ use log::{warn, info};
 use ark::{time::timestamp_secs, VtxoId};
 use bark::Wallet;
 use bark::onchain::{ChainSync, OnchainWallet};
+use bark::run_exits_with_bdk;
 use bark::vtxo::{FilterVtxos, VtxoFilter};
 use bark_json::cli::{ExitProgressStatus, ExitTransactionStatus};
 use bitcoin_ext::FeeRateExt;
@@ -131,11 +132,11 @@ pub async fn execute_exit_command(
 pub async fn get_exit_status(
 	args: StatusExitOpts,
 	wallet: &mut Wallet,
-	onchain: &mut OnchainWallet,
+	_onchain: &mut OnchainWallet,
 ) -> anyhow::Result<()> {
 	if !args.no_sync {
 		info!("Starting exit sync");
-		wallet.sync_exits(onchain).await?;
+		wallet.sync_exits().await?;
 	}
 
 	match wallet.exit_mgr().get_exit_status(args.vtxo, args.history, args.transactions).await? {
@@ -148,11 +149,11 @@ pub async fn get_exit_status(
 pub async fn list_exits(
 	args: ListExitsOpts,
 	wallet: &mut Wallet,
-	onchain: &mut OnchainWallet,
+	_onchain: &mut OnchainWallet,
 ) -> anyhow::Result<()> {
 	if !args.no_sync {
 		info!("Starting exit sync");
-		wallet.sync_exits(onchain).await?;
+		wallet.sync_exits().await?;
 	}
 
 	let exit_vtxos = wallet.exit_mgr().get_exit_vtxos().await;
@@ -243,8 +244,8 @@ async fn progress_once(
 	info!("Wallet sync completed");
 	info!("Start progressing exit");
 
-	wallet.exit_mgr().sync_no_progress(onchain).await.context("unable to sync exit process")?;
-	let result = wallet.exit_mgr().progress_exits(wallet, onchain, fee_rate).await
+	wallet.exit_mgr().sync_no_progress().await.context("unable to sync exit process")?;
+	let result = run_exits_with_bdk(wallet.exit_mgr(), wallet, onchain, fee_rate).await
 		.context("error making progress on exit process")?;
 
 	let done = !wallet.exit_mgr().has_pending_exits().await;
