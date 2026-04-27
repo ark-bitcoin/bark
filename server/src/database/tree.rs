@@ -109,20 +109,26 @@ impl VtxoInserts {
 		self.oor_spent_txids.push(oor_spent_txid.map(|t| t.to_string()));
 	}
 
-	fn push_spendable(&mut self, vtxo: &ServerVtxo<Full>) {
-		self.push_vtxo(vtxo, SpendState::Spendable, None);
+	fn push(
+		&mut self,
+		vtxo: &ServerVtxo<Full>,
+		spend_state: SpendState,
+		oor_spent_txid: Option<Txid>,
+	) {
+		self.push_vtxo(vtxo, spend_state, oor_spent_txid);
 	}
 
-	fn push_bare_spendable(&mut self, vtxo: &ServerVtxo<Bare>) {
-		self.push_bare_vtxo(vtxo, SpendState::Spendable, None);
-	}
-
-	fn push_unclaimed(&mut self, vtxo: &ServerVtxo<Full>) {
-		self.push_vtxo(vtxo, SpendState::Unclaimed, None);
+	fn push_bare(
+		&mut self,
+		vtxo: &ServerVtxo<Bare>,
+		spend_state: SpendState,
+		oor_spent_txid: Option<Txid>,
+	) {
+		self.push_bare_vtxo(vtxo, spend_state, oor_spent_txid);
 	}
 
 	fn push_oor_spent(&mut self, vtxo: &ServerVtxo<Full>, oor_spent_txid: Txid) {
-		self.push_vtxo(vtxo, SpendState::Spent, Some(oor_spent_txid));
+		self.push(vtxo, SpendState::Spent, Some(oor_spent_txid));
 	}
 
 	fn is_empty(&self) -> bool {
@@ -222,26 +228,44 @@ impl VtxoTreeUpdate {
 	// a second call trying to record a conflicting OOR spend cannot be
 	// silently deduped into authorizing a double-spend.
 
-	/// Insert vtxos with `spend_state = 'spendable'`.
-	pub fn insert_spendable_vtxos(
+	/// Insert vtxos with a given spend state.
+	pub fn insert_unspent_vtxos(
 		mut self,
 		vtxos: impl IntoIterator<Item = ServerVtxo<Full>>,
+		spend_state: SpendState,
 	) -> Self {
 		for vtxo in vtxos {
-			self.vtxo_inserts.push_spendable(&vtxo);
+			self.vtxo_inserts.push(&vtxo, spend_state, None);
 		}
 		self
 	}
 
-	/// Insert vtxos with `spend_state = 'unclaimed'`.
-	pub fn insert_unclaimed_vtxos(
+	/// Insert bare vtxos with a given spend state.
+	pub fn insert_unspent_bare_vtxos<V: std::borrow::Borrow<ServerVtxo<Bare>>>(
 		mut self,
-		vtxos: impl IntoIterator<Item = ServerVtxo<Full>>,
+		vtxos: impl IntoIterator<Item = V>,
+		spend_state: SpendState,
 	) -> Self {
 		for vtxo in vtxos {
-			self.vtxo_inserts.push_unclaimed(&vtxo);
+			self.vtxo_inserts.push_bare(vtxo.borrow(), spend_state, None);
 		}
 		self
+	}
+
+	/// Insert vtxos with `spend_state = 'spendable'`.
+	pub fn insert_spendable_vtxos(
+		self,
+		vtxos: impl IntoIterator<Item = ServerVtxo<Full>>,
+	) -> Self {
+		self.insert_unspent_vtxos(vtxos, SpendState::Spendable)
+	}
+
+	/// Insert vtxos with `spend_state = 'unclaimed'`.
+	pub fn insert_unclaimed_vtxos(
+		self,
+		vtxos: impl IntoIterator<Item = ServerVtxo<Full>>,
+	) -> Self {
+		self.insert_unspent_vtxos(vtxos, SpendState::Unclaimed)
 	}
 
 	/// Insert vtxos with `spend_state = 'spent'` and `oor_spent_txid` set.
@@ -263,13 +287,10 @@ impl VtxoTreeUpdate {
 	/// Insert bare vtxos with `spend_state = 'spendable'`.
 	/// Bare vtxos don't carry genesis data so the vtxo column is empty.
 	pub fn insert_spendable_bare_vtxos<V: std::borrow::Borrow<ServerVtxo<Bare>>>(
-		mut self,
+		self,
 		vtxos: impl IntoIterator<Item = V>,
 	) -> Self {
-		for vtxo in vtxos {
-			self.vtxo_inserts.push_bare_spendable(vtxo.borrow());
-		}
-		self
+		self.insert_unspent_bare_vtxos(vtxos, SpendState::Spendable)
 	}
 
 	// -- vtxo updates --
