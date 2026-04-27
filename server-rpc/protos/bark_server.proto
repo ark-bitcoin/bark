@@ -278,6 +278,7 @@ message StartLightningReceiveRequest {
 	uint64 amount_sat = 2;
 	uint32 min_cltv_delta = 3;
 	optional bytes mailbox_id = 4;
+	optional string description = 5;
 }
 
 message StartLightningReceiveResponse {

@@ -429,7 +429,7 @@ impl Barkd {
 	pub async fn lightning_invoice(&self, amount: Amount) -> InvoiceInfo {
 		info!("{}: Create lightning invoice for {}", self.name, amount);
 		let config = self.client_config();
-		let req = LightningInvoiceRequest { amount_sat: amount.to_sat() };
+		let req = LightningInvoiceRequest { amount_sat: amount.to_sat(), description: None };
 		lightning_api::generate_invoice(&config, req).await
 			.expect("failed to generate lightning invoice via barkd")
 	}

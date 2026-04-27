@@ -28,6 +28,9 @@ pub enum LightningCommand {
 	#[command()]
 	Invoice {
 		amount: Amount,
+		/// Optional description to embed in the invoice as its memo
+		#[arg(long)]
+		description: Option<String>,
 		/// Wait for the incoming payment to settle
 		#[arg(long)]
 		wait: bool,
@@ -138,8 +141,8 @@ pub async fn execute_lightning_command(
 		LightningCommand::Receive(receive_cmd) => {
 			execute_receive_command(receive_cmd, wallet).await?;
 		},
-		LightningCommand::Invoice { amount, wait, token } => {
-			let invoice = wallet.bolt11_invoice(amount).await?;
+		LightningCommand::Invoice { amount, description, wait, token } => {
+			let invoice = wallet.bolt11_invoice(amount, description).await?;
 			output_json(&InvoiceInfo { invoice: invoice.to_string() });
 			if wait {
 				let token = token.as_ref().map(|c| c.as_str());

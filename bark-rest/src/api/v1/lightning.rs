@@ -63,7 +63,7 @@ pub async fn generate_invoice(
 	let wallet = state.require_wallet()?;
 
 	let amount = Amount::from_sat(body.amount_sat);
-	let invoice = wallet.bolt11_invoice(amount).await
+	let invoice = wallet.bolt11_invoice(amount, body.description).await
 		.context("Failed to create invoice")?;
 
 	Ok(axum::Json(bark_json::cli::InvoiceInfo {

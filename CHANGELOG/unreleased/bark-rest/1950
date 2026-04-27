@@ -1,0 +1,5 @@
+- Accept an optional description when creating a Lightning invoice
+  `POST /api/v1/lightning/receives/invoice` now accepts an optional
+  `description` field in `LightningInvoiceRequest`, which is embedded in the
+  generated BOLT-11 invoice as its memo.
+  [#1950](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1950)

@@ -445,6 +445,7 @@ async fn bark_can_receive_lightning(
 	bark.board_and_confirm_and_register(&ctx, board_amount).await;
 
 	let pay_amount = btc(1);
+	let description = "coffee for Alice";
 	let invoice_info = bark.bolt11_invoice(pay_amount).await;
 	let invoice = Invoice::from_str(&invoice_info.invoice).unwrap();
 	let _ = bark.lightning_receive_status(&invoice).await.unwrap();
@@ -522,6 +523,15 @@ async fn bark_can_receive_lightning(
 	let vtxos = bark.vtxos().await;
 	assert!(!vtxos.iter().any(|v| matches!(v.state, VtxoStateInfo::Locked { .. })),
 		"should not be any locked vtxo left");
+
+	require_bark_version!(> "0.1.3");
+	let invoice_info = bark.bolt11_invoice_with_description(pay_amount, description).await;
+	let invoice = Invoice::from_str(&invoice_info.invoice).unwrap();
+	let _ = bark.lightning_receive_status(&invoice).await.unwrap();
+
+	// The description provided to the server must survive as the BOLT-11 memo.
+	let parsed = Bolt11Invoice::from_str(&invoice_info.invoice).unwrap();
+	assert_eq!(parsed.description().to_string(), description);
 }
 lightning_test!(bark_can_receive_lightning);
 
