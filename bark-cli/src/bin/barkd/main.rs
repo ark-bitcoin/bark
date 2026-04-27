@@ -317,30 +317,25 @@ async fn main() -> anyhow::Result<()>{
 		},
 	};
 
-	let (wallet_opt, daemon_opt) = if let Some((wallet, onchain)) = open_wallet(&datadir).await? {
+	let wallet_opt = if let Some((wallet, onchain)) = open_wallet(&datadir).await? {
 		let wallet = Arc::new(wallet);
 		let onchain = Arc::new(RwLock::new(onchain));
 
-		let daemon = wallet.run_daemon(Some(onchain.clone()))?;
+		wallet.run_daemon(Some(onchain.clone()))?;
 		info!("Wallet loaded and daemon started");
 		let server_wallet = bark_rest::ServerWallet::new(wallet, onchain);
 
-		(Some(server_wallet), Some(daemon))
+		Some(server_wallet)
 	} else {
 		warn!("No wallet found. Starting rest server without daemon");
-		(None, None)
+		None
 	};
 
-	let daemon = Arc::new(RwLock::new(daemon_opt));
-
-	let cloned_daemon = daemon.clone();
 	let on_wallet_create: Arc<OnWalletCreate> = Arc::new({
 		let datadir = datadir.clone();
 
 		move |req: CreateWalletRequest| {
 			let datadir = datadir.clone();
-			let daemon = cloned_daemon.clone();
-
 
 			Box::pin(async move {
 				let create_opts = wallet_create_request_to_create_opts(req)?;
@@ -358,8 +353,7 @@ async fn main() -> anyhow::Result<()>{
 					warn!("Ark server handshake failed on wallet creation: {:#}", e);
 				}
 
-				let daemon_handle = wallet.run_daemon(Some(onchain.clone()))?;
-				let _ = daemon.write().await.insert(daemon_handle);
+				wallet.run_daemon(Some(onchain.clone()))?;
 
 				let handle = ServerWallet::new(wallet, onchain);
 				Ok::<_, anyhow::Error>(handle)
@@ -367,17 +361,14 @@ async fn main() -> anyhow::Result<()>{
 		}
 	});
 
-	let daemon_delete = daemon.clone();
 	let on_wallet_delete: Arc<OnWalletDelete> = Arc::new({
 		let datadir = datadir.clone();
 		move || {
 			let datadir = datadir.clone();
-			let daemon_delete = daemon_delete.clone();
+
+			// NB: No need to stop the daemon here, it will be stopped when the wallet is removed from the server state
+
 			Box::pin(async move {
-				// Stop daemon first
-				if let Some(d) = daemon_delete.write().await.take() {
-					d.stop();
-				}
 				// Wipe datadir
 				let _ = tokio::fs::remove_dir_all(&datadir).await.ok();
 				tokio::fs::create_dir_all(&datadir).await?;
@@ -386,14 +377,15 @@ async fn main() -> anyhow::Result<()>{
 		}
 	});
 
+	let inner_wallet = wallet_opt.as_ref().map(|w| w.wallet.clone());
 	let server = RestServer::start(
 		&cli.to_config()?, Some(auth_token), wallet_opt, Some(on_wallet_create), Some(on_wallet_delete),
 	).await?;
 
 	run_shutdown_signal_listener().await;
 
-	if let Some(daemon) = daemon.write().await.take() {
-		daemon.stop();
+	if let Some(wallet) = inner_wallet {
+		wallet.stop_daemon();
 	}
 
 	if let Err(e) = server.stop_wait().await {

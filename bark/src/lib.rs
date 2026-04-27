@@ -734,6 +734,9 @@ pub struct Wallet {
 
 	/// Index of round states that are currently locked.
 	round_state_lock_index: RoundStateLockIndex,
+
+	/// A handle to the currently running daemon, if any.
+	daemon: parking_lot::Mutex<Option<DaemonHandle>>,
 }
 
 impl Wallet {
@@ -1035,6 +1038,7 @@ impl Wallet {
 			config, db, seed, exit, movements, notifications, server, chain,
 			inflight_lightning_payments: Mutex::new(HashSet::new()),
 			round_state_lock_index: RoundStateLockIndex::new(),
+			daemon: parking_lot::Mutex::new(None),
 		})
 	}
 
@@ -1058,16 +1062,16 @@ impl Wallet {
 		db: Arc<dyn BarkPersister>,
 		cfg: Config,
 		onchain: Option<Arc<RwLock<dyn DaemonizableOnchainWallet>>>,
-	) -> anyhow::Result<(Arc<Wallet>, DaemonHandle)> {
+	) -> anyhow::Result<Arc<Wallet>> {
 		let wallet = Arc::new(Wallet::open(mnemonic, db, cfg).await?);
 		if let Some(onchain) = onchain.as_ref() {
 			let mut onchain = onchain.write().await;
 			wallet.exit.write().await.load(&mut *onchain).await?;
 		}
 
-		let daemon = wallet.clone().run_daemon(onchain)?;
+		wallet.clone().run_daemon(onchain)?;
 
-		Ok((wallet, daemon))
+		Ok(wallet)
 	}
 
 	/// Returns the config used to create/load the bark [Wallet].
@@ -2053,10 +2057,26 @@ impl Wallet {
 	pub fn run_daemon(
 		self: &Arc<Self>,
 		onchain: Option<Arc<RwLock<dyn DaemonizableOnchainWallet>>>,
-	) -> anyhow::Result<DaemonHandle> {
+	) -> anyhow::Result<()> {
+		let mut daemon = self.daemon.lock();
+		if daemon.is_some() {
+			bail!("A daemon process is already running for this wallet");
+		}
+
 		// NB currently can't error but it's a pretty common method and quite likely that error
 		// cases will be introduces later
-		Ok(crate::daemon::start_daemon(self.clone(), onchain))
+		let handle = crate::daemon::start_daemon(self.clone(), onchain);
+		let _ = daemon.insert(handle);
+
+		Ok(())
+	}
+
+	/// Stops the daemon for the wallet if it is running, otherwise does nothing.
+	pub fn stop_daemon(&self) {
+		let mut daemon = self.daemon.lock();
+		if let Some(handle) = daemon.take() {
+			handle.stop();
+		}
 	}
 
 	/// Registers VTXOs with the server by sending their signed transaction chains.
@@ -2085,6 +2105,12 @@ fn wrap_server_connect_error(err: ConnectError) -> anyhow::Error {
 			anyhow!(MISSING_SERVER_TRANSPORT_HELP)
 		},
 		other => anyhow::Error::from(other),
+	}
+}
+
+impl std::ops::Drop for Wallet {
+	fn drop(&mut self) {
+		self.stop_daemon();
 	}
 }
 

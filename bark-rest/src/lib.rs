@@ -140,8 +140,13 @@ impl ServerWallet {
 #[derive(Clone)]
 pub struct ServerState {
 	wallet: Arc<parking_lot::RwLock<Option<ServerWallet>>>,
-	on_wallet_create: Option<Arc<OnWalletCreate>>,
 	auth_token: Option<AuthToken>,
+
+	/// A hook to be called when a wallet is created, returning a
+	/// [ServerWallet] to be added to the server state
+	on_wallet_create: Option<Arc<OnWalletCreate>>,
+	/// A hook to be called when a wallet is deleted,
+	///in addition to removing the wallet from the server state
 	on_wallet_delete: Option<Arc<OnWalletDelete>>,
 
 	/// A map of websocket tickets to their expiration time
