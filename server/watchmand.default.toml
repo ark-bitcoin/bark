@@ -68,8 +68,8 @@ name = "bark-server-db"
 max_connections = 10
 # Timeout in seconds for acquiring a connection from the pool (default: 10)
 #connection_timeout_secs = 10
-# Idle connections are recycled after this many seconds (default: 600)
-#idle_timeout_secs = 600
+# Idle connections are recycled after this many seconds (default: 90)
+#idle_timeout_secs = 90
 
 
 ############

@@ -276,8 +276,10 @@ mod defaults {
 	/// long enough for normal pool contention.
 	pub fn connection_timeout_secs() -> u64 { 10 }
 
-	/// 10 minutes — recycle idle connections before they go stale.
-	pub fn idle_timeout_secs() -> u64 { 600 }
+	/// 90 seconds — recycle idle connections before they go stale.
+	/// Must be longer than keepalives_idle (60s) so keepalive probes
+	/// can detect dead connections before the pool discards them.
+	pub fn idle_timeout_secs() -> u64 { 90 }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
