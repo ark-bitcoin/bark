@@ -1,0 +1,11 @@
+- Wallet now owns its daemon handle and stops it on drop
+  The `DaemonHandle` is kept internal to the `Wallet`, so the background
+  daemon is automatically stopped when the wallet is dropped. A new
+  `Wallet::stop_daemon` method is also exposed for callers that want to
+  shut it down explicitly.
+  [#1971](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1971)
+  - **BREAKING:** `Wallet::open` now returns `Arc<Wallet>` instead of
+    `(Arc<Wallet>, DaemonHandle)`.
+  - **BREAKING:** `Wallet::run_daemon` now returns `()` instead of
+    `DaemonHandle`, and errors if a daemon is already running for the
+    wallet.
