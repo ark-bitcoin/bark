@@ -684,7 +684,14 @@ impl Server {
 		//TODO(stevenroose) make this more robust
 		let tip = self.chain_tip();
 		if expiry_height < tip.height {
-			bail!("vtxo already expired: {} (tip = {})", expiry_height, tip.height);
+			bail!("VTXO already expired: {} (tip = {})", expiry_height, tip.height);
+		}
+		const LIFETIME_BUFFER: u16 = 3;
+		let requested_lifetime = expiry_height - tip.height;
+		if requested_lifetime as u16 > self.config.vtxo_lifetime + LIFETIME_BUFFER {
+			bail!("requested VTXO lifetime {} is too high (server VTXO lifetime is {})",
+				requested_lifetime, self.config.vtxo_lifetime,
+			);
 		}
 
 		let builder = BoardBuilder::new_for_cosign(

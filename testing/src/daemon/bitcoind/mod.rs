@@ -55,6 +55,7 @@ pub type Bitcoind = Daemon<BitcoindHelper>;
 ///
 /// Unlike [`Bitcoind`], this can be stored without holding onto the
 /// child process or daemon state.
+#[derive(Clone)]
 pub struct BitcoindRpcHandle {
 	pub name: String,
 	url: String,

@@ -22,7 +22,7 @@ pub use server::config::{self, Config};
 
 use crate::daemon::captaind::proxy::{ArkRpcProxy, ArkRpcProxyServer, MailboxRpcProxy};
 use crate::{secs, Bitcoind, Daemon, DaemonHelper, TestContext};
-use crate::daemon::{LogHandler, STDOUT_LOGFILE};
+use crate::daemon::{DaemonState, LogHandler, STDOUT_LOGFILE};
 use crate::constants::env::CAPTAIND_EXEC;
 use crate::util::resolve_path;
 
@@ -361,12 +361,23 @@ impl Captaind {
 		}
 	}
 
-	/// Wait until synced to the given height
+	/// Wait until synced to the given height.
+	///
+	/// Returns immediately if the daemon has been stopped, so callers that
+	/// generate blocks after an explicit `stop()` do not block forever.
 	pub async fn wait_for_sync_height(&self, height: BlockHeight) {
 		info!("Waiting for sync height {}...", height);
 		loop {
 			if self.inner.state.lock().sync_height >= height {
 				return;
+			}
+			if let Ok(state) = self.daemon_state.try_lock() {
+				if matches!(*state, DaemonState::Stopping | DaemonState::Stopped | DaemonState::Error) {
+					error!("Captaind {} is not running, skipping sync wait for height {}",
+						self.name, height,
+					);
+					return;
+				}
 			}
 			tokio::time::sleep(Duration::from_millis(50)).await;
 		}

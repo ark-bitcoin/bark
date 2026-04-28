@@ -18,7 +18,7 @@ use server_log::{parse_record, LogMsg, ParsedRecord, SyncedToHeight, WalletSyncC
 use server_rpc::protos;
 
 use crate::{Bitcoind, Daemon, DaemonHelper};
-use crate::daemon::{LogHandler, STDOUT_LOGFILE};
+use crate::daemon::{DaemonState, LogHandler, STDOUT_LOGFILE};
 use crate::daemon::captaind::{SlogHandler, SweepAdminClient};
 use crate::constants::env::WATCHMAND_EXEC;
 use crate::util::resolve_path;
@@ -175,6 +175,14 @@ impl Watchmand {
 		loop {
 			if self.inner.state.lock().sync_height >= height {
 				return;
+			}
+			if let Ok(state) = self.daemon_state.try_lock() {
+				if matches!(*state, DaemonState::Stopping | DaemonState::Stopped | DaemonState::Error) {
+					error!("Watchmand {} is not running, skipping sync wait for height {}",
+						self.name, height,
+					);
+					return;
+				}
 			}
 			tokio::time::sleep(Duration::from_millis(50)).await;
 		}

@@ -378,7 +378,7 @@ async fn max_vtxo_exit_depth() {
 #[tokio::test]
 async fn restart_fresh_server() {
 	let ctx = TestContext::new("server/restart_fresh_server").await;
-	let mut srv = ctx.captaind("server").create().await;
+	let mut srv = ctx.captaind("server").create_unregistered().await;
 	srv.stop().await.unwrap();
 	srv.start().await.unwrap();
 }
@@ -386,7 +386,7 @@ async fn restart_fresh_server() {
 #[tokio::test]
 async fn restart_funded_server() {
 	let ctx = TestContext::new("server/restart_funded_server").await;
-	let mut srv = ctx.captaind("server").funded(btc(10)).create().await;
+	let mut srv = ctx.captaind("server").funded(btc(10)).create_unregistered().await;
 	srv.stop().await.unwrap();
 	srv.start().await.unwrap();
 }
@@ -396,7 +396,7 @@ async fn restart_custom_cfg_server() {
 	let ctx = TestContext::new("server/restart_custom_cfg_server").await;
 	let mut srv = ctx.captaind("server").cfg(|cfg| {
 		cfg.vtxo_exit_delta = 24;
-	}).create().await;
+	}).create_unregistered().await;
 	srv.stop().await.unwrap();
 	srv.start().await.unwrap();
 }
@@ -404,7 +404,7 @@ async fn restart_custom_cfg_server() {
 #[tokio::test]
 async fn restart_server_with_payments() {
 	let ctx = TestContext::new("server/restart_server_with_payments").await;
-	let mut srv = ctx.captaind("server").funded(btc(10)).create().await;
+	let mut srv = ctx.captaind("server").funded(btc(10)).create_unregistered().await;
 	let bark1 = ctx.bark("bark1", &srv).create().await;
 	let bark2 = ctx.bark("bark2", &srv).create().await;
 	ctx.fund_bark(&bark1, sat(1_000_000)).await;
@@ -445,6 +445,7 @@ async fn full_round() {
 
 	// Since we can have 16 outputs, we will create 17 barks with 1 output each.
 
+	ctx.generate_blocks(1).await;
 	let barks = join_all((1..=NB_BARKS).map(|i| {
 		let name = format!("bark{}", i);
 		ctx.bark(name, &srv).funded(sat(40_000)).create()
@@ -456,6 +457,10 @@ async fn full_round() {
 		bark.board(sat(1_000)).await;
 	})).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
+	futures::future::join_all(barks.iter().map(|bark| async {
+		bark.sync().await;
+	})).await;
+	ctx.generate_blocks(1).await;
 
 	let (tx, mut rx) = mpsc::unbounded_channel();
 
@@ -1014,7 +1019,7 @@ async fn captaind_config_change(){
 	let ctx = TestContext::new("server/captaind_config_change").await;
 	let mut srv = ctx.captaind("server").cfg(|cfg| {
 		cfg.vtxo_exit_delta = 12;
-	}).create().await;
+	}).create_unregistered().await;
 	ctx.fund_captaind(&srv, btc(10)).await;
 	let bark1 = ctx.bark("bark1", &srv).create().await;
 	let bark2 = ctx.bark("bark2", &srv).create().await;
@@ -1536,7 +1541,7 @@ async fn test_register_board() {
 
 	// Get server info and calculate expiry height
 	let ark_info = srv.ark_info().await;
-	let current_height = ctx.bitcoind().get_block_count().await as u32;
+	let current_height = ctx.generate_blocks(1).await;
 	let expiry_height = current_height + ark_info.vtxo_expiry_delta as u32;
 
 	// Create a board builder to get the funding script
@@ -1586,6 +1591,7 @@ async fn test_register_board() {
 	let register_request = protos::BoardVtxoRequest {
 		board_vtxo: vtxo.serialize(),
 	};
+	srv.wait_for_sync_height(current_height).await;
 
 	// Wait for the funding tx to propagate to server's bitcoind
 	srv.bitcoind().await_transaction(funding_txid).await;

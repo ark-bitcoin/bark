@@ -474,7 +474,6 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 				(Some(a), false) => {
 					info!("Boarding {}...", a);
 					wallet.board_amount(&mut onchain, a).await?
-
 				},
 				(None, true) => {
 					info!("Boarding total balance...");

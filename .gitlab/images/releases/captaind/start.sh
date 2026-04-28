@@ -1,7 +1,7 @@
 #!/bin/sh
 set -e
 
-export RUST_BACKTRACE=1
+export RUST_BACKTRACE=full
 
 # Use CAPTAIND_CONFIG env var for config path, or default if not set
 CONFIG_PATH="${CAPTAIND_CONFIG:-/root/captaind/captaind.toml}"
