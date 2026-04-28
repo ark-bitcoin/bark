@@ -124,20 +124,33 @@ impl Wallet {
 		since_checkpoint: Option<u64>,
 		shutdown: CancellationToken,
 	) -> anyhow::Result<()> {
-		let mut stream = self.subscribe_mailbox_messages(since_checkpoint).await?;
+		let mut reconnect_count = 0;
+		const MAX_RECONNECT_ATTEMPTS: usize = 5;
 
-		loop {
-			futures::select! {
-				message = stream.next().fuse() => {
-					if let Some(message) = message {
-						let message = message.context("error on mailbox message stream")?;
-						self.process_mailbox_message(message).await;
-					}
-				},
-				_ = shutdown.cancelled().fuse() => {
-					info!("Shutdown signal received! Shutting mailbox messages process...");
-					return Ok(());
-				},
+		'outer: loop {
+			let mut stream = self.subscribe_mailbox_messages(since_checkpoint).await?;
+			trace!("Connected to mailbox stream with server");
+
+			loop {
+				futures::select! {
+					message = stream.next().fuse() => {
+						if let Some(message) = message {
+							reconnect_count = 0;
+							let message = message.context("error on mailbox message stream")?;
+							self.process_mailbox_message(message).await;
+						} else if reconnect_count >= MAX_RECONNECT_ATTEMPTS {
+							bail!("Mailbox stream dropped by server, giving up to retry later");
+						} else {
+							reconnect_count += 1;
+							warn!("Mailbox stream dropped by server, reconnecting");
+							continue 'outer;
+						}
+					},
+					_ = shutdown.cancelled().fuse() => {
+						info!("Shutdown signal received! Shutting mailbox messages process...");
+						return Ok(());
+					},
+				}
 			}
 		}
 	}
