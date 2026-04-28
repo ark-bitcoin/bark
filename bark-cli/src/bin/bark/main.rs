@@ -596,7 +596,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 			let wallet = Arc::new(wallet);
 			let onchain = Arc::new(RwLock::new(onchain));
 			let mut stream = wallet.subscribe_notifications();
-			let _daemon = wallet.run_daemon(Some(onchain))
+			let _daemon = wallet.start_daemon(Some(onchain))
 				.context("failed to start bark daemon")?;
 			while let Some(notif) = stream.next().await {
 				output_json(&json::notifications::WalletNotification::from(notif));
