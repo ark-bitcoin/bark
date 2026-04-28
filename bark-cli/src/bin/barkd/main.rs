@@ -321,7 +321,7 @@ async fn main() -> anyhow::Result<()>{
 		let wallet = Arc::new(wallet);
 		let onchain = Arc::new(RwLock::new(onchain));
 
-		wallet.run_daemon(Some(onchain.clone()))?;
+		wallet.start_daemon(Some(onchain.clone()))?;
 		info!("Wallet loaded and daemon started");
 		let server_wallet = bark_rest::ServerWallet::new(wallet, onchain);
 
@@ -353,7 +353,7 @@ async fn main() -> anyhow::Result<()>{
 					warn!("Ark server handshake failed on wallet creation: {:#}", e);
 				}
 
-				wallet.run_daemon(Some(onchain.clone()))?;
+				wallet.start_daemon(Some(onchain.clone()))?;
 
 				let handle = ServerWallet::new(wallet, onchain);
 				Ok::<_, anyhow::Error>(handle)

@@ -1069,7 +1069,7 @@ impl Wallet {
 			wallet.exit.write().await.load(&mut *onchain).await?;
 		}
 
-		wallet.clone().run_daemon(onchain)?;
+		wallet.clone().start_daemon(onchain)?;
 
 		Ok(wallet)
 	}
@@ -2054,7 +2054,7 @@ impl Wallet {
 	/// Note:
 	/// - This function doesn't check if a daemon is already running,
 	/// so it's possible to start multiple daemons by mistake.
-	pub fn run_daemon(
+	pub fn start_daemon(
 		self: &Arc<Self>,
 		onchain: Option<Arc<RwLock<dyn DaemonizableOnchainWallet>>>,
 	) -> anyhow::Result<()> {
@@ -2069,6 +2069,15 @@ impl Wallet {
 		let _ = daemon.insert(handle);
 
 		Ok(())
+	}
+
+	/// Use [Wallet::start_daemon] instead.
+	#[deprecated(since = "0.1.4", note = "use start_daemon instead")]
+	pub fn run_daemon(
+		self: &Arc<Self>,
+		onchain: Option<Arc<RwLock<dyn DaemonizableOnchainWallet>>>,
+	) -> anyhow::Result<()> {
+		self.start_daemon(onchain)
 	}
 
 	/// Stops the daemon for the wallet if it is running, otherwise does nothing.
