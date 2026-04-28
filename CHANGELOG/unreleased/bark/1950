@@ -1,8 +1,0 @@
-- Support an optional description on Lightning receive invoices
-  `bark lightning invoice` now accepts a `--description <TEXT>` flag that is
-  embedded in the generated BOLT-11 invoice as its memo, giving senders
-  context about what the payment is for.
-  [#1950](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1950)
-  - **BREAKING:** `Wallet::bolt11_invoice` now takes a second parameter
-    `description: Option<String>`; pass `None` to preserve the previous
-    behaviour.

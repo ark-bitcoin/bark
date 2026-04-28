@@ -6,6 +6,98 @@ https://docs.second.tech/changelog/changelog/
 
 Below is a more detailed summary for each version.
 
+
+# v0.1.4
+
+- `bark`
+  - `bark address` no longer requires a connection to the Ark server
+    The server public key and mailbox public key are now persisted in the local
+    database after the first connection, so address generation works fully offline.
+    [#1868](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1868)
+  - Let `bark-wallet` compile without a selected Ark RPC transport backend
+    Type-sharing consumers can now depend on `bark-wallet` without implicitly
+    selecting `native` or `wasm-web`, and server-backed wallet operations now
+    return a clear error that points developers to `bark-wallet/native` or
+    `bark-wallet/wasm-web` when no transport backend was compiled in.
+    [#1872](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1872)
+    - Mobile builds now reject `tls-native-roots` on both Android and iOS and
+      direct users to `tls-webpki-roots` instead.
+  - Support an optional description on Lightning receive invoices
+    `bark lightning invoice` now accepts a `--description <TEXT>` flag that is
+    embedded in the generated BOLT-11 invoice as its memo, giving senders
+    context about what the payment is for.
+    [#1950](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1950)
+    - **BREAKING:** `Wallet::bolt11_invoice` now takes a second parameter
+      `description: Option<String>`; pass `None` to preserve the previous
+      behaviour.
+  - Wallet now owns its daemon handle and stops it on drop
+    The `DaemonHandle` is kept internal to the `Wallet`, so the background
+    daemon is automatically stopped when the wallet is dropped. A new
+    `Wallet::stop_daemon` method is also exposed for callers that want to
+    shut it down explicitly.
+    [#1971](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1971)
+    - **BREAKING:** `Wallet::open` now returns `Arc<Wallet>` instead of
+      `(Arc<Wallet>, DaemonHandle)`.
+    - **BREAKING:** `Wallet::run_daemon` now returns `()` instead of
+      `DaemonHandle`, and errors if a daemon is already running for the
+      wallet.
+  - Rename `Wallet::register_vtxos_with_server` to `register_vtxo_transactions_with_server`
+    The wrapper sends signed transaction chains for already-known VTXOs to the
+    server; the new name matches the renamed RPC and removes the suggestion that
+    it creates or registers VTXOs.
+    [#1972](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1972)
+    - **BREAKING:** `Wallet::register_vtxos_with_server` renamed to `Wallet::register_vtxo_transactions_with_server`.
+  - deprecate `Wallet::run_daemon` in favor of `Wallet::start_daemon`
+    [#1974](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1974)
+  - don't produce error when calling `Wallet::start_daemon` with deamon already running
+    [#1974](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1974)
+
+- `bark-json`
+  - Stop `bark-json` from selecting wallet transport features by default
+    JSON-only consumers can now use `bark-json` for shared Bark types without
+    implicitly enabling `bark-wallet/native` or a TLS root strategy.
+    [#1872](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1872)
+
+- `bark-rest`
+  - Make `bark-rest` opt into native wallet transport explicitly
+    The REST server no longer relies on `bark-json` feature unification to pull in
+    wallet RPC support, which makes its server-only runtime requirements clearer.
+    [#1872](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1872)
+  - Expose a websocket gateway for real-time wallet notifications
+    Clients can request a short-lived ticket from
+    `/api/v1/notifications/ws/ticket` and upgrade to a long-lived websocket
+    connection at `/api/v1/notifications/ws` to receive `WalletNotification`
+    messages as they are emitted by the wallet, avoiding the need to poll
+    REST endpoints for updates.
+    [#1929](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1929)
+  - Accept an optional description when creating a Lightning invoice
+    `POST /api/v1/lightning/receives/invoice` now accepts an optional
+    `description` field in `LightningInvoiceRequest`, which is embedded in the
+    generated BOLT-11 invoice as its memo.
+    [#1950](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1950)
+
+- `server-rpc`
+  - Let `bark-server-rpc` build without selecting `tonic-native` or `tonic-web`
+    Generated gRPC client types now remain available in transportless builds, and
+    connection attempts fail early with a clear error telling developers to enable
+    `bark-server-rpc/tonic-native` or `bark-server-rpc/tonic-web`.
+    [#1872](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1872)
+    - Mobile builds now reject `tls-native-roots` on both Android and iOS and
+      direct users to `tls-webpki-roots` instead.
+  - Add optional `description` field to `StartLightningReceiveRequest`
+    Clients can now pass an invoice memo through the RPC, which the server
+    forwards to CLN's hold plugin when generating the BOLT-11 invoice. The
+    field is optional, so existing clients remain compatible.
+    [#1950](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1950)
+  - Rename `RegisterVtxos` RPC to `RegisterVtxoTransactions`
+    The previous name implied the call created or registered VTXOs server-side,
+    but it only attaches signed transaction chains to VTXOs that already exist.
+    The new name reflects what the RPC actually persists. The old `RegisterVtxos`
+    method path is kept as a deprecated alias that delegates to the new handler,
+    so existing clients continue to work without changes; new clients should call
+    `RegisterVtxoTransactions`. The request message is unchanged.
+    [#1972](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1972)
+
 # v0.1.3
 
 - `ark-lib`
