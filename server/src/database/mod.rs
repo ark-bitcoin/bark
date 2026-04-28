@@ -352,7 +352,7 @@ impl Db {
 	}
 
 	/// Assert that every given tx in the input VTXO chains has been registered
-	/// by the client via `register_vtxos`. See
+	/// by the client via `register_vtxo_transactions`. See
 	/// [`query::check_vtxo_transactions_registered`].
 	pub async fn check_vtxo_transactions_registered(
 		&self,
@@ -774,7 +774,7 @@ impl Db {
 		let txids = input_vtxos.iter()
 			.flat_map(|v| v.transactions().map(|i| i.tx.compute_txid()));
 		query::check_vtxo_transactions_registered(&tx, txids).await
-			.context("virtual tx update failed, user might not have called register_vtxos")?;
+			.context("virtual tx update failed, user might not have called register_vtxo_transactions")?;
 
 		tx.commit().await?;
 		Ok(())

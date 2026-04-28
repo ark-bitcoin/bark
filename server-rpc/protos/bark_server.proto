@@ -22,8 +22,16 @@ service ArkService {
 	rpc RequestBoardCosign(BoardCosignRequest) returns (BoardCosignResponse) {}
 	rpc RegisterBoardVtxo(BoardVtxoRequest) returns (core.Empty) {}
 
-	// Register VTXOs with their signed transaction chains
-	rpc RegisterVtxos(RegisterVtxosRequest) returns (core.Empty) {}
+	// Register the signed transaction chains for VTXOs that already exist server-side
+	rpc RegisterVtxoTransactions(RegisterVtxoTransactionsRequest) returns (core.Empty) {}
+
+	// Deprecated path alias for RegisterVtxoTransactions, kept for wire
+	// compatibility with pre-rename clients. The request message is
+	// unchanged; only the gRPC method path differs. New clients must use
+	// RegisterVtxoTransactions.
+	rpc RegisterVtxos(RegisterVtxoTransactionsRequest) returns (core.Empty) {
+		option deprecated = true;
+	}
 
 	// * ARKOOR PAYMENTS*
 
@@ -192,7 +200,7 @@ message BoardVtxoRequest {
 	bytes board_vtxo = 1;
 }
 
-message RegisterVtxosRequest {
+message RegisterVtxoTransactionsRequest {
 	// List of serialized VTXOs (using ProtocolEncoding)
 	repeated bytes vtxos = 1;
 }

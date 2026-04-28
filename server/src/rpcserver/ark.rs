@@ -179,13 +179,13 @@ impl rpc::server::ArkService for Server {
 		Ok(tonic::Response::new(protos::Empty {}))
 	}
 
-	/// Registers VTXOs with their signed transaction chains
+	/// Registers the signed transaction chains for VTXOs that already exist server-side.
 	#[tracing::instrument(skip(self, req), fields(
 		vtxo_count = req.get_ref().vtxos.len(),
 	))]
-	async fn register_vtxos(
+	async fn register_vtxo_transactions(
 		&self,
-		req: tonic::Request<protos::RegisterVtxosRequest>,
+		req: tonic::Request<protos::RegisterVtxoTransactionsRequest>,
 	) -> Result<tonic::Response<protos::Empty>, tonic::Status> {
 		let req = req.into_inner();
 
@@ -198,9 +198,21 @@ impl rpc::server::ArkService for Server {
 			.collect::<Result<Vec<_>, _>>()
 			.map_err(|e| tonic::Status::invalid_argument(format!("invalid vtxo: {}", e)))?;
 
-		self.register_vtxo_transactions(&vtxos).await.to_status()?;
+		self.store_vtxo_transactions(&vtxos).await.to_status()?;
 
 		Ok(tonic::Response::new(protos::Empty {}))
+	}
+
+	/// Deprecated path alias for `register_vtxo_transactions`, kept so
+	/// pre-rename clients can still reach the RPC over the wire.
+	#[tracing::instrument(skip(self, req), fields(
+		vtxo_count = req.get_ref().vtxos.len(),
+	))]
+	async fn register_vtxos(
+		&self,
+		req: tonic::Request<protos::RegisterVtxoTransactionsRequest>,
+	) -> Result<tonic::Response<protos::Empty>, tonic::Status> {
+		self.register_vtxo_transactions(req).await
 	}
 
 	// arkoor

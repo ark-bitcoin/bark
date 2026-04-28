@@ -736,7 +736,7 @@ async fn spend_unregistered_board() {
 		async { bark.try_refresh_all_no_retry().await.unwrap_err().to_alt_string() },
 		srv.trigger_round(),
 	);
-	assert!(err.contains("failed to register vtxos"), "err: {err}");
+	assert!(err.contains("failed to register vtxo transactions"), "err: {err}");
 }
 
 #[tokio::test]

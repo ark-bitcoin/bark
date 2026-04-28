@@ -280,8 +280,8 @@ pub async fn complete_round_participation(
 }
 
 /// Assert that every given txid exists in `virtual_transaction` with
-/// `signed_tx IS NOT NULL`: i.e. the client called `register_vtxos` for
-/// the entire transaction chain before attempting to spend.
+/// `signed_tx IS NOT NULL`: i.e. the client called `register_vtxo_transactions`
+/// for the entire transaction chain before attempting to spend.
 ///
 /// Callers pass every tx in each input VTXO's chain (see
 /// `Vtxo::transactions()`). Bails on the first missing or unsigned tx,
@@ -296,7 +296,7 @@ pub async fn check_vtxo_transactions_registered<C: GenericClient>(
 		.collect::<Vec<_>>();
 
 	if txid_strings.is_empty() {
-		bail!("register_vtxos guard called with empty txid list");
+		bail!("register_vtxo_transactions guard called with empty txid list");
 	}
 
 	// Dedupe so the count comparison below is against a unique set: input
@@ -334,13 +334,13 @@ pub async fn check_vtxo_transactions_registered<C: GenericClient>(
 		let txid = Txid::from_str(txid_str).context("invalid txid")?;
 
 		if !exists {
-			bail!("register_vtxos not called: transaction {} does not exist", txid);
+			bail!("register_vtxo_transactions not called: transaction {} does not exist", txid);
 		} else {
-			bail!("register_vtxos not called: transaction {} has NULL signed_tx", txid);
+			bail!("register_vtxo_transactions not called: transaction {} has NULL signed_tx", txid);
 		}
 	}
 
-	bail!("register_vtxos guard count mismatch: expected {}, got {}", expected, count);
+	bail!("register_vtxo_transactions guard count mismatch: expected {}, got {}", expected, count);
 }
 
 pub async fn set_round_id_for_participations(

@@ -662,21 +662,21 @@ async fn server_can_use_vtxo_pool_change_for_next_receive() {
 }
 
 #[tokio::test]
-async fn initiate_lightning_payment_fails_without_register_vtxos() {
-	let ctx = TestContext::new("server/initiate_lightning_payment_fails_without_register_vtxos").await;
+async fn initiate_lightning_payment_fails_without_register_vtxo_transactions() {
+	let ctx = TestContext::new("server/initiate_lightning_payment_fails_without_register_vtxo_transactions").await;
 
 	let lightning = ctx.new_lightning_setup("lightningd").await;
 
 	// Start a server and link it to our cln installation
 	let srv = ctx.captaind("server").lightningd(&lightning.internal).funded(btc(10)).create().await;
 
-	// Create a proxy that drops register_vtxos calls (returns success without calling upstream)
+	// Create a proxy that drops register_vtxo_transactions calls (returns success without calling upstream)
 	#[derive(Clone)]
 	struct Proxy;
 	#[async_trait::async_trait]
 	impl captaind::proxy::ArkRpcProxy for Proxy {
-		async fn register_vtxos(
-			&self, _upstream: &mut ArkClient, _req: protos::RegisterVtxosRequest,
+		async fn register_vtxo_transactions(
+			&self, _upstream: &mut ArkClient, _req: protos::RegisterVtxoTransactionsRequest,
 		) -> Result<protos::Empty, tonic::Status> {
 			// Drop the call - return success but don't register with upstream
 			Ok(protos::Empty {})
@@ -691,8 +691,8 @@ async fn initiate_lightning_payment_fails_without_register_vtxos() {
 
 	let invoice = lightning.external.invoice(Some(btc(1)), "test_payment", "A test payment").await;
 
-	// The payment should fail because register_vtxos was dropped, so the
-	// early check in initiate_lightning_payment rejects the request.
+	// The payment should fail because register_vtxo_transactions was dropped,
+	// so the early check in initiate_lightning_payment rejects the request.
 	let err = bark_1.try_pay_lightning(invoice, None, false).await.unwrap_err();
 	assert!(err.to_string().contains("does not exist") || err.to_string().contains("NULL signed_tx"),
 		"Expected error about missing or unsigned transaction, got: {err}");

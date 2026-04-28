@@ -46,7 +46,12 @@ pub trait ArkRpcProxy: Send + Sync + Clone + 'static {
 		Ok(upstream.register_board_vtxo(req).await?.into_inner())
 	}
 
-	async fn register_vtxos(&self, upstream: &mut ArkClient, req: protos::RegisterVtxosRequest) -> Result<protos::Empty, tonic::Status> {
+	async fn register_vtxo_transactions(&self, upstream: &mut ArkClient, req: protos::RegisterVtxoTransactionsRequest) -> Result<protos::Empty, tonic::Status> {
+		Ok(upstream.register_vtxo_transactions(req).await?.into_inner())
+	}
+
+	#[allow(deprecated)]
+	async fn register_vtxos(&self, upstream: &mut ArkClient, req: protos::RegisterVtxoTransactionsRequest) -> Result<protos::Empty, tonic::Status> {
 		Ok(upstream.register_vtxos(req).await?.into_inner())
 	}
 
@@ -281,8 +286,16 @@ impl<T: ArkRpcProxy> rpc::server::ArkService for ArkRpcProxyWrapper<T> {
 		Ok(tonic::Response::new(ArkRpcProxy::register_board_vtxo(&self.proxy, &mut self.upstream.clone(), req.into_inner()).await?))
 	}
 
+	async fn register_vtxo_transactions(
+		&self, req: tonic::Request<protos::RegisterVtxoTransactionsRequest>,
+	) -> Result<tonic::Response<protos::Empty>, tonic::Status> {
+		self.proxy.on_request(req.metadata()).await?;
+		Ok(tonic::Response::new(ArkRpcProxy::register_vtxo_transactions(&self.proxy, &mut self.upstream.clone(), req.into_inner()).await?))
+	}
+
+	#[allow(deprecated)]
 	async fn register_vtxos(
-		&self, req: tonic::Request<protos::RegisterVtxosRequest>,
+		&self, req: tonic::Request<protos::RegisterVtxoTransactionsRequest>,
 	) -> Result<tonic::Response<protos::Empty>, tonic::Status> {
 		self.proxy.on_request(req.metadata()).await?;
 		Ok(tonic::Response::new(ArkRpcProxy::register_vtxos(&self.proxy, &mut self.upstream.clone(), req.into_inner()).await?))

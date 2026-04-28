@@ -196,7 +196,7 @@ impl Wallet {
 			.build_signed_vtxos();
 
 		// Register the claim output so it is spendable for any later flow.
-		self.register_vtxos_with_server(&outputs).await?;
+		self.register_vtxo_transactions_with_server(&outputs).await?;
 
 		let mut effective_balance = Amount::ZERO;
 		for vtxo in &outputs {
