@@ -2060,7 +2060,8 @@ impl Wallet {
 	) -> anyhow::Result<()> {
 		let mut daemon = self.daemon.lock();
 		if daemon.is_some() {
-			bail!("A daemon process is already running for this wallet");
+			warn!("Called Wallet::start_daemon while daemon was already running.");
+			return Ok(());
 		}
 
 		// NB currently can't error but it's a pretty common method and quite likely that error
