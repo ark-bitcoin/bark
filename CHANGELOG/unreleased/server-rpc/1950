@@ -1,5 +1,0 @@
-- Add optional `description` field to `StartLightningReceiveRequest`
-  Clients can now pass an invoice memo through the RPC, which the server
-  forwards to CLN's hold plugin when generating the BOLT-11 invoice. The
-  field is optional, so existing clients remain compatible.
-  [#1950](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1950)

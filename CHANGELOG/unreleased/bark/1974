@@ -1,4 +1,0 @@
-- deprecate `Wallet::run_daemon` in favor of `Wallet::start_daemon`
-  [#1974](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1974)
-- don't produce error when calling `Wallet::start_daemon` with deamon already running
-  [#1974](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1974)
