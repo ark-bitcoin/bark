@@ -118,7 +118,9 @@ mod transport {
 
 		#[cfg_attr(not(any(feature = "tls-native-roots", feature = "tls-webpki-roots")), allow(unused_mut))]
 		let mut endpoint = Channel::builder(uri.clone())
+			.http2_keep_alive_interval(Duration::from_secs(20))
 			.keep_alive_timeout(Duration::from_secs(600))
+			.keep_alive_while_idle(true)
 			.timeout(Duration::from_secs(600));
 
 		#[cfg(any(feature = "tls-native-roots", feature = "tls-webpki-roots"))]
