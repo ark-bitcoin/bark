@@ -283,8 +283,8 @@ impl Wallet {
 		// is logged and swallowed: the receive must still proceed so we
 		// don't lose track of the vtxos locally, and later spends will
 		// retry registration if still needed.
-		if let Err(e) = self.register_vtxos_with_server(&new_vtxos).await {
-			warn!("Failed to register received arkoor vtxos with server: {:#}", e);
+		if let Err(e) = self.register_vtxo_transactions_with_server(&new_vtxos).await {
+			warn!("Failed to register received arkoor vtxo transactions with server: {:#}", e);
 		}
 
 		let balance = vtxos

@@ -95,12 +95,13 @@ impl Wallet {
 			.collect::<(Vec<_>, Vec<_>)>();
 
 		// Pre-register the input chains so the post-cosign register call
-		// for the outputs finds a signed chain anchor: register_vtxos
-		// validates a vtxo against its anchor's signed_tx in the DB,
-		// and boarded inputs sit unsigned in virtual_transaction (see
-		// register_board) until a register_vtxos call backfills them.
-		self.register_vtxos_with_server(&inputs).await
-			.context("failed to register arkoor input vtxos with server")?;
+		// for the outputs finds a signed chain anchor:
+		// register_vtxo_transactions validates a vtxo against its anchor's
+		// signed_tx in the DB, and boarded inputs sit unsigned in
+		// virtual_transaction (see register_board) until a
+		// register_vtxo_transactions call backfills them.
+		self.register_vtxo_transactions_with_server(&inputs).await
+			.context("failed to register arkoor input vtxo transactions with server")?;
 
 		// Peek at a potential change keypair without storing it yet.
 		// We'll only store it if change is actually created.
@@ -194,8 +195,8 @@ impl Wallet {
 		let to_register = arkoor.created.iter()
 			.chain(arkoor.change.iter())
 			.collect::<Vec<_>>();
-		if let Err(e) = self.register_vtxos_with_server(&to_register).await {
-			warn!("Failed to register arkoor output vtxos with server: {:#}", e);
+		if let Err(e) = self.register_vtxo_transactions_with_server(&to_register).await {
+			warn!("Failed to register arkoor output vtxo transactions with server: {:#}", e);
 		}
 
 		let mut movement = self.movements.new_guarded_movement_with_update(

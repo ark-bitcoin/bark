@@ -1,0 +1,8 @@
+- Rename `RegisterVtxos` RPC to `RegisterVtxoTransactions`
+  The previous name implied the call created or registered VTXOs server-side,
+  but it only attaches signed transaction chains to VTXOs that already exist.
+  The new name reflects what the RPC actually persists. The old `RegisterVtxos`
+  method path is kept as a deprecated alias that delegates to the new handler,
+  so existing clients continue to work without changes; new clients should call
+  `RegisterVtxoTransactions`. The request message is unchanged.
+  [#1972](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1972)

@@ -561,8 +561,8 @@ impl Wallet {
 
 		// Ensure that all inputs are fully registered so the server will
 		// accept them.
-		self.register_vtxos_with_server(&inputs).await
-			.context("failed to register lightning-send input vtxos with server")?;
+		self.register_vtxo_transactions_with_server(&inputs).await
+			.context("failed to register lightning-send input vtxo transactions with server")?;
 
 		let mut secs = Vec::with_capacity(inputs.len());
 		let mut pubs = Vec::with_capacity(inputs.len());
@@ -621,7 +621,7 @@ impl Wallet {
 
 		// Ensure both htlcs and change are registered. We must register
 		// change before initiating the lightning payment.
-		self.register_vtxos_with_server(&vtxos).await?;
+		self.register_vtxo_transactions_with_server(&vtxos).await?;
 
 		let (htlc_vtxos, change_vtxos) = vtxos.into_iter()
 			.partition::<Vec<_>, _>(|v| matches!(v.policy(), VtxoPolicy::ServerHtlcSend(_)));

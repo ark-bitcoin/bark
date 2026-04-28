@@ -774,14 +774,14 @@ impl Server {
 		Ok(())
 	}
 
-	/// Registers VTXO signed transaction chains.
+	/// Validates and stores the signed transaction chains for the given VTXOs.
 	///
-	/// Validates each VTXO:
+	/// For each VTXO:
 	/// - Checks it exists in the database
 	/// - Checks it is fully signed
 	/// - Validates signatures against the chain anchor transaction
 	/// - Extracts transactions and updates virtual_transaction table
-	pub async fn register_vtxo_transactions(
+	pub async fn store_vtxo_transactions(
 		&self,
 		vtxos: impl IntoIterator<Item = impl AsRef<Vtxo<Full>>>,
 	) -> anyhow::Result<()> {

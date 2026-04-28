@@ -32,8 +32,8 @@ impl Wallet {
 		vtxo_keys: &[Keypair],
 		req: &OffboardRequest,
 	) -> anyhow::Result<Transaction> {
-		// Register VTXOs with server before offboarding
-		self.register_vtxos_with_server(&vtxos).await?;
+		// Register VTXO transaction chains with server before offboarding
+		self.register_vtxo_transactions_with_server(&vtxos).await?;
 
 		let input_ids = vtxos.iter().map(|v| v.as_ref().id()).collect::<Vec<_>>();
 		let prep_resp = srv.client.prepare_offboard(protos::PrepareOffboardRequest {

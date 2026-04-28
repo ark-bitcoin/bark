@@ -532,7 +532,7 @@ async fn watchman_sweeps_exit_after_oor_then_forfeit() {
 
 	// bark2 refreshes its received OOR vtxo in a new round. Once the round tx confirms,
 	// bark2 syncs to complete the hArk forfeit protocol. During forfeit processing the
-	// server stores the signed OOR tx (via register_vtxos) and marks
+	// server stores the signed OOR tx (via register_vtxo_transactions) and marks
 	// server_may_own_descendant on bark1's round vtxo exit tx.
 	ctx.refresh_all(&srv, &[&bark2]).await;
 	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;

@@ -1,0 +1,6 @@
+- Rename `Wallet::register_vtxos_with_server` to `register_vtxo_transactions_with_server`
+  The wrapper sends signed transaction chains for already-known VTXOs to the
+  server; the new name matches the renamed RPC and removes the suggestion that
+  it creates or registers VTXOs.
+  [#1972](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1972)
+  - **BREAKING:** `Wallet::register_vtxos_with_server` renamed to `Wallet::register_vtxo_transactions_with_server`.
