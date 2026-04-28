@@ -228,7 +228,7 @@ bark-esplora:
   variables:
     CHAIN_SOURCE: esplora
     TEST_DIRECTORY: ./test/esplora
-    NEXTEST_TEST_THREADS: "2"
+    NEXTEST_TEST_THREADS: "4"
     BARK_COMMAND_TIMEOUT_MILLIS: "120000"
     TX_PROPAGATION_TIMEOUT: "30000"
   script:
@@ -255,7 +255,7 @@ bark-mempool:
   variables:
     CHAIN_SOURCE: mempool
     TEST_DIRECTORY: ./test/mempool
-    NEXTEST_TEST_THREADS: "2"
+    NEXTEST_TEST_THREADS: "4"
     BARK_COMMAND_TIMEOUT_MILLIS: "120000"
     TX_PROPAGATION_TIMEOUT: "30000"
     BARK_TOKIO_WORKER_THREADS: "1"
@@ -281,7 +281,7 @@ bark-btc30:
     - build-test-archives
   variables:
     TEST_DIRECTORY: ./test/btc30
-    NEXTEST_TEST_THREADS: "2"
+    NEXTEST_TEST_THREADS: "4"
     BARK_COMMAND_TIMEOUT_MILLIS: "120000"
     TX_PROPAGATION_TIMEOUT: "30000"
   script:
@@ -316,7 +316,7 @@ bark-filestore:
     CHAIN_SOURCE: mempool
     USE_FILESTORE: "1"
     TEST_DIRECTORY: ./test/filestore
-    NEXTEST_TEST_THREADS: "2"
+    NEXTEST_TEST_THREADS: "4"
     BARK_COMMAND_TIMEOUT_MILLIS: "120000"
     TX_PROPAGATION_TIMEOUT: "30000"
   script:
@@ -341,7 +341,7 @@ core-server:
     - build-test-archives
   variables:
     TEST_DIRECTORY: ./test/core-server
-    NEXTEST_TEST_THREADS: "2"
+    NEXTEST_TEST_THREADS: "4"
     BARK_COMMAND_TIMEOUT_MILLIS: "120000"
     TX_PROPAGATION_TIMEOUT: "30000"
   script:
@@ -366,7 +366,7 @@ compat-bark-0.1.2:
     - build-test-archives
   variables:
     TEST_DIRECTORY: ./test/bark-0.1.2
-    NEXTEST_TEST_THREADS: "2"
+    NEXTEST_TEST_THREADS: "4"
     BARK_COMMAND_TIMEOUT_MILLIS: "120000"
     TX_PROPAGATION_TIMEOUT: "30000"
     BARK_RELEASE_URL: https://gitlab.com/ark-bitcoin/bark/-/releases/bark-0.1.2/downloads/bark-0.1.2-linux-x86_64
@@ -401,7 +401,7 @@ compat-bark-0.1.3:
     - build-test-archives
   variables:
     TEST_DIRECTORY: ./test/bark-0.1.3
-    NEXTEST_TEST_THREADS: "2"
+    NEXTEST_TEST_THREADS: "4"
     BARK_COMMAND_TIMEOUT_MILLIS: "120000"
     TX_PROPAGATION_TIMEOUT: "30000"
     BARK_RELEASE_URL: https://gitlab.com/ark-bitcoin/bark/-/releases/bark-0.1.3/downloads/bark-0.1.3-linux-x86_64
