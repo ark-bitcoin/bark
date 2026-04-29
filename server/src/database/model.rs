@@ -28,6 +28,8 @@ pub enum SpendState {
 	Spent,
 	/// The VTXO is part of the VTXO pool
 	Pool,
+	/// The VTXO is an htlc-recv that hasn't been claimed yet
+	HtlcRecvUnclaimed
 }
 
 impl SpendState {
@@ -37,6 +39,7 @@ impl SpendState {
 			SpendState::Unclaimed => "unclaimed",
 			SpendState::Spent => "spent",
 			SpendState::Pool => "pool",
+			SpendState::HtlcRecvUnclaimed => "htlc-recv-unclaimed",
 		}
 	}
 }
@@ -56,6 +59,7 @@ impl FromStr for SpendState {
 			"unclaimed" => Ok(SpendState::Unclaimed),
 			"spent" => Ok(SpendState::Spent),
 			"pool" => Ok(SpendState::Pool),
+			"htlc-recv-unclaimed" => Ok(SpendState::HtlcRecvUnclaimed),
 			other => bail!("invalid spend_state: {}", other),
 		}
 	}

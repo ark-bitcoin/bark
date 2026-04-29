@@ -508,6 +508,7 @@ async fn do_oor_spend_updates<T: GenericClient>(
 		WHERE vtxo.vtxo_id = u.vtxo_id
 		AND (vtxo.spend_state = 'spendable'
 			OR vtxo.spend_state = 'pool'
+			OR vtxo.spend_state = 'htlc-recv-unclaimed'
 			OR (vtxo.spend_state = 'spent' AND vtxo.oor_spent_txid = u.txid))
 	", &[&ids, &txids]).await.context("failed to mark VTXOs as oor-spent")?;
 	if rows != spends.len() as u64 {
@@ -519,6 +520,7 @@ async fn do_oor_spend_updates<T: GenericClient>(
 			WHERE v.vtxo_id IS NULL
 				OR (v.spend_state != 'spendable'
 					AND v.spend_state != 'pool'
+					AND v.spend_state != 'htlc-recv-unclaimed'
 					AND NOT (v.spend_state = 'spent' AND v.oor_spent_txid = u.txid))
 			LIMIT 1
 		", &[&ids, &txids]).await.context("failed to find bad vtxo")?;

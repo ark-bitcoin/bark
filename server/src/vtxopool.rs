@@ -251,6 +251,10 @@ pub struct VtxoPool {
 }
 
 impl VtxoPool {
+	/// Create a VTXO from pool
+	///
+	/// The caller is responsible for requesting arkoor preparation
+	/// with correct destination: [`VtxoPolicy::ServerHtlcRecv`]
 	#[tracing::instrument(skip(self, srv))]
 	async fn prepare_arkoor(
 		&self,
@@ -302,7 +306,10 @@ impl VtxoPool {
 		let update = VtxoTreeUpdate::new()
 			.upsert_signed_tx(signed_vtxs)
 			.insert_oor_spent_vtxos(internal_vtxos)
-			.insert_spendable_vtxos(output_vtxos.iter().cloned().map(ServerVtxo::from))
+			.insert_unspent_vtxos(
+				output_vtxos.iter().cloned().map(ServerVtxo::from),
+				database::SpendState::HtlcRecvUnclaimed,
+			)
 			.mark_vtxos_oor_spent(input_spend_info);
 		srv.db.execute_vtxo_tree_update(update).await?;
 
