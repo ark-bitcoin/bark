@@ -424,6 +424,18 @@ impl Server {
 		wait: bool,
 	) -> anyhow::Result<LightningHtlcSubscription> {
 		let mut update_rx = self.cln.subscribe_payment_updates();
+		self.check_lightning_receive_with_rx(payment_hash, wait, &mut update_rx).await
+	}
+
+	/// Like [`Self::check_lightning_receive`] but with a caller-provided
+	/// broadcast receiver.  Useful in tests to pass a disconnected
+	/// receiver and force the poll-interval fallback path.
+	pub async fn check_lightning_receive_with_rx(
+		&self,
+		payment_hash: PaymentHash,
+		wait: bool,
+		update_rx: &mut broadcast::Receiver<PaymentHash>,
+	) -> anyhow::Result<LightningHtlcSubscription> {
 		// Generous fallback: notifications are the primary wake mechanism,
 		// this only guards against missed broadcasts.
 		let mut poll_interval = tokio::time::interval(Duration::from_secs(30));
