@@ -141,6 +141,10 @@ struct ClnHoldProcess {
 }
 
 impl ClnHoldProcess {
+	fn notifier(&self) -> super::PaymentAttemptNotifier<'_> {
+		super::PaymentAttemptNotifier::new(&self.db, &self.mailbox_manager, &self.payment_update_tx)
+	}
+
 	/// For each subscription, verifies if incoming HTLCs have been accepted.
 	/// - If so, it updates the status to accepted.
 	/// - After a delay, it cancels the subscription on the plugin and updates
@@ -444,18 +448,12 @@ impl ClnHoldProcess {
 			debug!("HTLC subscription canceled with ongoing payment attempt, \
 				marking as failed: {}", payment_attempt.id,
 			);
-			self.db.update_lightning_payment_attempt_status(
+			self.notifier().update_lightning_payment_attempt_status(
 				&payment_attempt,
 				LightningPaymentStatus::Failed,
 				Some(reason),
+				None,
 			).await?;
-		}
-
-		// Notify waiters: wakes check_lightning_receive (subscription
-		// canceled) and, for intra-ark payments, get_payment_status
-		// (payment attempt marked failed) since no CLN hook fires.
-		if let Err(e) = self.payment_update_tx.send(payment_hash) {
-			debug!("Failed to send payment update notification: {}", e);
 		}
 
 		Ok(())

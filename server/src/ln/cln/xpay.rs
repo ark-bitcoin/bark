@@ -62,6 +62,10 @@ struct ClnXpayClient {
 }
 
 impl ClnXpayClient {
+	fn notifier(&self) -> super::PaymentAttemptNotifier<'_> {
+		super::PaymentAttemptNotifier::new(&self.db, &self.mailbox_manager, &self.payment_update_tx)
+	}
+
 	pub async fn new(
 		db: database::Db,
 		payment_update_tx: broadcast::Sender<PaymentHash>,
@@ -133,10 +137,6 @@ impl ClnXpayClient {
 			attempt.id, payment_hash,
 		);
 
-		let mut updated = false;
-		let mut send_finished = false;
-		let mut preimage = Option::<Preimage>::None;
-
 		telemetry::add_invoice_verification(attempt.lightning_node_id, attempt.status);
 
 		let req = cln_rpc::ListpaysRequest {
@@ -167,9 +167,10 @@ impl ClnXpayClient {
 				LightningPaymentStatus::Requested
 					| LightningPaymentStatus::Submitted =>
 				{
-					self.db.update_lightning_payment_attempt_status(
+					self.notifier().update_lightning_payment_attempt_status(
 						&attempt,
 						LightningPaymentStatus::Failed,
+						None,
 						None,
 					).await?;
 
@@ -178,9 +179,6 @@ impl ClnXpayClient {
 						attempt.amount_msat,
 						LightningPaymentStatus::Failed,
 					);
-
-					send_finished = true;
-					updated = true;
 				},
 			}
 		} else {
@@ -219,7 +217,7 @@ impl ClnXpayClient {
 						payment_hash,
 					);
 				} else {
-					preimage = latest.preimage.map(|b| b.try_into())
+					let preimage = latest.preimage.map(|b| b.try_into())
 						.transpose()
 						.context("CLN returned a preimage that is not 32 bytes")?;
 
@@ -229,31 +227,17 @@ impl ClnXpayClient {
 						self.settler.settle(preimage).await?;
 					}
 
-					updated = self.db.verify_and_update_payment_attempt(
+					// NB: for intra-ark payments, settle_invoice may also post
+					// the mailbox notification for the same payment hash. The
+					// DB insert is idempotent (ON CONFLICT DO NOTHING).
+					self.notifier().verify_and_update_payment_attempt(
 						&attempt,
 						desired_status,
 						error_string,
 						latest.amount_sent_msat.map(|v| v.msat),
+						preimage,
 					).await?;
-
-					if updated && desired_status.is_final() {
-						send_finished = true;
-					}
 				}
-			}
-		}
-
-		if updated {
-			trace!("Lightning payment attempt ({}): status updated for payment hash {}.",
-				attempt.id, payment_hash,
-			);
-
-			self.payment_update_tx.send(payment_hash)?;
-
-			// NB: for intra-ark payments, settle_invoice may also post this
-			// notification. The DB insert is idempotent (ON CONFLICT DO NOTHING).
-			if send_finished {
-				super::post_lightning_send_finished(&self.db, &self.mailbox_manager, payment_hash, preimage).await;
 			}
 		}
 

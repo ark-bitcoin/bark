@@ -22,6 +22,7 @@
 //! broadcasts the result without making a CLN round-trip.
 
 pub(crate) mod hold;
+mod notifier;
 pub(crate) mod xpay;
 
 use std::fmt;
@@ -57,39 +58,9 @@ use crate::database::ln::{
 	LightningPaymentStatus,
 };
 use self::hold::{ClnHold, ClnHoldConfig};
+use self::notifier::PaymentAttemptNotifier;
 use self::xpay::{ClnXpay, ClnXpayConfig};
 use crate::telemetry;
-
-/// Post a lightning send finished notification to the sender's mailbox.
-///
-/// Shared between [`ClnManagerProcess`] and [`ClnXpayClient`].
-pub(super) async fn post_lightning_send_finished(
-	db: &database::Db,
-	mailbox_manager: &crate::mailbox_manager::MailboxManager,
-	payment_hash: PaymentHash,
-	preimage: Option<Preimage>,
-) {
-	let mailbox_id = match db.get_lightning_sender_mailbox_id(payment_hash).await {
-		Ok(Some(id)) => id,
-		Ok(None) => return,
-		Err(e) => {
-			warn!("Failed to look up mailbox_id for {}: {:#}", payment_hash, e);
-			return;
-		},
-	};
-
-	match db.store_lightning_send_finished(
-		mailbox_id, payment_hash, preimage,
-	).await {
-		Ok(Some(checkpoint)) => {
-			mailbox_manager.notify(mailbox_id, checkpoint);
-		},
-		Ok(None) => {},
-		Err(e) => {
-			warn!("Failed to store send finished notification for {}: {:#}", payment_hash, e);
-		},
-	}
-}
 
 type ClnGrpcClient = NodeClient<Channel>;
 
@@ -113,6 +84,10 @@ pub struct ClnManager {
 }
 
 impl ClnManager {
+	fn notifier(&self) -> PaymentAttemptNotifier<'_> {
+		PaymentAttemptNotifier::new(&self.db, &self.mailbox_manager, &self.payment_update_tx)
+	}
+
 	/// Start the [ClnManager].
 	pub async fn start(
 		rtmgr: RuntimeManager,
@@ -316,17 +291,11 @@ impl ClnManager {
 		// then skip hold invoice settlement.
 		let attempt = self.db.get_open_lightning_payment_attempt_by_payment_hash(payment_hash).await?;
 		if let Some(attempt) = attempt {
-			let status = LightningPaymentStatus::Succeeded;
-			self.db.verify_and_update_payment_attempt(
-				&attempt, status, None, None,
+			// NB: the xpay reconciliation loop may also post the mailbox notification
+			// for the same payment hash. The DB insert is idempotent (ON CONFLICT DO NOTHING).
+			self.notifier().verify_and_update_payment_attempt(
+				&attempt, LightningPaymentStatus::Succeeded, None, None, Some(preimage),
 			).await?;
-
-			// Notify the sender's mailbox that the payment completed.
-			// NB: the xpay reconciliation loop may also post this for the same
-			// payment hash. The DB insert is idempotent (ON CONFLICT DO NOTHING).
-			post_lightning_send_finished(
-				&self.db, &self.mailbox_manager, payment_hash, Some(preimage),
-			).await;
 		} else {
 			let (result_tx, result_rx) = oneshot::channel();
 			self.send_ctrl(Ctrl::SettleInvoice { subscription_id, preimage, result_tx });
@@ -768,6 +737,10 @@ struct ClnManagerProcess {
 }
 
 impl ClnManagerProcess {
+	fn notifier(&self) -> PaymentAttemptNotifier<'_> {
+		PaymentAttemptNotifier::new(&self.db, &self.mailbox_manager, &self.payment_update_tx)
+	}
+
 	fn online_nodes(&self) -> impl Iterator<Item = (u8, &ClnNodeOnlineState)> {
 		self.nodes.iter().filter_map(|(_, node)| {
 			if let ClnNodeState::Online(ref state) = node.state {
@@ -1042,13 +1015,12 @@ impl ClnManagerProcess {
 					.get_open_lightning_payment_attempt_by_payment_hash(payment_hash).await?
 					.expect("we inserted a payment attempt");
 
-				self.db.update_lightning_payment_attempt_status(
+				self.notifier().update_lightning_payment_attempt_status(
 					&payment_attempt,
 					LightningPaymentStatus::Failed,
 					Some(&e.to_string()),
+					None,
 				).await?;
-
-				post_lightning_send_finished(&self.db, &self.mailbox_manager, payment_hash, None).await;
 				return Err(e);
 			}
 
@@ -1299,7 +1271,7 @@ impl ClnManagerProcess {
 }
 
 impl database::Db {
-	async fn verify_and_update_payment_attempt(
+	pub(in crate::ln::cln) async fn verify_and_update_payment_attempt(
 		&self,
 		attempt: &LightningPaymentAttempt,
 		status: LightningPaymentStatus,
