@@ -82,7 +82,7 @@ use crate::secret::Secret;
 use crate::system::RuntimeManager;
 use crate::txindex::TxIndex;
 use crate::txindex::broadcast::TxNursery;
-use crate::utils::TimedEntryMap;
+use crate::utils::{InstrumentedLock, TimedEntryMap};
 use crate::vtxopool::VtxoPool;
 use crate::wallet::{PersistedWallet, WalletKind, MNEMONIC_FILE};
 
@@ -179,9 +179,8 @@ pub struct Server {
 	mailbox_manager: Arc<MailboxManager>,
 	/// The keypair used to generate ephemeral keys using tweaks
 	ephemeral_master_key: Secret<Keypair>,
-	// NB this needs to be an Arc so we can take a static guard
-	rounds_wallet: Arc<tokio::sync::Mutex<PersistedWallet>>,
-	watchman_wallet: Option<Arc<tokio::sync::Mutex<PersistedWallet>>>,
+	rounds_wallet: InstrumentedLock<PersistedWallet>,
+	watchman_wallet: Option<InstrumentedLock<PersistedWallet>>,
 	bitcoind: BitcoinRpcClient,
 	// NB needs to be Arc so tasks started before Server is constructed can share it
 	sync_manager: Arc<SyncManager>,
@@ -386,7 +385,7 @@ impl Server {
 				db.clone(), cfg.network, &master_xpriv, WalletKind::Watchman, deep_tip,
 				cfg.min_trusted_confs,
 			).await.context("error loading watchman wallet")?;
-			let watchman_wallet = Arc::new(tokio::sync::Mutex::new(watchman_wallet));
+			let watchman_wallet = InstrumentedLock::new("watchman_wallet", watchman_wallet);
 
 			let frontier = VtxoExitFrontier::init(db.clone(), htlc_settler.clone()).await?;
 			let frontier = Arc::new(tokio::sync::RwLock::new(frontier));
@@ -455,7 +454,7 @@ impl Server {
 		let (round_trigger_tx, round_trigger_rx) = tokio::sync::mpsc::channel(1);
 
 		let srv = Server {
-			rounds_wallet: Arc::new(tokio::sync::Mutex::new(rounds_wallet)),
+			rounds_wallet: InstrumentedLock::new("rounds_wallet", rounds_wallet),
 			watchman_wallet,
 			rounds: RoundHandle {
 				round_event_tx,
