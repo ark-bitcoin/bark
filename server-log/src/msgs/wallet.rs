@@ -12,7 +12,7 @@ pub struct WalletBalanceUnchanged {
 	pub balance: TrustedBalance,
 	pub block_height: u32,
 }
-impl_slog!(WalletBalanceUnchanged, TRACE, "Wallet balance has not unchanged since the previous sync");
+impl_slog!(WalletBalanceUnchanged, TRACE, "Wallet balance has not changed since the previous sync");
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WalletBalanceUpdated {
