@@ -5,8 +5,10 @@ pub mod settler;
 
 use std::cmp;
 use std::collections::HashMap;
+use std::time::Duration;
 
-use anyhow::Context;
+use anyhow::{bail, Context};
+use tokio::sync::broadcast;
 use bitcoin::Amount;
 use bitcoin::hex::DisplayHex;
 use bitcoin::secp256k1::PublicKey;
@@ -409,12 +411,35 @@ impl Server {
 		})
 	}
 
+	/// Polls until the HTLC subscription for `payment_hash` reaches a
+	/// terminal or actionable status (Accepted / HtlcsReady).
+	///
+	/// Woken by the `payment_update_tx` broadcast channel whenever the
+	/// subscription status changes.  A periodic fallback poll guards
+	/// against missed notifications.
 	#[tracing::instrument(skip(self))]
 	pub async fn check_lightning_receive(
 		&self,
 		payment_hash: PaymentHash,
 		wait: bool,
 	) -> anyhow::Result<LightningHtlcSubscription> {
+		let mut update_rx = self.cln.subscribe_payment_updates();
+		self.check_lightning_receive_with_rx(payment_hash, wait, &mut update_rx).await
+	}
+
+	/// Like [`Self::check_lightning_receive`] but with a caller-provided
+	/// broadcast receiver.  Useful in tests to pass a disconnected
+	/// receiver and force the poll-interval fallback path.
+	pub async fn check_lightning_receive_with_rx(
+		&self,
+		payment_hash: PaymentHash,
+		wait: bool,
+		update_rx: &mut broadcast::Receiver<PaymentHash>,
+	) -> anyhow::Result<LightningHtlcSubscription> {
+		// Generous fallback: notifications are the primary wake mechanism,
+		// this only guards against missed broadcasts.
+		let mut poll_interval = tokio::time::interval(Duration::from_secs(30));
+
 		let sub = loop {
 			let subscription = self.db.get_htlc_subscription_by_payment_hash(payment_hash).await?
 				.not_found([payment_hash], "invoice not found")?;
@@ -433,7 +458,24 @@ impl Server {
 				},
 			}
 
-			tokio::time::sleep(self.config.invoice_check_interval).await;
+			// Wait for a status change on our payment hash, with a
+			// periodic fallback in case a notification was missed.
+			tokio::select! {
+				_ = poll_interval.tick() => {},
+				rcv = update_rx.recv() => match rcv {
+					Ok(hash) => {
+						if hash != payment_hash {
+							continue;
+						}
+					},
+					Err(broadcast::error::RecvError::Lagged(n)) => {
+						tracing::warn!("payment update receiver lagged by {n} messages");
+					},
+					Err(broadcast::error::RecvError::Closed) => {
+						bail!("payment update channel closed, probably shutting down");
+					},
+				},
+			}
 		};
 
 		Ok(sub)
@@ -515,6 +557,8 @@ impl Server {
 			sub.id,
 			vtxos.iter().map(|v| v.id()),
 		).await.context("failed to store htlcs for ln receive")?;
+		// Wake check_lightning_receive so the client sees HtlcsReady.
+		self.cln.notify_payment_update(payment_hash);
 
 		sub.status = LightningHtlcSubscriptionStatus::HtlcsReady;
 		sub.htlc_vtxos = vtxos.iter().map(|v| v.id()).collect();
@@ -597,12 +641,6 @@ impl Server {
 
 		self.cln.cancel_invoice(sub.clone()).await
 			.context("could not cancel hold invoice")?;
-
-		self.db.store_lightning_htlc_subscription_status(
-			sub.id,
-			LightningHtlcSubscriptionStatus::Canceled,
-			None,
-		).await?;
 
 		Ok(())
 	}

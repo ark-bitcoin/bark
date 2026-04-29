@@ -142,6 +142,16 @@ impl ClnManager {
 		})
 	}
 
+	/// Subscribe to payment status changes.
+	pub fn subscribe_payment_updates(&self) -> broadcast::Receiver<PaymentHash> {
+		self.payment_update_rx.resubscribe()
+	}
+
+	/// Signal that a payment's status has changed.
+	pub fn notify_payment_update(&self, payment_hash: PaymentHash) {
+		let _ = self.payment_update_tx.send(payment_hash);
+	}
+
 	/// Send a control message to the process
 	fn send_ctrl(&self, ctrl: Ctrl) {
 		self.ctrl_tx.send(ctrl).expect("called ClnManager after shutting down");
@@ -277,24 +287,21 @@ impl ClnManager {
 			self.db.verify_and_update_invoice(
 				payment_hash, &attempt, status, None, None,
 			).await?;
-
-			// NB: in case of intra-ark lightning payments, we need to notify the subscriber
-			// that the payment has been succeeded, otherwise it will wait until next timeout
-			// to get the confirmation, since no notification will ever come from CLN hook
-			self.payment_update_tx.send(payment_hash)
-				.context("payment update channel broken")?;
 		} else {
 			let (result_tx, result_rx) = oneshot::channel();
 			self.send_ctrl(Ctrl::SettleInvoice { subscription_id, preimage, result_tx });
 			result_rx.await.context("an error occurred settling invoice")??;
 		}
 
-		// Update the subscription status to settled
+		// Update the subscription status to settled and notify waiters.
+		// This covers both intra-ark (no CLN hook fires) and regular
+		// hold-invoice paths.
 		self.db.store_lightning_htlc_subscription_status(
 			subscription_id,
 			LightningHtlcSubscriptionStatus::Settled,
 			None
 		).await?;
+		let _ = self.payment_update_tx.send(payment_hash);
 
 		Ok(())
 
@@ -304,9 +311,20 @@ impl ClnManager {
 		&self,
 		subscription: LightningHtlcSubscription,
 	) -> anyhow::Result<()> {
+		let id = subscription.id;
+		let payment_hash = PaymentHash::from(*subscription.invoice.payment_hash());
 		let (result_tx, result_rx) = oneshot::channel();
 		self.send_ctrl(Ctrl::CancelInvoice { subscription: Box::new(subscription), result_tx });
-		result_rx.await.context("an error occurred canceling an invoice")?
+		result_rx.await.context("an error occurred canceling an invoice")??;
+
+		self.db.store_lightning_htlc_subscription_status(
+			id,
+			LightningHtlcSubscriptionStatus::Canceled,
+			None,
+		).await?;
+		self.notify_payment_update(payment_hash);
+
+		Ok(())
 	}
 
 	/// Fetches and parse an invoice from a bolt-12 offer
@@ -923,8 +941,11 @@ impl ClnManagerProcess {
 					Some(htlc_send_expiry_height),
 				).await?;
 
-				// Post mailbox notification so the client knows to come online and claim
 				let payment_hash = PaymentHash::from(&subscription.invoice);
+				// Wake check_lightning_receive so the client sees Accepted.
+				let _ = self.payment_update_tx.send(payment_hash);
+
+				// Post mailbox notification so the client knows to come online and claim
 				post_lightning_receive_notification(
 					&self.db, &self.mailbox_manager, payment_hash,
 				).await;

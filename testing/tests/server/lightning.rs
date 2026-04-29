@@ -697,3 +697,63 @@ async fn initiate_lightning_payment_fails_without_register_vtxo_transactions() {
 	assert!(err.to_string().contains("does not exist") || err.to_string().contains("NULL signed_tx"),
 		"Expected error about missing or unsigned transaction, got: {err}");
 }
+
+/// Verify that `check_lightning_receive` returns via the 30-second
+/// poll-interval fallback when the broadcast notification is not
+/// received.
+///
+/// Calls `check_lightning_receive_with_rx` with a disconnected
+/// broadcast receiver so the notification can never arrive.  The
+/// payment is sent concurrently; the server can only detect the
+/// status change through the poll fallback.  Asserts the call took
+/// at least 28 seconds.
+#[tokio::test]
+async fn check_lightning_receive_poll_interval_fallback() {
+	let ctx = TestContext::new("server/check_lightning_receive_poll_interval_fallback").await;
+
+	let lightning = ctx.new_lightning_setup("lightningd").await;
+
+	let srv = ctx.new_server_with_cfg("server", Some(&lightning.internal), |_| {}).await;
+
+	// Create a preimage and derive the payment hash.
+	let preimage = ark::lightning::Preimage::from(rand::random::<[u8; 32]>());
+	let payment_hash = preimage.compute_payment_hash();
+
+	// Create a hold invoice on the server.
+	let resp = srv.start_lightning_receive(payment_hash, btc(1), 18, None, None).await.unwrap();
+
+	// Create a disconnected receiver: the sender is kept alive so
+	// recv() blocks forever instead of returning Closed.
+	let (_no_op_tx, mut disconnected_rx) =
+		tokio::sync::broadcast::channel::<ark::lightning::PaymentHash>(1);
+
+	let start = std::time::Instant::now();
+
+	// Pay the invoice in the background.  The hold plugin will hold
+	// the HTLC so pay_bolt11 blocks until settled or canceled.
+	let bolt11 = resp.bolt11;
+	tokio::spawn(async move {
+		lightning.external.pay_bolt11(bolt11).await;
+	});
+
+	// check_lightning_receive_with_rx uses a disconnected receiver so
+	// the notification can never arrive.  It can only detect the status
+	// change through the 30-second poll fallback.
+	let srv_clone = srv.clone();
+	let sub = tokio::spawn(async move {
+		srv_clone.check_lightning_receive_with_rx(
+			payment_hash, true, &mut disconnected_rx,
+		).await.unwrap()
+	}).await.unwrap();
+	let elapsed = start.elapsed();
+
+	assert_eq!(
+		sub.status,
+		server::database::ln::LightningHtlcSubscriptionStatus::Accepted,
+		"expected Accepted status, got {:?}", sub.status,
+	);
+	assert!(
+		elapsed >= Duration::from_secs(28),
+		"expected at least ~30s for poll fallback, but took {:?}", elapsed,
+	);
+}

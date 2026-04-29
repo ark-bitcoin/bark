@@ -292,35 +292,32 @@ impl ClnHoldProcess {
 		// NB: We subtract 1 to give some buffer for the lightning payment to be sent.
 		let required_min_htlc_expiry = tip + invoice.min_final_cltv_expiry_delta() as BlockHeight - 1;
 
-		if lowest_incoming_htlc_expiry >= required_min_htlc_expiry {
+		let (status, expiry) = if lowest_incoming_htlc_expiry >= required_min_htlc_expiry {
 			debug!("Lightning htlc subscription ({}) was accepted.", htlc_subscription.id);
-
-			self.db.store_lightning_htlc_subscription_status(
-				htlc_subscription.id,
-				LightningHtlcSubscriptionStatus::Accepted,
-				Some(lowest_incoming_htlc_expiry),
-			).await?;
-
-			// Post mailbox notification so the client knows to come online and claim
-			let payment_hash = PaymentHash::from(*htlc_subscription.invoice.payment_hash());
-			super::post_lightning_receive_notification(
-				&self.db, &self.mailbox_manager, payment_hash,
-			).await;
-
-			Ok(true)
+			(LightningHtlcSubscriptionStatus::Accepted, Some(lowest_incoming_htlc_expiry))
 		} else {
 			debug!("Incoming HTLC expiry height ({}) for subscription doesn't fit. required {}, actual {}",
 				htlc_subscription.id, required_min_htlc_expiry, lowest_incoming_htlc_expiry
 			);
+			(LightningHtlcSubscriptionStatus::Canceled, None)
+		};
 
-			self.db.store_lightning_htlc_subscription_status(
-				htlc_subscription.id,
-				LightningHtlcSubscriptionStatus::Canceled,
-				None,
-			).await?;
+		self.db.store_lightning_htlc_subscription_status(
+			htlc_subscription.id, status, expiry,
+		).await?;
 
-			Ok(false)
+		let payment_hash = PaymentHash::from(*htlc_subscription.invoice.payment_hash());
+		// Wake check_lightning_receive so the client sees the new status.
+		let _ = self.payment_update_tx.send(payment_hash);
+
+		if status == LightningHtlcSubscriptionStatus::Accepted {
+			// Post mailbox notification so the client knows to come online and claim
+			super::post_lightning_receive_notification(
+				&self.db, &self.mailbox_manager, payment_hash,
+			).await;
 		}
+
+		Ok(status == LightningHtlcSubscriptionStatus::Accepted)
 	}
 
 	/// Polls hold plugin for invoice state changes.
@@ -452,13 +449,13 @@ impl ClnHoldProcess {
 				LightningPaymentStatus::Failed,
 				Some(reason),
 			).await?;
+		}
 
-			// NB: For intra-ark lightning payments, we need to notify the subscriber
-			// that the payment has failed, otherwise it will wait until next timeout
-			// to get the confirmation, since no notification will ever come from CLN hook.
-			if let Err(e) = self.payment_update_tx.send(payment_hash) {
-				debug!("Failed to send payment update notification: {}", e);
-			}
+		// Notify waiters: wakes check_lightning_receive (subscription
+		// canceled) and, for intra-ark payments, get_payment_status
+		// (payment attempt marked failed) since no CLN hook fires.
+		if let Err(e) = self.payment_update_tx.send(payment_hash) {
+			debug!("Failed to send payment update notification: {}", e);
 		}
 
 		Ok(())
