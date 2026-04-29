@@ -5,6 +5,8 @@ mod board;
 pub use self::board::*;
 mod lightning;
 pub use self::lightning::*;
+mod locks;
+pub use self::locks::*;
 mod fee_estimator;
 pub use self::fee_estimator::*;
 mod offboards;

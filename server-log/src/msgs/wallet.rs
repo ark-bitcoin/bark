@@ -48,14 +48,6 @@ pub struct WalletSyncComplete {
 impl_slog!(WalletSyncComplete, DEBUG, "Wallet synced to latest block");
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WalletTransactionBroadcastFailure {
-	pub wallet: Cow<'static, str>,
-	pub error: String,
-	pub txid: Txid,
-}
-impl_slog!(WalletTransactionBroadcastFailure, WARN, "Failed to broadcast unconfirmed transaction");
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WalletSignedTx {
 	pub wallet: Cow<'static, str>,
 	pub txid: Txid,

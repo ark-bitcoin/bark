@@ -196,19 +196,6 @@ impl PersistedWallet {
 
 		self.persist().await?;
 
-		// rebroadcast unconfirmed txs
-		// NB during some round failures we commit a tx but fail to broadcast it,
-		// so this ensures we still broadcast them afterwards
-		for tx in self.transactions() {
-			if !tx.chain_position.is_confirmed() {
-				if let Err(e) = bitcoind.broadcast_tx(&*tx.tx_node.tx) {
-					slog!(WalletTransactionBroadcastFailure, wallet: self.kind.name().into(),
-						error: e.to_string(), txid: tx.tx_node.txid,
-					);
-				}
-			}
-		}
-
 		let checkpoint = self.latest_checkpoint();
 		slog!(WalletSyncComplete, wallet: self.kind.name().into(), sync_time: start_time.elapsed(),
 			new_block_height: checkpoint.height(), previous_block_height: prev_tip.height(),
