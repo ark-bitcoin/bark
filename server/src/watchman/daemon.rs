@@ -26,6 +26,7 @@ use crate::sync::{ChainEventListener, SyncManager};
 use crate::system::RuntimeManager;
 use crate::txindex::TxIndex;
 use crate::txindex::broadcast::TxNursery;
+use crate::utils::InstrumentedLock;
 use crate::wallet::{PersistedWallet, WalletKind, MNEMONIC_FILE};
 use crate::ln::settler::HtlcSettler;
 use crate::watchman::{VtxoExitFrontier, Watchman, WatchmanHandle, WatchmanSigner};
@@ -43,7 +44,7 @@ pub struct Daemon {
 	pub txindex: TxIndex,
 	pub tx_nursery: TxNursery,
 	#[allow(unused)]
-	watchman_wallet: Arc<tokio::sync::Mutex<PersistedWallet>>,
+	watchman_wallet: InstrumentedLock<PersistedWallet>,
 	#[allow(unused)]
 	frontier: Arc<tokio::sync::RwLock<VtxoExitFrontier>>,
 	watchman_handle: WatchmanHandle,
@@ -169,7 +170,7 @@ impl Daemon {
 			db.clone(), cfg.network, &master_xpriv, WalletKind::Watchman, deep_tip,
 			cfg.min_trusted_confs,
 		).await.context("error loading watchman wallet")?;
-		let watchman_wallet = Arc::new(tokio::sync::Mutex::new(watchman_wallet));
+		let watchman_wallet = InstrumentedLock::new("watchman_wallet", watchman_wallet);
 
 		// The settler writes preimages to the htlc_settlement WAL table but
 		// does NOT spawn a CLN settlement subscriber — watchmand has no CLN

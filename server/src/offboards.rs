@@ -1,5 +1,4 @@
 
-use std::borrow::BorrowMut;
 use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
@@ -231,19 +230,16 @@ impl Server {
 		Ok(ret)
 	}
 
-	/// Commit the offboard with the wallet, broadcast it and mark committed in db
-	///
-	/// If you pass an owned wallet guard, it will be dropped when no longer needed.
+	/// Commit the offboard with the wallet, broadcast it and mark committed in db.
 	async fn commit_offboard(
 		&self,
-		mut wallet_guard: impl BorrowMut<tokio::sync::MutexGuard<'_, PersistedWallet>>,
+		wallet: &mut PersistedWallet,
 		offboard_tx: &Transaction,
 		offboard_txid: Txid,
 	) -> anyhow::Result<()> {
-		wallet_guard.borrow_mut().commit_tx(offboard_tx);
-		wallet_guard.borrow_mut().persist().await
+		wallet.commit_tx(offboard_tx);
+		wallet.persist().await
 			.context("persisting wallet")?;
-		drop(wallet_guard);
 		self.tx_nursery.broadcast_tx(offboard_tx.clone()).await
 			.context("broadcasting tx")?;
 		self.db.mark_offboard_committed(offboard_txid).await

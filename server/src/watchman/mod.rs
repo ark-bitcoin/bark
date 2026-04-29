@@ -55,6 +55,7 @@ use bitcoin_ext::rpc::{BitcoinRpcClient, BitcoinRpcExt, RpcApi};
 use crate::database::{BlockTable, Db};
 use crate::fee_estimator::FeeEstimator;
 use crate::system::RuntimeManager;
+use crate::utils::InstrumentedLock;
 use crate::wallet::PersistedWallet;
 use crate::watchman::policy::ActionContextFetcher;
 
@@ -115,7 +116,7 @@ pub struct Watchman {
 	/// Address where coins from claimed VTXOs are sent.
 	drain_spk: ScriptBuf,
 	/// Wallet used to pay fees for progress transactions.
-	watchman_wallet: Arc<tokio::sync::Mutex<PersistedWallet>>,
+	watchman_wallet: InstrumentedLock<PersistedWallet>,
 	/// The set of VTXOs the watchman is responsible for monitoring and claiming.
 	/// Shared with SyncManager for chain event handling.
 	frontier: Arc<tokio::sync::RwLock<VtxoExitFrontier>>,
@@ -136,7 +137,7 @@ impl Watchman {
 		block_table: BlockTable,
 		fee_estimator: Arc<FeeEstimator>,
 		drain_address: Address,
-		wallet: Arc<tokio::sync::Mutex<PersistedWallet>>,
+		wallet: InstrumentedLock<PersistedWallet>,
 		frontier: Arc<tokio::sync::RwLock<VtxoExitFrontier>>,
 		sync_height: watch::Receiver<BlockRef>,
 	) -> Self {

@@ -15,7 +15,7 @@ use bitcoin::{Amount, OutPoint, Psbt, Txid};
 use bitcoin::hashes::{sha256, Hash};
 use bitcoin::secp256k1::{rand, Keypair, PublicKey};
 use bitcoin_ext::{BlockHeight, P2TR_DUST, P2WSH_DUST};
-use tokio::sync::{mpsc, oneshot, OwnedMutexGuard};
+use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, error, info, trace, warn};
 
 use ark::vtxo::Full;
@@ -40,6 +40,7 @@ use crate::{telemetry, Server, SECP};
 use crate::error::{ContextExt, NotFound};
 use crate::flux::{VtxoFluxGuard, OwnedVtxoFluxGuard};
 use crate::telemetry::{RoundStep, TimedRoundStep};
+use crate::utils::InstrumentedOwnedLockGuard;
 use crate::wallet::{BdkWalletExt, PersistedWallet, WalletUtxoGuard};
 
 #[macro_export]
@@ -780,7 +781,7 @@ impl CollectingPayments {
 
 		// Build round tx.
 		//TODO(stevenroose) think about if we can release lock sooner
-		let mut wallet_lock = srv.rounds_wallet.clone().lock_owned().await;
+		let mut wallet_lock = srv.rounds_wallet.lock_owned().await;
 		let round_tx_psbt = {
 			let unavailable = wallet_lock.unavailable_outputs(srv.config.min_trusted_confs);
 			let mut b = wallet_lock.build_tx();
@@ -926,7 +927,7 @@ pub struct SigningVtxoTree {
 	cosign_part_sigs: HashMap<PublicKey, Vec<musig::PartialSignature>>,
 	cosign_agg_nonces: Vec<musig::AggregatedNonce>,
 	unsigned_vtxo_tree: UnsignedVtxoTree,
-	wallet_lock: OwnedMutexGuard<PersistedWallet>,
+	wallet_lock: InstrumentedOwnedLockGuard<PersistedWallet>,
 	round_tx_psbt: Psbt,
 	round_txid: Txid,
 	round_tx_fee: Amount,
