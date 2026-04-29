@@ -139,6 +139,91 @@ async fn is_trusted() {
 	assert!(!wallet.is_trusted_tx(child_txid, 1));
 }
 
+/// Repro for the rounds-wallet `balance()` blow-up seen in production
+/// (sync_time = 131s while wall-clock between WalletSyncStarting and
+/// WalletSyncComplete was ~136ms — the cost is the `prev_balance =
+/// self.balance()` call in `sync()` before the start log fires).
+///
+/// Shape:
+///   * one confirmed funding UTXO (root of trust)
+///   * a chain of unconfirmed self-spends, depth > 100 — past the
+///     `is_trusted_tx_inner` budget so the walk exhausts before
+///     reaching the confirmed root, and every UTXO hits the worst case
+///   * a single fan-out tip tx producing many unspent outputs, so each
+///     output triggers a fresh full-budget walk over the same chain
+///     (no memoization across UTXOs, fresh budget per top-level call —
+///     `bitcoin-ext/src/bdk.rs:126`)
+///
+/// We don't broadcast the chain to bitcoind because mempool ancestor
+/// limits would cap us at ~25; `apply_unconfirmed_txs` directly seeds
+/// the wallet's canonical view, which is what BDK's `list_unspent`
+/// reads from.
+#[tokio::test]
+async fn balance_perf_deep_unconfirmed_fanout() {
+	let ctx = TestContext::new("bitcoin_ext/balance_perf").await;
+	let bitcoind = ctx.bitcoind();
+	bitcoind.prepare_funds().await;
+
+	let mut wallet = create_wallet();
+	let client = bitcoind.sync_client();
+
+	// One confirmed funding UTXO — the root of trust the recursion
+	// is trying (and failing) to reach.
+	let addr = wallet.peek_address(KEYCHAIN, 0).address;
+	client.send_to_address(&addr, sat(500_000_000), None, None, None, None, None, None).unwrap();
+	bitcoind.generate(1).await;
+	sync_wallet(&mut wallet, &client);
+	assert_eq!(wallet.balance().total(), sat(500_000_000));
+
+	// Deep unconfirmed self-spend chain. CHAIN_DEPTH > 100 means the
+	// budget runs out before we hit the root.
+	const CHAIN_DEPTH: u32 = 120;
+	for i in 1..=CHAIN_DEPTH {
+		let next_addr = wallet.peek_address(KEYCHAIN, i).address;
+		let mut b = wallet.build_tx();
+		b.drain_wallet();
+		b.drain_to(next_addr.script_pubkey());
+		b.fee_rate(FeeRate::from_sat_per_vb(2).unwrap());
+		let mut psbt = b.finish().unwrap();
+		wallet.sign(&mut psbt, Default::default()).unwrap();
+		let tx = psbt.extract_tx().unwrap();
+		wallet.apply_unconfirmed_txs([(tx, 0)]);
+	}
+
+	// Fan-out tip: one tx, many outputs. Each output becomes a UTXO
+	// with the same creating txid; `is_trusted_utxo` is still called
+	// per-outpoint and dispatches to `is_trusted_tx(txid, ...)` with a
+	// fresh budget, so the same chain is walked once per output.
+	const FANOUT: u32 = 1000;
+	let fanout_addrs: Vec<_> = (0..FANOUT)
+		.map(|i| wallet.peek_address(KEYCHAIN, CHAIN_DEPTH + 1 + i).address)
+		.collect();
+	let mut b = wallet.build_tx();
+	for a in &fanout_addrs {
+		b.add_recipient(a.script_pubkey(), sat(50_000));
+	}
+	b.fee_rate(FeeRate::from_sat_per_vb(2).unwrap());
+	let mut psbt = b.finish().unwrap();
+	wallet.sign(&mut psbt, Default::default()).unwrap();
+	let fanout_tx = psbt.extract_tx().unwrap();
+	wallet.apply_unconfirmed_txs([(fanout_tx, 0)]);
+
+	let unspent_count = wallet.list_unspent().count();
+	println!("unspent count after fanout: {}", unspent_count);
+
+	// Time `trusted_balance(1)` — the call that's blocking sync.
+	let start = std::time::Instant::now();
+	let bal = wallet.trusted_balance(1);
+	let elapsed = start.elapsed();
+	println!(
+		"trusted_balance(1) over {} unspent took {:?} (trusted={}, untrusted={})",
+		unspent_count, elapsed, bal.trusted, bal.untrusted,
+	);
+
+	assert!(elapsed < std::time::Duration::from_secs(2),
+		"trusted_balance(1) took {:?}, expected < 2s", elapsed);
+}
+
 #[tokio::test]
 async fn deep_reorg_wallet_sync() {
 	let ctx = TestContext::new("bitcoin_ext/deep_reorg").await;
