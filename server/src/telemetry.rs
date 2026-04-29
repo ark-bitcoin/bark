@@ -280,6 +280,7 @@ struct Metrics {
 	postgres_get_wait_time: Gauge<u64>,
 	fee_rate_gauge: Gauge<f64>,
 	fee_rate_using_fallback_gauge: Gauge<u64>,
+	tokio_runtime_delay_histogram: Histogram<u64>,
 	global_labels: Vec<KeyValue>,
 }
 
@@ -496,6 +497,10 @@ impl Metrics {
 		let fee_rate_using_fallback_gauge = meter.u64_gauge("fee_rate_using_fallback")
 			.with_description("Whether fallback fee rates are being used (0=estimated, 1=fallback)")
 			.build();
+		let tokio_runtime_delay_histogram = meter.u64_histogram("tokio_runtime_delay_ms")
+			.with_description("Tokio runtime poll delay: time a 100ms sleep actually took")
+			.with_unit("ms")
+			.build();
 
 		// log the current server version
 		meter.u64_counter("server_version_counter").build().add(
@@ -558,6 +563,7 @@ impl Metrics {
 			postgres_get_wait_time,
 			fee_rate_gauge,
 			fee_rate_using_fallback_gauge,
+			tokio_runtime_delay_histogram,
 			global_labels,
 		}
 	}
@@ -1062,6 +1068,12 @@ pub fn set_fee_estimator_metrics(
 		m.fee_rate_gauge.record(regular_sat_vb, &regular_labels);
 		m.fee_rate_gauge.record(slow_sat_vb, &slow_labels);
 		m.fee_rate_using_fallback_gauge.record(if using_fallback { 1 } else { 0 }, global_labels);
+	}
+}
+
+pub fn record_tokio_runtime_delay(actual_ms: u64) {
+	if let Some(m) = TELEMETRY.get() {
+		m.tokio_runtime_delay_histogram.record(actual_ms, m.global_labels());
 	}
 }
 

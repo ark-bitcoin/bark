@@ -31,3 +31,10 @@ pub struct PostgresPoolError {
 	pub code: Option<String>,
 }
 impl_slog!(PostgresPoolError, ERROR, "a bb8 postgresql pool error");
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TokioRuntimeDelay {
+	pub expected_ms: u64,
+	pub actual_ms: u64,
+}
+impl_slog!(TokioRuntimeDelay, WARN, "tokio runtime poll delay detected, possible starvation");

@@ -546,6 +546,30 @@ impl Server {
 			});
 		}
 
+		// Detect tokio runtime starvation: if a 100ms sleep overshoots
+		// significantly, something is blocking the async runtime.
+		let rtmgr = srv.rtmgr.clone();
+		let worker = srv.rtmgr.spawn_critical("tokio-starvation-detection");
+		tokio::spawn(async move {
+			let _worker = worker;
+			loop {
+				let before = std::time::Instant::now();
+				tokio::select! {
+					_ = tokio::time::sleep(Duration::from_millis(100)) => {},
+					_ = rtmgr.shutdown_signal() => break,
+				}
+				let actual = before.elapsed();
+				let actual_ms = actual.as_millis() as u64;
+				telemetry::record_tokio_runtime_delay(actual_ms);
+				if actual > Duration::from_millis(500) {
+					slog!(TokioRuntimeDelay,
+						expected_ms: 100,
+						actual_ms,
+					);
+				}
+			}
+		});
+
 		Ok(srv)
 	}
 
