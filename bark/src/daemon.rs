@@ -316,6 +316,8 @@ impl DaemonProcess {
 	}
 
 	pub async fn run(self) {
+		info!("Starting daemon for wallet {}", self.wallet.fingerprint());
+
 		self.run_startup_tasks().await;
 
 		if self.wallet.config.daemon_manual_sync {
