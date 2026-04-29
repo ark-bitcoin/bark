@@ -162,9 +162,10 @@ impl PersistedWallet {
 		let start_time = Instant::now();
 
 		let prev_tip = self.latest_checkpoint();
+		slog!(WalletSyncStarting, wallet: self.kind.name().into(), block_height: prev_tip.height());
+
 		let prev_balance = self.balance();
 
-		slog!(WalletSyncStarting, wallet: self.kind.name().into(), block_height: prev_tip.height());
 		// NB We pass start_height=0 so the Emitter never skips blocks.
 		// Using prev_tip.height() would cause the Emitter to jump from the
 		// agreement point directly to prev_tip on the new chain after a deep
