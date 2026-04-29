@@ -1,7 +1,7 @@
 { pkgs, lib, rustToolchain }:
 let
 	isDarwin = pkgs.stdenv.hostPlatform.isDarwin;
-	postgresql = pkgs.postgresql_16;
+	postgresql = pkgs.postgresql_17;
 
 	env = {
 		LIBCLANG_PATH = "${pkgs.llvmPackages.clang-unwrapped.lib}/lib/";

@@ -23,7 +23,7 @@ let
 		rustc = rustBuildToolchain;
 	};
 
-	postgresql = pkgs.postgresql_16;
+	postgresql = pkgs.postgresql_17;
 
 	bitcoin = pkgs.bitcoind.overrideAttrs (old: {
 		version = bitcoinVersion;
