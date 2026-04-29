@@ -508,7 +508,10 @@ impl Process {
 			.upsert_signed_tx(tree.internal_node_txs().iter().cloned())
 			.upsert_unsigned_tx(tree.unsigned_leaf_txs().iter().map(Transaction::compute_txid))
 			.insert_oor_spent_vtxos(tree.internal_vtxos())
-			.insert_spendable_vtxos(tree.output_vtxos().map(ServerVtxo::from));
+			.insert_unspent_vtxos(
+				tree.output_vtxos().map(ServerVtxo::from),
+				database::SpendState::Pool,
+			);
 		self.srv.db.execute_vtxo_tree_update(update).await?;
 
 		// Here we commit the transaction to the wallet

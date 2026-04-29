@@ -26,6 +26,8 @@ pub enum SpendState {
 	Unclaimed,
 	/// The vtxo has been fully spent (via round, OOR, or offboard).
 	Spent,
+	/// The VTXO is part of the VTXO pool
+	Pool,
 }
 
 impl SpendState {
@@ -34,6 +36,7 @@ impl SpendState {
 			SpendState::Spendable => "spendable",
 			SpendState::Unclaimed => "unclaimed",
 			SpendState::Spent => "spent",
+			SpendState::Pool => "pool",
 		}
 	}
 }
@@ -52,6 +55,7 @@ impl FromStr for SpendState {
 			"spendable" => Ok(SpendState::Spendable),
 			"unclaimed" => Ok(SpendState::Unclaimed),
 			"spent" => Ok(SpendState::Spent),
+			"pool" => Ok(SpendState::Pool),
 			other => bail!("invalid spend_state: {}", other),
 		}
 	}
