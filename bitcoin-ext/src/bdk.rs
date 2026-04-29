@@ -1,5 +1,6 @@
 
 use std::borrow::BorrowMut;
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use bdk_wallet::{AddressInfo, TxBuilder, Wallet};
@@ -107,7 +108,15 @@ pub trait WalletExt: BorrowMut<Wallet> {
 	///
 	/// Delegates to [WalletExt::is_trusted_tx] on the creating transaction.
 	fn is_trusted_utxo(&self, outpoint: OutPoint, min_confs: u32) -> bool {
-		self.is_trusted_tx(outpoint.txid, min_confs)
+		let mut cache = HashMap::new();
+		self.is_trusted_utxo_with_cache(outpoint, min_confs, &mut cache)
+	}
+
+	/// Check whether a UTXO can be trusted for spending.
+	///
+	/// Delegates to [WalletExt::is_trusted_tx] on the creating transaction.
+	fn is_trusted_utxo_with_cache(&self, outpoint: OutPoint, min_confs: u32, cache: &mut HashMap<Txid, bool>) -> bool {
+		self.is_trusted_tx_with_cache(outpoint.txid, min_confs, cache)
 	}
 
 	/// Check whether a transaction can be trusted to confirm on chain.
@@ -121,18 +130,34 @@ pub trait WalletExt: BorrowMut<Wallet> {
 	/// To keep the check cheap, at most 100 ancestor transactions are visited.
 	/// If the budget is exhausted the transaction is considered untrusted.
 	fn is_trusted_tx(&self, txid: Txid, min_confs: u32) -> bool {
+		let mut cache = HashMap::new();
+		self.is_trusted_tx_with_cache(txid, min_confs, &mut cache)
+	}
+
+	/// Check whether a transaction can be trusted to confirm on chain.
+	///
+	/// A transaction is trusted if:
+	/// - `min_confs` is 0 (unconditionally trusted), or
+	/// - it has at least `min_confs` confirmations, or
+	/// - all its inputs are ours and their creating transactions are also
+	///   trusted (checked recursively).
+	///
+	/// To keep the check cheap, at most 100 ancestor transactions are visited.
+	/// If the budget is exhausted the transaction is considered untrusted.
+	fn is_trusted_tx_with_cache(&self, txid: Txid, min_confs: u32, cache: &mut HashMap<Txid, bool>) -> bool {
 		let w = self.borrow();
 		let tip = w.latest_checkpoint().height();
 		let mut budget = 10u32;
-		is_trusted_tx_inner(w, txid, min_confs, tip, &mut budget)
+		is_trusted_tx_inner(w, txid, min_confs, tip, cache, &mut budget)
 	}
 
 	/// Compute the wallet balance using our recursive trust model.
 	fn trusted_balance(&self, min_confs: u32) -> TrustedBalance {
 		let mut trusted = Amount::ZERO;
 		let mut untrusted = Amount::ZERO;
+		let mut cache = HashMap::<Txid, bool>::new();
 		for utxo in self.borrow().list_unspent() {
-			if self.is_trusted_utxo(utxo.outpoint, min_confs) {
+			if self.is_trusted_utxo_with_cache(utxo.outpoint, min_confs, &mut cache) {
 				trusted += utxo.txout.value;
 			} else {
 				untrusted += utxo.txout.value;
@@ -145,8 +170,16 @@ pub trait WalletExt: BorrowMut<Wallet> {
 	///
 	/// Delegates to [WalletExt::is_trusted_utxo] for each UTXO.
 	fn untrusted_utxos(&self, min_confs: u32) -> Vec<OutPoint> {
+		let mut cache = HashMap::new();
+		self.untrusted_utxos_with_cache(min_confs, &mut cache)
+	}
+
+	/// Return all UTXOs that are untrusted.
+	///
+	/// Delegates to [WalletExt::is_trusted_utxo] for each UTXO.
+	fn untrusted_utxos_with_cache(&self, min_confs: u32, cache: &mut HashMap<Txid, bool>) -> Vec<OutPoint> {
 		self.borrow().list_unspent()
-			.filter(|utxo| !self.is_trusted_utxo(utxo.outpoint, min_confs))
+			.filter(|utxo| !self.is_trusted_utxo_with_cache(utxo.outpoint, min_confs, cache))
 			.map(|utxo| utxo.outpoint)
 			.collect()
 	}
@@ -278,14 +311,25 @@ pub trait WalletExt: BorrowMut<Wallet> {
 impl WalletExt for Wallet {}
 
 fn is_trusted_tx_inner(
-	w: &Wallet, txid: Txid, min_confs: u32, tip: BlockHeight, budget: &mut u32,
+	w: &Wallet,
+	txid: Txid,
+	min_confs: u32,
+	tip: BlockHeight,
+	cache: &mut HashMap<Txid, bool>,
+	budget: &mut u32,
 ) -> bool {
+	// Check the cache
+	if let Some(is_trusted) = cache.get(&txid) {
+		return *is_trusted
+	};
+
 	if *budget == 0 {
 		return false;
 	}
 	*budget -= 1;
 
 	let Some(tx) = w.get_tx(txid) else {
+		cache.insert(txid, false);
 		return false;
 	};
 
@@ -295,11 +339,12 @@ fn is_trusted_tx_inner(
 		None => 0,
 	};
 	if nb_confs >= min_confs {
+		cache.insert(txid, true);
 		return true;
 	}
 
 	// Recursively check that all inputs are ours and come from trusted transactions.
-	tx.tx_node.tx.input.iter().all(|input| {
+	let result = tx.tx_node.tx.input.iter().all(|input| {
 		let prev = input.previous_output;
 		let Some(prev_tx) = w.get_tx(prev.txid) else {
 			return false;
@@ -308,6 +353,9 @@ fn is_trusted_tx_inner(
 			return false;
 		};
 		w.is_mine(txout.script_pubkey.clone())
-			&& is_trusted_tx_inner(w, prev.txid, min_confs, tip, budget)
-	})
+			&& is_trusted_tx_inner(w, prev.txid, min_confs, tip, cache, budget)
+	});
+
+	cache.insert(txid, result);
+	result
 }
