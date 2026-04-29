@@ -123,7 +123,7 @@ pub trait WalletExt: BorrowMut<Wallet> {
 	fn is_trusted_tx(&self, txid: Txid, min_confs: u32) -> bool {
 		let w = self.borrow();
 		let tip = w.latest_checkpoint().height();
-		let mut budget = 100u32;
+		let mut budget = 10u32;
 		is_trusted_tx_inner(w, txid, min_confs, tip, &mut budget)
 	}
 
