@@ -703,7 +703,11 @@ impl rpc::server::ArkService for Server {
 		}))
 	}
 
-	#[tracing::instrument(skip(self, req))]
+	#[tracing::instrument(skip(self, req), fields(
+		offboard_txid = tracing::field::Empty,
+		nonce_count = req.get_ref().user_nonces.len(),
+		sig_count = req.get_ref().partial_signatures.len(),
+	))]
 	async fn finish_offboard(
 		&self,
 		req: tonic::Request<protos::FinishOffboardRequest>,
@@ -711,6 +715,7 @@ impl rpc::server::ArkService for Server {
 		let req = req.into_inner();
 
 		let offboard_txid = Txid::from_bytes(req.offboard_txid)?;
+		tracing::Span::current().record("offboard_txid", tracing::field::display(offboard_txid));
 		let pub_nonces = req.user_nonces.iter()
 			.map(musig::PublicNonce::from_bytes)
 			.collect::<Result<Vec<_>, _>>()?;
