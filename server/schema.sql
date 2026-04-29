@@ -59,7 +59,9 @@ CREATE TYPE public.mailbox_type AS ENUM (
 CREATE TYPE public.spend_state AS ENUM (
     'spendable',
     'unclaimed',
-    'spent'
+    'spent',
+    'pool',
+    'htlc-recv-unclaimed'
 );
 
 
