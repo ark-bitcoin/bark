@@ -550,6 +550,91 @@ mod tests {
 		assert_eq!(decide_action_pubkey(&params), Action::Wait);
 	}
 
+	/// Progress remains the answer no matter how far past `after_exit_delta`
+	/// the chain tip has advanced. Pre-fix, `server_knows_key` would have
+	/// flipped this to `Claim` once `chain_tip >= after_exit_delta`.
+	#[test]
+	fn pubkey_progresses_well_past_exit_delta_when_arkoored() {
+		let txid = Txid::from_byte_array([2; 32]);
+		let params = ActionParams {
+			vtxo_id: test_vtxo_id(),
+			chain_tip_height: 900,
+			progress_grace_period: Some(6),
+			expiry_height: 1000,
+			exit_delta: 144,
+			confirmed_at: 100,
+			policy_extras: PubkeyExtra {
+				next_tx: Some(ProgressSpec { next_txid: txid, is_signed: true }),
+				server_knows_key: true,
+			},
+		};
+		// after_exit_delta = 244; tip is at 900, well past it. Still progress.
+		assert_eq!(decide_action_pubkey(&params), Action::Progress { txid, deadline: Some(244) });
+	}
+
+	/// Even when the server doesn't know the key, a signed `next_tx` whose
+	/// grace period has elapsed should be progressed past `after_exit_delta`.
+	/// This locks down the watchtower path independently of the key flag.
+	#[test]
+	fn pubkey_progresses_post_exit_delta_without_key() {
+		let txid = Txid::from_byte_array([3; 32]);
+		let params = ActionParams {
+			vtxo_id: test_vtxo_id(),
+			chain_tip_height: 500,
+			progress_grace_period: Some(6),
+			expiry_height: 1000,
+			exit_delta: 144,
+			confirmed_at: 100,
+			policy_extras: PubkeyExtra {
+				next_tx: Some(ProgressSpec { next_txid: txid, is_signed: true }),
+				server_knows_key: false,
+			},
+		};
+		assert_eq!(decide_action_pubkey(&params), Action::Progress { txid, deadline: Some(244) });
+	}
+
+	/// When the server holds the key and a signed `next_tx` is available
+	/// but the grace period has not yet elapsed, the policy waits — the
+	/// new owner is given a chance to broadcast first.
+	#[test]
+	fn pubkey_waits_for_grace_period_with_known_key() {
+		let txid = Txid::from_byte_array([4; 32]);
+		let params = ActionParams {
+			vtxo_id: test_vtxo_id(),
+			chain_tip_height: 105,
+			progress_grace_period: Some(6),
+			expiry_height: 1000,
+			exit_delta: 144,
+			confirmed_at: 100,
+			policy_extras: PubkeyExtra {
+				next_tx: Some(ProgressSpec { next_txid: txid, is_signed: true }),
+				server_knows_key: true,
+			},
+		};
+		// grace period = 6, confirmed_at = 100, tip = 105 → not elapsed.
+		assert_eq!(decide_action_pubkey(&params), Action::Wait);
+	}
+
+	/// With `progress_grace_period = None`, a signed `next_tx` is progressed
+	/// immediately. The known-key flag must not flip this to `Claim`.
+	#[test]
+	fn pubkey_progresses_immediately_without_grace_period() {
+		let txid = Txid::from_byte_array([5; 32]);
+		let params = ActionParams {
+			vtxo_id: test_vtxo_id(),
+			chain_tip_height: 100,
+			progress_grace_period: None,
+			expiry_height: 1000,
+			exit_delta: 144,
+			confirmed_at: 100,
+			policy_extras: PubkeyExtra {
+				next_tx: Some(ProgressSpec { next_txid: txid, is_signed: true }),
+				server_knows_key: true,
+			},
+		};
+		assert_eq!(decide_action_pubkey(&params), Action::Progress { txid, deadline: Some(244) });
+	}
+
 	/// A signed checkpoint tx is broadcast once the grace period passes,
 	/// regardless of any bookkeeping flag.
 	#[test]
