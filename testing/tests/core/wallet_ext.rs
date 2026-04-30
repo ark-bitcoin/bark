@@ -8,7 +8,7 @@ use bitcoincore_rpc::json::CreateRawTransactionInput;
 use bdk_wallet::Wallet;
 
 use ark_testing::{TestContext, sat};
-use bitcoin_ext::bdk::{WalletExt, KEYCHAIN};
+use bitcoin_ext::bdk::{TrustedCanonicalization, WalletExt, KEYCHAIN};
 use bitcoin_ext::cpfp::MakeCpfpFees;
 use bitcoin_ext::fee::P2A_SCRIPT;
 use bitcoin_ext::rpc::BitcoinRpcExt;
@@ -70,25 +70,25 @@ async fn is_trusted() {
 	sync_wallet(&mut wallet, &client);
 
 	// Unconfirmed external tx (0 confs).
-	assert!(wallet.is_trusted_tx(funding_txid, 0));
-	assert!(!wallet.is_trusted_tx(funding_txid, 1));
-	assert!(!wallet.is_trusted_tx(funding_txid, 2));
+	assert!(TrustedCanonicalization::from_wallet(&wallet, 0).is_trusted(funding_txid));
+	assert!(!TrustedCanonicalization::from_wallet(&wallet, 1).is_trusted(funding_txid));
+	assert!(!TrustedCanonicalization::from_wallet(&wallet, 2).is_trusted(funding_txid));
 
 	// Confirm with 1 block (1 conf).
 	bitcoind.generate(1).await;
 	sync_wallet(&mut wallet, &client);
 
-	assert!(wallet.is_trusted_tx(funding_txid, 0));
-	assert!(wallet.is_trusted_tx(funding_txid, 1));
-	assert!(!wallet.is_trusted_tx(funding_txid, 2));
+	assert!(TrustedCanonicalization::from_wallet(&wallet, 0).is_trusted(funding_txid));
+	assert!(TrustedCanonicalization::from_wallet(&wallet, 1).is_trusted(funding_txid));
+	assert!(!TrustedCanonicalization::from_wallet(&wallet, 2).is_trusted(funding_txid));
 
 	// Mine another block (2 confs).
 	bitcoind.generate(1).await;
 	sync_wallet(&mut wallet, &client);
 
-	assert!(wallet.is_trusted_tx(funding_txid, 0));
-	assert!(wallet.is_trusted_tx(funding_txid, 1));
-	assert!(wallet.is_trusted_tx(funding_txid, 2));
+	assert!(TrustedCanonicalization::from_wallet(&wallet, 0).is_trusted(funding_txid));
+	assert!(TrustedCanonicalization::from_wallet(&wallet, 1).is_trusted(funding_txid));
+	assert!(TrustedCanonicalization::from_wallet(&wallet, 2).is_trusted(funding_txid));
 
 	// Spend to self → unconfirmed change output.
 	let self_addr = wallet.peek_address(KEYCHAIN, 1).address;
@@ -102,7 +102,7 @@ async fn is_trusted() {
 	sync_wallet(&mut wallet, &client);
 
 	// Self-spend is unconfirmed, but ancestor is confirmed → trusted transitively.
-	assert!(wallet.is_trusted_tx(self_txid, 1));
+	assert!(TrustedCanonicalization::from_wallet(&wallet, 1).is_trusted(self_txid));
 
 	// Build a chain of 3 more self-spends, all unconfirmed.
 	let mut last_txid = self_txid;
@@ -119,7 +119,7 @@ async fn is_trusted() {
 	}
 
 	// The whole chain is trusted because it roots in the confirmed funding tx.
-	assert!(wallet.is_trusted_tx(last_txid, 1));
+	assert!(TrustedCanonicalization::from_wallet(&wallet, 1).is_trusted(last_txid));
 
 	bitcoind.generate(1).await;
 	sync_wallet(&mut wallet, &client);
@@ -136,7 +136,7 @@ async fn is_trusted() {
 	sync_wallet(&mut wallet, &client);
 
 	// The child spends a P2A from an external parent → untrusted.
-	assert!(!wallet.is_trusted_tx(child_txid, 1));
+	assert!(!TrustedCanonicalization::from_wallet(&wallet, 1).is_trusted(child_txid));
 }
 
 /// Repro for the rounds-wallet `balance()` blow-up seen in production

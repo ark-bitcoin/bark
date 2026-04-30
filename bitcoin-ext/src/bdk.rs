@@ -1,10 +1,10 @@
 
 use std::borrow::BorrowMut;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use bdk_wallet::{AddressInfo, TxBuilder, Wallet};
-use bdk_wallet::chain::BlockId;
+use bdk_wallet::chain::{BlockId, CanonicalizationParams, ChainPosition, ConfirmationBlockTime};
 use bdk_wallet::coin_selection::InsufficientFunds;
 use bdk_wallet::error::CreateTxError;
 use bitcoin::consensus::encode::serialize_hex;
@@ -12,9 +12,124 @@ use bitcoin::{Amount, BlockHash, FeeRate, OutPoint, Transaction, TxOut, Txid, We
 use bitcoin::psbt::{ExtractTxError, Input};
 use log::{debug, trace};
 
-use crate::{BlockHeight, TransactionExt};
+use crate::TransactionExt;
 use crate::cpfp::MakeCpfpFees;
 use crate::fee::FEE_ANCHOR_SPEND_WEIGHT;
+
+/// One canonical wallet tx, with its trust verdict already decided.
+#[derive(Debug, Clone)]
+pub struct LocalTransaction {
+	/// Refcounted handle into BDK's in-memory tx graph; cloning is cheap.
+	pub tx: Arc<Transaction>,
+	pub chain_position: ChainPosition<ConfirmationBlockTime>,
+	pub is_trusted: bool,
+}
+
+/// Borrowed view of one of our unspent outputs, returned by
+/// [`TrustedCanonicalization::list_unspent`]. Carries the trust verdict
+/// already decided for the creating tx so callers don't re-look-it-up.
+pub struct TrustedUtxo<'a> {
+	pub outpoint: OutPoint,
+	pub txout: &'a TxOut,
+	pub chain_position: &'a ChainPosition<ConfirmationBlockTime>,
+	pub is_trusted: bool,
+}
+
+/// Single-pass canonical view of the wallet's tx graph with trust
+/// verdicts pre-computed.
+///
+/// Built via one [`TxGraph::list_ordered_canonical_txs`] call which
+/// yields txs in topological (parents-before-children) order. We mark
+/// each tx trusted/untrusted in that order, so by the time we look at a
+/// tx every ancestor is already decided — no recursion, no per-tx
+/// `Wallet::get_tx`, no ancestor-walk budget heuristic.
+///
+/// In the same pass we also collect this wallet's UTXOs (ours-outpoints
+/// from the keychain index, minus anything consumed by another canonical
+/// tx). [`TrustedCanonicalization::list_unspent`] returns them without
+/// triggering a second canonicalization the way [`Wallet::list_unspent`]
+/// would.
+///
+/// [`TxGraph::list_ordered_canonical_txs`]: bdk_wallet::chain::TxGraph::list_ordered_canonical_txs
+pub struct TrustedCanonicalization {
+	txs: HashMap<Txid, LocalTransaction>,
+	unspent: Vec<OutPoint>,
+}
+
+impl TrustedCanonicalization {
+	/// Take one canonicalization snapshot of `w` and decide trust for
+	/// every canonical tx using `min_confs` as the confirmation
+	/// threshold.
+	pub fn from_wallet(w: &Wallet, min_confs: u32) -> Self {
+		let tip = w.latest_checkpoint().height();
+		let chain = w.local_chain();
+		let chain_tip = w.latest_checkpoint().block_id();
+
+		let mut txs: HashMap<Txid, LocalTransaction> = HashMap::new();
+		let mut spent: HashSet<OutPoint> = HashSet::new();
+
+		for ctx in w.tx_graph().list_ordered_canonical_txs(
+			chain, chain_tip, CanonicalizationParams::default(),
+		) {
+			let txid = ctx.tx_node.txid;
+			let tx = ctx.tx_node.tx.clone();
+			let chain_position = ctx.chain_position.clone();
+
+			for input in tx.input.iter() {
+				spent.insert(input.previous_output);
+			}
+
+			let nb_confs = match chain_position.confirmation_height_upper_bound() {
+				Some(h) => tip.saturating_sub(h) + 1,
+				None => 0,
+			};
+			let is_trusted = nb_confs >= min_confs || tx.input.iter().all(|input| {
+				let prev = input.previous_output;
+				let Some(prev_entry) = txs.get(&prev.txid) else { return false };
+				let Some(prev_out) = prev_entry.tx.output.get(prev.vout as usize) else { return false };
+				// Trust rule: this input must spend an output of ours,
+				// AND the prev tx itself must already be trusted.
+				// Topological order guarantees the prev entry is
+				// fully decided.
+				w.is_mine(prev_out.script_pubkey.clone()) && prev_entry.is_trusted
+			});
+
+			txs.insert(txid, LocalTransaction { tx, chain_position, is_trusted });
+		}
+
+		// Unspent = ours-outpoints (from the keychain index) ∩ canonical
+		// txs ∖ spent. Mirrors `Wallet::list_unspent`'s use of
+		// `spk_index().outpoints()` but reuses the canonical view we
+		// just built instead of running a second canonicalization.
+		let unspent = w.spk_index().outpoints().iter()
+			.map(|(_, op)| *op)
+			.filter(|op| !spent.contains(op))
+			.filter(|op| txs.contains_key(&op.txid))
+			.collect();
+
+		Self { txs, unspent }
+	}
+
+	/// Trust verdict for `txid`. Unknown txids (not in the wallet's
+	/// canonical view) are treated as untrusted.
+	pub fn is_trusted(&self, txid: Txid) -> bool {
+		self.txs.get(&txid).map(|e| e.is_trusted).unwrap_or(false)
+	}
+
+	/// Iterate this wallet's unspent outputs in canonical view, each
+	/// carrying its trust verdict.
+	pub fn list_unspent(&self) -> impl Iterator<Item = TrustedUtxo<'_>> + '_ {
+		self.unspent.iter().map(move |op| {
+			let lt = &self.txs[&op.txid];
+			TrustedUtxo {
+				outpoint: *op,
+				txout: &lt.tx.output[op.vout as usize],
+				chain_position: &lt.chain_position,
+				is_trusted: lt.is_trusted,
+			}
+		})
+	}
+}
 
 /// Balance categorized by our recursive trust model.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -104,60 +219,13 @@ pub trait WalletExt: BorrowMut<Wallet> {
 		})
 	}
 
-	/// Check whether a UTXO can be trusted for spending.
-	///
-	/// Delegates to [WalletExt::is_trusted_tx] on the creating transaction.
-	fn is_trusted_utxo(&self, outpoint: OutPoint, min_confs: u32) -> bool {
-		let mut cache = HashMap::new();
-		self.is_trusted_utxo_with_cache(outpoint, min_confs, &mut cache)
-	}
-
-	/// Check whether a UTXO can be trusted for spending.
-	///
-	/// Delegates to [WalletExt::is_trusted_tx] on the creating transaction.
-	fn is_trusted_utxo_with_cache(&self, outpoint: OutPoint, min_confs: u32, cache: &mut HashMap<Txid, bool>) -> bool {
-		self.is_trusted_tx_with_cache(outpoint.txid, min_confs, cache)
-	}
-
-	/// Check whether a transaction can be trusted to confirm on chain.
-	///
-	/// A transaction is trusted if:
-	/// - `min_confs` is 0 (unconditionally trusted), or
-	/// - it has at least `min_confs` confirmations, or
-	/// - all its inputs are ours and their creating transactions are also
-	///   trusted (checked recursively).
-	///
-	/// To keep the check cheap, at most 100 ancestor transactions are visited.
-	/// If the budget is exhausted the transaction is considered untrusted.
-	fn is_trusted_tx(&self, txid: Txid, min_confs: u32) -> bool {
-		let mut cache = HashMap::new();
-		self.is_trusted_tx_with_cache(txid, min_confs, &mut cache)
-	}
-
-	/// Check whether a transaction can be trusted to confirm on chain.
-	///
-	/// A transaction is trusted if:
-	/// - `min_confs` is 0 (unconditionally trusted), or
-	/// - it has at least `min_confs` confirmations, or
-	/// - all its inputs are ours and their creating transactions are also
-	///   trusted (checked recursively).
-	///
-	/// To keep the check cheap, at most 100 ancestor transactions are visited.
-	/// If the budget is exhausted the transaction is considered untrusted.
-	fn is_trusted_tx_with_cache(&self, txid: Txid, min_confs: u32, cache: &mut HashMap<Txid, bool>) -> bool {
-		let w = self.borrow();
-		let tip = w.latest_checkpoint().height();
-		let mut budget = 10u32;
-		is_trusted_tx_inner(w, txid, min_confs, tip, cache, &mut budget)
-	}
-
 	/// Compute the wallet balance using our recursive trust model.
 	fn trusted_balance(&self, min_confs: u32) -> TrustedBalance {
+		let canon = TrustedCanonicalization::from_wallet(self.borrow(), min_confs);
 		let mut trusted = Amount::ZERO;
 		let mut untrusted = Amount::ZERO;
-		let mut cache = HashMap::<Txid, bool>::new();
-		for utxo in self.borrow().list_unspent() {
-			if self.is_trusted_utxo_with_cache(utxo.outpoint, min_confs, &mut cache) {
+		for utxo in canon.list_unspent() {
+			if utxo.is_trusted {
 				trusted += utxo.txout.value;
 			} else {
 				untrusted += utxo.txout.value;
@@ -167,20 +235,11 @@ pub trait WalletExt: BorrowMut<Wallet> {
 	}
 
 	/// Return all UTXOs that are untrusted.
-	///
-	/// Delegates to [WalletExt::is_trusted_utxo] for each UTXO.
 	fn untrusted_utxos(&self, min_confs: u32) -> Vec<OutPoint> {
-		let mut cache = HashMap::new();
-		self.untrusted_utxos_with_cache(min_confs, &mut cache)
-	}
-
-	/// Return all UTXOs that are untrusted.
-	///
-	/// Delegates to [WalletExt::is_trusted_utxo] for each UTXO.
-	fn untrusted_utxos_with_cache(&self, min_confs: u32, cache: &mut HashMap<Txid, bool>) -> Vec<OutPoint> {
-		self.borrow().list_unspent()
-			.filter(|utxo| !self.is_trusted_utxo_with_cache(utxo.outpoint, min_confs, cache))
-			.map(|utxo| utxo.outpoint)
+		TrustedCanonicalization::from_wallet(self.borrow(), min_confs)
+			.list_unspent()
+			.filter(|u| !u.is_trusted)
+			.map(|u| u.outpoint)
 			.collect()
 	}
 
@@ -309,53 +368,3 @@ pub trait WalletExt: BorrowMut<Wallet> {
 }
 
 impl WalletExt for Wallet {}
-
-fn is_trusted_tx_inner(
-	w: &Wallet,
-	txid: Txid,
-	min_confs: u32,
-	tip: BlockHeight,
-	cache: &mut HashMap<Txid, bool>,
-	budget: &mut u32,
-) -> bool {
-	// Check the cache
-	if let Some(is_trusted) = cache.get(&txid) {
-		return *is_trusted
-	};
-
-	if *budget == 0 {
-		return false;
-	}
-	*budget -= 1;
-
-	let Some(tx) = w.get_tx(txid) else {
-		cache.insert(txid, false);
-		return false;
-	};
-
-	// Trust transactions with enough confirmations (unconfirmed = 0 confs).
-	let nb_confs = match tx.chain_position.confirmation_height_upper_bound() {
-		Some(h) => tip.saturating_sub(h) + 1,
-		None => 0,
-	};
-	if nb_confs >= min_confs {
-		cache.insert(txid, true);
-		return true;
-	}
-
-	// Recursively check that all inputs are ours and come from trusted transactions.
-	let result = tx.tx_node.tx.input.iter().all(|input| {
-		let prev = input.previous_output;
-		let Some(prev_tx) = w.get_tx(prev.txid) else {
-			return false;
-		};
-		let Some(txout) = prev_tx.tx_node.tx.output.get(prev.vout as usize) else {
-			return false;
-		};
-		w.is_mine(txout.script_pubkey.clone())
-			&& is_trusted_tx_inner(w, prev.txid, min_confs, tip, cache, budget)
-	});
-
-	cache.insert(txid, result);
-	result
-}
