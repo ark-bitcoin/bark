@@ -336,7 +336,7 @@ use bitcoin::{Amount, Network, OutPoint};
 use bitcoin::bip32::{self, ChildNumber, Fingerprint};
 use bitcoin::secp256k1::{self, Keypair, PublicKey};
 use log::{trace, info, warn, error};
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::{Mutex, OnceCell, RwLock};
 
 use ark::lightning::PaymentHash;
 
@@ -725,8 +725,13 @@ pub struct Wallet {
 	/// Deterministic seed material used to generate wallet keypairs.
 	seed: WalletSeed,
 
-	/// Optional live connection to an Ark server for round participation and synchronization.
-	server: parking_lot::RwLock<Option<ServerConnection>>,
+	/// Live connection to an Ark server for round participation and synchronization.
+	///
+	/// Lazily initialised on first use via [`Wallet::require_server`]. A
+	/// [`OnceCell`] is the right primitive here: concurrent callers on a
+	/// cold cell all await the same in-flight `connect_to_server` future
+	/// instead of each opening a fresh gRPC channel.
+	server: OnceCell<ServerConnection>,
 
 	/// Tracks payment hashes of lightning payments currently being processed.
 	/// Used to prevent concurrent payment attempts for the same invoice.
@@ -1028,7 +1033,7 @@ impl Wallet {
 		).await?;
 		let chain = Arc::new(chain_source_client);
 
-		let server = parking_lot::RwLock::new(None);
+		let server = OnceCell::new();
 
 		let notifications = NotificationDispatch::new();
 		let movements = Arc::new(MovementManager::new(db.clone(), notifications.clone()));
@@ -1112,42 +1117,37 @@ impl Wallet {
 	}
 
 	async fn require_server(&self) -> anyhow::Result<(ServerConnection, ArkInfo)> {
-		// Connect lazily if not yet connected.
-		if self.server.read().is_none() {
+		// Connect lazily if not yet connected. `get_or_try_init` ensures
+		// concurrent callers on a cold cell all await the same in-flight
+		// connect future instead of each opening a fresh gRPC channel.
+		let conn = self.server.get_or_try_init(|| async {
 			let network = self.properties().await?.network;
-			let conn = Self::connect_to_server(&self.config, network).await
-				.context("You should be connected to Ark server to perform this action")?;
-			let _ = self.server.write().insert(conn);
-		}
+			Self::connect_to_server(&self.config, network).await
+				.context("You should be connected to Ark server to perform this action")
+		}).await?.clone();
 
-		let conn = self.server.read().clone()
-			.context("You should be connected to Ark server to perform this action")?;
 		let ark_info = conn.ark_info().await?;
-
 		self.check_and_store_server_keys(&ark_info).await?;
 
 		Ok((conn, ark_info))
 	}
 
 	pub async fn refresh_server(&self) -> anyhow::Result<()> {
-		let server = self.server.read().clone();
-
-		let srv = if let Some(srv) = server {
-			srv.check_connection().await?;
-			let ark_info = srv.ark_info().await?;
-			ark_info.fees.validate().context("invalid fee schedule")?;
-			self.check_and_store_server_keys(&ark_info).await?;
-			srv
-		} else {
+		// If the cell is still cold, initialise it with a fresh connection.
+		// If it is already initialised, run a heartbeat against the existing
+		// one — `OnceCell` does not support replacing a stored value, but
+		// `ServerConnection` is built around a tonic `Channel` which
+		// transparently reconnects, so we don't need to swap it.
+		let srv = self.server.get_or_try_init(|| async {
 			let properties = self.properties().await?;
-			let conn = Self::connect_to_server(&self.config, properties.network).await?;
-			let ark_info = conn.ark_info().await?;
-			ark_info.fees.validate().context("invalid fee schedule")?;
-			self.check_and_store_server_keys(&ark_info).await?;
-			conn
-		};
+			Self::connect_to_server(&self.config, properties.network).await
+				.map_err(anyhow::Error::from)
+		}).await?;
 
-		let _ = self.server.write().insert(srv);
+		srv.check_connection().await?;
+		let ark_info = srv.ark_info().await?;
+		ark_info.fees.validate().context("invalid fee schedule")?;
+		self.check_and_store_server_keys(&ark_info).await?;
 
 		Ok(())
 	}
@@ -1186,10 +1186,9 @@ impl Wallet {
 
 	/// Return [ArkInfo] fetched on last handshake with the Ark server
 	pub async fn ark_info(&self) -> anyhow::Result<Option<ArkInfo>> {
-		let server = self.server.read().clone();
-		match server.as_ref() {
+		match self.server.get() {
 			Some(srv) => Ok(Some(srv.ark_info().await?)),
-			_ => Ok(None),
+			None => Ok(None),
 		}
 	}
 
