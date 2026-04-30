@@ -52,10 +52,10 @@ impl WatchmanSigner {
 		// we refuse to act when a hash exists in multiple sources.
 
 		// first payment preimages from the htlc settlement table
-		let settlement = self.db.get_htlc_settlement_by_payment_hash(hash.into()).await.ok()?;
+		let settlement = self.db.read(async |t| t.get_htlc_settlement_by_payment_hash(hash.into()).await).await.ok()?;
 
 		// then hark unlock hashes
-		let hark = self.db.get_round_participation_by_unlock_hash(hash).await.ok()?;
+		let hark = self.db.read(async |t| t.get_round_participation_by_unlock_hash(hash).await).await.ok()?;
 
 		if settlement.is_some() && hark.is_some() {
 			slog!(DuplicateSecretHash, hash);
@@ -97,7 +97,7 @@ impl VtxoSigner<ServerVtxoPolicy> for WatchmanSigner {
 		let key = if clause.pubkey() == self.server_keypair.leak_ref().public_key() {
 			self.server_keypair.leak_owned()
 		} else {
-			let tweak = self.db.fetch_ephemeral_tweak(clause.pubkey()).await.ok()??;
+			let tweak = self.db.read(async |t| t.fetch_ephemeral_tweak(clause.pubkey()).await).await.ok()??;
 			let seckey = self.ephemeral_master_key.leak_ref().secret_key()
 				.add_tweak(&tweak).expect("tweak error");
 			Keypair::from_secret_key(&*SECP, &seckey)

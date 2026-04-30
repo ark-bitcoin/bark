@@ -77,10 +77,10 @@ impl Server {
 		let unlock_hash = unlock_hash.badarg("zero forfeit bundles provided")?;
 
 		// fetch all input vtxos in a single query; result is in the same order as vtxo_ids
-		let vtxos = self.db.get_user_vtxos_by_id(&vtxo_ids).await?;
+		let vtxos = self.db.read(async |t| t.get_user_vtxos_by_id(&vtxo_ids).await).await?;
 
 		// fetch the round participation
-		let part = self.db.get_round_participation_by_unlock_hash(unlock_hash).await?
+		let part = self.db.read(async |t| t.get_round_participation_by_unlock_hash(unlock_hash).await).await?
 			.badarg("unknown unlock hash")?;
 
 		// if this participation was already forfeited, skip the expensive work
@@ -137,13 +137,13 @@ impl Server {
 
 		// Persist all signed forfeit txs in a single batch. Either all succeed or
 		// none do; on a partial failure the user retries with the same bundles.
-		self.db.set_forfeit_transactions(unlock_hash, &vtxo_ids, &ff_txs, &ff_txids).await
+		self.db.write(async |t| t.set_forfeit_transactions(unlock_hash, &vtxo_ids, &ff_txs, &ff_txids).await).await
 			.context("error storing signed forfeit txs")?;
 
 		// Transition the round output vtxos from 'unclaimed' to 'spendable' and
 		// record the forfeit txid on the round inputs.
 		let round_id = part.round_id.context("round participation has no round_id")?;
-		let round = self.db.get_round(round_id).await?
+		let round = self.db.read(async |t| t.get_round(round_id).await).await?
 			.context("round not found for participation")?;
 		let tree = round.signed_tree.into_cached_tree();
 		let output_vtxo_ids = part.outputs.iter()
@@ -159,10 +159,10 @@ impl Server {
 			.insert_unspent_vtxos(ff_vtxos, SpendState::RoundForfeit)
 			.mark_vtxos_round_forfeited(input_forfeit_pairs)
 			.mark_vtxos_claimed(output_vtxo_ids);
-		self.db.execute_vtxo_tree_update(update).await
+		self.db.write(async |t| t.execute_vtxo_tree_update(update).await).await
 			.context("failed to execute vtxo tree update")?;
 
-		self.db.mark_participation_forfeited(unlock_hash).await
+		self.db.write(async |t| t.mark_participation_forfeited(unlock_hash).await).await
 			.context("failed to mark participation as forfeited")?;
 
 		Ok(part.unlock_preimage.leak_owned())

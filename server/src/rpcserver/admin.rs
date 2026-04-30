@@ -138,7 +138,7 @@ impl rpc::server::BanAdminService for Server {
 			.badarg("invalid vtxo id")?;
 		let chain_tip = self.chain_tip().height;
 		let until_height = chain_tip.saturating_add(req.ban_blocks);
-		self.db.ban_vtxo(vtxo_id, until_height).await.to_status()?;
+		self.db.write(async |t| t.ban_vtxo(vtxo_id, until_height).await).await.to_status()?;
 		Ok(tonic::Response::new(protos::Empty {}))
 	}
 
@@ -150,7 +150,7 @@ impl rpc::server::BanAdminService for Server {
 		let req = req.into_inner();
 		let vtxo_id = VtxoId::from_slice(&req.vtxo_id)
 			.badarg("invalid vtxo id")?;
-		self.db.unban_vtxo(vtxo_id).await.to_status()?;
+		self.db.write(async |t| t.unban_vtxo(vtxo_id).await).await.to_status()?;
 		Ok(tonic::Response::new(protos::Empty {}))
 	}
 
@@ -160,7 +160,7 @@ impl rpc::server::BanAdminService for Server {
 		_req: tonic::Request<protos::Empty>,
 	) -> Result<tonic::Response<protos::ListBannedVtxosResponse>, tonic::Status> {
 		let chain_tip = self.sync_manager.chain_tip().height;
-		let banned = self.db.list_banned_vtxos(chain_tip).await.to_status()?;
+		let banned = self.db.read(async |t| t.list_banned_vtxos(chain_tip).await).await.to_status()?;
 		let banned_vtxos = banned.into_iter().map(|v| {
 			protos::BannedVtxo {
 				vtxo_id: v.vtxo_id.to_bytes().to_vec(),

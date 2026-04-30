@@ -55,9 +55,9 @@ async fn mailbox_checkpoint_visibility_gap() {
 		(kp, vtxo)
 	}).collect();
 
-	db.upsert_vtxos(
+	db.write(async |t| t.upsert_vtxos(
 		vtxo_pairs.iter().map(|(_, v)| ServerVtxo::from(v.clone()))
-	).await.expect("upsert vtxos");
+	).await).await.expect("upsert vtxos");
 
 	let writers_done = Arc::new(AtomicBool::new(false));
 	let expiry = chrono::Local::now() + Duration::from_secs(300);
@@ -125,7 +125,7 @@ async fn mailbox_checkpoint_visibility_gap() {
 		.into_iter().map(|r| r.unwrap()).collect();
 
 	// Sanity: all 100 writes landed in the database.
-	let all = db.get_mailbox_entries(mailbox_id, 0, 10_000).await.unwrap();
+	let all = db.read(async |t| t.get_mailbox_entries(mailbox_id, 0, 10_000).await).await.unwrap();
 	let total: usize = all.iter().map(|e| match &e.payload {
 		MailboxPayload::Arkoor { vtxos } => vtxos.len(),
 		_ => 0,

@@ -45,7 +45,7 @@ impl Server {
 		request: ArkoorPackageCosignRequest<VtxoId>,
 	) -> anyhow::Result<ArkoorPackageCosignResponse> {
 		let input_vtxo_ids = request.inputs().cloned().collect::<Vec<VtxoId>>();
-		let input_vtxos = self.db.get_user_vtxos_by_id(&input_vtxo_ids).await?;
+		let input_vtxos = self.db.read(async |t| t.get_user_vtxos_by_id(&input_vtxo_ids).await).await?;
 
 		let htlc_vtxos = request.all_outputs()
 			.filter(|v| matches!(v.policy, VtxoPolicy::ServerHtlcSend(..)))
@@ -83,9 +83,9 @@ impl Server {
 			);
 		}
 
-		if self.db.get_open_lightning_payment_attempt_by_payment_hash(
+		if self.db.read(async |t| t.get_open_lightning_payment_attempt_by_payment_hash(
 			payment_hash,
-		).await?.is_some()
+		).await).await?.is_some()
 		{
 			return badarg!("payment already in progress for this invoice");
 		}
@@ -127,7 +127,7 @@ impl Server {
 		//TODO(stevenroose) validate vtxo generally (based on input)
 		let invoice_payment_hash = invoice.payment_hash();
 
-		let htlc_vtxos = self.db.get_user_vtxos_by_id(&htlc_vtxo_ids).await?;
+		let htlc_vtxos = self.db.read(async |t| t.get_user_vtxos_by_id(&htlc_vtxo_ids).await).await?;
 
 		slog!(LightningPaymentInitRequested, invoice_payment_hash, htlc_vtxo_ids);
 
@@ -202,7 +202,7 @@ impl Server {
 		// before initiating the payment. Fails early if the client skipped it.
 		let txids = vtxos.iter()
 			.flat_map(|v| v.transactions().map(|i| i.tx.compute_txid()));
-		self.db.check_vtxo_transactions_registered(txids).await
+		self.db.read(async |t| t.check_vtxo_transactions_registered(txids).await).await
 			.context("register_vtxo_transactions not called for input VTXOs")?;
 
 		// Spawn a task that performs the payment, keep the difference between the payment amount
@@ -263,7 +263,7 @@ impl Server {
 		}
 
 		let htlc_vtxo_ids = cosign_request.inputs().cloned().collect::<Vec<VtxoId>>();
-		let htlc_vtxos = self.db.get_user_vtxos_by_id(&htlc_vtxo_ids).await?.into_iter()
+		let htlc_vtxos = self.db.read(async |t| t.get_user_vtxos_by_id(&htlc_vtxo_ids).await).await?.into_iter()
 			.map(|v| v.vtxo).collect::<Vec<_>>();
 
 		let input_policy = htlc_vtxos.iter()
@@ -288,7 +288,9 @@ impl Server {
 		let builder = self.validate_cosign_request(validation, cosign_request)
 			.badarg("invalid cosign request")?;
 
-		let attempt = db.get_latest_payment_attempt_by_payment_hash(invoice_payment_hash).await?;
+		let attempt = db.read(async |t|
+			t.get_latest_payment_attempt_by_payment_hash(invoice_payment_hash).await
+		).await?;
 
 		// If payment not found but input vtxos are found, we can allow revoke
 		if let Some(attempt) = attempt {
@@ -319,7 +321,7 @@ impl Server {
 			.insert_oor_spent_vtxos(builder.build_unsigned_internal_vtxos())
 			.insert_spendable_vtxos(builder.build_unsigned_vtxos().map(ServerVtxo::from))
 			.mark_vtxos_oor_spent(builder.input_spend_info());
-		self.db.execute_vtxo_tree_update(update).await?;
+		self.db.write(async |t| t.execute_vtxo_tree_update(update).await).await?;
 
 		let new_vtxo_ids = builder.build_unsigned_vtxos().map(|v| v.id()).collect::<Vec<_>>();
 
@@ -363,7 +365,7 @@ impl Server {
 			}
 		}
 
-		let subscriptions = self.db.get_htlc_subscriptions_by_payment_hash(payment_hash).await?;
+		let subscriptions = self.db.read(async |t| t.get_htlc_subscriptions_by_payment_hash(payment_hash).await).await?;
 
 		let subscriptions_by_status = subscriptions.iter()
 			.fold::<HashMap<_, Vec<_>>, _>(HashMap::new(), |mut acc, sub| {
@@ -440,8 +442,9 @@ impl Server {
 		let mut poll_interval = tokio::time::interval(Duration::from_secs(30));
 
 		let sub = loop {
-			let subscription = self.db.get_htlc_subscription_by_payment_hash(payment_hash).await?
-				.not_found([payment_hash], "invoice not found")?;
+			let subscription = self.db.read(async |t|
+				t.get_htlc_subscription_by_payment_hash(payment_hash).await
+			).await?.not_found([payment_hash], "invoice not found")?;
 
 			match subscription.status {
 				LightningHtlcSubscriptionStatus::Accepted |
@@ -488,7 +491,7 @@ impl Server {
 		htlc_recv_expiry: BlockHeight,
 		anti_dos: Option<protos::prepare_lightning_receive_claim_request::LightningReceiveAntiDos>,
 	) -> anyhow::Result<(LightningHtlcSubscription, Vec<Vtxo<Full>>)> {
-		let mut sub = self.db.get_htlc_subscription_by_payment_hash(payment_hash).await?
+		let mut sub = self.db.read(async |t| t.get_htlc_subscription_by_payment_hash(payment_hash).await).await?
 			.not_found([payment_hash], "no pending payment with this payment hash")?;
 
 		slog!(LightningReceivePrepareRequested, payment_hash, user_pubkey, htlc_recv_expiry);
@@ -498,7 +501,7 @@ impl Server {
 			LightningHtlcSubscriptionStatus::Accepted => {}, // we continue
 			LightningHtlcSubscriptionStatus::HtlcsReady => {
 				// we already did this, let's fetch the vtxos and return them
-				let vtxos = self.db.get_user_vtxos_by_id(&sub.htlc_vtxos).await?.into_iter()
+				let vtxos = self.db.read(async |t| t.get_user_vtxos_by_id(&sub.htlc_vtxos).await).await?.into_iter()
 					.map(|v| v.vtxo)
 					.collect();
 				return Ok((sub, vtxos));
@@ -552,10 +555,10 @@ impl Server {
 			self.vtxopool.send_arkoor(self, dest).await.context("vtxopool error")?
 		};
 
-		self.db.update_lightning_htlc_subscription_with_htlcs(
+		self.db.write(async |t| t.update_lightning_htlc_subscription_with_htlcs(
 			sub.id,
 			vtxos.iter().map(|v| v.id()),
-		).await.context("failed to store htlcs for ln receive")?;
+		).await).await.context("failed to store htlcs for ln receive")?;
 		// Wake check_lightning_receive so the client sees HtlcsReady.
 		self.cln.notify_payment_update(payment_hash);
 
@@ -582,7 +585,7 @@ impl Server {
 					let attestation = LightningReceiveAttestation::from_bytes(attestation)
 						.context("invalid attestation")?;
 
-					let vtxos = self.db.get_user_vtxos_by_id(&[vtxo_id]).await?;
+					let vtxos = self.db.read(async |t| t.get_user_vtxos_by_id(&[vtxo_id]).await).await?;
 					let vtxo = vtxos.first().badarg("vtxo for proof not found")?;
 					let chain_tip = self.sync_manager.chain_tip().height;
 					vtxo.check_spendable(chain_tip)?;
@@ -590,10 +593,10 @@ impl Server {
 					attestation.verify(payment_hash, &vtxo.vtxo).context("vtxo attestation invalid")?;
 				},
 				LightningReceiveAntiDos::Token(token_string) => {
-					let api_key = self.db.get_integration_api_key_by_api_key(Uuid::parse_str(CAPTAIND_API_KEY)
-						.expect("hardcoded api key is valid")).await?
+					let api_key = self.db.read(async |t| t.get_integration_api_key_by_api_key(Uuid::parse_str(CAPTAIND_API_KEY)
+						.expect("hardcoded api key is valid")).await).await?
 						.context("captaind integration api key not found")?;
-					let token = self.db.get_integration_token(&token_string).await?.context("token not found")?;
+					let token = self.db.read(async |t| t.get_integration_token(&token_string).await).await?.context("token not found")?;
 
 					if token.is_expired() {
 						return badarg!("token has expired");
@@ -604,7 +607,7 @@ impl Server {
 					}
 
 					let filters = token.filters.clone();
-					let _ = self.db.update_integration_token(token, api_key.id, TokenStatus::Used, &filters).await?;
+					let _ = self.db.write(async |t| t.update_integration_token(token, api_key.id, TokenStatus::Used, &filters).await).await?;
 				},
 			}
 		} else if self.config.ln_receive_anti_dos_required {
@@ -619,7 +622,7 @@ impl Server {
 		&self,
 		payment_hash: PaymentHash,
 	) -> anyhow::Result<()> {
-		let sub = self.db.get_htlc_subscription_by_payment_hash(payment_hash).await?
+		let sub = self.db.read(async |t| t.get_htlc_subscription_by_payment_hash(payment_hash).await).await?
 			.not_found([payment_hash], "no pending payment with this payment hash")?;
 
 		match sub.status {
@@ -660,7 +663,7 @@ impl Server {
 			.map(|o| o.policy.clone()).context("no destination VTXO policy present")?;
 		slog!(LightningReceiveClaimRequested, payment_hash, payment_preimage, vtxo_policy: vtxo_policy.clone());
 
-		let sub = self.db.get_htlc_subscription_by_payment_hash(payment_hash).await?
+		let sub = self.db.read(async |t| t.get_htlc_subscription_by_payment_hash(payment_hash).await).await?
 			.not_found([payment_hash], "no pending payment with this payment hash")?;
 
 		if !matches!(sub.status, LightningHtlcSubscriptionStatus::HtlcsReady|LightningHtlcSubscriptionStatus::Settled) {
@@ -671,7 +674,7 @@ impl Server {
 			bail!("internal error: no HTLC VTXOs found");
 		}
 
-		let mut htlc_vtxos = self.db.get_user_vtxos_by_id(&sub.htlc_vtxos).await?;
+		let mut htlc_vtxos = self.db.read(async |t| t.get_user_vtxos_by_id(&sub.htlc_vtxos).await).await?;
 		htlc_vtxos.sort_by_key(|v| v.vtxo_id);
 
 		// check that cosign request input vtxos and htlc vtxos match

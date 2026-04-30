@@ -15,7 +15,7 @@ use anyhow::Context;
 use bitcoin::hashes::Hash;
 use bitcoin::hex::DisplayHex;
 use bitcoin::{Amount, Txid};
-use tokio_postgres::{GenericClient, Row, Transaction as PgTransaction};
+use tokio_postgres::{Row, Transaction as PgTransaction};
 use tokio_postgres::types::Type;
 
 use ark::{ProtocolEncoding, ServerVtxoPolicy, VtxoId, VtxoRequest};
@@ -30,16 +30,16 @@ use crate::error::ContextExt;
 use crate::secret::Secret;
 
 
-pub async fn get_virtual_transaction_by_txid<T: GenericClient>(
-	client: &T,
+pub async fn get_virtual_transaction_by_txid(
+	tx: &PgTransaction<'_>,
 	txid: Txid,
 ) -> anyhow::Result<Option<VirtualTransaction<'static>>> {
-	let stmt = client.prepare(
+	let stmt = tx.prepare(
 		"SELECT txid, signed_tx, is_funding
 			FROM virtual_transaction
 			WHERE txid = $1").await?;
 
-	match client.query_opt(&stmt, &[&txid.to_string()]).await? {
+	match tx.query_opt(&stmt, &[&txid.to_string()]).await? {
 		Some(row) => Ok(Some(VirtualTransaction::try_from(row)?)),
 		None => Ok(None),
 	}
@@ -47,8 +47,8 @@ pub async fn get_virtual_transaction_by_txid<T: GenericClient>(
 
 /// Returns the first txid that exists in the virtual_transaction table but has no signed_tx.
 /// Returns None if all txids either don't exist or are signed.
-pub async fn get_first_unsigned_virtual_transaction<T: GenericClient>(
-	client: &T,
+pub async fn get_first_unsigned_virtual_transaction(
+	tx: &PgTransaction<'_>,
 	txids: &[Txid],
 ) -> anyhow::Result<Option<Txid>> {
 	if txids.is_empty() {
@@ -56,14 +56,14 @@ pub async fn get_first_unsigned_virtual_transaction<T: GenericClient>(
 	}
 
 	let txid_strings = txids.iter().map(|t| t.to_string()).collect::<Vec<_>>();
-	let stmt = client.prepare_typed(
+	let stmt = tx.prepare_typed(
 		"SELECT txid FROM virtual_transaction
 			WHERE txid = ANY($1) AND signed_tx IS NULL
 			LIMIT 1",
 		&[Type::TEXT_ARRAY]
 	).await?;
 
-	match client.query_opt(&stmt, &[&txid_strings]).await? {
+	match tx.query_opt(&stmt, &[&txid_strings]).await? {
 		Some(row) => {
 			let txid_str: &str = row.get("txid");
 			Ok(Some(Txid::from_str(txid_str).context("invalid txid in database")?))
@@ -76,20 +76,19 @@ pub async fn get_first_unsigned_virtual_transaction<T: GenericClient>(
 /// Get a VTXO by id
 ///
 /// This function returns a [ServerVtxo]
-pub async fn get_vtxo_by_id<T>(
-	client: &T,
+pub async fn get_vtxo_by_id(
+	tx: &PgTransaction<'_>,
 	id: VtxoId,
 ) -> anyhow::Result<VtxoState<Full, ServerVtxoPolicy>>
-	where T : GenericClient + Sized
 {
-	let stmt = client.prepare_typed("
+	let stmt = tx.prepare_typed("
 		SELECT id, vtxo_id, vtxo, expiry, oor_spent_txid, spent_in_round, offboarded_in,
 			banned_until_height, created_at, updated_at
 		FROM vtxo
 		WHERE vtxo_id = $1;
 	", &[Type::TEXT]).await?;
 
-	let row = client.query_opt(&stmt, &[&id.to_string()]).await
+	let row = tx.query_opt(&stmt, &[&id.to_string()]).await
 		.context("Query get_vtxo_by_id failed")?
 		.not_found([id], "VTXO not found")?;
 
@@ -100,13 +99,12 @@ pub async fn get_vtxo_by_id<T>(
 /// the order of the provided ids
 ///
 /// This function returns [ServerVtxo]s
-pub async fn get_vtxos_by_id<T>(
-	client: &T,
+pub async fn get_vtxos_by_id(
+	tx: &PgTransaction<'_>,
 	ids: &[VtxoId],
 ) -> anyhow::Result<Vec<VtxoState<Full, ServerVtxoPolicy>>>
-	where T: GenericClient + Sized
 {
-	let statement = client.prepare_typed("
+	let statement = tx.prepare_typed("
 		SELECT id, vtxo_id, vtxo, expiry, oor_spent_txid, spent_in_round, offboarded_in,
 			banned_until_height, created_at, updated_at
 		FROM vtxo
@@ -114,7 +112,7 @@ pub async fn get_vtxos_by_id<T>(
 	", &[Type::TEXT_ARRAY]).await?;
 
 	let id_str = ids.iter().map(|id| id.to_string()).collect::<Vec<_>>();
-	let rows = client.query(&statement, &[&id_str]).await
+	let rows = tx.query(&statement, &[&id_str]).await
 		.context("Query get_vtxos_by_id failed")?;
 
 	// Parse all rows
@@ -137,13 +135,12 @@ pub async fn get_vtxos_by_id<T>(
 
 /// Get a bare VTXO by id, constructed from the metadata columns
 /// without deserializing the full vtxo blob.
-pub async fn get_bare_vtxo_by_id<T>(
-	client: &T,
+pub async fn get_bare_vtxo_by_id(
+	tx: &PgTransaction<'_>,
 	id: VtxoId,
 ) -> anyhow::Result<VtxoState<Bare, ServerVtxoPolicy>>
-	where T: GenericClient + Sized
 {
-	let stmt = client.prepare_typed("
+	let stmt = tx.prepare_typed("
 		SELECT id, vtxo_id, expiry, exit_delta, policy_type, policy,
 			server_pubkey, amount, anchor_point,
 			oor_spent_txid, spent_in_round, offboarded_in,
@@ -152,7 +149,7 @@ pub async fn get_bare_vtxo_by_id<T>(
 		WHERE vtxo_id = $1;
 	", &[Type::TEXT]).await?;
 
-	let row = client.query_opt(&stmt, &[&id.to_string()]).await
+	let row = tx.query_opt(&stmt, &[&id.to_string()]).await
 		.context("Query get_bare_vtxo_by_id failed")?
 		.not_found([id], "VTXO not found")?;
 
@@ -287,8 +284,8 @@ pub async fn complete_round_participation(
 /// `Vtxo::transactions()`). Bails on the first missing or unsigned tx,
 /// and bails on an empty input: the guard's purpose is to assert a
 /// pre-condition, so a caller with nothing to assert is a bug.
-pub async fn check_vtxo_transactions_registered<C: GenericClient>(
-	client: &C,
+pub async fn check_vtxo_transactions_registered(
+	tx: &PgTransaction<'_>,
 	txids: impl IntoIterator<Item = impl Borrow<Txid>>,
 ) -> anyhow::Result<()> {
 	let mut txid_strings = txids.into_iter()
@@ -305,19 +302,19 @@ pub async fn check_vtxo_transactions_registered<C: GenericClient>(
 	txid_strings.dedup();
 	let expected = txid_strings.len() as i64;
 
-	let stmt = client.prepare_typed("
+	let stmt = tx.prepare_typed("
 		SELECT count(*)::BIGINT AS count
 		FROM virtual_transaction
 		WHERE txid = ANY($1::TEXT[]) AND signed_tx IS NOT NULL
 	", &[Type::TEXT_ARRAY]).await?;
 
-	let count: i64 = client.query_one(&stmt, &[&txid_strings]).await?.get("count");
+	let count: i64 = tx.query_one(&stmt, &[&txid_strings]).await?.get("count");
 	if count == expected {
 		return Ok(());
 	}
 
 	// Fast path failed: walk the inputs to produce a precise error.
-	let diag_stmt = client.prepare_typed("
+	let diag_stmt = tx.prepare_typed("
 		WITH input_txids AS (
 			SELECT unnest($1::TEXT[]) AS txid
 		)
@@ -328,7 +325,7 @@ pub async fn check_vtxo_transactions_registered<C: GenericClient>(
 		LIMIT 1
 	", &[Type::TEXT_ARRAY]).await?;
 
-	if let Some(row) = client.query_opt(&diag_stmt, &[&txid_strings]).await? {
+	if let Some(row) = tx.query_opt(&diag_stmt, &[&txid_strings]).await? {
 		let txid_str: &str = row.get("txid");
 		let exists: bool = row.get("exists");
 		let txid = Txid::from_str(txid_str).context("invalid txid")?;

@@ -1,7 +1,7 @@
 use anyhow::Context;
 use bitcoin_ext::{BlockHeight, BlockRef};
 
-use crate::database::Db;
+use crate::database::Tx;
 
 /// Identifies which process's block table to use.
 ///
@@ -26,7 +26,7 @@ impl BlockTable {
 	}
 }
 
-impl Db {
+impl<'t> Tx<'t> {
 
 	/// Stores a block reference (height and hash) in the database.
 	///
@@ -37,15 +37,13 @@ impl Db {
 	/// Returns an error if a block with the same height already exists,
 	/// since height is the primary key.
 	pub async fn store_block(&self, table: BlockTable, block: &BlockRef) -> anyhow::Result<()> {
-		let conn = self.get_conn().await?;
-
 		let query = format!(
 			"INSERT INTO {} (height, hash) VALUES ($1, $2)",
 			table.as_str()
 		);
-		let stmt = conn.prepare(&query).await?;
+		let stmt = self.prepare(&query).await?;
 
-		conn.execute(&stmt, &[&(block.height as i64), &block.hash.to_string()]).await?;
+		self.execute(&stmt, &[&(block.height as i64), &block.hash.to_string()]).await?;
 
 		Ok(())
 	}
@@ -55,29 +53,25 @@ impl Db {
 	/// This is used during chain reorganizations to remove orphaned blocks
 	/// that are no longer part of the best chain.
 	pub async fn remove_blocks_above(&self, table: BlockTable, height: BlockHeight) -> anyhow::Result<()> {
-		let conn = self.get_conn().await?;
-
 		let query = format!(
 			"DELETE FROM {} WHERE height > $1",
 			table.as_str()
 		);
-		let stmt = conn.prepare(&query).await?;
+		let stmt = self.prepare(&query).await?;
 
-		conn.execute(&stmt, &[&(height as i64)]).await?;
+		self.execute(&stmt, &[&(height as i64)]).await?;
 		Ok(())
 	}
 
 	/// Returns the block at the given height, if one exists.
 	pub async fn get_block_by_height(&self, table: BlockTable, height: BlockHeight) -> anyhow::Result<Option<BlockRef>> {
-		let conn = self.get_conn().await?;
-
 		let query = format!(
 			"SELECT hash FROM {} WHERE height = $1",
 			table.as_str()
 		);
-		let stmt = conn.prepare(&query).await?;
+		let stmt = self.prepare(&query).await?;
 
-		match conn.query_opt(&stmt, &[&(height as i64)]).await? {
+		match self.query_opt(&stmt, &[&(height as i64)]).await? {
 			Some(row) => {
 				let hash: &str = row.get::<_, &str>("hash");
 
@@ -89,15 +83,13 @@ impl Db {
 	}
 
 	pub async fn get_highest_block(&self, table: BlockTable) -> anyhow::Result<Option<BlockRef>> {
-		let conn = self.get_conn().await?;
-
 		let query = format!(
 			"SELECT height, hash FROM {} ORDER BY height DESC LIMIT 1",
 			table.as_str()
 		);
-		let stmt = conn.prepare(&query).await?;
+		let stmt = self.prepare(&query).await?;
 
-		match conn.query_opt(&stmt, &[]).await? {
+		match self.query_opt(&stmt, &[]).await? {
 			Some(row) => {
 				let height = row.get::<_, i64>("height") as BlockHeight;
 				let hash= row.get::<_, &str>("hash");
@@ -111,15 +103,13 @@ impl Db {
 
 	/// Returns the block with the lowest height, if any blocks exist.
 	pub async fn get_lowest_block(&self, table: BlockTable) -> anyhow::Result<Option<BlockRef>> {
-		let conn = self.get_conn().await?;
-
 		let query = format!(
 			"SELECT height, hash FROM {} ORDER BY height ASC LIMIT 1",
 			table.as_str()
 		);
-		let stmt = conn.prepare(&query).await?;
+		let stmt = self.prepare(&query).await?;
 
-		match conn.query_opt(&stmt, &[]).await? {
+		match self.query_opt(&stmt, &[]).await? {
 			Some(row) => {
 				let height = row.get::<_, i64>("height") as BlockHeight;
 				let hash = row.get::<_, &str>("hash");

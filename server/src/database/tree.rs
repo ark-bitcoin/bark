@@ -3,7 +3,6 @@ use std::collections::HashSet;
 use anyhow::{Context, bail};
 
 use bitcoin::{Transaction, Txid};
-use tokio_postgres::GenericClient;
 
 use ark::{ProtocolEncoding, ServerVtxo, VtxoId};
 use ark::vtxo::{Bare, Full};
@@ -408,8 +407,8 @@ pub async fn execute_vtxo_tree_update(
 	Ok(())
 }
 
-async fn upsert_virtual_transactions<T: GenericClient>(
-	client: &T,
+async fn upsert_virtual_transactions(
+	tx: &tokio_postgres::Transaction<'_>,
 	txs: &[VirtualTransaction<'_>],
 ) -> anyhow::Result<()> {
 	if txs.is_empty() { return Ok(()) }
@@ -421,7 +420,7 @@ async fn upsert_virtual_transactions<T: GenericClient>(
 		signed_txs.push(vtx.signed_tx().map(bitcoin::consensus::serialize));
 		is_funding.push(vtx.is_funding);
 	}
-	client.execute("
+	tx.execute("
 		INSERT INTO virtual_transaction
 			(txid, signed_tx, is_funding, created_at, updated_at)
 		SELECT txid, signed_tx, is_funding, NOW(), NOW()
@@ -435,8 +434,8 @@ async fn upsert_virtual_transactions<T: GenericClient>(
 	Ok(())
 }
 
-async fn insert_vtxos<T: GenericClient>(
-	client: &T,
+async fn insert_vtxos(
+	tx: &tokio_postgres::Transaction<'_>,
 	vi: &VtxoInserts,
 ) -> anyhow::Result<()> {
 	if vi.is_empty() { return Ok(()) }
@@ -444,7 +443,7 @@ async fn insert_vtxos<T: GenericClient>(
 	// rows inserted via `insert_oor_spent_vtxos`, we then validate that the
 	// existing row's oor_spent_txid actually matches — otherwise the insert
 	// would silently authorize a double-spend.
-	client.execute("
+	tx.execute("
 		INSERT INTO vtxo (
 			vtxo_id, vtxo_txid, vtxo, expiry, exit_delta, policy_type, policy,
 			server_pubkey, amount, anchor_point,
@@ -463,7 +462,7 @@ async fn insert_vtxos<T: GenericClient>(
 		&vi.amounts, &vi.anchor_points, &vi.spend_states, &vi.oor_spent_txids,
 	]).await.context("failed to insert VTXOs")?;
 
-	let bad = client.query_opt("
+	let bad = tx.query_opt("
 		SELECT u.vtxo_id
 		FROM UNNEST($1::text[], $2::text[]) AS u(vtxo_id, expected_txid)
 		JOIN vtxo v ON v.vtxo_id = u.vtxo_id
@@ -479,30 +478,30 @@ async fn insert_vtxos<T: GenericClient>(
 	Ok(())
 }
 
-async fn apply_vtxo_updates<T: GenericClient>(
-	client: &T,
+async fn apply_vtxo_updates(
+	tx: &tokio_postgres::Transaction<'_>,
 	vu: &VtxoUpdates,
 ) -> anyhow::Result<()> {
-	do_oor_spend_updates(client, &vu.oor_spends).await?;
-	do_round_spend_updates(client, &vu.round_spends).await?;
-	do_offboard_spend_updates(client, &vu.offboard_spends).await?;
-	do_round_forfeit_updates(client, &vu.round_forfeits).await?;
-	do_undo_round_updates(client, &vu.round_unspends).await?;
-	do_claim_updates(client, &vu.claims).await?;
+	do_oor_spend_updates(tx, &vu.oor_spends).await?;
+	do_round_spend_updates(tx, &vu.round_spends).await?;
+	do_offboard_spend_updates(tx, &vu.offboard_spends).await?;
+	do_round_forfeit_updates(tx, &vu.round_forfeits).await?;
+	do_undo_round_updates(tx, &vu.round_unspends).await?;
+	do_claim_updates(tx, &vu.claims).await?;
 	Ok(())
 }
 
 // -- Individual update functions --
 
 /// Idempotent: succeeds if already spent with the same oor_spent_txid.
-async fn do_oor_spend_updates<T: GenericClient>(
-	client: &T,
+async fn do_oor_spend_updates(
+	tx: &tokio_postgres::Transaction<'_>,
 	spends: &[OorSpendUpdate],
 ) -> anyhow::Result<()> {
 	if spends.is_empty() { return Ok(()) }
 	let ids: Vec<String> = spends.iter().map(|s| s.vtxo_id.to_string()).collect();
 	let txids: Vec<String> = spends.iter().map(|s| s.txid.to_string()).collect();
-	let rows = client.execute("
+	let rows = tx.execute("
 		UPDATE vtxo SET spend_state = 'spent', oor_spent_txid = u.txid, updated_at = NOW()
 		FROM UNNEST($1::text[], $2::text[]) AS u(vtxo_id, txid)
 		WHERE vtxo.vtxo_id = u.vtxo_id
@@ -513,7 +512,7 @@ async fn do_oor_spend_updates<T: GenericClient>(
 	", &[&ids, &txids]).await.context("failed to mark VTXOs as oor-spent")?;
 	if rows != spends.len() as u64 {
 		// Find the first vtxo that wasn't spendable and doesn't match our txid
-		let bad = client.query_one("
+		let bad = tx.query_one("
 			SELECT u.vtxo_id, v.spend_state::text, v.oor_spent_txid
 			FROM UNNEST($1::text[], $2::text[]) AS u(vtxo_id, txid)
 			LEFT JOIN vtxo v ON v.vtxo_id = u.vtxo_id
@@ -531,14 +530,14 @@ async fn do_oor_spend_updates<T: GenericClient>(
 }
 
 /// Idempotent: succeeds if already spent in the same round.
-async fn do_round_spend_updates<T: GenericClient>(
-	client: &T,
+async fn do_round_spend_updates(
+	tx: &tokio_postgres::Transaction<'_>,
 	spends: &[RoundSpendUpdate],
 ) -> anyhow::Result<()> {
 	if spends.is_empty() { return Ok(()) }
 	let ids: Vec<String> = spends.iter().map(|s| s.vtxo_id.to_string()).collect();
 	let round_ids: Vec<i64> = spends.iter().map(|s| s.round_id).collect();
-	let rows = client.execute("
+	let rows = tx.execute("
 		UPDATE vtxo SET spend_state = 'spent', spent_in_round = u.round_id, updated_at = NOW()
 		FROM UNNEST($1::text[], $2::int8[]) AS u(vtxo_id, round_id)
 		WHERE vtxo.vtxo_id = u.vtxo_id
@@ -546,7 +545,7 @@ async fn do_round_spend_updates<T: GenericClient>(
 			OR (vtxo.spend_state = 'spent' AND vtxo.spent_in_round = u.round_id))
 	", &[&ids, &round_ids]).await.context("failed to mark VTXOs as round-spent")?;
 	if rows != spends.len() as u64 {
-		let bad = client.query_one("
+		let bad = tx.query_one("
 			SELECT u.vtxo_id, v.spend_state::text, v.spent_in_round
 			FROM UNNEST($1::text[], $2::int8[]) AS u(vtxo_id, round_id)
 			LEFT JOIN vtxo v ON v.vtxo_id = u.vtxo_id
@@ -565,15 +564,15 @@ async fn do_round_spend_updates<T: GenericClient>(
 /// txid in a single update.
 ///
 /// Idempotent: succeeds if already offboarded with the same txids.
-async fn do_offboard_spend_updates<T: GenericClient>(
-	client: &T,
+async fn do_offboard_spend_updates(
+	tx: &tokio_postgres::Transaction<'_>,
 	spends: &[OffboardSpendUpdate],
 ) -> anyhow::Result<()> {
 	if spends.is_empty() { return Ok(()) }
 	let ids: Vec<String> = spends.iter().map(|s| s.vtxo_id.to_string()).collect();
 	let offboard_txids: Vec<String> = spends.iter().map(|s| s.offboard_txid.to_string()).collect();
 	let forfeit_txids: Vec<String> = spends.iter().map(|s| s.forfeit_txid.to_string()).collect();
-	let rows = client.execute("
+	let rows = tx.execute("
 		UPDATE vtxo SET
 			spend_state = 'spent',
 			offboarded_in = u.offboard_txid,
@@ -589,7 +588,7 @@ async fn do_offboard_spend_updates<T: GenericClient>(
 	", &[&ids, &offboard_txids, &forfeit_txids])
 		.await.context("failed to mark VTXOs as offboard-spent")?;
 	if rows != spends.len() as u64 {
-		let bad = client.query_one("
+		let bad = tx.query_one("
 			SELECT u.vtxo_id
 			FROM UNNEST($1::text[], $2::text[], $3::text[])
 				AS u(vtxo_id, offboard_txid, forfeit_txid)
@@ -609,14 +608,14 @@ async fn do_offboard_spend_updates<T: GenericClient>(
 }
 
 /// Idempotent: succeeds if oor_spent_txid already matches.
-async fn do_round_forfeit_updates<T: GenericClient>(
-	client: &T,
+async fn do_round_forfeit_updates(
+	tx: &tokio_postgres::Transaction<'_>,
 	forfeits: &[RoundForfeitUpdate],
 ) -> anyhow::Result<()> {
 	if forfeits.is_empty() { return Ok(()) }
 	let ids: Vec<String> = forfeits.iter().map(|f| f.vtxo_id.to_string()).collect();
 	let txids: Vec<String> = forfeits.iter().map(|f| f.txid.to_string()).collect();
-	let rows = client.execute("
+	let rows = tx.execute("
 		UPDATE vtxo SET oor_spent_txid = u.txid, updated_at = NOW()
 		FROM UNNEST($1::text[], $2::text[]) AS u(vtxo_id, txid)
 		WHERE vtxo.vtxo_id = u.vtxo_id
@@ -625,7 +624,7 @@ async fn do_round_forfeit_updates<T: GenericClient>(
 		AND (vtxo.oor_spent_txid IS NULL OR vtxo.oor_spent_txid = u.txid)
 	", &[&ids, &txids]).await.context("failed to mark VTXOs as round-forfeited")?;
 	if rows != forfeits.len() as u64 {
-		let bad = client.query_one("
+		let bad = tx.query_one("
 			SELECT u.vtxo_id, v.spend_state::text, v.spent_in_round, v.oor_spent_txid
 			FROM UNNEST($1::text[], $2::text[]) AS u(vtxo_id, txid)
 			LEFT JOIN vtxo v ON v.vtxo_id = u.vtxo_id
@@ -643,13 +642,13 @@ async fn do_round_forfeit_updates<T: GenericClient>(
 
 /// Undo a round spend: reset vtxos spent in the given rounds back to spendable.
 /// Idempotent: if no vtxos match, nothing happens.
-async fn do_undo_round_updates<T: GenericClient>(
-	client: &T,
+async fn do_undo_round_updates(
+	tx: &tokio_postgres::Transaction<'_>,
 	unspends: &[UndoRoundUpdate],
 ) -> anyhow::Result<()> {
 	if unspends.is_empty() { return Ok(()) }
 	let round_ids: Vec<i64> = unspends.iter().map(|s| s.round_id).collect();
-	client.execute("
+	tx.execute("
 		UPDATE vtxo
 		SET spend_state = 'spendable', spent_in_round = NULL, oor_spent_txid = NULL, updated_at = NOW()
 		WHERE spent_in_round = ANY($1::int8[])
@@ -659,13 +658,13 @@ async fn do_undo_round_updates<T: GenericClient>(
 
 /// Transitions unclaimed vtxos to spendable after the preimage is released.
 /// Always idempotent: succeeds even if already claimed.
-async fn do_claim_updates<T: GenericClient>(
-	client: &T,
+async fn do_claim_updates(
+	tx: &tokio_postgres::Transaction<'_>,
 	claims: &[VtxoId],
 ) -> anyhow::Result<()> {
 	if claims.is_empty() { return Ok(()) }
 	let ids: Vec<String> = claims.iter().map(|id| id.to_string()).collect();
-	client.execute("
+	tx.execute("
 		UPDATE vtxo SET spend_state = 'spendable', updated_at = NOW()
 		WHERE vtxo_id = ANY($1::text[]) AND spend_state = 'unclaimed'
 	", &[&ids]).await.context("failed to mark VTXOs as claimed")?;

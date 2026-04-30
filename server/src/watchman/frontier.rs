@@ -30,7 +30,7 @@ pub struct VtxoExitFrontier {
 
 impl VtxoExitFrontier {
 	pub async fn init(db: Db, htlc_settler: Arc<HtlcSettler>) -> anyhow::Result<Self> {
-		let frontier = db.get_frontier().await?;
+		let frontier = db.read(async |t| t.get_frontier().await).await?;
 		Ok(VtxoExitFrontier {
 			db, htlc_settler, frontier,
 			last_db_sync: chrono::Utc::now(),
@@ -42,7 +42,7 @@ impl VtxoExitFrontier {
 	/// Should not be used for initial sync.
 	async fn sync_new_vtxos_from_db(&mut self) -> anyhow::Result<()> {
 		let since = self.last_db_sync - chrono::Duration::seconds(60);
-		let vtxos = self.db.get_frontier_vtxos_since(since).await?;
+		let vtxos = self.db.read(async |t| t.get_frontier_vtxos_since(since).await).await?;
 		if !vtxos.is_empty() {
 			trace!("Syncing {} new frontier vtxos from DB", vtxos.len());
 			for (vtxo, db_confirmed_height) in vtxos {
@@ -65,10 +65,10 @@ impl VtxoExitFrontier {
 		let vtxo_id = vtxo.id();
 		if !self.frontier.contains_key(&vtxo_id) {
 			self.frontier.insert(vtxo_id, (confirmed_height, vtxo));
-			self.db.add_vtxo_to_frontier(vtxo_id).await?;
+			self.db.write(async |t| t.add_vtxo_to_frontier(vtxo_id).await).await?;
 
 			if let Some(height) = confirmed_height {
-				self.db.register_vtxo_confirmation(vtxo_id, height).await?;
+				self.db.write(async |t| t.register_vtxo_confirmation(vtxo_id, height).await).await?;
 			}
 
 			slog!(WatchmanAddedVtxo, id: vtxo_id);
@@ -96,7 +96,7 @@ impl VtxoExitFrontier {
 					.context("failed to record HTLC settlement from on-chain spend")?;
 			}
 
-			self.db.register_vtxo_spend(vtxo_id, spent_height, spent_txid).await?;
+			self.db.write(async |t| t.register_vtxo_spend(vtxo_id, spent_height, spent_txid).await).await?;
 			Ok(true)
 		} else {
 			Ok(false)
@@ -115,13 +115,13 @@ impl VtxoExitFrontier {
 				error!("Unexpected re-org or duplicate block from SyncManager?");
 			}
 			*h = Some(height);
-			self.db.register_vtxo_confirmation(*id, height).await?;
+			self.db.write(async |t| t.register_vtxo_confirmation(*id, height).await).await?;
 		}
 		Ok(())
 	}
 
 	pub async fn reload(&mut self) -> anyhow::Result<()> {
-		self.frontier = self.db.get_frontier().await?;
+		self.frontier = self.db.read(async |t| t.get_frontier().await).await?;
 		Ok(())
 	}
 
@@ -135,7 +135,7 @@ impl VtxoExitFrontier {
 
 	#[cfg(test)]
 	pub async fn check_frontier_matches_db(&self) -> anyhow::Result<()> {
-		let db_frontier = self.db.get_frontier().await?;
+		let db_frontier = self.db.read(async |t| t.get_frontier().await).await?;
 
 		let mut local = self.frontier.keys().collect::<Vec<_>>();
 		let mut db = db_frontier.keys().collect::<Vec<_>>();
@@ -206,7 +206,7 @@ impl ChainEventListener for Arc<RwLock<VtxoExitFrontier>> {
 
 			// Find new vtxos originating from this tx and add to frontier
 			if removed_any {
-				let new_vtxos = frontier.db.get_vtxos_by_txid(txid).await?;
+				let new_vtxos = frontier.db.read(async |t| t.get_vtxos_by_txid(txid).await).await?;
 				for vtxo in new_vtxos {
 					// Only add if not already in frontier
 					if !frontier.frontier.contains_key(&vtxo.id()) {
@@ -237,7 +237,7 @@ impl ChainEventListener for Arc<RwLock<VtxoExitFrontier>> {
 		// it is public knowledge. Settling the CLN hold invoice is still
 		// correct — the receiver already knows the preimage and could
 		// re-broadcast the claiming tx at any time.
-		frontier.db.reorg_frontier(block_ref.height).await?;
+		frontier.db.write(async |t| t.reorg_frontier(block_ref.height).await).await?;
 
 		// Reload in-memory frontier
 		frontier.reload().await?;

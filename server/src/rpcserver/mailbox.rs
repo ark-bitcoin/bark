@@ -94,8 +94,14 @@ impl rpc::server::MailboxService for crate::Server {
 
 		let mailbox_id = self.unblind_mailbox_id(blinded_mailbox_id, vtxo_pubkey);
 
-		let checkpoint = self.db.store_vtxos_in_mailbox(MailboxType::ArkoorReceive, mailbox_id, vtxos.as_slice()).await.to_status()?
-			.badarg("nothing was stored")?;
+		let checkpoint = self.db.write(async |t| {
+			let cp = t.store_vtxos_in_mailbox(
+				MailboxType::ArkoorReceive,
+				mailbox_id,
+				vtxos.as_slice(),
+			).await?.context("nothing was stored")?;
+			anyhow::Ok(cp)
+		}).await.to_status()?;
 
 		self.mailbox_manager.notify(mailbox_id, checkpoint);
 
@@ -126,11 +132,9 @@ impl rpc::server::MailboxService for crate::Server {
 			self::badarg!("invalid mailbox authorization signature");
 		}
 		let limit = self.config.max_read_mailbox_items;
-		let entries_by_checkpoint = self.db.get_mailbox_messages(
-			unblinded_id,
-			req.checkpoint,
-			limit,
-		).await.to_status()?;
+		let entries_by_checkpoint = self.db.read(async |t| {
+			t.get_mailbox_messages(unblinded_id, req.checkpoint, limit).await
+		}).await.to_status()?;
 
 		let response = protos::mailbox_server::MailboxMessages {
 			have_more: entries_by_checkpoint.len() >= limit,
@@ -197,7 +201,7 @@ impl rpc::server::MailboxService for crate::Server {
 
 				'fetching:
 				loop {
-					match db.get_mailbox_messages(mailbox_id, processed_cp, ret_limit).await {
+					match db.read(async |tx| { tx.get_mailbox_messages(mailbox_id, processed_cp, ret_limit).await }).await {
 						Ok(entries) => {
 							let done = entries.len() < ret_limit;
 							for entry in entries {
@@ -239,9 +243,13 @@ impl rpc::server::MailboxService for crate::Server {
 		let mailbox_id = MailboxIdentifier::from_slice(req.unblinded_id.as_slice())
 			.badarg("invalid unblinded mailbox id")?;
 
-		let checkpoint = self.db.store_vtxo_ids_in_mailbox(
-			MailboxType::RecoveryVtxoId, mailbox_id, vtxo_ids.as_slice(),
-		).await.to_status()?;
+		let checkpoint = self.db.write(async |t| {
+			t.store_vtxo_ids_in_mailbox(
+				MailboxType::RecoveryVtxoId,
+				mailbox_id,
+				vtxo_ids.as_slice(),
+			).await
+		}).await.to_status()?;
 
 		if let Some(checkpoint) = checkpoint {
 			self.mailbox_manager.notify(mailbox_id, checkpoint);

@@ -1074,8 +1074,8 @@ async fn test_ephemeral_keys() {
 	let pubkey = srv.generate_ephemeral_cosign_key(secs(60)).await.unwrap().public_key();
 	assert_eq!(srv.get_ephemeral_cosign_key(pubkey).await.unwrap().public_key(), pubkey);
 	assert_eq!(srv.drop_ephemeral_cosign_key(pubkey).await.unwrap().public_key(), pubkey);
-	assert!(db.fetch_ephemeral_tweak(pubkey).await.unwrap().is_none());
-	assert!(db.drop_ephemeral_tweak(pubkey).await.unwrap().is_none());
+	assert!(db.read(async |t| t.fetch_ephemeral_tweak(pubkey).await).await.unwrap().is_none());
+	assert!(db.write(async |t| t.drop_ephemeral_tweak(pubkey).await).await.unwrap().is_none());
 
 	// let's expire one
 	let pubkey = srv.generate_ephemeral_cosign_key(secs(1)).await.unwrap().public_key();
@@ -1083,8 +1083,8 @@ async fn test_ephemeral_keys() {
 	tokio::time::sleep(Duration::from_millis(1500)).await;
 	// to trigger the cleanup
 	let _ = srv.generate_ephemeral_cosign_key(secs(1)).await.unwrap().public_key();
-	assert!(db.fetch_ephemeral_tweak(pubkey).await.unwrap().is_none());
-	assert!(db.drop_ephemeral_tweak(pubkey).await.unwrap().is_none());
+	assert!(db.read(async |t| t.fetch_ephemeral_tweak(pubkey).await).await.unwrap().is_none());
+	assert!(db.write(async |t| t.drop_ephemeral_tweak(pubkey).await).await.unwrap().is_none());
 }
 
 #[tokio::test]

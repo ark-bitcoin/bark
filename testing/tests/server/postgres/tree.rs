@@ -46,9 +46,9 @@ async fn insert_spendable_vtxos() {
 
 	let update = VtxoTreeUpdate::new()
 		.insert_spendable_vtxos([vtxo.clone()]);
-	db.execute_vtxo_tree_update(update).await.expect("insert succeeded");
+	db.write(async |t| t.execute_vtxo_tree_update(update).await).await.expect("insert succeeded");
 
-	let state = db.get_user_vtxo_by_id(vtxo.id()).await.expect("vtxo found");
+	let state = db.read(async |t| t.get_user_vtxo_by_id(vtxo.id()).await).await.expect("vtxo found");
 	assert_eq!(state.vtxo_id, vtxo.id());
 }
 
@@ -60,12 +60,12 @@ async fn insert_spendable_is_idempotent() {
 
 	let update = VtxoTreeUpdate::new()
 		.insert_spendable_vtxos([vtxo.clone()]);
-	db.execute_vtxo_tree_update(update).await.expect("first insert");
+	db.write(async |t| t.execute_vtxo_tree_update(update).await).await.expect("first insert");
 
 	// Second insert with same vtxo should succeed (ON CONFLICT DO NOTHING)
 	let update = VtxoTreeUpdate::new()
 		.insert_spendable_vtxos([vtxo.clone()]);
-	db.execute_vtxo_tree_update(update).await.expect("idempotent insert");
+	db.write(async |t| t.execute_vtxo_tree_update(update).await).await.expect("idempotent insert");
 }
 
 #[tokio::test]
@@ -77,9 +77,9 @@ async fn insert_oor_spent_vtxos() {
 
 	let update = VtxoTreeUpdate::new()
 		.insert_oor_spent_vtxos([(vtxo.clone(), spending_txid)]);
-	db.execute_vtxo_tree_update(update).await.expect("insert succeeded");
+	db.write(async |t| t.execute_vtxo_tree_update(update).await).await.expect("insert succeeded");
 
-	let state = db.get_user_vtxo_by_id(vtxo.id()).await.expect("vtxo found");
+	let state = db.read(async |t| t.get_user_vtxo_by_id(vtxo.id()).await).await.expect("vtxo found");
 	assert_eq!(state.oor_spent_txid, Some(spending_txid));
 }
 
@@ -92,14 +92,14 @@ async fn insert_oor_spent_is_idempotent() {
 
 	let update = VtxoTreeUpdate::new()
 		.insert_oor_spent_vtxos([(vtxo.clone(), spending_txid)]);
-	db.execute_vtxo_tree_update(update).await.expect("first insert");
+	db.write(async |t| t.execute_vtxo_tree_update(update).await).await.expect("first insert");
 
 	// Re-inserting the same vtxo with the same spending txid is a no-op.
 	let update = VtxoTreeUpdate::new()
 		.insert_oor_spent_vtxos([(vtxo.clone(), spending_txid)]);
-	db.execute_vtxo_tree_update(update).await.expect("idempotent insert");
+	db.write(async |t| t.execute_vtxo_tree_update(update).await).await.expect("idempotent insert");
 
-	let state = db.get_user_vtxo_by_id(vtxo.id()).await.expect("vtxo found");
+	let state = db.read(async |t| t.get_user_vtxo_by_id(vtxo.id()).await).await.expect("vtxo found");
 	assert_eq!(state.oor_spent_txid, Some(spending_txid));
 }
 
@@ -111,13 +111,13 @@ async fn insert_oor_spent_double_spend_fails() {
 
 	let update = VtxoTreeUpdate::new()
 		.insert_oor_spent_vtxos([(vtxo.clone(), dummy_txid(0x01))]);
-	db.execute_vtxo_tree_update(update).await.expect("first insert");
+	db.write(async |t| t.execute_vtxo_tree_update(update).await).await.expect("first insert");
 
 	// A second oor-spent insert for the same vtxo with a different txid
 	// would silently authorize a double-spend under ON CONFLICT DO NOTHING.
 	let update = VtxoTreeUpdate::new()
 		.insert_oor_spent_vtxos([(vtxo.clone(), dummy_txid(0x02))]);
-	let err = db.execute_vtxo_tree_update(update).await.unwrap_err();
+	let err = db.write(async |t| t.execute_vtxo_tree_update(update).await).await.unwrap_err();
 	assert!(err.to_string().contains("already spent"), "got: {}", err);
 }
 
@@ -131,14 +131,14 @@ async fn mark_oor_spent() {
 	// First insert as spendable
 	let update = VtxoTreeUpdate::new()
 		.insert_spendable_vtxos([vtxo.clone()]);
-	db.execute_vtxo_tree_update(update).await.expect("insert");
+	db.write(async |t| t.execute_vtxo_tree_update(update).await).await.expect("insert");
 
 	// Then mark as oor spent
 	let update = VtxoTreeUpdate::new()
 		.mark_vtxos_oor_spent([(vtxo.id(), spending_txid)]);
-	db.execute_vtxo_tree_update(update).await.expect("mark oor spent");
+	db.write(async |t| t.execute_vtxo_tree_update(update).await).await.expect("mark oor spent");
 
-	let state = db.get_user_vtxo_by_id(vtxo.id()).await.expect("vtxo found");
+	let state = db.read(async |t| t.get_user_vtxo_by_id(vtxo.id()).await).await.expect("vtxo found");
 	assert_eq!(state.oor_spent_txid, Some(spending_txid));
 }
 
@@ -151,16 +151,16 @@ async fn mark_oor_spent_is_idempotent() {
 
 	let update = VtxoTreeUpdate::new()
 		.insert_spendable_vtxos([vtxo.clone()]);
-	db.execute_vtxo_tree_update(update).await.expect("insert");
+	db.write(async |t| t.execute_vtxo_tree_update(update).await).await.expect("insert");
 
 	let update = VtxoTreeUpdate::new()
 		.mark_vtxos_oor_spent([(vtxo.id(), spending_txid)]);
-	db.execute_vtxo_tree_update(update).await.expect("first mark");
+	db.write(async |t| t.execute_vtxo_tree_update(update).await).await.expect("first mark");
 
 	// Same mark again should succeed
 	let update = VtxoTreeUpdate::new()
 		.mark_vtxos_oor_spent([(vtxo.id(), spending_txid)]);
-	db.execute_vtxo_tree_update(update).await.expect("idempotent mark");
+	db.write(async |t| t.execute_vtxo_tree_update(update).await).await.expect("idempotent mark");
 }
 
 #[tokio::test]
@@ -171,16 +171,16 @@ async fn mark_oor_spent_double_spend_fails() {
 
 	let update = VtxoTreeUpdate::new()
 		.insert_spendable_vtxos([vtxo.clone()]);
-	db.execute_vtxo_tree_update(update).await.expect("insert");
+	db.write(async |t| t.execute_vtxo_tree_update(update).await).await.expect("insert");
 
 	let update = VtxoTreeUpdate::new()
 		.mark_vtxos_oor_spent([(vtxo.id(), dummy_txid(0x01))]);
-	db.execute_vtxo_tree_update(update).await.expect("first spend");
+	db.write(async |t| t.execute_vtxo_tree_update(update).await).await.expect("first spend");
 
 	// Try to spend with a different txid
 	let err = VtxoTreeUpdate::new()
 		.mark_vtxos_oor_spent([(vtxo.id(), dummy_txid(0x02))]);
-	let err = db.execute_vtxo_tree_update(err).await.unwrap_err();
+	let err = db.write(async |t| t.execute_vtxo_tree_update(err).await).await.unwrap_err();
 	assert!(err.to_string().contains("unspendable"), "got: {}", err);
 }
 
@@ -192,7 +192,7 @@ async fn mark_oor_spent_missing_vtxo_fails() {
 
 	let err = VtxoTreeUpdate::new()
 		.mark_vtxos_oor_spent([(vtxo.id(), dummy_txid(0xdd))]);
-	let err = db.execute_vtxo_tree_update(err).await.unwrap_err();
+	let err = db.write(async |t| t.execute_vtxo_tree_update(err).await).await.unwrap_err();
 	assert!(err.to_string().contains("unspendable"), "got: {}", err);
 }
 
@@ -207,21 +207,21 @@ async fn insert_and_mark_in_single_update() {
 	// Insert the input as spendable first
 	let update = VtxoTreeUpdate::new()
 		.insert_spendable_vtxos([input_vtxo.clone()]);
-	db.execute_vtxo_tree_update(update).await.expect("insert input");
+	db.write(async |t| t.execute_vtxo_tree_update(update).await).await.expect("insert input");
 
 	// Arkoor-style update: insert output + internal vtxos, mark input spent
 	let update = VtxoTreeUpdate::new()
 		.insert_spendable_vtxos([output_vtxo.clone()])
 		.insert_oor_spent_vtxos([(ServerVtxo::from(VTXO_VECTORS.arkoor2_vtxo.clone()), spending_txid)])
 		.mark_vtxos_oor_spent([(input_vtxo.id(), spending_txid)]);
-	db.execute_vtxo_tree_update(update).await.expect("arkoor update");
+	db.write(async |t| t.execute_vtxo_tree_update(update).await).await.expect("arkoor update");
 
 	// Input should be spent
-	let state = db.get_user_vtxo_by_id(input_vtxo.id()).await.expect("input found");
+	let state = db.read(async |t| t.get_user_vtxo_by_id(input_vtxo.id()).await).await.expect("input found");
 	assert_eq!(state.oor_spent_txid, Some(spending_txid));
 
 	// Output should exist
-	db.get_user_vtxo_by_id(output_vtxo.id()).await.expect("output found");
+	db.read(async |t| t.get_user_vtxo_by_id(output_vtxo.id()).await).await.expect("output found");
 }
 
 #[tokio::test]
@@ -233,13 +233,13 @@ async fn mark_round_spent() {
 
 	let update = VtxoTreeUpdate::new()
 		.insert_spendable_vtxos([vtxo.clone()]);
-	db.execute_vtxo_tree_update(update).await.expect("insert");
+	db.write(async |t| t.execute_vtxo_tree_update(update).await).await.expect("insert");
 
 	let update = VtxoTreeUpdate::new()
 		.mark_vtxos_round_spent([(vtxo.id(), round_id)]);
-	db.execute_vtxo_tree_update(update).await.expect("mark round spent");
+	db.write(async |t| t.execute_vtxo_tree_update(update).await).await.expect("mark round spent");
 
-	let state = db.get_user_vtxo_by_id(vtxo.id()).await.expect("vtxo found");
+	let state = db.read(async |t| t.get_user_vtxo_by_id(vtxo.id()).await).await.expect("vtxo found");
 	assert_eq!(state.spent_in_round, Some(round_id));
 }
 
@@ -253,15 +253,15 @@ async fn mark_round_spent_double_spend_fails() {
 
 	let update = VtxoTreeUpdate::new()
 		.insert_spendable_vtxos([vtxo.clone()]);
-	db.execute_vtxo_tree_update(update).await.expect("insert");
+	db.write(async |t| t.execute_vtxo_tree_update(update).await).await.expect("insert");
 
 	let update = VtxoTreeUpdate::new()
 		.mark_vtxos_round_spent([(vtxo.id(), round_id_1)]);
-	db.execute_vtxo_tree_update(update).await.expect("first spend");
+	db.write(async |t| t.execute_vtxo_tree_update(update).await).await.expect("first spend");
 
 	let err = VtxoTreeUpdate::new()
 		.mark_vtxos_round_spent([(vtxo.id(), round_id_2)]);
-	let err = db.execute_vtxo_tree_update(err).await.unwrap_err();
+	let err = db.write(async |t| t.execute_vtxo_tree_update(err).await).await.unwrap_err();
 	assert!(err.to_string().contains("unspendable"), "got: {}", err);
 }
 
@@ -275,13 +275,13 @@ async fn mark_offboard_spent() {
 
 	let update = VtxoTreeUpdate::new()
 		.insert_spendable_vtxos([vtxo.clone()]);
-	db.execute_vtxo_tree_update(update).await.expect("insert");
+	db.write(async |t| t.execute_vtxo_tree_update(update).await).await.expect("insert");
 
 	let update = VtxoTreeUpdate::new()
 		.mark_vtxos_offboard_spent([(vtxo.id(), offboard_txid, forfeit_txid)]);
-	db.execute_vtxo_tree_update(update).await.expect("mark offboard spent");
+	db.write(async |t| t.execute_vtxo_tree_update(update).await).await.expect("mark offboard spent");
 
-	let state = db.get_user_vtxo_by_id(vtxo.id()).await.expect("vtxo found");
+	let state = db.read(async |t| t.get_user_vtxo_by_id(vtxo.id()).await).await.expect("vtxo found");
 	assert_eq!(state.offboarded_in, Some(offboard_txid));
 	assert_eq!(state.oor_spent_txid, Some(forfeit_txid));
 }
@@ -294,15 +294,15 @@ async fn mark_offboard_spent_double_spend_fails() {
 
 	let update = VtxoTreeUpdate::new()
 		.insert_spendable_vtxos([vtxo.clone()]);
-	db.execute_vtxo_tree_update(update).await.expect("insert");
+	db.write(async |t| t.execute_vtxo_tree_update(update).await).await.expect("insert");
 
 	let update = VtxoTreeUpdate::new()
 		.mark_vtxos_offboard_spent([(vtxo.id(), dummy_txid(0x01), dummy_txid(0x11))]);
-	db.execute_vtxo_tree_update(update).await.expect("first spend");
+	db.write(async |t| t.execute_vtxo_tree_update(update).await).await.expect("first spend");
 
 	let err = VtxoTreeUpdate::new()
 		.mark_vtxos_offboard_spent([(vtxo.id(), dummy_txid(0x02), dummy_txid(0x22))]);
-	let err = db.execute_vtxo_tree_update(err).await.unwrap_err();
+	let err = db.write(async |t| t.execute_vtxo_tree_update(err).await).await.unwrap_err();
 	assert!(err.to_string().contains("unspendable"), "got: {}", err);
 }
 
@@ -316,17 +316,17 @@ async fn round_forfeit_after_round_spend() {
 
 	let update = VtxoTreeUpdate::new()
 		.insert_spendable_vtxos([vtxo.clone()]);
-	db.execute_vtxo_tree_update(update).await.expect("insert");
+	db.write(async |t| t.execute_vtxo_tree_update(update).await).await.expect("insert");
 
 	let update = VtxoTreeUpdate::new()
 		.mark_vtxos_round_spent([(vtxo.id(), round_id)]);
-	db.execute_vtxo_tree_update(update).await.expect("round spend");
+	db.write(async |t| t.execute_vtxo_tree_update(update).await).await.expect("round spend");
 
 	let update = VtxoTreeUpdate::new()
 		.mark_vtxos_round_forfeited([(vtxo.id(), forfeit_txid)]);
-	db.execute_vtxo_tree_update(update).await.expect("round forfeit");
+	db.write(async |t| t.execute_vtxo_tree_update(update).await).await.expect("round forfeit");
 
-	let state = db.get_user_vtxo_by_id(vtxo.id()).await.expect("vtxo found");
+	let state = db.read(async |t| t.get_user_vtxo_by_id(vtxo.id()).await).await.expect("vtxo found");
 	assert_eq!(state.spent_in_round, Some(round_id));
 	assert_eq!(state.oor_spent_txid, Some(forfeit_txid));
 }
@@ -339,11 +339,11 @@ async fn round_forfeit_without_round_spend_fails() {
 
 	let update = VtxoTreeUpdate::new()
 		.insert_spendable_vtxos([vtxo.clone()]);
-	db.execute_vtxo_tree_update(update).await.expect("insert");
+	db.write(async |t| t.execute_vtxo_tree_update(update).await).await.expect("insert");
 
 	let err = VtxoTreeUpdate::new()
 		.mark_vtxos_round_forfeited([(vtxo.id(), dummy_txid(0xcd))]);
-	let err = db.execute_vtxo_tree_update(err).await.unwrap_err();
+	let err = db.write(async |t| t.execute_vtxo_tree_update(err).await).await.unwrap_err();
 	assert!(
 		err.to_string().contains("vtxo not round-spent or already forfeited differently"),
 		"got: {}", err,
@@ -358,11 +358,11 @@ async fn unclaimed_then_claimed() {
 
 	let update = VtxoTreeUpdate::new()
 		.insert_unclaimed_vtxos([vtxo.clone()]);
-	db.execute_vtxo_tree_update(update).await.expect("insert unclaimed");
+	db.write(async |t| t.execute_vtxo_tree_update(update).await).await.expect("insert unclaimed");
 
 	let update = VtxoTreeUpdate::new()
 		.mark_vtxos_claimed([vtxo.id()]);
-	db.execute_vtxo_tree_update(update).await.expect("claim");
+	db.write(async |t| t.execute_vtxo_tree_update(update).await).await.expect("claim");
 }
 
 #[tokio::test]
@@ -373,14 +373,14 @@ async fn claim_is_idempotent() {
 
 	let update = VtxoTreeUpdate::new()
 		.insert_unclaimed_vtxos([vtxo.clone()]);
-	db.execute_vtxo_tree_update(update).await.expect("insert unclaimed");
+	db.write(async |t| t.execute_vtxo_tree_update(update).await).await.expect("insert unclaimed");
 
 	let update = VtxoTreeUpdate::new()
 		.mark_vtxos_claimed([vtxo.id()]);
-	db.execute_vtxo_tree_update(update).await.expect("first claim");
+	db.write(async |t| t.execute_vtxo_tree_update(update).await).await.expect("first claim");
 
 	// Already claimed — should still succeed
 	let update = VtxoTreeUpdate::new()
 		.mark_vtxos_claimed([vtxo.id()]);
-	db.execute_vtxo_tree_update(update).await.expect("idempotent claim");
+	db.write(async |t| t.execute_vtxo_tree_update(update).await).await.expect("idempotent claim");
 }

@@ -120,7 +120,7 @@ impl Server {
 			.insert_oor_spent_vtxos(builder.build_unsigned_internal_vtxos())
 			.insert_spendable_vtxos(builder.build_unsigned_vtxos().map(ServerVtxo::from))
 			.mark_vtxos_oor_spent(builder.input_spend_info());
-		self.db.execute_vtxo_tree_update(update).await?;
+		self.db.write(async |t| t.execute_vtxo_tree_update(update).await).await?;
 		drop(vtxo_guard);
 
 		// Only now it's safe to sign
@@ -134,7 +134,7 @@ impl Server {
 		request: ArkoorPackageCosignRequest<VtxoId>,
 	) -> anyhow::Result<ArkoorPackageCosignResponse> {
 		let input_vtxo_ids = request.inputs().cloned().collect::<Vec<VtxoId>>();
-		let input_vtxo_states = self.db.get_user_vtxos_by_id(&input_vtxo_ids).await?;
+		let input_vtxo_states = self.db.read(async |t| t.get_user_vtxos_by_id(&input_vtxo_ids).await).await?;
 
 		// Validate policies
 		for v in &input_vtxo_states {
@@ -161,7 +161,7 @@ impl Server {
 		// is already OOR-spent by the same tx (idempotent retry).
 		let chain_tip = self.chain_tip().height;
 		let spend_map: HashMap<VtxoId, Txid> = builder.spend_info().collect();
-		let input_vtxo_states = self.db.get_user_vtxos_by_id(&input_vtxo_ids).await?;
+		let input_vtxo_states = self.db.read(async |t| t.get_user_vtxos_by_id(&input_vtxo_ids).await).await?;
 		for v in &input_vtxo_states {
 			let spending_txid = spend_map.get(&v.vtxo_id)
 				.context("missing spend info for input vtxo")?;

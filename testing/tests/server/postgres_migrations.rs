@@ -15,9 +15,9 @@ async fn get_bare_vtxo_by_id() {
 	let db = Db::connect(&postgres_cfg).await.expect("Connected to database");
 
 	let vtxo = ServerVtxo::from(VTXO_VECTORS.board_vtxo.clone());
-	db.upsert_vtxos([vtxo.clone()]).await.unwrap();
+	db.write(async |t| t.upsert_vtxos([vtxo.clone()]).await).await.unwrap();
 
-	let bare = db.get_bare_vtxo_by_id(vtxo.id()).await.unwrap();
+	let bare = db.read(async |t| t.get_bare_vtxo_by_id(vtxo.id()).await).await.unwrap();
 
 	assert_eq!(bare.vtxo_id, vtxo.id());
 	assert_eq!(bare.vtxo.amount(), vtxo.amount());

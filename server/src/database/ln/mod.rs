@@ -10,19 +10,20 @@ use bitcoin::Amount;
 use bitcoin::secp256k1::PublicKey;
 use chrono::{DateTime, Local};
 use lightning_invoice::Bolt11Invoice;
-use tracing::{trace, warn};
+use tracing::{debug, trace, warn};
 use ark::VtxoId;
 use ark::lightning::{Invoice, PaymentHash, Preimage};
 use ark::mailbox::MailboxIdentifier;
 use bitcoin_ext::{AmountExt, BlockHeight};
 use cln_rpc::listsendpays_request::ListsendpaysIndex;
 
-use crate::database::{Checkpoint, Db};
+use crate::database::{Checkpoint, Tx};
+use crate::telemetry;
 
 /// Identifier by which CLN nodes are stored in the database.
 pub type ClnNodeId = i64;
 
-impl Db {
+impl<'t> Tx<'t> {
 	// *******************
 	// * lightning state *
 	// *******************
@@ -31,23 +32,21 @@ impl Db {
 		&self,
 		pubkey: &PublicKey,
 	) -> anyhow::Result<(ClnNodeId, DateTime<Local>)> {
-		let conn = self.get_conn().await?;
-
-		let select_stmt = conn.prepare("
+		let select_stmt = self.prepare("
 			SELECT id, updated_at
 			FROM lightning_node
 			WHERE pubkey = $1;
 		").await?;
 
 		let pubkey = pubkey.serialize();
-		let rows = conn.query(&select_stmt, &[&&pubkey[..]]).await?;
+		let rows = self.query(&select_stmt, &[&&pubkey[..]]).await?;
 		if let Some(row) = rows.get(0) {
 			let id = row.get("id");
 			let updated_at = row.get("updated_at");
 			return Ok((id, updated_at));
 		}
 
-		let insert_stmt = conn.prepare("
+		let insert_stmt = self.prepare("
 			INSERT INTO lightning_node (
 				pubkey,
 				payment_created_index,
@@ -58,7 +57,7 @@ impl Db {
 			RETURNING id, updated_at;
 		").await?;
 
-		let rows = conn.query(&insert_stmt, &[&&pubkey[..]]).await?;
+		let rows = self.query(&insert_stmt, &[&&pubkey[..]]).await?;
 		if let Some(row) = rows.get(0) {
 			let id = row.get("id");
 			let updated_at = row.get("updated_at");
@@ -75,13 +74,12 @@ impl Db {
 		&self,
 		node_id: ClnNodeId,
 	) -> anyhow::Result<Option<LightningIndexes>> {
-		let conn = self.get_conn().await?;
-		let statement = conn.prepare("
+		let statement = self.prepare("
 			SELECT payment_created_index, payment_updated_index
 			FROM lightning_node
 			WHERE id = $1;
 		").await?;
-		let rows = conn.query(&statement, &[&node_id]).await?;
+		let rows = self.query(&statement, &[&node_id]).await?;
 
 		if let Some(row) = rows.get(0) {
 			let created_index = row.get::<_, i64>("payment_created_index");
@@ -106,15 +104,14 @@ impl Db {
 		kind: ListsendpaysIndex,
 		index: u64,
 	) -> anyhow::Result<DateTime<Local>> {
-		let conn = self.get_conn().await?;
 		let statement = match kind {
-			ListsendpaysIndex::Created => conn.prepare("
+			ListsendpaysIndex::Created => self.prepare("
 				UPDATE lightning_node
 				SET payment_created_index = $2, updated_at = NOW()
 				WHERE id = $1
 				RETURNING updated_at;
 			").await?,
-			ListsendpaysIndex::Updated => conn.prepare("
+			ListsendpaysIndex::Updated => self.prepare("
 				UPDATE lightning_node
 				SET payment_updated_index = $2, updated_at = NOW()
 				WHERE id = $1
@@ -122,7 +119,7 @@ impl Db {
 			").await?,
 		};
 
-		let row = conn.query_one(&statement, &[&node_id, &(index as i64)]).await?;
+		let row = self.query_one(&statement, &[&node_id, &(index as i64)]).await?;
 		Ok(row.get("updated_at"))
 	}
 
@@ -130,9 +127,7 @@ impl Db {
 		&self,
 		node_id: ClnNodeId,
 	) -> anyhow::Result<Vec<LightningPaymentAttempt>> {
-		let conn = self.get_conn().await?;
-
-		let stmt = conn.prepare("
+		let stmt = self.prepare("
 			SELECT lpa.id,
 				lpa.lightning_node_id, lpa.payment_hash, lpa.amount_msat, lpa.final_amount_msat,
 				lpa.status, lpa.error, lpa.created_at, lpa.updated_at, (
@@ -147,7 +142,7 @@ impl Db {
 
 		let status_failed = LightningPaymentStatus::Failed;
 		let status_succeeded = LightningPaymentStatus::Succeeded;
-		let rows = conn.query(
+		let rows = self.query(
 			&stmt, &[&status_failed, &status_succeeded, &node_id],
 		).await?;
 
@@ -158,9 +153,7 @@ impl Db {
 		&self,
 		payment_hash: PaymentHash,
 	) -> anyhow::Result<Option<LightningPaymentAttempt>> {
-		let conn = self.get_conn().await?;
-
-		let stmt = conn.prepare("
+		let stmt = self.prepare("
 			SELECT lpa.id,
 				lpa.lightning_node_id, lpa.payment_hash, lpa.amount_msat, lpa.final_amount_msat,
 				lpa.status, lpa.error, lpa.created_at, lpa.updated_at, (
@@ -176,7 +169,7 @@ impl Db {
 
 		let status_failed = LightningPaymentStatus::Failed;
 		let status_succeeded = LightningPaymentStatus::Succeeded;
-		let rows = conn.query(
+		let rows = self.query(
 			&stmt, &[&payment_hash.to_string(), &status_failed, &status_succeeded],
 		).await?;
 
@@ -206,12 +199,9 @@ impl Db {
 		amount: Amount,
 		sender_mailbox_id: Option<&MailboxIdentifier>,
 	) -> anyhow::Result<()> {
-		let mut conn = self.get_conn().await?;
-		let tx = conn.transaction().await?;
-
 		let payment_hash = invoice.payment_hash();
 
-		let check_stmt = tx.prepare("
+		let check_stmt = self.prepare("
 			SELECT id FROM lightning_payment_attempt
 			WHERE payment_hash = $1 AND status NOT IN ($2, $3)
 			LIMIT 1
@@ -220,7 +210,7 @@ impl Db {
 
 		let status_failed = LightningPaymentStatus::Failed;
 		let status_succeeded = LightningPaymentStatus::Succeeded;
-		let existing = tx.query_opt(
+		let existing = self.query_opt(
 			&check_stmt,
 			&[&payment_hash.to_string(), &status_failed, &status_succeeded],
 		).await?;
@@ -229,7 +219,7 @@ impl Db {
 			bail!("open payment attempt already exists for payment hash {}", payment_hash);
 		}
 
-		let stmt = tx.prepare("
+		let stmt = self.prepare("
 			INSERT INTO lightning_payment_attempt (
 				lightning_node_id,
 				payment_hash,
@@ -244,15 +234,13 @@ impl Db {
 
 		let requested_status = LightningPaymentStatus::Requested;
 		let mailbox_str = sender_mailbox_id.map(|id| id.to_string());
-		let row = tx.query_one(
+		let row = self.query_one(
 			&stmt,
 			&[&node_id, &payment_hash.to_string(), &(amount.to_msat() as i64), &mailbox_str, &requested_status],
 		).await?;
 
 		let payment_attempt_id: i64 = row.get("id");
 		let updated_at: DateTime<Local> = row.get("updated_at");
-
-		tx.commit().await?;
 
 		trace!("Stored lightning payment attempt {} with time {:#?}.",
 			payment_attempt_id,
@@ -268,11 +256,9 @@ impl Db {
 		new_status: LightningPaymentStatus,
 		new_payment_error: Option<&str>,
 	) -> anyhow::Result<()> {
-		let conn = self.get_conn().await?;
-
 		// We want to preserve any previous error message in case we don't have a new one.
 		if let Some(error) = new_payment_error {
-			let stmt = conn.prepare("
+			let stmt = self.prepare("
 				UPDATE lightning_payment_attempt
 				SET status = $3,
 					error = $4,
@@ -280,7 +266,7 @@ impl Db {
 				WHERE id = $1 AND updated_at = $2
 				RETURNING updated_at;
 			").await?;
-			conn.query_one(
+			self.query_one(
 				&stmt,
 				&[
 					&old_payment_attempt.id,
@@ -290,14 +276,14 @@ impl Db {
 				]
 			).await?;
 		} else {
-			let stmt = conn.prepare("
+			let stmt = self.prepare("
 				UPDATE lightning_payment_attempt
 				SET status = $3,
 					updated_at = NOW()
 				WHERE id = $1 AND updated_at = $2
 				RETURNING updated_at;
 			").await?;
-			conn.query_one(
+			self.query_one(
 				&stmt,
 				&[
 					&old_payment_attempt.id,
@@ -318,9 +304,7 @@ impl Db {
 		new_payment_error: Option<&str>,
 		new_final_amount_msat: Option<u64>,
 	) -> anyhow::Result<Option<DateTime<Local>>> {
-		let conn = self.get_conn().await?;
-
-		let stmt = conn.prepare("
+		let stmt = self.prepare("
 			UPDATE lightning_payment_attempt
 			SET status = $3,
 				error = COALESCE($4, error),
@@ -332,7 +316,7 @@ impl Db {
 
 		let final_amount_msat = new_final_amount_msat.map(|u| u as i64);
 		let error_str = new_payment_error;
-		let row = conn.query_opt(&stmt, &[
+		let row = self.query_opt(&stmt, &[
 			&attempt.id,
 			&attempt.updated_at,
 			&new_status,
@@ -348,9 +332,7 @@ impl Db {
 		&self,
 		payment_hash: PaymentHash,
 	) -> anyhow::Result<Option<LightningPaymentAttempt>> {
-		let conn = self.get_conn().await?;
-
-		let stmt = conn.prepare("
+		let stmt = self.prepare("
 			SELECT lpa.id,
 				lpa.lightning_node_id, lpa.payment_hash, lpa.amount_msat, lpa.final_amount_msat,
 				lpa.status, lpa.error, lpa.created_at, lpa.updated_at, (
@@ -364,7 +346,7 @@ impl Db {
 			LIMIT 1;
 		").await?;
 
-		let row = conn.query_opt(
+		let row = self.query_opt(
 			&stmt, &[&payment_hash.to_string()],
 		).await?;
 
@@ -382,13 +364,11 @@ impl Db {
 		amount_msat: u64,
 		receiver_mailbox_id: Option<&MailboxIdentifier>,
 	) -> anyhow::Result<()> {
-		let conn = self.get_conn().await?;
-
 		let payment_hash = invoice.payment_hash();
 		let mailbox_str = receiver_mailbox_id.map(|id| id.to_string());
 
 		self.inner_store_lightning_htlc_subscription(
-			conn, node_id, &payment_hash.to_string(), &invoice.to_string(),
+			node_id, &payment_hash.to_string(), &invoice.to_string(),
 			Some(amount_msat), mailbox_str.as_deref(),
 		).await?;
 
@@ -398,22 +378,17 @@ impl Db {
 	/// Store a new HTLC subscription for a given invoice.
 	///
 	/// CLN node monitor regularly queries open subscriptions to check if there are any incoming HTLCs.
-	async fn inner_store_lightning_htlc_subscription<T, C>(
+	async fn inner_store_lightning_htlc_subscription(
 		&self,
-		conn: T,
 		node_id: ClnNodeId,
 		payment_hash: &str,
 		invoice: &str,
 		final_amount_msat: Option<u64>,
 		receiver_mailbox_id: Option<&str>,
-	) -> anyhow::Result<(i64, DateTime<Local>)>
-	where
-		T: std::ops::Deref<Target = C>,
-		C: tokio_postgres::GenericClient,
-	{
+	) -> anyhow::Result<(i64, DateTime<Local>)> {
 		let requested_status = LightningHtlcSubscriptionStatus::Created;
 
-		let stmt = conn.prepare("
+		let stmt = self.prepare("
 			INSERT INTO lightning_htlc_subscription (
 				lightning_node_id,
 				payment_hash,
@@ -428,11 +403,10 @@ impl Db {
 		").await?;
 
 		let final_amount = final_amount_msat.map(|u| u as i64);
-		let row = conn
-			.query_one(
-				&stmt,
-				&[&node_id, &payment_hash, &invoice, &final_amount, &receiver_mailbox_id, &requested_status],
-			).await?;
+		let row = self.query_one(
+			&stmt,
+			&[&node_id, &payment_hash, &invoice, &final_amount, &receiver_mailbox_id, &requested_status],
+		).await?;
 
 		let id = row.get("id");
 		let updated_at = row.get("updated_at");
@@ -452,9 +426,8 @@ impl Db {
 		payment_hash: PaymentHash,
 		invoice: &Bolt11Invoice,
 	) -> anyhow::Result<()> {
-		let conn = self.get_conn().await?;
 		self.inner_store_lightning_htlc_subscription(
-			conn, node_id, &payment_hash.to_string(), &invoice.to_string(), None, None,
+			node_id, &payment_hash.to_string(), &invoice.to_string(), None, None,
 		).await?;
 		Ok(())
 	}
@@ -476,8 +449,6 @@ impl Db {
 		status: LightningHtlcSubscriptionStatus,
 		lowest_incoming_htlc_expiry: Option<BlockHeight>,
 	) -> anyhow::Result<()> {
-		let conn = self.get_conn().await?;
-
 		// Set accepted_at when transitioning to Accepted status
 		let set_accepted_at = status == LightningHtlcSubscriptionStatus::Accepted;
 
@@ -495,11 +466,11 @@ impl Db {
 			WHERE id = $1{accepted_at_check}",
 		);
 
-		let stmt = conn.prepare(&query).await?;
+		let stmt = self.prepare(&query).await?;
 		if let Some(expiry) = lowest_incoming_htlc_expiry {
-			conn.execute(&stmt, &[&id, &status, &(expiry as i64)]).await?;
+			self.execute(&stmt, &[&id, &status, &(expiry as i64)]).await?;
 		} else {
-			conn.execute(&stmt, &[&id, &status]).await?;
+			self.execute(&stmt, &[&id, &status]).await?;
 		}
 
 		Ok(())
@@ -516,10 +487,7 @@ impl Db {
 		htlc_subscription_id: i64,
 		htlcs: impl IntoIterator<Item = VtxoId>,
 	) -> anyhow::Result<()> {
-		let mut conn = self.get_conn().await?;
-		let tx = conn.transaction().await?;
-
-		let stmt = tx.prepare("
+		let stmt = self.prepare("
 			UPDATE lightning_htlc_subscription
 				SET status = 'htlcs-ready'::lightning_htlc_subscription_status,
 					updated_at = NOW()
@@ -527,13 +495,13 @@ impl Db {
 					AND status = 'accepted'::lightning_htlc_subscription_status
 				RETURNING id;
 		").await?;
-		let count = tx.execute(&stmt, &[&htlc_subscription_id]).await
+		let count = self.execute(&stmt, &[&htlc_subscription_id]).await
 			.context("UPDATE lightning_htlc_subscription")?;
 		if count == 0 {
 			bail!("error updating lightning receive with htlcs, probably not in status accepted");
 		}
 
-		let stmt = tx.prepare("
+		let stmt = self.prepare("
 			UPDATE vtxo
 				SET lightning_htlc_subscription_id = $1, updated_at = NOW()
 			WHERE vtxo_id = ANY($2)
@@ -541,13 +509,12 @@ impl Db {
 		").await?;
 
 		let ids = htlcs.into_iter().map(|v| v.to_string()).collect::<Vec<_>>();
-		let count = tx.execute(&stmt, &[&htlc_subscription_id, &ids]).await
+		let count = self.execute(&stmt, &[&htlc_subscription_id, &ids]).await
 			.context("UPDATE vtxo")?;
 		if count != ids.len() as u64 {
 			bail!("error updating lightning receive with htlcs, probably not in status accepted");
 		}
 
-		tx.commit().await?;
 		Ok(())
 	}
 
@@ -558,9 +525,7 @@ impl Db {
 		&self,
 		node_id: ClnNodeId,
 	) -> anyhow::Result<Vec<LightningHtlcSubscription>> {
-		let conn = self.get_conn().await?;
-
-		let stmt = conn.prepare("
+		let stmt = self.prepare("
 			SELECT id, lightning_node_id, payment_hash, invoice,
 				status, lowest_incoming_htlc_expiry, accepted_at,
 				created_at, updated_at
@@ -571,7 +536,7 @@ impl Db {
 
 		let status_settled = LightningHtlcSubscriptionStatus::Settled;
 		let status_canceled = LightningHtlcSubscriptionStatus::Canceled;
-		let rows = conn.query(
+		let rows = self.query(
 			&stmt, &[&status_settled, &status_canceled, &node_id]
 		).await?;
 
@@ -585,9 +550,7 @@ impl Db {
 		&self,
 		payment_hash: PaymentHash,
 	) -> anyhow::Result<Vec<LightningHtlcSubscription>> {
-		let conn = self.get_conn().await?;
-
-		let stmt = conn.prepare("
+		let stmt = self.prepare("
 			SELECT id, lightning_node_id, payment_hash, invoice,
 				status, lowest_incoming_htlc_expiry, accepted_at,
 				created_at, updated_at
@@ -596,7 +559,7 @@ impl Db {
 			ORDER BY created_at DESC;
 		").await?;
 
-		let rows = conn.query(
+		let rows = self.query(
 			&stmt, &[&payment_hash.to_string()]
 		).await?;
 
@@ -610,9 +573,7 @@ impl Db {
 		&self,
 		payment_hash: PaymentHash,
 	) -> anyhow::Result<Option<LightningHtlcSubscription>> {
-		let conn = self.get_conn().await?;
-
-		let stmt = conn.prepare("
+		let stmt = self.prepare("
 			SELECT lhs.id, lhs.lightning_node_id, lhs.payment_hash, lhs.invoice,
 				lhs.status, lhs.lowest_incoming_htlc_expiry, lhs.accepted_at,
 				lhs.created_at, lhs.updated_at,
@@ -633,7 +594,7 @@ impl Db {
 			LIMIT 1;
 		").await?;
 
-		let rows = conn.query(&stmt, &[&payment_hash.to_string()]).await?;
+		let rows = self.query(&stmt, &[&payment_hash.to_string()]).await?;
 		if let Some(row) = rows.get(0) {
 			Ok(Some(row.try_into()?))
 		} else {
@@ -645,9 +606,7 @@ impl Db {
 		&self,
 		htlc_subscription_id: i64,
 	) -> anyhow::Result<Option<LightningHtlcSubscription>> {
-		let conn = self.get_conn().await?;
-
-		let stmt = conn.prepare("
+		let stmt = self.prepare("
 			SELECT id, lightning_node_id, payment_hash, invoice,
 				status, lowest_incoming_htlc_expiry, accepted_at,
 				created_at, updated_at
@@ -656,7 +615,7 @@ impl Db {
 			ORDER BY created_at DESC;
 		").await?;
 
-		let row = conn.query_opt(
+		let row = self.query_opt(
 			&stmt, &[&htlc_subscription_id]
 		).await?;
 
@@ -672,12 +631,10 @@ impl Db {
 		&self,
 		payment_hash: PaymentHash,
 	) -> anyhow::Result<Option<ark::mailbox::MailboxIdentifier>> {
-		let conn = self.get_conn().await?;
-
-		let stmt = conn.prepare(
+		let stmt = self.prepare(
 			"SELECT receiver_mailbox_id FROM lightning_htlc_subscription WHERE payment_hash = $1 ORDER BY created_at DESC LIMIT 1"
 		).await?;
-		let row = conn.query_opt(&stmt, &[&payment_hash.to_string()]).await?;
+		let row = self.query_opt(&stmt, &[&payment_hash.to_string()]).await?;
 
 		match row {
 			Some(row) => {
@@ -700,15 +657,13 @@ impl Db {
 		&self,
 		payment_hash: PaymentHash,
 	) -> anyhow::Result<Option<ark::mailbox::MailboxIdentifier>> {
-		let conn = self.get_conn().await?;
-
-		let stmt = conn.prepare(
+		let stmt = self.prepare(
 			"SELECT sender_mailbox_id FROM lightning_payment_attempt
 			WHERE payment_hash = $1
 			ORDER BY created_at DESC
 			LIMIT 1"
 		).await?;
-		let row = conn.query_opt(&stmt, &[&payment_hash.to_string()]).await?;
+		let row = self.query_opt(&stmt, &[&payment_hash.to_string()]).await?;
 
 		match row {
 			Some(row) => {
@@ -735,9 +690,7 @@ impl Db {
 		node_id: ClnNodeId,
 		payment_hash: &PaymentHash,
 	) -> anyhow::Result<Option<LightningHtlcSubscription>> {
-		let conn = self.get_conn().await?;
-
-		let stmt = conn.prepare("
+		let stmt = self.prepare("
 			SELECT id, lightning_node_id, payment_hash, invoice,
 				status, lowest_incoming_htlc_expiry, accepted_at,
 				created_at, updated_at
@@ -751,7 +704,7 @@ impl Db {
 
 		let status_settled = LightningHtlcSubscriptionStatus::Settled;
 		let status_canceled = LightningHtlcSubscriptionStatus::Canceled;
-		let row = conn.query_opt(
+		let row = self.query_opt(
 			&stmt,
 			&[&payment_hash.to_string(), &node_id, &status_settled, &status_canceled],
 		).await?;
@@ -767,13 +720,12 @@ impl Db {
 		&self,
 		preimage: Preimage,
 	) -> anyhow::Result<Option<Checkpoint>> {
-		let conn = self.get_conn().await?;
 		let payment_hash = preimage.compute_payment_hash();
 
 		// ON CONFLICT DO NOTHING makes this idempotent: if an HTLC tx
 		// gets unconfirmed and re-confirmed in a reorg, the duplicate
 		// insert is safely ignored.
-		let stmt = conn.prepare("
+		let stmt = self.prepare("
 			WITH lock AS (SELECT pg_advisory_xact_lock(hashtext('htlc_settlement.write')))
 			INSERT INTO htlc_settlement (payment_hash, preimage, created_at)
 			SELECT $1, $2, NOW() FROM lock
@@ -781,7 +733,7 @@ impl Db {
 			RETURNING id;
 		").await?;
 
-		let row = conn.query_opt(
+		let row = self.query_opt(
 			&stmt,
 			&[&payment_hash.to_string(), &preimage.to_string()],
 		).await.context("failed to store htlc settlement")?;
@@ -799,15 +751,13 @@ impl Db {
 		&self,
 		payment_hash: PaymentHash,
 	) -> anyhow::Result<Option<Preimage>> {
-		let conn = self.get_conn().await?;
-
-		let stmt = conn.prepare("
+		let stmt = self.prepare("
 			SELECT preimage
 			FROM htlc_settlement
 			WHERE payment_hash = $1;
 		").await?;
 
-		let row = conn.query_opt(&stmt, &[&payment_hash.to_string()]).await
+		let row = self.query_opt(&stmt, &[&payment_hash.to_string()]).await
 			.context("failed to query htlc settlement")?;
 
 		if let Some(row) = row {
@@ -829,11 +779,9 @@ impl Db {
 	pub async fn get_htlc_settlement_resume_checkpoint(
 		&self,
 	) -> anyhow::Result<Checkpoint> {
-		let conn = self.get_conn().await?;
-
 		// Single query: find the earliest unsettled entry, or fall back
 		// to MAX(id) when everything is already settled.
-		let stmt = conn.prepare("
+		let stmt = self.prepare("
 			SELECT COALESCE(
 				(SELECT hs.id - 1
 				 FROM htlc_settlement hs
@@ -846,7 +794,7 @@ impl Db {
 			) AS resume_cp;
 		").await?;
 
-		let row = conn.query_one(&stmt, &[]).await
+		let row = self.query_one(&stmt, &[]).await
 			.context("failed to query htlc settlement resume checkpoint")?;
 		let cp = u64::try_from(row.get::<_, i64>("resume_cp"))
 			.context("negative checkpoint")?;
@@ -859,9 +807,7 @@ impl Db {
 		after_id: Checkpoint,
 		limit: usize,
 	) -> anyhow::Result<Vec<crate::ln::settler::Settlement>> {
-		let conn = self.get_conn().await?;
-
-		let stmt = conn.prepare("
+		let stmt = self.prepare("
 			SELECT id, payment_hash, preimage
 			FROM htlc_settlement
 			WHERE id > $1
@@ -869,7 +815,7 @@ impl Db {
 			LIMIT $2;
 		").await?;
 
-		let rows = conn.query(
+		let rows = self.query(
 			&stmt,
 			&[&i64::try_from(after_id)?, &i64::try_from(limit)?],
 		).await.context("failed to query htlc settlements since checkpoint")?;
@@ -892,13 +838,46 @@ impl Db {
 	pub async fn get_htlc_settlement_max_checkpoint(
 		&self,
 	) -> anyhow::Result<Checkpoint> {
-		let conn = self.get_conn().await?;
-		let row = conn.query_one(
+		let row = self.query_one(
 			"SELECT COALESCE(MAX(id), 0) AS cp FROM htlc_settlement;",
 			&[],
 		).await.context("failed to query max htlc settlement checkpoint")?;
 		let cp = u64::try_from(row.get::<_, i64>("cp"))
 			.context("negative checkpoint")?;
 		Ok(cp)
+	}
+
+	pub async fn verify_and_update_payment_attempt(
+		&self,
+		attempt: &LightningPaymentAttempt,
+		status: LightningPaymentStatus,
+		payment_error: Option<&str>,
+		final_amount_msat: Option<u64>,
+	) -> anyhow::Result<bool> {
+		let payment_hash = attempt.payment_hash;
+
+		// Skip if the attempt is already in a final state. The on-chain
+		// settlement path records the preimage (via the settler) before
+		// CLN finalizes the payment attempt; checking only the DB status
+		// here is sufficient because the preimage lives in htlc_settlement.
+		if attempt.status.is_final() {
+			debug!("Lightning payment attempt update for {payment_hash}: Skipped update because the \
+				payment is already in a final state.");
+			return Ok(false);
+		}
+
+		let updated_at = self.update_lightning_payment_attempt_result(
+			attempt, status, payment_error, final_amount_msat,
+		).await?;
+
+		let amount_msat = final_amount_msat.unwrap_or(attempt.amount_msat);
+
+		telemetry::add_lightning_payment(
+			attempt.lightning_node_id,
+			amount_msat,
+			status,
+		);
+
+		Ok(updated_at.is_some())
 	}
 }

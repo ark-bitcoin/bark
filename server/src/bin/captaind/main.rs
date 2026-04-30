@@ -375,15 +375,15 @@ async fn inner_main() -> anyhow::Result<()> {
 				IntegrationCommand::Add {
 					integration_name,
 				} => {
-					let integration = db.store_integration(integration_name.as_str()).await?;
+					let integration = db.write(async |t| t.store_integration(integration_name.as_str()).await).await?;
 					println!("{}", integration.id);
 				}
 				IntegrationCommand::Remove {
 					integration_name,
 				} => {
-					let mut integration = db.get_integration_by_name(integration_name.as_str()).await?.expect("no such integration");
+					let mut integration = db.read(async |t| t.get_integration_by_name(integration_name.as_str()).await).await?.expect("no such integration");
 					integration.deleted_at = Some(Local::now());
-					let _ = db.delete_integration(integration.id).await?;
+					let _ = db.write(async |t| t.delete_integration(integration.id).await).await?;
 					println!("Deleted {}", integration_name);
 				}
 				IntegrationCommand::GenerateApiKey {
@@ -391,27 +391,27 @@ async fn inner_main() -> anyhow::Result<()> {
 				} => {
 					let db_filters = filters::Filters::init(filters.ip, filters.dns);
 					let api_key = uuid::Uuid::new_v4();
-					let integration = db.get_integration_by_name(integration_name.as_str()).await?
+					let integration = db.read(async |t| t.get_integration_by_name(integration_name.as_str()).await).await?
 						.expect("Invalid integration name");
 					let expiry_duration = humantime::parse_duration(expiry.as_str())
 						.context("Invalid value for <EXPIRY>")?;
 					let expiry = Local::now() + chrono::Duration::seconds(expiry_duration.as_secs() as i64);
-					let integration_api_key = db.store_integration_api_key(
+					let integration_api_key = db.write(async |t| t.store_integration_api_key(
 						api_key_name.as_str(),
 						api_key,
 						&db_filters,
 						integration.id,
 						expiry,
-					).await?;
+					).await).await?;
 					println!("API Key: {}", integration_api_key.api_key.to_string())
 				}
 				IntegrationCommand::DisableApiKey {
 					integration_name, api_key_name,
 				} => {
 					let integration_api_key =
-						db.get_integration_api_key_by_name(integration_name.as_str(), api_key_name.as_str()).await?
+						db.read(async |t| t.get_integration_api_key_by_name(integration_name.as_str(), api_key_name.as_str()).await).await?
 							.expect("invalid API Key");
-					db.delete_integration_api_key(integration_api_key.id, integration_api_key.updated_at).await?;
+					db.write(async |t| t.delete_integration_api_key(integration_api_key.id, integration_api_key.updated_at).await).await?;
 					println!("Deleted {}", api_key_name);
 				}
 				IntegrationCommand::UpdateApiKeyFilters {
@@ -419,34 +419,34 @@ async fn inner_main() -> anyhow::Result<()> {
 				} => {
 					let filters = filters::Filters::init(filters.ip, filters.dns);
 					let integration_api_key =
-						db.get_integration_api_key_by_name(integration_name.as_str(), api_key_name.as_str()).await?
+						db.read(async |t| t.get_integration_api_key_by_name(integration_name.as_str(), api_key_name.as_str()).await).await?
 							.expect("invalid API Key");
 
-					let integration_api_key = db.update_integration_api_key(
+					let integration_api_key = db.write(async |t| t.update_integration_api_key(
 						integration_api_key,
 						&filters,
-					).await?;
+					).await).await?;
 					println!("{}", integration_api_key.id);
 				}
 				IntegrationCommand::ConfigureTokenType {
 					integration_name, token_type, maximum_open_tokens, active_seconds,
 				} => {
-					let integration = db.get_integration_by_name(integration_name.as_str()).await?
+					let integration = db.read(async |t| t.get_integration_by_name(integration_name.as_str()).await).await?
 						.expect("Invalid integration name");
-					let existing_config = db.get_integration_token_config(token_type, integration.id).await?;
+					let existing_config = db.read(async |t| t.get_integration_token_config(token_type, integration.id).await).await?;
 					let integration_token_config = if let Some(existing_config) = existing_config {
-						db.update_integration_token_config(
+						db.write(async |t| t.update_integration_token_config(
 							existing_config,
 							maximum_open_tokens,
 							active_seconds,
-						).await?
+						).await).await?
 					} else {
-						db.store_integration_token_config(
+						db.write(async |t| t.store_integration_token_config(
 							token_type,
 							maximum_open_tokens,
 							active_seconds,
 							integration.id,
-						).await?
+						).await).await?
 					};
 					println!("{}", integration_token_config.id);
 				}
@@ -455,17 +455,17 @@ async fn inner_main() -> anyhow::Result<()> {
 				} => {
 					let db_filters = filters::Filters::init(filters.ip, filters.dns);
 					let token = uuid::Uuid::new_v4().to_string();
-					let integration = db.get_integration_by_name(integration_name.as_str()).await?
+					let integration = db.read(async |t| t.get_integration_by_name(integration_name.as_str()).await).await?
 						.expect("Invalid integration name");
-					let integration_token_config = db.get_integration_token_config(token_type, integration.id).await?
+					let integration_token_config = db.read(async |t| t.get_integration_token_config(token_type, integration.id).await).await?
 						.expect("no token configuration found");
-					let integration_api_key = db.get_integration_api_key_by_api_key(
+					let integration_api_key = db.read(async |t| t.get_integration_api_key_by_api_key(
 						integration_api_key.unwrap_or_else(|| Uuid::parse_str(CAPTAIND_CLI_API_KEY).expect("default api key valid"))
-					).await?.expect("invalid API Key");
+					).await).await?.expect("invalid API Key");
 					let expiry_time = Local::now() +
 						chrono::Duration::seconds(integration_token_config.active_seconds as i64);
 
-					let integration_token = db.store_integration_token(
+					let integration_token = db.write(async |t| t.store_integration_token(
 						token.as_str(),
 						token_type,
 						TokenStatus::Unused,
@@ -473,58 +473,58 @@ async fn inner_main() -> anyhow::Result<()> {
 						&db_filters,
 						integration.id,
 						integration_api_key.id,
-					).await?;
+					).await).await?;
 					println!("Token: {}", integration_token.token);
 				}
 				IntegrationCommand::UpdateTokenStatus {
 					integration_name, integration_api_key, token, status,
 				} => {
-					let integration = db.get_integration_by_name(integration_name.as_str()).await?
+					let integration = db.read(async |t| t.get_integration_by_name(integration_name.as_str()).await).await?
 						.expect("invalid integration name");
 					let integration_token =
-						db.get_integration_token(token.as_str()).await?
+						db.read(async |t| t.get_integration_token(token.as_str()).await).await?
 							.expect("invalid Token");
 
 					if integration.id != integration_token.integration_id {
 						bail!("integration doesn't match token");
 					}
 
-					let integration_api_key = db.get_integration_api_key_by_api_key(
+					let integration_api_key = db.read(async |t| t.get_integration_api_key_by_api_key(
 						integration_api_key.unwrap_or_else(|| Uuid::parse_str(CAPTAIND_CLI_API_KEY).expect("default api key valid"))
-					).await?.expect("invalid API Key");
+					).await).await?.expect("invalid API Key");
 
-					let integration_token = db.update_integration_token(
+					let integration_token = db.write(async |t| t.update_integration_token(
 						integration_token.clone(),
 						integration_api_key.id,
 						status,
 						&integration_token.filters,
-					).await?;
+					).await).await?;
 					println!("{}", integration_token.id);
 				}
 				IntegrationCommand::UpdateTokenFilters {
 					integration_name, integration_api_key, token, filters,
 				} => {
 					let filters = filters::Filters::init(filters.ip, filters.dns);
-					let integration = db.get_integration_by_name(integration_name.as_str()).await?
+					let integration = db.read(async |t| t.get_integration_by_name(integration_name.as_str()).await).await?
 						.expect("invalid integration name");
 					let integration_token =
-						db.get_integration_token(token.as_str()).await?
+						db.read(async |t| t.get_integration_token(token.as_str()).await).await?
 							.expect("invalid Token");
 
 					if integration.id != integration_token.integration_id {
 						bail!("integration doesn't match token");
 					}
 
-					let integration_api_key = db.get_integration_api_key_by_api_key(
+					let integration_api_key = db.read(async |t| t.get_integration_api_key_by_api_key(
 						integration_api_key.unwrap_or_else(|| Uuid::parse_str(CAPTAIND_CLI_API_KEY).expect("default api key valid"))
-					).await?.expect("invalid API Key");
+					).await).await?.expect("invalid API Key");
 
-					let integration_token = db.update_integration_token(
+					let integration_token = db.write(async |t| t.update_integration_token(
 						integration_token.clone(),
 						integration_api_key.id,
 						integration_token.status,
 						&filters,
-					).await?;
+					).await).await?;
 					println!("{}", integration_token.id);
 				}
 			}
@@ -549,7 +549,7 @@ async fn inner_main() -> anyhow::Result<()> {
 				}
 
 				// If we have the signed funding tx, check that the mempool would reject it.
-				let vtx = db.get_virtual_transaction_by_txid(funding_txid).await?
+				let vtx = db.read(async |t| t.get_virtual_transaction_by_txid(funding_txid).await).await?
 					.context("funding tx not found in virtual tx table")?;
 				let signed_tx = vtx.signed_tx()
 					.context("no signed tx in virtual tx table for funding tx")?;
@@ -562,11 +562,11 @@ async fn inner_main() -> anyhow::Result<()> {
 				}
 
 				// Check if any user-facing output vtxos have already been spent.
-				let round = db.get_round(round_id).await?.context("round not found")?;
+				let round = db.read(async |t| t.get_round(round_id).await).await?.context("round not found")?;
 				let cached_tree = round.signed_tree.into_cached_tree();
 				let mut any_spent = false;
 				for vtxo in cached_tree.output_vtxos() {
-					let state = db.get_user_vtxo_by_id(vtxo.id()).await?;
+					let state = db.read(async |t| t.get_user_vtxo_by_id(vtxo.id()).await).await?;
 					if !state.is_unspent() {
 						println!("VTXO {} is already spent", vtxo.id());
 						any_spent = true;
@@ -582,7 +582,7 @@ async fn inner_main() -> anyhow::Result<()> {
 					acknowledge by setting the --dangerous flag");
 			}
 
-			db.undo_round(round_id).await?;
+			db.write(async |t| t.undo_round(round_id).await).await?;
 			println!("Round {} undone successfully", funding_txid);
 		},
 	}
