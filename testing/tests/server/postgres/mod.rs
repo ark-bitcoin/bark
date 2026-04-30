@@ -1261,18 +1261,18 @@ async fn set_forfeit_transactions_is_idempotent() {
 	// Note: `round_participation.round_id` is a TEXT column holding the
 	// funding txid, not the numeric `round.id`.
 	let funding_txid = dummy_tx(42).compute_txid();
-	{
-		let conn = db.get_conn().await.unwrap();
-		conn.execute(
+	db.write(async |t| {
+		t.execute(
 			"INSERT INTO round (seq, funding_txid, funding_tx, signed_tree, expiry, created_at)
 			VALUES (0, $1, '\\x00', '\\x00', 1000, NOW())",
 			&[&funding_txid.to_string()],
 		).await.unwrap();
-		conn.execute(
+		t.execute(
 			"UPDATE round_participation SET round_id = $1 WHERE unlock_hash = $2",
 			&[&funding_txid.to_string(), &unlock_hash.to_string()],
 		).await.unwrap();
-	}
+		Ok(())
+	}).await.unwrap();
 
 	// Build one distinct forfeit tx per input. Using distinct txs lets us
 	// check that each vtxo row ends up with its own oor_spent_txid and not

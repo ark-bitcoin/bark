@@ -29,14 +29,15 @@ fn dummy_txid(byte: u8) -> Txid {
 /// Required because spent_in_round has a foreign key to round.id.
 async fn insert_dummy_round(db: &Db, seq: i64) -> i64 {
 	let funding_txid = dummy_txid(seq as u8);
-	let conn = db.get_conn().await.expect("connection");
-	let row = conn.query_one(
-		"INSERT INTO round (seq, funding_txid, funding_tx, signed_tree, expiry, created_at)
-		VALUES ($1, $2, '\\x00', '\\x00', 1000, NOW())
-		RETURNING id",
-		&[&seq, &funding_txid.to_string()],
-	).await.expect("insert dummy round");
-	row.get::<_, i64>("id")
+	db.write(async |t| {
+		let row = t.query_one(
+			"INSERT INTO round (seq, funding_txid, funding_tx, signed_tree, expiry, created_at)
+			VALUES ($1, $2, '\\x00', '\\x00', 1000, NOW())
+			RETURNING id",
+			&[&seq, &funding_txid.to_string()],
+		).await.expect("insert dummy round");
+		Ok(row.get::<_, i64>("id"))
+	}).await.expect("connection")
 }
 
 #[tokio::test]

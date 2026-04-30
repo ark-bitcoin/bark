@@ -225,7 +225,7 @@ impl Db {
 		Self::connect(config).await
 	}
 
-	pub async fn get_conn(&self) -> anyhow::Result<PooledConnection<'_, PostgresConnectionManager<NoTls>>> {
+	async fn get_conn(&self) -> anyhow::Result<PooledConnection<'_, PostgresConnectionManager<NoTls>>> {
 		let before = self.pool.state();
 		telemetry::set_postgres_connection_pool_metrics(self.pool.state());
 		let start = std::time::Instant::now();
