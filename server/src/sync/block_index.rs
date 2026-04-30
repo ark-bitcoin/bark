@@ -5,9 +5,11 @@ use tokio::sync::watch;
 use futures::future::join_all;
 use tracing::{trace, debug, info, warn};
 
-use bitcoin_ext::rpc::{BitcoinRpcClient, BitcoinRpcExt, RpcApi};
-use bitcoin_ext::{BlockRef};
+use bitcoind_async_client::Client as BitcoindClient;
+use bitcoind_async_client::traits::Reader;
+use bitcoin_ext::BlockRef;
 
+use crate::bitcoind as bcd;
 use crate::database::{BlockTable, Db};
 use crate::sync::{BlockData, ChainEventListener};
 use crate::telemetry;
@@ -17,7 +19,7 @@ pub struct BlockIndex {
 	chain_tip_tx: watch::Sender<BlockRef>,
 	/// The block index has synced up-to and including this height
 	sync_height_tx: watch::Sender<BlockRef>,
-	bitcoind: BitcoinRpcClient,
+	bitcoind: BitcoindClient,
 	db: Db,
 	pub(super) listeners: Vec<Box<dyn ChainEventListener>>,
 	/// Which block table this index uses for persistence
@@ -38,7 +40,7 @@ impl BlockIndex {
 	/// with the Bitcoin chain. Choose a birthday that is sufficiently deep
 	/// (e.g., 100+ confirmations) to make this scenario unlikely.
 	pub async fn new(
-		bitcoind: BitcoinRpcClient,
+		bitcoind: BitcoindClient,
 		db: Db,
 		listeners: Vec<Box<dyn ChainEventListener>>,
 		birthday: BlockRef,
@@ -52,7 +54,7 @@ impl BlockIndex {
 			}
 		};
 
-		let chain_tip = bitcoind.tip().context("Failed to get bitcoind tip")?;
+		let chain_tip = bcd::tip(&bitcoind).await.context("Failed to get bitcoind tip")?;
 
 		// Initialize telemetry with current values
 		telemetry::set_block_height(chain_tip.height);
@@ -110,7 +112,8 @@ impl BlockIndex {
 	///
 	/// Returns `Ok(true)` if blocks were synced, `Ok(false)` if already in sync.
 	pub async fn sync(&mut self) -> anyhow::Result<bool> {
-		let bitcoind_tip = self.bitcoind.tip().context("Failed to get bitcoind tip")?;
+		let bitcoind_tip = bcd::tip(&self.bitcoind).await
+			.context("Failed to get bitcoind tip")?;
 
 		if self.chain_tip() != bitcoind_tip {
 			self.update_tip(bitcoind_tip);
@@ -144,8 +147,8 @@ impl BlockIndex {
 
 		// Add new blocks to the index
 		for height in common.height+1..=bitcoind_tip.height {
-			let hash = self.bitcoind.get_block_hash(height as u64)?;
-			let block = self.bitcoind.get_block(&hash)?;
+			let hash = self.bitcoind.get_block_hash(height as u64).await?;
+			let block = self.bitcoind.get_block(&hash).await?;
 
 			debug!("Adding block {} - {} - {} to the index", height, hash, block.block_hash());
 
@@ -246,12 +249,14 @@ impl BlockIndex {
 	async fn common_ancestor(&self) -> anyhow::Result<BlockRef> {
 		trace!("Looking for common ancestor");
 
-		let bitcoind_tip = self.bitcoind.tip().context("Failed to get bitcoind tip")?;
+		let bitcoind_tip = bcd::tip(&self.bitcoind).await
+			.context("Failed to get bitcoind tip")?;
 		let local_height = self.sync_tip().height;
 
 		// Take the local and bitcoind at this height and see if they match
 		let mut height = std::cmp::min(bitcoind_tip.height, local_height);
-		let mut bitcoind_block = self.bitcoind.get_block_by_height(height).context("failed to get bitcoind block by height")?;
+		let mut bitcoind_block = bcd::get_block_by_height(&self.bitcoind, height).await
+			.context("failed to get bitcoind block by height")?;
 		let mut local_block = self.db.get_block_by_height(self.block_table, height).await
 			.context("Failed to get local block by height")?
 			.context("No local block at height")?;
@@ -260,7 +265,7 @@ impl BlockIndex {
 		while bitcoind_block != local_block {
 			trace!("Checking if height {} is a common ancestor", height);
 			height -= 1;
-			bitcoind_block = self.bitcoind.get_block_by_height(height)
+			bitcoind_block = bcd::get_block_by_height(&self.bitcoind, height).await
 				.context("Failed to get bitcoind block by height")?;
 			local_block = self.db.get_block_by_height(self.block_table, height).await
 				.context("Failed to get local block by height")?

@@ -4,11 +4,12 @@ use bitcoin::Txid;
 
 use ark::{ServerVtxo, ServerVtxoPolicy, VtxoId, VtxoPolicy};
 use ark::lightning::PaymentHash;
-use bitcoin_ext::rpc::{BitcoinRpcClient, BitcoinRpcExt};
+use bitcoind_async_client::Client as BitcoindClient;
 use bitcoin_ext::{BlockDelta, BlockHeight};
 use server_log::slog;
 use tracing::{error, warn};
 
+use crate::bitcoind as bcd;
 use crate::database::Db;
 use super::{Action, Config};
 
@@ -202,7 +203,7 @@ fn decide_action_server_htlc_recv(params: &ActionParams<HtlcRecvExtra>) -> Actio
 pub struct ActionContextFetcher<'a> {
 	pub config: &'a Config,
 	pub db: &'a Db,
-	pub bitcoind: &'a BitcoinRpcClient,
+	pub bitcoind: &'a BitcoindClient,
 	pub chain_tip_height: BlockHeight,
 }
 
@@ -318,7 +319,7 @@ impl ActionContextFetcher<'_> {
 				}
 
 				let parent_txid = tx.input[1].previous_output.txid;
-				let status = self.bitcoind.tx_status(parent_txid).inspect_err(|e| {
+				let status = bcd::tx_status(self.bitcoind, parent_txid).await.inspect_err(|e| {
 					warn!("bitcoind rpc error fetching parent progress tx {} for {}: {:#}",
 						parent_txid, child_txid, e,
 					);

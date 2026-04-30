@@ -13,9 +13,9 @@ use ark::attestations::OffboardRequestAttestation;
 use ark::fees::{validate_and_subtract_fee_min_dust, VtxoFeeInfo};
 use ark::offboard::{OffboardForfeitContext, OffboardRequest};
 use bitcoin_ext::P2TR_DUST;
-use bitcoin_ext::rpc::RpcApi;
 
 use crate::{Server, SECP};
+use crate::bitcoind as bcd;
 use crate::error::ContextExt;
 use crate::flux::OwnedVtxoFluxGuard;
 use crate::wallet::{BdkWalletExt, PersistedWallet, WalletUtxosGuard};
@@ -284,7 +284,7 @@ impl Server {
 		let signed_tx = wallet_guard.finish_tx(state.offboard_tx)
 			.context("error signing offboard tx")?;
 
-		let [mempool_accept] = self.bitcoind.test_mempool_accept(&[&signed_tx])
+		let [mempool_accept] = bcd::test_mempool_accept(&self.bitcoind, &[&signed_tx]).await
 			.context("bitcoin node down")?.try_into().unwrap();
 		if !mempool_accept.allowed {
 			slog!(OffboardTxRejected, offboard_txid, input_vtxos: input_vtxos.to_vec(),

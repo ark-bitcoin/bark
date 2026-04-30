@@ -12,7 +12,8 @@ use tokio::sync::watch;
 
 use tracing::{error, info};
 
-use bitcoin_ext::rpc::{BitcoinRpcClient, RpcApi};
+use bitcoind_async_client::Client as BitcoindClient;
+use bitcoind_async_client::traits::Reader;
 use bitcoin_ext::BlockRef;
 
 use crate::database::{BlockTable, Db};
@@ -81,7 +82,7 @@ pub trait ChainEventListener: Send + Sync {
 
 struct Process {
 	block_index: BlockIndex,
-	bitcoind: BitcoinRpcClient,
+	bitcoind: BitcoindClient,
 	block_poll_interval: Duration,
 }
 
@@ -135,7 +136,7 @@ impl Process {
 		// all blocks are fully synced.
 		self.block_index.sync().await?;
 
-		let txids = self.bitcoind.get_raw_mempool()?;
+		let txids = self.bitcoind.get_raw_mempool().await?.0;
 		let mempool = RawMempool {
 			observed_at: chrono::Local::now(),
 			txids,
@@ -163,7 +164,7 @@ pub struct SyncManager {
 impl SyncManager {
 	pub async fn start<'a>(
 		rtmgr: RuntimeManager,
-		bitcoind: BitcoinRpcClient,
+		bitcoind: BitcoindClient,
 		db: Db,
 		listeners: Vec<Box<dyn ChainEventListener>>,
 		birthday: BlockRef,

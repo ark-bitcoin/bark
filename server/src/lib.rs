@@ -22,7 +22,7 @@ pub mod watchman;
 pub(crate) mod flux;
 pub mod system;
 
-mod bitcoind;
+pub mod bitcoind;
 mod intman;
 pub mod ln;
 mod offboards;
@@ -65,9 +65,11 @@ use ark::tree::signed::{LeafVtxoCosignRequest, LeafVtxoCosignResponse, UnlockPre
 use ark::tree::signed::builder::{SignedTreeBuilder, SignedTreeCosignResponse};
 use bitcoin_ext::{BlockHeight, BlockRef, TxStatus, P2TR_DUST};
 use bitcoin_ext::bdk::WalletExt;
-use bitcoin_ext::rpc::{BitcoinRpcClient, BitcoinRpcExt, RpcApi};
+use bitcoin_ext::rpc::BitcoinRpcClient;
+use bitcoind_async_client::Client as BitcoindClient;
+use bitcoind_async_client::traits::Reader;
 
-use crate::bitcoind::BitcoinRpcClientExt;
+use crate::bitcoind as bcd;
 use crate::sync::{ChainEventListener, SyncManager};
 use crate::error::ContextExt;
 use crate::watchman::VtxoExitFrontier;
@@ -181,7 +183,13 @@ pub struct Server {
 	ephemeral_master_key: Secret<Keypair>,
 	rounds_wallet: InstrumentedLock<PersistedWallet>,
 	watchman_wallet: Option<InstrumentedLock<PersistedWallet>>,
-	bitcoind: BitcoinRpcClient,
+	bitcoind: BitcoindClient,
+	/// Sync companion to `bitcoind`, used inside `spawn_blocking` for the
+	/// `bdk_bitcoind_rpc::Emitter` (which is sync-only).
+	///
+	/// TODO: drop this (and the sync `bitcoincore_rpc` dep) once
+	/// `bdk_bitcoind_rpc::Emitter` is async upstream.
+	bitcoind_sync: BitcoinRpcClient,
 	// NB needs to be Arc so tasks started before Server is constructed can share it
 	sync_manager: Arc<SyncManager>,
 	rtmgr: RuntimeManager,
@@ -207,16 +215,15 @@ impl Server {
 			bail!("Found an existing mnemonic file in datadir, the server is probably already initialized!");
 		}
 
-		let bitcoind = BitcoinRpcClient::new(&cfg.bitcoind.url, cfg.bitcoind.auth())
-			.context("failed to create bitcoind rpc client")?;
+		let bitcoind = bcd::build_client(&cfg.bitcoind.url, cfg.bitcoind.auth())?;
 		// Check if our bitcoind is on the expected network.
-		let chain_info = bitcoind.get_blockchain_info()?;
-		if chain_info.chain != cfg.network {
+		let network = bitcoind.network().await?;
+		if network != cfg.network {
 			bail!("Our bitcoind is running on network {} while we are configured for network {}",
-				chain_info.chain, cfg.network,
+				network, cfg.network,
 			);
 		}
-		let deep_tip = bitcoind.deep_tip()
+		let deep_tip = bcd::deep_tip(&bitcoind).await
 			.context("failed to fetch deep tip from bitcoind")?;
 
 		info!("Creating server at {}", cfg.data_dir.display());
@@ -317,21 +324,18 @@ impl Server {
 			.await
 			.context("failed to connect to db")?;
 
-		let bitcoind = BitcoinRpcClient::new(&cfg.bitcoind.url, cfg.bitcoind.auth())
-			.context("failed to create bitcoind rpc client")?;
-		bitcoind.require_network(cfg.network)?;
-		bitcoind.require_version()?;
-		bitcoind.require_txindex()?;
+		let bitcoind = bcd::build_client(&cfg.bitcoind.url, cfg.bitcoind.auth())?;
+		bcd::require_network(&bitcoind, cfg.network).await?;
+		bcd::require_version(&bitcoind).await?;
+		bcd::require_txindex(&bitcoind).await?;
 
-		// Check if our bitcoind is on the expected network.
-		let chain_info = bitcoind.get_blockchain_info()?;
-		if chain_info.chain != cfg.network {
-			bail!("Our bitcoind is running on network {} while we are configured for network {}",
-				chain_info.chain, cfg.network,
-			);
-		}
+		// Sync companion to `bitcoind` for the (sync-only) `bdk_bitcoind_rpc::Emitter`,
+		// which the wallet runs inside `tokio::task::spawn_blocking`.
+		let bitcoind_sync = BitcoinRpcClient::new(&cfg.bitcoind.url, cfg.bitcoind.auth())
+			.context("failed to create sync bitcoind rpc client")?;
 
-		let deep_tip = bitcoind.deep_tip().context("failed to query node for deep tip")?;
+		let deep_tip = bcd::deep_tip(&bitcoind).await
+			.context("failed to query node for deep tip")?;
 		let wallet_xpriv = master_xpriv.derive_priv(
 			&crate::SECP, &[WalletKind::Rounds.child_number()],
 		).expect("can't error");
@@ -421,6 +425,7 @@ impl Server {
 				watchman_cfg,
 				signer,
 				bitcoind.clone(),
+				bitcoind_sync.clone(),
 				db.clone(),
 				BlockTable::Captaind,
 				fee_estimator.clone(),
@@ -476,6 +481,7 @@ impl Server {
 			mailbox_manager,
 			ephemeral_master_key: Secret::new(ephemeral_master_key),
 			bitcoind,
+			bitcoind_sync,
 			sync_manager,
 			rtmgr,
 			tx_nursery: tx_nursery.clone(),
@@ -596,12 +602,12 @@ impl Server {
 	pub async fn sync_wallets(&self) -> anyhow::Result<()> {
 		tokio::try_join!(
 			async {
-				self.rounds_wallet.lock().await.sync(&self.bitcoind, false).await?;
+				self.rounds_wallet.lock().await.sync(&self.bitcoind_sync, false).await?;
 				Ok::<_, anyhow::Error>(())
 			},
 			async {
 				if let Some(ref fw) = self.watchman_wallet {
-					fw.lock().await.sync(&self.bitcoind, false).await?;
+					fw.lock().await.sync(&self.bitcoind_sync, false).await?;
 				}
 				Ok::<_, anyhow::Error>(())
 			},
@@ -660,7 +666,7 @@ impl Server {
 		}).await.context("waiting for tx broadcast timed out")?;
 
 		// then re-sync
-		watchman_wallet.lock().await.sync(&self.bitcoind, false).await?;
+		watchman_wallet.lock().await.sync(&self.bitcoind_sync, false).await?;
 
 		Ok(())
 	}
@@ -746,14 +752,17 @@ impl Server {
 	pub async fn register_board(&self, vtxo: Vtxo<Full>) -> anyhow::Result<()> {
 		let funding_txid = vtxo.chain_anchor().txid;
 		let funding_vout = vtxo.chain_anchor().vout;
-		let tx_info = self.bitcoind.custom_get_raw_transaction_info(funding_txid, None)
+		let tx_info = bcd::custom_get_raw_transaction_info(&self.bitcoind, funding_txid, None).await
 			.with_context(|| format!("failed to fetch funding tx {funding_txid}"))?
 			.with_context(|| format!("funding tx not found: {funding_txid}"))?;
 
 		let confirmed_hash = tx_info.blockhash
 			.context("board funding tx still unconfirmed")?;
-		let confirmed_height = self.bitcoind.get_block_header_info(&confirmed_hash)?
-			.height as BlockHeight;
+		let confirmed_header: bitcoin_ext::rpc::json::GetBlockHeaderResult =
+			self.bitcoind.call_raw(
+				"getblockheader", &[bcd::json_arg(confirmed_hash)?, true.into()],
+			).await?;
+		let confirmed_height = confirmed_header.height as BlockHeight;
 
 		let confirmations = tx_info.confirmations.unwrap_or(0) as usize;
 		if confirmations < self.config.required_board_confirmations {
@@ -769,7 +778,7 @@ impl Server {
 
 		// bitcoind rpc documents that if a mempool tx spends a utxo in the utxoset,
 		// if will not appear in gettxout when include_mempool is set to true
-		let is_spent = self.bitcoind.get_tx_out(&funding_txid, funding_vout, Some(true))
+		let is_spent = bcd::get_tx_out(&self.bitcoind, &funding_txid, funding_vout, Some(true)).await
 			.context("failed to check board utxo spend status")?
 			.is_none();
 		if is_spent {
@@ -872,7 +881,7 @@ impl Server {
 		for vtxo in vtxos {
 			let vtxo_id = vtxo.vtxo_id();
 			let txid = vtxo_id.to_point().txid;
-			let status = self.bitcoind.tx_status(txid)?;
+			let status = bcd::tx_status(&self.bitcoind, txid).await?;
 
 			match status {
 				TxStatus::Confirmed(_) => {

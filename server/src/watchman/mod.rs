@@ -50,8 +50,11 @@ use ark::vtxo::policy::signing::VtxoSigner;
 use bitcoin_ext::{fee, BlockHeight, BlockRef, TxStatus, P2TR_DUST};
 use bitcoin_ext::bdk::{WalletExt, KEYCHAIN};
 use bitcoin_ext::cpfp::MakeCpfpFees;
-use bitcoin_ext::rpc::{BitcoinRpcClient, BitcoinRpcExt, RpcApi};
+use bitcoin_ext::rpc::BitcoinRpcClient;
+use bitcoind_async_client::Client as BitcoindClient;
+use bitcoind_async_client::traits::Reader;
 
+use crate::bitcoind as bcd;
 use crate::database::{BlockTable, Db};
 use crate::fee_estimator::FeeEstimator;
 use crate::system::RuntimeManager;
@@ -106,7 +109,13 @@ pub struct Watchman {
 	/// Signer used to create claim transactions.
 	signer: WatchmanSigner,
 	/// Bitcoin RPC client for broadcasting transactions and querying the mempool.
-	bitcoind: BitcoinRpcClient,
+	bitcoind: BitcoindClient,
+	/// Sync companion for the (sync-only) `bdk_bitcoind_rpc::Emitter` driving
+	/// `watchman_wallet.sync()`.
+	///
+	/// TODO: drop this (and the sync `bitcoincore_rpc` dep) once
+	/// `bdk_bitcoind_rpc::Emitter` is async upstream.
+	bitcoind_sync: BitcoinRpcClient,
 	/// Database handle for persisting watchman state.
 	db: Db,
 	/// the block table in the db to use (captaind or watchmand)
@@ -132,7 +141,8 @@ impl Watchman {
 	pub fn new(
 		config: Config,
 		signer: WatchmanSigner,
-		bitcoind: BitcoinRpcClient,
+		bitcoind: BitcoindClient,
+		bitcoind_sync: BitcoinRpcClient,
 		db: Db,
 		block_table: BlockTable,
 		fee_estimator: Arc<FeeEstimator>,
@@ -145,6 +155,7 @@ impl Watchman {
 			config,
 			signer: signer,
 			bitcoind,
+			bitcoind_sync,
 			db,
 			block_table,
 			fee_estimator,
@@ -194,7 +205,7 @@ impl Watchman {
 			}
 
 			// Sync the watchman wallet to update balance and detect confirmed UTXOs.
-			if let Err(e) = self.watchman_wallet.lock().await.sync(&self.bitcoind, false).await {
+			if let Err(e) = self.watchman_wallet.lock().await.sync(&self.bitcoind_sync, false).await {
 				warn!("Error syncing watchman wallet: {:#}", e);
 			}
 
@@ -226,7 +237,7 @@ impl Watchman {
 		let mut frontier = self.frontier.write().await;
 
 		for txid in txids {
-			let confirmed_height = match self.bitcoind.tx_status(txid)? {
+			let confirmed_height = match bcd::tx_status(&self.bitcoind, txid).await? {
 				// Only use confirmed_height if the block is on the synced chain.
 				// Otherwise, add as unconfirmed and it will confirm during the next sync.
 				TxStatus::Confirmed(b) if self.db.get_block_by_height(
@@ -361,7 +372,9 @@ impl Watchman {
 		let cached = self.mempool_spends.read().get(&vtxo_id).cloned();
 
 		// Check what's currently spending this vtxo in the mempool
-		let spending_txid = match self.bitcoind.get_mempool_spending_tx(vtxo_id.to_point()) {
+		let spending_txid = match bcd::get_mempool_spending_tx(
+			&self.bitcoind, vtxo_id.to_point(),
+		).await {
 			Ok(Some(txid)) => txid,
 			Ok(None) => {
 				self.mempool_spends.write().remove(&vtxo_id);
@@ -378,7 +391,9 @@ impl Watchman {
 			return;
 		}
 
-		let Ok(Some(feerate)) = self.bitcoind.estimate_mempool_feerate(spending_txid) else {
+		let Ok(Some(feerate)) = bcd::estimate_mempool_feerate(
+			&self.bitcoind, spending_txid,
+		).await else {
 			self.mempool_spends.write().remove(&vtxo_id);
 			return;
 		};
@@ -398,7 +413,8 @@ impl Watchman {
 		}
 
 		// Check if it's a claim (all non-anchor outputs go to drain_address)
-		if let Ok(tx) = self.bitcoind.get_raw_transaction(&txid, None) {
+		if let Ok(tx) = self.bitcoind.get_raw_transaction_verbosity_zero(&txid).await {
+			let tx = tx.0;
 			let is_claim = tx.output.iter()
 				.filter(|o| !o.script_pubkey.is_op_return() && o.script_pubkey != *fee::P2A_SCRIPT)
 				.all(|o| o.script_pubkey == self.drain_spk);
@@ -429,7 +445,7 @@ impl Watchman {
 	) -> anyhow::Result<()> {
 		let tx = self.build_claim_tx(vtxos, fee_rate).await?;
 		let txid = tx.compute_txid();
-		self.bitcoind.broadcast_tx(&tx)?;
+		bcd::broadcast_tx(&self.bitcoind, &tx).await?;
 
 		let total_output_value = tx.output.iter().map(|o| o.value).sum::<Amount>();
 		let total_input_value = vtxos.iter().map(|v| v.amount()).sum::<Amount>();
@@ -647,7 +663,7 @@ impl Watchman {
 
 		// Broadcast the progress tx and CPFP as a package
 		let cpfp_txid = cpfp_tx.compute_txid();
-		self.bitcoind.submit_package(&[progress_tx, cpfp_tx])?;
+		bcd::submit_package(&self.bitcoind, &[progress_tx, cpfp_tx]).await?;
 
 		slog!(ProgressBroadcast, vtxo_id: vtxo.id(), txid, cpfp_txid);
 

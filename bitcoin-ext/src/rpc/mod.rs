@@ -19,10 +19,10 @@ use crate::{BlockHeight, BlockRef, TxStatus, DEEPLY_CONFIRMED};
 compile_error!("`wasm-web` does not support the `rpc-socks5-proxy` feature");
 
 /// Error code for RPC_VERIFY_ALREADY_IN_UTXO_SET.
-const RPC_VERIFY_ALREADY_IN_UTXO_SET: i32 = -27;
+pub const RPC_VERIFY_ALREADY_IN_UTXO_SET: i32 = -27;
 
 /// Error code for RPC_INVALID_ADDRESS_OR_KEY, used when a tx is not found.
-const RPC_INVALID_ADDRESS_OR_KEY: i32 = -5;
+pub const RPC_INVALID_ADDRESS_OR_KEY: i32 = -5;
 
 /// Clonable bitcoind rpc client.
 #[derive(Debug)]

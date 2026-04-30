@@ -2,9 +2,12 @@ use std::time::Duration;
 
 use bitcoin::{Txid, Transaction};
 use bitcoin::consensus::encode::serialize;
-use bitcoin_ext::rpc::{BitcoinRpcClient, BitcoinRpcExt, RpcApi};
+use bitcoind_async_client::Client as BitcoindClient;
+use bitcoind_async_client::traits::Broadcaster;
 use tokio::sync::mpsc;
 use tracing::{debug, info, trace, warn};
+
+use crate::bitcoind as bcd;
 use crate::system::RuntimeManager;
 use crate::txindex::{Tx, TxIndex};
 
@@ -18,7 +21,7 @@ impl TxNursery {
 	pub fn start(
 		rtmgr: RuntimeManager,
 		txindex: TxIndex,
-		bitcoind: BitcoinRpcClient,
+		bitcoind: BitcoindClient,
 		interval: Duration,
 	) -> TxNursery {
 		let (sender, receiver) = mpsc::unbounded_channel();
@@ -65,7 +68,7 @@ impl TxNursery {
 
 struct Process {
 	txindex: TxIndex,
-	bitcoind: BitcoinRpcClient,
+	bitcoind: BitcoindClient,
 	receiver: mpsc::UnboundedReceiver<Vec<Txid>>,
 	broadcast: Vec<Vec<Txid>>,
 	interval: std::time::Duration,
@@ -166,10 +169,9 @@ impl Process {
 			return;
 		}
 
-		let bytes = serialize(&tx.tx);
-		if let Err(e) = self.bitcoind.send_raw_transaction(&bytes) {
+		if let Err(e) = self.bitcoind.send_raw_transaction(&tx.tx).await {
 			warn!("Error when re-broadcasting one of our txs: {}", e);
-			slog!(TxBroadcastError, txid: tx.txid, raw_tx: bytes, error: e.to_string());
+			slog!(TxBroadcastError, txid: tx.txid, raw_tx: serialize(&tx.tx), error: e.to_string());
 		} else {
 			trace!("Broadcasted tx {}", tx.txid);
 		}
@@ -188,7 +190,7 @@ impl Process {
 		}
 
 		let txs: Vec<_> = pkg.iter().map(|t| &t.tx).collect();
-		match self.bitcoind.submit_package(&txs) {
+		match bcd::submit_package(&self.bitcoind, &txs).await {
 			Ok(r) if r.package_msg != "success" => {
 				let errors = r.tx_results.values().map(|tx| {
 					let raw_tx = pkg.iter().find(|t| t.txid == tx.txid)
