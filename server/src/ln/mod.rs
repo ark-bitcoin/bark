@@ -12,7 +12,7 @@ use tokio::sync::broadcast;
 use bitcoin::Amount;
 use bitcoin::hex::DisplayHex;
 use bitcoin::secp256k1::PublicKey;
-use tracing::{error, info, trace};
+use tracing::{error, info, trace, warn};
 use uuid::Uuid;
 
 use ark::{Vtxo, VtxoId, VtxoPolicy, VtxoRequest, ServerVtxo};
@@ -471,7 +471,7 @@ impl Server {
 						}
 					},
 					Err(broadcast::error::RecvError::Lagged(n)) => {
-						tracing::warn!("payment update receiver lagged by {n} messages");
+						warn!("payment update receiver lagged by {n} messages");
 					},
 					Err(broadcast::error::RecvError::Closed) => {
 						bail!("payment update channel closed, probably shutting down");
@@ -593,21 +593,25 @@ impl Server {
 					attestation.verify(payment_hash, &vtxo.vtxo).context("vtxo attestation invalid")?;
 				},
 				LightningReceiveAntiDos::Token(token_string) => {
-					let api_key = self.db.read(async |t| t.get_integration_api_key_by_api_key(Uuid::parse_str(CAPTAIND_API_KEY)
-						.expect("hardcoded api key is valid")).await).await?
-						.context("captaind integration api key not found")?;
-					let token = self.db.read(async |t| t.get_integration_token(&token_string).await).await?.context("token not found")?;
-
-					if token.is_expired() {
-						return badarg!("token has expired");
-					}
-
-					if !matches!(token.status, TokenStatus::Unused) {
-						return badarg!("token has already been used or is invalid");
-					}
-
-					let filters = token.filters.clone();
-					let _ = self.db.write(async |t| t.update_integration_token(token, api_key.id, TokenStatus::Used, &filters).await).await?;
+					self.db.write(async |t| {
+						let uuid = Uuid::parse_str(CAPTAIND_API_KEY)
+							.expect("hardcoded api key is valid");
+						let api_key = t.get_integration_api_key_by_api_key(uuid).await?
+							.context("captaind integration api key not found")?;
+						let token = t.get_integration_token(&token_string).await?
+							.context("token not found")?;
+						if token.is_expired() {
+							return badarg!("token has expired");
+						}
+						if !matches!(token.status, TokenStatus::Unused) {
+							return badarg!("token has already been used or is invalid");
+						}
+						let filters = token.filters.clone();
+						t.update_integration_token(
+							token, api_key.id, TokenStatus::Used, &filters,
+						).await?;
+						Ok(())
+					}).await?;
 				},
 			}
 		} else if self.config.ln_receive_anti_dos_required {

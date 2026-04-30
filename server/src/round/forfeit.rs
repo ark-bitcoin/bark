@@ -76,12 +76,13 @@ impl Server {
 
 		let unlock_hash = unlock_hash.badarg("zero forfeit bundles provided")?;
 
-		// fetch all input vtxos in a single query; result is in the same order as vtxo_ids
-		let vtxos = self.db.read(async |t| t.get_user_vtxos_by_id(&vtxo_ids).await).await?;
-
-		// fetch the round participation
-		let part = self.db.read(async |t| t.get_round_participation_by_unlock_hash(unlock_hash).await).await?
-			.badarg("unknown unlock hash")?;
+		// fetch all input vtxos and round participation in a single transaction
+		let (vtxos, part) = self.db.read(async |t| {
+			let vtxos = t.get_user_vtxos_by_id(&vtxo_ids).await?;
+			let part = t.get_round_participation_by_unlock_hash(unlock_hash).await?
+				.badarg("unknown unlock hash")?;
+			Ok((vtxos, part))
+		}).await?;
 
 		// if this participation was already forfeited, skip the expensive work
 		// and return the preimage directly
@@ -135,35 +136,35 @@ impl Server {
 			input_forfeit_pairs.push((input.vtxo_id, ff_txid));
 		}
 
-		// Persist all signed forfeit txs in a single batch. Either all succeed or
-		// none do; on a partial failure the user retries with the same bundles.
-		self.db.write(async |t| t.set_forfeit_transactions(unlock_hash, &vtxo_ids, &ff_txs, &ff_txids).await).await
-			.context("error storing signed forfeit txs")?;
-
-		// Transition the round output vtxos from 'unclaimed' to 'spendable' and
-		// record the forfeit txid on the round inputs.
 		let round_id = part.round_id.context("round participation has no round_id")?;
-		let round = self.db.read(async |t| t.get_round(round_id).await).await?
-			.context("round not found for participation")?;
-		let tree = round.signed_tree.into_cached_tree();
-		let output_vtxo_ids = part.outputs.iter()
-			.map(|output| {
+		self.db.write(async |t| {
+			// Persist all signed forfeit txs in a single batch. Either all succeed or
+			// none do; on a partial failure the user retries with the same bundles.
+			t.set_forfeit_transactions(unlock_hash, &vtxo_ids, &ff_txs, &ff_txids).await
+				.context("error storing signed forfeit txs")?;
+
+			// Transition the round output vtxos from 'unclaimed' to 'spendable' and
+			// record the forfeit txid on the round inputs.
+			let round = t.get_round(round_id).await?
+				.context("round not found for participation")?;
+			let tree = round.signed_tree.into_cached_tree();
+			let output_vtxo_ids = part.outputs.iter().map(|output| {
 				let idx = tree.spec.spec.leaf_idx_of_req(&output.vtxo_request)
 					.with_context(|| format!("output req not in round {}", round_id))?;
 				Ok(tree.build_vtxo(idx).id())
-			})
-			.collect::<anyhow::Result<Vec<_>>>()?;
+			}).collect::<anyhow::Result<Vec<_>>>()?;
 
-		let update = VtxoTreeUpdate::new()
-			.upsert_signed_tx(ff_txs)
-			.insert_unspent_vtxos(ff_vtxos, SpendState::RoundForfeit)
-			.mark_vtxos_round_forfeited(input_forfeit_pairs)
-			.mark_vtxos_claimed(output_vtxo_ids);
-		self.db.write(async |t| t.execute_vtxo_tree_update(update).await).await
-			.context("failed to execute vtxo tree update")?;
-
-		self.db.write(async |t| t.mark_participation_forfeited(unlock_hash).await).await
-			.context("failed to mark participation as forfeited")?;
+			let update = VtxoTreeUpdate::new()
+				.upsert_signed_tx(ff_txs)
+				.insert_unspent_vtxos(ff_vtxos, SpendState::RoundForfeit)
+				.mark_vtxos_round_forfeited(input_forfeit_pairs)
+				.mark_vtxos_claimed(output_vtxo_ids);
+			t.execute_vtxo_tree_update(update).await
+				.context("failed to execute vtxo tree update")?;
+			t.mark_participation_forfeited(unlock_hash).await
+				.context("failed to mark participation as forfeited")?;
+			Ok(())
+		}).await?;
 
 		Ok(part.unlock_preimage.leak_owned())
 	}

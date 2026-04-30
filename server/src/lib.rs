@@ -799,10 +799,12 @@ impl Server {
 			.upsert_unsigned_tx([builder.exit_txid()])
 			.insert_spendable_vtxos(builder.build_internal_unsigned_vtxos())
 			.mark_vtxos_oor_spent(builder.spend_info());
-		self.db.write(async |t| t.execute_vtxo_tree_update(update).await).await?;
-
-		self.db.write(async |t| t.add_funding_vtxos_to_frontier(funding_txid, Some(confirmed_height)).await).await
-			.context("failed to add board vtxos to frontier")?;
+		self.db.write(async |t| {
+			t.execute_vtxo_tree_update(update).await?;
+			t.add_funding_vtxos_to_frontier(funding_txid, Some(confirmed_height)).await
+				.context("failed to add board vtxos to frontier")?;
+			Ok(())
+		}).await?;
 
 		slog!(RegisteredBoard,
 			onchain_utxo: vtxo.chain_anchor(),
@@ -992,11 +994,14 @@ impl Server {
 		&self,
 		request: &LeafVtxoCosignRequest,
 	) -> anyhow::Result<LeafVtxoCosignResponse> {
-		let [vtxo] = self.db.read(async |t| t.get_user_vtxos_by_id(&[request.vtxo_id]).await).await?
-			.try_into().expect("one argument one response");
-		let round_id = RoundId::new(vtxo.vtxo.chain_anchor().txid);
-		let round = self.db.read(async |t| t.get_round(round_id).await).await?
-			.badarg("VTXO's chain anchor is not a known round")?;
+		let (vtxo, round) = self.db.read(async |t| {
+			let [vtxo] = t.get_user_vtxos_by_id(&[request.vtxo_id]).await?
+				.try_into().expect("one argument one response");
+			let round_id = RoundId::new(vtxo.vtxo.chain_anchor().txid);
+			let round = t.get_round(round_id).await?
+				.badarg("VTXO's chain anchor is not a known round")?;
+			Ok((vtxo, round))
+		}).await?;
 		Ok(self.cosign_hashlocked_leaf(request, &vtxo.vtxo, &round.funding_tx))
 	}
 

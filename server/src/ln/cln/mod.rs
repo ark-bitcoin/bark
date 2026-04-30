@@ -468,26 +468,20 @@ async fn post_lightning_receive_notification(
 	mailbox_manager: &crate::mailbox_manager::MailboxManager,
 	payment_hash: PaymentHash,
 ) {
-	let mailbox_id = match db.read(async |t|
-		t.get_lightning_receiver_mailbox_id(payment_hash).await
-	).await {
-		Ok(Some(id)) => id,
-		Ok(None) => return,
-		Err(e) => {
-			warn!("Failed to look up mailbox_id for {}: {:#}", payment_hash, e);
-			return;
-		},
-	};
-
-	match db.write(async |tx| {
-		tx.store_lightning_receive_notification(mailbox_id, &payment_hash.to_string()).await
-	}).await {
-		Ok(checkpoint) => {
-			mailbox_manager.notify(mailbox_id, checkpoint);
-		},
-		Err(e) => {
-			warn!("Failed to store mailbox notification for {}: {:#}", payment_hash, e);
-		},
+	let res = db.write(async |t| {
+		if let Some(id) = t.get_lightning_receiver_mailbox_id(payment_hash).await
+			.context("failed to look up mailbox ID")?
+		{
+			let cp = t.store_lightning_receive_notification(id, &payment_hash.to_string()).await?;
+			Ok(Some((id, cp)))
+		} else {
+			Ok(None)
+		}
+	}).await;
+	match res {
+		Ok(Some((id, cp))) => mailbox_manager.notify(id, cp),
+		Ok(None) => {},
+		Err(e) => warn!("Error posting lightning receive notification for {}: {:#}", payment_hash, e),
 	}
 }
 

@@ -1,6 +1,7 @@
 
 use std::net::SocketAddr;
 
+use anyhow::Context;
 use chrono::Local;
 use trust_dns_resolver::config::{ResolverConfig, ResolverOpts};
 use trust_dns_resolver::TokioAsyncResolver;
@@ -25,9 +26,12 @@ impl Server {
 		let integration_api_key = self.db.read(async |t| t.get_integration_api_key_by_api_key(api_key).await).await?;
 		let (integration, integration_api_key) =
 			self.verify_integration_api_key(client_address, &integration_api_key).await?;
-		let open_count = self.db.read(async |t| t.count_open_integration_tokens(integration.id, token_type).await).await?;
-		let integration_token_config = self.db.read(async |t| t.get_integration_token_config(token_type, integration.id).await).await?
-			.expect("no integration token configuration found");
+		let (open_count, integration_token_config) = self.db.read(async |t| {
+			let open_count = t.count_open_integration_tokens(integration.id, token_type).await?;
+			let config = t.get_integration_token_config(token_type, integration.id).await?
+				.context("no integration token configuration found")?;
+			Ok((open_count, config))
+		}).await?;
 		if integration_token_config.maximum_open_tokens <= open_count {
 			bail!("Maximum tokens reached")
 		}

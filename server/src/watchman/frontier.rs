@@ -65,11 +65,13 @@ impl VtxoExitFrontier {
 		let vtxo_id = vtxo.id();
 		if !self.frontier.contains_key(&vtxo_id) {
 			self.frontier.insert(vtxo_id, (confirmed_height, vtxo));
-			self.db.write(async |t| t.add_vtxo_to_frontier(vtxo_id).await).await?;
-
-			if let Some(height) = confirmed_height {
-				self.db.write(async |t| t.register_vtxo_confirmation(vtxo_id, height).await).await?;
-			}
+			self.db.write(async |t| {
+				t.add_vtxo_to_frontier(vtxo_id).await?;
+				if let Some(height) = confirmed_height {
+					t.register_vtxo_confirmation(vtxo_id, height).await?;
+				}
+				Ok(())
+			}).await?;
 
 			slog!(WatchmanAddedVtxo, id: vtxo_id);
 		}

@@ -442,8 +442,9 @@ impl ClnHoldProcess {
 		).await).await?;
 
 		let payment_hash = PaymentHash::from(&htlc_subscription.invoice);
-		let payment_attempt = self.db
-			.read(async |t| t.get_open_lightning_payment_attempt_by_payment_hash(payment_hash).await).await?;
+		let payment_attempt = self.db.read(async |t|
+			t.get_open_lightning_payment_attempt_by_payment_hash(payment_hash).await
+		).await?;
 		if let Some(payment_attempt) = payment_attempt {
 			debug!("HTLC subscription canceled with ongoing payment attempt, \
 				marking as failed: {}", payment_attempt.id,

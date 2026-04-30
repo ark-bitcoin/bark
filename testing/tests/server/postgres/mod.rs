@@ -9,7 +9,7 @@ use chrono::Local;
 use ark::{ServerVtxo, VtxoPolicy, VtxoRequest};
 use ark::offboard::OffboardForfeitResult;
 use ark::integration::{TokenStatus, TokenType};
-use ark::lightning::{Invoice, Preimage};
+use ark::lightning::{AsPaymentHash, Invoice, Preimage};
 use ark::mailbox::{MailboxIdentifier, MailboxType};
 use ark::rounds::RoundId;
 use ark::test_util::VTXO_VECTORS;
@@ -1661,8 +1661,7 @@ async fn lightning_send_finished_mailbox_notification() {
 	let mailbox_id = MailboxIdentifier::from_pubkey(
 		PublicKey::from_str(DUMMY_PUBKEY).unwrap()
 	);
-	let payment_hash: ark::lightning::PaymentHash = Bolt11Invoice::from_str(BOLT11_INVOICE)
-		.unwrap().payment_hash().as_byte_array().clone().into();
+	let payment_hash = BOLT11_INVOICE.parse::<Bolt11Invoice>().unwrap().as_payment_hash();
 
 	// Store a failed payment notification (no preimage)
 	let cp1 = db.write(async |t| t.store_lightning_send_finished(mailbox_id, payment_hash, None).await).await.unwrap()
