@@ -758,6 +758,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "bip321"
+version = "0.1.0"
+dependencies = [
+ "bitcoin",
+ "lightning",
+ "lightning-invoice",
+ "percent-encoding",
+ "thiserror 2.0.17",
+]
+
+[[package]]
 name = "bip39"
 version = "2.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
