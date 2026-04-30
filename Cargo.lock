@@ -590,6 +590,7 @@ dependencies = [
  "bdk_wallet",
  "bip39",
  "bitcoin",
+ "bitcoind-async-client",
  "chrono",
  "config",
  "console_log",

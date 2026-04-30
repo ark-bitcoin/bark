@@ -16,7 +16,6 @@ use serde::{Deserialize, Serialize};
 use tonic::transport::Uri;
 use tracing::{debug, error, info};
 use ark::integration::{TokenStatus, TokenType};
-use bitcoin_ext::rpc::BitcoinRpcClient;
 use uuid::Uuid;
 
 use ark::VtxoId;
@@ -327,8 +326,6 @@ async fn inner_main() -> anyhow::Result<()> {
 			info!("Running with config: {:#?}", cfg);
 			let db = server::database::Db::connect(&cfg.postgres).await?;
 			let bitcoind = bcd::build_client(&cfg.bitcoind.url, cfg.bitcoind.auth())?;
-			let bitcoind_sync = BitcoinRpcClient::new(&cfg.bitcoind.url, cfg.bitcoind.auth())
-				.context("failed to create sync bitcoind rpc client")?;
 
 			let seed = server::wallet::read_mnemonic_from_datadir(&cfg.data_dir)?.to_seed("");
 			let master_xpriv = bip32::Xpriv::new_master(cfg.network, &seed).unwrap();
@@ -344,7 +341,7 @@ async fn inner_main() -> anyhow::Result<()> {
 				cfg.min_trusted_confs,
 			).await?;
 
-			let tx = w.drain(address, &bitcoind, &bitcoind_sync).await?;
+			let tx = w.drain(address, &bitcoind).await?;
 			println!("{}", tx.compute_txid());
 		}
 		Command::GetMnemonic => {

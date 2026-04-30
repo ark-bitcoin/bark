@@ -17,7 +17,6 @@ use ark::vtxo::policy::signing::VtxoSigner;
 use bitcoin_ext::{BlockHeight, BlockRef};
 use bitcoin_ext::bdk::{CpfpInternalError, WalletExt};
 use bitcoin_ext::cpfp::CpfpError;
-use bitcoin_ext::rpc::RpcApi;
 
 use crate::chain::{ChainSource, ChainSourceClient};
 use crate::exit::{ExitVtxo, ExitState};
@@ -302,9 +301,10 @@ impl ChainSync for OnchainWallet {
 		trace!("Starting unconfirmed txs: {:?}", self.unconfirmed_txids().collect::<Vec<_>>());
 
 		match chain.inner() {
-			ChainSourceClient::Bitcoind(bitcoind) => {
+			#[cfg(feature = "bitcoind-rpc")]
+			ChainSourceClient::Bitcoind { sync, .. } => {
 				let prev_tip = self.inner.latest_checkpoint();
-				self.inner_sync_bitcoind(bitcoind, prev_tip).await?;
+				self.inner_sync_bitcoind(sync, prev_tip).await?;
 			},
 			ChainSourceClient::Esplora(client) => {
 				debug!("Syncing with esplora...");
@@ -387,21 +387,45 @@ impl OnchainWallet {
 		self.inner.build_tx()
 	}
 
+	#[cfg(feature = "bitcoind-rpc")]
 	async fn inner_sync_bitcoind(
 		&mut self,
-		bitcoind: &bitcoin_ext::rpc::Client,
+		bitcoind_sync: &bitcoin_ext::rpc::BitcoinRpcClient,
 		prev_tip: CheckPoint,
 	) -> anyhow::Result<()> {
 		debug!("Syncing with bitcoind, starting at block height {}...", prev_tip.height());
+		// `bdk_bitcoind_rpc::Emitter` is sync-only upstream. Run it on a
+		// blocking thread and stream blocks back over a channel so we can
+		// persist progress incrementally and yield to the runtime.
 		// NB We pass start_height=0 so the Emitter never skips blocks.
 		// Using prev_tip.height() would cause the Emitter to jump from the
 		// agreement point directly to prev_tip on the new chain after a deep
 		// reorg, producing a gap that BDK cannot merge.
-		let mut emitter = bdk_bitcoind_rpc::Emitter::new(
-			bitcoind, prev_tip.clone(), 0, self.unconfirmed_txs()
-		);
+		let sync_rpc = bitcoind_sync.clone();
+		let prev_tip_clone = prev_tip.clone();
+		// Materialize the unconfirmed-tx iterator before crossing the thread
+		// boundary; bdk's iterator borrows wallet state and is not Send.
+		let unconfirmed: Vec<_> = self.unconfirmed_txs().collect();
+		let (block_tx, mut block_rx) =
+			tokio::sync::mpsc::channel::<bdk_bitcoind_rpc::BlockEvent<bitcoin::Block>>(8);
+		let (mempool_tx, mempool_rx) =
+			tokio::sync::oneshot::channel::<bdk_bitcoind_rpc::MempoolEvent>();
+		let emitter_handle = tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
+			let mut emitter = bdk_bitcoind_rpc::Emitter::new(
+				&sync_rpc, prev_tip_clone, 0, unconfirmed,
+			);
+			while let Some(em) = emitter.next_block()? {
+				if block_tx.blocking_send(em).is_err() {
+					return Ok(());
+				}
+			}
+			drop(block_tx);
+			let _ = mempool_tx.send(emitter.mempool()?);
+			Ok(())
+		});
+
 		let mut count = 0;
-		while let Some(em) = emitter.next_block()? {
+		while let Some(em) = block_rx.recv().await {
 			self.inner.apply_block_connected_to(
 				&em.block, em.block_height(), em.connected_to(),
 			)?;
@@ -412,10 +436,12 @@ impl OnchainWallet {
 				info!("Synced until block height {}", em.block_height());
 			}
 		}
+		emitter_handle.await.context("wallet sync blocking task panicked")??;
 
-		let mempool = emitter.mempool()?;
-		self.inner.apply_evicted_txs(mempool.evicted);
-		self.inner.apply_unconfirmed_txs(mempool.update);
+		if let Ok(mempool) = mempool_rx.await {
+			self.inner.apply_evicted_txs(mempool.evicted);
+			self.inner.apply_unconfirmed_txs(mempool.update);
+		}
 		self.persist().await?;
 		debug!("Finished syncing with bitcoind");
 
@@ -455,12 +481,14 @@ impl OnchainWallet {
 		debug!("Starting balance: {}", self.inner.balance());
 
 		match chain.inner() {
-			ChainSourceClient::Bitcoind(bitcoind) => {
+			#[cfg(feature = "bitcoind-rpc")]
+			ChainSourceClient::Bitcoind { rpc, sync } => {
+				use bitcoind_async_client::traits::Reader;
 				// Make sure we include the given start_height in the scan
 				let height = start_height.unwrap_or(GENESIS_HEIGHT).saturating_sub(1);
-				let block_hash = bitcoind.get_block_hash(height as u64)?;
+				let block_hash = rpc.get_block_hash(height as u64).await?;
 				self.inner.set_checkpoint(height, block_hash);
-				self.inner_sync_bitcoind(bitcoind, self.inner.latest_checkpoint()).await?;
+				self.inner_sync_bitcoind(sync, self.inner.latest_checkpoint()).await?;
 			},
 			// Esplora can't do a full scan from a given block height, so we can ignore start_height
 			ChainSourceClient::Esplora(client) => {

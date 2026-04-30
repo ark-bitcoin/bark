@@ -458,7 +458,7 @@ pub async fn open_wallet(datadir: &Path) -> anyhow::Result<Option<(BarkWallet, O
 	let bdk_wallet = OnchainWallet::load_or_create(properties.network, seed, db.clone()).await?;
 	let bark_wallet = BarkWallet::open_with_onchain(&mnemonic, db, &bdk_wallet, config).await?;
 
-	if let Err(e) = bark_wallet.require_chainsource_version() {
+	if let Err(e) = bark_wallet.require_chainsource_version().await {
 		warn!("{}", e);
 	}
 

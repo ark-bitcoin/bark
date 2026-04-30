@@ -9,10 +9,13 @@ edition = "2024"
 readme = "README.md"
 
 [features]
-default = ["rand", "sqlite", "native", "tls-native-roots"]
+default = ["rand", "sqlite", "native", "tls-native-roots", "bitcoind-rpc"]
 
 pid-lock = []
 onchain-bdk = ["bdk_wallet", "bark-bitcoin-ext/bdk"]
+
+# Native bitcoind JSON-RPC backend for the on-chain layer.
+bitcoind-rpc = ["dep:bitcoind-async-client"]
 
 # The default persistence
 sqlite = ["rusqlite", "bdk_wallet/rusqlite"]
@@ -76,6 +79,7 @@ bip39.workspace = true
 bdk_core = { workspace = true }
 bdk_bitcoind_rpc = { workspace = true }
 bdk_esplora = { workspace = true }
+bitcoind-async-client = { workspace = true, optional = true }
 # crate used by bdk_esplora, first version with submit_package
 esplora-client = { workspace = true }
 lightning.workspace = true

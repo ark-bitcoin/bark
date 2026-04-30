@@ -15,7 +15,7 @@ use tracing::{error, trace};
 
 use bitcoin_ext::BlockRef;
 use bitcoin_ext::bdk::{TrustedBalance, WalletExt, KEYCHAIN};
-use bitcoin_ext::rpc::{BitcoinRpcClient, RpcApi};
+use bitcoin_ext::rpc::BitcoinRpcClient;
 use bitcoind_async_client::Client as BitcoindClient;
 
 use crate::bitcoind as bcd;
@@ -308,14 +308,11 @@ impl PersistedWallet {
 	}
 
 	/// This function is primarily intended for dev, not prod usage.
-	#[tracing::instrument(skip(self, address, bitcoind, _bitcoind_sync))]
+	#[tracing::instrument(skip(self, address, bitcoind))]
 	pub async fn drain(
 		&mut self,
 		address: Address<bitcoin::address::NetworkUnchecked>,
 		bitcoind: &BitcoindClient,
-		// Sync companion is unused right now but kept on the signature for
-		// symmetry with `sync()` / for any future Emitter-driven flows.
-		_bitcoind_sync: &impl RpcApi,
 	) -> anyhow::Result<Transaction> {
 		//TODO(stevenroose) also claim all expired round vtxos here!
 
