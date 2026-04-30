@@ -270,11 +270,66 @@ impl Db {
 		}
 	}
 
+	/// Perform db operations in a tx
+	async fn do_in_tx<R, F>(&self, read_only: bool, f: F) -> anyhow::Result<R>
+	where
+		F: AsyncFnOnce(&Tx<'_>) -> anyhow::Result<R>,
+	{
+		let mut conn = self.get_conn().await.context("unable to get db connection")?;
+		let pgtx = conn.build_transaction()
+			.read_only(read_only)
+			.start().await
+			.context("unable to start db tx")?;
+		let tx = Tx { inner: &pgtx };
+		let ret = f(&tx).await;
+		if read_only {
+			// We want to commit read queries regardless of error because it's the
+			// fastest path and doesn't skew failure stats.
+			pgtx.commit().await.context("tx commit error")?;
+		} else {
+			if ret.is_ok() {
+				pgtx.commit().await.context("tx commit error")?;
+			} else {
+				pgtx.rollback().await.context("tx rollback error")?;
+			}
+		}
+		Ok(ret.context("tx body error")?)
+	}
+
+	/// Perform db operations in read-only mode
+	pub async fn read<R, F>(&self, f: F) -> anyhow::Result<R>
+	where
+		F: AsyncFnOnce(&Tx<'_>) -> anyhow::Result<R>,
+	{
+		self.do_in_tx(true, f).await
+	}
+
+	/// Perform db operations in write mode
+	pub async fn write<R, F>(&self, f: F) -> anyhow::Result<R>
+	where
+		F: AsyncFnOnce(&Tx<'_>) -> anyhow::Result<R>,
+	{
+		self.do_in_tx(false, f).await
+	}
+}
+
+/// A managed postgres DB transaction
+pub struct Tx<'t> {
+	inner: &'t tokio_postgres::Transaction<'t>,
+}
+
+impl<'t> std::ops::Deref for Tx<'t> {
+	type Target = tokio_postgres::Transaction<'t>;
+
+	fn deref(&self) -> &Self::Target {
+		&self.inner
+	}
+}
+
+impl Db {
 	/**
 	 * VTXOs
 	*/
-
-
 
 	/// Insert vtxos as spendable. Existing vtxos are silently skipped.
 	pub async fn upsert_vtxos(
