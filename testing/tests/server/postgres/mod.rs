@@ -2,6 +2,7 @@ mod tree;
 
 use std::str::FromStr;
 
+use ark_testing::util::ToAltString;
 use bitcoin::secp256k1::PublicKey;
 use bitcoin::{Transaction, Txid};
 use chrono::Local;
@@ -377,7 +378,7 @@ async fn check_vtxo_transactions_registered_empty_input() {
 	// Fail closed: a caller with nothing to assert is a bug.
 	let err = db.read(async |t| t.check_vtxo_transactions_registered(Vec::<Txid>::new()).await).await
 		.expect_err("Empty input should fail");
-	assert!(err.to_string().contains("empty txid list"),
+	assert!(err.to_alt_string().contains("empty txid list"),
 		"Error should mention empty txid list: {}", err);
 }
 
@@ -443,7 +444,7 @@ async fn check_vtxo_transactions_registered_fails_for_unsigned() {
 
 	let err = db.read(async |t| t.check_vtxo_transactions_registered([txid_signed, txid_unsigned]).await).await
 		.expect_err("Should fail when one tx is unsigned");
-	let msg = err.to_string();
+	let msg = err.to_alt_string();
 	assert!(msg.contains("NULL signed_tx"),
 		"Error should mention NULL signed_tx: {}", msg);
 	assert!(msg.contains(&txid_unsigned.to_string()),
@@ -469,7 +470,7 @@ async fn check_vtxo_transactions_registered_fails_for_nonexistent() {
 
 	let err = db.read(async |t| t.check_vtxo_transactions_registered([txid_nonexistent]).await).await
 		.expect_err("Should fail when tx does not exist");
-	let msg = err.to_string();
+	let msg = err.to_alt_string();
 	assert!(msg.contains("does not exist"),
 		"Error should mention 'does not exist': {}", msg);
 	assert!(msg.contains(&txid_nonexistent.to_string()),

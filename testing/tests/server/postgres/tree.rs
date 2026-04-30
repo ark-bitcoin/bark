@@ -1,3 +1,4 @@
+use ark_testing::util::ToAltString;
 use bitcoin::Txid;
 use bitcoin::hashes::Hash;
 
@@ -118,7 +119,7 @@ async fn insert_oor_spent_double_spend_fails() {
 	let update = VtxoTreeUpdate::new()
 		.insert_oor_spent_vtxos([(vtxo.clone(), dummy_txid(0x02))]);
 	let err = db.write(async |t| t.execute_vtxo_tree_update(update).await).await.unwrap_err();
-	assert!(err.to_string().contains("already spent"), "got: {}", err);
+	assert!(err.to_alt_string().contains("already spent"), "got: {}", err);
 }
 
 #[tokio::test]
@@ -181,7 +182,7 @@ async fn mark_oor_spent_double_spend_fails() {
 	let err = VtxoTreeUpdate::new()
 		.mark_vtxos_oor_spent([(vtxo.id(), dummy_txid(0x02))]);
 	let err = db.write(async |t| t.execute_vtxo_tree_update(err).await).await.unwrap_err();
-	assert!(err.to_string().contains("unspendable"), "got: {}", err);
+	assert!(err.to_alt_string().contains("unspendable"), "got: {}", err);
 }
 
 #[tokio::test]
@@ -193,7 +194,7 @@ async fn mark_oor_spent_missing_vtxo_fails() {
 	let err = VtxoTreeUpdate::new()
 		.mark_vtxos_oor_spent([(vtxo.id(), dummy_txid(0xdd))]);
 	let err = db.write(async |t| t.execute_vtxo_tree_update(err).await).await.unwrap_err();
-	assert!(err.to_string().contains("unspendable"), "got: {}", err);
+	assert!(err.to_alt_string().contains("unspendable"), "got: {}", err);
 }
 
 #[tokio::test]
@@ -262,7 +263,7 @@ async fn mark_round_spent_double_spend_fails() {
 	let err = VtxoTreeUpdate::new()
 		.mark_vtxos_round_spent([(vtxo.id(), round_id_2)]);
 	let err = db.write(async |t| t.execute_vtxo_tree_update(err).await).await.unwrap_err();
-	assert!(err.to_string().contains("unspendable"), "got: {}", err);
+	assert!(err.to_alt_string().contains("unspendable"), "got: {}", err);
 }
 
 #[tokio::test]
@@ -303,7 +304,7 @@ async fn mark_offboard_spent_double_spend_fails() {
 	let err = VtxoTreeUpdate::new()
 		.mark_vtxos_offboard_spent([(vtxo.id(), dummy_txid(0x02), dummy_txid(0x22))]);
 	let err = db.write(async |t| t.execute_vtxo_tree_update(err).await).await.unwrap_err();
-	assert!(err.to_string().contains("unspendable"), "got: {}", err);
+	assert!(err.to_alt_string().contains("unspendable"), "got: {}", err);
 }
 
 #[tokio::test]
@@ -345,7 +346,7 @@ async fn round_forfeit_without_round_spend_fails() {
 		.mark_vtxos_round_forfeited([(vtxo.id(), dummy_txid(0xcd))]);
 	let err = db.write(async |t| t.execute_vtxo_tree_update(err).await).await.unwrap_err();
 	assert!(
-		err.to_string().contains("vtxo not round-spent or already forfeited differently"),
+		err.to_alt_string().contains("vtxo not round-spent or already forfeited differently"),
 		"got: {}", err,
 	);
 }
