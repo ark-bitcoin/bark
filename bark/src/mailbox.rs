@@ -234,34 +234,50 @@ impl Wallet {
 	) {
 		use protos::mailbox_server::mailbox_message::Message;
 
-		match mailbox_msg.message {
+		// Each arm returns whether the checkpoint should advance. Only
+		// arkoor returns false on processing error so the server
+		// redelivers and we retry. Every other arm advances regardless,
+		// either because the work is idempotent and re-done on every
+		// wallet sync, or because the message is informational/ignored.
+		let advance = match mailbox_msg.message {
 			Some(Message::Arkoor(msg)) => {
-				let result = self
-					.process_received_arkoor_package(msg.vtxos, Some(mailbox_msg.checkpoint)).await;
-				if let Err(e) = result {
-					error!("Error processing received arkoor package: {:#}", e);
+				match self.process_received_arkoor_package(msg.vtxos).await {
+					Ok(()) => true,
+					Err(e) => {
+						error!("Error processing received arkoor package: {:#}", e);
+						false
+					}
 				}
 			}
 			Some(Message::RoundParticipationCompleted(m)) => {
-				// Do we want to do custom code paths for progressing the round participations
-				// via the payment hashes returnded by the server?
 				info!("Server informed that round participation is ready, unlock_hash:{:?}",
 					UnlockHash::from_slice(&m.unlock_hash).ok(),
 				);
 				if let Err(e) = self.sync_pending_rounds().await {
 					error!("Error syncing pending rounds: {:#}", e);
 				}
+				true
 			},
 			Some(Message::IncomingLightningPayment(msg)) => {
-				if let Err(e) = self.handle_lightning_receive_notification(msg, mailbox_msg.checkpoint).await {
+				if let Err(e) = self.handle_lightning_receive_notification(msg).await {
 					error!("Error handling lightning receive notification: {:#}", e);
 				}
+				true
 			},
 			Some(Message::RecoveryVtxoIds(_)) => {
 				trace!("Received recovery VTXO IDs, ignoring");
+				true
 			}
 			None => {
-				warn!("Received unknown mailbox message, ignoring");
+				warn!("Received unknown mailbox message kind at checkpoint {}; bark may need to be upgraded",
+					mailbox_msg.checkpoint);
+				true
+			}
+		};
+
+		if advance {
+			if let Err(e) = self.store_mailbox_checkpoint(mailbox_msg.checkpoint).await {
+				error!("Error storing mailbox checkpoint: {:#}", e);
 			}
 		}
 	}
@@ -269,7 +285,6 @@ impl Wallet {
 	async fn process_received_arkoor_package(
 		&self,
 		raw_vtxos: Vec<Vec<u8>>,
-		checkpoint: Option<u64>,
 	) -> anyhow::Result<()> {
 		let vtxos = self.process_raw_vtxos(raw_vtxos).await;
 
@@ -281,7 +296,7 @@ impl Wallet {
 				continue;
 			}
 
-			trace!("Received arkoor VTXO {} for {} (checkpoint {:?})", vtxo.id(), vtxo.amount(), checkpoint);
+			trace!("Received arkoor VTXO {} for {}", vtxo.id(), vtxo.amount());
 			new_vtxos.push(vtxo);
 		}
 
@@ -332,10 +347,6 @@ impl Wallet {
 
 		info!("Received arkoor (movement {}) for {}", movement_id, balance);
 
-		if let Some(checkpoint) = checkpoint {
-			self.store_mailbox_checkpoint(checkpoint).await?;
-		}
-
 		Ok(())
 	}
 
@@ -346,7 +357,6 @@ impl Wallet {
 	async fn handle_lightning_receive_notification(
 		&self,
 		notif: protos::mailbox_server::IncomingLightningPaymentMessage,
-		checkpoint: u64,
 	) -> anyhow::Result<()> {
 		let payment_hash = PaymentHash::try_from(notif.payment_hash)
 			.context("invalid payment hash in lightning receive notification")?;
@@ -358,7 +368,6 @@ impl Wallet {
 			Err(e) => error!("Failed to claim lightning receive for {}: {:#}", payment_hash, e),
 		}
 
-		self.store_mailbox_checkpoint(checkpoint).await?;
 		Ok(())
 	}
 
