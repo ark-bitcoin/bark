@@ -251,6 +251,10 @@ pub struct VtxoPool {
 }
 
 impl VtxoPool {
+	/// Create a VTXO from pool
+	///
+	/// The caller is responsible for requesting arkoor preparation
+	/// with correct destination: [`VtxoPolicy::ServerHtlcRecv`]
 	#[tracing::instrument(skip(self, srv))]
 	async fn prepare_arkoor(
 		&self,
@@ -302,7 +306,10 @@ impl VtxoPool {
 		let update = VtxoTreeUpdate::new()
 			.upsert_signed_tx(signed_vtxs)
 			.insert_oor_spent_vtxos(internal_vtxos)
-			.insert_spendable_vtxos(output_vtxos.iter().cloned().map(ServerVtxo::from))
+			.insert_unspent_vtxos(
+				output_vtxos.iter().cloned().map(ServerVtxo::from),
+				database::SpendState::HtlcRecvUnclaimed,
+			)
 			.mark_vtxos_oor_spent(input_spend_info);
 		srv.db.execute_vtxo_tree_update(update).await?;
 
@@ -508,7 +515,10 @@ impl Process {
 			.upsert_signed_tx(tree.internal_node_txs().iter().cloned())
 			.upsert_unsigned_tx(tree.unsigned_leaf_txs().iter().map(Transaction::compute_txid))
 			.insert_oor_spent_vtxos(tree.internal_vtxos())
-			.insert_spendable_vtxos(tree.output_vtxos().map(ServerVtxo::from));
+			.insert_unspent_vtxos(
+				tree.output_vtxos().map(ServerVtxo::from),
+				database::SpendState::Pool,
+			);
 		self.srv.db.execute_vtxo_tree_update(update).await?;
 
 		// Here we commit the transaction to the wallet
