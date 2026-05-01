@@ -262,6 +262,9 @@ impl RestServer {
 	path = "/ping",
 	summary = "Ping",
 	security(()),
+	extensions(
+		("x-hidden" = json!(true))
+	),
 	responses(
 		(status = 200, description = "Returns pong")
 	)

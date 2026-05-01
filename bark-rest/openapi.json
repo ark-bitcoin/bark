@@ -2455,7 +2455,8 @@
         },
         "security": [
           {}
-        ]
+        ],
+        "x-hidden": true
       }
     }
   },
