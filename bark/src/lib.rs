@@ -345,25 +345,25 @@ use ark::address::VtxoDelivery;
 use ark::fees::{validate_and_subtract_fee_min_dust, VtxoFeeInfo};
 use ark::vtxo::{Full, PubkeyVtxoPolicy, VtxoRef};
 use ark::vtxo::policy::signing::VtxoSigner;
-use bitcoin_ext::{BlockHeight, P2TR_DUST, TxStatus};
+use bitcoin_ext::{BlockHeight, P2TR_DUST};
 use server_rpc::{protos, ServerConnection};
 use server_rpc::client::{ConnectError, CreateEndpointError};
 
 use crate::chain::{ChainSource, ChainSourceSpec};
 use crate::exit::Exit;
-use crate::movement::{Movement, MovementStatus, PaymentMethod};
+use crate::movement::{Movement, PaymentMethod};
 use crate::movement::manager::MovementManager;
 use crate::movement::update::MovementUpdate;
 use crate::notification::NotificationDispatch;
 use crate::onchain::{ExitUnilaterally, PreparePsbt, SignPsbt, Utxo};
 use crate::onchain::DaemonizableOnchainWallet;
 use crate::persist::BarkPersister;
-use crate::persist::models::{PendingOffboard, RoundStateId, StoredRoundState, Unlocked};
+use crate::persist::models::{RoundStateId, StoredRoundState, Unlocked};
 #[cfg(feature = "socks5-proxy")]
 use crate::proxy::proxy_for_url;
 use crate::round::{RoundParticipation, RoundStateLockIndex, RoundStatus};
 use crate::subsystem::{ArkoorMovement, RoundMovement};
-use crate::vtxo::{FilterVtxos, RefreshStrategy, VtxoFilter, VtxoState, VtxoStateKind};
+use crate::vtxo::{FilterVtxos, RefreshStrategy, VtxoFilter, VtxoStateKind};
 
 #[cfg(all(feature = "wasm-web", feature = "socks5-proxy"))]
 compile_error!("features `wasm-web` does not support feature `socks5-proxy");
@@ -1353,149 +1353,6 @@ impl Wallet {
 		let expiry = self.chain.tip().await? + threshold;
 		let filter = VtxoFilter::new(&self).expires_before(expiry);
 		Ok(self.spendable_vtxos_with(&filter).await?)
-	}
-
-	/// Checks pending offboard transactions for confirmation status.
-	///
-	/// - On confirmation with enough confs (or mempool with 0 required confs): finalize as successful.
-	/// - On `NotFound`: wait at least 1 hour before canceling, in case the chain backend is slow.
-	/// - On error (e.g. network drop): log and keep waiting — don't cancel due to transient failures.
-	pub async fn sync_pending_offboards(&self) -> anyhow::Result<()> {
-		let pending_offboards: Vec<PendingOffboard> = self.db.get_pending_offboards().await?;
-
-		if pending_offboards.is_empty() {
-			return Ok(());
-		}
-
-		let current_height = self.chain.tip().await?;
-		let required_confs = self.config.offboard_required_confirmations;
-
-		trace!("Checking {} pending offboard transaction(s)", pending_offboards.len());
-
-		for pending in pending_offboards {
-			let status = self.chain.tx_status(pending.offboard_txid).await;
-
-			match status {
-				Ok(TxStatus::Confirmed(block_ref)) => {
-					let confs = current_height - (block_ref.height - 1);
-					if confs < required_confs as BlockHeight {
-						trace!(
-							"Offboard tx {} has {}/{} confirmations, waiting...",
-							pending.offboard_txid, confs, required_confs,
-						);
-						continue;
-					}
-
-					info!(
-						"Offboard tx {} confirmed, finalizing movement {}",
-						pending.offboard_txid, pending.movement_id,
-					);
-
-					// Mark VTXOs as spent
-					for vtxo_id in &pending.vtxo_ids {
-						if let Err(e) = self.db.update_vtxo_state_checked(
-							*vtxo_id,
-							VtxoState::Spent,
-							&[VtxoStateKind::Locked],
-						).await {
-							warn!("Failed to mark vtxo {} as spent: {:#}", vtxo_id, e);
-						}
-					}
-
-					// Finish the movement as successful
-					if let Err(e) = self.movements.finish_movement(
-						pending.movement_id,
-						MovementStatus::Successful,
-					).await {
-						warn!("Failed to finish movement {}: {:#}", pending.movement_id, e);
-					}
-
-					self.db.remove_pending_offboard(pending.movement_id).await?;
-				}
-				Ok(TxStatus::Mempool) => {
-					if required_confs == 0 {
-						info!(
-							"Offboard tx {} in mempool with 0 required confirmations, \
-							finalizing movement {}",
-							pending.offboard_txid, pending.movement_id,
-						);
-
-						// Mark VTXOs as spent
-						for vtxo_id in &pending.vtxo_ids {
-							if let Err(e) = self.db.update_vtxo_state_checked(
-								*vtxo_id,
-								VtxoState::Spent,
-								&[VtxoStateKind::Locked],
-							).await {
-								warn!("Failed to mark vtxo {} as spent: {:#}", vtxo_id, e);
-							}
-						}
-
-						// Finish the movement as successful
-						if let Err(e) = self.movements.finish_movement(
-							pending.movement_id,
-							MovementStatus::Successful,
-						).await {
-							warn!("Failed to finish movement {}: {:#}", pending.movement_id, e);
-						}
-
-						self.db.remove_pending_offboard(pending.movement_id).await?;
-					} else {
-						trace!(
-							"Offboard tx {} still in mempool, waiting...",
-							pending.offboard_txid,
-						);
-					}
-				}
-				Ok(TxStatus::NotFound) => {
-					// Don't cancel immediately — the chain backend might be slow
-					// or temporarily out of sync. Wait at least 1 hour before
-					// treating the tx as truly lost.
-					let age = chrono::Local::now() - pending.created_at;
-					if age < chrono::Duration::hours(1) {
-						trace!(
-							"Offboard tx {} not found, but only {} minutes old — waiting...",
-							pending.offboard_txid, age.num_minutes(),
-						);
-						continue;
-					}
-
-					warn!(
-						"Offboard tx {} not found after {} minutes, canceling movement {}",
-						pending.offboard_txid, age.num_minutes(), pending.movement_id,
-					);
-
-					// Restore VTXOs to spendable
-					for vtxo_id in &pending.vtxo_ids {
-						if let Err(e) = self.db.update_vtxo_state_checked(
-							*vtxo_id,
-							VtxoState::Spendable,
-							&[VtxoStateKind::Locked],
-						).await {
-							warn!("Failed to restore vtxo {} to spendable: {:#}", vtxo_id, e);
-						}
-					}
-
-					// Finish the movement as failed
-					if let Err(e) = self.movements.finish_movement(
-						pending.movement_id,
-						MovementStatus::Failed,
-					).await {
-						warn!("Failed to fail movement {}: {:#}", pending.movement_id, e);
-					}
-
-					self.db.remove_pending_offboard(pending.movement_id).await?;
-				}
-				Err(e) => {
-					warn!(
-						"Failed to check status of offboard tx {}: {:#}",
-						pending.offboard_txid, e,
-					);
-				}
-			}
-		}
-
-		Ok(())
 	}
 
 	/// Performs maintenance tasks and performs refresh interactively until finished when needed.
