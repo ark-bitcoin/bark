@@ -9,11 +9,11 @@ use std::collections::HashMap;
 use bdk_bitcoind_rpc::bitcoincore_rpc::Result as RpcResult;
 use bitcoin::address::NetworkUnchecked;
 use bitcoin::hex::FromHex;
-use bitcoin::{Address, Amount, FeeRate, Transaction, Txid};
+use bitcoin::{Address, Amount, FeeRate, Transaction, Txid, Weight};
 use serde::{self, Deserialize, Serialize};
 use serde::de::Error as SerdeError;
 
-use crate::{BlockHeight, BlockRef, TxStatus, DEEPLY_CONFIRMED};
+use crate::{BlockHeight, BlockRef, FeeRateExt, TxStatus, DEEPLY_CONFIRMED};
 
 #[cfg(all(feature = "wasm-web", feature = "rpc-socks5-proxy"))]
 compile_error!("`wasm-web` does not support the `rpc-socks5-proxy` feature");
@@ -413,21 +413,18 @@ pub trait BitcoinRpcExt: RpcApi {
 			Err(e) => return Err(e),
 		};
 
-		// Compute ancestor fee rate: sat/kwu = sat * 1000 / (vbytes * 4) = sat * 250 / vbytes
-		let ancestor_feerate = |e: &json::GetMempoolEntryResult| -> Result<FeeRate, Error> {
-			Ok(FeeRate::from_sat_per_kwu(
-				e.fees.ancestor.to_sat() * 250u64.checked_div(e.ancestor_size)
-					.ok_or_else(|| Error::UnexpectedStructure)?
-			))
+		let entry_feerate = |e: &json::GetMempoolEntryResult| -> Result<FeeRate, Error> {
+			ancestor_feerate(e.fees.ancestor, e.ancestor_size)
+				.ok_or(Error::UnexpectedStructure)
 		};
 
 		// Start with this tx's ancestor fee rate
-		let mut feerate = ancestor_feerate(&entry)?;
+		let mut feerate = entry_feerate(&entry)?;
 
 		// Check direct descendants - if any has better ancestor rate, use that (CPFP)
 		for descendant_txid in &entry.spent_by {
 			if let Ok(desc_entry) = self.get_mempool_entry(descendant_txid) {
-				feerate = std::cmp::max(feerate, ancestor_feerate(&desc_entry)?);
+				feerate = std::cmp::max(feerate, entry_feerate(&desc_entry)?);
 			}
 		}
 
@@ -436,6 +433,14 @@ pub trait BitcoinRpcExt: RpcApi {
 }
 
 impl <T: RpcApi> BitcoinRpcExt for T {}
+
+/// Effective feerate for a mempool entry given its ancestor fee total and
+/// ancestor package size (in vbytes, as returned by `getmempoolentry`).
+/// Returns `None` if the size is zero or the math overflows.
+fn ancestor_feerate(ancestor_fee: Amount, ancestor_size_vb: u64) -> Option<FeeRate> {
+	let weight = Weight::from_vb(ancestor_size_vb)?;
+	FeeRate::from_amount_and_weight_ceil(ancestor_fee, weight)
+}
 
 /// Creates a bitcoind RPC client, optionally routing through a SOCKS5 proxy.
 ///
@@ -457,4 +462,42 @@ pub fn create_client(
 		return Ok(Client::from_jsonrpc(jsonrpc::Client::with_transport(transport)));
 	}
 	Client::new(url, auth)
+}
+
+#[cfg(test)]
+mod test {
+	use super::*;
+
+	// Regression: a previous implementation computed
+	// `sat * (250 / ancestor_size)` due to integer-division precedence,
+	// returning feerate 0 for any tx with `ancestor_size > 250` vbytes.
+
+	#[test]
+	fn ancestor_feerate_above_250_vbytes_is_nonzero() {
+		// 1000 vbytes is well above the buggy threshold.
+		// sat/kwu = ceil(10_000 * 1000 / (1000 * 4)) = 2_500
+		let fr = ancestor_feerate(Amount::from_sat(10_000), 1_000).unwrap();
+		assert_eq!(fr.to_sat_per_kwu(), 2_500);
+	}
+
+	#[test]
+	fn ancestor_feerate_just_above_threshold() {
+		// 251 vbytes - one above where the old code started returning 0.
+		// sat/kwu = ceil(10_000 * 1000 / 1004) = ceil(9960.16) = 9_961
+		let fr = ancestor_feerate(Amount::from_sat(10_000), 251).unwrap();
+		assert_eq!(fr.to_sat_per_kwu(), 9_961);
+	}
+
+	#[test]
+	fn ancestor_feerate_below_250_no_precision_loss() {
+		// 100 vbytes - old code gave sat * 2 instead of sat * 2.5 (20% off).
+		// sat/kwu = ceil(1_000 * 1000 / 400) = 2_500
+		let fr = ancestor_feerate(Amount::from_sat(1_000), 100).unwrap();
+		assert_eq!(fr.to_sat_per_kwu(), 2_500);
+	}
+
+	#[test]
+	fn ancestor_feerate_zero_size_is_none() {
+		assert_eq!(ancestor_feerate(Amount::from_sat(1_000), 0), None);
+	}
 }
