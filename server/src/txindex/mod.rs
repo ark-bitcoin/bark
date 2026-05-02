@@ -11,9 +11,13 @@ use anyhow::Context;
 use bitcoin::consensus::encode::serialize;
 use bitcoin::{Transaction, Txid};
 use bitcoin_ext::{BlockHeight, BlockRef};
-use bitcoin_ext::rpc::{BitcoinRpcClient, BitcoinRpcExt, RpcApi};
+use bitcoin_ext::rpc as rpc;
+use bitcoind_async_client::Client as BitcoindClient;
+use bitcoind_async_client::traits::Reader;
 use chrono::{DateTime, Local};
 use tracing::{info, trace, warn};
+
+use crate::bitcoind as bcd;
 use crate::database::Db;
 use crate::system::RuntimeManager;
 
@@ -297,7 +301,7 @@ pub struct TxIndex {
 	/// The index keeps data in memory
 	data: TxIndexData,
 	/// Can be used to query the status
-	rpc: BitcoinRpcClient,
+	rpc: BitcoindClient,
 	/// Can be used to query the content of a transaction
 	/// Note, that a [bitcoin::Transaction] that hasn't
 	/// entered the mempool will not be known by bitcoind.
@@ -346,7 +350,7 @@ impl TxIndex {
 		let txid = tx.compute_txid();
 		self.db.upsert_bitcoin_transaction(txid, &tx).await
 			.context("failed to store bitcoin tx in db")?;
-		let status = self.rpc.tx_status(txid)
+		let status = bcd::tx_status(&self.rpc, txid).await
 			.context("failed to get bitcoin tx status")?;
 		Ok(self.data.register_as(tx, status.into()).await)
 	}
@@ -361,7 +365,7 @@ impl TxIndex {
 	async fn dump_transaction(&self, txid: Txid, tx: Transaction) -> anyhow::Result<Tx> {
 		self.db.upsert_bitcoin_transaction(txid, &tx).await
 			.context("failed to store bitcoin tx in db")?;
-		let status = self.rpc.tx_status(txid)?;
+		let status = bcd::tx_status(&self.rpc, txid).await?;
 		let indexed_tx = self.data.get_or_insert(&txid, || (tx, status.into())).await;
 		Ok(indexed_tx)
 	}
@@ -373,7 +377,7 @@ impl TxIndex {
 		match db_tx {
 			None => Ok(None),
 			Some(tx) => {
-				let status = self.rpc.tx_status(txid)
+				let status = bcd::tx_status(&self.rpc, txid).await
 					.context("failed to get bitcoin tx status")?;
 				let indexed_tx = self.data.get_or_insert(&txid, || (tx, status.into())).await;
 				Ok(Some(indexed_tx))
@@ -384,7 +388,7 @@ impl TxIndex {
 	pub fn start(
 		deep_tip: BlockRef,
 		rtmgr: RuntimeManager,
-		bitcoind: BitcoinRpcClient,
+		bitcoind: BitcoindClient,
 		interval: Duration,
 		db: Db,
 	) -> TxIndex {
@@ -411,7 +415,7 @@ impl TxIndex {
 }
 
 struct Process {
-	bitcoind: BitcoinRpcClient,
+	bitcoind: BitcoindClient,
 	interval: Duration,
 	data: TxIndexData,
 	rtmgr: RuntimeManager,
@@ -419,7 +423,7 @@ struct Process {
 
 impl Process {
 	async fn update_mempool(&self) -> anyhow::Result<()> {
-		let txids = self.bitcoind.get_raw_mempool()?;
+		let txids = self.bitcoind.get_raw_mempool().await?.0;
 		let mempool = RawMempool {
 			observed_at: chrono::Local::now(),
 			txids: txids,
@@ -430,7 +434,8 @@ impl Process {
 	}
 
 	async fn update_blocks(&self) -> anyhow::Result<()> {
-		let bitcoind_tip = self.bitcoind.tip().context("Failed to get tip from bitcoind")?;
+		let bitcoind_tip = bcd::tip(&self.bitcoind).await
+			.context("Failed to get tip from bitcoind")?;
 
 		let index_start = self.data.block_index.read().await.first().height;
 		let index_tip = self.data.block_index.read().await.tip();
@@ -447,8 +452,13 @@ impl Process {
 		// This is potentially a re-org or multiple blocks
 		// have been found at the same time.
 		for height in (index_start..=bitcoind_tip.height).rev() {
-			let block_hash = self.bitcoind.get_block_hash(height as u64)?;
-			let block_info = self.bitcoind.get_block_info(&block_hash)?;
+			let block_hash = self.bitcoind.get_block_hash(height as u64).await?;
+			// `getblock` verbosity 1 returns a `bitcoincore_rpc::json::GetBlockResult`
+			// which is richer than the upstream `Reader::get_block` (which returns
+			// the bare `Block`); keep `call_raw` here to preserve the existing type.
+			let block_info: rpc::json::GetBlockResult = self.bitcoind.call_raw(
+				"getblock", &[bcd::json_arg(block_hash)?, 1.into()],
+			).await?;
 			let block_ref  = BlockRef { height, hash: block_hash};
 			let prev_hash = block_info.previousblockhash.unwrap();
 

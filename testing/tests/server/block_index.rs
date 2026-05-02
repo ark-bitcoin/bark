@@ -99,11 +99,12 @@ async fn test_block_index_basic_sync() {
 	// Initializes a bitcoind and creates a client
 	ctx.init_central_bitcoind().await;
 	let bitcoind = ctx.bitcoind().sync_client();
+	let bitcoind_async = ctx.bitcoind().async_client();
 
 	// Create the BlockIndex (should sync tip with deep_tip from bitcoind)
 	let listeners = vec![Box::new(BlockIndexListener::new()) as Box<dyn ChainEventListener>];
 	let birthday = bitcoind.deep_tip().expect("deep tip");
-	let mut block_index = BlockIndex::new(bitcoind.clone(), db.clone(), listeners, birthday, BlockTable::Captaind).await.expect("blockindex created");
+	let mut block_index = BlockIndex::new(bitcoind_async, db.clone(), listeners, birthday, BlockTable::Captaind).await.expect("blockindex created");
 	check_block_index_is_consistent(&db, BlockTable::Captaind, &bitcoind).await;
 
 	// The current chain-tip is 104

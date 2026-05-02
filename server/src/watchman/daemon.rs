@@ -16,9 +16,11 @@ use anyhow::Context;
 use bitcoin::bip32;
 use bitcoin::secp256k1::Keypair;
 use tracing::{error, info};
-use bitcoin_ext::rpc::{BitcoinRpcClient, BitcoinRpcExt, RpcApi};
+use bitcoin_ext::rpc::BitcoinRpcClient;
+use bitcoind_async_client::traits::Reader;
 
 use crate::EPHEMERAL_KEY_PATH;
+use crate::bitcoind as bcd;
 use crate::{fee_estimator, rpcserver, secret::Secret, telemetry, wallet, SECP};
 use crate::config::watchmand::Config;
 use crate::database::{self, BlockTable};
@@ -57,16 +59,15 @@ impl Daemon {
 			bail!("Found an existing mnemonic file in datadir, the server is probably already initialized!");
 		}
 
-		let bitcoind = BitcoinRpcClient::new(&cfg.bitcoind.url, cfg.bitcoind.auth())
-			.context("failed to create bitcoind rpc client")?;
+		let bitcoind = bcd::build_client(&cfg.bitcoind.url, cfg.bitcoind.auth())?;
 		// Check if our bitcoind is on the expected network.
-		let chain_info = bitcoind.get_blockchain_info()?;
-		if chain_info.chain != cfg.network {
+		let network = bitcoind.network().await?;
+		if network != cfg.network {
 			bail!("Our bitcoind is running on network {} while we are configured for network {}",
-				chain_info.chain, cfg.network,
+				network, cfg.network,
 			);
 		}
-		let deep_tip = bitcoind.deep_tip()
+		let deep_tip = bcd::deep_tip(&bitcoind).await
 			.context("failed to fetch deep tip from bitcoind")?;
 
 		info!("Creating server at {}", cfg.data_dir.display());
@@ -124,17 +125,20 @@ impl Daemon {
 			.await
 			.context("failed to connect to db")?;
 
-		let bitcoind = BitcoinRpcClient::new(&cfg.bitcoind.url, cfg.bitcoind.auth())
-			.context("failed to create bitcoind rpc client")?;
+		let bitcoind = bcd::build_client(&cfg.bitcoind.url, cfg.bitcoind.auth())?;
+		// Sync companion for the (sync-only) `bdk_bitcoind_rpc::Emitter`.
+		let bitcoind_sync = BitcoinRpcClient::new(&cfg.bitcoind.url, cfg.bitcoind.auth())
+			.context("failed to create sync bitcoind rpc client")?;
 		// Check if our bitcoind is on the expected network.
-		let chain_info = bitcoind.get_blockchain_info()?;
-		if chain_info.chain != cfg.network {
+		let network = bitcoind.network().await?;
+		if network != cfg.network {
 			bail!("Our bitcoind is running on network {} while we are configured for network {}",
-				chain_info.chain, cfg.network,
+				network, cfg.network,
 			);
 		}
 
-		let deep_tip = bitcoind.deep_tip().context("failed to query node for deep tip")?;
+		let deep_tip = bcd::deep_tip(&bitcoind).await
+			.context("failed to query node for deep tip")?;
 
 
 		// *******************
@@ -219,6 +223,7 @@ impl Daemon {
 			cfg.watchman,
 			signer,
 			bitcoind.clone(),
+			bitcoind_sync.clone(),
 			db,
 			BlockTable::Watchmand,
 			fee_estimator,

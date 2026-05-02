@@ -368,6 +368,9 @@ use crate::vtxo::{FilterVtxos, RefreshStrategy, VtxoFilter, VtxoState, VtxoState
 #[cfg(all(feature = "wasm-web", feature = "socks5-proxy"))]
 compile_error!("features `wasm-web` does not support feature `socks5-proxy");
 
+#[cfg(all(feature = "wasm-web", feature = "bitcoind-rpc"))]
+compile_error!("`wasm-web` does not support the `bitcoind-rpc` feature");
+
 /// Derivation index for Bark usage
 const BARK_PURPOSE_INDEX: u32 = 350;
 /// Derivation index used to generate keypairs to sign VTXOs
@@ -775,8 +778,8 @@ impl Wallet {
 	/// Verifies that the bark [Wallet] can be used with the configured [chain::ChainSource].
 	/// More specifically, if the [chain::ChainSource] connects to Bitcoin Core it must be
 	/// a high enough version to support ephemeral anchors.
-	pub fn require_chainsource_version(&self) -> anyhow::Result<()> {
-		self.chain.require_version()
+	pub async fn require_chainsource_version(&self) -> anyhow::Result<()> {
+		self.chain.require_version().await
 	}
 
 	pub async fn network(&self) -> anyhow::Result<Network> {
@@ -965,7 +968,7 @@ impl Wallet {
 
 		// from then on we can open the wallet
 		let wallet = Wallet::open(&mnemonic, db, config).await.context("failed to open wallet")?;
-		wallet.require_chainsource_version()?;
+		wallet.require_chainsource_version().await?;
 
 		Ok(wallet)
 	}

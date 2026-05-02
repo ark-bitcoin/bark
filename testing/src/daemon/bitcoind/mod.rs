@@ -103,6 +103,15 @@ impl Bitcoind {
 		bitcoin_ext::rpc::BitcoinRpcClient::new(&self.rpc_url(), self.auth()).unwrap()
 	}
 
+	pub fn async_client(&self) -> bitcoind_async_client::Client {
+		let auth = match self.auth() {
+			rpc::Auth::CookieFile(p) => bitcoind_async_client::Auth::CookieFile(p),
+			rpc::Auth::UserPass(u, p) => bitcoind_async_client::Auth::UserPass(u, p),
+			rpc::Auth::None => panic!("anonymous bitcoind auth not supported"),
+		};
+		bitcoind_async_client::Client::new(self.rpc_url(), auth, None, None, None).unwrap()
+	}
+
 	pub fn rpc_handle(&self) -> BitcoindRpcHandle {
 		BitcoindRpcHandle {
 			name: self.name.clone(),

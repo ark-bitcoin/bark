@@ -1406,7 +1406,7 @@ async fn perform_round(
 	loop {
 		if let Err(e) = srv.rounds_wallet
 			.lock().await
-			.sync(&srv.bitcoind, false)
+			.sync(&srv.bitcoind_sync, false)
 			.await {
 			slog!(RoundSyncError, error: format!("{:?}", e));
 		}

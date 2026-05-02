@@ -12,8 +12,10 @@ use tokio::time::Instant;
 use tracing::info;
 
 use bitcoin_ext::FeeRateExt;
-use bitcoin_ext::rpc::{self, BitcoinRpcClient, RpcApi};
+use bitcoin_ext::rpc;
+use bitcoind_async_client::Client as BitcoindClient;
 
+use crate::bitcoind as bcd;
 use crate::system::RuntimeManager;
 use crate::telemetry;
 
@@ -160,7 +162,7 @@ impl FeeEstimator {
 
 struct Process {
 	config: Config,
-	bitcoind: BitcoinRpcClient,
+	bitcoind: BitcoindClient,
 	fee_estimator: Arc<FeeEstimator>,
 }
 
@@ -175,7 +177,7 @@ impl Process {
 		loop {
 			tokio::select! {
 				_ = interval.tick() => {
-					self.update_fee_rates();
+					self.update_fee_rates().await;
 				}
 				_ = rtmgr.shutdown_signal() => {
 					info!("Shutdown signal received. Exiting FeeEstimator loop...");
@@ -187,8 +189,8 @@ impl Process {
 		info!("FeeEstimator terminated gracefully.");
 	}
 
-	fn update_fee_rates(&self) {
-		let (rates, using_fallback) = match self.fetch_fee_rates() {
+	async fn update_fee_rates(&self) {
+		let (rates, using_fallback) = match self.fetch_fee_rates().await {
 			Ok(rates) => (rates, false),
 			Err(e) => {
 				slog!(FeeEstimateFallback, err: e.to_string());
@@ -210,11 +212,15 @@ impl Process {
 		self.fee_estimator.update(rates);
 	}
 
-	fn fetch_fee_rates(&self) -> anyhow::Result<OnchainFeeRates> {
-		let get_fee_rate = |target: u16| -> anyhow::Result<FeeRate> {
-			let fee = self.bitcoind.estimate_smart_fee(
-				target, Some(rpc::json::EstimateMode::Conservative),
-			)?;
+	async fn fetch_fee_rates(&self) -> anyhow::Result<OnchainFeeRates> {
+		let get_fee_rate = async |target: u16| -> anyhow::Result<FeeRate> {
+			let fee: rpc::json::EstimateSmartFeeResult = self.bitcoind.call_raw(
+				"estimatesmartfee",
+				&[
+					target.into(),
+					bcd::json_arg(rpc::json::EstimateMode::Conservative)?,
+				],
+			).await?;
 			if let Some(fee_rate) = fee.fee_rate {
 				Ok(FeeRate::from_amount_per_kvb_ceil(fee_rate))
 			} else {
@@ -226,9 +232,9 @@ impl Process {
 		};
 
 		Ok(OnchainFeeRates {
-			fast: get_fee_rate(FEE_RATE_TARGET_CONF_FAST)?,
-			regular: get_fee_rate(FEE_RATE_TARGET_CONF_REGULAR)?,
-			slow: get_fee_rate(FEE_RATE_TARGET_CONF_SLOW)?,
+			fast: get_fee_rate(FEE_RATE_TARGET_CONF_FAST).await?,
+			regular: get_fee_rate(FEE_RATE_TARGET_CONF_REGULAR).await?,
+			slow: get_fee_rate(FEE_RATE_TARGET_CONF_SLOW).await?,
 		})
 	}
 }
@@ -240,7 +246,7 @@ impl Process {
 pub fn start(
 	rtmgr: RuntimeManager,
 	config: Config,
-	bitcoind: BitcoinRpcClient,
+	bitcoind: BitcoindClient,
 ) -> Arc<FeeEstimator> {
 	// Initialize with fallback rates
 	let fee_estimator = Arc::new(FeeEstimator::new(

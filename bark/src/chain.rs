@@ -15,13 +15,23 @@ use log::{debug, info, warn};
 use tokio::sync::RwLock;
 
 use bitcoin_ext::{BlockHeight, BlockRef, FeeRateExt, TxStatus};
-use bitcoin_ext::rpc::{self, BitcoinRpcExt, BitcoinRpcErrorExt, RpcApi};
+use bitcoin_ext::rpc;
+#[cfg(feature = "bitcoind-rpc")]
+use bitcoin_ext::rpc::{
+	BitcoinRpcClient, RPC_INVALID_ADDRESS_OR_KEY, RPC_VERIFY_ALREADY_IN_UTXO_SET,
+};
+#[cfg(feature = "bitcoind-rpc")]
+use bitcoind_async_client::Client as BitcoindClient;
+#[cfg(feature = "bitcoind-rpc")]
+use bitcoind_async_client::error::ClientError as BitcoindClientError;
+#[cfg(feature = "bitcoind-rpc")]
+use bitcoind_async_client::traits::{Broadcaster, Reader};
 
 const FEE_RATE_TARGET_CONF_FAST: u16 = 1;
 const FEE_RATE_TARGET_CONF_REGULAR: u16 = 3;
 const FEE_RATE_TARGET_CONF_SLOW: u16 = 6;
 
-const TX_ALREADY_IN_CHAIN_ERROR: i32 = -27;
+#[cfg(feature = "bitcoind-rpc")]
 const MIN_BITCOIND_VERSION: usize = 290000;
 
 /// Configuration for the onchain data source.
@@ -59,17 +69,27 @@ impl ChainSourceSpec {
 }
 
 pub enum ChainSourceClient {
-	Bitcoind(rpc::Client),
+	/// Native bitcoind backend.
+	///
+	/// Carries an async client for everything the wallet does asynchronously
+	/// and a sync companion for `bdk_bitcoind_rpc::Emitter`, which is sync-only
+	/// upstream and runs inside `tokio::task::spawn_blocking`.
+	#[cfg(feature = "bitcoind-rpc")]
+	Bitcoind {
+		rpc: BitcoindClient,
+		sync: BitcoinRpcClient,
+	},
 	Esplora(esplora_client::AsyncClient),
 }
 
 impl ChainSourceClient {
 	async fn check_network(&self, expected: Network) -> anyhow::Result<()> {
 		match self {
-			ChainSourceClient::Bitcoind(bitcoind) => {
-				let network = bitcoind.get_blockchain_info()?;
-				if expected != network.chain {
-					bail!("Network mismatch: expected {:?}, got {:?}", expected, network.chain);
+			#[cfg(feature = "bitcoind-rpc")]
+			ChainSourceClient::Bitcoind { rpc, .. } => {
+				let network = rpc.network().await?;
+				if expected != network {
+					bail!("Network mismatch: expected {:?}, got {:?}", expected, network);
 				}
 			},
 			ChainSourceClient::Esplora(client) => {
@@ -131,9 +151,13 @@ impl ChainSource {
 	///
 	/// For bitcoind, it checks if the version is at least 29.0
 	/// This is the first version for which 0 fee-anchors are considered standard
-	pub fn require_version(&self) -> anyhow::Result<()> {
-		if let ChainSourceClient::Bitcoind(bitcoind) = self.inner() {
-			if bitcoind.version()? < MIN_BITCOIND_VERSION {
+	pub async fn require_version(&self) -> anyhow::Result<()> {
+		#[cfg(feature = "bitcoind-rpc")]
+		if let ChainSourceClient::Bitcoind { rpc, .. } = self.inner() {
+			#[derive(Debug, serde::Deserialize)]
+			struct NetworkInfo { version: usize }
+			let info: NetworkInfo = rpc.call_raw("getnetworkinfo", &[]).await?;
+			if info.version < MIN_BITCOIND_VERSION {
 				bail!("Bitcoin Core version is too old, you can participate in rounds but won't be able to unilaterally exit. Please upgrade to 29.0 or higher.");
 			}
 		}
@@ -194,12 +218,34 @@ impl ChainSource {
 		#[cfg(feature = "socks5-proxy")] proxy: Option<&str>,
 	) -> anyhow::Result<Self> {
 		let inner = match spec {
-			ChainSourceSpec::Bitcoind { url, auth } => ChainSourceClient::Bitcoind(
-				rpc::create_client(
-					&url,
-					auth,
-					#[cfg(feature = "socks5-proxy")] proxy,
-				).context("failed to create bitcoind rpc client")?
+			#[cfg(feature = "bitcoind-rpc")]
+			ChainSourceSpec::Bitcoind { url, auth } => {
+				// `bdk_bitcoind_rpc::Emitter` is sync-only upstream, so we keep
+				// a sync companion to drive it inside `spawn_blocking`. The async
+				// client is used everywhere else. `BitcoinRpcClient` (rather
+				// than the bare `bitcoincore_rpc::Client`) is required so the
+				// `spawn_blocking` closure can take an owned, `Clone` value.
+				//
+				// The sync companion currently does not honour `socks5-proxy`;
+				// SOCKS5 is supported on the Esplora backend, where it is the
+				// realistic Tor-via-bitcoind use case.
+				let sync = BitcoinRpcClient::new(&url, auth.clone())
+					.context("failed to create sync bitcoind rpc client")?;
+				let async_auth = match auth {
+					rpc::Auth::None => bail!(
+						"bitcoind RPC auth is required (cookie file or user/pass)",
+					),
+					rpc::Auth::UserPass(u, p) => bitcoind_async_client::Auth::UserPass(u, p),
+					rpc::Auth::CookieFile(p) => bitcoind_async_client::Auth::CookieFile(p),
+				};
+				let rpc = BitcoindClient::new(url, async_auth, None, None, None)
+					.context("failed to create async bitcoind rpc client")?;
+				ChainSourceClient::Bitcoind { rpc, sync }
+			},
+			#[cfg(not(feature = "bitcoind-rpc"))]
+			ChainSourceSpec::Bitcoind { .. } => bail!(
+				"bitcoind RPC backend is not available: this build was compiled without \
+				 the `bitcoind-rpc` feature (notably the wasm-web build)",
 			),
 			ChainSourceSpec::Esplora { url } => ChainSourceClient::Esplora({
 				// the esplora client doesn't deal well with trailing slash in url
@@ -224,11 +270,17 @@ impl ChainSource {
 
 	async fn fetch_fee_rates(&self) -> anyhow::Result<FeeRates> {
 		match self.inner() {
-			ChainSourceClient::Bitcoind(bitcoind) => {
-				let get_fee_rate = |target| {
-					let fee = bitcoind.estimate_smart_fee(
-						target, Some(rpc::json::EstimateMode::Economical),
-					)?;
+			#[cfg(feature = "bitcoind-rpc")]
+			ChainSourceClient::Bitcoind { rpc, .. } => {
+				let get_fee_rate = async |target: u16| -> anyhow::Result<FeeRate> {
+					let fee: rpc::json::EstimateSmartFeeResult = rpc.call_raw(
+						"estimatesmartfee",
+						&[
+							target.into(),
+							serde_json::to_value(rpc::json::EstimateMode::Economical)
+								.expect("serializable"),
+						],
+					).await?;
 					if let Some(fee_rate) = fee.fee_rate {
 						Ok(FeeRate::from_amount_per_kvb_ceil(fee_rate))
 					} else {
@@ -236,9 +288,9 @@ impl ChainSource {
 					}
 				};
 				Ok(FeeRates {
-					fast: get_fee_rate(FEE_RATE_TARGET_CONF_FAST)?,
-					regular: get_fee_rate(FEE_RATE_TARGET_CONF_REGULAR).expect("should exist"),
-					slow: get_fee_rate(FEE_RATE_TARGET_CONF_SLOW).expect("should exist"),
+					fast: get_fee_rate(FEE_RATE_TARGET_CONF_FAST).await?,
+					regular: get_fee_rate(FEE_RATE_TARGET_CONF_REGULAR).await.expect("should exist"),
+					slow: get_fee_rate(FEE_RATE_TARGET_CONF_SLOW).await.expect("should exist"),
 				})
 			},
 			ChainSourceClient::Esplora(client) => {
@@ -263,8 +315,10 @@ impl ChainSource {
 
 	pub async fn tip(&self) -> anyhow::Result<BlockHeight> {
 		match self.inner() {
-			ChainSourceClient::Bitcoind(bitcoind) => {
-				Ok(bitcoind.get_block_count()? as BlockHeight)
+			#[cfg(feature = "bitcoind-rpc")]
+			ChainSourceClient::Bitcoind { rpc, .. } => {
+				let count = rpc.get_block_count().await?;
+				Ok(count as BlockHeight)
 			},
 			ChainSourceClient::Esplora(client) => {
 				Ok(client.get_height().await?)
@@ -278,8 +332,9 @@ impl ChainSource {
 
 	pub async fn block_ref(&self, height: BlockHeight) -> anyhow::Result<BlockRef> {
 		match self.inner() {
-			ChainSourceClient::Bitcoind(bitcoind) => {
-				let hash = bitcoind.get_block_hash(height as u64)?;
+			#[cfg(feature = "bitcoind-rpc")]
+			ChainSourceClient::Bitcoind { rpc, .. } => {
+				let hash = rpc.get_block_hash(height as u64).await?;
 				Ok(BlockRef { height, hash })
 			},
 			ChainSourceClient::Esplora(client) => {
@@ -291,10 +346,11 @@ impl ChainSource {
 
 	pub async fn block(&self, hash: BlockHash) -> anyhow::Result<Option<Block>> {
 		match self.inner() {
-			ChainSourceClient::Bitcoind(bitcoind) => {
-				match bitcoind.get_block(&hash) {
-					Ok(b) => Ok(Some(b)),
-					Err(e) if e.is_not_found() => Ok(None),
+			#[cfg(feature = "bitcoind-rpc")]
+			ChainSourceClient::Bitcoind { rpc, .. } => {
+				match rpc.get_block(&hash).await {
+					Ok(block) => Ok(Some(block)),
+					Err(e) if is_not_found(&e) => Ok(None),
 					Err(e) => Err(e.into()),
 				}
 			},
@@ -312,8 +368,11 @@ impl ChainSource {
 		// TODO: Determine if any line of descendant transactions increase the effective fee rate
 		//		 of the target txid.
 		match self.inner() {
-			ChainSourceClient::Bitcoind(bitcoind) => {
-				let entry = bitcoind.get_mempool_entry(&txid)?;
+			#[cfg(feature = "bitcoind-rpc")]
+			ChainSourceClient::Bitcoind { rpc, .. } => {
+				let entry: rpc::json::GetMempoolEntryResult = rpc.call_raw(
+					"getmempoolentry", &[serde_json::to_value(txid).expect("serializable")],
+				).await?;
 				let err = || anyhow!("missing weight parameter from getmempoolentry");
 
 				result.total_fee = entry.fees.ancestor;
@@ -370,11 +429,13 @@ impl ChainSource {
 	pub async fn txs_spending_inputs<T: IntoIterator<Item = OutPoint>>(
 		&self,
 		outpoints: T,
+		#[cfg_attr(not(feature = "bitcoind-rpc"), allow(unused_variables))]
 		block_scan_start: BlockHeight,
 	) -> anyhow::Result<TxsSpendingInputsResult> {
 		let mut res = TxsSpendingInputsResult::new();
 		match self.inner() {
-			ChainSourceClient::Bitcoind(bitcoind) => {
+			#[cfg(feature = "bitcoind-rpc")]
+			ChainSourceClient::Bitcoind { sync, .. } => {
 				// We must offset the height to account for the fact we iterate using next_block()
 				let start = block_scan_start.saturating_sub(1);
 				let block_ref = self.block_ref(start).await?;
@@ -383,55 +444,63 @@ impl ChainSource {
 					hash: block_ref.hash,
 				});
 
-				let mut emitter = bdk_bitcoind_rpc::Emitter::new(
-					bitcoind, cp.clone(), cp.height(), bdk_bitcoind_rpc::NO_EXPECTED_MEMPOOL_TXS,
-				);
-
 				debug!("Scanning blocks for spent outpoints with bitcoind, starting at block height {}...", block_scan_start);
 				let outpoint_set = outpoints.into_iter().collect::<HashSet<_>>();
-				while let Some(em) = emitter.next_block()? {
-					// Provide updates as the scan can take a long time
-					if em.block_height() % 1000 == 0 {
-						info!("Scanned for spent outpoints until block height {}", em.block_height());
+
+				// `bdk_bitcoind_rpc::Emitter` is sync-only upstream, so the
+				// scan loop runs inside `spawn_blocking` with the sync companion.
+				let sync_client = sync.clone();
+				let cp_for_blocking = cp.clone();
+				res = tokio::task::spawn_blocking(move || -> anyhow::Result<TxsSpendingInputsResult> {
+					let mut res = res;
+					let mut emitter = bdk_bitcoind_rpc::Emitter::new(
+						&sync_client,
+						cp_for_blocking.clone(),
+						cp_for_blocking.height(),
+						bdk_bitcoind_rpc::NO_EXPECTED_MEMPOOL_TXS,
+					);
+					while let Some(em) = emitter.next_block()? {
+						if em.block_height() % 1000 == 0 {
+							info!("Scanned for spent outpoints until block height {}", em.block_height());
+						}
+						for tx in &em.block.txdata {
+							for txin in tx.input.iter() {
+								if outpoint_set.contains(&txin.previous_output) {
+									res.add(
+										txin.previous_output.clone(),
+										tx.compute_txid(),
+										TxStatus::Confirmed(BlockRef {
+											height: em.block_height(),
+											hash: em.block.block_hash().clone(),
+										}),
+									);
+									if res.map.len() == outpoint_set.len() {
+										return Ok(res);
+									}
+								}
+							}
+						}
 					}
-					for tx in &em.block.txdata {
+
+					debug!("Finished scanning blocks for spent outpoints, now checking the mempool...");
+					let mempool = emitter.mempool()?;
+					for (tx, _last_seen) in &mempool.update {
 						for txin in tx.input.iter() {
 							if outpoint_set.contains(&txin.previous_output) {
 								res.add(
 									txin.previous_output.clone(),
 									tx.compute_txid(),
-									TxStatus::Confirmed(BlockRef {
-										height: em.block_height(), hash: em.block.block_hash().clone()
-									})
+									TxStatus::Mempool,
 								);
-								// We can stop early if we've found a spending tx for each outpoint
 								if res.map.len() == outpoint_set.len() {
 									return Ok(res);
 								}
 							}
 						}
 					}
-				}
-
-				debug!("Finished scanning blocks for spent outpoints, now checking the mempool...");
-				let mempool = emitter.mempool()?;
-				for (tx, _last_seen) in &mempool.update {
-					for txin in tx.input.iter() {
-						if outpoint_set.contains(&txin.previous_output) {
-							res.add(
-								txin.previous_output.clone(),
-								tx.compute_txid(),
-								TxStatus::Mempool,
-							);
-
-							// We can stop early if we've found a spending tx for each outpoint
-							if res.map.len() == outpoint_set.len() {
-								return Ok(res);
-							}
-						}
-					}
-				}
-				debug!("Finished checking the mempool for spent outpoints");
+					debug!("Finished checking the mempool for spent outpoints");
+					Ok(res)
+				}).await.context("Emitter scan task panicked")??;
 			},
 			ChainSourceClient::Esplora(client) => {
 				for outpoint in outpoints {
@@ -463,12 +532,11 @@ impl ChainSource {
 
 	pub async fn broadcast_tx(&self, tx: &Transaction) -> anyhow::Result<()> {
 		match self.inner() {
-			ChainSourceClient::Bitcoind(bitcoind) => {
-				match bitcoind.send_raw_transaction(tx) {
+			#[cfg(feature = "bitcoind-rpc")]
+			ChainSourceClient::Bitcoind { rpc, .. } => {
+				match rpc.send_raw_transaction(tx).await {
 					Ok(_) => Ok(()),
-					Err(rpc::Error::JsonRpc(
-						rpc::jsonrpc::Error::Rpc(e))
-					) if e.code == TX_ALREADY_IN_CHAIN_ERROR => Ok(()),
+					Err(e) if is_in_utxo_set(&e) => Ok(()),
 					Err(e) => Err(e.into()),
 				}
 			},
@@ -481,8 +549,13 @@ impl ChainSource {
 
 	pub async fn broadcast_package(&self, txs: &[impl Borrow<Transaction>]) -> anyhow::Result<()> {
 		match self.inner() {
-			ChainSourceClient::Bitcoind(bitcoind) => {
-				let res = bitcoind.submit_package(txs)?;
+			#[cfg(feature = "bitcoind-rpc")]
+			ChainSourceClient::Bitcoind { rpc, .. } => {
+				let hexes: Vec<String> = txs.iter()
+					.map(|t| bitcoin::consensus::encode::serialize_hex(t.borrow()))
+					.collect();
+				let res: rpc::SubmitPackageResult =
+					rpc.call_raw("submitpackage", &[hexes.into()]).await?;
 				if res.package_msg != "success" {
 					let errors = res.tx_results.values()
 						.map(|t| format!("tx {}: {}",
@@ -512,10 +585,11 @@ impl ChainSource {
 
 	pub async fn get_tx(&self, txid: &Txid) -> anyhow::Result<Option<Transaction>> {
 		match self.inner() {
-			ChainSourceClient::Bitcoind(bitcoind) => {
-				match bitcoind.get_raw_transaction(txid, None) {
-					Ok(tx) => Ok(Some(tx)),
-					Err(e) if e.is_not_found() => Ok(None),
+			#[cfg(feature = "bitcoind-rpc")]
+			ChainSourceClient::Bitcoind { rpc, .. } => {
+				match rpc.get_raw_transaction_verbosity_zero(txid).await {
+					Ok(tx) => Ok(Some(tx.0)),
+					Err(e) if is_not_found(&e) => Ok(None),
 					Err(e) => Err(e.into()),
 				}
 			},
@@ -533,7 +607,8 @@ impl ChainSource {
 	/// Returns the status of the given transaction, including the block height if it is confirmed
 	pub async fn tx_status(&self, txid: Txid) -> anyhow::Result<TxStatus> {
 		match self.inner() {
-			ChainSourceClient::Bitcoind(bitcoind) => Ok(bitcoind.tx_status(txid)?),
+			#[cfg(feature = "bitcoind-rpc")]
+			ChainSourceClient::Bitcoind { rpc, .. } => Ok(bitcoind_tx_status(rpc, txid).await?),
 			ChainSourceClient::Esplora(esplora) => {
 				match esplora.get_tx_info(&txid).await? {
 					Some(info) => match (info.status.block_height, info.status.block_hash) {
@@ -552,9 +627,11 @@ impl ChainSource {
 	#[allow(unused)]
 	pub async fn txout_value(&self, outpoint: &OutPoint) -> anyhow::Result<Amount> {
 		let tx = match self.inner() {
-			ChainSourceClient::Bitcoind(bitcoind) => {
-				bitcoind.get_raw_transaction(&outpoint.txid, None)
+			#[cfg(feature = "bitcoind-rpc")]
+			ChainSourceClient::Bitcoind { rpc, .. } => {
+				rpc.get_raw_transaction_verbosity_zero(&outpoint.txid).await
 					.with_context(|| format!("tx {} unknown", outpoint.txid))?
+					.0
 			},
 			ChainSourceClient::Esplora(client) => {
 				client.get_tx(&outpoint.txid).await?
@@ -580,6 +657,54 @@ impl ChainSource {
 
 		*self.fee_rates.write().await = fee_rates;
 		Ok(())
+	}
+}
+
+// ----- bitcoind-rpc feature-gated helpers ---------------------------------
+
+/// Inspect upstream `bitcoind-async-client` JSON-RPC errors for the
+/// "transaction not found" code. Mirrors the sync-side `BitcoinRpcErrorExt`
+/// in `bitcoin_ext::rpc`.
+#[cfg(feature = "bitcoind-rpc")]
+fn is_not_found(e: &BitcoindClientError) -> bool {
+	matches!(e, BitcoindClientError::Server(c, _) if *c == RPC_INVALID_ADDRESS_OR_KEY)
+}
+
+/// Inspect upstream errors for the "already in utxo set" code.
+#[cfg(feature = "bitcoind-rpc")]
+fn is_in_utxo_set(e: &BitcoindClientError) -> bool {
+	matches!(e, BitcoindClientError::Server(c, _) if *c == RPC_VERIFY_ALREADY_IN_UTXO_SET)
+}
+
+/// Two-step `getrawtransaction` + `getblockheader` to determine whether a
+/// txid is confirmed, in the mempool, or unknown.
+#[cfg(feature = "bitcoind-rpc")]
+async fn bitcoind_tx_status(
+	rpc: &BitcoindClient, txid: Txid,
+) -> Result<TxStatus, BitcoindClientError> {
+	let res: Result<rpc::GetRawTransactionResult, _> = rpc.call_raw(
+		"getrawtransaction",
+		&[serde_json::to_value(txid).expect("serializable"), true.into()],
+	).await;
+	let info = match res {
+		Ok(info) => info,
+		Err(e) if is_not_found(&e) => return Ok(TxStatus::NotFound),
+		Err(e) => return Err(e),
+	};
+	let Some(hash) = info.blockhash else {
+		return Ok(TxStatus::Mempool);
+	};
+	let header: rpc::json::GetBlockHeaderResult = rpc.call_raw(
+		"getblockheader",
+		&[serde_json::to_value(hash).expect("serializable"), true.into()],
+	).await?;
+	if header.confirmations > 0 {
+		Ok(TxStatus::Confirmed(BlockRef {
+			height: header.height as BlockHeight,
+			hash: header.hash,
+		}))
+	} else {
+		Ok(TxStatus::Mempool)
 	}
 }
 

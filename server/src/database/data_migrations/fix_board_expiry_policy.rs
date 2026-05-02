@@ -6,7 +6,9 @@ use tokio_postgres::types::Type;
 use bitcoin::consensus;
 use bitcoin::secp256k1::{PublicKey, Parity};
 
-use bitcoin_ext::rpc::{BitcoinRpcClient, BitcoinRpcExt};
+use bitcoind_async_client::Client as BitcoindClient;
+
+use crate::bitcoind as bcd;
 
 use ark::vtxo::Full;
 use ark::vtxo::raw::RawVtxo;
@@ -30,7 +32,7 @@ const NOARG: &[&bool] = &[];
 /// For each candidate we compare the VTXO's expected txout against the
 /// actual funding tx output. If they differ the bug is present and we
 /// patch the internal key to the correct combined key.
-pub async fn run(db: &Db, bitcoind: &BitcoinRpcClient) -> anyhow::Result<u64> {
+pub async fn run(db: &Db, bitcoind: &BitcoindClient) -> anyhow::Result<u64> {
 	let reader = db.get_conn().await.context("reader connection")?;
 	let writer = db.get_conn().await.context("writer connection")?;
 
@@ -79,7 +81,7 @@ pub async fn run(db: &Db, bitcoind: &BitcoinRpcClient) -> anyhow::Result<u64> {
 
 		// Fetch the funding tx from bitcoind.
 		let anchor = vtxo.chain_anchor();
-		let tx_info = bitcoind.custom_get_raw_transaction_info(anchor.txid, None)
+		let tx_info = bcd::custom_get_raw_transaction_info(bitcoind, anchor.txid, None).await
 			.with_context(|| format!("failed to fetch funding tx for vtxo id={}", id))?;
 		let tx_info = match tx_info {
 			Some(info) => info,

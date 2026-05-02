@@ -16,11 +16,10 @@ use serde::{Deserialize, Serialize};
 use tonic::transport::Uri;
 use tracing::{debug, error, info};
 use ark::integration::{TokenStatus, TokenType};
-use bitcoin_ext::rpc::{BitcoinRpcClient, BitcoinRpcExt, RpcApi};
 use uuid::Uuid;
 
 use ark::VtxoId;
-use server::{filters, Config, Server, CAPTAIND_CLI_API_KEY};
+use server::{bitcoind as bcd, filters, Config, Server, CAPTAIND_CLI_API_KEY};
 use server::utils::block_duration;
 use server_rpc::{self as rpc, protos};
 
@@ -326,17 +325,19 @@ async fn inner_main() -> anyhow::Result<()> {
 		Command::Drain { address } => {
 			info!("Running with config: {:#?}", cfg);
 			let db = server::database::Db::connect(&cfg.postgres).await?;
-			let bitcoind = BitcoinRpcClient::new(&cfg.bitcoind.url, cfg.bitcoind.auth())?;
+			let bitcoind = bcd::build_client(&cfg.bitcoind.url, cfg.bitcoind.auth())?;
 
 			let seed = server::wallet::read_mnemonic_from_datadir(&cfg.data_dir)?.to_seed("");
 			let master_xpriv = bip32::Xpriv::new_master(cfg.network, &seed).unwrap();
 
+			let deep_tip = bcd::deep_tip(&bitcoind).await
+				.context("failed to query node for deep tip")?;
 			let mut w = server::wallet::PersistedWallet::load_derive_from_master_xpriv(
 				db.clone(),
 				cfg.network,
 				&master_xpriv,
 				server::wallet::WalletKind::Rounds,
-				bitcoind.deep_tip().context("failed to query node for deep tip")?,
+				deep_tip,
 				cfg.min_trusted_confs,
 			).await?;
 
@@ -351,7 +352,7 @@ async fn inner_main() -> anyhow::Result<()> {
 			let db = server::database::Db::connect(&cfg.postgres).await?;
 			match cmd {
 				DataCommand::FixBoardExpiryPolicy => {
-					let bitcoind = BitcoinRpcClient::new(&cfg.bitcoind.url, cfg.bitcoind.auth())?;
+					let bitcoind = bcd::build_client(&cfg.bitcoind.url, cfg.bitcoind.auth())?;
 					let count = server::database::data_migrations::fix_board_expiry_policy::run(&db, &bitcoind).await?;
 					println!("Fixed {} board expiry vtxos", count);
 				}
@@ -523,9 +524,11 @@ async fn inner_main() -> anyhow::Result<()> {
 			let round_id = ark::rounds::RoundId::new(funding_txid);
 
 			if !force {
-				let bitcoind = BitcoinRpcClient::new(&cfg.bitcoind.url, cfg.bitcoind.auth())?;
+				let bitcoind = bcd::build_client(&cfg.bitcoind.url, cfg.bitcoind.auth())?;
 
-				match bitcoind.tx_status(funding_txid).context("failed to query tx status")? {
+				match bcd::tx_status(&bitcoind, funding_txid).await
+					.context("failed to query tx status")?
+				{
 					bitcoin_ext::TxStatus::Confirmed(_) => bail!(
 						"funding tx {} is confirmed; use --force to undo anyway", funding_txid,
 					),
@@ -541,7 +544,7 @@ async fn inner_main() -> anyhow::Result<()> {
 				let signed_tx = vtx.signed_tx()
 					.context("no signed tx in virtual tx table for funding tx")?;
 				println!("Serialized round funding tx: {}", serialize(&signed_tx).as_hex());
-				let [accept] = bitcoind.test_mempool_accept(&[signed_tx])
+				let [accept] = bcd::test_mempool_accept(&bitcoind, &[&signed_tx]).await
 					.context("failed to query mempool")?.try_into().unwrap();
 				if accept.allowed {
 					bail!("mempool would accept funding tx {}; the round may still confirm, \

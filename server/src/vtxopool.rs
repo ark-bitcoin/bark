@@ -457,7 +457,7 @@ impl Process {
 		let funding_txout = builder.funding_txout();
 
 		let mut wallet = self.srv.rounds_wallet.lock().await;
-		if let Err(e) = wallet.sync(&self.srv.bitcoind, false).await {
+		if let Err(e) = wallet.sync(&self.srv.bitcoind_sync, false).await {
 			warn!("Wallet sync error before funding vtxo pool issuance tx: {:#}", e);
 		}
 		let funding_psbt = {
