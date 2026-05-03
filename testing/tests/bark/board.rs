@@ -202,6 +202,35 @@ async fn board_tx_rejects_wrong_funding_address() {
 }
 
 #[tokio::test]
+async fn board_tx_rejects_wrong_expiry_height() {
+	let ctx = TestContext::new("bark/board_tx_rejects_wrong_expiry_height").await;
+	let srv = ctx.captaind("server").create().await;
+	let bark1 = ctx.bark("bark1", &srv).funded(sat(100_000)).create().await;
+
+	let wallet = bark1.client().await;
+	let mut onchain = bark1.onchain_wallet().await;
+	onchain.sync(&wallet.chain).await.unwrap();
+
+	let (keypair, _) = wallet.derive_store_next_keypair().await.unwrap();
+	let (board_addr, expiry_height) = wallet.board_funding_address(&keypair).await.unwrap();
+
+	let board_amount = sat(90_000);
+	let fee_rate = wallet.chain.fee_rates().await.regular;
+	let psbt = onchain.prepare_tx(&[(board_addr, board_amount)], fee_rate).unwrap();
+	let signed_psbt = onchain.finish_psbt(psbt).await.unwrap();
+
+	let err = wallet
+		.board_tx(signed_psbt, keypair, expiry_height + 1)
+		.await
+		.unwrap_err()
+		.to_alt_string();
+	assert!(
+		err.contains("does not pay to the expected board funding address"),
+		"unexpected error: {err}",
+	);
+}
+
+#[tokio::test]
 async fn board_tx_rejects_dust_amount() {
 	let ctx = TestContext::new("bark/board_tx_rejects_dust_amount").await;
 	let srv = ctx.captaind("server").cfg(|cfg| {
