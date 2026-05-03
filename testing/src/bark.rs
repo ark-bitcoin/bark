@@ -21,6 +21,7 @@ use tokio::sync::Mutex;
 use ark::{ProtocolEncoding, Vtxo, VtxoId};
 use ark::vtxo::Full;
 use bark::{BarkNetwork, Config};
+use bark::onchain::OnchainWallet;
 use bark::persist::BarkPersister;
 use bark::persist::adaptor::StorageAdaptorWrapper;
 use bark::persist::adaptor::filestore::FileStorageAdaptor;
@@ -265,7 +266,7 @@ impl Bark {
 		wallet.estimate_send_onchain(address, amount).await.unwrap()
 	}
 
-	pub async fn onchain_wallet(&self) -> bark::onchain::OnchainWallet {
+	pub async fn onchain_wallet(&self) -> OnchainWallet {
 		const MNEMONIC_FILE: &str = "mnemonic";
 		const DB_FILE: &str = "db.sqlite";
 		const FILESTORE_FILE: &str = "wallet.json";
@@ -288,7 +289,7 @@ impl Bark {
 		let properties = db.read_properties().await
 			.expect("failed to read properties")
 			.expect("wallet not initialised");
-		bark::onchain::OnchainWallet::load_or_create(properties.network, seed, db).await
+		OnchainWallet::load_or_create(properties.network, seed, db).await
 			.expect("failed to create OnchainWallet")
 	}
 
@@ -964,4 +965,3 @@ impl Bark {
 		}
 	}
 }
-

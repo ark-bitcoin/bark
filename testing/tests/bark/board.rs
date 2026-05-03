@@ -1,7 +1,8 @@
 use std::sync::Arc;
 use std::sync::atomic::{self, AtomicBool};
 
-use bitcoin::{Amount, Psbt, TxOut};
+use bitcoin::{Amount, OutPoint, Psbt, ScriptBuf, Transaction, TxIn, TxOut, Txid};
+use bitcoin::absolute::LockTime;
 use bitcoin::hashes::Hash;
 use bitcoin_ext::P2TR_DUST_SAT;
 
@@ -12,6 +13,7 @@ use server_rpc::protos;
 use ark_testing::{btc, sat, TestContext};
 use ark_testing::constants::BOARD_CONFIRMATIONS;
 use ark_testing::daemon::captaind::{self, ArkClient};
+use ark_testing::util::ToAltString;
 
 #[tokio::test]
 async fn board_bark() {
@@ -98,7 +100,7 @@ async fn bark_rejects_boarding_subdust_amount() {
 	let res = bark1.try_board(board_amount).await;
 
 	// This is taken care by BDK
-	assert!(res.unwrap_err().to_string().contains(&format!("Output below the dust limit: 0")));
+	assert!(res.unwrap_err().to_alt_string().contains(&format!("Output below the dust limit: 0")));
 }
 
 #[tokio::test]
@@ -114,7 +116,7 @@ async fn bark_rejects_boarding_below_minimum_board_amount() {
 	let board_amount = sat(MIN_BOARD_AMOUNT_SATS - 1);
 	let res = bark1.try_board(board_amount).await;
 
-	assert!(res.unwrap_err().to_string().contains(&format!(
+	assert!(res.unwrap_err().to_alt_string().contains(&format!(
 		"board amount of 0.00029999 BTC is less than minimum board amount required by server (0.00030000 BTC)",
 	)));
 }
@@ -174,17 +176,17 @@ async fn board_tx_rejects_wrong_funding_address() {
 	let (_, expiry_height) = wallet.board_funding_address(&keypair).await.unwrap();
 
 	// Build a PSBT that pays to an arbitrary script instead of the board funding address
-	let wrong_script = bitcoin::ScriptBuf::new_op_return(&[0u8; 20]);
+	let wrong_script = ScriptBuf::new_op_return(&[0u8; 20]);
 
 	let board_amount = sat(90_000);
 	// The input is not valid but it doesn't matter since validation fails before it's used.
-	let fake_input = bitcoin::TxIn {
-		previous_output: bitcoin::OutPoint::new(bitcoin::Txid::all_zeros(), 0),
+	let fake_input = TxIn {
+		previous_output: OutPoint::new(Txid::all_zeros(), 0),
 		..Default::default()
 	};
-	let psbt = Psbt::from_unsigned_tx(bitcoin::Transaction {
+	let psbt = Psbt::from_unsigned_tx(Transaction {
 		version: bitcoin::transaction::Version::TWO,
-		lock_time: bitcoin::absolute::LockTime::ZERO,
+		lock_time: LockTime::ZERO,
 		input: vec![fake_input],
 		output: vec![TxOut {
 			script_pubkey: wrong_script,
@@ -192,9 +194,9 @@ async fn board_tx_rejects_wrong_funding_address() {
 		}],
 	}).unwrap();
 
-	let err = wallet.board_tx(psbt, keypair, expiry_height).await.unwrap_err();
+	let err = wallet.board_tx(psbt, keypair, expiry_height).await.unwrap_err().to_alt_string();
 	assert!(
-		err.to_string().contains("does not pay to the expected board funding address"),
+		err.contains("does not pay to the expected board funding address"),
 		"unexpected error: {err}",
 	);
 }
@@ -214,13 +216,13 @@ async fn board_tx_rejects_dust_amount() {
 	// Build a PSBT that pays to the correct address but with a dust amount
 	let dust_amount = sat(1_000);
 	// The input is not valid but it doesn't matter since validation fails before it's used.
-	let fake_input = bitcoin::TxIn {
-		previous_output: bitcoin::OutPoint::new(bitcoin::Txid::all_zeros(), 0),
+	let fake_input = TxIn {
+		previous_output: OutPoint::new(Txid::all_zeros(), 0),
 		..Default::default()
 	};
-	let psbt = Psbt::from_unsigned_tx(bitcoin::Transaction {
+	let psbt = Psbt::from_unsigned_tx(Transaction {
 		version: bitcoin::transaction::Version::TWO,
-		lock_time: bitcoin::absolute::LockTime::ZERO,
+		lock_time: LockTime::ZERO,
 		input: vec![fake_input],
 		output: vec![TxOut {
 			script_pubkey: board_addr.script_pubkey(),
@@ -228,9 +230,9 @@ async fn board_tx_rejects_dust_amount() {
 		}],
 	}).unwrap();
 
-	let err = wallet.board_tx(psbt, keypair, expiry_height).await.unwrap_err();
+	let err = wallet.board_tx(psbt, keypair, expiry_height).await.unwrap_err().to_alt_string();
 	assert!(
-		err.to_string().contains("less than minimum board amount"),
+		err.contains("less than minimum board amount"),
 		"unexpected error: {err}",
 	);
 }
