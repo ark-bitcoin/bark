@@ -497,9 +497,12 @@ impl Metrics {
 		let fee_rate_using_fallback_gauge = meter.u64_gauge("fee_rate_using_fallback")
 			.with_description("Whether fallback fee rates are being used (0=estimated, 1=fallback)")
 			.build();
+		// 100ms is the sleep floor; buckets grow from there. Anything below 100
+		// is clock skew, anything above tracks runtime stalls of increasing severity.
 		let tokio_runtime_delay_histogram = meter.u64_histogram("tokio_runtime_delay_ms")
 			.with_description("Tokio runtime poll delay: time a 100ms sleep actually took")
 			.with_unit("ms")
+			.with_boundaries(vec![100.0, 105.0, 110.0, 125.0, 150.0, 200.0, 300.0, 500.0, 1000.0, 2000.0, 5000.0])
 			.build();
 
 		// log the current server version
