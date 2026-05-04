@@ -395,7 +395,7 @@ impl Metrics {
 			}
 		}
 
-		match tracing_subscriber::registry()
+		let registry = tracing_subscriber::registry()
 			.with(filter)
 			.with(
 				json_subscriber::layer()
@@ -410,8 +410,15 @@ impl Metrics {
 					.with_current_span(true)
 					.with_span_list(true)
 					.with_opentelemetry_ids(true))
-			.with(tracing_opentelemetry::layer().with_tracer(tracer))
-			.try_init() {
+			.with(tracing_opentelemetry::layer().with_tracer(tracer));
+
+		// Spawns the console-subscriber server (default 127.0.0.1:6669) and
+		// returns a layer that captures the tokio runtime trace events that
+		// `tokio-console` consumes. Honours TOKIO_CONSOLE_BIND etc.
+		#[cfg(feature = "tokio-console")]
+		let registry = registry.with(console_subscriber::spawn());
+
+		match registry.try_init() {
 			Ok(()) => {
 				global::set_tracer_provider(tracer_provider);
 

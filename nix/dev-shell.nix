@@ -192,6 +192,10 @@ in {
 			# for all tests
 			pkgs.cargo-nextest
 
+			# for inspecting tokio runtime tasks (paired with the
+			# `tokio-console` cargo feature on bark-server)
+			pkgs.tokio-console
+
 			# for integration tests
 			postgresql
 			bitcoin
