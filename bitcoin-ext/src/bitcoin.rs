@@ -121,7 +121,7 @@ impl TaprootSpendInfoExt for taproot::TaprootSpendInfo {}
 /// Extension trait for [Amount].
 pub trait AmountExt: Borrow<Amount> {
 	fn to_msat(&self) -> u64 {
-		self.borrow().to_sat() * 1_000
+		self.borrow().to_sat().saturating_mul(1_000)
 	}
 
 	/// Convert an amount from msat, rounding up.
