@@ -67,7 +67,8 @@ CREATE TYPE public.spend_state AS ENUM (
     'round-forfeit',
     'offboard-forfeit',
     'offboard-connector',
-    'unregistered'
+    'unregistered',
+    'ln-spent'
 );
 
 
