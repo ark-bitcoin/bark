@@ -275,11 +275,16 @@ async fn process_log_file<P: AsRef<Path>>(
 			}
 		}
 
-		line.clear();
-		match reader.read_line(&mut line).await.expect("I/O error on log file handle") {
-			0 => tokio::time::sleep(Duration::from_millis(100)).await,
-			_ => handlers.retain_mut(|h| !h.process_log(&line)),
+		// `read_line` appends to `line` and may return early with a partial
+		// line if the writer hasn't flushed a trailing '\n' yet. Only
+		// dispatch once we have a full line; otherwise keep accumulating.
+		let n = reader.read_line(&mut line).await.expect("I/O error on log file handle");
+		if n == 0 || !line.ends_with('\n') {
+			tokio::time::sleep(Duration::from_millis(100)).await;
+			continue;
 		}
+		handlers.retain_mut(|h| !h.process_log(&line));
+		line.clear();
 	}
 }
 
