@@ -21,12 +21,11 @@ use crate::constants::TX_PROPAGATION_SLEEP_TIME;
 use crate::daemon::{Daemon, DaemonHelper};
 use crate::util::{FutureExt, resolve_path, get_tx_propagation_timeout_millis};
 
-#[derive(Clone)]
 pub struct BitcoindHelper {
 	name : String,
 	exec: PathBuf,
 	config: BitcoindConfig,
-	state: BitcoindState,
+	state: parking_lot::Mutex<BitcoindState>,
 	add_node: Option<String>
 }
 
@@ -94,7 +93,7 @@ impl Bitcoind {
 	}
 
 	pub fn new(name: String, config: BitcoindConfig, add_node: Option<String>) -> Self {
-		let state = BitcoindState::default();
+		let state = parking_lot::Mutex::new(BitcoindState::default());
 		let exec = Bitcoind::exec();
 		Daemon::wrap(BitcoindHelper { name, exec, config, state, add_node })
 	}
@@ -252,16 +251,16 @@ impl BitcoindHelper {
 	}
 
 	pub fn rpc_port(&self) -> u16 {
-		self.state.rpc_port.expect("A port has been picked. Is bitcoind running?")
+		self.state.lock().rpc_port.expect("A port has been picked. Is bitcoind running?")
 	}
 
 	pub fn rpc_url(&self) -> String {
-		format!("http://127.0.0.1:{}", self.state.rpc_port
+		format!("http://127.0.0.1:{}", self.state.lock().rpc_port
 			.expect("A port has been picked. Is bitcoind running?"))
 	}
 
 	pub fn p2p_url(&self) -> String {
-		format!("127.0.0.1:{}", self.state.p2p_port.expect("A P2P port has been assigned."))
+		format!("127.0.0.1:{}", self.state.lock().p2p_port.expect("A P2P port has been assigned."))
 	}
 
 	pub fn sync_client(&self) -> anyhow::Result<rpc::Client> {
@@ -288,7 +287,7 @@ impl BitcoindHelper {
 	}
 
 	pub fn zmq_port(&self) -> u16 {
-		self.state.zmq_port.expect("A port has been picked. Is bitcoind running?")
+		self.state.lock().zmq_port.expect("A port has been picked. Is bitcoind running?")
 	}
 
 	pub fn zmq_url(&self) -> String {
@@ -296,14 +295,28 @@ impl BitcoindHelper {
 	}
 
 	async fn is_initialized(&self) -> bool {
-		let helper = self.clone();
+		let url = self.rpc_url();
+		let auth = self.auth();
+		let timeout_str = std::env::var(BITCOINRPC_TIMEOUT_SECS)
+			.unwrap_or_else(|_| String::from("15"));
+		let timeout = Duration::from_secs(
+			timeout_str.parse::<u64>()
+				.expect("BITCOINRPC_TIMEOUT_SECS is not a number"),
+		);
 		let check_init = tokio::task::spawn_blocking(move || {
-			match helper.sync_client() {
-				Ok(client) => {
-					client.get_network_info().is_ok()
-				},
-				Err(_) => false
-			}
+			let (user, pass) = match auth.get_user_pass() {
+				Ok(v) => v,
+				Err(_) => return false,
+			};
+			let transport = match rpc::jsonrpc::http::simple_http::Builder::new()
+				.url(&url)
+			{
+				Ok(b) => b.auth(user.expect("user defined"), pass).timeout(timeout).build(),
+				Err(_) => return false,
+			};
+			let jsonrpc = rpc::jsonrpc::client::Client::with_transport(transport);
+			let client = rpc::Client::from_jsonrpc(jsonrpc);
+			client.get_network_info().is_ok()
 		});
 
 		// We do need an additional time-out here to ensure this method returns
@@ -335,10 +348,11 @@ impl DaemonHelper for BitcoindHelper {
 		self.config.datadir.clone()
 	}
 
-	async fn make_reservations(&mut self) -> anyhow::Result<()> {
-		self.state.rpc_port = Some(portpicker::pick_unused_port().expect("A port is free"));
-		self.state.p2p_port = Some(portpicker::pick_unused_port().expect("A port is free"));
-		self.state.zmq_port = Some(portpicker::pick_unused_port().expect("A port is free"));
+	async fn make_reservations(&self) -> anyhow::Result<()> {
+		let mut state = self.state.lock();
+		state.rpc_port = Some(portpicker::pick_unused_port().expect("A port is free"));
+		state.p2p_port = Some(portpicker::pick_unused_port().expect("A port is free"));
+		state.zmq_port = Some(portpicker::pick_unused_port().expect("A port is free"));
 
 		Ok(())
 	}
@@ -376,8 +390,8 @@ impl DaemonHelper for BitcoindHelper {
 			&format!("-datadir={}", self.config.datadir.display()),
 			&format!("-txindex={}", self.config.txindex as u8),
 			&format!("-disablewallet={}", !self.config.wallet as u8),
-			&format!("-rpcport={}", self.state.rpc_port.expect("A port has been picked")),
-			&format!("-bind=127.0.0.1:{}", self.state.p2p_port.expect("A port has been picked")),
+			&format!("-rpcport={}", self.rpc_port()),
+			&format!("-bind=127.0.0.1:{}", self.state.lock().p2p_port.expect("A port has been picked")),
 			&format!("-zmqpubhashblock={}", self.zmq_url()),
 			&format!("-zmqpubhashtx={}", self.zmq_url()),
 			&format!("-zmqpubrawblock={}", self.zmq_url()),

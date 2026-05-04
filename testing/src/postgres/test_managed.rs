@@ -11,7 +11,7 @@ pub struct TestManagedPostgres {
 
 impl TestManagedPostgres {
 	pub async fn init(datadir: PathBuf) -> Self {
-		let mut postgresd = Postgres::new("postgres", datadir);
+		let postgresd = Postgres::new("postgres", datadir);
 		postgresd.start().await.unwrap();
 		Self { postgresd }
 	}

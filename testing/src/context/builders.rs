@@ -68,7 +68,7 @@ impl<'a> CaptaindBuilder<'a> {
 			mod_cfg(&mut cfg);
 		}
 
-		let mut ret = Captaind::new(&self.name, bitcoind, cfg);
+		let ret = Captaind::new(&self.name, bitcoind, cfg);
 		ret.start().await.unwrap();
 
 		if let Some(amount) = self.fund_amount {
@@ -134,7 +134,7 @@ impl<'a> WatchmandBuilder<'a> {
 			cfg.data_dir.join(MNEMONIC_FILE),
 		).await.expect("failed to copy mnemonic file for watchmand");
 
-		let mut ret = Watchmand::new(&self.name, bitcoind, cfg);
+		let ret = Watchmand::new(&self.name, bitcoind, cfg);
 		ret.start().await.unwrap();
 
 		ret
@@ -200,7 +200,7 @@ impl<'a> BarkdBuilder<'a> {
 		let config_toml = toml::to_string(&cfg).unwrap();
 		std::fs::write(datadir.join("config.toml"), config_toml).unwrap();
 
-		let mut daemon = Barkd::new(
+		let daemon = Barkd::new(
 			&self.name, datadir, self.srv.ark_url(), chain_source, bitcoind,
 		);
 		daemon.start().await.expect("failed to start barkd");
@@ -359,7 +359,7 @@ impl<'a> LightningdBuilder<'a> {
 			lightning_dir: self.ctx.datadir.join(&self.name),
 		};
 
-		let mut ret = Lightningd::new(&self.name, bitcoind, cfg);
+		let ret = Lightningd::new(&self.name, bitcoind, cfg);
 		ret.start().await.unwrap();
 
 		// wait for grpc to be available

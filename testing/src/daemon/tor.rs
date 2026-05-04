@@ -34,8 +34,8 @@ pub struct TorHelper {
 	name: String,
 	exec: PathBuf,
 	config: TorConfig,
-	socks_port: Option<u16>,
-	hidden_services: Vec<HiddenService>,
+	socks_port: parking_lot::Mutex<Option<u16>>,
+	hidden_services: parking_lot::Mutex<Vec<HiddenService>>,
 }
 
 pub type Tor = Daemon<TorHelper>;
@@ -66,26 +66,26 @@ impl Tor {
 			name: name.as_ref().to_owned(),
 			exec,
 			config,
-			socks_port: None,
-			hidden_services,
+			socks_port: parking_lot::Mutex::new(None),
+			hidden_services: parking_lot::Mutex::new(hidden_services),
 		})
 	}
 
 	pub fn socks_port(&self) -> u16 {
-		self.inner.socks_port.expect("socks port not assigned yet; is tor running?")
+		self.inner.socks_port.lock().expect("socks port not assigned yet; is tor running?")
 	}
 
 	pub fn socks_address(&self) -> String {
 		format!("socks5h://127.0.0.1:{}", self.socks_port())
 	}
 
-	pub fn onion_address(&self, name: &str) -> &str {
-		self.inner.hidden_services
+	pub fn onion_address(&self, name: &str) -> String {
+		self.inner.hidden_services.lock()
 			.iter()
 			.find(|hs| hs.name == name)
 			.unwrap_or_else(|| panic!("no hidden service named '{}'", name))
 			.onion_address
-			.as_deref()
+			.clone()
 			.expect("onion address not available yet; is tor running?")
 	}
 }
@@ -100,8 +100,8 @@ impl DaemonHelper for TorHelper {
 		self.config.datadir.clone()
 	}
 
-	async fn make_reservations(&mut self) -> anyhow::Result<()> {
-		self.socks_port = Some(portpicker::pick_unused_port().expect("free port available"));
+	async fn make_reservations(&self) -> anyhow::Result<()> {
+		*self.socks_port.lock() = Some(portpicker::pick_unused_port().expect("free port available"));
 		Ok(())
 	}
 
@@ -117,12 +117,12 @@ impl DaemonHelper for TorHelper {
 			"SocksPort {}\n\
 			 DataDirectory {}\n\
 			 Log notice file {}\n",
-			self.socks_port.expect("port reserved"),
+			self.socks_port.lock().expect("port reserved"),
 			data_dir.display(),
 			self.config.datadir.join("tor.log").display(),
 		);
 
-		for service in &self.hidden_services {
+		for service in self.hidden_services.lock().iter() {
 			let service_dir = self.config.datadir.join(format!("hs_{}", service.name));
 			create_dir_all(&service_dir)?;
 			// Tor requires hidden service directories to have mode 0700 on unix
@@ -154,16 +154,18 @@ impl DaemonHelper for TorHelper {
 
 	async fn wait_for_init(&self) -> anyhow::Result<()> {
 		// Tor is ready once all hidden service hostname files are written
-		for service in &self.hidden_services {
+		let names: Vec<String> = self.hidden_services.lock().iter()
+			.map(|s| s.name.clone()).collect();
+		for name in &names {
 			let hostname_path = self.config.datadir
-				.join(format!("hs_{}", service.name))
+				.join(format!("hs_{}", name))
 				.join("hostname");
 
 			loop {
 				if let Ok(contents) = read_to_string(&hostname_path).await {
 					let addr = contents.trim().to_string();
 					if !addr.is_empty() {
-						info!("Tor hidden service '{}' available at {}", service.name, addr);
+						info!("Tor hidden service '{}' available at {}", name, addr);
 						break;
 					}
 				}
@@ -186,17 +188,23 @@ impl DaemonHelper for TorHelper {
 	}
 
 	async fn post_start(
-		&mut self,
+		&self,
 		_log_handler_tx: &Sender<Box<dyn super::LogHandler>>,
 	) -> anyhow::Result<()> {
 		// Read all onion addresses now that tor is initialized.
-		for service in &mut self.hidden_services {
+		let names: Vec<String> = self.hidden_services.lock().iter()
+			.map(|s| s.name.clone()).collect();
+		for name in &names {
 			let hostname_path = self.config.datadir
-				.join(format!("hs_{}", service.name))
+				.join(format!("hs_{}", name))
 				.join("hostname");
 
 			let contents = read_to_string(&hostname_path).await?;
-			service.onion_address = Some(contents.trim().to_string());
+			let addr = contents.trim().to_string();
+			let mut services = self.hidden_services.lock();
+			if let Some(service) = services.iter_mut().find(|s| &s.name == name) {
+				service.onion_address = Some(addr);
+			}
 		}
 		Ok(())
 	}

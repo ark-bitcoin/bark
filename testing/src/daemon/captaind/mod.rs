@@ -102,7 +102,7 @@ impl SlogHandler for Arc<parking_lot::Mutex<State>> {
 
 pub struct CaptaindHelper {
 	name: String,
-	cfg: Config,
+	cfg: parking_lot::Mutex<Config>,
 	bitcoind: Arc<Bitcoind>,
 	slog_handler_tx: parking_lot::Mutex<Option<mpsc::Sender<Box<dyn SlogHandler>>>>,
 	state: Arc<parking_lot::Mutex<State>>,
@@ -113,22 +113,22 @@ impl Captaind {
 		&self.inner.bitcoind
 	}
 
-	pub fn config(&self) -> &Config {
-		&self.inner.cfg
+	pub fn config(&self) -> parking_lot::MutexGuard<'_, Config> {
+		self.inner.cfg.lock()
 	}
 
-	pub fn config_mut(&mut self) -> &mut Config {
-		&mut self.inner.cfg
+	pub fn config_mut(&self) -> parking_lot::MutexGuard<'_, Config> {
+		self.inner.cfg.lock()
 	}
 
 	pub fn rpc_port(&self) -> u16 {
-		self.inner.cfg.rpc.public_address.port()
+		self.inner.cfg.lock().rpc.public_address.port()
 	}
 
 	/// The maximum time it can take for a user to wait for the next round to finish,
 	/// counting for max one failed attempt
 	pub fn max_round_delay(&self) -> Duration {
-		let cfg = &self.inner.cfg;
+		let cfg = self.inner.cfg.lock();
 		let buffer = Duration::from_millis(500);
 		cfg.round_interval + 2 * (cfg.round_submit_time + 2 * cfg.round_sign_time) + buffer
 	}
@@ -148,7 +148,7 @@ impl Captaind {
 	pub fn new(name: impl AsRef<str>, bitcoind: Arc<Bitcoind>, cfg: Config) -> Self {
 		let helper = CaptaindHelper {
 			name: name.as_ref().to_string(),
-			cfg,
+			cfg: parking_lot::Mutex::new(cfg),
 			bitcoind,
 			slog_handler_tx: parking_lot::Mutex::new(None),
 			state: Arc::new(parking_lot::Mutex::new(State::default())),
@@ -390,7 +390,7 @@ impl DaemonHelper for CaptaindHelper {
 	}
 
 	fn datadir(&self) -> PathBuf {
-		self.cfg.data_dir.clone()
+		self.cfg.lock().data_dir.clone()
 	}
 
 	async fn get_command(&self) -> anyhow::Result<Command> {
@@ -408,7 +408,7 @@ impl DaemonHelper for CaptaindHelper {
 		Ok(cmd)
 	}
 
-	async fn make_reservations(&mut self) -> anyhow::Result<()> {
+	async fn make_reservations(&self) -> anyhow::Result<()> {
 		let public_port = portpicker::pick_unused_port().expect("No ports free");
 		let admin_port = portpicker::pick_unused_port().expect("No ports free");
 		let integration_port = portpicker::pick_unused_port().expect("No ports free");
@@ -420,7 +420,7 @@ impl DaemonHelper for CaptaindHelper {
 		trace!("admin rpc address: {}", admin_address.to_string());
 		trace!("integration rpc address: {}", integration_port.to_string());
 
-		self.cfg.rpc = config::Rpc {
+		self.cfg.lock().rpc = config::Rpc {
 			public_address: SocketAddr::from_str(public_address.as_str())?,
 			admin_address: Some(SocketAddr::from_str(admin_address.as_str())?),
 			integration_address: Some(SocketAddr::from_str(integration_address.as_str())?),
@@ -442,7 +442,7 @@ impl DaemonHelper for CaptaindHelper {
 		let config_path = data_dir.join(CAPTAIND_CONFIG_FILE);
 		info!("Preparing to create configuration file at: {}", config_path.display());
 		let mut config_file = fs::File::create(&config_path).unwrap();
-		self.cfg.write_into(&mut config_file)
+		self.cfg.lock().write_into(&mut config_file)
 			.with_context(|| format!("error writing server config to '{}'", config_path.display()))?;
 		info!("Configuration file successfully created at: {}", config_path.display());
 
@@ -462,7 +462,7 @@ impl DaemonHelper for CaptaindHelper {
 	}
 
 	async fn post_start(
-		&mut self,
+		&self,
 		log_handler_tx: &mpsc::Sender<Box<dyn LogHandler>>,
 	) -> anyhow::Result<()> {
 		log_handler_tx.send(self.init_slog_handler()).await.unwrap();
@@ -514,11 +514,11 @@ impl CaptaindHelper {
 	}
 
 	pub fn ark_url(&self) -> String {
-		format!("http://{}", self.cfg.rpc.public_address)
+		format!("http://{}", self.cfg.lock().rpc.public_address)
 	}
 
 	pub fn admin_url(&self) -> String {
-		format!("http://{}", self.cfg.rpc.admin_address.expect("missing admin addr"))
+		format!("http://{}", self.cfg.lock().rpc.admin_address.expect("missing admin addr"))
 	}
 
 	async fn create(&self) -> anyhow::Result<()> {
@@ -546,7 +546,7 @@ impl CaptaindHelper {
 	}
 
 	/// Initialize the [LogHandler] that will drive slog handlers
-	fn init_slog_handler(&mut self) -> Box<dyn LogHandler> {
+	fn init_slog_handler(&self) -> Box<dyn LogHandler> {
 		/// This handler will forward the raw stdout log lines into
 		/// the slog handlers after parsing
 		struct Handler {

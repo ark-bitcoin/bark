@@ -55,7 +55,7 @@ impl SlogHandler for Arc<parking_lot::Mutex<State>> {
 
 pub struct WatchmandHelper {
 	name: String,
-	cfg: Config,
+	cfg: parking_lot::Mutex<Config>,
 	bitcoind: Arc<Bitcoind>,
 	slog_handler_tx: parking_lot::Mutex<Option<mpsc::Sender<Box<dyn SlogHandler>>>>,
 	state: Arc<parking_lot::Mutex<State>>,
@@ -66,12 +66,12 @@ impl Watchmand {
 		&self.inner.bitcoind
 	}
 
-	pub fn config(&self) -> &Config {
-		&self.inner.cfg
+	pub fn config(&self) -> parking_lot::MutexGuard<'_, Config> {
+		self.inner.cfg.lock()
 	}
 
-	pub fn config_mut(&mut self) -> &mut Config {
-		&mut self.inner.cfg
+	pub fn config_mut(&self) -> parking_lot::MutexGuard<'_, Config> {
+		self.inner.cfg.lock()
 	}
 
 	/// Gracefully shutdown bitcoind associated with this server.
@@ -89,7 +89,7 @@ impl Watchmand {
 	pub fn new(name: impl AsRef<str>, bitcoind: Arc<Bitcoind>, cfg: Config) -> Self {
 		let helper = WatchmandHelper {
 			name: name.as_ref().to_string(),
-			cfg,
+			cfg: parking_lot::Mutex::new(cfg),
 			bitcoind,
 			slog_handler_tx: parking_lot::Mutex::new(None),
 			state: Arc::new(parking_lot::Mutex::new(State::default())),
@@ -207,7 +207,7 @@ impl DaemonHelper for WatchmandHelper {
 	}
 
 	fn datadir(&self) -> PathBuf {
-		self.cfg.data_dir.clone()
+		self.cfg.lock().data_dir.clone()
 	}
 
 	async fn get_command(&self) -> anyhow::Result<Command> {
@@ -225,11 +225,11 @@ impl DaemonHelper for WatchmandHelper {
 		Ok(cmd)
 	}
 
-	async fn make_reservations(&mut self) -> anyhow::Result<()> {
+	async fn make_reservations(&self) -> anyhow::Result<()> {
 		let admin_port = portpicker::pick_unused_port().expect("No ports free");
 		let admin_address = format!("127.0.0.1:{}", admin_port);
 		trace!("admin rpc address: {}", admin_address.to_string());
-		self.cfg.admin_address = Some(SocketAddr::from_str(admin_address.as_str())?);
+		self.cfg.lock().admin_address = Some(SocketAddr::from_str(admin_address.as_str())?);
 		Ok(())
 	}
 
@@ -243,7 +243,7 @@ impl DaemonHelper for WatchmandHelper {
 		let config_path = data_dir.join(WATCHMAND_CONFIG_FILE);
 		info!("Preparing to create configuration file at: {}", config_path.display());
 		let mut config_file = fs::File::create(&config_path).unwrap();
-		self.cfg.write_into(&mut config_file)
+		self.cfg.lock().write_into(&mut config_file)
 			.with_context(|| format!("error writing server config to '{}'", config_path.display()))?;
 		info!("Configuration file successfully created at: {}", config_path.display());
 
@@ -258,7 +258,7 @@ impl DaemonHelper for WatchmandHelper {
 	}
 
 	async fn post_start(
-		&mut self,
+		&self,
 		log_handler_tx: &mpsc::Sender<Box<dyn LogHandler>>,
 	) -> anyhow::Result<()> {
 		log_handler_tx.send(self.init_slog_handler()).await.unwrap();
@@ -303,11 +303,11 @@ impl WatchmandHelper {
 	}
 
 	pub fn admin_url(&self) -> String {
-		format!("http://{}", self.cfg.admin_address.expect("missing admin addr"))
+		format!("http://{}", self.cfg.lock().admin_address.expect("missing admin addr"))
 	}
 
 	/// Initialize the [LogHandler] that will drive slog handlers
-	fn init_slog_handler(&mut self) -> Box<dyn LogHandler> {
+	fn init_slog_handler(&self) -> Box<dyn LogHandler> {
 		/// This handler will forward the raw stdout log lines into
 		/// the slog handlers after parsing
 		struct Handler {

@@ -20,7 +20,7 @@ async fn setup(test_name: &str) -> (TestContext, Arc<Captaind>, Tor, LightningPa
 		ctx.bitcoind().rpc_port()
 	};
 
-	let mut tor = Tor::new("tor", TorConfig {
+	let tor = Tor::new("tor", TorConfig {
 		datadir: ctx.datadir.join("tor"),
 		hidden_services: vec![
 			HiddenServiceConfig {

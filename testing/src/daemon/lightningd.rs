@@ -308,7 +308,7 @@ impl DaemonHelper for LightningDHelper {
 		self.config.lightning_dir.clone()
 	}
 
-	async fn make_reservations(&mut self) -> anyhow::Result<()> {
+	async fn make_reservations(&self) -> anyhow::Result<()> {
 		let grpc_port = portpicker::pick_unused_port().expect("No ports free");
 		let hold_port = portpicker::pick_unused_port().expect("No ports free");
 		let port = portpicker::pick_unused_port().expect("No ports free");

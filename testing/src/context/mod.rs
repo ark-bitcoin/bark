@@ -172,7 +172,7 @@ impl TestContext {
 
 		snapshot::ensure_snapshot(&snapshot_dir).await;
 
-		let mut bitcoind = Bitcoind::new(
+		let bitcoind = Bitcoind::new(
 			"bitcoind".to_string(),
 			BitcoindConfig {
 				datadir: self.datadir.join("bitcoind"),
@@ -202,7 +202,7 @@ impl TestContext {
 					bitcoin_zmq_port: self.bitcoind().zmq_port(),
 					electrs_dir: self.datadir.join("electrs"),
 				};
-				let mut electrs = Electrs::new(&self.test_name, cfg, electrs_type);
+				let electrs = Electrs::new(&self.test_name, cfg, electrs_type);
 				electrs.start().await.unwrap();
 				Some(electrs)
 			},
@@ -268,7 +268,7 @@ impl TestContext {
 		let wallet = cfg.wallet;
 		let name = name.as_ref();
 
-		let mut bitcoind = Bitcoind::new(name.to_string(), cfg, Some(self.bitcoind().p2p_url()));
+		let bitcoind = Bitcoind::new(name.to_string(), cfg, Some(self.bitcoind().p2p_url()));
 		bitcoind.start().await.unwrap();
 		if wallet {
 			bitcoind.create_wallet(name).await;
