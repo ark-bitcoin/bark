@@ -87,5 +87,13 @@ tonic-tracing-opentelemetry.workspace = true
 tower-http = { version = "0.6.8", default-features = false, features = ["cors"] }
 json-subscriber.workspace = true
 
+# Optional: enables a tokio-console subscriber. Requires `--cfg tokio_unstable`
+# in RUSTFLAGS at build time. Build with:
+#   RUSTFLAGS="--cfg tokio_unstable" cargo build -p bark-server --features tokio-console
+console-subscriber = { version = "0.5.0", optional = true }
+
+[features]
+tokio-console = ["dep:console-subscriber", "tokio/tracing"]
+
 [dev-dependencies]
 ark-lib = { path = "../lib", features = [ "test-util" ] }
