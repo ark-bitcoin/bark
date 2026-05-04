@@ -52,6 +52,8 @@ impl<'a> PaymentAttemptHandler<'a> {
 	///
 	/// Wraps [`database::Db::verify_and_update_payment_attempt`] with broadcast
 	/// and mailbox notification.
+	///
+	/// The caller is responsible for verifying that the preimage matches the payment hash.
 	pub async fn process_payment_attempt(
 		&self,
 		settler: &HtlcSettler,
@@ -64,14 +66,36 @@ impl<'a> PaymentAttemptHandler<'a> {
 		// Store the preimage in the settlement table so the
 		// watchman can use it to claim HTLC VTXOs on-chain.
 		if let Some(preimage) = preimage {
-			debug_assert!(status.is_final(), "preimage must be set for final status");
-			debug_assert!(preimage.compute_payment_hash() == attempt.payment_hash, "preimage must match payment hash");
+			debug_assert!(
+				matches!(status, LightningPaymentStatus::Succeeded),
+				"payment is succeeded if preimage is known, not {}", status,
+			);
+			debug_assert!(
+				preimage.compute_payment_hash() == attempt.payment_hash,
+				"preimage must match payment hash",
+			);
 			settler.settle(preimage).await?;
 		}
 
-		let updated = self.db.write(async |t|
-			t.verify_and_update_payment_attempt(attempt, status, payment_error, final_amount_msat).await
-		).await?;
+		let updated = self.db.write(async |t| {
+			// Mark the spendable HTLC-send vtxos as ln-spent as soon as the
+			// preimage is known. Any linked vtxo that wasn't spendable is left
+			// untouched and reported, but the settlement still proceeds.
+			if preimage.is_some() {
+				let not_spendable = t.mark_htlc_send_vtxos_ln_spent(attempt.payment_hash).await?;
+				if !not_spendable.is_empty() {
+					warn!(
+						"Lightning payment attempt ({}): HTLC-send vtxos for payment hash {} \
+						were not spendable and left untouched: {:?}",
+						attempt.id, attempt.payment_hash, not_spendable,
+					);
+				}
+			}
+
+			t.verify_and_update_payment_attempt(
+				attempt, status, payment_error, final_amount_msat
+			).await
+		}).await?;
 
 		if updated {
 			trace!("Lightning payment attempt ({}): status updated to {} for payment hash {}.",

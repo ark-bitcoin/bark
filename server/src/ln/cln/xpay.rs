@@ -221,9 +221,15 @@ impl ClnXpayClient {
 						payment_hash,
 					);
 				} else {
-					let preimage = latest.preimage.map(|b| b.try_into())
+					let preimage = latest.preimage.map(|b| Preimage::from_slice(&b))
 						.transpose()
 						.context("CLN returned a preimage that is not 32 bytes")?;
+
+					if let Some(preimage) = &preimage {
+						if preimage.compute_payment_hash() != attempt.payment_hash {
+							bail!("preimage does not match payment hash");
+						}
+					}
 
 					// NB: for intra-ark payments, settle_invoice may also post
 					// the mailbox notification for the same payment hash.

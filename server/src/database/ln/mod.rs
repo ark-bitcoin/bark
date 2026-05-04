@@ -757,6 +757,52 @@ impl<'t> Tx<'t> {
 		}
 	}
 
+	/// Transition every currently-`spendable` HTLC-send vtxo linked to the
+	/// given payment hash's open attempts to `ln-spent`. Called when a lightning
+	/// send settles, so the vtxo is explicitly marked as consumed by a paid
+	/// invoice.
+	///
+	/// Returns the ids of the linked vtxos that were *not* spendable and so
+	/// were left untouched. An empty vec means every linked vtxo was spendable
+	/// and transitioned.
+	pub async fn mark_htlc_send_vtxos_ln_spent(
+		&self,
+		payment_hash: PaymentHash,
+	) -> anyhow::Result<Vec<VtxoId>> {
+		let stmt = self.prepare("
+			WITH found AS (
+				SELECT vtxo.vtxo_id, vtxo.spend_state
+				FROM vtxo
+				JOIN lightning_payment_attempt_htlc_vtxo link ON link.vtxo_id = vtxo.vtxo_id
+				JOIN lightning_payment_attempt lpa ON lpa.id = link.lightning_payment_attempt_id
+				WHERE lpa.payment_hash = $1
+				  AND lpa.status NOT IN ($2, $3)
+			),
+			updated AS (
+				UPDATE vtxo
+				SET spend_state = 'ln-spent', updated_at = NOW()
+				WHERE vtxo_id IN (SELECT vtxo_id FROM found WHERE spend_state = 'spendable')
+				RETURNING vtxo.vtxo_id
+			)
+			SELECT vtxo_id FROM found WHERE spend_state != 'spendable'
+		").await?;
+
+		let status_failed = LightningPaymentStatus::Failed;
+		let status_succeeded = LightningPaymentStatus::Succeeded;
+
+		let rows = self.query(&stmt, &[
+			&payment_hash.to_string(),
+			&status_failed,
+			&status_succeeded,
+		]).await
+			.context("failed to mark HTLC-send vtxos as ln-spent")?;
+
+		rows.iter()
+			.map(|row| VtxoId::from_str(row.get::<_, &str>("vtxo_id"))
+				.context("invalid vtxo_id in vtxo table"))
+			.collect()
+	}
+
 	/// Look up whether a payment hash has been settled.
 	///
 	/// Returns the preimage if the settlement exists.
