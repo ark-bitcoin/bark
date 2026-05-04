@@ -8,6 +8,7 @@ use ark::{musig, VtxoId};
 use ark::forfeit::HashLockedForfeitBundle;
 use ark::tree::signed::{UnlockHash, UnlockPreimage};
 
+use crate::database::SpendState;
 use crate::database::tree::VtxoTreeUpdate;
 use crate::Server;
 use crate::error::ContextExt;
@@ -155,7 +156,7 @@ impl Server {
 
 		let update = VtxoTreeUpdate::new()
 			.upsert_signed_tx(ff_txs)
-			.insert_spendable_vtxos(ff_vtxos)
+			.insert_unspent_vtxos(ff_vtxos, SpendState::RoundForfeit)
 			.mark_vtxos_round_forfeited(input_forfeit_pairs)
 			.mark_vtxos_claimed(output_vtxo_ids);
 		self.db.execute_vtxo_tree_update(update).await
