@@ -92,20 +92,18 @@ impl FromStr for MailboxType {
 /// Identifier for a mailbox
 ///
 /// Represented as a curve point.
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct MailboxIdentifier([u8; PUBLIC_KEY_SIZE]);
-
-impl_byte_newtype!(MailboxIdentifier, PUBLIC_KEY_SIZE);
+#[derive(Clone, Debug, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct MailboxIdentifier(PublicKey);
 
 impl MailboxIdentifier {
 	/// Convert to public key
 	pub fn as_pubkey(&self) -> PublicKey {
-		PublicKey::from_slice(&self.0).expect("invalid pubkey")
+		self.0
 	}
 
 	/// Convert from a public key
 	pub fn from_pubkey(pubkey: PublicKey) -> Self {
-		Self(pubkey.serialize())
+		Self(pubkey)
 	}
 
 	/// Blind the mailbox id with the server pubkey and the VTXO privkey
@@ -127,7 +125,26 @@ impl MailboxIdentifier {
 		let neg_dh_pk = point_to_pubkey(&dh).negate(&SECP);
 		let ret = PublicKey::combine_keys(&[&blinded.as_pubkey(), &neg_dh_pk])
 			.expect("error adding DH secret to mailbox key");
-		Self(ret.serialize())
+		Self(ret)
+	}
+}
+
+impl fmt::Display for MailboxIdentifier {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		write!(f, "{}", self.0)
+	}
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error("invalid mailbox identifier: {0}")]
+pub struct InvalidMailboxIdentifier(String);
+
+impl FromStr for MailboxIdentifier {
+	type Err = InvalidMailboxIdentifier;
+
+	fn from_str(s: &str) -> Result<Self, Self::Err> {
+		let pubkey = PublicKey::from_str(s).map_err(|_| InvalidMailboxIdentifier(s.to_string()))?;
+		Ok(Self(pubkey))
 	}
 }
 
@@ -139,15 +156,15 @@ impl From<PublicKey> for MailboxIdentifier {
 
 impl ProtocolEncoding for MailboxIdentifier {
 	fn encode<W: io::Write + ?Sized>(&self, w: &mut W) -> Result<(), io::Error> {
-		w.emit_slice(self.as_ref())
+		w.emit_slice(self.0.serialize().as_slice())
 	}
 
 	fn decode<R: io::Read + ?Sized>(r: &mut R) -> Result<Self, ProtocolDecodingError> {
 		let bytes: [u8; PUBLIC_KEY_SIZE] = r.read_byte_array()?;
-		PublicKey::from_slice(&bytes).map_err(|e| {
+		let pubkey = PublicKey::from_slice(&bytes).map_err(|e| {
 			ProtocolDecodingError::invalid_err(e, "invalid mailbox identifier public key")
 		})?;
-		Ok(Self(bytes))
+		Ok(Self(pubkey))
 	}
 }
 

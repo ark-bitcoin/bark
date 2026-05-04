@@ -268,7 +268,7 @@ struct SerdeRoundParticipation<'a> {
 	#[serde(with = "ark::encode::serde::cow::vec")]
 	inputs: Cow<'a, [Vtxo<Full>]>,
 	outputs: Vec<SerdeVtxoRequest<'a>>,
-	#[serde(default, skip_serializing_if = "Option::is_none")]
+	#[serde(default, skip_serializing_if = "Option::is_none", with = "ark::encode::serde::opt")]
 	unblinded_mailbox_id: Option<MailboxIdentifier>,
 }
 
