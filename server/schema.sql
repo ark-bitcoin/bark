@@ -62,7 +62,10 @@ CREATE TYPE public.spend_state AS ENUM (
     'unclaimed',
     'spent',
     'pool',
-    'htlc-recv-unclaimed'
+    'htlc-recv-unclaimed',
+    'round-forfeit',
+    'offboard-forfeit',
+    'offboard-connector'
 );
 
 
