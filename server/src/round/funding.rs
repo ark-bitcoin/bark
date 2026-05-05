@@ -55,6 +55,9 @@ impl FundingTxSpec {
 	/// bdk's coin selection; in an async context prefer
 	/// [`FundingTxSpec::build`].
 	fn compute_build(self, wallet: &mut PersistedWallet) -> anyhow::Result<FundingTx> {
+		let start = std::time::Instant::now();
+
+
 		let unavailable_outputs = wallet.unavailable_outputs(self.min_trusted_confs);
 
 		let psbt = {
@@ -95,6 +98,14 @@ impl FundingTxSpec {
 			.context("failed to lock extra inputs")?;
 
 		let txid = psbt.unsigned_tx.compute_txid();
+		let total_output_amount = psbt.unsigned_tx.output.iter()
+			.map(|o| o.value)
+			.sum();
+		slog!(RoundFundingTxBuilt,
+			total_output_amount,
+			pinned_input: pinned_input.utxo(),
+			build_time: start.elapsed(),
+		);
 		Ok(FundingTx { psbt, txid, pinned_input, _extra_inputs })
 	}
 }
