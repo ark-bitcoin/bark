@@ -1,5 +1,5 @@
-
 pub mod forfeit;
+pub mod funding;
 
 
 use std::mem;
@@ -11,7 +11,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::Context;
 use bitcoin::consensus::encode::serialize;
-use bitcoin::{Amount, OutPoint, Psbt, Txid};
+use bitcoin::{Amount, TxOut};
 use bitcoin::hashes::{sha256, Hash};
 use bitcoin::secp256k1::{rand, Keypair, PublicKey};
 use bitcoin_ext::{BlockHeight, P2TR_DUST, P2WSH_DUST};
@@ -27,7 +27,7 @@ use ark::fees::{RefreshFees, VtxoFeeInfo};
 use ark::musig::{self, PublicNonce, SecretNonce};
 use ark::rounds::{
 	RoundAttempt, RoundAttemptAttestation, RoundEvent, RoundFinished, RoundSeq, VtxoProposal,
-	RoundFailed, ROUND_TX_VTXO_TREE_VOUT
+	RoundFailed,
 };
 use ark::tree::signed::{
 	CachedSignedVtxoTree, UnlockHash, UnlockPreimage, UnsignedVtxoTree, VtxoLeafSpec, VtxoTreeSpec,
@@ -42,6 +42,8 @@ use crate::flux::{VtxoFluxGuard, OwnedVtxoFluxGuard};
 use crate::telemetry::{RoundStep, TimedRoundStep};
 use crate::utils::InstrumentedOwnedLockGuard;
 use crate::wallet::{BdkWalletExt, PersistedWallet, WalletUtxoGuard};
+
+use self::funding::{FundingTx, FundingTxSpec};
 
 #[macro_export]
 macro_rules! server_rslog {
@@ -776,49 +778,17 @@ impl CollectingPayments {
 			vec![self.cosign_key.public_key()],
 		);
 
-		// Build round tx.
 		//TODO(stevenroose) think about if we can release lock sooner
 		let mut wallet_lock = srv.rounds_wallet.lock_owned().await;
-		let round_tx_psbt = {
-			let unavailable = wallet_lock.unavailable_outputs(srv.config.min_trusted_confs);
-			let mut b = wallet_lock.build_tx();
-			b.ordering(bdk_wallet::TxOrdering::Untouched);
-			b.current_height(tip);
-			b.unspendable(unavailable);
-			// NB: manual selection overrides unspendable
-			if let Some(ref common_round_tx_input) = self.common_round_tx_input {
-				let utxo = common_round_tx_input.utxo().clone();
-				b.add_utxo(utxo).map_err(|e| RoundError::Recoverable(e.into()))?;
-			}
-			// NB: order is important here, we need to respect `ROUND_TX_VTXO_TREE_VOUT`
-			b.add_recipient(vtxos_spec.funding_tx_script_pubkey(), vtxos_spec.total_required_value());
-			b.fee_rate(srv.fee_estimator.regular());
-			match b.finish().context("bdk failed to create round tx") {
-				Ok(psbt) => psbt,
-				Err(e) => return Err(RoundError::Recoverable(e)),
-			}
-		};
-		let round_tx_fee = round_tx_psbt.fee()
-			.context("error calculating roudn tx fee")
-			.map_err(|e| RoundError::Recoverable(e))?;
-		let res = round_tx_psbt.clone().extract_tx().context("failed to extract tx from psbt");
-		let unsigned_round_tx = match res {
-			Ok(tx) => tx,
-			Err(e) => return Err(RoundError::Recoverable(e)),
-		};
-
-		let common_round_tx_input = match self.common_round_tx_input.take() {
-			Some(input) => input,
-			None => {
-				let common_round_tx_input = unsigned_round_tx.input.first()
-					.expect("funded round tx should have an input").previous_output;
-				wallet_lock.lock_wallet_utxo(common_round_tx_input)
-					.map_err(|e| RoundError::Recoverable(e.into()))?
-			}
-		};
-
-		let round_txid = unsigned_round_tx.compute_txid();
-		let vtxos_utxo = OutPoint::new(round_txid, ROUND_TX_VTXO_TREE_VOUT);
+		let funding_tx = FundingTxSpec {
+			tree_output: TxOut {
+				script_pubkey: vtxos_spec.funding_tx_script_pubkey(),
+				value: vtxos_spec.total_required_value(),
+			},
+			fee_rate: srv.fee_estimator.regular(),
+			min_trusted_confs: srv.config.min_trusted_confs,
+			pinned_input: self.common_round_tx_input.take(),
+		}.build(&mut wallet_lock).map_err(RoundError::Recoverable)?;
 
 		// Generate vtxo nonces and combine with user's nonces.
 		let (cosign_sec_nonces, cosign_pub_nonces) = {
@@ -860,12 +830,12 @@ impl CollectingPayments {
 		srv.rounds.broadcast_event(RoundEvent::VtxoProposal(VtxoProposal {
 			round_seq: round_step.round_seq(),
 			attempt_seq: round_step.attempt_seq(),
-			unsigned_round_tx: unsigned_round_tx.clone(),
+			unsigned_round_tx: funding_tx.unsigned_tx().clone(),
 			vtxos_spec: vtxos_spec.clone(),
 			cosign_agg_nonces: cosign_agg_nonces.clone(),
 		}));
 
-		let unsigned_vtxo_tree = vtxos_spec.into_unsigned_tree(vtxos_utxo);
+		let unsigned_vtxo_tree = vtxos_spec.into_unsigned_tree(funding_tx.tree_outpoint());
 		// proceed if no leaves need cosigning
 		let proceed = unsigned_vtxo_tree.nb_cosigned_leaves() == 0;
 
@@ -890,13 +860,10 @@ impl CollectingPayments {
 			cosign_part_sigs: HashMap::with_capacity(unsigned_vtxo_tree.nb_leaves()),
 			unsigned_vtxo_tree,
 			wallet_lock,
-			round_tx_psbt,
-			round_txid,
-			round_tx_fee,
+			funding_tx,
 			user_cosign_nonces,
 			inputs_per_cosigner: self.inputs_per_cosigner,
 			output_mailbox_ids,
-			common_round_tx_input,
 			round_step,
 			proceed,
 		})
@@ -925,9 +892,7 @@ pub struct SigningVtxoTree {
 	cosign_agg_nonces: Vec<musig::AggregatedNonce>,
 	unsigned_vtxo_tree: UnsignedVtxoTree,
 	wallet_lock: InstrumentedOwnedLockGuard<PersistedWallet>,
-	round_tx_psbt: Psbt,
-	round_txid: Txid,
-	round_tx_fee: Amount,
+	funding_tx: FundingTx,
 
 	// data from earlier
 	all_inputs: HashMap<VtxoId, Vtxo<Full>>,
@@ -940,8 +905,6 @@ pub struct SigningVtxoTree {
 	/// Used to post VTXOs to mailboxes after round finalization for wallet recovery.
 	/// None for server-generated padding VTXOs which don't need mailbox delivery.
 	output_mailbox_ids: Vec<Option<ark::mailbox::MailboxIdentifier>>,
-
-	common_round_tx_input: WalletUtxoGuard,
 
 	round_step: TimedRoundStep,
 
@@ -1018,7 +981,7 @@ impl SigningVtxoTree {
 			self.round_data,
 			self.locked_inputs,
 			Some(allowed_inputs),
-			Some(self.common_round_tx_input),
+			Some(self.funding_tx.into_pinned_input()),
 		)
 	}
 
@@ -1086,8 +1049,8 @@ impl SigningVtxoTree {
 		}
 
 		server_rslog!(BroadcastRoundFundingTx, self.round_step,
-			txid: self.round_txid,
-			round_tx_fee: self.round_tx_fee,
+			txid: self.funding_tx.txid(),
+			round_tx_fee: self.funding_tx.fee(),
 		);
 
 		Ok(finished)
@@ -1124,7 +1087,7 @@ fn create_signed_vtxo_tree(
 async fn sign_funding_tx(
 	state: &mut SigningVtxoTree,
 ) -> Result<bitcoin::Transaction, RoundError> {
-	let signed_round_tx = match state.wallet_lock.finish_tx(state.round_tx_psbt.clone()) {
+	let signed_round_tx = match state.wallet_lock.finish_tx(state.funding_tx.psbt().clone()) {
 		Ok(tx) => tx,
 		Err(e) => return Err(RoundError::Recoverable(e.context("funding tx signing error"))),
 	};
@@ -1138,7 +1101,7 @@ async fn sign_funding_tx(
 	fields(
 		{ telemetry::ATTRIBUTE_ROUND_SEQ } = %state.round_step.round_seq(),
 		{ telemetry::ATTRIBUTE_ATTEMPT_SEQ } = state.round_step.attempt_seq(),
-		{ telemetry::ATTRIBUTE_ROUND_ID } = %state.round_txid,
+		{ telemetry::ATTRIBUTE_ROUND_ID } = %state.funding_tx.txid(),
 		signed_vtxo_count = signed_vtxos.nb_leaves(),
 	)
 )]
@@ -1150,8 +1113,7 @@ async fn persist_round(
 	let round_step = state.round_step.proceed(RoundStep::Persist);
 	state.round_step = round_step;
 
-	let unsigned_funding_tx = state.round_tx_psbt.clone().extract_tx()
-		.expect("failed to extract unsigned funding tx from psbt");
+	let unsigned_funding_tx = state.funding_tx.unsigned_tx();
 
 	trace!("Storing round result");
 	if tracing::enabled!(RoundVtxoCreated::LEVEL) {
@@ -1165,7 +1127,7 @@ async fn persist_round(
 	let result = srv.db.write(async |t| {
 		t.finish_round(
 			round_step.round_seq(),
-			&unsigned_funding_tx,
+			unsigned_funding_tx,
 			state.all_inputs.keys().copied(),
 			signed_vtxos,
 			&state.interactive_participants,
@@ -1175,7 +1137,7 @@ async fn persist_round(
 	if let Err(e) = result {
 		server_rslog!(FatalStoringRound, round_step,
 			error: format!("{:?}", e),
-			unsigned_funding_tx: serialize(&unsigned_funding_tx),
+			unsigned_funding_tx: serialize(unsigned_funding_tx),
 			vtxo_tree: signed_vtxos.spec.serialize(),
 			input_vtxos: state.all_inputs.keys().copied().collect(),
 		);
@@ -1183,7 +1145,7 @@ async fn persist_round(
 	}
 
 	server_rslog!(RoundFinished, round_step,
-		txid: state.round_txid,
+		txid: state.funding_tx.txid(),
 		vtxo_expiry_block_height: state.expiry_height,
 		nb_input_vtxos: state.all_inputs.len(),
 	);
