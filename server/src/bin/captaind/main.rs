@@ -291,6 +291,9 @@ async fn inner_main() -> anyhow::Result<()> {
 	let config_path: Option<&PathBuf> = cli.config.as_ref();
 
 	if let Command::Rpc { cmd, addr } = cli.command {
+		// Setting simple logging with no telemetry for RPC commands
+		tracing_subscriber::fmt::init();
+
 		let rpc_addr = match config_path {
 			Some(cfg) => {
 				let cfg = Config::load(cfg)
@@ -309,18 +312,25 @@ async fn inner_main() -> anyhow::Result<()> {
 		.context("error loading config file")?;
 	cfg.validate().expect("invalid configuration");
 
+	if let Command::Start = cli.command {
+		if let Err(e) = Server::run(cfg).await {
+			eprintln!("Shutdown error from server {:?}", e);
+
+			process::exit(1);
+		};
+
+		return Ok(())
+	}
+
+	// Setting simple logging with no telemetry for other commands
+	tracing_subscriber::fmt::init();
+
 	match cli.command {
 		Command::Rpc { .. } => unreachable!(),
+		Command::Start => unreachable!(),
 		Command::Create => {
 			info!("Running with config: {:#?}", cfg);
 			Server::create(cfg).await?;
-		}
-		Command::Start => {
-			if let Err(e) = Server::run(cfg).await {
-				eprintln!("Shutdown error from server {:?}", e);
-
-				process::exit(1);
-			};
 		}
 		Command::Drain { address } => {
 			info!("Running with config: {:#?}", cfg);
