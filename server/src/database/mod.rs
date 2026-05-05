@@ -765,8 +765,12 @@ impl Db {
 		let update = tree::VtxoTreeUpdate::new()
 			.upsert_funding_tx(offboard_tx)
 			.upsert_signed_tx(connector_txs.chain(forfeit_txs))
-			.insert_spendable_bare_vtxos(&forfeit_result.forfeit_vtxos)
-			.insert_spendable_bare_vtxos(&forfeit_result.connector_vtxos)
+			.insert_unspent_bare_vtxos(
+				&forfeit_result.forfeit_vtxos, SpendState::OffboardForfeit
+			)
+			.insert_unspent_bare_vtxos(
+				&forfeit_result.connector_vtxos, SpendState::OffboardConnector
+			)
 			.mark_vtxos_offboard_spent(offboard_triples);
 		tree::execute_vtxo_tree_update(&tx, update).await?;
 
