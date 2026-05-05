@@ -778,9 +778,7 @@ impl CollectingPayments {
 			vec![self.cosign_key.public_key()],
 		);
 
-		//TODO(stevenroose) think about if we can release lock sooner
-		let mut wallet_lock = srv.rounds_wallet.lock_owned().await;
-		let funding_tx = FundingTxSpec {
+		let (funding_tx, wallet_lock) = FundingTxSpec {
 			tree_output: TxOut {
 				script_pubkey: vtxos_spec.funding_tx_script_pubkey(),
 				value: vtxos_spec.total_required_value(),
@@ -788,7 +786,7 @@ impl CollectingPayments {
 			fee_rate: srv.fee_estimator.regular(),
 			min_trusted_confs: srv.config.min_trusted_confs,
 			pinned_input: self.common_round_tx_input.take(),
-		}.build(&mut wallet_lock).map_err(RoundError::Recoverable)?;
+		}.build(&srv.rounds_wallet).await.map_err(RoundError::Recoverable)?;
 
 		// Generate vtxo nonces and combine with user's nonces.
 		let (cosign_sec_nonces, cosign_pub_nonces) = {

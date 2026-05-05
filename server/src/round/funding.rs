@@ -15,6 +15,7 @@ use bitcoin::{Amount, FeeRate, OutPoint, Psbt, Transaction, TxOut, Txid};
 
 use ark::rounds::ROUND_TX_VTXO_TREE_VOUT;
 
+use crate::utils::{InstrumentedLock, InstrumentedOwnedLockGuard};
 use crate::wallet::{PersistedWallet, WalletUtxoGuard, WalletUtxosGuard};
 
 /// Inputs needed to build a funding tx. Pass to [`FundingTxSpec::build`]
@@ -34,8 +35,26 @@ pub struct FundingTxSpec {
 }
 
 impl FundingTxSpec {
-	/// Build the funding tx and lock every input it picks.
-	pub fn build(self, wallet: &mut PersistedWallet) -> anyhow::Result<FundingTx> {
+	/// Build the funding tx, offloading the blocking work to the tokio
+	/// blocking pool. Acquires the wallet lock internally and returns the
+	/// guard alongside the resulting [`FundingTx`] so the caller can keep
+	/// using the wallet (e.g. to sign and broadcast).
+	pub async fn build(
+		self,
+		wallet: &InstrumentedLock<PersistedWallet>,
+	) -> anyhow::Result<(FundingTx, InstrumentedOwnedLockGuard<PersistedWallet>)> {
+		let mut wallet_lock = wallet.lock_owned().await;
+		tokio::task::spawn_blocking(move || -> anyhow::Result<_> {
+			let funding_tx = self.compute_build(&mut wallet_lock)?;
+			Ok((funding_tx, wallet_lock))
+		}).await
+			.context("funding tx build task panicked")?
+	}
+
+	/// Build the funding tx synchronously. Blocks the calling thread on
+	/// bdk's coin selection; in an async context prefer
+	/// [`FundingTxSpec::build`].
+	fn compute_build(self, wallet: &mut PersistedWallet) -> anyhow::Result<FundingTx> {
 		let unavailable_outputs = wallet.unavailable_outputs(self.min_trusted_confs);
 
 		let psbt = {
