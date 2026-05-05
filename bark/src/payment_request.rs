@@ -21,7 +21,7 @@ use ark::lightning::{Bolt11Invoice, Invoice, Offer, OfferAmountExt};
 use bip321::{Bip321Error, Bip321Uri, ExtensionHandler, FieldWithAttributes};
 use bitcoin_ext::AmountExt;
 
-use crate::Wallet;
+use crate::{FeeEstimate, Wallet};
 use crate::arkoor::ArkoorAddressError;
 
 #[derive(Default, Clone, PartialEq, Eq, Debug)]
@@ -393,5 +393,49 @@ impl Wallet {
 		debug_assert!(req.options.len() > 0, "Parser should bail if no valid payment option is found");
 
 		Ok(req)
+	}
+
+	/// Estimate fees for a single payment option.
+	///
+	/// Returns a [`FeeEstimate`] for the given [`AvailablePaymentMethod`] and amount.
+	pub async fn estimate_payment_fee(&self, option: &AvailablePaymentMethod, amount: Amount)
+		-> anyhow::Result<FeeEstimate>
+	{
+		match &option.method {
+			PaymentMethod::Invoice(_) => self.estimate_lightning_send_fee(amount).await,
+			PaymentMethod::Offer(_) => self.estimate_lightning_send_fee(amount).await,
+			PaymentMethod::LightningAddress(_) => self.estimate_lightning_send_fee(amount).await,
+			PaymentMethod::Bitcoin(address) => {
+				let addr = address.assume_checked_ref();
+				self.estimate_send_onchain(addr, amount).await
+			},
+			PaymentMethod::Ark(_) => self.estimate_arkoor_payment_fee(amount).await,
+			PaymentMethod::OutputScript(_) => bail!("Sending to output scripts is not supported yet"),
+			PaymentMethod::Custom(_) => bail!("Cannot estimate fees for custom payment method"),
+		}
+	}
+
+	/// Estimate fees for all payment options in a [`PaymentRequest`].
+	///
+	/// Returns a list of tuples containing the [`AvailablePaymentMethod`] and its [`FeeEstimate`].
+	/// The list is sorted by the gross amount of the fee estimate in ascending order.
+	pub async fn estimate_payment_fees(&self, request: PaymentRequest, amount: Option<Amount>)
+		-> anyhow::Result<Vec<(AvailablePaymentMethod, FeeEstimate)>>
+	{
+		let amount = match (amount, request.amount) {
+			(Some(amount), _) => amount,
+			(None, Some(amount)) => amount,
+			(None, None) => bail!("Amount is required to estimate fees"),
+		};
+
+		let mut options_with_fees = Vec::new();
+		for option in request.options {
+			let fee = self.estimate_payment_fee(&option, amount).await?;
+			options_with_fees.push((option, fee));
+		}
+
+		options_with_fees.sort_by_key(|(_, fee)| fee.gross_amount);
+
+		Ok(options_with_fees)
 	}
 }

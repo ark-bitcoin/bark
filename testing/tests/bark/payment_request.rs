@@ -3,12 +3,12 @@ use std::str::FromStr;
 use ark::{SECP, VtxoPolicy};
 use ark::lightning::{Bolt11Invoice, Invoice};
 use bark::lnurllib::lightning_address::LightningAddress;
-use bark::ArkoorAddressError;
+use bark::{ArkoorAddressError, FeeEstimate};
 use bark::payment_request::{
 	PaymentRequest, AvailablePaymentMethod, PaymentMethodParsingError, PaymentMethod
 };
 use bitcoin::secp256k1::{Keypair, rand::thread_rng};
-
+use bitcoin::Amount;
 use ark_testing::{btc, sat, TestContext};
 
 fn new_ark_address(testnet: bool) -> ark::Address {
@@ -39,6 +39,10 @@ async fn parse_payment_request() {
 
 	let uri_builder_bark = ctx.bark("bark1", &srv).create().await;
 	let uri_parser_bark = ctx.bark("bark2", &srv).funded(sat(200_000)).create().await;
+
+	// Fee estimation needs a VTXO to spend.
+	let [vtxo] = uri_parser_bark
+		.board_and_confirm_and_register(&ctx, sat(100_000)).await.try_into().unwrap();
 
 	let amount = sat(50_000);
 
@@ -92,6 +96,15 @@ async fn parse_payment_request() {
 				errors: vec![],
 			}],
 		});
+
+		let fees = uri_parser_bark.estimate_payment_fees(request, None).await;
+		assert_eq!(fees.len(), 1);
+		assert_eq!(fees[0].1, FeeEstimate {
+			gross_amount: amount,
+			fee: Amount::ZERO,
+			net_amount: amount,
+			vtxos_spent: vec![vtxo],
+		});
 	}
 
 	// -- Lightning address --
@@ -109,6 +122,15 @@ async fn parse_payment_request() {
 				method: PaymentMethod::LightningAddress(lightning_address),
 				errors: vec![],
 			}],
+		});
+
+		let fees = uri_parser_bark.estimate_payment_fees(request, Some(amount)).await;
+		assert_eq!(fees.len(), 1);
+		assert_eq!(fees[0].1, FeeEstimate {
+			gross_amount: amount,
+			fee: Amount::ZERO,
+			net_amount: amount,
+			vtxos_spent: vec![vtxo],
 		});
 	}
 
@@ -128,6 +150,15 @@ async fn parse_payment_request() {
 				errors: vec![],
 			}],
 		});
+
+		let fees = uri_parser_bark.estimate_payment_fees(request, Some(amount)).await;
+		assert_eq!(fees.len(), 1);
+		assert_eq!(fees[0].1, FeeEstimate {
+			gross_amount: amount,
+			fee: Amount::ZERO,
+			net_amount: amount,
+			vtxos_spent: vec![vtxo],
+		});
 	}
 
 	// -- Bare ark address from foreign server (manual) --
@@ -144,6 +175,15 @@ async fn parse_payment_request() {
 				errors: vec![PaymentMethodParsingError::InvalidArkAddress(ArkoorAddressError::ServerMismatch)],
 			}],
 		});
+
+		let fees = uri_parser_bark.estimate_payment_fees(request, Some(amount)).await;
+		assert_eq!(fees.len(), 1);
+		assert_eq!(fees[0].1, FeeEstimate {
+			gross_amount: amount,
+			fee: Amount::ZERO,
+			net_amount: amount,
+			vtxos_spent: vec![vtxo],
+		});
 	}
 
 	// -- Bare onchain address --
@@ -159,6 +199,15 @@ async fn parse_payment_request() {
 				method: PaymentMethod::Bitcoin(btc_addr.into_unchecked()),
 				errors: vec![],
 			}],
+		});
+
+		let fees = uri_parser_bark.estimate_payment_fees(request, Some(amount)).await;
+		assert_eq!(fees.len(), 1);
+		assert_eq!(fees[0].1, FeeEstimate {
+			gross_amount: amount + Amount::from_sat(854),
+			fee: Amount::from_sat(854),
+			net_amount: amount,
+			vtxos_spent: vec![vtxo],
 		});
 	}
 
