@@ -1,0 +1,4 @@
+- Handle lightning send finished mailbox notifications
+  Bark now processes server notifications when a lightning send payment
+  completes, allowing prompt handling of success or failure without polling.
+  [#1889](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1889)

@@ -11,7 +11,7 @@ use server_rpc::protos;
 use tokio_postgres::Row;
 
 use ark::VtxoId;
-use ark::lightning::{Invoice, PaymentHash};
+use ark::lightning::PaymentHash;
 use bitcoin_ext::{AmountExt, BlockHeight};
 
 use super::ClnNodeId;
@@ -65,40 +65,12 @@ impl fmt::Display for LightningPaymentStatus {
 }
 
 #[derive(Debug, Clone)]
-pub struct LightningInvoice {
-	pub id: i64,
-	pub invoice: Invoice,
-	pub payment_hash: PaymentHash,
-	pub final_amount_msat: Option<u64>,
-	pub last_attempt_status: Option<LightningPaymentStatus>,
-	pub created_at: DateTime<Local>,
-	pub updated_at: DateTime<Local>,
-}
-
-impl TryFrom<Row> for LightningInvoice {
-	type Error = anyhow::Error;
-
-	fn try_from(row: Row) -> Result<Self, Self::Error> {
-		Ok(LightningInvoice {
-			id: row.get("id"),
-			invoice: Invoice::from_str(row.get("invoice"))
-				.context("error decoding invoice from db")?,
-			payment_hash: PaymentHash::from_str(row.get::<_, &str>("payment_hash"))
-				.context("error decoding payment hash from db")?,
-			final_amount_msat: row.get::<_, Option<i64>>("final_amount_msat").map(|i| i as u64),
-			last_attempt_status: row.get::<_, Option<LightningPaymentStatus>>("status"),
-			created_at: row.get("created_at"),
-			updated_at: row.get("updated_at"),
-		})
-	}
-}
-
-#[derive(Debug, Clone)]
 pub struct LightningPaymentAttempt {
 	pub id: i64,
-	pub lightning_invoice_id: i64,
 	pub lightning_node_id: ClnNodeId,
+	pub payment_hash: PaymentHash,
 	pub amount_msat: u64,
+	pub final_amount_msat: Option<u64>,
 	pub status: LightningPaymentStatus,
 	pub is_self_payment: bool,
 	pub error: Option<String>,
@@ -106,19 +78,23 @@ pub struct LightningPaymentAttempt {
 	pub updated_at: DateTime<Local>,
 }
 
-impl From<Row> for LightningPaymentAttempt {
-	fn from(row: Row) -> Self {
-		LightningPaymentAttempt {
+impl TryFrom<Row> for LightningPaymentAttempt {
+	type Error = anyhow::Error;
+
+	fn try_from(row: Row) -> Result<Self, Self::Error> {
+		Ok(LightningPaymentAttempt {
 			id: row.get("id"),
-			lightning_invoice_id: row.get("lightning_invoice_id"),
 			lightning_node_id: row.get("lightning_node_id"),
+			payment_hash: PaymentHash::from_str(row.get::<_, &str>("payment_hash"))
+				.context("error decoding payment hash from db")?,
 			amount_msat: row.get::<_, i64>("amount_msat") as u64,
+			final_amount_msat: row.get::<_, Option<i64>>("final_amount_msat").map(|i| i as u64),
 			is_self_payment: row.get::<_, bool>("is_self_payment"),
 			status: row.get("status"),
 			error: row.get("error"),
 			created_at: row.get("created_at"),
 			updated_at: row.get("updated_at"),
-		}
+		})
 	}
 }
 
@@ -180,8 +156,8 @@ impl From<LightningHtlcSubscriptionStatus> for protos::LightningReceiveStatus {
 #[derive(Debug, Clone)]
 pub struct LightningHtlcSubscription {
 	pub id: i64,
-	pub lightning_invoice_id: i64,
 	pub lightning_node_id: ClnNodeId,
+	pub payment_hash: PaymentHash,
 	pub invoice: Bolt11Invoice,
 	pub status: LightningHtlcSubscriptionStatus,
 	pub lowest_incoming_htlc_expiry: Option<BlockHeight>,
@@ -208,8 +184,9 @@ impl <'a>TryFrom<&'a Row> for LightningHtlcSubscription {
 
 		Ok(LightningHtlcSubscription {
 			id: row.get("id"),
-			lightning_invoice_id: row.get("lightning_invoice_id"),
 			lightning_node_id: row.get("lightning_node_id"),
+			payment_hash: PaymentHash::from_str(row.get::<_, &str>("payment_hash"))
+				.context("error decoding payment hash from db")?,
 			invoice: invoice,
 			status: row.get("status"),
 			lowest_incoming_htlc_expiry: row.get::<_, Option<i64>>("lowest_incoming_htlc_expiry").map(|i| i as BlockHeight),

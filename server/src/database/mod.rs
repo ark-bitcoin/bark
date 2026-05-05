@@ -45,7 +45,7 @@ use tokio_postgres::{Client, NoTls, GenericClient, RowStream};
 use tokio_postgres::types::Type;
 use tracing::{info, warn};
 use ark::{ServerVtxo, ServerVtxoPolicy, Vtxo, VtxoId};
-use ark::lightning::PaymentHash;
+use ark::lightning::{PaymentHash, Preimage};
 use ark::mailbox::{MailboxIdentifier, MailboxType};
 use ark::encode::ProtocolEncoding;
 
@@ -80,6 +80,7 @@ impl MailboxEntry {
 			},
 			MailboxPayload::LightningReceive { .. } => MailboxType::LnRecvPendingPayment,
 			MailboxPayload::RecoveryVtxoIds { .. } => MailboxType::RecoveryVtxoId,
+			MailboxPayload::LightningSendFinished { .. } => MailboxType::LnSendFinished,
 		}
 	}
 
@@ -90,6 +91,7 @@ impl MailboxEntry {
 			MailboxPayload::RoundParticipationCompleted { .. } => 1,
 			MailboxPayload::LightningReceive { .. } => 1,
 			MailboxPayload::RecoveryVtxoIds { vtxo_ids } => vtxo_ids.len(),
+			MailboxPayload::LightningSendFinished { .. } => 1,
 		}
 	}
 }
@@ -107,6 +109,11 @@ pub enum MailboxPayload {
 	},
 	RecoveryVtxoIds {
 		vtxo_ids: Vec<VtxoId>,
+	},
+	LightningSendFinished {
+		payment_hash: PaymentHash,
+		/// The preimage, present only on success.
+		preimage: Option<Preimage>,
 	},
 }
 
@@ -426,7 +433,7 @@ impl Db {
 		let conn = self.get_conn().await?;
 
 		let statement = conn.prepare(&format!("
-			SELECT vtxo_id, vtxo, payment_hash, unlock_hash, checkpoint, mailbox_type::TEXT AS entry_type
+			SELECT vtxo_id, vtxo, payment_hash, unlock_hash, preimage, checkpoint, mailbox_type::TEXT AS entry_type
 			FROM mailbox
 			WHERE unblinded_mailbox_id = $1 AND checkpoint > $2
 			ORDER BY checkpoint ASC, entry_type ASC
@@ -490,6 +497,24 @@ impl Db {
 
 					continue;
 				},
+				MailboxType::LnSendFinished => {
+					ensure!(res.last().map(|e| e.checkpoint) != Some(cp),
+						"corrupt db: incorrect checkpoint {}", cp,
+					);
+					let hash_str = row.get::<_, String>("payment_hash");
+					let payment_hash = PaymentHash::from_str(&hash_str)
+						.context("invalid payment hash in mailbox notification")?;
+					let preimage = row.get::<_, Option<String>>("preimage");
+					let preimage = preimage.map(|s| Preimage::from_str(&s))
+						.transpose()
+						.context("invalid preimage in mailbox notification")?;
+					res.push(MailboxEntry {
+						checkpoint: cp,
+						payload: MailboxPayload::LightningSendFinished { payment_hash, preimage },
+					});
+					telemetry::set_mailbox_get_metric(mailbox_type, 1);
+					continue;
+				},
 				MailboxType::ArkoorReceive |
 					MailboxType::RecoveryVtxoId => {},
 			}
@@ -504,7 +529,8 @@ impl Db {
 						MailboxPayload::RecoveryVtxoIds { vtxo_ids: vec![] }
 					},
 					MailboxType::RoundParticipationCompleted
-						| MailboxType::LnRecvPendingPayment =>
+						| MailboxType::LnRecvPendingPayment
+						| MailboxType::LnSendFinished =>
 					{
 						unreachable!("continued in match above");
 					},
@@ -529,7 +555,8 @@ impl Db {
 					vtxo_ids.push(vtxo_id);
 				}
 				MailboxPayload::RoundParticipationCompleted { .. }
-					| MailboxPayload::LightningReceive { .. } =>
+					| MailboxPayload::LightningReceive { .. }
+					| MailboxPayload::LightningSendFinished { .. } =>
 				{
 					unreachable!("continued in match above");
 				}
@@ -593,8 +620,7 @@ impl Db {
 		tx.execute("SELECT pg_advisory_xact_lock(hashtext('mailbox_write'))", &[]).await?;
 
 		let checkpoint: i64 = tx.query_one("SELECT next_checkpoint()", &[]).await?.get(0);
-		let mailbox_type = String::from(MailboxType::LnRecvPendingPayment);
-		let mailbox_type_str = String::from(mailbox_type);
+		let mailbox_type_str = String::from(MailboxType::LnRecvPendingPayment);
 
 		let statement = tx.prepare("
 			INSERT INTO mailbox (unblinded_mailbox_id, payment_hash, checkpoint, mailbox_type, created_at)
@@ -611,6 +637,51 @@ impl Db {
 		tx.commit().await?;
 
 		Ok(checkpoint as u64)
+	}
+
+	/// Store a lightning send finished notification in the mailbox.
+	///
+	/// Returns the checkpoint assigned to this notification, or `None` if a
+	/// notification for this payment hash already exists.
+	pub async fn store_lightning_send_finished(
+		&self,
+		mailbox_id: MailboxIdentifier,
+		payment_hash: PaymentHash,
+		preimage: Option<Preimage>,
+	) -> anyhow::Result<Option<Checkpoint>> {
+		let mut conn = self.get_conn().await?;
+		let tx = conn.transaction().await?;
+
+		// Acquire advisory lock to serialize all mailbox writes.
+		// This prevents race conditions where checkpoints could be committed out of order.
+		// Lock is automatically released when transaction commits/rolls back.
+		tx.execute("SELECT pg_advisory_xact_lock(hashtext('mailbox_write'))", &[]).await?;
+
+		let checkpoint = tx.query_one("SELECT next_checkpoint()", &[]).await?.get::<_, i64>(0);
+		let mailbox_type_str = String::from(MailboxType::LnSendFinished);
+		let payment_hash_str = payment_hash.to_string();
+		let preimage_str = preimage.map(|p| p.to_string());
+
+		let statement = tx.prepare("
+			INSERT INTO mailbox (unblinded_mailbox_id, payment_hash, preimage, checkpoint, mailbox_type, created_at)
+			VALUES ($1, $2, $3, $4, $5::TEXT::mailbox_type, NOW())
+			ON CONFLICT (mailbox_type, payment_hash) DO NOTHING;
+		").await?;
+		let rows_inserted = tx.execute(&statement, &[
+			&mailbox_id.to_string(),
+			&payment_hash_str,
+			&preimage_str,
+			&checkpoint,
+			&mailbox_type_str,
+		]).await?;
+
+		tx.commit().await?;
+
+		if rows_inserted == 1 {
+			Ok(Some(checkpoint as u64))
+		} else {
+			Ok(None)
+		}
 	}
 
 	pub async fn store_vtxo_ids_in_mailbox(

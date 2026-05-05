@@ -351,6 +351,8 @@ impl ActionContextFetcher<'_> {
 	}
 
 	async fn check_have_payment_preimage(&self, payment_hash: PaymentHash) -> bool {
+		// Check the htlc_settlement table (populated by the settler),
+		// which is the single source of truth for preimages.
 		self.db.get_htlc_settlement_by_payment_hash(payment_hash).await
 			.inspect_err(|e| error!("DB error: {:#}", e))
 			.ok().flatten()

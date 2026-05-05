@@ -210,3 +210,66 @@ async fn mailbox_lightning_receive_pending() {
 	// the sender timing out on the unsettled hold invoice.
 	drop(pay_handle);
 }
+
+/// Test that a successful lightning send posts a LightningSendFinished
+/// notification to the sender's mailbox with the preimage.
+#[tokio::test]
+async fn mailbox_lightning_send_finished() {
+	let ctx = TestContext::new("server/mailbox_lightning_send_finished").await;
+
+	let lightning = ctx.new_lightning_setup("lightningd").await;
+	let srv = ctx.captaind("server").lightningd(&lightning.internal).funded(btc(10)).create().await;
+	srv.wait_for_vtxopool(&ctx).await;
+
+	let bark = ctx.bark("bark", &srv).funded(btc(3)).create().await;
+	bark.board_and_confirm_and_register(&ctx, btc(2)).await;
+
+	lightning.sync().await;
+
+	let mut mb_rpc = srv.get_mailbox_public_rpc().await;
+	let bark_wallet = bark.client().await;
+
+	// Pay a lightning invoice
+	let invoice = lightning.external.invoice(Some(btc(1)), "test_payment", "test").await;
+	bark.pay_lightning_wait(invoice, None).await;
+
+	// Read the sender's main mailbox, retrying until the notification arrives.
+	// The send-finished notification is posted asynchronously after the payment
+	// status is written to the DB, so there is a small race window.
+	let mailbox_kp = bark_wallet.mailbox_keypair();
+	let mailbox_id = MailboxIdentifier::from_pubkey(mailbox_kp.public_key());
+
+	let send_finished = tokio::time::timeout(Duration::from_secs(10), async {
+		loop {
+			let expiry = chrono::Local::now() + Duration::from_secs(60);
+			let mailbox_auth = MailboxAuthorization::new(&mailbox_kp, expiry);
+
+			let read_req = protos::mailbox_server::MailboxRequest {
+				authorization: Some(mailbox_auth.serialize().to_vec()),
+				unblinded_id: mailbox_id.to_vec(),
+				checkpoint: 0,
+			};
+
+			let mailbox_msgs = mb_rpc.read_mailbox(read_req).await.unwrap().into_inner();
+
+			let found = mailbox_msgs.messages.iter().find_map(|msg| {
+				match msg.message.as_ref()? {
+					Message::LightningSendFinished(m) => Some(m.clone()),
+					_ => None,
+				}
+			});
+
+			if let Some(msg) = found {
+				break msg;
+			}
+			tokio::time::sleep(Duration::from_millis(200)).await;
+		}
+	}).await.expect("LightningSendFinished notification should arrive within 10s");
+
+	// Verify the payment hash is valid
+	PaymentHash::try_from(send_finished.payment_hash.clone())
+		.expect("valid payment hash");
+
+	// On success the preimage must be present
+	assert!(send_finished.preimage.is_some(), "preimage should be present on successful payment");
+}

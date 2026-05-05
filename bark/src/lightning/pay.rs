@@ -244,7 +244,9 @@ impl Wallet {
 			}
 		}
 
-		let result = self.check_lightning_payment_inner(payment_hash, wait).await;
+		let result = self.check_lightning_payment_inner(
+			payment_hash, wait, None,
+		).await;
 
 		// Always remove from inflight set when done
 		{
@@ -255,12 +257,47 @@ impl Wallet {
 		result
 	}
 
-	/// Internal implementation of lightning payment status check after concurrency check.
-	async fn check_lightning_payment_inner(&self, payment_hash: PaymentHash, wait: bool)
-		-> anyhow::Result<Option<LightningSend>>
+	/// Like [`check_lightning_payment`](Self::check_lightning_payment) but accepts
+	/// a known preimage (e.g. from a mailbox notification) to skip the server RPC
+	/// when the payment is already known to have succeeded.
+	pub(crate) async fn check_lightning_payment_with_preimage(
+		&self,
+		payment_hash: PaymentHash,
+		known_preimage: Option<Preimage>,
+	) -> anyhow::Result<Option<LightningSend>>
 	{
-		let (mut srv, _) = self.require_server().await?;
+		trace!("Checking lightning payment status for payment hash: {}", payment_hash);
 
+		{
+			let mut inflight = self.inflight_lightning_payments.lock().await;
+			if !inflight.insert(payment_hash) {
+				bail!("Payment operation already in progress for this invoice");
+			}
+		}
+
+		let result = self.check_lightning_payment_inner(
+			payment_hash, false, known_preimage,
+		).await;
+
+		{
+			let mut inflight = self.inflight_lightning_payments.lock().await;
+			inflight.remove(&payment_hash);
+		}
+
+		result
+	}
+
+	/// Internal implementation of lightning payment status check after concurrency check.
+	///
+	/// When `known_preimage` is provided (e.g. from a mailbox notification),
+	/// the server RPC is skipped and the preimage is used directly.
+	async fn check_lightning_payment_inner(
+		&self,
+		payment_hash: PaymentHash,
+		wait: bool,
+		known_preimage: Option<Preimage>,
+	) -> anyhow::Result<Option<LightningSend>>
+	{
 		let payment = self.db.get_lightning_send(payment_hash).await?
 			.context("no lightning send found for payment hash")?;
 
@@ -283,6 +320,23 @@ impl Wallet {
 			bail!("Payment hash mismatch");
 		}
 
+		// If we already have the preimage (from a mailbox notification),
+		// process it directly without an RPC round-trip to the server.
+		if let Some(preimage) = known_preimage {
+			let preimage_opt = self.process_lightning_send_server_preimage(
+				Some(preimage.to_vec()), &payment,
+			).await?;
+
+			if preimage_opt.is_some() {
+				let updated_payment = self.db.get_lightning_send(payment_hash).await?
+					.context("payment disappeared from database")?;
+				return Ok(Some(updated_payment));
+			}
+			// Fall through to the server RPC path if the preimage was invalid.
+			warn!("Known preimage was invalid, falling back to server RPC");
+		}
+
+		let (mut srv, _) = self.require_server().await?;
 		let req = protos::CheckLightningPaymentRequest {
 			hash: payment_hash.to_vec(),
 			wait,
@@ -673,10 +727,12 @@ impl Wallet {
 			movement_id,
 		).await?;
 
+		let mailbox_id = self.mailbox_identifier();
 		let req = protos::InitiateLightningPaymentRequest {
 			invoice: invoice.to_string(),
 			htlc_vtxo_ids: htlc_vtxos.iter().map(|v| v.id().to_bytes().to_vec()).collect(),
 			payment_amount_sat: payment_amount.to_sat(),
+			mailbox_id: Some(mailbox_id.to_vec()),
 		};
 
 		srv.client.initiate_lightning_payment(req).await?;

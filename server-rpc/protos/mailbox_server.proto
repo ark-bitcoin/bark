@@ -37,6 +37,7 @@ message MailboxMessage {
 		RoundParticipationCompleted round_participation_completed = 4;
 		IncomingLightningPaymentMessage incoming_lightning_payment = 5;
 		RecoveryVtxoIdsMessage recovery_vtxo_ids = 6;
+		LightningSendFinishedMessage lightning_send_finished = 7;
 	}
 	// Strictly ascending time based number.
 	uint64 checkpoint = 2;
@@ -59,6 +60,13 @@ message IncomingLightningPaymentMessage {
 
 message RecoveryVtxoIdsMessage {
 	repeated bytes vtxo_ids = 1;
+}
+
+message LightningSendFinishedMessage {
+	bytes payment_hash = 1;
+	// The preimage, present only on success (proves payment was made).
+	// Absent when payment failed.
+	optional bytes preimage = 2;
 }
 
 message MailboxMessages {

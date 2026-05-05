@@ -253,6 +253,7 @@ message InitiateLightningPaymentRequest {
 	string invoice = 1;
 	repeated bytes htlc_vtxo_ids = 2;
 	uint64 payment_amount_sat = 3;
+	optional bytes mailbox_id = 4;
 }
 
 message CheckLightningPaymentRequest {

@@ -9,7 +9,7 @@ use chrono::Local;
 use ark::{ServerVtxo, VtxoPolicy, VtxoRequest};
 use ark::offboard::OffboardForfeitResult;
 use ark::integration::{TokenStatus, TokenType};
-use ark::lightning::Invoice;
+use ark::lightning::{Invoice, Preimage};
 use ark::mailbox::{MailboxIdentifier, MailboxType};
 use ark::rounds::RoundId;
 use ark::test_util::VTXO_VECTORS;
@@ -79,48 +79,6 @@ async fn lightning_invoice() {
 	assert_eq!(payment_indexes.updated_index, 2);
 }
 
-#[tokio::test]
-async fn duplicated_lightning_invoice() {
-	let mut ctx = TestContext::new_minimal("postgresd/duplicated_lightning_invoice").await;
-	ctx.init_central_postgres().await;
-	let postgres_cfg = ctx.new_postgres(&ctx.test_name).await;
-
-	Db::create(&postgres_cfg).await.expect("Database created");
-	let db = Db::connect(&postgres_cfg).await.expect("Connected to database");
-
-	let dummy_public_key = PublicKey::from_str("038f47dcd43ba6d97fc9ed2e3bba09b175a45fac55f0683e8cf771e8ced4572354")
-		.expect("Failed to create dummy pubkey");
-
-	let invoice = Bolt11Invoice::from_str("lnbcrt11p59rr6msp534kz2tahyrxl0rndcjrt8qpqvd0dynxxwfd28ea74rxjuj0tphfspp5nc0gf6vamuphaf4j49qzjvz2rg3del5907vdhncn686cj5yykvfsdqqcqzzs9qyysgqgalnpu3selnlgw8n66qmdpuqdjpqak900ru52v572742wk4mags8a8nec2unls57r5j95kkxxp4lr6wy9048uzgsvdhrz7dh498va2cq4t6qh8").unwrap();
-	let invoice = Invoice::Bolt11(invoice);
-
-	let (lightning_node_id, _dt) = db.register_lightning_node(&dummy_public_key).await.unwrap();
-	assert_ne!(lightning_node_id, 0);
-
-	db.store_lightning_payment_start(lightning_node_id, &invoice, sat(1)).await.unwrap();
-
-	// We create a test db client because Db check lightning invoice uniqueness
-	let db_client = ctx.postgres_manager().database_client(Some(&ctx.test_name)).await;
-
-	let stmt = db_client.prepare("
-		INSERT INTO lightning_invoice (
-			invoice,
-			payment_hash,
-			created_at,
-			updated_at
-		) VALUES ($1, $2, NOW(), NOW())
-		RETURNING id;
-	").await.unwrap();
-
-	let err = db_client.query_one(
-		&stmt, &[&invoice.to_string(), &invoice.payment_hash().to_string()],
-	).await.unwrap_err();
-	let db_err = err.as_db_error().expect("db error expected").to_string();
-	assert!(
-		db_err.contains("duplicate key value violates unique constraint"),
-		"unexpected error: {}", db_err
-	);
-}
 
 #[tokio::test]
 async fn integration() {
@@ -1427,7 +1385,7 @@ async fn lightning_payment_attempt_lifecycle() {
 	).await.unwrap().is_none());
 
 	// Start a payment
-	db.store_lightning_payment_start(node_id, &invoice, sat(2)).await.unwrap();
+	db.store_lightning_payment_start(node_id, &invoice, sat(2), None).await.unwrap();
 
 	// One open attempt
 	let attempts = db.get_open_lightning_payment_attempts(node_id).await.unwrap();
@@ -1438,15 +1396,9 @@ async fn lightning_payment_attempt_lifecycle() {
 		(&bolt11).into()
 	).await.unwrap().expect("should find attempt");
 
-	// Verify invoice retrieval
-	let li = db.get_lightning_invoice_by_id(attempt.lightning_invoice_id).await.unwrap();
-	assert_eq!(li.payment_hash.to_vec(), bolt11.payment_hash().to_byte_array().to_vec());
-	assert_eq!(li.final_amount_msat, None);
-
-	let li2 = db.get_lightning_invoice_by_payment_hash(
-		(&bolt11).into()
-	).await.unwrap().expect("should find invoice");
-	assert_eq!(li.id, li2.id);
+	// Verify attempt has correct payment hash
+	assert_eq!(attempt.payment_hash.to_vec(), bolt11.payment_hash().to_byte_array().to_vec());
+	assert_eq!(attempt.final_amount_msat, None);
 
 	// Update attempt status to Submitted
 	db.update_lightning_payment_attempt_status(&attempt, LightningPaymentStatus::Submitted, None).await.unwrap();
@@ -1479,7 +1431,7 @@ async fn lightning_payment_attempt_with_error() {
 	let bolt11 = Bolt11Invoice::from_str(BOLT11_INVOICE).unwrap();
 	let invoice = Invoice::Bolt11(bolt11);
 
-	db.store_lightning_payment_start(node_id, &invoice, sat(1)).await.unwrap();
+	db.store_lightning_payment_start(node_id, &invoice, sat(1), None).await.unwrap();
 
 	let attempts = db.get_open_lightning_payment_attempts(node_id).await.unwrap();
 	assert_eq!(attempts.len(), 1);
@@ -1497,8 +1449,10 @@ async fn lightning_payment_attempt_with_error() {
 }
 
 #[tokio::test]
-async fn lightning_invoice_update() {
-	let mut ctx = TestContext::new_minimal("postgresd/lightning_invoice_update").await;
+async fn lightning_payment_attempt_result_update() {
+	use server::database::ln::LightningPaymentStatus;
+
+	let mut ctx = TestContext::new_minimal("postgresd/lightning_payment_attempt_result").await;
 	ctx.init_central_postgres().await;
 	let postgres_cfg = ctx.new_postgres(&ctx.test_name).await;
 
@@ -1511,21 +1465,23 @@ async fn lightning_invoice_update() {
 	let bolt11 = Bolt11Invoice::from_str(BOLT11_INVOICE).unwrap();
 	let invoice = Invoice::Bolt11(bolt11.clone());
 
-	db.store_lightning_payment_start(node_id, &invoice, sat(1000)).await.unwrap();
+	db.store_lightning_payment_start(node_id, &invoice, sat(1000), None).await.unwrap();
 
-	let li = db.get_lightning_invoice_by_payment_hash(
+	let attempt = db.get_open_lightning_payment_attempt_by_payment_hash(
 		(&bolt11).into()
-	).await.unwrap().expect("invoice present");
-	assert!(li.final_amount_msat.is_none());
+	).await.unwrap().expect("attempt present");
+	assert!(attempt.final_amount_msat.is_none());
 
-	let updated_at = db.update_lightning_invoice(li, Some(9999)).await.unwrap();
+	let updated_at = db.update_lightning_payment_attempt_result(
+		&attempt, LightningPaymentStatus::Succeeded, None, Some(9999),
+	).await.unwrap();
 	assert!(updated_at.is_some(), "update should return new updated_at");
 
 	// Verify changes persisted
-	let li2 = db.get_lightning_invoice_by_payment_hash(
+	let attempt2 = db.get_latest_payment_attempt_by_payment_hash(
 		(&bolt11).into()
-	).await.unwrap().expect("invoice still present");
-	assert_eq!(li2.final_amount_msat, Some(9999));
+	).await.unwrap().expect("attempt still present");
+	assert_eq!(attempt2.final_amount_msat, Some(9999));
 }
 
 #[tokio::test]
@@ -1542,8 +1498,8 @@ async fn lightning_generated_invoice_and_htlc_subscription() {
 
 	let bolt11 = Bolt11Invoice::from_str(BOLT11_INVOICE).unwrap();
 
-	// Store as generated (receive-side) invoice
-	db.store_generated_lightning_invoice(node_id, &bolt11, 3000).await.unwrap();
+	// Store as generated (receive-side) subscription
+	db.store_generated_lightning_receive(node_id, &bolt11, 3000, None).await.unwrap();
 
 	// Find the htlc subscription (should be in Created state)
 	let payment_hash: ark::lightning::PaymentHash = (&bolt11).into();
@@ -1695,4 +1651,56 @@ async fn round_participation_mailbox() {
 		ref other => panic!("expected RoundParticipationCompleted payload, got {:?}", other),
 	};
 	assert_eq!(unlock_hash, hash2);
+}
+
+#[tokio::test]
+async fn lightning_send_finished_mailbox_notification() {
+	let mut ctx = TestContext::new_minimal("postgresd/lightning_send_finished_mailbox").await;
+	ctx.init_central_postgres().await;
+	let postgres_cfg = ctx.new_postgres(&ctx.test_name).await;
+
+	Db::create(&postgres_cfg).await.expect("Database created");
+	let db = Db::connect(&postgres_cfg).await.expect("Connected to database");
+
+	let mailbox_id = MailboxIdentifier::from_pubkey(
+		PublicKey::from_str(DUMMY_PUBKEY).unwrap()
+	);
+	let payment_hash: ark::lightning::PaymentHash = Bolt11Invoice::from_str(BOLT11_INVOICE)
+		.unwrap().payment_hash().as_byte_array().clone().into();
+
+	// Store a failed payment notification (no preimage)
+	let cp1 = db.store_lightning_send_finished(mailbox_id, payment_hash, None).await.unwrap()
+		.expect("first insert should succeed");
+
+	let messages = db.get_mailbox_messages(mailbox_id, 0, 10).await.unwrap();
+	assert_eq!(messages.len(), 1);
+	assert_eq!(messages[0].checkpoint, cp1);
+	match &messages[0].payload {
+		MailboxPayload::LightningSendFinished { payment_hash: ph, preimage } => {
+			assert_eq!(*ph, payment_hash);
+			assert!(preimage.is_none(), "failed payment should have no preimage");
+		},
+		other => panic!("expected LightningSendFinished payload, got {:?}", other),
+	}
+
+	// Duplicate insert for the same payment hash should be a no-op
+	let dup = db.store_lightning_send_finished(mailbox_id, payment_hash, None).await.unwrap();
+	assert!(dup.is_none(), "duplicate insert should return None");
+
+	// Store a successful payment notification (with preimage)
+	let test_preimage = Preimage::random();
+	let success_hash: ark::lightning::PaymentHash = test_preimage.compute_payment_hash();
+	let cp2 = db.store_lightning_send_finished(mailbox_id, success_hash, Some(test_preimage)).await.unwrap()
+		.expect("first insert should succeed");
+	assert!(cp2 > cp1, "checkpoints should be monotonically increasing");
+
+	let messages = db.get_mailbox_messages(mailbox_id, cp1, 10).await.unwrap();
+	assert_eq!(messages.len(), 1);
+	match &messages[0].payload {
+		MailboxPayload::LightningSendFinished { payment_hash: ph, preimage } => {
+			assert_eq!(*ph, success_hash);
+			assert_eq!(preimage.as_ref(), Some(&test_preimage), "success should include preimage");
+		},
+		other => panic!("expected LightningSendFinished payload, got {:?}", other),
+	}
 }
