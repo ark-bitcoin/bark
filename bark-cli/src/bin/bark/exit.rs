@@ -112,10 +112,10 @@ pub async fn execute_exit_command(
 ) -> anyhow::Result<()> {
 	match exit_command {
 		ExitCommand::Status(opts) => {
-			get_exit_status(opts, wallet, onchain).await
+			get_exit_status(opts, wallet).await
 		},
 		ExitCommand::List(opts) => {
-			list_exits(opts, wallet, onchain).await
+			list_exits(opts, wallet).await
 		},
 		ExitCommand::Start(opts) => {
 			start_exit(opts, wallet, onchain).await
@@ -132,7 +132,6 @@ pub async fn execute_exit_command(
 pub async fn get_exit_status(
 	args: StatusExitOpts,
 	wallet: &mut Wallet,
-	_onchain: &mut OnchainWallet,
 ) -> anyhow::Result<()> {
 	if !args.no_sync {
 		info!("Starting exit sync");
@@ -149,7 +148,6 @@ pub async fn get_exit_status(
 pub async fn list_exits(
 	args: ListExitsOpts,
 	wallet: &mut Wallet,
-	_onchain: &mut OnchainWallet,
 ) -> anyhow::Result<()> {
 	if !args.no_sync {
 		info!("Starting exit sync");

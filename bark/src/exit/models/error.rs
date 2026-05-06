@@ -1,4 +1,4 @@
-use bitcoin::{Amount, FeeRate, Txid};
+use bitcoin::{Amount, Txid};
 use bitcoin::address::FromScriptError;
 use thiserror::Error;
 
@@ -75,13 +75,6 @@ pub enum ExitError {
 	InsufficientConfirmedFunds {
 		needed: Amount,
 		available: Amount
-	},
-
-	#[error("Insufficient Fee Error: Your balance is {balance} but an estimated {total_fee} (fee rate of {fee_rate}) is required to exit the VTXO")]
-	InsufficientFeeToStart {
-		balance: Amount,
-		total_fee: Amount,
-		fee_rate: FeeRate,
 	},
 
 	#[error("Internal Error: An unexpected problem occurred, {error}")]

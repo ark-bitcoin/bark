@@ -693,7 +693,7 @@ struct WalletInner {
 /// - Creation allows the use of an optional onchain wallet for boarding and [Exit] functionality.
 ///   It also initializes any internal state and connects to the [chain::ChainSource]. See
 ///   [onchain::OnchainWallet] for an implementation of an onchain wallet using BDK.
-///   - [Wallet::create_with_onchain],
+///   - [Wallet::create_with_exits],
 ///   - [Wallet::open_with_daemon]
 ///
 /// Example
@@ -726,20 +726,21 @@ struct WalletInner {
 ///
 /// // Create or open the Ark wallet
 /// let lock_manager = Box::new(MemoryLockManager::new());
-/// let mut wallet = Wallet::create_with_onchain(
+/// let mut wallet = Wallet::create_with_exits(
 /// 	&mnemonic,
 /// 	network,
 /// 	cfg.clone(),
 /// 	db,
 /// 	lock_manager,
-/// 	&onchain_wallet,
 /// 	false,
 /// ).await?;
 /// // let mut wallet = Wallet::create(&mnemonic, network, cfg.clone(), db.clone(), Box::new(MemoryLockManager::new()), false).await?;
 /// // let mut wallet = Wallet::open(&mnemonic, db.clone(), cfg.clone(), Box::new(MemoryLockManager::new())).await?;
-/// // let mut wallet = Wallet::open_with_onchain(
-/// //    &mnemonic, network, cfg.clone(), db.clone(), &onchain_wallet
+/// // let mut wallet = Wallet::open_with_exits(
+/// //    &mnemonic, db.clone(), cfg.clone(), Box::new(MemoryLockManager::new())
 /// // ).await?;
+
+
 ///
 /// // There are two main ways to update the wallet, the primary is to use one of the maintenance
 /// // commands which will sync everything, refresh VTXOs and reconcile pending lightning payments.
@@ -762,7 +763,8 @@ struct WalletInner {
 /// let vtxos = wallet.vtxos()?;
 ///
 /// // Progress any unilateral exits, make sure to sync first
-/// wallet.exit_mgr().progress_exits(&wallet, &mut onchain_wallet, None).await?;
+/// wallet.exit_mgr().sync_no_progress().await?;
+/// bark::run_exits_with_bdk(wallet.exit_mgr(), &wallet, &mut onchain_wallet, None).await?;
 ///
 /// # Ok(())
 /// # }
@@ -1009,20 +1011,18 @@ impl Wallet {
 		Ok(wallet)
 	}
 
-	/// Create a new wallet with an onchain backend. This enables full Ark functionality. A default
-	/// implementation of an onchain wallet when the `onchain-bdk` feature is enabled. See
-	/// [onchain::OnchainWallet] for more details. Alternatively, implement [ExitUnilaterally] if
-	/// you have your own onchain wallet implementation.
+	/// Create a new wallet and eagerly load any persisted exit state from the database.
 	///
 	/// The `force` flag will allow you to create the wallet even if a connection to the Ark server
 	/// cannot be established, it will not overwrite a wallet which has already been created.
-	pub async fn create_with_onchain(
+	///
+	/// TODO: consider making [Wallet::create] always load exits so this wrapper is unnecessary.
+	pub async fn create_with_exits(
 		mnemonic: &Mnemonic,
 		network: Network,
 		config: Config,
 		db: Arc<dyn BarkPersister>,
 		lock_manager: Box<dyn LockManager>,
-		_onchain: &dyn ExitUnilaterally,
 		force: bool,
 	) -> anyhow::Result<Wallet> {
 		let wallet = Wallet::create(mnemonic, network, config, db, lock_manager, force).await?;
@@ -1089,12 +1089,12 @@ impl Wallet {
 		})})
 	}
 
-	/// Similar to [Wallet::open] however this also unilateral exits using the provided onchain
-	/// wallet.
-	pub async fn open_with_onchain(
+	/// Open a wallet and eagerly load any persisted exit state from the database.
+	///
+	/// TODO: consider making [Wallet::open] always load exits so this wrapper is unnecessary.
+	pub async fn open_with_exits(
 		mnemonic: &Mnemonic,
 		db: Arc<dyn BarkPersister>,
-		_onchain: &dyn ExitUnilaterally,
 		cfg: Config,
 		lock_manager: Box<dyn LockManager>,
 	) -> anyhow::Result<Wallet> {
@@ -1630,7 +1630,8 @@ impl Wallet {
 	/// to [Wallet::maintenance] as it will not refresh VTXOs or sync the onchain wallet.
 	///
 	/// Notes:
-	/// - The exit system will not be synced as doing so requires the onchain wallet.
+	/// - The exit system is not synced here. Call [Wallet::sync_exits] explicitly, or use
+	///   [Wallet::maintenance_with_onchain] for a full sync including onchain fee bumping.
 	pub async fn sync(&self) {
 		futures::join!(
 			async {

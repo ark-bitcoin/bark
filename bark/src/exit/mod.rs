@@ -31,10 +31,12 @@
 //!    - Mark individual VTXOs for exit with [Exit::start_exit_for_vtxos], or exit everything with
 //!      [Exit::start_exit_for_entire_wallet].
 //! 2) Drive progress
-//!    - Use either [Exit::sync] or [Exit::sync_no_progress] to update the state of tracked exits.
-//!    - Periodically call [Exit::progress_exits] to advance the exit process. This will create or
-//!      update transactions, adjust fees for existing transactions, and refresh the status of each
-//!      unilateral exit until it has been confirmed and subsequentially spent onchain.
+//!    - Call [Exit::sync_no_progress] to initialize pending exits and update transaction statuses.
+//!    - Call [Exit::progress_exits] to advance the wallet-agnostic state machine for each exit.
+//!    - To create or fee-bump CPFP transactions using an onchain wallet, call
+//!      [Exit::exits_needing_cpfp] to get pending requests, provide signed CPFPs via
+//!      [Exit::provide_cpfp_tx], then call [Exit::progress_exits] again. Alternatively, use the
+//!      convenience wrapper [`run_exits_with_bdk`] if you have a BDK-backed onchain wallet.
 //! 3) Inspect status
 //!    - Use [Exit::get_exit_status] for detailed per-VTXO status (optionally including
 //!      history and transactions).
@@ -47,10 +49,9 @@
 //!    - Alternatively, you can use [Exit::sign_exit_claim_inputs] to sign the inputs of a given
 //!      PSBT if any are the outputs of a claimable unilateral exit.
 //!
-//! Fees rates
-//! - Suitable fee rates will be calculated based on the current network conditions, however, if you
-//!   wish to override this, you can do so by providing your own [FeeRate] in [Exit::progress_exits]
-//!   and [Exit::drain_exits]
+//! Fee rates
+//! - Suitable fee rates will be calculated based on the current network conditions. To override,
+//!   pass your own [FeeRate] to [`run_exits_with_bdk`] or [Exit::drain_exits].
 //!
 //! Error handling and persistence
 //! - The coordinator surfaces operational errors via [anyhow::Result] and domain-specific errors

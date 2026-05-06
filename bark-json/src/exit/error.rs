@@ -1,4 +1,4 @@
-use bitcoin::{Amount, FeeRate, Txid};
+use bitcoin::{Amount, Txid};
 use thiserror::Error;
 
 use ark::VtxoId;
@@ -94,20 +94,6 @@ pub enum ExitError {
 		available: Amount
 	},
 
-	#[error("Insufficient Fee Error: Your balance is {balance} but an estimated {total_fee} (fee rate of {fee_rate}) is required to exit the VTXO")]
-	InsufficientFeeToStart {
-		#[cfg_attr(feature = "utoipa", schema(value_type = u64))]
-		balance: Amount,
-		#[cfg_attr(feature = "utoipa", schema(value_type = u64))]
-		total_fee: Amount,
-		#[serde(rename = "fee_rate_sat_per_kvb", with = "crate::serde_utils::fee_rate_sat_per_kvb")]
-		#[cfg_attr(feature = "utoipa", schema(value_type = u64))]
-		fee_rate: FeeRate,
-		#[deprecated(note = "use fee_rate_sat_per_kvb instead")]
-		#[cfg_attr(feature = "utoipa", schema(value_type = u64))]
-		fee_rate_kwu: u64,
-	},
-
 	#[error("Internal Error: An unexpected problem occurred, {error}")]
 	InternalError { error: String },
 
@@ -194,10 +180,6 @@ impl From<bark::exit::ExitError> for ExitError {
 			},
 			bark::exit::ExitError::InsufficientConfirmedFunds { needed, available } => {
 				ExitError::InsufficientConfirmedFunds { needed, available }
-			},
-			bark::exit::ExitError::InsufficientFeeToStart { balance, total_fee, fee_rate } => {
-				let fee_rate_kwu = fee_rate.to_sat_per_kwu();
-				ExitError::InsufficientFeeToStart { balance, total_fee, fee_rate, fee_rate_kwu }
 			},
 			bark::exit::ExitError::InternalError { error } => {
 				ExitError::InternalError { error }

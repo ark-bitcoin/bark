@@ -206,7 +206,7 @@ impl ExitVtxo {
 			})
 	}
 
-	pub(crate) async fn update_state_if_newer(
+	async fn update_state_if_newer(
 		&mut self,
 		new: ExitState,
 		persister: &dyn BarkPersister,
