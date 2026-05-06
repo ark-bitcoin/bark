@@ -306,6 +306,8 @@ pub mod vtxo;
 #[cfg(feature = "pid-lock")]
 pub mod pid_lock;
 
+pub mod lock_manager;
+
 mod arkoor;
 mod board;
 mod config;
