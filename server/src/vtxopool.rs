@@ -325,6 +325,14 @@ impl VtxoPool {
 			slog!(SpentPoolVtxo, vtxo: input.0, amount: input.2, destination: dest.clone());
 		}
 
+		// Forget the input keys now the vtxo has been arkoored to its new owner.
+		for key in &keys {
+			if let Err(e) = srv.drop_ephemeral_cosign_key(key.public_key()).await {
+				warn!("Failed to drop ephemeral cosign key {} for arkoored pool vtxo: {:#}",
+					key.public_key(), e);
+			}
+		}
+
 		for change in change {
 			let new = PoolVtxo::new(change);
 			if let Err(e) = srv.db.write(async |t| t.store_vtxopool_vtxo(&new).await).await {
