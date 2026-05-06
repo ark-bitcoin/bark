@@ -600,7 +600,7 @@ async fn ban_vtxo() {
 	let state = db.read(async |t| t.get_user_vtxos_by_id(&[vtxo_id]).await).await.expect("get succeeded")
 		.into_iter().next().expect("vtxo found");
 	assert!(state.banned_until_height.is_none());
-	assert!(state.is_spendable(100));
+	assert!(state.check_spendable(100).is_ok());
 
 	// Ban the vtxo until block 200
 	db.write(async |t| t.ban_vtxo(vtxo_id, 200).await).await.expect("ban succeeded");
@@ -609,8 +609,8 @@ async fn ban_vtxo() {
 	let state = db.read(async |t| t.get_user_vtxos_by_id(&[vtxo_id]).await).await.expect("get succeeded")
 		.into_iter().next().expect("vtxo found");
 	assert_eq!(state.banned_until_height, Some(200));
-	assert!(!state.is_spendable(100)); // tip 100 < ban 200
-	assert!(state.is_spendable(200)); // tip 200 >= ban 200
+	assert!(state.check_spendable(100).is_err()); // tip 100 < ban 200
+	assert!(state.check_spendable(200).is_ok()); // tip 200 >= ban 200
 
 	// Should appear in the banned list
 	let banned = db.read(async |t| t.list_banned_vtxos(100).await).await.expect("list succeeded");
@@ -625,7 +625,7 @@ async fn ban_vtxo() {
 	let state = db.read(async |t| t.get_user_vtxos_by_id(&[vtxo_id]).await).await.expect("get succeeded")
 		.into_iter().next().expect("vtxo found");
 	assert!(state.banned_until_height.is_none());
-	assert!(state.is_spendable(100));
+	assert!(state.check_spendable(100).is_ok());
 
 	// Banned list should be empty again
 	let banned = db.read(async |t| t.list_banned_vtxos(100).await).await.expect("list succeeded");

@@ -316,10 +316,13 @@ impl Server {
 			}
 		}
 
+		// Output user vtxos from the revoke cosign go in as `unregistered`,
+		// matching the arkoor cosign path. They flip to spendable once the
+		// caller uploads the signed chain via register_vtxo_transactions.
 		let update = VtxoTreeUpdate::new()
 			.upsert_unsigned_tx(builder.virtual_transactions())
 			.insert_oor_spent_vtxos(builder.build_unsigned_internal_vtxos())
-			.insert_spendable_vtxos(builder.build_unsigned_vtxos().map(ServerVtxo::from))
+			.insert_unregistered_vtxos(builder.build_unsigned_vtxos().map(ServerVtxo::from))
 			.mark_vtxos_oor_spent(builder.input_spend_info());
 		self.db.write(async |t| t.execute_vtxo_tree_update(update).await).await?;
 

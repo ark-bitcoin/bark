@@ -59,7 +59,7 @@ pub async fn list_banned_vtxos<T: GenericClient>(
 		SELECT id, vtxo_id, expiry, exit_delta, policy_type, policy,
 			server_pubkey, amount, anchor_point,
 			oor_spent_txid, spent_in_round, offboarded_in,
-			banned_until_height, created_at, updated_at
+			banned_until_height, spend_state::TEXT AS spend_state, created_at, updated_at
 		FROM vtxo
 		WHERE banned_until_height IS NOT NULL AND banned_until_height > $1
 	", &[Type::INT4]).await?;
