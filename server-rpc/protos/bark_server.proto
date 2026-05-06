@@ -542,7 +542,6 @@ message ForfeitVtxosResponse {
 
 
 service WalletAdminService {
-	rpc WalletSync(core.Empty) returns (core.Empty) {}
 	rpc WalletStatus(core.Empty) returns (WalletStatusResponse) {}
 }
 

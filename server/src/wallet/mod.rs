@@ -1,25 +1,25 @@
+pub mod sync;
 
 use std::collections::HashSet;
 use std::sync::Arc;
 use std::{fmt, ops};
 use std::path::Path;
 use std::str::FromStr;
-use std::time::{SystemTime, UNIX_EPOCH, Instant};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::Context;
 use bdk_wallet::Wallet;
 use bip39::Mnemonic;
 use bitcoin::{bip32, Address, Amount, FeeRate, Network, OutPoint, ScriptBuf};
 use bitcoin::{hex::DisplayHex, Psbt, Transaction};
-use tracing::{error, trace};
+use tracing::error;
 
 use bitcoin_ext::BlockRef;
 use bitcoin_ext::bdk::{TrustedBalance, WalletExt, KEYCHAIN};
-use bitcoin_ext::rpc::BitcoinRpcClient;
 use bitcoind_async_client::Client as BitcoindClient;
 
 use crate::bitcoind as bcd;
-use crate::{database, telemetry, SECP};
+use crate::{database, SECP};
 
 
 /// The location of the mnemonic file in server's datadir.
@@ -153,99 +153,6 @@ impl PersistedWallet {
 			self.wallet.take_staged();
 		}
 		Ok(())
-	}
-
-	#[tracing::instrument(skip(self, bitcoind_sync), fields(wallet = self.kind.name().to_string()))]
-	pub async fn sync(
-		&mut self,
-		bitcoind_sync: &BitcoinRpcClient,
-		mempool: bool,
-	) -> anyhow::Result<TrustedBalance> {
-		let start_time = Instant::now();
-
-		let prev_tip = self.latest_checkpoint();
-		slog!(WalletSyncStarting, wallet: self.kind.name().into(), block_height: prev_tip.height());
-
-		let prev_balance = self.balance();
-
-		// `bdk_bitcoind_rpc::Emitter` is sync-only upstream. Run it on a
-		// blocking thread and stream blocks back over a channel so we can
-		// persist progress incrementally and yield to the runtime.
-		// NB We pass start_height=0 so the Emitter never skips blocks.
-		// Using prev_tip.height() would cause the Emitter to jump from the
-		// agreement point directly to prev_tip on the new chain after a deep
-		// reorg, producing a gap that BDK cannot merge.
-		let sync_rpc = bitcoind_sync.clone();
-		let prev_tip_clone = prev_tip.clone();
-		// Materialize the unconfirmed-tx iterator before crossing the thread
-		// boundary; bdk's iterator borrows wallet state and is not Send.
-		let unconfirmed: Vec<_> = self.wallet.unconfirmed_txs().collect();
-		let want_mempool = mempool;
-		let (block_tx, mut block_rx) =
-			tokio::sync::mpsc::channel::<bdk_bitcoind_rpc::BlockEvent<bitcoin::Block>>(8);
-		let (mempool_tx, mempool_rx) =
-			tokio::sync::oneshot::channel::<Option<bdk_bitcoind_rpc::MempoolEvent>>();
-		let emitter_handle = tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
-			let mut emitter = bdk_bitcoind_rpc::Emitter::new(
-				&sync_rpc, prev_tip_clone, 0, unconfirmed,
-			);
-			while let Some(em) = emitter.next_block()? {
-				if block_tx.blocking_send(em).is_err() {
-					return Ok(());
-				}
-			}
-			drop(block_tx);
-			let mempool = if want_mempool { Some(emitter.mempool()?) } else { None };
-			let _ = mempool_tx.send(mempool);
-			Ok(())
-		});
-
-		while let Some(em) = block_rx.recv().await {
-			self.apply_block_connected_to(&em.block, em.block_height(), em.connected_to())?;
-
-			// this is to make sure that during initial sync we don't lose all
-			// progress if we halt the process mid-way
-			if em.block_height() % 10_000 == 0 {
-				slog!(WalletSyncCommittingProgress, wallet: self.kind.name().into(),
-					block_height: em.block_height(),
-				);
-				self.persist().await?;
-			}
-		}
-		emitter_handle.await.context("wallet sync blocking task panicked")??;
-
-		if mempool {
-			if let Ok(Some(mempool)) = mempool_rx.await {
-				trace!("Syncing {} new mempool txs and {} evicted mempool txs...",
-					mempool.update.len(), mempool.evicted.len(),
-				);
-				self.apply_evicted_txs(mempool.evicted);
-				self.apply_unconfirmed_txs(mempool.update);
-			}
-		}
-
-		self.persist().await?;
-
-		let checkpoint = self.latest_checkpoint();
-		slog!(WalletSyncComplete, wallet: self.kind.name().into(), sync_time: start_time.elapsed(),
-			new_block_height: checkpoint.height(), previous_block_height: prev_tip.height(),
-			next_address: self.next_unused_address(KEYCHAIN).address.into_unchecked(),
-		);
-
-		let balance = self.balance();
-		if balance != prev_balance {
-			slog!(WalletBalanceUpdated, wallet: self.kind.name().into(), balance: balance.clone(),
-				block_height: checkpoint.height(),
-			);
-		} else {
-			slog!(WalletBalanceUnchanged, wallet: self.kind.name().into(), balance: balance.clone(),
-				block_height: checkpoint.height(),
-			);
-		}
-
-		telemetry::set_wallet_balance(self.kind, balance.clone());
-
-		Ok(balance)
 	}
 
 	pub fn status(&mut self) -> server_rpc::WalletStatus {

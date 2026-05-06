@@ -283,7 +283,7 @@ async fn restart_key_stability() {
 
 	let ctx = TestContext::new("server/restart_key_stability").await;
 	let bitcoind = ctx.bitcoind_arc();
-	let srv = ctx.captaind("server").bitcoind(bitcoind.clone()).create().await;
+	let srv = ctx.captaind("server").bitcoind(bitcoind).create().await;
 
 	let server_key1 = srv.ark_info().await.server_pubkey;
 	let addr1 = srv.wallet_status().await.rounds.address.require_network(Network::Regtest).unwrap();
@@ -292,14 +292,11 @@ async fn restart_key_stability() {
 	ctx.bitcoind().fund_addr(&addr1, btc(1)).await;
 	ctx.generate_blocks(1).await;
 
-	// Restart server.
+	// Stop and restart the same daemon. The postgres DB and datadir are
+	// preserved, so persisted wallet state carries over.
 	srv.stop().await.unwrap();
+	srv.start().await.unwrap();
 
-	let new_cfg = srv.config().clone();
-	// reiniting the daemon should not call the create command if the datadir exists
-	let srv = ctx.captaind("server").bitcoind(bitcoind).cfg(move |cfg| {
-		*cfg = new_cfg;
-	}).create().await;
 	let server_key2 = srv.ark_info().await.server_pubkey;
 	let addr2 = srv.wallet_status().await.rounds.address.require_network(Network::Regtest).unwrap();
 
@@ -378,7 +375,7 @@ async fn max_vtxo_exit_depth() {
 #[tokio::test]
 async fn restart_fresh_server() {
 	let ctx = TestContext::new("server/restart_fresh_server").await;
-	let mut srv = ctx.captaind("server").create_unregistered().await;
+	let srv = ctx.captaind("server").create_unregistered().await;
 	srv.stop().await.unwrap();
 	srv.start().await.unwrap();
 }
@@ -386,7 +383,7 @@ async fn restart_fresh_server() {
 #[tokio::test]
 async fn restart_funded_server() {
 	let ctx = TestContext::new("server/restart_funded_server").await;
-	let mut srv = ctx.captaind("server").funded(btc(10)).create_unregistered().await;
+	let srv = ctx.captaind("server").funded(btc(10)).create_unregistered().await;
 	srv.stop().await.unwrap();
 	srv.start().await.unwrap();
 }
@@ -394,7 +391,7 @@ async fn restart_funded_server() {
 #[tokio::test]
 async fn restart_custom_cfg_server() {
 	let ctx = TestContext::new("server/restart_custom_cfg_server").await;
-	let mut srv = ctx.captaind("server").cfg(|cfg| {
+	let srv = ctx.captaind("server").cfg(|cfg| {
 		cfg.vtxo_exit_delta = 24;
 	}).create_unregistered().await;
 	srv.stop().await.unwrap();
@@ -404,7 +401,7 @@ async fn restart_custom_cfg_server() {
 #[tokio::test]
 async fn restart_server_with_payments() {
 	let ctx = TestContext::new("server/restart_server_with_payments").await;
-	let mut srv = ctx.captaind("server").funded(btc(10)).create_unregistered().await;
+	let srv = ctx.captaind("server").funded(btc(10)).create_unregistered().await;
 	let bark1 = ctx.bark("bark1", &srv).create().await;
 	let bark2 = ctx.bark("bark2", &srv).create().await;
 	ctx.fund_bark(&bark1, sat(1_000_000)).await;
@@ -1017,7 +1014,7 @@ async fn run_two_captainds() {
 #[tokio::test]
 async fn captaind_config_change(){
 	let ctx = TestContext::new("server/captaind_config_change").await;
-	let mut srv = ctx.captaind("server").cfg(|cfg| {
+	let srv = ctx.captaind("server").cfg(|cfg| {
 		cfg.vtxo_exit_delta = 12;
 	}).create_unregistered().await;
 	ctx.fund_captaind(&srv, btc(10)).await;

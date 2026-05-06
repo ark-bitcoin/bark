@@ -50,7 +50,6 @@ use ark::vtxo::policy::signing::VtxoSigner;
 use bitcoin_ext::{fee, BlockHeight, BlockRef, TxStatus, P2TR_DUST};
 use bitcoin_ext::bdk::{WalletExt, KEYCHAIN};
 use bitcoin_ext::cpfp::MakeCpfpFees;
-use bitcoin_ext::rpc::BitcoinRpcClient;
 use bitcoind_async_client::Client as BitcoindClient;
 use bitcoind_async_client::traits::Reader;
 
@@ -110,12 +109,6 @@ pub struct Watchman {
 	signer: WatchmanSigner,
 	/// Bitcoin RPC client for broadcasting transactions and querying the mempool.
 	bitcoind: BitcoindClient,
-	/// Sync companion for the (sync-only) `bdk_bitcoind_rpc::Emitter` driving
-	/// `watchman_wallet.sync()`.
-	///
-	/// TODO: drop this (and the sync `bitcoincore_rpc` dep) once
-	/// `bdk_bitcoind_rpc::Emitter` is async upstream.
-	bitcoind_sync: BitcoinRpcClient,
 	/// Database handle for persisting watchman state.
 	db: Db,
 	/// the block table in the db to use (captaind or watchmand)
@@ -142,7 +135,6 @@ impl Watchman {
 		config: Config,
 		signer: WatchmanSigner,
 		bitcoind: BitcoindClient,
-		bitcoind_sync: BitcoinRpcClient,
 		db: Db,
 		block_table: BlockTable,
 		fee_estimator: Arc<FeeEstimator>,
@@ -155,7 +147,6 @@ impl Watchman {
 			config,
 			signer: signer,
 			bitcoind,
-			bitcoind_sync,
 			db,
 			block_table,
 			fee_estimator,
@@ -202,11 +193,6 @@ impl Watchman {
 					info!("Shutdown signal received. Exiting Watchman...");
 					return;
 				},
-			}
-
-			// Sync the watchman wallet to update balance and detect confirmed UTXOs.
-			if let Err(e) = self.watchman_wallet.lock().await.sync(&self.bitcoind_sync, false).await {
-				warn!("Error syncing watchman wallet: {:#}", e);
 			}
 
 			if let Err(e) = self.process_all().await {

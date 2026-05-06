@@ -57,8 +57,14 @@ pub struct BarkdHelper {
 	chain_source: BarkdChainSource,
 	/// Optional dedicated bitcoind kept alive for the duration of the test.
 	_bitcoind: Option<Bitcoind>,
-	port: u16,
+	port: parking_lot::Mutex<u16>,
 	auth_token: AuthToken,
+}
+
+impl BarkdHelper {
+	fn port(&self) -> u16 {
+		*self.port.lock()
+	}
 }
 
 impl Barkd {
@@ -84,14 +90,14 @@ impl Barkd {
 			ark_server_url,
 			chain_source,
 			_bitcoind: bitcoind,
-			port: 0,
+			port: parking_lot::Mutex::new(0),
 			auth_token: AuthToken::new(secret),
 		};
 		Daemon::wrap(helper)
 	}
 
 	pub fn base_url(&self) -> String {
-		format!("http://127.0.0.1:{}", self.inner.port)
+		format!("http://127.0.0.1:{}", self.inner.port())
 	}
 
 	pub fn client_config(&self) -> Configuration {
@@ -183,7 +189,7 @@ impl Barkd {
 		let ticket = self.create_ws_ticket().await;
 		let url = format!(
 			"ws://127.0.0.1:{}/api/v1/notifications/ws?ticket={}",
-			self.inner.port, ticket,
+			self.inner.port(), ticket,
 		);
 		let (ws, _resp) = tokio_tungstenite::connect_async(&url).await
 			.expect("failed to open barkd websocket");
@@ -461,14 +467,14 @@ impl DaemonHelper for BarkdHelper {
 
 		cmd.args([
 			"--datadir", self.datadir.to_str().expect("non-UTF-8 datadir"),
-			"--port", &self.port.to_string(),
+			"--port", &self.port().to_string(),
 			"--verbose",
 		]);
 		Ok(cmd)
 	}
 
-	async fn make_reservations(&mut self) -> anyhow::Result<()> {
-		self.port = portpicker::pick_unused_port().expect("No ports free");
+	async fn make_reservations(&self) -> anyhow::Result<()> {
+		*self.port.lock() = portpicker::pick_unused_port().expect("No ports free");
 		Ok(())
 	}
 
@@ -485,7 +491,7 @@ impl DaemonHelper for BarkdHelper {
 		// `wait_for_init` is on `BarkdHelper`, not the `Barkd` type alias, so
 		// `client_config()` is not available here. Construct the config inline.
 		let config = Configuration {
-			base_path: format!("http://127.0.0.1:{}", self.port),
+			base_path: format!("http://127.0.0.1:{}", self.port()),
 			..Configuration::default()
 		};
 		loop {

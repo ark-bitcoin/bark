@@ -66,11 +66,10 @@ impl Postgres {
 	}
 }
 
-#[derive(Clone)]
 pub struct PostgresHelper {
 	pub name: String,
 	pub datadir: PathBuf,
-	pub port: Option<u16>
+	port: parking_lot::Mutex<Option<u16>>,
 }
 
 impl PostgresHelper {
@@ -78,12 +77,12 @@ impl PostgresHelper {
 		PostgresHelper {
 			name: name.as_ref().to_string(),
 			datadir: datadir,
-			port: None
+			port: parking_lot::Mutex::new(None),
 		}
 	}
 
 	pub fn port(&self) -> u16 {
-		self.port.expect("port should be set")
+		self.port.lock().expect("port should be set")
 	}
 
 	pub fn into_config(&self, dbname: &str) -> config::Postgres {
@@ -142,11 +141,11 @@ impl DaemonHelper for PostgresHelper {
 		self.datadir.clone()
 	}
 
-	async fn make_reservations(&mut self) -> anyhow::Result<()> {
+	async fn make_reservations(&self) -> anyhow::Result<()> {
 		let db_port = portpicker::pick_unused_port().expect("No ports free");
 
 		trace!("Reserved postgres port = {}", db_port);
-		self.port = Some(db_port);
+		*self.port.lock() = Some(db_port);
 
 		Ok(())
 	}
@@ -195,7 +194,7 @@ impl DaemonHelper for PostgresHelper {
 		cmd.args([
 			"-k", LOCK_DIR,
 			"-D", &self.pgdata().display().to_string(),
-			"-p", &self.port.expect("a port should be configured").to_string(),
+			"-p", &self.port().to_string(),
 		]);
 
 		debug!("postgresql command: {:?}", cmd);

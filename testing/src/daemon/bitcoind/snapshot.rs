@@ -58,7 +58,7 @@ pub async fn ensure_snapshot(snapshot_dir: &Path) {
 		std::fs::remove_dir_all(snapshot_dir).expect("failed to remove stale snapshot");
 	}
 
-	let mut bitcoind = Bitcoind::new(
+	let bitcoind = Bitcoind::new(
 		"snapshot".to_string(),
 		BitcoindConfig {
 			datadir: snapshot_dir.to_path_buf(),

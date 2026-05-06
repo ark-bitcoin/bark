@@ -1404,13 +1404,6 @@ async fn perform_round(
 	telemetry::set_round_state(round_state.kind());
 
 	loop {
-		if let Err(e) = srv.rounds_wallet
-			.lock().await
-			.sync(&srv.bitcoind_sync, false)
-			.await {
-			slog!(RoundSyncError, error: format!("{:?}", e));
-		}
-
 		match perform_round_attempt(srv, round_input_rx, round_seq, round_state).await {
 			RoundAttemptResult::Retry(new_state) => {
 				round_state = new_state;
@@ -1767,11 +1760,8 @@ pub async fn run_round_coordinator(
 			},
 		}
 
-		// We sync and rebalance all wallets now so that we are sure it doesn't
-		// interfere with rounds happening.
-		if let Err(e) = srv.sync_wallets().await {
-			slog!(RoundSyncError, error: format!("{:?}", e));
-		};
+		// Rebalance wallets now so that it doesn't interfere with rounds happening.
+		// Wallet syncing is handled by the SyncManager via the ChainEventListener.
 		if let Err(e) = srv.rebalance_wallets().await {
 			slog!(RoundSyncError, error: format!("{:?}", e));
 		};

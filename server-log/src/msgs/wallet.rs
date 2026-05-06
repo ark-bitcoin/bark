@@ -30,13 +30,6 @@ pub struct WalletSyncStarting {
 impl_slog!(WalletSyncStarting, DEBUG, "Starting onchain sync of wallet");
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WalletSyncCommittingProgress {
-	pub wallet: Cow<'static, str>,
-	pub block_height: u32,
-}
-impl_slog!(WalletSyncCommittingProgress, DEBUG, "Wallet partially synced, committing changes to the database");
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WalletSyncComplete {
 	pub wallet: Cow<'static, str>,
 	pub new_block_height: u32,
@@ -58,3 +51,10 @@ pub struct WalletSignedTx {
 	pub fee: Amount,
 }
 impl_slog!(WalletSignedTx, DEBUG, "Our wallet signed an onchain tx");
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TxEvicted {
+	pub wallet: Cow<'static, str>,
+	pub txid: Txid,
+}
+impl_slog!(TxEvicted, INFO, "Transaction evicted from wallet");

@@ -59,7 +59,7 @@ impl Electrs {
 			name: name.as_ref().to_owned(),
 			config,
 			electrs_type,
-			state: ElectrsHelperState::default()
+			state: parking_lot::Mutex::new(ElectrsHelperState::default())
 		};
 		Daemon::wrap(inner)
 	}
@@ -180,32 +180,32 @@ pub struct ElectrsHelper {
 	name: String,
 	config: ElectrsConfig,
 	electrs_type: ElectrsType,
-	state: ElectrsHelperState,
+	state: parking_lot::Mutex<ElectrsHelperState>,
 }
 
 impl ElectrsHelper {
 	pub fn electrum_port(&self) -> u16 {
-		self.state.electrum_port.expect("A port should be configured")
+		self.state.lock().electrum_port.expect("A port should be configured")
 	}
 
 	pub fn electrum_url(&self) -> String {
-		format!("tcp://127.0.0.1:{}", self.state.electrum_port.expect("A port should be configured"))
+		format!("tcp://127.0.0.1:{}", self.electrum_port())
 	}
 
 	pub fn monitoring_port(&self) -> u16 {
-		self.state.monitoring_port.expect("A port should be configured")
+		self.state.lock().monitoring_port.expect("A port should be configured")
 	}
 
 	pub fn monitoring_url(&self) -> String {
-		format!("http://127.0.0.1:{}", self.state.monitoring_port.expect("A port should be configured"))
+		format!("http://127.0.0.1:{}", self.monitoring_port())
 	}
 
 	pub fn rest_port(&self) -> u16 {
-		self.state.rest_port.expect("A port should be configured")
+		self.state.lock().rest_port.expect("A port should be configured")
 	}
 
 	pub fn rest_url(&self) -> String {
-		format!("http://127.0.0.1:{}", self.state.rest_port.expect("A port should be configured"))
+		format!("http://127.0.0.1:{}", self.rest_port())
 	}
 
 	async fn is_ready(&self) -> bool {
@@ -228,15 +228,16 @@ impl DaemonHelper for ElectrsHelper {
 		self.config.electrs_dir.clone()
 	}
 
-	async fn make_reservations(&mut self) -> anyhow::Result<()> {
+	async fn make_reservations(&self) -> anyhow::Result<()> {
 		let rest_port = portpicker::pick_unused_port().expect("No ports free");
 		let electrum_port = portpicker::pick_unused_port().expect("No ports free");
 		let monitoring_port = portpicker::pick_unused_port().expect("No ports free");
 
 		trace!("Reserved electrs ports = {}, {} and {}", rest_port, electrum_port, monitoring_port);
-		self.state.rest_port = Some(rest_port);
-		self.state.electrum_port = Some(electrum_port);
-		self.state.monitoring_port = Some(monitoring_port);
+		let mut state = self.state.lock();
+		state.rest_port = Some(rest_port);
+		state.electrum_port = Some(electrum_port);
+		state.monitoring_port = Some(monitoring_port);
 
 		Ok(())
 	}

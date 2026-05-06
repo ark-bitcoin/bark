@@ -57,12 +57,12 @@ pub trait DaemonHelper {
 	fn name(&self) -> &str;
 	fn datadir(&self) -> PathBuf;
 	async fn get_command(&self) -> anyhow::Result<Command>;
-	async fn make_reservations(&mut self) -> anyhow::Result<()>;
+	async fn make_reservations(&self) -> anyhow::Result<()>;
 	async fn prepare(&self) -> anyhow::Result<()>;
 
 	/// A hook to run right after daemon succesfully started.
 	async fn post_start(
-		&mut self,
+		&self,
 		_log_handler_tx: &mpsc::Sender<Box<dyn LogHandler>>,
 	) -> anyhow::Result<()> {
 		Ok(())
@@ -78,7 +78,7 @@ pub struct Daemon<T>
 	inner: T,
 	daemon_state: Mutex<DaemonState>,
 	child: Mutex<Option<Child>>,
-	log_handler_tx: Option<mpsc::Sender<Box<dyn LogHandler>>>,
+	log_handler_tx: parking_lot::Mutex<Option<mpsc::Sender<Box<dyn LogHandler>>>>,
 }
 
 impl<T> Daemon<T>
@@ -90,7 +90,7 @@ impl<T> Daemon<T>
 			inner: inner,
 			daemon_state: Mutex::new(DaemonState::Init),
 			child: Mutex::new(None),
-			log_handler_tx: None,
+			log_handler_tx: parking_lot::Mutex::new(None),
 		}
 	}
 
@@ -98,9 +98,9 @@ impl<T> Daemon<T>
 		return self.inner.name()
 	}
 
-	pub async fn start(&mut self) -> anyhow::Result<()> {
+	pub async fn start(&self) -> anyhow::Result<()> {
 		info!("Starting {}", self.name);
-		*self.daemon_state.get_mut() = DaemonState::Starting;
+		*self.daemon_state.lock().await = DaemonState::Starting;
 
 		let mut tries = 3;
 		let res = loop {
@@ -122,23 +122,24 @@ impl<T> Daemon<T>
 
 		match res {
 			Ok(()) => {
-				if let Err(e) = self.inner.post_start(self.log_handler_tx.as_ref().unwrap()).await {
-					*self.daemon_state.get_mut() = DaemonState::Error;
+				let tx = self.log_handler_tx.lock().as_ref().unwrap().clone();
+				if let Err(e) = self.inner.post_start(&tx).await {
+					*self.daemon_state.lock().await = DaemonState::Error;
 					bail!("post_start hook failed for '{}': {}", e, self.name);
 				}
 
 				info!("Started {}", self.name);
-				*self.daemon_state.get_mut() = DaemonState::Running;
+				*self.daemon_state.lock().await = DaemonState::Running;
 				Ok(())
 			},
 			Err(e) => {
-				*self.daemon_state.get_mut() = DaemonState::Error;
+				*self.daemon_state.lock().await = DaemonState::Error;
 				bail!("Failed to launch daemon: {}", e);
 			},
 		}
 	}
 
-	pub async fn try_start(&mut self) -> anyhow::Result<()> {
+	pub async fn try_start(&self) -> anyhow::Result<()> {
 		trace!("Preparing {}", self.name);
 		self.inner.make_reservations().await?;
 		self.inner.prepare().await?;
@@ -157,7 +158,7 @@ impl<T> Daemon<T>
 		// Read the log-file for stdout
 		let (log_hander_tx, log_handler_rx) = mpsc::channel(8);
 		let _jh = tokio::spawn(process_log_file(stdout_path.clone(), log_handler_rx));
-		self.log_handler_tx = Some(log_hander_tx);
+		*self.log_handler_tx.lock() = Some(log_hander_tx);
 
 		// Wait for initialization
 		let init_timeout = std::env::var(DAEMON_INIT_TIMEOUT_MILLIS)
@@ -182,7 +183,7 @@ impl<T> Daemon<T>
 
 		match result {
 			Ok(()) => {
-				*self.child.get_mut() = Some(child);
+				*self.child.lock().await = Some(child);
 				Ok(())
 			},
 			Err(e) => {
@@ -236,7 +237,7 @@ impl<T> Daemon<T>
 	}
 
 	pub fn add_stdout_handler<L: LogHandler>(&self, log_handler: L) {
-		self.log_handler_tx.as_ref().expect("not started yet")
+		self.log_handler_tx.lock().as_ref().expect("not started yet")
 			.try_send(Box::new(log_handler))
 			.expect("too many log handlers pending");
 	}

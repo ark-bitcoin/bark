@@ -16,7 +16,6 @@ use anyhow::Context;
 use bitcoin::bip32;
 use bitcoin::secp256k1::Keypair;
 use tracing::{error, info};
-use bitcoin_ext::rpc::BitcoinRpcClient;
 use bitcoind_async_client::traits::Reader;
 
 use crate::EPHEMERAL_KEY_PATH;
@@ -126,9 +125,6 @@ impl Daemon {
 			.context("failed to connect to db")?;
 
 		let bitcoind = bcd::build_client(&cfg.bitcoind.url, cfg.bitcoind.auth())?;
-		// Sync companion for the (sync-only) `bdk_bitcoind_rpc::Emitter`.
-		let bitcoind_sync = BitcoinRpcClient::new(&cfg.bitcoind.url, cfg.bitcoind.auth())
-			.context("failed to create sync bitcoind rpc client")?;
 		// Check if our bitcoind is on the expected network.
 		let network = bitcoind.network().await?;
 		if network != cfg.network {
@@ -189,6 +185,7 @@ impl Daemon {
 		));
 
 		let listeners: Vec<Box<dyn ChainEventListener>> = vec![
+			Box::new(watchman_wallet.clone()),
 			Box::new(frontier.clone()),
 		];
 
@@ -223,7 +220,6 @@ impl Daemon {
 			cfg.watchman,
 			signer,
 			bitcoind.clone(),
-			bitcoind_sync.clone(),
 			db,
 			BlockTable::Watchmand,
 			fee_estimator,
