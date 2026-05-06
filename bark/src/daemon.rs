@@ -86,25 +86,8 @@ impl DaemonProcess {
 		}
 	}
 
-	fn fast_interval(&self) -> Duration {
-		Duration::from_secs(self.wallet.config().daemon_fast_sync_interval_secs)
-	}
-
-	fn slow_interval(&self) -> Duration {
-		Duration::from_secs(self.wallet.config().daemon_slow_sync_interval_secs)
-	}
-
-	/// Run lightning sync process
-	/// - Try to claim all pending lightning receives
-	/// - Sync pending lightning sends
-	async fn run_lightning_sync(&self) {
-		if let Err(e) = self.wallet.try_claim_all_lightning_receives(false).await {
-			warn!("An error occured while checking and claiming pending lightning receives: {e:#}");
-		}
-
-		if let Err(e) = self.wallet.sync_pending_lightning_send_vtxos().await {
-			warn!("An error occured while syncing pending lightning sends: {e:#}");
-		}
+	fn sync_interval(&self) -> Duration {
+		Duration::from_secs(self.wallet.config().daemon_sync_interval_secs)
 	}
 
 	/// Recursively resubscribe to mailbox message stream by waiting and
@@ -121,7 +104,7 @@ impl DaemonProcess {
 			}
 
 			futures::select! {
-				_ = tokio::time::sleep(self.slow_interval()).fuse() => {},
+				_ = tokio::time::sleep(self.sync_interval()).fuse() => {},
 				_ = self.shutdown.cancelled().fuse() => {
 					info!("Shutdown signal received! Shutting mailbox messages process...");
 					break;
@@ -231,7 +214,7 @@ impl DaemonProcess {
 			}
 
 			futures::select! {
-				_ = tokio::time::sleep(self.slow_interval()).fuse() => {},
+				_ = tokio::time::sleep(self.sync_interval()).fuse() => {},
 				_ = self.shutdown.cancelled().fuse() => {
 					info!("Shutdown signal received! Shutting round events process...");
 					break;
@@ -244,7 +227,7 @@ impl DaemonProcess {
 	async fn run_server_connection_check_process(&self) {
 		loop {
 			futures::select! {
-				_ = tokio::time::sleep(self.fast_interval()).fuse() => {},
+				_ = tokio::time::sleep(self.sync_interval()).fuse() => {},
 				_ = self.shutdown.cancelled().fuse() => {
 					info!("Shutdown signal received! Shutting server connection check process...");
 					break;
@@ -264,20 +247,11 @@ impl DaemonProcess {
 	}
 
 	async fn run_sync_processes(&self) {
-		let mut fast_interval = tokio::time::interval(self.fast_interval());
-		let mut slow_interval = tokio::time::interval(self.slow_interval());
+		let mut sync_interval = tokio::time::interval(self.sync_interval());
 
 		loop {
 			futures::select! {
-				_ = fast_interval.tick().fuse() => {
-					if !self.connected.load(Ordering::Relaxed) {
-						continue;
-					}
-
-					self.run_lightning_sync().await;
-					fast_interval.reset();
-				},
-				_ = slow_interval.tick().fuse() => {
+				_ = sync_interval.tick().fuse() => {
 					if self.connected.load(Ordering::Relaxed) {
 						self.run_fee_rate_update().await;
 						self.run_boards_sync().await;
@@ -287,7 +261,7 @@ impl DaemonProcess {
 					self.run_onchain_sync().await;
 					self.run_rounds_sync().await;
 					self.run_exits().await;
-					slow_interval.reset();
+					sync_interval.reset();
 				},
 				_ = self.shutdown.cancelled().fuse() => {
 					info!("Shutdown signal received! Shutting sync processes...");
