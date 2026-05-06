@@ -152,7 +152,7 @@ pub struct FullRound {
 	#[serde(with = "crate::serde_utils::duration_millis")]
 	pub server_duration: Duration,
 }
-impl_slog!(FullRound, WARN, "Round is full, no longer adding payments");
+impl_slog!(FullRound, INFO, "Round is full, no longer adding payments");
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NoRoundPayments {
@@ -233,7 +233,7 @@ pub struct VtxoSignatureRegistrationFailed {
 	#[serde(with = "crate::serde_utils::duration_millis")]
 	pub client_duration: Duration,
 }
-impl_slog!(VtxoSignatureRegistrationFailed, WARN, "Participant failed to provide a valid VTXO tree signature");
+impl_slog!(VtxoSignatureRegistrationFailed, INFO, "Participant failed to provide a valid VTXO tree signature");
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RoundVtxoSignaturesRegistered {
