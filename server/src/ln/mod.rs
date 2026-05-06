@@ -198,13 +198,6 @@ impl Server {
 			);
 		};
 
-		// Verify register_vtxo_transactions was called for the input VTXOs
-		// before initiating the payment. Fails early if the client skipped it.
-		let txids = vtxos.iter()
-			.flat_map(|v| v.transactions().map(|i| i.tx.compute_txid()));
-		self.db.read(async |t| t.check_vtxo_transactions_registered(txids).await).await
-			.context("register_vtxo_transactions not called for input VTXOs")?;
-
 		// Spawn a task that performs the payment, keep the difference between the payment amount
 		// and the VTXO sum as a fee.
 		self.cln.pay_invoice(
