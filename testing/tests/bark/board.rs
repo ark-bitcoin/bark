@@ -242,8 +242,8 @@ async fn board_tx_rejects_dust_amount() {
 	let (keypair, _) = wallet.derive_store_next_keypair().await.unwrap();
 	let (board_addr, expiry_height) = wallet.board_funding_address(&keypair).await.unwrap();
 
-	// Build a PSBT that pays to the correct address but with a dust amount
-	let dust_amount = sat(1_000);
+	// Build a PSBT that pays to the correct address but with a sub-dust amount
+	let dust_amount = sat(P2TR_DUST_SAT - 1);
 	// The input is not valid but it doesn't matter since validation fails before it's used.
 	let fake_input = TxIn {
 		previous_output: OutPoint::new(Txid::all_zeros(), 0),
@@ -261,7 +261,7 @@ async fn board_tx_rejects_dust_amount() {
 
 	let err = wallet.board_tx(psbt, keypair, expiry_height).await.unwrap_err().to_alt_string();
 	assert!(
-		err.contains("less than minimum board amount"),
+		err.contains("board amount must be at least"),
 		"unexpected error: {err}",
 	);
 }
