@@ -20,13 +20,11 @@ use ark::rounds::{RoundId, RoundSeq};
 use ark::tree::signed::{CachedSignedVtxoTree, UnlockHash, UnlockPreimage};
 use bitcoin_ext::BlockHeight;
 
-use crate::database::tree;
-use crate::database::Db;
-use crate::database::query;
+use crate::database::{query, tree, Tx};
 use crate::round::InteractiveParticipation;
 
 
-impl Db {
+impl<'t> Tx<'t> {
 	#[tracing::instrument(skip(self, unsigned_funding_tx, input_vtxos, signed_tree, interactive_participations))]
 	pub async fn finish_round(
 		&self,
@@ -39,17 +37,14 @@ impl Db {
 		let funding_txid = unsigned_funding_tx.compute_txid();
 		info!("Storing finished round with funding txid {}", funding_txid);
 
-		let mut conn = self.get_conn().await?;
-		let tx = conn.transaction().await?;
-
 		// First, store the round itself.
-		let stmt = tx.prepare_typed(
+		let stmt = self.prepare_typed(
 			"INSERT INTO round (seq, funding_txid, funding_tx, signed_tree, expiry, created_at)
 			VALUES ($1, $2, $3, $4, $5, NOW())
 			RETURNING id;",
 			&[Type::INT8, Type::TEXT, Type::BYTEA, Type::BYTEA, Type::INT4],
 		).await?;
-		let row = tx.query_one(
+		let row = self.query_one(
 			&stmt,
 			&[
 				&(round_seq.inner() as i64),
@@ -62,7 +57,7 @@ impl Db {
 		let round_id = row.get::<_, i64>("id");
 
 		// store round participations for the interactive participants
-		let remove_existing_stmt = tx.prepare_typed(
+		let remove_existing_stmt = self.prepare_typed(
 			"DELETE FROM round_participation
 			WHERE id IN (
 				SELECT participation_id
@@ -74,7 +69,7 @@ impl Db {
 			// remove any existing ones, but if the round was not full,
 			// this should already have happened
 			let input_strings = part.inputs.iter().map(|i| i.to_string()).collect::<Vec<_>>();
-			let existing = tx.execute(&remove_existing_stmt, &[&input_strings]).await?;
+			let existing = self.execute(&remove_existing_stmt, &[&input_strings]).await?;
 			if existing > 0 {
 				debug!("Had to remove existing hark participation for interactive participant \
 					with input ids: {:?}", part.inputs,
@@ -82,7 +77,7 @@ impl Db {
 			}
 
 			query::store_round_participation(
-				&tx,
+				&self,
 				*unlock_hash,
 				part.unlock_preimage,
 				&part.inputs,
@@ -95,7 +90,7 @@ impl Db {
 
 		// update the hark round participations, both non-interactive and interactive
 		let hark_unlock_hashes = signed_tree.spec.spec.vtxos.iter().map(|v| v.unlock_hash);
-		query::set_round_id_for_participations(&tx, hark_unlock_hashes, funding_txid).await?;
+		query::set_round_id_for_participations(&self, hark_unlock_hashes, funding_txid).await?;
 
 		// Insert new vtxos and virtual transactions.
 		// The funding tx is not yet signed at this point.
@@ -106,38 +101,34 @@ impl Db {
 			.insert_oor_spent_vtxos(signed_tree.internal_vtxos())
 			.insert_unclaimed_vtxos(signed_tree.output_vtxos().map(ServerVtxo::from))
 			.mark_vtxos_round_spent(input_vtxos.into_iter().map(|id| (id, round_id)));
-		tree::execute_vtxo_tree_update(&tx, update).await?;
+		tree::execute_vtxo_tree_update(&self, update).await?;
 
 		// register the funding output vtxos directly into the frontier
-		tx.execute(
+		self.execute(
 			"INSERT INTO watchman_vtxo_frontier (vtxo_id) \
 			SELECT vtxo_id FROM vtxo WHERE vtxo_txid = $1 \
 			ON CONFLICT DO NOTHING",
 			&[&funding_txid.to_string()],
 		).await?;
 
-		tx.commit().await?;
 		Ok(())
 	}
 
 	pub async fn is_round_tx(&self, txid: Txid) -> anyhow::Result<bool> {
-		let conn = self.get_conn().await?;
-		let statement = conn.prepare("SELECT 1 FROM round WHERE funding_txid = $1 LIMIT 1;").await?;
-
-		let rows = conn.query(&statement, &[&txid.to_string()]).await?;
+		let statement = self.prepare("SELECT 1 FROM round WHERE funding_txid = $1 LIMIT 1;").await?;
+		let rows = self.query(&statement, &[&txid.to_string()]).await?;
 		Ok(!rows.is_empty())
 	}
 
 	pub async fn get_round(&self, id: RoundId) -> anyhow::Result<Option<StoredRound>> {
-		let conn = self.get_conn().await?;
-		let statement = conn.prepare("
+		let statement = self.prepare("
 			SELECT id, seq, funding_txid, funding_tx, signed_tree,
 				expiry, swept_at, created_at
 			FROM round
 			WHERE funding_txid = $1;
 		").await?;
 
-		let rows = conn.query(&statement, &[&id.to_string()]).await?;
+		let rows = self.query(&statement, &[&id.to_string()]).await?;
 		let round = match rows.get(0) {
 			Some(row) => Some(StoredRound::try_from(row.clone()).expect("corrupt db")),
 			_ => None
@@ -147,13 +138,11 @@ impl Db {
 	}
 
 	pub async fn mark_round_swept(&self, id: RoundId) -> anyhow::Result<()> {
-		let conn = self.get_conn().await?;
-
-		let statement = conn.prepare("
+		let statement = self.prepare("
 			UPDATE round SET swept_at = NOW(), updated_at = NOW() WHERE funding_txid = $1;
 		").await?;
 
-		conn.execute(&statement, &[&id.to_string()]).await?;
+		self.execute(&statement, &[&id.to_string()]).await?;
 
 		Ok(())
 	}
@@ -161,12 +150,11 @@ impl Db {
 	/// Get all round IDs of rounds that expired before or on `height`
 	/// and that have not been swept
 	pub async fn get_expired_round_ids(&self, height: BlockHeight) -> anyhow::Result<Vec<RoundId>> {
-		let conn = self.get_conn().await?;
-		let statement = conn.prepare("
+		let statement = self.prepare("
 			SELECT funding_txid FROM round WHERE expiry <= $1 AND swept_at IS NULL;
 		").await?;
 
-		let rows = conn.query(&statement, &[&(height as i32)]).await?;
+		let rows = self.query(&statement, &[&(height as i32)]).await?;
 		Ok(rows
 			.into_iter()
 			.map(|row| RoundId::from_str(row.get("funding_txid")).expect("corrupt db"))
@@ -182,25 +170,23 @@ impl Db {
 		last_round_id: Option<RoundId>,
 		vtxo_lifetime: Option<Duration>,
 	) -> anyhow::Result<Vec<RoundId>> {
-		let conn = self.get_conn().await?;
-
 		let rows = if let Some(last) = last_round_id {
-			let stmt = conn.prepare("
+			let stmt = self.prepare("
 				SELECT funding_txid
 				FROM round
 				WHERE created_at > (SELECT created_at FROM round WHERE funding_txid = $1)
 				ORDER BY id
 			").await?;
-			conn.query(&stmt, &[&last.to_string()]).await?
+			self.query(&stmt, &[&last.to_string()]).await?
 		} else if let Some(lifetime) = vtxo_lifetime {
 			let window = lifetime + lifetime / 2;
-			let stmt = conn.prepare("
+			let stmt = self.prepare("
 				SELECT funding_txid
 				FROM round
 				WHERE created_at >= NOW() - ($1 * interval '1 second')
 				ORDER BY id
 			").await?;
-			conn.query(&stmt, &[&(window.as_secs() as f64)]).await?
+			self.query(&stmt, &[&(window.as_secs() as f64)]).await?
 		} else {
 			bail!("need to provide either last_round_id or vtxo_lifetime argument");
 		};
@@ -213,9 +199,8 @@ impl Db {
 	}
 
 	pub async fn get_last_round_id(&self) -> anyhow::Result<Option<RoundId>> {
-		let conn = self.get_conn().await?;
-		let stmt = conn.prepare("SELECT funding_txid FROM round ORDER BY id DESC LIMIT 1").await?;
-		Ok(conn.query_opt(&stmt, &[]).await?.map(|r|
+		let stmt = self.prepare("SELECT funding_txid FROM round ORDER BY id DESC LIMIT 1").await?;
+		Ok(self.query_opt(&stmt, &[]).await?.map(|r|
 			RoundId::from_str(&r.get::<_, &str>("funding_txid")).expect("corrupt db: funding txid")
 		))
 	}
@@ -224,10 +209,7 @@ impl Db {
 		&self,
 		unlock_hash: UnlockHash,
 	) -> anyhow::Result<Option<StoredRoundParticipation>> {
-		let mut conn = self.get_conn().await?;
-		let tx = conn.transaction().await?;
-
-		let part_opt = tx.query_opt(
+		let part_opt = self.query_opt(
 			"SELECT id, unlock_hash, unlock_preimage, round_id, forfeited_at, created_at \
 			FROM round_participation \
 			WHERE unlock_hash = $1",
@@ -239,16 +221,13 @@ impl Db {
 			None => return Ok(None),
 		};
 
-		Ok(Some(query::complete_round_participation(&tx, part_row).await?))
+		Ok(Some(query::complete_round_participation(&self, part_row).await?))
 	}
 
 	pub async fn get_all_pending_round_participations(
 		&self,
 	) -> anyhow::Result<Vec<StoredRoundParticipation>> {
-		let mut conn = self.get_conn().await?;
-		let tx = conn.transaction().await?;
-
-		let parts = tx.query(
+		let parts = self.query(
 			"SELECT id, unlock_hash, unlock_preimage, round_id, forfeited_at, created_at \
 			FROM round_participation \
 			WHERE round_id IS NULL",
@@ -257,7 +236,7 @@ impl Db {
 
 		let mut ret = Vec::with_capacity(parts.len());
 		for row in parts {
-			ret.push(query::complete_round_participation(&tx, row).await?);
+			ret.push(query::complete_round_participation(&self, row).await?);
 		}
 
 		Ok(ret)
@@ -273,24 +252,20 @@ impl Db {
 		inputs: &[VtxoId],
 		outputs: impl IntoIterator<Item = &StoredRoundOutput>,
 	) -> anyhow::Result<()> {
-		let mut conn = self.get_conn().await?;
-		let tx = conn.transaction().await?;
-
 		let unlock_hash = UnlockHash::hash(&unlock_preimage);
 		trace!("Storing round participation for unlock hash {} and inputs {:?}",
 			unlock_hash, inputs,
 		);
 
 		// check that all inputs are free
-		for vtxo in query::get_vtxos_by_id(&tx, inputs).await? {
+		for vtxo in query::get_vtxos_by_id(&self, inputs).await? {
 			vtxo.check_spendable(chain_tip)?;
 		}
 
 		query::store_round_participation(
-			&tx, unlock_hash, unlock_preimage, inputs, outputs,
+			&self, unlock_hash, unlock_preimage, inputs, outputs,
 		).await?;
 
-		tx.commit().await?;
 		Ok(())
 	}
 
@@ -315,10 +290,7 @@ impl Db {
 		let serialized = forfeits.iter().map(|ff| serialize(ff)).collect::<Vec<_>>();
 		let txid_strs = txids.iter().map(|t| t.to_string()).collect::<Vec<_>>();
 
-		let mut conn = self.get_conn().await?;
-		let tx = conn.transaction().await?;
-
-		let stmt = tx.prepare_typed(
+		let stmt = self.prepare_typed(
 			"UPDATE round_part_input SET signed_forfeit_tx = u.signed_tx \
 			FROM round_participation, UNNEST($2::text[], $3::bytea[]) AS u(vtxo_id, signed_tx) \
 			WHERE round_part_input.participation_id = round_participation.id \
@@ -328,7 +300,7 @@ impl Db {
 			&[Type::TEXT, Type::TEXT_ARRAY, Type::BYTEA_ARRAY]
 		).await.context("error preparing participation query")?;
 
-		let rows_affected = tx.execute(&stmt, &[
+		let rows_affected = self.execute(&stmt, &[
 			&unlock_hash.to_string(),
 			&vtxo_id_strs,
 			&serialized,
@@ -341,13 +313,13 @@ impl Db {
 			);
 		}
 
-		let stmt = tx.prepare_typed(
+		let stmt = self.prepare_typed(
 			"UPDATE vtxo SET oor_spent_txid = u.txid, updated_at = NOW() \
 			FROM UNNEST($1::text[], $2::text[]) AS u(vtxo_id, txid) \
 			WHERE vtxo.vtxo_id = u.vtxo_id",
 			&[Type::TEXT_ARRAY, Type::TEXT_ARRAY],
 		).await.context("error preparing vtxo query")?;
-		let rows_affected = tx.execute(&stmt, &[
+		let rows_affected = self.execute(&stmt, &[
 			&vtxo_id_strs,
 			&txid_strs,
 		]).await.context("error executing vtxo query")?;
@@ -356,7 +328,6 @@ impl Db {
 			vtxo_ids.len(), rows_affected,
 		);
 
-		tx.commit().await?;
 		Ok(())
 	}
 
@@ -364,13 +335,12 @@ impl Db {
 		&self,
 		unlock_hash: UnlockHash,
 	) -> anyhow::Result<()> {
-		let conn = self.get_conn().await?;
-		let stmt = conn.prepare_typed(
+		let stmt = self.prepare_typed(
 			"UPDATE round_participation SET forfeited_at = NOW() \
 			WHERE unlock_hash = $1 AND forfeited_at IS NULL",
 			&[Type::TEXT],
 		).await?;
-		conn.execute(&stmt, &[&unlock_hash.to_string()]).await?;
+		self.execute(&stmt, &[&unlock_hash.to_string()]).await?;
 		Ok(())
 	}
 
@@ -399,65 +369,61 @@ impl Db {
 
 		let round_id_str = round_id.to_string();
 
-		let mut conn = self.get_conn().await?;
-		let tx = conn.transaction().await?;
-
 		// Restore input vtxos: set them back to spendable.
 		// oor_spent_txid may have been set by set_forfeit_transactions after finish_round.
 		let update = tree::VtxoTreeUpdate::new()
 			.undo_round(round.id);
-		tree::execute_vtxo_tree_update(&tx, update).await?;
+		tree::execute_vtxo_tree_update(&self, update).await?;
 
 		// Delete round_part_input and round_part_output before round_participation (FK).
-		let stmt = tx.prepare_typed(
+		let stmt = self.prepare_typed(
 			"DELETE FROM round_part_input WHERE participation_id IN
 			(SELECT id FROM round_participation WHERE round_id = $1)",
 			&[Type::TEXT],
 		).await?;
-		tx.execute(&stmt, &[&round_id_str]).await?;
+		self.execute(&stmt, &[&round_id_str]).await?;
 
-		let stmt = tx.prepare_typed(
+		let stmt = self.prepare_typed(
 			"DELETE FROM round_part_output WHERE participation_id IN
 			(SELECT id FROM round_participation WHERE round_id = $1)",
 			&[Type::TEXT],
 		).await?;
-		tx.execute(&stmt, &[&round_id_str]).await?;
+		self.execute(&stmt, &[&round_id_str]).await?;
 
-		let stmt = tx.prepare_typed(
+		let stmt = self.prepare_typed(
 			"DELETE FROM round_participation WHERE round_id = $1",
 			&[Type::TEXT],
 		).await?;
-		tx.execute(&stmt, &[&round_id_str]).await?;
+		self.execute(&stmt, &[&round_id_str]).await?;
 
 		// Delete watchman frontier rows before vtxos (FK constraint).
-		let stmt = tx.prepare_typed(
+		let stmt = self.prepare_typed(
 			"DELETE FROM watchman_vtxo_frontier WHERE vtxo_id = ANY($1)",
 			&[Type::TEXT_ARRAY],
 		).await?;
-		tx.execute(&stmt, &[&output_vtxo_ids]).await?;
+		self.execute(&stmt, &[&output_vtxo_ids]).await?;
 
 		// Delete vtxos that were created by this round (output and internal tree vtxos).
-		let stmt = tx.prepare_typed(
+		let stmt = self.prepare_typed(
 			"DELETE FROM vtxo WHERE vtxo_id = ANY($1)",
 			&[Type::TEXT_ARRAY],
 		).await?;
-		tx.execute(&stmt, &[&output_vtxo_ids]).await?;
+		self.execute(&stmt, &[&output_vtxo_ids]).await?;
 
 		// Delete virtual transactions for this round's tx tree.
-		let stmt = tx.prepare_typed(
+		let stmt = self.prepare_typed(
 			"DELETE FROM virtual_transaction WHERE txid = ANY($1)",
 			&[Type::TEXT_ARRAY],
 		).await?;
-		tx.execute(&stmt, &[&tree_txids]).await?;
+		self.execute(&stmt, &[&tree_txids]).await?;
 
 		// Delete the round row itself.
-		let stmt = tx.prepare_typed(
+		let stmt = self.prepare_typed(
 			"DELETE FROM round WHERE funding_txid = $1",
 			&[Type::TEXT],
 		).await?;
-		tx.execute(&stmt, &[&round_id_str]).await?;
+		self.execute(&stmt, &[&round_id_str]).await?;
 
-		tx.commit().await?;
 		info!("Undid round {}", round_id);
 		Ok(())
 	}
@@ -466,9 +432,7 @@ impl Db {
 		&self,
 		unlock_hash: UnlockHash,
 	) -> anyhow::Result<bool> {
-		let conn = self.get_conn().await?;
-
-		let stmt = conn.prepare_typed(
+		let stmt = self.prepare_typed(
 			"WITH deleted AS (
 				DELETE FROM round_participation WHERE unlock_hash = $1
 				RETURNING id
@@ -484,7 +448,7 @@ impl Db {
 			SELECT id FROM deleted",
 			&[Type::TEXT]
 		).await?;
-		let rows_affected = conn.execute(&stmt, &[&unlock_hash.to_string()]).await?;
+		let rows_affected = self.execute(&stmt, &[&unlock_hash.to_string()]).await?;
 
 		Ok(rows_affected > 0)
 	}

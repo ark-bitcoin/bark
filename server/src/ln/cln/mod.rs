@@ -54,8 +54,7 @@ use crate::system::RuntimeManager;
 use crate::config::{self, Config};
 use crate::database;
 use crate::database::ln::{
-	ClnNodeId, LightningHtlcSubscription, LightningHtlcSubscriptionStatus, LightningPaymentAttempt,
-	LightningPaymentStatus,
+	ClnNodeId, LightningHtlcSubscription, LightningHtlcSubscriptionStatus, LightningPaymentStatus,
 };
 use self::hold::{ClnHold, ClnHoldConfig};
 use self::notifier::PaymentAttemptNotifier;
@@ -231,8 +230,9 @@ impl ClnManager {
 				},
 			}
 
-			let attempt = self.db.get_latest_payment_attempt_by_payment_hash(payment_hash).await?
-				.not_found([payment_hash], "payment attempt not found")?;
+			let attempt = self.db.read(async |t|
+				t.get_latest_payment_attempt_by_payment_hash(payment_hash).await
+			).await?.not_found([payment_hash], "payment attempt not found")?;
 
 			// Check payment status
 			trace!("Payment attempt status for payment {}: {}",
@@ -289,7 +289,7 @@ impl ClnManager {
 		// If an open payment attempt exists for the payment hash, it is an
 		// intra-Ark lightning payment so we can mark it as succeeded,
 		// then skip hold invoice settlement.
-		let attempt = self.db.get_open_lightning_payment_attempt_by_payment_hash(payment_hash).await?;
+		let attempt = self.db.read(async |t| t.get_open_lightning_payment_attempt_by_payment_hash(payment_hash).await).await?;
 		if let Some(attempt) = attempt {
 			// NB: the xpay reconciliation loop may also post the mailbox notification
 			// for the same payment hash. The DB insert is idempotent (ON CONFLICT DO NOTHING).
@@ -305,11 +305,11 @@ impl ClnManager {
 		// Update the subscription status to settled and notify waiters.
 		// This covers both intra-ark (no CLN hook fires) and regular
 		// hold-invoice paths.
-		self.db.store_lightning_htlc_subscription_status(
+		self.db.write(async |t| t.store_lightning_htlc_subscription_status(
 			subscription_id,
 			LightningHtlcSubscriptionStatus::Settled,
 			None
-		).await?;
+		).await).await?;
 		let _ = self.payment_update_tx.send(payment_hash);
 
 		Ok(())
@@ -326,11 +326,11 @@ impl ClnManager {
 		self.send_ctrl(Ctrl::CancelInvoice { subscription: Box::new(subscription), result_tx });
 		result_rx.await.context("an error occurred canceling an invoice")??;
 
-		self.db.store_lightning_htlc_subscription_status(
+		self.db.write(async |t| t.store_lightning_htlc_subscription_status(
 			id,
 			LightningHtlcSubscriptionStatus::Canceled,
 			None,
-		).await?;
+		).await).await?;
 		self.notify_payment_update(payment_hash);
 
 		Ok(())
@@ -435,7 +435,7 @@ async fn try_settle_hold_invoice(
 	payment_hash: PaymentHash,
 	preimage: Preimage,
 ) -> bool {
-	let sub = match srv.db.get_htlc_subscription_by_payment_hash(payment_hash).await {
+	let sub = match srv.db.read(async |t| t.get_htlc_subscription_by_payment_hash(payment_hash).await).await {
 		Ok(Some(sub)) => sub,
 		Ok(None) => return true, // no subscription, nothing to settle
 		Err(e) => {
@@ -468,24 +468,20 @@ async fn post_lightning_receive_notification(
 	mailbox_manager: &crate::mailbox_manager::MailboxManager,
 	payment_hash: PaymentHash,
 ) {
-	let mailbox_id = match db.get_lightning_receiver_mailbox_id(payment_hash).await {
-		Ok(Some(id)) => id,
-		Ok(None) => return,
-		Err(e) => {
-			warn!("Failed to look up mailbox_id for {}: {:#}", payment_hash, e);
-			return;
-		},
-	};
-
-	match db.store_lightning_receive_notification(
-		mailbox_id, &payment_hash.to_string(),
-	).await {
-		Ok(checkpoint) => {
-			mailbox_manager.notify(mailbox_id, checkpoint);
-		},
-		Err(e) => {
-			warn!("Failed to store mailbox notification for {}: {:#}", payment_hash, e);
-		},
+	let res = db.write(async |t| {
+		if let Some(id) = t.get_lightning_receiver_mailbox_id(payment_hash).await
+			.context("failed to look up mailbox ID")?
+		{
+			let cp = t.store_lightning_receive_notification(id, &payment_hash.to_string()).await?;
+			Ok(Some((id, cp)))
+		} else {
+			Ok(None)
+		}
+	}).await;
+	match res {
+		Ok(Some((id, cp))) => mailbox_manager.notify(id, cp),
+		Ok(None) => {},
+		Err(e) => warn!("Error posting lightning receive notification for {}: {:#}", payment_hash, e),
 	}
 }
 
@@ -636,7 +632,7 @@ impl ClnNodeInfo {
 		let pubkey = PublicKey::from_slice(&info.id.to_vec())
 			.context(ClnNodeState::invalid("malformed pubkey"))?;
 
-		let (id, _) = db.register_lightning_node(&pubkey).await?;
+		let (id, _) = db.write(async |t| t.register_lightning_node(&pubkey).await).await?;
 
 		info!("Succesfully connected to cln node with uri {}", self.uri);
 		let monitor = ClnHold::start(
@@ -951,11 +947,11 @@ impl ClnManagerProcess {
 	) -> anyhow::Result<()> {
 		match subscription.status {
 			LightningHtlcSubscriptionStatus::Created => {
-				self.db.store_lightning_htlc_subscription_status(
+				self.db.write(async |t| t.store_lightning_htlc_subscription_status(
 					subscription.id,
 					LightningHtlcSubscriptionStatus::Accepted,
 					Some(htlc_send_expiry_height),
-				).await?;
+				).await).await?;
 
 				let payment_hash = PaymentHash::from(&subscription.invoice);
 				// Wake check_lightning_receive so the client sees Accepted.
@@ -1000,19 +996,20 @@ impl ClnManagerProcess {
 			Current block height is {}", node.id, payment_hash, amount, tip,
 		);
 
-		self.db.store_lightning_payment_start(node.id, &invoice, amount, sender_mailbox_id).await?;
+		self.db.write(async |t|
+			t.store_lightning_payment_start(node.id, &invoice, amount, sender_mailbox_id).await
+		).await?;
 
 		// If there is an existing subscription, it's an intra-Ark lightning
 		// payment so we can directly mark it as accepted, then skip cln payment
-		let sub = self.db
-			.get_htlc_subscription_by_payment_hash(payment_hash).await?;
+		let sub = self.db.read(async |t| t.get_htlc_subscription_by_payment_hash(payment_hash).await).await?;
 		if let Some(sub) = sub {
 			trace!("Updating subscription status for intra-Ark lightning payment with payment hash {payment_hash}");
 			let res = self.set_created_subscription_to_accepted(sub, htlc_send_expiry_height).await;
 			if let Err(e) = res {
 				trace!("Failed to update subscription status: {e:#}");
 				let payment_attempt = self.db
-					.get_open_lightning_payment_attempt_by_payment_hash(payment_hash).await?
+					.read(async |t| t.get_open_lightning_payment_attempt_by_payment_hash(payment_hash).await).await?
 					.expect("we inserted a payment attempt");
 
 				self.notifier().update_lightning_payment_attempt_status(
@@ -1072,7 +1069,9 @@ impl ClnManagerProcess {
 
 		// Check for an existing subscription (e.g. from a previous canceled attempt)
 		// to reuse the bolt11 invoice.
-		let existing_subs = self.db.get_htlc_subscriptions_by_payment_hash(payment_hash).await?;
+		let existing_subs = self.db.read(async |t|
+			t.get_htlc_subscriptions_by_payment_hash(payment_hash).await
+		).await?;
 		if let Some(existing) = existing_subs.first() {
 			trace!("Found existing subscription, creating new one with same invoice");
 
@@ -1081,7 +1080,9 @@ impl ClnManagerProcess {
 				min_cltv_expiry: None,
 			}).await?;
 
-			self.db.store_lightning_htlc_subscription(node.id, payment_hash, &existing.invoice).await?;
+			self.db.write(async |t|
+				t.store_lightning_htlc_subscription(node.id, payment_hash, &existing.invoice).await
+			).await?;
 			return Ok(existing.invoice.clone())
 		}
 
@@ -1095,8 +1096,10 @@ impl ClnManagerProcess {
 		}).await?.into_inner();
 
 		let invoice = Bolt11Invoice::from_str(&res.bolt11)?;
-		self.db.store_generated_lightning_receive(
-			node.id, &invoice, amount.to_msat(), receiver_mailbox_id,
+		self.db.write(async |t|
+			t.store_generated_lightning_receive(
+				node.id, &invoice, amount.to_msat(), receiver_mailbox_id,
+			).await
 		).await?;
 
 		Ok(invoice)
@@ -1104,7 +1107,7 @@ impl ClnManagerProcess {
 
 	async fn settle_invoice(&self, subscription_id: i64, preimage: Preimage) -> anyhow::Result<()> {
 		let htlc_subscription = self.db
-			.get_htlc_subscription_by_id(subscription_id).await?
+			.read(async |t| t.get_htlc_subscription_by_id(subscription_id).await).await?
 			.expect("can only settle known invoice");
 
 		// NB: we need to use the node that created the subscription because it is where the HTLCs were sent
@@ -1267,42 +1270,6 @@ impl ClnManagerProcess {
 				},
 			};
 		}
-	}
-}
-
-impl database::Db {
-	pub(in crate::ln::cln) async fn verify_and_update_payment_attempt(
-		&self,
-		attempt: &LightningPaymentAttempt,
-		status: LightningPaymentStatus,
-		payment_error: Option<&str>,
-		final_amount_msat: Option<u64>,
-	) -> anyhow::Result<bool> {
-		let payment_hash = attempt.payment_hash;
-
-		// Skip if the attempt is already in a final state. The on-chain
-		// settlement path records the preimage (via the settler) before
-		// CLN finalizes the payment attempt; checking only the DB status
-		// here is sufficient because the preimage lives in htlc_settlement.
-		if attempt.status.is_final() {
-			debug!("Lightning payment attempt update for {payment_hash}: Skipped update because the \
-				payment is already in a final state.");
-			return Ok(false);
-		}
-
-		let updated_at = self.update_lightning_payment_attempt_result(
-			attempt, status, payment_error, final_amount_msat,
-		).await?;
-
-		let amount_msat = final_amount_msat.unwrap_or(attempt.amount_msat);
-
-		telemetry::add_lightning_payment(
-			attempt.lightning_node_id,
-			amount_msat,
-			status,
-		);
-
-		Ok(updated_at.is_some())
 	}
 }
 

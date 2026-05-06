@@ -2,6 +2,7 @@ mod tree;
 
 use std::str::FromStr;
 
+use ark_testing::util::ToAltString;
 use bitcoin::secp256k1::PublicKey;
 use bitcoin::{Transaction, Txid};
 use chrono::Local;
@@ -9,7 +10,7 @@ use chrono::Local;
 use ark::{ServerVtxo, VtxoPolicy, VtxoRequest};
 use ark::offboard::OffboardForfeitResult;
 use ark::integration::{TokenStatus, TokenType};
-use ark::lightning::{Invoice, Preimage};
+use ark::lightning::{AsPaymentHash, Invoice, Preimage};
 use ark::mailbox::{MailboxIdentifier, MailboxType};
 use ark::rounds::RoundId;
 use ark::test_util::VTXO_VECTORS;
@@ -45,12 +46,12 @@ async fn upsert_vtxo() {
 	let vtxo2 = ServerVtxo::from(VTXO_VECTORS.round1_vtxo.clone());
 	let vtxo3 = ServerVtxo::from(VTXO_VECTORS.arkoor_htlc_out_vtxo.clone());
 
-	db.upsert_vtxos([vtxo1.clone(), vtxo2.clone()]).await.expect("Query succeeded");
-	db.get_user_vtxos_by_id(&[vtxo1.id(), vtxo2.id()]).await.expect("Query succeeded");
-	db.get_user_vtxos_by_id(&[vtxo3.id()]).await.expect_err("Query Failed because 3 isn't in the db yet");
+	db.write(async |t| t.upsert_vtxos([vtxo1.clone(), vtxo2.clone()]).await).await.expect("Query succeeded");
+	db.read(async |t| t.get_user_vtxos_by_id(&[vtxo1.id(), vtxo2.id()]).await).await.expect("Query succeeded");
+	db.read(async |t| t.get_user_vtxos_by_id(&[vtxo3.id()]).await).await.expect_err("Query Failed because 3 isn't in the db yet");
 
 	// It shouldn't complain if vtxo2 is already present
-	db.upsert_vtxos([vtxo2.into(), vtxo3.clone()]).await.expect("Query succeeded");
+	db.write(async |t| t.upsert_vtxos([vtxo2.into(), vtxo3.clone()]).await).await.expect("Query succeeded");
 }
 
 
@@ -66,15 +67,15 @@ async fn lightning_invoice() {
 	let dummy_public_key = PublicKey::from_str("038f47dcd43ba6d97fc9ed2e3bba09b175a45fac55f0683e8cf771e8ced4572354")
 		.expect("Failed to create dummy pubkey");
 
-	let (lightning_node_id, _dt) = db.register_lightning_node(&dummy_public_key).await.unwrap();
+	let (lightning_node_id, _dt) = db.write(async |t| t.register_lightning_node(&dummy_public_key).await).await.unwrap();
 	assert_ne!(lightning_node_id, 0);
-	let (lightning_node_id2, _dt) = db.register_lightning_node(&dummy_public_key).await.unwrap();
+	let (lightning_node_id2, _dt) = db.write(async |t| t.register_lightning_node(&dummy_public_key).await).await.unwrap();
 	assert_eq!(lightning_node_id, lightning_node_id2);
 
-	db.store_lightning_payment_index(lightning_node_id, ListsendpaysIndex::Created, 1).await.unwrap();
-	db.store_lightning_payment_index(lightning_node_id, ListsendpaysIndex::Updated, 2).await.unwrap();
+	db.write(async |t| t.store_lightning_payment_index(lightning_node_id, ListsendpaysIndex::Created, 1).await).await.unwrap();
+	db.write(async |t| t.store_lightning_payment_index(lightning_node_id, ListsendpaysIndex::Updated, 2).await).await.unwrap();
 
-	let payment_indexes = db.get_lightning_payment_indexes(lightning_node_id).await.unwrap().unwrap();
+	let payment_indexes = db.read(async |t| t.get_lightning_payment_indexes(lightning_node_id).await).await.unwrap().unwrap();
 	assert_eq!(payment_indexes.created_index, 1);
 	assert_eq!(payment_indexes.updated_index, 2);
 }
@@ -89,107 +90,106 @@ async fn integration() {
 	Db::create(&postgres_cfg).await.expect("Database created");
 	let db = Db::connect(&postgres_cfg).await.expect("Connected to database");
 
-	let integration_second = db.store_integration("second").await.unwrap();
+	let integration_second = db.write(async |t| t.store_integration("second").await).await.unwrap();
 	assert_ne!(integration_second.id, 0);
 
-	let integration_second = db.get_integration_by_name("second").await.unwrap()
+	let integration_second = db.read(async |t| t.get_integration_by_name("second").await).await.unwrap()
 		.expect("Second's integration not found in database");
 	assert_ne!(integration_second.id, 0);
 
-	let integration_second = db.get_integration_by_id(integration_second.id).await.unwrap()
+	let integration_second = db.read(async |t| t.get_integration_by_id(integration_second.id).await).await.unwrap()
 		.expect("Second's integration not found in database");
 	assert_ne!(integration_second.id, 0);
 	assert_eq!(integration_second.deleted_at, None);
 
-	let integration_second = db.delete_integration(integration_second.id).await.unwrap();
+	let integration_second = db.write(async |t| t.delete_integration(integration_second.id).await).await.unwrap();
 	assert_ne!(integration_second.deleted_at, None);
 
-	let integration_third = db.store_integration("third").await.unwrap();
+	let integration_third = db.write(async |t| t.store_integration("third").await).await.unwrap();
 	assert_ne!(integration_third.id, 0);
 
 	let api_key = uuid::Uuid::new_v4();
-	let integration_api_key_second = db.store_integration_api_key(
+	let integration_api_key_second = db.write(async |t| t.store_integration_api_key(
 		"second_api_key",
-		api_key.clone(),
+		api_key,
 		&filters::Filters::new(),
 		integration_second.id,
 		Local::now(),
-	).await.unwrap();
+	).await).await.unwrap();
 	assert_ne!(integration_api_key_second.id, 0);
 
-	let integration_api_key_second = db.get_integration_api_key_by_api_key(api_key).await.unwrap()
+	let integration_api_key_second = db.read(async |t| t.get_integration_api_key_by_api_key(api_key).await).await.unwrap()
 		.expect("Second's integration API key not found in database");
 	assert_ne!(integration_api_key_second.id, 0);
 	assert_eq!(integration_api_key_second.deleted_at, None);
 	assert!(integration_api_key_second.filters.is_empty());
 
-	let integration_api_key_second = db.get_integration_api_key_by_name(
+	let integration_api_key_second = db.read(async |t| t.get_integration_api_key_by_name(
 		integration_second.name.as_str(), integration_api_key_second.name.as_str(),
-	).await.unwrap()
+	).await).await.unwrap()
 		.expect("Second's integration API key not found in database");
 	assert_ne!(integration_api_key_second.id, 0);
 	assert_eq!(integration_api_key_second.deleted_at, None);
 	assert!(integration_api_key_second.filters.is_empty());
 
-	let integration_api_key_second = db.update_integration_api_key(
+	let integration_api_key_second = db.write(async |t| t.update_integration_api_key(
 		integration_api_key_second,
 		&Filters::init(vec!["127.0.0.1".to_string()], vec!["localhost".to_string()]),
-	).await.unwrap();
+	).await).await.unwrap();
 	assert!(!integration_api_key_second.filters.is_empty());
 
-	let integration_api_key_second = db.delete_integration_api_key(
+	let integration_api_key_second = db.write(async |t| t.delete_integration_api_key(
 		integration_api_key_second.id,
 		integration_api_key_second.updated_at,
-	).await.unwrap();
+	).await).await.unwrap();
 	assert_ne!(integration_api_key_second.deleted_at, None);
 
-	let integration_api_key_third = db.store_integration_api_key(
+	let integration_api_key_third = db.write(async |t| t.store_integration_api_key(
 		"third_api_key", uuid::Uuid::new_v4(), &filters::Filters::new(), integration_third.id, Local::now()
-	).await.unwrap();
+	).await).await.unwrap();
 	assert_ne!(integration_api_key_third.integration_id, 0);
 
-	let integration_token_config_second = db.store_integration_token_config(
+	let integration_token_config_second = db.write(async |t| t.store_integration_token_config(
 		TokenType::SingleUseBoard,
 		1,
 		2,
 		integration_second.id,
-	)
-		.await.unwrap();
+	).await).await.unwrap();
 	assert_ne!(integration_token_config_second.id, 0);
 	assert_eq!(integration_token_config_second.maximum_open_tokens, 1);
 	assert_eq!(integration_token_config_second.active_seconds, 2);
 	assert_eq!(integration_token_config_second.integration_id, integration_second.id);
-	let integration_token_config_second = db.update_integration_token_config(
+	let integration_token_config_second = db.write(async |t| t.update_integration_token_config(
 		integration_token_config_second,
 		10,
 		11,
-	).await.unwrap();
+	).await).await.unwrap();
 	assert_eq!(integration_token_config_second.maximum_open_tokens, 10);
 	assert_eq!(integration_token_config_second.active_seconds, 11);
 
-	let integration_token_config_second = db.delete_integration_token_config(
+	let integration_token_config_second = db.write(async |t| t.delete_integration_token_config(
 		integration_token_config_second.id,
 		integration_token_config_second.updated_at,
-	).await.unwrap();
+	).await).await.unwrap();
 	assert_ne!(integration_token_config_second.deleted_at, None);
 
 	let token = uuid::Uuid::new_v4().to_string();
 	let tomorrow = Local::now() + chrono::Duration::days(1);
-	let integration_token_third = db.store_integration_token(
+	let integration_token_third = db.write(async |t| t.store_integration_token(
 		token.as_str(), TokenType::SingleUseBoard, TokenStatus::Unused, tomorrow,
 		&filters::Filters::new(),
 		integration_third.id, integration_api_key_third.id,
-	).await.unwrap();
+	).await).await.unwrap();
 	assert_ne!(integration_token_third.id, 0);
 
-	let integration_token_third = db.get_integration_token(token.as_str()).await.unwrap()
+	let integration_token_third = db.read(async |t| t.get_integration_token(token.as_str()).await).await.unwrap()
 		.expect("Token is not found in database");
 	assert_eq!(integration_token_third.integration_id, integration_third.id);
 
-	let count = db.count_open_integration_tokens(integration_third.id, TokenType::SingleUseBoard).await.unwrap();
+	let count = db.read(async |t| t.count_open_integration_tokens(integration_third.id, TokenType::SingleUseBoard).await).await.unwrap();
 	assert_eq!(count, 1);
 
-	let integration_token_third = db.update_integration_token(
+	let integration_token_third = db.write(async |t| t.update_integration_token(
 		integration_token_third,
 		integration_api_key_second.id,
 		TokenStatus::Used,
@@ -197,12 +197,12 @@ async fn integration() {
 			Vec::from(&["127.0.0.1".to_string()]),
 			Vec::from(&["localhost".to_string()]),
 		),
-	).await.unwrap();
+	).await).await.unwrap();
 	assert_eq!(integration_token_third.integration_id, integration_third.id);
 	assert_ne!(integration_token_third.status, TokenStatus::Unused);
 	assert!(!integration_token_third.filters.is_empty());
 
-	let count = db.count_open_integration_tokens(integration_third.id, TokenType::SingleUseBoard).await.unwrap();
+	let count = db.read(async |t| t.count_open_integration_tokens(integration_third.id, TokenType::SingleUseBoard).await).await.unwrap();
 	assert_eq!(count, 0);
 }
 
@@ -229,28 +229,28 @@ async fn block_database_crud() {
 	};
 
 	// Initially no blocks
-	assert!(db.get_block_by_height(BlockTable::Captaind, 1).await.unwrap().is_none());
-	assert!(db.get_block_by_height(BlockTable::Captaind, 2).await.unwrap().is_none());
+	assert!(db.read(async |t| t.get_block_by_height(BlockTable::Captaind, 1).await).await.unwrap().is_none());
+	assert!(db.read(async |t| t.get_block_by_height(BlockTable::Captaind, 2).await).await.unwrap().is_none());
 
 	// Initially no tip
-	assert!(db.get_highest_block(BlockTable::Captaind).await.unwrap().is_none());
+	assert!(db.read(async |t| t.get_highest_block(BlockTable::Captaind).await).await.unwrap().is_none());
 
 	// Store first block
-	db.store_block(BlockTable::Captaind, &block1).await.expect("Store block1");
+	db.write(async |t| t.store_block(BlockTable::Captaind, &block1).await).await.expect("Store block1");
 	{
-		let stored = db.get_block_by_height(BlockTable::Captaind, 1).await.unwrap().expect("block1 present");
+		let stored = db.read(async |t| t.get_block_by_height(BlockTable::Captaind, 1).await).await.unwrap().expect("block1 present");
 		assert_eq!(stored.height, block1.height);
 		assert_eq!(stored.hash, block1.hash);
-		assert_eq!(db.get_highest_block(BlockTable::Captaind).await.unwrap(), Some(block1.clone()));
+		assert_eq!(db.read(async |t| t.get_highest_block(BlockTable::Captaind).await).await.unwrap(), Some(block1.clone()));
 	}
 
 	// Store second block
-	db.store_block(BlockTable::Captaind, &block2).await.expect("Store block2");
+	db.write(async |t| t.store_block(BlockTable::Captaind, &block2).await).await.expect("Store block2");
 	{
-		let stored = db.get_block_by_height(BlockTable::Captaind, 2).await.unwrap().expect("block2 present");
+		let stored = db.read(async |t| t.get_block_by_height(BlockTable::Captaind, 2).await).await.unwrap().expect("block2 present");
 		assert_eq!(stored.height, block2.height);
 		assert_eq!(stored.hash, block2.hash);
-		assert_eq!(db.get_highest_block(BlockTable::Captaind).await.unwrap(), Some(block2.clone()));
+		assert_eq!(db.read(async |t| t.get_highest_block(BlockTable::Captaind).await).await.unwrap(), Some(block2.clone()));
 	}
 
 	// Try to add a conflicting block at block-height 2
@@ -260,19 +260,19 @@ async fn block_database_crud() {
 		hash: hash2_conflict,
 	};
 
-	let result = db.store_block(BlockTable::Captaind, &block2_conflict).await;
+	let result = db.write(async |t| t.store_block(BlockTable::Captaind, &block2_conflict).await).await;
 	assert!(result.is_err(), "Storing a conflicting block at the same height should error");
 
 	// Remove blocks above height2 (block2 should still be there)
-	db.remove_blocks_above(BlockTable::Captaind, 2).await.expect("Remove above height2");
-	assert!(db.get_block_by_height(BlockTable::Captaind, 2).await.unwrap().is_some()); // block2 still there
-	assert!(db.get_block_by_height(BlockTable::Captaind, 1).await.unwrap().is_some()); // block1 still there
-	assert_eq!(db.get_highest_block(BlockTable::Captaind).await.unwrap(), Some(block2.clone())); // Tip should be at block2
+	db.write(async |t| t.remove_blocks_above(BlockTable::Captaind, 2).await).await.expect("Remove above height2");
+	assert!(db.read(async |t| t.get_block_by_height(BlockTable::Captaind, 2).await).await.unwrap().is_some()); // block2 still there
+	assert!(db.read(async |t| t.get_block_by_height(BlockTable::Captaind, 1).await).await.unwrap().is_some()); // block1 still there
+	assert_eq!(db.read(async |t| t.get_highest_block(BlockTable::Captaind).await).await.unwrap(), Some(block2.clone())); // Tip should be at block2
 
 	// Remove blocks above height1 (block1 should still be there)
-	db.remove_blocks_above(BlockTable::Captaind, 1).await.expect("Remove above height1");
-	assert!(db.get_block_by_height(BlockTable::Captaind, 1).await.unwrap().is_some()); // block1 still there
-	assert_eq!(db.get_highest_block(BlockTable::Captaind).await.unwrap(), Some(block1.clone())); // Tip should be at block1
+	db.write(async |t| t.remove_blocks_above(BlockTable::Captaind, 1).await).await.expect("Remove above height1");
+	assert!(db.read(async |t| t.get_block_by_height(BlockTable::Captaind, 1).await).await.unwrap().is_some()); // block1 still there
+	assert_eq!(db.read(async |t| t.get_highest_block(BlockTable::Captaind).await).await.unwrap(), Some(block1.clone())); // Tip should be at block1
 }
 
 #[tokio::test]
@@ -294,7 +294,7 @@ async fn get_virtual_transaction_not_found() {
 	let txid = tx.compute_txid();
 
 	// Verify returns Ok(None) for non-existent txid
-	let result = db.get_virtual_transaction_by_txid(txid).await
+	let result = db.read(async |t| t.get_virtual_transaction_by_txid(txid).await).await
 		.expect("Query should not error");
 	assert!(result.is_none(), "Non-existent txid should return None");
 }
@@ -343,26 +343,26 @@ async fn get_first_unsigned_virtual_transaction() {
 	let update = VtxoTreeUpdate::new()
 		.upsert_signed_tx([tx1.clone(), tx3.clone()])
 		.upsert_unsigned_tx([txid2]);
-	db.execute_vtxo_tree_update(update).await.unwrap();
+	db.write(async |t| t.execute_vtxo_tree_update(update).await).await.unwrap();
 
 	// Test case 1: [tx1, tx2, tx3] -> Some(tx2)
-	let result = db.get_first_unsigned_virtual_transaction(&[txid1, txid2, txid3]).await.unwrap();
+	let result = db.read(async |t| t.get_first_unsigned_virtual_transaction(&[txid1, txid2, txid3]).await).await.unwrap();
 	assert_eq!(result, Some(txid2), "Should find unsigned tx2");
 
 	// Test case 2: [tx1, tx3] -> None (all signed)
-	let result = db.get_first_unsigned_virtual_transaction(&[txid1, txid3]).await.unwrap();
+	let result = db.read(async |t| t.get_first_unsigned_virtual_transaction(&[txid1, txid3]).await).await.unwrap();
 	assert_eq!(result, None, "All signed should return None");
 
 	// Test case 3: [tx_nonexistent] -> None (doesn't exist)
-	let result = db.get_first_unsigned_virtual_transaction(&[txid_nonexistent]).await.unwrap();
+	let result = db.read(async |t| t.get_first_unsigned_virtual_transaction(&[txid_nonexistent]).await).await.unwrap();
 	assert_eq!(result, None, "Non-existent should return None");
 
 	// Test case 4: [] (empty) -> None
-	let result = db.get_first_unsigned_virtual_transaction(&[]).await.unwrap();
+	let result = db.read(async |t| t.get_first_unsigned_virtual_transaction(&[]).await).await.unwrap();
 	assert_eq!(result, None, "Empty input should return None");
 
 	// Test case 5: [tx_nonexistent, tx2] -> Some(tx2)
-	let result = db.get_first_unsigned_virtual_transaction(&[txid_nonexistent, txid2]).await.unwrap();
+	let result = db.read(async |t| t.get_first_unsigned_virtual_transaction(&[txid_nonexistent, txid2]).await).await.unwrap();
 	assert_eq!(result, Some(txid2), "Should find unsigned tx2, ignoring non-existent");
 }
 
@@ -376,9 +376,9 @@ async fn check_vtxo_transactions_registered_empty_input() {
 	let db = Db::connect(&postgres_cfg).await.expect("Connected to database");
 
 	// Fail closed: a caller with nothing to assert is a bug.
-	let err = db.check_vtxo_transactions_registered(Vec::<Txid>::new()).await
+	let err = db.read(async |t| t.check_vtxo_transactions_registered(Vec::<Txid>::new()).await).await
 		.expect_err("Empty input should fail");
-	assert!(err.to_string().contains("empty txid list"),
+	assert!(err.to_alt_string().contains("empty txid list"),
 		"Error should mention empty txid list: {}", err);
 }
 
@@ -407,9 +407,9 @@ async fn check_vtxo_transactions_registered_all_signed() {
 	let txid2 = tx2.compute_txid();
 
 	let update = VtxoTreeUpdate::new().upsert_signed_tx([tx1, tx2]);
-	db.execute_vtxo_tree_update(update).await.unwrap();
+	db.write(async |t| t.execute_vtxo_tree_update(update).await).await.unwrap();
 
-	db.check_vtxo_transactions_registered([txid1, txid2]).await
+	db.read(async |t| t.check_vtxo_transactions_registered([txid1, txid2]).await).await
 		.expect("All-signed input should succeed");
 }
 
@@ -440,11 +440,11 @@ async fn check_vtxo_transactions_registered_fails_for_unsigned() {
 	let update = VtxoTreeUpdate::new()
 		.upsert_signed_tx([tx_signed])
 		.upsert_unsigned_tx([txid_unsigned]);
-	db.execute_vtxo_tree_update(update).await.unwrap();
+	db.write(async |t| t.execute_vtxo_tree_update(update).await).await.unwrap();
 
-	let err = db.check_vtxo_transactions_registered([txid_signed, txid_unsigned]).await
+	let err = db.read(async |t| t.check_vtxo_transactions_registered([txid_signed, txid_unsigned]).await).await
 		.expect_err("Should fail when one tx is unsigned");
-	let msg = err.to_string();
+	let msg = err.to_alt_string();
 	assert!(msg.contains("NULL signed_tx"),
 		"Error should mention NULL signed_tx: {}", msg);
 	assert!(msg.contains(&txid_unsigned.to_string()),
@@ -468,9 +468,9 @@ async fn check_vtxo_transactions_registered_fails_for_nonexistent() {
 	};
 	let txid_nonexistent = tx_nonexistent.compute_txid();
 
-	let err = db.check_vtxo_transactions_registered([txid_nonexistent]).await
+	let err = db.read(async |t| t.check_vtxo_transactions_registered([txid_nonexistent]).await).await
 		.expect_err("Should fail when tx does not exist");
-	let msg = err.to_string();
+	let msg = err.to_alt_string();
 	assert!(msg.contains("does not exist"),
 		"Error should mention 'does not exist': {}", msg);
 	assert!(msg.contains(&txid_nonexistent.to_string()),
@@ -490,10 +490,10 @@ async fn upsert_vtxos_with_txid() {
 	let vtxo = ServerVtxo::from(VTXO_VECTORS.board_vtxo.clone());
 
 	// Upsert vtxos
-	db.upsert_vtxos([vtxo.clone()]).await.expect("Failed to upsert vtxo");
+	db.write(async |t| t.upsert_vtxos([vtxo.clone()]).await).await.expect("Failed to upsert vtxo");
 
 	// Retrieve vtxos and verify they exist
-	let vtxos = db.get_user_vtxos_by_id(&[vtxo.id()]).await.expect("Failed to get vtxo");
+	let vtxos = db.read(async |t| t.get_user_vtxos_by_id(&[vtxo.id()]).await).await.expect("Failed to get vtxo");
 	assert_eq!(vtxos.len(), 1);
 
 	// Query raw DB to check vtxo_txid column
@@ -527,24 +527,24 @@ async fn block_table_independence() {
 	let watchmand_block_100 = BlockRef { height: 100, hash: hash_watchmand };
 
 	// Initially both tables are empty
-	assert!(db.get_highest_block(BlockTable::Captaind).await.unwrap().is_none());
-	assert!(db.get_highest_block(BlockTable::Watchmand).await.unwrap().is_none());
+	assert!(db.read(async |t| t.get_highest_block(BlockTable::Captaind).await).await.unwrap().is_none());
+	assert!(db.read(async |t| t.get_highest_block(BlockTable::Watchmand).await).await.unwrap().is_none());
 
 	// Insert block 100 into captaind table
-	db.store_block(BlockTable::Captaind, &captaind_block_100).await.expect("Store to captaind");
+	db.write(async |t| t.store_block(BlockTable::Captaind, &captaind_block_100).await).await.expect("Store to captaind");
 
 	// Verify isolation: captaind has it, watchmand doesn't
-	assert_eq!(db.get_highest_block(BlockTable::Captaind).await.unwrap(), Some(captaind_block_100));
-	assert_eq!(db.get_block_by_height(BlockTable::Captaind, 100).await.unwrap(), Some(captaind_block_100));
-	assert_eq!(db.get_highest_block(BlockTable::Watchmand).await.unwrap(), None);
-	assert_eq!(db.get_block_by_height(BlockTable::Watchmand, 100).await.unwrap(), None);
+	assert_eq!(db.read(async |t| t.get_highest_block(BlockTable::Captaind).await).await.unwrap(), Some(captaind_block_100));
+	assert_eq!(db.read(async |t| t.get_block_by_height(BlockTable::Captaind, 100).await).await.unwrap(), Some(captaind_block_100));
+	assert_eq!(db.read(async |t| t.get_highest_block(BlockTable::Watchmand).await).await.unwrap(), None);
+	assert_eq!(db.read(async |t| t.get_block_by_height(BlockTable::Watchmand, 100).await).await.unwrap(), None);
 
 	// Insert block 100 into watchmand table (different hash!)
-	db.store_block(BlockTable::Watchmand, &watchmand_block_100).await.expect("Store to watchmand");
+	db.write(async |t| t.store_block(BlockTable::Watchmand, &watchmand_block_100).await).await.expect("Store to watchmand");
 
 	// Verify both tables have independent data at the same height
-	let captaind_retrieved = db.get_block_by_height(BlockTable::Captaind, 100).await.unwrap().unwrap();
-	let watchmand_retrieved = db.get_block_by_height(BlockTable::Watchmand, 100).await.unwrap().unwrap();
+	let captaind_retrieved = db.read(async |t| t.get_block_by_height(BlockTable::Captaind, 100).await).await.unwrap().unwrap();
+	let watchmand_retrieved = db.read(async |t| t.get_block_by_height(BlockTable::Watchmand, 100).await).await.unwrap().unwrap();
 
 	assert_eq!(captaind_retrieved.hash, hash_captaind);
 	assert_eq!(watchmand_retrieved.hash, hash_watchmand);
@@ -554,27 +554,27 @@ async fn block_table_independence() {
 	let captaind_block_101 = BlockRef { height: 101, hash: hash_captaind };
 	let watchmand_block_102 = BlockRef { height: 102, hash: hash_watchmand };
 
-	db.store_block(BlockTable::Captaind, &captaind_block_101).await.unwrap();
-	db.store_block(BlockTable::Watchmand, &watchmand_block_102).await.unwrap();
+	db.write(async |t| t.store_block(BlockTable::Captaind, &captaind_block_101).await).await.unwrap();
+	db.write(async |t| t.store_block(BlockTable::Watchmand, &watchmand_block_102).await).await.unwrap();
 
-	assert_eq!(db.get_highest_block(BlockTable::Captaind).await.unwrap().unwrap().height, 101);
-	assert_eq!(db.get_highest_block(BlockTable::Watchmand).await.unwrap().unwrap().height, 102);
+	assert_eq!(db.read(async |t| t.get_highest_block(BlockTable::Captaind).await).await.unwrap().unwrap().height, 101);
+	assert_eq!(db.read(async |t| t.get_highest_block(BlockTable::Watchmand).await).await.unwrap().unwrap().height, 102);
 
 	// Test independent removal
-	db.remove_blocks_above(BlockTable::Captaind, 100).await.unwrap();
+	db.write(async |t| t.remove_blocks_above(BlockTable::Captaind, 100).await).await.unwrap();
 
 	// Captaind should only have block 100 now
-	assert_eq!(db.get_highest_block(BlockTable::Captaind).await.unwrap().unwrap().height, 100);
-	assert_eq!(db.get_block_by_height(BlockTable::Captaind, 101).await.unwrap(), None);
+	assert_eq!(db.read(async |t| t.get_highest_block(BlockTable::Captaind).await).await.unwrap().unwrap().height, 100);
+	assert_eq!(db.read(async |t| t.get_block_by_height(BlockTable::Captaind, 101).await).await.unwrap(), None);
 
 	// Watchmand should still have both blocks
-	assert_eq!(db.get_highest_block(BlockTable::Watchmand).await.unwrap().unwrap().height, 102);
-	assert!(db.get_block_by_height(BlockTable::Watchmand, 100).await.unwrap().is_some());
-	assert!(db.get_block_by_height(BlockTable::Watchmand, 102).await.unwrap().is_some());
+	assert_eq!(db.read(async |t| t.get_highest_block(BlockTable::Watchmand).await).await.unwrap().unwrap().height, 102);
+	assert!(db.read(async |t| t.get_block_by_height(BlockTable::Watchmand, 100).await).await.unwrap().is_some());
+	assert!(db.read(async |t| t.get_block_by_height(BlockTable::Watchmand, 102).await).await.unwrap().is_some());
 
 	// Test independent lowest block tracking
-	assert_eq!(db.get_lowest_block(BlockTable::Captaind).await.unwrap().unwrap().height, 100);
-	assert_eq!(db.get_lowest_block(BlockTable::Watchmand).await.unwrap().unwrap().height, 100);
+	assert_eq!(db.read(async |t| t.get_lowest_block(BlockTable::Captaind).await).await.unwrap().unwrap().height, 100);
+	assert_eq!(db.read(async |t| t.get_lowest_block(BlockTable::Watchmand).await).await.unwrap().unwrap().height, 100);
 }
 
 #[tokio::test]
@@ -590,45 +590,45 @@ async fn ban_vtxo() {
 	// Insert a vtxo
 	let vtxo = ServerVtxo::from(VTXO_VECTORS.board_vtxo.clone());
 	let vtxo_id = vtxo.id();
-	db.upsert_vtxos(&[vtxo]).await.expect("upsert succeeded");
+	db.write(async |t| t.upsert_vtxos(&[vtxo]).await).await.expect("upsert succeeded");
 
 	// Initially no vtxos are banned
-	let banned = db.list_banned_vtxos(100).await.expect("list succeeded");
+	let banned = db.read(async |t| t.list_banned_vtxos(100).await).await.expect("list succeeded");
 	assert!(banned.is_empty(), "no vtxos should be banned initially");
 
 	// The vtxo should not have a ban set
-	let state = db.get_user_vtxos_by_id(&[vtxo_id]).await.expect("get succeeded")
+	let state = db.read(async |t| t.get_user_vtxos_by_id(&[vtxo_id]).await).await.expect("get succeeded")
 		.into_iter().next().expect("vtxo found");
 	assert!(state.banned_until_height.is_none());
 	assert!(state.is_spendable(100));
 
 	// Ban the vtxo until block 200
-	db.ban_vtxo(vtxo_id, 200).await.expect("ban succeeded");
+	db.write(async |t| t.ban_vtxo(vtxo_id, 200).await).await.expect("ban succeeded");
 
 	// The vtxo should now be banned
-	let state = db.get_user_vtxos_by_id(&[vtxo_id]).await.expect("get succeeded")
+	let state = db.read(async |t| t.get_user_vtxos_by_id(&[vtxo_id]).await).await.expect("get succeeded")
 		.into_iter().next().expect("vtxo found");
 	assert_eq!(state.banned_until_height, Some(200));
 	assert!(!state.is_spendable(100)); // tip 100 < ban 200
 	assert!(state.is_spendable(200)); // tip 200 >= ban 200
 
 	// Should appear in the banned list
-	let banned = db.list_banned_vtxos(100).await.expect("list succeeded");
+	let banned = db.read(async |t| t.list_banned_vtxos(100).await).await.expect("list succeeded");
 	assert_eq!(banned.len(), 1);
 	assert_eq!(banned[0].vtxo_id, vtxo_id);
 	assert_eq!(banned[0].banned_until_height, Some(200));
 
 	// Unban the vtxo
-	db.unban_vtxo(vtxo_id).await.expect("unban succeeded");
+	db.write(async |t| t.unban_vtxo(vtxo_id).await).await.expect("unban succeeded");
 
 	// The vtxo should no longer be banned
-	let state = db.get_user_vtxos_by_id(&[vtxo_id]).await.expect("get succeeded")
+	let state = db.read(async |t| t.get_user_vtxos_by_id(&[vtxo_id]).await).await.expect("get succeeded")
 		.into_iter().next().expect("vtxo found");
 	assert!(state.banned_until_height.is_none());
 	assert!(state.is_spendable(100));
 
 	// Banned list should be empty again
-	let banned = db.list_banned_vtxos(100).await.expect("list succeeded");
+	let banned = db.read(async |t| t.list_banned_vtxos(100).await).await.expect("list succeeded");
 	assert!(banned.is_empty());
 }
 
@@ -643,7 +643,7 @@ async fn pending_sweeps() {
 	let db = Db::connect(&postgres_cfg).await.expect("Connected to database");
 
 	// Initially empty
-	let sweeps = db.fetch_pending_sweeps().await.unwrap();
+	let sweeps = db.read(async |t| t.fetch_pending_sweeps().await).await.unwrap();
 	assert!(sweeps.is_empty(), "should start with no pending sweeps");
 
 	let tx1 = Transaction {
@@ -662,30 +662,30 @@ async fn pending_sweeps() {
 	let txid2 = tx2.compute_txid();
 
 	// Store two sweeps
-	db.store_pending_sweep(&txid1, &tx1).await.unwrap();
-	db.store_pending_sweep(&txid2, &tx2).await.unwrap();
+	db.write(async |t| t.store_pending_sweep(&txid1, &tx1).await).await.unwrap();
+	db.write(async |t| t.store_pending_sweep(&txid2, &tx2).await).await.unwrap();
 
 	// Inserting the same txid twice must fail due to the unique index on sweep.txid
-	let err = db.store_pending_sweep(&txid1, &tx1).await.unwrap_err();
+	let err = db.write(async |t| t.store_pending_sweep(&txid1, &tx1).await).await.unwrap_err();
 	let err_chain = format!("{:#}", err);
 	assert!(
 		err_chain.contains("duplicate key value violates unique constraint"),
 		"expected unique constraint violation, got: {}", err_chain,
 	);
 
-	let sweeps = db.fetch_pending_sweeps().await.unwrap();
+	let sweeps = db.read(async |t| t.fetch_pending_sweeps().await).await.unwrap();
 	assert_eq!(sweeps.len(), 2, "both sweeps should be pending");
 
 	// Confirm one
-	db.confirm_pending_sweep(&txid1).await.unwrap();
-	let sweeps = db.fetch_pending_sweeps().await.unwrap();
+	db.write(async |t| t.confirm_pending_sweep(&txid1).await).await.unwrap();
+	let sweeps = db.read(async |t| t.fetch_pending_sweeps().await).await.unwrap();
 	assert_eq!(sweeps.len(), 1, "one sweep confirmed, one still pending");
 	assert!(!sweeps.contains_key(&txid1), "confirmed sweep should not appear");
 	assert!(sweeps.contains_key(&txid2), "unconfirmed sweep should appear");
 
 	// Abandon the remaining one
-	db.abandon_pending_sweep(&txid2).await.unwrap();
-	let sweeps = db.fetch_pending_sweeps().await.unwrap();
+	db.write(async |t| t.abandon_pending_sweep(&txid2).await).await.unwrap();
+	let sweeps = db.read(async |t| t.fetch_pending_sweeps().await).await.unwrap();
 	assert!(sweeps.is_empty(), "all sweeps resolved");
 }
 
@@ -708,14 +708,14 @@ async fn postgres_offboards() {
 	let db = Db::connect(&postgres_cfg).await.expect("Connected to database");
 
 	let vtxo = ServerVtxo::from(VTXO_VECTORS.board_vtxo.clone());
-	db.upsert_vtxos(&[vtxo.clone()]).await.unwrap();
+	db.write(async |t| t.upsert_vtxos(&[vtxo.clone()]).await).await.unwrap();
 
 	// Register the vtxo's transactions in the virtual transaction tree
 	let signed_txs: Vec<_> = vtxo.transactions().map(|item| item.tx).collect();
-	db.execute_vtxo_tree_update(VtxoTreeUpdate::new().upsert_signed_tx(signed_txs)).await.unwrap();
+	db.write(async |t| t.execute_vtxo_tree_update(VtxoTreeUpdate::new().upsert_signed_tx(signed_txs)).await).await.unwrap();
 
 	// Initially no uncommitted offboards
-	let uncommitted = db.get_uncommitted_offboards().await.unwrap();
+	let uncommitted = db.read(async |t| t.get_uncommitted_offboards().await).await.unwrap();
 	assert!(uncommitted.is_empty());
 
 	let offboard_tx = dummy_tx(1);
@@ -728,9 +728,9 @@ async fn postgres_offboards() {
 		connector_tx: None,
 		connector_vtxos: vec![],
 	};
-	db.register_offboard(&[&vtxo], &offboard_tx, &forfeit_result).await.unwrap();
+	db.write(async |t| t.register_offboard(&[&vtxo], &offboard_tx, &forfeit_result).await).await.unwrap();
 
-	let uncommitted = db.get_uncommitted_offboards().await.unwrap();
+	let uncommitted = db.read(async |t| t.get_uncommitted_offboards().await).await.unwrap();
 	assert_eq!(uncommitted.len(), 1, "one uncommitted offboard");
 	assert_eq!(uncommitted[0].txid, offboard_txid);
 
@@ -742,13 +742,13 @@ async fn postgres_offboards() {
 		connector_tx: None,
 		connector_vtxos: vec![],
 	};
-	let result = db.register_offboard(&[&vtxo], &offboard_tx2, &forfeit_result2).await;
+	let result = db.write(async |t| t.register_offboard(&[&vtxo], &offboard_tx2, &forfeit_result2).await).await;
 	assert!(result.is_err(), "double-offboard should fail");
 
 	// Commit the offboard
-	db.mark_offboard_committed(offboard_txid).await.unwrap();
+	db.write(async |t| t.mark_offboard_committed(offboard_txid).await).await.unwrap();
 
-	let uncommitted = db.get_uncommitted_offboards().await.unwrap();
+	let uncommitted = db.read(async |t| t.get_uncommitted_offboards().await).await.unwrap();
 	assert!(uncommitted.is_empty(), "no uncommitted offboards after commit");
 }
 
@@ -770,18 +770,18 @@ async fn bitcoin_transaction_index() {
 	let txid = tx.compute_txid();
 
 	// Not found initially
-	assert!(db.get_bitcoin_transaction_by_id(txid).await.unwrap().is_none());
+	assert!(db.read(async |t| t.get_bitcoin_transaction_by_id(txid).await).await.unwrap().is_none());
 
 	// Upsert the transaction
-	db.upsert_bitcoin_transaction(txid, &tx).await.unwrap();
+	db.write(async |t| t.upsert_bitcoin_transaction(txid, &tx).await).await.unwrap();
 
 	// Now found
-	let stored = db.get_bitcoin_transaction_by_id(txid).await.unwrap().unwrap();
+	let stored = db.read(async |t| t.get_bitcoin_transaction_by_id(txid).await).await.unwrap().unwrap();
 	assert_eq!(stored.compute_txid(), txid);
 
 	// Upsert same txid again (idempotent)
-	db.upsert_bitcoin_transaction(txid, &tx).await.unwrap();
-	let stored2 = db.get_bitcoin_transaction_by_id(txid).await.unwrap().unwrap();
+	db.write(async |t| t.upsert_bitcoin_transaction(txid, &tx).await).await.unwrap();
+	let stored2 = db.read(async |t| t.get_bitcoin_transaction_by_id(txid).await).await.unwrap().unwrap();
 	assert_eq!(stored2.compute_txid(), txid);
 }
 
@@ -801,24 +801,24 @@ async fn ephemeral_tweaks() {
 	let tweak = bitcoin::secp256k1::Scalar::from_be_bytes(tweak_bytes).unwrap();
 
 	// Not found initially
-	assert!(db.fetch_ephemeral_tweak(pubkey).await.unwrap().is_none());
+	assert!(db.read(async |t| t.fetch_ephemeral_tweak(pubkey).await).await.unwrap().is_none());
 
 	// Store tweak with long lifetime
-	db.store_ephemeral_tweak(pubkey, tweak, std::time::Duration::from_secs(3600)).await.unwrap();
+	db.write(async |t| t.store_ephemeral_tweak(pubkey, tweak, std::time::Duration::from_secs(3600)).await).await.unwrap();
 
 	// Now found
-	let fetched = db.fetch_ephemeral_tweak(pubkey).await.unwrap().unwrap();
+	let fetched = db.read(async |t| t.fetch_ephemeral_tweak(pubkey).await).await.unwrap().unwrap();
 	assert_eq!(fetched.to_be_bytes(), tweak_bytes);
 
 	// Drop it
-	let dropped = db.drop_ephemeral_tweak(pubkey).await.unwrap().unwrap();
+	let dropped = db.write(async |t| t.drop_ephemeral_tweak(pubkey).await).await.unwrap().unwrap();
 	assert_eq!(dropped.to_be_bytes(), tweak_bytes);
 
 	// Gone after drop
-	assert!(db.fetch_ephemeral_tweak(pubkey).await.unwrap().is_none());
+	assert!(db.read(async |t| t.fetch_ephemeral_tweak(pubkey).await).await.unwrap().is_none());
 
 	// clean_expired removes nothing when table is empty
-	db.clean_expired_ephemeral_tweaks().await.unwrap();
+	db.write(async |t| t.clean_expired_ephemeral_tweaks().await).await.unwrap();
 }
 
 #[tokio::test]
@@ -837,21 +837,21 @@ async fn vtxo_mailbox() {
 	// Upsert the vtxo first (vtxo_mailbox has a FK on vtxo)
 	let vtxo1 = VTXO_VECTORS.board_vtxo.clone();
 	let vtxo2 = VTXO_VECTORS.round1_vtxo.clone();
-	db.upsert_vtxos(&[
+	db.write(async |t| t.upsert_vtxos(&[
 		ServerVtxo::from(vtxo1.clone()),
 		ServerVtxo::from(vtxo2.clone()),
-	]).await.unwrap();
+	]).await).await.unwrap();
 
 	// Empty mailbox returns nothing
-	let result = db.get_mailbox_entries(mailbox_id.clone(), 0, 10).await.unwrap();
+	let result = db.read(async |t| t.get_mailbox_entries(mailbox_id.clone(), 0, 10).await).await.unwrap();
 	assert!(result.is_empty());
 
 	// Store vtxo1 in mailbox (gets checkpoint 1)
-	let cp1 = db.store_vtxos_in_mailbox(MailboxType::ArkoorReceive, mailbox_id.clone(), &[vtxo1.clone()]).await.unwrap()
+	let cp1 = db.write(async |t| t.store_vtxos_in_mailbox(MailboxType::ArkoorReceive, mailbox_id.clone(), &[vtxo1.clone()]).await).await.unwrap()
 		.expect("should return a checkpoint");
 
 	// Fetch from checkpoint 0 – should return vtxo1
-	let batches = db.get_mailbox_entries(mailbox_id.clone(), 0, 10).await.unwrap();
+	let batches = db.read(async |t| t.get_mailbox_entries(mailbox_id.clone(), 0, 10).await).await.unwrap();
 	assert_eq!(batches.len(), 1);
 	assert_eq!(batches[0].checkpoint, cp1);
 	let vtxos = match &batches[0].payload {
@@ -862,12 +862,12 @@ async fn vtxo_mailbox() {
 	assert_eq!(vtxos[0].id(), vtxo1.id());
 
 	// Store vtxo2 in mailbox (gets checkpoint 2, ≥ cp1)
-	let cp2 = db.store_vtxos_in_mailbox(MailboxType::ArkoorReceive, mailbox_id.clone(), &[vtxo2.clone()]).await.unwrap()
+	let cp2 = db.write(async |t| t.store_vtxos_in_mailbox(MailboxType::ArkoorReceive, mailbox_id.clone(), &[vtxo2.clone()]).await).await.unwrap()
 		.expect("should return a checkpoint");
 	assert!(cp2 > cp1, "checkpoints should be monotonically increasing");
 
 	// Fetch from checkpoint cp1 – should only return vtxo2 (beyond cp1)
-	let batches = db.get_mailbox_entries(mailbox_id.clone(), cp1, 10).await.unwrap();
+	let batches = db.read(async |t| t.get_mailbox_entries(mailbox_id.clone(), cp1, 10).await).await.unwrap();
 	assert_eq!(batches.len(), 1);
 	assert_eq!(batches[0].checkpoint, cp2);
 	let vtxos2 = match &batches[0].payload {
@@ -891,7 +891,7 @@ async fn store_vtxos_in_mailbox_empty() {
 	).unwrap();
 
 	// Storing an empty slice returns None (no checkpoint allocated)
-	let result = db.store_vtxos_in_mailbox(MailboxType::ArkoorReceive, mailbox_id, &[]).await.unwrap();
+	let result = db.write(async |t| t.store_vtxos_in_mailbox(MailboxType::ArkoorReceive, mailbox_id, &[]).await).await.unwrap();
 	assert!(result.is_none(), "empty vtxo list should return None");
 }
 
@@ -910,21 +910,21 @@ async fn vtxo_pool() {
 	let vtxo2 = PoolVtxo::new(VTXO_VECTORS.round1_vtxo.clone());
 
 	// vtxo_pool has a FK on vtxo_id → insert into vtxo table first
-	db.upsert_vtxos(&[
+	db.write(async |t| t.upsert_vtxos(&[
 		ServerVtxo::from(VTXO_VECTORS.board_vtxo.clone()),
 		ServerVtxo::from(VTXO_VECTORS.round1_vtxo.clone()),
-	]).await.unwrap();
+	]).await).await.unwrap();
 
 	// Load from empty pool
 	let pool: Vec<_> = db.load_vtxopool().await.unwrap().try_collect().await.unwrap();
 	assert!(pool.is_empty());
 
 	// Store vtxo1 individually, vtxo2 in bulk
-	db.store_vtxopool_vtxo(&vtxo1).await.unwrap();
-	db.store_vtxopool_vtxos(&[vtxo2.clone()]).await.unwrap();
+	db.write(async |t| t.store_vtxopool_vtxo(&vtxo1).await).await.unwrap();
+	db.write(async |t| t.store_vtxopool_vtxos(&[vtxo2.clone()]).await).await.unwrap();
 
 	// Get by ids
-	let got = db.get_pool_vtxos_by_ids(&[vtxo1.id(), vtxo2.id()]).await.unwrap();
+	let got = db.read(async |t| t.get_pool_vtxos_by_ids(&[vtxo1.id(), vtxo2.id()]).await).await.unwrap();
 	assert_eq!(got.len(), 2);
 
 	// Load pool: 2 unspent vtxos
@@ -932,7 +932,7 @@ async fn vtxo_pool() {
 	assert_eq!(pool.len(), 2);
 
 	// Mark vtxo1 as spent
-	db.mark_vtxopool_vtxos_spent([vtxo1.id()]).await.unwrap();
+	db.write(async |t| t.mark_vtxopool_vtxos_spent([vtxo1.id()]).await).await.unwrap();
 
 	// Load pool: only vtxo2 remains unspent
 	let pool: Vec<_> = db.load_vtxopool().await.unwrap().try_collect().await.unwrap();
@@ -951,33 +951,33 @@ async fn watchman_frontier() {
 
 	// First, store the vtxo object itself (watchman_vtxo_frontier JOINs vtxo)
 	let vtxo = ServerVtxo::from(VTXO_VECTORS.board_vtxo.clone());
-	db.upsert_vtxos(&[vtxo.clone()]).await.unwrap();
+	db.write(async |t| t.upsert_vtxos(&[vtxo.clone()]).await).await.unwrap();
 
 	// Also store the funding virtual transaction that watchman queries for
 	let funding_txid = vtxo.point().txid;
-	db.execute_vtxo_tree_update(VtxoTreeUpdate::new().upsert_unsigned_funding_tx(funding_txid)).await.unwrap();
+	db.write(async |t| t.execute_vtxo_tree_update(VtxoTreeUpdate::new().upsert_unsigned_funding_tx(funding_txid)).await).await.unwrap();
 
 	// Frontier starts empty
-	let frontier = db.get_frontier().await.unwrap();
+	let frontier = db.read(async |t| t.get_frontier().await).await.unwrap();
 	assert!(frontier.is_empty());
 
 	// Add vtxo to frontier
-	db.add_vtxo_to_frontier(vtxo.id()).await.unwrap();
+	db.write(async |t| t.add_vtxo_to_frontier(vtxo.id()).await).await.unwrap();
 
 	// Frontier has one unconfirmed entry
-	let frontier = db.get_frontier().await.unwrap();
+	let frontier = db.read(async |t| t.get_frontier().await).await.unwrap();
 	assert_eq!(frontier.len(), 1);
 	let (confirmed_height, _) = frontier[&vtxo.id()];
 	assert!(confirmed_height.is_none(), "not yet confirmed");
 
 	// get_unfrontiered_funding_txids returns empty (vtxo is now frontiered)
-	let unfrontiered = db.get_unfrontiered_funding_txids().await.unwrap();
+	let unfrontiered = db.read(async |t| t.get_unfrontiered_funding_txids().await).await.unwrap();
 	assert!(unfrontiered.is_empty(), "all vtxos should be frontiered now");
 
 	// Register confirmation at height 100
-	db.register_vtxo_confirmation(vtxo.id(), 100).await.unwrap();
+	db.write(async |t| t.register_vtxo_confirmation(vtxo.id(), 100).await).await.unwrap();
 
-	let frontier = db.get_frontier().await.unwrap();
+	let frontier = db.read(async |t| t.get_frontier().await).await.unwrap();
 	let (confirmed_height, _) = frontier[&vtxo.id()];
 	assert_eq!(confirmed_height, Some(100));
 
@@ -989,10 +989,10 @@ async fn watchman_frontier() {
 		output: vec![],
 	};
 	let spend_txid = spend_tx.compute_txid();
-	db.register_vtxo_spend(vtxo.id(), 101, spend_txid).await.unwrap();
+	db.write(async |t| t.register_vtxo_spend(vtxo.id(), 101, spend_txid).await).await.unwrap();
 
 	// Spent vtxos do not appear in frontier
-	let frontier = db.get_frontier().await.unwrap();
+	let frontier = db.read(async |t| t.get_frontier().await).await.unwrap();
 	assert!(frontier.is_empty(), "spent vtxo should not appear in frontier");
 }
 
@@ -1006,18 +1006,18 @@ async fn watchman_reorg() {
 	let db = Db::connect(&postgres_cfg).await.expect("Connected to database");
 
 	let vtxo = ServerVtxo::from(VTXO_VECTORS.board_vtxo.clone());
-	db.upsert_vtxos(&[vtxo.clone()]).await.unwrap();
-	db.add_vtxo_to_frontier(vtxo.id()).await.unwrap();
-	db.register_vtxo_confirmation(vtxo.id(), 100).await.unwrap();
+	db.write(async |t| t.upsert_vtxos(&[vtxo.clone()]).await).await.unwrap();
+	db.write(async |t| t.add_vtxo_to_frontier(vtxo.id()).await).await.unwrap();
+	db.write(async |t| t.register_vtxo_confirmation(vtxo.id(), 100).await).await.unwrap();
 
 	// Verify confirmed
-	let frontier = db.get_frontier().await.unwrap();
+	let frontier = db.read(async |t| t.get_frontier().await).await.unwrap();
 	assert_eq!(frontier[&vtxo.id()].0, Some(100));
 
 	// Reorg at height 99 – confirmation at 100 should be cleared
-	db.reorg_frontier(99).await.unwrap();
+	db.write(async |t| t.reorg_frontier(99).await).await.unwrap();
 
-	let frontier = db.get_frontier().await.unwrap();
+	let frontier = db.read(async |t| t.get_frontier().await).await.unwrap();
 	assert!(frontier[&vtxo.id()].0.is_none(), "confirmation cleared after reorg");
 }
 
@@ -1031,10 +1031,10 @@ async fn watchman_get_vtxos_by_txid() {
 	let db = Db::connect(&postgres_cfg).await.expect("Connected to database");
 
 	let vtxo = ServerVtxo::from(VTXO_VECTORS.board_vtxo.clone());
-	db.upsert_vtxos(&[vtxo.clone()]).await.unwrap();
+	db.write(async |t| t.upsert_vtxos(&[vtxo.clone()]).await).await.unwrap();
 
 	let vtxo_txid = vtxo.point().txid;
-	let vtxos = db.get_vtxos_by_txid(vtxo_txid).await.unwrap();
+	let vtxos = db.read(async |t| t.get_vtxos_by_txid(vtxo_txid).await).await.unwrap();
 	assert_eq!(vtxos.len(), 1);
 	assert_eq!(vtxos[0].id(), vtxo.id());
 
@@ -1046,7 +1046,7 @@ async fn watchman_get_vtxos_by_txid() {
 		output: vec![],
 	};
 	let other_txid = other_tx.compute_txid();
-	let vtxos = db.get_vtxos_by_txid(other_txid).await.unwrap();
+	let vtxos = db.read(async |t| t.get_vtxos_by_txid(other_txid).await).await.unwrap();
 	assert!(vtxos.is_empty());
 }
 
@@ -1060,22 +1060,22 @@ async fn watchman_unfrontiered_funding_txids() {
 	let db = Db::connect(&postgres_cfg).await.expect("Connected to database");
 
 	// No vtxos → no unfrontiered txids
-	let unfrontiered = db.get_unfrontiered_funding_txids().await.unwrap();
+	let unfrontiered = db.read(async |t| t.get_unfrontiered_funding_txids().await).await.unwrap();
 	assert!(unfrontiered.is_empty());
 
 	// Insert vtxo + its funding virtual_transaction (is_funding = true)
 	let vtxo = ServerVtxo::from(VTXO_VECTORS.board_vtxo.clone());
-	db.upsert_vtxos(&[vtxo.clone()]).await.unwrap();
+	db.write(async |t| t.upsert_vtxos(&[vtxo.clone()]).await).await.unwrap();
 	let funding_txid = vtxo.point().txid;
-	db.execute_vtxo_tree_update(VtxoTreeUpdate::new().upsert_unsigned_funding_tx(funding_txid)).await.unwrap();
+	db.write(async |t| t.execute_vtxo_tree_update(VtxoTreeUpdate::new().upsert_unsigned_funding_tx(funding_txid)).await).await.unwrap();
 
 	// Now funding_txid is unfrontiered
-	let unfrontiered = db.get_unfrontiered_funding_txids().await.unwrap();
+	let unfrontiered = db.read(async |t| t.get_unfrontiered_funding_txids().await).await.unwrap();
 	assert!(unfrontiered.contains(&funding_txid));
 
 	// After adding to frontier it disappears from unfrontiered
-	db.add_vtxo_to_frontier(vtxo.id()).await.unwrap();
-	let unfrontiered = db.get_unfrontiered_funding_txids().await.unwrap();
+	db.write(async |t| t.add_vtxo_to_frontier(vtxo.id()).await).await.unwrap();
+	let unfrontiered = db.read(async |t| t.get_unfrontiered_funding_txids().await).await.unwrap();
 	assert!(unfrontiered.is_empty());
 }
 
@@ -1098,10 +1098,10 @@ async fn round_queries_empty() {
 	let round_id = RoundId::from(txid);
 
 	// No rounds yet
-	assert!(!db.is_round_tx(txid).await.unwrap(), "no rounds yet");
-	assert!(db.get_round(round_id).await.unwrap().is_none());
-	assert!(db.get_last_round_id().await.unwrap().is_none());
-	assert!(db.get_expired_round_ids(u32::MAX).await.unwrap().is_empty());
+	assert!(!db.read(async |t| t.is_round_tx(txid).await).await.unwrap(), "no rounds yet");
+	assert!(db.read(async |t| t.get_round(round_id).await).await.unwrap().is_none());
+	assert!(db.read(async |t| t.get_last_round_id().await).await.unwrap().is_none());
+	assert!(db.read(async |t| t.get_expired_round_ids(u32::MAX).await).await.unwrap().is_empty());
 }
 
 #[tokio::test]
@@ -1115,7 +1115,7 @@ async fn round_participation() {
 
 	// Insert a vtxo to use as an input
 	let vtxo = ServerVtxo::from(VTXO_VECTORS.board_vtxo.clone());
-	db.upsert_vtxos(&[vtxo.clone()]).await.unwrap();
+	db.write(async |t| t.upsert_vtxos(&[vtxo.clone()]).await).await.unwrap();
 
 	let unlock_preimage: UnlockPreimage = [1u8; 32];
 
@@ -1128,33 +1128,32 @@ async fn round_participation() {
 	};
 
 	// No participations yet
-	let pending = db.get_all_pending_round_participations().await.unwrap();
+	let pending = db.read(async |t| t.get_all_pending_round_participations().await).await.unwrap();
 	assert!(pending.is_empty());
 
 	// Store a participation
-	db.try_store_round_participation(0, unlock_preimage, &[vtxo.id()], std::iter::once(&output))
-		.await.unwrap();
+	db.write(async |t| t.try_store_round_participation(0, unlock_preimage, &[vtxo.id()], std::iter::once(&output)).await).await.unwrap();
 
 	// One pending participation
-	let pending = db.get_all_pending_round_participations().await.unwrap();
+	let pending = db.read(async |t| t.get_all_pending_round_participations().await).await.unwrap();
 	assert_eq!(pending.len(), 1);
 
 	let unlock_hash = UnlockHash::hash(&unlock_preimage);
-	let part = db.get_round_participation_by_unlock_hash(unlock_hash).await.unwrap()
+	let part = db.read(async |t| t.get_round_participation_by_unlock_hash(unlock_hash).await).await.unwrap()
 		.expect("participation should exist");
 	assert_eq!(part.inputs.len(), 1);
 	assert_eq!(part.inputs[0].vtxo_id, vtxo.id());
 	assert_eq!(part.outputs.len(), 1);
 
 	// Remove it
-	let removed = db.remove_round_participation(unlock_hash).await.unwrap();
+	let removed = db.write(async |t| t.remove_round_participation(unlock_hash).await).await.unwrap();
 	assert!(removed, "should have removed one participation");
 
-	let pending = db.get_all_pending_round_participations().await.unwrap();
+	let pending = db.read(async |t| t.get_all_pending_round_participations().await).await.unwrap();
 	assert!(pending.is_empty(), "participation removed");
 
 	// Removing again returns false
-	let removed_again = db.remove_round_participation(unlock_hash).await.unwrap();
+	let removed_again = db.write(async |t| t.remove_round_participation(unlock_hash).await).await.unwrap();
 	assert!(!removed_again, "nothing to remove the second time");
 }
 
@@ -1168,7 +1167,7 @@ async fn round_participation_forfeited_at() {
 	let db = Db::connect(&postgres_cfg).await.expect("Connected to database");
 
 	let vtxo = ServerVtxo::from(VTXO_VECTORS.board_vtxo.clone());
-	db.upsert_vtxos(&[vtxo.clone()]).await.unwrap();
+	db.write(async |t| t.upsert_vtxos(&[vtxo.clone()]).await).await.unwrap();
 
 	let unlock_preimage: UnlockPreimage = [2u8; 32];
 	let unlock_hash = UnlockHash::hash(&unlock_preimage);
@@ -1181,25 +1180,24 @@ async fn round_participation_forfeited_at() {
 		unblinded_mailbox_id: None,
 	};
 
-	db.try_store_round_participation(0, unlock_preimage, &[vtxo.id()], std::iter::once(&output))
-		.await.unwrap();
+	db.write(async |t| t.try_store_round_participation(0, unlock_preimage, &[vtxo.id()], std::iter::once(&output)).await).await.unwrap();
 
 	// newly created participation is not forfeited
-	let part = db.get_round_participation_by_unlock_hash(unlock_hash).await.unwrap()
+	let part = db.read(async |t| t.get_round_participation_by_unlock_hash(unlock_hash).await).await.unwrap()
 		.expect("participation should exist");
 	assert!(part.forfeited_at.is_none(), "new participation should not be forfeited");
 
 	// mark it as forfeited
-	db.mark_participation_forfeited(unlock_hash).await.unwrap();
+	db.write(async |t| t.mark_participation_forfeited(unlock_hash).await).await.unwrap();
 
 	// now it should be forfeited and carry a timestamp
-	let part = db.get_round_participation_by_unlock_hash(unlock_hash).await.unwrap()
+	let part = db.read(async |t| t.get_round_participation_by_unlock_hash(unlock_hash).await).await.unwrap()
 		.expect("participation should exist");
 	let first_forfeited_at = part.forfeited_at.expect("participation should be marked as forfeited");
 
 	// marking again preserves the original timestamp
-	db.mark_participation_forfeited(unlock_hash).await.unwrap();
-	let part = db.get_round_participation_by_unlock_hash(unlock_hash).await.unwrap()
+	db.write(async |t| t.mark_participation_forfeited(unlock_hash).await).await.unwrap();
+	let part = db.read(async |t| t.get_round_participation_by_unlock_hash(unlock_hash).await).await.unwrap()
 		.expect("participation should exist");
 	assert_eq!(part.forfeited_at, Some(first_forfeited_at),
 		"re-marking should preserve the original forfeited_at timestamp");
@@ -1238,7 +1236,7 @@ async fn set_forfeit_transactions_is_idempotent() {
 
 	let input_vtxo_ids = input_vtxos.iter().map(|v| v.id()).collect::<Vec<_>>();
 
-	db.upsert_vtxos(input_vtxos.clone()).await.unwrap();
+	db.write(async |t| t.upsert_vtxos(input_vtxos.clone()).await).await.unwrap();
 
 
 	// We will create a round participation that spends all three vtxos.
@@ -1252,8 +1250,7 @@ async fn set_forfeit_transactions_is_idempotent() {
 		},
 		unblinded_mailbox_id: None,
 	};
-	db.try_store_round_participation(0, unlock_preimage, &input_vtxo_ids, std::iter::once(&output))
-		.await.unwrap();
+	db.write(async |t| t.try_store_round_participation(0, unlock_preimage, &input_vtxo_ids, std::iter::once(&output)).await).await.unwrap();
 
 	// `set_forfeit_transactions`'s join filters on `round_id IS NOT NULL`, so
 	// it only matches participations that have already been attached to a
@@ -1264,18 +1261,18 @@ async fn set_forfeit_transactions_is_idempotent() {
 	// Note: `round_participation.round_id` is a TEXT column holding the
 	// funding txid, not the numeric `round.id`.
 	let funding_txid = dummy_tx(42).compute_txid();
-	{
-		let conn = db.get_conn().await.unwrap();
-		conn.execute(
+	db.write(async |t| {
+		t.execute(
 			"INSERT INTO round (seq, funding_txid, funding_tx, signed_tree, expiry, created_at)
 			VALUES (0, $1, '\\x00', '\\x00', 1000, NOW())",
 			&[&funding_txid.to_string()],
 		).await.unwrap();
-		conn.execute(
+		t.execute(
 			"UPDATE round_participation SET round_id = $1 WHERE unlock_hash = $2",
 			&[&funding_txid.to_string(), &unlock_hash.to_string()],
 		).await.unwrap();
-	}
+		Ok(())
+	}).await.unwrap();
 
 	// Build one distinct forfeit tx per input. Using distinct txs lets us
 	// check that each vtxo row ends up with its own oor_spent_txid and not
@@ -1285,13 +1282,13 @@ async fn set_forfeit_transactions_is_idempotent() {
 	let forfeit_txids = forfeit_txs.iter().map(|t| t.compute_txid()).collect::<Vec<_>>();
 
 	// First call: batch-forfeit all inputs in one db transaction.
-	db.set_forfeit_transactions(unlock_hash, &input_vtxo_ids, &forfeit_txs, &forfeit_txids).await
+	db.write(async |t| t.set_forfeit_transactions(unlock_hash, &input_vtxo_ids, &forfeit_txs, &forfeit_txids).await).await
 		.expect("first call should succeed");
 
 	// Helper: read back the state and assert both the input-side and
 	// vtxo-side rows have the expected values for every input.
 	let assert_all_forfeited = || async {
-		let part = db.get_round_participation_by_unlock_hash(unlock_hash).await.unwrap()
+		let part = db.read(async |t| t.get_round_participation_by_unlock_hash(unlock_hash).await).await.unwrap()
 			.expect("participation should exist");
 		assert_eq!(part.inputs.len(), input_vtxos.len());
 
@@ -1303,7 +1300,7 @@ async fn set_forfeit_transactions_is_idempotent() {
 			assert_eq!(stored.compute_txid(), *expected_ff_txid,
 				"input row should carry the forfeit tx it was given");
 
-			let state = db.get_user_vtxo_by_id(vtxo.id()).await.expect("vtxo exists");
+			let state = db.read(async |t| t.get_user_vtxo_by_id(vtxo.id()).await).await.expect("vtxo exists");
 			assert_eq!(state.oor_spent_txid, Some(*expected_ff_txid),
 				"vtxo row should carry the forfeit txid it was given");
 		}
@@ -1315,7 +1312,7 @@ async fn set_forfeit_transactions_is_idempotent() {
 	// rows with the same values, so the rows_affected guards still hold and
 	// the observable state must be unchanged. This is the idempotency
 	// property that lets a client safely retry after a transient failure.
-	db.set_forfeit_transactions(unlock_hash, &input_vtxo_ids, &forfeit_txs, &forfeit_txids).await
+	db.write(async |t| t.set_forfeit_transactions(unlock_hash, &input_vtxo_ids, &forfeit_txs, &forfeit_txids).await).await
 		.expect("repeat call with same args should succeed");
 
 	assert_all_forfeited().await;
@@ -1331,7 +1328,7 @@ async fn round_participation_same_vtxo_multiple_pending() {
 	let db = Db::connect(&postgres_cfg).await.expect("Connected to database");
 
 	let vtxo = ServerVtxo::from(VTXO_VECTORS.board_vtxo.clone());
-	db.upsert_vtxos(&[vtxo.clone()]).await.unwrap();
+	db.write(async |t| t.upsert_vtxos(&[vtxo.clone()]).await).await.unwrap();
 
 	let preimage1: UnlockPreimage = [1u8; 32];
 	let preimage2: UnlockPreimage = [2u8; 32];
@@ -1345,14 +1342,14 @@ async fn round_participation_same_vtxo_multiple_pending() {
 	};
 
 	// First participation succeeds
-	db.try_store_round_participation(0, preimage1, &[vtxo.id()], std::iter::once(&output)).await.unwrap();
+	db.write(async |t| t.try_store_round_participation(0, preimage1, &[vtxo.id()], std::iter::once(&output)).await).await.unwrap();
 
 	// Second participation with same vtxo as input is allowed at the DB level;
 	// deduplication happens when a round is finalized (no unique constraint on vtxo_id).
-	db.try_store_round_participation(0, preimage2, &[vtxo.id()], std::iter::once(&output)).await.unwrap();
+	db.write(async |t| t.try_store_round_participation(0, preimage2, &[vtxo.id()], std::iter::once(&output)).await).await.unwrap();
 
 	// Both are stored as pending participations
-	let pending = db.get_all_pending_round_participations().await.unwrap();
+	let pending = db.read(async |t| t.get_all_pending_round_participations().await).await.unwrap();
 	assert_eq!(pending.len(), 2, "both participations are pending");
 }
 
@@ -1371,46 +1368,46 @@ async fn lightning_payment_attempt_lifecycle() {
 	let db = Db::connect(&postgres_cfg).await.expect("Connected to database");
 
 	let pubkey = PublicKey::from_str(DUMMY_PUBKEY).unwrap();
-	let (node_id, _) = db.register_lightning_node(&pubkey).await.unwrap();
+	let (node_id, _) = db.write(async |t| t.register_lightning_node(&pubkey).await).await.unwrap();
 
 	let bolt11 = Bolt11Invoice::from_str(BOLT11_INVOICE).unwrap();
 	let invoice = Invoice::Bolt11(bolt11.clone());
 
 	// No open attempts yet
-	let attempts = db.get_open_lightning_payment_attempts(node_id).await.unwrap();
+	let attempts = db.read(async |t| t.get_open_lightning_payment_attempts(node_id).await).await.unwrap();
 	assert!(attempts.is_empty());
 
-	assert!(db.get_open_lightning_payment_attempt_by_payment_hash(
+	assert!(db.read(async |t| t.get_open_lightning_payment_attempt_by_payment_hash(
 		(&bolt11).into()
-	).await.unwrap().is_none());
+	).await).await.unwrap().is_none());
 
 	// Start a payment
-	db.store_lightning_payment_start(node_id, &invoice, sat(2), None).await.unwrap();
+	db.write(async |t| t.store_lightning_payment_start(node_id, &invoice, sat(2), None).await).await.unwrap();
 
 	// One open attempt
-	let attempts = db.get_open_lightning_payment_attempts(node_id).await.unwrap();
+	let attempts = db.read(async |t| t.get_open_lightning_payment_attempts(node_id).await).await.unwrap();
 	assert_eq!(attempts.len(), 1);
 	assert_eq!(attempts[0].amount_msat, 2000);
 
-	let attempt = db.get_open_lightning_payment_attempt_by_payment_hash(
+	let attempt = db.read(async |t| t.get_open_lightning_payment_attempt_by_payment_hash(
 		(&bolt11).into()
-	).await.unwrap().expect("should find attempt");
+	).await).await.unwrap().expect("should find attempt");
 
 	// Verify attempt has correct payment hash
 	assert_eq!(attempt.payment_hash.to_vec(), bolt11.payment_hash().to_byte_array().to_vec());
 	assert_eq!(attempt.final_amount_msat, None);
 
 	// Update attempt status to Submitted
-	db.update_lightning_payment_attempt_status(&attempt, LightningPaymentStatus::Submitted, None).await.unwrap();
+	db.write(async |t| t.update_lightning_payment_attempt_status(&attempt, LightningPaymentStatus::Submitted, None).await).await.unwrap();
 
 	// Update attempt status to Succeeded with an error message (tests the error branch)
-	let refreshed = db.get_open_lightning_payment_attempts(node_id).await.unwrap();
+	let refreshed = db.read(async |t| t.get_open_lightning_payment_attempts(node_id).await).await.unwrap();
 	assert_eq!(refreshed.len(), 1); // Submitted is still "open"
 
-	db.update_lightning_payment_attempt_status(&refreshed[0], LightningPaymentStatus::Succeeded, None).await.unwrap();
+	db.write(async |t| t.update_lightning_payment_attempt_status(&refreshed[0], LightningPaymentStatus::Succeeded, None).await).await.unwrap();
 
 	// Succeeded attempt is no longer "open"
-	let open = db.get_open_lightning_payment_attempts(node_id).await.unwrap();
+	let open = db.read(async |t| t.get_open_lightning_payment_attempts(node_id).await).await.unwrap();
 	assert!(open.is_empty(), "succeeded attempt is closed");
 }
 
@@ -1426,25 +1423,25 @@ async fn lightning_payment_attempt_with_error() {
 	let db = Db::connect(&postgres_cfg).await.expect("Connected to database");
 
 	let pubkey = PublicKey::from_str(DUMMY_PUBKEY).unwrap();
-	let (node_id, _) = db.register_lightning_node(&pubkey).await.unwrap();
+	let (node_id, _) = db.write(async |t| t.register_lightning_node(&pubkey).await).await.unwrap();
 
 	let bolt11 = Bolt11Invoice::from_str(BOLT11_INVOICE).unwrap();
 	let invoice = Invoice::Bolt11(bolt11);
 
-	db.store_lightning_payment_start(node_id, &invoice, sat(1), None).await.unwrap();
+	db.write(async |t| t.store_lightning_payment_start(node_id, &invoice, sat(1), None).await).await.unwrap();
 
-	let attempts = db.get_open_lightning_payment_attempts(node_id).await.unwrap();
+	let attempts = db.read(async |t| t.get_open_lightning_payment_attempts(node_id).await).await.unwrap();
 	assert_eq!(attempts.len(), 1);
 
 	// Fail with an error message
-	db.update_lightning_payment_attempt_status(
+	db.write(async |t| t.update_lightning_payment_attempt_status(
 		&attempts[0],
 		LightningPaymentStatus::Failed,
 		Some("route not found"),
-	).await.unwrap();
+	).await).await.unwrap();
 
 	// No more open attempts
-	let open = db.get_open_lightning_payment_attempts(node_id).await.unwrap();
+	let open = db.read(async |t| t.get_open_lightning_payment_attempts(node_id).await).await.unwrap();
 	assert!(open.is_empty());
 }
 
@@ -1460,27 +1457,27 @@ async fn lightning_payment_attempt_result_update() {
 	let db = Db::connect(&postgres_cfg).await.expect("Connected to database");
 
 	let pubkey = PublicKey::from_str(DUMMY_PUBKEY).unwrap();
-	let (node_id, _) = db.register_lightning_node(&pubkey).await.unwrap();
+	let (node_id, _) = db.write(async |t| t.register_lightning_node(&pubkey).await).await.unwrap();
 
 	let bolt11 = Bolt11Invoice::from_str(BOLT11_INVOICE).unwrap();
 	let invoice = Invoice::Bolt11(bolt11.clone());
 
-	db.store_lightning_payment_start(node_id, &invoice, sat(1000), None).await.unwrap();
+	db.write(async |t| t.store_lightning_payment_start(node_id, &invoice, sat(1000), None).await).await.unwrap();
 
-	let attempt = db.get_open_lightning_payment_attempt_by_payment_hash(
+	let attempt = db.read(async |t| t.get_open_lightning_payment_attempt_by_payment_hash(
 		(&bolt11).into()
-	).await.unwrap().expect("attempt present");
+	).await).await.unwrap().expect("attempt present");
 	assert!(attempt.final_amount_msat.is_none());
 
-	let updated_at = db.update_lightning_payment_attempt_result(
+	let updated_at = db.write(async |t| t.update_lightning_payment_attempt_result(
 		&attempt, LightningPaymentStatus::Succeeded, None, Some(9999),
-	).await.unwrap();
+	).await).await.unwrap();
 	assert!(updated_at.is_some(), "update should return new updated_at");
 
 	// Verify changes persisted
-	let attempt2 = db.get_latest_payment_attempt_by_payment_hash(
+	let attempt2 = db.read(async |t| t.get_latest_payment_attempt_by_payment_hash(
 		(&bolt11).into()
-	).await.unwrap().expect("attempt still present");
+	).await).await.unwrap().expect("attempt still present");
 	assert_eq!(attempt2.final_amount_msat, Some(9999));
 }
 
@@ -1494,53 +1491,53 @@ async fn lightning_generated_invoice_and_htlc_subscription() {
 	let db = Db::connect(&postgres_cfg).await.expect("Connected to database");
 
 	let pubkey = PublicKey::from_str(DUMMY_PUBKEY).unwrap();
-	let (node_id, _) = db.register_lightning_node(&pubkey).await.unwrap();
+	let (node_id, _) = db.write(async |t| t.register_lightning_node(&pubkey).await).await.unwrap();
 
 	let bolt11 = Bolt11Invoice::from_str(BOLT11_INVOICE).unwrap();
 
 	// Store as generated (receive-side) subscription
-	db.store_generated_lightning_receive(node_id, &bolt11, 3000, None).await.unwrap();
+	db.write(async |t| t.store_generated_lightning_receive(node_id, &bolt11, 3000, None).await).await.unwrap();
 
 	// Find the htlc subscription (should be in Created state)
 	let payment_hash: ark::lightning::PaymentHash = (&bolt11).into();
-	let subs = db.get_htlc_subscriptions_by_payment_hash(payment_hash).await.unwrap();
+	let subs = db.read(async |t| t.get_htlc_subscriptions_by_payment_hash(payment_hash).await).await.unwrap();
 	assert_eq!(subs.len(), 1);
 	assert_eq!(subs[0].status, LightningHtlcSubscriptionStatus::Created);
 
 	let sub_id = subs[0].id;
 
 	// Update status to Accepted
-	db.store_lightning_htlc_subscription_status(
+	db.write(async |t| t.store_lightning_htlc_subscription_status(
 		sub_id, LightningHtlcSubscriptionStatus::Accepted, Some(200),
-	).await.unwrap();
+	).await).await.unwrap();
 
-	let latest = db.get_htlc_subscription_by_payment_hash(payment_hash).await.unwrap().unwrap();
+	let latest = db.read(async |t| t.get_htlc_subscription_by_payment_hash(payment_hash).await).await.unwrap().unwrap();
 	assert_eq!(latest.status, LightningHtlcSubscriptionStatus::Accepted);
 	assert!(latest.accepted_at.is_some());
 
 	// Calling Accepted again should NOT change accepted_at (idempotency)
-	db.store_lightning_htlc_subscription_status(
+	db.write(async |t| t.store_lightning_htlc_subscription_status(
 		sub_id, LightningHtlcSubscriptionStatus::Accepted, None,
-	).await.unwrap();
-	let latest2 = db.get_htlc_subscription_by_payment_hash(payment_hash).await.unwrap().unwrap();
+	).await).await.unwrap();
+	let latest2 = db.read(async |t| t.get_htlc_subscription_by_payment_hash(payment_hash).await).await.unwrap().unwrap();
 	assert_eq!(latest.accepted_at, latest2.accepted_at, "accepted_at must not change on duplicate");
 
 	// Insert a vtxo and attach it to the subscription (htlcs-ready transition)
 	let vtxo = ServerVtxo::from(VTXO_VECTORS.board_vtxo.clone());
-	db.upsert_vtxos(&[vtxo.clone()]).await.unwrap();
+	db.write(async |t| t.upsert_vtxos(&[vtxo.clone()]).await).await.unwrap();
 
-	db.update_lightning_htlc_subscription_with_htlcs(sub_id, [vtxo.id()]).await.unwrap();
+	db.write(async |t| t.update_lightning_htlc_subscription_with_htlcs(sub_id, [vtxo.id()]).await).await.unwrap();
 
-	let latest3 = db.get_htlc_subscription_by_payment_hash(payment_hash).await.unwrap().unwrap();
+	let latest3 = db.read(async |t| t.get_htlc_subscription_by_payment_hash(payment_hash).await).await.unwrap().unwrap();
 	assert_eq!(latest3.status, LightningHtlcSubscriptionStatus::HtlcsReady);
 
 	// get_open_lightning_htlc_subscriptions should return this subscription
 	// (HtlcsReady is not Settled/Canceled)
-	let open = db.get_open_lightning_htlc_subscriptions(node_id).await.unwrap();
+	let open = db.read(async |t| t.get_open_lightning_htlc_subscriptions(node_id).await).await.unwrap();
 	assert_eq!(open.len(), 1);
 
 	// get_htlc_subscription_by_id
-	let by_id = db.get_htlc_subscription_by_id(sub_id).await.unwrap().unwrap();
+	let by_id = db.read(async |t| t.get_htlc_subscription_by_id(sub_id).await).await.unwrap().unwrap();
 	assert_eq!(by_id.id, sub_id);
 }
 
@@ -1553,21 +1550,21 @@ async fn get_integration_token_config() {
 	Db::create(&postgres_cfg).await.expect("Database created");
 	let db = Db::connect(&postgres_cfg).await.expect("Connected to database");
 
-	let integration = db.store_integration("test_integration").await.unwrap();
+	let integration = db.write(async |t| t.store_integration("test_integration").await).await.unwrap();
 
 	// Not found before storing
-	let cfg = db.get_integration_token_config(TokenType::SingleUseBoard, integration.id).await.unwrap();
+	let cfg = db.read(async |t| t.get_integration_token_config(TokenType::SingleUseBoard, integration.id).await).await.unwrap();
 	assert!(cfg.is_none(), "not yet created");
 
-	db.store_integration_token_config(
+	db.write(async |t| t.store_integration_token_config(
 		TokenType::SingleUseBoard,
 		5,
 		3600,
 		integration.id,
-	).await.unwrap();
+	).await).await.unwrap();
 
-	let cfg = db.get_integration_token_config(TokenType::SingleUseBoard, integration.id)
-		.await.unwrap().expect("config should exist");
+	let cfg = db.read(async |t| t.get_integration_token_config(TokenType::SingleUseBoard, integration.id).await).await
+		.unwrap().expect("config should exist");
 	assert_eq!(cfg.maximum_open_tokens, 5);
 	assert_eq!(cfg.active_seconds, 3600);
 	assert_eq!(cfg.integration_id, integration.id);
@@ -1583,7 +1580,7 @@ async fn wallet_changeset() {
 	let db = Db::connect(&postgres_cfg).await.expect("Connected to database");
 
 	// Empty aggregate changeset
-	let cs = db.read_aggregate_changeset(WalletKind::Rounds).await.unwrap();
+	let cs = db.read(async |t| t.read_aggregate_changeset(WalletKind::Rounds).await).await.unwrap();
 	assert!(cs.is_none(), "no changesets stored yet");
 
 	// Build a minimal ChangeSet
@@ -1592,14 +1589,14 @@ async fn wallet_changeset() {
 		..Default::default()
 	};
 
-	db.store_changeset(WalletKind::Rounds, &cs1).await.unwrap();
+	db.write(async |t| t.store_changeset(WalletKind::Rounds, &cs1).await).await.unwrap();
 
-	let agg = db.read_aggregate_changeset(WalletKind::Rounds).await.unwrap()
+	let agg = db.read(async |t| t.read_aggregate_changeset(WalletKind::Rounds).await).await.unwrap()
 		.expect("should have one changeset");
 	assert_eq!(agg.network, Some(bitcoin::Network::Regtest));
 
 	// Watchman wallet is independent
-	let cs_watchman = db.read_aggregate_changeset(WalletKind::Watchman).await.unwrap();
+	let cs_watchman = db.read(async |t| t.read_aggregate_changeset(WalletKind::Watchman).await).await.unwrap();
 	assert!(cs_watchman.is_none(), "watchman has no changesets");
 }
 
@@ -1620,15 +1617,15 @@ async fn round_participation_mailbox() {
 	let hash2 = sha256::Hash::hash(b"unlock-hash-2");
 
 	// Empty mailbox returns nothing
-	let messages = db.get_mailbox_messages(mailbox_id, 0, 10).await.unwrap();
+	let messages = db.read(async |t| t.get_mailbox_messages(mailbox_id, 0, 10).await).await.unwrap();
 	assert!(messages.is_empty());
 
 	// Store hash1
-	let cp1 = db.store_round_participation_in_mailbox(mailbox_id, hash1).await
+	let cp1 = db.write(async |t| t.store_round_participation_in_mailbox(mailbox_id, hash1).await).await
 		.unwrap().expect("should return a checkpoint");
 
 	// Fetch from checkpoint 0 – should return hash1
-	let messages = db.get_mailbox_messages(mailbox_id, 0, 10).await.unwrap();
+	let messages = db.read(async |t| t.get_mailbox_messages(mailbox_id, 0, 10).await).await.unwrap();
 	assert_eq!(messages.len(), 1);
 	assert_eq!(messages[0].checkpoint, cp1);
 	let unlock_hash = match messages[0].payload {
@@ -1638,12 +1635,12 @@ async fn round_participation_mailbox() {
 	assert_eq!(unlock_hash, hash1);
 
 	// Store hash2
-	let cp2 = db.store_round_participation_in_mailbox(mailbox_id, hash2).await
+	let cp2 = db.write(async |t| t.store_round_participation_in_mailbox(mailbox_id, hash2).await).await
 		.unwrap().expect("should return a checkpoint");
 	assert!(cp2 > cp1, "checkpoints should be monotonically increasing");
 
 	// Fetch from cp1 – should only return hash2
-	let messages = db.get_mailbox_messages(mailbox_id, cp1, 10).await.unwrap();
+	let messages = db.read(async |t| t.get_mailbox_messages(mailbox_id, cp1, 10).await).await.unwrap();
 	assert_eq!(messages.len(), 1);
 	assert_eq!(messages[0].checkpoint, cp2);
 	let unlock_hash = match messages[0].payload {
@@ -1665,14 +1662,13 @@ async fn lightning_send_finished_mailbox_notification() {
 	let mailbox_id = MailboxIdentifier::from_pubkey(
 		PublicKey::from_str(DUMMY_PUBKEY).unwrap()
 	);
-	let payment_hash: ark::lightning::PaymentHash = Bolt11Invoice::from_str(BOLT11_INVOICE)
-		.unwrap().payment_hash().as_byte_array().clone().into();
+	let payment_hash = BOLT11_INVOICE.parse::<Bolt11Invoice>().unwrap().as_payment_hash();
 
 	// Store a failed payment notification (no preimage)
-	let cp1 = db.store_lightning_send_finished(mailbox_id, payment_hash, None).await.unwrap()
+	let cp1 = db.write(async |t| t.store_lightning_send_finished(mailbox_id, payment_hash, None).await).await.unwrap()
 		.expect("first insert should succeed");
 
-	let messages = db.get_mailbox_messages(mailbox_id, 0, 10).await.unwrap();
+	let messages = db.read(async |t| t.get_mailbox_messages(mailbox_id, 0, 10).await).await.unwrap();
 	assert_eq!(messages.len(), 1);
 	assert_eq!(messages[0].checkpoint, cp1);
 	match &messages[0].payload {
@@ -1684,17 +1680,17 @@ async fn lightning_send_finished_mailbox_notification() {
 	}
 
 	// Duplicate insert for the same payment hash should be a no-op
-	let dup = db.store_lightning_send_finished(mailbox_id, payment_hash, None).await.unwrap();
+	let dup = db.write(async |t| t.store_lightning_send_finished(mailbox_id, payment_hash, None).await).await.unwrap();
 	assert!(dup.is_none(), "duplicate insert should return None");
 
 	// Store a successful payment notification (with preimage)
 	let test_preimage = Preimage::random();
 	let success_hash: ark::lightning::PaymentHash = test_preimage.compute_payment_hash();
-	let cp2 = db.store_lightning_send_finished(mailbox_id, success_hash, Some(test_preimage)).await.unwrap()
+	let cp2 = db.write(async |t| t.store_lightning_send_finished(mailbox_id, success_hash, Some(test_preimage)).await).await.unwrap()
 		.expect("first insert should succeed");
 	assert!(cp2 > cp1, "checkpoints should be monotonically increasing");
 
-	let messages = db.get_mailbox_messages(mailbox_id, cp1, 10).await.unwrap();
+	let messages = db.read(async |t| t.get_mailbox_messages(mailbox_id, cp1, 10).await).await.unwrap();
 	assert_eq!(messages.len(), 1);
 	match &messages[0].payload {
 		MailboxPayload::LightningSendFinished { payment_hash: ph, preimage } => {

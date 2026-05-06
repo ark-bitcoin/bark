@@ -46,10 +46,10 @@ impl BlockIndex {
 		birthday: BlockRef,
 		block_table: BlockTable,
 	) -> anyhow::Result<Self> {
-		let sync_tip = match db.get_highest_block(block_table).await.context("Failed to get tip from database")? {
+		let sync_tip = match db.read(async |t| t.get_highest_block(block_table).await).await.context("Failed to get tip from database")? {
 			Some(tip) => tip,
 			None => {
-				db.store_block(block_table, &birthday).await.context("Failed to store tip in database")?;
+				db.write(async |t| t.store_block(block_table, &birthday).await).await.context("Failed to store tip in database")?;
 				birthday
 			}
 		};
@@ -204,7 +204,7 @@ impl BlockIndex {
 			}
 		}
 
-		self.db.remove_blocks_above(self.block_table, block.height).await?;
+		self.db.write(async |t| t.remove_blocks_above(self.block_table, block.height).await).await?;
 		Ok(())
 	}
 
@@ -239,7 +239,7 @@ impl BlockIndex {
 			}
 		}
 
-		self.db.store_block(self.block_table, &block.block_ref).await?;
+		self.db.write(async |t| t.store_block(self.block_table, &block.block_ref).await).await?;
 		self.update_sync_height(block.block_ref);
 		Ok(())
 	}
@@ -257,7 +257,9 @@ impl BlockIndex {
 		let mut height = std::cmp::min(bitcoind_tip.height, local_height);
 		let mut bitcoind_block = bcd::get_block_by_height(&self.bitcoind, height).await
 			.context("failed to get bitcoind block by height")?;
-		let mut local_block = self.db.get_block_by_height(self.block_table, height).await
+		let mut local_block = self.db.read(async |t|
+			t.get_block_by_height(self.block_table, height).await
+		).await
 			.context("Failed to get local block by height")?
 			.context("No local block at height")?;
 
@@ -267,7 +269,7 @@ impl BlockIndex {
 			height -= 1;
 			bitcoind_block = bcd::get_block_by_height(&self.bitcoind, height).await
 				.context("Failed to get bitcoind block by height")?;
-			local_block = self.db.get_block_by_height(self.block_table, height).await
+			local_block = self.db.read(async |t| t.get_block_by_height(self.block_table, height).await).await
 				.context("Failed to get local block by height")?
 				.context("No local block at height")?;
 		}

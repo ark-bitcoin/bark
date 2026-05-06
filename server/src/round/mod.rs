@@ -370,7 +370,7 @@ impl CollectingPayments {
 	) -> anyhow::Result<Vec<Vtxo<Full>>> {
 		let chain_tip = srv.sync_manager.chain_tip().height;
 		let mut ret  = Vec::with_capacity(inputs.len());
-		match srv.db.get_user_vtxos_by_id(&inputs).await {
+		match srv.db.read(async |t| t.get_user_vtxos_by_id(&inputs).await).await {
 			Ok(vtxos) => {
 				// Check if the input vtxos exist, unspent and owned by user.
 				for v in vtxos {
@@ -679,7 +679,7 @@ impl CollectingPayments {
 		srv: &Server,
 	) {
 		//TODO(stevenroose) do this streamingly to avoid allocation
-		let parts = match srv.db.get_all_pending_round_participations().await {
+		let parts = match srv.db.read(async |t| t.get_all_pending_round_participations().await).await {
 			Ok(p) => p,
 			Err(e) => {
 				error!("Error loading pending hArk participations: {}", e);
@@ -702,7 +702,7 @@ impl CollectingPayments {
 				Err(ProcessHarkParticipationError::BadParticipation(e)) => {
 					slog!(RoundParticipationRejected, unlock_hash, reason: format!("{:#}", e));
 
-					match srv.db.remove_round_participation(unlock_hash).await {
+					match srv.db.write(async |t| t.remove_round_participation(unlock_hash).await).await {
 						Err(e) => warn!("Error removing hArk round participation for \
 							unlock hash {}: {:#}", unlock_hash, e),
 						Ok(false) => warn!("Couldn't removing hArk round participation for \
@@ -1067,7 +1067,7 @@ impl SigningVtxoTree {
 		// Persist the signed funding tx to the database.
 		let update = VtxoTreeUpdate::new()
 			.upsert_funding_tx(&signed_round_tx);
-		srv.db.execute_vtxo_tree_update(update).await
+		srv.db.write(async |t| t.execute_vtxo_tree_update(update).await).await
 			.map_err(|e| RoundError::Fatal(e.context("failed to upsert signed funding tx")))?;
 
 		let finished = RoundFinished {
@@ -1165,13 +1165,15 @@ async fn persist_round(
 			);
 		}
 	}
-	let result = srv.db.finish_round(
-		round_step.round_seq(),
-		&unsigned_funding_tx,
-		state.all_inputs.keys().copied(),
-		signed_vtxos,
-		&state.interactive_participants,
-	).await;
+	let result = srv.db.write(async |t| {
+		t.finish_round(
+			round_step.round_seq(),
+			&unsigned_funding_tx,
+			state.all_inputs.keys().copied(),
+			signed_vtxos,
+			&state.interactive_participants,
+		).await
+	}).await;
 	telemetry::set_round_step_duration(round_step);
 	if let Err(e) = result {
 		server_rslog!(FatalStoringRound, round_step,
@@ -1199,9 +1201,9 @@ async fn persist_round(
 		let Some(unlock_hash) = vtxo.unlock_hash() else {
 			continue; // Skip VTXOs without unlock hash
 		};
-		match srv.db.store_round_participation_in_mailbox(
-			*unblinded_mailbox_id, unlock_hash,
-		).await {
+		match srv.db.write(async |t| {
+			t.store_round_participation_in_mailbox(*unblinded_mailbox_id, unlock_hash).await
+		}).await {
 			Ok(checkpoint) => {
 				if let Some(cp) = checkpoint {
 					srv.mailbox_manager.notify(*unblinded_mailbox_id, cp);
@@ -1787,7 +1789,7 @@ impl Server {
 		let outputs_for_verify = outputs.iter()
 			.map(|o| o.vtxo_request.clone())
 			.collect::<Vec<_>>();
-		let vtxos = self.db.get_user_vtxos_by_id(&input_ids).await?;
+		let vtxos = self.db.read(async |t| t.get_user_vtxos_by_id(&input_ids).await).await?;
 		for (input, vtxo) in inputs.iter().zip(&vtxos) {
 			input.attestation.verify(&vtxo.vtxo, &outputs_for_verify)
 				.with_badarg(|| format!("attestation for vtxo {} failed", input.vtxo_id))?;
@@ -1797,9 +1799,9 @@ impl Server {
 		let unlock_hash = UnlockHash::hash(&unlock_preimage);
 
 		let chain_tip = self.chain_tip().height;
-		self.db.try_store_round_participation(
-			chain_tip, unlock_preimage, &input_ids, &outputs,
-		).await?;
+		self.db.write(async |t| {
+			t.try_store_round_participation(chain_tip, unlock_preimage, &input_ids, &outputs).await
+		}).await?;
 
 		Ok(unlock_hash)
 	}

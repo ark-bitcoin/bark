@@ -87,7 +87,7 @@ impl rpc::server::ArkService for Server {
 			None => None,
 		};
 		let lifetime = Duration::from_secs(10 * 60 * self.config.vtxo_lifetime as u64);
-		let ids = self.db.get_fresh_round_ids(txid, Some(lifetime)).await
+		let ids = self.db.read(async |t| t.get_fresh_round_ids(txid, Some(lifetime)).await).await
 			.context("db error")?;
 
 		let response = protos::FreshRounds {
@@ -106,7 +106,7 @@ impl rpc::server::ArkService for Server {
 
 		let id = RoundId::from_bytes(req.txid.as_slice())?;
 
-		let ret = self.db.get_round(id).await
+		let ret = self.db.read(async |t| t.get_round(id).await).await
 			.context("db error")?
 			.not_found([id], "round with txid {} not found")?;
 
@@ -127,7 +127,7 @@ impl rpc::server::ArkService for Server {
 
 		let id = VtxoId::from_bytes(req.vtxo_id)?;
 
-		let vtxo_state = self.db.get_server_vtxo_by_id(id).await
+		let vtxo_state = self.db.read(async |t| t.get_server_vtxo_by_id(id).await).await
 			.to_status()?;
 
 		let response = protos::GetVtxoResponse {
@@ -589,14 +589,14 @@ impl rpc::server::ArkService for Server {
 		let req = req.into_inner();
 
 		let unlock_hash = UnlockHash::from_bytes(&req.unlock_hash)?;
-		let part = self.db.get_round_participation_by_unlock_hash(unlock_hash).await.to_status()?
+		let part = self.db.read(async |t| t.get_round_participation_by_unlock_hash(unlock_hash).await).await.to_status()?
 			.not_found([unlock_hash], "round participation not found")?;
 
 		let res = if let Some(round_id) = part.round_id {
 			//TODO(stevenroose) consider storing the new vtxos in the participation table
 			// so that we don't have to create the entire cached tree here each time
 
-			let round = self.db.get_round(round_id).await.to_status()?
+			let round = self.db.read(async |t| t.get_round(round_id).await).await.to_status()?
 				.context("our own db has unknown round")?;
 			let round_funding_tx = Some(serialize(&round.funding_tx));
 

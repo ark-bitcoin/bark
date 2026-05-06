@@ -15,12 +15,12 @@ use ark_testing::TestContext;
 /// Checks that the block index is fully consistent with the bitcoind chain
 async fn check_block_index_is_consistent(db: &Db, block_table: BlockTable, bitcoind: &BitcoinRpcClient) {
 
-	let lowest_block = db.get_lowest_block(block_table).await.unwrap().unwrap();
-	let highest_block = db.get_highest_block(block_table).await.unwrap().unwrap();
+	let lowest_block = db.read(async |t| t.get_lowest_block(block_table).await).await.unwrap().unwrap();
+	let highest_block = db.read(async |t| t.get_highest_block(block_table).await).await.unwrap().unwrap();
 
 	for height in lowest_block.height..=highest_block.height {
 		let bitcoind_block = bitcoind.get_block_by_height(height).unwrap();
-		let db_block = db.get_block_by_height(block_table, height).await.unwrap().unwrap();
+		let db_block = db.read(async |t| t.get_block_by_height(block_table, height).await).await.unwrap().unwrap();
 
 		assert_eq!(bitcoind_block.hash, db_block.hash);
 	}
@@ -137,7 +137,7 @@ async fn test_block_index_basic_sync() {
 
 	// Let's retrieve the details about the block at heigh 120
 	let block_120 = {
-		let local_block = db.get_block_by_height(BlockTable::Captaind, 120).await.unwrap().unwrap();
+		let local_block = db.read(async |t| t.get_block_by_height(BlockTable::Captaind, 120).await).await.unwrap().unwrap();
 		let bitcoin_block = bitcoind.get_block_by_height(120).unwrap();
 		assert_eq!(local_block.hash, bitcoin_block.hash);
 		assert_eq!(local_block.height, 120);
@@ -158,7 +158,7 @@ async fn test_block_index_basic_sync() {
 		let bitcoind_tip = bitcoind.tip().expect("Got bitcoind tip");
 		let chain_tip = block_index.chain_tip();
 		let sync_tip = block_index.sync_tip();
-		let db_tip = db.get_highest_block(BlockTable::Captaind).await.unwrap().unwrap();
+		let db_tip = db.read(async |t| t.get_highest_block(BlockTable::Captaind).await).await.unwrap().unwrap();
 
 		assert_eq!(chain_tip.height, bitcoind_tip.height);
 		assert_eq!(chain_tip.hash, bitcoind_tip.hash);

@@ -348,7 +348,7 @@ impl TxIndex {
 	#[tracing::instrument(skip(self))]
 	pub async fn register(&self, tx: Transaction) -> anyhow::Result<Tx> {
 		let txid = tx.compute_txid();
-		self.db.upsert_bitcoin_transaction(txid, &tx).await
+		self.db.write(async |t| t.upsert_bitcoin_transaction(txid, &tx).await).await
 			.context("failed to store bitcoin tx in db")?;
 		let status = bcd::tx_status(&self.rpc, txid).await
 			.context("failed to get bitcoin tx status")?;
@@ -357,13 +357,13 @@ impl TxIndex {
 
 	pub async fn register_as(&self, tx: Transaction, status: TxStatus) -> anyhow::Result<Tx> {
 		let txid = tx.compute_txid();
-		self.db.upsert_bitcoin_transaction(txid, &tx).await
+		self.db.write(async |t| t.upsert_bitcoin_transaction(txid, &tx).await).await
 			.context("failed to store bitcoin tx in db")?;
 		Ok(self.data.register_as(tx, status).await)
 	}
 
 	async fn dump_transaction(&self, txid: Txid, tx: Transaction) -> anyhow::Result<Tx> {
-		self.db.upsert_bitcoin_transaction(txid, &tx).await
+		self.db.write(async |t| t.upsert_bitcoin_transaction(txid, &tx).await).await
 			.context("failed to store bitcoin tx in db")?;
 		let status = bcd::tx_status(&self.rpc, txid).await?;
 		let indexed_tx = self.data.get_or_insert(&txid, || (tx, status.into())).await;
@@ -371,10 +371,10 @@ impl TxIndex {
 	}
 
 	async fn database_to_index(&self, txid: Txid) -> anyhow::Result<Option<Tx>> {
-		let db_tx = self.db.get_bitcoin_transaction_by_id(txid).await
+		let stored = self.db.read(async |t| t.get_bitcoin_transaction_by_id(txid).await).await
 			.context("failed to query bitcoin tx from db")?;
 
-		match db_tx {
+		match stored {
 			None => Ok(None),
 			Some(tx) => {
 				let status = bcd::tx_status(&self.rpc, txid).await

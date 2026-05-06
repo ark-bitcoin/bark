@@ -263,7 +263,7 @@ impl VtxoPool {
 		inputs: &[(VtxoId, BlockHeight, Amount)],
 	) -> anyhow::Result<Vec<Vtxo<Full>>> {
 		let input_ids = inputs.iter().map(|v| v.0).collect::<Vec<_>>();
-		let input_vtxos = srv.db.get_pool_vtxos_by_ids(&input_ids).await?;
+		let input_vtxos = srv.db.read(async |t| t.get_pool_vtxos_by_ids(&input_ids).await).await?;
 
 		// Validate that the inputs are still usable and unlocked
 		let _vtxo_guard = srv.vtxos_in_flux.try_lock(&input_ids).map_err(|e| {
@@ -311,21 +311,23 @@ impl VtxoPool {
 				database::SpendState::HtlcRecvUnclaimed,
 			)
 			.mark_vtxos_oor_spent(input_spend_info);
-		srv.db.execute_vtxo_tree_update(update).await?;
+		srv.db.write(async |t| {
+			t.execute_vtxo_tree_update(update).await?;
+			t.mark_vtxopool_vtxos_spent(inputs.iter().map(|v| v.0)).await
+				.context("failed to mark vtxopool vtxos as spent")?;
+			Ok(())
+		}).await?;
 
 		let (sent, change) = output_vtxos.into_iter()
 			.partition::<Vec<_>, _>(|v| *v.policy() == dest.policy);
 
-		// mark inputs as spent
-		srv.db.mark_vtxopool_vtxos_spent(inputs.iter().map(|v| v.0)).await
-			.context("failed to mark vtxopool vtxos as spent")?;
 		for input in inputs {
 			slog!(SpentPoolVtxo, vtxo: input.0, amount: input.2, destination: dest.clone());
 		}
 
 		for change in change {
 			let new = PoolVtxo::new(change);
-			if let Err(e) = srv.db.store_vtxopool_vtxo(&new).await {
+			if let Err(e) = srv.db.write(async |t| t.store_vtxopool_vtxo(&new).await).await {
 				// don't abort for this
 				warn!("Failed to store change from a vtxopool spend: {:#}", e);
 			} else {
@@ -516,7 +518,7 @@ impl Process {
 				tree.output_vtxos().map(ServerVtxo::from),
 				database::SpendState::Pool,
 			);
-		self.srv.db.execute_vtxo_tree_update(update).await?;
+		self.srv.db.write(async |t| t.execute_vtxo_tree_update(update).await).await?;
 
 		// Here we commit the transaction to the wallet
 		wallet.commit_tx(&tx);
@@ -524,14 +526,17 @@ impl Process {
 		drop(wallet);
 		let txid = tx.compute_txid();
 
-		self.srv.db.add_funding_vtxos_to_frontier(txid, None).await
-			.context("failed to add vtxopool vtxos to frontier")?;
-		self.srv.db.upsert_bitcoin_transaction(txid, &tx).await
-			.context("error storing unbroadcasted vtxo issuance funding tx")?;
 		// store the new vtxos
 		let pool_vtxos = vtxos.into_iter()
 			.map(|v| PoolVtxo::new(v)).collect::<Vec<_>>();
-		self.srv.db.store_vtxopool_vtxos(&pool_vtxos).await.context("storing pool vtxos")?;
+		self.srv.db.write(async |t| {
+			t.add_funding_vtxos_to_frontier(txid, None).await
+				.context("failed to add vtxopool vtxos to frontier")?;
+			t.upsert_bitcoin_transaction(txid, &tx).await
+				.context("error storing unbroadcasted vtxo issuance funding tx")?;
+			t.store_vtxopool_vtxos(&pool_vtxos).await.context("storing pool vtxos")?;
+			Ok(())
+		}).await?;
 		self.data.lock().insert_vtxos(&pool_vtxos);
 		update_all_bucket_metrics(&self.data);
 

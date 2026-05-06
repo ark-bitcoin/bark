@@ -299,11 +299,11 @@ impl ActionContextFetcher<'_> {
 
 	/// Fetch the next tx in the offchain tx chain for this VTXO and whether it is signed
 	async fn fetch_progress(&self, vtxo: &ServerVtxo) -> Option<ProgressSpec> {
-		let vtxo_state = self.db.get_server_vtxo_by_id(vtxo.id()).await
+		let vtxo_state = self.db.read(async |t| t.get_server_vtxo_by_id(vtxo.id()).await).await
 			.inspect_err(|e| warn!("DB error: {:#}", e))
 			.ok()?;
 		let oor_txid = vtxo_state.oor_spent_txid?;
-		let vtx = self.db.get_virtual_transaction_by_txid(oor_txid).await
+		let vtx = self.db.read(async |t| t.get_virtual_transaction_by_txid(oor_txid).await).await
 			.inspect_err(|e| warn!("DB error: {:#}", e))
 			.ok()??;
 
@@ -325,7 +325,7 @@ impl ActionContextFetcher<'_> {
 					);
 				}).ok()?;
 				if !status.is_confirmed() {
-					let vtx = self.db.get_virtual_transaction_by_txid(parent_txid).await
+					let vtx = self.db.read(async |t| t.get_virtual_transaction_by_txid(parent_txid).await).await
 						.inspect_err(|e| warn!("DB error: {:#}", e)).ok()??;
 					if vtx.signed_tx.is_none() {
 						// connector txs should be signed
@@ -353,14 +353,14 @@ impl ActionContextFetcher<'_> {
 	async fn check_have_payment_preimage(&self, payment_hash: PaymentHash) -> bool {
 		// Check the htlc_settlement table (populated by the settler),
 		// which is the single source of truth for preimages.
-		self.db.get_htlc_settlement_by_payment_hash(payment_hash).await
+		self.db.read(async |t| t.get_htlc_settlement_by_payment_hash(payment_hash).await).await
 			.inspect_err(|e| error!("DB error: {:#}", e))
 			.ok().flatten()
 			.is_some()
 	}
 
 	async fn check_server_knows_pubkey(&self, pk: PublicKey) -> bool {
-		match self.db.fetch_ephemeral_tweak(pk).await {
+		match self.db.read(async |t| t.fetch_ephemeral_tweak(pk).await).await {
 			Ok(Some(_)) => true,
 			_ => false,
 		}

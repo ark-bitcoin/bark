@@ -41,7 +41,7 @@ use bitcoin::consensus::{serialize, deserialize};
 use bitcoin::secp256k1::{self, PublicKey};
 use chrono::Local;
 use futures::Stream;
-use tokio_postgres::{Client, NoTls, GenericClient, RowStream};
+use tokio_postgres::{Client, NoTls, RowStream};
 use tokio_postgres::types::Type;
 use tracing::{info, warn};
 use ark::{ServerVtxo, ServerVtxoPolicy, Vtxo, VtxoId};
@@ -225,7 +225,7 @@ impl Db {
 		Self::connect(config).await
 	}
 
-	pub async fn get_conn(&self) -> anyhow::Result<PooledConnection<'_, PostgresConnectionManager<NoTls>>> {
+	async fn get_conn(&self) -> anyhow::Result<PooledConnection<'_, PostgresConnectionManager<NoTls>>> {
 		let before = self.pool.state();
 		telemetry::set_postgres_connection_pool_metrics(self.pool.state());
 		let start = std::time::Instant::now();
@@ -270,11 +270,66 @@ impl Db {
 		}
 	}
 
+	/// Perform db operations in a tx
+	async fn do_in_tx<R, F>(&self, read_only: bool, f: F) -> anyhow::Result<R>
+	where
+		F: AsyncFnOnce(&Tx<'_>) -> anyhow::Result<R>,
+	{
+		let mut conn = self.get_conn().await.context("unable to get db connection")?;
+		let pgtx = conn.build_transaction()
+			.read_only(read_only)
+			.start().await
+			.context("unable to start db tx")?;
+		let tx = Tx { inner: &pgtx };
+		let ret = f(&tx).await;
+		if read_only {
+			// We want to commit read queries regardless of error because it's the
+			// fastest path and doesn't skew failure stats.
+			pgtx.commit().await.context("tx commit error")?;
+		} else {
+			if ret.is_ok() {
+				pgtx.commit().await.context("tx commit error")?;
+			} else {
+				pgtx.rollback().await.context("tx rollback error")?;
+			}
+		}
+		Ok(ret.context("tx body error")?)
+	}
+
+	/// Perform db operations in read-only mode
+	pub async fn read<R, F>(&self, f: F) -> anyhow::Result<R>
+	where
+		F: AsyncFnOnce(&Tx<'_>) -> anyhow::Result<R>,
+	{
+		self.do_in_tx(true, f).await
+	}
+
+	/// Perform db operations in write mode
+	pub async fn write<R, F>(&self, f: F) -> anyhow::Result<R>
+	where
+		F: AsyncFnOnce(&Tx<'_>) -> anyhow::Result<R>,
+	{
+		self.do_in_tx(false, f).await
+	}
+}
+
+/// A managed postgres DB transaction
+pub struct Tx<'t> {
+	inner: &'t tokio_postgres::Transaction<'t>,
+}
+
+impl<'t> std::ops::Deref for Tx<'t> {
+	type Target = tokio_postgres::Transaction<'t>;
+
+	fn deref(&self) -> &Self::Target {
+		&self.inner
+	}
+}
+
+impl<'t> Tx<'t> {
 	/**
 	 * VTXOs
 	*/
-
-
 
 	/// Insert vtxos as spendable. Existing vtxos are silently skipped.
 	pub async fn upsert_vtxos(
@@ -291,24 +346,21 @@ impl Db {
 		&self,
 		id: VtxoId,
 	) -> anyhow::Result<VtxoState<Full, ServerVtxoPolicy>> {
-		let conn = self.get_conn().await?;
-		query::get_vtxo_by_id(&*conn, id).await
+		query::get_vtxo_by_id(&self, id).await
 	}
 
 	pub async fn get_bare_vtxo_by_id(
 		&self,
 		id: VtxoId,
 	) -> anyhow::Result<VtxoState<Bare, ServerVtxoPolicy>> {
-		let conn = self.get_conn().await?;
-		query::get_bare_vtxo_by_id(&*conn, id).await
+		query::get_bare_vtxo_by_id(&self, id).await
 	}
 
 	pub async fn get_server_vtxos_by_id(
 		&self,
 		ids: &[VtxoId],
 	) -> anyhow::Result<Vec<VtxoState<Full, ServerVtxoPolicy>>> {
-		let conn = self.get_conn().await?;
-		query::get_vtxos_by_id(&*conn, ids).await
+		query::get_vtxos_by_id(&self, ids).await
 	}
 
 	pub async fn get_user_vtxo_by_id(&self, id: VtxoId) -> anyhow::Result<VtxoState> {
@@ -331,12 +383,7 @@ impl Db {
 		&self,
 		update: tree::VtxoTreeUpdate,
 	) -> anyhow::Result<()> {
-		let mut conn = self.get_conn().await.context("failed to connect to db")?;
-		let tx = conn.transaction().await.context("failed to start db transaction")?;
-
-		tree::execute_vtxo_tree_update(&tx, update).await?;
-
-		tx.commit().await?;
+		tree::execute_vtxo_tree_update(&self, update).await?;
 		Ok(())
 	}
 
@@ -345,17 +392,13 @@ impl Db {
 		&self,
 		txid: Txid,
 	) -> anyhow::Result<Option<VirtualTransaction<'static>>> {
-		let conn = self.get_conn().await.context("Failed to connect to db")?;
-		let client: &tokio_postgres::Client = conn.client();
-		query::get_virtual_transaction_by_txid(client, txid).await
+		query::get_virtual_transaction_by_txid(&self, txid).await
 	}
 
 	/// Returns the first txid that exists as an unsigned virtual transaction,
 	/// or None if all txids are either signed or don't exist in the table.
 	pub async fn get_first_unsigned_virtual_transaction(&self, txids: &[Txid]) -> anyhow::Result<Option<Txid>> {
-		let conn = self.get_conn().await.context("Failed to connect to db")?;
-		let client: &tokio_postgres::Client = conn.client();
-		query::get_first_unsigned_virtual_transaction(client, txids).await
+		query::get_first_unsigned_virtual_transaction(&self, txids).await
 	}
 
 	/// Assert that every given tx in the input VTXO chains has been registered
@@ -365,8 +408,7 @@ impl Db {
 		&self,
 		txids: impl IntoIterator<Item = impl Borrow<Txid>>,
 	) -> anyhow::Result<()> {
-		let conn = self.get_conn().await.context("failed to connect to db")?;
-		query::check_vtxo_transactions_registered(&*conn, txids).await
+		query::check_vtxo_transactions_registered(&self, txids).await
 	}
 
 	pub async fn store_vtxos_in_mailbox(
@@ -379,23 +421,20 @@ impl Db {
 			return Ok(None);
 		}
 
-		let mut conn = self.get_conn().await?;
-		let tx = conn.transaction().await?;
-
 		// Acquire advisory lock to serialize all mailbox writes.
 		// This prevents race conditions where checkpoints could be committed out of order.
 		// Lock is automatically released when transaction commits/rolls back.
-		tx.execute("SELECT pg_advisory_xact_lock(hashtext('mailbox_write'))", &[]).await?;
+		self.execute("SELECT pg_advisory_xact_lock(hashtext('mailbox_write'))", &[]).await?;
 
-		let checkpoint: i64 = tx.query_one("SELECT next_checkpoint()", &[]).await?.get(0);
+		let checkpoint: i64 = self.query_one("SELECT next_checkpoint()", &[]).await?.get(0);
 		let mailbox_type_str = String::from(mailbox_type);
 
-		let statement = tx.prepare("
+		let statement = self.prepare("
 			INSERT INTO mailbox (unblinded_mailbox_id, vtxo_id, vtxo, checkpoint, mailbox_type, created_at)
 			VALUES ($1, $2, $3, $4, $5::TEXT::mailbox_type, NOW());
 		").await?;
 		for vtxo in vtxos {
-			let rows_updated = tx.execute(&statement, &[
+			let rows_updated = self.execute(&statement, &[
 				&mailbox_id.to_string(),
 				&vtxo.id().to_string(),
 				&ProtocolEncoding::serialize(vtxo).to_vec(),
@@ -405,7 +444,6 @@ impl Db {
 			debug_assert_eq!(rows_updated, 1);
 		}
 
-		tx.commit().await?;
 		telemetry::set_mailbox_put_metric(mailbox_type, vtxos.len());
 		Ok(Some(checkpoint as u64))
 	}
@@ -430,9 +468,7 @@ impl Db {
 		checkpoint: Checkpoint,
 		limit: usize,
 	) -> anyhow::Result<Vec<MailboxEntry>> {
-		let conn = self.get_conn().await?;
-
-		let statement = conn.prepare(&format!("
+		let statement = self.prepare(&format!("
 			SELECT vtxo_id, vtxo, payment_hash, unlock_hash, preimage, checkpoint, mailbox_type::TEXT AS entry_type
 			FROM mailbox
 			WHERE unblinded_mailbox_id = $1 AND checkpoint > $2
@@ -442,7 +478,7 @@ impl Db {
 
 		let checkpoint = checkpoint as i64;
 		let mailbox_id_str = mailbox_id.to_string();
-		let rows = conn.query(&statement, &[&mailbox_id_str, &checkpoint]).await?;
+		let rows = self.query(&statement, &[&mailbox_id_str, &checkpoint]).await?;
 		if rows.is_empty() {
 			return Ok(vec![]);
 		}
@@ -577,29 +613,24 @@ impl Db {
 		mailbox_id: MailboxIdentifier,
 		unlock_hash: UnlockHash,
 	) -> anyhow::Result<Option<Checkpoint>> {
-		let mut conn = self.get_conn().await?;
-		let tx = conn.transaction().await?;
-
 		// Acquire advisory lock to serialize all mailbox writes.
 		// This prevents race conditions where checkpoints could be committed out of order.
 		// Lock is automatically released when transaction commits/rolls back.
-		tx.execute("SELECT pg_advisory_xact_lock(hashtext('mailbox_write'))", &[]).await?;
+		self.execute("SELECT pg_advisory_xact_lock(hashtext('mailbox_write'))", &[]).await?;
 
-		let checkpoint: i64 = tx.query_one("SELECT next_checkpoint()", &[]).await?.get(0);
+		let checkpoint: i64 = self.query_one("SELECT next_checkpoint()", &[]).await?.get(0);
 
-		let statement = tx.prepare("
+		let statement = self.prepare("
 			INSERT INTO mailbox (unblinded_mailbox_id, unlock_hash, checkpoint, mailbox_type, created_at)
 			VALUES ($1, $2, $3, $4::TEXT::mailbox_type, NOW());
 		").await?;
-		let rows_updated = tx.execute(&statement, &[
+		let rows_updated = self.execute(&statement, &[
 			&mailbox_id.to_string(),
 			&unlock_hash.to_string(),
 			&checkpoint,
 			&MailboxType::RoundParticipationCompleted.as_str(),
 		]).await?;
 		debug_assert_eq!(rows_updated, 1);
-
-		tx.commit().await?;
 
 		Ok(Some(checkpoint as u64))
 	}
@@ -611,30 +642,25 @@ impl Db {
 		mailbox_id: MailboxIdentifier,
 		payment_hash: &str,
 	) -> anyhow::Result<Checkpoint> {
-		let mut conn = self.get_conn().await?;
-		let tx = conn.transaction().await?;
-
 		// Acquire advisory lock to serialize all mailbox writes.
 		// This prevents race conditions where checkpoints could be committed out of order.
 		// Lock is automatically released when transaction commits/rolls back.
-		tx.execute("SELECT pg_advisory_xact_lock(hashtext('mailbox_write'))", &[]).await?;
+		self.execute("SELECT pg_advisory_xact_lock(hashtext('mailbox_write'))", &[]).await?;
 
-		let checkpoint: i64 = tx.query_one("SELECT next_checkpoint()", &[]).await?.get(0);
+		let checkpoint: i64 = self.query_one("SELECT next_checkpoint()", &[]).await?.get(0);
 		let mailbox_type_str = String::from(MailboxType::LnRecvPendingPayment);
 
-		let statement = tx.prepare("
+		let statement = self.prepare("
 			INSERT INTO mailbox (unblinded_mailbox_id, payment_hash, checkpoint, mailbox_type, created_at)
 			VALUES ($1, $2, $3, $4::TEXT::mailbox_type, NOW());
 		").await?;
-		let rows_updated = tx.execute(&statement, &[
+		let rows_updated = self.execute(&statement, &[
 			&mailbox_id.to_string(),
 			&payment_hash.to_string(),
 			&checkpoint,
 			&mailbox_type_str,
 		]).await?;
 		debug_assert_eq!(rows_updated, 1);
-
-		tx.commit().await?;
 
 		Ok(checkpoint as u64)
 	}
@@ -649,33 +675,28 @@ impl Db {
 		payment_hash: PaymentHash,
 		preimage: Option<Preimage>,
 	) -> anyhow::Result<Option<Checkpoint>> {
-		let mut conn = self.get_conn().await?;
-		let tx = conn.transaction().await?;
-
 		// Acquire advisory lock to serialize all mailbox writes.
 		// This prevents race conditions where checkpoints could be committed out of order.
 		// Lock is automatically released when transaction commits/rolls back.
-		tx.execute("SELECT pg_advisory_xact_lock(hashtext('mailbox_write'))", &[]).await?;
+		self.execute("SELECT pg_advisory_xact_lock(hashtext('mailbox_write'))", &[]).await?;
 
-		let checkpoint = tx.query_one("SELECT next_checkpoint()", &[]).await?.get::<_, i64>(0);
+		let checkpoint = self.query_one("SELECT next_checkpoint()", &[]).await?.get::<_, i64>(0);
 		let mailbox_type_str = String::from(MailboxType::LnSendFinished);
 		let payment_hash_str = payment_hash.to_string();
 		let preimage_str = preimage.map(|p| p.to_string());
 
-		let statement = tx.prepare("
+		let statement = self.prepare("
 			INSERT INTO mailbox (unblinded_mailbox_id, payment_hash, preimage, checkpoint, mailbox_type, created_at)
 			VALUES ($1, $2, $3, $4, $5::TEXT::mailbox_type, NOW())
 			ON CONFLICT (mailbox_type, payment_hash) DO NOTHING;
 		").await?;
-		let rows_inserted = tx.execute(&statement, &[
+		let rows_inserted = self.execute(&statement, &[
 			&mailbox_id.to_string(),
 			&payment_hash_str,
 			&preimage_str,
 			&checkpoint,
 			&mailbox_type_str,
 		]).await?;
-
-		tx.commit().await?;
 
 		if rows_inserted == 1 {
 			Ok(Some(checkpoint as u64))
@@ -694,25 +715,22 @@ impl Db {
 			return Ok(None);
 		}
 
-		let mut conn = self.get_conn().await?;
-		let tx = conn.transaction().await?;
-
 		// Acquire advisory lock to serialize all mailbox writes.
 		// This prevents race conditions where checkpoints could be committed out of order.
 		// Lock is automatically released when transaction commits/rolls back.
-		tx.execute("SELECT pg_advisory_xact_lock(hashtext('mailbox_write'))", &[]).await?;
+		self.execute("SELECT pg_advisory_xact_lock(hashtext('mailbox_write'))", &[]).await?;
 
-		let checkpoint: i64 = tx.query_one("SELECT next_checkpoint()", &[]).await?.get(0);
+		let checkpoint: i64 = self.query_one("SELECT next_checkpoint()", &[]).await?.get(0);
 		let mailbox_type_str = String::from(mailbox_type);
 
-		let statement = tx.prepare("
+		let statement = self.prepare("
 			INSERT INTO mailbox (unblinded_mailbox_id, vtxo_id, checkpoint, mailbox_type, created_at)
 			VALUES ($1, $2, $3, $4::TEXT::mailbox_type, NOW())
 			ON CONFLICT (mailbox_type, vtxo_id) DO NOTHING;
 		").await?;
 		let mut total_inserted = 0u64;
 		for vtxo_id in vtxo_ids {
-			total_inserted += tx.execute(&statement, &[
+			total_inserted += self.execute(&statement, &[
 				&mailbox_id.to_string(),
 				&vtxo_id.to_string(),
 				&checkpoint,
@@ -724,8 +742,6 @@ impl Db {
 			return Ok(None);
 		}
 
-		tx.commit().await?;
-
 		Ok(Some(checkpoint as u64))
 	}
 
@@ -735,11 +751,10 @@ impl Db {
 
 	/// Add the pending sweep tx.
 	pub async fn store_pending_sweep(&self, txid: &Txid, tx: &Transaction) -> anyhow::Result<()> {
-		let conn = self.get_conn().await?;
-		let statement = conn.prepare_typed("
+		let statement = self.prepare_typed("
 			INSERT INTO sweep (txid, tx, created_at) VALUES ($1, $2, NOW());
 		", &[Type::TEXT, Type::BYTEA]).await?;
-		conn.execute(
+		self.execute(
 			&statement,
 			&[&txid.to_string(), &serialize(tx)]
 		).await?;
@@ -749,38 +764,33 @@ impl Db {
 
 	/// Confirm the pending sweep tx by txid.
 	pub async fn confirm_pending_sweep(&self, txid: &Txid) -> anyhow::Result<()> {
-		let conn = self.get_conn().await?;
-
-		let statement = conn.prepare("
+		let statement = self.prepare("
 			UPDATE sweep SET confirmed_at = NOW() WHERE txid = $1 AND confirmed_at IS NULL;
 		").await?;
-		conn.execute(&statement, &[&txid.to_string()]).await?;
+		self.execute(&statement, &[&txid.to_string()]).await?;
 
 		Ok(())
 	}
 
 	/// Abandon the pending sweep tx by txid.
 	pub async fn abandon_pending_sweep(&self, txid: &Txid) -> anyhow::Result<()> {
-		let conn = self.get_conn().await?;
-
-		let statement = conn.prepare("
+		let statement = self.prepare("
 			UPDATE sweep SET abandoned_at = NOW() WHERE txid = $1 AND abandoned_at IS NULL;
 		").await?;
-		conn.execute(&statement, &[&txid.to_string()]).await?;
+		self.execute(&statement, &[&txid.to_string()]).await?;
 
 		Ok(())
 	}
 
 	/// Fetch all pending sweep txs.
 	pub async fn fetch_pending_sweeps(&self) -> anyhow::Result<HashMap<Txid, Transaction>> {
-		let conn = self.get_conn().await?;
-		let statement = conn.prepare("
+		let statement = self.prepare("
 			SELECT txid, tx
 			FROM sweep
 			WHERE confirmed_at IS NULL AND abandoned_at IS NULL
 		").await?;
 
-		let rows = conn.query(&statement, &[]).await?;
+		let rows = self.query(&statement, &[]).await?;
 
 		let pending_sweeps = rows
 			.into_iter()
@@ -816,14 +826,11 @@ impl Db {
 		let offboard_txid_str = offboard_txid.to_string();
 		let offboard_tx_bytes = bitcoin::consensus::serialize(offboard_tx);
 
-		let mut conn = self.get_conn().await?;
-		let tx = conn.transaction().await?;
-
-		let stmt = tx.prepare_typed(
+		let stmt = self.prepare_typed(
 			"INSERT INTO offboards (txid, signed_tx, wallet_commit, created_at)
 			VALUES ($1, $2, FALSE, NOW());",
 			&[Type::TEXT, Type::BYTEA]).await?;
-		tx.execute(&stmt, &[&offboard_txid_str, &offboard_tx_bytes]).await?;
+		self.execute(&stmt, &[&offboard_txid_str, &offboard_tx_bytes]).await?;
 
 		// update the virtual tx tree
 		let connector_txs = forfeit_result.connector_tx.iter().cloned();
@@ -843,36 +850,32 @@ impl Db {
 				&forfeit_result.connector_vtxos, SpendState::OffboardConnector
 			)
 			.mark_vtxos_offboard_spent(offboard_triples);
-		tree::execute_vtxo_tree_update(&tx, update).await?;
+		tree::execute_vtxo_tree_update(&self, update).await?;
 
 		// Mark transactions as having server-owned descendants before completing offboard
 		let txids = input_vtxos.iter()
 			.flat_map(|v| v.transactions().map(|i| i.tx.compute_txid()));
-		query::check_vtxo_transactions_registered(&tx, txids).await
+		query::check_vtxo_transactions_registered(&self, txids).await
 			.context("virtual tx update failed, user might not have called register_vtxo_transactions")?;
-
-		tx.commit().await?;
 		Ok(())
 	}
 
 	pub async fn mark_offboard_committed(&self, offboard_txid: Txid) -> anyhow::Result<()> {
-		let conn = self.get_conn().await?;
-		let stmt = conn.prepare_typed(
+		let stmt = self.prepare_typed(
 			"UPDATE offboards SET wallet_commit = TRUE WHERE txid = $1;",
 			&[Type::TEXT],
 		).await?;
-		ensure!(conn.execute(&stmt, &[&offboard_txid.to_string()]).await? > 0,
+		ensure!(self.execute(&stmt, &[&offboard_txid.to_string()]).await? > 0,
 			"no offboard with txid {}", offboard_txid,
 		);
 		Ok(())
 	}
 
 	pub async fn get_uncommitted_offboards(&self) -> anyhow::Result<Vec<StoredBitcoinTx>> {
-		let conn = self.get_conn().await?;
-		let stmt = conn.prepare_typed(
+		let stmt = self.prepare_typed(
 			"SELECT txid, signed_tx FROM offboards WHERE wallet_commit IS FALSE;", &[],
 		).await?;
-		let rows = conn.query(&stmt, &[]).await?;
+		let rows = self.query(&stmt, &[]).await?;
 		let mut ret = Vec::with_capacity(rows.len());
 		for row in rows {
 			ret.push(StoredBitcoinTx {
@@ -886,12 +889,11 @@ impl Db {
 	pub async fn store_changeset(&self, wallet: WalletKind, c: &ChangeSet) -> anyhow::Result<()> {
 		let bytes = rmp_serde::to_vec_named(c).expect("serde serialization");
 
-		let conn = self.get_conn().await?;
-		let statement = conn.prepare_typed("
+		let statement = self.prepare_typed("
 			INSERT INTO wallet_changeset (content, kind, created_at)
 			VALUES ($1, $2::TEXT::wallet_kind, NOW());
 		", &[Type::BYTEA, Type::TEXT]).await?;
-		conn.execute(&statement, &[&bytes, &wallet.name()]).await?;
+		self.execute(&statement, &[&bytes, &wallet.name()]).await?;
 
 		Ok(())
 	}
@@ -900,14 +902,13 @@ impl Db {
 		&self,
 		wallet: WalletKind,
 	) -> anyhow::Result<Option<ChangeSet>> {
-		let conn = self.get_conn().await?;
-		let statement = conn.prepare("
+		let statement = self.prepare("
 			SELECT content
 			FROM wallet_changeset
 			WHERE kind = $1::TEXT::wallet_kind
 			ORDER BY id ASC;
 		").await?;
-		let rows = conn.query(&statement, &[&wallet.name()]).await?;
+		let rows = self.query(&statement, &[&wallet.name()]).await?;
 
 		let mut ret = Option::<ChangeSet>::None;
 		for row in rows {
@@ -936,8 +937,7 @@ impl Db {
 		txid: Txid,
 		tx: &Transaction
 	) -> anyhow::Result<()> {
-		let conn = self.get_conn().await?;
-		let statement = conn.prepare_typed(
+		let statement = self.prepare_typed(
 			"INSERT INTO bitcoin_transaction
 				(txid, tx, created_at)
 			VALUES
@@ -947,7 +947,7 @@ impl Db {
 
 		// Prepare the data
 
-		conn.execute(
+		self.execute(
 			&statement,
 			&[&txid.to_string(), &serialize(&tx)]
 		).await?;
@@ -959,12 +959,11 @@ impl Db {
 		&self,
 		txid: Txid,
 	) -> anyhow::Result<Option<Transaction>> {
-		let conn = self.get_conn().await?;
-		let statement = conn.prepare(
+		let statement = self.prepare(
 			"SELECT tx FROM bitcoin_transaction WHERE txid = $1",
 		).await?;
 
-		match conn.query_opt(&statement, &[&txid.to_string()]).await? {
+		match self.query_opt(&statement, &[&txid.to_string()]).await? {
 			Some(row) => {
 				let tx_bytes: &[u8] = row.get("tx");
 				let tx = deserialize(tx_bytes)
@@ -989,15 +988,13 @@ impl Db {
 			warn!("Error while trying to clean up expired ephemeral tweaks: {:#}", e);
 		}
 
-		let conn = self.get_conn().await?;
-
-		let stmt = conn.prepare("
+		let stmt = self.prepare("
 			INSERT INTO ephemeral_tweak (pubkey, tweak, created_at, expires_at)
 			VALUES ($1, $2, NOW(), $3)
 		").await?;
 
 		let expires_at = Local::now() + lifetime;
-		let _ = conn.execute(&stmt, &[
+		let _ = self.execute(&stmt, &[
 			&pubkey.to_string(),
 			&&tweak.to_be_bytes()[..],
 			&expires_at,
@@ -1011,12 +1008,10 @@ impl Db {
 		&self,
 		pubkey: PublicKey,
 	) -> anyhow::Result<Option<secp256k1::Scalar>> {
-		let conn = self.get_conn().await?;
-
-		let stmt = conn.prepare(
+		let stmt = self.prepare(
 			"SELECT tweak FROM ephemeral_tweak WHERE pubkey = $1 LIMIT 1",
 		).await?;
-		let res = conn.query_opt(&stmt, &[&pubkey.to_string()]).await
+		let res = self.query_opt(&stmt, &[&pubkey.to_string()]).await
 			.context("fetching ephemeral tweak")?;
 
 		Ok(res.map(|row| {
@@ -1031,12 +1026,10 @@ impl Db {
 		&self,
 		pubkey: PublicKey,
 	) -> anyhow::Result<Option<secp256k1::Scalar>> {
-		let conn = self.get_conn().await?;
-
-		let stmt = conn.prepare(
+		let stmt = self.prepare(
 			"DELETE FROM ephemeral_tweak WHERE pubkey = $1 RETURNING tweak",
 		).await?;
-		let res = conn.query_opt(&stmt, &[&pubkey.to_string()]).await
+		let res = self.query_opt(&stmt, &[&pubkey.to_string()]).await
 			.context("fetching ephemeral tweak")?;
 
 		Ok(res.map(|row| {
@@ -1048,11 +1041,10 @@ impl Db {
 	}
 
 	pub async fn clean_expired_ephemeral_tweaks(&self) -> anyhow::Result<()> {
-		let conn = self.get_conn().await?;
-		let stmt = conn.prepare(
+		let stmt = self.prepare(
 			"DELETE FROM ephemeral_tweak WHERE expires_at < NOW()",
 		).await?;
-		let nb_tweaks = conn.execute(&stmt, &[]).await.context("cleaning ephemeral tweaks")?;
+		let nb_tweaks = self.execute(&stmt, &[]).await.context("cleaning ephemeral tweaks")?;
 		if nb_tweaks > 0 {
 			slog!(CleanedEphemeralTweaks, nb_tweaks: nb_tweaks as usize);
 		}

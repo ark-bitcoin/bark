@@ -9,7 +9,7 @@ use ark::vtxo::Bare;
 
 use bitcoin_ext::BlockHeight;
 
-use super::Db;
+use super::Tx;
 use super::model::VtxoState;
 
 /// Ban a vtxo until the given block height
@@ -72,22 +72,19 @@ pub async fn list_banned_vtxos<T: GenericClient>(
 		.collect()
 }
 
-impl Db {
+impl<'t> Tx<'t> {
 	/// Ban a vtxo until a given block height
 	pub async fn ban_vtxo(&self, vtxo_id: VtxoId, until_height: BlockHeight) -> anyhow::Result<()> {
-		let conn = self.get_conn().await?;
-		ban_vtxo(&*conn, vtxo_id, until_height).await
+		ban_vtxo(&**self, vtxo_id, until_height).await
 	}
 
 	/// Remove the ban from a vtxo
 	pub async fn unban_vtxo(&self, vtxo_id: VtxoId) -> anyhow::Result<()> {
-		let conn = self.get_conn().await?;
-		unban_vtxo(&*conn, vtxo_id).await
+		unban_vtxo(&**self, vtxo_id).await
 	}
 
 	/// List all vtxos that are currently banned at the given chain tip.
 	pub async fn list_banned_vtxos(&self, chain_tip: BlockHeight) -> anyhow::Result<Vec<VtxoState<Bare, ServerVtxoPolicy>>> {
-		let conn = self.get_conn().await?;
-		list_banned_vtxos(&*conn, chain_tip).await
+		list_banned_vtxos(&**self, chain_tip).await
 	}
 }

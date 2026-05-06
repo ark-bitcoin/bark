@@ -76,7 +76,7 @@ impl Server {
 					_ = self.rtmgr.shutdown_signal() => return,
 				}
 
-				match self.db.get_uncommitted_offboards().await {
+				match self.db.read(async |t| t.get_uncommitted_offboards().await).await {
 					Ok(txs) => {
 						let mut guard = self.rounds_wallet.lock().await;
 						for tx in txs {
@@ -127,7 +127,7 @@ impl Server {
 			return badarg!("wrong number of attestations");
 		}
 
-		let vtxos = self.db.get_user_vtxos_by_id(&input_vtxos).await?;
+		let vtxos = self.db.read(async |t| t.get_user_vtxos_by_id(&input_vtxos).await).await?;
 		let tip = self.chain_tip().height;
 		for v in &vtxos {
 			v.check_spendable(tip)?;
@@ -242,7 +242,7 @@ impl Server {
 			.context("persisting wallet")?;
 		self.tx_nursery.broadcast_tx(offboard_tx.clone()).await
 			.context("broadcasting tx")?;
-		self.db.mark_offboard_committed(offboard_txid).await
+		self.db.write(async |t| t.mark_offboard_committed(offboard_txid).await).await
 			.context("marking offboard committed")?;
 		Ok(())
 	}
@@ -268,7 +268,7 @@ impl Server {
 			return badarg!("incorrect number of partial signatures");
 		}
 
-		let vtxos = self.db.get_user_vtxos_by_id(input_vtxos).await?;
+		let vtxos = self.db.read(async |t| t.get_user_vtxos_by_id(input_vtxos).await).await?;
 		let forfeit_ctx = OffboardForfeitContext::new(&vtxos, &state.offboard_tx.unsigned_tx);
 
 		let forfeit_txs = forfeit_ctx.finish(
@@ -304,7 +304,7 @@ impl Server {
 
 		// nb catch the error and don't return it, as it might contain the signed offboard tx
 		let vtxo_refs = vtxos.iter().map(|v| &v.vtxo).collect::<Vec<_>>();
-		if let Err(e) = self.db.register_offboard(&vtxo_refs, &signed_tx, &forfeit_txs).await {
+		if let Err(e) = self.db.write(async |t| t.register_offboard(&vtxo_refs, &signed_tx, &forfeit_txs).await).await {
 			error!("Failed to register offboard {} in db: {:#}", offboard_txid, e);
 			bail!("failed to register offboard in db, please start over");
 		}

@@ -489,7 +489,7 @@ impl Server {
 		// Tails the htlc_settlement WAL via the settler's stream and
 		// settles CLN hold invoices when preimages appear.
 		//
-		let resume_cp = srv.db.get_htlc_settlement_resume_checkpoint().await
+		let resume_cp = srv.db.read(async |t| t.get_htlc_settlement_resume_checkpoint().await).await
 			.unwrap_or_else(|e| {
 				warn!("Failed to query HTLC settlement resume checkpoint, starting from 0: {:#}", e);
 				0
@@ -767,10 +767,12 @@ impl Server {
 			.upsert_unsigned_tx([builder.exit_txid()])
 			.insert_spendable_vtxos(builder.build_internal_unsigned_vtxos())
 			.mark_vtxos_oor_spent(builder.spend_info());
-		self.db.execute_vtxo_tree_update(update).await?;
-
-		self.db.add_funding_vtxos_to_frontier(funding_txid, Some(confirmed_height)).await
-			.context("failed to add board vtxos to frontier")?;
+		self.db.write(async |t| {
+			t.execute_vtxo_tree_update(update).await?;
+			t.add_funding_vtxos_to_frontier(funding_txid, Some(confirmed_height)).await
+				.context("failed to add board vtxos to frontier")?;
+			Ok(())
+		}).await?;
 
 		slog!(RegisteredBoard,
 			onchain_utxo: vtxo.chain_anchor(),
@@ -799,7 +801,7 @@ impl Server {
 			let vtxo_id = vtxo.id();
 
 			// Check vtxo exists in database
-			let _stored_vtxo = self.db.get_user_vtxo_by_id(vtxo_id).await
+			let _stored_vtxo = self.db.read(async |t| t.get_user_vtxo_by_id(vtxo_id).await).await
 				.context(vtxo_id)
 				.badarg("vtxo not found in database")?;
 
@@ -810,7 +812,7 @@ impl Server {
 
 			// Get chain anchor transaction for validation
 			let anchor_txid = vtxo.chain_anchor().txid;
-			let anchor_vtx = self.db.get_virtual_transaction_by_txid(anchor_txid).await
+			let anchor_vtx = self.db.read(async |t| t.get_virtual_transaction_by_txid(anchor_txid).await).await
 				.context(anchor_txid)
 				.context("failed to query virtual transaction")?
 				.context(anchor_txid)
@@ -838,7 +840,7 @@ impl Server {
 
 		let update = VtxoTreeUpdate::new()
 			.upsert_signed_tx(signed_txs);
-		self.db.execute_vtxo_tree_update(update).await?;
+		self.db.write(async |t| t.execute_vtxo_tree_update(update).await).await?;
 		Ok(())
 	}
 
@@ -885,13 +887,13 @@ impl Server {
 		let seckey = self.ephemeral_master_key.leak_ref().secret_key()
 			.add_tweak(&tweak).expect("tweak error");
 		let key = Keypair::from_secret_key(&*SECP, &seckey);
-		self.db.store_ephemeral_tweak(key.public_key(), tweak, lifetime).await?;
+		self.db.write(async |t| t.store_ephemeral_tweak(key.public_key(), tweak, lifetime).await).await?;
 		Ok(key)
 	}
 
 	#[tracing::instrument(skip(self))]
 	pub async fn get_ephemeral_cosign_key(&self, pubkey: PublicKey) -> anyhow::Result<Keypair> {
-		let tweak = self.db.fetch_ephemeral_tweak(pubkey).await?
+		let tweak = self.db.read(async |t| t.fetch_ephemeral_tweak(pubkey).await).await?
 			.context("ephemeral pubkey unknown")?;
 		let seckey = self.ephemeral_master_key.leak_ref().secret_key()
 			.add_tweak(&tweak).expect("tweak error");
@@ -900,7 +902,7 @@ impl Server {
 
 	#[tracing::instrument(skip(self))]
 	pub async fn drop_ephemeral_cosign_key(&self, pubkey: PublicKey) -> anyhow::Result<Keypair> {
-		let tweak = self.db.drop_ephemeral_tweak(pubkey).await?
+		let tweak = self.db.write(async |t| t.drop_ephemeral_tweak(pubkey).await).await?
 			.context("ephemeral pubkey unknown")?;
 		let seckey = self.ephemeral_master_key.leak_ref().secret_key()
 			.add_tweak(&tweak).expect("tweak error");
@@ -960,11 +962,14 @@ impl Server {
 		&self,
 		request: &LeafVtxoCosignRequest,
 	) -> anyhow::Result<LeafVtxoCosignResponse> {
-		let [vtxo] = self.db.get_user_vtxos_by_id(&[request.vtxo_id]).await?
-			.try_into().expect("one argument one response");
-		let round_id = RoundId::new(vtxo.vtxo.chain_anchor().txid);
-		let round = self.db.get_round(round_id).await?
-			.badarg("VTXO's chain anchor is not a known round")?;
+		let (vtxo, round) = self.db.read(async |t| {
+			let [vtxo] = t.get_user_vtxos_by_id(&[request.vtxo_id]).await?
+				.try_into().expect("one argument one response");
+			let round_id = RoundId::new(vtxo.vtxo.chain_anchor().txid);
+			let round = t.get_round(round_id).await?
+				.badarg("VTXO's chain anchor is not a known round")?;
+			Ok((vtxo, round))
+		}).await?;
 		Ok(self.cosign_hashlocked_leaf(request, &vtxo.vtxo, &round.funding_tx))
 	}
 

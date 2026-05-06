@@ -1,6 +1,7 @@
 
 use std::net::SocketAddr;
 
+use anyhow::Context;
 use chrono::Local;
 use trust_dns_resolver::config::{ResolverConfig, ResolverOpts};
 use trust_dns_resolver::TokioAsyncResolver;
@@ -22,12 +23,15 @@ impl Server {
 		token_type: TokenType,
 		count: Option<u32>,
 	) -> anyhow::Result<Vec<IntegrationToken>> {
-		let integration_api_key = self.db.get_integration_api_key_by_api_key(api_key).await?;
+		let integration_api_key = self.db.read(async |t| t.get_integration_api_key_by_api_key(api_key).await).await?;
 		let (integration, integration_api_key) =
 			self.verify_integration_api_key(client_address, &integration_api_key).await?;
-		let open_count = self.db.count_open_integration_tokens(integration.id, token_type).await?;
-		let integration_token_config = self.db.get_integration_token_config(token_type, integration.id)
-			.await?.expect("no integration token configuration found");
+		let (open_count, integration_token_config) = self.db.read(async |t| {
+			let open_count = t.count_open_integration_tokens(integration.id, token_type).await?;
+			let config = t.get_integration_token_config(token_type, integration.id).await?
+				.context("no integration token configuration found")?;
+			Ok((open_count, config))
+		}).await?;
 		if integration_token_config.maximum_open_tokens <= open_count {
 			bail!("Maximum tokens reached")
 		}
@@ -46,7 +50,7 @@ impl Server {
 				chrono::Duration::seconds(integration_token_config.active_seconds as i64);
 
 			let filters = Filters::new();
-			let inserted = self.db.store_integration_token(
+			let inserted = self.db.write(async |t| t.store_integration_token(
 				token_string.as_str(),
 				token_type,
 				TokenStatus::Unused,
@@ -54,7 +58,7 @@ impl Server {
 				&filters,
 				integration.id,
 				integration_api_key.id,
-			).await?;
+			).await).await?;
 			result.push(inserted);
 		}
 
@@ -67,10 +71,10 @@ impl Server {
 		api_key: uuid::Uuid,
 		token: &str,
 	) -> anyhow::Result<(Integration, IntegrationApiKey, IntegrationToken)> {
-		let integration_api_key = self.db.get_integration_api_key_by_api_key(api_key).await?;
+		let integration_api_key = self.db.read(async |t| t.get_integration_api_key_by_api_key(api_key).await).await?;
 		let (integration, integration_api_key) =
 			self.verify_integration_api_key(client_address, &integration_api_key).await?;
-		let integration_token = self.db.get_integration_token(token).await?;
+		let integration_token = self.db.read(async |t| t.get_integration_token(token).await).await?;
 		let integration_token = self.verify_integration_token(
 			&integration, integration_token,
 		).await?;
@@ -109,12 +113,12 @@ impl Server {
 			}
 		};
 
-		Ok(self.db.update_integration_token(
+		Ok(self.db.write(async |t| t.update_integration_token(
 			integration_token.clone(),
 			integration_api_key.id,
 			status,
 			&integration_token.filters,
-		).await?)
+		).await).await?)
 	}
 
 	async fn verify_integration_api_key(
@@ -132,7 +136,7 @@ impl Server {
 					return badarg!("API key is expired");
 				}
 
-				let integration = self.db.get_integration_by_id(integration_api_key.integration_id).await?;
+				let integration = self.db.read(async |t| t.get_integration_by_id(integration_api_key.integration_id).await).await?;
 				match integration {
 					None => badarg!("Integration linked with API key not found"),
 					Some(integration) => {

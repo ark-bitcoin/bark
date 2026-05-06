@@ -99,7 +99,7 @@ impl PersistedWallet {
 		deep_tip: BlockRef,
 		min_trusted_confs: u32,
 	) -> anyhow::Result<Self> {
-		let init = db.read_aggregate_changeset(kind).await?;
+		let init = db.read(async |tx| { tx.read_aggregate_changeset(kind).await }).await?;
 		let fresh = init.is_none();
 
 		let desc = format!("tr({}/0/*)", xpriv);
@@ -121,7 +121,7 @@ impl PersistedWallet {
 		if fresh {
 			wallet.set_checkpoint(deep_tip.height, deep_tip.hash);
 			let cs = wallet.take_staged().expect("should have stored tip");
-			db.store_changeset(kind, &cs).await.context("error storing initial wallet state")?;
+			db.write(async |tx| { tx.store_changeset(kind, &cs).await }).await.context("error storing initial wallet state")?;
 		}
 
 		Ok(Self { wallet, kind, db, locked_outputs: LockedWalletUtxosIndex::new(), min_trusted_confs })
@@ -148,7 +148,7 @@ impl PersistedWallet {
 		// NB we make sure that we don't erase the changeset if an error happened
 		// in the db.
 		if let Some(change) = self.wallet.staged() {
-			self.db.store_changeset(self.kind, &change).await
+			self.db.write(async |t| t.store_changeset(self.kind, &change).await).await
 				.context("error persisting wallet changes to db")?;
 			self.wallet.take_staged();
 		}

@@ -166,9 +166,9 @@ impl ClnHoldProcess {
 			},
 		};
 
-		let htlc_subscriptions = self.db.get_open_lightning_htlc_subscriptions(
+		let htlc_subscriptions = self.db.read(async |t| t.get_open_lightning_htlc_subscriptions(
 			self.node_id,
-		).await?;
+		).await).await?;
 
 		let status_counts = htlc_subscriptions.iter()
 			.fold(HashMap::new(), |mut acc, sub| {
@@ -306,9 +306,9 @@ impl ClnHoldProcess {
 			(LightningHtlcSubscriptionStatus::Canceled, None)
 		};
 
-		self.db.store_lightning_htlc_subscription_status(
+		self.db.write(async |t| t.store_lightning_htlc_subscription_status(
 			htlc_subscription.id, status, expiry,
-		).await?;
+		).await).await?;
 
 		let payment_hash = PaymentHash::from(*htlc_subscription.invoice.payment_hash());
 		// Wake check_lightning_receive so the client sees the new status.
@@ -335,9 +335,9 @@ impl ClnHoldProcess {
 			},
 		};
 
-		let htlc_subscriptions = self.db.get_open_lightning_htlc_subscriptions(
+		let htlc_subscriptions = self.db.read(async |t| t.get_open_lightning_htlc_subscriptions(
 			self.node_id,
-		).await?;
+		).await).await?;
 
 		for htlc_subscription in htlc_subscriptions {
 			// Only poll for subscriptions that haven't been accepted yet
@@ -395,10 +395,10 @@ impl ClnHoldProcess {
 
 		if state == Some(hold::InvoiceState::Accepted) {
 			if let Some(sub) = self.db
-				.get_open_htlc_subscription_for_node_by_payment_hash(
+				.read(async |t| t.get_open_htlc_subscription_for_node_by_payment_hash(
 					self.node_id,
 					&PaymentHash::from(payment_hash),
-				).await?
+				).await).await?
 			{
 				self.handle_invoice_accepted(&sub).await?;
 			}
@@ -435,15 +435,16 @@ impl ClnHoldProcess {
 			htlc_subscription.id, reason,
 		);
 
-		self.db.store_lightning_htlc_subscription_status(
+		self.db.write(async |t| t.store_lightning_htlc_subscription_status(
 			htlc_subscription.id,
 			LightningHtlcSubscriptionStatus::Canceled,
 			None,
-		).await?;
+		).await).await?;
 
 		let payment_hash = PaymentHash::from(&htlc_subscription.invoice);
-		let payment_attempt = self.db
-			.get_open_lightning_payment_attempt_by_payment_hash(payment_hash).await?;
+		let payment_attempt = self.db.read(async |t|
+			t.get_open_lightning_payment_attempt_by_payment_hash(payment_hash).await
+		).await?;
 		if let Some(payment_attempt) = payment_attempt {
 			debug!("HTLC subscription canceled with ongoing payment attempt, \
 				marking as failed: {}", payment_attempt.id,

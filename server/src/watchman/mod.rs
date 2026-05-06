@@ -212,7 +212,7 @@ impl Watchman {
 	/// TODO: remove this once all deployments have run with finish_round adding vtxos
 	/// directly to the frontier. Called only once at startup to handle legacy data.
 	pub async fn sync_unfrontiered_funding(&self) -> anyhow::Result<()> {
-		let txids = self.db.get_unfrontiered_funding_txids().await?;
+		let txids = self.db.read(async |t| t.get_unfrontiered_funding_txids().await).await?;
 
 		trace!("We got {} unfrontiered funding txs", txids.len());
 
@@ -226,15 +226,15 @@ impl Watchman {
 			let confirmed_height = match bcd::tx_status(&self.bitcoind, txid).await? {
 				// Only use confirmed_height if the block is on the synced chain.
 				// Otherwise, add as unconfirmed and it will confirm during the next sync.
-				TxStatus::Confirmed(b) if self.db.get_block_by_height(
+				TxStatus::Confirmed(b) if self.db.read(async |t| t.get_block_by_height(
 					self.block_table, b.height,
-				).await?.is_some() => {
+				).await).await?.is_some() => {
 					Some(b.height)
 				},
 				TxStatus::Mempool | TxStatus::NotFound | TxStatus::Confirmed(_) => None,
 			};
 
-			let vtxos = self.db.get_vtxos_by_txid(txid).await?;
+			let vtxos = self.db.read(async |t| t.get_vtxos_by_txid(txid).await).await?;
 			let nb_vtxos = vtxos.len();
 			for vtxo in vtxos {
 				frontier.register(vtxo, confirmed_height).await?;
@@ -394,7 +394,7 @@ impl Watchman {
 	/// Detect the kind of spend for a transaction.
 	async fn detect_spend_kind(&self, txid: Txid) -> SpendKind {
 		// Check if it's a progress tx (in virtual_transaction table)
-		if let Ok(Some(_)) = self.db.get_virtual_transaction_by_txid(txid).await {
+		if let Ok(Some(_)) = self.db.read(async |t| t.get_virtual_transaction_by_txid(txid).await).await {
 			return SpendKind::Progress;
 		}
 
@@ -635,7 +635,7 @@ impl Watchman {
 		fee_rate: FeeRate,
 	) -> anyhow::Result<()> {
 		// Get the progress transaction from the database
-		let vtx = self.db.get_virtual_transaction_by_txid(txid).await?
+		let vtx = self.db.read(async |t| t.get_virtual_transaction_by_txid(txid).await).await?
 			.context(txid)
 			.context("progress tx not found")?;
 

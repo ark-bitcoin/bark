@@ -108,7 +108,7 @@ impl ClnXpayClient {
 		}
 
 		let attempt_res = self.db
-			.get_open_lightning_payment_attempt_by_payment_hash(payment_hash).await;
+			.read(async |t| t.get_open_lightning_payment_attempt_by_payment_hash(payment_hash).await).await;
 
 		match attempt_res {
 			Ok(Some(attempt)) => {
@@ -279,7 +279,7 @@ impl ClnXpay {
 		settler: Arc<HtlcSettler>,
 		mailbox_manager: Arc<crate::mailbox_manager::MailboxManager>,
 	) -> anyhow::Result<ClnXpay> {
-		let payment_idxs = db.get_lightning_payment_indexes(node_id).await
+		let payment_idxs = db.read(async |t| t.get_lightning_payment_indexes(node_id).await).await
 			.with_context(|| format!("failed to fetch payment indices for {}", node_id))?
 			.unwrap_or_default();
 
@@ -402,7 +402,7 @@ impl ClnXpayProcess {
 	/// each one that is old enough and not in backoff. Prunes expired backoff
 	/// entries afterwards.
 	async fn process_payment_attempts(&mut self) -> anyhow::Result<()> {
-		let open_attempts = self.db.get_open_lightning_payment_attempts(self.node_id).await?;
+		let open_attempts = self.db.read(async |t| t.get_open_lightning_payment_attempts(self.node_id).await).await?;
 
 		for attempt in open_attempts {
 			if attempt.is_self_payment {

@@ -79,7 +79,7 @@ impl HtlcSettler {
 	/// Record a settlement: write preimage to the WAL table, notify watchers.
 	/// If this preimage was already recorded, this is a no-op.
 	pub async fn settle(&self, preimage: Preimage) -> anyhow::Result<()> {
-		if let Some(checkpoint) = self.db.store_htlc_settlement(preimage).await? {
+		if let Some(checkpoint) = self.db.write(async |t| t.store_htlc_settlement(preimage).await).await? {
 			slog!(HtlcSettled, payment_hash: preimage.compute_payment_hash(), preimage);
 			self.watch.update(checkpoint);
 		}
@@ -91,7 +91,7 @@ impl HtlcSettler {
 		&self,
 		payment_hash: PaymentHash,
 	) -> anyhow::Result<Option<Preimage>> {
-		self.db.get_htlc_settlement_by_payment_hash(payment_hash).await
+		self.db.read(async |t| t.get_htlc_settlement_by_payment_hash(payment_hash).await).await
 	}
 
 	/// Subscribe to settlement notifications starting after `since`.
@@ -118,7 +118,7 @@ impl HtlcSettler {
 				}
 
 				let batch = match db
-					.get_htlc_settlements_since(cursor, batch_size)
+					.read(async |t| t.get_htlc_settlements_since(cursor, batch_size).await)
 					.await
 				{
 					Ok(b) => b,
@@ -164,7 +164,7 @@ impl Process {
 		loop {
 			tokio::select! {
 				_ = interval.tick() => {
-					match self.db.get_htlc_settlement_max_checkpoint().await {
+					match self.db.read(async |t| t.get_htlc_settlement_max_checkpoint().await).await {
 						Ok(cp) => { self.watch.update(cp); }
 						Err(e) => {
 							tracing::warn!("HtlcSettler poll failed: {:#}", e);

@@ -33,7 +33,9 @@ impl<'a> PaymentAttemptNotifier<'a> {
 		error: Option<&str>,
 		preimage: Option<Preimage>,
 	) -> anyhow::Result<()> {
-		self.db.update_lightning_payment_attempt_status(attempt, new_status, error).await?;
+		self.db.write(async |t|
+			t.update_lightning_payment_attempt_status(attempt, new_status, error).await
+		).await?;
 
 		trace!("Lightning payment attempt ({}): status updated to {} for payment hash {}.",
 			attempt.id, new_status, attempt.payment_hash,
@@ -63,8 +65,8 @@ impl<'a> PaymentAttemptNotifier<'a> {
 		final_amount_msat: Option<u64>,
 		preimage: Option<Preimage>,
 	) -> anyhow::Result<()> {
-		let updated = self.db.verify_and_update_payment_attempt(
-			attempt, status, payment_error, final_amount_msat,
+		let updated = self.db.write(async |t|
+			t.verify_and_update_payment_attempt(attempt, status, payment_error, final_amount_msat).await
 		).await?;
 
 		if updated {
@@ -89,7 +91,9 @@ impl<'a> PaymentAttemptNotifier<'a> {
 		payment_hash: PaymentHash,
 		preimage: Option<Preimage>,
 	) {
-		let mailbox_id = match self.db.get_lightning_sender_mailbox_id(payment_hash).await {
+		let mailbox_id = match self.db.read(async |t|
+			t.get_lightning_sender_mailbox_id(payment_hash).await
+		).await {
 			Ok(Some(id)) => id,
 			Ok(None) => return,
 			Err(e) => {
@@ -98,8 +102,8 @@ impl<'a> PaymentAttemptNotifier<'a> {
 			},
 		};
 
-		match self.db.store_lightning_send_finished(
-			mailbox_id, payment_hash, preimage,
+		match self.db.write(async |t|
+			t.store_lightning_send_finished(mailbox_id, payment_hash, preimage).await
 		).await {
 			Ok(Some(checkpoint)) => {
 				self.mailbox_manager.notify(mailbox_id, checkpoint);

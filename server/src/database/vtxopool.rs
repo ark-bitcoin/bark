@@ -7,7 +7,7 @@ use tokio_postgres::Row;
 use ark::{ProtocolEncoding, Vtxo, VtxoId};
 use ark::vtxo::Full;
 
-use crate::database::{Db, OwnedRowStream, NOARG};
+use crate::database::{Db, OwnedRowStream, Tx, NOARG};
 
 
 /// A struct reprensenting a vtxo currently in the vtxo pool.
@@ -44,14 +44,13 @@ impl TryFrom<Row> for PoolVtxo {
 	}
 }
 
-impl Db {
+impl<'t> Tx<'t> {
 	pub async fn get_pool_vtxos_by_ids(&self, ids: &[VtxoId]) -> anyhow::Result<Vec<PoolVtxo>> {
-		let conn = self.get_conn().await?;
-		let stmt = conn.prepare_typed(
+		let stmt = self.prepare_typed(
 			"SELECT vtxo FROM vtxo_pool WHERE vtxo_id = ANY($1)",
 			&[Type::TEXT_ARRAY],
 		).await?;
-		let rows = conn.query(&stmt, &[&ids.iter().map(|id| id.to_string()).collect::<Vec<_>>()]).await?;
+		let rows = self.query(&stmt, &[&ids.iter().map(|id| id.to_string()).collect::<Vec<_>>()]).await?;
 
 		let mut vtxos = vec![];
 		for row in rows {
@@ -65,14 +64,13 @@ impl Db {
 		&self,
 		vtxo: &PoolVtxo,
 	) -> anyhow::Result<()> {
-		let conn = self.get_conn().await?;
-		let stmt = conn.prepare_typed(
+		let stmt = self.prepare_typed(
 			"INSERT INTO vtxo_pool (vtxo_id, vtxo, expiry_height, amount) \
 				VALUES ( $1, $2, $3, $4)",
 			&[Type::TEXT, Type::BYTEA, Type::INT4, Type::INT8],
 		).await?;
 
-		conn.execute(&stmt, &[
+		self.execute(&stmt, &[
 			&vtxo.id().to_string(),
 			&vtxo.serialize(),
 			&(vtxo.expiry_height() as i32),
@@ -85,8 +83,7 @@ impl Db {
 		&self,
 		vtxos: impl IntoIterator<Item = &'a PoolVtxo>,
 	) -> anyhow::Result<()> {
-		let conn = self.get_conn().await?;
-		let stmt = conn.prepare_typed(
+		let stmt = self.prepare_typed(
 			"INSERT INTO vtxo_pool (vtxo_id, vtxo, expiry_height, amount) \
 				VALUES ( UNNEST($1), UNNEST($2), UNNEST($3), UNNEST($4) )",
 			&[Type::TEXT_ARRAY, Type::BYTEA_ARRAY, Type::INT4_ARRAY, Type::INT8_ARRAY],
@@ -99,7 +96,7 @@ impl Db {
 			v.amount().to_sat() as i64,
 		)).collect::<(Vec<_>, Vec<_>, Vec<_>, Vec<_>)>();
 
-		conn.execute(&stmt, &[&ids, &vtxos, &expiries, &amounts]).await?;
+		self.execute(&stmt, &[&ids, &vtxos, &expiries, &amounts]).await?;
 		Ok(())
 	}
 
@@ -107,17 +104,18 @@ impl Db {
 		&self,
 		ids: impl IntoIterator<Item = VtxoId>,
 	) -> anyhow::Result<()> {
-		let conn = self.get_conn().await?;
-		let stmt = conn.prepare_typed(
+		let stmt = self.prepare_typed(
 			"UPDATE vtxo_pool SET spent_at = NOW() WHERE vtxo_id = ANY($1)",
 			&[Type::TEXT_ARRAY],
 		).await?;
 
 		let ids = ids.into_iter().map(|id| id.to_string()).collect::<Vec<_>>();
-		conn.execute(&stmt, &[&ids]).await?;
+		self.execute(&stmt, &[&ids]).await?;
 		Ok(())
 	}
+}
 
+impl Db {
 	pub async fn load_vtxopool(
 		&self,
 	) -> anyhow::Result<impl Stream<Item = anyhow::Result<PoolVtxo>> + '_> {
