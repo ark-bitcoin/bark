@@ -110,7 +110,7 @@ ark-lib = { path = "../lib", features = [ "test-util" ] }
 
 [target.'cfg(target_arch = "wasm32")'.dev-dependencies]
 wasm-bindgen-test = "0.3"
-console_log = "0.2"
+console_log = "1.0.0"
 
 # tempfile doesn't work on WASM (no filesystem), only include for native tests
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
