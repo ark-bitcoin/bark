@@ -141,7 +141,8 @@ impl Wallet {
 		address: &bitcoin::Address,
 		vtxos: impl IntoIterator<Item = impl AsRef<Vtxo<G>>>,
 	) -> anyhow::Result<FeeEstimate> {
-		let (_, ark_info) = self.require_server().await?;
+		let (srv, ark_info) = self.require_server().await?;
+		let offboard_feerate = srv.offboard_feerate().await?;
 		let script_buf = address.script_pubkey();
 		let current_height = self.chain.tip().await?;
 
@@ -160,7 +161,7 @@ impl Wallet {
 		let fee = ark_info.fees.offboard.calculate(
 			&script_buf,
 			amount,
-			ark_info.offboard_feerate,
+			offboard_feerate,
 			fee_info,
 		).context("Error whilst calculating offboard fee")?;
 
@@ -224,12 +225,13 @@ impl Wallet {
 		address: &bitcoin::Address,
 		amount: Amount,
 	) -> anyhow::Result<FeeEstimate> {
-		let (_, ark_info) = self.require_server().await?;
+		let (srv, ark_info) = self.require_server().await?;
+		let offboard_feerate = srv.offboard_feerate().await?;
 		let script_buf = address.script_pubkey();
 
 		let (inputs, fee) = match self.select_vtxos_to_cover_with_fee(
 			amount, |a, v|
-				ark_info.fees.offboard.calculate(&script_buf, a, ark_info.offboard_feerate, v)
+				ark_info.fees.offboard.calculate(&script_buf, a, offboard_feerate, v)
 					.ok_or_else(|| anyhow!("Error whilst calculating fee"))
 		).await {
 			Ok((inputs, fee)) => (inputs, fee),
@@ -238,7 +240,7 @@ impl Wallet {
 				// funds.
 				let info = [VtxoFeeInfo { amount, expiry_blocks: u32::MAX }];
 				let fee = ark_info.fees.offboard.calculate(
-					&script_buf, amount, ark_info.offboard_feerate, info,
+					&script_buf, amount, offboard_feerate, info,
 				).context("fee overflowed")?;
 				(Vec::new(), fee)
 			}

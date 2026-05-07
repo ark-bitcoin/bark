@@ -245,10 +245,11 @@ impl Wallet {
 		}
 
 		let (mut srv, ark) = self.require_server().await?;
+		let offboard_feerate = srv.offboard_feerate().await?;
 
 		let destination_spk = destination.script_pubkey();
 		let (vtxos, fee) = self.select_vtxos_to_cover_with_fee(amount, |a, v| {
-			ark.fees.offboard.calculate(&destination_spk, a, ark.offboard_feerate, v)
+			ark.fees.offboard.calculate(&destination_spk, a, offboard_feerate, v)
 				.ok_or_else(|| anyhow!("failed to calculate offboard fee for {}", a))
 		}).await?;
 		let required_amount = amount + fee;
@@ -301,7 +302,7 @@ impl Wallet {
 			script_pubkey: destination_spk.clone(),
 			net_amount: amount,
 			deduct_fees_from_gross_amount: false,
-			fee_rate: ark.offboard_feerate,
+			fee_rate: offboard_feerate,
 		};
 		let vtxo_keys = vec![offboard_pubkey; vtxos.len()];
 
@@ -348,6 +349,7 @@ impl Wallet {
 		destination: bitcoin::Address,
 	) -> anyhow::Result<Txid> {
 		let (mut srv, ark) = self.require_server().await?;
+		let offboard_feerate = srv.offboard_feerate().await?;
 		let tip = self.chain.tip().await?;
 
 		let destination_spk = destination.script_pubkey();
@@ -355,7 +357,7 @@ impl Wallet {
 		let fee = ark.fees.offboard.calculate(
 			&destination_spk,
 			vtxos_amount,
-			ark.offboard_feerate,
+			offboard_feerate,
 			vtxos.iter().map(|v| VtxoFeeInfo::from_vtxo_and_tip(v, tip)),
 		).context("error calculating offboard fee")?;
 		let net_amount = validate_and_subtract_fee_min_dust(vtxos_amount, fee)?;
@@ -371,7 +373,7 @@ impl Wallet {
 			script_pubkey: destination_spk.clone(),
 			net_amount,
 			deduct_fees_from_gross_amount: true,
-			fee_rate: ark.offboard_feerate,
+			fee_rate: offboard_feerate,
 		};
 
 		let signed_offboard_tx = self.offboard_inner(&mut srv, &vtxos, &vtxo_keys, &req).await
