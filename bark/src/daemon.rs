@@ -182,9 +182,14 @@ impl DaemonProcess {
 		}
 	}
 
-	/// Subscribe to round event stream and process each incoming event
+	/// Subscribe to round event stream and process each incoming event.
+	///
+	/// A successful subscription also signals server connectivity — the
+	/// `connected` flag is set to `true` once the stream opens and back
+	/// to `false` when it breaks.
 	async fn inner_process_pending_rounds(&self) -> anyhow::Result<()> {
 		let mut events = self.wallet.subscribe_round_events().await?;
+		self.connected.store(true, Ordering::Relaxed);
 
 		loop {
 			futures::select! {
@@ -210,6 +215,7 @@ impl DaemonProcess {
 			if self.connected.load(Ordering::Relaxed) {
 				if let Err(e) = self.inner_process_pending_rounds().await {
 					warn!("An error occured while processing pending rounds: {e:#}");
+					self.connected.store(false, Ordering::Relaxed);
 				}
 			}
 
@@ -223,7 +229,11 @@ impl DaemonProcess {
 		}
 	}
 
-	/// Run a process that will recursively check the server connection
+	/// Periodically try to reconnect when the server is not reachable.
+	///
+	/// When connected, the round-events stream drives the `connected`
+	/// flag — this process only kicks in to re-establish the initial
+	/// connection so the streams can take over again.
 	async fn run_server_connection_check_process(&self) {
 		loop {
 			futures::select! {
@@ -234,13 +244,16 @@ impl DaemonProcess {
 				},
 			}
 
-			let was_connected = self.connected.load(Ordering::Relaxed);
+			if self.connected.load(Ordering::Relaxed) {
+				continue;
+			}
+
 			let result = self.wallet.refresh_server().await;
 			let connected = result.is_ok();
-			match (was_connected, &result) {
-				(true, Err(e)) => warn!("Ark server refresh failed: {:#}", e),
-				(false, Ok(())) => info!("Ark server reconnected"),
-				_ => {},
+			if let Err(ref e) = result {
+				warn!("Ark server reconnect failed: {:#}", e);
+			} else {
+				info!("Ark server reconnected");
 			}
 			self.connected.store(connected, Ordering::Relaxed);
 		}

@@ -81,7 +81,12 @@ pub struct ArkInfo {
 
 	//TODO(stevenroose) move elsewhere eith other temp fields
 
-	/// The feerate for offboards
+	/// The feerate for offboard transactions.
+	///
+	/// This is the only field on [ArkInfo] that changes over time (it depends
+	/// on mempool conditions). In `bark`, prefer
+	/// [`ServerConnection::offboard_feerate`] which caches this value with a
+	/// TTL and transparently refreshes it when stale.
 	pub offboard_feerate: FeeRate,
 
 	/// Indicates whether the Ark server requires clients to either

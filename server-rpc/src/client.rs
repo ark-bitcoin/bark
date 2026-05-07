@@ -31,7 +31,7 @@ use std::convert::TryFrom;
 use std::ops::Deref;
 use std::sync::Arc;
 
-use bitcoin::Network;
+use bitcoin::{FeeRate, Network};
 use log::warn;
 use tokio::sync::RwLock;
 use tonic::metadata::AsciiMetadataValue;
@@ -210,10 +210,8 @@ pub const MIN_PROTOCOL_VERSION: u64 = 1;
 /// For info on protocol versions, see [server_rpc](crate) module documentation.
 pub const MAX_PROTOCOL_VERSION: u64 = 1;
 
-/// The time to live for the Ark info.
-///
-/// The Ark info is refreshed every 10 minutes.
-pub const ARK_INFO_TTL_SECS: u64 = 10 * 60;
+/// How long we trust the cached offboard fee rate before refreshing.
+const OFFBOARD_FEERATE_TTL_SECS: u64 = 5 * 60;
 
 #[derive(Debug, thiserror::Error)]
 #[error("failed to create gRPC endpoint: {msg}")]
@@ -324,28 +322,26 @@ pub struct ServerInfo {
 	pub pver: u64,
 	/// Server-side configuration and network parameters returned after connection.
 	pub info: ArkInfo,
-	/// Informations contained in this struct will be considered outdated after this timestamp.
-	pub refresh_at_secs: u64,
+	/// Timestamp (secs since epoch) after which `offboard_feerate` is stale.
+	offboard_feerate_refresh_at: u64,
 }
 
 impl ServerInfo {
-	/// Compute the time at which the Ark info will be considered outdated.
-	fn ttl() -> u64 {
-		ark::time::timestamp_secs() + ARK_INFO_TTL_SECS
-	}
-
 	pub fn new(pver: u64, info: ArkInfo) -> Self {
-		Self { pver, info, refresh_at_secs: Self::ttl() }
+		Self {
+			pver,
+			info,
+			offboard_feerate_refresh_at: ark::time::timestamp_secs() + OFFBOARD_FEERATE_TTL_SECS,
+		}
 	}
 
-	pub fn update(&mut self, info: ArkInfo) {
+	fn offboard_feerate_is_stale(&self) -> bool {
+		ark::time::timestamp_secs() > self.offboard_feerate_refresh_at
+	}
+
+	fn refresh_offboard_feerate(&mut self, info: ArkInfo) {
 		self.info = info;
-		self.refresh_at_secs = Self::ttl();
-	}
-
-	/// Checks if the information contained in this struct is outdated.
-	pub fn is_outdated(&self) -> bool {
-		ark::time::timestamp_secs() > self.refresh_at_secs
+		self.offboard_feerate_refresh_at = ark::time::timestamp_secs() + OFFBOARD_FEERATE_TTL_SECS;
 	}
 }
 
@@ -497,23 +493,35 @@ impl ServerConnection {
 		Ok(())
 	}
 
-	/// Returns a [ArkInfoHandle]
+	/// Returns the cached [ArkInfo].
 	///
-	/// If the Ark info is outdated, a new request will be sent to
-	/// the Ark server to refresh it asynchronously.
-	///
-	/// The handle also contains a receiver that will be signalled
-	/// when the Ark info is successfully refreshed.
-	pub async fn ark_info(&self) -> Result<ArkInfo, ConnectError> {
-		let mut current = self.info.write().await;
+	/// All fields are static for the lifetime of a server connection,
+	/// **except** `offboard_feerate` which depends on mempool conditions
+	/// and may become stale. Use [Self::offboard_feerate] instead when
+	/// you need the offboard fee rate - it checks a TTL and refreshes
+	/// from the server automatically.
+	pub async fn ark_info(&self) -> ArkInfo {
+		self.info.read().await.info.clone()
+	}
 
-		let new_info = self.client.clone().ark_info(current.info.network).await?;
-		if current.is_outdated() {
-			current.update(new_info.clone());
-			return Ok(new_info);
+	/// Returns the offboard fee rate, refreshing from the server if stale.
+	pub async fn offboard_feerate(&self) -> Result<FeeRate, ConnectError> {
+		{
+			let current = self.info.read().await;
+			if !current.offboard_feerate_is_stale() {
+				return Ok(current.info.offboard_feerate);
+			}
 		}
 
-		Ok(current.info.clone())
+		let mut current = self.info.write().await;
+		// Re-check after acquiring write lock — another task may have refreshed.
+		if !current.offboard_feerate_is_stale() {
+			return Ok(current.info.offboard_feerate);
+		}
+
+		let new_info = self.client.clone().ark_info(current.info.network).await?;
+		current.refresh_offboard_feerate(new_info);
+		Ok(current.info.offboard_feerate)
 	}
 }
 trait ArkServiceClientExt {

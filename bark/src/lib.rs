@@ -940,7 +940,7 @@ impl Wallet {
 		let (server_pubkey, mailbox_pubkey) = if !force {
 			match Self::connect_to_server(&config, network).await {
 				Ok(conn) => {
-					let ark_info = conn.ark_info().await?;
+					let ark_info = conn.ark_info().await;
 					(Some(ark_info.server_pubkey), Some(ark_info.mailbox_pubkey))
 				}
 				Err(err) => {
@@ -1129,7 +1129,7 @@ impl Wallet {
 				.context("You should be connected to Ark server to perform this action")
 		}).await?.clone();
 
-		let ark_info = conn.ark_info().await?;
+		let ark_info = conn.ark_info().await;
 		self.check_and_store_server_keys(&ark_info).await?;
 
 		Ok((conn, ark_info))
@@ -1148,7 +1148,9 @@ impl Wallet {
 		}).await?;
 
 		srv.check_connection().await?;
-		let ark_info = srv.ark_info().await?;
+		// Force a fresh fetch so the cache is up-to-date after reconnection.
+		srv.offboard_feerate().await?;
+		let ark_info = srv.ark_info().await;
 		ark_info.fees.validate().context("invalid fee schedule")?;
 		self.check_and_store_server_keys(&ark_info).await?;
 
@@ -1190,7 +1192,7 @@ impl Wallet {
 	/// Return [ArkInfo] fetched on last handshake with the Ark server
 	pub async fn ark_info(&self) -> anyhow::Result<Option<ArkInfo>> {
 		match self.server.get() {
-			Some(srv) => Ok(Some(srv.ark_info().await?)),
+			Some(srv) => Ok(Some(srv.ark_info().await)),
 			None => Ok(None),
 		}
 	}
