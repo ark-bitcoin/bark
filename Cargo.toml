@@ -100,7 +100,7 @@ bdk_esplora = { version = "0.22.1", features = [ "std", "async-https-rustls", "t
 # crate used by bdk_esplora, first version with submit_package
 esplora-client = { version = ">=0.12.3", default-features = false, features = ["async", "async-https-rustls", "tokio"] }
 bdk_bitcoind_rpc = { version = "0.22.0" }
-bitcoind-async-client = { version = "0.10", features = [ "raw_rpc" ] }
+bitcoind-async-client = { version = "0.11", features = [ "raw_rpc" ] }
 # tracing and monitoring
 opentelemetry = "0.30.0"
 opentelemetry_sdk = { version = "0.30.0", features = [ "trace", "rt-tokio" ] }
