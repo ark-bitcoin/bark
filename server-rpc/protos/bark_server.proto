@@ -9,6 +9,7 @@ import "core.proto";
 service ArkService {
 	rpc Handshake(HandshakeRequest) returns (HandshakeResponse) {}
 	rpc GetArkInfo(core.Empty) returns (ArkInfo) {}
+	rpc GetOffboardFeeRate(core.Empty) returns (OffboardFeeRateResponse) {}
 
 	// Get new round since the given round id
 	//
@@ -105,13 +106,17 @@ message ArkInfo {
 	bool ln_receive_anti_dos_required = 15;
 	bytes mailbox_pubkey = 16;
 
-	//TODO(stevenroose) move fee related values that are less
-	// permanent into another struct for bark to check
-	uint64 offboard_feerate_sat_vkb = 14;
+	// Deprecated: use GetOffboardFeeRate instead. This field is kept
+	// for wire compatibility with older clients.
+	uint64 offboard_feerate_sat_vkb = 14 [deprecated = true];
 	FeeSchedule fees = 18;
 	uint32 max_vtxo_exit_depth = 19;
 
 	// last index: 19
+}
+
+message OffboardFeeRateResponse {
+	uint64 sat_vkb = 1;
 }
 
 message FeeSchedule {

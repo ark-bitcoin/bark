@@ -210,8 +210,6 @@ pub const MIN_PROTOCOL_VERSION: u64 = 1;
 /// For info on protocol versions, see [server_rpc](crate) module documentation.
 pub const MAX_PROTOCOL_VERSION: u64 = 1;
 
-/// How long we trust the cached offboard fee rate before refreshing.
-const OFFBOARD_FEERATE_TTL_SECS: u64 = 5 * 60;
 
 #[derive(Debug, thiserror::Error)]
 #[error("failed to create gRPC endpoint: {msg}")]
@@ -253,6 +251,8 @@ pub enum ConnectError {
 	InvalidArkInfo(#[from] ConvertError),
 	#[error("network mismatch. Expected: {expected}, Got: {got}")]
 	NetworkMismatch { expected: Network, got: Network },
+	#[error("error getting offboard fee rate: {0}")]
+	GetOffboardFeeRate(tonic::Status),
 	#[error("tokio channel error: {0}")]
 	Tokio(#[from] tokio::sync::oneshot::error::RecvError),
 }
@@ -322,26 +322,11 @@ pub struct ServerInfo {
 	pub pver: u64,
 	/// Server-side configuration and network parameters returned after connection.
 	pub info: ArkInfo,
-	/// Timestamp (secs since epoch) after which `offboard_feerate` is stale.
-	offboard_feerate_refresh_at: u64,
 }
 
 impl ServerInfo {
 	pub fn new(pver: u64, info: ArkInfo) -> Self {
-		Self {
-			pver,
-			info,
-			offboard_feerate_refresh_at: ark::time::timestamp_secs() + OFFBOARD_FEERATE_TTL_SECS,
-		}
-	}
-
-	fn offboard_feerate_is_stale(&self) -> bool {
-		ark::time::timestamp_secs() > self.offboard_feerate_refresh_at
-	}
-
-	fn refresh_offboard_feerate(&mut self, info: ArkInfo) {
-		self.info = info;
-		self.offboard_feerate_refresh_at = ark::time::timestamp_secs() + OFFBOARD_FEERATE_TTL_SECS;
+		Self { pver, info }
 	}
 }
 
@@ -494,34 +479,17 @@ impl ServerConnection {
 	}
 
 	/// Returns the cached [ArkInfo].
-	///
-	/// All fields are static for the lifetime of a server connection,
-	/// **except** `offboard_feerate` which depends on mempool conditions
-	/// and may become stale. Use [Self::offboard_feerate] instead when
-	/// you need the offboard fee rate - it checks a TTL and refreshes
-	/// from the server automatically.
 	pub async fn ark_info(&self) -> ArkInfo {
 		self.info.read().await.info.clone()
 	}
 
-	/// Returns the offboard fee rate, refreshing from the server if stale.
+	/// Fetches the current offboard fee rate from the server.
 	pub async fn offboard_feerate(&self) -> Result<FeeRate, ConnectError> {
-		{
-			let current = self.info.read().await;
-			if !current.offboard_feerate_is_stale() {
-				return Ok(current.info.offboard_feerate);
-			}
-		}
-
-		let mut current = self.info.write().await;
-		// Re-check after acquiring write lock — another task may have refreshed.
-		if !current.offboard_feerate_is_stale() {
-			return Ok(current.info.offboard_feerate);
-		}
-
-		let new_info = self.client.clone().ark_info(current.info.network).await?;
-		current.refresh_offboard_feerate(new_info);
-		Ok(current.info.offboard_feerate)
+		let resp = self.client.clone()
+			.get_offboard_fee_rate(protos::Empty {}).await
+			.map_err(ConnectError::GetOffboardFeeRate)?
+			.into_inner();
+		Ok(FeeRate::from_sat_per_kwu(resp.sat_vkb / 4))
 	}
 }
 trait ArkServiceClientExt {

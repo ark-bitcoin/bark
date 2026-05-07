@@ -1,0 +1,5 @@
+- Add `GetOffboardFeeRate` RPC endpoint
+  The offboard fee rate is now available via a dedicated endpoint so clients
+  can fetch it without re-requesting all of `ArkInfo`. The field in `ArkInfo`
+  is marked deprecated but still populated for older clients.
+  [#2029](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2029)

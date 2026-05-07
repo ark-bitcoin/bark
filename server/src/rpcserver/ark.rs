@@ -75,6 +75,17 @@ impl rpc::server::ArkService for Server {
 		Ok(tonic::Response::new(self.ark_info().into()))
 	}
 
+	#[tracing::instrument(skip(self, _req))]
+	async fn get_offboard_fee_rate(
+		&self,
+		_req: tonic::Request<protos::Empty>,
+	) -> Result<tonic::Response<protos::OffboardFeeRateResponse>, tonic::Status> {
+		let feerate = self.offboard_feerate();
+		Ok(tonic::Response::new(protos::OffboardFeeRateResponse {
+			sat_vkb: feerate.to_sat_per_kwu() * 4,
+		}))
+	}
+
 	#[tracing::instrument(skip(self, req))]
 	async fn get_fresh_rounds(
 		&self,

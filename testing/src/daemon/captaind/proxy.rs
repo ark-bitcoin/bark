@@ -26,6 +26,10 @@ pub trait ArkRpcProxy: Send + Sync + Clone + 'static {
 		Ok(upstream.get_ark_info(req).await?.into_inner())
 	}
 
+	async fn get_offboard_fee_rate(&self, upstream: &mut ArkClient, req: protos::Empty) -> Result<protos::OffboardFeeRateResponse, tonic::Status> {
+		Ok(upstream.get_offboard_fee_rate(req).await?.into_inner())
+	}
+
 	async fn get_fresh_rounds(&self, upstream: &mut ArkClient, req: protos::FreshRoundsRequest) -> Result<protos::FreshRounds, tonic::Status> {
 		Ok(upstream.get_fresh_rounds(req).await?.into_inner())
 	}
@@ -249,6 +253,13 @@ impl<T: ArkRpcProxy> rpc::server::ArkService for ArkRpcProxyWrapper<T> {
 	) -> Result<tonic::Response<protos::ArkInfo>, tonic::Status> {
 		self.proxy.on_request(req.metadata()).await?;
 		Ok(tonic::Response::new(ArkRpcProxy::get_ark_info(&self.proxy, &mut self.upstream.clone(), req.into_inner()).await?))
+	}
+
+	async fn get_offboard_fee_rate(
+		&self, req: tonic::Request<protos::Empty>,
+	) -> Result<tonic::Response<protos::OffboardFeeRateResponse>, tonic::Status> {
+		self.proxy.on_request(req.metadata()).await?;
+		Ok(tonic::Response::new(ArkRpcProxy::get_offboard_fee_rate(&self.proxy, &mut self.upstream.clone(), req.into_inner()).await?))
 	}
 
 	async fn get_fresh_rounds(
