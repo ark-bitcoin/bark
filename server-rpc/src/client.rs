@@ -507,13 +507,13 @@ impl ServerConnection {
 	pub async fn ark_info(&self) -> Result<ArkInfo, ConnectError> {
 		let mut current = self.info.write().await;
 
-		let new_info = self.client.clone().ark_info(current.info.network).await?;
-		if current.is_outdated() {
-			current.update(new_info.clone());
-			return Ok(new_info);
+		if !current.is_outdated() {
+			return Ok(current.info.clone());
 		}
 
-		Ok(current.info.clone())
+		let new_info = self.client.clone().ark_info(current.info.network).await?;
+		current.update(new_info.clone());
+		Ok(new_info)
 	}
 }
 trait ArkServiceClientExt {
