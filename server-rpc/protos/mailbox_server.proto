@@ -5,13 +5,13 @@ package mailbox_server;
 
 import "core.proto";
 
-/// Public mailbox service.
+// Public mailbox service.
 service MailboxService {
-	/// Deposits your VTXOs into the mailbox (blinded ID is unblinded with the VTXOs’ shared user pubkey; all VTXOs must have identical user pubkeys).
+	// Deposits your VTXOs into the mailbox (blinded ID is unblinded with the VTXOs’ shared user pubkey; all VTXOs must have identical user pubkeys).
 	rpc PostArkoorMessage(PostArkoorMessageRequest) returns (core.Empty) {};
 	rpc SubscribeMailbox(MailboxRequest) returns (stream MailboxMessage);
 	rpc ReadMailbox(MailboxRequest) returns (MailboxMessages);
-	/// Deposits your VTXO IDs into your recovery mailbox.
+	// Deposits your VTXO IDs into your recovery mailbox.
 	rpc PostRecoveryVtxoIds(PostRecoveryVtxoIdsRequest) returns (core.Empty) {};
 }
 
@@ -71,7 +71,7 @@ message LightningSendFinishedMessage {
 
 message MailboxMessages {
 	repeated MailboxMessage messages = 1;
-	/// Whether the server has more messages for you
+	// Whether the server has more messages for you
 	bool have_more = 2;
 }
 

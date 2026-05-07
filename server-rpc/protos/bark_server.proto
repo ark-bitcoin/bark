@@ -5,7 +5,7 @@ package bark_server;
 
 import "core.proto";
 
-/// Public ark service for arkd.
+// Public ark service for arkd.
 service ArkService {
 	rpc Handshake(HandshakeRequest) returns (HandshakeResponse) {}
 	rpc GetArkInfo(core.Empty) returns (ArkInfo) {}
@@ -398,9 +398,9 @@ message VtxoProposal {
 message RoundFinished {
 	uint64 round_seq = 1;
 	uint64 attempt_seq = 2;
-	/// The signed round tx.
+	// The signed round tx.
 	bytes signed_round_tx = 3;
-	/// The cosign signatures to plug into the vtxo tree.
+	// The cosign signatures to plug into the vtxo tree.
 	repeated bytes vtxo_cosign_signatures = 4;
 }
 
@@ -462,7 +462,7 @@ message ForfeitSignatures {
 }
 
 message VtxoSignaturesRequest {
-	/// The cosign pubkey these signatures are for.
+	// The cosign pubkey these signatures are for.
 	bytes pubkey = 1;
 	repeated bytes signatures = 2;
 }
