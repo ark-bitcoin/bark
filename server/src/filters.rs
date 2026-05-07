@@ -3,7 +3,7 @@ use std::net::{IpAddr, SocketAddr};
 use clap::Args;
 use ipnet::IpNet;
 use tracing::trace;
-use trust_dns_resolver::TokioAsyncResolver;
+use hickory_resolver::TokioResolver;
 
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq, Args)]
 pub struct Filters {
@@ -41,7 +41,7 @@ impl Filters {
 
 	pub async fn allowed(
 		&self,
-		resolver: &TokioAsyncResolver,
+		resolver: &TokioResolver,
 		addr: &SocketAddr,
 	) -> bool {
 		let ip = addr.ip();

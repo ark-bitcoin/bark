@@ -3,8 +3,9 @@ use std::net::SocketAddr;
 
 use anyhow::Context;
 use chrono::Local;
-use trust_dns_resolver::config::{ResolverConfig, ResolverOpts};
-use trust_dns_resolver::TokioAsyncResolver;
+use hickory_resolver::TokioResolver;
+use hickory_resolver::config::ResolverConfig;
+use hickory_resolver::net::runtime::TokioRuntimeProvider;
 
 use ark::integration::{TokenStatus, TokenType};
 
@@ -154,10 +155,10 @@ impl Server {
 
 						let client_address = client_address.unwrap();
 
-						let resolver = TokioAsyncResolver::tokio(
+						let resolver = TokioResolver::builder_with_config(
 							ResolverConfig::default(),
-							ResolverOpts::default(),
-						);
+							TokioRuntimeProvider::default(),
+						).build()?;
 
 						if !integration_api_key.filters.allowed(&resolver, &client_address).await {
 							return badarg!("Client's address is not allowed");
