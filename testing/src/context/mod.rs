@@ -571,9 +571,8 @@ impl TestContext {
 		info!("Fund {} {}", srv.name, amount);
 		let rounds_address = srv.get_rounds_funding_address().await;
 		self.bitcoind().fund_addr(rounds_address, amount).await;
-		tokio::time::sleep(Duration::from_millis(1000)).await;
 		self.bitcoind().generate(1).await;
-		tokio::time::sleep(Duration::from_millis(1000)).await;
+		self.await_block_count_sync().await;
 	}
 
 	/// Send `amount` to an onchain address of this Bark client.
