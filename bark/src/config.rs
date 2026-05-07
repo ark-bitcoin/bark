@@ -187,7 +187,7 @@ impl Config {
 			vtxo_refresh_expiry_threshold: 144,
 			vtxo_exit_margin: 12,
 			htlc_recv_claim_delta: 18,
-			fallback_fee_rate: Some(FeeRate::from_sat_per_vb_unchecked(2)),
+			fallback_fee_rate: Some(FeeRate::from_sat_per_vb_u32(2)),
 			round_tx_required_confirmations: 1,
 			offboard_required_confirmations: 2,
 			daemon_sync_interval_secs: 60,
@@ -196,7 +196,7 @@ impl Config {
 
 		if network != Network::Bitcoin {
 			ret.vtxo_refresh_expiry_threshold = 12;
-			ret.fallback_fee_rate = Some(FeeRate::from_sat_per_vb_unchecked(1));
+			ret.fallback_fee_rate = Some(FeeRate::from_sat_per_vb_u32(1));
 			ret.round_tx_required_confirmations = 1;
 			ret.offboard_required_confirmations = 0;
 		}

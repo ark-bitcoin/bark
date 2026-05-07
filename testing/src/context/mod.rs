@@ -372,9 +372,9 @@ impl TestContext {
 			fee_estimator: server::fee_estimator::Config {
 				update_interval: Duration::from_secs(60),
 				history_duration: Duration::from_secs(60 * 30),
-				fallback_fee_rate_fast: FeeRate::from_sat_per_vb_unchecked(25),
-				fallback_fee_rate_regular: FeeRate::from_sat_per_vb_unchecked(7),
-				fallback_fee_rate_slow: FeeRate::from_sat_per_vb_unchecked(5),
+				fallback_fee_rate_fast: FeeRate::from_sat_per_vb_u32(25),
+				fallback_fee_rate_regular: FeeRate::from_sat_per_vb_u32(7),
+				fallback_fee_rate_slow: FeeRate::from_sat_per_vb_u32(5),
 			},
 			transaction_rebroadcast_interval: std::time::Duration::from_secs(2),
 			rpc: server::config::Rpc {
@@ -471,9 +471,9 @@ impl TestContext {
 			fee_estimator: server::fee_estimator::Config {
 				update_interval: Duration::from_secs(60),
 				history_duration: Duration::from_secs(60 * 30),
-				fallback_fee_rate_fast: FeeRate::from_sat_per_vb_unchecked(25),
-				fallback_fee_rate_regular: FeeRate::from_sat_per_vb_unchecked(7),
-				fallback_fee_rate_slow: FeeRate::from_sat_per_vb_unchecked(5),
+				fallback_fee_rate_fast: FeeRate::from_sat_per_vb_u32(25),
+				fallback_fee_rate_regular: FeeRate::from_sat_per_vb_u32(7),
+				fallback_fee_rate_slow: FeeRate::from_sat_per_vb_u32(5),
 			},
 			transaction_rebroadcast_interval: std::time::Duration::from_secs(2),
 			bitcoind: server::config::Bitcoind {
@@ -523,7 +523,7 @@ impl TestContext {
 			vtxo_refresh_expiry_threshold: 24,
 			vtxo_exit_margin: 12,
 			htlc_recv_claim_delta: 18,
-			fallback_fee_rate: Some(FeeRate::from_sat_per_vb_unchecked(5)),
+			fallback_fee_rate: Some(FeeRate::from_sat_per_vb_u32(5)),
 			round_tx_required_confirmations: constants::ROUND_CONFIRMATIONS,
 			offboard_required_confirmations: constants::OFFBOARD_CONFIRMATIONS,
 			daemon_sync_interval_secs: 3,

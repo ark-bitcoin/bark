@@ -959,10 +959,10 @@ async fn exit_oor_ping_pong_then_rbf_tx() {
 	let srv = ctx.captaind("server").funded(btc(10)).create().await;
 
 	let mut bark1 = ctx.bark("bark1", &srv).cfg(|cfg| {
-		cfg.fallback_fee_rate = Some(FeeRate::from_sat_per_vb_unchecked(1));
+		cfg.fallback_fee_rate = Some(FeeRate::from_sat_per_vb_u32(1));
 	}).try_create().await.unwrap();
 	let mut bark2 = ctx.bark("bark2", &srv).cfg(|cfg| {
-		cfg.fallback_fee_rate = Some(FeeRate::from_sat_per_vb_unchecked(100));
+		cfg.fallback_fee_rate = Some(FeeRate::from_sat_per_vb_u32(100));
 	}).try_create().await.unwrap();
 	bark1.set_timeout(Duration::from_secs(2 * 60));
 	bark2.set_timeout(Duration::from_secs(2 * 60));
