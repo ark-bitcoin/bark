@@ -251,11 +251,8 @@ impl CollectingPayments {
 			}
 
 			match output.policy {
-				// HTLCs are not included in the sum because they don't spend any
-				// round input. Instead, they are funded by provided the payment
-				// hash and handled in the `collect_htlcs` method.
 				VtxoPolicy::ServerHtlcRecv { .. } => {
-					continue;
+					return badarg!("invalid vtxo policy: {:?}", output.policy);
 				},
 				VtxoPolicy::ServerHtlcSend { .. } => {
 					return badarg!("invalid vtxo policy: {:?}", output.policy);
