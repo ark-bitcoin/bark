@@ -244,7 +244,7 @@ pub trait WalletExt: BorrowMut<Wallet> {
 	}
 
 	/// Check if a transaction is fully owned by the wallet (all inputs spend
-	/// wallet-owned outputs). 
+	/// wallet-owned outputs).
 	fn is_fully_owned_tx(&self, txid: Txid) -> bool {
 		let wallet = self.borrow();
 		let graph = wallet.tx_graph();
@@ -272,6 +272,21 @@ pub trait WalletExt: BorrowMut<Wallet> {
 			chain: Some(wallet.latest_checkpoint().insert(checkpoint)),
 			..Default::default()
 		}).expect("should work, might fail if tip is genesis");
+	}
+
+	/// Mark the keys used in the outputs of this tx as unused
+	///
+	/// Used to replaced removed `cancel_tx` function as per suggestion:
+	/// https://github.com/bitcoindevkit/bdk_wallet/pull/393
+	fn mark_output_keys_unused(&mut self, tx: &Transaction) {
+		let wallet = self.borrow_mut();
+		for txout in &tx.output {
+			if let Some((keychain, index)) = wallet.spk_index().index_of_spk(txout.script_pubkey.clone()) {
+				// NOTE: unmark_used will **not** make something unused if it has actually been used
+				// by a tx in the tracker. It only removes the superficial marking.
+				wallet.unmark_used(*keychain, *index);
+			}
+		}
 	}
 
 	fn make_signed_p2a_cpfp(
@@ -344,7 +359,7 @@ pub trait WalletExt: BorrowMut<Wallet> {
 			if tx_weight != final_child_weight {
 				// Since the weight changed, we can drop the transaction and recalculate the
 				// required fee amount.
-				wallet.cancel_tx(&tx);
+				wallet.mark_output_keys_unused(&tx);
 				final_child_weight = tx_weight;
 				fee_needed = match fees {
 					MakeCpfpFees::Effective(fr) => total_weight * fr,

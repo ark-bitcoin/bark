@@ -61,15 +61,18 @@ pub fn verify_tx(
 	use bitcoinkernel as krn;
 	use bitcoin::consensus::encode::serialize;
 
+	let tx = krn::Transaction::new(&serialize(tx)).unwrap();
+	let spent_outputs = inputs.iter().map(|i| krn::TxOut::new(
+		&krn::ScriptPubkey::new(i.script_pubkey.as_bytes()).unwrap(),
+		i.value.to_sat() as i64,
+	)).collect::<Vec<_>>();
+
 	krn::verify(
 		&krn::ScriptPubkey::new(inputs[input_idx].script_pubkey.as_bytes()).unwrap(),
 		Some(inputs[input_idx].value.to_sat() as i64),
-		&krn::Transaction::new(&serialize(tx)).unwrap(),
+		&tx,
 		input_idx,
 		Some(krn::VERIFY_ALL),
-		&inputs.iter().map(|i| krn::TxOut::new(
-			&krn::ScriptPubkey::new(i.script_pubkey.as_bytes()).unwrap(),
-			i.value.to_sat() as i64,
-		)).collect::<Vec<_>>(),
+		&krn::PrecomputedTransactionData::new(&tx, &spent_outputs).unwrap(),
 	)
 }

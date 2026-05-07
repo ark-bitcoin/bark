@@ -546,7 +546,7 @@ mod tests {
 		let script_str = "6a0474657374"; // OP_RETURN, push 4 bytes with the string "test"
 		let destination = ScriptBuf::from_hex(script_str)
 			.expect("Failed to parse OP_RETURN script hex string");
-		let fee_rate = FeeRate::from_sat_per_vb_unchecked(10);
+		let fee_rate = FeeRate::from_sat_per_vb_u32(10);
 		let amount = Amount::from_sat(100_000);
 
 		// Test with expiry < 100 blocks (should use 0 ppm)
@@ -588,7 +588,7 @@ mod tests {
 		let script_str = "6a0474657374"; // OP_RETURN, push 4 bytes with the string "test"
 		let destination = ScriptBuf::from_hex(script_str)
 			.expect("Failed to parse OP_RETURN script hex string");
-		let fee_rate = FeeRate::from_sat_per_vb_unchecked(10);
+		let fee_rate = FeeRate::from_sat_per_vb_u32(10);
 		// Test with multiple VTXOs where total VTXO value exceeds amount being sent
 		// VTXOs total 120,000 but we're only sending 100,000
 		let vtxos = vec![
@@ -620,7 +620,7 @@ mod tests {
 		let script_str = "6a0474657374"; // OP_RETURN, push 4 bytes with the string "test"
 		let destination = ScriptBuf::from_hex(script_str)
 			.expect("Failed to parse OP_RETURN script hex string");
-		let fee_rate = FeeRate::from_sat_per_vb_unchecked(0);
+		let fee_rate = FeeRate::from_sat_per_vb_u32(0);
 		let vtxos = vec![
 			VtxoFeeInfo { amount: Amount::from_sat(200_000), expiry_blocks: 50 },  // 1,000 ppm (> 1)
 		];
@@ -644,7 +644,7 @@ mod tests {
 		let script_str = "6a0474657374"; // OP_RETURN, push 4 bytes with the string "test"
 		let destination = ScriptBuf::from_hex(script_str)
 			.expect("Failed to parse OP_RETURN script hex string");
-		let fee_rate = FeeRate::from_sat_per_vb_unchecked(10);
+		let fee_rate = FeeRate::from_sat_per_vb_u32(10);
 		let vtxos = vec![
 			VtxoFeeInfo { amount: Amount::from_sat(200_000), expiry_blocks: 50 },  // 1,000 ppm (> 1)
 		];

@@ -467,7 +467,7 @@ pub mod helpers {
 	/// the test the entire database might be cleared.
 	#[cfg(any(test, feature = "rand"))]
 	pub fn in_memory_db() -> (PathBuf, Connection) {
-		use rand::{distr, Rng};
+		use rand::{distr, RngExt};
 
 		// All tests run in the same process and share the same
 		// cache. To ensure that each call to `in_memory` results

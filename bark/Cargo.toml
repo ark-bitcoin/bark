@@ -103,14 +103,14 @@ rusqlite = { version = "0.31.0", features = ["chrono"], optional = true }
 
 wasm-bindgen-futures = { version = "0.4.56", optional = true }
 # needed to force dependencies to use js features
-getrandom = { version = "0.3.0", features = ["wasm_js"], optional = true }
+getrandom = { version = "0.4.2", features = ["wasm_js"], optional = true }
 
 [dev-dependencies]
 ark-lib = { path = "../lib", features = [ "test-util" ] }
 
 [target.'cfg(target_arch = "wasm32")'.dev-dependencies]
 wasm-bindgen-test = "0.3"
-console_log = "0.2"
+console_log = "1.0.0"
 
 # tempfile doesn't work on WASM (no filesystem), only include for native tests
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
