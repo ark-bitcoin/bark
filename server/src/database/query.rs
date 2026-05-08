@@ -1,4 +1,3 @@
-use std::borrow::Borrow;
 use bitcoin::hex::FromHex;
 /// This module contains utilities to create
 /// database queries.
@@ -83,7 +82,7 @@ pub async fn get_vtxo_by_id(
 {
 	let stmt = tx.prepare_typed("
 		SELECT id, vtxo_id, vtxo, expiry, oor_spent_txid, spent_in_round, offboarded_in,
-			banned_until_height, created_at, updated_at
+			banned_until_height, spend_state::TEXT AS spend_state, created_at, updated_at
 		FROM vtxo
 		WHERE vtxo_id = $1;
 	", &[Type::TEXT]).await?;
@@ -106,7 +105,7 @@ pub async fn get_vtxos_by_id(
 {
 	let statement = tx.prepare_typed("
 		SELECT id, vtxo_id, vtxo, expiry, oor_spent_txid, spent_in_round, offboarded_in,
-			banned_until_height, created_at, updated_at
+			banned_until_height, spend_state::TEXT AS spend_state, created_at, updated_at
 		FROM vtxo
 		WHERE vtxo_id = ANY($1);
 	", &[Type::TEXT_ARRAY]).await?;
@@ -144,7 +143,7 @@ pub async fn get_bare_vtxo_by_id(
 		SELECT id, vtxo_id, expiry, exit_delta, policy_type, policy,
 			server_pubkey, amount, anchor_point,
 			oor_spent_txid, spent_in_round, offboarded_in,
-			banned_until_height, created_at, updated_at
+			banned_until_height, spend_state::TEXT AS spend_state, created_at, updated_at
 		FROM vtxo
 		WHERE vtxo_id = $1;
 	", &[Type::TEXT]).await?;
@@ -274,70 +273,6 @@ pub async fn complete_round_participation(
 		round_id,
 		forfeited_at,
 	})
-}
-
-/// Assert that every given txid exists in `virtual_transaction` with
-/// `signed_tx IS NOT NULL`: i.e. the client called `register_vtxo_transactions`
-/// for the entire transaction chain before attempting to spend.
-///
-/// Callers pass every tx in each input VTXO's chain (see
-/// `Vtxo::transactions()`). Bails on the first missing or unsigned tx,
-/// and bails on an empty input: the guard's purpose is to assert a
-/// pre-condition, so a caller with nothing to assert is a bug.
-pub async fn check_vtxo_transactions_registered(
-	tx: &PgTransaction<'_>,
-	txids: impl IntoIterator<Item = impl Borrow<Txid>>,
-) -> anyhow::Result<()> {
-	let mut txid_strings = txids.into_iter()
-		.map(|t| t.borrow().to_string())
-		.collect::<Vec<_>>();
-
-	if txid_strings.is_empty() {
-		bail!("register_vtxo_transactions guard called with empty txid list");
-	}
-
-	// Dedupe so the count comparison below is against a unique set: input
-	// vtxos can share parents/checkpoints, producing duplicate txids.
-	txid_strings.sort();
-	txid_strings.dedup();
-	let expected = txid_strings.len() as i64;
-
-	let stmt = tx.prepare_typed("
-		SELECT count(*)::BIGINT AS count
-		FROM virtual_transaction
-		WHERE txid = ANY($1::TEXT[]) AND signed_tx IS NOT NULL
-	", &[Type::TEXT_ARRAY]).await?;
-
-	let count: i64 = tx.query_one(&stmt, &[&txid_strings]).await?.get("count");
-	if count == expected {
-		return Ok(());
-	}
-
-	// Fast path failed: walk the inputs to produce a precise error.
-	let diag_stmt = tx.prepare_typed("
-		WITH input_txids AS (
-			SELECT unnest($1::TEXT[]) AS txid
-		)
-		SELECT i.txid, vt.txid IS NOT NULL AS exists
-		FROM input_txids i
-		LEFT JOIN virtual_transaction vt ON i.txid = vt.txid
-		WHERE vt.txid IS NULL OR vt.signed_tx IS NULL
-		LIMIT 1
-	", &[Type::TEXT_ARRAY]).await?;
-
-	if let Some(row) = tx.query_opt(&diag_stmt, &[&txid_strings]).await? {
-		let txid_str: &str = row.get("txid");
-		let exists: bool = row.get("exists");
-		let txid = Txid::from_str(txid_str).context("invalid txid")?;
-
-		if !exists {
-			bail!("register_vtxo_transactions not called: transaction {} does not exist", txid);
-		} else {
-			bail!("register_vtxo_transactions not called: transaction {} has NULL signed_tx", txid);
-		}
-	}
-
-	bail!("register_vtxo_transactions guard count mismatch: expected {}, got {}", expected, count);
 }
 
 pub async fn set_round_id_for_participations(

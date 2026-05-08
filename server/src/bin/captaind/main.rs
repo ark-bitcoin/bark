@@ -573,7 +573,10 @@ async fn inner_main() -> anyhow::Result<()> {
 					let mut any_spent = false;
 					for vtxo in cached_tree.output_vtxos() {
 						let state = t.get_user_vtxo_by_id(vtxo.id()).await?;
-						if !state.is_unspent() {
+						if state.oor_spent_txid.is_some()
+							|| state.spent_in_round.is_some()
+							|| state.offboarded_in.is_some()
+						{
 							println!("VTXO {} is already spent", vtxo.id());
 							any_spent = true;
 						}

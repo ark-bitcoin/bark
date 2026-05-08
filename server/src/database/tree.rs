@@ -142,6 +142,7 @@ struct VtxoUpdates {
 	round_forfeits: Vec<RoundForfeitUpdate>,
 	round_unspends: Vec<UndoRoundUpdate>,
 	claims: Vec<VtxoId>,
+	registrations: Vec<VtxoId>,
 }
 
 impl VtxoUpdates {
@@ -153,6 +154,7 @@ impl VtxoUpdates {
 			round_forfeits: Vec::new(),
 			round_unspends: Vec::new(),
 			claims: Vec::new(),
+			registrations: Vec::new(),
 		}
 	}
 
@@ -257,6 +259,17 @@ impl VtxoTreeUpdate {
 		vtxos: impl IntoIterator<Item = ServerVtxo<Full>>,
 	) -> Self {
 		self.insert_unspent_vtxos(vtxos, SpendState::Spendable)
+	}
+
+	/// Insert vtxos with `spend_state = 'unregistered'`. The vtxo is
+	/// unspendable (`check_spendable` and the SQL state-machine reject it)
+	/// until the client uploads the signed transaction chain via
+	/// `register_vtxo_transactions`, which transitions it to spendable.
+	pub fn insert_unregistered_vtxos(
+		self,
+		vtxos: impl IntoIterator<Item = ServerVtxo<Full>>,
+	) -> Self {
+		self.insert_unspent_vtxos(vtxos, SpendState::Unregistered)
 	}
 
 	/// Insert vtxos with `spend_state = 'unclaimed'`.
@@ -384,6 +397,21 @@ impl VtxoTreeUpdate {
 		self.vtxo_updates.claims.extend(ids);
 		self
 	}
+
+	/// Transition unregistered vtxos to spendable. Called from
+	/// `register_vtxo_transactions` after the signed tx chain is uploaded.
+	///
+	/// Idempotent: vtxos already in `spendable` (e.g. re-registration of an
+	/// already-registered vtxo) are silently skipped. Vtxos in any other
+	/// state (spent, pool, …) are also skipped — the registration step
+	/// only flips the `unregistered` → `spendable` transition.
+	pub fn mark_vtxos_registered(
+		mut self,
+		ids: impl IntoIterator<Item = VtxoId>,
+	) -> Self {
+		self.vtxo_updates.registrations.extend(ids);
+		self
+	}
 }
 
 // -- Execution --
@@ -488,6 +516,7 @@ async fn apply_vtxo_updates(
 	do_round_forfeit_updates(tx, &vu.round_forfeits).await?;
 	do_undo_round_updates(tx, &vu.round_unspends).await?;
 	do_claim_updates(tx, &vu.claims).await?;
+	do_register_updates(tx, &vu.registrations).await?;
 	Ok(())
 }
 
@@ -671,6 +700,22 @@ async fn do_claim_updates(
 	Ok(())
 }
 
+/// Transitions unregistered vtxos to spendable once the client has
+/// uploaded the signed tx chain. Idempotent: vtxos already in any state
+/// other than `unregistered` are left untouched.
+async fn do_register_updates(
+	tx: &tokio_postgres::Transaction<'_>,
+	registrations: &[VtxoId],
+) -> anyhow::Result<()> {
+	if registrations.is_empty() { return Ok(()) }
+	let ids: Vec<String> = registrations.iter().map(|id| id.to_string()).collect();
+	tx.execute("
+		UPDATE vtxo SET spend_state = 'spendable', updated_at = NOW()
+		WHERE vtxo_id = ANY($1::text[]) AND spend_state = 'unregistered'
+	", &[&ids]).await.context("failed to mark VTXOs as registered")?;
+	Ok(())
+}
+
 // -- Validation --
 
 /// Validate the update for internal consistency (debug only).
@@ -688,7 +733,8 @@ fn validate(update: &VtxoTreeUpdate) -> anyhow::Result<()> {
 		.chain(vu.round_spends.iter().map(|s| &s.vtxo_id))
 		.chain(vu.offboard_spends.iter().map(|s| &s.vtxo_id))
 		.chain(vu.round_forfeits.iter().map(|f| &f.vtxo_id))
-		.chain(vu.claims.iter());
+		.chain(vu.claims.iter())
+		.chain(vu.registrations.iter());
 	for id in all_update_ids {
 		if !seen_update_ids.insert(id) {
 			bail!("duplicate vtxo id {} in vtxo updates", id);

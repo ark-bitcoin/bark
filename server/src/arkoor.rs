@@ -115,10 +115,14 @@ impl Server {
 		// Check if the vtxo is not exited
 		self.check_vtxos_not_exited(builder.input_ids()).await?;
 
+		// Output user vtxos go in as `unregistered`. They become spendable
+		// once the sender uploads the signed transaction chain via
+		// register_vtxo_transactions; until then `check_spendable` rejects
+		// them. This replaces the standalone chain-registration guard.
 		let update = VtxoTreeUpdate::new()
 			.upsert_unsigned_tx(builder.virtual_transactions())
 			.insert_oor_spent_vtxos(builder.build_unsigned_internal_vtxos())
-			.insert_spendable_vtxos(builder.build_unsigned_vtxos().map(ServerVtxo::from))
+			.insert_unregistered_vtxos(builder.build_unsigned_vtxos().map(ServerVtxo::from))
 			.mark_vtxos_oor_spent(builder.input_spend_info());
 		self.db.write(async |t| t.execute_vtxo_tree_update(update).await).await?;
 		drop(vtxo_guard);

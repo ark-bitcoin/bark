@@ -1333,6 +1333,10 @@ impl Wallet {
 		// Get mailbox identifier for VTXO delivery
 		let unblinded_mailbox_id = self.mailbox_identifier();
 
+		// Register VTXO transaction chains with server before round participation
+		self.register_vtxo_transactions_with_server(&participation.inputs).await
+			.context("failed to register input vtxo transactions with server")?;
+
 		// Generate attestations for input vtxos
 		let mut input_vtxos = Vec::with_capacity(participation.inputs.len());
 		for vtxo in participation.inputs.iter() {

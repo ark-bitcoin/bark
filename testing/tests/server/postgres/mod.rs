@@ -2,9 +2,8 @@ mod tree;
 
 use std::str::FromStr;
 
-use ark_testing::util::ToAltString;
 use bitcoin::secp256k1::PublicKey;
-use bitcoin::{Transaction, Txid};
+use bitcoin::Transaction;
 use chrono::Local;
 
 use ark::{ServerVtxo, VtxoPolicy, VtxoRequest};
@@ -367,117 +366,6 @@ async fn get_first_unsigned_virtual_transaction() {
 }
 
 #[tokio::test]
-async fn check_vtxo_transactions_registered_empty_input() {
-	let mut ctx = TestContext::new_minimal("postgresd/check_registered_empty").await;
-	ctx.init_central_postgres().await;
-	let postgres_cfg = ctx.new_postgres(&ctx.test_name).await;
-
-	Db::create(&postgres_cfg).await.expect("Database created");
-	let db = Db::connect(&postgres_cfg).await.expect("Connected to database");
-
-	// Fail closed: a caller with nothing to assert is a bug.
-	let err = db.read(async |t| t.check_vtxo_transactions_registered(Vec::<Txid>::new()).await).await
-		.expect_err("Empty input should fail");
-	assert!(err.to_alt_string().contains("empty txid list"),
-		"Error should mention empty txid list: {}", err);
-}
-
-#[tokio::test]
-async fn check_vtxo_transactions_registered_all_signed() {
-	let mut ctx = TestContext::new_minimal("postgresd/check_registered_all_signed").await;
-	ctx.init_central_postgres().await;
-	let postgres_cfg = ctx.new_postgres(&ctx.test_name).await;
-
-	Db::create(&postgres_cfg).await.expect("Database created");
-	let db = Db::connect(&postgres_cfg).await.expect("Connected to database");
-
-	let tx1 = Transaction {
-		version: bitcoin::transaction::Version::non_standard(1),
-		lock_time: bitcoin::absolute::LockTime::ZERO,
-		input: vec![],
-		output: vec![],
-	};
-	let tx2 = Transaction {
-		version: bitcoin::transaction::Version::non_standard(2),
-		lock_time: bitcoin::absolute::LockTime::ZERO,
-		input: vec![],
-		output: vec![],
-	};
-	let txid1 = tx1.compute_txid();
-	let txid2 = tx2.compute_txid();
-
-	let update = VtxoTreeUpdate::new().upsert_signed_tx([tx1, tx2]);
-	db.write(async |t| t.execute_vtxo_tree_update(update).await).await.unwrap();
-
-	db.read(async |t| t.check_vtxo_transactions_registered([txid1, txid2]).await).await
-		.expect("All-signed input should succeed");
-}
-
-#[tokio::test]
-async fn check_vtxo_transactions_registered_fails_for_unsigned() {
-	let mut ctx = TestContext::new_minimal("postgresd/check_registered_unsigned").await;
-	ctx.init_central_postgres().await;
-	let postgres_cfg = ctx.new_postgres(&ctx.test_name).await;
-
-	Db::create(&postgres_cfg).await.expect("Database created");
-	let db = Db::connect(&postgres_cfg).await.expect("Connected to database");
-
-	let tx_signed = Transaction {
-		version: bitcoin::transaction::Version::non_standard(1),
-		lock_time: bitcoin::absolute::LockTime::ZERO,
-		input: vec![],
-		output: vec![],
-	};
-	let tx_unsigned = Transaction {
-		version: bitcoin::transaction::Version::non_standard(2),
-		lock_time: bitcoin::absolute::LockTime::ZERO,
-		input: vec![],
-		output: vec![],
-	};
-	let txid_signed = tx_signed.compute_txid();
-	let txid_unsigned = tx_unsigned.compute_txid();
-
-	let update = VtxoTreeUpdate::new()
-		.upsert_signed_tx([tx_signed])
-		.upsert_unsigned_tx([txid_unsigned]);
-	db.write(async |t| t.execute_vtxo_tree_update(update).await).await.unwrap();
-
-	let err = db.read(async |t| t.check_vtxo_transactions_registered([txid_signed, txid_unsigned]).await).await
-		.expect_err("Should fail when one tx is unsigned");
-	let msg = err.to_alt_string();
-	assert!(msg.contains("NULL signed_tx"),
-		"Error should mention NULL signed_tx: {}", msg);
-	assert!(msg.contains(&txid_unsigned.to_string()),
-		"Error should name the unsigned txid: {}", msg);
-}
-
-#[tokio::test]
-async fn check_vtxo_transactions_registered_fails_for_nonexistent() {
-	let mut ctx = TestContext::new_minimal("postgresd/check_registered_nonexistent").await;
-	ctx.init_central_postgres().await;
-	let postgres_cfg = ctx.new_postgres(&ctx.test_name).await;
-
-	Db::create(&postgres_cfg).await.expect("Database created");
-	let db = Db::connect(&postgres_cfg).await.expect("Connected to database");
-
-	let tx_nonexistent = Transaction {
-		version: bitcoin::transaction::Version::non_standard(99),
-		lock_time: bitcoin::absolute::LockTime::ZERO,
-		input: vec![],
-		output: vec![],
-	};
-	let txid_nonexistent = tx_nonexistent.compute_txid();
-
-	let err = db.read(async |t| t.check_vtxo_transactions_registered([txid_nonexistent]).await).await
-		.expect_err("Should fail when tx does not exist");
-	let msg = err.to_alt_string();
-	assert!(msg.contains("does not exist"),
-		"Error should mention 'does not exist': {}", msg);
-	assert!(msg.contains(&txid_nonexistent.to_string()),
-		"Error should name the non-existent txid: {}", msg);
-}
-
-#[tokio::test]
 async fn upsert_vtxos_with_txid() {
 	let mut ctx = TestContext::new_minimal("postgresd/vtxos_with_txid").await;
 	ctx.init_central_postgres().await;
@@ -600,7 +488,7 @@ async fn ban_vtxo() {
 	let state = db.read(async |t| t.get_user_vtxos_by_id(&[vtxo_id]).await).await.expect("get succeeded")
 		.into_iter().next().expect("vtxo found");
 	assert!(state.banned_until_height.is_none());
-	assert!(state.is_spendable(100));
+	assert!(state.check_spendable(100).is_ok());
 
 	// Ban the vtxo until block 200
 	db.write(async |t| t.ban_vtxo(vtxo_id, 200).await).await.expect("ban succeeded");
@@ -609,8 +497,8 @@ async fn ban_vtxo() {
 	let state = db.read(async |t| t.get_user_vtxos_by_id(&[vtxo_id]).await).await.expect("get succeeded")
 		.into_iter().next().expect("vtxo found");
 	assert_eq!(state.banned_until_height, Some(200));
-	assert!(!state.is_spendable(100)); // tip 100 < ban 200
-	assert!(state.is_spendable(200)); // tip 200 >= ban 200
+	assert!(state.check_spendable(100).is_err()); // tip 100 < ban 200
+	assert!(state.check_spendable(200).is_ok()); // tip 200 >= ban 200
 
 	// Should appear in the banned list
 	let banned = db.read(async |t| t.list_banned_vtxos(100).await).await.expect("list succeeded");
@@ -625,7 +513,7 @@ async fn ban_vtxo() {
 	let state = db.read(async |t| t.get_user_vtxos_by_id(&[vtxo_id]).await).await.expect("get succeeded")
 		.into_iter().next().expect("vtxo found");
 	assert!(state.banned_until_height.is_none());
-	assert!(state.is_spendable(100));
+	assert!(state.check_spendable(100).is_ok());
 
 	// Banned list should be empty again
 	let banned = db.read(async |t| t.list_banned_vtxos(100).await).await.expect("list succeeded");

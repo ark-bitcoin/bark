@@ -401,16 +401,6 @@ impl<'t> Tx<'t> {
 		query::get_first_unsigned_virtual_transaction(&self, txids).await
 	}
 
-	/// Assert that every given tx in the input VTXO chains has been registered
-	/// by the client via `register_vtxo_transactions`. See
-	/// [`query::check_vtxo_transactions_registered`].
-	pub async fn check_vtxo_transactions_registered(
-		&self,
-		txids: impl IntoIterator<Item = impl Borrow<Txid>>,
-	) -> anyhow::Result<()> {
-		query::check_vtxo_transactions_registered(&self, txids).await
-	}
-
 	pub async fn store_vtxos_in_mailbox(
 		&self,
 		mailbox_type: MailboxType,
@@ -852,11 +842,6 @@ impl<'t> Tx<'t> {
 			.mark_vtxos_offboard_spent(offboard_triples);
 		tree::execute_vtxo_tree_update(&self, update).await?;
 
-		// Mark transactions as having server-owned descendants before completing offboard
-		let txids = input_vtxos.iter()
-			.flat_map(|v| v.transactions().map(|i| i.tx.compute_txid()));
-		query::check_vtxo_transactions_registered(&self, txids).await
-			.context("virtual tx update failed, user might not have called register_vtxo_transactions")?;
 		Ok(())
 	}
 
