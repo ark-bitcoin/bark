@@ -27,7 +27,7 @@ pub fn default_scheme(default_scheme: &'static str, url: impl AsRef<str>) -> any
 	}
 }
 
-/// Writes a [`Serializable`] value to stdout
+/// Writes a [`serde::Serialize`] value to stdout
 pub fn output_json<T>(value: &T)
 where
 	T: ?Sized + Serialize,

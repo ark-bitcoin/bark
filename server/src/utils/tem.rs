@@ -126,7 +126,7 @@ impl<K, V> TimedEntryMap<K, Option<V>>
 where
 	K: Eq + Hash,
 {
-	/// Insert a new [Option::some] entry
+	/// Insert a new [`Option::Some`] entry
 	pub fn insert_some(&mut self, key: K, value: V) -> Option<V> {
 		self.inner.insert(key, (Some(value), Instant::now())).map(|(mut v, _t)| v.take()).flatten()
 	}

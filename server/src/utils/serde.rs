@@ -40,7 +40,7 @@ impl<'de> Deserialize<'de> for Bytes<'de> {
 }
 
 pub mod string {
-	//! generic way to serialize a type using it's [fmt::Display] and [str::FromStr] impl
+	//! generic way to serialize a type using it's [fmt::Display] and [`std::str::FromStr`] impl
 
 	use std::marker::PhantomData;
 

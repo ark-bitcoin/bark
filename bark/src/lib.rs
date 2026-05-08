@@ -53,7 +53,7 @@
 //! the configuration. The example below configures
 //!
 //! You will also need a place to store all [ark::Vtxo]s on the users device.
-//! We have implemented [SqliteClient] which is a sane default on most devices
+//! We have implemented [`persist::sqlite::SqliteClient`] which is a sane default on most devices
 //! (requires the `sqlite` feature). However, it is possible to implement a
 //! [BarkPersister] if you have other requirements.
 //!
@@ -103,7 +103,7 @@
 //! ## Opening an existing Ark wallet
 //!
 //! The [Wallet] can be opened again by providing the [bip39::Mnemonic] and
-//! the [BarkPersister] again. Note, that [SqliteClient] implements the [BarkPersister]-trait.
+//! the [BarkPersister] again. Note, that [`persist::sqlite::SqliteClient`] implements the [BarkPersister]-trait.
 //!
 //! ```no_run
 //! # use std::sync::Arc;

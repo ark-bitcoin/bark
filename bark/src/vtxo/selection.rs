@@ -271,7 +271,7 @@ enum InnerRefreshStrategy {
 ///
 /// Notes:
 /// - This type implements [FilterVtxos], so it can be passed directly to [`Wallet::vtxos_with`].
-/// - Calling [FilterVtxos::matches] on [RefreshStategy::should_result_if_must] is invalid.
+/// - Calling [FilterVtxos::matches] on `RefreshStrategy::should_refresh_if_must` is invalid.
 pub struct RefreshStrategy<'a> {
 	inner: InnerRefreshStrategy,
 	tip: BlockHeight,

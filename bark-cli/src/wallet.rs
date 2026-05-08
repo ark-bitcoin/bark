@@ -5,7 +5,7 @@
 //! ## Behavior
 //! - Reads a BIP-39 `mnemonic` file from the provided directory
 //! - Parses `config.toml` into a [`bark::Config`]
-//! - Opens `db.sqlite` as a [`bark::SqliteClient`] and loads persisted properties
+//! - Opens `db.sqlite` as a [`bark::persist::sqlite::SqliteClient`] and loads persisted properties
 //! - Loads or creates the [`bark::onchain::OnchainWallet`]
 //! - Opens the [`bark::Wallet`] bound to the on-chain wallet
 //! - Returns `(bark::Wallet, bark::onchain::OnchainWallet)`

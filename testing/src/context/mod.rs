@@ -532,7 +532,7 @@ impl TestContext {
 	}
 
 	/// Build a new barkd daemon connected to the given Ark server.
-	/// [`BarkdBuilder::create`] starts the daemon and creates its wallet.
+	/// [`builders::BarkdBuilder::create`] starts the daemon and creates its wallet.
 	///
 	/// Uses esplora (electrs) as chain source when available, otherwise
 	/// creates a dedicated bitcoind.

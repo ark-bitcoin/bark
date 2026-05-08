@@ -187,7 +187,7 @@ pub async fn run_rpc_server(srv: Arc<Server>) -> anyhow::Result<()> {
 	Ok(())
 }
 
-/// Run the watchmand admin gRPC server, exposing only [SweepAdminService].
+/// Run the watchmand admin gRPC server, exposing only `SweepAdminService`.
 pub async fn run_watchmand_admin_rpc_server(
 	addr: SocketAddr,
 	daemon: Arc<crate::watchman::Daemon>,

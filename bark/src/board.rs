@@ -19,7 +19,7 @@ use crate::subsystem::{BoardMovement, Subsystem};
 use crate::vtxo::{VtxoState, VtxoStateKind};
 
 impl Wallet {
-	/// Board a [Vtxo] with the given amount.
+	/// Board a `Vtxo` with the given amount.
 	///
 	/// NB we will spend a little more onchain to cover fees.
 	pub async fn board_amount(
@@ -31,7 +31,7 @@ impl Wallet {
 		self.board(onchain, Some(amount), user_keypair).await
 	}
 
-	/// Board a [Vtxo] with all the funds in your onchain wallet.
+	/// Board a `Vtxo` with all the funds in your onchain wallet.
 	pub async fn board_all(
 		&self,
 		onchain: &mut dyn onchain::Board,
@@ -54,7 +54,7 @@ impl Wallet {
 	/// Queries the database for any VTXO that is an unregistered board. There is a lag time between
 	/// when a board is created and when it becomes spendable.
 	///
-	/// See [ArkInfo::required_board_confirmations] and [Wallet::sync_pending_boards].
+	/// See [ark::ArkInfo::required_board_confirmations] and [Wallet::sync_pending_boards].
 	pub async fn pending_board_vtxos(&self) -> anyhow::Result<Vec<WalletVtxo>> {
 		let vtxo_ids = self.pending_boards().await?.into_iter()
 			.flat_map(|b| b.vtxos.into_iter())
@@ -76,7 +76,7 @@ impl Wallet {
 
 	/// Attempts to register all pendings boards with the Ark server. A board transaction must have
 	/// sufficient confirmations before it will be registered. For more details see
-	/// [ArkInfo::required_board_confirmations].
+	/// [ark::ArkInfo::required_board_confirmations].
 	pub async fn sync_pending_boards(&self) -> anyhow::Result<()> {
 		let (_, ark_info) = self.require_server().await?;
 		let current_height = self.chain.tip().await?;

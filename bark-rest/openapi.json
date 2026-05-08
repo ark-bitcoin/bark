@@ -2765,7 +2765,7 @@
           "amount_sat": {
             "type": "integer",
             "format": "int64",
-            "description": "An amount of onchain funds to board (in satoshis). For a board operation to be successful,\nthis value, with any server-configured [BoardFees](crate::cli::BoardFees) deducted, must be\n>= [P2TR_DUST](bitcoin_ext::P2TR_DUST).",
+            "description": "An amount of onchain funds to board (in satoshis). For a board operation to be successful,\nthis value, with any server-configured [BoardFees](crate::cli::fees::BoardFees) deducted, must be\n>= [P2TR_DUST](bitcoin_ext::P2TR_DUST).",
             "minimum": 0
           }
         }
@@ -4340,7 +4340,7 @@
           "amount_sat": {
             "type": "integer",
             "format": "int64",
-            "description": "The amount to create invoice for (in satoshis). This is the amount the payee will pay but\nthe final amount received by the client will have any server-configured\n[LightningReceiveFees](crate::cli::LightningReceiveFees) deducted.",
+            "description": "The amount to create invoice for (in satoshis). This is the amount the payee will pay but\nthe final amount received by the client will have any server-configured\n[LightningReceiveFees](crate::cli::fees::LightningReceiveFees) deducted.",
             "minimum": 0
           },
           "description": {
@@ -4364,7 +4364,7 @@
               "null"
             ],
             "format": "int64",
-            "description": "The amount to send (in satoshis). Optional for bolt11 invoices with amount. This must be\nhigher than the minimum fee laid out in server-configured\n[LightningSendFees](crate::cli::LightningSendFees). The wallet must also contain enough\nfunds to cover the amount plus any fees.",
+            "description": "The amount to send (in satoshis). Optional for bolt11 invoices with amount. This must be\nhigher than the minimum fee laid out in server-configured\n[LightningSendFees](crate::cli::fees::LightningSendFees). The wallet must also contain enough\nfunds to cover the amount plus any fees.",
             "minimum": 0
           },
           "comment": {
@@ -4802,7 +4802,7 @@
             "items": {
               "type": "string"
             },
-            "description": "List of VTXO IDs to offboard. The sum of the VTXOs being refreshed must be\n>= [P2TR_DUST](bitcoin_ext::P2TR_DUST) after the server-configured\n[OffboardFees](crate::cli::OffboardFees) are deducted."
+            "description": "List of VTXO IDs to offboard. The sum of the VTXOs being refreshed must be\n>= [P2TR_DUST](bitcoin_ext::P2TR_DUST) after the server-configured\n[OffboardFees](crate::cli::fees::OffboardFees) are deducted."
           }
         }
       },
@@ -5101,7 +5101,7 @@
             "items": {
               "type": "string"
             },
-            "description": "List of VTXO IDs to refresh. The sum of the VTXOs being refreshed must be\n>= [P2TR_DUST](bitcoin_ext::P2TR_DUST). Keep in mind that fees set out in\n[RefreshFees](crate::cli::RefreshFees) will be deducted from the newly created VTXO, this\nvalue must also be >= [P2TR_DUST](bitcoin_ext::P2TR_DUST)."
+            "description": "List of VTXO IDs to refresh. The sum of the VTXOs being refreshed must be\n>= [P2TR_DUST](bitcoin_ext::P2TR_DUST). Keep in mind that fees set out in\n[RefreshFees](crate::cli::fees::RefreshFees) will be deducted from the newly created VTXO, this\nvalue must also be >= [P2TR_DUST](bitcoin_ext::P2TR_DUST)."
           }
         }
       },
@@ -5277,7 +5277,7 @@
           "amount_sat": {
             "type": "integer",
             "format": "int64",
-            "description": "The amount (in satoshis) to be received by `destination` onchain. Must be\n>= [P2TR_DUST](bitcoin_ext::P2TR_DUST). Server-configured fees laid out in\n[OffboardFees](crate::cli::OffboardFees) will be added on top of this amount.",
+            "description": "The amount (in satoshis) to be received by `destination` onchain. Must be\n>= [P2TR_DUST](bitcoin_ext::P2TR_DUST). Server-configured fees laid out in\n[OffboardFees](crate::cli::fees::OffboardFees) will be added on top of this amount.",
             "minimum": 0
           },
           "destination": {
@@ -5298,7 +5298,7 @@
               "null"
             ],
             "format": "int64",
-            "description": "The amount to send (in satoshis). Optional for bolt11 invoices. Depending on the\n`destination`, the wallet must contain this amount plus any fees configured by the server in\n[FeeSchedule](crate::cli::FeeSchedule).",
+            "description": "The amount to send (in satoshis). Optional for bolt11 invoices. Depending on the\n`destination`, the wallet must contain this amount plus any fees configured by the server in\n[FeeSchedule](crate::cli::fees::FeeSchedule).",
             "minimum": 0
           },
           "comment": {
