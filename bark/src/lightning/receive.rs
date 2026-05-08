@@ -334,7 +334,7 @@ impl Wallet {
 		).await {
 			Ok(anti_dos) => Some(anti_dos),
 			Err(e) => {
-				warn!("Could not compute anti-dos: {e:#}. Trying without");
+				info!("Could not compute anti-dos: {e:#}. Trying without");
 				None
 			},
 		};
