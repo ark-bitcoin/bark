@@ -12,7 +12,6 @@ use tokio_util::sync::CancellationToken;
 
 use crate::Wallet;
 use crate::onchain::DaemonizableOnchainWallet;
-use crate::run_exits_with_bdk;
 
 
 
@@ -160,7 +159,7 @@ impl DaemonProcess {
 				warn!("An error occurred while syncing exits: {e:#}");
 			}
 
-			if let Err(e) = run_exits_with_bdk(self.wallet.exit_mgr(), &self.wallet, &mut *onchain, None).await {
+			if let Err(e) = self.wallet.exit_mgr().progress_exits_onchain(&self.wallet, &mut *onchain, None).await {
 				warn!("An error occurred while progressing exits: {e:#}");
 			}
 		}

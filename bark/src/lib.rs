@@ -346,7 +346,7 @@ use std::time::Duration;
 
 use anyhow::{bail, Context};
 use bip39::Mnemonic;
-use bitcoin::{Amount, FeeRate, Network, OutPoint};
+use bitcoin::{Amount, Network, OutPoint};
 use bitcoin::bip32::{self, ChildNumber, Fingerprint};
 use bitcoin::secp256k1::{self, Keypair, PublicKey};
 use log::{trace, info, warn, error};
@@ -360,13 +360,13 @@ use bitcoin_ext::{BlockHeight, P2TR_DUST};
 use server_rpc::{protos, ServerConnection};
 use server_rpc::client::{ConnectError, CreateEndpointError};
 use crate::chain::{ChainSource, ChainSourceSpec};
-use crate::exit::{Exit, ExitProgressStatus};
+use crate::exit::Exit;
 use crate::lock_manager::LockManager;
 use crate::movement::{Movement, MovementId, PaymentMethod};
 use crate::movement::manager::MovementManager;
 use crate::movement::update::MovementUpdate;
 use crate::notification::NotificationDispatch;
-use crate::onchain::{CpfpError, ExitUnilaterally, MakeCpfpFees, PreparePsbt, SignPsbt, Utxo};
+use crate::onchain::{ExitUnilaterally, PreparePsbt, SignPsbt, Utxo};
 use crate::onchain::DaemonizableOnchainWallet;
 use crate::persist::BarkPersister;
 use crate::persist::models::{RoundStateId, StoredRoundState, Unlocked};
@@ -764,7 +764,7 @@ struct WalletInner {
 ///
 /// // Progress any unilateral exits, make sure to sync first
 /// wallet.exit_mgr().sync_no_progress().await?;
-/// bark::run_exits_with_bdk(wallet.exit_mgr(), &wallet, &mut onchain_wallet, None).await?;
+/// wallet.exit_mgr().progress_exits_onchain(&wallet, &mut onchain_wallet, None).await?;
 ///
 /// # Ok(())
 /// # }
@@ -1517,9 +1517,7 @@ impl Wallet {
 		if let Err(e) = exit_sync.as_ref() {
 			warn!("Error syncing exits: {:#}", e);
 		}
-		let exit_progress = run_exits_with_bdk(
-			self.exit_mgr(), self, onchain, None,
-		).await;
+		let exit_progress = self.exit_mgr().progress_exits_onchain(self, onchain, None).await;
 		if let Err(e) = exit_progress.as_ref() {
 			warn!("Error progressing exits: {:#}", e);
 		}
@@ -1549,9 +1547,7 @@ impl Wallet {
 		if let Err(e) = exit_sync.as_ref() {
 			warn!("Error syncing exits: {:#}", e);
 		}
-		let exit_progress = run_exits_with_bdk(
-			self.exit_mgr(), self, onchain, None,
-		).await;
+		let exit_progress = self.exit_mgr().progress_exits_onchain(self, onchain, None).await;
 		if let Err(e) = exit_progress.as_ref() {
 			warn!("Error progressing exits: {:#}", e);
 		}
@@ -2085,53 +2081,6 @@ impl Wallet {
 
 		Ok(())
 	}
-}
-
-/// Drive unilateral exits forward using a BDK-backed onchain wallet to create CPFP transactions.
-///
-/// Runs the exit state machine, creates CPFP transactions for any exits that need them using
-/// `onchain`, then runs the state machine again so exits advance past [ExitTxStatus::AwaitingCpfpBroadcast].
-///
-/// External or hardware wallets should instead call [Exit::exits_needing_cpfp] and
-/// [Exit::provide_cpfp_tx] directly.
-pub async fn run_exits_with_bdk(
-	exit: &Exit,
-	wallet: &Wallet,
-	onchain: &mut dyn ExitUnilaterally,
-	fee_rate_override: Option<FeeRate>,
-) -> anyhow::Result<Option<Vec<ExitProgressStatus>>> {
-	exit.progress_exits(wallet).await?;
-
-	let fee_rate = fee_rate_override.unwrap_or(wallet.chain().fee_rates().await.fast);
-	for req in exit.exits_needing_cpfp().await {
-		let fees = match req.min_fee_for_rbf {
-			None => MakeCpfpFees::Effective(fee_rate),
-			Some((min_fee_rate, min_fee)) => {
-				// Only RBF if we can improve the fee rate; equal or lower rates are rejected
-				// by Bitcoin Core's RBF policy ("new feerate must be strictly greater").
-				if fee_rate <= min_fee_rate {
-					continue;
-				}
-				MakeCpfpFees::Rbf {
-					min_effective_fee_rate: fee_rate,
-					current_package_fee: min_fee,
-				}
-			},
-		};
-		let child_tx = match onchain.make_signed_p2a_cpfp(&req.exit_tx, fees) {
-			Ok(tx) => tx,
-			Err(CpfpError::InsufficientConfirmedFunds { needed, available }) => {
-				warn!("Insufficient funds for exit CPFP: needed {} available {}", needed, available);
-				continue;
-			},
-			Err(e) => return Err(e.into()),
-		};
-		onchain.store_signed_p2a_cpfp(&child_tx).await?;
-		let exit_txid = req.exit_tx.compute_txid();
-		exit.provide_cpfp_tx(wallet, exit_txid, child_tx).await?;
-	}
-
-	exit.progress_exits(wallet).await
 }
 
 fn wrap_server_connect_error(err: ConnectError) -> anyhow::Error {

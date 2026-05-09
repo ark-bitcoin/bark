@@ -36,7 +36,7 @@
 //!    - To create or fee-bump CPFP transactions using an onchain wallet, call
 //!      [Exit::exits_needing_cpfp] to get pending requests, provide signed CPFPs via
 //!      [Exit::provide_cpfp_tx], then call [Exit::progress_exits] again. Alternatively, use the
-//!      convenience wrapper [`run_exits_with_bdk`] if you have a BDK-backed onchain wallet.
+//!      [Exit::progress_exits_onchain] if you have a BDK-backed onchain wallet.
 //! 3) Inspect status
 //!    - Use [Exit::get_exit_status] for detailed per-VTXO status (optionally including
 //!      history and transactions).
@@ -51,7 +51,7 @@
 //!
 //! Fee rates
 //! - Suitable fee rates will be calculated based on the current network conditions. To override,
-//!   pass your own [FeeRate] to [`run_exits_with_bdk`] or [Exit::drain_exits].
+//!   pass your own [FeeRate] to [Exit::progress_exits_onchain] or [Exit::drain_exits].
 //!
 //! Error handling and persistence
 //! - The coordinator surfaces operational errors via [anyhow::Result] and domain-specific errors
@@ -94,7 +94,7 @@
 //!
 //! // Transactions will be broadcast and require confirmations so keep periodically calling this.
 //! bark_wallet.exit_mgr().sync_no_progress().await?;
-//! bark::run_exits_with_bdk(bark_wallet.exit_mgr(), &bark_wallet, &mut onchain_wallet, None).await?;
+//! bark_wallet.exit_mgr().progress_exits_onchain(&bark_wallet, &mut onchain_wallet, None).await?;
 //!
 //! // Once all VTXOs are claimable, construct a PSBT to drain them.
 //! let drain_to = bitcoin::Address::from_str("bc1p...")?.assume_checked();
@@ -148,6 +148,7 @@ use crate::exit::transaction_manager::ExitTransactionManager;
 use crate::movement::{MovementDestination, MovementStatus, PaymentMethod};
 use crate::movement::manager::MovementManager;
 use crate::movement::update::MovementUpdate;
+use crate::onchain::{CpfpError, ExitUnilaterally, MakeCpfpFees};
 use crate::persist::BarkPersister;
 use crate::persist::models::StoredExit;
 use crate::psbtext::PsbtInputExt;
@@ -654,6 +655,53 @@ impl Exit {
 		}
 
 		Ok(())
+	}
+
+	/// Drive unilateral exits forward using a BDK-backed onchain wallet.
+	///
+	/// This is the onchain-wallet wrapper around the wallet-agnostic state machine.
+	/// It calls [Exit::progress_exits], creates CPFP transactions via `onchain` for any
+	/// exits in [ExitTxStatus::AwaitingCpfpBroadcast], then calls [Exit::progress_exits]
+	/// again so those exits advance to [ExitTxStatus::AwaitingConfirmation].
+	///
+	/// Callers with external or hardware wallets should use [Exit::exits_needing_cpfp]
+	/// and [Exit::provide_cpfp_tx] directly instead.
+	pub async fn progress_exits_onchain(
+		&self,
+		wallet: &Wallet,
+		onchain: &mut dyn ExitUnilaterally,
+		fee_rate_override: Option<FeeRate>,
+	) -> anyhow::Result<Option<Vec<ExitProgressStatus>>> {
+		self.progress_exits(wallet).await?;
+
+		let fee_rate = fee_rate_override.unwrap_or(wallet.chain().fee_rates().await.fast);
+		for req in self.exits_needing_cpfp().await {
+			let fees = match req.min_fee_for_rbf {
+				None => MakeCpfpFees::Effective(fee_rate),
+				Some((min_fee_rate, min_fee)) => {
+					if fee_rate <= min_fee_rate {
+						continue;
+					}
+					MakeCpfpFees::Rbf {
+						min_effective_fee_rate: fee_rate,
+						current_package_fee: min_fee,
+					}
+				},
+			};
+			let child_tx = match onchain.make_signed_p2a_cpfp(&req.exit_tx, fees) {
+				Ok(tx) => tx,
+				Err(CpfpError::InsufficientConfirmedFunds { needed, available }) => {
+					warn!("Insufficient funds for exit CPFP: needed {} available {}", needed, available);
+					continue;
+				},
+				Err(e) => return Err(e.into()),
+			};
+			onchain.store_signed_p2a_cpfp(&child_tx).await?;
+			let exit_txid = req.exit_tx.compute_txid();
+			self.provide_cpfp_tx(wallet, exit_txid, child_tx).await?;
+		}
+
+		self.progress_exits(wallet).await
 	}
 
 	/// Lists all exits that are claimable

@@ -10,7 +10,6 @@ use tracing::info;
 use utoipa::OpenApi;
 
 use bark::onchain::ChainSync;
-use bark::run_exits_with_bdk;
 use bark::vtxo::{FilterVtxos, VtxoFilter};
 use bitcoin_ext::FeeRateExt;
 
@@ -262,7 +261,7 @@ pub async fn exit_progress(
 
 	wallet.exit_mgr().sync_no_progress().await
 		.context("error syncing exit state")?;
-	let result = run_exits_with_bdk(wallet.exit_mgr(), &wallet, &mut *onchain_lock, fee_rate).await
+	let result = wallet.exit_mgr().progress_exits_onchain(&wallet, &mut *onchain_lock, fee_rate).await
 		.context("error making progress on exit process")?;
 
 	let done = !wallet.exit_mgr().has_pending_exits().await;
