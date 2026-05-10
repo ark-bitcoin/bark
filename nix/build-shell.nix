@@ -5,6 +5,10 @@ let
 
 	env = {
 		LIBCLANG_PATH = "${pkgs.llvmPackages.clang-unwrapped.lib}/lib/";
+		CC = "${pkgs.stdenv.cc}/bin/cc";
+		CXX = "${pkgs.stdenv.cc}/bin/c++";
+		AR = "${pkgs.stdenv.cc}/bin/ar";
+		RANLIB = "${pkgs.stdenv.cc}/bin/ranlib";
 		LD_LIBRARY_PATH = lib.makeLibraryPath [
 			pkgs.gcc.cc.lib
 			pkgs.openssl.out
@@ -30,6 +34,7 @@ in {
 
 			# For building
 			pkgs.glibcLocales
+			pkgs.stdenv.cc
 			pkgs.llvmPackages.clang
 			pkgs.llvmPackages.bintools
 			pkgs.llvmPackages.llvm
