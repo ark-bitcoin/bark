@@ -26,7 +26,7 @@ tls-webpki-roots = ["bark-wallet/tls-webpki-roots", "bark-server-rpc/tls-webpki-
 [dependencies]
 ark-lib = { version = "0.1.4", path = "../lib" }
 bark-json = { version = "0.1.4", path = "../bark-json" }
-bark-wallet = { version = "0.1.4", path = "../bark", default-features = false, features = [ "onchain-bdk", "sqlite", "filestore", "pid-lock", "socks5-proxy", "rand", "native", "bitcoind-rpc" ] }
+bark-wallet = { version = "0.1.4", path = "../bark", default-features = false, features = [ "onchain-bdk", "sqlite", "filestore", "socks5-proxy", "rand", "native", "bitcoind-rpc" ] }
 bark-bitcoin-ext = { version = "0.1.4", path = "../bitcoin-ext", features = ["rpc-socks5-proxy"] }
 bark-server-rpc = { version = "0.1.4", path = "../server-rpc", default-features = false, features = ["tonic-native", "socks5-proxy"] }
 bark-rest = { version = "0.1.4", path = "../bark-rest" }

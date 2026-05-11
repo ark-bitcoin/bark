@@ -11,7 +11,6 @@ readme = "README.md"
 [features]
 default = ["rand", "sqlite", "native", "tls-native-roots", "bitcoind-rpc"]
 
-pid-lock = []
 onchain-bdk = ["bdk_wallet", "bark-bitcoin-ext/bdk"]
 
 # Native bitcoind JSON-RPC backend for the on-chain layer.

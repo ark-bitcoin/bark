@@ -40,10 +40,9 @@ use log::{debug, info, warn};
 use tonic::transport::Uri;
 
 use bark::{BarkNetwork, Config, Wallet as BarkWallet};
-use bark::lock_manager::memory::MemoryLockManager;
+use bark::lock_manager::pid_flock::{FlockPidLockManager, LOCK_FILE};
 use bark::onchain::OnchainWallet;
 use bark::persist::BarkPersister;
-use bark::pid_lock::LOCK_FILE;
 use bark::persist::sqlite::SqliteClient;
 use bark::persist::adaptor::filestore::FileStorageAdaptor;
 
@@ -406,10 +405,8 @@ async fn try_create_wallet(
 	};
 
 	let mut onchain = OnchainWallet::load_or_create(net.as_bitcoin(), seed, db.clone()).await?;
-	// The CLI holds a `PidLock` on `datadir` for its entire lifetime, so
-	// only this process accesses the wallet. In-memory locking is
-	// therefore enough — see `bark::lock_manager::memory`.
-	let lock_manager = Box::new(MemoryLockManager::new());
+	let lock_manager = Box::new(FlockPidLockManager::new(&datadir)
+		.context("failed to acquire datadir lock")?);
 	let wallet = BarkWallet::create_with_onchain(
 		&mnemonic, net.as_bitcoin(), config, db, lock_manager, &onchain, opts.force,
 	).await.context("error creating wallet")?;
@@ -461,9 +458,8 @@ pub async fn open_wallet(datadir: &Path) -> anyhow::Result<Option<(BarkWallet, O
 		.context("error loading bark config file")?;
 
 	let bdk_wallet = OnchainWallet::load_or_create(properties.network, seed, db.clone()).await?;
-	// Same rationale as `create_wallet`: the CLI's `PidLock` on `datadir`
-	// guarantees single-process access, so the in-memory backend is safe.
-	let lock_manager = Box::new(MemoryLockManager::new());
+	let lock_manager = Box::new(FlockPidLockManager::new(datadir)
+		.context("failed to acquire datadir lock")?);
 	let bark_wallet = BarkWallet::open_with_onchain(&mnemonic, db, &bdk_wallet, config, lock_manager).await?;
 
 	if let Err(e) = bark_wallet.require_chainsource_version().await {

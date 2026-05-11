@@ -10,7 +10,6 @@ use clap::builder::BoolishValueParser;
 use log::{info, warn};
 use tokio::sync::RwLock;
 
-use bark::pid_lock::PidLock;
 use bark_json::web::{BarkNetwork, BitcoindAuth, ChainSourceConfig, CreateWalletRequest};
 use bark_rest::{Config, OnWalletCreate, OnWalletDelete, RestServer, ServerWallet};
 use bark_rest::http::HeaderValue;
@@ -301,7 +300,6 @@ async fn main() -> anyhow::Result<()>{
 	}
 
 	info!("Starting barkd version {} with datadir {}", FULL_VERSION, datadir.display());
-	let _pid_lock = PidLock::acquire(&datadir)?;
 
 	if env!("BARK_VERSION") == VERSION_DIRTY {
 		warn!("You're running a custom build of barkd, which might cause unexpected issues. \

@@ -13,6 +13,8 @@
 //!
 //! - A wallet that only ever runs in a single process? An in-memory
 //!   manager is enough.
+//! - A wallet on disk that another process might also open? You need a
+//!   cross-process file-based manager.
 //! - A wallet running in the browser, possibly opened in multiple tabs?
 //!   You need the Web Locks backend.
 //!
@@ -21,20 +23,27 @@
 //!
 //! # Platform support
 //!
-//! | Backend                                            | Linux | macOS | iOS | Android | Windows | Web (wasm32) |
-//! |----------------------------------------------------|:-----:|:-----:|:---:|:-------:|:-------:|:------------:|
-//! | [`MemoryLockManager`](memory::MemoryLockManager)   |   ✓   |   ✓   |  ✓  |    ✓    |    ✓    |      ✓       |
-//! | [`WebLockManager`](web_locks::WebLockManager)      |       |       |     |         |         |      ✓       |
+//! | Backend                                                  | Linux | macOS | iOS | Android | Windows | Web (wasm32) |
+//! |----------------------------------------------------------|:-----:|:-----:|:---:|:-------:|:-------:|:------------:|
+//! | [`MemoryLockManager`](memory::MemoryLockManager)         |   ✓   |   ✓   |  ✓  |    ✓    |    ✓    |      ✓       |
+//! | [`FlockPidLockManager`](pid_flock::FlockPidLockManager)  |   ✓   |   ✓   |     |    ✓    |    ✓    |              |
+//! | [`FcntlPidLockManager`](pid_fcntl::FcntlPidLockManager)  |   ✓   |   ✓   |  ✓  |    ✓    |         |              |
+//! | [`WebLockManager`](web_locks::WebLockManager)            |       |       |     |         |         |      ✓       |
 //!
 //! # Safety scope
 //!
 //! Each backend prevents concurrent access by callers under a different
 //! scope. Pick the one that matches the threat you actually have:
 //!
-//! | Backend     | Same async runtime | Same OS process | Across processes | Across browser tabs |
-//! |-------------|:------------------:|:---------------:|:----------------:|:-------------------:|
-//! | `Memory`    |         ✓          |        ✓        |                  |                     |
-//! | `WebLocks`  |         ✓          |    (n/a)        |     (n/a)        |          ✓          |
+//! | Backend          | Same async runtime | Same OS process | Across processes | Across machines (NFS/SMB) | Across browser tabs |
+//! |------------------|:------------------:|:---------------:|:----------------:|:-------------------------:|:-------------------:|
+//! | `Memory`         |         ✓          |        ✓        |                  |                           |                     |
+//! | `FlockPidLock`   |         ✓          |        ✓        |    refuses 2nd   |           ⚠               |                     |
+//! | `FcntlPidLock`   |         ✓          |        ✓        |    refuses 2nd   |  ✓ (POSIX-compliant NFS)  |                     |
+//! | `WebLocks`       |         ✓          |    (n/a)        |     (n/a)        |           (n/a)           |          ✓          |
+//!
+//! ⚠ `FlockPidLock` uses `flock(2)` on Unix, whose behavior over networked
+//! filesystems is implementation-defined; use `FcntlPidLock` there.
 //!
 //! # Picking a backend
 //!
@@ -42,6 +51,13 @@
 //!   [`MemoryLockManager`](memory::MemoryLockManager) is the safe
 //!   default: every instance in the process shares one key map, so two
 //!   callers cannot accidentally end up with disjoint lock universes.
+//! - **Single-process-per-datadir CLIs / daemons** — pick a `PidLock`
+//!   variant: [`FlockPidLockManager`](pid_flock::FlockPidLockManager)
+//!   on Linux/macOS/Android/Windows desktops, or
+//!   [`FcntlPidLockManager`](pid_fcntl::FcntlPidLockManager) when the
+//!   datadir may live on networked storage. One OS-level lock on
+//!   `<datadir>/LOCK` guarantees single-process exclusivity; per-key
+//!   locking is in-memory.
 //! - **Web (wasm32)** — only [`WebLockManager`](web_locks::WebLockManager)
 //!   (which delegates to `navigator.locks`) is available. Prevents
 //!   concurrent access across same-origin tabs in the same browser;
@@ -61,18 +77,53 @@ mod internal_memory;
 pub mod memory;
 #[cfg(target_arch = "wasm32")]
 pub mod web_locks;
+#[cfg(all(any(unix, windows), not(target_arch = "wasm32")))]
+pub mod pid_flock;
+#[cfg(all(any(unix), not(target_arch = "wasm32")))]
+pub mod pid_fcntl;
 
 use std::time::Duration;
+use std::path::PathBuf;
 use anyhow::bail;
 
 const POLL_INTERVAL: Duration = Duration::from_millis(50);
 
+/// Errors from constructing a pid-lock-based [`LockManager`]
+/// ([`pid_flock::FlockPidLockManager`] or [`pid_fcntl::FcntlPidLockManager`]).
+///
+/// Pattern-match on this when you want to surface "another process is
+/// already using this datadir" differently from setup-failure cases.
+#[derive(thiserror::Error, Debug)]
+pub enum PidLockError {
+	/// Another instance — same process or otherwise — already holds
+	/// the pid lock for this datadir. The `pid` is the value that
+	/// instance wrote into the LOCK file (best-effort; may be absent
+	/// or stale).
+	#[error("another process is already using datadir {datadir}{}",
+		match pid {
+			Some(p) => format!(" (holder PID: {})", p),
+			None => String::new(),
+		})]
+	AlreadyHeld {
+		datadir: PathBuf,
+		pid: Option<u32>,
+	},
+
+	/// Anything else that went wrong setting up the datadir or
+	/// opening the lock file (filesystem permission, ENOENT, etc.).
+	#[error("failed to set up datadir {datadir}")]
+	SetupFailed {
+		datadir: PathBuf,
+		#[source]
+		source: anyhow::Error,
+	},
+}
 
 /// A handle that holds a named lock until dropped.
 ///
 /// Trait objects are returned from [`LockManager`] methods so callers do
 /// not need to spell the backend's concrete guard type.
-pub trait LockGuard: Send + std::fmt::Debug {}
+pub trait LockGuard: Send + Sync + std::fmt::Debug {}
 
 /// Acquire and release named locks.
 ///
@@ -109,7 +160,6 @@ pub trait LockManager: Send + Sync + std::fmt::Debug {
 	}
 }
 
-
 // The shared test harness uses `tokio::spawn` / `tokio::sync::Barrier`
 // / `tokio::time::timeout`, all of which require the `rt` feature that
 // is desktop-only. The web_locks backend has its own wasm-bindgen-test
@@ -139,6 +189,13 @@ mod test {
 		}
 	}
 
+	fn tmp_dir() -> PathBuf {
+		let dir = std::env::temp_dir()
+			.join(format!("bark-lock-test-{}", rand::random::<u64>()));
+		fs::create_dir_all(&dir).unwrap();
+		dir
+	}
+
 	/// Every backend available on this target.
 	fn managers() -> Vec<TestBackend> {
 		let mut v = Vec::new();
@@ -155,9 +212,28 @@ mod test {
 			dir: None,
 		});
 
+		#[cfg(all(any(unix, windows), not(target_arch = "wasm32")))]
+		{
+			let dir = tmp_dir();
+			v.push(TestBackend {
+				name: "FlockPidLock",
+				mgr: Arc::new(pid_flock::FlockPidLockManager::new(&dir).unwrap()),
+				dir: Some(dir),
+			});
+		}
+
+		#[cfg(all(unix, not(target_arch = "wasm32")))]
+		{
+			let dir = tmp_dir();
+			v.push(TestBackend {
+				name: "FcntlPidLock",
+				mgr: Arc::new(pid_fcntl::FcntlPidLockManager::new(&dir).unwrap()),
+				dir: Some(dir),
+			});
+		}
+
 		#[cfg(target_arch = "wasm32")]
 		{
-			let _ = tmp_dir;
 			v.push(TestBackend {
 				name: "Web",
 				mgr: Arc::new(web_locks::WebLockManager::new()),
@@ -172,10 +248,6 @@ mod test {
 	async fn acquire_and_release() {
 		for tb in managers() {
 			let g = tb.mgr.lock("bark.ln_receive.1", TEST_TIMEOUT).await.unwrap();
-			if let Some(d) = &tb.dir {
-				assert!(d.join("bark.ln_receive.1.lock").exists(),
-					"{} should create the lock file", tb.name);
-			}
 			drop(g);
 			let _g2 = tb.mgr.lock("bark.ln_receive.1", TEST_TIMEOUT).await.unwrap();
 		}

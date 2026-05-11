@@ -1,153 +1,174 @@
 #![cfg(unix)]
 
 use std::fs;
-use std::io::{BufRead, BufReader};
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
 
-use nix::sys::signal::{self, Signal};
-use nix::unistd::Pid;
+use nix::sys::signal::Signal;
 
 use ark_testing::TestContext;
-use bark::pid_lock::{PidLock, LOCK_FILE};
+use bark::lock_manager::pid_fcntl::FcntlPidLockManager;
+use bark::lock_manager::pid_flock::{FlockPidLockManager, LOCK_FILE};
 
-fn spawn_lock_holder(datadir: &Path) -> Child {
-	let bin = env!("CARGO_BIN_EXE_pid-lock-holder");
+use super::lock_helpers::{kill_and_wait, lock_holder_bin, spawn_holder};
 
-	let mut child = Command::new(bin)
-		.env("PID_TEST_DATADIR", datadir)
-		.stdout(Stdio::piped())
-		.stderr(Stdio::piped())
-		.spawn()
-		.expect("failed to spawn pid-lock-holder");
-
-	// Wait until the child has acquired the lock.
-	let stdout = child.stdout.as_mut().unwrap();
-	let mut line = String::new();
-	BufReader::new(stdout).read_line(&mut line).unwrap();
-	assert_eq!(line.trim(), "LOCKED", "unexpected output: {line}");
-
-	child
+/// What the parent test needs to know about a pid-lock backend: the
+/// `LOCK_TEST_KIND` to pass to the child, a human-readable name for
+/// failure messages, and a closure that mirrors the child's
+/// construction so we can assert "second acquisition fails".
+struct PidBackend {
+	name: &'static str,
+	kind: &'static str,
+	/// Returns `true` if a fresh manager could be constructed (i.e. the
+	/// lock was free). `false` means "another holder has it".
+	try_acquire: fn(&Path) -> bool,
 }
 
-fn kill_and_wait(mut child: Child, signal: Signal) {
-	signal::kill(Pid::from_raw(child.id() as i32), signal).unwrap();
-	let _ = child.wait();
+fn try_flock(dir: &Path) -> bool {
+	FlockPidLockManager::new(dir).is_ok()
+}
+
+fn try_fcntl(dir: &Path) -> bool {
+	FcntlPidLockManager::new(dir).is_ok()
+}
+
+fn pid_backends() -> [PidBackend; 2] {
+	[
+		PidBackend { name: "flock", kind: "pid-flock", try_acquire: try_flock },
+		PidBackend { name: "fcntl", kind: "pid-fcntl", try_acquire: try_fcntl },
+	]
 }
 
 #[tokio::test]
 async fn pid_lock_is_released_after_sigkill() {
-	let ctx = TestContext::new_minimal("pid/sigkill").await;
+	for b in pid_backends() {
+		let ctx = TestContext::new_minimal(&format!("pid/{}/sigkill", b.name)).await;
+		let child = spawn_holder(b.kind, &ctx.datadir, None);
 
-	let child = spawn_lock_holder(&ctx.datadir);
+		// The pid file must exist and contain the child's PID.
+		let contents = fs::read_to_string(ctx.datadir.join(LOCK_FILE)).unwrap();
+		assert_eq!(contents, child.id().to_string(), "{}", b.name);
 
-	// The pid file must exist and contain the child's PID.
-	let contents = fs::read_to_string(ctx.datadir.join(LOCK_FILE)).unwrap();
-	assert_eq!(contents, child.id().to_string());
+		// A second acquisition must fail while the child holds the lock.
+		assert!(!(b.try_acquire)(&ctx.datadir),
+			"{}: second acquisition should fail while child holds lock", b.name);
 
-	// A second acquisition must fail while the child holds the lock.
-	assert!(PidLock::acquire(&ctx.datadir).is_err());
+		kill_and_wait(child, Signal::SIGKILL);
 
-	kill_and_wait(child, Signal::SIGKILL);
-
-	// After SIGKILL the OS releases the flock — reacquisition must succeed.
-	let _lock = PidLock::acquire(&ctx.datadir).expect("should reacquire after SIGKILL");
+		assert!((b.try_acquire)(&ctx.datadir),
+			"{}: should reacquire after SIGKILL", b.name);
+	}
 }
 
 #[tokio::test]
 async fn pid_lock_is_released_after_sigterm() {
-	let ctx = TestContext::new_minimal("pid/sigterm").await;
+	for b in pid_backends() {
+		let ctx = TestContext::new_minimal(&format!("pid/{}/sigterm", b.name)).await;
+		let child = spawn_holder(b.kind, &ctx.datadir, None);
 
-	let child = spawn_lock_holder(&ctx.datadir);
-	assert!(PidLock::acquire(&ctx.datadir).is_err());
+		assert!(!(b.try_acquire)(&ctx.datadir),
+			"{}: second acquisition should fail while child holds lock", b.name);
 
-	kill_and_wait(child, Signal::SIGTERM);
+		kill_and_wait(child, Signal::SIGTERM);
 
-	let _lock = PidLock::acquire(&ctx.datadir).expect("should reacquire after SIGTERM");
+		assert!((b.try_acquire)(&ctx.datadir),
+			"{}: should reacquire after SIGTERM", b.name);
+	}
 }
 
 #[tokio::test]
 async fn pid_lock_is_released_after_sigint() {
-	let ctx = TestContext::new_minimal("pid/sigint").await;
+	for b in pid_backends() {
+		let ctx = TestContext::new_minimal(&format!("pid/{}/sigint", b.name)).await;
+		let child = spawn_holder(b.kind, &ctx.datadir, None);
 
-	let child = spawn_lock_holder(&ctx.datadir);
-	assert!(PidLock::acquire(&ctx.datadir).is_err());
+		assert!(!(b.try_acquire)(&ctx.datadir),
+			"{}: second acquisition should fail while child holds lock", b.name);
 
-	kill_and_wait(child, Signal::SIGINT);
+		kill_and_wait(child, Signal::SIGINT);
 
-	let _lock = PidLock::acquire(&ctx.datadir).expect("should reacquire after SIGINT");
+		assert!((b.try_acquire)(&ctx.datadir),
+			"{}: should reacquire after SIGINT", b.name);
+	}
 }
 
 #[tokio::test]
 async fn pid_file_contains_holder_pid() {
-	let ctx = TestContext::new_minimal("pid/pid_content").await;
+	for b in pid_backends() {
+		let ctx = TestContext::new_minimal(&format!("pid/{}/pid_content", b.name)).await;
+		let child = spawn_holder(b.kind, &ctx.datadir, None);
 
-	let child = spawn_lock_holder(&ctx.datadir);
+		let contents = fs::read_to_string(ctx.datadir.join(LOCK_FILE)).unwrap();
+		assert_eq!(contents, child.id().to_string(), "{}", b.name);
 
-	let contents = fs::read_to_string(ctx.datadir.join(LOCK_FILE)).unwrap();
-	assert_eq!(contents, child.id().to_string());
-
-	kill_and_wait(child, Signal::SIGKILL);
+		kill_and_wait(child, Signal::SIGKILL);
+	}
 }
 
 #[tokio::test]
 async fn stale_pid_file_does_not_prevent_acquisition() {
-	let ctx = TestContext::new_minimal("pid/stale").await;
+	for b in pid_backends() {
+		let ctx = TestContext::new_minimal(&format!("pid/{}/stale", b.name)).await;
 
-	// Write a fake PID — no process holds the flock.
-	fs::write(ctx.datadir.join(LOCK_FILE), "999999").unwrap();
+		// Write a fake PID — no process holds the OS lock.
+		fs::write(ctx.datadir.join(LOCK_FILE), "999999").unwrap();
 
-	// Acquisition must succeed because no flock is held.
-	let _lock = PidLock::acquire(&ctx.datadir).expect("stale pid file should not block");
+		assert!((b.try_acquire)(&ctx.datadir),
+			"{}: stale pid file should not block acquisition", b.name);
+	}
 }
 
 #[tokio::test]
 async fn only_one_of_ten_concurrent_holders_succeeds() {
-	let ctx = TestContext::new_minimal("pid/concurrent").await;
-	let bin = env!("CARGO_BIN_EXE_pid-lock-holder");
+	for b in pid_backends() {
+		let ctx = TestContext::new_minimal(&format!("pid/{}/concurrent", b.name)).await;
+		let bin = lock_holder_bin();
 
-	// Spawn 10 holders racing for the same lock.
-	let mut children: Vec<Child> = (0..10)
-		.map(|_| {
-			Command::new(bin)
-				.env("PID_TEST_DATADIR", &ctx.datadir)
-				.stdout(Stdio::piped())
-				.stderr(Stdio::piped())
-				.spawn()
-				.expect("failed to spawn pid-lock-holder")
-		})
-		.collect();
+		// Spawn 10 holders racing for the same lock.
+		let mut children: Vec<Child> = (0..10)
+			.map(|_| {
+				Command::new(&bin)
+					.env("LOCK_TEST_KIND", b.kind)
+					.env("LOCK_TEST_DIR", &ctx.datadir)
+					.stdout(Stdio::piped())
+					.stderr(Stdio::piped())
+					.spawn()
+					.expect("failed to spawn lock-holder")
+			})
+			.collect();
 
-	// Wait for all losers to exit. Each loser panics on acquire and exits
-	// with a non-success status. The single winner stays alive.
-	let mut failed = 0;
-	let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
-	while failed < 9 {
-		assert!(
-			tokio::time::Instant::now() < deadline,
-			"timed out: only {failed} children failed, {} still alive — \
-			 more than one process may have acquired the lock",
-			children.len(),
-		);
+		// Wait for all losers to exit. Each loser panics on acquire and exits
+		// with a non-success status. The single winner stays alive.
+		let mut failed = 0;
+		let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
+		while failed < 9 {
+			assert!(
+				tokio::time::Instant::now() < deadline,
+				"{}: timed out: only {failed} children failed, {} still alive — \
+				 more than one process may have acquired the lock",
+				b.name, children.len(),
+			);
 
-		children.retain_mut(|child| {
-			match child.try_wait().unwrap() {
-				Some(status) => {
-					assert!(!status.success());
-					failed += 1;
-					false
+			children.retain_mut(|child| {
+				match child.try_wait().unwrap() {
+					Some(status) => {
+						assert!(!status.success(), "{}", b.name);
+						failed += 1;
+						false
+					}
+					None => true,
 				}
-				None => true,
-			}
-		});
+			});
 
-		tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-	}
+			tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+		}
 
-	assert_eq!(children.len(), 1, "exactly one holder should still be alive");
-	assert_eq!(failed, 9, "nine holders should fail");
+		assert_eq!(children.len(), 1,
+			"{}: exactly one holder should still be alive", b.name);
+		assert_eq!(failed, 9, "{}: nine holders should fail", b.name);
 
-	for child in children {
-		kill_and_wait(child, Signal::SIGKILL);
+		for child in children {
+			kill_and_wait(child, Signal::SIGKILL);
+		}
 	}
 }
