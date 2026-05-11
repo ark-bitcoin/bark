@@ -34,7 +34,7 @@ use ark::VtxoId;
 use ark::rounds::RoundSeq;
 
 use crate::database::ln::{LightningHtlcSubscriptionStatus, LightningPaymentStatus};
-use crate::ln::cln::ClnNodeStateKind;
+use crate::ln::cln::NodeStateKind;
 use crate::round::RoundStateKind;
 use crate::wallet::WalletKind;
 
@@ -891,7 +891,7 @@ pub fn set_lightning_node_state(
 	lightning_node_uri: tonic::transport::Uri,
 	lightning_node_id: Option<i64>,
 	pubkey: Option<PublicKey>,
-	state: ClnNodeStateKind,
+	state: NodeStateKind,
 ) {
 	let pubkey_string = match pubkey {
 		Some(pubkey) => pubkey.to_string(),
@@ -899,7 +899,7 @@ pub fn set_lightning_node_state(
 	};
 
 	if let Some(m) = TELEMETRY.get() {
-		for s in ClnNodeStateKind::get_all() {
+		for s in NodeStateKind::get_all() {
 			let value = if *s == state {
 				1
 			} else {
@@ -915,7 +915,7 @@ pub fn set_lightning_node_state(
 			m.lightning_node_gauge.record(value, &attrs);
 		}
 
-		if state == ClnNodeStateKind::Online {
+		if state == NodeStateKind::Online {
 			let boot_attrs = m.with_global_labels([
 				KeyValue::new(ATTRIBUTE_URI, lightning_node_uri.to_string()),
 				KeyValue::new(ATTRIBUTE_LIGHTNING_NODE_ID, lightning_node_id.unwrap_or(0).to_string()),
