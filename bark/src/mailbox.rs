@@ -129,6 +129,7 @@ impl Wallet {
 
 		'outer: loop {
 			let mut stream = self.subscribe_mailbox_messages(since_checkpoint).await?;
+			let connected_at = std::time::Instant::now();
 			trace!("Connected to mailbox stream with server");
 
 			loop {
@@ -138,6 +139,12 @@ impl Wallet {
 							reconnect_count = 0;
 							let message = message.context("error on mailbox message stream")?;
 							self.process_mailbox_message(message).await;
+						} else if connected_at.elapsed() >= crate::HEALTHY_STREAM_DURATION {
+							// Stream lived long enough that this is likely a
+							// normal idle timeout, not a misbehaving server.
+							reconnect_count = 0;
+							info!("Mailbox stream closed after healthy session, reconnecting");
+							continue 'outer;
 						} else if reconnect_count >= MAX_RECONNECT_ATTEMPTS {
 							bail!("Mailbox stream dropped by server, giving up to retry later");
 						} else {
