@@ -1,3 +1,4 @@
+pub mod node_manager;
 
 pub mod cln;
 pub mod settler;

@@ -9,7 +9,7 @@ use crate::database::ln::{LightningPaymentAttempt, LightningPaymentStatus};
 /// Borrows the DB, mailbox manager, and payment update broadcast channel
 /// so that every payment-attempt status change is consistently followed by
 /// a broadcast and (for final states) a mailbox notification.
-pub(in crate::ln::cln) struct PaymentAttemptNotifier<'a> {
+pub(crate) struct PaymentAttemptNotifier<'a> {
 	db: &'a database::Db,
 	mailbox_manager: &'a crate::mailbox_manager::MailboxManager,
 	payment_update_tx: &'a broadcast::Sender<PaymentHash>,

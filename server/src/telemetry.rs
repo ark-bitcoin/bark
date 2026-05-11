@@ -34,7 +34,7 @@ use ark::VtxoId;
 use ark::rounds::RoundSeq;
 
 use crate::database::ln::{LightningHtlcSubscriptionStatus, LightningPaymentStatus};
-use crate::ln::cln::NodeStateKind;
+use crate::ln::node_manager::NodeStateKind;
 use crate::round::RoundStateKind;
 use crate::wallet::WalletKind;
 

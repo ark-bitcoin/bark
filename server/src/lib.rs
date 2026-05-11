@@ -73,7 +73,7 @@ use crate::sync::{ChainEventListener, SyncManager};
 use crate::error::ContextExt;
 use crate::watchman::VtxoExitFrontier;
 use crate::flux::VtxosInFlux;
-use crate::ln::cln::LightningManager;
+use crate::ln::node_manager::LightningManager;
 use crate::ln::settler::HtlcSettler;
 use crate::mailbox_manager::MailboxManager;
 use crate::fee_estimator::FeeEstimator;
