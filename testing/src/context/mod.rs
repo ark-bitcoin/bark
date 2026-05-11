@@ -13,7 +13,7 @@ use ark::fees::{
 use bitcoin::{Amount, FeeRate, Network, OutPoint, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Txid, Witness};
 use bitcoin::absolute::LockTime;
 use bitcoin::transaction::Version;
-use bitcoin_ext::{FeeRateExt, TxOutExt};
+use bitcoin_ext::{BlockHeight, FeeRateExt, TxOutExt};
 use bitcoin_ext::fee::P2A_SCRIPT;
 use bitcoin_ext::rpc::BitcoinRpcExt;
 use bitcoincore_rpc::json::SignRawTransactionInput;
@@ -573,6 +573,12 @@ impl TestContext {
 		self.bitcoind().fund_addr(rounds_address, amount).await;
 		self.bitcoind().generate(1).await;
 		self.await_block_count_sync().await;
+		// `await_block_count_sync` only waits for the server's bitcoind to
+		// receive the block; the wallet syncs in a background task and may
+		// still be catching up. Callers that immediately query `wallet_status`
+		// need to also wait for the wallet's own sync height to catch up.
+		let height = srv.bitcoind().get_block_count().await as BlockHeight;
+		srv.wait_for_sync_height(height).await;
 	}
 
 	/// Send `amount` to an onchain address of this Bark client.
