@@ -188,21 +188,35 @@ impl DaemonProcess {
 	/// `connected` flag is set to `true` once the stream opens and back
 	/// to `false` when it breaks.
 	async fn inner_process_pending_rounds(&self) -> anyhow::Result<()> {
-		let mut events = self.wallet.subscribe_round_events().await?;
-		self.connected.store(true, Ordering::Relaxed);
+		'reconnect: loop {
+			let mut events = self.wallet.subscribe_round_events().await?;
+			let connected_at = std::time::Instant::now();
+			self.connected.store(true, Ordering::Relaxed);
 
-		loop {
-			futures::select! {
-				res = events.next().fuse() => {
-					let event = res.context("events stream broke")?
-						.context("error on event stream")?;
-
-					self.wallet.progress_pending_rounds(Some(&event)).await?;
-				},
-				_ = self.shutdown.cancelled().fuse() => {
-					info!("Shutdown signal received! Shutting inner round events process...");
-					return Ok(());
-				},
+			loop {
+				futures::select! {
+					res = events.next().fuse() => {
+						match res {
+							Some(Ok(event)) => {
+								self.wallet.progress_pending_rounds(Some(&event)).await?;
+							},
+							Some(Err(e)) => {
+								bail!("error on event stream: {e:#}");
+							},
+							None if connected_at.elapsed() >= crate::HEALTHY_STREAM_DURATION => {
+								info!("Round events stream closed after healthy session, reconnecting");
+								continue 'reconnect;
+							},
+							None => {
+								bail!("events stream broke");
+							},
+						}
+					},
+					_ = self.shutdown.cancelled().fuse() => {
+						info!("Shutdown signal received! Shutting inner round events process...");
+						return Ok(());
+					},
+				}
 			}
 		}
 	}
