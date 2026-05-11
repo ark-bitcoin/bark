@@ -1,0 +1,6 @@
+- Reconnect mailbox and round-event streams gracefully on idle timeout
+  Streaming connections killed by a proxy idle timeout are now silently
+  reconnected instead of treated as server failures. This prevents the
+  daemon from unnecessarily marking the server as disconnected or giving
+  up on the mailbox stream after prolonged idle periods.
+  [#2040](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2040)
