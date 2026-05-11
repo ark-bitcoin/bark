@@ -961,6 +961,18 @@ impl Wallet {
 		force: bool,
 	) -> anyhow::Result<Wallet> {
 		trace!("Config: {:?}", config);
+
+		let wallet_fingerprint = WalletSeed::new(network, &mnemonic.to_seed("")).fingerprint();
+
+		// Block concurrent creators against the same locking universe. A
+		// short timeout is fine: if a sibling process wins the race they
+		// will have committed the wallet by the time we'd time out, and
+		// the `read_properties` check below catches that case cleanly.
+		let create_guard = lock_manager.lock(
+			&format!("{}.create", wallet_fingerprint),
+			Duration::from_secs(5),
+		).await.context("wallet initialization already in progress")?;
+
 		if let Some(existing) = db.read_properties().await? {
 			trace!("Existing config: {:?}", existing);
 			bail!("cannot overwrite already existing config")
@@ -981,7 +993,6 @@ impl Wallet {
 			(None, None)
 		};
 
-		let wallet_fingerprint = WalletSeed::new(network, &mnemonic.to_seed("")).fingerprint();
 		let properties = WalletProperties {
 			network,
 			fingerprint: wallet_fingerprint,
@@ -995,6 +1006,10 @@ impl Wallet {
 		if let Some(pk) = server_pubkey {
 			info!("Stored server pubkey: {}", pk);
 		}
+
+		// The wallet exists from this point on — drop the creation lock
+		// so another process is free to open it.
+		drop(create_guard);
 
 		// from then on we can open the wallet
 		let wallet = Wallet::open(&mnemonic, db, config, lock_manager).await.context("failed to open wallet")?;
