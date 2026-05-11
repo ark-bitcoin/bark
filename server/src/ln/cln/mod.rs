@@ -1,23 +1,23 @@
-//! Manages CLN node connections and proxies requests to [`ClnHold`] and [`ClnXpay`].
+//! Manages CLN node connections and proxies requests to `ClnHold` and `ClnXpay`.
 //!
 //! ## Node lifecycle
 //!
-//! Each configured CLN node is tracked as a [`ClnNodeInfo`] with a state machine:
+//! Each configured CLN node is tracked as a `ClnNodeInfo` with a state machine:
 //! `Offline ↔ Online ↔ Error`, where `Invalid` and `Disabled` are terminal states.
 //! The manager periodically reconnects offline/errored nodes and monitors online nodes
-//! for crashed sub-monitors ([`ClnHold`], [`ClnXpay`]). When multiple nodes are online,
+//! for crashed sub-monitors (`ClnHold`, `ClnXpay`). When multiple nodes are online,
 //! the highest-priority node is selected for operations.
 //!
 //! ## Actor pattern
 //!
-//! [`ClnManager`] is the public handle held by the rest of the server. It sends [`Ctrl`]
-//! messages over an mpsc channel to [`ClnManagerProcess`], which runs as a tokio task.
+//! [`ClnManager`] is the public handle held by the rest of the server. It sends `Ctrl`
+//! messages over an mpsc channel to `ClnManagerProcess`, which runs as a tokio task.
 //! Responses come back via oneshot channels embedded in the control messages.
 //!
 //! ## Routing
 //!
-//! `generate_invoice`/`settle_invoice`/`cancel_invoice` route to [`ClnHold`].
-//! `pay` routes to [`ClnXpay`]. `fetch_bolt12` calls CLN gRPC directly.
+//! `generate_invoice`/`settle_invoice`/`cancel_invoice` route to `ClnHold`.
+//! `pay` routes to `ClnXpay`. `fetch_bolt12` calls CLN gRPC directly.
 //! Intra-Ark payments short-circuit both paths: the manager updates the DB and
 //! broadcasts the result without making a CLN round-trip.
 

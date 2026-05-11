@@ -12,7 +12,7 @@ use crate::persist::BarkPersister;
 use crate::subsystem::Subsystem;
 
 /// A minimalist helper class to handle movement registration and updating based on unique
-/// [SubsystemId] values.
+/// [Subsystem] values.
 pub struct MovementManager {
 	db: Arc<dyn BarkPersister>,
 	subsystem_ids: RwLock<HashSet<Subsystem>>,
@@ -34,7 +34,7 @@ impl MovementManager {
 	}
 
 	/// Registers a subsystem with the movement manager. Subsystems are identified using unique
-	/// names, to maintain this guarantee a unique [SubsystemId] will be generated and returned by
+	/// names, to maintain this guarantee a unique [Subsystem] will be generated and returned by
 	/// this function. Future calls to register or modify movements must provide this ID.
 	pub async fn register_subsystem(&self, id: Subsystem) -> anyhow::Result<(), MovementError> {
 		let mut guard = self.subsystem_ids.write().await;

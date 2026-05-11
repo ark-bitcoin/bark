@@ -114,7 +114,7 @@ pub struct WalletVtxo {
 	/// The underlying [Vtxo].
 	#[serde(with = "ark::encode::serde")]
 	pub vtxo: Vtxo<Full>,
-	/// The current tracked state for [WalletVtxo::into_vtxo].
+	/// The current tracked state for [`WalletVtxo`].
 	pub state: VtxoState,
 }
 

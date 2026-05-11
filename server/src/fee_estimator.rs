@@ -70,7 +70,6 @@ impl Config {
 /// Provides access to cached fee rate estimates.
 ///
 /// The fee rates are updated periodically by a background process.
-/// Use [FeeEstimator::fee_rates] to get the current cached rates.
 pub struct FeeEstimator {
 	fee_rates: parking_lot::RwLock<VecDeque<(OnchainFeeRates, Instant)>>,
 	history_duration: Duration,

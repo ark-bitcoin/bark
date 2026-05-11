@@ -41,7 +41,7 @@ mod sort;
 #[cfg(feature = "filestore")]
 pub mod filestore;
 pub mod memory;
-pub use self::sort::SortKey;
+pub use self::sort::{SortKey, SortKeyBuilder};
 
 #[cfg(feature = "indexed-db")]
 pub mod indexed_db;

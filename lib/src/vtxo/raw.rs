@@ -1,6 +1,6 @@
 //! Raw VTXO representation with public fields for data migrations.
 //!
-//! Provides [`RawVtxo`], a view over a [`ServerVtxo<Full>`] with all
+//! Provides [`RawVtxo`], a view over a `Vtxo<Full, ServerVtxoPolicy>` with all
 //! fields exposed as `pub` so they can be mutated from outside the crate.
 
 use bitcoin::Amount;
@@ -16,7 +16,7 @@ type ServerVtxoFull = Vtxo<Full, ServerVtxoPolicy>;
 
 /// A VTXO with all fields public, for use in data migrations.
 ///
-/// Convert from/to [`ServerVtxo<Full>`] via [`From`]/[`Into`].
+/// Convert from/to `Vtxo<Full, ServerVtxoPolicy>` via [`From`]/[`Into`].
 pub struct RawVtxo {
 	pub policy: ServerVtxoPolicy,
 	pub amount: Amount,
@@ -59,12 +59,12 @@ impl From<RawVtxo> for Vtxo<Full, ServerVtxoPolicy> {
 }
 
 impl RawVtxo {
-	/// Deserialize from bytes encoded as a [`ServerVtxo<Full>`].
+	/// Deserialize from bytes encoded as a `Vtxo<Full, ServerVtxoPolicy>`.
 	pub fn deserialize(bytes: &[u8]) -> Result<Self, ProtocolDecodingError> {
 		ServerVtxoFull::decode(&mut &*bytes).map(RawVtxo::from)
 	}
 
-	/// Serialize by converting back into a [`ServerVtxo<Full>`].
+	/// Serialize by converting back into a `Vtxo<Full, ServerVtxoPolicy>`.
 	pub fn serialize(self) -> Vec<u8> {
 		let vtxo: ServerVtxoFull = self.into();
 		ProtocolEncoding::serialize(&vtxo)

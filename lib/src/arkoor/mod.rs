@@ -42,7 +42,7 @@
 //! used to build arkoor transactions. The struct is designed to be
 //! used by both the client and the server.
 //!
-//! [ArkoorBuilder::new]  is a constructor that validates
+//! `ArkoorBuilder::new`  is a constructor that validates
 //! the intended transaction. At this point, all transactions that
 //! will be constructed are fully designed. You can
 //! use [ArkoorBuilder::build_unsigned_vtxos] to construct the
@@ -53,15 +53,15 @@
 //!
 //! The client will call [ArkoorBuilder::generate_user_nonces]
 //! which will update the builder-state to  [state::UserGeneratedNonces].
-//! The client will create a [CosignRequest] which contains the details
+//! The client will create a [ArkoorCosignRequest] which contains the details
 //! about the arkoor payment including the user nonces. The server will
-//! respond with a [CosignResponse] which can be used to finalize all
+//! respond with a [ArkoorCosignResponse] which can be used to finalize all
 //! signatures. At the end the client can call [ArkoorBuilder::build_signed_vtxos]
 //! to get their fully signed VTXOs.
 //!
 //! The server will also use [ArkoorBuilder::from_cosign_request]
 //! to construct a builder. The [ArkoorBuilder::server_cosign]
-//! will construct the [CosignResponse] which is sent to the client.
+//! will construct the [ArkoorCosignResponse] which is sent to the client.
 //!
 
 pub mod package;
@@ -1550,7 +1550,7 @@ impl<'a> ArkoorBuilder<state::UserSigned> {
 
 	/// Returns signed copies of all intermediate transactions.
 	///
-	/// Same order as [virtual_transactions]: checkpoint tx (if any),
+	/// Same order as `virtual_transactions`: checkpoint tx (if any),
 	/// arkoor txs, isolation fanout tx (if any).
 	pub fn signed_virtual_transactions(&self) -> Vec<Transaction> {
 		let sigs = self.full_signatures.as_ref().expect("state invariant");

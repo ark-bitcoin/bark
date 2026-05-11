@@ -471,7 +471,7 @@ impl<G, P: Policy> Vtxo<G, P> {
 		self.policy.txout(self.amount, self.server_pubkey, self.exit_delta, self.expiry_height)
 	}
 
-	/// Convert to a bare VTXO, [Vtxo<Bare>]
+	/// Convert to a bare VTXO, `Vtxo<Bare>`
 	pub fn to_bare(&self) -> Vtxo<Bare, P> {
 		Vtxo {
 			point: self.point,
@@ -485,7 +485,7 @@ impl<G, P: Policy> Vtxo<G, P> {
 		}
 	}
 
-	/// Convert into a bare VTXO, [Vtxo<Bare>]
+	/// Convert into a bare VTXO, `Vtxo<Bare>`
 	pub fn into_bare(self) -> Vtxo<Bare, P> {
 		Vtxo {
 			point: self.point,
