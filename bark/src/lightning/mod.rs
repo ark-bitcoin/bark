@@ -64,6 +64,7 @@ mod test {
 	use lightning_invoice::Bolt11Invoice;
 
 	use crate::{Config, Wallet};
+	use crate::lock_manager::memory::MemoryLockManager;
 	use crate::persist::adaptor::StorageAdaptorWrapper;
 
 	#[allow(unused)] // just exists for compile check
@@ -72,7 +73,10 @@ mod test {
 
 		let db = Arc::new(StorageAdaptorWrapper::new_memory());
 		let w = Wallet::open(
-			&"".parse().unwrap(), db, Config::network_default(Network::Regtest),
+			&"".parse().unwrap(),
+			db,
+			Config::network_default(Network::Regtest),
+			Box::new(MemoryLockManager::new()),
 		).await.unwrap();
 
 		let bolt11 = Bolt11Invoice::from_str("").unwrap();
