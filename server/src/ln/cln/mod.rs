@@ -54,7 +54,7 @@ use crate::system::RuntimeManager;
 use crate::config::{self, Config};
 use crate::database;
 use crate::database::ln::{
-	ClnNodeId, LightningHtlcSubscription, LightningHtlcSubscriptionStatus, LightningPaymentStatus,
+	LightningNodeId, LightningHtlcSubscription, LightningHtlcSubscriptionStatus, LightningPaymentStatus,
 };
 use self::hold::{ClnHold, ClnHoldConfig};
 use self::notifier::PaymentAttemptNotifier;
@@ -487,7 +487,7 @@ async fn post_lightning_receive_notification(
 
 #[derive(Debug)]
 pub struct ClnNodeOnlineState {
-	id: ClnNodeId,
+	id: LightningNodeId,
 	pubkey: PublicKey,
 	rpc: ClnGrpcClient,
 	hold_rpc: Option<HoldClient<Channel>>,
@@ -613,7 +613,7 @@ impl ClnNodeInfo {
 		sync_manager: &Arc<SyncManager>,
 		mailbox_manager: &Arc<crate::mailbox_manager::MailboxManager>,
 		settler: &Arc<HtlcSettler>,
-	) -> anyhow::Result<ClnNodeId> {
+	) -> anyhow::Result<LightningNodeId> {
 		let mut rpc = self.config.build_grpc_client().await.context("failed to connect rpc")?;
 		let hold_rpc = self.config.build_hold_client().await.context("failed to connect hold rpc")?;
 
@@ -721,7 +721,7 @@ struct ClnManagerProcess {
 
 	network: bitcoin::Network,
 	nodes: HashMap<Uri, ClnNodeInfo>,
-	node_by_id: HashMap<ClnNodeId, Uri>,
+	node_by_id: HashMap<LightningNodeId, Uri>,
 	hold_config: ClnHoldConfig,
 	xpay_config: ClnXpayConfig,
 	invoice_expiry: Duration,
@@ -760,7 +760,7 @@ impl ClnManagerProcess {
 			.min_by_key(|&(prio, _)| prio).map(|(_, node)| node)
 	}
 
-	fn get_node_by_id(&self, id: ClnNodeId) -> Option<&ClnNodeOnlineState> {
+	fn get_node_by_id(&self, id: LightningNodeId) -> Option<&ClnNodeOnlineState> {
 		self.online_nodes()
 			.find(|(_, node)| node.id == id)
 			.map(|(_, node)| node)

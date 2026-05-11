@@ -14,7 +14,7 @@ use ark::VtxoId;
 use ark::lightning::PaymentHash;
 use bitcoin_ext::{AmountExt, BlockHeight};
 
-use super::ClnNodeId;
+use super::LightningNodeId;
 
 
 #[derive(Debug, Clone, Default)]
@@ -67,7 +67,7 @@ impl fmt::Display for LightningPaymentStatus {
 #[derive(Debug, Clone)]
 pub struct LightningPaymentAttempt {
 	pub id: i64,
-	pub lightning_node_id: ClnNodeId,
+	pub lightning_node_id: LightningNodeId,
 	pub payment_hash: PaymentHash,
 	pub amount_msat: u64,
 	pub final_amount_msat: Option<u64>,
@@ -156,7 +156,7 @@ impl From<LightningHtlcSubscriptionStatus> for protos::LightningReceiveStatus {
 #[derive(Debug, Clone)]
 pub struct LightningHtlcSubscription {
 	pub id: i64,
-	pub lightning_node_id: ClnNodeId,
+	pub lightning_node_id: LightningNodeId,
 	pub payment_hash: PaymentHash,
 	pub invoice: Bolt11Invoice,
 	pub status: LightningHtlcSubscriptionStatus,

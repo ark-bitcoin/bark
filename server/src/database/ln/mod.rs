@@ -20,8 +20,8 @@ use cln_rpc::listsendpays_request::ListsendpaysIndex;
 use crate::database::{Checkpoint, Tx};
 use crate::telemetry;
 
-/// Identifier by which CLN nodes are stored in the database.
-pub type ClnNodeId = i64;
+/// Identifier by which lightning nodes are stored in the database.
+pub type LightningNodeId = i64;
 
 impl<'t> Tx<'t> {
 	// *******************
@@ -31,7 +31,7 @@ impl<'t> Tx<'t> {
 	pub async fn register_lightning_node(
 		&self,
 		pubkey: &PublicKey,
-	) -> anyhow::Result<(ClnNodeId, DateTime<Local>)> {
+	) -> anyhow::Result<(LightningNodeId, DateTime<Local>)> {
 		let select_stmt = self.prepare("
 			SELECT id, updated_at
 			FROM lightning_node
@@ -72,7 +72,7 @@ impl<'t> Tx<'t> {
 	// each index is handled by a separate never ending thread
 	pub async fn get_lightning_payment_indexes(
 		&self,
-		node_id: ClnNodeId,
+		node_id: LightningNodeId,
 	) -> anyhow::Result<Option<LightningIndexes>> {
 		let statement = self.prepare("
 			SELECT payment_created_index, payment_updated_index
@@ -100,7 +100,7 @@ impl<'t> Tx<'t> {
 	// each index is handled by a separate never ending thread
 	pub async fn store_lightning_payment_index(
 		&self,
-		node_id: ClnNodeId,
+		node_id: LightningNodeId,
 		kind: ListsendpaysIndex,
 		index: u64,
 	) -> anyhow::Result<DateTime<Local>> {
@@ -125,7 +125,7 @@ impl<'t> Tx<'t> {
 
 	pub async fn get_open_lightning_payment_attempts(
 		&self,
-		node_id: ClnNodeId,
+		node_id: LightningNodeId,
 	) -> anyhow::Result<Vec<LightningPaymentAttempt>> {
 		let stmt = self.prepare("
 			SELECT lpa.id,
@@ -194,7 +194,7 @@ impl<'t> Tx<'t> {
 	/// Errors if there is already an open attempt for the same payment hash.
 	pub async fn store_lightning_payment_start(
 		&self,
-		node_id: ClnNodeId,
+		node_id: LightningNodeId,
 		invoice: &Invoice,
 		amount: Amount,
 		sender_mailbox_id: Option<&MailboxIdentifier>,
@@ -359,7 +359,7 @@ impl<'t> Tx<'t> {
 	/// Store a generated lightning receive (invoice + htlc subscription).
 	pub async fn store_generated_lightning_receive(
 		&self,
-		node_id: ClnNodeId,
+		node_id: LightningNodeId,
 		invoice: &Bolt11Invoice,
 		amount_msat: u64,
 		receiver_mailbox_id: Option<&MailboxIdentifier>,
@@ -380,7 +380,7 @@ impl<'t> Tx<'t> {
 	/// CLN node monitor regularly queries open subscriptions to check if there are any incoming HTLCs.
 	async fn inner_store_lightning_htlc_subscription(
 		&self,
-		node_id: ClnNodeId,
+		node_id: LightningNodeId,
 		payment_hash: &str,
 		invoice: &str,
 		final_amount_msat: Option<u64>,
@@ -422,7 +422,7 @@ impl<'t> Tx<'t> {
 	/// Stores a htlc subscription for lightning receive in the database
 	pub async fn store_lightning_htlc_subscription(
 		&self,
-		node_id: ClnNodeId,
+		node_id: LightningNodeId,
 		payment_hash: PaymentHash,
 		invoice: &Bolt11Invoice,
 	) -> anyhow::Result<()> {
@@ -523,7 +523,7 @@ impl<'t> Tx<'t> {
 	/// This method DOES NOT fetch the htlc vtxos for the subscription.
 	pub async fn get_open_lightning_htlc_subscriptions(
 		&self,
-		node_id: ClnNodeId,
+		node_id: LightningNodeId,
 	) -> anyhow::Result<Vec<LightningHtlcSubscription>> {
 		let stmt = self.prepare("
 			SELECT id, lightning_node_id, payment_hash, invoice,
@@ -687,7 +687,7 @@ impl<'t> Tx<'t> {
 	/// when a state change notification is received.
 	pub async fn get_open_htlc_subscription_for_node_by_payment_hash(
 		&self,
-		node_id: ClnNodeId,
+		node_id: LightningNodeId,
 		payment_hash: &PaymentHash,
 	) -> anyhow::Result<Option<LightningHtlcSubscription>> {
 		let stmt = self.prepare("
