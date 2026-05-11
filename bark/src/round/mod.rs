@@ -2,10 +2,6 @@
 //! Round State Machine
 //!
 
-mod lock;
-
-pub(crate) use lock::{RoundStateGuard, RoundStateLockIndex};
-
 use std::iter;
 use std::borrow::Cow;
 use std::convert::Infallible;
@@ -40,6 +36,10 @@ use crate::{SECP, Wallet, WalletVtxo};
 use crate::movement::{MovementId, MovementStatus};
 use crate::movement::update::MovementUpdate;
 use crate::persist::models::{RoundStateId, StoredRoundState, Unlocked};
+
+/// How long [`Wallet::lock_wait_round_state`] waits for a contended
+/// round lock before giving up. Long enough to outlast a normal round.
+const ROUND_LOCK_TIMEOUT: Duration = Duration::from_secs(10);
 use crate::subsystem::{RoundMovement, Subsystem};
 
 
@@ -1276,6 +1276,26 @@ async fn update_funding_txid(
 }
 
 impl Wallet {
+	/// Load and lock a single given round state (by id), waiting for the lock.
+	///
+	/// Returns `Some(state)` if the round state is found and locked, `None`
+	/// if it is not found after acquiring the lock.
+	pub async fn lock_wait_round_state(&self, id: RoundStateId) -> anyhow::Result<Option<StoredRoundState>> {
+		let guard = self.lock_manager.lock(
+			&format!("{}.round.{}", self.fingerprint(), id),
+			ROUND_LOCK_TIMEOUT,
+		).await.with_context(|| format!(
+			"timed out waiting for lock on round state {} (wallet {})",
+			id, self.fingerprint(),
+		))?;
+
+		if let Some(state) = self.db.get_round_state_by_id(id).await? {
+			return Ok(Some(state.lock(guard)));
+		}
+
+		Ok(None)
+	}
+
 	/// Ask the server when the next round is scheduled to start
 	pub async fn next_round_start_time(&self) -> anyhow::Result<SystemTime> {
 		let (mut srv, _) = self.require_server().await?;

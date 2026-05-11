@@ -373,7 +373,7 @@ use crate::persist::BarkPersister;
 use crate::persist::models::{RoundStateId, StoredRoundState, Unlocked};
 #[cfg(feature = "socks5-proxy")]
 use crate::proxy::proxy_for_url;
-use crate::round::{RoundParticipation, RoundStateLockIndex, RoundStatus};
+use crate::round::{RoundParticipation, RoundStatus};
 use crate::subsystem::{ArkoorMovement, RoundMovement};
 use crate::vtxo::{FilterVtxos, RefreshStrategy, VtxoFilter, VtxoStateKind};
 
@@ -748,7 +748,6 @@ pub struct Wallet {
 	/// Coordinates access to the wallet's protected resources. The caller
 	/// picks a backend whose enforcement scope matches how the wallet is
 	/// deployed; see [`crate::lock_manager`].
-	#[allow(dead_code)]
 	lock_manager: Box<dyn LockManager>,
 
 	/// Deterministic seed material used to generate wallet keypairs.
@@ -765,9 +764,6 @@ pub struct Wallet {
 	/// Tracks payment hashes of lightning payments currently being processed.
 	/// Used to prevent concurrent payment attempts for the same invoice.
 	inflight_lightning_payments: Mutex<HashSet<PaymentHash>>,
-
-	/// Index of round states that are currently locked.
-	round_state_lock_index: RoundStateLockIndex,
 
 	/// A handle to the currently running daemon, if any.
 	daemon: parking_lot::Mutex<Option<DaemonHandle>>,
@@ -1095,7 +1091,6 @@ impl Wallet {
 		Ok(Wallet {
 			config, db, lock_manager, seed, exit, movements, notifications, server, chain,
 			inflight_lightning_payments: Mutex::new(HashSet::new()),
-			round_state_lock_index: RoundStateLockIndex::new(),
 			daemon: parking_lot::Mutex::new(None),
 		})
 	}
