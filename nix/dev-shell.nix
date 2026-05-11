@@ -1,7 +1,7 @@
 { system, pkgs, lib, fenix, slog-tools, buildShell, rustTargetWasm,
 }:
 let
-	bitcoinVersion = "30.2";
+	bitcoinVersion = "31.0";
 	lightningVersion = "25.12.1";
 	holdPluginVersion = "0.3.3";
 	esploraElectrsRevision = "5852c0cf49380bed575d69d364d3cc0a47f00375";
@@ -29,7 +29,7 @@ let
 		version = bitcoinVersion;
 		src = pkgs.fetchurl {
 			urls = [ "https://bitcoincore.org/bin/bitcoin-core-${bitcoinVersion}/bitcoin-${bitcoinVersion}.tar.gz" ];
-			sha256 = "sha256-b9ALjEKIPVyWOQGtQQmjW+Hl7Fwtx2MBjBZsIaBshMs=";
+			sha256 = "sha256-C6DvXuo679lswXdL4nTD1ZSBLPrAmIgJ1wZzi7Bns+M=";
 		};
 		cmakeFlags = (old.cmakeFlags or []) ++ [
 			"-DENABLE_IPC=OFF"
