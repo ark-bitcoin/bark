@@ -17,7 +17,6 @@
 <div align="center">
 
 [![Release](https://img.shields.io/gitlab/pipeline-status/ark-bitcoin/bark?branch=master&gitlab_url=https%3A%2F%2Fgitlab.com)](https://gitlab.com/ark-bitcoin/bark/tags)
-[![Project Status](https://img.shields.io/badge/status-experimental-red.svg)](https://gitlab.com/ark-bitcoin/bark)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen?logo=git)](CONTRIBUTING.md)
 [![Community](https://img.shields.io/badge/community-forum-blue?logo=discourse)](https://community.second.tech)
@@ -33,12 +32,6 @@ The project consists of:
 - The Ark wallet: **bark**
 - The Ark server: **captaind**
 - A set of libraries containing all protocol primitives
-
-> **Warning**  
-> This repository contains experimental code. Using it with real bitcoin is reckless and can result in loss of funds.
->
-> - Updating bark or captaind may corrupt your wallet-we prioritize development velocity over backward compatibility.
-> - Known bugs and vulnerabilities can still lead to loss of funds.
 
 ## Get started
 
