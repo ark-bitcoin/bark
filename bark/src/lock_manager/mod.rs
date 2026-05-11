@@ -47,6 +47,11 @@
 //!
 //! # Picking a backend
 //!
+//! - **Don't want to think about it?** Call [`platform_default`] —
+//!   it returns the sensible PidLock-family backend for your build
+//!   target (wasm gets Web Locks). Override with a specific backend
+//!   only when you have a non-default deployment shape (e.g.
+//!   multi-process access to the same datadir).
 //! - **Single-process apps and tests** —
 //!   [`MemoryLockManager`](memory::MemoryLockManager) is the safe
 //!   default: every instance in the process shares one key map, so two
@@ -158,6 +163,54 @@ pub trait LockManager: Send + Sync + std::fmt::Debug {
 			Err(_) => bail!("timed out acquiring lock {:?} after {:?}", key, timeout),
 		}
 	}
+}
+
+/// Return the recommended [`LockManager`] backend for the current
+/// build target. Most platforms will result a `LockManager` that
+/// can only be instantiated once.
+pub fn platform_default(datadir: impl Into<PathBuf>) -> anyhow::Result<Box<dyn LockManager>> {
+	#[cfg(target_arch = "wasm32")]
+	{
+		// Use navigator.locks via WebLockManager. An in-memory variant
+		// wouldn't be safe — the user can open the app in multiple
+		// tabs, each a separate wasm instance. navigator.locks is the
+		// only cross-tab coordination primitive in the browser.
+		// `datadir` is ignored.
+		let _ = datadir;
+		return Ok(Box::new(web_locks::WebLockManager::new()));
+	}
+
+	#[cfg(all(unix, not(target_arch = "wasm32")))]
+	{
+		// Use fcntl: it has wider support than flock across the unix
+		// family.
+		//
+		// We pick a PidLock variant over per-key fcntl files because:
+		// 1. It doesn't pollute the datadir with `<key>.lock` files.
+		// 2. It's faster — one OS-level lock at construction, then
+		//    in-memory locking per key (no syscall per try_lock).
+		// 3. It avoids cross-process footguns like notifications not
+		//    firing when a second process is doing the work.
+		return Ok(Box::new(pid_fcntl::FcntlPidLockManager::new(datadir)?));
+	}
+
+	#[cfg(all(windows, not(target_arch = "wasm32")))]
+	{
+		// Use std::fs::File::try_lock (LockFileEx under the hood):
+		// fcntl doesn't exist on Windows, and LockFileEx is the
+		// direct equivalent.
+		//
+		// We pick a PidLock variant over per-key file locks because:
+		// 1. It doesn't pollute the datadir with `<key>.lock` files.
+		// 2. It's faster — one OS-level lock at construction, then
+		//    in-memory locking per key (no syscall per try_lock).
+		// 3. It avoids cross-process footguns like notifications not
+		//    firing when a second process is doing the work.
+		return Ok(Box::new(pid_flock::FlockPidLockManager::new(datadir)?));
+	}
+
+	#[cfg(not(any(target_arch = "wasm32", unix, windows)))]
+	panic!("lock_manager::platform_default: no default backend for this target");
 }
 
 // The shared test harness uses `tokio::spawn` / `tokio::sync::Barrier`
@@ -387,5 +440,16 @@ mod test {
 		assert!(names.contains(&"Memory"), "missing Memory: {:?}", names);
 		#[cfg(target_arch = "wasm32")]
 		assert!(names.contains(&"Web"), "missing Web: {:?}", names);
+	}
+
+	#[tokio::test]
+	async fn platform_default_returns_a_working_manager() {
+		let dir = tmp_dir();
+		let mgr = super::platform_default(&dir)
+			.expect("platform_default should construct a manager");
+		let g = mgr.try_lock("bark.platform.default.test").await;
+		assert!(g.is_some(), "platform_default's manager should grant a fresh lock");
+		drop(g);
+		let _ = fs::remove_dir_all(&dir);
 	}
 }
