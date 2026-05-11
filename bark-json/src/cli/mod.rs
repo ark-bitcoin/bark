@@ -82,6 +82,7 @@ pub struct NextRoundStart {
 }
 
 impl<T: Borrow<ark::ArkInfo>> From<T> for ArkInfo {
+	#[allow(deprecated)] // offboard_feerate kept for old clients
 	fn from(v: T) -> Self {
 		let v = v.borrow();
 	    ArkInfo {
@@ -479,7 +480,7 @@ mod test {
 		//! the purpose of this test is to fail if we add a field to
 		//! ark::ArkInfo but we forgot to add it to the ArkInfo here
 
-		#[allow(unused)]
+		#[allow(unused, deprecated)]
 		fn convert(j: ArkInfo) -> ark::ArkInfo {
 			ark::ArkInfo {
 				network: j.network,

@@ -86,6 +86,7 @@ pub struct ArkInfo {
 	/// older clients but may be stale; prefer
 	/// [`ServerConnection::offboard_feerate`] which calls the dedicated
 	/// endpoint.
+	#[deprecated(since = "0.1.5", note = "use ServerConnection::offboard_feerate instead")]
 	pub offboard_feerate: FeeRate,
 
 	/// Indicates whether the Ark server requires clients to either
