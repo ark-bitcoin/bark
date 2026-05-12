@@ -101,6 +101,7 @@ Both keys can be found on the [keys.openpgp.org](https://keys.openpgp.org/) keys
 If you run into any issues at all, let us know:
 
 - [Community forum](https://community.second.tech)
+- [Community chat](https://chat.second.tech)
 - [Issue tracker](https://gitlab.com/ark-bitcoin/bark/issues)
 
 ## Security policy and responsible disclosure
