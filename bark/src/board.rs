@@ -201,7 +201,8 @@ impl Wallet {
 			ark_info.vtxo_exit_delta,
 		);
 
-		let board_output = &board_psbt.unsigned_tx.output[BOARD_FUNDING_TX_VTXO_VOUT as usize];
+		let board_output = board_psbt.unsigned_tx.output.get(BOARD_FUNDING_TX_VTXO_VOUT as usize)
+			.context("PSBT does not have output at board funding vout index")?;
 		let expected_script = builder.funding_script_pubkey();
 		ensure!(
 			board_output.script_pubkey == expected_script,
