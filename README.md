@@ -17,7 +17,6 @@
 <div align="center">
 
 [![Release](https://img.shields.io/gitlab/pipeline-status/ark-bitcoin/bark?branch=master&gitlab_url=https%3A%2F%2Fgitlab.com)](https://gitlab.com/ark-bitcoin/bark/tags)
-[![Project Status](https://img.shields.io/badge/status-experimental-red.svg)](https://gitlab.com/ark-bitcoin/bark)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen?logo=git)](CONTRIBUTING.md)
 [![Community](https://img.shields.io/badge/community-forum-blue?logo=discourse)](https://community.second.tech)
@@ -33,12 +32,6 @@ The project consists of:
 - The Ark wallet: **bark**
 - The Ark server: **captaind**
 - A set of libraries containing all protocol primitives
-
-> **Warning**  
-> This repository contains experimental code. Using it with real bitcoin is reckless and can result in loss of funds.
->
-> - Updating bark or captaind may corrupt your wallet-we prioritize development velocity over backward compatibility.
-> - Known bugs and vulnerabilities can still lead to loss of funds.
 
 ## Get started
 
@@ -89,6 +82,19 @@ The `ark-lib` crate (and by extension the `bark-bitcoin-ext` crate) have a MSRV 
 ## Contributing
 
 Thinking of opening a pull request? See our [contribution guide](CONTRIBUTING.md) for dependencies, style guidelines, and code hygiene expectations.
+
+### Security
+
+Please report any vulnerability or any bug that could potentially affect the
+security of users' funds by e-mail to [`security@second.tech`](mailto:security@second.tech).
+
+You may use the following PGP keys to encrypt your e-mail:
+
+- `8CC974D9CFD034DCEED213B02A57E0A610D7F19C` (Steven Roose)
+- `011E7F59B45397C4654D81298F44B2DD98E18528` (Erik De Smedt)
+
+Both keys can be found on the [keys.openpgp.org](https://keys.openpgp.org/) keyserver.
+
 
 ## Questions or issues
 
