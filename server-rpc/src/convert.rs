@@ -138,6 +138,7 @@ impl_try_from_bytes_bitcoin!(Transaction, "bitcoin transaction");
 
 
 impl From<ark::ArkInfo> for protos::ArkInfo {
+	#[allow(deprecated)] // offboard_feerate_sat_vkb kept for old clients
 	fn from(v: ark::ArkInfo) -> Self {
 		protos::ArkInfo {
 			network: v.network.to_string(),
@@ -163,6 +164,7 @@ impl From<ark::ArkInfo> for protos::ArkInfo {
 
 impl TryFrom<protos::ArkInfo> for ark::ArkInfo {
 	type Error = ConvertError;
+	#[allow(deprecated)] // offboard_feerate_sat_vkb kept for old clients
 	fn try_from(v: protos::ArkInfo) -> Result<Self, Self::Error> {
 		Ok(ark::ArkInfo {
 			network: v.network.parse().map_err(|_| "invalid network")?,

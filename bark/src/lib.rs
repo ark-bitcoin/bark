@@ -1154,8 +1154,6 @@ impl Wallet {
 		}).await?;
 
 		srv.check_connection().await?;
-		// Force a fresh fetch so the cache is up-to-date after reconnection.
-		srv.offboard_feerate().await?;
 		let ark_info = srv.ark_info().await;
 		ark_info.fees.validate().context("invalid fee schedule")?;
 		self.check_and_store_server_keys(&ark_info).await?;

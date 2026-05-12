@@ -79,14 +79,14 @@ pub struct ArkInfo {
 	/// Minimum amount for a board the server will cosign
 	pub min_board_amount: Amount,
 
-	//TODO(stevenroose) move elsewhere eith other temp fields
-
 	/// The feerate for offboard transactions.
 	///
-	/// This is the only field on [ArkInfo] that changes over time (it depends
-	/// on mempool conditions). In `bark`, prefer
-	/// [`ServerConnection::offboard_feerate`] which caches this value with a
-	/// TTL and transparently refreshes it when stale.
+	/// Deprecated in favour of the dedicated `GetOffboardFeeRate` RPC.
+	/// This field is still populated for backwards compatibility with
+	/// older clients but may be stale; prefer
+	/// [`ServerConnection::offboard_feerate`] which calls the dedicated
+	/// endpoint.
+	#[deprecated(since = "0.1.5", note = "use ServerConnection::offboard_feerate instead")]
 	pub offboard_feerate: FeeRate,
 
 	/// Indicates whether the Ark server requires clients to either

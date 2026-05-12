@@ -256,6 +256,7 @@ impl Server {
 		self.mailbox_pubkey
 	}
 
+	#[allow(deprecated)] // offboard_feerate kept for old clients
 	pub fn ark_info(&self) -> ark::ArkInfo {
 		ark::ArkInfo {
 			network: self.config.network,
