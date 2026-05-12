@@ -109,7 +109,7 @@ impl <W: Deref<Target = BdkWallet>> GetBalance for W {
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl SignPsbt for BdkWallet {
-	async fn finish_tx(&mut self, mut psbt: Psbt) -> anyhow::Result<Transaction> {
+	async fn finish_psbt(&mut self, mut psbt: Psbt) -> anyhow::Result<Psbt> {
 		#[allow(deprecated)]
 		let opts = bdk_wallet::SignOptions {
 			trust_witness_utxo: true,
@@ -118,10 +118,11 @@ impl SignPsbt for BdkWallet {
 
 		let finalized = self.sign(&mut psbt, opts).context("signing error")?;
 		assert!(finalized);
-		let tx = psbt.extract_tx()?;
-		self.apply_unconfirmed_txs([(tx.clone(), timestamp_secs())]);
-		Ok(tx)
+		let tx = psbt.clone().extract_tx()?;
+		self.apply_unconfirmed_txs([(tx, timestamp_secs())]);
+		Ok(psbt)
 	}
+
 }
 
 impl <W: Deref<Target = BdkWallet>> GetWalletTx for W {
@@ -285,10 +286,10 @@ impl MakeCpfp for OnchainWallet {
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl SignPsbt for OnchainWallet {
-	async fn finish_tx(&mut self, psbt: Psbt) -> anyhow::Result<Transaction> {
-		let tx = self.inner.finish_tx(psbt).await?;
+	async fn finish_psbt(&mut self, psbt: Psbt) -> anyhow::Result<Psbt> {
+		let psbt = self.inner.finish_psbt(psbt).await?;
 		self.persist().await?;
-		Ok(tx)
+		Ok(psbt)
 	}
 }
 
@@ -353,7 +354,7 @@ impl OnchainWallet {
 	pub async fn send(&mut self, chain: &ChainSource, dest: Address, amount: Amount, fee_rate: FeeRate
 	)	-> anyhow::Result<Txid> {
 		let psbt = self.prepare_tx(&[(dest, amount)], fee_rate)?;
-		let tx = self.finish_tx(psbt).await?;
+		let tx = self.finish_psbt(psbt).await?.extract_tx()?;
 		chain.broadcast_tx(&tx).await?;
 		Ok(tx.compute_txid())
 	}
@@ -365,7 +366,7 @@ impl OnchainWallet {
 		fee_rate: FeeRate,
 	) -> anyhow::Result<Txid> {
 		let pbst = self.prepare_tx(destinations, fee_rate)?;
-		let tx = self.finish_tx(pbst).await?;
+		let tx = self.finish_psbt(pbst).await?.extract_tx()?;
 		chain.broadcast_tx(&tx).await?;
 		Ok(tx.compute_txid())
 	}
@@ -378,7 +379,7 @@ impl OnchainWallet {
 		fee_rate: FeeRate,
 	) -> anyhow::Result<Txid> {
 		let psbt = self.prepare_drain_tx(destination, fee_rate)?;
-		let tx = self.finish_tx(psbt).await?;
+		let tx = self.finish_psbt(psbt).await?.extract_tx()?;
 		chain.broadcast_tx(&tx).await?;
 		Ok(tx.compute_txid())
 	}

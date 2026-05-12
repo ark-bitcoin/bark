@@ -1,15 +1,19 @@
 use std::sync::Arc;
 use std::sync::atomic::{self, AtomicBool};
 
-use bitcoin::Amount;
+use bitcoin::{Amount, OutPoint, Psbt, ScriptBuf, Transaction, TxIn, TxOut, Txid};
+use bitcoin::absolute::LockTime;
+use bitcoin::hashes::Hash;
 use bitcoin_ext::P2TR_DUST_SAT;
 
+use bark::onchain::{ChainSync, PreparePsbt, SignPsbt};
 use bark_json::primitives::VtxoStateInfo;
 use server_rpc::protos;
 
 use ark_testing::{btc, sat, TestContext};
 use ark_testing::constants::BOARD_CONFIRMATIONS;
 use ark_testing::daemon::captaind::{self, ArkClient};
+use ark_testing::util::ToAltString;
 
 #[tokio::test]
 async fn board_bark() {
@@ -72,7 +76,7 @@ async fn board_all_bark() {
 
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 
-	// Check that we emptied our on-chain balance
+	// Check that we emptied our onchain balance
 	assert_eq!(bark1.onchain_balance().await, Amount::ZERO);
 
 	// Check if the boarding tx's output value is the same as our off-chain balance
@@ -96,7 +100,7 @@ async fn bark_rejects_boarding_subdust_amount() {
 	let res = bark1.try_board(board_amount).await;
 
 	// This is taken care by BDK
-	assert!(res.unwrap_err().to_string().contains(&format!("Output below the dust limit: 0")));
+	assert!(res.unwrap_err().to_alt_string().contains(&format!("Output below the dust limit: 0")));
 }
 
 #[tokio::test]
@@ -112,7 +116,7 @@ async fn bark_rejects_boarding_below_minimum_board_amount() {
 	let board_amount = sat(MIN_BOARD_AMOUNT_SATS - 1);
 	let res = bark1.try_board(board_amount).await;
 
-	assert!(res.unwrap_err().to_string().contains(&format!(
+	assert!(res.unwrap_err().to_alt_string().contains(&format!(
 		"board amount of 0.00029999 BTC is less than minimum board amount required by server (0.00030000 BTC)",
 	)));
 }
@@ -159,4 +163,137 @@ async fn bark_recover_unregistered_board() {
 	ctx.generate_blocks(12).await;
 	// The board registration will succeed during maintenance her and the pending board balance should be 0.
 	assert_eq!(bark.pending_board_balance().await, Amount::ZERO);
+}
+
+#[tokio::test]
+async fn board_tx_rejects_wrong_funding_address() {
+	let ctx = TestContext::new("bark/board_tx_rejects_wrong_funding_address").await;
+	let srv = ctx.captaind("server").create().await;
+	let bark1 = ctx.bark("bark1", &srv).funded(sat(100_000)).create().await;
+
+	let wallet = bark1.client().await;
+	let (keypair, _) = wallet.derive_store_next_keypair().await.unwrap();
+	let (_, expiry_height) = wallet.board_funding_address(&keypair).await.unwrap();
+
+	// Build a PSBT that pays to an arbitrary script instead of the board funding address
+	let wrong_script = ScriptBuf::new_op_return(&[0u8; 20]);
+
+	let board_amount = sat(90_000);
+	// The input is not valid but it doesn't matter since validation fails before it's used.
+	let fake_input = TxIn {
+		previous_output: OutPoint::new(Txid::all_zeros(), 0),
+		..Default::default()
+	};
+	let psbt = Psbt::from_unsigned_tx(Transaction {
+		version: bitcoin::transaction::Version::TWO,
+		lock_time: LockTime::ZERO,
+		input: vec![fake_input],
+		output: vec![TxOut {
+			script_pubkey: wrong_script,
+			value: board_amount,
+		}],
+	}).unwrap();
+
+	let err = wallet.board_tx(psbt, keypair, expiry_height).await.unwrap_err().to_alt_string();
+	assert!(
+		err.contains("does not pay to the expected board funding address"),
+		"unexpected error: {err}",
+	);
+}
+
+#[tokio::test]
+async fn board_tx_rejects_wrong_expiry_height() {
+	let ctx = TestContext::new("bark/board_tx_rejects_wrong_expiry_height").await;
+	let srv = ctx.captaind("server").create().await;
+	let bark1 = ctx.bark("bark1", &srv).funded(sat(100_000)).create().await;
+
+	let wallet = bark1.client().await;
+	let mut onchain = bark1.onchain_wallet().await;
+	onchain.sync(&wallet.chain).await.unwrap();
+
+	let (keypair, _) = wallet.derive_store_next_keypair().await.unwrap();
+	let (board_addr, expiry_height) = wallet.board_funding_address(&keypair).await.unwrap();
+
+	let board_amount = sat(90_000);
+	let fee_rate = wallet.chain.fee_rates().await.regular;
+	let psbt = onchain.prepare_tx(&[(board_addr, board_amount)], fee_rate).unwrap();
+	let signed_psbt = onchain.finish_psbt(psbt).await.unwrap();
+
+	let err = wallet
+		.board_tx(signed_psbt, keypair, expiry_height + 1)
+		.await
+		.unwrap_err()
+		.to_alt_string();
+	assert!(
+		err.contains("does not pay to the expected board funding address"),
+		"unexpected error: {err}",
+	);
+}
+
+#[tokio::test]
+async fn board_tx_rejects_dust_amount() {
+	let ctx = TestContext::new("bark/board_tx_rejects_dust_amount").await;
+	let srv = ctx.captaind("server").cfg(|cfg| {
+		cfg.min_board_amount = Amount::ZERO;
+	}).create().await;
+	let bark1 = ctx.bark("bark1", &srv).funded(sat(100_000)).create().await;
+
+	let wallet = bark1.client().await;
+	let (keypair, _) = wallet.derive_store_next_keypair().await.unwrap();
+	let (board_addr, expiry_height) = wallet.board_funding_address(&keypair).await.unwrap();
+
+	// Build a PSBT that pays to the correct address but with a sub-dust amount
+	let dust_amount = sat(P2TR_DUST_SAT - 1);
+	// The input is not valid but it doesn't matter since validation fails before it's used.
+	let fake_input = TxIn {
+		previous_output: OutPoint::new(Txid::all_zeros(), 0),
+		..Default::default()
+	};
+	let psbt = Psbt::from_unsigned_tx(Transaction {
+		version: bitcoin::transaction::Version::TWO,
+		lock_time: LockTime::ZERO,
+		input: vec![fake_input],
+		output: vec![TxOut {
+			script_pubkey: board_addr.script_pubkey(),
+			value: dust_amount,
+		}],
+	}).unwrap();
+
+	let err = wallet.board_tx(psbt, keypair, expiry_height).await.unwrap_err().to_alt_string();
+	assert!(
+		err.contains("board amount must be at least"),
+		"unexpected error: {err}",
+	);
+}
+
+/// Tests the full boarding flow using [Wallet::board_tx] directl.
+/// Uses an [OnchainWallet] to build and sign the funding PSBT.
+/// This will be workflow will be replicated by external wallets
+#[tokio::test]
+async fn board_tx_full_flow() {
+	const BOARD_AMOUNT: u64 = 90_000;
+	let ctx = TestContext::new("bark/board_tx_full_flow").await;
+	let srv = ctx.captaind("server").create().await;
+	let bark1 = ctx.bark("bark1", &srv).funded(sat(100_000)).create().await;
+
+	let wallet = bark1.client().await;
+	let mut onchain = bark1.onchain_wallet().await;
+
+	// Sync the onchain wallet so it sees the funded UTXOs
+	onchain.sync(&wallet.chain).await.unwrap();
+
+	let (keypair, _) = wallet.derive_store_next_keypair().await.unwrap();
+	let (board_addr, expiry_height) = wallet.board_funding_address(&keypair).await.unwrap();
+
+	// Build and sign the funding PSBT using the onchain wallet
+	let fee_rate = wallet.chain.fee_rates().await.regular;
+	let board_psbt = onchain.prepare_tx(&[(board_addr, sat(BOARD_AMOUNT))], fee_rate).unwrap();
+	let signed_psbt = onchain.finish_psbt(board_psbt).await.unwrap();
+
+	let board = wallet.board_tx(signed_psbt, keypair, expiry_height).await.unwrap();
+	assert_eq!(board.vtxos.len(), 1, "board should produce one vtxo");
+
+	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
+
+	assert_eq!(bark1.spendable_balance().await, sat(BOARD_AMOUNT));
 }
