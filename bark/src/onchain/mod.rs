@@ -87,9 +87,6 @@ pub struct SpendableExit {
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 pub trait SignPsbt {
-	/// Consume a [Psbt] and return a fully signed and finalized [Transaction].
-	async fn finish_tx(&mut self, psbt: Psbt) -> anyhow::Result<Transaction>;
-
 	/// Consume a [Psbt] and return a fully signed [Psbt] with all witnesses filled in.
 	///
 	/// Useful when the signed [Psbt] is needed after signing, e.g. to compute fees
