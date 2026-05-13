@@ -305,6 +305,7 @@ pub extern crate lnurl as lnurllib;
 #[macro_use] extern crate async_trait;
 #[macro_use] extern crate serde;
 
+pub mod actions;
 pub mod chain;
 pub mod exit;
 pub mod movement;
