@@ -18,6 +18,7 @@ use ark::test_util::VTXO_VECTORS;
 use ark::VtxoId;
 
 use super::BarkPersister;
+use crate::actions::WalletActionCheckpoint;
 use crate::exit::{ExitState, ExitTxOrigin};
 use crate::movement::{MovementStatus, MovementSubsystem};
 use crate::persist::models::{SerdeRoundState, StoredExit, StoredRoundState, Unlocked};
@@ -780,6 +781,102 @@ mod lightning {
 		test_lightning_receive_set_preimage_revealed(a, b).await;
 		test_lightning_receive_update(a, b).await;
 		test_lightning_receive_finish(a, b).await;
+		test_wallet_action_checkpoint_upsert_and_get(a, b).await;
+		test_wallet_action_checkpoint_upsert_replaces(a, b).await;
+		test_wallet_action_checkpoint_get_missing(a, b).await;
+		test_wallet_action_checkpoint_get_all(a, b).await;
+		test_wallet_action_checkpoint_remove(a, b).await;
+		test_wallet_action_checkpoint_remove_missing_is_noop(a, b).await;
+	}
+
+	async fn test_wallet_action_checkpoint_upsert_and_get<A: BarkPersister, B: BarkPersister>(a: &A, b: &B) {
+		let checkpoint: WalletActionCheckpoint = WalletActionCheckpoint::Dummy { id: "test".to_string() };
+		let id = checkpoint.id();
+
+		let ra = a.upsert_wallet_action_checkpoint(&id, &checkpoint).await;
+		let rb = b.upsert_wallet_action_checkpoint(&id, &checkpoint).await;
+		assert_eq!(ra.is_ok(), rb.is_ok(), "upsert: ok/err mismatch");
+
+		let ra = a.get_wallet_action_checkpoint(&id).await
+			.expect("a: get_wallet_action_checkpoint");
+		let rb = b.get_wallet_action_checkpoint(&id).await
+			.expect("b: get_wallet_action_checkpoint");
+		assert_eq!(ra, rb, "get mismatch");
+		assert_eq!(ra, Some(checkpoint), "stored checkpoint round-trip mismatch");
+
+		a.remove_wallet_action_checkpoint(&id).await.unwrap();
+		b.remove_wallet_action_checkpoint(&id).await.unwrap();
+	}
+
+	async fn test_wallet_action_checkpoint_upsert_replaces<A: BarkPersister, B: BarkPersister>(a: &A, b: &B) {
+		let start: WalletActionCheckpoint = WalletActionCheckpoint::Dummy { id: "test".to_string() };
+		let id = start.id();
+		a.upsert_wallet_action_checkpoint(&id, &start).await.unwrap();
+		b.upsert_wallet_action_checkpoint(&id, &start).await.unwrap();
+
+		let initiated: WalletActionCheckpoint = WalletActionCheckpoint::Dummy { id: "updated".to_string() };
+
+		let ra = a.upsert_wallet_action_checkpoint(&id, &initiated).await;
+		let rb = b.upsert_wallet_action_checkpoint(&id, &initiated).await;
+		assert_eq!(ra.is_ok(), rb.is_ok(), "replace ok/err mismatch");
+
+		let ra = a.get_wallet_action_checkpoint(&id).await.unwrap();
+		let rb = b.get_wallet_action_checkpoint(&id).await.unwrap();
+		assert_eq!(ra, rb, "get after replace mismatch");
+		assert_eq!(ra, Some(initiated), "replaced checkpoint should match latest upsert");
+
+		a.remove_wallet_action_checkpoint(&id).await.unwrap();
+		b.remove_wallet_action_checkpoint(&id).await.unwrap();
+	}
+
+	async fn test_wallet_action_checkpoint_get_missing<A: BarkPersister, B: BarkPersister>(a: &A, b: &B) {
+		let id = "missing-checkpoint-id".to_string();
+		let ra = a.get_wallet_action_checkpoint(&id).await.unwrap();
+		let rb = b.get_wallet_action_checkpoint(&id).await.unwrap();
+		assert_eq!(ra, rb, "missing mismatch");
+		assert!(ra.is_none(), "expected None");
+	}
+
+	async fn test_wallet_action_checkpoint_get_all<A: BarkPersister, B: BarkPersister>(a: &A, b: &B) {
+		let revocable: WalletActionCheckpoint = WalletActionCheckpoint::Dummy { id: "test".to_string() };
+		let id = revocable.id();
+
+		a.upsert_wallet_action_checkpoint(&id, &revocable).await.unwrap();
+		b.upsert_wallet_action_checkpoint(&id, &revocable).await.unwrap();
+
+		let mut ra = a.get_all_wallet_action_checkpoints().await.unwrap();
+		let mut rb = b.get_all_wallet_action_checkpoints().await.unwrap();
+		ra.sort_by_key(|c| c.id());
+		rb.sort_by_key(|c| c.id());
+		assert_eq!(ra, rb, "get_all mismatch");
+		assert!(ra.contains(&revocable), "stored checkpoint missing from get_all");
+
+		a.remove_wallet_action_checkpoint(&id).await.unwrap();
+		b.remove_wallet_action_checkpoint(&id).await.unwrap();
+	}
+
+	async fn test_wallet_action_checkpoint_remove<A: BarkPersister, B: BarkPersister>(a: &A, b: &B) {
+		let received: WalletActionCheckpoint = WalletActionCheckpoint::Dummy { id: "test".to_string() };
+		let id = received.id();
+
+		a.upsert_wallet_action_checkpoint(&id, &received).await.unwrap();
+		b.upsert_wallet_action_checkpoint(&id, &received).await.unwrap();
+
+		a.remove_wallet_action_checkpoint(&id).await.unwrap();
+		b.remove_wallet_action_checkpoint(&id).await.unwrap();
+
+		let ra = a.get_wallet_action_checkpoint(&id).await.unwrap();
+		let rb = b.get_wallet_action_checkpoint(&id).await.unwrap();
+		assert_eq!(ra, rb, "after remove mismatch");
+		assert!(ra.is_none(), "checkpoint should be gone after remove");
+	}
+
+	async fn test_wallet_action_checkpoint_remove_missing_is_noop<A: BarkPersister, B: BarkPersister>(a: &A, b: &B) {
+		let id = "never-existed".to_string();
+		let ra = a.remove_wallet_action_checkpoint(&id).await;
+		let rb = b.remove_wallet_action_checkpoint(&id).await;
+		assert!(ra.is_ok(), "remove of missing id should not error (a)");
+		assert!(rb.is_ok(), "remove of missing id should not error (b)");
 	}
 
 	async fn test_lightning_send_store_and_query<A: BarkPersister, B: BarkPersister>(a: &A, b: &B) {

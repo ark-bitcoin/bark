@@ -11,6 +11,24 @@ use std::time::Duration;
 
 use crate::Wallet;
 
+/// Tagged union of every kind of checkpoint the wallet persists.
+///
+/// Used as the serialization boundary for the
+/// `bark_wallet_action_checkpoint` table; per-kind logic lives on each
+/// variant's payload type.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum WalletActionCheckpoint {
+	Dummy { id: String },
+}
+
+impl WalletActionCheckpoint {
+	pub fn id(&self) -> WalletActionId {
+		match self {
+			WalletActionCheckpoint::Dummy { id } => id.clone(),
+		}
+	}
+}
+
 /// Stable identifier for a wallet action.
 ///
 /// The id must be derivable from the action's identity (e.g. the payment

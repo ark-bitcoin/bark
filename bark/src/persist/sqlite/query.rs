@@ -17,6 +17,7 @@ use ark::vtxo::{Full, VtxoRef};
 use bitcoin_ext::BlockDelta;
 
 use crate::{VtxoId, WalletProperties};
+use crate::actions::{WalletActionCheckpoint, WalletActionId};
 use crate::exit::{ExitState, ExitTxOrigin};
 use crate::movement::{Movement, MovementId, MovementStatus, MovementSubsystem, PaymentMethod};
 use crate::persist::{RoundStateId, StoredRoundState};
@@ -1199,6 +1200,72 @@ pub fn get_exit_child_tx(
 		Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
 		Err(e) => Err(format_err!("Unable to deserialize child tx for exit {}: {}", exit_txid, e)),
 	}
+}
+
+pub fn upsert_wallet_action_checkpoint(
+	conn: &Connection,
+	id: &WalletActionId,
+	checkpoint: &WalletActionCheckpoint,
+) -> anyhow::Result<()> {
+	let payload = serde_json::to_vec(checkpoint)
+		.context("failed to serialize wallet action checkpoint")?;
+	let query = "
+		INSERT INTO bark_wallet_action_checkpoint (id, payload)
+		VALUES (:id, :payload)
+		ON CONFLICT(id) DO UPDATE SET
+			payload = excluded.payload,
+			updated_at = strftime('%Y-%m-%d %H:%M:%f', 'now')";
+	let mut statement = conn.prepare(query)?;
+	statement.execute(named_params! {
+		":id": id,
+		":payload": payload,
+	})?;
+	Ok(())
+}
+
+pub fn get_wallet_action_checkpoint(
+	conn: &Connection,
+	id: &WalletActionId,
+) -> anyhow::Result<Option<WalletActionCheckpoint>> {
+	let query = "SELECT payload FROM bark_wallet_action_checkpoint WHERE id = :id";
+	let mut statement = conn.prepare(query)?;
+	let mut rows = statement.query(named_params! { ":id": id })?;
+
+	let row = match rows.next()? {
+		Some(row) => row,
+		None => return Ok(None),
+	};
+	let payload: Vec<u8> = row.get("payload")?;
+	let checkpoint = serde_json::from_slice(&payload)
+		.context("failed to deserialize wallet action checkpoint")?;
+	Ok(Some(checkpoint))
+}
+
+pub fn get_all_wallet_action_checkpoints(
+	conn: &Connection,
+) -> anyhow::Result<Vec<WalletActionCheckpoint>> {
+	let query = "SELECT payload FROM bark_wallet_action_checkpoint ORDER BY created_at ASC";
+	let mut statement = conn.prepare(query)?;
+	let mut rows = statement.query([])?;
+
+	let mut result = Vec::new();
+	while let Some(row) = rows.next()? {
+		let payload: Vec<u8> = row.get("payload")?;
+		let checkpoint = serde_json::from_slice(&payload)
+			.context("failed to deserialize wallet action checkpoint")?;
+		result.push(checkpoint);
+	}
+	Ok(result)
+}
+
+pub fn remove_wallet_action_checkpoint(
+	conn: &Connection,
+	id: &WalletActionId,
+) -> anyhow::Result<()> {
+	let query = "DELETE FROM bark_wallet_action_checkpoint WHERE id = :id";
+	let mut statement = conn.prepare(query)?;
+	statement.execute(named_params! { ":id": id })?;
+	Ok(())
 }
 
 

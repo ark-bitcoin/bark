@@ -29,6 +29,7 @@ use ark::vtxo::Full;
 use bitcoin_ext::BlockDelta;
 
 use crate::WalletProperties;
+use crate::actions::{WalletActionCheckpoint, WalletActionId};
 use crate::exit::ExitTxOrigin;
 use crate::movement::{Movement, MovementId, MovementStatus, MovementSubsystem, PaymentMethod};
 use crate::persist::{BarkPersister, RoundStateId, StoredRoundState, Unlocked};
@@ -346,6 +347,38 @@ impl BarkPersister for SqliteClient {
 	async fn get_lightning_send(&self, payment_hash: PaymentHash) -> anyhow::Result<Option<LightningSend>> {
 		let conn = self.connect()?;
 		query::get_lightning_send(&conn, payment_hash)
+	}
+
+	async fn upsert_wallet_action_checkpoint(
+		&self,
+		id: &WalletActionId,
+		checkpoint: &WalletActionCheckpoint,
+	) -> anyhow::Result<()> {
+		let conn = self.connect()?;
+		query::upsert_wallet_action_checkpoint(&conn, id, checkpoint)
+	}
+
+	async fn get_wallet_action_checkpoint(
+		&self,
+		id: &WalletActionId,
+	) -> anyhow::Result<Option<WalletActionCheckpoint>> {
+		let conn = self.connect()?;
+		query::get_wallet_action_checkpoint(&conn, id)
+	}
+
+	async fn get_all_wallet_action_checkpoints(
+		&self,
+	) -> anyhow::Result<Vec<WalletActionCheckpoint>> {
+		let conn = self.connect()?;
+		query::get_all_wallet_action_checkpoints(&conn)
+	}
+
+	async fn remove_wallet_action_checkpoint(
+		&self,
+		id: &WalletActionId,
+	) -> anyhow::Result<()> {
+		let conn = self.connect()?;
+		query::remove_wallet_action_checkpoint(&conn, id)
 	}
 
 	async fn get_all_pending_lightning_receives(&self) -> anyhow::Result<Vec<LightningReceive>> {
