@@ -19,6 +19,7 @@ use ark::VtxoId;
 
 use super::BarkPersister;
 use crate::actions::WalletActionCheckpoint;
+use crate::actions::lightning::pay::{Htlcs, LightningSend, Progress, Revocation};
 use crate::exit::{
 	ExitProcessingState, ExitState, ExitTx, ExitTxOrigin, ExitTxStatus,
 };
@@ -774,6 +775,7 @@ mod round_states {
 
 mod lightning {
 	use super::*;
+	use crate::movement::{MovementId, PaymentMethod};
 
 	pub async fn run<A: BarkPersister, B: BarkPersister>(a: &A, b: &B) {
 		test_lightning_send_store_and_query(a, b).await;
@@ -791,8 +793,54 @@ mod lightning {
 		test_wallet_action_checkpoint_remove_missing_is_noop(a, b).await;
 	}
 
+	fn send_at_start() -> LightningSend {
+		LightningSend {
+			invoice: test_invoice(),
+			original_payment_method: PaymentMethod::Custom("test".into()),
+			input_vtxo_ids: vec![],
+			payment_amount: Amount::from_sat(1000),
+			fee: Amount::from_sat(10),
+			htlc_key: test_pubkey(),
+			htlc_expiry: 100,
+			progress: Progress::Start,
+		}
+	}
+
+	fn send_at_htlc_received() -> LightningSend {
+		LightningSend {
+			progress: Progress::HtlcReceived(Htlcs {
+				vtxo_ids: vec![],
+				mailbox_id: ark::mailbox::MailboxIdentifier::from(test_pubkey()),
+				movement_id: MovementId::new(1),
+			}),
+			..send_at_start()
+		}
+	}
+
+	fn send_at_payment_initiated() -> LightningSend {
+		let progress = match send_at_htlc_received().progress {
+			Progress::HtlcReceived(htlcs) => Progress::PaymentInitiated(htlcs),
+			_ => unreachable!(),
+		};
+		LightningSend { progress, ..send_at_start() }
+	}
+
+	fn send_at_revocable_htlcs() -> LightningSend {
+		let htlcs = match send_at_htlc_received().progress {
+			Progress::HtlcReceived(htlcs) => htlcs,
+			_ => unreachable!(),
+		};
+		LightningSend {
+			progress: Progress::RevocableHtlcs {
+				htlcs,
+				revocation: Revocation { key: test_pubkey() },
+			},
+			..send_at_start()
+		}
+	}
+
 	async fn test_wallet_action_checkpoint_upsert_and_get<A: BarkPersister, B: BarkPersister>(a: &A, b: &B) {
-		let checkpoint: WalletActionCheckpoint = WalletActionCheckpoint::Dummy { id: "test".to_string() };
+		let checkpoint: WalletActionCheckpoint = send_at_start().into();
 		let id = checkpoint.id();
 
 		let ra = a.upsert_wallet_action_checkpoint(&id, &checkpoint).await;
@@ -811,12 +859,13 @@ mod lightning {
 	}
 
 	async fn test_wallet_action_checkpoint_upsert_replaces<A: BarkPersister, B: BarkPersister>(a: &A, b: &B) {
-		let start: WalletActionCheckpoint = WalletActionCheckpoint::Dummy { id: "test".to_string() };
+		let start: WalletActionCheckpoint = send_at_start().into();
 		let id = start.id();
 		a.upsert_wallet_action_checkpoint(&id, &start).await.unwrap();
 		b.upsert_wallet_action_checkpoint(&id, &start).await.unwrap();
 
-		let initiated: WalletActionCheckpoint = WalletActionCheckpoint::Dummy { id: "updated".to_string() };
+		let initiated: WalletActionCheckpoint = send_at_payment_initiated().into();
+		assert_eq!(initiated.id(), id, "different phases of the same invoice must share an id");
 
 		let ra = a.upsert_wallet_action_checkpoint(&id, &initiated).await;
 		let rb = b.upsert_wallet_action_checkpoint(&id, &initiated).await;
@@ -840,7 +889,7 @@ mod lightning {
 	}
 
 	async fn test_wallet_action_checkpoint_get_all<A: BarkPersister, B: BarkPersister>(a: &A, b: &B) {
-		let revocable: WalletActionCheckpoint = WalletActionCheckpoint::Dummy { id: "test".to_string() };
+		let revocable: WalletActionCheckpoint = send_at_revocable_htlcs().into();
 		let id = revocable.id();
 
 		a.upsert_wallet_action_checkpoint(&id, &revocable).await.unwrap();
@@ -858,7 +907,7 @@ mod lightning {
 	}
 
 	async fn test_wallet_action_checkpoint_remove<A: BarkPersister, B: BarkPersister>(a: &A, b: &B) {
-		let received: WalletActionCheckpoint = WalletActionCheckpoint::Dummy { id: "test".to_string() };
+		let received: WalletActionCheckpoint = send_at_htlc_received().into();
 		let id = received.id();
 
 		a.upsert_wallet_action_checkpoint(&id, &received).await.unwrap();
