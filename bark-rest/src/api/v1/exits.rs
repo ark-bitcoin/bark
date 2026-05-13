@@ -83,7 +83,7 @@ pub async fn get_exit_status_by_vtxo_id(
 
 	let vtxo_id = ark::VtxoId::from_str(&vtxo).badarg("Invalid VTXO ID")?;
 
-	let status = wallet.exit.get_exit_status(
+	let status = wallet.exit_mgr().get_exit_status(
 		vtxo_id,
 		query.history.unwrap_or(false),
 		query.transactions.unwrap_or(false)
@@ -120,11 +120,11 @@ pub async fn get_all_exit_status(
 ) -> HandlerResult<Json<Vec<bark_json::cli::ExitTransactionStatus>>> {
 	let wallet = state.require_wallet()?;
 
-	let exit_vtxos = wallet.exit.get_exit_vtxos().await;
+	let exit_vtxos = wallet.exit_mgr().get_exit_vtxos().await;
 	let mut statuses = Vec::with_capacity(exit_vtxos.len());
 
 	for e in &exit_vtxos {
-		let status = wallet.exit.get_exit_status(
+		let status = wallet.exit_mgr().get_exit_status(
 			e.id(),
 			query.history.unwrap_or(false),
 			query.transactions.unwrap_or(false)
@@ -188,7 +188,7 @@ pub async fn exit_start_vtxos(
 	let vtxos = spendable.into_iter().chain(inround)
 		.map(|v| v.vtxo).collect::<Vec<_>>();
 
-	wallet.exit.start_exit_for_vtxos(&vtxos).await
+	wallet.exit_mgr().start_exit_for_vtxos(&vtxos).await
 		.context("Failed to start exit for VTXOs")?;
 
 	Ok(axum::Json(bark_json::web::ExitStartResponse {
@@ -218,7 +218,7 @@ pub async fn exit_start_all(
 ) -> HandlerResult<Json<bark_json::web::ExitStartResponse>> {
 	let wallet = state.require_wallet()?;
 
-	wallet.exit.start_exit_for_entire_wallet().await
+	wallet.exit_mgr().start_exit_for_entire_wallet().await
 		.context("Failed to start exit for entire wallet")?;
 
 	Ok(axum::Json(bark_json::web::ExitStartResponse {
@@ -260,13 +260,13 @@ pub async fn exit_progress(
 	onchain_lock.sync(wallet.chain()).await
 		.context("error syncing on-chain wallet")?;
 
-	wallet.exit.sync_no_progress(&*onchain_lock).await
+	wallet.exit_mgr().sync_no_progress(&*onchain_lock).await
 		.context("error syncing exit state")?;
-	let result = wallet.exit.progress_exits(&wallet, &mut *onchain_lock, fee_rate).await
+	let result = wallet.exit_mgr().progress_exits(&wallet, &mut *onchain_lock, fee_rate).await
 		.context("error making progress on exit process")?;
 
-	let done = !wallet.exit.has_pending_exits().await;
-	let claimable_height = wallet.exit.all_claimable_at_height().await;
+	let done = !wallet.exit_mgr().has_pending_exits().await;
+	let claimable_height = wallet.exit_mgr().all_claimable_at_height().await;
 	let exits = result.unwrap_or_default();
 
 	Ok(axum::Json(bark_json::cli::ExitProgressResponse {
@@ -286,7 +286,7 @@ async fn inner_claim_vtxos(
 	let onchain = state.require_onchain()?;
 
 	let address_spk = address.script_pubkey();
-	let psbt = wallet.exit.drain_exits(vtxos, &wallet, address, fee_rate).await
+	let psbt = wallet.exit_mgr().drain_exits(vtxos, &wallet, address, fee_rate).await
 		.context("Failed to drain exits")?;
 	let tx = psbt.extract_tx()
 		.context("Failed to extract transaction")?;
@@ -340,7 +340,7 @@ pub async fn exit_claim_vtxos(
 		.require_network(network)
 		.badarg("Address is not valid for configured network")?;
 
-	let claimable = wallet.exit.list_claimable().await;
+	let claimable = wallet.exit_mgr().list_claimable().await;
 	let vtxos = {
 		let mut vtxo_ids = HashSet::new();
 		for s in body.vtxos {
@@ -395,7 +395,7 @@ pub async fn exit_claim_all(
 		.require_network(network)
 		.badarg("Address is not valid for configured network")?;
 
-	let vtxos = wallet.exit.list_claimable().await;
+	let vtxos = wallet.exit_mgr().list_claimable().await;
 
 	let fee_rate = body.fee_rate.map(FeeRate::from_sat_per_kvb_ceil);
 

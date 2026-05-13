@@ -719,7 +719,7 @@ impl WalletSeed {
 /// let vtxos = wallet.vtxos()?;
 ///
 /// // Progress any unilateral exits, make sure to sync first
-/// wallet.exit.progress_exit(&mut onchain_wallet, None).await?;
+/// wallet.exit_mgr().progress_exits(&wallet, &mut onchain_wallet, None).await?;
 ///
 /// # Ok(())
 /// # }
@@ -729,7 +729,7 @@ pub struct Wallet {
 	chain: Arc<ChainSource>,
 
 	/// Exit subsystem handling unilateral exits and on-chain reconciliation outside Ark rounds.
-	pub exit: Exit,
+	exit: Exit,
 
 	/// Allows easy creation of and management of wallet fund movements.
 	pub movements: Arc<MovementManager>,
@@ -1255,7 +1255,7 @@ impl Wallet {
 
 		let pending_in_round = self.pending_round_balance().await?;
 
-		let pending_exit = self.exit.try_pending_total();
+		let pending_exit = self.exit_mgr().try_pending_total();
 
 		Ok(Balance {
 			spendable,
@@ -1475,7 +1475,7 @@ impl Wallet {
 		if let Err(e) = exit_sync.as_ref() {
 			warn!("Error syncing exits: {:#}", e);
 		}
-		let exit_progress = self.exit.progress_exits(&self, onchain, None).await;
+		let exit_progress = self.exit_mgr().progress_exits(&self, onchain, None).await;
 		if let Err(e) = exit_progress.as_ref() {
 			warn!("Error progressing exits: {:#}", e);
 		}
@@ -1505,7 +1505,7 @@ impl Wallet {
 		if let Err(e) = exit_sync.as_ref() {
 			warn!("Error syncing exits: {:#}", e);
 		}
-		let exit_progress = self.exit.progress_exits(&self, onchain, None).await;
+		let exit_progress = self.exit_mgr().progress_exits(&self, onchain, None).await;
 		if let Err(e) = exit_progress.as_ref() {
 			warn!("Error progressing exits: {:#}", e);
 		}
@@ -1636,7 +1636,7 @@ impl Wallet {
 		&self,
 		onchain: &mut dyn ExitUnilaterally,
 	) -> anyhow::Result<()> {
-		self.exit.sync(&self, onchain).await?;
+		self.exit_mgr().sync(&self, onchain).await?;
 		Ok(())
 	}
 
@@ -1656,7 +1656,7 @@ impl Wallet {
 			self.db.remove_vtxo(vtxo.id()).await?;
 		}
 
-		self.exit.dangerous_clear_exit().await?;
+		self.exit_mgr().dangerous_clear_exit().await?;
 		Ok(())
 	}
 

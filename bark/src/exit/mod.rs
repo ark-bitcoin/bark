@@ -89,16 +89,16 @@
 //! let (mut bark_wallet, mut onchain_wallet) = get_wallets().await;
 //!
 //! // Mark all VTXOs for exit.
-//! bark_wallet.exit.start_exit_for_entire_wallet().await?;
+//! bark_wallet.exit_mgr().start_exit_for_entire_wallet().await?;
 //!
 //! // Transactions will be broadcast and require confirmations so keep periodically calling this.
-//! bark_wallet.exit.sync_no_progress(&onchain_wallet).await?;
-//! bark_wallet.exit.progress_exits(&bark_wallet, &mut onchain_wallet, None).await?;
+//! bark_wallet.exit_mgr().sync_no_progress(&onchain_wallet).await?;
+//! bark_wallet.exit_mgr().progress_exits(&bark_wallet, &mut onchain_wallet, None).await?;
 //!
 //! // Once all VTXOs are claimable, construct a PSBT to drain them.
 //! let drain_to = bitcoin::Address::from_str("bc1p...")?.assume_checked();
-//! let claimable_outputs = bark_wallet.exit.list_claimable().await;
-//! let drain_psbt = bark_wallet.exit.drain_exits(
+//! let claimable_outputs = bark_wallet.exit_mgr().list_claimable().await;
+//! let drain_psbt = bark_wallet.exit_mgr().drain_exits(
 //!   &claimable_outputs,
 //!   &bark_wallet,
 //!   drain_to,

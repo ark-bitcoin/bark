@@ -138,7 +138,7 @@ pub async fn get_exit_status(
 		wallet.sync_exits(onchain).await?;
 	}
 
-	match wallet.exit.get_exit_status(args.vtxo, args.history, args.transactions).await? {
+	match wallet.exit_mgr().get_exit_status(args.vtxo, args.history, args.transactions).await? {
 		None => bail!("VTXO not found: {}", args.vtxo),
 		Some(status) => output_json(&ExitTransactionStatus::from(status)),
 	}
@@ -155,10 +155,10 @@ pub async fn list_exits(
 		wallet.sync_exits(onchain).await?;
 	}
 
-	let exit_vtxos = wallet.exit.get_exit_vtxos().await;
+	let exit_vtxos = wallet.exit_mgr().get_exit_vtxos().await;
 	let mut statuses = Vec::with_capacity(exit_vtxos.len());
 	for e in &exit_vtxos {
-		statuses.push(wallet.exit.get_exit_status(
+		statuses.push(wallet.exit_mgr().get_exit_status(
 			e.id(),
 			args.history,
 			args.transactions,
@@ -189,7 +189,7 @@ pub async fn start_exit(
 	info!("Starting exit");
 
 	if args.all {
-		wallet.exit.start_exit_for_entire_wallet().await
+		wallet.exit_mgr().start_exit_for_entire_wallet().await
 	} else {
 		let filter = VtxoFilter::new(wallet).include_many(args.vtxos);
 
@@ -204,7 +204,7 @@ pub async fn start_exit(
 		let vtxos = spendable.into_iter().chain(inround)
 			.map(|v| v.vtxo).collect::<Vec<_>>();
 
-		wallet.exit.start_exit_for_vtxos(&vtxos).await
+		wallet.exit_mgr().start_exit_for_vtxos(&vtxos).await
 	}
 }
 
@@ -243,12 +243,12 @@ async fn progress_once(
 	info!("Wallet sync completed");
 	info!("Start progressing exit");
 
-	wallet.exit.sync_no_progress(onchain).await.context("unable to sync exit process")?;
-	let result = wallet.exit.progress_exits(wallet, onchain, fee_rate).await
+	wallet.exit_mgr().sync_no_progress(onchain).await.context("unable to sync exit process")?;
+	let result = wallet.exit_mgr().progress_exits(wallet, onchain, fee_rate).await
 		.context("error making progress on exit process")?;
 
-	let done = !wallet.exit.has_pending_exits().await;
-	let claimable_height = wallet.exit.all_claimable_at_height().await;
+	let done = !wallet.exit_mgr().has_pending_exits().await;
+	let claimable_height = wallet.exit_mgr().all_claimable_at_height().await;
 	let exits = result.unwrap_or_default()
 		.into_iter().map(ExitProgressStatus::from).collect::<Vec<_>>();
 
@@ -276,7 +276,7 @@ pub async fn claim_exits(
 		format!("address is not valid for configured network {}", network)
 	})?;
 
-	let claimable = wallet.exit.list_claimable().await;
+	let claimable = wallet.exit_mgr().list_claimable().await;
 	let vtxos = match (vtxos, all) {
 		(Some(vtxo_ids), false) => {
 			let mut vtxo_ids = vtxo_ids.iter().map(|s| {
@@ -298,7 +298,7 @@ pub async fn claim_exits(
 	let address_spk = address.script_pubkey();
 
 	let fee_rate = wallet.chain().fee_rates().await.regular;
-	let psbt = wallet.exit.drain_exits(&vtxos, &wallet, address, Some(fee_rate)).await.unwrap();
+	let psbt = wallet.exit_mgr().drain_exits(&vtxos, &wallet, address, Some(fee_rate)).await.unwrap();
 	let tx = psbt.extract_tx()?;
 	wallet.chain().broadcast_tx(&tx).await?;
 	info!("Drain transaction broadcasted: {}", tx.compute_txid());
