@@ -2,6 +2,7 @@
 use std::ops::Deref;
 use std::sync::Arc;
 
+use bark::actions::WalletActionId;
 use bitcoin::{Amount, OutPoint, SignedAmount, Transaction, Txid};
 use bitcoin::secp256k1::PublicKey;
 #[cfg(feature = "utoipa")]
@@ -234,6 +235,10 @@ pub enum VtxoStateInfo {
 		#[serde(skip_serializing_if = "Option::is_none")]
 		#[cfg_attr(feature = "utoipa", schema(value_type = u32))]
 		movement_id: Option<MovementId>,
+		/// The action that locked this VTXO, if any.
+		#[serde(skip_serializing_if = "Option::is_none")]
+		#[cfg_attr(feature = "utoipa", schema(value_type = String))]
+		action_id: Option<WalletActionId>,
 	},
 }
 
@@ -242,8 +247,16 @@ impl From<VtxoState> for VtxoStateInfo {
 		match state {
 			VtxoState::Spendable => VtxoStateInfo::Spendable,
 			VtxoState::Spent => VtxoStateInfo::Spent,
-			VtxoState::Locked { movement_id } => VtxoStateInfo::Locked {
-				movement_id,
+			VtxoState::Locked { holder } => {
+				match holder {
+					Some(bark::vtxo::VtxoLockHolder::Movement { id }) => {
+						VtxoStateInfo::Locked { movement_id: Some(id), action_id: None }
+					},
+					Some(bark::vtxo::VtxoLockHolder::Action { id }) => {
+						VtxoStateInfo::Locked { movement_id: None, action_id: Some(id) }
+					},
+					None => VtxoStateInfo::Locked { movement_id: None, action_id: None },
+				}
 			},
 		}
 	}

@@ -6,7 +6,7 @@ use rusqlite::{Transaction, named_params};
 use ark::{ProtocolEncoding, Vtxo, VtxoId, VtxoPolicy};
 use ark::vtxo::Full;
 
-use crate::vtxo::{VtxoState, VtxoStateKind};
+use crate::vtxo::{VtxoLockHolder, VtxoState, VtxoStateKind};
 
 use super::Migration;
 
@@ -52,7 +52,7 @@ impl Migration for Migration0021 {
 				VtxoPolicy::ServerHtlcRecv(_) => true,
 			};
 			let movement_id = match (is_htlc, state) {
-				(true, VtxoState::Locked { movement_id: Some(mid) }) => mid,
+				(true, VtxoState::Locked { holder: Some(VtxoLockHolder::Movement { id }) }) => id,
 				_ => continue,
 			};
 

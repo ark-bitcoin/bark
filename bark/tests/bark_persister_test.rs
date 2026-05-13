@@ -118,7 +118,7 @@ impl BarkPersister for Dummy {
 		Ok(Vec::<WalletVtxo>::from([WalletVtxo {
 			vtxo: Vtxo::deserialize(&[])?,
 			state: VtxoState::Locked {
-				movement_id: Some(MovementId::new(0)),
+				holder: Some(bark::vtxo::VtxoLockHolder::Movement { id: MovementId::new(0) }),
 			},
 			exit_depth: 0,
 			exit_tx_weight: bitcoin::Weight::ZERO,

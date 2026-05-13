@@ -597,7 +597,10 @@ impl <S: StorageAdaptor> BarkPersister for StorageAdaptorWrapper<S> {
 			update_vtxo_state_checked(
 				&mut *lock,
 				vtxo.id(),
-				VtxoState::Locked { movement_id: round_state.movement_id },
+				VtxoState::Locked {
+					holder: round_state.movement_id
+						.map(|id| crate::vtxo::VtxoLockHolder::Movement { id }),
+				},
 				allowed_states,
 			).await?;
 		}

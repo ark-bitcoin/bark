@@ -1288,7 +1288,7 @@ mod test {
 		let vtxo_2 = &VTXO_VECTORS.arkoor_htlc_out_vtxo;
 		let vtxo_3 = &VTXO_VECTORS.round2_vtxo;
 
-		let locked = VtxoState::Locked { movement_id: None };
+		let locked = VtxoState::Locked { holder: None };
 		store_vtxo_with_initial_state(&tx, &vtxo_1, &locked).unwrap();
 		store_vtxo_with_initial_state(&tx, &vtxo_2, &locked).unwrap();
 		store_vtxo_with_initial_state(&tx, &vtxo_3, &locked).unwrap();
@@ -1331,7 +1331,7 @@ mod test {
 		store_vtxo_with_initial_state(&tx, vtxo, &spendable).unwrap();
 
 		// Second insert with different state should also succeed but NOT change state
-		let locked = VtxoState::Locked { movement_id: None };
+		let locked = VtxoState::Locked { holder: None };
 		store_vtxo_with_initial_state(&tx, vtxo, &locked).unwrap();
 
 		// State should still be Spendable (original state preserved)
@@ -1353,7 +1353,7 @@ mod test {
 		let vtxo = &VTXO_VECTORS.board_vtxo;
 
 		// Store a VTXO in Locked state.
-		let locked = VtxoState::Locked { movement_id: None };
+		let locked = VtxoState::Locked { holder: None };
 		store_vtxo_with_initial_state(&tx, vtxo, &locked).unwrap();
 
 		// First unlock: Locked -> Spendable. Must succeed.
@@ -1386,7 +1386,7 @@ mod test {
 		// Also verify that a disallowed transition still fails.
 		// VTXO is Spendable, but only Spent is allowed -> must error.
 		update_vtxo_state_checked(
-			&tx, vtxo.id(), VtxoState::Locked { movement_id: None }, &[VtxoStateKind::Spent],
+			&tx, vtxo.id(), VtxoState::Locked { holder: None }, &[VtxoStateKind::Spent],
 		).expect_err("transition from Spendable should fail when only Spent is allowed");
 	}
 

@@ -4,6 +4,7 @@
 
 Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
+**action_id** | Option<**String**> | The action that locked this VTXO, if any. | [optional]
 **movement_id** | Option<**i32**> | The movement that locked this VTXO, if any. | [optional]
 **r#type** | **String** |  | 
 

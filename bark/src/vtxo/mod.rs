@@ -4,18 +4,22 @@ mod signing;
 mod state;
 
 pub use self::selection::{FilterVtxos, RefreshStrategy, VtxoFilter};
-pub use self::state::{VtxoState, VtxoStateKind, WalletVtxo};
+pub use self::state::{VtxoLockHolder, VtxoState, VtxoStateKind, WalletVtxo};
 
 use log::{debug, error, trace};
 use ark::{ProtocolEncoding, Vtxo};
 use ark::vtxo::{Full, VtxoRef};
 
 use crate::Wallet;
-use crate::movement::MovementId;
 
 impl Wallet {
 	/// Attempts to lock VTXOs with the given [VtxoId](ark::VtxoId) values. This will only work if the current
 	/// [VtxoState] is contained by [VtxoStateKind::UNSPENT_STATES].
+	///
+	/// `holder` records which operation is reserving the vtxos so
+	/// "who holds this vtxo?" is a typed lookup. Pass `None` only for
+	/// the narrow window before the operation's holder identity is
+	/// known (e.g. offboard's preparatory arkoor).
 	///
 	/// # Errors
 	/// - If the VTXO is not in a lockable [VtxoState].
@@ -24,10 +28,10 @@ impl Wallet {
 	pub async fn lock_vtxos(
 		&self,
 		vtxos: impl IntoIterator<Item = impl VtxoRef>,
-		movement_id: Option<MovementId>,
+		holder: Option<VtxoLockHolder>,
 	) -> anyhow::Result<()> {
 		self.set_vtxo_states(
-			vtxos, &VtxoState::Locked { movement_id }, &VtxoStateKind::UNSPENT_STATES,
+			vtxos, &VtxoState::Locked { holder }, &VtxoStateKind::UNSPENT_STATES,
 		).await
 	}
 
@@ -113,9 +117,9 @@ impl Wallet {
 	pub async fn store_locked_vtxos<'a>(
 		&self,
 		vtxos: impl IntoIterator<Item = &'a Vtxo<Full>>,
-		movement_id: Option<MovementId>,
+		holder: Option<VtxoLockHolder>,
 	) -> anyhow::Result<()> {
-		self.store_vtxos(vtxos, &VtxoState::Locked { movement_id }).await
+		self.store_vtxos(vtxos, &VtxoState::Locked { holder }).await
 	}
 
 	/// Stores the given collection of VTXOs in the wallet with an initial state of
