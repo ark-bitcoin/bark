@@ -27,6 +27,7 @@ in {
 			# Rust
 			rustToolchain.rustc
 			rustToolchain.cargo
+			rustToolchain.clippy
 			rustToolchain.rust-src
 			rustToolchain.llvm-tools
 			rustToolchain.rust-std
