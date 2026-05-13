@@ -11,7 +11,8 @@ use std::time::Duration;
 
 use log::{debug, trace, warn};
 
-use crate::Wallet;
+use crate::vtxo::{VtxoState, VtxoStateKind};
+use crate::{Wallet, WalletVtxo};
 use crate::lock_manager::LockGuard;
 
 /// Tagged union of every kind of checkpoint the wallet persists.
@@ -108,6 +109,48 @@ pub enum DriveMode {
 }
 
 impl Wallet {
+	/// List the VTXOs currently locked by a specific wallet action.
+	///
+	/// Used by the executor to free reservations when an action fails
+	/// terminally without having transitioned its vtxos through the
+	/// normal Spent/Spendable channels.
+	async fn get_vtxos_locked_by_action(
+		&self,
+		action_id: &WalletActionId,
+	) -> anyhow::Result<Vec<WalletVtxo>> {
+		let all = self.inner.db.get_vtxos_by_state(&[VtxoStateKind::Locked]).await?;
+		Ok(all.into_iter().filter(|v| match &v.state {
+			VtxoState::Locked { holder: Some(crate::vtxo::VtxoLockHolder::Action { id }) } => {
+				id == action_id
+			},
+			_ => false,
+		}).collect())
+	}
+
+	/// Release every vtxo currently locked by the given action,
+	/// returning each one to [`crate::vtxo::VtxoState::Spendable`].
+	///
+	/// Cheap when nothing is held (no-op). Used as the cleanup hook by
+	/// the executor on `Advance::Done` and by manual cancellation via
+	/// [`Self::cancel_wallet_action`].
+	pub async fn release_action_locks(&self, action_id: &WalletActionId) -> anyhow::Result<()> {
+		let vtxos = self.get_vtxos_locked_by_action(action_id).await?;
+		if vtxos.is_empty() {
+			return Ok(());
+		}
+		debug!("releasing {} vtxo lock(s) held by action {}", vtxos.len(), action_id);
+		self.unlock_vtxos(vtxos).await
+	}
+
+	/// Cancel a wallet action: release its vtxo locks and remove the
+	/// checkpoint row. Intended for manual cleanup of stuck actions;
+	/// the normal terminal path is `Advance::Done` from `advance`.
+	pub async fn cancel_wallet_action(&self, action_id: &WalletActionId) -> anyhow::Result<()> {
+		self.release_action_locks(action_id).await?;
+		self.inner.db.remove_wallet_action_checkpoint(action_id).await?;
+		Ok(())
+	}
+
 	/// Drive a wallet action to its next park or terminal state.
 	///
 	/// Holds a per-action-id in-flight guard so concurrent drives of
@@ -178,6 +221,9 @@ impl Wallet {
 					}
 				},
 				Ok(Advance::Done) => {
+					if let Err(e) = self.release_action_locks(&id).await {
+						warn!("action {} done but couldn't release stale locks: {:#}", id, e);
+					}
 					if let Err(e) = self.inner.db.remove_wallet_action_checkpoint(&id).await {
 						warn!("action {} finished but removal failed: {:#}", id, e);
 					}
