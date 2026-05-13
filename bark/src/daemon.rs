@@ -154,12 +154,11 @@ impl DaemonProcess {
 	async fn run_exits(&self) {
 		if let Some(onchain) = &self.onchain {
 			let mut onchain = onchain.write().await;
-			let mut exit_lock = self.wallet.exit.write().await;
-			if let Err(e) = exit_lock.sync_no_progress(&*onchain).await {
+			if let Err(e) = self.wallet.exit.sync_no_progress(&*onchain).await {
 				warn!("An error occurred while syncing exits: {e:#}");
 			}
 
-			if let Err(e) = exit_lock.progress_exits(&self.wallet, &mut *onchain, None).await {
+			if let Err(e) = self.wallet.exit.progress_exits(&self.wallet, &mut *onchain, None).await {
 				warn!("An error occurred while progressing exits: {e:#}");
 			}
 		}

@@ -466,7 +466,7 @@ impl Wallet {
 		let vtxos = lightning_receive.htlc_vtxos.iter().map(|v| &v.vtxo).collect::<Vec<_>>();
 
 		info!("Exiting HTLC VTXOs for lightning_receive with payment hash {}", lightning_receive.payment_hash);
-		self.exit.write().await.start_exit_for_vtxos(&vtxos).await?;
+		self.exit.start_exit_for_vtxos(&vtxos).await?;
 
 		if let Some(movement_id) = lightning_receive.movement_id {
 			self.movements.finish_movement_with_update(

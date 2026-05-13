@@ -116,7 +116,7 @@ impl Wallet {
 
 			if vtxo.expiry_height() < current_height + ark_info.required_board_confirmations as BlockHeight {
 				warn!("VTXO {} expired before its board was confirmed, removing board and marking VTXO for exit", vtxo.id());
-				self.exit.write().await.start_exit_for_vtxos(&[vtxo.vtxo]).await?;
+				self.exit.start_exit_for_vtxos(&[vtxo.vtxo]).await?;
 				self.movements.finish_movement_with_update(
 					board.movement_id,
 					MovementStatus::Failed,

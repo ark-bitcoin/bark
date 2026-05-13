@@ -358,7 +358,6 @@ use ark::vtxo::policy::signing::VtxoSigner;
 use bitcoin_ext::{BlockHeight, P2TR_DUST};
 use server_rpc::{protos, ServerConnection};
 use server_rpc::client::{ConnectError, CreateEndpointError};
-
 use crate::chain::{ChainSource, ChainSourceSpec};
 use crate::exit::Exit;
 use crate::lock_manager::LockManager;
@@ -730,7 +729,7 @@ pub struct Wallet {
 	chain: Arc<ChainSource>,
 
 	/// Exit subsystem handling unilateral exits and on-chain reconciliation outside Ark rounds.
-	pub exit: tokio::sync::RwLock<Exit>,
+	pub exit: Exit,
 
 	/// Allows easy creation of and management of wallet fund movements.
 	pub movements: Arc<MovementManager>,
@@ -779,6 +778,11 @@ impl Wallet {
 	/// Access the server's chain source
 	pub fn chain(&self) -> &Arc<ChainSource> {
 		&self.chain
+	}
+
+	/// Access the exit manager
+	pub fn exit_mgr(&self) -> &Exit {
+		&self.exit
 	}
 
 	/// Peek at the keypair directly after currently last revealed one,
@@ -1006,8 +1010,8 @@ impl Wallet {
 		onchain: &dyn ExitUnilaterally,
 		force: bool,
 	) -> anyhow::Result<Wallet> {
-		let mut wallet = Wallet::create(mnemonic, network, config, db, lock_manager, force).await?;
-		wallet.exit.get_mut().load(onchain).await?;
+		let wallet = Wallet::create(mnemonic, network, config, db, lock_manager, force).await?;
+		wallet.exit.load(onchain).await?;
 		Ok(wallet)
 	}
 
@@ -1062,7 +1066,7 @@ impl Wallet {
 
 		let notifications = NotificationDispatch::new();
 		let movements = Arc::new(MovementManager::new(db.clone(), notifications.clone()));
-		let exit = tokio::sync::RwLock::new(Exit::new(db.clone(), chain.clone(), movements.clone()).await?);
+		let exit = Exit::new(db.clone(), chain.clone(), movements.clone()).await?;
 
 		Ok(Wallet {
 			config, db, lock_manager, seed, exit, movements, notifications, server, chain,
@@ -1079,8 +1083,8 @@ impl Wallet {
 		cfg: Config,
 		lock_manager: Box<dyn LockManager>,
 	) -> anyhow::Result<Wallet> {
-		let mut wallet = Wallet::open(mnemonic, db, cfg, lock_manager).await?;
-		wallet.exit.get_mut().load(onchain).await?;
+		let wallet = Wallet::open(mnemonic, db, cfg, lock_manager).await?;
+		wallet.exit.load(onchain).await?;
 		Ok(wallet)
 	}
 
@@ -1096,7 +1100,7 @@ impl Wallet {
 		let wallet = Arc::new(Wallet::open(mnemonic, db, cfg, lock_manager).await?);
 		if let Some(onchain) = onchain.as_ref() {
 			let mut onchain = onchain.write().await;
-			wallet.exit.write().await.load(&mut *onchain).await?;
+			wallet.exit.load(&mut *onchain).await?;
 		}
 
 		wallet.clone().start_daemon(onchain)?;
@@ -1251,7 +1255,7 @@ impl Wallet {
 
 		let pending_in_round = self.pending_round_balance().await?;
 
-		let pending_exit = self.exit.try_read().ok().map(|e| e.pending_total());
+		let pending_exit = self.exit.try_pending_total();
 
 		Ok(Balance {
 			spendable,
@@ -1471,7 +1475,7 @@ impl Wallet {
 		if let Err(e) = exit_sync.as_ref() {
 			warn!("Error syncing exits: {:#}", e);
 		}
-		let exit_progress = self.exit.write().await.progress_exits(&self, onchain, None).await;
+		let exit_progress = self.exit.progress_exits(&self, onchain, None).await;
 		if let Err(e) = exit_progress.as_ref() {
 			warn!("Error progressing exits: {:#}", e);
 		}
@@ -1501,7 +1505,7 @@ impl Wallet {
 		if let Err(e) = exit_sync.as_ref() {
 			warn!("Error syncing exits: {:#}", e);
 		}
-		let exit_progress = self.exit.write().await.progress_exits(&self, onchain, None).await;
+		let exit_progress = self.exit.progress_exits(&self, onchain, None).await;
 		if let Err(e) = exit_progress.as_ref() {
 			warn!("Error progressing exits: {:#}", e);
 		}
@@ -1632,7 +1636,7 @@ impl Wallet {
 		&self,
 		onchain: &mut dyn ExitUnilaterally,
 	) -> anyhow::Result<()> {
-		self.exit.write().await.sync(&self, onchain).await?;
+		self.exit.sync(&self, onchain).await?;
 		Ok(())
 	}
 
@@ -1652,7 +1656,7 @@ impl Wallet {
 			self.db.remove_vtxo(vtxo.id()).await?;
 		}
 
-		self.exit.write().await.dangerous_clear_exit().await?;
+		self.exit.dangerous_clear_exit().await?;
 		Ok(())
 	}
 

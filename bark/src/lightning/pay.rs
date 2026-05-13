@@ -381,7 +381,7 @@ impl Wallet {
 						.iter()
 						.map(|v| v.vtxo.clone())
 						.collect::<Vec<_>>();
-					self.exit.write().await.start_exit_for_vtxos(&vtxos).await?;
+					self.exit.start_exit_for_vtxos(&vtxos).await?;
 
 					let exited = vtxos.iter().map(|v| v.amount()).sum::<Amount>();
 					let effective = -payment.amount.to_signed()? - payment.fee.to_signed()? + exited.to_signed()?;
