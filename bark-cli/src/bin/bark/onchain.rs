@@ -94,7 +94,7 @@ pub async fn execute_onchain_command(onchain_command: OnchainCommand, wallet: &m
 		OnchainCommand::Balance { no_sync } => {
 			if !no_sync {
 				info!("Syncing wallet...");
-				if let Err(e) = onchain.sync(&wallet.chain).await {
+				if let Err(e) = onchain.sync(wallet.chain()).await {
 					warn!("Onchain sync error: {}", e)
 				}
 			}
@@ -115,13 +115,13 @@ pub async fn execute_onchain_command(onchain_command: OnchainCommand, wallet: &m
 
 			if !no_sync {
 				info!("Syncing wallet...");
-				if let Err(e) = onchain.sync(&wallet.chain).await {
+				if let Err(e) = onchain.sync(wallet.chain()).await {
 					warn!("Sync error: {}", e)
 				}
 			}
 
-			let fee_rate = wallet.chain.fee_rates().await.regular;
-			let txid = onchain.send(&wallet.chain, addr, amount, fee_rate).await?;
+			let fee_rate = wallet.chain().fee_rates().await.regular;
+			let txid = onchain.send(wallet.chain(), addr, amount, fee_rate).await?;
 
 			let output = json::onchain::Send { txid };
 			output_json(&output);
@@ -133,13 +133,13 @@ pub async fn execute_onchain_command(onchain_command: OnchainCommand, wallet: &m
 
 			if !no_sync {
 				info!("Syncing wallet...");
-				if let Err(e) = onchain.sync(&wallet.chain).await {
+				if let Err(e) = onchain.sync(wallet.chain()).await {
 					warn!("Sync error: {}", e)
 				}
 			}
 
-			let fee_rate = wallet.chain.fee_rates().await.regular;
-			let txid = onchain.drain(&wallet.chain, addr, fee_rate).await?;
+			let fee_rate = wallet.chain().fee_rates().await.regular;
+			let txid = onchain.drain(wallet.chain(), addr, fee_rate).await?;
 
 			let output = json::onchain::Send { txid };
 			output_json(&output);
@@ -177,13 +177,13 @@ pub async fn execute_onchain_command(onchain_command: OnchainCommand, wallet: &m
 
 			if !no_sync {
 				info!("Syncing wallet...");
-				if let Err(e) = onchain.sync(&wallet.chain).await {
+				if let Err(e) = onchain.sync(wallet.chain()).await {
 					warn!("Sync error: {}", e)
 				}
 			}
 
-			let fee_rate = wallet.chain.fee_rates().await.regular;
-			let txid = onchain.send_many(&wallet.chain, &outputs, fee_rate).await?;
+			let fee_rate = wallet.chain().fee_rates().await.regular;
+			let txid = onchain.send_many(wallet.chain(), &outputs, fee_rate).await?;
 
 			let output = json::onchain::Send { txid };
 			output_json(&output);
@@ -191,7 +191,7 @@ pub async fn execute_onchain_command(onchain_command: OnchainCommand, wallet: &m
 		OnchainCommand::Utxos { no_sync } => {
 			if !no_sync {
 				info!("Syncing wallet...");
-				if let Err(e) = onchain.sync(&wallet.chain).await {
+				if let Err(e) = onchain.sync(wallet.chain()).await {
 					warn!("Sync error: {}", e)
 				}
 			}
@@ -206,7 +206,7 @@ pub async fn execute_onchain_command(onchain_command: OnchainCommand, wallet: &m
 		OnchainCommand::Transactions { no_sync } => {
 			if !no_sync {
 				info!("Syncing wallet...");
-				if let Err(e) = onchain.sync(&wallet.chain).await {
+				if let Err(e) = onchain.sync(wallet.chain()).await {
 					warn!("Sync error: {}", e)
 				}
 			}

@@ -140,9 +140,9 @@ pub async fn onchain_send(
 		.require_network(net)
 		.badarg("Address is not valid for configured network")?;
 
-	let fee_rate = wallet.chain.fee_rates().await.regular;
+	let fee_rate = wallet.chain().fee_rates().await.regular;
 	let amount = Amount::from_sat(body.amount_sat);
-	let txid = onchain.write().await.send(&wallet.chain, addr, amount, fee_rate).await
+	let txid = onchain.write().await.send(wallet.chain(), addr, amount, fee_rate).await
 		.context("Failed to send onchain payment")?;
 
 	Ok(axum::Json(bark_json::cli::onchain::Send { txid }))
@@ -200,8 +200,8 @@ pub async fn onchain_send_many(
 		info!("{} to {}", amount, address);
 	}
 
-	let fee_rate = wallet.chain.fee_rates().await.regular;
-	let txid = onchain.write().await.send_many(&wallet.chain, &outputs, fee_rate).await
+	let fee_rate = wallet.chain().fee_rates().await.regular;
+	let txid = onchain.write().await.send_many(wallet.chain(), &outputs, fee_rate).await
 		.context("Failed to send many onchain payments")?;
 
 	Ok(axum::Json(bark_json::cli::onchain::Send { txid }))
@@ -237,8 +237,8 @@ pub async fn onchain_drain(
 		.require_network(net)
 		.badarg("Address is not valid for configured network")?;
 
-	let fee_rate = wallet.chain.fee_rates().await.regular;
-	let txid = onchain.write().await.drain(&wallet.chain, addr, fee_rate).await
+	let fee_rate = wallet.chain().fee_rates().await.regular;
+	let txid = onchain.write().await.drain(wallet.chain(), addr, fee_rate).await
 		.context("Failed to drain onchain wallet")?;
 
 	Ok(axum::Json(bark_json::cli::onchain::Send { txid }))
@@ -319,6 +319,6 @@ pub async fn onchain_sync(
 	let onchain = state.require_onchain()?;
 	let wallet = state.require_wallet()?;
 
-	onchain.write().await.sync(&wallet.chain).await?;
+	onchain.write().await.sync(wallet.chain()).await?;
 	Ok(())
 }

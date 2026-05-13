@@ -464,7 +464,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 		Command::Board { amount, all, no_sync } => {
 			if !no_sync {
 				info!("Syncing onchain wallet...");
-				if let Err(e) = onchain.sync(&wallet.chain).await {
+				if let Err(e) = onchain.sync(wallet.chain()).await {
 					warn!("Sync error: {}", e)
 				}
 			}

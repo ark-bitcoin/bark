@@ -181,7 +181,7 @@ pub async fn start_exit(
 		bail!("No exit to start. Use either the --vtxo or --all flag.")
 	}
 	info!("Starting onchain sync");
-	if let Err(err) = onchain.sync(&wallet.chain).await {
+	if let Err(err) = onchain.sync(wallet.chain()).await {
 		warn!("Failed to perform onchain sync: {}", err.to_string());
 	}
 	info!("Starting offchain sync");
@@ -237,7 +237,7 @@ async fn progress_once(
 	fee_rate: Option<FeeRate>,
 ) -> anyhow::Result<bark_json::cli::ExitProgressResponse> {
 	info!("Starting onchain sync");
-	if let Err(error) = onchain.sync(&wallet.chain).await {
+	if let Err(error) = onchain.sync(wallet.chain()).await {
 		warn!("Failed to perform onchain sync: {}", error)
 	}
 	info!("Wallet sync completed");
@@ -267,7 +267,7 @@ pub async fn claim_exits(
 	if !no_sync {
 		info!("Syncing wallet...");
 		wallet.sync().await;
-		if let Err(e) = onchain.sync(&wallet.chain).await {
+		if let Err(e) = onchain.sync(wallet.chain()).await {
 			warn!("Sync error: {}", e)
 		}
 	}
@@ -298,10 +298,10 @@ pub async fn claim_exits(
 
 	let address_spk = address.script_pubkey();
 
-	let fee_rate = wallet.chain.fee_rates().await.regular;
+	let fee_rate = wallet.chain().fee_rates().await.regular;
 	let psbt = exit.drain_exits(&vtxos, &wallet, address, Some(fee_rate)).await.unwrap();
 	let tx = psbt.extract_tx()?;
-	wallet.chain.broadcast_tx(&tx).await?;
+	wallet.chain().broadcast_tx(&tx).await?;
 	info!("Drain transaction broadcasted: {}", tx.compute_txid());
 
 	// Commit the transaction to the wallet if the claim destination is ours

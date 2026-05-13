@@ -423,11 +423,11 @@ async fn try_create_wallet(
 
 	// Skip initial block sync if we generated a new wallet.
 	let birthday_height = if is_new_wallet {
-		Some(wallet.chain.tip().await?)
+		Some(wallet.chain().tip().await?)
 	} else {
 		opts.birthday_height
 	};
-	onchain.initial_wallet_scan(&wallet.chain, birthday_height).await?;
+	onchain.initial_wallet_scan(wallet.chain(), birthday_height).await?;
 	Ok(())
 }
 

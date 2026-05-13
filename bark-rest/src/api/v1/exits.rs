@@ -257,7 +257,7 @@ pub async fn exit_progress(
 
 	let fee_rate = body.fee_rate.map(FeeRate::from_sat_per_kvb_ceil);
 
-	onchain_lock.sync(&wallet.chain).await
+	onchain_lock.sync(wallet.chain()).await
 		.context("error syncing on-chain wallet")?;
 
 	let mut exit = wallet.exit.write().await;
@@ -292,7 +292,7 @@ async fn inner_claim_vtxos(
 		.context("Failed to drain exits")?;
 	let tx = psbt.extract_tx()
 		.context("Failed to extract transaction")?;
-	wallet.chain.broadcast_tx(&tx).await
+	wallet.chain().broadcast_tx(&tx).await
 		.context("Failed to broadcast transaction")?;
 	info!("Drain transaction broadcasted: {}", tx.compute_txid());
 

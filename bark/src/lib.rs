@@ -727,7 +727,7 @@ impl WalletSeed {
 /// ```
 pub struct Wallet {
 	/// The chain source the wallet is connected to
-	pub chain: Arc<ChainSource>,
+	chain: Arc<ChainSource>,
 
 	/// Exit subsystem handling unilateral exits and on-chain reconciliation outside Ark rounds.
 	pub exit: tokio::sync::RwLock<Exit>,
@@ -774,6 +774,11 @@ impl Wallet {
 
 	pub async fn network(&self) -> anyhow::Result<Network> {
 		Ok(self.properties().await?.network)
+	}
+
+	/// Access the server's chain source
+	pub fn chain(&self) -> &Arc<ChainSource> {
+		&self.chain
 	}
 
 	/// Peek at the keypair directly after currently last revealed one,
