@@ -27,6 +27,7 @@ use ark::lightning::{Bolt12InvoiceExt, Invoice, Offer, OfferAmountExt, PaymentHa
 use ark::tree::signed::{LeafVtxoCosignRequest, UnlockHash, UnlockPreimage};
 use ark::rounds::RoundId;
 use ark::vtxo::Full;
+use ark::vtxo::policy::check_block_height;
 use bitcoin_ext::{BlockDelta, BlockHeight};
 use server_rpc::{self as rpc, protos, TryFromBytes};
 use crate::database::rounds::StoredRoundOutput;
@@ -162,7 +163,8 @@ impl rpc::server::ArkService for Server {
 
 		let amount = Amount::from_sat(req.amount);
 		let user_pubkey = PublicKey::from_bytes(&req.user_pubkey)?;
-		let expiry_height = req.expiry_height;
+		let expiry_height = check_block_height(req.expiry_height)
+			.map_err(|e| tonic::Status::invalid_argument(format!("expiry_height: {e}")))?;
 		let utxo = OutPoint::from_bytes(&req.utxo)?;
 		let pub_nonce = musig::PublicNonce::from_bytes(&req.pub_nonce)?;
 

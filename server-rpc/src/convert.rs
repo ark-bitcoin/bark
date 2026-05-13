@@ -8,6 +8,7 @@ use bitcoin::secp256k1::{schnorr, PublicKey};
 use bitcoin::{self, Amount, FeeRate, OutPoint, ScriptBuf, Transaction, Txid};
 
 use ark::{musig, ProtocolEncoding, SignedVtxoRequest, Vtxo, VtxoId, VtxoPolicy, VtxoRequest};
+use ark::vtxo::policy::check_block_delta;
 use ark::arkoor::{ArkoorCosignRequest, ArkoorCosignResponse, ArkoorDestination};
 use ark::arkoor::package::{ArkoorPackageCosignRequest, ArkoorPackageCosignResponse};
 use ark::attestations::{
@@ -174,18 +175,18 @@ impl TryFrom<protos::ArkInfo> for ark::ArkInfo {
 				.map_err(|_| "invalid mailbox pubkey")?,
 			round_interval: Duration::from_secs(v.round_interval_secs as u64),
 			nb_round_nonces: v.nb_round_nonces as usize,
-			vtxo_exit_delta: v.vtxo_exit_delta.try_into()
-				.map_err(|_| "invalid vtxo exit delta")?,
-			vtxo_expiry_delta: v.vtxo_expiry_delta.try_into()
-				.map_err(|_| "invalid vtxo expiry delta")?,
-			htlc_send_expiry_delta: v.htlc_send_expiry_delta.try_into()
-				.map_err(|_| "invalid htlc send expiry delta")?,
-			htlc_expiry_delta: v.htlc_expiry_delta.try_into()
-				.map_err(|_| "invalid htlc expiry delta")?,
+			vtxo_exit_delta: check_block_delta(v.vtxo_exit_delta)
+				.map_err(|_| "invalid vtxo_exit_delta")?,
+			vtxo_expiry_delta: check_block_delta(v.vtxo_expiry_delta)
+				.map_err(|_| "invalid vtxo_expiry_delta")?,
+			htlc_send_expiry_delta: check_block_delta(v.htlc_send_expiry_delta)
+				.map_err(|_| "invalid htlc_send_expiry_delta")?,
+			htlc_expiry_delta: check_block_delta(v.htlc_expiry_delta)
+				.map_err(|_| "invalid htlc_expiry_delta")?,
 			max_vtxo_amount: v.max_vtxo_amount.map(|v| Amount::from_sat(v)),
 			required_board_confirmations: v.required_board_confirmations as usize,
-			max_user_invoice_cltv_delta: v.max_user_invoice_cltv_delta.try_into()
-				.map_err(|_| "invalid max user invoice cltv delta")?,
+			max_user_invoice_cltv_delta: check_block_delta(v.max_user_invoice_cltv_delta)
+				.map_err(|_| "invalid max_user_invoice_cltv_delta")?,
 			min_board_amount: Amount::from_sat(v.min_board_amount),
 			offboard_feerate: FeeRate::from_sat_per_kwu(v.offboard_feerate_sat_vkb / 4),
 			ln_receive_anti_dos_required: v.ln_receive_anti_dos_required,
@@ -766,5 +767,63 @@ mod test {
 		assert_eq!(preimage, Preimage::from_slice(&b).unwrap());
 		assert_eq!(preimage, Preimage::from_slice(&preimage.to_vec()).unwrap());
 		assert_eq!(preimage, Preimage::from_bytes(&preimage.to_vec()).unwrap());
+	}
+
+	/// Baseline proto with valid network and pubkeys, so TryFrom proceeds far
+	/// enough to exercise the delta validators. Fields after the deltas may be
+	/// invalid; these tests only assert delta-rejection short-circuits.
+	fn baseline_ark_info_proto() -> protos::ArkInfo {
+		let pk = PublicKey::from_str(
+			"02dfa52f6690299d2d6a08323083e290597b56fee125063e5f4e2957731639c42c",
+		).unwrap();
+		protos::ArkInfo {
+			network: "regtest".into(),
+			server_pubkey: pk.serialize().to_vec(),
+			mailbox_pubkey: pk.serialize().to_vec(),
+			round_interval_secs: 60,
+			nb_round_nonces: 1,
+			vtxo_exit_delta: 12,
+			vtxo_expiry_delta: 100,
+			htlc_send_expiry_delta: 100,
+			htlc_expiry_delta: 6,
+			max_vtxo_amount: None,
+			required_board_confirmations: 1,
+			max_user_invoice_cltv_delta: 50,
+			min_board_amount: 0,
+			ln_receive_anti_dos_required: false,
+			offboard_feerate_sat_vkb: 1000,
+			fees: None,
+			max_vtxo_exit_depth: 5,
+		}
+	}
+
+	#[test]
+	fn ark_info_rejects_oversized_vtxo_exit_delta() {
+		let mut proto = baseline_ark_info_proto();
+		proto.vtxo_exit_delta = ark::vtxo::policy::MAX_BLOCK_DELTA as u32 + 1;
+		assert!(ark::ArkInfo::try_from(proto).is_err());
+	}
+
+	#[test]
+	fn ark_info_rejects_oversized_htlc_expiry_delta() {
+		let mut proto = baseline_ark_info_proto();
+		proto.htlc_expiry_delta = ark::vtxo::policy::MAX_BLOCK_DELTA as u32 + 1;
+		assert!(ark::ArkInfo::try_from(proto).is_err());
+	}
+
+	#[test]
+	fn ark_info_rejects_oversized_max_user_invoice_cltv_delta() {
+		let mut proto = baseline_ark_info_proto();
+		proto.max_user_invoice_cltv_delta = ark::vtxo::policy::MAX_BLOCK_DELTA as u32 + 1;
+		assert!(ark::ArkInfo::try_from(proto).is_err());
+	}
+
+	#[test]
+	fn ark_info_rejects_u32_max_delta() {
+		// Pre-MR a u32 value above u16::MAX would have failed try_into; verify
+		// the new validator still rejects values that exceed the policy bound.
+		let mut proto = baseline_ark_info_proto();
+		proto.htlc_expiry_delta = u32::MAX;
+		assert!(ark::ArkInfo::try_from(proto).is_err());
 	}
 }
