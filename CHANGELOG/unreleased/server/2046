@@ -1,0 +1,13 @@
+- Validate VTXO policy block heights and deltas at gRPC and DB boundaries
+  `ArkInfo` deltas (`vtxo_exit_delta`, `vtxo_expiry_delta`,
+  `htlc_send_expiry_delta`, `htlc_expiry_delta`, `max_user_invoice_cltv_delta`)
+  arriving from the wire are now range-checked against the policy maximum
+  rather than only against `u16::MAX`. The `expiry_height` field on
+  `BoardCosignRequest` is similarly range-checked at the rpcserver boundary.
+  Vtxo rows loaded from postgres validate `exit_delta` and `expiry` on read.
+
+  Fixed two latent panic vectors in `watchman/policy.rs` where adversarial
+  `exit_delta` could overflow `u16` (`2 * exit_delta`) or `u32`
+  (`confirmed_at + BlockHeight::from(2 * exit_delta)`); these now use
+  `checked_*` and reference the policy bound in their `expect` messages.
+  [#2046](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2046)
