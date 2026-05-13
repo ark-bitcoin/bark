@@ -19,7 +19,7 @@ use log::{debug, error, info, trace, warn};
 
 use ark::arkoor::ArkoorDestination;
 use ark::arkoor::package::{ArkoorPackageBuilder, ArkoorPackageCosignResponse};
-use ark::lightning::{Invoice, PaymentStatus, Preimage};
+use ark::lightning::{Invoice, PaymentHash, PaymentStatus, Preimage};
 use ark::mailbox::MailboxIdentifier;
 use ark::util::IteratorExt;
 use ark::{ProtocolEncoding, VtxoId, VtxoPolicy};
@@ -30,10 +30,27 @@ use crate::Wallet;
 use crate::actions::{Advance, AdvanceError, WalletAction, WalletActionId, park_with_backoff};
 use crate::movement::update::MovementUpdate;
 use crate::movement::{MovementDestination, MovementId, MovementStatus, PaymentMethod};
+use crate::persist::models::PaidInvoice;
 use crate::subsystem::{LightningMovement, LightningSendMovement, Subsystem};
 use crate::vtxo::VtxoLockHolder;
 
 const LN_PAY_NAMESPACE: &str = "ln_pay";
+
+pub(crate) fn ln_pay_action_id(payment_hash: PaymentHash) -> WalletActionId {
+	format!("{LN_PAY_NAMESPACE}.{payment_hash}")
+}
+
+/// Outcome of a lightning send lookup by payment hash.
+///
+/// `Paid` records come from `bark_paid_invoice` and are kept forever.
+/// `InProgress` records come from `bark_wallet_action_checkpoint`.
+/// `Unknown` means the wallet has no memory of this payment hash.
+#[derive(Debug, Clone)]
+pub enum LightningSendState {
+	Unknown,
+	InProgress(LightningSend),
+	Paid(PaidInvoice),
+}
 
 /// An outgoing lightning payment, persisted as a single checkpoint row
 /// and driven across crashes by the executor.
@@ -57,11 +74,17 @@ pub struct LightningSend {
 
 impl LightningSend {
 	pub fn id(&self) -> WalletActionId {
-		format!("{}.{}", LN_PAY_NAMESPACE, self.invoice.payment_hash())
+		ln_pay_action_id(self.invoice.payment_hash())
 	}
 
 	pub fn total_amount(&self) -> Amount {
 		self.payment_amount + self.fee
+	}
+
+	pub async fn is_htlc_near_expiry(&self, wallet: &Wallet) -> anyhow::Result<bool> {
+		let tip = wallet.inner.chain.tip().await?;
+		Ok(tip > self.htlc_expiry
+			.saturating_sub(wallet.config().vtxo_refresh_expiry_threshold))
 	}
 }
 
@@ -89,11 +112,8 @@ impl WalletAction for LightningSend {
 						settle_lightning_send_payment(wallet, &self, &htlcs, preimage).await?;
 						return Ok(Advance::Done);
 					},
-					PaymentStatus::Failed => {
-						let revocation = fail_lightning_send_payment(wallet, &self).await?;
-						Progress::RevocableHtlcs { htlcs, revocation }
-					},
-					PaymentStatus::Pending => {
+					// We can park and wait until htlcs are near expiry
+					PaymentStatus::Pending if !self.is_htlc_near_expiry(wallet).await? => {
 						return Ok(Advance::Park {
 							state: LightningSend {
 								progress: Progress::PaymentInitiated(htlcs),
@@ -102,6 +122,10 @@ impl WalletAction for LightningSend {
 							wake_after: None,
 							error: None,
 						});
+					},
+					PaymentStatus::Failed | PaymentStatus::Pending => {
+						let revocation = fail_lightning_send_payment(wallet, &self).await?;
+						Progress::RevocableHtlcs { htlcs, revocation }
 					},
 				}
 			},
@@ -115,21 +139,21 @@ impl WalletAction for LightningSend {
 	}
 
 	async fn on_retry(self, wallet: &Wallet, retries: u32) -> anyhow::Result<Advance<Self>> {
-		// Escalate to unilateral exit only when *both* conditions
-		// hold: the revocation budget is exhausted (we're here)
-		// AND the HTLC vtxos are inside the exit window.
-		let tip = wallet.inner.chain.tip().await?;
-		let near_expiry = tip > self.htlc_expiry
-			.saturating_sub(wallet.config().vtxo_refresh_expiry_threshold);
-
-		if near_expiry {
+		if self.is_htlc_near_expiry(wallet).await? {
 			match self.progress.clone() {
 				Progress::Start => {
 					let err = anyhow!("Could not start lightning send and HTLCs are near expiry");
 					return Ok(Advance::Failed(err));
 				},
 				Progress::HtlcReceived(htlcs) |
-				Progress::PaymentInitiated(htlcs) |
+				Progress::PaymentInitiated(htlcs) => {
+					let revocation = fail_lightning_send_payment(wallet, &self).await?;
+					let next = LightningSend {
+						progress: Progress::RevocableHtlcs { htlcs, revocation },
+						..self
+					};
+					return Ok(Advance::Next(next));
+				},
 				Progress::RevocableHtlcs { htlcs, .. } => {
 					// TODO: maybe we don't want to exit but rather log VTXOs
 					exit_lightning_send_htlcs(wallet, &self, &htlcs).await?;
@@ -234,21 +258,20 @@ pub(crate) async fn start_lightning_send(
 		bail!("Cannot pay invoice for 0 sats (0 sat invoices are not any-amount invoices)");
 	}
 
-	let (change_keypair, _) = wallet.derive_store_next_keypair().await?;
-
 	let (inputs, fee) = wallet.select_vtxos_to_cover_with_fee(
 		payment_amount,
 		|a, v| ark_info.fees.lightning_send.calculate(a, v).context("fee overflowed"),
 	).await.context("Could not find enough suitable VTXOs to cover lightning payment")?;
 
-	let htlc_expiry = tip + ark_info.htlc_send_expiry_delta as BlockHeight;
-
-	// TODO: selection and lock are not atomic; tracked as a known gap.
-	let action_id = invoice.payment_hash().to_string();
+	let action_id = ln_pay_action_id(invoice.payment_hash());
 	wallet.lock_vtxos(
 		&inputs,
 		Some(crate::vtxo::VtxoLockHolder::Action { id: action_id }),
 	).await?;
+
+	let (change_keypair, _) = wallet.derive_store_next_keypair().await?;
+
+	let htlc_expiry = tip + ark_info.htlc_send_expiry_delta as BlockHeight;
 
 	Ok(LightningSend {
 		invoice,
@@ -324,11 +347,7 @@ pub(crate) async fn request_lightning_send_htlcs(
 		.context("Failed to cosign vtxos")?
 		.build_signed_vtxos();
 
-	// Register both htlcs and change before initiating the payment.
-	wallet.register_vtxo_transactions_with_server(&vtxos).await
-		.context("failed to register lightning-send output vtxo transactions with server")?;
-
-	let (htlc_vtxos, change_vtxos) = vtxos.into_iter()
+	let (htlc_vtxos, change_vtxos) = vtxos.clone().into_iter()
 		.partition::<Vec<_>, _>(|v| matches!(v.policy(), VtxoPolicy::ServerHtlcSend(_)));
 
 	let mut effective_balance = Amount::ZERO;
@@ -344,6 +363,10 @@ pub(crate) async fn request_lightning_send_htlcs(
 			last_input.chain_anchor().txid,
 		))?;
 		change.validate(&tx).context("invalid lightning change vtxo")?;
+	}
+
+	if let Err(e) = wallet.register_vtxo_transactions_with_server(&vtxos).await {
+		warn!("failed to register lightning-send output vtxo transactions with server: {:#}", e);
 	}
 
 	let movement_id = wallet.inner.movements.new_movement_with_update(

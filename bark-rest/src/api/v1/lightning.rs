@@ -217,15 +217,15 @@ pub async fn pay(
 		if body.comment.is_some() {
 			badarg!("comment is not supported for BOLT-11 invoices");
 		}
-		wallet.pay_lightning_invoice(invoice, amount).await?
+		wallet.pay_lightning_invoice(invoice, amount, false).await?
 	} else if let Ok(offer) = Offer::from_str(&body.destination) {
 		if body.comment.is_some() {
 			badarg!("comment is not supported for BOLT-12 offers");
 		}
-		wallet.pay_lightning_offer(offer, amount).await?
+		wallet.pay_lightning_offer(offer, amount, false).await?
 	} else if let Ok(lnaddr) = LightningAddress::from_str(&body.destination) {
 		let amount = amount.badarg("amount is required for Lightning addresses")?;
-		wallet.pay_lightning_address(&lnaddr, amount, body.comment).await?
+		wallet.pay_lightning_address(&lnaddr, amount, body.comment, false).await?
 	} else {
 		badarg!("argument is not a valid BOLT-11 invoice, BOLT-12 offer or Lightning address");
 	};

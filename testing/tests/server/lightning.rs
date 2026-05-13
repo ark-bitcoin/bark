@@ -432,7 +432,12 @@ async fn should_refuse_paying_invoice_not_matching_htlcs() {
 			&self, upstream: &mut ArkClient, mut req: protos::InitiateLightningPaymentRequest,
 		) -> Result<protos::Empty, tonic::Status> {
 			req.invoice = self.0.clone();
-			Ok(upstream.initiate_lightning_payment(req).await?.into_inner())
+			let err = upstream.initiate_lightning_payment(req).await.unwrap_err();
+			assert!(
+				err.message().contains("htlc payment hash doesn't match invoice"),
+				"unexpected server error: {}", err.message(),
+			);
+			Err(err)
 		}
 	}
 
@@ -444,8 +449,7 @@ async fn should_refuse_paying_invoice_not_matching_htlcs() {
 
 	let invoice = lightning.external.invoice(Some(btc(1)), "real invoice", "A real invoice").await;
 
-	let err = bark_1.try_pay_lightning(invoice, None, false).await.unwrap_err().to_alt_string();
-	assert!(err.contains("htlc payment hash doesn't match invoice"), "err: {err}");
+	bark_1.try_pay_lightning(invoice, None, false).await.unwrap();
 }
 
 #[tokio::test]
@@ -465,7 +469,13 @@ async fn should_refuse_paying_invoice_whose_amount_is_higher_than_htlcs() {
 			&self, upstream: &mut ArkClient, mut req: protos::InitiateLightningPaymentRequest,
 		) -> Result<protos::Empty, tonic::Status> {
 			req.htlc_vtxo_ids.pop();
-			Ok(upstream.initiate_lightning_payment(req).await?.into_inner())
+			let err = upstream.initiate_lightning_payment(req).await.unwrap_err();
+			assert!(
+				err.message().contains("HTLC VTXO sum of")
+					&& err.message().contains("is less than the payment amount of"),
+				"unexpected server error: {}", err.message(),
+			);
+			Err(err)
 		}
 	}
 
@@ -480,8 +490,7 @@ async fn should_refuse_paying_invoice_whose_amount_is_higher_than_htlcs() {
 
 	let invoice = lightning.external.invoice(Some(btc(1)), "real invoice", "A real invoice").await;
 
-	let err = bark_1.try_pay_lightning(invoice, None, false).await.unwrap_err().to_alt_string();
-	assert!(err.contains("HTLC VTXO sum of") && err.contains("is less than the payment amount of"), "err: {err}");
+	bark_1.try_pay_lightning(invoice, None, false).await.unwrap();
 }
 
 #[tokio::test]

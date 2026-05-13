@@ -8,11 +8,56 @@ use lightning_invoice::Bolt11Invoice;
 use lnurl::lightning_address::LightningAddress;
 use log::info;
 
+use bitcoin::hex::DisplayHex;
+use serde::Serialize;
+
 use ark::lightning::{PaymentHash, Preimage};
 use bark::Wallet;
-use bark_json::cli::{InvoiceInfo, LightningReceiveInfo, LightningSendInfo};
+use bark::actions::lightning::pay::{LightningSendState, Progress};
+use bark_json::cli::{InvoiceInfo, LightningReceiveInfo};
 
 use bark_cli::util::output_json;
+
+#[derive(Serialize)]
+struct LightningSendStatus {
+	payment_hash: String,
+	state: &'static str,
+	invoice: Option<String>,
+	preimage: Option<String>,
+}
+
+impl LightningSendStatus {
+	fn from_state(hash: PaymentHash, state: &LightningSendState) -> Self {
+		match state {
+			LightningSendState::Unknown => LightningSendStatus {
+				payment_hash: hash.to_string(),
+				state: "unknown",
+				invoice: None,
+				preimage: None,
+			},
+			LightningSendState::Paid(paid) => LightningSendStatus {
+				payment_hash: paid.payment_hash.to_string(),
+				state: "paid",
+				invoice: None,
+				preimage: Some(paid.preimage.as_hex().to_string()),
+			},
+			LightningSendState::InProgress(send) => {
+				let phase = match send.progress {
+					Progress::Start => "start",
+					Progress::HtlcReceived(_) => "htlc-received",
+					Progress::PaymentInitiated(_) => "payment-initiated",
+					Progress::RevocableHtlcs { .. } => "revocable-htlcs",
+				};
+				LightningSendStatus {
+					payment_hash: send.invoice.payment_hash().to_string(),
+					state: phase,
+					invoice: Some(send.invoice.to_string()),
+					preimage: None,
+				}
+			},
+		}
+	}
+}
 
 #[derive(clap::Subcommand)]
 pub enum LightningCommand {
@@ -193,27 +238,22 @@ async fn execute_pay_command(
 				wallet.sync().await;
 			}
 
-			let payment = if let Ok(invoice) = Bolt11Invoice::from_str(&invoice) {
+			if let Ok(invoice) = Bolt11Invoice::from_str(&invoice) {
 				if comment.is_some() {
 					bail!("comment is not supported for BOLT-11 invoices");
 				}
-				wallet.pay_lightning_invoice(invoice, amount).await?
+				wallet.pay_lightning_invoice(invoice, amount, wait).await?;
 			} else if let Ok(offer) = Offer::from_str(&invoice) {
 				if comment.is_some() {
 					bail!("comment is not supported for BOLT-12 offers");
 				}
-				wallet.pay_lightning_offer(offer, amount).await?
+				wallet.pay_lightning_offer(offer, amount, wait).await?;
 			} else if let Ok(lnaddr) = LightningAddress::from_str(&invoice) {
 				let amount = amount.context("amount is required for Lightning addresses")?;
-				wallet.pay_lightning_address(&lnaddr, amount, comment).await?
+				wallet.pay_lightning_address(&lnaddr, amount, comment, wait).await?;
 			} else {
 				bail!("argument is not a valid BOLT-11 invoice, BOLT-12 offer or \
 					Lightning address");
-			};
-
-			if wait {
-				let payment_hash = payment.invoice.payment_hash();
-				wallet.check_lightning_payment(payment_hash, true).await?;
 			}
 		},
 		PayCommand::Status { filter_args: LightningStatusFilterGroup { filter, preimage }, no_sync } => {
@@ -229,11 +269,8 @@ async fn execute_pay_command(
 				(Some(_), Some(_)) => bail!("cannot provide both filter and preimage"),
 			};
 
-			if let Some(ret) = wallet.check_lightning_payment(payment_hash, false).await? {
-				output_json(&LightningSendInfo::from(ret));
-			} else {
-				info!("No outgoing payment found for this payment hash");
-			}
+			let state = wallet.check_lightning_payment(payment_hash, false).await?;
+			output_json(&LightningSendStatus::from_state(payment_hash, &state));
 		},
 	}
 
