@@ -16,7 +16,7 @@ mod query;
 use std::path::{Path, PathBuf};
 
 use anyhow::Context;
-use bitcoin::{Amount, Txid};
+use bitcoin::Txid;
 use bitcoin::secp256k1::PublicKey;
 use chrono::DateTime;
 use lightning_invoice::Bolt11Invoice;
@@ -24,7 +24,7 @@ use log::debug;
 use rusqlite::Connection;
 
 use ark::{Vtxo, VtxoId};
-use ark::lightning::{Invoice, PaymentHash, Preimage};
+use ark::lightning::{PaymentHash, Preimage};
 use ark::vtxo::Full;
 use bitcoin_ext::BlockDelta;
 
@@ -34,7 +34,7 @@ use crate::exit::ExitTxOrigin;
 use crate::movement::{Movement, MovementId, MovementStatus, MovementSubsystem, PaymentMethod};
 use crate::persist::{BarkPersister, RoundStateId, StoredRoundState, Unlocked};
 use crate::persist::models::{
-	LightningReceive, LightningSend, PaidInvoice, PendingBoard, PendingOffboard, StoredExit,
+	LightningReceive, PaidInvoice, PendingBoard, PendingOffboard, StoredExit,
 };
 use crate::round::RoundState;
 use crate::vtxo::{VtxoState, VtxoStateKind, WalletVtxo};
@@ -313,43 +313,6 @@ impl BarkPersister for SqliteClient {
 			&conn, payment_hash, preimage, invoice, htlc_recv_cltv_delta,
 		)?;
 		Ok(())
-	}
-
-	async fn store_new_pending_lightning_send(
-		&self,
-		invoice: &Invoice,
-		amount: Amount,
-		fee: Amount,
-		vtxos: &[VtxoId],
-		movement_id: MovementId,
-	) -> anyhow::Result<LightningSend> {
-		let conn = self.connect()?;
-		query::store_new_pending_lightning_send(&conn, invoice, amount, fee, vtxos, movement_id)
-	}
-
-	async fn get_all_pending_lightning_send(&self) -> anyhow::Result<Vec<LightningSend>> {
-		let conn = self.connect()?;
-		query::get_all_pending_lightning_send(&conn)
-	}
-
-	async fn finish_lightning_send(
-		&self,
-		payment_hash: PaymentHash,
-		preimage: Option<Preimage>,
-	) -> anyhow::Result<()> {
-		let conn = self.connect()?;
-		query::finish_lightning_send(&conn, payment_hash, preimage)
-	}
-
-	async fn remove_lightning_send(&self, payment_hash: PaymentHash) -> anyhow::Result<()> {
-		let conn = self.connect()?;
-		query::remove_lightning_send(&conn, payment_hash)?;
-		Ok(())
-	}
-
-	async fn get_lightning_send(&self, payment_hash: PaymentHash) -> anyhow::Result<Option<LightningSend>> {
-		let conn = self.connect()?;
-		query::get_lightning_send(&conn, payment_hash)
 	}
 
 	async fn upsert_wallet_action_checkpoint(

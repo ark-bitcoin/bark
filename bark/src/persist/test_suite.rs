@@ -55,10 +55,6 @@ fn test_invoice() -> Invoice {
 	Invoice::Bolt11(test_bolt11())
 }
 
-fn test_payment_hash() -> PaymentHash {
-	test_invoice().payment_hash()
-}
-
 // A separate hash for receive tests so send and receive don't share state.
 fn test_receive_payment_hash() -> PaymentHash {
 	PaymentHash::from_slice(&[0xabu8; 32]).unwrap()
@@ -778,9 +774,6 @@ mod lightning {
 	use crate::movement::{MovementId, PaymentMethod};
 
 	pub async fn run<A: BarkPersister, B: BarkPersister>(a: &A, b: &B) {
-		test_lightning_send_store_and_query(a, b).await;
-		test_lightning_send_finish(a, b).await;
-		test_lightning_send_remove(a, b).await;
 		test_lightning_receive_store_and_query(a, b).await;
 		test_lightning_receive_set_preimage_revealed(a, b).await;
 		test_lightning_receive_update(a, b).await;
@@ -976,77 +969,6 @@ mod lightning {
 		let rb = b.get_paid_invoice(hash).await.unwrap();
 		assert!(ra.is_none(), "missing hash returns None (a)");
 		assert!(rb.is_none(), "missing hash returns None (b)");
-	}
-
-	async fn test_lightning_send_store_and_query<A: BarkPersister, B: BarkPersister>(a: &A, b: &B) {
-		let time = test_time();
-		let id_a = a.create_new_movement(MovementStatus::Pending, &test_subsystem(), time).await
-			.expect("a: create_new_movement");
-		let id_b = b.create_new_movement(MovementStatus::Pending, &test_subsystem(), time).await
-			.expect("b: create_new_movement");
-		assert_eq!(id_a, id_b, "create_new_movement id mismatch");
-
-		let ra = a.store_new_pending_lightning_send(
-			&test_invoice(), Amount::from_sat(1000), Amount::from_sat(10), &[], id_a,
-		).await;
-		let rb = b.store_new_pending_lightning_send(
-			&test_invoice(), Amount::from_sat(1000), Amount::from_sat(10), &[], id_b,
-		).await;
-		assert_eq!(ra.is_ok(), rb.is_ok(), "store_new_pending_lightning_send: ok/err mismatch");
-		assert_eq!(ra.unwrap(), rb.unwrap(), "store_new_pending_lightning_send result mismatch");
-
-		let ra = a.get_lightning_send(test_payment_hash()).await.expect("a: get_lightning_send");
-		let rb = b.get_lightning_send(test_payment_hash()).await.expect("b: get_lightning_send");
-		assert_eq!(ra, rb, "get_lightning_send mismatch");
-
-		let mut ra = a.get_all_pending_lightning_send().await.expect("a: get_all_pending_lightning_send");
-		let mut rb = b.get_all_pending_lightning_send().await.expect("b: get_all_pending_lightning_send");
-		ra.sort_by_key(|s| s.movement_id.0);
-		rb.sort_by_key(|s| s.movement_id.0);
-		assert_eq!(ra, rb, "get_all_pending_lightning_send mismatch");
-	}
-
-	async fn test_lightning_send_finish<A: BarkPersister, B: BarkPersister>(a: &A, b: &B) {
-		let hash = test_payment_hash();
-		let preimage = test_preimage();
-
-		let ra = a.finish_lightning_send(hash, Some(preimage)).await;
-		let rb = b.finish_lightning_send(hash, Some(preimage)).await;
-		assert_eq!(ra.is_ok(), rb.is_ok(), "finish_lightning_send: ok/err mismatch");
-
-		// finished_at is set internally by each backend; compare only semantic fields
-		let ra = a.get_lightning_send(hash).await.expect("a: get_lightning_send after finish");
-		let rb = b.get_lightning_send(hash).await.expect("b: get_lightning_send after finish");
-		assert_eq!(
-			ra.as_ref().map(|s| s.preimage),
-			rb.as_ref().map(|s| s.preimage),
-			"get_lightning_send preimage mismatch after finish",
-		);
-		assert_eq!(
-			ra.as_ref().map(|s| s.finished_at.is_some()),
-			rb.as_ref().map(|s| s.finished_at.is_some()),
-			"get_lightning_send finished_at presence mismatch after finish",
-		);
-
-		let mut ra = a.get_all_pending_lightning_send().await
-			.expect("a: get_all_pending_lightning_send after finish");
-		let mut rb = b.get_all_pending_lightning_send().await
-			.expect("b: get_all_pending_lightning_send after finish");
-		ra.sort_by_key(|s| s.movement_id.0);
-		rb.sort_by_key(|s| s.movement_id.0);
-		assert_eq!(ra, rb, "get_all_pending_lightning_send after finish mismatch");
-	}
-
-	async fn test_lightning_send_remove<A: BarkPersister, B: BarkPersister>(a: &A, b: &B) {
-		let hash = test_payment_hash();
-
-		let ra = a.remove_lightning_send(hash).await;
-		let rb = b.remove_lightning_send(hash).await;
-		assert_eq!(ra.is_ok(), rb.is_ok(), "remove_lightning_send: ok/err mismatch");
-
-		let ra = a.get_lightning_send(hash).await.expect("a: get_lightning_send after remove");
-		let rb = b.get_lightning_send(hash).await.expect("b: get_lightning_send after remove");
-		assert_eq!(ra, rb, "get_lightning_send after remove mismatch");
 	}
 
 	async fn test_lightning_receive_store_and_query<A: BarkPersister, B: BarkPersister>(a: &A, b: &B) {
