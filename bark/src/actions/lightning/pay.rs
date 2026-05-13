@@ -11,6 +11,8 @@
 //! pattern-matches on progress and dispatches; persistence is the
 //! executor's job.
 
+use std::time::Duration;
+
 use anyhow::Context;
 use bitcoin::hex::DisplayHex;
 use bitcoin::secp256k1::PublicKey;
@@ -119,7 +121,7 @@ impl WalletAction for LightningSend {
 								progress: Progress::PaymentInitiated(htlcs),
 								..self
 							},
-							wake_after: None,
+							wake_after: Some(PAYMENT_PENDING_POLL_INTERVAL),
 							error: None,
 						});
 					},
@@ -230,6 +232,9 @@ pub struct Htlcs {
 pub struct Revocation {
 	pub key: PublicKey,
 }
+
+/// How long to sleep between poll attempts when the server reports `Pending`.
+const PAYMENT_PENDING_POLL_INTERVAL: Duration = Duration::from_secs(2);
 
 /// Build a fresh [`LightningSend`] in `Progress::Start`: pick inputs,
 /// lock them, derive the htlc key, snapshot expiry.
