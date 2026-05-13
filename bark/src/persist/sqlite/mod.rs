@@ -34,7 +34,7 @@ use crate::exit::ExitTxOrigin;
 use crate::movement::{Movement, MovementId, MovementStatus, MovementSubsystem, PaymentMethod};
 use crate::persist::{BarkPersister, RoundStateId, StoredRoundState, Unlocked};
 use crate::persist::models::{
-	LightningReceive, LightningSend, PendingBoard, PendingOffboard, StoredExit,
+	LightningReceive, LightningSend, PaidInvoice, PendingBoard, PendingOffboard, StoredExit,
 };
 use crate::round::RoundState;
 use crate::vtxo::{VtxoState, VtxoStateKind, WalletVtxo};
@@ -382,6 +382,23 @@ impl BarkPersister for SqliteClient {
 	) -> anyhow::Result<()> {
 		let conn = self.connect()?;
 		query::remove_wallet_action_checkpoint(&conn, id)
+	}
+
+	async fn record_paid_invoice(
+		&self,
+		payment_hash: PaymentHash,
+		preimage: Preimage,
+	) -> anyhow::Result<()> {
+		let conn = self.connect()?;
+		query::record_paid_invoice(&conn, payment_hash, preimage)
+	}
+
+	async fn get_paid_invoice(
+		&self,
+		payment_hash: PaymentHash,
+	) -> anyhow::Result<Option<PaidInvoice>> {
+		let conn = self.connect()?;
+		query::get_paid_invoice(&conn, payment_hash)
 	}
 
 	async fn get_all_pending_lightning_receives(&self) -> anyhow::Result<Vec<LightningReceive>> {

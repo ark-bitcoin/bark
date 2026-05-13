@@ -72,7 +72,7 @@ use crate::movement::{
 };
 use crate::persist::BarkPersister;
 use crate::persist::models::{
-	LightningReceive, LightningSend, PendingBoard, PendingOffboard,
+	LightningReceive, LightningSend, PaidInvoice, PendingBoard, PendingOffboard,
 	RoundStateId, SerdeExitChildTx, SerdeRoundState, SerdeVtxo, SerdeVtxoKey, StoredExit,
 	StoredRoundState, Unlocked, wallet_vtxo_from_full,
 };
@@ -100,6 +100,9 @@ pub mod partition {
 	pub const MOVEMENT_PAYMENT_METHOD: u8 = 13;
 	/// Per-action checkpoint payloads keyed by [WalletActionId].
 	pub const WALLET_ACTION_CHECKPOINT: u8 = 14;
+	/// Permanent record of every settled outgoing lightning payment,
+	/// keyed by payment hash.
+	pub const PAID_INVOICE: u8 = 15;
 
 	pub const LAST_IDS: u8 = u8::MAX;
 }
@@ -976,6 +979,38 @@ impl <S: StorageAdaptor> BarkPersister for StorageAdaptorWrapper<S> {
 		self.inner.write().await
 			.delete(partition::WALLET_ACTION_CHECKPOINT, id.as_bytes()).await?;
 		Ok(())
+	}
+
+	async fn record_paid_invoice(
+		&self,
+		payment_hash: PaymentHash,
+		preimage: Preimage,
+	) -> anyhow::Result<()> {
+		let key = payment_hash.to_byte_array();
+		// Idempotent: preserve the original paid_at across retries.
+		let mut lock = self.inner.write().await;
+		if lock.get(partition::PAID_INVOICE, &key).await?.is_some() {
+			return Ok(());
+		}
+		let paid = PaidInvoice {
+			payment_hash,
+			preimage,
+			paid_at: chrono::Local::now(),
+		};
+		let record = Record::from_data(partition::PAID_INVOICE, &key, None, &paid)?;
+		lock.put(record).await
+	}
+
+	async fn get_paid_invoice(
+		&self,
+		payment_hash: PaymentHash,
+	) -> anyhow::Result<Option<PaidInvoice>> {
+		match self.inner.read().await
+			.get(partition::PAID_INVOICE, &payment_hash.to_byte_array()).await?
+		{
+			Some(record) => Ok(Some(record.to_data()?)),
+			None => Ok(None),
+		}
 	}
 
 	async fn store_lightning_receive(

@@ -31,8 +31,8 @@ use bark::movement::{
 };
 use bark::persist::BarkPersister;
 use bark::persist::models::{
-	LightningReceive, LightningSend, PendingBoard, StoredExit, StoredRoundState, Unlocked,
-	RoundStateId, SerdeRoundState, PendingOffboard,
+	LightningReceive, LightningSend, PaidInvoice, PendingBoard, StoredExit, StoredRoundState,
+	Unlocked, RoundStateId, SerdeRoundState, PendingOffboard,
 };
 use bark::round::RoundState;
 use bark::vtxo::{VtxoState, VtxoStateKind};
@@ -225,6 +225,21 @@ impl BarkPersister for Dummy {
 		_id: &WalletActionId,
 	) -> anyhow::Result<()> {
 		Ok(())
+	}
+
+	async fn record_paid_invoice(
+		&self,
+		_payment_hash: PaymentHash,
+		_preimage: Preimage,
+	) -> anyhow::Result<()> {
+		Ok(())
+	}
+
+	async fn get_paid_invoice(
+		&self,
+		_payment_hash: PaymentHash,
+	) -> anyhow::Result<Option<PaidInvoice>> {
+		Ok(None)
 	}
 
 	async fn store_lightning_receive(

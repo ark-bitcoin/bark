@@ -41,8 +41,8 @@ use crate::WalletProperties;
 use crate::actions::{WalletActionCheckpoint, WalletActionId};
 use crate::exit::ExitTxOrigin;
 use crate::persist::models::{
-	LightningReceive, LightningSend, PendingBoard, RoundStateId, StoredExit, StoredRoundState,
-	Unlocked, PendingOffboard,
+	LightningReceive, LightningSend, PaidInvoice, PendingBoard, RoundStateId, StoredExit,
+	StoredRoundState, Unlocked, PendingOffboard,
 };
 use crate::movement::{Movement, MovementId, MovementStatus, MovementSubsystem, PaymentMethod};
 use crate::round::RoundState;
@@ -566,6 +566,23 @@ pub trait BarkPersister: Send + Sync + 'static {
 		&self,
 		id: &WalletActionId,
 	) -> anyhow::Result<()>;
+
+	/// Record a settled outgoing lightning send.
+	///
+	/// Idempotent: a subsequent call with the same payment_hash is a
+	/// no-op (the existing row wins). This makes retry across a crash
+	/// safe even without a multi-row transaction.
+	async fn record_paid_invoice(
+		&self,
+		payment_hash: PaymentHash,
+		preimage: Preimage,
+	) -> anyhow::Result<()>;
+
+	/// Look up an existing paid-invoice record by payment hash.
+	async fn get_paid_invoice(
+		&self,
+		payment_hash: PaymentHash,
+	) -> anyhow::Result<Option<PaidInvoice>>;
 
 	/// Store an incoming Lightning receive record.
 	///

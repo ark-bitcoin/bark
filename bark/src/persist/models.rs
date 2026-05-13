@@ -185,6 +185,18 @@ pub struct PendingOffboard {
 	pub created_at: chrono::DateTime<chrono::Local>,
 }
 
+/// Replay-protection record for a fully-settled outgoing lightning send.
+///
+/// Written when a payment is acknowledged with a valid preimage; never
+/// deleted. Used by [`crate::actions::lightning::pay`] to refuse paying
+/// the same invoice twice.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PaidInvoice {
+	pub payment_hash: PaymentHash,
+	pub preimage: Preimage,
+	pub paid_at: chrono::DateTime<chrono::Local>,
+}
+
 /// Persisted representation of a lightning send.
 ///
 /// Created after the HTLCs from client to server are constructed.

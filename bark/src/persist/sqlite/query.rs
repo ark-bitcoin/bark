@@ -22,8 +22,8 @@ use crate::exit::{ExitState, ExitTxOrigin};
 use crate::movement::{Movement, MovementId, MovementStatus, MovementSubsystem, PaymentMethod};
 use crate::persist::{RoundStateId, StoredRoundState};
 use crate::persist::models::{
-	LightningReceive, LightningSend, PendingBoard, SerdeRoundState, StoredExit, Unlocked,
-	PendingOffboard,
+	LightningReceive, LightningSend, PaidInvoice, PendingBoard, SerdeRoundState, StoredExit,
+	Unlocked, PendingOffboard,
 };
 use crate::persist::sqlite::convert::{row_to_movement, row_to_wallet_vtxo, rows_to_wallet_vtxos};
 use crate::round::RoundState;
@@ -1266,6 +1266,43 @@ pub fn remove_wallet_action_checkpoint(
 	let mut statement = conn.prepare(query)?;
 	statement.execute(named_params! { ":id": id })?;
 	Ok(())
+}
+
+
+pub fn record_paid_invoice(
+	conn: &Connection,
+	payment_hash: PaymentHash,
+	preimage: Preimage,
+) -> anyhow::Result<()> {
+	let query = "
+		INSERT INTO bark_paid_invoice (payment_hash, preimage)
+		VALUES (:payment_hash, :preimage)
+		ON CONFLICT(payment_hash) DO NOTHING";
+	let mut statement = conn.prepare(query)?;
+	statement.execute(named_params! {
+		":payment_hash": payment_hash.as_hex().to_string(),
+		":preimage": preimage.as_hex().to_string(),
+	})?;
+	Ok(())
+}
+
+pub fn get_paid_invoice(
+	conn: &Connection,
+	payment_hash: PaymentHash,
+) -> anyhow::Result<Option<PaidInvoice>> {
+	let query = "SELECT preimage, paid_at FROM bark_paid_invoice WHERE payment_hash = :payment_hash";
+	let mut statement = conn.prepare(query)?;
+	let mut rows = statement.query(named_params! { ":payment_hash": payment_hash.as_hex().to_string() })?;
+
+	let row = match rows.next()? {
+		Some(row) => row,
+		None => return Ok(None),
+	};
+	let preimage_str: String = row.get("preimage")?;
+	let preimage = Preimage::from_str(&preimage_str)
+		.context("invalid preimage hex in bark_paid_invoice")?;
+	let paid_at: chrono::DateTime<chrono::Local> = row.get("paid_at")?;
+	Ok(Some(PaidInvoice { payment_hash, preimage, paid_at }))
 }
 
 

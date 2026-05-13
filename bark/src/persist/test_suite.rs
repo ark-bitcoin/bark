@@ -791,6 +791,9 @@ mod lightning {
 		test_wallet_action_checkpoint_get_all(a, b).await;
 		test_wallet_action_checkpoint_remove(a, b).await;
 		test_wallet_action_checkpoint_remove_missing_is_noop(a, b).await;
+		test_paid_invoice_record_and_get(a, b).await;
+		test_paid_invoice_record_is_idempotent(a, b).await;
+		test_paid_invoice_get_missing(a, b).await;
 	}
 
 	fn send_at_start() -> LightningSend {
@@ -928,6 +931,51 @@ mod lightning {
 		let rb = b.remove_wallet_action_checkpoint(&id).await;
 		assert!(ra.is_ok(), "remove of missing id should not error (a)");
 		assert!(rb.is_ok(), "remove of missing id should not error (b)");
+	}
+
+	fn paid_invoice_hash() -> PaymentHash {
+		PaymentHash::from_slice(&[0xcdu8; 32]).unwrap()
+	}
+
+	async fn test_paid_invoice_record_and_get<A: BarkPersister, B: BarkPersister>(a: &A, b: &B) {
+		let hash = paid_invoice_hash();
+		let preimage = test_preimage();
+
+		a.record_paid_invoice(hash, preimage).await.unwrap();
+		b.record_paid_invoice(hash, preimage).await.unwrap();
+
+		let ra = a.get_paid_invoice(hash).await.expect("a: get_paid_invoice");
+		let rb = b.get_paid_invoice(hash).await.expect("b: get_paid_invoice");
+		assert_eq!(
+			ra.as_ref().map(|p| (p.payment_hash, p.preimage)),
+			rb.as_ref().map(|p| (p.payment_hash, p.preimage)),
+			"paid invoice round-trip mismatch",
+		);
+		let stored = ra.expect("a: should have stored row");
+		assert_eq!(stored.payment_hash, hash, "payment hash round-trip");
+		assert_eq!(stored.preimage, preimage, "preimage round-trip");
+	}
+
+	async fn test_paid_invoice_record_is_idempotent<A: BarkPersister, B: BarkPersister>(a: &A, b: &B) {
+		let hash = paid_invoice_hash();
+		let preimage = test_preimage();
+
+		let ra = a.record_paid_invoice(hash, preimage).await;
+		let rb = b.record_paid_invoice(hash, preimage).await;
+		assert!(ra.is_ok(), "second record_paid_invoice on (a) should be a no-op");
+		assert!(rb.is_ok(), "second record_paid_invoice on (b) should be a no-op");
+
+		let ra = a.get_paid_invoice(hash).await.unwrap().expect("a: row still present");
+		let rb = b.get_paid_invoice(hash).await.unwrap().expect("b: row still present");
+		assert_eq!(ra.preimage, rb.preimage, "preimage stable across retry");
+	}
+
+	async fn test_paid_invoice_get_missing<A: BarkPersister, B: BarkPersister>(a: &A, b: &B) {
+		let hash = PaymentHash::from_slice(&[0x55u8; 32]).unwrap();
+		let ra = a.get_paid_invoice(hash).await.unwrap();
+		let rb = b.get_paid_invoice(hash).await.unwrap();
+		assert!(ra.is_none(), "missing hash returns None (a)");
+		assert!(rb.is_none(), "missing hash returns None (b)");
 	}
 
 	async fn test_lightning_send_store_and_query<A: BarkPersister, B: BarkPersister>(a: &A, b: &B) {
