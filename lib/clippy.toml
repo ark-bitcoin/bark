@@ -1,0 +1,7 @@
+arithmetic-side-effects-allowed = [
+    "bitcoin::Amount",
+    "bitcoin::FeeRate",
+    "bitcoin::Weight",
+    "bitcoin::SignedAmount",
+    "std::time::Duration",
+]

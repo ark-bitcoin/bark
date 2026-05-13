@@ -33,6 +33,8 @@ debug = true
 strip = "none"
 debug-assertions = true
 
+[profile.release]
+overflow-checks = true
 
 # TODO(stevenroose) at some point probably move these inline
 [workspace.dependencies]

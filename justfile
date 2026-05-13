@@ -29,7 +29,10 @@ check:
 	cargo version
 	cargo check --all --tests --examples
 
-checks: prechecks check
+check-lib-arithmetic:
+	cargo clippy -p ark-lib --tests
+
+checks: prechecks check check-lib-arithmetic
 
 check-commits:
 	bash contrib/check-commits.sh
