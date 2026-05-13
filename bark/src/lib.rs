@@ -349,7 +349,6 @@ use bitcoin::{Amount, Network, OutPoint};
 use bitcoin::bip32::{self, ChildNumber, Fingerprint};
 use bitcoin::secp256k1::{self, Keypair, PublicKey};
 use log::{trace, info, warn, error};
-use tokio::sync::{OnceCell, RwLock};
 
 use ark::{ArkInfo, ProtocolEncoding, Vtxo, VtxoId, VtxoPolicy, VtxoRequest};
 use ark::address::VtxoDelivery;
@@ -731,7 +730,7 @@ pub struct Wallet {
 	pub chain: Arc<ChainSource>,
 
 	/// Exit subsystem handling unilateral exits and on-chain reconciliation outside Ark rounds.
-	pub exit: RwLock<Exit>,
+	pub exit: tokio::sync::RwLock<Exit>,
 
 	/// Allows easy creation of and management of wallet fund movements.
 	pub movements: Arc<MovementManager>,
@@ -759,7 +758,7 @@ pub struct Wallet {
 	/// [`OnceCell`] is the right primitive here: concurrent callers on a
 	/// cold cell all await the same in-flight `connect_to_server` future
 	/// instead of each opening a fresh gRPC channel.
-	server: OnceCell<ServerConnection>,
+	server: tokio::sync::OnceCell<ServerConnection>,
 
 	/// A handle to the currently running daemon, if any.
 	daemon: parking_lot::Mutex<Option<DaemonHandle>>,
@@ -1054,11 +1053,11 @@ impl Wallet {
 		).await?;
 		let chain = Arc::new(chain_source_client);
 
-		let server = OnceCell::new();
+		let server = tokio::sync::OnceCell::new();
 
 		let notifications = NotificationDispatch::new();
 		let movements = Arc::new(MovementManager::new(db.clone(), notifications.clone()));
-		let exit = RwLock::new(Exit::new(db.clone(), chain.clone(), movements.clone()).await?);
+		let exit = tokio::sync::RwLock::new(Exit::new(db.clone(), chain.clone(), movements.clone()).await?);
 
 		Ok(Wallet {
 			config, db, lock_manager, seed, exit, movements, notifications, server, chain,
@@ -1086,7 +1085,7 @@ impl Wallet {
 		mnemonic: &Mnemonic,
 		db: Arc<dyn BarkPersister>,
 		cfg: Config,
-		onchain: Option<Arc<RwLock<dyn DaemonizableOnchainWallet>>>,
+		onchain: Option<Arc<tokio::sync::RwLock<dyn DaemonizableOnchainWallet>>>,
 		lock_manager: Box<dyn LockManager>,
 	) -> anyhow::Result<Arc<Wallet>> {
 		let wallet = Arc::new(Wallet::open(mnemonic, db, cfg, lock_manager).await?);
@@ -1982,7 +1981,7 @@ impl Wallet {
 	/// so it's possible to start multiple daemons by mistake.
 	pub fn start_daemon(
 		self: &Arc<Self>,
-		onchain: Option<Arc<RwLock<dyn DaemonizableOnchainWallet>>>,
+		onchain: Option<Arc<tokio::sync::RwLock<dyn DaemonizableOnchainWallet>>>,
 	) -> anyhow::Result<()> {
 		let mut daemon = self.daemon.lock();
 		if daemon.is_some() {
@@ -2002,7 +2001,7 @@ impl Wallet {
 	#[deprecated(since = "0.1.4", note = "use start_daemon instead")]
 	pub fn run_daemon(
 		self: &Arc<Self>,
-		onchain: Option<Arc<RwLock<dyn DaemonizableOnchainWallet>>>,
+		onchain: Option<Arc<tokio::sync::RwLock<dyn DaemonizableOnchainWallet>>>,
 	) -> anyhow::Result<()> {
 		self.start_daemon(onchain)
 	}
