@@ -208,3 +208,9 @@ CREATE VIEW vtxo_view AS
 			JOIN most_recent_vtxo_state as vs
 				ON v.id = vs.vtxo_id
 /* vtxo_view(id,expiry_height,amount_sat,raw_bare,exit_depth,exit_tx_weight,created_at,state,state_kind,last_updated_at) */;
+CREATE TABLE bark_wallet_action_checkpoint (
+				id         TEXT PRIMARY KEY,
+				payload    BLOB NOT NULL,
+				created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now')),
+				updated_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now'))
+			);

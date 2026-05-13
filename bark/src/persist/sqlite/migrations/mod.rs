@@ -27,6 +27,7 @@ mod m0026_pending_offboard;
 mod m0027_split_destination;
 mod m0028_mailbox_pubkey;
 mod m0029_split_vtxo_genesis;
+mod m0030_wallet_action_checkpoint;
 
 use anyhow::Context;
 use log::debug;
@@ -61,6 +62,7 @@ use m0026_pending_offboard::Migration0026;
 use m0027_split_destination::Migration0027;
 use m0028_mailbox_pubkey::Migration0028;
 use m0029_split_vtxo_genesis::Migration0029;
+use m0030_wallet_action_checkpoint::Migration0030;
 
 pub struct MigrationContext {}
 
@@ -107,6 +109,7 @@ impl MigrationContext {
 		self.try_migration(conn, &Migration0027{})?;
 		self.try_migration(conn, &Migration0028{})?;
 		self.try_migration(conn, &Migration0029{})?;
+		self.try_migration(conn, &Migration0030{})?;
 
 		Ok(())
 	}
@@ -261,7 +264,7 @@ mod test {
 
 		// Perform the migrations and confirm it took effect
 		migs.do_all_migrations(&mut conn).unwrap();
-		assert_current_version(&conn, 29).unwrap();
+		assert_current_version(&conn, 30).unwrap();
 
 		assert!(table_exists(&conn, "bark_vtxo").unwrap());
 		assert!(table_exists(&conn, "bark_vtxo_state").unwrap());
@@ -278,6 +281,7 @@ mod test {
 		assert!(table_exists(&conn, "bark_lightning_send").unwrap());
 		assert!(table_exists(&conn, "bark_mailbox_checkpoint").unwrap());
 		assert!(table_exists(&conn, "bark_pending_offboard").unwrap());
+		assert!(table_exists(&conn, "bark_wallet_action_checkpoint").unwrap());
 
 		// The migration can be run multiple times
 		migs.do_all_migrations(&mut conn).unwrap();
