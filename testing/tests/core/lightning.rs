@@ -16,7 +16,7 @@ async fn start_lightningd() {
 	let result = client.getinfo(rpc::GetinfoRequest{}).await.unwrap();
 	let info = result.into_inner();
 
-	assert_eq!(info.alias.unwrap(), "lightningd-1");
+	assert_eq!(info.alias, "lightningd-1");
 }
 
 /// A test that makes a simple lightning payment
