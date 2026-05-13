@@ -732,7 +732,7 @@ pub struct Wallet {
 	exit: Exit,
 
 	/// Allows easy creation of and management of wallet fund movements.
-	pub movements: Arc<MovementManager>,
+	movements: Arc<MovementManager>,
 
 	/// Dispatch for wallet notifications
 	notifications: NotificationDispatch,
@@ -783,6 +783,11 @@ impl Wallet {
 	/// Access the exit manager
 	pub fn exit_mgr(&self) -> &Exit {
 		&self.exit
+	}
+
+	/// Access the movements manager
+	pub fn movements_mgr(&self) -> &MovementManager {
+		&self.movements
 	}
 
 	/// Peek at the keypair directly after currently last revealed one,
