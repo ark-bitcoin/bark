@@ -766,33 +766,6 @@ pub struct Wallet {
 }
 
 impl Wallet {
-	/// Creates a [chain::ChainSource] instance to communicate with an onchain backend from the
-	/// given [Config].
-	pub fn chain_source(
-		config: &Config,
-	) -> anyhow::Result<ChainSourceSpec> {
-		if let Some(ref url) = config.esplora_address {
-			Ok(ChainSourceSpec::Esplora {
-				url: url.clone(),
-			})
-		} else if let Some(ref url) = config.bitcoind_address {
-			let auth = if let Some(ref c) = config.bitcoind_cookiefile {
-				bitcoin_ext::rpc::Auth::CookieFile(c.clone())
-			} else {
-				bitcoin_ext::rpc::Auth::UserPass(
-					config.bitcoind_user.clone().context("need bitcoind auth config")?,
-					config.bitcoind_pass.clone().context("need bitcoind auth config")?,
-				)
-			};
-			Ok(ChainSourceSpec::Bitcoind {
-				url: url.clone(),
-				auth,
-			})
-		} else {
-			bail!("Need to either provide esplora or bitcoind info");
-		}
-	}
-
 	/// Verifies that the bark [Wallet] can be used with the configured [chain::ChainSource].
 	/// More specifically, if the [chain::ChainSource] connects to Bitcoin Core it must be
 	/// a high enough version to support ephemeral anchors.
