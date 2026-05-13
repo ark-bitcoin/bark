@@ -9,7 +9,10 @@
 
 use std::time::Duration;
 
+use log::{debug, trace, warn};
+
 use crate::Wallet;
+use crate::lock_manager::LockGuard;
 
 /// Tagged union of every kind of checkpoint the wallet persists.
 ///
@@ -92,4 +95,104 @@ pub trait WalletAction: Sized + Send + Sync {
 	fn id(&self) -> WalletActionId;
 
 	async fn advance(self, wallet: &Wallet) -> anyhow::Result<Advance<Self>>;
+}
+
+/// How aggressively the executor should drive an action.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DriveMode {
+	/// Drive until the action parks or completes, then return.
+	UntilParkOrDone,
+	/// Drive past parks, sleeping between iterations, until the action
+	/// returns [`Advance::Done`].
+	UntilDone,
+}
+
+impl Wallet {
+	/// Drive a wallet action to its next park or terminal state.
+	///
+	/// Holds a per-action-id in-flight guard so concurrent drives of
+	/// the same action (e.g. the periodic sync racing a user call)
+	/// don't step on each other.
+	pub async fn drive_action<A>(&self, action: A, mode: DriveMode) -> anyhow::Result<()>
+	where
+		A: WalletAction + Into<WalletActionCheckpoint> + Clone,
+	{
+		let guard = match self.inner.lock_manager.try_lock(&lock_key::<A>(&action.id())).await {
+			Some(g) => g,
+			None => {
+				trace!("action {} in namespace {} is already being driven, skipping", action.id(), A::namespace());
+				return Ok(());
+			},
+		};
+
+		self.drive_action_with_guard(action, mode, guard).await
+	}
+
+	/// Drive an action assuming the caller already holds its per-id
+	/// lock. `lock_guard` MUST be the guard returned by
+	/// `lock_manager.try_lock(&lock_key::<A>(&action.id()))`; it is
+	/// held for RAII and dropped when this function returns.
+	pub(crate) async fn drive_action_with_guard<A>(
+		&self,
+		action: A,
+		mode: DriveMode,
+		_lock_guard: Box<dyn LockGuard>,
+	) -> anyhow::Result<()>
+	where
+		A: WalletAction + Into<WalletActionCheckpoint> + Clone,
+	{
+		self.run_action_loop(action, mode).await
+	}
+
+	async fn run_action_loop<A>(&self, mut action: A, mode: DriveMode) -> anyhow::Result<()>
+	where
+		A: WalletAction + Into<WalletActionCheckpoint> + Clone,
+	{
+		loop {
+			let id = action.id();
+			match action.advance(self).await {
+				Ok(Advance::Next(next)) => {
+					let checkpoint: WalletActionCheckpoint = next.clone().into();
+					self.inner.db.upsert_wallet_action_checkpoint(&id, &checkpoint).await?;
+					action = next;
+				},
+				Ok(Advance::Park { state, wake_after, error }) => {
+					let checkpoint: WalletActionCheckpoint = state.clone().into();
+					self.inner.db.upsert_wallet_action_checkpoint(&id, &checkpoint).await?;
+					match mode {
+						DriveMode::UntilParkOrDone => {
+							return match error {
+								Some(error) => Err(error),
+								None => Ok(()),
+							};
+						},
+						DriveMode::UntilDone => {
+							if let Some(delay) = wake_after {
+								debug!("action {} parked; sleeping {:?} before re-drive", id, delay);
+								tokio::time::sleep(delay).await;
+								action = state;
+							} else {
+								return Ok(());
+							}
+						},
+					}
+				},
+				Ok(Advance::Done) => {
+					if let Err(e) = self.inner.db.remove_wallet_action_checkpoint(&id).await {
+						warn!("action {} finished but removal failed: {:#}", id, e);
+					}
+					return Ok(());
+				},
+				Ok(Advance::Failed(e)) => {
+					if let Err(e) = self.inner.db.remove_wallet_action_checkpoint(&id).await {
+						warn!("action {} failed but removal failed: {:#}", id, e);
+					}
+					return Err(e);
+				},
+				Err(e) => {
+					return Err(e);
+				},
+			}
+		}
+	}
 }
