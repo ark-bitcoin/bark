@@ -672,13 +672,13 @@ impl<S: state::BuilderState> ArkoorBuilder<S> {
 
 	fn nb_sigs(&self) -> usize {
 		let base = if self.checkpoint_data.is_some() {
-			1 + self.outputs.len()  // 1 checkpoint + m arkoor txs
+			self.outputs.len().saturating_add(1)  // 1 checkpoint + m arkoor txs
 		} else {
 			1  // 1 direct arkoor tx (regardless of output count)
 		};
 
 		if self.unsigned_isolation_fanout_tx.is_some() {
-			base + 1  // Just 1 fanout tx signature
+			base.saturating_add(1)  // Just 1 fanout tx signature
 		} else {
 			base
 		}
@@ -1351,8 +1351,8 @@ impl<'a> ArkoorBuilder<state::ServerCanCosign> {
 			});
 		}
 
-		let mut server_pub_nonces = Vec::with_capacity(self.outputs.len() + 1);
-		let mut server_partial_sigs = Vec::with_capacity(self.outputs.len() + 1);
+		let mut server_pub_nonces = Vec::with_capacity(self.outputs.len().saturating_add(1));
+		let mut server_partial_sigs = Vec::with_capacity(self.outputs.len().saturating_add(1));
 
 		for idx in 0..self.nb_sigs() {
 			let (server_pub_nonce, server_partial_sig) = musig::deterministic_partial_sign(
@@ -1498,21 +1498,21 @@ impl ArkoorBuilder<state::UserGeneratedNonces> {
 impl<'a> ArkoorBuilder<state::UserSigned> {
 	pub fn build_signed_vtxos(&self) -> Vec<Vtxo<Full>> {
 		let sigs = self.full_signatures.as_ref().expect("state invariant");
-		let mut ret = Vec::with_capacity(self.outputs.len() + self.isolated_outputs.len());
+		let mut ret = Vec::with_capacity(self.outputs.len().saturating_add(self.isolated_outputs.len()));
 
 		if self.checkpoint_data.is_some() {
 			let checkpoint_sig = sigs[0];
 
 			// Build regular vtxos (signatures 1..1+m)
 			for i in 0..self.outputs.len() {
-				let arkoor_sig = sigs[1 + i];
+				let arkoor_sig = sigs[i.saturating_add(1)];
 				ret.push(self.build_vtxo_at(i, Some(checkpoint_sig), Some(arkoor_sig)));
 			}
 
 			// Build isolated vtxos if present
 			if self.unsigned_isolation_fanout_tx.is_some() {
 				let m = self.outputs.len();
-				let fanout_tx_sig = sigs[1 + m];
+				let fanout_tx_sig = sigs[m.saturating_add(1)];
 
 				for i in 0..self.isolated_outputs.len() {
 					ret.push(self.build_isolated_vtxo_at(
@@ -1555,18 +1555,18 @@ impl<'a> ArkoorBuilder<state::UserSigned> {
 	pub fn signed_virtual_transactions(&self) -> Vec<Transaction> {
 		let sigs = self.full_signatures.as_ref().expect("state invariant");
 		let mut ret = Vec::new();
-		let mut sig_idx = 0;
+		let mut sig_idx = 0usize;
 		if let Some((tx, _)) = &self.checkpoint_data {
 			let mut tx = tx.clone();
 			tx.input[0].witness.push(&sigs[sig_idx][..]);
 			ret.push(tx);
-			sig_idx += 1;
+			sig_idx = sig_idx.saturating_add(1);
 		}
 		for tx in &self.unsigned_arkoor_txs {
 			let mut tx = tx.clone();
 			tx.input[0].witness.push(&sigs[sig_idx][..]);
 			ret.push(tx);
-			sig_idx += 1;
+			sig_idx = sig_idx.saturating_add(1);
 		}
 		if let Some(tx) = &self.unsigned_isolation_fanout_tx {
 			let mut tx = tx.clone();

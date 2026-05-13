@@ -301,7 +301,7 @@ where
 			let connector_txid = connector_tx.compute_txid();
 
 			ret.connector_tx = Some(connector_tx);
-			ret.connector_vtxos = Vec::with_capacity(self.input_vtxos.len() + 1);
+			ret.connector_vtxos = Vec::with_capacity(self.input_vtxos.len().saturating_add(1));
 			ret.connector_vtxos.push(construct_connector_vtxo_fanout_root(
 				offboard_txid,
 				self.input_vtxos.iter().map(|v| v.as_ref().expiry_height()).max().unwrap(),
@@ -372,7 +372,8 @@ fn construct_connector_vtxo_single<G>(
 		policy: ServerVtxoPolicy::ServerOwned,
 		amount: P2TR_DUST,
 		server_pubkey: input.server_pubkey,
-		expiry_height: input.expiry_height + CONNECTOR_EXPIRY_DELTA as u32,
+		expiry_height: input.expiry_height.checked_add(CONNECTOR_EXPIRY_DELTA as u32)
+			.expect("expiry_height + CONNECTOR_EXPIRY_DELTA fits in u32 by MAX_BLOCK_HEIGHT invariant"),
 		exit_delta: 0,
 		genesis: Bare,
 	}
@@ -394,9 +395,11 @@ fn construct_connector_vtxo_fanout_root(
 		anchor_point: point.clone(),
 		point: point,
 		policy: ServerVtxoPolicy::ServerOwned,
-		amount: P2TR_DUST * nb_vtxos as u64,
+		amount: P2TR_DUST.checked_mul(nb_vtxos as u64)
+			.expect("P2TR_DUST * nb_vtxos fits in u64 by VTXO-count and dust bounds"),
 		server_pubkey: server_pubkey,
-		expiry_height: max_expiry_height + CONNECTOR_EXPIRY_DELTA as u32,
+		expiry_height: max_expiry_height.checked_add(CONNECTOR_EXPIRY_DELTA as u32)
+			.expect("max_expiry_height + CONNECTOR_EXPIRY_DELTA fits in u32 by MAX_BLOCK_HEIGHT invariant"),
 		exit_delta: 0,
 		genesis: Bare,
 	}
@@ -417,7 +420,8 @@ fn construct_connector_vtxo_fanout_leaf<G>(
 		policy: ServerVtxoPolicy::ServerOwned,
 		amount: P2TR_DUST,
 		server_pubkey: input.server_pubkey,
-		expiry_height: input.expiry_height + CONNECTOR_EXPIRY_DELTA as u32,
+		expiry_height: input.expiry_height.checked_add(CONNECTOR_EXPIRY_DELTA as u32)
+			.expect("expiry_height + CONNECTOR_EXPIRY_DELTA fits in u32 by MAX_BLOCK_HEIGHT invariant"),
 		exit_delta: 0,
 		genesis: Bare,
 	}

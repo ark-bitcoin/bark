@@ -137,7 +137,7 @@ pub fn partial_sign(
 	let session = Session::new(&agg, agg_nonce, &sighash);
 	let my_sig = session.partial_sign(sec_nonce, &keypair_to(&key), &agg);
 	let final_sig = if let Some(others) = other_sigs {
-		let mut sigs = Vec::with_capacity(others.len() + 1);
+		let mut sigs = Vec::with_capacity(others.len().saturating_add(1));
 		sigs.extend_from_slice(others);
 		sigs.push(&my_sig);
 		Some(session.partial_sig_agg(&sigs))

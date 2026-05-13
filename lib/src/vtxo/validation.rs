@@ -61,7 +61,7 @@ fn verify_transition<P: Policy>(
 
 	let prev_txout = prev_tx.output.get(prev_vout).ok_or_else(|| "output idx out of range")?;
 
-	let next_output = vtxo.genesis.items.get(genesis_idx + 1).map(|item| {
+	let next_output = vtxo.genesis.items.get(genesis_idx.saturating_add(1)).map(|item| {
 		item.transition.input_txout(
 			next_amount, vtxo.server_pubkey, vtxo.expiry_height, vtxo.exit_delta,
 		)

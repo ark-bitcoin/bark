@@ -90,7 +90,7 @@ impl VtxoDelivery {
 	fn encoded_length(&self) -> usize {
 		match self {
 			Self::ServerMailbox { .. } => 1 + 33,
-			Self::Unknown { data, .. } => 1 + data.len(),
+			Self::Unknown { data, .. } => 1usize.saturating_add(data.len()),
 		}
 	}
 
@@ -290,7 +290,7 @@ impl fmt::Display for Address {
 		let mut pos = 0;
 		for c in chars {
 			buf[pos] = c as u8;
-			pos += 1;
+			pos = pos.saturating_add(1);
 
 			if pos == BUF_LENGTH {
 				let s = core::str::from_utf8(&buf).expect("we only write ASCII");
@@ -532,7 +532,7 @@ impl<T: Iterator<Item = u8>> io::Read for ByteIter<T> {
 		for e in buf.iter_mut() {
 			if let Some(n) = self.0.next() {
 				*e = n;
-				written += 1;
+				written = (written as usize).saturating_add(1);
 			} else {
 				break;
 			}

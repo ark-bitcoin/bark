@@ -1,3 +1,30 @@
+//!
+//! VTXO policies
+//! =============
+//!
+//! # Block height and block delta invariants
+//!
+//! Policy heights and deltas are raw `BlockHeight` (u32) and `BlockDelta`
+//! (u16), but every value crossing a deserialization boundary (protocol
+//! decode, gRPC ingress, JSON, postgres) must be validated through
+//! [check_block_height] / [check_block_delta]. The `arithmetic_side_effects`
+//! clippy lint enforces that interior arithmetic on these values goes through
+//! `checked_*`/`saturating_*`/`wrapping_*`.
+//!
+//! The bounds (see [MAX_BLOCK_DELTA], [MAX_BLOCK_HEIGHT] and the
+//! `const _: () = { ... }` block below):
+//!
+//! * Up to four policy deltas sum into a value that fits in `BlockDelta` (u16).
+//!   This lets clause `block_delta` (relative locktime) fields hold any
+//!   in-codebase composition without overflowing u16.
+//! * Any chain tip plus up to four policy deltas stays below
+//!   `LOCK_TIME_THRESHOLD`, so the result is always a valid absolute locktime
+//!   height (and therefore `LockTime::from_height` succeeds).
+//!
+//! Today's maximum composition is two policy deltas (htlc-send clause's
+//! `2 * exit_delta`, watchman `confirmed_at + 2 * exit_delta`, htlc-recv clause
+//! and watchman `exit_delta + htlc_expiry_delta`); the extra 2x of headroom is
+//! defensive so future operations can be added without retuning the bounds.
 
 pub mod clause;
 pub mod signing;
@@ -18,6 +45,62 @@ use crate::vtxo::policy::clause::{
 	DelayedSignClause, DelayedTimelockSignClause, HashDelaySignClause, HashSignClause,
 	TimelockSignClause, VtxoClause,
 };
+
+#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
+#[error("invalid policy data: {msg}")]
+pub struct PolicyError {
+	msg: &'static str,
+}
+
+impl PolicyError {
+	fn new(msg: &'static str) -> Self {
+		Self { msg }
+	}
+}
+
+/// The maximum value of a block delta accepted in policies.
+///
+/// Equals `u16::MAX / 4 = 16383` blocks, or roughly 114 days (~3.8 months).
+pub const MAX_BLOCK_DELTA: BlockDelta = u16::MAX / 4;
+
+/// The maximum value of a block height accepted in policies.
+///
+/// Reserves enough headroom below [bitcoin::absolute::LOCK_TIME_THRESHOLD]
+/// for any accepted height plus up to `4 * MAX_BLOCK_DELTA` of additional
+/// blocks to still produce a valid absolute locktime height.
+pub const MAX_BLOCK_HEIGHT: BlockHeight =
+	bitcoin::absolute::LOCK_TIME_THRESHOLD - 1 - 4 * MAX_BLOCK_DELTA as BlockHeight;
+
+const _: () = {
+	// Up to four policy deltas fit in BlockDelta (u16).
+	assert!(4 * (MAX_BLOCK_DELTA as u32) <= u16::MAX as u32);
+	// Any accepted height plus up to 4 deltas stays below LOCK_TIME_THRESHOLD.
+	assert!((MAX_BLOCK_HEIGHT as u64) + 4 * (MAX_BLOCK_DELTA as u64)
+		< (bitcoin::absolute::LOCK_TIME_THRESHOLD as u64));
+};
+
+/// Boundary check for a block delta arriving from an untrusted source (protocol
+/// decode, gRPC, JSON, DB).
+pub fn check_block_delta<T: TryInto<BlockDelta>>(v: T) -> Result<BlockDelta, PolicyError> {
+	let v: BlockDelta = v.try_into()
+		.map_err(|_| PolicyError::new("block delta out of u16 range"))?;
+	if v > MAX_BLOCK_DELTA {
+		Err(PolicyError::new("block delta exceeds maximum value"))
+	} else {
+		Ok(v)
+	}
+}
+
+/// Boundary check for a block height arriving from an untrusted source.
+pub fn check_block_height<T: TryInto<BlockHeight>>(v: T) -> Result<BlockHeight, PolicyError> {
+	let v: BlockHeight = v.try_into()
+		.map_err(|_| PolicyError::new("block height out of u32 range"))?;
+	if v > MAX_BLOCK_HEIGHT {
+		Err(PolicyError::new("block height exceeds maximum value"))
+	} else {
+		Ok(v)
+	}
+}
 
 /// Trait for policy types that can be used in a Vtxo.
 pub trait Policy: Clone + Send + Sync + 'static {
@@ -390,7 +473,8 @@ impl ServerHtlcSendVtxoPolicy {
 		DelayedTimelockSignClause {
 			pubkey: self.user_pubkey,
 			timelock_height: self.htlc_expiry,
-			block_delta: 2 * exit_delta
+			block_delta: exit_delta.checked_mul(2)
+				.expect("2*exit_delta fits in BlockDelta by MAX_BLOCK_DELTA invariant"),
 		}
 	}
 
@@ -449,7 +533,8 @@ impl ServerHtlcRecvVtxoPolicy {
 		HashDelaySignClause {
 			pubkey: self.user_pubkey,
 			hash: self.payment_hash.to_sha256_hash(),
-			block_delta: self.htlc_expiry_delta + exit_delta
+			block_delta: self.htlc_expiry_delta.checked_add(exit_delta)
+				.expect("htlc_expiry_delta+exit_delta fits in BlockDelta by MAX_BLOCK_DELTA invariant"),
 		}
 	}
 

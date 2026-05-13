@@ -18,6 +18,8 @@ pub struct Node {
 }
 
 impl Node {
+	// Tree construction arithmetic on bounded leaf indices and a small RADIX.
+	#[allow(clippy::arithmetic_side_effects)]
 	fn new_leaf(idx: usize, nb_tree_leaves: usize) -> Node {
 		let idx = idx as u32;
 		Node {
@@ -65,6 +67,7 @@ impl Node {
 	}
 
 	/// An iterator over all leaf indices under this node.
+	#[allow(clippy::arithmetic_side_effects)]
 	pub fn leaves(&self) -> impl Iterator<Item = usize> + Clone {
 		let (first, last) = self.leaves;
 		let nb = self.nb_tree_leaves;
@@ -98,6 +101,8 @@ pub struct Tree {
 impl Tree {
 	/// Calculate the total number of nodes a tree would have
 	/// for the given number of leaves.
+	// Tree-size accumulation: bounded by RADIX-base log of nb_leaves.
+	#[allow(clippy::arithmetic_side_effects)]
 	pub fn nb_nodes_for_leaves(nb_leaves: usize) -> usize {
 		let mut ret = nb_leaves;
 		let mut left = nb_leaves;
@@ -110,6 +115,8 @@ impl Tree {
 		ret
 	}
 
+	// Tree construction: cursor/nb_children/level bounded by RADIX-base log of nb_leaves.
+	#[allow(clippy::arithmetic_side_effects)]
 	pub fn new(
 		nb_leaves: usize,
 	) -> Tree {

@@ -329,7 +329,7 @@ pub fn generate_vtxo_vectors() -> VtxoTestVectors {
 			).unwrap();
 			map.insert(req.cosign_pubkey.unwrap(), {
 				let secs = nonces.into_iter().map(|(s, _)| s).collect();
-				tree.cosign_branch(&cosign_agg_nonces, 2 + i, &cosign_key, secs).unwrap()
+				tree.cosign_branch(&cosign_agg_nonces, i.saturating_add(2), &cosign_key, secs).unwrap()
 			});
 		}
 		map
