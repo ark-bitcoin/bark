@@ -504,6 +504,10 @@ async fn call_xpay(
 		retry_for: Some(retry_for.as_secs() as u32),
 		partial_msat: None,
 		layers: vec![],
+		payer_note: None,
+		label: None,
+		localinvreqid: None,
+		dev_use_shadow: None,
 	}).await;
 
 	let result = match pay_result {

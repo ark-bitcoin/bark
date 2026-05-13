@@ -372,7 +372,7 @@ dependencies = [
 
 [[package]]
 name = "bark-cln-rpc"
-version = "0.3.0+cln.25.09-hold.0.3.2.patched"
+version = "0.3.0+cln.26.04.1-hold.0.3.3.patched"
 dependencies = [
  "ark-lib",
  "bitcoin",

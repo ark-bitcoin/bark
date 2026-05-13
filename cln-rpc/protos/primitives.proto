@@ -39,6 +39,7 @@ enum ChannelState {
 	ChanneldAwaitingSplice = 11;
 	DualopendOpenCommitted = 12;
 	DualopendOpenCommittReady = 13;
+	Closed = 14;
 }
 
 enum HtlcState {
@@ -122,12 +123,12 @@ message TlvStream {
 }
 
 enum ChannelTypeName {
-  static_remotekey_even = 0;
-  anchor_outputs_even = 1;
-  anchors_zero_fee_htlc_tx_even = 2;
-  scid_alias_even = 3;
-  zeroconf_even = 4;
-  anchors_even = 5;
+	static_remotekey_even = 0;
+	anchor_outputs_even = 1;
+	anchors_zero_fee_htlc_tx_even = 2;
+	scid_alias_even = 3;
+	zeroconf_even = 4;
+	anchors_even = 5;
 }
 
 enum AutocleanSubsystem {
@@ -145,4 +146,41 @@ enum PluginSubcommand {
 	RESCAN = 2;
 	STARTDIR = 3;
 	LIST = 4;
+}
+
+message JsonObjectOrArray {
+	oneof structure {
+		JsonObject object = 1;
+		JsonArray array  = 2;
+	}
+}
+
+message JsonObject {
+	map<string, JsonValue> fields = 1;
+}
+
+message JsonArray {
+	repeated JsonValue values = 1;
+}
+
+message JsonValue {
+	oneof kind {
+		bool   bool_value   = 1;
+		int64  int_value    = 2;
+		uint64 uint_value   = 3;
+		double double_value = 4;
+		string string_value = 5;
+		JsonArray  array    = 6;
+		JsonObject object   = 7;
+	}
+}
+
+message JsonScalar {
+	oneof scalar {
+		bool   bool_value   = 1;
+		int64  int_value    = 2;
+		uint64 uint_value   = 3;
+		double double_value = 4;
+		string string_value = 5;
+	}
 }

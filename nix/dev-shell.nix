@@ -2,7 +2,7 @@
 }:
 let
 	bitcoinVersion = "31.0";
-	lightningVersion = "25.12.1";
+	lightningVersion = "26.04.1";
 	holdPluginVersion = "0.3.3";
 	esploraElectrsRevision = "5852c0cf49380bed575d69d364d3cc0a47f00375";
 	mempoolElectrsRevision = "v3.3.0";
@@ -91,7 +91,7 @@ let
 		version = lightningVersion;
 		src = pkgs.fetchurl {
 			url = "https://github.com/ElementsProject/lightning/releases/download/v${lightningVersion}/clightning-v${lightningVersion}.zip";
-			hash = "sha256-50rcNH9dXeRezJ3nEW/cRK5uE+IpGoHAzkU3C7p44KY=";
+			hash = "sha256-MEsZ5GPCY6q/SNO+xcktfGiCZUVgl4p7pdMOiqIqFJM=";
 		};
 		makeFlags = [ "VERSION=v${lightningVersion}" ];
 		preInstall = ''

@@ -519,6 +519,7 @@ impl Lightningd {
 			single_use: None,
 			proportional_amount: None,
 			optional_recurrence: None,
+			fronting_nodes: vec![],
 		}).await.unwrap().into_inner().bolt12
 	}
 
