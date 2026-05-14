@@ -1923,23 +1923,11 @@ impl Wallet {
 		amount: Amount,
 	) -> anyhow::Result<Vec<WalletVtxo>> {
 		let mut vtxos = self.spendable_vtxos().await?;
-		vtxos.sort_by_key(|v| v.expiry_height());
+		self.sort_vtxos_for_selection(&mut vtxos);
 
-		// Iterate over VTXOs until the required amount is reached
-		let mut result = Vec::new();
-		let mut total_amount = Amount::ZERO;
-		for input in vtxos {
-			total_amount += input.amount();
-			result.push(input);
-
-			if total_amount >= amount {
-				return Ok(result)
-			}
-		}
-
-		bail!("Insufficient money available. Needed {} but {} is available",
-			amount, total_amount,
-		);
+		let (last, _total_amount) = self.select_vtxos_inner(amount, &vtxos)?;
+		vtxos.truncate(last+1);
+		Ok(vtxos)
 	}
 
 	/// Determines which VTXOs to use for a fee-paying transaction where the fee is added on top of
@@ -1958,39 +1946,67 @@ impl Wallet {
 		) -> anyhow::Result<Amount>,
 	{
 		let tip = self.chain.tip().await?;
+		let mut vtxos = self.spendable_vtxos().await?;
+		self.sort_vtxos_for_selection(&mut vtxos);
+
+		let fee_info = vtxos.iter()
+			.map(|v| VtxoFeeInfo::from_vtxo_and_tip(v, tip))
+			.collect::<Vec<_>>();
 
 		// We need to loop to find suitable inputs due to the VTXOs having a direct impact on
 		// how much we must pay in fees.
 		const MAX_ITERATIONS: usize = 100;
 		let mut fee = Amount::ZERO;
-		let mut fee_info = Vec::new();
 		for _ in 0..MAX_ITERATIONS {
 			let required = amount.checked_add(fee)
 				.context("Amount + fee overflow")?;
 
-			let vtxos = self.select_vtxos_to_cover(required).await
+			let (last, vtxo_amount) = self.select_vtxos_inner(required, &vtxos)
 				.context("Could not find enough suitable VTXOs to cover payment + fees")?;
+			fee = calc_fee(amount, fee_info[..=last].iter().copied())?;
 
-			fee_info.reserve(vtxos.len());
-			let mut vtxo_amount = Amount::ZERO;
-			for vtxo in &vtxos {
-				vtxo_amount += vtxo.amount();
-				fee_info.push(VtxoFeeInfo::from_vtxo_and_tip(vtxo, tip));
-			}
-
-			fee = calc_fee(amount, fee_info.iter().copied())?;
 			if amount + fee <= vtxo_amount {
 				trace!("Selected vtxos to cover amount + fee: amount = {}, fee = {}, total inputs = {}",
 					amount, fee, vtxo_amount,
 				);
+				vtxos.truncate(last+1);
 				return Ok((vtxos, fee));
 			}
 			trace!("VTXO sum of {} did not exceed amount {} and fee {}, iterating again",
 				vtxo_amount, amount, fee,
 			);
-			fee_info.clear();
 		}
 		bail!("Fee calculation did not converge after maximum iterations")
+	}
+
+	/// Sorts the given `vtxos` in place ready for selection to cover funds.
+	fn sort_vtxos_for_selection(&self, vtxos: &mut Vec<WalletVtxo>) {
+		vtxos.sort_by_key(|v| v.expiry_height());
+	}
+
+	/// Iterates through the given `Vec` until either the given `amount` can be covered for a
+	/// payment or until the `Vec` is exhausted, at which point an error will be returned.
+	///
+	/// Returns the index of the last VTXO included in the selection, as well as the total amount of
+	/// the selected VTXOs.
+	fn select_vtxos_inner(
+		&self,
+		amount: Amount,
+		vtxos: &Vec<WalletVtxo>,
+	) -> anyhow::Result<(usize, Amount)> {
+		// Iterate over VTXOs until the required amount is reached
+		let mut total_amount = Amount::ZERO;
+		for (i, vtxo) in vtxos.iter().enumerate() {
+			total_amount += vtxo.amount();
+
+			if total_amount >= amount {
+				return Ok((i, total_amount))
+			}
+		}
+
+		bail!("Insufficient money available. Needed {} but {} is available",
+			amount, total_amount,
+		);
 	}
 
 	/// Starts a daemon for the wallet.

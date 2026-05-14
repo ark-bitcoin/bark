@@ -613,7 +613,8 @@ impl Wallet {
 		let (change_keypair, _) = self.derive_store_next_keypair().await?;
 
 		let (inputs, fee) = self.select_vtxos_to_cover_with_fee(
-			payment_amount, |a, v| ark_info.fees.lightning_send.calculate(a, v).context("fee overflowed"),
+			payment_amount, |a, v| ark_info.fees.lightning_send.calculate(a, v)
+				.context("fee overflowed"),
 		).await.context("Could not find enough suitable VTXOs to cover lightning payment")?;
 		let total_amount = payment_amount + fee;
 
