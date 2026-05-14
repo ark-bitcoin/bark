@@ -17,6 +17,8 @@
 use std::fmt;
 use std::ops::Deref;
 
+use bitcoin::Weight;
+
 use ark::Vtxo;
 use ark::vtxo::{Bare, Full, VtxoRef};
 use crate::movement::MovementId;
@@ -108,44 +110,64 @@ impl VtxoState {
 	}
 }
 
-/// A wallet-owned [Vtxo] paired with its current tracked state.
+/// A wallet-owned [Vtxo] paired with its current tracked state and a small set of
+/// genesis-derived summaries that the wallet would otherwise have to load the full
+/// exit chain for.
+///
+/// The wallet stores [Vtxo<Full>] on disk but listings, balance computations, coin
+/// selection, and refresh-strategy checks all run against this bare representation
+/// to avoid the per-VTXO memory cost (tens of KB at high exit depths). When an
+/// operation actually needs the exit chain — unilateral exit, server registration,
+/// arkoor send, offboard, counterparty-risk checks — call
+/// [crate::Wallet::get_full_vtxo] or
+/// [crate::persist::BarkPersister::get_full_vtxos] to fetch it from disk.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WalletVtxo {
-	/// The underlying [Vtxo].
+	/// The underlying [Vtxo] without its genesis chain.
 	#[serde(with = "ark::encode::serde")]
-	pub vtxo: Vtxo<Full>,
+	pub vtxo: Vtxo<Bare>,
+
 	/// The current tracked state for [`WalletVtxo`].
 	pub state: VtxoState,
+
+	/// Cached `vtxo.exit_depth()` from when the VTXO was inserted into the
+	/// wallet. Genesis is immutable post-creation, so this never drifts.
+	pub exit_depth: u16,
+
+	/// Cached sum of weight units for the unilateral exit transaction chain.
+	///
+	/// Lets the refresh strategy answer "uneconomical to exit" without loading the genesis.
+	pub exit_tx_weight: Weight,
 }
 
 impl VtxoRef for WalletVtxo {
 	fn vtxo_id(&self) -> ark::VtxoId { self.vtxo.id() }
 	fn as_bare_vtxo(&self) -> Option<std::borrow::Cow<'_, Vtxo<Bare>>> {
-		Some(std::borrow::Cow::Owned(self.vtxo.to_bare()))
+		Some(std::borrow::Cow::Borrowed(&self.vtxo))
 	}
-	fn as_full_vtxo(&self) -> Option<&Vtxo<Full>> { Some(&self.vtxo) }
-	fn into_full_vtxo(self) -> Option<Vtxo<Full>> { Some(self.vtxo) }
+	fn as_full_vtxo(&self) -> Option<&Vtxo<Full>> { None }
+	fn into_full_vtxo(self) -> Option<Vtxo<Full>> { None }
 }
 
 impl<'a> VtxoRef for &'a WalletVtxo {
 	fn vtxo_id(&self) -> ark::VtxoId { self.vtxo.id() }
 	fn as_bare_vtxo(&self) -> Option<std::borrow::Cow<'_, Vtxo<Bare>>> {
-		Some(std::borrow::Cow::Owned(self.vtxo.to_bare()))
+		Some(std::borrow::Cow::Borrowed(&self.vtxo))
 	}
-	fn as_full_vtxo(&self) -> Option<&Vtxo<Full>> { Some(&self.vtxo) }
-	fn into_full_vtxo(self) -> Option<Vtxo<Full>> { Some(self.vtxo.clone()) }
+	fn as_full_vtxo(&self) -> Option<&Vtxo<Full>> { None }
+	fn into_full_vtxo(self) -> Option<Vtxo<Full>> { None }
 }
 
-impl AsRef<Vtxo<Full>> for WalletVtxo {
-	fn as_ref(&self) -> &Vtxo<Full> {
+impl AsRef<Vtxo<Bare>> for WalletVtxo {
+	fn as_ref(&self) -> &Vtxo<Bare> {
 		&self.vtxo
 	}
 }
 
 impl Deref for WalletVtxo {
-	type Target = Vtxo<Full>;
+	type Target = Vtxo<Bare>;
 
-	fn deref(&self) -> &Vtxo<Full> {
+	fn deref(&self) -> &Vtxo<Bare> {
 		&self.vtxo
 	}
 }
