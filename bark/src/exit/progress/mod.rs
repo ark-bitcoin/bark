@@ -6,15 +6,13 @@ use std::collections::HashSet;
 use bitcoin::{Amount, FeeRate, Transaction, Txid};
 use log::{debug, error, warn};
 
-use ark::Vtxo;
-use ark::vtxo::Full;
 use bitcoin_ext::{BlockHeight, BlockRef, TxStatus};
 use bitcoin_ext::cpfp::{CpfpError, MakeCpfpFees};
 
 use crate::exit::models::{ExitError, ExitState, ExitTx, ExitTxOrigin, ExitTxStatus};
 use crate::exit::transaction_manager::ExitTransactionManager;
 use crate::onchain::ExitUnilaterally;
-use crate::Wallet;
+use crate::{Wallet, WalletVtxo};
 
 /// A trait which allows [ExitState] objects to transition from their current state to a new state
 /// depending on the contents of the users wallet, the mempool or the blockchain. E.g. Calling
@@ -84,7 +82,7 @@ impl From<ExitError> for ExitProgressError {
 }
 
 pub(crate) struct ProgressContext<'a> {
-	pub vtxo: &'a Vtxo<Full>,
+	pub vtxo: &'a WalletVtxo,
 	pub exit_txids: &'a Vec<Txid>,
 	pub wallet: &'a Wallet,
 	pub fee_rate: FeeRate,

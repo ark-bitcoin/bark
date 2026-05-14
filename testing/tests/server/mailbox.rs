@@ -14,7 +14,7 @@ use server::database::{Db, MailboxPayload};
 use server_rpc::protos;
 use server_rpc::protos::mailbox_server::mailbox_message::Message;
 
-use ark_testing::{btc, TestContext};
+use ark_testing::{TestContext, btc, require_bark_version};
 use ark_testing::daemon::captaind::MailboxClient;
 
 /// Regression test for the checkpoint visibility gap in concurrent mailbox writes.
@@ -147,6 +147,8 @@ async fn mailbox_checkpoint_visibility_gap() {
 /// notification to the receiver's mailbox with the payment hash.
 #[tokio::test]
 async fn mailbox_lightning_receive_pending() {
+	require_bark_version!(> "0.1.4");
+
 	let ctx = TestContext::new("server/mailbox_lightning_receive_pending").await;
 
 	let lightning = ctx.new_lightning_setup("lightningd").await;
@@ -215,6 +217,8 @@ async fn mailbox_lightning_receive_pending() {
 /// notification to the sender's mailbox with the preimage.
 #[tokio::test]
 async fn mailbox_lightning_send_finished() {
+	require_bark_version!(> "0.1.4");
+
 	let ctx = TestContext::new("server/mailbox_lightning_send_finished").await;
 
 	let lightning = ctx.new_lightning_setup("lightningd").await;

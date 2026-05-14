@@ -140,7 +140,7 @@ use bitcoin::consensus::Params;
 use log::{error, info, trace, warn};
 
 use ark::{Vtxo, VtxoId};
-use ark::vtxo::Full;
+use ark::vtxo::Bare;
 use ark::vtxo::policy::signing::VtxoSigner;
 use bitcoin_ext::{BlockHeight, P2TR_DUST};
 
@@ -226,12 +226,12 @@ impl Exit {
 							txs.push(self.tx_manager.get_package(*txid)?.read().await.clone());
 						}
 					} else {
-						let exit_vtxo = exit.get_vtxo(&*self.persister).await?;
 						// Realistically, the only way an exit isn't initialized is if it has been
 						// marked for exit, and we haven't synced the exit system yet. On this basis
 						// we can just return the VTXO transactions since there shouldn't be any
-						// children.
-						for tx in exit_vtxo.vtxo.transactions() {
+						// children. We need the full VTXO here for `transactions()`.
+						let exit_vtxo = exit.get_full_vtxo(&*self.persister).await?;
+						for tx in exit_vtxo.transactions() {
 							txs.push(ExitTransactionPackage {
 								exit: TransactionInfo {
 									txid: tx.tx.compute_txid(),
@@ -302,8 +302,8 @@ impl Exit {
 	/// It's recommended to sync the wallet, by using something like [Wallet::maintenance] being
 	/// doing this.
 	pub async fn start_exit_for_entire_wallet(&mut self) -> anyhow::Result<()> {
-		let all_vtxos = self.persister.get_vtxos_by_state(&VtxoStateKind::UNSPENT_STATES).await?.into_iter()
-			.map(|v| v.vtxo);
+		let all_vtxos = self.persister.get_vtxos_by_state(&VtxoStateKind::UNSPENT_STATES).await?
+			.into_iter().map(|v| v.vtxo);
 
 		// Partition: separate eligible VTXO from dust
 		let (eligible, dust) = all_vtxos.partition::<Vec<_>, _>(|v| v.amount() >= P2TR_DUST);
@@ -341,9 +341,9 @@ impl Exit {
 	///
 	/// It's recommended to sync the wallet, by using something like [Wallet::maintenance] being
 	/// doing this.
-	pub async fn start_exit_for_vtxos<'a>(
+	pub async fn start_exit_for_vtxos(
 		&mut self,
-		vtxos: &[impl Borrow<Vtxo<Full>>],
+		vtxos: &[impl Borrow<Vtxo<Bare>>],
 	) -> anyhow::Result<()> {
 		if vtxos.is_empty() {
 			return Ok(());
@@ -585,7 +585,7 @@ impl Exit {
 		let mut vtxos = HashMap::with_capacity(inputs.len());
 		for input in inputs {
 			let i = input.borrow();
-			let vtxo = i.get_vtxo(&*self.persister).await?;
+			let vtxo = i.get_full_vtxo(&*self.persister).await?;
 			vtxos.insert(i.id(), vtxo);
 		}
 
@@ -636,8 +636,8 @@ impl Exit {
 				})?;
 			psbt.inputs.iter_mut().zip(inputs).for_each(|(i, e)| {
 				let v = &vtxos[&e.borrow().id()];
-				i.set_exit_claim_input(&v.vtxo);
-				i.witness_utxo = Some(v.vtxo.txout())
+				i.set_exit_claim_input(v);
+				i.witness_utxo = Some(v.txout())
 			});
 			self.sign_exit_claim_inputs(&mut psbt, wallet).await
 				.map_err(|e| ExitError::ClaimSigningError { error: e.to_string() })?;

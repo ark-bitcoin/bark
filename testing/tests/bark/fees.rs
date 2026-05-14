@@ -9,7 +9,7 @@ use ark::fees::{
 };
 use bark_json::movements::{MovementDestination, PaymentMethod};
 use bitcoin_ext::{FeeRateExt, P2TR_DUST};
-use ark_testing::{btc, sat, TestContext};
+use ark_testing::{TestContext, btc, require_bark_version, sat};
 use ark_testing::constants::{BOARD_CONFIRMATIONS, ROUND_CONFIRMATIONS};
 use ark_testing::exit::complete_exit;
 use ark_testing::util::{FutureExt, ToAltString};
@@ -119,6 +119,8 @@ async fn exit_fee_anchor_no_dust_change_error() {
 
 #[tokio::test]
 async fn board_fee_base_and_ppm() {
+	require_bark_version!(> "0.1.4");
+
 	let ctx = TestContext::new("fees/board_fee_base_and_ppm").await;
 	let srv = ctx.captaind("server").cfg(|cfg| {
 		cfg.fees.board = BoardFees {
@@ -161,6 +163,8 @@ async fn board_fee_base_and_ppm() {
 
 #[tokio::test]
 async fn board_fee_min_fee_applies() {
+	require_bark_version!(> "0.1.4");
+
 	let ctx = TestContext::new("fees/board_fee_min_fee_applies").await;
 	let srv = ctx.captaind("server").cfg(|cfg| {
 		cfg.fees.board = BoardFees {
@@ -200,6 +204,8 @@ async fn board_fee_min_fee_applies() {
 
 #[tokio::test]
 async fn board_fee_rejects_when_fee_exceeds_amount() {
+	require_bark_version!(> "0.1.4");
+
 	let ctx = TestContext::new("fees/board_fee_rejects_when_fee_exceeds_amount").await;
 	let srv = ctx.captaind("server").cfg(|cfg| {
 		cfg.fees.board = BoardFees {
@@ -230,6 +236,8 @@ async fn board_fee_rejects_when_fee_exceeds_amount() {
 
 #[tokio::test]
 async fn refresh_fee_base_only() {
+	require_bark_version!(> "0.1.4");
+
 	let ctx = TestContext::new("fees/refresh_fee_base_only").await;
 	let srv = ctx.captaind("server").cfg(|cfg| {
 		cfg.round_interval = Duration::from_secs(3600);
@@ -269,6 +277,8 @@ async fn refresh_fee_base_only() {
 
 #[tokio::test]
 async fn refresh_fee_with_ppm_expiry() {
+	require_bark_version!(> "0.1.4");
+
 	let ctx = TestContext::new("fees/refresh_fee_with_ppm_expiry").await;
 	let srv = ctx.captaind("server").cfg(|cfg| {
 		cfg.round_interval = Duration::from_secs(3600);
@@ -310,6 +320,8 @@ async fn refresh_fee_with_ppm_expiry() {
 
 #[tokio::test]
 async fn refresh_fee_with_multiple_vtxos() {
+	require_bark_version!(> "0.1.4");
+
 	let ctx = TestContext::new("fees/refresh_fee_with_multiple_vtxos").await;
 	let srv = ctx.captaind("server").cfg(|cfg| {
 		cfg.round_interval = Duration::from_secs(3600);
@@ -506,6 +518,8 @@ async fn refresh_should_refresh_vtxos_no_dust() {
 
 #[tokio::test]
 async fn refresh_fee_rejects_dust_output() {
+	require_bark_version!(> "0.1.4");
+
 	let ctx = TestContext::new("fees/refresh_fee_rejects_dust_output").await;
 	let srv = ctx.captaind("server").cfg(|cfg| {
 		cfg.round_interval = Duration::from_secs(3600);
@@ -541,6 +555,8 @@ async fn refresh_fee_rejects_dust_output() {
 
 #[tokio::test]
 async fn offboard_fee_base_deducted() {
+	require_bark_version!(> "0.1.4");
+
 	let ctx = TestContext::new("fees/offboard_fee_base_deducted").await;
 	let srv = ctx.captaind("server").cfg(|cfg| {
 		cfg.round_interval = Duration::from_secs(3600);
@@ -598,6 +614,8 @@ async fn offboard_fee_base_deducted() {
 
 #[tokio::test]
 async fn offboard_fee_with_ppm_expiry() {
+	require_bark_version!(> "0.1.4");
+
 	let ctx = TestContext::new("fees/offboard_fee_with_ppm_expiry").await;
 	let srv = ctx.captaind("server").cfg(|cfg| {
 		cfg.round_interval = Duration::from_secs(3600);
@@ -652,6 +670,8 @@ async fn offboard_fee_with_ppm_expiry() {
 
 #[tokio::test]
 async fn offboard_all_rejects_dust_output() {
+	require_bark_version!(> "0.1.4");
+
 	let ctx = TestContext::new("fees/offboard_all_rejects_dust_output").await;
 	let srv = ctx.captaind("server").cfg(|cfg| {
 		cfg.round_interval = Duration::from_secs(3600);
@@ -686,6 +706,8 @@ async fn offboard_all_rejects_dust_output() {
 
 #[tokio::test]
 async fn send_onchain_fee_deducted() {
+	require_bark_version!(> "0.1.4");
+
 	let ctx = TestContext::new("fees/send_onchain_fee_deducted").await;
 	let srv = ctx.captaind("server").cfg(|cfg| {
 		cfg.fees.offboard = OffboardFees {
@@ -744,6 +766,8 @@ async fn send_onchain_fee_deducted() {
 
 #[tokio::test]
 async fn lightning_receive_fee_deducted() {
+	require_bark_version!(> "0.1.4");
+
 	let ctx = TestContext::new("fees/lightning_receive_fee_deducted").await;
 
 	let lightning = ctx.new_lightning_setup("lightningd").await;
@@ -800,6 +824,8 @@ async fn lightning_receive_fee_deducted() {
 
 #[tokio::test]
 async fn lightning_receive_fee_rejects_when_fee_exceeds_amount() {
+	require_bark_version!(> "0.1.4");
+
 	let ctx = TestContext::new("fees/lightning_receive_fee_rejects_when_fee_exceeds_amount").await;
 
 	let lightning = ctx.new_lightning_setup("lightningd").await;
@@ -831,6 +857,8 @@ async fn lightning_receive_fee_rejects_when_fee_exceeds_amount() {
 
 #[tokio::test]
 async fn lightning_send_fee_deducted() {
+	require_bark_version!(> "0.1.4");
+
 	let ctx = TestContext::new("fees/lightning_send_fee_deducted").await;
 
 	let lightning = ctx.new_lightning_setup("lightningd").await;
@@ -881,6 +909,8 @@ async fn lightning_send_fee_deducted() {
 
 #[tokio::test]
 async fn lightning_send_fee_min_fee_applies() {
+	require_bark_version!(> "0.1.4");
+
 	let ctx = TestContext::new("fees/lightning_send_fee_min_fee_applies").await;
 
 	let lightning = ctx.new_lightning_setup("lightningd").await;
@@ -930,6 +960,8 @@ async fn lightning_send_fee_min_fee_applies() {
 
 #[tokio::test]
 async fn lightning_send_fee_ppm_expiry_table() {
+	require_bark_version!(> "0.1.4");
+
 	let ctx = TestContext::new("fees/lightning_send_fee_ppm_expiry_table").await;
 
 	let lightning = ctx.new_lightning_setup("lightningd").await;

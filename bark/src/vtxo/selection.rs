@@ -59,6 +59,7 @@
 
 use std::borrow::Borrow;
 use std::collections::HashSet;
+use std::iter;
 
 use anyhow::Context;
 use bitcoin::FeeRate;
@@ -230,7 +231,13 @@ impl FilterVtxos for VtxoFilter<'_> {
 		}
 
 		if self.counterparty {
-			if self.wallet.has_counterparty_risk(vtxo).await.context("db error")? {
+			// Counterparty-risk checks need the genesis chain (the past
+			// arkoor pubkeys live in there). Hydrate this single VTXO on
+			// demand — the broader filter pipeline only reaches this
+			// branch for a small candidate set so the cost is bounded.
+			let full = self.wallet.get_full_vtxo(id).await
+				.with_context(|| format!("failed to hydrate vtxo {id} for counterparty check"))?;
+			if self.wallet.has_counterparty_risk(&full).await.context("db error")? {
 				return Ok(true);
 			}
 		}
@@ -397,11 +404,11 @@ impl<'a> RefreshStrategy<'a> {
 	async fn check_must_refresh(&self, vtxo: &WalletVtxo) -> anyhow::Result<bool> {
 		// Check if the VTXO's exit depth has reached the server maximum.
 		if let Some(max_depth) = self.server_max_arkoor_depth().await? {
-			if vtxo.exit_depth() >= max_depth {
+			if vtxo.exit_depth >= max_depth {
 				warn!(
 					"VTXO {} exit depth {} has reached the server maximum of {}; \
 					 must be refreshed before further OOR payments are possible",
-					vtxo.id(), vtxo.exit_depth(), max_depth,
+					vtxo.id(), vtxo.exit_depth, max_depth,
 				);
 				return Ok(true);
 			}
@@ -429,11 +436,11 @@ impl<'a> RefreshStrategy<'a> {
 			// This ensures the wallet stays well below the hard ceiling and
 			// avoids hitting it unexpectedly during normal usage.
 			let soft_depth_threshold = max_depth / 2;
-			if vtxo.exit_depth() >= soft_depth_threshold {
+			if vtxo.exit_depth >= soft_depth_threshold {
 				warn!(
 					"VTXO {} exit depth {} is approaching the server maximum of {}; \
 					 should be refreshed on next opportunity",
-					vtxo.id(), vtxo.exit_depth(), max_depth,
+					vtxo.id(), vtxo.exit_depth, max_depth,
 				);
 				return Ok(true);
 			}
@@ -451,7 +458,7 @@ impl<'a> RefreshStrategy<'a> {
 
 		// Check if the VTXO's amount is uneconomical to exit.
 		let fr = self.fee_rate;
-		if vtxo.amount() < estimate_exit_cost(&[vtxo.vtxo.clone()], fr) {
+		if vtxo.amount() < estimate_exit_cost(iter::once(vtxo), fr) {
 			warn!("VTXO {} is uneconomical to exit, should be refreshed on \
 				next opportunity", vtxo.id(),
 			);

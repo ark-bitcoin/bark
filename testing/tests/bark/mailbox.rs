@@ -81,6 +81,8 @@ async fn reject_arkoor_with_bad_signature() {
 
 #[tokio::test]
 async fn accept_mailbox() {
+	require_bark_version!(> "0.1.4");
+
 	let ctx = TestContext::new("bark/accept_mailbox").await;
 	let srv = ctx.captaind("server").funded(btc(10)).create().await;
 
@@ -99,7 +101,8 @@ async fn accept_mailbox() {
 	// Test import_vtxo
 	let bark2_wallet = bark2.client().await;
 	let vtxos = bark2_wallet.vtxos().await.unwrap();
-	let vtxo_hex = vtxos[0].vtxo.serialize_hex();
+	let vtxos = bark2_wallet.get_full_vtxos(vtxos).await.unwrap();
+	let vtxo_hex = vtxos[0].serialize_hex();
 
 	bark2.import_vtxos(&[&vtxo_hex]).await;
 	assert_eq!(bark2.vtxos().await.len(), 1, "import should be idempotent");
@@ -117,8 +120,9 @@ async fn accept_mailbox() {
 
 	let bark3_wallet = bark3.client().await;
 	let vtxos = bark3_wallet.vtxos().await.unwrap();
-	let vtxo_hex1 = vtxos[0].vtxo.serialize_hex();
-	let vtxo_hex2 = vtxos[1].vtxo.serialize_hex();
+	let vtxos = bark3_wallet.get_full_vtxos(vtxos).await.unwrap();
+	let vtxo_hex1 = vtxos[0].serialize_hex();
+	let vtxo_hex2 = vtxos[1].serialize_hex();
 
 	// Drop all VTXOs from bark3 and re-import them in bulk
 	bark3.drop_vtxos().await;
@@ -135,7 +139,8 @@ async fn accept_mailbox() {
 
 	let bark4_wallet = bark4.client().await;
 	let bark4_vtxos = bark4_wallet.vtxos().await.unwrap();
-	let expired_vtxo_hex = bark4_vtxos[0].vtxo.serialize_hex();
+	let bark4_vtxos = bark4_wallet.get_full_vtxos(bark4_vtxos).await.unwrap();
+	let expired_vtxo_hex = bark4_vtxos[0].serialize_hex();
 
 	bark4.drop_vtxos().await;
 	assert_eq!(bark4.vtxos().await.len(), 0, "bark4 should have 0 VTXOs after drop");
@@ -182,8 +187,7 @@ async fn read_recovery_vtxo_ids(
 /// - Sending arkoor (change)
 #[tokio::test]
 async fn recovery_mailbox_receives_vtxo_ids() {
-	// Vtxo id based recovery is only supported later than beta.9
-	require_bark_version!(> "0.1.0-beta.9");
+	require_bark_version!(> "0.1.4");
 	let ctx = TestContext::new("bark/recovery_mailbox_receives_vtxo_ids").await;
 	let srv = ctx.captaind("server").funded(btc(10)).create().await;
 
@@ -231,8 +235,7 @@ async fn recovery_mailbox_receives_vtxo_ids() {
 /// Test that lightning send change vtxo_ids are posted to recovery mailbox
 #[tokio::test]
 async fn recovery_mailbox_lightning_send_change() {
-	// Vtxo id based recovery is only supported later than beta.9
-	require_bark_version!(> "0.1.0-beta.9");
+	require_bark_version!(> "0.1.4");
 	let ctx = TestContext::new("bark/recovery_mailbox_lightning_send_change").await;
 
 	let lightning = ctx.new_lightning_setup("lightningd").await;
@@ -272,8 +275,7 @@ async fn recovery_mailbox_lightning_send_change() {
 /// when a payment fails (no channel exists)
 #[tokio::test]
 async fn recovery_mailbox_lightning_send_revoke() {
-	// Vtxo id based recovery is only supported later than beta.9
-	require_bark_version!(> "0.1.0-beta.9");
+	require_bark_version!(> "0.1.4");
 	let ctx = TestContext::new("bark/recovery_mailbox_lightning_send_revoke").await;
 
 	// Create lightning setup WITHOUT a channel so payment will fail
@@ -320,8 +322,7 @@ async fn recovery_mailbox_lightning_send_revoke() {
 /// Test that lightning receive claimed vtxo_ids are posted to recovery mailbox
 #[tokio::test]
 async fn recovery_mailbox_lightning_receive() {
-	// Vtxo id based recovery is only supported later than beta.9
-	require_bark_version!(> "0.1.0-beta.9");
+	require_bark_version!(> "0.1.4");
 	let ctx = TestContext::new("bark/recovery_mailbox_lightning_receive").await;
 
 	let lightning = ctx.new_lightning_setup("lightningd").await;

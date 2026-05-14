@@ -440,10 +440,10 @@ pub async fn get_vtxo_encoded(
 ) -> HandlerResult<Json<bark_json::web::EncodedVtxoResponse>> {
 	let wallet = state.require_wallet()?;
 	let vtxo_id = VtxoId::from_str(&id).badarg("Invalid VTXO id")?;
-	let wallet_vtxo = wallet.get_vtxo_by_id(vtxo_id).await
+	let vtxo = wallet.get_full_vtxo(vtxo_id).await
 		.not_found([vtxo_id], "VTXO not found")?;
 
-	let encoded = bark_json::primitives::EncodedVtxo(wallet_vtxo.vtxo.serialize_hex());
+	let encoded = bark_json::primitives::EncodedVtxo(vtxo.serialize_hex());
 	Ok(axum::Json(bark_json::web::EncodedVtxoResponse { encoded }))
 }
 

@@ -13,7 +13,7 @@ use bitcoin::{Amount, FeeRate, Txid};
 use log::{debug, trace};
 
 use ark::{Vtxo, VtxoId};
-use ark::vtxo::Full;
+use ark::vtxo::{Bare, Full};
 
 use crate::exit::models::{ExitError, ExitState};
 use crate::exit::progress::{ExitStateProgress, ProgressContext, ProgressStep};
@@ -49,7 +49,7 @@ impl ExitVtxo {
 	/// # Parameters
 	/// - `vtxo_id`: the [VtxoId] being exited.
 	/// - `tip`: current chain tip used to initialize the starting state.
-	pub fn new(vtxo: &Vtxo<Full>, tip: u32) -> Self {
+	pub fn new(vtxo: &Vtxo<Bare>, tip: u32) -> Self {
 		Self {
 			vtxo_id: vtxo.id(),
 			amount: vtxo.amount(),
@@ -121,7 +121,7 @@ impl ExitVtxo {
 		onchain: &dyn ExitUnilaterally,
 	) -> anyhow::Result<(), ExitError> {
 		trace!("Initializing VTXO for exit {}", self.vtxo_id);
-		let vtxo = self.get_vtxo(persister).await?;
+		let vtxo = self.get_full_vtxo(persister).await?;
 		self.txids = Some(tx_manager.track_vtxo_exits(&vtxo, onchain).await?);
 		Ok(())
 	}
@@ -155,11 +155,11 @@ impl ExitVtxo {
 			});
 		}
 
-		let wallet_vtxo = self.get_vtxo(&*wallet.db).await?;
+		let vtxo = self.get_vtxo(&*wallet.db).await?;
 		const MAX_ITERATIONS: usize = 100;
 		for _ in 0..MAX_ITERATIONS {
 			let mut context = ProgressContext {
-				vtxo: &wallet_vtxo.vtxo,
+				vtxo: &vtxo,
 				exit_txids: self.txids.as_ref().unwrap(),
 				wallet,
 				fee_rate: fee_rate_override.unwrap_or(wallet.chain.fee_rates().await.fast),
@@ -193,6 +193,20 @@ impl ExitVtxo {
 
 	pub async fn get_vtxo(&self, persister: &dyn BarkPersister) -> anyhow::Result<WalletVtxo, ExitError> {
 		persister.get_wallet_vtxo(self.vtxo_id).await
+			.map_err(|e| ExitError::InvalidWalletState { error: e.to_string() })?
+			.ok_or_else(|| ExitError::InternalError {
+				error: format!("VTXO for exit couldn't be found: {}", self.vtxo_id)
+			})
+	}
+
+	/// Hydrate the underlying [Vtxo] including its full unilateral exit
+	/// chain. Used by exit-specific code paths that need to construct or
+	/// inspect the actual exit transactions.
+	pub async fn get_full_vtxo(
+		&self,
+		persister: &dyn BarkPersister,
+	) -> anyhow::Result<Vtxo<Full>, ExitError> {
+		persister.get_full_vtxo(self.vtxo_id).await
 			.map_err(|e| ExitError::InvalidWalletState { error: e.to_string() })?
 			.ok_or_else(|| ExitError::InternalError {
 				error: format!("VTXO for exit couldn't be found: {}", self.vtxo_id)

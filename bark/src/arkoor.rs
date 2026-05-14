@@ -90,9 +90,13 @@ impl Wallet {
 	) -> anyhow::Result<ArkoorCreateResult> {
 		// Find vtxos to cover
 		let (mut srv, _) = self.require_server().await?;
-		let (input_ids, inputs) = inputs.into_iter()
-			.map(|v| (v.id(), v))
-			.collect::<(Vec<_>, Vec<_>)>();
+		let input_ids = inputs.into_iter().map(|v| v.id()).collect::<Vec<_>>();
+
+		// Hydrate the inputs to their full form: the arkoor builder needs
+		// the genesis chain and the server registration call sends the
+		// full bytes over the wire.
+		let inputs = self.db.get_full_vtxos(&input_ids).await
+			.context("failed to hydrate arkoor input vtxos")?;
 
 		// Pre-register the input chains so the post-cosign register call
 		// for the outputs finds a signed chain anchor:
@@ -118,7 +122,7 @@ impl Wallet {
 		}
 
 		let builder = ArkoorPackageBuilder::new_single_output_with_checkpoints(
-			inputs.into_iter().map(|v| v.vtxo),
+			inputs.into_iter(),
 			arkoor_dest.clone(),
 			VtxoPolicy::new_pubkey(change_pubkey),
 		)

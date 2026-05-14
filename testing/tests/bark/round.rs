@@ -16,7 +16,7 @@ use bark::vtxo::VtxoState;
 use server_log::{AttemptingRound, RestartMissingVtxoSigs, RoundFinished, RoundUserVtxoNotAllowed};
 use server_rpc::protos;
 
-use ark_testing::{btc, sat, signed_sat, TestContext};
+use ark_testing::{TestContext, btc, require_bark_version, sat, signed_sat};
 use ark_testing::constants::{BOARD_CONFIRMATIONS, ROUND_CONFIRMATIONS};
 use ark_testing::daemon::captaind::{self, ArkClient};
 use ark_testing::util::FutureExt;
@@ -293,6 +293,8 @@ async fn stepwise_round() {
 	//! this test tests that the bark rust api can be used to participate
 	//! in rounds stepwise by manually feeding events into the wallet
 
+	require_bark_version!(> "0.1.4");
+
 	let ctx = TestContext::new("bark/stepwise_round").await;
 	let srv = ctx.captaind("server").cfg(|cfg| {
 		cfg.round_interval = Duration::from_secs(3600);
@@ -311,8 +313,12 @@ async fn stepwise_round() {
 	assert_eq!(inputs.len(), 1);
 	info!("refreshing {}", inputs[0].vtxo.id());
 
+	// Listings are bare; hydrate to full for the round participation, which
+	// still carries `Vec<Vtxo<Full>>` (server-side forfeit and registration
+	// need the chain).
+	let full_input = bark.get_full_vtxo(inputs[0].vtxo.id()).await.unwrap();
 	let participation = RoundParticipation {
-		inputs: vec![inputs[0].vtxo.clone()],
+		inputs: vec![full_input],
 		outputs: vec![VtxoRequest {
 			policy: VtxoPolicy::Pubkey(PubkeyVtxoPolicy {
 				user_pubkey: bark.derive_store_next_keypair().await.unwrap().0.public_key(),
@@ -388,6 +394,8 @@ async fn stepwise_round() {
 
 #[tokio::test]
 async fn multiple_round_participations_dont_race() {
+	require_bark_version!(> "0.1.4");
+
 	let ctx = TestContext::new("bark/multiple_round_participations_dont_race").await;
 	let srv = ctx.captaind("server").funded(btc(10)).create().await;
 	let bark = ctx.bark("bark", &srv).funded(sat(1_000_000)).create().await;
@@ -447,6 +455,8 @@ async fn multiple_round_participations_dont_race() {
 
 #[tokio::test]
 async fn refresh_vtxos_and_participate_ongoing_rounds_dont_race() {
+	require_bark_version!(> "0.1.4");
+
 	let ctx = TestContext::new("bark/refresh_vtxos_and_participate_ongoing_rounds_dont_race").await;
 	let srv = ctx.captaind("server").funded(btc(10)).create().await;
 	let bark = ctx.bark("bark", &srv).funded(sat(1_000_000)).create().await;
@@ -507,6 +517,8 @@ async fn refresh_vtxos_and_participate_ongoing_rounds_dont_race() {
 /// (participate_ongoing_rounds locks the round state).
 #[tokio::test]
 async fn participate_round_and_progress_pending_dont_race() {
+	require_bark_version!(> "0.1.4");
+
 	let ctx = TestContext::new("bark/participate_round_and_progress_pending_dont_race").await;
 	let srv = ctx.captaind("server").funded(btc(10)).create().await;
 	let bark = ctx.bark("bark", &srv).funded(sat(1_000_000)).create().await;
@@ -584,6 +596,8 @@ async fn participate_round_and_progress_pending_dont_race() {
 /// on the same round state (participate_ongoing_rounds locks the round state).
 #[tokio::test]
 async fn participate_round_and_event_stream_processing_dont_race() {
+	require_bark_version!(> "0.1.4");
+
 	let ctx = TestContext::new("bark/participate_round_and_event_stream_processing_dont_race").await;
 	let srv = ctx.captaind("server").funded(btc(10)).create().await;
 	let bark = ctx.bark("bark", &srv).funded(sat(1_000_000)).create().await;

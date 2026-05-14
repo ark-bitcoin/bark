@@ -17,7 +17,7 @@ use bark_json::primitives::WalletVtxoInfo;
 use server_rpc::protos::{self, lightning_payment_status};
 use server::vtxopool::VtxoTarget;
 
-use ark_testing::{Captaind, TestContext, btc, lightning_test, sat};
+use ark_testing::{Captaind, TestContext, btc, lightning_test, require_bark_version, sat};
 use ark_testing::constants::{BOARD_CONFIRMATIONS, ROUND_CONFIRMATIONS};
 use ark_testing::context::LightningPaymentSetup;
 use ark_testing::daemon::captaind::{self, ArkClient};
@@ -442,6 +442,8 @@ async fn should_refuse_paying_invoice_whose_amount_is_higher_than_htlcs() {
 
 #[tokio::test]
 async fn should_refuse_ln_pay_input_vtxo_that_is_being_exited() {
+	require_bark_version!(> "0.1.4");
+
 	let ctx = TestContext::new("server/should_refuse_ln_pay_input_vtxo_that_is_being_exited").await;
 
 	trace!("Start lightningd-1");

@@ -376,7 +376,12 @@ impl Wallet {
 			fee_rate: offboard_feerate,
 		};
 
-		let signed_offboard_tx = self.offboard_inner(&mut srv, &vtxos, &vtxo_keys, &req).await
+		// Hydrate the inputs to their full form: offboard_inner needs the
+		// genesis chain to register and forfeit them with the server.
+		let input_ids = vtxos.iter().map(|v| v.id()).collect::<Vec<_>>();
+		let full_inputs = self.db.get_full_vtxos(&input_ids).await
+			.context("failed to hydrate offboard input vtxos")?;
+		let signed_offboard_tx = self.offboard_inner(&mut srv, &full_inputs, &vtxo_keys, &req).await
 			.context("error performing offboard")?;
 
 		// Lock VTXOs instead of marking them as spent

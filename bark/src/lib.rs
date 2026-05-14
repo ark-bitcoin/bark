@@ -1343,6 +1343,31 @@ impl Wallet {
 		Ok(vtxo)
 	}
 
+	/// Hydrate a VTXO into its full form, including the unilateral exit chain.
+	///
+	/// [Wallet::get_vtxo_by_id] returns the bare form ([WalletVtxo] holds
+	/// [Vtxo<ark::vtxo::Bare>]). This method reads the genesis chain from the
+	/// database and reassembles the full VTXO. Use it from external SDK
+	/// callers that need the chain (e.g. to feed into [ArkoorPackageBuilder]
+	/// or [Wallet::register_vtxo_transactions_with_server]).
+	pub async fn get_full_vtxo(&self, vtxo_id: VtxoId) -> anyhow::Result<Vtxo<Full>> {
+		self.db.get_full_vtxo(vtxo_id).await
+			.with_context(|| format!("Error when querying full vtxo {} in database", vtxo_id))?
+			.with_context(|| format!("The VTXO with id {} cannot be found", vtxo_id))
+	}
+
+	/// Similar to [Wallet::get_full_vtxo] but it retrieves the full variant of each given VTXO.
+	pub async fn get_full_vtxos<V: VtxoRef>(
+		&self,
+		vtxos: impl IntoIterator<Item = V>,
+	) -> anyhow::Result<Vec<Vtxo<Full>>> {
+		let ids = vtxos.into_iter().map(|v| v.vtxo_id()).collect::<Vec<_>>();
+		self.db.get_full_vtxos(&ids).await
+			.with_context(||
+				format!("Error when querying full vtxos in database with IDs: {:?}", ids)
+			)
+	}
+
 	/// Fetches all movements ordered from newest to oldest.
 	#[deprecated(since="0.1.0-beta.5", note = "Use Wallet::history instead")]
 	pub async fn movements(&self) -> anyhow::Result<Vec<Movement>> {
@@ -1657,10 +1682,13 @@ impl Wallet {
 		Ok(())
 	}
 
-	/// Checks if the provided VTXO has some counterparty risk in the current wallet
+	/// Checks if the provided VTXO has some counterparty risk in the current wallet.
 	///
-	/// An arkoor vtxo is considered to have some counterparty risk
-	/// if it is (directly or not) based on round VTXOs that aren't owned by the wallet
+	/// An arkoor vtxo is considered to have some counterparty risk if it is
+	/// (directly or not) based on round VTXOs that aren't owned by the
+	/// wallet. The check inspects the genesis chain, so this takes a full
+	/// VTXO; callers working from a bare listing should hydrate via
+	/// [Wallet::get_full_vtxo] or [BarkPersister::get_full_vtxos] first.
 	async fn has_counterparty_risk(&self, vtxo: &Vtxo<Full>) -> anyhow::Result<bool> {
 		for past_pks in vtxo.past_arkoor_pubkeys() {
 			let mut owns_any = false;
@@ -1738,8 +1766,11 @@ impl Wallet {
 			policy: VtxoPolicy::new_pubkey(user_keypair.public_key()),
 			amount: output_amount,
 		};
-		participation.inputs.reserve(vtxos_to_refresh.len());
-		participation.inputs.extend(vtxos_to_refresh.into_iter().map(|wv| wv.vtxo));
+		let extra_ids = vtxos_to_refresh.into_iter().map(|wv| wv.id()).collect::<Vec<_>>();
+		let extra_full = self.db.get_full_vtxos(&extra_ids).await
+			.context("failed to hydrate refresh candidates")?;
+		participation.inputs.reserve(extra_full.len());
+		participation.inputs.extend(extra_full);
 		participation.outputs.push(req);
 
 		Ok(())
@@ -1766,8 +1797,10 @@ impl Wallet {
 				let vtxo = if let Some(vtxo) = vref.into_full_vtxo() {
 					vtxo
 				} else {
-					self.get_vtxo_by_id(id).await
-						.with_context(|| format!("vtxo with id {} not found", id))?.vtxo
+					// Listings/selection return bare wallet vtxos; the round
+					// flow needs the full chain to forfeit and register.
+					self.db.get_full_vtxo(id).await?
+						.with_context(|| format!("vtxo with id {} not found", id))?
 				};
 				amount += vtxo.amount();
 				vtxos.push(vtxo);
