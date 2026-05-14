@@ -32,6 +32,13 @@ use crate::round::{AttemptState, RoundFlowState, RoundParticipation, RoundState}
 use crate::vtxo::VtxoState;
 
 /// VTXO with state history for persistence.
+///
+/// TODO(pc): once the storage adaptor grows a migration framework, switch
+/// this to hold a `Vtxo<Bare>` plus the cached summaries (mirroring the
+/// SQLite `raw_bare`/`raw_genesis` split) and store the genesis bytes in a
+/// sibling record. For now we keep the full VTXO embedded so adaptor
+/// listings still pay the full deserialization cost — this is the
+/// follow-up.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SerdeVtxo {
 	#[serde(with = "ark::encode::serde")]
@@ -50,10 +57,29 @@ impl SerdeVtxo {
 	}
 
 	pub fn to_wallet_vtxo(&self) -> Result<WalletVtxo, MissingStateError> {
-		Ok(WalletVtxo {
-			vtxo: self.vtxo.clone(),
-			state: self.current_state().cloned().ok_or(MissingStateError)?,
-		})
+		let state = self.current_state().cloned().ok_or(MissingStateError)?;
+		Ok(wallet_vtxo_from_full(&self.vtxo, state))
+	}
+}
+
+/// Project a stored full VTXO into the bare-shaped [WalletVtxo] the wallet
+/// hot paths consume, computing the cached `exit_depth` and
+/// `exit_tx_weight` summaries on the fly.
+///
+/// SQLite stores those summaries as columns and reads them without touching
+/// the genesis chain; the adaptor backend currently does not split storage,
+/// so it has to deserialize the full vtxo first and compute the summaries
+/// here. Once the adaptor gains a migration framework this helper goes away
+/// in favor of a true split.
+pub(crate) fn wallet_vtxo_from_full(
+	vtxo: &Vtxo<Full>,
+	state: VtxoState,
+) -> WalletVtxo {
+	WalletVtxo {
+		vtxo: vtxo.to_bare(),
+		state,
+		exit_depth: vtxo.exit_depth(),
+		exit_tx_weight: vtxo.transactions().map(|t| t.tx.weight()).sum(),
 	}
 }
 
