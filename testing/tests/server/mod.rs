@@ -944,7 +944,7 @@ async fn reject_dust_vtxo_request() {
 	#[derive(Clone)]
 	struct Proxy {
 		vtxo: WalletVtxoInfo,
-		wallet: Arc<Wallet>,
+		wallet: Wallet,
 		challenge:  Arc<Mutex<Option<Challenge>>>
 	}
 	#[async_trait::async_trait]
@@ -996,7 +996,7 @@ async fn reject_dust_vtxo_request() {
 
 	let proxy = Proxy {
 		vtxo: vtxo.clone(),
-		wallet: Arc::new(bark_client),
+		wallet: bark_client,
 		challenge: Arc::new(Mutex::new(None)),
 	};
 	let proxy = srv.start_proxy_no_mailbox(proxy).await;
@@ -1267,7 +1267,7 @@ async fn should_refuse_oor_input_vtxo_that_is_being_exited() {
 	assert_eq!(bark.onchain_balance().await, sat(596_429));
 
 	#[derive(Clone)]
-	struct Proxy(Arc<Wallet>, WalletVtxoInfo);
+	struct Proxy(Wallet, WalletVtxoInfo);
 	#[async_trait::async_trait]
 	impl captaind::proxy::ArkRpcProxy for Proxy {
 		async fn request_arkoor_cosign(
@@ -1290,7 +1290,7 @@ async fn should_refuse_oor_input_vtxo_that_is_being_exited() {
 	}
 
 	let proxy = srv.start_proxy_no_mailbox(
-		Proxy(Arc::new(bark.client().await), vtxo_a.clone())
+		Proxy(bark.client().await, vtxo_a.clone())
 	).await;
 
 	bark.set_ark_url(&proxy.address).await;
@@ -1463,7 +1463,7 @@ async fn should_refuse_round_input_vtxo_that_is_being_exited() {
 
 	#[derive(Clone)]
 	struct Proxy {
-		pub wallet: Arc<Wallet>,
+		pub wallet: Wallet,
 		pub challenge: Arc<Mutex<Option<Challenge>>>,
 		pub vtxo: WalletVtxoInfo
 	}
@@ -1515,7 +1515,7 @@ async fn should_refuse_round_input_vtxo_that_is_being_exited() {
 	}
 
 	let proxy = Proxy {
-		wallet: Arc::new(bark.client().await),
+		wallet: bark.client().await,
 		challenge: Arc::new(Mutex::new(None)),
 		vtxo: vtxo_a.clone(),
 	};

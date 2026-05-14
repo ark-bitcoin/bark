@@ -40,10 +40,10 @@ impl Wallet {
 	}
 
 	pub async fn pending_boards(&self) -> anyhow::Result<Vec<PendingBoard>> {
-		let boarding_vtxo_ids = self.db.get_all_pending_board_ids().await?;
+		let boarding_vtxo_ids = self.inner.db.get_all_pending_board_ids().await?;
 		let mut boards = Vec::with_capacity(boarding_vtxo_ids.len());
 		for vtxo_id in boarding_vtxo_ids {
-			let board = self.db.get_pending_board_by_vtxo_id(vtxo_id).await?
+			let board = self.inner.db.get_pending_board_by_vtxo_id(vtxo_id).await?
 				.expect("id just retrieved from db");
 			boards.push(board);
 		}
@@ -78,7 +78,7 @@ impl Wallet {
 	/// [ark::ArkInfo::required_board_confirmations].
 	pub async fn sync_pending_boards(&self) -> anyhow::Result<()> {
 		let (_, ark_info) = self.require_server().await?;
-		let current_height = self.chain.tip().await?;
+		let current_height = self.inner.chain.tip().await?;
 		let unregistered_boards = self.pending_boards().await?;
 		let mut registered_boards = 0;
 
@@ -95,7 +95,7 @@ impl Wallet {
 			let vtxo = self.get_vtxo_by_id(vtxo_id).await?;
 
 			let anchor = vtxo.chain_anchor();
-			let confs = match self.chain.tx_status(anchor.txid).await {
+			let confs = match self.inner.chain.tx_status(anchor.txid).await {
 				Ok(TxStatus::Confirmed(block_ref)) => Some(current_height - (block_ref.height - 1)),
 				Ok(TxStatus::Mempool) => Some(0),
 				Ok(TxStatus::NotFound) => None,
@@ -116,15 +116,15 @@ impl Wallet {
 
 			if vtxo.expiry_height() < current_height + ark_info.required_board_confirmations as BlockHeight {
 				warn!("VTXO {} expired before its board was confirmed, removing board and marking VTXO for exit", vtxo.id());
-				self.exit.start_exit_for_vtxos(&[vtxo.vtxo]).await?;
-				self.movements.finish_movement_with_update(
+				self.inner.exit.start_exit_for_vtxos(&[vtxo.vtxo]).await?;
+				self.inner.movements.finish_movement_with_update(
 					board.movement_id,
 					MovementStatus::Failed,
 					MovementUpdate::new()
 						.exited_vtxo(vtxo_id),
 				).await?;
 
-				self.db.remove_pending_board(&vtxo_id).await?;
+				self.inner.db.remove_pending_board(&vtxo_id).await?;
 			}
 		};
 
@@ -141,7 +141,7 @@ impl Wallet {
 		user_keypair: Keypair,
 	) -> anyhow::Result<PendingBoard> {
 		let (addr, expiry_height) = self.board_funding_address(&user_keypair).await?;
-		let fee_rate = self.chain.fee_rates().await.regular;
+		let fee_rate = self.inner.chain.fee_rates().await.regular;
 
 		let board_psbt = if let Some(amount) = amount {
 			wallet.prepare_tx(&[(addr, amount)], fee_rate)?
@@ -162,8 +162,8 @@ impl Wallet {
 		user_keypair: &Keypair,
 	) -> anyhow::Result<(Address, BlockHeight)> {
 		let (_, ark_info) = self.require_server().await?;
-		let properties = self.db.read_properties().await?.context("Missing config")?;
-		let current_height = self.chain.tip().await?;
+		let properties = self.inner.db.read_properties().await?.context("Missing config")?;
+		let current_height = self.inner.chain.tip().await?;
 
 		let expiry_height = current_height + ark_info.vtxo_expiry_delta as BlockHeight;
 		let builder = BoardBuilder::new(
@@ -239,7 +239,7 @@ impl Wallet {
 		let vtxo = builder.build_vtxo(&cosign_resp, &user_keypair)?;
 
 		let onchain_fee = board_psbt.fee()?;
-		let movement_id = self.movements.new_movement_with_update(
+		let movement_id = self.inner.movements.new_movement_with_update(
 			Subsystem::BOARD,
 			BoardMovement::Board.to_string(),
 			MovementUpdate::new()
@@ -252,13 +252,13 @@ impl Wallet {
 		self.store_locked_vtxos([&vtxo], Some(movement_id)).await?;
 
 		let tx = board_psbt.extract_tx()?;
-		self.db.store_pending_board(&vtxo, &tx, movement_id).await?;
+		self.inner.db.store_pending_board(&vtxo, &tx, movement_id).await?;
 
 		trace!("Broadcasting board tx: {}", bitcoin::consensus::encode::serialize_hex(&tx));
-		self.chain.broadcast_tx(&tx).await?;
+		self.inner.chain.broadcast_tx(&tx).await?;
 
 		info!("Board broadcasted");
-		Ok(self.db.get_pending_board_by_vtxo_id(vtxo.id()).await?.expect("board should be stored"))
+		Ok(self.inner.db.get_pending_board_by_vtxo_id(vtxo.id()).await?.expect("board should be stored"))
 	}
 
 	/// Registers a board to the Ark server
@@ -268,7 +268,7 @@ impl Wallet {
 
 		// Get the full vtxo (including the genesis chain) since we send the
 		// serialized bytes to the server.
-		let vtxo = self.db.get_full_vtxo(vtxo_id).await?
+		let vtxo = self.inner.db.get_full_vtxo(vtxo_id).await?
 			.with_context(|| format!("VTXO doesn't exist: {}", vtxo_id))?;
 
 		// Register the vtxo with the server
@@ -278,7 +278,7 @@ impl Wallet {
 
 		// Remember that we have stored the vtxo
 		// No need to complain if the vtxo is already registered
-		self.db.update_vtxo_state_checked(
+		self.inner.db.update_vtxo_state_checked(
 			vtxo.id(), VtxoState::Spendable, &VtxoStateKind::UNSPENT_STATES,
 		).await?;
 
@@ -287,11 +287,11 @@ impl Wallet {
 			error!("Failed to post recovery vtxo ID to server: {:#}", e);
 		}
 
-		let board = self.db.get_pending_board_by_vtxo_id(vtxo.id()).await?
+		let board = self.inner.db.get_pending_board_by_vtxo_id(vtxo.id()).await?
 			.context("pending board not found")?;
 
-		self.movements.finish_movement(board.movement_id, MovementStatus::Successful).await?;
-		self.db.remove_pending_board(&vtxo.id()).await?;
+		self.inner.movements.finish_movement(board.movement_id, MovementStatus::Successful).await?;
+		self.inner.db.remove_pending_board(&vtxo.id()).await?;
 
 		Ok(())
 	}

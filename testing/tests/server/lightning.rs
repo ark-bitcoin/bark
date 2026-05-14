@@ -472,7 +472,7 @@ async fn should_refuse_ln_pay_input_vtxo_that_is_being_exited() {
 	assert_eq!(bark.onchain_balance().await, sat(596_429));
 
 	#[derive(Clone)]
-	struct Proxy(Arc<Wallet>, WalletVtxoInfo);
+	struct Proxy(Wallet, WalletVtxoInfo);
 	#[async_trait::async_trait]
 	impl captaind::proxy::ArkRpcProxy for Proxy {
 		async fn request_lightning_pay_htlc_cosign(
@@ -495,7 +495,7 @@ async fn should_refuse_ln_pay_input_vtxo_that_is_being_exited() {
 	}
 
 	let proxy = srv.start_proxy_no_mailbox(
-		Proxy(Arc::new(bark.client().await), vtxo_a.clone())
+		Proxy(bark.client().await, vtxo_a.clone())
 	).await;
 
 	bark.set_ark_url(&proxy.address).await;

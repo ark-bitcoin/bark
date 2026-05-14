@@ -14,6 +14,7 @@ use crate::Wallet;
 use crate::onchain::DaemonizableOnchainWallet;
 
 
+
 /// A handle to a running background daemon
 #[cfg(not(feature = "wasm-web"))]
 pub struct DaemonHandle {
@@ -43,7 +44,7 @@ impl DaemonHandle {
 }
 
 pub(crate) fn start_daemon(
-	wallet: Arc<Wallet>,
+	wallet: Wallet,
 	onchain: Option<Arc<RwLock<dyn DaemonizableOnchainWallet>>>,
 ) -> DaemonHandle {
 	let shutdown = CancellationToken::new();
@@ -67,14 +68,14 @@ struct DaemonProcess {
 	shutdown: CancellationToken,
 
 	connected: AtomicBool,
-	wallet: Arc<Wallet>,
+	wallet: Wallet,
 	onchain: Option<Arc<RwLock<dyn DaemonizableOnchainWallet>>>,
 }
 
 impl DaemonProcess {
 	fn new(
 		shutdown: CancellationToken,
-		wallet: Arc<Wallet>,
+		wallet: Wallet,
 		onchain: Option<Arc<RwLock<dyn DaemonizableOnchainWallet>>>,
 	) -> DaemonProcess {
 		DaemonProcess {
@@ -135,7 +136,7 @@ impl DaemonProcess {
 
 	/// Update cached fee rates from the chain source
 	async fn run_fee_rate_update(&self) {
-		if let Err(e) = self.wallet.chain.update_fee_rates(self.wallet.config.fallback_fee_rate).await {
+		if let Err(e) = self.wallet.chain().update_fee_rates(self.wallet.config().fallback_fee_rate).await {
 			warn!("An error occured while updating fee rates: {e:#}");
 		}
 	}
@@ -144,7 +145,7 @@ impl DaemonProcess {
 	async fn run_onchain_sync(&self) {
 		if let Some(onchain) = &self.onchain {
 			let mut onchain = onchain.write().await;
-			if let Err(e) = onchain.sync(&self.wallet.chain).await {
+			if let Err(e) = onchain.sync(self.wallet.chain()).await {
 				warn!("An error occured while syncing onchain: {e:#}");
 			}
 		}
@@ -307,10 +308,10 @@ impl DaemonProcess {
 		if let Err(ref e) = result {
 			warn!("Ark server refresh failed: {:#}", e);
 		}
-		let connected = self.wallet.server.initialized();
+		let connected = self.wallet.inner.server.initialized();
 		self.connected.store(connected, Ordering::Relaxed);
 
-		if !self.wallet.config.daemon_manual_sync {
+		if !self.wallet.config().daemon_manual_sync {
 			self.wallet.sync().await;
 		}
 	}
@@ -320,7 +321,7 @@ impl DaemonProcess {
 
 		self.run_startup_tasks().await;
 
-		if self.wallet.config.daemon_manual_sync {
+		if self.wallet.config().daemon_manual_sync {
 			// In manual-sync mode only the server connection heartbeat keeps
 			// running; everything else must be triggered via the REST API.
 			info!("Daemon running in manual-sync mode; background sync disabled");

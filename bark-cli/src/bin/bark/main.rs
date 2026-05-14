@@ -591,7 +591,6 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 			round::execute_round_command(cmd, &mut wallet).await?;
 		},
 		Command::Watch => {
-			let wallet = Arc::new(wallet);
 			let onchain = Arc::new(RwLock::new(onchain));
 			let mut stream = wallet.subscribe_notifications();
 			let _daemon = wallet.start_daemon(Some(onchain))

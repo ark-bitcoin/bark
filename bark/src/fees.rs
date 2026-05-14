@@ -144,7 +144,7 @@ impl Wallet {
 		let (srv, ark_info) = self.require_server().await?;
 		let offboard_feerate = srv.offboard_feerate().await?;
 		let script_buf = address.script_pubkey();
-		let current_height = self.chain.tip().await?;
+		let current_height = self.inner.chain.tip().await?;
 
 		let vtxos = vtxos.into_iter();
 		let capacity = vtxos.size_hint().1.unwrap_or(vtxos.size_hint().0);
@@ -186,7 +186,7 @@ impl Wallet {
 		vtxos: impl IntoIterator<Item = impl AsRef<Vtxo<G>>>,
 	) -> anyhow::Result<FeeEstimate> {
 		let (_, ark_info) = self.require_server().await?;
-		let current_height = self.chain.tip().await?;
+		let current_height = self.inner.chain.tip().await?;
 
 		let vtxos = vtxos.into_iter();
 		let capacity = vtxos.size_hint().1.unwrap_or(vtxos.size_hint().0);

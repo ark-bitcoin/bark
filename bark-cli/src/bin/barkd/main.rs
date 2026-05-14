@@ -316,7 +316,6 @@ async fn main() -> anyhow::Result<()>{
 	};
 
 	let wallet_opt = if let Some((wallet, onchain)) = open_wallet(&datadir).await? {
-		let wallet = Arc::new(wallet);
 		let onchain = Arc::new(RwLock::new(onchain));
 
 		wallet.start_daemon(Some(onchain.clone()))?;
@@ -341,7 +340,6 @@ async fn main() -> anyhow::Result<()>{
 				let (wallet, onchain) = open_wallet(&datadir).await?
 					.expect("Wallet should exist");
 
-				let wallet = Arc::new(wallet);
 				let onchain = Arc::new(RwLock::new(onchain));
 
 				// Warm up `wallet.server` before spawning the daemon so

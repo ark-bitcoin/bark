@@ -44,12 +44,12 @@ const MAX_MAILBOX_REQUEST_BURST: usize = 10;
 impl Wallet {
 	/// Get the keypair used for the server mailbox
 	pub fn mailbox_keypair(&self) -> Keypair {
-		self.seed.to_mailbox_keypair()
+		self.inner.seed.to_mailbox_keypair()
 	}
 
 	/// Get the keypair used for the server recovery mailbox
 	pub fn recovery_mailbox_keypair(&self) -> Keypair {
-		self.seed.to_recovery_mailbox_keypair()
+		self.inner.seed.to_recovery_mailbox_keypair()
 	}
 
 	/// Get this wallet's server mailbox ID
@@ -304,7 +304,7 @@ impl Wallet {
 		let mut new_vtxos = Vec::with_capacity(vtxos.len());
 		for vtxo in &vtxos {
 			// Skip if already in wallet
-			if self.db.get_wallet_vtxo(vtxo.id()).await?.is_some() {
+			if self.inner.db.get_wallet_vtxo(vtxo.id()).await?.is_some() {
 				debug!("Ignoring duplicate arkoor VTXO {}", vtxo.id());
 				continue;
 			}
@@ -348,7 +348,7 @@ impl Wallet {
 			.map(|(addr, amount)| MovementDestination::ark(addr.clone(), *amount))
 			.collect();
 
-		let movement_id = self.movements.new_finished_movement(
+		let movement_id = self.inner.movements.new_finished_movement(
 			Subsystem::ARKOOR,
 			ArkoorMovement::Receive.to_string(),
 			MovementStatus::Successful,
@@ -444,10 +444,10 @@ impl Wallet {
 	/// has consumed up to. After a successful [`Self::sync_mailbox`], this value
 	/// reflects the server's latest advertised tip.
 	pub async fn get_mailbox_checkpoint(&self) -> anyhow::Result<u64> {
-		Ok(self.db.get_mailbox_checkpoint().await?)
+		Ok(self.inner.db.get_mailbox_checkpoint().await?)
 	}
 
 	async fn store_mailbox_checkpoint(&self, checkpoint: u64) -> anyhow::Result<()> {
-		Ok(self.db.store_mailbox_checkpoint(checkpoint).await?)
+		Ok(self.inner.db.store_mailbox_checkpoint(checkpoint).await?)
 	}
 }

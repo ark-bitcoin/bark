@@ -58,7 +58,7 @@ impl ExitStateProgress for ExitStartState {
 		info!("Validated VTXO {}, exit process can now begin", id);
 
 		Ok(ExitState::new_processing(
-			ctx.wallet.chain.tip().await.unwrap_or(self.tip_height),
+			ctx.wallet.inner.chain.tip().await.unwrap_or(self.tip_height),
 			ctx.exit_txids.iter().cloned(),
 		))
 	}
@@ -357,7 +357,7 @@ impl ExitStateProgress for ExitClaimableState {
 
 		// Check if the VTXO exit has been spent
 		let point = ctx.vtxo.point();
-		let result = ctx.wallet.chain
+		let result = ctx.wallet.inner.chain
 			.txs_spending_inputs(
 				vec![point],
 				scan_height,

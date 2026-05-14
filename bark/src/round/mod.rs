@@ -889,16 +889,16 @@ async fn check_funding_tx_confirmations(
 	funding_txid: Txid,
 	funding_tx: &Transaction,
 ) -> anyhow::Result<bool> {
-	let tip = wallet.chain.tip().await.context("chain source error")?;
-	let conf_height = tip - wallet.config.round_tx_required_confirmations + 1;
-	let tx_status = wallet.chain.tx_status(funding_txid).await.context("chain source error")?;
+	let tip = wallet.inner.chain.tip().await.context("chain source error")?;
+	let conf_height = tip - wallet.inner.config.round_tx_required_confirmations + 1;
+	let tx_status = wallet.inner.chain.tx_status(funding_txid).await.context("chain source error")?;
 	trace!("Round funding tx {} confirmation status: {:?} (tip={})",
 		funding_txid, tx_status, tip,
 	);
 	match tx_status {
 		TxStatus::Confirmed(b) if b.height <= conf_height => Ok(true),
 		TxStatus::Mempool | TxStatus::Confirmed(_) => {
-			if wallet.config.round_tx_required_confirmations == 0 {
+			if wallet.inner.config.round_tx_required_confirmations == 0 {
 				debug!("Accepting round funding tx without confirmations because of configuration");
 				Ok(true)
 			} else {
@@ -911,7 +911,7 @@ async fn check_funding_tx_confirmations(
 			//TODO(stevenroose) change this to an explicit "testmempoolaccept" so that we can
 			// reliably distinguish the cases of our chain source having issues and the tx
 			// actually being rejected which suggests the round was double-spent
-			if let Err(e) = wallet.chain.broadcast_tx(&funding_tx).await {
+			if let Err(e) = wallet.inner.chain.broadcast_tx(&funding_tx).await {
 				Err(anyhow!("hark funding tx {} server sent us is rejected by mempool (hex={}): {:#}",
 					funding_txid, serialize_hex(funding_tx), e,
 				))
@@ -1063,7 +1063,7 @@ async fn progress_attempt(
 				));
 			}
 
-			if let Err(e) = wallet.chain.broadcast_tx(&signed_round_tx).await {
+			if let Err(e) = wallet.inner.chain.broadcast_tx(&signed_round_tx).await {
 				warn!("Failed to broadcast signed round tx: {:#}", e);
 			}
 
@@ -1222,7 +1222,7 @@ async fn persist_round_success(
 	let spent_result = wallet.mark_vtxos_as_spent(&participation.inputs).await
 		.context("failed to mark input VTXOs as spent");
 	let update_result = if let Some(mid) = movement_id {
-		wallet.movements.finish_movement_with_update(
+		wallet.inner.movements.finish_movement_with_update(
 			mid,
 			MovementStatus::Successful,
 			MovementUpdate::new()
@@ -1248,7 +1248,7 @@ async fn persist_round_failure(
 	debug!("Attempting to persist the failure of a round with the movement ID {:?}", movement_id);
 	let unlock_result = wallet.unlock_vtxos(&participation.inputs).await;
 	let finish_result = if let Some(movement_id) = movement_id {
-		wallet.movements.finish_movement(movement_id, MovementStatus::Failed).await
+		wallet.inner.movements.finish_movement(movement_id, MovementStatus::Failed).await
 	} else {
 		Ok(())
 	};
@@ -1267,7 +1267,7 @@ async fn update_funding_txid(
 	movement_id: MovementId,
 	funding_txid: Txid,
 ) -> anyhow::Result<()> {
-	wallet.movements.update_movement(
+	wallet.inner.movements.update_movement(
 		movement_id,
 		MovementUpdate::new()
 			.metadata([("funding_txid".into(), serde_json::to_value(&funding_txid)?)])
@@ -1280,7 +1280,7 @@ impl Wallet {
 	/// Returns `Some(state)` if the round state is found and locked, `None`
 	/// if it is not found after acquiring the lock.
 	pub async fn lock_wait_round_state(&self, id: RoundStateId) -> anyhow::Result<Option<StoredRoundState>> {
-		let guard = self.lock_manager.lock(
+		let guard = self.inner.lock_manager.lock(
 			&format!("{}.round.{}", self.fingerprint(), id),
 			ROUND_LOCK_TIMEOUT,
 		).await.with_context(|| format!(
@@ -1288,7 +1288,7 @@ impl Wallet {
 			id, self.fingerprint(),
 		))?;
 
-		if let Some(state) = self.db.get_round_state_by_id(id).await? {
+		if let Some(state) = self.inner.db.get_round_state_by_id(id).await? {
 			return Ok(Some(state.lock(guard)));
 		}
 
@@ -1316,7 +1316,7 @@ impl Wallet {
 		movement_kind: Option<RoundMovement>,
 	) -> anyhow::Result<StoredRoundState> {
 		let movement_id = if let Some(kind) = movement_kind {
-			Some(self.movements.new_movement_with_update(
+			Some(self.inner.movements.new_movement_with_update(
 				Subsystem::ROUND,
 				kind.to_string(),
 				participation.to_movement_update()?
@@ -1326,7 +1326,7 @@ impl Wallet {
 		};
 		let state = RoundState::new_interactive(participation, movement_id);
 
-		let id = self.db.store_round_state_lock_vtxos(&state).await?;
+		let id = self.inner.db.store_round_state_lock_vtxos(&state).await?;
 		let state = self.lock_wait_round_state(id).await?
 			.context("failed to lock fresh round state")?;
 
@@ -1342,7 +1342,7 @@ impl Wallet {
 		let (mut srv, _) = self.require_server().await?;
 
 		let movement_id = if let Some(kind) = movement_kind {
-			Some(self.movements.new_movement_with_update(
+			Some(self.inner.movements.new_movement_with_update(
 				Subsystem::ROUND, kind.to_string(), participation.to_movement_update()?,
 			).await?)
 		} else {
@@ -1398,21 +1398,21 @@ impl Wallet {
 			(and has sufficient confirmations).",
 		);
 
-		let id = self.db.store_round_state_lock_vtxos(&state).await?;
+		let id = self.inner.db.store_round_state_lock_vtxos(&state).await?;
 		Ok(StoredRoundState::new(id, state))
 	}
 
 	/// Get all pending round states
 	pub async fn pending_round_state_ids(&self) -> anyhow::Result<Vec<RoundStateId>> {
-		self.db.get_pending_round_state_ids().await
+		self.inner.db.get_pending_round_state_ids().await
 	}
 
 	/// Get all pending round states
 	pub async fn pending_round_states(&self) -> anyhow::Result<Vec<StoredRoundState<Unlocked>>> {
-		let ids = self.db.get_pending_round_state_ids().await?;
+		let ids = self.inner.db.get_pending_round_state_ids().await?;
 		let mut states = Vec::with_capacity(ids.len());
 		for id in ids {
-			if let Some(state) = self.db.get_round_state_by_id(id).await? {
+			if let Some(state) = self.inner.db.get_round_state_by_id(id).await? {
 				states.push(state);
 			}
 		}
@@ -1475,30 +1475,30 @@ impl Wallet {
 			match status {
 				Ok(RoundStatus::Confirmed { funding_txid }) => {
 					info!("Round confirmed. Funding tx {}", funding_txid);
-					if let Err(e) = self.db.remove_round_state(&state).await {
+					if let Err(e) = self.inner.db.remove_round_state(&state).await {
 						warn!("Error removing confirmed round state from db: {:#}", e);
 					}
 				},
 				Ok(RoundStatus::Unconfirmed { funding_txid }) => {
 					info!("Waiting for confirmations for round funding tx {}", funding_txid);
-					if let Err(e) = self.db.update_round_state(&state).await {
+					if let Err(e) = self.inner.db.update_round_state(&state).await {
 						warn!("Error updating pending round state in db: {:#}", e);
 					}
 				},
 				Ok(RoundStatus::Pending) => {
-					if let Err(e) = self.db.update_round_state(&state).await {
+					if let Err(e) = self.inner.db.update_round_state(&state).await {
 						warn!("Error updating pending round state in db: {:#}", e);
 					}
 				},
 				Ok(RoundStatus::Failed { error }) => {
 					error!("Round failed: {}", error);
-					if let Err(e) = self.db.remove_round_state(&state).await {
+					if let Err(e) = self.inner.db.remove_round_state(&state).await {
 						warn!("Error removing failed round state from db: {:#}", e);
 					}
 				},
 				Ok(RoundStatus::Canceled) => {
 					error!("Round canceled");
-					if let Err(e) = self.db.remove_round_state(&state).await {
+					if let Err(e) = self.inner.db.remove_round_state(&state).await {
 						warn!("Error removing canceled round state from db: {:#}", e);
 					}
 				},
@@ -1524,7 +1524,7 @@ impl Wallet {
 		if let Some(event) = event && state.state().ongoing_participation() {
 			let updated = state.state_mut().process_event(self, &event).await;
 			if updated {
-				if let Err(e) = self.db.update_round_state(&state).await {
+				if let Err(e) = self.inner.db.update_round_state(&state).await {
 					error!("Error storing round state #{} after progress: {:#}", state.id(), e);
 				}
 			}
@@ -1534,13 +1534,13 @@ impl Wallet {
 			Err(e) => warn!("Error syncing round #{}: {:#}", state.id(), e),
 			Ok(s) if s.is_final() => {
 				info!("Round #{} finished with result: {:?}", state.id(), s);
-				if let Err(e) = self.db.remove_round_state(&state).await {
+				if let Err(e) = self.inner.db.remove_round_state(&state).await {
 					warn!("Failed to remove finished round #{} from db: {:#}", state.id(), e);
 				}
 			},
 			Ok(s) => {
 				trace!("Round state #{} is now in state {:?}", state.id(), s);
-				if let Err(e) = self.db.update_round_state(&state).await {
+				if let Err(e) = self.inner.db.update_round_state(&state).await {
 					warn!("Error storing round state #{}: {:#}", state.id(), e);
 				}
 			},
@@ -1648,7 +1648,7 @@ impl Wallet {
 	/// as well as rounds where we have not yet signed any forfeit txs.
 	pub async fn cancel_all_pending_rounds(&self) -> anyhow::Result<()> {
 		// initial load to get all pending round states ids
-		let state_ids = self.db.get_pending_round_state_ids().await?;
+		let state_ids = self.inner.db.get_pending_round_state_ids().await?;
 
 		let futures = state_ids.into_iter().map(|state_id| {
 			async move {
@@ -1661,7 +1661,7 @@ impl Wallet {
 
 				match state.state_mut().try_cancel(self).await {
 					Ok(true) => {
-						if let Err(e) = self.db.remove_round_state(&state).await {
+						if let Err(e) = self.inner.db.remove_round_state(&state).await {
 							warn!("Error removing canceled round state from db: {:#}", e);
 						}
 					},
@@ -1682,7 +1682,7 @@ impl Wallet {
 			.context("round state not found")?;
 
 		if state.state_mut().try_cancel(self).await.context("failed to cancel round")? {
-			self.db.remove_round_state(&state).await
+			self.inner.db.remove_round_state(&state).await
 				.context("error removing canceled round state from db")?;
 		} else {
 			bail!("failed to cancel round");
@@ -1721,7 +1721,7 @@ impl Wallet {
 				.context("events stream broke")?
 				.context("error on event stream")?;
 			if state.state_mut().process_event(self, &event).await {
-				self.db.update_round_state(&state).await?;
+				self.inner.db.update_round_state(&state).await?;
 			}
 		}
 	}

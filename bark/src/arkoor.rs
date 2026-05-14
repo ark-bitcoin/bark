@@ -95,7 +95,7 @@ impl Wallet {
 		// Hydrate the inputs to their full form: the arkoor builder needs
 		// the genesis chain and the server registration call sends the
 		// full bytes over the wire.
-		let inputs = self.db.get_full_vtxos(&input_ids).await
+		let inputs = self.inner.db.get_full_vtxos(&input_ids).await
 			.context("failed to hydrate arkoor input vtxos")?;
 
 		// Pre-register the input chains so the post-cosign register call
@@ -152,7 +152,7 @@ impl Wallet {
 
 		if !change.is_empty() {
 			// Change was created, so now store the keypair
-			self.db.store_vtxo_key(change_key_index, change_pubkey).await?;
+			self.inner.db.store_vtxo_key(change_key_index, change_pubkey).await?;
 		}
 
 		Ok(ArkoorCreateResult {
@@ -203,7 +203,7 @@ impl Wallet {
 			warn!("Failed to register arkoor output vtxo transactions with server: {:#}", e);
 		}
 
-		let mut movement = self.movements.new_guarded_movement_with_update(
+		let mut movement = self.inner.movements.new_guarded_movement_with_update(
 			Subsystem::ARKOOR,
 			ArkoorMovement::Send.to_string(),
 			OnDropStatus::Failed,
