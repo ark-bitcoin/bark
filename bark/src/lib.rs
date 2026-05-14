@@ -338,6 +338,7 @@ pub use self::fees::FeeEstimate;
 pub use self::notification::{WalletNotification, NotificationStream};
 pub use self::vtxo::WalletVtxo;
 
+use std::borrow::Cow;
 use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
@@ -886,8 +887,11 @@ impl Wallet {
 	/// * `Err(anyhow::Error)` - If the corresponding public key doesn't exist
 	///   in the database or a database error occurred.
 	pub async fn get_vtxo_key(&self, vtxo: impl VtxoRef) -> anyhow::Result<Keypair> {
-		let wallet_vtxo = self.get_vtxo_by_id(vtxo.vtxo_id()).await?;
-		let pubkey = self.find_signable_clause(&wallet_vtxo.vtxo).await
+		let bare_vtxo = match vtxo.as_bare_vtxo() {
+			Some(bare) => bare,
+			None => Cow::Owned(self.get_vtxo_by_id(vtxo.vtxo_id()).await?.vtxo),
+		};
+		let pubkey = self.find_signable_clause(&bare_vtxo).await
 			.context("VTXO is not signable by wallet")?
 			.pubkey();
 		let idx = self.db.get_public_key_idx(&pubkey).await?
