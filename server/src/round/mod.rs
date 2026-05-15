@@ -40,7 +40,7 @@ use crate::{telemetry, Server, SECP};
 use crate::error::{ContextExt, NotFound};
 use crate::flux::{VtxoFluxGuard, OwnedVtxoFluxGuard};
 use crate::telemetry::{RoundStep, TimedRoundStep};
-use crate::utils::InstrumentedOwnedLockGuard;
+use crate::utils::InstrumentedLock;
 use crate::wallet::{BdkWalletExt, PersistedWallet, WalletUtxoGuard};
 
 use self::funding::{UnsignedFundingTx, FundingTxSpec};
@@ -778,7 +778,7 @@ impl CollectingPayments {
 			vec![self.cosign_key.public_key()],
 		);
 
-		let (funding_tx, wallet_lock) = FundingTxSpec {
+		let funding_tx = FundingTxSpec {
 			tree_output: TxOut {
 				script_pubkey: vtxos_spec.funding_tx_script_pubkey(),
 				value: vtxos_spec.total_required_value(),
@@ -846,6 +846,7 @@ impl CollectingPayments {
 			.collect::<Vec<_>>();
 
 		Ok(SigningVtxoTree {
+			rounds_wallet: srv.rounds_wallet.clone(),
 			round_data: self.round_data,
 			expiry_height,
 			cosign_key: self.cosign_key,
@@ -857,7 +858,6 @@ impl CollectingPayments {
 			interactive_participants: self.interactive_participants,
 			cosign_part_sigs: HashMap::with_capacity(unsigned_vtxo_tree.nb_leaves()),
 			unsigned_vtxo_tree,
-			wallet_lock,
 			funding_tx,
 			user_cosign_nonces,
 			inputs_per_cosigner: self.inputs_per_cosigner,
@@ -880,6 +880,8 @@ enum ProcessHarkParticipationError {
 }
 
 pub struct SigningVtxoTree {
+	rounds_wallet: InstrumentedLock<PersistedWallet>,
+
 	round_data: RoundData,
 	expiry_height: BlockHeight,
 
@@ -889,7 +891,6 @@ pub struct SigningVtxoTree {
 	cosign_part_sigs: HashMap<PublicKey, Vec<musig::PartialSignature>>,
 	cosign_agg_nonces: Vec<musig::AggregatedNonce>,
 	unsigned_vtxo_tree: UnsignedVtxoTree,
-	wallet_lock: InstrumentedOwnedLockGuard<PersistedWallet>,
 	funding_tx: UnsignedFundingTx,
 
 	// data from earlier
@@ -1020,11 +1021,15 @@ impl SigningVtxoTree {
 		persist_round(&mut self, srv, &signed_vtxos).await?;
 
 		// Sign the funding tx.
-		let signed_round_tx = sign_funding_tx(&mut self).await?;
+		let signed_round_tx = {
+			let mut wallet = self.rounds_wallet.lock().await;
+			self.funding_tx.sign(&mut wallet)
+				.map_err(|e| RoundError::Recoverable(e))?
+		};
 
 		// Persist the signed funding tx to the database.
 		let update = VtxoTreeUpdate::new()
-			.upsert_funding_tx(&signed_round_tx);
+			.upsert_funding_tx(&signed_round_tx.tx);
 		srv.db.write(async |t| t.execute_vtxo_tree_update(update).await).await
 			.map_err(|e| RoundError::Fatal(e.context("failed to upsert signed funding tx")))?;
 
@@ -1032,23 +1037,26 @@ impl SigningVtxoTree {
 			round_seq: self.round_step.round_seq(),
 			attempt_seq: self.round_step.attempt_seq(),
 			cosign_sigs: signed_vtxos.spec.cosign_sigs.clone(),
-			signed_round_tx: signed_round_tx.clone(),
+			signed_round_tx: signed_round_tx.tx.clone(),
 		};
 
 		// Persist the signed tx to BDK wallet.
-		self.wallet_lock.commit_tx(&signed_round_tx);
-		if let Err(e) = self.wallet_lock.persist().await {
-			warn!("Failed to persist BDK wallet to db: {:?}", e);
+		{
+			let mut wallet_lock = self.rounds_wallet.lock().await;
+			wallet_lock.commit_tx(&signed_round_tx.tx);
+			if let Err(e) = wallet_lock.persist().await {
+				warn!("Failed to persist BDK wallet to db: {:?}", e);
+			}
 		}
 
 		// Broadcast the transaction.
-		if let Err(e) = srv.tx_nursery.broadcast_tx(signed_round_tx).await {
+		if let Err(e) = srv.tx_nursery.broadcast_tx(signed_round_tx.tx).await {
 			warn!("Failed to broadcast round tx: {:?}", e);
 		}
 
 		server_rslog!(BroadcastRoundFundingTx, self.round_step,
-			txid: self.funding_tx.txid(),
-			round_tx_fee: self.funding_tx.fee(),
+			txid: signed_round_tx.txid,
+			round_tx_fee: signed_round_tx.fee,
 		);
 
 		Ok(finished)
@@ -1072,25 +1080,6 @@ fn create_signed_vtxo_tree(
 	telemetry::set_round_step_duration(round_step);
 
 	signed_vtxos
-}
-
-#[tracing::instrument(
-	skip(state),
-	name = "SignFundingTx",
-	fields(
-		{ telemetry::ATTRIBUTE_ROUND_SEQ } = %state.round_step.round_seq(),
-		{ telemetry::ATTRIBUTE_ATTEMPT_SEQ } = state.round_step.attempt_seq(),
-	)
-)]
-async fn sign_funding_tx(
-	state: &mut SigningVtxoTree,
-) -> Result<bitcoin::Transaction, RoundError> {
-	let signed_round_tx = match state.wallet_lock.finish_tx(state.funding_tx.psbt().clone()) {
-		Ok(tx) => tx,
-		Err(e) => return Err(RoundError::Recoverable(e.context("funding tx signing error"))),
-	};
-
-	Ok(signed_round_tx)
 }
 
 #[tracing::instrument(

@@ -15,7 +15,7 @@ use bitcoin::{Amount, FeeRate, OutPoint, Psbt, Transaction, TxOut, Txid};
 
 use ark::rounds::ROUND_TX_VTXO_TREE_VOUT;
 
-use crate::utils::{InstrumentedLock, InstrumentedOwnedLockGuard};
+use crate::utils::InstrumentedLock;
 use crate::wallet::{PersistedWallet, WalletUtxoGuard, WalletUtxosGuard};
 
 /// Inputs needed to build a funding tx. Pass to [`FundingTxSpec::build`]
@@ -42,11 +42,11 @@ impl FundingTxSpec {
 	pub async fn build(
 		self,
 		wallet: &InstrumentedLock<PersistedWallet>,
-	) -> anyhow::Result<(UnsignedFundingTx, InstrumentedOwnedLockGuard<PersistedWallet>)> {
+	) -> anyhow::Result<UnsignedFundingTx> {
 		let mut wallet_lock = wallet.lock_owned().await;
 		tokio::task::spawn_blocking(move || -> anyhow::Result<_> {
 			let funding_tx = self.compute_build(&mut wallet_lock)?;
-			Ok((funding_tx, wallet_lock))
+			Ok(funding_tx)
 		}).await
 			.context("funding tx build task panicked")?
 	}
@@ -153,7 +153,31 @@ impl UnsignedFundingTx {
 	pub fn into_pinned_input(self) -> WalletUtxoGuard {
 		self.pinned_input
 	}
+
+	pub fn sign(self, wallet: &mut PersistedWallet) -> anyhow::Result<SignedFundingTx> {
+		match wallet.finish_tx(self.psbt().clone()) {
+			Ok(tx) => Ok(SignedFundingTx {
+				tx,
+				txid: self.txid,
+				fee: self.fee(),
+				pinned_input: self.pinned_input,
+				_extra_inputs: self._extra_inputs,
+			}),
+			Err(e) => bail!("Failed to sign funding transaction: {:?}", e),
+		}
+	}
 }
+
+pub struct SignedFundingTx {
+	pub tx: Transaction,
+	pub txid: Txid,
+	pub fee: Amount,
+	pub pinned_input: WalletUtxoGuard,
+	/// Held only for its Drop impl: releases the locks on the extra inputs
+	/// when this `FundingTx` is dropped (e.g. on round restart).
+	pub _extra_inputs: WalletUtxosGuard,
+}
+
 
 
 
