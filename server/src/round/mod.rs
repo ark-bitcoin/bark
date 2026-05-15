@@ -43,7 +43,7 @@ use crate::telemetry::{RoundStep, TimedRoundStep};
 use crate::utils::InstrumentedOwnedLockGuard;
 use crate::wallet::{BdkWalletExt, PersistedWallet, WalletUtxoGuard};
 
-use self::funding::{FundingTx, FundingTxSpec};
+use self::funding::{UnsignedFundingTx, FundingTxSpec};
 
 #[macro_export]
 macro_rules! server_rslog {
@@ -890,7 +890,7 @@ pub struct SigningVtxoTree {
 	cosign_agg_nonces: Vec<musig::AggregatedNonce>,
 	unsigned_vtxo_tree: UnsignedVtxoTree,
 	wallet_lock: InstrumentedOwnedLockGuard<PersistedWallet>,
-	funding_tx: FundingTx,
+	funding_tx: UnsignedFundingTx,
 
 	// data from earlier
 	all_inputs: HashMap<VtxoId, Vtxo<Full>>,

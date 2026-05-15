@@ -42,7 +42,7 @@ impl FundingTxSpec {
 	pub async fn build(
 		self,
 		wallet: &InstrumentedLock<PersistedWallet>,
-	) -> anyhow::Result<(FundingTx, InstrumentedOwnedLockGuard<PersistedWallet>)> {
+	) -> anyhow::Result<(UnsignedFundingTx, InstrumentedOwnedLockGuard<PersistedWallet>)> {
 		let mut wallet_lock = wallet.lock_owned().await;
 		tokio::task::spawn_blocking(move || -> anyhow::Result<_> {
 			let funding_tx = self.compute_build(&mut wallet_lock)?;
@@ -54,7 +54,7 @@ impl FundingTxSpec {
 	/// Build the funding tx synchronously. Blocks the calling thread on
 	/// bdk's coin selection; in an async context prefer
 	/// [`FundingTxSpec::build`].
-	fn compute_build(self, wallet: &mut PersistedWallet) -> anyhow::Result<FundingTx> {
+	fn compute_build(self, wallet: &mut PersistedWallet) -> anyhow::Result<UnsignedFundingTx> {
 		let start = std::time::Instant::now();
 
 
@@ -106,14 +106,14 @@ impl FundingTxSpec {
 			pinned_input: pinned_input.utxo(),
 			build_time: start.elapsed(),
 		);
-		Ok(FundingTx { psbt, txid, pinned_input, _extra_inputs })
+		Ok(UnsignedFundingTx { psbt, txid, pinned_input, _extra_inputs })
 	}
 }
 
 
 /// A round's funding transaction with the lock guards on every input it
 /// consumes. Built by [`FundingTxSpec::build`].
-pub struct FundingTx {
+pub struct UnsignedFundingTx {
 	psbt: Psbt,
 	txid: Txid,
 	pinned_input: WalletUtxoGuard,
@@ -122,7 +122,7 @@ pub struct FundingTx {
 	_extra_inputs: WalletUtxosGuard,
 }
 
-impl FundingTx {
+impl UnsignedFundingTx {
 	pub fn psbt(&self) -> &Psbt {
 		&self.psbt
 	}
@@ -154,5 +154,7 @@ impl FundingTx {
 		self.pinned_input
 	}
 }
+
+
 
 
