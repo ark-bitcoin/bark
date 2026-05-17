@@ -3,8 +3,9 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
+use ark::rounds::RoundEvent;
 use futures::{FutureExt, StreamExt};
-use log::{info, warn};
+use log::{info, trace, warn};
 use tokio::sync::RwLock;
 #[cfg(not(feature = "wasm-web"))]
 use tokio::task::JoinHandle;
@@ -181,56 +182,61 @@ impl DaemonProcess {
 		}
 	}
 
-	/// Subscribe to round event stream and process each incoming event.
-	///
-	/// A successful subscription also signals server connectivity — the
-	/// `connected` flag is set to `true` once the stream opens and back
-	/// to `false` when it breaks.
-	async fn inner_process_pending_rounds(&self) -> anyhow::Result<()> {
-		'reconnect: loop {
-			let mut events = self.wallet.subscribe_round_events().await?;
-			let connected_at = std::time::Instant::now();
-			self.connected.store(true, Ordering::Relaxed);
+	async fn handle_round_event(&self, event: &RoundEvent) -> anyhow::Result<()> {
+		self.wallet.progress_pending_rounds(Some(event)).await
+	}
 
-			loop {
-				futures::select! {
-					res = events.next().fuse() => {
-						match res {
-							Some(Ok(event)) => {
-								self.wallet.progress_pending_rounds(Some(&event)).await?;
-							},
-							Some(Err(e)) => {
-								bail!("error on event stream: {e:#}");
-							},
-							None if connected_at.elapsed() >= crate::HEALTHY_STREAM_DURATION => {
-								info!("Round events stream closed after healthy session, reconnecting");
-								continue 'reconnect;
-							},
-							None => {
-								bail!("events stream broke");
-							},
-						}
-					},
-					_ = self.shutdown.cancelled().fuse() => {
-						info!("Shutdown signal received! Shutting inner round events process...");
-						return Ok(());
-					},
-				}
+	/// Subscribe to the round event stream and process events
+	/// until it closes or the daemon shuts down.
+	async fn process_round_event_stream(&self) -> anyhow::Result<()> {
+		let mut events = self.wallet.subscribe_round_events().await?;
+		self.connected.store(true, Ordering::Relaxed);
+
+		loop {
+			futures::select! {
+				res = events.next().fuse() => {
+					match res {
+						Some(Ok(event)) => {
+							if let Err(e) = self.handle_round_event(&event).await {
+								warn!("Error processing round event: {e:#}");
+							}
+						},
+						Some(Err(e)) => {
+							return Err(e.context("error on event stream"));
+						},
+						None => {
+							return Ok(());
+						},
+					}
+				},
+				_ = self.shutdown.cancelled().fuse() => {
+					info!("Shutdown signal received! Shutting round events stream...");
+					return Ok(());
+				},
 			}
 		}
 	}
 
-	/// Recursively resubscribe to round event stream by waiting and
-	/// calling [Self::inner_process_pending_rounds] again until
-	/// the daemon is shutdown.
+	/// Keep the round events subscription alive for the
+	/// lifetime of the daemon, reconnecting as needed.
 	async fn run_round_events_process(&self) {
 		loop {
-			if self.connected.load(Ordering::Relaxed) {
-				if let Err(e) = self.inner_process_pending_rounds().await {
-					warn!("An error occured while processing pending rounds: {e:#}");
-					self.connected.store(false, Ordering::Relaxed);
-				}
+			if self.shutdown.is_cancelled() {
+				info!("Shutdown signal received! Shutting round events process...");
+				break;
 			}
+
+			let started_at = std::time::Instant::now();
+			if let Err(e) = self.process_round_event_stream().await {
+				warn!("An error occured while processing pending rounds: {e:#}");
+			}
+
+			if started_at.elapsed() >= crate::HEALTHY_STREAM_DURATION {
+				trace!("Round events stream closed after healthy session, reconnecting");
+				continue;
+			}
+
+			self.connected.store(false, Ordering::Relaxed);
 
 			futures::select! {
 				_ = tokio::time::sleep(self.sync_interval()).fuse() => {},
