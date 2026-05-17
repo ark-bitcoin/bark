@@ -1,4 +1,3 @@
-
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
@@ -151,22 +150,6 @@ impl DaemonProcess {
 		}
 	}
 
-	/// Perform library built-in maintenance refresh
-	async fn run_maintenance_refresh_process(&self) {
-		match self.wallet.maybe_schedule_maintenance_refresh().await {
-			Ok(Some(round_state_id)) => {
-				info!("Performing maintenance refresh in round {}",
-					round_state_id,
-				);
-				// Round participation is created, it will be picked up by the round events process
-			},
-			Ok(None) => {},
-			Err(e) => {
-				warn!("An error occured while scheduling maintenance refresh: {e:#}");
-			},
-		}
-	}
-
 	/// Progress any ongoing unilateral exits and sync the exit statuses
 	async fn run_exits(&self) {
 		if let Some(onchain) = &self.onchain {
@@ -183,6 +166,19 @@ impl DaemonProcess {
 	}
 
 	async fn handle_round_event(&self, event: &RoundEvent) -> anyhow::Result<()> {
+		// Do a refresh if you need to
+		match &event {
+			&RoundEvent::Attempt(attempt) => {
+				if attempt.attempt_seq == 0 {
+					match self.wallet.maybe_schedule_maintenance_refresh().await {
+						Ok(_) => {},
+						Err(err) => warn!("Failed to schedule maintenance refresh: {:?}", err),
+					}
+				};
+			},
+			_ => {},
+		};
+
 		self.wallet.progress_pending_rounds(Some(event)).await
 	}
 
@@ -288,7 +284,6 @@ impl DaemonProcess {
 						self.run_fee_rate_update().await;
 						self.run_boards_sync().await;
 						self.run_offboards_sync().await;
-						self.run_maintenance_refresh_process().await;
 					}
 					self.run_onchain_sync().await;
 					self.run_rounds_sync().await;
