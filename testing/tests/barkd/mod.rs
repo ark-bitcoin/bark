@@ -5,4 +5,5 @@ mod helpers;
 mod lightning;
 mod notifications;
 mod onchain;
+mod rounds;
 mod vtxo;
