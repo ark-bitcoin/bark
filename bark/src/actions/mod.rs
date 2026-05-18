@@ -10,10 +10,13 @@
 use std::time::Duration;
 
 use log::{debug, trace, warn};
+use server_rpc::StatusExt;
 
 use crate::vtxo::{VtxoState, VtxoStateKind};
 use crate::{Wallet, WalletVtxo};
 use crate::lock_manager::LockGuard;
+
+pub(crate) const BASE_RETRY_BACKOFF: Duration = Duration::from_secs(1);
 
 /// Tagged union of every kind of checkpoint the wallet persists.
 ///
@@ -60,7 +63,7 @@ pub enum Advance<A> {
 	Park {
 		state: A,
 		wake_after: Option<Duration>,
-		error: Option<anyhow::Error>,
+		error: Option<AdvanceError>,
 	},
 	/// Terminal: executor removes the checkpoint row. Any permanent fact
 	/// the action wants to retain (e.g. an "invoice paid" record) must
@@ -68,12 +71,36 @@ pub enum Advance<A> {
 	Done,
 	/// Terminal: executor removes the checkpoint row because of a fatal error.
 	/// This advance should only be returned when no server change occured yet
-	/// or when process has checked server status is expected one and it is not.
+	/// or when process has checked server status is expected one and it is
+	/// safe to remove checkpoint
 	Failed(anyhow::Error),
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum AdvanceError {
+	#[error("An error occurred while communicating with the server: {0}")]
+	Server(tonic::Status),
+	#[error("An error occurred while processing the action: {0}")]
+	Other(#[from] anyhow::Error),
+}
+
+impl AdvanceError {
+	pub fn is_server_rejection(&self) -> bool {
+		match self {
+			AdvanceError::Server(err) => err.is_rejection(),
+			_ => false,
+		}
+	}
 }
 
 pub fn lock_key<A: WalletAction>(id: &WalletActionId) -> String {
 	format!("{}.{}", A::namespace(), id)
+}
+
+pub fn park_with_backoff<A: WalletAction>(state: A, attempts: u32) -> Advance<A> {
+	let delay = attempts.pow(2) * BASE_RETRY_BACKOFF;
+	debug!("action {} retrying; sleeping {:?} before re-drive", state.id(), delay);
+	Advance::Park { state, wake_after: Some(delay), error: None }
 }
 
 /// A wallet action that can be driven step-by-step.
@@ -89,13 +116,23 @@ pub fn lock_key<A: WalletAction>(id: &WalletActionId) -> String {
 ///   be idempotent.
 /// - The `id` returned MUST be stable across calls on the same logical
 ///   action (different states of the same action share an id).
+/// - `on_rejection` MUST be re-entrant for the same reason as
+///   `advance`: it may run partially, crash, and be re-driven against
+///   the state the action subsequently lands in.
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 pub trait WalletAction: Sized + Send + Sync {
 	fn namespace() -> &'static str;
 	fn id(&self) -> WalletActionId;
 
-	async fn advance(self, wallet: &Wallet) -> anyhow::Result<Advance<Self>>;
+	async fn advance(self, wallet: &Wallet) -> Result<Advance<Self>, AdvanceError>;
+
+	async fn on_retry(self, _wallet: &Wallet, attempts: u32) -> anyhow::Result<Advance<Self>> {
+		Ok(park_with_backoff(self, attempts))
+	}
+
+	async fn on_rejection(self, _wallet: &Wallet, _error: AdvanceError)
+		-> anyhow::Result<Advance<Self>>;
 }
 
 /// How aggressively the executor should drive an action.
@@ -142,10 +179,10 @@ impl Wallet {
 		self.unlock_vtxos(vtxos).await
 	}
 
-	/// Cancel a wallet action: release its vtxo locks and remove the
+	/// Finish a wallet action: release its vtxo locks and remove the
 	/// checkpoint row. Intended for manual cleanup of stuck actions;
 	/// the normal terminal path is `Advance::Done` from `advance`.
-	pub async fn cancel_wallet_action(&self, action_id: &WalletActionId) -> anyhow::Result<()> {
+	pub async fn stop_wallet_action(&self, action_id: &WalletActionId) -> anyhow::Result<()> {
 		self.release_action_locks(action_id).await?;
 		self.inner.db.remove_wallet_action_checkpoint(action_id).await?;
 		Ok(())
@@ -191,21 +228,48 @@ impl Wallet {
 	where
 		A: WalletAction + Into<WalletActionCheckpoint> + Clone,
 	{
+		// In-memory counter for transient errors. Lives only for this
+		// drive_action call so the backoff curve resets between drives.
+		let mut retries: u32 = 0;
+
 		loop {
 			let id = action.id();
-			match action.advance(self).await {
-				Ok(Advance::Next(next)) => {
+			// Snapshot for the error path: advance consumes self, and
+			// on_rejection also takes self by value, so we need a
+			// copy around if budget exhausts.
+			let snapshot = action.clone();
+
+			let advance = match action.advance(self).await {
+				Ok(advance) => { advance },
+				Err(e) if e.is_server_rejection() => {
+					warn!("action {} got rejected by server: {:#}", id, e);
+					snapshot.on_rejection(self, e).await.inspect_err(|err| {
+						warn!("action {} on_rejection failed, leaving checkpoint for retry: {:#}", id, err);
+					})?
+				}
+				Err(e) => {
+					retries = retries.saturating_add(1);
+					log::error!("Got error {:?} from action {}, retrying", e, id);
+					snapshot.on_retry(self, retries).await.inspect_err(|err| {
+						warn!("action {} on_retry failed, leaving checkpoint for retry: {:#}", id, err);
+					})?
+				},
+			};
+
+			match advance {
+				Advance::Next(next) => {
+					retries = 0;
 					let checkpoint: WalletActionCheckpoint = next.clone().into();
 					self.inner.db.upsert_wallet_action_checkpoint(&id, &checkpoint).await?;
 					action = next;
 				},
-				Ok(Advance::Park { state, wake_after, error }) => {
+				Advance::Park { state, wake_after, error } => {
 					let checkpoint: WalletActionCheckpoint = state.clone().into();
 					self.inner.db.upsert_wallet_action_checkpoint(&id, &checkpoint).await?;
 					match mode {
 						DriveMode::UntilParkOrDone => {
 							return match error {
-								Some(error) => Err(error),
+								Some(error) => Err(error.into()),
 								None => Ok(()),
 							};
 						},
@@ -220,22 +284,16 @@ impl Wallet {
 						},
 					}
 				},
-				Ok(Advance::Done) => {
-					if let Err(e) = self.release_action_locks(&id).await {
-						warn!("action {} done but couldn't release stale locks: {:#}", id, e);
-					}
-					if let Err(e) = self.inner.db.remove_wallet_action_checkpoint(&id).await {
-						warn!("action {} finished but removal failed: {:#}", id, e);
+				Advance::Done => {
+					if let Err(e) = self.stop_wallet_action(&id).await {
+						warn!("action {} done but couldn't cancel: {:#}", id, e);
 					}
 					return Ok(());
 				},
-				Ok(Advance::Failed(e)) => {
-					if let Err(e) = self.inner.db.remove_wallet_action_checkpoint(&id).await {
-						warn!("action {} failed but removal failed: {:#}", id, e);
+				Advance::Failed(e) => {
+					if let Err(e) = self.stop_wallet_action(&id).await {
+						warn!("action {} failed but couldn't cancel: {:#}", id, e);
 					}
-					return Err(e);
-				},
-				Err(e) => {
 					return Err(e);
 				},
 			}
