@@ -3,7 +3,6 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-use anyhow::Context;
 use futures::{FutureExt, StreamExt};
 use log::{info, warn};
 use tokio::sync::RwLock;
