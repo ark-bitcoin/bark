@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use ark::tree::signed::UnlockHash;
-use bitcoin::{Amount, Txid};
+use bitcoin::{Amount, OutPoint, Txid};
 use bitcoin::secp256k1::PublicKey;
 
 use ark::VtxoId;
@@ -378,3 +378,13 @@ pub struct FatalStoringRound {
 	pub server_duration: Duration,
 }
 impl_slog!(FatalStoringRound, ERROR, "failed to store finished and signed round");
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RoundFundingTxBuilt {
+	#[serde(with = "bitcoin::amount::serde::as_sat")]
+	pub total_output_amount: Amount,
+	pub pinned_input: OutPoint,
+	#[serde(with = "crate::serde_utils::duration_millis")]
+	pub build_time: Duration,
+}
+impl_slog!(RoundFundingTxBuilt, TRACE, "Round funding tx built");
