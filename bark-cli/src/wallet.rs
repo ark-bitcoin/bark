@@ -40,9 +40,10 @@ use log::{debug, info, warn};
 use tonic::transport::Uri;
 
 use bark::{BarkNetwork, Config, Wallet as BarkWallet};
+use bark::lock_manager::{self, LockManager, PidLockError};
+use bark::lock_manager::pid_flock::LOCK_FILE;
 use bark::onchain::OnchainWallet;
 use bark::persist::BarkPersister;
-use bark::pid_lock::LOCK_FILE;
 use bark::persist::sqlite::SqliteClient;
 use bark::persist::adaptor::filestore::FileStorageAdaptor;
 
@@ -71,6 +72,16 @@ pub const AUTH_TOKEN_FILE: &str = "auth_token";
 /// framework during testing; they should be ignored like debug.log.
 const STDOUT_LOG_FILE: &str = "stdout.log";
 const STDERR_LOG_FILE: &str = "stderr.log";
+
+/// Take the datadir lock via [`lock_manager::platform_default`], surfacing
+/// the "already held" case as-is so the CLI prints a clean error.
+fn open_lock_manager(datadir: &Path) -> anyhow::Result<Box<dyn LockManager>> {
+	match lock_manager::platform_default(datadir) {
+		Ok(m) => Ok(m),
+		Err(e) if e.is::<PidLockError>() => Err(e),
+		Err(e) => Err(e.context("failed to acquire datadir lock")),
+	}
+}
 
 /// Options to define the initial bark config
 #[derive(Clone, PartialEq, Eq, Default, clap::Args)]
@@ -405,8 +416,9 @@ async fn try_create_wallet(
 	};
 
 	let mut onchain = OnchainWallet::load_or_create(net.as_bitcoin(), seed, db.clone()).await?;
+	let lock_manager = open_lock_manager(&datadir)?;
 	let wallet = BarkWallet::create_with_onchain(
-		&mnemonic, net.as_bitcoin(), config, db, &onchain, opts.force,
+		&mnemonic, net.as_bitcoin(), config, db, lock_manager, &onchain, opts.force,
 	).await.context("error creating wallet")?;
 
 	// Skip initial block sync if we generated a new wallet.
@@ -456,7 +468,8 @@ pub async fn open_wallet(datadir: &Path) -> anyhow::Result<Option<(BarkWallet, O
 		.context("error loading bark config file")?;
 
 	let bdk_wallet = OnchainWallet::load_or_create(properties.network, seed, db.clone()).await?;
-	let bark_wallet = BarkWallet::open_with_onchain(&mnemonic, db, &bdk_wallet, config).await?;
+	let lock_manager = open_lock_manager(datadir)?;
+	let bark_wallet = BarkWallet::open_with_onchain(&mnemonic, db, &bdk_wallet, config, lock_manager).await?;
 
 	if let Err(e) = bark_wallet.require_chainsource_version().await {
 		warn!("{}", e);

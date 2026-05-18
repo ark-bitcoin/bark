@@ -5,8 +5,8 @@ license = "MIT"
 edition = "2024"
 
 [[bin]]
-name = "pid-lock-holder"
-path = "src/bin/pid-lock-holder.rs"
+name = "lock-holder"
+path = "tests/core/lock-holder.rs"
 
 [[test]]
 name = "server"
@@ -34,7 +34,7 @@ bark-server-log = { path = "../server-log" }
 bark-server-rpc = { path = "../server-rpc", features = ["server"] }
 bark-cln-rpc = { path = "../cln-rpc"}
 bark-json = { path = "../bark-json", features = ["onchain-bdk"] }
-bark-wallet = { path = "../bark", features = ["filestore", "sqlite", "pid-lock", "socks5-proxy"] }
+bark-wallet = { path = "../bark", features = ["filestore", "sqlite", "socks5-proxy"] }
 bark-bitcoin-ext = { path = "../bitcoin-ext" }
 bark-rest = { path = "../bark-rest" }
 bark-rest-client = { path = "../bark-rest-client" }

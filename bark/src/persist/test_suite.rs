@@ -21,7 +21,8 @@ use super::BarkPersister;
 use crate::exit::{ExitState, ExitTxOrigin};
 use crate::movement::{MovementStatus, MovementSubsystem};
 use crate::persist::models::{SerdeRoundState, StoredExit, StoredRoundState, Unlocked};
-use crate::round::RoundStateLockIndex;
+use crate::lock_manager::LockManager;
+use crate::lock_manager::memory::MemoryLockManager;
 use crate::round::{RoundFlowState, RoundParticipation, RoundState};
 use crate::vtxo::{VtxoState, VtxoStateKind};
 use crate::WalletProperties;
@@ -704,11 +705,6 @@ mod round_states {
 	}
 
 	async fn test_update_round_state<A: BarkPersister, B: BarkPersister>(a: &A, b: &B) {
-		// Each backend gets its own lock index: id_a == id_b numerically but
-		// they guard different backends, so they must not share a lock index.
-		let lock_index_a = RoundStateLockIndex::new();
-		let lock_index_b = RoundStateLockIndex::new();
-
 		let id_a = a.store_round_state_lock_vtxos(&empty_round_state()).await.expect("a: store_round_state");
 		let id_b = b.store_round_state_lock_vtxos(&empty_round_state()).await.expect("b: store_round_state");
 		assert_eq!(id_a, id_b, "store_round_state id mismatch");
@@ -716,8 +712,9 @@ mod round_states {
 		let unlocked_a = a.get_round_state_by_id(id_a).await.expect("a: get_round_state_by_id").unwrap();
 		let unlocked_b = b.get_round_state_by_id(id_b).await.expect("b: get_round_state_by_id").unwrap();
 
-		let guard_a = lock_index_a.try_lock(id_a).expect("a: lock should succeed");
-		let guard_b = lock_index_b.try_lock(id_b).expect("b: lock should succeed");
+		let mgr = MemoryLockManager::new();
+		let guard_a = mgr.try_lock("test.a").await.expect("test.a unlocked");
+		let guard_b = mgr.try_lock("test.b").await.expect("test.b unlocked");
 		let mut stored_a = unlocked_a.lock(guard_a);
 		let mut stored_b = unlocked_b.lock(guard_b);
 		stored_a.state_mut().done = true;
@@ -737,9 +734,6 @@ mod round_states {
 	}
 
 	async fn test_remove_round_state<A: BarkPersister, B: BarkPersister>(a: &A, b: &B) {
-		let lock_index_a = RoundStateLockIndex::new();
-		let lock_index_b = RoundStateLockIndex::new();
-
 		let id_a = a.store_round_state_lock_vtxos(&empty_round_state()).await.expect("a: store_round_state");
 		let id_b = b.store_round_state_lock_vtxos(&empty_round_state()).await.expect("b: store_round_state");
 		assert_eq!(id_a, id_b, "store_round_state id mismatch");
@@ -747,8 +741,9 @@ mod round_states {
 		let unlocked_a = a.get_round_state_by_id(id_a).await.expect("a: get_round_state_by_id").unwrap();
 		let unlocked_b = b.get_round_state_by_id(id_b).await.expect("b: get_round_state_by_id").unwrap();
 
-		let guard_a = lock_index_a.try_lock(id_a).expect("a: lock should succeed");
-		let guard_b = lock_index_b.try_lock(id_b).expect("b: lock should succeed");
+		let mgr = MemoryLockManager::new();
+		let guard_a = mgr.try_lock("test.a").await.expect("test.a unlocked");
+		let guard_b = mgr.try_lock("test.b").await.expect("test.b unlocked");
 		let stored_a = unlocked_a.lock(guard_a);
 		let stored_b = unlocked_b.lock(guard_b);
 

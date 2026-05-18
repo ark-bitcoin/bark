@@ -1,0 +1,8 @@
+- Add a `LockManager` to prevent race-conditions. 
+  [#2042](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2042)
+  - **BREAKING:** `Wallet::create`, `Wallet::open`,
+    `Wallet::create_with_onchain`, `Wallet::open_with_onchain`, and
+    `Wallet::open_with_daemon` gain a `lock_manager: Box<dyn LockManager>`
+    parameter.
+  - **BREAKING:** the `pid-lock` Cargo feature is gone; bark-cli now takes
+    its datadir lock via `lock_manager::platform_default`.

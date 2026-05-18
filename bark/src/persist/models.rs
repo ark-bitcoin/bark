@@ -27,7 +27,8 @@ use bitcoin_ext::BlockDelta;
 use crate::WalletVtxo;
 use crate::exit::{ExitState, ExitTxOrigin, ExitVtxo};
 use crate::movement::MovementId;
-use crate::round::{AttemptState, RoundFlowState, RoundParticipation, RoundState, RoundStateGuard};
+use crate::lock_manager::LockGuard;
+use crate::round::{AttemptState, RoundFlowState, RoundParticipation, RoundState};
 use crate::vtxo::VtxoState;
 
 /// VTXO with state history for persistence.
@@ -80,7 +81,7 @@ impl fmt::Display for RoundStateId {
 }
 
 #[allow(unused)]
-pub struct Locked(RoundStateGuard);
+pub struct Locked(Box<dyn LockGuard>);
 
 pub struct Unlocked;
 
@@ -105,7 +106,7 @@ impl StoredRoundState<Unlocked> {
 		Self { id, state, _guard: Unlocked }
 	}
 
-	pub fn lock(self, guard: RoundStateGuard) -> StoredRoundState {
+	pub fn lock(self, guard: Box<dyn LockGuard>) -> StoredRoundState {
 		StoredRoundState { id: self.id, state: self.state, _guard: Locked(guard) }
 	}
 }

@@ -11,7 +11,6 @@ readme = "README.md"
 [features]
 default = ["rand", "sqlite", "native", "tls-native-roots", "bitcoind-rpc"]
 
-pid-lock = []
 onchain-bdk = ["bdk_wallet", "bark-bitcoin-ext/bdk"]
 
 # Native bitcoind JSON-RPC backend for the on-chain layer.
@@ -40,6 +39,8 @@ wasm-web = [
 	"bark-bitcoin-ext/wasm-web",
 	"getrandom",
 	"wasm-bindgen-futures",
+	"dep:wasm-bindgen",
+	"dep:js-sys",
 ]
 
 [lib]
@@ -103,8 +104,15 @@ serde-wasm-bindgen = { version = "0.6.5", optional = true }
 rusqlite = { version = "0.31.0", features = ["chrono"], optional = true }
 
 wasm-bindgen-futures = { version = "0.4.56", optional = true }
+# Used by lock_manager::web_locks to call navigator.locks via js-sys::Reflect.
+wasm-bindgen = { version = "0.2", optional = true }
+js-sys = { version = "0.3", optional = true }
 # needed to force dependencies to use js features
 getrandom = { version = "0.4.2", features = ["wasm_js"], optional = true }
+
+# Used by lock_manager for POSIX fcntl advisory locks (Linux/macOS/iOS/Android).
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
 
 [dev-dependencies]
 ark-lib = { path = "../lib", features = [ "test-util" ] }

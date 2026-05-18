@@ -64,6 +64,7 @@
 //! use std::sync::Arc;
 //! use tokio::fs;
 //! use bark::{Config, onchain, Wallet};
+//! use bark::lock_manager::memory::MemoryLockManager;
 //! use bark::persist::sqlite::SqliteClient;
 //!
 //! const MNEMONIC_FILE : &str = "mnemonic";
@@ -90,11 +91,13 @@
 //! 	let mnemonic = bip39::Mnemonic::generate(12).expect("12 is valid");
 //! 	fs::write(datadir.join(MNEMONIC_FILE), mnemonic.to_string().as_bytes()).await.unwrap();
 //!
+//! 	let lock_manager = Box::new(MemoryLockManager::new());
 //! 	let wallet = Wallet::create(
 //! 		&mnemonic,
 //! 		network,
 //! 		config,
 //! 		db,
+//! 		lock_manager,
 //! 		false
 //! 	).await.unwrap();
 //! }
@@ -114,6 +117,7 @@
 //! # use tokio::fs;
 //! #
 //! # use bark::{Config, Wallet};
+//! # use bark::lock_manager::memory::MemoryLockManager;
 //! # use bark::persist::sqlite::SqliteClient;
 //! #
 //! const MNEMONIC_FILE : &str = "mnemonic";
@@ -131,7 +135,8 @@
 //! 	let db = Arc::new(SqliteClient::open(datadir.join(DB_FILE)).unwrap());
 //! 	let mnemonic_str = fs::read_to_string(datadir.join(DB_FILE)).await.unwrap();
 //! 	let mnemonic = bip39::Mnemonic::from_str(&mnemonic_str).unwrap();
-//! 	let wallet = Wallet::open(&mnemonic, db, config).await.unwrap();
+//! 	let lock_manager = Box::new(MemoryLockManager::new());
+//! 	let wallet = Wallet::open(&mnemonic, db, config, lock_manager).await.unwrap();
 //! }
 //! ```
 //!
@@ -151,6 +156,7 @@
 //! # use tokio::fs;
 //! #
 //! # use bark::{Config, Wallet};
+//! # use bark::lock_manager::memory::MemoryLockManager;
 //! # use bark::persist::sqlite::SqliteClient;
 //! #
 //! # const MNEMONIC_FILE : &str = "mnemonic";
@@ -163,7 +169,8 @@
 //! 	#   let db = Arc::new(SqliteClient::open(datadir.join(DB_FILE)).unwrap());
 //! 	#   let mnemonic_str = fs::read_to_string(datadir.join(DB_FILE)).await.unwrap();
 //! 	#   let mnemonic = bip39::Mnemonic::from_str(&mnemonic_str).unwrap();
-//! 	#   Wallet::open(&mnemonic, db, config).await.unwrap()
+//! 	#   let lock_manager = Box::new(MemoryLockManager::new());
+//! 	#   Wallet::open(&mnemonic, db, config, lock_manager).await.unwrap()
 //! 	# }
 //! #
 //!
@@ -192,6 +199,7 @@
 //! # use tokio::fs;
 //! #
 //! # use bark::{Config, Wallet};
+//! # use bark::lock_manager::memory::MemoryLockManager;
 //! # use bark::persist::sqlite::SqliteClient;
 //! #
 //! # const MNEMONIC_FILE : &str = "mnemonic";
@@ -206,7 +214,8 @@
 //! 	#
 //! 	#   let config = Config::network_default(bitcoin::Network::Signet);
 //! 	#
-//! 	#   Wallet::open(&mnemonic, db, config).await.unwrap()
+//! 	#   let lock_manager = Box::new(MemoryLockManager::new());
+//! 	#   Wallet::open(&mnemonic, db, config, lock_manager).await.unwrap()
 //! 	# }
 //! #
 //!
@@ -247,6 +256,7 @@
 //! # use tokio::fs;
 //! #
 //! # use bark::{Config, Wallet};
+//! # use bark::lock_manager::memory::MemoryLockManager;
 //! # use bark::persist::sqlite::SqliteClient;
 //! #
 //! # const MNEMONIC_FILE : &str = "mnemonic";
@@ -261,7 +271,8 @@
 //! 	#
 //! 	#   let config = Config::network_default(bitcoin::Network::Signet);
 //! 	#
-//! 	#   Wallet::open(&mnemonic, db, config).await.unwrap()
+//! 	#   let lock_manager = Box::new(MemoryLockManager::new());
+//! 	#   Wallet::open(&mnemonic, db, config, lock_manager).await.unwrap()
 //! 	# }
 //! #
 //! use bark::vtxo::RefreshStrategy;
@@ -304,8 +315,7 @@ pub mod round;
 pub mod subsystem;
 pub mod vtxo;
 
-#[cfg(feature = "pid-lock")]
-pub mod pid_lock;
+pub mod lock_manager;
 
 mod arkoor;
 mod board;
@@ -353,6 +363,7 @@ use server_rpc::client::{ConnectError, CreateEndpointError};
 
 use crate::chain::{ChainSource, ChainSourceSpec};
 use crate::exit::Exit;
+use crate::lock_manager::LockManager;
 use crate::movement::{Movement, PaymentMethod};
 use crate::movement::manager::MovementManager;
 use crate::movement::update::MovementUpdate;
@@ -363,7 +374,7 @@ use crate::persist::BarkPersister;
 use crate::persist::models::{RoundStateId, StoredRoundState, Unlocked};
 #[cfg(feature = "socks5-proxy")]
 use crate::proxy::proxy_for_url;
-use crate::round::{RoundParticipation, RoundStateLockIndex, RoundStatus};
+use crate::round::{RoundParticipation, RoundStatus};
 use crate::subsystem::{ArkoorMovement, RoundMovement};
 use crate::vtxo::{FilterVtxos, RefreshStrategy, VtxoFilter, VtxoStateKind};
 
@@ -651,6 +662,7 @@ impl WalletSeed {
 /// # async fn demo() -> anyhow::Result<()> {
 /// # use std::sync::Arc;
 /// # use bark::{Config, Wallet};
+/// # use bark::lock_manager::memory::MemoryLockManager;
 /// # use bark::onchain::OnchainWallet;
 /// # use bark::persist::{BarkPersister, SqliteClient};
 /// # use bark::persist::sqlite::helpers::in_memory_db;
@@ -673,16 +685,18 @@ impl WalletSeed {
 /// let onchain_wallet = OnchainWallet::load_or_create(network, mnemonic.to_seed(""), db.clone()).await?;
 ///
 /// // Create or open the Ark wallet
+/// let lock_manager = Box::new(MemoryLockManager::new());
 /// let mut wallet = Wallet::create_with_onchain(
 /// 	&mnemonic,
 /// 	network,
 /// 	cfg.clone(),
 /// 	db,
+/// 	lock_manager,
 /// 	&onchain_wallet,
 /// 	false,
 /// ).await?;
-/// // let mut wallet = Wallet::create(&mnemonic, network, cfg.clone(), db.clone(), false).await?;
-/// // let mut wallet = Wallet::open(&mnemonic, db.clone(), cfg.clone()).await?;
+/// // let mut wallet = Wallet::create(&mnemonic, network, cfg.clone(), db.clone(), Box::new(MemoryLockManager::new()), false).await?;
+/// // let mut wallet = Wallet::open(&mnemonic, db.clone(), cfg.clone(), Box::new(MemoryLockManager::new())).await?;
 /// // let mut wallet = Wallet::open_with_onchain(
 /// //    &mnemonic, network, cfg.clone(), db.clone(), &onchain_wallet
 /// // ).await?;
@@ -732,6 +746,11 @@ pub struct Wallet {
 	/// Persistence backend for wallet state (keys metadata, VTXOs, movements, round state, etc.).
 	db: Arc<dyn BarkPersister>,
 
+	/// Coordinates access to the wallet's protected resources. The caller
+	/// picks a backend whose enforcement scope matches how the wallet is
+	/// deployed; see [`crate::lock_manager`].
+	lock_manager: Box<dyn LockManager>,
+
 	/// Deterministic seed material used to generate wallet keypairs.
 	seed: WalletSeed,
 
@@ -746,9 +765,6 @@ pub struct Wallet {
 	/// Tracks payment hashes of lightning payments currently being processed.
 	/// Used to prevent concurrent payment attempts for the same invoice.
 	inflight_lightning_payments: Mutex<HashSet<PaymentHash>>,
-
-	/// Index of round states that are currently locked.
-	round_state_lock_index: RoundStateLockIndex,
 
 	/// A handle to the currently running daemon, if any.
 	daemon: parking_lot::Mutex<Option<DaemonHandle>>,
@@ -928,6 +944,9 @@ impl Wallet {
 	/// Create a new wallet without an optional onchain backend. This will restrict features such as
 	/// boarding and unilateral exit.
 	///
+	/// `lock_manager` coordinates access to the wallet's protected resources. Pick a backend
+	/// whose enforcement scope matches how the wallet is deployed — see [`crate::lock_manager`].
+	///
 	/// The `force` flag will allow you to create the wallet even if a connection to the Ark server
 	/// cannot be established, it will not overwrite a wallet which has already been created.
 	pub async fn create(
@@ -935,9 +954,22 @@ impl Wallet {
 		network: Network,
 		config: Config,
 		db: Arc<dyn BarkPersister>,
+		lock_manager: Box<dyn LockManager>,
 		force: bool,
 	) -> anyhow::Result<Wallet> {
 		trace!("Config: {:?}", config);
+
+		let wallet_fingerprint = WalletSeed::new(network, &mnemonic.to_seed("")).fingerprint();
+
+		// Block concurrent creators against the same locking universe. A
+		// short timeout is fine: if a sibling process wins the race they
+		// will have committed the wallet by the time we'd time out, and
+		// the `read_properties` check below catches that case cleanly.
+		let create_guard = lock_manager.lock(
+			&format!("{}.create", wallet_fingerprint),
+			Duration::from_secs(5),
+		).await.context("wallet initialization already in progress")?;
+
 		if let Some(existing) = db.read_properties().await? {
 			trace!("Existing config: {:?}", existing);
 			bail!("cannot overwrite already existing config")
@@ -958,7 +990,6 @@ impl Wallet {
 			(None, None)
 		};
 
-		let wallet_fingerprint = WalletSeed::new(network, &mnemonic.to_seed("")).fingerprint();
 		let properties = WalletProperties {
 			network,
 			fingerprint: wallet_fingerprint,
@@ -973,8 +1004,12 @@ impl Wallet {
 			info!("Stored server pubkey: {}", pk);
 		}
 
+		// The wallet exists from this point on — drop the creation lock
+		// so another process is free to open it.
+		drop(create_guard);
+
 		// from then on we can open the wallet
-		let wallet = Wallet::open(&mnemonic, db, config).await.context("failed to open wallet")?;
+		let wallet = Wallet::open(&mnemonic, db, config, lock_manager).await.context("failed to open wallet")?;
 		wallet.require_chainsource_version().await?;
 
 		Ok(wallet)
@@ -992,19 +1027,24 @@ impl Wallet {
 		network: Network,
 		config: Config,
 		db: Arc<dyn BarkPersister>,
+		lock_manager: Box<dyn LockManager>,
 		onchain: &dyn ExitUnilaterally,
 		force: bool,
 	) -> anyhow::Result<Wallet> {
-		let mut wallet = Wallet::create(mnemonic, network, config, db, force).await?;
+		let mut wallet = Wallet::create(mnemonic, network, config, db, lock_manager, force).await?;
 		wallet.exit.get_mut().load(onchain).await?;
 		Ok(wallet)
 	}
 
 	/// Loads the bark wallet from the given database ensuring the fingerprint remains consistent.
+	///
+	/// `lock_manager` coordinates access to the wallet's protected resources. Pick a backend
+	/// whose enforcement scope matches how the wallet is deployed — see [`crate::lock_manager`].
 	pub async fn open(
 		mnemonic: &Mnemonic,
 		db: Arc<dyn BarkPersister>,
 		config: Config,
+		lock_manager: Box<dyn LockManager>,
 	) -> anyhow::Result<Wallet> {
 		let properties = db.read_properties().await?.context("Wallet is not initialised")?;
 
@@ -1050,9 +1090,8 @@ impl Wallet {
 		let exit = RwLock::new(Exit::new(db.clone(), chain.clone(), movements.clone()).await?);
 
 		Ok(Wallet {
-			config, db, seed, exit, movements, notifications, server, chain,
+			config, db, lock_manager, seed, exit, movements, notifications, server, chain,
 			inflight_lightning_payments: Mutex::new(HashSet::new()),
-			round_state_lock_index: RoundStateLockIndex::new(),
 			daemon: parking_lot::Mutex::new(None),
 		})
 	}
@@ -1064,8 +1103,9 @@ impl Wallet {
 		db: Arc<dyn BarkPersister>,
 		onchain: &dyn ExitUnilaterally,
 		cfg: Config,
+		lock_manager: Box<dyn LockManager>,
 	) -> anyhow::Result<Wallet> {
-		let mut wallet = Wallet::open(mnemonic, db, cfg).await?;
+		let mut wallet = Wallet::open(mnemonic, db, cfg, lock_manager).await?;
 		wallet.exit.get_mut().load(onchain).await?;
 		Ok(wallet)
 	}
@@ -1077,8 +1117,9 @@ impl Wallet {
 		db: Arc<dyn BarkPersister>,
 		cfg: Config,
 		onchain: Option<Arc<RwLock<dyn DaemonizableOnchainWallet>>>,
+		lock_manager: Box<dyn LockManager>,
 	) -> anyhow::Result<Arc<Wallet>> {
-		let wallet = Arc::new(Wallet::open(mnemonic, db, cfg).await?);
+		let wallet = Arc::new(Wallet::open(mnemonic, db, cfg, lock_manager).await?);
 		if let Some(onchain) = onchain.as_ref() {
 			let mut onchain = onchain.write().await;
 			wallet.exit.write().await.load(&mut *onchain).await?;

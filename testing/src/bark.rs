@@ -21,6 +21,7 @@ use tokio::sync::Mutex;
 use ark::{ProtocolEncoding, Vtxo, VtxoId};
 use ark::vtxo::Full;
 use bark::{BarkNetwork, Config};
+use bark::lock_manager::memory::MemoryLockManager;
 use bark::onchain::OnchainWallet;
 use bark::persist::BarkPersister;
 use bark::persist::adaptor::StorageAdaptorWrapper;
@@ -223,7 +224,8 @@ impl Bark {
 			Arc::new(SqliteClient::open(self.datadir.join(DB_FILE))?)
 		};
 
-		Ok(bark::Wallet::open(&mnemonic, db, config).await?)
+		let lock_manager = Box::new(MemoryLockManager::new());
+		Ok(bark::Wallet::open(&mnemonic, db, config, lock_manager).await?)
 	}
 
 	pub async fn client(&self) -> bark::Wallet {
