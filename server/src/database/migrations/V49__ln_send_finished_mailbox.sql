@@ -20,7 +20,8 @@ ALTER TABLE lightning_htlc_subscription ADD COLUMN receiver_mailbox_id TEXT;
 -- Migrate data from lightning_invoice to lightning_payment_attempt
 UPDATE lightning_payment_attempt attempt
 SET payment_hash = invoice.payment_hash,
-	final_amount_msat = invoice.final_amount_msat
+	final_amount_msat = invoice.final_amount_msat,
+	updated_at = CURRENT_TIMESTAMP
 FROM lightning_invoice invoice
 WHERE attempt.lightning_invoice_id = invoice.id;
 
@@ -29,7 +30,8 @@ UPDATE lightning_htlc_subscription sub
 SET payment_hash = invoice.payment_hash,
 	invoice = invoice.invoice,
 	final_amount_msat = invoice.final_amount_msat,
-	receiver_mailbox_id = invoice.mailbox_id
+	receiver_mailbox_id = invoice.mailbox_id,
+	updated_at = CURRENT_TIMESTAMP
 FROM lightning_invoice invoice
 WHERE sub.lightning_invoice_id = invoice.id;
 
