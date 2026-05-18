@@ -12,6 +12,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::Wallet;
 use crate::onchain::DaemonizableOnchainWallet;
+use crate::utils::time::sleep;
 
 
 
@@ -108,7 +109,7 @@ impl DaemonProcess {
 			}
 
 			futures::select! {
-				_ = tokio::time::sleep(self.sync_interval()).fuse() => {},
+				_ = sleep(self.sync_interval()).fuse() => {},
 				_ = self.shutdown.cancelled().fuse() => {
 					info!("Shutdown signal received! Shutting mailbox messages process...");
 					break;
@@ -232,7 +233,7 @@ impl DaemonProcess {
 			}
 
 			futures::select! {
-				_ = tokio::time::sleep(self.sync_interval()).fuse() => {},
+				_ = sleep(self.sync_interval()).fuse() => {},
 				_ = self.shutdown.cancelled().fuse() => {
 					info!("Shutdown signal received! Shutting round events process...");
 					break;
@@ -248,7 +249,7 @@ impl DaemonProcess {
 	async fn run_server_connection_check_process(&self) {
 		loop {
 			futures::select! {
-				_ = tokio::time::sleep(self.sync_interval()).fuse() => {},
+				_ = sleep(self.sync_interval()).fuse() => {},
 				_ = self.shutdown.cancelled().fuse() => {
 					info!("Shutdown signal received! Shutting server connection check process...");
 					break;

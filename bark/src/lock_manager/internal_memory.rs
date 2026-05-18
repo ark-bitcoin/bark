@@ -20,6 +20,8 @@ use std::collections::HashMap;
 use std::sync::{Arc, Weak};
 use std::time::{Duration, Instant};
 
+use crate::utils::time;
+
 use super::{LockGuard, LockManager, key::validate_key};
 
 /// How often `key_mutex` triggers an auto-purge of dead entries.
@@ -97,7 +99,8 @@ impl std::fmt::Debug for InternalMemoryLockManager {
 	}
 }
 
-#[async_trait::async_trait]
+#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
 impl LockManager for InternalMemoryLockManager {
 	async fn try_lock(&self, key: &str) -> Option<Box<dyn LockGuard>> {
 		if let Err(e) = validate_key(key) {
@@ -118,7 +121,7 @@ impl LockManager for InternalMemoryLockManager {
 	) -> anyhow::Result<Box<dyn LockGuard>> {
 		super::key::validate_key(key)?;
 		let mutex = self.key_mutex(key);
-		match tokio::time::timeout(timeout, mutex.lock_owned()).await {
+		match time::timeout(timeout, mutex.lock_owned()).await {
 			Ok(guard) => Ok(Box::new(InternalMemoryGuard { _guard: guard })),
 			Err(_) => anyhow::bail!(
 				"timed out acquiring lock {:?} after {:?}", key, timeout,

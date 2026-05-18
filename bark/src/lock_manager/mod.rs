@@ -91,6 +91,8 @@ use std::time::Duration;
 use std::path::PathBuf;
 use anyhow::bail;
 
+use crate::utils::time;
+
 const POLL_INTERVAL: Duration = Duration::from_millis(50);
 
 /// Errors from constructing a pid-lock-based [`LockManager`]
@@ -134,7 +136,8 @@ pub trait LockGuard: Send + Sync + std::fmt::Debug {}
 ///
 /// Implementations only need to provide [`try_lock`](Self::try_lock); the
 /// default [`lock`](Self::lock) polls it under a [`tokio::time::timeout`].
-#[async_trait::async_trait]
+#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
 pub trait LockManager: Send + Sync + std::fmt::Debug {
 	/// Try to acquire the named lock without waiting. Returns `None` if
 	/// it is already held, the key is rejected by [`validate_key`], or
@@ -150,12 +153,12 @@ pub trait LockManager: Send + Sync + std::fmt::Debug {
 	async fn lock(&self, key: &str, timeout: Duration)
 		-> anyhow::Result<Box<dyn LockGuard>>
 	{
-		let result = tokio::time::timeout(timeout, async {
+		let result = time::timeout(timeout, async {
 			loop {
 				if let Some(g) = self.try_lock(key).await {
 					return g;
 				}
-				tokio::time::sleep(POLL_INTERVAL).await;
+				time::sleep(POLL_INTERVAL).await;
 			}
 		}).await;
 		match result {
@@ -356,7 +359,7 @@ mod test {
 			tokio::time::sleep(Duration::from_millis(150)).await;
 			drop(g);
 
-			let result = tokio::time::timeout(Duration::from_secs(2), waiter).await;
+			let result = time::timeout(Duration::from_secs(2), waiter).await;
 			assert!(result.is_ok(), "{}: waiter should succeed after holder dropped", tb.name);
 		}
 	}
