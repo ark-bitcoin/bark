@@ -118,7 +118,7 @@ pub struct UnsignedFundingTx {
 	txid: Txid,
 	pinned_input: WalletUtxoGuard,
 	/// Held only for its Drop impl: releases the locks on the extra inputs
-	/// when this `FundingTx` is dropped (e.g. on round restart).
+	/// when this `UnsignedFundingTx` is dropped (e.g. on round restart).
 	_extra_inputs: WalletUtxosGuard,
 }
 
@@ -160,7 +160,7 @@ impl UnsignedFundingTx {
 				tx,
 				txid: self.txid,
 				fee: self.fee(),
-				pinned_input: self.pinned_input,
+				_pinned_input: self.pinned_input,
 				_extra_inputs: self._extra_inputs,
 			}),
 			Err(e) => bail!("Failed to sign funding transaction: {:?}", e),
@@ -172,9 +172,9 @@ pub struct SignedFundingTx {
 	pub tx: Transaction,
 	pub txid: Txid,
 	pub fee: Amount,
-	pub pinned_input: WalletUtxoGuard,
-	/// Held only for its Drop impl: releases the locks on the extra inputs
-	/// when this `FundingTx` is dropped (e.g. on round restart).
+	/// Held only for its Drop impl: releases the locks on theinputs
+	/// when this `SignedFundingTx` is dropped (e.g. on round restart).
+	pub _pinned_input: WalletUtxoGuard,
 	pub _extra_inputs: WalletUtxosGuard,
 }
 
