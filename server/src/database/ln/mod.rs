@@ -725,13 +725,13 @@ impl<'t> Tx<'t> {
 		// ON CONFLICT DO NOTHING makes this idempotent: if an HTLC tx
 		// gets unconfirmed and re-confirmed in a reorg, the duplicate
 		// insert is safely ignored.
-		let stmt = self.prepare("
-			WITH lock AS (SELECT pg_advisory_xact_lock(hashtext('htlc_settlement.write')))
+		let stmt = self.prepare(&format!("
+			WITH lock AS (SELECT pg_advisory_xact_lock({}))
 			INSERT INTO htlc_settlement (payment_hash, preimage, created_at)
 			SELECT $1, $2, NOW() FROM lock
 			ON CONFLICT (payment_hash) DO NOTHING
 			RETURNING id;
-		").await?;
+		", super::AdvisoryLock::HtlcSettlementWrite as i64)).await?;
 
 		let row = self.query_opt(
 			&stmt,

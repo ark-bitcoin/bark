@@ -58,6 +58,17 @@ const NOARG: &[&bool] = &[];
 
 const DEFAULT_DATABASE: &str = "postgres";
 
+/// Advisory lock keys for `pg_advisory_xact_lock`.
+///
+/// Each variant maps to a unique lock id. Using an enum avoids
+/// computing `hashtext(...)` at runtime and makes every lock site
+/// grep-able.
+#[repr(i64)]
+enum AdvisoryLock {
+	MailboxWrite = 1,
+	HtlcSettlementWrite = 2,
+}
+
 /// A stored bitcoin tx with txid pre-calculated
 pub struct StoredBitcoinTx {
 	pub txid: Txid,
@@ -414,7 +425,9 @@ impl<'t> Tx<'t> {
 		// Acquire advisory lock to serialize all mailbox writes.
 		// This prevents race conditions where checkpoints could be committed out of order.
 		// Lock is automatically released when transaction commits/rolls back.
-		self.execute("SELECT pg_advisory_xact_lock(hashtext('mailbox_write'))", &[]).await?;
+		self.execute(
+			&format!("SELECT pg_advisory_xact_lock({})", AdvisoryLock::MailboxWrite as i64), &[],
+		).await?;
 
 		let checkpoint: i64 = self.query_one("SELECT next_checkpoint()", &[]).await?.get(0);
 		let mailbox_type_str = String::from(mailbox_type);
@@ -606,7 +619,9 @@ impl<'t> Tx<'t> {
 		// Acquire advisory lock to serialize all mailbox writes.
 		// This prevents race conditions where checkpoints could be committed out of order.
 		// Lock is automatically released when transaction commits/rolls back.
-		self.execute("SELECT pg_advisory_xact_lock(hashtext('mailbox_write'))", &[]).await?;
+		self.execute(
+			&format!("SELECT pg_advisory_xact_lock({})", AdvisoryLock::MailboxWrite as i64), &[],
+		).await?;
 
 		let checkpoint: i64 = self.query_one("SELECT next_checkpoint()", &[]).await?.get(0);
 
@@ -635,7 +650,9 @@ impl<'t> Tx<'t> {
 		// Acquire advisory lock to serialize all mailbox writes.
 		// This prevents race conditions where checkpoints could be committed out of order.
 		// Lock is automatically released when transaction commits/rolls back.
-		self.execute("SELECT pg_advisory_xact_lock(hashtext('mailbox_write'))", &[]).await?;
+		self.execute(
+			&format!("SELECT pg_advisory_xact_lock({})", AdvisoryLock::MailboxWrite as i64), &[],
+		).await?;
 
 		let checkpoint: i64 = self.query_one("SELECT next_checkpoint()", &[]).await?.get(0);
 		let mailbox_type_str = String::from(MailboxType::LnRecvPendingPayment);
@@ -668,7 +685,9 @@ impl<'t> Tx<'t> {
 		// Acquire advisory lock to serialize all mailbox writes.
 		// This prevents race conditions where checkpoints could be committed out of order.
 		// Lock is automatically released when transaction commits/rolls back.
-		self.execute("SELECT pg_advisory_xact_lock(hashtext('mailbox_write'))", &[]).await?;
+		self.execute(
+			&format!("SELECT pg_advisory_xact_lock({})", AdvisoryLock::MailboxWrite as i64), &[],
+		).await?;
 
 		let checkpoint = self.query_one("SELECT next_checkpoint()", &[]).await?.get::<_, i64>(0);
 		let mailbox_type_str = String::from(MailboxType::LnSendFinished);
@@ -708,7 +727,9 @@ impl<'t> Tx<'t> {
 		// Acquire advisory lock to serialize all mailbox writes.
 		// This prevents race conditions where checkpoints could be committed out of order.
 		// Lock is automatically released when transaction commits/rolls back.
-		self.execute("SELECT pg_advisory_xact_lock(hashtext('mailbox_write'))", &[]).await?;
+		self.execute(
+			&format!("SELECT pg_advisory_xact_lock({})", AdvisoryLock::MailboxWrite as i64), &[],
+		).await?;
 
 		let checkpoint: i64 = self.query_one("SELECT next_checkpoint()", &[]).await?.get(0);
 		let mailbox_type_str = String::from(mailbox_type);
