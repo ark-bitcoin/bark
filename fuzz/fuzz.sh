@@ -144,6 +144,10 @@ run_fuzzing() {
     export NIX_HARDENING_ENABLE=""
     export CFLAGS="-U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0 ${CFLAGS:-}"
 
+    # sccache doesn't work with honggfuzz's sanitizer flags; bypass it entirely
+    unset RUSTC_WRAPPER
+    unset RUSTC_WORKSPACE_WRAPPER
+
     echo "cargo $(cargo --version)"
     echo "rustc $(rustc --version)"
 
