@@ -121,6 +121,13 @@ pub struct Config {
 	/// Default value: 18
 	pub htlc_recv_claim_delta: BlockDelta,
 
+	/// Maximum number of retry attempts when claiming a Lightning receive
+	/// against the server fails. After this budget is exhausted, the HTLC-recv
+	/// VTXOs will be exited on-chain.
+	///
+	/// Default value: 5
+	pub lightning_receive_claim_retries: u8,
+
 	/// Optional SOCKS5 proxy URL for network traffic.
 	///
 	/// The proxy is automatically bypassed for localhost addresses
@@ -187,6 +194,7 @@ impl Config {
 			vtxo_refresh_expiry_threshold: 144,
 			vtxo_exit_margin: 12,
 			htlc_recv_claim_delta: 18,
+			lightning_receive_claim_retries: 5,
 			fallback_fee_rate: Some(FeeRate::from_sat_per_vb_u32(2)),
 			round_tx_required_confirmations: 1,
 			offboard_required_confirmations: 2,

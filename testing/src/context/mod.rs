@@ -523,6 +523,7 @@ impl TestContext {
 			vtxo_refresh_expiry_threshold: 24,
 			vtxo_exit_margin: 12,
 			htlc_recv_claim_delta: 18,
+			lightning_receive_claim_retries: 5,
 			fallback_fee_rate: Some(FeeRate::from_sat_per_vb_u32(5)),
 			round_tx_required_confirmations: constants::ROUND_CONFIRMATIONS,
 			offboard_required_confirmations: constants::OFFBOARD_CONFIRMATIONS,

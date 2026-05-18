@@ -55,8 +55,11 @@ async fn server_settles_invoice_from_on_chain_htlc_preimage(
 
 	let proxy = srv.start_proxy_no_mailbox(BlockCooperativeSettlement).await;
 
-	// bark_recv connects through the proxy so cooperative settlement is blocked
-	let bark_recv = ctx.bark("bark-recv", &proxy.address).funded(btc(3)).create().await;
+	// bark_recv connects through the proxy so cooperative settlement is blocked.
+	// Skip claim retries; the proxy blocks every attempt, so we want the exit immediately.
+	let bark_recv = ctx.bark("bark-recv", &proxy.address).funded(btc(3)).cfg(|cfg| {
+		cfg.lightning_receive_claim_retries = 0;
+	}).create().await;
 	bark_recv.board(btc(2)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 	bark_recv.sync().await;
