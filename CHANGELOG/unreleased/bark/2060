@@ -1,0 +1,5 @@
+- Richer onchain transaction listing in the REST API
+  `GET /onchain/transactions` now returns `onchain_fee_sat` (nullable),
+  `balance_change_sat`, and `confirmation` alongside the existing
+  `txid` and `tx`.
+  [#2060](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2060)
