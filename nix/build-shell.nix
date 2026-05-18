@@ -54,7 +54,16 @@ in {
 		] ++ lib.optionals (!isDarwin) [ # honggfuzz deps (Linux only)
 			pkgs.binutils-unwrapped
 			pkgs.libunwind
-			pkgs.libblocksruntime
+			# nixpkgs only installs the shared library, but honggfuzz links
+			# BlocksRuntime statically (-Wl,-Bstatic -lBlocksRuntime). Override
+			# the install phase to keep libBlocksRuntime.a as well.
+			(pkgs.libblocksruntime.overrideAttrs (_: {
+				installPhase = ''
+					runHook preInstall
+					prefix="/" DESTDIR=$out ./installlib
+					runHook postInstall
+				'';
+			}))
 			pkgs.xz
 			pkgs.gdb
 		];
