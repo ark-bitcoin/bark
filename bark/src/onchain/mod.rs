@@ -37,7 +37,7 @@ pub use crate::onchain::bdk::{OnchainWallet, TxBuilderExt};
 use std::sync::Arc;
 
 use bitcoin::{
-	Address, Amount, FeeRate, OutPoint, Psbt, Transaction, Txid
+	Address, Amount, FeeRate, OutPoint, Psbt, SignedAmount, Transaction, Txid
 };
 
 use ark::Vtxo;
@@ -45,6 +45,21 @@ use ark::vtxo::Full;
 use bitcoin_ext::{BlockHeight, BlockRef};
 
 use crate::chain::ChainSource;
+
+/// Summary of a wallet transaction produced by [OnchainWallet::list_transaction_infos].
+#[derive(Debug, Clone)]
+pub struct WalletTxInfo {
+	pub txid: Txid,
+	pub tx: Arc<Transaction>,
+	/// Total fee paid by the transaction, when computable. `None` for inbound or
+	/// collaboratively-funded txs whose foreign prevouts BDK has not indexed
+	/// (e.g. after a bitcoind-rpc sync — esplora syncs populate prevouts).
+	pub onchain_fees: Option<Amount>,
+	/// Net change to the wallet's balance: `received - sent` over wallet-owned outputs.
+	pub balance_change: SignedAmount,
+	/// `Some` if the transaction is confirmed in a block, `None` if still in the mempool.
+	pub confirmation: Option<BlockRef>,
+}
 
 /// Represents an onchain UTXO known to the wallet.
 ///

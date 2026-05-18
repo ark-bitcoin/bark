@@ -22,7 +22,7 @@ use crate::chain::{ChainSource, ChainSourceClient};
 use crate::exit::{ExitVtxo, ExitState};
 use crate::onchain::{
 	ChainSync, GetBalance, GetSpendingTx, GetWalletTx, LocalUtxo,
-	MakeCpfp, MakeCpfpFees, PreparePsbt, SignPsbt, Utxo
+	MakeCpfp, MakeCpfpFees, PreparePsbt, SignPsbt, Utxo, WalletTxInfo,
 };
 use crate::persist::BarkPersister;
 use crate::psbtext::PsbtInputExt;
@@ -339,6 +339,38 @@ impl OnchainWallet {
 
 	pub fn list_transactions(&self) -> Vec<Arc<Transaction>> {
 		self.inner.transactions().map(|tx| tx.tx_node.tx).collect()
+	}
+
+	/// List every wallet transaction with fee, balance change, and confirmation.
+	///
+	/// Fees are `None` for txs whose foreign prevouts BDK has not indexed: see
+	/// [`WalletTxInfo::onchain_fees`].
+	pub fn list_transaction_infos(&self) -> anyhow::Result<Vec<WalletTxInfo>> {
+		let mut out = Vec::new();
+		for canon in self.inner.transactions() {
+			let txid = canon.tx_node.txid;
+			let tx = canon.tx_node.tx.clone();
+
+			let confirmation = match canon.chain_position {
+				ChainPosition::Confirmed { anchor, .. } => Some(anchor.block_id.into()),
+				ChainPosition::Unconfirmed { .. } => None,
+			};
+
+			let (sent, received) = self.inner.sent_and_received(&tx);
+			let balance_change = received.to_signed().context("received overflow")?
+				- sent.to_signed().context("sent overflow")?;
+
+			let onchain_fees = self.inner.calculate_fee(&tx).ok();
+
+			out.push(WalletTxInfo {
+				txid,
+				tx,
+				onchain_fees,
+				balance_change,
+				confirmation,
+			});
+		}
+		Ok(out)
 	}
 
 	pub async fn address(&mut self) -> anyhow::Result<Address> {
