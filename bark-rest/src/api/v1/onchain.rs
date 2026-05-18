@@ -46,6 +46,8 @@ pub fn router() -> Router<ServerState> {
 		bark_json::web::OnchainDrainRequest,
 		bark_json::primitives::UtxoInfo,
 		bark_json::primitives::TransactionInfo,
+		bark_json::primitives::WalletTxInfo,
+		bark_json::primitives::BlockRef,
 	)),
 	tags((name = "onchain", description = "Manage barkd's on-chain bitcoin wallet."))
 )]
@@ -272,23 +274,26 @@ pub async fn onchain_utxos(
 	path = "/transactions",
 	summary = "List on-chain transactions",
 	responses(
-		(status = 200, description = "Returns the on-chain transactions", body = Vec<bark_json::primitives::TransactionInfo>),
+		(status = 200, description = "Returns the on-chain transactions", body = Vec<bark_json::primitives::WalletTxInfo>),
 	),
-	description = "Returns all on-chain wallet transactions, ordered from oldest to newest.",
+	description = "Returns all on-chain wallet transactions, ordered from oldest to newest. \
+		Each entry includes the raw transaction, its fee (when known), the wallet's net balance \
+		change, and confirmation status. The fee is `null` for inbound or collaboratively-funded \
+		transactions whose foreign prevouts BDK has not indexed.",
 	tag = "onchain"
 )]
 #[debug_handler]
 pub async fn onchain_transactions(
 	State(state): State<ServerState>,
-) -> HandlerResult<Json<Vec<bark_json::primitives::TransactionInfo>>> {
+) -> HandlerResult<Json<Vec<bark_json::primitives::WalletTxInfo>>> {
 	let onchain = state.require_onchain()?;
 
-	let mut transactions = onchain.read().await.list_transactions();
+	let mut transactions = onchain.read().await.list_transaction_infos()?;
 	// transactions are ordered from newest to oldest, so we reverse them so last terminal item is newest
 	transactions.reverse();
 
 	let transactions = transactions.into_iter()
-		.map(|tx| bark_json::primitives::TransactionInfo::from(tx))
+		.map(bark_json::primitives::WalletTxInfo::from)
 		.collect::<Vec<_>>();
 
 	Ok(axum::Json(transactions))

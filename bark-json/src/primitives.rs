@@ -2,7 +2,7 @@
 use std::ops::Deref;
 use std::sync::Arc;
 
-use bitcoin::{Amount, OutPoint, Transaction, Txid};
+use bitcoin::{Amount, OutPoint, SignedAmount, Transaction, Txid};
 use bitcoin::secp256k1::PublicKey;
 #[cfg(feature = "utoipa")]
 use utoipa::ToSchema;
@@ -276,5 +276,44 @@ impl From<Transaction> for TransactionInfo {
 impl From<Arc<Transaction>> for TransactionInfo {
 	fn from(v: Arc<Transaction>) -> Self {
 		TransactionInfo { txid: v.compute_txid(), tx: (*v).clone() }
+	}
+}
+
+/// A richer wallet-transaction summary returned by the onchain transactions endpoint.
+///
+/// Includes the raw transaction plus its fee, the wallet's net balance change, and
+/// confirmation status.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[cfg_attr(feature = "utoipa", derive(ToSchema))]
+pub struct WalletTxInfo {
+	#[cfg_attr(feature = "utoipa", schema(value_type = String))]
+	pub txid: Txid,
+	#[serde(with = "bitcoin::consensus::serde::With::<bitcoin::consensus::serde::Hex>")]
+	#[cfg_attr(feature = "utoipa", schema(value_type = String))]
+	pub tx: Transaction,
+	/// Total fee paid by the transaction, when known. `None` for txs whose foreign
+	/// prevouts BDK has not indexed (e.g. inbound payments observed via the
+	/// bitcoind-rpc sync path; esplora sync always populates prevouts).
+	#[serde(rename = "onchain_fee_sat", default, with = "bitcoin::amount::serde::as_sat::opt", skip_serializing_if = "Option::is_none")]
+	#[cfg_attr(feature = "utoipa", schema(value_type = Option<u64>))]
+	pub onchain_fees: Option<Amount>,
+	/// Net change to the wallet's balance: `received - sent` over wallet-owned outputs.
+	/// Positive for inbound, negative for outbound, zero for self-spends with no net change.
+	#[serde(rename = "balance_change_sat", with = "bitcoin::amount::serde::as_sat")]
+	#[cfg_attr(feature = "utoipa", schema(value_type = i64))]
+	pub balance_change: SignedAmount,
+	/// `Some` when the transaction is mined; `None` while still in the mempool.
+	pub confirmation: Option<BlockRef>,
+}
+
+impl From<bark::onchain::WalletTxInfo> for WalletTxInfo {
+	fn from(v: bark::onchain::WalletTxInfo) -> Self {
+		WalletTxInfo {
+			txid: v.txid,
+			tx: (*v.tx).clone(),
+			onchain_fees: v.onchain_fees,
+			balance_change: v.balance_change,
+			confirmation: v.confirmation.map(Into::into),
+		}
 	}
 }

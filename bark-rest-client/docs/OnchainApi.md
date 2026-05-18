@@ -188,10 +188,10 @@ This endpoint does not need any parameter.
 
 ## onchain_transactions
 
-> Vec<models::TransactionInfo> onchain_transactions()
+> Vec<models::WalletTxInfo> onchain_transactions()
 List on-chain transactions
 
-Returns all on-chain wallet transactions, ordered from oldest to newest.
+Returns all on-chain wallet transactions, ordered from oldest to newest. Each entry includes the raw transaction, its fee (when known), the wallet's net balance change, and confirmation status. The fee is `null` for inbound or collaboratively-funded transactions whose foreign prevouts BDK has not indexed.
 
 ### Parameters
 
@@ -199,7 +199,7 @@ This endpoint does not need any parameter.
 
 ### Return type
 
-[**Vec<models::TransactionInfo>**](TransactionInfo.md)
+[**Vec<models::WalletTxInfo>**](WalletTxInfo.md)
 
 ### Authorization
 

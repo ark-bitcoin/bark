@@ -306,8 +306,8 @@ pub async fn onchain_sync(configuration: &configuration::Configuration, ) -> Res
     }
 }
 
-/// Returns all on-chain wallet transactions, ordered from oldest to newest.
-pub async fn onchain_transactions(configuration: &configuration::Configuration, ) -> Result<Vec<models::TransactionInfo>, Error<OnchainTransactionsError>> {
+/// Returns all on-chain wallet transactions, ordered from oldest to newest. Each entry includes the raw transaction, its fee (when known), the wallet's net balance change, and confirmation status. The fee is `null` for inbound or collaboratively-funded transactions whose foreign prevouts BDK has not indexed.
+pub async fn onchain_transactions(configuration: &configuration::Configuration, ) -> Result<Vec<models::WalletTxInfo>, Error<OnchainTransactionsError>> {
 
     let uri_str = format!("{}/api/v1/onchain/transactions", configuration.base_path);
     let mut req_builder = configuration.client.request(reqwest::Method::GET, &uri_str);
@@ -334,8 +334,8 @@ pub async fn onchain_transactions(configuration: &configuration::Configuration, 
         let content = resp.text().await?;
         match content_type {
             ContentType::Json => serde_json::from_str(&content).map_err(Error::from),
-            ContentType::Text => return Err(Error::from(serde_json::Error::custom("Received `text/plain` content type response that cannot be converted to `Vec&lt;models::TransactionInfo&gt;`"))),
-            ContentType::Unsupported(unknown_type) => return Err(Error::from(serde_json::Error::custom(format!("Received `{unknown_type}` content type response that cannot be converted to `Vec&lt;models::TransactionInfo&gt;`")))),
+            ContentType::Text => return Err(Error::from(serde_json::Error::custom("Received `text/plain` content type response that cannot be converted to `Vec&lt;models::WalletTxInfo&gt;`"))),
+            ContentType::Unsupported(unknown_type) => return Err(Error::from(serde_json::Error::custom(format!("Received `{unknown_type}` content type response that cannot be converted to `Vec&lt;models::WalletTxInfo&gt;`")))),
         }
     } else {
         let content = resp.text().await?;
