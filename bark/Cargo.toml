@@ -54,6 +54,7 @@ bark-bitcoin-ext = { version = "0.1.4", path = "../bitcoin-ext", default-feature
 	"bdk", "rpc",
 ]}
 bark-server-rpc = { version = "0.1.4", path = "../server-rpc", default-features = false }
+bip321 = { version = "0.1.0", path = "../bip321"  }
 
 # EXPORTED
 bitcoin.workspace = true

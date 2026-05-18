@@ -55,7 +55,7 @@ async fn estimate_send_onchain_fee_without_funds() {
 	// threshold so the 1% top tier applies. With real VTXOs this tier is unreachable.
 	// Fee = base(1,000) + weight_fee(100 vb * feerate) + ppm_expiry(300,000 × 1% = 3,000)
 	let send_amount = sat(300_000);
-	let estimate = bark.estimate_send_onchain(&address, send_amount).await;
+	let estimate = bark.estimate_send_onchain_fee(&address, send_amount).await;
 
 	// base_fee(1,000) + ppm(3,000) = 4,000, plus weight fee from fixed_additional_vb
 	assert_eq!(estimate.fee, sat(4_854),

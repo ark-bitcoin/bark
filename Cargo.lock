@@ -562,6 +562,7 @@ dependencies = [
  "bdk_core",
  "bdk_esplora",
  "bdk_wallet",
+ "bip321",
  "bip39",
  "bitcoin",
  "bitcoind-async-client",

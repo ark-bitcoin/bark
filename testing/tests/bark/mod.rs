@@ -6,6 +6,7 @@
 mod access_token;
 mod arkoor;
 mod base;
+mod payment_request;
 mod board;
 mod chain_source;
 mod create;

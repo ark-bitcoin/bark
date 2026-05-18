@@ -23,11 +23,11 @@ use ark::{musig, ProtocolEncoding, Vtxo, VtxoId};
 use ark::arkoor::package::ArkoorPackageCosignRequest;
 use ark::mailbox::MailboxIdentifier;
 use ark::forfeit::HashLockedForfeitBundle;
-use ark::lightning::{Bolt12InvoiceExt, Invoice, Offer, OfferAmount, PaymentHash, Preimage};
+use ark::lightning::{Bolt12InvoiceExt, Invoice, Offer, OfferAmountExt, PaymentHash, Preimage};
 use ark::tree::signed::{LeafVtxoCosignRequest, UnlockHash, UnlockPreimage};
 use ark::rounds::RoundId;
 use ark::vtxo::Full;
-use bitcoin_ext::{AmountExt, BlockDelta, BlockHeight};
+use bitcoin_ext::{BlockDelta, BlockHeight};
 use server_rpc::{self as rpc, protos, TryFromBytes};
 use crate::database::rounds::StoredRoundOutput;
 use crate::round::DelegatedInput;
@@ -326,12 +326,9 @@ impl rpc::server::ArkService for Server {
 
 		let amount = match req.amount_sat {
 			Some(a) => { Amount::from_sat(a) },
-			None if offer.amount().is_some() => {
-				match offer.amount().unwrap() {
-					OfferAmount::Bitcoin { amount_msats } => { Amount::from_msat_ceil(amount_msats) },
-					_ => { macros::badarg!("unsupported offer currency"); }
-				}
-			},
+			None if offer.amount().is_some() => offer.amount().unwrap()
+				.to_bitcoin_amount()
+				.badarg("unsupported offer currency")?,
 			None => {
 				macros::badarg!("amount_sat is required for bolt12 offers with no amount specified");
 			},

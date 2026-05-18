@@ -10,15 +10,17 @@ use lnurllib::lightning_address::LightningAddress;
 
 use bitcoin_ext::AmountExt;
 
-/// Initiates payment of a LNURL-Pay invoice.
+/// Performs an LNURL-Pay request against `lnurlp` and returns the BOLT11
+/// invoice the endpoint issues for the requested amount.
 ///
-/// This function attempts to pay the given invoice and returns immediately;
-/// it does not wait for the payment to be completed or for the pre-image
-/// to be released by the receiver.
+/// `comment` is forwarded as the LNURL-Pay `comment` field when present; the
+/// endpoint may reject or truncate it according to its own `commentAllowed`
+/// limit.
 ///
-/// To determine whether the payment succeeded or failed,
-/// call [Wallet::check_lightning_payment] after initiating the payment.
-async fn lnurlp_invoice(
+/// Returns an error if the endpoint resolves to a non-pay LNURL response
+/// (withdraw, channel), if the HTTP request fails, or if the returned bolt11
+/// string is not a valid invoice.
+pub(crate) async fn lnurlp_invoice(
 	lnurlp: &str,
 	amount: Amount,
 	comment: Option<impl AsRef<str>>,
@@ -37,15 +39,12 @@ async fn lnurlp_invoice(
 	Ok(invoice.parse().with_context(|| format!("received invalid invoice: {}", invoice))?)
 }
 
-/// Initiates payment of a Lightning Address.
+/// Resolves a Lightning Address (`user@domain`) to its LNURL-Pay endpoint and
+/// returns a BOLT11 invoice issued by that endpoint for the requested amount.
 ///
-/// This function attempts to pay the given address and returns immediately;
-/// it does not wait for the payment to be completed or for the pre-image
-/// to be released by the receiver.
-///
-/// To determine whether the payment succeeded or failed,
-/// call [Wallet::check_lightning_payment] after initiating the payment.
-async fn lnaddr_invoice(
+/// Thin wrapper over [`lnurlp_invoice`]; see it for the meaning of `comment`
+/// and for the set of conditions under which this call can fail.
+pub(crate) async fn lnaddr_invoice(
 	addr: &LightningAddress,
 	amount: Amount,
 	comment: Option<impl AsRef<str>>,

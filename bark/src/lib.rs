@@ -298,6 +298,7 @@ pub mod chain;
 pub mod exit;
 pub mod movement;
 pub mod onchain;
+pub mod payment_request;
 pub mod persist;
 pub mod round;
 pub mod subsystem;
@@ -320,7 +321,7 @@ mod proxy;
 mod psbtext;
 mod utils;
 
-pub use self::arkoor::ArkoorCreateResult;
+pub use self::arkoor::{ArkoorCreateResult, ArkoorAddressError};
 pub use self::config::{BarkNetwork, Config};
 pub use self::daemon::DaemonHandle;
 pub use self::fees::FeeEstimate;

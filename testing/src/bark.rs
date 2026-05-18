@@ -257,7 +257,7 @@ impl Bark {
 		wallet.estimate_offboard(address, &vtxos).await.unwrap()
 	}
 
-	pub async fn estimate_send_onchain(
+	pub async fn estimate_send_onchain_fee(
 		&self,
 		address: &Address,
 		amount: Amount,
@@ -291,6 +291,33 @@ impl Bark {
 			.expect("wallet not initialised");
 		OnchainWallet::load_or_create(properties.network, seed, db).await
 			.expect("failed to create OnchainWallet")
+	}
+
+	pub async fn try_parse_payment_request(
+		&self,
+		payment_str: &str,
+	) -> anyhow::Result<bark::payment_request::PaymentRequest> {
+		let wallet = self.client().await;
+		wallet.parse_payment_request(payment_str).await
+	}
+
+	pub async fn parse_payment_request(
+		&self,
+		payment_str: &str,
+	) -> bark::payment_request::PaymentRequest {
+		self.try_parse_payment_request(payment_str).await.unwrap()
+	}
+
+	/// Estimate fees for all payment options in a [`PaymentRequest`].
+	///
+	/// You can get a payment request from [`Self::parse_payment_request`].
+	pub async fn estimate_payment_fees(
+		&self,
+		request: bark::payment_request::PaymentRequest,
+		amount: Option<Amount>,
+	) -> Vec<(bark::payment_request::AvailablePaymentMethod, bark::FeeEstimate)> {
+		let wallet = self.client().await;
+		wallet.estimate_payment_fees(request, amount).await.unwrap()
 	}
 
 	pub fn bitcoind(&self) -> Option<&Bitcoind> {
@@ -653,10 +680,11 @@ impl Bark {
 		self.run(["maintain", "--delegated"]).await;
 	}
 
-	pub async fn board_and_confirm_and_register(&self, ctx: &TestContext, amount: Amount) {
-		self.board(amount).await;
+	pub async fn board_and_confirm_and_register(&self, ctx: &TestContext, amount: Amount) -> Vec<VtxoId> {
+		let pending_board = self.board(amount).await;
 		ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 		self.sync().await;
+		pending_board.vtxos
 	}
 
 	pub async fn board_all_and_confirm_and_register(&self, ctx: &TestContext) {
