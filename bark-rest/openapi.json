@@ -1347,7 +1347,7 @@
           "onchain"
         ],
         "summary": "List on-chain transactions",
-        "description": "Returns all on-chain wallet transactions, ordered from oldest to newest.",
+        "description": "Returns all on-chain wallet transactions, ordered from oldest to newest. Each entry includes the raw transaction, its fee (when known), the wallet's net balance change, and confirmation status. The fee is `null` for inbound or collaboratively-funded transactions whose foreign prevouts BDK has not indexed.",
         "operationId": "onchain_transactions",
         "responses": {
           "200": {
@@ -1357,7 +1357,7 @@
                 "schema": {
                   "type": "array",
                   "items": {
-                    "$ref": "#/components/schemas/TransactionInfo"
+                    "$ref": "#/components/schemas/WalletTxInfo"
                   }
                 }
               }
@@ -5630,6 +5630,48 @@
           }
         ],
         "description": "A notification of something happening in the wallet"
+      },
+      "WalletTxInfo": {
+        "type": "object",
+        "description": "A richer wallet-transaction summary returned by the onchain transactions endpoint.\n\nIncludes the raw transaction plus its fee, the wallet's net balance change, and\nconfirmation status.",
+        "required": [
+          "txid",
+          "tx",
+          "balance_change_sat"
+        ],
+        "properties": {
+          "balance_change_sat": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Net change to the wallet's balance: `received - sent` over wallet-owned outputs.\nPositive for inbound, negative for outbound, zero for self-spends with no net change."
+          },
+          "confirmation": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/BlockRef",
+                "description": "`Some` when the transaction is mined; `None` while still in the mempool."
+              }
+            ]
+          },
+          "onchain_fee_sat": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Total fee paid by the transaction, when known. `None` for txs whose foreign\nprevouts BDK has not indexed (e.g. inbound payments observed via the\nbitcoind-rpc sync path; esplora sync always populates prevouts).",
+            "minimum": 0
+          },
+          "tx": {
+            "type": "string"
+          },
+          "txid": {
+            "type": "string"
+          }
+        }
       },
       "WalletVtxoInfo": {
         "allOf": [

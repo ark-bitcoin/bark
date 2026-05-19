@@ -15,7 +15,7 @@ use bark_json::cli::{
 };
 use bark_json::cli::onchain::{Address, OnchainBalance};
 use bark_json::notifications::WalletNotification;
-use bark_json::primitives::{TransactionInfo, UtxoInfo, WalletVtxoInfo};
+use bark_json::primitives::{UtxoInfo, WalletTxInfo, WalletVtxoInfo};
 use bark_json::web::{
 	BarkNetwork, ConnectedResponse, CreateWalletRequest, EncodedVtxoResponse,
 	ExitStartResponse, FeeEstimateResponse, MailboxSyncResponse, OnchainFeeRatesResponse,
@@ -248,7 +248,7 @@ impl Barkd {
 	}
 
 	/// List transactions in the on-chain wallet without syncing first.
-	pub async fn onchain_transactions(&self) -> Vec<TransactionInfo> {
+	pub async fn onchain_transactions(&self) -> Vec<WalletTxInfo> {
 		let config = self.client_config();
 		onchain_api::onchain_transactions(&config).await
 			.expect("failed to list barkd onchain transactions")

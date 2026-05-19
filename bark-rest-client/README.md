@@ -245,6 +245,7 @@ Class | Method | HTTP request | Description
  - [WalletNotificationOneOf](docs/WalletNotificationOneOf.md)
  - [WalletNotificationOneOf1](docs/WalletNotificationOneOf1.md)
  - [WalletNotificationOneOf2](docs/WalletNotificationOneOf2.md)
+ - [WalletTxInfo](docs/WalletTxInfo.md)
  - [WalletVtxoInfo](docs/WalletVtxoInfo.md)
 
 
