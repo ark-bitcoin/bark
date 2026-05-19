@@ -348,9 +348,7 @@ use bitcoin::{Amount, Network, OutPoint};
 use bitcoin::bip32::{self, ChildNumber, Fingerprint};
 use bitcoin::secp256k1::{self, Keypair, PublicKey};
 use log::{trace, info, warn, error};
-use tokio::sync::{Mutex, OnceCell, RwLock};
-
-use ark::lightning::PaymentHash;
+use tokio::sync::{OnceCell, RwLock};
 
 use ark::{ArkInfo, ProtocolEncoding, Vtxo, VtxoId, VtxoPolicy, VtxoRequest};
 use ark::address::VtxoDelivery;
@@ -762,10 +760,6 @@ pub struct Wallet {
 	/// instead of each opening a fresh gRPC channel.
 	server: OnceCell<ServerConnection>,
 
-	/// Tracks payment hashes of lightning payments currently being processed.
-	/// Used to prevent concurrent payment attempts for the same invoice.
-	inflight_lightning_payments: Mutex<HashSet<PaymentHash>>,
-
 	/// A handle to the currently running daemon, if any.
 	daemon: parking_lot::Mutex<Option<DaemonHandle>>,
 }
@@ -1091,7 +1085,6 @@ impl Wallet {
 
 		Ok(Wallet {
 			config, db, lock_manager, seed, exit, movements, notifications, server, chain,
-			inflight_lightning_payments: Mutex::new(HashSet::new()),
 			daemon: parking_lot::Mutex::new(None),
 		})
 	}

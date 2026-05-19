@@ -22,6 +22,8 @@ use crate::movement::{MovementDestination, MovementStatus};
 use crate::movement::update::MovementUpdate;
 use crate::persist::models::LightningReceive;
 
+const LIGHTNING_RECEIVE_LOCK_PREFIX: &str = "lightning_receive";
+
 /// Leniency delta to allow claim when blocks were mined between htlc
 /// receive and claim preparation
 const LIGHTNING_PREPARE_CLAIM_DELTA: BlockDelta = 2;
@@ -589,23 +591,17 @@ impl Wallet {
 		// Mark this payment as in-flight. If another task is already claiming
 		// the same payment hash, return the current receive state instead of
 		// starting a duplicate claim.
-		{
-			let mut inflight = self.inflight_lightning_payments.lock().await;
-			if !inflight.insert(payment_hash) {
+		let key = format!("{}.{}", LIGHTNING_RECEIVE_LOCK_PREFIX, payment_hash);
+		let _guard = match self.lock_manager.try_lock(&key).await {
+			Some(guard) => guard,
+			None => {
 				debug!("Receive operation already in progress for this payment");
-				return self.db.fetch_lightning_receive_by_payment_hash(payment_hash).await?.context("no receive for payment hash");
-			}
-		}
+				return self.db.fetch_lightning_receive_by_payment_hash(payment_hash).await?
+					.context("no receive for payment hash");
+			},
+		};
 
-		let result = self.try_claim_lightning_receive_inner(payment_hash, wait, token).await;
-
-		// Always remove from inflight set when done
-		{
-			let mut inflight = self.inflight_lightning_payments.lock().await;
-			inflight.remove(&payment_hash);
-		}
-
-		result
+		self.try_claim_lightning_receive_inner(payment_hash, wait, token).await
 	}
 
 	/// Internal implementation of lightning receive claim after concurrency check.
