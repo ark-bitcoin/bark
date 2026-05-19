@@ -556,7 +556,8 @@ impl Wallet {
 	/// Check and claim a Lightning receive
 	///
 	/// This function checks for an incoming lightning payment with the given [PaymentHash]
-	/// and then claims the payment using returned HTLC VTXOs.
+	/// and then claims the payment using returned HTLC VTXOs. If another task is
+	/// already claiming the same payment hash, returns the current receive state.
 	///
 	/// # Arguments
 	///
@@ -569,7 +570,8 @@ impl Wallet {
 	/// # Returns
 	///
 	/// Returns an `anyhow::Result<LightningReceive>`, which is:
-	/// * `Ok(LightningReceive)` if the claim was completed or is awaiting HTLC VTXOs
+	/// * `Ok(LightningReceive)` if the claim was completed, is awaiting HTLC
+	///   VTXOs, or another claim for the same payment hash is already in flight.
 	/// * `Err` if an error occurs at any stage of the operation.
 	///
 	/// # Remarks
@@ -584,13 +586,14 @@ impl Wallet {
 	) -> anyhow::Result<LightningReceive> {
 		trace!("Claiming lightning receive for payment hash: {}", payment_hash);
 
-		// Try to mark this payment as in-flight to prevent concurrent claim attempts.
-		// This prevents race conditions where multiple concurrent calls could both
-		// attempt to check/claim the same receive, leading to duplicate operations.
+		// Mark this payment as in-flight. If another task is already claiming
+		// the same payment hash, return the current receive state instead of
+		// starting a duplicate claim.
 		{
 			let mut inflight = self.inflight_lightning_payments.lock().await;
 			if !inflight.insert(payment_hash) {
-				bail!("Receive operation already in progress for this payment");
+				debug!("Receive operation already in progress for this payment");
+				return self.db.fetch_lightning_receive_by_payment_hash(payment_hash).await?.context("no receive for payment hash");
 			}
 		}
 
