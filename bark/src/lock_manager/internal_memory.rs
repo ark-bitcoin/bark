@@ -31,16 +31,16 @@ const DEFAULT_PURGE_INTERVAL: Duration = Duration::from_secs(60);
 /// once the last guard goes away. The map slot stays until either an
 /// explicit [`purge`](Self::purge) or the periodic auto-purge sweeps it.
 pub struct InternalMemoryLockManager {
-	keys: std::sync::Mutex<HashMap<String, Weak<tokio::sync::Mutex<()>>>>,
-	last_purge: std::sync::Mutex<Instant>,
+	keys: parking_lot::Mutex<HashMap<String, Weak<tokio::sync::Mutex<()>>>>,
+	last_purge: parking_lot::Mutex<Instant>,
 	purge_interval: Duration,
 }
 
 impl InternalMemoryLockManager {
 	pub fn new() -> Self {
 		Self {
-			keys: std::sync::Mutex::new(HashMap::new()),
-			last_purge: std::sync::Mutex::new(Instant::now()),
+			keys: parking_lot::Mutex::new(HashMap::new()),
+			last_purge: parking_lot::Mutex::new(Instant::now()),
 			purge_interval: DEFAULT_PURGE_INTERVAL,
 		}
 	}
@@ -57,7 +57,7 @@ impl InternalMemoryLockManager {
 	/// holders are never disturbed because their `Arc` keeps the `Weak`
 	/// upgradable.
 	pub fn purge(&self) -> usize {
-		let mut keys = self.keys.lock().expect("memory lock map poisoned");
+		let mut keys = self.keys.lock();
 		let before = keys.len();
 		keys.retain(|_, weak| weak.strong_count() > 0);
 		before - keys.len()
@@ -65,7 +65,7 @@ impl InternalMemoryLockManager {
 
 	fn key_mutex(&self, key: &str) -> Arc<tokio::sync::Mutex<()>> {
 		self.maybe_purge();
-		let mut keys = self.keys.lock().expect("memory lock map poisoned");
+		let mut keys = self.keys.lock();
 		if let Some(weak) = keys.get(key) {
 			if let Some(arc) = weak.upgrade() {
 				return arc;
@@ -78,7 +78,7 @@ impl InternalMemoryLockManager {
 
 	fn maybe_purge(&self) {
 		let now = Instant::now();
-		let mut last = self.last_purge.lock().expect("last_purge poisoned");
+		let mut last = self.last_purge.lock();
 		if now.duration_since(*last) >= self.purge_interval {
 			*last = now;
 			drop(last);
