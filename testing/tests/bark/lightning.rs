@@ -1,6 +1,7 @@
 
 use std::str::FromStr;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicI8, AtomicUsize, Ordering};
 use std::time::Duration;
 
 use ark::VtxoId;
@@ -8,6 +9,7 @@ use ark::lightning::{Invoice, PaymentHash};
 use ark::vtxo::VtxoPolicyKind;
 use ark_testing::context::LightningPaymentSetup;
 use bark::lightning_invoice::Bolt11Invoice;
+use bark_json::exit::ExitState;
 use bark_json::movements::{MovementDestination, MovementStatus, PaymentMethod};
 use bark_json::primitives::VtxoStateInfo;
 use log::{info, trace};
@@ -1525,4 +1527,126 @@ async fn bark_can_receive_lightning_long_route() {
 
 	assert_eq!(bark.spendable_balance().await, btc(8) + bolt11_amount);
 	info!("Bolt11 receive over long route succeeded");
+}
+
+/// Exhaust the Lightning receive claim retry budget and confirm we fall back
+/// to exiting the HTLC-recv VTXOs on-chain.
+#[tokio::test]
+async fn bark_exits_lightning_receive_after_retry_budget_exhausted() {
+	require_bark_version!(== "DIRTY");
+
+	let ctx = TestContext::new("lightningd/exits_after_retry_budget_exhausted").await;
+
+	let lightning = ctx.new_lightning_setup("lightningd").await;
+
+	let srv = ctx.captaind("srv").lightningd(&lightning.internal).funded(btc(10)).create().await;
+
+	/// Counts and rejects every claim attempt so the retry budget is always
+	/// exhausted.
+	#[derive(Clone)]
+	struct AlwaysFailClaim(Arc<AtomicUsize>);
+	#[async_trait::async_trait]
+	impl captaind::proxy::ArkRpcProxy for AlwaysFailClaim {
+		async fn claim_lightning_receive(
+			&self,
+			_upstream: &mut ArkClient,
+			_req: protos::ClaimLightningReceiveRequest,
+		) -> Result<protos::ArkoorPackageCosignResponse, tonic::Status> {
+			self.0.fetch_add(1, Ordering::Relaxed);
+			Err(tonic::Status::internal("simulated transient claim failure"))
+		}
+	}
+
+	let attempts = Arc::new(AtomicUsize::new(0));
+	let proxy = srv.start_proxy_no_mailbox(AlwaysFailClaim(attempts.clone())).await;
+
+	// Cap the retry budget so the test doesn't pay the full default backoff.
+	let retries: u8 = 3;
+	let bark = ctx.bark("bark", &proxy.address).funded(btc(3)).cfg(move |cfg| {
+		cfg.lightning_receive_claim_retries = retries;
+	}).create().await;
+	bark.board(btc(2)).await;
+	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
+
+	let invoice_info = bark.bolt11_invoice(btc(1)).await;
+
+	let cloned_invoice = invoice_info.clone();
+	tokio::spawn(async move {
+		lightning.external.pay_bolt11(cloned_invoice.invoice).await;
+	});
+
+	// 1 initial attempt + 3 retries with 2s/4s/8s backoff = ~14s of waiting,
+	// plus payment routing and the on-chain exit start. Allow generous slack.
+	bark.try_lightning_receive(&invoice_info.invoice).wait_millis(60_000).await
+		.expect_err("claim should fail after retry budget is exhausted");
+
+	assert_eq!(attempts.load(Ordering::Relaxed), usize::from(retries) + 1,
+		"server should see one claim per attempt (initial + each retry)");
+
+	// The HTLC-recv VTXO must have been moved into an on-chain exit.
+	let exits = bark.list_exits().await;
+	assert_eq!(exits.len(), 1, "should have started an exit for the HTLC-recv VTXO");
+	assert!(matches!(exits[0].state, ExitState::Start(_)),
+		"exit should be in Start state, got: {:?}", exits[0].state);
+}
+
+/// A transient claim failure should be absorbed by the retry budget and the
+/// receive should ultimately settle off-chain.
+#[tokio::test]
+async fn bark_completes_lightning_receive_after_transient_claim_failures() {
+	require_bark_version!(== "DIRTY");
+
+	let ctx = TestContext::new("lightningd/completes_after_transient_claim_failures").await;
+
+	let lightning = ctx.new_lightning_setup("lightningd").await;
+
+	let srv = ctx.captaind("srv").lightningd(&lightning.internal).funded(btc(10)).create().await;
+
+	/// Fails the first `remaining` calls, then forwards subsequent ones. Use
+	/// AtomicI8 so the counter can go negative without wrapping concerns once
+	/// we start forwarding.
+	#[derive(Clone)]
+	struct FailThenSucceed(Arc<AtomicI8>);
+	#[async_trait::async_trait]
+	impl captaind::proxy::ArkRpcProxy for FailThenSucceed {
+		async fn claim_lightning_receive(
+			&self,
+			upstream: &mut ArkClient,
+			req: protos::ClaimLightningReceiveRequest,
+		) -> Result<protos::ArkoorPackageCosignResponse, tonic::Status> {
+			let prev = self.0.fetch_sub(1, Ordering::Relaxed);
+			if prev > 0 {
+				Err(tonic::Status::internal("simulated transient claim failure"))
+			} else {
+				Ok(upstream.claim_lightning_receive(req).await?.into_inner())
+			}
+		}
+	}
+
+	// Fail the first two attempts so the third one (within a budget of 3
+	// retries) succeeds. Backoff: 2s + 4s of sleeps.
+	let counter = Arc::new(AtomicI8::new(2));
+	let proxy = srv.start_proxy_no_mailbox(FailThenSucceed(counter.clone())).await;
+
+	let bark = ctx.bark("bark", &proxy.address).funded(btc(3)).cfg(|cfg| {
+		cfg.lightning_receive_claim_retries = 3;
+	}).create().await;
+	let board_amount = btc(2);
+	bark.board_and_confirm_and_register(&ctx, board_amount).await;
+
+	let pay_amount = btc(1);
+	let invoice_info = bark.bolt11_invoice(pay_amount).await;
+
+	let cloned_invoice = invoice_info.clone();
+	tokio::spawn(async move {
+		lightning.external.pay_bolt11(cloned_invoice.invoice).await;
+	});
+
+	bark.lightning_receive(&invoice_info.invoice).wait_millis(30_000).await;
+
+	assert_eq!(bark.spendable_balance().await, board_amount + pay_amount);
+	assert!(bark.list_exits().await.is_empty(),
+		"no exit should have been triggered after a successful retry");
+	assert!(counter.load(Ordering::Relaxed) <= 0,
+		"proxy should have served at least the failure budget");
 }
