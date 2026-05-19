@@ -986,7 +986,12 @@ impl ProtocolEncoding for GenesisTransition {
 	fn decode<R: io::Read + ?Sized>(r: &mut R) -> Result<Self, ProtocolDecodingError> {
 		match r.read_u8()? {
 			GENESIS_TRANSITION_TYPE_COSIGNED => {
-				let pubkeys = LengthPrefixedVector::decode(r)?.into_inner();
+				let pubkeys: Vec<PublicKey> = LengthPrefixedVector::decode(r)?.into_inner();
+				if pubkeys.is_empty() {
+					return Err(ProtocolDecodingError::invalid(
+						"cosigned genesis transition with empty pubkey list",
+					));
+				}
 				let signature = Option::<schnorr::Signature>::decode(r)?;
 				Ok(Self::new_cosigned(pubkeys, signature))
 			},
@@ -1287,6 +1292,7 @@ mod test {
 		use bitcoin::taproot::TapTweakHash;
 		use std::str::FromStr;
 
+		use crate::encode::ProtocolEncoding;
 		use crate::test_util::encoding_roundtrip;
 		use super::genesis::{
 			GenesisTransition, CosignedGenesis, HashLockedCosignedGenesis, ArkoorGenesis,
@@ -1321,6 +1327,17 @@ mod test {
 				signature: None,
 			});
 			encoding_roundtrip(&transition);
+		}
+
+		#[test]
+		fn cosigned_empty_pubkeys_rejected() {
+			let mut buf = Vec::new();
+			buf.push(super::GENESIS_TRANSITION_TYPE_COSIGNED);
+			buf.push(0x00); // LengthPrefixedVector length = 0
+			buf.push(0x00); // Option::<Signature> = None
+			let err = GenesisTransition::deserialize(&mut buf.as_slice())
+				.expect_err("empty pubkeys must be rejected");
+			assert!(format!("{err}").contains("empty pubkey list"), "got: {err}");
 		}
 
 		#[test]

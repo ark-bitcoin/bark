@@ -20,3 +20,10 @@
   workspace members may adopt it later. Workspace release profile sets
   `overflow-checks = true` as defense in depth for any sites the lint misses.
   [#2046](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2046)
+
+- Reject empty pubkey list in cosigned `GenesisTransition` decode
+  `GenesisTransition::decode` now returns a `ProtocolDecodingError` when a
+  cosigned variant carries an empty pubkey vector. A `CosignedGenesis` with
+  no pubkeys violates the type's invariant and downstream callers assume at
+  least one cosigner.
+  [#2046](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2046)
