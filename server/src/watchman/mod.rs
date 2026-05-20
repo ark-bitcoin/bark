@@ -258,6 +258,7 @@ impl Watchman {
 
 		let mut claims = Vec::new();
 		let mut progress = Vec::new();
+		let mut wait_volume = Amount::ZERO;
 
 		let ctx = ActionContextFetcher {
 			config: &self.config,
@@ -267,7 +268,9 @@ impl Watchman {
 		};
 		for (vtxo, confirmed_at) in frontier.get() {
 			match ctx.get_action(vtxo, confirmed_at).await {
-				Action::Wait => {},
+				Action::Wait => {
+					wait_volume += vtxo.amount();
+				},
 				Action::Progress { txid, deadline } => {
 					progress.push((deadline, txid, vtxo.clone()));
 				},
@@ -277,6 +280,14 @@ impl Watchman {
 			}
 		}
 		drop(frontier); // Release read lock before processing
+
+		let claim_volume = claims.iter().map(|(_, v)| v.amount()).sum::<Amount>();
+		let progress_volume = progress.iter().map(|(_, _, v)| v.amount()).sum::<Amount>();
+		crate::telemetry::set_frontier_metrics(
+			claim_volume.to_sat(),
+			progress_volume.to_sat(),
+			wait_volume.to_sat(),
+		);
 
 		// Sort by deadline (soonest first, None last)
 		claims.sort_by_key(|(d, _)| d.map(|h| (0u8, h)).unwrap_or((1u8, 0)));
