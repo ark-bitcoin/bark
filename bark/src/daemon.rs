@@ -92,6 +92,9 @@ impl DaemonProcess {
 	/// Recursively resubscribe to mailbox message stream by waiting and
 	/// calling [Wallet::subscribe_store_mailbox_messages] again until
 	/// the daemon is shutdown.
+	///
+	/// The mailbox stream is always-on and sets `connected` to `false`
+	/// when it breaks, so other processes can back off.
 	async fn run_mailbox_messages_process(&self) {
 		loop {
 			let shutdown = self.shutdown.clone();
@@ -99,6 +102,7 @@ impl DaemonProcess {
 				let r = self.wallet.subscribe_process_mailbox_messages(None, shutdown).await;
 				if let Err(e) = r {
 					warn!("An error occurred while processing mailbox messages: {e:#}");
+					self.connected.store(false, Ordering::Relaxed);
 				}
 			}
 
@@ -186,7 +190,6 @@ impl DaemonProcess {
 	/// until it closes or the daemon shuts down.
 	async fn process_round_event_stream(&self) -> anyhow::Result<()> {
 		let mut events = self.wallet.subscribe_round_events().await?;
-		self.connected.store(true, Ordering::Relaxed);
 
 		loop {
 			futures::select! {
@@ -232,8 +235,6 @@ impl DaemonProcess {
 				continue;
 			}
 
-			self.connected.store(false, Ordering::Relaxed);
-
 			futures::select! {
 				_ = tokio::time::sleep(self.sync_interval()).fuse() => {},
 				_ = self.shutdown.cancelled().fuse() => {
@@ -246,9 +247,8 @@ impl DaemonProcess {
 
 	/// Periodically try to reconnect when the server is not reachable.
 	///
-	/// When connected, the round-events stream drives the `connected`
-	/// flag — this process only kicks in to re-establish the initial
-	/// connection so the streams can take over again.
+	/// Sets `connected` to `true` on success so the round-events
+	/// and mailbox streams start subscribing again.
 	async fn run_server_connection_check_process(&self) {
 		loop {
 			futures::select! {
@@ -264,13 +264,12 @@ impl DaemonProcess {
 			}
 
 			let result = self.wallet.refresh_server().await;
-			let connected = result.is_ok();
 			if let Err(ref e) = result {
 				warn!("Ark server reconnect failed: {:#}", e);
 			} else {
 				info!("Ark server reconnected");
+				self.connected.store(true, Ordering::Relaxed);
 			}
-			self.connected.store(connected, Ordering::Relaxed);
 		}
 	}
 
