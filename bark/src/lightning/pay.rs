@@ -8,7 +8,7 @@ use lnurllib::lightning_address::LightningAddress;
 use log::{debug, error, info, trace, warn};
 use server_rpc::protos::{self, lightning_payment_status::PaymentStatus};
 
-use ark::{musig, VtxoPolicy};
+use ark::{ProtocolEncoding, VtxoPolicy, musig};
 use ark::arkoor::ArkoorDestination;
 use ark::arkoor::package::{ArkoorPackageBuilder, ArkoorPackageCosignResponse};
 use ark::lightning::{Bolt12Invoice, Bolt12InvoiceExt, Invoice, Offer, PaymentHash, Preimage};
@@ -732,7 +732,7 @@ impl Wallet {
 			invoice: invoice.to_string(),
 			htlc_vtxo_ids: htlc_vtxos.iter().map(|v| v.id().to_bytes().to_vec()).collect(),
 			payment_amount_sat: payment_amount.to_sat(),
-			mailbox_id: Some(mailbox_id.to_vec()),
+			mailbox_id: Some(mailbox_id.serialize()),
 		};
 
 		srv.client.initiate_lightning_payment(req).await?;

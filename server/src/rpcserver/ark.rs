@@ -274,7 +274,7 @@ impl rpc::server::ArkService for Server {
 		let payment_amount = Amount::from_sat(req.payment_amount_sat);
 
 		let mailbox_id = req.mailbox_id.as_deref()
-			.map(ark::mailbox::MailboxIdentifier::from_slice)
+			.map(ark::mailbox::MailboxIdentifier::deserialize)
 			.transpose()
 			.map_err(|_| tonic::Status::invalid_argument("invalid mailbox_id"))?;
 
@@ -354,7 +354,7 @@ impl rpc::server::ArkService for Server {
 		let amount = Amount::from_sat(req.amount_sat);
 
 		let mailbox_id = req.mailbox_id.as_deref()
-			.map(ark::mailbox::MailboxIdentifier::from_slice)
+			.map(ark::mailbox::MailboxIdentifier::deserialize)
 			.transpose()
 			.map_err(|_| tonic::Status::invalid_argument("invalid mailbox_id"))?;
 
@@ -570,7 +570,7 @@ impl rpc::server::ArkService for Server {
 
 		// Parse the request-level mailbox ID (applies to all outputs)
 		let unblinded_mailbox_id = req.unblinded_mailbox_id
-			.map(|b| MailboxIdentifier::try_from(b.as_slice()))
+			.map(|b| MailboxIdentifier::deserialize(&b[..]))
 			.transpose().badarg("invalid unblinded mailbox id")?;
 
 		let mut outputs = Vec::with_capacity(req.vtxo_requests.len());

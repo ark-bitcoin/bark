@@ -159,7 +159,7 @@ async fn read_recovery_vtxo_ids(
 
 	let read_mailbox = protos::mailbox_server::MailboxRequest {
 		authorization: Some(mailbox_auth.serialize().to_vec()),
-		unblinded_id: recovery_mailbox_id.to_vec(),
+		unblinded_id: recovery_mailbox_id.serialize(),
 		checkpoint: 0,
 	};
 

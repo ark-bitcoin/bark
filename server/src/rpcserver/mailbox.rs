@@ -117,7 +117,7 @@ impl rpc::server::MailboxService for crate::Server {
 	) -> Result<tonic::Response<protos::mailbox_server::MailboxMessages>, tonic::Status> {
 		let req = req.into_inner();
 
-		let unblinded_id = MailboxIdentifier::from_slice(req.unblinded_id.as_slice())
+		let unblinded_id = MailboxIdentifier::deserialize(req.unblinded_id.as_slice())
 			.badarg("invalid unblinded mailbox id")?;
 		let auth_bytes = req.authorization.badarg("mailbox authorization required")?;
 		let auth = MailboxAuthorization::deserialize(auth_bytes.as_slice())
@@ -159,7 +159,7 @@ impl rpc::server::MailboxService for crate::Server {
 	) -> Result<tonic::Response<Self::SubscribeMailboxStream>, tonic::Status> {
 		let req = req.into_inner();
 
-		let mailbox_id = MailboxIdentifier::from_slice(req.unblinded_id.as_slice())
+		let mailbox_id = MailboxIdentifier::deserialize(req.unblinded_id.as_slice())
 			.badarg("invalid unblinded mailbox id")?;
 		let auth_bytes = req.authorization.badarg("mailbox authorization required")?;
 		let auth = MailboxAuthorization::deserialize(auth_bytes.as_slice())
@@ -240,7 +240,7 @@ impl rpc::server::MailboxService for crate::Server {
 			self::badarg!("no vtxo ids provided");
 		}
 
-		let mailbox_id = MailboxIdentifier::from_slice(req.unblinded_id.as_slice())
+		let mailbox_id = MailboxIdentifier::deserialize(req.unblinded_id.as_slice())
 			.badarg("invalid unblinded mailbox id")?;
 
 		let checkpoint = self.db.write(async |t| {

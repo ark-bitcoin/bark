@@ -1307,7 +1307,7 @@ async fn mailbox_post_and_process_with_auth() {
 	let mut mb_rpc = srv.get_mailbox_public_rpc().await;
 
 	let mailbox_id = MailboxIdentifier::from_pubkey(bark2_mailbox_kp.public_key());
-	let unblinded_id = mailbox_id.to_vec();
+	let unblinded_id = mailbox_id.serialize();
 	let expiry_ok = chrono::Local::now() + Duration::from_secs(60);
 	let mailbox_auth = MailboxAuthorization::new(&bark2_mailbox_kp, expiry_ok);
 	let authorization = Some(mailbox_auth.serialize().to_vec());

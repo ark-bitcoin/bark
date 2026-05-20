@@ -62,7 +62,7 @@ async fn mailbox_checkpoint_visibility_gap() {
 	let writers_done = Arc::new(AtomicBool::new(false));
 	let expiry = chrono::Local::now() + Duration::from_secs(300);
 	let auth_bytes = MailboxAuthorization::new(&mailbox_kp, expiry).serialize().to_vec();
-	let unblinded_id = mailbox_id.as_ref().to_vec();
+	let unblinded_id = mailbox_id.serialize();
 
 	// -- Readers: 100 tasks polling as fast as possible, advancing cursor --
 
@@ -181,7 +181,7 @@ async fn mailbox_lightning_receive_pending() {
 
 			let read_req = protos::mailbox_server::MailboxRequest {
 				authorization: Some(mailbox_auth.serialize().to_vec()),
-				unblinded_id: mailbox_id.to_vec(),
+				unblinded_id: mailbox_id.serialize(),
 				checkpoint: 0,
 			};
 
@@ -246,7 +246,7 @@ async fn mailbox_lightning_send_finished() {
 
 			let read_req = protos::mailbox_server::MailboxRequest {
 				authorization: Some(mailbox_auth.serialize().to_vec()),
-				unblinded_id: mailbox_id.to_vec(),
+				unblinded_id: mailbox_id.serialize(),
 				checkpoint: 0,
 			};
 

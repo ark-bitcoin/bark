@@ -24,7 +24,6 @@ use log::{debug, error, info, trace, warn};
 use ark::{ProtocolEncoding, SignedVtxoRequest, Vtxo, VtxoRequest};
 use ark::vtxo::Full;
 use ark::attestations::{DelegatedRoundParticipationAttestation, RoundAttemptAttestation};
-use ark::mailbox::MailboxIdentifier;
 use ark::forfeit::HashLockedForfeitBundle;
 use ark::musig::{self, DangerousSecretNonce, PublicNonce, SecretNonce};
 use ark::rounds::{RoundAttempt, RoundEvent, RoundFinished, RoundSeq, ROUND_TX_VTXO_TREE_VOUT};
@@ -55,8 +54,8 @@ pub struct RoundParticipation {
 	/// including change
 	pub outputs: Vec<VtxoRequest>,
 	/// Optional mailbox identifier for round completion notification
-	#[serde(default, skip_serializing_if = "Option::is_none")]
-	pub unblinded_mailbox_id: Option<MailboxIdentifier>,
+	#[serde(default, skip_serializing_if = "Option::is_none", with = "ark::encode::serde::opt")]
+	pub unblinded_mailbox_id: Option<ark::mailbox::MailboxIdentifier>,
 }
 
 impl RoundParticipation {
@@ -703,7 +702,7 @@ async fn start_attempt(
 		vtxo_requests: signed_reqs.into_iter().map(Into::into).collect(),
 		#[allow(deprecated)]
 		offboard_requests: vec![],
-		unblinded_mailbox_id: Some(unblinded_mailbox_id.to_vec()),
+		unblinded_mailbox_id: Some(unblinded_mailbox_id.serialize()),
 	}).await.context("Ark server refused our payment submission")?;
 
 	Ok(AttemptState::AwaitingUnsignedVtxoTree {
@@ -1386,7 +1385,7 @@ impl Wallet {
 		let resp = srv.client.submit_round_participation(protos::RoundParticipationRequest {
 			input_vtxos,
 			vtxo_requests,
-			unblinded_mailbox_id: Some(unblinded_mailbox_id.to_vec()),
+			unblinded_mailbox_id: Some(unblinded_mailbox_id.serialize()),
 		}).await.context("error submitting round participation to server")?.into_inner();
 
 		let unlock_hash = UnlockHash::from_bytes(resp.unlock_hash)

@@ -96,7 +96,7 @@ impl Wallet {
 			payment_hash: payment_hash.to_vec(),
 			amount_sat: amount.to_sat(),
 			min_cltv_delta: requested_min_cltv_delta as u32,
-			mailbox_id: Some(mailbox_id.to_vec()),
+			mailbox_id: Some(mailbox_id.serialize()),
 			description,
 		};
 

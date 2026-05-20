@@ -1284,6 +1284,6 @@ mod test {
 		assert_eq!(std::mem::size_of::<Invoice>(), 1616);
 		assert_eq!(std::mem::size_of::<Bolt11Invoice>(), 168);
 		assert_eq!(std::mem::size_of::<Bolt12Invoice>(), 1616);
-		assert_eq!(std::mem::size_of::<Ctrl>(), 112, "Ctrl type size changed");
+		assert_eq!(std::mem::size_of::<Ctrl>(), 144, "Ctrl type size changed");
 	}
 }

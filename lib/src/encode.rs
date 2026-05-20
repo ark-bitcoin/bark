@@ -582,6 +582,22 @@ pub mod serde {
 		Ok(DeWrapper::<T>::deserialize(d)?.0)
 	}
 
+	pub mod opt {
+		use super::*;
+
+
+		pub fn serialize<T: ProtocolEncoding, S: Serializer>(v: &Option<T>, s: S) -> Result<S::Ok, S::Error> {
+			match v {
+				Some(v) => s.serialize_some(&SerWrapper(v)),
+				None => s.serialize_none(),
+			}
+		}
+
+		pub fn deserialize<'d, T: ProtocolEncoding, D: Deserializer<'d>>(d: D) -> Result<Option<T>, D::Error> {
+			Ok(Option::<DeWrapper<T>>::deserialize(d)?.map(|w| w.0))
+		}
+	}
+
 	pub mod vec {
 		use super::*;
 
@@ -716,5 +732,24 @@ mod test {
 			).unwrap(),
 		);
 
+	}
+
+	#[test]
+	fn serde_opt_json_roundtrip() {
+		#[derive(Serialize, Deserialize, PartialEq, Debug)]
+		struct Wrap {
+			#[serde(default, skip_serializing_if = "Option::is_none", with = "super::serde::opt")]
+			pk: Option<PublicKey>,
+		}
+
+		let pk = Keypair::new(&SECP, &mut secp256k1::rand::thread_rng()).public_key();
+
+		let some = Wrap { pk: Some(pk) };
+		let json = serde_json::to_string(&some).unwrap();
+		assert_eq!(some, serde_json::from_str(&json).unwrap());
+
+		let none = Wrap { pk: None };
+		let json = serde_json::to_string(&none).unwrap();
+		assert_eq!(none, serde_json::from_str(&json).unwrap());
 	}
 }
