@@ -37,20 +37,21 @@ pub extern crate tonic;
 include!(concat!(env!("OUT_DIR"), "/grpc_methods.rs"));
 
 mod convert;
-use std::borrow::BorrowMut;
+pub use crate::convert::{ConvertError, TryFromBytes};
 
-pub use convert::{ConvertError, TryFromBytes};
+mod error;
+pub use crate::error::StatusExt;
 
 pub mod client;
 pub mod protos {
 	pub mod core {
 		tonic::include_proto!("core");
 	}
-	pub use core::*;
+	pub use self::core::*;
 	pub mod bark_server {
 		tonic::include_proto!("bark_server");
 	}
-	pub use bark_server::*;
+	pub use self::bark_server::*;
 	pub mod intman {
 		tonic::include_proto!("intman");
 	}
@@ -92,6 +93,7 @@ pub mod mailbox {
 }
 
 
+use std::borrow::BorrowMut;
 use std::str::FromStr;
 
 use bitcoin::{Address, Amount, OutPoint};
