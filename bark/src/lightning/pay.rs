@@ -22,6 +22,7 @@ use crate::movement::update::MovementUpdate;
 use crate::persist::models::LightningSend;
 use crate::subsystem::{LightningMovement, LightningSendMovement, Subsystem};
 
+const LIGHTNING_PAY_LOCK_PREFIX: &str = "lightning_pay";
 
 impl Wallet {
 	/// Returns each pending lightning payment.
@@ -237,24 +238,11 @@ impl Wallet {
 		// Try to mark this payment as in-flight to prevent concurrent status checks.
 		// This prevents race conditions where multiple concurrent calls could both
 		// attempt to process success/revocation, leading to duplicate operations.
-		{
-			let mut inflight = self.inflight_lightning_payments.lock().await;
-			if !inflight.insert(payment_hash) {
-				bail!("Payment operation already in progress for this invoice");
-			}
-		}
+		let key = format!("{}.{}", LIGHTNING_PAY_LOCK_PREFIX, payment_hash);
+		let _guard = self.lock_manager.try_lock(&key).await
+			.context("Payment operation already in progress for this invoice")?;
 
-		let result = self.check_lightning_payment_inner(
-			payment_hash, wait, None,
-		).await;
-
-		// Always remove from inflight set when done
-		{
-			let mut inflight = self.inflight_lightning_payments.lock().await;
-			inflight.remove(&payment_hash);
-		}
-
-		result
+		self.check_lightning_payment_inner(payment_hash, wait, None).await
 	}
 
 	/// Like [`check_lightning_payment`](Self::check_lightning_payment) but accepts
@@ -268,23 +256,14 @@ impl Wallet {
 	{
 		trace!("Checking lightning payment status for payment hash: {}", payment_hash);
 
-		{
-			let mut inflight = self.inflight_lightning_payments.lock().await;
-			if !inflight.insert(payment_hash) {
-				bail!("Payment operation already in progress for this invoice");
-			}
-		}
+		// Try to mark this payment as in-flight to prevent concurrent status checks.
+		// This prevents race conditions where multiple concurrent calls could both
+		// attempt to process success/revocation, leading to duplicate operations.
+		let key = format!("{}.{}", LIGHTNING_PAY_LOCK_PREFIX, payment_hash);
+		let _guard = self.lock_manager.try_lock(&key).await
+			.context("Payment operation already in progress for this invoice")?;
 
-		let result = self.check_lightning_payment_inner(
-			payment_hash, false, known_preimage,
-		).await;
-
-		{
-			let mut inflight = self.inflight_lightning_payments.lock().await;
-			inflight.remove(&payment_hash);
-		}
-
-		result
+		self.check_lightning_payment_inner(payment_hash, false, known_preimage).await
 	}
 
 	/// Internal implementation of lightning payment status check after concurrency check.
@@ -556,25 +535,12 @@ impl Wallet {
 		// Try to mark this payment as in-flight to prevent concurrent attempts.
 		// This prevents a race condition where multiple concurrent calls could all pass
 		// the DB check below before any of them complete, leading to orphaned state.
-		{
-			let mut inflight = self.inflight_lightning_payments.lock().await;
-			if !inflight.insert(payment_hash) {
-				bail!("Payment already in progress for this invoice");
-			}
-		}
+		let key = format!("{}.{}", LIGHTNING_PAY_LOCK_PREFIX, payment_hash);
+		let _guard = self.lock_manager.try_lock(&key).await
+			.context("Payment operation already in progress for this invoice")?;
 
 		// Execute the payment, ensuring we remove from inflight set on any exit path
-		let result = self.make_lightning_payment_inner(
-			invoice, original_payment_method, user_amount, payment_hash
-		).await;
-
-		// Always remove from inflight set when done
-		{
-			let mut inflight = self.inflight_lightning_payments.lock().await;
-			inflight.remove(&payment_hash);
-		}
-
-		result
+		self.make_lightning_payment_inner(invoice, original_payment_method, user_amount, payment_hash).await
 	}
 
 	/// Internal implementation of lightning payment after concurrency check.
