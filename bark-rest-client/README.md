@@ -179,8 +179,6 @@ Class | Method | HTTP request | Description
  - [ExitTxStatusOneOf2](docs/ExitTxStatusOneOf2.md)
  - [ExitTxStatusOneOf3](docs/ExitTxStatusOneOf3.md)
  - [ExitTxStatusOneOf4](docs/ExitTxStatusOneOf4.md)
- - [ExitTxStatusOneOf5](docs/ExitTxStatusOneOf5.md)
- - [ExitTxStatusOneOf6](docs/ExitTxStatusOneOf6.md)
  - [FeeEstimateQuery](docs/FeeEstimateQuery.md)
  - [FeeEstimateResponse](docs/FeeEstimateResponse.md)
  - [FeeSchedule](docs/FeeSchedule.md)
