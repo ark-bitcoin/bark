@@ -263,6 +263,7 @@ struct Metrics {
 	vtxo_pool_block_expiry_bucket_count_gauge: Gauge<u64>,
 	vtxo_pool_amount_bucket_count_gauge: Gauge<u64>,
 	vtxo_pool_amount_bucket_amount_gauge: Gauge<u64>,
+	frontier_gauge: Gauge<u64>,
 	grpc_in_progress_counter: UpDownCounter<i64>,
 	grpc_latency_histogram: Histogram<u64>,
 	grpc_request_counter: Counter<u64>,
@@ -479,6 +480,9 @@ impl Metrics {
 		let vtxo_pool_block_expiry_bucket_count_gauge = meter.u64_gauge("vtxo_pool_block_expiry_bucket_count_gauge").build();
 		let vtxo_pool_amount_bucket_count_gauge = meter.u64_gauge("vtxo_pool_amount_bucket_count_gauge").build();
 		let vtxo_pool_amount_bucket_amount_gauge = meter.u64_gauge("vtxo_pool_amount_bucket_amount_gauge").build();
+		let frontier_gauge = meter.u64_gauge("frontier_gauge")
+			.with_description("Unswept frontier VTXO value in sats, labeled by watchman action")
+			.build();
 		// gRPC metrics
 		let grpc_in_progress_counter = meter.i64_up_down_counter("grpc_requests_in_progress").build();
 		let grpc_latency_histogram = meter.u64_histogram("grpc_request_duration_ms").build();
@@ -556,6 +560,7 @@ impl Metrics {
 			vtxo_pool_block_expiry_bucket_count_gauge,
 			vtxo_pool_amount_bucket_count_gauge,
 			vtxo_pool_amount_bucket_amount_gauge,
+			frontier_gauge,
 			grpc_in_progress_counter,
 			grpc_latency_histogram,
 			grpc_request_counter,
@@ -812,6 +817,29 @@ pub fn set_forfeit_metrics(
 			KeyValue::new(ATTRIBUTE_TYPE, "pending_claim_volume"),
 		]);
 		m.pending_forfeit_gauge.record(pending_claim_volume as u64, &claim_volume_attrs)
+	}
+}
+
+pub fn set_frontier_metrics(
+	claim_volume: u64,
+	progress_volume: u64,
+	wait_volume: u64,
+) {
+	if let Some(m) = TELEMETRY.get() {
+		let claim_attrs = m.with_global_labels([
+			KeyValue::new(ATTRIBUTE_TYPE, "claim"),
+		]);
+		m.frontier_gauge.record(claim_volume, &claim_attrs);
+
+		let progress_attrs = m.with_global_labels([
+			KeyValue::new(ATTRIBUTE_TYPE, "progress"),
+		]);
+		m.frontier_gauge.record(progress_volume, &progress_attrs);
+
+		let wait_attrs = m.with_global_labels([
+			KeyValue::new(ATTRIBUTE_TYPE, "wait"),
+		]);
+		m.frontier_gauge.record(wait_volume, &wait_attrs);
 	}
 }
 
