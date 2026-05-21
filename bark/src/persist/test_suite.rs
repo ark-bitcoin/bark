@@ -19,7 +19,9 @@ use ark::VtxoId;
 
 use super::BarkPersister;
 use crate::actions::WalletActionCheckpoint;
-use crate::exit::{ExitState, ExitTxOrigin};
+use crate::exit::{
+	ExitProcessingState, ExitState, ExitTx, ExitTxOrigin, ExitTxStatus,
+};
 use crate::movement::{MovementStatus, MovementSubsystem};
 use crate::persist::models::{SerdeRoundState, StoredExit, StoredRoundState, Unlocked};
 use crate::lock_manager::LockManager;
@@ -1041,6 +1043,7 @@ mod lightning {
 
 mod exit {
 	use bitcoin::hashes::Hash;
+	use bitcoin_ext::BlockRef;
 
 	use super::*;
 
@@ -1054,6 +1057,7 @@ mod exit {
 
 	pub async fn run<A: BarkPersister, B: BarkPersister>(a: &A, b: &B) {
 		test_exit_vtxo_entry_roundtrip(a, b).await;
+		test_exit_processing_state_roundtrip(a, b).await;
 		test_exit_child_tx_roundtrip(a, b).await;
 	}
 
@@ -1084,6 +1088,71 @@ mod exit {
 		ra.sort_by_key(|e| e.vtxo_id);
 		rb.sort_by_key(|e| e.vtxo_id);
 		assert_eq!(ra, rb, "get_exit_vtxo_entries after remove mismatch");
+	}
+
+	/// Persists a Processing state that touches every ExitTxStatus variant so any
+	/// rename or shape change to that enum is caught at the storage layer rather
+	/// than only at runtime.  Without this, a roundtrip-only test of ExitState::Start
+	/// (the trivial variant) lets schema-breaking refactors of nested variants slip
+	/// through silently.
+	async fn test_exit_processing_state_roundtrip<A: BarkPersister, B: BarkPersister>(a: &A, b: &B) {
+		let vtxo_id = VtxoId::from_slice(&[0xddu8; 36]).unwrap();
+		let txid = |n: u8| bitcoin::Txid::from_slice(&[n; 32]).unwrap();
+		let child_a = txid(0xa1);
+		let child_b = txid(0xb1);
+		let block = BlockRef {
+			height: 12_345,
+			hash: bitcoin::BlockHash::from_slice(&[0xcc; 32]).unwrap(),
+		};
+
+		let processing = ExitProcessingState {
+			tip_height: 200,
+			transactions: vec![
+				ExitTx { txid: txid(0x01), status: ExitTxStatus::VerifyInputs },
+				ExitTx {
+					txid: txid(0x02),
+					status: ExitTxStatus::AwaitingInputConfirmation {
+						txids: [txid(0x03), txid(0x04)].into_iter().collect(),
+					},
+				},
+				ExitTx { txid: txid(0x05), status: ExitTxStatus::AwaitingCpfpBroadcast },
+				ExitTx {
+					txid: txid(0x06),
+					status: ExitTxStatus::AwaitingConfirmation {
+						child_txid: child_a,
+						origin: ExitTxOrigin::Wallet { confirmed_in: None },
+					},
+				},
+				ExitTx {
+					txid: txid(0x07),
+					status: ExitTxStatus::Confirmed {
+						child_txid: child_b,
+						block,
+						origin: ExitTxOrigin::Block { confirmed_in: block },
+					},
+				},
+			],
+		};
+		let entry = StoredExit {
+			vtxo_id,
+			state: ExitState::Processing(processing),
+			history: vec![ExitState::Start(crate::exit::ExitStartState { tip_height: 100 })],
+		};
+
+		a.store_exit_vtxo_entry(&entry).await.expect("a: store processing entry");
+		b.store_exit_vtxo_entry(&entry).await.expect("b: store processing entry");
+
+		let mut ra = a.get_exit_vtxo_entries().await.expect("a: get_exit_vtxo_entries");
+		let mut rb = b.get_exit_vtxo_entries().await.expect("b: get_exit_vtxo_entries");
+		ra.sort_by_key(|e| e.vtxo_id);
+		rb.sort_by_key(|e| e.vtxo_id);
+		assert_eq!(ra, rb, "get_exit_vtxo_entries mismatch for processing state");
+		let stored = ra.into_iter().find(|e| e.vtxo_id == vtxo_id)
+			.expect("processing entry present after store");
+		assert_eq!(stored, entry, "stored processing entry differs from input");
+
+		a.remove_exit_vtxo_entry(&vtxo_id).await.expect("a: remove processing entry");
+		b.remove_exit_vtxo_entry(&vtxo_id).await.expect("b: remove processing entry");
 	}
 
 	async fn test_exit_child_tx_roundtrip<A: BarkPersister, B: BarkPersister>(a: &A, b: &B) {
