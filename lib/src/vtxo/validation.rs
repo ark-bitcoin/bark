@@ -32,6 +32,10 @@ pub enum VtxoValidationError {
 		policy: VtxoPolicyKind,
 		msg: &'static str,
 	},
+	#[error("Expected genesis items but found none")]
+	MissingGenesisItems,
+	#[error("Genesis items were found but none were expected")]
+	UnexpectedGenesisItems,
 }
 
 impl VtxoValidationError {

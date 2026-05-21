@@ -20,7 +20,7 @@ pub const MAX_VEC_SIZE: usize = 4_000_000;
 /// Maximum allowed scriptPubkey size in vbytes
 pub const MAX_SCRIPT_PUBKEY_SIZE: usize = 100;
 
-/// Error occuring during protocol decoding.
+/// Error occurring during protocol decoding.
 #[derive(Debug, thiserror::Error)]
 pub enum ProtocolDecodingError {
 	#[error("I/O error: {0}")]
