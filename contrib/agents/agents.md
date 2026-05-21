@@ -21,6 +21,7 @@ Use the skills in `contrib/agents/skills/` extensively:
 | `missing-changelogs.md` | Finding MRs without changelog entries |
 | `protocol-encoding.md` | Working with ProtocolEncoding (backward compat, no panics, DoS protection) |
 | `documentation.md` | Vocabulary and terminology guide |
+| `database-schema.md` | Finding the full database DDL (use schema.sql, not migrations) |
 | `release-tagging.md` | Tagging releases |
 | `prompts.md` | Managing prompts and research |
 | `corrections.md` | When corrected, encode the fix into skill files |
