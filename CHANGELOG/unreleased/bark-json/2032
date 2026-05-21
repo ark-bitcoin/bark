@@ -1,0 +1,31 @@
+- Reshape `ExitTxStatus` and `ExitError` for the unilateral exit refactor
+  The exit state machine no longer exposes intermediate "machine action"
+  states; statuses now describe the tx itself.
+  [#2032](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2032)
+  - **BREAKING:** `ExitTxStatus::NeedsSignedPackage` and
+    `ExitTxStatus::NeedsReplacementPackage` are replaced by
+    `ExitTxStatus::AwaitingCpfpBroadcast`. The `min_fee_rate` /
+    `min_fee_rate_kwu` / `min_fee` hints on `NeedsReplacementPackage` are
+    gone — RBF fee requirements are surfaced through
+    `bark::exit::ExitCpfpRequest.min_fee_for_rbf` at request time.
+  - **BREAKING:** `ExitTxStatus::NeedsBroadcasting` and
+    `ExitTxStatus::BroadcastWithCpfp` are replaced by
+    `ExitTxStatus::AwaitingConfirmation` (same `child_txid` and `origin`
+    fields).
+  - **BREAKING:** `ExitError::InsufficientFeeToStart` removed.
+  - New `ExitError::DatabaseChildStoreFailure { error }` variant.
+- Decouple mempool RBF info from `ExitTxOrigin`
+  The `ExitTxOrigin::Mempool` variant is now a unit variant. Effective fee
+  rate and total package fee are exposed on `ChildTransactionInfo.fee_info`
+  (a new `FeeInfo { fee_rate, total_fee }` struct) and tracked for any
+  unconfirmed child regardless of how it entered our state — wallet-built
+  children get fee info populated by the next sync, not just children we
+  downloaded from the mempool.
+  [#2032](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2032)
+  - **BREAKING:** `ExitTxOrigin::Mempool` no longer carries `fee_rate` /
+    `fee_rate_kwu` / `total_fee` fields. Read these from
+    `ChildTransactionInfo.fee_info` instead.
+  - New `FeeInfo` struct with `fee_rate` (serialized as
+    `fee_rate_sat_per_kvb`, matching the unit used elsewhere in
+    `bark-json`) and `total_fee` (serialized as `total_fee_sat`).
+  - New optional `ChildTransactionInfo.fee_info: Option<FeeInfo>`.
