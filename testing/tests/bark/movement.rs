@@ -12,7 +12,7 @@ use bitcoin::params::Params;
 use tokio::join;
 use bitcoin_ext::TaprootSpendInfoExt;
 
-use ark_testing::{btc, sat, signed_sat, TestContext};
+use ark_testing::{btc, require_bark_version, sat, signed_sat, TestContext};
 use ark_testing::constants::{BOARD_CONFIRMATIONS, ROUND_CONFIRMATIONS};
 use ark_testing::util::FutureExt;
 
@@ -122,6 +122,8 @@ async fn board_board() {
 
 #[tokio::test]
 async fn exit_start() {
+	require_bark_version!(> "0.1.4");
+
 	let ctx = TestContext::new("movement/exit_start").await;
 	let srv = ctx.captaind("server").funded(btc(10)).create().await;
 	let bark = ctx.bark("bark", &srv).funded(sat(1_000_000)).create().await;
