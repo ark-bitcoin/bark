@@ -48,3 +48,6 @@ getrandom = { version = "0.2", optional = true, features = ["js"] }
 
 [dev-dependencies]
 rmp-serde.workspace = true
+
+[lints.clippy]
+all = "allow"

@@ -211,6 +211,18 @@ check-release:
         cargo check --release -p bark-cli -p bark-server
       "
 
+check-lib-arithmetic:
+  interruptible: true
+  stage: test
+  extends: .test-rules-no-tags
+  needs:
+    - prechecks
+  script:
+    - |
+      nix develop .#default --command bash -c "
+        just check-lib-arithmetic
+      "
+
 bark-esplora:
   interruptible: true
   stage: test

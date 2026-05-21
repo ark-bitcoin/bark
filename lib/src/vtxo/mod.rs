@@ -89,7 +89,7 @@ use bitcoin::taproot::TapTweakHash;
 
 use bitcoin_ext::{fee, BlockDelta, BlockHeight, TxOutExt};
 
-use crate::vtxo::policy::HarkForfeitVtxoPolicy;
+use crate::vtxo::policy::{check_block_delta, check_block_height, HarkForfeitVtxoPolicy};
 use crate::scripts;
 use crate::encode::{
 	LengthPrefixedVector, OversizedVectorError, ProtocolDecodingError, ProtocolEncoding, ReadExt,
@@ -325,7 +325,7 @@ impl<'a, P: Policy> Iterator for VtxoTxIter<'a, P> {
 			item.other_output_sum().expect("we calculated this amount beforehand")
 		).expect("we calculated this amount beforehand");
 
-		let next_output = if let Some(item) = self.vtxo.genesis.items.get(self.genesis_idx + 1) {
+		let next_output = if let Some(item) = self.vtxo.genesis.items.get(self.genesis_idx.saturating_add(1)) {
 			item.transition.input_txout(
 				next_amount,
 				self.vtxo.server_pubkey,
@@ -344,7 +344,7 @@ impl<'a, P: Policy> Iterator for VtxoTxIter<'a, P> {
 
 		let tx = item.tx(self.prev, next_output, self.vtxo.server_pubkey, self.vtxo.expiry_height);
 		self.prev = OutPoint::new(tx.compute_txid(), item.output_idx as u32);
-		self.genesis_idx += 1;
+		self.genesis_idx = self.genesis_idx.saturating_add(1);
 		self.current_amount = next_amount;
 		let output_idx = item.output_idx as usize;
 		Some(VtxoTxIterItem { tx, output_idx })
@@ -856,14 +856,17 @@ fn decode_vtxo_policy<R: io::Read + ?Sized>(
 		VTXO_POLICY_SERVER_HTLC_SEND => {
 			let user_pubkey = PublicKey::decode(r)?;
 			let payment_hash = PaymentHash::from(sha256::Hash::decode(r)?.to_byte_array());
-			let htlc_expiry = r.read_u32()?;
+			let htlc_expiry = check_block_height(r.read_u32()?)
+				.map_err(|e| ProtocolDecodingError::invalid_err(e, "htlc_expiry"))?;
 			Ok(VtxoPolicy::ServerHtlcSend(ServerHtlcSendVtxoPolicy { user_pubkey, payment_hash, htlc_expiry }))
 		},
 		VTXO_POLICY_SERVER_HTLC_RECV => {
 			let user_pubkey = PublicKey::decode(r)?;
 			let payment_hash = PaymentHash::from(sha256::Hash::decode(r)?.to_byte_array());
-			let htlc_expiry = r.read_u32()?;
-			let htlc_expiry_delta = r.read_u16()?;
+			let htlc_expiry = check_block_height(r.read_u32()?)
+				.map_err(|e| ProtocolDecodingError::invalid_err(e, "htlc_expiry"))?;
+			let htlc_expiry_delta = check_block_delta(r.read_u16()?)
+				.map_err(|e| ProtocolDecodingError::invalid_err(e, "htlc_expiry_delta"))?;
 			Ok(VtxoPolicy::ServerHtlcRecv(ServerHtlcRecvVtxoPolicy { user_pubkey, payment_hash, htlc_expiry, htlc_expiry_delta }))
 		},
 
@@ -983,7 +986,12 @@ impl ProtocolEncoding for GenesisTransition {
 	fn decode<R: io::Read + ?Sized>(r: &mut R) -> Result<Self, ProtocolDecodingError> {
 		match r.read_u8()? {
 			GENESIS_TRANSITION_TYPE_COSIGNED => {
-				let pubkeys = LengthPrefixedVector::decode(r)?.into_inner();
+				let pubkeys: Vec<PublicKey> = LengthPrefixedVector::decode(r)?.into_inner();
+				if pubkeys.is_empty() {
+					return Err(ProtocolDecodingError::invalid(
+						"cosigned genesis transition with empty pubkey list",
+					));
+				}
 				let signature = Option::<schnorr::Signature>::decode(r)?;
 				Ok(Self::new_cosigned(pubkeys, signature))
 			},
@@ -1046,7 +1054,7 @@ impl VtxoVersionedEncoding for Full {
 		w.emit_compact_size(self.items.len() as u64)?;
 		for item in &self.items {
 			item.transition.encode(w)?;
-			let nb_outputs = item.other_outputs.len() + 1;
+			let nb_outputs = item.other_outputs.len().saturating_add(1);
 			w.emit_u8(nb_outputs.try_into()
 				.map_err(|_| io::Error::other("too many outputs on genesis transaction"))?)?;
 			w.emit_u8(item.output_idx)?;
@@ -1113,17 +1121,11 @@ impl<G: VtxoVersionedEncoding, P: Policy + ProtocolEncoding> ProtocolEncoding fo
 		}
 
 		let amount = Amount::from_sat(r.read_u64()?);
-		let expiry_height = r.read_u32()?;
-		// Values >= 500_000_000 (LOCK_TIME_THRESHOLD) are interpreted as
-		// unix timestamps by consensus, not block heights.
-		if LockTime::from_height(expiry_height).is_err() {
-			return Err(ProtocolDecodingError::invalid(format_args!(
-				"expiry_height {expiry_height} is not a valid block height \
-				(must be below consensus LOCK_TIME_THRESHOLD)"
-			)));
-		}
+		let expiry_height = check_block_height(r.read_u32()?)
+			.map_err(|e| ProtocolDecodingError::invalid_err(e, "expiry_height"))?;
 		let server_pubkey = PublicKey::decode(r)?;
-		let exit_delta = r.read_u16()?;
+		let exit_delta = check_block_delta(r.read_u16()?)
+			.map_err(|e| ProtocolDecodingError::invalid_err(e, "exit_delta"))?;
 		let anchor_point = OutPoint::decode(r)?;
 
 		let genesis = VtxoVersionedEncoding::decode(r, version)?;
@@ -1290,6 +1292,7 @@ mod test {
 		use bitcoin::taproot::TapTweakHash;
 		use std::str::FromStr;
 
+		use crate::encode::ProtocolEncoding;
 		use crate::test_util::encoding_roundtrip;
 		use super::genesis::{
 			GenesisTransition, CosignedGenesis, HashLockedCosignedGenesis, ArkoorGenesis,
@@ -1324,6 +1327,17 @@ mod test {
 				signature: None,
 			});
 			encoding_roundtrip(&transition);
+		}
+
+		#[test]
+		fn cosigned_empty_pubkeys_rejected() {
+			let mut buf = Vec::new();
+			buf.push(super::GENESIS_TRANSITION_TYPE_COSIGNED);
+			buf.push(0x00); // LengthPrefixedVector length = 0
+			buf.push(0x00); // Option::<Signature> = None
+			let err = GenesisTransition::deserialize(&mut buf.as_slice())
+				.expect_err("empty pubkeys must be rejected");
+			assert!(format!("{err}").contains("empty pubkey list"), "got: {err}");
 		}
 
 		#[test]

@@ -29,7 +29,7 @@ impl RoundSeq {
 	}
 
 	pub fn increment(&mut self) {
-		self.0 += 1;
+		self.0 = self.0.saturating_add(1);
 	}
 
 	pub fn inner(&self) -> u64 {

@@ -33,6 +33,15 @@ pub trait TapScriptClause: Sized + Clone {
 	}
 
 	/// Computes the total witness size in bytes for spending via this clause.
+	///
+	/// Implementations sum bounded components and so cannot overflow `usize`
+	/// on any supported platform:
+	///   tapscript_size: <= MAX_STANDARD_TAPSCRIPT_SIZE (10_000 bytes)
+	///   cb_size: <= TAPROOT_CONTROL_MAX_SIZE (33 + 32*128 = 4_129 bytes)
+	///   VarInt sizes: <= 9 bytes each
+	///   constants: <= 1 + 1 + 64 (+ 1 + 32 for hash variants)
+	/// Sum is on the order of ~14 KB, well below u32::MAX, so the
+	/// usize addition cannot overflow even when usize is 32 bits.
 	fn witness_size<G, P: Policy>(&self, vtxo: &Vtxo<G, P>) -> usize;
 
 	/// Constructs the witness for the clause.
@@ -78,6 +87,8 @@ impl TapScriptClause for DelayedSignClause {
 	}
 
 
+	// See `TapScriptClause::witness_size` for the overflow analysis.
+	#[allow(clippy::arithmetic_side_effects)]
 	fn witness_size<G, P: Policy>(&self, vtxo: &Vtxo<G, P>) -> usize {
 		let cb_size = self.control_block(vtxo).size();
 		let tapscript_size = self.tapscript().as_bytes().len();
@@ -132,6 +143,8 @@ impl TapScriptClause for TimelockSignClause {
 		])
 	}
 
+	// See `TapScriptClause::witness_size` for the overflow analysis.
+	#[allow(clippy::arithmetic_side_effects)]
 	fn witness_size<G, P: Policy>(&self, vtxo: &Vtxo<G, P>) -> usize {
 		let cb_size = self.control_block(vtxo).size();
 		let tapscript_size = self.tapscript().as_bytes().len();
@@ -196,6 +209,8 @@ impl TapScriptClause for DelayedTimelockSignClause {
 		])
 	}
 
+	// See `TapScriptClause::witness_size` for the overflow analysis.
+	#[allow(clippy::arithmetic_side_effects)]
 	fn witness_size<G, P: Policy>(&self, vtxo: &Vtxo<G, P>) -> usize {
 		let cb_size = self.control_block(vtxo).size();
 		let tapscript_size = self.tapscript().as_bytes().len();
@@ -280,6 +295,8 @@ impl TapScriptClause for HashDelaySignClause {
 		])
 	}
 
+	// See `TapScriptClause::witness_size` for the overflow analysis.
+	#[allow(clippy::arithmetic_side_effects)]
 	fn witness_size<G, P: Policy>(&self, vtxo: &Vtxo<G, P>) -> usize {
 		let cb_size = self.control_block(vtxo).size();
 		let tapscript_size = self.tapscript().as_bytes().len();
@@ -333,6 +350,8 @@ impl TapScriptClause for HashSignClause {
 		])
 	}
 
+	// See `TapScriptClause::witness_size` for the overflow analysis.
+	#[allow(clippy::arithmetic_side_effects)]
 	fn witness_size<G, P: Policy>(&self, vtxo: &Vtxo<G, P>) -> usize {
 		let cb_size = self.control_block(vtxo).size();
 		let tapscript_size = 57;

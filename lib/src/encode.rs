@@ -464,7 +464,9 @@ pub struct OversizedVectorError {
 impl OversizedVectorError {
 	/// Check if allocating the requested number of items is allowed
 	pub fn check<T>(requested: usize) -> Result<(), Self> {
-		let max = MAX_VEC_SIZE / mem::size_of::<T>();
+		assert_ne!(mem::size_of::<T>(), 0, "cannot serialize vectors of empty types");
+		let max = MAX_VEC_SIZE.checked_div(mem::size_of::<T>())
+			.expect("size_of always > 0 for instantiable T");
 		if requested > max {
 			Err(Self { requested, max })
 		} else {

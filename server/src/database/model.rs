@@ -13,6 +13,7 @@ use chrono::{DateTime, Local};
 use tokio_postgres::Row;
 
 use ark::{ProtocolEncoding, ServerVtxoPolicy, Vtxo, VtxoId, VtxoPolicy};
+use ark::vtxo::policy::{check_block_delta, check_block_height};
 
 // Used by mailbox as an always increasing number for data sorting.
 pub type Checkpoint = u64;
@@ -219,13 +220,15 @@ impl<P: Policy + ProtocolEncoding> TryFrom<Row> for VtxoState<Bare, P> {
 		let vtxo_id = VtxoId::from_str(row.get::<_, &str>("vtxo_id"))?;
 		let point = vtxo_id.to_point();
 
-		let exit_delta = row.get::<_, i32>("exit_delta") as u16;
+		let exit_delta = check_block_delta(row.get::<_, i32>("exit_delta"))
+			.context("invalid exit_delta in DB")?;
 		let policy = P::deserialize(row.get::<_, &[u8]>("policy"))?;
 		let server_pubkey = PublicKey::from_str(row.get::<_, &str>("server_pubkey"))?;
 		let amount = Amount::from_sat(row.get::<_, i64>("amount") as u64);
 		let anchor_point = OutPoint::from_str(row.get::<_, &str>("anchor_point"))
 			.context("invalid anchor_point")?;
-		let expiry = u32::try_from(row.get::<_, i32>("expiry"))?;
+		let expiry = check_block_height(row.get::<_, i32>("expiry"))
+			.context("invalid expiry in DB")?;
 
 		let vtxo = Vtxo::new(
 			point, policy, amount, expiry, server_pubkey, exit_delta, anchor_point,

@@ -448,7 +448,7 @@ impl GenesisItem {
 				witness: self.transition.witness(server_pubkey, expiry_height),
 			}],
 			output: {
-				let mut out = Vec::with_capacity(self.other_outputs.len() + 2);
+				let mut out = Vec::with_capacity(self.other_outputs.len().saturating_add(2));
 				out.extend(self.other_outputs.iter().take(self.output_idx as usize).cloned());
 				out.push(next);
 				out.extend(self.other_outputs.iter().skip(self.output_idx as usize).cloned());

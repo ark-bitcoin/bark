@@ -72,7 +72,10 @@ impl ConnectorChain {
 	/// The total size in vbytes of the connector tree.
 	pub fn total_weight(len: usize) -> Weight {
 		assert_ne!(len, 0);
-		(len - 1) as u64 * TX_WEIGHT
+		// len >= 1 just asserted; usize/u64 multiplication of bounded chain length.
+		#[allow(clippy::arithmetic_side_effects)]
+		let w = (len - 1) as u64 * TX_WEIGHT;
+		w
 	}
 
 	/// The budget needed for a chain of length `len` to pay for
@@ -121,6 +124,8 @@ impl ConnectorChain {
 		self.len
 	}
 
+	// idx < self.len enforced by caller iterator, self.len > 0 by constructor.
+	#[allow(clippy::arithmetic_side_effects)]
 	fn tx(&self, prev: OutPoint, idx: usize) -> Transaction {
 		Transaction {
 			version: bitcoin::transaction::Version(3),
@@ -151,6 +156,8 @@ impl ConnectorChain {
 	}
 
 	/// NB we expect the output key here, not the internal key
+	// idx < self.len enforced by caller iterator, self.len > 0 by constructor.
+	#[allow(clippy::arithmetic_side_effects)]
 	fn sign_tx(&self, tx: &mut Transaction, idx: usize, keypair: &Keypair) {
 		let prevout = TxOut {
 			script_pubkey: self.spk.to_owned(),
@@ -247,6 +254,8 @@ impl<'a> ConnectorTxIter<'a> {
 impl<'a> iter::Iterator for ConnectorTxIter<'a> {
 	type Item = Transaction;
 
+	// chain.len > 0 by constructor; idx bounded by chain.len.
+	#[allow(clippy::arithmetic_side_effects)]
 	fn next(&mut self) -> Option<Self::Item> {
 		if self.idx >= self.chain.len - 1 {
 			return None;
@@ -263,7 +272,7 @@ impl<'a> iter::Iterator for ConnectorTxIter<'a> {
 	}
 
 	fn size_hint(&self) -> (usize, Option<usize>) {
-		let len = (self.chain.len - 1).saturating_sub(self.idx);
+		let len = self.chain.len.saturating_sub(1).saturating_sub(self.idx);
 		(len, Some(len))
 	}
 }
@@ -316,7 +325,7 @@ impl<'a> iter::Iterator for ConnectorIter<'a> {
 	}
 
 	fn size_hint(&self) -> (usize, Option<usize>) {
-		let len = self.txs.size_hint().0 + 1;
+		let len = self.txs.size_hint().0.saturating_add(1);
 		(len, Some(len))
 	}
 }

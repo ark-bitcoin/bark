@@ -497,7 +497,7 @@ impl UnsignedVtxoTree {
 		}
 
 		let mut nonce_iter = cosign_sec_nonces.into_iter().enumerate();
-		let mut ret = Vec::with_capacity(self.tree.root().level() + 1);
+		let mut ret = Vec::with_capacity(self.tree.root().level().saturating_add(1));
 		// skip the leaf
 		for node in self.tree.iter_branch(leaf_idx).skip(1) {
 			// Since we can skip a level, we sometimes have to skip a nonce.
@@ -707,8 +707,8 @@ impl UnsignedVtxoTree {
 			false => self.tree.root().internal_level(),
 		};
 		self.tree.iter_internal().map(|node| {
-			let mut cosign_pks = Vec::with_capacity(max_level + 1);
-			let mut part_sigs = Vec::with_capacity(max_level + 1);
+			let mut cosign_pks = Vec::with_capacity(max_level.saturating_add(1));
+			let mut part_sigs = Vec::with_capacity(max_level.saturating_add(1));
 			for leaf in node.leaves() {
 				if let Some(cosign_pk) = self.spec.vtxos[leaf].cosign_pubkey {
 					let part_sig = leaf_part_sigs.get_mut(&cosign_pk)
@@ -1686,7 +1686,7 @@ mod test {
 		let map = tree.txs.iter().map(|tx| (tx.compute_txid(), tx)).collect::<HashMap<_, _>>();
 
 		// skip the root
-		for (idx, tx) in tree.txs.iter().take(tree.txs.len() - 1).enumerate() {
+		for (idx, tx) in tree.txs.iter().take(tree.txs.len().saturating_sub(1)).enumerate() {
 			println!("tx #{idx}: {}", bitcoin::consensus::encode::serialize_hex(tx));
 			let input = tx.input.iter().map(|i| {
 				let prev = i.previous_output;

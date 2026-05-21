@@ -49,3 +49,7 @@ features = [ "serde" ]
 bitcoin = { version = "0.32", features = [ "serde", "rand", "rand-std" ] }
 serde_json = { workspace = true }
 bitcoinkernel = "0.2.0"
+
+[lints.clippy]
+all = { level = "allow", priority = -1 }
+arithmetic_side_effects = "deny"

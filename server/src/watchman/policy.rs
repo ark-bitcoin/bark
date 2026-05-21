@@ -124,7 +124,9 @@ fn decide_action_expiry(params: &ActionParams) -> Action {
 ///
 /// Always claim
 fn decide_action_hark_forfeit(params: &ActionParams) -> Action {
-	Action::Claim { deadline: Some(params.confirmed_at + BlockHeight::from(params.exit_delta)) }
+	let deadline = params.confirmed_at.checked_add(BlockHeight::from(params.exit_delta))
+		.expect("confirmed_at + exit_delta within u32 by MAX_BLOCK_HEIGHT invariant");
+	Action::Claim { deadline: Some(deadline) }
 }
 
 /// Determine action for Pubkey policy.
@@ -135,7 +137,8 @@ fn decide_action_hark_forfeit(params: &ActionParams) -> Action {
 /// the key (e.g. an unspent pool vtxo whose parent tx hit the chain via a
 /// sibling exit), claim after the exit delta.
 fn decide_action_pubkey(params: &ActionParams<PubkeyExtra>) -> Action {
-	let after_exit_delta = params.confirmed_at + BlockHeight::from(params.exit_delta);
+	let after_exit_delta = params.confirmed_at.checked_add(BlockHeight::from(params.exit_delta))
+		.expect("confirmed_at + exit_delta within u32 by MAX_BLOCK_HEIGHT invariant");
 
 	// Check next_tx before server_knows_key. We drop the input key when
 	// arkooring out a pool vtxo, but rows arkoored before that fix
@@ -167,17 +170,19 @@ fn decide_action_pubkey(params: &ActionParams<PubkeyExtra>) -> Action {
 ///
 /// Deadline is `min(htlc_expiry, confirmed_at + 2*exit_delta)`.
 fn decide_action_server_htlc_send(params: &ActionParams<HtlcSendExtra>) -> Action {
-	let deadline = std::cmp::min(
-		params.policy_extras.htlc_expiry,
-		params.confirmed_at + BlockHeight::from(2 * params.exit_delta),
-	);
+	let twice_exit_delta = params.exit_delta.checked_mul(2)
+		.expect("2*exit_delta fits in BlockDelta by MAX_BLOCK_DELTA invariant");
+	let confirmed_plus_2x = params.confirmed_at.checked_add(BlockHeight::from(twice_exit_delta))
+		.expect("confirmed_at + 2*exit_delta within u32 by MAX_BLOCK_HEIGHT invariant");
+	let deadline = std::cmp::min(params.policy_extras.htlc_expiry, confirmed_plus_2x);
 
 	if let Some(action) = try_progress(params, params.policy_extras.next_tx, deadline) {
 		return action;
 	}
 
 	if params.policy_extras.has_preimage {
-		let claim_height = params.confirmed_at + BlockHeight::from(params.exit_delta);
+		let claim_height = params.confirmed_at.checked_add(BlockHeight::from(params.exit_delta))
+			.expect("confirmed_at + exit_delta within u32 by MAX_BLOCK_HEIGHT invariant");
 		if params.chain_tip_height >= claim_height {
 			return Action::Claim { deadline: Some(deadline) };
 		}
@@ -193,18 +198,17 @@ fn decide_action_server_htlc_send(params: &ActionParams<HtlcSendExtra>) -> Actio
 ///
 /// Deadline is `confirmed_at + htlc_expiry_delta + exit_delta`.
 fn decide_action_server_htlc_recv(params: &ActionParams<HtlcRecvExtra>) -> Action {
-	let deadline = (params.confirmed_at + BlockHeight::from(params.exit_delta))
-		// htlc expiry delta comes from user input
-		.saturating_add(BlockHeight::from(params.policy_extras.htlc_expiry_delta));
+	let confirmed_plus_exit = params.confirmed_at.checked_add(BlockHeight::from(params.exit_delta))
+		.expect("confirmed_at + exit_delta within u32 by MAX_BLOCK_HEIGHT invariant");
+	let deadline = confirmed_plus_exit
+		.checked_add(BlockHeight::from(params.policy_extras.htlc_expiry_delta))
+		.expect("confirmed_at + exit_delta + htlc_expiry_delta within u32 by MAX_BLOCK_HEIGHT invariant");
 
 	if let Some(action) = try_progress(params, params.policy_extras.next_tx, deadline) {
 		return action;
 	}
 
-	let claim_height = std::cmp::max(
-		params.policy_extras.htlc_expiry,
-		params.confirmed_at + BlockHeight::from(params.exit_delta),
-	);
+	let claim_height = std::cmp::max(params.policy_extras.htlc_expiry, confirmed_plus_exit);
 	if params.chain_tip_height >= claim_height {
 		return Action::Claim { deadline: Some(deadline) };
 	}
