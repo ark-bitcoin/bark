@@ -154,11 +154,11 @@ impl VtxoState<Full, ServerVtxoPolicy> {
 impl<G, P: Policy> VtxoState<G, P> {
 	pub fn check_spendable(&self, chain_tip: BlockHeight) -> anyhow::Result<()> {
 		if self.spend_state != SpendState::Spendable {
-			bail!("vtxo {} is not spendable (state: {})", self.vtxo_id, self.spend_state);
+			return badarg!("vtxo {} is not spendable (state: {})", self.vtxo_id, self.spend_state);
 		}
 		if let Some(until) = self.banned_until_height {
 			if chain_tip < until {
-				bail!("vtxo {} is banned until block {}", self.vtxo_id, until);
+				return badarg!("vtxo {} is banned until block {}", self.vtxo_id, until);
 			}
 		}
 		Ok(())
