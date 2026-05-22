@@ -7,6 +7,7 @@ use std::time::Duration;
 
 use anyhow::Context;
 use bitcoin::Amount;
+use bitcoin::hex::DisplayHex;
 use log::{error, warn};
 
 use ark::{ProtocolEncoding, Vtxo};
@@ -21,6 +22,7 @@ use crate::arkoor::ArkoorCreateError;
 use crate::movement::{MovementDestination, MovementId, MovementStatus};
 use crate::movement::update::MovementUpdate;
 use crate::subsystem::{ArkoorMovement, Subsystem};
+use crate::vtxo::VtxoLockHolder;
 
 /// How long to wait before re-attempting delivery in the
 /// [`Progress::Delivery`] park path.
@@ -219,6 +221,48 @@ impl WalletAction for ArkoorSend {
 			},
 		}
 	}
+}
+
+/// Build a fresh [`ArkoorSend`] in [`Progress::Cosigning`]
+pub(crate) async fn start_arkoor_send(
+	wallet: &Wallet,
+	destination: ark::Address,
+	amount: Amount,
+) -> anyhow::Result<ArkoorSend> {
+	let _ = wallet.require_server().await?;
+	wallet.validate_arkoor_address(&destination).await
+		.context("address validation failed")?;
+
+	let (change_keypair, change_key_index) = wallet.peek_next_keypair().await
+		.context("failed to derive arkoor change keypair")?;
+	if destination.policy().user_pubkey() == change_keypair.public_key() {
+		bail!("Cannot create arkoor to same address as change");
+	}
+	wallet.inner.db.store_vtxo_key(change_key_index, change_keypair.public_key()).await
+		.context("failed to store arkoor change keypair")?;
+
+	let inputs = wallet.select_vtxos_to_cover(amount).await?;
+	let input_vtxo_ids = inputs.iter().map(|v| v.id()).collect::<Vec<_>>();
+
+	let id = new_action_id();
+	wallet.lock_vtxos(
+		inputs.iter(),
+		Some(VtxoLockHolder::Action { id: id.clone() }),
+	).await?;
+
+	Ok(ArkoorSend {
+		id,
+		destination,
+		amount,
+		input_vtxo_ids,
+		change_key_index,
+		progress: Progress::Cosigning,
+	})
+}
+
+/// Random 128-bit identifier hex-encoded for use as the action id.
+fn new_action_id() -> String {
+	rand::random::<[u8; 16]>().to_lower_hex_string()
 }
 
 /// Cosigning -> Registration. Cosigns the arkoor with the server and

@@ -369,7 +369,6 @@ use crate::exit::Exit;
 use crate::lock_manager::LockManager;
 use crate::movement::{Movement, MovementId, PaymentMethod};
 use crate::movement::manager::MovementManager;
-use crate::movement::update::MovementUpdate;
 use crate::notification::NotificationDispatch;
 use crate::onchain::{ExitUnilaterally, PreparePsbt, SignPsbt, Utxo};
 use crate::onchain::DaemonizableOnchainWallet;
@@ -378,7 +377,7 @@ use crate::persist::models::{RoundStateId, StoredRoundState, Unlocked};
 #[cfg(feature = "socks5-proxy")]
 use crate::proxy::proxy_for_url;
 use crate::round::{RoundParticipation, RoundSecretNonces, RoundStatus};
-use crate::subsystem::{ArkoorMovement, RoundMovement};
+use crate::subsystem::RoundMovement;
 use crate::vtxo::{FilterVtxos, RefreshStrategy, VtxoFilter, VtxoStateKind};
 
 #[cfg(all(feature = "wasm-web", feature = "socks5-proxy"))]

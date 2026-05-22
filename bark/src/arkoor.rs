@@ -2,18 +2,17 @@ use anyhow::Context;
 use bitcoin::{Amount, NetworkKind};
 use bitcoin::hex::DisplayHex;
 use bitcoin::secp256k1::Keypair;
-use log::{info, warn, error};
+use log::info;
 
-use ark::{VtxoPolicy, ProtocolEncoding};
+use ark::VtxoPolicy;
 use ark::arkoor::ArkoorDestination;
 use ark::arkoor::package::{ArkoorPackageBuilder, ArkoorPackageCosignResponse};
 use ark::vtxo::{Full, Vtxo, VtxoId};
 use server_rpc::protos;
 
-use crate::subsystem::Subsystem;
-use crate::{ArkoorMovement, VtxoDelivery, MovementUpdate, Wallet, WalletVtxo};
-use crate::movement::MovementDestination;
-use crate::movement::manager::OnDropStatus;
+use crate::{VtxoDelivery, Wallet, WalletVtxo};
+use crate::actions::DriveMode;
+use crate::actions::arkoor_send::start_arkoor_send;
 
 /// The result of creating an arkoor transaction
 pub struct ArkoorCreateResult {
@@ -192,89 +191,15 @@ impl Wallet {
 		&self,
 		destination: &ark::Address,
 		amount: Amount,
-	) -> anyhow::Result<Vec<Vtxo<Full>>> {
-		let (mut srv, _) = self.require_server().await?;
+	) -> anyhow::Result<()> {
+		let action = start_arkoor_send(self, destination.clone(), amount).await?;
 
-		self.validate_arkoor_address(&destination).await
-			.context("address validation failed")?;
+		// Persist the action together with the input locks so the executor has
+		// something to drive on restart; otherwise a crash between this point and
+		// `drive_action` leaves vtxos locked under an action id that has no
+		// checkpoint row.
+		self.inner.db.upsert_wallet_action_checkpoint(&action.id, &action.clone().into()).await?;
 
-		let negative_amount = -amount.to_signed().context("Amount out-of-range")?;
-
-		let dest = ArkoorDestination { total_amount: amount, policy: destination.policy().clone() };
-		let inputs = self.select_vtxos_to_cover(dest.total_amount).await?;
-		// Peek the change keypair without storing it. We only persist the
-		// index below if the arkoor actually produced a change vtxo.
-		let (change_keypair, change_key_index) = self.peek_next_keypair().await
-			.context("failed to derive arkoor change keypair")?;
-		let arkoor = self.create_checkpointed_arkoor_with_vtxos(
-			dest.clone(), inputs.into_iter(), change_keypair,
-		).await.context("failed to create arkoor transaction")?;
-		if !arkoor.change.is_empty() {
-			self.inner.db.store_vtxo_key(change_key_index, change_keypair.public_key()).await
-				.context("failed to store arkoor change keypair")?;
-		}
-
-		// Register destination and change after cosign so the server
-		// gets signed_tx rows for the shared checkpoint and both leaves:
-		// the watchman needs the checkpoint signed to rebroadcast on
-		// exit, and a later guarded spend (offboard, lightning pay) of
-		// either leaf needs the full chain signed. Failure is logged
-		// and swallowed: the receiver also re-registers on receive, and
-		// later spends will retry registration if the server still
-		// needs it.
-		let to_register = arkoor.created.iter()
-			.chain(arkoor.change.iter())
-			.collect::<Vec<_>>();
-		if let Err(e) = self.register_vtxo_transactions_with_server(&to_register).await {
-			warn!("Failed to register arkoor output vtxo transactions with server: {:#}", e);
-		}
-
-		let mut movement = self.inner.movements.new_guarded_movement_with_update(
-			Subsystem::ARKOOR,
-			ArkoorMovement::Send.to_string(),
-			OnDropStatus::Failed,
-			MovementUpdate::new()
-				.intended_and_effective_balance(negative_amount)
-				.consumed_vtxos(&arkoor.inputs)
-				.sent_to([MovementDestination::ark(destination.clone(), amount)])
-		).await?;
-
-		let mut delivered = false;
-		for delivery in destination.delivery() {
-			match delivery {
-				VtxoDelivery::ServerMailbox { blinded_id } => {
-					let req = protos::mailbox_server::PostArkoorMessageRequest {
-						blinded_id: blinded_id.to_vec(),
-						vtxos: arkoor.created.iter().map(|v| v.serialize().to_vec()).collect(),
-					};
-
-					if let Err(e) = srv.mailbox_client.post_arkoor_message(req).await {
-						error!("Failed to post the vtxos to the destination's mailbox: '{:#}'", e);
-						//NB we will continue to at least not lose our own change
-					} else {
-						delivered = true;
-					}
-				},
-				VtxoDelivery::Unknown { delivery_type, data } => {
-					error!("Unknown delivery type {} for arkoor payment: {}", delivery_type, data.as_hex());
-				},
-				_ => {
-					error!("Unsupported delivery type for arkoor payment: {:?}", delivery);
-				}
-			}
-		}
-		self.mark_vtxos_as_spent(&arkoor.inputs).await?;
-		if !arkoor.change.is_empty() {
-			self.store_spendable_vtxos(&arkoor.change).await?;
-			movement.apply_update(MovementUpdate::new().produced_vtxos(arkoor.change)).await?;
-		}
-
-		if delivered {
-			movement.success().await?;
-		} else {
-			bail!("Failed to deliver arkoor vtxos to any destination");
-		}
-
-		Ok(arkoor.created)
+		self.drive_action(action, DriveMode::UntilDone).await
 	}
 }
