@@ -22,6 +22,24 @@ pub struct ArkoorCreateResult {
 	pub change: Vec<Vtxo<Full>>,
 }
 
+/// Error returned by [`Wallet::create_checkpointed_arkoor_with_vtxos`].
+///
+/// The cosign RPC failure is kept as a typed [`tonic::Status`] rather
+/// than flattened into `anyhow`, so a caller driving this as a wallet
+/// action can route a genuine server rejection to its `on_rejection`
+/// path (via `AdvanceError::is_server_rejection`) instead of retrying a
+/// doomed request forever. Every other failure is opaque `Other`.
+#[derive(Debug, thiserror::Error)]
+pub enum ArkoorCreateError {
+	/// The `request_arkoor_cosign` RPC failed. May be a rejection
+	/// (`InvalidArgument`/`NotFound`) or a transient error; the caller
+	/// classifies it via the status code.
+	#[error("server failed to cosign arkoor: {0}")]
+	Cosign(#[source] tonic::Status),
+	#[error(transparent)]
+	Other(#[from] anyhow::Error),
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum ArkoorAddressError {
 	#[error("Ark address is for different network")]
@@ -96,7 +114,7 @@ impl Wallet {
 		arkoor_dest: ArkoorDestination,
 		inputs: impl IntoIterator<Item = WalletVtxo>,
 		change_keypair: Keypair,
-	) -> anyhow::Result<ArkoorCreateResult> {
+	) -> Result<ArkoorCreateResult, ArkoorCreateError> {
 		let (mut srv, _) = self.require_server().await?;
 		let input_ids = inputs.into_iter().map(|v| v.id()).collect::<Vec<_>>();
 
@@ -117,7 +135,7 @@ impl Wallet {
 
 		let change_pubkey = change_keypair.public_key();
 		if arkoor_dest.policy.user_pubkey() == change_pubkey {
-			bail!("Cannot create arkoor to same address as change");
+			return Err(anyhow!("Cannot create arkoor to same address as change").into());
 		}
 
 		let mut user_keypairs = vec![];
@@ -139,7 +157,7 @@ impl Wallet {
 		);
 
 		let response = srv.client.request_arkoor_cosign(cosign_request).await
-			.context("server failed to cosign arkoor")?
+			.map_err(ArkoorCreateError::Cosign)?
 			.into_inner();
 
 		let cosign_responses = ArkoorPackageCosignResponse::try_from(response)
