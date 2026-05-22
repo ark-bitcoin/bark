@@ -1,6 +1,7 @@
 use anyhow::Context;
 use bitcoin::{Amount, NetworkKind};
 use bitcoin::hex::DisplayHex;
+use bitcoin::secp256k1::Keypair;
 use log::{info, warn, error};
 
 use ark::{VtxoPolicy, ProtocolEncoding};
@@ -83,12 +84,19 @@ impl Wallet {
 		Ok(())
 	}
 
+	/// Build, cosign and split an arkoor package using a caller-provided
+	/// change keypair.
+	///
+	/// Reusing the same change keypair on a retry keeps the implied
+	/// `spending_txid` stable, so the server's `check_spendable_for_oor`
+	/// idempotency check accepts the retry rather than rejecting it as a
+	/// conflicting double-spend.
 	pub(crate) async fn create_checkpointed_arkoor_with_vtxos(
 		&self,
 		arkoor_dest: ArkoorDestination,
 		inputs: impl IntoIterator<Item = WalletVtxo>,
+		change_keypair: Keypair,
 	) -> anyhow::Result<ArkoorCreateResult> {
-		// Find vtxos to cover
 		let (mut srv, _) = self.require_server().await?;
 		let input_ids = inputs.into_iter().map(|v| v.id()).collect::<Vec<_>>();
 
@@ -107,11 +115,7 @@ impl Wallet {
 		self.register_vtxo_transactions_with_server(&inputs).await
 			.context("failed to register arkoor input vtxo transactions with server")?;
 
-		// Peek at a potential change keypair without storing it yet.
-		// We'll only store it if change is actually created.
-		let (change_keypair, change_key_index) = self.peek_next_keypair().await?;
 		let change_pubkey = change_keypair.public_key();
-
 		if arkoor_dest.policy.user_pubkey() == change_pubkey {
 			bail!("Cannot create arkoor to same address as change");
 		}
@@ -150,11 +154,6 @@ impl Wallet {
 		let (dest, change) = vtxos.into_iter()
 			.partition::<Vec<_>, _>(|v| *v.policy() == arkoor_dest.policy);
 
-		if !change.is_empty() {
-			// Change was created, so now store the keypair
-			self.inner.db.store_vtxo_key(change_key_index, change_pubkey).await?;
-		}
-
 		Ok(ArkoorCreateResult {
 			inputs: input_ids,
 			created: dest,
@@ -185,8 +184,17 @@ impl Wallet {
 
 		let dest = ArkoorDestination { total_amount: amount, policy: destination.policy().clone() };
 		let inputs = self.select_vtxos_to_cover(dest.total_amount).await?;
-		let arkoor = self.create_checkpointed_arkoor_with_vtxos(dest.clone(), inputs.into_iter())
-			.await.context("failed to create arkoor transaction")?;
+		// Peek the change keypair without storing it. We only persist the
+		// index below if the arkoor actually produced a change vtxo.
+		let (change_keypair, change_key_index) = self.peek_next_keypair().await
+			.context("failed to derive arkoor change keypair")?;
+		let arkoor = self.create_checkpointed_arkoor_with_vtxos(
+			dest.clone(), inputs.into_iter(), change_keypair,
+		).await.context("failed to create arkoor transaction")?;
+		if !arkoor.change.is_empty() {
+			self.inner.db.store_vtxo_key(change_key_index, change_keypair.public_key()).await
+				.context("failed to store arkoor change keypair")?;
+		}
 
 		// Register destination and change after cosign so the server
 		// gets signed_tx rows for the shared checkpoint and both leaves:
