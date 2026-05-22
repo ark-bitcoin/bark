@@ -309,6 +309,9 @@ impl Server {
 			bail!("failed to register offboard in db, please start over");
 		}
 
+		let offboard_volume = vtxos.iter().map(|v| v.vtxo.amount().to_sat()).sum::<u64>();
+		crate::telemetry::add_offboard(offboard_volume);
+
 		if let Err(e) = self.commit_offboard(&mut wallet_guard, &signed_tx, offboard_txid).await {
 			// we will later retry
 			slog!(CommitOffboardFailed, offboard_txid, error: format!("{:#}", e),

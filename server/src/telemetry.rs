@@ -257,6 +257,10 @@ struct Metrics {
 	lightning_payment_volume: Counter<u64>,
 	arkoor_payment_counter: Counter<u64>,
 	arkoor_payment_volume: Counter<u64>,
+	board_counter: Counter<u64>,
+	board_volume: Counter<u64>,
+	offboard_counter: Counter<u64>,
+	offboard_volume: Counter<u64>,
 	lightning_invoice_verification_counter: Counter<u64>,
 	lightning_invoice_verification_queue_gauge: Gauge<u64>,
 	lightning_open_invoices_gauge: Gauge<u64>,
@@ -476,6 +480,10 @@ impl Metrics {
 		let lightning_payment_volume = meter.u64_counter("lightning_payment_volume").build();
 		let arkoor_payment_counter = meter.u64_counter("arkoor_payment_counter").build();
 		let arkoor_payment_volume = meter.u64_counter("arkoor_payment_volume").build();
+		let board_counter = meter.u64_counter("board_counter").build();
+		let board_volume = meter.u64_counter("board_volume").build();
+		let offboard_counter = meter.u64_counter("offboard_counter").build();
+		let offboard_volume = meter.u64_counter("offboard_volume").build();
 		let lightning_invoice_verification_counter = meter.u64_counter("lightning_invoice_verification_counter").build();
 		let lightning_invoice_verification_queue_gauge = meter.u64_gauge("lightning_invoice_verification_queue_gauge").build();
 		let lightning_open_invoices_gauge = meter.u64_gauge("lightning_open_invoices_gauge").build();
@@ -558,6 +566,10 @@ impl Metrics {
 			lightning_payment_volume,
 			arkoor_payment_counter,
 			arkoor_payment_volume,
+			board_counter,
+			board_volume,
+			offboard_counter,
+			offboard_volume,
 			lightning_invoice_verification_counter,
 			lightning_invoice_verification_queue_gauge,
 			lightning_open_invoices_gauge,
@@ -903,6 +915,22 @@ pub fn set_lightning_node_state(
 			]);
 			m.lightning_node_boot_counter.add(1, &boot_attrs);
 		}
+	}
+}
+
+pub fn add_board(volume_sats: u64) {
+	if let Some(m) = TELEMETRY.get() {
+		let attrs = m.with_global_labels([] as [KeyValue; 0]);
+		m.board_counter.add(1, &attrs);
+		m.board_volume.add(volume_sats, &attrs);
+	}
+}
+
+pub fn add_offboard(volume_sats: u64) {
+	if let Some(m) = TELEMETRY.get() {
+		let attrs = m.with_global_labels([] as [KeyValue; 0]);
+		m.offboard_counter.add(1, &attrs);
+		m.offboard_volume.add(volume_sats, &attrs);
 	}
 }
 

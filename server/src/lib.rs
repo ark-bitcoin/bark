@@ -781,6 +781,8 @@ impl Server {
 			amount: vtxo.amount(),
 		);
 
+		crate::telemetry::add_board(vtxo.amount().to_sat());
+
 		Ok(())
 	}
 
