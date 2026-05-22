@@ -1,4 +1,5 @@
 use std::str::FromStr;
+use std::time::Duration;
 
 use anyhow::Context;
 use ark::arkoor::package::ArkoorPackageBuilder;
@@ -27,6 +28,13 @@ const LIGHTNING_RECEIVE_LOCK_PREFIX: &str = "lightning_receive";
 /// Leniency delta to allow claim when blocks were mined between htlc
 /// receive and claim preparation
 const LIGHTNING_PREPARE_CLAIM_DELTA: BlockDelta = 2;
+
+/// Initial backoff between retries of a Lightning receive claim. Each
+/// successive retry doubles the wait, capped by [CLAIM_RETRY_BACKOFF_MAX].
+/// With the default 5 retries this gives ~60s of grace before we give up
+/// and exit on-chain, which is enough for a brief server restart.
+const CLAIM_RETRY_BACKOFF_INITIAL: Duration = Duration::from_secs(2);
+const CLAIM_RETRY_BACKOFF_MAX: Duration = Duration::from_secs(30);
 
 impl Wallet {
 	/// Fetches all pending lightning receives ordered from newest to oldest.
@@ -631,13 +639,31 @@ impl Wallet {
 			return Ok(receive);
 		}
 
-		match self.claim_lightning_receive(&mut receive).await {
+		let mut retries_left = self.config.lightning_receive_claim_retries;
+		let mut backoff = CLAIM_RETRY_BACKOFF_INITIAL;
+		let claim_result = loop {
+			match self.claim_lightning_receive(&mut receive).await {
+				Ok(()) => break Ok(()),
+				Err(e) if retries_left == 0 => break Err(e),
+				Err(e) => {
+					warn!(
+						"Error claiming lightning receive {} ({} retries left, retrying in {:?}): {:#}",
+						receive.payment_hash, retries_left, backoff, e,
+					);
+					retries_left -= 1;
+					tokio::time::sleep(backoff).await;
+					backoff = (backoff * 2).min(CLAIM_RETRY_BACKOFF_MAX);
+				}
+			}
+		};
+
+		match claim_result {
 			Ok(()) => Ok(receive),
 			Err(e) => {
 				error!("Failed to claim htlcs for payment_hash: {}", receive.payment_hash);
-				// We're now in a our havoc era. Just exit. The server prepared our HTLCs,
-				// but then later refused to / couldn't allow our claim. This shoul be quite
-				// rare.
+				// We're now in a our havoc era. The server prepared our HTLCs, but
+				// then later refused to / couldn't allow our claim, and the retry
+				// budget is exhausted. Fall back to an on-chain exit.
 				warn!("Exiting lightning receive VTXOs");
 				self.exit_lightning_receive(&receive).await?;
 				return Err(e)
