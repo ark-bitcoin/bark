@@ -174,9 +174,15 @@ impl Server {
 
 		let builder = self.cosign_oor_with_builder(builder).await?;
 
+		let volume_sats = input_vtxo_states.iter()
+			.map(|v| v.vtxo.amount().to_sat())
+			.sum::<u64>();
+
 		slog!(ArkoorCosign, input_ids: input_vtxo_ids,
 			output_ids: builder.build_unsigned_vtxos().into_iter().map(|v| v.id()).collect(),
 		);
+
+		crate::telemetry::add_arkoor_payment(volume_sats);
 
 		Ok(builder.cosign_response())
 	}

@@ -255,6 +255,8 @@ struct Metrics {
 	lightning_node_boot_counter: Counter<u64>,
 	lightning_payment_counter: Counter<u64>,
 	lightning_payment_volume: Counter<u64>,
+	arkoor_payment_counter: Counter<u64>,
+	arkoor_payment_volume: Counter<u64>,
 	lightning_invoice_verification_counter: Counter<u64>,
 	lightning_invoice_verification_queue_gauge: Gauge<u64>,
 	lightning_open_invoices_gauge: Gauge<u64>,
@@ -472,6 +474,8 @@ impl Metrics {
 		let lightning_node_boot_counter = meter.u64_counter("lightning_node_boot_counter").build();
 		let lightning_payment_counter = meter.u64_counter("lightning_payment_counter").build();
 		let lightning_payment_volume = meter.u64_counter("lightning_payment_volume").build();
+		let arkoor_payment_counter = meter.u64_counter("arkoor_payment_counter").build();
+		let arkoor_payment_volume = meter.u64_counter("arkoor_payment_volume").build();
 		let lightning_invoice_verification_counter = meter.u64_counter("lightning_invoice_verification_counter").build();
 		let lightning_invoice_verification_queue_gauge = meter.u64_gauge("lightning_invoice_verification_queue_gauge").build();
 		let lightning_open_invoices_gauge = meter.u64_gauge("lightning_open_invoices_gauge").build();
@@ -552,6 +556,8 @@ impl Metrics {
 			lightning_node_boot_counter,
 			lightning_payment_counter,
 			lightning_payment_volume,
+			arkoor_payment_counter,
+			arkoor_payment_volume,
 			lightning_invoice_verification_counter,
 			lightning_invoice_verification_queue_gauge,
 			lightning_open_invoices_gauge,
@@ -897,6 +903,14 @@ pub fn set_lightning_node_state(
 			]);
 			m.lightning_node_boot_counter.add(1, &boot_attrs);
 		}
+	}
+}
+
+pub fn add_arkoor_payment(volume_sats: u64) {
+	if let Some(m) = TELEMETRY.get() {
+		let attrs = m.with_global_labels([] as [KeyValue; 0]);
+		m.arkoor_payment_counter.add(1, &attrs);
+		m.arkoor_payment_volume.add(volume_sats, &attrs);
 	}
 }
 
