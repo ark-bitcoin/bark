@@ -375,6 +375,22 @@ pub trait BarkPersister: Send + Sync + 'static {
 	/// - Returns an error if the query fails.
 	async fn get_vtxos_by_state(&self, state: &[VtxoStateKind]) -> anyhow::Result<Vec<WalletVtxo>>;
 
+	/// Fetch a single VTXO in full form (including the unilateral exit chain).
+	///
+	/// Listing/balance/selection paths return [WalletVtxo] (which holds
+	/// [Vtxo<ark::vtxo::Bare>]) to keep memory bounded. Operations that
+	/// genuinely need the genesis chain — unilateral exit, server
+	/// registration, arkoor send, offboard — should call this method
+	/// (or [BarkPersister::get_full_vtxos] for batches) on demand.
+	async fn get_full_vtxo(&self, id: VtxoId) -> anyhow::Result<Option<Vtxo<Full>>>;
+
+	/// Hydrate a batch of VTXOs into their full form, preserving the order
+	/// of the input slice. Returns an error if any id is missing — callers
+	/// reach this from a selection step against the wallet's listings, so a
+	/// missing row indicates the wallet's state is inconsistent with the
+	/// caller's view.
+	async fn get_full_vtxos(&self, ids: &[VtxoId]) -> anyhow::Result<Vec<Vtxo<Full>>>;
+
 	/// Remove a [Vtxo] by ID.
 	///
 	/// Parameters:

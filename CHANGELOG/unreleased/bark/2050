@@ -1,0 +1,21 @@
+- Slim down VTXO listings by storing the genesis item chain separately
+  Bark now stores each VTXO as a small "bare" blob plus a separate genesis
+  blob. Listings, balance computations, coin selection, and refresh-strategy
+  checks load only the bare form (~200 B per VTXO regardless of exit depth)
+  along with two cached scalars (`exit_depth`, `exit_tx_weight`); For wallets
+  with many or deep VTXOs this can be a 20–100x reduction in resident memory
+  across the read-only hot paths.
+  [#2050](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2050)
+  - **BREAKING:** `WalletVtxo` now holds `Vtxo<ark::vtxo::Bare>` instead of
+    `Vtxo<ark::vtxo::Full>`, plus two cached fields: `exit_depth: u16` and
+    `exit_tx_weight: bitcoin::Weight`. Use the new `Wallet::get_full_vtxo`
+    (or `BarkPersister::get_full_vtxos` for batches) to obtain the full
+    VTXO with its exit chain when needed.
+  - **BREAKING:** `Exit::start_exit_for_vtxos` now accepts
+    `&[impl Borrow<Vtxo<Bare>>]`, replacing the old
+    `&[impl Borrow<Vtxo<Full>>]` signature.
+  - Adds `BarkPersister::get_full_vtxo` and `BarkPersister::get_full_vtxos`
+    for SDK consumers implementing custom storage backends.
+  - Adds migration `0029_split_vtxo_genesis` which splits existing
+    `bark_vtxo.raw_vtxo` blobs into `raw_bare`/`raw_genesis` columns and
+    backfills the cached `exit_depth`/`exit_tx_weight` columns.

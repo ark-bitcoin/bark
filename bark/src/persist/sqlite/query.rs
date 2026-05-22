@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::str::FromStr;
 
 use anyhow::{Context, ensure};
@@ -12,7 +13,7 @@ use rusqlite::{self, named_params, params, Connection, Row, ToSql, Transaction};
 
 use ark::{ProtocolEncoding, Vtxo};
 use ark::lightning::{Invoice, PaymentHash, Preimage};
-use ark::vtxo::{Full, VtxoRef};
+use ark::vtxo::{Bare, Full, VtxoRef};
 use bitcoin_ext::BlockDelta;
 
 use crate::{VtxoId, WalletProperties};
@@ -398,16 +399,35 @@ pub fn store_vtxo_with_initial_state(
 	vtxo: &Vtxo<Full>,
 	state: &VtxoState,
 ) -> anyhow::Result<()> {
+	// Split the vtxo into bare bytes + genesis bytes, and precompute the
+	// genesis-derived summaries that listings/refresh-strategy will need
+	// without loading the genesis again.
+	let raw_bare = vtxo.to_bare().serialize();
+	let raw_genesis = vtxo.serialize_genesis();
+	let exit_depth = vtxo.exit_depth() as i64;
+	let exit_tx_weight = vtxo.transactions()
+		.map(|t| t.tx.weight().to_wu())
+		.sum::<u64>() as i64;
+
 	// Store the vtxo, ignoring if it already exists (idempotent)
 	let q1 =
-		"INSERT OR IGNORE INTO bark_vtxo (id, expiry_height, amount_sat, raw_vtxo)
-		VALUES (:vtxo_id, :expiry_height, :amount_sat, :raw_vtxo);";
+		"INSERT OR IGNORE INTO bark_vtxo (
+			id, expiry_height, amount_sat,
+			raw_bare, raw_genesis, exit_depth, exit_tx_weight
+		)
+		VALUES (
+			:vtxo_id, :expiry_height, :amount_sat,
+			:raw_bare, :raw_genesis, :exit_depth, :exit_tx_weight
+		);";
 	let mut statement = tx.prepare(q1)?;
 	let rows_inserted = statement.execute(named_params! {
 		":vtxo_id" : vtxo.id().to_string(),
 		":expiry_height": vtxo.expiry_height(),
 		":amount_sat": vtxo.amount().to_sat(),
-		":raw_vtxo": vtxo.serialize(),
+		":raw_bare": raw_bare,
+		":raw_genesis": raw_genesis,
+		":exit_depth": exit_depth,
+		":exit_tx_weight": exit_tx_weight,
 	})?;
 
 	// Only store initial state if vtxo was newly inserted.
@@ -655,12 +675,19 @@ pub fn get_lightning_send(
 	}
 }
 
+/// Columns the `vtxo_view`-based listings always select, in the order
+/// [`row_to_wallet_vtxo`] expects them.
+const VTXO_VIEW_COLUMNS: &str =
+	"raw_bare, exit_depth, exit_tx_weight, state";
+
 pub fn get_wallet_vtxo_by_id(
 	conn: &Connection,
 	id: VtxoId
 ) -> anyhow::Result<Option<WalletVtxo>> {
-	let query = "SELECT raw_vtxo, state FROM vtxo_view WHERE id = ?1";
-	let mut statement = conn.prepare(query)?;
+	let query = format!(
+		"SELECT {VTXO_VIEW_COLUMNS} FROM vtxo_view WHERE id = ?1",
+	);
+	let mut statement = conn.prepare(&query)?;
 	let mut rows = statement.query([id.to_string()])?;
 
 	if let Some(row) = rows.next()? {
@@ -671,12 +698,13 @@ pub fn get_wallet_vtxo_by_id(
 }
 
 pub fn get_all_vtxos(conn: &Connection) -> anyhow::Result<Vec<WalletVtxo>> {
-	let query = "
-		SELECT raw_vtxo, state
+	let query = format!(
+		"SELECT {VTXO_VIEW_COLUMNS}
 		FROM vtxo_view
-		ORDER BY expiry_height ASC, amount_sat DESC";
+		ORDER BY expiry_height ASC, amount_sat DESC",
+	);
 
-	let mut statement = conn.prepare(query)?;
+	let mut statement = conn.prepare(&query)?;
 	let rows = statement.query(())?;
 
 	rows_to_wallet_vtxos(rows)
@@ -686,16 +714,86 @@ pub fn get_vtxos_by_state(
 	conn: &Connection,
 	state: &[VtxoStateKind]
 ) -> anyhow::Result<Vec<WalletVtxo>> {
-	let query = "
-		SELECT raw_vtxo, state
+	let query = format!(
+		"SELECT {VTXO_VIEW_COLUMNS}
 		FROM vtxo_view
 		WHERE state_kind IN (SELECT atom FROM json_each(?))
-		ORDER BY expiry_height ASC, amount_sat DESC";
+		ORDER BY expiry_height ASC, amount_sat DESC",
+	);
 
-	let mut statement = conn.prepare(query)?;
+	let mut statement = conn.prepare(&query)?;
 	let rows = statement.query(&[&serde_json::to_string(&state)?])?;
 
 	rows_to_wallet_vtxos(rows)
+}
+
+/// Hydrate a single VTXO into its full form (with the genesis chain), reading
+/// from `bark_vtxo` directly. Returns `None` when no row exists.
+pub fn get_full_vtxo_by_id(
+	conn: &Connection,
+	id: VtxoId,
+) -> anyhow::Result<Option<Vtxo<Full>>> {
+	let mut statement = conn.prepare(
+		"SELECT raw_bare, raw_genesis FROM bark_vtxo WHERE id = ?1",
+	)?;
+	let mut rows = statement.query([id.to_string()])?;
+
+	if let Some(row) = rows.next()? {
+		let raw_bare: Vec<u8> = row.get(0)?;
+		let raw_genesis: Vec<u8> = row.get(1)?;
+		Ok(Some(reassemble_full_vtxo(&raw_bare, &raw_genesis)?))
+	} else {
+		Ok(None)
+	}
+}
+
+/// Hydrate a batch of VTXOs by id, preserving the order of the input slice.
+/// Errors if any id is missing — callers always come here from a selection
+/// step against `vtxo_view`, so missing rows indicate the wallet's state is
+/// inconsistent with what the caller just observed.
+pub fn get_full_vtxos_by_ids(
+	conn: &Connection,
+	ids: &[VtxoId],
+) -> anyhow::Result<Vec<Vtxo<Full>>> {
+	if ids.is_empty() {
+		return Ok(Vec::new());
+	}
+
+	let id_strings: Vec<String> = ids.iter().map(|id| id.to_string()).collect();
+	let mut statement = conn.prepare(
+		"SELECT id, raw_bare, raw_genesis
+		FROM bark_vtxo
+		WHERE id IN (SELECT atom FROM json_each(?))",
+	)?;
+
+	let json_ids = serde_json::to_string(&id_strings)?;
+	let rows = statement.query_map([json_ids], |row| {
+		let id: String = row.get(0)?;
+		let raw_bare: Vec<u8> = row.get(1)?;
+		let raw_genesis: Vec<u8> = row.get(2)?;
+		Ok((id, raw_bare, raw_genesis))
+	})?;
+
+	let mut by_id = HashMap::with_capacity(ids.len());
+	for row in rows {
+		let (id, raw_bare, raw_genesis) = row?;
+		by_id.insert(id, reassemble_full_vtxo(&raw_bare, &raw_genesis)?);
+	}
+
+	let mut out = Vec::with_capacity(ids.len());
+	for (id, id_str) in ids.iter().zip(id_strings.iter()) {
+		match by_id.remove(id_str) {
+			Some(v) => out.push(v),
+			None => bail!("vtxo {id} not found in bark_vtxo"),
+		}
+	}
+	Ok(out)
+}
+
+fn reassemble_full_vtxo(raw_bare: &[u8], raw_genesis: &[u8]) -> anyhow::Result<Vtxo<Full>> {
+	let bare = Vtxo::<Bare>::deserialize(raw_bare)?;
+	let genesis = Vtxo::<Bare>::decode_genesis(&mut &raw_genesis[..])?;
+	Ok(bare.with_genesis(genesis))
 }
 
 pub fn delete_vtxo(
@@ -706,15 +804,16 @@ pub fn delete_vtxo(
 	let query = "DELETE FROM bark_vtxo_state WHERE vtxo_id = ?1";
 	tx.execute(query, [id.to_string()])?;
 
-	let query = "DELETE FROM bark_vtxo WHERE id = ?1 RETURNING raw_vtxo";
+	let query = "DELETE FROM bark_vtxo WHERE id = ?1 RETURNING raw_bare, raw_genesis";
 	let mut statement = tx.prepare(query)?;
 
 	let vtxo = statement
 		.query_and_then(
 			[id.to_string()],
 			|row| -> anyhow::Result<Vtxo<Full>> {
-				let raw_vtxo : Vec<u8> = row.get(0)?;
-				Ok(Vtxo::deserialize(&raw_vtxo)?)
+				let raw_bare: Vec<u8> = row.get(0)?;
+				let raw_genesis: Vec<u8> = row.get(1)?;
+				reassemble_full_vtxo(&raw_bare, &raw_genesis)
 			})?
 		.filter_map(|x| x.ok())
 		.next();

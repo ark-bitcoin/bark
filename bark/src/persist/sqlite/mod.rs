@@ -252,6 +252,16 @@ impl BarkPersister for SqliteClient {
 		Ok(result)
 	}
 
+	async fn get_full_vtxo(&self, id: VtxoId) -> anyhow::Result<Option<Vtxo<Full>>> {
+		let conn = self.connect()?;
+		query::get_full_vtxo_by_id(&conn, id)
+	}
+
+	async fn get_full_vtxos(&self, ids: &[VtxoId]) -> anyhow::Result<Vec<Vtxo<Full>>> {
+		let conn = self.connect()?;
+		query::get_full_vtxos_by_ids(&conn, ids)
+	}
+
 	async fn remove_vtxo(&self, id: VtxoId) -> anyhow::Result<Option<Vtxo<Full>>> {
 		let mut conn = self.connect()?;
 		let tx = conn.transaction().context("Failed to start transaction")?;
@@ -488,6 +498,7 @@ pub mod helpers {
 
 #[cfg(test)]
 mod test {
+	use ark::ProtocolEncoding;
 	use ark::test_util::VTXO_VECTORS;
 
 	use crate::{persist::sqlite::helpers::in_memory_db, vtxo::VtxoState};
@@ -507,9 +518,14 @@ mod test {
 			(vtxo_1, &VtxoState::Spendable), (vtxo_2, &VtxoState::Spendable)
 		]).await.unwrap();
 
-		// Check that vtxo-1 can be retrieved from the database
+		// Check that vtxo-1 can be retrieved from the database. Listings
+		// return the bare form, so compare against `to_bare()`.
 		let vtxo_1_db = db.get_wallet_vtxo(vtxo_1.id()).await.expect("No error").expect("A vtxo was found");
-		assert_eq!(vtxo_1_db.vtxo, *vtxo_1);
+		assert_eq!(vtxo_1_db.vtxo, vtxo_1.to_bare());
+
+		// Hydrating to full should round-trip back to the original bytes.
+		let vtxo_1_full = db.get_full_vtxo(vtxo_1.id()).await.unwrap().unwrap();
+		assert_eq!(vtxo_1_full.serialize(), vtxo_1.serialize());
 
 		// Verify that vtxo 3 is not in the database
 		assert!(db.get_wallet_vtxo(vtxo_3.id()).await.expect("No error").is_none());
@@ -517,9 +533,9 @@ mod test {
 		// Verify that we have two entries in the database
 		let vtxos = db.get_vtxos_by_state(&[VtxoStateKind::Spendable]).await.unwrap();
 		assert_eq!(vtxos.len(), 2);
-		assert!(vtxos.iter().any(|v| v.vtxo == *vtxo_1));
-		assert!(vtxos.iter().any(|v| v.vtxo == *vtxo_2));
-		assert!(!vtxos.iter().any(|v| v.vtxo == *vtxo_3));
+		assert!(vtxos.iter().any(|v| v.vtxo == vtxo_1.to_bare()));
+		assert!(vtxos.iter().any(|v| v.vtxo == vtxo_2.to_bare()));
+		assert!(!vtxos.iter().any(|v| v.vtxo == vtxo_3.to_bare()));
 
 		// Verify that we can mark a vtxo as spent
 		db.update_vtxo_state_checked(
@@ -534,8 +550,8 @@ mod test {
 
 		let vtxos = db.get_vtxos_by_state(&[VtxoStateKind::Spendable]).await.unwrap();
 		assert_eq!(vtxos.len(), 2);
-		assert!(vtxos.iter().any(|v| v.vtxo == *vtxo_2));
-		assert!(vtxos.iter().any(|v| v.vtxo == *vtxo_3));
+		assert!(vtxos.iter().any(|v| v.vtxo == vtxo_2.to_bare()));
+		assert!(vtxos.iter().any(|v| v.vtxo == vtxo_3.to_bare()));
 
 		conn.close().unwrap();
 	}

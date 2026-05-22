@@ -10,7 +10,7 @@ use bark::onchain::{ChainSync, PreparePsbt, SignPsbt};
 use bark_json::primitives::VtxoStateInfo;
 use server_rpc::protos;
 
-use ark_testing::{btc, sat, TestContext};
+use ark_testing::{btc, require_bark_version, sat, TestContext};
 use ark_testing::constants::BOARD_CONFIRMATIONS;
 use ark_testing::daemon::captaind::{self, ArkClient};
 use ark_testing::util::ToAltString;
@@ -167,6 +167,8 @@ async fn bark_recover_unregistered_board() {
 
 #[tokio::test]
 async fn board_tx_rejects_wrong_funding_address() {
+	require_bark_version!(> "0.1.4");
+
 	let ctx = TestContext::new("bark/board_tx_rejects_wrong_funding_address").await;
 	let srv = ctx.captaind("server").create().await;
 	let bark1 = ctx.bark("bark1", &srv).funded(sat(100_000)).create().await;
@@ -203,6 +205,8 @@ async fn board_tx_rejects_wrong_funding_address() {
 
 #[tokio::test]
 async fn board_tx_rejects_wrong_expiry_height() {
+	require_bark_version!(> "0.1.4");
+
 	let ctx = TestContext::new("bark/board_tx_rejects_wrong_expiry_height").await;
 	let srv = ctx.captaind("server").create().await;
 	let bark1 = ctx.bark("bark1", &srv).funded(sat(100_000)).create().await;
@@ -232,6 +236,8 @@ async fn board_tx_rejects_wrong_expiry_height() {
 
 #[tokio::test]
 async fn board_tx_rejects_dust_amount() {
+	require_bark_version!(> "0.1.4");
+
 	let ctx = TestContext::new("bark/board_tx_rejects_dust_amount").await;
 	let srv = ctx.captaind("server").cfg(|cfg| {
 		cfg.min_board_amount = Amount::ZERO;
@@ -271,6 +277,8 @@ async fn board_tx_rejects_dust_amount() {
 /// This will be workflow will be replicated by external wallets
 #[tokio::test]
 async fn board_tx_full_flow() {
+	require_bark_version!(> "0.1.4");
+
 	const BOARD_AMOUNT: u64 = 90_000;
 	let ctx = TestContext::new("bark/board_tx_full_flow").await;
 	let srv = ctx.captaind("server").create().await;

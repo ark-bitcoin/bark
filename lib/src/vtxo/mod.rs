@@ -513,6 +513,34 @@ impl<P: Policy> Vtxo<Bare, P> {
 	) -> Self {
 		Vtxo { point, policy, amount, expiry_height, server_pubkey, exit_delta, anchor_point, genesis: Bare }
 	}
+
+	/// Decode the [Full] genesis item list; this assumes the data being decoded was previously
+	/// written using [Vtxo::<Full>::encode_genesis].
+	pub fn decode_genesis<R: io::Read + ?Sized>(
+		r: &mut R,
+	) -> Result<Full, ProtocolDecodingError> {
+		<Full as VtxoVersionedEncoding>::decode(r, VTXO_ENCODING_VERSION)
+	}
+
+	/// Upgrade this bare VTXO to a [Vtxo<Full, P>] by attaching a previously
+	/// stripped or decoded genesis chain.
+	///
+	/// Field-by-field copy mirroring the inverse of [Vtxo::into_bare]. The
+	/// VTXO's `point` is a deterministic checksum of the genesis chain, so a
+	/// caller passing a mismatched `genesis` would simply produce an invalid
+	/// VTXO; use [Vtxo::with_genesis_checked] when paranoia is warranted.
+	pub fn with_genesis(self, genesis: Full) -> Vtxo<Full, P> {
+		Vtxo {
+			policy: self.policy,
+			amount: self.amount,
+			expiry_height: self.expiry_height,
+			server_pubkey: self.server_pubkey,
+			exit_delta: self.exit_delta,
+			anchor_point: self.anchor_point,
+			genesis,
+			point: self.point,
+		}
+	}
 }
 
 impl<P: Policy> Vtxo<Full, P> {
@@ -599,6 +627,26 @@ impl<P: Policy> Vtxo<Full, P> {
 	/// Iterator that constructs all the exit txs for this [Vtxo].
 	pub fn transactions(&self) -> VtxoTxIter<'_, P> {
 		VtxoTxIter::new(self)
+	}
+
+	/// Encode just the genesis chain.
+	///
+	/// The wire format is the same as the genesis section embedded inside a
+	/// full VTXO encoding at [VTXO_ENCODING_VERSION], so callers that already
+	/// store a [Vtxo<Bare>] alongside this blob can reassemble the full VTXO
+	/// via [Vtxo::<Bare>::decode_genesis] and [Vtxo::with_genesis].
+	pub fn encode_genesis<W: io::Write + ?Sized>(
+		&self,
+		w: &mut W,
+	) -> Result<(), io::Error> {
+		<Full as VtxoVersionedEncoding>::encode(&self.genesis, w, VTXO_ENCODING_VERSION)
+	}
+
+	/// Serialize the genesis chain into a fresh `Vec<u8>`.
+	pub fn serialize_genesis(&self) -> Vec<u8> {
+		let mut out = Vec::new();
+		self.encode_genesis(&mut out).expect("writing to a Vec doesn't fail");
+		out
 	}
 
 	/// Fully validate this VTXO and its entire transaction chain.
@@ -742,10 +790,10 @@ pub trait VtxoRef<P: Policy = VtxoPolicy> {
 	/// If the bare [Vtxo] can be provided, provides it by reference
 	fn as_bare_vtxo(&self) -> Option<Cow<'_, Vtxo<Bare, P>>> { None }
 
-	/// If the bare [Vtxo] can be provided, provides it by reference
+	/// If the full [Vtxo] can be provided, provides it by reference
 	fn as_full_vtxo(&self) -> Option<&Vtxo<Full, P>> { None }
 
-	/// If the bare [Vtxo] can be provided, provides it by value, either directly or via cloning
+	/// If the full [Vtxo] can be provided, provides it by value, either directly or via cloning
 	fn into_full_vtxo(self) -> Option<Vtxo<Full, P>> where Self: Sized;
 }
 
@@ -1041,7 +1089,7 @@ impl VtxoVersionedEncoding for Bare {
 		r: &mut R,
 		version: u16,
 	) -> Result<Self, ProtocolDecodingError> {
-		// We want to be comaptible with [Full] encoded VTXOs, so we just ignore
+		// We want to be compatible with [Full] encoded VTXOs, so we just ignore
 		// whatever genesis there might be.
 		let _full = Full::decode(r, version)?;
 
@@ -1259,6 +1307,64 @@ mod test {
 	}
 
 	#[test]
+	fn test_split_genesis_roundtrip() {
+		// For each fixture, splitting the encoding into bare bytes + genesis
+		// bytes and reassembling must produce a byte-identical full VTXO. This
+		// is the load-bearing invariant for the m0029 storage migration.
+		fn check<P: Policy + ProtocolEncoding + Clone + std::fmt::Debug>(
+			vtxo: &Vtxo<Full, P>,
+		) where
+			Vtxo<Full, P>: PartialEq,
+		{
+			let original = vtxo.serialize();
+
+			let bare_bytes = vtxo.to_bare().serialize();
+			let genesis_bytes = vtxo.serialize_genesis();
+
+			let bare = Vtxo::<Bare, P>::deserialize(&bare_bytes)
+				.expect("bare deserialize");
+			let genesis = Vtxo::<Bare, P>::decode_genesis(&mut &genesis_bytes[..])
+				.expect("decode_genesis");
+			let reassembled = bare.with_genesis(genesis);
+
+			assert_eq!(*vtxo, reassembled, "reassembled vtxo differs from original");
+			assert_eq!(reassembled.serialize(), original,
+				"reassembled bytes differ from original");
+		}
+
+		let v = &*VTXO_VECTORS;
+		check(&v.board_vtxo);
+		check(&v.arkoor_htlc_out_vtxo);
+		check(&v.arkoor2_vtxo);
+		check(&v.round1_vtxo);
+		check(&v.round2_vtxo);
+		check(&v.arkoor3_vtxo);
+
+		// Also exercise a depth-257 genesis to cover compact_size > 252.
+		let big: Vtxo<Full> = Vtxo {
+			policy: VtxoPolicy::new_pubkey(DUMMY_USER_KEY.public_key()),
+			amount: Amount::from_sat(10_000),
+			expiry_height: 101_010,
+			server_pubkey: DUMMY_SERVER_KEY.public_key(),
+			exit_delta: 2016,
+			anchor_point: OutPoint::new(Txid::from_slice(&[1u8; 32]).unwrap(), 1),
+			genesis: Full {
+				items: vec![GenesisItem {
+					transition: GenesisTransition::new_cosigned(
+						vec![DUMMY_USER_KEY.public_key()],
+						Some(schnorr::Signature::from_slice(&[2u8; 64]).unwrap()),
+					),
+					output_idx: 0,
+					other_outputs: vec![],
+					fee_amount: Amount::ZERO,
+				}; 257],
+			},
+			point: OutPoint::new(Txid::from_slice(&[3u8; 32]).unwrap(), 3),
+		};
+		check(&big);
+	}
+
+	#[test]
 	fn test_genesis_length_257() {
 		let vtxo: Vtxo<Full> = Vtxo {
 			policy: VtxoPolicy::new_pubkey(DUMMY_USER_KEY.public_key()),
@@ -1268,17 +1374,15 @@ mod test {
 			exit_delta: 2016,
 			anchor_point: OutPoint::new(Txid::from_slice(&[1u8; 32]).unwrap(), 1),
 			genesis: Full {
-				items: (0..257).map(|_| {
-					GenesisItem {
-						transition: GenesisTransition::new_cosigned(
-							vec![DUMMY_USER_KEY.public_key()],
-							Some(schnorr::Signature::from_slice(&[2u8; 64]).unwrap()),
-						),
-						output_idx: 0,
-						other_outputs: vec![],
-						fee_amount: Amount::ZERO,
-					}
-				}).collect(),
+				items: vec![GenesisItem {
+					transition: GenesisTransition::new_cosigned(
+						vec![DUMMY_USER_KEY.public_key()],
+						Some(schnorr::Signature::from_slice(&[2u8; 64]).unwrap()),
+					),
+					output_idx: 0,
+					other_outputs: vec![],
+					fee_amount: Amount::ZERO,
+				}; 257],
 			},
 			point: OutPoint::new(Txid::from_slice(&[3u8; 32]).unwrap(), 3),
 		};

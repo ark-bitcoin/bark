@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::fmt;
 use std::str::FromStr;
 
-use bitcoin::{Amount, SignedAmount};
+use bitcoin::{Amount, SignedAmount, Weight};
 use chrono::DateTime;
 use rusqlite::{Row, RowIndex, Rows};
 use rusqlite::types::FromSql;
@@ -100,11 +100,15 @@ fn destinations_from_json(json: String) -> anyhow::Result<Vec<MovementDestinatio
 }
 
 pub (crate) fn row_to_wallet_vtxo(row: &Row<'_>) -> anyhow::Result<WalletVtxo> {
-	let raw_vtxo = row.get::<_, Vec<u8>>("raw_vtxo")?;
-	let vtxo = Vtxo::deserialize(&raw_vtxo)?;
+	let raw_bare = row.get::<_, Vec<u8>>("raw_bare")?;
+	let vtxo = Vtxo::deserialize(&raw_bare)?;
 
 	let state = serde_json::from_slice::<VtxoState>(&row.get::<_, Vec<u8>>("state")?)?;
-	Ok(WalletVtxo { vtxo, state })
+
+	let exit_depth = row.get::<_, i64>("exit_depth")? as u16;
+	let exit_tx_weight = Weight::from_wu(row.get::<_, i64>("exit_tx_weight")? as u64);
+
+	Ok(WalletVtxo { vtxo, state, exit_depth, exit_tx_weight })
 }
 
 pub (crate) fn rows_to_wallet_vtxos(mut rows: Rows<'_>) -> anyhow::Result<Vec<WalletVtxo>> {

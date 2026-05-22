@@ -73,7 +73,7 @@ use crate::persist::BarkPersister;
 use crate::persist::models::{
 	LightningReceive, LightningSend, PendingBoard, PendingOffboard,
 	RoundStateId, SerdeExitChildTx, SerdeRoundState, SerdeVtxo, SerdeVtxoKey, StoredExit,
-	StoredRoundState, Unlocked,
+	StoredRoundState, Unlocked, wallet_vtxo_from_full,
 };
 use crate::round::RoundState;
 use crate::vtxo::{VtxoState, VtxoStateKind};
@@ -344,10 +344,7 @@ async fn update_vtxo_state_checked<S: StorageAdaptor>(
 
 	adaptor.put(updated_record).await?;
 
-	Ok(WalletVtxo {
-		vtxo: serde_vtxo.vtxo,
-		state: new_state,
-	})
+	Ok(wallet_vtxo_from_full(&serde_vtxo.vtxo, new_state))
 }
 
 pub struct StorageAdaptorWrapper<S: StorageAdaptor> {
@@ -682,10 +679,11 @@ impl <S: StorageAdaptor> BarkPersister for StorageAdaptorWrapper<S> {
 	async fn get_wallet_vtxo(&self, id: VtxoId) -> anyhow::Result<Option<WalletVtxo>> {
 		let lock = self.inner.read().await;
 		match get_vtxo(&*lock, id).await? {
-			Some(vtxo) => Ok(Some(WalletVtxo {
-				state: vtxo.current_state().context("vtxo has no state")?.clone(),
-				vtxo: vtxo.vtxo,
-			})),
+			Some(serde_vtxo) => {
+				let state = serde_vtxo.current_state()
+					.context("vtxo has no state")?.clone();
+				Ok(Some(wallet_vtxo_from_full(&serde_vtxo.vtxo, state)))
+			},
 			None => Ok(None),
 		}
 	}
@@ -702,10 +700,7 @@ impl <S: StorageAdaptor> BarkPersister for StorageAdaptorWrapper<S> {
 					.current_state()
 					.cloned()
 					.context("vtxo has no state")?;
-				Ok(WalletVtxo {
-					vtxo: serde_vtxo.vtxo,
-					state,
-				})
+				Ok(wallet_vtxo_from_full(&serde_vtxo.vtxo, state))
 			})
 			.collect()
 	}
@@ -732,14 +727,27 @@ impl <S: StorageAdaptor> BarkPersister for StorageAdaptorWrapper<S> {
 				let current_state = serde_vtxo.current_state()
 					.context("vtxo has no current state")?.clone();
 				debug_assert_eq!(current_state.kind(), *state);
-				records.push(WalletVtxo {
-					vtxo: serde_vtxo.vtxo,
-					state: current_state,
-				});
+				records.push(wallet_vtxo_from_full(&serde_vtxo.vtxo, current_state));
 			}
 		}
 
 		Ok(records)
+	}
+
+	async fn get_full_vtxo(&self, id: VtxoId) -> anyhow::Result<Option<Vtxo<Full>>> {
+		let lock = self.inner.read().await;
+		Ok(get_vtxo(&*lock, id).await?.map(|s| s.vtxo))
+	}
+
+	async fn get_full_vtxos(&self, ids: &[VtxoId]) -> anyhow::Result<Vec<Vtxo<Full>>> {
+		let lock = self.inner.read().await;
+		let mut out = Vec::with_capacity(ids.len());
+		for id in ids {
+			let serde_vtxo = get_vtxo(&*lock, *id).await?
+				.with_context(|| format!("vtxo {id} not found"))?;
+			out.push(serde_vtxo.vtxo);
+		}
+		Ok(out)
 	}
 
 	async fn remove_vtxo(&self, id: VtxoId) -> anyhow::Result<Option<Vtxo<Full>>> {

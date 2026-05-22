@@ -71,7 +71,10 @@ impl<Cs: Send + Sync> TxBuilderExt for TxBuilder<'_, Cs> {
 				bail!("VTXO exit is not spendable");
 			}
 
-			let vtxo = wallet.db.get_wallet_vtxo(input.id()).await?
+			// Claiming an exit needs the full vtxo: the PSBT input embeds the
+			// serialized full bytes (including the genesis chain) so the
+			// claim signer can reconstruct the spend.
+			let vtxo = wallet.db.get_full_vtxo(input.id()).await?
 				.context(format!("Unable to load VTXO for exit: {}", input.id()))?;
 			let mut psbt_in = psbt::Input::default();
 			psbt_in.set_exit_claim_input(&vtxo);

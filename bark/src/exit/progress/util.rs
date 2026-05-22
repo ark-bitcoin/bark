@@ -1,11 +1,8 @@
 
-use std::collections::HashMap;
-
 use bitcoin::{Amount, FeeRate, Weight};
 
-use ark::{vtxo::Full, Vtxo};
-
 use crate::exit::models::{ExitTx, ExitTxStatus};
+use crate::WalletVtxo;
 
 /// Counts how many of the given ExitTx objects exist in either the mempool or the blockchain
 pub(crate) fn count_broadcast(status: &[ExitTx]) -> usize {
@@ -29,16 +26,9 @@ pub(crate) fn count_confirmed(status: &[ExitTx]) -> usize {
 /// We estimate the CPFP part by multiplying the exit tx weight by 2.
 pub(crate) fn estimate_exit_cost<'a, I>(vtxos: I, fee_rate: FeeRate) -> Amount
 where
-	I: IntoIterator<Item = &'a Vtxo<Full>>
+	I: IntoIterator<Item = &'a WalletVtxo>
 {
-	let mut all_txs = HashMap::with_capacity(10);
-	for vtxo in vtxos {
-		for tx in vtxo.transactions() {
-			all_txs.insert(tx.tx.compute_txid(), tx.tx);
-		}
-	}
-
-	let total_weight = all_txs.values().map(|t| t.weight()).sum::<Weight>();
-	// we multiply by two as a rough upper bound of all the CPFP txs
+	// we multiply by two as a rough upper bound of all the CPFP tx
+	let total_weight = vtxos.into_iter().map(|vtxo| vtxo.exit_tx_weight).sum::<Weight>();
 	fee_rate * total_weight * 2
 }

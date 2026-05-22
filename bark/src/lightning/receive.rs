@@ -162,28 +162,26 @@ impl Wallet {
 			.context("No movement created for lightning receive")?;
 		let (mut srv, _) = self.require_server().await?;
 
-		// order inputs by vtxoid before we generate nonces
-		let inputs = {
-			ensure!(!receive.htlc_vtxos.is_empty(), "no HTLC VTXOs set on record yet");
-			let mut ret = receive.htlc_vtxos.iter().map(|v| &v.vtxo).collect::<Vec<_>>();
-			ret.sort_by_key(|v| v.id());
-			ret
-		};
+		// order inputs by vtxoid before we generate nonces, then hydrate
+		// to full so the arkoor builder has the genesis chain.
+		ensure!(!receive.htlc_vtxos.is_empty(), "no HTLC VTXOs set on record yet");
+		let mut input_ids = receive.htlc_vtxos.iter().map(|v| v.vtxo.id()).collect::<Vec<_>>();
+		input_ids.sort();
+		let inputs = self.db.get_full_vtxos(&input_ids).await
+			.context("failed to hydrate htlc input vtxos")?;
 
 		let mut keypairs = Vec::with_capacity(inputs.len());
 		for v in &inputs {
-			keypairs.push(self.get_vtxo_key(*v).await?);
+			keypairs.push(self.get_vtxo_key(v).await?);
 		}
 
 		// Claiming arkoor against preimage
 		let (claim_keypair, _) = self.derive_store_next_keypair().await?;
 		let receive_policy = VtxoPolicy::new_pubkey(claim_keypair.public_key());
 
-		trace!("ln arkoor builder params: inputs: {:?}; policy: {:?}",
-			inputs.iter().map(|v| v.id()).collect::<Vec<_>>(), receive_policy,
-		);
+		trace!("ln arkoor builder params: inputs: {:?}; policy: {:?}", input_ids, receive_policy);
 		let builder = ArkoorPackageBuilder::new_claim_all_without_checkpoints(
-			inputs.iter().copied().cloned(),
+			inputs,
 			receive_policy.clone(),
 		).context("creating claim arkoor builder failed")?;
 		let builder = builder.generate_user_nonces(&keypairs)
@@ -223,7 +221,7 @@ impl Wallet {
 		}
 
 		self.store_spendable_vtxos(&outputs).await?;
-		self.mark_vtxos_as_spent(inputs).await?;
+		self.mark_vtxos_as_spent(&receive.htlc_vtxos).await?;
 
 		info!("Got arkoors from lightning: {}",
 			outputs.iter().map(|v| v.id().to_string()).collect::<Vec<_>>().join(", ")

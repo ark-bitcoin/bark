@@ -20,7 +20,7 @@ use bitcoin_ext::TaprootSpendInfoExt;
 use bitcoin_ext::rpc::BitcoinRpcExt;
 use server_rpc::protos::{self, lightning_payment_status};
 
-use ark_testing::{btc, sat, signed_sat, Bark, TestContext};
+use ark_testing::{Bark, TestContext, btc, require_bark_version, sat, signed_sat};
 use ark_testing::constants::{BOARD_CONFIRMATIONS, ROUND_CONFIRMATIONS};
 use ark_testing::daemon::captaind::{self, ArkClient};
 use ark_testing::exit::complete_exit;
@@ -694,6 +694,8 @@ async fn bark_should_exit_a_failed_htlc_out_that_server_refuse_to_revoke() {
 
 #[tokio::test]
 async fn bark_should_exit_a_pending_htlc_out_that_server_refuse_to_revoke() {
+	require_bark_version!(> "0.1.4");
+
 	let ctx = TestContext::new("exit/bark_should_exit_a_pending_htlc_out_that_server_refuse_to_revoke").await;
 
 	let lightning = ctx.new_lightning_setup_no_channel("lightningd").await;

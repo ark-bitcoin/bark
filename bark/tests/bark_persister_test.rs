@@ -99,6 +99,8 @@ impl BarkPersister for Dummy {
 		Ok(Some(WalletVtxo {
 			vtxo: Vtxo::deserialize(&[])?,
 			state: VtxoState::Spendable,
+			exit_depth: 0,
+			exit_tx_weight: bitcoin::Weight::ZERO,
 		}))
 	}
 
@@ -106,6 +108,8 @@ impl BarkPersister for Dummy {
 		Ok(Vec::<WalletVtxo>::from([WalletVtxo {
 			vtxo: Vtxo::deserialize(&[])?,
 			state: VtxoState::Spendable,
+			exit_depth: 0,
+			exit_tx_weight: bitcoin::Weight::ZERO,
 		}]))
 	}
 
@@ -115,7 +119,17 @@ impl BarkPersister for Dummy {
 			state: VtxoState::Locked {
 				movement_id: Some(MovementId::new(0)),
 			},
+			exit_depth: 0,
+			exit_tx_weight: bitcoin::Weight::ZERO,
 		}]))
+	}
+
+	async fn get_full_vtxo(&self, _id: VtxoId) -> anyhow::Result<Option<Vtxo<Full>>> {
+		Ok(Some(Vtxo::deserialize(&[])?))
+	}
+
+	async fn get_full_vtxos(&self, _ids: &[VtxoId]) -> anyhow::Result<Vec<Vtxo<Full>>> {
+		Ok(Vec::new())
 	}
 
 	async fn remove_vtxo(&self, _id: VtxoId) -> anyhow::Result<Option<Vtxo<Full>>> {
@@ -282,6 +296,8 @@ impl BarkPersister for Dummy {
 		Ok(Vec::<WalletVtxo>::from([WalletVtxo {
 			vtxo: Vtxo::deserialize(&[])?,
 			state: VtxoState::Spent,
+			exit_depth: 0,
+			exit_tx_weight: bitcoin::Weight::ZERO,
 		}]).pop().unwrap())
 	}
 

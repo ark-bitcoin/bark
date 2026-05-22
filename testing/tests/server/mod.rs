@@ -511,6 +511,8 @@ async fn full_round() {
 
 #[tokio::test]
 async fn double_spend_arkoor() {
+	require_bark_version!(> "0.1.4");
+
 	let ctx = TestContext::new("server/double_spend_arkoor").await;
 	let srv = ctx.captaind("server").funded(btc(10)).create().await;
 
@@ -522,11 +524,14 @@ async fn double_spend_arkoor() {
 	let bark_client = bark.client().await;
 	bark_client.maintenance().await.unwrap();
 
-	// Let's try to construct a few conflicting arkoor transactions
-	let vtxo = bark_client.vtxos().await
+	// Let's try to construct a few conflicting arkoor transactions. Listings
+	// return bare wallet vtxos; hydrate to full so the arkoor builder has
+	// the genesis chain.
+	let bare_vtxo = bark_client.vtxos().await
 		.unwrap().into_iter().next().unwrap().vtxo;
-	let vtxo_keypair = bark_client.pubkey_keypair(&vtxo.user_pubkey()).await
+	let vtxo_keypair = bark_client.pubkey_keypair(&bare_vtxo.user_pubkey()).await
 		.unwrap().unwrap().1;
+	let vtxo = bark_client.get_full_vtxo(bare_vtxo.id()).await.unwrap();
 
 	let pk1 = bark_client.derive_store_next_keypair().await.unwrap().0.public_key();
 	let pk2 = bark_client.derive_store_next_keypair().await.unwrap().0.public_key();
@@ -738,6 +743,8 @@ async fn spend_unregistered_board() {
 
 #[tokio::test]
 async fn bad_round_input() {
+	require_bark_version!(> "0.1.4");
+
 	let ctx = TestContext::new("server/bad_round_input").await;
 	let srv = ctx.captaind("server").cfg(|cfg| {
 		cfg.round_interval = Duration::from_secs(10000000);
@@ -921,6 +928,8 @@ async fn reject_below_minimum_board_cosign() {
 
 #[tokio::test]
 async fn reject_dust_vtxo_request() {
+	require_bark_version!(> "0.1.4");
+
 	let ctx = TestContext::new("server/reject_dust_vtxo_request").await;
 	let srv = ctx.captaind("server").create().await;
 
@@ -1233,6 +1242,8 @@ async fn should_refuse_ln_pay_with_invalid_attestation() {
 
 #[tokio::test]
 async fn should_refuse_oor_input_vtxo_that_is_being_exited() {
+	require_bark_version!(> "0.1.4");
+
 	let ctx = TestContext::new("server/should_refuse_oor_input_vtxo_that_is_being_exited").await;
 	let srv = ctx.captaind("server").create().await;
 
@@ -1293,6 +1304,8 @@ async fn should_refuse_oor_input_vtxo_that_is_being_exited() {
 
 #[tokio::test]
 async fn mailbox_post_and_process_with_auth() {
+	require_bark_version!(> "0.1.4");
+
 	let ctx = TestContext::new("server/mailbox_post_and_process_with_auth").await;
 	let srv = ctx.captaind("server").create().await;
 
@@ -1421,6 +1434,8 @@ async fn mailbox_post_and_process_with_auth() {
 
 #[tokio::test]
 async fn should_refuse_round_input_vtxo_that_is_being_exited() {
+	require_bark_version!(> "0.1.4");
+
 	let ctx = TestContext::new("server/should_refuse_round_input_vtxo_that_is_being_exited").await;
 
 	trace!("Start lightningd-1");

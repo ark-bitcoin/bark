@@ -71,20 +71,6 @@ CREATE TABLE bark_round_state (
 				id INTEGER PRIMARY KEY AUTOINCREMENT,
 				state BLOB NOT NULL
 			);
-CREATE VIEW vtxo_view
-			AS SELECT
-				v.id,
-				v.expiry_height,
-				v.amount_sat,
-				v.raw_vtxo,
-				v.created_at,
-				vs.state,
-				vs.state_kind,
-				vs.last_updated_at
-			FROM bark_vtxo as v
-			JOIN most_recent_vtxo_state as vs
-				ON v.id = vs.vtxo_id
-/* vtxo_view(id,expiry_height,amount_sat,raw_vtxo,created_at,state,state_kind,last_updated_at) */;
 CREATE TABLE bark_pending_lightning_receive (
 				payment_hash TEXT NOT NULL PRIMARY KEY,
 				preimage TEXT NOT NULL UNIQUE,
@@ -99,9 +85,8 @@ CREATE TABLE bark_vtxo (
 				id TEXT PRIMARY KEY,
 				expiry_height INTEGER,
 				amount_sat INTEGER,
-				raw_vtxo BLOB,
 				created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now'))
-			);
+			, raw_bare BLOB, raw_genesis BLOB, exit_depth INTEGER, exit_tx_weight INTEGER);
 CREATE TABLE IF NOT EXISTS "bark_movements" (
 					id                INTEGER  PRIMARY KEY AUTOINCREMENT NOT NULL UNIQUE,
 					status            TEXT     NOT NULL,
@@ -207,3 +192,19 @@ CREATE INDEX movements_sent_to_idx
 				ON bark_movements_sent_to (destination_type, destination_value);
 CREATE INDEX movements_received_on_idx
 				ON bark_movements_received_on (destination_type, destination_value);
+CREATE VIEW vtxo_view AS
+			SELECT
+				v.id,
+				v.expiry_height,
+				v.amount_sat,
+				v.raw_bare,
+				v.exit_depth,
+				v.exit_tx_weight,
+				v.created_at,
+				vs.state,
+				vs.state_kind,
+				vs.last_updated_at
+			FROM bark_vtxo as v
+			JOIN most_recent_vtxo_state as vs
+				ON v.id = vs.vtxo_id
+/* vtxo_view(id,expiry_height,amount_sat,raw_bare,exit_depth,exit_tx_weight,created_at,state,state_kind,last_updated_at) */;

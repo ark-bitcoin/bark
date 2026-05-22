@@ -4,10 +4,9 @@ use bitcoin::key::Keypair;
 use bitcoin::{Address, OutPoint, Psbt};
 use log::{error, info, trace, warn};
 
-use ark::ProtocolEncoding;
+use ark::{ProtocolEncoding, VtxoId};
 use ark::board::{BoardBuilder, BOARD_FUNDING_TX_VTXO_VOUT};
 use ark::fees::validate_and_subtract_fee;
-use ark::vtxo::VtxoRef;
 use bitcoin_ext::{BlockHeight, TxStatus};
 use server_rpc::protos;
 
@@ -263,20 +262,14 @@ impl Wallet {
 	}
 
 	/// Registers a board to the Ark server
-	async fn register_board(&self, vtxo: impl VtxoRef) -> anyhow::Result<()> {
-		trace!("Attempting to register board {} to server", vtxo.vtxo_id());
+	async fn register_board(&self, vtxo_id: VtxoId) -> anyhow::Result<()> {
+		trace!("Attempting to register board {} to server", vtxo_id);
 		let (mut srv, _) = self.require_server().await?;
 
-		// Get the vtxo and funding transaction from the database
-		let wallet_vtxo;
-		let vtxo = match vtxo.as_full_vtxo() {
-			Some(v) => v,
-			None => {
-				wallet_vtxo = self.db.get_wallet_vtxo(vtxo.vtxo_id()).await?
-					.with_context(|| format!("VTXO doesn't exist: {}", vtxo.vtxo_id()))?;
-				&wallet_vtxo.vtxo
-			},
-		};
+		// Get the full vtxo (including the genesis chain) since we send the
+		// serialized bytes to the server.
+		let vtxo = self.db.get_full_vtxo(vtxo_id).await?
+			.with_context(|| format!("VTXO doesn't exist: {}", vtxo_id))?;
 
 		// Register the vtxo with the server
 		srv.client.register_board_vtxo(protos::BoardVtxoRequest {

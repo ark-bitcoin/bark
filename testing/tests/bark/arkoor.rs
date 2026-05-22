@@ -6,6 +6,8 @@ use futures::StreamExt;
 
 #[tokio::test]
 async fn send_simple_arkoor() {
+	require_bark_version!(> "0.1.4");
+
 	let ctx = TestContext::new("bark/send_simple_arkoor").await;
 	let srv = ctx.captaind("server").funded(btc(10)).create().await;
 	let bark1 = ctx.bark("bark1", &srv).funded(sat(90_000)).create().await;

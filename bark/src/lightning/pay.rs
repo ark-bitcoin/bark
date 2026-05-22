@@ -80,10 +80,14 @@ impl Wallet {
 	/// Returns `Ok(())` if revocation succeeds and the wallet state is properly updated.
 	async fn process_lightning_revocation(&self, payment: &LightningSend) -> anyhow::Result<()> {
 		let (mut srv, _) = self.require_server().await?;
-		let htlc_vtxos = payment.htlc_vtxos.clone().into_iter()
-			.map(|v| v.vtxo).collect::<Vec<_>>();
+		let htlc_ids = payment.htlc_vtxos.iter()
+			.map(|v| v.vtxo.id()).collect::<Vec<_>>();
 
-		debug!("Processing {} HTLC VTXOs for revocation", htlc_vtxos.len());
+		debug!("Processing {} HTLC VTXOs for revocation", htlc_ids.len());
+
+		// Hydrate to full so the arkoor builder has the genesis chain.
+		let htlc_vtxos = self.db.get_full_vtxos(&htlc_ids).await
+			.context("failed to hydrate htlc input vtxos for revocation")?;
 
 		let mut secs = Vec::with_capacity(htlc_vtxos.len());
 		let mut pubs = Vec::with_capacity(htlc_vtxos.len());
@@ -100,7 +104,7 @@ impl Wallet {
 
 		let revocation_claim_policy = VtxoPolicy::new_pubkey(revocation_keypair.public_key());
 		let builder = ArkoorPackageBuilder::new_claim_all_with_checkpoints(
-			htlc_vtxos.iter().cloned(),
+			htlc_vtxos,
 			revocation_claim_policy,
 		)
 			.context("Failed to construct arkoor package")?
@@ -144,7 +148,7 @@ impl Wallet {
 				.produced_vtxos(&vtxos)
 		).await?;
 		self.store_spendable_vtxos(&vtxos).await?;
-		self.mark_vtxos_as_spent(&htlc_vtxos).await?;
+		self.mark_vtxos_as_spent(&payment.htlc_vtxos).await?;
 
 		self.db.remove_lightning_send(payment.invoice.payment_hash()).await?;
 
@@ -575,26 +579,32 @@ impl Wallet {
 		let (change_keypair, _) = self.derive_store_next_keypair().await?;
 
 		let (inputs, fee) = self.select_vtxos_to_cover_with_fee(
-			payment_amount, |a, v| ark_info.fees.lightning_send.calculate(a, v).context("fee overflowed"),
+			payment_amount, |a, v| ark_info.fees.lightning_send.calculate(a, v)
+				.context("fee overflowed"),
 		).await.context("Could not find enough suitable VTXOs to cover lightning payment")?;
 		let total_amount = payment_amount + fee;
 
+		// Hydrate the selected inputs to their full form. We need them full
+		// for arkoor construction below and for registering the chain with
+		// the server.
+		let input_ids = inputs.iter().map(|v| v.id()).collect::<Vec<_>>();
+		let full_inputs = self.db.get_full_vtxos(&input_ids).await
+			.context("failed to hydrate lightning-send input vtxos")?;
+
 		// Ensure that all inputs are fully registered so the server will
 		// accept them.
-		self.register_vtxo_transactions_with_server(&inputs).await
+		self.register_vtxo_transactions_with_server(&full_inputs).await
 			.context("failed to register lightning-send input vtxo transactions with server")?;
 
 		let mut secs = Vec::with_capacity(inputs.len());
 		let mut pubs = Vec::with_capacity(inputs.len());
 		let mut input_keypairs = Vec::with_capacity(inputs.len());
-		let mut input_ids = Vec::with_capacity(inputs.len());
 		for input in inputs.iter() {
 			let keypair = self.get_vtxo_key(input).await?;
 			let (s, p) = musig::nonce_pair(&keypair);
 			secs.push(s);
 			pubs.push(p);
 			input_keypairs.push(keypair);
-			input_ids.push(input.id());
 		}
 
 		let expiry = tip + ark_info.htlc_send_expiry_delta as BlockHeight;
@@ -614,7 +624,7 @@ impl Wallet {
 			vec![pay_dest, change_dest]
 		};
 		let builder = ArkoorPackageBuilder::new_with_checkpoints(
-			inputs.iter().map(|v| &v.vtxo).cloned(),
+			full_inputs,
 			outputs,
 		)
 			.context("Failed to construct arkoor package")?

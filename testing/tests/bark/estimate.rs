@@ -2,10 +2,12 @@ use bitcoin::Amount;
 
 use ark::fees::{LightningSendFees, OffboardFees, PpmExpiryFeeEntry, PpmFeeRate};
 
-use ark_testing::{btc, sat, TestContext};
+use ark_testing::{TestContext, btc, require_bark_version, sat};
 
 #[tokio::test]
 async fn estimate_lightning_send_fee_without_funds() {
+	require_bark_version!(> "0.1.4");
+
 	let ctx = TestContext::new("bark/estimate_lightning_send_fee_without_funds").await;
 	let srv = ctx.captaind("server").cfg(|cfg| {
 		cfg.fees.lightning_send = LightningSendFees {
@@ -35,6 +37,8 @@ async fn estimate_lightning_send_fee_without_funds() {
 
 #[tokio::test]
 async fn estimate_send_onchain_fee_without_funds() {
+	require_bark_version!(> "0.1.4");
+
 	let ctx = TestContext::new("bark/estimate_send_onchain_fee_without_funds").await;
 	let srv = ctx.captaind("server").cfg(|cfg| {
 		cfg.fees.offboard = OffboardFees {

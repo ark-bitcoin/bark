@@ -175,6 +175,8 @@ async fn another_bark_pays_invoice_after_first() {
 
 #[tokio::test]
 async fn bark_check_lightning_payment_twice_succeeds() {
+	require_bark_version!(> "0.1.4");
+
 	let ctx = TestContext::new("lightningd/bark_check_lightning_payment_twice_succeeds").await;
 
 	let lightning = ctx.new_lightning_setup("lightningd").await;
@@ -1212,6 +1214,8 @@ async fn stress_test_track_all_stream() {
 /// leading to orphaned wallet state.
 #[tokio::test]
 async fn concurrent_payment_attempts_same_invoice() {
+	require_bark_version!(> "0.1.4");
+
 	let ctx = TestContext::new("lightningd/concurrent_payment_attempts_same_invoice").await;
 
 	let lightning = ctx.new_lightning_setup("lightningd").await;
