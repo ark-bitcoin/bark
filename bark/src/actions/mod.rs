@@ -8,6 +8,7 @@
 //! machines, transition functions) lives in submodules.
 
 pub mod lightning;
+pub mod arkoor_send;
 
 use std::time::Duration;
 
@@ -15,6 +16,7 @@ use log::{debug, trace, warn};
 use server_rpc::StatusExt;
 
 use crate::{Wallet, WalletVtxo};
+use crate::actions::arkoor_send::ArkoorSend;
 use crate::actions::lightning::pay::LightningSend;
 use crate::lock_manager::LockGuard;
 use crate::vtxo::{VtxoState, VtxoStateKind};
@@ -29,24 +31,28 @@ pub(crate) const BASE_RETRY_BACKOFF: Duration = Duration::from_secs(1);
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum WalletActionCheckpoint {
 	LightningSend(LightningSend),
+	ArkoorSend(ArkoorSend),
 }
 
 impl WalletActionCheckpoint {
 	pub fn id(&self) -> WalletActionId {
 		match self {
 			WalletActionCheckpoint::LightningSend(s) => s.id(),
+			WalletActionCheckpoint::ArkoorSend(s) => s.id(),
 		}
 	}
 
 	pub fn as_lightning_send(&self) -> Option<&LightningSend> {
 		match self {
 			WalletActionCheckpoint::LightningSend(s) => Some(s),
+			_ => None,
 		}
 	}
 
 	pub fn into_lightning_send(self) -> Option<LightningSend> {
 		match self {
 			WalletActionCheckpoint::LightningSend(s) => Some(s),
+			_ => None,
 		}
 	}
 }
@@ -54,6 +60,12 @@ impl WalletActionCheckpoint {
 impl From<LightningSend> for WalletActionCheckpoint {
 	fn from(s: LightningSend) -> Self {
 		WalletActionCheckpoint::LightningSend(s)
+	}
+}
+
+impl From<ArkoorSend> for WalletActionCheckpoint {
+	fn from(s: ArkoorSend) -> Self {
+		WalletActionCheckpoint::ArkoorSend(s)
 	}
 }
 
