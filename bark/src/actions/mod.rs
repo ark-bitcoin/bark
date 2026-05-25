@@ -55,6 +55,20 @@ impl WalletActionCheckpoint {
 			_ => None,
 		}
 	}
+
+	pub fn as_arkoor_send(&self) -> Option<&ArkoorSend> {
+		match self {
+			WalletActionCheckpoint::ArkoorSend(s) => Some(s),
+			_ => None,
+		}
+	}
+
+	pub fn into_arkoor_send(self) -> Option<ArkoorSend> {
+		match self {
+			WalletActionCheckpoint::ArkoorSend(s) => Some(s),
+			_ => None,
+		}
+	}
 }
 
 impl From<LightningSend> for WalletActionCheckpoint {

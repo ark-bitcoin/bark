@@ -2,7 +2,7 @@ use anyhow::Context;
 use bitcoin::{Amount, NetworkKind};
 use bitcoin::hex::DisplayHex;
 use bitcoin::secp256k1::Keypair;
-use log::info;
+use log::{info, warn};
 
 use ark::VtxoPolicy;
 use ark::arkoor::ArkoorDestination;
@@ -12,7 +12,7 @@ use server_rpc::protos;
 
 use crate::{VtxoDelivery, Wallet, WalletVtxo};
 use crate::actions::DriveMode;
-use crate::actions::arkoor_send::start_arkoor_send;
+use crate::actions::arkoor_send::{ArkoorSend, start_arkoor_send};
 
 /// The result of creating an arkoor transaction
 pub struct ArkoorCreateResult {
@@ -201,5 +201,30 @@ impl Wallet {
 		self.inner.db.upsert_wallet_action_checkpoint(&action.id, &action.clone().into()).await?;
 
 		self.drive_action(action, DriveMode::UntilDone).await
+	}
+
+	/// Returns every in-progress arkoor send checkpoint.
+	pub async fn pending_arkoor_sends(&self) -> anyhow::Result<Vec<ArkoorSend>> {
+		Ok(self.inner.db.get_all_wallet_action_checkpoints().await?
+			.into_iter()
+			.filter_map(|cp| cp.into_arkoor_send())
+			.collect())
+	}
+
+	/// Drives every pending arkoor send forward by one step or to
+	/// completion if it's ready.
+	pub async fn sync_pending_arkoor_sends(&self) -> anyhow::Result<()> {
+		let pending = self.pending_arkoor_sends().await?;
+		if pending.is_empty() {
+			return Ok(());
+		}
+		info!("Syncing {} pending arkoor sends", pending.len());
+		for send in pending {
+			let id = send.id.clone();
+			if let Err(e) = self.drive_action(send, DriveMode::UntilParkOrDone).await {
+				warn!("Failed to sync arkoor send {}: {:#}", id, e);
+			}
+		}
+		Ok(())
 	}
 }

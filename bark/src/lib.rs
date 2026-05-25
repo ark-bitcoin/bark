@@ -1695,6 +1695,11 @@ impl Wallet {
 				}
 			},
 			async {
+				if let Err(e) = self.sync_pending_arkoor_sends().await {
+					warn!("Error syncing pending arkoor sends: {:#}", e);
+				}
+			},
+			async {
 				if let Err(e) = self.try_claim_all_lightning_receives(false).await {
 					warn!("Error claiming pending lightning receives: {:#}", e);
 				}
