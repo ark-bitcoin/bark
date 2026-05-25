@@ -117,8 +117,8 @@ pub(crate) mod progress;
 pub(crate) mod transaction_manager;
 
 pub use self::models::{
-	ExitCpfpRequest, ExitTransactionPackage, TransactionInfo, ChildTransactionInfo, ExitError,
-	ExitState, ExitTx, ExitTxStatus, ExitTxOrigin, ExitStartState, ExitProcessingState,
+	ExitCpfpRequest, ExitTransactionPackage, RbfRequirement, TransactionInfo, ChildTransactionInfo,
+	ExitError, ExitState, ExitTx, ExitTxStatus, ExitTxOrigin, ExitStartState, ExitProcessingState,
 	ExitAwaitingDeltaState, ExitClaimableState, ExitClaimInProgressState, ExitClaimedState,
 	ExitProgressStatus, ExitTransactionStatus,
 };
@@ -569,8 +569,8 @@ impl Exit {
 
 	/// Returns one [ExitCpfpRequest] for each exit transaction that needs a CPFP child.
 	///
-	/// A request with `min_fee_for_rbf = None` means no CPFP exists yet. A request with
-	/// `min_fee_for_rbf = Some(...)` means a third-party CPFP is already in the mempool;
+	/// A request with `rbf_requirement = None` means no CPFP exists yet. A request with
+	/// `rbf_requirement = Some(...)` means a third-party CPFP is already in the mempool;
 	/// the caller can optionally provide a replacement with a higher fee rate.
 	/// Call [Exit::provide_cpfp_tx] to submit the child.
 	pub async fn exits_needing_cpfp(&self) -> Vec<ExitCpfpRequest> {
@@ -579,10 +579,13 @@ impl Exit {
 		for ev in &guard.exit_vtxos {
 			let ExitState::Processing(s) = ev.state() else { continue };
 			for tx in &s.transactions {
-				let min_fee_for_rbf = match &tx.status {
+				let rbf_requirement = match &tx.status {
 					ExitTxStatus::AwaitingCpfpBroadcast => None,
 					ExitTxStatus::AwaitingConfirmation { origin: ExitTxOrigin::Mempool { fee_rate, total_fee }, .. } => {
-						Some((*fee_rate, *total_fee))
+						Some(RbfRequirement {
+							min_fee_rate: *fee_rate,
+							current_package_fee: *total_fee,
+						})
 					},
 					_ => continue,
 				};
@@ -594,7 +597,7 @@ impl Exit {
 				requests.push(ExitCpfpRequest {
 					vtxo_id: ev.id(),
 					exit_tx,
-					min_fee_for_rbf,
+					rbf_requirement,
 				});
 			}
 		}

@@ -29,19 +29,19 @@ impl Exit {
 
 		let fee_rate = fee_rate_override.unwrap_or(wallet.chain().fee_rates().await.fast);
 		for req in self.exits_needing_cpfp().await {
-			let fees = match req.min_fee_for_rbf {
+			let fees = match req.rbf_requirement {
 				None => MakeCpfpFees::Effective(fee_rate),
-				Some((min_fee_rate, min_fee)) => {
-					if fee_rate <= min_fee_rate {
+				Some(rbf) => {
+					if fee_rate <= rbf.min_fee_rate {
 						warn!(
 							"Skipping exit CPFP RBF: requested fee rate {} is not above current package rate {}",
-							fee_rate, min_fee_rate,
+							fee_rate, rbf.min_fee_rate,
 						);
 						continue;
 					}
 					MakeCpfpFees::Rbf {
 						min_effective_fee_rate: fee_rate,
-						current_package_fee: min_fee,
+						current_package_fee: rbf.current_package_fee,
 					}
 				},
 			};

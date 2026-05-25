@@ -15,9 +15,18 @@ pub struct ExitCpfpRequest {
 	pub vtxo_id: VtxoId,
 	/// The exit transaction whose P2A anchor output must be spent by the CPFP child.
 	pub exit_tx: Transaction,
-	/// If set, this is an RBF replacement: the suggested minimum fee rate and total fee
-	/// the child must pay to replace the existing package. Wallets may pay more.
-	pub min_fee_for_rbf: Option<(FeeRate, Amount)>,
+	/// If set, a third-party CPFP is already in the mempool and the child must replace it
+	/// via RBF. `None` means no CPFP exists yet and any valid fee is acceptable.
+	pub rbf_requirement: Option<RbfRequirement>,
+}
+
+/// Constraints a CPFP replacement transaction must satisfy to evict an existing one via RBF.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RbfRequirement {
+	/// The effective fee rate of the existing package. A replacement must exceed this.
+	pub min_fee_rate: FeeRate,
+	/// The total fee paid by the existing package. A replacement must pay strictly more.
+	pub current_package_fee: Amount,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
