@@ -99,6 +99,7 @@ docs/FeeEstimateQuery.md
 docs/FeeEstimateResponse.md
 docs/FeeSchedule.md
 docs/FeesApi.md
+docs/HistoryApi.md
 docs/ImportVtxoRequest.md
 docs/InternalServerError.md
 docs/InvoiceInfo.md
@@ -175,6 +176,7 @@ src/apis/configuration.rs
 src/apis/default_api.rs
 src/apis/exits_api.rs
 src/apis/fees_api.rs
+src/apis/history_api.rs
 src/apis/lightning_api.rs
 src/apis/mod.rs
 src/apis/notifications_api.rs

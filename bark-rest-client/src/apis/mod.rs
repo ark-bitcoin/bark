@@ -116,6 +116,7 @@ pub mod boards_api;
 pub mod default_api;
 pub mod exits_api;
 pub mod fees_api;
+pub mod history_api;
 pub mod lightning_api;
 pub mod notifications_api;
 pub mod onchain_api;

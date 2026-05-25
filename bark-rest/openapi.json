@@ -828,6 +828,88 @@
         }
       }
     },
+    "/api/v1/history/": {
+      "get": {
+        "tags": [
+          "history"
+        ],
+        "summary": "Get wallet history",
+        "description": "Returns the full history of wallet movements ordered from newest to oldest. A movement represents any wallet operation that affects VTXOs—an arkoor send or receive, Lightning send or receive, board, offboard, or refresh. Each entry records which VTXOs were consumed and produced, the effective balance change (if any), fees paid, and the operation status.",
+        "operationId": "list",
+        "responses": {
+          "200": {
+            "description": "Returns the wallet history",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Movement"
+                  }
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternalServerError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/history/{id}/metadata": {
+      "post": {
+        "tags": [
+          "history"
+        ],
+        "summary": "Patch movement metadata",
+        "description": "Applies an [RFC 7396](https://www.rfc-editor.org/rfc/rfc7396) JSON Merge Patch to a movement's metadata. Use this to annotate history entries after the fact (e.g. refund notes, counterparty info). Keys set to `null` are removed; other values are recursively merged.",
+        "operationId": "update_metadata",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Movement identifier.",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          }
+        ],
+        "requestBody": {
+          "description": "RFC 7396 JSON Merge Patch. The body is applied directly to the movement's metadata object: any field with value `null` is removed, every other field is recursively merged.",
+          "content": {
+            "application/merge-patch+json": {
+              "schema": {}
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Metadata updated"
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternalServerError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/lightning/pay": {
       "post": {
         "tags": [
@@ -1699,8 +1781,8 @@
         "tags": [
           "wallet"
         ],
-        "summary": "Get wallet history",
-        "description": "Returns the full history of wallet movements ordered from newest to oldest. A movement represents any wallet operation that affects VTXOs—an arkoor send or receive, Lightning send or receive, board, offboard, or refresh. Each entry records which VTXOs were consumed and produced, the effective balance change (if any), fees paid, and the operation status.",
+        "summary": "Get wallet history (deprecated)",
+        "description": "Deprecated: use `GET /api/v1/history` instead.",
         "operationId": "history",
         "responses": {
           "200": {
@@ -1726,7 +1808,8 @@
               }
             }
           }
-        }
+        },
+        "deprecated": true
       }
     },
     "/api/v1/wallet/import-vtxo": {
@@ -5731,6 +5814,10 @@
     {
       "name": "fees",
       "description": "Estimate fees for wallet operations before executing them."
+    },
+    {
+      "name": "history",
+      "description": "Inspect and annotate wallet movement history."
     },
     {
       "name": "lightning",

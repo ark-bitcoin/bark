@@ -502,7 +502,8 @@ pub async fn get_vtxo_encoded(configuration: &configuration::Configuration, id: 
     }
 }
 
-/// Returns the full history of wallet movements ordered from newest to oldest. A movement represents any wallet operation that affects VTXOs—an arkoor send or receive, Lightning send or receive, board, offboard, or refresh. Each entry records which VTXOs were consumed and produced, the effective balance change (if any), fees paid, and the operation status.
+/// Deprecated: use `GET /api/v1/history` instead.
+#[deprecated]
 pub async fn history(configuration: &configuration::Configuration, ) -> Result<Vec<models::Movement>, Error<HistoryError>> {
 
     let uri_str = format!("{}/api/v1/wallet/history", configuration.base_path);

@@ -48,6 +48,8 @@ Class | Method | HTTP request | Description
 *FeesApi* | [**offboard_all_fee**](docs/FeesApi.md#offboard_all_fee) | **GET** /api/v1/fees/offboard-all | Estimate offboard-all fee
 *FeesApi* | [**onchain_fee_rates**](docs/FeesApi.md#onchain_fee_rates) | **GET** /api/v1/fees/onchain | Get on-chain fee rates
 *FeesApi* | [**send_onchain_fee**](docs/FeesApi.md#send_onchain_fee) | **GET** /api/v1/fees/send-onchain | Estimate send-onchain fee
+*HistoryApi* | [**list**](docs/HistoryApi.md#list) | **GET** /api/v1/history/ | Get wallet history
+*HistoryApi* | [**update_metadata**](docs/HistoryApi.md#update_metadata) | **POST** /api/v1/history/{id}/metadata | Patch movement metadata
 *LightningApi* | [**cancel_receive**](docs/LightningApi.md#cancel_receive) | **DELETE** /api/v1/lightning/receives/{identifier} | Cancel a pending receive
 *LightningApi* | [**generate_invoice**](docs/LightningApi.md#generate_invoice) | **POST** /api/v1/lightning/receives/invoice | Create a BOLT11 invoice
 *LightningApi* | [**get_receive_status**](docs/LightningApi.md#get_receive_status) | **GET** /api/v1/lightning/receives/{identifier} | Get receive status
@@ -69,7 +71,7 @@ Class | Method | HTTP request | Description
 *WalletApi* | [**create_wallet**](docs/WalletApi.md#create_wallet) | **POST** /api/v1/wallet/create | Create a wallet
 *WalletApi* | [**get_vtxo**](docs/WalletApi.md#get_vtxo) | **GET** /api/v1/wallet/vtxos/{id} | Get VTXO detail
 *WalletApi* | [**get_vtxo_encoded**](docs/WalletApi.md#get_vtxo_encoded) | **GET** /api/v1/wallet/vtxos/{id}/encoded | Get encoded VTXO
-*WalletApi* | [**history**](docs/WalletApi.md#history) | **GET** /api/v1/wallet/history | Get wallet history
+*WalletApi* | [**history**](docs/WalletApi.md#history) | **GET** /api/v1/wallet/history | Get wallet history (deprecated)
 *WalletApi* | [**import_vtxo**](docs/WalletApi.md#import_vtxo) | **POST** /api/v1/wallet/import-vtxo | Import a VTXO
 *WalletApi* | [**movements**](docs/WalletApi.md#movements) | **GET** /api/v1/wallet/movements | List movements (deprecated)
 *WalletApi* | [**next_round**](docs/WalletApi.md#next_round) | **GET** /api/v1/wallet/next-round | Get next round time
