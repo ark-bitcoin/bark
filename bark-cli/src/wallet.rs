@@ -76,7 +76,7 @@ const STDERR_LOG_FILE: &str = "stderr.log";
 /// Take the datadir lock via [`lock_manager::platform_default`], surfacing
 /// the "already held" case as-is so the CLI prints a clean error.
 fn open_lock_manager(datadir: &Path) -> anyhow::Result<Box<dyn LockManager>> {
-	match lock_manager::platform_default(datadir) {
+	match lock_manager::platform_default(Some(datadir), None) {
 		Ok(m) => Ok(m),
 		Err(e) if e.is::<PidLockError>() => Err(e),
 		Err(e) => Err(e.context("failed to acquire datadir lock")),
