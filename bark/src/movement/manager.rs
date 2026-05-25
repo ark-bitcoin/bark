@@ -257,6 +257,34 @@ impl MovementManager {
 		Ok(())
 	}
 
+	/// Applies an [RFC 7396](https://www.rfc-editor.org/rfc/rfc7396) JSON Merge Patch to a
+	/// movement's metadata. A non-object patch resets metadata to an empty object.
+	pub async fn patch_metadata(
+		&self,
+		id: MovementId,
+		patch: &serde_json::Value,
+	) -> anyhow::Result<(), MovementError> {
+		let mut guard = self.get_cached_movement(id).await?;
+
+		let mut value = serde_json::Value::Object(std::mem::take(&mut guard.metadata));
+		crate::utils::json_patch::merge(&mut value, patch);
+		guard.metadata = match value {
+			serde_json::Value::Object(map) => map,
+			_ => serde_json::Map::new(),
+		};
+		guard.time.updated_at = chrono::Local::now();
+
+		self.db.update_movement(&guard).await
+			.map_err(|e| MovementError::PersisterError { id, e })?;
+		self.notifications.dispatch_movement_updated(guard.clone());
+
+		if guard.status != MovementStatus::Pending {
+			drop(guard);
+			self.unload_movement_from_cache(id).await?;
+		}
+		Ok(())
+	}
+
 	/// Finalizes a movement, setting it to the given [MovementStatus].
 	///
 	/// See also: [MovementManager::new_movement] and [MovementManager::update_movement]

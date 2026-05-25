@@ -361,7 +361,7 @@ use server_rpc::client::{ConnectError, CreateEndpointError};
 use crate::chain::{ChainSource, ChainSourceSpec};
 use crate::exit::Exit;
 use crate::lock_manager::LockManager;
-use crate::movement::{Movement, PaymentMethod};
+use crate::movement::{Movement, MovementId, PaymentMethod};
 use crate::movement::manager::MovementManager;
 use crate::movement::update::MovementUpdate;
 use crate::notification::NotificationDispatch;
@@ -1369,6 +1369,34 @@ impl Wallet {
 	/// Fetches all wallet fund movements ordered from newest to oldest.
 	pub async fn history(&self) -> anyhow::Result<Vec<Movement>> {
 		Ok(self.inner.db.get_all_movements().await?)
+	}
+
+	/// Applies an [RFC 7396](https://www.rfc-editor.org/rfc/rfc7396) JSON Merge Patch to the
+	/// metadata of a movement.
+	///
+	/// ```no_run
+	/// # use serde_json::json;
+	/// # async fn example(
+	/// #     wallet: &bark::Wallet,
+	/// #     id: bark::movement::MovementId,
+	/// # ) -> anyhow::Result<()> {
+	/// // Add or overwrite a key.
+	/// wallet.update_history_metadata(id, &json!({"note": "refund issued"})).await?;
+	///
+	/// // Delete a key (null means remove).
+	/// wallet.update_history_metadata(id, &json!({"note": null})).await?;
+	///
+	/// // Nested merge.
+	/// wallet.update_history_metadata(id, &json!({"counterparty": {"name": "Alice"}})).await?;
+	/// # Ok(()) }
+	/// ```
+	pub async fn update_history_metadata(
+		&self,
+		movement_id: MovementId,
+		patch: &serde_json::Value,
+	) -> anyhow::Result<()> {
+		self.inner.movements.patch_metadata(movement_id, patch).await?;
+		Ok(())
 	}
 
 	/// Query the wallet history by the given payment method
