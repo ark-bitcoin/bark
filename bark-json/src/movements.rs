@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::str::FromStr;
 
 use anyhow::anyhow;
@@ -53,7 +52,7 @@ pub struct Movement {
 	/// Miscellaneous metadata for the movement. This is JSON containing arbitrary information as
 	/// defined by the subsystem that created the movement.
 	#[serde(default, skip_serializing_if = "Option::is_none")]
-	pub metadata: Option<HashMap<String, serde_json::Value>>,
+	pub metadata: Option<serde_json::Map<String, serde_json::Value>>,
 	/// How much the movement was expected to increase or decrease the balance by. This is always an
 	/// estimate and often discounts any applicable fees.
 	#[serde(rename="intended_balance_sat", with="bitcoin::amount::serde::as_sat")]

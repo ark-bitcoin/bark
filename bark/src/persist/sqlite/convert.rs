@@ -1,6 +1,5 @@
 
 use std::borrow::Borrow;
-use std::collections::HashMap;
 use std::fmt;
 use std::str::FromStr;
 
@@ -60,7 +59,7 @@ pub(crate) fn row_to_movement(row: &Row) -> anyhow::Result<Movement> {
 		},
 		metadata: row.get::<_, Option<String>>("metadata")?
 			.map(|s| from_json_text(&s))
-			.unwrap_or_else(|| Ok(HashMap::new()))?,
+			.unwrap_or_else(|| Ok(serde_json::Map::new()))?,
 		intended_balance: SignedAmount::from_sat(row.get("intended_balance")?),
 		effective_balance: SignedAmount::from_sat(row.get("effective_balance")?),
 		offchain_fee: Amount::from_sat(row.get("offchain_fee")?),

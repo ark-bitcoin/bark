@@ -9,7 +9,6 @@ use crate::subsystem::{LightningMovement, Subsystem};
 
 pub use self::payment_method::PaymentMethod;
 
-use std::collections::HashMap;
 use std::fmt;
 use std::str::FromStr;
 
@@ -39,7 +38,7 @@ pub struct Movement {
 	pub subsystem: MovementSubsystem,
 	/// Miscellaneous metadata for the movement. This is JSON containing arbitrary information as
 	/// defined by the subsystem that created the movement.
-	pub metadata: HashMap<String, serde_json::Value>,
+	pub metadata: serde_json::Map<String, serde_json::Value>,
 	/// How much the movement was expected to increase or decrease the balance by. This is always an
 	/// estimate and often discounts any applicable fees.
 	#[serde(with = "bitcoin::amount::serde::as_sat")]
@@ -90,7 +89,7 @@ impl Movement {
 				updated_at: time,
 				completed_at: None,
 			},
-			metadata: HashMap::new(),
+			metadata: serde_json::Map::new(),
 			intended_balance: SignedAmount::ZERO,
 			effective_balance: SignedAmount::ZERO,
 			offchain_fee: Amount::ZERO,

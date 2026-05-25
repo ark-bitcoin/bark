@@ -5,7 +5,6 @@
 //! so all that matters is that the code can compile. It doesn't have to run.
 //!
 
-use std::collections::HashMap;
 use std::str::FromStr;
 
 #[cfg(feature = "onchain-bdk")]
@@ -406,7 +405,7 @@ fn dummy_movement(status: MovementStatus) -> Movement {
 			name: "".to_string(),
 			kind: "".to_string(),
 		},
-		metadata: HashMap::new(),
+		metadata: serde_json::Map::new(),
 		intended_balance: SignedAmount::ZERO,
 		effective_balance: SignedAmount::ZERO,
 		offchain_fee: Amount::ZERO,
