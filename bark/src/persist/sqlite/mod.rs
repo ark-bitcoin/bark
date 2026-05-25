@@ -39,9 +39,13 @@ use crate::persist::models::{
 use crate::round::RoundState;
 use crate::vtxo::{VtxoState, VtxoStateKind, WalletVtxo};
 
+
+/// The default sqlite db file for when no file path was provided
+pub const DEFAULT_DB_FILE: &str = "db.sqlite";
+
 /// An implementation of the BarkPersister using rusqlite. Changes are persisted using the given
 /// [PathBuf].
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct SqliteClient {
 	connection_string: PathBuf,
 }
