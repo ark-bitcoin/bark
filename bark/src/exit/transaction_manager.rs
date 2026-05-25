@@ -247,7 +247,7 @@ impl ExitTransactionManager {
 					]).await
 					.map_err(|e| ExitError::ExitPackageBroadcastFailure {
 						txid: package.exit.txid,
-						error: e.to_string(),
+						error: e,
 					})?;
 
 				info!("Successfully broadcast exit package: {}", package.exit.txid);

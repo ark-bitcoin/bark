@@ -170,7 +170,7 @@ impl From<bark::exit::ExitError> for ExitError {
 				ExitError::DustLimit { vtxo, dust }
 			},
 			bark::exit::ExitError::ExitPackageBroadcastFailure { txid, error } => {
-				ExitError::ExitPackageBroadcastFailure { txid, error }
+				ExitError::ExitPackageBroadcastFailure { txid, error: error.to_string() }
 			},
 			bark::exit::ExitError::ExitPackageFinalizeFailure { error } => {
 				ExitError::ExitPackageFinalizeFailure { error }

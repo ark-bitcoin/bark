@@ -5,6 +5,7 @@ use thiserror::Error;
 use ark::VtxoId;
 use bitcoin_ext::BlockHeight;
 
+use crate::chain::BroadcastError;
 use crate::exit::models::states::ExitTxStatus;
 
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
@@ -59,7 +60,7 @@ pub enum ExitError {
 	#[error("Exit Package Broadcast Failure: Unable to broadcast exit transaction package {txid}: {error}")]
 	ExitPackageBroadcastFailure {
 		txid: Txid,
-		error: String
+		error: BroadcastError,
 	},
 
 	#[error("Exit Package Finalize Failure: Unable to create exit transaction package: {error}")]

@@ -632,7 +632,7 @@ impl Exit {
 		match inner.tx_manager.broadcast_package(&*pkg_guard).await {
 			Ok(_) => {},
 			Err(ExitError::ExitPackageBroadcastFailure { ref error, .. })
-				if is_mempool_conflict(error) =>
+				if error.is_mempool_conflict() =>
 			{
 				warn!("CPFP broadcast conflict for {}: {} — another CPFP may already be in mempool", exit_txid, error);
 			},
@@ -781,12 +781,3 @@ impl Exit {
 	}
 }
 
-/// Returns true if the broadcast error is a mempool conflict rather than an invalid transaction.
-///
-/// These errors occur when another CPFP or replacement is already in the mempool — not a sign
-/// that our transaction is invalid.
-fn is_mempool_conflict(error: &str) -> bool {
-	error.contains("txn-already-known")
-		|| error.contains("bad-txns-inputs-missingorspent")
-		|| error.contains("insufficient fee, rejecting replacement")
-}
