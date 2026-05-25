@@ -190,7 +190,11 @@ impl Server {
 		// the max routing fee is the configured fraction of our own fee,
 		// plus whatever additional the user pays
 		let max_routing_fee = if let Some(extra) = htlc_vtxo_sum.checked_sub(amount_with_fee) {
-			(fee * self.config.ln_max_fee_ppm as u64) / 1_000_000 + extra
+			fee.to_sat()
+				.checked_mul(self.config.ln_max_fee_ppm as u64)
+				.map(|n| Amount::from_sat(n / 1_000_000))
+				.and_then(|f| f.checked_add(extra))
+				.context("routing fee calculation overflowed")?
 		} else {
 			return badarg!(
 				"HTLC VTXO sum of {} is less than the payment amount of {} plus fees of {}",
