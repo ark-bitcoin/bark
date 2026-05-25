@@ -66,7 +66,7 @@
 //! # use bitcoin::Network;
 //! # use tokio::fs;
 //! #
-//! # use bark::{Config, Wallet};
+//! # use bark::{Config, Wallet, WalletSeed, OpenWalletArgs};
 //! # use bark::lock_manager::memory::MemoryLockManager;
 //! # use bark::onchain::OnchainWallet;
 //! # use bark::persist::sqlite::SqliteClient;
@@ -77,8 +77,11 @@
 //! #   let db = Arc::new(SqliteClient::open(datadir.join("db.sqlite")).unwrap());
 //! #   let mnemonic_str = fs::read_to_string(datadir.join("mnemonic")).await.unwrap();
 //! #   let mnemonic = bip39::Mnemonic::from_str(&mnemonic_str).unwrap();
-//! #   let lock_manager = Box::new(MemoryLockManager::new());
-//! #   let bark_wallet = Wallet::open(&mnemonic, db.clone(), config, lock_manager).await.unwrap();
+//! #   let seed = WalletSeed::new_from_mnemonic(Network::Signet, &mnemonic);
+//! #   let bark_wallet = Wallet::open(Network::Signet, seed, config, OpenWalletArgs {
+//! #   	persister: Some(db.clone()),
+//! #   	..Default::default()
+//! #   }).await.unwrap();
 //! #   let seed = mnemonic.to_seed("");
 //! #   let onchain_wallet = OnchainWallet::load_or_create(Network::Regtest, seed, db).await.unwrap();
 //! #   (bark_wallet, onchain_wallet)

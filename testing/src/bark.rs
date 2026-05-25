@@ -20,7 +20,7 @@ use tokio::sync::Mutex;
 
 use ark::{ProtocolEncoding, Vtxo, VtxoId};
 use ark::vtxo::Full;
-use bark::{BarkNetwork, Config};
+use bark::{BarkNetwork, Config, OpenWalletArgs, WalletSeed};
 use bark::lock_manager::memory::MemoryLockManager;
 use bark::onchain::OnchainWallet;
 use bark::persist::BarkPersister;
@@ -238,7 +238,17 @@ impl Bark {
 		let db = self.db_client().await?;
 
 		let lock_manager = Box::new(MemoryLockManager::new());
-		Ok(bark::Wallet::open(&mnemonic, db, config, lock_manager).await?)
+		Ok(bark::Wallet::open(
+			Network::Regtest,
+			WalletSeed::new_from_mnemonic(Network::Regtest, &mnemonic),
+			config,
+			OpenWalletArgs {
+				persister: Some(db),
+				lock_manager: Some(lock_manager),
+				run_daemon: false,
+				..Default::default()
+			},
+		).await?)
 	}
 
 	pub async fn client(&self) -> bark::Wallet {

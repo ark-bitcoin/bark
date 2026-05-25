@@ -4,8 +4,7 @@ use std::sync::Arc;
 
 use bitcoin::Network;
 
-use bark::{Config, Wallet};
-use bark::lock_manager::memory::MemoryLockManager;
+use bark::{Config, OpenWalletArgs, Wallet, WalletSeed};
 
 async fn example() -> anyhow::Result<()> {
 	use bark::persist::adaptor::StorageAdaptorWrapper;
@@ -17,8 +16,15 @@ async fn example() -> anyhow::Result<()> {
 		..Config::network_default(Network::Signet)
 	};
 	let db = Arc::new(StorageAdaptorWrapper::new_memory());
-	let lock_manager = Box::new(MemoryLockManager::new());
-	let wallet = Wallet::create(&mnemonic, Network::Signet, cfg, db, lock_manager, false).await?;
+	let wallet = Wallet::open(
+		Network::Signet,
+		WalletSeed::new_from_mnemonic(Network::Signet, &mnemonic),
+		cfg,
+		OpenWalletArgs {
+			persister: Some(db),
+			..Default::default()
+		},
+	).await?;
 
 	let address = wallet.new_address().await?;
 	println!("My first Ark address: {}", address);

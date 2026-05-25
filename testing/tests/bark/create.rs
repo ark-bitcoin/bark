@@ -26,9 +26,7 @@ async fn bark_create_is_atomic() {
 	// This ensures that clients cannot be created
 	srv.stop().await.unwrap();
 	let err = ctx.bark("bark_fails", &srv).try_create().await.unwrap_err();
-	assert!(err.to_alt_string().contains(
-		"Failed to connect to provided server (if you are sure use the --force flag)"
-	), "{:?}", err);
+	assert!(err.to_alt_string().contains("Failed to connect to provided server"), "{:?}", err);
 	assert!(!ctx.datadir.join("bark_fails").is_dir());
 }
 

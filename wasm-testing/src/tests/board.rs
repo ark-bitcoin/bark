@@ -3,8 +3,11 @@ use wasm_bindgen_test::*;
 
 use bitcoin::Amount;
 
+use std::sync::Arc;
+
 use bark::onchain::{bdk_wallet, ChainSync, OnchainWallet};
-use bark::Wallet;
+use bark::persist::BarkPersister;
+use bark::{OpenWalletArgs, Wallet, WalletSeed};
 
 use crate::test_utils::*;
 
@@ -15,15 +18,19 @@ async fn test_board() {
 	let _ = console_log::init_with_level(log::Level::Debug);
 
 	let mnemonic = random_mnemonic();
-	let db = open_db("test_board").await;
+	let db: Arc<dyn BarkPersister> = open_db("test_board").await;
 
-	let wallet = Wallet::create(
-		&mnemonic,
+	let wallet = Wallet::open(
 		bitcoin::Network::Regtest,
+		WalletSeed::new_from_mnemonic(bitcoin::Network::Regtest, &mnemonic),
 		test_config(),
-		db.clone(),
-		test_lock_manager(),
-		false,
+		OpenWalletArgs {
+			persister: Some(db.clone()),
+			lock_manager: Some(test_lock_manager()),
+			run_daemon: false,
+			create_if_not_exists: true,
+			..Default::default()
+		},
 	).await.expect("failed to create wallet");
 
 	// Create an onchain wallet for boarding.
