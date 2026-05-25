@@ -560,7 +560,8 @@ pub struct WalletSeed {
 }
 
 impl WalletSeed {
-	fn new(network: Network, seed: &[u8; 64]) -> Self {
+	/// Create a new [WalletSeed] from a given BIP-32 master seed
+	pub fn new_from_seed(network: Network, seed: &[u8; 64]) -> Self {
 		let bark_path = [ChildNumber::from_hardened_idx(BARK_PURPOSE_INDEX).unwrap()];
 		let master = bip32::Xpriv::new_master(network, seed)
 			.expect("invalid seed")
@@ -572,6 +573,11 @@ impl WalletSeed {
 			.expect("vtxo path is valid");
 
 		Self { master, vtxo }
+	}
+
+	/// Create a new [WalletSeed] from a given BIP-39 [Mnemonic]
+	pub fn new_from_mnemonic(network: Network, mnemonic: &Mnemonic) -> Self {
+		Self::new_from_seed(network, &mnemonic.to_seed(""))
 	}
 
 	fn fingerprint(&self) -> Fingerprint {
@@ -962,7 +968,7 @@ impl Wallet {
 	) -> anyhow::Result<Wallet> {
 		trace!("Config: {:?}", config);
 
-		let wallet_fingerprint = WalletSeed::new(network, &mnemonic.to_seed("")).fingerprint();
+		let wallet_fingerprint = WalletSeed::new_from_seed(network, &mnemonic.to_seed("")).fingerprint();
 
 		// Block concurrent creators against the same locking universe. A
 		// short timeout is fine: if a sibling process wins the race they
@@ -1051,7 +1057,7 @@ impl Wallet {
 
 		let seed = {
 			let seed = mnemonic.to_seed("");
-			WalletSeed::new(properties.network, &seed)
+			WalletSeed::new_from_seed(properties.network, &seed)
 		};
 
 		if properties.fingerprint != seed.fingerprint() {
