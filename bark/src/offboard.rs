@@ -31,19 +31,19 @@ impl Wallet {
 	/// - On `NotFound`: wait at least 1 hour before canceling, in case the chain backend is slow.
 	/// - On error (e.g. network drop): log and keep waiting — don't cancel due to transient failures.
 	pub async fn sync_pending_offboards(&self) -> anyhow::Result<()> {
-		let pending_offboards: Vec<PendingOffboard> = self.db.get_pending_offboards().await?;
+		let pending_offboards: Vec<PendingOffboard> = self.inner.db.get_pending_offboards().await?;
 
 		if pending_offboards.is_empty() {
 			return Ok(());
 		}
 
-		let current_height = self.chain.tip().await?;
-		let required_confs = self.config.offboard_required_confirmations;
+		let current_height = self.inner.chain.tip().await?;
+		let required_confs = self.inner.config.offboard_required_confirmations;
 
 		trace!("Checking {} pending offboard transaction(s)", pending_offboards.len());
 
 		for pending in pending_offboards {
-			let status = self.chain.tx_status(pending.offboard_txid).await;
+			let status = self.inner.chain.tx_status(pending.offboard_txid).await;
 
 			match status {
 				Ok(TxStatus::Confirmed(block_ref)) => {
@@ -63,7 +63,7 @@ impl Wallet {
 
 					// Mark VTXOs as spent
 					for vtxo_id in &pending.vtxo_ids {
-						if let Err(e) = self.db.update_vtxo_state_checked(
+						if let Err(e) = self.inner.db.update_vtxo_state_checked(
 							*vtxo_id,
 							VtxoState::Spent,
 							&[VtxoStateKind::Locked],
@@ -73,14 +73,14 @@ impl Wallet {
 					}
 
 					// Finish the movement as successful
-					if let Err(e) = self.movements.finish_movement(
+					if let Err(e) = self.inner.movements.finish_movement(
 						pending.movement_id,
 						MovementStatus::Successful,
 					).await {
 						warn!("Failed to finish movement {}: {:#}", pending.movement_id, e);
 					}
 
-					self.db.remove_pending_offboard(pending.movement_id).await?;
+					self.inner.db.remove_pending_offboard(pending.movement_id).await?;
 				}
 				Ok(TxStatus::Mempool) => {
 					if required_confs == 0 {
@@ -92,7 +92,7 @@ impl Wallet {
 
 						// Mark VTXOs as spent
 						for vtxo_id in &pending.vtxo_ids {
-							if let Err(e) = self.db.update_vtxo_state_checked(
+							if let Err(e) = self.inner.db.update_vtxo_state_checked(
 								*vtxo_id,
 								VtxoState::Spent,
 								&[VtxoStateKind::Locked],
@@ -102,14 +102,14 @@ impl Wallet {
 						}
 
 						// Finish the movement as successful
-						if let Err(e) = self.movements.finish_movement(
+						if let Err(e) = self.inner.movements.finish_movement(
 							pending.movement_id,
 							MovementStatus::Successful,
 						).await {
 							warn!("Failed to finish movement {}: {:#}", pending.movement_id, e);
 						}
 
-						self.db.remove_pending_offboard(pending.movement_id).await?;
+						self.inner.db.remove_pending_offboard(pending.movement_id).await?;
 					} else {
 						trace!(
 							"Offboard tx {} still in mempool, waiting...",
@@ -137,7 +137,7 @@ impl Wallet {
 
 					// Restore VTXOs to spendable
 					for vtxo_id in &pending.vtxo_ids {
-						if let Err(e) = self.db.update_vtxo_state_checked(
+						if let Err(e) = self.inner.db.update_vtxo_state_checked(
 							*vtxo_id,
 							VtxoState::Spendable,
 							&[VtxoStateKind::Locked],
@@ -147,14 +147,14 @@ impl Wallet {
 					}
 
 					// Finish the movement as failed
-					if let Err(e) = self.movements.finish_movement(
+					if let Err(e) = self.inner.movements.finish_movement(
 						pending.movement_id,
 						MovementStatus::Failed,
 					).await {
 						warn!("Failed to fail movement {}: {:#}", pending.movement_id, e);
 					}
 
-					self.db.remove_pending_offboard(pending.movement_id).await?;
+					self.inner.db.remove_pending_offboard(pending.movement_id).await?;
 				}
 				Err(e) => {
 					warn!(
@@ -226,7 +226,7 @@ impl Wallet {
 		}
 
 		// we don't accept the tx if our mempool doesn't accept it, it might be a double spend
-		self.chain.broadcast_tx(&signed_offboard_tx).await.with_context(|| format!(
+		self.inner.chain.broadcast_tx(&signed_offboard_tx).await.with_context(|| format!(
 			"error broadcasting offboard tx {} (tx={})",
 			offboard_txid, finish_resp.signed_offboard_tx.as_hex(),
 		))?;
@@ -273,7 +273,7 @@ impl Wallet {
 		self.mark_vtxos_as_spent(&arkoor.inputs).await
 			.context("error marking used input VTXOs as spent")?;
 
-		let mut movement = self.movements.new_guarded_movement_with_update(
+		let mut movement = self.inner.movements.new_guarded_movement_with_update(
 			Subsystem::OFFBOARD,
 			OffboardMovement::SendOnchain.to_string(),
 			OnDropStatus::Failed,
@@ -313,10 +313,10 @@ impl Wallet {
 			.metadata(OffboardMovement::metadata(&signed_offboard_tx))
 		).await.context("error updating movement")?;
 
-		if self.config.offboard_required_confirmations == 0 {
+		if self.inner.config.offboard_required_confirmations == 0 {
 			// No confirmation required — mark VTXOs as spent and succeed immediately
 			for vtxo in &vtxos {
-				self.db.update_vtxo_state_checked(
+				self.inner.db.update_vtxo_state_checked(
 					vtxo.id(),
 					VtxoState::Spent,
 					&[crate::vtxo::VtxoStateKind::Locked],
@@ -327,7 +327,7 @@ impl Wallet {
 		} else {
 			// Store as pending offboard — don't mark success until confirmed on chain
 			let vtxo_ids = vtxos.iter().map(|v| v.id()).collect::<Vec<_>>();
-			self.db.store_pending_offboard(&PendingOffboard {
+			self.inner.db.store_pending_offboard(&PendingOffboard {
 				movement_id: movement.id(),
 				offboard_txid: signed_offboard_tx.compute_txid(),
 				offboard_tx: signed_offboard_tx.clone(),
@@ -350,7 +350,7 @@ impl Wallet {
 	) -> anyhow::Result<Txid> {
 		let (mut srv, ark) = self.require_server().await?;
 		let offboard_feerate = srv.offboard_feerate().await?;
-		let tip = self.chain.tip().await?;
+		let tip = self.inner.chain.tip().await?;
 
 		let destination_spk = destination.script_pubkey();
 		let vtxos_amount = vtxos.iter().map(|v| v.amount()).sum::<Amount>();
@@ -379,7 +379,7 @@ impl Wallet {
 		// Hydrate the inputs to their full form: offboard_inner needs the
 		// genesis chain to register and forfeit them with the server.
 		let input_ids = vtxos.iter().map(|v| v.id()).collect::<Vec<_>>();
-		let full_inputs = self.db.get_full_vtxos(&input_ids).await
+		let full_inputs = self.inner.db.get_full_vtxos(&input_ids).await
 			.context("failed to hydrate offboard input vtxos")?;
 		let signed_offboard_tx = self.offboard_inner(&mut srv, &full_inputs, &vtxo_keys, &req).await
 			.context("error performing offboard")?;
@@ -389,7 +389,7 @@ impl Wallet {
 		let effective_amt = -SignedAmount::try_from(vtxos_amount)
 			.expect("can't have this many vtxo sats");
 		let destination_str = destination.to_string();
-		let movement_id = self.movements.new_movement_with_update(
+		let movement_id = self.inner.movements.new_movement_with_update(
 			Subsystem::OFFBOARD,
 			OffboardMovement::Offboard.to_string(),
 			MovementUpdate::new()
@@ -403,22 +403,22 @@ impl Wallet {
 
 		self.lock_vtxos(&vtxos, Some(movement_id)).await?;
 
-		if self.config.offboard_required_confirmations == 0 {
+		if self.inner.config.offboard_required_confirmations == 0 {
 			// No confirmation required — mark VTXOs as spent and succeed immediately
 			for vtxo in &vtxos {
-				self.db.update_vtxo_state_checked(
+				self.inner.db.update_vtxo_state_checked(
 					vtxo.vtxo_id(),
 					VtxoState::Spent,
 					&[crate::vtxo::VtxoStateKind::Locked],
 				).await.context("error marking vtxo as spent")?;
 			}
-			self.movements.finish_movement(
+			self.inner.movements.finish_movement(
 				movement_id,
 				MovementStatus::Successful,
 			).await.context("error finishing movement")?;
 		} else {
 			// Store as pending offboard — wait for on-chain confirmation
-			self.db.store_pending_offboard(&PendingOffboard {
+			self.inner.db.store_pending_offboard(&PendingOffboard {
 				movement_id,
 				offboard_txid: signed_offboard_tx.compute_txid(),
 				offboard_tx: signed_offboard_tx.clone(),
@@ -446,7 +446,7 @@ impl Wallet {
 		let mut input_vtxos = vec![];
 		for v in vtxos {
 			let id = v.vtxo_id();
-			let vtxo = match self.db.get_wallet_vtxo(id).await? {
+			let vtxo = match self.inner.db.get_wallet_vtxo(id).await? {
 				Some(vtxo) => vtxo,
 				_ => bail!("cannot find requested vtxo: {}", id),
 			};

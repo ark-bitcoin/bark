@@ -27,12 +27,12 @@ const LIGHTNING_PAY_LOCK_PREFIX: &str = "lightning_pay";
 impl Wallet {
 	/// Returns each pending lightning payment.
 	pub async fn pending_lightning_sends(&self) -> anyhow::Result<Vec<LightningSend>> {
-		Ok(self.db.get_all_pending_lightning_send().await?)
+		Ok(self.inner.db.get_all_pending_lightning_send().await?)
 	}
 
 	/// Queries the database for any VTXO that is a pending lightning send.
 	pub async fn pending_lightning_send_vtxos(&self) -> anyhow::Result<Vec<WalletVtxo>> {
-		let vtxos = self.db.get_all_pending_lightning_send().await?.into_iter()
+		let vtxos = self.inner.db.get_all_pending_lightning_send().await?.into_iter()
 			.flat_map(|pending_lightning_send| pending_lightning_send.htlc_vtxos)
 			.collect::<Vec<_>>();
 
@@ -86,7 +86,7 @@ impl Wallet {
 		debug!("Processing {} HTLC VTXOs for revocation", htlc_ids.len());
 
 		// Hydrate to full so the arkoor builder has the genesis chain.
-		let htlc_vtxos = self.db.get_full_vtxos(&htlc_ids).await
+		let htlc_vtxos = self.inner.db.get_full_vtxos(&htlc_ids).await
 			.context("failed to hydrate htlc input vtxos for revocation")?;
 
 		let mut secs = Vec::with_capacity(htlc_vtxos.len());
@@ -139,7 +139,7 @@ impl Wallet {
 				payment.movement_id, effective, payment.amount, payment.fee, revoked,
 			);
 		}
-		self.movements.finish_movement_with_update(
+		self.inner.movements.finish_movement_with_update(
 			payment.movement_id,
 			MovementStatus::Failed,
 			MovementUpdate::new()
@@ -150,7 +150,7 @@ impl Wallet {
 		self.store_spendable_vtxos(&vtxos).await?;
 		self.mark_vtxos_as_spent(&payment.htlc_vtxos).await?;
 
-		self.db.remove_lightning_send(payment.invoice.payment_hash()).await?;
+		self.inner.db.remove_lightning_send(payment.invoice.payment_hash()).await?;
 
 		debug!("Revoked {} HTLC VTXOs", count);
 
@@ -188,9 +188,9 @@ impl Wallet {
 					preimage.as_hex(), payment.invoice.payment_hash().as_hex());
 
 				// Complete the payment
-				self.db.finish_lightning_send(payment_hash, Some(preimage)).await?;
+				self.inner.db.finish_lightning_send(payment_hash, Some(preimage)).await?;
 				self.mark_vtxos_as_spent(&payment.htlc_vtxos).await?;
-				self.movements.finish_movement_with_update(
+				self.inner.movements.finish_movement_with_update(
 					payment.movement_id,
 					MovementStatus::Successful,
 					MovementUpdate::new().metadata([(
@@ -243,7 +243,7 @@ impl Wallet {
 		// This prevents race conditions where multiple concurrent calls could both
 		// attempt to process success/revocation, leading to duplicate operations.
 		let key = format!("{}.{}", LIGHTNING_PAY_LOCK_PREFIX, payment_hash);
-		let _guard = self.lock_manager.try_lock(&key).await
+		let _guard = self.inner.lock_manager.try_lock(&key).await
 			.context("Payment operation already in progress for this invoice")?;
 
 		self.check_lightning_payment_inner(payment_hash, wait, None).await
@@ -264,7 +264,7 @@ impl Wallet {
 		// This prevents race conditions where multiple concurrent calls could both
 		// attempt to process success/revocation, leading to duplicate operations.
 		let key = format!("{}.{}", LIGHTNING_PAY_LOCK_PREFIX, payment_hash);
-		let _guard = self.lock_manager.try_lock(&key).await
+		let _guard = self.inner.lock_manager.try_lock(&key).await
 			.context("Payment operation already in progress for this invoice")?;
 
 		self.check_lightning_payment_inner(payment_hash, false, known_preimage).await
@@ -281,7 +281,7 @@ impl Wallet {
 		known_preimage: Option<Preimage>,
 	) -> anyhow::Result<Option<LightningSend>>
 	{
-		let payment = self.db.get_lightning_send(payment_hash).await?
+		let payment = self.inner.db.get_lightning_send(payment_hash).await?
 			.context("no lightning send found for payment hash")?;
 
 		// If the payment already has a preimage, it was already completed successfully
@@ -311,7 +311,7 @@ impl Wallet {
 			).await?;
 
 			if preimage_opt.is_some() {
-				let updated_payment = self.db.get_lightning_send(payment_hash).await?
+				let updated_payment = self.inner.db.get_lightning_send(payment_hash).await?
 					.context("payment disappeared from database")?;
 				return Ok(Some(updated_payment));
 			}
@@ -329,7 +329,7 @@ impl Wallet {
 		let response = srv.client.check_lightning_payment(req).await
 			.map(|r| r.into_inner().payment_status);
 
-		let tip = self.chain.tip().await?;
+		let tip = self.inner.chain.tip().await?;
 		let min_vtxo_expiry = payment.htlc_vtxos.iter()
 			.map(|v| v.vtxo.expiry_height())
 			.min().context("no HTLC VTXOs for expiry check")?;
@@ -344,7 +344,7 @@ impl Wallet {
 
 				if preimage_opt.is_some() {
 					// Re-fetch from DB to get the updated payment with preimage
-					let updated_payment = self.db.get_lightning_send(payment_hash).await?
+					let updated_payment = self.inner.db.get_lightning_send(payment_hash).await?
 						.context("payment disappeared from database")?;
 					return Ok(Some(updated_payment));
 				} else {
@@ -381,7 +381,7 @@ impl Wallet {
 						.iter()
 						.map(|v| v.vtxo.clone())
 						.collect::<Vec<_>>();
-					self.exit.write().await.start_exit_for_vtxos(&vtxos).await?;
+					self.inner.exit.start_exit_for_vtxos(&vtxos).await?;
 
 					let exited = vtxos.iter().map(|v| v.amount()).sum::<Amount>();
 					let effective = -payment.amount.to_signed()? - payment.fee.to_signed()? + exited.to_signed()?;
@@ -390,7 +390,7 @@ impl Wallet {
 							payment.movement_id, effective, payment.amount, payment.fee, exited,
 						);
 					}
-					self.movements.finish_movement_with_update(
+					self.inner.movements.finish_movement_with_update(
 						payment.movement_id,
 						MovementStatus::Failed,
 						MovementUpdate::new()
@@ -398,7 +398,7 @@ impl Wallet {
 							.fee(effective.unsigned_abs())
 							.exited_vtxos(&vtxos)
 					).await?;
-					self.db.finish_lightning_send(payment.invoice.payment_hash(), None).await?;
+					self.inner.db.finish_lightning_send(payment.invoice.payment_hash(), None).await?;
 				}
 
 				return Err(e)
@@ -406,7 +406,7 @@ impl Wallet {
 		}
 
 		// Return current payment state from DB (may have been updated by revocation)
-		Ok(self.db.get_lightning_send(payment_hash).await?)
+		Ok(self.inner.db.get_lightning_send(payment_hash).await?)
 	}
 
 	/// Pays a Lightning [Invoice] using Ark VTXOs. This is also an out-of-round payment
@@ -540,7 +540,7 @@ impl Wallet {
 		// This prevents a race condition where multiple concurrent calls could all pass
 		// the DB check below before any of them complete, leading to orphaned state.
 		let key = format!("{}.{}", LIGHTNING_PAY_LOCK_PREFIX, payment_hash);
-		let _guard = self.lock_manager.try_lock(&key).await
+		let _guard = self.inner.lock_manager.try_lock(&key).await
 			.context("Payment operation already in progress for this invoice")?;
 
 		// Execute the payment, ensuring we remove from inflight set on any exit path
@@ -557,14 +557,14 @@ impl Wallet {
 	) -> anyhow::Result<LightningSend> {
 		let (mut srv, ark_info) = self.require_server().await?;
 
-		let tip = self.chain.tip().await?;
+		let tip = self.inner.chain.tip().await?;
 
-		let properties = self.db.read_properties().await?.context("Missing config")?;
+		let properties = self.inner.db.read_properties().await?.context("Missing config")?;
 		if invoice.network() != properties.network {
 			bail!("Invoice is for wrong network: {}", invoice.network());
 		}
 
-		let lightning_send = self.db.get_lightning_send(payment_hash).await?;
+		let lightning_send = self.inner.db.get_lightning_send(payment_hash).await?;
 		if lightning_send.is_some() {
 			bail!("Invoice has already been paid");
 		}
@@ -588,7 +588,7 @@ impl Wallet {
 		// for arkoor construction below and for registering the chain with
 		// the server.
 		let input_ids = inputs.iter().map(|v| v.id()).collect::<Vec<_>>();
-		let full_inputs = self.db.get_full_vtxos(&input_ids).await
+		let full_inputs = self.inner.db.get_full_vtxos(&input_ids).await
 			.context("failed to hydrate lightning-send input vtxos")?;
 
 		// Ensure that all inputs are fully registered so the server will
@@ -663,7 +663,7 @@ impl Wallet {
 			effective_balance += vtxo.amount();
 		}
 
-		let movement_id = self.movements.new_movement_with_update(
+		let movement_id = self.inner.movements.new_movement_with_update(
 			Subsystem::LIGHTNING_SEND,
 			LightningSendMovement::Send.to_string(),
 			MovementUpdate::new()
@@ -680,7 +680,7 @@ impl Wallet {
 		// Validate the change vtxo. It has the same chain anchor as the last input.
 		for change in &change_vtxos {
 			let last_input = inputs.last().context("no inputs provided")?;
-			let tx = self.chain.get_tx(&last_input.chain_anchor().txid).await?;
+			let tx = self.inner.chain.get_tx(&last_input.chain_anchor().txid).await?;
 			let tx = tx.with_context(|| {
 				format!("input vtxo chain anchor not found for lightning change vtxo: {}", last_input.chain_anchor().txid)
 			})?;
@@ -688,14 +688,14 @@ impl Wallet {
 			self.store_spendable_vtxos([change]).await?;
 		}
 
-		self.movements.update_movement(
+		self.inner.movements.update_movement(
 			movement_id,
 			MovementUpdate::new()
 				.produced_vtxos(change_vtxos)
 				.metadata(LightningMovement::metadata(invoice.payment_hash(), &htlc_vtxos, None))
 		).await?;
 
-		let lightning_send = self.db.store_new_pending_lightning_send(
+		let lightning_send = self.inner.db.store_new_pending_lightning_send(
 			&invoice,
 			payment_amount,
 			fee,

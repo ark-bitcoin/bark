@@ -39,7 +39,7 @@ const CLAIM_RETRY_BACKOFF_MAX: Duration = Duration::from_secs(30);
 impl Wallet {
 	/// Fetches all pending lightning receives ordered from newest to oldest.
 	pub async fn pending_lightning_receives(&self) -> anyhow::Result<Vec<LightningReceive>> {
-		Ok(self.db.get_all_pending_lightning_receives().await?)
+		Ok(self.inner.db.get_all_pending_lightning_receives().await?)
 	}
 
 	/// Calculates how much balance can currently be claimed via inbound lightning payments.
@@ -99,7 +99,7 @@ impl Wallet {
 		info!("Start bolt11 board with preimage / payment hash: {} / {}",
 			preimage.as_hex(), payment_hash.as_hex());
 
-		let mailbox_kp = self.seed.to_mailbox_keypair();
+		let mailbox_kp = self.inner.seed.to_mailbox_keypair();
 		let mailbox_id = ark::mailbox::MailboxIdentifier::from_pubkey(mailbox_kp.public_key());
 
 		let req = protos::StartLightningReceiveRequest {
@@ -116,7 +116,7 @@ impl Wallet {
 		let invoice = Bolt11Invoice::from_str(&resp.bolt11)
 			.context("invalid bolt11 invoice returned by Ark server")?;
 
-		self.db.store_lightning_receive(
+		self.inner.db.store_lightning_receive(
 			payment_hash,
 			preimage,
 			&invoice,
@@ -131,7 +131,7 @@ impl Wallet {
 		&self,
 		payment: impl Into<PaymentHash>,
 	) -> anyhow::Result<Option<LightningReceive>> {
-		Ok(self.db.fetch_lightning_receive_by_payment_hash(payment.into()).await?)
+		Ok(self.inner.db.fetch_lightning_receive_by_payment_hash(payment.into()).await?)
 	}
 
 	/// Claim given incoming lightning payment.
@@ -167,7 +167,7 @@ impl Wallet {
 		ensure!(!receive.htlc_vtxos.is_empty(), "no HTLC VTXOs set on record yet");
 		let mut input_ids = receive.htlc_vtxos.iter().map(|v| v.vtxo.id()).collect::<Vec<_>>();
 		input_ids.sort();
-		let inputs = self.db.get_full_vtxos(&input_ids).await
+		let inputs = self.inner.db.get_full_vtxos(&input_ids).await
 			.context("failed to hydrate htlc input vtxos")?;
 
 		let mut keypairs = Vec::with_capacity(inputs.len());
@@ -188,7 +188,7 @@ impl Wallet {
 			.context("arkoor nonce generation for claim failed")?;
 
 		info!("Claiming arkoor against payment preimage");
-		self.db.set_preimage_revealed(receive.payment_hash).await?;
+		self.inner.db.set_preimage_revealed(receive.payment_hash).await?;
 		let package_cosign_request = protos::ArkoorPackageCosignRequest::from(
 			builder.cosign_request(),
 		);
@@ -227,7 +227,7 @@ impl Wallet {
 			outputs.iter().map(|v| v.id().to_string()).collect::<Vec<_>>().join(", ")
 		);
 
-		self.movements.finish_movement_with_update(
+		self.inner.movements.finish_movement_with_update(
 			movement_id,
 			MovementStatus::Successful,
 			MovementUpdate::new()
@@ -235,8 +235,8 @@ impl Wallet {
 				.produced_vtxos(&outputs)
 		).await?;
 
-		self.db.finish_pending_lightning_receive(receive.payment_hash).await?;
-		*receive = self.db.fetch_lightning_receive_by_payment_hash(receive.payment_hash).await
+		self.inner.db.finish_pending_lightning_receive(receive.payment_hash).await?;
+		*receive = self.inner.db.fetch_lightning_receive_by_payment_hash(receive.payment_hash).await
 			.context("Database error")?
 			.context("Receive not found")?;
 
@@ -302,9 +302,9 @@ impl Wallet {
 		token: Option<&str>,
 	) -> anyhow::Result<Option<LightningReceive>> {
 		let (mut srv, ark_info) = self.require_server().await?;
-		let current_height = self.chain.tip().await?;
+		let current_height = self.inner.chain.tip().await?;
 
-		let mut receive = self.db.fetch_lightning_receive_by_payment_hash(payment_hash).await?
+		let mut receive = self.inner.db.fetch_lightning_receive_by_payment_hash(payment_hash).await?
 			.context("no pending lightning receive found for payment hash, might already be claimed")?;
 
 		// If we have already HTLC VTXOs stored, we can return them without asking the server
@@ -420,7 +420,7 @@ impl Wallet {
 		let movement_id = if let Some(movement_id) = receive.movement_id {
 			movement_id
 		} else {
-			self.movements.new_movement_with_update(
+			self.inner.movements.new_movement_with_update(
 				Subsystem::LIGHTNING_RECEIVE,
 				LightningReceiveMovement::Receive.to_string(),
 				MovementUpdate::new()
@@ -438,11 +438,11 @@ impl Wallet {
 		self.store_locked_vtxos(&vtxos, Some(movement_id)).await?;
 
 		let vtxo_ids = vtxos.iter().map(|v| v.id()).collect::<Vec<_>>();
-		self.db.update_lightning_receive(payment_hash, &vtxo_ids, movement_id).await?;
+		self.inner.db.update_lightning_receive(payment_hash, &vtxo_ids, movement_id).await?;
 
 		let mut wallet_vtxos = vec![];
 		for vtxo in vtxos {
-			let v =  self.db.get_wallet_vtxo(vtxo.id()).await?
+			let v =  self.inner.db.get_wallet_vtxo(vtxo.id()).await?
 				.context("Failed to get wallet VTXO for lightning receive")?;
 			wallet_vtxos.push(v);
 		}
@@ -466,10 +466,10 @@ impl Wallet {
 		let vtxos = lightning_receive.htlc_vtxos.iter().map(|v| &v.vtxo).collect::<Vec<_>>();
 
 		info!("Exiting HTLC VTXOs for lightning_receive with payment hash {}", lightning_receive.payment_hash);
-		self.exit.write().await.start_exit_for_vtxos(&vtxos).await?;
+		self.inner.exit.start_exit_for_vtxos(&vtxos).await?;
 
 		if let Some(movement_id) = lightning_receive.movement_id {
-			self.movements.finish_movement_with_update(
+			self.inner.movements.finish_movement_with_update(
 				movement_id,
 				MovementStatus::Failed,
 				MovementUpdate::new().exited_vtxos(vtxos),
@@ -478,7 +478,7 @@ impl Wallet {
 			error!("movement id is missing but we disclosed preimage: {}", lightning_receive.payment_hash);
 		}
 
-		self.db.finish_pending_lightning_receive(lightning_receive.payment_hash).await?;
+		self.inner.db.finish_pending_lightning_receive(lightning_receive.payment_hash).await?;
 		Ok(())
 	}
 
@@ -519,10 +519,10 @@ impl Wallet {
 		};
 
 		if let Some((movement_id, update, status)) = update_opt {
-			self.movements.finish_movement_with_update(movement_id, status, update).await?;
+			self.inner.movements.finish_movement_with_update(movement_id, status, update).await?;
 		}
 
-		self.db.finish_pending_lightning_receive(lightning_receive.payment_hash).await?;
+		self.inner.db.finish_pending_lightning_receive(lightning_receive.payment_hash).await?;
 
 		Ok(())
 	}
@@ -539,7 +539,7 @@ impl Wallet {
 		&self,
 		payment_hash: PaymentHash,
 	) -> anyhow::Result<()> {
-		let receive = self.db.fetch_lightning_receive_by_payment_hash(payment_hash).await?
+		let receive = self.inner.db.fetch_lightning_receive_by_payment_hash(payment_hash).await?
 			.context("no pending lightning receive found for this payment hash")?;
 
 		if receive.preimage_revealed_at.is_some() {
@@ -598,11 +598,11 @@ impl Wallet {
 		// the same payment hash, return the current receive state instead of
 		// starting a duplicate claim.
 		let key = format!("{}.{}", LIGHTNING_RECEIVE_LOCK_PREFIX, payment_hash);
-		let _guard = match self.lock_manager.try_lock(&key).await {
+		let _guard = match self.inner.lock_manager.try_lock(&key).await {
 			Some(guard) => guard,
 			None => {
 				debug!("Receive operation already in progress for this payment");
-				return self.db.fetch_lightning_receive_by_payment_hash(payment_hash).await?
+				return self.inner.db.fetch_lightning_receive_by_payment_hash(payment_hash).await?
 					.context("no receive for payment hash");
 			},
 		};
@@ -622,7 +622,7 @@ impl Wallet {
 		let mut receive = match self.check_lightning_receive(payment_hash, wait, token).await? {
 			Some(receive) => receive,
 			None => {
-				return self.db.fetch_lightning_receive_by_payment_hash(payment_hash).await?
+				return self.inner.db.fetch_lightning_receive_by_payment_hash(payment_hash).await?
 					.context("No receive for payment_hash")
 			}
 		};
@@ -637,7 +637,7 @@ impl Wallet {
 			return Ok(receive);
 		}
 
-		let mut retries_left = self.config.lightning_receive_claim_retries;
+		let mut retries_left = self.inner.config.lightning_receive_claim_retries;
 		let mut backoff = CLAIM_RETRY_BACKOFF_INITIAL;
 		let claim_result = loop {
 			match self.claim_lightning_receive(&mut receive).await {

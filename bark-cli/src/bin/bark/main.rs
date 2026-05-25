@@ -464,7 +464,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 		Command::Board { amount, all, no_sync } => {
 			if !no_sync {
 				info!("Syncing onchain wallet...");
-				if let Err(e) = onchain.sync(&wallet.chain).await {
+				if let Err(e) = onchain.sync(wallet.chain()).await {
 					warn!("Sync error: {}", e)
 				}
 			}
@@ -591,7 +591,6 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 			round::execute_round_command(cmd, &mut wallet).await?;
 		},
 		Command::Watch => {
-			let wallet = Arc::new(wallet);
 			let onchain = Arc::new(RwLock::new(onchain));
 			let mut stream = wallet.subscribe_notifications();
 			let _daemon = wallet.start_daemon(Some(onchain))

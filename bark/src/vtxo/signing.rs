@@ -51,7 +51,7 @@ impl VtxoSigner for Wallet {
 			VtxoClause::DelayedTimelockSign(c) => Some(c.witness(&signature, &control_block)),
 			VtxoClause::TimelockSign(c) => Some(c.witness(&signature, &control_block)),
 			VtxoClause::HashDelaySign(c) => {
-				let receive = self.db.fetch_lightning_receive_by_payment_hash(c.hash.into())
+				let receive = self.inner.db.fetch_lightning_receive_by_payment_hash(c.hash.into())
 					.await.ok().flatten();
 
 				receive.map(|r| c.witness(

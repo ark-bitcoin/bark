@@ -60,7 +60,7 @@ pub async fn onchain_fee_rates(
 ) -> HandlerResult<Json<bark_json::web::OnchainFeeRatesResponse>> {
 	let wallet = state.require_wallet()?;
 
-	let rates = wallet.chain.fee_rates().await;
+	let rates = wallet.chain().fee_rates().await;
 
 	Ok(axum::Json(bark_json::web::OnchainFeeRatesResponse {
 		fast_sat_per_vb: rates.fast.to_sat_per_vb_ceil(),

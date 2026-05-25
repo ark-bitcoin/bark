@@ -155,21 +155,21 @@ impl ExitVtxo {
 			});
 		}
 
-		let vtxo = self.get_vtxo(&*wallet.db).await?;
+		let vtxo = self.get_vtxo(&*wallet.inner.db).await?;
 		const MAX_ITERATIONS: usize = 100;
 		for _ in 0..MAX_ITERATIONS {
 			let mut context = ProgressContext {
 				vtxo: &vtxo,
 				exit_txids: self.txids.as_ref().unwrap(),
 				wallet,
-				fee_rate: fee_rate_override.unwrap_or(wallet.chain.fee_rates().await.fast),
+				fee_rate: fee_rate_override.unwrap_or(wallet.inner.chain.fee_rates().await.fast),
 				tx_manager,
 			};
 			// Attempt to move to the next state, which may or may not generate a new state
-			trace!("Progressing VTXO {} at height {}", self.id(), wallet.chain.tip().await.unwrap());
+			trace!("Progressing VTXO {} at height {}", self.id(), wallet.inner.chain.tip().await.unwrap());
 			match self.state.clone().progress(&mut context, onchain).await {
 				Ok(new_state) => {
-					self.update_state_if_newer(new_state, &*wallet.db).await?;
+					self.update_state_if_newer(new_state, &*wallet.inner.db).await?;
 					if !continue_until_finished {
 						return Ok(());
 					}
@@ -181,7 +181,7 @@ impl ExitVtxo {
 				Err(e) => {
 					// We may need to commit a new state before returning an error
 					if let Some(new_state) = e.state {
-						self.update_state_if_newer(new_state, &*wallet.db).await?;
+						self.update_state_if_newer(new_state, &*wallet.inner.db).await?;
 					}
 					return Err(e.error);
 				}

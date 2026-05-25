@@ -148,7 +148,7 @@ impl<'a> ProgressContext<'a> {
 	}
 
 	pub async fn get_block_ref(&self, height: BlockHeight) -> anyhow::Result<BlockRef, ExitError> {
-		self.wallet.chain.block_ref(height).await
+		self.wallet.inner.chain.block_ref(height).await
 			.map_err(|e| ExitError::BlockRetrievalFailure { height, error: e.to_string() })
 	}
 
@@ -233,7 +233,7 @@ impl<'a> ProgressContext<'a> {
 	}
 
 	pub async fn tip_height(&self) -> anyhow::Result<u32, ExitError> {
-		self.wallet.chain.tip().await
+		self.wallet.inner.chain.tip().await
 			.map_err(|e| ExitError::TipRetrievalFailure { error: e.to_string() })
 	}
 }

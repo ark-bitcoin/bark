@@ -192,6 +192,6 @@ impl Wallet {
 	/// # }
 	/// ```
 	pub fn subscribe_notifications(&self) -> NotificationStream {
-		self.notifications.subscribe()
+		self.inner.notifications.subscribe()
 	}
 }

@@ -7,6 +7,8 @@ use bitcoin::{FeeRate, Network};
 
 use bitcoin_ext::{BlockDelta, BlockHeight};
 
+use crate::chain::ChainSourceSpec;
+
 
 /// Networks bark can be used on
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -229,6 +231,31 @@ impl Config {
 			.add_source(config::Environment::with_prefix("BARK"))
 			.build().context("error building config")?
 			.try_deserialize::<Config>().context("error parsing config")?)
+	}
+
+	/// Creates a [chain::ChainSource] instance to communicate with a chain
+	/// backend from this [Config].
+	pub fn chain_source(&self) -> anyhow::Result<ChainSourceSpec> {
+		if let Some(ref url) = self.esplora_address {
+			Ok(ChainSourceSpec::Esplora {
+				url: url.clone(),
+			})
+		} else if let Some(ref url) = self.bitcoind_address {
+			let auth = if let Some(ref c) = self.bitcoind_cookiefile {
+				bitcoin_ext::rpc::Auth::CookieFile(c.clone())
+			} else {
+				bitcoin_ext::rpc::Auth::UserPass(
+					self.bitcoind_user.clone().context("need bitcoind auth config")?,
+					self.bitcoind_pass.clone().context("need bitcoind auth config")?,
+				)
+			};
+			Ok(ChainSourceSpec::Bitcoind {
+				url: url.clone(),
+				auth,
+			})
+		} else {
+			bail!("Need to either provide esplora or bitcoind info");
+		}
 	}
 }
 

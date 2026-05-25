@@ -127,12 +127,12 @@ pub struct RestServer {
 /// A simple wrapper around a [Wallet] and an [OnchainWallet] hold by
 /// the [RestServer]
 pub struct ServerWallet {
-	pub wallet: Arc<Wallet>,
+	pub wallet: Wallet,
 	pub onchain: Arc<RwLock<OnchainWallet>>,
 }
 
 impl ServerWallet {
-	pub fn new(wallet: Arc<Wallet>, onchain: Arc<RwLock<OnchainWallet>>) -> Self {
+	pub fn new(wallet: Wallet, onchain: Arc<RwLock<OnchainWallet>>) -> Self {
 		Self { wallet, onchain }
 	}
 }
@@ -173,7 +173,7 @@ impl ServerState {
 		}
 	}
 
-	pub fn require_wallet(&self) -> anyhow::Result<Arc<Wallet>> {
+	pub fn require_wallet(&self) -> anyhow::Result<Wallet> {
 		let wallet = self.wallet.read().as_ref()
 			.ok_or_else(|| anyhow!("No wallet set"))?.wallet.clone();
 		Ok(wallet)

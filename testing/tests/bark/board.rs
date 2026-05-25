@@ -213,13 +213,13 @@ async fn board_tx_rejects_wrong_expiry_height() {
 
 	let wallet = bark1.client().await;
 	let mut onchain = bark1.onchain_wallet().await;
-	onchain.sync(&wallet.chain).await.unwrap();
+	onchain.sync(wallet.chain()).await.unwrap();
 
 	let (keypair, _) = wallet.derive_store_next_keypair().await.unwrap();
 	let (board_addr, expiry_height) = wallet.board_funding_address(&keypair).await.unwrap();
 
 	let board_amount = sat(90_000);
-	let fee_rate = wallet.chain.fee_rates().await.regular;
+	let fee_rate = wallet.chain().fee_rates().await.regular;
 	let psbt = onchain.prepare_tx(&[(board_addr, board_amount)], fee_rate).unwrap();
 	let signed_psbt = onchain.finish_psbt(psbt).await.unwrap();
 
@@ -288,13 +288,13 @@ async fn board_tx_full_flow() {
 	let mut onchain = bark1.onchain_wallet().await;
 
 	// Sync the onchain wallet so it sees the funded UTXOs
-	onchain.sync(&wallet.chain).await.unwrap();
+	onchain.sync(wallet.chain()).await.unwrap();
 
 	let (keypair, _) = wallet.derive_store_next_keypair().await.unwrap();
 	let (board_addr, expiry_height) = wallet.board_funding_address(&keypair).await.unwrap();
 
 	// Build and sign the funding PSBT using the onchain wallet
-	let fee_rate = wallet.chain.fee_rates().await.regular;
+	let fee_rate = wallet.chain().fee_rates().await.regular;
 	let board_psbt = onchain.prepare_tx(&[(board_addr, sat(BOARD_AMOUNT))], fee_rate).unwrap();
 	let signed_psbt = onchain.finish_psbt(board_psbt).await.unwrap();
 

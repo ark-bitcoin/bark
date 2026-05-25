@@ -78,7 +78,7 @@ impl Wallet {
 		let mut problematic_vtxos = Vec::new();
 		for vtxo in vtxos {
 			let id = vtxo.vtxo_id();
-			if let Err(e) = self.db.update_vtxo_state_checked(
+			if let Err(e) = self.inner.db.update_vtxo_state_checked(
 				id,
 				state.clone(),
 				allowed_states,
@@ -168,7 +168,7 @@ impl Wallet {
 		state: &VtxoState,
 	) -> anyhow::Result<()> {
 		let vtxos = vtxos.into_iter().map(|v| (v, state)).collect::<Vec<_>>();
-		if let Err(e) = self.db.store_vtxos(&vtxos).await {
+		if let Err(e) = self.inner.db.store_vtxos(&vtxos).await {
 			error!("An error occurred while storing {} VTXOs: {:#}", vtxos.len(), e);
 			error!("Raw VTXOs for debugging:");
 			for (vtxo, _) in vtxos {
