@@ -13,7 +13,7 @@ use rusqlite::{self, named_params, params, Connection, Row, ToSql, Transaction};
 
 use ark::{ProtocolEncoding, Vtxo};
 use ark::lightning::{Invoice, PaymentHash, Preimage};
-use ark::vtxo::{Bare, Full, VtxoRef};
+use ark::vtxo::{Full, VtxoRef};
 use bitcoin_ext::BlockDelta;
 
 use crate::{VtxoId, WalletProperties};
@@ -791,9 +791,7 @@ pub fn get_full_vtxos_by_ids(
 }
 
 fn reassemble_full_vtxo(raw_bare: &[u8], raw_genesis: &[u8]) -> anyhow::Result<Vtxo<Full>> {
-	let bare = Vtxo::<Bare>::deserialize(raw_bare)?;
-	let genesis = Vtxo::<Bare>::decode_genesis(&mut &raw_genesis[..])?;
-	Ok(bare.with_genesis(genesis))
+	Vtxo::<Full>::deserialize_with_genesis(raw_bare, raw_genesis).context("failed to load VTXO")
 }
 
 pub fn delete_vtxo(

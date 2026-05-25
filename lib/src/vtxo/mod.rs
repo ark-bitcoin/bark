@@ -514,14 +514,6 @@ impl<P: Policy> Vtxo<Bare, P> {
 		Vtxo { point, policy, amount, expiry_height, server_pubkey, exit_delta, anchor_point, genesis: Bare }
 	}
 
-	/// Decode the [Full] genesis item list; this assumes the data being decoded was previously
-	/// written using [Vtxo::<Full>::encode_genesis].
-	pub fn decode_genesis<R: io::Read + ?Sized>(
-		r: &mut R,
-	) -> Result<Full, ProtocolDecodingError> {
-		<Full as VtxoVersionedEncoding>::decode(r, VTXO_ENCODING_VERSION)
-	}
-
 	/// Upgrade this bare VTXO to a [Vtxo<Full, P>] by attaching a previously
 	/// stripped or decoded genesis chain.
 	///
@@ -529,8 +521,27 @@ impl<P: Policy> Vtxo<Bare, P> {
 	/// VTXO's `point` is a deterministic checksum of the genesis chain, so a
 	/// caller passing a mismatched `genesis` would simply produce an invalid
 	/// VTXO; use [Vtxo::with_genesis_checked] when paranoia is warranted.
-	pub fn with_genesis(self, genesis: Full) -> Vtxo<Full, P> {
-		Vtxo {
+	///
+	/// A [VtxoValidationError::MissingGenesisItems] will be returned if the provided `genesis`
+	/// contains no genesis transitions and the [Vtxo::point] and [Vtxo::chain_anchor] are not
+	/// equal.
+	///
+	/// No further validation of the VTXO will be performed. It's recommended to run
+	/// [Vtxo::validate] to ensure the VTXO data is consistent with the provided `genesis`.
+	pub fn with_genesis(self, genesis: Full) -> Result<Vtxo<Full, P>, VtxoValidationError> {
+		// Allow VTXOs with no genesis items if the chain anchor is equal to the VTXO point. This
+		// is effectively a virtual representation of a UTXO.
+		if self.point() != self.chain_anchor() {
+			if genesis.items.is_empty() {
+				return Err(VtxoValidationError::MissingGenesisItems);
+			}
+		}
+		else {
+			if !genesis.items.is_empty() {
+				return Err(VtxoValidationError::UnexpectedGenesisItems);
+			}
+		}
+		Ok(Vtxo {
 			policy: self.policy,
 			amount: self.amount,
 			expiry_height: self.expiry_height,
@@ -539,7 +550,7 @@ impl<P: Policy> Vtxo<Bare, P> {
 			anchor_point: self.anchor_point,
 			genesis,
 			point: self.point,
-		}
+		})
 	}
 }
 
@@ -639,7 +650,24 @@ impl<P: Policy> Vtxo<Full, P> {
 		&self,
 		w: &mut W,
 	) -> Result<(), io::Error> {
-		<Full as VtxoVersionedEncoding>::encode(&self.genesis, w, VTXO_ENCODING_VERSION)
+		Full::encode(&self.genesis, w, VTXO_ENCODING_VERSION)
+	}
+
+	/// Similar to `Vtxo::deserialize` but it takes two byte splices, one containing `Vtxo<Bare>`
+	/// data and one for the `Full` genesis data.
+	pub fn deserialize_with_genesis(
+		mut vtxo_bytes: &[u8],
+		mut genesis_bytes: &[u8],
+	) -> Result<Self, ProtocolDecodingError>
+	where
+		P: ProtocolEncoding,
+	{
+		let (vtxo, version) = vtxo_decode_inner::<Bare, P, _>(&mut vtxo_bytes)?;
+		let genesis = Full::decode(&mut genesis_bytes, version)?;
+		vtxo.with_genesis(genesis)
+			.map_err(|e| ProtocolDecodingError::invalid_err(
+				e, "unable to decode VTXO with genesis",
+			))
 	}
 
 	/// Serialize the genesis chain into a fresh `Vec<u8>`.
@@ -1143,50 +1171,95 @@ impl VtxoVersionedEncoding for Full {
 	}
 }
 
-impl<G: VtxoVersionedEncoding, P: Policy + ProtocolEncoding> ProtocolEncoding for Vtxo<G, P> {
+impl<P: Policy + ProtocolEncoding> ProtocolEncoding for Vtxo<Bare, P> {
 	fn encode<W: io::Write + ?Sized>(&self, w: &mut W) -> Result<(), io::Error> {
-		let version = VTXO_ENCODING_VERSION;
-		w.emit_u16(version)?;
-		w.emit_u64(self.amount.to_sat())?;
-		w.emit_u32(self.expiry_height)?;
-		self.server_pubkey.encode(w)?;
-		w.emit_u16(self.exit_delta)?;
-		self.anchor_point.encode(w)?;
-
-		self.genesis.encode(w, version)?;
-
-		self.policy.encode(w)?;
-		self.point.encode(w)?;
-		Ok(())
+		vtxo_encode_inner(&self, w)
 	}
 
 	fn decode<R: io::Read + ?Sized>(r: &mut R) -> Result<Self, ProtocolDecodingError> {
-		let version = r.read_u16()?;
-		if version != VTXO_ENCODING_VERSION && version != VTXO_NO_FEE_AMOUNT_VERSION {
-			return Err(ProtocolDecodingError::invalid(format_args!(
-				"invalid Vtxo encoding version byte: {version:#x}",
-			)));
-		}
-
-		let amount = Amount::from_sat(r.read_u64()?);
-		let expiry_height = check_block_height(r.read_u32()?)
-			.map_err(|e| ProtocolDecodingError::invalid_err(e, "expiry_height"))?;
-		let server_pubkey = PublicKey::decode(r)?;
-		let exit_delta = check_block_delta(r.read_u16()?)
-			.map_err(|e| ProtocolDecodingError::invalid_err(e, "exit_delta"))?;
-		let anchor_point = OutPoint::decode(r)?;
-
-		let genesis = VtxoVersionedEncoding::decode(r, version)?;
-
-		let policy = P::decode(r)?;
-		let point = OutPoint::decode(r)?;
-
-		Ok(Self {
-			amount, expiry_height, server_pubkey, exit_delta, anchor_point, genesis, policy, point,
-		})
+		Ok(vtxo_decode_inner(r)?.0)
 	}
 }
 
+impl<P: Policy + ProtocolEncoding> ProtocolEncoding for Vtxo<Full, P> {
+	fn encode<W: io::Write + ?Sized>(&self, w: &mut W) -> Result<(), io::Error> {
+		vtxo_encode_inner(&self, w)
+	}
+
+	fn decode<R: io::Read + ?Sized>(r: &mut R) -> Result<Self, ProtocolDecodingError> {
+		// Only allow coding Vtxo<Full> with no genesis items if the VTXO is a virtual
+		// representation of an onchain UTXO.
+		let (vtxo, _) = vtxo_decode_inner::<Full, P, _>(r)?;
+		if vtxo.point() != vtxo.chain_anchor() {
+			if vtxo.genesis.items.is_empty() {
+				return Err(ProtocolDecodingError::invalid_err(
+					VtxoValidationError::MissingGenesisItems,
+					format!("VTXO {} has no genesis item data", vtxo.id()),
+				));
+			}
+		} else {
+			if !vtxo.genesis.items.is_empty() {
+				return Err(ProtocolDecodingError::invalid_err(
+					VtxoValidationError::UnexpectedGenesisItems,
+					format!("decoded genesis item data when there shouldn't be any for VTXO {}", vtxo.id()),
+				));
+			}
+		}
+		Ok(vtxo)
+	}
+}
+
+fn vtxo_encode_inner<G, P, W>(vtxo: &Vtxo<G, P>, w: &mut W) -> Result<(), io::Error>
+where
+	G: VtxoVersionedEncoding,
+	P: Policy + ProtocolEncoding,
+	W: io::Write + ?Sized,
+{
+	let version = VTXO_ENCODING_VERSION;
+	w.emit_u16(version)?;
+	w.emit_u64(vtxo.amount.to_sat())?;
+	w.emit_u32(vtxo.expiry_height)?;
+	vtxo.server_pubkey.encode(w)?;
+	w.emit_u16(vtxo.exit_delta)?;
+	vtxo.anchor_point.encode(w)?;
+
+	vtxo.genesis.encode(w, version)?;
+
+	vtxo.policy.encode(w)?;
+	vtxo.point.encode(w)?;
+	Ok(())
+}
+
+fn vtxo_decode_inner<G, P, R>(r: &mut R) -> Result<(Vtxo<G, P>, u16), ProtocolDecodingError>
+where
+	G: VtxoVersionedEncoding,
+	P: Policy + ProtocolEncoding,
+	R: io::Read + ?Sized,
+{
+	let version = r.read_u16()?;
+	if version != VTXO_ENCODING_VERSION && version != VTXO_NO_FEE_AMOUNT_VERSION {
+		return Err(ProtocolDecodingError::invalid(format_args!(
+			"invalid Vtxo encoding version byte: {version:#x}",
+		)));
+	}
+
+	let amount = Amount::from_sat(r.read_u64()?);
+	let expiry_height = check_block_height(r.read_u32()?)
+		.map_err(|e| ProtocolDecodingError::invalid_err(e, "expiry_height"))?;
+	let server_pubkey = PublicKey::decode(r)?;
+	let exit_delta = check_block_delta(r.read_u16()?)
+		.map_err(|e| ProtocolDecodingError::invalid_err(e, "exit_delta"))?;
+	let anchor_point = OutPoint::decode(r)?;
+
+	let genesis = VtxoVersionedEncoding::decode(r, version)?;
+
+	let policy = P::decode(r)?;
+	let point = OutPoint::decode(r)?;
+	let vtxo = Vtxo {
+		amount, expiry_height, server_pubkey, exit_delta, anchor_point, genesis, policy, point,
+	};
+	Ok((vtxo, version))
+}
 
 #[cfg(test)]
 mod test {
@@ -1323,9 +1396,10 @@ mod test {
 
 			let bare = Vtxo::<Bare, P>::deserialize(&bare_bytes)
 				.expect("bare deserialize");
-			let genesis = Vtxo::<Bare, P>::decode_genesis(&mut &genesis_bytes[..])
+			let genesis = Full::decode(&mut &genesis_bytes[..], VTXO_ENCODING_VERSION)
 				.expect("decode_genesis");
-			let reassembled = bare.with_genesis(genesis);
+			let reassembled = bare.with_genesis(genesis)
+				.expect("reassemble");
 
 			assert_eq!(*vtxo, reassembled, "reassembled vtxo differs from original");
 			assert_eq!(reassembled.serialize(), original,
@@ -1388,6 +1462,42 @@ mod test {
 		};
 		assert_eq!(vtxo.genesis.items.len(), 257);
 		encoding_roundtrip(&vtxo);
+	}
+
+	#[test]
+	fn test_genesis_decoding() {
+		// We should disallow decoding a Vtxo<Bare> as a Vtxo<Full> since it's nonsensical and will
+		// only lead to confusing errors, such as when validating a VTXO.
+		fn check<P: Policy + ProtocolEncoding + Clone + std::fmt::Debug>(
+			vtxo: &Vtxo<Full, P>,
+		) where
+			Vtxo<Full, P>: PartialEq,
+		{
+			let full_bytes = vtxo.serialize();
+			let bare_bytes = vtxo.as_bare_vtxo().unwrap().serialize();
+
+			// We should support the following:
+			// - Full -> Full
+			// - Full -> Bare
+			// - Bare -> Bare
+			// We should disallow Bare -> Full.
+			let full_to_full = Vtxo::<Full>::deserialize(&full_bytes).expect("works");
+			let full_to_bare = Vtxo::<Bare>::deserialize(&full_bytes).expect("works");
+			let bare_to_bare = Vtxo::<Bare>::deserialize(&bare_bytes).expect("works");
+			Vtxo::<Full>::deserialize(&bare_bytes).expect_err("bare to full fails");
+
+			assert_eq!(full_to_full.serialize(), full_bytes);
+			assert_eq!(full_to_bare.serialize(), bare_bytes);
+			assert_eq!(bare_to_bare.serialize(), bare_bytes);
+		}
+
+		let v = &*VTXO_VECTORS;
+		check(&v.board_vtxo);
+		check(&v.arkoor_htlc_out_vtxo);
+		check(&v.arkoor2_vtxo);
+		check(&v.round1_vtxo);
+		check(&v.round2_vtxo);
+		check(&v.arkoor3_vtxo);
 	}
 
 	mod genesis_transition_encoding {

@@ -1,0 +1,11 @@
+- Reject decoding a `Vtxo<Full>` from `Vtxo<Bare>` data
+  Previously a `Vtxo<Bare>` serialization could be silently decoded as a `Vtxo<Full>`,
+  yielding a "full" VTXO with an empty genesis chain. `Vtxo<Full>` now rejects such
+  input, except for virtual VTXOs that wrap an onchain UTXO (where `point` equals
+  `chain_anchor`), which legitimately carry no genesis items.
+  [#2072](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2072)
+  - Added `Vtxo::<Full>::deserialize_with_genesis` to reassemble a full VTXO from
+    separate bare and genesis byte buffers (e.g. when the two halves are stored
+    independently).
+  - Added `VtxoValidationError::MissingGenesisItems` and
+    `VtxoValidationError::UnexpectedGenesisItems`.
