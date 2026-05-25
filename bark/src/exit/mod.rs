@@ -36,7 +36,7 @@
 //!    - To create or fee-bump CPFP transactions using an onchain wallet, call
 //!      [Exit::exits_needing_cpfp] to get pending requests, provide signed CPFPs via
 //!      [Exit::provide_cpfp_tx], then call [Exit::progress_exits] again. Alternatively, use the
-//!      [Exit::progress_exits_onchain] if you have a BDK-backed onchain wallet.
+//!      [Exit::progress_exits_with_bdk] if you have a BDK-backed onchain wallet.
 //! 3) Inspect status
 //!    - Use [Exit::get_exit_status] for detailed per-VTXO status (optionally including
 //!      history and transactions).
@@ -51,7 +51,7 @@
 //!
 //! Fee rates
 //! - Suitable fee rates will be calculated based on the current network conditions. To override,
-//!   pass your own [FeeRate] to [Exit::progress_exits_onchain] or [Exit::drain_exits].
+//!   pass your own [FeeRate] to [Exit::progress_exits_with_bdk] or [Exit::drain_exits].
 //!
 //! Error handling and persistence
 //! - The coordinator surfaces operational errors via [anyhow::Result] and domain-specific errors
@@ -94,7 +94,7 @@
 //!
 //! // Transactions will be broadcast and require confirmations so keep periodically calling this.
 //! bark_wallet.exit_mgr().sync_no_progress().await?;
-//! bark_wallet.exit_mgr().progress_exits_onchain(&bark_wallet, &mut onchain_wallet, None).await?;
+//! bark_wallet.exit_mgr().progress_exits_with_bdk(&bark_wallet, &mut onchain_wallet, None).await?;
 //!
 //! // Once all VTXOs are claimable, construct a PSBT to drain them.
 //! let drain_to = bitcoin::Address::from_str("bc1p...")?.assume_checked();

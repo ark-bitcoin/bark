@@ -764,7 +764,7 @@ struct WalletInner {
 ///
 /// // Progress any unilateral exits, make sure to sync first
 /// wallet.exit_mgr().sync_no_progress().await?;
-/// wallet.exit_mgr().progress_exits_onchain(&wallet, &mut onchain_wallet, None).await?;
+/// wallet.exit_mgr().progress_exits_with_bdk(&wallet, &mut onchain_wallet, None).await?;
 ///
 /// # Ok(())
 /// # }
@@ -1517,7 +1517,7 @@ impl Wallet {
 		if let Err(e) = exit_sync.as_ref() {
 			warn!("Error syncing exits: {:#}", e);
 		}
-		let exit_progress = self.exit_mgr().progress_exits_onchain(self, onchain, None).await;
+		let exit_progress = self.exit_mgr().progress_exits_with_bdk(self, onchain, None).await;
 		if let Err(e) = exit_progress.as_ref() {
 			warn!("Error progressing exits: {:#}", e);
 		}
@@ -1547,7 +1547,7 @@ impl Wallet {
 		if let Err(e) = exit_sync.as_ref() {
 			warn!("Error syncing exits: {:#}", e);
 		}
-		let exit_progress = self.exit_mgr().progress_exits_onchain(self, onchain, None).await;
+		let exit_progress = self.exit_mgr().progress_exits_with_bdk(self, onchain, None).await;
 		if let Err(e) = exit_progress.as_ref() {
 			warn!("Error progressing exits: {:#}", e);
 		}

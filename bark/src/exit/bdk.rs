@@ -6,7 +6,12 @@ use crate::exit::{Exit, ExitProgressStatus};
 use crate::onchain::{CpfpError, ExitUnilaterally, MakeCpfpFees};
 
 impl Exit {
-	/// Progress all ongoing exits, handling CPFP fee-bumping via an onchain wallet.
+	/// Advance ongoing exits by one step, handling CPFP fee-bumping via an onchain wallet.
+	///
+	/// This makes progress on each exit but does not run an exit to completion — exits
+	/// span many blocks (broadcasting, confirmations, CSV timelocks, claim spends), so
+	/// this must be called repeatedly (e.g. once per block) until all exits reach a
+	/// terminal state.
 	///
 	/// It calls [Exit::progress_exits], creates CPFP transactions via `onchain` for any
 	/// exits in [ExitTxStatus::AwaitingCpfpBroadcast], then calls [Exit::progress_exits]
@@ -14,7 +19,7 @@ impl Exit {
 	///
 	/// Callers with external or hardware wallets should use [Exit::exits_needing_cpfp]
 	/// and [Exit::provide_cpfp_tx] directly instead.
-	pub async fn progress_exits_onchain(
+	pub async fn progress_exits_with_bdk(
 		&self,
 		wallet: &Wallet,
 		onchain: &mut dyn ExitUnilaterally,
@@ -28,6 +33,10 @@ impl Exit {
 				None => MakeCpfpFees::Effective(fee_rate),
 				Some((min_fee_rate, min_fee)) => {
 					if fee_rate <= min_fee_rate {
+						warn!(
+							"Skipping exit CPFP RBF: requested fee rate {} is not above current package rate {}",
+							fee_rate, min_fee_rate,
+						);
 						continue;
 					}
 					MakeCpfpFees::Rbf {

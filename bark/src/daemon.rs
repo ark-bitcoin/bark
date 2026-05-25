@@ -159,7 +159,7 @@ impl DaemonProcess {
 				warn!("An error occurred while syncing exits: {e:#}");
 			}
 
-			if let Err(e) = self.wallet.exit_mgr().progress_exits_onchain(&self.wallet, &mut *onchain, None).await {
+			if let Err(e) = self.wallet.exit_mgr().progress_exits_with_bdk(&self.wallet, &mut *onchain, None).await {
 				warn!("An error occurred while progressing exits: {e:#}");
 			}
 		}

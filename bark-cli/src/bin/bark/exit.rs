@@ -242,7 +242,7 @@ async fn progress_once(
 	info!("Start progressing exit");
 
 	wallet.exit_mgr().sync_no_progress().await.context("unable to sync exit process")?;
-	let result = wallet.exit_mgr().progress_exits_onchain(wallet, onchain, fee_rate).await
+	let result = wallet.exit_mgr().progress_exits_with_bdk(wallet, onchain, fee_rate).await
 		.context("error making progress on exit process")?;
 
 	let done = !wallet.exit_mgr().has_pending_exits().await;
