@@ -31,7 +31,6 @@
 //!    - Mark individual VTXOs for exit with [Exit::start_exit_for_vtxos], or exit everything with
 //!      [Exit::start_exit_for_entire_wallet].
 //! 2) Drive progress
-//!    - Call [Exit::sync_no_progress] to initialize pending exits and update transaction statuses.
 //!    - Call [Exit::progress_exits] to advance the wallet-agnostic state machine for each exit.
 //!    - To create or fee-bump CPFP transactions using an onchain wallet, call
 //!      [Exit::exits_needing_cpfp] to get pending requests, provide signed CPFPs via
@@ -93,7 +92,6 @@
 //! bark_wallet.exit_mgr().start_exit_for_entire_wallet().await?;
 //!
 //! // Transactions will be broadcast and require confirmations so keep periodically calling this.
-//! bark_wallet.exit_mgr().sync_no_progress().await?;
 //! bark_wallet.exit_mgr().progress_exits_with_bdk(&bark_wallet, &mut onchain_wallet, None).await?;
 //!
 //! // Once all VTXOs are claimable, construct a PSBT to drain them.
@@ -232,9 +230,8 @@ impl ExitInner {
 		Ok(())
 	}
 
-	/// Initializes pending exits and syncs transaction statuses.
-	/// Used by both [Exit::sync_no_progress] and [Exit::sync].
-	async fn sync_no_progress(&mut self) -> anyhow::Result<()> {
+	/// Initializes pending exits and refreshes the chain view of their transaction packages.
+	async fn refresh_tx_state(&mut self) -> anyhow::Result<()> {
 		let mut exit_vtxos = std::mem::take(&mut self.exit_vtxos);
 		for exit in &mut exit_vtxos {
 			if !exit.is_initialized() {
@@ -486,8 +483,10 @@ impl Exit {
 		Ok(())
 	}
 
-	/// Iterates over each registered VTXO and attempts to progress their unilateral exit. Note that
-	/// [Exit::sync] or [Exit::sync_no_progress] should be called before calling this method.
+	/// Iterates over each registered VTXO and attempts to progress their unilateral exit.
+	///
+	/// Initializes any pending exits and refreshes the chain view of exit transactions
+	/// before advancing state.
 	///
 	/// If you need to create CPFP transactions using a BDK-backed wallet, call
 	/// [Exit::exits_needing_cpfp] after this, supply the signed CPFPs via [Exit::provide_cpfp_tx],
@@ -501,6 +500,7 @@ impl Exit {
 		wallet: &Wallet,
 	) -> anyhow::Result<Option<Vec<ExitProgressStatus>>> {
 		let mut guard = self.inner.write().await;
+		guard.refresh_tx_state().await?;
 		let mut exit_vtxos = std::mem::take(&mut guard.exit_vtxos);
 		let mut exit_statuses = Vec::with_capacity(exit_vtxos.len());
 
@@ -550,7 +550,7 @@ impl Exit {
 		wallet: &Wallet,
 	) -> anyhow::Result<()> {
 		let mut guard = self.inner.write().await;
-		guard.sync_no_progress().await?;
+		guard.refresh_tx_state().await?;
 		let mut exit_vtxos = std::mem::take(&mut guard.exit_vtxos);
 		for exit in &mut exit_vtxos {
 			// If the exit is waiting for new blocks, we should trigger an update
@@ -566,13 +566,6 @@ impl Exit {
 		Ok(())
 	}
 
-	/// For use when syncing. Initializes pending exits and syncs confirmed or broadcast child
-	/// transactions. This differs from [Exit::sync] in that it doesn't update the [ExitState]
-	/// of a unilateral exit — that must be done by calling [Exit::progress_exits].
-	pub async fn sync_no_progress(&self) -> anyhow::Result<()> {
-		let mut guard = self.inner.write().await;
-		guard.sync_no_progress().await
-	}
 
 	/// Returns one [ExitCpfpRequest] for each exit transaction that needs a CPFP child.
 	///

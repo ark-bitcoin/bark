@@ -259,8 +259,6 @@ pub async fn exit_progress(
 	onchain_lock.sync(wallet.chain()).await
 		.context("error syncing on-chain wallet")?;
 
-	wallet.exit_mgr().sync_no_progress().await
-		.context("error syncing exit state")?;
 	let result = wallet.exit_mgr().progress_exits_with_bdk(&wallet, &mut *onchain_lock, fee_rate).await
 		.context("error making progress on exit process")?;
 
