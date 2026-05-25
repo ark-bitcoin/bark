@@ -32,6 +32,8 @@ impl Exit {
 			let fees = match req.rbf_requirement {
 				None => MakeCpfpFees::Effective(fee_rate),
 				Some(rbf) => {
+					// Only RBF if we can improve the fee rate; equal or lower rates are rejected
+					// by Bitcoin Core's RBF policy ("new feerate must be strictly greater").
 					if fee_rate <= rbf.min_fee_rate {
 						warn!(
 							"Skipping exit CPFP RBF: requested fee rate {} is not above current package rate {}",
