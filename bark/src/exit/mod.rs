@@ -553,13 +553,10 @@ impl Exit {
 		guard.refresh_tx_state().await?;
 		let mut exit_vtxos = std::mem::take(&mut guard.exit_vtxos);
 		for exit in &mut exit_vtxos {
-			// If the exit is waiting for new blocks, we should trigger an update
-			if exit.state().requires_network_update() {
-				if let Err(e) = exit.progress(
-					wallet, &mut guard.tx_manager, false,
-				).await {
-					error!("Error syncing exit for VTXO {}: {}", exit.id(), e);
-				}
+			if let Err(e) = exit.progress(
+				wallet, &mut guard.tx_manager, false,
+			).await {
+				error!("Error syncing exit for VTXO {}: {}", exit.id(), e);
 			}
 		}
 		guard.exit_vtxos = exit_vtxos;

@@ -14,7 +14,6 @@ use ark::lightning::{Invoice, PaymentHash};
 use ark::vtxo::{VtxoId, VtxoPolicyKind};
 use bark_json::movements::{MovementDestination, MovementStatus, PaymentMethod};
 use bark_json::exit::ExitState;
-use bark_json::exit::states::ExitStartState;
 use bark_json::primitives::VtxoStateInfo;
 use bitcoin_ext::TaprootSpendInfoExt;
 use bitcoin_ext::rpc::BitcoinRpcExt;
@@ -651,9 +650,10 @@ async fn bark_should_exit_a_failed_htlc_out_that_server_refuse_to_revoke() {
 	bark_1.sync().await;
 
 	// Should start an exit
-	assert_eq!(
-		bark_1.list_exits().await[0].state,
-		ExitState::Start(ExitStartState { tip_height: desired_height }),
+	let exit_state = &bark_1.list_exits().await[0].state;
+	assert!(
+		matches!(exit_state, ExitState::Start(_) | ExitState::Processing(_)),
+		"Expected exit to be starting, got {:?}", exit_state,
 	);
 	complete_exit(&ctx, &bark_1).await;
 
@@ -789,9 +789,10 @@ async fn bark_should_exit_a_pending_htlc_out_that_server_refuse_to_revoke() {
 	bark_1.sync().await;
 
 	// Should start an exit
-	assert_eq!(
-		bark_1.list_exits().await[0].state,
-		ExitState::Start(ExitStartState { tip_height: desired_height }),
+	let exit_state = &bark_1.list_exits().await[0].state;
+	assert!(
+		matches!(exit_state, ExitState::Start(_) | ExitState::Processing(_)),
+		"Expected exit to be starting, got {:?}", exit_state,
 	);
 	complete_exit(&ctx, &bark_1).await;
 

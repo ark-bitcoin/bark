@@ -122,24 +122,6 @@ impl ExitState {
 		}
 	}
 
-	/// Indicates whether the state relies on network updates during wallet sync to check whether
-	/// the exit can be spent
-	pub fn requires_network_update(&self) -> bool {
-		match self {
-			// If all transactions are either confirmed or already broadcast we can count Processing
-			// as requiring network updates since we don't need to create more exit packages.
-			ExitState::Processing(s) => s.transactions.iter().all(|s| match s.status {
-				ExitTxStatus::AwaitingConfirmation { .. } => true,
-				ExitTxStatus::Confirmed { .. } => true,
-				_ => false,
-			}),
-			ExitState::AwaitingDelta(_) => true,
-			ExitState::Claimable(_) => true,
-			ExitState::ClaimInProgress(_) => true,
-			_ => false,
-		}
-	}
-
 	pub fn claimable_height(&self) -> Option<BlockHeight> {
 		match self {
 			ExitState::AwaitingDelta(s) => Some(s.claimable_height),

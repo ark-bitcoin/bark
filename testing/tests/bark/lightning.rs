@@ -1590,7 +1590,7 @@ async fn bark_exits_lightning_receive_after_retry_budget_exhausted() {
 	// The HTLC-recv VTXO must have been moved into an on-chain exit.
 	let exits = bark.list_exits().await;
 	assert_eq!(exits.len(), 1, "should have started an exit for the HTLC-recv VTXO");
-	assert!(matches!(exits[0].state, ExitState::Start(_)),
+	assert!(matches!(exits[0].state, ExitState::Start(_) | ExitState::Processing(_)),
 		"exit should be in Start state, got: {:?}", exits[0].state);
 }
 
