@@ -7,6 +7,7 @@ use std::time::UNIX_EPOCH;
 
 use ark::attestations::DelegatedRoundParticipationAttestation;
 use ark::attestations::OffboardRequestAttestation;
+use ark::attestations::VtxoStatusAttestation;
 use ark::rounds::RoundAttemptAttestation;
 use bitcoin::consensus::serialize;
 use bitcoin::Txid;
@@ -30,6 +31,7 @@ use ark::vtxo::Full;
 use ark::vtxo::policy::check_block_height;
 use bitcoin_ext::{BlockDelta, BlockHeight};
 use server_rpc::{self as rpc, protos, RequestExt, TryFromBytes};
+use crate::database::SpendState;
 
 use crate::database::rounds::StoredRoundOutput;
 use crate::round::DelegatedInput;
@@ -48,6 +50,25 @@ use crate::round::RoundInput;
 use crate::rpcserver::macros;
 use crate::telemetry;
 
+
+/// Map an internal [`SpendState`] to the client-facing [`protos::VtxoSpendState`].
+///
+/// Returns `None` for server-internal states (pool, forfeit, connector). A user
+/// can never prove ownership of such a vtxo, so the `get_vtxo_status` endpoint
+/// reports those as not found rather than leaking their existence.
+fn client_spend_state(spend_state: SpendState) -> Option<protos::VtxoSpendState> {
+	match spend_state {
+		SpendState::Spendable => Some(protos::VtxoSpendState::Spendable),
+		SpendState::HtlcRecvUnclaimed => Some(protos::VtxoSpendState::HtlcRecvUnclaimed),
+		SpendState::Spent => Some(protos::VtxoSpendState::Spent),
+		SpendState::Unclaimed => Some(protos::VtxoSpendState::Unclaimed),
+		SpendState::Unregistered => Some(protos::VtxoSpendState::Unregistered),
+		SpendState::Pool
+		| SpendState::RoundForfeit
+		| SpendState::OffboardForfeit
+		| SpendState::OffboardConnector => None,
+	}
+}
 
 #[async_trait]
 impl rpc::server::ArkService for Server {
@@ -148,6 +169,39 @@ impl rpc::server::ArkService for Server {
 		};
 
 		Ok(tonic::Response::new(response))
+	}
+
+	#[tracing::instrument(skip(self, req))]
+	async fn get_vtxo_status(
+		&self,
+		req: tonic::Request<protos::GetVtxoStatusRequest>,
+	) -> Result<tonic::Response<protos::GetVtxoStatusResponse>, tonic::Status> {
+		let req = req.into_inner();
+
+		let id = VtxoId::from_bytes(req.vtxo_id)?;
+		let attestation = VtxoStatusAttestation::from_bytes(&req.attestation)?;
+
+		let vtxo_state = self.db.read(async |t| t.get_server_vtxo_by_id(id).await).await
+			.to_status()?;
+
+		let spend_state = vtxo_state.spend_state;
+		let user_vtxo = match vtxo_state.vtxo.try_into_user_vtxo() {
+			Ok(v) => v,
+			Err(_) => {
+				macros::not_found!([id], "VTXO not found");
+			},
+		};
+
+		attestation.verify(&user_vtxo)
+			.badarg("invalid VTXO status attestation")?;
+
+		let Some(spend_state) = client_spend_state(spend_state) else {
+			macros::not_found!([id], "VTXO not found");
+		};
+
+		Ok(tonic::Response::new(protos::GetVtxoStatusResponse {
+			spend_state: spend_state as i32,
+		}))
 	}
 
 	// boarding
@@ -787,4 +841,26 @@ pub async fn run_rpc_server(srv: Arc<Server>) -> anyhow::Result<()> {
 	info!("Terminated public gRPC service on address {}", addr);
 
 	Ok(())
+}
+
+#[cfg(test)]
+mod test {
+	use super::*;
+
+	#[test]
+	fn client_spend_state_collapses_server_internal_states() {
+		// Client-relevant states map to a concrete spend state.
+		assert_eq!(client_spend_state(SpendState::Spendable), Some(protos::VtxoSpendState::Spendable));
+		assert_eq!(client_spend_state(SpendState::HtlcRecvUnclaimed), Some(protos::VtxoSpendState::HtlcRecvUnclaimed));
+		assert_eq!(client_spend_state(SpendState::Spent), Some(protos::VtxoSpendState::Spent));
+		assert_eq!(client_spend_state(SpendState::Unclaimed), Some(protos::VtxoSpendState::Unclaimed));
+		assert_eq!(client_spend_state(SpendState::Unregistered), Some(protos::VtxoSpendState::Unregistered));
+
+		// Server-internal states (pool, forfeit, connector) collapse to `None`
+		// so the endpoint reports them as not found.
+		assert_eq!(client_spend_state(SpendState::Pool), None);
+		assert_eq!(client_spend_state(SpendState::RoundForfeit), None);
+		assert_eq!(client_spend_state(SpendState::OffboardForfeit), None);
+		assert_eq!(client_spend_state(SpendState::OffboardConnector), None);
+	}
 }
