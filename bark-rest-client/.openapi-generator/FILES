@@ -95,6 +95,7 @@ docs/ExitTxStatusOneOf4.md
 docs/ExitsApi.md
 docs/FeeEstimateQuery.md
 docs/FeeEstimateResponse.md
+docs/FeeInfo.md
 docs/FeeSchedule.md
 docs/FeesApi.md
 docs/HistoryApi.md
@@ -269,6 +270,7 @@ src/models/exit_tx_status_one_of_3.rs
 src/models/exit_tx_status_one_of_4.rs
 src/models/fee_estimate_query.rs
 src/models/fee_estimate_response.rs
+src/models/fee_info.rs
 src/models/fee_schedule.rs
 src/models/import_vtxo_request.rs
 src/models/internal_server_error.rs

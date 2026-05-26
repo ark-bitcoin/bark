@@ -4,6 +4,7 @@
 
 Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
+**fee_info** | Option<[**models::FeeInfo**](FeeInfo.md)> |  | [optional]
 **info** | [**models::TransactionInfo**](TransactionInfo.md) |  | 
 **origin** | [**models::ExitTxOrigin**](ExitTxOrigin.md) |  | 
 

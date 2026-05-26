@@ -2911,6 +2911,16 @@
           "origin"
         ],
         "properties": {
+          "fee_info": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/FeeInfo"
+              }
+            ]
+          },
           "info": {
             "$ref": "#/components/schemas/TransactionInfo"
           },
@@ -4067,30 +4077,9 @@
           {
             "type": "object",
             "required": [
-              "fee_rate_sat_per_kvb",
-              "fee_rate",
-              "total_fee",
               "type"
             ],
             "properties": {
-              "fee_rate": {
-                "type": "integer",
-                "format": "int64",
-                "deprecated": true,
-                "minimum": 0
-              },
-              "fee_rate_sat_per_kvb": {
-                "type": "integer",
-                "format": "int64",
-                "description": "This is the effective fee rate of the transaction (including CPFP ancestors)",
-                "minimum": 0
-              },
-              "total_fee": {
-                "type": "integer",
-                "format": "int64",
-                "description": "This includes the fees of the CPFP ancestors",
-                "minimum": 0
-              },
               "type": {
                 "type": "string",
                 "enum": [
@@ -4269,6 +4258,28 @@
               "type": "string"
             },
             "description": "The VTXOs that would be spent for this operation"
+          }
+        }
+      },
+      "FeeInfo": {
+        "type": "object",
+        "description": "Contains the data required to bump the fee for a given transaction (including ancestors).",
+        "required": [
+          "fee_rate_sat_per_kvb",
+          "total_fee_sat"
+        ],
+        "properties": {
+          "fee_rate_sat_per_kvb": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The effective fee rate of the transaction (including unconfirmed CPFP ancestors), in\nsats per kvB. `kvb` matches the unit used elsewhere in `bark-json`\n(e.g. `offboard_feerate_sat_per_kvb`).",
+            "minimum": 0
+          },
+          "total_fee_sat": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Sum of the transaction's own fee plus the fee of each of its unconfirmed ancestors.",
+            "minimum": 0
           }
         }
       },
