@@ -941,7 +941,7 @@ async fn exit_spend_anchor_single_utxo_required() {
 	complete_exit(&ctx, &bark).await;
 
 	// Verify that 1 UTXO + the P2A output are used
-	let list = bark.list_exits_with_details().await;
+	let list = bark.list_exits_with_txs().await;
 	assert_eq!(list.len(), 1);
 	let transactions = &list[0].transactions;
 	assert_eq!(transactions.len(), 1);
@@ -974,7 +974,7 @@ async fn exit_spend_anchor_multiple_utxos_required() {
 	complete_exit(&ctx, &bark).await;
 
 	// Verify that 3 UTXOs + the P2A output are used
-	let list = bark.list_exits_with_details().await;
+	let list = bark.list_exits_with_txs().await;
 	assert_eq!(list.len(), 1);
 	let transactions = &list[0].transactions;
 	assert_eq!(transactions.len(), 1);
@@ -1028,7 +1028,7 @@ async fn exit_oor_ping_pong_then_rbf_tx() {
 		// from the onchain wallet and those broadcast by a third party. Else the syncing process
 		// will download a lower fee-rate package from the mempool until esplora syncs the higher
 		// fee-rate package.
-		let child_txs = primary.list_exits_with_details_no_sync().await.into_iter().flat_map(|s| {
+		let child_txs = primary.list_exits_with_txs_no_sync().await.into_iter().flat_map(|s| {
 			s.transactions.into_iter().filter_map(|package| package.child)
 		});
 		ctx.await_transactions_across_nodes(
