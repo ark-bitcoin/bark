@@ -11,7 +11,7 @@ Method | HTTP request | Description
 [**create_wallet**](WalletApi.md#create_wallet) | **POST** /api/v1/wallet/create | Create a wallet
 [**get_vtxo**](WalletApi.md#get_vtxo) | **GET** /api/v1/wallet/vtxos/{id} | Get VTXO detail
 [**get_vtxo_encoded**](WalletApi.md#get_vtxo_encoded) | **GET** /api/v1/wallet/vtxos/{id}/encoded | Get encoded VTXO
-[**history**](WalletApi.md#history) | **GET** /api/v1/wallet/history | Get wallet history
+[**history**](WalletApi.md#history) | **GET** /api/v1/wallet/history | Get wallet history (deprecated)
 [**import_vtxo**](WalletApi.md#import_vtxo) | **POST** /api/v1/wallet/import-vtxo | Import a VTXO
 [**movements**](WalletApi.md#movements) | **GET** /api/v1/wallet/movements | List movements (deprecated)
 [**next_round**](WalletApi.md#next_round) | **GET** /api/v1/wallet/next-round | Get next round time
@@ -233,9 +233,9 @@ Name | Type | Description  | Required | Notes
 ## history
 
 > Vec<models::Movement> history()
-Get wallet history
+Get wallet history (deprecated)
 
-Returns the full history of wallet movements ordered from newest to oldest. A movement represents any wallet operation that affects VTXOs—an arkoor send or receive, Lightning send or receive, board, offboard, or refresh. Each entry records which VTXOs were consumed and produced, the effective balance change (if any), fees paid, and the operation status.
+Deprecated: use `GET /api/v1/history` instead.
 
 ### Parameters
 

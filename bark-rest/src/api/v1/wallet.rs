@@ -477,30 +477,20 @@ pub async fn movements(State(state): State<ServerState>) -> HandlerResult<Json<V
 #[utoipa::path(
 	get,
 	path = "/history",
-	summary = "Get wallet history",
+	summary = "Get wallet history (deprecated)",
 	responses(
 		(status = 200, description = "Returns the wallet history", body = Vec<bark_json::movements::Movement>),
 		(status = 500, description = "Internal server error", body = error::InternalServerError)
 	),
-	description = "Returns the full history of wallet movements ordered from newest to \
-		oldest. A movement represents any wallet operation that affects VTXOs—an arkoor \
-		send or receive, Lightning send or receive, board, offboard, or refresh. Each \
-		entry records which VTXOs were consumed and produced, the effective balance \
-		change (if any), fees paid, and the operation status.",
+	description = "Deprecated: use `GET /api/v1/history` instead.",
 	tag = "wallet"
 )]
 #[debug_handler]
-pub async fn history(State(state): State<ServerState>) -> HandlerResult<Json<Vec<bark_json::movements::Movement>>> {
-	let wallet = state.require_wallet()?;
-	let movements = wallet.history().await.context("Failed to get movements")?;
-
-	let json_movements = movements
-		.into_iter()
-		.map(|m| bark_json::movements::Movement::try_from(m)
-			.context("Failed to convert movement to JSON")
-		).collect::<Result<Vec<_>, _>>()?;
-
-	Ok(axum::Json(json_movements))
+#[deprecated(note = "Use `GET /api/v1/history` instead")]
+pub async fn history(
+	state: State<ServerState>,
+) -> HandlerResult<Json<Vec<bark_json::movements::Movement>>> {
+	crate::api::v1::history::list(state).await
 }
 
 #[utoipa::path(

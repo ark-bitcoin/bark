@@ -1,6 +1,3 @@
-use std::collections::HashMap;
-use std::hash::Hash;
-
 use bdk_esplora::esplora_client::Amount;
 use bitcoin::SignedAmount;
 use chrono::DateTime;
@@ -38,7 +35,7 @@ pub struct MovementUpdate {
 	consumed_vtxos: Option<UpdateMethod<Vec<VtxoId>>>,
 	produced_vtxos: Option<UpdateMethod<Vec<VtxoId>>>,
 	exited_vtxos: Option<UpdateMethod<Vec<VtxoId>>>,
-	metadata: Option<UpdateMethod<HashMap<String, serde_json::Value>>>,
+	metadata: Option<UpdateMethod<serde_json::Map<String, serde_json::Value>>>,
 }
 
 impl MovementUpdate {
@@ -286,15 +283,15 @@ impl<T: PartialEq + Eq> UpdateMethod<Vec<T>> {
 	}
 }
 
-impl<K: Eq + Hash, V> UpdateMethod<HashMap<K, V>> {
-	pub fn apply_to(self, target: &mut HashMap<K, V>) {
+impl UpdateMethod<serde_json::Map<String, serde_json::Value>> {
+	pub fn apply_to(self, target: &mut serde_json::Map<String, serde_json::Value>) {
 		match self {
 			UpdateMethod::Merge(map) => target.extend(map),
 			UpdateMethod::Replace(map) => *target = map,
 		}
 	}
 
-	pub fn insert(&mut self, key_pairs: impl IntoIterator<Item = (K, V)>) {
+	pub fn insert(&mut self, key_pairs: impl IntoIterator<Item = (String, serde_json::Value)>) {
 		let map = match self {
 			UpdateMethod::Merge(map) => map,
 			UpdateMethod::Replace(map) => map,
