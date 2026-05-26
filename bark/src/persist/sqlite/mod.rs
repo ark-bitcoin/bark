@@ -33,10 +33,7 @@ use crate::exit::{ExitStateKind, ExitTxOrigin};
 use crate::movement::{Movement, MovementId, MovementStatus, MovementSubsystem, PaymentMethod};
 use crate::movement::update::MovementUpdate;
 use crate::persist::{BarkPersister, RoundStateId, StoredRoundState, Unlocked};
-use crate::persist::models::{
-	PaidInvoice, PendingOffboard, SettledLightningReceive,
-	StoredExit,
-};
+use crate::persist::models::{PaidInvoice, SettledLightningReceive, StoredExit};
 use crate::round::RoundState;
 use crate::vtxo::{VtxoState, VtxoStateKind, WalletVtxo};
 
@@ -441,29 +438,6 @@ impl BarkPersister for SqliteClient {
 		Ok(())
 	}
 
-	async fn store_pending_offboard(
-		&self,
-		pending: &PendingOffboard,
-	) -> anyhow::Result<()> {
-		let mut conn = self.connect()?;
-		let tx = conn.transaction()?;
-		query::store_pending_offboard(&tx, pending)?;
-		tx.commit()?;
-		Ok(())
-	}
-
-	async fn get_pending_offboards(&self) -> anyhow::Result<Vec<PendingOffboard>> {
-		let conn = self.connect()?;
-		query::get_all_pending_offboards(&conn)
-	}
-
-	async fn remove_pending_offboard(&self, movement_id: MovementId) -> anyhow::Result<()> {
-		let mut conn = self.connect()?;
-		let tx = conn.transaction()?;
-		query::remove_pending_offboard(&tx, movement_id)?;
-		tx.commit()?;
-		Ok(())
-	}
 }
 
 #[cfg(any(test, doc))]

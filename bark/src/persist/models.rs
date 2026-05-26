@@ -163,26 +163,6 @@ pub struct PendingBoard {
 	pub movement_id: MovementId,
 }
 
-/// Persisted representation of a pending offboard.
-///
-/// Created when an offboard swap is performed, tracked until the
-/// offboard transaction confirms on-chain.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PendingOffboard {
-	/// The [MovementId] associated with this offboard.
-	pub movement_id: MovementId,
-	/// The txid of the offboard transaction.
-	pub offboard_txid: bitcoin::Txid,
-	/// The full signed offboard transaction.
-	pub offboard_tx: Transaction,
-	/// The VTXOs consumed by this offboard.
-	pub vtxo_ids: Vec<VtxoId>,
-	/// The destination address of the offboard.
-	pub destination: String,
-	/// When this pending offboard was created.
-	pub created_at: chrono::DateTime<chrono::Local>,
-}
-
 /// Replay-protection record for a fully-settled outgoing lightning send.
 ///
 /// Written when a payment is acknowledged with a valid preimage; never

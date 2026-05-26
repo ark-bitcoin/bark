@@ -72,8 +72,7 @@ use crate::movement::{
 use crate::movement::update::MovementUpdate;
 use crate::persist::BarkPersister;
 use crate::persist::models::{
-	PaidInvoice, PendingOffboard,
-	RoundStateId, SerdeExitChildTx, SerdeRoundState, SerdeVtxo, SerdeVtxoKey,
+	PaidInvoice, RoundStateId, SerdeExitChildTx, SerdeRoundState, SerdeVtxo, SerdeVtxoKey,
 	SettledLightningReceive, StoredExit, StoredRoundState, Unlocked, wallet_vtxo_from_full,
 };
 use crate::round::RoundState;
@@ -101,7 +100,10 @@ pub mod partition {
 	pub const EXIT_VTXO: u8 = 9;
 	pub const EXIT_CHILD_TX: u8 = 10;
 	pub const MAILBOX_CHECKPOINT: u8 = 11;
-	pub const PENDING_OFFBOARD: u8 = 12;
+	/// was used by the now-removed `PENDING_OFFBOARD`; superseded by
+	/// [`WALLET_ACTION_CHECKPOINT`]. Do not reuse.
+	#[allow(unused)]
+	pub const LEGACY_PENDING_OFFBOARD: u8 = 12;
 	/// An index table for payment method to movement
 	pub const MOVEMENT_PAYMENT_METHOD: u8 = 13;
 	/// Per-action checkpoint payloads keyed by [crate::actions::WalletActionId].
@@ -987,28 +989,6 @@ impl <S: StorageAdaptor> BarkPersister for StorageAdaptorWrapper<S> {
 		}
 	}
 
-
-	async fn store_pending_offboard(&self, pending: &PendingOffboard) -> anyhow::Result<()> {
-		let record = Record::from_data(
-			partition::PENDING_OFFBOARD,
-			&pending.movement_id.to_bytes(),
-			None,
-			pending,
-		)?;
-		self.inner.write().await.put(record).await
-	}
-
-	async fn get_pending_offboards(&self) -> anyhow::Result<Vec<PendingOffboard>> {
-		let records = self.inner.read().await
-			.get_all(partition::PENDING_OFFBOARD).await?;
-		records.into_iter().map(|r| r.to_data()).collect()
-	}
-
-	async fn remove_pending_offboard(&self, movement_id: MovementId) -> anyhow::Result<()> {
-		self.inner.write().await
-			.delete(partition::PENDING_OFFBOARD, &movement_id.to_bytes()).await?;
-		Ok(())
-	}
 
 	async fn store_exit_vtxo_entry(&self, exit: &StoredExit) -> anyhow::Result<()> {
 		let record = Record::from_data(
