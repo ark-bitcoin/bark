@@ -9,7 +9,7 @@ use ark::vtxo::Full;
 use ark::Vtxo;
 use bitcoin_ext::{BlockHeight, TransactionExt, TxStatus, DEEPLY_CONFIRMED};
 
-use crate::chain::ChainSource;
+use crate::chain::{BroadcastError, ChainSource};
 use crate::exit::models::{ChildTransactionInfo, ExitChildStatus, ExitError, ExitTransactionPackage, ExitTxOrigin, TransactionInfo};
 use crate::persist::BarkPersister;
 
@@ -328,6 +328,43 @@ impl ExitTransactionManager {
 			} else {
 				None
 			};
+
+			// If the chain reports a different *unconfirmed* spending tx than our local
+			// wallet-built child, the chain may simply be lagging behind our broadcast
+			// (esplora-electrs in particular indexes new mempool txs out-of-band), or we
+			// may have been RBF'd. Resolve by trying to (re-)broadcast our package: if
+			// Bitcoin Core accepts it — or it's already known to the mempool — our child
+			// is the live one and we keep it. If the broadcast is rejected (e.g. our fee
+			// rate doesn't meet RBF, or our inputs are gone), the chain's tx wins and we
+			// fall through to download it.
+			let local_is_wallet = guard.child.as_ref()
+				.is_some_and(|c| matches!(c.origin, ExitTxOrigin::Wallet { .. }));
+			if local_is_wallet && status.confirmed_in().is_none() {
+				let local_child_txid = guard.child.as_ref().unwrap().info.txid;
+				let broadcast_res = self.chain_source.broadcast_package(&[
+					&guard.exit.tx, &guard.child.as_ref().unwrap().info.tx,
+				]).await;
+				match broadcast_res {
+					Ok(()) => {
+						info!("Re-broadcast wallet child {} for exit {} succeeded — \
+							keeping it over chain-reported tx {}",
+							local_child_txid, outpoint.txid, txid,
+						);
+						return Ok(status.clone());
+					},
+					Err(BroadcastError::AlreadyKnown) => {
+						trace!("Wallet child {} already in mempool for exit {} — keeping it",
+							local_child_txid, outpoint.txid,
+						);
+						return Ok(status.clone());
+					},
+					Err(e) => {
+						info!("Accepting chain's tx {}, wallet child {} for exit {} rejected {:#}",
+							txid, local_child_txid, outpoint.txid, e,
+						);
+					},
+				}
+			}
 
 			// We should download a newer transaction if necessary
 			let tx = if current_txid.is_none() || current_txid.is_some_and(|t| t != *txid) {

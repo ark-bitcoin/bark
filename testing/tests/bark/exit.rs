@@ -1017,9 +1017,6 @@ async fn exit_oor_ping_pong_then_rbf_tx() {
 	bark1.sync().await;
 	bark2.sync().await;
 
-	ctx.refresh_all(&srv, &[&bark1, &bark2]).await;
-	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
-
 	// Exit the funds
 	srv.stop().await.unwrap();
 	bark1.start_exit_all().await;
