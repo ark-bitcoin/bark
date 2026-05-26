@@ -65,6 +65,7 @@ use ark::{Vtxo, VtxoId};
 use ark::vtxo::Full;
 use bitcoin_ext::BlockDelta;
 
+use crate::actions::{WalletActionCheckpoint, WalletActionId};
 use crate::exit::ExitTxOrigin;
 use crate::movement::{
 	Movement, MovementId, MovementStatus, MovementSubsystem, PaymentMethod,
@@ -97,6 +98,8 @@ pub mod partition {
 	pub const PENDING_OFFBOARD: u8 = 12;
 	/// An index table for payment method to movement
 	pub const MOVEMENT_PAYMENT_METHOD: u8 = 13;
+	/// Per-action checkpoint payloads keyed by [WalletActionId].
+	pub const WALLET_ACTION_CHECKPOINT: u8 = 14;
 
 	pub const LAST_IDS: u8 = u8::MAX;
 }
@@ -594,7 +597,10 @@ impl <S: StorageAdaptor> BarkPersister for StorageAdaptorWrapper<S> {
 			update_vtxo_state_checked(
 				&mut *lock,
 				vtxo.id(),
-				VtxoState::Locked { movement_id: round_state.movement_id },
+				VtxoState::Locked {
+					holder: round_state.movement_id
+						.map(|id| crate::vtxo::VtxoLockHolder::Movement { id }),
+				},
 				allowed_states,
 			).await?;
 		}
@@ -927,6 +933,49 @@ impl <S: StorageAdaptor> BarkPersister for StorageAdaptorWrapper<S> {
 			Some(record) => Ok(Some(record.to_data()?)),
 			None => Ok(None),
 		}
+	}
+
+	async fn upsert_wallet_action_checkpoint(
+		&self,
+		id: &WalletActionId,
+		checkpoint: &WalletActionCheckpoint,
+	) -> anyhow::Result<()> {
+		let record = Record::from_data(
+			partition::WALLET_ACTION_CHECKPOINT,
+			id.as_bytes(),
+			None,
+			checkpoint,
+		)?;
+		self.inner.write().await.put(record).await
+	}
+
+	async fn get_wallet_action_checkpoint(
+		&self,
+		id: &WalletActionId,
+	) -> anyhow::Result<Option<WalletActionCheckpoint>> {
+		match self.inner.read().await
+			.get(partition::WALLET_ACTION_CHECKPOINT, id.as_bytes()).await?
+		{
+			Some(record) => Ok(Some(record.to_data()?)),
+			None => Ok(None),
+		}
+	}
+
+	async fn get_all_wallet_action_checkpoints(
+		&self,
+	) -> anyhow::Result<Vec<WalletActionCheckpoint>> {
+		let records = self.inner.read().await
+			.get_all(partition::WALLET_ACTION_CHECKPOINT).await?;
+		records.into_iter().map(|r| r.to_data()).collect()
+	}
+
+	async fn remove_wallet_action_checkpoint(
+		&self,
+		id: &WalletActionId,
+	) -> anyhow::Result<()> {
+		self.inner.write().await
+			.delete(partition::WALLET_ACTION_CHECKPOINT, id.as_bytes()).await?;
+		Ok(())
 	}
 
 	async fn store_lightning_receive(

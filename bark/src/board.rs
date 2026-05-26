@@ -249,7 +249,10 @@ impl Wallet {
 				.produced_vtxo(&vtxo)
 				.metadata(BoardMovement::metadata(utxo, onchain_fee)),
 		).await?;
-		self.store_locked_vtxos([&vtxo], Some(movement_id)).await?;
+		self.store_locked_vtxos(
+			[&vtxo],
+			Some(crate::vtxo::VtxoLockHolder::Movement { id: movement_id }),
+		).await?;
 
 		let tx = board_psbt.extract_tx()?;
 		self.inner.db.store_pending_board(&vtxo, &tx, movement_id).await?;

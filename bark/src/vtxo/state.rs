@@ -21,7 +21,29 @@ use bitcoin::Weight;
 
 use ark::Vtxo;
 use ark::vtxo::{Bare, Full, VtxoRef};
+
+use crate::actions::WalletActionId;
 use crate::movement::MovementId;
+
+/// What kind of entity holds a [VtxoState::Locked] reservation.
+///
+/// The wallet's invariant is "every vtxo lock is owned by exactly one
+/// operation." For subsystems modelled as a [WalletAction] (today: the
+/// lightning send), that's an `Action(id)`. For subsystems that still
+/// run pre-action machinery (round, offboard, board, lightning receive)
+/// the holder is the operation's movement, captured as
+/// `Movement(MovementId)`. As those subsystems get converted to actions,
+/// new variants land here and the migration from `Movement` happens
+/// per-subsystem.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "kebab-case")]
+pub enum VtxoLockHolder {
+	/// A [WalletAction] checkpointed in `bark_wallet_action_checkpoint`.
+	Action { id: WalletActionId },
+	/// A pre-action subsystem (round, offboard, board, lightning
+	/// receive). The movement is used as a stable handle.
+	Movement { id: MovementId },
+}
 
 const SPENDABLE: &'static str = "Spendable";
 const LOCKED: &'static str = "Locked";
@@ -90,10 +112,14 @@ impl fmt::Debug for VtxoStateKind {
 pub enum VtxoState {
 	/// The [Vtxo] is available and can be spent in a future round.
 	Spendable,
-	/// The [Vtxo] is currently locked in an action.
+	/// The [Vtxo] is currently locked by an operation.
+	///
+	/// `holder` is `None` for the narrow window between creating a
+	/// fresh locked vtxo and pinning it to a specific operation (e.g.
+	/// during the offboard's preparatory arkoor). Production code
+	/// should set the holder explicitly whenever it knows the owner.
 	Locked {
-		/// The ID of the associated [Movement](crate::movement::Movement) that locked this VTXO.
-		movement_id: Option<MovementId>,
+		holder: Option<VtxoLockHolder>,
 	},
 	/// The [Vtxo] has been consumed.
 	Spent,

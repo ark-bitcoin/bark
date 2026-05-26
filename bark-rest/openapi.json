@@ -5586,6 +5586,10 @@
               "type"
             ],
             "properties": {
+              "action_id": {
+                "type": "string",
+                "description": "The action that locked this VTXO, if any."
+              },
               "movement_id": {
                 "type": "integer",
                 "format": "int32",

@@ -38,6 +38,7 @@ use ark::vtxo::Full;
 use bitcoin_ext::BlockDelta;
 
 use crate::WalletProperties;
+use crate::actions::{WalletActionCheckpoint, WalletActionId};
 use crate::exit::ExitTxOrigin;
 use crate::persist::models::{
 	LightningReceive, LightningSend, PendingBoard, RoundStateId, StoredExit, StoredRoundState,
@@ -526,6 +527,45 @@ pub trait BarkPersister: Send + Sync + 'static {
 	/// Errors:
 	/// - Returns an error if the lookup fails.
 	async fn get_lightning_send(&self, payment_hash: PaymentHash) -> anyhow::Result<Option<LightningSend>>;
+
+	/// Persist or overwrite a wallet action checkpoint.
+	///
+	/// Parameters:
+	/// - id: stable action identifier (e.g. payment hash hex for a lightning send).
+	/// - checkpoint: the payload to persist; replaces any existing row with the same id.
+	///
+	/// Errors:
+	/// - Returns an error if the write fails.
+	async fn upsert_wallet_action_checkpoint(
+		&self,
+		id: &WalletActionId,
+		checkpoint: &WalletActionCheckpoint,
+	) -> anyhow::Result<()>;
+
+	/// Fetch a wallet action checkpoint by id.
+	///
+	/// Returns:
+	/// - `Ok(Some(_))` if a row exists, `Ok(None)` otherwise.
+	///
+	/// Errors:
+	/// - Returns an error if the lookup or deserialization fails.
+	async fn get_wallet_action_checkpoint(
+		&self,
+		id: &WalletActionId,
+	) -> anyhow::Result<Option<WalletActionCheckpoint>>;
+
+	/// Fetch every persisted wallet action checkpoint, oldest first.
+	///
+	/// Used by the periodic sync to find work to re-drive.
+	async fn get_all_wallet_action_checkpoints(
+		&self,
+	) -> anyhow::Result<Vec<WalletActionCheckpoint>>;
+
+	/// Remove a wallet action checkpoint by id. No-op if absent.
+	async fn remove_wallet_action_checkpoint(
+		&self,
+		id: &WalletActionId,
+	) -> anyhow::Result<()>;
 
 	/// Store an incoming Lightning receive record.
 	///

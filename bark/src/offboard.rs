@@ -291,7 +291,9 @@ impl Wallet {
 				)])
 				.sent_to([MovementDestination::bitcoin(destination.clone(), amount)])
 		).await?;
-		let state = VtxoState::Locked { movement_id: Some(movement.id()) };
+		let state = VtxoState::Locked {
+			holder: Some(crate::vtxo::VtxoLockHolder::Movement { id: movement.id() }),
+		};
 		self.set_vtxo_states(&arkoor.created, &state, &[]).await
 			.context("error setting movement id on locked VTXOs")?;
 
@@ -401,7 +403,7 @@ impl Wallet {
 				.metadata(OffboardMovement::metadata(&signed_offboard_tx)),
 		).await?;
 
-		self.lock_vtxos(&vtxos, Some(movement_id)).await?;
+		self.lock_vtxos(&vtxos, Some(crate::vtxo::VtxoLockHolder::Movement { id: movement_id })).await?;
 
 		if self.inner.config.offboard_required_confirmations == 0 {
 			// No confirmation required — mark VTXOs as spent and succeed immediately

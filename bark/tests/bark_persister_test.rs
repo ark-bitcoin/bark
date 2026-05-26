@@ -23,6 +23,7 @@ use ark::lightning::{Invoice, PaymentHash, Preimage};
 use bitcoin_ext::{BlockDelta, BlockRef};
 
 use bark::{WalletProperties, WalletVtxo};
+use bark::actions::{WalletActionCheckpoint, WalletActionId};
 use bark::exit::{ExitState, ExitClaimableState, ExitTxOrigin};
 use bark::movement::{
 	Movement, MovementDestination, MovementId, MovementStatus, MovementSubsystem,
@@ -116,7 +117,7 @@ impl BarkPersister for Dummy {
 		Ok(Vec::<WalletVtxo>::from([WalletVtxo {
 			vtxo: Vtxo::deserialize(&[])?,
 			state: VtxoState::Locked {
-				movement_id: Some(MovementId::new(0)),
+				holder: Some(bark::vtxo::VtxoLockHolder::Movement { id: MovementId::new(0) }),
 			},
 			exit_depth: 0,
 			exit_tx_weight: bitcoin::Weight::ZERO,
@@ -196,6 +197,34 @@ impl BarkPersister for Dummy {
 
 	async fn get_lightning_send(&self, _payment_hash: PaymentHash) -> anyhow::Result<Option<LightningSend>> {
 		Ok(Some(dummy_lightning_send()))
+	}
+
+	async fn upsert_wallet_action_checkpoint(
+		&self,
+		_id: &WalletActionId,
+		_checkpoint: &WalletActionCheckpoint,
+	) -> anyhow::Result<()> {
+		Ok(())
+	}
+
+	async fn get_wallet_action_checkpoint(
+		&self,
+		_id: &WalletActionId,
+	) -> anyhow::Result<Option<WalletActionCheckpoint>> {
+		Ok(None)
+	}
+
+	async fn get_all_wallet_action_checkpoints(
+		&self,
+	) -> anyhow::Result<Vec<WalletActionCheckpoint>> {
+		Ok(vec![])
+	}
+
+	async fn remove_wallet_action_checkpoint(
+		&self,
+		_id: &WalletActionId,
+	) -> anyhow::Result<()> {
+		Ok(())
 	}
 
 	async fn store_lightning_receive(

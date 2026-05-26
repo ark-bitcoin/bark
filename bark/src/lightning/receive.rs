@@ -435,7 +435,10 @@ impl Wallet {
 					),
 			).await?
 		};
-		self.store_locked_vtxos(&vtxos, Some(movement_id)).await?;
+		self.store_locked_vtxos(
+			&vtxos,
+			Some(crate::vtxo::VtxoLockHolder::Movement { id: movement_id }),
+		).await?;
 
 		let vtxo_ids = vtxos.iter().map(|v| v.id()).collect::<Vec<_>>();
 		self.inner.db.update_lightning_receive(payment_hash, &vtxo_ids, movement_id).await?;

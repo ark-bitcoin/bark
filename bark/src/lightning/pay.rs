@@ -21,6 +21,7 @@ use crate::movement::{MovementDestination, MovementStatus, PaymentMethod};
 use crate::movement::update::MovementUpdate;
 use crate::persist::models::LightningSend;
 use crate::subsystem::{LightningMovement, LightningSendMovement, Subsystem};
+use crate::vtxo::VtxoLockHolder;
 
 const LIGHTNING_PAY_LOCK_PREFIX: &str = "lightning_pay";
 
@@ -674,7 +675,9 @@ impl Wallet {
 				.sent_to([MovementDestination::new(original_payment_method, payment_amount)])
 				.metadata(LightningMovement::metadata(invoice.payment_hash(), &htlc_vtxos, None))
 		).await?;
-		self.store_locked_vtxos(&htlc_vtxos, Some(movement_id)).await?;
+
+		let holder = VtxoLockHolder::Movement { id: movement_id };
+		self.store_locked_vtxos(&htlc_vtxos, Some(holder)).await?;
 		self.mark_vtxos_as_spent(&input_ids).await?;
 
 		// Validate the change vtxo. It has the same chain anchor as the last input.
