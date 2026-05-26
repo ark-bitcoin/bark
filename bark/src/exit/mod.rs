@@ -117,10 +117,10 @@ pub(crate) mod progress;
 pub(crate) mod transaction_manager;
 
 pub use self::models::{
-	ExitCpfpRequest, ExitTransactionPackage, RbfRequirement, TransactionInfo, ChildTransactionInfo,
-	ExitError, ExitState, ExitTx, ExitTxStatus, ExitTxOrigin, ExitStartState, ExitProcessingState,
-	ExitAwaitingDeltaState, ExitClaimableState, ExitClaimInProgressState, ExitClaimedState,
-	ExitProgressStatus, ExitTransactionStatus,
+	ExitCpfpRequest, ExitTransactionPackage, FeeInfo, RbfRequirement, TransactionInfo,
+	ChildTransactionInfo, ExitError, ExitState, ExitTx, ExitTxStatus, ExitTxOrigin, ExitStartState,
+	ExitProcessingState, ExitAwaitingDeltaState, ExitClaimableState, ExitClaimInProgressState,
+	ExitClaimedState, ExitProgressStatus, ExitTransactionStatus,
 };
 pub use self::vtxo::ExitVtxo;
 
@@ -578,11 +578,21 @@ impl Exit {
 			for tx in &s.transactions {
 				let rbf_requirement = match &tx.status {
 					ExitTxStatus::AwaitingCpfpBroadcast => None,
-					ExitTxStatus::AwaitingConfirmation { origin: ExitTxOrigin::Mempool { fee_rate, total_fee }, .. } => {
-						Some(RbfRequirement {
-							min_fee_rate: *fee_rate,
-							current_package_fee: *total_fee,
-						})
+					ExitTxStatus::AwaitingConfirmation { origin: ExitTxOrigin::Mempool, .. } => {
+						// Read mempool RBF info from the transaction manager; fee info is
+						// tracked on the child independently of its origin. If we don't have
+						// it yet (e.g. ancestor info call hasn't run), skip this round — the
+						// next sync will populate it.
+						match guard.tx_manager.get_child_status(tx.txid).await {
+							Ok(Some(c)) => match c.fee_info {
+								Some(fi) => Some(RbfRequirement {
+									min_fee_rate: fi.fee_rate,
+									current_package_fee: fi.total_fee,
+								}),
+								None => continue,
+							},
+							_ => continue,
+						}
 					},
 					_ => continue,
 				};

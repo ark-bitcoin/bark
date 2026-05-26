@@ -3,7 +3,10 @@ mod error;
 mod package;
 mod states;
 
-pub use self::package::{ExitCpfpRequest, ExitTransactionPackage, RbfRequirement, TransactionInfo, ChildTransactionInfo};
+pub use self::package::{
+	ChildTransactionInfo, ExitCpfpRequest, ExitTransactionPackage, FeeInfo, RbfRequirement,
+	TransactionInfo,
+};
 pub use self::error::ExitError;
 pub use self::states::{
 	ExitTx, ExitTxStatus, ExitTxOrigin, ExitStartState, ExitProcessingState, ExitAwaitingDeltaState,
@@ -159,4 +162,5 @@ pub struct ExitChildStatus {
 	pub txid: Txid,
 	pub status: TxStatus,
 	pub origin: ExitTxOrigin,
+	pub fee_info: Option<FeeInfo>,
 }

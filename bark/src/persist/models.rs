@@ -557,6 +557,10 @@ mod test {
 		serde_json::from_str::<ExitTxOrigin>(serialized).unwrap();
 		let serialized = r#"{"type":"wallet","confirmed_in": "134:71fe28f4c803a4c46a3a93d0a9937507d7c20b4bd9586ba317d1109e1aebaac9"}"#;
 		serde_json::from_str::<ExitTxOrigin>(serialized).unwrap();
+		// New shape: mempool is a unit variant; fee data lives on ChildTransactionInfo.fee_info.
+		let serialized = r#"{"type":"mempool"}"#;
+		serde_json::from_str::<ExitTxOrigin>(serialized).unwrap();
+		// Legacy shape: extra fee_rate_kwu/total_fee fields must still deserialize cleanly.
 		let serialized = r#"{"type":"mempool","fee_rate_kwu":25000,"total_fee":27625}"#;
 		serde_json::from_str::<ExitTxOrigin>(serialized).unwrap();
 		let serialized = r#"{"type":"block","confirmed_in": "134:71fe28f4c803a4c46a3a93d0a9937507d7c20b4bd9586ba317d1109e1aebaac9"}"#;

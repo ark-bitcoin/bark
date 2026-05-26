@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 use std::fmt;
 
-use bitcoin::{Amount, FeeRate, Txid};
+use bitcoin::Txid;
 
 use bitcoin_ext::{BlockHeight, BlockRef};
 
@@ -62,13 +62,7 @@ pub enum ExitTxOrigin {
 	Wallet {
 		confirmed_in: Option<BlockRef>
 	},
-	Mempool {
-		/// This is the effective fee rate of the transaction (including CPFP ancestors)
-		#[serde(rename = "fee_rate_kwu")]
-		fee_rate: FeeRate,
-		/// This includes the fees of the CPFP ancestors
-		total_fee: Amount,
-	},
+	Mempool,
 	Block {
 		confirmed_in: BlockRef
 	},
@@ -78,8 +72,20 @@ impl ExitTxOrigin {
 	pub fn confirmed_in(&self) -> Option<BlockRef> {
 		match self {
 			ExitTxOrigin::Wallet { confirmed_in } => *confirmed_in,
-			ExitTxOrigin::Mempool { .. } => None,
+			ExitTxOrigin::Mempool => None,
 			ExitTxOrigin::Block { confirmed_in } => Some(*confirmed_in),
+		}
+	}
+
+	/// Returns a copy of this origin reflecting the given confirmation state, preserving the
+	/// origin kind where it makes sense. A `Wallet` origin keeps its kind (we still know it's
+	/// ours) and updates its `confirmed_in`; mempool/block origins become `Block` once confirmed
+	/// and `Mempool` otherwise.
+	pub fn with_confirmed_in(self, confirmed_in: Option<BlockRef>) -> ExitTxOrigin {
+		match (self, confirmed_in) {
+			(ExitTxOrigin::Wallet { .. }, _) => ExitTxOrigin::Wallet { confirmed_in },
+			(_, Some(confirmed_in)) => ExitTxOrigin::Block { confirmed_in },
+			(_, None) => ExitTxOrigin::Mempool,
 		}
 	}
 }
