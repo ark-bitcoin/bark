@@ -38,6 +38,7 @@ mod m0037_settled_lightning_receive;
 mod m0038_board_action_checkpoints;
 mod m0039_movement_action_id;
 mod m0040_unlock_failed_movement_vtxos_again;
+mod m0041_offboard_action_checkpoint;
 
 use anyhow::Context;
 use log::debug;
@@ -83,6 +84,7 @@ use m0037_settled_lightning_receive::Migration0037;
 use m0038_board_action_checkpoints::Migration0038;
 use m0039_movement_action_id::Migration0039;
 use m0040_unlock_failed_movement_vtxos_again::Migration0040;
+use m0041_offboard_action_checkpoint::Migration0041;
 
 pub struct MigrationContext {}
 
@@ -140,6 +142,7 @@ impl MigrationContext {
 		self.try_migration(conn, &Migration0038{})?;
 		self.try_migration(conn, &Migration0039{})?;
 		self.try_migration(conn, &Migration0040{})?;
+		self.try_migration(conn, &Migration0041{})?;
 
 		Ok(())
 	}
@@ -294,7 +297,7 @@ mod test {
 
 		// Perform the migrations and confirm it took effect
 		migs.do_all_migrations(&mut conn).unwrap();
-		assert_current_version(&conn, 40).unwrap();
+		assert_current_version(&conn, 41).unwrap();
 
 		assert!(table_exists(&conn, "bark_vtxo").unwrap());
 		assert!(table_exists(&conn, "bark_vtxo_state").unwrap());
@@ -310,7 +313,8 @@ mod test {
 		assert!(table_exists(&conn, "bark_round_state").unwrap());
 		assert!(table_exists(&conn, "bark_lightning_send").unwrap());
 		assert!(table_exists(&conn, "bark_mailbox_checkpoint").unwrap());
-		assert!(table_exists(&conn, "bark_pending_offboard").unwrap());
+		assert!(!table_exists(&conn, "bark_pending_offboard").unwrap(),
+			"bark_pending_offboard should be dropped by migration 41");
 		assert!(table_exists(&conn, "bark_wallet_action_checkpoint").unwrap());
 		assert!(table_exists(&conn, "bark_paid_invoice").unwrap());
 		assert!(table_exists(&conn, "bark_settled_lightning_receive").unwrap());
