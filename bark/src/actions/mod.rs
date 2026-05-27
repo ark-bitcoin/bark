@@ -93,10 +93,6 @@ impl AdvanceError {
 	}
 }
 
-pub fn lock_key<A: WalletAction>(id: &WalletActionId) -> String {
-	format!("{}.{}", A::namespace(), id)
-}
-
 pub fn park_with_backoff<A: WalletAction>(state: A, attempts: u32) -> Advance<A> {
 	let delay = attempts.pow(2) * BASE_RETRY_BACKOFF;
 	debug!("action {} retrying; sleeping {:?} before re-drive", state.id(), delay);
@@ -122,7 +118,6 @@ pub fn park_with_backoff<A: WalletAction>(state: A, attempts: u32) -> Advance<A>
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 pub trait WalletAction: Sized + Send + Sync {
-	fn namespace() -> &'static str;
 	fn id(&self) -> WalletActionId;
 
 	async fn advance(self, wallet: &Wallet) -> Result<Advance<Self>, AdvanceError>;
@@ -197,10 +192,10 @@ impl Wallet {
 	where
 		A: WalletAction + Into<WalletActionCheckpoint> + Clone,
 	{
-		let guard = match self.inner.lock_manager.try_lock(&lock_key::<A>(&action.id())).await {
+		let guard = match self.inner.lock_manager.try_lock(&action.id()).await {
 			Some(g) => g,
 			None => {
-				trace!("action {} in namespace {} is already being driven, skipping", action.id(), A::namespace());
+				trace!("action {} is already being driven, skipping", action.id());
 				return Ok(());
 			},
 		};
