@@ -1,3 +1,0 @@
-- Add `LnSendFinished` mailbox type
-  New mailbox message type for lightning send completion notifications.
-  [#1889](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1889)

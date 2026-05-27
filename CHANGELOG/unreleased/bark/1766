@@ -1,6 +1,0 @@
-- Split board flow into `board_funding_address` + `board_tx`
-  Allows external wallets to build and sign the funding transaction themselves,
-  then complete the board via `board_tx` with a pre-signed PSBT. The PSBT is
-  validated to ensure it pays to the correct funding address and meets the
-  minimum board amount.
-  [#1766](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1766)

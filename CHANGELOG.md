@@ -6,6 +6,185 @@ https://docs.second.tech/changelog/changelog/
 
 Below is a more detailed summary for each version.
 
+# v0.2.0
+
+- `ark-lib`
+    - Add `LnSendFinished` mailbox type
+      New mailbox message type for lightning send completion notifications.
+      [#1889](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1889)
+    - Validate VTXO policy block heights and deltas at decode time
+      `Vtxo::decode` and `VtxoPolicy::decode` now reject `expiry_height`,
+      `htlc_expiry`, `exit_delta`, and `htlc_expiry_delta` values outside the
+      policy-safe range. Previously a malicious server could panic the client with
+      `htlc_expiry` at or above `LOCK_TIME_THRESHOLD`, or trigger `u16` arithmetic
+      overflow with large `htlc_expiry_delta` or `exit_delta`.
+
+      The same bounds are exposed as `MAX_BLOCK_HEIGHT`, `MAX_BLOCK_DELTA`,
+      `check_block_height`, and `check_block_delta` in `ark::vtxo::policy` for
+      reuse at other deserialization boundaries (gRPC, postgres). Two
+      `const _: () = assert!(...)` lines anchor the headroom invariant so all
+      in-codebase compositions (`exit_delta + htlc_expiry_delta`, `2 * exit_delta`,
+      `confirmed_at + 2 * exit_delta`) stay within their integer types.
+
+      The `arithmetic_side_effects` clippy lint is now `deny` for the `ark-lib`
+      crate, requiring every arithmetic site to use `checked_*` / `saturating_*` /
+      `wrapping_*` rather than raw operators. All other clippy lints are
+      explicitly allowed (`clippy::all = "allow"` with priority override), so
+      this is the only rule enforced. The lint is local to this crate; other
+      workspace members may adopt it later. Workspace release profile sets
+      `overflow-checks = true` as defense in depth for any sites the lint misses.
+      [#2046](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2046)
+
+    - Reject empty pubkey list in cosigned `GenesisTransition` decode
+      `GenesisTransition::decode` now returns a `ProtocolDecodingError` when a
+      cosigned variant carries an empty pubkey vector. A `CosignedGenesis` with
+      no pubkeys violates the type's invariant and downstream callers assume at
+      least one cosigner.
+      [#2046](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2046)
+    - Expose standalone genesis encoding for `Vtxo<Full>`
+      Adds `Vtxo::<Full, P>::encode_genesis` / `serialize_genesis` and the
+      inverse `Vtxo::<Bare, P>::decode_genesis` / `with_genesis`.
+      [#2050](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2050)
+    - Reject decoding a `Vtxo<Full>` from `Vtxo<Bare>` data
+      Previously a `Vtxo<Bare>` serialization could be silently decoded as a `Vtxo<Full>`,
+      yielding a "full" VTXO with an empty genesis chain. `Vtxo<Full>` now rejects such
+      input, except for virtual VTXOs that wrap an onchain UTXO (where `point` equals
+      `chain_anchor`), which legitimately carry no genesis items.
+      [#2072](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2072)
+        - Added `Vtxo::<Full>::deserialize_with_genesis` to reassemble a full VTXO from
+          separate bare and genesis byte buffers (e.g. when the two halves are stored
+          independently).
+        - Added `VtxoValidationError::MissingGenesisItems` and
+          `VtxoValidationError::UnexpectedGenesisItems`.
+
+- `bark`
+    - Split board flow into `board_funding_address` + `board_tx`
+      Allows external wallets to build and sign the funding transaction themselves,
+      then complete the board via `board_tx` with a pre-signed PSBT. The PSBT is
+      validated to ensure it pays to the correct funding address and meets the
+      minimum board amount.
+      [#1766](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1766)
+    - Handle lightning send finished mailbox notifications
+      Bark now processes server notifications when a lightning send payment
+      completes, allowing prompt handling of success or failure without polling.
+      [#1889](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1889)
+    - Fetch offboard fee rate from dedicated endpoint
+      Bark now calls `GetOffboardFeeRate` directly instead of re-fetching the
+      entire `ArkInfo` on a TTL to get the current mempool fee rate.
+      [#2029](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2029)
+    - Reconnect mailbox and round-event streams gracefully on idle timeout
+      Streaming connections killed by a proxy idle timeout are now silently
+      reconnected instead of treated as server failures. This prevents the
+      daemon from unnecessarily marking the server as disconnected or giving
+      up on the mailbox stream after prolonged idle periods.
+      [#2040](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2040)
+    - Add a `LockManager` to prevent race-conditions.
+      [#2042](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2042)
+        - **BREAKING:** `Wallet::create`, `Wallet::open`,
+          `Wallet::create_with_onchain`, `Wallet::open_with_onchain`, and
+          `Wallet::open_with_daemon` gain a `lock_manager: Box<dyn LockManager>`
+          parameter.
+        - **BREAKING:** the `pid-lock` Cargo feature is gone; bark-cli now takes
+          its datadir lock via `lock_manager::platform_default`.
+    - Slim down VTXO listings by storing the genesis item chain separately
+      Bark now stores each VTXO as a small "bare" blob plus a separate genesis
+      blob. Listings, balance computations, coin selection, and refresh-strategy
+      checks load only the bare form (~200 B per VTXO regardless of exit depth)
+      along with two cached scalars (`exit_depth`, `exit_tx_weight`); For wallets
+      with many or deep VTXOs this can be a 20–100x reduction in resident memory
+      across the read-only hot paths.
+      [#2050](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2050)
+        - **BREAKING:** `WalletVtxo` now holds `Vtxo<ark::vtxo::Bare>` instead of
+          `Vtxo<ark::vtxo::Full>`, plus two cached fields: `exit_depth: u16` and
+          `exit_tx_weight: bitcoin::Weight`. Use the new `Wallet::get_full_vtxo`
+          (or `BarkPersister::get_full_vtxos` for batches) to obtain the full
+          VTXO with its exit chain when needed.
+        - **BREAKING:** `Exit::start_exit_for_vtxos` now accepts
+          `&[impl Borrow<Vtxo<Bare>>]`, replacing the old
+          `&[impl Borrow<Vtxo<Full>>]` signature.
+        - Adds `BarkPersister::get_full_vtxo` and `BarkPersister::get_full_vtxos`
+          for SDK consumers implementing custom storage backends.
+        - Adds migration `0029_split_vtxo_genesis` which splits existing
+          `bark_vtxo.raw_vtxo` blobs into `raw_bare`/`raw_genesis` columns and
+          backfills the cached `exit_depth`/`exit_tx_weight` columns.
+    - move `Wallet::chain_source` static constructor to `Config::chain_source`
+      [#2051](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2052/)
+    - replace `Wallet::chain` field with `Wallet::chain` getter method
+      [#2051](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2052/)
+    - replace `Wallet::exit` field with `Wallet::exit_mgr` getter method
+        - the getter returns the `Exit` struct directly without `RwLock`
+          [#2051](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2052/)
+    - replace `Wallet::movements` field with `Wallet::movements_mgr` getter method
+      [#2051](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2052/)
+    - make `Wallet` internally wrap an Arc so that it can be cloned
+        - remove `Arc<Wallet>` from the API and replace with `Wallet`
+          [#2051](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2052/)
+
+    - Richer onchain transaction listing in the REST API
+      `GET /onchain/transactions` now returns `onchain_fee_sat` (nullable),
+      `balance_change_sat`, and `confirmation` alongside the existing
+      `txid` and `tx`.
+      [#2060](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2060)
+    - Retry Lightning receive claims before falling back to on-chain exit
+      When claiming an incoming Lightning payment, transient failures (server
+      restart, brief network blip) previously forced an immediate on-chain
+      exit of the HTLC-recv VTXOs, losing the off-chain advantage of the
+      receive. The claim is now retried up to `Config::lightning_receive_claim_retries`
+      times with exponential backoff (2s up to 30s, ~60s total for the default
+      budget of 5), exiting on-chain only if the budget is exhausted. The
+      server's claim is idempotent and the preimage is already revealed at
+      this point, so retrying is safe.
+      [#2061](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2061)
+    - Attach custom metadata to wallet history entries
+      Developers integrating bark can now annotate movements after the fact —
+      attaching refund references, customer or order IDs, internal notes, or
+      any other JSON — without maintaining a parallel store keyed by movement
+      ID. Exposed as `Wallet::update_history_metadata` and
+      `POST /api/v1/history/{id}/metadata`, which take a JSON merge patch:
+      keys set to `null` are removed, other values are merged recursively
+      into the existing metadata. The history listing also moves to
+      `GET /api/v1/history`; the old `GET /api/v1/wallet/history` stays but
+      is deprecated.
+      [#2079](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2079)
+        - **BREAKING:** `Movement.metadata` (and `bark_json::Movement.metadata`)
+          are now `serde_json::Map<String, Value>` instead of
+          `HashMap<String, Value>`. JSON wire format and persisted data are
+          unchanged.
+
+- `bip321`
+    - Add `bip321` crate for BIP 321 bitcoin payment URI parsing and serialization
+      Implements the `bitcoin:` URI scheme for encoding payment instructions in
+      clickable links and QR codes. Supports the standard payment parameters
+      (`lightning`, `lno`, `sp`, `pay`, `bc`/`tb`) as well as a pluggable
+      `ExtensionHandler` trait for custom or wallet-specific parameters. Handles
+      `req-` prefixed required parameters per the spec, rejecting URIs whose
+      mandatory extensions are unrecognised.
+      [#1921](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1921)
+
+- `server`
+    - Add lightning send finished mailbox notification
+      The server now notifies bark clients via the mailbox when a lightning
+      send payment completes (success or failure), allowing clients to
+      promptly process the result without polling.
+      [#1889](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1889)
+    - Add `GetOffboardFeeRate` RPC endpoint
+      The offboard fee rate is now available via a dedicated endpoint so clients
+      can fetch it without re-requesting all of `ArkInfo`. The field in `ArkInfo`
+      is marked deprecated but still populated for older clients.
+      [#2029](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2029)
+    - Validate VTXO policy block heights and deltas at gRPC and DB boundaries
+      `ArkInfo` deltas (`vtxo_exit_delta`, `vtxo_expiry_delta`,
+      `htlc_send_expiry_delta`, `htlc_expiry_delta`, `max_user_invoice_cltv_delta`)
+      arriving from the wire are now range-checked against the policy maximum
+      rather than only against `u16::MAX`. The `expiry_height` field on
+      `BoardCosignRequest` is similarly range-checked at the rpcserver boundary.
+      Vtxo rows loaded from postgres validate `exit_delta` and `expiry` on read.
+
+      Fixed two latent panic vectors in `watchman/policy.rs` where adversarial
+      `exit_delta` could overflow `u16` (`2 * exit_delta`) or `u32`
+      (`confirmed_at + BlockHeight::from(2 * exit_delta)`); these now use
+      `checked_*` and reference the policy bound in their `expect` messages.
+      [#2046](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2046)
 
 # v0.1.4
 
