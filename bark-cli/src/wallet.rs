@@ -417,8 +417,8 @@ async fn try_create_wallet(
 
 	let mut onchain = OnchainWallet::load_or_create(net.as_bitcoin(), seed, db.clone()).await?;
 	let lock_manager = open_lock_manager(&datadir)?;
-	let wallet = BarkWallet::create_with_onchain(
-		&mnemonic, net.as_bitcoin(), config, db, lock_manager, &onchain, opts.force,
+	let wallet = BarkWallet::create_with_exits(
+		&mnemonic, net.as_bitcoin(), config, db, lock_manager, opts.force,
 	).await.context("error creating wallet")?;
 
 	// Skip initial block sync if we generated a new wallet.
@@ -469,7 +469,7 @@ pub async fn open_wallet(datadir: &Path) -> anyhow::Result<Option<(BarkWallet, O
 
 	let bdk_wallet = OnchainWallet::load_or_create(properties.network, seed, db.clone()).await?;
 	let lock_manager = open_lock_manager(datadir)?;
-	let bark_wallet = BarkWallet::open_with_onchain(&mnemonic, db, &bdk_wallet, config, lock_manager).await?;
+	let bark_wallet = BarkWallet::open_with_exits(&mnemonic, db, config, lock_manager).await?;
 
 	if let Err(e) = bark_wallet.require_chainsource_version().await {
 		warn!("{}", e);

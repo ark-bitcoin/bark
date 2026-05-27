@@ -258,7 +258,7 @@
           "exits"
         ],
         "summary": "Progress exits",
-        "description": "Triggers all in-progress exits to advance by one step. The daemon already progresses exits automatically in the background—use this endpoint when you want immediate progress rather than waiting for the next automatic cycle. On each call, the endpoint checks whether previously broadcast transactions have confirmed and, if so, creates and broadcasts the next transaction in the sequence. The on-chain wallet must have sufficient bitcoin to cover transaction fees.",
+        "description": "Triggers all in-progress exits to advance. The daemon already progresses exits automatically in the background—use this endpoint when you want immediate progress rather than waiting for the next automatic cycle. On each call, the endpoint syncs transaction statuses, advances the exit state machine, and creates or fee-bumps CPFP children for any exit transactions that need them. The on-chain wallet must have sufficient bitcoin to cover transaction fees.",
         "operationId": "exit_progress",
         "requestBody": {
           "content": {
@@ -2911,6 +2911,16 @@
           "origin"
         ],
         "properties": {
+          "fee_info": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/FeeInfo"
+              }
+            ]
+          },
           "info": {
             "$ref": "#/components/schemas/TransactionInfo"
           },
@@ -3338,6 +3348,24 @@
           {
             "type": "object",
             "required": [
+              "error",
+              "type"
+            ],
+            "properties": {
+              "error": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "database-child-store-failure"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
               "vtxo",
               "dust",
               "type"
@@ -3445,45 +3473,6 @@
                 "type": "string",
                 "enum": [
                   "insufficient-confirmed-funds"
-                ]
-              }
-            }
-          },
-          {
-            "type": "object",
-            "required": [
-              "balance",
-              "total_fee",
-              "fee_rate_sat_per_kvb",
-              "fee_rate_kwu",
-              "type"
-            ],
-            "properties": {
-              "balance": {
-                "type": "integer",
-                "format": "int64",
-                "minimum": 0
-              },
-              "fee_rate_kwu": {
-                "type": "integer",
-                "format": "int64",
-                "deprecated": true,
-                "minimum": 0
-              },
-              "fee_rate_sat_per_kvb": {
-                "type": "integer",
-                "format": "int64",
-                "minimum": 0
-              },
-              "total_fee": {
-                "type": "integer",
-                "format": "int64",
-                "minimum": 0
-              },
-              "type": {
-                "type": "string",
-                "enum": [
-                  "insufficient-fee-to-start"
                 ]
               }
             }
@@ -4088,30 +4077,9 @@
           {
             "type": "object",
             "required": [
-              "fee_rate_sat_per_kvb",
-              "fee_rate",
-              "total_fee",
               "type"
             ],
             "properties": {
-              "fee_rate": {
-                "type": "integer",
-                "format": "int64",
-                "deprecated": true,
-                "minimum": 0
-              },
-              "fee_rate_sat_per_kvb": {
-                "type": "integer",
-                "format": "int64",
-                "description": "This is the effective fee rate of the transaction (including CPFP ancestors)",
-                "minimum": 0
-              },
-              "total_fee": {
-                "type": "integer",
-                "format": "int64",
-                "description": "This includes the fees of the CPFP ancestors",
-                "minimum": 0
-              },
               "type": {
                 "type": "string",
                 "enum": [
@@ -4186,40 +4154,7 @@
               "type": {
                 "type": "string",
                 "enum": [
-                  "needs-signed-package"
-                ]
-              }
-            }
-          },
-          {
-            "type": "object",
-            "required": [
-              "min_fee_rate_sat_per_kvb",
-              "min_fee_rate_kwu",
-              "min_fee",
-              "type"
-            ],
-            "properties": {
-              "min_fee": {
-                "type": "integer",
-                "format": "int64",
-                "minimum": 0
-              },
-              "min_fee_rate_kwu": {
-                "type": "integer",
-                "format": "int64",
-                "deprecated": true,
-                "minimum": 0
-              },
-              "min_fee_rate_sat_per_kvb": {
-                "type": "integer",
-                "format": "int64",
-                "minimum": 0
-              },
-              "type": {
-                "type": "string",
-                "enum": [
-                  "needs-replacement-package"
+                  "awaiting-cpfp-broadcast"
                 ]
               }
             }
@@ -4241,29 +4176,7 @@
               "type": {
                 "type": "string",
                 "enum": [
-                  "needs-broadcasting"
-                ]
-              }
-            }
-          },
-          {
-            "type": "object",
-            "required": [
-              "child_txid",
-              "origin",
-              "type"
-            ],
-            "properties": {
-              "child_txid": {
-                "type": "string"
-              },
-              "origin": {
-                "$ref": "#/components/schemas/ExitTxOrigin"
-              },
-              "type": {
-                "type": "string",
-                "enum": [
-                  "broadcast-with-cpfp"
+                  "awaiting-confirmation"
                 ]
               }
             }
@@ -4345,6 +4258,28 @@
               "type": "string"
             },
             "description": "The VTXOs that would be spent for this operation"
+          }
+        }
+      },
+      "FeeInfo": {
+        "type": "object",
+        "description": "Contains the data required to bump the fee for a given transaction (including ancestors).",
+        "required": [
+          "fee_rate_sat_per_kvb",
+          "total_fee_sat"
+        ],
+        "properties": {
+          "fee_rate_sat_per_kvb": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The effective fee rate of the transaction (including unconfirmed CPFP ancestors), in\nsats per kvB. `kvb` matches the unit used elsewhere in `bark-json`\n(e.g. `offboard_feerate_sat_per_kvb`).",
+            "minimum": 0
+          },
+          "total_fee_sat": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Sum of the transaction's own fee plus the fee of each of its unconfirmed ancestors.",
+            "minimum": 0
           }
         }
       },

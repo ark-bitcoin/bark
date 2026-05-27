@@ -14,7 +14,6 @@ use ark::lightning::{Invoice, PaymentHash};
 use ark::vtxo::{VtxoId, VtxoPolicyKind};
 use bark_json::movements::{MovementDestination, MovementStatus, PaymentMethod};
 use bark_json::exit::ExitState;
-use bark_json::exit::states::ExitStartState;
 use bark_json::primitives::VtxoStateInfo;
 use bitcoin_ext::TaprootSpendInfoExt;
 use bitcoin_ext::rpc::BitcoinRpcExt;
@@ -28,6 +27,8 @@ use ark_testing::exit::complete_exit;
 
 #[tokio::test]
 async fn simple_exit() {
+	require_bark_version!(> "0.1.4");
+
 	// Initialize the test
 	let ctx = TestContext::new("exit/simple_exit").await;
 	let srv = ctx.captaind("server").funded(btc(10)).create().await;
@@ -53,6 +54,8 @@ async fn simple_exit() {
 
 #[tokio::test]
 async fn exit_round() {
+	require_bark_version!(> "0.1.4");
+
 	// Initialize the test
 	let ctx = TestContext::new("exit/exit_round").await;
 	let srv = ctx.captaind("server").create().await;
@@ -169,6 +172,8 @@ async fn exit_round() {
 
 #[tokio::test]
 async fn exit_vtxo() {
+	require_bark_version!(> "0.1.4");
+
 	let ctx = TestContext::new("exit/exit_vtxo").await;
 	let srv = ctx.captaind("server").funded(btc(10)).create().await;
 
@@ -201,6 +206,8 @@ async fn exit_vtxo() {
 
 #[tokio::test]
 async fn exit_and_send_vtxo() {
+	require_bark_version!(> "0.1.4");
+
 	let ctx = TestContext::new("exit/exit_and_send_vtxo").await;
 	let srv = ctx.captaind("server").funded(btc(10)).create().await;
 
@@ -240,6 +247,8 @@ async fn exit_and_send_vtxo() {
 
 #[tokio::test]
 async fn exit_after_board() {
+	require_bark_version!(> "0.1.4");
+
 	let ctx = TestContext::new("exit/exit_after_board").await;
 	let srv = ctx.captaind("server").create().await;
 
@@ -263,6 +272,8 @@ async fn exit_after_board() {
 
 #[tokio::test]
 async fn exit_oor() {
+	require_bark_version!(> "0.1.4");
+
 	let ctx = TestContext::new("exit/exit_oor").await;
 	let srv = ctx.captaind("server").create().await;
 
@@ -300,6 +311,8 @@ async fn exit_oor() {
 
 #[tokio::test]
 async fn double_exit_call() {
+	require_bark_version!(> "0.1.4");
+
 	let ctx = TestContext::new("exit/double_exit_call").await;
 	let srv = ctx.captaind("server").funded(btc(10)).create().await;
 	let bark1 = ctx.bark("bark1", &srv).funded(sat(1_000_000)).create().await;
@@ -379,6 +392,8 @@ async fn double_exit_call() {
 
 #[tokio::test]
 async fn exit_bolt11_change() {
+	require_bark_version!(> "0.1.4");
+
 	let ctx = TestContext::new("exit/exit_bolt11_change").await;
 
 	let lightning = ctx.new_lightning_setup("lightningd").await;
@@ -419,6 +434,8 @@ async fn exit_bolt11_change() {
 
 #[tokio::test]
 async fn exit_revoked_lightning_payment() {
+	require_bark_version!(> "0.1.4");
+
 	let ctx = TestContext::new("exit/exit_revoked_lightning_payment").await;
 
 	let lightning = ctx.new_lightning_setup_no_channel("lightningd").await;
@@ -457,6 +474,8 @@ async fn exit_revoked_lightning_payment() {
 
 #[tokio::test]
 async fn bark_should_exit_a_pending_board() {
+	require_bark_version!(> "0.1.4");
+
 	let ctx = TestContext::new("exit/bark_should_exit_a_pending_board").await;
 
 	#[derive(Clone)]
@@ -568,6 +587,8 @@ async fn bark_should_exit_a_pending_board() {
 
 #[tokio::test]
 async fn bark_should_exit_a_failed_htlc_out_that_server_refuse_to_revoke() {
+	require_bark_version!(> "0.1.4");
+
 	let ctx = TestContext::new("exit/bark_should_exit_a_failed_htlc_out_that_server_refuse_to_revoke").await;
 
 	let lightning = ctx.new_lightning_setup_no_channel("lightningd").await;
@@ -629,9 +650,10 @@ async fn bark_should_exit_a_failed_htlc_out_that_server_refuse_to_revoke() {
 	bark_1.sync().await;
 
 	// Should start an exit
-	assert_eq!(
-		bark_1.list_exits().await[0].state,
-		ExitState::Start(ExitStartState { tip_height: desired_height }),
+	let exit_state = &bark_1.list_exits().await[0].state;
+	assert!(
+		matches!(exit_state, ExitState::Start(_) | ExitState::Processing(_)),
+		"Expected exit to be starting, got {:?}", exit_state,
 	);
 	complete_exit(&ctx, &bark_1).await;
 
@@ -767,9 +789,10 @@ async fn bark_should_exit_a_pending_htlc_out_that_server_refuse_to_revoke() {
 	bark_1.sync().await;
 
 	// Should start an exit
-	assert_eq!(
-		bark_1.list_exits().await[0].state,
-		ExitState::Start(ExitStartState { tip_height: desired_height }),
+	let exit_state = &bark_1.list_exits().await[0].state;
+	assert!(
+		matches!(exit_state, ExitState::Start(_) | ExitState::Processing(_)),
+		"Expected exit to be starting, got {:?}", exit_state,
 	);
 	complete_exit(&ctx, &bark_1).await;
 
@@ -834,6 +857,8 @@ async fn bark_should_exit_a_pending_htlc_out_that_server_refuse_to_revoke() {
 
 #[tokio::test]
 async fn bark_claim_specific_exit_in_low_fee_market() {
+	require_bark_version!(> "0.1.4");
+
 	let ctx = TestContext::new("exit/bark_claim_specific_exit_in_low_fee_market").await;
 	let srv = ctx.captaind("server").funded(btc(10)).create().await;
 	let bark = ctx.bark("bark", &srv).cfg(|cfg| {
@@ -868,6 +893,8 @@ async fn bark_claim_specific_exit_in_low_fee_market() {
 
 #[tokio::test]
 async fn bark_claim_all_exits_in_low_fee_market() {
+	require_bark_version!(> "0.1.4");
+
 	let ctx = TestContext::new("exit/bark_claim_all_exits_in_low_fee_market").await;
 	let srv = ctx.captaind("server").funded(btc(10)).create().await;
 	let bark = ctx.bark("bark", &srv).cfg(|cfg| {
@@ -901,6 +928,8 @@ async fn bark_claim_all_exits_in_low_fee_market() {
 
 #[tokio::test]
 async fn exit_spend_anchor_single_utxo_required() {
+	require_bark_version!(> "0.1.4");
+
 	let ctx = TestContext::new("exit/exit_spend_anchor_single_utxo_required").await;
 	let srv = ctx.captaind("server").create().await;
 
@@ -912,7 +941,7 @@ async fn exit_spend_anchor_single_utxo_required() {
 	complete_exit(&ctx, &bark).await;
 
 	// Verify that 1 UTXO + the P2A output are used
-	let list = bark.list_exits_with_details().await;
+	let list = bark.list_exits_with_txs().await;
 	assert_eq!(list.len(), 1);
 	let transactions = &list[0].transactions;
 	assert_eq!(transactions.len(), 1);
@@ -927,6 +956,8 @@ async fn exit_spend_anchor_single_utxo_required() {
 
 #[tokio::test]
 async fn exit_spend_anchor_multiple_utxos_required() {
+	require_bark_version!(> "0.1.4");
+
 	let ctx = TestContext::new("exit/exit_spend_anchor_multiple_utxos_required").await;
 	let srv = ctx.captaind("server").create().await;
 
@@ -943,7 +974,7 @@ async fn exit_spend_anchor_multiple_utxos_required() {
 	complete_exit(&ctx, &bark).await;
 
 	// Verify that 3 UTXOs + the P2A output are used
-	let list = bark.list_exits_with_details().await;
+	let list = bark.list_exits_with_txs().await;
 	assert_eq!(list.len(), 1);
 	let transactions = &list[0].transactions;
 	assert_eq!(transactions.len(), 1);
@@ -957,6 +988,8 @@ async fn exit_spend_anchor_multiple_utxos_required() {
 
 #[tokio::test]
 async fn exit_oor_ping_pong_then_rbf_tx() {
+	require_bark_version!(> "0.1.4");
+
 	let ctx = TestContext::new("exit/exit_oor_ping_pong_then_rbf_tx").await;
 	let srv = ctx.captaind("server").funded(btc(10)).create().await;
 
@@ -984,9 +1017,6 @@ async fn exit_oor_ping_pong_then_rbf_tx() {
 	bark1.sync().await;
 	bark2.sync().await;
 
-	ctx.refresh_all(&srv, &[&bark1, &bark2]).await;
-	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
-
 	// Exit the funds
 	srv.stop().await.unwrap();
 	bark1.start_exit_all().await;
@@ -998,7 +1028,7 @@ async fn exit_oor_ping_pong_then_rbf_tx() {
 		// from the onchain wallet and those broadcast by a third party. Else the syncing process
 		// will download a lower fee-rate package from the mempool until esplora syncs the higher
 		// fee-rate package.
-		let child_txs = primary.list_exits_with_details_no_sync().await.into_iter().flat_map(|s| {
+		let child_txs = primary.list_exits_with_txs_no_sync().await.into_iter().flat_map(|s| {
 			s.transactions.into_iter().filter_map(|package| package.child)
 		});
 		ctx.await_transactions_across_nodes(
@@ -1035,6 +1065,8 @@ async fn exit_oor_ping_pong_then_rbf_tx() {
 
 #[tokio::test]
 async fn bark_should_exit_a_htlc_recv_that_server_refuse_to_cosign() {
+	require_bark_version!(> "0.1.4");
+
 	let ctx = TestContext::new("exit/bark_should_exit_a_htlc_recv_that_server_refuse_to_cosign").await;
 	let ctx = Arc::new(ctx);
 

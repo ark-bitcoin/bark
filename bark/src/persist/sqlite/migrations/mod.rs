@@ -29,6 +29,7 @@ mod m0028_mailbox_pubkey;
 mod m0029_split_vtxo_genesis;
 mod m0030_wallet_action_checkpoint;
 mod m0031_vtxo_lock_holder;
+mod m0032_exit_state_refactor;
 
 use anyhow::Context;
 use log::debug;
@@ -65,6 +66,7 @@ use m0028_mailbox_pubkey::Migration0028;
 use m0029_split_vtxo_genesis::Migration0029;
 use m0030_wallet_action_checkpoint::Migration0030;
 use m0031_vtxo_lock_holder::Migration0031;
+use m0032_exit_state_refactor::Migration0032;
 
 pub struct MigrationContext {}
 
@@ -113,6 +115,7 @@ impl MigrationContext {
 		self.try_migration(conn, &Migration0029{})?;
 		self.try_migration(conn, &Migration0030{})?;
 		self.try_migration(conn, &Migration0031{})?;
+		self.try_migration(conn, &Migration0032{})?;
 
 		Ok(())
 	}
@@ -267,7 +270,7 @@ mod test {
 
 		// Perform the migrations and confirm it took effect
 		migs.do_all_migrations(&mut conn).unwrap();
-		assert_current_version(&conn, 31).unwrap();
+		assert_current_version(&conn, 32).unwrap();
 
 		assert!(table_exists(&conn, "bark_vtxo").unwrap());
 		assert!(table_exists(&conn, "bark_vtxo_state").unwrap());

@@ -1,10 +1,11 @@
-use bitcoin::{Amount, FeeRate, Txid};
+use bitcoin::{Amount, Txid};
 use bitcoin::address::FromScriptError;
 use thiserror::Error;
 
 use ark::VtxoId;
 use bitcoin_ext::BlockHeight;
 
+use crate::chain::BroadcastError;
 use crate::exit::models::states::ExitTxStatus;
 
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
@@ -47,6 +48,9 @@ pub enum ExitError {
 	#[error("Database Retrieval Failure: Unable to get child tx: {error}")]
 	DatabaseChildRetrievalFailure { error: String },
 
+	#[error("Database Store Failure: Unable to store child tx: {error}")]
+	DatabaseChildStoreFailure { error: String },
+
 	#[error("Dust Limit Error: The dust limit for a VTXO is {dust} but the balance is only {vtxo}")]
 	DustLimit {
 		vtxo: Amount,
@@ -56,7 +60,7 @@ pub enum ExitError {
 	#[error("Exit Package Broadcast Failure: Unable to broadcast exit transaction package {txid}: {error}")]
 	ExitPackageBroadcastFailure {
 		txid: Txid,
-		error: String
+		error: BroadcastError,
 	},
 
 	#[error("Exit Package Finalize Failure: Unable to create exit transaction package: {error}")]
@@ -72,13 +76,6 @@ pub enum ExitError {
 	InsufficientConfirmedFunds {
 		needed: Amount,
 		available: Amount
-	},
-
-	#[error("Insufficient Fee Error: Your balance is {balance} but an estimated {total_fee} (fee rate of {fee_rate}) is required to exit the VTXO")]
-	InsufficientFeeToStart {
-		balance: Amount,
-		total_fee: Amount,
-		fee_rate: FeeRate,
 	},
 
 	#[error("Internal Error: An unexpected problem occurred, {error}")]

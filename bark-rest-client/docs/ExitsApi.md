@@ -79,7 +79,7 @@ Name | Type | Description  | Required | Notes
 > models::ExitProgressResponse exit_progress(exit_progress_request)
 Progress exits
 
-Triggers all in-progress exits to advance by one step. The daemon already progresses exits automatically in the background—use this endpoint when you want immediate progress rather than waiting for the next automatic cycle. On each call, the endpoint checks whether previously broadcast transactions have confirmed and, if so, creates and broadcasts the next transaction in the sequence. The on-chain wallet must have sufficient bitcoin to cover transaction fees.
+Triggers all in-progress exits to advance. The daemon already progresses exits automatically in the background—use this endpoint when you want immediate progress rather than waiting for the next automatic cycle. On each call, the endpoint syncs transaction statuses, advances the exit state machine, and creates or fee-bumps CPFP children for any exit transactions that need them. The on-chain wallet must have sufficient bitcoin to cover transaction fees.
 
 ### Parameters
 

@@ -3,7 +3,10 @@ mod error;
 mod package;
 mod states;
 
-pub use self::package::{ExitTransactionPackage, TransactionInfo, ChildTransactionInfo};
+pub use self::package::{
+	ChildTransactionInfo, ExitCpfpRequest, ExitTransactionPackage, FeeInfo, RbfRequirement,
+	TransactionInfo,
+};
 pub use self::error::ExitError;
 pub use self::states::{
 	ExitTx, ExitTxStatus, ExitTxOrigin, ExitStartState, ExitProcessingState, ExitAwaitingDeltaState,
@@ -112,29 +115,11 @@ impl ExitState {
 			ExitState::Processing(s) => {
 				s.transactions.iter().any(|s| match s.status {
 					ExitTxStatus::AwaitingInputConfirmation { .. } => true,
-					ExitTxStatus::BroadcastWithCpfp { .. } => true,
+					ExitTxStatus::AwaitingConfirmation { .. } => true,
 					_ => false,
 				})
 			},
 			ExitState::AwaitingDelta(_) => true,
-			ExitState::ClaimInProgress(_) => true,
-			_ => false,
-		}
-	}
-
-	/// Indicates whether the state relies on network updates during wallet sync to check whether
-	/// the exit can be spent
-	pub fn requires_network_update(&self) -> bool {
-		match self {
-			// If all transactions are either confirmed or already broadcast we can count Processing
-			// as requiring network updates since we don't need to create more exit packages.
-			ExitState::Processing(s) => s.transactions.iter().all(|s| match s.status {
-				ExitTxStatus::BroadcastWithCpfp { .. } => true,
-				ExitTxStatus::Confirmed { .. } => true,
-				_ => false,
-			}),
-			ExitState::AwaitingDelta(_) => true,
-			ExitState::Claimable(_) => true,
 			ExitState::ClaimInProgress(_) => true,
 			_ => false,
 		}
@@ -177,4 +162,5 @@ pub struct ExitChildStatus {
 	pub txid: Txid,
 	pub status: TxStatus,
 	pub origin: ExitTxOrigin,
+	pub fee_info: Option<FeeInfo>,
 }

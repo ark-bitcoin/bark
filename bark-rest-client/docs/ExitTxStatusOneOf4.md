@@ -4,6 +4,7 @@
 
 Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
+**block** | [**models::BlockRef**](BlockRef.md) |  | 
 **child_txid** | **String** |  | 
 **origin** | [**models::ExitTxOrigin**](ExitTxOrigin.md) |  | 
 **r#type** | **String** |  | 

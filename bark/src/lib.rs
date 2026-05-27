@@ -693,7 +693,7 @@ struct WalletInner {
 /// - Creation allows the use of an optional onchain wallet for boarding and [Exit] functionality.
 ///   It also initializes any internal state and connects to the [chain::ChainSource]. See
 ///   [onchain::OnchainWallet] for an implementation of an onchain wallet using BDK.
-///   - [Wallet::create_with_onchain],
+///   - [Wallet::create_with_exits],
 ///   - [Wallet::open_with_daemon]
 ///
 /// Example
@@ -726,20 +726,21 @@ struct WalletInner {
 ///
 /// // Create or open the Ark wallet
 /// let lock_manager = Box::new(MemoryLockManager::new());
-/// let mut wallet = Wallet::create_with_onchain(
+/// let mut wallet = Wallet::create_with_exits(
 /// 	&mnemonic,
 /// 	network,
 /// 	cfg.clone(),
 /// 	db,
 /// 	lock_manager,
-/// 	&onchain_wallet,
 /// 	false,
 /// ).await?;
 /// // let mut wallet = Wallet::create(&mnemonic, network, cfg.clone(), db.clone(), Box::new(MemoryLockManager::new()), false).await?;
 /// // let mut wallet = Wallet::open(&mnemonic, db.clone(), cfg.clone(), Box::new(MemoryLockManager::new())).await?;
-/// // let mut wallet = Wallet::open_with_onchain(
-/// //    &mnemonic, network, cfg.clone(), db.clone(), &onchain_wallet
+/// // let mut wallet = Wallet::open_with_exits(
+/// //    &mnemonic, db.clone(), cfg.clone(), Box::new(MemoryLockManager::new())
 /// // ).await?;
+
+
 ///
 /// // There are two main ways to update the wallet, the primary is to use one of the maintenance
 /// // commands which will sync everything, refresh VTXOs and reconcile pending lightning payments.
@@ -751,7 +752,7 @@ struct WalletInner {
 /// wallet.sync().await?;
 /// wallet.sync_pending_lightning_send_vtxos().await?;
 /// wallet.register_all_confirmed_boards(&mut onchain_wallet).await?;
-/// wallet.sync_exits(&mut onchain_wallet).await?;
+/// wallet.sync_exits().await?;
 /// wallet.maintenance_refresh().await?;
 ///
 /// // Generate a new Ark address to receive funds via arkoor
@@ -762,7 +763,8 @@ struct WalletInner {
 /// let vtxos = wallet.vtxos()?;
 ///
 /// // Progress any unilateral exits, make sure to sync first
-/// wallet.exit_mgr().progress_exits(&wallet, &mut onchain_wallet, None).await?;
+/// wallet.exit_mgr().sync_no_progress().await?;
+/// wallet.exit_mgr().progress_exits_with_bdk(&wallet, &mut onchain_wallet, None).await?;
 ///
 /// # Ok(())
 /// # }
@@ -1009,24 +1011,22 @@ impl Wallet {
 		Ok(wallet)
 	}
 
-	/// Create a new wallet with an onchain backend. This enables full Ark functionality. A default
-	/// implementation of an onchain wallet when the `onchain-bdk` feature is enabled. See
-	/// [onchain::OnchainWallet] for more details. Alternatively, implement [ExitUnilaterally] if
-	/// you have your own onchain wallet implementation.
+	/// Create a new wallet and eagerly load any persisted exit state from the database.
 	///
 	/// The `force` flag will allow you to create the wallet even if a connection to the Ark server
 	/// cannot be established, it will not overwrite a wallet which has already been created.
-	pub async fn create_with_onchain(
+	///
+	/// TODO: consider making [Wallet::create] always load exits so this wrapper is unnecessary.
+	pub async fn create_with_exits(
 		mnemonic: &Mnemonic,
 		network: Network,
 		config: Config,
 		db: Arc<dyn BarkPersister>,
 		lock_manager: Box<dyn LockManager>,
-		onchain: &dyn ExitUnilaterally,
 		force: bool,
 	) -> anyhow::Result<Wallet> {
 		let wallet = Wallet::create(mnemonic, network, config, db, lock_manager, force).await?;
-		wallet.inner.exit.load(onchain).await?;
+		wallet.inner.exit.load().await?;
 		Ok(wallet)
 	}
 
@@ -1089,17 +1089,17 @@ impl Wallet {
 		})})
 	}
 
-	/// Similar to [Wallet::open] however this also unilateral exits using the provided onchain
-	/// wallet.
-	pub async fn open_with_onchain(
+	/// Open a wallet and eagerly load any persisted exit state from the database.
+	///
+	/// TODO: consider making [Wallet::open] always load exits so this wrapper is unnecessary.
+	pub async fn open_with_exits(
 		mnemonic: &Mnemonic,
 		db: Arc<dyn BarkPersister>,
-		onchain: &dyn ExitUnilaterally,
 		cfg: Config,
 		lock_manager: Box<dyn LockManager>,
 	) -> anyhow::Result<Wallet> {
 		let wallet = Wallet::open(mnemonic, db, cfg, lock_manager).await?;
-		wallet.inner.exit.load(onchain).await?;
+		wallet.inner.exit.load().await?;
 		Ok(wallet)
 	}
 
@@ -1113,9 +1113,8 @@ impl Wallet {
 		lock_manager: Box<dyn LockManager>,
 	) -> anyhow::Result<Wallet> {
 		let wallet = Wallet::open(mnemonic, db, cfg, lock_manager).await?;
-		if let Some(onchain) = onchain.as_ref() {
-			let mut onchain = onchain.write().await;
-			wallet.inner.exit.load(&mut *onchain).await?;
+		if onchain.is_some() {
+			wallet.inner.exit.load().await?;
 		}
 
 		wallet.start_daemon(onchain)?;
@@ -1514,11 +1513,11 @@ impl Wallet {
 		let maintenance = self.maintenance().await;
 
 		// NB: order matters here, after syncing lightning, we might have new exits to start
-		let exit_sync = self.sync_exits(onchain).await;
+		let exit_sync = self.sync_exits().await;
 		if let Err(e) = exit_sync.as_ref() {
 			warn!("Error syncing exits: {:#}", e);
 		}
-		let exit_progress = self.exit_mgr().progress_exits(&self, onchain, None).await;
+		let exit_progress = self.exit_mgr().progress_exits_with_bdk(self, onchain, None).await;
 		if let Err(e) = exit_progress.as_ref() {
 			warn!("Error progressing exits: {:#}", e);
 		}
@@ -1544,11 +1543,11 @@ impl Wallet {
 		let maintenance = self.maintenance_delegated().await;
 
 		// NB: order matters here, after syncing lightning, we might have new exits to start
-		let exit_sync = self.sync_exits(onchain).await;
+		let exit_sync = self.sync_exits().await;
 		if let Err(e) = exit_sync.as_ref() {
 			warn!("Error syncing exits: {:#}", e);
 		}
-		let exit_progress = self.exit_mgr().progress_exits(&self, onchain, None).await;
+		let exit_progress = self.exit_mgr().progress_exits_with_bdk(self, onchain, None).await;
 		if let Err(e) = exit_progress.as_ref() {
 			warn!("Error progressing exits: {:#}", e);
 		}
@@ -1627,7 +1626,8 @@ impl Wallet {
 	/// to [Wallet::maintenance] as it will not refresh VTXOs or sync the onchain wallet.
 	///
 	/// Notes:
-	/// - The exit system will not be synced as doing so requires the onchain wallet.
+	/// - The exit system is not synced here. Call [Wallet::sync_exits] explicitly, or use
+	///   [Wallet::maintenance_with_onchain] for a full sync including onchain fee bumping.
 	pub async fn sync(&self) {
 		futures::join!(
 			async {
@@ -1675,11 +1675,8 @@ impl Wallet {
 	/// This will not progress the unilateral exits in any way, it will merely check the
 	/// transaction status of each transaction as well as check whether any exits have become
 	/// claimable or have been claimed.
-	pub async fn sync_exits(
-		&self,
-		onchain: &mut dyn ExitUnilaterally,
-	) -> anyhow::Result<()> {
-		self.exit_mgr().sync(&self, onchain).await?;
+	pub async fn sync_exits(&self) -> anyhow::Result<()> {
+		self.exit_mgr().sync(&self).await?;
 		Ok(())
 	}
 

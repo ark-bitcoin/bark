@@ -24,6 +24,8 @@ fn assert_eq_unordered<T: Ord + Clone + std::fmt::Debug>(a: &[T], b: &[T]) {
 
 #[tokio::test]
 async fn exit_fee_anchor_only_covers_cost() {
+	require_bark_version!(> "0.1.4");
+
 	let ctx = TestContext::new("exit/exit_fee_anchor_only_covers_cost").await;
 	let srv = ctx.captaind("server").cfg(|cfg| {
 		cfg.fees.board = BoardFees {
@@ -71,6 +73,8 @@ async fn exit_fee_anchor_only_covers_cost() {
 
 #[tokio::test]
 async fn exit_fee_anchor_no_dust_change_error() {
+	require_bark_version!(> "0.1.4");
+
 	let ctx = TestContext::new("exit/exit_fee_anchor_no_dust_change_error").await;
 	let srv = ctx.captaind("server").cfg(|cfg| {
 		cfg.fees.board = BoardFees {

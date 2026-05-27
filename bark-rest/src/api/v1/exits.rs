@@ -236,13 +236,12 @@ pub async fn exit_start_all(
 		(status = 200, description = "Returns the exit progress", body = bark_json::cli::ExitProgressResponse),
 		(status = 500, description = "Internal server error", body = error::InternalServerError)
 	),
-	description = "Triggers all in-progress exits to advance by one step. The daemon already \
-		progresses exits automatically in the background—use this endpoint when you want \
-		immediate progress rather than waiting for the next automatic cycle. On each \
-		call, the endpoint checks whether previously broadcast transactions have \
-		confirmed and, if so, creates and broadcasts the next transaction in the \
-		sequence. The on-chain wallet must have sufficient bitcoin to cover transaction \
-		fees.",
+	description = "Triggers all in-progress exits to advance. The daemon already progresses exits \
+		automatically in the background—use this endpoint when you want immediate progress rather \
+		than waiting for the next automatic cycle. On each call, the endpoint syncs transaction \
+		statuses, advances the exit state machine, and creates or fee-bumps CPFP children for any \
+		exit transactions that need them. The on-chain wallet must have sufficient bitcoin to cover \
+		transaction fees.",
 	tag = "exits"
 )]
 #[debug_handler]
@@ -260,9 +259,7 @@ pub async fn exit_progress(
 	onchain_lock.sync(wallet.chain()).await
 		.context("error syncing on-chain wallet")?;
 
-	wallet.exit_mgr().sync_no_progress(&*onchain_lock).await
-		.context("error syncing exit state")?;
-	let result = wallet.exit_mgr().progress_exits(&wallet, &mut *onchain_lock, fee_rate).await
+	let result = wallet.exit_mgr().progress_exits_with_bdk(&wallet, &mut *onchain_lock, fee_rate).await
 		.context("error making progress on exit process")?;
 
 	let done = !wallet.exit_mgr().has_pending_exits().await;

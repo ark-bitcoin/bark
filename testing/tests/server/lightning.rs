@@ -37,6 +37,8 @@ async fn server_settles_invoice_from_on_chain_htlc_preimage(
 	srv: &Captaind,
 	pay: impl AsyncFn(String),
 ) {
+	require_bark_version!(> "0.1.4");
+
 	// Block cooperative settlement so the only path to settle
 	// the hold invoice is via on-chain preimage extraction.
 	#[derive(Clone)]

@@ -12,7 +12,7 @@ use server_log::{
 	ProgressCpfpFailure,
 };
 
-use ark_testing::{TestContext, btc, sat};
+use ark_testing::{TestContext, btc, require_bark_version, sat};
 use ark_testing::constants::{BOARD_CONFIRMATIONS, ROUND_CONFIRMATIONS};
 use ark_testing::daemon::captaind::SlogHandler;
 use ark_testing::exit::{complete_exit, progress_exit_until_awaiting_delta};
@@ -138,6 +138,8 @@ async fn watchman_sweeps_round_vtxos() {
 
 #[tokio::test]
 async fn watchman_sweeps_arkoor_vtxos_sender_exit() {
+	require_bark_version!(> "0.1.4");
+
 	let ctx = TestContext::new("server/watchman_sweeps_arkoor_vtxos_sender_exit").await;
 	let srv = ctx.captaind("server").funded(btc(10)).cfg(|cfg| {
 		cfg.watchman = OptionalService::Disabled;
@@ -182,6 +184,8 @@ async fn watchman_sweeps_arkoor_vtxos_sender_exit() {
 
 #[tokio::test]
 async fn watchman_sweeps_arkoor_vtxos_receiver_exit() {
+	require_bark_version!(> "0.1.4");
+
 	let ctx = TestContext::new("server/watchman_sweeps_arkoor_vtxos_receiver_exit").await;
 	let srv = ctx.captaind("server").funded(btc(10)).cfg(|cfg| {
 		cfg.watchman = OptionalService::Disabled;
@@ -279,6 +283,8 @@ async fn watchman_sweeps_lightning_vtxos() {
 
 #[tokio::test]
 async fn watchman_sweeps_round_leftovers_after_exits() {
+	require_bark_version!(> "0.1.4");
+
 	let ctx = TestContext::new("server/watchman_sweeps_round_leftovers_after_exits").await;
 	let srv = ctx.captaind("server").funded(btc(10)).cfg(|cfg| {
 		cfg.watchman = OptionalService::Disabled;
@@ -362,6 +368,8 @@ async fn watchman_sweeps_round_leftovers_after_exits() {
 
 #[tokio::test]
 async fn watchman_sweeps_vtxopool_with_exit() {
+	require_bark_version!(> "0.1.4");
+
 	let ctx = TestContext::new("server/watchman_sweeps_vtxopool_with_exit").await;
 	let ln = ctx.new_lightning_setup("ln").await;
 	let srv = ctx.captaind("server").funded(btc(10)).lightningd(&ln.internal).cfg(|cfg| {
@@ -432,6 +440,8 @@ async fn watchman_sweeps_vtxopool_with_exit() {
 
 #[tokio::test]
 async fn watchman_sweeps_exit_after_forfeit() {
+	require_bark_version!(> "0.1.4");
+
 	let ctx = TestContext::new("server/watchman_sweeps_exit_after_forfeit").await;
 	let srv = ctx.captaind("server").funded(btc(10)).cfg(|cfg| {
 		cfg.watchman = OptionalService::Disabled;
@@ -498,6 +508,8 @@ async fn watchman_sweeps_exit_after_forfeit() {
 /// and blocks the exit by broadcasting the OOR transaction as a progress step via CPFP.
 #[tokio::test]
 async fn watchman_sweeps_exit_after_oor_then_forfeit() {
+	require_bark_version!(> "0.1.4");
+
 	let ctx = TestContext::new("server/watchman_sweeps_exit_after_oor_then_forfeit").await;
 	let srv = ctx.captaind("server").funded(btc(10)).cfg(|cfg| {
 		cfg.watchman = OptionalService::Disabled;

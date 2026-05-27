@@ -1,0 +1,45 @@
+- Refactor unilateral exit to be wallet-agnostic
+  The unilateral exit driver no longer constructs and broadcasts CPFP child
+  transactions internally. Callers fetch pending CPFP work via
+  `Exit::exits_needing_cpfp` (which returns `ExitCpfpRequest` items, including
+  `min_fee_for_rbf` when an RBF replacement is needed) and submit signed
+  children back via `Exit::provide_cpfp_tx`. The state machine now pauses at
+  CPFP boundaries instead of racing internal broadcasts, letting third-party
+  wallets drive exits with their own fee policy and signer. Callers using
+  bark's bundled BDK onchain wallet can keep the old one-shot behaviour via
+  `Exit::progress_exits_onchain`.
+  [#2032](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2032)
+  - **BREAKING:** `ExitTxStatus` variants reshaped — see the `bark-json`
+    changelog for the wire-format changes.
+  - **BREAKING:** `ExitError::InsufficientFeeToStart` removed; fee
+    insufficiency surfaces via `ExitCpfpRequest.min_fee_for_rbf` instead.
+  - New `ExitError::DatabaseChildStoreFailure` reported when persisting a
+    CPFP child transaction fails.
+- Track mempool RBF info for every exit CPFP child, not just downloaded ones
+  Effective fee rate and total package fee are now stored on
+  `ChildTransactionInfo.fee_info` (`Option<FeeInfo>`) and refreshed by the
+  next sync after a child enters the mempool — regardless of whether it was
+  built by our wallet or downloaded from the chain source. This lets the
+  state machine make consistent RBF decisions without re-deriving fee info
+  from `ExitTxOrigin`.
+  [#2032](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2032)
+  - **BREAKING:** `ExitTxOrigin::Mempool` is now a unit variant; fee data
+    moved off of origin onto `ChildTransactionInfo.fee_info`. Persisted
+    state from older versions still deserializes cleanly (extra
+    `fee_rate_kwu` / `total_fee` fields on Mempool origins are ignored).
+  - New `FeeInfo { fee_rate, total_fee }` struct re-exported from
+    `bark::exit`.
+  - New `ExitTxOrigin::with_confirmed_in(...)` helper that updates an
+    origin given its current confirmation state.
+  - New `ExitChildStatus.fee_info: Option<FeeInfo>` field.
+- Resolve esplora-electrs lag during exit CPFP RBF
+  When the chain source reports a different unconfirmed spending tx than
+  our locally-broadcast wallet child (typically because esplora-electrs
+  hasn't indexed our broadcast yet), the transaction manager now tries
+  to (re-)broadcast our package first. If Bitcoin Core accepts it — or
+  reports it as `AlreadyKnown` — we keep our wallet child. If broadcast is
+  rejected (`InsufficientReplacementFee`, `MissingOrSpentInputs`, etc.)
+  we accept the chain's tx. This avoids silently downgrading a freshly
+  broadcast high-fee RBF to a stale lower-fee child returned by a lagging
+  indexer.
+  [#2032](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2032)

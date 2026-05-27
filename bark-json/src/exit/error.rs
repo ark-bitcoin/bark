@@ -1,4 +1,4 @@
-use bitcoin::{Amount, FeeRate, Txid};
+use bitcoin::{Amount, Txid};
 use thiserror::Error;
 
 use ark::VtxoId;
@@ -58,6 +58,9 @@ pub enum ExitError {
 	#[error("Database Retrieval Failure: Unable to get child tx: {error}")]
 	DatabaseChildRetrievalFailure { error: String },
 
+	#[error("Database Store Failure: Unable to store child tx: {error}")]
+	DatabaseChildStoreFailure { error: String },
+
 	#[error("Dust Limit Error: The dust limit for a VTXO is {dust} but the balance is only {vtxo}")]
 	DustLimit {
 		#[cfg_attr(feature = "utoipa", schema(value_type = u64))]
@@ -89,20 +92,6 @@ pub enum ExitError {
 		needed: Amount,
 		#[cfg_attr(feature = "utoipa", schema(value_type = u64))]
 		available: Amount
-	},
-
-	#[error("Insufficient Fee Error: Your balance is {balance} but an estimated {total_fee} (fee rate of {fee_rate}) is required to exit the VTXO")]
-	InsufficientFeeToStart {
-		#[cfg_attr(feature = "utoipa", schema(value_type = u64))]
-		balance: Amount,
-		#[cfg_attr(feature = "utoipa", schema(value_type = u64))]
-		total_fee: Amount,
-		#[serde(rename = "fee_rate_sat_per_kvb", with = "crate::serde_utils::fee_rate_sat_per_kvb")]
-		#[cfg_attr(feature = "utoipa", schema(value_type = u64))]
-		fee_rate: FeeRate,
-		#[deprecated(note = "use fee_rate_sat_per_kvb instead")]
-		#[cfg_attr(feature = "utoipa", schema(value_type = u64))]
-		fee_rate_kwu: u64,
 	},
 
 	#[error("Internal Error: An unexpected problem occurred, {error}")]
@@ -174,11 +163,14 @@ impl From<bark::exit::ExitError> for ExitError {
 			bark::exit::ExitError::DatabaseChildRetrievalFailure { error } => {
 				ExitError::DatabaseChildRetrievalFailure { error }
 			},
+			bark::exit::ExitError::DatabaseChildStoreFailure { error } => {
+				ExitError::DatabaseChildStoreFailure { error }
+			},
 			bark::exit::ExitError::DustLimit { vtxo, dust } => {
 				ExitError::DustLimit { vtxo, dust }
 			},
 			bark::exit::ExitError::ExitPackageBroadcastFailure { txid, error } => {
-				ExitError::ExitPackageBroadcastFailure { txid, error }
+				ExitError::ExitPackageBroadcastFailure { txid, error: error.to_string() }
 			},
 			bark::exit::ExitError::ExitPackageFinalizeFailure { error } => {
 				ExitError::ExitPackageFinalizeFailure { error }
@@ -188,10 +180,6 @@ impl From<bark::exit::ExitError> for ExitError {
 			},
 			bark::exit::ExitError::InsufficientConfirmedFunds { needed, available } => {
 				ExitError::InsufficientConfirmedFunds { needed, available }
-			},
-			bark::exit::ExitError::InsufficientFeeToStart { balance, total_fee, fee_rate } => {
-				let fee_rate_kwu = fee_rate.to_sat_per_kwu();
-				ExitError::InsufficientFeeToStart { balance, total_fee, fee_rate, fee_rate_kwu }
 			},
 			bark::exit::ExitError::InternalError { error } => {
 				ExitError::InternalError { error }

@@ -521,19 +521,35 @@ mod test {
 	#[test]
 	/// Each struct stored as JSON in the database should have test to check for backwards compatibility
 	/// Parsing can occur either in convert.rs or this file (query.rs)
-	fn test_serialised_structs() {
-		// Exit state
+	fn test_serialized_structs() {
+		// Exit state — top-level variants
 		let serialised = r#"{"type":"start","tip_height":119}"#;
-		serde_json::from_str::<ExitState>(serialised).unwrap();
-		let serialised = r#"{"type":"processing","tip_height":119,"transactions":[{"txid":"9fd34b8c556dd9954bda80ba2cf3474a372702ebc31a366639483e78417c6812","status":{"type":"awaiting-input-confirmation","txids":["ddfe11920358d1a1fae970dc80459c60675bf1392896f69b103fc638313751de"]}}]}"#;
 		serde_json::from_str::<ExitState>(serialised).unwrap();
 		let serialised = r#"{"type":"awaiting-delta","tip_height":122,"confirmed_block":"122:3cdd30fc942301a74666c481beb82050ccd182050aee3c92d2197e8cad427b8f","claimable_height":134}"#;
 		serde_json::from_str::<ExitState>(serialised).unwrap();
 		let serialised = r#"{"type":"claimable","tip_height":134,"claimable_since": "134:71fe28f4c803a4c46a3a93d0a9937507d7c20b4bd9586ba317d1109e1aebaac9","last_scanned_block":null}"#;
 		serde_json::from_str::<ExitState>(serialised).unwrap();
+		let serialised = r#"{"type":"claimable","tip_height":140,"claimable_since": "134:71fe28f4c803a4c46a3a93d0a9937507d7c20b4bd9586ba317d1109e1aebaac9","last_scanned_block": "139:c6e9eb8c8b4d9620bbe87b94d7fb0fbb8eef1c4a8c1e60f7b3a5d80fe26b0d3e"}"#;
+		serde_json::from_str::<ExitState>(serialised).unwrap();
 		let serialised = r#"{"type":"claim-in-progress","tip_height":134, "claimable_since": "134:6585896bdda6f08d924bf45cc2b16418af56703b3c50930e4dccbc1728d3800a","claim_txid":"599347c35870bd36f7acb22b81f9ffa8b911d9b5e94834858aebd3ec09339f4c"}"#;
 		serde_json::from_str::<ExitState>(serialised).unwrap();
 		let serialised = r#"{"type":"claimed","tip_height":134,"txid":"599347c35870bd36f7acb22b81f9ffa8b911d9b5e94834858aebd3ec09339f4c","block": "122:3cdd30fc942301a74666c481beb82050ccd182050aee3c92d2197e8cad427b8f"}"#;
+		serde_json::from_str::<ExitState>(serialised).unwrap();
+
+		// Exit state — `processing` carrying each ExitTxStatus variant. These fixtures
+		// guard against the same class of bug the m0029 migration was written to fix:
+		// renaming, dropping, or reshaping a nested status variant must trip this test.
+		let serialised = r#"{"type":"processing","tip_height":119,"transactions":[{"txid":"9fd34b8c556dd9954bda80ba2cf3474a372702ebc31a366639483e78417c6812","status":{"type":"verify-inputs"}}]}"#;
+		serde_json::from_str::<ExitState>(serialised).unwrap();
+		let serialised = r#"{"type":"processing","tip_height":119,"transactions":[{"txid":"9fd34b8c556dd9954bda80ba2cf3474a372702ebc31a366639483e78417c6812","status":{"type":"awaiting-input-confirmation","txids":["ddfe11920358d1a1fae970dc80459c60675bf1392896f69b103fc638313751de"]}}]}"#;
+		serde_json::from_str::<ExitState>(serialised).unwrap();
+		let serialised = r#"{"type":"processing","tip_height":119,"transactions":[{"txid":"9fd34b8c556dd9954bda80ba2cf3474a372702ebc31a366639483e78417c6812","status":{"type":"awaiting-cpfp-broadcast"}}]}"#;
+		serde_json::from_str::<ExitState>(serialised).unwrap();
+		let serialised = r#"{"type":"processing","tip_height":119,"transactions":[{"txid":"9fd34b8c556dd9954bda80ba2cf3474a372702ebc31a366639483e78417c6812","status":{"type":"awaiting-confirmation","child_txid":"ddfe11920358d1a1fae970dc80459c60675bf1392896f69b103fc638313751de","origin":{"type":"wallet","confirmed_in":null}}}]}"#;
+		serde_json::from_str::<ExitState>(serialised).unwrap();
+		let serialised = r#"{"type":"processing","tip_height":119,"transactions":[{"txid":"9fd34b8c556dd9954bda80ba2cf3474a372702ebc31a366639483e78417c6812","status":{"type":"awaiting-confirmation","child_txid":"ddfe11920358d1a1fae970dc80459c60675bf1392896f69b103fc638313751de","origin":{"type":"mempool","fee_rate_kwu":25000,"total_fee":27625}}}]}"#;
+		serde_json::from_str::<ExitState>(serialised).unwrap();
+		let serialised = r#"{"type":"processing","tip_height":134,"transactions":[{"txid":"9fd34b8c556dd9954bda80ba2cf3474a372702ebc31a366639483e78417c6812","status":{"type":"confirmed","child_txid":"ddfe11920358d1a1fae970dc80459c60675bf1392896f69b103fc638313751de","block":"122:3cdd30fc942301a74666c481beb82050ccd182050aee3c92d2197e8cad427b8f","origin":{"type":"block","confirmed_in":"122:3cdd30fc942301a74666c481beb82050ccd182050aee3c92d2197e8cad427b8f"}}}]}"#;
 		serde_json::from_str::<ExitState>(serialised).unwrap();
 
 		// Exit child tx origins
@@ -541,6 +557,10 @@ mod test {
 		serde_json::from_str::<ExitTxOrigin>(serialized).unwrap();
 		let serialized = r#"{"type":"wallet","confirmed_in": "134:71fe28f4c803a4c46a3a93d0a9937507d7c20b4bd9586ba317d1109e1aebaac9"}"#;
 		serde_json::from_str::<ExitTxOrigin>(serialized).unwrap();
+		// New shape: mempool is a unit variant; fee data lives on ChildTransactionInfo.fee_info.
+		let serialized = r#"{"type":"mempool"}"#;
+		serde_json::from_str::<ExitTxOrigin>(serialized).unwrap();
+		// Legacy shape: extra fee_rate_kwu/total_fee fields must still deserialize cleanly.
 		let serialized = r#"{"type":"mempool","fee_rate_kwu":25000,"total_fee":27625}"#;
 		serde_json::from_str::<ExitTxOrigin>(serialized).unwrap();
 		let serialized = r#"{"type":"block","confirmed_in": "134:71fe28f4c803a4c46a3a93d0a9937507d7c20b4bd9586ba317d1109e1aebaac9"}"#;
@@ -552,6 +572,8 @@ mod test {
 		let serialised = r#"{"type": "spent"}"#;
 		serde_json::from_str::<VtxoState>(serialised).unwrap();
 		let serialised = r#"{"type": "locked", "movement_id": null}"#;
+		serde_json::from_str::<VtxoState>(serialised).unwrap();
+		let serialised = r#"{"type": "locked", "movement_id": 42}"#;
 		serde_json::from_str::<VtxoState>(serialised).unwrap();
 	}
 }

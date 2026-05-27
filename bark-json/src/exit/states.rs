@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 use std::fmt;
 
-use bitcoin::{Amount, FeeRate, Txid};
+use bitcoin::Txid;
 
 use bitcoin_ext::BlockHeight;
 use crate::primitives::BlockRef;
@@ -27,23 +27,8 @@ pub enum ExitTxStatus {
 		#[cfg_attr(feature = "utoipa", schema(value_type = Vec<String>))]
 		txids: HashSet<Txid>
 	},
-	NeedsSignedPackage,
-	NeedsReplacementPackage {
-		#[serde(rename = "min_fee_rate_sat_per_kvb", with = "crate::serde_utils::fee_rate_sat_per_kvb")]
-		#[cfg_attr(feature = "utoipa", schema(value_type = u64))]
-		min_fee_rate: FeeRate,
-		#[deprecated(note = "use min_fee_rate_sat_per_kvb instead")]
-		#[cfg_attr(feature = "utoipa", schema(value_type = u64))]
-		min_fee_rate_kwu: u64,
-		#[cfg_attr(feature = "utoipa", schema(value_type = u64))]
-		min_fee: Amount,
-	},
-	NeedsBroadcasting {
-		#[cfg_attr(feature = "utoipa", schema(value_type = String))]
-		child_txid: Txid,
-		origin: ExitTxOrigin,
-	},
-	BroadcastWithCpfp {
+	AwaitingCpfpBroadcast,
+	AwaitingConfirmation {
 		#[cfg_attr(feature = "utoipa", schema(value_type = String))]
 		child_txid: Txid,
 		origin: ExitTxOrigin,
@@ -71,18 +56,11 @@ impl From<bark::exit::ExitTxStatus> for ExitTxStatus {
 			bark::exit::ExitTxStatus::AwaitingInputConfirmation { txids } => {
 				ExitTxStatus::AwaitingInputConfirmation { txids }
 			},
-			bark::exit::ExitTxStatus::NeedsSignedPackage => {
-				ExitTxStatus::NeedsSignedPackage
+			bark::exit::ExitTxStatus::AwaitingCpfpBroadcast => {
+				ExitTxStatus::AwaitingCpfpBroadcast
 			},
-			bark::exit::ExitTxStatus::NeedsReplacementPackage { min_fee_rate, min_fee } => {
-				let min_fee_rate_kwu = min_fee_rate.to_sat_per_kwu();
-				ExitTxStatus::NeedsReplacementPackage { min_fee_rate, min_fee, min_fee_rate_kwu }
-			},
-			bark::exit::ExitTxStatus::NeedsBroadcasting { child_txid, origin } => {
-				ExitTxStatus::NeedsBroadcasting { child_txid, origin: origin.into() }
-			},
-			bark::exit::ExitTxStatus::BroadcastWithCpfp { child_txid, origin } => {
-				ExitTxStatus::BroadcastWithCpfp { child_txid, origin: origin.into() }
+			bark::exit::ExitTxStatus::AwaitingConfirmation { child_txid, origin } => {
+				ExitTxStatus::AwaitingConfirmation { child_txid, origin: origin.into() }
 			},
 			bark::exit::ExitTxStatus::Confirmed { child_txid, block, origin } => {
 				ExitTxStatus::Confirmed { child_txid, block: block.into(), origin: origin.into() }
@@ -98,19 +76,7 @@ pub enum ExitTxOrigin {
 	Wallet {
 		confirmed_in: Option<BlockRef>
 	},
-	Mempool {
-		/// This is the effective fee rate of the transaction (including CPFP ancestors)
-		#[serde(rename = "fee_rate_sat_per_kvb", with = "crate::serde_utils::fee_rate_sat_per_kvb")]
-		#[cfg_attr(feature = "utoipa", schema(value_type = u64))]
-		fee_rate: FeeRate,
-		#[deprecated(note = "use fee_rate_sat_per_kvb instead")]
-		#[cfg_attr(feature = "utoipa", schema(value_type = u64))]
-		#[serde(rename = "fee_rate")]
-		fee_rate_kwu: u64,
-		/// This includes the fees of the CPFP ancestors
-		#[cfg_attr(feature = "utoipa", schema(value_type = u64))]
-		total_fee: Amount,
-	},
+	Mempool,
 	Block {
 		confirmed_in: BlockRef
 	},
@@ -128,10 +94,7 @@ impl From<bark::exit::ExitTxOrigin> for ExitTxOrigin {
 			bark::exit::ExitTxOrigin::Wallet { confirmed_in } => {
 				ExitTxOrigin::Wallet { confirmed_in: confirmed_in.map(Into::into) }
 			},
-			bark::exit::ExitTxOrigin::Mempool { fee_rate, total_fee } => {
-				let fee_rate_kwu = fee_rate.to_sat_per_kwu();
-				ExitTxOrigin::Mempool { fee_rate, total_fee, fee_rate_kwu }
-			},
+			bark::exit::ExitTxOrigin::Mempool => ExitTxOrigin::Mempool,
 			bark::exit::ExitTxOrigin::Block { confirmed_in } => {
 				ExitTxOrigin::Block { confirmed_in: confirmed_in.into() }
 			},

@@ -547,35 +547,34 @@ impl ChainSource {
 		}
 	}
 
-	pub async fn broadcast_package(&self, txs: &[impl Borrow<Transaction>]) -> anyhow::Result<()> {
+	pub async fn broadcast_package(&self, txs: &[impl Borrow<Transaction>]) -> Result<(), BroadcastError> {
 		match self.inner() {
 			#[cfg(feature = "bitcoind-rpc")]
 			ChainSourceClient::Bitcoind { rpc, .. } => {
 				let hexes: Vec<String> = txs.iter()
 					.map(|t| bitcoin::consensus::encode::serialize_hex(t.borrow()))
 					.collect();
-				let res: rpc::SubmitPackageResult =
-					rpc.call_raw("submitpackage", &[hexes.into()]).await?;
+				let res: rpc::SubmitPackageResult = rpc.call_raw("submitpackage", &[hexes.into()])
+					.await
+					.map_err(|e| BroadcastError::Other(e.to_string()))?;
 				if res.package_msg != "success" {
-					let errors = res.tx_results.values()
-						.map(|t| format!("tx {}: {}",
-							t.txid, t.error.as_ref().map(|s| s.as_str()).unwrap_or("(no error)"),
-						))
-						.collect::<Vec<_>>();
-					bail!("msg: '{}', errors: {:?}", res.package_msg, errors);
+					return Err(classify_submit_package_errors(
+						&res.package_msg,
+						res.tx_results.values().map(|t| (t.txid, t.error.as_deref())),
+					));
 				}
 				Ok(())
 			},
 			ChainSourceClient::Esplora(client) => {
 				let txs = txs.iter().map(|t| t.borrow().clone()).collect::<Vec<_>>();
-				let res = client.submit_package(&txs, None, None).await?;
+				let res = client.submit_package(&txs, None, None)
+					.await
+					.map_err(|e| BroadcastError::Other(e.to_string()))?;
 				if res.package_msg != "success" {
-					let errors = res.tx_results.values()
-						.map(|t| format!("tx {}: {}",
-							t.txid, t.error.as_ref().map(|s| s.as_str()).unwrap_or("(no error)"),
-						))
-						.collect::<Vec<_>>();
-					bail!("msg: '{}', errors: {:?}", res.package_msg, errors);
+					return Err(classify_submit_package_errors(
+						&res.package_msg,
+						res.tx_results.values().map(|t| (t.txid, t.error.as_deref())),
+					));
 				}
 
 				Ok(())
@@ -779,5 +778,59 @@ impl TxsSpendingInputsResult {
 			.iter()
 			.filter(|(_, (_, status))| matches!(status, TxStatus::Mempool))
 			.map(|(_, (txid, _))| *txid)
+	}
+}
+
+/// Classified failure modes when broadcasting a transaction package.
+///
+/// The reject reasons covered by the typed variants are stable Bitcoin Core mempool policy
+/// constants (`txn-already-known`, `bad-txns-inputs-missingorspent`, `insufficient fee, rejecting
+/// replacement`). Esplora forwards bitcoind's reject reasons verbatim, so the same matching works
+/// for both backends.
+#[derive(Clone, Debug, thiserror::Error, PartialEq, Eq)]
+pub enum BroadcastError {
+	/// The transaction is already in the mempool. Treated as success for retry-safety.
+	#[error("transaction already known to the mempool")]
+	AlreadyKnown,
+	/// Inputs are missing or already spent — typically a conflicting replacement is in the mempool.
+	#[error("transaction inputs are missing or already spent")]
+	MissingOrSpentInputs,
+	/// The replacement fee is insufficient under RBF policy.
+	#[error("insufficient fee, rejecting replacement")]
+	InsufficientReplacementFee,
+	/// Any other failure (unrecognized reject reason, RPC/transport error, etc.).
+	#[error("{0}")]
+	Other(String),
+}
+
+impl BroadcastError {
+	/// True if the error means the transaction (or an equivalent one) is already known to the
+	/// network — i.e., not a sign that our transaction is invalid.
+	pub fn is_mempool_conflict(&self) -> bool {
+		matches!(
+			self,
+			BroadcastError::AlreadyKnown
+				| BroadcastError::MissingOrSpentInputs
+				| BroadcastError::InsufficientReplacementFee,
+		)
+	}
+}
+
+fn classify_submit_package_errors<'a>(
+	package_msg: &str,
+	tx_results: impl Iterator<Item = (Txid, Option<&'a str>)>,
+) -> BroadcastError {
+	let errors: Vec<String> = tx_results
+		.map(|(txid, err)| format!("tx {}: {}", txid, err.unwrap_or("(no error)")))
+		.collect();
+	let combined = errors.join(", ");
+	if combined.contains("txn-already-known") {
+		BroadcastError::AlreadyKnown
+	} else if combined.contains("bad-txns-inputs-missingorspent") {
+		BroadcastError::MissingOrSpentInputs
+	} else if combined.contains("insufficient fee, rejecting replacement") {
+		BroadcastError::InsufficientReplacementFee
+	} else {
+		BroadcastError::Other(format!("msg: '{}', errors: [{}]", package_msg, combined))
 	}
 }

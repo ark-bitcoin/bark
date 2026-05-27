@@ -1,6 +1,33 @@
-use bitcoin::{Transaction, Txid};
+use bitcoin::{Amount, FeeRate, Transaction, Txid};
+
+use ark::VtxoId;
 
 use crate::exit::models::states::ExitTxOrigin;
+
+/// Describes an exit transaction that needs a CPFP child to be confirmed.
+///
+/// Returned by [crate::exit::Exit::exits_needing_cpfp]. The caller creates a child
+/// transaction spending the P2A anchor of [ExitCpfpRequest::exit_tx] and submits it
+/// via [crate::exit::Exit::provide_cpfp_tx].
+#[derive(Clone, Debug)]
+pub struct ExitCpfpRequest {
+	/// The VTXO being exited.
+	pub vtxo_id: VtxoId,
+	/// The exit transaction whose P2A anchor output must be spent by the CPFP child.
+	pub exit_tx: Transaction,
+	/// If set, a third-party CPFP is already in the mempool and the child must replace it
+	/// via RBF. `None` means no CPFP exists yet and any valid fee is acceptable.
+	pub rbf_requirement: Option<RbfRequirement>,
+}
+
+/// Constraints a CPFP replacement transaction must satisfy to evict an existing one via RBF.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RbfRequirement {
+	/// The effective fee rate of the existing package. A replacement must exceed this.
+	pub min_fee_rate: FeeRate,
+	/// The total fee paid by the existing package. A replacement must pay strictly more.
+	pub current_package_fee: Amount,
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ExitTransactionPackage {
@@ -23,5 +50,19 @@ pub struct TransactionInfo {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ChildTransactionInfo {
 	pub info: TransactionInfo,
+	pub fee_info: Option<FeeInfo>,
 	pub origin: ExitTxOrigin,
+}
+
+/// Contains the data required to bump the fee for a given transaction (including ancestors).
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
+pub struct FeeInfo {
+	/// The effective fee rate of the transaction (including unconfirmed CPFP ancestors).
+	#[serde(rename = "fee_rate_kwu")]
+	pub fee_rate: FeeRate,
+	/// Sum of the transaction's own fee plus the fee of each of its unconfirmed ancestors.
+	/// To replace this transaction via RBF, a replacement must add `mintxrelayfee` (typically
+	/// 0.1 sat/vB) multiplied by the replacement weight on top of this amount.
+	#[serde(rename = "total_fee_sat", with = "bitcoin::amount::serde::as_sat")]
+	pub total_fee: Amount,
 }
