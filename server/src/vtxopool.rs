@@ -9,7 +9,7 @@ use anyhow::Context;
 use bitcoin::secp256k1::{rand, Keypair};
 use bitcoin::{Amount, OutPoint, Transaction};
 use futures::{stream, StreamExt, TryStreamExt};
-use tracing::{info, warn};
+use tracing::{info, warn, error};
 
 use ark::{ServerVtxo, Vtxo, VtxoId, VtxoPolicy, VtxoRequest};
 use ark::arkoor::ArkoorDestination;
@@ -263,7 +263,12 @@ impl VtxoPool {
 		inputs: &[(VtxoId, BlockHeight, Amount)],
 	) -> anyhow::Result<Vec<Vtxo<Full>>> {
 		let input_ids = inputs.iter().map(|v| v.0).collect::<Vec<_>>();
-		let input_vtxos = srv.db.read(async |t| t.get_pool_vtxos_by_ids(&input_ids).await).await?;
+		let mut input_vtxos = srv.db.read(async |t| t.get_pool_vtxos_by_ids(&input_ids).await).await?;
+
+		// We sort the vtxos in order of increasing amounts
+		// This ensures we spend the smallest vtxos first and
+		// we don't have any vtxo that serves as change
+		input_vtxos.sort_by(|v1, v2| v1.amount().cmp(&v2.amount()));
 
 		// Validate that the inputs are still usable and unlocked
 		let _vtxo_guard = srv.vtxos_in_flux.try_lock(&input_ids).map_err(|e| {
@@ -306,6 +311,13 @@ impl VtxoPool {
 		let (sent, change) = output_vtxos.into_iter()
 			.partition::<Vec<_>, _>(|v| *v.policy() == dest.policy);
 
+		if change.len() > 1 {
+			error!("The vtxo pool returned more then one change-output");
+			bail!("More then one change output");
+		};
+
+		let change = change.into_iter().next();
+
 		let update = VtxoTreeUpdate::new()
 			.upsert_signed_tx(signed_vtxs)
 			.insert_oor_spent_vtxos(internal_vtxos)
@@ -337,7 +349,7 @@ impl VtxoPool {
 			}
 		}
 
-		for change in change {
+		if let Some(change) = change {
 			let new = PoolVtxo::new(change);
 			if let Err(e) = srv.db.write(async |t| t.store_vtxopool_vtxo(&new).await).await {
 				// don't abort for this
