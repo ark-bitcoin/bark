@@ -313,7 +313,7 @@ impl VtxoPool {
 
 		if change.len() > 1 {
 			error!("The vtxo pool returned more then one change-output");
-			bail!("More then one change output");
+			bail!("More than one change output");
 		};
 
 		let change = change.into_iter().next();
