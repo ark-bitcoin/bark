@@ -1,0 +1,3 @@
+- Include the timezone offset in terminal log timestamps
+  Terminal log lines now show the UTC offset (e.g. `+02:00`) alongside the local time.
+  [#2083](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2083)
