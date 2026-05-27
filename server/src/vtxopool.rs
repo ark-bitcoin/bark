@@ -303,12 +303,19 @@ impl VtxoPool {
 		let input_spend_info = builder.input_spend_info().collect::<Vec<_>>();
 		let output_vtxos = builder.build_signed_vtxos();
 
+		let (sent, change) = output_vtxos.into_iter()
+			.partition::<Vec<_>, _>(|v| *v.policy() == dest.policy);
+
 		let update = VtxoTreeUpdate::new()
 			.upsert_signed_tx(signed_vtxs)
 			.insert_oor_spent_vtxos(internal_vtxos)
 			.insert_unspent_vtxos(
-				output_vtxos.iter().cloned().map(ServerVtxo::from),
+				sent.iter().cloned().map(ServerVtxo::from),
 				database::SpendState::HtlcRecvUnclaimed,
+			)
+			.insert_unspent_vtxos(
+				change.iter().cloned().map(ServerVtxo::from),
+				database::SpendState::Pool,
 			)
 			.mark_vtxos_oor_spent(input_spend_info);
 		srv.db.write(async |t| {
@@ -317,9 +324,6 @@ impl VtxoPool {
 				.context("failed to mark vtxopool vtxos as spent")?;
 			Ok(())
 		}).await?;
-
-		let (sent, change) = output_vtxos.into_iter()
-			.partition::<Vec<_>, _>(|v| *v.policy() == dest.policy);
 
 		for input in inputs {
 			slog!(SpentPoolVtxo, vtxo: input.0, amount: input.2, destination: dest.clone());
