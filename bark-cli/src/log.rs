@@ -70,7 +70,7 @@ pub fn init_logging(verbose: bool, quiet: bool, datadir: &Path) {
 		logger.parse_env(env)
 			.format(move |out, rec| {
 				let now = chrono::Local::now();
-				let ts = now.format("%Y-%m-%d %H:%M:%S.%3f");
+				let ts = now.format("%Y-%m-%d %H:%M:%S.%3f %:z");
 				let lvl = rec.level();
 				let msg = rec.args();
 				if verbose {
