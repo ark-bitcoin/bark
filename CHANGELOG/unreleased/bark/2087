@@ -1,0 +1,2 @@
+- Avoid panic when failing to download an exit transaction
+  [#2087](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2087)
