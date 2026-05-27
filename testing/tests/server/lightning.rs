@@ -15,6 +15,7 @@ use bark::Wallet;
 use bark::lightning_invoice::Bolt11Invoice;
 use bark_json::primitives::WalletVtxoInfo;
 use server_rpc::protos::{self, lightning_payment_status};
+use server::database::Db;
 use server::vtxopool::VtxoTarget;
 
 use ark_testing::{Captaind, TestContext, btc, lightning_test, require_bark_version, sat};
@@ -23,6 +24,32 @@ use ark_testing::context::LightningPaymentSetup;
 use ark_testing::daemon::captaind::{self, ArkClient};
 use ark_testing::util::{FutureExt, ToAltString};
 use ark_testing::exit::complete_exit;
+
+
+/// Asserts that every unspent entry in `vtxo_pool` (`spent_at IS NULL`)
+/// references a `vtxo` row with `spend_state = 'pool'`.
+async fn assert_vtxopool_consistency_db(db: &Db) {
+	let bad = db.read(async |t| {
+		let rows = t.query("
+			SELECT vtxo.vtxo_id, vtxo.spend_state::text
+			FROM vtxo_pool
+			JOIN vtxo ON vtxo.vtxo_id = vtxo_pool.vtxo_id
+			WHERE vtxo_pool.spent_at IS NULL AND vtxo.spend_state != 'pool'
+		", &[]).await?;
+		Ok(rows.into_iter()
+			.map(|r| (r.get::<_, String>(0), r.get::<_, String>(1)))
+			.collect::<Vec<_>>())
+	}).await.unwrap();
+	assert!(bad.is_empty(),
+		"vtxo_pool entries with spent_at IS NULL must have spend_state = 'pool'; got: {:?}",
+		bad);
+}
+
+async fn assert_vtxopool_consistency(srv: &Captaind) {
+	let pg_cfg = srv.config().postgres.clone();
+	let db = Db::connect(&pg_cfg).await.unwrap();
+	assert_vtxopool_consistency_db(&db).await;
+}
 
 
 /// Verify that the server extracts preimages from on-chain HTLC spends
@@ -87,6 +114,8 @@ async fn server_settles_invoice_from_on_chain_htlc_preimage(
 			ctx.generate_blocks(1).await;
 		},
 	);
+
+	assert_vtxopool_consistency(srv).await;
 }
 lightning_test!(server_settles_invoice_from_on_chain_htlc_preimage, |cfg| {
 	// Use a long receive_htlc_forward_timeout so hold invoices stay alive
@@ -185,6 +214,8 @@ async fn server_refuse_claim_invoice_not_settled() {
 	tokio::spawn(async move { lightning.internal.pay_bolt11(cloned.invoice).await; });
 	let err = bark.try_lightning_receive(&invoice_info.invoice).await.unwrap_err().to_alt_string();
 	assert!(err.contains("bad user input: preimage doesn't match payment hash"), "err: {err}");
+
+	assert_vtxopool_consistency(&srv).await;
 }
 
 #[tokio::test]
@@ -225,6 +256,8 @@ async fn server_should_release_hold_invoice_when_subscription_is_canceled() {
 	// Verify the hold invoice was released by trying to pay again - should also fail
 	let err = sender.try_pay_bolt11(invoice_info.invoice).await.unwrap_err().to_alt_string();
 	assert!(err.contains("WIRE_INCORRECT_OR_UNKNOWN_PAYMENT_DETAILS"), "err: {err}");
+
+	assert_vtxopool_consistency(&srv).await;
 }
 
 #[tokio::test]
@@ -263,6 +296,8 @@ async fn server_generated_invoice_has_configured_expiry() {
 	// Sender also rejects expired invoice, confirming expiry was set correctly in the invoice
 	let err = lightning.internal.try_pay_bolt11(invoice_info.invoice).await.unwrap_err().to_alt_string();
 	assert!(err.contains("Invoice expired"), "err: {err}");
+
+	assert_vtxopool_consistency(&srv).await;
 }
 
 async fn server_claim_lightning_receive_is_idempotent(
@@ -302,6 +337,8 @@ async fn server_claim_lightning_receive_is_idempotent(
 		bark.lightning_receive_status(&invoice_info.invoice).await.unwrap().finished_at,
 		status_before.finished_at,
 	);
+
+	assert_vtxopool_consistency(srv).await;
 }
 lightning_test!(server_claim_lightning_receive_is_idempotent);
 
@@ -369,6 +406,8 @@ async fn server_returned_htlc_recv_vtxos_identical(
 			assert_eq!(vtxos_1, vtxos_3, "should have the same VTXOs");
 		} => {},
 	}
+
+	assert_vtxopool_consistency(srv).await;
 }
 lightning_test!(server_returned_htlc_recv_vtxos_identical);
 
@@ -523,6 +562,8 @@ async fn should_allow_dust_lightning_receive_request() {
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 
 	bark.try_bolt11_invoice(sat(300)).await.unwrap();
+
+	assert_vtxopool_consistency(&srv).await;
 }
 
 #[tokio::test]
@@ -559,6 +600,8 @@ async fn should_refuse_over_max_vtxo_amount_lightning_receive_request() {
 
 	let err = bark.try_bolt11_invoice(sat(30_000)).await.unwrap_err().to_alt_string();
 	assert!(err.contains("Requested amount exceeds limit of 0.01000000 BTC"), "err: {err}");
+
+	assert_vtxopool_consistency(&srv).await;
 }
 
 #[tokio::test]
@@ -600,6 +643,8 @@ async fn server_can_use_multi_input_from_vtxo_pool() {
 	res1.ready().await.unwrap();
 
 	assert_eq!(balance, pay_amount + board_amount);
+
+	assert_vtxopool_consistency(&srv).await;
 }
 
 #[tokio::test]
@@ -664,6 +709,8 @@ async fn server_can_use_vtxo_pool_change_for_next_receive() {
 	let balance = bark.spendable_balance().await;
 
 	assert_eq!(balance, first_pay_amount + second_pay_amount + board_amount);
+
+	assert_vtxopool_consistency(&srv).await;
 }
 
 #[tokio::test]
@@ -761,4 +808,6 @@ async fn check_lightning_receive_poll_interval_fallback() {
 		elapsed >= Duration::from_secs(28),
 		"expected at least ~30s for poll fallback, but took {:?}", elapsed,
 	);
+
+	assert_vtxopool_consistency_db(srv.database()).await;
 }
