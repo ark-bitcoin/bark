@@ -1,4 +1,0 @@
-- Fetch offboard fee rate from dedicated endpoint
-  Bark now calls `GetOffboardFeeRate` directly instead of re-fetching the
-  entire `ArkInfo` on a TTL to get the current mempool fee rate.
-  [#2029](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2029)

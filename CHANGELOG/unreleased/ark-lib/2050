@@ -1,4 +1,0 @@
-- Expose standalone genesis encoding for `Vtxo<Full>`
-  Adds `Vtxo::<Full, P>::encode_genesis` / `serialize_genesis` and the
-  inverse `Vtxo::<Bare, P>::decode_genesis` / `with_genesis`.
-  [#2050](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2050)
