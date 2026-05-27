@@ -806,11 +806,15 @@ impl LightningManagerProcess {
 		};
 
 		if enable {
-			let new_state = NodeState::Disabled;
+			// NB: mark Offline (not Disabled) so check_nodes reconnects the
+			// node, and nudge the supervisor so it happens on the next loop
+			// iteration rather than waiting for the reconnect interval.
+			let new_state = NodeState::Offline;
 			telemetry::set_lightning_node_state(
 				uri.clone(), None, None, new_state.kind(),
 			);
 			node.set_state(new_state);
+			self.waker.notify_one();
 		}
 	}
 
