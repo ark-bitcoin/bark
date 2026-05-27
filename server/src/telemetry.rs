@@ -261,6 +261,8 @@ struct Metrics {
 	board_volume: Counter<u64>,
 	offboard_counter: Counter<u64>,
 	offboard_volume: Counter<u64>,
+	round_counter: Counter<u64>,
+	round_volume: Counter<u64>,
 	lightning_invoice_verification_counter: Counter<u64>,
 	lightning_invoice_verification_queue_gauge: Gauge<u64>,
 	lightning_open_invoices_gauge: Gauge<u64>,
@@ -484,6 +486,8 @@ impl Metrics {
 		let board_volume = meter.u64_counter("board_volume").build();
 		let offboard_counter = meter.u64_counter("offboard_counter").build();
 		let offboard_volume = meter.u64_counter("offboard_volume").build();
+		let round_counter = meter.u64_counter("round_counter").build();
+		let round_volume = meter.u64_counter("round_volume").build();
 		let lightning_invoice_verification_counter = meter.u64_counter("lightning_invoice_verification_counter").build();
 		let lightning_invoice_verification_queue_gauge = meter.u64_gauge("lightning_invoice_verification_queue_gauge").build();
 		let lightning_open_invoices_gauge = meter.u64_gauge("lightning_open_invoices_gauge").build();
@@ -570,6 +574,8 @@ impl Metrics {
 			board_volume,
 			offboard_counter,
 			offboard_volume,
+			round_counter,
+			round_volume,
 			lightning_invoice_verification_counter,
 			lightning_invoice_verification_queue_gauge,
 			lightning_open_invoices_gauge,
@@ -765,6 +771,8 @@ pub fn set_round_metrics(
 		m.round_input_volume_gauge.record(input_volume.to_sat(), global_labels);
 		m.round_input_count_gauge.record(input_count as u64, global_labels);
 		m.round_output_count_gauge.record(output_count as u64, global_labels);
+		m.round_counter.add(1, global_labels);
+		m.round_volume.add(input_volume.to_sat(), global_labels);
 	}
 }
 
