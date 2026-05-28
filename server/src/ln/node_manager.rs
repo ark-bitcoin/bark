@@ -184,6 +184,11 @@ impl LightningManager {
 			.cloned()
 	}
 
+	/// The currently-online node with the given id, if any.
+	fn node_by_id(&self, id: LightningNodeId) -> Option<NodeHandle> {
+		self.node_handles.read().iter().find(|h| h.id == id).cloned()
+	}
+
 	/// Pays a bolt-11 invoice and returns the pre-image
 	///
 	/// This method is also more clever than calling the grpc-method.
@@ -352,9 +357,19 @@ impl LightningManager {
 				&attempt, LightningPaymentStatus::Succeeded, None, None, Some(preimage),
 			).await?;
 		} else {
-			let (result_tx, result_rx) = oneshot::channel();
-			self.send_ctrl(Ctrl::SettleInvoice { subscription_id, preimage, result_tx });
-			result_rx.await.context("an error occurred settling invoice")??;
+			// Settle the hold invoice on the node that created the
+			// subscription - that's where the HTLCs are locked. The user has
+			// already revealed the preimage, so if that node is now offline
+			// we cannot recover and the caller will surface the error.
+			let htlc_subscription = self.db
+				.read(async |t| t.get_htlc_subscription_by_id(subscription_id).await).await?
+				.expect("can only settle known invoice");
+			let mut hold_client = self.node_by_id(htlc_subscription.lightning_node_id)
+				.context("invoice cannot be settled: node is now offline")?
+				.hold_rpc.context("node doesn't support hold anymore")?;
+			hold_client.settle(hold_plugin::SettleRequest {
+				payment_preimage: preimage.to_vec(),
+			}).await?;
 		}
 
 		// Update the subscription status to settled and notify waiters.
@@ -377,9 +392,14 @@ impl LightningManager {
 	) -> anyhow::Result<()> {
 		let id = subscription.id;
 		let payment_hash = PaymentHash::from(*subscription.invoice.payment_hash());
-		let (result_tx, result_rx) = oneshot::channel();
-		self.send_ctrl(Ctrl::CancelInvoice { subscription: Box::new(subscription), result_tx });
-		result_rx.await.context("an error occurred canceling an invoice")??;
+
+		// Cancel on the node that created the subscription.
+		let mut hold_client = self.node_by_id(subscription.lightning_node_id)
+			.context("invoice cannot be canceled: node is now offline")?
+			.hold_rpc.context("node doesn't support hold anymore")?;
+		hold_client.cancel(hold_plugin::CancelRequest {
+			payment_hash: payment_hash.to_vec(),
+		}).await?;
 
 		self.db.write(async |t| t.store_lightning_htlc_subscription_status(
 			id,
@@ -635,15 +655,6 @@ enum Ctrl {
 		sender_mailbox_id: Option<MailboxIdentifier>,
 		result_tx: oneshot::Sender<anyhow::Result<()>>,
 	},
-	SettleInvoice {
-		subscription_id: i64,
-		preimage: Preimage,
-		result_tx: oneshot::Sender<anyhow::Result<()>>,
-	},
-	CancelInvoice {
-		subscription: Box<LightningHtlcSubscription>,
-		result_tx: oneshot::Sender<anyhow::Result<()>>,
-	},
 }
 
 struct LightningManagerProcess {
@@ -691,12 +702,6 @@ impl LightningManagerProcess {
 	/// We use this node to start payments.
 	fn get_active_node(&self) -> Option<&ClnNodeOnlineState> {
 		self.online_nodes().min_by_key(|&(prio, _)| prio).map(|(_, node)| node)
-	}
-
-	fn get_node_by_id(&self, id: LightningNodeId) -> Option<&ClnNodeOnlineState> {
-		self.online_nodes()
-			.find(|(_, node)| node.id == id)
-			.map(|(_, node)| node)
 	}
 
 	/// Rebuild the shared snapshot of command handles for the currently-online
@@ -916,7 +921,18 @@ impl LightningManagerProcess {
 					&self.db, &self.mailbox_manager, payment_hash,
 				).await;
 
-				self.cancel_invoice(subscription.clone()).await?;
+				// Cancel the hold invoice on the receiving node: the intra-Ark
+				// payment settles off-CLN, so we don't want the HTLCs locked.
+				// NB: we only issue the RPC here, not the full cancel_invoice
+				// flow - we just set the subscription to Accepted, not Canceled.
+				let mut hold_client = self.online_nodes()
+					.find(|(_, n)| n.id == subscription.lightning_node_id)
+					.map(|(_, n)| n)
+					.context("invoice cannot be canceled: node is now offline")?
+					.hold_rpc.clone().context("node doesn't support hold anymore")?;
+				hold_client.cancel(hold_plugin::CancelRequest {
+					payment_hash: payment_hash.to_vec(),
+				}).await?;
 			},
 			LightningHtlcSubscriptionStatus::Accepted |
 			LightningHtlcSubscriptionStatus::HtlcsReady |
@@ -1001,43 +1017,6 @@ impl LightningManagerProcess {
 		Ok(())
 	}
 
-	async fn settle_invoice(&self, subscription_id: i64, preimage: Preimage) -> anyhow::Result<()> {
-		let htlc_subscription = self.db
-			.read(async |t| t.get_htlc_subscription_by_id(subscription_id).await).await?
-			.expect("can only settle known invoice");
-
-		// NB: we need to use the node that created the subscription because it is where the HTLCs were sent
-		// TODO: this unlikely to happen but at this point, the user already revealed the preimage, so we need
-		// to find a way to settle the invoice else he will go onchain and we won't be able to claim Lightning fees,
-		// so we'll lose the board amount
-		let mut hold_client = self.online_nodes()
-			.find(|(_, node)| node.id == htlc_subscription.lightning_node_id)
-			.map(|(_, node)| node)
-			.context("invoice cannot be settled: node is now offline")?
-			.hold_rpc.clone().context("node doesn't support hold anymore")?;
-
-		hold_client.settle(hold_plugin::SettleRequest {
-			payment_preimage: preimage.to_vec(),
-		}).await?;
-
-		Ok(())
-	}
-
-	/// Cancels an invoice by sending a cancel request to the hold plugin.
-	async fn cancel_invoice(&self, subscription: LightningHtlcSubscription) -> anyhow::Result<()> {
-		// NB: we need to use the node that created the subscription
-		let mut hold_client = self.get_node_by_id(subscription.lightning_node_id)
-			.context("invoice cannot be canceled: node is now offline")?
-			.hold_rpc.clone().context("node doesn't support hold anymore")?;
-
-		let payment_hash = PaymentHash::from(*subscription.invoice.payment_hash());
-		hold_client.cancel(hold_plugin::CancelRequest {
-			payment_hash: payment_hash.to_vec(),
-		}).await?;
-
-		Ok(())
-	}
-
 	async fn run(mut self, reconnect_interval: Duration) {
 		let _worker = self.rtmgr.spawn_critical("LightningManager");
 
@@ -1083,35 +1062,6 @@ impl LightningManagerProcess {
 							).await;
 
 							let _ = result_tx.send(res);
-						},
-						Ctrl::SettleInvoice { subscription_id, preimage, result_tx } => {
-							match self.settle_invoice(subscription_id, preimage).await {
-								Ok(()) => {
-									trace!("Invoice settled successfully: payment_hash={}",
-										preimage.compute_payment_hash(),
-									);
-									let _ = result_tx.send(Ok(()));
-								},
-								Err(e) => {
-									debug!("Error settling invoice: {:#}", e);
-									let _ = result_tx.send(Err(e));
-								},
-							}
-						},
-						Ctrl::CancelInvoice { subscription, result_tx } => {
-							let payment_hash = PaymentHash::from(*subscription.invoice.payment_hash());
-							match self.cancel_invoice(*subscription).await {
-								Ok(()) => {
-									trace!("Invoice canceled successfully: payment_hash={}",
-										payment_hash,
-									);
-									let _ = result_tx.send(Ok(()));
-								},
-								Err(e) => {
-									debug!("Error canceling invoice: {:#}", e);
-									let _ = result_tx.send(Err(e));
-								},
-							}
 						},
 					}
 				} else {
