@@ -24,6 +24,7 @@ use lnurllib::lightning_address::LightningAddress;
 use ark::lightning::{Bolt11Invoice, Invoice, Offer, OfferAmountExt};
 use bip321::{Bip321Error, Bip321Uri, ExtensionHandler, FieldWithAttributes};
 use bitcoin_ext::AmountExt;
+use log::debug;
 
 use crate::{FeeEstimate, Wallet};
 use crate::arkoor::ArkoorAddressError;
@@ -129,10 +130,7 @@ impl From<AvailablePaymentMethod> for PaymentRequest {
 /// Builder for constructing a [`Bip321Uri`] backed by a bark [`Wallet`].
 ///
 /// Each setter records the intent; the actual address/invoice generation
-/// happens in [`build`](Self::build). The `bool` parameter on destination
-/// setters controls the BIP 321 `req-` flag: when `true` the parameter is
-/// marked as required, meaning wallets that do not understand it must
-/// reject the URI.
+/// happens in [`build`](Self::build).
 ///
 /// # Example
 ///
@@ -140,14 +138,19 @@ impl From<AvailablePaymentMethod> for PaymentRequest {
 /// # use bitcoin::Amount;
 /// # use bark::Wallet;
 /// # async fn example(wallet: &mut Wallet) -> anyhow::Result<()> {
-/// let mut builder = wallet.bip321_uri();
-/// builder = builder
-///		.amount(Amount::from_sat(100_000))?
-///		.ark(false)
-///		.lightning_invoice(false)?;
-/// let uri = builder.build().await?;
+/// // Default URI has all options that don't require amount
+/// let uri = wallet.bip321_uri().build().await?;
 ///
-/// // bitcoin:?amount=100000&ark=tark1pwh9vsmezqqpharv69q4z8m6x364d5m5prnmcalcalq9pdmzw0y7mpveck4pcfhezqypczkrrj3lkx5ue4qrf4jc7ztpt9htdttmh2judhqnu7aue8p0y9mq47jn9z&lightning=lnbc20m1pvjluezsp5zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zygshp58yjmdan79s6qqdhdzgynm4zwqd5d7xmw5fk98klysy043l2ahrqspp5qqqsyqcyq5rqwzqfqqqsyqcyq5rqwzqfqqqsyqcyq5rqwzqfqypqfp4qrp33g0q5c5txsp9arysrx4k6zdkfs4nce4xj0gdcccefvpysxf3q9qrsgq9vlvyj8cqvq6ggvpwd53jncp9nwc47xlrsnenq2zp70fq83qlgesn4u3uyf4tesfkkwwfg3qs54qe426hp3tz7z6sweqdjg05axsrjqp9yrrwc
+/// // bitcoin:?ark=tark1pwh9vsmezqqpharv69q4z8m6x364d5m5prnmcalcalq9pdmzw0y7mpveck4pcfhezqypczkrrj3lkx5ue4qrf4jc7ztpt9htdttmh2judhqnu7aue8p0y9mq47jn9z
+/// println!("{}", uri.to_string());
+///
+/// // Add an amount to enable BOLT-11 invoice; can disable options as well
+/// let uri = wallet.bip321_uri()
+/// 	.amount(Amount::from_sat(100_000))
+/// 	.ark(false)
+/// 	.build().await?;
+///
+/// // bitcoin:?amount=100000&lightning=lnbc20m1pvjluezsp5zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zygshp58yjmdan79s6qqdhdzgynm4zwqd5d7xmw5fk98klysy043l2ahrqspp5qqqsyqcyq5rqwzqfqqqsyqcyq5rqwzqfqqqsyqcyq5rqwzqfqypqfp4qrp33g0q5c5txsp9arysrx4k6zdkfs4nce4xj0gdcccefvpysxf3q9qrsgq9vlvyj8cqvq6ggvpwd53jncp9nwc47xlrsnenq2zp70fq83qlgesn4u3uyf4tesfkkwwfg3qs54qe426hp3tz7z6sweqdjg05axsrjqp9yrrwc
 /// println!("{}", uri.to_string());
 ///
 /// # Ok(())
@@ -155,28 +158,30 @@ impl From<AvailablePaymentMethod> for PaymentRequest {
 /// ```
 pub struct BarkBip321UriBuilder<'a> {
 	wallet: &'a mut Wallet,
+	onchain_wallet: Option<&'a mut dyn GetAddress>,
 
 	amount: Option<Amount>,
 	label: Option<String>,
 	message: Option<String>,
 
-	onchain: Option<&'a mut dyn GetAddress>,
-	ark: Option<bool>,
-	lightning: Option<bool>,
+	ark: bool,
+	onchain: bool,
+	bolt11: bool,
 }
 
 impl<'a> BarkBip321UriBuilder<'a> {
 	pub fn new(wallet: &'a mut Wallet) -> Self {
 		Self {
 			wallet,
+			onchain_wallet: None,
 
 			amount: None,
 			label: None,
 			message: None,
 
-			onchain: None,
-			ark: None,
-			lightning: None,
+			ark: true,
+			onchain: true,
+			bolt11: true,
 		}
 	}
 
@@ -190,54 +195,56 @@ impl<'a> BarkBip321UriBuilder<'a> {
 		self
 	}
 
-	pub fn amount(mut self, amount: Amount) -> anyhow::Result<Self> {
-		if amount == Amount::ZERO {
-			bail!("amount cannot be zero")
-		} else {
-			self.amount = Some(amount);
-			Ok(self)
-		}
+	pub fn amount(mut self, amount: Amount) -> Self {
+		self.amount = Some(amount);
+		self
 	}
 
-	/// Include an onchain address destination in the URI.
-	pub fn onchain(mut self, onchain: &'a mut dyn GetAddress) -> Self {
-		self.onchain = Some(onchain);
+	pub fn amount_sat(self, amount_sat: u64) -> Self {
+		self.amount(Amount::from_sat(amount_sat))
+	}
+
+	/// Disable all payment methods
+	///
+	/// You can then enable them one by one.
+	pub fn disable_all(self) -> Self {
+		self.onchain(false).ark(false).lightning_bolt11(false)
+	}
+
+	/// Include an onchain address destination in the URI
+	///
+	/// This will only work if the builder has an onchain wallet.
+	pub fn onchain(mut self, enabled: bool) -> Self {
+		self.onchain = enabled;
+		self
+	}
+
+	/// Set the onchain wallet to fetch onchain address from
+	///
+	/// Setting this will also set the flag to include an onchain address.
+	pub fn onchain_wallet(mut self, onchain: &'a mut dyn GetAddress) -> Self {
+		self.onchain_wallet = Some(onchain);
+		self.onchain = true;
 		self
 	}
 
 	/// Include an Ark address destination in the URI.
-	pub fn ark(mut self, required: bool) -> Self {
-		self.ark = Some(required);
+	///
+	/// They are enabled by default.
+	pub fn ark(mut self, enabled: bool) -> Self {
+		self.ark = enabled;
 		self
 	}
 
 	/// Include a BOLT11 Lightning invoice destination in the URI.
 	///
-	/// Requires [`set_amount`](Self::set_amount) to have been called first,
+	/// Requires [`amount`](Self::amount) to have been called first,
 	/// because the builder needs an amount to generate the invoice.
-	pub fn lightning_invoice(mut self, required: bool) -> anyhow::Result<Self> {
-		if self.amount.is_none() {
-			bail!("amount is required to enable lightning invoice payment method");
-		}
-		self.lightning = Some(required);
-		Ok(self)
-	}
-
-	/// Enable all supported payment methods (Ark + Lightning) as non-required.
 	///
-	/// Requires [`set_amount`](Self::set_amount) to have been called first.
-	pub fn enable_all(self, onchain: &'a mut dyn GetAddress) -> anyhow::Result<Self> {
-		self.onchain(onchain).enable_all_offchain()
-	}
-
-	/// Enable all supported offchain payment methods (Ark + Lightning) as non-required.
-	///
-	/// Requires [`set_amount`](Self::set_amount) to have been called first.
-	pub fn enable_all_offchain(self) -> anyhow::Result<Self> {
-		if self.amount.is_none() {
-			bail!("amount is required to enable all payment methods");
-		}
-		self.ark(false).lightning_invoice(false)
+	/// This is enabled by default when an amount is given.
+	pub fn lightning_bolt11(mut self, enabled: bool) -> Self {
+		self.bolt11 = enabled;
+		self
 	}
 
 	/// Consume the builder, generate addresses/invoices, and return the URI.
@@ -245,6 +252,9 @@ impl<'a> BarkBip321UriBuilder<'a> {
 		let mut uri = BarkBip321Uri::new();
 
 		if let Some(amount) = self.amount {
+			if amount == Amount::ZERO {
+				bail!("amount cannot be zero")
+			}
 			uri.set_amount(amount).context("failed to set amount")?;
 		}
 		if let Some(label) = self.label {
@@ -254,33 +264,36 @@ impl<'a> BarkBip321UriBuilder<'a> {
 			uri.set_message(message);
 		}
 
-		if let Some(onchain) = self.onchain {
-			let address = onchain.address().await
-				.context("failed to get onchain address")?;
-			// As per BIP 321, onchain addresses are only supported on mainnet.
-			if self.wallet.network().await? == Network::Bitcoin {
-				uri.set_address(address.into_unchecked())
-					.context("failed to set address")?;
-			} else {
-				uri.push_tb(address.into_unchecked(), false)?;
+		if self.onchain {
+			if let Some(onchain) = self.onchain_wallet {
+				let address = onchain.address().await
+					.context("failed to get onchain address")?;
+				// As per BIP 321, onchain addresses are only supported on mainnet.
+				if self.wallet.network().await? == Network::Bitcoin {
+					uri.set_address(address.into_unchecked())
+						.context("failed to set address")?;
+				} else {
+					uri.push_tb(address.into_unchecked(), false)?;
+				}
 			}
 		}
 
-		if let Some(required) = self.ark {
+		if self.ark {
 			let address = self.wallet.new_address().await
 				.context("failed to generate new ark address")?;
 
-			uri.extensions_mut().ark.push(FieldWithAttributes::new(address, required));
+			uri.extensions_mut().ark.push(FieldWithAttributes::new(address, false));
 		}
 
-		if let Some(required) = self.lightning {
-			let amount = self.amount
-				.context("lightning requires an amount to be set")?;
+		if self.bolt11 {
+			if let Some(amount) = self.amount {
+				let invoice = self.wallet.bolt11_invoice(amount, None).await
+					.context("failed to generate lightning invoice")?;
 
-			let invoice = self.wallet.bolt11_invoice(amount, None).await
-				.context("failed to generate lightning invoice")?;
-
-			uri.push_lightning(invoice, required);
+				uri.push_lightning(invoice, false);
+			} else {
+				debug!("amount is required to enable lightning invoice payment method");
+			}
 		}
 
 		let res = uri.validate();
@@ -617,11 +630,9 @@ impl Wallet {
 	/// # use bark::Wallet;
 	/// # async fn example(wallet: &mut Wallet) -> anyhow::Result<()> {
 	/// let mut builder = wallet.bip321_uri();
-	/// builder = builder
-	///		.amount(Amount::from_sat(100_000))?
-	///		.ark(false)
-	///		.lightning_invoice(false)?;
-	/// let uri = builder.build().await?;
+	/// let uri = builder
+	///		.amount(Amount::from_sat(100_000))
+	/// 	.build().await?;
 	///
 	/// // bitcoin:?amount=100000&ark=tark1pwh9vsmezqqpharv69q4z8m6x364d5m5prnmcalcalq9pdmzw0y7mpveck4pcfhezqypczkrrj3lkx5ue4qrf4jc7ztpt9htdttmh2judhqnu7aue8p0y9mq47jn9z&lightning=lnbc20m1pvjluezsp5zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zygshp58yjmdan79s6qqdhdzgynm4zwqd5d7xmw5fk98klysy043l2ahrqspp5qqqsyqcyq5rqwzqfqqqsyqcyq5rqwzqfqqqsyqcyq5rqwzqfqypqfp4qrp33g0q5c5txsp9arysrx4k6zdkfs4nce4xj0gdcccefvpysxf3q9qrsgq9vlvyj8cqvq6ggvpwd53jncp9nwc47xlrsnenq2zp70fq83qlgesn4u3uyf4tesfkkwwfg3qs54qe426hp3tz7z6sweqdjg05axsrjqp9yrrwc
 	/// println!("{}", uri.to_string());
