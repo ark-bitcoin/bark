@@ -52,6 +52,25 @@ use self::xpay::{ClnXpay, ClnXpayConfig};
 
 type ClnGrpcClient = NodeClient<Channel>;
 
+/// Cheap, cloneable command handle to a running node.
+///
+/// Returned by the manager's node getters so callers can issue RPCs to the
+/// node directly instead of routing a command through the manager task. The
+/// manager republishes these handles whenever node state changes, so a handle
+/// reflects a node that was online as of the last maintenance pass.
+#[derive(Clone, Debug)]
+pub(crate) struct NodeHandle {
+	pub(crate) priority: u8,
+	rpc: ClnGrpcClient,
+}
+
+impl NodeHandle {
+	/// A fresh clone of the node's gRPC client.
+	pub(crate) fn rpc(&self) -> ClnGrpcClient {
+		self.rpc.clone()
+	}
+}
+
 #[derive(Debug)]
 pub struct ClnNodeOnlineState {
 	pub(crate) id: LightningNodeId,
@@ -62,6 +81,17 @@ pub struct ClnNodeOnlineState {
 	pub(crate) monitor: Option<ClnHold>,
 	pub(crate) xpay: Option<ClnXpay>,
 }
+
+impl ClnNodeOnlineState {
+	/// Build a cloneable command handle for this node at the given priority.
+	pub(crate) fn handle(&self, priority: u8) -> NodeHandle {
+		NodeHandle {
+			priority,
+			rpc: self.rpc.clone(),
+		}
+	}
+}
+
 #[derive(Debug)]
 pub struct ClnNodeInfo {
 	pub(crate) uri: Uri,

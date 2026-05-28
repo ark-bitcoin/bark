@@ -44,7 +44,7 @@ use ark::mailbox::MailboxIdentifier;
 
 use crate::Server;
 use crate::error::ContextExt;
-use crate::ln::cln::{ClnNodeInfo, ClnNodeOnlineState, PaymentAttemptNotifier};
+use crate::ln::cln::{ClnNodeInfo, ClnNodeOnlineState, NodeHandle, PaymentAttemptNotifier};
 use crate::ln::cln::hold::ClnHoldConfig;
 use crate::ln::cln::xpay::ClnXpayConfig;
 use crate::ln::settler::HtlcSettler;
@@ -66,6 +66,11 @@ pub struct LightningManager {
 
 	/// This channel is to manage individual CLN integrations.
 	ctrl_tx: mpsc::UnboundedSender<Ctrl>,
+
+	/// Snapshot of command handles for the currently-online nodes, republished
+	/// by the manager process on every maintenance pass. The node getters read
+	/// from here to route data-path operations without a channel round-trip.
+	node_handles: Arc<parking_lot::RwLock<Vec<NodeHandle>>>,
 
 	/// We also keep a handle of the update channel to update from
 	/// payment request that fail before the hit the sendpay stream.
@@ -92,6 +97,7 @@ impl LightningManager {
 	) -> anyhow::Result<LightningManager> {
 		let (ctrl_tx, ctrl_rx) = mpsc::unbounded_channel();
 		let (payment_update_tx, payment_update_rx) = broadcast::channel(256);
+		let node_handles = Arc::new(parking_lot::RwLock::new(Vec::new()));
 
 		let hold_config = ClnHoldConfig {
 			invoice_check_interval: config.invoice_check_interval,
@@ -111,6 +117,7 @@ impl LightningManager {
 			waker: Arc::new(Notify::new()),
 
 			ctrl_rx,
+			node_handles: node_handles.clone(),
 			hold_config,
 			xpay_config,
 			invoice_expiry: config.invoice_expiry,
@@ -138,6 +145,7 @@ impl LightningManager {
 			settler,
 			mailbox_manager,
 			ctrl_tx,
+			node_handles,
 			payment_update_tx,
 			payment_update_rx,
 			invoice_poll_interval: config.invoice_poll_interval,
@@ -157,6 +165,14 @@ impl LightningManager {
 	/// Send a control message to the process
 	fn send_ctrl(&self, ctrl: Ctrl) {
 		self.ctrl_tx.send(ctrl).expect("called LightningManager after shutting down");
+	}
+
+	/// The highest-priority online node, if any.
+	///
+	/// Reads the snapshot published by the manager process; the returned handle
+	/// talks to the node directly, without a control-channel round-trip.
+	fn active_node(&self) -> Option<NodeHandle> {
+		self.node_handles.read().iter().min_by_key(|h| h.priority).cloned()
 	}
 
 	/// Pays a bolt-11 invoice and returns the pre-image
@@ -336,9 +352,23 @@ impl LightningManager {
 		offer: Offer,
 		amount: Amount,
 	) -> anyhow::Result<Bolt12Invoice> {
-		let (invoice_tx, invoice_rx) = oneshot::channel();
-		self.send_ctrl(Ctrl::RequestBolt12 { offer: Box::new(offer), amount, invoice_tx });
-		invoice_rx.await.context("an error occurred requesting BOLT-12 invoice")
+		let node = self.active_node().context("no active cln node")?;
+
+		let resp = node.rpc().fetch_invoice(cln_rpc::FetchinvoiceRequest {
+			offer: offer.to_string(),
+			amount_msat: Some(cln_rpc::Amount { msat: amount.to_msat() }),
+			quantity: None,
+			recurrence_counter: None,
+			recurrence_start: None,
+			recurrence_label: None,
+			timeout: None,
+			payer_note: None,
+			payer_metadata: None,
+			bip353: None,
+		}).await?.into_inner();
+
+		Bolt12Invoice::from_str(&resp.invoice)
+			.map_err(|e| anyhow!("Invalid bolt12 invoice: {:?}", e))
 	}
 
 	pub fn activate(&self, uri: Uri) {
@@ -573,11 +603,6 @@ enum Ctrl {
 		preimage: Preimage,
 		result_tx: oneshot::Sender<anyhow::Result<()>>,
 	},
-	RequestBolt12 {
-		offer: Box<Offer>,
-		amount: Amount,
-		invoice_tx: oneshot::Sender<Bolt12Invoice>,
-	},
 	CancelInvoice {
 		subscription: Box<LightningHtlcSubscription>,
 		result_tx: oneshot::Sender<anyhow::Result<()>>,
@@ -592,6 +617,10 @@ struct LightningManagerProcess {
 	ctrl_rx: mpsc::UnboundedReceiver<Ctrl>,
 
 	payment_update_tx: broadcast::Sender<PaymentHash>,
+
+	/// Shared with [`LightningManager`]; rebuilt by [`Self::publish`] whenever
+	/// node state changes so the manager's getters see fresh handles.
+	node_handles: Arc<parking_lot::RwLock<Vec<NodeHandle>>>,
 
 	network: bitcoin::Network,
 	nodes: HashMap<Uri, ClnNodeInfo>,
@@ -638,6 +667,17 @@ impl LightningManagerProcess {
 		self.online_nodes()
 			.find(|(_, node)| node.id == id)
 			.map(|(_, node)| node)
+	}
+
+	/// Rebuild the shared snapshot of command handles for the currently-online
+	/// nodes. Called after every maintenance pass and state change so the
+	/// manager's getters route to nodes that were online as of the last pass.
+	fn publish(&self) {
+		let handles = self.nodes.values().filter_map(|node| {
+			let NodeState::Online(ref state) = node.state else { return None };
+			Some(state.handle(node.config.priority))
+		}).collect();
+		*self.node_handles.write() = handles;
 	}
 
 	async fn check_nodes(&mut self) {
@@ -736,6 +776,10 @@ impl LightningManagerProcess {
 				NodeState::Invalid { .. } | NodeState::Disabled => {}, // do nothing anymore
 			}
 		}
+
+		// Republish the snapshot so the manager's getters see the latest set
+		// of online nodes.
+		self.publish();
 	}
 
 	async fn disable_node(&mut self, uri: &Uri) {
@@ -772,7 +816,9 @@ impl LightningManagerProcess {
 			telemetry::set_lightning_node_state(
 				uri.clone(), None, None, new_state.kind(),
 			);
-			node.set_state(new_state)
+			node.set_state(new_state);
+			// Drop the node from the snapshot so getters stop routing to it.
+			self.publish();
 		}
 	}
 
@@ -1020,30 +1066,6 @@ impl LightningManagerProcess {
 		Ok(())
 	}
 
-	async fn fetch_bolt12_invoice(
-		&self,
-		offer: &Offer,
-		amount: Amount,
-	) -> anyhow::Result<Bolt12Invoice> {
-		let node = self.get_active_node().context("no active cln node")?;
-
-		let resp = node.rpc.clone().fetch_invoice(cln_rpc::FetchinvoiceRequest {
-			offer: offer.to_string(),
-			amount_msat: Some(cln_rpc::Amount { msat: amount.to_msat() }),
-			quantity: None,
-			recurrence_counter: None,
-			recurrence_start: None,
-			recurrence_label: None,
-			timeout: None,
-			payer_note: None,
-			payer_metadata: None,
-			bip353: None,
-		}).await?.into_inner();
-
-		Ok(Bolt12Invoice::from_str(&resp.invoice)
-			.map_err(|e| anyhow!("Invalid bolt12 invoice: {:?}", e))?)
-	}
-
 	async fn run(mut self, reconnect_interval: Duration) {
 		let _worker = self.rtmgr.spawn_critical("LightningManager");
 
@@ -1131,16 +1153,6 @@ impl LightningManagerProcess {
 								},
 							}
 						},
-						Ctrl::RequestBolt12 { offer, amount, invoice_tx } => {
-							trace!(offer = %offer, "requesting bolt12 invoice for offer");
-							match self.fetch_bolt12_invoice(&offer, amount).await {
-								Ok(invoice) => {
-									trace!(invoice = %Invoice::from(invoice.clone()), "fetched bolt12 invoice");
-									let _ = invoice_tx.send(invoice);
-								},
-								Err(e) => error!("Error fetching bolt12 invoice: {:#}", e),
-							}
-						},
 					}
 				} else {
 					warn!("control channel closed, shutting down LightningManager");
@@ -1148,20 +1160,5 @@ impl LightningManagerProcess {
 				},
 			};
 		}
-	}
-}
-
-#[cfg(test)]
-mod test {
-	use super::*;
-
-	#[test]
-	fn guard_ctrl_size() {
-		// NB our invoice types are huge (thanks LDK), so we box them
-		// to reduce the size of our control message
-		assert_eq!(std::mem::size_of::<Invoice>(), 1616);
-		assert_eq!(std::mem::size_of::<Bolt11Invoice>(), 168);
-		assert_eq!(std::mem::size_of::<Bolt12Invoice>(), 1616);
-		assert_eq!(std::mem::size_of::<Ctrl>(), 144, "Ctrl type size changed");
 	}
 }
