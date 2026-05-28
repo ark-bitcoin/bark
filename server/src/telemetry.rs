@@ -387,6 +387,7 @@ impl Metrics {
 			.add_directive(LevelFilter::TRACE.into())
 			.add_directive("rustls=WARN".parse().unwrap())
 			.add_directive("bitcoincore_rpc=WARN".parse().unwrap())
+			.add_directive("bitcoind_async_client=WARN".parse().unwrap())
 			.add_directive("tokio_postgres=INFO".parse().unwrap())
 			.add_directive("tonic=INFO".parse().unwrap())
 			.add_directive("tower=INFO".parse().unwrap())
