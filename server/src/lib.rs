@@ -73,7 +73,7 @@ use crate::sync::{ChainEventListener, SyncManager};
 use crate::error::ContextExt;
 use crate::watchman::VtxoExitFrontier;
 use crate::flux::VtxosInFlux;
-use crate::ln::cln::ClnManager;
+use crate::ln::node_manager::LightningManager;
 use crate::ln::settler::HtlcSettler;
 use crate::mailbox_manager::MailboxManager;
 use crate::fee_estimator::FeeEstimator;
@@ -193,7 +193,7 @@ pub struct Server {
 	/// All vtxos that are currently being processed in any way.
 	/// (Plus a small buffer to optimize allocations.)
 	vtxos_in_flux: VtxosInFlux,
-	cln: ClnManager,
+	cln: LightningManager,
 	htlc_settler: Arc<HtlcSettler>,
 	vtxopool: VtxoPool,
 	watchman_handle: Option<watchman::WatchmanHandle>,
@@ -433,14 +433,14 @@ impl Server {
 
 		let mailbox_manager = Arc::new(MailboxManager::new());
 
-		let cln = ClnManager::start(
+		let cln = LightningManager::start(
 			rtmgr.clone(),
 			&cfg,
 			db.clone(),
 			sync_manager.clone(),
 			mailbox_manager.clone(),
 			htlc_settler.clone(),
-		).await.context("failed to start ClnManager")?;
+		).await.context("failed to start LightningManager")?;
 
 		let vtxopool = VtxoPool::new(cfg.vtxopool.clone(), &db).await
 			.context("failed to initiate vtxopool")?;

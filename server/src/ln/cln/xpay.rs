@@ -37,7 +37,7 @@ use bitcoin_ext::BlockDelta;
 use cln_rpc::listpays_pays::ListpaysPaysStatus;
 
 use crate::database;
-use crate::database::ln::{ClnNodeId, LightningPaymentAttempt, LightningPaymentStatus};
+use crate::database::ln::{LightningNodeId, LightningPaymentAttempt, LightningPaymentStatus};
 use crate::ln::settler::HtlcSettler;
 use crate::system::RuntimeManager;
 use crate::telemetry;
@@ -56,7 +56,7 @@ struct ClnXpayClient {
 	db: database::Db,
 	rpc: ClnGrpcClient,
 	settler: Arc<HtlcSettler>,
-	/// Notifies [`ClnManager::get_payment_status`] when a payment reaches a final state.
+	/// Notifies [`LightningManager::get_payment_status`] when a payment reaches a final state.
 	payment_update_tx: broadcast::Sender<PaymentHash>,
 	mailbox_manager: Arc<crate::mailbox_manager::MailboxManager>,
 }
@@ -273,7 +273,7 @@ impl ClnXpay {
 		mgr_waker: Arc<Notify>,
 		db: database::Db,
 		payment_update_tx: broadcast::Sender<PaymentHash>,
-		node_id: ClnNodeId,
+		node_id: LightningNodeId,
 		rpc: ClnGrpcClient,
 		config: ClnXpayConfig,
 		settler: Arc<HtlcSettler>,
@@ -366,7 +366,7 @@ struct ClnXpayProcess {
 	config: ClnXpayConfig,
 	db: database::Db,
 
-	node_id: ClnNodeId,
+	node_id: LightningNodeId,
 
 	client: Arc<ClnXpayClient>,
 

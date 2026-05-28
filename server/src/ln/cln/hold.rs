@@ -40,7 +40,8 @@ use tracing::{debug, error, info, warn};
 use ark::lightning::PaymentHash;
 use cln_rpc::plugins::hold::hold_client::HoldClient;
 use crate::database;
-use crate::database::ln::{ClnNodeId, LightningHtlcSubscription, LightningHtlcSubscriptionStatus, LightningPaymentStatus};
+use crate::database::ln::{LightningNodeId, LightningHtlcSubscription, LightningHtlcSubscriptionStatus, LightningPaymentStatus};
+use crate::ln::node_manager::post_lightning_receive_notification;
 use crate::sync::SyncManager;
 use crate::system::RuntimeManager;
 use crate::telemetry;
@@ -65,7 +66,7 @@ impl ClnHold {
 		mgr_waker: Arc<Notify>,
 		db: database::Db,
 		payment_update_tx: broadcast::Sender<PaymentHash>,
-		node_id: ClnNodeId,
+		node_id: LightningNodeId,
 		hold_rpc: Option<HoldClient<Channel>>,
 		config: ClnHoldConfig,
 		sync_manager: Arc<SyncManager>,
@@ -133,7 +134,7 @@ struct ClnHoldProcess {
 	db: database::Db,
 	payment_update_tx: broadcast::Sender<PaymentHash>,
 
-	node_id: ClnNodeId,
+	node_id: LightningNodeId,
 
 	hold_rpc: Option<HoldClient<Channel>>,
 	sync_manager: Arc<SyncManager>,
@@ -316,7 +317,8 @@ impl ClnHoldProcess {
 
 		if status == LightningHtlcSubscriptionStatus::Accepted {
 			// Post mailbox notification so the client knows to come online and claim
-			super::post_lightning_receive_notification(
+			let payment_hash = PaymentHash::from(*htlc_subscription.invoice.payment_hash());
+			post_lightning_receive_notification(
 				&self.db, &self.mailbox_manager, payment_hash,
 			).await;
 		}
