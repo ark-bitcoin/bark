@@ -432,22 +432,29 @@ impl<'t> Tx<'t> {
 		let checkpoint: i64 = self.query_one("SELECT next_checkpoint()", &[]).await?.get(0);
 		let mailbox_type_str = String::from(mailbox_type);
 
+		// Duplicate posts of the same vtxo are idempotent: a re-posted vtxo is
+		// silently ignored rather than rejected.
 		let statement = self.prepare("
 			INSERT INTO mailbox (unblinded_mailbox_id, vtxo_id, vtxo, checkpoint, mailbox_type, created_at)
-			VALUES ($1, $2, $3, $4, $5::TEXT::mailbox_type, NOW());
+			VALUES ($1, $2, $3, $4, $5::TEXT::mailbox_type, NOW())
+			ON CONFLICT (mailbox_type, vtxo_id) DO NOTHING;
 		").await?;
+		let mut total_inserted = 0u64;
 		for vtxo in vtxos {
-			let rows_updated = self.execute(&statement, &[
+			total_inserted += self.execute(&statement, &[
 				&mailbox_id.to_string(),
 				&vtxo.id().to_string(),
 				&ProtocolEncoding::serialize(vtxo).to_vec(),
 				&checkpoint,
 				&mailbox_type_str,
 			]).await?;
-			debug_assert_eq!(rows_updated, 1);
 		}
 
-		telemetry::set_mailbox_put_metric(mailbox_type, vtxos.len());
+		if total_inserted == 0 {
+			return Ok(None);
+		}
+
+		telemetry::set_mailbox_put_metric(mailbox_type, total_inserted as usize);
 		Ok(Some(checkpoint as u64))
 	}
 

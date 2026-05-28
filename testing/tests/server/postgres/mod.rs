@@ -784,6 +784,50 @@ async fn store_vtxos_in_mailbox_empty() {
 }
 
 #[tokio::test]
+async fn store_vtxos_in_mailbox_duplicate() {
+	let mut ctx = TestContext::new_minimal("postgresd/vtxo_mailbox_duplicate").await;
+	ctx.init_central_postgres().await;
+	let postgres_cfg = ctx.new_postgres(&ctx.test_name).await;
+
+	Db::create(&postgres_cfg).await.expect("Database created");
+	let db = Db::connect(&postgres_cfg).await.expect("Connected to database");
+
+	let mailbox_id = MailboxIdentifier::from_str(
+		"038f47dcd43ba6d97fc9ed2e3bba09b175a45fac55f0683e8cf771e8ced4572354"
+	).unwrap();
+
+	let vtxo1 = VTXO_VECTORS.board_vtxo.clone();
+	let vtxo2 = VTXO_VECTORS.round1_vtxo.clone();
+	db.write(async |t| t.upsert_vtxos(&[
+		ServerVtxo::from(vtxo1.clone()),
+		ServerVtxo::from(vtxo2.clone()),
+	]).await).await.unwrap();
+
+	// First post stores vtxo1 and returns a checkpoint.
+	let cp1 = db.write(async |t| t.store_vtxos_in_mailbox(MailboxType::ArkoorReceive, mailbox_id.clone(), &[vtxo1.clone()]).await).await.unwrap()
+		.expect("should return a checkpoint");
+
+	// Re-posting the same vtxo is ignored, not rejected: no error and no checkpoint.
+	let dup = db.write(async |t| t.store_vtxos_in_mailbox(MailboxType::ArkoorReceive, mailbox_id.clone(), &[vtxo1.clone()]).await).await.unwrap();
+	assert!(dup.is_none(), "duplicate vtxo should be ignored and return None");
+
+	// A batch mixing a duplicate and a new vtxo still stores the new one.
+	let cp2 = db.write(async |t| t.store_vtxos_in_mailbox(MailboxType::ArkoorReceive, mailbox_id.clone(), &[vtxo1.clone(), vtxo2.clone()]).await).await.unwrap()
+		.expect("should return a checkpoint for the new vtxo");
+	assert!(cp2 > cp1, "checkpoints should be monotonically increasing");
+
+	// The mailbox holds exactly one copy of each vtxo.
+	let batches = db.read(async |t| t.get_mailbox_entries(mailbox_id.clone(), 0, 10).await).await.unwrap();
+	let stored: Vec<_> = batches.iter().flat_map(|b| match &b.payload {
+		MailboxPayload::Arkoor { vtxos } => vtxos.iter().map(|v| v.id()).collect::<Vec<_>>(),
+		other => panic!("expected Arkoor payload, got {:?}", other),
+	}).collect();
+	assert_eq!(stored.len(), 2);
+	assert!(stored.contains(&vtxo1.id()));
+	assert!(stored.contains(&vtxo2.id()));
+}
+
+#[tokio::test]
 async fn vtxo_pool() {
 	use futures::TryStreamExt;
 

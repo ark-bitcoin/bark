@@ -95,15 +95,18 @@ impl rpc::server::MailboxService for crate::Server {
 		let mailbox_id = self.unblind_mailbox_id(blinded_mailbox_id, vtxo_pubkey);
 
 		let checkpoint = self.db.write(async |t| {
-			let cp = t.store_vtxos_in_mailbox(
+			t.store_vtxos_in_mailbox(
 				MailboxType::ArkoorReceive,
 				mailbox_id,
 				vtxos.as_slice(),
-			).await?.context("nothing was stored")?;
-			anyhow::Ok(cp)
+			).await
 		}).await.to_status()?;
 
-		self.mailbox_manager.notify(mailbox_id, checkpoint);
+		// `None` means every posted vtxo was already in the mailbox. A duplicate
+		// post is a no-op, so there's no new checkpoint to notify subscribers of.
+		if let Some(checkpoint) = checkpoint {
+			self.mailbox_manager.notify(mailbox_id, checkpoint);
+		}
 
 		Ok(tonic::Response::new(protos::core::Empty{}))
 	}
