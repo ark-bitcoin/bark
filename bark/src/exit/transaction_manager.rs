@@ -396,11 +396,15 @@ impl ExitTransactionManager {
 
 		// At this point we must adopt the chain's tx as the new child.
 		info!("Downloading child tx {} for exit {}", new_txid, outpoint.txid);
-		let tx = self.chain_source.get_tx(new_txid)
-			.await
-			.map_err(|e| ExitError::TransactionRetrievalFailure {
+		let tx = match self.chain_source.get_tx(new_txid).await {
+			Ok(Some(tx)) => Ok(tx),
+			Ok(None) => Err(ExitError::TransactionRetrievalFailure {
+				txid: *new_txid, error: "Spending transaction was unexpectedly missing".into(),
+			}),
+			Err(e) => Err(ExitError::TransactionRetrievalFailure {
 				txid: *new_txid, error: e.to_string(),
-			})?.expect("Spending transaction should exist");
+			}),
+		}?;
 		info!("Successfully downloaded child tx {} for exit {}", new_txid, outpoint.txid);
 
 		let (origin, fee_info) = if let Some(block) = status.confirmed_in() {
