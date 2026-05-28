@@ -449,8 +449,10 @@ pub(crate) async fn post_lightning_receive_notification(
 		if let Some(id) = t.get_lightning_receiver_mailbox_id(payment_hash).await
 			.context("failed to look up mailbox ID")?
 		{
+			// `None` means a notification for this payment hash already exists;
+			// the re-post is silently ignored.
 			let cp = t.store_lightning_receive_notification(id, &payment_hash.to_string()).await?;
-			Ok(Some((id, cp)))
+			Ok(cp.map(|cp| (id, cp)))
 		} else {
 			Ok(None)
 		}

@@ -648,12 +648,14 @@ impl<'t> Tx<'t> {
 	}
 
 	/// Store a lightning receive notification in the mailbox.
-	/// Returns the checkpoint assigned to this notification.
+	///
+	/// Returns the checkpoint assigned to this notification, or `None` if a
+	/// notification for this payment hash already exists.
 	pub async fn store_lightning_receive_notification(
 		&self,
 		mailbox_id: MailboxIdentifier,
 		payment_hash: &str,
-	) -> anyhow::Result<Checkpoint> {
+	) -> anyhow::Result<Option<Checkpoint>> {
 		// Acquire advisory lock to serialize all mailbox writes.
 		// This prevents race conditions where checkpoints could be committed out of order.
 		// Lock is automatically released when transaction commits/rolls back.
@@ -666,17 +668,21 @@ impl<'t> Tx<'t> {
 
 		let statement = self.prepare("
 			INSERT INTO mailbox (unblinded_mailbox_id, payment_hash, checkpoint, mailbox_type, created_at)
-			VALUES ($1, $2, $3, $4::TEXT::mailbox_type, NOW());
+			VALUES ($1, $2, $3, $4::TEXT::mailbox_type, NOW())
+			ON CONFLICT (mailbox_type, payment_hash) DO NOTHING;
 		").await?;
-		let rows_updated = self.execute(&statement, &[
+		let rows_inserted = self.execute(&statement, &[
 			&mailbox_id.to_string(),
 			&payment_hash.to_string(),
 			&checkpoint,
 			&mailbox_type_str,
 		]).await?;
-		debug_assert_eq!(rows_updated, 1);
 
-		Ok(checkpoint as u64)
+		if rows_inserted == 1 {
+			Ok(Some(checkpoint as u64))
+		} else {
+			Ok(None)
+		}
 	}
 
 	/// Store a lightning send finished notification in the mailbox.

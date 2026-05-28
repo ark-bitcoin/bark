@@ -1583,6 +1583,39 @@ async fn round_participation_mailbox() {
 }
 
 #[tokio::test]
+async fn lightning_receive_notification_mailbox_duplicate() {
+	let mut ctx = TestContext::new_minimal("postgresd/lightning_receive_notification_dup").await;
+	ctx.init_central_postgres().await;
+	let postgres_cfg = ctx.new_postgres(&ctx.test_name).await;
+
+	Db::create(&postgres_cfg).await.expect("Database created");
+	let db = Db::connect(&postgres_cfg).await.expect("Connected to database");
+
+	let mailbox_id = MailboxIdentifier::from_pubkey(
+		PublicKey::from_str(DUMMY_PUBKEY).unwrap()
+	);
+	let payment_hash = BOLT11_INVOICE.parse::<Bolt11Invoice>().unwrap().as_payment_hash();
+	let payment_hash_str = payment_hash.to_string();
+
+	// First insert returns a checkpoint.
+	let cp1 = db.write(async |t| t.store_lightning_receive_notification(mailbox_id, &payment_hash_str).await).await.unwrap()
+		.expect("first insert should return a checkpoint");
+
+	// Re-posting the same payment hash is ignored, not rejected.
+	let dup = db.write(async |t| t.store_lightning_receive_notification(mailbox_id, &payment_hash_str).await).await.unwrap();
+	assert!(dup.is_none(), "duplicate insert should return None");
+
+	// The mailbox holds exactly one notification.
+	let messages = db.read(async |t| t.get_mailbox_messages(mailbox_id, 0, 10).await).await.unwrap();
+	assert_eq!(messages.len(), 1);
+	assert_eq!(messages[0].checkpoint, cp1);
+	match messages[0].payload {
+		MailboxPayload::LightningReceive { payment_hash: ph } => assert_eq!(ph, payment_hash),
+		ref other => panic!("expected LightningReceive payload, got {:?}", other),
+	}
+}
+
+#[tokio::test]
 async fn lightning_send_finished_mailbox_notification() {
 	let mut ctx = TestContext::new_minimal("postgresd/lightning_send_finished_mailbox").await;
 	ctx.init_central_postgres().await;
