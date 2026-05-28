@@ -224,7 +224,8 @@
 //! 	let mut wallet = get_wallet().await;
 //!
 //! 	// The vtxo's command doesn't sync your wallet
-//! 	// Make sure your app is synced before inspecting the wallet
+//! 	// When you're not running the daemon, make sure your app is synced
+//! 	// before inspecting the wallet
 //! 	wallet.sync().await;
 //!
 //! 	let vtxos: Vec<bark::WalletVtxo> = wallet.vtxos().await.unwrap();
@@ -1247,7 +1248,7 @@ impl Wallet {
 
 	/// Return the [Balance] of the wallet.
 	///
-	/// Make sure you sync before calling this method.
+	/// When not running the daemon, make sure you sync before calling this method.
 	pub async fn balance(&self) -> anyhow::Result<Balance> {
 		let vtxos = self.vtxos().await?;
 
