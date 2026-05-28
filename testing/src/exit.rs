@@ -117,6 +117,12 @@ pub async fn complete_exit(ctx: &TestContext, bark: &Bark) {
 					ExitError::ExitPackageBroadcastFailure { txid, error } => {
 						warn!("{} failed to broadcast exit {}: {}", bark.name(), txid, error);
 					}
+					ExitError::AncestorRetrievalFailure { txid, error } => {
+						warn!("{} failed to retrieve ancestor for exit {}: {}", bark.name(), txid, error);
+					}
+					ExitError::TransactionRetrievalFailure { txid, error} => {
+						warn!("{} failed to retrieve transaction for exit {}: {}", bark.name(), txid, error);
+					}
 					_ => panic!("unexpected exit error: {:?}", e),
 				}
 			}
