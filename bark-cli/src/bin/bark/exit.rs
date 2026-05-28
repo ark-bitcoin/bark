@@ -7,7 +7,7 @@ use bitcoin::{address, Address, FeeRate};
 use clap;
 use log::{warn, info};
 
-use ark::{time::timestamp_secs, VtxoId};
+use ark::VtxoId;
 use bark::Wallet;
 use bark::onchain::{ChainSync, OnchainWallet};
 use bark::vtxo::{FilterVtxos, VtxoFilter};
@@ -303,7 +303,7 @@ pub async fn claim_exits(
 	// Commit the transaction to the wallet if the claim destination is ours
 	if onchain.is_mine(address_spk) {
 		info!("Adding claim transaction to wallet: {}", tx.compute_txid());
-		onchain.apply_unconfirmed_txs([(tx, timestamp_secs())]);
+		onchain.apply_unconfirmed_txs([(tx, bark::time::timestamp_secs())]);
 	}
 	Ok(())
 }
