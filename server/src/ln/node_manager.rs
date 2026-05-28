@@ -9,11 +9,19 @@
 //! When multiple nodes are online, the highest-priority node is selected for
 //! operations.
 //!
-//! ## Actor pattern
+//! ## Architecture
 //!
-//! [`LightningManager`] is the public handle held by the rest of the server. It sends `Ctrl`
-//! messages over an mpsc channel to `LightningManagerProcess`, which runs as a tokio task.
-//! Responses come back via oneshot channels embedded in the control messages.
+//! [`LightningManager`] is the public handle held by the rest of the server.
+//! `LightningManagerProcess` runs as a tokio task and is a pure supervisor:
+//! it reconnects offline nodes, watches monitor liveness, and republishes a
+//! snapshot of [`NodeHandle`]s for the currently-online nodes into a shared
+//! `parking_lot::RwLock` whenever node state changes.
+//!
+//! Data-path operations (pay, generate/settle/cancel invoice, fetch bolt12)
+//! run directly on the caller's task: they pick a node via one of the
+//! manager's getters (`active_node`, `hold_active_node`, `node_by_id`) and
+//! issue RPCs on the cloned handle. A small `Ctrl` mpsc channel survives only
+//! for `activate`/`disable`, where the supervisor owns the state transition.
 //!
 //! ## Routing
 //!
@@ -35,7 +43,7 @@ use bitcoin_ext::{AmountExt, BlockDelta, BlockHeight};
 use cln_rpc::plugins::hold as hold_plugin;
 use lightning_invoice::Bolt11Invoice;
 use futures::Stream;
-use tokio::sync::{broadcast, Notify, mpsc, oneshot};
+use tokio::sync::{broadcast, Notify, mpsc};
 use tokio_stream::StreamExt;
 use tonic::transport::Uri;
 use tracing::{debug, error, info, trace, warn};
@@ -63,6 +71,8 @@ pub struct LightningManager {
 	settler: Arc<HtlcSettler>,
 	invoice_poll_interval: Duration,
 	invoice_expiry: Duration,
+	htlc_expiry_delta: BlockDelta,
+	cln_xpay_timeout: Duration,
 	mailbox_manager: Arc<crate::mailbox_manager::MailboxManager>,
 
 	/// This channel is to manage individual CLN integrations.
@@ -134,8 +144,6 @@ impl LightningManager {
 				state: NodeState::Offline,
 			})).collect(),
 			node_by_id: HashMap::with_capacity(config.cln_array.len()),
-
-			htlc_expiry_delta: config.htlc_expiry_delta,
 		};
 		info!("Starting LightningManager thread... nb_nodes={}", proc.nodes.len());
 		tokio::spawn(proc.run(config.cln_reconnect_interval));
@@ -150,6 +158,8 @@ impl LightningManager {
 			payment_update_rx,
 			invoice_poll_interval: config.invoice_poll_interval,
 			invoice_expiry: config.invoice_expiry,
+			htlc_expiry_delta: config.htlc_expiry_delta,
+			cln_xpay_timeout: config.cln_xpay_timeout,
 		})
 	}
 
@@ -206,21 +216,145 @@ impl LightningManager {
 
 		debug!("Sending payment to CLN for invoice: {}", invoice);
 
-		let (result_tx, result_rx) = oneshot::channel();
-		self.send_ctrl(Ctrl::PaymentRequest {
-			result_tx,
-			invoice: Box::new(invoice.clone()),
-			amount: payment_amount,
-			max_routing_fee: max_routing_fee,
-			htlc_expiry_height: htlc_send_expiry_height,
-			sender_mailbox_id,
-		});
-
-		if let Err(e) = result_rx.await.context("channel closed")? {
+		if let Err(e) = self.start_payment(
+			Box::new(invoice.clone()),
+			payment_amount,
+			max_routing_fee,
+			htlc_send_expiry_height,
+			sender_mailbox_id.as_ref(),
+		).await {
 			error!("Error sending bolt11 payment for invoice: {:#}", e);
 		} else {
 			debug!("Bolt11 invoice sent for payment");
 		}
+
+		Ok(())
+	}
+
+	/// Kick off a bolt-11 payment on the highest-priority online node.
+	///
+	/// If a hold-invoice subscription already exists for this payment hash,
+	/// this is an intra-Ark payment and we settle off-CLN instead of issuing
+	/// an outbound xpay. Otherwise we spawn the xpay fire-and-forget; the
+	/// xpay monitor picks the result up via the sendpays stream.
+	async fn start_payment(
+		&self,
+		invoice: Box<Invoice>,
+		amount: Amount,
+		max_routing_fee: Amount,
+		htlc_send_expiry_height: BlockHeight,
+		sender_mailbox_id: Option<&MailboxIdentifier>,
+	) -> anyhow::Result<()> {
+		let payment_hash = invoice.payment_hash();
+		let node = self.active_node().context("no active cln node")?;
+		let tip = node.rpc.clone().getinfo(cln_rpc::GetinfoRequest {}).await
+			.context("failed to get info from rpc")?
+			.into_inner().blockheight;
+
+		debug!("Selected cln node {} for bolt11 payment with payment hash {} and amount {}. \
+			Current block height is {}", node.id, payment_hash, amount, tip,
+		);
+
+		self.db.write(async |t|
+			t.store_lightning_payment_start(node.id, &invoice, amount, sender_mailbox_id).await
+		).await?;
+
+		// If there is an existing subscription, it's an intra-Ark lightning
+		// payment so we can directly mark it as accepted, then skip cln payment.
+		let sub = self.db.read(async |t| t.get_htlc_subscription_by_payment_hash(payment_hash).await).await?;
+		if let Some(sub) = sub {
+			trace!("Updating subscription status for intra-Ark lightning payment with payment hash {payment_hash}");
+			let res = self.set_created_subscription_to_accepted(sub, htlc_send_expiry_height).await;
+			if let Err(e) = res {
+				trace!("Failed to update subscription status: {e:#}");
+				let payment_attempt = self.db
+					.read(async |t| t.get_open_lightning_payment_attempt_by_payment_hash(payment_hash).await).await?
+					.expect("we inserted a payment attempt");
+
+				self.notifier().update_lightning_payment_attempt_status(
+					&payment_attempt,
+					LightningPaymentStatus::Failed,
+					Some(&e.to_string()),
+					None,
+				).await?;
+				return Err(e);
+			}
+
+			return Ok(());
+		}
+
+		// NB: we don't want a lightning payment to take more time than the
+		// htlc-send expiry leaves us with.
+		let max_cltv_expiry_delta = htlc_send_expiry_height
+			.checked_sub(tip + self.htlc_expiry_delta as BlockHeight)
+			.context("HTLC expiry height is too soon to perform a lightning payment")?;
+
+		// Fire-and-forget: ClnXpayClient::pay issues the gRPC and reconciles
+		// the DB on completion, same as the old ClnXpay::pay wrapper. If the
+		// gRPC times out the payment may still succeed; the xpay monitor's
+		// sendpay stream is the source of truth.
+		trace!("Bolt11 invoice payment of {:?} sent to CLN: {}", amount, invoice);
+		let xpay_client = node.xpay.clone();
+		let retry_for = self.cln_xpay_timeout;
+		tokio::spawn(async move {
+			xpay_client.pay(
+				invoice,
+				amount,
+				max_routing_fee,
+				max_cltv_expiry_delta as BlockDelta,
+				retry_for,
+			).await;
+		});
+
+		Ok(())
+	}
+
+	/// Promote a Created hold-invoice subscription to Accepted for an
+	/// intra-Ark payment, cancel the locked hold HTLCs on the receiving
+	/// node, and notify the receiver to come online.
+	async fn set_created_subscription_to_accepted(
+		&self,
+		subscription: LightningHtlcSubscription,
+		htlc_send_expiry_height: BlockHeight,
+	) -> anyhow::Result<()> {
+		match subscription.status {
+			LightningHtlcSubscriptionStatus::Created => {
+				self.db.write(async |t| t.store_lightning_htlc_subscription_status(
+					subscription.id,
+					LightningHtlcSubscriptionStatus::Accepted,
+					Some(htlc_send_expiry_height),
+				).await).await?;
+
+				let payment_hash = PaymentHash::from(&subscription.invoice);
+				// Wake check_lightning_receive so the client sees Accepted.
+				let _ = self.payment_update_tx.send(payment_hash);
+
+				// Post mailbox notification so the client knows to come online and claim
+				post_lightning_receive_notification(
+					&self.db, &self.mailbox_manager, payment_hash,
+				).await;
+
+				// Cancel the hold invoice on the receiving node: the intra-Ark
+				// payment settles off-CLN, so we don't want the HTLCs locked.
+				// NB: we only issue the RPC here, not the full cancel_invoice
+				// flow - we just set the subscription to Accepted, not Canceled.
+				let mut hold_client = self.node_by_id(subscription.lightning_node_id)
+					.context("invoice cannot be canceled: node is now offline")?
+					.hold_rpc.context("node doesn't support hold anymore")?;
+				hold_client.cancel(hold_plugin::CancelRequest {
+					payment_hash: payment_hash.to_vec(),
+				}).await?;
+			},
+			LightningHtlcSubscriptionStatus::Accepted |
+			LightningHtlcSubscriptionStatus::HtlcsReady |
+			LightningHtlcSubscriptionStatus::Settled |
+			LightningHtlcSubscriptionStatus::Canceled => {
+				bail!("invoice is not in a valid state to pay: {}. expected: {}",
+					subscription.status,
+					LightningHtlcSubscriptionStatus::Created,
+				);
+			}
+		};
 
 		Ok(())
 	}
@@ -647,14 +781,6 @@ impl fmt::Display for NodeState {
 enum Ctrl {
 	ActivateNode(Uri),
 	DisableNode(Uri),
-	PaymentRequest {
-		invoice: Box<Invoice>,
-		amount: Amount,
-		max_routing_fee: Amount,
-		htlc_expiry_height: BlockHeight,
-		sender_mailbox_id: Option<MailboxIdentifier>,
-		result_tx: oneshot::Sender<anyhow::Result<()>>,
-	},
 }
 
 struct LightningManagerProcess {
@@ -678,32 +804,9 @@ struct LightningManagerProcess {
 	sync_manager: Arc<SyncManager>,
 	mailbox_manager: Arc<crate::mailbox_manager::MailboxManager>,
 	settler: Arc<HtlcSettler>,
-
-	htlc_expiry_delta: BlockDelta,
 }
 
 impl LightningManagerProcess {
-	fn notifier(&self) -> PaymentAttemptNotifier<'_> {
-		PaymentAttemptNotifier::new(&self.db, &self.mailbox_manager, &self.payment_update_tx)
-	}
-
-	fn online_nodes(&self) -> impl Iterator<Item = (u8, &ClnNodeOnlineState)> {
-		self.nodes.iter().filter_map(|(_, node)| {
-			if let NodeState::Online(ref state) = node.state {
-				Some((node.config.priority, state))
-			} else {
-				None
-			}
-		})
-	}
-
-	/// Get the active node, i.e. the node with the highest priority.
-	///
-	/// We use this node to start payments.
-	fn get_active_node(&self) -> Option<&ClnNodeOnlineState> {
-		self.online_nodes().min_by_key(|&(prio, _)| prio).map(|(_, node)| node)
-	}
-
 	/// Rebuild the shared snapshot of command handles for the currently-online
 	/// nodes. Called after every maintenance pass and state change so the
 	/// manager's getters route to nodes that were online as of the last pass.
@@ -899,124 +1002,6 @@ impl LightningManagerProcess {
 		}
 	}
 
-	async fn set_created_subscription_to_accepted(
-		&self,
-		subscription: LightningHtlcSubscription,
-		htlc_send_expiry_height: BlockHeight,
-	) -> anyhow::Result<()> {
-		match subscription.status {
-			LightningHtlcSubscriptionStatus::Created => {
-				self.db.write(async |t| t.store_lightning_htlc_subscription_status(
-					subscription.id,
-					LightningHtlcSubscriptionStatus::Accepted,
-					Some(htlc_send_expiry_height),
-				).await).await?;
-
-				let payment_hash = PaymentHash::from(&subscription.invoice);
-				// Wake check_lightning_receive so the client sees Accepted.
-				let _ = self.payment_update_tx.send(payment_hash);
-
-				// Post mailbox notification so the client knows to come online and claim
-				post_lightning_receive_notification(
-					&self.db, &self.mailbox_manager, payment_hash,
-				).await;
-
-				// Cancel the hold invoice on the receiving node: the intra-Ark
-				// payment settles off-CLN, so we don't want the HTLCs locked.
-				// NB: we only issue the RPC here, not the full cancel_invoice
-				// flow - we just set the subscription to Accepted, not Canceled.
-				let mut hold_client = self.online_nodes()
-					.find(|(_, n)| n.id == subscription.lightning_node_id)
-					.map(|(_, n)| n)
-					.context("invoice cannot be canceled: node is now offline")?
-					.hold_rpc.clone().context("node doesn't support hold anymore")?;
-				hold_client.cancel(hold_plugin::CancelRequest {
-					payment_hash: payment_hash.to_vec(),
-				}).await?;
-			},
-			LightningHtlcSubscriptionStatus::Accepted |
-			LightningHtlcSubscriptionStatus::HtlcsReady |
-			LightningHtlcSubscriptionStatus::Settled |
-			LightningHtlcSubscriptionStatus::Canceled => {
-				bail!("invoice is not in a valid state to pay: {}. expected: {}",
-					subscription.status,
-					LightningHtlcSubscriptionStatus::Created,
-				);
-			}
-		};
-
-		Ok(())
-	}
-
-	async fn start_payment(
-		&self,
-		invoice: Box<Invoice>,
-		amount: Amount,
-		max_routing_fee: Amount,
-		htlc_send_expiry_height: BlockHeight,
-		sender_mailbox_id: Option<&MailboxIdentifier>,
-	) -> anyhow::Result<()> {
-		let payment_hash = invoice.payment_hash();
-		let node = self.get_active_node().context("no active cln node")?;
-		let tip = node.rpc.clone().getinfo(cln_rpc::GetinfoRequest {}).await
-			.context("failed to get info from rpc")?
-			.into_inner().blockheight;
-
-		debug!("Selected cln node {} for bolt11 payment with payment hash {} and amount {}. \
-			Current block height is {}", node.id, payment_hash, amount, tip,
-		);
-
-		self.db.write(async |t|
-			t.store_lightning_payment_start(node.id, &invoice, amount, sender_mailbox_id).await
-		).await?;
-
-		// If there is an existing subscription, it's an intra-Ark lightning
-		// payment so we can directly mark it as accepted, then skip cln payment
-		let sub = self.db.read(async |t| t.get_htlc_subscription_by_payment_hash(payment_hash).await).await?;
-		if let Some(sub) = sub {
-			trace!("Updating subscription status for intra-Ark lightning payment with payment hash {payment_hash}");
-			let res = self.set_created_subscription_to_accepted(sub, htlc_send_expiry_height).await;
-			if let Err(e) = res {
-				trace!("Failed to update subscription status: {e:#}");
-				let payment_attempt = self.db
-					.read(async |t| t.get_open_lightning_payment_attempt_by_payment_hash(payment_hash).await).await?
-					.expect("we inserted a payment attempt");
-
-				self.notifier().update_lightning_payment_attempt_status(
-					&payment_attempt,
-					LightningPaymentStatus::Failed,
-					Some(&e.to_string()),
-					None,
-				).await?;
-				return Err(e);
-			}
-
-			return Ok(());
-		}
-
-		// NB: we don't want lightning payment to take more time than the htlc-send expiry
-		let max_cltv_expiry_delta = htlc_send_expiry_height
-			.checked_sub(tip + self.htlc_expiry_delta as BlockHeight)
-			.context("HTLC expiry height is too soon to perform a lightning payment")?;
-
-		// Call pay over GRPC
-		// If it returns a pre-image we know the call succeeded,
-		// however we ignore the response because it should get processed by the maintenance task.
-		// This method might fail even if the payment will succeed
-		// (grpc-connection problems or time-outs).
-		// We keep the error-around but will verify if the payment actually failed.
-		trace!("Bolt11 invoice payment of {:?} sent to CLN: {}", amount, invoice);
-		node.xpay.as_ref().context("xpay not running")?.pay(
-			invoice,
-			amount,
-			max_routing_fee,
-			max_cltv_expiry_delta as BlockDelta,
-			self.xpay_config.cln_xpay_timeout,
-		);
-
-		Ok(())
-	}
-
 	async fn run(mut self, reconnect_interval: Duration) {
 		let _worker = self.rtmgr.spawn_critical("LightningManager");
 
@@ -1045,23 +1030,6 @@ impl LightningManagerProcess {
 						},
 						Ctrl::DisableNode(uri) => {
 							self.disable_node(&uri).await;
-						},
-						Ctrl::PaymentRequest {
-							invoice, amount, max_routing_fee, htlc_expiry_height, sender_mailbox_id, result_tx,
-						} => {
-							trace!("Payment request received: payment_hash={}",
-								invoice.payment_hash(),
-							);
-
-							let res = self.start_payment(
-								invoice,
-								amount,
-								max_routing_fee,
-								htlc_expiry_height,
-								sender_mailbox_id.as_ref(),
-							).await;
-
-							let _ = result_tx.send(res);
 						},
 					}
 				} else {

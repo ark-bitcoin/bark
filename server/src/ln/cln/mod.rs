@@ -1,25 +1,17 @@
-//! Manages CLN node connections and proxies requests to `ClnHold` and `ClnXpay`.
-//!
-//! ## Node lifecycle
+//! CLN-specific node types: `ClnNodeInfo`, `ClnNodeOnlineState`, and the
+//! cloneable [`NodeHandle`] returned by the manager's node getters.
 //!
 //! Each configured CLN node is tracked as a `ClnNodeInfo` with a state machine:
 //! `Offline ↔ Online ↔ Error`, where `Invalid` and `Disabled` are terminal states.
-//! The manager periodically reconnects offline/errored nodes and monitors online nodes
-//! for crashed sub-monitors (`ClnHold`, `ClnXpay`). When multiple nodes are online,
-//! the highest-priority node is selected for operations.
+//! The supervisor (see [`crate::ln::node_manager`]) reconnects offline/errored
+//! nodes and watches `ClnHold`/`ClnXpay` for crashes. When multiple nodes are
+//! online, the highest-priority node is selected for operations.
 //!
-//! ## Actor pattern
-//!
-//! [`LightningManager`] is the public handle held by the rest of the server. It sends [`Ctrl`]
-//! messages over an mpsc channel to [`LightningManagerProcess`], which runs as a tokio task.
-//! Responses come back via oneshot channels embedded in the control messages.
-//!
-//! ## Routing
-//!
-//! `generate_invoice`/`settle_invoice`/`cancel_invoice` route to `ClnHold`.
-//! `pay` routes to `ClnXpay`. `fetch_bolt12` calls CLN gRPC directly.
-//! Intra-Ark payments short-circuit both paths: the manager updates the DB and
-//! broadcasts the result without making a CLN round-trip.
+//! `NodeHandle` carries the cheap RPC clients (gRPC, hold-plugin, xpay client)
+//! and is what data-path operations on `LightningManager` use to talk to a
+//! node directly. `ClnNodeOnlineState::handle` builds one from the live
+//! online-state fields; the supervisor republishes them into the manager's
+//! shared snapshot.
 
 pub(crate) mod hold;
 mod notifier;
@@ -48,7 +40,7 @@ use crate::telemetry;
 
 use self::hold::{ClnHold, ClnHoldConfig};
 pub(crate) use self::notifier::PaymentAttemptNotifier;
-use self::xpay::{ClnXpay, ClnXpayConfig};
+use self::xpay::{ClnXpay, ClnXpayClient, ClnXpayConfig};
 
 type ClnGrpcClient = NodeClient<Channel>;
 
@@ -58,12 +50,13 @@ type ClnGrpcClient = NodeClient<Channel>;
 /// node directly instead of routing a command through the manager task. The
 /// manager republishes these handles whenever node state changes, so a handle
 /// reflects a node that was online as of the last maintenance pass.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub(crate) struct NodeHandle {
 	pub(crate) id: LightningNodeId,
 	pub(crate) priority: u8,
 	pub(crate) rpc: ClnGrpcClient,
 	pub(crate) hold_rpc: Option<HoldClient<Channel>>,
+	pub(crate) xpay: Arc<ClnXpayClient>,
 }
 
 #[derive(Debug)]
@@ -79,12 +72,17 @@ pub struct ClnNodeOnlineState {
 
 impl ClnNodeOnlineState {
 	/// Build a cloneable command handle for this node at the given priority.
+	///
+	/// Online state always carries a live xpay monitor (check_nodes drops the
+	/// node from Online if its monitor crashes before publish runs), so it is
+	/// safe to expect it here.
 	pub(crate) fn handle(&self, priority: u8) -> NodeHandle {
 		NodeHandle {
 			id: self.id,
 			priority,
 			rpc: self.rpc.clone(),
 			hold_rpc: self.hold_rpc.clone(),
+			xpay: self.xpay.as_ref().expect("online node has live xpay monitor").client(),
 		}
 	}
 }
