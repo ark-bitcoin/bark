@@ -395,6 +395,41 @@ compat-bark-0.1.4:
       --cache-dir "${CI_PROJECT_DIR}/.bark-release-cache")
     - bash ./contrib/ci-run-test.sh test-integration-bark-prebuilt
 
+compat-bark-0.2.0:
+  interruptible: true
+  stage: test
+  tags:
+    - integration
+    - datastore
+  extends: .test-rules-no-tags
+  needs:
+    - check-commits
+    - build
+    - build-test-archives
+  variables:
+    TEST_DIRECTORY: ./test/bark-0.2.0
+    NEXTEST_TEST_THREADS: "4"
+    BARK_COMMAND_TIMEOUT_MILLIS: "120000"
+    TX_PROPAGATION_TIMEOUT: "30000"
+    BARK_RELEASE_URL: https://gitlab.com/ark-bitcoin/bark/-/releases/bark-0.2.0/downloads/bark-0.2.0-linux-x86_64
+    BARK_RELEASE_SHA256: e4fec31e5d4dc565b3ac299d92aee48cf911ff5b635741d3cd676836835d45c0
+  cache:
+    key: bark-0.2.0
+    paths:
+      - .bark-release-cache/
+  script:
+    - git log --oneline -1
+    - export RUN_DATETIME=$(cat RUN_DATETIME)
+    - export CAPTAIND_EXEC=${CI_PROJECT_DIR}/target/ci/captaind
+    - export WATCHMAND_EXEC=${CI_PROJECT_DIR}/target/ci/watchmand
+    - export BARKD_EXEC=${CI_PROJECT_DIR}/target/ci/barkd
+    - >-
+      export BARK_EXEC=$(python3 contrib/fetch-bark-release.py
+      --url "$BARK_RELEASE_URL"
+      --sha256 "$BARK_RELEASE_SHA256"
+      --cache-dir "${CI_PROJECT_DIR}/.bark-release-cache")
+    - bash ./contrib/ci-run-test.sh test-integration-bark-prebuilt
+
 tar-and-print-test-data:
   interruptible: true
   stage: post-test
@@ -413,6 +448,8 @@ tar-and-print-test-data:
     - job: core-server
       optional: true
     - job: compat-bark-0.1.4
+      optional: true
+    - job: compat-bark-0.2.0
       optional: true
   script:
     - |
