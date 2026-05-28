@@ -828,7 +828,7 @@
         }
       }
     },
-    "/api/v1/history/": {
+    "/api/v1/history": {
       "get": {
         "tags": [
           "history"
