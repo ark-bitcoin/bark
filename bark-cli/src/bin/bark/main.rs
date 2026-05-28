@@ -171,6 +171,36 @@ enum Command {
 	#[command(subcommand)]
 	Message(MessageCommand),
 
+	/// Generate a BIP 321 payment string
+	#[command()]
+	Bip321 {
+		/// The amount to receive
+		///
+		/// Provided value must match format `<amount> <unit>`, where unit can be any amount denomination. Example: `250000 sats`.
+		///
+		/// Optional. If omitted, the builder will skip generating a BOLT11 invoice.
+		#[arg(long)]
+		amount: Option<Amount>,
+		/// The label to add to the payment
+		#[arg(long)]
+		label: Option<String>,
+		/// The message to add to the payment
+		#[arg(long)]
+		message: Option<String>,
+		/// Whether to include all payment methods
+		#[arg(long)]
+		all: bool,
+		/// Whether to include an onchain address in the payment
+		#[arg(long)]
+		onchain: bool,
+		/// Whether to include a Lightning invoice in the payment
+		#[arg(long)]
+		lightning: bool,
+		/// Whether to include an Ark address in the payment
+		#[arg(long)]
+		ark: bool,
+	},
+
 	/// Get the wallet balance
 	#[command()]
 	Balance {
@@ -438,6 +468,59 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 			let signature = wallet.sign_message(message.as_bytes(), &address).await?
 				.context("address does not belong to this wallet or its key has not been derived")?;
 			output_json(&json::cli::SignedMessage { signature });
+		},
+		Command::Bip321 {
+			amount, label, message,
+			onchain: onchain_enabled,
+			lightning: lightning_enabled,
+			ark: ark_enabled,
+			all: all_enabled,
+		} => {
+			let onchain = wallet.onchain();
+			let mut onchain_guard = match onchain.as_ref() {
+				Some(onchain) => Some(onchain.write().await),
+				None => None,
+			};
+
+			let mut builder = wallet.bip321_uri();
+			if let Some(amount) = amount {
+				builder = builder.amount(amount);
+			}
+
+			if let Some(label) = label {
+				builder = builder.label(label);
+			}
+			if let Some(message) = message {
+				builder = builder.message(message);
+			}
+
+			if all_enabled {
+				let onchain = onchain_guard.as_mut()
+					.context("no onchain wallet configured")?;
+				builder = builder
+					.onchain_wallet(&mut **onchain)
+					.lightning_bolt11(true)
+					.ark(true);
+			} else {
+				let enabled_count = [onchain_enabled, lightning_enabled, ark_enabled]
+					.iter().filter(|e| **e).count();
+				if enabled_count == 0 {
+					bail!("at least one payment method must be enabled");
+				}
+
+				// The builder enables all methods by default,
+				// so first disable them and re-enable the selected ones.
+				builder = builder.disable_all();
+				if onchain_enabled {
+					let onchain = onchain_guard.as_mut()
+						.context("no onchain wallet configured")?;
+					builder = builder.onchain_wallet(&mut **onchain);
+				}
+				if lightning_enabled { builder = builder.lightning_bolt11(true); }
+				if ark_enabled { builder = builder.ark(true); }
+			}
+
+			println!("{}", builder.build().await?);
 		},
 		Command::Balance { no_sync } => {
 			if !no_sync {
