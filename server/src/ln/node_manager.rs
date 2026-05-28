@@ -62,6 +62,7 @@ pub struct LightningManager {
 	db: database::Db,
 	settler: Arc<HtlcSettler>,
 	invoice_poll_interval: Duration,
+	invoice_expiry: Duration,
 	mailbox_manager: Arc<crate::mailbox_manager::MailboxManager>,
 
 	/// This channel is to manage individual CLN integrations.
@@ -120,7 +121,6 @@ impl LightningManager {
 			node_handles: node_handles.clone(),
 			hold_config,
 			xpay_config,
-			invoice_expiry: config.invoice_expiry,
 			sync_manager,
 			mailbox_manager: mailbox_manager.clone(),
 			settler: settler.clone(),
@@ -149,6 +149,7 @@ impl LightningManager {
 			payment_update_tx,
 			payment_update_rx,
 			invoice_poll_interval: config.invoice_poll_interval,
+			invoice_expiry: config.invoice_expiry,
 		})
 	}
 
@@ -173,6 +174,14 @@ impl LightningManager {
 	/// talks to the node directly, without a control-channel round-trip.
 	fn active_node(&self) -> Option<NodeHandle> {
 		self.node_handles.read().iter().min_by_key(|h| h.priority).cloned()
+	}
+
+	/// The highest-priority online node that supports hold invoices, if any.
+	fn hold_active_node(&self) -> Option<NodeHandle> {
+		self.node_handles.read().iter()
+			.filter(|h| h.hold_rpc.is_some())
+			.min_by_key(|h| h.priority)
+			.cloned()
 	}
 
 	/// Pays a bolt-11 invoice and returns the pre-image
@@ -269,6 +278,8 @@ impl LightningManager {
 		}
 	}
 
+	/// Generate (or, when a prior subscription exists, reuse) a bolt-11 invoice
+	/// on the highest-priority hold-capable node.
 	pub async fn generate_invoice(
 		&self,
 		payment_hash: PaymentHash,
@@ -277,11 +288,45 @@ impl LightningManager {
 		description: Option<String>,
 		receiver_mailbox_id: Option<MailboxIdentifier>,
 	) -> anyhow::Result<Bolt11Invoice> {
-		let (invoice_tx, invoice_rx) = oneshot::channel();
-		self.send_ctrl(Ctrl::GenerateInvoice {
-			payment_hash, amount, cltv_delta, description, receiver_mailbox_id, invoice_tx,
-		});
-		invoice_rx.await.context("an error occurred requesting a BOLT-11 invoice")
+		let node = self.hold_active_node().context("no active hold-compatible cln node")?;
+		let mut hold_client = node.hold_rpc.clone().expect("hold-active node has hold_rpc");
+
+		// Reuse the invoice from any prior subscription (e.g. from a previous
+		// canceled attempt) so the payer can settle to the same payment hash.
+		let existing_subs = self.db.read(async |t|
+			t.get_htlc_subscriptions_by_payment_hash(payment_hash).await
+		).await?;
+		if let Some(existing) = existing_subs.first() {
+			trace!("Found existing subscription, creating new one with same invoice");
+
+			hold_client.inject(hold_plugin::InjectRequest {
+				invoice: existing.invoice.to_string(),
+				min_cltv_expiry: None,
+			}).await?;
+
+			self.db.write(async |t|
+				t.store_lightning_htlc_subscription(node.id, payment_hash, &existing.invoice).await
+			).await?;
+			return Ok(existing.invoice.clone())
+		}
+
+		let res = hold_client.invoice(hold_plugin::InvoiceRequest {
+			payment_hash: payment_hash.to_vec(),
+			amount_msat: amount.to_msat(),
+			min_final_cltv_expiry: Some(cltv_delta as u64),
+			expiry: Some(self.invoice_expiry.as_secs()),
+			routing_hints: vec![],
+			description: description.map(hold_plugin::invoice_request::Description::Memo),
+		}).await?.into_inner();
+
+		let invoice = Bolt11Invoice::from_str(&res.bolt11)?;
+		self.db.write(async |t|
+			t.store_generated_lightning_receive(
+				node.id, &invoice, amount.to_msat(), receiver_mailbox_id.as_ref(),
+			).await
+		).await?;
+
+		Ok(invoice)
 	}
 
 	/// Settle a hold invoice in CLN or, for intra-ark payments, mark the
@@ -354,7 +399,7 @@ impl LightningManager {
 	) -> anyhow::Result<Bolt12Invoice> {
 		let node = self.active_node().context("no active cln node")?;
 
-		let resp = node.rpc().fetch_invoice(cln_rpc::FetchinvoiceRequest {
+		let resp = node.rpc.clone().fetch_invoice(cln_rpc::FetchinvoiceRequest {
 			offer: offer.to_string(),
 			amount_msat: Some(cln_rpc::Amount { msat: amount.to_msat() }),
 			quantity: None,
@@ -590,14 +635,6 @@ enum Ctrl {
 		sender_mailbox_id: Option<MailboxIdentifier>,
 		result_tx: oneshot::Sender<anyhow::Result<()>>,
 	},
-	GenerateInvoice {
-		payment_hash: PaymentHash,
-		amount: Amount,
-		cltv_delta: BlockDelta,
-		description: Option<String>,
-		receiver_mailbox_id: Option<MailboxIdentifier>,
-		invoice_tx: oneshot::Sender<Bolt11Invoice>,
-	},
 	SettleInvoice {
 		subscription_id: i64,
 		preimage: Preimage,
@@ -627,7 +664,6 @@ struct LightningManagerProcess {
 	node_by_id: HashMap<LightningNodeId, Uri>,
 	hold_config: ClnHoldConfig,
 	xpay_config: ClnXpayConfig,
-	invoice_expiry: Duration,
 	sync_manager: Arc<SyncManager>,
 	mailbox_manager: Arc<crate::mailbox_manager::MailboxManager>,
 	settler: Arc<HtlcSettler>,
@@ -655,12 +691,6 @@ impl LightningManagerProcess {
 	/// We use this node to start payments.
 	fn get_active_node(&self) -> Option<&ClnNodeOnlineState> {
 		self.online_nodes().min_by_key(|&(prio, _)| prio).map(|(_, node)| node)
-	}
-
-	fn get_hold_active_node(&self) -> Option<&ClnNodeOnlineState> {
-		self.online_nodes()
-			.filter(|(_, node)| node.hold_rpc.is_some())
-			.min_by_key(|&(prio, _)| prio).map(|(_, node)| node)
 	}
 
 	fn get_node_by_id(&self, id: LightningNodeId) -> Option<&ClnNodeOnlineState> {
@@ -971,64 +1001,6 @@ impl LightningManagerProcess {
 		Ok(())
 	}
 
-	/// Generates an invoice for the payment hash if none is found in the
-	/// database.
-	/// - If there is an existing invoice in the database, creates a new
-	///   subscription for it and returns the invoice
-	/// - Otherwise, creates a new invoice in the hold plugin, stores it in
-	///   the database and returns it
-	///
-	/// Caller is responsible for checking if there is an existing opened
-	/// subscription in the db and act accordingly.
-	async fn generate_invoice(
-		&self,
-		payment_hash: PaymentHash,
-		amount: Amount,
-		cltv_delta: BlockDelta,
-		description: Option<String>,
-		receiver_mailbox_id: Option<&MailboxIdentifier>,
-	) -> anyhow::Result<Bolt11Invoice> {
-		let node = self.get_hold_active_node().context("no active hold-compatible cln node")?;
-		let mut hold_client = node.hold_rpc.clone().expect("active node not hold enabled");
-
-		// Check for an existing subscription (e.g. from a previous canceled attempt)
-		// to reuse the bolt11 invoice.
-		let existing_subs = self.db.read(async |t|
-			t.get_htlc_subscriptions_by_payment_hash(payment_hash).await
-		).await?;
-		if let Some(existing) = existing_subs.first() {
-			trace!("Found existing subscription, creating new one with same invoice");
-
-			hold_client.inject(hold_plugin::InjectRequest {
-				invoice: existing.invoice.to_string(),
-				min_cltv_expiry: None,
-			}).await?;
-
-			self.db.write(async |t|
-				t.store_lightning_htlc_subscription(node.id, payment_hash, &existing.invoice).await
-			).await?;
-			return Ok(existing.invoice.clone())
-		}
-
-		let res = hold_client.invoice(hold_plugin::InvoiceRequest {
-			payment_hash: payment_hash.to_vec(),
-			amount_msat: amount.to_msat(),
-			min_final_cltv_expiry: Some(cltv_delta as u64),
-			expiry: Some(self.invoice_expiry.as_secs()),
-			routing_hints: vec![],
-			description: description.map(hold_plugin::invoice_request::Description::Memo),
-		}).await?.into_inner();
-
-		let invoice = Bolt11Invoice::from_str(&res.bolt11)?;
-		self.db.write(async |t|
-			t.store_generated_lightning_receive(
-				node.id, &invoice, amount.to_msat(), receiver_mailbox_id,
-			).await
-		).await?;
-
-		Ok(invoice)
-	}
-
 	async fn settle_invoice(&self, subscription_id: i64, preimage: Preimage) -> anyhow::Result<()> {
 		let htlc_subscription = self.db
 			.read(async |t| t.get_htlc_subscription_by_id(subscription_id).await).await?
@@ -1111,18 +1083,6 @@ impl LightningManagerProcess {
 							).await;
 
 							let _ = result_tx.send(res);
-						},
-						Ctrl::GenerateInvoice { payment_hash, amount, cltv_delta, description, receiver_mailbox_id, invoice_tx } => {
-							trace!("Invoice generation received: payment_hash={:?}", payment_hash);
-							match self.generate_invoice(payment_hash, amount, cltv_delta, description, receiver_mailbox_id.as_ref()).await {
-								Ok(invoice) => {
-									trace!("Invoice generation successful: payment_hash={}",
-										payment_hash,
-									);
-									let _ = invoice_tx.send(invoice);
-								},
-								Err(e) => error!("Error generating invoice: {:#}", e),
-							}
 						},
 						Ctrl::SettleInvoice { subscription_id, preimage, result_tx } => {
 							match self.settle_invoice(subscription_id, preimage).await {

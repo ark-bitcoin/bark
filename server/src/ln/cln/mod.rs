@@ -60,15 +60,10 @@ type ClnGrpcClient = NodeClient<Channel>;
 /// reflects a node that was online as of the last maintenance pass.
 #[derive(Clone, Debug)]
 pub(crate) struct NodeHandle {
+	pub(crate) id: LightningNodeId,
 	pub(crate) priority: u8,
-	rpc: ClnGrpcClient,
-}
-
-impl NodeHandle {
-	/// A fresh clone of the node's gRPC client.
-	pub(crate) fn rpc(&self) -> ClnGrpcClient {
-		self.rpc.clone()
-	}
+	pub(crate) rpc: ClnGrpcClient,
+	pub(crate) hold_rpc: Option<HoldClient<Channel>>,
 }
 
 #[derive(Debug)]
@@ -86,8 +81,10 @@ impl ClnNodeOnlineState {
 	/// Build a cloneable command handle for this node at the given priority.
 	pub(crate) fn handle(&self, priority: u8) -> NodeHandle {
 		NodeHandle {
+			id: self.id,
 			priority,
 			rpc: self.rpc.clone(),
+			hold_rpc: self.hold_rpc.clone(),
 		}
 	}
 }
