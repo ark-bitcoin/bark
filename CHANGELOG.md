@@ -108,17 +108,17 @@ Below is a more detailed summary for each version.
           `bark_vtxo.raw_vtxo` blobs into `raw_bare`/`raw_genesis` columns and
           backfills the cached `exit_depth`/`exit_tx_weight` columns.
     - move `Wallet::chain_source` static constructor to `Config::chain_source`
-      [#2051](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2052/)
+      [#2052](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2052)
     - replace `Wallet::chain` field with `Wallet::chain` getter method
-      [#2051](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2052/)
+      [#2052](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2052)
     - replace `Wallet::exit` field with `Wallet::exit_mgr` getter method
         - the getter returns the `Exit` struct directly without `RwLock`
-          [#2051](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2052/)
+          [#2052](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2052)
     - replace `Wallet::movements` field with `Wallet::movements_mgr` getter method
-      [#2051](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2052/)
+      [#2052](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2052)
     - make `Wallet` internally wrap an Arc so that it can be cloned
         - remove `Arc<Wallet>` from the API and replace with `Wallet`
-          [#2051](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2052/)
+          [#2052](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2052)
 
     - Richer onchain transaction listing in the REST API
       `GET /onchain/transactions` now returns `onchain_fee_sat` (nullable),
