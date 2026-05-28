@@ -1,4 +1,5 @@
-pub mod json_patch;
+pub(crate) mod json_patch;
+pub mod time;
 
 #[cfg(not(feature = "wasm-web"))]
 pub fn spawn<F>(fut: F) -> tokio::task::JoinHandle<F::Output>

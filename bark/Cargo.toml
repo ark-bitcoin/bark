@@ -41,6 +41,7 @@ wasm-web = [
 	"wasm-bindgen-futures",
 	"dep:wasm-bindgen",
 	"dep:js-sys",
+	"dep:web-time",
 ]
 
 [lib]
@@ -87,7 +88,8 @@ esplora-client = { workspace = true }
 lightning.workspace = true
 
 tonic = { version = "0.14.2", default-features = false }
-tokio.workspace = true
+# Used for `time::sleep` / `time::timeout` on non-wasm targets.
+tokio = { workspace = true, features = ["time"] }
 tokio-stream.workspace = true
 futures.workspace = true
 parking_lot.workspace = true
@@ -97,6 +99,7 @@ http = { workspace = true, optional = true }
 bdk_wallet = { workspace = true, optional = true }
 
 indexed-db = { version = "0.4.2", optional = true }
+web-time = { version = "1.1.0", optional = true }
 web-sys = { version = "0.3.83", optional = true }
 serde-wasm-bindgen = { version = "0.6.5", optional = true }
 

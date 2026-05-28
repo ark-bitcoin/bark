@@ -2,7 +2,7 @@ use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
 
 use anyhow::Context;
-use ark::time::timestamp_secs;
+use crate::utils::time::timestamp_secs;
 use bdk_esplora::EsploraAsyncExt;
 use bdk_wallet::chain::{ChainPosition, CheckPoint};
 use bdk_wallet::Wallet as BdkWallet;

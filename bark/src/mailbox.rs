@@ -28,6 +28,7 @@ use crate::Wallet;
 use crate::movement::{MovementDestination, MovementStatus};
 use crate::movement::update::MovementUpdate;
 use crate::subsystem::{ArkoorMovement, Subsystem};
+use crate::utils::time::Instant;
 
 
 /// The maximum number of times we will call the fetch mailbox endpoint in one go
@@ -129,7 +130,7 @@ impl Wallet {
 
 		'outer: loop {
 			let mut stream = self.subscribe_mailbox_messages(since_checkpoint).await?;
-			let connected_at = std::time::Instant::now();
+			let connected_at = Instant::now();
 			trace!("Connected to mailbox stream with server");
 
 			loop {

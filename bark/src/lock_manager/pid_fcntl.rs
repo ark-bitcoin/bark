@@ -176,7 +176,8 @@ impl std::fmt::Debug for FcntlPidLockManager {
 	}
 }
 
-#[async_trait::async_trait]
+#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
 impl LockManager for FcntlPidLockManager {
 	async fn try_lock(&self, key: &str) -> Option<Box<dyn LockGuard>> {
 		self.in_process.try_lock(key).await
