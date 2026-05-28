@@ -46,6 +46,55 @@ async fn parse_payment_request() {
 
 	let amount = sat(50_000);
 
+	// -- BIP 321 with ark + lightning + onchain --
+	{
+		let mut wallet1 = uri_builder_bark.client().await;
+		let mut onchain1 = uri_builder_bark.onchain_client().await;
+		let uri = wallet1.bip321_uri()
+			.amount(amount).unwrap()
+			.enable_all(&mut onchain1).unwrap()
+			.label("test-label".to_string())
+			.message("test-message".to_string())
+			.build().await.unwrap();
+
+		let request = uri_parser_bark.try_parse_payment_request(&uri.to_string()).await.unwrap();
+
+		assert_eq!(request.amount, Some(amount));
+		assert_eq!(request.label.as_deref(), Some("test-label"));
+		assert_eq!(request.message.as_deref(), Some("test-message"));
+		assert_eq!(request.options.len(), 3);
+		assert!(request.options.iter().any(|m| m.method.is_bitcoin()), "should have onchain method");
+		assert!(request.options.iter().any(|m| m.method.is_ark()), "should have ark method");
+		assert!(request.options.iter().any(|m| m.method.is_lightning()), "should have lightning method");
+		assert!(
+			request.options.iter().all(|m| m.errors.is_empty()),
+			"all methods should be valid",
+		);
+	}
+
+	// -- BIP 321 with ark only --
+	{
+		let mut wallet1 = uri_builder_bark.client().await;
+		let uri = wallet1.bip321_uri()
+			.amount(amount).unwrap()
+			.ark(false)
+			.build().await.unwrap();
+
+		let request = uri_parser_bark.try_parse_payment_request(&uri.to_string()).await.unwrap();
+
+		assert!(request.options[0].method.is_ark());
+		assert!(request.options[0].errors.is_empty());
+
+		let fees = uri_parser_bark.estimate_payment_fees(request, None).await;
+		assert_eq!(fees.len(), 1);
+		assert_eq!(fees[0].1, FeeEstimate {
+			gross_amount: amount,
+			fee: Amount::ZERO,
+			net_amount: amount,
+			vtxos_spent: vec![vtxo],
+		});
+	}
+
 	// -- BIP 321 with invalid ark address (foreign server, manual URI) --
 	{
 		let btc_addr = ctx.bitcoind().get_new_address();
@@ -79,6 +128,31 @@ async fn parse_payment_request() {
 			.expect("ark method should be present");
 		assert_eq!(ark_method.method, PaymentMethod::Ark(foreign_ark_addr));
 		assert_eq!(ark_method.errors, vec![PaymentMethodParsingError::InvalidArkAddress(ArkoorAddressError::ServerMismatch)]);
+	}
+
+	// -- BIP 321 with amount only (onchain) --
+	{
+		let mut wallet1 = uri_builder_bark.client().await;
+		let mut onchain1 = uri_builder_bark.onchain_client().await;
+		let uri = wallet1.bip321_uri()
+			.amount(amount).unwrap()
+			.onchain(&mut onchain1)
+			.build().await.unwrap();
+		let request = uri_parser_bark.try_parse_payment_request(&uri.to_string()).await.unwrap();
+
+		assert_eq!(request.amount, Some(amount));
+		assert_eq!(request.options.len(), 1);
+		assert!(request.options[0].method.is_bitcoin());
+		assert!(request.options[0].errors.is_empty(), "valid address should have no errors");
+
+		let fees = uri_parser_bark.estimate_payment_fees(request, None).await;
+		assert_eq!(fees.len(), 1);
+		assert_eq!(fees[0].1, FeeEstimate {
+			gross_amount: amount + Amount::from_sat(938),
+			fee: Amount::from_sat(938),
+			net_amount: amount,
+			vtxos_spent: vec![vtxo],
+		});
 	}
 
 	// -- Bare lightning invoice (built by wallet_1, parsed by wallet_2) --

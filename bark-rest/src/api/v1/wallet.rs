@@ -13,6 +13,7 @@ use ark::VtxoId;
 use ark::lightning::{Bolt11Invoice, Offer};
 use ark::ProtocolEncoding;
 use bark::lnurllib::lightning_address::LightningAddress;
+use bark::onchain::GetAddress;
 use bark::subsystem::RoundMovement;
 use bark::vtxo::VtxoFilter;
 use bark_json::web::PendingRoundInfo;

@@ -7,7 +7,7 @@ use bitcoin::{address, Amount};
 use log::{info, warn};
 
 use bark::Wallet;
-use bark::onchain::{ChainSync, OnchainWallet};
+use bark::onchain::{ChainSync, GetAddress, OnchainWallet};
 use bark_json::{cli as json, primitives};
 
 use bark_cli::util::output_json;

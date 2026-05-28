@@ -7,6 +7,10 @@
 //!   lightning addresses, output scripts, bitcoin addresses, ark addresses)
 //!   and returns structured [`PaymentRequest`] with per-method validation
 //!   errors.
+//!
+//! - **Construction**: [`Wallet::bip321_uri`] returns a [`BarkBip321UriBuilder`]
+//!   for creating BIP 321 URIs backed by the wallet's Ark and Lightning
+//!   capabilities.
 
 pub use crate::movement::PaymentMethod;
 
@@ -23,9 +27,10 @@ use bitcoin_ext::AmountExt;
 
 use crate::{FeeEstimate, Wallet};
 use crate::arkoor::ArkoorAddressError;
+use crate::onchain::GetAddress;
 
 #[derive(Default, Clone, PartialEq, Eq, Debug)]
-struct BarkExtension {
+pub struct BarkExtension {
 	ark: Vec<FieldWithAttributes<ark::Address>>,
 }
 
@@ -118,6 +123,170 @@ impl From<AvailablePaymentMethod> for PaymentRequest {
 			message: None,
 			options: vec![option],
 		}
+	}
+}
+
+/// Builder for constructing a [`Bip321Uri`] backed by a bark [`Wallet`].
+///
+/// Each setter records the intent; the actual address/invoice generation
+/// happens in [`build`](Self::build). The `bool` parameter on destination
+/// setters controls the BIP 321 `req-` flag: when `true` the parameter is
+/// marked as required, meaning wallets that do not understand it must
+/// reject the URI.
+///
+/// # Example
+///
+/// ```no_run
+/// # use bitcoin::Amount;
+/// # use bark::Wallet;
+/// # async fn example(wallet: &mut Wallet) -> anyhow::Result<()> {
+/// let mut builder = wallet.bip321_uri();
+/// builder = builder
+///		.amount(Amount::from_sat(100_000))?
+///		.ark(false)
+///		.lightning_invoice(false)?;
+/// let uri = builder.build().await?;
+///
+/// // bitcoin:?amount=100000&ark=tark1pwh9vsmezqqpharv69q4z8m6x364d5m5prnmcalcalq9pdmzw0y7mpveck4pcfhezqypczkrrj3lkx5ue4qrf4jc7ztpt9htdttmh2judhqnu7aue8p0y9mq47jn9z&lightning=lnbc20m1pvjluezsp5zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zygshp58yjmdan79s6qqdhdzgynm4zwqd5d7xmw5fk98klysy043l2ahrqspp5qqqsyqcyq5rqwzqfqqqsyqcyq5rqwzqfqqqsyqcyq5rqwzqfqypqfp4qrp33g0q5c5txsp9arysrx4k6zdkfs4nce4xj0gdcccefvpysxf3q9qrsgq9vlvyj8cqvq6ggvpwd53jncp9nwc47xlrsnenq2zp70fq83qlgesn4u3uyf4tesfkkwwfg3qs54qe426hp3tz7z6sweqdjg05axsrjqp9yrrwc
+/// println!("{}", uri.to_string());
+///
+/// # Ok(())
+/// # }
+/// ```
+pub struct BarkBip321UriBuilder<'a> {
+	wallet: &'a mut Wallet,
+
+	amount: Option<Amount>,
+	label: Option<String>,
+	message: Option<String>,
+
+	onchain: Option<&'a mut dyn GetAddress>,
+	ark: Option<bool>,
+	lightning: Option<bool>,
+}
+
+impl<'a> BarkBip321UriBuilder<'a> {
+	pub fn new(wallet: &'a mut Wallet) -> Self {
+		Self {
+			wallet,
+
+			amount: None,
+			label: None,
+			message: None,
+
+			onchain: None,
+			ark: None,
+			lightning: None,
+		}
+	}
+
+	pub fn label(mut self, label: String) -> Self {
+		self.label = Some(label);
+		self
+	}
+
+	pub fn message(mut self, message: String) -> Self {
+		self.message = Some(message);
+		self
+	}
+
+	pub fn amount(mut self, amount: Amount) -> anyhow::Result<Self> {
+		if amount == Amount::ZERO {
+			bail!("amount cannot be zero")
+		} else {
+			self.amount = Some(amount);
+			Ok(self)
+		}
+	}
+
+	/// Include an onchain address destination in the URI.
+	pub fn onchain(mut self, onchain: &'a mut dyn GetAddress) -> Self {
+		self.onchain = Some(onchain);
+		self
+	}
+
+	/// Include an Ark address destination in the URI.
+	pub fn ark(mut self, required: bool) -> Self {
+		self.ark = Some(required);
+		self
+	}
+
+	/// Include a BOLT11 Lightning invoice destination in the URI.
+	///
+	/// Requires [`set_amount`](Self::set_amount) to have been called first,
+	/// because the builder needs an amount to generate the invoice.
+	pub fn lightning_invoice(mut self, required: bool) -> anyhow::Result<Self> {
+		if self.amount.is_none() {
+			bail!("amount is required to enable lightning invoice payment method");
+		}
+		self.lightning = Some(required);
+		Ok(self)
+	}
+
+	/// Enable all supported payment methods (Ark + Lightning) as non-required.
+	///
+	/// Requires [`set_amount`](Self::set_amount) to have been called first.
+	pub fn enable_all(self, onchain: &'a mut dyn GetAddress) -> anyhow::Result<Self> {
+		self.onchain(onchain).enable_all_offchain()
+	}
+
+	/// Enable all supported offchain payment methods (Ark + Lightning) as non-required.
+	///
+	/// Requires [`set_amount`](Self::set_amount) to have been called first.
+	pub fn enable_all_offchain(self) -> anyhow::Result<Self> {
+		if self.amount.is_none() {
+			bail!("amount is required to enable all payment methods");
+		}
+		self.ark(false).lightning_invoice(false)
+	}
+
+	/// Consume the builder, generate addresses/invoices, and return the URI.
+	pub async fn build(self) -> anyhow::Result<BarkBip321Uri> {
+		let mut uri = BarkBip321Uri::new();
+
+		if let Some(amount) = self.amount {
+			uri.set_amount(amount).context("failed to set amount")?;
+		}
+		if let Some(label) = self.label {
+			uri.set_label(label);
+		}
+		if let Some(message) = self.message {
+			uri.set_message(message);
+		}
+
+		if let Some(onchain) = self.onchain {
+			let address = onchain.address().await
+				.context("failed to get onchain address")?;
+			// As per BIP 321, onchain addresses are only supported on mainnet.
+			if self.wallet.network().await? == Network::Bitcoin {
+				uri.set_address(address.into_unchecked())
+					.context("failed to set address")?;
+			} else {
+				uri.push_tb(address.into_unchecked(), false)?;
+			}
+		}
+
+		if let Some(required) = self.ark {
+			let address = self.wallet.new_address().await
+				.context("failed to generate new ark address")?;
+
+			uri.extensions_mut().ark.push(FieldWithAttributes::new(address, required));
+		}
+
+		if let Some(required) = self.lightning {
+			let amount = self.amount
+				.context("lightning requires an amount to be set")?;
+
+			let invoice = self.wallet.bolt11_invoice(amount, None).await
+				.context("failed to generate lightning invoice")?;
+
+			uri.push_lightning(invoice, required);
+		}
+
+		let res = uri.validate();
+		debug_assert!(res.is_ok());
+
+		Ok(uri)
 	}
 }
 
@@ -437,5 +606,30 @@ impl Wallet {
 		options_with_fees.sort_by_key(|(_, fee)| fee.gross_amount);
 
 		Ok(options_with_fees)
+	}
+
+	/// Create a builder for constructing a BIP 321 payment URI.
+	///
+	/// # Example
+	///
+	/// ```no_run
+	/// # use bitcoin::Amount;
+	/// # use bark::Wallet;
+	/// # async fn example(wallet: &mut Wallet) -> anyhow::Result<()> {
+	/// let mut builder = wallet.bip321_uri();
+	/// builder = builder
+	///		.amount(Amount::from_sat(100_000))?
+	///		.ark(false)
+	///		.lightning_invoice(false)?;
+	/// let uri = builder.build().await?;
+	///
+	/// // bitcoin:?amount=100000&ark=tark1pwh9vsmezqqpharv69q4z8m6x364d5m5prnmcalcalq9pdmzw0y7mpveck4pcfhezqypczkrrj3lkx5ue4qrf4jc7ztpt9htdttmh2judhqnu7aue8p0y9mq47jn9z&lightning=lnbc20m1pvjluezsp5zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zygshp58yjmdan79s6qqdhdzgynm4zwqd5d7xmw5fk98klysy043l2ahrqspp5qqqsyqcyq5rqwzqfqqqsyqcyq5rqwzqfqqqsyqcyq5rqwzqfqypqfp4qrp33g0q5c5txsp9arysrx4k6zdkfs4nce4xj0gdcccefvpysxf3q9qrsgq9vlvyj8cqvq6ggvpwd53jncp9nwc47xlrsnenq2zp70fq83qlgesn4u3uyf4tesfkkwwfg3qs54qe426hp3tz7z6sweqdjg05axsrjqp9yrrwc
+	/// println!("{}", uri.to_string());
+	///
+	/// # Ok(())
+	/// # }
+	/// ```
+	pub fn bip321_uri<'a>(&'a mut self) -> BarkBip321UriBuilder<'a> {
+		BarkBip321UriBuilder::new(self)
 	}
 }

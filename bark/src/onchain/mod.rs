@@ -109,6 +109,13 @@ pub trait SignPsbt {
 	async fn finish_psbt(&mut self, psbt: Psbt) -> anyhow::Result<Psbt>;
 }
 
+/// Ability to get the next onchain address from the wallet.
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+pub trait GetAddress {
+	async fn address(&mut self) -> anyhow::Result<Address>;
+}
+
 /// Ability to query the wallets' total balance.
 ///
 /// This is used by higher-level flows to decide when onchain funds are available for boarding or

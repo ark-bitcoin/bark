@@ -21,8 +21,9 @@ use bitcoin_ext::cpfp::CpfpError;
 use crate::chain::{ChainSource, ChainSourceClient};
 use crate::exit::{ExitVtxo, ExitState};
 use crate::onchain::{
-	ChainSync, GetBalance, GetSpendingTx, GetWalletTx, LocalUtxo,
-	MakeCpfp, MakeCpfpFees, PreparePsbt, SignPsbt, Utxo, WalletTxInfo,
+	ChainSync, GetAddress, GetBalance, GetSpendingTx, GetWalletTx,
+	LocalUtxo, MakeCpfp, MakeCpfpFees, PreparePsbt, SignPsbt, Utxo,
+	WalletTxInfo,
 };
 use crate::persist::BarkPersister;
 use crate::psbtext::PsbtInputExt;
@@ -106,6 +107,15 @@ impl<Cs: Send + Sync> TxBuilderExt for TxBuilder<'_, Cs> {
 impl <W: Deref<Target = BdkWallet>> GetBalance for W {
 	fn get_balance(&self) -> Amount {
 		self.deref().balance().total()
+	}
+}
+
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+impl GetAddress for BdkWallet {
+	async fn address(&mut self) -> anyhow::Result<Address> {
+		let ret = self.reveal_next_address(bdk_wallet::KeychainKind::External).address;
+		Ok(ret)
 	}
 }
 
@@ -288,6 +298,16 @@ impl MakeCpfp for OnchainWallet {
 
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+impl GetAddress for OnchainWallet {
+	async fn address(&mut self) -> anyhow::Result<Address> {
+		let ret = self.inner.reveal_next_address(bdk_wallet::KeychainKind::External).address;
+		self.persist().await?;
+		Ok(ret)
+	}
+}
+
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl SignPsbt for OnchainWallet {
 	async fn finish_psbt(&mut self, psbt: Psbt) -> anyhow::Result<Psbt> {
 		let psbt = self.inner.finish_psbt(psbt).await?;
@@ -374,12 +394,6 @@ impl OnchainWallet {
 			});
 		}
 		Ok(out)
-	}
-
-	pub async fn address(&mut self) -> anyhow::Result<Address> {
-		let ret = self.inner.reveal_next_address(bdk_wallet::KeychainKind::External).address;
-		self.persist().await?;
-		Ok(ret)
 	}
 
 	pub fn utxos(&self) -> Vec<Utxo> {
