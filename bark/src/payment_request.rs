@@ -18,10 +18,11 @@ use std::str::FromStr;
 
 use anyhow::Context;
 use ark::address::ParseAddressError;
-use bitcoin::{Amount, Network};
+use bitcoin::{Amount, Network, Txid};
 use bitcoin::constants::ChainHash;
 use lnurllib::lightning_address::LightningAddress;
 use lnurllib::lnurl::LnUrl;
+use log::warn;
 
 use ark::lightning::{Bolt11Invoice, Invoice, Offer, OfferAmountExt};
 use bip321::{Bip321Error, Bip321Uri, ExtensionHandler, FieldWithAttributes};
@@ -162,6 +163,16 @@ pub struct PaymentRequest {
 	pub options: Vec<AvailablePaymentMethod>,
 }
 
+impl PaymentRequest {
+	/// Returns the option to use when the caller doesn't want to pick one
+	/// itself.
+	///
+	/// Returns [None] when the request has no options.
+	pub fn default_option(&self) -> Option<&AvailablePaymentMethod> {
+		self.options.first()
+	}
+}
+
 impl From<AvailablePaymentMethod> for PaymentRequest {
 	fn from(option: AvailablePaymentMethod) -> Self {
 		Self {
@@ -171,6 +182,18 @@ impl From<AvailablePaymentMethod> for PaymentRequest {
 			options: vec![option],
 		}
 	}
+}
+
+/// Outcome of a successful payment initiation via [`Wallet::send_payment`].
+///
+/// Onchain payments are settled once the transaction is broadcast (carrying its
+/// [`Txid`]). Lightning payments are only initiated — the caller must await
+/// settlement using the returned [`Invoice`]. Ark payments settle in-band.
+#[derive(Debug, Clone)]
+pub enum PaymentInitOutput {
+	Onchain(Txid),
+	Lightning(Invoice),
+	Ark,
 }
 
 /// Builder for constructing a [`Bip321Uri`] backed by a bark [`Wallet`].
@@ -699,6 +722,67 @@ impl Wallet {
 		options_with_fees.sort_by_key(|(_, fee)| fee.gross_amount);
 
 		Ok(options_with_fees)
+	}
+
+	/// Initiate a payment for the given [`PaymentMethod`].
+	///
+	/// Dispatches to the appropriate per-method send routine. The `input_amount`
+	/// is required for methods that don't carry their own amount (bitcoin
+	/// address, lightning address, ark address) and is ignored otherwise.
+	/// `comment` is forwarded only to methods that support it (currently only
+	/// lightning addresses); a warning is logged if supplied for others.
+	pub async fn send_payment(
+		&self,
+		payment_method: &PaymentMethod,
+		input_amount: Option<Amount>,
+		comment: Option<impl AsRef<str>>,
+		wait: bool,
+	) -> anyhow::Result<PaymentInitOutput> {
+		let network = self.network().await?;
+
+		if comment.is_some() && !payment_method.supports_comment() {
+			warn!("comment ignored for payment method {}", payment_method.type_str());
+		}
+
+		let output = match payment_method {
+			PaymentMethod::Bitcoin(address) => {
+				let address = address.clone().require_network(network)?;
+				let amount = input_amount.context("amount is required for bitcoin address")?;
+				let txid = self.send_onchain(address, amount).await?;
+				PaymentInitOutput::Onchain(txid)
+			},
+			PaymentMethod::Invoice(invoice) => {
+				let paid_invoice = self.pay_lightning_invoice(invoice.clone(), input_amount, wait).await?;
+				PaymentInitOutput::Lightning(paid_invoice)
+			},
+			PaymentMethod::Offer(offer) => {
+				let paid_invoice = self.pay_lightning_offer(offer.clone(), input_amount, wait).await?;
+				PaymentInitOutput::Lightning(paid_invoice)
+			},
+			PaymentMethod::LightningAddress(address) => {
+				let amount = input_amount.context("amount is required for lightning address")?;
+				let paid_invoice = self.pay_lightning_address(&address, amount, comment, wait).await?;
+				PaymentInitOutput::Lightning(paid_invoice)
+			},
+			PaymentMethod::Ark(address) => {
+				let amount = input_amount.context("amount is required for arkoor payment")?;
+				self.send_arkoor_payment(&address, amount).await?;
+				PaymentInitOutput::Ark
+			},
+			PaymentMethod::Lnurl(lnurl) => {
+				let amount = input_amount.context("amount is required for lnurl payment")?;
+				let paid_invoice = self.pay_lnurl(&lnurl, amount, comment, wait).await?;
+				PaymentInitOutput::Lightning(paid_invoice)
+			},
+			PaymentMethod::OutputScript(_) => {
+				bail!("sending to output scripts is not supported");
+			},
+			PaymentMethod::Custom(_) => {
+				bail!("custom payment methods are not supported for sending");
+			},
+		};
+
+		Ok(output)
 	}
 
 	/// Create a builder for constructing a BIP 321 payment URI.

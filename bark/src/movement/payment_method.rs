@@ -130,6 +130,20 @@ impl PaymentMethod {
 		}
 	}
 
+	/// Returns whether the payment method supports a comment on payment.
+	pub fn supports_comment(&self) -> bool {
+		match self {
+			PaymentMethod::Ark(_) => false,
+			PaymentMethod::Bitcoin(_) => false,
+			PaymentMethod::OutputScript(_) => false,
+			PaymentMethod::Invoice(_) => false,
+			PaymentMethod::Offer(_) => false,
+			PaymentMethod::LightningAddress(_) => true,
+			PaymentMethod::Lnurl(_) => true,
+			PaymentMethod::Custom(_) => false,
+		}
+	}
+
 	/// Construct a PaymentMethod from a type tag and value string.
 	pub fn from_type_value(type_str: &str, value: &str) -> anyhow::Result<Self> {
 		match type_str {

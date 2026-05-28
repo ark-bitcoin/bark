@@ -337,6 +337,9 @@ mod psbtext;
 mod utils;
 
 pub use self::arkoor::{ArkoorCreateResult, ArkoorAddressError};
+pub use self::payment_request::{
+	AvailablePaymentMethod, PaymentInitOutput, PaymentMethodParsingError, PaymentRequest,
+};
 pub use self::config::{BarkNetwork, Config};
 pub use self::daemon::DaemonHandle;
 pub use self::fees::FeeEstimate;
