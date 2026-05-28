@@ -1,7 +1,12 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use anyhow::Context;
 use bark::BarkNetwork;
+use bark::lock_manager::memory::MemoryLockManager;
+use bark::onchain::{ChainSync, GetAddress, OnchainWallet};
+use bark::persist::BarkPersister;
+use bark::persist::sqlite::SqliteClient;
 use bitcoin::Amount;
 use server::wallet::MNEMONIC_FILE;
 use tokio::fs;
@@ -337,6 +342,133 @@ impl<'a> BarkBuilder<'a> {
 		}
 
 		Ok(bark)
+	}
+}
+
+// ── BarkSdkBuilder ──────────────────────────────────────────────────
+
+/// Builds an in-process [`bark::Wallet`] for `bark-sdk` integration tests.
+///
+/// Mirrors [`BarkBuilder`], but instead of spawning the `bark` CLI binary
+/// it constructs a [`bark::Wallet`] directly via the library API and
+/// returns it ready to use.
+pub struct BarkSdkBuilder<'a> {
+	ctx: &'a TestContext,
+	name: String,
+	srv: &'a dyn super::ToArkUrl,
+	fund_amount: Option<Amount>,
+	board_amount: Option<Amount>,
+	mod_cfg: Option<Box<dyn FnOnce(&mut bark::Config)>>,
+}
+
+impl<'a> BarkSdkBuilder<'a> {
+	pub(super) fn new(
+		ctx: &'a TestContext,
+		name: impl AsRef<str>,
+		srv: &'a dyn super::ToArkUrl,
+	) -> Self {
+		BarkSdkBuilder {
+			ctx,
+			name: name.as_ref().to_string(),
+			srv,
+			fund_amount: None,
+			board_amount: None,
+			mod_cfg: None,
+		}
+	}
+
+	pub fn cfg(mut self, f: impl FnOnce(&mut bark::Config) + 'static) -> Self {
+		self.mod_cfg = Some(Box::new(f));
+		self
+	}
+
+	/// Send `amount` to a fresh onchain address of the wallet before
+	/// returning it. If unset and [`Self::boarded`] is set, enough
+	/// onchain funds are sent automatically to cover the board plus
+	/// fees.
+	pub fn funded(mut self, amount: Amount) -> Self {
+		self.fund_amount = Some(amount);
+		self
+	}
+
+	/// Board `amount` from the onchain wallet into Ark, wait for the
+	/// configured number of board confirmations, and sync the wallet so
+	/// the resulting VTXO is registered with the Ark server. The
+	/// returned [`bark::Wallet`] has `amount` of spendable balance.
+	pub fn boarded(mut self, amount: Amount) -> Self {
+		self.board_amount = Some(amount);
+		self
+	}
+
+	pub async fn create(self) -> bark::Wallet {
+		self.try_create().await.unwrap()
+	}
+
+	pub async fn try_create(self) -> anyhow::Result<bark::Wallet> {
+		let bitcoind = if self.ctx.electrs.is_some() {
+			None
+		} else {
+			Some(self.ctx.bitcoind_arc())
+		};
+
+		let mut cfg = self.ctx.bark_default_cfg(self.srv, bitcoind.as_deref());
+		if let Some(mod_cfg) = self.mod_cfg {
+			mod_cfg(&mut cfg);
+		}
+
+		let datadir = self.ctx.datadir.join(&self.name);
+		fs::create_dir_all(&datadir).await
+			.with_context(|| format!("creating bark-sdk datadir at {}", datadir.display()))?;
+
+		let network = BarkNetwork::Regtest.as_bitcoin();
+		let mnemonic = bip39::Mnemonic::generate(12).context("mnemonic")?;
+		fs::write(datadir.join("mnemonic"), mnemonic.to_string()).await
+			.context("writing mnemonic file")?;
+		fs::write(
+			datadir.join("config.toml"),
+			toml::to_string_pretty(&cfg).unwrap(),
+		).await.context("writing config.toml")?;
+
+		let db: Arc<dyn BarkPersister> = Arc::new(
+			SqliteClient::open(datadir.join("db.sqlite")).context("opening sqlite db")?,
+		);
+
+		let mut onchain = OnchainWallet::load_or_create(
+			network, mnemonic.to_seed(""), db.clone(),
+		).await.context("creating onchain wallet")?;
+
+		let wallet = bark::Wallet::create_with_exits(
+			&mnemonic,
+			network,
+			cfg,
+			db,
+			Box::new(MemoryLockManager::new()),
+			false,
+		).await.context("creating bark wallet")?;
+
+		// If the caller asked us to board but didn't specify how much
+		// onchain to send, cover the board amount plus a generous fee
+		// buffer.
+		const ONCHAIN_FEE_BUFFER: Amount = Amount::from_sat(100_000);
+		let fund_amount = self.fund_amount.or_else(|| {
+			self.board_amount.map(|a| a + ONCHAIN_FEE_BUFFER)
+		});
+
+		if let Some(amount) = fund_amount {
+			let address = onchain.address().await.context("onchain address")?;
+			self.ctx.bitcoind().fund_addr(address, amount).await;
+			self.ctx.bitcoind().generate(1).await;
+			self.ctx.await_block_count_sync().await;
+			onchain.sync(wallet.chain()).await.context("onchain sync after funding")?;
+		}
+
+		if let Some(amount) = self.board_amount {
+			wallet.board_amount(&mut onchain, amount).await.context("board_amount")?;
+			self.ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
+			wallet.sync().await;
+		}
+
+		Ok(wallet)
 	}
 }
 
