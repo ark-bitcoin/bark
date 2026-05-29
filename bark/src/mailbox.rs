@@ -30,7 +30,6 @@ use crate::actions::lightning::pay::Progress;
 use crate::movement::{MovementDestination, MovementStatus};
 use crate::movement::update::MovementUpdate;
 use crate::subsystem::{ArkoorMovement, Subsystem};
-use crate::utils::time::Instant;
 
 
 /// The maximum number of times we will call the fetch mailbox endpoint in one go
@@ -132,28 +131,35 @@ impl Wallet {
 
 		'outer: loop {
 			let mut stream = self.subscribe_mailbox_messages(since_checkpoint).await?;
-			let connected_at = Instant::now();
 			trace!("Connected to mailbox stream with server");
 
 			loop {
 				futures::select! {
 					message = stream.next().fuse() => {
-						if let Some(message) = message {
-							reconnect_count = 0;
-							let message = message.context("error on mailbox message stream")?;
-							self.process_mailbox_message(message).await;
-						} else if connected_at.elapsed() >= crate::HEALTHY_STREAM_DURATION {
-							// Stream lived long enough that this is likely a
-							// normal idle timeout, not a misbehaving server.
-							reconnect_count = 0;
-							info!("Mailbox stream closed after healthy session, reconnecting");
-							continue 'outer;
-						} else if reconnect_count >= MAX_RECONNECT_ATTEMPTS {
-							bail!("Mailbox stream dropped by server, giving up to retry later");
-						} else {
-							reconnect_count += 1;
-							warn!("Mailbox stream dropped by server, reconnecting");
-							continue 'outer;
+						match message {
+							Some(Ok(message)) => {
+								reconnect_count = 0;
+								self.process_mailbox_message(message).await;
+							},
+							// A tonic h2 stream reset is almost always a
+							// proxy- or server-side idle timeout rather than
+							// a real failure; resubscribe quietly.
+							Some(Err(e)) if crate::utils::is_h2_stream_error(&e) => {
+								reconnect_count = 0;
+								trace!("Mailbox stream reset by server, reconnecting: {e:#}");
+								continue 'outer;
+							},
+							Some(Err(e)) => {
+								return Err(e).context("error on mailbox message stream");
+							},
+							None if reconnect_count >= MAX_RECONNECT_ATTEMPTS => {
+								bail!("Mailbox stream dropped by server, giving up to retry later");
+							},
+							None => {
+								reconnect_count += 1;
+								warn!("Mailbox stream dropped by server, reconnecting");
+								continue 'outer;
+							},
 						}
 					},
 					_ = shutdown.cancelled().fuse() => {

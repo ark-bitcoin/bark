@@ -384,11 +384,6 @@ compile_error!("features `wasm-web` does not support feature `socks5-proxy");
 #[cfg(all(feature = "wasm-web", feature = "bitcoind-rpc"))]
 compile_error!("`wasm-web` does not support the `bitcoind-rpc` feature");
 
-/// If a streaming connection was alive for at least this long before
-/// dropping, treat it as a normal idle timeout (e.g. proxy-side) rather
-/// than a server failure.
-const HEALTHY_STREAM_DURATION: Duration = Duration::from_secs(59);
-
 /// Derivation index for Bark usage
 const BARK_PURPOSE_INDEX: u32 = 350;
 /// Derivation index used to generate keypairs to sign VTXOs
