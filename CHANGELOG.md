@@ -6,6 +6,105 @@ https://docs.second.tech/changelog/changelog/
 
 Below is a more detailed summary for each version.
 
+# v0.2.1
+
+- `bark`
+    - Add BIP 321 URI builder to bark wallet
+      Bark wallets can now construct BIP 321 `bitcoin:` URIs that bundle Ark,
+      Lightning, and onchain destinations into a single payment request via
+      `Wallet::bip321_uri`. The new `GetAddress` trait abstracts onchain
+      address generation so callers can plug in any onchain wallet backend.
+      [#1997](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1997)
+    - Refactor unilateral exit to be wallet-agnostic
+      The unilateral exit driver no longer constructs and broadcasts CPFP child
+      transactions internally. Callers fetch pending CPFP work via
+      `Exit::exits_needing_cpfp` (which returns `ExitCpfpRequest` items, including
+      `min_fee_for_rbf` when an RBF replacement is needed) and submit signed
+      children back via `Exit::provide_cpfp_tx`. The state machine now pauses at
+      CPFP boundaries instead of racing internal broadcasts, letting third-party
+      wallets drive exits with their own fee policy and signer. Callers using
+      bark's bundled BDK onchain wallet can keep the old one-shot behaviour via
+      `Exit::progress_exits_onchain`.
+      [#2032](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2032)
+        - **BREAKING:** `ExitTxStatus` variants reshaped — see the `bark-json`
+          changelog for the wire-format changes.
+        - **BREAKING:** `ExitError::InsufficientFeeToStart` removed; fee
+          insufficiency surfaces via `ExitCpfpRequest.min_fee_for_rbf` instead.
+        - New `ExitError::DatabaseChildStoreFailure` reported when persisting a
+          CPFP child transaction fails.
+    - Track mempool RBF info for every exit CPFP child, not just downloaded ones
+      Effective fee rate and total package fee are now stored on
+      `ChildTransactionInfo.fee_info` (`Option<FeeInfo>`) and refreshed by the
+      next sync after a child enters the mempool — regardless of whether it was
+      built by our wallet or downloaded from the chain source. This lets the
+      state machine make consistent RBF decisions without re-deriving fee info
+      from `ExitTxOrigin`.
+      [#2032](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2032)
+        - **BREAKING:** `ExitTxOrigin::Mempool` is now a unit variant; fee data
+          moved off of origin onto `ChildTransactionInfo.fee_info`. Persisted
+          state from older versions still deserializes cleanly (extra
+          `fee_rate_kwu` / `total_fee` fields on Mempool origins are ignored).
+        - New `FeeInfo { fee_rate, total_fee }` struct re-exported from
+          `bark::exit`.
+        - New `ExitTxOrigin::with_confirmed_in(...)` helper that updates an
+          origin given its current confirmation state.
+        - New `ExitChildStatus.fee_info: Option<FeeInfo>` field.
+    - Resolve esplora-electrs lag during exit CPFP RBF
+      When the chain source reports a different unconfirmed spending tx than
+      our locally-broadcast wallet child (typically because esplora-electrs
+      hasn't indexed our broadcast yet), the transaction manager now tries
+      to (re-)broadcast our package first. If Bitcoin Core accepts it — or
+      reports it as `AlreadyKnown` — we keep our wallet child. If broadcast is
+      rejected (`InsufficientReplacementFee`, `MissingOrSpentInputs`, etc.)
+      we accept the chain's tx. This avoids silently downgrading a freshly
+      broadcast high-fee RBF to a stale lower-fee child returned by a lagging
+      indexer.
+      [#2032](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2032)
+    - Include the timezone offset in terminal log timestamps
+      Terminal log lines now show the UTC offset (e.g. `+02:00`) alongside the local time.
+      [#2083](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2083)
+    - Avoid panic when failing to download an exit transaction
+      [#2087](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2087)
+
+- `bark-json`
+    - Reshape `ExitTxStatus` and `ExitError` for the unilateral exit refactor
+      The exit state machine no longer exposes intermediate "machine action"
+      states; statuses now describe the tx itself.
+      [#2032](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2032)
+        - **BREAKING:** `ExitTxStatus::NeedsSignedPackage` and
+          `ExitTxStatus::NeedsReplacementPackage` are replaced by
+          `ExitTxStatus::AwaitingCpfpBroadcast`. The `min_fee_rate` /
+          `min_fee_rate_kwu` / `min_fee` hints on `NeedsReplacementPackage` are
+          gone — RBF fee requirements are surfaced through
+          `bark::exit::ExitCpfpRequest.min_fee_for_rbf` at request time.
+        - **BREAKING:** `ExitTxStatus::NeedsBroadcasting` and
+          `ExitTxStatus::BroadcastWithCpfp` are replaced by
+          `ExitTxStatus::AwaitingConfirmation` (same `child_txid` and `origin`
+          fields).
+        - **BREAKING:** `ExitError::InsufficientFeeToStart` removed.
+        - New `ExitError::DatabaseChildStoreFailure { error }` variant.
+    - Decouple mempool RBF info from `ExitTxOrigin`
+      The `ExitTxOrigin::Mempool` variant is now a unit variant. Effective fee
+      rate and total package fee are exposed on `ChildTransactionInfo.fee_info`
+      (a new `FeeInfo { fee_rate, total_fee }` struct) and tracked for any
+      unconfirmed child regardless of how it entered our state — wallet-built
+      children get fee info populated by the next sync, not just children we
+      downloaded from the mempool.
+      [#2032](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2032)
+        - **BREAKING:** `ExitTxOrigin::Mempool` no longer carries `fee_rate` /
+          `fee_rate_kwu` / `total_fee` fields. Read these from
+          `ChildTransactionInfo.fee_info` instead.
+        - New `FeeInfo` struct with `fee_rate` (serialized as
+          `fee_rate_sat_per_kvb`, matching the unit used elsewhere in
+          `bark-json`) and `total_fee` (serialized as `total_fee_sat`).
+        - New optional `ChildTransactionInfo.fee_info: Option<FeeInfo>`.
+
+- `bark-rest`
+    - Fix OpenAPI spec for `GET /api/v1/history`
+      The spec previously wrongly advertised the endpoint at `/api/v1/history/`,
+      which broke generated clients.
+      [#2099](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2099)
+
 # v0.2.0
 
 - `ark-lib`
