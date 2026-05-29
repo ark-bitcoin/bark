@@ -47,7 +47,7 @@ pub(crate) fn ln_pay_action_id(payment_hash: PaymentHash) -> WalletActionId {
 /// `Paid` records come from `bark_paid_invoice` and are kept forever.
 /// `InProgress` records come from `bark_wallet_action_checkpoint`.
 /// `Unknown` means the wallet has no memory of this payment hash.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum LightningSendState {
 	Unknown,
 	InProgress(LightningSend),
