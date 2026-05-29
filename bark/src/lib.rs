@@ -371,8 +371,7 @@ use crate::lock_manager::LockManager;
 use crate::movement::{Movement, MovementId, PaymentMethod};
 use crate::movement::manager::MovementManager;
 use crate::notification::NotificationDispatch;
-use crate::onchain::{ExitUnilaterally, PreparePsbt, SignPsbt, Utxo};
-use crate::onchain::DaemonizableOnchainWallet;
+use crate::onchain::{OnchainWalletTrait, Utxo};
 use crate::persist::BarkPersister;
 use crate::persist::models::{RoundStateId, StoredRoundState, Unlocked};
 #[cfg(feature = "socks5-proxy")]
@@ -640,7 +639,7 @@ pub struct OpenWalletArgs {
 	/// The onchain wallet to use, if any
 	///
 	/// Default: none
-	pub onchain: Option<Arc<tokio::sync::RwLock<dyn DaemonizableOnchainWallet>>>,
+	pub onchain: Option<Arc<tokio::sync::RwLock<dyn OnchainWalletTrait>>>,
 
 	/// Whether to create a new wallet if no wallet exists
 	///
@@ -1551,7 +1550,7 @@ impl Wallet {
 	/// This can take a long period of time due to syncing the onchain wallet, registering boards,
 	/// syncing rounds, arkoors, and the exit system, checking pending lightning payments and
 	/// refreshing VTXOs if necessary.
-	pub async fn maintenance_with_onchain<W: PreparePsbt + SignPsbt + ExitUnilaterally>(
+	pub async fn maintenance_with_onchain<W: OnchainWalletTrait>(
 		&self,
 		onchain: &mut W,
 	) -> anyhow::Result<()> {
@@ -1581,9 +1580,9 @@ impl Wallet {
 	/// This can take a long period of time due to syncing the onchain wallet, registering boards,
 	/// syncing rounds, arkoors, and the exit system, checking pending lightning payments and
 	/// refreshing VTXOs if necessary.
-	pub async fn maintenance_with_onchain_delegated<W: PreparePsbt + SignPsbt + ExitUnilaterally>(
+	pub async fn maintenance_with_onchain_delegated(
 		&self,
-		onchain: &mut W,
+		onchain: &mut dyn OnchainWalletTrait,
 	) -> anyhow::Result<()> {
 		info!("Starting wallet maintenance in delegated mode with onchain wallet");
 
@@ -2090,7 +2089,7 @@ impl Wallet {
 	/// so it's possible to start multiple daemons by mistake.
 	pub fn start_daemon(
 		&self,
-		onchain: Option<Arc<tokio::sync::RwLock<dyn DaemonizableOnchainWallet>>>,
+		onchain: Option<Arc<tokio::sync::RwLock<dyn OnchainWalletTrait>>>,
 	) -> anyhow::Result<()> {
 		let mut daemon = self.inner.daemon.lock();
 		if daemon.is_some() {
@@ -2108,7 +2107,7 @@ impl Wallet {
 	#[deprecated(since = "0.1.4", note = "use start_daemon instead")]
 	pub fn run_daemon(
 		&self,
-		onchain: Option<Arc<tokio::sync::RwLock<dyn DaemonizableOnchainWallet>>>,
+		onchain: Option<Arc<tokio::sync::RwLock<dyn OnchainWalletTrait>>>,
 	) -> anyhow::Result<()> {
 		self.start_daemon(onchain)
 	}

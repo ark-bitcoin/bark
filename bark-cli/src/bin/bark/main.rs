@@ -30,7 +30,7 @@ use tokio::sync::RwLock;
 
 use ark::{ProtocolEncoding, VtxoId};
 use ark::lightning::PaymentHash;
-use bark::onchain::{ChainSync, GetAddress};
+use bark::onchain::OnchainWalletTrait;
 use bark::vtxo::{VtxoFilter, VtxoStateKind};
 use bark_json as json;
 use bark_json::primitives::WalletVtxoInfo;

@@ -9,7 +9,6 @@ use bitcoin::FeeRate;
 use tracing::info;
 use utoipa::OpenApi;
 
-use bark::onchain::ChainSync;
 use bark::vtxo::{FilterVtxos, VtxoFilter};
 use bitcoin_ext::FeeRateExt;
 

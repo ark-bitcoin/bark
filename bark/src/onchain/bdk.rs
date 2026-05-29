@@ -21,9 +21,7 @@ use bitcoin_ext::cpfp::CpfpError;
 use crate::chain::{ChainSource, ChainSourceClient};
 use crate::exit::{ExitVtxo, ExitState};
 use crate::onchain::{
-	ChainSync, GetAddress, GetBalance, GetSpendingTx, GetWalletTx,
-	LocalUtxo, MakeCpfp, MakeCpfpFees, PreparePsbt, SignPsbt, Utxo,
-	WalletTxInfo,
+	LocalUtxo, MakeCpfpFees, Utxo, OnchainWalletTrait, WalletTxInfo,
 };
 use crate::persist::BarkPersister;
 use crate::psbtext::PsbtInputExt;
@@ -104,131 +102,6 @@ impl<Cs: Send + Sync> TxBuilderExt for TxBuilder<'_, Cs> {
 	}
 }
 
-impl <W: Deref<Target = BdkWallet>> GetBalance for W {
-	fn get_balance(&self) -> Amount {
-		self.deref().balance().total()
-	}
-}
-
-#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
-#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
-impl GetAddress for BdkWallet {
-	async fn address(&mut self) -> anyhow::Result<Address> {
-		let ret = self.reveal_next_address(bdk_wallet::KeychainKind::External).address;
-		Ok(ret)
-	}
-}
-
-#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
-#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
-impl SignPsbt for BdkWallet {
-	async fn finish_psbt(&mut self, mut psbt: Psbt) -> anyhow::Result<Psbt> {
-		#[allow(deprecated)]
-		let opts = bdk_wallet::SignOptions {
-			trust_witness_utxo: true,
-			..Default::default()
-		};
-
-		let finalized = self.sign(&mut psbt, opts).context("signing error")?;
-		assert!(finalized);
-		let tx = psbt.clone().extract_tx()?;
-		self.apply_unconfirmed_txs([(tx, timestamp_secs())]);
-		Ok(psbt)
-	}
-
-}
-
-impl <W: Deref<Target = BdkWallet>> GetWalletTx for W {
-	/// Retrieves a transaction from the wallet
-	///
-	/// This method will only check the database and will not
-	/// use a chain-source to find the transaction
-	fn get_wallet_tx(&self, txid: Txid) -> Option<Arc<Transaction>> {
-		self.deref().get_tx(txid).map(|tx| tx.tx_node.tx)
-	}
-
-	fn get_wallet_tx_confirmed_block(&self, txid: Txid) -> anyhow::Result<Option<BlockRef>> {
-		match self.deref().get_tx(txid) {
-			Some(tx) => match tx.chain_position {
-				ChainPosition::Confirmed { anchor, .. } => Ok(Some(anchor.block_id.into())),
-				ChainPosition::Unconfirmed { .. } => Ok(None),
-			},
-			None => Err(anyhow!("Tx {} does not exist in the wallet", txid)),
-		}
-	}
-}
-
-impl <W: DerefMut<Target = BdkWallet>> PreparePsbt for W {
-	fn prepare_tx(
-		&mut self,
-		destinations: &[(Address, Amount)],
-		fee_rate: FeeRate,
-	) -> anyhow::Result<Psbt> {
-		let mut b = self.deref_mut().build_tx();
-		b.ordering(TxOrdering::Untouched);
-		for (dest, amount) in destinations {
-			b.add_recipient(dest.script_pubkey(), *amount);
-		}
-		b.fee_rate(fee_rate);
-		b.finish().context("error building tx")
-	}
-
-	fn prepare_drain_tx(
-		&mut self,
-		destination: Address,
-		fee_rate: FeeRate,
-	) -> anyhow::Result<Psbt> {
-		let mut b = self.deref_mut().build_tx();
-		b.drain_to(destination.script_pubkey());
-		b.fee_rate(fee_rate);
-		b.drain_wallet();
-		b.finish().context("error building tx")
-	}
-}
-
-impl <W: Deref<Target = BdkWallet>> GetSpendingTx for W {
-	fn get_spending_tx(&self, outpoint: OutPoint) -> Option<Arc<Transaction>> {
-		for transaction in self.deref().transactions() {
-			if transaction.tx_node.tx.input.iter().any(|i| i.previous_output == outpoint) {
-				return Some(transaction.tx_node.tx);
-			}
-		}
-		None
-	}
-}
-
-#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
-#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
-impl MakeCpfp for BdkWallet {
-	fn make_signed_p2a_cpfp(
-		&mut self,
-		tx: &Transaction,
-		fees: MakeCpfpFees,
-	) -> Result<Transaction, CpfpError> {
-		 WalletExt::make_signed_p2a_cpfp(self, tx, fees)
-			 .inspect_err(|e| error!("Error creating signed P2A CPFP: {}", e))
-			 .map_err(|e| match e {
-				 CpfpInternalError::General(s) => CpfpError::InternalError(s),
-				 CpfpInternalError::Create(e) => CpfpError::CreateError(e.to_string()),
-				 CpfpInternalError::Extract(e) => CpfpError::FinalizeError(e.to_string()),
-				 CpfpInternalError::Fee() => CpfpError::InternalError(e.to_string()),
-				 CpfpInternalError::FinalizeError(s) => CpfpError::FinalizeError(s),
-				 CpfpInternalError::InsufficientConfirmedFunds(f) => {
-					 CpfpError::InsufficientConfirmedFunds {
-						 needed: f.needed, available: f.available,
-					 }
-				 },
-				 CpfpInternalError::NoFeeAnchor(txid) => CpfpError::NoFeeAnchor(txid),
-				 CpfpInternalError::Signer(e) => CpfpError::SigningError(e.to_string()),
-			 })
-	}
-
-	async fn store_signed_p2a_cpfp(&mut self, tx: &Transaction) -> anyhow::Result<(), CpfpError> {
-		self.apply_unconfirmed_txs([(tx.clone(), timestamp_secs())]);
-		trace!("Unconfirmed txs: {:?}", self.unconfirmed_txids().collect::<Vec<_>>());
-		Ok(())
-	}
-}
 
 /// A basic wrapper around the bdk wallet to showcase
 /// how to use bark with an external onchain wallet.
@@ -280,46 +153,117 @@ impl OnchainWallet {
 
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
-impl MakeCpfp for OnchainWallet {
-	fn make_signed_p2a_cpfp(
-		&mut self,
-		tx: &Transaction,
-		fees: MakeCpfpFees,
-	) -> Result<Transaction, CpfpError> {
-		MakeCpfp::make_signed_p2a_cpfp(&mut self.inner, tx, fees)
+impl OnchainWalletTrait for OnchainWallet {
+	async fn balance(&self) -> Amount {
+		self.inner.balance().total()
 	}
 
-	async fn store_signed_p2a_cpfp(&mut self, tx: &Transaction) -> anyhow::Result<(), CpfpError> {
-		self.inner.store_signed_p2a_cpfp(tx).await?;
-		self.persist().await
-			.map_err(|e| CpfpError::StoreError(e.to_string()))
-	}
-}
-
-#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
-#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
-impl GetAddress for OnchainWallet {
 	async fn address(&mut self) -> anyhow::Result<Address> {
 		let ret = self.inner.reveal_next_address(bdk_wallet::KeychainKind::External).address;
 		self.persist().await?;
 		Ok(ret)
 	}
-}
 
-#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
-#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
-impl SignPsbt for OnchainWallet {
-	async fn finish_psbt(&mut self, psbt: Psbt) -> anyhow::Result<Psbt> {
-		let psbt = self.inner.finish_psbt(psbt).await?;
+	async fn sync(&mut self, chain: &ChainSource) -> anyhow::Result<()> {
+		OnchainWallet::sync(self, chain).await
+	}
+
+	async fn get_wallet_tx(&self, txid: Txid) -> Option<Arc<Transaction>> {
+		self.inner.get_tx(txid).map(|tx| tx.tx_node.tx)
+	}
+
+	async fn get_wallet_tx_confirmed_block(&self, txid: Txid) -> anyhow::Result<Option<BlockRef>> {
+		match self.inner.get_tx(txid) {
+			Some(tx) => match tx.chain_position {
+				ChainPosition::Confirmed { anchor, .. } => Ok(Some(anchor.block_id.into())),
+				ChainPosition::Unconfirmed { .. } => Ok(None),
+			},
+			None => Err(anyhow!("Tx {} does not exist in the wallet", txid)),
+		}
+	}
+
+	async fn prepare_tx(
+		&mut self,
+		destinations: &[(Address, Amount)],
+		fee_rate: FeeRate,
+	) -> anyhow::Result<Psbt> {
+		let mut b = self.inner.build_tx();
+		b.ordering(TxOrdering::Untouched);
+		for (dest, amount) in destinations {
+			b.add_recipient(dest.script_pubkey(), *amount);
+		}
+		b.fee_rate(fee_rate);
+		b.finish().context("error building tx")
+	}
+
+	async fn prepare_drain_tx(
+		&mut self,
+		destination: Address,
+		fee_rate: FeeRate,
+	) -> anyhow::Result<Psbt> {
+		let mut b = self.inner.build_tx();
+		b.drain_to(destination.script_pubkey());
+		b.fee_rate(fee_rate);
+		b.drain_wallet();
+		b.finish().context("error building tx")
+	}
+
+	async fn finish_psbt(&mut self, mut psbt: Psbt) -> anyhow::Result<Psbt> {
+		#[allow(deprecated)]
+		let opts = bdk_wallet::SignOptions {
+			trust_witness_utxo: true,
+			..Default::default()
+		};
+		let finalized = self.inner.sign(&mut psbt, opts).context("signing error")?;
+		assert!(finalized);
+		let tx = psbt.clone().extract_tx()?;
+		self.inner.apply_unconfirmed_txs([(tx, timestamp_secs())]);
 		self.persist().await?;
 		Ok(psbt)
 	}
+
+	async fn get_spending_tx(&self, outpoint: OutPoint) -> Option<Arc<Transaction>> {
+		for transaction in self.inner.transactions() {
+			if transaction.tx_node.tx.input.iter().any(|i| i.previous_output == outpoint) {
+				return Some(transaction.tx_node.tx);
+			}
+		}
+		None
+	}
+
+	async fn make_signed_p2a_cpfp(
+		&mut self,
+		tx: &Transaction,
+		fees: MakeCpfpFees,
+	) -> Result<Transaction, CpfpError> {
+		WalletExt::make_signed_p2a_cpfp(&mut self.inner, tx, fees)
+			.inspect_err(|e| error!("Error creating signed P2A CPFP: {}", e))
+			.map_err(|e| match e {
+				CpfpInternalError::General(s) => CpfpError::InternalError(s),
+				CpfpInternalError::Create(e) => CpfpError::CreateError(e.to_string()),
+				CpfpInternalError::Extract(e) => CpfpError::FinalizeError(e.to_string()),
+				CpfpInternalError::Fee() => CpfpError::InternalError(e.to_string()),
+				CpfpInternalError::FinalizeError(s) => CpfpError::FinalizeError(s),
+				CpfpInternalError::InsufficientConfirmedFunds(f) => {
+					CpfpError::InsufficientConfirmedFunds {
+						needed: f.needed, available: f.available,
+					}
+				},
+				CpfpInternalError::NoFeeAnchor(txid) => CpfpError::NoFeeAnchor(txid),
+				CpfpInternalError::Signer(e) => CpfpError::SigningError(e.to_string()),
+			})
+	}
+
+	async fn store_signed_p2a_cpfp(&mut self, tx: &Transaction) -> anyhow::Result<(), CpfpError> {
+		self.inner.apply_unconfirmed_txs([(tx.clone(), timestamp_secs())]);
+		trace!("Unconfirmed txs: {:?}", self.unconfirmed_txids().collect::<Vec<_>>());
+		self.persist().await
+			.map_err(|e| CpfpError::StoreError(e.to_string()))
+	}
 }
 
-#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
-#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
-impl ChainSync for OnchainWallet {
-	async fn sync(&mut self, chain: &ChainSource) -> anyhow::Result<()> {
+impl OnchainWallet {
+	pub async fn sync(&mut self, chain: &ChainSource) -> anyhow::Result<()> {
 		debug!("Starting wallet sync...");
 		debug!("Starting balance: {}", self.inner.balance());
 		trace!("Starting unconfirmed txs: {:?}", self.unconfirmed_txids().collect::<Vec<_>>());
@@ -369,9 +313,7 @@ impl ChainSync for OnchainWallet {
 
 		Ok(())
 	}
-}
 
-impl OnchainWallet {
 	pub fn balance(&self) -> Balance {
 		self.inner.balance()
 	}
@@ -428,7 +370,7 @@ impl OnchainWallet {
 
 	pub async fn send(&mut self, chain: &ChainSource, dest: Address, amount: Amount, fee_rate: FeeRate
 	)	-> anyhow::Result<Txid> {
-		let psbt = self.prepare_tx(&[(dest, amount)], fee_rate)?;
+		let psbt = self.prepare_tx(&[(dest, amount)], fee_rate).await?;
 		let tx = self.finish_psbt(psbt).await?.extract_tx()?;
 		chain.broadcast_tx(&tx).await?;
 		Ok(tx.compute_txid())
@@ -440,7 +382,7 @@ impl OnchainWallet {
 		destinations: &[(Address, Amount)],
 		fee_rate: FeeRate,
 	) -> anyhow::Result<Txid> {
-		let pbst = self.prepare_tx(destinations, fee_rate)?;
+		let pbst = self.prepare_tx(destinations, fee_rate).await?;
 		let tx = self.finish_psbt(pbst).await?.extract_tx()?;
 		chain.broadcast_tx(&tx).await?;
 		Ok(tx.compute_txid())
@@ -453,7 +395,7 @@ impl OnchainWallet {
 		destination: Address,
 		fee_rate: FeeRate,
 	) -> anyhow::Result<Txid> {
-		let psbt = self.prepare_drain_tx(destination, fee_rate)?;
+		let psbt = self.prepare_drain_tx(destination, fee_rate).await?;
 		let tx = self.finish_psbt(psbt).await?.extract_tx()?;
 		chain.broadcast_tx(&tx).await?;
 		Ok(tx.compute_txid())

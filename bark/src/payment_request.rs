@@ -30,7 +30,7 @@ use log::debug;
 
 use crate::{FeeEstimate, Wallet};
 use crate::arkoor::ArkoorAddressError;
-use crate::onchain::GetAddress;
+use crate::onchain::OnchainWalletTrait;
 
 /// Enum for representing either a bark address ([ark::Address]) or an arkade address.
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -204,9 +204,8 @@ impl From<AvailablePaymentMethod> for PaymentRequest {
 /// ```
 pub struct BarkBip321UriBuilder<'a> {
 	wallet: &'a mut Wallet,
-	// `+ Send` so the builder can be driven from a multi-threaded async
 	// context such as the REST server.
-	onchain_wallet: Option<&'a mut (dyn GetAddress + Send)>,
+	onchain_wallet: Option<&'a mut dyn OnchainWalletTrait>,
 
 	amount: Option<Amount>,
 	label: Option<String>,
@@ -270,7 +269,7 @@ impl<'a> BarkBip321UriBuilder<'a> {
 	/// Set the onchain wallet to fetch onchain address from
 	///
 	/// Setting this will also set the flag to include an onchain address.
-	pub fn onchain_wallet(mut self, onchain: &'a mut (dyn GetAddress + Send)) -> Self {
+	pub fn onchain_wallet(mut self, onchain: &'a mut dyn OnchainWalletTrait) -> Self {
 		self.onchain_wallet = Some(onchain);
 		self.onchain = true;
 		self

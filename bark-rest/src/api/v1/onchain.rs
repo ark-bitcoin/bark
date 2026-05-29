@@ -8,7 +8,7 @@ use bitcoin::Amount;
 use tracing::info;
 use utoipa::OpenApi;
 
-use bark::onchain::{ChainSync, GetAddress};
+use bark::onchain::OnchainWalletTrait;
 
 use crate::ServerState;
 use crate::error::{self, HandlerResult, ContextExt};

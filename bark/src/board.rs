@@ -23,7 +23,7 @@ impl Wallet {
 	/// NB we will spend a little more onchain to cover fees.
 	pub async fn board_amount(
 		&self,
-		onchain: &mut dyn onchain::Board,
+		onchain: &mut dyn onchain::OnchainWalletTrait,
 		amount: Amount,
 	) -> anyhow::Result<PendingBoard> {
 		let (user_keypair, _) = self.derive_store_next_keypair().await?;
@@ -33,7 +33,7 @@ impl Wallet {
 	/// Board a [ark::Vtxo] with all the funds in your onchain wallet.
 	pub async fn board_all(
 		&self,
-		onchain: &mut dyn onchain::Board,
+		onchain: &mut dyn onchain::OnchainWalletTrait,
 	) -> anyhow::Result<PendingBoard> {
 		let (user_keypair, _) = self.derive_store_next_keypair().await?;
 		self.board(onchain, None, user_keypair).await
@@ -117,7 +117,7 @@ impl Wallet {
 
 	async fn board(
 		&self,
-		wallet: &mut dyn onchain::Board,
+		wallet: &mut dyn onchain::OnchainWalletTrait,
 		amount: Option<Amount>,
 		user_keypair: Keypair,
 	) -> anyhow::Result<PendingBoard> {
@@ -125,9 +125,9 @@ impl Wallet {
 		let fee_rate = self.inner.chain.fee_rates().await.regular;
 
 		let board_psbt = if let Some(amount) = amount {
-			wallet.prepare_tx(&[(addr, amount)], fee_rate)?
+			wallet.prepare_tx(&[(addr, amount)], fee_rate).await?
 		} else {
-			wallet.prepare_drain_tx(addr, fee_rate)?
+			wallet.prepare_drain_tx(addr, fee_rate).await?
 		};
 
 		let signed_psbt = wallet.finish_psbt(board_psbt).await?;

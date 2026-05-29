@@ -3,7 +3,7 @@ use log::warn;
 
 use crate::Wallet;
 use crate::exit::{Exit, ExitProgressStatus};
-use crate::onchain::{CpfpError, ExitUnilaterally, MakeCpfpFees};
+use crate::onchain::{CpfpError, MakeCpfpFees, OnchainWalletTrait};
 
 impl Exit {
 	/// Advance ongoing exits by one step, handling CPFP fee-bumping via an onchain wallet.
@@ -22,7 +22,7 @@ impl Exit {
 	pub async fn progress_exits_with_bdk(
 		&self,
 		wallet: &Wallet,
-		onchain: &mut dyn ExitUnilaterally,
+		onchain: &mut dyn OnchainWalletTrait,
 		fee_rate_override: Option<FeeRate>,
 	) -> anyhow::Result<Option<Vec<ExitProgressStatus>>> {
 		self.progress_exits(wallet).await?;
@@ -47,7 +47,7 @@ impl Exit {
 					}
 				},
 			};
-			let child_tx = match onchain.make_signed_p2a_cpfp(&req.exit_tx, fees) {
+			let child_tx = match onchain.make_signed_p2a_cpfp(&req.exit_tx, fees).await {
 				Ok(tx) => tx,
 				Err(CpfpError::InsufficientConfirmedFunds { needed, available }) => {
 					warn!("Insufficient funds for exit CPFP: needed {} available {}", needed, available);

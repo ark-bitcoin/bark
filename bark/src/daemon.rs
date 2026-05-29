@@ -11,7 +11,7 @@ use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
 use crate::Wallet;
-use crate::onchain::DaemonizableOnchainWallet;
+use crate::onchain::OnchainWalletTrait;
 use crate::utils::ReconnectBackoff;
 use crate::utils::time::sleep;
 
@@ -47,7 +47,7 @@ impl DaemonHandle {
 
 pub(crate) fn start_daemon(
 	wallet: Wallet,
-	onchain: Option<Arc<RwLock<dyn DaemonizableOnchainWallet>>>,
+	onchain: Option<Arc<RwLock<dyn OnchainWalletTrait>>>,
 ) -> DaemonHandle {
 	let shutdown = CancellationToken::new();
 	let proc = DaemonProcess::new(shutdown.clone(), wallet, onchain);
@@ -71,14 +71,14 @@ struct DaemonProcess {
 
 	connected: AtomicBool,
 	wallet: Wallet,
-	onchain: Option<Arc<RwLock<dyn DaemonizableOnchainWallet>>>,
+	onchain: Option<Arc<RwLock<dyn OnchainWalletTrait>>>,
 }
 
 impl DaemonProcess {
 	fn new(
 		shutdown: CancellationToken,
 		wallet: Wallet,
-		onchain: Option<Arc<RwLock<dyn DaemonizableOnchainWallet>>>,
+		onchain: Option<Arc<RwLock<dyn OnchainWalletTrait>>>,
 	) -> DaemonProcess {
 		DaemonProcess {
 			connected: AtomicBool::new(false),

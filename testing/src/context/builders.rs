@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use anyhow::Context;
 use bark::{BarkNetwork, OpenWalletArgs, WalletSeed};
-use bark::onchain::{ChainSync, GetAddress, OnchainWallet};
+use bark::onchain::{OnchainWallet, OnchainWalletTrait};
 use bark::persist::BarkPersister;
 use bark::persist::sqlite::SqliteClient;
 use bitcoin::Amount;
