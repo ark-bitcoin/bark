@@ -222,21 +222,23 @@ impl DaemonProcess {
 				break;
 			}
 
-			let started_at = std::time::Instant::now();
-			if let Err(e) = self.process_round_event_stream().await {
-				warn!("An error occured while processing pending rounds: {e:#}");
-			}
-
-			if started_at.elapsed() >= crate::HEALTHY_STREAM_DURATION {
-				trace!("Round events stream closed after healthy session, reconnecting");
-				continue;
-			}
-
-			futures::select! {
-				_ = sleep(self.sync_interval()).fuse() => {},
-				_ = self.shutdown.cancelled().fuse() => {
-					info!("Shutdown signal received! Shutting round events process...");
-					break;
+			match self.process_round_event_stream().await {
+				Ok(()) => {},
+				// A tonic h2 stream reset is almost always a
+				// proxy- or server-side idle timeout rather than
+				// a real failure; resubscribe quietly.
+				Err(e) if crate::utils::is_h2_stream_error(&e) => {
+					trace!("Round events stream reset by server, reconnecting: {e:#}");
+				},
+				Err(e) => {
+					warn!("An error occured while processing pending rounds: {e:#}");
+					futures::select! {
+						_ = sleep(self.sync_interval()).fuse() => {},
+						_ = self.shutdown.cancelled().fuse() => {
+							info!("Shutdown signal received! Shutting round events process...");
+							break;
+						},
+					}
 				},
 			}
 		}
