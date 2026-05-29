@@ -35,7 +35,7 @@ pub enum UpdateMetadataError {
 /// Returns the full history of wallet movements ordered from newest to oldest. A movement represents any wallet operation that affects VTXOs—an arkoor send or receive, Lightning send or receive, board, offboard, or refresh. Each entry records which VTXOs were consumed and produced, the effective balance change (if any), fees paid, and the operation status.
 pub async fn list(configuration: &configuration::Configuration, ) -> Result<Vec<models::Movement>, Error<ListError>> {
 
-    let uri_str = format!("{}/api/v1/history/", configuration.base_path);
+    let uri_str = format!("{}/api/v1/history", configuration.base_path);
     let mut req_builder = configuration.client.request(reqwest::Method::GET, &uri_str);
 
     if let Some(ref user_agent) = configuration.user_agent {

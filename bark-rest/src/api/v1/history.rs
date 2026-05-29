@@ -33,7 +33,7 @@ pub fn router() -> Router<ServerState> {
 
 #[utoipa::path(
 	get,
-	path = "/",
+	path = "",
 	summary = "Get wallet history",
 	responses(
 		(status = 200, description = "Returns the wallet history", body = Vec<bark_json::movements::Movement>),

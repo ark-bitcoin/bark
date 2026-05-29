@@ -4,7 +4,7 @@ All URIs are relative to *http://localhost*
 
 Method | HTTP request | Description
 ------------- | ------------- | -------------
-[**list**](HistoryApi.md#list) | **GET** /api/v1/history/ | Get wallet history
+[**list**](HistoryApi.md#list) | **GET** /api/v1/history | Get wallet history
 [**update_metadata**](HistoryApi.md#update_metadata) | **POST** /api/v1/history/{id}/metadata | Patch movement metadata
 
 

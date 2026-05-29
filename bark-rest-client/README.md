@@ -48,7 +48,7 @@ Class | Method | HTTP request | Description
 *FeesApi* | [**offboard_all_fee**](docs/FeesApi.md#offboard_all_fee) | **GET** /api/v1/fees/offboard-all | Estimate offboard-all fee
 *FeesApi* | [**onchain_fee_rates**](docs/FeesApi.md#onchain_fee_rates) | **GET** /api/v1/fees/onchain | Get on-chain fee rates
 *FeesApi* | [**send_onchain_fee**](docs/FeesApi.md#send_onchain_fee) | **GET** /api/v1/fees/send-onchain | Estimate send-onchain fee
-*HistoryApi* | [**list**](docs/HistoryApi.md#list) | **GET** /api/v1/history/ | Get wallet history
+*HistoryApi* | [**list**](docs/HistoryApi.md#list) | **GET** /api/v1/history | Get wallet history
 *HistoryApi* | [**update_metadata**](docs/HistoryApi.md#update_metadata) | **POST** /api/v1/history/{id}/metadata | Patch movement metadata
 *LightningApi* | [**cancel_receive**](docs/LightningApi.md#cancel_receive) | **DELETE** /api/v1/lightning/receives/{identifier} | Cancel a pending receive
 *LightningApi* | [**generate_invoice**](docs/LightningApi.md#generate_invoice) | **POST** /api/v1/lightning/receives/invoice | Create a BOLT11 invoice
