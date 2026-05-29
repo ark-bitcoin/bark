@@ -20,7 +20,7 @@ use ark::vtxo::Full;
 use ark::mailbox::MailboxIdentifier;
 use ark::musig::DangerousSecretNonce;
 use ark::tree::signed::{UnlockHash, VtxoTreeSpec};
-use ark::lightning::{Invoice, PaymentHash, Preimage};
+use ark::lightning::{PaymentHash, Preimage};
 use ark::rounds::RoundSeq;
 use bitcoin_ext::BlockDelta;
 
@@ -185,31 +185,16 @@ pub struct PendingOffboard {
 	pub created_at: chrono::DateTime<chrono::Local>,
 }
 
-/// Persisted representation of a lightning send.
+/// Replay-protection record for a fully-settled outgoing lightning send.
 ///
-/// Created after the HTLCs from client to server are constructed.
+/// Written when a payment is acknowledged with a valid preimage; never
+/// deleted. Used by [`crate::actions::lightning::pay`] to refuse paying
+/// the same invoice twice.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct LightningSend {
-	/// The Lightning invoice being paid.
-	pub invoice: Invoice,
-	/// The amount being sent.
-	#[serde(with = "bitcoin::amount::serde::as_sat")]
-	pub amount: Amount,
-	/// The fee paid for making the lightning payment.
-	pub fee: Amount,
-	/// The open HTLCs that are used for this payment.
-	pub htlc_vtxos: Vec<WalletVtxo>,
-	/// The movement associated with this payment.
-	pub movement_id: MovementId,
-	/// The payment preimage, serving as proof of payment.
-	///
-	/// Combined with [`finished_at`](Self::finished_at), determines the payment state:
-	/// - `None` + `finished_at: None` → Pending (in-flight)
-	/// - `None` + `finished_at: Some(_)` → Failed
-	/// - `Some(_)` + `finished_at: Some(_)` → Succeeded
-	pub preimage: Option<Preimage>,
-	/// When the payment reached a terminal state (succeeded or failed).
-	pub finished_at: Option<chrono::DateTime<chrono::Local>>,
+pub struct PaidInvoice {
+	pub payment_hash: PaymentHash,
+	pub preimage: Preimage,
+	pub paid_at: chrono::DateTime<chrono::Local>,
 }
 
 /// Persisted representation of an incoming Lightning payment.

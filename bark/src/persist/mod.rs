@@ -25,7 +25,7 @@ pub mod sqlite;
 pub(crate) mod test_suite;
 
 
-use bitcoin::{Amount, Transaction, Txid};
+use bitcoin::{Transaction, Txid};
 use bitcoin::secp256k1::PublicKey;
 use chrono::DateTime;
 use lightning_invoice::Bolt11Invoice;
@@ -33,7 +33,7 @@ use lightning_invoice::Bolt11Invoice;
 use bdk_wallet::ChangeSet;
 
 use ark::{Vtxo, VtxoId};
-use ark::lightning::{Invoice, PaymentHash, Preimage};
+use ark::lightning::{PaymentHash, Preimage};
 use ark::vtxo::Full;
 use bitcoin_ext::BlockDelta;
 
@@ -41,7 +41,7 @@ use crate::WalletProperties;
 use crate::actions::{WalletActionCheckpoint, WalletActionId};
 use crate::exit::ExitTxOrigin;
 use crate::persist::models::{
-	LightningReceive, LightningSend, PendingBoard, RoundStateId, StoredExit, StoredRoundState,
+	LightningReceive, PaidInvoice, PendingBoard, RoundStateId, StoredExit, StoredRoundState,
 	Unlocked, PendingOffboard,
 };
 use crate::movement::{Movement, MovementId, MovementStatus, MovementSubsystem, PaymentMethod};
@@ -467,67 +467,6 @@ pub trait BarkPersister: Send + Sync + 'static {
 	/// - Returns error when the provided checkpoint is smaller than the existing checkpoint
 	async fn store_mailbox_checkpoint(&self, checkpoint: u64) -> anyhow::Result<()>;
 
-	/// Store a new pending lightning send.
-	///
-	/// Parameters:
-	/// - invoice: The invoice of the pending lightning send.
-	/// - amount: The amount of the pending lightning send.
-	/// - fee: The fee of the pending lightning send.
-	/// - vtxos: The vtxos of the pending lightning send.
-	/// - movement_id: The movement ID associated with this send.
-	///
-	/// Errors:
-	/// - Returns an error if the pending lightning send cannot be stored.
-	async fn store_new_pending_lightning_send(
-		&self,
-		invoice: &Invoice,
-		amount: Amount,
-		fee: Amount,
-		vtxos: &[VtxoId],
-		movement_id: MovementId,
-	) -> anyhow::Result<LightningSend>;
-
-	/// Get all pending lightning sends.
-	///
-	/// Returns:
-	/// - `Ok(Vec<LightningSend>)` possibly empty.
-	///
-	/// Errors:
-	/// - Returns an error if the query fails.
-	async fn get_all_pending_lightning_send(&self) -> anyhow::Result<Vec<LightningSend>>;
-
-	/// Mark a lightning send as finished.
-	///
-	/// Parameters:
-	/// - payment_hash: The [PaymentHash] of the lightning send to update.
-	/// - preimage: The [Preimage] of the successful lightning send.
-	///
-	/// Errors:
-	/// - Returns an error if the lightning send cannot be updated.
-	async fn finish_lightning_send(
-		&self,
-		payment_hash: PaymentHash,
-		preimage: Option<Preimage>,
-	) -> anyhow::Result<()>;
-
-	/// Remove a lightning send.
-	///
-	/// Parameters:
-	/// - payment_hash: The [PaymentHash] of the lightning send to remove.
-	///
-	/// Errors:
-	/// - Returns an error if the lightning send cannot be removed.
-	async fn remove_lightning_send(&self, payment_hash: PaymentHash) -> anyhow::Result<()>;
-
-	/// Get a lightning send by payment hash
-	///
-	/// Parameters:
-	/// - payment_hash: The [PaymentHash] of the lightning send to get.
-	///
-	/// Errors:
-	/// - Returns an error if the lookup fails.
-	async fn get_lightning_send(&self, payment_hash: PaymentHash) -> anyhow::Result<Option<LightningSend>>;
-
 	/// Persist or overwrite a wallet action checkpoint.
 	///
 	/// Parameters:
@@ -566,6 +505,23 @@ pub trait BarkPersister: Send + Sync + 'static {
 		&self,
 		id: &WalletActionId,
 	) -> anyhow::Result<()>;
+
+	/// Record a settled outgoing lightning send.
+	///
+	/// Idempotent: a subsequent call with the same payment_hash is a
+	/// no-op (the existing row wins). This makes retry across a crash
+	/// safe even without a multi-row transaction.
+	async fn record_paid_invoice(
+		&self,
+		payment_hash: PaymentHash,
+		preimage: Preimage,
+	) -> anyhow::Result<()>;
+
+	/// Look up an existing paid-invoice record by payment hash.
+	async fn get_paid_invoice(
+		&self,
+		payment_hash: PaymentHash,
+	) -> anyhow::Result<Option<PaidInvoice>>;
 
 	/// Store an incoming Lightning receive record.
 	///

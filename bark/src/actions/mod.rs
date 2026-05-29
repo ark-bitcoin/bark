@@ -7,14 +7,17 @@
 //! This module defines the generic vocabulary; per-kind machinery (state
 //! machines, transition functions) lives in submodules.
 
+pub mod lightning;
+
 use std::time::Duration;
 
 use log::{debug, trace, warn};
 use server_rpc::StatusExt;
 
-use crate::vtxo::{VtxoState, VtxoStateKind};
 use crate::{Wallet, WalletVtxo};
+use crate::actions::lightning::pay::LightningSend;
 use crate::lock_manager::LockGuard;
+use crate::vtxo::{VtxoState, VtxoStateKind};
 
 pub(crate) const BASE_RETRY_BACKOFF: Duration = Duration::from_secs(1);
 
@@ -25,14 +28,32 @@ pub(crate) const BASE_RETRY_BACKOFF: Duration = Duration::from_secs(1);
 /// variant's payload type.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum WalletActionCheckpoint {
-	Dummy { id: String },
+	LightningSend(LightningSend),
 }
 
 impl WalletActionCheckpoint {
 	pub fn id(&self) -> WalletActionId {
 		match self {
-			WalletActionCheckpoint::Dummy { id } => id.clone(),
+			WalletActionCheckpoint::LightningSend(s) => s.id(),
 		}
+	}
+
+	pub fn as_lightning_send(&self) -> Option<&LightningSend> {
+		match self {
+			WalletActionCheckpoint::LightningSend(s) => Some(s),
+		}
+	}
+
+	pub fn into_lightning_send(self) -> Option<LightningSend> {
+		match self {
+			WalletActionCheckpoint::LightningSend(s) => Some(s),
+		}
+	}
+}
+
+impl From<LightningSend> for WalletActionCheckpoint {
+	fn from(s: LightningSend) -> Self {
+		WalletActionCheckpoint::LightningSend(s)
 	}
 }
 
@@ -93,10 +114,6 @@ impl AdvanceError {
 	}
 }
 
-pub fn lock_key<A: WalletAction>(id: &WalletActionId) -> String {
-	format!("{}.{}", A::namespace(), id)
-}
-
 pub fn park_with_backoff<A: WalletAction>(state: A, attempts: u32) -> Advance<A> {
 	let delay = attempts.pow(2) * BASE_RETRY_BACKOFF;
 	debug!("action {} retrying; sleeping {:?} before re-drive", state.id(), delay);
@@ -122,7 +139,6 @@ pub fn park_with_backoff<A: WalletAction>(state: A, attempts: u32) -> Advance<A>
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 pub trait WalletAction: Sized + Send + Sync {
-	fn namespace() -> &'static str;
 	fn id(&self) -> WalletActionId;
 
 	async fn advance(self, wallet: &Wallet) -> Result<Advance<Self>, AdvanceError>;
@@ -197,10 +213,10 @@ impl Wallet {
 	where
 		A: WalletAction + Into<WalletActionCheckpoint> + Clone,
 	{
-		let guard = match self.inner.lock_manager.try_lock(&lock_key::<A>(&action.id())).await {
+		let guard = match self.inner.lock_manager.try_lock(&action.id()).await {
 			Some(g) => g,
 			None => {
-				trace!("action {} in namespace {} is already being driven, skipping", action.id(), A::namespace());
+				trace!("action {} is already being driven, skipping", action.id());
 				return Ok(());
 			},
 		};

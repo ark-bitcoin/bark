@@ -79,18 +79,18 @@ mod test {
 		).await.unwrap();
 
 		let bolt11 = Bolt11Invoice::from_str("").unwrap();
-		w.pay_lightning_invoice(bolt11, None).await.unwrap();
+		w.pay_lightning_invoice(bolt11, None, false).await.unwrap();
 
 		let bolt12 = Bolt12Invoice::from_str("").unwrap();
-		w.pay_lightning_invoice(bolt12, None).await.unwrap();
+		w.pay_lightning_invoice(bolt12, None, false).await.unwrap();
 
 		let string = format!("lnbc1..");
-		w.pay_lightning_invoice(string, None).await.unwrap();
+		w.pay_lightning_invoice(string, None, false).await.unwrap();
 
 		let strr = "lnbc1..";
-		w.pay_lightning_invoice(strr, None).await.unwrap();
+		w.pay_lightning_invoice(strr, None, false).await.unwrap();
 
 		let invoice = Invoice::Bolt11("".parse().unwrap());
-		w.pay_lightning_invoice(invoice, None).await.unwrap();
+		w.pay_lightning_invoice(invoice, None, false).await.unwrap();
 	}
 }

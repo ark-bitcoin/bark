@@ -1,426 +1,146 @@
 use std::fmt;
 
 use anyhow::Context;
-use bitcoin::{Amount, SignedAmount};
-use bitcoin::hex::DisplayHex;
+use bitcoin::Amount;
 use lightning::util::ser::Writeable;
 use lnurllib::lightning_address::LightningAddress;
-use log::{debug, error, info, trace, warn};
-use server_rpc::protos::{self, lightning_payment_status::PaymentStatus};
+use log::{info, warn};
+use server_rpc::protos;
 
-use ark::{ProtocolEncoding, VtxoPolicy, musig};
-use ark::arkoor::ArkoorDestination;
-use ark::arkoor::package::{ArkoorPackageBuilder, ArkoorPackageCosignResponse};
 use ark::lightning::{Bolt12Invoice, Bolt12InvoiceExt, Invoice, Offer, PaymentHash, Preimage};
-use ark::util::IteratorExt;
-use bitcoin_ext::BlockHeight;
 
-use crate::{Wallet, WalletVtxo};
+use crate::Wallet;
+use crate::WalletVtxo;
+use crate::actions::DriveMode;
+use crate::actions::lightning::pay::ln_pay_action_id;
+use crate::actions::lightning::pay::{
+	Htlcs, LightningSend, LightningSendState, Progress, settle_lightning_send_payment,
+	start_lightning_send,
+};
 use crate::lightning::lnaddr_invoice;
-use crate::movement::{MovementDestination, MovementStatus, PaymentMethod};
-use crate::movement::update::MovementUpdate;
-use crate::persist::models::LightningSend;
-use crate::subsystem::{LightningMovement, LightningSendMovement, Subsystem};
-use crate::vtxo::VtxoLockHolder;
-
-const LIGHTNING_PAY_LOCK_PREFIX: &str = "lightning_pay";
+use crate::movement::PaymentMethod;
 
 impl Wallet {
-	/// Returns each pending lightning payment.
+	/// Returns every in-progress lightning send checkpoint.
 	pub async fn pending_lightning_sends(&self) -> anyhow::Result<Vec<LightningSend>> {
-		Ok(self.inner.db.get_all_pending_lightning_send().await?)
+		let mut result = Vec::new();
+		for cp in self.inner.db.get_all_wallet_action_checkpoints().await? {
+			if let Some(ls) = cp.into_lightning_send() {
+				result.push(ls);
+			}
+		}
+		Ok(result)
 	}
 
-	/// Queries the database for any VTXO that is a pending lightning send.
+	/// Returns the VTXOs currently held by any in-progress lightning send.
 	pub async fn pending_lightning_send_vtxos(&self) -> anyhow::Result<Vec<WalletVtxo>> {
-		let vtxos = self.inner.db.get_all_pending_lightning_send().await?.into_iter()
-			.flat_map(|pending_lightning_send| pending_lightning_send.htlc_vtxos)
-			.collect::<Vec<_>>();
-
+		let mut vtxos = Vec::new();
+		for send in self.pending_lightning_sends().await? {
+			let ids: Vec<_> = match &send.progress {
+				Progress::Start => send.input_vtxo_ids.clone(),
+				Progress::HtlcReceived(h) => h.vtxo_ids.clone(),
+				Progress::PaymentInitiated(h) => h.vtxo_ids.clone(),
+				Progress::RevocableHtlcs { htlcs, .. } => htlcs.vtxo_ids.clone(),
+			};
+			for id in ids {
+				vtxos.push(self.get_vtxo_by_id(id).await?);
+			}
+		}
 		Ok(vtxos)
 	}
 
-	/// Syncs pending lightning payments, verifying whether the payment status has changed and
-	/// creating a revocation VTXO if necessary.
+	/// Drives every pending lightning send forward by one step (or to
+	/// completion if it's ready). Each action runs to its next park
+	/// independently; errors on one don't stop the others.
 	pub async fn sync_pending_lightning_send_vtxos(&self) -> anyhow::Result<()> {
-		let pending_payments = self.pending_lightning_sends().await?;
-
-		if pending_payments.is_empty() {
+		let pending = self.pending_lightning_sends().await?;
+		if pending.is_empty() {
 			return Ok(());
 		}
-
-		info!("Syncing {} pending lightning sends", pending_payments.len());
-
-		for payment in pending_payments {
-			let payment_hash = payment.invoice.payment_hash();
-			self.check_lightning_payment(payment_hash, false).await?;
-		}
-
-		Ok(())
-	}
-
-	/// Performs the revocation of HTLC VTXOs associated with a failed Lightning payment.
-	///
-	/// Builds a revocation package, requests server cosign,
-	/// then constructs new spendable VTXOs from server response.
-	///
-	/// Updates wallet database and movement logs to reflect the failed
-	/// payment and new produced VTXOs; removes the pending send record.
-	///
-	/// # Arguments
-	///
-	/// * `payment` - A reference to the [`LightningSend`] representing the failed payment whose
-	///     associated HTLC VTXOs should be revoked.
-	///
-	/// # Errors
-	///
-	/// Returns an error if revocation fails at any step.
-	///
-	/// # Returns
-	///
-	/// Returns `Ok(())` if revocation succeeds and the wallet state is properly updated.
-	async fn process_lightning_revocation(&self, payment: &LightningSend) -> anyhow::Result<()> {
-		let (mut srv, _) = self.require_server().await?;
-		let htlc_ids = payment.htlc_vtxos.iter()
-			.map(|v| v.vtxo.id()).collect::<Vec<_>>();
-
-		debug!("Processing {} HTLC VTXOs for revocation", htlc_ids.len());
-
-		// Hydrate to full so the arkoor builder has the genesis chain.
-		let htlc_vtxos = self.inner.db.get_full_vtxos(&htlc_ids).await
-			.context("failed to hydrate htlc input vtxos for revocation")?;
-
-		let mut secs = Vec::with_capacity(htlc_vtxos.len());
-		let mut pubs = Vec::with_capacity(htlc_vtxos.len());
-		let mut htlc_keypairs = Vec::with_capacity(htlc_vtxos.len());
-		for input in htlc_vtxos.iter() {
-			let keypair = self.get_vtxo_key(input).await?;
-			let (s, p) = musig::nonce_pair(&keypair);
-			secs.push(s);
-			pubs.push(p);
-			htlc_keypairs.push(keypair);
-		}
-
-		let (revocation_keypair, _) = self.derive_store_next_keypair().await?;
-
-		let revocation_claim_policy = VtxoPolicy::new_pubkey(revocation_keypair.public_key());
-		let builder = ArkoorPackageBuilder::new_claim_all_with_checkpoints(
-			htlc_vtxos,
-			revocation_claim_policy,
-		)
-			.context("Failed to construct arkoor package")?
-			.generate_user_nonces(&htlc_keypairs)?;
-
-		let cosign_request = protos::ArkoorPackageCosignRequest::from(
-			builder.cosign_request(),
-		);
-
-		let response = srv.client
-			.request_lightning_pay_htlc_revocation(cosign_request).await
-			.context("server failed to cosign arkoor")?.into_inner();
-
-		let cosign_resp = ArkoorPackageCosignResponse::try_from(response)
-			.context("Failed to parse cosign response from server")?;
-
-		let vtxos = builder
-			.user_cosign(&htlc_keypairs, cosign_resp)
-			.context("Failed to cosign vtxos")?
-			.build_signed_vtxos();
-
-		let mut revoked = Amount::ZERO;
-		for vtxo in &vtxos {
-			debug!("Got revocation VTXO: {}: {}", vtxo.id(), vtxo.amount());
-			revoked += vtxo.amount();
-		}
-
-		let count = vtxos.len();
-		let effective = -payment.amount.to_signed()? - payment.fee.to_signed()? + revoked.to_signed()?;
-		if effective != SignedAmount::ZERO {
-			warn!("Movement {} should have fee of zero, but got {}: amount = {}, fee = {}, revoked = {}",
-				payment.movement_id, effective, payment.amount, payment.fee, revoked,
-			);
-		}
-		self.inner.movements.finish_movement_with_update(
-			payment.movement_id,
-			MovementStatus::Failed,
-			MovementUpdate::new()
-				.effective_balance(effective)
-				.fee(effective.unsigned_abs())
-				.produced_vtxos(&vtxos)
-		).await?;
-		self.store_spendable_vtxos(&vtxos).await?;
-		self.mark_vtxos_as_spent(&payment.htlc_vtxos).await?;
-
-		self.inner.db.remove_lightning_send(payment.invoice.payment_hash()).await?;
-
-		debug!("Revoked {} HTLC VTXOs", count);
-
-		Ok(())
-	}
-
-	/// Processes the result of a lightning payment by checking the preimage sent by the server and
-	/// completing the payment if successful.
-	///
-	/// Note:
-	/// - That function cannot return an Error if the server provides a valid preimage, meaning
-	/// that if some occur, it is useless to ask for revocation as server wouldn't accept it.
-	/// In that case, it is better to keep the payment pending and try again later
-	///
-	/// # Returns
-	///
-	/// Returns `Ok(Some(Preimage))` if the payment is successfully completed and a preimage is
-	/// received.
-	/// Returns `Ok(None)` if preimage is missing, invalid or does not match the payment hash.
-	/// Returns an `Err` if an error occurs during the payment completion.
-	async fn process_lightning_send_server_preimage(
-		&self,
-		preimage: Option<Vec<u8>>,
-		payment: &LightningSend,
-	) -> anyhow::Result<Option<Preimage>> {
-		let payment_hash = payment.invoice.payment_hash();
-		let preimage_res = preimage
-			.context("preimage is missing")
-			.map(|p| Ok(Preimage::try_from(p)?))
-			.flatten();
-
-		match preimage_res {
-			Ok(preimage) if preimage.compute_payment_hash() == payment_hash => {
-				info!("Lightning payment succeeded! Preimage: {}. Payment hash: {}",
-					preimage.as_hex(), payment.invoice.payment_hash().as_hex());
-
-				// Complete the payment
-				self.inner.db.finish_lightning_send(payment_hash, Some(preimage)).await?;
-				self.mark_vtxos_as_spent(&payment.htlc_vtxos).await?;
-				self.inner.movements.finish_movement_with_update(
-					payment.movement_id,
-					MovementStatus::Successful,
-					MovementUpdate::new().metadata([(
-						"payment_preimage".into(),
-						serde_json::to_value(preimage).expect("payment preimage can serde"),
-					)])
-				).await?;
-
-				Ok(Some(preimage))
-			},
-			_ => {
-				error!("Server failed to provide a valid preimage. \
-					Payment hash: {}. Preimage result: {:#?}", payment_hash, preimage_res
-				);
-				Ok(None)
+		info!("Syncing {} pending lightning sends", pending.len());
+		for send in pending {
+			let id = send.id();
+			if let Err(e) = self.drive_action(send, DriveMode::UntilParkOrDone).await {
+				warn!("Failed to sync lightning send {}: {:#}", id, e);
 			}
 		}
+		Ok(())
 	}
 
-	/// Checks the status of a lightning payment associated with a set of VTXOs, processes the
-	/// payment result and optionally takes appropriate actions based on the payment outcome.
-	///
-	/// # Arguments
-	///
-	/// * `payment_hash` - The [PaymentHash] identifying the lightning payment.
-	/// * `wait`         - If true, asks the server to wait for payment completion (may block longer).
-	///
-	/// # Returns
-	///
-	/// Returns `Ok(Some(LightningSend))` with the current payment status.
-	/// Returns `Ok(None)` if no lightning send is found for the payment hash.
-	/// Returns an `Err` if an error occurs during the process.
-	///
-	/// # Behavior
-	///
-	/// - Validates that all HTLC VTXOs share the same invoice, amount and policy.
-	/// - Sends a request to the Ark server to check the payment status.
-	/// - Depending on the payment status:
-	///   - **Failed**: Revokes the associated VTXOs.
-	///   - **Pending**: Checks if the HTLC has expired based on the tip height. If expired,
-	///     revokes the VTXOs.
-	///   - **Complete**: Extracts the payment preimage, logs the payment, registers movement
-	///     in the database and returns the payment info.
-	pub async fn check_lightning_payment(&self, payment_hash: PaymentHash, wait: bool)
+	/// Fetches the current checkpoint for the given payment hash, if any.
+	pub async fn lightning_send_checkpoint(&self, hash: PaymentHash)
 		-> anyhow::Result<Option<LightningSend>>
 	{
-		trace!("Checking lightning payment status for payment hash: {}", payment_hash);
-
-		// Try to mark this payment as in-flight to prevent concurrent status checks.
-		// This prevents race conditions where multiple concurrent calls could both
-		// attempt to process success/revocation, leading to duplicate operations.
-		let key = format!("{}.{}", LIGHTNING_PAY_LOCK_PREFIX, payment_hash);
-		let _guard = self.inner.lock_manager.try_lock(&key).await
-			.context("Payment operation already in progress for this invoice")?;
-
-		self.check_lightning_payment_inner(payment_hash, wait, None).await
+		Ok(self.inner.db.get_wallet_action_checkpoint(&ln_pay_action_id(hash)).await?
+			.and_then(|cp| cp.into_lightning_send()))
 	}
 
-	/// Like [`check_lightning_payment`](Self::check_lightning_payment) but accepts
-	/// a known preimage (e.g. from a mailbox notification) to skip the server RPC
-	/// when the payment is already known to have succeeded.
-	pub(crate) async fn check_lightning_payment_with_preimage(
-		&self,
-		payment_hash: PaymentHash,
-		known_preimage: Option<Preimage>,
-	) -> anyhow::Result<Option<LightningSend>>
+	/// Triage a payment hash: paid, in-progress, or unknown.
+	pub async fn lightning_send_state(&self, hash: PaymentHash)
+		-> anyhow::Result<LightningSendState>
 	{
-		trace!("Checking lightning payment status for payment hash: {}", payment_hash);
-
-		// Try to mark this payment as in-flight to prevent concurrent status checks.
-		// This prevents race conditions where multiple concurrent calls could both
-		// attempt to process success/revocation, leading to duplicate operations.
-		let key = format!("{}.{}", LIGHTNING_PAY_LOCK_PREFIX, payment_hash);
-		let _guard = self.inner.lock_manager.try_lock(&key).await
-			.context("Payment operation already in progress for this invoice")?;
-
-		self.check_lightning_payment_inner(payment_hash, false, known_preimage).await
+		if let Some(paid) = self.inner.db.get_paid_invoice(hash).await? {
+			return Ok(LightningSendState::Paid(paid));
+		}
+		if let Some(cp) = self.lightning_send_checkpoint(hash).await? {
+			return Ok(LightningSendState::InProgress(cp));
+		}
+		Ok(LightningSendState::Unknown)
 	}
 
-	/// Internal implementation of lightning payment status check after concurrency check.
-	///
-	/// When `known_preimage` is provided (e.g. from a mailbox notification),
-	/// the server RPC is skipped and the preimage is used directly.
-	async fn check_lightning_payment_inner(
-		&self,
-		payment_hash: PaymentHash,
-		wait: bool,
-		known_preimage: Option<Preimage>,
-	) -> anyhow::Result<Option<LightningSend>>
+	/// Cheap "has this invoice ever been paid?" check.
+	pub async fn is_invoice_paid(&self, hash: PaymentHash) -> anyhow::Result<bool> {
+		Ok(self.inner.db.get_paid_invoice(hash).await?.is_some())
+	}
+
+	/// Drive a lightning send forward (e.g., to settle a pending one
+	/// or revoke a failed one). `wait=true` keeps driving past parks
+	/// until the action terminates. Returns the current state.
+	pub async fn check_lightning_payment(&self, hash: PaymentHash, wait: bool)
+		-> anyhow::Result<LightningSendState>
 	{
-		let payment = self.inner.db.get_lightning_send(payment_hash).await?
-			.context("no lightning send found for payment hash")?;
-
-		// If the payment already has a preimage, it was already completed successfully
-		if payment.preimage.is_some() {
-			trace!("Payment already completed with preimage");
-			return Ok(Some(payment));
-		}
-
-		if payment.htlc_vtxos.is_empty() {
-			bail!("No HTLC VTXOs found for payment");
-		}
-
-		let policy = payment.htlc_vtxos.iter()
-			.all_same(|v| v.vtxo.policy())
-			.ok_or(anyhow::anyhow!("All lightning htlc should have the same policy"))?;
-
-		let policy = policy.as_server_htlc_send().context("VTXO is not an HTLC send")?;
-		if policy.payment_hash != payment_hash {
-			bail!("Payment hash mismatch");
-		}
-
-		// If we already have the preimage (from a mailbox notification),
-		// process it directly without an RPC round-trip to the server.
-		if let Some(preimage) = known_preimage {
-			let preimage_opt = self.process_lightning_send_server_preimage(
-				Some(preimage.to_vec()), &payment,
-			).await?;
-
-			if preimage_opt.is_some() {
-				let updated_payment = self.inner.db.get_lightning_send(payment_hash).await?
-					.context("payment disappeared from database")?;
-				return Ok(Some(updated_payment));
-			}
-			// Fall through to the server RPC path if the preimage was invalid.
-			warn!("Known preimage was invalid, falling back to server RPC");
-		}
-
-		let (mut srv, _) = self.require_server().await?;
-		let req = protos::CheckLightningPaymentRequest {
-			hash: payment_hash.to_vec(),
-			wait,
-		};
-		// NB: we don't early return on server error or bad response because we
-		// don't want it to prevent us from revoking or exiting HTLCs if necessary.
-		let response = srv.client.check_lightning_payment(req).await
-			.map(|r| r.into_inner().payment_status);
-
-		let tip = self.inner.chain.tip().await?;
-		let min_vtxo_expiry = payment.htlc_vtxos.iter()
-			.map(|v| v.vtxo.expiry_height())
-			.min().context("no HTLC VTXOs for expiry check")?;
-		let expired = tip > policy.htlc_expiry
-			|| tip > min_vtxo_expiry.saturating_sub(self.config().vtxo_refresh_expiry_threshold);
-
-		let should_revoke = match response {
-			Ok(Some(PaymentStatus::Success(status))) => {
-				let preimage_opt = self.process_lightning_send_server_preimage(
-					Some(status.preimage), &payment,
-				).await?;
-
-				if preimage_opt.is_some() {
-					// Re-fetch from DB to get the updated payment with preimage
-					let updated_payment = self.inner.db.get_lightning_send(payment_hash).await?
-						.context("payment disappeared from database")?;
-					return Ok(Some(updated_payment));
-				} else {
-					trace!("Server said payment is complete, but has no valid preimage: {:?}", preimage_opt);
-					expired
-				}
-			},
-			Ok(Some(PaymentStatus::Failed(_))) => {
-				info!("Payment failed, revoking VTXO");
-				true
-			},
-			Ok(Some(PaymentStatus::Pending(_))) => {
-				trace!("Payment is still pending");
-				expired
-			},
-			// bad server response or request error
-			Ok(None) | Err(_) => expired,
+		let send = match self.lightning_send_state(hash).await? {
+			LightningSendState::InProgress(s) => s,
+			s => return Ok(s),
 		};
 
-		if should_revoke {
-			debug!("Revoking HTLC VTXOs for payment {} (tip: {}, expiry: {})",
-				payment_hash, tip, policy.htlc_expiry);
-
-			if let Err(e) = self.process_lightning_revocation(&payment).await {
-				warn!("Failed to revoke VTXO: {}", e);
-
-				// if one of the htlc is about to expire, we exit all of them.
-				// Maybe we want a different behavior here, but we have to decide whether
-				// htlc vtxos revocation is a all or nothing process.
-				if tip > min_vtxo_expiry.saturating_sub(self.config().vtxo_refresh_expiry_threshold) {
-					warn!("HTLC VTXOs for payment {} are near VTXO expiry, marking to exit", payment_hash);
-
-					let vtxos = payment.htlc_vtxos
-						.iter()
-						.map(|v| v.vtxo.clone())
-						.collect::<Vec<_>>();
-					self.inner.exit.start_exit_for_vtxos(&vtxos).await?;
-
-					let exited = vtxos.iter().map(|v| v.amount()).sum::<Amount>();
-					let effective = -payment.amount.to_signed()? - payment.fee.to_signed()? + exited.to_signed()?;
-					if effective != SignedAmount::ZERO {
-						warn!("Movement {} should have fee of zero, but got {}: amount = {}, fee = {}, exited = {}",
-							payment.movement_id, effective, payment.amount, payment.fee, exited,
-						);
-					}
-					self.inner.movements.finish_movement_with_update(
-						payment.movement_id,
-						MovementStatus::Failed,
-						MovementUpdate::new()
-							.effective_balance(effective)
-							.fee(effective.unsigned_abs())
-							.exited_vtxos(&vtxos)
-					).await?;
-					self.inner.db.finish_lightning_send(payment.invoice.payment_hash(), None).await?;
-				}
-
-				return Err(e)
-			}
-		}
-
-		// Return current payment state from DB (may have been updated by revocation)
-		Ok(self.inner.db.get_lightning_send(payment_hash).await?)
+		let mode = if wait { DriveMode::UntilDone } else { DriveMode::UntilParkOrDone };
+		self.drive_action(send, mode).await?;
+		self.lightning_send_state(hash).await
 	}
 
-	/// Pays a Lightning [Invoice] using Ark VTXOs. This is also an out-of-round payment
-	/// so the same [Wallet::send_arkoor_payment] rules apply.
+	/// Settle a payment using a preimage we already have (e.g. from a
+	/// mailbox notification), skipping the server poll.
+	pub(crate) async fn settle_lightning_send_with_preimage(
+		&self,
+		send: LightningSend,
+		htlcs: Htlcs,
+		preimage: Preimage,
+	) -> anyhow::Result<()> {
+		let payment_hash = send.invoice.payment_hash();
+		if preimage.compute_payment_hash() != payment_hash {
+			bail!("preimage mismatch for payment hash {}", payment_hash);
+		}
+		settle_lightning_send_payment(self, &send, &htlcs, preimage).await?;
+		// Remove the in-progress row now that the paid_invoice record
+		// is the source of truth.
+		self.inner.db.remove_wallet_action_checkpoint(&ln_pay_action_id(payment_hash)).await?;
+		Ok(())
+	}
+
+	/// Pays a Lightning [Invoice] using Ark VTXOs.
 	///
-	/// # Returns
-	///
-	/// Returns the [Invoice] for which payment was initiated.
+	/// `wait=true` keeps the call open until the payment settles or
+	/// fails; `wait=false` returns once the payment has been kicked off
+	/// and lets the background sync drive it to completion. Returns the
+	/// parsed [`Invoice`] in either case; callers wanting the preimage
+	/// can look up the settled record via [`Self::lightning_send_state`].
 	pub async fn pay_lightning_invoice<T>(
 		&self,
 		invoice: T,
 		user_amount: Option<Amount>,
-	) -> anyhow::Result<LightningSend>
+		wait: bool,
+	) -> anyhow::Result<Invoice>
 	where
 		T: TryInto<Invoice>,
 		T::Error: std::error::Error + fmt::Display + Send + Sync + 'static,
@@ -428,32 +148,35 @@ impl Wallet {
 		let invoice = invoice.try_into().context("failed to parse invoice")?;
 		let amount = invoice.get_payment_amount(user_amount)?;
 		info!("Sending bolt11 payment of {} to invoice {}", amount, invoice);
-		self.make_lightning_payment(&invoice, invoice.clone().into(), user_amount).await
+		self.make_lightning_payment(&invoice, invoice.clone().into(), user_amount, wait).await?;
+		Ok(invoice)
 	}
 
-	/// Same as [Wallet::pay_lightning_invoice] but instead it pays a [LightningAddress].
+	/// Same as [`Self::pay_lightning_invoice`] but resolves the invoice
+	/// from a [`LightningAddress`] first.
 	pub async fn pay_lightning_address(
 		&self,
 		addr: &LightningAddress,
 		amount: Amount,
 		comment: Option<impl AsRef<str>>,
-	) -> anyhow::Result<LightningSend> {
+		wait: bool,
+	) -> anyhow::Result<Invoice> {
 		let comment = comment.as_ref();
-		let invoice = lnaddr_invoice(addr, amount, comment).await
-			.context("lightning address error")?;
+		let invoice: Invoice = lnaddr_invoice(addr, amount, comment).await
+			.context("lightning address error")?.into();
 		info!("Sending {} to lightning address {}", amount, addr);
-		let ret = self.make_lightning_payment(&invoice.into(), addr.clone().into(), None).await
-			.context("bolt11 payment error")?;
-		info!("Paid invoice {}", ret.invoice);
-		Ok(ret)
+		self.make_lightning_payment(&invoice, addr.clone().into(), None, wait).await?;
+		info!("Paid invoice {}", invoice);
+		Ok(invoice)
 	}
 
-	/// Attempts to pay the given BOLT12 [Offer] using offchain funds.
+	/// Attempts to pay the given BOLT12 [`Offer`] using offchain funds.
 	pub async fn pay_lightning_offer(
 		&self,
 		offer: Offer,
 		user_amount: Option<Amount>,
-	) -> anyhow::Result<LightningSend> {
+		wait: bool,
+	) -> anyhow::Result<Invoice> {
 		let (mut srv, _) = self.require_server().await?;
 
 		let offer_bytes = {
@@ -482,240 +205,52 @@ impl Wallet {
 		invoice.validate_issuance(&offer)
 			.context("invalid BOLT12 invoice received from offer")?;
 
-		let ret = self.make_lightning_payment(&invoice.into(), offer.into(), None).await
-			.context("bolt12 payment error")?;
-		info!("Paid invoice: {}", ret.invoice.to_string());
-
-		Ok(ret)
+		let invoice: Invoice = invoice.into();
+		self.make_lightning_payment(&invoice, offer.into(), None, wait).await?;
+		info!("Paid invoice: {}", invoice);
+		Ok(invoice)
 	}
 
-	/// Makes a payment using the Lightning Network. This is a low-level primitive to allow for
-	/// more fine-grained control over the payment process. The primary purpose of using this method
-	/// is to support [PaymentMethod::Custom] for other payment use cases such as LNURL-Pay.
-	///
-	/// It's recommended to use the following higher-level functions where suitable:
-	/// - BOLT11: [Wallet::pay_lightning_invoice]
-	/// - BOLT12: [Wallet::pay_lightning_offer]
-	/// - Lightning Address: [Wallet::pay_lightning_address]
-	///
-	/// # Parameters
-	/// - `invoice`: A reference to the BOLT11/BOLT12 invoice to be paid.
-	/// - `original_payment_method`: The payment method that the given invoice was originally
-	///   derived from (e.g., BOLT11, an offer, lightning address). This will appear in the stored
-	///   [Movement](crate::movement::Movement).
-	/// - `user_amount`: An optional custom amount to override the amount specified in the invoice.
-	///   If not provided, the invoice's amount is used.
-	///
-	/// # Returns
-	/// Returns a `LightningSend` representing the successful payment.
-	/// If an error occurs during the process, an `anyhow::Error` is returned.
-	///
-	/// # Errors
-	/// This function can return an error for the following reasons:
-	/// - If the given payment method is not either an officially supported lightning payment method
-	///   or [PaymentMethod::Custom].
-	/// - The `invoice` belongs to a different network than the one configured in the server's
-	///   properties.
-	/// - The `invoice` has already been paid (the payment hash exists in the database).
-	/// - The `invoice` contains an invalid or tampered signature.
-	/// - The wallet doesn't have enough funds to cover the payment.
-	/// - Validation, signing, server or network issues occur.
-	///
-	/// # Notes
-	/// - A movement won't be recorded until we receive an intermediary HTLC VTXO.
-	/// - This is effectively an arkoor payment with an additional HTLC conversion step, so the
-	///   same [Wallet::send_arkoor_payment] rules apply.
+	/// Low-level lightning payment primitive. Exposed for
+	/// [`PaymentMethod::Custom`] use cases (e.g. LNURL-pay).
 	pub async fn make_lightning_payment(
 		&self,
 		invoice: &Invoice,
 		original_payment_method: PaymentMethod,
 		user_amount: Option<Amount>,
-	) -> anyhow::Result<LightningSend> {
+		wait: bool,
+	) -> anyhow::Result<()> {
 		if !original_payment_method.is_lightning() && !original_payment_method.is_custom() {
 			bail!("Invalid original payment method for lightning payment");
 		}
 
 		let payment_hash = invoice.payment_hash();
+		let mode = if wait { DriveMode::UntilDone } else { DriveMode::UntilParkOrDone };
 
-		// Try to mark this payment as in-flight to prevent concurrent attempts.
-		// This prevents a race condition where multiple concurrent calls could all pass
-		// the DB check below before any of them complete, leading to orphaned state.
-		let key = format!("{}.{}", LIGHTNING_PAY_LOCK_PREFIX, payment_hash);
-		let _guard = self.inner.lock_manager.try_lock(&key).await
-			.context("Payment operation already in progress for this invoice")?;
-
-		// Execute the payment, ensuring we remove from inflight set on any exit path
-		self.make_lightning_payment_inner(invoice, original_payment_method, user_amount, payment_hash).await
-	}
-
-	/// Internal implementation of lightning payment after concurrency check.
-	async fn make_lightning_payment_inner(
-		&self,
-		invoice: &Invoice,
-		original_payment_method: PaymentMethod,
-		user_amount: Option<Amount>,
-		payment_hash: PaymentHash,
-	) -> anyhow::Result<LightningSend> {
-		let (mut srv, ark_info) = self.require_server().await?;
-
-		let tip = self.inner.chain.tip().await?;
-
-		let properties = self.inner.db.read_properties().await?.context("Missing config")?;
-		if invoice.network() != properties.network {
-			bail!("Invoice is for wrong network: {}", invoice.network());
-		}
-
-		let lightning_send = self.inner.db.get_lightning_send(payment_hash).await?;
-		if lightning_send.is_some() {
+		if self.is_invoice_paid(payment_hash).await? {
 			bail!("Invoice has already been paid");
 		}
 
-		invoice.check_signature()?;
+		let key = ln_pay_action_id(payment_hash);
+		let guard = self.inner.lock_manager.try_lock(&key).await
+			.context("Payment operation already in progress for this invoice")?;
 
-		let payment_amount = invoice.get_payment_amount(user_amount)?;
-		if payment_amount == Amount::ZERO {
-			bail!("Cannot pay invoice for 0 sats (0 sat invoices are not any-amount invoices)");
-		}
+		// Resume an existing checkpoint, or build a fresh send.
+		let action = match self.lightning_send_checkpoint(payment_hash).await? {
+			Some(existing) => existing,
+			None => {
+				let start = start_lightning_send(
+					self, invoice.clone(), user_amount, original_payment_method,
+				).await?;
 
-		let (change_keypair, _) = self.derive_store_next_keypair().await?;
+				self.inner.db.upsert_wallet_action_checkpoint(
+					&start.id(), &start.clone().into()
+				).await?;
 
-		let (inputs, fee) = self.select_vtxos_to_cover_with_fee(
-			payment_amount, |a, v| ark_info.fees.lightning_send.calculate(a, v)
-				.context("fee overflowed"),
-		).await.context("Could not find enough suitable VTXOs to cover lightning payment")?;
-		let total_amount = payment_amount + fee;
-
-		// Hydrate the selected inputs to their full form. We need them full
-		// for arkoor construction below and for registering the chain with
-		// the server.
-		let input_ids = inputs.iter().map(|v| v.id()).collect::<Vec<_>>();
-		let full_inputs = self.inner.db.get_full_vtxos(&input_ids).await
-			.context("failed to hydrate lightning-send input vtxos")?;
-
-		// Ensure that all inputs are fully registered so the server will
-		// accept them.
-		self.register_vtxo_transactions_with_server(&full_inputs).await
-			.context("failed to register lightning-send input vtxo transactions with server")?;
-
-		let mut secs = Vec::with_capacity(inputs.len());
-		let mut pubs = Vec::with_capacity(inputs.len());
-		let mut input_keypairs = Vec::with_capacity(inputs.len());
-		for input in inputs.iter() {
-			let keypair = self.get_vtxo_key(input).await?;
-			let (s, p) = musig::nonce_pair(&keypair);
-			secs.push(s);
-			pubs.push(p);
-			input_keypairs.push(keypair);
-		}
-
-		let expiry = tip + ark_info.htlc_send_expiry_delta as BlockHeight;
-		let policy = VtxoPolicy::new_server_htlc_send(
-			change_keypair.public_key(), invoice.payment_hash(), expiry,
-		);
-
-		let input_amount = inputs.iter().map(|v| v.amount()).sum::<Amount>();
-		let pay_dest = ArkoorDestination { total_amount, policy };
-		let outputs = if input_amount == total_amount {
-			vec![pay_dest]
-		} else {
-			let change_dest = ArkoorDestination {
-				total_amount: input_amount - total_amount,
-				policy: VtxoPolicy::new_pubkey(change_keypair.public_key()),
-			};
-			vec![pay_dest, change_dest]
-		};
-		let builder = ArkoorPackageBuilder::new_with_checkpoints(
-			full_inputs,
-			outputs,
-		)
-			.context("Failed to construct arkoor package")?
-			.generate_user_nonces(&input_keypairs)
-			.context("invalid nb of keypairs")?;
-
-		let package_cosign_request = protos::ArkoorPackageCosignRequest::from(
-			builder.cosign_request(),
-		);
-		let cosign_request = protos::LightningPayHtlcCosignRequest {
-			parts: package_cosign_request.parts,
+				start
+			},
 		};
 
-		let response = srv.client.request_lightning_pay_htlc_cosign(cosign_request).await
-			.context("htlc request failed")?.into_inner();
-
-		let cosign_responses = ArkoorPackageCosignResponse::try_from(response)
-			.context("Failed to parse cosign response from server")?;
-
-		let vtxos = builder
-			.user_cosign(&input_keypairs, cosign_responses)
-			.context("Failed to cosign vtxos")?
-			.build_signed_vtxos();
-
-		// Ensure both htlcs and change are registered. We must register
-		// change before initiating the lightning payment.
-		self.register_vtxo_transactions_with_server(&vtxos).await?;
-
-		let (htlc_vtxos, change_vtxos) = vtxos.into_iter()
-			.partition::<Vec<_>, _>(|v| matches!(v.policy(), VtxoPolicy::ServerHtlcSend(_)));
-
-		// Validate the new vtxos. They have the same chain anchor.
-		let mut effective_balance = Amount::ZERO;
-		for vtxo in &htlc_vtxos {
-			self.validate_vtxo(vtxo).await?;
-			effective_balance += vtxo.amount();
-		}
-
-		let movement_id = self.inner.movements.new_movement_with_update(
-			Subsystem::LIGHTNING_SEND,
-			LightningSendMovement::Send.to_string(),
-			MovementUpdate::new()
-				.intended_balance(-payment_amount.to_signed()?)
-				.effective_balance(-effective_balance.to_signed()?)
-				.fee(fee)
-				.consumed_vtxos(&inputs)
-				.sent_to([MovementDestination::new(original_payment_method, payment_amount)])
-				.metadata(LightningMovement::metadata(invoice.payment_hash(), &htlc_vtxos, None))
-		).await?;
-
-		let holder = VtxoLockHolder::Movement { id: movement_id };
-		self.store_locked_vtxos(&htlc_vtxos, Some(holder)).await?;
-		self.mark_vtxos_as_spent(&input_ids).await?;
-
-		// Validate the change vtxo. It has the same chain anchor as the last input.
-		for change in &change_vtxos {
-			let last_input = inputs.last().context("no inputs provided")?;
-			let tx = self.inner.chain.get_tx(&last_input.chain_anchor().txid).await?;
-			let tx = tx.with_context(|| {
-				format!("input vtxo chain anchor not found for lightning change vtxo: {}", last_input.chain_anchor().txid)
-			})?;
-			change.validate(&tx).context("invalid lightning change vtxo")?;
-			self.store_spendable_vtxos([change]).await?;
-		}
-
-		self.inner.movements.update_movement(
-			movement_id,
-			MovementUpdate::new()
-				.produced_vtxos(change_vtxos)
-				.metadata(LightningMovement::metadata(invoice.payment_hash(), &htlc_vtxos, None))
-		).await?;
-
-		let lightning_send = self.inner.db.store_new_pending_lightning_send(
-			&invoice,
-			payment_amount,
-			fee,
-			&htlc_vtxos.iter().map(|v| v.id()).collect::<Vec<_>>(),
-			movement_id,
-		).await?;
-
-		let mailbox_id = self.mailbox_identifier();
-		let req = protos::InitiateLightningPaymentRequest {
-			invoice: invoice.to_string(),
-			htlc_vtxo_ids: htlc_vtxos.iter().map(|v| v.id().to_bytes().to_vec()).collect(),
-			payment_amount_sat: payment_amount.to_sat(),
-			mailbox_id: Some(mailbox_id.serialize()),
-		};
-
-		srv.client.initiate_lightning_payment(req).await?;
-
-		Ok(lightning_send)
+		self.drive_action_with_guard(action, mode, guard).await
 	}
 }

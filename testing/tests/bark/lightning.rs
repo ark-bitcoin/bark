@@ -200,11 +200,14 @@ async fn bark_check_lightning_payment_twice_succeeds() {
 	let bolt11 = Bolt11Invoice::from_str(&invoice).unwrap();
 	let payment_hash = PaymentHash::from(&bolt11);
 
-	// Second check should succeed and return payment info with preimage, not error
-	let result = wallet.check_lightning_payment(payment_hash, false).await.expect("check_lightning_payment should not error on second call");
-	let lightning_send = result.expect("should return LightningSend on second call");
-	let preimage = lightning_send.preimage.expect("should have preimage after successful payment");
-	assert_eq!(preimage.compute_payment_hash(), payment_hash, "should return correct preimage on second call");
+	// Second check should report the payment as Paid, with a valid preimage.
+	let state = wallet.check_lightning_payment(payment_hash, false).await
+		.expect("check_lightning_payment should not error on second call");
+	let paid = match state {
+		bark::actions::lightning::pay::LightningSendState::Paid(p) => p,
+		other => panic!("expected Paid state, got {:?}", other),
+	};
+	assert_eq!(paid.preimage.compute_payment_hash(), payment_hash, "should return correct preimage on second call");
 }
 
 #[tokio::test]
@@ -1254,7 +1257,7 @@ async fn concurrent_payment_attempts_same_invoice() {
 
 		let handle = tokio::spawn(async move {
 			info!("Task {} starting payment attempt", i);
-			let result = wallet_clone.pay_lightning_invoice(invoice_clone, None).await;
+			let result = wallet_clone.pay_lightning_invoice(invoice_clone, None, false).await;
 			info!("Task {} result: {:?}", i, result.is_ok());
 			(i, result)
 		});

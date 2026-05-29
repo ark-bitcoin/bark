@@ -500,18 +500,18 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 				if comment.is_some() {
 					bail!("comment is not supported for BOLT-11 invoices");
 				}
-				let ln_send = wallet.pay_lightning_invoice(inv, amount).await?;
-				wait_for_lightning_send(&wallet, ln_send.invoice.payment_hash(), wait).await;
+				let invoice = wallet.pay_lightning_invoice(inv, amount, wait).await?;
+				log_lightning_send_outcome(invoice.payment_hash(), wait);
 			} else if let Ok(offer) = Offer::from_str(&destination) {
 				if comment.is_some() {
 					bail!("comment is not supported for BOLT-12 offers");
 				}
-				let ln_send = wallet.pay_lightning_offer(offer, amount).await?;
-				wait_for_lightning_send(&wallet, ln_send.invoice.payment_hash(), wait).await;
+				let invoice = wallet.pay_lightning_offer(offer, amount, wait).await?;
+				log_lightning_send_outcome(invoice.payment_hash(), wait);
 			} else if let Ok(addr) = LightningAddress::from_str(&destination) {
 				let amount = amount.context("amount is required for Lightning addresses")?;
-				let ln_send = wallet.pay_lightning_address(&addr, amount, comment).await?;
-				wait_for_lightning_send(&wallet, ln_send.invoice.payment_hash(), wait).await;
+				let invoice = wallet.pay_lightning_address(&addr, amount, comment, wait).await?;
+				log_lightning_send_outcome(invoice.payment_hash(), wait);
 			} else {
 				bail!("Argument is not a valid destination. Supported are: \
 					VTXO pubkeys, bolt11 invoices, bolt12 offers and lightning addresses",
@@ -612,17 +612,12 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 }
 
 
-async fn wait_for_lightning_send(wallet: &Wallet, payment_hash: PaymentHash, wait: bool) {
-	if wait {
-		match wallet.check_lightning_payment(payment_hash, true).await {
-			Ok(Some(_)) => info!("Payment sent: hash = {}", payment_hash),
-			Err(err) => warn!("Error waiting for payment: {:?}", err),
-			Ok(None) => info!("Payment failed: hash = {}", payment_hash),
-		}
+fn log_lightning_send_outcome(payment_hash: PaymentHash, waited: bool) {
+	if waited {
+		info!("Payment completed: hash = {}", payment_hash);
 	} else {
-		info!("Payment initiated but not completed (yet).");
+		info!("Payment initiated: hash = {}", payment_hash);
 	}
-
 }
 
 #[tokio::main]

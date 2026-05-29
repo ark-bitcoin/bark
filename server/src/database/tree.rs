@@ -553,7 +553,7 @@ async fn do_oor_spend_updates(
 			LIMIT 1
 		", &[&ids, &txids]).await.context("failed to find bad vtxo")?;
 		let vtxo_id: &str = bad.get("vtxo_id");
-		bail!("vtxo doesn't exist or is unspendable: {}", vtxo_id);
+		return badarg!("vtxo doesn't exist or is unspendable: {}", vtxo_id);
 	}
 	Ok(())
 }
@@ -584,7 +584,7 @@ async fn do_round_spend_updates(
 			LIMIT 1
 		", &[&ids, &round_ids]).await.context("failed to find bad vtxo")?;
 		let vtxo_id: &str = bad.get("vtxo_id");
-		bail!("vtxo doesn't exist or is unspendable: {}", vtxo_id);
+		return badarg!("vtxo doesn't exist or is unspendable: {}", vtxo_id);
 	}
 	Ok(())
 }
@@ -631,7 +631,7 @@ async fn do_offboard_spend_updates(
 		", &[&ids, &offboard_txids, &forfeit_txids])
 			.await.context("failed to find bad vtxo")?;
 		let vtxo_id: &str = bad.get("vtxo_id");
-		bail!("vtxo doesn't exist or is unspendable: {}", vtxo_id);
+		return badarg!("vtxo doesn't exist or is unspendable: {}", vtxo_id);
 	}
 	Ok(())
 }

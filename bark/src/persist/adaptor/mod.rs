@@ -60,7 +60,7 @@ use chrono::{DateTime, Local};
 use lightning_invoice::Bolt11Invoice;
 use serde::{de::DeserializeOwned, Serialize};
 
-use ark::lightning::{Invoice, PaymentHash, Preimage};
+use ark::lightning::{PaymentHash, Preimage};
 use ark::{Vtxo, VtxoId};
 use ark::vtxo::Full;
 use bitcoin_ext::BlockDelta;
@@ -72,7 +72,7 @@ use crate::movement::{
 };
 use crate::persist::BarkPersister;
 use crate::persist::models::{
-	LightningReceive, LightningSend, PendingBoard, PendingOffboard,
+	LightningReceive, PaidInvoice, PendingBoard, PendingOffboard,
 	RoundStateId, SerdeExitChildTx, SerdeRoundState, SerdeVtxo, SerdeVtxoKey, StoredExit,
 	StoredRoundState, Unlocked, wallet_vtxo_from_full,
 };
@@ -90,7 +90,9 @@ pub mod partition {
 	pub const PENDING_BOARD: u8 = 4;
 	pub const ROUND_STATE: u8 = 5;
 	pub const MOVEMENT: u8 = 6;
-	pub const LIGHTNING_SEND: u8 = 7;
+	/// was used by the now-removed `bark_lightning_send`. Do not reuse.
+	#[allow(unused)]
+	pub const LEGACY_LIGHTNING_SEND: u8 = 7;
 	pub const LIGHTNING_RECEIVE: u8 = 8;
 	pub const EXIT_VTXO: u8 = 9;
 	pub const EXIT_CHILD_TX: u8 = 10;
@@ -100,6 +102,9 @@ pub mod partition {
 	pub const MOVEMENT_PAYMENT_METHOD: u8 = 13;
 	/// Per-action checkpoint payloads keyed by [WalletActionId].
 	pub const WALLET_ACTION_CHECKPOINT: u8 = 14;
+	/// Permanent record of every settled outgoing lightning payment,
+	/// keyed by payment hash.
+	pub const PAID_INVOICE: u8 = 15;
 
 	pub const LAST_IDS: u8 = u8::MAX;
 }
@@ -838,103 +843,6 @@ impl <S: StorageAdaptor> BarkPersister for StorageAdaptorWrapper<S> {
 		Ok(())
 	}
 
-	async fn store_new_pending_lightning_send(
-		&self,
-		invoice: &Invoice,
-		amount: Amount,
-		fee: Amount,
-		vtxo_ids: &[VtxoId],
-		movement_id: MovementId,
-	) -> anyhow::Result<LightningSend> {
-		let mut lock = self.inner.write().await;
-		let mut htlc_vtxos = Vec::with_capacity(vtxo_ids.len());
-		for vtxo_id in vtxo_ids {
-			let vtxo = get_vtxo(&*lock, *vtxo_id).await?
-				.context("vtxo not found")?;
-			htlc_vtxos.push(vtxo.to_wallet_vtxo()?);
-		}
-
-		let lightning_send = LightningSend {
-			invoice: invoice.clone(),
-			amount,
-			fee,
-			htlc_vtxos,
-			preimage: None,
-			movement_id,
-			finished_at: None,
-		};
-
-		let record = Record::from_data(
-			partition::LIGHTNING_SEND,
-			&invoice.payment_hash().to_byte_array(),
-			None,
-			&lightning_send,
-		)?;
-
-		lock.put(record).await?;
-
-		Ok(lightning_send)
-	}
-
-	async fn get_all_pending_lightning_send(&self) -> anyhow::Result<Vec<LightningSend>> {
-		let records = self.inner.read().await
-			.get_all(partition::LIGHTNING_SEND).await?;
-		records
-			.into_iter()
-			.filter_map(|r| {
-				let send = r.to_data::<LightningSend>().ok()?;
-				if send.finished_at.is_none() {
-					Some(Ok(send))
-				} else {
-					None
-				}
-			})
-			.collect()
-	}
-
-	async fn finish_lightning_send(
-		&self,
-		payment_hash: PaymentHash,
-		preimage: Option<Preimage>,
-	) -> anyhow::Result<()> {
-		let mut lock = self.inner.write().await;
-
-		let pk = payment_hash.to_byte_array();
-		let record = lock
-			.get(partition::LIGHTNING_SEND, &pk).await?.context("lightning send not found")?;
-		let mut lightning_send: LightningSend = record.to_data()?;
-
-		lightning_send.preimage = preimage;
-		lightning_send.finished_at = Some(Local::now());
-
-		let updated_record = Record::from_data(
-			partition::LIGHTNING_SEND,
-			&pk,
-			None,
-			&lightning_send,
-		)?;
-		lock.put(updated_record).await?;
-
-		Ok(())
-	}
-
-	async fn remove_lightning_send(&self, payment_hash: PaymentHash) -> anyhow::Result<()> {
-		self.inner.write().await.delete(partition::LIGHTNING_SEND, &payment_hash.to_byte_array()).await?;
-		Ok(())
-	}
-
-	async fn get_lightning_send(
-		&self,
-		payment_hash: PaymentHash,
-	) -> anyhow::Result<Option<LightningSend>> {
-		match self.inner.read().await
-			.get(partition::LIGHTNING_SEND, &payment_hash.to_byte_array()).await?
-		{
-			Some(record) => Ok(Some(record.to_data()?)),
-			None => Ok(None),
-		}
-	}
-
 	async fn upsert_wallet_action_checkpoint(
 		&self,
 		id: &WalletActionId,
@@ -976,6 +884,38 @@ impl <S: StorageAdaptor> BarkPersister for StorageAdaptorWrapper<S> {
 		self.inner.write().await
 			.delete(partition::WALLET_ACTION_CHECKPOINT, id.as_bytes()).await?;
 		Ok(())
+	}
+
+	async fn record_paid_invoice(
+		&self,
+		payment_hash: PaymentHash,
+		preimage: Preimage,
+	) -> anyhow::Result<()> {
+		let key = payment_hash.to_byte_array();
+		// Idempotent: preserve the original paid_at across retries.
+		let mut lock = self.inner.write().await;
+		if lock.get(partition::PAID_INVOICE, &key).await?.is_some() {
+			return Ok(());
+		}
+		let paid = PaidInvoice {
+			payment_hash,
+			preimage,
+			paid_at: chrono::Local::now(),
+		};
+		let record = Record::from_data(partition::PAID_INVOICE, &key, None, &paid)?;
+		lock.put(record).await
+	}
+
+	async fn get_paid_invoice(
+		&self,
+		payment_hash: PaymentHash,
+	) -> anyhow::Result<Option<PaidInvoice>> {
+		match self.inner.read().await
+			.get(partition::PAID_INVOICE, &payment_hash.to_byte_array()).await?
+		{
+			Some(record) => Ok(Some(record.to_data()?)),
+			None => Ok(None),
+		}
 	}
 
 	async fn store_lightning_receive(

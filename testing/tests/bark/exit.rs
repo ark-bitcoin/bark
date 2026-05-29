@@ -606,13 +606,13 @@ async fn bark_should_exit_a_failed_htlc_out_that_server_refuse_to_revoke() {
 		async fn initiate_lightning_payment(
 			&self, _upstream: &mut ArkClient, _req: protos::InitiateLightningPaymentRequest,
 		) -> Result<protos::Empty, tonic::Status> {
-			Err(tonic::Status::internal("Refused to finish bolt11 payment"))
+			Err(tonic::Status::invalid_argument("Refused to finish bolt11 payment"))
 		}
 
 		async fn request_lightning_pay_htlc_revocation(
 			&self, _upstream: &mut ArkClient, _req: protos::ArkoorPackageCosignRequest,
 		) -> Result<protos::ArkoorPackageCosignResponse, tonic::Status> {
-			Err(tonic::Status::internal("Refused to revoke htlc out"))
+			Err(tonic::Status::invalid_argument("Refused to revoke htlc out"))
 		}
 	}
 
@@ -633,21 +633,13 @@ async fn bark_should_exit_a_failed_htlc_out_that_server_refuse_to_revoke() {
 		&lightning.external.invoice(Some(invoice_amount), "test_payment", "A test payment").await,
 	).unwrap();
 
+	// Tip at lightning send attempt time
+	let tip = ctx.bitcoind().sync_client().tip().unwrap();
+
 	// Try to send coins through lightning
 	assert_eq!(bark_1.spendable_balance().await, board_amount);
 	bark_1.try_pay_lightning(invoice.to_string(), None, false).await
 		.expect_err("The payment fails");
-
-	// We need to ensure the HTLC expires so an exit will be triggered.
-	let tip = ctx.bitcoind().sync_client().tip().unwrap();
-	let desired_height = {
-		let htlc = bark_1.vtxos().await.into_iter().find(
-			|v| v.policy_type == VtxoPolicyKind::ServerHtlcSend
-		).unwrap();
-		htlc.expiry_height - bark_1.config().vtxo_refresh_expiry_threshold + 1
-	};
-	ctx.generate_blocks(desired_height - tip.height).await;
-	bark_1.sync().await;
 
 	// Should start an exit
 	let exit_state = &bark_1.list_exits().await[0].state;
@@ -656,6 +648,14 @@ async fn bark_should_exit_a_failed_htlc_out_that_server_refuse_to_revoke() {
 		"Expected exit to be starting, got {:?}", exit_state,
 	);
 	complete_exit(&ctx, &bark_1).await;
+
+	// We need to reach htlc expiry to be able to claim it
+	// TODO: should the exit care about that ? it looks like htlc VTXOs are marked as claimable even though they are not expired yet
+	let bark1_client = bark_1.client().await;
+	let htlc_expiry_height = bark1_client.all_vtxos().await.unwrap().into_iter().find_map(
+		|v| v.policy().as_server_htlc_send().map(|h| h.htlc_expiry)
+	).unwrap();
+	ctx.generate_blocks(htlc_expiry_height - tip.height).await;
 
 	bark_1.claim_all_exits(bark_1.get_onchain_address().await).await;
 	ctx.generate_blocks(1).await;

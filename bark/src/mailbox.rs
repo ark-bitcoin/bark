@@ -25,6 +25,8 @@ use server_rpc::protos;
 use server_rpc::protos::mailbox_server::MailboxMessage;
 
 use crate::Wallet;
+use crate::actions::DriveMode;
+use crate::actions::lightning::pay::Progress;
 use crate::movement::{MovementDestination, MovementStatus};
 use crate::movement::update::MovementUpdate;
 use crate::subsystem::{ArkoorMovement, Subsystem};
@@ -406,13 +408,46 @@ impl Wallet {
 			debug!("Lightning send finished notification (failed): payment_hash={}", payment_hash);
 		}
 
-		// Trigger the payment check flow which will handle success/revocation.
-		// When we already have the preimage, this skips the server RPC.
-		// Errors are logged but not propagated: we always advance the checkpoint
-		// to avoid re-processing the same notification on the next poll.
-		match self.check_lightning_payment_with_preimage(payment_hash, known_preimage).await {
-			Ok(_) => info!("Processed lightning send finished for {}", payment_hash),
-			Err(e) => error!("Failed to process lightning send finished for {}: {:#}", payment_hash, e),
+		// Errors are logged but not propagated: we always advance the
+		// mailbox checkpoint to avoid re-processing the same
+		// notification on the next poll.
+		match self.is_invoice_paid(payment_hash).await {
+			Ok(true) => {
+				debug!("Lightning send {} already settled; ignoring notification", payment_hash);
+			},
+			Ok(false) => {
+				let lookup = self.lightning_send_checkpoint(payment_hash).await;
+				match lookup {
+					Ok(Some(send)) => {
+						let result = match (&send.progress, known_preimage) {
+							(Progress::PaymentInitiated(htlcs), Some(preimage)) => {
+								let htlcs = htlcs.clone();
+								self.settle_lightning_send_with_preimage(send, htlcs, preimage).await
+							},
+							(Progress::PaymentInitiated(_), None) => {
+								self.drive_action(send, DriveMode::UntilParkOrDone).await
+							},
+							_ => {
+								debug!("Lightning send finished notification for {} but checkpoint is not PaymentInitiated; ignoring", payment_hash);
+								Ok(())
+							},
+						};
+						match result {
+							Ok(()) => info!("Processed lightning send finished for {}", payment_hash),
+							Err(e) => error!("Failed to process lightning send finished for {}: {:#}", payment_hash, e),
+						}
+					},
+					Ok(None) => {
+						warn!("Lightning send finished notification for unknown payment hash {}", payment_hash);
+					},
+					Err(e) => {
+						error!("Failed to look up lightning send checkpoint for {}: {:#}", payment_hash, e);
+					},
+				}
+			},
+			Err(e) => {
+				error!("Failed to look up paid_invoice for {}: {:#}", payment_hash, e);
+			},
 		}
 
 		self.store_mailbox_checkpoint(checkpoint).await?;

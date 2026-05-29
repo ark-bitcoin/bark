@@ -34,7 +34,7 @@ async fn example() -> anyhow::Result<()> {
 
 	// Let's give back!
 	let invoice = "lnbc1... get this from someone you like";
-	wallet.pay_lightning_invoice(invoice, None).await?;
+	wallet.pay_lightning_invoice(invoice, None, false).await?;
 
 	Ok(())
 }

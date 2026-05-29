@@ -214,3 +214,8 @@ CREATE TABLE bark_wallet_action_checkpoint (
 				created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now')),
 				updated_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now'))
 			);
+CREATE TABLE bark_paid_invoice (
+				payment_hash TEXT PRIMARY KEY,
+				preimage     TEXT NOT NULL,
+				paid_at      DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now'))
+			);

@@ -19,6 +19,7 @@ use ark::VtxoId;
 
 use super::BarkPersister;
 use crate::actions::WalletActionCheckpoint;
+use crate::actions::lightning::pay::{Htlcs, LightningSend, Progress, Revocation};
 use crate::exit::{
 	ExitProcessingState, ExitState, ExitTx, ExitTxOrigin, ExitTxStatus,
 };
@@ -52,10 +53,6 @@ fn test_bolt11() -> Bolt11Invoice {
 
 fn test_invoice() -> Invoice {
 	Invoice::Bolt11(test_bolt11())
-}
-
-fn test_payment_hash() -> PaymentHash {
-	test_invoice().payment_hash()
 }
 
 // A separate hash for receive tests so send and receive don't share state.
@@ -774,11 +771,9 @@ mod round_states {
 
 mod lightning {
 	use super::*;
+	use crate::movement::{MovementId, PaymentMethod};
 
 	pub async fn run<A: BarkPersister, B: BarkPersister>(a: &A, b: &B) {
-		test_lightning_send_store_and_query(a, b).await;
-		test_lightning_send_finish(a, b).await;
-		test_lightning_send_remove(a, b).await;
 		test_lightning_receive_store_and_query(a, b).await;
 		test_lightning_receive_set_preimage_revealed(a, b).await;
 		test_lightning_receive_update(a, b).await;
@@ -789,10 +784,59 @@ mod lightning {
 		test_wallet_action_checkpoint_get_all(a, b).await;
 		test_wallet_action_checkpoint_remove(a, b).await;
 		test_wallet_action_checkpoint_remove_missing_is_noop(a, b).await;
+		test_paid_invoice_record_and_get(a, b).await;
+		test_paid_invoice_record_is_idempotent(a, b).await;
+		test_paid_invoice_get_missing(a, b).await;
+	}
+
+	fn send_at_start() -> LightningSend {
+		LightningSend {
+			invoice: test_invoice(),
+			original_payment_method: PaymentMethod::Custom("test".into()),
+			input_vtxo_ids: vec![],
+			payment_amount: Amount::from_sat(1000),
+			fee: Amount::from_sat(10),
+			htlc_key: test_pubkey(),
+			htlc_expiry: 100,
+			progress: Progress::Start,
+		}
+	}
+
+	fn send_at_htlc_received() -> LightningSend {
+		LightningSend {
+			progress: Progress::HtlcReceived(Htlcs {
+				vtxo_ids: vec![],
+				mailbox_id: ark::mailbox::MailboxIdentifier::from(test_pubkey()),
+				movement_id: MovementId::new(1),
+			}),
+			..send_at_start()
+		}
+	}
+
+	fn send_at_payment_initiated() -> LightningSend {
+		let progress = match send_at_htlc_received().progress {
+			Progress::HtlcReceived(htlcs) => Progress::PaymentInitiated(htlcs),
+			_ => unreachable!(),
+		};
+		LightningSend { progress, ..send_at_start() }
+	}
+
+	fn send_at_revocable_htlcs() -> LightningSend {
+		let htlcs = match send_at_htlc_received().progress {
+			Progress::HtlcReceived(htlcs) => htlcs,
+			_ => unreachable!(),
+		};
+		LightningSend {
+			progress: Progress::RevocableHtlcs {
+				htlcs,
+				revocation: Revocation { key: test_pubkey() },
+			},
+			..send_at_start()
+		}
 	}
 
 	async fn test_wallet_action_checkpoint_upsert_and_get<A: BarkPersister, B: BarkPersister>(a: &A, b: &B) {
-		let checkpoint: WalletActionCheckpoint = WalletActionCheckpoint::Dummy { id: "test".to_string() };
+		let checkpoint: WalletActionCheckpoint = send_at_start().into();
 		let id = checkpoint.id();
 
 		let ra = a.upsert_wallet_action_checkpoint(&id, &checkpoint).await;
@@ -811,12 +855,13 @@ mod lightning {
 	}
 
 	async fn test_wallet_action_checkpoint_upsert_replaces<A: BarkPersister, B: BarkPersister>(a: &A, b: &B) {
-		let start: WalletActionCheckpoint = WalletActionCheckpoint::Dummy { id: "test".to_string() };
+		let start: WalletActionCheckpoint = send_at_start().into();
 		let id = start.id();
 		a.upsert_wallet_action_checkpoint(&id, &start).await.unwrap();
 		b.upsert_wallet_action_checkpoint(&id, &start).await.unwrap();
 
-		let initiated: WalletActionCheckpoint = WalletActionCheckpoint::Dummy { id: "updated".to_string() };
+		let initiated: WalletActionCheckpoint = send_at_payment_initiated().into();
+		assert_eq!(initiated.id(), id, "different phases of the same invoice must share an id");
 
 		let ra = a.upsert_wallet_action_checkpoint(&id, &initiated).await;
 		let rb = b.upsert_wallet_action_checkpoint(&id, &initiated).await;
@@ -840,7 +885,7 @@ mod lightning {
 	}
 
 	async fn test_wallet_action_checkpoint_get_all<A: BarkPersister, B: BarkPersister>(a: &A, b: &B) {
-		let revocable: WalletActionCheckpoint = WalletActionCheckpoint::Dummy { id: "test".to_string() };
+		let revocable: WalletActionCheckpoint = send_at_revocable_htlcs().into();
 		let id = revocable.id();
 
 		a.upsert_wallet_action_checkpoint(&id, &revocable).await.unwrap();
@@ -858,7 +903,7 @@ mod lightning {
 	}
 
 	async fn test_wallet_action_checkpoint_remove<A: BarkPersister, B: BarkPersister>(a: &A, b: &B) {
-		let received: WalletActionCheckpoint = WalletActionCheckpoint::Dummy { id: "test".to_string() };
+		let received: WalletActionCheckpoint = send_at_htlc_received().into();
 		let id = received.id();
 
 		a.upsert_wallet_action_checkpoint(&id, &received).await.unwrap();
@@ -881,75 +926,49 @@ mod lightning {
 		assert!(rb.is_ok(), "remove of missing id should not error (b)");
 	}
 
-	async fn test_lightning_send_store_and_query<A: BarkPersister, B: BarkPersister>(a: &A, b: &B) {
-		let time = test_time();
-		let id_a = a.create_new_movement(MovementStatus::Pending, &test_subsystem(), time).await
-			.expect("a: create_new_movement");
-		let id_b = b.create_new_movement(MovementStatus::Pending, &test_subsystem(), time).await
-			.expect("b: create_new_movement");
-		assert_eq!(id_a, id_b, "create_new_movement id mismatch");
-
-		let ra = a.store_new_pending_lightning_send(
-			&test_invoice(), Amount::from_sat(1000), Amount::from_sat(10), &[], id_a,
-		).await;
-		let rb = b.store_new_pending_lightning_send(
-			&test_invoice(), Amount::from_sat(1000), Amount::from_sat(10), &[], id_b,
-		).await;
-		assert_eq!(ra.is_ok(), rb.is_ok(), "store_new_pending_lightning_send: ok/err mismatch");
-		assert_eq!(ra.unwrap(), rb.unwrap(), "store_new_pending_lightning_send result mismatch");
-
-		let ra = a.get_lightning_send(test_payment_hash()).await.expect("a: get_lightning_send");
-		let rb = b.get_lightning_send(test_payment_hash()).await.expect("b: get_lightning_send");
-		assert_eq!(ra, rb, "get_lightning_send mismatch");
-
-		let mut ra = a.get_all_pending_lightning_send().await.expect("a: get_all_pending_lightning_send");
-		let mut rb = b.get_all_pending_lightning_send().await.expect("b: get_all_pending_lightning_send");
-		ra.sort_by_key(|s| s.movement_id.0);
-		rb.sort_by_key(|s| s.movement_id.0);
-		assert_eq!(ra, rb, "get_all_pending_lightning_send mismatch");
+	fn paid_invoice_hash() -> PaymentHash {
+		PaymentHash::from_slice(&[0xcdu8; 32]).unwrap()
 	}
 
-	async fn test_lightning_send_finish<A: BarkPersister, B: BarkPersister>(a: &A, b: &B) {
-		let hash = test_payment_hash();
+	async fn test_paid_invoice_record_and_get<A: BarkPersister, B: BarkPersister>(a: &A, b: &B) {
+		let hash = paid_invoice_hash();
 		let preimage = test_preimage();
 
-		let ra = a.finish_lightning_send(hash, Some(preimage)).await;
-		let rb = b.finish_lightning_send(hash, Some(preimage)).await;
-		assert_eq!(ra.is_ok(), rb.is_ok(), "finish_lightning_send: ok/err mismatch");
+		a.record_paid_invoice(hash, preimage).await.unwrap();
+		b.record_paid_invoice(hash, preimage).await.unwrap();
 
-		// finished_at is set internally by each backend; compare only semantic fields
-		let ra = a.get_lightning_send(hash).await.expect("a: get_lightning_send after finish");
-		let rb = b.get_lightning_send(hash).await.expect("b: get_lightning_send after finish");
+		let ra = a.get_paid_invoice(hash).await.expect("a: get_paid_invoice");
+		let rb = b.get_paid_invoice(hash).await.expect("b: get_paid_invoice");
 		assert_eq!(
-			ra.as_ref().map(|s| s.preimage),
-			rb.as_ref().map(|s| s.preimage),
-			"get_lightning_send preimage mismatch after finish",
+			ra.as_ref().map(|p| (p.payment_hash, p.preimage)),
+			rb.as_ref().map(|p| (p.payment_hash, p.preimage)),
+			"paid invoice round-trip mismatch",
 		);
-		assert_eq!(
-			ra.as_ref().map(|s| s.finished_at.is_some()),
-			rb.as_ref().map(|s| s.finished_at.is_some()),
-			"get_lightning_send finished_at presence mismatch after finish",
-		);
-
-		let mut ra = a.get_all_pending_lightning_send().await
-			.expect("a: get_all_pending_lightning_send after finish");
-		let mut rb = b.get_all_pending_lightning_send().await
-			.expect("b: get_all_pending_lightning_send after finish");
-		ra.sort_by_key(|s| s.movement_id.0);
-		rb.sort_by_key(|s| s.movement_id.0);
-		assert_eq!(ra, rb, "get_all_pending_lightning_send after finish mismatch");
+		let stored = ra.expect("a: should have stored row");
+		assert_eq!(stored.payment_hash, hash, "payment hash round-trip");
+		assert_eq!(stored.preimage, preimage, "preimage round-trip");
 	}
 
-	async fn test_lightning_send_remove<A: BarkPersister, B: BarkPersister>(a: &A, b: &B) {
-		let hash = test_payment_hash();
+	async fn test_paid_invoice_record_is_idempotent<A: BarkPersister, B: BarkPersister>(a: &A, b: &B) {
+		let hash = paid_invoice_hash();
+		let preimage = test_preimage();
 
-		let ra = a.remove_lightning_send(hash).await;
-		let rb = b.remove_lightning_send(hash).await;
-		assert_eq!(ra.is_ok(), rb.is_ok(), "remove_lightning_send: ok/err mismatch");
+		let ra = a.record_paid_invoice(hash, preimage).await;
+		let rb = b.record_paid_invoice(hash, preimage).await;
+		assert!(ra.is_ok(), "second record_paid_invoice on (a) should be a no-op");
+		assert!(rb.is_ok(), "second record_paid_invoice on (b) should be a no-op");
 
-		let ra = a.get_lightning_send(hash).await.expect("a: get_lightning_send after remove");
-		let rb = b.get_lightning_send(hash).await.expect("b: get_lightning_send after remove");
-		assert_eq!(ra, rb, "get_lightning_send after remove mismatch");
+		let ra = a.get_paid_invoice(hash).await.unwrap().expect("a: row still present");
+		let rb = b.get_paid_invoice(hash).await.unwrap().expect("b: row still present");
+		assert_eq!(ra.preimage, rb.preimage, "preimage stable across retry");
+	}
+
+	async fn test_paid_invoice_get_missing<A: BarkPersister, B: BarkPersister>(a: &A, b: &B) {
+		let hash = PaymentHash::from_slice(&[0x55u8; 32]).unwrap();
+		let ra = a.get_paid_invoice(hash).await.unwrap();
+		let rb = b.get_paid_invoice(hash).await.unwrap();
+		assert!(ra.is_none(), "missing hash returns None (a)");
+		assert!(rb.is_none(), "missing hash returns None (b)");
 	}
 
 	async fn test_lightning_receive_store_and_query<A: BarkPersister, B: BarkPersister>(a: &A, b: &B) {
