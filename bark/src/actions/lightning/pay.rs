@@ -83,6 +83,8 @@ impl LightningSend {
 		self.payment_amount + self.fee
 	}
 
+	/// Returns whether the HTLCs are near expiry. It also returns true
+	/// if the HTLCs are actually expired.
 	pub async fn is_htlc_near_expiry(&self, wallet: &Wallet) -> anyhow::Result<bool> {
 		let tip = wallet.inner.chain.tip().await?;
 		Ok(tip > self.htlc_expiry
@@ -114,20 +116,24 @@ impl WalletAction for LightningSend {
 						settle_lightning_send_payment(wallet, &self, &htlcs, preimage).await?;
 						return Ok(Advance::Done);
 					},
-					// We can park and wait until htlcs are near expiry
-					PaymentStatus::Pending if !self.is_htlc_near_expiry(wallet).await? => {
-						return Ok(Advance::Park {
-							state: LightningSend {
-								progress: Progress::PaymentInitiated(htlcs),
-								..self
-							},
-							wake_after: Some(PAYMENT_PENDING_POLL_INTERVAL),
-							error: None,
-						});
-					},
-					PaymentStatus::Failed | PaymentStatus::Pending => {
+					PaymentStatus::Failed => {
 						let revocation = fail_lightning_send_payment(wallet, &self).await?;
 						Progress::RevocableHtlcs { htlcs, revocation }
+					},
+					PaymentStatus::Pending => {
+						if self.is_htlc_near_expiry(wallet).await? {
+							let revocation = fail_lightning_send_payment(wallet, &self).await?;
+							Progress::RevocableHtlcs { htlcs, revocation }
+						} else {
+							return Ok(Advance::Park {
+								state: LightningSend {
+									progress: Progress::PaymentInitiated(htlcs),
+									..self
+								},
+								wake_after: Some(PAYMENT_PENDING_POLL_INTERVAL),
+								error: None,
+							});
+						}
 					},
 				}
 			},
