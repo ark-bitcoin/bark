@@ -1,4 +1,0 @@
-- Fix OpenAPI spec for `GET /api/v1/history`
-  The spec previously wrongly advertised the endpoint at `/api/v1/history/`,
-  which broke generated clients.
-  [#2099](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2099)

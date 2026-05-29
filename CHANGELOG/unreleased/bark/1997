@@ -1,6 +1,0 @@
-- Add BIP 321 URI builder to bark wallet
-  Bark wallets can now construct BIP 321 `bitcoin:` URIs that bundle Ark,
-  Lightning, and onchain destinations into a single payment request via
-  `Wallet::bip321_uri`. The new `GetAddress` trait abstracts onchain
-  address generation so callers can plug in any onchain wallet backend.
-  [#1997](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/1997)
