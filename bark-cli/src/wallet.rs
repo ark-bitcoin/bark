@@ -6,9 +6,12 @@
 //! - Reads a BIP-39 `mnemonic` file from the provided directory
 //! - Parses `config.toml` into a [`bark::Config`]
 //! - Opens `db.sqlite` as a [`bark::persist::sqlite::SqliteClient`] and loads persisted properties
-//! - Loads or creates the [`bark::onchain::OnchainWallet`]
-//! - Opens the [`bark::Wallet`] bound to the on-chain wallet
-//! - Returns `(bark::Wallet, bark::onchain::OnchainWallet)`
+//! - Loads or creates the [`bark::onchain::OnchainWallet`], wraps it in
+//!   `Arc<RwLock<_>>`, and stores it inside the [`bark::Wallet`] via
+//!   [`bark::OpenWalletArgs::onchain`]
+//! - Returns `(bark::Wallet, Arc<RwLock<bark::onchain::OnchainWallet>>)`;
+//!   the Arc is the same one stored inside the wallet, allowing callers to
+//!   access BDK-specific methods not exposed through the trait
 //!
 //! ## Errors
 //! Returns an [`anyhow::Error`] with context describing the failing step (I/O, parsing,
@@ -22,7 +25,7 @@
 //! # use bark_cli::wallet::open_wallet;
 //! # async fn example() -> anyhow::Result<()> {
 //!     let datadir = Path::new("./bark_data");
-//!     let (bark_wallet, onchain_wallet) = open_wallet(datadir, "myapp/1.0").await?.unwrap();
+//!     let (bark_wallet, onchain) = open_wallet(datadir, "myapp/1.0").await?.unwrap();
 //!     // Use the wallets...
 //!     Ok(())
 //! # }
@@ -31,6 +34,8 @@
 use std::path::Path;
 use std::sync::Arc;
 use std::str::FromStr;
+
+use tokio::sync::RwLock;
 
 use anyhow::{Context, bail};
 use bark::chain::ChainSource;
@@ -469,7 +474,7 @@ pub async fn read_mnemonic(datadir: &Path) -> anyhow::Result<String> {
 pub async fn open_wallet(
 	datadir: &Path,
 	user_agent: &str,
-) -> anyhow::Result<Option<(BarkWallet, OnchainWallet)>> {
+) -> anyhow::Result<Option<(BarkWallet, Arc<RwLock<OnchainWallet>>)>> {
 	debug!("Opening bark wallet in {}", datadir.display());
 
 
@@ -517,6 +522,7 @@ pub async fn open_wallet(
 	}
 
 	let bdk_wallet = OnchainWallet::load_or_create(properties.network, seed, db.clone()).await?;
+	let onchain = Arc::new(RwLock::new(bdk_wallet));
 	let lock_manager = open_lock_manager(datadir)?;
 	let bark_wallet = BarkWallet::open(
 		properties.network,
@@ -525,11 +531,12 @@ pub async fn open_wallet(
 		OpenWalletArgs {
 			persister: Some(db),
 			lock_manager: Some(lock_manager),
+			onchain: Some(onchain.clone()),
 			run_daemon: false,
 			..Default::default()
 		},
 	).await?;
 
-	Ok(Some((bark_wallet, bdk_wallet)))
+	Ok(Some((bark_wallet, onchain)))
 }
 

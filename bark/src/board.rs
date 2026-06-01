@@ -9,7 +9,7 @@ use ark::fees::validate_and_subtract_fee;
 use bitcoin_ext::BlockHeight;
 use server_rpc::protos;
 
-use crate::{onchain, Wallet, WalletVtxo};
+use crate::{Wallet, WalletVtxo};
 use crate::actions::DriveMode;
 use crate::actions::board::{Board, Progress, board_action_id};
 use crate::movement::update::MovementUpdate;
@@ -21,22 +21,19 @@ impl Wallet {
 	/// Board a [ark::Vtxo] with the given amount.
 	///
 	/// NB we will spend a little more onchain to cover fees.
-	pub async fn board_amount(
-		&self,
-		onchain: &mut dyn onchain::OnchainWalletTrait,
-		amount: Amount,
-	) -> anyhow::Result<PendingBoard> {
+	///
+	/// Returns an error if no onchain wallet is configured.
+	pub async fn board_amount(&self, amount: Amount) -> anyhow::Result<PendingBoard> {
 		let (user_keypair, _) = self.derive_store_next_keypair().await?;
-		self.board(onchain, Some(amount), user_keypair).await
+		self.board(Some(amount), user_keypair).await
 	}
 
 	/// Board a [ark::Vtxo] with all the funds in your onchain wallet.
-	pub async fn board_all(
-		&self,
-		onchain: &mut dyn onchain::OnchainWalletTrait,
-	) -> anyhow::Result<PendingBoard> {
+	///
+	/// Returns an error if no onchain wallet is configured.
+	pub async fn board_all(&self) -> anyhow::Result<PendingBoard> {
 		let (user_keypair, _) = self.derive_store_next_keypair().await?;
-		self.board(onchain, None, user_keypair).await
+		self.board(None, user_keypair).await
 	}
 
 	pub async fn pending_boards(&self) -> anyhow::Result<Vec<PendingBoard>> {
@@ -117,20 +114,25 @@ impl Wallet {
 
 	async fn board(
 		&self,
-		wallet: &mut dyn onchain::OnchainWalletTrait,
 		amount: Option<Amount>,
 		user_keypair: Keypair,
 	) -> anyhow::Result<PendingBoard> {
+		let onchain = self.inner.onchain.as_ref()
+			.ok_or_else(|| anyhow!("no onchain wallet configured; cannot board"))?;
+
 		let (addr, expiry_height) = self.board_funding_address(&user_keypair).await?;
 		let fee_rate = self.inner.chain.fee_rates().await.regular;
 
-		let board_psbt = if let Some(amount) = amount {
-			wallet.prepare_tx(&[(addr, amount)], fee_rate).await?
-		} else {
-			wallet.prepare_drain_tx(addr, fee_rate).await?
+		let signed_psbt = {
+			let mut wallet = onchain.write().await;
+			let board_psbt = if let Some(amount) = amount {
+				wallet.prepare_tx(&[(addr, amount)], fee_rate).await?
+			} else {
+				wallet.prepare_drain_tx(addr, fee_rate).await?
+			};
+			wallet.finish_psbt(board_psbt).await?
 		};
 
-		let signed_psbt = wallet.finish_psbt(board_psbt).await?;
 		self.board_tx(signed_psbt, user_keypair, expiry_height).await
 	}
 

@@ -500,7 +500,7 @@ impl<'a> BarkSdkBuilder<'a> {
 
 		if !self.board_amounts.is_empty() {
 			for amount in &self.board_amounts {
-				let b = wallet.board_amount(&mut onchain, *amount).await.context("board_amount")?;
+				let b = wallet.board_amount(*amount).await.context("board_amount")?;
 				self.ctx.await_transaction(b.funding_tx.compute_txid()).await;
 			}
 			self.ctx.generate_blocks(BOARD_CONFIRMATIONS).await;

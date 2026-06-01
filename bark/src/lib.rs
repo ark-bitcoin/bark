@@ -701,6 +701,12 @@ struct WalletInner {
 	/// instead of each opening a fresh gRPC channel.
 	server: tokio::sync::OnceCell<ServerConnection>,
 
+	/// Onchain wallet used for boarding, exit fee-bumping, and onchain syncing.
+	///
+	/// When present, the wallet can perform onchain operations without the
+	/// caller having to supply a wallet on every call.
+	onchain: Option<Arc<tokio::sync::RwLock<dyn OnchainWalletTrait>>>,
+
 	/// A handle to the currently running daemon, if any.
 	daemon: parking_lot::Mutex<Option<DaemonHandle>>,
 
@@ -1123,8 +1129,10 @@ impl Wallet {
 		let movements = Arc::new(MovementManager::new(db.clone(), notifications.clone()));
 		let exit = Exit::new(db.clone(), chain.clone(), movements.clone()).await?;
 
+		let onchain = args.onchain;
 		let ret = Wallet { inner: Arc::new(WalletInner {
 			config, db, lock_manager, seed, exit, movements, notifications, server, chain,
+			onchain,
 			daemon: parking_lot::Mutex::new(None),
 			last_force_exit_scan_tip: tokio::sync::Mutex::new(None),
 			round_secret_nonces: RoundSecretNonces::new(),
@@ -1134,7 +1142,7 @@ impl Wallet {
 			.context("error loading exit system after opening wallet")?;
 
 		if args.run_daemon {
-			ret.start_daemon(args.onchain)
+			ret.start_daemon()
 				.context("failed to start daemon after opening wallet")?;
 		}
 
@@ -1219,6 +1227,19 @@ impl Wallet {
 		ark_info.fees.validate().context("invalid fee schedule")?;
 		self.check_and_store_server_keys(&ark_info).await?;
 
+		Ok(())
+	}
+
+	/// Returns the configured onchain wallet, if any.
+	pub fn onchain(&self) -> Option<Arc<tokio::sync::RwLock<dyn OnchainWalletTrait>>> {
+		self.inner.onchain.clone()
+	}
+
+	/// Sync the internal onchain wallet against the chain source, if one is configured.
+	pub async fn sync_onchain(&self) -> anyhow::Result<()> {
+		if let Some(onchain) = self.inner.onchain.as_ref() {
+			onchain.write().await.sync(self.chain()).await?;
+		}
 		Ok(())
 	}
 
@@ -1479,10 +1500,10 @@ impl Wallet {
 	}
 
 	/// Performs maintenance tasks and performs refresh interactively until finished when needed.
-	/// This risks spending users' funds because refreshing may cost fees.
 	///
-	/// This can take a long period of time due to syncing rounds, arkoors, checking pending
-	/// payments, progressing pending rounds, and refreshing VTXOs if necessary.
+	/// This can take a long period of time due to registering boards, syncing
+	/// rounds, arkoors, checking pending lightning payments and refreshing VTXOs
+	/// if necessary.
 	pub async fn maintenance(&self) -> anyhow::Result<()> {
 		info!("Starting wallet maintenance in interactive mode");
 		self.sync().await;
@@ -1515,17 +1536,22 @@ impl Wallet {
 		if let Err(e) = refresh.as_ref() {
 			warn!("Error refreshing VTXOs: {:#}", e);
 		}
+
 		if rounds.is_err() || refresh.is_err() {
-			bail!("Maintenance encountered errors.\nprogress_rounds: {:#?}\nrefresh: {:#?}", rounds, refresh);
+			bail!("Maintenance encountered errors.\nprogress_rounds: {:#?}\nrefresh: {:#?}",
+				rounds, refresh,
+			);
 		}
+
 		Ok(())
 	}
 
 	/// Performs maintenance tasks and schedules delegated refresh when needed. This risks spending
-	/// users' funds because refreshing may cost fees.
+	/// users' funds because refreshing may cost fees and any pending exits will be progressed.
 	///
-	/// This can take a long period of time due to syncing rounds, arkoors, checking pending
-	/// payments, progressing pending rounds, and refreshing VTXOs if necessary.
+	/// This can take a long period of time due to syncing the onchain wallet, registering boards,
+	/// syncing rounds, arkoors, and the exit system, checking pending lightning payments and
+	/// refreshing VTXOs if necessary.
 	pub async fn maintenance_delegated(&self) -> anyhow::Result<()> {
 		info!("Starting wallet maintenance in delegated mode");
 		self.sync().await;
@@ -1537,70 +1563,14 @@ impl Wallet {
 		if let Err(e) = refresh.as_ref() {
 			warn!("Error refreshing VTXOs: {:#}", e);
 		}
+
 		if rounds.is_err() || refresh.is_err() {
-			bail!("Delegated maintenance encountered errors.\nprogress_rounds: {:#?}\nrefresh: {:#?}", rounds, refresh);
+			bail!("Delegated maintenance encountered errors.\n\
+				progress_rounds: {:#?}\nrefresh: {:#?}",
+				rounds, refresh,
+			);
 		}
-		Ok(())
-	}
 
-	/// Performs maintenance tasks and performs refresh interactively until finished when needed.
-	/// This risks spending users' funds because refreshing may cost fees and any pending exits will
-	/// be progressed.
-	///
-	/// This can take a long period of time due to syncing the onchain wallet, registering boards,
-	/// syncing rounds, arkoors, and the exit system, checking pending lightning payments and
-	/// refreshing VTXOs if necessary.
-	pub async fn maintenance_with_onchain<W: OnchainWalletTrait>(
-		&self,
-		onchain: &mut W,
-	) -> anyhow::Result<()> {
-		info!("Starting wallet maintenance in interactive mode with onchain wallet");
-
-		// Maintenance will log so we don't need to.
-		let maintenance = self.maintenance().await;
-
-		// NB: order matters here, after syncing lightning, we might have new exits to start
-		let exit_sync = self.sync_exits().await;
-		if let Err(e) = exit_sync.as_ref() {
-			warn!("Error syncing exits: {:#}", e);
-		}
-		let exit_progress = self.exit_mgr().progress_exits_with_bdk(self, onchain, None).await;
-		if let Err(e) = exit_progress.as_ref() {
-			warn!("Error progressing exits: {:#}", e);
-		}
-		if maintenance.is_err() || exit_sync.is_err() || exit_progress.is_err() {
-			bail!("Maintenance encountered errors.\nmaintenance: {:#?}\nexit_sync: {:#?}\nexit_progress: {:#?}", maintenance, exit_sync, exit_progress);
-		}
-		Ok(())
-	}
-
-	/// Performs maintenance tasks and schedules delegated refresh when needed. This risks spending
-	/// users' funds because refreshing may cost fees and any pending exits will be progressed.
-	///
-	/// This can take a long period of time due to syncing the onchain wallet, registering boards,
-	/// syncing rounds, arkoors, and the exit system, checking pending lightning payments and
-	/// refreshing VTXOs if necessary.
-	pub async fn maintenance_with_onchain_delegated(
-		&self,
-		onchain: &mut dyn OnchainWalletTrait,
-	) -> anyhow::Result<()> {
-		info!("Starting wallet maintenance in delegated mode with onchain wallet");
-
-		// Maintenance will log so we don't need to.
-		let maintenance = self.maintenance_delegated().await;
-
-		// NB: order matters here, after syncing lightning, we might have new exits to start
-		let exit_sync = self.sync_exits().await;
-		if let Err(e) = exit_sync.as_ref() {
-			warn!("Error syncing exits: {:#}", e);
-		}
-		let exit_progress = self.exit_mgr().progress_exits_with_bdk(self, onchain, None).await;
-		if let Err(e) = exit_progress.as_ref() {
-			warn!("Error progressing exits: {:#}", e);
-		}
-		if maintenance.is_err() || exit_sync.is_err() || exit_progress.is_err() {
-			bail!("Delegated maintenance encountered errors.\nmaintenance: {:#?}\nexit_sync: {:#?}\nexit_progress: {:#?}", maintenance, exit_sync, exit_progress);
-		}
 		Ok(())
 	}
 
@@ -1801,6 +1771,15 @@ impl Wallet {
 	/// claimable or have been claimed.
 	pub async fn sync_exits(&self) -> anyhow::Result<()> {
 		self.exit_mgr().sync(&self).await?;
+		Ok(())
+	}
+
+	/// Progress unilateral exits
+	///
+	/// This risks spending users' funds because refreshing may cost fees and any
+	/// pending exits will be progressed.
+	pub async fn progress_exits(&self) -> anyhow::Result<()> {
+		self.exit_mgr().progress_exits_with_cpfp(&self, None).await?;
 		Ok(())
 	}
 
@@ -2084,32 +2063,23 @@ impl Wallet {
 
 	/// Starts a daemon for the wallet.
 	///
+	/// The daemon uses the onchain wallet stored in [OpenWalletArgs::onchain] (if any)
+	/// for background onchain syncing and exit fee-bumping.
+	///
 	/// Note:
 	/// - This function doesn't check if a daemon is already running,
 	/// so it's possible to start multiple daemons by mistake.
-	pub fn start_daemon(
-		&self,
-		onchain: Option<Arc<tokio::sync::RwLock<dyn OnchainWalletTrait>>>,
-	) -> anyhow::Result<()> {
+	pub fn start_daemon(&self) -> anyhow::Result<()> {
 		let mut daemon = self.inner.daemon.lock();
 		if daemon.is_some() {
 			warn!("Called Wallet::start_daemon while daemon was already running.");
 			return Ok(());
 		}
 
-		let handle = crate::daemon::start_daemon(self.clone(), onchain);
+		let handle = crate::daemon::start_daemon(self.clone());
 		let _ = daemon.insert(handle);
 
 		Ok(())
-	}
-
-	/// Use [Wallet::start_daemon] instead.
-	#[deprecated(since = "0.1.4", note = "use start_daemon instead")]
-	pub fn run_daemon(
-		&self,
-		onchain: Option<Arc<tokio::sync::RwLock<dyn OnchainWalletTrait>>>,
-	) -> anyhow::Result<()> {
-		self.start_daemon(onchain)
 	}
 
 	/// Stops the daemon for the wallet if it is running, otherwise does nothing.

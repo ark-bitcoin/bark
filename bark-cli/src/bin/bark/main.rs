@@ -7,7 +7,6 @@ mod onchain;
 mod round;
 
 use std::cmp::Ordering;
-use std::sync::Arc;
 use std::{env, process};
 use std::path::PathBuf;
 use std::str::FromStr;
@@ -26,7 +25,6 @@ use lightning_invoice::Bolt11Invoice;
 use lnurl::lightning_address::LightningAddress;
 use lnurl::lnurl::LnUrl;
 use log::{debug, info, warn};
-use tokio::sync::RwLock;
 
 use ark::{ProtocolEncoding, VtxoId};
 use ark::lightning::PaymentHash;
@@ -328,9 +326,9 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 		return dev::execute_dev_command(cmd, datadir).await;
 	}
 
-	let (mut wallet, mut onchain) = open_wallet(&datadir, USER_AGENT).await
-			.context("error opening wallet")?
-			.context("No wallet found")?;
+	let (mut wallet, onchain) = open_wallet(&datadir, USER_AGENT).await
+		.context("error opening wallet")?
+		.context("No wallet found")?;
 
 	let net = wallet.network().await?;
 
@@ -469,18 +467,18 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 		Command::Board { amount, all, no_sync } => {
 			if !no_sync {
 				info!("Syncing onchain wallet...");
-				if let Err(e) = onchain.sync(wallet.chain()).await {
+				if let Err(e) = wallet.sync_onchain().await {
 					warn!("Sync error: {}", e)
 				}
 			}
 			let board = match (amount, all) {
 				(Some(a), false) => {
 					info!("Boarding {}...", a);
-					wallet.board_amount(&mut onchain, a).await?
+					wallet.board_amount(a).await?
 				},
 				(None, true) => {
 					info!("Boarding total balance...");
-					wallet.board_all(&mut onchain).await?
+					wallet.board_all().await?
 				},
 				_ => bail!("please provide either an amount or --all"),
 			};
@@ -568,7 +566,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 
 				address
 			} else {
-				onchain.address().await?
+				onchain.write().await.address().await?
 			};
 
 			let offboard_txid = if let Some(vtxos) = vtxos {
@@ -599,10 +597,10 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 			output_json(&json::cli::OffboardResult { offboard_txid });
 		},
 		Command::Onchain(onchain_command) => {
-			onchain::execute_onchain_command(onchain_command, &mut wallet, &mut onchain).await?;
+			onchain::execute_onchain_command(onchain_command, &mut wallet, &mut *onchain.write().await).await?;
 		},
 		Command::Exit(cmd) => {
-			exit::execute_exit_command(cmd, &mut wallet, &mut onchain).await?;
+			exit::execute_exit_command(cmd, &mut wallet).await?;
 		},
 		Command::Lightning(cmd) => {
 			lightning::execute_lightning_command(cmd, &mut wallet).await?;
@@ -611,9 +609,8 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 			round::execute_round_command(cmd, &mut wallet).await?;
 		},
 		Command::Watch => {
-			let onchain = Arc::new(RwLock::new(onchain));
 			let mut stream = wallet.subscribe_notifications();
-			let _daemon = wallet.start_daemon(Some(onchain))
+			let _daemon = wallet.start_daemon()
 				.context("failed to start bark daemon")?;
 			while let Some(notif) = stream.next().await {
 				output_json(&json::notifications::WalletNotification::from(notif));
@@ -622,9 +619,9 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 		},
 		Command::Maintain { delegated } => {
 			if delegated {
-				wallet.maintenance_with_onchain_delegated(&mut onchain).await?;
+				wallet.maintenance_delegated().await?;
 			} else {
-				wallet.maintenance_with_onchain(&mut onchain).await?;
+				wallet.maintenance().await?;
 			}
 		},
 	}

@@ -1,30 +1,37 @@
+
+use anyhow::Context;
 use bitcoin::FeeRate;
 use log::warn;
 
 use crate::Wallet;
 use crate::exit::{Exit, ExitProgressStatus};
-use crate::onchain::{CpfpError, MakeCpfpFees, OnchainWalletTrait};
+use crate::onchain::{CpfpError, MakeCpfpFees};
 
 impl Exit {
-	/// Advance ongoing exits by one step, handling CPFP fee-bumping via an onchain wallet.
+	/// Advance ongoing exits by one step, handling CPFP fee-bumping via the wallet's
+	/// internal onchain wallet.
 	///
 	/// This makes progress on each exit but does not run an exit to completion — exits
 	/// span many blocks (broadcasting, confirmations, CSV timelocks, claim spends), so
 	/// this must be called repeatedly (e.g. once per block) until all exits reach a
 	/// terminal state.
 	///
-	/// It calls [Exit::progress_exits], creates CPFP transactions via `onchain` for any
-	/// exits in [crate::exit::ExitTxStatus::AwaitingCpfpBroadcast], then calls [Exit::progress_exits]
-	/// again so those exits advance to [crate::exit::ExitTxStatus::AwaitingConfirmation].
+	/// It calls [Exit::progress_exits], creates CPFP transactions for any exits in
+	/// [crate::exit::ExitTxStatus::AwaitingCpfpBroadcast], then calls [Exit::progress_exits] again
+	/// so those exits advance to [crate::exit::ExitTxStatus::AwaitingConfirmation].
 	///
 	/// Callers with external or hardware wallets should use [Exit::exits_needing_cpfp]
 	/// and [Exit::provide_cpfp_tx] directly instead.
-	pub async fn progress_exits_with_bdk(
+	///
+	/// Returns an error if the wallet has no onchain wallet configured.
+	pub async fn progress_exits_with_cpfp(
 		&self,
 		wallet: &Wallet,
-		onchain: &mut dyn OnchainWalletTrait,
 		fee_rate_override: Option<FeeRate>,
 	) -> anyhow::Result<Option<Vec<ExitProgressStatus>>> {
+		let onchain_arc = wallet.inner.onchain.as_ref()
+			.context("no onchain wallet configured; cannot progress exits")?;
+
 		self.progress_exits(wallet).await?;
 
 		let fee_rate = fee_rate_override.unwrap_or(wallet.chain().fee_rates().await.fast);
@@ -47,15 +54,19 @@ impl Exit {
 					}
 				},
 			};
-			let child_tx = match onchain.make_signed_p2a_cpfp(&req.exit_tx, fees).await {
-				Ok(tx) => tx,
-				Err(CpfpError::InsufficientConfirmedFunds { needed, available }) => {
-					warn!("Insufficient funds for exit CPFP: needed {} available {}", needed, available);
-					continue;
-				},
-				Err(e) => return Err(e.into()),
+			let child_tx = {
+				let mut onchain = onchain_arc.write().await;
+				let tx = match onchain.make_signed_p2a_cpfp(&req.exit_tx, fees).await {
+					Ok(tx) => tx,
+					Err(CpfpError::InsufficientConfirmedFunds { needed, available }) => {
+						warn!("Insufficient funds for exit CPFP: needed {} available {}", needed, available);
+						continue;
+					},
+					Err(e) => return Err(e.into()),
+				};
+				onchain.store_signed_p2a_cpfp(&tx).await?;
+				tx
 			};
-			onchain.store_signed_p2a_cpfp(&child_tx).await?;
 			let exit_txid = req.exit_tx.compute_txid();
 			self.provide_cpfp_tx(wallet, exit_txid, child_tx).await?;
 		}
