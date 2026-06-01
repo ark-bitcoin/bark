@@ -763,6 +763,17 @@ pub fn set_round_metrics(
 		m.round_input_volume_gauge.record(input_volume.to_sat(), global_labels);
 		m.round_input_count_gauge.record(input_count as u64, global_labels);
 		m.round_output_count_gauge.record(output_count as u64, global_labels);
+	}
+}
+
+/// Increment the cumulative round counter and add to the cumulative volume.
+///
+/// Why: this lives outside [set_round_metrics] because that runs once per
+/// round *attempt* (and even for empty attempts). Counting attempts inflates
+/// "rounds/h" by the retry rate. Call this once per successful round.
+pub fn add_round(input_volume: Amount) {
+	if let Some(m) = TELEMETRY.get() {
+		let global_labels = m.global_labels();
 		m.round_counter.add(1, global_labels);
 		m.round_volume.add(input_volume.to_sat(), global_labels);
 	}

@@ -1059,6 +1059,12 @@ impl SigningVtxoTree {
 			round_tx_fee: signed_round_tx.fee,
 		);
 
+		// Why here and not in set_round_metrics: that function runs once per
+		// round *attempt* and even for empty attempts, so it inflates the
+		// counter by the retry rate. This block runs once per successful round.
+		let input_volume = self.all_inputs.values().map(|v| v.amount()).sum::<Amount>();
+		telemetry::add_round(input_volume);
+
 		Ok(finished)
 	}
 }

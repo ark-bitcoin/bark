@@ -309,7 +309,11 @@ impl Server {
 			bail!("failed to register offboard in db, please start over");
 		}
 
-		let offboard_volume = vtxos.iter().map(|v| v.vtxo.amount().to_sat()).sum::<u64>();
+		// The on-chain payout is the first output (set in prepare_offboard via
+		// b.add_recipient(request.script_pubkey, net_amount)). Output 1 is the
+		// connector; later outputs are bdk-added change to the rounds wallet.
+		// Using inputs would also count forfeit fees and connector dust.
+		let offboard_volume = signed_tx.output[0].value.to_sat();
 		crate::telemetry::add_offboard(offboard_volume);
 
 		if let Err(e) = self.commit_offboard(&mut wallet_guard, &signed_tx, offboard_txid).await {

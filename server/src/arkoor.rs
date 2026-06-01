@@ -103,10 +103,14 @@ impl Server {
 		Ok(ret)
 	}
 
+	/// Returns the signed builder along with the number of VTXO rows actually
+	/// inserted by the tree update. Callers gate retry-sensitive metrics on
+	/// this count: `> 0` means the inputs/outputs were freshly persisted,
+	/// `0` means the update collapsed onto an existing row (idempotent retry).
 	pub async fn cosign_oor_with_builder(
 		&self,
 		builder: ArkoorPackageBuilder<ServerCanCosign>,
-	) -> anyhow::Result<ArkoorPackageBuilder<ServerSigned>> {
+	) -> anyhow::Result<(ArkoorPackageBuilder<ServerSigned>, u64)> {
 		let vtxo_guard = self.vtxos_in_flux.try_lock(builder.input_ids()).map_err(|e| {
 			slog!(ArkoorInputAlreadyInFlux, vtxo: e.id);
 			badarg_err!("some VTXO is already locked by another process: {}", e.id)
@@ -124,13 +128,13 @@ impl Server {
 			.insert_oor_spent_vtxos(builder.build_unsigned_internal_vtxos())
 			.insert_unregistered_vtxos(builder.build_unsigned_vtxos().map(ServerVtxo::from))
 			.mark_vtxos_oor_spent(builder.input_spend_info());
-		self.db.write(async |t| t.execute_vtxo_tree_update(update).await).await?;
+		let inserted = self.db.write(async |t| t.execute_vtxo_tree_update(update).await).await?;
 		drop(vtxo_guard);
 
 		// Only now it's safe to sign
 		let builder = builder.server_cosign(self.server_key.leak_ref())
 			.context("failed to sign arkoor")?;
-		Ok(builder)
+		Ok((builder, inserted))
 	}
 
 	pub async fn cosign_oor(
@@ -172,17 +176,21 @@ impl Server {
 			v.check_spendable_for_oor(chain_tip, *spending_txid)?;
 		}
 
-		let builder = self.cosign_oor_with_builder(builder).await?;
-
-		let volume_sats = input_vtxo_states.iter()
-			.map(|v| v.vtxo.amount().to_sat())
-			.sum::<u64>();
+		let (builder, inserted) = self.cosign_oor_with_builder(builder).await?;
 
 		slog!(ArkoorCosign, input_ids: input_vtxo_ids,
 			output_ids: builder.build_unsigned_vtxos().into_iter().map(|v| v.id()).collect(),
 		);
 
-		crate::telemetry::add_arkoor_payment(volume_sats);
+		// inserted == 0 means the tree update collapsed onto rows that already
+		// exist — i.e. an idempotent retry of an already-cosigned arkoor.
+		// Counting again would double-count the payment metric.
+		if inserted > 0 {
+			let volume_sats = input_vtxo_states.iter()
+				.map(|v| v.vtxo.amount().to_sat())
+				.sum::<u64>();
+			crate::telemetry::add_arkoor_payment(volume_sats);
+		}
 
 		Ok(builder.cosign_response())
 	}

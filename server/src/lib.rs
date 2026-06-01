@@ -763,16 +763,21 @@ impl Server {
 		let builder = BoardBuilder::new_from_vtxo(&vtxo, &funding_tx, self.server_pubkey)
 			.badarg("vtxo is not a board")?;
 
+		// insert_spendable_vtxos uses ON CONFLICT DO NOTHING, so an idempotent
+		// retry inserts zero rows. We gate the board metric on the actual
+		// inserted-row count returned by execute_vtxo_tree_update, which makes
+		// the fresh-vs-retry decision atomic with the write rather than
+		// depending on a separate racy pre-read.
 		let update = VtxoTreeUpdate::new()
 			.upsert_funding_tx(&funding_tx)
 			.upsert_unsigned_tx([builder.exit_txid()])
 			.insert_spendable_vtxos(builder.build_internal_unsigned_vtxos())
 			.mark_vtxos_oor_spent(builder.spend_info());
-		self.db.write(async |t| {
-			t.execute_vtxo_tree_update(update).await?;
+		let inserted = self.db.write(async |t| {
+			let inserted = t.execute_vtxo_tree_update(update).await?;
 			t.add_funding_vtxos_to_frontier(funding_txid, Some(confirmed_height)).await
 				.context("failed to add board vtxos to frontier")?;
-			Ok(())
+			Ok(inserted)
 		}).await?;
 
 		slog!(RegisteredBoard,
@@ -781,7 +786,9 @@ impl Server {
 			amount: vtxo.amount(),
 		);
 
-		crate::telemetry::add_board(vtxo.amount().to_sat());
+		if inserted > 0 {
+			crate::telemetry::add_board(vtxo.amount().to_sat());
+		}
 
 		Ok(())
 	}

@@ -112,7 +112,7 @@ impl Server {
 
 		slog!(LightningPayHtlcsRequested, payment_hash, expiry);
 
-		let builder = self.cosign_oor_with_builder(builder).await?;
+		let (builder, _) = self.cosign_oor_with_builder(builder).await?;
 		Ok(builder.cosign_response())
 	}
 
@@ -718,7 +718,7 @@ impl Server {
 		self.htlc_settler.settle(payment_preimage).await
 			.context("could not record htlc settlement")?;
 
-		let builder = self.cosign_oor_with_builder(builder).await?;
+		let (builder, _) = self.cosign_oor_with_builder(builder).await?;
 		let vtxo_request = VtxoRequest {
 			amount: sub.amount(),
 			policy: vtxo_policy,
