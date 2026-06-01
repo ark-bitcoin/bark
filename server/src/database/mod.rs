@@ -117,6 +117,7 @@ pub enum MailboxPayload {
 	},
 	LightningReceive {
 		payment_hash: PaymentHash,
+		amount_msat: u64,
 	},
 	RecoveryVtxoIds {
 		vtxo_ids: Vec<VtxoId>,
@@ -479,10 +480,20 @@ impl<'t> Tx<'t> {
 		limit: usize,
 	) -> anyhow::Result<Vec<MailboxEntry>> {
 		let statement = self.prepare(&format!("
-			SELECT vtxo_id, vtxo, payment_hash, unlock_hash, preimage, checkpoint, mailbox_type::TEXT AS entry_type
-			FROM mailbox
-			WHERE unblinded_mailbox_id = $1 AND checkpoint > $2
-			ORDER BY checkpoint ASC, entry_type ASC
+			SELECT
+				m.vtxo_id, m.vtxo, m.payment_hash, m.unlock_hash, m.preimage,
+				m.checkpoint, m.mailbox_type::TEXT AS entry_type,
+				lhs.final_amount_msat AS ln_recv_amount_msat
+			FROM mailbox m
+			-- Resolve the amount for ln-recv-pending rows from the originating
+			-- subscription. Re-injected subscriptions on the same payment hash
+			-- leave receiver_mailbox_id NULL so they don't match here.
+			LEFT JOIN lightning_htlc_subscription lhs
+				ON m.mailbox_type = 'ln-recv-pending'
+				AND lhs.payment_hash = m.payment_hash
+				AND lhs.receiver_mailbox_id = m.unblinded_mailbox_id
+			WHERE m.unblinded_mailbox_id = $1 AND m.checkpoint > $2
+			ORDER BY m.checkpoint ASC, entry_type ASC
 			LIMIT {limit};
 		")).await?;
 
@@ -515,9 +526,16 @@ impl<'t> Tx<'t> {
 
 					let payment_hash = PaymentHash::from_str(&row.get::<_, &str>("payment_hash"))
 						.context("invalid payment hash in mailbox notification")?;
+					// Invariant: a ln-recv-pending mailbox row is only ever
+					// posted when the originating subscription exists, and
+					// store_generated_lightning_receive always sets
+					// final_amount_msat. A NULL here means corrupt state.
+					let amount_msat = row.get::<_, Option<i64>>("ln_recv_amount_msat")
+						.context("ln-recv-pending mailbox row missing matching subscription with final_amount_msat")?
+						as u64;
 					res.push(MailboxEntry {
 						checkpoint: cp,
-						payload: MailboxPayload::LightningReceive { payment_hash },
+						payload: MailboxPayload::LightningReceive { payment_hash, amount_msat },
 					});
 					telemetry::set_mailbox_get_metric(mailbox_type, 1);
 

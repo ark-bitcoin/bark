@@ -56,6 +56,7 @@ message RoundParticipationCompleted {
 
 message IncomingLightningPaymentMessage {
 	bytes payment_hash = 1;
+	uint64 amount_msat = 2;
 }
 
 message RecoveryVtxoIdsMessage {
