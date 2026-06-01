@@ -504,7 +504,7 @@ async fn ban_vtxo() {
 	let banned = db.read(async |t| t.list_banned_vtxos(100).await).await.expect("list succeeded");
 	assert_eq!(banned.len(), 1);
 	assert_eq!(banned[0].vtxo_id, vtxo_id);
-	assert_eq!(banned[0].banned_until_height, Some(200));
+	assert_eq!(banned[0].banned_until_height, 200);
 
 	// Unban the vtxo
 	db.write(async |t| t.unban_vtxo(vtxo_id).await).await.expect("unban succeeded");
