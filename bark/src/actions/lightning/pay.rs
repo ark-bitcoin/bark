@@ -453,11 +453,7 @@ pub(crate) async fn check_lightning_send_payment_status(
 	}
 
 	let tip = wallet.inner.chain.tip().await?;
-	let min_vtxo_expiry = htlc_vtxos.iter()
-		.map(|v| v.vtxo.expiry_height())
-		.min().context("no HTLC VTXOs for expiry check")?;
-	let expired = tip > policy.htlc_expiry
-		|| tip > min_vtxo_expiry.saturating_sub(wallet.config().vtxo_refresh_expiry_threshold);
+	let expired = tip > policy.htlc_expiry;
 	let pending_status = if expired { PaymentStatus::Failed } else { PaymentStatus::Pending };
 
 	let req = protos::CheckLightningPaymentRequest {
