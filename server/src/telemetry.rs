@@ -247,9 +247,6 @@ struct Metrics {
 	round_input_volume_gauge: Gauge<u64>,
 	round_input_count_gauge: Gauge<u64>,
 	round_output_count_gauge: Gauge<u64>,
-	pending_expired_operation_gauge: Gauge<u64>,
-	pending_sweeper_gauge: Gauge<u64>,
-	pending_forfeit_gauge: Gauge<u64>,
 	mailbox_counter: Counter<u64>,
 	lightning_node_gauge: Gauge<u64>,
 	lightning_node_boot_counter: Counter<u64>,
@@ -473,10 +470,7 @@ impl Metrics {
 		let round_input_volume_gauge = meter.u64_gauge("round_input_volume_gauge").build();
 		let round_input_count_gauge = meter.u64_gauge("round_input_count_gauge").build();
 		let round_output_count_gauge = meter.u64_gauge("round_output_count_gauge").build();
-		let pending_expired_operation_gauge = meter.u64_gauge("pending_expired_operation_gauge").build();
-		let pending_sweeper_gauge = meter.u64_gauge("pending_sweeper_gauge").build();
 		let mailbox_counter = meter.u64_counter("mailbox_counter").build();
-		let pending_forfeit_gauge = meter.u64_gauge("pending_forfeit_gauge").build();
 		let lightning_node_gauge = meter.u64_gauge("lightning_node_gauge").build();
 		let lightning_node_boot_counter = meter.u64_counter("lightning_node_boot_counter").build();
 		let lightning_payment_counter = meter.u64_counter("lightning_payment_counter").build();
@@ -561,9 +555,6 @@ impl Metrics {
 			round_input_volume_gauge,
 			round_input_count_gauge,
 			round_output_count_gauge,
-			pending_expired_operation_gauge,
-			pending_sweeper_gauge,
-			pending_forfeit_gauge,
 			mailbox_counter,
 			lightning_node_gauge,
 			lightning_node_boot_counter,
@@ -774,76 +765,6 @@ pub fn set_round_metrics(
 		m.round_output_count_gauge.record(output_count as u64, global_labels);
 		m.round_counter.add(1, global_labels);
 		m.round_volume.add(input_volume.to_sat(), global_labels);
-	}
-}
-
-pub fn set_pending_expired_rounds_count(pending_expired_rounds_count: usize) {
-	if let Some(m) = TELEMETRY.get() {
-		let attrs = m.with_global_labels([
-			KeyValue::new(ATTRIBUTE_TYPE, "rounds"),
-		]);
-		m.pending_expired_operation_gauge.record(pending_expired_rounds_count as u64, &attrs);
-	}
-}
-
-pub fn set_pending_expired_boards_count(pending_expired_boards_count: usize) {
-	if let Some(m) = TELEMETRY.get() {
-		let attrs = m.with_global_labels([
-			KeyValue::new(ATTRIBUTE_TYPE, "boards"),
-		]);
-		m.pending_expired_operation_gauge.record(pending_expired_boards_count as u64, &attrs);
-	}
-}
-
-pub fn set_pending_sweeper_stats(
-	pending_tx_count: usize,
-	pending_tx_volume: u64,
-	pending_utxo_count: usize,
-) {
-	if let Some(m) = TELEMETRY.get() {
-		let tx_attrs = m.with_global_labels([
-			KeyValue::new(ATTRIBUTE_TYPE, "transaction_count"),
-		]);
-		m.pending_sweeper_gauge.record(pending_tx_count as u64, &tx_attrs);
-
-		let volume_attrs = m.with_global_labels([
-			KeyValue::new(ATTRIBUTE_TYPE, "transaction_volume"),
-		]);
-		m.pending_sweeper_gauge.record(pending_tx_volume, &volume_attrs);
-
-		let utxo_attrs = m.with_global_labels([
-			KeyValue::new(ATTRIBUTE_TYPE, "utxo_count"),
-		]);
-		m.pending_sweeper_gauge.record(pending_utxo_count as u64, &utxo_attrs);
-	}
-}
-
-pub fn set_forfeit_metrics(
-	pending_exit_tx_count: usize,
-	pending_exit_volume: u64,
-	pending_claim_count: usize,
-	pending_claim_volume: u64,
-) {
-	if let Some(ref m) = TELEMETRY.get() {
-		let exit_tx_attrs = m.with_global_labels([
-			KeyValue::new(ATTRIBUTE_TYPE, "pending_exit_transaction_count"),
-		]);
-		m.pending_forfeit_gauge.record(pending_exit_tx_count as u64, &exit_tx_attrs);
-
-		let exit_volume_attrs = m.with_global_labels([
-			KeyValue::new(ATTRIBUTE_TYPE, "pending_exit_transaction_volume"),
-		]);
-		m.pending_forfeit_gauge.record(pending_exit_volume as u64, &exit_volume_attrs);
-
-		let claim_count_attrs = m.with_global_labels([
-			KeyValue::new(ATTRIBUTE_TYPE, "pending_claim_count"),
-		]);
-		m.pending_forfeit_gauge.record(pending_claim_count as u64, &claim_count_attrs);
-
-		let claim_volume_attrs = m.with_global_labels([
-			KeyValue::new(ATTRIBUTE_TYPE, "pending_claim_volume"),
-		]);
-		m.pending_forfeit_gauge.record(pending_claim_volume as u64, &claim_volume_attrs)
 	}
 }
 
