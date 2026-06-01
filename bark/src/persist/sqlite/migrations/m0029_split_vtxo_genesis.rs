@@ -138,7 +138,6 @@ fn exit_tx_weight_wu(vtxo: &Vtxo<Full>) -> u64 {
 mod test {
 	use super::*;
 
-	use ark::vtxo::Bare;
 	use bitcoin::Weight;
 	use rusqlite::Connection;
 

@@ -27,7 +27,6 @@ use tokio::sync::RwLock;
 
 use ark::{ProtocolEncoding, VtxoId};
 use ark::lightning::PaymentHash;
-use bark::Wallet;
 use bark::onchain::{ChainSync, GetAddress};
 use bark::vtxo::{VtxoFilter, VtxoStateKind};
 use bark_json as json;

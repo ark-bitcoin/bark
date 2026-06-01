@@ -791,6 +791,7 @@ mod test {
 			max_user_invoice_cltv_delta: 50,
 			min_board_amount: 0,
 			ln_receive_anti_dos_required: false,
+			#[allow(deprecated)]
 			offboard_feerate_sat_vkb: 1000,
 			fees: None,
 			max_vtxo_exit_depth: 5,
