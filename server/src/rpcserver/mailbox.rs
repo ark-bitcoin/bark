@@ -35,11 +35,12 @@ fn new_mailbox_msg(entry: MailboxEntry) -> protos::mailbox_server::MailboxMessag
 				checkpoint: entry.checkpoint.into(),
 			}
 		},
-		MailboxPayload::LightningReceive { payment_hash } => {
+		MailboxPayload::LightningReceive { payment_hash, amount_msat } => {
 			protos::mailbox_server::MailboxMessage {
 				message: Some(protos::mailbox_server::mailbox_message::Message::IncomingLightningPayment(
 					protos::mailbox_server::IncomingLightningPaymentMessage {
 						payment_hash: payment_hash.to_vec(),
+						amount_msat,
 					}
 				)),
 				checkpoint: entry.checkpoint.into(),

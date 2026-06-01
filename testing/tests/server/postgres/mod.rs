@@ -1594,8 +1594,18 @@ async fn lightning_receive_notification_mailbox_duplicate() {
 	let mailbox_id = MailboxIdentifier::from_pubkey(
 		PublicKey::from_str(DUMMY_PUBKEY).unwrap()
 	);
-	let payment_hash = BOLT11_INVOICE.parse::<Bolt11Invoice>().unwrap().as_payment_hash();
+	let bolt11 = BOLT11_INVOICE.parse::<Bolt11Invoice>().unwrap();
+	let payment_hash = bolt11.as_payment_hash();
 	let payment_hash_str = payment_hash.to_string();
+
+	// Set up the originating receive subscription with this mailbox id so the
+	// read-side JOIN can resolve the amount.
+	let pubkey = PublicKey::from_str(DUMMY_PUBKEY).unwrap();
+	let (node_id, _) = db.write(async |t| t.register_lightning_node(&pubkey).await).await.unwrap();
+	let invoice_amount_msat = 4242;
+	db.write(async |t| t.store_generated_lightning_receive(
+		node_id, &bolt11, invoice_amount_msat, Some(&mailbox_id),
+	).await).await.unwrap();
 
 	// First insert returns a checkpoint.
 	let cp1 = db.write(async |t| t.store_lightning_receive_notification(mailbox_id, &payment_hash_str).await).await.unwrap()
@@ -1605,12 +1615,15 @@ async fn lightning_receive_notification_mailbox_duplicate() {
 	let dup = db.write(async |t| t.store_lightning_receive_notification(mailbox_id, &payment_hash_str).await).await.unwrap();
 	assert!(dup.is_none(), "duplicate insert should return None");
 
-	// The mailbox holds exactly one notification.
+	// The mailbox holds exactly one notification, joined to the subscription's amount.
 	let messages = db.read(async |t| t.get_mailbox_messages(mailbox_id, 0, 10).await).await.unwrap();
 	assert_eq!(messages.len(), 1);
 	assert_eq!(messages[0].checkpoint, cp1);
 	match messages[0].payload {
-		MailboxPayload::LightningReceive { payment_hash: ph } => assert_eq!(ph, payment_hash),
+		MailboxPayload::LightningReceive { payment_hash: ph, amount_msat } => {
+			assert_eq!(ph, payment_hash);
+			assert_eq!(amount_msat, invoice_amount_msat);
+		},
 		ref other => panic!("expected LightningReceive payload, got {:?}", other),
 	}
 }
