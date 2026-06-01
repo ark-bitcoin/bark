@@ -17,27 +17,38 @@ impl<'t> Tx<'t> {
 	/// vtxopool issuance) so the watchman can pick them up without a full scan.
 	/// Pass `confirmed_height` when the funding tx is already confirmed on-chain
 	/// (e.g. board vtxos), or `None` when it is still unconfirmed.
+	///
+	/// `frontier_at` is preserved on rows that were already frontiered. A
+	/// supplied `confirmed_height` overwrites any existing value — callers
+	/// pass it straight from a fresh bitcoind observation, which is more
+	/// reliable than what's already on the row (e.g. across reorgs).
 	pub async fn add_funding_vtxos_to_frontier(
 		&self,
 		funding_txid: Txid,
 		confirmed_height: Option<BlockHeight>,
 	) -> anyhow::Result<()> {
-		self.execute(
-			"INSERT INTO watchman_vtxo_frontier (vtxo_id, confirmed_height)
-			SELECT vtxo_id, $2 FROM vtxo WHERE vtxo_txid = $1
-			ON CONFLICT DO NOTHING",
-			&[&funding_txid.to_string(), &confirmed_height.map(|h| h as i32)],
-		).await?;
+		self.execute("
+			UPDATE vtxo
+			SET frontier_at = COALESCE(frontier_at, NOW()),
+				confirmed_height = COALESCE($2::int4, confirmed_height),
+				updated_at = NOW()
+			WHERE vtxo_txid = $1
+			AND (frontier_at IS NULL
+				OR ($2::int4 IS NOT NULL
+					AND confirmed_height IS DISTINCT FROM $2::int4))
+		", &[&funding_txid.to_string(), &confirmed_height.map(|h| h as i32)]).await?;
 
 		Ok(())
 	}
 
-	/// Add a new vtxo to the frontier table.
+	/// Add a new vtxo to the frontier.
+	///
+	/// Idempotent: a no-op if the vtxo is already in the frontier.
 	pub async fn add_vtxo_to_frontier(&self, vtxo_id: VtxoId) -> anyhow::Result<()> {
-		let stmt = self.prepare_typed(
-			"INSERT INTO watchman_vtxo_frontier (vtxo_id) VALUES ($1) ON CONFLICT DO NOTHING",
-			&[Type::TEXT],
-		).await?;
+		let stmt = self.prepare_typed("
+			UPDATE vtxo SET frontier_at = NOW(), updated_at = NOW()
+			WHERE vtxo_id = $1 AND frontier_at IS NULL
+		", &[Type::TEXT]).await?;
 
 		self.execute(&stmt, &[&vtxo_id.to_string()]).await?;
 
@@ -45,15 +56,23 @@ impl<'t> Tx<'t> {
 	}
 
 	/// Register a confirmation for a vtxo at a given block height.
+	///
+	/// The `IS DISTINCT FROM` guard skips the UPDATE when the value is
+	/// unchanged. Plain `<>` would silently filter out rows where
+	/// `confirmed_height IS NULL` (since `NULL <> $2` is NULL, not true), so
+	/// the first confirmation would never land. `IS DISTINCT FROM` is the
+	/// NULL-safe inequality and treats NULL as a comparable value, which is
+	/// what we want here. Avoiding no-op updates matters because every
+	/// UPDATE fires `vtxo_update_trigger` and writes a `vtxo_history` row.
 	pub async fn register_vtxo_confirmation(
 		&self,
 		vtxo_id: VtxoId,
 		height: BlockHeight,
 	) -> anyhow::Result<()> {
-		let stmt = self.prepare_typed(
-			"UPDATE watchman_vtxo_frontier SET confirmed_height = $2 WHERE vtxo_id = $1",
-			&[Type::TEXT, Type::INT4],
-		).await?;
+		let stmt = self.prepare_typed("
+			UPDATE vtxo SET confirmed_height = $2, updated_at = NOW()
+			WHERE vtxo_id = $1 AND confirmed_height IS DISTINCT FROM $2::int4
+		", &[Type::TEXT, Type::INT4]).await?;
 
 		self.execute(&stmt, &[&vtxo_id.to_string(), &(height as i32)]).await?;
 
@@ -67,24 +86,25 @@ impl<'t> Tx<'t> {
 		height: BlockHeight,
 		txid: Txid,
 	) -> anyhow::Result<()> {
-		let stmt = self.prepare_typed(
-			"UPDATE watchman_vtxo_frontier SET spent_height = $2, spent_txid = $3 WHERE vtxo_id = $1",
-			&[Type::TEXT, Type::INT4, Type::TEXT],
-		).await?;
+		let stmt = self.prepare_typed("
+			UPDATE vtxo
+			SET onchain_spent_height = $2, onchain_spent_txid = $3, updated_at = NOW()
+			WHERE vtxo_id = $1 AND onchain_spent_height IS NULL
+		", &[Type::TEXT, Type::INT4, Type::TEXT]).await?;
 
 		self.execute(&stmt, &[&vtxo_id.to_string(), &(height as i32), &txid.to_string()]).await?;
 
 		Ok(())
 	}
 
-	/// Get the current frontier: all vtxos that are not yet spent, grouped by confirmation height.
+	/// Get the current frontier: all vtxos that are in the frontier and not yet
+	/// spent on-chain, grouped by confirmation height.
 	pub async fn get_frontier(
 		&self,
 	) -> anyhow::Result<BTreeMap<VtxoId, (Option<BlockHeight>, ServerVtxo)>> {
 		let stmt = self.prepare("
-			SELECT f.confirmed_height, v.vtxo FROM watchman_vtxo_frontier f
-			JOIN vtxo v ON f.vtxo_id = v.vtxo_id
-			WHERE f.spent_height IS NULL
+			SELECT confirmed_height, vtxo FROM vtxo
+			WHERE frontier_at IS NOT NULL AND onchain_spent_height IS NULL
 		").await?;
 
 		let mut frontier = BTreeMap::new();
@@ -102,18 +122,16 @@ impl<'t> Tx<'t> {
 		Ok(frontier)
 	}
 
-	/// Get frontier vtxos that were created after `since`, used for the periodic
-	/// in-memory sync. Returns unspent entries so the caller can register any
-	/// that are not yet in the in-memory frontier.
+	/// Get frontier vtxos that joined the frontier after `since`, used for the
+	/// periodic in-memory sync. Returns unspent entries so the caller can
+	/// register any that are not yet in the in-memory frontier.
 	pub async fn get_frontier_vtxos_since(
 		&self,
 		since: chrono::DateTime<chrono::Utc>,
 	) -> anyhow::Result<Vec<(ServerVtxo, Option<BlockHeight>)>> {
 		let stmt = self.prepare_typed("
-			SELECT f.confirmed_height, v.vtxo
-			FROM watchman_vtxo_frontier f
-			JOIN vtxo v ON f.vtxo_id = v.vtxo_id
-			WHERE v.created_at > $1 AND f.spent_height IS NULL
+			SELECT confirmed_height, vtxo FROM vtxo
+			WHERE frontier_at > $1 AND onchain_spent_height IS NULL
 		", &[Type::TIMESTAMPTZ]).await?;
 
 		let rows = self.query(&stmt, &[&since]).await?;
@@ -147,9 +165,7 @@ impl<'t> Tx<'t> {
 			SELECT DISTINCT v.vtxo_txid
 			FROM vtxo v
 			JOIN virtual_transaction vt ON vt.txid = v.vtxo_txid AND vt.is_funding = true
-			WHERE NOT EXISTS (
-				SELECT 1 FROM watchman_vtxo_frontier f WHERE f.vtxo_id = v.vtxo_id
-			)
+			WHERE v.frontier_at IS NULL
 		").await?;
 
 		let rows = self.query(&stmt, &[]).await?;
@@ -165,16 +181,17 @@ impl<'t> Tx<'t> {
 	/// Rollback frontier state after a chain reorg.
 	/// Clears confirmed_height and spent data for entries above the fork point.
 	pub async fn reorg_frontier(&self, height: BlockHeight) -> anyhow::Result<()> {
-		let stmt = self.prepare_typed(
-			"UPDATE watchman_vtxo_frontier SET confirmed_height = NULL WHERE confirmed_height > $1",
-			&[Type::INT4],
-		).await?;
+		let stmt = self.prepare_typed("
+			UPDATE vtxo SET confirmed_height = NULL, updated_at = NOW()
+			WHERE confirmed_height > $1
+		", &[Type::INT4]).await?;
 		self.execute(&stmt, &[&(height as i32)]).await?;
 
-		let stmt = self.prepare_typed(
-			"UPDATE watchman_vtxo_frontier SET spent_height = NULL, spent_txid = NULL WHERE spent_height > $1",
-			&[Type::INT4],
-		).await?;
+		let stmt = self.prepare_typed("
+			UPDATE vtxo
+			SET onchain_spent_height = NULL, onchain_spent_txid = NULL, updated_at = NOW()
+			WHERE onchain_spent_height > $1
+		", &[Type::INT4]).await?;
 		self.execute(&stmt, &[&(height as i32)]).await?;
 
 		Ok(())

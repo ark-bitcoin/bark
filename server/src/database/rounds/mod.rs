@@ -104,12 +104,7 @@ impl<'t> Tx<'t> {
 		tree::execute_vtxo_tree_update(&self, update).await?;
 
 		// register the funding output vtxos directly into the frontier
-		self.execute(
-			"INSERT INTO watchman_vtxo_frontier (vtxo_id) \
-			SELECT vtxo_id FROM vtxo WHERE vtxo_txid = $1 \
-			ON CONFLICT DO NOTHING",
-			&[&funding_txid.to_string()],
-		).await?;
+		self.add_funding_vtxos_to_frontier(funding_txid, None).await?;
 
 		Ok(())
 	}
@@ -403,13 +398,6 @@ impl<'t> Tx<'t> {
 			&[Type::TEXT],
 		).await?;
 		self.execute(&stmt, &[&round_id_str]).await?;
-
-		// Delete watchman frontier rows before vtxos (FK constraint).
-		let stmt = self.prepare_typed(
-			"DELETE FROM watchman_vtxo_frontier WHERE vtxo_id = ANY($1)",
-			&[Type::TEXT_ARRAY],
-		).await?;
-		self.execute(&stmt, &[&output_vtxo_ids]).await?;
 
 		// Delete vtxos that were created by this round (output and internal tree vtxos).
 		let stmt = self.prepare_typed(
