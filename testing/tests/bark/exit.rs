@@ -1244,3 +1244,55 @@ async fn bark_should_exit_a_htlc_recv_that_server_refuse_to_cosign() {
 	assert_eq!(exit_movement.time.completed_at.is_some(), true);
 	assert_eq!(exit_movement.metadata.is_none(), true);
 }
+
+/// Once a VTXO is queued for exit but before the chain has broadcast, the wallet should
+/// still let the user spend it via the normal Ark protocol — refresh, OOR send, etc. If
+/// that happens, the exit progress code notices the VTXO is gone and transitions to the
+/// terminal `VtxoAlreadySpent` state with the exit movement Canceled.
+#[tokio::test]
+async fn vtxo_remains_spendable_while_exit_pending() {
+	require_bark_version!(> "0.2.0");
+
+	let ctx = TestContext::new("exit/vtxo_remains_spendable_while_exit_pending").await;
+	let srv = ctx.captaind("server").funded(btc(10)).create().await;
+	let bark = ctx.bark("bark", &srv).funded(sat(1_000_000)).create().await;
+
+	bark.board_and_confirm_and_register(&ctx, sat(500_000)).await;
+	let board_vtxos = bark.vtxos().await;
+	assert_eq!(board_vtxos.len(), 1);
+	let original_id = board_vtxos[0].id;
+
+	// Queue the VTXO for exit but don't progress it yet — it should remain Spendable
+	// and visible to coin selection.
+	bark.start_exit_all().await;
+	let after_start = bark.vtxos().await;
+	assert_eq!(after_start.len(), 1, "vtxo should remain in spendable set");
+	assert!(matches!(after_start[0].state, VtxoStateInfo::Spendable),
+		"vtxo state should still be Spendable, got {:?}", after_start[0].state);
+
+	// Refresh through a round — this consumes the original VTXO and produces a new one.
+	ctx.refresh_all(&srv, &[&bark]).await;
+	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
+
+	let after_refresh = bark.vtxos().await;
+	assert_eq!(after_refresh.len(), 1, "refresh should produce a new vtxo");
+	assert_ne!(after_refresh[0].id, original_id,
+		"the original vtxo should have been replaced by the round output");
+
+	// Now progress the exit — it should detect the original VTXO has been spent and
+	// abort to the VtxoAlreadySpent terminal state.
+	bark.progress_exit().await;
+
+	let exits = bark.list_exits().await;
+	assert_eq!(exits.len(), 1);
+	assert_eq!(exits[0].vtxo_id, original_id);
+	assert!(matches!(exits[0].state, ExitState::VtxoAlreadySpent(_)),
+		"exit should be in VtxoAlreadySpent, got {:?}", exits[0].state);
+
+	// And the exit movement should now be Canceled.
+	let exit_movement = bark.history().await.into_iter()
+		.find(|m| m.subsystem.name == "bark.exit")
+		.expect("exit movement should exist");
+	assert_eq!(exit_movement.status, MovementStatus::Canceled);
+	assert!(exit_movement.time.completed_at.is_some());
+}
