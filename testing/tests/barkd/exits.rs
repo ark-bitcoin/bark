@@ -1,4 +1,8 @@
 
+use std::collections::HashSet;
+
+use bitcoin::Txid;
+
 use ark_testing::{btc, require_bark_version, sat, TestContext};
 use ark_testing::constants::BOARD_CONFIRMATIONS;
 
@@ -38,6 +42,29 @@ async fn exit_start_all_and_progress_barkd() {
 	// Fund the on-chain wallet for CPFP fees, then let the daemon drive to completion.
 	ctx.fund_barkd(&barkd, sat(100_000)).await;
 	wait_for_exits_claimable(&ctx, &barkd).await;
+
+	// The CPFP children recorded against each exit package are the ground truth.
+	let statuses = barkd.get_all_exit_status(None, Some(true)).await;
+	let expected_cpfp_txids: HashSet<Txid> = statuses.iter()
+		.flat_map(|s| s.transactions.iter())
+		.filter_map(|pkg| pkg.child.as_ref().map(|c| c.info.txid))
+		.collect();
+	assert!(
+		!expected_cpfp_txids.is_empty(),
+		"exit progression should have produced at least one CPFP child",
+	);
+
+	// Make sure the on-chain wallet has seen everything before we read its tx list.
+	barkd.onchain_sync().await;
+	let txs = barkd.onchain_transactions().await;
+	let labeled_cpfp_txids: HashSet<Txid> = txs.iter()
+		.filter(|t| t.is_cpfp)
+		.map(|t| t.txid)
+		.collect();
+	assert_eq!(
+		labeled_cpfp_txids, expected_cpfp_txids,
+		"onchain_transactions `is_cpfp` set must match the exit-package child set",
+	);
 }
 
 /// Verify `POST /exits/claim/all` sweeps claimable exits to an on-chain address.
