@@ -473,7 +473,10 @@ pub struct Balance {
 	pub claimable_lightning_receive: Amount,
 	/// Coins locked in a round.
 	pub pending_in_round: Amount,
-	/// Coins that are in the process of unilaterally exiting the Ark.
+	/// Coins held in VTXOs whose unilateral exit chain has confirmed onchain but which
+	/// haven't yet been drained back to the onchain wallet. While in this state the
+	/// VTXOs are [`vtxo::VtxoStateKind::Exited`] and unusable in the Ark protocol; the
+	/// drain transaction moves them to spendable onchain output.
 	/// None if exit subsystem was unavailable
 	pub pending_exit: Option<Amount>,
 	/// Coins that are pending sufficient confirmations from board transactions.

@@ -2753,7 +2753,7 @@
               "null"
             ],
             "format": "int64",
-            "description": "Sats in VTXOs undergoing an emergency exit back on-chain.\n`null` if the exit subsystem is unavailable.",
+            "description": "Sats held in VTXOs whose unilateral exit chain is confirmed on-chain but which\nhaven't yet been drained to the onchain wallet. Equivalent to the sum of\n`Exited` VTXOs whose exit state hasn't reached `Claimed`.\n`null` if the exit subsystem is unavailable.",
             "minimum": 0
           },
           "pending_in_round_sat": {
