@@ -33,6 +33,7 @@ mod m0032_exit_state_refactor;
 mod m0033_paid_invoice;
 mod m0034_unlock_failed_movement_vtxos;
 mod m0035_exit_vtxo_pending;
+mod m0036_pending_exit_movements;
 
 use anyhow::Context;
 use log::debug;
@@ -73,6 +74,7 @@ use m0032_exit_state_refactor::Migration0032;
 use m0033_paid_invoice::Migration0033;
 use m0034_unlock_failed_movement_vtxos::Migration0034;
 use m0035_exit_vtxo_pending::Migration0035;
+use m0036_pending_exit_movements::Migration0036;
 
 pub struct MigrationContext {}
 
@@ -125,6 +127,7 @@ impl MigrationContext {
 		self.try_migration(conn, &Migration0033{})?;
 		self.try_migration(conn, &Migration0034{})?;
 		self.try_migration(conn, &Migration0035{})?;
+		self.try_migration(conn, &Migration0036{})?;
 
 		Ok(())
 	}
@@ -279,7 +282,7 @@ mod test {
 
 		// Perform the migrations and confirm it took effect
 		migs.do_all_migrations(&mut conn).unwrap();
-		assert_current_version(&conn, 35).unwrap();
+		assert_current_version(&conn, 36).unwrap();
 
 		assert!(table_exists(&conn, "bark_vtxo").unwrap());
 		assert!(table_exists(&conn, "bark_vtxo_state").unwrap());

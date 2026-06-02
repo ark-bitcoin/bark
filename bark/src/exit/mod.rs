@@ -206,13 +206,9 @@ impl ExitInner {
 				}
 			};
 
-			// We register the movement as finished — we still don't support canceling
-			// exits, so once started we treat the funds as gone. A follow-up commit
-			// flips this to a Pending movement that tracks completion onchain.
-			let movement_id = self.movement_manager.new_finished_movement(
+			let movement_id = self.movement_manager.new_movement_with_update(
 				Subsystem::EXIT,
 				ExitMovement::Exit.to_string(),
-				MovementStatus::Successful,
 				MovementUpdate::new()
 					.intended_and_effective_balance(balance)
 					.consumed_vtxo(vtxo_id)
@@ -516,6 +512,7 @@ impl Exit {
 			}
 
 			info!("Progressing exit for VTXO {}", ev.id());
+			let pre_state = ev.state().clone();
 			let error = match ev.progress(
 				wallet,
 				&mut guard.tx_manager,
@@ -534,6 +531,12 @@ impl Exit {
 					Some(e)
 				}
 			};
+
+			let state_changed = ev.state() != &pre_state;
+			Self::reconcile_vtxo_and_movement(
+				&guard.movement_manager, ev, state_changed,
+			).await;
+
 			if !matches!(ev.state(), ExitState::Claimed(..)) {
 				exit_statuses.push(ExitProgressStatus {
 					vtxo_id: ev.id(),
@@ -547,6 +550,33 @@ impl Exit {
 		Ok(Some(exit_statuses))
 	}
 
+	/// Drives the exit movement to its terminal status once the exit state machine
+	/// reaches one. `Claimed` flips it to `Successful`; `VtxoAlreadySpent` flips it to
+	/// `Canceled`. Only fires on a fresh state change so we don't spam notifications.
+	///
+	/// Failures are logged and don't abort progress.
+	async fn reconcile_vtxo_and_movement(
+		movements: &MovementManager,
+		ev: &ExitVtxo,
+		state_changed: bool,
+	) {
+		if !state_changed {
+			return;
+		}
+		let Some(movement_id) = ev.movement_id() else { return };
+		let new_status = match ev.state() {
+			ExitState::Claimed(_) => MovementStatus::Successful,
+			ExitState::VtxoAlreadySpent(_) => MovementStatus::Canceled,
+			_ => return,
+		};
+		if let Err(e) = movements.finish_movement(movement_id, new_status).await {
+			error!(
+				"Failed to finalize exit movement {} as {:?}: {:#}",
+				movement_id, new_status, e,
+			);
+		}
+	}
+
 	/// For use when syncing. Pending exits will be initialized, the network status of each
 	/// [ExitTransactionPackage] will be updated, and finally, any unilateral exits that are waiting
 	/// for network updates will be progressed.
@@ -558,11 +588,21 @@ impl Exit {
 		guard.refresh_tx_state().await?;
 		let mut exit_vtxos = std::mem::take(&mut guard.exit_vtxos);
 		for exit in &mut exit_vtxos {
+			if !exit.is_initialized() {
+				warn!("Skipping progress of uninitialized unilateral exit {}", exit.id());
+				continue;
+			}
+
+			let pre_state = exit.state().clone();
 			if let Err(e) = exit.progress(
 				wallet, &mut guard.tx_manager, false,
 			).await {
 				error!("Error syncing exit for VTXO {}: {}", exit.id(), e);
 			}
+			let state_changed = exit.state() != &pre_state;
+			Self::reconcile_vtxo_and_movement(
+				&guard.movement_manager, exit, state_changed,
+			).await;
 		}
 		guard.exit_vtxos = exit_vtxos;
 		Ok(())

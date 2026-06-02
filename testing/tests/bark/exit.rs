@@ -532,9 +532,7 @@ async fn bark_should_exit_a_pending_board() {
 	assert_eq!(bark.offchain_balance().await.pending_exit, Some(board_amount));
 
 	let movements = bark.history().await;
-	let [board_mvt, exit_mvt] = movements.as_slice() else {
-		panic!("Should have at least two movements");
-	};
+	let board_mvt = movements.first().unwrap();
 	assert_eq!(board_mvt.status, MovementStatus::Failed);
 	assert_eq!(board_mvt.subsystem.name, "bark.board");
 	assert_eq!(board_mvt.subsystem.kind, "board");
@@ -555,6 +553,19 @@ async fn bark_should_exit_a_pending_board() {
 	let onchain_fee = metadata.get("onchain_fee_sat").map(|of| Amount::from_sat(serde_json::from_value::<u64>(of.clone()).unwrap()));
 	assert_eq!(onchain_fee, Some(sat(772)));
 
+	// Now verify that the exit can complete
+	complete_exit(&ctx, &bark).await;
+	bark.claim_all_exits(bark.get_onchain_address().await).await;
+	ctx.generate_blocks(1).await;
+	// One more progress pass so the exit state advances from Claimable → Claimed
+	// now that the drain tx has confirmed — that's what flips the movement to Successful.
+	bark.progress_exit().await;
+	assert_eq!(bark.onchain_balance().await, sat(997_201));
+
+	// Re-fetch the exit movement once the exit has completed — it should now be Successful.
+	let movements = bark.history().await;
+	let exit_mvt = movements.iter().find(|m| m.subsystem.name == "bark.exit")
+		.expect("exit movement should exist");
 	assert_eq!(exit_mvt.status, MovementStatus::Successful);
 	assert_eq!(exit_mvt.subsystem.name, "bark.exit");
 	assert_eq!(exit_mvt.subsystem.kind, "start");
@@ -576,13 +587,7 @@ async fn bark_should_exit_a_pending_board() {
 	assert_eq!(*exit_mvt.input_vtxos.first().unwrap(), board_vtxo.id);
 	assert_eq!(exit_mvt.output_vtxos.len(), 0);
 	assert_eq!(exit_mvt.exited_vtxos.len(), 0);
-	assert_eq!(exit_mvt.time.completed_at.is_some(), true);
-
-	// Now verify that the exit can complete
-	complete_exit(&ctx, &bark).await;
-	bark.claim_all_exits(bark.get_onchain_address().await).await;
-	ctx.generate_blocks(1).await;
-	assert_eq!(bark.onchain_balance().await, sat(997_201));
+	assert!(exit_mvt.time.completed_at.is_some());
 }
 
 #[tokio::test]
@@ -676,6 +681,8 @@ async fn bark_should_exit_a_failed_htlc_out_that_server_refuse_to_revoke() {
 
 	bark_1.claim_all_exits(bark_1.get_onchain_address().await).await;
 	ctx.generate_blocks(1).await;
+	// Drive the exit past Claimable → Claimed now that the drain has confirmed.
+	bark_1.progress_exit().await;
 
 	assert_eq!(bark_1.onchain_balance().await, sat(199_994_174));
 
@@ -832,6 +839,8 @@ async fn bark_should_exit_a_pending_htlc_out_that_server_refuse_to_revoke() {
 
 	bark_1.claim_all_exits(bark_1.get_onchain_address().await).await;
 	ctx.generate_blocks(1).await;
+	// Drive the exit past Claimable → Claimed now that the drain has confirmed.
+	bark_1.progress_exit().await;
 	assert_eq!(bark_1.onchain_balance().await, sat(199_994_174));
 
 	assert_eq!(bark_1.offchain_balance().await.pending_lightning_send, btc(0));
@@ -1169,6 +1178,8 @@ async fn bark_should_exit_a_htlc_recv_that_server_refuse_to_cosign() {
 
 	bark.claim_all_exits(bark.get_onchain_address().await).await;
 	ctx.generate_blocks(1).await;
+	// Drive the exit past Claimable → Claimed now that the drain has confirmed.
+	bark.progress_exit().await;
 
 	assert_eq!(bark.onchain_balance().await, sat(109_993_699));
 
