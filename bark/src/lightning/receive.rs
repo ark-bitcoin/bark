@@ -134,6 +134,28 @@ impl Wallet {
 		Ok(self.inner.db.fetch_lightning_receive_by_payment_hash(payment.into()).await?)
 	}
 
+	/// Attempts to exit a [LightningReceive] for the given [PaymentHash]. This method is provided
+	/// for the rare situation where HTLCs were received, the preimage was revealed, but the HTLCs
+	/// can't be revoked.
+	///
+	/// Certain preconditions must be met for this method to succeed:
+	/// - The preimage must have been previously revealed
+	/// - The HTLC VTXOs must all be locked
+	pub async fn attempt_lightning_receive_exit(
+		&self,
+		payment: impl Into<PaymentHash>,
+	) -> anyhow::Result<()> {
+		let receive = self.inner.db.fetch_lightning_receive_by_payment_hash(payment.into()).await?
+			.context("no pending lightning receive found for payment hash")?;
+		if receive.preimage_revealed_at.is_none() {
+			bail!("preimage must be revealed before attempting to exit");
+		}
+		if receive.htlc_vtxos.is_empty() {
+			bail!("Nothing to exit, no htlcs have been created yet!");
+		}
+		self.exit_lightning_receive(&receive).await
+	}
+
 	/// Claim given incoming lightning payment.
 	///
 	/// This function reveals the preimage of the lightning payment in
@@ -332,7 +354,7 @@ impl Wallet {
 			protos::LightningReceiveStatus::Settled => bail!("payment already settled"),
 			protos::LightningReceiveStatus::Canceled => {
 				warn!("payment was canceled. removing pending lightning receive");
-				self.exit_or_cancel_lightning_receive(&receive).await?;
+				self.handle_failed_lightning_receive(&receive).await?;
 				return Ok(None);
 			},
 		}
@@ -485,7 +507,7 @@ impl Wallet {
 		Ok(())
 	}
 
-	pub(crate) async fn exit_or_cancel_lightning_receive(
+	pub(crate) async fn handle_failed_lightning_receive(
 		&self,
 		lightning_receive: &LightningReceive,
 	) -> anyhow::Result<()> {
@@ -493,7 +515,11 @@ impl Wallet {
 
 		let update_opt = match (vtxos.is_empty(), lightning_receive.preimage_revealed_at) {
 			(false, Some(_)) => {
-				return self.exit_lightning_receive(lightning_receive).await;
+				// Preimage was disclosed but the claim failed: the HTLC VTXOs are
+				// still locked and need to be exited on-chain. We don't auto-exit
+				// anymore — leave the receive pending and let the caller decide
+				// when to call `attempt_lightning_receive_exit`.
+				return Ok(());
 			}
 			(false, None) => {
 				warn!("HTLC-recv VTXOs are about to expire, but preimage has not been disclosed yet. Canceling");
@@ -559,7 +585,7 @@ impl Wallet {
 		}).await.context("server refused cancellation")?;
 
 		// Clean up local state: mark htlc vtxos as spent and finish the receive
-		self.exit_or_cancel_lightning_receive(&receive).await?;
+		self.handle_failed_lightning_receive(&receive).await?;
 
 		Ok(())
 	}
