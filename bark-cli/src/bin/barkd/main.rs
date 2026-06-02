@@ -11,14 +11,14 @@ use log::{info, warn};
 use tokio::sync::RwLock;
 
 use bark_json::web::{BarkNetwork, BitcoindAuth, ChainSourceConfig, CreateWalletRequest};
-use bark_rest::{Config, OnWalletCreate, OnWalletDelete, RestServer, ServerWallet};
+use bark_rest::{Config, OnGetMnemonic, OnWalletCreate, OnWalletDelete, RestServer, ServerWallet};
 use bark_rest::http::HeaderValue;
 use bark_rest::error::ContextExt;
 use bark_rest::auth::AuthToken;
 
 use bark_cli::VERSION_DIRTY;
 use bark_cli::log::init_logging;
-use bark_cli::wallet::{ConfigOpts, CreateOpts, create_wallet, open_wallet, AUTH_TOKEN_FILE};
+use bark_cli::wallet::{ConfigOpts, CreateOpts, create_wallet, open_wallet, read_mnemonic, AUTH_TOKEN_FILE};
 
 
 /// The full version string we show in our binary.
@@ -74,6 +74,16 @@ struct Cli {
 	/// If not set, all cross-origin requests are denied.
 	#[arg(long, env = "BARKD_ALLOWED_ORIGINS", value_delimiter = ',')]
 	allowed_origins: Vec<String>,
+
+	/// Expose `GET /api/v1/wallet/mnemonic`, which returns the wallet's BIP-39
+	/// mnemonic phrase. Disabling responds with 404.
+	#[arg(
+		long,
+		env = "BARKD_EXPOSE_MNEMONIC",
+		default_value_t = true,
+		value_parser = BoolishValueParser::new(),
+	)]
+	expose_mnemonic: bool,
 }
 
 #[derive(Subcommand)]
@@ -373,9 +383,20 @@ async fn main() -> anyhow::Result<()>{
 		}
 	});
 
+	let on_get_mnemonic: Option<Arc<OnGetMnemonic>> = if cli.expose_mnemonic {
+		let datadir = datadir.clone();
+		Some(Arc::new(move || {
+			let datadir = datadir.clone();
+			Box::pin(async move { read_mnemonic(&datadir).await })
+		}))
+	} else {
+		None
+	};
+
 	let inner_wallet = wallet_opt.as_ref().map(|w| w.wallet.clone());
 	let server = RestServer::start(
-		&cli.to_config()?, Some(auth_token), wallet_opt, Some(on_wallet_create), Some(on_wallet_delete),
+		&cli.to_config()?, Some(auth_token), wallet_opt,
+		Some(on_wallet_create), Some(on_wallet_delete), on_get_mnemonic,
 	).await?;
 
 	run_shutdown_signal_listener().await;

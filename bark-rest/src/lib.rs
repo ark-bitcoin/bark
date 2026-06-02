@@ -43,6 +43,10 @@ pub type OnWalletCreate = dyn Fn(CreateWalletRequest)
 pub type OnWalletDelete = dyn Fn()
 	-> BoxFuture<anyhow::Result<()>> + Send + Sync;
 
+/// A hook that returns the wallet's BIP-39 mnemonic phrase.
+pub type OnGetMnemonic = dyn Fn()
+	-> BoxFuture<anyhow::Result<String>> + Send + Sync;
+
 const CRATE_VERSION : &'static str = env!("CARGO_PKG_VERSION");
 
 // NB please keep below 1000 chars for crates.io publish
@@ -149,6 +153,9 @@ pub struct ServerState {
 	/// A hook to be called when a wallet is deleted,
 	///in addition to removing the wallet from the server state
 	on_wallet_delete: Option<Arc<OnWalletDelete>>,
+	/// A hook to be called to retrieve the wallet's mnemonic phrase.
+	/// When `None`, the mnemonic endpoint responds with 404.
+	on_get_mnemonic: Option<Arc<OnGetMnemonic>>,
 
 	/// A map of websocket tickets to their expiration time
 	///
@@ -163,12 +170,14 @@ impl ServerState {
 		auth_token: Option<AuthToken>,
 		on_wallet_create: Option<Arc<OnWalletCreate>>,
 		on_wallet_delete: Option<Arc<OnWalletDelete>>,
+		on_get_mnemonic: Option<Arc<OnGetMnemonic>>,
 	) -> Self {
 		ServerState {
 			wallet: Arc::new(parking_lot::RwLock::new(wallet)),
 			on_wallet_create,
 			auth_token,
 			on_wallet_delete,
+			on_get_mnemonic,
 
 			websocket_tickets: Arc::new(RwLock::new(HashMap::new())),
 		}
@@ -203,6 +212,7 @@ impl RestServer {
 		wallet: Option<ServerWallet>,
 		on_wallet_create: Option<Arc<OnWalletCreate>>,
 		on_wallet_delete: Option<Arc<OnWalletDelete>>,
+		on_get_mnemonic: Option<Arc<OnGetMnemonic>>,
 	) -> anyhow::Result<Self> {
 		let (router, api) = OpenApiRouter::with_openapi(ApiDoc::openapi())
 			.split_for_parts();
@@ -213,7 +223,9 @@ impl RestServer {
 			warn!("No auth token configured — all authentication is disabled");
 		}
 
-		let state = ServerState::new(wallet, auth_token, on_wallet_create, on_wallet_delete);
+		let state = ServerState::new(
+			wallet, auth_token, on_wallet_create, on_wallet_delete, on_get_mnemonic,
+		);
 
 		let router = router
 			.route("/ping", get(ping))

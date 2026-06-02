@@ -13,6 +13,7 @@ Method | HTTP request | Description
 [**get_vtxo_encoded**](WalletApi.md#get_vtxo_encoded) | **GET** /api/v1/wallet/vtxos/{id}/encoded | Get encoded VTXO
 [**history**](WalletApi.md#history) | **GET** /api/v1/wallet/history | Get wallet history (deprecated)
 [**import_vtxo**](WalletApi.md#import_vtxo) | **POST** /api/v1/wallet/import-vtxo | Import a VTXO
+[**mnemonic**](WalletApi.md#mnemonic) | **GET** /api/v1/wallet/mnemonic | Get wallet mnemonic
 [**movements**](WalletApi.md#movements) | **GET** /api/v1/wallet/movements | List movements (deprecated)
 [**next_round**](WalletApi.md#next_round) | **GET** /api/v1/wallet/next-round | Get next round time
 [**offboard_all**](WalletApi.md#offboard_all) | **POST** /api/v1/wallet/offboard/all | Offboard all VTXOs
@@ -282,6 +283,33 @@ Name | Type | Description  | Required | Notes
 ### HTTP request headers
 
 - **Content-Type**: application/json
+- **Accept**: application/json
+
+[[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
+
+
+## mnemonic
+
+> models::MnemonicResponse mnemonic()
+Get wallet mnemonic
+
+Returns the BIP-39 mnemonic phrase backing the wallet. Returns 404 when mnemonic exposure is disabled (`BARKD_EXPOSE_MNEMONIC=false` on barkd).
+
+### Parameters
+
+This endpoint does not need any parameter.
+
+### Return type
+
+[**models::MnemonicResponse**](MnemonicResponse.md)
+
+### Authorization
+
+[bearer](../README.md#bearer)
+
+### HTTP request headers
+
+- **Content-Type**: Not defined
 - **Accept**: application/json
 
 [[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)

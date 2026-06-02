@@ -27,6 +27,7 @@ pub fn router() -> Router<ServerState> {
 		.route("/", get(wallet_exists).post(create_wallet).delete(wallet_delete))
 		.route("/connected", get(connected))
 		.route("/create", post(create_wallet))
+		.route("/mnemonic", get(mnemonic))
 		.route("/ark-info", get(ark_info))
 		.route("/next-round", get(next_round))
 		.route("/addresses/next", post(address))
@@ -57,6 +58,7 @@ pub fn router() -> Router<ServerState> {
 		wallet_delete,
 		connected,
 		create_wallet,
+		mnemonic,
 		ark_info,
 		next_round,
 		address,
@@ -87,6 +89,7 @@ pub fn router() -> Router<ServerState> {
 		bark_json::web::ConnectedResponse,
 		bark_json::web::CreateWalletRequest,
 		bark_json::web::CreateWalletResponse,
+		bark_json::web::MnemonicResponse,
 		bark_json::cli::ArkInfo,
 		bark_json::cli::NextRoundStart,
 		bark_json::web::VtxosQuery,
@@ -225,6 +228,30 @@ pub async fn create_wallet(
 	} else {
 		badarg!("No wallet creation hook set");
 	}
+}
+
+#[utoipa::path(
+	get,
+	path = "/mnemonic",
+	summary = "Get wallet mnemonic",
+	responses(
+		(status = 200, description = "Returns the wallet's BIP-39 mnemonic phrase", body = bark_json::web::MnemonicResponse),
+		(status = 404, description = "Mnemonic retrieval is disabled", body = error::NotFoundError),
+		(status = 500, description = "Internal server error", body = error::InternalServerError)
+	),
+	description = "Returns the BIP-39 mnemonic phrase backing the wallet. Returns 404 when \
+		mnemonic exposure is disabled (`BARKD_EXPOSE_MNEMONIC=false` on barkd).",
+	tag = "wallet"
+)]
+#[debug_handler]
+pub async fn mnemonic(
+	State(state): State<ServerState>,
+) -> HandlerResult<Json<bark_json::web::MnemonicResponse>> {
+	let Some(hook) = state.on_get_mnemonic.as_ref() else {
+		not_found!(Vec::<String>::new(), "Mnemonic endpoint is disabled");
+	};
+	let mnemonic = hook().await?;
+	Ok(axum::Json(bark_json::web::MnemonicResponse { mnemonic }))
 }
 
 #[utoipa::path(

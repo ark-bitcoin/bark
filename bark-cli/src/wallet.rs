@@ -431,6 +431,14 @@ async fn try_create_wallet(
 	Ok(())
 }
 
+/// Read the raw mnemonic phrase from the wallet datadir.
+pub async fn read_mnemonic(datadir: &Path) -> anyhow::Result<String> {
+	let path = datadir.join(MNEMONIC_FILE);
+	let s = tokio::fs::read_to_string(&path).await
+		.with_context(|| format!("failed to read mnemonic file at {}", path.display()))?;
+	Ok(s.trim().to_string())
+}
+
 pub async fn open_wallet(datadir: &Path) -> anyhow::Result<Option<(BarkWallet, OnchainWallet)>> {
 	debug!("Opening bark wallet in {}", datadir.display());
 

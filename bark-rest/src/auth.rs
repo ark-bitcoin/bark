@@ -170,6 +170,7 @@ mod tests {
 			on_wallet_create: None,
 			auth_token: Some(token),
 			on_wallet_delete: None,
+			on_get_mnemonic: None,
 
 			websocket_tickets: Arc::new(RwLock::new(HashMap::new())),
 		})
