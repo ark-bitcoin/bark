@@ -1,0 +1,5 @@
+- the wallet maintenance will now do rounds JIT, so it will not lock VTXOs
+  while waiting for a round to start
+  - if any existing rounds were ongoing and can be cancelled, it will cancel them first;
+    this is done to clean up probably stuck rounds and later refresh again
+  [#2113](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2113)
