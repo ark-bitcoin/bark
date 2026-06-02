@@ -1,0 +1,5 @@
+- Surface `is_cpfp` on `bark::onchain::WalletTxInfo`
+  Flags transactions that spend a P2A fee anchor — typically the wallet's
+  own CPFP children bumping an exit transaction. Lets consumers label or
+  hide these internal txs in user-facing transaction lists.
+  [#2119](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2119)
