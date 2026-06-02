@@ -347,11 +347,12 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{bail, Context};
+use ark::rounds::RoundEvent;
 use bip39::Mnemonic;
 use bitcoin::{Amount, Network, OutPoint};
 use bitcoin::bip32::{self, ChildNumber, Fingerprint};
 use bitcoin::secp256k1::{self, Keypair, PublicKey};
-use log::{trace, info, warn, error};
+use log::{debug, error, info, trace, warn};
 
 use ark::{ArkInfo, ProtocolEncoding, Vtxo, VtxoId, VtxoPolicy, VtxoRequest};
 use ark::address::VtxoDelivery;
@@ -361,6 +362,7 @@ use ark::vtxo::policy::signing::VtxoSigner;
 use bitcoin_ext::{BlockHeight, P2TR_DUST};
 use server_rpc::{protos, ServerConnection};
 use server_rpc::client::{ConnectError, CreateEndpointError};
+use tokio_stream::StreamExt;
 use crate::chain::{ChainSource, ChainSourceSpec};
 use crate::exit::Exit;
 use crate::lock_manager::LockManager;
@@ -1458,10 +1460,30 @@ impl Wallet {
 		info!("Starting wallet maintenance in interactive mode");
 		self.sync().await;
 
+		// First try progress any rounds that exist, best effort.
 		let rounds = self.progress_pending_rounds(None).await;
 		if let Err(e) = rounds.as_ref() {
 			warn!("Error progressing pending rounds: {:#}", e);
 		}
+
+		// Then if there are still some participations open, try to cancel them.
+		let states = self.inner.db.get_pending_round_state_ids().await?;
+		for id in states {
+			debug!("Cancelling pending round participation {}", id);
+			let mut state = match self.lock_wait_round_state(id).await {
+				Ok(Some(s)) => s,
+				Ok(None) => continue, // round disappeared, not our problem
+				Err(e) => {
+					warn!("Failed to lock round state with id {}: {:#}", id, e);
+					continue;
+				}
+			};
+			if let Err(e) = state.state_mut().try_cancel(self).await {
+				warn!("Error cancelling pending round: {:#}", e);
+			}
+		}
+
+		// And then call refresh so that we can start again.
 		let refresh = self.maintenance_refresh().await;
 		if let Err(e) = refresh.as_ref() {
 			warn!("Error refreshing VTXOs: {:#}", e);
@@ -1616,8 +1638,22 @@ impl Wallet {
 			return Ok(None);
 		}
 
-		info!("Performing maintenance refresh");
-		self.refresh_vtxos(vtxos).await
+		info!("Waiting for round to perform maintenance refresh...");
+		let mut events = self.subscribe_round_events().await?;
+		while let Some(event) = events.next().await {
+			match event {
+				Ok(RoundEvent::Attempt(a)) if a.attempt_seq == 0 => {
+					let vtxos = self.get_vtxos_to_refresh().await?;
+					if vtxos.len() == 0 {
+						return Ok(None);
+					}
+					debug!("Round {} started, triggering refresh", a.round_seq);
+					return self.refresh_vtxos(vtxos).await;
+				},
+				_ => {},
+			}
+		}
+		Ok(None)
 	}
 
 	/// Sync offchain wallet and update onchain fees. This is a much more lightweight alternative
