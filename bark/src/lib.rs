@@ -1139,12 +1139,13 @@ impl Wallet {
 		config: &Config,
 		network: Network,
 	) -> anyhow::Result<ServerConnection> {
+		let server_address = crate::utils::url_with_default_https_scheme(&config.server_address);
 		let mut builder = ServerConnection::builder()
-			.address(&config.server_address)
+			.address(&server_address)
 			.network(network);
 
 		#[cfg(feature = "socks5-proxy")]
-		if let Some(proxy) = proxy_for_url(&config.socks5_proxy, &config.server_address)? {
+		if let Some(proxy) = proxy_for_url(&config.socks5_proxy, &server_address)? {
 			builder = builder.proxy(&proxy)
 		}
 
