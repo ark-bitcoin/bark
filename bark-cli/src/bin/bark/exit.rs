@@ -316,7 +316,6 @@ pub async fn claim_exits(
 	};
 
 	let address_spk = address.script_pubkey();
-
 	let fee_rate = wallet.chain().fee_rates().await.regular;
 	let psbt = wallet.exit_mgr().drain_exits(&vtxos, &wallet, address, Some(fee_rate)).await.unwrap();
 	let tx = psbt.extract_tx()?;

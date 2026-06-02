@@ -33,7 +33,7 @@ pub use crate::onchain::bdk::{OnchainWallet, TxBuilderExt};
 use std::sync::Arc;
 
 use bitcoin::{
-	Address, Amount, FeeRate, OutPoint, Psbt, SignedAmount, Transaction, Txid
+	Address, Amount, FeeRate, OutPoint, Psbt, Script, SignedAmount, Transaction, Txid,
 };
 
 use ark::Vtxo;
@@ -112,6 +112,12 @@ pub trait OnchainWalletTrait: std::any::Any + Send + Sync {
 
 	/// Retrieve information about the block, if any, a given wallet transaction was confirmed in
 	async fn get_wallet_tx_confirmed_block(&self, txid: Txid) -> anyhow::Result<Option<BlockRef>>;
+
+	/// Returns `true` if the given script pubkey belongs to the wallet's keychains.
+	async fn is_mine(&self, spk: &Script) -> anyhow::Result<bool>;
+
+	/// Register an unconfirmed transaction relevant to the wallet
+	async fn register_tx(&mut self, tx: &Transaction) -> anyhow::Result<()>;
 
 	/// Prepare a [Transaction] which will send to the given destinations
 	async fn prepare_tx(

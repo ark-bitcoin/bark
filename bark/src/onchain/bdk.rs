@@ -2,14 +2,14 @@ use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
 
 use anyhow::Context;
-use crate::utils::time::timestamp_secs;
 use bdk_esplora::EsploraAsyncExt;
 use bdk_wallet::chain::{Anchor, ChainPosition, CheckPoint};
 use bdk_wallet::Wallet as BdkWallet;
 use bdk_wallet::coin_selection::DefaultCoinSelectionAlgorithm;
 use bdk_wallet::{Balance, KeychainKind, LocalOutput, TxBuilder, TxOrdering};
 use bitcoin::{
-	Address, Amount, FeeRate, Network, OutPoint, Psbt, Sequence, Transaction, TxOut, Txid, Weight, bip32, psbt
+	Address, Amount, FeeRate, Network, OutPoint, Psbt, Script, Sequence, Transaction, TxOut,
+	Txid, Weight, bip32, psbt,
 };
 use log::{debug, error, info, trace, warn};
 
@@ -18,6 +18,7 @@ use bitcoin_ext::{BlockHeight, BlockRef, DEEPLY_CONFIRMED};
 use bitcoin_ext::bdk::{CpfpInternalError, WalletExt};
 use bitcoin_ext::cpfp::CpfpError;
 
+use crate::Wallet;
 use crate::chain::{ChainSource, ChainSourceClient};
 use crate::exit::{ExitVtxo, ExitState};
 use crate::onchain::{
@@ -25,7 +26,7 @@ use crate::onchain::{
 };
 use crate::persist::BarkPersister;
 use crate::psbtext::PsbtInputExt;
-use crate::Wallet;
+use crate::utils::time::timestamp_secs;
 
 const STOP_GAP: usize = 50;
 const PARALLEL_REQS: usize = 4;
@@ -180,6 +181,15 @@ impl OnchainWalletTrait for OnchainWallet {
 			},
 			None => Err(anyhow!("Tx {} does not exist in the wallet", txid)),
 		}
+	}
+
+	async fn is_mine(&self, spk: &Script) -> anyhow::Result<bool> {
+		Ok(self.inner.is_mine(spk.to_owned()))
+	}
+
+	async fn register_tx(&mut self, tx: &Transaction) -> anyhow::Result<()> {
+		self.inner.apply_unconfirmed_txs([(tx.clone(), timestamp_secs())]);
+		self.persist().await
 	}
 
 	async fn prepare_tx(
