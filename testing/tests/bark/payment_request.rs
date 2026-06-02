@@ -46,13 +46,55 @@ async fn parse_payment_request() {
 
 	let amount = sat(50_000);
 
+	// -- BIP321 with default payment methods (not amount)
+	{
+		let mut wallet1 = uri_builder_bark.client().await;
+		let uri = wallet1.bip321_uri().build().await.unwrap();
+
+		let request = uri_parser_bark.try_parse_payment_request(&uri.to_string()).await.unwrap();
+
+		assert_eq!(request.amount, None);
+		assert_eq!(request.label.as_deref(), None);
+		assert_eq!(request.message.as_deref(), None);
+		assert_eq!(request.options.len(), 1);
+		assert!(request.options.iter().any(|m| m.method.is_ark()), "should have ark method");
+		assert!(!request.options.iter().any(|m| m.method.is_bitcoin()), "should not have onchain method");
+		assert!(!request.options.iter().any(|m| m.method.is_lightning()), "should not have lightning method");
+		assert!(
+			request.options.iter().all(|m| m.errors.is_empty()),
+			"all methods should be valid",
+		);
+	}
+
+	// -- BIP321 with default payment methods (with amount)
+	{
+		let mut wallet1 = uri_builder_bark.client().await;
+		let uri = wallet1.bip321_uri()
+			.amount(amount)
+			.build().await.unwrap();
+
+		let request = uri_parser_bark.try_parse_payment_request(&uri.to_string()).await.unwrap();
+
+		assert_eq!(request.amount, Some(amount));
+		assert_eq!(request.label.as_deref(), None);
+		assert_eq!(request.message.as_deref(), None);
+		assert_eq!(request.options.len(), 2);
+		assert!(request.options.iter().any(|m| m.method.is_ark()), "should have ark method");
+		assert!(request.options.iter().any(|m| m.method.is_lightning()), "should have lightning method");
+		assert!(!request.options.iter().any(|m| m.method.is_bitcoin()), "should not have onchain method");
+		assert!(
+			request.options.iter().all(|m| m.errors.is_empty()),
+			"all methods should be valid",
+		);
+	}
+
 	// -- BIP 321 with ark + lightning + onchain --
 	{
 		let mut wallet1 = uri_builder_bark.client().await;
 		let mut onchain1 = uri_builder_bark.onchain_client().await;
 		let uri = wallet1.bip321_uri()
-			.amount(amount).unwrap()
-			.enable_all(&mut onchain1).unwrap()
+			.amount(amount)
+			.onchain_wallet(&mut onchain1)
 			.label("test-label".to_string())
 			.message("test-message".to_string())
 			.build().await.unwrap();
@@ -76,13 +118,14 @@ async fn parse_payment_request() {
 	{
 		let mut wallet1 = uri_builder_bark.client().await;
 		let uri = wallet1.bip321_uri()
-			.amount(amount).unwrap()
-			.ark(false)
+			.amount(amount)
+			.disable_all()
+			.ark(true)
 			.build().await.unwrap();
 
 		let request = uri_parser_bark.try_parse_payment_request(&uri.to_string()).await.unwrap();
 
-		assert!(request.options[0].method.is_ark());
+		assert!(request.options[0].method.is_ark(), "{:?}", request.options);
 		assert!(request.options[0].errors.is_empty());
 
 		let fees = uri_parser_bark.estimate_payment_fees(request, None).await;
@@ -135,8 +178,9 @@ async fn parse_payment_request() {
 		let mut wallet1 = uri_builder_bark.client().await;
 		let mut onchain1 = uri_builder_bark.onchain_client().await;
 		let uri = wallet1.bip321_uri()
-			.amount(amount).unwrap()
-			.onchain(&mut onchain1)
+			.amount(amount)
+			.disable_all()
+			.onchain_wallet(&mut onchain1)
 			.build().await.unwrap();
 		let request = uri_parser_bark.try_parse_payment_request(&uri.to_string()).await.unwrap();
 
