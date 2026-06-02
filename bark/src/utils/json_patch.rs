@@ -50,12 +50,6 @@ pub fn merge(target: &mut Value, patch: &Value) {
 	}
 }
 
-/// Convenience wrapper around [`merge`] that returns the merged value.
-pub fn merged(mut target: Value, patch: &Value) -> Value {
-	merge(&mut target, patch);
-	target
-}
-
 #[cfg(test)]
 mod tests {
 	use super::*;
@@ -63,10 +57,11 @@ mod tests {
 
 	#[track_caller]
 	fn check(original: Value, patch: Value, expected: Value) {
-		let result = merged(original.clone(), &patch);
+		let mut buf = original.clone();
+		merge(&mut buf, &patch);
 		assert_eq!(
-			result, expected,
-			"\n  original: {original}\n  patch:    {patch}\n  expected: {expected}\n  result:   {result}",
+			buf, expected,
+			"\n  original: {original}\n  patch:    {patch}\n  expected: {expected}\n  result:   {buf}",
 		);
 	}
 
