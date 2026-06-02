@@ -384,6 +384,22 @@ impl Exit {
 		guard.exit_vtxos.clone()
 	}
 
+	/// Returns whether a VTXO has an active or completed unilateral exit.
+	pub async fn is_exiting(&self, vtxo_id: VtxoId) -> bool {
+		let guard = self.inner.read().await;
+		let state = guard.exit_vtxos.iter().find(|ev| ev.id() == vtxo_id).map(|ev| ev.state());
+		match state {
+			Some(ExitState::Start(_)) => true,
+			Some(ExitState::Processing(_)) => true,
+			Some(ExitState::AwaitingDelta(_)) => true,
+			Some(ExitState::Claimable(_)) => true,
+			Some(ExitState::ClaimInProgress(_)) => true,
+			Some(ExitState::Claimed(_)) => true,
+			Some(ExitState::VtxoAlreadySpent(_)) => false,
+			None => false,
+		}
+	}
+
 	/// True if there are any unilateral exits which have been started but are not yet claimable.
 	pub async fn has_pending_exits(&self) -> bool {
 		let guard = self.inner.read().await;

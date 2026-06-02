@@ -527,13 +527,19 @@ async fn bark_should_exit_a_pending_board() {
 	ctx.generate_blocks(board_expiry - tip - 2).await;
 	bark.sync().await;
 
-	assert_eq!(bark.pending_board_balance().await, Amount::ZERO, "board should be cleared");
+	// An exit has kicked off but the pending_board entry stays alive so registration
+	// will keep retrying if the server becomes available. The funds therefore stay in
+	// `pending_board`; they only move to `pending_exit` once the exit commits past
+	// Start/Processing (i.e. reaches `AwaitingDelta`).
 	assert_eq!(bark.list_exits().await.len(), 1, "exit should be triggered");
-	assert_eq!(bark.offchain_balance().await.pending_exit, Some(board_amount));
+	assert_eq!(bark.pending_board_balance().await, board_amount,
+		"board entry should still be retried until the exit commits on-chain");
+	assert_eq!(bark.offchain_balance().await.pending_exit, Some(Amount::ZERO),
+		"pending_exit is empty while the exit is still in its abortable window");
 
 	let movements = bark.history().await;
 	let board_mvt = movements.first().unwrap();
-	assert_eq!(board_mvt.status, MovementStatus::Failed);
+	assert_eq!(board_mvt.status, MovementStatus::Pending);
 	assert_eq!(board_mvt.subsystem.name, "bark.board");
 	assert_eq!(board_mvt.subsystem.kind, "board");
 	assert_eq!(board_mvt.intended_balance, board_amount.to_signed().unwrap());
@@ -546,7 +552,7 @@ async fn bark_should_exit_a_pending_board() {
 	assert_eq!(*board_mvt.output_vtxos.first().unwrap(), board_vtxo.id);
 	assert_eq!(board_mvt.exited_vtxos.len(), 1);
 	assert_eq!(*board_mvt.exited_vtxos.first().unwrap(), board_vtxo.id);
-	assert_eq!(board_mvt.time.completed_at.is_some(), true);
+	assert_eq!(board_mvt.time.completed_at.is_some(), false);
 	let metadata = board_mvt.metadata.as_ref().unwrap();
 	let chain_anchor = metadata.get("chain_anchor").map(|ca| serde_json::from_value::<OutPoint>(ca.clone()).unwrap());
 	assert!(chain_anchor.is_some(), "chain anchor should be present");
@@ -564,6 +570,10 @@ async fn bark_should_exit_a_pending_board() {
 
 	// Re-fetch the exit movement once the exit has completed — it should now be Successful.
 	let movements = bark.history().await;
+	let board_mvt = movements.first().unwrap();
+	assert_eq!(board_mvt.status, MovementStatus::Failed);
+	assert_eq!(board_mvt.time.completed_at.is_some(), true);
+
 	let exit_mvt = movements.iter().find(|m| m.subsystem.name == "bark.exit")
 		.expect("exit movement should exist");
 	assert_eq!(exit_mvt.status, MovementStatus::Successful);
