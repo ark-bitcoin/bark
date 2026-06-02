@@ -137,7 +137,7 @@ impl StoredRoundState<Unlocked> {
 	}
 }
 
-impl StoredRoundState {
+impl StoredRoundState<Locked> {
 	pub fn state_mut(&mut self) -> &mut RoundState {
 		&mut self.state
 	}
