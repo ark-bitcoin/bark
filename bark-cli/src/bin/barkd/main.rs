@@ -11,7 +11,7 @@ use log::{info, warn};
 use tokio::sync::RwLock;
 
 use bark_json::web::{BarkNetwork, BitcoindAuth, ChainSourceConfig, CreateWalletRequest};
-use bark_rest::{Config, OnGetMnemonic, OnWalletCreate, OnWalletDelete, RestServer, ServerWallet};
+use bark_rest::{Config, OnGetMnemonic, OnWalletCreate, OnWalletDelete, RestServer, ServerState, ServerWallet};
 use bark_rest::http::HeaderValue;
 use bark_rest::error::ContextExt;
 use bark_rest::auth::AuthToken;
@@ -394,10 +394,14 @@ async fn main() -> anyhow::Result<()>{
 	};
 
 	let inner_wallet = wallet_opt.as_ref().map(|w| w.wallet.clone());
-	let server = RestServer::start(
-		&cli.to_config()?, Some(auth_token), wallet_opt,
-		Some(on_wallet_create), Some(on_wallet_delete), on_get_mnemonic,
-	).await?;
+	let state = ServerState::builder()
+		.wallet(wallet_opt)
+		.auth_token(auth_token)
+		.on_wallet_create(on_wallet_create)
+		.on_wallet_delete(on_wallet_delete)
+		.on_get_mnemonic(on_get_mnemonic)
+		.build();
+	let server = RestServer::start(&cli.to_config()?, state).await?;
 
 	run_shutdown_signal_listener().await;
 

@@ -142,6 +142,9 @@ impl ServerWallet {
 	}
 }
 
+/// Shared state held by the REST server.
+///
+/// Construct via [`ServerState::builder`].
 #[derive(Clone)]
 pub struct ServerState {
 	wallet: Arc<parking_lot::RwLock<Option<ServerWallet>>>,
@@ -164,23 +167,80 @@ pub struct ServerState {
 	websocket_tickets: Arc<RwLock<HashMap<String, DateTime<Utc>>>>,
 }
 
-impl ServerState {
-	pub fn new(
-		wallet: Option<ServerWallet>,
-		auth_token: Option<AuthToken>,
-		on_wallet_create: Option<Arc<OnWalletCreate>>,
-		on_wallet_delete: Option<Arc<OnWalletDelete>>,
-		on_get_mnemonic: Option<Arc<OnGetMnemonic>>,
-	) -> Self {
-		ServerState {
-			wallet: Arc::new(parking_lot::RwLock::new(wallet)),
-			on_wallet_create,
-			auth_token,
-			on_wallet_delete,
-			on_get_mnemonic,
+/// Builder for [`ServerState`].
+///
+/// ```ignore
+/// let state = ServerState::builder()
+///     .wallet(server_wallet)
+///     .auth_token(token)
+///     .on_wallet_create(create_hook)
+///     .build();
+/// ```
+pub struct ServerStateBuilder {
+	wallet: Option<ServerWallet>,
+	auth_token: Option<AuthToken>,
+	on_wallet_create: Option<Arc<OnWalletCreate>>,
+	on_wallet_delete: Option<Arc<OnWalletDelete>>,
+	on_get_mnemonic: Option<Arc<OnGetMnemonic>>,
+}
 
+impl ServerStateBuilder {
+	pub fn new() -> Self {
+		Self {
+			wallet: None,
+			auth_token: None,
+			on_wallet_create: None,
+			on_wallet_delete: None,
+			on_get_mnemonic: None,
+		}
+	}
+
+	pub fn wallet(mut self, wallet: impl Into<Option<ServerWallet>>) -> Self {
+		self.wallet = wallet.into();
+		self
+	}
+
+	pub fn auth_token(mut self, token: impl Into<Option<AuthToken>>) -> Self {
+		self.auth_token = token.into();
+		self
+	}
+
+	pub fn on_wallet_create(mut self, hook: impl Into<Option<Arc<OnWalletCreate>>>) -> Self {
+		self.on_wallet_create = hook.into();
+		self
+	}
+
+	pub fn on_wallet_delete(mut self, hook: impl Into<Option<Arc<OnWalletDelete>>>) -> Self {
+		self.on_wallet_delete = hook.into();
+		self
+	}
+
+	pub fn on_get_mnemonic(mut self, hook: impl Into<Option<Arc<OnGetMnemonic>>>) -> Self {
+		self.on_get_mnemonic = hook.into();
+		self
+	}
+
+	pub fn build(self) -> ServerState {
+		ServerState {
+			wallet: Arc::new(parking_lot::RwLock::new(self.wallet)),
+			auth_token: self.auth_token,
+			on_wallet_create: self.on_wallet_create,
+			on_wallet_delete: self.on_wallet_delete,
+			on_get_mnemonic: self.on_get_mnemonic,
 			websocket_tickets: Arc::new(RwLock::new(HashMap::new())),
 		}
+	}
+}
+
+impl Default for ServerStateBuilder {
+	fn default() -> Self {
+		Self::new()
+	}
+}
+
+impl ServerState {
+	pub fn builder() -> ServerStateBuilder {
+		ServerStateBuilder::new()
 	}
 
 	pub fn require_wallet(&self) -> anyhow::Result<Wallet> {
@@ -201,31 +261,18 @@ impl ServerState {
 }
 
 impl RestServer {
-	/// Start a new [RestServer] with the given config and an optional [ServerWallet]
+	/// Start a new [RestServer] with the given config and [ServerState].
 	///
-	/// If no wallet is provided, the server will reject any action.
-	/// If `auth_secrets` is non-empty, token-based authentication is
-	/// enforced on all `/api/v1` routes.
-	pub async fn start(
-		config: &Config,
-		auth_token: Option<AuthToken>,
-		wallet: Option<ServerWallet>,
-		on_wallet_create: Option<Arc<OnWalletCreate>>,
-		on_wallet_delete: Option<Arc<OnWalletDelete>>,
-		on_get_mnemonic: Option<Arc<OnGetMnemonic>>,
-	) -> anyhow::Result<Self> {
+	/// Build the state via [`ServerState::builder`].
+	pub async fn start(config: &Config, state: ServerState) -> anyhow::Result<Self> {
 		let (router, api) = OpenApiRouter::with_openapi(ApiDoc::openapi())
 			.split_for_parts();
 
 		let socket_addr = config.socket_addr();
 
-		if auth_token.is_none() {
+		if state.auth_token().is_none() {
 			warn!("No auth token configured — all authentication is disabled");
 		}
-
-		let state = ServerState::new(
-			wallet, auth_token, on_wallet_create, on_wallet_delete, on_get_mnemonic,
-		);
 
 		let router = router
 			.route("/ping", get(ping))

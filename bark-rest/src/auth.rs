@@ -153,11 +153,6 @@ pub(crate) async fn guard_auth(
 
 #[cfg(test)]
 mod tests {
-	use std::collections::HashMap;
-	use std::sync::Arc;
-
-	use tokio::sync::RwLock;
-
 	use super::*;
 
 	fn test_token() -> AuthToken {
@@ -165,15 +160,7 @@ mod tests {
 	}
 
 	fn make_state(token: AuthToken) -> State<ServerState> {
-		State(ServerState {
-			wallet: Arc::new(parking_lot::RwLock::new(None)),
-			on_wallet_create: None,
-			auth_token: Some(token),
-			on_wallet_delete: None,
-			on_get_mnemonic: None,
-
-			websocket_tickets: Arc::new(RwLock::new(HashMap::new())),
-		})
+		State(ServerState::builder().auth_token(token).build())
 	}
 
 	#[test]
