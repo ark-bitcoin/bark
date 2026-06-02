@@ -534,7 +534,7 @@ impl Exit {
 
 			let state_changed = ev.state() != &pre_state;
 			Self::reconcile_vtxo_and_movement(
-				&guard.movement_manager, ev, state_changed,
+				wallet, &guard.movement_manager, ev, state_changed,
 			).await;
 
 			if !matches!(ev.state(), ExitState::Claimed(..)) {
@@ -550,16 +550,27 @@ impl Exit {
 		Ok(Some(exit_statuses))
 	}
 
-	/// Drives the exit movement to its terminal status once the exit state machine
-	/// reaches one. `Claimed` flips it to `Successful`; `VtxoAlreadySpent` flips it to
-	/// `Canceled`. Only fires on a fresh state change so we don't spam notifications.
+	/// Maps the current exit state onto the VTXO and movement bookkeeping:
+	/// - mark the VTXO `Exited` once every exit transaction has been broadcast (i.e. past
+	///   `Start`, with `Processing` having all txs broadcast or beyond),
+	/// - finish the movement as `Successful` when we reach `Claimed`,
+	/// - finish the movement as `Canceled` when we detect the VTXO was already spent.
 	///
-	/// Failures are logged and don't abort progress.
+	/// All updates are best-effort: failures are logged and don't abort progress. The VTXO
+	/// transition is idempotent; the movement transitions only fire on a fresh state change
+	/// to avoid notification spam.
 	async fn reconcile_vtxo_and_movement(
+		wallet: &Wallet,
 		movements: &MovementManager,
 		ev: &ExitVtxo,
 		state_changed: bool,
 	) {
+		if ev.state().warrants_exited_vtxo() {
+			if let Err(e) = wallet.mark_vtxos_as_exited([ev.id()]).await {
+				error!("Failed to mark VTXO {} as Exited: {:#}", ev.id(), e);
+			}
+		}
+
 		if !state_changed {
 			return;
 		}
@@ -601,7 +612,7 @@ impl Exit {
 			}
 			let state_changed = exit.state() != &pre_state;
 			Self::reconcile_vtxo_and_movement(
-				&guard.movement_manager, exit, state_changed,
+				wallet, &guard.movement_manager, exit, state_changed,
 			).await;
 		}
 		guard.exit_vtxos = exit_vtxos;
