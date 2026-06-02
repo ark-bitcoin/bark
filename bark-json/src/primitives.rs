@@ -228,6 +228,9 @@ pub enum VtxoStateInfo {
 	Spendable,
 	/// The VTXO has already been spent.
 	Spent,
+	/// The VTXO has been moved on-chain via a unilateral exit and is no longer
+	/// usable in the protocol.
+	Exited,
 	/// The VTXO is locked by an in-progress movement (e.g. a pending
 	/// round or Lightning payment).
 	Locked {
@@ -247,6 +250,7 @@ impl From<VtxoState> for VtxoStateInfo {
 		match state {
 			VtxoState::Spendable => VtxoStateInfo::Spendable,
 			VtxoState::Spent => VtxoStateInfo::Spent,
+			VtxoState::Exited => VtxoStateInfo::Exited,
 			VtxoState::Locked { holder } => {
 				match holder {
 					Some(bark::vtxo::VtxoLockHolder::Movement { id }) => {

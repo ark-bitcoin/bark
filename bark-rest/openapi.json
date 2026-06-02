@@ -5581,6 +5581,21 @@
           },
           {
             "type": "object",
+            "description": "The VTXO has been moved on-chain via a unilateral exit and is no longer\nusable in the protocol.",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "exited"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
             "description": "The VTXO is locked by an in-progress movement (e.g. a pending\nround or Lightning payment).",
             "required": [
               "type"

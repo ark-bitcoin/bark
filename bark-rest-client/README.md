@@ -240,6 +240,7 @@ Class | Method | HTTP request | Description
  - [VtxoStateInfoOneOf](docs/VtxoStateInfoOneOf.md)
  - [VtxoStateInfoOneOf1](docs/VtxoStateInfoOneOf1.md)
  - [VtxoStateInfoOneOf2](docs/VtxoStateInfoOneOf2.md)
+ - [VtxoStateInfoOneOf3](docs/VtxoStateInfoOneOf3.md)
  - [VtxosQuery](docs/VtxosQuery.md)
  - [WalletDeleteRequest](docs/WalletDeleteRequest.md)
  - [WalletDeleteResponse](docs/WalletDeleteResponse.md)

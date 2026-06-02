@@ -5,6 +5,13 @@
 //! - created and ready to spend on Ark: [VtxoStateKind::Spendable]
 //! - owned but not usable because it is locked by subsystem: [VtxoStateKind::Locked]
 //! - consumed (no longer part of the wallet's balance): [VtxoStateKind::Spent]
+//! - taken on-chain via a unilateral exit: [VtxoStateKind::Exited]. Distinct from
+//!   [VtxoStateKind::Spent] so callers can tell whether a VTXO disappeared from the
+//!   wallet because the user forfeited it (round, send) or because the user moved
+//!   it onchain. The server refuses VTXOs once every exit transaction for a VTXO has
+//!   been broadcast, even before the corresponding on-chain UTXO has been claimed, so
+//!   the VTXO will enter [VtxoStateKind::Exited] as soon as we expect a VTXO to become
+//!   unusable offchain.
 //!
 //! Two layers of state are provided:
 //! - [VtxoStateKind]: a compact, serialization-friendly discriminator intended for storage, logs,
@@ -54,6 +61,7 @@ impl From<MovementId> for VtxoLockHolder {
 const SPENDABLE: &'static str = "Spendable";
 const LOCKED: &'static str = "Locked";
 const SPENT: &'static str = "Spent";
+const EXITED: &'static str = "Exited";
 
 /// A compact, serialization-friendly representation of a VTXO's state.
 ///
@@ -66,6 +74,12 @@ pub enum VtxoStateKind {
 	Locked,
 	/// The [Vtxo] has been consumed and is no longer part of the wallet's balance.
 	Spent,
+	/// The [Vtxo] has been moved on-chain via a unilateral exit. Like
+	/// [VtxoStateKind::Spent], an `Exited` vtxo is no longer part of the wallet's balance
+	/// and the server will refuse to interact with it; unlike `Spent`, the disappearance
+	/// is the result of the user taking the funds onchain rather than forfeiting them in
+	/// the protocol.
+	Exited,
 }
 
 impl VtxoStateKind {
@@ -75,6 +89,7 @@ impl VtxoStateKind {
 			VtxoStateKind::Spendable => SPENDABLE,
 			VtxoStateKind::Locked => LOCKED,
 			VtxoStateKind::Spent => SPENT,
+			VtxoStateKind::Exited => EXITED,
 		}
 	}
 
@@ -83,6 +98,7 @@ impl VtxoStateKind {
 			VtxoStateKind::Spendable => 0,
 			VtxoStateKind::Locked { .. } => 1,
 			VtxoStateKind::Spent => 2,
+			VtxoStateKind::Exited => 3,
 		}
 	}
 
@@ -91,6 +107,7 @@ impl VtxoStateKind {
 		VtxoStateKind::Spendable,
 		VtxoStateKind::Locked,
 		VtxoStateKind::Spent,
+		VtxoStateKind::Exited,
 	];
 
 	/// List of the different states considered unspent
@@ -129,6 +146,9 @@ pub enum VtxoState {
 	},
 	/// The [Vtxo] has been consumed.
 	Spent,
+	/// The [Vtxo] is in (or has completed) a unilateral exit. See
+	/// [VtxoStateKind::Exited] for the distinction from [VtxoState::Spent].
+	Exited,
 }
 
 impl VtxoState {
@@ -138,6 +158,7 @@ impl VtxoState {
 			VtxoState::Spendable => VtxoStateKind::Spendable,
 			VtxoState::Locked { .. } => VtxoStateKind::Locked,
 			VtxoState::Spent => VtxoStateKind::Spent,
+			VtxoState::Exited => VtxoStateKind::Exited,
 		}
 	}
 }
@@ -214,11 +235,12 @@ mod test {
 			VtxoStateKind::Spendable,
 			VtxoStateKind::Spent,
 			VtxoStateKind::Locked,
+			VtxoStateKind::Exited,
 		];
 
 		assert_eq!(
 			serde_json::to_string(&states).unwrap(),
-			serde_json::to_string(&[SPENDABLE, SPENT, LOCKED]).unwrap(),
+			serde_json::to_string(&[SPENDABLE, SPENT, LOCKED, EXITED]).unwrap(),
 		);
 
 		// If a compiler error occurs,
@@ -227,6 +249,7 @@ mod test {
 			VtxoState::Spendable => {},
 			VtxoState::Spent => {},
 			VtxoState::Locked { .. } => {},
+			VtxoState::Exited => {},
 		}
 	}
 }
