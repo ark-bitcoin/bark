@@ -135,6 +135,15 @@ pub struct ExitClaimedState {
 	pub block: BlockRef,
 }
 
+/// Terminal state reached when the exit cannot proceed because the VTXO has already been
+/// consumed by something other than this exit (e.g. the server forfeited it in a round).
+/// No exit transactions can be broadcast at this point; the caller should cancel the
+/// associated movement and remove the exit from active tracking.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ExitVtxoAlreadySpentState {
+	pub tip_height: BlockHeight,
+}
+
 impl Into<ExitState> for ExitStartState {
 	fn into(self) -> ExitState {
 		ExitState::Start(self)
@@ -168,5 +177,11 @@ impl Into<ExitState> for ExitClaimInProgressState {
 impl Into<ExitState> for ExitClaimedState {
 	fn into(self) -> ExitState {
 		ExitState::Claimed(self)
+	}
+}
+
+impl Into<ExitState> for ExitVtxoAlreadySpentState {
+	fn into(self) -> ExitState {
+		ExitState::VtxoAlreadySpent(self)
 	}
 }

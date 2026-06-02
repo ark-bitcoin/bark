@@ -4,10 +4,11 @@ use log::{debug, error, info, trace, warn};
 use bitcoin_ext::{BlockDelta, P2TR_DUST, TxStatus};
 use crate::exit::models::{
 	ExitError, ExitAwaitingDeltaState, ExitProcessingState, ExitClaimInProgressState, ExitClaimableState,
-	ExitClaimedState, ExitState, ExitStartState, ExitTx, ExitTxStatus,
+	ExitClaimedState, ExitState, ExitStartState, ExitTx, ExitTxStatus, ExitVtxoAlreadySpentState,
 };
 use crate::exit::progress::{ExitProgressError, ExitStateProgress, ProgressContext};
 use crate::exit::progress::util::{count_broadcast, count_confirmed};
+use crate::vtxo::VtxoStateKind;
 
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
@@ -16,6 +17,18 @@ impl ExitStateProgress for ExitState {
 		self,
 		ctx: &mut ProgressContext<'_>,
 	) -> anyhow::Result<ExitState, ExitProgressError> {
+		// While the exit is still pre-broadcast another consumer (round forfeit, send, etc.)
+		// can still take the VTXO out from under us. If we notice that's happened, bail to
+		// the terminal `VtxoAlreadySpent` state so the caller can cancel the movement.
+		// Once all exit txs are in mempool the underlying outpoint is committed to the
+		// exit chain and a competing offchain spend would either lose in mempool or be
+		// refused server-side, so we stop checking.
+		if !self.warrants_exited_vtxo() && ctx.vtxo.state.kind() == VtxoStateKind::Spent {
+			warn!("VTXO {} was spent before its exit chain was fully broadcast, aborting exit",
+				ctx.vtxo.id());
+			let tip = ctx.tip_height().await?;
+			return Ok(ExitState::new_vtxo_already_spent(tip));
+		}
 		match self {
 			ExitState::Start(s) => s.progress(ctx).await,
 			ExitState::Processing(s) => s.progress(ctx).await,
@@ -23,6 +36,7 @@ impl ExitStateProgress for ExitState {
 			ExitState::Claimable(s) => s.progress(ctx).await,
 			ExitState::ClaimInProgress(s) => s.progress(ctx).await,
 			ExitState::Claimed(s) => s.progress(ctx).await,
+			ExitState::VtxoAlreadySpent(s) => s.progress(ctx).await,
 		}
 	}
 }
@@ -43,10 +57,8 @@ impl ExitStateProgress for ExitStartState {
 
 		info!("Validated VTXO {}, exit process can now begin", id);
 
-		Ok(ExitState::new_processing(
-			ctx.wallet.inner.chain.tip().await.unwrap_or(self.tip_height),
-			ctx.exit_txids.iter().cloned(),
-		))
+		let tip = ctx.wallet.inner.chain.tip().await.unwrap_or(self.tip_height);
+		Ok(ExitState::new_processing(tip, ctx.exit_txids.iter().cloned()))
 	}
 }
 
@@ -328,6 +340,18 @@ impl ExitStateProgress for ExitClaimedState {
 		ctx: &mut ProgressContext<'_>,
 	) -> anyhow::Result<ExitState, ExitProgressError> {
 		trace!("Exit for VTXO {} is spent!", ctx.vtxo.id());
+		Ok(self.into())
+	}
+}
+
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+impl ExitStateProgress for ExitVtxoAlreadySpentState {
+	async fn progress(
+		self,
+		ctx: &mut ProgressContext<'_>,
+	) -> anyhow::Result<ExitState, ExitProgressError> {
+		trace!("Exit for VTXO {} cannot proceed: VTXO was already spent.", ctx.vtxo.id());
 		Ok(self.into())
 	}
 }

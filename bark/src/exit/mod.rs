@@ -120,7 +120,7 @@ pub use self::models::{
 	ExitCpfpRequest, ExitTransactionPackage, FeeInfo, RbfRequirement, TransactionInfo,
 	ChildTransactionInfo, ExitError, ExitState, ExitTx, ExitTxStatus, ExitTxOrigin, ExitStartState,
 	ExitProcessingState, ExitAwaitingDeltaState, ExitClaimableState, ExitClaimInProgressState,
-	ExitClaimedState, ExitProgressStatus, ExitTransactionStatus,
+	ExitClaimedState, ExitVtxoAlreadySpentState, ExitProgressStatus, ExitTransactionStatus,
 };
 pub use self::vtxo::ExitVtxo;
 
@@ -152,7 +152,7 @@ use crate::persist::BarkPersister;
 use crate::persist::models::StoredExit;
 use crate::psbtext::PsbtInputExt;
 use crate::subsystem::{ExitMovement, Subsystem};
-use crate::vtxo::{VtxoState, VtxoStateKind};
+use crate::vtxo::VtxoStateKind;
 
 /// Handles the process of ongoing VTXO exits.
 pub(crate) struct ExitInner {
@@ -192,18 +192,10 @@ impl ExitInner {
 				}.into());
 			}
 
-			// We avoid composing the TXID vector since that requires access to the onchain wallet,
-			// as such the ExitVtxo will be considered uninitialized.
-			trace!("Starting exit for VTXO: {}", vtxo_id);
-			let exit = ExitVtxo::new(vtxo, tip);
-			self.persister.store_exit_vtxo_entry(&StoredExit::new(&exit)).await?;
-			self.persister.update_vtxo_state_checked(
-				vtxo_id, VtxoState::Spent, &VtxoStateKind::UNSPENT_STATES,
-			).await?;
-			self.exit_vtxos.push(exit);
-			trace!("Exit for VTXO started successfully: {}", vtxo_id);
-
-			// Register the movement now so users can be aware of where their funds have gone.
+			// Create the movement in a Pending state. It transitions to Successful once the
+			// exit completes (Claimed), or Canceled if we discover the VTXO was already
+			// consumed by something else. We don't touch the VTXO's own state here — that
+			// happens in `progress_exits` once we've actually broadcast the exit chain.
 			let balance = -vtxo.amount().to_signed()?;
 			let script_pubkey = vtxo.output_script_pubkey();
 			let payment_method = match Address::from_script(&script_pubkey, &params) {
@@ -214,10 +206,10 @@ impl ExitInner {
 				}
 			};
 
-			// A big reason for creating a finished movement is that we currently don't support
-			// canceling exits. When we do, we can leave this in pending until it's either finished
-			// or canceled by the user.
-			self.movement_manager.new_finished_movement(
+			// We register the movement as finished — we still don't support canceling
+			// exits, so once started we treat the funds as gone. A follow-up commit
+			// flips this to a Pending movement that tracks completion onchain.
+			let movement_id = self.movement_manager.new_finished_movement(
 				Subsystem::EXIT,
 				ExitMovement::Exit.to_string(),
 				MovementStatus::Successful,
@@ -226,6 +218,14 @@ impl ExitInner {
 					.consumed_vtxo(vtxo_id)
 					.sent_to([MovementDestination::new(payment_method, vtxo.amount())]),
 			).await.context("Failed to register exit movement")?;
+
+			// We avoid composing the TXID vector since that requires access to the onchain wallet,
+			// as such the ExitVtxo will be considered uninitialized.
+			trace!("Starting exit for VTXO: {}", vtxo_id);
+			let exit = ExitVtxo::new(vtxo, tip, Some(movement_id));
+			self.persister.store_exit_vtxo_entry(&StoredExit::new(&exit)).await?;
+			self.exit_vtxos.push(exit);
+			trace!("Exit for VTXO started successfully: {}", vtxo_id);
 		}
 		Ok(())
 	}

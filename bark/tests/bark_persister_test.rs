@@ -264,6 +264,7 @@ impl BarkPersister for Dummy {
 					last_scanned_block: None,
 				}),
 				history: Vec::<ExitState>::new(),
+				movement_id: None,
 			}
 		]))
 	}

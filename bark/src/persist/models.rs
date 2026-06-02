@@ -217,7 +217,8 @@ pub struct LightningReceive {
 /// Persistable view of an [ExitVtxo].
 ///
 /// `StoredExit` is a lightweight data transfer object tailored for storage backends. It captures
-/// the VTXO ID, the current state, and the full history of the unilateral exit.
+/// the VTXO ID, the current state, the full history of the unilateral exit, and a pointer
+/// back to the pending movement that records this exit.
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StoredExit {
 	/// Identifier of the VTXO being exited.
@@ -226,6 +227,9 @@ pub struct StoredExit {
 	pub state: ExitState,
 	/// Historical states for auditability.
 	pub history: Vec<ExitState>,
+	/// The movement that records this exit. `None` for exits created before
+	/// movement tracking was wired up.
+	pub movement_id: Option<MovementId>,
 }
 
 impl StoredExit {
@@ -235,6 +239,7 @@ impl StoredExit {
 			vtxo_id: exit.id(),
 			state: exit.state().clone(),
 			history: exit.history().clone(),
+			movement_id: exit.movement_id(),
 		}
 	}
 }

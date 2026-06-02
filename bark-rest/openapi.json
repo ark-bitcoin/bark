@@ -4006,6 +4006,27 @@
                 }
               }
             ]
+          },
+          {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ExitVtxoAlreadySpentState"
+              },
+              {
+                "type": "object",
+                "required": [
+                  "type"
+                ],
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "vtxo-already-spent"
+                    ]
+                  }
+                }
+              }
+            ]
           }
         ],
         "description": "A utility type to wrap ExitState children so they can be easily serialized. This also helps with\ndebugging a lot!"
@@ -4261,6 +4282,18 @@
             }
           }
         ]
+      },
+      "ExitVtxoAlreadySpentState": {
+        "type": "object",
+        "description": "JSON mirror of [bark::exit::ExitVtxoAlreadySpentState].",
+        "required": [
+          "tip_height"
+        ],
+        "properties": {
+          "tip_height": {
+            "$ref": "#/components/schemas/u32"
+          }
+        }
       },
       "FeeEstimateQuery": {
         "type": "object",

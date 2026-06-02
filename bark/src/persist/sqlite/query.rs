@@ -970,12 +970,13 @@ pub fn fetch_lightning_receive_by_payment_hash(
 
 pub fn store_exit_vtxo_entry(tx: &rusqlite::Transaction, exit: &StoredExit) -> anyhow::Result<()> {
 	let query = r"
-		INSERT INTO bark_exit_states (vtxo_id, state, history)
-		VALUES (?1, ?2, ?3)
+		INSERT INTO bark_exit_states (vtxo_id, state, history, movement_id)
+		VALUES (?1, ?2, ?3, ?4)
 		ON CONFLICT (vtxo_id) DO UPDATE
 		SET
 			state = EXCLUDED.state,
-			history = EXCLUDED.history;
+			history = EXCLUDED.history,
+			movement_id = EXCLUDED.movement_id;
 	";
 
 	// We can't use JSONB with rusqlite, so we make do with strings
@@ -984,8 +985,9 @@ pub fn store_exit_vtxo_entry(tx: &rusqlite::Transaction, exit: &StoredExit) -> a
 		.map_err(|e| anyhow::format_err!("Exit VTXO {} state can't be serialized: {}", id, e))?;
 	let history = serde_json::to_string(&exit.history)
 		.map_err(|e| anyhow::format_err!("Exit VTXO {} history can't be serialized: {}", id, e))?;
+	let movement_id = exit.movement_id.map(|m| m.0);
 
-	tx.execute(query, (id, state, history))?;
+	tx.execute(query, (id, state, history, movement_id))?;
 	Ok(())
 }
 
@@ -997,15 +999,18 @@ pub fn remove_exit_vtxo_entry(tx: &rusqlite::Transaction, id: &VtxoId) -> anyhow
 }
 
 pub fn get_exit_vtxo_entries(conn: &Connection) -> anyhow::Result<Vec<StoredExit>> {
-	let mut statement = conn.prepare("SELECT vtxo_id, state, history FROM bark_exit_states;")?;
+	let mut statement = conn.prepare(
+		"SELECT vtxo_id, state, history, movement_id FROM bark_exit_states;",
+	)?;
 	let mut rows = statement.query([])?;
 	let mut result = Vec::new();
 	while let Some(row) = rows.next()? {
 		let vtxo_id = VtxoId::from_str(&row.get::<usize, String>(0)?)?;
 		let state = serde_json::from_str::<ExitState>(&row.get::<usize, String>(1)?)?;
 		let history = serde_json::from_str::<Vec<ExitState>>(&row.get::<usize, String>(2)?)?;
+		let movement_id = row.get::<usize, Option<u32>>(3)?.map(MovementId::new);
 
-		result.push(StoredExit { vtxo_id, state, history });
+		result.push(StoredExit { vtxo_id, state, history, movement_id });
 	}
 
 	Ok(result)
