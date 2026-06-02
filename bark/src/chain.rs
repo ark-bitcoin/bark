@@ -248,6 +248,7 @@ impl ChainSource {
 				 the `bitcoind-rpc` feature (notably the wasm-web build)",
 			),
 			ChainSourceSpec::Esplora { url } => ChainSourceClient::Esplora({
+				let url = crate::utils::url_with_default_https_scheme(&url);
 				// the esplora client doesn't deal well with trailing slash in url
 				let url = url.strip_suffix("/").unwrap_or(&url);
 				let mut builder = esplora_client::Builder::new(url);

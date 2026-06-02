@@ -5,7 +5,7 @@ use bitcoin::{BlockHash, Network, OutPoint, ScriptBuf};
 use bitcoin::hashes::Hash;
 use bitcoin::hashes::sha256::HashEngine;
 
-use bark::chain::ChainSource;
+use bark::chain::{ChainSource, ChainSourceSpec};
 use bitcoin_ext::{BlockHeight, TxStatus};
 
 use ark_testing::{sat, Bitcoind, TestContext};
@@ -26,6 +26,16 @@ async fn setup_chain_source(name: impl AsRef<str>) -> (TestContext, ChainSource)
 	};
 	(ctx, ChainSource::new(chain_source, Network::Regtest, None, None).await
 		.expect("failed to create chain source client"))
+}
+
+#[tokio::test]
+async fn chain_source_without_explicit_protocol() {
+	let url = "127.0.0.1:1".to_string();
+	assert!(!url.contains("://"), "url under test must have no scheme");
+
+	let spec = ChainSourceSpec::Esplora { url };
+	let result = ChainSource::new(spec, Network::Regtest, None, None).await;
+	assert!(result.is_err(), "schemeless URL should fail gracefully, not panic");
 }
 
 async fn test_bitcoind(ctx: &TestContext, id: usize) -> Bitcoind {
