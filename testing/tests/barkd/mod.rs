@@ -3,6 +3,7 @@ mod core;
 mod exits;
 mod helpers;
 mod lightning;
+mod mnemonic;
 mod notifications;
 mod onchain;
 mod rounds;

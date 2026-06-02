@@ -1867,6 +1867,48 @@
         }
       }
     },
+    "/api/v1/wallet/mnemonic": {
+      "get": {
+        "tags": [
+          "wallet"
+        ],
+        "summary": "Get wallet mnemonic",
+        "description": "Returns the BIP-39 mnemonic phrase backing the wallet. Returns 404 when mnemonic exposure is disabled (`BARKD_EXPOSE_MNEMONIC=false` on barkd).",
+        "operationId": "mnemonic",
+        "responses": {
+          "200": {
+            "description": "Returns the wallet's BIP-39 mnemonic phrase",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MnemonicResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Mnemonic retrieval is disabled",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotFoundError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternalServerError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/wallet/movements": {
       "get": {
         "tags": [
@@ -4526,6 +4568,18 @@
             "format": "int64",
             "description": "The mailbox checkpoint (tip) the wallet has consumed up to after\nthe sync. Monotonically non-decreasing across successful syncs.",
             "minimum": 0
+          }
+        }
+      },
+      "MnemonicResponse": {
+        "type": "object",
+        "required": [
+          "mnemonic"
+        ],
+        "properties": {
+          "mnemonic": {
+            "type": "string",
+            "description": "The BIP-39 mnemonic phrase backing the wallet."
           }
         }
       },

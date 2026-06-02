@@ -1,4 +1,5 @@
 
+use std::collections::HashMap;
 use std::env;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -59,6 +60,8 @@ pub struct BarkdHelper {
 	_bitcoind: Option<Bitcoind>,
 	port: parking_lot::Mutex<u16>,
 	auth_token: AuthToken,
+	/// Extra environment variables passed to the spawned barkd process.
+	env: parking_lot::Mutex<HashMap<String, String>>,
 }
 
 impl BarkdHelper {
@@ -92,8 +95,15 @@ impl Barkd {
 			_bitcoind: bitcoind,
 			port: parking_lot::Mutex::new(0),
 			auth_token: AuthToken::new(secret),
+			env: parking_lot::Mutex::new(HashMap::new()),
 		};
 		Daemon::wrap(helper)
+	}
+
+	/// Set an extra environment variable on the spawned barkd process.
+	/// Must be called before [`Daemon::start`].
+	pub fn set_env(&self, key: impl Into<String>, value: impl Into<String>) {
+		self.inner.env.lock().insert(key.into(), value.into());
 	}
 
 	pub fn base_url(&self) -> String {
@@ -463,6 +473,10 @@ impl DaemonHelper for BarkdHelper {
 
 		if let Ok(nb) = env::var(BARK_TOKIO_WORKER_THREADS) {
 			cmd.env("TOKIO_WORKER_THREADS", nb);
+		}
+
+		for (k, v) in self.env.lock().iter() {
+			cmd.env(k, v);
 		}
 
 		cmd.args([

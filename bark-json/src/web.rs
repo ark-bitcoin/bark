@@ -180,6 +180,13 @@ pub struct ConnectedResponse {
 
 #[derive(Serialize, Deserialize)]
 #[cfg_attr(feature = "utoipa", derive(ToSchema))]
+pub struct MnemonicResponse {
+	/// The BIP-39 mnemonic phrase backing the wallet.
+	pub mnemonic: String,
+}
+
+#[derive(Serialize, Deserialize)]
+#[cfg_attr(feature = "utoipa", derive(ToSchema))]
 pub struct ArkAddressResponse {
 	#[cfg_attr(feature = "utoipa", schema(value_type = String))]
 	pub address: String,

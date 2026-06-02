@@ -73,6 +73,7 @@ Class | Method | HTTP request | Description
 *WalletApi* | [**get_vtxo_encoded**](docs/WalletApi.md#get_vtxo_encoded) | **GET** /api/v1/wallet/vtxos/{id}/encoded | Get encoded VTXO
 *WalletApi* | [**history**](docs/WalletApi.md#history) | **GET** /api/v1/wallet/history | Get wallet history (deprecated)
 *WalletApi* | [**import_vtxo**](docs/WalletApi.md#import_vtxo) | **POST** /api/v1/wallet/import-vtxo | Import a VTXO
+*WalletApi* | [**mnemonic**](docs/WalletApi.md#mnemonic) | **GET** /api/v1/wallet/mnemonic | Get wallet mnemonic
 *WalletApi* | [**movements**](docs/WalletApi.md#movements) | **GET** /api/v1/wallet/movements | List movements (deprecated)
 *WalletApi* | [**next_round**](docs/WalletApi.md#next_round) | **GET** /api/v1/wallet/next-round | Get next round time
 *WalletApi* | [**offboard_all**](docs/WalletApi.md#offboard_all) | **POST** /api/v1/wallet/offboard/all | Offboard all VTXOs
@@ -193,6 +194,7 @@ Class | Method | HTTP request | Description
  - [LightningReceiveInfo](docs/LightningReceiveInfo.md)
  - [LightningSendFees](docs/LightningSendFees.md)
  - [MailboxSyncResponse](docs/MailboxSyncResponse.md)
+ - [MnemonicResponse](docs/MnemonicResponse.md)
  - [Movement](docs/Movement.md)
  - [MovementDestination](docs/MovementDestination.md)
  - [MovementStatus](docs/MovementStatus.md)
