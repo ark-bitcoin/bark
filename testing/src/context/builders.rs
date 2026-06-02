@@ -151,6 +151,7 @@ pub struct BarkdBuilder<'a> {
 	mod_cfg: Option<Box<dyn FnOnce(&mut bark::Config)>>,
 	fund_amount: Option<Amount>,
 	board_amount: Option<Amount>,
+	env: std::collections::HashMap<String, String>,
 }
 
 impl<'a> BarkdBuilder<'a> {
@@ -166,7 +167,14 @@ impl<'a> BarkdBuilder<'a> {
 			mod_cfg: None,
 			fund_amount: None,
 			board_amount: None,
+			env: std::collections::HashMap::new(),
 		}
+	}
+
+	/// Set an extra environment variable on the spawned barkd process.
+	pub fn env(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
+		self.env.insert(key.into(), value.into());
+		self
 	}
 
 	pub fn cfg(mut self, f: impl FnOnce(&mut bark::Config) + 'static) -> Self {
@@ -214,6 +222,9 @@ impl<'a> BarkdBuilder<'a> {
 		let daemon = Barkd::new(
 			&self.name, datadir, self.srv.ark_url(), chain_source, bitcoind,
 		);
+		for (k, v) in self.env {
+			daemon.set_env(k, v);
+		}
 		daemon.start().await.expect("failed to start barkd");
 		daemon.create_wallet().await.expect("failed to create barkd wallet");
 
