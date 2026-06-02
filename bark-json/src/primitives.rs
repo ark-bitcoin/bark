@@ -317,6 +317,10 @@ pub struct WalletTxInfo {
 	pub balance_change: SignedAmount,
 	/// `Some` when the transaction is mined; `None` while still in the mempool.
 	pub confirmation: Option<BlockRef>,
+	/// `true` when this tx spends a P2A fee anchor output — i.e. it is a CPFP
+	/// child bumping its parent. In bark this typically means the wallet is
+	/// fee-bumping an exit transaction.
+	pub is_cpfp: bool,
 }
 
 impl From<bark::onchain::WalletTxInfo> for WalletTxInfo {
@@ -327,6 +331,7 @@ impl From<bark::onchain::WalletTxInfo> for WalletTxInfo {
 			onchain_fees: v.onchain_fees,
 			balance_change: v.balance_change,
 			confirmation: v.confirmation.map(Into::into),
+			is_cpfp: v.is_cpfp,
 		}
 	}
 }

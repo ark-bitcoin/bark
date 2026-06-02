@@ -59,6 +59,9 @@ pub struct WalletTxInfo {
 	pub balance_change: SignedAmount,
 	/// `Some` if the transaction is confirmed in a block, `None` if still in the mempool.
 	pub confirmation: Option<BlockRef>,
+	/// `true` when this tx spends a P2A fee anchor — i.e. it is a CPFP child
+	/// bumping the parent that created the anchor.
+	pub is_cpfp: bool,
 }
 
 /// Represents an onchain UTXO known to the wallet.

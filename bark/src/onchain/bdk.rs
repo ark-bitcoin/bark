@@ -385,12 +385,18 @@ impl OnchainWallet {
 
 			let onchain_fees = self.inner.calculate_fee(&tx).ok();
 
+			// A P2A fee anchor is anyone-can-spend (BIP-431), so its spend
+			// carries no signature: both witness and script_sig are empty.
+			let is_cpfp = tx.input.iter()
+				.any(|i| i.witness.is_empty() && i.script_sig.is_empty());
+
 			out.push(WalletTxInfo {
 				txid,
 				tx,
 				onchain_fees,
 				balance_change,
 				confirmation,
+				is_cpfp,
 			});
 		}
 		Ok(out)
