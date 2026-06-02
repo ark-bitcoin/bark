@@ -22,7 +22,7 @@ use server_rpc::protos::{self, lightning_payment_status};
 use ark_testing::{Bark, TestContext, btc, require_bark_version, sat, signed_sat};
 use ark_testing::constants::{BOARD_CONFIRMATIONS, ROUND_CONFIRMATIONS};
 use ark_testing::daemon::captaind::{self, ArkClient};
-use ark_testing::exit::complete_exit;
+use ark_testing::exit::{complete_exit, progress_exit_until_awaiting_delta};
 
 
 #[tokio::test]
@@ -1295,4 +1295,85 @@ async fn vtxo_remains_spendable_while_exit_pending() {
 		.expect("exit movement should exist");
 	assert_eq!(exit_movement.status, MovementStatus::Canceled);
 	assert!(exit_movement.time.completed_at.is_some());
+}
+
+/// Walks the exit through its two visible milestones and pins down what the wallet
+/// shows at each.
+///
+/// At `AwaitingDelta` the exit chain has confirmed on-chain. The VTXO must flip to
+/// `Exited` (so the wallet — and by extension the server — agrees the VTXO is gone
+/// from the protocol's view), drop out of the spendable set, and start contributing
+/// to the `pending_exit` balance. The exit movement is still `Pending` because the
+/// drain hasn't happened.
+///
+/// At `Claimed` the drain has confirmed too. The VTXO stays `Exited` (terminal),
+/// `pending_exit` drops to zero (it's now in the onchain balance, not pending), and
+/// the exit movement flips to `Successful`.
+#[tokio::test]
+async fn exited_vtxo_is_not_spendable() {
+	require_bark_version!(> "0.2.0");
+
+	let ctx = TestContext::new("exit/exited_vtxo_is_not_spendable").await;
+	let srv = ctx.captaind("server").funded(btc(10)).create().await;
+	let bark = ctx.bark("bark", &srv).funded(sat(1_000_000)).create().await;
+
+	let exit_amount = sat(500_000);
+	bark.board_and_confirm_and_register(&ctx, exit_amount).await;
+	let vtxos = bark.vtxos().await;
+	assert_eq!(vtxos.len(), 1);
+	let exited_id = vtxos[0].id;
+
+	// Drive the exit until every exit transaction has confirmed onchain.
+	bark.start_exit_all().await;
+	progress_exit_until_awaiting_delta(&ctx, &bark).await;
+
+	// At this point the chain has accepted the exit chain. The VTXO must be Exited.
+	let exits = bark.list_exits().await;
+	assert_eq!(exits.len(), 1);
+	assert_eq!(exits[0].vtxo_id, exited_id);
+	assert!(matches!(exits[0].state, ExitState::AwaitingDelta(_)),
+		"exit should be in AwaitingDelta, got {:?}", exits[0].state);
+
+	// The wallet stops surfacing the VTXO as spendable …
+	assert_eq!(bark.vtxos().await.len(), 0,
+		"exited vtxo should drop out of the spendable list once its chain confirms");
+	let balance = bark.offchain_balance().await;
+	assert_eq!(balance.spendable, Amount::ZERO,
+		"offchain spendable balance should be zero once the vtxo has exited");
+	// … and the amount surfaces under `pending_exit` instead.
+	assert_eq!(balance.pending_exit, Some(exit_amount),
+		"pending_exit should reflect the exited (but not yet drained) vtxo");
+
+	// The exit movement is still in flight — drain hasn't happened.
+	let exit_movement = bark.history().await.into_iter()
+		.find(|m| m.subsystem.name == "bark.exit")
+		.expect("exit movement should exist");
+	assert_eq!(exit_movement.status, MovementStatus::Pending);
+	assert!(exit_movement.time.completed_at.is_none());
+
+	// Walk past the CSV delta, drain, confirm, and let progress notice.
+	complete_exit(&ctx, &bark).await;
+	bark.claim_all_exits(bark.get_onchain_address().await).await;
+	ctx.generate_blocks(1).await;
+	bark.progress_exit().await;
+
+	let exits = bark.list_exits().await;
+	assert_eq!(exits.len(), 1);
+	assert_eq!(exits[0].vtxo_id, exited_id);
+	assert!(matches!(exits[0].state, ExitState::Claimed(_)),
+		"exit should be in Claimed, got {:?}", exits[0].state);
+
+	// VTXO is still out of the spendable set (Exited is terminal). `pending_exit`
+	// drops to zero because the funds are now onchain via the drain.
+	let balance = bark.offchain_balance().await;
+	assert_eq!(bark.vtxos().await.len(), 0,
+		"exited vtxo should still be out of the spendable list after claim");
+	assert_eq!(balance.spendable, Amount::ZERO);
+	assert_eq!(balance.pending_exit, Some(Amount::ZERO),
+		"pending_exit should drop to zero once the drain has confirmed");
+
+	let exit_movement = bark.history().await.into_iter()
+		.find(|m| m.subsystem.name == "bark.exit")
+		.expect("exit movement should exist");
+	assert_eq!(exit_movement.status, MovementStatus::Successful);
 }
