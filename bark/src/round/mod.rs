@@ -232,7 +232,10 @@ impl RoundState {
 	/// or if it was already canceled or failed
 	pub async fn try_cancel(&mut self, wallet: &Wallet) -> anyhow::Result<bool> {
 		let ret = match self.flow {
-			RoundFlowState::NonInteractivePending { .. } => todo!("we have to cancel with server!"),
+			RoundFlowState::NonInteractivePending { .. } => {
+				//TODO(stevenroose) we have to cancel with server
+				bail!("it is currently not yet possible to cancel pending delegated rounds");
+			},
 			RoundFlowState::Canceled => true,
 			RoundFlowState::Failed { .. } => true,
 			RoundFlowState::InteractivePending | RoundFlowState::InteractiveOngoing { .. } => {
