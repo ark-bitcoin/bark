@@ -1,0 +1,11 @@
+- Make unilateral exit progress resilient to chain-source hiccups and surface real failures
+  A single transaction failing its status refresh inside the exit transaction
+  manager no longer aborts the whole progress call — the failure is logged and
+  the rest of the txs continue, and the next sync tick retries. When a
+  progress run genuinely fails at a level that can't be attributed to a
+  specific VTXO (chain source unreachable, refresh tip retrieval failed),
+  `bark exit progress` now emits the error on a new top-level field of its
+  JSON response instead of dying with an unstructured stderr message, so
+  callers that scrape the JSON (tests, automation scripts) can match on the
+  variant and decide whether to retry.
+  [#2120](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2120)
