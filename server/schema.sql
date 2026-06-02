@@ -968,6 +968,16 @@ CREATE TABLE public.lightning_payment_attempt_history (
 
 
 --
+-- Name: lightning_payment_attempt_htlc_vtxo; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.lightning_payment_attempt_htlc_vtxo (
+    lightning_payment_attempt_id bigint NOT NULL,
+    vtxo_id text NOT NULL
+);
+
+
+--
 -- Name: lightning_payment_attempt_lightning_payment_attempt_id_seq; Type: SEQUENCE; Schema: public; Owner: -
 --
 
@@ -1644,6 +1654,14 @@ ALTER TABLE ONLY public.lightning_node
 
 
 --
+-- Name: lightning_payment_attempt_htlc_vtxo lightning_payment_attempt_htlc_vtxo_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.lightning_payment_attempt_htlc_vtxo
+    ADD CONSTRAINT lightning_payment_attempt_htlc_vtxo_pkey PRIMARY KEY (lightning_payment_attempt_id, vtxo_id);
+
+
+--
 -- Name: lightning_payment_attempt lightning_payment_attempt_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -1857,6 +1875,13 @@ CREATE UNIQUE INDEX lightning_invoice_invoice_uix ON public.lightning_invoice US
 --
 
 CREATE UNIQUE INDEX lightning_node_public_key_uix ON public.lightning_node USING btree (pubkey);
+
+
+--
+-- Name: lightning_payment_attempt_htlc_vtxo_vtxo_id_ix; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX lightning_payment_attempt_htlc_vtxo_vtxo_id_ix ON public.lightning_payment_attempt_htlc_vtxo USING btree (vtxo_id);
 
 
 --
@@ -2191,6 +2216,22 @@ ALTER TABLE ONLY public.integration_token
 
 ALTER TABLE ONLY public.lightning_htlc_subscription
     ADD CONSTRAINT lightning_htlc_subscription_lightning_node_id_fkey FOREIGN KEY (lightning_node_id) REFERENCES public.lightning_node(id);
+
+
+--
+-- Name: lightning_payment_attempt_htlc_vtxo lightning_payment_attempt_htl_lightning_payment_attempt_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.lightning_payment_attempt_htlc_vtxo
+    ADD CONSTRAINT lightning_payment_attempt_htl_lightning_payment_attempt_id_fkey FOREIGN KEY (lightning_payment_attempt_id) REFERENCES public.lightning_payment_attempt(id) ON DELETE CASCADE;
+
+
+--
+-- Name: lightning_payment_attempt_htlc_vtxo lightning_payment_attempt_htlc_vtxo_vtxo_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.lightning_payment_attempt_htlc_vtxo
+    ADD CONSTRAINT lightning_payment_attempt_htlc_vtxo_vtxo_id_fkey FOREIGN KEY (vtxo_id) REFERENCES public.vtxo(vtxo_id);
 
 
 --

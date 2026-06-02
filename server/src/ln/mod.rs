@@ -164,7 +164,7 @@ impl Server {
 
 		let htlc_vtxos = self.db.read(async |t| t.get_user_vtxos_by_id(&htlc_vtxo_ids).await).await?;
 
-		slog!(LightningPaymentInitRequested, invoice_payment_hash, htlc_vtxo_ids);
+		slog!(LightningPaymentInitRequested, invoice_payment_hash, htlc_vtxo_ids: htlc_vtxo_ids.clone());
 
 		let chain_tip = self.sync_manager.chain_tip().height;
 		let mut vtxos = vec![];
@@ -245,6 +245,7 @@ impl Server {
 			max_routing_fee,
 			min_expiry_height,
 			mailbox_id,
+			htlc_vtxo_ids,
 		).await?;
 
 		slog!(LightningPaymentInitiated, invoice_payment_hash, amount: payment_amount, fee,

@@ -47,6 +47,7 @@ use tokio::sync::{broadcast, Notify, mpsc};
 use tokio_stream::StreamExt;
 use tonic::transport::Uri;
 use tracing::{debug, error, info, trace, warn};
+use ark::VtxoId;
 use ark::lightning::{Bolt12Invoice, Bolt12InvoiceExt, Invoice, Offer, PaymentHash, PaymentStatus, Preimage};
 use ark::mailbox::MailboxIdentifier;
 
@@ -225,6 +226,7 @@ impl LightningManager {
 		max_routing_fee: Amount,
 		htlc_send_expiry_height: BlockHeight,
 		sender_mailbox_id: Option<MailboxIdentifier>,
+		htlc_vtxo_ids: Vec<VtxoId>,
 	) -> anyhow::Result<()> {
 		invoice.check_signature().context("invalid invoice signature")?;
 
@@ -236,6 +238,7 @@ impl LightningManager {
 			max_routing_fee,
 			htlc_send_expiry_height,
 			sender_mailbox_id.as_ref(),
+			&htlc_vtxo_ids,
 		).await {
 			error!("Error sending bolt11 payment for invoice: {:#}", e);
 		} else {
@@ -265,6 +268,7 @@ impl LightningManager {
 		max_routing_fee: Amount,
 		htlc_send_expiry_height: BlockHeight,
 		sender_mailbox_id: Option<&MailboxIdentifier>,
+		htlc_vtxo_ids: &[VtxoId],
 	) -> anyhow::Result<()> {
 		let payment_hash = invoice.payment_hash();
 		let node = self.active_node().context("no active cln node")?;
@@ -277,7 +281,7 @@ impl LightningManager {
 		);
 
 		self.db.write(async |t|
-			t.store_lightning_payment_start(node.id, &invoice, amount, sender_mailbox_id).await
+			t.store_lightning_payment_start(node.id, &invoice, amount, sender_mailbox_id, htlc_vtxo_ids).await
 		).await?;
 
 		// If there is an existing subscription, it's an intra-Ark lightning

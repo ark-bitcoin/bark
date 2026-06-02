@@ -190,14 +190,16 @@ impl<'t> Tx<'t> {
 
 	/// Stores data after lightning payment start.
 	///
-	/// Creates a new payment attempt for the given invoice.
-	/// Errors if there is already an open attempt for the same payment hash.
+	/// Creates a new payment attempt for the given invoice and links the
+	/// HTLC-send vtxos that were committed to it. Errors if there is
+	/// already an open attempt for the same payment hash.
 	pub async fn store_lightning_payment_start(
 		&self,
 		node_id: LightningNodeId,
 		invoice: &Invoice,
 		amount: Amount,
 		sender_mailbox_id: Option<&MailboxIdentifier>,
+		htlc_vtxo_ids: &[VtxoId],
 	) -> anyhow::Result<()> {
 		let payment_hash = invoice.payment_hash();
 
@@ -241,6 +243,17 @@ impl<'t> Tx<'t> {
 
 		let payment_attempt_id: i64 = row.get("id");
 		let updated_at: DateTime<Local> = row.get("updated_at");
+
+		if !htlc_vtxo_ids.is_empty() {
+			let link_stmt = self.prepare("
+				INSERT INTO lightning_payment_attempt_htlc_vtxo
+					(lightning_payment_attempt_id, vtxo_id)
+				SELECT $1, unnest($2::text[]);
+			").await?;
+			let ids: Vec<String> = htlc_vtxo_ids.iter().map(|id| id.to_string()).collect();
+			self.execute(&link_stmt, &[&payment_attempt_id, &ids]).await
+				.context("failed to link htlc vtxos to payment attempt")?;
+		}
 
 		trace!("Stored lightning payment attempt {} with time {:#?}.",
 			payment_attempt_id,
