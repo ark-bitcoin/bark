@@ -2,9 +2,11 @@
 //! Round State Machine
 //!
 
+use std::collections::HashMap;
 use std::iter;
 use std::borrow::Cow;
 use std::convert::Infallible;
+use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::Context;
@@ -1447,66 +1449,76 @@ impl Wallet {
 	}
 
 	/// Sync pending rounds that have finished but are waiting for confirmations
-	pub async fn sync_pending_rounds(&self) -> anyhow::Result<()> {
+	pub async fn sync_pending_rounds(&self) -> anyhow::Result<HashMap<RoundStateId, RoundStatus>> {
 		let states = self.pending_round_states().await?;
 		if states.is_empty() {
-			return Ok(());
+			return Ok(HashMap::new());
 		}
 
 		debug!("Syncing {} pending round states...", states.len());
 
-		tokio_stream::iter(states).for_each_concurrent(10, |state| async move {
-			// not processing events here
-			if state.state().ongoing_participation() {
-				return;
-			}
-
-			let mut state = match self.lock_wait_round_state(state.id()).await {
-				Ok(Some(state)) => state,
-				Ok(None) => return,
-				Err(e) => {
-					warn!("Error locking round state: {:#}", e);
+		let ret = Arc::new(parking_lot::Mutex::new(HashMap::with_capacity(states.len())));
+		tokio_stream::iter(states).for_each_concurrent(10, |state| {
+			let ret = ret.clone();
+			async move {
+				// not processing events here
+				if state.state().ongoing_participation() {
 					return;
-				},
-			};
+				}
 
-			let status = state.state_mut().sync(self).await;
-			trace!("Synced round #{}, status: {:?}", state.id(), status);
-			match status {
-				Ok(RoundStatus::Confirmed { funding_txid }) => {
-					info!("Round confirmed. Funding tx {}", funding_txid);
-					if let Err(e) = self.inner.db.remove_round_state(&state).await {
-						warn!("Error removing confirmed round state from db: {:#}", e);
-					}
-				},
-				Ok(RoundStatus::Unconfirmed { funding_txid }) => {
-					info!("Waiting for confirmations for round funding tx {}", funding_txid);
-					if let Err(e) = self.inner.db.update_round_state(&state).await {
-						warn!("Error updating pending round state in db: {:#}", e);
-					}
-				},
-				Ok(RoundStatus::Pending) => {
-					if let Err(e) = self.inner.db.update_round_state(&state).await {
-						warn!("Error updating pending round state in db: {:#}", e);
-					}
-				},
-				Ok(RoundStatus::Failed { error }) => {
-					error!("Round failed: {}", error);
-					if let Err(e) = self.inner.db.remove_round_state(&state).await {
-						warn!("Error removing failed round state from db: {:#}", e);
-					}
-				},
-				Ok(RoundStatus::Canceled) => {
-					error!("Round canceled");
-					if let Err(e) = self.inner.db.remove_round_state(&state).await {
-						warn!("Error removing canceled round state from db: {:#}", e);
-					}
-				},
-				Err(e) => warn!("Error syncing round: {:#}", e),
+				let mut state = match self.lock_wait_round_state(state.id()).await {
+					Ok(Some(state)) => state,
+					Ok(None) => return,
+					Err(e) => {
+						warn!("Error locking round state: {:#}", e);
+						return;
+					},
+				};
+
+				let status = match state.state_mut().sync(self).await {
+					Ok(s) => s,
+					Err(e) => {
+						warn!("Error syncing round: {:#}", e);
+						return;
+					},
+				};
+				trace!("Synced round #{}, status: {:?}", state.id(), status);
+				match status {
+					RoundStatus::Confirmed { funding_txid } => {
+						info!("Round confirmed. Funding tx {}", funding_txid);
+						if let Err(e) = self.inner.db.remove_round_state(&state).await {
+							warn!("Error removing confirmed round state from db: {:#}", e);
+						}
+					},
+					RoundStatus::Unconfirmed { funding_txid } => {
+						info!("Waiting for confirmations for round funding tx {}", funding_txid);
+						if let Err(e) = self.inner.db.update_round_state(&state).await {
+							warn!("Error updating pending round state in db: {:#}", e);
+						}
+					},
+					RoundStatus::Pending => {
+						if let Err(e) = self.inner.db.update_round_state(&state).await {
+							warn!("Error updating pending round state in db: {:#}", e);
+						}
+					},
+					RoundStatus::Failed { ref error } => {
+						error!("Round failed: {}", error);
+						if let Err(e) = self.inner.db.remove_round_state(&state).await {
+							warn!("Error removing failed round state from db: {:#}", e);
+						}
+					},
+					RoundStatus::Canceled => {
+						error!("Round canceled");
+						if let Err(e) = self.inner.db.remove_round_state(&state).await {
+							warn!("Error removing canceled round state from db: {:#}", e);
+						}
+					},
+				}
+				ret.lock().insert(state.id(), status);
 			}
 		}).await;
 
-		Ok(())
+		Ok(Arc::into_inner(ret).expect("only ref left").into_inner())
 	}
 
 	/// Fetch last round event from server
