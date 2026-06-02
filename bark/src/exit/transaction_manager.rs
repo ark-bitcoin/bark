@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Weak};
 
 use bitcoin::{Network, Transaction, Txid};
-use log::{debug, error, info, trace};
+use log::{debug, error, info, trace, warn};
 use tokio::sync::RwLock;
 
 use ark::vtxo::Full;
@@ -113,46 +113,64 @@ impl ExitTransactionManager {
 					continue;
 				}
 			}
-			match self.index.get(&txid) {
-				// If the transaction is not an exit package, we can just update its status
-				None => {
-					trace!("Updating status for non-exit tx {}", txid);
-					self.status.insert(txid, self.get_tx_status(txid).await?);
-				},
-				// If the transaction is a package, we must query the status of both transactions
-				Some(weak_ptr) => {
-					trace!("Update status for exit tx {}", txid);
-					let package = weak_ptr.upgrade().expect("index contains a stale package");
-					let status = self.get_tx_status(txid).await?;
-					trace!("Exit tx {} old status {:?}, new status {:?}", txid, self.status.get(&txid), Some(status));
+			// Failures for one tx should not abort the whole sync. The most common cause is
+			// a race between our status check and the chain source's view (e.g. esplora
+			// reports a tx as mempool while bitcoind's mempool has already evicted or
+			// confirmed it). Log and move on — the next sync tick will retry. Each exit's
+			// own `progress()` call surfaces fatal problems via its per-VTXO error field.
+			if let Err(e) = self.update_one_tx_status(txid, tip).await {
+				warn!("Failed to update status for exit tx {}: {:#}", txid, e);
+			}
+		}
+		Ok(())
+	}
 
-					match status {
-						TxStatus::NotFound => {
-							// Broadcast the current package if we have one
-							match self.broadcast_package(&*package.read().await).await {
-								Ok(_) => continue,
-								Err(ExitError::ExitPackageBroadcastFailure { error, .. }) => {
-									// We can just swallow these errors instead of stopping the
-									// entire syncing process
-									error!("{}", error);
-								},
-								Err(e) => {
-									return Err(e);
-								},
-							}
-						},
-						_ => {
-							// We should update/redownload from the network as a newer child
-							// transaction may exist in the mempool or in a confirmed block.
-							// We will skip this step once a transaction is deeply confirmed.
-							trace!("Attempting to update child status from network for exit tx {}", txid);
-							let status = self.update_package_from_network(
-								&package,
-								status.confirmed_height().unwrap_or(tip),
-							).await?;
-							self.status.insert(txid, status);
-						},
-					}
+	async fn update_one_tx_status(
+		&mut self,
+		txid: Txid,
+		tip: BlockHeight,
+	) -> anyhow::Result<(), ExitError> {
+		match self.index.get(&txid) {
+			// If the transaction is not an exit package, we can just update its status
+			None => {
+				trace!("Updating status for non-exit tx {}", txid);
+				self.status.insert(txid, self.get_tx_status(txid).await?);
+			},
+			// If the transaction is a package, we must query the status of both transactions
+			Some(weak_ptr) => {
+				trace!("Update status for exit tx {}", txid);
+				let package = weak_ptr.upgrade().ok_or_else(|| ExitError::InternalError {
+					error: "index contains a stale package".into(),
+				})?;
+				let status = self.get_tx_status(txid).await?;
+				trace!("Exit tx {} old status {:?}, new status {:?}", txid, self.status.get(&txid), Some(status));
+
+				match status {
+					TxStatus::NotFound => {
+						// Broadcast the current package if we have one
+						match self.broadcast_package(&*package.read().await).await {
+							Ok(_) => {},
+							Err(ExitError::ExitPackageBroadcastFailure { error, .. }) => {
+								// We can just swallow these errors instead of stopping the
+								// entire syncing process
+								error!("{}", error);
+							},
+							Err(e) => {
+								return Err(e);
+							},
+						}
+					},
+					_ => {
+						// We should update/redownload from the network as a newer child
+						// transaction may exist in the mempool or in a confirmed block.
+						// We will skip this step once a transaction is deeply confirmed.
+						trace!("Attempting to update child status from network for exit tx {}", txid);
+						let status = self.update_package_from_network(
+							&package,
+							status.confirmed_height().unwrap_or(tip),
+						).await?;
+						self.status.insert(txid, status);
+					},
 				}
 			}
 		}
@@ -168,7 +186,9 @@ impl ExitTransactionManager {
 		if let Some(child) = &guard.child {
 			Ok(Some(ExitChildStatus {
 				txid: child.info.txid,
-				status: self.status.get(&exit_txid).cloned().expect("status should be set"),
+				status: self.status.get(&exit_txid).cloned().ok_or_else(|| ExitError::InternalError {
+					error: "status should be set".into(),
+				})?,
 				fee_info: child.fee_info,
 				origin: child.origin,
 			}))

@@ -35,6 +35,18 @@ pub async fn progress_exit_until_awaiting_delta(ctx: &TestContext, bark: &Bark) 
 
 		let mut generate_block = false;
 
+		if let Some(e) = &response.error {
+			match e {
+				ExitError::AncestorRetrievalFailure { txid, error } => {
+					warn!("{} ancestor retrieval failed for {}: {}", bark.name(), txid, error);
+				}
+				ExitError::TransactionRetrievalFailure { txid, error } => {
+					warn!("{} tx retrieval failed for {}: {}", bark.name(), txid, error);
+				}
+				_ => panic!("unexpected top-level exit error: {:?}", e),
+			}
+		}
+
 		for exit in &response.exits {
 			if let Some(e) = &exit.error {
 				match e {
@@ -107,6 +119,21 @@ pub async fn complete_exit(ctx: &TestContext, bark: &Bark) {
 		let mut generate_block = flip;
 		flip = !flip;
 
+		// Top-level errors are typically transient — chain source hiccups, mempool races
+		// between status checks and ancestor lookups — so just log and let the retry loop
+		// pick them up next iteration.
+		if let Some(e) = &response.error {
+			match e {
+				ExitError::AncestorRetrievalFailure { txid, error } => {
+					warn!("{} ancestor retrieval failed for {}: {}", bark.name(), txid, error);
+				}
+				ExitError::TransactionRetrievalFailure { txid, error } => {
+					warn!("{} tx retrieval failed for {}: {}", bark.name(), txid, error);
+				}
+				_ => panic!("unexpected top-level exit error: {:?}", e),
+			}
+		}
+
 		// Panic early if an unexpected error occurs
 		for exit in &response.exits {
 			if let Some(e) = &exit.error {
@@ -116,12 +143,6 @@ pub async fn complete_exit(ctx: &TestContext, bark: &Bark) {
 					}
 					ExitError::ExitPackageBroadcastFailure { txid, error } => {
 						warn!("{} failed to broadcast exit {}: {}", bark.name(), txid, error);
-					}
-					ExitError::AncestorRetrievalFailure { txid, error } => {
-						warn!("{} failed to retrieve ancestor for exit {}: {}", bark.name(), txid, error);
-					}
-					ExitError::TransactionRetrievalFailure { txid, error} => {
-						warn!("{} failed to retrieve transaction for exit {}: {}", bark.name(), txid, error);
 					}
 					_ => panic!("unexpected exit error: {:?}", e),
 				}

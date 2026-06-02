@@ -3794,6 +3794,17 @@
             "type": "boolean",
             "description": "Whether all transactions have been confirmed"
           },
+          "error": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ExitError",
+                "description": "Top-level error that prevented progress from running cleanly this round. Per-exit\nproblems live on each `ExitProgressStatus`; this slot is for failures that can't\nbe attributed to a specific VTXO (e.g. the chain source becoming unavailable, or\nthe exit manager failing to refresh its view of pending transactions)."
+              }
+            ]
+          },
           "exits": {
             "type": "array",
             "items": {
