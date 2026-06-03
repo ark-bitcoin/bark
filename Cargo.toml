@@ -35,6 +35,7 @@ debug-assertions = true
 
 [profile.release]
 overflow-checks = true
+lto = true
 
 # TODO(stevenroose) at some point probably move these inline
 [workspace.dependencies]
