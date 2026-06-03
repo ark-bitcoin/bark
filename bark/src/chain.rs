@@ -3,6 +3,7 @@
 use std::borrow::Borrow;
 use std::collections::{HashMap, HashSet};
 use std::str::FromStr as _;
+use std::time::Duration;
 
 use anyhow::Context;
 use bdk_core::{BlockId, CheckPoint};
@@ -13,6 +14,8 @@ use bitcoin::{
 };
 use log::{debug, info, warn};
 use tokio::sync::RwLock;
+
+use crate::utils::time::Instant;
 
 use bitcoin_ext::{BlockHeight, BlockRef, FeeRateExt, TxStatus};
 use bitcoin_ext::rpc;
@@ -30,6 +33,16 @@ use bitcoind_async_client::traits::{Broadcaster, Reader};
 const FEE_RATE_TARGET_CONF_FAST: u16 = 1;
 const FEE_RATE_TARGET_CONF_REGULAR: u16 = 3;
 const FEE_RATE_TARGET_CONF_SLOW: u16 = 6;
+
+/// Coalesce bursts of `tip()` calls within the same `Wallet::sync()` cycle
+/// (parallel sub-syncs each fetch tip, and the exit progress state machine
+/// fetches it twice per iteration). Short enough to be invisible to tests
+/// and UI; long enough to dedupe within a single sync burst.
+const TIP_CACHE_TTL: Duration = Duration::from_secs(1);
+
+/// Fee estimates change on the scale of minutes, so refreshing more often
+/// than this buys nothing while costing one HTTP round trip per sync tick.
+const FEE_RATES_CACHE_TTL: Duration = Duration::from_secs(30);
 
 #[cfg(feature = "bitcoind-rpc")]
 const MIN_BITCOIND_VERSION: usize = 290000;
@@ -144,6 +157,12 @@ pub struct ChainSource {
 	inner: ChainSourceClient,
 	network: Network,
 	fee_rates: RwLock<FeeRates>,
+	/// `None` until the first successful (or fallback) `update_fee_rates`.
+	/// `Some(t)` makes subsequent calls within `FEE_RATES_CACHE_TTL` a no-op.
+	fee_rates_fetched_at: RwLock<Option<Instant>>,
+	/// Last observed tip height with the time it was fetched, used to
+	/// short-circuit repeat `tip()` calls within `TIP_CACHE_TTL`.
+	tip_cache: RwLock<Option<(BlockHeight, Instant)>>,
 }
 
 impl ChainSource {
@@ -266,7 +285,13 @@ impl ChainSource {
 		let fee = fallback_fee.unwrap_or(FeeRate::BROADCAST_MIN);
 		let fee_rates = RwLock::new(FeeRates { fast: fee, regular: fee, slow: fee });
 
-		Ok(Self { inner, network, fee_rates })
+		Ok(Self {
+			inner,
+			network,
+			fee_rates,
+			fee_rates_fetched_at: RwLock::new(None),
+			tip_cache: RwLock::new(None),
+		})
 	}
 
 	async fn fetch_fee_rates(&self) -> anyhow::Result<FeeRates> {
@@ -315,16 +340,31 @@ impl ChainSource {
 	}
 
 	pub async fn tip(&self) -> anyhow::Result<BlockHeight> {
-		match self.inner() {
+		if let Some((height, fetched_at)) = *self.tip_cache.read().await {
+			if fetched_at.elapsed() < TIP_CACHE_TTL {
+				return Ok(height);
+			}
+		}
+		let height = match self.inner() {
 			#[cfg(feature = "bitcoind-rpc")]
 			ChainSourceClient::Bitcoind { rpc, .. } => {
-				let count = rpc.get_block_count().await?;
-				Ok(count as BlockHeight)
+				rpc.get_block_count().await? as BlockHeight
 			},
 			ChainSourceClient::Esplora(client) => {
-				Ok(client.get_height().await?)
+				client.get_height().await?
 			},
-		}
+		};
+		*self.tip_cache.write().await = Some((height, Instant::now()));
+		Ok(height)
+	}
+
+	/// Drop the cached tip and fee-rate values, forcing the next call to
+	/// `tip()` or `update_fee_rates()` to round-trip the backend. Useful
+	/// in tests that fabricate chain changes faster than the TTL so the
+	/// next observation is deterministic without sleeping.
+	pub async fn invalidate_caches(&self) {
+		*self.tip_cache.write().await = None;
+		*self.fee_rates_fetched_at.write().await = None;
 	}
 
 	pub async fn tip_ref(&self) -> anyhow::Result<BlockRef> {
@@ -642,20 +682,33 @@ impl ChainSource {
 	}
 
 	/// Gets the current fee rates from the chain source, falling back to user-specified values if
-	/// necessary
+	/// necessary.
+	///
+	/// No-ops if a previous successful call ran within `FEE_RATES_CACHE_TTL`.
+	/// The fallback path overwrites the cached rates but deliberately does
+	/// not advance the cache timestamp, so the next call retries the backend
+	/// instead of serving the fallback for another full TTL.
 	pub async fn update_fee_rates(&self, fallback_fee: Option<FeeRate>) -> anyhow::Result<()> {
-		let fee_rates = match (self.fetch_fee_rates().await, fallback_fee) {
-			(Ok(fee_rates), _) => Ok(fee_rates),
-			(Err(e), None) => Err(e),
+		if let Some(fetched_at) = *self.fee_rates_fetched_at.read().await {
+			if fetched_at.elapsed() < FEE_RATES_CACHE_TTL {
+				return Ok(());
+			}
+		}
+		let (fee_rates, used_fallback) = match (self.fetch_fee_rates().await, fallback_fee) {
+			(Ok(fee_rates), _) => (fee_rates, false),
+			(Err(e), None) => return Err(e),
 			(Err(e), Some(fallback)) => {
 				warn!("Error getting fee rates, falling back to {} sat/kvB: {}",
 					fallback.to_btc_per_kvb(), e,
 				);
-				Ok(FeeRates { fast: fallback, regular: fallback, slow: fallback })
+				(FeeRates { fast: fallback, regular: fallback, slow: fallback }, true)
 			}
-		}?;
+		};
 
 		*self.fee_rates.write().await = fee_rates;
+		if !used_fallback {
+			*self.fee_rates_fetched_at.write().await = Some(Instant::now());
+		}
 		Ok(())
 	}
 }
