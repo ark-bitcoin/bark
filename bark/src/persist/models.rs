@@ -196,6 +196,19 @@ pub struct PaidInvoice {
 	pub paid_at: chrono::DateTime<chrono::Local>,
 }
 
+/// Permanent record of a fully-settled incoming lightning receive.
+///
+/// Written when an inbound payment is claimed (the wallet has obtained
+/// spendable VTXOs in exchange for the preimage); never deleted.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SettledLightningReceive {
+	pub payment_hash: PaymentHash,
+	pub preimage: Preimage,
+	pub invoice: Bolt11Invoice,
+	pub amount: Amount,
+	pub settled_at: chrono::DateTime<chrono::Local>,
+}
+
 /// Persisted representation of an incoming Lightning payment.
 ///
 /// Stores the invoice and related cryptographic material (e.g., payment hash and preimage)
