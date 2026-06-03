@@ -211,12 +211,12 @@ pub async fn execute_onchain_command(onchain_command: OnchainCommand, wallet: &m
 				}
 			}
 
-			let mut transactions = onchain.list_transactions();
+			let mut transactions = onchain.list_transaction_infos()?;
 			// transactions are ordered from newest to oldest, so we reverse them so last terminal item is newest
 			transactions.reverse();
 
 			let transactions = transactions.into_iter()
-				.map(|tx| bark_json::primitives::TransactionInfo::from(tx))
+				.map(primitives::WalletTxInfo::from)
 				.collect::<Vec<_>>();
 
 			output_json(&transactions);

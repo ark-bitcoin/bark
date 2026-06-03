@@ -1,0 +1,6 @@
+- Add `is_cpfp` field to `GET /api/v1/onchain/transactions`
+  A single exit can produce several child-pay-for-parent transactions
+  that fee-bump the exit's anchor outputs. They show up in the wallet's
+  tx list and are confusing for most end users. This flag gives client
+  developers a hook to label or hide those internal txs.
+  [#2119](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2119)

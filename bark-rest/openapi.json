@@ -5713,7 +5713,8 @@
         "required": [
           "txid",
           "tx",
-          "balance_change_sat"
+          "balance_change_sat",
+          "is_cpfp"
         ],
         "properties": {
           "balance_change_sat": {
@@ -5731,6 +5732,10 @@
                 "description": "`Some` when the transaction is mined; `None` while still in the mempool."
               }
             ]
+          },
+          "is_cpfp": {
+            "type": "boolean",
+            "description": "`true` when this tx spends a P2A fee anchor output — i.e. it is a CPFP\nchild bumping its parent. In bark this typically means the wallet is\nfee-bumping an exit transaction."
           },
           "onchain_fee_sat": {
             "type": [
