@@ -351,7 +351,8 @@ impl<'t> Tx<'t> {
 		let vtxos = vtxos.into_iter().map(|v| v.borrow().clone()).collect::<Vec<_>>();
 		let update = tree::VtxoTreeUpdate::new()
 			.insert_spendable_vtxos(vtxos);
-		self.execute_vtxo_tree_update(update).await
+		self.execute_vtxo_tree_update(update).await?;
+		Ok(())
 	}
 
 	pub async fn get_server_vtxo_by_id(
@@ -394,9 +395,8 @@ impl<'t> Tx<'t> {
 	pub async fn execute_vtxo_tree_update(
 		&self,
 		update: tree::VtxoTreeUpdate,
-	) -> anyhow::Result<()> {
-		tree::execute_vtxo_tree_update(&self, update).await?;
-		Ok(())
+	) -> anyhow::Result<u64> {
+		tree::execute_vtxo_tree_update(&self, update).await
 	}
 
 	/// Queries a virtual transaction by txid

@@ -422,17 +422,22 @@ impl VtxoTreeUpdate {
 /// 1. Upsert virtual transactions
 /// 2. Insert VTXOs (with ON CONFLICT DO NOTHING)
 /// 3. Update existing VTXOs (mark spent, forfeited, claimed)
+///
+/// Returns the number of VTXO rows actually inserted by step 2. Callers
+/// gate fresh-vs-retry behaviour on this: `> 0` means at least one new
+/// VTXO row was written, `0` means every insert hit `ON CONFLICT DO NOTHING`
+/// (i.e. an idempotent retry of an already-applied update).
 pub async fn execute_vtxo_tree_update(
 	tx: &tokio_postgres::Transaction<'_>,
 	update: VtxoTreeUpdate,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<u64> {
 	debug_assert!(validate(&update).is_ok(), "{}", validate(&update).unwrap_err());
 
 	upsert_virtual_transactions(tx, &update.tx_inserts).await?;
-	insert_vtxos(tx, &update.vtxo_inserts).await?;
+	let inserted = insert_vtxos(tx, &update.vtxo_inserts).await?;
 	apply_vtxo_updates(tx, &update.vtxo_updates).await?;
 
-	Ok(())
+	Ok(inserted)
 }
 
 async fn upsert_virtual_transactions(
@@ -465,13 +470,13 @@ async fn upsert_virtual_transactions(
 async fn insert_vtxos(
 	tx: &tokio_postgres::Transaction<'_>,
 	vi: &VtxoInserts,
-) -> anyhow::Result<()> {
-	if vi.is_empty() { return Ok(()) }
+) -> anyhow::Result<u64> {
+	if vi.is_empty() { return Ok(0) }
 	// ON CONFLICT DO NOTHING just continues if the vtxo already exists. For
 	// rows inserted via `insert_oor_spent_vtxos`, we then validate that the
 	// existing row's oor_spent_txid actually matches — otherwise the insert
 	// would silently authorize a double-spend.
-	tx.execute("
+	let inserted = tx.execute("
 		INSERT INTO vtxo (
 			vtxo_id, vtxo_txid, vtxo, expiry, exit_delta, policy_type, policy,
 			server_pubkey, amount, anchor_point,
@@ -503,7 +508,7 @@ async fn insert_vtxos(
 		let vtxo_id: &str = row.get("vtxo_id");
 		bail!("vtxo {} is already spent", vtxo_id);
 	}
-	Ok(())
+	Ok(inserted)
 }
 
 async fn apply_vtxo_updates(
