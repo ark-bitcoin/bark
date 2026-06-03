@@ -34,6 +34,7 @@ mod m0033_paid_invoice;
 mod m0034_unlock_failed_movement_vtxos;
 mod m0035_exit_vtxo_pending;
 mod m0036_pending_exit_movements;
+mod m0037_settled_lightning_receive;
 
 use anyhow::Context;
 use log::debug;
@@ -75,6 +76,7 @@ use m0033_paid_invoice::Migration0033;
 use m0034_unlock_failed_movement_vtxos::Migration0034;
 use m0035_exit_vtxo_pending::Migration0035;
 use m0036_pending_exit_movements::Migration0036;
+use m0037_settled_lightning_receive::Migration0037;
 
 pub struct MigrationContext {}
 
@@ -128,6 +130,7 @@ impl MigrationContext {
 		self.try_migration(conn, &Migration0034{})?;
 		self.try_migration(conn, &Migration0035{})?;
 		self.try_migration(conn, &Migration0036{})?;
+		self.try_migration(conn, &Migration0037{})?;
 
 		Ok(())
 	}
@@ -282,7 +285,7 @@ mod test {
 
 		// Perform the migrations and confirm it took effect
 		migs.do_all_migrations(&mut conn).unwrap();
-		assert_current_version(&conn, 36).unwrap();
+		assert_current_version(&conn, 37).unwrap();
 
 		assert!(table_exists(&conn, "bark_vtxo").unwrap());
 		assert!(table_exists(&conn, "bark_vtxo_state").unwrap());
@@ -301,6 +304,7 @@ mod test {
 		assert!(table_exists(&conn, "bark_pending_offboard").unwrap());
 		assert!(table_exists(&conn, "bark_wallet_action_checkpoint").unwrap());
 		assert!(table_exists(&conn, "bark_paid_invoice").unwrap());
+		assert!(table_exists(&conn, "bark_settled_lightning_receive").unwrap());
 
 		// The migration can be run multiple times
 		migs.do_all_migrations(&mut conn).unwrap();
