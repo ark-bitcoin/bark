@@ -6,7 +6,6 @@
 //! [`Progress`], representing the current phase of the state machine.
 
 use std::str::FromStr;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use anyhow::Context;
@@ -81,6 +80,114 @@ pub struct LightningReceive {
 impl LightningReceive {
 	pub fn id(&self) -> WalletActionId {
 		ln_recv_action_id(self.payment_hash)
+	}
+}
+
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+impl WalletAction for LightningReceive {
+	fn id(&self) -> WalletActionId { LightningReceive::id(self) }
+
+	async fn advance(self, wallet: &Wallet) -> Result<Advance<Self>, AdvanceError> {
+		let mut preimage_revealed = false;
+		let new_progress = match self.progress.clone() {
+			Progress::AwaitingPayment => {
+				match check_incoming_lightning_payment(wallet, &self).await? {
+					IncomingStatus::Pending => {
+						if invoice_expired(&self.invoice) {
+							info!("Removing unpaid expired lightning receive {}", self.payment_hash);
+							return Ok(Advance::Done);
+						}
+						return Ok(Advance::Park {
+							state: self,
+							wake_after: Some(AWAITING_PAYMENT_POLL_INTERVAL),
+							error: None,
+						});
+					},
+					IncomingStatus::Canceled => {
+						let err = anyhow!("Lightning receive {} canceled server-side", self.payment_hash);
+						return Ok(Advance::Failed(err.into()));
+					},
+					IncomingStatus::Ready => {
+						let htlcs = prepare_lightning_receive_htlcs(wallet, &self).await?;
+						Progress::HtlcsReady(htlcs)
+					},
+				}
+			},
+			Progress::HtlcsReady(htlcs) => {
+				// Preimage not revealed yet: if the HTLCs are near expiry,
+				// abandon rather than commit;
+				if is_htlc_near_expiry(wallet, &htlcs).await? {
+					abandon_lightning_receive(wallet, &self, &htlcs).await?;
+					return Ok(Advance::Done);
+				}
+
+				match claim_lightning_receive_htlcs(wallet, &self, &htlcs, &mut preimage_revealed).await {
+					Ok(_) => return Ok(Advance::Done),
+					Err(e) => {
+						if preimage_revealed {
+							Progress::PreimageRevealed(htlcs)
+						} else {
+							return Err(e);
+						}
+					},
+				}
+			},
+			Progress::PreimageRevealed(htlcs) => {
+				claim_lightning_receive_htlcs(wallet, &self, &htlcs, &mut preimage_revealed).await?;
+				return Ok(Advance::Done);
+			},
+		};
+
+		Ok(Advance::Next(LightningReceive { progress: new_progress, ..self }))
+	}
+
+	async fn on_retry(self, wallet: &Wallet, retries: u32) -> anyhow::Result<Advance<Self>> {
+		match self.progress.clone() {
+			// No money committed; just back off. Expiry reaping happens in advance.
+			Progress::AwaitingPayment => Ok(park_with_backoff(self, retries)),
+			Progress::HtlcsReady(htlcs) => {
+				if is_htlc_near_expiry(wallet, &htlcs).await? {
+					abandon_lightning_receive(wallet, &self, &htlcs).await?;
+					let err = anyhow!("HTLCs near expiry, abandoning");
+					return Ok(Advance::Failed(err.into()));
+				}
+				Ok(park_with_backoff(self, retries))
+			},
+			Progress::PreimageRevealed(_) => {
+				let budget = u32::from(wallet.config().lightning_receive_claim_retries);
+				if retries >= budget {
+					let err = anyhow!("lightning receive claim retry budget exhausted");
+					return Ok(Advance::Park { state: self, wake_after: None, error: Some(err.into()) });
+				}
+				Ok(park_with_backoff(self, retries))
+			},
+		}
+	}
+
+	async fn on_rejection(self, wallet: &Wallet, error: AdvanceError) -> anyhow::Result<Advance<Self>> {
+		match self.progress.clone() {
+			// Nothing committed server-side: drop the row ourselves and
+			// surface the original error to the caller.
+			Progress::AwaitingPayment => {
+				let id = self.id();
+				error!("Could not start lightning receive {}: {:?}", id, error);
+				if let Err(e) = wallet.stop_wallet_action(&id).await {
+					warn!("could not cancel awaiting-payment lightning receive {}: {:#}", id, e);
+				}
+				Ok(Advance::Failed(error.into()))
+			},
+			// Preimage not revealed yet: abandon locally (the inbound HTLC
+			// times out and the sender is refunded).
+			Progress::HtlcsReady(htlcs) => {
+				error!("Server rejected lightning receive claim before preimage disclosure, abandoning");
+				abandon_lightning_receive(wallet, &self, &htlcs).await?;
+				Ok(Advance::Failed(error.into()))
+			},
+			Progress::PreimageRevealed(_) => {
+				Ok(Advance::Park { state: self, wake_after: None, error: Some(error) })
+			},
+		}
 	}
 }
 
@@ -361,7 +468,7 @@ async fn claim_lightning_receive_htlcs(
 	wallet: &Wallet,
 	recv: &LightningReceive,
 	htlcs: &Htlcs,
-	preimage_revealed: &AtomicBool,
+	preimage_revealed: &mut bool,
 ) -> Result<(), AdvanceError> {
 	let (mut srv, _) = wallet.require_server().await?;
 
@@ -386,7 +493,7 @@ async fn claim_lightning_receive_htlcs(
 		.context("arkoor nonce generation for claim failed")?;
 
 	info!("Claiming arkoor against payment preimage for {}", recv.payment_hash);
-	preimage_revealed.store(true, Ordering::Relaxed);
+	*preimage_revealed = true;
 	let package_cosign_request = protos::ArkoorPackageCosignRequest::from(builder.cosign_request());
 	let resp = srv.client.claim_lightning_receive(protos::ClaimLightningReceiveRequest {
 		payment_hash: recv.payment_hash.to_byte_array().to_vec(),
