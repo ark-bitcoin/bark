@@ -1,9 +1,0 @@
-- Surface top-level exit progress errors on `ExitProgressResponse`
-  `ExitProgressResponse` gains an optional `error: Option<ExitError>` field
-  for failures that aren't attributable to a specific exit (e.g. the chain
-  source becoming unavailable or the exit manager failing to refresh its
-  view of pending transactions). Per-exit problems still live on each
-  `ExitProgressStatus`; this slot fills in the gap for global failures so
-  consumers can distinguish "one VTXO had a problem" from "the whole
-  progress run hit a transient issue".
-  [#2120](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2120)

@@ -6,6 +6,114 @@ https://docs.second.tech/changelog/changelog/
 
 Below is a more detailed summary for each version.
 
+# v0.2.2
+
+- `bark`
+    - Make outgoing lightning sends crash-safe via the wallet action executor
+      Lightning sends are now persisted as a single `WalletActionCheckpoint`
+      row and driven across crashes by the executor. Settled payments are recorded
+      in a new `bark_paid_invoice` fact table and kept forever, letting the wallet
+      answer "is this invoice paid?" without consulting the server.
+      [#2062](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2062)
+        - **BREAKING:** `Wallet::pay_lightning_invoice` and
+          `Wallet::pay_lightning_offer` take a new `wait: bool` parameter that
+          blocks until the send reaches a terminal state. Pass `false` to
+          return as soon as the payment is initiated and poll
+          `Wallet::lightning_send_state` for progress.
+        - **BREAKING:** `Wallet::check_lightning_payment` was removed. Use
+          `Wallet::lightning_send_state` (returns `LightningSendState::Unknown
+      | InProgress(LightningSend) | Paid(PaidInvoice)`),
+          `Wallet::lightning_send_checkpoint`, or `Wallet::is_invoice_paid`
+          instead.
+    - the wallet maintenance will now do rounds JIT, so it will not lock VTXOs
+      while waiting for a round to start
+        - if any existing rounds were ongoing and can be cancelled, it will cancel them first;
+          this is done to clean up probably stuck rounds and later refresh again
+          [#2113](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2113)
+    - Surface `is_cpfp` on `bark::onchain::WalletTxInfo`
+      Flags transactions that spend a P2A fee anchor — typically the wallet's
+      own CPFP children bumping an exit transaction. Lets consumers label or
+      hide these internal txs in user-facing transaction lists.
+      [#2119](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2119)
+    - Make unilateral exit progress resilient to chain-source hiccups and surface real failures
+      A single transaction failing its status refresh inside the exit transaction
+      manager no longer aborts the whole progress call — the failure is logged and
+      the rest of the txs continue, and the next sync tick retries. When a
+      progress run genuinely fails at a level that can't be attributed to a
+      specific VTXO (chain source unreachable, refresh tip retrieval failed),
+      `bark exit progress` now emits the error on a new top-level field of its
+      JSON response instead of dying with an unstructured stderr message, so
+      callers that scrape the JSON (tests, automation scripts) can match on the
+      variant and decide whether to retry.
+      [#2120](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2120)
+
+- `bark-cli`
+    - change log level for bitcoind client to DEBUG
+      [#2126](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2126)
+
+- `barkd`
+    - Add `GET /api/v1/wallet/mnemonic` endpoint
+      Returns the wallet's BIP-39 mnemonic phrase so operators can back up
+      the mnemonic without reading `{datadir}/mnemonic` off the host.
+      Exposed by default; disable with `BARKD_EXPOSE_MNEMONIC=false` (or
+      `--expose-mnemonic=false`), in which case the endpoint responds 404.
+      [#2114](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2114)
+    - Add `is_cpfp` field to `GET /api/v1/onchain/transactions`
+      A single exit can produce several child-pay-for-parent transactions
+      that fee-bump the exit's anchor outputs. They show up in the wallet's
+      tx list and are confusing for most end users. This flag gives client
+      developers a hook to label or hide those internal txs.
+      [#2119](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2119)
+    - make swagger ui optional with `swagger-ui` compile feature
+      [#2123](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2123)
+
+- `bark-json`
+    - Drop `LightningSendInfo` and `LightningMovement` from CLI for a compact
+      `LightningSendStatus { payment_hash, state, invoice, preimage }` instead.
+      [#2062](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2062)
+        - **BREAKING:** `bark_json::cli::LightningSendInfo` removed.
+        - **BREAKING:** `bark_json::cli::LightningMovement` removed (it only
+          wrapped `LightningReceiveInfo` / `LightningSendInfo`).
+    - Add `MnemonicResponse` for the new `GET /api/v1/wallet/mnemonic` endpoint
+      [#2114](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2114)
+    - `bark onchain transactions` now emits the rich `WalletTxInfo` shape
+      The CLI's onchain tx list now matches the REST endpoint: it includes
+      `onchain_fee_sat`, `balance_change_sat`, `confirmation`, and the new
+      `is_cpfp` flag, rather than just `{txid, tx}`.
+      [#2119](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2119)
+        - **BREAKING:** `bark onchain transactions` JSON output shape changed
+          from `TransactionInfo` (`{txid, tx}`) to `WalletTxInfo`. Scripts
+          parsing the CLI output need to adapt.
+        - Adds `is_cpfp` to `bark_json::primitives::WalletTxInfo`.
+    - Surface top-level exit progress errors on `ExitProgressResponse`
+      `ExitProgressResponse` gains an optional `error: Option<ExitError>` field
+      for failures that aren't attributable to a specific exit (e.g. the chain
+      source becoming unavailable or the exit manager failing to refresh its
+      view of pending transactions). Per-exit problems still live on each
+      `ExitProgressStatus`; this slot fills in the gap for global failures so
+      consumers can distinguish "one VTXO had a problem" from "the whole
+      progress run hit a transient issue".
+      [#2120](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2120)
+
+- `bark-rest`
+    - Add `GET /api/v1/wallet/mnemonic` endpoint
+      Returns the wallet's BIP-39 mnemonic phrase via a new `OnGetMnemonic`
+      hook on `ServerState`. Embedders that don't supply the hook get a
+      404 on this endpoint.
+      [#2114](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2114)
+        - **BREAKING:** `RestServer::start` now takes a `ServerState` instead
+          of individual wallet/auth/hook arguments. Build it via
+          `ServerState::builder()`.
+        - **BREAKING:** `ServerState::new` removed in favor of
+          `ServerState::builder()`.
+
+- `server`
+    - Return `badarg` when a client tries to spend an unspendable VTXO
+      `VtxoState::check_spendable` and the oor / round / offboard spend-update
+      paths now surface unspendable or banned VTXOs as `badarg` instead of
+      generic internal errors.
+      [#2062](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2062)
+
 # v0.2.1
 
 - `bark`

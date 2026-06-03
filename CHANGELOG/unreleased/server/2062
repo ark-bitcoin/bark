@@ -1,5 +1,0 @@
-- Return `badarg` when a client tries to spend an unspendable VTXO
-  `VtxoState::check_spendable` and the oor / round / offboard spend-update
-  paths now surface unspendable or banned VTXOs as `badarg` instead of
-  generic internal errors.
-  [#2062](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2062)

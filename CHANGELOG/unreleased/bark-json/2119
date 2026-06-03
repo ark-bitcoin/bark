@@ -1,9 +1,0 @@
-- `bark onchain transactions` now emits the rich `WalletTxInfo` shape
-  The CLI's onchain tx list now matches the REST endpoint: it includes
-  `onchain_fee_sat`, `balance_change_sat`, `confirmation`, and the new
-  `is_cpfp` flag, rather than just `{txid, tx}`.
-  [#2119](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2119)
-  - **BREAKING:** `bark onchain transactions` JSON output shape changed
-    from `TransactionInfo` (`{txid, tx}`) to `WalletTxInfo`. Scripts
-    parsing the CLI output need to adapt.
-  - Adds `is_cpfp` to `bark_json::primitives::WalletTxInfo`.

@@ -1,2 +1,0 @@
-- Add `MnemonicResponse` for the new `GET /api/v1/wallet/mnemonic` endpoint
-  [#2114](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2114)
