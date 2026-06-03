@@ -16,7 +16,7 @@ mod query;
 use std::path::{Path, PathBuf};
 
 use anyhow::Context;
-use bitcoin::Txid;
+use bitcoin::{Amount, Txid};
 use bitcoin::secp256k1::PublicKey;
 use chrono::DateTime;
 use lightning_invoice::Bolt11Invoice;
@@ -34,7 +34,8 @@ use crate::exit::ExitTxOrigin;
 use crate::movement::{Movement, MovementId, MovementStatus, MovementSubsystem, PaymentMethod};
 use crate::persist::{BarkPersister, RoundStateId, StoredRoundState, Unlocked};
 use crate::persist::models::{
-	LightningReceive, PaidInvoice, PendingBoard, PendingOffboard, StoredExit,
+	LightningReceive, PaidInvoice, PendingBoard, PendingOffboard, SettledLightningReceive,
+	StoredExit,
 };
 use crate::round::RoundState;
 use crate::vtxo::{VtxoState, VtxoStateKind, WalletVtxo};
@@ -357,6 +358,25 @@ impl BarkPersister for SqliteClient {
 	) -> anyhow::Result<Option<PaidInvoice>> {
 		let conn = self.connect()?;
 		query::get_paid_invoice(&conn, payment_hash)
+	}
+
+	async fn record_settled_lightning_receive(
+		&self,
+		payment_hash: PaymentHash,
+		preimage: Preimage,
+		invoice: &Bolt11Invoice,
+		amount: Amount,
+	) -> anyhow::Result<()> {
+		let conn = self.connect()?;
+		query::record_settled_lightning_receive(&conn, payment_hash, preimage, invoice, amount)
+	}
+
+	async fn get_settled_lightning_receive(
+		&self,
+		payment_hash: PaymentHash,
+	) -> anyhow::Result<Option<SettledLightningReceive>> {
+		let conn = self.connect()?;
+		query::get_settled_lightning_receive(&conn, payment_hash)
 	}
 
 	async fn get_all_pending_lightning_receives(&self) -> anyhow::Result<Vec<LightningReceive>> {

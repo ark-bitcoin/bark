@@ -46,8 +46,8 @@ use crate::WalletProperties;
 use crate::actions::{WalletActionCheckpoint, WalletActionId};
 use crate::exit::ExitTxOrigin;
 use crate::persist::models::{
-	LightningReceive, PaidInvoice, PendingBoard, RoundStateId, StoredExit, StoredRoundState,
-	Unlocked, PendingOffboard,
+	LightningReceive, PaidInvoice, PendingBoard, RoundStateId, SettledLightningReceive,
+	StoredExit, StoredRoundState, Unlocked, PendingOffboard,
 };
 use crate::movement::{Movement, MovementId, MovementStatus, MovementSubsystem, PaymentMethod};
 use crate::round::RoundState;
@@ -528,6 +528,21 @@ pub trait BarkPersister: Send + Sync + 'static {
 		&self,
 		payment_hash: PaymentHash,
 	) -> anyhow::Result<Option<PaidInvoice>>;
+
+	/// Record a settled incoming lightning receive, ignore if already exists.
+	async fn record_settled_lightning_receive(
+		&self,
+		payment_hash: PaymentHash,
+		preimage: Preimage,
+		invoice: &Bolt11Invoice,
+		amount: Amount,
+	) -> anyhow::Result<()>;
+
+	/// Look up a settled lightning receive record by payment hash.
+	async fn get_settled_lightning_receive(
+		&self,
+		payment_hash: PaymentHash,
+	) -> anyhow::Result<Option<SettledLightningReceive>>;
 
 	/// Store an incoming Lightning receive record.
 	///

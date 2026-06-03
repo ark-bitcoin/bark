@@ -203,6 +203,23 @@ impl BarkPersister for Dummy {
 		Ok(None)
 	}
 
+	async fn record_settled_lightning_receive(
+		&self,
+		_payment_hash: PaymentHash,
+		_preimage: Preimage,
+		_invoice: &Bolt11Invoice,
+		_amount: bitcoin::Amount,
+	) -> anyhow::Result<()> {
+		Ok(())
+	}
+
+	async fn get_settled_lightning_receive(
+		&self,
+		_payment_hash: PaymentHash,
+	) -> anyhow::Result<Option<bark::persist::models::SettledLightningReceive>> {
+		Ok(None)
+	}
+
 	async fn store_lightning_receive(
 		&self,
 		_payment_hash: PaymentHash,

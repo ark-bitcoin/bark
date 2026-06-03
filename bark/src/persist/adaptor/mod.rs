@@ -73,8 +73,8 @@ use crate::movement::{
 use crate::persist::BarkPersister;
 use crate::persist::models::{
 	LightningReceive, PaidInvoice, PendingBoard, PendingOffboard,
-	RoundStateId, SerdeExitChildTx, SerdeRoundState, SerdeVtxo, SerdeVtxoKey, StoredExit,
-	StoredRoundState, Unlocked, wallet_vtxo_from_full,
+	RoundStateId, SerdeExitChildTx, SerdeRoundState, SerdeVtxo, SerdeVtxoKey,
+	SettledLightningReceive, StoredExit, StoredRoundState, Unlocked, wallet_vtxo_from_full,
 };
 use crate::round::RoundState;
 use crate::vtxo::{VtxoState, VtxoStateKind};
@@ -105,6 +105,9 @@ pub mod partition {
 	/// Permanent record of every settled outgoing lightning payment,
 	/// keyed by payment hash.
 	pub const PAID_INVOICE: u8 = 15;
+	/// Permanent record of every settled incoming lightning receive,
+	/// keyed by payment hash.
+	pub const SETTLED_LIGHTNING_RECEIVE: u8 = 16;
 
 	pub const LAST_IDS: u8 = u8::MAX;
 }
@@ -910,6 +913,42 @@ impl <S: StorageAdaptor> BarkPersister for StorageAdaptorWrapper<S> {
 	) -> anyhow::Result<Option<PaidInvoice>> {
 		match self.inner.read().await
 			.get(partition::PAID_INVOICE, &payment_hash.to_byte_array()).await?
+		{
+			Some(record) => Ok(Some(record.to_data()?)),
+			None => Ok(None),
+		}
+	}
+
+	async fn record_settled_lightning_receive(
+		&self,
+		payment_hash: PaymentHash,
+		preimage: Preimage,
+		invoice: &Bolt11Invoice,
+		amount: Amount,
+	) -> anyhow::Result<()> {
+		let key = payment_hash.to_byte_array();
+
+		let mut lock = self.inner.write().await;
+		if lock.get(partition::SETTLED_LIGHTNING_RECEIVE, &key).await?.is_some() {
+			return Ok(());
+		}
+		let settled = SettledLightningReceive {
+			payment_hash,
+			preimage,
+			invoice: invoice.clone(),
+			amount,
+			settled_at: chrono::Local::now(),
+		};
+		let record = Record::from_data(partition::SETTLED_LIGHTNING_RECEIVE, &key, None, &settled)?;
+		lock.put(record).await
+	}
+
+	async fn get_settled_lightning_receive(
+		&self,
+		payment_hash: PaymentHash,
+	) -> anyhow::Result<Option<SettledLightningReceive>> {
+		match self.inner.read().await
+			.get(partition::SETTLED_LIGHTNING_RECEIVE, &payment_hash.to_byte_array()).await?
 		{
 			Some(record) => Ok(Some(record.to_data()?)),
 			None => Ok(None),

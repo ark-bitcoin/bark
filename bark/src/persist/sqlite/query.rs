@@ -22,8 +22,8 @@ use crate::exit::{ExitState, ExitTxOrigin};
 use crate::movement::{Movement, MovementId, MovementStatus, MovementSubsystem, PaymentMethod};
 use crate::persist::{RoundStateId, StoredRoundState};
 use crate::persist::models::{
-	LightningReceive, PaidInvoice, PendingBoard, SerdeRoundState, StoredExit, Unlocked,
-	PendingOffboard,
+	LightningReceive, PaidInvoice, PendingBoard, SerdeRoundState, SettledLightningReceive,
+	StoredExit, Unlocked, PendingOffboard,
 };
 use crate::persist::sqlite::convert::{row_to_movement, row_to_wallet_vtxo, rows_to_wallet_vtxos};
 use crate::round::RoundState;
@@ -1168,6 +1168,52 @@ pub fn get_paid_invoice(
 		.context("invalid preimage hex in bark_paid_invoice")?;
 	let paid_at: chrono::DateTime<chrono::Local> = row.get("paid_at")?;
 	Ok(Some(PaidInvoice { payment_hash, preimage, paid_at }))
+}
+
+
+pub fn record_settled_lightning_receive(
+	conn: &Connection,
+	payment_hash: PaymentHash,
+	preimage: Preimage,
+	invoice: &Bolt11Invoice,
+	amount: Amount,
+) -> anyhow::Result<()> {
+	let query = "
+		INSERT INTO bark_settled_lightning_receive (payment_hash, preimage, invoice, amount_sat)
+		VALUES (:payment_hash, :preimage, :invoice, :amount_sat)
+		ON CONFLICT(payment_hash) DO NOTHING";
+	let mut statement = conn.prepare(query)?;
+	statement.execute(named_params! {
+		":payment_hash": payment_hash.as_hex().to_string(),
+		":preimage": preimage.as_hex().to_string(),
+		":invoice": invoice.to_string(),
+		":amount_sat": amount.to_sat() as i64,
+	})?;
+	Ok(())
+}
+
+pub fn get_settled_lightning_receive(
+	conn: &Connection,
+	payment_hash: PaymentHash,
+) -> anyhow::Result<Option<SettledLightningReceive>> {
+	let query = "SELECT preimage, invoice, amount_sat, settled_at
+		FROM bark_settled_lightning_receive WHERE payment_hash = :payment_hash";
+	let mut statement = conn.prepare(query)?;
+	let mut rows = statement.query(named_params! { ":payment_hash": payment_hash.as_hex().to_string() })?;
+
+	let row = match rows.next()? {
+		Some(row) => row,
+		None => return Ok(None),
+	};
+	let preimage_str: String = row.get("preimage")?;
+	let preimage = Preimage::from_str(&preimage_str)
+		.context("invalid preimage hex in bark_settled_lightning_receive")?;
+	let invoice_str: String = row.get("invoice")?;
+	let invoice = Bolt11Invoice::from_str(&invoice_str)
+		.context("invalid invoice in bark_settled_lightning_receive")?;
+	let amount = Amount::from_sat(row.get::<_, i64>("amount_sat")? as u64);
+	let settled_at: chrono::DateTime<chrono::Local> = row.get("settled_at")?;
+	Ok(Some(SettledLightningReceive { payment_hash, preimage, invoice, amount, settled_at }))
 }
 
 

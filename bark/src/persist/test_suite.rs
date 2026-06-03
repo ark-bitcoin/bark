@@ -772,6 +772,9 @@ mod lightning {
 		test_paid_invoice_record_and_get(a, b).await;
 		test_paid_invoice_record_is_idempotent(a, b).await;
 		test_paid_invoice_get_missing(a, b).await;
+		test_settled_lightning_receive_record_and_get(a, b).await;
+		test_settled_lightning_receive_record_is_idempotent(a, b).await;
+		test_settled_lightning_receive_get_missing(a, b).await;
 	}
 
 	fn send_at_start() -> LightningSend {
@@ -973,6 +976,55 @@ mod lightning {
 		let hash = PaymentHash::from_slice(&[0x55u8; 32]).unwrap();
 		let ra = a.get_paid_invoice(hash).await.unwrap();
 		let rb = b.get_paid_invoice(hash).await.unwrap();
+		assert!(ra.is_none(), "missing hash returns None (a)");
+		assert!(rb.is_none(), "missing hash returns None (b)");
+	}
+
+	fn settled_receive_hash() -> PaymentHash {
+		PaymentHash::from_slice(&[0xefu8; 32]).unwrap()
+	}
+
+	async fn test_settled_lightning_receive_record_and_get<A: BarkPersister, B: BarkPersister>(a: &A, b: &B) {
+		let hash = settled_receive_hash();
+		let preimage = test_preimage();
+		let invoice = test_bolt11();
+		let amount = Amount::from_sat(12_345);
+
+		a.record_settled_lightning_receive(hash, preimage, &invoice, amount).await.unwrap();
+		b.record_settled_lightning_receive(hash, preimage, &invoice, amount).await.unwrap();
+
+		let ra = a.get_settled_lightning_receive(hash).await.expect("a: get").expect("a: present");
+		let rb = b.get_settled_lightning_receive(hash).await.expect("b: get").expect("b: present");
+		assert_eq!(ra.payment_hash, hash, "payment hash round-trip");
+		assert_eq!(ra.preimage, preimage, "preimage round-trip");
+		assert_eq!(ra.invoice, invoice, "invoice round-trip");
+		assert_eq!(ra.amount, amount, "amount round-trip");
+		assert_eq!(ra.payment_hash, rb.payment_hash, "settled receive round-trip mismatch");
+		assert_eq!(ra.amount, rb.amount, "settled receive amount mismatch");
+	}
+
+	async fn test_settled_lightning_receive_record_is_idempotent<A: BarkPersister, B: BarkPersister>(a: &A, b: &B) {
+		let hash = settled_receive_hash();
+		let preimage = test_preimage();
+		let invoice = test_bolt11();
+
+		// A second record with a different amount must be a no-op: the
+		// original row wins.
+		let ra = a.record_settled_lightning_receive(hash, preimage, &invoice, Amount::from_sat(999)).await;
+		let rb = b.record_settled_lightning_receive(hash, preimage, &invoice, Amount::from_sat(999)).await;
+		assert!(ra.is_ok(), "second record on (a) should be a no-op");
+		assert!(rb.is_ok(), "second record on (b) should be a no-op");
+
+		let ra = a.get_settled_lightning_receive(hash).await.unwrap().expect("a: row still present");
+		let rb = b.get_settled_lightning_receive(hash).await.unwrap().expect("b: row still present");
+		assert_eq!(ra.amount, Amount::from_sat(12_345), "original amount preserved (a)");
+		assert_eq!(rb.amount, Amount::from_sat(12_345), "original amount preserved (b)");
+	}
+
+	async fn test_settled_lightning_receive_get_missing<A: BarkPersister, B: BarkPersister>(a: &A, b: &B) {
+		let hash = PaymentHash::from_slice(&[0x66u8; 32]).unwrap();
+		let ra = a.get_settled_lightning_receive(hash).await.unwrap();
+		let rb = b.get_settled_lightning_receive(hash).await.unwrap();
 		assert!(ra.is_none(), "missing hash returns None (a)");
 		assert!(rb.is_none(), "missing hash returns None (b)");
 	}
