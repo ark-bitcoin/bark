@@ -47,15 +47,22 @@ async fn test_bitcoind(ctx: &TestContext, id: usize) -> Bitcoind {
 
 #[tokio::test]
 async fn chain_source_tip() {
+	// `ChainSource::tip` caches the last-fetched height for a short TTL to
+	// coalesce sync bursts. Invalidate the cache whenever this test wants
+	// to observe a fresh fetch (new height, or backend errors); the cache
+	// behaviour itself is exercised by the unchanged loop below.
 	let (ctx, chain_source) = setup_chain_source("chain_source/tip").await;
 	let start_height = ctx.bitcoind().get_block_count().await as BlockHeight;
 	assert_eq!(chain_source.tip().await.unwrap(), start_height);
 
 	// The tip should be updated when blocks are generated.
 	ctx.generate_blocks(10).await;
+	chain_source.invalidate_caches().await;
 	assert_eq!(chain_source.tip().await.unwrap(), start_height + 10);
 
-	// The tip should stay the same when blocks are not generated.
+	// The tip should stay the same when blocks are not generated. With the
+	// cache primed by the assertion above, this loop also exercises that
+	// repeated reads return the cached value consistently.
 	for _ in 0..10 {
 		assert_eq!(chain_source.tip().await.unwrap(), start_height + 10);
 		tokio::time::sleep(Duration::from_millis(10)).await;
@@ -63,13 +70,16 @@ async fn chain_source_tip() {
 
 	// The tip should continue to be updated when new blocks are generated.
 	ctx.generate_blocks(37).await;
+	chain_source.invalidate_caches().await;
 	assert_eq!(chain_source.tip().await.unwrap(), start_height + 47);
 
 	ctx.generate_blocks(1234).await;
+	chain_source.invalidate_caches().await;
 	assert_eq!(chain_source.tip().await.unwrap(), start_height + 1281);
 
-	// Ensure network problems result in errors
+	// Ensure network problems result in errors once the cache is cleared.
 	drop(ctx);
+	chain_source.invalidate_caches().await;
 	chain_source.tip().await
 		.expect_err("We shouldn't be able to retrieve data");
 }
