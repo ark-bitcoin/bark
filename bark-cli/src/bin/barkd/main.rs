@@ -10,7 +10,7 @@ use clap::builder::BoolishValueParser;
 use log::{info, warn};
 
 use bark_json::web::{BarkNetwork, BitcoindAuth, ChainSourceConfig, CreateWalletRequest};
-use bark_rest::{Config, OnGetMnemonic, OnWalletCreate, OnWalletDelete, RestServer, ServerState, ServerWallet};
+use bark_rest::{Config, OnGetMnemonic, OnWalletCreate, OnWalletDelete, RestServer, ServerState};
 use bark_rest::http::HeaderValue;
 use bark_rest::error::ContextExt;
 use bark_rest::auth::AuthToken;
@@ -359,9 +359,7 @@ async fn main() -> anyhow::Result<()>{
 	let wallet_opt = if let Some((wallet, _onchain)) = open_wallet(&datadir, USER_AGENT).await? {
 		wallet.start_daemon()?;
 		info!("Wallet loaded and daemon started");
-		let server_wallet = bark_rest::ServerWallet::new(wallet);
-
-		Some(server_wallet)
+		Some(wallet)
 	} else {
 		warn!("No wallet found. Starting rest server without daemon");
 		None
@@ -388,8 +386,7 @@ async fn main() -> anyhow::Result<()>{
 
 				wallet.start_daemon()?;
 
-				let handle = ServerWallet::new(wallet);
-				Ok::<_, anyhow::Error>(handle)
+				Ok::<_, anyhow::Error>(wallet)
 			})
 		}
 	});
@@ -422,7 +419,7 @@ async fn main() -> anyhow::Result<()>{
 		None
 	};
 
-	let inner_wallet = wallet_opt.as_ref().map(|w| w.wallet.clone());
+	let inner_wallet = wallet_opt.as_ref().map(|w| w.clone());
 	let state = ServerState::builder()
 		.wallet(wallet_opt)
 		.auth_token(auth_token)

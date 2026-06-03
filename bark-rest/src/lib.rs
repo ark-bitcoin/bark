@@ -36,7 +36,7 @@ type BoxFuture<T> =
 	Pin<Box<dyn Future<Output = T> + Send + 'static>>;
 
 pub type OnWalletCreate = dyn Fn(CreateWalletRequest)
-	-> BoxFuture<anyhow::Result<ServerWallet>> + Send + Sync;
+	-> BoxFuture<anyhow::Result<Wallet>> + Send + Sync;
 
 pub type OnWalletDelete = dyn Fn()
 	-> BoxFuture<anyhow::Result<()>> + Send + Sync;
@@ -127,27 +127,16 @@ pub struct RestServer {
 	jh: JoinHandle<()>,
 }
 
-/// A simple wrapper around a [Wallet] held by the [RestServer].
-pub struct ServerWallet {
-	pub wallet: Wallet,
-}
-
-impl ServerWallet {
-	pub fn new(wallet: Wallet) -> Self {
-		Self { wallet }
-	}
-}
-
 /// Shared state held by the REST server.
 ///
 /// Construct via [`ServerState::builder`].
 #[derive(Clone)]
 pub struct ServerState {
-	wallet: Arc<parking_lot::RwLock<Option<ServerWallet>>>,
+	wallet: Arc<parking_lot::RwLock<Option<Wallet>>>,
 	auth_token: Option<AuthToken>,
 
 	/// A hook to be called when a wallet is created, returning a
-	/// [ServerWallet] to be added to the server state
+	/// [Wallet] to be added to the server state
 	on_wallet_create: Option<Arc<OnWalletCreate>>,
 	/// A hook to be called when a wallet is deleted,
 	///in addition to removing the wallet from the server state
@@ -173,7 +162,7 @@ pub struct ServerState {
 ///     .build();
 /// ```
 pub struct ServerStateBuilder {
-	wallet: Option<ServerWallet>,
+	wallet: Option<Wallet>,
 	auth_token: Option<AuthToken>,
 	on_wallet_create: Option<Arc<OnWalletCreate>>,
 	on_wallet_delete: Option<Arc<OnWalletDelete>>,
@@ -191,7 +180,7 @@ impl ServerStateBuilder {
 		}
 	}
 
-	pub fn wallet(mut self, wallet: impl Into<Option<ServerWallet>>) -> Self {
+	pub fn wallet(mut self, wallet: impl Into<Option<Wallet>>) -> Self {
 		self.wallet = wallet.into();
 		self
 	}
@@ -240,14 +229,12 @@ impl ServerState {
 	}
 
 	pub fn require_wallet(&self) -> anyhow::Result<Wallet> {
-		let wallet = self.wallet.read().as_ref()
-			.ok_or_else(|| anyhow!("No wallet set"))?.wallet.clone();
-		Ok(wallet)
+		self.wallet.read().clone().context("No wallet set")
 	}
 
 	pub fn require_onchain(&self) -> anyhow::Result<Arc<tokio::sync::RwLock<dyn OnchainWalletTrait>>> {
 		self.wallet.read().as_ref().context("No wallet set")?
-			.wallet.onchain().context("No onchain wallet configured")
+			.onchain().context("No onchain wallet configured")
 	}
 
 	pub fn auth_token(&self) -> Option<&AuthToken> {
