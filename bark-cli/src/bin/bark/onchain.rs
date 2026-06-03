@@ -9,8 +9,20 @@ use log::{info, warn};
 use bark::Wallet;
 use bark::onchain::{OnchainWallet, OnchainWalletTrait};
 use bark_json::{cli as json, primitives};
-
 use bark_cli::util::output_json;
+
+
+/// Cast an [OnchainWalletTrait] to an [OnchainWallet]
+fn cast_bdk(w: &dyn OnchainWalletTrait) -> anyhow::Result<&OnchainWallet> {
+	(w as &dyn std::any::Any).downcast_ref::<OnchainWallet>()
+		.context("onchain wallet is not a BDK wallet")
+}
+
+/// Cast a mutable [OnchainWalletTrait] to an [OnchainWallet]
+fn cast_bdk_mut(w: &mut dyn OnchainWalletTrait) -> anyhow::Result<&mut OnchainWallet> {
+	(w as &mut dyn std::any::Any).downcast_mut::<OnchainWallet>()
+		.context("onchain wallet is not a BDK wallet")
+}
 
 #[derive(clap::Subcommand)]
 pub enum OnchainCommand {
@@ -87,24 +99,26 @@ pub enum OnchainCommand {
 	},
 }
 
-pub async fn execute_onchain_command(onchain_command: OnchainCommand, wallet: &mut Wallet, onchain: &mut OnchainWallet) -> anyhow::Result<()> {
+pub async fn execute_onchain_command(onchain_command: OnchainCommand, wallet: &Wallet) -> anyhow::Result<()> {
 	let net = wallet.network().await?;
+	let onchain = wallet.onchain().context("no onchain wallet configured")?;
 
 	match onchain_command {
 		OnchainCommand::Balance { no_sync } => {
 			if !no_sync {
 				info!("Syncing wallet...");
-				if let Err(e) = onchain.sync(wallet.chain()).await {
+				if let Err(e) = onchain.write().await.sync(wallet.chain()).await {
 					warn!("Onchain sync error: {}", e)
 				}
 			}
 
-			let balance = onchain.balance();
+			let guard = onchain.read().await;
+			let balance = cast_bdk(&*guard)?.balance();
 			let onchain_balance = json::onchain::OnchainBalance::from(balance);
 			output_json(&onchain_balance);
 		},
 		OnchainCommand::Address => {
-			let address = onchain.address().await?;
+			let address = onchain.write().await.address().await?;
 			let output = json::onchain::Address { address: address.into_unchecked() };
 			output_json(&output);
 		},
@@ -115,13 +129,13 @@ pub async fn execute_onchain_command(onchain_command: OnchainCommand, wallet: &m
 
 			if !no_sync {
 				info!("Syncing wallet...");
-				if let Err(e) = onchain.sync(wallet.chain()).await {
+				if let Err(e) = onchain.write().await.sync(wallet.chain()).await {
 					warn!("Sync error: {}", e)
 				}
 			}
 
 			let fee_rate = wallet.chain().fee_rates().await.regular;
-			let txid = onchain.send(wallet.chain(), addr, amount, fee_rate).await?;
+			let txid = cast_bdk_mut(&mut *onchain.write().await)?.send(wallet.chain(), addr, amount, fee_rate).await?;
 
 			let output = json::onchain::Send { txid };
 			output_json(&output);
@@ -133,13 +147,13 @@ pub async fn execute_onchain_command(onchain_command: OnchainCommand, wallet: &m
 
 			if !no_sync {
 				info!("Syncing wallet...");
-				if let Err(e) = onchain.sync(wallet.chain()).await {
+				if let Err(e) = onchain.write().await.sync(wallet.chain()).await {
 					warn!("Sync error: {}", e)
 				}
 			}
 
 			let fee_rate = wallet.chain().fee_rates().await.regular;
-			let txid = onchain.drain(wallet.chain(), addr, fee_rate).await?;
+			let txid = cast_bdk_mut(&mut *onchain.write().await)?.drain(wallet.chain(), addr, fee_rate).await?;
 
 			let output = json::onchain::Send { txid };
 			output_json(&output);
@@ -177,13 +191,13 @@ pub async fn execute_onchain_command(onchain_command: OnchainCommand, wallet: &m
 
 			if !no_sync {
 				info!("Syncing wallet...");
-				if let Err(e) = onchain.sync(wallet.chain()).await {
+				if let Err(e) = onchain.write().await.sync(wallet.chain()).await {
 					warn!("Sync error: {}", e)
 				}
 			}
 
 			let fee_rate = wallet.chain().fee_rates().await.regular;
-			let txid = onchain.send_many(wallet.chain(), &outputs, fee_rate).await?;
+			let txid = cast_bdk_mut(&mut *onchain.write().await)?.send_many(wallet.chain(), &outputs, fee_rate).await?;
 
 			let output = json::onchain::Send { txid };
 			output_json(&output);
@@ -191,12 +205,13 @@ pub async fn execute_onchain_command(onchain_command: OnchainCommand, wallet: &m
 		OnchainCommand::Utxos { no_sync } => {
 			if !no_sync {
 				info!("Syncing wallet...");
-				if let Err(e) = onchain.sync(wallet.chain()).await {
+				if let Err(e) = onchain.write().await.sync(wallet.chain()).await {
 					warn!("Sync error: {}", e)
 				}
 			}
 
-			let utxos = onchain.utxos()
+			let guard = onchain.read().await;
+			let utxos = cast_bdk(&*guard)?.utxos()
 				.into_iter()
 				.map(primitives::UtxoInfo::from)
 				.collect::<Vec<_>>();
@@ -206,13 +221,15 @@ pub async fn execute_onchain_command(onchain_command: OnchainCommand, wallet: &m
 		OnchainCommand::Transactions { no_sync } => {
 			if !no_sync {
 				info!("Syncing wallet...");
-				if let Err(e) = onchain.sync(wallet.chain()).await {
+				if let Err(e) = onchain.write().await.sync(wallet.chain()).await {
 					warn!("Sync error: {}", e)
 				}
 			}
 
-			let mut transactions = onchain.list_transaction_infos()?;
-			// transactions are ordered from newest to oldest, so we reverse them so last terminal item is newest
+			let guard = onchain.read().await;
+			let mut transactions = cast_bdk(&*guard)?.list_transaction_infos()?;
+			// transactions are ordered from newest to oldest,
+			// so we reverse them so last terminal item is newest
 			transactions.reverse();
 
 			let transactions = transactions.into_iter()

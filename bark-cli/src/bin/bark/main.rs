@@ -28,7 +28,6 @@ use log::{debug, info, warn};
 
 use ark::{ProtocolEncoding, VtxoId};
 use ark::lightning::PaymentHash;
-use bark::onchain::OnchainWalletTrait;
 use bark::vtxo::{VtxoFilter, VtxoStateKind};
 use bark_json as json;
 use bark_json::primitives::WalletVtxoInfo;
@@ -326,7 +325,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 		return dev::execute_dev_command(cmd, datadir).await;
 	}
 
-	let (mut wallet, onchain) = open_wallet(&datadir, USER_AGENT).await
+	let mut wallet = open_wallet(&datadir, USER_AGENT).await
 		.context("error opening wallet")?
 		.context("No wallet found")?;
 
@@ -566,7 +565,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 
 				address
 			} else {
-				onchain.write().await.address().await?
+				wallet.onchain().context("no onchain wallet configured")?.write().await.address().await?
 			};
 
 			let offboard_txid = if let Some(vtxos) = vtxos {
@@ -597,7 +596,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 			output_json(&json::cli::OffboardResult { offboard_txid });
 		},
 		Command::Onchain(onchain_command) => {
-			onchain::execute_onchain_command(onchain_command, &mut wallet, &mut *onchain.write().await).await?;
+			onchain::execute_onchain_command(onchain_command, &wallet).await?;
 		},
 		Command::Exit(cmd) => {
 			exit::execute_exit_command(cmd, &mut wallet).await?;

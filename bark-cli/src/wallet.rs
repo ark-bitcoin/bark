@@ -8,11 +8,8 @@
 //! - Opens `db.sqlite` as a [`bark::persist::sqlite::SqliteClient`] and loads persisted properties
 //! - Loads or creates the [`bark::onchain::OnchainWallet`], wraps it in
 //!   `Arc<RwLock<_>>`, and stores it inside the [`bark::Wallet`] via
-//!   [`bark::OpenWalletArgs::onchain`]
-//! - Returns `(bark::Wallet, Arc<RwLock<bark::onchain::OnchainWallet>>)`;
-//!   the Arc is the same one stored inside the wallet, allowing callers to
-//!   access BDK-specific methods not exposed through the trait
-//!
+//!   [`bark::OpenWalletArgs::onchain`] — BDK-specific methods are accessed
+//!   via downcasting through [`bark::Wallet::onchain`]
 //! ## Errors
 //! Returns an [`anyhow::Error`] with context describing the failing step (I/O, parsing,
 //! database access, or wallet initialization).
@@ -25,8 +22,8 @@
 //! # use bark_cli::wallet::open_wallet;
 //! # async fn example() -> anyhow::Result<()> {
 //!     let datadir = Path::new("./bark_data");
-//!     let (bark_wallet, onchain) = open_wallet(datadir, "myapp/1.0").await?.unwrap();
-//!     // Use the wallets...
+//!     let bark_wallet = open_wallet(datadir, "myapp/1.0").await?.unwrap();
+//!     // Use the wallet...
 //!     Ok(())
 //! # }
 //! ```
@@ -469,12 +466,8 @@ pub async fn read_mnemonic(datadir: &Path) -> anyhow::Result<String> {
 	Ok(s.trim().to_string())
 }
 
-pub async fn open_wallet(
-	datadir: &Path,
-	user_agent: &str,
-) -> anyhow::Result<Option<(BarkWallet, Arc<tokio::sync::RwLock<OnchainWallet>>)>> {
+pub async fn open_wallet(datadir: &Path, user_agent: &str) -> anyhow::Result<Option<BarkWallet>> {
 	debug!("Opening bark wallet in {}", datadir.display());
-
 
 	// read mnemonic file
 	let mnemonic_path = datadir.join(MNEMONIC_FILE);
@@ -535,6 +528,6 @@ pub async fn open_wallet(
 		},
 	).await?;
 
-	Ok(Some((bark_wallet, onchain)))
+	Ok(Some(bark_wallet))
 }
 
