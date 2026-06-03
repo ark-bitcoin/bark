@@ -172,6 +172,12 @@ pub struct ExitProgressResponse {
 	pub done: bool,
 	/// Block height at which all exit outputs will be spendable
 	pub claimable_height: Option<u32>,
+	/// Top-level error that prevented progress from running cleanly this round. Per-exit
+	/// problems live on each `ExitProgressStatus`; this slot is for failures that can't
+	/// be attributed to a specific VTXO (e.g. the chain source becoming unavailable, or
+	/// the exit manager failing to refresh its view of pending transactions).
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub error: Option<ExitError>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]

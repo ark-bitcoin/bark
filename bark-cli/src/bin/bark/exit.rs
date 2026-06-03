@@ -241,15 +241,38 @@ async fn progress_once(
 	info!("Wallet sync completed");
 	info!("Start progressing exit");
 
-	let result = wallet.exit_mgr().progress_exits_with_bdk(wallet, onchain, fee_rate).await
-		.context("error making progress on exit process")?;
+	// If progress fails at a level that isn't attributable to a specific exit (e.g. the
+	// chain source going away), surface it on the response rather than blowing up the CLI
+	// with a plain stderr message. Callers that scrape the JSON output (tests, scripts)
+	// can then react to known transient errors and retry.
+	let progress_result = wallet.exit_mgr()
+		.progress_exits_with_bdk(wallet, onchain, fee_rate).await;
 
 	let done = !wallet.exit_mgr().has_pending_exits().await;
 	let claimable_height = wallet.exit_mgr().all_claimable_at_height().await;
-	let exits = result.unwrap_or_default()
-		.into_iter().map(ExitProgressStatus::from).collect::<Vec<_>>();
 
-	Ok(bark_json::cli::ExitProgressResponse { done, claimable_height, exits, })
+	let (exits, error) = match progress_result {
+		Ok(result) => {
+			let exits = result.unwrap_or_default()
+				.into_iter().map(ExitProgressStatus::from).collect::<Vec<_>>();
+			(exits, None)
+		},
+		Err(e) => {
+			warn!("Exit progress failed: {:#}", e);
+			// Walk the anyhow chain to recover the typed ExitError if present so the
+			// caller can match on the variant rather than parsing a free-form string.
+			let exit_err = e.chain()
+				.find_map(|cause| cause.downcast_ref::<bark::exit::ExitError>())
+				.cloned()
+				.map(bark_json::exit::error::ExitError::from)
+				.unwrap_or_else(|| bark_json::exit::error::ExitError::InternalError {
+					error: format!("{:#}", e),
+				});
+			(Vec::new(), Some(exit_err))
+		},
+	};
+
+	Ok(bark_json::cli::ExitProgressResponse { done, claimable_height, exits, error })
 }
 
 pub async fn claim_exits(
