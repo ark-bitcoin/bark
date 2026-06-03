@@ -20,7 +20,6 @@ use std::sync::Arc;
 use anyhow::Context;
 use axum::routing::get;
 use log::{error, warn, info};
-use tokio::sync::RwLock;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use axum::http::{header, Method, HeaderValue};
@@ -30,7 +29,7 @@ use utoipa::openapi::security::{HttpAuthScheme, HttpBuilder, SecurityScheme};
 use utoipa_axum::router::OpenApiRouter;
 
 use bark::Wallet;
-use bark::onchain::OnchainWallet;
+use bark::onchain::OnchainWalletTrait;
 use bark_json::web::CreateWalletRequest;
 
 type BoxFuture<T> =
@@ -128,16 +127,14 @@ pub struct RestServer {
 	jh: JoinHandle<()>,
 }
 
-/// A simple wrapper around a [Wallet] and an [OnchainWallet] hold by
-/// the [RestServer]
+/// A simple wrapper around a [Wallet] held by the [RestServer].
 pub struct ServerWallet {
 	pub wallet: Wallet,
-	pub onchain: Arc<RwLock<OnchainWallet>>,
 }
 
 impl ServerWallet {
-	pub fn new(wallet: Wallet, onchain: Arc<RwLock<OnchainWallet>>) -> Self {
-		Self { wallet, onchain }
+	pub fn new(wallet: Wallet) -> Self {
+		Self { wallet }
 	}
 }
 
@@ -163,7 +160,7 @@ pub struct ServerState {
 	///
 	/// Note: this map is only stored in memory and not persisted
 	/// to the database, any server restart will clear the map.
-	websocket_tickets: Arc<RwLock<HashMap<String, DateTime<Utc>>>>,
+	websocket_tickets: Arc<tokio::sync::RwLock<HashMap<String, DateTime<Utc>>>>,
 }
 
 /// Builder for [`ServerState`].
@@ -226,7 +223,7 @@ impl ServerStateBuilder {
 			on_wallet_create: self.on_wallet_create,
 			on_wallet_delete: self.on_wallet_delete,
 			on_get_mnemonic: self.on_get_mnemonic,
-			websocket_tickets: Arc::new(RwLock::new(HashMap::new())),
+			websocket_tickets: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
 		}
 	}
 }
@@ -248,10 +245,9 @@ impl ServerState {
 		Ok(wallet)
 	}
 
-	pub fn require_onchain(&self) -> anyhow::Result<Arc<RwLock<OnchainWallet>>> {
-		let onchain = self.wallet.read().as_ref()
-			.ok_or_else(|| anyhow!("No onchain set"))?.onchain.clone();
-		Ok(onchain)
+	pub fn require_onchain(&self) -> anyhow::Result<Arc<tokio::sync::RwLock<dyn OnchainWalletTrait>>> {
+		self.wallet.read().as_ref().context("No wallet set")?
+			.wallet.onchain().context("No onchain wallet configured")
 	}
 
 	pub fn auth_token(&self) -> Option<&AuthToken> {

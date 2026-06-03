@@ -35,8 +35,6 @@ use std::path::Path;
 use std::sync::Arc;
 use std::str::FromStr;
 
-use tokio::sync::RwLock;
-
 use anyhow::{Context, bail};
 use bark::chain::ChainSource;
 use bark::fs_perms;
@@ -474,7 +472,7 @@ pub async fn read_mnemonic(datadir: &Path) -> anyhow::Result<String> {
 pub async fn open_wallet(
 	datadir: &Path,
 	user_agent: &str,
-) -> anyhow::Result<Option<(BarkWallet, Arc<RwLock<OnchainWallet>>)>> {
+) -> anyhow::Result<Option<(BarkWallet, Arc<tokio::sync::RwLock<OnchainWallet>>)>> {
 	debug!("Opening bark wallet in {}", datadir.display());
 
 
@@ -522,7 +520,7 @@ pub async fn open_wallet(
 	}
 
 	let bdk_wallet = OnchainWallet::load_or_create(properties.network, seed, db.clone()).await?;
-	let onchain = Arc::new(RwLock::new(bdk_wallet));
+	let onchain = Arc::new(tokio::sync::RwLock::new(bdk_wallet));
 	let lock_manager = open_lock_manager(datadir)?;
 	let bark_wallet = BarkWallet::open(
 		properties.network,

@@ -12,9 +12,9 @@ use utoipa::OpenApi;
 use ark::VtxoId;
 use ark::lightning::{Bolt11Invoice, Offer};
 use ark::ProtocolEncoding;
+
 use bark::lnurllib::lightning_address::LightningAddress;
 use bark::lnurllib::lnurl::LnUrl;
-use bark::onchain::OnchainWalletTrait;
 use bark::payment_request::ArkAddressType;
 use bark::subsystem::RoundMovement;
 use bark::vtxo::VtxoFilter;

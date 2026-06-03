@@ -356,10 +356,10 @@ async fn main() -> anyhow::Result<()>{
 		Some(token)
 	};
 
-	let wallet_opt = if let Some((wallet, onchain)) = open_wallet(&datadir, USER_AGENT).await? {
+	let wallet_opt = if let Some((wallet, _onchain)) = open_wallet(&datadir, USER_AGENT).await? {
 		wallet.start_daemon()?;
 		info!("Wallet loaded and daemon started");
-		let server_wallet = bark_rest::ServerWallet::new(wallet, onchain);
+		let server_wallet = bark_rest::ServerWallet::new(wallet);
 
 		Some(server_wallet)
 	} else {
@@ -376,7 +376,7 @@ async fn main() -> anyhow::Result<()>{
 			Box::pin(async move {
 				let create_opts = wallet_create_request_to_create_opts(req)?;
 				create_wallet(&datadir, USER_AGENT, create_opts).await?;
-				let (wallet, onchain) = open_wallet(&datadir, USER_AGENT).await?
+				let (wallet, _onchain) = open_wallet(&datadir, USER_AGENT).await?
 					.expect("Wallet should exist");
 
 				// Warm up `wallet.server` before spawning the daemon so
@@ -388,7 +388,7 @@ async fn main() -> anyhow::Result<()>{
 
 				wallet.start_daemon()?;
 
-				let handle = ServerWallet::new(wallet, onchain);
+				let handle = ServerWallet::new(wallet);
 				Ok::<_, anyhow::Error>(handle)
 			})
 		}
