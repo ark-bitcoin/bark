@@ -49,6 +49,7 @@ pub fn init_logging(verbose: bool, quiet: bool, datadir: &Path) {
 		let mut builder = env_logger::Builder::new();
 		builder
 			.filter_module("rusqlite", log::LevelFilter::Warn)
+			.filter_module("bitcoind_async_client", log::LevelFilter::Debug)
 			.filter_module("rustls", log::LevelFilter::Warn)
 			.filter_module("reqwest", log::LevelFilter::Warn)
 			.filter_module("ureq", log::LevelFilter::Warn)
