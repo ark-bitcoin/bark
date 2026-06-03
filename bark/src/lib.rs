@@ -840,13 +840,6 @@ pub struct Wallet {
 }
 
 impl Wallet {
-	/// Verifies that the bark [Wallet] can be used with the configured [chain::ChainSource].
-	/// More specifically, if the [chain::ChainSource] connects to Bitcoin Core it must be
-	/// a high enough version to support ephemeral anchors.
-	pub async fn require_chainsource_version(&self) -> anyhow::Result<()> {
-		self.inner.chain.require_version().await
-	}
-
 	pub async fn network(&self) -> anyhow::Result<Network> {
 		Ok(self.properties().await?.network)
 	}

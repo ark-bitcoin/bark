@@ -498,10 +498,6 @@ pub async fn open_wallet(datadir: &Path) -> anyhow::Result<Option<(BarkWallet, O
 		},
 	).await?;
 
-	if let Err(e) = bark_wallet.require_chainsource_version().await {
-		warn!("{}", e);
-	}
-
 	Ok(Some((bark_wallet, bdk_wallet)))
 }
 
