@@ -363,7 +363,7 @@ async fn server_claim_lightning_receive_is_idempotent(
 
 	let vtxos_before = bark.vtxo_ids_no_sync().await;
 	let status_before = bark.lightning_receive_status(&invoice_info.invoice).await.unwrap();
-	assert!(status_before.finished_at.is_some());
+	assert!(status_before.settled_at.is_some());
 
 	// Claiming again should be a no-op.
 	bark.lightning_receive(&invoice_info.invoice).wait_millis(10_000).await;
@@ -371,8 +371,8 @@ async fn server_claim_lightning_receive_is_idempotent(
 	assert_eq!(bark.spendable_balance().await, btc(3));
 	assert_eq!(bark.vtxo_ids_no_sync().await, vtxos_before);
 	assert_eq!(
-		bark.lightning_receive_status(&invoice_info.invoice).await.unwrap().finished_at,
-		status_before.finished_at,
+		bark.lightning_receive_status(&invoice_info.invoice).await.unwrap().settled_at,
+		status_before.settled_at,
 	);
 
 	assert_vtxopool_consistency(srv).await;

@@ -27,6 +27,7 @@ use crate::Wallet;
 use crate::actions::{Advance, AdvanceError, WalletAction, WalletActionId, park_with_backoff};
 use crate::movement::update::MovementUpdate;
 use crate::movement::{MovementDestination, MovementId, MovementStatus};
+use crate::persist::models::SettledLightningReceive;
 use crate::subsystem::{LightningMovement, LightningReceiveMovement, Subsystem};
 use crate::vtxo::VtxoLockHolder;
 
@@ -218,6 +219,15 @@ pub struct Htlcs {
 	pub movement_id: MovementId,
 	/// The pubkey to send claim outputs to
 	pub claim_key: PublicKey,
+}
+
+/// Triage of a payment hash on the receive side, mirroring
+/// [`LightningSendState`](crate::actions::lightning::pay::LightningSendState):
+/// settled (permanent record), in-progress (live checkpoint), or unknown.
+#[derive(Debug, Clone)]
+pub enum LightningReceiveState {
+	InProgress(LightningReceive),
+	Settled(SettledLightningReceive),
 }
 
 /// Outcome of polling the server for an inbound payment while in

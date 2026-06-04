@@ -14,6 +14,10 @@ use ark::VtxoId;
 use ark::lightning::{PaymentHash, Preimage};
 use bitcoin_ext::{AmountExt, BlockDelta};
 
+use bark::actions::lightning::receive::{
+	LightningReceive, LightningReceiveState, Progress as ReceiveProgress,
+};
+
 use crate::cli::fees::FeeSchedule;
 use crate::exit::error::ExitError;
 use crate::exit::package::ExitTransactionPackage;
@@ -359,43 +363,88 @@ pub struct OffboardResult {
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[cfg_attr(feature = "utoipa", derive(ToSchema))]
 pub struct LightningReceiveInfo {
-	/// The amount of the lightning receive
+	/// The payment hash linked to the lightning receive
+	#[cfg_attr(feature = "utoipa", schema(value_type = String))]
+	pub payment_hash: PaymentHash,
+	/// Lifecycle phase of the receive: `awaiting-payment`, `htlcs-ready`,
+	/// `preimage-revealed`, or `settled`.
+	pub state: String,
+	/// The invoice string, if known.
+	pub invoice: String,
+	/// The payment preimage, if known.
+	#[cfg_attr(feature = "utoipa", schema(value_type = Option<String>))]
+	pub payment_preimage: Option<Preimage>,
+	/// The amount of the lightning receive, if known.
 	#[serde(rename = "amount_sat", with = "bitcoin::amount::serde::as_sat")]
 	#[cfg_attr(feature = "utoipa", schema(value_type = u64))]
 	pub amount: Amount,
-	/// The payment hash linked to the lightning receive info
-	#[cfg_attr(feature = "utoipa", schema(value_type = String))]
-	pub payment_hash: PaymentHash,
-	/// The payment preimage linked to the lightning receive info
-	#[cfg_attr(feature = "utoipa", schema(value_type = String))]
-	pub payment_preimage: Preimage,
-	/// The timestamp at which the preimage was revealed
-	pub preimage_revealed_at: Option<chrono::DateTime<chrono::Local>>,
-	/// The timestamp at which the lightning receive was finished
-	pub finished_at: Option<chrono::DateTime<chrono::Local>>,
-	/// The invoice string
-	pub invoice: String,
-	/// The HTLC VTXOs granted by the server for the lightning receive
+	/// IDs of the HTLC-recv VTXOs granted by the server, if any.
 	///
-	/// Empty if the lightning HTLC has not yet been received by the server.
+	/// Empty until the inbound HTLC has been received and prepared.
+	#[serde(default, deserialize_with = "serde_utils::null_as_default")]
+	#[cfg_attr(feature = "utoipa", schema(value_type = Vec<String>, required = true))]
+	pub htlc_vtxo_ids: Vec<VtxoId>,
+	/// The timestamp at which the receive settled, if it has.
+	pub settled_at: Option<chrono::DateTime<chrono::Local>>,
+
+	/// The timestamp at which the preimage was revealed.
+	#[deprecated(note = "no longer tracked; use `state` and `settled_at`")]
+	#[serde(default)]
+	pub preimage_revealed_at: Option<chrono::DateTime<chrono::Local>>,
+	/// The timestamp at which the lightning receive was finished.
+	#[deprecated(note = "renamed to `settled_at`")]
+	#[serde(default)]
+	pub finished_at: Option<chrono::DateTime<chrono::Local>>,
+	/// The HTLC VTXOs granted by the server for the lightning receive.
+	#[deprecated(note = "replaced by `htlc_vtxo_ids`")]
 	#[serde(default, deserialize_with = "serde_utils::null_as_default")]
 	#[cfg_attr(feature = "utoipa", schema(required = true))]
 	pub htlc_vtxos: Vec<WalletVtxoInfo>,
 }
 
-impl From<bark::persist::models::LightningReceive> for LightningReceiveInfo {
-	fn from(v: bark::persist::models::LightningReceive) -> Self {
+impl LightningReceiveInfo {
+	/// Render a triaged receive state, mirroring the send-side status.
+	#[allow(deprecated)] // populates deprecated compat fields kept for old clients
+	pub fn from_state(state: &LightningReceiveState) -> Self {
+		match state {
+			LightningReceiveState::InProgress(recv) => LightningReceiveInfo::from(recv),
+			LightningReceiveState::Settled(s) => LightningReceiveInfo {
+				payment_hash: s.payment_hash,
+				state: "settled".to_string(),
+				invoice: s.invoice.to_string(),
+				payment_preimage: Some(s.preimage),
+				amount: s.amount,
+				htlc_vtxo_ids: vec![],
+				settled_at: Some(s.settled_at),
+				preimage_revealed_at: None,
+				finished_at: Some(s.settled_at),
+				htlc_vtxos: vec![],
+			},
+		}
+	}
+}
+
+impl From<&LightningReceive> for LightningReceiveInfo {
+	#[allow(deprecated)] // populates deprecated compat fields kept for old clients
+	fn from(recv: &LightningReceive) -> Self {
+		let (state, htlc_vtxo_ids) = match &recv.progress {
+			ReceiveProgress::AwaitingPayment => ("awaiting-payment", vec![]),
+			ReceiveProgress::HtlcsReady(htlcs) => ("htlcs-ready", htlcs.vtxo_ids.clone()),
+			ReceiveProgress::PreimageRevealed(htlcs) => ("preimage-revealed", htlcs.vtxo_ids.clone()),
+		};
 		LightningReceiveInfo {
-			payment_hash: v.payment_hash,
-			payment_preimage: v.payment_preimage,
-			preimage_revealed_at: v.preimage_revealed_at,
-			invoice: v.invoice.to_string(),
-			htlc_vtxos: v.htlc_vtxos.iter()
-				.map(crate::primitives::WalletVtxoInfo::from)
-				.collect(),
-			amount: v.invoice.amount_milli_satoshis().map(Amount::from_msat_floor)
-				.unwrap_or(Amount::ZERO),
-			finished_at: v.finished_at,
+			payment_hash: recv.payment_hash,
+			state: state.to_string(),
+			invoice: recv.invoice.to_string(),
+			payment_preimage: Some(recv.payment_preimage),
+			amount: recv.invoice.amount_milli_satoshis()
+				.map(Amount::from_msat_floor)
+				.expect("generated invoice with no amount"),
+			htlc_vtxo_ids,
+			settled_at: None,
+			preimage_revealed_at: None,
+			finished_at: None,
+			htlc_vtxos: vec![],
 		}
 	}
 }
@@ -410,29 +459,29 @@ mod test {
 			"amount_sat": 1000,
 			"payment_hash": "0000000000000000000000000000000000000000000000000000000000000000",
 			"payment_preimage": "0000000000000000000000000000000000000000000000000000000000000000",
-			"preimage_revealed_at": null,
-			"finished_at": null,
+			"state": "awaiting-payment",
+			"settled_at": null,
 			"invoice": "lnbc1",
 		})
 	}
 
 	#[test]
-	fn deserialize_lightning_receive_htlc_vtxos_missing() {
+	fn deserialize_lightning_receive_htlc_vtxo_ids_missing() {
 		let json = lightning_receive_base_json();
 		serde_json::from_value::<LightningReceiveInfo>(json).unwrap();
 	}
 
 	#[test]
-	fn deserialize_lightning_receive_htlc_vtxos_null() {
+	fn deserialize_lightning_receive_htlc_vtxo_ids_null() {
 		let mut json = lightning_receive_base_json();
-		json["htlc_vtxos"] = serde_json::json!(null);
+		json["htlc_vtxo_ids"] = serde_json::json!(null);
 		serde_json::from_value::<LightningReceiveInfo>(json).unwrap();
 	}
 
 	#[test]
-	fn deserialize_lightning_receive_htlc_vtxos_empty() {
+	fn deserialize_lightning_receive_htlc_vtxo_ids_empty() {
 		let mut json = lightning_receive_base_json();
-		json["htlc_vtxos"] = serde_json::json!([]);
+		json["htlc_vtxo_ids"] = serde_json::json!([]);
 		serde_json::from_value::<LightningReceiveInfo>(json).unwrap();
 	}
 

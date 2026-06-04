@@ -12,7 +12,7 @@ use bark::lightning_invoice::Bolt11Invoice;
 use bark::lnurllib::lightning_address::LightningAddress;
 use bark::lnurllib::lnurl::LnUrl;
 
-use crate::error::{self, badarg, not_found, ContextExt, HandlerResult};
+use crate::error::{self, badarg, ContextExt, HandlerResult};
 use crate::ServerState;
 
 #[derive(OpenApi)]
@@ -64,7 +64,7 @@ pub async fn generate_invoice(
 	let wallet = state.require_wallet()?;
 
 	let amount = Amount::from_sat(body.amount_sat);
-	let invoice = wallet.bolt11_invoice(amount, body.description).await
+	let invoice = wallet.bolt11_invoice(amount, body.description, None).await
 		.context("Failed to create invoice")?;
 
 	Ok(axum::Json(bark_json::cli::InvoiceInfo {
@@ -109,13 +109,9 @@ pub async fn get_receive_status(
 		badarg!("identifier is not a valid payment hash, invoice or preimage");
 	};
 
-	if let Some(status) = wallet.lightning_receive_status(payment_hash).await
-		.context("Failed to get lightning receive status")? {
-
-		Ok(axum::Json(status.into()))
-	} else {
-		not_found!([payment_hash], "No invoice found");
-	}
+	let state = wallet.lightning_receive_state(payment_hash).await
+		.context("Failed to get lightning receive status")?;
+	Ok(axum::Json(bark_json::cli::LightningReceiveInfo::from_state(&state)))
 }
 
 #[utoipa::path(
@@ -142,7 +138,7 @@ pub async fn list_receive_statuses(
 	// receives are ordered from newest to oldest, so we reverse them so last terminal item is newest
 	receives.reverse();
 
-	let receives = receives.into_iter()
+	let receives = receives.iter()
 		.map(bark_json::cli::LightningReceiveInfo::from).collect::<Vec<_>>();
 
 	Ok(axum::Json(receives))

@@ -454,7 +454,7 @@ impl Wallet {
 
 		debug!("Lightning receive notification: payment_hash={}", payment_hash);
 
-		match self.try_claim_lightning_receive(payment_hash, false, None).await {
+		match self.try_claim_lightning_receive(payment_hash, false).await {
 			Ok(_) => info!("Lightning receive claimed via mailbox notification for {}", payment_hash),
 			Err(e) => error!("Failed to claim lightning receive for {}: {:#}", payment_hash, e),
 		}

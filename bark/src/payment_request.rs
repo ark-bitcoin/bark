@@ -326,7 +326,7 @@ impl<'a> BarkBip321UriBuilder<'a> {
 
 		if self.bolt11 {
 			if let Some(amount) = self.amount {
-				let invoice = self.wallet.bolt11_invoice(amount, None).await
+				let invoice = self.wallet.bolt11_invoice(amount, None, None).await
 					.context("failed to generate lightning invoice")?;
 
 				uri.push_lightning(invoice, false);

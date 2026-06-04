@@ -100,10 +100,6 @@ pub enum LightningCommand {
 		/// Skip syncing wallet
 		#[arg(long)]
 		no_sync: bool,
-		/// Provide a lightning receive token for authentication of this claim if the server requires one
-		/// and there are no existing spendable VTXOs to prove ownership of
-		#[arg(long)]
-		token: Option<String>,
 	},
 }
 
@@ -189,20 +185,19 @@ pub async fn execute_lightning_command(
 			execute_receive_command(receive_cmd, wallet).await?;
 		},
 		LightningCommand::Invoice { amount, description, wait, token } => {
-			let invoice = wallet.bolt11_invoice(amount, description).await?;
+			let invoice = wallet.bolt11_invoice(amount, description, token).await?;
 			output_json(&InvoiceInfo { invoice: invoice.to_string() });
 			if wait {
-				let token = token.as_ref().map(|c| c.as_str());
-				wallet.try_claim_lightning_receive(invoice.into(), true, token).await?;
+				wallet.try_claim_lightning_receive(invoice.into(), true).await?;
 			}
 		},
 		LightningCommand::Invoices => {
 			let mut receives = wallet.pending_lightning_receives().await?;
 			// receives are ordered from newest to oldest, so we reverse them so last terminal item is newest
 			receives.reverse();
-			output_json(&receives.into_iter().map(LightningReceiveInfo::from).collect::<Vec<_>>());
+			output_json(&receives.iter().map(LightningReceiveInfo::from).collect::<Vec<_>>());
 		},
-		LightningCommand::Claim { payment, wait, no_sync, token } => {
+		LightningCommand::Claim { payment, wait, no_sync } => {
 			if !no_sync {
 				info!("Syncing wallet...");
 				wallet.sync().await;
@@ -217,8 +212,7 @@ pub async fn execute_lightning_command(
 					}
 				};
 
-				let token = token.as_ref().map(|c| c.as_str());
-				wallet.try_claim_lightning_receive(payment_hash, wait, token).await?;
+				wallet.try_claim_lightning_receive(payment_hash, wait).await?;
 			} else {
 				info!("no invoice provided, trying to claim all open invoices");
 				wallet.try_claim_all_lightning_receives(wait).await?;
@@ -300,11 +294,8 @@ async fn execute_receive_command(
 				(Some(_), Some(_)) => bail!("cannot provide both filter and preimage"),
 			};
 
-			if let Some(ret) = wallet.lightning_receive_status(payment_hash).await? {
-				output_json(&LightningReceiveInfo::from(ret));
-			} else {
-				info!("No incoming payment found for this payment hash");
-			}
+			let state = wallet.lightning_receive_state(payment_hash).await?;
+			output_json(&LightningReceiveInfo::from_state(&state));
 		},
 		ReceiveCommand::Cancel { payment } => {
 			let payment_hash = payment_hash_from_filter(&payment)?;

@@ -8,6 +8,7 @@ use ark::VtxoId;
 use ark::lightning::{Invoice, PaymentHash};
 use ark::vtxo::VtxoPolicyKind;
 use ark_testing::context::LightningPaymentSetup;
+use bark::actions::lightning::receive::LightningReceiveState;
 use bark::lightning_invoice::Bolt11Invoice;
 use bark_json::movements::{MovementDestination, MovementStatus, PaymentMethod};
 use bark_json::primitives::VtxoStateInfo;
@@ -460,7 +461,7 @@ async fn bark_can_receive_lightning(
 	let receives = bark.list_lightning_receives().await;
 	assert_eq!(receives.len(), 1);
 	assert_eq!(receives[0].invoice.to_string(), invoice_info.invoice);
-	assert!(receives[0].preimage_revealed_at.is_none());
+	assert!(receives[0].settled_at.is_none());
 
 	tokio::join!(
 		pay(invoice_info.invoice.clone()),
@@ -629,7 +630,7 @@ async fn bark_check_lightning_receive_no_wait(
 					.wait(Duration::from_secs(10)).await.expect("should not fail");
 
 				if let Some(receive) = bark.lightning_receive_status(&invoice).await {
-					if receive.finished_at.is_some() {
+					if receive.settled_at.is_some() {
 						success = true;
 						break;
 					}
@@ -1647,11 +1648,18 @@ async fn bark_keeps_lightning_receive_pending_after_retry_budget_exhausted() {
 		"no exit should start without an explicit exit attempt");
 
 	let invoice = Invoice::from_str(&invoice_info.invoice).unwrap();
-	let receive = bark.client().await.lightning_receive_status(invoice.payment_hash()).await.unwrap()
-		.expect("the lightning receive should still be pending");
-	assert!(receive.preimage_revealed_at.is_some(),
-		"preimage should have been revealed before the claim failed");
-	assert!(receive.finished_at.is_none(), "the receive should not be finished");
+	let receive = match bark.client().await
+		.lightning_receive_state(invoice.payment_hash()).await
+		.expect("the lightning receive should still be pending")
+	{
+		LightningReceiveState::InProgress(receive) => receive,
+		LightningReceiveState::Settled(_) => {
+			panic!("the lightning receive should not be settled");
+		},
+	};
+
+	assert!(matches!(receive.progress, bark::actions::lightning::receive::Progress::PreimageRevealed(_)),
+		"the lightning receive should be in the preimage revealed state");
 }
 
 /// A transient claim failure should be absorbed by the retry budget and the

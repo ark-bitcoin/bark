@@ -29,7 +29,7 @@ async fn example() -> anyhow::Result<()> {
 	let address = wallet.new_address().await?;
 	println!("My first Ark address: {}", address);
 
-	let invoice = wallet.bolt11_invoice("10000sat".parse()?, None).await?;
+	let invoice = wallet.bolt11_invoice("10000sat".parse()?, None, None).await?;
 	println!("Send me some sats: {}", invoice);
 
 	// Wait for someone to send the sats...
