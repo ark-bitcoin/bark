@@ -250,6 +250,17 @@ impl TestContext {
 		builders::BarkBuilder::new(self, name, srv)
 	}
 
+	/// In-process counterpart to [`Self::bark`]: returns a builder that
+	/// constructs a [`bark::Wallet`] directly via the library API,
+	/// instead of spawning the `bark` CLI binary.
+	pub fn bark_sdk<'a>(
+		&'a self,
+		name: impl AsRef<str>,
+		srv: &'a dyn ToArkUrl,
+	) -> builders::BarkSdkBuilder<'a> {
+		builders::BarkSdkBuilder::new(self, name, srv)
+	}
+
 	pub fn watchmand(&self, name: impl AsRef<str>) -> builders::WatchmandBuilder<'_> {
 		builders::WatchmandBuilder::new(self, name)
 	}

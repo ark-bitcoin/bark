@@ -371,6 +371,14 @@ impl Lightningd {
 		self.inner.hold_details().await
 	}
 
+	pub async fn try_hold_client(&self) -> anyhow::Result<HoldClient<Channel>> {
+		self.inner.try_hold_client().await
+	}
+
+	pub async fn hold_client(&self) -> HoldClient<Channel> {
+		self.try_hold_client().await.expect("failed to create hold rpc client")
+	}
+
 	pub async fn port(&self) -> Option<u16> {
 		self.inner.state.lock().await.port
 	}

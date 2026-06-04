@@ -360,6 +360,31 @@ core-server:
     - export BARKD_EXEC=${CI_PROJECT_DIR}/target/ci/barkd
     - bash ./contrib/ci-run-test.sh test-integration-core-prebuilt
 
+bark-sdk:
+  interruptible: true
+  stage: test
+  tags:
+    - integration
+    - datastore
+  extends: .test-rules-no-tags
+  needs:
+    - check-commits
+    - build
+    - build-test-archives
+  variables:
+    TEST_DIRECTORY: ./test/bark-sdk
+    NEXTEST_TEST_THREADS: "4"
+    BARK_COMMAND_TIMEOUT_MILLIS: "120000"
+    TX_PROPAGATION_TIMEOUT: "30000"
+  script:
+    - git log --oneline -1
+    - export RUN_DATETIME=$(cat RUN_DATETIME)
+    - export CAPTAIND_EXEC=${CI_PROJECT_DIR}/target/ci/captaind
+    - export WATCHMAND_EXEC=${CI_PROJECT_DIR}/target/ci/watchmand
+    - export BARK_EXEC=${CI_PROJECT_DIR}/target/ci/bark
+    - export BARKD_EXEC=${CI_PROJECT_DIR}/target/ci/barkd
+    - bash ./contrib/ci-run-test.sh test-integration-bark-sdk-prebuilt
+
 compat-bark-0.1.4:
   interruptible: true
   stage: test
@@ -446,6 +471,8 @@ tar-and-print-test-data:
     - job: bark-filestore
       optional: true
     - job: core-server
+      optional: true
+    - job: bark-sdk
       optional: true
     - job: compat-bark-0.1.4
       optional: true
