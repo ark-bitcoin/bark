@@ -1,6 +1,0 @@
-- Drop `LightningSendInfo` and `LightningMovement` from CLI for a compact
-  `LightningSendStatus { payment_hash, state, invoice, preimage }` instead.
-  [#2062](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2062)
-  - **BREAKING:** `bark_json::cli::LightningSendInfo` removed.
-  - **BREAKING:** `bark_json::cli::LightningMovement` removed (it only
-    wrapped `LightningReceiveInfo` / `LightningSendInfo`).

@@ -1,6 +1,0 @@
-- Add `GET /api/v1/wallet/mnemonic` endpoint
-  Returns the wallet's BIP-39 mnemonic phrase so operators can back up
-  the mnemonic without reading `{datadir}/mnemonic` off the host.
-  Exposed by default; disable with `BARKD_EXPOSE_MNEMONIC=false` (or
-  `--expose-mnemonic=false`), in which case the endpoint responds 404.
-  [#2114](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2114)
