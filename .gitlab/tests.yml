@@ -381,8 +381,6 @@ bark-sdk:
     - export RUN_DATETIME=$(cat RUN_DATETIME)
     - export CAPTAIND_EXEC=${CI_PROJECT_DIR}/target/ci/captaind
     - export WATCHMAND_EXEC=${CI_PROJECT_DIR}/target/ci/watchmand
-    - export BARK_EXEC=${CI_PROJECT_DIR}/target/ci/bark
-    - export BARKD_EXEC=${CI_PROJECT_DIR}/target/ci/barkd
     - bash ./contrib/ci-run-test.sh test-integration-bark-sdk-prebuilt
 
 compat-bark-0.1.4:
