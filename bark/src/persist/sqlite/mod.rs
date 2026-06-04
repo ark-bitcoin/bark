@@ -26,7 +26,6 @@ use rusqlite::Connection;
 use ark::{Vtxo, VtxoId};
 use ark::lightning::{PaymentHash, Preimage};
 use ark::vtxo::Full;
-use bitcoin_ext::BlockDelta;
 
 use crate::WalletProperties;
 use crate::actions::{WalletActionCheckpoint, WalletActionId};
@@ -34,7 +33,7 @@ use crate::exit::ExitTxOrigin;
 use crate::movement::{Movement, MovementId, MovementStatus, MovementSubsystem, PaymentMethod};
 use crate::persist::{BarkPersister, RoundStateId, StoredRoundState, Unlocked};
 use crate::persist::models::{
-	LightningReceive, PaidInvoice, PendingBoard, PendingOffboard, SettledLightningReceive,
+	PaidInvoice, PendingBoard, PendingOffboard, SettledLightningReceive,
 	StoredExit,
 };
 use crate::round::RoundState;
@@ -296,21 +295,6 @@ impl BarkPersister for SqliteClient {
 		Ok(())
 	}
 
-	/// Store a lightning receive
-	async fn store_lightning_receive(
-		&self,
-		payment_hash: PaymentHash,
-		preimage: Preimage,
-		invoice: &Bolt11Invoice,
-		htlc_recv_cltv_delta: BlockDelta,
-	) -> anyhow::Result<()> {
-		let conn = self.connect()?;
-		query::store_lightning_receive(
-			&conn, payment_hash, preimage, invoice, htlc_recv_cltv_delta,
-		)?;
-		Ok(())
-	}
-
 	async fn upsert_wallet_action_checkpoint(
 		&self,
 		id: &WalletActionId,
@@ -377,43 +361,6 @@ impl BarkPersister for SqliteClient {
 	) -> anyhow::Result<Option<SettledLightningReceive>> {
 		let conn = self.connect()?;
 		query::get_settled_lightning_receive(&conn, payment_hash)
-	}
-
-	async fn get_all_pending_lightning_receives(&self) -> anyhow::Result<Vec<LightningReceive>> {
-		let conn = self.connect()?;
-		query::get_all_pending_lightning_receives(&conn)
-	}
-
-	async fn set_preimage_revealed(&self, payment_hash: PaymentHash) -> anyhow::Result<()> {
-		let conn = self.connect()?;
-		query::set_preimage_revealed(&conn, payment_hash)?;
-		Ok(())
-	}
-
-	async fn update_lightning_receive(
-		&self,
-		payment_hash: PaymentHash,
-		htlc_vtxo_ids: &[VtxoId],
-		movement_id: MovementId,
-	) -> anyhow::Result<()> {
-		let conn = self.connect()?;
-		query::update_lightning_receive(&conn, payment_hash, htlc_vtxo_ids, movement_id)?;
-		Ok(())
-	}
-
-	/// Fetch a lightning receive by payment hash
-	async fn fetch_lightning_receive_by_payment_hash(
-		&self,
-		payment_hash: PaymentHash,
-	) -> anyhow::Result<Option<LightningReceive>> {
-		let conn = self.connect()?;
-		query::fetch_lightning_receive_by_payment_hash(&conn, payment_hash)
-	}
-
-	async fn finish_pending_lightning_receive(&self, payment_hash: PaymentHash) -> anyhow::Result<()> {
-		let conn = self.connect()?;
-		query::finish_pending_lightning_receive(&conn, payment_hash)?;
-		Ok(())
 	}
 
 	async fn store_exit_vtxo_entry(&self, exit: &StoredExit) -> anyhow::Result<()> {

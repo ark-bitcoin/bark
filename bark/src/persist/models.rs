@@ -21,7 +21,6 @@ use ark::mailbox::MailboxIdentifier;
 use ark::tree::signed::{UnlockHash, VtxoTreeSpec};
 use ark::lightning::{PaymentHash, Preimage};
 use ark::rounds::RoundSeq;
-use bitcoin_ext::BlockDelta;
 
 use crate::WalletVtxo;
 use crate::exit::{ExitState, ExitTxOrigin, ExitVtxo};
@@ -207,24 +206,6 @@ pub struct SettledLightningReceive {
 	pub invoice: Bolt11Invoice,
 	pub amount: Amount,
 	pub settled_at: chrono::DateTime<chrono::Local>,
-}
-
-/// Persisted representation of an incoming Lightning payment.
-///
-/// Stores the invoice and related cryptographic material (e.g., payment hash and preimage)
-/// and tracks whether the preimage has been revealed.
-///
-/// Note: the record should be removed when the receive is completed or failed.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct LightningReceive {
-	pub payment_hash: PaymentHash,
-	pub payment_preimage: Preimage,
-	pub invoice: Bolt11Invoice,
-	pub preimage_revealed_at: Option<chrono::DateTime<chrono::Local>>,
-	pub htlc_vtxos: Vec<WalletVtxo>,
-	pub htlc_recv_cltv_delta: BlockDelta,
-	pub movement_id: Option<MovementId>,
-	pub finished_at: Option<chrono::DateTime<chrono::Local>>,
 }
 
 /// Persistable view of an [ExitVtxo].

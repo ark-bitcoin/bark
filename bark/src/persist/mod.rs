@@ -40,13 +40,12 @@ use bdk_wallet::ChangeSet;
 use ark::{Vtxo, VtxoId};
 use ark::lightning::{PaymentHash, Preimage};
 use ark::vtxo::Full;
-use bitcoin_ext::BlockDelta;
 
 use crate::WalletProperties;
 use crate::actions::{WalletActionCheckpoint, WalletActionId};
 use crate::exit::ExitTxOrigin;
 use crate::persist::models::{
-	LightningReceive, PaidInvoice, PendingBoard, RoundStateId, SettledLightningReceive,
+	PaidInvoice, PendingBoard, RoundStateId, SettledLightningReceive,
 	StoredExit, StoredRoundState, Unlocked, PendingOffboard,
 };
 use crate::movement::{Movement, MovementId, MovementStatus, MovementSubsystem, PaymentMethod};
@@ -543,86 +542,6 @@ pub trait BarkPersister: Send + Sync + 'static {
 		&self,
 		payment_hash: PaymentHash,
 	) -> anyhow::Result<Option<SettledLightningReceive>>;
-
-	/// Store an incoming Lightning receive record.
-	///
-	/// Parameters:
-	/// - payment_hash: Unique payment hash.
-	/// - preimage: Payment preimage (kept until disclosure).
-	/// - invoice: The associated BOLT11 invoice.
-	/// - htlc_recv_cltv_delta: The CLTV delta for the HTLC VTXO.
-	///
-	/// Errors:
-	/// - Returns an error if the receive cannot be stored.
-	async fn store_lightning_receive(
-		&self,
-		payment_hash: PaymentHash,
-		preimage: Preimage,
-		invoice: &Bolt11Invoice,
-		htlc_recv_cltv_delta: BlockDelta,
-	) -> anyhow::Result<()>;
-
-	/// Returns a list of all pending lightning receives
-	///
-	/// Returns:
-	/// - `Ok(Vec<LightningReceive>)` possibly empty.
-	///
-	/// Errors:
-	/// - Returns an error if the query fails.
-	async fn get_all_pending_lightning_receives(&self) -> anyhow::Result<Vec<LightningReceive>>;
-
-	/// Mark a Lightning receive preimage as revealed (e.g., after settlement).
-	///
-	/// Parameters:
-	/// - payment_hash: The payment hash identifying the receive.
-	///
-	/// Errors:
-	/// - Returns an error if the update fails or the receive does not exist.
-	async fn set_preimage_revealed(&self, payment_hash: PaymentHash) -> anyhow::Result<()>;
-
-	/// Set the VTXO IDs and [MovementId] for a [LightningReceive].
-	///
-	/// Parameters:
-	/// - payment_hash: The payment hash identifying the receive.
-	/// - htlc_vtxo_ids: The VTXO IDs to set.
-	/// - movement_id: The movement ID associated with the invoice.
-	///
-	/// Errors:
-	/// - Returns an error if the update fails or the receive does not exist.
-	async fn update_lightning_receive(
-		&self,
-		payment_hash: PaymentHash,
-		htlc_vtxo_ids: &[VtxoId],
-		movement_id: MovementId,
-	) -> anyhow::Result<()>;
-
-	/// Fetch a Lightning receive by its payment hash.
-	///
-	/// Parameters:
-	/// - payment_hash: The payment hash to look up.
-	///
-	/// Returns:
-	/// - `Ok(Some(LightningReceive))` if found,
-	/// - `Ok(None)` otherwise.
-	///
-	/// Errors:
-	/// - Returns an error if the lookup fails.
-	async fn fetch_lightning_receive_by_payment_hash(
-		&self,
-		payment_hash: PaymentHash,
-	) -> anyhow::Result<Option<LightningReceive>>;
-
-	/// Mark a Lightning receive as finished by its payment hash.
-	///
-	/// Parameters:
-	/// - payment_hash: The payment hash of the record to mark finished
-	///
-	/// Errors:
-	/// - Returns an error if the operation fails.
-	async fn finish_pending_lightning_receive(
-		&self,
-		payment_hash: PaymentHash,
-	) -> anyhow::Result<()>;
 
 	/// Store an entry indicating a [Vtxo] is being exited.
 	///
