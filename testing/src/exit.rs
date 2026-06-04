@@ -1,5 +1,5 @@
 
-use bark_json::cli::ExitProgressStatus;
+use bark_json::cli::{ExitProgressResponse, ExitProgressStatus};
 use bark_json::exit::ExitState;
 use bark_json::exit::states::ExitTxStatus;
 use bitcoincore_rpc::RpcApi;
@@ -35,30 +35,9 @@ pub async fn progress_exit_until_awaiting_delta(ctx: &TestContext, bark: &Bark) 
 
 		let mut generate_block = false;
 
-		if let Some(e) = &response.error {
-			match e {
-				ExitError::AncestorRetrievalFailure { txid, error } => {
-					warn!("{} ancestor retrieval failed for {}: {}", bark.name(), txid, error);
-				}
-				ExitError::TransactionRetrievalFailure { txid, error } => {
-					warn!("{} tx retrieval failed for {}: {}", bark.name(), txid, error);
-				}
-				_ => panic!("unexpected top-level exit error: {:?}", e),
-			}
-		}
-
+		process_top_level_error(bark, &response);
 		for exit in &response.exits {
-			if let Some(e) = &exit.error {
-				match e {
-					ExitError::InsufficientConfirmedFunds { .. } => {
-						generate_block = true;
-					},
-					ExitError::ExitPackageBroadcastFailure { txid, error } => {
-						warn!("{} failed to broadcast exit {}: {}", bark.name(), txid, error);
-					},
-					_ => panic!("unexpected exit error: {:?}", e),
-				}
-			}
+			generate_block |= process_progress_status(bark, exit);
 		}
 
 		// Generate a block to confirm exit txs if they are in the processing state.
@@ -119,37 +98,9 @@ pub async fn complete_exit(ctx: &TestContext, bark: &Bark) {
 		let mut generate_block = flip;
 		flip = !flip;
 
-		// Top-level errors are typically transient — chain source hiccups, mempool races
-		// between status checks and ancestor lookups — so just log and let the retry loop
-		// pick them up next iteration.
-		if let Some(e) = &response.error {
-			match e {
-				ExitError::AncestorRetrievalFailure { txid, error } => {
-					warn!("{} ancestor retrieval failed for {}: {}", bark.name(), txid, error);
-				}
-				ExitError::TransactionRetrievalFailure { txid, error } => {
-					warn!("{} tx retrieval failed for {}: {}", bark.name(), txid, error);
-				}
-				_ => panic!("unexpected top-level exit error: {:?}", e),
-			}
-		}
-
-		// Panic early if an unexpected error occurs
+		process_top_level_error(bark, &response);
 		for exit in &response.exits {
-			if let Some(e) = &exit.error {
-				match e {
-					ExitError::InsufficientConfirmedFunds { .. } => {
-						generate_block = true;
-					}
-					ExitError::ExitPackageBroadcastFailure { txid, error } => {
-						warn!("{} failed to broadcast exit {}: {}", bark.name(), txid, error);
-					}
-					_ => panic!("unexpected exit error: {:?}", e),
-				}
-			}
-		}
-		if response.exits.iter().any(check_exit_requires_confirmations) {
-			generate_block = true;
+			generate_block |= process_progress_status(bark, exit);
 		}
 
 		// Fast-forward if we're just waiting for confirmations
@@ -169,6 +120,48 @@ pub async fn complete_exit(ctx: &TestContext, bark: &Bark) {
 		previous = Some(response);
 	}
 	panic!("failed to finish unilateral exit of bark {}", bark.name());
+}
+
+/// Top-level errors are typically transient — chain source hiccups, mempool races
+/// between status checks, and ancestor lookups — so just log and let the retry loop
+/// pick them up next iteration.
+fn process_top_level_error(bark: &Bark, response: &ExitProgressResponse) {
+	if let Some(e) = &response.error {
+		match e {
+			ExitError::AncestorRetrievalFailure { txid, error } => {
+				warn!("{} ancestor retrieval failed for {}: {}", bark.name(), txid, error);
+			}
+			ExitError::TransactionRetrievalFailure { txid, error } => {
+				warn!("{} tx retrieval failed for {}: {}", bark.name(), txid, error);
+			}
+			ExitError::ExitPackageBroadcastFailure { txid, error } => {
+				// This can happen if a competing transaction exists in the mempool when refreshing
+				// transaction statuses.
+				warn!("{} failed to broadcast exit {}: {}", bark.name(), txid, error);
+			}
+			_ => panic!("unexpected top-level exit error: {:?}", e),
+		}
+	}
+}
+
+/// Panic early if an unexpected error occurs.
+///
+/// Returns whether a block should be generated.
+fn process_progress_status(bark: &Bark, exit: &ExitProgressStatus) -> bool {
+	if let Some(e) = &exit.error {
+		match e {
+			ExitError::InsufficientConfirmedFunds { .. } => {
+				return true;
+			}
+			ExitError::ExitPackageBroadcastFailure { txid, error } => {
+				// This can happen if a competing transaction is created by a different bark at a
+				// higher fee rate.
+				warn!("{} failed to broadcast exit {}: {}", bark.name(), txid, error);
+			}
+			_ => panic!("unexpected exit error: {:?}", e),
+		}
+	}
+	check_exit_requires_confirmations(exit)
 }
 
 fn get_blocks_to_generate(
