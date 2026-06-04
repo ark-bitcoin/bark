@@ -1142,7 +1142,7 @@ async fn bark_should_exit_a_htlc_recv_that_server_refuse_to_cosign() {
 			req: server_rpc::protos::ClaimLightningReceiveRequest,
 		) -> Result<server_rpc::protos::ArkoorPackageCosignResponse, tonic::Status> {
 			upstream.claim_lightning_receive(req).await?;
-			Err(tonic::Status::internal("Refused to finish bolt11 board"))
+			Err(tonic::Status::invalid_argument("Refused to finish bolt11 board"))
 		}
 	}
 

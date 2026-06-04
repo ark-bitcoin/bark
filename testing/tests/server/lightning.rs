@@ -79,18 +79,15 @@ async fn server_settles_invoice_from_on_chain_htlc_preimage(
 			req: server_rpc::protos::ClaimLightningReceiveRequest,
 		) -> Result<server_rpc::protos::ArkoorPackageCosignResponse, tonic::Status> {
 			info!("payment preimage: {}", req.payment_preimage.as_hex());
-			Err(tonic::Status::internal("Blocked cooperative settlement"))
+			Err(tonic::Status::invalid_argument("Blocked cooperative settlement"))
 		}
 	}
 
 	let proxy = srv.start_proxy_no_mailbox(BlockCooperativeSettlement).await;
 
-	// bark_recv connects through the proxy so cooperative settlement is blocked.
-	// Skip claim retries; the proxy blocks every attempt, so we want the claim
-	// to fail immediately.
-	let bark_recv = ctx.bark("bark-recv", &proxy.address).funded(btc(3)).cfg(|cfg| {
-		cfg.lightning_receive_claim_retries = 0;
-	}).create().await;
+	// bark_recv connects through the proxy so cooperative settlement is blocked,
+	// so the claim fails; the test then exits the HTLC VTXOs explicitly.
+	let bark_recv = ctx.bark("bark-recv", &proxy.address).funded(btc(3)).create().await;
 	bark_recv.board(btc(2)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 	bark_recv.sync().await;
@@ -343,6 +340,9 @@ async fn server_claim_lightning_receive_is_idempotent(
 	srv: &Captaind,
 	pay: impl AsyncFn(String),
 ) {
+	// LightningReceiveInfo changes between 0.2.5 and 0.2.6
+	require_bark_version!(> "0.2.5");
+
 	srv.wait_for_vtxopool(&ctx).await;
 
 	let bark = Arc::new(ctx.bark("bark-1", srv).funded(btc(3)).create().await);
@@ -363,6 +363,7 @@ async fn server_claim_lightning_receive_is_idempotent(
 
 	let vtxos_before = bark.vtxo_ids_no_sync().await;
 	let status_before = bark.lightning_receive_status(&invoice_info.invoice).await.unwrap();
+	assert_eq!(status_before.state, "settled");
 	assert!(status_before.settled_at.is_some());
 
 	// Claiming again should be a no-op.
@@ -385,6 +386,9 @@ async fn server_returned_htlc_recv_vtxos_identical(
 	srv: &Captaind,
 	pay: impl AsyncFn(String),
 ) {
+	// LightningReceiveInfo changes between 0.2.5 and 0.2.6
+	require_bark_version!(> "0.2.5");
+
 	srv.wait_for_vtxopool(&ctx).await;
 
 	let bark = ctx.bark("bark-1", srv).funded(btc(3)).create().await;
