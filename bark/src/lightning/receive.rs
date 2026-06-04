@@ -5,7 +5,7 @@ use lightning_invoice::Bolt11Invoice;
 use log::{error, info, warn};
 use server_rpc::protos;
 
-use ark::lightning::{Bolt11InvoiceExt, PaymentHash};
+use ark::lightning::{Bolt11InvoiceExt, Preimage, PaymentHash};
 
 use crate::Wallet;
 use crate::actions::DriveMode;
@@ -70,6 +70,22 @@ impl Wallet {
 	{
 		Ok(self.inner.db.get_wallet_action_checkpoint(&ln_recv_action_id(hash)).await?
 			.and_then(|cp| cp.into_lightning_receive()))
+	}
+
+	/// Look up the preimage for a receive by payment hash, for witnessing
+	/// an on-chain exit of an HTLC-recv vtxo. Checks the permanent settled
+	/// record (written on both successful claim and exit) first, then any
+	/// in-progress checkpoint.
+	pub(crate) async fn lightning_receive_preimage(&self, hash: PaymentHash)
+		-> anyhow::Result<Option<Preimage>>
+	{
+		if let Some(settled) = self.inner.db.get_settled_lightning_receive(hash).await? {
+			return Ok(Some(settled.preimage));
+		}
+		if let Some(cp) = self.lightning_receive_checkpoint(hash).await? {
+			return Ok(Some(cp.payment_preimage));
+		}
+		Ok(None)
 	}
 
 	/// Triage a payment hash: settled, in-progress, or unknown.
