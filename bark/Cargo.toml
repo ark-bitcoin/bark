@@ -18,6 +18,8 @@ bitcoind-rpc = ["dep:bitcoind-async-client"]
 
 # The default persistence
 sqlite = ["rusqlite", "bdk_wallet/rusqlite"]
+# Compile SQLite from source instead of linking against the system library; useful for cross-compilation.
+sqlite-bundled = ["sqlite", "rusqlite/bundled"]
 # Used for testing, enables testing storage adaptor implementation
 filestore = ["tokio/fs"]
 indexed-db = ["dep:indexed-db", "dep:web-sys", "dep:serde-wasm-bindgen"]
