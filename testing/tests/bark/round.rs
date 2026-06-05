@@ -12,11 +12,11 @@ use ark::vtxo::policy::PubkeyVtxoPolicy;
 use bark::persist::models::{StoredRoundState, Unlocked};
 use bark::round::RoundParticipation;
 use bark::subsystem::RoundMovement;
-use bark::vtxo::VtxoState;
-use server_log::{AttemptingRound, RestartMissingVtxoSigs, RoundFinished, RoundUserVtxoNotAllowed};
+use bark::vtxo::{VtxoLockHolder, VtxoState};
+use server_log::{AttemptingRound, NoRoundPayments, RestartMissingVtxoSigs, RoundFinished, RoundUserVtxoNotAllowed};
 use server_rpc::protos;
 
-use ark_testing::{TestContext, btc, require_bark_version, sat, signed_sat};
+use ark_testing::{TestContext, btc, require_bark_version, sat, secs, signed_sat};
 use ark_testing::constants::{BOARD_CONFIRMATIONS, ROUND_CONFIRMATIONS};
 use ark_testing::daemon::captaind::{self, ArkClient};
 use ark_testing::util::FutureExt;
@@ -277,6 +277,95 @@ async fn delegated_maintenance_refresh() {
 	let vtxos = bark.vtxos().await;
 	assert_eq!(vtxos.len(), 1, "should still have one vtxo after refresh");
 	assert_eq!(vtxos[0].amount, sat(800_000));
+}
+
+#[tokio::test]
+async fn delegated_refresh_must_not_leave_server_trace_on_failure() {
+	//! A delegated refresh and a lightning send race on the same VTXO, the refresh fails locally,
+	//! but it had already submitted its participation to the server, so the
+	//! server forfeits the VTXO in a round the wallet no longer tracks. The
+	//! VTXO ends up spent in a round and unusable.
+	//!
+	//! The scenario: the refresh selects its input while it is still Spendable,
+	//! then a concurrent lightning send (`start_lightning_send` ->
+	//! `request_lightning_send_htlcs`) progresses far enough to *consume* that
+	//! input into its HTLC vtxos (it locks the input and then
+	//! `mark_vtxos_as_spent`). The refresh then tries to lock the input and
+	//! fails because it is no longer lockable.
+	//!
+	//! The invariant `join_next_round_delegated` must uphold is atomicity with
+	//! respect to *server* state: either it fully succeeds, or it fails leaving
+	//! nothing on the server. The dangerous behavior is committing the
+	//! participation server-side and only then failing the local lock: the
+	//! server still has a delegated participation (with the user's attestation)
+	//! and will forfeit the VTXO in the next round, with no local round state
+	//! tracking it.
+	//!
+	//! We force the interleaving deterministically rather than relying on
+	//! timing: a real concurrent lightning send hits exactly this window.
+	//!
+	//! We assert the atomicity contract: the refresh either succeeds (the round
+	//! forfeits exactly our VTXO as a tracked refresh) or it fails with no
+	//! server-side trace (the triggered round sits out with no payments).
+
+	require_bark_version!(> "0.1.4");
+
+	let ctx = TestContext::new("bark/delegated_refresh_must_not_leave_server_trace_on_failure").await;
+	let srv = ctx.captaind("server").funded(btc(10)).create().await;
+	let bark = ctx.bark("bark", &srv).funded(sat(1_000_000)).create().await;
+
+	bark.board_and_confirm_and_register(&ctx, sat(800_000)).await;
+
+	let wallet = bark.client().await;
+
+	// The delegated refresh selects its input while it is still Spendable.
+	let [vtxo] = wallet.spendable_vtxos().await.unwrap()
+		.try_into().expect("should have exactly one spendable vtxo");
+	let vtxo_id = vtxo.vtxo.id();
+
+	let participation = wallet.build_refresh_participation(vec![vtxo_id]).await
+		.unwrap().expect("should build participation");
+
+	// A concurrent lightning send progresses past `Progress::Start`: it locks
+	// the input and then consumes it into its HTLC vtxos. After this the input
+	// is no longer lockable by the refresh.
+	let ln_holder = VtxoLockHolder::Action { id: "ln-pay-test-action".to_string() };
+	wallet.lock_vtxos(vec![vtxo_id], Some(ln_holder)).await
+		.expect("lightning send lock should succeed on a Spendable vtxo");
+	wallet.mark_vtxos_as_spent(vec![vtxo_id]).await
+		.expect("lightning send should consume its input into its HTLC vtxos");
+
+	// Subscribe before triggering so we catch whatever the next round does.
+	let mut log_round_finished = srv.subscribe_log::<RoundFinished>();
+	let mut log_no_payments = srv.subscribe_log::<NoRoundPayments>();
+
+	let res = wallet.join_next_round_delegated(participation, Some(RoundMovement::Refresh)).await;
+
+	// Trigger a round so any server-side participation gets executed.
+	srv.trigger_round().await;
+
+	match res {
+		Ok(_) => {
+			// The refresh committed: the round must forfeit exactly our VTXO,
+			// fully tracked as a refresh.
+			let finished = log_round_finished.recv().wait(secs(30)).await
+				.expect("a successful delegated refresh should produce a round");
+			assert_eq!(
+				finished.nb_input_vtxos, 1,
+				"a successful delegated refresh round should forfeit our vtxo",
+			);
+		},
+		Err(err) => {
+			info!("delegated refresh failed as expected: {:#}", err);
+			// Atomicity: a failed refresh must leave NO participation on the
+			// server. Otherwise the server forfeits the VTXO in a round the
+			// wallet no longer tracks (the "spent in round, unusable" loss).
+			// With no participation registered, the triggered round sits out.
+			log_no_payments.recv().wait(secs(30)).await
+				.expect("a failed delegated refresh must leave no server-side trace, \
+					so the triggered round sits out with no payments");
+		},
+	}
 }
 
 async fn print_pending_rounds(wallet: &bark::Wallet) -> Vec<StoredRoundState<Unlocked>> {
