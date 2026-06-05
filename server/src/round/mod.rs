@@ -119,7 +119,7 @@ impl VtxoParticipant {
 		}
 	}
 
-	pub fn new_non_interactive(
+	pub fn new_delegated(
 		req: VtxoRequest,
 		unlock_hash: UnlockHash,
 		unblinded_mailbox_id: Option<ark::mailbox::MailboxIdentifier>,
@@ -445,7 +445,7 @@ impl CollectingPayments {
 			{ telemetry::ATTRIBUTE_ATTEMPT_SEQ } = self.round_step.attempt_seq(),
 		)
 	)]
-	fn register_non_interactive_participation(
+	fn register_delegated_participation(
 		&mut self,
 		flux_guard: VtxoFluxGuard,
 		inputs: Vec<Vtxo<Full>>,
@@ -462,7 +462,7 @@ impl CollectingPayments {
 		self.all_inputs.extend(inputs.into_iter().map(|v| (v.id(), v)));
 
 		for output in outputs {
-			self.all_outputs.push(VtxoParticipant::new_non_interactive(
+			self.all_outputs.push(VtxoParticipant::new_delegated(
 				output.vtxo_request,
 				unlock_hash,
 				output.unblinded_mailbox_id,
@@ -560,7 +560,7 @@ impl CollectingPayments {
 			unlock_hash = %participation.unlock_hash,
 		)
 	)]
-	async fn process_non_interactive_participation(
+	async fn process_delegated_participation(
 		&mut self,
 		srv: &Server,
 		participation: StoredRoundParticipation,
@@ -656,7 +656,7 @@ impl CollectingPayments {
 		}
 
 		// Finally, we are done
-		self.register_non_interactive_participation(
+		self.register_delegated_participation(
 			lock,
 			input_vtxos,
 			participation.outputs,
@@ -673,7 +673,7 @@ impl CollectingPayments {
 			{ telemetry::ATTRIBUTE_ATTEMPT_SEQ } = self.round_step.attempt_seq(),
 		)
 	)]
-	pub async fn register_all_non_interactive_participations(
+	pub async fn register_all_delegated_participations(
 		&mut self,
 		srv: &Server,
 	) {
@@ -694,7 +694,7 @@ impl CollectingPayments {
 					might mean we don't protect hArk participants during round!");
 				continue;
 			}
-			match self.process_non_interactive_participation(srv, part).await {
+			match self.process_delegated_participation(srv, part).await {
 				Ok(()) => {},
 				// NB we already slog this when producing an error
 				Err(ProcessHarkParticipationError::RoundFull) => continue,
@@ -1422,8 +1422,8 @@ async fn receive_payments(
 		}
 	}
 
-	// after the interactive sign-ups, also add our non-interactive participations
-	state.register_all_non_interactive_participations(srv)
+	// after the interactive sign-ups, also add our delegated participations
+	state.register_all_delegated_participations(srv)
 		.await;
 
 	let input_volume = state.total_input_amount();
@@ -1729,7 +1729,7 @@ impl Server {
 			nb_outputs = outputs.len(),
 		)
 	)]
-	pub async fn register_non_interactive_round_participation(
+	pub async fn register_delegated_round_participation(
 		&self,
 		inputs: Vec<DelegatedInput>,
 		outputs: Vec<StoredRoundOutput>,

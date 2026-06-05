@@ -583,7 +583,7 @@ impl rpc::server::ArkService for Server {
 			});
 		}
 
-		let unlock_hash = self.register_non_interactive_round_participation(inputs, outputs).await
+		let unlock_hash = self.register_delegated_round_participation(inputs, outputs).await
 			.to_status()?;
 
 		Ok(tonic::Response::new(protos::RoundParticipationResponse {
