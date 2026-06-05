@@ -144,6 +144,15 @@ pub struct RoundPaymentRegistered {
 impl_slog!(RoundPaymentRegistered, TRACE, "Registered payment from a participant");
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DelegatedRoundParticipationRegistered {
+	pub input_vtxos: Vec<VtxoId>,
+	pub unlock_hash: UnlockHash,
+}
+impl_slog!(DelegatedRoundParticipationRegistered, TRACE,
+	"Registered a non-interactive (delegated) round participation",
+);
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FullRound {
 	pub round_seq: RoundSeq,
 	pub attempt_seq: usize,

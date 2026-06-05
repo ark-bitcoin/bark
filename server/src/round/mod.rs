@@ -1755,6 +1755,10 @@ impl Server {
 			t.try_store_round_participation(chain_tip, unlock_preimage, &input_ids, &outputs).await
 		}).await?;
 
+		slog!(DelegatedRoundParticipationRegistered,
+			input_vtxos: input_ids, unlock_hash,
+		);
+
 		Ok(unlock_hash)
 	}
 }
