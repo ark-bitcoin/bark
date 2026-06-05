@@ -52,7 +52,7 @@ pub const XPAY_TIMEOUT_BUFFER: Duration = Duration::from_secs(15);
 ///
 /// Wrapped in an `Arc` so both [`ClnXpay::pay`] (fire-and-forget spawned tasks)
 /// and [`ClnXpayProcess`] (periodic reconciliation) can use it concurrently.
-struct ClnXpayClient {
+pub(crate) struct ClnXpayClient {
 	db: database::Db,
 	rpc: ClnGrpcClient,
 	settler: Arc<HtlcSettler>,
@@ -312,6 +312,12 @@ impl ClnXpay {
 		self.jh.as_ref().is_some_and(|jh| !jh.is_finished())
 	}
 
+	/// Cheap clone of the shared command client. Used by [`NodeHandle`] to
+	/// issue xpay payments directly without going through the spawn helper.
+	pub(crate) fn client(&self) -> Arc<ClnXpayClient> {
+		self.client.clone()
+	}
+
 	/// Wait for the process to end.
 	pub async fn wait(mut self) -> Result<anyhow::Result<()>, tokio::task::JoinError> {
 		match self.jh.take() {
@@ -320,26 +326,6 @@ impl ClnXpay {
 		}
 	}
 
-	/// Fire-and-forget: spawn a task that calls xpay and then updates the DB.
-	pub fn pay(
-		&self,
-		invoice: Box<Invoice>,
-		payment_amount: Amount,
-		max_routing_fee: Amount,
-		max_cltv_expiry_delta: BlockDelta,
-		retry_for: Duration,
-	) {
-		let client = self.client.clone();
-		tokio::spawn(async move {
-			client.pay(
-				invoice,
-				payment_amount,
-				max_routing_fee,
-				max_cltv_expiry_delta,
-				retry_for,
-			).await;
-		});
-	}
 }
 
 impl Drop for ClnXpay {
