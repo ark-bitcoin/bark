@@ -405,7 +405,7 @@ bark-sdk:
     - export WATCHMAND_EXEC=${CI_PROJECT_DIR}/target/ci/watchmand
     - bash ./contrib/ci-run-test.sh test-integration-bark-sdk-prebuilt
 
-compat-bark-0.1.4:
+compat-bark-0.2.3:
   interruptible: true
   stage: test
   tags:
@@ -417,14 +417,14 @@ compat-bark-0.1.4:
     - build
     - build-test-archives
   variables:
-    TEST_DIRECTORY: ./test/bark-0.1.4
+    TEST_DIRECTORY: ./test/bark-0.2.3
     NEXTEST_TEST_THREADS: "4"
     BARK_COMMAND_TIMEOUT_MILLIS: "120000"
     TX_PROPAGATION_TIMEOUT: "30000"
-    BARK_RELEASE_URL: https://gitlab.com/ark-bitcoin/bark/-/releases/bark-0.1.4/downloads/bark-0.1.4-linux-x86_64
-    BARK_RELEASE_SHA256: ed0a058a4b6df3ab8fb119d121ba3551b00d58849ae0b6a5ede5620b29ba7e41
+    BARK_RELEASE_URL: https://gitlab.com/ark-bitcoin/bark/-/releases/bark-0.2.3/downloads/bark-0.2.3-linux-x86_64
+    BARK_RELEASE_SHA256: e72a75cfc9948531130e18624ad0be89c864bd0c04267a407d14caf98278a36f
   cache:
-    key: bark-0.1.4
+    key: bark-0.2.3
     paths:
       - .bark-release-cache/
   script:
@@ -440,7 +440,7 @@ compat-bark-0.1.4:
       --cache-dir "${CI_PROJECT_DIR}/.bark-release-cache")
     - bash ./contrib/ci-run-test.sh test-integration-bark-prebuilt
 
-compat-bark-0.2.0:
+compat-bark-0.2.2:
   interruptible: true
   stage: test
   tags:
@@ -452,14 +452,14 @@ compat-bark-0.2.0:
     - build
     - build-test-archives
   variables:
-    TEST_DIRECTORY: ./test/bark-0.2.0
+    TEST_DIRECTORY: ./test/bark-0.2.2
     NEXTEST_TEST_THREADS: "4"
     BARK_COMMAND_TIMEOUT_MILLIS: "120000"
     TX_PROPAGATION_TIMEOUT: "30000"
-    BARK_RELEASE_URL: https://gitlab.com/ark-bitcoin/bark/-/releases/bark-0.2.0/downloads/bark-0.2.0-linux-x86_64
-    BARK_RELEASE_SHA256: e4fec31e5d4dc565b3ac299d92aee48cf911ff5b635741d3cd676836835d45c0
+    BARK_RELEASE_URL: https://gitlab.com/ark-bitcoin/bark/-/releases/bark-0.2.2/downloads/bark-0.2.2-linux-x86_64
+    BARK_RELEASE_SHA256: a8670689f9404907455a165b23ac628e7eed920b83279892698344495b2324e5
   cache:
-    key: bark-0.2.0
+    key: bark-0.2.2
     paths:
       - .bark-release-cache/
   script:
