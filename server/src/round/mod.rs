@@ -1722,6 +1722,13 @@ pub async fn run_round_coordinator(
 	}
 }
 impl Server {
+	#[tracing::instrument(
+		skip(self, inputs, outputs),
+		fields(
+			nb_inputs = inputs.len(),
+			nb_outputs = outputs.len(),
+		)
+	)]
 	pub async fn register_non_interactive_round_participation(
 		&self,
 		inputs: Vec<DelegatedInput>,
@@ -1754,6 +1761,10 @@ impl Server {
 		self.db.write(async |t| {
 			t.try_store_round_participation(chain_tip, unlock_preimage, &input_ids, &outputs).await
 		}).await?;
+
+		slog!(DelegatedRoundParticipationRegistered,
+			input_vtxos: input_ids, unlock_hash,
+		);
 
 		Ok(unlock_hash)
 	}

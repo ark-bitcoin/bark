@@ -224,6 +224,7 @@ impl<'t> Tx<'t> {
 		Ok(Some(query::complete_round_participation(&self, part_row).await?))
 	}
 
+	#[tracing::instrument(skip(self))]
 	pub async fn get_all_pending_round_participations(
 		&self,
 	) -> anyhow::Result<Vec<StoredRoundParticipation>> {
@@ -245,6 +246,13 @@ impl<'t> Tx<'t> {
 	/// Try register a new hArk round participation
 	///
 	/// Will check that the input vtxos are spendable.
+	#[tracing::instrument(
+		skip(self, unlock_preimage, outputs),
+		fields(
+			chain_tip = chain_tip,
+			nb_inputs = inputs.len(),
+		)
+	)]
 	pub async fn try_store_round_participation(
 		&self,
 		chain_tip: BlockHeight,
