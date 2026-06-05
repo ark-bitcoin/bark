@@ -173,7 +173,7 @@ impl RoundState {
 		}
 	}
 
-	fn new_non_interactive(
+	fn new_delegated(
 		participation: RoundParticipation,
 		unlock_hash: UnlockHash,
 		movement_id: Option<MovementId>,
@@ -383,7 +383,7 @@ impl RoundState {
 			},
 
 			RoundFlowState::NonInteractivePending { unlock_hash } => {
-				match progress_non_interactive(wallet, &self.participation, unlock_hash).await {
+				match progress_delegated(wallet, &self.participation, unlock_hash).await {
 					Ok(HarkProgressResult::RoundPending) => Ok(RoundStatus::Pending),
 					Ok(HarkProgressResult::RoundNotFound) => {
 						self.handle_round_not_found(wallet).await
@@ -422,11 +422,11 @@ impl RoundState {
 						//TODO(stevenroose) we failed here but we might actualy be able to
 						// succeed if we retry. should we implement some kind of limited
 						// retry after which we mark as failed?
-						Err(e.context("error progressing non-interactive round"))
+						Err(e.context("error progressing delegated round"))
 					},
 					Err(HarkForfeitError::SentForfeits(e)) => {
 						self.sent_forfeit_sigs = true;
-						Err(e.context("error progressing non-interactive round \
+						Err(e.context("error progressing delegated round \
 							after sending forfeit tx signatures"))
 					},
 				}
@@ -940,7 +940,7 @@ enum HarkProgressResult {
 	},
 }
 
-async fn progress_non_interactive(
+async fn progress_delegated(
 	wallet: &Wallet,
 	participation: &RoundParticipation,
 	unlock_hash: UnlockHash,
@@ -1338,7 +1338,7 @@ impl Wallet {
 		Ok(state)
 	}
 
-	/// Join next round in non-interactive or delegated mode
+	/// Join next round in delegated mode
 	pub async fn join_next_round_delegated(
 		&self,
 		participation: RoundParticipation,
@@ -1396,9 +1396,9 @@ impl Wallet {
 		let unlock_hash = UnlockHash::from_bytes(resp.unlock_hash)
 			.context("invalid unlock hash from server")?;
 
-		let state = RoundState::new_non_interactive(participation, unlock_hash, movement_id);
+		let state = RoundState::new_delegated(participation, unlock_hash, movement_id);
 
-		info!("Non-interactive round participation submitted, it will automatically execute \
+		info!("Delegated round participation submitted, it will automatically execute \
 			when you next sync your wallet after the round happened \
 			(and has sufficient confirmations).",
 		);
