@@ -70,19 +70,25 @@ impl VtxosInFlux {
 	{
 		let ids = ids.into_iter();
 		let mut buf = Vec::with_capacity(ids.size_hint().0);
+		let mut conflict = None;
 		{
 			let mut inner = self.inner.lock();
 			for id in ids {
 				let id = id.vtxo_id();
 				if !inner.vtxos.insert(id) {
 					// abort
-					for take in buf {
-						inner.vtxos.remove(&take);
+					for take in &buf {
+						inner.vtxos.remove(take);
 					}
-					return Err(VtxoAlreadyInFluxError { id });
+					conflict = Some(id);
+					break;
 				}
 				buf.push(id);
 			}
+		}
+		if let Some(id) = conflict {
+			slog!(VtxoFluxConflict, vtxo: id);
+			return Err(VtxoAlreadyInFluxError { id });
 		}
 		slog!(VtxosAddedToFlux, vtxos: buf);
 		Ok(())
