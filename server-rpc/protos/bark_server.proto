@@ -70,7 +70,7 @@ service ArkService {
 	rpc SubmitPayment(SubmitPaymentRequest) returns (SubmitPaymentResponse) {}
 	rpc ProvideVtxoSignatures(VtxoSignaturesRequest) returns (core.Empty) {}
 
-	// Submit a non-interactive round participation
+	// Submit a delegated round participation
 	rpc SubmitRoundParticipation(RoundParticipationRequest) returns (RoundParticipationResponse) {}
 	rpc RoundParticipationStatus(RoundParticipationStatusRequest) returns (RoundParticipationStatusResponse) {}
 	rpc RequestLeafVtxoCosign(LeafVtxoCosignRequest) returns (LeafVtxoCosignResponse) {}
