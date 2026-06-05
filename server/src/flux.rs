@@ -70,26 +70,34 @@ impl VtxosInFlux {
 	{
 		let ids = ids.into_iter();
 		let mut buf = Vec::with_capacity(ids.size_hint().0);
-		let mut inner = self.inner.lock();
-		for id in ids {
-			let id = id.vtxo_id();
-			if !inner.vtxos.insert(id) {
-				// abort
-				for take in buf {
-					inner.vtxos.remove(&take);
+		{
+			let mut inner = self.inner.lock();
+			for id in ids {
+				let id = id.vtxo_id();
+				if !inner.vtxos.insert(id) {
+					// abort
+					for take in buf {
+						inner.vtxos.remove(&take);
+					}
+					return Err(VtxoAlreadyInFluxError { id });
 				}
-				return Err(VtxoAlreadyInFluxError { id });
+				buf.push(id);
 			}
-			buf.push(id);
 		}
+		slog!(VtxosAddedToFlux, vtxos: buf);
 		Ok(())
 	}
 
 	fn release<V: Borrow<VtxoId> + std::fmt::Display>(&self, ids: impl IntoIterator<Item = V>) {
-		let mut inner = self.inner.lock();
-		for id in ids {
-			assert!(inner.vtxos.remove(id.borrow()), "VtxoFluxGuard already unlocked; id={}", id);
+		let mut removed = Vec::new();
+		{
+			let mut inner = self.inner.lock();
+			for id in ids {
+				assert!(inner.vtxos.remove(id.borrow()), "VtxoFluxGuard already unlocked; id={}", id);
+				removed.push(*id.borrow());
+			}
 		}
+		slog!(VtxosRemovedFromFlux, vtxos: removed);
 	}
 
 	#[cfg(test)]
