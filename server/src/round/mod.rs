@@ -1736,14 +1736,6 @@ impl Server {
 	) -> anyhow::Result<UnlockHash> {
 		let input_ids = inputs.iter().map(|i| i.vtxo_id).collect::<Vec<_>>();
 
-		// we do check the vtxo's spendability in the db call below, but
-		// with this, if the user is doing race-y behavior, we can fail early
-		// either here or on the other side of the race
-		let _guard = match self.vtxos_in_flux.try_lock(&input_ids) {
-			Ok(g) => g,
-			Err(v) => return badarg!("vtxo already in flux: {}", v),
-		};
-
 		// check input proofs
 		let outputs_for_verify = outputs.iter()
 			.map(|o| o.vtxo_request.clone())
