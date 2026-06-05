@@ -124,29 +124,32 @@ pub fn park_with_backoff<A: WalletAction>(state: A, attempts: u32) -> Advance<A>
 ///
 /// Implementors define the per-kind state machine; the executor owns the
 /// loop, persistence, retry tracking and wake scheduling.
-///
-/// # Invariants
-///
-/// - `advance` MUST be re-entrant: it may be called more than once for
-///   the same logical step (after a crash, after an early wake, after a
-///   notification arrives). All side effects it triggers must therefore
-///   be idempotent.
-/// - The `id` returned MUST be stable across calls on the same logical
-///   action (different states of the same action share an id).
-/// - `on_rejection` MUST be re-entrant for the same reason as
-///   `advance`: it may run partially, crash, and be re-driven against
-///   the state the action subsequently lands in.
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 pub trait WalletAction: Sized + Send + Sync {
+	/// Get an identifier for this action
+	///
+	/// The `id` returned MUST be stable across calls on the same logical
+	/// action (different states of the same action share an id).
 	fn id(&self) -> WalletActionId;
 
+	/// Called to advance the action state
+	///
+	/// MUST be re-entrant: it may be called more than once for the same logical
+	/// step (after a crash, after an early wake, after a notification arrives).
+	/// All side effects it triggers must therefore be idempotent.
 	async fn advance(self, wallet: &Wallet) -> Result<Advance<Self>, AdvanceError>;
 
+	/// Called when the action should be retried
 	async fn on_retry(self, _wallet: &Wallet, attempts: u32) -> anyhow::Result<Advance<Self>> {
 		Ok(park_with_backoff(self, attempts))
 	}
 
+	/// Called when the server rejected one of our requests
+	///
+	/// MUST be re-entrant for the same reason as [WalletAction::advance]:
+	/// it may run partially, crash, and be re-driven against the state the action
+	/// subsequently lands in.
 	async fn on_rejection(self, _wallet: &Wallet, _error: AdvanceError)
 		-> anyhow::Result<Advance<Self>>;
 }
