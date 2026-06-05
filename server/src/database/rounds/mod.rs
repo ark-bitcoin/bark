@@ -114,6 +114,21 @@ impl<'t> Tx<'t> {
 		Ok(())
 	}
 
+	/// Update the funding tx of a round to its signed version.
+	///
+	/// Enforces that the txid of `signed_tx` matches the stored `funding_txid`,
+	/// so the identity of the round cannot change.
+	pub async fn update_round_funding_tx(&self, signed_tx: &Transaction) -> anyhow::Result<()> {
+		let txid = signed_tx.compute_txid();
+		let stmt = self.prepare_typed(
+			"UPDATE round SET funding_tx = $1 WHERE funding_txid = $2 RETURNING id;",
+			&[Type::BYTEA, Type::TEXT],
+		).await?;
+		self.query_one(&stmt, &[&serialize(signed_tx), &txid.to_string()]).await
+			.with_context(|| format!("no round found with funding_txid {}", txid))?;
+		Ok(())
+	}
+
 	pub async fn is_round_tx(&self, txid: Txid) -> anyhow::Result<bool> {
 		let statement = self.prepare("SELECT 1 FROM round WHERE funding_txid = $1 LIMIT 1;").await?;
 		let rows = self.query(&statement, &[&txid.to_string()]).await?;

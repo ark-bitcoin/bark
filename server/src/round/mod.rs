@@ -1030,8 +1030,11 @@ impl SigningVtxoTree {
 		// Persist the signed funding tx to the database.
 		let update = VtxoTreeUpdate::new()
 			.upsert_funding_tx(&signed_round_tx.tx);
-		srv.db.write(async |t| t.execute_vtxo_tree_update(update).await).await
-			.map_err(|e| RoundError::Fatal(e.context("failed to upsert signed funding tx")))?;
+		let signed_tx = signed_round_tx.tx.clone();
+		srv.db.write(async |t| {
+			t.execute_vtxo_tree_update(update).await?;
+			t.update_round_funding_tx(&signed_tx).await
+		}).await.map_err(|e| RoundError::Fatal(e.context("failed to persist signed funding tx")))?;
 
 		let finished = RoundFinished {
 			round_seq: self.round_step.round_seq(),
