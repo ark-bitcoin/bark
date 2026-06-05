@@ -1,6 +1,7 @@
 
+use std::collections::HashMap;
 use std::sync::Arc;
-use std::sync::atomic::{self, AtomicUsize};
+use std::sync::atomic::{self, AtomicU64};
 use std::time::{Duration, Instant};
 
 use tokio::signal;
@@ -12,6 +13,7 @@ use crate::telemetry;
 /// A struct to be held in scope while a process is working.
 pub struct WorkerGuard {
 	mgr: RuntimeManager,
+	id: u64,
 	name: String,
 	critical: bool,
 
@@ -30,13 +32,14 @@ impl std::ops::Drop for WorkerGuard {
 		if let Some(ref notify) = self.extra_notify {
 			notify.notify_waiters();
 		}
-		self.mgr.drop_worker(&self.name, self.critical);
+		self.mgr.drop_worker(self.id, &self.name, self.critical);
 	}
 }
 
 struct Inner {
 	shutdown: CancellationToken,
-	workers: AtomicUsize,
+	workers: parking_lot::Mutex<HashMap<u64, String>>,
+	next_id: AtomicU64,
 	notify: Notify,
 }
 
@@ -51,7 +54,8 @@ impl RuntimeManager {
 		RuntimeManager {
 			inner: Arc::new(Inner {
 				shutdown: CancellationToken::new(),
-				workers: AtomicUsize::new(0),
+				workers: parking_lot::Mutex::new(HashMap::new()),
+				next_id: AtomicU64::new(0),
 				notify: Notify::new(),
 			}),
 		}
@@ -82,19 +86,21 @@ impl RuntimeManager {
 			while !rt.shutdown_complete() {
 				let now = Instant::now();
 				if let Some(time_left) = deadline.checked_duration_since(now) {
-					info!("Forced exit in {} seconds...", time_left.as_secs());
+					info!("Forced exit in {} seconds... Waiting on workers: {:?}",
+						time_left.as_secs(), rt.remaining_worker_names());
 					tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
 				} else {
-					error!("Graceful shutdown took too long, exiting...");
+					error!("Graceful shutdown took too long, exiting... Remaining workers: {:?}",
+						rt.remaining_worker_names());
 					std::process::exit(0);
 				}
 			}
 		});
 	}
 
-	fn drop_worker(&self, name: &str, critical: bool) {
-		let old = self.inner.workers.fetch_sub(1, atomic::Ordering::SeqCst);
-		assert_ne!(old, 0);
+	fn drop_worker(&self, id: u64, name: &str, critical: bool) {
+		let removed = self.inner.workers.lock().remove(&id);
+		assert!(removed.is_some(), "worker {} ({}) was not registered", id, name);
 		self.inner.notify.notify_waiters();
 
 		telemetry::worker_dropped(name);
@@ -108,17 +114,19 @@ impl RuntimeManager {
 	}
 
 	fn inner_spawn(&self, name: impl AsRef<str>, critical: bool) -> WorkerGuard {
-		let _old = self.inner.workers.fetch_add(1, atomic::Ordering::SeqCst);
+		let id = self.inner.next_id.fetch_add(1, atomic::Ordering::SeqCst);
+		let name = name.as_ref().to_string();
+		self.inner.workers.lock().insert(id, name.clone());
 		self.inner.notify.notify_waiters();
 
-		let name = name.as_ref();
-		slog!(WorkerStarted, name: name.into(), critical);
+		slog!(WorkerStarted, name: name.clone(), critical);
 
-		telemetry::worker_spawned(name);
+		telemetry::worker_spawned(&name);
 
 		WorkerGuard {
 			mgr: self.clone(),
-			name: name.into(),
+			id,
+			name,
 			critical,
 			extra_notify: None,
 		}
@@ -152,7 +160,15 @@ impl RuntimeManager {
 
 	/// Number of currently live workers.
 	pub fn worker_count(&self) -> usize {
-		self.inner.workers.load(atomic::Ordering::SeqCst)
+		self.inner.workers.lock().len()
+	}
+
+	/// Names of currently live workers. Useful for diagnosing slow shutdowns.
+	pub fn remaining_worker_names(&self) -> Vec<String> {
+		let mut names: Vec<String> = self.inner.workers.lock()
+			.values().cloned().collect();
+		names.sort();
+		names
 	}
 
 	/// Wait for shutdown to finish.
