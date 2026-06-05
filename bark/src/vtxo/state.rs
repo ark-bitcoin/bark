@@ -45,6 +45,12 @@ pub enum VtxoLockHolder {
 	Movement { id: MovementId },
 }
 
+impl From<MovementId> for VtxoLockHolder {
+	fn from(id: MovementId) -> Self {
+		VtxoLockHolder::Movement { id }
+	}
+}
+
 const SPENDABLE: &'static str = "Spendable";
 const LOCKED: &'static str = "Locked";
 const SPENT: &'static str = "Spent";

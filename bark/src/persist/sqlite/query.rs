@@ -449,11 +449,11 @@ pub fn store_vtxo_with_initial_state(
 }
 
 pub fn store_round_state(
-	tx: &rusqlite::Transaction,
+	conn: &Connection,
 	state: &RoundState,
 ) -> anyhow::Result<RoundStateId> {
 	let bytes = rmp_serde::to_vec(&SerdeRoundState::from(state)).expect("can serialize");
-	let mut stmt = tx.prepare(
+	let mut stmt = conn.prepare(
 		"INSERT INTO bark_round_state (state) VALUES (:state) RETURNING id",
 	)?;
 	let id = stmt.query_row(named_params! {
