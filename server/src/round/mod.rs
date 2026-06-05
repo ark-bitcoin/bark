@@ -1722,6 +1722,13 @@ pub async fn run_round_coordinator(
 	}
 }
 impl Server {
+	#[tracing::instrument(
+		skip(self, inputs, outputs),
+		fields(
+			nb_inputs = inputs.len(),
+			nb_outputs = outputs.len(),
+		)
+	)]
 	pub async fn register_non_interactive_round_participation(
 		&self,
 		inputs: Vec<DelegatedInput>,
