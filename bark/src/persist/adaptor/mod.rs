@@ -583,33 +583,10 @@ impl <S: StorageAdaptor> BarkPersister for StorageAdaptorWrapper<S> {
 		}
 	}
 
-	async fn store_round_state_lock_vtxos(
-		&self,
-		round_state: &RoundState,
-	) -> anyhow::Result<RoundStateId> {
+	async fn store_round_state(&self, round_state: &RoundState) -> anyhow::Result<RoundStateId> {
 		let mut lock = self.inner.write().await;
 
 		let id = RoundStateId(lock.incremental_id(partition::ROUND_STATE).await?);
-
-		let allowed_states = &[VtxoStateKind::Spendable];
-
-		// First check that the inputs are spendable
-		for vtxo in round_state.participation().inputs.iter() {
-			get_check_vtxo_state(&mut *lock, vtxo.id(), allowed_states).await?;
-		}
-
-		for vtxo in round_state.participation().inputs.iter() {
-			update_vtxo_state_checked(
-				&mut *lock,
-				vtxo.id(),
-				VtxoState::Locked {
-					holder: round_state.movement_id
-						.map(|id| crate::vtxo::VtxoLockHolder::Movement { id }),
-				},
-				allowed_states,
-			).await?;
-		}
-
 		let serde_state = SerdeRoundState::from(round_state);
 		let record = Record::from_data(
 			partition::ROUND_STATE,

@@ -640,53 +640,15 @@ mod round_states {
 
 	pub async fn run<A: BarkPersister, B: BarkPersister>(a: &A, b: &B) {
 		test_store_and_get_round_state(a, b).await;
-		test_store_round_state_with_vtxo_locking(a, b).await;
 		test_update_round_state(a, b).await;
 		test_remove_round_state(a, b).await;
-	}
-
-	async fn test_store_round_state_with_vtxo_locking<A: BarkPersister, B: BarkPersister>(a: &A, b: &B) {
-		// arkoor3_vtxo was removed by vtxo_lifecycle::test_remove_vtxo, so it is
-		// absent from both backends.  Re-inserting it gives us a fresh Spendable
-		// vtxo to use as round input, which exercises the locking loop inside
-		// store_round_state_lock_vtxos.
-		let vtxo = &VTXO_VECTORS.arkoor3_vtxo;
-
-		a.store_vtxos(&[(vtxo, &VtxoState::Spendable)]).await.expect("a: store_vtxos for locking test");
-		b.store_vtxos(&[(vtxo, &VtxoState::Spendable)]).await.expect("b: store_vtxos for locking test");
-
-		let state = RoundState {
-			done: false,
-			participation: RoundParticipation {
-				inputs: vec![vtxo.as_ref().clone()],
-				outputs: vec![],
-				unblinded_mailbox_id: None,
-			},
-			flow: RoundFlowState::InteractivePending,
-			new_vtxos: vec![],
-			sent_forfeit_sigs: false,
-			movement_id: None,
-		};
-
-		let id_a = a.store_round_state_lock_vtxos(&state).await.expect("a: store_round_state_lock_vtxos");
-		let id_b = b.store_round_state_lock_vtxos(&state).await.expect("b: store_round_state_lock_vtxos");
-		assert_eq!(id_a, id_b, "store_round_state_lock_vtxos id mismatch");
-
-		// Both backends must have transitioned the vtxo to Locked.
-		let ra = a.get_wallet_vtxo(vtxo.id()).await.expect("a: get_wallet_vtxo after lock");
-		let rb = b.get_wallet_vtxo(vtxo.id()).await.expect("b: get_wallet_vtxo after lock");
-		assert_eq!(ra, rb, "get_wallet_vtxo after lock mismatch");
-		assert!(
-			matches!(ra.as_ref().map(|w| &w.state), Some(VtxoState::Locked { .. })),
-			"vtxo should be Locked after store_round_state_lock_vtxos",
-		);
 	}
 
 	async fn test_store_and_get_round_state<A: BarkPersister, B: BarkPersister>(a: &A, b: &B) {
 		let state = empty_round_state();
 
-		let id_a = a.store_round_state_lock_vtxos(&state).await.expect("a: store_round_state");
-		let id_b = b.store_round_state_lock_vtxos(&state).await.expect("b: store_round_state");
+		let id_a = a.store_round_state(&state).await.expect("a: store_round_state");
+		let id_b = b.store_round_state(&state).await.expect("b: store_round_state");
 		assert_eq!(id_a, id_b, "store_round_state id mismatch");
 
 		let mut ra = a.get_pending_round_state_ids().await.expect("a: get_pending_round_state_ids");
@@ -705,8 +667,8 @@ mod round_states {
 	}
 
 	async fn test_update_round_state<A: BarkPersister, B: BarkPersister>(a: &A, b: &B) {
-		let id_a = a.store_round_state_lock_vtxos(&empty_round_state()).await.expect("a: store_round_state");
-		let id_b = b.store_round_state_lock_vtxos(&empty_round_state()).await.expect("b: store_round_state");
+		let id_a = a.store_round_state(&empty_round_state()).await.expect("a: store_round_state");
+		let id_b = b.store_round_state(&empty_round_state()).await.expect("b: store_round_state");
 		assert_eq!(id_a, id_b, "store_round_state id mismatch");
 
 		let unlocked_a = a.get_round_state_by_id(id_a).await.expect("a: get_round_state_by_id").unwrap();
@@ -734,8 +696,8 @@ mod round_states {
 	}
 
 	async fn test_remove_round_state<A: BarkPersister, B: BarkPersister>(a: &A, b: &B) {
-		let id_a = a.store_round_state_lock_vtxos(&empty_round_state()).await.expect("a: store_round_state");
-		let id_b = b.store_round_state_lock_vtxos(&empty_round_state()).await.expect("b: store_round_state");
+		let id_a = a.store_round_state(&empty_round_state()).await.expect("a: store_round_state");
+		let id_b = b.store_round_state(&empty_round_state()).await.expect("b: store_round_state");
 		assert_eq!(id_a, id_b, "store_round_state id mismatch");
 
 		let unlocked_a = a.get_round_state_by_id(id_a).await.expect("a: get_round_state_by_id").unwrap();

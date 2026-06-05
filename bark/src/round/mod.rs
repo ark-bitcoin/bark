@@ -33,6 +33,7 @@ use ark::tree::signed::{LeafVtxoCosignContext, UnlockHash, VtxoTreeSpec};
 use bitcoin_ext::TxStatus;
 use server_rpc::{protos, ServerConnection, TryFromBytes};
 
+use crate::movement::manager::OnDropStatus;
 use crate::{SECP, Wallet, WalletVtxo};
 use crate::movement::{MovementId, MovementStatus};
 use crate::movement::update::MovementUpdate;
@@ -173,7 +174,7 @@ impl RoundState {
 		}
 	}
 
-	fn new_non_interactive(
+	fn new_delegated(
 		participation: RoundParticipation,
 		unlock_hash: UnlockHash,
 		movement_id: Option<MovementId>,
@@ -383,7 +384,7 @@ impl RoundState {
 			},
 
 			RoundFlowState::NonInteractivePending { unlock_hash } => {
-				match progress_non_interactive(wallet, &self.participation, unlock_hash).await {
+				match progress_delegated(wallet, &self.participation, unlock_hash).await {
 					Ok(HarkProgressResult::RoundPending) => Ok(RoundStatus::Pending),
 					Ok(HarkProgressResult::RoundNotFound) => {
 						self.handle_round_not_found(wallet).await
@@ -422,11 +423,11 @@ impl RoundState {
 						//TODO(stevenroose) we failed here but we might actualy be able to
 						// succeed if we retry. should we implement some kind of limited
 						// retry after which we mark as failed?
-						Err(e.context("error progressing non-interactive round"))
+						Err(e.context("error progressing delegated round"))
 					},
 					Err(HarkForfeitError::SentForfeits(e)) => {
 						self.sent_forfeit_sigs = true;
-						Err(e.context("error progressing non-interactive round \
+						Err(e.context("error progressing delegated round \
 							after sending forfeit tx signatures"))
 					},
 				}
@@ -940,7 +941,7 @@ enum HarkProgressResult {
 	},
 }
 
-async fn progress_non_interactive(
+async fn progress_delegated(
 	wallet: &Wallet,
 	participation: &RoundParticipation,
 	unlock_hash: UnlockHash,
@@ -1320,39 +1321,91 @@ impl Wallet {
 		participation: RoundParticipation,
 		movement_kind: Option<RoundMovement>,
 	) -> anyhow::Result<StoredRoundState> {
-		let movement_id = if let Some(kind) = movement_kind {
-			Some(self.inner.movements.new_movement_with_update(
+		let movement = if let Some(kind) = movement_kind {
+			Some(self.inner.movements.new_guarded_movement_with_update(
 				Subsystem::ROUND,
 				kind.to_string(),
+				OnDropStatus::Failed,
 				participation.to_movement_update()?
 			).await?)
 		} else {
 			None
 		};
+		let movement_id = movement.as_ref().map(|m| m.id());
+		let input_vtxos = participation.inputs.iter().map(|v| v.id()).collect::<Vec<_>>();
 		let state = RoundState::new_interactive(participation, movement_id);
 
-		let id = self.inner.db.store_round_state_lock_vtxos(&state).await?;
-		let state = self.lock_wait_round_state(id).await?
-			.context("failed to lock fresh round state")?;
+		self.lock_vtxos(&input_vtxos, movement_id.map(|m| m.into())).await
+			.context("failed to lock input VTXOs")?;
 
-		Ok(state)
+		match (async || {
+			let id = self.inner.db.store_round_state(&state).await?;
+			Ok(self.lock_wait_round_state(id).await?
+				.context("failed to lock fresh round state")?)
+		})().await {
+			Ok(state) => {
+				if let Some(mut m) = movement {
+					m.stop();
+				}
+				Ok(state)
+			},
+			Err(e) => {
+				self.unlock_vtxos(&input_vtxos).await
+					.context("failed to unlock input VTXOs")?;
+				if let Some(mut m) = movement {
+					m.fail().await.context("failed to mark movement as failed")?;
+				}
+				Err(e)
+			},
+		}
 	}
 
-	/// Join next round in non-interactive or delegated mode
+	/// Join next round in delegated mode
 	pub async fn join_next_round_delegated(
 		&self,
 		participation: RoundParticipation,
 		movement_kind: Option<RoundMovement>,
 	) -> anyhow::Result<StoredRoundState<Unlocked>> {
-		let (mut srv, _) = self.require_server().await?;
-
-		let movement_id = if let Some(kind) = movement_kind {
-			Some(self.inner.movements.new_movement_with_update(
-				Subsystem::ROUND, kind.to_string(), participation.to_movement_update()?,
+		let movement = if let Some(kind) = movement_kind {
+			Some(self.inner.movements.new_guarded_movement_with_update(
+				Subsystem::ROUND,
+				kind.to_string(),
+				OnDropStatus::Failed,
+				participation.to_movement_update()?,
 			).await?)
 		} else {
 			None
 		};
+		let movement_id = movement.as_ref().map(|m| m.id());
+
+		let input_ids = participation.inputs.iter().map(|v| v.id()).collect::<Vec<_>>();
+		self.lock_vtxos(&input_ids, movement_id.map(|m| m.into())).await
+			.context("error locking input VTXOs")?;
+
+		match self.join_next_round_delegated_inner(participation, movement_id).await {
+			Ok(state) => {
+				if let Some(mut m) = movement {
+					m.stop();
+				}
+				Ok(state)
+			},
+			Err(e) => {
+				self.unlock_vtxos(&input_ids).await
+					.context("error unlocking input VTXOs")?;
+				if let Some(mut m) = movement {
+					m.fail().await.context("error marking movement as failed")?;
+				}
+				Err(e)
+			},
+		}
+	}
+
+	async fn join_next_round_delegated_inner(
+		&self,
+		participation: RoundParticipation,
+		movement_id: Option<MovementId>,
+	) -> anyhow::Result<StoredRoundState<Unlocked>> {
+		let (mut srv, _) = self.require_server().await?;
 
 		// Get mailbox identifier for VTXO delivery
 		let unblinded_mailbox_id = self.mailbox_identifier();
@@ -1396,14 +1449,14 @@ impl Wallet {
 		let unlock_hash = UnlockHash::from_bytes(resp.unlock_hash)
 			.context("invalid unlock hash from server")?;
 
-		let state = RoundState::new_non_interactive(participation, unlock_hash, movement_id);
+		let state = RoundState::new_delegated(participation, unlock_hash, movement_id);
 
-		info!("Non-interactive round participation submitted, it will automatically execute \
+		info!("Delegated round participation submitted, it will automatically execute \
 			when you next sync your wallet after the round happened \
 			(and has sufficient confirmations).",
 		);
 
-		let id = self.inner.db.store_round_state_lock_vtxos(&state).await?;
+		let id = self.inner.db.store_round_state(&state).await?;
 		Ok(StoredRoundState::new(id, state))
 	}
 

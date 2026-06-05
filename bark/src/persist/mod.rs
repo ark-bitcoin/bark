@@ -273,7 +273,9 @@ pub trait BarkPersister: Send + Sync + 'static {
 	/// - Returns an error if the query fails.
 	async fn get_pending_board_by_vtxo_id(&self, vtxo_id: VtxoId) -> anyhow::Result<Option<PendingBoard>>;
 
-	/// Store a new ongoing round state and lock the VTXOs in round
+	/// Store a new ongoing round state
+	///
+	/// The holder should ensure the input VTXOs are available and locked.
 	///
 	/// Parameters:
 	/// - `round_state`: the state to store
@@ -282,9 +284,8 @@ pub trait BarkPersister: Send + Sync + 'static {
 	/// - `RoundStateId`: the storaged ID of the new state
 	///
 	/// Errors:
-	/// - returns an error of the new round state could not be stored or the VTXOs
-	///   couldn't be marked as locked
-	async fn store_round_state_lock_vtxos(&self, round_state: &RoundState) -> anyhow::Result<RoundStateId>;
+	/// - returns an error of the new round state could not be stored
+	async fn store_round_state(&self, round_state: &RoundState) -> anyhow::Result<RoundStateId>;
 
 	/// Update an existing stored pending round state
 	///

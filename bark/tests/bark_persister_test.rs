@@ -320,7 +320,7 @@ impl BarkPersister for Dummy {
 		Ok(())
 	}
 
-	async fn store_round_state_lock_vtxos(&self, _round_state: &RoundState) -> anyhow::Result<RoundStateId> {
+	async fn store_round_state(&self, _round_state: &RoundState) -> anyhow::Result<RoundStateId> {
 		Ok(RoundStateId(5))
 	}
 

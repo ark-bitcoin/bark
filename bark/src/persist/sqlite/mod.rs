@@ -178,23 +178,9 @@ impl BarkPersister for SqliteClient {
 		query::get_pending_board_by_vtxo_id(&conn, vtxo_id)
 	}
 
-	async fn store_round_state_lock_vtxos(&self, round_state: &RoundState) -> anyhow::Result<RoundStateId> {
-		let mut conn = self.connect()?;
-		let tx = conn.transaction()?;
-		for vtxo in round_state.participation().inputs.iter() {
-			query::update_vtxo_state_checked(
-				&*tx,
-				vtxo.id(),
-				VtxoState::Locked {
-					holder: round_state.movement_id
-						.map(|id| crate::vtxo::VtxoLockHolder::Movement { id }),
-				},
-				&[VtxoStateKind::Spendable],
-			)?;
-		}
-		let id = query::store_round_state(&tx, round_state)?;
-		tx.commit()?;
-		Ok(id)
+	async fn store_round_state(&self, round_state: &RoundState) -> anyhow::Result<RoundStateId> {
+		let conn = self.connect()?;
+		query::store_round_state(&conn, round_state)
 	}
 
 	async fn update_round_state(&self, state: &StoredRoundState) -> anyhow::Result<()> {
