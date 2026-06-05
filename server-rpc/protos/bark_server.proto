@@ -501,6 +501,9 @@ message RoundParticipationStatusResponse {
 	// the actual status
 	RoundParticipationStatus status = 1;
 
+    // vtxo ids of the input vtxos
+    repeated bytes input_vtxo_ids = 5;
+
 	// signed round funding tx
 	// (provided if status != ROUND_PART_PENDING)
 	optional bytes round_funding_tx = 2;
@@ -512,6 +515,8 @@ message RoundParticipationStatusResponse {
 	// unlock preimage to unlock new vtxos
 	// (provided if status == ROUND_PART_RELEASED)
 	optional bytes unlock_preimage = 4;
+
+	// last index: 5
 }
 
 message LeafVtxoCosignRequest {

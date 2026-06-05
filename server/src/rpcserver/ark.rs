@@ -601,6 +601,7 @@ impl rpc::server::ArkService for Server {
 		let unlock_hash = UnlockHash::from_bytes(&req.unlock_hash)?;
 		let part = self.db.read(async |t| t.get_round_participation_by_unlock_hash(unlock_hash).await).await.to_status()?
 			.not_found([unlock_hash], "round participation not found")?;
+		let input_vtxo_ids = part.inputs.iter().map(|i| i.vtxo_id.to_bytes().to_vec()).collect();
 
 		let res = if let Some(round_id) = part.round_id {
 			//TODO(stevenroose) consider storing the new vtxos in the participation table
@@ -622,18 +623,19 @@ impl rpc::server::ArkService for Server {
 				protos::RoundParticipationStatusResponse {
 					status: protos::RoundParticipationStatus::RoundPartReleased.into(),
 					unlock_preimage: Some(part.unlock_preimage.leak_ref().to_vec()),
-					round_funding_tx, output_vtxos,
+					input_vtxo_ids, round_funding_tx, output_vtxos,
 				}
 			} else {
 				protos::RoundParticipationStatusResponse {
 					status: protos::RoundParticipationStatus::RoundPartIssued.into(),
 					unlock_preimage: None,
-					round_funding_tx, output_vtxos,
+					input_vtxo_ids, round_funding_tx, output_vtxos,
 				}
 			}
 		} else {
 			protos::RoundParticipationStatusResponse {
 				status: protos::RoundParticipationStatus::RoundPartPending.into(),
+				input_vtxo_ids,
 				round_funding_tx: None,
 				unlock_preimage: None,
 				output_vtxos: vec![],
