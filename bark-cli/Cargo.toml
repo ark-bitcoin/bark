@@ -1,6 +1,6 @@
 [package]
 name = "bark-cli"
-version = "0.2.2"
+version = "0.2.3"
 edition = "2024"
 license = "MIT"
 description = "CLI for the bitcoin Ark protocol built by Second"
@@ -28,12 +28,12 @@ sqlite-bundled = ["bark-wallet/sqlite-bundled"]
 barkd-swagger-ui = ["bark-rest/swagger-ui"]
 
 [dependencies]
-ark-lib = { version = "0.2.2", path = "../lib" }
-bark-json = { version = "0.2.2", path = "../bark-json" }
-bark-wallet = { version = "0.2.2", path = "../bark", default-features = false, features = [ "onchain-bdk", "sqlite", "filestore", "socks5-proxy", "rand", "native", "bitcoind-rpc" ] }
-bark-bitcoin-ext = { version = "0.2.2", path = "../bitcoin-ext", features = ["rpc-socks5-proxy"] }
-bark-server-rpc = { version = "0.2.2", path = "../server-rpc", default-features = false, features = ["tonic-native", "socks5-proxy"] }
-bark-rest = { version = "0.2.2", path = "../bark-rest", default-features = false }
+ark-lib = { version = "0.2.3", path = "../lib" }
+bark-json = { version = "0.2.3", path = "../bark-json" }
+bark-wallet = { version = "0.2.3", path = "../bark", default-features = false, features = [ "onchain-bdk", "sqlite", "filestore", "socks5-proxy", "rand", "native", "bitcoind-rpc" ] }
+bark-bitcoin-ext = { version = "0.2.3", path = "../bitcoin-ext", features = ["rpc-socks5-proxy"] }
+bark-server-rpc = { version = "0.2.3", path = "../server-rpc", default-features = false, features = ["tonic-native", "socks5-proxy"] }
+bark-rest = { version = "0.2.3", path = "../bark-rest", default-features = false }
 
 anyhow.workspace = true
 bitcoin.workspace = true
