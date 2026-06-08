@@ -72,6 +72,8 @@ pub struct LightningSend {
 
 	// Mutable state:
 	pub progress: Progress,
+	/// Unless a developer allows it, we will not auto-exit the HTLCs if revocation fails.
+	pub allow_exit_of_htlcs: bool,
 }
 
 impl LightningSend {
@@ -89,6 +91,13 @@ impl LightningSend {
 		let tip = wallet.inner.chain.tip().await?;
 		Ok(tip > self.htlc_expiry
 			.saturating_sub(wallet.config().vtxo_refresh_expiry_threshold))
+	}
+
+	/// Returns whether the lightning payment has failed to revoke HTLCs after a failed payment.
+	/// Previously these would be auto-exited when approaching expiry, instead developers can use
+	/// [`crate::Wallet::allow_lightning_send_to_exit`] to control this behaviour.
+	pub fn has_failed_revocation(&self) -> bool {
+		matches!(self.progress, Progress::RevocationStuck { .. })
 	}
 }
 
@@ -137,7 +146,8 @@ impl WalletAction for LightningSend {
 					},
 				}
 			},
-			Progress::RevocableHtlcs { htlcs, revocation } => {
+			Progress::RevocableHtlcs { htlcs, revocation } |
+			Progress::RevocationStuck { htlcs, revocation } => {
 				handle_lightning_send_htlcs_revocation(wallet, &self, &htlcs, &revocation).await?;
 				return Ok(Advance::Done);
 			},
@@ -147,28 +157,39 @@ impl WalletAction for LightningSend {
 	}
 
 	async fn on_retry(self, wallet: &Wallet, retries: u32) -> anyhow::Result<Advance<Self>> {
-		if self.is_htlc_near_expiry(wallet).await? {
-			match self.progress.clone() {
-				Progress::Start => {
+		match self.progress.clone() {
+			Progress::Start => {
+				if self.is_htlc_near_expiry(wallet).await? {
 					let err = anyhow!("Could not start lightning send and HTLCs are near expiry");
 					return Ok(Advance::Failed(err));
-				},
-				Progress::HtlcReceived(htlcs) |
-				Progress::PaymentInitiated(htlcs) => {
+				}
+			},
+			Progress::HtlcReceived(htlcs) |
+			Progress::PaymentInitiated(htlcs) => {
+				if self.is_htlc_near_expiry(wallet).await? {
 					let revocation = fail_lightning_send_payment(wallet, &self).await?;
 					let next = LightningSend {
 						progress: Progress::RevocableHtlcs { htlcs, revocation },
 						..self
 					};
 					return Ok(Advance::Next(next));
-				},
-				Progress::RevocableHtlcs { htlcs, .. } => {
-					// TODO: maybe we don't want to exit but rather log VTXOs
+				}
+			},
+			Progress::RevocableHtlcs { htlcs, revocation } => {
+				warn!("We could not revoke HTLCs, will continue retrying but the attempt will be marked as such");
+				let next = LightningSend {
+					progress: Progress::RevocationStuck { htlcs, revocation },
+					..self
+				};
+				return Ok(Advance::Next(next));
+			},
+			Progress::RevocationStuck { htlcs, .. } => {
+				if self.allow_exit_of_htlcs && self.is_htlc_near_expiry(wallet).await? {
 					exit_lightning_send_htlcs(wallet, &self, &htlcs).await?;
-					let err = anyhow!("We could not revoke HTLCs and they are near expiry, exiting");
-					return Ok(Advance::Failed(err));
-				},
-			}
+					return Ok(Advance::Done);
+				}
+				// Just keep retrying...
+			},
 		}
 
 		Ok(park_with_backoff(self, retries))
@@ -197,10 +218,23 @@ impl WalletAction for LightningSend {
 				};
 				Ok(Advance::Next(next))
 			},
-			Progress::RevocableHtlcs { htlcs, .. } => {
-				// TODO: maybe we don't want to exit but rather log VTXOs
-				exit_lightning_send_htlcs(wallet, &self, &htlcs).await?;
-				return Ok(Advance::Failed(anyhow!("Server refused to revoke HTLCs, exiting")));
+			Progress::RevocableHtlcs { htlcs, revocation } => {
+				warn!("We could not revoke HTLCs, will continue retrying but the attempt will be marked as such");
+				let next = LightningSend {
+					progress: Progress::RevocationStuck { htlcs, revocation },
+					..self
+				};
+				Ok(Advance::Next(next))
+			},
+			Progress::RevocationStuck { htlcs, .. } => {
+				if self.allow_exit_of_htlcs && self.is_htlc_near_expiry(wallet).await? {
+					exit_lightning_send_htlcs(wallet, &self, &htlcs).await?;
+					return Ok(Advance::Failed(anyhow!("Server refused to revoke HTLCs, exiting")));
+				}
+				// Park instead of looping: re-driving immediately would just
+				// hit the same server rejection. Surface the original error
+				// so callers driving `UntilParkOrDone` see why we stopped.
+				Ok(Advance::Park { state: self, wake_after: None, error: Some(error) })
 			},
 		}
 	}
@@ -219,6 +253,11 @@ pub enum Progress {
 	PaymentInitiated(Htlcs),
 	/// Payment failed; HTLCs must be revoked back to a spendable vtxo.
 	RevocableHtlcs { htlcs: Htlcs, revocation: Revocation },
+	/// We've tried to revoke the HTLCs previously and failed, the user
+	/// should consider forcing an exit. This step will keep retrying
+	/// until automatic exit is permissible when the HTLCs are near expiry,
+	/// provided [Wallet::allow_lightning_send_to_exit] is called.
+	RevocationStuck { htlcs: Htlcs, revocation: Revocation },
 }
 
 /// The HTLC vtxos the server cosigned for us, plus the movement they
@@ -292,6 +331,7 @@ pub(crate) async fn start_lightning_send(
 		fee,
 		htlc_key: change_keypair.public_key(),
 		htlc_expiry,
+		allow_exit_of_htlcs: false,
 		progress: Progress::Start,
 	})
 }
