@@ -148,3 +148,31 @@ async fn can_only_lock_spendable_vtxo() {
 	wallet.lock_vtxos(vec![missing_id], Some(holder)).await
 		.expect_err("locking a non-existent vtxo should fail");
 }
+
+/// `unlock_vtxos` must reject Spent — unlocking a consumed vtxo back
+/// to Spendable would let the wallet double-spend it.
+#[tokio::test]
+async fn cannot_unlock_spent_vtxo() {
+	let ctx = TestContext::new("bark_sdk/cannot_unlock_spent_vtxo").await;
+	let srv = ctx.captaind("server").funded(btc(10)).create().await;
+
+	let wallet = ctx.bark_sdk("bark", &srv)
+		.boarded(btc(1))
+		.create().await;
+
+	let [vtxo] = wallet.vtxos().await.expect("list vtxos")
+		.try_into().expect("expected exactly one boarded vtxo");
+	let vtxo_id = vtxo.vtxo.id();
+
+	wallet.mark_vtxos_as_spent(vec![vtxo_id]).await
+		.expect("marking the vtxo as spent should succeed");
+
+	wallet.unlock_vtxos(vec![vtxo_id]).await
+		.expect_err("unlocking a spent vtxo should fail");
+
+	let state = wallet.get_vtxo_by_id(vtxo_id).await.expect("get vtxo").state;
+	assert!(
+		matches!(state, VtxoState::Spent),
+		"vtxo should remain Spent after the failed unlock, was {:?}", state,
+	);
+}
