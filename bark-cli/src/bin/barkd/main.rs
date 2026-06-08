@@ -283,6 +283,9 @@ async fn main() -> anyhow::Result<()>{
 
 	let datadir = PathBuf::from_str(&cli.datadir).unwrap();
 
+	std::fs::create_dir_all(&datadir)
+		.with_context(|| format!("failed to create datadir {}", datadir.display()))?;
+
 	init_logging(cli.verbose, cli.quiet, &datadir);
 
 	// Handle subcommands that don't start the daemon.
