@@ -768,6 +768,18 @@ impl Server {
 		let funding_tx = bitcoin::consensus::deserialize::<Transaction>(&tx_info.hex)
 			.context("failed to deserialize funding transaction")?;
 
+		if let Some(ref list) = self.bitcoin_address_blocklist {
+			let res = list.check_tx(&funding_tx).await;
+			if !res.is_ok() {
+				if let Some(addr) = res.violating_address() {
+					slog!(BoardAttemptBlockedAddress, vtxo: vtxo.id(), amount: vtxo.amount(),
+						address: addr.as_unchecked().clone(),
+					);
+				}
+				res.into_user_result().context("address blocklist check failed")?;
+			}
+		}
+
 		// bitcoind rpc documents that if a mempool tx spends a utxo in the utxoset,
 		// if will not appear in gettxout when include_mempool is set to true
 		let is_spent = bcd::get_tx_out(&self.bitcoind, &funding_txid, funding_vout, Some(true)).await
