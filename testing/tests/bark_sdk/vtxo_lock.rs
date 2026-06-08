@@ -87,3 +87,30 @@ async fn batch_lock_is_atomic() {
 		"vtxo c should be untouched by the failed batch, was {:?}", c_state,
 	);
 }
+
+#[tokio::test]
+async fn unlock_returns_vtxo_to_spendable() {
+	let ctx = TestContext::new("bark_sdk/unlock_returns_vtxo_to_spendable").await;
+	let srv = ctx.captaind("server").funded(btc(10)).create().await;
+
+	let wallet = ctx.bark_sdk("bark", &srv)
+		.boarded(btc(1))
+		.create().await;
+
+	let [vtxo] = wallet.vtxos().await.expect("list vtxos")
+		.try_into().expect("expected exactly one boarded vtxo");
+	let vtxo_id = vtxo.vtxo.id();
+
+	let holder = VtxoLockHolder::Movement { id: MovementId::new(1) };
+	wallet.lock_vtxos(vec![vtxo_id], Some(holder)).await
+		.expect("lock should succeed");
+
+	wallet.unlock_vtxos(vec![vtxo_id]).await
+		.expect("unlock should succeed");
+
+	let state = wallet.get_vtxo_by_id(vtxo_id).await.expect("get vtxo").state;
+	assert!(
+		matches!(state, VtxoState::Spendable),
+		"unlocked vtxo should be Spendable, was {:?}", state,
+	);
+}
