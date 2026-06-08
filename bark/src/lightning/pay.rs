@@ -32,6 +32,38 @@ impl Wallet {
 		Ok(result)
 	}
 
+	/// Returns every failed lightning payment currently stuck because revocation has failed. When
+	/// HTLC VTXOs approach their expiry, the user should consider starting an exit for each VTXO.
+	/// This will only happen automatically if the [Wallet::allow_lightning_send_to_exit] is called.
+	pub async fn stuck_failed_lightning_sends(&self) -> anyhow::Result<Vec<LightningSend>> {
+		let mut result = Vec::new();
+		for send in self.pending_lightning_sends().await? {
+			if send.has_failed_revocation() {
+				result.push(send);
+			}
+		}
+		Ok(result)
+	}
+
+	/// Opts the lightning send identified by `hash` into auto-exiting its
+	/// HTLCs once they approach expiry, after revocation has failed.
+	///
+	/// The flag is persisted on the action checkpoint; the next drive
+	/// (e.g. via [`Self::sync_pending_lightning_send_vtxos`] or
+	/// [`Self::check_lightning_payment`]) picks it up and exits when
+	/// HTLCs are near expiry. See [`LightningSend::has_failed_revocation`].
+	pub async fn allow_lightning_send_to_exit(&self, hash: PaymentHash) -> anyhow::Result<()> {
+		let key = ln_pay_action_id(hash);
+		let _guard = self.inner.lock_manager.try_lock(&key).await
+			.context("Payment operation already in progress for this invoice")?;
+
+		let mut send = self.lightning_send_checkpoint(hash).await?
+			.with_context(|| format!("no in-progress lightning send for payment hash {hash}"))?;
+		send.allow_exit_of_htlcs = true;
+		self.inner.db.upsert_wallet_action_checkpoint(&send.id(), &send.into()).await?;
+		Ok(())
+	}
+
 	/// Returns the VTXOs currently held by any in-progress lightning send.
 	pub async fn pending_lightning_send_vtxos(&self) -> anyhow::Result<Vec<WalletVtxo>> {
 		let mut vtxos = Vec::new();
@@ -41,6 +73,7 @@ impl Wallet {
 				Progress::HtlcReceived(h) => h.vtxo_ids.clone(),
 				Progress::PaymentInitiated(h) => h.vtxo_ids.clone(),
 				Progress::RevocableHtlcs { htlcs, .. } => htlcs.vtxo_ids.clone(),
+				Progress::RevocationStuck { htlcs, .. } => htlcs.vtxo_ids.clone(),
 			};
 			for id in ids {
 				vtxos.push(self.get_vtxo_by_id(id).await?);

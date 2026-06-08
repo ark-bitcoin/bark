@@ -47,6 +47,7 @@ impl LightningSendStatus {
 					Progress::HtlcReceived(_) => "htlc-received",
 					Progress::PaymentInitiated(_) => "payment-initiated",
 					Progress::RevocableHtlcs { .. } => "revocable-htlcs",
+					Progress::RevocationStuck { .. } => "revocation-stuck",
 				};
 				LightningSendStatus {
 					payment_hash: send.invoice.payment_hash().to_string(),

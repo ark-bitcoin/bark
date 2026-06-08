@@ -784,6 +784,7 @@ mod lightning {
 			htlc_key: test_pubkey(),
 			htlc_expiry: 100,
 			progress: Progress::Start,
+			allow_exit_of_htlcs: false,
 		}
 	}
 

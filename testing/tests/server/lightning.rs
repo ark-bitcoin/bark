@@ -14,7 +14,7 @@ use ark::vtxo::Full;
 use bark::Wallet;
 use bark::lightning_invoice::Bolt11Invoice;
 use bark_json::primitives::WalletVtxoInfo;
-use server_rpc::protos::{self, lightning_payment_status};
+use server_rpc::protos;
 use server::database::Db;
 use server::vtxopool::VtxoTarget;
 
@@ -127,60 +127,88 @@ lightning_test!(server_settles_invoice_from_on_chain_htlc_preimage, |cfg| {
 	cfg.vtxopool.vtxo_lifetime = 2048;
 });
 
+/// The server must refuse `request_lightning_pay_htlc_revocation` for a
+/// payment that has already settled, returning the preimage in the
+/// error message so the caller can recover.
+///
+/// 1. An external invoice is created.
+/// 2. bark pays it normally; the payment settles and the preimage is
+///    persisted as a paid invoice.
+/// 3. We build a fresh revocation request against the (now-spent) HTLC
+///    vtxos and call the server's revocation RPC directly. The server
+///    must refuse with `InvalidArgument` and surface the preimage in
+///    the error message.
 #[tokio::test]
 async fn reject_revocation_on_successful_lightning_payment() {
 	let ctx = TestContext::new("server/reject_revocation_on_successful_lightning_payment").await;
 
-	#[derive(Clone)]
-	struct Proxy;
-	#[async_trait::async_trait]
-	impl captaind::proxy::ArkRpcProxy for Proxy {
-		async fn check_lightning_payment(
-			&self, upstream: &mut ArkClient,
-			req: protos::CheckLightningPaymentRequest,
-		) -> Result<protos::LightningPaymentStatus, tonic::Status> {
-			let res = upstream.check_lightning_payment(req).await?.into_inner();
-			let status = res.payment_status.unwrap();
-
-			match status {
-				lightning_payment_status::PaymentStatus::Pending(_) => {
-					Ok(protos::LightningPaymentStatus {
-						payment_status: Some(lightning_payment_status::PaymentStatus::Pending(protos::Empty {})),
-					})
-				},
-				_ => {
-					Ok(protos::LightningPaymentStatus {
-						payment_status: Some(lightning_payment_status::PaymentStatus::Failed(protos::Empty {})),
-					})
-				},
-			}
-		}
-	}
-
 	let lightning = ctx.new_lightning_setup("lightningd").await;
-
-	// Start a server and link it to our cln installation
 	let srv = ctx.captaind("server").lightningd(&lightning.internal).create().await;
 
-	// Start a bark and create a VTXO
-	let onchain_amount = btc(7);
-	let board_amount = btc(5);
-
-	let proxy = srv.start_proxy_no_mailbox(Proxy).await;
-	let bark_1 = ctx.bark("bark-1", &proxy.address).funded(onchain_amount).create().await;
-
-	bark_1.board(board_amount).await;
+	let bark_1 = ctx.bark("bark-1", &srv).funded(btc(7)).create().await;
+	bark_1.board(btc(5)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 
-	// Create a payable invoice
-	let invoice_amount = btc(2);
-	let invoice = lightning.external.invoice(Some(invoice_amount), "test_payment", "A test payment").await;
-
+	// 1. External invoice.
+	let invoice = lightning.external.invoice(
+		Some(btc(2)), "test_payment", "A test payment",
+	).await;
 	lightning.sync().await;
 
-	assert_eq!(bark_1.spendable_balance().await, board_amount);
-	let err = bark_1.try_pay_lightning(invoice, None, true).await.unwrap_err().to_alt_string();
-	assert!(err.contains("This lightning payment has completed. preimage: "), "err: {err}");
+	// 2. bark pays it successfully end-to-end.
+	bark_1.try_pay_lightning(&invoice, None, true).await.unwrap();
+	let payment_hash: ark::lightning::PaymentHash =
+		Bolt11Invoice::from_str(&invoice).unwrap().into();
+	let client = bark_1.client().await;
+	assert!(
+		client.is_invoice_paid(payment_hash).await.unwrap(),
+		"payment should have settled",
+	);
+
+	// 3. Build a fresh revocation request from the (now-spent) HTLC
+	// vtxos still in bark's DB and send it directly to the server.
+	let htlc_vtxo_ids = client.all_vtxos().await.unwrap()
+		.into_iter()
+		.filter_map(|wv| {
+			let pol = wv.vtxo.policy().as_server_htlc_send()?;
+			(pol.payment_hash == payment_hash).then(|| wv.vtxo.id())
+		})
+		.collect::<Vec<ark::VtxoId>>();
+	assert!(
+		!htlc_vtxo_ids.is_empty(),
+		"expected HTLC vtxos to remain in DB after settlement",
+	);
+
+	let mut htlc_vtxos = Vec::with_capacity(htlc_vtxo_ids.len());
+	let mut keypairs = Vec::with_capacity(htlc_vtxo_ids.len());
+	for id in &htlc_vtxo_ids {
+		let vtxo = client.get_full_vtxo(*id).await.unwrap();
+		keypairs.push(client.get_vtxo_key(&vtxo).await.unwrap());
+		htlc_vtxos.push(vtxo);
+	}
+
+	// Any pubkey works for the revocation output; the test never
+	// claims it.
+	let revocation_pubkey =
+		Keypair::new(&SECP, &mut bip39::rand::thread_rng()).public_key();
+	let builder = ark::arkoor::package::ArkoorPackageBuilder::new_claim_all_with_checkpoints(
+		htlc_vtxos.iter().cloned(),
+		ark::VtxoPolicy::new_pubkey(revocation_pubkey),
+	).unwrap().generate_user_nonces(&keypairs).unwrap();
+
+	let cosign_request =
+		protos::ArkoorPackageCosignRequest::from(builder.cosign_request());
+
+	let mut srv_rpc = srv.get_public_rpc().await;
+	let status = srv_rpc
+		.request_lightning_pay_htlc_revocation(cosign_request).await
+		.expect_err("server should refuse revocation for a completed payment");
+
+	assert_eq!(status.code(), tonic::Code::InvalidArgument);
+	assert!(
+		status.message().contains("This lightning payment has completed. preimage: "),
+		"unexpected server response: {status:?}",
+	);
 }
 
 #[tokio::test]

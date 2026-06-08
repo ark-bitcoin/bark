@@ -641,6 +641,31 @@ async fn bark_should_exit_a_failed_htlc_out_that_server_refuse_to_revoke() {
 	bark_1.try_pay_lightning(invoice.to_string(), None, false).await
 		.expect_err("The payment fails");
 
+	// The send is now parked in `RevocationFailed`. Advance past the
+	// refresh window so the on_rejection exit branch becomes reachable.
+	let bark1_client = bark_1.client().await;
+	let htlc_expiry_height = bark1_client.all_vtxos().await.unwrap().into_iter().find_map(
+		|v| v.policy().as_server_htlc_send().map(|h| h.htlc_expiry)
+	).unwrap();
+	ctx.generate_blocks(htlc_expiry_height - tip.height).await;
+
+	// Without `allow_lightning_send_to_exit`, even at expiry the action
+	// must keep parking - no exit may be started, and the send must be
+	// reported as stuck.
+	let _ = bark1_client.check_lightning_payment(invoice.payment_hash(), false).await;
+	assert!(
+		bark_1.list_exits().await.is_empty(),
+		"exit must not start without `allow_lightning_send_to_exit`",
+	);
+	assert_eq!(
+		bark1_client.stuck_failed_lightning_sends().await.unwrap().len(), 1,
+		"send should be reported as stuck",
+	);
+
+	// Opting in and re-driving must register the exit.
+	bark1_client.allow_lightning_send_to_exit(invoice.payment_hash()).await.unwrap();
+	let _ = bark1_client.check_lightning_payment(invoice.payment_hash(), true).await;
+
 	// Should start an exit
 	let exit_state = &bark_1.list_exits().await[0].state;
 	assert!(
@@ -648,14 +673,6 @@ async fn bark_should_exit_a_failed_htlc_out_that_server_refuse_to_revoke() {
 		"Expected exit to be starting, got {:?}", exit_state,
 	);
 	complete_exit(&ctx, &bark_1).await;
-
-	// We need to reach htlc expiry to be able to claim it
-	// TODO: should the exit care about that ? it looks like htlc VTXOs are marked as claimable even though they are not expired yet
-	let bark1_client = bark_1.client().await;
-	let htlc_expiry_height = bark1_client.all_vtxos().await.unwrap().into_iter().find_map(
-		|v| v.policy().as_server_htlc_send().map(|h| h.htlc_expiry)
-	).unwrap();
-	ctx.generate_blocks(htlc_expiry_height - tip.height).await;
 
 	bark_1.claim_all_exits(bark_1.get_onchain_address().await).await;
 	ctx.generate_blocks(1).await;
@@ -786,6 +803,23 @@ async fn bark_should_exit_a_pending_htlc_out_that_server_refuse_to_revoke() {
 		htlc.expiry_height() - bark.config().vtxo_refresh_expiry_threshold + 1
 	};
 	ctx.generate_blocks(desired_height - tip.height).await;
+
+	// Without `allow_lightning_send_to_exit`, the sync moves the action
+	// through `RevocableHtlcs` → `RevocationFailed` and parks, but does
+	// not start any exit. The send must be reported as stuck.
+	bark_1.sync().await;
+	assert!(
+		bark_1.list_exits().await.is_empty(),
+		"exit must not start without `allow_lightning_send_to_exit`",
+	);
+	assert_eq!(
+		bark_1.client().await.stuck_failed_lightning_sends().await.unwrap().len(), 1,
+		"send should be reported as stuck",
+	);
+
+	// Opt in and sync again: the on_retry branch picks up the flag and
+	// the action exits its HTLCs.
+	bark_1.client().await.allow_lightning_send_to_exit(invoice.payment_hash()).await.unwrap();
 	bark_1.sync().await;
 
 	// Should start an exit
