@@ -706,23 +706,21 @@ pub fn update_vtxo_state_checked(
 		WHERE
 			vtxo_id = :vtxo_id AND
 			state_kind IN (SELECT atom FROM json_each(:old_states)) AND
-			state_kind != :state_kind";
+			state != :state";
 
+	let new_state_blob = serde_json::to_vec(&new_state)?;
 	let mut statement = conn.prepare(query)?;
 	let nb_inserted = statement.execute(named_params! {
 		":vtxo_id": vtxo_id.to_string(),
 		":state_kind": new_state.kind().as_str(),
-		":state": serde_json::to_vec(&new_state)?,
+		":state": &new_state_blob,
 		":old_states": &serde_json::to_string(old_states)?,
 	})?;
 
 	match nb_inserted {
 		0 => {
-			// Either the VTXO doesn't exist, its current state is not in the
-			// allowed old states, or it's already in the target state. The last
-			// case is a no-op — return the existing VTXO.
 			match get_wallet_vtxo_by_id(conn, vtxo_id)? {
-				Some(wv) if wv.state.kind() == new_state.kind() => Ok(wv),
+				Some(wv) if wv.state == new_state => Ok(wv),
 				Some(wv) => bail!(
 					"vtxo {} is in state {} which is not in the allowed old states {:?}",
 					vtxo_id, wv.state.kind(), old_states,
@@ -736,6 +734,22 @@ pub fn update_vtxo_state_checked(
 		},
 		n => bail!("Corrupted database: inserted {n} state rows for a single vtxo"),
 	}
+}
+
+/// Apply [update_vtxo_state_checked] to every id in `vtxo_ids` against the
+/// same connection. The caller is expected to wrap this in a transaction
+/// (BEGIN IMMEDIATE/COMMIT) so the batch is atomic and serialized against
+/// concurrent writers.
+pub fn update_vtxo_states_checked(
+	conn: &Connection,
+	vtxo_ids: &[VtxoId],
+	new_state: VtxoState,
+	old_states: &[VtxoStateKind],
+) -> anyhow::Result<()> {
+	for id in vtxo_ids {
+		update_vtxo_state_checked(conn, *id, new_state.clone(), old_states)?;
+	}
+	Ok(())
 }
 
 pub fn store_vtxo_key(

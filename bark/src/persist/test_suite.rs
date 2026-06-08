@@ -23,7 +23,7 @@ use crate::actions::lightning::pay::{Htlcs, LightningSend, Progress, Revocation}
 use crate::exit::{
 	ExitProcessingState, ExitState, ExitTx, ExitTxOrigin, ExitTxStatus,
 };
-use crate::movement::{MovementStatus, MovementSubsystem};
+use crate::movement::{MovementId, MovementStatus, MovementSubsystem};
 use crate::persist::models::{SerdeRoundState, StoredExit, StoredRoundState, Unlocked};
 use crate::lock_manager::LockManager;
 use crate::lock_manager::memory::MemoryLockManager;
@@ -289,6 +289,7 @@ mod vtxo_lifecycle {
 		test_get_vtxos_by_state(a, b).await;
 		test_vtxo_state_transition_ok(a, b).await;
 		test_vtxo_state_transition_rejected(a, b).await;
+		test_vtxo_state_transition_holder_upgrade(a, b).await;
 		test_remove_vtxo(a, b).await;
 		test_has_spent_vtxo(a, b).await;
 		test_store_vtxos_idempotent(a, b).await;
@@ -357,6 +358,28 @@ mod vtxo_lifecycle {
 		let rb = b.update_vtxo_state_checked(vtxo.id(), VtxoState::Spent, &[VtxoStateKind::Spent]).await;
 		assert_eq!(ra.is_ok(), rb.is_ok(), "update_vtxo_state_checked (rejected): ok/err mismatch");
 		assert!(ra.is_err(), "transition from Spendable with only Spent allowed should be rejected");
+	}
+
+	/// Transitioning within the same `state_kind` must still take effect:
+	/// attaching a holder to a `Locked { holder: None }` row is a real
+	/// state change and both backends must agree on the resulting state.
+	async fn test_vtxo_state_transition_holder_upgrade<A: BarkPersister, B: BarkPersister>(a: &A, b: &B) {
+		let vtxo = &VTXO_VECTORS.arkoor3_vtxo;
+
+		let initial = VtxoState::Locked { holder: None };
+		a.store_vtxos(&[(vtxo, &initial)]).await.expect("a: store_vtxos");
+		b.store_vtxos(&[(vtxo, &initial)]).await.expect("b: store_vtxos");
+
+		let target = VtxoState::Locked {
+			holder: Some(MovementId::new(42).into()),
+		};
+
+		let ra = a.update_vtxo_state_checked(vtxo.id(), target.clone(), &[VtxoStateKind::Locked])
+			.await.expect("a: holder upgrade");
+		let rb = b.update_vtxo_state_checked(vtxo.id(), target.clone(), &[VtxoStateKind::Locked])
+			.await.expect("b: holder upgrade");
+		assert_eq!(ra.state, target, "a: expected new state to be persisted");
+		assert_eq!(rb.state, target, "b: expected new state to be persisted");
 	}
 
 	async fn test_remove_vtxo<A: BarkPersister, B: BarkPersister>(a: &A, b: &B) {

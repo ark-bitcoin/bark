@@ -305,6 +305,15 @@ impl BarkPersister for Dummy {
 		}]).pop().unwrap())
 	}
 
+	async fn update_vtxo_states_checked(
+		&self,
+		_vtxo_ids: &[VtxoId],
+		_new_state: VtxoState,
+		_allowed_old_states: &[VtxoStateKind],
+	) -> anyhow::Result<()> {
+		Ok(())
+	}
+
 	async fn store_pending_offboard(
 		&self,
 		_pending: &PendingOffboard,

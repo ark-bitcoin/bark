@@ -368,7 +368,7 @@ pub struct BarkSdkBuilder<'a> {
 	name: String,
 	srv: &'a dyn super::ToArkUrl,
 	fund_amount: Option<Amount>,
-	board_amount: Option<Amount>,
+	board_amounts: Vec<Amount>,
 	mod_cfg: Option<Box<dyn FnOnce(&mut bark::Config)>>,
 }
 
@@ -383,7 +383,7 @@ impl<'a> BarkSdkBuilder<'a> {
 			name: name.as_ref().to_string(),
 			srv,
 			fund_amount: None,
-			board_amount: None,
+			board_amounts: Vec::new(),
 			mod_cfg: None,
 		}
 	}
@@ -395,7 +395,7 @@ impl<'a> BarkSdkBuilder<'a> {
 
 	/// Send `amount` to a fresh onchain address of the wallet before
 	/// returning it. If unset and [`Self::boarded`] is set, enough
-	/// onchain funds are sent automatically to cover the board plus
+	/// onchain funds are sent automatically to cover all boards plus
 	/// fees.
 	pub fn funded(mut self, amount: Amount) -> Self {
 		self.fund_amount = Some(amount);
@@ -404,10 +404,12 @@ impl<'a> BarkSdkBuilder<'a> {
 
 	/// Board `amount` from the onchain wallet into Ark, wait for the
 	/// configured number of board confirmations, and sync the wallet so
-	/// the resulting VTXO is registered with the Ark server. The
-	/// returned [`bark::Wallet`] has `amount` of spendable balance.
+	/// the resulting VTXO is registered with the Ark server.
+	///
+	/// May be called multiple times to produce multiple distinct VTXOs;
+	/// each call appends a separate board.
 	pub fn boarded(mut self, amount: Amount) -> Self {
-		self.board_amount = Some(amount);
+		self.board_amounts.push(amount);
 		self
 	}
 
@@ -458,11 +460,15 @@ impl<'a> BarkSdkBuilder<'a> {
 		).await.context("creating bark wallet")?;
 
 		// If the caller asked us to board but didn't specify how much
-		// onchain to send, cover the board amount plus a generous fee
+		// onchain to send, cover all board amounts plus a generous fee
 		// buffer.
 		const ONCHAIN_FEE_BUFFER: Amount = Amount::from_sat(100_000);
 		let fund_amount = self.fund_amount.or_else(|| {
-			self.board_amount.map(|a| a + ONCHAIN_FEE_BUFFER)
+			if self.board_amounts.is_empty() {
+				None
+			} else {
+				Some(self.board_amounts.iter().copied().sum::<Amount>() + ONCHAIN_FEE_BUFFER)
+			}
 		});
 
 		if let Some(amount) = fund_amount {
@@ -473,8 +479,10 @@ impl<'a> BarkSdkBuilder<'a> {
 			onchain.sync(wallet.chain()).await.context("onchain sync after funding")?;
 		}
 
-		if let Some(amount) = self.board_amount {
-			wallet.board_amount(&mut onchain, amount).await.context("board_amount")?;
+		if !self.board_amounts.is_empty() {
+			for amount in &self.board_amounts {
+				wallet.board_amount(&mut onchain, *amount).await.context("board_amount")?;
+			}
 			self.ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 			wallet.sync().await;
 		}

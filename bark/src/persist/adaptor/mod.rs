@@ -762,6 +762,27 @@ impl <S: StorageAdaptor> BarkPersister for StorageAdaptorWrapper<S> {
 		update_vtxo_state_checked(&mut *lock, vtxo_id, new_state, allowed_old_states).await
 	}
 
+	async fn update_vtxo_states_checked(
+		&self,
+		vtxo_ids: &[VtxoId],
+		new_state: VtxoState,
+		allowed_old_states: &[VtxoStateKind],
+	) -> anyhow::Result<()> {
+		let mut lock = self.inner.write().await;
+		// Validate every vtxo before mutating anything, so a state-kind
+		// mismatch can't leave the batch half-applied. Concurrent batches
+		// are serialized by the write lock above. Storage errors during
+		// the put loop cannot be rolled back from here — that is a
+		// fundamental limitation of the adaptor.
+		for id in vtxo_ids {
+			get_check_vtxo_state(&*lock, *id, allowed_old_states).await?;
+		}
+		for id in vtxo_ids {
+			update_vtxo_state_checked(&mut *lock, *id, new_state.clone(), allowed_old_states).await?;
+		}
+		Ok(())
+	}
+
 	async fn store_vtxo_key(&self, index: u32, public_key: PublicKey) -> anyhow::Result<()> {
 		let vtxo_key = SerdeVtxoKey { index, public_key };
 		let record = Record::from_data(

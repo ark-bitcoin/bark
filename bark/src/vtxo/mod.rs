@@ -13,8 +13,13 @@ use ark::vtxo::{Full, VtxoRef};
 use crate::Wallet;
 
 impl Wallet {
-	/// Attempts to lock VTXOs with the given [VtxoId](ark::VtxoId) values. This will only work if the current
-	/// [VtxoState] is contained by [VtxoStateKind::UNSPENT_STATES].
+	/// Attempts to lock VTXOs with the given [VtxoId](ark::VtxoId) values.
+	///
+	/// Only [VtxoStateKind::Spendable] vtxos can be locked; re-locking a
+	/// vtxo that is already in the exact target state (same holder) is a
+	/// no-op success, but any other prior state — including a Locked vtxo
+	/// owned by a different holder — fails. The whole batch is atomic:
+	/// if any vtxo fails the check, no vtxo's state changes.
 	///
 	/// `holder` records which operation is reserving the vtxos so
 	/// "who holds this vtxo?" is a typed lookup. Pass `None` only for
@@ -22,8 +27,8 @@ impl Wallet {
 	/// known (e.g. offboard's preparatory arkoor).
 	///
 	/// # Errors
-	/// - If the VTXO is not in a lockable [VtxoState].
-	/// - If the VTXO doesn't exist.
+	/// - If any VTXO is not Spendable (and not already locked by the same holder).
+	/// - If a VTXO doesn't exist.
 	/// - If a database error occurs.
 	pub async fn lock_vtxos(
 		&self,
@@ -31,7 +36,7 @@ impl Wallet {
 		holder: Option<VtxoLockHolder>,
 	) -> anyhow::Result<()> {
 		self.set_vtxo_states(
-			vtxos, &VtxoState::Locked { holder }, &VtxoStateKind::UNSPENT_STATES,
+			vtxos, &VtxoState::Locked { holder }, &[VtxoStateKind::Spendable],
 		).await
 	}
 
@@ -79,32 +84,8 @@ impl Wallet {
 			allowed_states = VtxoStateKind::ALL;
 		}
 
-		let mut problematic_vtxos = Vec::new();
-		for vtxo in vtxos {
-			let id = vtxo.vtxo_id();
-			if let Err(e) = self.inner.db.update_vtxo_state_checked(
-				id,
-				state.clone(),
-				allowed_states,
-			).await {
-				error!(
-					"Failed to set {} state with allowed states {:?} for VTXO {}: {:#}",
-					state.kind(), allowed_states, id, e,
-				);
-				problematic_vtxos.push(id);
-			}
-		}
-
-		if problematic_vtxos.is_empty() {
-			Ok(())
-		} else {
-			Err(anyhow!(
-				"Failed to set {} state for {} VTXOs: {:?}",
-				state.kind(),
-				problematic_vtxos.len(),
-				problematic_vtxos
-			))
-		}
+		let ids: Vec<_> = vtxos.into_iter().map(|v| v.vtxo_id()).collect();
+		self.inner.db.update_vtxo_states_checked(&ids, state.clone(), allowed_states).await
 	}
 
 	/// Stores the given collection of VTXOs in the wallet with an initial state of
