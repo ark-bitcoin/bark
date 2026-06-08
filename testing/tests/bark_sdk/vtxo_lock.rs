@@ -114,3 +114,37 @@ async fn unlock_returns_vtxo_to_spendable() {
 		"unlocked vtxo should be Spendable, was {:?}", state,
 	);
 }
+
+/// `lock_vtxos` rejects anything that isn't in an unspent state — a
+/// Spent vtxo or an unknown id must not silently succeed.
+#[tokio::test]
+async fn can_only_lock_spendable_vtxo() {
+	let ctx = TestContext::new("bark_sdk/can_only_lock_spendable_vtxo").await;
+	let srv = ctx.captaind("server").funded(btc(10)).create().await;
+
+	let wallet = ctx.bark_sdk("bark", &srv)
+		.boarded(btc(1))
+		.create().await;
+
+	let [vtxo] = wallet.vtxos().await.expect("list vtxos")
+		.try_into().expect("expected exactly one boarded vtxo");
+	let spent_id = vtxo.vtxo.id();
+
+	wallet.mark_vtxos_as_spent(vec![spent_id]).await
+		.expect("marking the vtxo as spent should succeed");
+
+	let holder = VtxoLockHolder::Movement { id: MovementId::new(1) };
+
+	wallet.lock_vtxos(vec![spent_id], Some(holder.clone())).await
+		.expect_err("locking a spent vtxo should fail");
+
+	let state = wallet.get_vtxo_by_id(spent_id).await.expect("get vtxo").state;
+	assert!(
+		matches!(state, VtxoState::Spent),
+		"spent vtxo should remain Spent after the failed lock, was {:?}", state,
+	);
+
+	let missing_id = VtxoId::from_slice(&[0u8; VtxoId::ENCODE_SIZE]).unwrap();
+	wallet.lock_vtxos(vec![missing_id], Some(holder)).await
+		.expect_err("locking a non-existent vtxo should fail");
+}
