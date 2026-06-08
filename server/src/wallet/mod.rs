@@ -89,6 +89,7 @@ pub struct PersistedWallet {
 	bitcoind: BitcoindClient,
 	locked_outputs: LockedWalletUtxosIndex,
 	min_trusted_confs: u32,
+	address_blocklist: Option<BitcoinAddressBlocklist>,
 }
 
 impl PersistedWallet {
@@ -130,6 +131,7 @@ impl PersistedWallet {
 		Ok(Self {
 			wallet, kind, db, bitcoind, min_trusted_confs,
 			locked_outputs: LockedWalletUtxosIndex::new(),
+			address_blocklist: None,
 		})
 	}
 
@@ -147,6 +149,11 @@ impl PersistedWallet {
 		let wallet_xpriv = master_xpriv.derive_priv(&*SECP, &[kind.child_number()])
 			.expect("can't error");
 		Self::load_from_xpriv(db, bitcoind, network, &wallet_xpriv, kind, deep_tip, min_trusted_confs).await
+	}
+
+	/// Set the address blocklist for this wallet
+	pub fn set_address_blocklist(&mut self, blocklist: BitcoinAddressBlocklist) {
+		self.address_blocklist = Some(blocklist);
 	}
 
 	/// Persist the committed wallet changes to the database.

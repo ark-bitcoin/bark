@@ -174,10 +174,13 @@ impl Daemon {
 			bitcoind.clone(),
 		);
 
-		let watchman_wallet = PersistedWallet::load_derive_from_master_xpriv(
+		let mut watchman_wallet = PersistedWallet::load_derive_from_master_xpriv(
 			db.clone(), bitcoind.clone(), cfg.network, &master_xpriv, WalletKind::Watchman, deep_tip,
 			cfg.min_trusted_confs,
 		).await.context("error loading watchman wallet")?;
+		if let Some(list) = bitcoin_address_blocklist.clone() {
+			watchman_wallet.set_address_blocklist(list);
+		}
 		let watchman_wallet = InstrumentedLock::new("watchman_wallet", watchman_wallet);
 
 		// The settler writes preimages to the htlc_settlement WAL table but

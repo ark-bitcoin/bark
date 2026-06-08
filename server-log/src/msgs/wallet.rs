@@ -58,3 +58,13 @@ pub struct TxEvicted {
 	pub txid: Txid,
 }
 impl_slog!(TxEvicted, INFO, "Transaction evicted from wallet");
+
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WalletReceivedBlockedAddress {
+	pub wallet: Cow<'static, str>,
+	pub txid: Txid,
+	pub utxo: OutPoint,
+}
+impl_slog!(WalletReceivedBlockedAddress, WARN, "our wallet received funds from a blocked address");
+

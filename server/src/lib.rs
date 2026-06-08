@@ -346,10 +346,13 @@ impl Server {
 		let wallet_xpriv = master_xpriv.derive_priv(
 			&crate::SECP, &[WalletKind::Rounds.child_number()],
 		).expect("can't error");
-		let rounds_wallet = PersistedWallet::load_from_xpriv(
+		let mut rounds_wallet = PersistedWallet::load_from_xpriv(
 			db.clone(), bitcoind.clone(), cfg.network, &wallet_xpriv, WalletKind::Rounds, deep_tip,
 			cfg.min_trusted_confs,
 		).await.context("error loading rounds wallet")?;
+		if let Some(list) = bitcoin_address_blocklist.clone() {
+			rounds_wallet.set_address_blocklist(list);
+		}
 		let rounds_wallet = InstrumentedLock::new("rounds_wallet", rounds_wallet);
 
 		let ephemeral_master_key = {
@@ -394,10 +397,13 @@ impl Server {
 		let mut listeners: Vec<Box<dyn ChainEventListener>> = vec![];
 		listeners.push(Box::new(rounds_wallet.clone()));
 		let watchman_deps = if let Some(watchman_cfg) = cfg.watchman.enabled() {
-			let watchman_wallet = PersistedWallet::load_derive_from_master_xpriv(
+			let mut watchman_wallet = PersistedWallet::load_derive_from_master_xpriv(
 				db.clone(), bitcoind.clone(), cfg.network, &master_xpriv, WalletKind::Watchman, deep_tip,
 				cfg.min_trusted_confs,
 			).await.context("error loading watchman wallet")?;
+			if let Some(list) = bitcoin_address_blocklist.clone() {
+				watchman_wallet.set_address_blocklist(list);
+			}
 			let watchman_wallet = InstrumentedLock::new("watchman_wallet", watchman_wallet);
 			listeners.push(Box::new(watchman_wallet.clone()));
 
