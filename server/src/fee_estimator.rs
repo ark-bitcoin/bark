@@ -34,6 +34,17 @@ pub struct OnchainFeeRates {
 	pub slow: FeeRate,
 }
 
+impl OnchainFeeRates {
+	/// Apply a max fee rate to all rates
+	pub fn max(&mut self, max_fee_rate: FeeRate) {
+		*self = OnchainFeeRates {
+			fast: self.fast.max(max_fee_rate),
+			regular: self.regular.max(max_fee_rate),
+			slow: self.slow.max(max_fee_rate),
+		};
+	}
+}
+
 /// Configuration for the fee estimator process.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -54,6 +65,13 @@ pub struct Config {
 	/// Fallback fee rate for slow transactions when estimation fails.
 	#[serde(with = "crate::utils::serde::fee_rate")]
 	pub fallback_fee_rate_slow: FeeRate,
+	/// Optional ceiling applied to every fetched fee rate.
+	///
+	/// If the backend returns a rate above this value (e.g. due to a bad
+	/// mempool spike), it is clamped down to this maximum instead of being
+	/// used verbatim.  Leave unset to impose no ceiling.
+	#[serde(default, with = "crate::utils::serde::fee_rate::opt")]
+	pub max_fee_rate: Option<FeeRate>,
 }
 
 impl Config {
@@ -73,13 +91,18 @@ impl Config {
 pub struct FeeEstimator {
 	fee_rates: parking_lot::RwLock<VecDeque<(OnchainFeeRates, Instant)>>,
 	history_duration: Duration,
+	max_fee_rate: Option<FeeRate>,
 }
 
 impl FeeEstimator {
-	fn new(initial: OnchainFeeRates, history_duration: Duration) -> Self {
+	fn new(
+		initial: OnchainFeeRates,
+		history_duration: Duration,
+		max_fee_rate: Option<FeeRate>,
+	) -> Self {
 		Self {
 			fee_rates: parking_lot::RwLock::new([(initial, Instant::now())].into()),
-			history_duration,
+			history_duration, max_fee_rate,
 		}
 	}
 
@@ -149,7 +172,11 @@ impl FeeEstimator {
 		false
 	}
 
-	fn update(&self, rates: OnchainFeeRates) {
+	fn update(&self, mut rates: OnchainFeeRates) {
+		if let Some(max) = self.max_fee_rate {
+			rates.max(max);
+		}
+
 		let mut deque = self.fee_rates.write();
 		let now = Instant::now();
 		while deque.back().is_some_and(|(_, timestamp)| now - *timestamp >= self.history_duration) {
@@ -249,7 +276,7 @@ pub fn start(
 ) -> Arc<FeeEstimator> {
 	// Initialize with fallback rates
 	let fee_estimator = Arc::new(FeeEstimator::new(
-		config.fallback_fee_rates(), config.history_duration,
+		config.fallback_fee_rates(), config.history_duration, config.max_fee_rate,
 	));
 
 	let process = Process {
