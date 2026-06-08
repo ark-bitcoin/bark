@@ -264,6 +264,8 @@ impl Server {
 		let htlc_vtxos = self.db.read(async |t| t.get_user_vtxos_by_id(&htlc_vtxo_ids).await).await?.into_iter()
 			.map(|v| v.vtxo).collect::<Vec<_>>();
 
+		self.check_vtxos_not_exited(htlc_vtxo_ids.iter().copied()).await?;
+
 		let input_policy = htlc_vtxos.iter()
 			.all_same(|v| v.policy())
 			.context("all vtxos should have the same policy")?
