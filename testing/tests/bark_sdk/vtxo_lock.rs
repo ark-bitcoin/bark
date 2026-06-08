@@ -176,3 +176,57 @@ async fn cannot_unlock_spent_vtxo() {
 		"vtxo should remain Spent after the failed unlock, was {:?}", state,
 	);
 }
+
+/// Concurrent overlapping batch locks must serialize: either nobody
+/// wins (every vtxo stays Spendable) or exactly one holder wins
+/// (every vtxo is locked by it). Multiple partial winners would
+/// mean the wallet handed out overlapping locks.
+#[ignore = "repro: lock_vtxos has no transaction across the per-vtxo loop, so concurrent overlapping batches partially succeed"]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn concurrent_locks_serialize() {
+	const N: usize = 10;
+
+	let ctx = TestContext::new("bark_sdk/concurrent_locks_serialize").await;
+	let srv = ctx.captaind("server").funded(btc(10)).create().await;
+
+	let mut builder = ctx.bark_sdk("bark", &srv);
+	for _ in 0..N {
+		builder = builder.boarded(btc(1));
+	}
+	let wallet = builder.create().await;
+
+	let vtxo_ids: Vec<VtxoId> = wallet.vtxos().await.expect("list vtxos")
+		.iter().map(|v| v.vtxo.id()).collect();
+	assert_eq!(vtxo_ids.len(), N);
+
+	// N tasks all racing to lock the same N vtxos, each under its
+	// own holder and with a rotated order so the per-vtxo
+	// iteration genuinely differs between tasks.
+	let tasks = (0..N).map(|i| {
+		let wallet = wallet.clone();
+		let mut order = vtxo_ids.clone();
+		order.rotate_left(i);
+		let holder = VtxoLockHolder::Movement { id: MovementId::new(i as u32 + 1) };
+		tokio::spawn(async move {
+			let res = wallet.lock_vtxos(order, Some(holder.clone())).await;
+			res.ok().map(|()| holder)
+		})
+	}).collect::<Vec<_>>();
+
+	let mut winners = Vec::new();
+	for t in tasks {
+		if let Some(h) = t.await.expect("task panicked") {
+			winners.push(h);
+		}
+	}
+	assert!(winners.len() <= 1, "at most one holder may win, got {:?}", winners);
+
+	let expected = match winners.first() {
+		None => VtxoState::Spendable,
+		Some(h) => VtxoState::Locked { holder: Some(h.clone()) },
+	};
+	for id in &vtxo_ids {
+		let state = wallet.get_vtxo_by_id(*id).await.expect("get vtxo").state;
+		assert_eq!(state, expected, "vtxo {} ended in wrong state", id);
+	}
+}
