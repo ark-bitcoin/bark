@@ -1,0 +1,4 @@
+- Change exit claim transactions to v2
+  Initially when claiming an exit, bark produced a v3 transaction which is intended to be a TRUC. This is unnecessary
+  and added unnecessary restrictions to the claim process. This has now been fixed.
+  [#2149](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2149)

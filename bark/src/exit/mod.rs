@@ -736,7 +736,7 @@ impl Exit {
 				.map_err(|e| ExitError::InvalidLocktime { tip, error: e.to_string() })?;
 
 			Transaction {
-				version: bitcoin::transaction::Version(3),
+				version: bitcoin::transaction::Version::TWO,
 				lock_time: locktime,
 				input: tx_ins,
 				output: vec![
