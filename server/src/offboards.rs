@@ -127,6 +127,15 @@ impl Server {
 			return badarg!("wrong number of attestations");
 		}
 
+		// Check delivery address against blocklist
+		if let Some(ref list) = self.bitcoin_address_blocklist {
+			if list.check_spk(&request.script_pubkey).await {
+				let address = bitcoin::Address::from_script(&request.script_pubkey, self.config.network)
+					.map(|a| a.to_string()).unwrap_or_else(|_| "<unknown>".to_owned());
+				return badarg!("requested output address is blocked: {}", address);
+			}
+		}
+
 		let vtxos = self.db.read(async |t| t.get_user_vtxos_by_id(&input_vtxos).await).await?;
 		let tip = self.chain_tip().height;
 		for v in &vtxos {
