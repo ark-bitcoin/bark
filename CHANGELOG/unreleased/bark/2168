@@ -1,0 +1,9 @@
+- Fix arkoor receives being double-counted in wallet history
+  When several consumers of one wallet processed the mailbox at the same time
+  (the daemon's always-on stream alongside a periodic sync, or concurrent REST
+  `/sync` and `/sync/mailbox` requests), each could win the receive dedup check
+  before the others stored, recording its own movement for the same arkoor. The
+  received VTXO still landed once, but the receive showed up multiple times in
+  history. Processing now serializes the dedup per wallet so the receive is
+  recorded exactly once.
+  [!2168](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2168)
