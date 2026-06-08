@@ -88,6 +88,18 @@ struct Cli {
 		value_parser = BoolishValueParser::new(),
 	)]
 	expose_mnemonic: bool,
+
+	/// Disable the bearer-token authentication requirement. No auth token
+	/// will be created or read. Any client that can reach the HTTP port
+	/// will have full API access, so use this only in trusted environments.
+	/// A warning is emitted when no CORS origins are configured.
+	#[arg(
+		long,
+		env = "BARKD_NO_AUTH",
+		default_value_t = false,
+		value_parser = BoolishValueParser::new(),
+	)]
+	no_auth: bool,
 }
 
 #[derive(Subcommand)]
@@ -323,13 +335,22 @@ async fn main() -> anyhow::Result<()>{
 			Consider building at one of the tagged versions or using the release builds.");
 	}
 
-	let auth_token = match load_auth_token(&datadir)? {
-		Some(token) => token,
-		None => {
-			let token = generate_store_auth_token(&datadir)?;
-			eprintln!("No auth token found — generated a new one. Use `barkd secret show` to view it.");
-			token
-		},
+	let auth_token = if cli.no_auth {
+		if cli.allowed_origins.is_empty() {
+			warn!("Auth is disabled and no CORS origins are configured — \
+				any client that can reach this port has full API access.");
+		}
+		None
+	} else {
+		let token = match load_auth_token(&datadir)? {
+			Some(token) => token,
+			None => {
+				let token = generate_store_auth_token(&datadir)?;
+				eprintln!("No auth token found — generated a new one. Use `barkd secret show` to view it.");
+				token
+			},
+		};
+		Some(token)
 	};
 
 	let wallet_opt = if let Some((wallet, onchain)) = open_wallet(&datadir).await? {
