@@ -1,9 +1,0 @@
-- Let developers opt failed lightning sends into exiting their HTLCs
-  When a lightning send fails and HTLC revocation also fails, bark no longer
-  force-exits the HTLC vtxos automatically. Stuck sends can be inspected via
-  `Wallet::stuck_failed_lightning_sends`, and `Wallet::allow_lightning_send_to_exit`
-  opts an individual send into auto-exiting once its HTLCs approach expiry.
-  [#2153](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2153)
-  - **BREAKING:** New `Progress::RevocationStuck` variant on the lightning
-    send state machine; any exhaustive matches on `Progress` must add an arm.
-  - **BREAKING:** New `allow_exit_of_htlcs: bool` field on `LightningSend`.

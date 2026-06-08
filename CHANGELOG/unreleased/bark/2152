@@ -1,6 +1,0 @@
-- Don't auto-exit unfinished lightning receives.
-  We've had a few instances of incoming lightning payments getting exited unnecessarily. Instead we should leave this
-  up to developers whilst we implement better logic.
-  [#2152](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2152)
-  - Introduces `Wallet::attempt_lightning_receive_exit` which can be used to forced an exit of an unfinished
-    lightning receive, provided the preimage has been revealed and HTLCs have been received.
