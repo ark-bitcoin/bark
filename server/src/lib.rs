@@ -22,6 +22,7 @@ pub mod watchman;
 pub(crate) mod flux;
 pub mod system;
 
+pub(crate) mod bitcoin_blocklist;
 pub mod bitcoind;
 mod intman;
 pub mod ln;
@@ -32,6 +33,7 @@ mod txindex;
 pub mod utils;
 
 
+use crate::bitcoin_blocklist::BitcoinAddressBlocklist;
 use crate::database::BlockTable;
 use crate::database::tree::VtxoTreeUpdate;
 pub use crate::intman::{CAPTAIND_API_KEY, CAPTAIND_CLI_API_KEY};
@@ -199,6 +201,8 @@ pub struct Server {
 	watchman_handle: Option<watchman::WatchmanHandle>,
 	pending_offboards: parking_lot::Mutex<TimedEntryMap<Txid, Option<offboards::PendingOffboard>>>,
 	fee_estimator: Arc<FeeEstimator>,
+	/// scriptPubkeys in the bitcoin address blocklist
+	bitcoin_address_blocklist: Option<BitcoinAddressBlocklist>,
 }
 
 impl Server {
@@ -330,6 +334,13 @@ impl Server {
 		bcd::require_version(&bitcoind).await?;
 		bcd::require_txindex(&bitcoind).await?;
 
+		let bitcoin_address_blocklist = if let Some(ref path) = cfg.bitcoin_address_blocklist {
+			Some(BitcoinAddressBlocklist::new(cfg.network, bitcoind.clone(), path).await
+				.context("error parsing bitcoin address blocklist")?)
+		} else {
+			None
+		};
+
 		let deep_tip = bcd::deep_tip(&bitcoind).await
 			.context("failed to query node for deep tip")?;
 		let wallet_xpriv = master_xpriv.derive_priv(
@@ -452,6 +463,10 @@ impl Server {
 		let vtxopool = VtxoPool::new(cfg.vtxopool.clone(), &db).await
 			.context("failed to initiate vtxopool")?;
 
+		if let Some(ref list) = bitcoin_address_blocklist {
+			list.start_auto_update_thread(rtmgr.clone(), Duration::from_secs(60 * 60));
+		}
+
 		let (round_event_tx, _rx) = broadcast::channel(8);
 		let (round_input_tx, round_input_rx) = tokio::sync::mpsc::unbounded_channel();
 		let (round_trigger_tx, round_trigger_rx) = tokio::sync::mpsc::channel(1);
@@ -488,6 +503,7 @@ impl Server {
 			watchman_handle,
 			pending_offboards: parking_lot::Mutex::new(TimedEntryMap::new()),
 			fee_estimator,
+			bitcoin_address_blocklist,
 		};
 
 		let srv = Arc::new(srv);

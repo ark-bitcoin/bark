@@ -460,6 +460,16 @@ pub struct Config {
 
 	/// The fee schedule outlining any fees that must be paid to interact with the Ark server.
 	pub fees: FeeSchedule,
+
+	/// Path to a bitcoin address blocklist file
+	///
+	/// The file should contain one bitcoin address per line.
+	///
+	/// The bitcoin addresses will be blocked from
+	/// - being used for boards
+	/// - being used in offboards or send-onchain actions
+	/// - sending money to our internal wallets
+	pub bitcoin_address_blocklist: Option<PathBuf>,
 }
 
 impl Config {
@@ -578,6 +588,11 @@ pub mod watchmand {
 		pub bitcoind: Bitcoind,
 
 		pub sweep_address: Option<Address<NetworkUnchecked>>, // no default
+
+		/// Path to a bitcoin address blocklist file
+		///
+		/// See [super::Config::bitcoin_address_blocklist] for more info
+		pub bitcoin_address_blocklist: Option<PathBuf>,
 	}
 
 	impl Config {

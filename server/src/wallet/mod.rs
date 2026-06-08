@@ -10,14 +10,15 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use anyhow::Context;
 use bdk_wallet::Wallet;
 use bip39::Mnemonic;
-use bitcoin::{bip32, Address, Amount, FeeRate, Network, OutPoint, ScriptBuf};
-use bitcoin::{hex::DisplayHex, Psbt, Transaction};
+use bitcoin::{bip32, Address, Amount, FeeRate, Network, OutPoint, ScriptBuf, Psbt, Transaction};
+use bitcoin::hex::DisplayHex;
+use bitcoind_async_client::Client as BitcoindClient;
 use tracing::error;
 
 use bitcoin_ext::BlockRef;
 use bitcoin_ext::bdk::{TrustedBalance, WalletExt, KEYCHAIN};
-use bitcoind_async_client::Client as BitcoindClient;
 
+use crate::bitcoin_blocklist::BitcoinAddressBlocklist;
 use crate::bitcoind as bcd;
 use crate::{database, SECP};
 

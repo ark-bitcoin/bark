@@ -18,6 +18,7 @@ use bitcoin::secp256k1::Keypair;
 use tracing::{error, info};
 use bitcoind_async_client::traits::Reader;
 
+use crate::bitcoin_blocklist::BitcoinAddressBlocklist;
 use crate::EPHEMERAL_KEY_PATH;
 use crate::bitcoind as bcd;
 use crate::{fee_estimator, rpcserver, secret::Secret, telemetry, wallet, SECP};
@@ -136,6 +137,13 @@ impl Daemon {
 		let deep_tip = bcd::deep_tip(&bitcoind).await
 			.context("failed to query node for deep tip")?;
 
+		let bitcoin_address_blocklist = if let Some(ref path) = cfg.bitcoin_address_blocklist {
+			Some(BitcoinAddressBlocklist::new(cfg.network, bitcoind.clone(), path).await
+				.context("error parsing bitcoin address blocklist")?)
+		} else {
+			None
+		};
+
 
 		// *******************
 		// * START PROCESSES *
@@ -216,6 +224,10 @@ impl Daemon {
 		);
 		let sync_height_watcher = sync_manager.sync_height_watcher();
 
+		if let Some(ref list) = bitcoin_address_blocklist {
+			list.start_auto_update_thread(rtmgr.clone(), Duration::from_secs(60*60));
+		}
+
 		let watchman = Watchman::new(
 			cfg.watchman,
 			signer,
@@ -231,7 +243,9 @@ impl Daemon {
 
 		let watchman_handle = watchman.start(rtmgr.clone());
 
-		Ok(Self { rtmgr, sync_manager, txindex, tx_nursery, watchman_wallet, frontier, watchman_handle })
+		Ok(Self {
+			rtmgr, sync_manager, txindex, tx_nursery, watchman_wallet, frontier, watchman_handle,
+		})
 	}
 
 	pub fn watchman_handle(&self) -> &WatchmanHandle {
