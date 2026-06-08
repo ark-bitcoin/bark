@@ -7,7 +7,6 @@ use bark::vtxo::{VtxoLockHolder, VtxoState};
 
 /// Every vtxo lock is owned by exactly one holder; a second holder
 /// must not be able to take it over via [bark::Wallet::lock_vtxos].
-#[ignore = "repro: lock_vtxos currently no-ops when re-locking a Locked vtxo, silently letting holder2 take over"]
 #[tokio::test]
 async fn locks_cannot_be_stolen() {
 	let ctx = TestContext::new("bark_sdk/locks_cannot_be_stolen").await;
@@ -44,7 +43,6 @@ async fn locks_cannot_be_stolen() {
 /// Batch lock must be all-or-nothing: if any vtxo in the batch is
 /// already locked by another holder, the whole call fails and no
 /// vtxo in the batch changes state.
-#[ignore = "repro: set_vtxo_states loops per-vtxo and partially locks the batch before failing on the overlap"]
 #[tokio::test]
 async fn batch_lock_is_atomic() {
 	let ctx = TestContext::new("bark_sdk/batch_lock_is_atomic").await;
@@ -181,7 +179,6 @@ async fn cannot_unlock_spent_vtxo() {
 /// wins (every vtxo stays Spendable) or exactly one holder wins
 /// (every vtxo is locked by it). Multiple partial winners would
 /// mean the wallet handed out overlapping locks.
-#[ignore = "repro: lock_vtxos has no transaction across the per-vtxo loop, so concurrent overlapping batches partially succeed"]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn concurrent_locks_serialize() {
 	const N: usize = 10;
