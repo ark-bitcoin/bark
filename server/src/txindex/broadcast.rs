@@ -61,8 +61,7 @@ impl TxNursery {
 
 	/// Adds the transaction to the queue for broadcasting
 	fn inner_broadcast(&self, pkg: impl Into<Vec<Txid>>) {
-		self.sender
-			.send(pkg.into()).expect("txindex shut down");
+		self.sender.send(pkg.into()).expect("txindex shut down");
 	}
 }
 
