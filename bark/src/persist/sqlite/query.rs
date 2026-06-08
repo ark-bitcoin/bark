@@ -736,6 +736,22 @@ pub fn update_vtxo_state_checked(
 	}
 }
 
+/// Apply [update_vtxo_state_checked] to every id in `vtxo_ids` against the
+/// same connection. The caller is expected to wrap this in a transaction
+/// (BEGIN IMMEDIATE/COMMIT) so the batch is atomic and serialized against
+/// concurrent writers.
+pub fn update_vtxo_states_checked(
+	conn: &Connection,
+	vtxo_ids: &[VtxoId],
+	new_state: VtxoState,
+	old_states: &[VtxoStateKind],
+) -> anyhow::Result<()> {
+	for id in vtxo_ids {
+		update_vtxo_state_checked(conn, *id, new_state.clone(), old_states)?;
+	}
+	Ok(())
+}
+
 pub fn store_vtxo_key(
 	conn: &Connection,
 	index: u32,

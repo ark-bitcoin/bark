@@ -439,6 +439,19 @@ impl BarkPersister for SqliteClient {
 		query::update_vtxo_state_checked(&conn, vtxo_id, new_state, allowed_old_states)
 	}
 
+	async fn update_vtxo_states_checked(
+		&self,
+		vtxo_ids: &[VtxoId],
+		new_state: VtxoState,
+		allowed_old_states: &[VtxoStateKind],
+	) -> anyhow::Result<()> {
+		let mut conn = self.connect()?;
+		let tx = conn.transaction()?;
+		query::update_vtxo_states_checked(&tx, vtxo_ids, new_state, allowed_old_states)?;
+		tx.commit()?;
+		Ok(())
+	}
+
 	async fn store_pending_offboard(
 		&self,
 		pending: &PendingOffboard,

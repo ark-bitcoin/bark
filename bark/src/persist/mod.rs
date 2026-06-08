@@ -687,6 +687,16 @@ pub trait BarkPersister: Send + Sync + 'static {
 		allowed_old_states: &[VtxoStateKind],
 	) -> anyhow::Result<WalletVtxo>;
 
+	/// Transition multiple VTXOs to `new_state` atomically: either every
+	/// vtxo's state changes or none does. A failure must not affect any
+	/// vtxo.
+	async fn update_vtxo_states_checked(
+		&self,
+		vtxo_ids: &[VtxoId],
+		new_state: VtxoState,
+		allowed_old_states: &[VtxoStateKind],
+	) -> anyhow::Result<()>;
+
 	/// Store a pending offboard record.
 	///
 	/// Parameters:
