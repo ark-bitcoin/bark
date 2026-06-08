@@ -91,7 +91,7 @@ impl Daemon {
 		let wallet_xpriv = seed_xpriv.derive_priv(&*SECP, &[WalletKind::Watchman.child_number()])
 			.expect("can't error");
 		let _wallet = PersistedWallet::load_from_xpriv(
-			db.clone(), cfg.network, &wallet_xpriv, WalletKind::Watchman, deep_tip,
+			db.clone(), bitcoind.clone(), cfg.network, &wallet_xpriv, WalletKind::Watchman, deep_tip,
 			cfg.min_trusted_confs,
 		);
 
@@ -167,7 +167,7 @@ impl Daemon {
 		);
 
 		let watchman_wallet = PersistedWallet::load_derive_from_master_xpriv(
-			db.clone(), cfg.network, &master_xpriv, WalletKind::Watchman, deep_tip,
+			db.clone(), bitcoind.clone(), cfg.network, &master_xpriv, WalletKind::Watchman, deep_tip,
 			cfg.min_trusted_confs,
 		).await.context("error loading watchman wallet")?;
 		let watchman_wallet = InstrumentedLock::new("watchman_wallet", watchman_wallet);

@@ -85,6 +85,7 @@ pub struct PersistedWallet {
 	wallet: Wallet,
 	kind: WalletKind,
 	db: database::Db,
+	bitcoind: BitcoindClient,
 	locked_outputs: LockedWalletUtxosIndex,
 	min_trusted_confs: u32,
 }
@@ -93,6 +94,7 @@ impl PersistedWallet {
 	/// Load a wallet from the database, or create if it doesn't exist yet.
 	pub async fn load_from_xpriv(
 		db: database::Db,
+		bitcoind: BitcoindClient,
 		network: Network,
 		xpriv: &bip32::Xpriv,
 		kind: WalletKind,
@@ -124,13 +126,17 @@ impl PersistedWallet {
 			db.write(async |tx| { tx.store_changeset(kind, &cs).await }).await.context("error storing initial wallet state")?;
 		}
 
-		Ok(Self { wallet, kind, db, locked_outputs: LockedWalletUtxosIndex::new(), min_trusted_confs })
+		Ok(Self {
+			wallet, kind, db, bitcoind, min_trusted_confs,
+			locked_outputs: LockedWalletUtxosIndex::new(),
+		})
 	}
 
 	/// Load a wallet from the database, deriving the wallet's xpriv using the master xpriv
 	/// and the wallet kind
 	pub async fn load_derive_from_master_xpriv(
 		db: database::Db,
+		bitcoind: BitcoindClient,
 		network: Network,
 		master_xpriv: &bip32::Xpriv,
 		kind: WalletKind,
@@ -139,7 +145,7 @@ impl PersistedWallet {
 	) -> anyhow::Result<Self> {
 		let wallet_xpriv = master_xpriv.derive_priv(&*SECP, &[kind.child_number()])
 			.expect("can't error");
-		Self::load_from_xpriv(db, network, &wallet_xpriv, kind, deep_tip, min_trusted_confs).await
+		Self::load_from_xpriv(db, bitcoind, network, &wallet_xpriv, kind, deep_tip, min_trusted_confs).await
 	}
 
 	/// Persist the committed wallet changes to the database.
@@ -215,11 +221,10 @@ impl PersistedWallet {
 	}
 
 	/// This function is primarily intended for dev, not prod usage.
-	#[tracing::instrument(skip(self, address, bitcoind))]
+	#[tracing::instrument(skip(self, address))]
 	pub async fn drain(
 		&mut self,
 		address: Address<bitcoin::address::NetworkUnchecked>,
-		bitcoind: &BitcoindClient,
 	) -> anyhow::Result<Transaction> {
 		//TODO(stevenroose) also claim all expired round vtxos here!
 
@@ -234,7 +239,7 @@ impl PersistedWallet {
 		self.commit_tx(&tx);
 		self.persist().await?;
 
-		if let Err(e) = bcd::broadcast_tx(bitcoind, &tx).await {
+		if let Err(e) = bcd::broadcast_tx(&self.bitcoind, &tx).await {
 			error!("Error broadcasting tx: {}", e);
 			error!("Try yourself: {}", bitcoin::consensus::encode::serialize_hex(&tx));
 		}

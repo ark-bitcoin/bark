@@ -344,6 +344,7 @@ async fn inner_main() -> anyhow::Result<()> {
 				.context("failed to query node for deep tip")?;
 			let mut w = server::wallet::PersistedWallet::load_derive_from_master_xpriv(
 				db.clone(),
+				bitcoind.clone(),
 				cfg.network,
 				&master_xpriv,
 				server::wallet::WalletKind::Rounds,
@@ -351,7 +352,7 @@ async fn inner_main() -> anyhow::Result<()> {
 				cfg.min_trusted_confs,
 			).await?;
 
-			let tx = w.drain(address, &bitcoind).await?;
+			let tx = w.drain(address).await?;
 			println!("{}", tx.compute_txid());
 		}
 		Command::GetMnemonic => {

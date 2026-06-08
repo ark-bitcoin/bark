@@ -240,7 +240,7 @@ impl Server {
 		// Store initial wallet states to avoid full chain sync.
 		for wallet in [WalletKind::Rounds, WalletKind::Watchman] {
 			let _wallet = PersistedWallet::load_derive_from_master_xpriv(
-				db.clone(), cfg.network, &master_xpriv, wallet, deep_tip,
+				db.clone(), bitcoind.clone(), cfg.network, &master_xpriv, wallet, deep_tip,
 				cfg.min_trusted_confs,
 			);
 		}
@@ -336,7 +336,7 @@ impl Server {
 			&crate::SECP, &[WalletKind::Rounds.child_number()],
 		).expect("can't error");
 		let rounds_wallet = PersistedWallet::load_from_xpriv(
-			db.clone(), cfg.network, &wallet_xpriv, WalletKind::Rounds, deep_tip,
+			db.clone(), bitcoind.clone(), cfg.network, &wallet_xpriv, WalletKind::Rounds, deep_tip,
 			cfg.min_trusted_confs,
 		).await.context("error loading rounds wallet")?;
 		let rounds_wallet = InstrumentedLock::new("rounds_wallet", rounds_wallet);
@@ -384,7 +384,7 @@ impl Server {
 		listeners.push(Box::new(rounds_wallet.clone()));
 		let watchman_deps = if let Some(watchman_cfg) = cfg.watchman.enabled() {
 			let watchman_wallet = PersistedWallet::load_derive_from_master_xpriv(
-				db.clone(), cfg.network, &master_xpriv, WalletKind::Watchman, deep_tip,
+				db.clone(), bitcoind.clone(), cfg.network, &master_xpriv, WalletKind::Watchman, deep_tip,
 				cfg.min_trusted_confs,
 			).await.context("error loading watchman wallet")?;
 			let watchman_wallet = InstrumentedLock::new("watchman_wallet", watchman_wallet);
