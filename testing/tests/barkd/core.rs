@@ -1,5 +1,7 @@
 
 use ark_testing::TestContext;
+use bark_rest_client::apis::configuration::Configuration;
+use bark_rest_client::apis::default_api;
 
 /// Verify that `barkd` responds to `GET /ping`.
 #[tokio::test]
@@ -79,4 +81,23 @@ async fn wallet_next_round_barkd() {
 		"next round start_time {:?} should be in the future (now: {:?})",
 		next_round.start_time, now,
 	);
+}
+
+/// With `BARKD_NO_AUTH=true`, unauthenticated requests are accepted.
+#[tokio::test]
+async fn no_auth_flag_allows_unauthenticated_requests() {
+	let ctx = TestContext::new("barkd/no_auth_flag_allows_unauthenticated_requests").await;
+
+	let srv = ctx.captaind("server").create().await;
+	let barkd = ctx.barkd("barkd1", &srv)
+		.env("BARKD_NO_AUTH", "true")
+		.create().await;
+
+	// An unauthenticated client (no Authorization header) should be able to ping.
+	let unauthed = Configuration {
+		base_path: barkd.base_url(),
+		..Configuration::default()
+	};
+	default_api::ping(&unauthed).await
+		.expect("unauthenticated ping should succeed when --no-auth is set");
 }
