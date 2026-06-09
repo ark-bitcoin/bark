@@ -101,11 +101,24 @@ impl ExitState {
 		})
 	}
 
+	/// Checks if the state is awaiting the confirmation of every exit transaction in the tree and
+	/// the exit delta required for the VTXO to become claimable.
+	/// 
+	/// Note: This excludes the claimable state, use [ExitState::is_claimable] for that.
 	pub fn is_pending(&self) -> bool {
 		match self {
 			ExitState::Start(_) => true,
 			ExitState::Processing(_) => true,
 			ExitState::AwaitingDelta(_) => true,
+			_ => false,
+		}
+	}
+
+	/// A simple helper for [ExitState::Claimable], at this point an exit can be spent on-chain
+	/// and redeemed into a UTXO controlled by the user.
+	pub fn is_claimable(&self) -> bool {
+		match self {
+			ExitState::Claimable(_) => true,
 			_ => false,
 		}
 	}

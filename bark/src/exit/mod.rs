@@ -398,8 +398,13 @@ impl Exit {
 	pub fn try_pending_total(&self) -> Option<Amount> {
 		self.inner.try_read().ok().map(|guard| {
 			guard.exit_vtxos.iter()
-				.filter_map(|ev| if ev.state().is_pending() { Some(ev.amount()) } else { None })
-				.sum()
+				.filter_map(|ev| {
+					if ev.state().is_pending() || ev.state().is_claimable() {
+						Some(ev.amount())
+					} else {
+						None
+					}
+				}).sum()
 		})
 	}
 

@@ -1,0 +1,5 @@
+- Include claimable exits in the `pending_exit` balance
+  Funds from unilateral exits that have reached the claimable state are now
+  reported as part of the pending exit balance, so they remain visible to
+  users until they are spent on-chain.
+  [#2161](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2161)
