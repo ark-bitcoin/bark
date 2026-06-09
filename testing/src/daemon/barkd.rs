@@ -318,10 +318,13 @@ impl Barkd {
 
 	/// Board the specified amount into Ark.
 	pub async fn board_amount(&self, amount: Amount) -> PendingBoardInfo {
+		tokio::time::sleep(Duration::from_millis(500)).await;
 		info!("{}: Boarding {} via REST", self.name, amount);
 		let config = self.client_config();
-		boards_api::board_amount(&config, BoardRequest { amount_sat: amount.to_sat() }).await
-			.expect("barkd board_amount failed")
+		let ret = boards_api::board_amount(&config, BoardRequest { amount_sat: amount.to_sat() }).await
+			.expect("barkd board_amount failed");
+		tokio::time::sleep(Duration::from_millis(500)).await;
+		ret
 	}
 
 	/// Return all pending boards (funding transactions not yet confirmed).
