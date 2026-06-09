@@ -209,6 +209,13 @@ impl LightningManager {
 	/// This method is also more clever than calling the grpc-method.
 	/// We might be able to recover from a short connection-break or time-outs
 	/// from Core Lightning.
+	#[tracing::instrument(skip_all, fields(
+		payment_hash = %invoice.payment_hash(),
+		invoice = %invoice,
+		payment_amount = %payment_amount,
+		max_routing_fee = %max_routing_fee,
+		htlc_send_expiry_height,
+	))]
 	pub async fn pay_invoice(
 		&self,
 		invoice: &Invoice,
@@ -242,6 +249,13 @@ impl LightningManager {
 	/// this is an intra-Ark payment and we settle off-CLN instead of issuing
 	/// an outbound xpay. Otherwise we spawn the xpay fire-and-forget; the
 	/// xpay monitor picks the result up via the sendpays stream.
+	#[tracing::instrument(skip_all, fields(
+		payment_hash = %invoice.payment_hash(),
+		invoice = %invoice,
+		amount = %amount,
+		max_routing_fee = %max_routing_fee,
+		htlc_send_expiry_height,
+	))]
 	async fn start_payment(
 		&self,
 		invoice: Box<Invoice>,
