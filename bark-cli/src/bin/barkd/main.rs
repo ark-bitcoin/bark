@@ -321,7 +321,7 @@ async fn main() -> anyhow::Result<()>{
 				} else {
 					generate_store_auth_token(&datadir)?
 				};
-				eprintln!("Restart barkd for the new token to take effect.");
+				info!("Restart barkd for the new token to take effect.");
 				println!("{}", token.encode());
 				return Ok(());
 			},
@@ -346,7 +346,7 @@ async fn main() -> anyhow::Result<()>{
 			Some(token) => token,
 			None => {
 				let token = generate_store_auth_token(&datadir)?;
-				eprintln!("No auth token found — generated a new one. Use `barkd secret show` to view it.");
+				info!("No auth token found — generated a new one. Use `barkd secret show` to view it.");
 				token
 			},
 		};
