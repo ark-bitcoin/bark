@@ -443,6 +443,7 @@ impl Server {
 		// Generous fallback: notifications are the primary wake mechanism,
 		// this only guards against missed broadcasts.
 		let mut poll_interval = tokio::time::interval(Duration::from_secs(30));
+		poll_interval.reset();
 
 		let sub = loop {
 			let subscription = self.db.read(async |t|

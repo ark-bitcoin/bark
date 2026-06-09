@@ -512,7 +512,25 @@ impl TestContext {
 		mod_cfg(&mut cfg);
 
 		Server::create(cfg.clone()).await.expect("error creating server");
-		Server::start(cfg).await.expect("error starting server")
+		let srv = Server::start(cfg).await.expect("error starting server");
+
+		// Server::start returns before LightningManager has finished its first
+		// connect pass. Tests that hit start_lightning_receive immediately would
+		// otherwise race with "no active hold-compatible cln node".
+		if lightningd.is_some() {
+			trace!("Waiting for lightning node to come online");
+			let wait = async {
+				while !srv.has_hold_node() {
+					tokio::time::sleep(Duration::from_millis(100)).await;
+				}
+			};
+			if tokio::time::timeout(Duration::from_secs(5), wait).await.is_err() {
+				log::error!("timed out waiting for lightning node to come online;
+					letting test continue so the actual failure surfaces");
+			}
+		}
+
+		srv
 	}
 
 	pub fn bark_default_cfg(
