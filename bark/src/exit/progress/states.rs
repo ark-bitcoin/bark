@@ -107,7 +107,7 @@ impl ExitStateProgress for ExitProcessingState {
 			let now_broadcast = count_broadcast(&transactions);
 			if now_broadcast == transactions.len() {
 				info!("Exit for VTXO ({}) has been fully broadcast, waiting for {} transactions \
-					to confirm...", ctx.vtxo.id(), now_confirmed,
+					to confirm...", ctx.vtxo.id(), transactions.len() - now_confirmed,
 				);
 			} else if prev_broadcast != now_broadcast {
 				let remaining = transactions.len() - now_broadcast;
