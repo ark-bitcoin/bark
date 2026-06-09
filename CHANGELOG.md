@@ -6,6 +6,32 @@ https://docs.second.tech/changelog/changelog/
 
 Below is a more detailed summary for each version.
 
+
+# v0.2.3
+
+- `bark`
+  - add `sqlite-bundled` compile feature
+    [#2122](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2122)
+  - Change exit claim transactions to v2
+    Initially when claiming an exit, bark produced a v3 transaction which is intended to be a TRUC. This is unnecessary
+    and added unnecessary restrictions to the claim process. This has now been fixed.
+    [#2149](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2149)
+  - Don't auto-exit unfinished lightning receives.
+    We've had a few instances of incoming lightning payments getting exited unnecessarily. Instead we should leave this
+    up to developers whilst we implement better logic.
+    [#2152](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2152)
+    - Introduces `Wallet::attempt_lightning_receive_exit` which can be used to forced an exit of an unfinished
+      lightning receive, provided the preimage has been revealed and HTLCs have been received.
+  - Let developers opt failed lightning sends into exiting their HTLCs
+    When a lightning send fails and HTLC revocation also fails, bark no longer
+    force-exits the HTLC vtxos automatically. Stuck sends can be inspected via
+    `Wallet::stuck_failed_lightning_sends`, and `Wallet::allow_lightning_send_to_exit`
+    opts an individual send into auto-exiting once its HTLCs approach expiry.
+    [#2153](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2153)
+    - **BREAKING:** New `Progress::RevocationStuck` variant on the lightning
+      send state machine; any exhaustive matches on `Progress` must add an arm.
+    - **BREAKING:** New `allow_exit_of_htlcs: bool` field on `LightningSend`.
+
 # v0.2.2
 
 - `bark`
