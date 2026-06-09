@@ -201,6 +201,7 @@ impl TestContext {
 					bitcoin_rpc_port: self.bitcoind().rpc_port(),
 					bitcoin_zmq_port: self.bitcoind().zmq_port(),
 					electrs_dir: self.datadir.join("electrs"),
+					cors: Some("*".to_owned()),
 				};
 				let electrs = Electrs::new(&self.test_name, cfg, electrs_type);
 				electrs.start().await.unwrap();
@@ -654,7 +655,7 @@ impl TestContext {
 			}
 		}));
 
-		let electrs: Pin<Box<dyn Future<Output = ()>>> = if let Some(electrs) = self.electrs.as_ref() {
+		let electrs: Pin<Box<dyn Future<Output = ()> + Send>> = if let Some(electrs) = self.electrs.as_ref() {
 			Box::pin(electrs.await_tip_synced(tip as u32))
 		} else {
 			Box::pin(always_ready(|| ()))

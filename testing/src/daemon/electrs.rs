@@ -174,6 +174,7 @@ pub struct ElectrsConfig {
 	pub bitcoin_zmq_port: u16,
 	pub bitcoin_dir: PathBuf,
 	pub electrs_dir: PathBuf,
+	pub cors: Option<String>,
 }
 
 pub struct ElectrsHelper {
@@ -273,6 +274,10 @@ impl DaemonHelper for ElectrsHelper {
 			cmd.args([
 				"--zmq-addr", &format!("127.0.0.1:{}", self.config.bitcoin_zmq_port),
 			]);
+		}
+
+		if let Some(ref cors) = self.config.cors {
+			cmd.args(["--cors", cors]);
 		}
 
 		Ok(cmd)

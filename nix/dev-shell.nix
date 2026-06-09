@@ -221,6 +221,9 @@ in {
 			pkgs.wabt
 			pkgs.firefox
 			pkgs.geckodriver
+			# pinned to the wasm-bindgen version in Cargo.lock (the test
+			# runner errors out on version mismatch).
+			pkgs.wasm-bindgen-cli_0_2_114
 
 		] ++ (
 			if isDarwin then [
