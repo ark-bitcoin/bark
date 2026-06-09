@@ -155,6 +155,24 @@ impl FeeEstimator {
 		while deque.back().is_some_and(|(_, timestamp)| now - *timestamp >= self.history_duration) {
 			deque.pop_back();
 		}
+
+		// log on update
+		let latest = deque.front().map(|(r, _)| r.clone()).unwrap_or(OnchainFeeRates {
+			slow: FeeRate::ZERO,
+			regular: FeeRate::ZERO,
+			fast: FeeRate::ZERO,
+		});
+		if latest != rates {
+			slog!(FeeRatesUpdated,
+				new_fast: rates.fast,
+				new_regular: rates.regular,
+				new_slow: rates.slow,
+				old_fast: latest.fast,
+				old_regular: latest.regular,
+				old_slow: latest.slow,
+			);
+		}
+
 		deque.push_front((rates, Instant::now()));
 	}
 }
