@@ -408,6 +408,7 @@ BEGIN
 		oor_spent_txid, spent_in_round, offboarded_in,
 		lightning_htlc_subscription_id, banned_until_height,
 		spend_state,
+		frontier_at, confirmed_height, onchain_spent_height, onchain_spent_txid,
 		created_at, updated_at
 	) VALUES (
 		OLD.id, OLD.vtxo_id, OLD.vtxo_txid, OLD.vtxo, OLD.expiry, OLD.exit_delta, OLD.policy_type, OLD.policy,
@@ -415,6 +416,7 @@ BEGIN
 		OLD.oor_spent_txid, OLD.spent_in_round, OLD.offboarded_in,
 		OLD.lightning_htlc_subscription_id, OLD.banned_until_height,
 		OLD.spend_state,
+		OLD.frontier_at, OLD.confirmed_height, OLD.onchain_spent_height, OLD.onchain_spent_txid,
 		OLD.created_at, OLD.updated_at
 	);
 
@@ -1218,7 +1220,11 @@ CREATE TABLE public.vtxo (
     amount bigint NOT NULL,
     anchor_point text NOT NULL,
     banned_until_height integer,
-    spend_state public.spend_state NOT NULL
+    spend_state public.spend_state NOT NULL,
+    frontier_at timestamp with time zone,
+    confirmed_height integer,
+    onchain_spent_height integer,
+    onchain_spent_txid text
 );
 
 
@@ -1246,7 +1252,11 @@ CREATE TABLE public.vtxo_history (
     anchor_point text,
     lightning_htlc_subscription_id bigint,
     banned_until_height integer,
-    spend_state public.spend_state
+    spend_state public.spend_state,
+    frontier_at timestamp with time zone,
+    confirmed_height integer,
+    onchain_spent_height integer,
+    onchain_spent_txid text
 );
 
 
@@ -1351,18 +1361,6 @@ CREATE SEQUENCE public.wallet_changeset_id_seq
 --
 
 ALTER SEQUENCE public.wallet_changeset_id_seq OWNED BY public.wallet_changeset.id;
-
-
---
--- Name: watchman_vtxo_frontier; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.watchman_vtxo_frontier (
-    vtxo_id text NOT NULL,
-    confirmed_height integer,
-    spent_height integer,
-    spent_txid text
-);
 
 
 --
@@ -1738,14 +1736,6 @@ ALTER TABLE ONLY public.vtxo_pool
 
 ALTER TABLE ONLY public.wallet_changeset
     ADD CONSTRAINT wallet_changeset_pkey PRIMARY KEY (id);
-
-
---
--- Name: watchman_vtxo_frontier watchman_vtxo_frontier_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.watchman_vtxo_frontier
-    ADD CONSTRAINT watchman_vtxo_frontier_pkey PRIMARY KEY (vtxo_id);
 
 
 --
@@ -2264,14 +2254,6 @@ ALTER TABLE ONLY public.mailbox
 
 ALTER TABLE ONLY public.vtxo_pool
     ADD CONSTRAINT vtxo_pool_vtxo_id_fkey FOREIGN KEY (vtxo_id) REFERENCES public.vtxo(vtxo_id);
-
-
---
--- Name: watchman_vtxo_frontier watchman_vtxo_frontier_vtxo_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.watchman_vtxo_frontier
-    ADD CONSTRAINT watchman_vtxo_frontier_vtxo_id_fkey FOREIGN KEY (vtxo_id) REFERENCES public.vtxo(vtxo_id);
 
 
 --

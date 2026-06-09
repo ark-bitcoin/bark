@@ -881,7 +881,7 @@ async fn watchman_frontier() {
 	Db::create(&postgres_cfg).await.expect("Database created");
 	let db = Db::connect(&postgres_cfg).await.expect("Connected to database");
 
-	// First, store the vtxo object itself (watchman_vtxo_frontier JOINs vtxo)
+	// Store the vtxo row that the frontier columns hang off of
 	let vtxo = ServerVtxo::from(VTXO_VECTORS.board_vtxo.clone());
 	db.write(async |t| t.upsert_vtxos(&[vtxo.clone()]).await).await.unwrap();
 

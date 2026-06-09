@@ -1,0 +1,7 @@
+- Fold `watchman_vtxo_frontier` columns onto the `vtxo` table
+  Adds `frontier_at`, `confirmed_height`, `onchain_spent_height`, and
+  `onchain_spent_txid` to `vtxo` (and `vtxo_history`), copies existing
+  rows over, and drops `watchman_vtxo_frontier`. A single row lock now
+  serializes captaind/watchmand transitions that previously spanned two
+  tables.
+  [#2112](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2112)
