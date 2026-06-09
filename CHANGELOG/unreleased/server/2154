@@ -1,0 +1,3 @@
+- add `max_fee_rate` config option to specify maximum fee rate
+  (this is to protect against fee estimators returning insane fee rates)
+  [#2154](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2154)

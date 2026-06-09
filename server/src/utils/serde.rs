@@ -257,4 +257,23 @@ pub mod fee_rate {
 
 		d.deserialize_str(Visitor)
 	}
+
+	pub mod opt {
+		use super::*;
+
+		pub fn serialize<S: Serializer>(v: &Option<FeeRate>, s: S) -> Result<S::Ok, S::Error> {
+			match v {
+				Some(fee_rate) => super::serialize(fee_rate, s),
+				None => s.serialize_none(),
+			}
+		}
+
+		pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Option<FeeRate>, D::Error> {
+			match Option::<String>::deserialize(d)? {
+				Some(s) => super::deserialize(serde::de::value::StrDeserializer::new(&s))
+					.map(Some),
+				None => Ok(None),
+			}
+		}
+	}
 }

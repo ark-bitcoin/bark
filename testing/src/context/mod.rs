@@ -387,6 +387,7 @@ impl TestContext {
 				fallback_fee_rate_fast: FeeRate::from_sat_per_vb_u32(25),
 				fallback_fee_rate_regular: FeeRate::from_sat_per_vb_u32(7),
 				fallback_fee_rate_slow: FeeRate::from_sat_per_vb_u32(5),
+				max_fee_rate: None,
 			},
 			transaction_rebroadcast_interval: std::time::Duration::from_secs(2),
 			rpc: server::config::Rpc {
@@ -486,6 +487,7 @@ impl TestContext {
 				fallback_fee_rate_fast: FeeRate::from_sat_per_vb_u32(25),
 				fallback_fee_rate_regular: FeeRate::from_sat_per_vb_u32(7),
 				fallback_fee_rate_slow: FeeRate::from_sat_per_vb_u32(5),
+				max_fee_rate: None,
 			},
 			transaction_rebroadcast_interval: std::time::Duration::from_secs(2),
 			bitcoind: server::config::Bitcoind {
