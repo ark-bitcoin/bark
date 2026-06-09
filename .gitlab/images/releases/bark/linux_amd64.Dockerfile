@@ -3,6 +3,7 @@ FROM --platform=linux/amd64 debian:bookworm-slim
 RUN apt-get update && \
     apt-get upgrade -y && \
     apt-get install -y --no-install-recommends \
+        ca-certificates \
         telnet \
         && apt-get clean && rm -rf /var/lib/apt/lists/*
 
