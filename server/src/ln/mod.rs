@@ -352,6 +352,13 @@ impl Server {
 			return badarg!("Cannot create invoice for 0 sats (this would create an explicit 0 sat invoice, not an any-amount invoice)");
 		}
 
+		// Pre-check the description so we reject invalid input before reaching cln.
+		if let Some(desc) = description.as_ref() {
+			if let Err(e) = lightning_invoice::Description::new(desc.clone()) {
+				return badarg!("invalid invoice description: {}", e);
+			}
+		}
+
 		if min_cltv_delta > self.config.max_user_invoice_cltv_delta {
 			bail!("Requested min HTLC CLTV delta is greater than max HTLC recv CLTV delta: requested: {}, max: {}",
 				min_cltv_delta, self.config.max_user_invoice_cltv_delta,
