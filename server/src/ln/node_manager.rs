@@ -194,6 +194,11 @@ impl LightningManager {
 			.cloned()
 	}
 
+	/// Whether a hold-capable lightning node is currently registered as online.
+	pub fn has_hold_active_node(&self) -> bool {
+		self.hold_active_node().is_some()
+	}
+
 	/// The currently-online node with the given id, if any.
 	fn node_by_id(&self, id: LightningNodeId) -> Option<NodeHandle> {
 		self.node_handles.read().iter().find(|h| h.id == id).cloned()

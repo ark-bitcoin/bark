@@ -283,6 +283,13 @@ impl Server {
 		&self.db
 	}
 
+	/// Whether a hold-capable lightning node is currently registered as online.
+	/// LightningManager connects asynchronously, so this may return false right
+	/// after [`Self::start`] returns even if a node is configured.
+	pub fn has_hold_node(&self) -> bool {
+		self.cln.has_hold_active_node()
+	}
+
 	/// Start the server.
 	pub async fn start(cfg: Config) -> anyhow::Result<Arc<Self>> {
 		let seed = wallet::read_mnemonic_from_datadir(&cfg.data_dir)?.to_seed("");
