@@ -111,7 +111,7 @@ impl ClnXpayClient {
 			},
 			// Fetch and store the attempt as failed.
 			Err(pay_err) => {
-				error!("Error calling pay-command: {}", pay_err);
+				debug!("Error calling pay-command: {}", pay_err);
 			},
 		}
 
