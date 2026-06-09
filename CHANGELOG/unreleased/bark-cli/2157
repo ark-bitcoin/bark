@@ -1,0 +1,4 @@
+- add `--no-auth` option to barkd to disable auth
+  This can be used together with the CORS setting when shipping in a container
+  as a web application.
+  [#2157](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2157)
