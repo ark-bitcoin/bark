@@ -1,0 +1,2 @@
+- avoid spurious error log when a client submits an oversized BOLT 11 invoice description, rejecting it with `badarg` instead
+  [#2164](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2164)
