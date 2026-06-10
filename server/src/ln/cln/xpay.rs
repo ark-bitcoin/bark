@@ -81,6 +81,14 @@ impl ClnXpayClient {
 	/// On RPC success the sendpay stream will pick up the result, but we still
 	/// reconcile afterwards to handle edge cases (e.g. the stream missing an event).
 	/// On RPC error the reconciliation drives the attempt to its final state.
+	#[tracing::instrument(skip_all, fields(
+		payment_hash = %invoice.payment_hash(),
+		invoice = %invoice,
+		payment_amount = %payment_amount,
+		max_routing_fee = %max_routing_fee,
+		max_cltv_expiry_delta,
+		retry_for = ?retry_for,
+	))]
 	pub async fn pay(
 		&self,
 		invoice: Box<Invoice>,
@@ -103,7 +111,7 @@ impl ClnXpayClient {
 			},
 			// Fetch and store the attempt as failed.
 			Err(pay_err) => {
-				error!("Error calling pay-command: {}", pay_err);
+				debug!("Error calling pay-command: {}", pay_err);
 			},
 		}
 
