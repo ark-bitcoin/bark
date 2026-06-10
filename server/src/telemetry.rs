@@ -260,6 +260,18 @@ struct Metrics {
 	offboard_volume: Counter<u64>,
 	round_counter: Counter<u64>,
 	round_volume: Counter<u64>,
+	refresh_counter: Counter<u64>,
+	refresh_volume: Counter<u64>,
+	delegated_participation_counter: Counter<u64>,
+	delegated_participation_volume: Counter<u64>,
+	round_output_pubkey_counter: Counter<u64>,
+	round_output_pubkey_volume: Counter<u64>,
+	round_output_htlc_send_counter: Counter<u64>,
+	round_output_htlc_send_volume: Counter<u64>,
+	round_output_htlc_recv_counter: Counter<u64>,
+	round_output_htlc_recv_volume: Counter<u64>,
+	unilateral_exit_counter: Counter<u64>,
+	unilateral_exit_volume: Counter<u64>,
 	lightning_invoice_verification_counter: Counter<u64>,
 	lightning_invoice_verification_queue_gauge: Gauge<u64>,
 	lightning_open_invoices_gauge: Gauge<u64>,
@@ -483,6 +495,48 @@ impl Metrics {
 		let offboard_volume = meter.u64_counter("offboard_volume").build();
 		let round_counter = meter.u64_counter("round_counter").build();
 		let round_volume = meter.u64_counter("round_volume").build();
+		let refresh_counter = meter.u64_counter("refresh_counter")
+			.with_description("Refresh participations (one per interactive SubmitPayment that recycles existing VTXOs into a round)")
+			.build();
+		let refresh_volume = meter.u64_counter("refresh_volume")
+			.with_description("Volume of inputs recycled via interactive round participations, in sats")
+			.with_unit("sat")
+			.build();
+		let delegated_participation_counter = meter.u64_counter("delegated_participation_counter")
+			.with_description("Delegated round participations (server-submitted on behalf of users, e.g. LN HTLC settlements landing in a round); one per participation included in a successful round")
+			.build();
+		let delegated_participation_volume = meter.u64_counter("delegated_participation_volume")
+			.with_description("Volume of inputs consumed via delegated round participations, in sats")
+			.with_unit("sat")
+			.build();
+		let round_output_pubkey_counter = meter.u64_counter("round_output_pubkey_counter")
+			.with_description("VTXOs minted by a successful round with a pubkey policy (excludes server-generated padding)")
+			.build();
+		let round_output_pubkey_volume = meter.u64_counter("round_output_pubkey_volume")
+			.with_description("Volume of pubkey-policy VTXOs minted by successful rounds, in sats")
+			.with_unit("sat")
+			.build();
+		let round_output_htlc_send_counter = meter.u64_counter("round_output_htlc_send_counter")
+			.with_description("VTXOs minted by a successful round with the server-htlc-send policy")
+			.build();
+		let round_output_htlc_send_volume = meter.u64_counter("round_output_htlc_send_volume")
+			.with_description("Volume of server-htlc-send VTXOs minted by successful rounds, in sats")
+			.with_unit("sat")
+			.build();
+		let round_output_htlc_recv_counter = meter.u64_counter("round_output_htlc_recv_counter")
+			.with_description("VTXOs minted by a successful round with the server-htlc-recv policy")
+			.build();
+		let round_output_htlc_recv_volume = meter.u64_counter("round_output_htlc_recv_volume")
+			.with_description("Volume of server-htlc-recv VTXOs minted by successful rounds, in sats")
+			.with_unit("sat")
+			.build();
+		let unilateral_exit_counter = meter.u64_counter("unilateral_exit_counter")
+			.with_description("Unilateral exits observed on-chain (one per frontier VTXO whose funding tx first confirms)")
+			.build();
+		let unilateral_exit_volume = meter.u64_counter("unilateral_exit_volume")
+			.with_description("Total VTXO value (sats) observed exiting unilaterally on-chain")
+			.with_unit("sat")
+			.build();
 		let lightning_invoice_verification_counter = meter.u64_counter("lightning_invoice_verification_counter").build();
 		let lightning_invoice_verification_queue_gauge = meter.u64_gauge("lightning_invoice_verification_queue_gauge").build();
 		let lightning_open_invoices_gauge = meter.u64_gauge("lightning_open_invoices_gauge").build();
@@ -568,6 +622,18 @@ impl Metrics {
 			offboard_volume,
 			round_counter,
 			round_volume,
+			refresh_counter,
+			refresh_volume,
+			delegated_participation_counter,
+			delegated_participation_volume,
+			round_output_pubkey_counter,
+			round_output_pubkey_volume,
+			round_output_htlc_send_counter,
+			round_output_htlc_send_volume,
+			round_output_htlc_recv_counter,
+			round_output_htlc_recv_volume,
+			unilateral_exit_counter,
+			unilateral_exit_volume,
 			lightning_invoice_verification_counter,
 			lightning_invoice_verification_queue_gauge,
 			lightning_open_invoices_gauge,
@@ -776,6 +842,67 @@ pub fn add_round(input_volume: Amount) {
 		let global_labels = m.global_labels();
 		m.round_counter.add(1, global_labels);
 		m.round_volume.add(input_volume.to_sat(), global_labels);
+	}
+}
+
+/// One interactive round participation by a user: existing VTXOs being
+/// recycled (refreshed) into a new round. Non-interactive settlements
+/// (board/LN) are excluded; those are counted by their own metrics.
+pub fn add_refresh(input_volume_sats: u64) {
+	if let Some(m) = TELEMETRY.get() {
+		let global_labels = m.global_labels();
+		m.refresh_counter.add(1, global_labels);
+		m.refresh_volume.add(input_volume_sats, global_labels);
+	}
+}
+
+/// One delegated round participation: the server submitted inputs into the
+/// round on behalf of a user (typically an LN HTLC settlement). Volume is
+/// the sum of input VTXO amounts consumed by this participation.
+pub fn add_delegated_participation(input_volume_sats: u64) {
+	if let Some(m) = TELEMETRY.get() {
+		let global_labels = m.global_labels();
+		m.delegated_participation_counter.add(1, global_labels);
+		m.delegated_participation_volume.add(input_volume_sats, global_labels);
+	}
+}
+
+/// One VTXO minted by a successful round, split by output policy. Padding
+/// VTXOs that the server inserts to meet the tree's minimum-leaves
+/// requirement are not counted.
+pub fn add_round_output_pubkey(amount_sats: u64) {
+	if let Some(m) = TELEMETRY.get() {
+		let global_labels = m.global_labels();
+		m.round_output_pubkey_counter.add(1, global_labels);
+		m.round_output_pubkey_volume.add(amount_sats, global_labels);
+	}
+}
+
+pub fn add_round_output_htlc_send(amount_sats: u64) {
+	if let Some(m) = TELEMETRY.get() {
+		let global_labels = m.global_labels();
+		m.round_output_htlc_send_counter.add(1, global_labels);
+		m.round_output_htlc_send_volume.add(amount_sats, global_labels);
+	}
+}
+
+pub fn add_round_output_htlc_recv(amount_sats: u64) {
+	if let Some(m) = TELEMETRY.get() {
+		let global_labels = m.global_labels();
+		m.round_output_htlc_recv_counter.add(1, global_labels);
+		m.round_output_htlc_recv_volume.add(amount_sats, global_labels);
+	}
+}
+
+/// A frontier VTXO's funding tx confirmed on-chain, i.e. the user (or
+/// some watcher acting on their behalf) broadcast an exit-tree node. Each
+/// confirmed VTXO counts as one exit; the volume is the off-chain face
+/// value of the exiting VTXO.
+pub fn add_unilateral_exit(amount_sats: u64) {
+	if let Some(m) = TELEMETRY.get() {
+		let global_labels = m.global_labels();
+		m.unilateral_exit_counter.add(1, global_labels);
+		m.unilateral_exit_volume.add(amount_sats, global_labels);
 	}
 }
 
