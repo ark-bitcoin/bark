@@ -4,7 +4,6 @@ use std::env;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use anyhow::Context;
 use bitcoin::{Amount, Network};
 use bitcoin::secp256k1::rand::{self, RngCore};
 use chrono::{DateTime, Utc};
@@ -140,20 +139,38 @@ impl Barkd {
 	/// `create_wallet` loads them from the file, mirroring the
 	/// `bark create` CLI pattern.
 	pub async fn create_wallet(&self) -> anyhow::Result<()> {
+		self.create_wallet_with(None, None).await
+	}
+
+	/// Create the barkd wallet from an explicit BIP-39 `mnemonic` (seed
+	/// recovery). `birthday_height` optionally bounds how far back the wallet
+	/// scans the chain.
+	pub async fn create_wallet_with(
+		&self,
+		mnemonic: Option<String>,
+		birthday_height: Option<u32>,
+	) -> anyhow::Result<()> {
 		#[allow(deprecated)]
 		let req = CreateWalletRequest {
 			ark_server: None,
 			ark_server_access_token: None,
 			chain_source: None,
-			mnemonic: None,
+			mnemonic,
 			network: BarkNetwork::Regtest,
-			birthday_height: None,
+			birthday_height,
 		};
 
 		let config = self.client_config();
-		wallet_api::create_wallet(&config, req).await
-			.context("failed to create barkd wallet")?;
+		wallet_api::create_wallet(&config, req).await?;
 		Ok(())
+	}
+
+	/// Return the BIP-39 mnemonic phrase backing the wallet.
+	pub async fn mnemonic(&self) -> String {
+		let config = self.client_config();
+		wallet_api::mnemonic(&config).await
+			.expect("failed to get barkd mnemonic")
+			.mnemonic
 	}
 
 	/// Get a new on-chain receiving address from barkd.

@@ -6,7 +6,6 @@ use axum::routing::{get, post};
 use axum::{Json, Router, debug_handler};
 
 use bitcoin::Amount;
-use tracing::info;
 use utoipa::OpenApi;
 
 use ark::VtxoId;
@@ -674,7 +673,7 @@ pub async fn send(
 		Ok(ArkAddressType::Bark(addr)) => {
 			let amount = amount.context("amount missing")?;
 
-			info!("Sending arkoor payment of {} to address {}", amount, addr);
+			log::info!("Sending arkoor payment of {} to address {}", amount, addr);
 			wallet.send_arkoor_payment(&addr, amount).await?;
 			return Ok(axum::Json(bark_json::web::SendResponse {
 				message: "Payment sent successfully".to_string(),

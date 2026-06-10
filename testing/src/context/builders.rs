@@ -7,6 +7,7 @@ use bark::onchain::{OnchainWallet, OnchainWalletTrait};
 use bark::persist::BarkPersister;
 use bark::persist::sqlite::SqliteClient;
 use bitcoin::Amount;
+use log::warn;
 use server::wallet::MNEMONIC_FILE;
 use tokio::fs;
 
@@ -156,6 +157,8 @@ pub struct BarkdBuilder<'a> {
 	ctx: &'a TestContext,
 	name: String,
 	srv: &'a Captaind,
+	mnemonic: Option<String>,
+	birthday_height: Option<u32>,
 	mod_cfg: Option<Box<dyn FnOnce(&mut bark::Config)>>,
 	fund_amount: Option<Amount>,
 	board_amount: Option<Amount>,
@@ -172,6 +175,8 @@ impl<'a> BarkdBuilder<'a> {
 			ctx,
 			name: name.as_ref().to_string(),
 			srv,
+			mnemonic: None,
+			birthday_height: None,
 			mod_cfg: None,
 			fund_amount: None,
 			board_amount: None,
@@ -205,6 +210,11 @@ impl<'a> BarkdBuilder<'a> {
 		self
 	}
 
+	pub fn mnemonic(mut self, mnemonic: String) -> Self {
+		self.mnemonic = Some(mnemonic);
+		self
+	}
+
 	pub async fn create(self) -> Barkd {
 		let (chain_source, bitcoind) = if let Some(electrs) = &self.ctx.electrs {
 			(BarkdChainSource::Esplora(electrs.rest_url()), None)
@@ -234,7 +244,19 @@ impl<'a> BarkdBuilder<'a> {
 			daemon.set_env(k, v);
 		}
 		daemon.start().await.expect("failed to start barkd");
-		daemon.create_wallet().await.expect("failed to create barkd wallet");
+
+		let (mnemonic, birthday_height) = match (self.mnemonic, self.birthday_height) {
+			(Some(mnemonic), Some(birthday_height)) => (Some(mnemonic), Some(birthday_height)),
+			(Some(mnemonic), None) => (Some(mnemonic), Some(1)),
+			(None, Some(_)) => {
+				warn!("birthday_height is set but mnemonic is not, ignoring.");
+				(None, None)
+			},
+			(None, None) => (None, None),
+		};
+
+		daemon.create_wallet_with(mnemonic, birthday_height).await
+			.expect("failed to create barkd wallet");
 
 		if let Some(amount) = self.board_amount {
 			self.ctx.fund_barkd(&daemon, amount).await;
