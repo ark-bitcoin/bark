@@ -470,6 +470,12 @@ pub struct Config {
 	/// - being used in offboards or send-onchain actions
 	/// - sending money to our internal wallets
 	pub bitcoin_address_blocklist: Option<PathBuf>,
+
+	/// How often the bitcoin address blocklist file is re-read from disk.
+	///
+	/// Defaults to 1 hour. Only relevant if [Self::bitcoin_address_blocklist] is set.
+	#[serde(default, with = "utils::serde::duration::opt")]
+	pub bitcoin_address_blocklist_refresh_interval: Option<Duration>,
 }
 
 impl Config {
@@ -593,6 +599,12 @@ pub mod watchmand {
 		///
 		/// See [super::Config::bitcoin_address_blocklist] for more info
 		pub bitcoin_address_blocklist: Option<PathBuf>,
+
+		/// How often the bitcoin address blocklist file is re-read from disk.
+		///
+		/// See [super::Config::bitcoin_address_blocklist_refresh_interval] for more info
+		#[serde(default, with = "utils::serde::duration::opt")]
+		pub bitcoin_address_blocklist_refresh_interval: Option<Duration>,
 	}
 
 	impl Config {

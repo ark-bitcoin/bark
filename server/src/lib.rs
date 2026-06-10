@@ -470,7 +470,11 @@ impl Server {
 			.context("failed to initiate vtxopool")?;
 
 		if let Some(ref list) = bitcoin_address_blocklist {
-			list.start_auto_update_thread(rtmgr.clone(), Duration::from_secs(60 * 60));
+			list.start_auto_update_thread(
+			rtmgr.clone(),
+			cfg.bitcoin_address_blocklist_refresh_interval
+				.unwrap_or(crate::bitcoin_blocklist::DEFAULT_REFRESH_INTERVAL),
+		);
 		}
 
 		let (round_event_tx, _rx) = broadcast::channel(8);

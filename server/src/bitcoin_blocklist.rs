@@ -19,6 +19,10 @@ use crate::error::ContextExt;
 use crate::system::RuntimeManager;
 
 
+/// the default refresh interval for loading the file from disk is 1 hour
+pub const DEFAULT_REFRESH_INTERVAL: Duration = Duration::from_secs(60 * 60);
+
+
 /// Return type of [BitcoinAddressBlocklist::check_tx]
 pub enum AddressBlocklistCheckResult {
 	Ok,
