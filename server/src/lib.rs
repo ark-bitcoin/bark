@@ -22,6 +22,7 @@ pub mod watchman;
 pub(crate) mod flux;
 pub mod system;
 
+pub(crate) mod bitcoin_blocklist;
 pub mod bitcoind;
 mod intman;
 pub mod ln;
@@ -32,6 +33,7 @@ mod txindex;
 pub mod utils;
 
 
+use crate::bitcoin_blocklist::BitcoinAddressBlocklist;
 use crate::database::BlockTable;
 use crate::database::tree::VtxoTreeUpdate;
 pub use crate::intman::{CAPTAIND_API_KEY, CAPTAIND_CLI_API_KEY};
@@ -199,6 +201,8 @@ pub struct Server {
 	watchman_handle: Option<watchman::WatchmanHandle>,
 	pending_offboards: parking_lot::Mutex<TimedEntryMap<Txid, Option<offboards::PendingOffboard>>>,
 	fee_estimator: Arc<FeeEstimator>,
+	/// scriptPubkeys in the bitcoin address blocklist
+	bitcoin_address_blocklist: Option<BitcoinAddressBlocklist>,
 }
 
 impl Server {
@@ -240,7 +244,7 @@ impl Server {
 		// Store initial wallet states to avoid full chain sync.
 		for wallet in [WalletKind::Rounds, WalletKind::Watchman] {
 			let _wallet = PersistedWallet::load_derive_from_master_xpriv(
-				db.clone(), cfg.network, &master_xpriv, wallet, deep_tip,
+				db.clone(), bitcoind.clone(), cfg.network, &master_xpriv, wallet, deep_tip,
 				cfg.min_trusted_confs,
 			);
 		}
@@ -330,15 +334,25 @@ impl Server {
 		bcd::require_version(&bitcoind).await?;
 		bcd::require_txindex(&bitcoind).await?;
 
+		let bitcoin_address_blocklist = if let Some(ref path) = cfg.bitcoin_address_blocklist {
+			Some(BitcoinAddressBlocklist::new(cfg.network, bitcoind.clone(), path).await
+				.context("error parsing bitcoin address blocklist")?)
+		} else {
+			None
+		};
+
 		let deep_tip = bcd::deep_tip(&bitcoind).await
 			.context("failed to query node for deep tip")?;
 		let wallet_xpriv = master_xpriv.derive_priv(
 			&crate::SECP, &[WalletKind::Rounds.child_number()],
 		).expect("can't error");
-		let rounds_wallet = PersistedWallet::load_from_xpriv(
-			db.clone(), cfg.network, &wallet_xpriv, WalletKind::Rounds, deep_tip,
+		let mut rounds_wallet = PersistedWallet::load_from_xpriv(
+			db.clone(), bitcoind.clone(), cfg.network, &wallet_xpriv, WalletKind::Rounds, deep_tip,
 			cfg.min_trusted_confs,
 		).await.context("error loading rounds wallet")?;
+		if let Some(list) = bitcoin_address_blocklist.clone() {
+			rounds_wallet.set_address_blocklist(list);
+		}
 		let rounds_wallet = InstrumentedLock::new("rounds_wallet", rounds_wallet);
 
 		let ephemeral_master_key = {
@@ -383,10 +397,13 @@ impl Server {
 		let mut listeners: Vec<Box<dyn ChainEventListener>> = vec![];
 		listeners.push(Box::new(rounds_wallet.clone()));
 		let watchman_deps = if let Some(watchman_cfg) = cfg.watchman.enabled() {
-			let watchman_wallet = PersistedWallet::load_derive_from_master_xpriv(
-				db.clone(), cfg.network, &master_xpriv, WalletKind::Watchman, deep_tip,
+			let mut watchman_wallet = PersistedWallet::load_derive_from_master_xpriv(
+				db.clone(), bitcoind.clone(), cfg.network, &master_xpriv, WalletKind::Watchman, deep_tip,
 				cfg.min_trusted_confs,
 			).await.context("error loading watchman wallet")?;
+			if let Some(list) = bitcoin_address_blocklist.clone() {
+				watchman_wallet.set_address_blocklist(list);
+			}
 			let watchman_wallet = InstrumentedLock::new("watchman_wallet", watchman_wallet);
 			listeners.push(Box::new(watchman_wallet.clone()));
 
@@ -452,6 +469,10 @@ impl Server {
 		let vtxopool = VtxoPool::new(cfg.vtxopool.clone(), &db).await
 			.context("failed to initiate vtxopool")?;
 
+		if let Some(ref list) = bitcoin_address_blocklist {
+			list.start_auto_update_thread(rtmgr.clone(), Duration::from_secs(60 * 60));
+		}
+
 		let (round_event_tx, _rx) = broadcast::channel(8);
 		let (round_input_tx, round_input_rx) = tokio::sync::mpsc::unbounded_channel();
 		let (round_trigger_tx, round_trigger_rx) = tokio::sync::mpsc::channel(1);
@@ -488,6 +509,7 @@ impl Server {
 			watchman_handle,
 			pending_offboards: parking_lot::Mutex::new(TimedEntryMap::new()),
 			fee_estimator,
+			bitcoin_address_blocklist,
 		};
 
 		let srv = Arc::new(srv);
@@ -751,6 +773,18 @@ impl Server {
 
 		let funding_tx = bitcoin::consensus::deserialize::<Transaction>(&tx_info.hex)
 			.context("failed to deserialize funding transaction")?;
+
+		if let Some(ref list) = self.bitcoin_address_blocklist {
+			let res = list.check_tx(&funding_tx).await;
+			if !res.is_ok() {
+				if let Some(addr) = res.violating_address() {
+					slog!(BoardAttemptBlockedAddress, vtxo: vtxo.id(), amount: vtxo.amount(),
+						address: addr.as_unchecked().clone(),
+					);
+				}
+				res.into_user_result().context("address blocklist check failed")?;
+			}
+		}
 
 		// bitcoind rpc documents that if a mempool tx spends a utxo in the utxoset,
 		// if will not appear in gettxout when include_mempool is set to true

@@ -1,4 +1,5 @@
 mod ban;
+mod blocklist;
 mod block_index;
 mod lightning;
 mod mailbox;

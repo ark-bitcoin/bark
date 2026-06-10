@@ -447,6 +447,7 @@ impl TestContext {
 					ppm_expiry_table: vec![],
 				},
 			},
+			bitcoin_address_blocklist: None,
 		}
 	}
 
@@ -498,6 +499,7 @@ impl TestContext {
 			},
 			htlc_settlement_poll_interval: Duration::from_secs(5),
 			admin_address: None,
+			bitcoin_address_blocklist: None,
 		}
 	}
 

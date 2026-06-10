@@ -15,7 +15,7 @@ use std::borrow::Borrow;
 
 use anyhow::{bail, Context};
 use bitcoin::consensus::encode;
-use bitcoin::{Amount, BlockHash, FeeRate, Network, OutPoint, Transaction, Txid, Weight};
+use bitcoin::{Amount, BlockHash, FeeRate, Network, OutPoint, Transaction, TxOut, Txid, Weight};
 use bitcoind_async_client::Client;
 use bitcoind_async_client::error::ClientError;
 use bitcoind_async_client::traits::{Broadcaster, Reader};
@@ -92,6 +92,13 @@ pub async fn get_block_by_height(
 ) -> Result<BlockRef, ClientError> {
 	let hash = client.get_block_hash(height as u64).await?;
 	Ok(BlockRef { height, hash })
+}
+
+/// Get a raw txout using getrawtransaction rpc
+pub async fn get_raw_txout(client: &Client, point: OutPoint) -> Result<TxOut, ClientError> {
+	let tx = client.get_raw_transaction_verbosity_zero(&point.txid).await?.0;
+	tx.output.get(point.vout as usize).cloned()
+		.ok_or_else(|| ClientError::Other(format!("vout out of range")))
 }
 
 pub async fn tx_status(client: &Client, txid: Txid) -> Result<TxStatus, ClientError> {

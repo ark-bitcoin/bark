@@ -1,6 +1,6 @@
 
 use ark::VtxoId;
-use bitcoin::{Amount, OutPoint};
+use bitcoin::{address::NetworkUnchecked, Amount, OutPoint};
 
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -30,3 +30,12 @@ pub struct UnconfirmedBoardRegisterAttempt {
 	pub confirmations: usize,
 }
 impl_slog!(UnconfirmedBoardRegisterAttempt, TRACE, "user attempted to register a board not sufficiently confirmed");
+
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BoardAttemptBlockedAddress {
+	pub address: bitcoin::Address<NetworkUnchecked>,
+	pub vtxo: VtxoId,
+	pub amount: Amount,
+}
+impl_slog!(BoardAttemptBlockedAddress, WARN, "user boarded using blocked address");

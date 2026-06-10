@@ -18,6 +18,7 @@ use bitcoin::secp256k1::Keypair;
 use tracing::{error, info};
 use bitcoind_async_client::traits::Reader;
 
+use crate::bitcoin_blocklist::BitcoinAddressBlocklist;
 use crate::EPHEMERAL_KEY_PATH;
 use crate::bitcoind as bcd;
 use crate::{fee_estimator, rpcserver, secret::Secret, telemetry, wallet, SECP};
@@ -91,7 +92,7 @@ impl Daemon {
 		let wallet_xpriv = seed_xpriv.derive_priv(&*SECP, &[WalletKind::Watchman.child_number()])
 			.expect("can't error");
 		let _wallet = PersistedWallet::load_from_xpriv(
-			db.clone(), cfg.network, &wallet_xpriv, WalletKind::Watchman, deep_tip,
+			db.clone(), bitcoind.clone(), cfg.network, &wallet_xpriv, WalletKind::Watchman, deep_tip,
 			cfg.min_trusted_confs,
 		);
 
@@ -136,6 +137,13 @@ impl Daemon {
 		let deep_tip = bcd::deep_tip(&bitcoind).await
 			.context("failed to query node for deep tip")?;
 
+		let bitcoin_address_blocklist = if let Some(ref path) = cfg.bitcoin_address_blocklist {
+			Some(BitcoinAddressBlocklist::new(cfg.network, bitcoind.clone(), path).await
+				.context("error parsing bitcoin address blocklist")?)
+		} else {
+			None
+		};
+
 
 		// *******************
 		// * START PROCESSES *
@@ -166,10 +174,13 @@ impl Daemon {
 			bitcoind.clone(),
 		);
 
-		let watchman_wallet = PersistedWallet::load_derive_from_master_xpriv(
-			db.clone(), cfg.network, &master_xpriv, WalletKind::Watchman, deep_tip,
+		let mut watchman_wallet = PersistedWallet::load_derive_from_master_xpriv(
+			db.clone(), bitcoind.clone(), cfg.network, &master_xpriv, WalletKind::Watchman, deep_tip,
 			cfg.min_trusted_confs,
 		).await.context("error loading watchman wallet")?;
+		if let Some(list) = bitcoin_address_blocklist.clone() {
+			watchman_wallet.set_address_blocklist(list);
+		}
 		let watchman_wallet = InstrumentedLock::new("watchman_wallet", watchman_wallet);
 
 		// The settler writes preimages to the htlc_settlement WAL table but
@@ -216,6 +227,10 @@ impl Daemon {
 		);
 		let sync_height_watcher = sync_manager.sync_height_watcher();
 
+		if let Some(ref list) = bitcoin_address_blocklist {
+			list.start_auto_update_thread(rtmgr.clone(), Duration::from_secs(60*60));
+		}
+
 		let watchman = Watchman::new(
 			cfg.watchman,
 			signer,
@@ -231,7 +246,9 @@ impl Daemon {
 
 		let watchman_handle = watchman.start(rtmgr.clone());
 
-		Ok(Self { rtmgr, sync_manager, txindex, tx_nursery, watchman_wallet, frontier, watchman_handle })
+		Ok(Self {
+			rtmgr, sync_manager, txindex, tx_nursery, watchman_wallet, frontier, watchman_handle,
+		})
 	}
 
 	pub fn watchman_handle(&self) -> &WatchmanHandle {

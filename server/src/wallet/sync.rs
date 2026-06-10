@@ -50,6 +50,63 @@ impl ChainEventListener for InstrumentedLock<PersistedWallet> {
 				"failed applying block {} to {} wallet", height, wallet_name,
 			))?;
 
+		// BDK doesn't have a good mechanism for blocking UTXOs from our wallet
+		//
+		// This is what we do:
+		// - we detect any relevant tx that we should ignore
+		// - we drop it from the changeset that gets persisted
+		//   - this will however not take effect on the live wallet in memory
+		// - we also mark the blocked utxos as "locked"
+		//
+		// This means that without a server restart, the blocked utxos will be
+		// included in the balance but won't be used because they are locked.
+		// After restart, they will disappear but there will be locked utxos that are
+		// no longer part of the wallet.
+		if let Some(ref list) = wallet.address_blocklist {
+			let mut blocked_txids = HashSet::new();
+			let mut blocked_points = HashSet::new();
+			if let Some(cs) = wallet.wallet.staged() {
+				for tx in &cs.tx_graph.txs {
+					if list.check_tx(tx).await.is_blocked().context("error checking blocklist")? {
+						let txid = tx.compute_txid();
+						blocked_txids.insert(txid);
+					}
+				}
+				// supposedly this doesn't get populated during sync, but let's
+				// be safe because it might at some point
+				for (point, txout) in &cs.tx_graph.txouts {
+					if list.check_spk(&txout.script_pubkey).await {
+						blocked_points.insert(*point);
+					}
+				}
+			}
+
+			// Clean up the changeset to clean future state
+			if let Some(cs) = wallet.wallet.staged_mut() {
+				cs.tx_graph.txs.retain(|tx| !blocked_txids.contains(&tx.compute_txid()));
+				cs.tx_graph.anchors.retain(|(_, txid)| !blocked_txids.contains(txid));
+				cs.tx_graph.first_seen.retain(|txid, _| !blocked_txids.contains(txid));
+				cs.tx_graph.last_seen.retain(|txid, _| !blocked_txids.contains(txid));
+				cs.tx_graph.txouts.retain(|p, _| {
+					!blocked_points.contains(p) && !blocked_txids.contains(&p.txid)
+				});
+			}
+
+			// then lock all points we should block
+			for output in wallet.list_unspent() {
+				if blocked_txids.contains(&output.outpoint.txid) {
+					blocked_points.insert(output.outpoint);
+				}
+			}
+			for point in blocked_points {
+				wallet.lock_outpoint(point);
+
+				slog!(WalletReceivedBlockedAddress, wallet: wallet.kind.name().into(),
+					txid: point.txid, utxo: point,
+				);
+			}
+		}
+
 		wallet.persist().await
 			.with_context(|| format!(
 				"failed persisting {} wallet after block {}", wallet_name, height,

@@ -680,8 +680,11 @@ impl Bark {
 	}
 
 	pub async fn try_board(&self, amount: Amount) -> anyhow::Result<json::cli::PendingBoardInfo> {
+		tokio::time::sleep(Duration::from_millis(500)).await;
 		info!("{}: Board {}", self.name, amount);
-		self.try_run_json(["board", &amount.to_string()]).await
+		let ret = self.try_run_json(["board", &amount.to_string()]).await;
+		tokio::time::sleep(Duration::from_millis(500)).await;
+		ret
 	}
 
 	pub async fn board(&self, amount: Amount) -> json::cli::PendingBoardInfo {
@@ -693,6 +696,7 @@ impl Bark {
 	}
 
 	pub async fn try_board_all(&self) -> anyhow::Result<json::cli::PendingBoardInfo> {
+		tokio::time::sleep(Duration::from_millis(500)).await;
 		info!("{}: Boarding all on-chain funds", self.name);
 		self.try_run_json(["board", "--all"]).await
 	}
