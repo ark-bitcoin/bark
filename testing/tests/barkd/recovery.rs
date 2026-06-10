@@ -423,6 +423,8 @@ async fn recovered_wallet_skips_exited_vtxo() {
 	let srv = ctx.captaind("server").funded(btc(10)).create().await;
 	let barkd = ctx.barkd("bark", &srv).boarded(sat(500_000)).create().await;
 
+	let [before] = barkd.vtxos(Some(true)).await.try_into().expect("should hold one VTXO");
+
 	// Unilaterally exit the board VTXO on-chain. The on-chain wallet is empty
 	// after boarding, so fund it to pay the exit CPFP fees.
 	barkd.exit_start_all().await;
@@ -440,9 +442,10 @@ async fn recovered_wallet_skips_exited_vtxo() {
 	recovered.onchain_sync().await;
 	recovered.sync().await;
 
-	let after = recovered.vtxos(Some(true)).await;
-	assert!(after.is_empty(),
-		"recovered wallet should not resurrect an exited VTXO, got {:?}", after);
+	let [after] = recovered.vtxos(Some(true)).await.try_into().expect("should hold one VTXO");
+	assert_eq!(after.vtxo.id, before.vtxo.id);
+	assert_eq!(after.state, VtxoStateInfo::Exited,
+		"recovered wallet should mark the exited VTXO as such");
 }
 
 /// Recovery of a wallet holding VTXOs of multiple origins at once.

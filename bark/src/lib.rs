@@ -329,6 +329,7 @@ mod notification;
 mod offboard;
 #[cfg(feature = "socks5-proxy")]
 mod proxy;
+mod recovery;
 mod psbtext;
 mod utils;
 

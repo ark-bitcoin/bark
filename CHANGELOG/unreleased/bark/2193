@@ -1,0 +1,15 @@
+- Recover a wallet's VTXOs from its seed
+  A wallet now posts the ids of VTXOs it creates or receives to a seed-derived
+  recovery mailbox, and re-derives that mailbox on first open to rebuild its
+  spendable VTXO set from the seed alone — no local state required. Already-spent
+  and unilaterally-exited VTXOs are skipped, the mailbox scan is bounded so an
+  uncooperative server can't stall it indefinitely, and any VTXOs that could not
+  be checked due to errors are reported so recovery can be retried.
+  [#2193](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2193)
+  - Recovery runs automatically on wallet open; set the new
+    `OpenWalletArgs::skip_recovery` flag to opt out.
+  - The new `OpenWalletArgs::on_recovery_finished` callback receives a
+    `RecoveryReport` summarising the recovered, skipped, foreign, exited, and
+    failed VTXOs.
+  - The new `Wallet::recover_vtxos` method recovers a caller-supplied set of
+    VTXO ids on demand, returning a `RecoveryReport`.
