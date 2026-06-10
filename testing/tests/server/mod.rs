@@ -27,6 +27,7 @@ use ark::{
 use ark::arkoor::ArkoorDestination;
 use ark::arkoor::package::ArkoorPackageBuilder;
 use ark::attestations::ArkoorCosignAttestation;
+use ark::attestations::VtxoStatusAttestation;
 use ark::mailbox::{MailboxAuthorization, MailboxIdentifier};
 use ark::rounds::{Challenge, RoundAttemptAttestation, RoundSeq};
 use ark::tree::signed::builder::SignedTreeBuilder;
@@ -91,6 +92,53 @@ async fn get_vtxo() {
 	// Not-found case
 	let err = rpc.get_vtxo(protos::GetVtxoRequest {
 		vtxo_id: vec![0u8; 36],
+	}).await.unwrap_err();
+	assert_eq!(err.code(), tonic::Code::NotFound);
+}
+
+#[tokio::test]
+async fn get_vtxo_status() {
+	let ctx = TestContext::new("server/get_vtxo_status").await;
+	let srv = ctx.captaind("server").funded(btc(10)).create().await;
+	let bark = ctx.bark("bark", &srv).funded(sat(1_000_000)).create().await;
+
+	bark.board(sat(100_000)).await;
+	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
+	bark.sync().await;
+
+	// Grab the boarded vtxo together with the keypair that controls it, so
+	// we can sign a status attestation the way a real client would.
+	let client = bark.client().await;
+	let bare_vtxo = client.vtxos().await.unwrap().into_iter().next().unwrap().vtxo;
+	let vtxo_id = bare_vtxo.id();
+	let vtxo_keypair = client.pubkey_keypair(&bare_vtxo.user_pubkey()).await
+		.unwrap().expect("known vtxo keypair").1;
+
+	let mut rpc = srv.get_public_rpc().await;
+
+	// Valid vtxo + valid attestation: a freshly boarded vtxo is spendable.
+	let attestation = VtxoStatusAttestation::new(vtxo_id, &vtxo_keypair);
+	let resp = rpc.get_vtxo_status(protos::GetVtxoStatusRequest {
+		vtxo_id: vtxo_id.to_bytes().to_vec(),
+		attestation: attestation.serialize(),
+	}).await.unwrap().into_inner();
+	assert_eq!(resp.spend_state, protos::VtxoSpendState::Spendable as i32);
+
+	// Valid vtxo + invalid attestation (signed by a key that doesn't own the
+	// vtxo): the server rejects it as a bad argument.
+	let wrong_keypair = Keypair::new(&SECP, &mut thread_rng());
+	let bad_attestation = VtxoStatusAttestation::new(vtxo_id, &wrong_keypair);
+	let err = rpc.get_vtxo_status(protos::GetVtxoStatusRequest {
+		vtxo_id: vtxo_id.to_bytes().to_vec(),
+		attestation: bad_attestation.serialize(),
+	}).await.unwrap_err();
+	assert_eq!(err.code(), tonic::Code::InvalidArgument);
+
+	// Non-existent vtxo: not found (the lookup fails before the attestation
+	// is even checked).
+	let err = rpc.get_vtxo_status(protos::GetVtxoStatusRequest {
+		vtxo_id: vec![0u8; 36],
+		attestation: attestation.serialize(),
 	}).await.unwrap_err();
 	assert_eq!(err.code(), tonic::Code::NotFound);
 }
