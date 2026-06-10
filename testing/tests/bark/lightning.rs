@@ -14,6 +14,7 @@ use bark_json::primitives::VtxoStateInfo;
 use log::{info, trace};
 
 use ark_testing::{Captaind, Lightningd, TestContext, btc, lightning_test, require_bark_version, sat};
+use server::vtxopool::VtxoTarget;
 use ark_testing::constants::{BOARD_CONFIRMATIONS, ROUND_CONFIRMATIONS};
 use ark_testing::daemon::captaind::{self, ArkClient};
 use ark_testing::util::{FutureExt, ToAltString};
@@ -540,6 +541,56 @@ async fn bark_can_receive_lightning(
 	assert_eq!(parsed.description().to_string(), description);
 }
 lightning_test!(bark_can_receive_lightning);
+
+/// Reproduces the vtxo pool "More than one change output" bug.
+///
+/// The pool only holds 10_000 sat vtxos, so an ordinary (non-dust) 10_200 sat
+/// receive must be funded by two inputs. The dest splits across the input
+/// boundary, leaving a sub-dust dest slice on the second input; dust isolation
+/// borrows from that input's change to lift it, producing two change-policy
+/// outputs
+async fn bark_can_receive_lightning_when_pool_spend_creates_subdust_output(
+	ctx: &TestContext,
+	_lightning: &LightningPaymentSetup,
+	srv: &Captaind,
+	pay: impl AsyncFn(String),
+) {
+	srv.wait_for_vtxopool(&ctx).await;
+
+	let bark = Arc::new(ctx.bark("bark", srv).funded(btc(3)).create().await);
+	let board_amount = btc(2);
+	bark.board_and_confirm_and_register(&ctx, board_amount).await;
+
+	// 10_200 sats: comfortably above dust, but larger than any single pool
+	// vtxo, so the server is forced to combine two 10_000 sat inputs.
+	let pay_amount = sat(10_200);
+	let invoice_info = bark.bolt11_invoice(pay_amount).await;
+	let invoice = Invoice::from_str(&invoice_info.invoice).unwrap();
+	let _ = bark.lightning_receive_status(&invoice).await.unwrap();
+
+	tokio::join!(
+		pay(invoice_info.invoice.clone()),
+		bark.lightning_receive(&invoice_info.invoice).wait_millis(10_000),
+	);
+
+	// The receive must settle. Before the fix the claim errors out server-side
+	// and this assertion (and the `lightning_receive` call above) never pass.
+	let receives = bark.list_lightning_receives().await;
+	assert!(receives.is_empty(), "lightning receive should be claimed");
+	assert_eq!(bark.offchain_balance().await.claimable_lightning_receive, btc(0),
+		"claimable lightning receive should be reset after payment");
+
+	let vtxos = bark.vtxos().await;
+	assert!(!vtxos.iter().any(|v| matches!(v.state, VtxoStateInfo::Locked { .. })),
+		"should not be any locked vtxo left");
+}
+lightning_test!(bark_can_receive_lightning_when_pool_spend_creates_subdust_output, |cfg| {
+	// Only issue small (10_000 sat) pool vtxos, so an ordinary ~10k receive has
+	// to be funded by two inputs, splitting the dest across an input boundary.
+	cfg.vtxopool.vtxo_targets = vec![
+		VtxoTarget { count: 5, amount: sat(10_000) },
+	];
+});
 
 async fn bark_check_lightning_receive_no_wait(
 	ctx: &TestContext,
