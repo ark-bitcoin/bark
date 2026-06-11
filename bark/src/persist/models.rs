@@ -502,6 +502,7 @@ impl<'a> From<SerdeRoundState<'a>> for RoundState {
 mod test {
 	use crate::exit::{ExitState, ExitTxOrigin};
 	use crate::vtxo::VtxoState;
+	use super::SerdeAttemptState;
 
 	#[test]
 	/// Each struct stored as JSON in the database should have test to check for backwards compatibility
@@ -560,5 +561,24 @@ mod test {
 		serde_json::from_str::<VtxoState>(serialised).unwrap();
 		let serialised = r#"{"type": "locked", "movement_id": 42}"#;
 		serde_json::from_str::<VtxoState>(serialised).unwrap();
+
+		// Round-attempt state — `AwaitingUnsignedVtxoTree`. Legacy
+		// records carry `secret_nonces` as an array of 132-byte buffers.
+		let serialised = r#"{"AwaitingUnsignedVtxoTree":{"cosign_keys":[],"secret_nonces":[[[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]]],"unlock_hash":"0000000000000000000000000000000000000000000000000000000000000000"}}"#;
+		serde_json::from_str::<SerdeAttemptState>(serialised).unwrap();
+	}
+
+	/// `SerdeRoundState` is written to sqlite via `rmp_serde` (positional
+	/// MessagePack), so its wire format needs covering separately from
+	/// the JSON fixtures.
+	#[test]
+	fn test_serialized_round_state_msgpack() {
+		use bitcoin::hex::FromHex;
+
+		// Legacy record carrying `secret_nonces`.
+		let serialised = "81b84177616974696e67556e7369676e65645674786f5472656593909191dc0084000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000c4200000000000000000000000000000000000000000000000000000000000000000";
+		rmp_serde::from_slice::<SerdeAttemptState>(
+			&Vec::<u8>::from_hex(serialised).unwrap(),
+		).unwrap();
 	}
 }
