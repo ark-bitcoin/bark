@@ -10,6 +10,8 @@ use ark_testing::util::ToAltString;
 
 #[tokio::test]
 async fn offboard_all() {
+	require_bark_version!(> "0.2.3");
+
 	let ctx = TestContext::new("bark/offboard_all").await;
 	let srv = ctx.captaind("server").funded(btc(10)).create().await;
 	let bark1 = ctx.bark("bark1", &srv).funded(sat(1_000_000)).create().await;
