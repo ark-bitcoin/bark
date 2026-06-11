@@ -22,7 +22,7 @@ use bitcoin::sighash::{Prevouts, SighashCache};
 use bitcoin_ext::{fee, BlockDelta, BlockHeight, KeypairExt, TxOutExt, P2TR_DUST};
 
 use crate::{musig, ServerVtxo, ServerVtxoPolicy, Vtxo, VtxoId, SECP};
-use crate::connectors::construct_multi_connector_tx;
+use crate::connectors::construct_multi_connector_fanout_tx;
 use crate::vtxo::{Bare, Full};
 
 
@@ -221,8 +221,10 @@ where
 			// here we will create a deterministic intermediate connector tx and
 			// sign forfeit txs with the outputs of that tx
 
-			let connector_tx = construct_multi_connector_tx(
-				connector_fanout_prev, self.input_vtxos.len(), &connector_fanout_txout.script_pubkey,
+			let connector_tx = construct_multi_connector_fanout_tx(
+				connector_fanout_prev,
+				self.input_vtxos.len(),
+				&connector_fanout_txout.script_pubkey,
 			);
 			let connector_txid = connector_tx.compute_txid();
 
@@ -303,7 +305,7 @@ where
 			// sign forfeit txs with the outputs of that tx
 
 			let connector_tx = {
-				let mut tx = construct_multi_connector_tx(
+				let mut tx = construct_multi_connector_fanout_tx(
 					connector_fanout_prev,
 					self.input_vtxos.len(),
 					&connector_fanout_txout.script_pubkey,

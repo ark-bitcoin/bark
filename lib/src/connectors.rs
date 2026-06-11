@@ -28,7 +28,7 @@ pub const INPUT_WEIGHT: Weight = Weight::from_wu(66);
 
 
 /// Construct a tx that breaks up a single connector output into N connectors
-pub fn construct_multi_connector_tx(
+pub fn construct_multi_connector_fanout_tx(
 	prev: OutPoint,
 	nb_outputs: usize,
 	connector_spk: &Script,
