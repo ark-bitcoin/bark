@@ -5,6 +5,7 @@ use std::iter;
 use bitcoin::{Amount, Transaction, TxIn, TxOut, ScriptBuf, OutPoint, Txid, Witness, Script};
 use bitcoin::blockdata::opcodes;
 use bitcoin::hashes::Hash;
+use bitcoin_ext::MAX_TX_WEIGHT;
 
 
 const BYTES32: [u8; 32] = [0; 32];
@@ -206,4 +207,22 @@ fn napkin() {
 	println!();
 
 	println!("Round tx weight: {} wu", round_tx().weight());
+}
+
+#[test]
+fn calculate_max_offboard_fanout() {
+	let mut n = 2320;
+	let max = loop {
+		let tx = Transaction {
+			version: bitcoin::transaction::Version::TWO,
+			lock_time: bitcoin::locktime::absolute::LockTime::from_consensus(0),
+			input: vec![taproot_keyspend_input(); 1],
+			output: vec![taproot_output(); n],
+		};
+		if tx.weight() > MAX_TX_WEIGHT {
+			break n - 1;
+		}
+		n += 1;
+	};
+	assert_eq!(max, 2323);
 }

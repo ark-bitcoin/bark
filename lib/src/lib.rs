@@ -234,7 +234,7 @@ pub mod scripts {
 		for (input, sig) in tx.input.iter_mut().zip(sigs.iter()) {
 			assert!(input.witness.is_empty());
 			input.witness.push(&sig[..]);
-			debug_assert_eq!(TAPROOT_KEYSPEND_WEIGHT, input.witness.size());
+			debug_assert_eq!(TAPROOT_KEYSPEND_WEIGHT.to_wu(), input.witness.size() as u64);
 		}
 	}
 
