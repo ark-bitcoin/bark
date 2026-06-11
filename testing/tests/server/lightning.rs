@@ -411,7 +411,7 @@ async fn server_returned_htlc_recv_vtxos_identical(
 			let req_1 = protos::PrepareLightningReceiveClaimRequest {
 				payment_hash: receive.payment_hash.to_vec(),
 				user_pubkey: keypair.public_key().serialize().to_vec(),
-				htlc_recv_expiry: 180,
+				htlc_recv_expiry: 172,
 				lightning_receive_anti_dos: None,
 			};
 			let vtxos_1 = client.prepare_lightning_receive_claim(req_1.clone()).await.unwrap()
@@ -430,7 +430,7 @@ async fn server_returned_htlc_recv_vtxos_identical(
 			let req_2 = protos::PrepareLightningReceiveClaimRequest {
 				payment_hash: receive.payment_hash.to_vec(),
 				user_pubkey: keypair.public_key().serialize().to_vec(),
-				htlc_recv_expiry: 180,
+				htlc_recv_expiry: 172,
 				lightning_receive_anti_dos: None,
 			};
 
