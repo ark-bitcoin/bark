@@ -587,7 +587,7 @@ async fn bark_should_exit_a_pending_board() {
 
 #[tokio::test]
 async fn bark_should_exit_a_failed_htlc_out_that_server_refuse_to_revoke() {
-	require_bark_version!(> "0.2.0");
+	require_bark_version!(> "0.2.2");
 
 	let ctx = TestContext::new("exit/bark_should_exit_a_failed_htlc_out_that_server_refuse_to_revoke").await;
 
@@ -733,7 +733,7 @@ async fn bark_should_exit_a_failed_htlc_out_that_server_refuse_to_revoke() {
 
 #[tokio::test]
 async fn bark_should_exit_a_pending_htlc_out_that_server_refuse_to_revoke() {
-	require_bark_version!(> "0.2.0");
+	require_bark_version!(> "0.2.2");
 
 	let ctx = TestContext::new("exit/bark_should_exit_a_pending_htlc_out_that_server_refuse_to_revoke").await;
 
