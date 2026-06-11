@@ -1,6 +1,0 @@
-- add `bitcoin_address_blocklist` config variables to `captaind` and `watchmand`
-  - refers to a file name with blocklist of addresses, loaded on startup
-  - offboards to blocked addresses are rejected
-  - boards with funds coming from blocked addresses are rejected
-  - funds coming to internal wallets coming from blocked addresses are ignored
-  [#2155](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2155)

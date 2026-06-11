@@ -6,6 +6,50 @@ https://docs.second.tech/changelog/changelog/
 
 Below is a more detailed summary for each version.
 
+# v0.2.4
+
+- `bark`
+  - Include claimable exits in the `pending_exit` balance
+    Funds from unilateral exits that have reached the claimable state are now
+    reported as part of the pending exit balance, so they remain visible to
+    users until they are spent on-chain.
+    [#2161](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2161)
+  - Stop auto-exiting Lightning receives when the claim fails
+    A failed HTLC claim (e.g. transient server errors after the retry budget
+    is exhausted) no longer triggers an automatic unilateral exit of the HTLC
+    VTXOs. The receive stays pending so the claim can be retried, and
+    `Wallet::attempt_lightning_receive_exit` can be used to explicitly fall
+    back to an on-chain exit.
+    [#2174](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2174)
+
+- `bark-cli`
+  - add `--no-auth` option to barkd to disable auth
+    This can be used together with the CORS setting when shipping in a container
+    as a web application.
+    [#2157](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2157)
+  - fix multi-input offboards
+    - add fixup for old clients that got stuck by doing an offboard
+    [#2175](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2175/)
+
+- `server`
+  - Fold `watchman_vtxo_frontier` columns onto the `vtxo` table
+    Adds `frontier_at`, `confirmed_height`, `onchain_spent_height`, and
+    `onchain_spent_txid` to `vtxo` (and `vtxo_history`), copies existing
+    rows over, and drops `watchman_vtxo_frontier`. A single row lock now
+    serializes captaind/watchmand transitions that previously spanned two
+    tables.
+    [#2112](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2112)
+  - add `max_fee_rate` config option to specify maximum fee rate
+    (this is to protect against fee estimators returning insane fee rates)
+    [#2154](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2154)
+  - add `bitcoin_address_blocklist` config variables to `captaind` and `watchmand`
+    - refers to a file name with blocklist of addresses, loaded on startup
+    - offboards to blocked addresses are rejected
+    - boards with funds coming from blocked addresses are rejected
+    - funds coming to internal wallets coming from blocked addresses are ignored
+    [#2155](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2155)
+  - avoid spurious error log when a client submits an oversized BOLT 11 invoice description, rejecting it with `badarg` instead
+    [#2164](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2164)
 
 # v0.2.3
 
