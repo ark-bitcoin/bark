@@ -120,6 +120,32 @@ pub async fn wait_for_exits_claimable(ctx: &TestContext, barkd: &Barkd) {
 	}
 }
 
+/// Drive `sync` until the wallet's spendable balance equals `expected`.
+///
+/// Some flows (e.g. a Lightning receive) resolve asynchronously after the REST
+/// call returns, so we sync on each poll. Panics with the last-seen balance on
+/// timeout rather than failing silently.
+pub async fn wait_for_spendable(barkd: &Barkd, expected: Amount) {
+	let timeout = Duration::from_secs(15);
+	let poll_interval = Duration::from_millis(500);
+	let start = std::time::Instant::now();
+
+	loop {
+		barkd.sync().await;
+		let balance = barkd.bark_balance().await;
+		if balance.spendable == expected {
+			return;
+		}
+		if start.elapsed() > timeout {
+			panic!(
+				"spendable balance did not reach {} within {:?} (current: {})",
+				expected, timeout, balance.spendable,
+			);
+		}
+		tokio::time::sleep(poll_interval).await;
+	}
+}
+
 /// Drive `sync` until the wallet's VTXO set satisfies `predicate`, returning it.
 ///
 /// For flows that resolve asynchronously after the REST call returns (e.g. a

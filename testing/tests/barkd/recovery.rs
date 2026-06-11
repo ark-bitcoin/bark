@@ -1,10 +1,18 @@
+use ark::VtxoId;
+use server_rpc::protos;
 
-use std::time::Duration;
-
-use ark_testing::{btc, sat, TestContext};
+use ark_testing::{btc, require_bark_version, sat, TestContext};
+use ark_testing::constants::BOARD_CONFIRMATIONS;
+use ark_testing::daemon::captaind::{self, MailboxClient};
+use bark_json::primitives::VtxoStateInfo;
 use bitcoin::Amount;
 
-use super::helpers::{wait_for_rounds_complete, wait_for_spendable_vtxos};
+use crate::helpers::wait_for_boards_synced;
+
+use super::helpers::{
+	wait_for_exits_claimable, wait_for_rounds_complete, wait_for_spendable,
+	wait_for_spendable_vtxos, wait_for_vtxos,
+};
 
 /// Wallet recovery from seed.
 ///
@@ -103,7 +111,7 @@ async fn recovered_wallet_finds_round_vtxo() {
 /// than resurrecting them.
 #[tokio::test]
 async fn recovered_wallet_finds_arkoor_receive_and_change_vtxos() {
-	let ctx = TestContext::new("barkd/recovered_wallet_handles_long_arkoor_chain").await;
+	let ctx = TestContext::new("barkd/recovered_wallet_finds_arkoor_receive_and_change_vtxos").await;
 
 	let srv = ctx.captaind("server").funded(btc(10)).create().await;
 
@@ -195,18 +203,7 @@ async fn recovered_wallet_finds_lightning_receive() {
 	// spendable VTXO.
 	tokio::join!(
 		lightning.external.pay_bolt11(invoice.invoice),
-		async {
-			let mut claimed = false;
-			for _ in 0..30 {
-				tokio::time::sleep(Duration::from_millis(500)).await;
-				barkd.sync().await;
-				if barkd.bark_balance().await.spendable == amount {
-					claimed = true;
-					break;
-				}
-			}
-			assert!(claimed, "lightning receive should be claimed");
-		},
+		wait_for_spendable(&barkd, amount),
 	);
 
 	let before = barkd.vtxos(None).await;
@@ -257,18 +254,13 @@ async fn recovered_wallet_finds_lightning_send_change() {
 	barkd.pay_lightning(&invoice).await;
 
 	// The REST send returns before the payment resolves, so drive it via sync
-	// until the change VTXO has replaced the board VTXO.
-	let mut before = None;
-	for _ in 0..30 {
-		tokio::time::sleep(Duration::from_millis(500)).await;
-		barkd.sync().await;
-		let vtxos = barkd.vtxos(None).await;
-		if vtxos.len() == 1 && vtxos[0].vtxo.id != board_id {
-			before = Some(vtxos);
-			break;
-		}
-	}
-	let before = before.expect("lightning send should resolve to a single change VTXO");
+	// until the change VTXO has replaced the board VTXO. Require it spendable so
+	// we don't capture the transient in-flight HTLC (locked, and spent once the
+	// payment settles) that briefly is the only unspent VTXO.
+	let before = wait_for_vtxos(&barkd, |vtxos| {
+		vtxos.len() == 1 && vtxos[0].vtxo.id != board_id
+			&& vtxos[0].state == VtxoStateInfo::Spendable
+	}).await;
 
 	// Recover from the same seed.
 	let mnemonic = barkd.mnemonic().await;
@@ -280,7 +272,7 @@ async fn recovered_wallet_finds_lightning_send_change() {
 
 	let after = recovered.vtxos(Some(true)).await;
 	assert_eq!(after.len(), before.len(),
-		"recovered wallet should rediscover both the change and revocation VTXOs");
+		"recovered wallet should rediscover the change VTXO");
 	for vtxo in before.iter() {
 		assert!(after.iter().any(|v| v.vtxo.id == vtxo.vtxo.id),
 			"recovered wallet should rediscover VTXO {:?}", vtxo.vtxo.id);
@@ -315,18 +307,10 @@ async fn recovered_wallet_finds_lightning_send_revocation() {
 	lightning.sync().await;
 	barkd.pay_lightning(&invoice).await;
 
-	// Drive the failed send to its revocation via sync.
-	let mut before = None;
-	for _ in 0..30 {
-		tokio::time::sleep(Duration::from_millis(500)).await;
-		barkd.sync().await;
-		let vtxos = barkd.vtxos(None).await;
-		if vtxos.len() == 2 {
-			before = Some(vtxos);
-			break;
-		}
-	}
-	let before = before.expect("failed lightning send should produce change + revocation VTXOs");
+	// Wait for both VTXOs to settle spendable: this skips the transient
+	// {change, locked-htlc} state and captures the settled {change, revocation}
+	// set, since the HTLC is spent into the revocation VTXO under a new id.
+	let before = wait_for_spendable_vtxos(&barkd, 2).await;
 
 	// Recover from the same seed.
 	let mnemonic = barkd.mnemonic().await;
@@ -391,4 +375,202 @@ async fn recovered_wallet_finds_offboard_change() {
 
 	// Spend recovered VTXOs in a payment
 	recovered.send(&recipient.ark_address().await, Amount::from_sat(698_505)).await;
+}
+
+/// Recovery yields nothing for a fully-spent wallet.
+///
+/// Offboard everything on-chain (no change remains), then recover from the
+/// seed: the spent board VTXO must not be resurrected.
+#[tokio::test]
+async fn recovered_wallet_is_empty_when_fully_spent() {
+	let ctx = TestContext::new("barkd/recovered_wallet_is_empty_when_fully_spent").await;
+	let srv = ctx.captaind("server").funded(btc(10)).create().await;
+
+	let barkd = ctx.barkd("bark", &srv).boarded(sat(500_000)).create().await;
+	let recipient = ctx.barkd("recipient", &srv).create().await;
+	let addr = recipient.onchain_address().await;
+
+	// Offboard everything on-chain — no change VTXO remains.
+	barkd.offboard_all(&addr.to_string()).await;
+	ctx.generate_blocks(2).await;
+	barkd.sync().await;
+	assert!(barkd.vtxos(None).await.is_empty(),
+		"wallet should hold no VTXOs after offboarding everything");
+
+	// Recover from the same seed: there is nothing to recover.
+	let mnemonic = barkd.mnemonic().await;
+	let recovered = ctx.barkd("bark_recovered", &srv)
+		.mnemonic(mnemonic)
+		.create().await;
+	recovered.onchain_sync().await;
+	recovered.sync().await;
+
+	let after = recovered.vtxos(Some(true)).await;
+	assert!(after.is_empty(), "recovered wallet should hold no VTXOs, got {:?}", after);
+}
+
+/// Recovery does not resurrect a unilaterally-exited VTXO.
+///
+/// Board a VTXO, exit it on-chain, then recover from the seed: the exited VTXO
+/// must not come back as a spendable off-chain VTXO.
+#[tokio::test]
+async fn recovered_wallet_skips_exited_vtxo() {
+	// The daemon's background exit auto-progress (run_exits) is required to
+	// drive the CPFP broadcast to completion.
+	require_bark_version!(> "0.2.0");
+
+	let ctx = TestContext::new("barkd/recovered_wallet_skips_exited_vtxo").await;
+	let srv = ctx.captaind("server").funded(btc(10)).create().await;
+	let barkd = ctx.barkd("bark", &srv).boarded(sat(500_000)).create().await;
+
+	// Unilaterally exit the board VTXO on-chain. The on-chain wallet is empty
+	// after boarding, so fund it to pay the exit CPFP fees.
+	barkd.exit_start_all().await;
+	ctx.fund_barkd(&barkd, sat(100_000)).await;
+	wait_for_exits_claimable(&ctx, &barkd).await;
+	barkd.sync().await;
+	assert!(barkd.vtxos(None).await.is_empty(),
+		"exited VTXO should no longer be a spendable VTXO");
+
+	// Recover from the same seed: the exited VTXO must not be resurrected.
+	let mnemonic = barkd.mnemonic().await;
+	let recovered = ctx.barkd("bark_recovered", &srv)
+		.mnemonic(mnemonic)
+		.create().await;
+	recovered.onchain_sync().await;
+	recovered.sync().await;
+
+	let after = recovered.vtxos(Some(true)).await;
+	assert!(after.is_empty(),
+		"recovered wallet should not resurrect an exited VTXO, got {:?}", after);
+}
+
+/// Recovery of a wallet holding VTXOs of multiple origins at once.
+///
+/// Build a wallet that simultaneously holds a board VTXO, a round-output VTXO
+/// (from refreshing a second board), and an arkoor-receive VTXO, then recover
+/// from the seed and assert all three are rediscovered.
+#[tokio::test]
+async fn recovered_wallet_finds_mixed_origin_vtxos() {
+	let ctx = TestContext::new("barkd/recovered_wallet_finds_mixed_origin_vtxos").await;
+	let srv = ctx.captaind("server").funded(btc(10)).create().await;
+
+	// Board VTXO #1 — kept as the board leaf. Fund extra on-chain so a second
+	// board has coins to spend (boarding consumes the whole on-chain balance).
+	let barkd = ctx.barkd("bark", &srv)
+		.boarded(sat(300_000))
+		.funded(sat(400_000))
+		.create().await;
+	let board_id = barkd.vtxos(None).await[0].vtxo.id;
+
+	// Board VTXO #2 and refresh just it into a round output.
+	barkd.onchain_sync().await;
+	let board_info = barkd.board_amount(sat(300_000)).await;
+	ctx.await_transaction(board_info.funding_tx.txid).await;
+	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
+	wait_for_boards_synced(&barkd).await;
+	let second_board = barkd.vtxos(None).await
+		.into_iter().find(|v| v.vtxo.id != board_id && v.state == VtxoStateInfo::Spendable)
+		.expect("second board VTXO").vtxo.id;
+	tokio::join!(
+		barkd.refresh_vtxos(vec![second_board.to_string()]),
+		srv.trigger_round(),
+	);
+	wait_for_rounds_complete(&ctx, &barkd).await;
+
+	// Receive an arkoor payment from another wallet.
+	let sender = ctx.barkd("sender", &srv).boarded(sat(500_000)).create().await;
+	sender.send(&barkd.ark_address().await, sat(50_000)).await;
+	barkd.sync().await;
+
+	let before = barkd.vtxos(None).await;
+	assert_eq!(before.len(), 3,
+		"wallet should hold board + round-output + arkoor-receive VTXOs, got {:?}", before);
+
+	// Recover from the same seed and rediscover all three.
+	let mnemonic = barkd.mnemonic().await;
+	let recovered = ctx.barkd("bark_recovered", &srv)
+		.mnemonic(mnemonic)
+		.create().await;
+	recovered.onchain_sync().await;
+	recovered.sync().await;
+
+	let after = recovered.vtxos(Some(true)).await;
+	assert_eq!(after.len(), before.len(),
+		"recovered wallet should rediscover all VTXOs");
+	for vtxo in before.iter() {
+		assert!(after.iter().any(|v| v.vtxo.id == vtxo.vtxo.id),
+			"recovered wallet should rediscover VTXO {:?}", vtxo.vtxo.id);
+	}
+
+	// Spend recovered VTXOs in a payment
+	let recipient = ctx.barkd("recipient", &srv).create().await;
+	recovered.send(&recipient.ark_address().await, Amount::from_sat(649_443)).await;
+}
+
+/// Recovery tolerates a valid VTXO it cannot own.
+///
+/// Anyone who knows the mailbox id can post a valid, server-fetchable VTXO we
+/// don't own. Recovery must skip it gracefully — not hang on the key search, not
+/// abort wallet creation — and still recover the VTXOs we *do* own.
+#[tokio::test]
+async fn recovered_wallet_skips_unownable_vtxo() {
+	let ctx = TestContext::new("barkd/recovered_wallet_skips_unownable_vtxo").await;
+	let srv = ctx.captaind("server").funded(btc(10)).create().await;
+
+	// A foreign wallet boards a VTXO: it's valid and fetchable from the server,
+	// but its owner key belongs to the foreign seed, not ours.
+	let foreign = ctx.barkd("foreign", &srv).boarded(sat(100_000)).create().await;
+	let foreign_id = foreign.vtxos(None).await[0].vtxo.id;
+
+	// Our wallet boards its own VTXO, which is posted to our recovery mailbox.
+	let victim = ctx.barkd("victim", &srv).boarded(sat(100_000)).create().await;
+	let own_id = victim.vtxos(None).await[0].vtxo.id;
+	let mnemonic = victim.mnemonic().await;
+
+	// Proxy the server and inject the foreign id into every recovery-mailbox
+	// read, so the recovering wallet is handed a VTXO it can never own. The
+	// genuine messages (our own posted ids) are passed through untouched.
+	#[derive(Clone)]
+	struct InjectForeignId { foreign_id: VtxoId }
+
+	#[async_trait::async_trait]
+	impl captaind::proxy::MailboxRpcProxy for InjectForeignId {
+		async fn read_mailbox(
+			&self, upstream: &mut MailboxClient, req: protos::mailbox_server::MailboxRequest,
+		) -> Result<protos::mailbox_server::MailboxMessages, tonic::Status> {
+			use protos::mailbox_server::{mailbox_message, MailboxMessage, RecoveryVtxoIdsMessage};
+
+			let mut resp = upstream.read_mailbox(req).await?.into_inner();
+			resp.messages.push(MailboxMessage {
+				message: Some(mailbox_message::Message::RecoveryVtxoIds(RecoveryVtxoIdsMessage {
+					vtxo_ids: vec![self.foreign_id.to_bytes().to_vec()],
+				})),
+				checkpoint: 0,
+			});
+			Ok(resp)
+		}
+	}
+
+	let proxy = srv.start_proxy_with_mailbox((), InjectForeignId { foreign_id }).await;
+
+	// Recover from our seed, talking to the server through the injecting proxy.
+	let recovered = ctx.barkd("victim_recovered", &srv)
+		.mnemonic(mnemonic)
+		.cfg({
+			let addr = proxy.address.clone();
+			move |c| c.server_address = addr
+		})
+		.create().await;
+	recovered.onchain_sync().await;
+	recovered.sync().await;
+
+	// Wallet creation returned (recovery did not hang or abort) and we recovered
+	// exactly our own VTXO; the unownable foreign one was skipped.
+	let after = recovered.vtxos(Some(true)).await;
+	assert_eq!(after.len(), 1,
+		"recovered wallet should hold only its own VTXO, got {:?}", after);
+	assert_eq!(after[0].vtxo.id, own_id, "recovered VTXO should be our own board");
+	assert!(!after.iter().any(|v| v.vtxo.id == foreign_id),
+		"unownable foreign VTXO must not be recovered");
 }
