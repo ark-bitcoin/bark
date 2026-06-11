@@ -99,8 +99,20 @@ use std::str::FromStr;
 use bitcoin::{Address, Amount, OutPoint};
 use bitcoin::address::NetworkUnchecked;
 
+
+/// The minimum protocol version supported by the client.
+///
+/// For info on protocol versions, see [server_rpc](crate) module documentation.
+pub const MIN_PROTOCOL_VERSION: u64 = 1;
+
+/// The maximum protocol version supported by the client.
+///
+/// For info on protocol versions, see [server_rpc](crate) module documentation.
+pub const MAX_PROTOCOL_VERSION: u64 = 1;
+
 /// The string used in the gRPC HTTP header for the protocol version.
 pub const PROTOCOL_VERSION_HEADER: &str = "pver";
+
 
 #[derive(Debug, Clone)]
 pub struct WalletStatus {

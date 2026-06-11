@@ -40,7 +40,10 @@ use tonic::service::interceptor::{InterceptedService, Interceptor};
 
 use ark::ArkInfo;
 
-use crate::{mailbox, protos, ArkServiceClient, ConvertError, RequestExt};
+use crate::{
+	mailbox, protos, ArkServiceClient, ConvertError, RequestExt,
+	MAX_PROTOCOL_VERSION, MIN_PROTOCOL_VERSION,
+};
 
 
 #[cfg(all(feature = "tonic-native", feature = "tonic-web"))]
@@ -199,16 +202,6 @@ mod transport {
 		}
 	}
 }
-
-/// The minimum protocol version supported by the client.
-///
-/// For info on protocol versions, see [server_rpc](crate) module documentation.
-pub const MIN_PROTOCOL_VERSION: u64 = 1;
-
-/// The maximum protocol version supported by the client.
-///
-/// For info on protocol versions, see [server_rpc](crate) module documentation.
-pub const MAX_PROTOCOL_VERSION: u64 = 1;
 
 
 #[derive(Debug, thiserror::Error)]
