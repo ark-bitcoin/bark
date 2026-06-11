@@ -31,6 +31,7 @@ mod m0030_wallet_action_checkpoint;
 mod m0031_vtxo_lock_holder;
 mod m0032_exit_state_refactor;
 mod m0033_paid_invoice;
+mod m0034_unlock_failed_movement_vtxos;
 
 use anyhow::Context;
 use log::debug;
@@ -69,6 +70,7 @@ use m0030_wallet_action_checkpoint::Migration0030;
 use m0031_vtxo_lock_holder::Migration0031;
 use m0032_exit_state_refactor::Migration0032;
 use m0033_paid_invoice::Migration0033;
+use m0034_unlock_failed_movement_vtxos::Migration0034;
 
 pub struct MigrationContext {}
 
@@ -119,6 +121,7 @@ impl MigrationContext {
 		self.try_migration(conn, &Migration0031{})?;
 		self.try_migration(conn, &Migration0032{})?;
 		self.try_migration(conn, &Migration0033{})?;
+		self.try_migration(conn, &Migration0034{})?;
 
 		Ok(())
 	}
@@ -273,7 +276,7 @@ mod test {
 
 		// Perform the migrations and confirm it took effect
 		migs.do_all_migrations(&mut conn).unwrap();
-		assert_current_version(&conn, 33).unwrap();
+		assert_current_version(&conn, 34).unwrap();
 
 		assert!(table_exists(&conn, "bark_vtxo").unwrap());
 		assert!(table_exists(&conn, "bark_vtxo_state").unwrap());
