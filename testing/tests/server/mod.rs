@@ -928,6 +928,56 @@ async fn reject_below_minimum_board_cosign() {
 }
 
 #[tokio::test]
+async fn reject_overlong_board_cosign() {
+	let ctx = TestContext::new("server/reject_overlong_board_cosign").await;
+	// min_board_amount = 0 so the amount check passes and we reach the expiry check.
+	let srv = ctx.captaind("server").cfg(|cfg| {
+		cfg.min_board_amount = sat(0);
+	}).create().await;
+
+	let ark_info = srv.ark_info().await;
+	let tip = ctx.bitcoind().get_block_count().await as u32;
+
+	// An evil client picks the worst expiry the bug allows: the largest height the
+	// ingress bound (MAX_BLOCK_HEIGHT) permits whose offset from the tip is a
+	// multiple of 65536. The server checks `requested_lifetime as u16 > cap`, so a
+	// multiple of 65536 truncates to 0 and slips under the cap — even though the
+	// real lifetime is ~499M blocks (~9,500 years) vs the configured ~4320. A board
+	// VTXO with that expiry can never be cheaply swept (the funding output's expiry
+	// leaf is dead until ~year 11,500), stranding the server's reclaim/forfeit path.
+	let offset = ark::vtxo::policy::MAX_BLOCK_HEIGHT - tip;
+	let expiry_height = tip + (offset - offset % 65_536);
+	assert!(expiry_height <= ark::vtxo::policy::MAX_BLOCK_HEIGHT);
+	assert!(
+		expiry_height - tip > ark_info.vtxo_expiry_delta as u32,
+		"test expiry lifetime ({}) must exceed the server's cap ({})",
+		expiry_height - tip, ark_info.vtxo_expiry_delta,
+	);
+
+	// An honest client computes a sane expiry, so only a hand-built request
+	// exercises the server's validation. The expiry check runs before any signing,
+	// so a freshly generated nonce and a throwaway outpoint suffice to reach it.
+	let user_key = Keypair::new(&SECP, &mut thread_rng());
+	let (_sec_nonce, pub_nonce) = musig::nonce_pair(&user_key);
+
+	let mut rpc = srv.get_public_rpc().await;
+	let res = rpc.request_board_cosign(protos::BoardCosignRequest {
+		amount: sat(100_000).to_sat(),
+		utxo: OutPoint::null().serialize(),
+		expiry_height,
+		user_pubkey: user_key.public_key().serialize().to_vec(),
+		pub_nonce: pub_nonce.serialize().to_vec(),
+	}).await;
+
+	let err = res.expect_err("server must refuse a board expiry beyond its lifetime cap");
+	assert!(
+		err.message().contains("too high"),
+		"expected a lifetime rejection, got [{}]: {}", err.code(), err.message(),
+	);
+	assert_eq!(err.code(), tonic::Code::InvalidArgument, "err: {err}");
+}
+
+#[tokio::test]
 async fn reject_dust_vtxo_request() {
 	require_bark_version!(> "0.1.4");
 
