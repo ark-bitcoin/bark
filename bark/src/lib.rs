@@ -377,6 +377,7 @@ use crate::persist::BarkPersister;
 use crate::persist::models::{RoundStateId, StoredRoundState, Unlocked};
 #[cfg(feature = "socks5-proxy")]
 use crate::proxy::proxy_for_url;
+use crate::recovery::RecoveryReport;
 use crate::round::{RoundParticipation, RoundSecretNonces, RoundStatus};
 use crate::subsystem::RoundMovement;
 use crate::utils::rejected_vtxos_from_error;
@@ -651,6 +652,18 @@ pub struct OpenWalletArgs {
 	///
 	/// Default: false
 	pub create_without_server: bool,
+
+	/// Whether to skip recovering VTXOs from the recovery mailbox.
+	///
+	/// When false (the default), recovery runs on wallet open.
+	///
+	/// Default: false
+	pub skip_recovery: bool,
+
+	/// A callback function to be called when the recovery is finished
+	///
+	/// Default: none
+	pub on_recovery_finished: Option<Box<dyn FnOnce(RecoveryReport) + Send + Sync>>,
 }
 
 impl Default for OpenWalletArgs {
@@ -663,6 +676,8 @@ impl Default for OpenWalletArgs {
 			lock_manager: None,
 			create_if_not_exists: true,
 			create_without_server: false,
+			skip_recovery: false,
+			on_recovery_finished: None,
 		}
 	}
 }
@@ -1079,12 +1094,14 @@ impl Wallet {
 				.context("failed to instantiate platform default persister")?
 		};
 
+		let mut created_now = false;
 		let properties = if let Some(p) = db.read_properties().await? {
 			p
 		} else if args.create_if_not_exists {
 			Self::create(
 				network, &seed, &config, &*db, &*lock_manager, args.create_without_server,
 			).await.context("error creating new wallet")?;
+			created_now = true;
 			db.read_properties().await?
 				.context("create failed: no wallet properties after Wallet::create was called")?
 		} else {
@@ -1141,6 +1158,28 @@ impl Wallet {
 
 		ret.inner.exit.load().await
 			.context("error loading exit system after opening wallet")?;
+
+		if created_now {
+			if !args.skip_recovery {
+				// Recover any VTXOs backed up to the seed-derived recovery mailbox.
+				// Best-effort so it can't abort wallet creation, but a failure means
+				// funds may be missing — surface it loudly. Partial failures are
+				// logged inside the recovery call.
+				match ret.recover_from_mailbox().await {
+					Ok(report) => {
+						if let Some(callback) = args.on_recovery_finished {
+							callback(report);
+						}
+					},
+					Err(e) => {
+						error!("VTXO recovery from the recovery mailbox failed; funds may be \
+							missing from this wallet until recovery succeeds: {:#}", e);
+					},
+				}
+			} else {
+				info!("Seed-based wallet recovery explicitly skipped");
+			}
+		}
 
 		if args.run_daemon {
 			ret.start_daemon()

@@ -68,7 +68,7 @@ impl RecoveryReportEntry {
 /// not be taken for a complete recovery. Ids are kept (not counted) so a caller
 /// can log or retry the exact VTXOs.
 #[derive(Debug, Default, Clone)]
-pub(crate) struct RecoveryReport {
+pub struct RecoveryReport {
 	/// Spendable VTXOs that were successfully re-imported.
 	recovered: RecoveryReportEntry,
 	/// VTXOs deliberately left out: spent into a newer recovered VTXO, exited
@@ -556,7 +556,7 @@ impl Wallet {
 mod test {
 	use super::*;
 	use bitcoin::Amount;
-use bitcoin::hashes::Hash;
+	use bitcoin::hashes::Hash;
 
 	fn dummy_id(vout: u32) -> VtxoId {
 		bitcoin::OutPoint::new(bitcoin::Txid::all_zeros(), vout).into()
