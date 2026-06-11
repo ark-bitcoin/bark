@@ -19,7 +19,7 @@ use bitcoin::hashes::Hash;
 use bitcoin::hex::DisplayHex;
 use bitcoin::key::Keypair;
 use bitcoin::secp256k1::schnorr;
-use futures::future::{join_all, try_join_all};
+use futures::future::join_all;
 use futures::{Stream, StreamExt};
 use log::{debug, error, info, trace, warn};
 
@@ -27,7 +27,7 @@ use ark::{ProtocolEncoding, SignedVtxoRequest, Vtxo, VtxoRequest};
 use ark::vtxo::Full;
 use ark::attestations::{DelegatedRoundParticipationAttestation, RoundAttemptAttestation};
 use ark::forfeit::HashLockedForfeitBundle;
-use ark::musig::{self, DangerousSecretNonce, PublicNonce, SecretNonce};
+use ark::musig::{self, PublicNonce, SecretNonce};
 use ark::rounds::{RoundAttempt, RoundEvent, RoundFinished, RoundSeq, ROUND_TX_VTXO_TREE_VOUT};
 use ark::tree::signed::{LeafVtxoCosignContext, UnlockHash, VtxoTreeSpec};
 use bitcoin_ext::TxStatus;
@@ -252,7 +252,22 @@ impl RoundState {
 		Ok(ret)
 	}
 
-	async fn try_start_attempt(&mut self, wallet: &Wallet, attempt: &RoundAttempt) {
+	async fn try_start_attempt(
+		&mut self,
+		wallet: &Wallet,
+		attempt: &RoundAttempt,
+	) {
+		// Drop the previous attempt's stashed nonces: the new attempt
+		// regenerates cosign keys, so the old key becomes unreachable.
+		if let RoundFlowState::InteractiveOngoing {
+			state: AttemptState::AwaitingUnsignedVtxoTree { ref cosign_keys, .. },
+			..
+		} = self.flow {
+			if let Some(k) = cosign_keys.first() {
+				wallet.inner.round_secret_nonces.forget(&k.public_key());
+			}
+		}
+
 		match start_attempt(wallet, &self.participation, attempt).await {
 			Ok(state) => {
 				self.flow = RoundFlowState::InteractiveOngoing {
@@ -595,7 +610,6 @@ pub enum AttemptState {
 	AwaitingAttempt,
 	AwaitingUnsignedVtxoTree {
 		cosign_keys: Vec<Keypair>,
-		secret_nonces: Vec<Vec<DangerousSecretNonce>>,
 		unlock_hash: UnlockHash,
 	},
 	AwaitingFinishedRound {
@@ -710,16 +724,18 @@ async fn start_attempt(
 		offboard_requests: vec![],
 		unblinded_mailbox_id: Some(unblinded_mailbox_id.serialize()),
 	}).await.context("Ark server refused our payment submission")?;
+	let unlock_hash = UnlockHash::from_bytes(&resp.into_inner().unlock_hash)?;
 
-	Ok(AttemptState::AwaitingUnsignedVtxoTree {
-		unlock_hash: UnlockHash::from_bytes(&resp.into_inner().unlock_hash)?,
-		cosign_keys: cosign_keys,
-		secret_nonces: cosign_nonces.into_iter()
-			.map(|(sec, _pub)| sec.into_iter()
-				.map(DangerousSecretNonce::dangerous_from_secret_nonce)
-				.collect())
-			.collect(),
-	})
+	// Stash nonces in memory only. Empty `cosign_keys` means no VTXO
+	// outputs (offboard-only) — nothing to stash.
+	if let Some(k) = cosign_keys.first() {
+		wallet.inner.round_secret_nonces.stash(
+			k.public_key(),
+			cosign_nonces.into_iter().map(|(sec, _pub)| sec).collect(),
+		);
+	}
+
+	Ok(AttemptState::AwaitingUnsignedVtxoTree { unlock_hash, cosign_keys })
 }
 
 /// just an internal type; need Error trait to work with anyhow
@@ -1018,7 +1034,7 @@ async fn progress_delegated(
 }
 
 async fn progress_attempt(
-	state: &AttemptState,
+	state: &mut AttemptState,
 	wallet: &Wallet,
 	part: &RoundParticipation,
 	event: &RoundEvent,
@@ -1029,15 +1045,30 @@ async fn progress_attempt(
 	match (state, event) {
 
 		(
-			AttemptState::AwaitingUnsignedVtxoTree { cosign_keys, secret_nonces, unlock_hash },
+			AttemptState::AwaitingUnsignedVtxoTree { cosign_keys, unlock_hash },
 			RoundEvent::VtxoProposal(e),
 		) => {
 			trace!("Received VtxoProposal: {:#?}", e);
+
+			// Missing nonces means we restarted before signing —
+			// abandon the attempt rather than reuse on retry.
+			let secret_nonces = if let Some(first) = cosign_keys.first() {
+				match wallet.inner.round_secret_nonces.take(&first.public_key()) {
+					Some(n) => n,
+					None => return AttemptProgressResult::Failed(anyhow!(
+						"secret cosign nonces unavailable (likely after a restart); \
+						 abandoning round attempt to avoid nonce reuse",
+					)),
+				}
+			} else {
+				vec![]
+			};
+
 			match sign_vtxo_tree(
 				wallet,
 				part,
 				&cosign_keys,
-				&secret_nonces,
+				secret_nonces,
 				&e.unsigned_round_tx,
 				&e.vtxos_spec,
 				&e.cosign_agg_nonces,
@@ -1105,12 +1136,12 @@ async fn sign_vtxo_tree(
 	wallet: &Wallet,
 	participation: &RoundParticipation,
 	cosign_keys: &[Keypair],
-	secret_nonces: &[impl AsRef<[DangerousSecretNonce]>],
+	secret_nonces: Vec<Vec<SecretNonce>>,
 	unsigned_round_tx: &Transaction,
 	vtxo_tree: &VtxoTreeSpec,
 	cosign_agg_nonces: &[musig::AggregatedNonce],
 ) -> anyhow::Result<()> {
-	let (srv, _) = wallet.require_server().await.context("server not available")?;
+	let (mut srv, _) = wallet.require_server().await.context("server not available")?;
 
 	let vtxos_utxo = OutPoint::new(unsigned_round_tx.compute_txid(), ROUND_TX_VTXO_TREE_VOUT);
 
@@ -1128,26 +1159,26 @@ async fn sign_vtxo_tree(
 	}
 
 	let unsigned_vtxos = vtxo_tree.clone().into_unsigned_tree(vtxos_utxo);
-	let iter = participation.outputs.iter().zip(cosign_keys).zip(secret_nonces);
 	trace!("Sending vtxo signatures to server...");
-	let _ = try_join_all(iter.map(|((req, key), sec)| async {
+	// Sequential: SecretNonce is consume-once and not Clone, so we move
+	// one Vec<SecretNonce> into cosign_branch per output. Going parallel
+	// would require sharing the server connection across futures, which
+	// isn't worth the complexity for a per-output RPC.
+	for ((req, key), sec) in participation.outputs.iter().zip(cosign_keys).zip(secret_nonces) {
 		let leaf_idx = unsigned_vtxos.spec.leaf_idx_of_req(req).expect("req included");
-		let secret_nonces = sec.as_ref().iter().map(|s| s.to_sec_nonce()).collect();
 		let part_sigs = unsigned_vtxos.cosign_branch(
-			&cosign_agg_nonces, leaf_idx, key, secret_nonces,
+			&cosign_agg_nonces, leaf_idx, key, sec,
 		).context("failed to cosign branch: our request not part of tree")?;
 
 		info!("Sending {} partial vtxo cosign signatures for pk {}",
 			part_sigs.len(), key.public_key(),
 		);
 
-		let _ = srv.client.clone().provide_vtxo_signatures(protos::VtxoSignaturesRequest {
+		srv.client.provide_vtxo_signatures(protos::VtxoSignaturesRequest {
 			pubkey: key.public_key().serialize().to_vec(),
 			signatures: part_sigs.iter().map(|s| s.serialize().to_vec()).collect(),
 		}).await.context("error sending vtxo signatures")?;
-
-		Result::<(), anyhow::Error>::Ok(())
-	})).await.context("error sending VTXO signatures")?;
+	}
 	trace!("Done sending vtxo signatures to server");
 
 	Ok(())

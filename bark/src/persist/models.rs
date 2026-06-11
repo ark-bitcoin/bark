@@ -18,7 +18,6 @@ use lightning_invoice::Bolt11Invoice;
 use ark::{Vtxo, VtxoId, VtxoPolicy, VtxoRequest};
 use ark::vtxo::Full;
 use ark::mailbox::MailboxIdentifier;
-use ark::musig::DangerousSecretNonce;
 use ark::tree::signed::{UnlockHash, VtxoTreeSpec};
 use ark::lightning::{PaymentHash, Preimage};
 use ark::rounds::RoundSeq;
@@ -304,13 +303,34 @@ impl<'a> From<SerdeRoundParticipation<'a>> for RoundParticipation {
 	}
 }
 
+/// Placeholder for the now-removed `secret_nonces` field. Discards
+/// any payload on read so legacy records still parse.
+#[derive(Debug, Default)]
+struct PersistedNoncesPlaceholder;
+
+impl ::serde::Serialize for PersistedNoncesPlaceholder {
+	fn serialize<S: ::serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+		s.collect_seq(std::iter::empty::<()>())
+	}
+}
+
+impl<'de> ::serde::Deserialize<'de> for PersistedNoncesPlaceholder {
+	fn deserialize<D: ::serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+		::serde::de::IgnoredAny::deserialize(d)?;
+		Ok(PersistedNoncesPlaceholder)
+	}
+}
+
 /// Model for [AttemptState]
 #[derive(Debug, Serialize, Deserialize)]
 enum SerdeAttemptState<'a> {
 	AwaitingAttempt,
 	AwaitingUnsignedVtxoTree {
 		cosign_keys: Cow<'a, [Keypair]>,
-		secret_nonces: Cow<'a, [Vec<DangerousSecretNonce>]>,
+		/// Kept for backward compatibility. See
+		/// [PersistedNoncesPlaceholder].
+		#[serde(rename = "secret_nonces", default)]
+		_legacy_secret_nonces: PersistedNoncesPlaceholder,
 		unlock_hash: UnlockHash,
 	},
 	AwaitingFinishedRound {
@@ -326,10 +346,10 @@ impl<'a> From<&'a AttemptState> for SerdeAttemptState<'a> {
 	fn from(state: &'a AttemptState) -> Self {
 		match state {
 			AttemptState::AwaitingAttempt => SerdeAttemptState::AwaitingAttempt,
-			AttemptState::AwaitingUnsignedVtxoTree { cosign_keys, secret_nonces, unlock_hash } => {
+			AttemptState::AwaitingUnsignedVtxoTree { cosign_keys, unlock_hash } => {
 				SerdeAttemptState::AwaitingUnsignedVtxoTree {
 					cosign_keys: Cow::Borrowed(cosign_keys),
-					secret_nonces: Cow::Borrowed(secret_nonces),
+					_legacy_secret_nonces: PersistedNoncesPlaceholder,
 					unlock_hash: *unlock_hash,
 				}
 			},
@@ -348,10 +368,9 @@ impl<'a> From<SerdeAttemptState<'a>> for AttemptState {
 	fn from(state: SerdeAttemptState<'a>) -> Self {
 		match state {
 			SerdeAttemptState::AwaitingAttempt => AttemptState::AwaitingAttempt,
-			SerdeAttemptState::AwaitingUnsignedVtxoTree { cosign_keys, secret_nonces, unlock_hash } => {
+			SerdeAttemptState::AwaitingUnsignedVtxoTree { cosign_keys, _legacy_secret_nonces: _, unlock_hash } => {
 				AttemptState::AwaitingUnsignedVtxoTree {
 					cosign_keys: cosign_keys.into_owned(),
-					secret_nonces: secret_nonces.into_owned(),
 					unlock_hash: unlock_hash,
 				}
 			},
@@ -566,6 +585,8 @@ mod test {
 		// records carry `secret_nonces` as an array of 132-byte buffers.
 		let serialised = r#"{"AwaitingUnsignedVtxoTree":{"cosign_keys":[],"secret_nonces":[[[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]]],"unlock_hash":"0000000000000000000000000000000000000000000000000000000000000000"}}"#;
 		serde_json::from_str::<SerdeAttemptState>(serialised).unwrap();
+		let serialised = r#"{"AwaitingUnsignedVtxoTree":{"cosign_keys":[],"unlock_hash":"0000000000000000000000000000000000000000000000000000000000000000"}}"#;
+		serde_json::from_str::<SerdeAttemptState>(serialised).unwrap();
 	}
 
 	/// `SerdeRoundState` is written to sqlite via `rmp_serde` (positional
@@ -577,6 +598,11 @@ mod test {
 
 		// Legacy record carrying `secret_nonces`.
 		let serialised = "81b84177616974696e67556e7369676e65645674786f5472656593909191dc0084000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000c4200000000000000000000000000000000000000000000000000000000000000000";
+		rmp_serde::from_slice::<SerdeAttemptState>(
+			&Vec::<u8>::from_hex(serialised).unwrap(),
+		).unwrap();
+		// Current record: `secret_nonces` is an empty placeholder seq.
+		let serialised = "81b84177616974696e67556e7369676e65645674786f54726565939090c4200000000000000000000000000000000000000000000000000000000000000000";
 		rmp_serde::from_slice::<SerdeAttemptState>(
 			&Vec::<u8>::from_hex(serialised).unwrap(),
 		).unwrap();

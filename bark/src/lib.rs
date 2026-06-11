@@ -630,7 +630,6 @@ struct WalletInner {
 
 	/// In-memory MuSig2 secret cosign nonces for in-flight round attempts.
 	/// See [`RoundSecretNonces`].
-	#[allow(dead_code)] // wired up in a follow-up commit
 	pub(crate) round_secret_nonces: RoundSecretNonces,
 }
 
