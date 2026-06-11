@@ -104,12 +104,6 @@ If you run into any issues at all, let us know:
 - [Community chat](https://chat.second.tech)
 - [Issue tracker](https://gitlab.com/ark-bitcoin/bark/issues)
 
-## Security policy and responsible disclosure
-
-**The Ark protocol code is experimental and must not be used in production.**
-
-If you happen to find a vulnerability we invite you to [file a public issue](https://gitlab.com/ark-bitcoin/bark/issues/new).
-
 ## License
 
 Released under the **MIT** license-see the [LICENSE](LICENSE) file for details.
