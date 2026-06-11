@@ -1,0 +1,5 @@
+- Store fully-signed VTXOs on registration
+  The server now persists the complete, fully-signed VTXO when it is registered,
+  so it can later serve the full VTXO to clients rebuilding their wallet from
+  seed via the recovery mailbox.
+  [#2193](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2193)

@@ -670,6 +670,11 @@ pub(crate) async fn revoke_lightning_send_htlcs(
 		.context("Failed to cosign vtxos")?
 		.build_signed_vtxos();
 
+	// Ensure revocation vtxos are fully registered server-side before the cosign.
+	if let Err(e) = wallet.register_vtxo_transactions_with_server(&vtxos).await {
+		warn!("failed to register lightning-send revocation vtxo transactions with server: {:#}", e);
+	}
+
 	let revoked = vtxos.iter().map(|v| v.amount()).sum::<Amount>();
 	let effective = -send.total_amount().to_signed().context("total amount out of range")? +
 		revoked.to_signed().context("revoked amount out of range")?;
