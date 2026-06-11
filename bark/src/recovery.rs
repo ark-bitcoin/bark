@@ -1,4 +1,3 @@
-
 //! Wallet recovery from seed.
 //!
 //! As a wallet creates or receives VTXOs it posts their ids to a mailbox keyed
@@ -18,8 +17,8 @@ use ark::attestations::VtxoStatusAttestation;
 use ark::mailbox::MailboxAuthorization;
 use ark::vtxo::Full;
 use bitcoin_ext::BlockHeight;
-use server_rpc::protos::VtxoSpendState;
-use server_rpc::{TryFromBytes, protos};
+use server_rpc::TryFromBytes;
+use server_rpc::protos::{self, VtxoSpendState};
 use server_rpc::protos::mailbox_server::mailbox_message::Message;
 
 use crate::Wallet;
@@ -82,6 +81,8 @@ pub struct RecoveryReport {
 	/// VTXOs whose key sits beyond [`STOP_GAP`]; their presence means funds may be
 	/// missing and the scan can't be reported complete.
 	foreign: RecoveryReportEntry,
+	/// VTXOs that have been fully exited on-chain.
+	exited: RecoveryReportEntry,
 }
 
 impl RecoveryReport {
@@ -127,6 +128,15 @@ impl RecoveryReport {
 
 	pub fn push_failed(&mut self, id: VtxoId, amount: Option<Amount>) {
 		self.failed.insert(id, amount);
+	}
+
+	pub fn exited(&self) -> &RecoveryReportEntry {
+		&self.exited
+	}
+
+	pub fn push_exited(&mut self, vtxo: &Vtxo<Full>) {
+		self.failed.remove(vtxo.id());
+		self.exited.insert(vtxo.id(), Some(vtxo.amount()));
 	}
 }
 
@@ -303,6 +313,29 @@ impl Wallet {
 			.with_context(|| format!("server returned an undecodable vtxo for {id}"))
 	}
 
+	/// Check if a VTXO is confirmed on-chain.
+	///
+	/// If it is, we store it as exited and return `true`.
+	/// If we could not confirm the exit status, we consider it is not exited yet and return `false`.
+	async fn check_vtxo_onchain_status(&self, report: &mut RecoveryReport, vtxo: &Vtxo<Full>) -> anyhow::Result<bool> {
+		// An off-chain VTXO's tx is only confirmed once it has been exited,
+		// so if we see it on-chain the funds live in the on-chain wallet and
+		// it must not be recovered as spendable. The server's spend status
+		// doesn't capture unilateral exits, so we check the chain ourselves.
+		match self.inner.chain.tx_confirmed(vtxo.point().txid).await {
+			Ok(Some(height)) => {
+				self.store_vtxos(&vec![vtxo.clone()], &VtxoState::Exited).await?;
+				self.exit_mgr().start_exit_for_vtxos_including_non_standard(&vec![vtxo.to_bare()]).await?;
+				report.push_exited(vtxo);
+				debug!("Skipping recovery vtxo {}: confirmed on-chain at height {height} (exited)", vtxo.id());
+				Ok(true)
+			},
+			// If we could not confirm the exit status, we consider it is not exited yet.
+			// If it actually is, next wallet sync will handle it properly
+			Ok(None) | Err(_) => Ok(false),
+		}
+	}
+
 	/// Query the server for `id`'s spend state.
 	///
 	/// `keypair` is the VTXO's owner key, used to build the attestation that
@@ -455,6 +488,10 @@ impl Wallet {
 			// Add all the ancestor VTXO ids to the spent set
 			spent.extend(o.vtxo.ancestor_ids());
 
+			if self.check_vtxo_onchain_status(report, &o.vtxo).await? {
+				continue;
+			}
+
 			// The server is the authority on whether it was spent elsewhere.
 			// Matched exhaustively (no catch-all) so a new spend state forces an
 			// explicit decision rather than being silently skipped.
@@ -572,6 +609,7 @@ mod test {
 			skipped: RecoveryReportEntry(HashMap::from([(dummy_id(1), Some(Amount::from_sat(1000)))])),
 			foreign: RecoveryReportEntry(HashMap::new()),
 			failed: RecoveryReportEntry(HashMap::new()),
+			exited: RecoveryReportEntry(HashMap::new()),
 		};
 		assert!(clean.is_complete(),
 			"recovered and skipped VTXOs are clean decisions, not failures");
