@@ -4,6 +4,7 @@ use std::time::Duration;
 
 use log::{error, warn};
 use parking_lot::Mutex;
+use bitcoincore_rpc::RpcApi;
 
 use server::config::OptionalService;
 use server::vtxopool::VtxoTarget;
@@ -576,4 +577,132 @@ async fn watchman_sweeps_exit_after_oor_then_forfeit() {
 	assert!(claim.vtxo_ids.iter().any(|v| v.to_point().txid == progress.txid));
 
 	failures.assert_empty();
+}
+
+/// Runs one deposit -> offboard -> malicious-exit attack and returns how much the
+/// attacker managed to claim on-chain ("stole") on top of the offboard payout.
+///
+/// It boards `n_vtxos`, offboards them all in a single offboard (so for `n >= 2`
+/// the server builds a multi-input forfeit), clones the wallet beforehand, then
+/// has the clone unilaterally exit the now-forfeited vtxos. It then drives the
+/// watchman patiently — interleaving `trigger_sweep` with block confirmations so
+/// the watchman can run its full multi-step confiscation (broadcast the connector
+/// fanout tx, confirm it, then broadcast the forfeit that spends each exit output).
+///
+/// If the watchman confiscates every exit output, the attacker cannot double-spend
+/// and this returns 0. Otherwise the attacker completes its exit and claims the
+/// stranded outputs, and this returns the stolen amount.
+async fn offboard_exit_attack(test_name: &str, n_vtxos: usize) -> bitcoin::Amount {
+	let ctx = TestContext::new(test_name).await;
+	let srv = ctx.captaind("server").funded(btc(10)).cfg(|cfg| {
+		cfg.watchman = OptionalService::Disabled;
+		cfg.vtxopool.vtxo_targets = vec![];
+	}).create().await;
+	let wm = ctx.watchmand("watchman").cfg(|cfg| {
+		cfg.watchman.process_interval = Duration::from_secs(15 * 60);
+	}).create(&srv).await;
+
+	// fund the watchman so it can pay CPFP fees for its forfeit/connector broadcasts
+	ctx.bitcoind().fund_addr(wm.wait_wallet_address().await, sat(1_000_000)).await;
+
+	// honest wallet boards n vtxos
+	let bark = ctx.bark("bark1", &srv).funded(sat(5_000_000)).create().await;
+	for _ in 0..n_vtxos {
+		bark.board_and_confirm_and_register(&ctx, sat(400_000)).await;
+	}
+	bark.sync().await;
+	assert_eq!(bark.vtxos().await.len(), n_vtxos, "should hold {} board vtxos", n_vtxos);
+
+	// the board vtxo outputs that a unilateral exit will put on-chain
+	let exit_points = bark.vtxo_ids().await.iter().map(|id| id.to_point()).collect::<Vec<_>>();
+
+	// snapshot the wallet BEFORE offboarding; the attacker keeps the stale vtxos
+	let evil = bark.full_clone("evil").await;
+
+	// honest offboard: forfeits all n vtxos and receives the payout
+	let payout = ctx.bitcoind().get_new_address();
+	bark.offboard_all(&payout).await;
+	ctx.generate_blocks(1).await;
+	let payout_received = ctx.bitcoind().get_received_by_address(&payout);
+	assert!(payout_received > sat(0), "server should have paid out the offboard");
+
+	// attacker exits the now-forfeited vtxos (puts the exit outputs on-chain)
+	evil.start_exit_all().await;
+	progress_exit_until_awaiting_delta(&ctx, &evil).await;
+
+	// Patiently drive the watchman's multi-step confiscation. For a multi-input
+	// offboard it must first broadcast the connector fanout tx, get it confirmed,
+	// then broadcast the forfeit that spends each exit output. Each sweep it
+	// re-CPFPs the shared fanout tx, so only the LAST cpfp txid in a cycle is live
+	// (earlier ones get RBF-replaced); we await that one so the package has
+	// propagated to the node we mine on before mining.
+	let tip = ctx.generate_blocks(wm.config().watchman.progress_grace_period as u32).await;
+	wm.wait_for_sync_height(tip).await;
+	let client = ctx.bitcoind().sync_client();
+	// Give the watchman ample, repeated opportunity to run its confiscation. Each
+	// cycle triggers a sweep and confirms a block, so it can advance through any
+	// multi-step (connector fanout -> forfeit) confiscation. We stop early once the
+	// watchman has spent every exit output (single-input offboards), and run the
+	// full budget if it never manages to (the multi-input offboard bug).
+	for _ in 0..25 {
+		wm.trigger_sweep().await;
+		tokio::time::sleep(Duration::from_secs(2)).await;
+		let tip = ctx.generate_blocks(1).await;
+		wm.wait_for_sync_height(tip).await;
+		if exit_points.iter().all(|p|
+			client.get_tx_out(&p.txid, p.vout, Some(true)).unwrap().is_none())
+		{
+			break;
+		}
+	}
+
+	// how many exit outputs did the watchman fail to confiscate (still spendable
+	// by the attacker)? With a valid forfeit this is 0.
+	let unconfiscated = exit_points.iter()
+		.filter(|p| client.get_tx_out(&p.txid, p.vout, Some(true)).unwrap().is_some())
+		.count();
+	println!("{}: {}/{} exit outputs left unconfiscated by the watchman; offboard payout {}",
+		test_name, unconfiscated, n_vtxos, payout_received);
+
+	if unconfiscated == 0 {
+		return sat(0);
+	}
+
+	// the watchman failed: attacker completes the double-spend and claims the funds
+	complete_exit(&ctx, &evil).await;
+	let thief = ctx.bitcoind().get_new_address();
+	evil.claim_all_exits(thief.clone()).await;
+	ctx.generate_blocks(1).await;
+	let stolen = ctx.bitcoind().get_received_by_address(&thief);
+	println!("{}: attacker double-spent {} on top of the {} offboard payout",
+		test_name, stolen, payout_received);
+	stolen
+}
+
+/// Driver sanity check: a SINGLE-input offboard forfeit is valid, so the watchman
+/// MUST be able to confiscate a malicious post-offboard exit. If this fails, the
+/// test harness (not the protocol) is at fault — so it guards the meaning of
+/// `multi_input_offboard_double_spend` below.
+#[tokio::test]
+async fn watchman_defends_single_input_offboard_exit() {
+	require_bark_version!(> "0.2.0");
+	let stolen = offboard_exit_attack("server/watchman_defends_single_input_offboard_exit", 1).await;
+	assert_eq!(stolen, sat(0),
+		"single-input offboard: watchman should have confiscated the exit, attacker got {}", stolen);
+}
+
+/// The bug, end-to-end: a MULTI-input offboard forfeit is consensus-invalid, so the
+/// watchman cannot confiscate a malicious post-offboard exit and the attacker
+/// double-spends (keeps both the offboard payout and the exited vtxo value).
+///
+/// This asserts the SECURE outcome, so it is RED on the bug and GREEN once the
+/// forfeit-prevout fix is applied — which is how we confirm the fix is a real
+/// end-to-end fix, paired with `watchman_defends_single_input_offboard_exit`
+/// proving the watchman can defend at all.
+#[tokio::test]
+async fn watchman_defends_multi_input_offboard_exit() {
+	require_bark_version!(> "0.2.0");
+	let stolen = offboard_exit_attack("server/watchman_defends_multi_input_offboard_exit", 2).await;
+	assert_eq!(stolen, sat(0),
+		"multi-input offboard double-spend was NOT prevented; attacker stole {}", stolen);
 }

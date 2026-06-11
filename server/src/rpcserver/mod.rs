@@ -13,20 +13,20 @@ use std::sync::atomic::{self, AtomicBool};
 use tokio::sync::oneshot;
 use tracing::trace;
 
-use server_rpc::RequestExt;
+use server_rpc::{pver, RequestExt};
 
 use crate::error::{BadArgument, NotFound};
 
 
 /// The minimum protocol version supported by the server.
 ///
-/// For info on protocol versions, see [server_rpc] module documentation.
-pub const MIN_PROTOCOL_VERSION: u64 = 1;
+/// For info on protocol versions, see [server_rpc::pver] module documentation.
+pub const MIN_PROTOCOL_VERSION: u64 = pver::PROTOCOL_VERSION_BASE;
 
 /// The maximum protocol version supported by the server.
 ///
-/// For info on protocol versions, see [server_rpc] module documentation.
-pub const MAX_PROTOCOL_VERSION: u64 = 1;
+/// For info on protocol versions, see [server_rpc::pver] module documentation.
+pub const MAX_PROTOCOL_VERSION: u64 = pver::PROTOCOL_VERSION_OFFBOARD_FIX;
 
 /// Whether to provide rich internal errors to RPC users.
 ///

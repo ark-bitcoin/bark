@@ -353,6 +353,7 @@ use bitcoin::{Amount, Network, OutPoint};
 use bitcoin::bip32::{self, ChildNumber, Fingerprint};
 use bitcoin::secp256k1::{self, Keypair, PublicKey};
 use log::{debug, error, info, trace, warn};
+use tokio_stream::StreamExt;
 
 use ark::{ArkInfo, ProtocolEncoding, Vtxo, VtxoId, VtxoPolicy, VtxoRequest};
 use ark::address::VtxoDelivery;
@@ -362,7 +363,7 @@ use ark::vtxo::policy::signing::VtxoSigner;
 use bitcoin_ext::{BlockHeight, P2TR_DUST};
 use server_rpc::{protos, ServerConnection};
 use server_rpc::client::{ConnectError, CreateEndpointError};
-use tokio_stream::StreamExt;
+
 use crate::chain::{ChainSource, ChainSourceSpec};
 use crate::exit::Exit;
 use crate::lock_manager::LockManager;

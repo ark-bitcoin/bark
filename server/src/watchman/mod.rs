@@ -597,6 +597,12 @@ impl Watchman {
 		// make sure we always increment with the minimum incremental feerate
 		let mut fee_rate = min_fee_rate;
 
+		// Deduplicate by progress_txid: when multiple vtxos share the same
+		// connector tx, only one CPFP must be created for it (P2A can only be
+		// spent once per mempool slot).
+		let mut seen = HashSet::new();
+		txs.retain(|(txid, _)| seen.insert(*txid));
+
 		// filter txs that are already in the mempool with sufficient fee
 		txs.retain(|(_, v)| match self.get_mempool_spend(v.id()) {
 			None => true,

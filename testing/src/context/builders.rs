@@ -18,6 +18,10 @@ use crate::{Bark, Bitcoind, Captaind, Lightningd, LightningdConfig};
 use crate::util::FutureExt;
 use super::TestContext;
 
+// If the caller asked us to board but didn't specify how much
+// onchain to send, cover all board amounts plus a generous fee
+// buffer.
+const BOARD_ONCHAIN_FEE_BUFFER: Amount = Amount::from_sat(100_000);
 
 pub struct CaptaindBuilder<'a> {
 	ctx: &'a TestContext,
@@ -260,6 +264,7 @@ pub struct BarkBuilder<'a> {
 	srv: &'a dyn super::ToArkUrl,
 	own_bitcoind: bool,
 	fund_amount: Option<Amount>,
+	board_amounts: Vec<Amount>,
 	server_address: Option<String>,
 	chain_address: Option<String>,
 	socks5_proxy: Option<String>,
@@ -274,6 +279,7 @@ impl<'a> BarkBuilder<'a> {
 			srv,
 			own_bitcoind: false,
 			fund_amount: None,
+			board_amounts: Vec::new(),
 			server_address: None,
 			chain_address: None,
 			socks5_proxy: None,
@@ -288,6 +294,11 @@ impl<'a> BarkBuilder<'a> {
 
 	pub fn funded(mut self, amount: Amount) -> Self {
 		self.fund_amount = Some(amount);
+		self
+	}
+
+	pub fn boarded(mut self, amount: Amount) -> Self {
+		self.board_amounts.push(amount);
 		self
 	}
 
@@ -349,8 +360,23 @@ impl<'a> BarkBuilder<'a> {
 		let datadir = self.ctx.datadir.join(&self.name);
 		let bark = Bark::try_new(&self.name, datadir, BarkNetwork::Regtest, cfg, bitcoind).await?;
 
-		if let Some(amount) = self.fund_amount {
+		let fund_amount = self.fund_amount.or_else(|| {
+			if self.board_amounts.is_empty() {
+				None
+			} else {
+				Some(self.board_amounts.iter().copied().sum::<Amount>() + BOARD_ONCHAIN_FEE_BUFFER)
+			}
+		});
+		if let Some(amount) = fund_amount {
 			self.ctx.fund_bark(&bark, amount).await;
+		}
+		if !self.board_amounts.is_empty() {
+			for amount in &self.board_amounts {
+				let b = bark.try_board(*amount).await.context("board_amount")?;
+				self.ctx.await_transaction(b.funding_tx.txid).await;
+			}
+			self.ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
+			bark.sync().await;
 		}
 
 		Ok(bark)
@@ -460,18 +486,13 @@ impl<'a> BarkSdkBuilder<'a> {
 			false,
 		).await.context("creating bark wallet")?;
 
-		// If the caller asked us to board but didn't specify how much
-		// onchain to send, cover all board amounts plus a generous fee
-		// buffer.
-		const ONCHAIN_FEE_BUFFER: Amount = Amount::from_sat(100_000);
 		let fund_amount = self.fund_amount.or_else(|| {
 			if self.board_amounts.is_empty() {
 				None
 			} else {
-				Some(self.board_amounts.iter().copied().sum::<Amount>() + ONCHAIN_FEE_BUFFER)
+				Some(self.board_amounts.iter().copied().sum::<Amount>() + BOARD_ONCHAIN_FEE_BUFFER)
 			}
 		});
-
 		if let Some(amount) = fund_amount {
 			let address = onchain.address().await.context("onchain address")?;
 			self.ctx.bitcoind().fund_addr(address, amount).await;

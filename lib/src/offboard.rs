@@ -203,16 +203,16 @@ where
 		let mut pub_nonces = Vec::with_capacity(self.input_vtxos.len());
 		let mut part_sigs = Vec::with_capacity(self.input_vtxos.len());
 		let offboard_txid = self.offboard_tx.compute_txid();
-		let connector_prev = OutPoint::new(offboard_txid, OFFBOARD_TX_CONNECTOR_VOUT as u32);
-		let connector_txout = self.offboard_tx.output.get(OFFBOARD_TX_CONNECTOR_VOUT)
+		let connector_fanout_prev = OutPoint::new(offboard_txid, OFFBOARD_TX_CONNECTOR_VOUT as u32);
+		let connector_fanout_txout = self.offboard_tx.output.get(OFFBOARD_TX_CONNECTOR_VOUT)
 			.expect("invalid offboard tx");
 
 		if self.input_vtxos.len() == 1 {
 			let (nonce, sig) = user_sign_vtxo_forfeit_input(
 				self.input_vtxos[0].as_ref(),
 				keys[0].borrow(),
-				connector_prev,
-				connector_txout,
+				connector_fanout_prev,
+				connector_fanout_txout,
 				&server_nonces[0],
 			);
 			pub_nonces.push(nonce);
@@ -222,16 +222,23 @@ where
 			// sign forfeit txs with the outputs of that tx
 
 			let connector_tx = construct_multi_connector_tx(
-				connector_prev, self.input_vtxos.len(), &connector_txout.script_pubkey,
+				connector_fanout_prev, self.input_vtxos.len(), &connector_fanout_txout.script_pubkey,
 			);
 			let connector_txid = connector_tx.compute_txid();
 
-			// NB all connector txouts are identical, we copy the one from the offboard tx
+			// The forfeit txs spend the connector tx's outputs, which carry a
+			// single dust each; the offboard tx's connector output carries the
+			// combined sum. The sighash commits to the prevout values, so we
+			// must use the actual connector tx output here.
+			let connector_txout = TxOut {
+				script_pubkey: connector_fanout_txout.script_pubkey.clone(),
+				value: P2TR_DUST,
+			};
 			let iter = self.input_vtxos.iter().zip(keys).zip(server_nonces);
 			for (i, ((vtxo, key), server_nonce)) in iter.enumerate() {
 				let connector = OutPoint::new(connector_txid, i as u32);
 				let (nonce, sig) = user_sign_vtxo_forfeit_input(
-					vtxo.as_ref(), key.borrow(), connector, connector_txout, server_nonce,
+					vtxo.as_ref(), key.borrow(), connector, &connector_txout, server_nonce,
 				);
 				pub_nonces.push(nonce);
 				part_sigs.push(sig);
@@ -264,8 +271,8 @@ where
 		assert_ne!(self.input_vtxos.len(), 0, "no inputs");
 
 		let offboard_txid = self.offboard_tx.compute_txid();
-		let connector_prev = OutPoint::new(offboard_txid, OFFBOARD_TX_CONNECTOR_VOUT as u32);
-		let connector_txout = self.offboard_tx.output.get(OFFBOARD_TX_CONNECTOR_VOUT)
+		let connector_fanout_prev = OutPoint::new(offboard_txid, OFFBOARD_TX_CONNECTOR_VOUT as u32);
+		let connector_fanout_txout = self.offboard_tx.output.get(OFFBOARD_TX_CONNECTOR_VOUT)
 			.expect("invalid offboard tx");
 		let tweaked_connector_key = connector_key.for_keyspend_only(&*SECP);
 
@@ -282,8 +289,8 @@ where
 				vtxo,
 				server_key,
 				&tweaked_connector_key,
-				connector_prev,
-				connector_txout,
+				connector_fanout_prev,
+				connector_fanout_txout,
 				(&server_pub_nonces[0], server_sec_nonces.into_iter().next().unwrap()),
 				&user_pub_nonces[0],
 				&user_partial_sigs[0],
@@ -295,9 +302,26 @@ where
 			// here we will create a deterministic intermediate connector tx and
 			// sign forfeit txs with the outputs of that tx
 
-			let connector_tx = construct_multi_connector_tx(
-				connector_prev, self.input_vtxos.len(), &connector_txout.script_pubkey,
-			);
+			let connector_tx = {
+				let mut tx = construct_multi_connector_tx(
+					connector_fanout_prev,
+					self.input_vtxos.len(),
+					&connector_fanout_txout.script_pubkey,
+				);
+
+				// The connector fanout tx spends the offboard's connector output, a
+				// key-path-only p2tr for the connector key. Sign it; otherwise it would
+				// be stored/broadcast with an empty witness and rejected by the mempool.
+				let sighash = SighashCache::new(&tx).taproot_key_spend_signature_hash(
+					0, &Prevouts::All(&[connector_fanout_txout]), TapSighashType::Default,
+				).expect("provided the connector prevout");
+				let sig = SECP.sign_schnorr_with_aux_rand(
+					&sighash.into(), &tweaked_connector_key, &rand::random(),
+				);
+				tx.input[0].witness = Witness::from_slice(&[&sig[..]]);
+
+				tx
+			};
 			let connector_txid = connector_tx.compute_txid();
 
 			ret.connector_tx = Some(connector_tx);
@@ -309,7 +333,14 @@ where
 				self.input_vtxos.len(),
 			));
 
-			// NB all connector txouts are identical, we copy the one from the offboard tx
+			// The forfeit txs spend the connector tx's outputs, which carry a
+			// single dust each; the offboard tx's connector output carries the
+			// combined sum. The sighash commits to the prevout values, so we
+			// must use the actual connector tx output here.
+			let connector_txout = TxOut {
+				script_pubkey: connector_fanout_txout.script_pubkey.clone(),
+				value: P2TR_DUST,
+			};
 			let iter = self.input_vtxos.iter()
 				.zip(server_pub_nonces)
 				.zip(server_sec_nonces)
@@ -323,7 +354,7 @@ where
 					server_key,
 					&tweaked_connector_key,
 					connector,
-					connector_txout,
+					&connector_txout,
 					(server_pub, server_sec),
 					user_pub,
 					user_part,
@@ -669,7 +700,7 @@ mod test {
 
 		let user_sigs = ctx.user_sign_forfeits(&[&input1_key, &input2_key], &server_pub_nonces);
 
-		ctx.finish(
+		let result = ctx.finish(
 			&server_key,
 			&conn_key,
 			&server_pub_nonces,
@@ -677,5 +708,26 @@ mod test {
 			&user_sigs.public_nonces,
 			&user_sigs.partial_signatures,
 		).unwrap();
+
+		// The forfeit txs must be valid against the prevouts that will actually
+		// exist on-chain: each spends an output of the connector fanout tx,
+		// which carries a single dust, not the combined fanout root output on
+		// the offboard tx. Taproot sighashes commit to all prevout amounts, so
+		// signing against the wrong value makes the forfeits consensus-invalid.
+		let connector_tx = result.connector_tx.as_ref()
+			.expect("multi-input offboard must have a connector fanout tx");
+		let connector_txid = connector_tx.compute_txid();
+		for (i, (vtxo, forfeit_tx)) in inputs.iter().zip(&result.forfeit_txs).enumerate() {
+			assert_eq!(
+				forfeit_tx.input[1].previous_output,
+				OutPoint::new(connector_txid, i as u32),
+				"forfeit tx {} doesn't spend its fanout connector", i,
+			);
+			let real_prevouts = [vtxo.txout(), connector_tx.output[i].clone()];
+			crate::test_util::verify_tx(&real_prevouts, 0, forfeit_tx)
+				.expect(&format!("forfeit tx {} vtxo input invalid against real connector prevout", i));
+			crate::test_util::verify_tx(&real_prevouts, 1, forfeit_tx)
+				.expect(&format!("forfeit tx {} connector input invalid against real connector prevout", i));
+		}
 	}
 }
