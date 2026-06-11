@@ -1,34 +1,128 @@
+use std::collections::HashSet;
 use std::future::Future;
 use std::pin::Pin;
 use std::str::FromStr;
+use std::sync::LazyLock;
 use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
 
 use http::HeaderMap;
 use http_body::Body as HttpBody;
 use opentelemetry::KeyValue;
-use server_rpc::client::ACCESS_TOKEN_HEADER;
+use parking_lot::RwLock;
+use server_rpc::client::{ACCESS_TOKEN_HEADER, USER_AGENT_HEADER};
 use server_rpc::lookup_grpc_method;
 use tonic::transport::server::TcpConnectInfo;
 use tower::{Layer, Service};
-use tracing::{debug, info_span, trace, Instrument};
+use tracing::{debug, error, info_span, trace, Instrument};
 use crate::telemetry::{self};
 use super::MAX_PROTOCOL_VERSION;
 
 const RPC_SYSTEM_HTTP: &str = "http";
 const RPC_SYSTEM_GRPC: &str = "grpc";
 
+/// Hard cap on distinct `client` label values admitted per process lifetime.
+/// Once full, unknown names roll up into the `other` bucket. With pre-seeded
+/// known clients ([SEEN_CLIENTS]) the effective dynamic budget is slightly
+/// smaller than this number.
+const MAX_CLIENT_BUCKETS: usize = 1024;
+/// Max length of an accepted client name. Longer names are rejected.
+const MAX_CLIENT_NAME_LEN: usize = 32;
+
 #[derive(Clone, Debug)]
 pub struct RpcMethodDetails {
 	system: &'static str,
 	service: &'static str,
 	method: &'static str,
+	client: &'static str,
 }
 
 impl RpcMethodDetails {
 	pub fn format_path(&self) -> String {
 		format!("{}://{}/{}", self.system, self.service, self.method)
 	}
+}
+
+/// Process-wide set of admitted `client` label values. Pre-seeded with the
+/// canonical client names we ship (pure-Rust `bark` plus the per-binding flavors
+/// from `bark-ffi-bindings`) so their slots are always available even if an
+/// attacker races to fill the dynamic budget on startup. Members are `'static`
+/// because we leak admitted names ([bucket_client] uses `Box::leak`); the set
+/// is bounded by [MAX_CLIENT_BUCKETS] so the total leak is at most ~1KB per
+/// process.
+static SEEN_CLIENTS: LazyLock<RwLock<HashSet<&'static str>>> = LazyLock::new(|| {
+	let mut s = HashSet::new();
+	s.insert("bark");
+	s.insert("bark-kotlin");
+	s.insert("bark-swift");
+	s.insert("bark-dart");
+	s.insert("bark-react-native");
+	s.insert("bark-wasm");
+	s.insert("bark-go");
+	RwLock::new(s)
+});
+
+/// Parse a strict `<name>/<version>` user-agent value, borrowing the name slice.
+///
+/// Called on every request, so this is allocation-free. The schema is rigid:
+/// exactly one `/`, a non-empty name on the left, a non-empty version on the
+/// right. The name must be lowercase ASCII alphanumeric with optional `-`/`_`
+/// and no longer than [MAX_CLIENT_NAME_LEN]. We don't lowercase ourselves
+/// (that would allocate); uppercase names are rejected so misbehaving clients
+/// get a clear signal rather than silently bucketing as something else.
+fn parse_client_name(raw: &str) -> Option<&str> {
+	let (name, version) = raw.split_once('/')?;
+	if name.is_empty() || version.is_empty() || name.len() > MAX_CLIENT_NAME_LEN {
+		return None;
+	}
+	if !name.bytes().all(|b| matches!(b, b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_')) {
+		return None;
+	}
+	Some(name)
+}
+
+/// Bucket a raw `x-user-agent` value into a stable `client` telemetry label.
+///
+/// - `None` (header absent) -> `Ok("unknown")`.
+/// - Header present but malformed -> `Err(())`; the caller should reject the RPC.
+/// - Otherwise, the parsed name is admitted to [SEEN_CLIENTS] up to
+///   [MAX_CLIENT_BUCKETS], returning the interned `&'static str`. Past the
+///   cap further unique names collapse into `other`, bounding label cardinality.
+pub fn bucket_client(raw: Option<&str>) -> Result<&'static str, ()> {
+	let Some(raw) = raw else { return Ok("unknown") };
+	let name = parse_client_name(raw).ok_or(())?;
+
+	// Fast path: already admitted.
+	if let Some(&interned) = SEEN_CLIENTS.read().get(name) {
+		return Ok(interned);
+	}
+
+	// Slow path: admit if we still have budget.
+	let mut seen = SEEN_CLIENTS.write();
+	// Re-check under the write lock in case another thread admitted concurrently.
+	if let Some(&interned) = seen.get(name) {
+		return Ok(interned);
+	}
+	if seen.len() >= MAX_CLIENT_BUCKETS {
+		return Ok("other");
+	}
+	let interned: &'static str = Box::leak(Box::<str>::from(name));
+	seen.insert(interned);
+	// Fire exactly once, on the insert that brings us up to the cap. After
+	// this point any further unique client names bucket as "other". Emitted
+	// at error level so the team is paged: hitting the cap means either the
+	// budget needs raising or something fishy is going on, both of which
+	// warrant prompt attention.
+	if seen.len() == MAX_CLIENT_BUCKETS {
+		let mut admitted: Vec<&'static str> = seen.iter().copied().collect();
+		admitted.sort_unstable();
+		error!(
+			"rpc.client bucket budget exhausted ({}/{} admitted: {:?}); \
+			 further unique client names will be reported as 'other'",
+			seen.len(), MAX_CLIENT_BUCKETS, admitted,
+		);
+	}
+	Ok(interned)
 }
 
 #[derive(Clone)]
@@ -107,6 +201,7 @@ fn report_grpc_status(
 				KeyValue::new(telemetry::RPC_SYSTEM, rpc_method_details.system),
 				KeyValue::new(telemetry::RPC_SERVICE, rpc_method_details.service),
 				KeyValue::new(telemetry::RPC_METHOD, rpc_method_details.method),
+				KeyValue::new(telemetry::RPC_CLIENT, rpc_method_details.client),
 				KeyValue::new(telemetry::ATTRIBUTE_ERROR, tonic::Code::from_i32(code).to_string()),
 			]);
 
@@ -129,6 +224,7 @@ fn report_grpc_status(
 				KeyValue::new(telemetry::RPC_SYSTEM, rpc_method_details.system),
 				KeyValue::new(telemetry::RPC_SERVICE, rpc_method_details.service),
 				KeyValue::new(telemetry::RPC_METHOD, rpc_method_details.method),
+				KeyValue::new(telemetry::RPC_CLIENT, rpc_method_details.client),
 				KeyValue::new(telemetry::ATTRIBUTE_ERROR, "missing_grpc_status"),
 			]);
 
@@ -169,6 +265,7 @@ impl<B> TrailerCapturingBody<B> {
 			inner,
 			rpc_method_details: RpcMethodDetails {
 				system: RPC_SYSTEM_GRPC, service: "health", method: "check",
+				client: "unknown",
 			},
 			start_time: Instant::now(),
 			skip_telemetry: true,
@@ -201,6 +298,7 @@ where
 					KeyValue::new(telemetry::RPC_SYSTEM, self.rpc_method_details.system),
 					KeyValue::new(telemetry::RPC_SERVICE, self.rpc_method_details.service),
 					KeyValue::new(telemetry::RPC_METHOD, self.rpc_method_details.method),
+					KeyValue::new(telemetry::RPC_CLIENT, self.rpc_method_details.client),
 					KeyValue::new(telemetry::ATTRIBUTE_ERROR, "body_error"),
 				]);
 
@@ -252,7 +350,7 @@ where
 	S::Error: std::fmt::Debug,
 	B: http_body::Body + Send + 'static,
 	B::Error: Into<tonic::codegen::StdError> + Send + 'static,
-	ResBody: HttpBody + Unpin + Send + 'static,
+	ResBody: HttpBody + Unpin + Send + Default + 'static,
 	ResBody::Error: std::fmt::Display,
 {
 	type Response = http::Response<TrailerCapturingBody<ResBody>>;
@@ -276,6 +374,24 @@ where
 		let is_grpc = req.headers().get("content-type")
 			.map_or(false, |ct| ct == "application/grpc");
 
+		let raw_ua = req.headers().get(USER_AGENT_HEADER).and_then(|v| v.to_str().ok());
+		let client = match bucket_client(raw_ua) {
+			Ok(client) => client,
+			Err(()) => {
+				// Header is present but doesn't match `<name>/<version>`.
+				// Reject the request with a trailers-only invalid_argument
+				// response so misbehaving clients get a clear signal rather
+				// than silently rolling up into a junk bucket.
+				debug!("rejecting RPC: malformed x-user-agent: {:?}", raw_ua);
+				let response: http::Response<ResBody> = tonic::Status::invalid_argument(
+					"x-user-agent must match `<name>/<version>`",
+				).into_http();
+				return Box::pin(async move {
+					Ok(response.map(TrailerCapturingBody::noop))
+				});
+			}
+		};
+
 		let rpc_method_details = if is_grpc {
 			// Log protocol version used by user.
 			// We allow +50 above MAX to detect clients using newer versions,
@@ -291,15 +407,18 @@ where
 			}
 
 			let (service, method) = lookup_grpc_method(req.uri().path());
-			RpcMethodDetails { system: RPC_SYSTEM_GRPC, service, method }
+			RpcMethodDetails { system: RPC_SYSTEM_GRPC, service, method, client }
 		} else {
-			RpcMethodDetails { system: RPC_SYSTEM_HTTP, service: "unknown", method: "unknown" }
+			RpcMethodDetails {
+				system: RPC_SYSTEM_HTTP, service: "unknown", method: "unknown", client,
+			}
 		};
 
 		let attributes = [
 			KeyValue::new(telemetry::RPC_SYSTEM, rpc_method_details.system),
 			KeyValue::new(telemetry::RPC_SERVICE, rpc_method_details.service),
 			KeyValue::new(telemetry::RPC_METHOD, rpc_method_details.method),
+			KeyValue::new(telemetry::RPC_CLIENT, rpc_method_details.client),
 		];
 		telemetry::add_grpc_in_progress(&attributes);
 
@@ -310,6 +429,7 @@ where
 			{ telemetry::RPC_SYSTEM } = rpc_method_details.system,
 			{ telemetry::RPC_SERVICE } = rpc_method_details.service,
 			{ telemetry::RPC_METHOD } = rpc_method_details.method,
+			{ telemetry::RPC_CLIENT } = rpc_method_details.client,
 			{ telemetry::RPC_ACCESS_TOKEN } = req.headers().get(ACCESS_TOKEN_HEADER)
 				.and_then(|v| v.to_str().ok()),
 		);
@@ -331,6 +451,7 @@ where
 						KeyValue::new(telemetry::RPC_SYSTEM, rpc_method_details.system),
 						KeyValue::new(telemetry::RPC_SERVICE, rpc_method_details.service),
 						KeyValue::new(telemetry::RPC_METHOD, rpc_method_details.method),
+						KeyValue::new(telemetry::RPC_CLIENT, rpc_method_details.client),
 						KeyValue::new(telemetry::ATTRIBUTE_ERROR, "protocol_error"),
 					]);
 
@@ -372,6 +493,46 @@ impl<S> tower::Layer<S> for TelemetryMetricsLayer {
 
 	fn layer(&self, inner: S) -> Self::Service {
 		TelemetryMetricsService::new(inner)
+	}
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	#[test]
+	fn parse_client_name_accepts_schema() {
+		assert_eq!(parse_client_name("bark/0.2.3"), Some("bark"));
+		assert_eq!(parse_client_name("my-wallet/1.0"), Some("my-wallet"));
+		assert_eq!(parse_client_name("my_wallet/1.0"), Some("my_wallet"));
+		// Versions with extra `/` or `-` are kept opaque on the right side.
+		assert_eq!(parse_client_name("bark/0.2.3-DIRTY"), Some("bark"));
+	}
+
+	#[test]
+	fn parse_client_name_rejects_violations() {
+		// Missing or empty halves.
+		assert_eq!(parse_client_name(""), None);
+		assert_eq!(parse_client_name("bark"), None);
+		assert_eq!(parse_client_name("bark/"), None);
+		assert_eq!(parse_client_name("/0.2.3"), None);
+		// Uppercase in the name (we don't lowercase to stay allocation-free).
+		assert_eq!(parse_client_name("Bark/0.2.3"), None);
+		// Invalid characters in the name.
+		assert_eq!(parse_client_name("bark!/0.2.3"), None);
+		assert_eq!(parse_client_name(" bark/0.2.3"), None);
+		// Name too long.
+		let long = format!("{}/1.0", "a".repeat(MAX_CLIENT_NAME_LEN + 1));
+		assert_eq!(parse_client_name(&long), None);
+	}
+
+	#[test]
+	fn bucket_client_classifies_inputs() {
+		assert_eq!(bucket_client(None), Ok("unknown"));
+		assert_eq!(bucket_client(Some("bark/0.2.3")), Ok("bark"));
+		assert_eq!(bucket_client(Some("bark")), Err(()));
+		assert_eq!(bucket_client(Some("")), Err(()));
+		assert_eq!(bucket_client(Some("Bark/0.2.3")), Err(()));
 	}
 }
 

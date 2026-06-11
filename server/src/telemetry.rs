@@ -200,6 +200,9 @@ pub const RPC_SYSTEM: &str = opentelemetry_semantic_conventions::attribute::RPC_
 pub const RPC_SERVICE: &str = opentelemetry_semantic_conventions::attribute::RPC_SERVICE;
 pub const RPC_METHOD: &str = opentelemetry_semantic_conventions::attribute::RPC_METHOD;
 pub const RPC_ACCESS_TOKEN: &str = "rpc.access_token";
+/// Client implementation that issued the RPC, bucketed to a small allowlist
+/// to bound metric cardinality (see [crate::rpcserver::middleware::bucket_client]).
+pub const RPC_CLIENT: &str = "rpc.client";
 /// The [numeric status code](https://github.com/grpc/grpc/blob/v1.33.2/doc/statuscodes.md)
 /// of the gRPC request.
 pub const RPC_GRPC_STATUS_CODE: &str = opentelemetry_semantic_conventions::attribute::RPC_GRPC_STATUS_CODE;

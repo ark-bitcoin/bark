@@ -1,0 +1,11 @@
+- Send an `x-user-agent` header on every Ark RPC
+  Bark now identifies itself to the Ark server on every request, defaulting
+  to `bark/<version>`. Integrators embedding the `bark` crate (FFI bindings,
+  WASM wallets, custom apps) can override the value via the new
+  `Config.user_agent` field or `ServerConnectionBuilder::user_agent()`, so
+  server-side telemetry can attribute traffic per implementation.
+  [#2170](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2170)
+  - **BREAKING:** `bark::Config` gained a `user_agent: Option<String>` field.
+    Code that constructs `Config` via struct literal must now supply
+    `user_agent: None` (or a value) explicitly. Code using
+    `Config::network_default(...)` or TOML deserialization is unaffected.
