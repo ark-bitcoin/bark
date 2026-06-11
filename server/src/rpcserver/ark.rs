@@ -29,7 +29,8 @@ use ark::rounds::RoundId;
 use ark::vtxo::Full;
 use ark::vtxo::policy::check_block_height;
 use bitcoin_ext::{BlockDelta, BlockHeight};
-use server_rpc::{self as rpc, protos, TryFromBytes};
+use server_rpc::{self as rpc, protos, RequestExt, TryFromBytes};
+
 use crate::database::rounds::StoredRoundOutput;
 use crate::round::DelegatedInput;
 use crate::round::SelfSignedInput;
@@ -701,10 +702,20 @@ impl rpc::server::ArkService for Server {
 		&self,
 		req: tonic::Request<protos::PrepareOffboardRequest>,
 	) -> Result<tonic::Response<protos::PrepareOffboardResponse>, tonic::Status> {
+		let pver = req.pver()?;
 		let req = req.into_inner();
 
 		let request = req.offboard.badarg("missing offboard field")?.try_into()
 			.badarg("invalid offboard request")?;
+
+		if pver < server_rpc::pver::PROTOCOL_VERSION_OFFBOARD_FIX {
+			if req.input_vtxo_ids.len() > 1 {
+				return Err(tonic::Status::unavailable(
+					"YOU NEED TO UPDATE YOUR WALLET VERSION FOR THIS OPERATION",
+				));
+			}
+		}
+
 		let input_vtxos = req.input_vtxo_ids.iter().map(|v| VtxoId::from_bytes(v))
 			.collect::<Result<Vec<_>, _>>()?;
 		let attestation = req.attestation.iter()
