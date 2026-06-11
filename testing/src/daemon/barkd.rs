@@ -212,6 +212,19 @@ impl Barkd {
 			.expect("failed to build barkd bip321 uri")
 	}
 
+	/// Pay a BOLT-11 `invoice` (lightning send), using the amount from the
+	/// invoice. The REST send does not wait for the payment to resolve, so
+	/// callers should drive resolution with [`Barkd::sync`].
+	pub async fn pay_lightning(&self, invoice: &str) {
+		let config = self.client_config();
+		wallet_api::send(&config, SendRequest {
+			destination: invoice.to_string(),
+			amount_sat: None,
+			comment: None,
+		}).await.expect("barkd lightning send failed");
+	}
+
+
 	/// Request a short-lived websocket authentication ticket.
 	async fn create_ws_ticket(&self) -> String {
 		// The ticket endpoint is exercised directly via reqwest rather than the

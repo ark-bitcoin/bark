@@ -229,3 +229,122 @@ async fn recovered_wallet_finds_lightning_receive() {
 	let recipient = ctx.barkd("recipient", &srv).create().await;
 	recovered.send(&recipient.ark_address().await, Amount::from_sat(500_000)).await;
 }
+
+/// Wallet recovery of a Lightning-send change output.
+///
+/// Pay a Lightning invoice (a successful send): the wallet's VTXO is spent and
+/// a change VTXO comes back. After recovering from the seed, the change must be
+/// rediscovered.
+#[tokio::test]
+async fn recovered_wallet_finds_lightning_send_change() {
+	let ctx = TestContext::new("barkd/recovered_wallet_finds_lightning_send_change").await;
+	let lightning = ctx.new_lightning_setup("lightningd").await;
+	let srv = ctx.captaind("server")
+		.lightningd(&lightning.internal)
+		.funded(btc(10))
+		.create().await;
+	srv.wait_for_vtxopool(&ctx).await;
+	ctx.generate_blocks(1).await;
+
+	let barkd = ctx.barkd("barkd", &srv).boarded(sat(1_000_000)).create().await;
+	let board = barkd.vtxos(None).await;
+	let board_id = board[0].vtxo.id;
+
+	// Pay a 300k invoice: the send succeeds, spending the board VTXO and
+	// leaving a change VTXO.
+	let invoice = lightning.external.invoice(Some(sat(300_000)), "send", "send").await;
+	lightning.sync().await;
+	barkd.pay_lightning(&invoice).await;
+
+	// The REST send returns before the payment resolves, so drive it via sync
+	// until the change VTXO has replaced the board VTXO.
+	let mut before = None;
+	for _ in 0..30 {
+		tokio::time::sleep(Duration::from_millis(500)).await;
+		barkd.sync().await;
+		let vtxos = barkd.vtxos(None).await;
+		if vtxos.len() == 1 && vtxos[0].vtxo.id != board_id {
+			before = Some(vtxos);
+			break;
+		}
+	}
+	let before = before.expect("lightning send should resolve to a single change VTXO");
+
+	// Recover from the same seed.
+	let mnemonic = barkd.mnemonic().await;
+	let recovered = ctx.barkd("barkd_recovered", &srv)
+		.mnemonic(mnemonic)
+		.create().await;
+	recovered.onchain_sync().await;
+	recovered.sync().await;
+
+	let after = recovered.vtxos(Some(true)).await;
+	assert_eq!(after.len(), before.len(),
+		"recovered wallet should rediscover both the change and revocation VTXOs");
+	for vtxo in before.iter() {
+		assert!(after.iter().any(|v| v.vtxo.id == vtxo.vtxo.id),
+			"recovered wallet should rediscover VTXO {:?}", vtxo.vtxo.id);
+	}
+
+	// Spend recovered VTXOs in a payment
+	let recipient = ctx.barkd("recipient", &srv).create().await;
+	recovered.send(&recipient.ark_address().await, Amount::from_sat(699_443)).await;
+}
+
+/// Wallet recovery of Lightning-send change and revocation outputs.
+///
+/// With no channel, a Lightning send can't be routed: the payment fails and the
+/// wallet recovers its funds as a revocation VTXO alongside the change VTXO.
+/// After recovering from the seed, both must be rediscovered.
+#[tokio::test]
+async fn recovered_wallet_finds_lightning_send_revocation() {
+	let ctx = TestContext::new("barkd/recovered_wallet_finds_lightning_send_revocation").await;
+	let lightning = ctx.new_lightning_setup_no_channel("lightningd").await;
+	let srv = ctx.captaind("server")
+		.lightningd(&lightning.internal)
+		.funded(btc(10))
+		.create().await;
+	srv.wait_for_vtxopool(&ctx).await;
+	ctx.generate_blocks(1).await;
+
+	let barkd = ctx.barkd("barkd", &srv).boarded(sat(1_000_000)).create().await;
+
+	// Pay a 300k invoice with no route: the send fails and the wallet ends up
+	// with two VTXOs — the change and the revoked payment amount.
+	let invoice = lightning.external.invoice(Some(sat(300_000)), "send", "send").await;
+	lightning.sync().await;
+	barkd.pay_lightning(&invoice).await;
+
+	// Drive the failed send to its revocation via sync.
+	let mut before = None;
+	for _ in 0..30 {
+		tokio::time::sleep(Duration::from_millis(500)).await;
+		barkd.sync().await;
+		let vtxos = barkd.vtxos(None).await;
+		if vtxos.len() == 2 {
+			before = Some(vtxos);
+			break;
+		}
+	}
+	let before = before.expect("failed lightning send should produce change + revocation VTXOs");
+
+	// Recover from the same seed.
+	let mnemonic = barkd.mnemonic().await;
+	let recovered = ctx.barkd("barkd_recovered", &srv)
+		.mnemonic(mnemonic)
+		.create().await;
+	recovered.onchain_sync().await;
+	recovered.sync().await;
+
+	let after = recovered.vtxos(Some(true)).await;
+	assert_eq!(after.len(), before.len(),
+		"recovered wallet should rediscover both the change and revocation VTXOs");
+	for vtxo in before.iter() {
+		assert!(after.iter().any(|v| v.vtxo.id == vtxo.vtxo.id),
+			"recovered wallet should rediscover VTXO {:?}", vtxo.vtxo.id);
+	}
+
+	// Spend recovered VTXOs in a payment
+	let recipient = ctx.barkd("recipient", &srv).create().await;
+	recovered.send(&recipient.ark_address().await, Amount::from_sat(999_443)).await;
+}
