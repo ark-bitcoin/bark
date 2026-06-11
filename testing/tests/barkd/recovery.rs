@@ -1,4 +1,6 @@
 
+use std::time::Duration;
+
 use ark_testing::{btc, sat, TestContext};
 use bitcoin::Amount;
 
@@ -164,4 +166,66 @@ async fn recovered_wallet_finds_arkoor_receive_and_change_vtxos() {
 	// Spend recovered VTXOs in a payment
 	sender_recovered.send(&recipient.ark_address().await, Amount::from_sat(991_443)).await;
 	recipient_recovered.send(&sender.ark_address().await, Amount::from_sat(8_000)).await;
+}
+
+/// Wallet recovery of a claimed Lightning-receive output.
+///
+/// Receive a Lightning payment and claim it (producing a spendable VTXO), then
+/// recover from the same seed and assert the recovered wallet rediscovers the
+/// claimed receive output. Runs on both the external-lightningd and intra-ark
+/// topologies via the `lightning_test!` harness.
+#[tokio::test]
+async fn recovered_wallet_finds_lightning_receive() {
+	let ctx = TestContext::new("barkd/recovered_wallet_finds_lightning_receive").await;
+	let lightning = ctx.new_lightning_setup("lightningd").await;
+	let srv = ctx.captaind("server")
+		.lightningd(&lightning.internal)
+		.funded(btc(10))
+		.create().await;
+
+	srv.wait_for_vtxopool(&ctx).await;
+	ctx.generate_blocks(1).await;
+
+	let barkd = ctx.barkd("barkd", &srv).create().await;
+
+	let amount = sat(500_000);
+	let invoice = barkd.lightning_invoice(amount).await;
+
+	// Pay the invoice and wait for the wallet to claim the receive into a
+	// spendable VTXO.
+	tokio::join!(
+		lightning.external.pay_bolt11(invoice.invoice),
+		async {
+			let mut claimed = false;
+			for _ in 0..30 {
+				tokio::time::sleep(Duration::from_millis(500)).await;
+				barkd.sync().await;
+				if barkd.bark_balance().await.spendable == amount {
+					claimed = true;
+					break;
+				}
+			}
+			assert!(claimed, "lightning receive should be claimed");
+		},
+	);
+
+	let before = barkd.vtxos(None).await;
+	assert_eq!(before.len(), 1, "should hold one lightning-receive VTXO after claim");
+	let recv_id = before[0].vtxo.id;
+
+	// Recover from the same seed into a fresh wallet.
+	let mnemonic = barkd.mnemonic().await;
+	let recovered = ctx.barkd("barkd_recovered", &srv)
+		.mnemonic(mnemonic)
+		.create().await;
+	recovered.onchain_sync().await;
+	recovered.sync().await;
+
+	let after = recovered.vtxos(Some(true)).await;
+	assert_eq!(after.len(), 1, "recovered wallet should hold the lightning-receive VTXO");
+	assert_eq!(after[0].vtxo.id, recv_id, "recovered VTXO should be the claimed receive output");
+
+	// Spend recovered VTXOs in a payment
+	let recipient = ctx.barkd("recipient", &srv).create().await;
+	recovered.send(&recipient.ark_address().await, Amount::from_sat(500_000)).await;
 }
