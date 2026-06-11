@@ -1,9 +1,10 @@
+
 use bitcoin::Amount;
 use bitcoin_ext::P2TR_DUST_SAT;
 
 use bark_json::movements::{MovementDestination, PaymentMethod};
 
-use ark_testing::{btc, sat, TestContext};
+use ark_testing::{btc, sat, TestContext, require_bark_version};
 use ark_testing::constants::{BOARD_CONFIRMATIONS, ROUND_CONFIRMATIONS};
 use ark_testing::util::ToAltString;
 
@@ -202,4 +203,52 @@ async fn bark_rejects_offboarding_dust_amount() {
 	assert!(err.to_alt_string().contains(
 		"it doesn't make sense to send dust",
 	), "err: {err}");
+}
+
+#[tokio::test]
+async fn old_bark_recovers_from_rejected_forfeit_sigs() {
+	require_bark_version!(== "0.2.3");
+
+	let ctx = TestContext::new("bark/old_bark_recovers_from_rejected_forfeit_sigs").await;
+	let srv = ctx.captaind("server").funded(btc(10)).create().await;
+
+	let bark = ctx.bark("bark", &srv)
+		.boarded(sat(1_000_000))
+		.boarded(sat(1_000_000))
+		.create().await;
+
+	let old_balance = bark.offchain_balance().await;
+	let vtxos = bark.vtxos().await;
+	println!("vtxos before: {:#?}", vtxos);
+
+	let addr = bark.get_onchain_address().await;
+	assert!(bark.try_send_onchain(&addr, sat(1_850_000)).await.is_err());
+
+	let vtxos = bark.vtxos().await;
+	println!("vtxos after: {:#?}", vtxos);
+	assert_ne!(old_balance, bark.offchain_balance().await);
+
+	// Here we use a hack: the SDK is always at the latest version,
+	// so creating this client will apply the latest migration and it should unstuck
+	// the movement
+	let client = bark.client().await;
+	client.sync().await;
+	let vtxos = client.vtxos().await.unwrap();
+	println!("vtxos sdk: {:#?}", vtxos);
+	let balance = client.balance().await.unwrap();
+	assert_eq!(bark_json::cli::Balance::from(balance), old_balance);
+
+	// The recovered VTXOs must actually be spendable: offboard everything
+	// with the new SDK and check the funds arrive onchain.
+	let address = ctx.bitcoind().get_new_address();
+	client.offboard_all(address.clone()).await.unwrap();
+
+	assert_eq!(client.balance().await.unwrap().spendable, Amount::ZERO);
+
+	ctx.generate_blocks(1).await;
+	let offboard_fee = sat(854);
+	assert_eq!(
+		ctx.bitcoind().get_received_by_address(&address),
+		old_balance.spendable - offboard_fee,
+	);
 }
