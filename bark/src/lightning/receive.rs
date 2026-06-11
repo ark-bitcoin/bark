@@ -211,6 +211,13 @@ impl Wallet {
 
 		info!("Claiming arkoor against payment preimage");
 		self.inner.db.set_preimage_revealed(receive.payment_hash).await?;
+		// NB: also refresh the in-memory receive: if the claim fails from here
+		// on, the failure handling must see that the preimage has been
+		// revealed, or it would wrongly cancel the receive and mark the HTLC
+		// VTXOs as spent.
+		*receive = self.inner.db.fetch_lightning_receive_by_payment_hash(receive.payment_hash).await
+			.context("Database error")?
+			.context("Receive not found")?;
 		let package_cosign_request = protos::ArkoorPackageCosignRequest::from(
 			builder.cosign_request(),
 		);
@@ -688,12 +695,10 @@ impl Wallet {
 			Ok(()) => Ok(receive),
 			Err(e) => {
 				error!("Failed to claim htlcs for payment_hash: {}", receive.payment_hash);
-				// We're now in a our havoc era. The server prepared our HTLCs, but
-				// then later refused to / couldn't allow our claim, and the retry
-				// budget is exhausted. Fall back to an on-chain exit.
-				warn!("Exiting lightning receive VTXOs");
-				self.exit_lightning_receive(&receive).await?;
-				return Err(e)
+				// We could be having temporary problems with the server. Instead of auto-exiting we
+				// should fall through to our normal error handling flow.
+				self.handle_failed_lightning_receive(&receive).await?;
+				Err(e)
 			}
 		}
 	}

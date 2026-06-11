@@ -9,7 +9,6 @@ use ark::lightning::{Invoice, PaymentHash};
 use ark::vtxo::VtxoPolicyKind;
 use ark_testing::context::LightningPaymentSetup;
 use bark::lightning_invoice::Bolt11Invoice;
-use bark_json::exit::ExitState;
 use bark_json::movements::{MovementDestination, MovementStatus, PaymentMethod};
 use bark_json::primitives::VtxoStateInfo;
 use log::{info, trace};
@@ -1536,13 +1535,14 @@ async fn bark_can_receive_lightning_long_route() {
 	info!("Bolt11 receive over long route succeeded");
 }
 
-/// Exhaust the Lightning receive claim retry budget and confirm we fall back
-/// to exiting the HTLC-recv VTXOs on-chain.
+/// Exhaust the Lightning receive claim retry budget and confirm the receive
+/// is kept pending rather than auto-exited: a later claim retry or an
+/// explicit exit attempt decides what happens next.
 #[tokio::test]
-async fn bark_exits_lightning_receive_after_retry_budget_exhausted() {
+async fn bark_keeps_lightning_receive_pending_after_retry_budget_exhausted() {
 	require_bark_version!(== "DIRTY");
 
-	let ctx = TestContext::new("lightningd/exits_after_retry_budget_exhausted").await;
+	let ctx = TestContext::new("lightningd/keeps_pending_after_retry_budget_exhausted").await;
 
 	let lightning = ctx.new_lightning_setup("lightningd").await;
 
@@ -1583,18 +1583,24 @@ async fn bark_exits_lightning_receive_after_retry_budget_exhausted() {
 	});
 
 	// 1 initial attempt + 3 retries with 2s/4s/8s backoff = ~14s of waiting,
-	// plus payment routing and the on-chain exit start. Allow generous slack.
+	// plus payment routing. Allow generous slack.
 	bark.try_lightning_receive(&invoice_info.invoice).wait_millis(60_000).await
 		.expect_err("claim should fail after retry budget is exhausted");
 
 	assert_eq!(attempts.load(Ordering::Relaxed), usize::from(retries) + 1,
 		"server should see one claim per attempt (initial + each retry)");
 
-	// The HTLC-recv VTXO must have been moved into an on-chain exit.
-	let exits = bark.list_exits().await;
-	assert_eq!(exits.len(), 1, "should have started an exit for the HTLC-recv VTXO");
-	assert!(matches!(exits[0].state, ExitState::Start(_) | ExitState::Processing(_)),
-		"exit should be in Start state, got: {:?}", exits[0].state);
+	// We no longer auto-exit when the budget runs out: the receive stays
+	// pending so the claim can be retried later.
+	assert!(bark.list_exits().await.is_empty(),
+		"no exit should start without an explicit exit attempt");
+
+	let invoice = Invoice::from_str(&invoice_info.invoice).unwrap();
+	let receive = bark.client().await.lightning_receive_status(invoice.payment_hash()).await.unwrap()
+		.expect("the lightning receive should still be pending");
+	assert!(receive.preimage_revealed_at.is_some(),
+		"preimage should have been revealed before the claim failed");
+	assert!(receive.finished_at.is_none(), "the receive should not be finished");
 }
 
 /// A transient claim failure should be absorbed by the retry budget and the
