@@ -277,7 +277,7 @@ impl Server {
 			max_user_invoice_cltv_delta: self.config.max_user_invoice_cltv_delta,
 			min_board_amount: self.config.min_board_amount,
 			offboard_feerate: self.offboard_feerate(),
-			max_offboard_inputs: 1000,
+			max_offboard_inputs: 100,
 			ln_receive_anti_dos_required: self.config.ln_receive_anti_dos_required,
 			fees: self.config.fees.clone(),
 			max_vtxo_exit_depth: self.config.max_vtxo_exit_depth,

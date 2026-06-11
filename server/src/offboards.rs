@@ -98,7 +98,12 @@ impl Server {
 		input_vtxos: Vec<VtxoId>,
 		attestations: Vec<OffboardRequestAttestation>,
 	) -> anyhow::Result<OffboardResponse> {
+		if input_vtxos.len() > self.ark_info().max_offboard_inputs {
+			return badarg!("too many inputs");
+		}
+
 		request.validate().badarg("invalid offboard request")?;
+
 		let valid_fee_duration = self.config.offboard_acceptable_fee_rate_duration;
 		if !self.fee_estimator.is_historical_regular_rate(request.fee_rate, valid_fee_duration) {
 			return badarg!(
