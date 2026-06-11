@@ -414,12 +414,9 @@ impl Exit {
 		let guard = self.inner.read().await;
 		let mut highest_claimable_height = None;
 		for exit in &guard.exit_vtxos {
-			if matches!(exit.state(), ExitState::Claimed(..)) {
-				continue;
-			}
 			match exit.state().claimable_height() {
 				Some(h) => highest_claimable_height = cmp::max(highest_claimable_height, Some(h)),
-				None => return None,
+				None => continue,
 			}
 		}
 		highest_claimable_height
