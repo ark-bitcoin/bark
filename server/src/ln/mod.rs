@@ -39,6 +39,39 @@ use crate::error::ContextExt;
 use crate::{Server, CAPTAIND_API_KEY};
 
 
+
+/// Validate the client-requested HTLC-recv VTXO expiry leaves at
+/// least `htlc_expiry_delta` blocks of settlement margin below the
+/// inbound Lightning HTLC expiry, both for the request and the
+/// current chain tip.
+fn validate_htlc_recv_expiry(
+	lowest_incoming_htlc_expiry: BlockHeight,
+	chain_tip: BlockHeight,
+	htlc_expiry_delta: BlockDelta,
+	requested: BlockHeight,
+) -> anyhow::Result<()> {
+	let delta = BlockHeight::from(htlc_expiry_delta);
+
+	let chain_tip_plus_delta = chain_tip.checked_add(delta)
+		.context("chain_tip + htlc_expiry_delta overflows BlockHeight")?;
+	if chain_tip_plus_delta > lowest_incoming_htlc_expiry {
+		return badarg!(
+			"Inbound HTLC too close to expiring: chain tip {chain_tip} + \
+			htlc_expiry_delta {delta} > lowest incoming HTLC expiry {lowest_incoming_htlc_expiry}"
+		);
+	}
+	let requested_plus_delta = requested.checked_add(delta)
+		.badarg("requested HTLC recv expiry is excessively high")?;
+	if requested_plus_delta > lowest_incoming_htlc_expiry {
+		return badarg!(
+			"Requested HTLC recv expiry too close to inbound HTLC expiry: \
+			{requested} + htlc_expiry_delta {delta} > lowest incoming HTLC expiry {lowest_incoming_htlc_expiry}"
+		);
+	}
+	Ok(())
+}
+
+
 impl Server {
 	#[tracing::instrument(skip(self, request))]
 	pub async fn request_lightning_pay_htlc_cosign(
@@ -536,35 +569,23 @@ impl Server {
 			.context("fee overflowed")?;
 		let htlc_amount = validate_and_subtract_fee(received_amount, fee)?;
 
-		let vtxos = {
-			// We compare requested htlc expiry height with the lowest LN HTLC expiry height
-			// If the difference is lower than the configured delta, we refuse the request.
-			let expiry = match sub.lowest_incoming_htlc_expiry {
-				Some(lowest_incoming_htlc_expiry) => {
-					let max_htlc_recv_expiry = lowest_incoming_htlc_expiry + self.config.htlc_expiry_delta as BlockHeight;
-					if htlc_recv_expiry > max_htlc_recv_expiry {
-						return badarg!("Requested HTLC recv expiry is too high. Requested {}. Max {}",
-							htlc_recv_expiry,
-							max_htlc_recv_expiry,
-						);
-					}
+		let lowest_incoming_htlc_expiry = sub.lowest_incoming_htlc_expiry
+			.context("no incoming HTLCs found for this payment")?;
+		validate_htlc_recv_expiry(
+			lowest_incoming_htlc_expiry,
+			self.sync_manager.chain_tip().height,
+			self.config.htlc_expiry_delta,
+			htlc_recv_expiry,
+		)?;
 
-					htlc_recv_expiry
-				},
-				None => {
-					error!("An accepted invoice has no lowest HTLC expiry. subscription id: {}", sub.id);
-					bail!("Cannot prepare claim: invoice subscription has no lowest HTLC expiry set");
-				},
-			};
-
-			let dest = ArkoorDestination {
-				total_amount: htlc_amount,
-				policy: VtxoPolicy::new_server_htlc_recv(
-					user_pubkey, payment_hash, expiry, self.config.htlc_expiry_delta,
-				),
-			};
-			self.vtxopool.send_arkoor(self, dest).await.context("vtxopool error")?
+		let dest = ArkoorDestination {
+			total_amount: htlc_amount,
+			policy: VtxoPolicy::new_server_htlc_recv(
+				user_pubkey, payment_hash, htlc_recv_expiry, self.config.htlc_expiry_delta,
+			),
 		};
+		let vtxos = self.vtxopool.send_arkoor(self, dest).await
+			.context("vtxopool error")?;
 
 		self.db.write(async |t| t.update_lightning_htlc_subscription_with_htlcs(
 			sub.id,
@@ -736,5 +757,42 @@ impl Server {
 		slog!(LightningReceiveClaimed, payment_hash, payment_preimage, vtxo_request);
 
 		Ok(builder.cosign_response())
+	}
+}
+
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	/// Typical config delta used in tests.
+	const DELTA: BlockDelta = 40;
+
+	#[test]
+	fn grant_outgoing_htlc_respects_htlcs_expiry_delta() {
+		// In this test the chain_tip shouldn't result in problems
+		// We have sufficient time anyway
+		let lowest_expiry = 1000;
+		let chain_tip = 100;
+
+		validate_htlc_recv_expiry(lowest_expiry, chain_tip, DELTA, 900).expect("Is safe");
+		validate_htlc_recv_expiry(lowest_expiry, chain_tip, DELTA, 960).expect("Is safe");
+		validate_htlc_recv_expiry(lowest_expiry, chain_tip, DELTA, 961).expect_err("Not enough time for server to broadcast");
+		validate_htlc_recv_expiry(lowest_expiry, chain_tip, DELTA, 1000).expect_err("Is unsafe");
+		validate_htlc_recv_expiry(lowest_expiry, chain_tip, DELTA, u32::MAX).expect_err("Is unsafe");
+	}
+
+	#[test]
+	fn grant_takes_chaintip_into_account() {
+		let lowest_expiry = 1000;
+
+		// This one is a bit weird.
+		// Yes, the user requests an already expired htlc so it looks totally safe
+		// However, the because we are so close to the lowest incoming
+		// the server wouldn't have sufficient time to respond
+		validate_htlc_recv_expiry(lowest_expiry, 990, DELTA, 900).expect_err("Only 10 blocks to respond");
+		validate_htlc_recv_expiry(lowest_expiry, 980, DELTA, 900).expect_err("Only 20 blocks to respond");
+		validate_htlc_recv_expiry(lowest_expiry, 970, DELTA, 900).expect_err("Only 30 blocks to respond");
+		validate_htlc_recv_expiry(lowest_expiry, 960, DELTA, 900).expect("This is safe now");
 	}
 }
