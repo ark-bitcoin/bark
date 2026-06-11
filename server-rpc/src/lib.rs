@@ -42,6 +42,8 @@ pub use crate::convert::{ConvertError, TryFromBytes};
 mod error;
 pub use crate::error::StatusExt;
 
+pub mod pver;
+
 pub mod client;
 pub mod protos {
 	pub mod core {
@@ -103,12 +105,12 @@ use bitcoin::address::NetworkUnchecked;
 /// The minimum protocol version supported by the client.
 ///
 /// For info on protocol versions, see [server_rpc](crate) module documentation.
-pub const MIN_PROTOCOL_VERSION: u64 = 1;
+pub const MIN_PROTOCOL_VERSION: u64 = crate::pver::PROTOCOL_VERSION_BASE;
 
 /// The maximum protocol version supported by the client.
 ///
 /// For info on protocol versions, see [server_rpc](crate) module documentation.
-pub const MAX_PROTOCOL_VERSION: u64 = 1;
+pub const MAX_PROTOCOL_VERSION: u64 = crate::pver::PROTOCOL_VERSION_OFFBOARD_FIX;
 
 /// The string used in the gRPC HTTP header for the protocol version.
 pub const PROTOCOL_VERSION_HEADER: &str = "pver";
