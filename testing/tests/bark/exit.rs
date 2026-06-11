@@ -1099,7 +1099,7 @@ async fn exit_oor_ping_pong_then_rbf_tx() {
 
 #[tokio::test]
 async fn bark_should_exit_a_htlc_recv_that_server_refuse_to_cosign() {
-	require_bark_version!(> "0.2.0");
+	require_bark_version!(> "0.2.3");
 
 	let ctx = TestContext::new("exit/bark_should_exit_a_htlc_recv_that_server_refuse_to_cosign").await;
 	let ctx = Arc::new(ctx);
@@ -1126,8 +1126,11 @@ async fn bark_should_exit_a_htlc_recv_that_server_refuse_to_cosign() {
 
 	let proxy = srv.start_proxy_no_mailbox(Proxy).await;
 
-	// Start a bark and create a VTXO to be able to board
-	let bark = ctx.bark("bark", &proxy.address).funded(btc(2.1)).create().await;
+	// Start a bark and create a VTXO to be able to board. The claim retry
+	// budget is not under test here, so drop it to fail fast.
+	let bark = ctx.bark("bark", &proxy.address).funded(btc(2.1)).cfg(|cfg| {
+		cfg.lightning_receive_claim_retries = 0;
+	}).create().await;
 	bark.board(btc(2)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 
@@ -1143,8 +1146,24 @@ async fn bark_should_exit_a_htlc_recv_that_server_refuse_to_cosign() {
 
 	res1.await.unwrap();
 
-	// Exit should start immediately when server refuses to cosign
+	// The server refused to cosign the claim, but we no longer exit
+	// automatically: the receive must stay pending so the claim can be
+	// retried later.
 	bark.sync().await;
+	assert!(bark.list_exits().await.is_empty(),
+		"no exit should start without an explicit exit attempt");
+
+	let invoice = Invoice::from_str(&invoice_info.invoice).unwrap();
+	let client = bark.client().await;
+	let receive = client.lightning_receive_status(invoice.payment_hash()).await.unwrap()
+		.expect("the lightning receive should still be pending");
+	assert!(receive.preimage_revealed_at.is_some(),
+		"preimage should have been revealed before the claim failed");
+	assert!(receive.finished_at.is_none(), "the receive should not be finished");
+
+	// Explicitly fall back to exiting the HTLC VTXOs on-chain.
+	client.attempt_lightning_receive_exit(invoice.payment_hash()).await.unwrap();
+
 	assert!(!bark.list_exits().await.is_empty(), "Expected exit to be started");
 	complete_exit(&ctx, &bark).await;
 
@@ -1154,7 +1173,6 @@ async fn bark_should_exit_a_htlc_recv_that_server_refuse_to_cosign() {
 	assert_eq!(bark.onchain_balance().await, sat(109_993_699));
 
 	// Check that we have a lightning receive -> exit movement chain
-	let invoice = Invoice::from_str(&invoice_info.invoice).unwrap();
 	let movements = bark.history().await;
 	let [.., ln_movement, exit_movement] = movements.as_slice() else {
 		panic!("Should have at least two movements");

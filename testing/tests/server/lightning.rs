@@ -55,9 +55,9 @@ async fn assert_vtxopool_consistency(srv: &Captaind) {
 /// Verify that the server extracts preimages from on-chain HTLC spends
 /// and uses them to settle invoices.
 ///
-/// The proxy blocks cooperative settlement, forcing bark into an emergency
-/// exit. The exit publishes the HTLC preimage on-chain, which the server's
-/// HtlcSettler extracts to settle the hold invoice.
+/// The proxy blocks cooperative settlement, so bark explicitly exits the
+/// HTLC VTXOs. The exit publishes the HTLC preimage on-chain, which the
+/// server's HtlcSettler extracts to settle the hold invoice.
 async fn server_settles_invoice_from_on_chain_htlc_preimage(
 	ctx: &TestContext,
 	_lightning: &LightningPaymentSetup,
@@ -85,7 +85,8 @@ async fn server_settles_invoice_from_on_chain_htlc_preimage(
 	let proxy = srv.start_proxy_no_mailbox(BlockCooperativeSettlement).await;
 
 	// bark_recv connects through the proxy so cooperative settlement is blocked.
-	// Skip claim retries; the proxy blocks every attempt, so we want the exit immediately.
+	// Skip claim retries; the proxy blocks every attempt, so we want the claim
+	// to fail immediately.
 	let bark_recv = ctx.bark("bark-recv", &proxy.address).funded(btc(3)).cfg(|cfg| {
 		cfg.lightning_receive_claim_retries = 0;
 	}).create().await;
@@ -105,6 +106,11 @@ async fn server_settles_invoice_from_on_chain_htlc_preimage(
 		async {
 			// Proxy blocks cooperative settlement, so this errors
 			let _ = bark_recv.try_lightning_receive(&invoice_info.invoice).await;
+
+			// The failed claim no longer starts an exit on its own; explicitly
+			// exit the HTLC VTXOs so the preimage is published on-chain.
+			let invoice = Bolt11Invoice::from_str(&invoice_info.invoice).unwrap();
+			bark_recv.client().await.attempt_lightning_receive_exit(&invoice).await.unwrap();
 
 			bark_recv.sync().await;
 			assert!(!bark_recv.list_exits().await.is_empty(), "Expected exit to be started");
