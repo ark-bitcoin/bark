@@ -4,7 +4,7 @@ use std::time::Duration;
 use ark_testing::{btc, sat, TestContext};
 use bitcoin::Amount;
 
-use super::helpers::wait_for_rounds_complete;
+use super::helpers::{wait_for_rounds_complete, wait_for_spendable_vtxos};
 
 /// Wallet recovery from seed.
 ///
@@ -347,4 +347,48 @@ async fn recovered_wallet_finds_lightning_send_revocation() {
 	// Spend recovered VTXOs in a payment
 	let recipient = ctx.barkd("recipient", &srv).create().await;
 	recovered.send(&recipient.ark_address().await, Amount::from_sat(999_443)).await;
+}
+
+/// Wallet recovery of an offboard (send-onchain) change output.
+///
+/// Send part of a VTXO on-chain (an offboard), leaving the remainder as an
+/// off-chain change VTXO, then recover from the seed and assert the change is
+/// rediscovered. The offboard mints the change via a checkpointed arkoor, so
+/// this exercises arkoor-change recovery.
+#[tokio::test]
+async fn recovered_wallet_finds_offboard_change() {
+	let ctx = TestContext::new("barkd/recovered_wallet_finds_offboard_change").await;
+	let srv = ctx.captaind("server").funded(btc(10)).create().await;
+
+	let barkd = ctx.barkd("bark", &srv).boarded(sat(1_000_000)).create().await;
+	let recipient = ctx.barkd("recipient", &srv).create().await;
+	let addr = recipient.onchain_address().await;
+
+	let board = barkd.vtxos(None).await;
+	let board_id = board[0].vtxo.id;
+
+	// Offboard 300k on-chain; the remainder comes back as a change VTXO.
+	barkd.send_onchain(&addr.to_string(), sat(300_000)).await;
+	ctx.generate_blocks(2).await;
+
+	// Wait for the change to settle spendable so we don't capture a transient
+	// locked intermediate the server already considers spent.
+	let before = wait_for_spendable_vtxos(&barkd, 1).await;
+	let change_id = before[0].vtxo.id;
+	assert_ne!(change_id, board_id, "offboard should produce a new change VTXO");
+
+	// Recover from the same seed.
+	let mnemonic = barkd.mnemonic().await;
+	let recovered = ctx.barkd("bark_recovered", &srv)
+		.mnemonic(mnemonic)
+		.create().await;
+	recovered.onchain_sync().await;
+	recovered.sync().await;
+
+	let after = recovered.vtxos(Some(true)).await;
+	assert_eq!(after.len(), 1, "recovered wallet should hold the offboard change VTXO");
+	assert_eq!(after[0].vtxo.id, change_id, "recovered VTXO should be the offboard change");
+
+	// Spend recovered VTXOs in a payment
+	recovered.send(&recipient.ark_address().await, Amount::from_sat(698_505)).await;
 }

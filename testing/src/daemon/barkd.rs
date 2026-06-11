@@ -30,12 +30,11 @@ use bark_rest_client::apis::{
 };
 use bark_rest_client::models::{
 	BoardRequest, ExitClaimAllRequest, ExitClaimVtxosRequest, ExitProgressRequest,
-	ExitStartRequest, LightningInvoiceRequest, RefreshRequest, SendRequest,
-	WaitNotificationResponse,
+	ExitStartRequest, LightningInvoiceRequest, OffboardAllRequest, RefreshRequest,
+	SendOnchainRequest, SendRequest, WaitNotificationResponse,
 };
 use futures::{Stream, StreamExt};
 use tokio_tungstenite::tungstenite::Message;
-
 use crate::{Bitcoind, Daemon, DaemonHelper};
 use crate::constants::env::{BARKD_EXEC, BARK_TOKIO_WORKER_THREADS};
 use crate::util::resolve_path;
@@ -224,6 +223,25 @@ impl Barkd {
 		}).await.expect("barkd lightning send failed");
 	}
 
+	/// Offboard `amount` to a Bitcoin `destination` address (send-onchain),
+	/// leaving the remainder as an off-chain change VTXO. Blocks until the
+	/// offboard completes.
+	pub async fn send_onchain(&self, destination: &str, amount: Amount) {
+		let config = self.client_config();
+		wallet_api::send_onchain(&config, SendOnchainRequest {
+			destination: destination.to_string(),
+			amount_sat: amount.to_sat(),
+		}).await.expect("barkd send_onchain failed");
+	}
+
+	/// Offboard all VTXOs to a Bitcoin `destination` address, leaving the
+	/// wallet empty. Blocks until the offboard completes.
+	pub async fn offboard_all(&self, destination: &str) {
+		let config = self.client_config();
+		wallet_api::offboard_all(&config, OffboardAllRequest {
+			address: Some(destination.to_string()),
+		}).await.expect("barkd offboard_all failed");
+	}
 
 	/// Request a short-lived websocket authentication ticket.
 	async fn create_ws_ticket(&self) -> String {
