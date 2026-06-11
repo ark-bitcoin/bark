@@ -5039,6 +5039,7 @@
               "invoice",
               "offer",
               "lightning-address",
+              "lnurl",
               "custom"
             ]
           },

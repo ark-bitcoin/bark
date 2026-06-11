@@ -8,6 +8,7 @@ use lightning::offers::invoice::Bolt12Invoice;
 use lightning::offers::offer::Offer;
 use lightning_invoice::Bolt11Invoice;
 use lnurllib::lightning_address::LightningAddress;
+use lnurllib::lnurl::LnUrl;
 use serde::{Deserialize, Serialize};
 
 use ark::lightning::Invoice;
@@ -20,6 +21,7 @@ const PAYMENT_METHOD_OUTPUT_SCRIPT: &str = "output-script";
 const PAYMENT_METHOD_INVOICE: &str = "invoice";
 const PAYMENT_METHOD_OFFER: &str = "offer";
 const PAYMENT_METHOD_LIGHTNING_ADDRESS: &str = "lightning-address";
+const PAYMENT_METHOD_LNURL: &str = "lnurl";
 const PAYMENT_METHOD_CUSTOM: &str = "custom";
 
 /// Provides a typed mechanism for describing the recipient in a
@@ -39,6 +41,9 @@ pub enum PaymentMethod {
 	Offer(Offer),
 	/// An email-like format used to retrieve a [Bolt11Invoice].
 	LightningAddress(LightningAddress),
+	/// A bech32-encoded LNURL-pay link (`lnurl1…`) resolved to a [Bolt11Invoice]
+	/// via an LNURL-Pay request.
+	Lnurl(LnUrl),
 	/// An alternative payment method that isn't native to bark.
 	Custom(String),
 }
@@ -52,6 +57,7 @@ impl PaymentMethod {
 			PaymentMethod::Invoice(_) => false,
 			PaymentMethod::Offer(_) => false,
 			PaymentMethod::LightningAddress(_) => false,
+			PaymentMethod::Lnurl(_) => false,
 			PaymentMethod::Custom(_) => false,
 		}
 	}
@@ -64,6 +70,7 @@ impl PaymentMethod {
 			PaymentMethod::Invoice(_) => false,
 			PaymentMethod::Offer(_) => false,
 			PaymentMethod::LightningAddress(_) => false,
+			PaymentMethod::Lnurl(_) => false,
 			PaymentMethod::Custom(_) => false,
 		}
 	}
@@ -76,6 +83,7 @@ impl PaymentMethod {
 			PaymentMethod::Invoice(_) => false,
 			PaymentMethod::Offer(_) => false,
 			PaymentMethod::LightningAddress(_) => false,
+			PaymentMethod::Lnurl(_) => false,
 			PaymentMethod::Custom(_) => true,
 		}
 	}
@@ -89,6 +97,7 @@ impl PaymentMethod {
 			PaymentMethod::Invoice(_) => true,
 			PaymentMethod::Offer(_) => true,
 			PaymentMethod::LightningAddress(_) => true,
+			PaymentMethod::Lnurl(_) => true,
 			PaymentMethod::Custom(_) => false,
 		}
 	}
@@ -102,6 +111,7 @@ impl PaymentMethod {
 			PaymentMethod::Invoice(_) => PAYMENT_METHOD_INVOICE,
 			PaymentMethod::Offer(_) => PAYMENT_METHOD_OFFER,
 			PaymentMethod::LightningAddress(_) => PAYMENT_METHOD_LIGHTNING_ADDRESS,
+			PaymentMethod::Lnurl(_) => PAYMENT_METHOD_LNURL,
 			PaymentMethod::Custom(_) => PAYMENT_METHOD_CUSTOM,
 		}
 	}
@@ -115,6 +125,7 @@ impl PaymentMethod {
 			PaymentMethod::Invoice(invoice) => invoice.to_string(),
 			PaymentMethod::Offer(offer) => offer.to_string(),
 			PaymentMethod::LightningAddress(addr) => addr.to_string(),
+			PaymentMethod::Lnurl(lnurl) => lnurl.to_string(),
 			PaymentMethod::Custom(custom) => custom.clone(),
 		}
 	}
@@ -153,6 +164,11 @@ impl PaymentMethod {
 					.context("invalid lightning address")?;
 				Ok(PaymentMethod::LightningAddress(addr))
 			},
+			PAYMENT_METHOD_LNURL => {
+				let lnurl = LnUrl::from_str(value)
+					.context("invalid lnurl")?;
+				Ok(PaymentMethod::Lnurl(lnurl))
+			},
 			PAYMENT_METHOD_CUSTOM => {
 				Ok(PaymentMethod::Custom(value.to_string()))
 			},
@@ -170,6 +186,7 @@ impl fmt::Display for PaymentMethod {
 			PaymentMethod::Invoice(i) => fmt::Display::fmt(i, f),
 			PaymentMethod::Offer(o) => fmt::Display::fmt(o, f),
 			PaymentMethod::LightningAddress(a) => fmt::Display::fmt(a, f),
+			PaymentMethod::Lnurl(l) => fmt::Display::fmt(l, f),
 			PaymentMethod::Custom(v) => fmt::Display::fmt(v, f),
 		}
 	}
@@ -220,6 +237,12 @@ impl From<Offer> for PaymentMethod {
 impl From<LightningAddress> for PaymentMethod {
 	fn from(addr: LightningAddress) -> Self {
 		PaymentMethod::LightningAddress(addr)
+	}
+}
+
+impl From<LnUrl> for PaymentMethod {
+	fn from(lnurl: LnUrl) -> Self {
+		PaymentMethod::Lnurl(lnurl)
 	}
 }
 
@@ -338,6 +361,12 @@ mod test {
 		let lnaddr_method = PaymentMethod::LightningAddress(LightningAddress::from_str(lnaddr_str).unwrap());
 		assert_eq!(serde_json::to_string(&lnaddr_method).unwrap(), serialised);
 		assert_eq!(serde_json::from_str::<PaymentMethod>(serialised).unwrap(), lnaddr_method);
+
+		let lnurl_str = "LNURL1DP68GURN8GHJ7UM9WFMXJCM99E3K7MF0V9CXJ0M385EKVCENXC6R2C35XVUKXEFCV5MKVV34X5EKZD3EV56NYD3HXQURZEPEXEJXXEPNXSCRVWFNV9NXZCN9XQ6XYEFHVGCXXCMYXYMNSERXFQ5FNS";
+		let serialised = r#"{"type":"lnurl","value":"lnurl1dp68gurn8ghj7um9wfmxjcm99e3k7mf0v9cxj0m385ekvcenxc6r2c35xvukxefcv5mkvv34x5ekzd3ev56nyd3hxqurzepexejxxepnxscrvwfnv9nxzcn9xq6xyefhvgcxxcmyxymnserxfq5fns"}"#;
+		let lnurl_method = PaymentMethod::Lnurl(LnUrl::from_str(lnurl_str).unwrap());
+		assert_eq!(serde_json::to_string(&lnurl_method).unwrap(), serialised);
+		assert_eq!(serde_json::from_str::<PaymentMethod>(serialised).unwrap(), lnurl_method);
 
 		let custom_str = "THIS IS AN EXAMPLE OF A CUSTOM STRING";
 		let serialised = r#"{"type":"custom","value":"THIS IS AN EXAMPLE OF A CUSTOM STRING"}"#;
