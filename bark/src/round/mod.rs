@@ -1280,6 +1280,50 @@ async fn update_funding_txid(
 	).await.context("Unable to update funding txid of round")
 }
 
+/// In-memory store for MuSig2 secret cosign nonces used during round
+/// signing. Entries are keyed by the first cosign pubkey of each round
+/// attempt — that pubkey is freshly generated in [`start_attempt`],
+/// uniquely identifies the attempt within a process, and is reachable
+/// from the persisted `AttemptState::AwaitingUnsignedVtxoTree`.
+///
+/// Nonces never touch disk: persisting them risks signing twice with
+/// the same nonce, which is unsafe with MuSig2.
+#[derive(Default)]
+pub struct RoundSecretNonces {
+	inner: parking_lot::Mutex<HashMap<bitcoin::secp256k1::PublicKey, Vec<Vec<SecretNonce>>>>,
+}
+
+impl RoundSecretNonces {
+	pub fn new() -> Self {
+		Self { inner: parking_lot::Mutex::new(HashMap::new()) }
+	}
+
+	/// Insert nonces under the given key, replacing any previous entry.
+	pub fn stash(
+		&self,
+		first_cosign_pubkey: bitcoin::secp256k1::PublicKey,
+		nonces: Vec<Vec<SecretNonce>>,
+	) {
+		self.inner.lock().insert(first_cosign_pubkey, nonces);
+	}
+
+	/// Remove and return the nonces stashed under the given key.
+	/// `None` after a process restart or if the entry was never stashed.
+	pub fn take(
+		&self,
+		first_cosign_pubkey: &bitcoin::secp256k1::PublicKey,
+	) -> Option<Vec<Vec<SecretNonce>>> {
+		self.inner.lock().remove(first_cosign_pubkey)
+	}
+
+	/// Drop the entry under the given key without returning its
+	/// contents. Use when a stashed attempt is being replaced by a new
+	/// one and its key would otherwise be unreachable.
+	pub fn forget(&self, first_cosign_pubkey: &bitcoin::secp256k1::PublicKey) {
+		self.inner.lock().remove(first_cosign_pubkey);
+	}
+}
+
 impl Wallet {
 	/// Load and lock a single given round state (by id), waiting for the lock.
 	///
@@ -1792,5 +1836,70 @@ impl Wallet {
 				self.inner.db.update_round_state(&state).await?;
 			}
 		}
+	}
+}
+
+#[cfg(test)]
+mod test {
+	use super::*;
+
+	use bitcoin::secp256k1::Secp256k1;
+
+	fn pubkey() -> bitcoin::secp256k1::PublicKey {
+		let secp = Secp256k1::new();
+		Keypair::new(&secp, &mut rand::thread_rng()).public_key()
+	}
+
+	fn nonces() -> Vec<Vec<SecretNonce>> {
+		let secp = Secp256k1::new();
+		let key = Keypair::new(&secp, &mut rand::thread_rng());
+		// Shape mirrors what start_attempt produces: outer Vec is one
+		// entry per cosign keypair, inner Vec is the tree-depth set of
+		// pre-generated nonces.
+		vec![vec![musig::nonce_pair(&key).0, musig::nonce_pair(&key).0]]
+	}
+
+	#[test]
+	fn stash_and_take() {
+		let store = RoundSecretNonces::new();
+		let k = pubkey();
+		store.stash(k, nonces());
+
+		assert!(store.take(&k).is_some());
+	}
+
+	#[test]
+	fn cannot_take_twice() {
+		let store = RoundSecretNonces::new();
+		let k = pubkey();
+		store.stash(k, nonces());
+
+		assert!(store.take(&k).is_some());
+		assert!(store.take(&k).is_none());
+	}
+
+	#[test]
+	fn cannot_take_after_forget() {
+		let store = RoundSecretNonces::new();
+		let k = pubkey();
+		store.stash(k, nonces());
+		store.forget(&k);
+
+		assert!(store.take(&k).is_none());
+	}
+
+	#[test]
+	fn stash_overrides_stash() {
+		let secp = Secp256k1::new();
+		let key = Keypair::new(&secp, &mut rand::thread_rng());
+		let nonces_1 = vec![vec![musig::nonce_pair(&key).0]];
+		let nonces_2 = vec![];
+
+		let store = RoundSecretNonces::new();
+		store.stash(key.public_key(), nonces_1);
+		store.stash(key.public_key(), nonces_2);
+
+		let taken = store.take(&key.public_key()).expect("nonces present");
+		assert_eq!(taken.len(), 0);
 	}
 }

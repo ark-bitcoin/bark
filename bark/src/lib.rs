@@ -377,7 +377,7 @@ use crate::persist::BarkPersister;
 use crate::persist::models::{RoundStateId, StoredRoundState, Unlocked};
 #[cfg(feature = "socks5-proxy")]
 use crate::proxy::proxy_for_url;
-use crate::round::{RoundParticipation, RoundStatus};
+use crate::round::{RoundParticipation, RoundSecretNonces, RoundStatus};
 use crate::subsystem::{ArkoorMovement, RoundMovement};
 use crate::vtxo::{FilterVtxos, RefreshStrategy, VtxoFilter, VtxoStateKind};
 
@@ -627,6 +627,11 @@ struct WalletInner {
 
 	/// A handle to the currently running daemon, if any.
 	daemon: parking_lot::Mutex<Option<DaemonHandle>>,
+
+	/// In-memory MuSig2 secret cosign nonces for in-flight round attempts.
+	/// See [`RoundSecretNonces`].
+	#[allow(dead_code)] // wired up in a follow-up commit
+	pub(crate) round_secret_nonces: RoundSecretNonces,
 }
 
 /// The central entry point for using this library as an Ark wallet.
@@ -1086,6 +1091,7 @@ impl Wallet {
 		Ok(Wallet { inner: Arc::new(WalletInner {
 			config, db, lock_manager, seed, exit, movements, notifications, server, chain,
 			daemon: parking_lot::Mutex::new(None),
+			round_secret_nonces: RoundSecretNonces::new(),
 		})})
 	}
 
