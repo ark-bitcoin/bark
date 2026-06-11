@@ -1,7 +1,0 @@
-- Stop auto-exiting Lightning receives when the claim fails
-  A failed HTLC claim (e.g. transient server errors after the retry budget
-  is exhausted) no longer triggers an automatic unilateral exit of the HTLC
-  VTXOs. The receive stays pending so the claim can be retried, and
-  `Wallet::attempt_lightning_receive_exit` can be used to explicitly fall
-  back to an on-chain exit.
-  [#2174](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2174)
