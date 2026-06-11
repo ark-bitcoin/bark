@@ -3001,7 +3001,8 @@
               "string",
               "null"
             ],
-            "description": "An access token for a private Ark server"
+            "description": "An access token for a private Ark server.\n\n**Deprecated**: access tokens are no longer enforced by the server;\nthis field will be removed in a future release.",
+            "deprecated": true
           },
           "birthday_height": {
             "type": [
