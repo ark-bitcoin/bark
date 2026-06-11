@@ -156,6 +156,7 @@ impl From<ark::ArkInfo> for protos::ArkInfo {
 			max_user_invoice_cltv_delta: v.max_user_invoice_cltv_delta as u32,
 			min_board_amount: v.min_board_amount.to_sat(),
 			offboard_feerate_sat_vkb: v.offboard_feerate.to_sat_per_kwu() * 4,
+			max_offboard_inputs: v.max_offboard_inputs as u32,
 			ln_receive_anti_dos_required: v.ln_receive_anti_dos_required,
 			fees: Some(v.fees.into()),
 			max_vtxo_exit_depth: v.max_vtxo_exit_depth as u32,
@@ -189,6 +190,7 @@ impl TryFrom<protos::ArkInfo> for ark::ArkInfo {
 				.map_err(|_| "invalid max_user_invoice_cltv_delta")?,
 			min_board_amount: Amount::from_sat(v.min_board_amount),
 			offboard_feerate: FeeRate::from_sat_per_kwu(v.offboard_feerate_sat_vkb / 4),
+			max_offboard_inputs: v.max_offboard_inputs as usize,
 			ln_receive_anti_dos_required: v.ln_receive_anti_dos_required,
 			fees: v.fees.ok_or("missing fees")?.try_into()?,
 			max_vtxo_exit_depth: v.max_vtxo_exit_depth.try_into()
@@ -795,6 +797,7 @@ mod test {
 			offboard_feerate_sat_vkb: 1000,
 			fees: None,
 			max_vtxo_exit_depth: 5,
+			max_offboard_inputs: 10,
 		}
 	}
 

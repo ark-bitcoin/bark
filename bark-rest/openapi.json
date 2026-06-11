@@ -2658,7 +2658,8 @@
           "offboard_feerate_sat_per_kvb",
           "ln_receive_anti_dos_required",
           "fees",
-          "max_vtxo_exit_depth"
+          "max_vtxo_exit_depth",
+          "max_offboard_inputs"
         ],
         "properties": {
           "fees": {
@@ -2680,6 +2681,11 @@
           "mailbox_pubkey": {
             "type": "string",
             "description": "The pubkey used for blinding unified mailbox IDs"
+          },
+          "max_offboard_inputs": {
+            "type": "integer",
+            "description": "The maximum number of inputs for an offboard",
+            "minimum": 0
           },
           "max_user_invoice_cltv_delta": {
             "type": "integer",

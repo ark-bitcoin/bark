@@ -76,6 +76,8 @@ pub struct ArkInfo {
 	/// cosign further OOR transactions spending it. Clients should refresh
 	/// their VTXOs into a round before this limit is reached.
 	pub max_vtxo_exit_depth: u16,
+	/// The maximum number of inputs for an offboard
+	pub max_offboard_inputs: usize,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -107,6 +109,7 @@ impl<T: Borrow<ark::ArkInfo>> From<T> for ArkInfo {
 			ln_receive_anti_dos_required: v.ln_receive_anti_dos_required,
 			fees: v.fees.clone().into(),
 			max_vtxo_exit_depth: v.max_vtxo_exit_depth,
+			max_offboard_inputs: v.max_offboard_inputs,
 		}
 	}
 }
@@ -510,6 +513,7 @@ mod test {
 				ln_receive_anti_dos_required: j.ln_receive_anti_dos_required,
 				fees: j.fees.into(),
 				max_vtxo_exit_depth: j.max_vtxo_exit_depth,
+				max_offboard_inputs: j.max_offboard_inputs,
 			}
 		}
 	}

@@ -9,6 +9,7 @@ Name | Type | Description | Notes
 **htlc_send_expiry_delta** | **i32** |  | 
 **ln_receive_anti_dos_required** | **bool** | Indicates whether the Ark server requires clients to either provide a VTXO ownership proof, or a lightning receive token when preparing a lightning claim. | 
 **mailbox_pubkey** | **String** | The pubkey used for blinding unified mailbox IDs | 
+**max_offboard_inputs** | **i32** | The maximum number of inputs for an offboard | 
 **max_user_invoice_cltv_delta** | **i32** | Maximum CLTV delta server will allow clients to request an invoice generation with. | 
 **max_vtxo_amount** | **i64** | Maximum amount of a VTXO | 
 **max_vtxo_exit_depth** | **i32** | Maximum exit depth (genesis chain length) allowed for a VTXO. Once a VTXO's exit depth reaches this value the server will refuse to cosign further OOR transactions spending it. Clients should refresh their VTXOs into a round before this limit is reached. | 

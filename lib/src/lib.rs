@@ -88,6 +88,9 @@ pub struct ArkInfo {
 	#[deprecated(since = "0.1.5", note = "use ServerConnection::offboard_feerate instead")]
 	pub offboard_feerate: FeeRate,
 
+	/// The maximum number of inputs for an offboard
+	pub max_offboard_inputs: usize,
+
 	/// Indicates whether the Ark server requires clients to either
 	/// provide a VTXO ownership proof, or a lightning receive token
 	/// when preparing a lightning claim.
