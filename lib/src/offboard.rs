@@ -302,9 +302,26 @@ where
 			// here we will create a deterministic intermediate connector tx and
 			// sign forfeit txs with the outputs of that tx
 
-			let connector_tx = construct_multi_connector_tx(
-				connector_fanout_prev, self.input_vtxos.len(), &connector_fanout_txout.script_pubkey,
-			);
+			let connector_tx = {
+				let mut tx = construct_multi_connector_tx(
+					connector_fanout_prev,
+					self.input_vtxos.len(),
+					&connector_fanout_txout.script_pubkey,
+				);
+
+				// The connector fanout tx spends the offboard's connector output, a
+				// key-path-only p2tr for the connector key. Sign it; otherwise it would
+				// be stored/broadcast with an empty witness and rejected by the mempool.
+				let sighash = SighashCache::new(&tx).taproot_key_spend_signature_hash(
+					0, &Prevouts::All(&[connector_fanout_txout]), TapSighashType::Default,
+				).expect("provided the connector prevout");
+				let sig = SECP.sign_schnorr_with_aux_rand(
+					&sighash.into(), &tweaked_connector_key, &rand::random(),
+				);
+				tx.input[0].witness = Witness::from_slice(&[&sig[..]]);
+
+				tx
+			};
 			let connector_txid = connector_tx.compute_txid();
 
 			ret.connector_tx = Some(connector_tx);
