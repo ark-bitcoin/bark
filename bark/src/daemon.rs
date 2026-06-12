@@ -325,14 +325,66 @@ impl DaemonProcess {
 			info!("Daemon running in manual-sync mode; background sync disabled");
 			let _ = self.run_server_connection_check_process().await;
 		} else {
-			let _ = futures::join!(
-				self.run_server_connection_check_process(),
-				self.run_round_events_process(),
-				self.run_sync_processes(),
-				self.run_mailbox_messages_process(),
-			);
+			#[cfg(not(feature = "wasm-web"))]
+			{
+				// Each loop runs in its own tokio task so that a panic in one
+				// (e.g. from a crafted round proposal) cannot silently kill the
+				// others — in particular exit monitoring / CPFP fee-bumping.
+				let proc = Arc::new(self);
+				let p1 = Arc::clone(&proc);
+				let p2 = Arc::clone(&proc);
+				let p3 = Arc::clone(&proc);
+				let p4 = Arc::clone(&proc);
+				let _ = futures::join!(
+					supervised("server-connection", move || {
+						let p = Arc::clone(&p1);
+						async move { p.run_server_connection_check_process().await }
+					}),
+					supervised("round-events", move || {
+						let p = Arc::clone(&p2);
+						async move { p.run_round_events_process().await }
+					}),
+					supervised("sync", move || {
+						let p = Arc::clone(&p3);
+						async move { p.run_sync_processes().await }
+					}),
+					supervised("mailbox", move || {
+						let p = Arc::clone(&p4);
+						async move { p.run_mailbox_messages_process().await }
+					}),
+				);
+			}
+			#[cfg(feature = "wasm-web")]
+			{
+				let _ = futures::join!(
+					self.run_server_connection_check_process(),
+					self.run_round_events_process(),
+					self.run_sync_processes(),
+					self.run_mailbox_messages_process(),
+				);
+			}
 		}
 
 		info!("Daemon gracefully stopped");
+	}
+}
+
+/// Run `f` in its own [`tokio::spawn`] task, restarting it if it panics.
+///
+/// A clean return (shutdown signal) breaks the loop immediately.
+#[cfg(not(feature = "wasm-web"))]
+async fn supervised<F, Fut>(name: &'static str, f: F)
+where
+	F: Fn() -> Fut,
+	Fut: std::future::Future<Output = ()> + Send + 'static,
+{
+	loop {
+		match tokio::spawn(f()).await {
+			Ok(()) => break,
+			Err(e) => {
+				warn!("Daemon task '{}' terminated unexpectedly, restarting: {e}", name);
+				tokio::time::sleep(Duration::from_secs(1)).await;
+			},
+		}
 	}
 }
