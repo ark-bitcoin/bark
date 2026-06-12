@@ -1,0 +1,6 @@
+- various fixes in feerate update logic
+  - fix reverse clamp in max_fee_rate
+  - prevent double update on fallback
+  - use ECONOMICAL instead of CONSERVATIVE
+  - move the slog to a better place
+  [#2185](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2185)
