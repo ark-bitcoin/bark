@@ -238,8 +238,6 @@ impl Process {
 			Ok(rates) => (rates, false),
 			Err(e) => {
 				slog!(FeeEstimateFallback, err: e.to_string());
-				let rates = self.config.fallback_fee_rates();
-				self.fee_estimator.update(rates);
 				(self.config.fallback_fee_rates(), true)
 			}
 		};
