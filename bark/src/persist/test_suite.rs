@@ -115,7 +115,7 @@ fn test_time() -> chrono::DateTime<chrono::Local> {
 /// Compare two `StoredRoundState<Unlocked>` values for equality.
 ///
 /// `RoundState` does not derive `PartialEq` or `Serialize` because
-/// `RoundFlowState` contains `Keypair` and `DangerousSecretNonce`.  We compare
+/// `RoundFlowState` contains `Keypair` and `SecretNonce`.  We compare
 /// the fields that are observable in tests and that backends actually store.
 fn round_states_match(a: &StoredRoundState<Unlocked>, b: &StoredRoundState<Unlocked>) -> bool {
 	if a.id() != b.id() {
