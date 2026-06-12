@@ -183,23 +183,6 @@ impl FeeEstimator {
 			deque.pop_back();
 		}
 
-		// log on update
-		let latest = deque.front().map(|(r, _)| r.clone()).unwrap_or(OnchainFeeRates {
-			slow: FeeRate::ZERO,
-			regular: FeeRate::ZERO,
-			fast: FeeRate::ZERO,
-		});
-		if latest != rates {
-			slog!(FeeRatesUpdated,
-				new_fast: rates.fast,
-				new_regular: rates.regular,
-				new_slow: rates.slow,
-				old_fast: latest.fast,
-				old_regular: latest.regular,
-				old_slow: latest.slow,
-			);
-		}
-
 		deque.push_front((rates, Instant::now()));
 	}
 }
@@ -242,16 +225,37 @@ impl Process {
 			}
 		};
 
+		// grab the latest and then update
+		let latest = self.fee_estimator.fee_rates.read().front().map(|(v, _)| v).cloned()
+			.unwrap_or(OnchainFeeRates {
+				fast: FeeRate::ZERO,
+				regular: FeeRate::ZERO,
+				slow: FeeRate::ZERO,
+			});
+		self.fee_estimator.update(rates);
+		drop(rates);
+		let current = self.fee_estimator.fee_rates.read().front().unwrap().0;
+
 		// Convert sat/kwu to sat/vb: 1 vbyte = 4 weight units, so sat/vb = sat/kwu / 250
 		let to_sat_per_vb = |rate: FeeRate| rate.to_sat_per_kwu() as f64 / 250.0;
 		telemetry::set_fee_estimator_metrics(
-			to_sat_per_vb(rates.fast),
-			to_sat_per_vb(rates.regular),
-			to_sat_per_vb(rates.slow),
+			to_sat_per_vb(current.fast),
+			to_sat_per_vb(current.regular),
+			to_sat_per_vb(current.slow),
 			using_fallback,
 		);
 
-		self.fee_estimator.update(rates);
+		// Slog when the rates are updated
+		if latest != current {
+			slog!(FeeRatesUpdated,
+				new_fast: current.fast,
+				new_regular: current.regular,
+				new_slow: current.slow,
+				old_fast: latest.fast,
+				old_regular: latest.regular,
+				old_slow: latest.slow,
+			);
+		}
 	}
 
 	async fn fetch_fee_rates(&self) -> anyhow::Result<OnchainFeeRates> {
