@@ -128,6 +128,7 @@ pub mod state {
 		impl Sealed for super::CanGenerateNonces {}
 		impl Sealed for super::ServerCanCosign {}
 		impl Sealed for super::CanFinish {}
+		impl Sealed for super::ServerCanBuildVtxos {}
 	}
 
 	/// A marker trait used as a generic for [super::BoardBuilder].
@@ -150,6 +151,10 @@ pub mod state {
 	/// a cosign response from the server.
 	pub struct CanFinish;
 	impl BuilderState for CanFinish {}
+
+	/// All the information for the server to build the VTXO is known.
+	pub struct ServerCanBuildVtxos;
+	impl BuilderState for ServerCanBuildVtxos {}
 
 	/// Trait to capture all states that have sufficient information
 	/// for either party to create signatures.
@@ -188,6 +193,9 @@ pub struct BoardBuilder<S: BuilderState> {
 	// Cached exit tx data (computed when funding details are set)
 	exit_data: Option<ExitData>,
 
+	/// The signed VTXO provided by the user
+	signed_vtxo: Option<Vtxo<Full>>,
+
 	_state: PhantomData<S>,
 }
 
@@ -211,6 +219,7 @@ impl<S: BuilderState> BoardBuilder<S> {
 			user_pub_nonce: self.user_pub_nonce,
 			user_sec_nonce: self.user_sec_nonce,
 			exit_data: self.exit_data,
+			signed_vtxo: self.signed_vtxo,
 			_state: PhantomData,
 		}
 	}
@@ -234,6 +243,7 @@ impl BoardBuilder<state::Preparing> {
 			user_pub_nonce: None,
 			user_sec_nonce: None,
 			exit_data: None,
+			signed_vtxo: None,
 			_state: PhantomData,
 		}
 	}
@@ -292,6 +302,76 @@ impl BoardBuilder<state::CanGenerateNonces> {
 		self.to_state()
 	}
 
+	/// Returns a reference to the exit transaction.
+	///
+	/// The exit transaction spends the board's funding UTXO and creates
+	/// the VTXO output.
+	pub fn exit_tx(&self) -> &Transaction {
+		&self.exit_data.as_ref().expect("state invariant").tx
+	}
+
+	/// Returns spend information mapping input VTXO IDs to spending transaction IDs.
+	pub fn spend_info(&self) -> Vec<(VtxoId, Txid)> {
+		let exit_txid = self.exit_data.as_ref().expect("state invariant").txid;
+		vec![(self.utxo.expect("state invariant").into(), exit_txid)]
+	}
+}
+
+impl<S: state::CanSign> BoardBuilder<S> {
+	pub fn user_pub_nonce(&self) -> &musig::PublicNonce {
+		self.user_pub_nonce.as_ref().expect("state invariant")
+	}
+}
+
+impl BoardBuilder<state::ServerCanCosign> {
+	/// This constructor is to be used by the server with the information provided
+	/// by the user.
+	pub fn new_for_cosign(
+		user_pubkey: PublicKey,
+		expiry_height: BlockHeight,
+		server_pubkey: PublicKey,
+		exit_delta: BlockDelta,
+		amount: Amount,
+		fee: Amount,
+		utxo: OutPoint,
+		user_pub_nonce: musig::PublicNonce,
+	) -> BoardBuilder<state::ServerCanCosign> {
+		let exit_data = compute_exit_data(
+			user_pubkey, server_pubkey, expiry_height, exit_delta, amount, fee, utxo,
+		);
+
+		BoardBuilder {
+			user_pubkey, expiry_height, server_pubkey, exit_delta,
+			amount: Some(amount),
+			fee: Some(fee),
+			utxo: Some(utxo),
+			user_pub_nonce: Some(user_pub_nonce),
+			user_sec_nonce: None,
+			exit_data: Some(exit_data),
+			signed_vtxo: None,
+			_state: PhantomData,
+		}
+	}
+
+	/// This method is used by the server to cosign the board request.
+	///
+	/// Returns `None` if utxo or user_pub_nonce field is not provided.
+	pub fn server_cosign(&self, key: &Keypair) -> BoardCosignResponse {
+		let exit_data = self.exit_data.as_ref().expect("state invariant");
+		let sighash = exit_data.sighash;
+		let taproot = &exit_data.funding_taproot;
+		let (pub_nonce, partial_signature) = musig::deterministic_partial_sign(
+			key,
+			[self.user_pubkey],
+			&[&self.user_pub_nonce()],
+			sighash.to_byte_array(),
+			Some(taproot.tap_tweak().to_byte_array()),
+		);
+		BoardCosignResponse { pub_nonce, partial_signature }
+	}
+}
+
+impl BoardBuilder<state::ServerCanBuildVtxos> {
 	/// Constructs a BoardBuilder from a vtxo
 	///
 	/// This is used to validate that a vtxo is a board
@@ -357,16 +437,9 @@ impl BoardBuilder<state::CanGenerateNonces> {
 			exit_delta: vtxo.exit_delta,
 			utxo: Some(vtxo.chain_anchor()),
 			exit_data: Some(exit_data),
+			signed_vtxo: Some(vtxo.clone()),
 			_state: PhantomData,
 		})
-	}
-
-	/// Returns a reference to the exit transaction.
-	///
-	/// The exit transaction spends the board's funding UTXO and creates
-	/// the VTXO output.
-	pub fn exit_tx(&self) -> &Transaction {
-		&self.exit_data.as_ref().expect("state invariant").tx
 	}
 
 	/// Returns the txid of the exit transaction.
@@ -378,21 +451,17 @@ impl BoardBuilder<state::CanGenerateNonces> {
 	///
 	/// Returns two VTXOs:
 	/// 1. An expiry VTXO with empty genesis (for server tracking)
-	/// 2. A pubkey VTXO with an arkoor genesis transition
-	pub fn build_internal_unsigned_vtxos(&self) -> Vec<ServerVtxo<Full>> {
-		let amount = self.amount.expect("state invariant");
-		let fee = self.fee.expect("state invariant");
-		let exit_data = self.exit_data.as_ref().expect("state invariant");
-		let exit_txid = exit_data.txid;
-		let tap_tweak = exit_data.funding_taproot.tap_tweak();
-
+	/// 2. The validated output VTXO
+	pub fn build_server_vtxos(&self) -> Vec<ServerVtxo<Full>> {
 		let combined_pubkey = musig::combine_keys([self.user_pubkey, self.server_pubkey])
 			.x_only_public_key().0;
-		let expiry_policy = ServerVtxoPolicy::new_expiry(combined_pubkey);
+
+		let vtxo = self.signed_vtxo.as_ref().expect("state invariant").clone();
+
 		vec![
 			Vtxo {
-				policy: expiry_policy,
-				amount: amount,
+				policy: ServerVtxoPolicy::new_expiry(combined_pubkey),
+				amount: self.amount.expect("state invariant"),
 				expiry_height: self.expiry_height,
 				server_pubkey: self.server_pubkey,
 				exit_delta: self.exit_delta,
@@ -400,29 +469,7 @@ impl BoardBuilder<state::CanGenerateNonces> {
 				genesis: Full { items: vec![] },
 				point: self.utxo.expect("state invariant"),
 			},
-			Vtxo {
-				policy: ServerVtxoPolicy::User(VtxoPolicy::new_pubkey(self.user_pubkey)),
-				amount: amount - fee,
-				expiry_height: self.expiry_height,
-				server_pubkey: self.server_pubkey,
-				exit_delta: self.exit_delta,
-				anchor_point: self.utxo.expect("state invariant"),
-				genesis: Full {
-					items: vec![
-						GenesisItem {
-							transition: GenesisTransition::new_arkoor(
-								vec![self.user_pubkey],
-								tap_tweak,
-								None,
-							),
-							output_idx: 0,
-							other_outputs: vec![],
-							fee_amount: fee,
-						}
-					],
-				},
-				point: OutPoint::new(exit_txid, BOARD_FUNDING_TX_VTXO_VOUT),
-			},
+			ServerVtxo::from(vtxo),
 		]
 	}
 
@@ -430,59 +477,6 @@ impl BoardBuilder<state::CanGenerateNonces> {
 	pub fn spend_info(&self) -> Vec<(VtxoId, Txid)> {
 		let exit_txid = self.exit_data.as_ref().expect("state invariant").txid;
 		vec![(self.utxo.expect("state invariant").into(), exit_txid)]
-	}
-}
-
-impl<S: state::CanSign> BoardBuilder<S> {
-	pub fn user_pub_nonce(&self) -> &musig::PublicNonce {
-		self.user_pub_nonce.as_ref().expect("state invariant")
-	}
-}
-
-impl BoardBuilder<state::ServerCanCosign> {
-	/// This constructor is to be used by the server with the information provided
-	/// by the user.
-	pub fn new_for_cosign(
-		user_pubkey: PublicKey,
-		expiry_height: BlockHeight,
-		server_pubkey: PublicKey,
-		exit_delta: BlockDelta,
-		amount: Amount,
-		fee: Amount,
-		utxo: OutPoint,
-		user_pub_nonce: musig::PublicNonce,
-	) -> BoardBuilder<state::ServerCanCosign> {
-		let exit_data = compute_exit_data(
-			user_pubkey, server_pubkey, expiry_height, exit_delta, amount, fee, utxo,
-		);
-
-		BoardBuilder {
-			user_pubkey, expiry_height, server_pubkey, exit_delta,
-			amount: Some(amount),
-			fee: Some(fee),
-			utxo: Some(utxo),
-			user_pub_nonce: Some(user_pub_nonce),
-			user_sec_nonce: None,
-			exit_data: Some(exit_data),
-			_state: PhantomData,
-		}
-	}
-
-	/// This method is used by the server to cosign the board request.
-	///
-	/// Returns `None` if utxo or user_pub_nonce field is not provided.
-	pub fn server_cosign(&self, key: &Keypair) -> BoardCosignResponse {
-		let exit_data = self.exit_data.as_ref().expect("state invariant");
-		let sighash = exit_data.sighash;
-		let taproot = &exit_data.funding_taproot;
-		let (pub_nonce, partial_signature) = musig::deterministic_partial_sign(
-			key,
-			[self.user_pubkey],
-			&[&self.user_pub_nonce()],
-			sighash.to_byte_array(),
-			Some(taproot.tap_tweak().to_byte_array()),
-		);
-		BoardCosignResponse { pub_nonce, partial_signature }
 	}
 }
 
@@ -685,7 +679,7 @@ mod test {
 		let builder = BoardBuilder::new_from_vtxo(&vtxo, &funding_tx, server_key.public_key())
 			.expect("Is valid");
 
-		let server_vtxos = builder.build_internal_unsigned_vtxos();
+		let server_vtxos = builder.build_server_vtxos();
 		assert_eq!(server_vtxos.len(), 2);
 		assert!(matches!(server_vtxos[0].policy(), ServerVtxoPolicy::Expiry(..)));
 		assert!(matches!(server_vtxos[1].policy(), ServerVtxoPolicy::User(VtxoPolicy::Pubkey {..})));

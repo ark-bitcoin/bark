@@ -816,7 +816,7 @@ impl Server {
 		let update = VtxoTreeUpdate::new()
 			.upsert_funding_tx(&funding_tx)
 			.upsert_unsigned_tx([builder.exit_txid()])
-			.insert_spendable_vtxos(builder.build_internal_unsigned_vtxos())
+			.insert_spendable_vtxos(builder.build_server_vtxos())
 			.mark_vtxos_oor_spent(builder.spend_info());
 		let inserted = self.db.write(async |t| {
 			let inserted = t.execute_vtxo_tree_update(update).await?;
