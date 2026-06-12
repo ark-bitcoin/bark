@@ -6,6 +6,35 @@ https://docs.second.tech/changelog/changelog/
 
 Below is a more detailed summary for each version.
 
+# v0.2.5
+
+Special thanks to Greg Sanders and Floppy for privately disclosing
+vulnerabilities fixed in this release.
+
+- `ark-lib`
+  - bugfix: reject VTXOs with output_idx out of range
+    [#2183](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2183)
+
+- `bark`
+  - fix potential panic on bad round data from server
+    [#2181](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2181)
+  - prevent panics in some of the daemon procedures to halt entire process
+    [#2181](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2181)
+  - protect against accidental nonce re-use when failing to persist after signing round
+    - no longer support progressing round while sleeping intermittently: bark needs to stay
+  	in memory between signing up for the round and signing the vtxo proposal
+    [#2182](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2182)
+
+- `server`
+  - bugfix: correctly check user-provided HTLC expiry value for LN receive
+    [#2184](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2184)
+  - various fixes in feerate update logic
+    - fix reverse clamp in max_fee_rate
+    - prevent double update on fallback
+    - use ECONOMICAL instead of CONSERVATIVE
+    - move the slog to a better place
+    [#2185](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2185)
+
 # v0.2.4
 
 - `bark`

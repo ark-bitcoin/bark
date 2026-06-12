@@ -1,4 +1,0 @@
-- fix potential panic on bad round data from server
-  [#2181](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2181)
-- prevent panics in some of the daemon procedures to halt entire process
-  [#2181](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2181)
