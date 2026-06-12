@@ -17,7 +17,7 @@
 //! <div align="center">
 //!
 //! [![Release](https://img.shields.io/gitlab/v/release/ark-bitcoin/bark?gitlab_url=https://gitlab.com&sort=semver&label=release)
-//! [![Project Status](https://img.shields.io/badge/status-experimental-red.svg)](https://gitlab.com/ark-bitcoin/bark)
+//! [![Project Status](https://img.shields.io/badge/status-active-brightgreen.svg)](https://gitlab.com/ark-bitcoin/bark)
 //! [![License](https://img.shields.io/badge/license-CC0--1.0-blue.svg)](https://gitlab.com/ark-bitcoin/bark/-/blob/master/LICENSE)
 //! [![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen?logo=git)](https://gitlab.com/ark-bitcoin/bark/-/blob/master/CONTRIBUTING.md)
 //! [![Community](https://img.shields.io/badge/community-forum-blue?logo=discourse)](https://community.second.tech)

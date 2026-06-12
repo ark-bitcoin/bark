@@ -17,7 +17,7 @@
 <div align="center">
 
 [![Release](https://img.shields.io/gitea/v/release/ark-bitcoin/bark?label=release&gitea_url=https://gitlab.com)](https://gitlab.com/ark-bitcoin/bark/tags)
-[![Project Status](https://img.shields.io/badge/status-experimental-red.svg)](https://gitlab.com/ark-bitcoin/bark)
+[![Project Status](https://img.shields.io/badge/status-active-brightgreen.svg)](https://gitlab.com/ark-bitcoin/bark)
 [![License](https://img.shields.io/badge/license-CC0--1.0-blue.svg)](https://gitlab.com/ark-bitcoin/bark/LICENSE)
 [![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen?logo=git)](https://gitlab.com/ark-bitcoin/bark/CONTRIBUTING.md)
 [![Community](https://img.shields.io/badge/community-forum-blue?logo=discourse)](https://community.second.tech)
