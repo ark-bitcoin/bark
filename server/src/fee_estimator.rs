@@ -36,11 +36,11 @@ pub struct OnchainFeeRates {
 
 impl OnchainFeeRates {
 	/// Apply a max fee rate to all rates
-	pub fn max(&mut self, max_fee_rate: FeeRate) {
+	pub fn clamp(&mut self, max_fee_rate: FeeRate) {
 		*self = OnchainFeeRates {
-			fast: self.fast.max(max_fee_rate),
-			regular: self.regular.max(max_fee_rate),
-			slow: self.slow.max(max_fee_rate),
+			fast: self.fast.min(max_fee_rate),
+			regular: self.regular.min(max_fee_rate),
+			slow: self.slow.min(max_fee_rate),
 		};
 	}
 }
@@ -174,7 +174,7 @@ impl FeeEstimator {
 
 	fn update(&self, mut rates: OnchainFeeRates) {
 		if let Some(max) = self.max_fee_rate {
-			rates.max(max);
+			rates.clamp(max);
 		}
 
 		let mut deque = self.fee_rates.write();
