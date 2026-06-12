@@ -264,7 +264,7 @@ impl Process {
 				"estimatesmartfee",
 				&[
 					target.into(),
-					bcd::json_arg(rpc::json::EstimateMode::Conservative)?,
+					bcd::json_arg(rpc::json::EstimateMode::Economical)?,
 				],
 			).await?;
 			if let Some(fee_rate) = fee.fee_rate {
