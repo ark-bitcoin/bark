@@ -36,11 +36,11 @@ pub struct OnchainFeeRates {
 
 impl OnchainFeeRates {
 	/// Apply a max fee rate to all rates
-	pub fn max(&mut self, max_fee_rate: FeeRate) {
+	pub fn clamp(&mut self, max_fee_rate: FeeRate) {
 		*self = OnchainFeeRates {
-			fast: self.fast.max(max_fee_rate),
-			regular: self.regular.max(max_fee_rate),
-			slow: self.slow.max(max_fee_rate),
+			fast: self.fast.min(max_fee_rate),
+			regular: self.regular.min(max_fee_rate),
+			slow: self.slow.min(max_fee_rate),
 		};
 	}
 }
@@ -174,30 +174,13 @@ impl FeeEstimator {
 
 	fn update(&self, mut rates: OnchainFeeRates) {
 		if let Some(max) = self.max_fee_rate {
-			rates.max(max);
+			rates.clamp(max);
 		}
 
 		let mut deque = self.fee_rates.write();
 		let now = Instant::now();
 		while deque.back().is_some_and(|(_, timestamp)| now - *timestamp >= self.history_duration) {
 			deque.pop_back();
-		}
-
-		// log on update
-		let latest = deque.front().map(|(r, _)| r.clone()).unwrap_or(OnchainFeeRates {
-			slow: FeeRate::ZERO,
-			regular: FeeRate::ZERO,
-			fast: FeeRate::ZERO,
-		});
-		if latest != rates {
-			slog!(FeeRatesUpdated,
-				new_fast: rates.fast,
-				new_regular: rates.regular,
-				new_slow: rates.slow,
-				old_fast: latest.fast,
-				old_regular: latest.regular,
-				old_slow: latest.slow,
-			);
 		}
 
 		deque.push_front((rates, Instant::now()));
@@ -238,22 +221,41 @@ impl Process {
 			Ok(rates) => (rates, false),
 			Err(e) => {
 				slog!(FeeEstimateFallback, err: e.to_string());
-				let rates = self.config.fallback_fee_rates();
-				self.fee_estimator.update(rates);
 				(self.config.fallback_fee_rates(), true)
 			}
 		};
 
+		// grab the latest and then update
+		let latest = self.fee_estimator.fee_rates.read().front().map(|(v, _)| v).cloned()
+			.unwrap_or(OnchainFeeRates {
+				fast: FeeRate::ZERO,
+				regular: FeeRate::ZERO,
+				slow: FeeRate::ZERO,
+			});
+		self.fee_estimator.update(rates);
+		drop(rates);
+		let current = self.fee_estimator.fee_rates.read().front().unwrap().0;
+
 		// Convert sat/kwu to sat/vb: 1 vbyte = 4 weight units, so sat/vb = sat/kwu / 250
 		let to_sat_per_vb = |rate: FeeRate| rate.to_sat_per_kwu() as f64 / 250.0;
 		telemetry::set_fee_estimator_metrics(
-			to_sat_per_vb(rates.fast),
-			to_sat_per_vb(rates.regular),
-			to_sat_per_vb(rates.slow),
+			to_sat_per_vb(current.fast),
+			to_sat_per_vb(current.regular),
+			to_sat_per_vb(current.slow),
 			using_fallback,
 		);
 
-		self.fee_estimator.update(rates);
+		// Slog when the rates are updated
+		if latest != current {
+			slog!(FeeRatesUpdated,
+				new_fast: current.fast,
+				new_regular: current.regular,
+				new_slow: current.slow,
+				old_fast: latest.fast,
+				old_regular: latest.regular,
+				old_slow: latest.slow,
+			);
+		}
 	}
 
 	async fn fetch_fee_rates(&self) -> anyhow::Result<OnchainFeeRates> {
@@ -262,7 +264,7 @@ impl Process {
 				"estimatesmartfee",
 				&[
 					target.into(),
-					bcd::json_arg(rpc::json::EstimateMode::Conservative)?,
+					bcd::json_arg(rpc::json::EstimateMode::Economical)?,
 				],
 			).await?;
 			if let Some(fee_rate) = fee.fee_rate {
