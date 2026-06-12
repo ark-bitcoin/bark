@@ -1155,6 +1155,16 @@ impl VtxoVersionedEncoding for Full {
 			let output_idx = r.read_u8()?;
 			let nb_other = nb_outputs.checked_sub(1)
 				.ok_or_else(|| ProtocolDecodingError::invalid("genesis item with 0 outputs"))?;
+			// `output_idx` MUST index a real output of the exit tx. Otherwise
+			// `GenesisItem::tx` clamps the placement and the VTXO's `point` ends
+			// up referencing a sibling output or the anyone-can-spend P2A fee
+			// anchor rather than the transition's own output, breaking the
+			// invariant that `point` is fully determined by the genesis data.
+			if output_idx as usize >= nb_outputs {
+				return Err(ProtocolDecodingError::invalid(
+					"genesis item output_idx out of range (>= nb_outputs)",
+				));
+			}
 			let mut other_outputs = Vec::with_capacity(nb_other);
 			for _ in 0..nb_other {
 				other_outputs.push(TxOut::decode(r)?);

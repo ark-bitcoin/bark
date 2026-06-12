@@ -195,6 +195,10 @@ pub fn validate_unsigned<P: Policy>(
 
 #[cfg(test)]
 mod test {
+	use bitcoin::{OutPoint, Transaction};
+
+	use crate::{ProtocolEncoding, Vtxo};
+	use crate::vtxo::Full;
 	use crate::test_util::VTXO_VECTORS;
 
 	#[test]
@@ -224,5 +228,40 @@ mod test {
 		assert!(vtxos.arkoor3_vtxo.is_standard());
 		let err = vtxos.arkoor3_vtxo.validate(&vtxos.round_tx).err();
 		assert!(err.is_none(), "err: {err:?}");
+	}
+
+	#[test]
+	fn terminal_output_idx_out_of_range_is_rejected() {
+		fn check(mut vtxo: Vtxo<Full>, anchor: &Transaction) {
+			// Baseline: the fixture validates and places its funds at vout 0.
+			vtxo.validate(anchor).expect("baseline vtxo must validate");
+			assert_eq!(vtxo.point().vout, 0, "fixtures place the funds at vout 0");
+			let genesis_txid = vtxo.point().txid;
+
+			// Craft the malicious encoding: bump the terminal item's output_idx
+			// to nb_outputs and move `point` to the same (out-of-range) vout.
+			let nb_outputs = {
+				let item = vtxo.genesis.items.last_mut().unwrap();
+				let nb = item.other_outputs.len() + 1;
+				item.output_idx = nb as u8; // == nb_outputs: out of range
+				nb
+			};
+			vtxo.point = OutPoint::new(genesis_txid, nb_outputs as u32);
+
+			// The decoder MUST reject it. Before the fix this returned Ok, and
+			// the decoded VTXO's id was the P2A fee-anchor outpoint while
+			// validate() still passed.
+			let bytes = vtxo.serialize();
+			let res = Vtxo::<Full>::deserialize(&bytes);
+			assert!(res.is_err(),
+				"decoder must reject a genesis item with output_idx >= nb_outputs; \
+				accepted a VTXO whose point is the fee anchor: {:?}",
+				res.map(|v| v.point()));
+		}
+
+		// A board VTXO (single cosigned item) and an arkoor VTXO (the real
+		// delivery vector, terminal `arkoor` item) both exercise the gap.
+		check(VTXO_VECTORS.board_vtxo.clone(), &VTXO_VECTORS.anchor_tx);
+		check(VTXO_VECTORS.arkoor2_vtxo.clone(), &VTXO_VECTORS.anchor_tx);
 	}
 }
