@@ -711,12 +711,16 @@ impl Server {
 		//TODO(stevenroose) make this more robust
 		let tip = self.chain_tip();
 		if expiry_height < tip.height {
-			bail!("VTXO already expired: {} (tip = {})", expiry_height, tip.height);
+			return badarg!("VTXO already expired: {} (tip = {})", expiry_height, tip.height);
 		}
 		const LIFETIME_BUFFER: u16 = 3;
+		// NB compare in u32: a `requested_lifetime as u16` cast truncates, letting a
+		// client request a lifetime of `n * 65536 + small` that wraps under the cap
+		// and gets a VTXO whose expiry the server can't cheaply sweep.
 		let requested_lifetime = expiry_height - tip.height;
-		if requested_lifetime as u16 > self.config.vtxo_lifetime + LIFETIME_BUFFER {
-			bail!("requested VTXO lifetime {} is too high (server VTXO lifetime is {})",
+		let max_lifetime = self.config.vtxo_lifetime as u32 + LIFETIME_BUFFER as u32;
+		if requested_lifetime > max_lifetime {
+			return badarg!("requested VTXO lifetime {} is too high (server VTXO lifetime is {})",
 				requested_lifetime, self.config.vtxo_lifetime,
 			);
 		}
