@@ -1,2 +1,0 @@
-- bugfix: reject VTXOs with output_idx out of range
-  [#2183](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2183)

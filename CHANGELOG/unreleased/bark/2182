@@ -1,4 +1,0 @@
-- protect against accidental nonce re-use when failing to persist after signing round
-  - no longer support progressing round while sleeping intermittently: bark needs to stay
-	in memory between signing up for the round and signing the vtxo proposal
-  [#2182](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2182)
