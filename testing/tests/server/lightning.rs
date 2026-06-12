@@ -8,6 +8,7 @@ use bitcoin::secp256k1::Keypair;
 use log::{info, trace};
 
 use ark::{ProtocolEncoding, Vtxo, SECP};
+use bitcoin_ext::BlockHeight;
 use ark::arkoor::ArkoorDestination;
 use ark::attestations::ArkoorCosignAttestation;
 use ark::vtxo::Full;
@@ -410,7 +411,7 @@ async fn server_returned_htlc_recv_vtxos_identical(
 			let req_1 = protos::PrepareLightningReceiveClaimRequest {
 				payment_hash: receive.payment_hash.to_vec(),
 				user_pubkey: keypair.public_key().serialize().to_vec(),
-				htlc_recv_expiry: 180,
+				htlc_recv_expiry: 172,
 				lightning_receive_anti_dos: None,
 			};
 			let vtxos_1 = client.prepare_lightning_receive_claim(req_1.clone()).await.unwrap()
@@ -429,7 +430,7 @@ async fn server_returned_htlc_recv_vtxos_identical(
 			let req_2 = protos::PrepareLightningReceiveClaimRequest {
 				payment_hash: receive.payment_hash.to_vec(),
 				user_pubkey: keypair.public_key().serialize().to_vec(),
-				htlc_recv_expiry: 180,
+				htlc_recv_expiry: 172,
 				lightning_receive_anti_dos: None,
 			};
 
@@ -446,6 +447,79 @@ async fn server_returned_htlc_recv_vtxos_identical(
 	assert_vtxopool_consistency(srv).await;
 }
 lightning_test!(server_returned_htlc_recv_vtxos_identical);
+
+/// The server must refuse an HTLC-recv expiry that doesn't leave at
+/// least `htlc_expiry_delta` blocks of margin below the inbound
+/// Lightning HTLC's expiry. Otherwise a receiver could wait for the
+/// inbound HTLC to time out and still claim the Ark VTXO.
+async fn refuses_htlc_recv_expiry_past_lowest_incoming_htlc_expiry(
+	ctx: &TestContext,
+	_lightning: &LightningPaymentSetup,
+	srv: &Captaind,
+	pay: impl AsyncFn(String),
+) {
+	srv.wait_for_vtxopool(&ctx).await;
+
+	let bark = ctx.bark("bark-1", srv).funded(btc(3)).create().await;
+	bark.board_and_confirm_and_register(&ctx, btc(2)).await;
+
+	let invoice_info = bark.bolt11_invoice(btc(1)).await;
+	let receive = bark.lightning_receive_status(&invoice_info.invoice).await.unwrap();
+
+	let mut client = srv.get_public_rpc().await;
+	let htlc_expiry_delta = srv.config().htlc_expiry_delta as BlockHeight;
+
+	tokio::select! {
+		_ = pay(invoice_info.invoice) => {},
+		_ = async {
+			client.check_lightning_receive(protos::CheckLightningReceiveRequest {
+				hash: receive.payment_hash.to_vec(),
+				wait: true,
+			}).wait_millis(10_000).await.unwrap().into_inner();
+
+			let pg_cfg = srv.config().postgres.clone();
+			let db = Db::connect(&pg_cfg).await.unwrap();
+			let sub = db.read(async |t|
+				t.get_htlc_subscription_by_payment_hash(receive.payment_hash).await
+			).await.unwrap().expect("subscription should exist");
+			let lowest = sub.lowest_incoming_htlc_expiry
+				.expect("Accepted subscription must have lowest_incoming_htlc_expiry");
+
+			// Boundary: requested + delta == lowest + 1. Server must refuse.
+			let attacker_expiry = lowest - htlc_expiry_delta + 1;
+			let keypair = Keypair::new(&SECP, &mut bip39::rand::thread_rng());
+			let req = protos::PrepareLightningReceiveClaimRequest {
+				payment_hash: receive.payment_hash.to_vec(),
+				user_pubkey: keypair.public_key().serialize().to_vec(),
+				htlc_recv_expiry: attacker_expiry,
+				lightning_receive_anti_dos: None,
+			};
+			let err = client.prepare_lightning_receive_claim(req).await
+				.expect_err("server must refuse htlc_recv_expiry + delta >= lowest");
+			assert_eq!(err.code(), tonic::Code::InvalidArgument,
+				"unexpected error: {err:?}");
+			assert!(
+				err.message().contains("too close to inbound HTLC expiry"),
+				"unexpected error message: {}", err.message(),
+			);
+
+			// Just below the boundary: requested + delta == lowest. Must accept.
+			let safe_expiry = lowest - htlc_expiry_delta ;
+			let keypair = Keypair::new(&SECP, &mut bip39::rand::thread_rng());
+			let req_safe = protos::PrepareLightningReceiveClaimRequest {
+				payment_hash: receive.payment_hash.to_vec(),
+				user_pubkey: keypair.public_key().serialize().to_vec(),
+				htlc_recv_expiry: safe_expiry,
+				lightning_receive_anti_dos: None,
+			};
+			client.prepare_lightning_receive_claim(req_safe).await
+				.expect("server must accept htlc_recv_expiry just below the safety bound");
+		} => {},
+	}
+
+	assert_vtxopool_consistency(srv).await;
+}
+lightning_test!(refuses_htlc_recv_expiry_past_lowest_incoming_htlc_expiry);
 
 #[tokio::test]
 async fn should_refuse_paying_invoice_not_matching_htlcs() {

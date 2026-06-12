@@ -1,0 +1,2 @@
+- bugfix: correctly check user-provided HTLC expiry value for LN receive
+  [#2184](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2184)
