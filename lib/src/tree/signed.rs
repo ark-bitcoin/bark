@@ -20,6 +20,7 @@ use crate::encode::{
 use crate::error::IncorrectSigningKeyError;
 use crate::tree::{self, Tree};
 use crate::vtxo::{self, Full, GenesisItem, GenesisTransition, MaybePreimage, ServerVtxo};
+use crate::vtxo::policy::{check_block_delta, check_block_height};
 
 
 /// Hash to lock hArk VTXOs from users before forfeits
@@ -1604,9 +1605,11 @@ impl ProtocolEncoding for VtxoTreeSpec {
 			)));
 		}
 
-		let expiry_height = r.read_u32()?;
+		let expiry_height = check_block_height(r.read_u32()?)
+			.map_err(|e| ProtocolDecodingError::invalid_err(e, "expiry_height"))?;
 		let server_pubkey = PublicKey::decode(r)?;
-		let exit_delta = r.read_u16()?;
+		let exit_delta = check_block_delta(r.read_u16()?)
+			.map_err(|e| ProtocolDecodingError::invalid_err(e, "exit_delta"))?;
 		let global_cosign_pubkeys = LengthPrefixedVector::decode(r)?.into_inner();
 		let vtxos = LengthPrefixedVector::decode(r)?.into_inner();
 		if vtxos.is_empty() {
