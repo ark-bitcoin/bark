@@ -9,7 +9,7 @@ use anyhow::Context;
 use bitcoin::secp256k1::{rand, Keypair};
 use bitcoin::{Amount, OutPoint, Transaction};
 use futures::{stream, StreamExt, TryStreamExt};
-use tracing::{info, warn, error};
+use tracing::{debug, error, info, warn};
 
 use ark::{ServerVtxo, Vtxo, VtxoId, VtxoPolicy, VtxoRequest};
 use ark::arkoor::ArkoorDestination;
@@ -17,7 +17,7 @@ use ark::vtxo::Full;
 use ark::arkoor::package::ArkoorPackageBuilder;
 use ark::tree::signed::{LeafVtxoCosignContext, UnlockPreimage};
 use ark::tree::signed::builder::SignedTreeBuilder;
-use bitcoin_ext::{BlockDelta, BlockHeight};
+use bitcoin_ext::{BlockDelta, BlockHeight, P2TR_DUST};
 
 use crate::database::vtxopool::PoolVtxo;
 use crate::database::tree::VtxoTreeUpdate;
@@ -243,6 +243,28 @@ fn update_all_bucket_metrics(data: &parking_lot::Mutex<Data>) {
 	telemetry::set_vtxo_pool_metrics(&data.pool, &data.bucket_amounts);
 }
 
+/// Checks that change outputs contains at most one non-dust and one dust output
+///
+/// Returns change outputs with non-dust first and dust last
+fn check_change_outputs(change: Vec<Vtxo<Full>>) -> anyhow::Result<Vec<Vtxo<Full>>> {
+	let (change, dust_change) = change.into_iter()
+		.partition::<Vec<_>, _>(|v| v.amount() >= P2TR_DUST);
+	if change.len() > 1 {
+		error!("The vtxo pool returned more than one non-dust change output");
+		bail!("More than one non-dust change output");
+	};
+	if dust_change.len() > 1 {
+		error!("The vtxo pool returned more than one dust change output");
+		bail!("More than one dust change output");
+	};
+	if !change.is_empty() && !dust_change.is_empty() {
+		debug!("The vtxo pool produced both non-dust and dust \
+			change outputs, dust one will be dropped from the pool");
+	}
+
+	Ok(change.into_iter().chain(dust_change.into_iter()).collect())
+}
+
 pub struct VtxoPool {
 	config: Config,
 	started: AtomicBool,
@@ -311,12 +333,7 @@ impl VtxoPool {
 		let (sent, change) = output_vtxos.into_iter()
 			.partition::<Vec<_>, _>(|v| *v.policy() == dest.policy);
 
-		if change.len() > 1 {
-			error!("The vtxo pool returned more then one change-output");
-			bail!("More than one change output");
-		};
-
-		let change = change.into_iter().next();
+		let change = check_change_outputs(change)?;
 
 		let update = VtxoTreeUpdate::new()
 			.upsert_signed_tx(signed_vtxs)
@@ -349,8 +366,10 @@ impl VtxoPool {
 			}
 		}
 
-		if let Some(change) = change {
-			let new = PoolVtxo::new(change);
+		// We stored all change output VTXOs, but in the pool we only keep the
+		// first one (nondust) to avoid later serving one whose ephemeral key was deleted
+		if let Some(change) = change.first() {
+			let new = PoolVtxo::new(change.clone());
 			if let Err(e) = srv.db.write(async |t| t.store_vtxopool_vtxo(&new).await).await {
 				// don't abort for this
 				warn!("Failed to store change from a vtxopool spend: {:#}", e);
