@@ -474,7 +474,7 @@ async fn exit_revoked_lightning_payment() {
 
 #[tokio::test]
 async fn bark_should_exit_a_pending_board() {
-	require_bark_version!(> "0.2.0");
+	require_bark_version!(> "0.2.5");
 
 	let ctx = TestContext::new("exit/bark_should_exit_a_pending_board").await;
 
@@ -602,7 +602,7 @@ async fn bark_should_exit_a_pending_board() {
 
 #[tokio::test]
 async fn bark_should_exit_a_failed_htlc_out_that_server_refuse_to_revoke() {
-	require_bark_version!(> "0.2.2");
+	require_bark_version!(> "0.2.5");
 
 	let ctx = TestContext::new("exit/bark_should_exit_a_failed_htlc_out_that_server_refuse_to_revoke").await;
 
@@ -750,7 +750,7 @@ async fn bark_should_exit_a_failed_htlc_out_that_server_refuse_to_revoke() {
 
 #[tokio::test]
 async fn bark_should_exit_a_pending_htlc_out_that_server_refuse_to_revoke() {
-	require_bark_version!(> "0.2.2");
+	require_bark_version!(> "0.2.5");
 
 	let ctx = TestContext::new("exit/bark_should_exit_a_pending_htlc_out_that_server_refuse_to_revoke").await;
 
@@ -1118,7 +1118,7 @@ async fn exit_oor_ping_pong_then_rbf_tx() {
 
 #[tokio::test]
 async fn bark_should_exit_a_htlc_recv_that_server_refuse_to_cosign() {
-	require_bark_version!(> "0.2.3");
+	require_bark_version!(> "0.2.5");
 
 	let ctx = TestContext::new("exit/bark_should_exit_a_htlc_recv_that_server_refuse_to_cosign").await;
 	let ctx = Arc::new(ctx);
@@ -1251,7 +1251,7 @@ async fn bark_should_exit_a_htlc_recv_that_server_refuse_to_cosign() {
 /// terminal `VtxoAlreadySpent` state with the exit movement Canceled.
 #[tokio::test]
 async fn vtxo_remains_spendable_while_exit_pending() {
-	require_bark_version!(> "0.2.0");
+	require_bark_version!(> "0.2.5");
 
 	let ctx = TestContext::new("exit/vtxo_remains_spendable_while_exit_pending").await;
 	let srv = ctx.captaind("server").funded(btc(10)).create().await;
@@ -1311,7 +1311,7 @@ async fn vtxo_remains_spendable_while_exit_pending() {
 /// the exit movement flips to `Successful`.
 #[tokio::test]
 async fn exited_vtxo_is_not_spendable() {
-	require_bark_version!(> "0.2.0");
+	require_bark_version!(> "0.2.5");
 
 	let ctx = TestContext::new("exit/exited_vtxo_is_not_spendable").await;
 	let srv = ctx.captaind("server").funded(btc(10)).create().await;
