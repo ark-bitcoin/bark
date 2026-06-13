@@ -889,10 +889,11 @@ impl LightningManagerProcess {
 								node.set_state(new_state);
 							},
 							Err(e) => {
-								if e.is_panic() {
-									error!("ClnXpay for {uri} thread paniced!");
+								let msg = e.to_string();
+								if let Ok(p) = e.try_into_panic() {
+									error!("ClnXpay for {uri} thread paniced!: {:?}", p);
 								}
-								let new_state = NodeState::error(e);
+								let new_state = NodeState::error(msg);
 								telemetry::set_lightning_node_state(
 									uri.clone(), Some(rt.id), Some(rt.pubkey), new_state.kind(),
 								);
