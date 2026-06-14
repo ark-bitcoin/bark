@@ -918,6 +918,11 @@ impl Server {
 
 		if inserted > 0 {
 			crate::telemetry::add_board(vtxo.amount().to_sat());
+			// Fee = what the user cosigned - vtxo amount, so schedule
+			// drift between cosign and register can't misreport.
+			let funding_value = funding_tx.output[funding_vout as usize].value;
+			let user_fee_sat = funding_value.to_sat().saturating_sub(vtxo.amount().to_sat());
+			telemetry::record_ark_fee(telemetry::ArkFeeOp::Board, user_fee_sat, None);
 		}
 
 		Ok(())

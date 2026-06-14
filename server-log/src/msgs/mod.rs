@@ -27,6 +27,8 @@ mod wallet;
 pub use self::wallet::*;
 mod watchman;
 pub use self::watchman::*;
+mod telemetry;
+pub use self::telemetry::*;
 
 
 use ark::VtxoId;

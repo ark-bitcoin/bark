@@ -242,6 +242,7 @@ impl LightningManager {
 		sender_mailbox_id: Option<MailboxIdentifier>,
 		htlc_vtxo_ids: Vec<VtxoId>,
 		user_fee: Amount,
+		attempt_block_height: BlockHeight,
 	) -> anyhow::Result<()> {
 		invoice.check_signature().context("invalid invoice signature")?;
 
@@ -255,6 +256,7 @@ impl LightningManager {
 			sender_mailbox_id.as_ref(),
 			&htlc_vtxo_ids,
 			user_fee,
+			attempt_block_height,
 		).await {
 			// The attempt is already recorded as failed and the client sees the
 			// failure via CheckLightningPayment. Benign races (someone else paid
@@ -294,6 +296,7 @@ impl LightningManager {
 		sender_mailbox_id: Option<&MailboxIdentifier>,
 		htlc_vtxo_ids: &[VtxoId],
 		user_fee: Amount,
+		attempt_block_height: BlockHeight,
 	) -> anyhow::Result<()> {
 		let payment_hash = invoice.payment_hash();
 		let node = self.active_node().context("no active cln node")?;
@@ -316,6 +319,7 @@ impl LightningManager {
 			t.store_lightning_payment_start(
 				node.id, &invoice, amount, sender_mailbox_id, htlc_vtxo_ids,
 				lightning_htlc_subscription_id,
+				attempt_block_height, user_fee,
 			).await
 		).await?;
 

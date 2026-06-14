@@ -327,6 +327,7 @@ struct Metrics {
 	fee_rate_gauge: Gauge<f64>,
 	fee_rate_using_fallback_gauge: Gauge<u64>,
 	tokio_runtime_delay_histogram: Histogram<u64>,
+	ark_protocol_fee_sat_counter: Counter<u64>,
 	global_labels: Vec<KeyValue>,
 }
 
@@ -635,6 +636,11 @@ impl Metrics {
 			.with_boundaries(vec![100.0, 105.0, 110.0, 125.0, 150.0, 200.0, 300.0, 500.0, 1000.0, 2000.0, 5000.0])
 			.build();
 
+		let ark_protocol_fee_sat_counter = meter.u64_counter("ark_protocol_fee_sat")
+			.with_description("Ark protocol fees in sats, labeled by op_type. \
+				For lightning_send the value is the net margin (quoted fee - routing fee).")
+			.build();
+
 		// log the current server version
 		meter.u64_counter("server_version_counter").build().add(
 			1u64, &[
@@ -720,6 +726,7 @@ impl Metrics {
 			fee_rate_gauge,
 			fee_rate_using_fallback_gauge,
 			tokio_runtime_delay_histogram,
+			ark_protocol_fee_sat_counter,
 			global_labels,
 		}
 	}
@@ -1158,6 +1165,72 @@ pub fn add_offboard(volume_sats: u64) {
 		let attrs = m.with_global_labels([KeyValue::new(RPC_CLIENT, current_client())]);
 		m.offboard_counter.add(1, &attrs);
 		m.offboard_volume.add(volume_sats, &attrs);
+	}
+}
+
+/// Op types for [record_ark_fee], kept typed so call sites can't drift on
+/// the label string.
+#[derive(Copy, Clone)]
+pub enum ArkFeeOp {
+	Board,
+	Offboard,
+	Refresh,
+	LightningSend,
+	LightningReceive,
+}
+
+impl ArkFeeOp {
+	fn as_str(self) -> &'static str {
+		match self {
+			ArkFeeOp::Board => "board",
+			ArkFeeOp::Offboard => "offboard",
+			ArkFeeOp::Refresh => "refresh",
+			ArkFeeOp::LightningSend => "lightning_send",
+			ArkFeeOp::LightningReceive => "lightning_receive",
+		}
+	}
+}
+
+/// Record an ark-protocol fee at the success boundary of an op. Callers
+/// must gate against idempotent retries so we don't double-count.
+/// `round_seq` goes to the slog only, not to the counter labels, to keep
+/// cardinality bounded.
+pub fn record_ark_fee(op: ArkFeeOp, user_fee_sat: u64, round_seq: Option<RoundSeq>) {
+	// No routing component on this path, so net == user.
+	let net_fee_sat = user_fee_sat;
+	// Mirror the metric in a slog so the recording path is auditable and
+	// can be asserted on in integration tests. Slog fires whether or not
+	// the OTel pipeline is initialised — keeping the two paths independent.
+	slog!(ArkFeeRecorded,
+		op_type: op.as_str().to_string(),
+		net_fee_sat,
+		user_fee_sat,
+		routing_fee_sat: None,
+		round_seq,
+	);
+	if let Some(m) = TELEMETRY.get() {
+		let attrs = m.with_global_labels([KeyValue::new("op_type", op.as_str())]);
+		m.ark_protocol_fee_sat_counter.add(net_fee_sat, &attrs);
+	}
+}
+
+/// Record a lightning-send fee at Succeeded. The counter gets the net
+/// margin (`user_fee - routing_fee`); the slog keeps both gross components.
+/// Routing fee is a pass-through cost, not server revenue.
+pub fn record_ark_fee_lightning_send(user_fee_sat: u64, routing_fee_sat: u64) {
+	let net_fee_sat = user_fee_sat.saturating_sub(routing_fee_sat);
+	slog!(ArkFeeRecorded,
+		op_type: ArkFeeOp::LightningSend.as_str().to_string(),
+		net_fee_sat,
+		user_fee_sat,
+		routing_fee_sat: Some(routing_fee_sat),
+		round_seq: None,
+	);
+	if let Some(m) = TELEMETRY.get() {
+		let attrs = m.with_global_labels([
+			KeyValue::new("op_type", ArkFeeOp::LightningSend.as_str()),
+		]);
+		m.ark_protocol_fee_sat_counter.add(net_fee_sat, &attrs);
 	}
 }
 
@@ -1724,5 +1797,16 @@ mod tests {
 		let hist = compute_amount_histogram(&pool);
 		assert_eq!(hist.cum_count[0], 1);
 		assert_eq!(hist.cum_sats[0], 42);
+	}
+
+	#[test]
+	fn ark_fee_op_labels_are_stable() {
+		// These strings are emitted as Prometheus label values; renaming
+		// them would silently break existing dashboards / alerts.
+		assert_eq!(ArkFeeOp::Board.as_str(),            "board");
+		assert_eq!(ArkFeeOp::Offboard.as_str(),         "offboard");
+		assert_eq!(ArkFeeOp::Refresh.as_str(),          "refresh");
+		assert_eq!(ArkFeeOp::LightningSend.as_str(),    "lightning_send");
+		assert_eq!(ArkFeeOp::LightningReceive.as_str(), "lightning_receive");
 	}
 }

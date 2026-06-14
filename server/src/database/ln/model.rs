@@ -78,7 +78,13 @@ pub struct LightningPaymentAttempt {
 	pub id: i64,
 	pub lightning_node_id: LightningNodeId,
 	pub payment_hash: PaymentHash,
+	/// Invoice amount in msats: what the payee receives. Set at initiation
+	/// from the invoice / requested payment amount, immutable after.
 	pub amount_msat: u64,
+	/// Total msats CLN put on the wire to fulfil the invoice
+	/// (`amount_msat + LN routing fee`), from CLN's `amount_sent_msat`.
+	/// `None` on intra-Ark self-payments (no CLN send) and while the attempt
+	/// is still open. Does not include the Ark `user_fee`.
 	pub final_amount_msat: Option<u64>,
 	pub status: LightningPaymentStatus,
 	/// The htlc subscription this attempt was initiated against, if any.
@@ -90,6 +96,12 @@ pub struct LightningPaymentAttempt {
 	/// self-payment.
 	pub lightning_htlc_subscription_id: Option<i64>,
 	pub error: Option<String>,
+	/// Chain-tip height at cosign time. `None` for pre-V57 rows and legacy
+	/// protocol versions.
+	pub block_height: Option<BlockHeight>,
+	/// Fee quoted to the user at initiation (`base_fee + expiry_fee`).
+	/// `None` for pre-V57 rows.
+	pub user_fee: Option<Amount>,
 	pub created_at: DateTime<Local>,
 	pub updated_at: DateTime<Local>,
 }
@@ -98,6 +110,16 @@ impl LightningPaymentAttempt {
 	/// Whether this attempt is an intra-Ark self-payment.
 	pub fn is_self_payment(&self) -> bool {
 		self.lightning_htlc_subscription_id.is_some()
+	}
+
+	/// Derive routing fee from CLN's `amount_sent_msat`; 0 when unset
+	/// (intra-Ark self-pay or a Failed attempt CLN never accepted).
+	pub fn routing_fee_sat_from(&self, final_amount_msat: Option<u64>) -> u64 {
+		final_amount_msat
+			.map(|sent| Amount::from_msat_ceil(
+				sent.saturating_sub(self.amount_msat),
+			).to_sat())
+			.unwrap_or(0)
 	}
 }
 
@@ -115,6 +137,9 @@ impl TryFrom<Row> for LightningPaymentAttempt {
 			lightning_htlc_subscription_id: row.get("lightning_htlc_subscription_id"),
 			status: row.get("status"),
 			error: row.get("error"),
+			block_height: row.get::<_, Option<i32>>("block_height").map(|i| i as BlockHeight),
+			user_fee: row.get::<_, Option<i64>>("user_fee_sat")
+				.map(|f| Amount::from_sat(u64::try_from(f).expect("negative user_fee_sat in db row"))),
 			created_at: row.get("created_at"),
 			updated_at: row.get("updated_at"),
 		})

@@ -96,7 +96,7 @@ async fn fix_offboard_vtxos() {
 		connector_tx: None,
 		connector_vtxos: vec![connector.clone()],
 	};
-	db.write(async |t| t.register_offboard(&[&vtxo], &offboard_tx, &forfeit_result).await).await.unwrap();
+	db.write(async |t| t.register_offboard(&[&vtxo], &offboard_tx, &forfeit_result, 0).await).await.unwrap();
 
 	// register_offboard frontiers the connector directly, so the legacy
 	// startup path has nothing to pick up

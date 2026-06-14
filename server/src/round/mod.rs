@@ -157,6 +157,10 @@ pub struct InteractiveParticipation {
 	/// this participation. Used to attribute `refresh_counter` /
 	/// `refresh_volume` per-integrator when the round finalizes.
 	pub(crate) client: &'static str,
+	/// Refresh fee paid by the user for this participation (input surplus
+	/// over outputs), captured at registration and recorded as fee telemetry
+	/// once the round succeeds.
+	pub(crate) user_fee_sat: u64,
 }
 
 pub struct DelegatedParticipation {
@@ -167,6 +171,10 @@ pub struct DelegatedParticipation {
 	/// `client` column on that table we can't recover the originator here,
 	/// so this stays `"delegated"` until such a column is added.
 	pub(crate) client: &'static str,
+	/// Refresh fee paid by the user for this participation (input surplus
+	/// over outputs), captured at registration and recorded as fee telemetry
+	/// once the round succeeds.
+	pub(crate) user_fee_sat: u64,
 }
 
 /// Validate the input and output amounts of a round participation.
@@ -464,6 +472,7 @@ impl CollectingPayments {
 		vtxo_requests: Vec<SignedVtxoRequest>,
 		unlock_preimage: UnlockPreimage,
 		client: &'static str,
+		user_fee_sat: u64,
 	) {
 		let unlock_hash = sha256::Hash::hash(&unlock_preimage);
 		client_rslog!(RoundPaymentRegistered, self.round_step, unlock_hash,
@@ -494,6 +503,7 @@ impl CollectingPayments {
 				unblinded_mailbox_id: None,
 			}).collect(),
 			client,
+			user_fee_sat,
 		}).is_none(), "duplicate unlock hash");
 
 		// Check whether our round is full.
@@ -519,6 +529,7 @@ impl CollectingPayments {
 		inputs: Vec<Vtxo<Full>>,
 		outputs: Vec<StoredRoundOutput>,
 		unlock_hash: UnlockHash,
+		user_fee_sat: u64,
 	) {
 		client_rslog!(RoundPaymentRegistered, self.round_step, unlock_hash,
 			nb_inputs: inputs.len(),
@@ -541,6 +552,7 @@ impl CollectingPayments {
 		assert!(self.delegated_participants.insert(unlock_hash, DelegatedParticipation {
 			inputs: input_ids,
 			client: "delegated",
+			user_fee_sat,
 		}).is_none(), "duplicate delegated unlock hash");
 
 		// Check whether our round is full.
@@ -617,10 +629,15 @@ impl CollectingPayments {
 			);
 			return Err(e).context("amounts check failed");
 		}
+		let in_sum = input_vtxos.iter().map(|v| v.amount()).sum::<Amount>();
+		let out_sum = vtxo_requests.iter().map(|r| r.as_ref().amount).sum::<Amount>();
+		let actual_fee = in_sum.checked_sub(out_sum)
+			.expect("checked by validate_payment_amounts");
 
 		// Finally, we are done
 		self.register_interactive_participation(
 			flux_guard, input_vtxos, vtxo_requests, unlock_preimage, client,
+			actual_fee.to_sat(),
 		);
 
 		Ok(())
@@ -724,12 +741,25 @@ impl CollectingPayments {
 			Err(e) => return Err(ProcessHarkParticipationError::BadParticipation(e)),
 		};
 
+		// Fee is not re-checked here on purpose: the delegated participation
+		// was already validated with pver-aware `validate_refresh_fee` in
+		// `register_delegated_round_participation`, and its stored invariant
+		// (fees only decrease as the tip advances) means it still covers the
+		// round-time fee. The actual fee is still captured for telemetry
+		// parity with the interactive path.
+		let in_sum = input_vtxos.iter().map(|v| v.amount()).sum::<Amount>();
+		let out_sum = participation.outputs.iter()
+			.map(|o| o.vtxo_request.amount).sum::<Amount>();
+		let actual_fee = in_sum.checked_sub(out_sum)
+			.expect("checked by validate_payment_amounts in register_delegated_round_participation");
+
 		// Finally, we are done
 		self.register_delegated_participation(
 			lock,
 			input_vtxos,
 			participation.outputs,
 			participation.unlock_hash,
+			actual_fee.to_sat(),
 		);
 
 		Ok(())
@@ -1160,15 +1190,19 @@ impl SigningVtxoTree {
 		telemetry::add_round(input_volume);
 
 		// Break round_volume down by participation kind (same retry reasoning
-		// as add_round above). Every input is either interactive (user-submitted
-		// refresh) or delegated (server-submitted, e.g. LN HTLC settlement), so
-		// refresh_volume + delegated_participation_volume == round_volume.
+		// as add_round). refresh_volume + delegated_participation_volume ==
+		// round_volume. Refresh fees are recorded here too — this block runs
+		// exactly once per successful round, so no double-count on retries.
+		let round_seq = self.round_step.round_seq();
 		for participation in self.interactive_participants.values() {
 			let vol = participation.inputs.iter()
 				.filter_map(|id| self.all_inputs.get(id))
 				.map(|v| v.amount())
 				.sum::<Amount>();
 			telemetry::add_refresh(vol.to_sat(), participation.client);
+			telemetry::record_ark_fee(
+				telemetry::ArkFeeOp::Refresh, participation.user_fee_sat, Some(round_seq),
+			);
 		}
 		for participation in self.delegated_participants.values() {
 			let vol = participation.inputs.iter()
@@ -1176,6 +1210,9 @@ impl SigningVtxoTree {
 				.map(|v| v.amount())
 				.sum::<Amount>();
 			telemetry::add_delegated_participation(vol.to_sat(), participation.client);
+			telemetry::record_ark_fee(
+				telemetry::ArkFeeOp::Refresh, participation.user_fee_sat, Some(round_seq),
+			);
 		}
 
 		// Outputs are split by VTXO policy. `real_outputs` was snapshotted
@@ -2044,7 +2081,7 @@ mod tests {
 		).unwrap();
 
 		let flux = VtxosInFlux::new();
-		state.register_interactive_participation(flux.empty_guard(), inputs, outputs.clone(), pre, "test");
+		state.register_interactive_participation(flux.empty_guard(), inputs, outputs.clone(), pre, "test", 0);
 		assert_eq!(state.all_inputs.len(), 1);
 		assert_eq!(state.all_outputs.len(), 1);
 		assert_eq!(state.inputs_per_cosigner.len(), 1);
@@ -2275,7 +2312,7 @@ mod tests {
 
 		let flux = VtxosInFlux::new();
 		state.validate_payment_data(&input_ids1, &outputs1).unwrap();
-		state.register_interactive_participation(flux.empty_guard(), inputs1, outputs1, pre, "test");
+		state.register_interactive_participation(flux.empty_guard(), inputs1, outputs1, pre, "test", 0);
 		state.validate_payment_data(&input_ids2, &outputs2).unwrap_err();
 	}
 
@@ -2349,9 +2386,9 @@ mod tests {
 
 		let flux = VtxosInFlux::new();
 		state.validate_payment_data(&input_ids1, &outputs1).unwrap();
-		state.register_interactive_participation(flux.empty_guard(), inputs1, outputs1.clone(), pre1, "test");
+		state.register_interactive_participation(flux.empty_guard(), inputs1, outputs1.clone(), pre1, "test", 0);
 		state.validate_payment_data(&input_ids2, &outputs2).unwrap();
-		state.register_interactive_participation(flux.empty_guard(), inputs2, outputs2.clone(), pre2, "test");
+		state.register_interactive_participation(flux.empty_guard(), inputs2, outputs2.clone(), pre2, "test", 0);
 
 		assert_eq!(state.all_inputs.len(), 2);
 		assert_eq!(state.all_outputs.len(), 4);
