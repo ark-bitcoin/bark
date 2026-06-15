@@ -22,6 +22,9 @@ pub struct ExitTransactionManager {
 	packages: Vec<Arc<RwLock<ExitTransactionPackage>>>,
 	index: HashMap<Txid, Weak<RwLock<ExitTransactionPackage>>>,
 	status: HashMap<Txid, TxStatus>,
+	/// How many tracked exits reference each exit (parent) transaction. Sibling VTXOs share
+	/// ancestor transactions in the exit tree, so a tx may be needed by several exits at once.
+	refcount: HashMap<Txid, usize>,
 }
 
 impl ExitTransactionManager {
@@ -35,6 +38,7 @@ impl ExitTransactionManager {
 			packages: Vec::new(),
 			index: HashMap::new(),
 			status: HashMap::new(),
+			refcount: HashMap::new(),
 		})
 	}
 
@@ -60,6 +64,7 @@ impl ExitTransactionManager {
 	) -> anyhow::Result<Txid, ExitError> {
 		let txid = tx.compute_txid();
 		if self.index.contains_key(&txid) {
+			*self.refcount.entry(txid).or_insert(0) += 1;
 			return Ok(txid);
 		}
 
@@ -92,7 +97,57 @@ impl ExitTransactionManager {
 		}
 		self.status.insert(txid, status);
 		self.packages.push(package);
+		*self.refcount.entry(txid).or_insert(0) += 1;
 		Ok(txid)
+	}
+
+	/// Drops references to the given exit (parent) transactions, removing each from memory once
+	/// no tracked exit references it any more. Used when an exit is canceled so we stop syncing
+	/// its transactions; ancestor transactions still needed by sibling exits are retained.
+	///
+	/// `exit_txids` should be the txids returned by [Self::track_vtxo_exits] for the canceled exit.
+	pub async fn untrack_vtxo_exits(&mut self, exit_txids: &[Txid]) {
+		for txid in exit_txids {
+			let remaining = match self.refcount.get_mut(txid) {
+				Some(count) => {
+					*count = count.saturating_sub(1);
+					*count
+				},
+				None => {
+					warn!("Attempt to untrack exit tx {} that isn't tracked", txid);
+					continue;
+				},
+			};
+			if remaining > 0 {
+				trace!("Exit tx {} still referenced by {} exit(s), keeping it", txid, remaining);
+				continue;
+			}
+
+			trace!("Dropping exit tx {} from the transaction manager", txid);
+			self.refcount.remove(txid);
+
+			// Grab the package (and its child txid) before we drop it so we can purge every
+			// index entry that points at it.
+			let package = self.index.get(txid).and_then(|w| w.upgrade());
+			let child_txid = match &package {
+				Some(p) => p.read().await.child.as_ref().map(|c| c.info.txid),
+				None => None,
+			};
+
+			self.index.remove(txid);
+			if let Some(child_txid) = child_txid {
+				self.index.remove(&child_txid);
+			}
+			self.status.remove(txid);
+			if let Some(package) = package {
+				match self.packages.iter().position(|p| Arc::ptr_eq(p, &package)) {
+					Some(pos) => {
+						self.packages.swap_remove(pos);
+					},
+					None => warn!("package with txid {} should be in the list", txid),
+				}
+			}
+		}
 	}
 
 	pub async fn sync(&mut self) -> anyhow::Result<(), ExitError> {
