@@ -123,7 +123,8 @@ pub use self::models::{
 	ExitCpfpRequest, ExitTransactionPackage, FeeInfo, RbfRequirement, TransactionInfo,
 	ChildTransactionInfo, ExitError, ExitState, ExitTx, ExitTxStatus, ExitTxOrigin, ExitStartState,
 	ExitProcessingState, ExitAwaitingDeltaState, ExitClaimableState, ExitClaimInProgressState,
-	ExitClaimedState, ExitVtxoAlreadySpentState, ExitProgressStatus, ExitTransactionStatus,
+	ExitClaimedState, ExitVtxoAlreadySpentState, ExitCanceledState, ExitProgressStatus,
+	ExitTransactionStatus,
 };
 pub use self::vtxo::ExitVtxo;
 
@@ -423,6 +424,7 @@ impl Exit {
 			Some(ExitState::ClaimInProgress(_)) => true,
 			Some(ExitState::Claimed(_)) => true,
 			Some(ExitState::VtxoAlreadySpent(_)) => false,
+			Some(ExitState::Canceled(_)) => false,
 			None => false,
 		}
 	}

@@ -7,7 +7,7 @@ use utoipa::ToSchema;
 
 use crate::exit::states::{
 	ExitAwaitingDeltaState, ExitProcessingState, ExitClaimInProgressState, ExitClaimableState,
-	ExitClaimedState, ExitStartState, ExitTx, ExitVtxoAlreadySpentState,
+	ExitClaimedState, ExitStartState, ExitTx, ExitVtxoAlreadySpentState, ExitCanceledState,
 };
 
 /// A utility type to wrap ExitState children so they can be easily serialized. This also helps with
@@ -23,6 +23,7 @@ pub enum ExitState {
 	ClaimInProgress(ExitClaimInProgressState),
 	Claimed(ExitClaimedState),
 	VtxoAlreadySpent(ExitVtxoAlreadySpentState),
+	Canceled(ExitCanceledState),
 }
 
 impl From<bark::exit::ExitState> for ExitState {
@@ -57,6 +58,9 @@ impl From<bark::exit::ExitState> for ExitState {
 			}),
 			bark::exit::ExitState::VtxoAlreadySpent(s) => ExitState::VtxoAlreadySpent(
 				ExitVtxoAlreadySpentState { tip_height: s.tip_height },
+			),
+			bark::exit::ExitState::Canceled(s) => ExitState::Canceled(
+				ExitCanceledState { tip_height: s.tip_height },
 			),
 		}
 	}

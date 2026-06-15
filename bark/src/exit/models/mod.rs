@@ -11,6 +11,7 @@ pub use self::error::ExitError;
 pub use self::states::{
 	ExitTx, ExitTxStatus, ExitTxOrigin, ExitStartState, ExitProcessingState, ExitAwaitingDeltaState,
 	ExitClaimableState, ExitClaimInProgressState, ExitClaimedState, ExitVtxoAlreadySpentState,
+	ExitCanceledState,
 };
 
 use ark::VtxoId;
@@ -38,6 +39,10 @@ pub enum ExitState {
 	/// user can start a unilateral exit for a VTXO but later spend it via a refresh, arkoor, etc,
 	/// in that situation an exit will enter this state.
 	VtxoAlreadySpent(ExitVtxoAlreadySpentState),
+	/// Resumable state: the user canceled the exit before its final transaction was broadcast;
+	/// ancestor transactions may already be on-chain. The VTXO is untouched and stays spendable,
+	/// so a new exit can be started later.
+	Canceled(ExitCanceledState),
 }
 
 impl ExitState {
@@ -114,6 +119,10 @@ impl ExitState {
 		ExitState::VtxoAlreadySpent(ExitVtxoAlreadySpentState { tip_height: tip })
 	}
 
+	pub fn new_canceled(tip: BlockHeight) -> Self {
+		ExitState::Canceled(ExitCanceledState { tip_height: tip })
+	}
+
 	/// Checks if the state is awaiting the confirmation of every exit transaction in the tree and
 	/// the exit delta required for the VTXO to become claimable.
 	///
@@ -178,6 +187,7 @@ impl ExitState {
 			ExitState::ClaimInProgress(_) => true,
 			ExitState::Claimed(_) => true,
 			ExitState::VtxoAlreadySpent(_) => false,
+			ExitState::Canceled(_) => false,
 		}
 	}
 }
