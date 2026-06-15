@@ -10,6 +10,7 @@ use utoipa::OpenApi;
 use ark::lightning::Offer;
 use bark::lightning_invoice::Bolt11Invoice;
 use bark::lnurllib::lightning_address::LightningAddress;
+use bark::lnurllib::lnurl::LnUrl;
 
 use crate::error::{self, badarg, not_found, ContextExt, HandlerResult};
 use crate::ServerState;
@@ -226,8 +227,11 @@ pub async fn pay(
 	} else if let Ok(lnaddr) = LightningAddress::from_str(&body.destination) {
 		let amount = amount.badarg("amount is required for Lightning addresses")?;
 		wallet.pay_lightning_address(&lnaddr, amount, body.comment, false).await?
+	} else if let Ok(lnurl) = LnUrl::from_str(&body.destination) {
+		let amount = amount.badarg("amount is required for LNURL")?;
+		wallet.pay_lnurl(&lnurl, amount, body.comment, false).await?
 	} else {
-		badarg!("argument is not a valid BOLT-11 invoice, BOLT-12 offer or Lightning address");
+		badarg!("argument is not a valid BOLT-11 invoice, BOLT-12 offer, Lightning address or LNURL");
 	};
 
 	Ok(axum::Json(bark_json::web::LightningPayResponse {

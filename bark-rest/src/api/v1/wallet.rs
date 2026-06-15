@@ -13,6 +13,7 @@ use ark::VtxoId;
 use ark::lightning::{Bolt11Invoice, Offer};
 use ark::ProtocolEncoding;
 use bark::lnurllib::lightning_address::LightningAddress;
+use bark::lnurllib::lnurl::LnUrl;
 use bark::onchain::GetAddress;
 use bark::subsystem::RoundMovement;
 use bark::vtxo::VtxoFilter;
@@ -606,6 +607,9 @@ pub async fn send(
 	} else if let Ok(addr) = LightningAddress::from_str(&body.destination) {
 		let amount = amount.badarg("amount is required for Lightning addresses")?;
 		wallet.pay_lightning_address(&addr, amount, body.comment, false).await?;
+	} else if let Ok(lnurl) = LnUrl::from_str(&body.destination) {
+		let amount = amount.badarg("amount is required for LNURL")?;
+		wallet.pay_lnurl(&lnurl, amount, body.comment, false).await?;
 	} else if let Ok(addr) = bitcoin::Address::from_str(&body.destination) {
 		let _checked_addr = addr
 			.require_network(wallet.network().await?)

@@ -1,0 +1,5 @@
+- Add support for paying raw LNURL-pay links
+  Bark can now pay bech32-encoded LNURL-pay links (`lnurl1…`).
+  `Wallet::parse_payment_request` parses them and the new `Wallet::pay_lnurl`
+  resolves the endpoint to a BOLT11 invoice and pays it.
+  [#2176](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2176)

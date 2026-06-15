@@ -1,0 +1,4 @@
+- Accept LNURL-pay links as a payment destination
+  The wallet and lightning pay endpoints now pay raw LNURL-pay links (`lnurl1…`)
+  passed as `destination`, like lightning addresses (an amount is required).
+  [#2176](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2176)
