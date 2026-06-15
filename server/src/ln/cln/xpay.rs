@@ -43,6 +43,7 @@ use crate::system::RuntimeManager;
 use crate::telemetry;
 
 use super::ClnGrpcClient;
+use super::super::payment_handler::PaymentAttemptHandler;
 
 
 /// The buffer we add to the xpay timeout before we check invoice
@@ -62,8 +63,8 @@ pub(crate) struct ClnXpayClient {
 }
 
 impl ClnXpayClient {
-	fn notifier(&self) -> super::PaymentAttemptNotifier<'_> {
-		super::PaymentAttemptNotifier::new(&self.db, &self.mailbox_manager, &self.payment_update_tx)
+	fn payment_handler(&self) -> PaymentAttemptHandler<'_> {
+		PaymentAttemptHandler::new(&self.db, &self.mailbox_manager, &self.payment_update_tx)
 	}
 
 	pub async fn new(
@@ -175,12 +176,7 @@ impl ClnXpayClient {
 				LightningPaymentStatus::Requested
 					| LightningPaymentStatus::Submitted =>
 				{
-					self.notifier().update_lightning_payment_attempt_status(
-						&attempt,
-						LightningPaymentStatus::Failed,
-						None,
-						None,
-					).await?;
+					self.payment_handler().fail_payment_attempt(&attempt, None).await?;
 
 					telemetry::add_lightning_payment(
 						attempt.lightning_node_id,
@@ -194,7 +190,7 @@ impl ClnXpayClient {
 				p.created_index.expect("should have index")
 			}).expect("we have at least one");
 
-			let desired_status = match latest.status() {
+			let updated_status = match latest.status() {
 				ListpaysPaysStatus::Pending => LightningPaymentStatus::Submitted,
 				ListpaysPaysStatus::Complete => {
 					if latest.preimage.is_none() {
@@ -217,11 +213,11 @@ impl ClnXpayClient {
 				})
 			});
 
-			if attempt.status != desired_status {
+			if attempt.status != updated_status {
 				if attempt.status.is_final() {
 					error!("Lightning payment attempt ({}): flagged {} when it \
 						actually {} for payment hash {}",
-						attempt.id, attempt.status, desired_status,
+						attempt.id, attempt.status, updated_status,
 						payment_hash,
 					);
 				} else {
@@ -229,18 +225,12 @@ impl ClnXpayClient {
 						.transpose()
 						.context("CLN returned a preimage that is not 32 bytes")?;
 
-					// Store the preimage in the settlement table so the
-					// watchman can use it to claim HTLC VTXOs on-chain.
-					if let Some(preimage) = preimage {
-						self.settler.settle(preimage).await?;
-					}
-
 					// NB: for intra-ark payments, settle_invoice may also post
-					// the mailbox notification for the same payment hash. The
-					// DB insert is idempotent (ON CONFLICT DO NOTHING).
-					self.notifier().verify_and_update_payment_attempt(
+					// the mailbox notification for the same payment hash.
+					self.payment_handler().process_payment_attempt(
+						&self.settler,
 						&attempt,
-						desired_status,
+						updated_status,
 						error_string,
 						latest.amount_sent_msat.map(|v| v.msat),
 						preimage,

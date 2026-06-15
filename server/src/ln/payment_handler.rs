@@ -5,17 +5,18 @@ use ark::lightning::{PaymentHash, Preimage};
 
 use crate::database;
 use crate::database::ln::{LightningPaymentAttempt, LightningPaymentStatus};
+use crate::ln::settler::HtlcSettler;
 
 /// Borrows the DB, mailbox manager, and payment update broadcast channel
 /// so that every payment-attempt status change is consistently followed by
 /// a broadcast and (for final states) a mailbox notification.
-pub(crate) struct PaymentAttemptNotifier<'a> {
+pub(crate) struct PaymentAttemptHandler<'a> {
 	db: &'a database::Db,
 	mailbox_manager: &'a crate::mailbox_manager::MailboxManager,
 	payment_update_tx: &'a broadcast::Sender<PaymentHash>,
 }
 
-impl<'a> PaymentAttemptNotifier<'a> {
+impl<'a> PaymentAttemptHandler<'a> {
 	pub fn new(
 		db: &'a database::Db,
 		mailbox_manager: &'a crate::mailbox_manager::MailboxManager,
@@ -26,13 +27,10 @@ impl<'a> PaymentAttemptNotifier<'a> {
 
 	/// Update a lightning payment attempt's status, broadcast the update, and
 	/// post a send-finished notification to the sender's mailbox.
-	pub async fn update_lightning_payment_attempt_status(
-		&self,
-		attempt: &LightningPaymentAttempt,
-		new_status: LightningPaymentStatus,
-		error: Option<&str>,
-		preimage: Option<Preimage>,
+	pub async fn fail_payment_attempt(
+		&self, attempt: &LightningPaymentAttempt, error: Option<&str>,
 	) -> anyhow::Result<()> {
+		let new_status = LightningPaymentStatus::Failed;
 		self.db.write(async |t|
 			t.update_lightning_payment_attempt_status(attempt, new_status, error).await
 		).await?;
@@ -44,10 +42,7 @@ impl<'a> PaymentAttemptNotifier<'a> {
 		self.payment_update_tx.send(attempt.payment_hash)
 			.context("payment update channel broken")?;
 
-		if new_status.is_final() {
-			self.post_lightning_send_finished(attempt.payment_hash, preimage).await;
-		}
-
+		self.post_lightning_send_finished(attempt.payment_hash, None).await;
 		Ok(())
 	}
 
@@ -57,14 +52,23 @@ impl<'a> PaymentAttemptNotifier<'a> {
 	///
 	/// Wraps [`database::Db::verify_and_update_payment_attempt`] with broadcast
 	/// and mailbox notification.
-	pub async fn verify_and_update_payment_attempt(
+	pub async fn process_payment_attempt(
 		&self,
+		settler: &HtlcSettler,
 		attempt: &LightningPaymentAttempt,
 		status: LightningPaymentStatus,
 		payment_error: Option<&str>,
 		final_amount_msat: Option<u64>,
 		preimage: Option<Preimage>,
 	) -> anyhow::Result<()> {
+		// Store the preimage in the settlement table so the
+		// watchman can use it to claim HTLC VTXOs on-chain.
+		if let Some(preimage) = preimage {
+			debug_assert!(status.is_final(), "preimage must be set for final status");
+			debug_assert!(preimage.compute_payment_hash() == attempt.payment_hash, "preimage must match payment hash");
+			settler.settle(preimage).await?;
+		}
+
 		let updated = self.db.write(async |t|
 			t.verify_and_update_payment_attempt(attempt, status, payment_error, final_amount_msat).await
 		).await?;

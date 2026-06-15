@@ -3,6 +3,7 @@ pub mod node_manager;
 pub mod cln;
 pub mod settler;
 
+mod payment_handler;
 
 use std::cmp;
 use std::collections::HashMap;

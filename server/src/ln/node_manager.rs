@@ -52,7 +52,7 @@ use ark::mailbox::MailboxIdentifier;
 
 use crate::Server;
 use crate::error::ContextExt;
-use crate::ln::cln::{ClnNodeInfo, ClnNodeOnlineState, NodeHandle, PaymentAttemptNotifier};
+use crate::ln::cln::{ClnNodeInfo, ClnNodeOnlineState, NodeHandle};
 use crate::ln::cln::hold::ClnHoldConfig;
 use crate::ln::cln::xpay::ClnXpayConfig;
 use crate::ln::settler::HtlcSettler;
@@ -64,6 +64,8 @@ use crate::database::ln::{
 	LightningNodeId, LightningHtlcSubscription, LightningHtlcSubscriptionStatus, LightningPaymentStatus,
 };
 use crate::telemetry;
+
+use super::payment_handler::PaymentAttemptHandler;
 
 /// Handle for the cln manager process.
 pub struct LightningManager {
@@ -93,8 +95,8 @@ pub struct LightningManager {
 }
 
 impl LightningManager {
-	fn notifier(&self) -> PaymentAttemptNotifier<'_> {
-		PaymentAttemptNotifier::new(&self.db, &self.mailbox_manager, &self.payment_update_tx)
+	fn payment_handler(&self) -> PaymentAttemptHandler<'_> {
+		PaymentAttemptHandler::new(&self.db, &self.mailbox_manager, &self.payment_update_tx)
 	}
 
 	/// Start the [LightningManager].
@@ -290,12 +292,7 @@ impl LightningManager {
 					.read(async |t| t.get_open_lightning_payment_attempt_by_payment_hash(payment_hash).await).await?
 					.expect("we inserted a payment attempt");
 
-				self.notifier().update_lightning_payment_attempt_status(
-					&payment_attempt,
-					LightningPaymentStatus::Failed,
-					Some(&e.to_string()),
-					None,
-				).await?;
+				self.payment_handler().fail_payment_attempt(&payment_attempt, Some(&e.to_string())).await?;
 				return Err(e);
 			}
 
@@ -506,8 +503,12 @@ impl LightningManager {
 		if let Some(attempt) = attempt {
 			// NB: the xpay reconciliation loop may also post the mailbox notification
 			// for the same payment hash. The DB insert is idempotent (ON CONFLICT DO NOTHING).
-			self.notifier().verify_and_update_payment_attempt(
-				&attempt, LightningPaymentStatus::Succeeded, None, None, Some(preimage),
+			self.payment_handler().process_payment_attempt(
+				&self.settler, &attempt,
+				LightningPaymentStatus::Succeeded,
+				None,
+				None,
+				Some(preimage),
 			).await?;
 		} else {
 			// Settle the hold invoice on the node that created the
