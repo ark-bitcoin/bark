@@ -60,6 +60,29 @@ impl Wallet {
 		self.set_vtxo_states(vtxos, &VtxoState::Spent, ALLOWED).await
 	}
 
+	/// Marks VTXOs as [VtxoState::Exited]. Called from the unilateral exit progression once
+	/// every exit transaction has been broadcast — at that point the VTXO is effectively gone
+	/// from the protocol's view, but it shouldn't be confused with a forfeited VTXO.
+	///
+	/// This operation is idempotent: VTXOs already in [VtxoState::Exited] will remain exited
+	/// without inserting a redundant state entry.
+	///
+	/// # Errors
+	/// - If the VTXO is in a state other than `Spendable`, `Locked`, or `Exited`.
+	/// - If the VTXO doesn't exist.
+	/// - If a database error occurs.
+	pub async fn mark_vtxos_as_exited(
+		&self,
+		vtxos: impl IntoIterator<Item = impl VtxoRef>,
+	) -> anyhow::Result<()> {
+		const ALLOWED: &[VtxoStateKind] = &[
+			VtxoStateKind::Spendable,
+			VtxoStateKind::Locked,
+			VtxoStateKind::Exited,
+		];
+		self.set_vtxo_states(vtxos, &VtxoState::Exited, ALLOWED).await
+	}
+
 	/// Updates the state set the [VtxoState] of VTXOs corresponding to each given
 	/// [VtxoId](ark::VtxoId) while validating if the transition is allowed based
 	/// on the current state and allowed transitions.

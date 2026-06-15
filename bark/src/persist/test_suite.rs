@@ -1072,6 +1072,7 @@ mod exit {
 			vtxo_id,
 			state: ExitState::Start(crate::exit::ExitStartState { tip_height: 100 }),
 			history: vec![],
+			movement_id: None,
 		};
 
 		let ra = a.store_exit_vtxo_entry(&entry).await;
@@ -1142,6 +1143,7 @@ mod exit {
 			vtxo_id,
 			state: ExitState::Processing(processing),
 			history: vec![ExitState::Start(crate::exit::ExitStartState { tip_height: 100 })],
+			movement_id: None,
 		};
 
 		a.store_exit_vtxo_entry(&entry).await.expect("a: store processing entry");

@@ -148,3 +148,10 @@ pub struct ExitClaimedState {
 	pub txid: Txid,
 	pub block: BlockRef,
 }
+
+/// JSON mirror of [bark::exit::ExitVtxoAlreadySpentState].
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(feature = "utoipa", derive(ToSchema))]
+pub struct ExitVtxoAlreadySpentState {
+	pub tip_height: BlockHeight,
+}

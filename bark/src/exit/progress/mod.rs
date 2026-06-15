@@ -58,6 +58,7 @@ impl ProgressStep {
 			ExitState::Claimable(_) => ProgressStep::Done,
 			ExitState::ClaimInProgress(_) => ProgressStep::Done,
 			ExitState::Claimed(_) => ProgressStep::Done,
+			ExitState::VtxoAlreadySpent(_) => ProgressStep::Done,
 		}
 	}
 }

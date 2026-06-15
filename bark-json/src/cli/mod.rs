@@ -138,7 +138,9 @@ pub struct Balance {
 	#[serde(rename = "pending_board_sat", with = "bitcoin::amount::serde::as_sat")]
 	#[cfg_attr(feature = "utoipa", schema(value_type = u64))]
 	pub pending_board: Amount,
-	/// Sats in VTXOs undergoing an emergency exit back on-chain.
+	/// Sats held in VTXOs whose unilateral exit chain is confirmed on-chain but which
+	/// haven't yet been drained to the onchain wallet. Equivalent to the sum of
+	/// `Exited` VTXOs whose exit state hasn't reached `Claimed`.
 	/// `null` if the exit subsystem is unavailable.
 	#[serde(
 		default,

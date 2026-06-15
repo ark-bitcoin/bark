@@ -1,0 +1,8 @@
+- Surface the new `Exited` VTXO state and `VtxoAlreadySpent` exit state
+  Mirrors the bark-side changes that decouple "the user moved this VTXO onchain"
+  from "the protocol forfeited this VTXO" and that surface an explicit terminal
+  state when an exit can't proceed because the VTXO has already been consumed.
+  [#2117](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2117)
+  - **BREAKING:** `VtxoStateInfo` gains an `Exited` variant.
+  - **BREAKING:** `ExitState` gains a
+    `VtxoAlreadySpent(ExitVtxoAlreadySpentState)` variant.

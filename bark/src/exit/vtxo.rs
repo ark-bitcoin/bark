@@ -18,6 +18,7 @@ use ark::vtxo::{Bare, Full};
 use crate::exit::models::{ExitError, ExitState};
 use crate::exit::progress::{ExitStateProgress, ProgressContext, ProgressStep};
 use crate::exit::transaction_manager::ExitTransactionManager;
+use crate::movement::MovementId;
 use crate::persist::BarkPersister;
 use crate::persist::models::StoredExit;
 use crate::{Wallet, WalletVtxo};
@@ -39,6 +40,7 @@ pub struct ExitVtxo {
 	state: ExitState,
 	history: Vec<ExitState>,
 	txids: Option<Vec<Txid>>,
+	movement_id: Option<MovementId>,
 }
 
 impl ExitVtxo {
@@ -46,15 +48,17 @@ impl ExitVtxo {
 	/// The unilateral exit can't progress until [ExitVtxo::initialize] is called.
 	///
 	/// # Parameters
-	/// - `vtxo_id`: the [VtxoId] being exited.
+	/// - `vtxo`: the [Vtxo] being exited.
 	/// - `tip`: current chain tip used to initialize the starting state.
-	pub fn new(vtxo: &Vtxo<Bare>, tip: u32) -> Self {
+	/// - `movement_id`: the [MovementId] of the pending movement that records this exit.
+	pub fn new(vtxo: &Vtxo<Bare>, tip: u32, movement_id: Option<MovementId>) -> Self {
 		Self {
 			vtxo_id: vtxo.id(),
 			amount: vtxo.amount(),
 			state: ExitState::new_start(tip),
 			history: vec![],
 			txids: None,
+			movement_id,
 		}
 	}
 
@@ -72,6 +76,7 @@ impl ExitVtxo {
 			state: entry.state,
 			history: entry.history,
 			txids: None,
+			movement_id: entry.movement_id,
 		}
 	}
 
@@ -99,6 +104,13 @@ impl ExitVtxo {
 	/// instance is not yet initialized, None will be returned.
 	pub fn txids(&self) -> Option<&Vec<Txid>> {
 		self.txids.as_ref()
+	}
+
+	/// Returns the [MovementId] of the pending movement that records this exit, if any.
+	/// Older exits created before movement tracking was wired up may not have an associated
+	/// movement here; callers should handle that case gracefully.
+	pub fn movement_id(&self) -> Option<MovementId> {
+		self.movement_id
 	}
 
 	/// True if the exit is currently [ExitState::Claimable] and can be claimed/spent.

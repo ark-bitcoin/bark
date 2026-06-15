@@ -10,7 +10,7 @@ pub use self::package::{
 pub use self::error::ExitError;
 pub use self::states::{
 	ExitTx, ExitTxStatus, ExitTxOrigin, ExitStartState, ExitProcessingState, ExitAwaitingDeltaState,
-	ExitClaimableState, ExitClaimInProgressState, ExitClaimedState,
+	ExitClaimableState, ExitClaimInProgressState, ExitClaimedState, ExitVtxoAlreadySpentState,
 };
 
 use ark::VtxoId;
@@ -28,7 +28,16 @@ pub enum ExitState {
 	AwaitingDelta(ExitAwaitingDeltaState),
 	Claimable(ExitClaimableState),
 	ClaimInProgress(ExitClaimInProgressState),
+	/// Terminal state: the exit is fully complete, and the VTXO has been claimed by the user or
+	/// spent by another user who owns a VTXO that is deeper in the tree than this one.
+	///
+	/// Note: The circumstances in which the latter can occur are typically when the user has stale
+	/// data and is trying to exit an already-spent VTXO.
 	Claimed(ExitClaimedState),
+	/// Terminal state: the exit cannot proceed because the VTXO has already been spent offchain. A
+	/// user can start a unilateral exit for a VTXO but later spend it via a refresh, arkoor, etc,
+	/// in that situation an exit will enter this state.
+	VtxoAlreadySpent(ExitVtxoAlreadySpentState),
 }
 
 impl ExitState {
@@ -101,9 +110,13 @@ impl ExitState {
 		})
 	}
 
+	pub fn new_vtxo_already_spent(tip: BlockHeight) -> Self {
+		ExitState::VtxoAlreadySpent(ExitVtxoAlreadySpentState { tip_height: tip })
+	}
+
 	/// Checks if the state is awaiting the confirmation of every exit transaction in the tree and
 	/// the exit delta required for the VTXO to become claimable.
-	/// 
+	///
 	/// Note: This excludes the claimable state, use [ExitState::is_claimable] for that.
 	pub fn is_pending(&self) -> bool {
 		match self {
@@ -144,6 +157,27 @@ impl ExitState {
 			ExitState::Claimable(s) => Some(s.claimable_since.height),
 			ExitState::ClaimInProgress(s) => Some(s.claimable_since.height),
 			_ => None,
+		}
+	}
+
+	/// True once every exit transaction has confirmed on-chain (i.e. the exit has reached
+	/// at least [`ExitState::AwaitingDelta`]). At that point the VTXO can be considered
+	/// [crate::vtxo::VtxoStateKind::Exited]: the underlying onchain outpoint is committed
+	/// to the exit chain, the server can see it and will refuse to service the VTXO for
+	/// any payment operations offchain, and there's nothing left to undo client-side.
+	///
+	/// Note: we deliberately don't flip the VTXO at `Processing` — even with every tx
+	/// broadcast, mempool eviction is still possible until confirmation, so we hold off
+	/// to keep `Exited` an accurate "this is gone" signal.
+	pub fn warrants_exited_vtxo(&self) -> bool {
+		match self {
+			ExitState::Start(_) => false,
+			ExitState::Processing(_) => false,
+			ExitState::AwaitingDelta(_) => true,
+			ExitState::Claimable(_) => true,
+			ExitState::ClaimInProgress(_) => true,
+			ExitState::Claimed(_) => true,
+			ExitState::VtxoAlreadySpent(_) => false,
 		}
 	}
 }

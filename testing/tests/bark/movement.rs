@@ -122,7 +122,7 @@ async fn board_board() {
 
 #[tokio::test]
 async fn exit_start() {
-	require_bark_version!(> "0.2.0");
+	require_bark_version!(> "0.2.5");
 
 	let ctx = TestContext::new("movement/exit_start").await;
 	let srv = ctx.captaind("server").funded(btc(10)).create().await;
@@ -137,7 +137,10 @@ async fn exit_start() {
 	assert_eq!(exits.first().unwrap().vtxo_id, vtxos.first().unwrap().vtxo.id);
 
 	let movement = bark.history().await.last().cloned().unwrap();
-	assert_eq!(movement.status, MovementStatus::Successful);
+	// Exit movements are created in Pending and only finalize once progress reaches
+	// Claimed (Successful) or VtxoAlreadySpent (Canceled). The exit here hasn't been
+	// progressed past Start yet.
+	assert_eq!(movement.status, MovementStatus::Pending);
 	assert_eq!(movement.subsystem.name, "bark.exit");
 	assert_eq!(movement.subsystem.kind, "start");
 	assert_eq!(movement.intended_balance, signed_sat(-100_000));
@@ -159,7 +162,7 @@ async fn exit_start() {
 	assert_eq!(*movement.input_vtxos.first().unwrap(), vtxos.first().unwrap().id);
 	assert_eq!(movement.output_vtxos.len(), 0);
 	assert_eq!(movement.exited_vtxos.len(), 0);
-	assert_eq!(movement.time.completed_at.is_some(), true);
+	assert!(movement.time.completed_at.is_none(), "pending exit movement should not have completed_at");
 	assert_eq!(movement.metadata.is_none(), true);
 }
 

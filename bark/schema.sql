@@ -35,7 +35,7 @@ CREATE TABLE bark_exit_states (
 				vtxo_id TEXT PRIMARY KEY,
 				state TEXT NOT NULL,
 				history TEXT NOT NULL
-			);
+			, movement_id INTEGER REFERENCES bark_movements(id));
 CREATE TABLE bark_vtxo_key (
 				public_key TEXT NOT NULL PRIMARY KEY,
 				idx INTEGER NOT NULL UNIQUE

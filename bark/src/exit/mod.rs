@@ -120,7 +120,7 @@ pub use self::models::{
 	ExitCpfpRequest, ExitTransactionPackage, FeeInfo, RbfRequirement, TransactionInfo,
 	ChildTransactionInfo, ExitError, ExitState, ExitTx, ExitTxStatus, ExitTxOrigin, ExitStartState,
 	ExitProcessingState, ExitAwaitingDeltaState, ExitClaimableState, ExitClaimInProgressState,
-	ExitClaimedState, ExitProgressStatus, ExitTransactionStatus,
+	ExitClaimedState, ExitVtxoAlreadySpentState, ExitProgressStatus, ExitTransactionStatus,
 };
 pub use self::vtxo::ExitVtxo;
 
@@ -152,7 +152,7 @@ use crate::persist::BarkPersister;
 use crate::persist::models::StoredExit;
 use crate::psbtext::PsbtInputExt;
 use crate::subsystem::{ExitMovement, Subsystem};
-use crate::vtxo::{VtxoState, VtxoStateKind};
+use crate::vtxo::VtxoStateKind;
 
 /// Handles the process of ongoing VTXO exits.
 pub(crate) struct ExitInner {
@@ -192,18 +192,10 @@ impl ExitInner {
 				}.into());
 			}
 
-			// We avoid composing the TXID vector since that requires access to the onchain wallet,
-			// as such the ExitVtxo will be considered uninitialized.
-			trace!("Starting exit for VTXO: {}", vtxo_id);
-			let exit = ExitVtxo::new(vtxo, tip);
-			self.persister.store_exit_vtxo_entry(&StoredExit::new(&exit)).await?;
-			self.persister.update_vtxo_state_checked(
-				vtxo_id, VtxoState::Spent, &VtxoStateKind::UNSPENT_STATES,
-			).await?;
-			self.exit_vtxos.push(exit);
-			trace!("Exit for VTXO started successfully: {}", vtxo_id);
-
-			// Register the movement now so users can be aware of where their funds have gone.
+			// Create the movement in a Pending state. It transitions to Successful once the
+			// exit completes (Claimed), or Canceled if we discover the VTXO was already
+			// consumed by something else. We don't touch the VTXO's own state here — that
+			// happens in `progress_exits` once we've actually broadcast the exit chain.
 			let balance = -vtxo.amount().to_signed()?;
 			let script_pubkey = vtxo.output_script_pubkey();
 			let payment_method = match Address::from_script(&script_pubkey, &params) {
@@ -214,18 +206,22 @@ impl ExitInner {
 				}
 			};
 
-			// A big reason for creating a finished movement is that we currently don't support
-			// canceling exits. When we do, we can leave this in pending until it's either finished
-			// or canceled by the user.
-			self.movement_manager.new_finished_movement(
+			let movement_id = self.movement_manager.new_movement_with_update(
 				Subsystem::EXIT,
 				ExitMovement::Exit.to_string(),
-				MovementStatus::Successful,
 				MovementUpdate::new()
 					.intended_and_effective_balance(balance)
 					.consumed_vtxo(vtxo_id)
 					.sent_to([MovementDestination::new(payment_method, vtxo.amount())]),
 			).await.context("Failed to register exit movement")?;
+
+			// We avoid composing the TXID vector since that requires access to the onchain wallet,
+			// as such the ExitVtxo will be considered uninitialized.
+			trace!("Starting exit for VTXO: {}", vtxo_id);
+			let exit = ExitVtxo::new(vtxo, tip, Some(movement_id));
+			self.persister.store_exit_vtxo_entry(&StoredExit::new(&exit)).await?;
+			self.exit_vtxos.push(exit);
+			trace!("Exit for VTXO started successfully: {}", vtxo_id);
 		}
 		Ok(())
 	}
@@ -388,23 +384,44 @@ impl Exit {
 		guard.exit_vtxos.clone()
 	}
 
+	/// Returns whether a VTXO has an active or completed unilateral exit.
+	pub async fn is_exiting(&self, vtxo_id: VtxoId) -> bool {
+		let guard = self.inner.read().await;
+		let state = guard.exit_vtxos.iter().find(|ev| ev.id() == vtxo_id).map(|ev| ev.state());
+		match state {
+			Some(ExitState::Start(_)) => true,
+			Some(ExitState::Processing(_)) => true,
+			Some(ExitState::AwaitingDelta(_)) => true,
+			Some(ExitState::Claimable(_)) => true,
+			Some(ExitState::ClaimInProgress(_)) => true,
+			Some(ExitState::Claimed(_)) => true,
+			Some(ExitState::VtxoAlreadySpent(_)) => false,
+			None => false,
+		}
+	}
+
 	/// True if there are any unilateral exits which have been started but are not yet claimable.
 	pub async fn has_pending_exits(&self) -> bool {
 		let guard = self.inner.read().await;
 		guard.exit_vtxos.iter().any(|ev| ev.state().is_pending())
 	}
 
+	/// Total balance held in VTXOs whose exit chain is confirmed onchain but hasn't yet
+	/// been drained back into the onchain wallet (exit state in `{AwaitingDelta,
+	/// Claimable, ClaimInProgress}` — i.e. the VTXO is `Exited` but not yet `Claimed`).
+	///
 	/// Returns [None] if the lock is currently held by a writer.
 	pub fn try_pending_total(&self) -> Option<Amount> {
 		self.inner.try_read().ok().map(|guard| {
 			guard.exit_vtxos.iter()
-				.filter_map(|ev| {
-					if ev.state().is_pending() || ev.state().is_claimable() {
-						Some(ev.amount())
-					} else {
-						None
-					}
-				}).sum()
+				.filter(|ev| matches!(
+					ev.state(),
+					ExitState::AwaitingDelta(_)
+					| ExitState::Claimable(_)
+					| ExitState::ClaimInProgress(_),
+				))
+				.map(|ev| ev.amount())
+				.sum()
 		})
 	}
 
@@ -413,12 +430,9 @@ impl Exit {
 		let guard = self.inner.read().await;
 		let mut highest_claimable_height = None;
 		for exit in &guard.exit_vtxos {
-			if matches!(exit.state(), ExitState::Claimed(..)) {
-				continue;
-			}
 			match exit.state().claimable_height() {
 				Some(h) => highest_claimable_height = cmp::max(highest_claimable_height, Some(h)),
-				None => return None,
+				None => continue,
 			}
 		}
 		highest_claimable_height
@@ -516,6 +530,7 @@ impl Exit {
 			}
 
 			info!("Progressing exit for VTXO {}", ev.id());
+			let pre_state = ev.state().clone();
 			let error = match ev.progress(
 				wallet,
 				&mut guard.tx_manager,
@@ -534,6 +549,12 @@ impl Exit {
 					Some(e)
 				}
 			};
+
+			let state_changed = ev.state() != &pre_state;
+			Self::reconcile_vtxo_and_movement(
+				wallet, &guard.movement_manager, ev, state_changed,
+			).await;
+
 			if !matches!(ev.state(), ExitState::Claimed(..)) {
 				exit_statuses.push(ExitProgressStatus {
 					vtxo_id: ev.id(),
@@ -547,6 +568,44 @@ impl Exit {
 		Ok(Some(exit_statuses))
 	}
 
+	/// Maps the current exit state onto the VTXO and movement bookkeeping:
+	/// - mark the VTXO `Exited` once every exit transaction has been broadcast (i.e. past
+	///   `Start`, with `Processing` having all txs broadcast or beyond),
+	/// - finish the movement as `Successful` when we reach `Claimed`,
+	/// - finish the movement as `Canceled` when we detect the VTXO was already spent.
+	///
+	/// All updates are best-effort: failures are logged and don't abort progress. The VTXO
+	/// transition is idempotent; the movement transitions only fire on a fresh state change
+	/// to avoid notification spam.
+	async fn reconcile_vtxo_and_movement(
+		wallet: &Wallet,
+		movements: &MovementManager,
+		ev: &ExitVtxo,
+		state_changed: bool,
+	) {
+		if ev.state().warrants_exited_vtxo() {
+			if let Err(e) = wallet.mark_vtxos_as_exited([ev.id()]).await {
+				error!("Failed to mark VTXO {} as Exited: {:#}", ev.id(), e);
+			}
+		}
+
+		if !state_changed {
+			return;
+		}
+		let Some(movement_id) = ev.movement_id() else { return };
+		let new_status = match ev.state() {
+			ExitState::Claimed(_) => MovementStatus::Successful,
+			ExitState::VtxoAlreadySpent(_) => MovementStatus::Canceled,
+			_ => return,
+		};
+		if let Err(e) = movements.finish_movement(movement_id, new_status).await {
+			error!(
+				"Failed to finalize exit movement {} as {:?}: {:#}",
+				movement_id, new_status, e,
+			);
+		}
+	}
+
 	/// For use when syncing. Pending exits will be initialized, the network status of each
 	/// [ExitTransactionPackage] will be updated, and finally, any unilateral exits that are waiting
 	/// for network updates will be progressed.
@@ -558,11 +617,21 @@ impl Exit {
 		guard.refresh_tx_state().await?;
 		let mut exit_vtxos = std::mem::take(&mut guard.exit_vtxos);
 		for exit in &mut exit_vtxos {
+			if !exit.is_initialized() {
+				warn!("Skipping progress of uninitialized unilateral exit {}", exit.id());
+				continue;
+			}
+
+			let pre_state = exit.state().clone();
 			if let Err(e) = exit.progress(
 				wallet, &mut guard.tx_manager, false,
 			).await {
 				error!("Error syncing exit for VTXO {}: {}", exit.id(), e);
 			}
+			let state_changed = exit.state() != &pre_state;
+			Self::reconcile_vtxo_and_movement(
+				wallet, &guard.movement_manager, exit, state_changed,
+			).await;
 		}
 		guard.exit_vtxos = exit_vtxos;
 		Ok(())

@@ -2,7 +2,7 @@ use anyhow::Context;
 use bdk_esplora::esplora_client::Amount;
 use bitcoin::key::Keypair;
 use bitcoin::{Address, OutPoint, Psbt};
-use log::{error, info, trace, warn};
+use log::{debug, error, info, trace, warn};
 
 use ark::{ProtocolEncoding, VtxoId};
 use ark::board::{BoardBuilder, BOARD_FUNDING_TX_VTXO_VOUT};
@@ -63,12 +63,17 @@ impl Wallet {
 		for vtxo_id in vtxo_ids {
 			let vtxo = self.get_vtxo_by_id(vtxo_id).await
 				.expect("vtxo id just got retrieved from db");
-			vtxos.push(vtxo);
+			// We can silently filter out exited VTXOs, next time we sync they will be dropped from
+			// the pending list.
+			match vtxo.state.kind() {
+				VtxoStateKind::Locked => vtxos.push(vtxo),
+				VtxoStateKind::Exited => continue,
+				VtxoStateKind::Spendable | VtxoStateKind::Spent => {
+					warn!("Pending board VTXO {} has unexpected state: {:?}", vtxo_id, vtxo.state);
+					debug_assert!(false, "all pending board vtxos should be locked or exited");
+				}
+			}
 		}
-
-		debug_assert!(vtxos.iter().all(|v| matches!(v.state.kind(), VtxoStateKind::Locked)),
-			"all pending board vtxos should be locked"
-		);
 
 		Ok(vtxos)
 	}
@@ -92,7 +97,19 @@ impl Wallet {
 			let [vtxo_id] = board.vtxos.try_into()
 				.map_err(|_| anyhow!("multiple board vtxos is not supported yet"))?;
 
+			// If we've kicked off an exit and it's progressed beyond the abortable stage,
+			// server-side registration can no longer succeed — the underlying outpoint is
+			// now committed to the exit chain. Drop the pending_board entry so we stop
+			// burning RPC calls on it.
 			let vtxo = self.get_vtxo_by_id(vtxo_id).await?;
+			if vtxo.state.kind() == VtxoStateKind::Exited {
+				debug!("Removing pending_board for exited VTXO {}", vtxo_id);
+				self.inner.db.remove_pending_board(&vtxo_id).await?;
+				self.inner.movements.finish_movement(
+					board.movement_id, MovementStatus::Failed,
+				).await?;
+				continue;
+			}
 
 			let anchor = vtxo.chain_anchor();
 			let confs = match self.inner.chain.tx_status(anchor.txid).await {
@@ -114,17 +131,21 @@ impl Wallet {
 				}
 			}
 
+			// Near expiry without registration — kick off an exit so the funds at least
+			// come back onchain, but keep the pending_board entry around so we keep
+			// retrying registration while the exit is still in its abortable
+			// Start/Processing window. If the server becomes available before the exit
+			// commits, `register_board` will succeed and tear down the entry; otherwise
+			// the top-of-loop check above will tear it down once the exit progresses.
 			if vtxo.expiry_height() < current_height + ark_info.required_board_confirmations as BlockHeight {
-				warn!("VTXO {} expired before its board was confirmed, removing board and marking VTXO for exit", vtxo.id());
-				self.inner.exit.start_exit_for_vtxos(&[vtxo.vtxo]).await?;
-				self.inner.movements.finish_movement_with_update(
-					board.movement_id,
-					MovementStatus::Failed,
-					MovementUpdate::new()
-						.exited_vtxo(vtxo_id),
-				).await?;
-
-				self.inner.db.remove_pending_board(&vtxo_id).await?;
+				let is_exiting = self.exit_mgr().is_exiting(vtxo.id()).await;
+				if !is_exiting {
+					warn!("VTXO {} expired before its board was confirmed, marking VTXO for exit", vtxo.id());
+					self.inner.exit.start_exit_for_vtxos(&[vtxo.vtxo]).await?;
+					self.inner.movements.update_movement(
+						board.movement_id, MovementUpdate::new().exited_vtxo(vtxo_id),
+					).await?;
+				}
 			}
 		};
 
@@ -293,6 +314,7 @@ impl Wallet {
 		let board = self.inner.db.get_pending_board_by_vtxo_id(vtxo.id()).await?
 			.context("pending board not found")?;
 
+		// TODO(pc): Cancel any pending exits for the VTXO once we support doing so.
 		self.inner.movements.finish_movement(board.movement_id, MovementStatus::Successful).await?;
 		self.inner.db.remove_pending_board(&vtxo.id()).await?;
 
