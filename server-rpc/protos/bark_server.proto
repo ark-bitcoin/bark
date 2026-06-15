@@ -17,6 +17,7 @@ service ArkService {
 	rpc GetFreshRounds(FreshRoundsRequest) returns (FreshRounds) {}
 	rpc GetRound(RoundId) returns (RoundInfo) {}
 	rpc GetVtxo(GetVtxoRequest) returns (GetVtxoResponse) {}
+	rpc GetVtxoStatus(GetVtxoStatusRequest) returns (GetVtxoStatusResponse) {}
 
 	// * BOARDING *
 
@@ -183,6 +184,36 @@ message GetVtxoRequest {
 
 message GetVtxoResponse {
 	bytes vtxo = 1;
+}
+
+// Client-relevant spend state for a user-owned VTXO.
+//
+// Server-internal states (pool, forfeit, connector) are never returned;
+// in-flight Lightning-receive HTLCs are reported as HTLC_RECV_UNCLAIMED because
+// the client must reveal the preimage to claim them before they become spendable.
+enum VtxoSpendState {
+	VTXO_SPEND_STATE_UNSPECIFIED = 0;
+	// The VTXO is available for spending.
+	VTXO_SPEND_STATE_SPENDABLE = 1;
+	// The VTXO has been spent (via round, OOR, or offboard).
+	VTXO_SPEND_STATE_SPENT = 2;
+	// The VTXO originates from a round but the server has not released the
+	// unlock preimage yet.
+	VTXO_SPEND_STATE_UNCLAIMED = 3;
+	// The VTXO's signed transaction chain has not been uploaded yet.
+	VTXO_SPEND_STATE_UNREGISTERED = 4;
+	// The VTXO's preimage haven't been revealed yet
+	VTXO_SPEND_STATE_HTLC_RECV_UNCLAIMED = 5;
+}
+
+message GetVtxoStatusRequest {
+	bytes vtxo_id = 1;
+	// Serialized VtxoStatusAttestation proving the user controls the VTXO.
+	bytes attestation = 2;
+}
+
+message GetVtxoStatusResponse {
+	VtxoSpendState spend_state = 1;
 }
 
 
