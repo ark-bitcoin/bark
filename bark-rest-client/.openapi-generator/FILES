@@ -34,6 +34,8 @@ docs/CreateWalletResponse.md
 docs/DefaultApi.md
 docs/EncodedVtxoResponse.md
 docs/ExitAwaitingDeltaState.md
+docs/ExitCancelResponse.md
+docs/ExitCanceledState.md
 docs/ExitClaimAllRequest.md
 docs/ExitClaimInProgressState.md
 docs/ExitClaimResponse.md
@@ -61,6 +63,9 @@ docs/ExitErrorOneOf23.md
 docs/ExitErrorOneOf24.md
 docs/ExitErrorOneOf25.md
 docs/ExitErrorOneOf26.md
+docs/ExitErrorOneOf27.md
+docs/ExitErrorOneOf28.md
+docs/ExitErrorOneOf29.md
 docs/ExitErrorOneOf3.md
 docs/ExitErrorOneOf4.md
 docs/ExitErrorOneOf5.md
@@ -76,6 +81,7 @@ docs/ExitStartRequest.md
 docs/ExitStartResponse.md
 docs/ExitStartState.md
 docs/ExitState.md
+docs/ExitStateKind.md
 docs/ExitStateOneOf.md
 docs/ExitStateOneOf1.md
 docs/ExitStateOneOf2.md
@@ -83,6 +89,7 @@ docs/ExitStateOneOf3.md
 docs/ExitStateOneOf4.md
 docs/ExitStateOneOf5.md
 docs/ExitStateOneOf6.md
+docs/ExitStateOneOf7.md
 docs/ExitStatusRequest.md
 docs/ExitTransactionPackage.md
 docs/ExitTransactionStatus.md
@@ -219,6 +226,8 @@ src/models/create_wallet_request.rs
 src/models/create_wallet_response.rs
 src/models/encoded_vtxo_response.rs
 src/models/exit_awaiting_delta_state.rs
+src/models/exit_cancel_response.rs
+src/models/exit_canceled_state.rs
 src/models/exit_claim_all_request.rs
 src/models/exit_claim_in_progress_state.rs
 src/models/exit_claim_response.rs
@@ -246,6 +255,9 @@ src/models/exit_error_one_of_23.rs
 src/models/exit_error_one_of_24.rs
 src/models/exit_error_one_of_25.rs
 src/models/exit_error_one_of_26.rs
+src/models/exit_error_one_of_27.rs
+src/models/exit_error_one_of_28.rs
+src/models/exit_error_one_of_29.rs
 src/models/exit_error_one_of_3.rs
 src/models/exit_error_one_of_4.rs
 src/models/exit_error_one_of_5.rs
@@ -261,6 +273,7 @@ src/models/exit_start_request.rs
 src/models/exit_start_response.rs
 src/models/exit_start_state.rs
 src/models/exit_state.rs
+src/models/exit_state_kind.rs
 src/models/exit_state_one_of.rs
 src/models/exit_state_one_of_1.rs
 src/models/exit_state_one_of_2.rs
@@ -268,6 +281,7 @@ src/models/exit_state_one_of_3.rs
 src/models/exit_state_one_of_4.rs
 src/models/exit_state_one_of_5.rs
 src/models/exit_state_one_of_6.rs
+src/models/exit_state_one_of_7.rs
 src/models/exit_status_request.rs
 src/models/exit_transaction_package.rs
 src/models/exit_transaction_status.rs
