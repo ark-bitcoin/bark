@@ -94,6 +94,14 @@ pub enum ExitError {
 		error: String
 	},
 
+	#[error("Exit Tx Already Broadcast: Cannot cancel the exit for VTXO {vtxo}, its final exit tx {txid} has already been broadcast")]
+	ExitTxAlreadyBroadcast {
+		#[cfg_attr(feature = "utoipa", schema(value_type = String))]
+		vtxo: VtxoId,
+		#[cfg_attr(feature = "utoipa", schema(value_type = String))]
+		txid: Txid,
+	},
+
 	#[error("Insufficient Confirmed Funds: {needed} is needed but only {available} is available")]
 	InsufficientConfirmedFunds {
 		#[cfg_attr(feature = "utoipa", schema(value_type = u64))]
@@ -195,6 +203,9 @@ impl From<bark::exit::ExitError> for ExitError {
 			},
 			bark::exit::ExitError::ExitPackageStoreFailure { txid, error } => {
 				ExitError::ExitPackageStoreFailure { txid, error }
+			},
+			bark::exit::ExitError::ExitTxAlreadyBroadcast { vtxo, txid } => {
+				ExitError::ExitTxAlreadyBroadcast { vtxo, txid }
 			},
 			bark::exit::ExitError::InsufficientConfirmedFunds { needed, available } => {
 				ExitError::InsufficientConfirmedFunds { needed, available }

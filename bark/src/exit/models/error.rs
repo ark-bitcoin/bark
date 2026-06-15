@@ -77,6 +77,9 @@ pub enum ExitError {
 		error: String
 	},
 
+	#[error("Exit Tx Already Broadcast: Cannot cancel the exit for VTXO {vtxo}, its final exit tx {txid} has already been broadcast")]
+	ExitTxAlreadyBroadcast { vtxo: VtxoId, txid: Txid },
+
 	#[error("Insufficient Confirmed Funds: {needed} is needed but only {available} is available")]
 	InsufficientConfirmedFunds {
 		needed: Amount,

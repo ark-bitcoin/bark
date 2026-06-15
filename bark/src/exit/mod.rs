@@ -143,7 +143,7 @@ use log::{error, info, trace, warn};
 use ark::{Vtxo, VtxoId};
 use ark::vtxo::Bare;
 use ark::vtxo::policy::signing::VtxoSigner;
-use bitcoin_ext::{BlockHeight, P2TR_DUST};
+use bitcoin_ext::{BlockHeight, P2TR_DUST, TxStatus};
 
 use crate::Wallet;
 use crate::chain::ChainSource;
@@ -599,6 +599,7 @@ impl Exit {
 	/// # Errors
 	/// - [ExitError::NotExiting] if the VTXO never had an exit.
 	/// - [ExitError::CannotCancelExit] if the exit has progressed past its abortable window.
+	/// - [ExitError::ExitTxAlreadyBroadcast] if the final exit tx is already on the network.
 	pub async fn cancel_exit(&self, vtxo_id: VtxoId) -> anyhow::Result<(), ExitError> {
 		let mut guard = self.inner.write().await;
 		let inner = &mut *guard;
@@ -622,6 +623,15 @@ impl Exit {
 				vtxo: vtxo_id,
 				state: inner.exit_vtxos[idx].state().kind(),
 			});
+		}
+
+		// Double check with the network first before canceling the exit.
+		let leaf_txid = inner.exit_vtxos[idx].get_vtxo(&*inner.persister).await?.point().txid;
+		match inner.tx_manager.sync_exit_tx(leaf_txid).await? {
+			TxStatus::NotFound => {},
+			TxStatus::Mempool | TxStatus::Confirmed(_) => {
+				return Err(ExitError::ExitTxAlreadyBroadcast { vtxo: vtxo_id, txid: leaf_txid });
+			},
 		}
 
 		let tip = inner.chain_source.tip().await
