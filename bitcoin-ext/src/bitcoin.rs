@@ -33,6 +33,18 @@ pub trait KeypairExt: Borrow<Keypair> {
 impl KeypairExt for Keypair {}
 
 
+/// Why a [TxOut] failed the standardness check.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum NonStandardOutput {
+	/// Output value is below the dust limit for its script type.
+	#[error("output value is below the dust limit for its script type")]
+	Dust,
+	/// Script type is not recognised as standard, or the OP_RETURN
+	/// payload exceeds the 83-byte standardness ceiling.
+	#[error("output uses a non-standard script type")]
+	Script,
+}
+
 /// Extension trait for [TxOut].
 pub trait TxOutExt: Borrow<TxOut> {
 	/// Check whether this output is a p2a fee anchor.
@@ -42,6 +54,16 @@ pub trait TxOutExt: Borrow<TxOut> {
 
 	/// Basic standardness check. Might be too strict.
 	fn is_standard(&self) -> bool {
+		self.check_standard().is_ok()
+	}
+
+	/// Basic standardness check, returning the offending reason when the
+	/// output isn't relayable. Might be too strict.
+	///
+	/// Combines two checks: the script type must be recognised (P2PKH,
+	/// P2SH, P2WPKH, P2WSH, P2TR, or a short OP_RETURN) *and* the value
+	/// must clear that script's dust limit.
+	fn check_standard(&self) -> Result<(), NonStandardOutput> {
 		let out = self.borrow();
 
 		let dust_limit = if out.script_pubkey.is_p2pkh() {
@@ -55,12 +77,16 @@ pub trait TxOutExt: Borrow<TxOut> {
 		} else if out.script_pubkey.is_p2tr() {
 			P2TR_DUST
 		} else if out.script_pubkey.is_op_return() {
-			return out.script_pubkey.len() <= 83;
+			return if out.script_pubkey.len() <= 83 {
+				Ok(())
+			} else {
+				Err(NonStandardOutput::Script)
+			};
 		} else {
-			return false;
+			return Err(NonStandardOutput::Script);
 		};
 
-		out.value >= dust_limit
+		if out.value >= dust_limit { Ok(()) } else { Err(NonStandardOutput::Dust) }
 	}
 }
 impl TxOutExt for TxOut {}
@@ -182,6 +208,70 @@ impl FeeRateExt for FeeRate {}
 #[cfg(test)]
 mod test {
 	use super::*;
+
+	/// A 34-byte P2TR scriptPubkey template (`OP_1 <32 zero bytes>`),
+	/// recognised as P2TR without needing a real key setup.
+	fn p2tr_script() -> ScriptBuf {
+		let mut bytes = Vec::with_capacity(34);
+		bytes.push(0x51); // OP_1
+		bytes.push(0x20); // OP_PUSHBYTES_32
+		bytes.extend_from_slice(&[0u8; 32]);
+		ScriptBuf::from(bytes)
+	}
+
+	#[test]
+	fn check_standard_p2tr_above_dust() {
+		let out = TxOut { value: P2TR_DUST, script_pubkey: p2tr_script() };
+		assert_eq!(out.check_standard(), Ok(()));
+		assert!(out.is_standard());
+	}
+
+	#[test]
+	fn check_standard_p2tr_sub_dust() {
+		let out = TxOut {
+			value: P2TR_DUST - Amount::from_sat(1),
+			script_pubkey: p2tr_script(),
+		};
+		assert_eq!(out.check_standard(), Err(NonStandardOutput::Dust));
+		assert!(!out.is_standard());
+	}
+
+	#[test]
+	fn check_standard_unrecognised_script() {
+		// An arbitrary script that matches none of the templates
+		// is_standard recognises.
+		let out = TxOut {
+			value: Amount::from_sat(100_000),
+			script_pubkey: ScriptBuf::from(vec![0xab, 0xcd, 0xef]),
+		};
+		assert_eq!(out.check_standard(), Err(NonStandardOutput::Script));
+	}
+
+	#[test]
+	fn check_standard_op_return_within_limit() {
+		// OP_RETURN <80 zero bytes> is well within the 83-byte ceiling.
+		let mut bytes = vec![0x6a, 0x4c, 80]; // OP_RETURN OP_PUSHDATA1 80
+		bytes.extend_from_slice(&[0u8; 80]);
+		let out = TxOut {
+			value: Amount::ZERO,
+			script_pubkey: ScriptBuf::from(bytes),
+		};
+		assert_eq!(out.check_standard(), Ok(()));
+	}
+
+	#[test]
+	fn check_standard_op_return_over_limit() {
+		// 83 bytes of opcode + push + data is exactly at the ceiling; one
+		// extra byte tips it over.
+		let mut bytes = vec![0x6a, 0x4c, 82]; // OP_RETURN OP_PUSHDATA1 82
+		bytes.extend_from_slice(&[0u8; 82]);
+		assert!(bytes.len() > 83);
+		let out = TxOut {
+			value: Amount::ZERO,
+			script_pubkey: ScriptBuf::from(bytes),
+		};
+		assert_eq!(out.check_standard(), Err(NonStandardOutput::Script));
+	}
 
 	#[test]
 	fn amount_from_msat() {

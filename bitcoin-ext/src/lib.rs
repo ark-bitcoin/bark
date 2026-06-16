@@ -14,7 +14,8 @@ pub mod rpc;
 pub mod serde;
 
 pub use mbitcoin::{
-	AmountExt, FeeRateExt, TaprootSpendInfoExt, KeypairExt, TransactionExt, TxOutExt,
+	AmountExt, FeeRateExt, NonStandardOutput, TaprootSpendInfoExt, KeypairExt, TransactionExt,
+	TxOutExt,
 };
 
 #[path = "bitcoin.rs"]
