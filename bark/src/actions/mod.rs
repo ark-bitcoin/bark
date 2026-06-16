@@ -386,7 +386,10 @@ impl Wallet {
 								tokio::time::sleep(delay).await;
 								action = state;
 							} else {
-								return Ok(());
+								return match error {
+									Some(error) => Err(error.into()),
+									None => Ok(()),
+								};
 							}
 						},
 					}
