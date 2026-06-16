@@ -383,7 +383,8 @@ impl ClnXpayProcess {
 		// e.g. base 10 seconds, doubling each time, capped to a max delay
 		let base_delay_secs = self.config.check_base_delay.as_secs();
 		let max_delay_secs = self.config.max_check_delay.as_secs();
-		let delay_secs = (base_delay_secs * 2u64.pow(*checks as u32 - 1)).min(max_delay_secs);
+		let delay_secs = (base_delay_secs.saturating_mul(2u64.saturating_pow(*checks as u32 - 1)))
+			.min(max_delay_secs);
 
 		*next_check = Local::now() + Duration::from_secs(delay_secs);
 
