@@ -156,6 +156,7 @@ dependencies = [
  "bdk_bitcoind_rpc",
  "bdk_esplora",
  "bdk_wallet",
+ "bip321",
  "bip39",
  "bitcoin",
  "bitcoincore-rpc",
