@@ -7,12 +7,16 @@ license = "MIT"
 
 [dependencies]
 honggfuzz = { version = "0.5.55" , default-features = false }
-ark = { package = "ark-lib", path = "../lib" }
+ark = { package = "ark-lib", path = "../lib", features = ["test-util"] }
 bitcoin = { version = "0.32", default-features = false, features = ["std"]}
 
 [profile.release]
 debug = 1
 opt-level = 3
+# Catch first-party integer overflow and debug_assert! violations a plain
+# release build would wrap/strip. (No memory sanitizers: ark-lib is safe Rust.)
+overflow-checks = true
+debug-assertions = true
 
 # Use independent workspace for fuzzers
 [workspace]
