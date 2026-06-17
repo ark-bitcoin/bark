@@ -80,7 +80,7 @@ async fn mailbox_checkpoint_visibility_gap() {
 
 			loop {
 				let resp = client.read_mailbox(protos::mailbox_server::MailboxRequest {
-					unblinded_id: unblinded_id.clone(),
+					mailbox_id: unblinded_id.clone(),
 					authorization: Some(auth_bytes.clone()),
 					checkpoint: cursor,
 				}).await.unwrap().into_inner();
@@ -183,7 +183,7 @@ async fn mailbox_lightning_receive_pending() {
 
 			let read_req = protos::mailbox_server::MailboxRequest {
 				authorization: Some(mailbox_auth.serialize().to_vec()),
-				unblinded_id: mailbox_id.serialize(),
+				mailbox_id: mailbox_id.serialize(),
 				checkpoint: 0,
 			};
 
@@ -250,7 +250,7 @@ async fn mailbox_lightning_send_finished() {
 
 			let read_req = protos::mailbox_server::MailboxRequest {
 				authorization: Some(mailbox_auth.serialize().to_vec()),
-				unblinded_id: mailbox_id.serialize(),
+				mailbox_id: mailbox_id.serialize(),
 				checkpoint: 0,
 			};
 

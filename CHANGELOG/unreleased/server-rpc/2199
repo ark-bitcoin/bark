@@ -1,0 +1,3 @@
+- rename field `unblinded_id` to `mailbox_id` in `MailboxRequest` and `PostRecoveryVtxoIdsRequest`,
+  content stays identical
+  [#2199](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2199)
