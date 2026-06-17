@@ -13,6 +13,8 @@ DAEMON=0
 USE_CORPUS=""
 JOBS=""
 MINIMIZE=0
+REPLAY=0
+T_GIVEN=0
 
 usage() {
     cat <<EOF
@@ -38,6 +40,11 @@ OPTIONS:
     -d, --daemon            Run in background, prints PID and exits
     -j, --jobs <N>          Number of CPUs/threads to use (default: honggfuzz default)
     --minimize              Minimize corpus only
+    --replay                Re-run the accumulated corpus under the current build
+                            to flush latent panics (incl. the debug_assert!s the
+                            release profile now compiles in). Short per-target run,
+                            does not exit on crash, and logs + summarizes the
+                            contained (unwind-isolated) panics it hits.
     --use-corpus <PATH>     Use corpus from a cloned bark-qa repo at PATH
 
 ENVIRONMENT VARIABLES:
@@ -75,6 +82,7 @@ while [[ $# -gt 0 ]]; do
             ;;
         -t|--time)
             RUN_TIME="$2"
+            T_GIVEN=1
             shift 2
             ;;
         -c|--continue)
@@ -99,6 +107,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --minimize)
             MINIMIZE=1
+            shift
+            ;;
+        --replay)
+            REPLAY=1
             shift
             ;;
         --use-corpus)
@@ -134,6 +146,49 @@ fi
 
 trap 'exit 130' INT
 
+# Replay mode: re-run the accumulated corpus under the current build to surface
+# latent contained panics (honggfuzz replays every corpus input at startup, so a
+# short run suffices). Don't abort on crash, and default to a short per-target run.
+if [ "$REPLAY" = "1" ]; then
+    EXIT_ON_CRASH=0
+    if [ "$T_GIVEN" = "0" ]; then
+        RUN_TIME=20
+    fi
+fi
+
+# Summarize the contained panics the harness wrote to $HFUZZ_CONTAINED_FILE
+# during a replay run: a total count plus a frequency-ranked list of source
+# locations. Emits CONTAINED-SUMMARY / CONTAINED-LOC lines for the daily report.
+summarize_contained() {
+    local target="$1" cfile="$2"
+    local total locs unique
+    # Only count/parse well-formed sentinel lines ("CONTAINED\t<file:line:col>: msg"),
+    # so any torn write is dropped rather than mis-parsed into a bogus location.
+    if [ -f "$cfile" ]; then
+        total=$(grep -cE '^CONTAINED'$'\t' "$cfile" 2>/dev/null) || total=0
+    else
+        total=0
+    fi
+    echo "=== Contained-panic summary: $target ==="
+    if [ "${total:-0}" -gt 0 ]; then
+        # A counted line may still lack a parseable location (e.g. a panic with
+        # a non-string payload), so these can come up empty under pipefail.
+        locs=$(grep -E '^CONTAINED'$'\t' "$cfile" \
+            | grep -oE '[A-Za-z0-9_./-]+\.rs:[0-9]+:[0-9]+' \
+            | sort | uniq -c | sort -rn) || locs=""
+        unique=$(printf '%s\n' "$locs" | grep -c .) || unique=0
+        echo "CONTAINED-SUMMARY target=$target total=$total unique=$unique"
+        printf '%s\n' "$locs" | while read -r count loc; do
+            if [ -n "$loc" ]; then
+                echo "CONTAINED-LOC $target $count $loc"
+            fi
+        done
+    else
+        echo "CONTAINED-SUMMARY target=$target total=0 unique=0"
+    fi
+    echo "=== End contained-panic summary: $target ==="
+}
+
 run_fuzzing() {
     # Enable command tracing if verbose
     if [ "$VERBOSE" = "1" ]; then
@@ -147,6 +202,14 @@ run_fuzzing() {
     # sccache doesn't work with honggfuzz's sanitizer flags; bypass it entirely
     unset RUSTC_WRAPPER
     unset RUSTC_WORKSPACE_WRAPPER
+
+    # Replay mode surfaces contained (unwind-isolated) panics — including the
+    # debug_assert!s now compiled into the release profile — which the harness
+    # otherwise only counts. Kept off for normal campaigns: a contained panic
+    # can fire millions of times and would flood the log (see fuzz/src/lib.rs).
+    if [ "$REPLAY" = "1" ]; then
+        export HFUZZ_LOG_CONTAINED=1
+    fi
 
     echo "cargo $(cargo --version)"
     echo "rustc $(rustc --version)"
@@ -211,7 +274,29 @@ run_fuzzing() {
 
             export HFUZZ_RUN_ARGS
             cd "$FUZZ_DIR"
-            if ! cargo hfuzz run "$target"; then
+
+            # In replay mode, point the harness's contained-panic file sink at a
+            # fresh per-target file, run, then summarize from it. honggfuzz
+            # swallows the child's stderr, so the file is the only reliable
+            # channel for contained panics (see fuzz/src/lib.rs).
+            if [ "$REPLAY" = "1" ]; then
+                contained_file=$(mktemp)
+                export HFUZZ_CONTAINED_FILE="$contained_file"
+                set +e
+                cargo hfuzz run "$target"
+                run_status=$?
+                set -e
+                unset HFUZZ_CONTAINED_FILE
+                summarize_contained "$target" "$contained_file"
+                rm -f "$contained_file"
+            else
+                set +e
+                cargo hfuzz run "$target"
+                run_status=$?
+                set -e
+            fi
+
+            if [ "$run_status" -ne 0 ]; then
                 if [ "$EXIT_ON_CRASH" = "1" ]; then
                     echo "=== Crash detected in $target, exiting ==="
                     exit 1
