@@ -1,6 +1,7 @@
 use std::pin::Pin;
 use bitcoin::hashes::Hash;
 use futures::Stream;
+use futures::StreamExt;
 use tracing::{error, warn};
 use ark::{ProtocolEncoding, Vtxo, VtxoId};
 use ark::mailbox::{BlindedMailboxIdentifier, MailboxAuthorization, MailboxIdentifier, MailboxType};
@@ -226,6 +227,9 @@ impl rpc::server::MailboxService for crate::Server {
 				}
 			}
 		};
+
+		let mgr = self.rtmgr.clone();
+		let stream = stream.take_until(async move { mgr.shutdown_signal().await });
 
 		Ok(tonic::Response::new(Box::pin(stream)))
 	}

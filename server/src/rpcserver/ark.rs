@@ -1,4 +1,5 @@
 
+use std::pin::Pin;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::sync::atomic;
@@ -15,7 +16,8 @@ use bitcoin::{Amount, OutPoint};
 use bitcoin::hashes::Hash;
 use bitcoin::secp256k1::{rand, PublicKey};
 use tokio::sync::oneshot;
-use tokio_stream::{Stream, StreamExt};
+use futures::StreamExt;
+use tokio_stream::Stream;
 use tower_http::cors::CorsLayer;
 use tonic_tracing_opentelemetry::middleware::server::OtelGrpcLayer;
 use tracing::info;
@@ -512,17 +514,20 @@ impl rpc::server::ArkService for Server {
 		}))
 	}
 
-	type SubscribeRoundsStream = Box<
-		dyn Stream<Item = Result<protos::RoundEvent, tonic::Status>> + Unpin + Send + 'static
-	>;
+	type SubscribeRoundsStream = Pin<Box<
+		dyn Stream<Item = Result<protos::RoundEvent, tonic::Status>> + Send + 'static
+	>>;
 
 	#[tracing::instrument(skip(self, _req))]
 	async fn subscribe_rounds(
 		&self,
 		_req: tonic::Request<protos::Empty>,
 	) -> Result<tonic::Response<Self::SubscribeRoundsStream>, tonic::Status> {
-		let stream = self.rounds.events();
-		Ok(tonic::Response::new(Box::new(stream.map(|e| Ok(e.as_ref().into())))))
+		let mgr = self.rtmgr.clone();
+		let stream = self.rounds.events()
+			.map(|e| Ok(e.as_ref().into()))
+			.take_until(async move { mgr.shutdown_signal().await });
+		Ok(tonic::Response::new(Box::pin(stream)))
 	}
 
 	#[tracing::instrument(skip(self, _req))]
