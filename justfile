@@ -107,6 +107,16 @@ test-integration-bark: ensure-build-bins docker-pull
 		--test bark --test barkd
 alias int-bark := test-integration-bark
 
+# RUST_MIN_STACK is bumped so a reentrancy failure surfaces as the assertion,
+# not a stack overflow (deep `advance` futures overflow the default stack in
+# local unoptimized builds).
+[doc("run the bark-sdk integration tests double-driving every action step to check reentrancy")]
+test-integration-bark-sdk-action-reentrancy TEST="": ensure-build-bins docker-pull
+	BARK_DOUBLE_DRIVE_ACTIONS=1 RUST_MIN_STACK=33554432 \
+		cargo nextest run --no-fail-fast --profile {{NEXTEST_PROFILE}} \
+		--package ark-testing --test bark-sdk {{TEST}}
+alias int-bark-sdk-action-reentrancy := test-integration-bark-sdk-action-reentrancy
+
 # run integration tests that exercise the bark Rust SDK directly.
 # Must not run under backward-compat mode (BARK_EXEC override has no effect
 # on tests linked against the current bark-wallet crate).

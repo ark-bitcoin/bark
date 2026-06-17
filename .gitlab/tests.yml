@@ -405,6 +405,30 @@ bark-sdk:
     - export WATCHMAND_EXEC=${CI_PROJECT_DIR}/target/ci/watchmand
     - bash ./contrib/ci-run-test.sh test-integration-bark-sdk-prebuilt
 
+bark-sdk-action-reentrancy:
+  interruptible: true
+  stage: test
+  tags:
+    - integration
+    - datastore
+  extends: .test-rules-no-tags
+  needs:
+    - check-commits
+    - build
+    - build-test-archives
+  variables:
+    TEST_DIRECTORY: ./test/bark-sdk-action-reentrancy
+    NEXTEST_TEST_THREADS: "4"
+    BARK_COMMAND_TIMEOUT_MILLIS: "120000"
+    TX_PROPAGATION_TIMEOUT: "30000"
+    BARK_DOUBLE_DRIVE_ACTIONS: "1"
+  script:
+    - git log --oneline -1
+    - export RUN_DATETIME=$(cat RUN_DATETIME)
+    - export CAPTAIND_EXEC=${CI_PROJECT_DIR}/target/ci/captaind
+    - export WATCHMAND_EXEC=${CI_PROJECT_DIR}/target/ci/watchmand
+    - bash ./contrib/ci-run-test.sh test-integration-bark-sdk-prebuilt
+
 compat-bark-0.2.4:
   interruptible: true
   stage: test
@@ -493,6 +517,8 @@ tar-and-print-test-data:
     - job: core-server
       optional: true
     - job: bark-sdk
+      optional: true
+    - job: bark-sdk-action-reentrancy
       optional: true
     - job: compat-bark-0.1.4
       optional: true
