@@ -192,6 +192,21 @@ impl ExitInner {
 				}.into());
 			}
 
+			// Pre-flight check: refuse to start an exit whose chain is not
+			// standardness-compliant. The exit chain is what we'd broadcast to
+			// claim the funds; if any tx in it carries a sub-dust or
+			// unrecognised-script output the broadcast will be rejected by
+			// public-network relay, so committing CPFP budget to it would just
+			// burn fees. Fetch the genesis via the persister since the
+			// Vtxo<Bare> we get here only carries the leaf info.
+			let full_vtxo = self.persister.get_full_vtxo(vtxo_id).await?
+				.ok_or_else(|| ExitError::InvalidWalletState {
+					error: format!("missing genesis for VTXO {vtxo_id}"),
+				})?;
+			if let Err(error) = full_vtxo.check_standard() {
+				return Err(ExitError::NonStandardVtxo { vtxo: vtxo_id, error }.into());
+			}
+
 			// Create the movement in a Pending state. It transitions to Successful once the
 			// exit completes (Claimed), or Canceled if we discover the VTXO was already
 			// consumed by something else. We don't touch the VTXO's own state here — that

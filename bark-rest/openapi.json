@@ -3642,6 +3642,28 @@
           {
             "type": "object",
             "required": [
+              "vtxo",
+              "error",
+              "type"
+            ],
+            "properties": {
+              "error": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "non-standard-vtxo"
+                ]
+              },
+              "vtxo": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
               "error",
               "type"
             ],
