@@ -2,6 +2,7 @@
 //!
 //! For more information on the mailbox, check the `docs/mailbox.md` file.
 
+use std::time::Duration;
 use std::{fmt, io};
 use std::str::FromStr;
 use bitcoin::hashes::{sha256, Hash, HashEngine};
@@ -275,8 +276,13 @@ impl MailboxAuthorization {
 		SECP.verify_schnorr(&self.sig, &msg, &self.id.as_pubkey().into()).is_ok()
 	}
 
+	/// Check if the authorization is expired
+	///
+	/// Allows for a 5 second expiration to be flexible.
 	pub fn is_expired(&self) -> bool {
-		self.expiry() < chrono::Local::now()
+		// Give some leeway so that clients can check against their now() without issue.
+		const LEEWAY: Duration = Duration::from_secs(5);
+		self.expiry() < (chrono::Local::now() - LEEWAY)
 	}
 }
 
