@@ -100,7 +100,7 @@ impl Wallet {
 		let mailbox_id = auth.mailbox();
 
 		let req = protos::mailbox_server::MailboxRequest {
-			unblinded_id: mailbox_id.serialize(),
+			mailbox_id: mailbox_id.serialize(),
 			authorization: Some(auth.serialize()),
 			checkpoint: checkpoint,
 		};
@@ -183,7 +183,7 @@ impl Wallet {
 		for _ in 0..MAX_MAILBOX_REQUEST_BURST {
 			let checkpoint = self.get_mailbox_checkpoint().await?;
 			let mailbox_req = protos::mailbox_server::MailboxRequest {
-				unblinded_id: mailbox_id.serialize(),
+				mailbox_id: mailbox_id.serialize(),
 				authorization: Some(auth.serialize()),
 				checkpoint,
 			};
@@ -472,8 +472,8 @@ impl Wallet {
 		let nb_vtxos = vtxo_ids.len();
 
 		let (mut srv, _) = self.require_server().await?;
-		let unblinded_id = self.recovery_mailbox_identifier().serialize();
-		let req = protos::mailbox_server::PostRecoveryVtxoIdsRequest { unblinded_id, vtxo_ids };
+		let mailbox_id = self.recovery_mailbox_identifier().serialize();
+		let req = protos::mailbox_server::PostRecoveryVtxoIdsRequest { mailbox_id, vtxo_ids };
 
 		srv.mailbox_client.post_recovery_vtxo_ids(req).await
 			.context("error posting recovery vtxo IDs to server")?;

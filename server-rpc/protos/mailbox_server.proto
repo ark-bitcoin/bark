@@ -22,8 +22,8 @@ message PostArkoorMessageRequest {
 }
 
 message MailboxRequest {
-	// The unblinded mailbox ID to obtain data from
-	bytes unblinded_id = 1;
+	// The mailbox ID to obtain data from
+	bytes mailbox_id = 1;
 	// A signed proof that you are allowed to read from this mailbox
 	optional bytes authorization = 2;
 	// The last checkpoint you have seen/processed
@@ -77,7 +77,7 @@ message MailboxMessages {
 }
 
 message PostRecoveryVtxoIdsRequest {
-	// The unblinded recovery mailbox ID
-	bytes unblinded_id = 1;
+	// The recovery mailbox ID
+	bytes mailbox_id = 1;
 	repeated bytes vtxo_ids = 2;
 }

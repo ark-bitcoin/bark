@@ -1426,7 +1426,7 @@ async fn mailbox_post_and_process_with_auth() {
 
 	let read_mailbox = protos::mailbox_server::MailboxRequest {
 		authorization,
-		unblinded_id: unblinded_id.clone(),
+		mailbox_id: unblinded_id.clone(),
 		checkpoint: 0,
 	};
 
@@ -1466,7 +1466,7 @@ async fn mailbox_post_and_process_with_auth() {
 
 	let incorrect_read_mailbox = protos::mailbox_server::MailboxRequest {
 		authorization: invalid_authorization,
-		unblinded_id: unblinded_id.clone(),
+		mailbox_id: unblinded_id.clone(),
 		checkpoint: 0,
 	};
 
@@ -1484,7 +1484,7 @@ async fn mailbox_post_and_process_with_auth() {
 	let expired_authorization = Some(expired_mailbox_auth.serialize().to_vec());
 
 	let expired_read_mailbox = protos::mailbox_server::MailboxRequest {
-		unblinded_id: unblinded_id.clone(),
+		mailbox_id: unblinded_id.clone(),
 		authorization: expired_authorization.clone(),
 		checkpoint: 0,
 	};
@@ -1499,7 +1499,7 @@ async fn mailbox_post_and_process_with_auth() {
 
 	// Now we check that the server rejects requests with no authorization
 	let no_auth_read_mailbox = protos::mailbox_server::MailboxRequest {
-		unblinded_id: unblinded_id.clone(),
+		mailbox_id: unblinded_id.clone(),
 		authorization: None,
 		checkpoint: 0,
 	};

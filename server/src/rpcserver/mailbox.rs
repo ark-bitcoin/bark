@@ -121,12 +121,12 @@ impl rpc::server::MailboxService for crate::Server {
 	) -> Result<tonic::Response<protos::mailbox_server::MailboxMessages>, tonic::Status> {
 		let req = req.into_inner();
 
-		let unblinded_id = MailboxIdentifier::deserialize(req.unblinded_id.as_slice())
-			.badarg("invalid unblinded mailbox id")?;
+		let mailbox_id = MailboxIdentifier::deserialize(req.mailbox_id.as_slice())
+			.badarg("invalid mailbox id")?;
 		let auth_bytes = req.authorization.badarg("mailbox authorization required")?;
 		let auth = MailboxAuthorization::deserialize(auth_bytes.as_slice())
 			.badarg("invalid mailbox authorization")?;
-		if auth.mailbox() != unblinded_id {
+		if auth.mailbox() != mailbox_id {
 			self::badarg!("authorization doesn't match mailbox id");
 		}
 		if auth.is_expired() {
@@ -137,14 +137,12 @@ impl rpc::server::MailboxService for crate::Server {
 		}
 		let limit = self.config.max_read_mailbox_items;
 		let entries_by_checkpoint = self.db.read(async |t| {
-			t.get_mailbox_messages(unblinded_id, req.checkpoint, limit).await
+			t.get_mailbox_messages(mailbox_id, req.checkpoint, limit).await
 		}).await.to_status()?;
 
 		let response = protos::mailbox_server::MailboxMessages {
 			have_more: entries_by_checkpoint.len() >= limit,
-			messages: entries_by_checkpoint.into_iter().map(|entry| {
-				new_mailbox_msg(entry)
-			}).collect(),
+			messages: entries_by_checkpoint.into_iter().map(new_mailbox_msg).collect(),
 		};
 
 		Ok(tonic::Response::new(response))
@@ -163,8 +161,8 @@ impl rpc::server::MailboxService for crate::Server {
 	) -> Result<tonic::Response<Self::SubscribeMailboxStream>, tonic::Status> {
 		let req = req.into_inner();
 
-		let mailbox_id = MailboxIdentifier::deserialize(req.unblinded_id.as_slice())
-			.badarg("invalid unblinded mailbox id")?;
+		let mailbox_id = MailboxIdentifier::deserialize(req.mailbox_id.as_slice())
+			.badarg("invalid mailbox id")?;
 		let auth_bytes = req.authorization.badarg("mailbox authorization required")?;
 		let auth = MailboxAuthorization::deserialize(auth_bytes.as_slice())
 			.badarg("invalid mailbox authorization")?;
@@ -244,8 +242,8 @@ impl rpc::server::MailboxService for crate::Server {
 			self::badarg!("no vtxo ids provided");
 		}
 
-		let mailbox_id = MailboxIdentifier::deserialize(req.unblinded_id.as_slice())
-			.badarg("invalid unblinded mailbox id")?;
+		let mailbox_id = MailboxIdentifier::deserialize(req.mailbox_id.as_slice())
+			.badarg("invalid mailbox id")?;
 
 		let checkpoint = self.db.write(async |t| {
 			t.store_vtxo_ids_in_mailbox(
