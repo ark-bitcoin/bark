@@ -70,7 +70,7 @@
 									$s0 + (if $L < $n then (reduce range(0; $n - $L) as $_ (""; . + " ")) else "" end);
 								"[\(time_ms3(.timestamp)) \(rpad(5; .level)) \(rpad(17; "\(.target)]"))  \(
 									if .slog_id != null
-									then "\(.slog_id) - \(.message): \(.slog_data_json)"
+									then "\(.slog_id) - \(.message): \(.slog_data)"
 									else "\(.message)"
 									end
 								)"

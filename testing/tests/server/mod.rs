@@ -221,7 +221,7 @@ async fn bitcoind_cookie_connection() {
 
 #[tokio::test]
 async fn round_started_log_can_be_captured() {
-	let ctx = TestContext::new("server/capture_log").await;
+	let ctx = TestContext::new("server/round_started_log_can_be_captured").await;
 	let srv = ctx.captaind("server").create().await;
 
 	let mut last_log_seq = RoundSeq::new(0);
