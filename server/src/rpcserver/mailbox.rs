@@ -11,6 +11,22 @@ use crate::database::{Checkpoint, MailboxEntry, MailboxPayload};
 use crate::rpcserver::{StatusContext, ToStatus, ToStatusResult};
 use crate::rpcserver::macros::badarg;
 
+/// Bail with `invalid_argument` if the authorization is expired, logging the
+/// timing details so we can attribute failures to clock skew.
+fn check_auth_not_expired(auth: &MailboxAuthorization) -> Result<(), tonic::Status> {
+	if auth.is_expired() {
+		let now = chrono::Local::now();
+		let expiry = auth.expiry();
+		slog!(MailboxAuthorizationExpired,
+			expiry,
+			now,
+			late_by_secs: (now - expiry).num_seconds(),
+		);
+		return crate::error::badarg!("mailbox authorization expired").to_status();
+	}
+	Ok(())
+}
+
 #[allow(deprecated)]
 fn new_mailbox_msg(entry: MailboxEntry) -> protos::mailbox_server::MailboxMessage {
 	match entry.payload {
@@ -130,9 +146,7 @@ impl rpc::server::MailboxService for crate::Server {
 		if auth.mailbox() != mailbox_id {
 			self::badarg!("authorization doesn't match mailbox id");
 		}
-		if auth.is_expired() {
-			self::badarg!("mailbox authorization expired");
-		}
+		check_auth_not_expired(&auth)?;
 		if !auth.verify() {
 			self::badarg!("invalid mailbox authorization signature");
 		}
@@ -170,9 +184,7 @@ impl rpc::server::MailboxService for crate::Server {
 		if auth.mailbox() != mailbox_id {
 			self::badarg!("authorization doesn't match mailbox id");
 		}
-		if auth.is_expired() {
-			self::badarg!("mailbox authorization expired");
-		}
+		check_auth_not_expired(&auth)?;
 		if !auth.verify() {
 			self::badarg!("invalid mailbox authorization signature");
 		}

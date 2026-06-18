@@ -7,6 +7,8 @@ mod lightning;
 pub use self::lightning::*;
 mod locks;
 pub use self::locks::*;
+mod mailbox;
+pub use self::mailbox::*;
 mod fee_estimator;
 pub use self::fee_estimator::*;
 mod flux;
