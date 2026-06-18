@@ -7,6 +7,7 @@ use chrono::DateTime;
 use ark::VtxoId;
 use ark::lightning::{Invoice, Offer};
 use bark::lnurllib::lightning_address::LightningAddress;
+use bark::lnurllib::lnurl::LnUrl;
 use bark::movement::MovementId;
 
 
@@ -154,6 +155,8 @@ pub enum PaymentMethod {
 	Offer(String),
 	/// A variant using an email-like lightning address format.
 	LightningAddress(String),
+	/// A bech32-encoded LNURL-pay link (`lnurl1…`).
+	Lnurl(String),
 	/// An alternative payment method that isn't native to bark.
 	Custom(String),
 }
@@ -177,6 +180,7 @@ impl utoipa::PartialSchema for PaymentMethod {
 						"invoice",
 						"offer",
 						"lightning-address",
+						"lnurl",
 						"custom",
 					]))
 					.description(Some("The type of payment method"))
@@ -209,6 +213,7 @@ impl From<bark::movement::PaymentMethod> for PaymentMethod {
 			bark::movement::PaymentMethod::Invoice(i) => Self::Invoice(i.to_string()),
 			bark::movement::PaymentMethod::Offer(o) => Self::Offer(o.to_string()),
 			bark::movement::PaymentMethod::LightningAddress(l) => Self::LightningAddress(l.to_string()),
+			bark::movement::PaymentMethod::Lnurl(l) => Self::Lnurl(l.to_string()),
 			bark::movement::PaymentMethod::Custom(c) => Self::Custom(c),
 		}
 	}
@@ -236,6 +241,9 @@ impl TryFrom<PaymentMethod> for bark::movement::PaymentMethod {
 			)),
 			PaymentMethod::LightningAddress(l) => Ok(bark::movement::PaymentMethod::LightningAddress(
 				LightningAddress::from_str(&l)?,
+			)),
+			PaymentMethod::Lnurl(l) => Ok(bark::movement::PaymentMethod::Lnurl(
+				LnUrl::from_str(&l)?,
 			)),
 			PaymentMethod::Custom(c) => Ok(bark::movement::PaymentMethod::Custom(c)),
 		}

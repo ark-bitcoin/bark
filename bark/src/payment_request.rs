@@ -20,6 +20,7 @@ use anyhow::Context;
 use bitcoin::{Amount, Network};
 use bitcoin::constants::ChainHash;
 use lnurllib::lightning_address::LightningAddress;
+use lnurllib::lnurl::LnUrl;
 
 use ark::lightning::{Bolt11Invoice, Invoice, Offer, OfferAmountExt};
 use bip321::{Bip321Error, Bip321Uri, ExtensionHandler, FieldWithAttributes};
@@ -371,6 +372,18 @@ impl Wallet {
 		}
 	}
 
+	fn details_for_lnurl(lnurl: &LnUrl) -> Option<AvailablePaymentMethod> {
+		// Only LNURL-Pay is supported.
+		if lnurl.is_lnurl_auth() {
+			return None
+		}
+
+		Some(AvailablePaymentMethod {
+			method: PaymentMethod::Lnurl(lnurl.clone()),
+			errors: vec![],
+		})
+	}
+
 	fn details_for_bitcoin_address(
 		address: &bitcoin::Address<bitcoin::address::NetworkUnchecked>,
 		network: Network,
@@ -388,7 +401,6 @@ impl Wallet {
 	}
 
 	fn details_for_output_script(script: &bitcoin::ScriptBuf) -> AvailablePaymentMethod {
-
 		AvailablePaymentMethod {
 			method: PaymentMethod::OutputScript(script.clone()),
 			// We don't support sending to output scripts yet
@@ -485,9 +497,10 @@ impl Wallet {
 	/// 2. Bare BOLT11 invoice
 	/// 3. Bare BOLT12 offer
 	/// 4. Lightning address (`user@domain`)
-	/// 5. Ark address
-	/// 6. Bare bitcoin address
-	/// 7. Hex-encoded output script
+	/// 5. Raw LNURL-pay link (`lnurl1…`)
+	/// 6. Ark address
+	/// 7. Bare bitcoin address
+	/// 8. Hex-encoded output script
 	///
 	/// Returns `None` when `payment_str` does not match any known format.
 	async fn inner_parse_payment_request(
@@ -529,6 +542,14 @@ impl Wallet {
 			return Ok(Self::details_for_lightning_address(&addr).into());
 		}
 
+		// Raw LNURL link (`lnurl1…`). Only matches the `lnurl` HRP, so it
+		// won't collide with bolt11 (`lnbc…`) handled above.
+		if let Ok(lnurl) = LnUrl::from_str(payment_str) {
+			if let Some(details) = Self::details_for_lnurl(&lnurl) {
+				return Ok(details.into());
+			}
+		}
+
 		// Ark address
 		if let Ok(ark_address) = ark::Address::from_str(payment_str) {
 			return Ok(self.details_for_ark_address(&ark_address).await.into());
@@ -558,9 +579,10 @@ impl Wallet {
 	/// 2. Bare BOLT11 invoice
 	/// 3. Bare BOLT12 offer
 	/// 4. Lightning address (`user@domain`)
-	/// 5. Ark address
-	/// 6. Bare bitcoin address
-	/// 7. Hex-encoded output script
+	/// 5. Raw LNURL-pay link (`lnurl1…`)
+	/// 6. Ark address
+	/// 7. Bare bitcoin address
+	/// 8. Hex-encoded output script
 	///
 	/// Returns a [`PaymentRequest`] with one or more [`AvailablePaymentMethod`]
 	/// the caller can present to the user. Returns an error if no valid payment
@@ -587,6 +609,7 @@ impl Wallet {
 			PaymentMethod::Invoice(_) => self.estimate_lightning_send_fee(amount).await,
 			PaymentMethod::Offer(_) => self.estimate_lightning_send_fee(amount).await,
 			PaymentMethod::LightningAddress(_) => self.estimate_lightning_send_fee(amount).await,
+			PaymentMethod::Lnurl(_) => self.estimate_lightning_send_fee(amount).await,
 			PaymentMethod::Bitcoin(address) => {
 				let addr = address.assume_checked_ref();
 				self.estimate_send_onchain(addr, amount).await

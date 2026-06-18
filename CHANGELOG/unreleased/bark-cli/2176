@@ -1,0 +1,4 @@
+- Accept LNURL-pay links as a payment destination
+  `bark pay` and `bark lightning pay` now pay raw LNURL-pay links (`lnurl1…`),
+  like lightning addresses (an amount is required).
+  [#2176](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2176)

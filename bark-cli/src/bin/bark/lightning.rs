@@ -6,6 +6,7 @@ use clap;
 use lightning::offers::offer::Offer;
 use lightning_invoice::Bolt11Invoice;
 use lnurl::lightning_address::LightningAddress;
+use lnurl::lnurl::LnUrl;
 use log::info;
 
 use bitcoin::hex::DisplayHex;
@@ -252,9 +253,12 @@ async fn execute_pay_command(
 			} else if let Ok(lnaddr) = LightningAddress::from_str(&invoice) {
 				let amount = amount.context("amount is required for Lightning addresses")?;
 				wallet.pay_lightning_address(&lnaddr, amount, comment, wait).await?;
+			} else if let Ok(lnurl) = LnUrl::from_str(&invoice) {
+				let amount = amount.context("amount is required for LNURL")?;
+				wallet.pay_lnurl(&lnurl, amount, comment, wait).await?;
 			} else {
-				bail!("argument is not a valid BOLT-11 invoice, BOLT-12 offer or \
-					Lightning address");
+				bail!("argument is not a valid BOLT-11 invoice, BOLT-12 offer, \
+					Lightning address or LNURL");
 			}
 		},
 		PayCommand::Status { filter_args: LightningStatusFilterGroup { filter, preimage }, no_sync } => {

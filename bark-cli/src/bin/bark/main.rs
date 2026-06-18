@@ -22,6 +22,7 @@ use futures::StreamExt;
 use ::lightning::offers::offer::Offer;
 use lightning_invoice::Bolt11Invoice;
 use lnurl::lightning_address::LightningAddress;
+use lnurl::lnurl::LnUrl;
 use log::{debug, info, warn};
 use tokio::sync::RwLock;
 
@@ -514,9 +515,13 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 				let amount = amount.context("amount is required for Lightning addresses")?;
 				let invoice = wallet.pay_lightning_address(&addr, amount, comment, wait).await?;
 				log_lightning_send_outcome(invoice.payment_hash(), wait);
+			} else if let Ok(lnurl) = LnUrl::from_str(&destination) {
+				let amount = amount.context("amount is required for LNURL")?;
+				let invoice = wallet.pay_lnurl(&lnurl, amount, comment, wait).await?;
+				log_lightning_send_outcome(invoice.payment_hash(), wait);
 			} else {
 				bail!("Argument is not a valid destination. Supported are: \
-					VTXO pubkeys, bolt11 invoices, bolt12 offers and lightning addresses",
+					VTXO pubkeys, bolt11 invoices, bolt12 offers, lightning addresses and LNURL",
 				);
 			}
 		},

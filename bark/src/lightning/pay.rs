@@ -4,6 +4,7 @@ use anyhow::Context;
 use bitcoin::Amount;
 use lightning::util::ser::Writeable;
 use lnurllib::lightning_address::LightningAddress;
+use lnurllib::lnurl::LnUrl;
 use log::{info, warn};
 use server_rpc::protos;
 
@@ -17,7 +18,7 @@ use crate::actions::lightning::pay::{
 	Htlcs, LightningSend, LightningSendState, Progress, settle_lightning_send_payment,
 	start_lightning_send,
 };
-use crate::lightning::lnaddr_invoice;
+use crate::lightning::{lnaddr_invoice, lnurlp_invoice};
 use crate::movement::PaymentMethod;
 
 impl Wallet {
@@ -199,6 +200,25 @@ impl Wallet {
 			.context("lightning address error")?.into();
 		info!("Sending {} to lightning address {}", amount, addr);
 		self.make_lightning_payment(&invoice, addr.clone().into(), None, wait).await?;
+		info!("Paid invoice {}", invoice);
+		Ok(invoice)
+	}
+
+	/// Same as [`Self::pay_lightning_address`] but resolves the invoice from a
+	/// raw LNURL-pay link (`lnurl1…`) first.
+	///
+	/// Errors if the link decodes to a non-pay LNURL (auth, withdraw, channel).
+	pub async fn pay_lnurl(
+		&self,
+		lnurl: &LnUrl,
+		amount: Amount,
+		comment: Option<impl AsRef<str>>,
+		wait: bool,
+	) -> anyhow::Result<Invoice> {
+		let invoice: Invoice = lnurlp_invoice(&lnurl.url, amount, comment).await
+			.context("lnurl-pay error")?.into();
+		info!("Sending {} to lnurl {}", amount, lnurl);
+		self.make_lightning_payment(&invoice, lnurl.clone().into(), None, wait).await?;
 		info!("Paid invoice {}", invoice);
 		Ok(invoice)
 	}
