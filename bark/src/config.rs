@@ -81,6 +81,20 @@ pub struct Config {
 	/// An access token used to access a private server
 	pub server_access_token: Option<String>,
 
+	/// Client identifier sent on every RPC to the Ark server (as the
+	/// `x-user-agent` header) so server-side telemetry can attribute traffic
+	/// per implementation.
+	///
+	/// Defaults to `bark/<version>` when unset. Integrators embedding bark
+	/// (FFI bindings, WASM wallets, custom apps) should set their own value,
+	/// e.g. `"aqua/1.4.2"`.
+	///
+	/// Format: `<name>/<version>`. The name must be 1-32 chars of lowercase
+	/// ASCII alphanumeric, `-`, or `_`. Anything else (uppercase, missing
+	/// slash, invalid chars, too long) gets the RPC rejected by the server
+	/// with `invalid_argument`.
+	pub user_agent: Option<String>,
+
 	/// The address of the Esplora HTTP REST server to use.
 	///
 	/// Either this or the `bitcoind_address` field has to be provided.
@@ -186,6 +200,7 @@ impl Config {
 		let mut ret = Self {
 			server_address: "http://127.0.0.1:3535".to_owned(),
 			server_access_token: None,
+			user_agent: None,
 			esplora_address: None,
 			bitcoind_address: None,
 			bitcoind_cookiefile: None,

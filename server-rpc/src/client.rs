@@ -55,6 +55,16 @@ compile_error!("the `socks5-proxy` feature is only usable in conjunction with `t
 
 /// The HTTP header used for private server access tokens
 pub const ACCESS_TOKEN_HEADER: &str = "ark-access-token";
+/// The HTTP header used to identify the client implementation.
+///
+/// We use `x-user-agent` rather than `user-agent` because browsers control the
+/// latter for `fetch`-based transports (gRPC-web from WASM), and `x-user-agent`
+/// is the established gRPC-web convention for client-set identifiers.
+///
+/// Expected value: `<name>/<version>` where `name` is 1-32 chars of lowercase
+/// ASCII alphanumeric / `-` / `_`. Anything else (uppercase, missing slash,
+/// invalid chars, too long) is rejected server-side with `invalid_argument`.
+pub const USER_AGENT_HEADER: &str = "x-user-agent";
 /// Error text used when no Ark RPC transport backend was compiled into the binary.
 pub const NO_TRANSPORT_BACKEND_MESSAGE: &str =
 	"no Ark RPC transport backend compiled in this build; enable `bark-server-rpc/tonic-native` or `bark-server-rpc/tonic-web`";
@@ -229,7 +239,9 @@ pub enum ConnectError {
 	#[error("missing info '{0}' to connect")]
 	MissingInfo(&'static str),
 	#[error("invalid access token: {0}")]
-	InvalidAccessToken(#[from] #[source] InvalidMetadataValue),
+	InvalidAccessToken(#[source] InvalidMetadataValue),
+	#[error("invalid user agent: {0}")]
+	InvalidUserAgent(#[source] InvalidMetadataValue),
 	#[error(transparent)]
 	CreateEndpoint(#[from] CreateEndpointError),
 	#[error("handshake request failed: {0}")]
@@ -274,10 +286,13 @@ impl tonic::service::Interceptor for ProtocolVersionInterceptor {
 ///
 /// - pver: the negotiated protocol version
 /// - access_token: the access token to use for private servers
+/// - user_agent: client identifier sent on every RPC so the server can
+///   attribute traffic per implementation (see [USER_AGENT_HEADER]).
 #[derive(Clone)]
 pub struct ArkServiceInterceptor {
 	pver: Option<u64>,
 	access_token: Option<AsciiMetadataValue>,
+	user_agent: AsciiMetadataValue,
 }
 
 impl tonic::service::Interceptor for ArkServiceInterceptor {
@@ -288,6 +303,7 @@ impl tonic::service::Interceptor for ArkServiceInterceptor {
 		if let Some(ref access_token) = self.access_token {
 			req.metadata_mut().insert(ACCESS_TOKEN_HEADER, access_token.clone());
 		}
+		req.metadata_mut().insert(USER_AGENT_HEADER, self.user_agent.clone());
 		Ok(req)
 	}
 }
@@ -330,6 +346,7 @@ pub struct ServerConnectionBuilder {
 	#[cfg(feature = "socks5-proxy")]
 	proxy: Option<String>,
 	access_token: Option<String>,
+	user_agent: Option<String>,
 }
 
 impl ServerConnectionBuilder {
@@ -351,6 +368,16 @@ impl ServerConnectionBuilder {
 
 	pub fn access_token(mut self, access_token: impl Into<String>) -> Self {
 		self.access_token = Some(access_token.into());
+		self
+	}
+
+	/// Override the client identifier sent on every RPC.
+	///
+	/// Defaults to `bark/<bark-server-rpc version>` when not set. Integrators
+	/// (FFI bindings, WASM wallets, custom apps) should pass their own ident
+	/// (e.g. `"aqua/1.4.2"`) so server-side telemetry can attribute traffic.
+	pub fn user_agent(mut self, user_agent: impl Into<String>) -> Self {
+		self.user_agent = Some(user_agent.into());
 		self
 	}
 
@@ -416,9 +443,19 @@ impl ServerConnection {
 		#[cfg(not(feature = "socks5-proxy"))]
 		let transport = transport::connect(&address).await?;
 
+		let user_agent = builder.user_agent
+			.unwrap_or_else(|| format!("bark/{}", env!("CARGO_PKG_VERSION")));
+		let user_agent: AsciiMetadataValue = user_agent.try_into()
+			.map_err(ConnectError::InvalidUserAgent)?;
+		let access_token = builder.access_token
+			.map(AsciiMetadataValue::try_from)
+			.transpose()
+			.map_err(ConnectError::InvalidAccessToken)?;
+
 		let mut interceptor = ArkServiceInterceptor {
 			pver: None,
-			access_token: builder.access_token.map(|t| t.try_into()).transpose()?,
+			access_token,
+			user_agent,
 		};
 
 		let mut handshake_client = ArkServiceClient::with_interceptor(transport.clone(), interceptor.clone());

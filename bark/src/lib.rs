@@ -1164,6 +1164,10 @@ impl Wallet {
 			builder = builder.access_token(token);
 		}
 
+		if let Some(ref ua) = config.user_agent {
+			builder = builder.user_agent(ua);
+		}
+
 		builder.connect().await.map_err(wrap_server_connect_error)
 			.context("Failed to connect to Ark server")
 	}
