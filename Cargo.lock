@@ -520,6 +520,7 @@ dependencies = [
  "bitcoin",
  "chrono",
  "humantime",
+ "json-subscriber",
  "opentelemetry",
  "serde",
  "serde_json",

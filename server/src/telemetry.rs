@@ -25,8 +25,6 @@ use tracing::warn;
 use tracing_core::LevelFilter;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
-use tracing_subscriber::fmt::format::Writer;
-use tracing_subscriber::fmt::time::FormatTime;
 use tracing_subscriber::EnvFilter;
 use smallvec::SmallVec;
 use ark::mailbox::MailboxType;
@@ -299,15 +297,6 @@ impl SpanExporter for NoopSpanExporter {
 	}
 }
 
-struct MillisTimer;
-
-impl FormatTime for MillisTimer {
-	fn format_time(&self, w: &mut Writer<'_>) -> std::fmt::Result {
-		let now = chrono::Local::now();
-		write!(w, "{}", now.to_rfc3339_opts(chrono::SecondsFormat::Millis, true))
-	}
-}
-
 impl Metrics {
 	fn init<S: MetricsService>(
 		endpoint: Option<String>,
@@ -404,19 +393,7 @@ impl Metrics {
 
 		let registry = tracing_subscriber::registry()
 			.with(filter)
-			.with(
-				json_subscriber::layer()
-					.with_timer(MillisTimer)
-					.with_writer(std::io::stdout)
-					.with_target(true)
-					.with_thread_ids(false)
-					.with_thread_names(false)
-					.with_file(true)
-					.with_line_number(true)
-					.flatten_event(true)
-					.with_current_span(true)
-					.with_span_list(true)
-					.with_opentelemetry_ids(true))
+			.with(server_log::slog_json_layer(std::io::stdout))
 			.with(tracing_opentelemetry::layer().with_tracer(tracer));
 
 		// Spawns the console-subscriber server (default 127.0.0.1:6669) and
