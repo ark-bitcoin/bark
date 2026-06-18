@@ -112,12 +112,22 @@ impl VtxoExitFrontier {
 		// same txid by iterating over a range.
 		let first = VtxoId::from(OutPoint::new(txid, 0));
 		let last = VtxoId::from(OutPoint::new(txid, u32::MAX));
-		for (id, h) in self.frontier.range_mut(first..last).map(|(id, (h, _v))| (id, h)) {
-			if h.is_some() {
+		for (id, (h, vtxo)) in self.frontier.range_mut(first..last) {
+			let was_unconfirmed = h.is_none();
+			if !was_unconfirmed {
 				error!("Unexpected re-org or duplicate block from SyncManager?");
 			}
-			*h = Some(height);
+			// Persist first, then mirror in memory and fire telemetry. If the
+			// DB write fails, leaving `*h` unchanged means the next retry will
+			// still see `h.is_none()` and re-attempt both the write and the
+			// one-time count; updating `*h` first would silently drop both.
 			self.db.write(async |t| t.register_vtxo_confirmation(*id, height).await).await?;
+			*h = Some(height);
+			if was_unconfirmed {
+				// First on-chain sighting of this frontier VTXO's funding tx:
+				// an exit-tree node has landed.
+				crate::telemetry::add_unilateral_exit(vtxo.amount().to_sat());
+			}
 		}
 		Ok(())
 	}

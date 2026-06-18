@@ -149,6 +149,10 @@ pub struct InteractiveParticipation {
 	pub(crate) outputs: Vec<StoredRoundOutput>,
 }
 
+pub struct DelegatedParticipation {
+	pub(crate) inputs: Vec<VtxoId>,
+}
+
 pub struct CollectingPayments {
 	round_data: RoundData,
 
@@ -164,6 +168,7 @@ pub struct CollectingPayments {
 	/// Keep track of which input vtxos belong to which inputs.
 	inputs_per_cosigner: HashMap<PublicKey, Vec<VtxoId>>,
 	interactive_participants: HashMap<UnlockHash, InteractiveParticipation>,
+	delegated_participants: HashMap<UnlockHash, DelegatedParticipation>,
 
 	common_round_tx_input: Option<WalletUtxoGuard>,
 
@@ -194,6 +199,7 @@ impl CollectingPayments {
 			all_outputs: Vec::new(),
 			inputs_per_cosigner: HashMap::new(),
 			interactive_participants: HashMap::new(),
+			delegated_participants: HashMap::new(),
 
 			common_round_tx_input,
 			round_step: RoundStep::AttemptInitiation.with_instant(round_seq, attempt_seq),
@@ -459,6 +465,7 @@ impl CollectingPayments {
 
 		self.locked_inputs.absorb(flux_guard);
 
+		let input_ids = inputs.iter().map(|v| v.id()).collect::<Vec<_>>();
 		self.all_inputs.extend(inputs.into_iter().map(|v| (v.id(), v)));
 
 		for output in outputs {
@@ -468,6 +475,10 @@ impl CollectingPayments {
 				output.unblinded_mailbox_id,
 			));
 		}
+
+		assert!(self.delegated_participants.insert(unlock_hash, DelegatedParticipation {
+			inputs: input_ids,
+		}).is_none(), "duplicate delegated unlock hash");
 
 		// Check whether our round is full.
 		if self.all_outputs.len() == self.round_data.max_output_vtxos {
@@ -740,6 +751,14 @@ impl CollectingPayments {
 
 		let round_step = self.next_step(RoundStep::ConstructVtxoTree);
 
+		// Snapshot of real (non-padding) outputs for downstream telemetry.
+		// Captured here, before the padding loop below adds UNSPENDABLE
+		// placeholders, so the success path can bucket by policy without
+		// also counting the server's tree-shape padding.
+		let real_outputs = self.all_outputs.iter()
+			.map(|p| p.req.vtxo.clone())
+			.collect::<Vec<_>>();
+
 		// In later versions, it is very likely that the server
 		// will actually want to create change vtxos, so temporarily, this
 		// dummy vtxo will be a placeholder for a potential change vtxo.
@@ -856,6 +875,8 @@ impl CollectingPayments {
 			all_inputs: self.all_inputs,
 			locked_inputs: self.locked_inputs,
 			interactive_participants: self.interactive_participants,
+			delegated_participants: self.delegated_participants,
+			real_outputs,
 			cosign_part_sigs: HashMap::with_capacity(unsigned_vtxo_tree.nb_leaves()),
 			unsigned_vtxo_tree,
 			funding_tx,
@@ -900,6 +921,11 @@ pub struct SigningVtxoTree {
 	/// All inputs that have participated, but might have dropped out.
 	locked_inputs: OwnedVtxoFluxGuard,
 	interactive_participants: HashMap<UnlockHash, InteractiveParticipation>,
+	delegated_participants: HashMap<UnlockHash, DelegatedParticipation>,
+	/// Snapshot of the real output VTXO requests, captured before the
+	/// tree-shape padding is added. Used to emit per-policy telemetry once
+	/// the round is known to have succeeded.
+	real_outputs: Vec<VtxoRequest>,
 	/// Mailbox IDs for each output VTXO (in same order as vtxo tree leaves).
 	/// Used to post VTXOs to mailboxes after round finalization for wallet recovery.
 	/// None for server-generated padding VTXOs which don't need mailbox delivery.
@@ -1067,6 +1093,37 @@ impl SigningVtxoTree {
 		// counter by the retry rate. This block runs once per successful round.
 		let input_volume = self.all_inputs.values().map(|v| v.amount()).sum::<Amount>();
 		telemetry::add_round(input_volume);
+
+		// Break round_volume down by participation kind (same retry reasoning
+		// as add_round above). Every input is either interactive (user-submitted
+		// refresh) or delegated (server-submitted, e.g. LN HTLC settlement), so
+		// refresh_volume + delegated_participation_volume == round_volume.
+		for participation in self.interactive_participants.values() {
+			let vol = participation.inputs.iter()
+				.filter_map(|id| self.all_inputs.get(id))
+				.map(|v| v.amount())
+				.sum::<Amount>();
+			telemetry::add_refresh(vol.to_sat());
+		}
+		for participation in self.delegated_participants.values() {
+			let vol = participation.inputs.iter()
+				.filter_map(|id| self.all_inputs.get(id))
+				.map(|v| v.amount())
+				.sum::<Amount>();
+			telemetry::add_delegated_participation(vol.to_sat());
+		}
+
+		// Outputs are split by VTXO policy. `real_outputs` was snapshotted
+		// before the tree-shape padding was added, so we don't count
+		// server-generated unspendable placeholders.
+		for output in &self.real_outputs {
+			let amount_sats = output.amount.to_sat();
+			match output.policy {
+				VtxoPolicy::Pubkey { .. } => telemetry::add_round_output_pubkey(amount_sats),
+				VtxoPolicy::ServerHtlcSend { .. } => telemetry::add_round_output_htlc_send(amount_sats),
+				VtxoPolicy::ServerHtlcRecv { .. } => telemetry::add_round_output_htlc_recv(amount_sats),
+			}
+		}
 
 		Ok(finished)
 	}
