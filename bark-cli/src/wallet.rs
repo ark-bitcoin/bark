@@ -22,7 +22,7 @@
 //! # use bark_cli::wallet::open_wallet;
 //! # async fn example() -> anyhow::Result<()> {
 //!     let datadir = Path::new("./bark_data");
-//!     let (bark_wallet, onchain_wallet) = open_wallet(datadir).await?.unwrap();
+//!     let (bark_wallet, onchain_wallet) = open_wallet(datadir, "myapp/1.0").await?.unwrap();
 //!     // Use the wallets...
 //!     Ok(())
 //! # }
@@ -322,7 +322,11 @@ async fn check_clean_datadir(datadir: &Path, clean: bool) -> anyhow::Result<bool
 	Ok(has_config)
 }
 
-pub async fn create_wallet(datadir: &Path, opts: CreateOpts) -> anyhow::Result<()> {
+pub async fn create_wallet(
+	datadir: &Path,
+	user_agent: &str,
+	opts: CreateOpts,
+) -> anyhow::Result<()> {
 	debug!("Creating wallet in {}", datadir.display());
 
 	let net = match (opts.mainnet, opts.signet, opts.regtest, opts.mutinynet) {
@@ -337,7 +341,7 @@ pub async fn create_wallet(datadir: &Path, opts: CreateOpts) -> anyhow::Result<(
 	let config_existed = check_clean_datadir(datadir, opts.force).await?;
 
 	// Everything that errors after this will wipe the datadir again.
-	let result = try_create_wallet(datadir, net, opts).await;
+	let result = try_create_wallet(datadir, net, user_agent, opts).await;
 	if let Err(e) = result {
 		if config_existed {
 			if let Err(e) = check_clean_datadir(datadir, true).await {
@@ -358,6 +362,7 @@ pub async fn create_wallet(datadir: &Path, opts: CreateOpts) -> anyhow::Result<(
 async fn try_create_wallet(
 	datadir: &Path,
 	net: BarkNetwork,
+	user_agent: &str,
 	mut opts: CreateOpts,
 ) -> anyhow::Result<()> {
 	info!("Creating new bark Wallet at {}", datadir.display());
@@ -366,7 +371,7 @@ async fn try_create_wallet(
 
 	let config_path = datadir.join(CONFIG_FILE);
 	let has_config_args = opts.config != ConfigOpts::default();
-	let config = match (config_path.exists(), has_config_args) {
+	let mut config = match (config_path.exists(), has_config_args) {
 		(true, false) => {
 			Config::load(net.as_bitcoin(), &config_path).with_context(|| format!(
 				"error loading existing config file at {}", config_path.display(),
@@ -380,6 +385,12 @@ async fn try_create_wallet(
 		(false, false) => bail!("You need to provide config flags or a config file"),
 		(true, true) => bail!("Cannot provide an existing config file and config flags"),
 	};
+
+	// Default the wire-level client identity to the calling binary unless the
+	// operator pinned one in config.toml.
+	if config.user_agent.is_none() {
+		config.user_agent = Some(user_agent.to_owned());
+	}
 
 	// A mnemonic implies that the user wishes to recover an existing wallet.
 	if opts.mnemonic.is_some() {
@@ -439,7 +450,10 @@ pub async fn read_mnemonic(datadir: &Path) -> anyhow::Result<String> {
 	Ok(s.trim().to_string())
 }
 
-pub async fn open_wallet(datadir: &Path) -> anyhow::Result<Option<(BarkWallet, OnchainWallet)>> {
+pub async fn open_wallet(
+	datadir: &Path,
+	user_agent: &str,
+) -> anyhow::Result<Option<(BarkWallet, OnchainWallet)>> {
 	debug!("Opening bark wallet in {}", datadir.display());
 
 
@@ -472,8 +486,14 @@ pub async fn open_wallet(datadir: &Path) -> anyhow::Result<Option<(BarkWallet, O
 
 	// Read the config
 	let config_path = datadir.join("config.toml");
-	let config = Config::load(properties.network, config_path)
+	let mut config = Config::load(properties.network, config_path)
 		.context("error loading bark config file")?;
+
+	// Default the wire-level client identity to the calling binary unless the
+	// operator pinned one in config.toml.
+	if config.user_agent.is_none() {
+		config.user_agent = Some(user_agent.to_owned());
+	}
 
 	let bdk_wallet = OnchainWallet::load_or_create(properties.network, seed, db.clone()).await?;
 	let lock_manager = open_lock_manager(datadir)?;

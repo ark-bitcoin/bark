@@ -53,6 +53,7 @@ impl RpcMethodDetails {
 static SEEN_CLIENTS: LazyLock<RwLock<HashSet<&'static str>>> = LazyLock::new(|| {
 	let mut s = HashSet::new();
 	s.insert("bark");
+	s.insert("barkd");
 	s.insert("bark-kotlin");
 	s.insert("bark-swift");
 	s.insert("bark-dart");

@@ -25,6 +25,9 @@ use bark_cli::wallet::{ConfigOpts, CreateOpts, create_wallet, open_wallet, read_
 /// (BARK_VERSION and GIT_HASH are set in build.rs)
 const FULL_VERSION: &str = concat!(env!("BARK_VERSION"), " (", env!("GIT_HASH"), ")");
 
+/// Wire-level client identity sent in `x-user-agent` on every RPC.
+const USER_AGENT: &str = concat!("barkd/", env!("BARK_VERSION"));
+
 
 fn default_datadir() -> String {
 	home::home_dir().or_else(|| {
@@ -353,7 +356,7 @@ async fn main() -> anyhow::Result<()>{
 		Some(token)
 	};
 
-	let wallet_opt = if let Some((wallet, onchain)) = open_wallet(&datadir).await? {
+	let wallet_opt = if let Some((wallet, onchain)) = open_wallet(&datadir, USER_AGENT).await? {
 		let onchain = Arc::new(RwLock::new(onchain));
 
 		wallet.start_daemon(Some(onchain.clone()))?;
@@ -374,8 +377,8 @@ async fn main() -> anyhow::Result<()>{
 
 			Box::pin(async move {
 				let create_opts = wallet_create_request_to_create_opts(req)?;
-				create_wallet(&datadir, create_opts).await?;
-				let (wallet, onchain) = open_wallet(&datadir).await?
+				create_wallet(&datadir, USER_AGENT, create_opts).await?;
+				let (wallet, onchain) = open_wallet(&datadir, USER_AGENT).await?
 					.expect("Wallet should exist");
 
 				let onchain = Arc::new(RwLock::new(onchain));

@@ -49,6 +49,9 @@ fn default_datadir() -> String {
 /// (BARK_VERSION and GIT_HASH are set in build.rs)
 const FULL_VERSION: &str = concat!(env!("BARK_VERSION"), " (", env!("GIT_HASH"), ")");
 
+/// Wire-level client identity sent in `x-user-agent` on every RPC.
+pub const USER_AGENT: &str = concat!("bark/", env!("BARK_VERSION"));
+
 #[derive(Parser)]
 #[command(name = "bark", author = "Team Second <hello@second.tech>", version = FULL_VERSION, about)]
 struct Cli {
@@ -314,7 +317,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 
 	// Handle create command differently.
 	if let Command::Create(opts) = cli.command {
-		create_wallet(&datadir, opts).await?;
+		create_wallet(&datadir, USER_AGENT, opts).await?;
 		return Ok(())
 	}
 
@@ -322,7 +325,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 		return dev::execute_dev_command(cmd, datadir).await;
 	}
 
-	let (mut wallet, mut onchain) = open_wallet(&datadir).await
+	let (mut wallet, mut onchain) = open_wallet(&datadir, USER_AGENT).await
 			.context("error opening wallet")?
 			.context("No wallet found")?;
 
