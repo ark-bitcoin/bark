@@ -131,10 +131,11 @@ mod transport {
 
 		#[cfg_attr(not(any(feature = "tls-native-roots", feature = "tls-webpki-roots")), allow(unused_mut))]
 		let mut endpoint = Channel::builder(uri.clone())
+			// nb how often we check if server is still there
 			.http2_keep_alive_interval(Duration::from_secs(20))
-			.keep_alive_timeout(Duration::from_secs(600))
-			.keep_alive_while_idle(true)
-			.timeout(Duration::from_secs(600));
+			// nb time we allow server to respond to ping before we consider dead
+			.keep_alive_timeout(Duration::from_secs(60)) // 1 min
+			.keep_alive_while_idle(true);
 
 		#[cfg(any(feature = "tls-native-roots", feature = "tls-webpki-roots"))]
 		if scheme == "https" {
