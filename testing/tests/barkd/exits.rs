@@ -3,6 +3,10 @@ use std::collections::HashSet;
 
 use bitcoin::Txid;
 
+use bark_json::exit::ExitState;
+use bark_json::movements::MovementStatus;
+use bark_json::primitives::VtxoStateInfo;
+
 use ark_testing::{btc, require_bark_version, sat, TestContext};
 use ark_testing::constants::BOARD_CONFIRMATIONS;
 
@@ -36,7 +40,7 @@ async fn exit_start_all_and_progress_barkd() {
 	barkd.exit_start_all().await;
 
 	// Status should show at least one exit entry.
-	let statuses = barkd.get_all_exit_status(None, None).await;
+	let statuses = barkd.get_live_exit_status(None, None).await;
 	assert!(!statuses.is_empty(), "should have at least one exit in progress");
 
 	// Fund the on-chain wallet for CPFP fees, then let the daemon drive to completion.
@@ -44,7 +48,7 @@ async fn exit_start_all_and_progress_barkd() {
 	wait_for_exits_claimable(&ctx, &barkd).await;
 
 	// The CPFP children recorded against each exit package are the ground truth.
-	let statuses = barkd.get_all_exit_status(None, Some(true)).await;
+	let statuses = barkd.get_live_exit_status(None, Some(true)).await;
 	let expected_cpfp_txids: HashSet<Txid> = statuses.iter()
 		.flat_map(|s| s.transactions.iter())
 		.filter_map(|pkg| pkg.child.as_ref().map(|c| c.info.txid))
@@ -129,7 +133,7 @@ async fn exit_start_vtxos_barkd() {
 	// Exit only one VTXO.
 	barkd.exit_start_vtxos(vec![target_id.clone()]).await;
 
-	let statuses = barkd.get_all_exit_status(None, None).await;
+	let statuses = barkd.get_live_exit_status(None, None).await;
 	assert_eq!(statuses.len(), 1, "only one VTXO should be exiting");
 	assert_eq!(statuses[0].vtxo_id.to_string(), target_id);
 	assert_ne!(statuses[0].vtxo_id.to_string(), other_id, "the other VTXO should not be exiting");
@@ -162,7 +166,7 @@ async fn exit_claim_vtxos_barkd() {
 	// Exit only the target VTXO, then let the daemon drive to completion.
 	barkd.exit_start_vtxos(vec![target_id.clone()]).await;
 
-	let exit_statuses = barkd.get_all_exit_status(None, None).await;
+	let exit_statuses = barkd.get_live_exit_status(None, None).await;
 	assert_eq!(exit_statuses.len(), 1, "only the target VTXO should be exiting");
 	assert_eq!(exit_statuses[0].vtxo_id.to_string(), target_id);
 
@@ -207,4 +211,181 @@ async fn exit_auto_progress_disconnected_barkd() {
 
 	// Let the daemon auto-progress. No exit_progress() call — the daemon does it.
 	wait_for_exits_claimable(&ctx, &barkd).await;
+}
+
+#[tokio::test]
+async fn cancel_pending_exit_keeps_vtxo_spendable_barkd() {
+	require_bark_version!(> "0.3.0");
+
+	let ctx = TestContext::new("barkd/cancel_pending_exit_keeps_vtxo_spendable_barkd").await;
+	let srv = ctx.captaind("server").funded(btc(10)).create().await;
+
+	// Sender boards and arkoors to `bark`, giving it a VTXO with a multi-transaction exit chain.
+	let sender = ctx.barkd("sender", &srv).boarded(sat(500_000)).create().await;
+	// Subject is manual-sync (we control exit broadcasting) and funded for CPFP fees.
+	let bark = ctx.barkd("bark", &srv)
+		.cfg(|c| c.daemon_manual_sync = true)
+		.funded(sat(1_000_000))
+		.create().await;
+
+	sender.send(bark.ark_address().await, sat(300_000)).await;
+	bark.sync().await;
+	let vtxos = bark.vtxos(None).await;
+	assert_eq!(vtxos.len(), 1, "bark should have received a single arkoor vtxo");
+	let vtxo_id = vtxos[0].id.to_string();
+
+	// Broadcast and confirm the first exit transaction, leaving the final (leaf) tx unbroadcast.
+	bark.exit_start_all().await;
+	bark.exit_progress().await;
+	ctx.generate_blocks(1).await;
+	bark.sync().await;
+
+	let statuses = bark.get_live_exit_status(None, None).await;
+	assert_eq!(statuses.len(), 1);
+	assert!(matches!(statuses[0].state, ExitState::Processing(_)),
+		"exit should be mid-chain (Processing), got {:?}", statuses[0].state);
+
+	// Cancellation still succeeds despite the broadcast/confirmed ancestor.
+	bark.cancel_exit(&vtxo_id).await;
+
+	// Canceling is idempotent: a second cancel of the same exit is a no-op.
+	bark.cancel_exit(&vtxo_id).await;
+
+	// Dropped from the active status list, surfaced under /exits/status/finished in Canceled state.
+	assert!(bark.get_live_exit_status(None, None).await.is_empty(),
+		"canceled exit should not appear in the active exit status list");
+	let finished = bark.get_finished_exits(None, None).await;
+	assert_eq!(finished.len(), 1);
+	assert_eq!(finished[0].vtxo_id.to_string(), vtxo_id);
+	assert!(matches!(finished[0].state, ExitState::Canceled(_)),
+		"canceled exit should be in Canceled state, got {:?}", finished[0].state);
+
+	// The VTXO is untouched: still spendable, balance intact.
+	let vtxos = bark.vtxos(None).await;
+	assert_eq!(vtxos.len(), 1);
+	assert_eq!(vtxos[0].id.to_string(), vtxo_id);
+	assert!(matches!(vtxos[0].state, VtxoStateInfo::Spendable),
+		"vtxo should still be Spendable, got {:?}", vtxos[0].state);
+	assert_eq!(bark.bark_balance().await.spendable, sat(300_000));
+
+	// The exit movement was canceled.
+	let exit_movement = bark.history(None, None).await.into_iter()
+		.find(|m| m.subsystem.name == "bark.exit")
+		.expect("exit movement should exist");
+	assert_eq!(exit_movement.status, MovementStatus::Canceled);
+	assert!(exit_movement.time.completed_at.is_some());
+}
+
+/// Once the final exit transaction has been broadcast, cancellation is refused over REST. A board
+/// has a single exit transaction, so one progress pass broadcasts it.
+#[tokio::test]
+async fn cannot_cancel_broadcast_exit_barkd() {
+	require_bark_version!(> "0.3.0");
+
+	let ctx = TestContext::new("barkd/cannot_cancel_broadcast_exit_barkd").await;
+	let srv = ctx.captaind("server").funded(btc(10)).create().await;
+	// Manual-sync so we control exactly when the exit tx is broadcast; funded for CPFP fees.
+	let bark = ctx.barkd("bark", &srv)
+		.cfg(|c| c.daemon_manual_sync = true)
+		.funded(sat(1_000_000))
+		.create().await;
+
+	// Make the funded coins visible (manual-sync: nothing syncs the onchain wallet for us), then
+	// board a portion, leaving the rest on-chain for CPFP fees.
+	bark.onchain_sync().await;
+	let board = bark.board_amount(sat(500_000)).await;
+	ctx.await_transaction(board.funding_tx.txid).await;
+	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
+	bark.sync().await;
+
+	let vtxos = bark.vtxos(None).await;
+	assert_eq!(vtxos.len(), 1);
+	let vtxo_id = vtxos[0].id.to_string();
+
+	// One progress broadcasts the board's single — and therefore final — exit transaction.
+	bark.exit_start_all().await;
+	bark.exit_progress().await;
+
+	let statuses = bark.get_live_exit_status(None, None).await;
+	assert_eq!(statuses.len(), 1);
+	assert!(matches!(statuses[0].state, ExitState::Processing(_)),
+		"exit should be Processing with its only tx broadcast, got {:?}", statuses[0].state);
+
+	// The final transaction is in the mempool, so cancellation must be refused (REST error).
+	assert!(bark.try_cancel_exit(&vtxo_id).await.is_err(),
+		"canceling once the final tx is broadcast should fail");
+
+	// Still tracked, not canceled.
+	let statuses = bark.get_live_exit_status(None, None).await;
+	assert_eq!(statuses.len(), 1);
+	assert!(!matches!(statuses[0].state, ExitState::Canceled(_)),
+		"exit should not have been canceled, got {:?}", statuses[0].state);
+	assert!(bark.get_finished_exits(None, None).await.is_empty());
+}
+
+/// A canceled exit can be restarted over REST and driven to completion — even after some of its
+/// transactions were already broadcast and confirmed before the cancellation.
+#[tokio::test]
+async fn restart_exit_after_cancel_barkd() {
+	require_bark_version!(> "0.3.0");
+
+	let ctx = TestContext::new("barkd/restart_exit_after_cancel_barkd").await;
+	let srv = ctx.captaind("server").funded(btc(10)).create().await;
+
+	let sender = ctx.barkd("sender", &srv).boarded(sat(500_000)).create().await;
+	let bark = ctx.barkd("bark", &srv)
+		.cfg(|c| c.daemon_manual_sync = true)
+		.funded(sat(1_000_000))
+		.create().await;
+
+	sender.send(bark.ark_address().await, sat(300_000)).await;
+	bark.sync().await;
+	let vtxo_id = bark.vtxos(None).await[0].id.to_string();
+
+	// Start, broadcast + confirm the first tx, sync, then cancel mid-chain.
+	bark.exit_start_all().await;
+	bark.exit_progress().await;
+	ctx.generate_blocks(1).await;
+	bark.sync().await;
+	bark.cancel_exit(&vtxo_id).await;
+	assert!(bark.get_live_exit_status(None, None).await.is_empty());
+
+	// Restart the exit for the same VTXO and drive it to claimable (manual-sync: step explicitly).
+	bark.exit_start_all().await;
+	assert_eq!(bark.get_live_exit_status(None, None).await.len(), 1,
+		"a fresh exit should be tracked after restart");
+
+	let mut claimable = false;
+	for _ in 0..40 {
+		bark.exit_progress().await;
+		let statuses = bark.get_live_exit_status(None, None).await;
+		if !statuses.is_empty() && statuses.iter().all(|s|
+			matches!(s.state, ExitState::Claimable(_) | ExitState::Claimed(_))
+		) {
+			claimable = true;
+			break;
+		}
+		ctx.generate_blocks(1).await;
+	}
+	assert!(claimable, "restarted exit should reach a claimable state");
+
+	// Claim the restarted exit and confirm it completes.
+	let addr = bark.onchain_address().await;
+	bark.exit_claim_all(&addr.to_string()).await;
+	ctx.generate_blocks(1).await;
+	bark.exit_progress().await;
+
+	let statuses = bark.get_live_exit_status(None, None).await;
+	assert_eq!(statuses.len(), 1);
+	assert!(matches!(statuses[0].state, ExitState::Claimed(_)),
+		"restarted exit should reach Claimed, got {:?}", statuses[0].state);
+
+	// Two exit movements exist now (the canceled one and the restarted one); the restarted exit
+	// must have completed successfully. Don't rely on history ordering.
+	let exit_statuses = bark.history(None, None).await.into_iter()
+		.filter(|m| m.subsystem.name == "bark.exit")
+		.map(|m| m.status)
+		.collect::<Vec<_>>();
+	assert!(exit_statuses.contains(&MovementStatus::Successful),
+		"a restarted exit movement should be Successful, got {:?}", exit_statuses);
 }
