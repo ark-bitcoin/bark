@@ -89,7 +89,9 @@ pub mod pid_fcntl;
 
 use std::time::Duration;
 use std::path::PathBuf;
+
 use anyhow::bail;
+use bitcoin::bip32::Fingerprint;
 
 use crate::utils::time;
 
@@ -170,8 +172,14 @@ pub trait LockManager: Send + Sync + std::fmt::Debug {
 
 /// Return the recommended [`LockManager`] backend for the current
 /// build target. Most platforms will result a `LockManager` that
-/// can only be instantiated once.
-pub fn platform_default(datadir: impl Into<PathBuf>) -> anyhow::Result<Box<dyn LockManager>> {
+/// can only be instantiated once per wallet.
+///
+/// UNIX and Windows platforms require datadir, wasm32 requires fingerprint.
+#[allow(unreachable_code)]
+pub fn platform_default(
+	datadir: Option<impl Into<PathBuf>>,
+	fingerprint: Option<Fingerprint>,
+) -> anyhow::Result<Box<dyn LockManager>> {
 	#[cfg(target_arch = "wasm32")]
 	{
 		// Use navigator.locks via WebLockManager. An in-memory variant
@@ -180,40 +188,55 @@ pub fn platform_default(datadir: impl Into<PathBuf>) -> anyhow::Result<Box<dyn L
 		// only cross-tab coordination primitive in the browser.
 		// `datadir` is ignored.
 		let _ = datadir;
-		return Ok(Box::new(web_locks::WebLockManager::new()));
+		let mgr = if let Some(fp) = fingerprint {
+			self::web_locks::WebLockManager::new_with_fingerprint(fp)
+		} else {
+			self::web_locks::WebLockManager::new()
+		};
+		return Ok(Box::new(mgr));
 	}
 
 	#[cfg(all(unix, not(target_arch = "wasm32")))]
 	{
-		// Use fcntl: it has wider support than flock across the unix
-		// family.
-		//
-		// We pick a PidLock variant over per-key fcntl files because:
-		// 1. It doesn't pollute the datadir with `<key>.lock` files.
-		// 2. It's faster — one OS-level lock at construction, then
-		//    in-memory locking per key (no syscall per try_lock).
-		// 3. It avoids cross-process footguns like notifications not
-		//    firing when a second process is doing the work.
-		return Ok(Box::new(pid_fcntl::FcntlPidLockManager::new(datadir)?));
+		let _ = fingerprint;
+		if let Some(datadir) = datadir {
+			// Use fcntl: it has wider support than flock across the unix
+			// family.
+			//
+			// We pick a PidLock variant over per-key fcntl files because:
+			// 1. It doesn't pollute the datadir with `<key>.lock` files.
+			// 2. It's faster — one OS-level lock at construction, then
+			//    in-memory locking per key (no syscall per try_lock).
+			// 3. It avoids cross-process footguns like notifications not
+			//    firing when a second process is doing the work.
+			//
+			return Ok(Box::new(self::pid_fcntl::FcntlPidLockManager::new(datadir)?));
+		} else {
+			return Ok(Box::new(self::memory::MemoryLockManager::new()));
+		}
 	}
 
 	#[cfg(all(windows, not(target_arch = "wasm32")))]
 	{
-		// Use std::fs::File::try_lock (LockFileEx under the hood):
-		// fcntl doesn't exist on Windows, and LockFileEx is the
-		// direct equivalent.
-		//
-		// We pick a PidLock variant over per-key file locks because:
-		// 1. It doesn't pollute the datadir with `<key>.lock` files.
-		// 2. It's faster — one OS-level lock at construction, then
-		//    in-memory locking per key (no syscall per try_lock).
-		// 3. It avoids cross-process footguns like notifications not
-		//    firing when a second process is doing the work.
-		return Ok(Box::new(pid_flock::FlockPidLockManager::new(datadir)?));
+		let _ = fingerprint;
+		if let Some(datadir) = datadir {
+			// Use std::fs::File::try_lock (LockFileEx under the hood):
+			// fcntl doesn't exist on Windows, and LockFileEx is the
+			// direct equivalent.
+			//
+			// We pick a PidLock variant over per-key file locks because:
+			// 1. It doesn't pollute the datadir with `<key>.lock` files.
+			// 2. It's faster — one OS-level lock at construction, then
+			//    in-memory locking per key (no syscall per try_lock).
+			// 3. It avoids cross-process footguns like notifications not
+			//    firing when a second process is doing the work.
+			return Ok(Box::new(self::pid_flock::FlockPidLockManager::new(datadir)?));
+		} else {
+			return Ok(Box::new(self::memory::MemoryLockManager::new()));
+		}
 	}
 
-	#[cfg(not(any(target_arch = "wasm32", unix, windows)))]
-	panic!("lock_manager::platform_default: no default backend for this target");
+	bail!("lock_manager::platform_default: no default backend for this target");
 }
 
 // The shared test harness uses `tokio::spawn` / `tokio::sync::Barrier`
@@ -448,7 +471,7 @@ mod test {
 	#[tokio::test]
 	async fn platform_default_returns_a_working_manager() {
 		let dir = tmp_dir();
-		let mgr = super::platform_default(&dir)
+		let mgr = super::platform_default(Some(&dir), None)
 			.expect("platform_default should construct a manager");
 		let g = mgr.try_lock("bark.platform.default.test").await;
 		assert!(g.is_some(), "platform_default's manager should grant a fresh lock");

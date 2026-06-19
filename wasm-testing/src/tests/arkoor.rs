@@ -3,8 +3,11 @@ use wasm_bindgen_test::*;
 
 use bitcoin::Amount;
 
+use std::sync::Arc;
+
 use bark::onchain::{bdk_wallet, ChainSync, OnchainWallet};
-use bark::Wallet;
+use bark::persist::BarkPersister;
+use bark::{OpenWalletArgs, Wallet, WalletSeed};
 
 use crate::test_utils::*;
 
@@ -16,15 +19,19 @@ async fn test_arkoor_send() {
 
 	// -- Sender: create, fund, board, confirm --
 	let sender_mnemonic = random_mnemonic();
-	let sender_db = open_db("test_arkoor_sender").await;
+	let sender_db: Arc<dyn BarkPersister> = open_db("test_arkoor_sender").await;
 
-	let sender = Wallet::create(
-		&sender_mnemonic,
+	let sender = Wallet::open(
 		bitcoin::Network::Regtest,
+		WalletSeed::new_from_mnemonic(bitcoin::Network::Regtest, &sender_mnemonic),
 		test_config(),
-		sender_db.clone(),
-		test_lock_manager(),
-		false,
+		OpenWalletArgs {
+			persister: Some(sender_db.clone()),
+			lock_manager: Some(test_lock_manager()),
+			run_daemon: false,
+			create_if_not_exists: true,
+			..Default::default()
+		},
 	).await.expect("failed to create sender wallet");
 
 	let seed = sender_mnemonic.to_seed("");
@@ -44,16 +51,20 @@ async fn test_arkoor_send() {
 	sender.sync_pending_boards().await.expect("failed to sync boards");
 
 	// -- Receiver: create wallet, get address --
-	let receiver_db = open_db("test_arkoor_receiver").await;
+	let receiver_db: Arc<dyn BarkPersister> = open_db("test_arkoor_receiver").await;
 	let receiver_mnemonic = random_mnemonic();
 
-	let receiver = Wallet::create(
-		&receiver_mnemonic,
+	let receiver = Wallet::open(
 		bitcoin::Network::Regtest,
+		WalletSeed::new_from_mnemonic(bitcoin::Network::Regtest, &receiver_mnemonic),
 		test_config(),
-		receiver_db,
-		test_lock_manager(),
-		false,
+		OpenWalletArgs {
+			persister: Some(receiver_db),
+			lock_manager: Some(test_lock_manager()),
+			run_daemon: false,
+			create_if_not_exists: true,
+			..Default::default()
+		},
 	).await.expect("failed to create receiver wallet");
 
 	let recv_addr = receiver.new_address().await

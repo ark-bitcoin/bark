@@ -2,8 +2,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Context;
-use bark::BarkNetwork;
-use bark::lock_manager::memory::MemoryLockManager;
+use bark::{BarkNetwork, OpenWalletArgs, WalletSeed};
 use bark::onchain::{ChainSync, GetAddress, OnchainWallet};
 use bark::persist::BarkPersister;
 use bark::persist::sqlite::SqliteClient;
@@ -477,14 +476,12 @@ impl<'a> BarkSdkBuilder<'a> {
 			network, mnemonic.to_seed(""), db.clone(),
 		).await.context("creating onchain wallet")?;
 
-		let wallet = bark::Wallet::create_with_exits(
-			&mnemonic,
-			network,
-			cfg,
-			db,
-			Box::new(MemoryLockManager::new()),
-			false,
-		).await.context("creating bark wallet")?;
+		let seed = WalletSeed::new_from_mnemonic(network, &mnemonic);
+		let wallet = bark::Wallet::open(network, seed, cfg, OpenWalletArgs {
+			persister: Some(db),
+			create_if_not_exists: true,
+			..Default::default()
+		}).await.context("creating bark wallet")?;
 
 		let fund_amount = self.fund_amount.or_else(|| {
 			if self.board_amounts.is_empty() {

@@ -62,7 +62,7 @@ mod test {
 	use ark::lightning::{Bolt12Invoice, Bolt12InvoiceExt, Invoice};
 	use lightning_invoice::Bolt11Invoice;
 
-	use crate::{Config, Wallet};
+	use crate::{Config, OpenWalletArgs, Wallet, WalletSeed};
 	use crate::lock_manager::memory::MemoryLockManager;
 	use crate::persist::adaptor::StorageAdaptorWrapper;
 
@@ -72,10 +72,14 @@ mod test {
 
 		let db = Arc::new(StorageAdaptorWrapper::new_memory());
 		let w = Wallet::open(
-			&"".parse().unwrap(),
-			db,
+			Network::Regtest,
+			WalletSeed::new_from_seed(Network::Regtest, &[1; 64]),
 			Config::network_default(Network::Regtest),
-			Box::new(MemoryLockManager::new()),
+			OpenWalletArgs {
+				lock_manager: Some(Box::new(MemoryLockManager::new())),
+				persister: Some(db),
+				..Default::default()
+			},
 		).await.unwrap();
 
 		let bolt11 = Bolt11Invoice::from_str("").unwrap();

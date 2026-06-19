@@ -154,10 +154,16 @@ bark-wasm:
   script:
     - |
       nix develop .#default --command bash -c "
-        cargo build -p ark-lib --target "wasm32-unknown-unknown" --lib --no-default-features --features wasm-web &&
-        cargo build -p bark-bitcoin-ext --target "wasm32-unknown-unknown" --lib --no-default-features --features wasm-web &&
-        cargo build -p bark-server-rpc --target "wasm32-unknown-unknown" --lib --no-default-features --features tonic-web &&
-        cargo build -p bark-wallet --target "wasm32-unknown-unknown" --lib --no-default-features --features wasm-web
+        cargo build --target "wasm32-unknown-unknown" --lib --no-default-features \
+          -p ark-lib --features wasm-web &&
+        cargo build --target "wasm32-unknown-unknown" --lib --no-default-features \
+          -p bark-bitcoin-ext --features wasm-web &&
+        cargo build --target "wasm32-unknown-unknown" --lib --no-default-features \
+          -p bark-server-rpc --features tonic-web &&
+        cargo build --target "wasm32-unknown-unknown" --lib --no-default-features \
+          -p bark-wallet --features wasm-web &&
+        cargo build --target "wasm32-unknown-unknown" --lib --no-default-features \
+          -p bark-wallet --features wasm-web,indexed-db
       "
 
 bark-wasm-indexed-db-tests:

@@ -33,18 +33,19 @@ use std::sync::Arc;
 use std::str::FromStr;
 
 use anyhow::{Context, bail};
+use bark::chain::ChainSource;
 use bark::persist::adaptor::StorageAdaptorWrapper;
 use bitcoin::Network;
 use clap::Args;
 use log::{debug, info, warn};
 use tonic::transport::Uri;
 
-use bark::{BarkNetwork, Config, Wallet as BarkWallet};
+use bark::{BarkNetwork, Config, OpenWalletArgs, Wallet as BarkWallet, WalletSeed};
 use bark::lock_manager::{self, LockManager, PidLockError};
 use bark::lock_manager::pid_flock::LOCK_FILE;
 use bark::onchain::OnchainWallet;
 use bark::persist::BarkPersister;
-use bark::persist::sqlite::SqliteClient;
+use bark::persist::sqlite::{SqliteClient, DEFAULT_DB_FILE};
 use bark::persist::adaptor::filestore::FileStorageAdaptor;
 
 use bitcoin_ext::BlockHeight;
@@ -55,7 +56,7 @@ use crate::util;
 const MNEMONIC_FILE: &str = "mnemonic";
 
 /// File name of the database file.
-const DB_FILE: &str = "db.sqlite";
+const DB_FILE: &str = DEFAULT_DB_FILE;
 /// File name of the filestore database file.
 const FILESTORE_FILE: &str = "wallet.json";
 
@@ -76,7 +77,7 @@ const STDERR_LOG_FILE: &str = "stderr.log";
 /// Take the datadir lock via [`lock_manager::platform_default`], surfacing
 /// the "already held" case as-is so the CLI prints a clean error.
 fn open_lock_manager(datadir: &Path) -> anyhow::Result<Box<dyn LockManager>> {
-	match lock_manager::platform_default(datadir) {
+	match lock_manager::platform_default(Some(datadir), None) {
 		Ok(m) => Ok(m),
 		Err(e) if e.is::<PidLockError>() => Err(e),
 		Err(e) => Err(e.context("failed to acquire datadir lock")),
@@ -409,6 +410,13 @@ async fn try_create_wallet(
 		}
 	}
 
+	// chain source client
+	let chain_spec = config.chain_source()
+		.context("failed to create a chain source client with the config")?;
+	let chain = ChainSource::new(chain_spec, net.as_bitcoin(), None, None).await
+		.context("failed to create a chain source client with the config")?;
+	chain.require_version().await.context("chain source version check failed")?;
+
 	// generate seed
 	let is_new_wallet = opts.mnemonic.is_none();
 	let mnemonic = opts.mnemonic.unwrap_or_else(|| bip39::Mnemonic::generate(12).expect("12 is valid"));
@@ -428,17 +436,18 @@ async fn try_create_wallet(
 
 	let mut onchain = OnchainWallet::load_or_create(net.as_bitcoin(), seed, db.clone()).await?;
 	let lock_manager = open_lock_manager(&datadir)?;
-	let wallet = BarkWallet::create_with_exits(
-		&mnemonic, net.as_bitcoin(), config, db, lock_manager, opts.force,
+	let seed = WalletSeed::new_from_mnemonic(net.as_bitcoin(), &mnemonic);
+	BarkWallet::create(
+		net.as_bitcoin(), &seed, &config, &*db, &*lock_manager, opts.force,
 	).await.context("error creating wallet")?;
 
 	// Skip initial block sync if we generated a new wallet.
 	let birthday_height = if is_new_wallet {
-		Some(wallet.chain().tip().await?)
+		Some(chain.tip().await?)
 	} else {
 		opts.birthday_height
 	};
-	onchain.initial_wallet_scan(wallet.chain(), birthday_height).await?;
+	onchain.initial_wallet_scan(&chain, birthday_height).await?;
 	Ok(())
 }
 
@@ -497,11 +506,17 @@ pub async fn open_wallet(
 
 	let bdk_wallet = OnchainWallet::load_or_create(properties.network, seed, db.clone()).await?;
 	let lock_manager = open_lock_manager(datadir)?;
-	let bark_wallet = BarkWallet::open_with_exits(&mnemonic, db, config, lock_manager).await?;
-
-	if let Err(e) = bark_wallet.require_chainsource_version().await {
-		warn!("{}", e);
-	}
+	let bark_wallet = BarkWallet::open(
+		properties.network,
+		WalletSeed::new_from_mnemonic(properties.network, &mnemonic),
+		config,
+		OpenWalletArgs {
+			persister: Some(db),
+			lock_manager: Some(lock_manager),
+			run_daemon: false,
+			..Default::default()
+		},
+	).await?;
 
 	Ok(Some((bark_wallet, bdk_wallet)))
 }

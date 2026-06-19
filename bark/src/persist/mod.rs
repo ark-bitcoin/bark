@@ -25,7 +25,12 @@ pub mod sqlite;
 pub(crate) mod test_suite;
 
 
-use bitcoin::{Transaction, Txid};
+use std::path::PathBuf;
+use std::sync::Arc;
+
+use anyhow::Context;
+use bitcoin::bip32::Fingerprint;
+use bitcoin::{Amount, Transaction, Txid};
 use bitcoin::secp256k1::PublicKey;
 use chrono::DateTime;
 use lightning_invoice::Bolt11Invoice;
@@ -726,4 +731,39 @@ pub trait BarkPersister: Send + Sync + 'static {
 	/// Errors:
 	/// - Returns an error if the record cannot be removed.
 	async fn remove_pending_offboard(&self, movement_id: MovementId) -> anyhow::Result<()>;
+}
+
+/// Return the recommended [`BarkPersister`] backend for the current
+/// build target.
+///
+/// UNIX and Windows platforms require datadir, wasm32 requires fingerprint.
+#[allow(unreachable_code)]
+pub async fn platform_default(
+	datadir: Option<impl Into<PathBuf>>,
+	wallet_fingerprint: Option<Fingerprint>,
+) -> anyhow::Result<Arc<dyn BarkPersister>> {
+	#[cfg(all(target_arch = "wasm32", feature = "indexed-db"))]
+	{
+		let _ = datadir;
+		let fingerprint = wallet_fingerprint
+			.context("wallet fingerprint argument is required for this platform")?;
+		let client = crate::persist::adaptor::indexed_db::IndexedDbClient::open(
+			&fingerprint.to_string(),
+		).await?;
+		return Ok(Arc::new(self::adaptor::StorageAdaptorWrapper::new(client)))
+	}
+
+	#[cfg(all(any(unix, windows), not(target_arch = "wasm32"), feature = "sqlite"))]
+	{
+		let _ = wallet_fingerprint;
+		let datadir = datadir.context("datadir argument is required for this platform")?;
+		let dbfile = {
+			let mut buf = datadir.into();
+			buf.push(crate::persist::sqlite::DEFAULT_DB_FILE);
+			buf
+		};
+		return Ok(Arc::new(crate::persist::sqlite::SqliteClient::open(dbfile)?));
+	}
+
+	bail!("persist::platform_default: no default backend for this target");
 }

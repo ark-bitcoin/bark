@@ -62,13 +62,11 @@
 //! ```no_run
 //! use std::path::PathBuf;
 //! use std::sync::Arc;
-//! use tokio::fs;
-//! use bark::{Config, onchain, Wallet};
+//! use bark::{Config, onchain, Wallet, OpenWalletArgs, WalletSeed};
 //! use bark::lock_manager::memory::MemoryLockManager;
 //! use bark::persist::sqlite::SqliteClient;
 //!
 //! const MNEMONIC_FILE : &str = "mnemonic";
-//! const DB_FILE: &str = "db.sqlite";
 //!
 //! #[tokio::main]
 //! async fn main() {
@@ -82,24 +80,18 @@
 //! 		..Config::network_default(network)
 //! 	};
 //!
-//!
 //! 	// Create a sqlite database
 //! 	let datadir = PathBuf::from("./bark");
-//! 	let db = Arc::new(SqliteClient::open(datadir.join(DB_FILE)).unwrap());
 //!
 //! 	// Generate and seed and store it somewhere
 //! 	let mnemonic = bip39::Mnemonic::generate(12).expect("12 is valid");
-//! 	fs::write(datadir.join(MNEMONIC_FILE), mnemonic.to_string().as_bytes()).await.unwrap();
+//! 	tokio::fs::write(datadir.join(MNEMONIC_FILE), mnemonic.to_string().as_bytes()).await.unwrap();
+//! 	let seed = WalletSeed::new_from_mnemonic(network, &mnemonic);
 //!
-//! 	let lock_manager = Box::new(MemoryLockManager::new());
-//! 	let wallet = Wallet::create(
-//! 		&mnemonic,
-//! 		network,
-//! 		config,
-//! 		db,
-//! 		lock_manager,
-//! 		false
-//! 	).await.unwrap();
+//! 	let wallet = Wallet::open(network, seed, config, OpenWalletArgs {
+//! 		datadir: Some(datadir),
+//! 		..Default::default()
+//! 	}).await.unwrap();
 //! }
 //! ```
 //!
@@ -114,14 +106,14 @@
 //! # use std::str::FromStr;
 //! #
 //! # use bip39;
+//! # use bitcoin::Network;
 //! # use tokio::fs;
 //! #
-//! # use bark::{Config, Wallet};
+//! # use bark::{Config, Wallet, WalletSeed, OpenWalletArgs};
 //! # use bark::lock_manager::memory::MemoryLockManager;
 //! # use bark::persist::sqlite::SqliteClient;
 //! #
 //! const MNEMONIC_FILE : &str = "mnemonic";
-//! const DB_FILE: &str = "db.sqlite";
 //!
 //! #[tokio::main]
 //! async fn main() {
@@ -129,14 +121,16 @@
 //! 	let config = Config {
 //! 		server_address: String::from("https://ark.signet.2nd.dev"),
 //! 		esplora_address: Some(String::from("https://esplora.signet.2nd.dev")),
-//! 		..Config::network_default(bitcoin::Network::Signet)
+//! 		..Config::network_default(Network::Signet)
 //! 	};
 //!
-//! 	let db = Arc::new(SqliteClient::open(datadir.join(DB_FILE)).unwrap());
-//! 	let mnemonic_str = fs::read_to_string(datadir.join(DB_FILE)).await.unwrap();
+//! 	let mnemonic_str = fs::read_to_string(datadir.join(MNEMONIC_FILE)).await.unwrap();
 //! 	let mnemonic = bip39::Mnemonic::from_str(&mnemonic_str).unwrap();
-//! 	let lock_manager = Box::new(MemoryLockManager::new());
-//! 	let wallet = Wallet::open(&mnemonic, db, config, lock_manager).await.unwrap();
+//! 	let seed = WalletSeed::new_from_mnemonic(Network::Signet, &mnemonic);
+//! 	let wallet = Wallet::open(Network::Signet, seed, config, OpenWalletArgs {
+//! 		datadir: Some(datadir),
+//! 		..Default::default()
+//! 	}).await.unwrap();
 //! }
 //! ```
 //!
@@ -153,26 +147,28 @@
 //! # use std::str::FromStr;
 //! # use std::path::PathBuf;
 //! #
+//! # use bitcoin::Network;
 //! # use tokio::fs;
 //! #
-//! # use bark::{Config, Wallet};
+//! # use bark::{Config, Wallet, OpenWalletArgs, WalletSeed};
 //! # use bark::lock_manager::memory::MemoryLockManager;
 //! # use bark::persist::sqlite::SqliteClient;
 //! #
 //! # const MNEMONIC_FILE : &str = "mnemonic";
-//! # const DB_FILE: &str = "db.sqlite";
 //! #
 //! # async fn get_wallet() -> Wallet {
-//! 	#   let datadir = PathBuf::from("./bark");
-//! 	#   let config = Config::network_default(bitcoin::Network::Signet);
-//! 	#
-//! 	#   let db = Arc::new(SqliteClient::open(datadir.join(DB_FILE)).unwrap());
-//! 	#   let mnemonic_str = fs::read_to_string(datadir.join(DB_FILE)).await.unwrap();
-//! 	#   let mnemonic = bip39::Mnemonic::from_str(&mnemonic_str).unwrap();
-//! 	#   let lock_manager = Box::new(MemoryLockManager::new());
-//! 	#   Wallet::open(&mnemonic, db, config, lock_manager).await.unwrap()
-//! 	# }
+//! #   let datadir = PathBuf::from("./bark");
 //! #
+//! #   let mnemonic_str = fs::read_to_string(datadir.join(MNEMONIC_FILE)).await.unwrap();
+//! #   let mnemonic = bip39::Mnemonic::from_str(&mnemonic_str).unwrap();
+//! #   let seed = WalletSeed::new_from_mnemonic(Network::Signet, &mnemonic);
+//! #
+//! #   let config = Config::network_default(bitcoin::Network::Signet);
+//! #   Wallet::open(Network::Signet, seed, config, OpenWalletArgs {
+//! #   	datadir: Some(datadir),
+//! #   	..Default::default()
+//! #   }).await.unwrap()
+//! # }
 //!
 //! #[tokio::main]
 //! async fn main() -> anyhow::Result<()> {
@@ -196,27 +192,28 @@
 //! # use std::str::FromStr;
 //! # use std::path::PathBuf;
 //! #
+//! # use bitcoin::Network;
 //! # use tokio::fs;
 //! #
-//! # use bark::{Config, Wallet};
+//! # use bark::{Config, Wallet, OpenWalletArgs, WalletSeed};
 //! # use bark::lock_manager::memory::MemoryLockManager;
 //! # use bark::persist::sqlite::SqliteClient;
 //! #
 //! # const MNEMONIC_FILE : &str = "mnemonic";
-//! # const DB_FILE: &str = "db.sqlite";
 //! #
 //! # async fn get_wallet() -> Wallet {
-//! 	#   let datadir = PathBuf::from("./bark");
-//! 	#
-//! 	#   let db = Arc::new(SqliteClient::open(datadir.join(DB_FILE)).unwrap());
-//! 	#   let mnemonic_str = fs::read_to_string(datadir.join(DB_FILE)).await.unwrap();
-//! 	#   let mnemonic = bip39::Mnemonic::from_str(&mnemonic_str).unwrap();
-//! 	#
-//! 	#   let config = Config::network_default(bitcoin::Network::Signet);
-//! 	#
-//! 	#   let lock_manager = Box::new(MemoryLockManager::new());
-//! 	#   Wallet::open(&mnemonic, db, config, lock_manager).await.unwrap()
-//! 	# }
+//! #   let datadir = PathBuf::from("./bark");
+//! #
+//! #   let mnemonic_str = fs::read_to_string(datadir.join(MNEMONIC_FILE)).await.unwrap();
+//! #   let mnemonic = bip39::Mnemonic::from_str(&mnemonic_str).unwrap();
+//! #   let seed = WalletSeed::new_from_mnemonic(Network::Signet, &mnemonic);
+//! #
+//! #   let config = Config::network_default(bitcoin::Network::Signet);
+//! #   Wallet::open(Network::Signet, seed, config, OpenWalletArgs {
+//! #   	datadir: Some(datadir),
+//! #   	..Default::default()
+//! #   }).await.unwrap()
+//! # }
 //! #
 //!
 //! #[tokio::main]
@@ -254,27 +251,28 @@
 //! # use std::str::FromStr;
 //! # use std::path::PathBuf;
 //! #
+//! # use bitcoin::Network;
 //! # use tokio::fs;
 //! #
-//! # use bark::{Config, Wallet};
+//! # use bark::{Config, Wallet, OpenWalletArgs, WalletSeed};
 //! # use bark::lock_manager::memory::MemoryLockManager;
 //! # use bark::persist::sqlite::SqliteClient;
 //! #
 //! # const MNEMONIC_FILE : &str = "mnemonic";
-//! # const DB_FILE: &str = "db.sqlite";
 //! #
 //! # async fn get_wallet() -> Wallet {
-//! 	#   let datadir = PathBuf::from("./bark");
-//! 	#
-//! 	#   let db = Arc::new(SqliteClient::open(datadir.join(DB_FILE)).unwrap());
-//! 	#   let mnemonic_str = fs::read_to_string(datadir.join(DB_FILE)).await.unwrap();
-//! 	#   let mnemonic = bip39::Mnemonic::from_str(&mnemonic_str).unwrap();
-//! 	#
-//! 	#   let config = Config::network_default(bitcoin::Network::Signet);
-//! 	#
-//! 	#   let lock_manager = Box::new(MemoryLockManager::new());
-//! 	#   Wallet::open(&mnemonic, db, config, lock_manager).await.unwrap()
-//! 	# }
+//! #   let datadir = PathBuf::from("./bark");
+//! #
+//! #   let mnemonic_str = fs::read_to_string(datadir.join(MNEMONIC_FILE)).await.unwrap();
+//! #   let mnemonic = bip39::Mnemonic::from_str(&mnemonic_str).unwrap();
+//! #   let seed = WalletSeed::new_from_mnemonic(Network::Signet, &mnemonic);
+//! #
+//! #   let config = Config::network_default(bitcoin::Network::Signet);
+//! #   Wallet::open(Network::Signet, seed, config, OpenWalletArgs {
+//! #   	datadir: Some(datadir),
+//! #   	..Default::default()
+//! #   }).await.unwrap()
+//! # }
 //! #
 //! use bark::vtxo::RefreshStrategy;
 //!
@@ -343,6 +341,7 @@ pub use self::utils::time;
 
 use std::borrow::Cow;
 use std::collections::HashSet;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -560,7 +559,8 @@ pub struct WalletSeed {
 }
 
 impl WalletSeed {
-	fn new(network: Network, seed: &[u8; 64]) -> Self {
+	/// Create a new [WalletSeed] from a given BIP-32 master seed
+	pub fn new_from_seed(network: Network, seed: &[u8; 64]) -> Self {
 		let bark_path = [ChildNumber::from_hardened_idx(BARK_PURPOSE_INDEX).unwrap()];
 		let master = bip32::Xpriv::new_master(network, seed)
 			.expect("invalid seed")
@@ -572,6 +572,11 @@ impl WalletSeed {
 			.expect("vtxo path is valid");
 
 		Self { master, vtxo }
+	}
+
+	/// Create a new [WalletSeed] from a given BIP-39 [Mnemonic]
+	pub fn new_from_mnemonic(network: Network, mnemonic: &Mnemonic) -> Self {
+		Self::new_from_seed(network, &mnemonic.to_seed(""))
 	}
 
 	fn fingerprint(&self) -> Fingerprint {
@@ -590,6 +595,69 @@ impl WalletSeed {
 	fn to_recovery_mailbox_keypair(&self) -> Keypair {
 		let mailbox_path = [ChildNumber::from_hardened_idx(RECOVERY_MAILBOX_KEY_INDEX).unwrap()];
 		self.master.derive_priv(&SECP, &mailbox_path).unwrap().to_keypair(&SECP)
+	}
+}
+
+/// Additional arguments for the [Wallet::open] function
+pub struct OpenWalletArgs {
+	/// Whether to run the background daemon
+	///
+	/// When disabled, you must manually call `Wallet::sync` to sync the wallet.
+	///
+	/// Default: true
+	pub run_daemon: bool,
+
+	/// The data directory to use for this wallet
+	///
+	/// This field can be used under most platforms as an alternative to
+	/// providing the `persister` and `lock_manager` fields.
+	///
+	/// This field is ignored if `persister` and `lock_manager` are provided
+	/// or for the wasm32 platform.
+	///
+	/// Default: none
+	pub datadir: Option<PathBuf>,
+
+	/// The persister to use for this wallet
+	///
+	/// Default: returned by [`crate::persist::platform_default`]
+	pub persister: Option<Arc<dyn BarkPersister>>,
+
+	/// The lock manager to use for this wallet
+	///
+	/// Default: returned by [`crate::lock_manager::platform_default`]
+	///
+	/// On some platforms (linux, macos, windows) the default lock manager
+	/// requires a datadir be provided.
+	pub lock_manager: Option<Box<dyn LockManager>>,
+
+	/// The onchain wallet to use, if any
+	///
+	/// Default: none
+	pub onchain: Option<Arc<tokio::sync::RwLock<dyn DaemonizableOnchainWallet>>>,
+
+	/// Whether to create a new wallet if no wallet exists
+	///
+	///  Default: true
+	pub create_if_not_exists: bool,
+
+	/// Whether to create a new wallet even if the Ark server cannot be reached
+	///
+	/// Default: false
+	pub create_without_server: bool,
+}
+
+impl Default for OpenWalletArgs {
+	fn default() -> Self {
+	    Self {
+			run_daemon: true,
+			onchain: None,
+			datadir: None,
+			persister: None,
+			lock_manager: None,
+			create_if_not_exists: true,
+			create_without_server: false,
+		}
 	}
 }
 
@@ -638,7 +706,7 @@ struct WalletInner {
 
 /// The central entry point for using this library as an Ark wallet.
 ///
-/// Not that a [Wallet] instance can freely be [Clone]'ed to refer to the same
+/// Note that a [Wallet] instance can freely be [Clone]'ed to refer to the same
 /// wallet.
 ///
 /// Overview
@@ -694,58 +762,48 @@ struct WalletInner {
 ///   - periodic maintenance helpers (e.g., auto-register boards, refresh policies)
 ///
 /// Construction and persistence
-/// - A [Wallet] is opened or created using a mnemonic and a backend implementing [BarkPersister].
-///   - [Wallet::create],
-///   - [Wallet::open]
-/// - Creation allows the use of an optional onchain wallet for boarding and [Exit] functionality.
-///   It also initializes any internal state and connects to the [chain::ChainSource]. See
-///   [onchain::OnchainWallet] for an implementation of an onchain wallet using BDK.
-///   - [Wallet::create_with_exits],
-///   - [Wallet::open_with_daemon]
+///
+/// A [Wallet] is opened or created using a mnemonic and a backend implementing [BarkPersister].
+/// The [Wallet::open] function allows for opening and creating a wallet if it doesn't exist yet.
+/// Check out the documentation on [OpenWalletArgs] for all optional arguments.
 ///
 /// Example
+/// ```no_run
+/// use std::path::PathBuf;
+/// use std::sync::Arc;
+/// use tokio::fs;
+/// use bark::{Config, onchain, Wallet, OpenWalletArgs, WalletSeed};
+/// use bark::lock_manager::memory::MemoryLockManager;
+/// use bark::persist::sqlite::SqliteClient;
+///
+/// const MNEMONIC_FILE : &str = "mnemonic";
+///
+/// #[tokio::main]
+/// async fn main() {
+/// 	// Pick the bitcoin network that will be used
+/// 	let network = bitcoin::Network::Signet;
+///
+/// 	// Configure the wallet
+/// 	let config = Config {
+/// 		server_address: String::from("https://ark.signet.2nd.dev"),
+/// 		esplora_address: Some(String::from("https://esplora.signet.2nd.dev")),
+/// 		..Config::network_default(network)
+/// 	};
+///
+/// 	// Create a sqlite database
+/// 	let datadir = PathBuf::from("./bark");
+///
+/// 	// Generate and seed and store it somewhere
+/// 	let mnemonic = bip39::Mnemonic::generate(12).expect("12 is valid");
+/// 	fs::write(datadir.join(MNEMONIC_FILE), mnemonic.to_string().as_bytes()).await.unwrap();
+/// 	let seed = WalletSeed::new_from_mnemonic(network, &mnemonic);
+///
+/// 	let wallet = Wallet::open(network, seed, config, OpenWalletArgs {
+/// 		datadir: Some(datadir),
+/// 		..Default::default()
+/// 	}).await.unwrap();
+/// }
 /// ```
-/// # #[cfg(any(test, doc))]
-/// # async fn demo() -> anyhow::Result<()> {
-/// # use std::sync::Arc;
-/// # use bark::{Config, Wallet};
-/// # use bark::lock_manager::memory::MemoryLockManager;
-/// # use bark::onchain::OnchainWallet;
-/// # use bark::persist::{BarkPersister, SqliteClient};
-/// # use bark::persist::sqlite::helpers::in_memory_db;
-/// # use bip39::Mnemonic;
-/// # use bitcoin::Network;
-/// # let (db_path, _) = in_memory_db();
-/// let network = Network::Signet;
-/// let mnemonic = Mnemonic::generate(12)?;
-/// let cfg = Config {
-///   server_address: String::from("https://ark.signet.2nd.dev"),
-///   esplora_address: Some(String::from("https://esplora.signet.2nd.dev")),
-///   ..Default::default()
-/// };
-///
-/// // You can either use the included SQLite implementation or create your own.
-/// let persister = SqliteClient::open(db_path).await?;
-/// let db: Arc<dyn BarkPersister> = Arc::new(persister);
-///
-/// // Load or create an onchain wallet if needed
-/// let onchain_wallet = OnchainWallet::load_or_create(network, mnemonic.to_seed(""), db.clone()).await?;
-///
-/// // Create or open the Ark wallet
-/// let lock_manager = Box::new(MemoryLockManager::new());
-/// let mut wallet = Wallet::create_with_exits(
-/// 	&mnemonic,
-/// 	network,
-/// 	cfg.clone(),
-/// 	db,
-/// 	lock_manager,
-/// 	false,
-/// ).await?;
-/// // let mut wallet = Wallet::create(&mnemonic, network, cfg.clone(), db.clone(), Box::new(MemoryLockManager::new()), false).await?;
-/// // let mut wallet = Wallet::open(&mnemonic, db.clone(), cfg.clone(), Box::new(MemoryLockManager::new())).await?;
-/// // let mut wallet = Wallet::open_with_exits(
-/// //    &mnemonic, db.clone(), cfg.clone(), Box::new(MemoryLockManager::new())
-/// // ).await?;
 
 
 ///
@@ -782,13 +840,6 @@ pub struct Wallet {
 }
 
 impl Wallet {
-	/// Verifies that the bark [Wallet] can be used with the configured [chain::ChainSource].
-	/// More specifically, if the [chain::ChainSource] connects to Bitcoin Core it must be
-	/// a high enough version to support ephemeral anchors.
-	pub async fn require_chainsource_version(&self) -> anyhow::Result<()> {
-		self.inner.chain.require_version().await
-	}
-
 	pub async fn network(&self) -> anyhow::Result<Network> {
 		Ok(self.properties().await?.network)
 	}
@@ -944,25 +995,25 @@ impl Wallet {
 		Ok(addr)
 	}
 
-	/// Create a new wallet without an optional onchain backend. This will restrict features such as
-	/// boarding and unilateral exit.
+	/// Create a new wallet
+	///
+	/// This function simply initiates a new wallet; use [Wallet::open] to open
+	/// it afterwards. You can also call [Wallet::open] with `create_if_not_exists`
+	/// set to true to avoid having to call this function.
 	///
 	/// `lock_manager` coordinates access to the wallet's protected resources. Pick a backend
 	/// whose enforcement scope matches how the wallet is deployed — see [`crate::lock_manager`].
-	///
-	/// The `force` flag will allow you to create the wallet even if a connection to the Ark server
-	/// cannot be established, it will not overwrite a wallet which has already been created.
 	pub async fn create(
-		mnemonic: &Mnemonic,
 		network: Network,
-		config: Config,
-		db: Arc<dyn BarkPersister>,
-		lock_manager: Box<dyn LockManager>,
-		force: bool,
-	) -> anyhow::Result<Wallet> {
+		seed: &WalletSeed,
+		config: &Config,
+		db: &dyn BarkPersister,
+		lock_manager: &dyn LockManager,
+		allow_unreachable_server: bool,
+	) -> anyhow::Result<()> {
 		trace!("Config: {:?}", config);
 
-		let wallet_fingerprint = WalletSeed::new(network, &mnemonic.to_seed("")).fingerprint();
+		let wallet_fingerprint = seed.fingerprint();
 
 		// Block concurrent creators against the same locking universe. A
 		// short timeout is fine: if a sibling process wins the race they
@@ -979,18 +1030,15 @@ impl Wallet {
 		}
 
 		// Try to connect to the server and get its pubkey
-		let (server_pubkey, mailbox_pubkey) = if !force {
-			match Self::connect_to_server(&config, network).await {
-				Ok(conn) => {
-					let ark_info = conn.ark_info().await;
-					(Some(ark_info.server_pubkey), Some(ark_info.mailbox_pubkey))
-				}
-				Err(err) => {
-					bail!("Failed to connect to provided server (if you are sure use the --force flag): {:#}", err);
-				}
-			}
-		} else {
-			(None, None)
+		let (server_pubkey, mailbox_pubkey) = match Self::connect_to_server(&config, network).await {
+			Ok(conn) => {
+				let ark_info = conn.ark_info().await;
+				(Some(ark_info.server_pubkey), Some(ark_info.mailbox_pubkey))
+			},
+			Err(_) if allow_unreachable_server => (None, None),
+			Err(err) => {
+				bail!("Failed to connect to provided server: {:#}", err);
+			},
 		};
 
 		let properties = WalletProperties {
@@ -1011,50 +1059,53 @@ impl Wallet {
 		// so another process is free to open it.
 		drop(create_guard);
 
-		// from then on we can open the wallet
-		let wallet = Wallet::open(&mnemonic, db, config, lock_manager).await.context("failed to open wallet")?;
-		wallet.require_chainsource_version().await?;
-
-		Ok(wallet)
+		Ok(())
 	}
 
-	/// Create a new wallet and eagerly load any persisted exit state from the database.
-	///
-	/// The `force` flag will allow you to create the wallet even if a connection to the Ark server
-	/// cannot be established, it will not overwrite a wallet which has already been created.
-	///
-	/// TODO: consider making [Wallet::create] always load exits so this wrapper is unnecessary.
-	pub async fn create_with_exits(
-		mnemonic: &Mnemonic,
-		network: Network,
-		config: Config,
-		db: Arc<dyn BarkPersister>,
-		lock_manager: Box<dyn LockManager>,
-		force: bool,
-	) -> anyhow::Result<Wallet> {
-		let wallet = Wallet::create(mnemonic, network, config, db, lock_manager, force).await?;
-		wallet.inner.exit.load().await?;
-		Ok(wallet)
-	}
-
-	/// Loads the bark wallet from the given database ensuring the fingerprint remains consistent.
-	///
-	/// `lock_manager` coordinates access to the wallet's protected resources. Pick a backend
-	/// whose enforcement scope matches how the wallet is deployed — see [`crate::lock_manager`].
+	/// Open an existing wallet or create one if `options.create_if_not_exists` is true
 	pub async fn open(
-		mnemonic: &Mnemonic,
-		db: Arc<dyn BarkPersister>,
+		network: Network,
+		seed: WalletSeed,
 		config: Config,
-		lock_manager: Box<dyn LockManager>,
+		args: OpenWalletArgs,
 	) -> anyhow::Result<Wallet> {
-		let properties = db.read_properties().await?.context("Wallet is not initialised")?;
-
-		let seed = {
-			let seed = mnemonic.to_seed("");
-			WalletSeed::new(properties.network, &seed)
+		let fingerprint = seed.fingerprint();
+		let lock_manager = if let Some(lm) = args.lock_manager {
+			lm
+		} else {
+			crate::lock_manager::platform_default(args.datadir.as_ref(), Some(fingerprint))
+				.context("failed to instantiate platform default lock manager")?
 		};
 
-		if properties.fingerprint != seed.fingerprint() {
+		let db = if let Some(db) = args.persister {
+			db
+		} else {
+			if let Some(ref datadir) = args.datadir {
+				#[cfg(not(target_arch = "wasm32"))]
+				if !datadir.exists() && args.create_if_not_exists {
+					tokio::fs::create_dir_all(datadir).await.with_context(|| format!(
+						"failed to create datadir at {}", datadir.display(),
+					))?;
+				}
+			}
+			crate::persist::platform_default(args.datadir.as_ref(), Some(fingerprint)).await
+				.context("failed to instantiate platform default persister")?
+		};
+
+		let properties = if let Some(p) = db.read_properties().await? {
+			p
+		} else if args.create_if_not_exists {
+			Self::create(
+				network, &seed, &config, &*db, &*lock_manager, args.create_without_server,
+			).await.context("error creating new wallet")?;
+			db.read_properties().await?
+				.context("create failed: no wallet properties after Wallet::create was called")?
+		} else {
+			bail!("wallet does not exist; use Wallet::create or \
+				set options.create_if_not_exists to true");
+		};
+
+		if properties.fingerprint != fingerprint {
 			bail!("incorrect mnemonic")
 		}
 
@@ -1083,6 +1134,8 @@ impl Wallet {
 			#[cfg(feature = "socks5-proxy")] chain_proxy.as_deref(),
 		).await?;
 		let chain = Arc::new(chain_source_client);
+		chain.require_version().await
+			.context("provided chain source doesn't meet version requirement")?;
 
 		let server = tokio::sync::OnceCell::new();
 
@@ -1090,44 +1143,21 @@ impl Wallet {
 		let movements = Arc::new(MovementManager::new(db.clone(), notifications.clone()));
 		let exit = Exit::new(db.clone(), chain.clone(), movements.clone()).await?;
 
-		Ok(Wallet { inner: Arc::new(WalletInner {
+		let ret = Wallet { inner: Arc::new(WalletInner {
 			config, db, lock_manager, seed, exit, movements, notifications, server, chain,
 			daemon: parking_lot::Mutex::new(None),
 			round_secret_nonces: RoundSecretNonces::new(),
-		})})
-	}
+		})};
 
-	/// Open a wallet and eagerly load any persisted exit state from the database.
-	///
-	/// TODO: consider making [Wallet::open] always load exits so this wrapper is unnecessary.
-	pub async fn open_with_exits(
-		mnemonic: &Mnemonic,
-		db: Arc<dyn BarkPersister>,
-		cfg: Config,
-		lock_manager: Box<dyn LockManager>,
-	) -> anyhow::Result<Wallet> {
-		let wallet = Wallet::open(mnemonic, db, cfg, lock_manager).await?;
-		wallet.inner.exit.load().await?;
-		Ok(wallet)
-	}
+		ret.inner.exit.load().await
+			.context("error loading exit system after opening wallet")?;
 
-	/// Similar to [Wallet::open] however this also starts the daemon, optionally with an onchain
-	/// wallet, and returns a handle to the daemon.
-	pub async fn open_with_daemon(
-		mnemonic: &Mnemonic,
-		db: Arc<dyn BarkPersister>,
-		cfg: Config,
-		onchain: Option<Arc<tokio::sync::RwLock<dyn DaemonizableOnchainWallet>>>,
-		lock_manager: Box<dyn LockManager>,
-	) -> anyhow::Result<Wallet> {
-		let wallet = Wallet::open(mnemonic, db, cfg, lock_manager).await?;
-		if onchain.is_some() {
-			wallet.inner.exit.load().await?;
+		if args.run_daemon {
+			ret.start_daemon(args.onchain)
+				.context("failed to start daemon after opening wallet")?;
 		}
 
-		wallet.start_daemon(onchain)?;
-
-		Ok(wallet)
+		Ok(ret)
 	}
 
 	/// Returns the config used to create/load the bark [Wallet].
@@ -2085,8 +2115,6 @@ impl Wallet {
 			return Ok(());
 		}
 
-		// NB currently can't error but it's a pretty common method and quite likely that error
-		// cases will be introduces later
 		let handle = crate::daemon::start_daemon(self.clone(), onchain);
 		let _ = daemon.insert(handle);
 
