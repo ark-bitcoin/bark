@@ -202,6 +202,40 @@ pub async fn store_round_participation(
 	Ok(())
 }
 
+/// Delete every *pending* (not yet assigned to a round) delegated round
+/// participation that has any of the given vtxos as an input.
+pub async fn delete_pending_participations_for_inputs(
+	tx: &PgTransaction<'_>,
+	inputs: &[VtxoId],
+) -> anyhow::Result<u64> {
+	if inputs.is_empty() {
+		return Ok(0);
+	}
+
+	let input_strs = inputs.iter().map(|i| i.to_string()).collect::<Vec<_>>();
+	let stmt = tx.prepare_typed(
+		"WITH stale AS (
+			SELECT DISTINCT rp.id
+			FROM round_participation rp
+			JOIN round_part_input rpi ON rpi.participation_id = rp.id
+			WHERE rp.round_id IS NULL AND rpi.vtxo_id = ANY($1)
+		),
+		deleted AS (
+			DELETE FROM round_participation WHERE id IN (SELECT id FROM stale) RETURNING id
+		),
+		_inputs AS (
+			DELETE FROM round_part_input WHERE participation_id IN (SELECT id FROM deleted)
+		),
+		_outputs AS (
+			DELETE FROM round_part_output WHERE participation_id IN (SELECT id FROM deleted)
+		)
+		SELECT id FROM deleted",
+		&[Type::TEXT_ARRAY],
+	).await?;
+
+	Ok(tx.execute(&stmt, &[&input_strs]).await?)
+}
+
 /// complete a round participation from the main row
 pub async fn complete_round_participation(
 	tx: &PgTransaction<'_>,
