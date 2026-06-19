@@ -243,6 +243,13 @@ impl<'t> Tx<'t> {
 			vtxo.check_spendable(chain_tip)?;
 		}
 
+		// Drop any earlier pending delegated refresh on the same inputs: a new
+		// request for these vtxos supersedes the old one.
+		let dropped = query::delete_pending_participations_for_inputs(&self, inputs).await?;
+		if dropped > 0 {
+			trace!("Dropped {} stale delegated round participation(s) for inputs {:?}", dropped, inputs);
+		}
+
 		query::store_round_participation(
 			&self, unlock_hash, unlock_preimage, inputs, outputs,
 		).await?;
