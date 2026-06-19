@@ -18,7 +18,6 @@ use bitcoin_ext::{AmountExt, BlockHeight};
 use cln_rpc::listsendpays_request::ListsendpaysIndex;
 
 use crate::database::{Checkpoint, Tx};
-use crate::telemetry;
 
 /// Identifier by which lightning nodes are stored in the database.
 pub type LightningNodeId = i64;
@@ -307,14 +306,15 @@ impl<'t> Tx<'t> {
 		Ok(())
 	}
 
+	/// Returns `None` when the optimistic-lock predicate missed.
 	pub async fn update_lightning_payment_attempt_status(
 		&self,
 		old_payment_attempt: &LightningPaymentAttempt,
 		new_status: LightningPaymentStatus,
 		new_payment_error: Option<&str>,
-	) -> anyhow::Result<()> {
+	) -> anyhow::Result<Option<DateTime<Local>>> {
 		// We want to preserve any previous error message in case we don't have a new one.
-		if let Some(error) = new_payment_error {
+		let row = if let Some(error) = new_payment_error {
 			let stmt = self.prepare("
 				UPDATE lightning_payment_attempt
 				SET status = $3,
@@ -323,7 +323,7 @@ impl<'t> Tx<'t> {
 				WHERE id = $1 AND updated_at = $2
 				RETURNING updated_at;
 			").await?;
-			self.query_one(
+			self.query_opt(
 				&stmt,
 				&[
 					&old_payment_attempt.id,
@@ -331,7 +331,7 @@ impl<'t> Tx<'t> {
 					&new_status,
 					&error
 				]
-			).await?;
+			).await?
 		} else {
 			let stmt = self.prepare("
 				UPDATE lightning_payment_attempt
@@ -340,17 +340,17 @@ impl<'t> Tx<'t> {
 				WHERE id = $1 AND updated_at = $2
 				RETURNING updated_at;
 			").await?;
-			self.query_one(
+			self.query_opt(
 				&stmt,
 				&[
 					&old_payment_attempt.id,
 					&old_payment_attempt.updated_at,
 					&new_status
 				]
-			).await?;
+			).await?
 		};
 
-		Ok(())
+		Ok(row.map(|r| r.get("updated_at")))
 	}
 
 	/// Update a payment attempt with final result (status, final amount).
@@ -489,12 +489,14 @@ impl<'t> Tx<'t> {
 	/// `updated_at must be updated` check: both settle off the same preimage
 	/// and can write `Settled` concurrently, and the loser of that row-lock
 	/// race would otherwise re-run the trigger on an unchanged row.
+	///
+	/// Returns `true` if the status transitioned.
 	pub async fn store_lightning_htlc_subscription_status(
 		&self,
 		id: i64,
 		status: LightningHtlcSubscriptionStatus,
 		lowest_incoming_htlc_expiry: Option<BlockHeight>,
-	) -> anyhow::Result<()> {
+	) -> anyhow::Result<bool> {
 		let accepted = status == LightningHtlcSubscriptionStatus::Accepted;
 		let expiry = lowest_incoming_htlc_expiry.map(|e| e as i64);
 
@@ -509,9 +511,9 @@ impl<'t> Tx<'t> {
 				accepted_at = CASE WHEN $4 THEN NOW() ELSE accepted_at END
 			WHERE id = $1 AND status != $2;
 		").await?;
-		self.execute(&stmt, &[&id, &status, &expiry, &accepted]).await?;
+		let rows_affected = self.execute(&stmt, &[&id, &status, &expiry, &accepted]).await?;
 
-		Ok(())
+		Ok(rows_affected == 1)
 	}
 
 	/// Cancel the latest receive subscription for `payment_hash` as part of
@@ -990,14 +992,6 @@ impl<'t> Tx<'t> {
 		let updated_at = self.update_lightning_payment_attempt_result(
 			attempt, status, payment_error, final_amount_msat,
 		).await?;
-
-		let amount_msat = final_amount_msat.unwrap_or(attempt.amount_msat);
-
-		telemetry::add_lightning_payment(
-			attempt.lightning_node_id,
-			amount_msat,
-			status,
-		);
 
 		Ok(updated_at.is_some())
 	}

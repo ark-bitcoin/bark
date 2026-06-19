@@ -1,0 +1,2 @@
+- Add `direction` and `self_payment` labels to `lightning_payment_*`, plus a `canceled` status for released receives. Failed volume now uses the attempted amount, and telemetry only fires when the DB update commits.
+  [#2206](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2206)

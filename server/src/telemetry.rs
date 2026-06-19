@@ -57,6 +57,52 @@ pub const ATTRIBUTE_ROUND_SEQ: &str = "round_seq";
 pub const ATTRIBUTE_ATTEMPT_SEQ: &str = "attempt_seq";
 pub const ATTRIBUTE_ROUND_STEP: &str = "round_step";
 pub const ATTRIBUTE_LIGHTNING_NODE_ID: &str = "lightning_node_id";
+pub const ATTRIBUTE_DIRECTION: &str = "direction";
+pub const ATTRIBUTE_LIGHTNING_SELF_PAYMENT: &str = "self_payment";
+
+/// Intra-Ark payments (`self_payment="true"`) are counted on both sides;
+/// filter `self_payment="false"` for real network volume.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LightningDirection {
+	Send,
+	Receive,
+}
+
+impl LightningDirection {
+	pub fn as_str(self) -> &'static str {
+		match self {
+			LightningDirection::Send => "send",
+			LightningDirection::Receive => "receive",
+		}
+	}
+}
+
+/// Metric-only status: adds `Canceled` (voluntarily released receive) to the DB enum.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LightningPaymentMetricStatus {
+	Succeeded,
+	Failed,
+	Canceled,
+}
+
+impl LightningPaymentMetricStatus {
+	pub fn as_str(self) -> &'static str {
+		match self {
+			LightningPaymentMetricStatus::Succeeded => "succeeded",
+			LightningPaymentMetricStatus::Failed => "failed",
+			LightningPaymentMetricStatus::Canceled => "canceled",
+		}
+	}
+
+	/// `Some` only for final statuses; non-final states aren't a payment outcome.
+	pub fn from_status(s: LightningPaymentStatus) -> Option<Self> {
+		match s {
+			LightningPaymentStatus::Succeeded => Some(Self::Succeeded),
+			LightningPaymentStatus::Failed => Some(Self::Failed),
+			LightningPaymentStatus::Requested | LightningPaymentStatus::Submitted => None,
+		}
+	}
+}
 
 
 pub trait MetricsService {
@@ -295,8 +341,8 @@ struct Metrics {
 	round_output_htlc_recv_volume: Counter<u64>,
 	unilateral_exit_counter: Counter<u64>,
 	unilateral_exit_volume: Counter<u64>,
-	lightning_invoice_verification_counter: Counter<u64>,
-	lightning_invoice_verification_queue_gauge: Gauge<u64>,
+	lightning_payment_sync_counter: Counter<u64>,
+	lightning_payment_sync_queue_gauge: Gauge<u64>,
 	lightning_open_invoices_gauge: Gauge<u64>,
 	vtxo_pool_expiry_blocks_bucket_gauge: Gauge<u64>,
 	vtxo_pool_expiry_blocks_count_gauge: Gauge<u64>,
@@ -545,8 +591,8 @@ impl Metrics {
 			.with_description("Total VTXO value (sats) observed exiting unilaterally on-chain")
 			.with_unit("sat")
 			.build();
-		let lightning_invoice_verification_counter = meter.u64_counter("lightning_invoice_verification_counter").build();
-		let lightning_invoice_verification_queue_gauge = meter.u64_gauge("lightning_invoice_verification_queue_gauge").build();
+		let lightning_payment_sync_counter = meter.u64_counter("lightning_payment_sync_counter").build();
+		let lightning_payment_sync_queue_gauge = meter.u64_gauge("lightning_payment_sync_queue_gauge").build();
 		let lightning_open_invoices_gauge = meter.u64_gauge("lightning_open_invoices_gauge").build();
 		// Prometheus-histogram-shaped view of the VTXO pool by blocks-until-expiry.
 		// Two families share `le`-labeled cumulative buckets over
@@ -694,8 +740,8 @@ impl Metrics {
 			round_output_htlc_recv_volume,
 			unilateral_exit_counter,
 			unilateral_exit_volume,
-			lightning_invoice_verification_counter,
-			lightning_invoice_verification_queue_gauge,
+			lightning_payment_sync_counter,
+			lightning_payment_sync_queue_gauge,
 			lightning_open_invoices_gauge,
 			vtxo_pool_expiry_blocks_bucket_gauge,
 			vtxo_pool_expiry_blocks_count_gauge,
@@ -1251,35 +1297,39 @@ pub fn add_arkoor_payment(volume_sats: u64) {
 pub fn add_lightning_payment(
 	lightning_node_id: i64,
 	amount_msat: u64,
-	status: LightningPaymentStatus,
+	status: LightningPaymentMetricStatus,
+	direction: LightningDirection,
+	is_self_payment: bool,
 ) {
 	if let Some(m) = TELEMETRY.get() {
 		let attrs = m.with_global_labels([
 			KeyValue::new(ATTRIBUTE_LIGHTNING_NODE_ID, lightning_node_id.to_string()),
-			KeyValue::new(ATTRIBUTE_STATUS, status.to_string()),
+			KeyValue::new(ATTRIBUTE_STATUS, status.as_str()),
 			KeyValue::new(RPC_CLIENT, current_client()),
+			KeyValue::new(ATTRIBUTE_DIRECTION, direction.as_str()),
+			KeyValue::new(ATTRIBUTE_LIGHTNING_SELF_PAYMENT, is_self_payment),
 		]);
 		m.lightning_payment_counter.add(1, &attrs);
 		m.lightning_payment_volume.add(amount_msat / 1000, &attrs);
 	}
 }
 
-pub fn add_invoice_verification(lightning_node_id: i64, status: LightningPaymentStatus) {
+pub fn add_payment_sync(lightning_node_id: i64, status: LightningPaymentStatus) {
 	if let Some(m) = TELEMETRY.get() {
 		let attrs = m.with_global_labels([
 			KeyValue::new(ATTRIBUTE_LIGHTNING_NODE_ID, lightning_node_id.to_string()),
 			KeyValue::new(ATTRIBUTE_STATUS, status.to_string()),
 		]);
-		m.lightning_invoice_verification_counter.add(1, &attrs);
+		m.lightning_payment_sync_counter.add(1, &attrs);
 	}
 }
 
-pub fn set_pending_invoice_verifications(lightning_node_id: i64, count: usize) {
+pub fn set_pending_payment_syncs(lightning_node_id: i64, count: usize) {
 	if let Some(m) = TELEMETRY.get() {
 		let attrs = m.with_global_labels([
 			KeyValue::new(ATTRIBUTE_LIGHTNING_NODE_ID, lightning_node_id.to_string()),
 		]);
-		m.lightning_invoice_verification_queue_gauge.record(count as u64, &attrs)
+		m.lightning_payment_sync_queue_gauge.record(count as u64, &attrs)
 	}
 }
 

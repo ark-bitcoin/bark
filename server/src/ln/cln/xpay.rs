@@ -146,7 +146,7 @@ impl ClnXpayClient {
 			attempt.id, payment_hash,
 		);
 
-		telemetry::add_invoice_verification(attempt.lightning_node_id, attempt.status);
+		telemetry::add_payment_sync(attempt.lightning_node_id, attempt.status);
 
 		let req = cln_rpc::ListpaysRequest {
 			bolt11: None,
@@ -177,12 +177,6 @@ impl ClnXpayClient {
 					| LightningPaymentStatus::Submitted =>
 				{
 					self.payment_handler().fail_payment_attempt(&attempt, None).await?;
-
-					telemetry::add_lightning_payment(
-						attempt.lightning_node_id,
-						attempt.amount_msat,
-						LightningPaymentStatus::Failed,
-					);
 				},
 			}
 		} else {
@@ -436,7 +430,7 @@ impl ClnXpayProcess {
 
 		self.attempt_next_check_at.retain(|_, &mut (_, datetime)| datetime > Local::now());
 
-		telemetry::set_pending_invoice_verifications(
+		telemetry::set_pending_payment_syncs(
 			self.node_id,
 			self.attempt_next_check_at.len(),
 		);
