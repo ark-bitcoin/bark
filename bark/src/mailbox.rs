@@ -6,6 +6,7 @@ pub extern crate lightning_invoice;
 pub extern crate lnurl as lnurllib;
 
 use std::collections::HashMap;
+use std::ops::ControlFlow;
 
 use anyhow::Context;
 use ark::tree::signed::UnlockHash;
@@ -42,6 +43,37 @@ use crate::subsystem::{ArkoorMovement, Subsystem};
 /// (Note that currently the server sends 100 messages per fetch, so this would
 /// only happen for users with more than 1000 pending items.)
 const MAX_MAILBOX_REQUEST_BURST: usize = 10;
+
+/// Key for the lock that serializes the arkoor receive dedup within a wallet.
+///
+/// Several consumers of one wallet process the same mailbox messages: the
+/// daemon's always-on stream ([`Wallet::subscribe_process_mailbox_messages`])
+/// runs alongside the startup / periodic `sync()` (which calls
+/// [`Wallet::sync_mailbox`]), and a REST deployment can fire concurrent
+/// `/sync` and `/sync/mailbox` requests. The server hands each consumer the
+/// same messages from its checkpoint, so without serialization the
+/// peek-then-store dedup in arkoor processing races: every consumer that wins
+/// the [`crate::persist::BarkPersister::get_wallet_vtxo`] check before the
+/// others store records its own receive movement, double-counting the receive.
+///
+/// Holding this lock across that check-then-store (in
+/// [`Wallet::process_received_arkoor_package`]) makes it atomic across
+/// consumers. The VTXO row is `INSERT OR IGNORE`, so once one consumer has
+/// stored the package the rest see the VTXO already present and skip the
+/// movement.
+const MAILBOX_PROCESSING_LOCK_KEY: &str = "mailbox.processing";
+
+/// How long a consumer waits for the arkoor dedup lock before giving up.
+///
+/// The critical section is a couple of server round trips plus local DB
+/// writes, normally well under a second. On timeout we error rather than
+/// block, handled like any other arkoor processing error: this message's
+/// checkpoint isn't advanced and processing halts (see
+/// [`Wallet::process_mailbox_message`]) so a later message can't bury it. A
+/// timeout only happens if a holder is stuck for the full duration; normally
+/// waiters acquire the lock and dedup as usual.
+const MAILBOX_PROCESSING_LOCK_TIMEOUT: std::time::Duration =
+	std::time::Duration::from_secs(30);
 
 impl Wallet {
 	/// Get the keypair used for the server mailbox
@@ -139,7 +171,15 @@ impl Wallet {
 						match message {
 							Some(Ok(message)) => {
 								reconnect_count = 0;
-								self.process_mailbox_message(message).await;
+								if self.process_mailbox_message(message).await.is_break() {
+									// A message failed without advancing its
+									// checkpoint. Stop consuming this stream and
+									// resubscribe from the unadvanced checkpoint
+									// so it's redelivered before a later message
+									// can bury it.
+									trace!("Halting mailbox stream after unadvanced message; resubscribing");
+									continue 'outer;
+								}
 							},
 							// A tonic h2 stream reset is almost always a
 							// proxy- or server-side idle timeout rather than
@@ -193,7 +233,12 @@ impl Wallet {
 			debug!("Ark server has {} mailbox messages for us", mailbox_resp.messages.len());
 
 			for mailbox_msg in mailbox_resp.messages {
-				self.process_mailbox_message(mailbox_msg).await;
+				if self.process_mailbox_message(mailbox_msg).await.is_break() {
+					// A message failed without advancing its checkpoint. Stop
+					// so we don't advance past it; the next sync retries from
+					// the same checkpoint.
+					return Ok(());
+				}
 			}
 
 			if !mailbox_resp.have_more {
@@ -244,10 +289,18 @@ impl Wallet {
 		valid_vtxos
 	}
 
+	/// Process a single mailbox message and report whether the caller should
+	/// keep consuming the mailbox.
+	///
+	/// Returns [`ControlFlow::Break`] when an arkoor package failed to process
+	/// and its checkpoint was therefore not advanced. Because checkpoints are
+	/// monotonic, the caller must stop before a later message stores a higher
+	/// checkpoint and buries the unprocessed one; the next sync/resubscribe
+	/// re-fetches from the unadvanced checkpoint and retries.
 	pub(crate) async fn process_mailbox_message(
 		&self,
 		mailbox_msg: MailboxMessage,
-	) {
+	) -> ControlFlow<()> {
 		use protos::mailbox_server::mailbox_message::Message;
 
 		// Each arm returns whether the checkpoint should advance. Only
@@ -301,6 +354,12 @@ impl Wallet {
 			if let Err(e) = self.store_mailbox_checkpoint(mailbox_msg.checkpoint).await {
 				error!("Error storing mailbox checkpoint: {:#}", e);
 			}
+			ControlFlow::Continue(())
+		} else {
+			// An arkoor package didn't process and its checkpoint wasn't
+			// advanced. Stop here so a later message can't store a higher
+			// checkpoint and bury it.
+			ControlFlow::Break(())
 		}
 	}
 
@@ -309,6 +368,15 @@ impl Wallet {
 		raw_vtxos: Vec<Vec<u8>>,
 	) -> anyhow::Result<()> {
 		let vtxos = self.process_raw_vtxos(raw_vtxos).await;
+
+		// Serialize the receive dedup across all consumers of this wallet's
+		// mailbox so two of them can't both record a movement for the same
+		// package. See MAILBOX_PROCESSING_LOCK_KEY. On lock failure we
+		// return like any other arkoor processing error, leaving this
+		// message's checkpoint unadvanced.
+		let _guard = self.inner.lock_manager.lock(
+			MAILBOX_PROCESSING_LOCK_KEY, MAILBOX_PROCESSING_LOCK_TIMEOUT,
+		).await.context("failed to acquire mailbox processing lock")?;
 
 		let mut new_vtxos = Vec::with_capacity(vtxos.len());
 		for vtxo in &vtxos {

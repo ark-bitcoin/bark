@@ -79,6 +79,47 @@ async fn reject_arkoor_with_bad_signature() {
 	}));
 }
 
+/// Concurrent consumers of one wallet's mailbox must not double-count a receive.
+/// The arkoor dedup is a check-then-store, so without serialization each racing
+/// consumer records its own movement for the single vtxo.
+#[tokio::test]
+async fn concurrent_mailbox_consumers_do_not_duplicate_arkoor_movement() {
+	let ctx = TestContext::new("bark/concurrent_mailbox_consumers_do_not_duplicate_arkoor_movement").await;
+	let srv = ctx.captaind("server").funded(btc(10)).create().await;
+
+	let bark1 = ctx.bark("bark1", &srv).funded(sat(1_000_000)).create().await;
+	bark1.board(sat(200_000)).await;
+	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
+
+	// One-shot CLI wallet: nothing syncs behind us, so the arkoor stays pending.
+	let bark2 = ctx.bark("bark2", &srv).create().await;
+	bark1.send_oor(bark2.address().await, sat(100_000)).await;
+
+	// Release several consumers of the same wallet together so they contend.
+	let wallet = bark2.client().await;
+	let start = Arc::new(tokio::sync::Barrier::new(4));
+	let handles = (0..4).map(|_| {
+		let w = wallet.clone();
+		let start = start.clone();
+		tokio::spawn(async move {
+			start.wait().await;
+			w.sync_mailbox().await
+		})
+	}).collect::<Vec<_>>();
+	for h in handles {
+		h.await.expect("task panicked").expect("sync_mailbox failed");
+	}
+
+	let vtxos = wallet.vtxos().await.unwrap();
+	assert_eq!(vtxos.len(), 1, "vtxo should land exactly once");
+	let received_id = vtxos[0].vtxo.id();
+
+	let movements = wallet.history().await.unwrap().into_iter()
+		.filter(|m| m.output_vtxos.contains(&received_id))
+		.count();
+	assert_eq!(movements, 1, "receive recorded as {movements} movements, expected 1");
+}
+
 #[tokio::test]
 async fn accept_mailbox() {
 	require_bark_version!(> "0.1.4");
