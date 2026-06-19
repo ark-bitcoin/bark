@@ -69,19 +69,27 @@ pub enum ExitStartVtxosError {
     UnknownValue(serde_json::Value),
 }
 
-/// struct for typed errors of method [`get_all_exit_status`]
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(untagged)]
-pub enum GetAllExitStatusError {
-    Status500(models::InternalServerError),
-    UnknownValue(serde_json::Value),
-}
-
 /// struct for typed errors of method [`get_exit_status_by_vtxo_id`]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum GetExitStatusByVtxoIdError {
     Status404(models::NotFoundError),
+    Status500(models::InternalServerError),
+    UnknownValue(serde_json::Value),
+}
+
+/// struct for typed errors of method [`get_finished_exits`]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum GetFinishedExitsError {
+    Status500(models::InternalServerError),
+    UnknownValue(serde_json::Value),
+}
+
+/// struct for typed errors of method [`get_live_exit_status`]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum GetLiveExitStatusError {
     Status500(models::InternalServerError),
     UnknownValue(serde_json::Value),
 }
@@ -329,53 +337,6 @@ pub async fn exit_start_vtxos(configuration: &configuration::Configuration, exit
     }
 }
 
-/// Returns the current state of every emergency exit in the wallet. Each entry includes which phase the exit is in (start, processing, awaiting-delta, claimable, claim-in-progress, or claimed), and optionally the full state transition history and the exit transaction packages with their CPFP children.
-pub async fn get_all_exit_status(configuration: &configuration::Configuration, history: Option<bool>, transactions: Option<bool>) -> Result<Vec<models::ExitTransactionStatus>, Error<GetAllExitStatusError>> {
-    // add a prefix to parameters to efficiently prevent name collisions
-    let p_query_history = history;
-    let p_query_transactions = transactions;
-
-    let uri_str = format!("{}/api/v1/exits/status", configuration.base_path);
-    let mut req_builder = configuration.client.request(reqwest::Method::GET, &uri_str);
-
-    if let Some(ref param_value) = p_query_history {
-        req_builder = req_builder.query(&[("history", &param_value.to_string())]);
-    }
-    if let Some(ref param_value) = p_query_transactions {
-        req_builder = req_builder.query(&[("transactions", &param_value.to_string())]);
-    }
-    if let Some(ref user_agent) = configuration.user_agent {
-        req_builder = req_builder.header(reqwest::header::USER_AGENT, user_agent.clone());
-    }
-    if let Some(ref token) = configuration.bearer_access_token {
-        req_builder = req_builder.bearer_auth(token.to_owned());
-    };
-
-    let req = req_builder.build()?;
-    let resp = configuration.client.execute(req).await?;
-
-    let status = resp.status();
-    let content_type = resp
-        .headers()
-        .get("content-type")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("application/octet-stream");
-    let content_type = super::ContentType::from(content_type);
-
-    if !status.is_client_error() && !status.is_server_error() {
-        let content = resp.text().await?;
-        match content_type {
-            ContentType::Json => serde_json::from_str(&content).map_err(Error::from),
-            ContentType::Text => return Err(Error::from(serde_json::Error::custom("Received `text/plain` content type response that cannot be converted to `Vec&lt;models::ExitTransactionStatus&gt;`"))),
-            ContentType::Unsupported(unknown_type) => return Err(Error::from(serde_json::Error::custom(format!("Received `{unknown_type}` content type response that cannot be converted to `Vec&lt;models::ExitTransactionStatus&gt;`")))),
-        }
-    } else {
-        let content = resp.text().await?;
-        let entity: Option<GetAllExitStatusError> = serde_json::from_str(&content).ok();
-        Err(Error::ResponseError(ResponseContent { status, content, entity }))
-    }
-}
-
 /// Returns the current state of an emergency exit for the specified VTXO, including which phase the exit is in (start, processing, awaiting-delta, claimable, claim-in-progress, or claimed). Optionally includes the full state transition history and the exit transaction packages with their CPFP children.
 pub async fn get_exit_status_by_vtxo_id(configuration: &configuration::Configuration, vtxo_id: &str, history: Option<bool>, transactions: Option<bool>) -> Result<models::ExitTransactionStatus, Error<GetExitStatusByVtxoIdError>> {
     // add a prefix to parameters to efficiently prevent name collisions
@@ -420,6 +381,100 @@ pub async fn get_exit_status_by_vtxo_id(configuration: &configuration::Configura
     } else {
         let content = resp.text().await?;
         let entity: Option<GetExitStatusByVtxoIdError> = serde_json::from_str(&content).ok();
+        Err(Error::ResponseError(ResponseContent { status, content, entity }))
+    }
+}
+
+/// Returns exits that reached a terminal state: claimed, aborted because the VTXO was already spent, or canceled. Finished exits are dropped from active tracking—they are never progressed—but they're retained for auditing and surfaced here.
+pub async fn get_finished_exits(configuration: &configuration::Configuration, history: Option<bool>, transactions: Option<bool>) -> Result<Vec<models::ExitTransactionStatus>, Error<GetFinishedExitsError>> {
+    // add a prefix to parameters to efficiently prevent name collisions
+    let p_query_history = history;
+    let p_query_transactions = transactions;
+
+    let uri_str = format!("{}/api/v1/exits/status/finished", configuration.base_path);
+    let mut req_builder = configuration.client.request(reqwest::Method::GET, &uri_str);
+
+    if let Some(ref param_value) = p_query_history {
+        req_builder = req_builder.query(&[("history", &param_value.to_string())]);
+    }
+    if let Some(ref param_value) = p_query_transactions {
+        req_builder = req_builder.query(&[("transactions", &param_value.to_string())]);
+    }
+    if let Some(ref user_agent) = configuration.user_agent {
+        req_builder = req_builder.header(reqwest::header::USER_AGENT, user_agent.clone());
+    }
+    if let Some(ref token) = configuration.bearer_access_token {
+        req_builder = req_builder.bearer_auth(token.to_owned());
+    };
+
+    let req = req_builder.build()?;
+    let resp = configuration.client.execute(req).await?;
+
+    let status = resp.status();
+    let content_type = resp
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("application/octet-stream");
+    let content_type = super::ContentType::from(content_type);
+
+    if !status.is_client_error() && !status.is_server_error() {
+        let content = resp.text().await?;
+        match content_type {
+            ContentType::Json => serde_json::from_str(&content).map_err(Error::from),
+            ContentType::Text => return Err(Error::from(serde_json::Error::custom("Received `text/plain` content type response that cannot be converted to `Vec&lt;models::ExitTransactionStatus&gt;`"))),
+            ContentType::Unsupported(unknown_type) => return Err(Error::from(serde_json::Error::custom(format!("Received `{unknown_type}` content type response that cannot be converted to `Vec&lt;models::ExitTransactionStatus&gt;`")))),
+        }
+    } else {
+        let content = resp.text().await?;
+        let entity: Option<GetFinishedExitsError> = serde_json::from_str(&content).ok();
+        Err(Error::ResponseError(ResponseContent { status, content, entity }))
+    }
+}
+
+/// Returns the current state of live emergency exits in the wallet. Each entry includes which phase the exit is in (start, processing, awaiting-delta, claimable or claim-in-progress), and optionally the full state transition history and the exit transaction packages with their CPFP children.
+pub async fn get_live_exit_status(configuration: &configuration::Configuration, history: Option<bool>, transactions: Option<bool>) -> Result<Vec<models::ExitTransactionStatus>, Error<GetLiveExitStatusError>> {
+    // add a prefix to parameters to efficiently prevent name collisions
+    let p_query_history = history;
+    let p_query_transactions = transactions;
+
+    let uri_str = format!("{}/api/v1/exits/status", configuration.base_path);
+    let mut req_builder = configuration.client.request(reqwest::Method::GET, &uri_str);
+
+    if let Some(ref param_value) = p_query_history {
+        req_builder = req_builder.query(&[("history", &param_value.to_string())]);
+    }
+    if let Some(ref param_value) = p_query_transactions {
+        req_builder = req_builder.query(&[("transactions", &param_value.to_string())]);
+    }
+    if let Some(ref user_agent) = configuration.user_agent {
+        req_builder = req_builder.header(reqwest::header::USER_AGENT, user_agent.clone());
+    }
+    if let Some(ref token) = configuration.bearer_access_token {
+        req_builder = req_builder.bearer_auth(token.to_owned());
+    };
+
+    let req = req_builder.build()?;
+    let resp = configuration.client.execute(req).await?;
+
+    let status = resp.status();
+    let content_type = resp
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("application/octet-stream");
+    let content_type = super::ContentType::from(content_type);
+
+    if !status.is_client_error() && !status.is_server_error() {
+        let content = resp.text().await?;
+        match content_type {
+            ContentType::Json => serde_json::from_str(&content).map_err(Error::from),
+            ContentType::Text => return Err(Error::from(serde_json::Error::custom("Received `text/plain` content type response that cannot be converted to `Vec&lt;models::ExitTransactionStatus&gt;`"))),
+            ContentType::Unsupported(unknown_type) => return Err(Error::from(serde_json::Error::custom(format!("Received `{unknown_type}` content type response that cannot be converted to `Vec&lt;models::ExitTransactionStatus&gt;`")))),
+        }
+    } else {
+        let content = resp.text().await?;
+        let entity: Option<GetLiveExitStatusError> = serde_json::from_str(&content).ok();
         Err(Error::ResponseError(ResponseContent { status, content, entity }))
     }
 }

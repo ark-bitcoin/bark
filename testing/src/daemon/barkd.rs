@@ -435,7 +435,7 @@ impl Barkd {
 	/// Return the status of all emergency exits.
 	pub async fn get_all_exit_status(&self, history: Option<bool>, transactions: Option<bool>) -> Vec<ExitTransactionStatus> {
 		let config = self.client_config();
-		exits_api::get_all_exit_status(&config, history, transactions).await
+		exits_api::get_live_exit_status(&config, history, transactions).await
 			.expect("failed to get barkd exit status")
 	}
 

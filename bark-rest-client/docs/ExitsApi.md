@@ -10,8 +10,9 @@ Method | HTTP request | Description
 [**exit_progress**](ExitsApi.md#exit_progress) | **POST** /api/v1/exits/progress | Progress exits
 [**exit_start_all**](ExitsApi.md#exit_start_all) | **POST** /api/v1/exits/start/all | Start exit for all VTXOs
 [**exit_start_vtxos**](ExitsApi.md#exit_start_vtxos) | **POST** /api/v1/exits/start/vtxos | Start exit for specific VTXOs
-[**get_all_exit_status**](ExitsApi.md#get_all_exit_status) | **GET** /api/v1/exits/status | List all exit statuses
 [**get_exit_status_by_vtxo_id**](ExitsApi.md#get_exit_status_by_vtxo_id) | **GET** /api/v1/exits/status/{vtxo_id} | Get exit status
+[**get_finished_exits**](ExitsApi.md#get_finished_exits) | **GET** /api/v1/exits/status/finished | List finished exits
+[**get_live_exit_status**](ExitsApi.md#get_live_exit_status) | **GET** /api/v1/exits/status | List live exit statuses
 
 
 
@@ -192,37 +193,6 @@ Name | Type | Description  | Required | Notes
 [[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
 
 
-## get_all_exit_status
-
-> Vec<models::ExitTransactionStatus> get_all_exit_status(history, transactions)
-List all exit statuses
-
-Returns the current state of every emergency exit in the wallet. Each entry includes which phase the exit is in (start, processing, awaiting-delta, claimable, claim-in-progress, or claimed), and optionally the full state transition history and the exit transaction packages with their CPFP children.
-
-### Parameters
-
-
-Name | Type | Description  | Required | Notes
-------------- | ------------- | ------------- | ------------- | -------------
-**history** | Option<**bool**> | Whether to include the detailed history of the exit process |  |
-**transactions** | Option<**bool**> | Whether to include the exit transactions and their CPFP children |  |
-
-### Return type
-
-[**Vec<models::ExitTransactionStatus>**](ExitTransactionStatus.md)
-
-### Authorization
-
-[bearer](../README.md#bearer)
-
-### HTTP request headers
-
-- **Content-Type**: Not defined
-- **Accept**: application/json
-
-[[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
-
-
 ## get_exit_status_by_vtxo_id
 
 > models::ExitTransactionStatus get_exit_status_by_vtxo_id(vtxo_id, history, transactions)
@@ -242,6 +212,68 @@ Name | Type | Description  | Required | Notes
 ### Return type
 
 [**models::ExitTransactionStatus**](ExitTransactionStatus.md)
+
+### Authorization
+
+[bearer](../README.md#bearer)
+
+### HTTP request headers
+
+- **Content-Type**: Not defined
+- **Accept**: application/json
+
+[[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
+
+
+## get_finished_exits
+
+> Vec<models::ExitTransactionStatus> get_finished_exits(history, transactions)
+List finished exits
+
+Returns exits that reached a terminal state: claimed, aborted because the VTXO was already spent, or canceled. Finished exits are dropped from active tracking—they are never progressed—but they're retained for auditing and surfaced here.
+
+### Parameters
+
+
+Name | Type | Description  | Required | Notes
+------------- | ------------- | ------------- | ------------- | -------------
+**history** | Option<**bool**> | Whether to include the detailed state history of each finished exit |  |
+**transactions** | Option<**bool**> | Whether to include the exit transactions and their CPFP children |  |
+
+### Return type
+
+[**Vec<models::ExitTransactionStatus>**](ExitTransactionStatus.md)
+
+### Authorization
+
+[bearer](../README.md#bearer)
+
+### HTTP request headers
+
+- **Content-Type**: Not defined
+- **Accept**: application/json
+
+[[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
+
+
+## get_live_exit_status
+
+> Vec<models::ExitTransactionStatus> get_live_exit_status(history, transactions)
+List live exit statuses
+
+Returns the current state of live emergency exits in the wallet. Each entry includes which phase the exit is in (start, processing, awaiting-delta, claimable or claim-in-progress), and optionally the full state transition history and the exit transaction packages with their CPFP children.
+
+### Parameters
+
+
+Name | Type | Description  | Required | Notes
+------------- | ------------- | ------------- | ------------- | -------------
+**history** | Option<**bool**> | Whether to include the detailed history of the exit process |  |
+**transactions** | Option<**bool**> | Whether to include the exit transactions and their CPFP children |  |
+
+### Return type
+
+[**Vec<models::ExitTransactionStatus>**](ExitTransactionStatus.md)
 
 ### Authorization
 
