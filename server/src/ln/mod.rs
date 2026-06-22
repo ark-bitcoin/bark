@@ -689,6 +689,7 @@ impl Server {
 		payment_hash: PaymentHash,
 		payment_preimage: Preimage,
 		cosign_request: ArkoorPackageCosignRequest<VtxoId>,
+		pver: u64,
 	) -> anyhow::Result<ArkoorPackageCosignResponse> {
 		if payment_hash != payment_preimage.compute_payment_hash() {
 			return badarg!("preimage doesn't match payment hash");
@@ -733,8 +734,11 @@ impl Server {
 			v.vtxo
 		});
 
+		// Force checkpoints once the client speaks the LN-receive-checkpoint protocol version:
+		// the watchman then stops at the checkpoint instead of force-exiting the claimed leaf.
+		let use_checkpoints = pver >= server_rpc::pver::PROTOCOL_VERSION_LN_RECEIVE_CHECKPOINT;
 		let validation = ArkoorCosignRequestValidationParams {
-			use_checkpoints: false,
+			use_checkpoints,
 			max_outputs_per_input: 1, // should claim all
 			disallow_unnecessary_dust: false, // don't need this check if max output is 1
 			max_input_exit_depth: self.config.max_vtxo_exit_depth,

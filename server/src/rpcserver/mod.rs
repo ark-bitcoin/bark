@@ -26,7 +26,7 @@ pub const MIN_PROTOCOL_VERSION: u64 = pver::PROTOCOL_VERSION_BASE;
 /// The maximum protocol version supported by the server.
 ///
 /// For info on protocol versions, see [server_rpc::pver] module documentation.
-pub const MAX_PROTOCOL_VERSION: u64 = pver::PROTOCOL_VERSION_OFFBOARD_FIX;
+pub const MAX_PROTOCOL_VERSION: u64 = pver::PROTOCOL_VERSION_LN_RECEIVE_CHECKPOINT;
 
 /// Whether to provide rich internal errors to RPC users.
 ///

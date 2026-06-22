@@ -26,6 +26,9 @@
 //! ## Protocol version changelog
 //!
 //! * `1`: initial version
+//! * `2`: fixed the offboard sighash for multi-input offboards
+//! * `3`: checkpoint the lightning-receive claim so the watchman can't
+//!   force-exit a freshly claimed VTXO
 
 #[cfg(all(any(target_os = "android", target_os = "ios"), feature = "tls-native-roots"))]
 compile_error!("feature `tls-native-roots` can't be used on Android or iOS, use `tls-webpki-roots` instead");
@@ -106,12 +109,12 @@ use bitcoin::address::NetworkUnchecked;
 /// The minimum protocol version supported by the client.
 ///
 /// For info on protocol versions, see [server_rpc](crate) module documentation.
-pub const MIN_PROTOCOL_VERSION: u64 = crate::pver::PROTOCOL_VERSION_BASE;
+pub const MIN_PROTOCOL_VERSION: u64 = pver::PROTOCOL_VERSION_BASE;
 
 /// The maximum protocol version supported by the client.
 ///
 /// For info on protocol versions, see [server_rpc](crate) module documentation.
-pub const MAX_PROTOCOL_VERSION: u64 = crate::pver::PROTOCOL_VERSION_OFFBOARD_FIX;
+pub const MAX_PROTOCOL_VERSION: u64 = pver::PROTOCOL_VERSION_LN_RECEIVE_CHECKPOINT;
 
 /// The string used in the gRPC HTTP header for the protocol version.
 pub const PROTOCOL_VERSION_HEADER: &str = "pver";
