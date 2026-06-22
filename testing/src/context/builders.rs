@@ -472,14 +472,15 @@ impl<'a> BarkSdkBuilder<'a> {
 			SqliteClient::open(datadir.join("db.sqlite")).context("opening sqlite db")?,
 		);
 
-		let mut onchain = OnchainWallet::load_or_create(
+		let onchain = Arc::new(tokio::sync::RwLock::new(OnchainWallet::load_or_create(
 			network, mnemonic.to_seed(""), db.clone(),
-		).await.context("creating onchain wallet")?;
+		).await.context("creating onchain wallet")?));
 
 		let seed = WalletSeed::new_from_mnemonic(network, &mnemonic);
 		let wallet = bark::Wallet::open(network, seed, cfg, OpenWalletArgs {
 			persister: Some(db),
 			create_if_not_exists: true,
+			onchain: Some(onchain.clone()),
 			..Default::default()
 		}).await.context("creating bark wallet")?;
 
@@ -491,6 +492,7 @@ impl<'a> BarkSdkBuilder<'a> {
 			}
 		});
 		if let Some(amount) = fund_amount {
+			let mut onchain = onchain.write().await;
 			let address = onchain.address().await.context("onchain address")?;
 			self.ctx.bitcoind().fund_addr(address, amount).await;
 			self.ctx.bitcoind().generate(1).await;
