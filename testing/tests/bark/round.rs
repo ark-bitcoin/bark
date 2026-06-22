@@ -368,6 +368,104 @@ async fn delegated_refresh_must_not_leave_server_trace_on_failure() {
 	}
 }
 
+#[tokio::test]
+async fn delegated_refresh_dropped_when_input_spent_before_round() {
+	require_bark_version!(> "0.2.5");
+
+	let ctx = TestContext::new("bark/delegated_refresh_dropped_when_input_spent_before_round").await;
+	let srv = ctx.captaind("server").funded(btc(10)).create().await;
+	let sender = ctx.bark("sender", &srv).funded(sat(1_000_000)).create().await;
+	let receiver = ctx.bark("receiver", &srv).create().await;
+
+	sender.board_and_confirm_and_register(&ctx, sat(800_000)).await;
+
+	// Submit a delegated refresh: the participation now sits pending on the
+	// server and (with the new behaviour) the input VTXO is left unlocked.
+	sender.refresh_all_delegated_no_sync().await;
+
+	// Without syncing, spend that same VTXO via an OOR send. The server marks the
+	// input spent and must drop the pending delegated participation in the same
+	// breath.
+	sender.send_oor_nosync(receiver.address().await, sat(300_000)).await;
+
+	// The OOR send was honoured: the receiver actually got paid.
+	assert_eq!(receiver.spendable_balance().await, sat(300_000));
+
+	// Trigger a round. With the participation dropped, the server has nothing to
+	// forfeit and the round sits out with no payments — rather than forfeiting a
+	// VTXO the sender already spent.
+	let mut log_no_payments = srv.subscribe_log::<NoRoundPayments>();
+	srv.trigger_round().await;
+	log_no_payments.recv().wait(secs(30)).await
+		.expect("round must sit out: the spent input's delegated participation should be dropped");
+}
+
+#[tokio::test]
+async fn delegated_refresh_then_unsynced_spend_is_rejected() {
+	require_bark_version!(> "0.2.5");
+
+	let ctx = TestContext::new("bark/delegated_refresh_then_unsynced_spend_is_rejected").await;
+	let srv = ctx.captaind("server").funded(btc(10)).create().await;
+	let sender = ctx.bark("sender", &srv).funded(sat(1_000_000)).create().await;
+	let receiver = ctx.bark("receiver", &srv).create().await;
+
+	sender.board_and_confirm_and_register(&ctx, sat(800_000)).await;
+
+	// Ask the server to refresh our VTXO on our behalf. In delegated mode the
+	// participation (with our attestation) is submitted to the server and the
+	// input VTXO is left unlocked locally.
+	sender.refresh_all_delegated_no_sync().await;
+
+	// The server completes the delegated refresh in a round, forfeiting the input.
+	let mut log_round_finished = srv.subscribe_log::<RoundFinished>();
+	srv.trigger_round().await;
+	let finished = log_round_finished.recv().wait(secs(30)).await
+		.expect("server should complete the delegated refresh in a round");
+	assert!(finished.nb_input_vtxos >= 1, "the delegated refresh should forfeit our input VTXO");
+
+	// The wallet never synced, so it still thinks the old VTXO is spendable.
+	// Spending it must be rejected by the server.
+	let res = sender.try_send_oor(receiver.address().await, sat(300_000), false).await;
+	assert!(res.is_err(),
+		"spending a VTXO the server already forfeited in a delegated refresh must fail, \
+			but the send succeeded");
+	info!("unsynced OOR send correctly rejected: {:#}", res.unwrap_err());
+}
+
+#[tokio::test]
+async fn delegated_refresh_sync_cleans_up_after_input_spent_elsewhere() {
+	require_bark_version!(> "0.2.5");
+
+	let ctx = TestContext::new("bark/delegated_refresh_sync_cleans_up_after_input_spent_elsewhere").await;
+	let srv = ctx.captaind("server").funded(btc(10)).create().await;
+	let sender = ctx.bark("sender", &srv).funded(sat(1_000_000)).create().await;
+	let receiver = ctx.bark("receiver", &srv).create().await;
+
+	sender.board_and_confirm_and_register(&ctx, sat(800_000)).await;
+
+	// Request a delegated refresh: a participation sits pending on the server and
+	// a pending delegated round state sits in the wallet; the input is unlocked.
+	sender.refresh_all_delegated_no_sync().await;
+
+	// Without syncing, spend that same input via an OOR send. The server drops
+	// the pending participation and the wallet marks the input spent locally.
+	sender.send_oor_nosync(receiver.address().await, sat(300_000)).await;
+	assert_eq!(receiver.spendable_balance().await, sat(300_000));
+
+	// Now the wallet syncs. The server reports the participation gone, so the
+	// stale delegated round state must be cleaned up.
+	sender.sync().await;
+
+	let wallet = sender.client().await;
+	let pending = wallet.pending_round_states().await.unwrap();
+	assert!(
+		pending.is_empty(),
+		"a delegated refresh whose input was spent elsewhere must be cleaned up on \
+			sync, but {} round state(s) are still pending",
+		pending.len(),
+	);
+}
+
 async fn print_pending_rounds(wallet: &bark::Wallet) -> Vec<StoredRoundState<Unlocked>> {
 	let states = wallet.pending_round_states().await.unwrap();
 	info!("Wallet has {} pending round states:", states.len());
