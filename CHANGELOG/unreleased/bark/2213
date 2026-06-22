@@ -1,0 +1,3 @@
+- fix disconnecting from Ark server every 10 minutes
+  - streaming connections now can live for one hour
+  [#2213](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2213)
