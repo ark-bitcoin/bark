@@ -70,6 +70,17 @@ pub struct LightningSend {
 	pub htlc_key: PublicKey,
 	pub htlc_expiry: BlockHeight,
 
+	/// Movement recording this payment, created up front in
+	/// [`start_lightning_send`] so re-driving `Start` reuses it rather than
+	/// creating a duplicate. `None` for checkpoints predating this field.
+	#[serde(default)]
+	pub movement_id: Option<MovementId>,
+
+	/// HTLC revocation key, pre-derived at start (like `htlc_key`) so the
+	/// failure step is idempotent. `None` for checkpoints predating this field.
+	#[serde(default)]
+	pub revocation_key: Option<PublicKey>,
+
 	// Mutable state:
 	pub progress: Progress,
 	/// Unless a developer allows it, we will not auto-exit the HTLCs if revocation fails.
@@ -320,8 +331,20 @@ pub(crate) async fn start_lightning_send(
 	).await?;
 
 	let (change_keypair, _) = wallet.derive_store_next_keypair().await?;
+	let (revocation_keypair, _) = wallet.derive_store_next_keypair().await?;
 
 	let htlc_expiry = tip + ark_info.htlc_send_expiry_delta as BlockHeight;
+
+	let movement_id = wallet.inner.movements.new_movement_with_update(
+		Subsystem::LIGHTNING_SEND,
+		LightningSendMovement::Send.to_string(),
+		MovementUpdate::new()
+			.intended_balance(-payment_amount.to_signed().context("payment amount out of range")?)
+			.fee(fee)
+			.consumed_vtxos(&inputs)
+			.sent_to([MovementDestination::new(original_payment_method.clone(), payment_amount)])
+			.metadata(LightningMovement::metadata(invoice.payment_hash(), Vec::<VtxoId>::new(), None))
+	).await.context("failed to create lightning-send movement")?;
 
 	Ok(LightningSend {
 		invoice,
@@ -331,6 +354,8 @@ pub(crate) async fn start_lightning_send(
 		fee,
 		htlc_key: change_keypair.public_key(),
 		htlc_expiry,
+		movement_id: Some(movement_id),
+		revocation_key: Some(revocation_keypair.public_key()),
 		allow_exit_of_htlcs: false,
 		progress: Progress::Start,
 	})
@@ -420,17 +445,22 @@ pub(crate) async fn request_lightning_send_htlcs(
 		warn!("failed to register lightning-send output vtxo transactions with server: {:#}", e);
 	}
 
-	let movement_id = wallet.inner.movements.new_movement_with_update(
-		Subsystem::LIGHTNING_SEND,
-		LightningSendMovement::Send.to_string(),
-		MovementUpdate::new()
-			.intended_balance(-send.payment_amount.to_signed().context("payment amount out of range")?)
-			.effective_balance(-effective_balance.to_signed().context("effective balance out of range")?)
-			.fee(send.fee)
-			.consumed_vtxos(&full_inputs)
-			.sent_to([MovementDestination::new(send.original_payment_method.clone(), send.payment_amount)])
-			.metadata(LightningMovement::metadata(send.invoice.payment_hash(), &htlc_vtxos, None))
-	).await.context("failed to create movement")?;
+	// The movement was created up front in `start_lightning_send` and its id
+	// carried on the action, so re-driving `Start` updates that same movement
+	// rather than creating a duplicate. Legacy checkpoints predating the field
+	// have `None`; create one on demand to preserve the old behaviour.
+	let movement_id = match send.movement_id {
+		Some(id) => id,
+		None => wallet.inner.movements.new_movement_with_update(
+			Subsystem::LIGHTNING_SEND,
+			LightningSendMovement::Send.to_string(),
+			MovementUpdate::new()
+				.intended_balance(-send.payment_amount.to_signed().context("payment amount out of range")?)
+				.fee(send.fee)
+				.consumed_vtxos(&full_inputs)
+				.sent_to([MovementDestination::new(send.original_payment_method.clone(), send.payment_amount)])
+		).await.context("failed to create lightning-send movement")?,
+	};
 	wallet.store_locked_vtxos(
 		&htlc_vtxos,
 		Some(VtxoLockHolder::Movement { id: movement_id })
@@ -440,9 +470,10 @@ pub(crate) async fn request_lightning_send_htlcs(
 	wallet.inner.movements.update_movement(
 		movement_id,
 		MovementUpdate::new()
+			.effective_balance(-effective_balance.to_signed().context("effective balance out of range")?)
 			.produced_vtxos(change_vtxos)
 			.metadata(LightningMovement::metadata(send.invoice.payment_hash(), &htlc_vtxos, None))
-	).await.context("failed to update movement")?;
+	).await.context("failed to update lightning-send movement")?;
 
 	Ok(Htlcs {
 		vtxo_ids: htlc_vtxos.iter().map(|v| v.id()).collect(),
@@ -576,8 +607,13 @@ pub(crate) async fn fail_lightning_send_payment(
 	send: &LightningSend,
 ) -> anyhow::Result<Revocation> {
 	info!("Lightning payment {} failed, preparing to revoke", send.invoice.payment_hash());
-	let (revocation_keypair, _) = wallet.derive_store_next_keypair().await?;
-	Ok(Revocation { key: revocation_keypair.public_key() })
+	// Use the key pre-derived at start so re-driving is idempotent; older
+	// checkpoints without it (`None`) derive on demand.
+	let key = match send.revocation_key {
+		Some(key) => key,
+		None => wallet.derive_store_next_keypair().await?.0.public_key(),
+	};
+	Ok(Revocation { key })
 }
 
 /// Cosign the revocation with the server, mark the HTLC vtxos spent

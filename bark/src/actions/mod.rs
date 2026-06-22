@@ -120,6 +120,43 @@ pub fn park_with_backoff<A: WalletAction>(state: A, attempts: u32) -> Advance<A>
 	Advance::Park { state, wake_after: Some(delay), error: None }
 }
 
+/// Whether to double-drive each action step to check reentrancy, set via the
+/// `BARK_DOUBLE_DRIVE_ACTIONS` env var. Debug-only, compiled out of release.
+/// See `just int-bark-sdk-action-reentrancy`.
+#[cfg(debug_assertions)]
+fn double_drive_actions() -> bool {
+	std::env::var_os("BARK_DOUBLE_DRIVE_ACTIONS").is_some()
+}
+
+/// Assert advancing the same state twice produced an equivalent outcome (same
+/// [`Advance`] kind, same checkpoint for non-terminal kinds); a divergence is a
+/// non-idempotency bug and panics, naming the offending step. Two errors count
+/// as equivalent: [`AdvanceError`] isn't comparable.
+#[cfg(debug_assertions)]
+fn assert_reentrant<A>(
+	first: &Result<Advance<A>, AdvanceError>,
+	second: &Result<Advance<A>, AdvanceError>,
+) where
+	A: Into<WalletActionCheckpoint> + Clone,
+{
+	fn describe<A: Into<WalletActionCheckpoint> + Clone>(
+		result: &Result<Advance<A>, AdvanceError>,
+	) -> (&'static str, Option<WalletActionCheckpoint>) {
+		match result {
+			Ok(Advance::Next(state)) => ("Next", Some(state.clone().into())),
+			Ok(Advance::Park { state, .. }) => ("Park", Some(state.clone().into())),
+			Ok(Advance::Done) => ("Done", None),
+			Ok(Advance::Failed(_)) => ("Failed", None),
+			Err(_) => ("Err", None),
+		}
+	}
+
+	assert_eq!(
+		describe(first), describe(second),
+		"wallet action is not reentrant: advancing the same state twice diverged",
+	);
+}
+
 /// A wallet action that can be driven step-by-step.
 ///
 /// Implementors define the per-kind state machine; the executor owns the
@@ -243,6 +280,31 @@ impl Wallet {
 		self.run_action_loop(action, mode).await
 	}
 
+	/// Run one `advance` step.
+	///
+	/// In debug builds with `BARK_DOUBLE_DRIVE_ACTIONS` set (see
+	/// [`double_drive_actions`]) the step runs twice from the same state and
+	/// [`assert_reentrant`] checks both reach an equivalent checkpoint,
+	/// exercising `advance`'s idempotency contract. Keep the second run; its
+	/// side effects are the ones the persisted state references.
+	async fn advance_step<A>(&self, action: A) -> Result<Advance<A>, AdvanceError>
+	where
+		A: WalletAction + Into<WalletActionCheckpoint> + Clone,
+	{
+		#[cfg(debug_assertions)]
+		if double_drive_actions() {
+			// Two deep `advance` runs back to back can overflow the default
+			// thread stack in debug; the runner bumps `RUST_MIN_STACK`.
+			let snapshot = action.clone();
+			let first = action.advance(self).await;
+			let second = snapshot.advance(self).await;
+			assert_reentrant(&first, &second);
+			return second;
+		}
+
+		action.advance(self).await
+	}
+
 	async fn run_action_loop<A>(&self, mut action: A, mode: DriveMode) -> anyhow::Result<()>
 	where
 		A: WalletAction + Into<WalletActionCheckpoint> + Clone,
@@ -258,7 +320,7 @@ impl Wallet {
 			// copy around if budget exhausts.
 			let snapshot = action.clone();
 
-			let advance = match action.advance(self).await {
+			let advance = match self.advance_step(action).await {
 				Ok(advance) => { advance },
 				Err(e) if e.is_server_rejection() => {
 					warn!("action {} got rejected by server: {:#}", id, e);
