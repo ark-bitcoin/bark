@@ -89,7 +89,12 @@ pub trait ProtocolEncoding: Sized {
 
 	/// Deserialize object from the given byte slice.
 	fn deserialize(mut byte_slice: &[u8]) -> Result<Self, ProtocolDecodingError> {
-		Self::decode(&mut byte_slice)
+		let ret = Self::decode(&mut byte_slice)?;
+		if byte_slice.is_empty() {
+			Ok(ret)
+		} else {
+			Err(ProtocolDecodingError::invalid("trailing bytes"))
+		}
 	}
 
 	/// Serialize the object to a lowercase hex string.
@@ -106,7 +111,12 @@ pub trait ProtocolEncoding: Sized {
 		let mut iter = hex_conservative::HexToBytesIter::new(hex_str).map_err(|e| {
 			ProtocolDecodingError::Io(io::Error::new(io::ErrorKind::InvalidData, e))
 		})?;
-		Self::decode(&mut iter)
+		let ret = Self::decode(&mut iter)?;
+		if iter.next().is_none() {
+			Ok(ret)
+		} else {
+			Err(ProtocolDecodingError::invalid("trailing bytes"))
+		}
 	}
 }
 
@@ -705,7 +715,10 @@ mod test {
 	use bitcoin::hex::DisplayHex;
 	use bitcoin::secp256k1::{self, Keypair};
 
-	use crate::SECP;
+	use crate::{Vtxo, SECP};
+	use crate::test_util::VTXO_VECTORS;
+	use crate::vtxo::Full;
+
 	use super::*;
 
 
@@ -733,7 +746,6 @@ mod test {
 				&ProtocolEncoding::serialize(&Option::<PublicKey>::None),
 			).unwrap(),
 		);
-
 	}
 
 	#[test]
@@ -753,5 +765,24 @@ mod test {
 		let none = Wrap { pk: None };
 		let json = serde_json::to_string(&none).unwrap();
 		assert_eq!(none, serde_json::from_str(&json).unwrap());
+	}
+
+	#[test]
+	fn reject_trailing_bytes() {
+		let vtxo = &VTXO_VECTORS.board_vtxo;
+
+		let encoded = vtxo.serialize();
+		assert!(<Vtxo<Full> as ProtocolEncoding>::deserialize(&encoded).is_ok());
+
+		let with_trailing = encoded.iter().copied().chain([1u8]).collect::<Vec<_>>();
+		let err = <Vtxo<Full> as ProtocolEncoding>::deserialize(&with_trailing).unwrap_err();
+		assert!(matches!(err, ProtocolDecodingError::Invalid { message, .. } if message == "trailing bytes"));
+
+		let hex = vtxo.serialize_hex();
+		assert!(<Vtxo<Full> as ProtocolEncoding>::deserialize_hex(&hex).is_ok());
+
+		let hex_with_trailing = format!("{}01", hex);
+		let err = <Vtxo<Full> as ProtocolEncoding>::deserialize_hex(&hex_with_trailing).unwrap_err();
+		assert!(matches!(err, ProtocolDecodingError::Invalid { message, .. } if message == "trailing bytes"));
 	}
 }
