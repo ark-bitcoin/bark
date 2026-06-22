@@ -36,6 +36,21 @@ const LIGHTNING_PREPARE_CLAIM_DELTA: BlockDelta = 2;
 const CLAIM_RETRY_BACKOFF_INITIAL: Duration = Duration::from_secs(2);
 const CLAIM_RETRY_BACKOFF_MAX: Duration = Duration::from_secs(30);
 
+fn validate_bolt11_payment_hash(
+	invoice: &Bolt11Invoice,
+	expected_payment_hash: PaymentHash,
+) -> anyhow::Result<()> {
+	let invoice_payment_hash = PaymentHash::from(invoice);
+	ensure!(
+		invoice_payment_hash == expected_payment_hash,
+		"Ark server returned invoice with payment hash {}, expected {}",
+		invoice_payment_hash,
+		expected_payment_hash,
+	);
+
+	Ok(())
+}
+
 impl Wallet {
 	/// Fetches all pending lightning receives ordered from newest to oldest.
 	pub async fn pending_lightning_receives(&self) -> anyhow::Result<Vec<LightningReceive>> {
@@ -115,6 +130,7 @@ impl Wallet {
 
 		let invoice = Bolt11Invoice::from_str(&resp.bolt11)
 			.context("invalid bolt11 invoice returned by Ark server")?;
+		validate_bolt11_payment_hash(&invoice, payment_hash)?;
 
 		self.inner.db.store_lightning_receive(
 			payment_hash,
@@ -759,5 +775,38 @@ impl Wallet {
 		}
 
 		Ok(claimed)
+	}
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	const TEST_INVOICE_STR: &str = "lntbs100u1p5j0x82sp5d0rwfh7tgrrlwsegy9rx3tzpt36cqwjqza5x4wvcjxjzscfaf6jspp5d8q7354dg3p8h0kywhqq5dq984r8f5en98hf9ln85ug0w8fx6hhsdqqcqzpc9qyysgqyk54v7tpzprxll7e0jyvtxcpgwttzk84wqsfjsqvcdtq47zt2wssxsmtjhz8dka62mdnf9jafhu3l4cpyfnsx449v4wstrwzzql2w5qqs8uh7p";
+
+	fn test_bolt11() -> Bolt11Invoice {
+		Bolt11Invoice::from_str(TEST_INVOICE_STR).expect("valid test invoice")
+	}
+
+	#[test]
+	fn validate_bolt11_payment_hash_accepts_matching_hash() {
+		let invoice = test_bolt11();
+		let payment_hash = PaymentHash::from(&invoice);
+
+		validate_bolt11_payment_hash(&invoice, payment_hash).unwrap();
+	}
+
+	#[test]
+	fn validate_bolt11_payment_hash_rejects_mismatched_hash() {
+		let invoice = test_bolt11();
+		let mismatched_payment_hash = PaymentHash::from_slice(&[0xabu8; 32]).unwrap();
+
+		let err = validate_bolt11_payment_hash(&invoice, mismatched_payment_hash)
+			.expect_err("mismatched payment hash should fail");
+
+		assert!(
+			err.to_string().contains("returned invoice with payment hash"),
+			"{err:?}",
+		);
 	}
 }
