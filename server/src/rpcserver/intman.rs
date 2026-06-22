@@ -6,7 +6,7 @@ use tonic_tracing_opentelemetry::middleware::server::OtelGrpcLayer;
 use tracing::{error, info};
 use server_rpc::protos;
 
-use crate::rpcserver::ToStatusResult;
+use crate::rpcserver::{StatusContext, ToStatusResult};
 use crate::Server;
 
 #[async_trait]
@@ -25,7 +25,7 @@ impl server_rpc::server::IntegrationService for Server {
 				None
 			};
 		let req = req.into_inner();
-		let api_key = uuid::Uuid::try_from(req.api_key.clone()).expect("Invalid API key");
+		let api_key = uuid::Uuid::try_from(req.api_key.clone()).badarg("invalid API key")?;
 
 		let tokens = self.get_integration_tokens(
 			client_address, api_key, req.r#type().into(), req.count,
@@ -64,7 +64,7 @@ impl server_rpc::server::IntegrationService for Server {
 				None
 			};
 		let req = req.into_inner();
-		let api_key = uuid::Uuid::try_from(req.api_key).unwrap();
+		let api_key = uuid::Uuid::try_from(req.api_key).badarg("invalid API key")?;
 
 		let (_, _, token) = self.get_integration_token(client_address, api_key, req.token.as_str())
 			.await.to_status()?;
@@ -102,7 +102,7 @@ impl server_rpc::server::IntegrationService for Server {
 				None
 			};
 		let req = req.into_inner();
-		let api_key = uuid::Uuid::try_from(req.api_key.clone()).unwrap();
+		let api_key = uuid::Uuid::try_from(req.api_key.clone()).badarg("invalid API key")?;
 
 		let token = self.update_integration_token(
 			client_address,
