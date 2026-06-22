@@ -103,8 +103,17 @@ impl<'a> ProgressContext<'a> {
 			}
 		}
 		if txids.is_empty() {
-			debug!("All inputs are confirmed for exit tx {}", exit.txid);
-			Ok(ExitTxStatus::AwaitingCpfpBroadcast)
+			// We should now get the status of the current exit tx and go from there.
+			match self.get_exit_tx_status(exit).await {
+				Ok(status) => {
+					debug!("All inputs are confirmed for exit tx {}, new status: {}", exit.txid, status);
+					Ok(status)
+				}
+				Err(e) => {
+					debug!("All inputs are confirmed for exit tx {} but unable to get status: {:#}", exit.txid, e);
+					Ok(ExitTxStatus::AwaitingCpfpBroadcast)
+				}
+			}
 		} else {
 			debug!("Exit tx {} has {} unconfirmed inputs: {:?}", exit.txid, txids.len(), txids);
 			Ok(ExitTxStatus::AwaitingInputConfirmation { txids })
