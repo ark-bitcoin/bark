@@ -1,0 +1,8 @@
+- Protect Lightning-received VTXOs from being force-exited
+  When claiming a Lightning receive, bark now builds the claim arkoor with a
+  checkpoint. The checkpoint gives the server's watchman a stopping point: if
+  the parent VTXO is ever dragged on-chain, the watchman broadcasts the
+  checkpoint instead of progressing all the way to your claimed VTXO and
+  exiting it against your will. Previously such a force-exit left the VTXO
+  unspendable off-chain while the server rejected any refresh of it.
+  [#2214](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2214)
