@@ -449,6 +449,8 @@ pub(crate) async fn request_lightning_send_htlcs(
 	// carried on the action, so re-driving `Start` updates that same movement
 	// rather than creating a duplicate. Legacy checkpoints predating the field
 	// have `None`; create one on demand to preserve the old behaviour.
+	// TODO: remove this `None` fallback (and make `movement_id` non-optional)
+	// after v0.2.6 ships, once no pre-v0.2.6 checkpoints can remain in flight.
 	let movement_id = match send.movement_id {
 		Some(id) => id,
 		None => wallet.inner.movements.new_movement_with_update(
@@ -609,6 +611,8 @@ pub(crate) async fn fail_lightning_send_payment(
 	info!("Lightning payment {} failed, preparing to revoke", send.invoice.payment_hash());
 	// Use the key pre-derived at start so re-driving is idempotent; older
 	// checkpoints without it (`None`) derive on demand.
+	// TODO: remove this `None` fallback (and make `revocation_key` non-optional)
+	// after v0.2.6 ships, once no pre-v0.2.6 checkpoints can remain in flight.
 	let key = match send.revocation_key {
 		Some(key) => key,
 		None => wallet.derive_store_next_keypair().await?.0.public_key(),
