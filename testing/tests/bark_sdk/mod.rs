@@ -9,4 +9,5 @@
 //! that mode would silently test the current code under a "compat" label.
 
 mod lightning;
+mod round;
 mod vtxo_lock;

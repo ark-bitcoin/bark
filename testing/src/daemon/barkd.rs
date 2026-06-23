@@ -25,7 +25,7 @@ use bark_json::web::{
 use bark_rest::auth::AuthToken;
 use bark_rest_client::apis::configuration::Configuration;
 use bark_rest_client::apis::{
-	bitcoin_api, boards_api, default_api, exits_api, fees_api, lightning_api,
+	bitcoin_api, boards_api, default_api, exits_api, fees_api, history_api, lightning_api,
 	onchain_api, wallet_api,
 };
 use bark_rest_client::models::{
@@ -368,6 +368,13 @@ impl Barkd {
 		let config = self.client_config();
 		wallet_api::pending_rounds(&config).await
 			.expect("failed to get barkd pending rounds")
+	}
+
+	/// List wallet movements (history), newest first.
+	pub async fn history(&self) -> Vec<bark_json::movements::Movement> {
+		let config = self.client_config();
+		history_api::list(&config).await
+			.expect("failed to get barkd movements")
 	}
 
 	/// Start emergency exit for all VTXOs.
