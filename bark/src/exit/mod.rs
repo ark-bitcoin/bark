@@ -655,7 +655,7 @@ impl Exit {
 			for tx in &s.transactions {
 				let rbf_requirement = match &tx.status {
 					ExitTxStatus::AwaitingCpfpBroadcast => None,
-					ExitTxStatus::AwaitingConfirmation { origin: ExitTxOrigin::Mempool, .. } => {
+					ExitTxStatus::AwaitingConfirmation {..} => {
 						// Read mempool RBF info from the transaction manager; fee info is
 						// tracked on the child independently of its origin. If we don't have
 						// it yet (e.g. ancestor info call hasn't run), skip this round — the
