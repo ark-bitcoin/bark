@@ -7,7 +7,7 @@ mod middleware;
 mod convert;
 mod macros;
 
-use std::fmt;
+use std::fmt::{self, Write};
 use std::sync::atomic::{self, AtomicBool};
 
 use tokio::sync::oneshot;
@@ -15,7 +15,7 @@ use tracing::trace;
 
 use server_rpc::{pver, RequestExt};
 
-use crate::error::{BadArgument, NotFound};
+use crate::error::{BadArgument, NotFound, UnusableInputs};
 
 
 /// The minimum protocol version supported by the server.
@@ -53,6 +53,23 @@ impl ToStatus for anyhow::Error {
 			let ids = nf.identifiers().join(",").parse().expect("non-ascii identifier");
 			metadata.insert("identifiers", ids);
 			tonic::Status::with_metadata(tonic::Code::NotFound, format!("{:#}", self), metadata)
+		} else if let Some(ui) = self.downcast_ref::<UnusableInputs>() {
+			// Like a bad argument, but we attach the offending VTXO ids so the
+			// client can drop exactly those inputs and retry without them.
+			let ids = {
+				let ids = ui.identifiers();
+				let mut buf = String::with_capacity(ids.len() * 65);
+				for (i, id) in ids.iter().enumerate() {
+					if i > 0 {
+						buf.push_str(",");
+					}
+					write!(&mut buf, "{}", id).unwrap();
+				}
+				buf.parse().expect("non-ascii identifier")
+			};
+			let mut metadata = tonic::metadata::MetadataMap::new();
+			metadata.insert("identifiers", ids);
+			tonic::Status::with_metadata(tonic::Code::InvalidArgument, format!("{:#}", self), metadata)
 		} else if let Some(_) = self.downcast_ref::<BadArgument>() {
 			tonic::Status::invalid_argument(format!("{:#}", self))
 		} else {
