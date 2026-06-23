@@ -97,6 +97,7 @@ pub mod mailbox {
 
 use std::borrow::BorrowMut;
 use std::str::FromStr;
+use std::time::Duration;
 
 use bitcoin::{Address, Amount, OutPoint};
 use bitcoin::address::NetworkUnchecked;
@@ -148,6 +149,16 @@ pub trait RequestExt<T>: BorrowMut<tonic::Request<T>> {
 	/// Set the protocol version header.
 	fn set_pver(&mut self, pver: u64) {
 		self.borrow_mut().metadata_mut().insert(PROTOCOL_VERSION_HEADER, pver.into());
+	}
+
+	/// Sets a request timeout only if no timeout has already been set
+	fn set_default_timeout(&mut self, timeout: Duration) {
+		const GRPC_TIMEOUT_HEADER: &str = "grpc-timeout";
+
+		let slf = self.borrow_mut();
+		if slf.metadata().get(GRPC_TIMEOUT_HEADER).is_none () {
+			slf.set_timeout(timeout);
+		}
 	}
 }
 impl<T> RequestExt<T> for tonic::Request<T> {}

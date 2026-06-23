@@ -30,6 +30,7 @@ use std::cmp;
 use std::convert::TryFrom;
 use std::ops::Deref;
 use std::sync::Arc;
+use std::time::Duration;
 
 use bitcoin::{FeeRate, Network};
 use log::warn;
@@ -68,6 +69,9 @@ pub const USER_AGENT_HEADER: &str = "x-user-agent";
 /// Error text used when no Ark RPC transport backend was compiled into the binary.
 pub const NO_TRANSPORT_BACKEND_MESSAGE: &str =
 	"no Ark RPC transport backend compiled in this build; enable `bark-server-rpc/tonic-native` or `bark-server-rpc/tonic-web`";
+
+/// Default timeout to add on requests to the server
+pub const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 
 
 #[cfg(feature = "tonic-native")]
@@ -131,10 +135,11 @@ mod transport {
 
 		#[cfg_attr(not(any(feature = "tls-native-roots", feature = "tls-webpki-roots")), allow(unused_mut))]
 		let mut endpoint = Channel::builder(uri.clone())
+			// nb how often we check if server is still there
 			.http2_keep_alive_interval(Duration::from_secs(20))
-			.keep_alive_timeout(Duration::from_secs(600))
-			.keep_alive_while_idle(true)
-			.timeout(Duration::from_secs(600));
+			// nb time we allow server to respond to ping before we consider dead
+			.keep_alive_timeout(Duration::from_secs(60)) // 1 min
+			.keep_alive_while_idle(true);
 
 		#[cfg(any(feature = "tls-native-roots", feature = "tls-webpki-roots"))]
 		if scheme == "https" {
@@ -285,6 +290,7 @@ impl tonic::service::Interceptor for ProtocolVersionInterceptor {
 /// A gRPC interceptor that attaches ark-specific headers to each request
 ///
 /// - pver: the negotiated protocol version
+/// - if no timeout is set yet, it sets [DEFAULT_REQUEST_TIMEOUT]
 /// - access_token: the access token to use for private servers
 /// - user_agent: client identifier sent on every RPC so the server can
 ///   attribute traffic per implementation (see [USER_AGENT_HEADER]).
@@ -297,6 +303,7 @@ pub struct ArkServiceInterceptor {
 
 impl tonic::service::Interceptor for ArkServiceInterceptor {
 	fn call(&mut self, mut req: tonic::Request<()>) -> Result<tonic::Request<()>, tonic::Status> {
+		req.set_default_timeout(DEFAULT_REQUEST_TIMEOUT);
 		if let Some(pver) = self.pver {
 			req.set_pver(pver);
 		}

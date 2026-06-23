@@ -34,7 +34,7 @@ use bitcoin_ext::TxStatus;
 use server_rpc::{protos, ServerConnection, TryFromBytes};
 
 use crate::movement::manager::OnDropStatus;
-use crate::{SECP, Wallet, WalletVtxo};
+use crate::{Wallet, WalletVtxo, SECP, SUBSCRIBE_REQUEST_TIMEOUT};
 use crate::movement::{MovementId, MovementStatus};
 use crate::movement::update::MovementUpdate;
 use crate::persist::models::{RoundStateId, StoredRoundState, Unlocked};
@@ -1738,7 +1738,9 @@ impl Wallet {
 		-> anyhow::Result<impl Stream<Item = anyhow::Result<RoundEvent>> + Unpin>
 	{
 		let (mut srv, _) = self.require_server().await?;
-		let events = srv.client.subscribe_rounds(protos::Empty {}).await?
+		let mut req = tonic::IntoRequest::into_request(protos::Empty {});
+		req.set_timeout(SUBSCRIBE_REQUEST_TIMEOUT);
+		let events = srv.client.subscribe_rounds(req).await?
 			.into_inner().map(|m| {
 				let m = m.context("received error on event stream")?;
 				let e = RoundEvent::try_from(m.clone())

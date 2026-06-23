@@ -397,6 +397,9 @@ const RECOVERY_MAILBOX_KEY_INDEX: u32 = 2;
 const MISSING_SERVER_TRANSPORT_HELP: &str =
 	"This build of bark-wallet does not include an Ark server transport backend. Enable feature `bark-wallet/native` or `bark-wallet/wasm-web` to use server-backed wallet functionality.";
 
+/// The timeout value to use for streaming subscribe requests to the Ark server
+const SUBSCRIBE_REQUEST_TIMEOUT: Duration = Duration::from_secs(60 * 60);
+
 lazy_static::lazy_static! {
 	/// Global secp context.
 	static ref SECP: secp256k1::Secp256k1<secp256k1::All> = secp256k1::Secp256k1::new();

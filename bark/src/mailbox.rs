@@ -25,7 +25,7 @@ use ark::vtxo::Full;
 use server_rpc::protos;
 use server_rpc::protos::mailbox_server::MailboxMessage;
 
-use crate::Wallet;
+use crate::{Wallet, SUBSCRIBE_REQUEST_TIMEOUT};
 use crate::actions::DriveMode;
 use crate::actions::lightning::pay::Progress;
 use crate::movement::{MovementDestination, MovementStatus};
@@ -131,11 +131,12 @@ impl Wallet {
 		let auth = self.mailbox_authorization(expiry);
 		let mailbox_id = auth.mailbox();
 
-		let req = protos::mailbox_server::MailboxRequest {
+		let mut req = tonic::IntoRequest::into_request(protos::mailbox_server::MailboxRequest {
 			mailbox_id: mailbox_id.serialize(),
 			authorization: Some(auth.serialize()),
 			checkpoint: checkpoint,
-		};
+		});
+		req.set_timeout(SUBSCRIBE_REQUEST_TIMEOUT);
 
 		let stream = srv.mailbox_client.subscribe_mailbox(req).await?.into_inner().map(|m| {
 			let m = m.context("received error on mailbox message stream")?;
