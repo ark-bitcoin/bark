@@ -88,6 +88,28 @@ macro_rules! require_bark_version {
 	};
 }
 
+/// Skip the test unless it is running against the bitcoind chain source.
+///
+/// Some test helpers — notably [`Bark::full_clone`](Bark::full_clone) - only work with the
+/// bitcoind harness, since the esplora/mempool chain source leaves the per-wallet bitcoind
+/// handle unset. Use this at the top of such a test so it is skipped (not failed) under
+/// `CHAIN_SOURCE=esplora`/`mempool`.
+#[macro_export]
+macro_rules! require_bitcoind_chain_source {
+	() => {
+		{
+			let chain_source = $crate::util::get_bark_chain_source_from_env();
+			if !matches!(chain_source, $crate::util::TestContextChainSource::BitcoinCore) {
+				log::info!(
+					"skipping test: requires the bitcoind chain source, but CHAIN_SOURCE is {}",
+					chain_source.as_str(),
+				);
+				return;
+			}
+		}
+	};
+}
+
 /// Shorthand for Amount from sats
 pub fn sat<V>(sats: V) -> Amount
 where

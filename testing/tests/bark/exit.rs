@@ -19,7 +19,9 @@ use bitcoin_ext::TaprootSpendInfoExt;
 use bitcoin_ext::rpc::BitcoinRpcExt;
 use server_rpc::protos::{self, lightning_payment_status};
 
-use ark_testing::{Bark, TestContext, btc, require_bark_version, sat, signed_sat};
+use ark_testing::{
+	Bark, TestContext, btc, require_bark_version, require_bitcoind_chain_source, sat, signed_sat,
+};
 use ark_testing::constants::{BOARD_CONFIRMATIONS, ROUND_CONFIRMATIONS};
 use ark_testing::daemon::captaind::{self, ArkClient};
 use ark_testing::exit::{complete_exit, progress_exit_until_awaiting_delta};
@@ -1389,6 +1391,7 @@ async fn exited_vtxo_is_not_spendable() {
 #[tokio::test]
 async fn detect_and_claim_force_exited_vtxo() {
 	require_bark_version!(> "0.2.5");
+	require_bitcoind_chain_source!();
 
 	let ctx = TestContext::new("bark/detect_and_claim_force_exited_vtxo").await;
 	let srv = ctx.captaind("server").funded(btc(10)).create().await;
