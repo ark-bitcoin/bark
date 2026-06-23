@@ -115,6 +115,7 @@
 
 mod models;
 mod vtxo;
+mod estimate;
 pub mod bdk;
 pub(crate) mod progress;
 pub(crate) mod transaction_manager;
@@ -127,6 +128,7 @@ pub use self::models::{
 	ExitProgressStatus, ExitTransactionStatus,
 };
 pub use self::vtxo::ExitVtxo;
+pub use self::estimate::ExitFeeEstimate;
 
 use std::borrow::Borrow;
 use std::cmp;
@@ -407,7 +409,19 @@ impl Exit {
 		Ok(())
 	}
 
+	/// The default fee rate for broadcasting and CPFP-bumping unilateral exit transactions.
+	///
+	/// Exits are time-critical, so this targets fast (~1 block) confirmation.
+	pub async fn default_exit_fee_rate(&self) -> FeeRate {
+		self.inner.read().await.chain_source.fee_rates().await.fast
+	}
+
 	/// Returns the unilateral exit status for a given VTXO, live or finished, if any.
+	///
+	/// # Parameters
+	/// - vtxo_id: The ID of the VTXO to check.
+	/// - include_history: Whether to include the full state machine history of the exit
+	/// - include_transactions: Whether to include the full set of transactions related to the exit.
 	pub async fn get_exit_status(
 		&self,
 		vtxo_id: VtxoId,

@@ -130,6 +130,15 @@ pub enum ExitError {
 	#[error("VTXO Not Spendable Error: Attempted to claim a VTXO which is not in a spendable state: {vtxo}")]
 	VtxoNotClaimable { vtxo: VtxoId },
 
+	#[error("Unknown VTXO: {vtxo} is not known to this wallet")]
+	UnknownVtxo { vtxo: VtxoId },
+
+	#[error("VTXO Already Exited: {vtxo} has already completed its unilateral exit")]
+	VtxoAlreadyExited { vtxo: VtxoId },
+
+	#[error("VTXO Already Spent: {vtxo} has already been spent and can no longer be exited")]
+	VtxoAlreadySpent { vtxo: VtxoId },
+
 	#[error("VTXO ScriptPubKey Invalid: {error}")]
 	VtxoScriptPubKeyInvalid { error: String },
 }
