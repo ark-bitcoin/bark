@@ -46,6 +46,9 @@ pub enum ExitCommand {
 		#[arg(long)]
 		all: bool,
 	},
+	/// Estimate the on-chain fees to unilaterally (emergency) exit a set of VTXOs
+	#[command()]
+	EstimateFee(EstimateFeeOpts),
 }
 
 #[derive(clap::Args)]
@@ -103,6 +106,29 @@ pub struct StartExitOpts{
 }
 
 #[derive(clap::Args)]
+pub struct EstimateFeeOpts {
+	/// The ID of a VTXO to estimate the exit for, can be specified multiple times.
+	#[arg(long = "vtxo", value_name = "VTXO_ID")]
+	vtxos: Vec<VtxoId>,
+	/// Estimate exiting all VTXOs, either this or --vtxo must be specified
+	#[arg(long)]
+	all: bool,
+	/// Sets the desired fee-rate in sats/kvB to price the estimate. Defaults to the
+	/// fast rate for broadcast and the regular rate for claim.
+	///
+	/// Example for 1 sat/vB: --fee-rate 1000
+	#[arg(long)]
+	fee_rate: Option<u64>,
+	/// The claim destination address. Only affects the claim-fee weight; a placeholder is used
+	/// when omitted.
+	#[arg(long)]
+	destination: Option<Address<address::NetworkUnchecked>>,
+	/// Skip syncing wallet
+	#[arg(long)]
+	no_sync: bool,
+}
+
+#[derive(clap::Args)]
 pub struct ProgressExitOpts {
 	/// Wait until the exit is completed
 	/// This might take several hours or days.
@@ -139,6 +165,9 @@ pub async fn execute_exit_command(
 		},
 		ExitCommand::Claim { destination, no_sync, vtxos, all } => {
 			claim_exits(destination, no_sync, vtxos, all, wallet).await
+		},
+		ExitCommand::EstimateFee(opts) => {
+			estimate_exit_fee(opts, wallet).await
 		},
 	}
 }
@@ -349,5 +378,40 @@ pub async fn claim_exits(
 			g.register_tx(&tx).await.context("failed to register claim tx in onchain wallet")?;
 		}
 	}
+	Ok(())
+}
+
+pub async fn estimate_exit_fee(
+	opts: EstimateFeeOpts,
+	wallet: &mut Wallet,
+) -> anyhow::Result<()> {
+	if !opts.no_sync {
+		info!("Syncing wallet...");
+		wallet.sync().await;
+		wallet.sync_onchain().await?;
+	}
+
+	let vtxos = match (opts.vtxos.is_empty(), opts.all) {
+		(false, false) => opts.vtxos,
+		(true, true) => wallet.spendable_vtxos().await?
+			.into_iter().map(|v| v.vtxo.id()).collect(),
+		(true, false) => bail!("Either --vtxo or --all must be specified"),
+		(false, true) => bail!("Cannot specify both --vtxo and --all"),
+	};
+
+	let fee_rate = opts.fee_rate.map(FeeRate::from_sat_per_kvb_ceil);
+
+	let destination = match opts.destination {
+		Some(a) => {
+			let network = wallet.network().await?;
+			Some(a.require_network(network).with_context(|| {
+				format!("address is not valid for configured network {}", network)
+			})?)
+		},
+		None => None,
+	};
+
+	let estimate = wallet.estimate_emergency_exit_fee(&vtxos, fee_rate, destination).await?;
+	output_json(&bark_json::web::EmergencyExitFeeEstimateResponse::from(estimate));
 	Ok(())
 }
