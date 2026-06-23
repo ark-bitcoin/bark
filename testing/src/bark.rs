@@ -877,6 +877,14 @@ impl Bark {
 		self.run(["exit", "start", "--all"]).await;
 	}
 
+	pub async fn estimate_exit_fee_all(&self) -> json::web::EmergencyExitFeeEstimateResponse {
+		self.run_json(["exit", "estimate-fee", "--all"]).await
+	}
+
+	pub async fn estimate_exit_fee_vtxo(&self, vtxo: impl fmt::Display) -> json::web::EmergencyExitFeeEstimateResponse {
+		self.run_json(["exit", "estimate-fee", "--vtxo", &vtxo.to_string()]).await
+	}
+
 	pub async fn start_exit_vtxos<I, T>(&self, vtxos: I)
 	where
 		I: IntoIterator<Item = T>,
