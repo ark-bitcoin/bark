@@ -15,6 +15,15 @@ use crate::{apis::ResponseContent, models};
 use super::{Error, configuration, ContentType};
 
 
+/// struct for typed errors of method [`emergency_exit_fee`]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum EmergencyExitFeeError {
+    Status400(models::BadRequestError),
+    Status500(models::InternalServerError),
+    UnknownValue(serde_json::Value),
+}
+
 /// struct for typed errors of method [`exit_cancel`]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
@@ -118,6 +127,57 @@ pub enum GetLiveExitStatusError {
     UnknownValue(serde_json::Value),
 }
 
+
+/// Estimates the on-chain cost of unilaterally (emergency) exiting a set of VTXOs without server cooperation. The breakdown separates the broadcast cost—CPFP-bumping every not-yet-confirmed transaction in each VTXO's exit tree, paid now from confirmed on-chain funds—from the claim cost of the single batched transaction that later drains the matured outputs. The estimate reflects current chain state, so exit transactions already confirmed cost nothing. `fundable` is false when the wallet's confirmed on-chain balance can't cover the full broadcast walk, which would stall the exit midway.
+pub async fn emergency_exit_fee(configuration: &configuration::Configuration, vtxo_ids: Option<&str>, fee_rate_sat_per_vb: Option<i64>, destination: Option<&str>) -> Result<models::EmergencyExitFeeEstimateResponse, Error<EmergencyExitFeeError>> {
+    // add a prefix to parameters to efficiently prevent name collisions
+    let p_query_vtxo_ids = vtxo_ids;
+    let p_query_fee_rate_sat_per_vb = fee_rate_sat_per_vb;
+    let p_query_destination = destination;
+
+    let uri_str = format!("{}/api/v1/exits/fee", configuration.base_path);
+    let mut req_builder = configuration.client.request(reqwest::Method::GET, &uri_str);
+
+    if let Some(ref param_value) = p_query_vtxo_ids {
+        req_builder = req_builder.query(&[("vtxo_ids", &param_value.to_string())]);
+    }
+    if let Some(ref param_value) = p_query_fee_rate_sat_per_vb {
+        req_builder = req_builder.query(&[("fee_rate_sat_per_vb", &param_value.to_string())]);
+    }
+    if let Some(ref param_value) = p_query_destination {
+        req_builder = req_builder.query(&[("destination", &param_value.to_string())]);
+    }
+    if let Some(ref user_agent) = configuration.user_agent {
+        req_builder = req_builder.header(reqwest::header::USER_AGENT, user_agent.clone());
+    }
+    if let Some(ref token) = configuration.bearer_access_token {
+        req_builder = req_builder.bearer_auth(token.to_owned());
+    };
+
+    let req = req_builder.build()?;
+    let resp = configuration.client.execute(req).await?;
+
+    let status = resp.status();
+    let content_type = resp
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("application/octet-stream");
+    let content_type = super::ContentType::from(content_type);
+
+    if !status.is_client_error() && !status.is_server_error() {
+        let content = resp.text().await?;
+        match content_type {
+            ContentType::Json => serde_json::from_str(&content).map_err(Error::from),
+            ContentType::Text => return Err(Error::from(serde_json::Error::custom("Received `text/plain` content type response that cannot be converted to `models::EmergencyExitFeeEstimateResponse`"))),
+            ContentType::Unsupported(unknown_type) => return Err(Error::from(serde_json::Error::custom(format!("Received `{unknown_type}` content type response that cannot be converted to `models::EmergencyExitFeeEstimateResponse`")))),
+        }
+    } else {
+        let content = resp.text().await?;
+        let entity: Option<EmergencyExitFeeError> = serde_json::from_str(&content).ok();
+        Err(Error::ResponseError(ResponseContent { status, content, entity }))
+    }
+}
 
 /// Aborts an in-progress emergency exit while it is still safe to do so—before its final transaction has been broadcast. Exit transactions are ordered topologically and only the final one moves the VTXO on-chain, so an exit can still be canceled even after its shared ancestor transactions are in the mempool or a block. Canceling leaves the VTXO spendable, so a fresh exit can be started for it later. Before canceling, the endpoint verifies directly against the chain that the final transaction hasn't been broadcast; nothing is rebroadcast in the process. Canceling an already-canceled exit succeeds as a no-op, so retries are safe. Note the daemon auto-progresses exits at the cadence defined by `SLOW_INTERVAL`, so cancel promptly once an exit reaches a state you no longer wish to pursue.
 pub async fn exit_cancel(configuration: &configuration::Configuration, vtxo_id: &str) -> Result<models::ExitCancelResponse, Error<ExitCancelError>> {
