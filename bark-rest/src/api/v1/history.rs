@@ -1,12 +1,12 @@
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::routing::{get, post};
 use axum::{debug_handler, Json, Router};
 use anyhow::Context;
 use utoipa::OpenApi;
 
-use bark::movement::MovementId;
+use bark::movement::{MovementId, PaymentMethod};
 
-use crate::error::{self, HandlerResult};
+use crate::error::{self, badarg, ContextExt, HandlerResult};
 use crate::ServerState;
 
 #[derive(OpenApi)]
@@ -35,23 +35,45 @@ pub fn router() -> Router<ServerState> {
 	get,
 	path = "",
 	summary = "Get wallet history",
+	params(
+		("type" = Option<String>, Query, description = "Payment method type tag to \
+			filter by, e.g. `ark`, `bitcoin`, `output-script`, `invoice`, `offer`, \
+			`lightning-address`, `lnurl` or `custom`. Must be supplied together with \
+			`value`."),
+		("value" = Option<String>, Query, description = "Payment method value to filter \
+			by, e.g. the destination address or invoice. Must be supplied together with \
+			`type`."),
+	),
 	responses(
 		(status = 200, description = "Returns the wallet history", body = Vec<bark_json::movements::Movement>),
+		(status = 400, description = "Bad request", body = error::BadRequestError),
 		(status = 500, description = "Internal server error", body = error::InternalServerError)
 	),
-	description = "Returns the full history of wallet movements ordered from newest to \
+	description = "Returns the history of wallet movements ordered from newest to \
 		oldest. A movement represents any wallet operation that affects VTXOs—an arkoor \
 		send or receive, Lightning send or receive, board, offboard, or refresh. Each \
 		entry records which VTXOs were consumed and produced, the effective balance \
-		change (if any), fees paid, and the operation status.",
+		change (if any), fees paid, and the operation status. Supplying the `type` and \
+		`value` query parameters (together) restricts the result to movements involving \
+		that single payment method, such as all payments sent to one address.",
 	tag = "history"
 )]
 #[debug_handler]
 pub async fn list(
 	State(state): State<ServerState>,
+	Query(query): Query<bark_json::web::HistoryQuery>,
 ) -> HandlerResult<Json<Vec<bark_json::movements::Movement>>> {
 	let wallet = state.require_wallet()?;
-	let movements = wallet.history().await.context("Failed to get movements")?;
+	let movements = match (query.method_type, query.value) {
+		(Some(method_type), Some(value)) => {
+			let pm = PaymentMethod::from_type_value(&method_type, &value)
+				.badarg("invalid payment method")?;
+			wallet.history_by_payment_method(&pm).await
+				.context("Failed to get movements")?
+		},
+		(None, None) => wallet.history().await.context("Failed to get movements")?,
+		_ => badarg!("`type` and `value` must be supplied together"),
+	};
 
 	let json_movements = movements
 		.into_iter()

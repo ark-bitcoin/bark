@@ -371,11 +371,18 @@ impl Barkd {
 			.expect("failed to get barkd pending rounds")
 	}
 
-	/// List wallet movements (history), newest first.
-	pub async fn history(&self) -> Vec<bark_json::movements::Movement> {
+	/// Fetch the wallet movement history.
+	///
+	/// When both `payment_method_type` and `value` are provided, the result is
+	/// restricted to movements involving that payment method.
+	pub async fn history(
+		&self,
+		payment_method_type: Option<&str>,
+		value: Option<&str>,
+	) -> Vec<bark_json::movements::Movement> {
 		let config = self.client_config();
-		history_api::list(&config).await
-			.expect("failed to get barkd movements")
+		history_api::list(&config, payment_method_type, value).await
+			.expect("failed to get barkd history")
 	}
 
 	/// Start emergency exit for all VTXOs.

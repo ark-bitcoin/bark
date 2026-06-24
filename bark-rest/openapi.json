@@ -834,8 +834,28 @@
           "history"
         ],
         "summary": "Get wallet history",
-        "description": "Returns the full history of wallet movements ordered from newest to oldest. A movement represents any wallet operation that affects VTXOs—an arkoor send or receive, Lightning send or receive, board, offboard, or refresh. Each entry records which VTXOs were consumed and produced, the effective balance change (if any), fees paid, and the operation status.",
+        "description": "Returns the history of wallet movements ordered from newest to oldest. A movement represents any wallet operation that affects VTXOs—an arkoor send or receive, Lightning send or receive, board, offboard, or refresh. Each entry records which VTXOs were consumed and produced, the effective balance change (if any), fees paid, and the operation status. Supplying the `type` and `value` query parameters (together) restricts the result to movements involving that single payment method, such as all payments sent to one address.",
         "operationId": "list",
+        "parameters": [
+          {
+            "name": "type",
+            "in": "query",
+            "description": "Payment method type tag to filter by, e.g. `ark`, `bitcoin`, `output-script`, `invoice`, `offer`, `lightning-address`, `lnurl` or `custom`. Must be supplied together with `value`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "value",
+            "in": "query",
+            "description": "Payment method value to filter by, e.g. the destination address or invoice. Must be supplied together with `type`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "Returns the wallet history",
@@ -846,6 +866,16 @@
                   "items": {
                     "$ref": "#/components/schemas/Movement"
                   }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
                 }
               }
             }

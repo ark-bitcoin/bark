@@ -519,7 +519,7 @@ pub async fn movements(State(state): State<ServerState>) -> HandlerResult<Json<V
 pub async fn history(
 	state: State<ServerState>,
 ) -> HandlerResult<Json<Vec<bark_json::movements::Movement>>> {
-	crate::api::v1::history::list(state).await
+	crate::api::v1::history::list(state, axum::extract::Query(Default::default())).await
 }
 
 #[utoipa::path(
