@@ -4,8 +4,11 @@
     <option name="command" value="test --package ark-testing" />
     <option name="workingDirectory" value="file://$PROJECT_DIR$" />
     <envs>
-      <env name="CAPTAIND_EXEC" value="../target/debug/captaind" />
       <env name="BARK_EXEC" value="../target/debug/bark" />
+      <env name="BARKD_EXEC" value="../target/debug/barkd" />
+      <env name="CAPTAIND_EXEC" value="../target/debug/captaind" />
+      <env name="WATCHMAND_EXEC" value="../target/debug/watchmand" />
+      <env name="RUST_MIN_STACK" value="33554432" />
       <env name="CHAIN_SOURCE" value="mempool" />
     </envs>
     <option name="emulateTerminal" value="true" />
