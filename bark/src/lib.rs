@@ -307,6 +307,7 @@ pub extern crate lnurl as lnurllib;
 pub mod actions;
 pub mod chain;
 pub mod exit;
+pub mod fs_perms;
 pub mod movement;
 pub mod onchain;
 pub mod payment_request;

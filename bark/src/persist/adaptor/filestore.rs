@@ -16,6 +16,9 @@ pub struct FileStorageAdaptor {
 impl FileStorageAdaptor {
 	pub async fn open(file_path: impl AsRef<Path>) -> anyhow::Result<Self> {
 		let file_path = file_path.as_ref().to_path_buf();
+
+		crate::fs_perms::warn_if_loose(&file_path, 0o600);
+
 		Ok(Self { file_path })
 	}
 
@@ -41,8 +44,9 @@ impl FileStorageAdaptor {
 		let records = data.partitions().values()
 			.map(|p| p.values())
 			.flatten().collect::<Vec<_>>();
-		fs::write(&self.file_path, serde_json::to_string(&records)?).await?;
-		Ok(())
+		let json = serde_json::to_vec(&records)?;
+
+		crate::fs_perms::write_atomic_owner_only(&self.file_path, &json)
 	}
 }
 
@@ -87,5 +91,25 @@ mod tests {
 		let temp_dir = tempfile::tempdir().unwrap();
 		let mut storage = FileStorageAdaptor::open(temp_dir.path().join("test.json")).await.unwrap();
 		test_suite::run_all(&mut storage).await;
+	}
+
+	#[cfg(unix)]
+	#[tokio::test]
+	async fn persisted_file_is_owner_only() {
+		use std::os::unix::fs::PermissionsExt;
+
+		let temp_dir = tempfile::tempdir().unwrap();
+		let path = temp_dir.path().join("wallet.json");
+		let mut storage = FileStorageAdaptor::open(&path).await.unwrap();
+
+		storage.put(Record {
+			partition: 0,
+			pk: b"k".to_vec(),
+			sort_key: None,
+			data: b"v".to_vec(),
+		}).await.unwrap();
+
+		let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+		assert_eq!(mode, 0o600, "wallet state file must be owner-only");
 	}
 }

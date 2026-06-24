@@ -96,7 +96,17 @@ pub fn init_logging(verbose: bool, quiet: bool, datadir: &Path) {
 
 	let logfile = if datadir.exists() {
 		let path = datadir.join("debug.log");
-		match std::fs::File::options().create(true).append(true).open(path) {
+		let mut opts = std::fs::File::options();
+		opts.create(true).append(true);
+		// The debug log records wallet activity at trace level; create it
+		// owner-only so other users can't read it. mode() only applies when
+		// the file is newly created, so an existing log keeps its perms.
+		#[cfg(unix)]
+		{
+			use std::os::unix::fs::OpenOptionsExt;
+			opts.mode(0o600);
+		}
+		match opts.open(path) {
 			Ok(mut file) => {
 				// try write a newline into the file to separate commands
 				let _ = file.write_all("\n\n".as_bytes());
