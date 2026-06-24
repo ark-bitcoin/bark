@@ -263,8 +263,17 @@ impl Wallet {
 			total_amount: required_amount,
 			policy: VtxoPolicy::new_pubkey(offboard_pubkey.public_key()),
 		};
-		let arkoor = self.create_checkpointed_arkoor_with_vtxos(offboard_dest, vtxos.into_iter())
-			.await.context("error trying to prepare offboard VTXOs with an arkoor tx")?;
+		// Peek the change keypair without storing it. We only persist the
+		// index below if the arkoor actually produced a change vtxo.
+		let (change_keypair, change_key_index) = self.peek_next_keypair().await
+			.context("failed to derive arkoor change keypair")?;
+		let arkoor = self.create_checkpointed_arkoor_with_vtxos(
+			offboard_dest, vtxos.into_iter(), change_keypair,
+		).await.context("error trying to prepare offboard VTXOs with an arkoor tx")?;
+		if !arkoor.change.is_empty() {
+			self.inner.db.store_vtxo_key(change_key_index, change_keypair.public_key()).await
+				.context("failed to store arkoor change keypair")?;
+		}
 
 		self.store_spendable_vtxos(&arkoor.change).await
 			.context("error storing change VTXOs from preparatory arkoor")?;

@@ -1,24 +1,42 @@
 use anyhow::Context;
 use bitcoin::{Amount, NetworkKind};
 use bitcoin::hex::DisplayHex;
-use log::{info, warn, error};
+use bitcoin::secp256k1::Keypair;
+use log::{info, warn};
 
-use ark::{VtxoPolicy, ProtocolEncoding};
+use ark::VtxoPolicy;
 use ark::arkoor::ArkoorDestination;
 use ark::arkoor::package::{ArkoorPackageBuilder, ArkoorPackageCosignResponse};
 use ark::vtxo::{Full, Vtxo, VtxoId};
 use server_rpc::protos;
 
-use crate::subsystem::Subsystem;
-use crate::{ArkoorMovement, VtxoDelivery, MovementUpdate, Wallet, WalletVtxo};
-use crate::movement::MovementDestination;
-use crate::movement::manager::OnDropStatus;
+use crate::{VtxoDelivery, Wallet, WalletVtxo};
+use crate::actions::DriveMode;
+use crate::actions::arkoor_send::{ArkoorSend, start_arkoor_send};
 
 /// The result of creating an arkoor transaction
 pub struct ArkoorCreateResult {
 	pub inputs: Vec<VtxoId>,
 	pub created: Vec<Vtxo<Full>>,
 	pub change: Vec<Vtxo<Full>>,
+}
+
+/// Error returned by [`Wallet::create_checkpointed_arkoor_with_vtxos`].
+///
+/// The cosign RPC failure is kept as a typed [`tonic::Status`] rather
+/// than flattened into `anyhow`, so a caller driving this as a wallet
+/// action can route a genuine server rejection to its `on_rejection`
+/// path (via `AdvanceError::is_server_rejection`) instead of retrying a
+/// doomed request forever. Every other failure is opaque `Other`.
+#[derive(Debug, thiserror::Error)]
+pub enum ArkoorCreateError {
+	/// The `request_arkoor_cosign` RPC failed. May be a rejection
+	/// (`InvalidArgument`/`NotFound`) or a transient error; the caller
+	/// classifies it via the status code.
+	#[error("server failed to cosign arkoor: {0}")]
+	Cosign(#[source] tonic::Status),
+	#[error(transparent)]
+	Other(#[from] anyhow::Error),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
@@ -83,12 +101,19 @@ impl Wallet {
 		Ok(())
 	}
 
+	/// Build, cosign and split an arkoor package using a caller-provided
+	/// change keypair.
+	///
+	/// Reusing the same change keypair on a retry keeps the implied
+	/// `spending_txid` stable, so the server's `check_spendable_for_oor`
+	/// idempotency check accepts the retry rather than rejecting it as a
+	/// conflicting double-spend.
 	pub(crate) async fn create_checkpointed_arkoor_with_vtxos(
 		&self,
 		arkoor_dest: ArkoorDestination,
 		inputs: impl IntoIterator<Item = WalletVtxo>,
-	) -> anyhow::Result<ArkoorCreateResult> {
-		// Find vtxos to cover
+		change_keypair: Keypair,
+	) -> Result<ArkoorCreateResult, ArkoorCreateError> {
 		let (mut srv, _) = self.require_server().await?;
 		let input_ids = inputs.into_iter().map(|v| v.id()).collect::<Vec<_>>();
 
@@ -107,13 +132,9 @@ impl Wallet {
 		self.register_vtxo_transactions_with_server(&inputs).await
 			.context("failed to register arkoor input vtxo transactions with server")?;
 
-		// Peek at a potential change keypair without storing it yet.
-		// We'll only store it if change is actually created.
-		let (change_keypair, change_key_index) = self.peek_next_keypair().await?;
 		let change_pubkey = change_keypair.public_key();
-
 		if arkoor_dest.policy.user_pubkey() == change_pubkey {
-			bail!("Cannot create arkoor to same address as change");
+			return Err(anyhow!("Cannot create arkoor to same address as change").into());
 		}
 
 		let mut user_keypairs = vec![];
@@ -135,7 +156,7 @@ impl Wallet {
 		);
 
 		let response = srv.client.request_arkoor_cosign(cosign_request).await
-			.context("server failed to cosign arkoor")?
+			.map_err(ArkoorCreateError::Cosign)?
 			.into_inner();
 
 		let cosign_responses = ArkoorPackageCosignResponse::try_from(response)
@@ -149,11 +170,6 @@ impl Wallet {
 		// divide between change and destination
 		let (dest, change) = vtxos.into_iter()
 			.partition::<Vec<_>, _>(|v| *v.policy() == arkoor_dest.policy);
-
-		if !change.is_empty() {
-			// Change was created, so now store the keypair
-			self.inner.db.store_vtxo_key(change_key_index, change_pubkey).await?;
-		}
 
 		Ok(ArkoorCreateResult {
 			inputs: input_ids,
@@ -175,80 +191,40 @@ impl Wallet {
 		&self,
 		destination: &ark::Address,
 		amount: Amount,
-	) -> anyhow::Result<Vec<Vtxo<Full>>> {
-		let (mut srv, _) = self.require_server().await?;
+	) -> anyhow::Result<()> {
+		let action = start_arkoor_send(self, destination.clone(), amount).await?;
 
-		self.validate_arkoor_address(&destination).await
-			.context("address validation failed")?;
+		// Persist the action together with the input locks so the executor has
+		// something to drive on restart; otherwise a crash between this point and
+		// `drive_action` leaves vtxos locked under an action id that has no
+		// checkpoint row.
+		self.inner.db.upsert_wallet_action_checkpoint(&action.id, &action.clone().into()).await?;
 
-		let negative_amount = -amount.to_signed().context("Amount out-of-range")?;
+		self.drive_action(action, DriveMode::UntilDone).await
+	}
 
-		let dest = ArkoorDestination { total_amount: amount, policy: destination.policy().clone() };
-		let inputs = self.select_vtxos_to_cover(dest.total_amount).await?;
-		let arkoor = self.create_checkpointed_arkoor_with_vtxos(dest.clone(), inputs.into_iter())
-			.await.context("failed to create arkoor transaction")?;
+	/// Returns every in-progress arkoor send checkpoint.
+	pub async fn pending_arkoor_sends(&self) -> anyhow::Result<Vec<ArkoorSend>> {
+		Ok(self.inner.db.get_all_wallet_action_checkpoints().await?
+			.into_iter()
+			.filter_map(|cp| cp.into_arkoor_send())
+			.collect())
+	}
 
-		// Register destination and change after cosign so the server
-		// gets signed_tx rows for the shared checkpoint and both leaves:
-		// the watchman needs the checkpoint signed to rebroadcast on
-		// exit, and a later guarded spend (offboard, lightning pay) of
-		// either leaf needs the full chain signed. Failure is logged
-		// and swallowed: the receiver also re-registers on receive, and
-		// later spends will retry registration if the server still
-		// needs it.
-		let to_register = arkoor.created.iter()
-			.chain(arkoor.change.iter())
-			.collect::<Vec<_>>();
-		if let Err(e) = self.register_vtxo_transactions_with_server(&to_register).await {
-			warn!("Failed to register arkoor output vtxo transactions with server: {:#}", e);
+	/// Drives every pending arkoor send forward by one step or to
+	/// completion if it's ready.
+	pub async fn sync_pending_arkoor_sends(&self) -> anyhow::Result<()> {
+		let pending = self.pending_arkoor_sends().await?;
+		if pending.is_empty() {
+			return Ok(());
 		}
-
-		let mut movement = self.inner.movements.new_guarded_movement_with_update(
-			Subsystem::ARKOOR,
-			ArkoorMovement::Send.to_string(),
-			OnDropStatus::Failed,
-			MovementUpdate::new()
-				.intended_and_effective_balance(negative_amount)
-				.consumed_vtxos(&arkoor.inputs)
-				.sent_to([MovementDestination::ark(destination.clone(), amount)])
-		).await?;
-
-		let mut delivered = false;
-		for delivery in destination.delivery() {
-			match delivery {
-				VtxoDelivery::ServerMailbox { blinded_id } => {
-					let req = protos::mailbox_server::PostArkoorMessageRequest {
-						blinded_id: blinded_id.to_vec(),
-						vtxos: arkoor.created.iter().map(|v| v.serialize().to_vec()).collect(),
-					};
-
-					if let Err(e) = srv.mailbox_client.post_arkoor_message(req).await {
-						error!("Failed to post the vtxos to the destination's mailbox: '{:#}'", e);
-						//NB we will continue to at least not lose our own change
-					} else {
-						delivered = true;
-					}
-				},
-				VtxoDelivery::Unknown { delivery_type, data } => {
-					error!("Unknown delivery type {} for arkoor payment: {}", delivery_type, data.as_hex());
-				},
-				_ => {
-					error!("Unsupported delivery type for arkoor payment: {:?}", delivery);
-				}
+		info!("Syncing {} pending arkoor sends", pending.len());
+		for send in pending {
+			let id = send.id.clone();
+			if let Err(e) = self.drive_action(send, DriveMode::UntilParkOrDone).await {
+				warn!("Failed to sync arkoor send {}: {:#}", id, e);
 			}
 		}
-		self.mark_vtxos_as_spent(&arkoor.inputs).await?;
-		if !arkoor.change.is_empty() {
-			self.store_spendable_vtxos(&arkoor.change).await?;
-			movement.apply_update(MovementUpdate::new().produced_vtxos(arkoor.change)).await?;
-		}
-
-		if delivered {
-			movement.success().await?;
-		} else {
-			bail!("Failed to deliver arkoor vtxos to any destination");
-		}
-
-		Ok(arkoor.created)
+		Ok(())
 	}
 }
