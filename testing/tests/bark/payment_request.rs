@@ -173,6 +173,24 @@ async fn parse_payment_request() {
 		assert_eq!(ark_method.errors, vec![PaymentMethodParsingError::InvalidArkAddress(ArkoorAddressError::ServerMismatch)]);
 	}
 
+	// -- BIP 321 with an Arkade address in the ark param (manual) --
+	{
+		// Version-0 (Arkade) address. Bark cannot pay these, so the URI still
+		// parses but the option is surfaced as an unsupported `Custom` method
+		// flagged with an invalid-ark-address error.
+		let arkade_addr = "ark1qzpq904am6clw3pgqwyh4p02708fy4xs0hcpwt7rwfdttuxsjamecr7zmxcnglmw0pqg99mp96dn5duae0l7cr7lm0gt59nhh4psml45xrdk57";
+		let uri = format!("bitcoin:?ark={}", arkade_addr);
+
+		let request = uri_parser_bark.try_parse_payment_request(&uri).await.unwrap();
+
+		assert_eq!(request.options.len(), 1);
+		assert_eq!(request.options[0].method, PaymentMethod::Custom(arkade_addr.to_string()));
+		assert_eq!(
+			request.options[0].errors,
+			vec![PaymentMethodParsingError::InvalidArkAddress(ArkoorAddressError::ServerMismatch)],
+		);
+	}
+
 	// -- BIP 321 with amount only (onchain) --
 	{
 		let mut wallet1 = uri_builder_bark.client().await;

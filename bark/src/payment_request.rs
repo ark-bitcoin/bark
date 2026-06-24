@@ -17,6 +17,7 @@ pub use crate::movement::PaymentMethod;
 use std::str::FromStr;
 
 use anyhow::Context;
+use ark::address::ParseAddressError;
 use bitcoin::{Amount, Network};
 use bitcoin::constants::ChainHash;
 use lnurllib::lightning_address::LightningAddress;
@@ -31,9 +32,43 @@ use crate::{FeeEstimate, Wallet};
 use crate::arkoor::ArkoorAddressError;
 use crate::onchain::GetAddress;
 
+/// Enum for representing either a bark address ([ark::Address]) or an arkade address.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum ArkAddressType {
+	Bark(ark::Address),
+	Arkade(String),
+}
+
+impl From<ark::Address> for ArkAddressType {
+	fn from(addr: ark::Address) -> Self {
+		ArkAddressType::Bark(addr)
+	}
+}
+
+impl std::fmt::Display for ArkAddressType {
+	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+		match self {
+			ArkAddressType::Bark(addr) => write!(f, "{}", addr),
+			ArkAddressType::Arkade(addr) => write!(f, "{}", addr),
+		}
+	}
+}
+
+impl FromStr for ArkAddressType {
+	type Err = ParseAddressError;
+
+	fn from_str(s: &str) -> Result<Self, Self::Err> {
+		match ark::Address::from_str(s) {
+			Ok(addr) => Ok(ArkAddressType::Bark(addr)),
+			Err(ParseAddressError::Arkade) => Ok(ArkAddressType::Arkade(s.to_string())),
+			Err(e) => Err(e),
+		}
+	}
+}
+
 #[derive(Default, Clone, PartialEq, Eq, Debug)]
 pub struct BarkExtension {
-	ark: Vec<FieldWithAttributes<ark::Address>>,
+	ark: Vec<FieldWithAttributes<ArkAddressType>>,
 }
 
 impl ExtensionHandler for BarkExtension {
@@ -44,9 +79,12 @@ impl ExtensionHandler for BarkExtension {
 		required: bool,
 	) -> Result<bool, Bip321Error> {
 		if key == "ark" {
-			let address = ark::Address::from_str(value)
-				.map_err(|e| Bip321Error::ExtensionError(e.to_string()))?;
-			self.ark.push(FieldWithAttributes::new(address, required));
+			let addr = match ArkAddressType::from_str(value) {
+				Ok(addr) => addr,
+				Err(e) => return Err(Bip321Error::ExtensionError(e.to_string())),
+			};
+
+			self.ark.push(FieldWithAttributes::new(addr, required));
 			Ok(true)
 		} else {
 			Ok(false)
@@ -283,7 +321,7 @@ impl<'a> BarkBip321UriBuilder<'a> {
 			let address = self.wallet.new_address().await
 				.context("failed to generate new ark address")?;
 
-			uri.extensions_mut().ark.push(FieldWithAttributes::new(address, false));
+			uri.extensions_mut().ark.push(FieldWithAttributes::new(address.into(), false));
 		}
 
 		if self.bolt11 {
@@ -410,11 +448,22 @@ impl Wallet {
 
 	async fn details_for_ark_address(
 		&self,
-		ark_address: &ark::Address,
+		ark_address: &ArkAddressType,
 	) -> AvailablePaymentMethod {
-		let mut errors = vec![];
+		let bark_address = match ark_address {
+			ArkAddressType::Bark(addr) => addr,
+			ArkAddressType::Arkade(addr) => {
+				return AvailablePaymentMethod {
+					method: PaymentMethod::Custom(addr.clone()),
+					errors: vec![
+						PaymentMethodParsingError::InvalidArkAddress(ArkoorAddressError::ServerMismatch),
+					],
+				}
+			},
+		};
 
-		match self.validate_arkoor_address(ark_address).await.err() {
+		let mut errors = vec![];
+		match self.validate_arkoor_address(bark_address).await.err() {
 			None => {},
 			Some(e) => {
 				errors.push(PaymentMethodParsingError::InvalidArkAddress(e));
@@ -422,7 +471,7 @@ impl Wallet {
 		}
 
 		AvailablePaymentMethod {
-			method: PaymentMethod::Ark(ark_address.clone()),
+			method: PaymentMethod::Ark(bark_address.clone()),
 			errors,
 		}
 	}
@@ -551,8 +600,8 @@ impl Wallet {
 		}
 
 		// Ark address
-		if let Ok(ark_address) = ark::Address::from_str(payment_str) {
-			return Ok(self.details_for_ark_address(&ark_address).await.into());
+		if let Ok(addr) = ArkAddressType::from_str(payment_str) {
+			return Ok(self.details_for_ark_address(&addr).await.into());
 		}
 
 		// Bare bitcoin address

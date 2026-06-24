@@ -1,0 +1,5 @@
+- Reject Arkade addresses with an explicit error
+  The wallet send endpoint now returns "Ark address is for different server"
+  when an Arkade address is passed as `destination`, instead of falling
+  through to the generic "not a valid destination" error.
+  [#2220](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2220)
