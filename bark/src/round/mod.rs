@@ -1535,6 +1535,75 @@ impl Wallet {
 		Ok(StoredRoundState::new(id, state))
 	}
 
+	/// Join an already-started round attempt interactively, submitting our
+	/// participation synchronously.
+	///
+	/// Unlike [Wallet::join_next_round] — which stores a pending participation
+	/// and waits for a round to start before submitting inside the round state
+	/// machine — this submits to the in-flight `attempt` right away. This allows
+	/// us to react to any unspendable VTXOs and exclude them from the refresh.
+	pub(crate) async fn join_attempt_interactive(
+		&self,
+		participation: RoundParticipation,
+		attempt: &RoundAttempt,
+		movement_kind: Option<RoundMovement>,
+	) -> anyhow::Result<StoredRoundState<Unlocked>> {
+		let movement = if let Some(kind) = movement_kind {
+			Some(self.inner.movements.new_guarded_movement_with_update(
+				Subsystem::ROUND,
+				kind.to_string(),
+				OnDropStatus::Failed,
+				participation.to_movement_update()?,
+			).await?)
+		} else {
+			None
+		};
+		let movement_id = movement.as_ref().map(|m| m.id());
+
+		let input_ids = participation.inputs.iter().map(|v| v.id()).collect::<Vec<_>>();
+		self.lock_vtxos(&input_ids, movement_id.map(|m| m.into())).await
+			.context("error locking input VTXOs")?;
+
+		match self.join_attempt_interactive_inner(participation, attempt, movement_id).await {
+			Ok(state) => {
+				if let Some(mut m) = movement {
+					m.stop();
+				}
+				Ok(state)
+			},
+			Err(e) => {
+				self.unlock_vtxos(&input_ids).await
+					.context("error unlocking input VTXOs")?;
+				if let Some(mut m) = movement {
+					m.fail().await.context("error marking movement as failed")?;
+				}
+				Err(e)
+			},
+		}
+	}
+
+	async fn join_attempt_interactive_inner(
+		&self,
+		participation: RoundParticipation,
+		attempt: &RoundAttempt,
+		movement_id: Option<MovementId>,
+	) -> anyhow::Result<StoredRoundState<Unlocked>> {
+		// Submit synchronously to the in-flight attempt. On rejection the
+		// tonic::Status (carrying the unusable input ids in its `identifiers`
+		// metadata) propagates up the error chain untouched.
+		let attempt_state = start_attempt(self, &participation, attempt).await?;
+
+		let mut state = RoundState::new_interactive(participation, movement_id);
+		state.flow = RoundFlowState::InteractiveOngoing {
+			round_seq: attempt.round_seq,
+			attempt_seq: attempt.attempt_seq,
+			state: attempt_state,
+		};
+
+		let id = self.inner.db.store_round_state(&state).await?;
+		Ok(StoredRoundState::new(id, state))
+	}
+
 	/// Get all pending round states
 	pub async fn pending_round_state_ids(&self) -> anyhow::Result<Vec<RoundStateId>> {
 		self.inner.db.get_pending_round_state_ids().await
@@ -1847,11 +1916,29 @@ impl Wallet {
 		participation: RoundParticipation,
 		movement_kind: Option<RoundMovement>,
 	) -> anyhow::Result<RoundStatus> {
-		let mut state = self.join_next_round(participation, movement_kind).await?;
+		let state = self.join_next_round(participation, movement_kind).await?;
 
 		info!("Waiting for a round start...");
 		let mut events = self.subscribe_round_events().await?;
 
+		self.drive_round_state(state, &mut events).await
+	}
+
+	/// Drive an already-joined round state to its final [RoundStatus], blocking
+	/// on `events` and persisting each update.
+	///
+	/// Shared by [Wallet::participate_round] and the blocking maintenance
+	/// refresh: the latter submits its participation up-front (against an
+	/// in-flight attempt) and then drives the resulting round to completion
+	/// here.
+	pub(crate) async fn drive_round_state<S>(
+		&self,
+		mut state: StoredRoundState,
+		events: &mut S,
+	) -> anyhow::Result<RoundStatus>
+	where
+		S: Stream<Item = anyhow::Result<RoundEvent>> + Unpin,
+	{
 		loop {
 			if !state.state().ongoing_participation() {
 				let status = state.state_mut().sync(self).await?;

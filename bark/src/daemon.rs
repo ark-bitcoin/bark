@@ -171,9 +171,8 @@ impl DaemonProcess {
 		match &event {
 			&RoundEvent::Attempt(attempt) => {
 				if attempt.attempt_seq == 0 {
-					match self.wallet.maybe_schedule_maintenance_refresh().await {
-						Ok(_) => {},
-						Err(err) => warn!("Failed to schedule maintenance refresh: {:?}", err),
+					if let Err(err) = self.wallet.join_round_for_maintenance_refresh(attempt).await {
+						warn!("Failed to join round for maintenance refresh: {:#}", err);
 					}
 				};
 			},
