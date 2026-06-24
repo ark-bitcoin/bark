@@ -1,0 +1,5 @@
+- Move the lightning receive token to invoice generation
+  `bark lightning invoice --token` authenticates at invoice time, and receive
+  status reports the payment's lifecycle state.
+  [#2148](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2148)
+  - **BREAKING:** removed `--token` from `bark lightning claim`.

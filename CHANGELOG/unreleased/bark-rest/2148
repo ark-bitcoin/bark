@@ -1,0 +1,5 @@
+- Report lightning receive status by lifecycle state
+  The status endpoint returns the reshaped `LightningReceiveInfo` with an
+  explicit `state` for any known payment hash, instead of a 404 until an HTLC
+  arrives.
+  [#2148](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2148)

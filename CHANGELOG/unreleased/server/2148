@@ -1,0 +1,4 @@
+- Return correct error codes for lightning receive anti-dos checks
+  Invalid attestations, unspendable proof vtxos and unknown tokens now surface
+  as `badarg`/`not_found` instead of a generic internal error.
+  [#2148](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2148)
