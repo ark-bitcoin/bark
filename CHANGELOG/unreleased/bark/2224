@@ -1,0 +1,4 @@
+- Increase incremental sync speed of esplora/mempool.space
+  Previously we were checking the status of every transaction the wallet had ever seen. Now we only query
+  transactions which are not deeply confirmed, as of today that means 100 confirmations.
+  [#2224](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2224)
