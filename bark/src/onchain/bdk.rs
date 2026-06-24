@@ -4,7 +4,7 @@ use std::sync::Arc;
 use anyhow::Context;
 use crate::utils::time::timestamp_secs;
 use bdk_esplora::EsploraAsyncExt;
-use bdk_wallet::chain::{ChainPosition, CheckPoint};
+use bdk_wallet::chain::{Anchor, ChainPosition, CheckPoint};
 use bdk_wallet::Wallet as BdkWallet;
 use bdk_wallet::coin_selection::DefaultCoinSelectionAlgorithm;
 use bdk_wallet::{Balance, KeychainKind, LocalOutput, TxBuilder, TxOrdering};
@@ -14,7 +14,7 @@ use bitcoin::{
 use log::{debug, error, info, trace, warn};
 
 use ark::vtxo::policy::signing::VtxoSigner;
-use bitcoin_ext::{BlockHeight, BlockRef};
+use bitcoin_ext::{BlockHeight, BlockRef, DEEPLY_CONFIRMED};
 use bitcoin_ext::bdk::{CpfpInternalError, WalletExt};
 use bitcoin_ext::cpfp::CpfpError;
 
@@ -332,9 +332,29 @@ impl ChainSync for OnchainWallet {
 			},
 			ChainSourceClient::Esplora(client) => {
 				debug!("Syncing with esplora...");
+
+				// Don't sync the entire transaction history of the wallet. We can safely filter out
+				// anything deeply confirmed.
+				let min_height = self.inner.latest_checkpoint()
+					.height()
+					.checked_sub(DEEPLY_CONFIRMED)
+					.unwrap_or(0);
+
 				let request = self.inner.start_sync_with_revealed_spks_at(timestamp_secs())
-					.outpoints(self.list_unspent().iter().map(|o| o.outpoint).collect::<Vec<_>>())
-					.txids(self.inner.transactions().map(|tx| tx.tx_node.txid).collect::<Vec<_>>());
+					.outpoints(self.list_unspent().iter().map(|o| o.outpoint))
+					.txids(self.inner.transactions().filter_map(|tx| {
+						let fresh = match tx.chain_position {
+							ChainPosition::Unconfirmed { .. } => true,
+							ChainPosition::Confirmed { anchor, .. } => {
+								anchor.anchor_block().height >= min_height
+							},
+						};
+						if fresh {
+							Some(tx.tx_node.txid)
+						} else {
+							None
+						}
+					}));
 
 				let update = client.sync(request, PARALLEL_REQS).await?;
 				self.inner.apply_update(update)?;
