@@ -7,6 +7,7 @@ Method | HTTP request | Description
 [**address**](WalletApi.md#address) | **POST** /api/v1/wallet/addresses/next | Generate Ark address
 [**ark_info**](WalletApi.md#ark_info) | **GET** /api/v1/wallet/ark-info | Get Ark server info
 [**balance**](WalletApi.md#balance) | **GET** /api/v1/wallet/balance | Get wallet balance
+[**bip321_uri**](WalletApi.md#bip321_uri) | **POST** /api/v1/wallet/bip321 | Build a BIP 321 payment URI
 [**connected**](WalletApi.md#connected) | **GET** /api/v1/wallet/connected | Check server connection
 [**create_wallet**](WalletApi.md#create_wallet) | **POST** /api/v1/wallet/create | Create a wallet
 [**get_vtxo**](WalletApi.md#get_vtxo) | **GET** /api/v1/wallet/vtxos/{id} | Get VTXO detail
@@ -109,6 +110,37 @@ This endpoint does not need any parameter.
 ### HTTP request headers
 
 - **Content-Type**: Not defined
+- **Accept**: application/json
+
+[[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
+
+
+## bip321_uri
+
+> models::Bip321UriResponse bip321_uri(bip321_uri_request, uppercase)
+Build a BIP 321 payment URI
+
+Builds a single BIP 321 `bitcoin:` URI bundling multiple ways to receive the same payment, so one call prepares everything needed for an incoming payment. A fresh Ark address is always included. When `amount_sat` is given, a BOLT11 invoice for that amount is generated and the amount is embedded in the URI. When `onchain` is `true`, a fresh on-chain address is added (placed in the URI body on mainnet, as a `tb=` parameter on test networks). Set the `uppercase` query parameter to upper-case the `bip321` URI so QR encoders can use the compact alphanumeric mode; this fails if the URI carries case-sensitive data. The individual `ark`, `bolt11`, and `onchain` destinations are always returned in their natural case for direct use.
+
+### Parameters
+
+
+Name | Type | Description  | Required | Notes
+------------- | ------------- | ------------- | ------------- | -------------
+**bip321_uri_request** | [**Bip321UriRequest**](Bip321UriRequest.md) |  | [required] |
+**uppercase** | Option<**bool**> | Upper-case the returned `bip321` URI for compact QR encoding. Defaults to false. Fails with 400 if the URI carries case-sensitive data (a label, message, or base58 address). |  |
+
+### Return type
+
+[**models::Bip321UriResponse**](Bip321UriResponse.md)
+
+### Authorization
+
+[bearer](../README.md#bearer)
+
+### HTTP request headers
+
+- **Content-Type**: application/json
 - **Accept**: application/json
 
 [[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)

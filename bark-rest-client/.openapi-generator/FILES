@@ -9,6 +9,9 @@ docs/ArkInfo.md
 docs/BadRequestError.md
 docs/Balance.md
 docs/BarkNetwork.md
+docs/Bip321UriQuery.md
+docs/Bip321UriRequest.md
+docs/Bip321UriResponse.md
 docs/BitcoinApi.md
 docs/BitcoindAuth.md
 docs/BitcoindAuthOneOf.md
@@ -193,6 +196,9 @@ src/models/ark_info.rs
 src/models/bad_request_error.rs
 src/models/balance.rs
 src/models/bark_network.rs
+src/models/bip321_uri_query.rs
+src/models/bip321_uri_request.rs
+src/models/bip321_uri_response.rs
 src/models/bitcoind_auth.rs
 src/models/bitcoind_auth_one_of.rs
 src/models/bitcoind_auth_one_of_1.rs

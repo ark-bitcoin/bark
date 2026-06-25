@@ -40,6 +40,15 @@ pub enum BalanceError {
     UnknownValue(serde_json::Value),
 }
 
+/// struct for typed errors of method [`bip321_uri`]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum Bip321UriError {
+    Status400(models::BadRequestError),
+    Status500(models::InternalServerError),
+    UnknownValue(serde_json::Value),
+}
+
 /// struct for typed errors of method [`connected`]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
@@ -348,6 +357,51 @@ pub async fn balance(configuration: &configuration::Configuration, ) -> Result<m
     } else {
         let content = resp.text().await?;
         let entity: Option<BalanceError> = serde_json::from_str(&content).ok();
+        Err(Error::ResponseError(ResponseContent { status, content, entity }))
+    }
+}
+
+/// Builds a single BIP 321 `bitcoin:` URI bundling multiple ways to receive the same payment, so one call prepares everything needed for an incoming payment. A fresh Ark address is always included. When `amount_sat` is given, a BOLT11 invoice for that amount is generated and the amount is embedded in the URI. When `onchain` is `true`, a fresh on-chain address is added (placed in the URI body on mainnet, as a `tb=` parameter on test networks). Set the `uppercase` query parameter to upper-case the `bip321` URI so QR encoders can use the compact alphanumeric mode; this fails if the URI carries case-sensitive data. The individual `ark`, `bolt11`, and `onchain` destinations are always returned in their natural case for direct use.
+pub async fn bip321_uri(configuration: &configuration::Configuration, bip321_uri_request: models::Bip321UriRequest, uppercase: Option<bool>) -> Result<models::Bip321UriResponse, Error<Bip321UriError>> {
+    // add a prefix to parameters to efficiently prevent name collisions
+    let p_body_bip321_uri_request = bip321_uri_request;
+    let p_query_uppercase = uppercase;
+
+    let uri_str = format!("{}/api/v1/wallet/bip321", configuration.base_path);
+    let mut req_builder = configuration.client.request(reqwest::Method::POST, &uri_str);
+
+    if let Some(ref param_value) = p_query_uppercase {
+        req_builder = req_builder.query(&[("uppercase", &param_value.to_string())]);
+    }
+    if let Some(ref user_agent) = configuration.user_agent {
+        req_builder = req_builder.header(reqwest::header::USER_AGENT, user_agent.clone());
+    }
+    if let Some(ref token) = configuration.bearer_access_token {
+        req_builder = req_builder.bearer_auth(token.to_owned());
+    };
+    req_builder = req_builder.json(&p_body_bip321_uri_request);
+
+    let req = req_builder.build()?;
+    let resp = configuration.client.execute(req).await?;
+
+    let status = resp.status();
+    let content_type = resp
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("application/octet-stream");
+    let content_type = super::ContentType::from(content_type);
+
+    if !status.is_client_error() && !status.is_server_error() {
+        let content = resp.text().await?;
+        match content_type {
+            ContentType::Json => serde_json::from_str(&content).map_err(Error::from),
+            ContentType::Text => return Err(Error::from(serde_json::Error::custom("Received `text/plain` content type response that cannot be converted to `models::Bip321UriResponse`"))),
+            ContentType::Unsupported(unknown_type) => return Err(Error::from(serde_json::Error::custom(format!("Received `{unknown_type}` content type response that cannot be converted to `models::Bip321UriResponse`")))),
+        }
+    } else {
+        let content = resp.text().await?;
+        let entity: Option<Bip321UriError> = serde_json::from_str(&content).ok();
         Err(Error::ResponseError(ResponseContent { status, content, entity }))
     }
 }

@@ -67,6 +67,7 @@ Class | Method | HTTP request | Description
 *WalletApi* | [**address**](docs/WalletApi.md#address) | **POST** /api/v1/wallet/addresses/next | Generate Ark address
 *WalletApi* | [**ark_info**](docs/WalletApi.md#ark_info) | **GET** /api/v1/wallet/ark-info | Get Ark server info
 *WalletApi* | [**balance**](docs/WalletApi.md#balance) | **GET** /api/v1/wallet/balance | Get wallet balance
+*WalletApi* | [**bip321_uri**](docs/WalletApi.md#bip321_uri) | **POST** /api/v1/wallet/bip321 | Build a BIP 321 payment URI
 *WalletApi* | [**connected**](docs/WalletApi.md#connected) | **GET** /api/v1/wallet/connected | Check server connection
 *WalletApi* | [**create_wallet**](docs/WalletApi.md#create_wallet) | **POST** /api/v1/wallet/create | Create a wallet
 *WalletApi* | [**get_vtxo**](docs/WalletApi.md#get_vtxo) | **GET** /api/v1/wallet/vtxos/{id} | Get VTXO detail
@@ -100,6 +101,9 @@ Class | Method | HTTP request | Description
  - [BadRequestError](docs/BadRequestError.md)
  - [Balance](docs/Balance.md)
  - [BarkNetwork](docs/BarkNetwork.md)
+ - [Bip321UriQuery](docs/Bip321UriQuery.md)
+ - [Bip321UriRequest](docs/Bip321UriRequest.md)
+ - [Bip321UriResponse](docs/Bip321UriResponse.md)
  - [BitcoindAuth](docs/BitcoindAuth.md)
  - [BitcoindAuthOneOf](docs/BitcoindAuthOneOf.md)
  - [BitcoindAuthOneOf1](docs/BitcoindAuthOneOf1.md)

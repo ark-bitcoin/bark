@@ -1702,6 +1702,69 @@
         }
       }
     },
+    "/api/v1/wallet/bip321": {
+      "post": {
+        "tags": [
+          "wallet"
+        ],
+        "summary": "Build a BIP 321 payment URI",
+        "description": "Builds a single BIP 321 `bitcoin:` URI bundling multiple ways to receive the same payment, so one call prepares everything needed for an incoming payment. A fresh Ark address is always included. When `amount_sat` is given, a BOLT11 invoice for that amount is generated and the amount is embedded in the URI. When `onchain` is `true`, a fresh on-chain address is added (placed in the URI body on mainnet, as a `tb=` parameter on test networks). Set the `uppercase` query parameter to upper-case the `bip321` URI so QR encoders can use the compact alphanumeric mode; this fails if the URI carries case-sensitive data. The individual `ark`, `bolt11`, and `onchain` destinations are always returned in their natural case for direct use.",
+        "operationId": "bip321_uri",
+        "parameters": [
+          {
+            "name": "uppercase",
+            "in": "query",
+            "description": "Upper-case the returned `bip321` URI for compact QR encoding. Defaults to false. Fails with 400 if the URI carries case-sensitive data (a label, message, or base58 address).",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Bip321UriRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Returns the BIP 321 URI and its destinations",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Bip321UriResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Requested an upper-case URI that carries case-sensitive data",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternalServerError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/wallet/connected": {
       "get": {
         "tags": [
@@ -2785,6 +2848,89 @@
           "mutinynet",
           "regtest"
         ]
+      },
+      "Bip321UriQuery": {
+        "type": "object",
+        "description": "Query parameters for building a BIP 321 URI.",
+        "properties": {
+          "uppercase": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Whether to upper-case the returned `bip321` URI so QR encoders can use\nthe compact alphanumeric mode. Defaults to `false`. Requesting an\nupper-case URI fails when it carries case-sensitive data (a label,\nmessage, or base58 address) that cannot be upper-cased."
+          }
+        }
+      },
+      "Bip321UriRequest": {
+        "type": "object",
+        "description": "Request to build a BIP 321 unified payment URI.\n\nAn Ark address is always included. A BOLT11 invoice is only included when\n`amount_sat` is given (an amount is required to create one). An on-chain\naddress is included only when `onchain` is `true`.",
+        "properties": {
+          "amount_sat": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Optional amount (in satoshis) to request. When set, it is embedded in\nthe URI and used to create the BOLT11 invoice. Any server-configured\n[LightningReceiveFees](crate::cli::fees::LightningReceiveFees) are\ndeducted from the amount the client ultimately receives over Lightning.",
+            "minimum": 0
+          },
+          "label": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Optional label describing the payment, recorded in the URI's `label`."
+          },
+          "message": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Optional message describing the payment, recorded in the URI's `message`."
+          },
+          "onchain": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Whether to include a fresh on-chain address as a payment destination.\nDefaults to `false`."
+          }
+        }
+      },
+      "Bip321UriResponse": {
+        "type": "object",
+        "description": "A BIP 321 unified payment URI together with its individual destinations.\n\nThe `bip321` field is the combined `bitcoin:` URI; the other fields expose\neach generated destination separately for convenience. A field is `null`\nwhen that destination was not requested or could not be produced.",
+        "required": [
+          "bip321"
+        ],
+        "properties": {
+          "ark": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The generated Ark address, if any."
+          },
+          "bip321": {
+            "type": "string",
+            "description": "The combined BIP 321 `bitcoin:` URI."
+          },
+          "bolt11": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The generated BOLT11 invoice, included only when an amount was given."
+          },
+          "onchain": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The generated on-chain address, included only when `onchain` was set."
+          }
+        }
       },
       "BitcoindAuth": {
         "oneOf": [
