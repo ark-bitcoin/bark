@@ -312,6 +312,10 @@ impl Server {
 			htlc_vtxo_ids: htlc_vtxo_ids.clone(),
 		);
 
+		if let Some(preimage) = self.htlc_settler.is_settled(invoice_payment_hash).await? {
+			return badarg!("invoice has already been paid, preimage: {}", preimage);
+		}
+
 		let cosign_request = cosign_request.set_vtxos(htlc_vtxos)?;
 
 		let validation = ArkoorCosignRequestValidationParams {
@@ -332,12 +336,7 @@ impl Server {
 			match attempt.status {
 				LightningPaymentStatus::Failed => {},
 				LightningPaymentStatus::Succeeded => {
-					if let Some(preimage) = self.htlc_settler.is_settled(invoice_payment_hash).await? {
-						return badarg!("This lightning payment has completed. preimage: {}",
-							preimage.as_hex());
-					} else {
-						error!("This lightning payment has completed, but no preimage found. Accepting revocation");
-					}
+					error!("This lightning payment has completed, but no preimage found. Accepting revocation");
 				},
 				_ if tip > input_policy.htlc_expiry => {
 					// Check one last time to see if it completed

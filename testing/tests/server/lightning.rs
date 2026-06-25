@@ -213,7 +213,7 @@ async fn reject_revocation_on_successful_lightning_payment() {
 
 	assert_eq!(status.code(), tonic::Code::InvalidArgument);
 	assert!(
-		status.message().contains("This lightning payment has completed. preimage: "),
+		status.message().contains("invoice has already been paid, preimage"),
 		"unexpected server response: {status:?}",
 	);
 }
