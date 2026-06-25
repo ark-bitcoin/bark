@@ -12,7 +12,7 @@ use bitcoind_async_client::Client as BitcoindClient;
 use futures::StreamExt;
 use tokio::io::AsyncBufReadExt;
 use tokio_stream::wrappers::LinesStream;
-use tracing::{info, warn};
+use tracing::{debug, error, info, warn};
 
 use crate::bitcoind as bcd;
 use crate::error::ContextExt;
@@ -240,13 +240,27 @@ where
 	let reader = tokio::io::BufReader::new(file);
 	let mut lines = LinesStream::new(reader.lines()).enumerate();
 	let mut ret = T::default();
+	let mut nb_lines = 0;
+	let mut nb_success = 0;
 	while let Some((idx, res)) = lines.next().await {
 		let line = res?;
-		let addr = bitcoin::Address::from_str(&line)
-			.with_context(|| format!("error parsing blocklist address on line {}", idx))?
-			.require_network(network)
-			.with_context(|| format!("blocklist address on line {} not valid network", idx))?;
-		ret.extend([addr.script_pubkey()]);
+		match bitcoin::Address::from_str(&line)
+			.with_context(|| format!("error parsing blocklist address on line {}", idx))
+			.and_then(|addr| addr.require_network(network)
+				.with_context(|| format!("blocklist address on line {} not valid network", idx))
+			)
+		{
+			Ok(addr) => {
+				ret.extend([addr.script_pubkey()]);
+				nb_success += 1;
+			},
+			Err(e) => debug!("Error parsing blocklist address '{}': {:#}", line, e),
+		}
+		nb_lines += 1;
+	}
+
+	if nb_lines > 5 && nb_success == 0 {
+		error!("blocklist: non-empty blocklist without any valid address");
 	}
 
 	Ok(ret)
