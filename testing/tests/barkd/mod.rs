@@ -2,6 +2,7 @@ mod boards;
 mod core;
 mod exits;
 mod helpers;
+mod history;
 mod lightning;
 mod mnemonic;
 mod notifications;
