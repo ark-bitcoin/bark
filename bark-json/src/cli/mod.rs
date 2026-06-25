@@ -390,8 +390,9 @@ impl From<bark::persist::models::LightningReceive> for LightningReceiveInfo {
 			payment_preimage: v.payment_preimage,
 			preimage_revealed_at: v.preimage_revealed_at,
 			invoice: v.invoice.to_string(),
-			htlc_vtxos: v.htlc_vtxos.into_iter()
-				.map(crate::primitives::WalletVtxoInfo::from).collect(),
+			htlc_vtxos: v.htlc_vtxos.iter()
+				.map(crate::primitives::WalletVtxoInfo::from)
+				.collect(),
 			amount: v.invoice.amount_milli_satoshis().map(Amount::from_msat_floor)
 				.unwrap_or(Amount::ZERO),
 			finished_at: v.finished_at,

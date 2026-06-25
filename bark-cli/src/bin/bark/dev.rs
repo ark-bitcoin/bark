@@ -132,7 +132,7 @@ async fn execute_vtxo_command(datadir: &Path, command: VtxoCommand) -> anyhow::R
 				wallet.import_vtxo(&vtxo).await.with_context(|| format!("Failed to import vtxo {}", vtxo_id))?;
 				let wallet_vtxo = wallet.get_vtxo_by_id(vtxo_id).await
 					.with_context(|| format!("Failed to get imported vtxo {}", vtxo_id))?;
-				imported.push(WalletVtxoInfo::from(wallet_vtxo));
+				imported.push(WalletVtxoInfo::from(&wallet_vtxo));
 			}
 			output_json(&imported);
 		}
