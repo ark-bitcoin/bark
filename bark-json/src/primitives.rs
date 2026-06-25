@@ -9,7 +9,7 @@ use bitcoin::secp256k1::PublicKey;
 use utoipa::ToSchema;
 
 use ark::{Vtxo, VtxoId};
-use ark::vtxo::{Bare, Full, VtxoPolicyKind};
+use ark::vtxo::{Full, VtxoPolicyKind};
 use bark::movement::MovementId;
 use bark::vtxo::VtxoState;
 use bitcoin_ext::{BlockDelta, BlockHeight};
@@ -139,22 +139,6 @@ pub struct VtxoInfo {
 	pub exit_depth: Option<u16>,
 }
 
-impl<'a> From<&'a Vtxo<Bare>> for VtxoInfo {
-	fn from(v: &'a Vtxo<Bare>) -> VtxoInfo {
-		VtxoInfo {
-			id: v.id(),
-			amount: v.amount(),
-			policy_type: v.policy().policy_type(),
-			user_pubkey: v.user_pubkey(),
-			server_pubkey: v.server_pubkey(),
-			expiry_height: v.expiry_height(),
-			exit_delta: v.exit_delta(),
-			chain_anchor: v.chain_anchor(),
-			exit_depth: None,
-		}
-	}
-}
-
 impl<'a> From<&'a Vtxo<Full>> for VtxoInfo {
 	fn from(v: &'a Vtxo<Full>) -> VtxoInfo {
 		VtxoInfo {
@@ -168,12 +152,6 @@ impl<'a> From<&'a Vtxo<Full>> for VtxoInfo {
 			chain_anchor: v.chain_anchor(),
 			exit_depth: Some(v.exit_depth()),
 		}
-	}
-}
-
-impl From<Vtxo<Bare>> for VtxoInfo {
-	fn from(v: Vtxo<Bare>) -> VtxoInfo {
-		VtxoInfo::from(&v)
 	}
 }
 
@@ -194,11 +172,21 @@ pub struct WalletVtxoInfo {
 	pub state: VtxoStateInfo,
 }
 
-impl From<bark::WalletVtxo> for WalletVtxoInfo {
-	fn from(v: bark::WalletVtxo) -> Self {
+impl<'a> From<&'a bark::WalletVtxo> for WalletVtxoInfo {
+	fn from(v: &'a bark::WalletVtxo) -> Self {
 		WalletVtxoInfo {
-			vtxo: v.vtxo.into(),
-			state: v.state.into(),
+			vtxo: VtxoInfo {
+				id: v.id(),
+				amount: v.amount(),
+				policy_type: v.policy().policy_type(),
+				user_pubkey: v.user_pubkey(),
+				server_pubkey: v.server_pubkey(),
+				expiry_height: v.expiry_height(),
+				exit_delta: v.exit_delta(),
+				chain_anchor: v.chain_anchor(),
+				exit_depth: Some(v.exit_depth),
+			},
+			state: VtxoStateInfo::from(&v.state),
 		}
 	}
 }
@@ -245,8 +233,8 @@ pub enum VtxoStateInfo {
 	},
 }
 
-impl From<VtxoState> for VtxoStateInfo {
-	fn from(state: VtxoState) -> Self {
+impl<'a> From<&'a VtxoState> for VtxoStateInfo {
+	fn from(state: &'a VtxoState) -> Self {
 		match state {
 			VtxoState::Spendable => VtxoStateInfo::Spendable,
 			VtxoState::Spent => VtxoStateInfo::Spent,
@@ -254,10 +242,10 @@ impl From<VtxoState> for VtxoStateInfo {
 			VtxoState::Locked { holder } => {
 				match holder {
 					Some(bark::vtxo::VtxoLockHolder::Movement { id }) => {
-						VtxoStateInfo::Locked { movement_id: Some(id), action_id: None }
+						VtxoStateInfo::Locked { movement_id: Some(*id), action_id: None }
 					},
 					Some(bark::vtxo::VtxoLockHolder::Action { id }) => {
-						VtxoStateInfo::Locked { movement_id: None, action_id: Some(id) }
+						VtxoStateInfo::Locked { movement_id: None, action_id: Some(id.clone()) }
 					},
 					None => VtxoStateInfo::Locked { movement_id: None, action_id: None },
 				}

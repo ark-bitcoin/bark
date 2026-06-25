@@ -407,10 +407,9 @@ pub async fn vtxos(
 		wallet.vtxos().await.context("Failed to get VTXOs")?
 	};
 
-	let vtxo_infos = wallet_vtxos
-		.into_iter()
+	let vtxo_infos = wallet_vtxos.iter()
 		.map(bark_json::primitives::WalletVtxoInfo::from)
-		.collect::<Vec<_>>();
+		.collect();
 
 	Ok(axum::Json(vtxo_infos))
 }
@@ -442,7 +441,7 @@ pub async fn get_vtxo(
 	let wallet_vtxo = wallet.get_vtxo_by_id(vtxo_id).await
 		.not_found([vtxo_id], "VTXO not found")?;
 
-	Ok(axum::Json(wallet_vtxo.into()))
+	Ok(axum::Json((&wallet_vtxo).into()))
 }
 
 #[utoipa::path(
@@ -989,7 +988,7 @@ pub async fn import_vtxo(
 		let vtxo_id = vtxo.id();
 		wallet.import_vtxo(&vtxo).await.context("Failed to import VTXO")?;
 		let wallet_vtxo = wallet.get_vtxo_by_id(vtxo_id).await.context("Failed to get imported VTXO")?;
-		imported.push(wallet_vtxo.into());
+		imported.push((&wallet_vtxo).into());
 	}
 
 	Ok(axum::Json(imported))
