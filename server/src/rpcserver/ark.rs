@@ -468,6 +468,7 @@ impl rpc::server::ArkService for Server {
 		&self,
 		req: tonic::Request<protos::ClaimLightningReceiveRequest>
 	) -> Result<tonic::Response<protos::ArkoorPackageCosignResponse>, tonic::Status> {
+		let pver = req.pver()?;
 		let req = req.into_inner();
 
 		let payment_hash = PaymentHash::from_bytes(req.payment_hash)?;
@@ -481,6 +482,7 @@ impl rpc::server::ArkService for Server {
 			payment_hash,
 			payment_preimage,
 			cosign_request,
+			pver,
 		).await.to_status()?;
 
 		Ok(tonic::Response::new(cosign_resp.into()))

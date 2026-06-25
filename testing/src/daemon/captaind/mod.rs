@@ -28,7 +28,31 @@ use crate::util::resolve_path;
 
 pub type Captaind = Daemon<CaptaindHelper>;
 
-pub type ArkClient = rpc::ArkServiceClient<tonic::transport::Channel>;
+/// Interceptor that stamps the protocol-version header on every RPC the test
+/// harness makes through an [ArkClient].
+///
+/// Real bark clients attach this header via their own interceptor once the
+/// handshake has negotiated a version. We need this for certain RPCs like
+/// when we claim a lightning receive.
+type PverInterceptor = fn(tonic::Request<()>) -> Result<tonic::Request<()>, tonic::Status>;
+
+fn inject_pver(mut req: tonic::Request<()>) -> Result<tonic::Request<()>, tonic::Status> {
+	rpc::RequestExt::set_pver(&mut req, rpc::MAX_PROTOCOL_VERSION);
+	Ok(req)
+}
+
+/// Connect an [ArkClient] to `url` with the [inject_pver] interceptor attached.
+async fn connect_ark_client(url: &str) -> anyhow::Result<ArkClient> {
+	let channel = tonic::transport::Endpoint::from_shared(url.to_owned())
+		.context("invalid ark url")?
+		.connect().await
+		.context("connecting ark rpc")?;
+	Ok(rpc::ArkServiceClient::with_interceptor(channel, inject_pver as PverInterceptor))
+}
+
+pub type ArkClient = rpc::ArkServiceClient<
+	tonic::service::interceptor::InterceptedService<tonic::transport::Channel, PverInterceptor>,
+>;
 pub type MailboxClient = rpc::mailbox::MailboxServiceClient<tonic::transport::Channel>;
 pub type WalletAdminClient = rpc::admin::WalletAdminServiceClient<tonic::transport::Channel>;
 pub type RoundAdminClient = rpc::admin::RoundAdminServiceClient<tonic::transport::Channel>;
@@ -189,7 +213,7 @@ impl Captaind {
 	}
 
 	pub async fn get_public_rpc(&self) -> ArkClient {
-		ArkClient::connect(self.ark_url()).await.expect("can't connect server public rpc")
+		connect_ark_client(&self.ark_url()).await.expect("can't connect server public rpc")
 	}
 
 	pub async fn get_mailbox_public_rpc(&self) -> MailboxClient {
@@ -490,7 +514,7 @@ impl CaptaindHelper {
 	}
 
 	async fn try_is_ready(&self) -> anyhow::Result<()> {
-		let mut public = ArkClient::connect(self.ark_url()).await.context("public rpc")?;
+		let mut public = connect_ark_client(&self.ark_url()).await.context("public rpc")?;
 		let req = protos::HandshakeRequest { bark_version: None };
 		let _ = public.handshake(req).await.context("handshake")?;
 

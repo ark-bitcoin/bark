@@ -218,7 +218,7 @@ impl Wallet {
 		let receive_policy = VtxoPolicy::new_pubkey(claim_keypair.public_key());
 
 		trace!("ln arkoor builder params: inputs: {:?}; policy: {:?}", input_ids, receive_policy);
-		let builder = ArkoorPackageBuilder::new_claim_all_without_checkpoints(
+		let builder = ArkoorPackageBuilder::new_claim_all_with_checkpoints(
 			inputs,
 			receive_policy.clone(),
 		).context("creating claim arkoor builder failed")?;

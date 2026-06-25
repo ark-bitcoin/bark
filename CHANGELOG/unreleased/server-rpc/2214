@@ -1,0 +1,6 @@
+- Add protocol version 3, `PROTOCOL_VERSION_LN_RECEIVE_CHECKPOINT`
+  Bumps `MAX_PROTOCOL_VERSION` to 3. On this version the Lightning-receive
+  claim is checkpointed, which lets the server's watchman stop at the
+  checkpoint rather than force-exiting a freshly claimed VTXO. Version
+  negotiation keeps older clients and servers interoperable.
+  [#2214](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2214)
