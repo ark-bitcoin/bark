@@ -99,6 +99,22 @@ async fn send_arkoor_package() {
 }
 
 #[tokio::test]
+async fn send_to_arkade_address_is_rejected() {
+	require_bark_version!(> "0.2.5");
+
+	let ctx = TestContext::new("bark/send_to_arkade_address_is_rejected").await;
+	let srv = ctx.captaind("server").funded(btc(10)).create().await;
+	let bark1 = ctx.bark("bark1", &srv).funded(sat(90_000)).create().await;
+
+	// An Arkade (version 0) address. Bark does not support these and should
+	// return an explicit error rather than treating it as an unknown destination.
+	let arkade_addr = "ark1qzpq904am6clw3pgqwyh4p02708fy4xs0hcpwt7rwfdttuxsjamecr7zmxcnglmw0pqg99mp96dn5duae0l7cr7lm0gt59nhh4psml45xrdk57";
+
+	let err = bark1.try_send_oor(arkade_addr, sat(10_000), false).await.unwrap_err().to_alt_string();
+	assert!(err.contains("Ark address is for different server"), "err: {err:#}");
+}
+
+#[tokio::test]
 async fn test_ark_address_other_ark() {
 	let ctx = TestContext::new("bark/test_ark_address_other_ark").await;
 

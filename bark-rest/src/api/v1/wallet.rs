@@ -15,6 +15,7 @@ use ark::ProtocolEncoding;
 use bark::lnurllib::lightning_address::LightningAddress;
 use bark::lnurllib::lnurl::LnUrl;
 use bark::onchain::GetAddress;
+use bark::payment_request::ArkAddressType;
 use bark::subsystem::RoundMovement;
 use bark::vtxo::VtxoFilter;
 use bark_json::web::PendingRoundInfo;
@@ -588,12 +589,23 @@ pub async fn send(
 
 	let amount = body.amount_sat.map(|a| Amount::from_sat(a));
 
-	if let Ok(addr) = ark::Address::from_str(&body.destination) {
-		let amount = amount.context("amount missing")?;
+	match ArkAddressType::from_str(&body.destination) {
+		Ok(ArkAddressType::Bark(addr)) => {
+			let amount = amount.context("amount missing")?;
 
-		info!("Sending arkoor payment of {} to address {}", amount, addr);
-		wallet.send_arkoor_payment(&addr, amount).await?;
-	} else if let Ok(inv) = Bolt11Invoice::from_str(&body.destination) {
+			info!("Sending arkoor payment of {} to address {}", amount, addr);
+			wallet.send_arkoor_payment(&addr, amount).await?;
+			return Ok(axum::Json(bark_json::web::SendResponse {
+				message: "Payment sent successfully".to_string(),
+			}));
+		},
+		// Explicitly handle Arkade addresses
+		Ok(ArkAddressType::Arkade(_)) => badarg!("Ark address is for different server"),
+		// Ignore other errors, we want to check payment methods below
+		Err(_) => {}
+	};
+
+	if let Ok(inv) = Bolt11Invoice::from_str(&body.destination) {
 		if body.comment.is_some() {
 			badarg!("comment is not supported for BOLT-11 invoices");
 		}
@@ -618,7 +630,7 @@ pub async fn send(
 		return Err(anyhow!("offboards are temporarily disabled").into());
 	} else {
 		badarg!("Argument is not a valid destination. Supported are: \
-			VTXO pubkeys, bolt11 invoices, bolt12 offers and lightning addresses");
+			ark addresses, bolt11 invoices, bolt12 offers and lightning addresses");
 	}
 
 	Ok(axum::Json(bark_json::web::SendResponse {

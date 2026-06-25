@@ -13,7 +13,9 @@ use std::path::PathBuf;
 use std::str::FromStr;
 
 use anyhow::Context;
+use bark::ArkoorAddressError;
 use bark::movement::PaymentMethod;
+use bark::payment_request::ArkAddressType;
 use bark_cli::VERSION_DIRTY;
 use bitcoin::{Amount};
 use clap::builder::BoolishValueParser;
@@ -490,16 +492,27 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 				wallet.sync().await;
 			}
 
-			if let Ok(addr) = ark::Address::from_str(&destination) {
-				let amount = amount.context("amount missing")?;
-				if comment.is_some() {
-					bail!("comment not supported for Ark address");
-				}
+			match ArkAddressType::from_str(&destination) {
+				Ok(ArkAddressType::Bark(addr)) => {
+					let amount = amount.context("amount missing")?;
+					if comment.is_some() {
+						bail!("comment not supported for Ark address");
+					}
 
-				info!("Sending arkoor payment of {} to address {}", amount, addr);
-				wallet.send_arkoor_payment(&addr, amount).await?;
-				info!("Payment sent successfully!");
-			} else if let Ok(inv) = Bolt11Invoice::from_str(&destination) {
+					info!("Sending arkoor payment of {} to address {}", amount, addr);
+					wallet.send_arkoor_payment(&addr, amount).await?;
+					info!("Payment sent successfully!");
+					return Ok(());
+				},
+				// Explicitly handle Arkade addresses
+				Ok(ArkAddressType::Arkade(_)) => {
+					return Err(ArkoorAddressError::ServerMismatch.into());
+				},
+				// Ignore other errors, we want to check payment methods below
+				Err(_) => {}
+			};
+
+			if let Ok(inv) = Bolt11Invoice::from_str(&destination) {
 				if comment.is_some() {
 					bail!("comment is not supported for BOLT-11 invoices");
 				}
@@ -521,7 +534,7 @@ async fn inner_main(cli: Cli) -> anyhow::Result<()> {
 				log_lightning_send_outcome(invoice.payment_hash(), wait);
 			} else {
 				bail!("Argument is not a valid destination. Supported are: \
-					VTXO pubkeys, bolt11 invoices, bolt12 offers, lightning addresses and LNURL",
+					ark addresses, bolt11 invoices, bolt12 offers, lightning addresses and LNURL",
 				);
 			}
 		},
