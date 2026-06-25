@@ -193,6 +193,7 @@ impl Data {
 	pub fn take_inputs(
 		&mut self,
 		required_amount: Amount,
+		expiry_threshold: BlockHeight,
 	) -> Vec<(VtxoId, BlockHeight, Amount)> {
 		// The strategy here is to always prioritize expiry.
 		// For each expiry "bucket", pick the highest amount if the
@@ -209,6 +210,10 @@ impl Data {
 		let mut ret = Vec::<(VtxoId, BlockHeight, Amount)>::new();
 		'main:
 		for (height, for_height) in self.pool.iter_mut() {
+			if *height < expiry_threshold {
+				continue;
+			}
+
 			let mut amount_iter = for_height.iter_mut().rev().peekable();
 			while let Some((amount, for_amount)) = amount_iter.next() {
 				let next_amount = amount_iter.peek().map(|p| *p.0).unwrap_or(Amount::ZERO);
@@ -388,7 +393,8 @@ impl VtxoPool {
 		srv: &Server,
 		dest: ArkoorDestination,
 	) -> anyhow::Result<Vec<Vtxo<Full>>> {
-		let inputs = self.data.lock().take_inputs(dest.total_amount);
+		let expiry_threshold = srv.chain_tip().height + self.config.vtxo_pre_expiry as u32;
+		let inputs = self.data.lock().take_inputs(dest.total_amount, expiry_threshold);
 		if inputs.is_empty() {
 			bail!("vtxo pool is empty");
 		}
@@ -714,6 +720,8 @@ mod test {
 			(id(14), 110, sat(2000)),
 			(id(15), 110, sat(3000)),
 			(id(16), 110, sat(3000)),
+			(id(17), 120, sat(1000)),
+			(id(18), 120, sat(1000)),
 		];
 		let len = vtxos.len();
 
@@ -723,27 +731,32 @@ mod test {
 		}
 		assert_eq!(data.len(), len);
 
-		let sel = data.take_inputs(sat(500));
+		let sel = data.take_inputs(sat(500), 0);
 		assert_sel(&sel, &[(100, sat(1000))]);
 
-		let sel = data.take_inputs(sat(2500));
+		let sel = data.take_inputs(sat(2500), 0);
 		assert_sel(&sel, &[(100, sat(3000))]);
 
-		let sel = data.take_inputs(sat(1000));
+		let sel = data.take_inputs(sat(1000), 0);
 		assert_sel(&sel, &[(100, sat(1000))]);
 
 		// the 2x 1000 at height 100 are already used
-		let sel = data.take_inputs(sat(900));
+		let sel = data.take_inputs(sat(900), 0);
 		assert_sel(&sel, &[(100, sat(2000))]);
 
 		// left at 100: 3000, 2000
-		let sel = data.take_inputs(sat(5500));
+		let sel = data.take_inputs(sat(5500), 0);
 		assert_sel(&sel, &[(100, sat(2000)), (100, sat(3000)), (110, sat(1000))]);
 
 		let len = data.len();
-		let sel = data.take_inputs(Amount::MAX_MONEY);
+		let sel = data.take_inputs(Amount::MAX_MONEY, 0);
 		assert!(sel.is_empty());
 		assert_eq!(data.len(), len);
+
+		// with expiry threshold
+		let sel = data.take_inputs(sat(1500), 111);
+		// skips all the 110 ones and picks the 120 ones
+		assert_sel(&sel, &[(120, sat(1000)), (120, sat(1000))]);
 	}
 
 }
