@@ -3,7 +3,7 @@ use std::borrow::Borrow;
 use std::collections::BTreeMap;
 
 use bitcoin::{
-	taproot, Amount, Denomination, FeeRate, OutPoint, ScriptBuf, TapNodeHash, Transaction, TxOut, Weight
+	taproot, Address, AddressType, Amount, Denomination, FeeRate, OutPoint, ScriptBuf, TapNodeHash, Transaction, TxOut, Weight
 };
 use bitcoin::taproot::ControlBlock;
 use bitcoin::secp256k1::{self, Keypair, Secp256k1};
@@ -161,6 +161,22 @@ pub trait AmountExt: Borrow<Amount> {
 	}
 }
 impl AmountExt for Amount {}
+
+
+/// Extension trait for [Address].
+pub trait AddressExt: Borrow<Address> {
+	/// Whether the address uses a case-insensitive bech32(m) encoding and can
+	/// therefore be safely upper-cased (e.g. for the compact alphanumeric QR
+	/// mode). Base58 addresses (P2PKH/P2SH) are case-sensitive, and unknown
+	/// future witness versions are treated conservatively as not uppercasable.
+	fn is_uppercasable(&self) -> bool {
+		matches!(
+			self.borrow().address_type(),
+			Some(AddressType::P2wpkh | AddressType::P2wsh | AddressType::P2tr),
+		)
+	}
+}
+impl AddressExt for Address {}
 
 
 /// Extension trait for [FeeRate].
