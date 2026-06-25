@@ -34,6 +34,7 @@ pub fn router() -> Router<ServerState> {
 		.route("/next-round", get(next_round))
 		.route("/addresses/next", post(address))
 		.route("/addresses/index/{index}", get(peek_address))
+		.route("/bip321", post(bip321_uri))
 		.route("/balance", get(balance))
 		.route("/vtxos", get(vtxos))
 		.route("/vtxos/{id}", get(get_vtxo))
@@ -65,6 +66,7 @@ pub fn router() -> Router<ServerState> {
 		next_round,
 		address,
 		peek_address,
+		bip321_uri,
 		balance,
 		vtxos,
 		get_vtxo,
@@ -85,6 +87,9 @@ pub fn router() -> Router<ServerState> {
 	),
 	components(schemas(
 		bark_json::web::ArkAddressResponse,
+		bark_json::web::Bip321UriRequest,
+		bark_json::web::Bip321UriQuery,
+		bark_json::web::Bip321UriResponse,
 		bark_json::web::WalletExistsResponse,
 		bark_json::web::WalletDeleteRequest,
 		bark_json::web::WalletDeleteResponse,
@@ -352,6 +357,78 @@ pub async fn peek_address(
 
 	Ok(axum::Json(bark_json::web::ArkAddressResponse {
 		address: ark_address.to_string(),
+	}))
+}
+
+#[utoipa::path(
+	post,
+	path = "/bip321",
+	summary = "Build a BIP 321 payment URI",
+	params(
+		("uppercase" = Option<bool>, Query, description = "Upper-case the returned `bip321` URI for compact QR encoding. Defaults to false. Fails with 400 if the URI carries case-sensitive data (a label, message, or base58 address)."),
+	),
+	request_body = bark_json::web::Bip321UriRequest,
+	responses(
+		(status = 200, description = "Returns the BIP 321 URI and its destinations", body = bark_json::web::Bip321UriResponse),
+		(status = 400, description = "Requested an upper-case URI that carries case-sensitive data", body = error::BadRequestError),
+		(status = 500, description = "Internal server error", body = error::InternalServerError)
+	),
+	description = "Builds a single BIP 321 `bitcoin:` URI bundling multiple ways to receive \
+		the same payment, so one call prepares everything needed for an incoming payment. \
+		A fresh Ark address is always included. When `amount_sat` is given, a BOLT11 invoice \
+		for that amount is generated and the amount is embedded in the URI. When `onchain` is \
+		`true`, a fresh on-chain address is added (placed in the URI body on mainnet, as a \
+		`tb=` parameter on test networks). Set the `uppercase` query parameter to upper-case \
+		the `bip321` URI so QR encoders can use the compact alphanumeric mode; this fails if \
+		the URI carries case-sensitive data. The individual `ark`, `bolt11`, and `onchain` \
+		destinations are always returned in their natural case for direct use.",
+	tag = "wallet"
+)]
+#[debug_handler]
+pub async fn bip321_uri(
+	State(state): State<ServerState>,
+	Query(query): Query<bark_json::web::Bip321UriQuery>,
+	Json(body): Json<bark_json::web::Bip321UriRequest>,
+) -> HandlerResult<Json<bark_json::web::Bip321UriResponse>> {
+	let mut wallet = state.require_wallet()?;
+
+	let mut builder = wallet.bip321_uri();
+	if let Some(amount_sat) = body.amount_sat {
+		builder = builder.amount_sat(amount_sat);
+	}
+	if let Some(label) = body.label {
+		builder = builder.label(label);
+	}
+	if let Some(message) = body.message {
+		builder = builder.message(message);
+	}
+
+	// The builder borrows the onchain wallet for its whole lifetime, so the
+	// write guard must outlive the build() call.
+	let uri = if body.onchain.unwrap_or(false) {
+		let onchain = state.require_onchain()?;
+		let mut onchain = onchain.write().await;
+		builder.onchain_wallet(&mut *onchain).build().await
+			.context("Failed to build BIP 321 URI")?
+	} else {
+		builder.build().await
+			.context("Failed to build BIP 321 URI")?
+	};
+
+	let bip321 = if query.uppercase.unwrap_or(false) {
+		uri.checked_uppercase()
+			.badarg("cannot upper-case the URI: it carries a label, message, or base58 address")?
+	} else {
+		uri.to_string()
+	};
+
+	Ok(axum::Json(bark_json::web::Bip321UriResponse {
+		ark: uri.extensions().ark().first().map(|a| a.inner().to_string()),
+		bolt11: uri.lightning().first().map(|i| i.inner().to_string()),
+		// onchain addresses live in the URI body on mainnet and in `tb=` on test networks
+		onchain: uri.address().map(|a| a.to_string())
+			.or_else(|| uri.tb().first().map(|a| a.inner().to_string())),
+		bip321,
 	}))
 }
 
