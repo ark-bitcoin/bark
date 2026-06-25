@@ -27,9 +27,7 @@ use std::time::Duration;
 
 use anyhow::Context;
 use bitcoin::hashes::{sha256, Hash};
-use bitcoin_ext::BlockHeight;
 use chrono::Local;
-use cln_rpc::plugins::hold::{self, InvoiceState};
 use futures::Stream;
 use lightning_invoice::Bolt11Invoice;
 use tokio::sync::{broadcast, Notify};
@@ -37,14 +35,20 @@ use tokio::task::JoinHandle;
 use tokio_stream::StreamExt;
 use tonic::transport::Channel;
 use tracing::{debug, error, info, warn};
+
 use ark::lightning::PaymentHash;
+use bitcoin_ext::BlockHeight;
+use cln_rpc::plugins::hold::{self, InvoiceState};
 use cln_rpc::plugins::hold::hold_client::HoldClient;
+
 use crate::database;
-use crate::database::ln::{LightningNodeId, LightningHtlcSubscription, LightningHtlcSubscriptionStatus, LightningPaymentStatus};
+use crate::database::ln::{LightningNodeId, LightningHtlcSubscription, LightningHtlcSubscriptionStatus};
 use crate::ln::node_manager::post_lightning_receive_notification;
 use crate::sync::SyncManager;
 use crate::system::RuntimeManager;
 use crate::telemetry;
+
+use super::super::payment_handler::PaymentAttemptHandler;
 
 #[derive(Debug, Clone)]
 pub struct ClnHoldConfig {
@@ -142,8 +146,8 @@ struct ClnHoldProcess {
 }
 
 impl ClnHoldProcess {
-	fn notifier(&self) -> super::PaymentAttemptNotifier<'_> {
-		super::PaymentAttemptNotifier::new(&self.db, &self.mailbox_manager, &self.payment_update_tx)
+	fn payment_handler(&self) -> PaymentAttemptHandler<'_> {
+		PaymentAttemptHandler::new(&self.db, &self.mailbox_manager, &self.payment_update_tx)
 	}
 
 	/// For each subscription, verifies if incoming HTLCs have been accepted.
@@ -451,12 +455,7 @@ impl ClnHoldProcess {
 			debug!("HTLC subscription canceled with ongoing payment attempt, \
 				marking as failed: {}", payment_attempt.id,
 			);
-			self.notifier().update_lightning_payment_attempt_status(
-				&payment_attempt,
-				LightningPaymentStatus::Failed,
-				Some(reason),
-				None,
-			).await?;
+			self.payment_handler().fail_payment_attempt(&payment_attempt, Some(reason)).await?;
 		}
 
 		Ok(())

@@ -31,6 +31,8 @@ pub enum SpendState {
 	Pool,
 	/// The VTXO is an htlc-recv that hasn't been claimed yet
 	HtlcRecvUnclaimed,
+	/// The vtxo is an htlc-send HTLC to the server
+	LnSpent,
 	/// The vtxo is a forfeit for a round input
 	RoundForfeit,
 	/// The vtxo is a forfeit for an offboard input
@@ -52,6 +54,7 @@ impl SpendState {
 			SpendState::Spent => "spent",
 			SpendState::Pool => "pool",
 			SpendState::HtlcRecvUnclaimed => "htlc-recv-unclaimed",
+			SpendState::LnSpent => "ln-spent",
 			SpendState::RoundForfeit => "round-forfeit",
 			SpendState::OffboardForfeit => "offboard-forfeit",
 			SpendState::OffboardConnector => "offboard-connector",
@@ -76,6 +79,7 @@ impl FromStr for SpendState {
 			"spent" => Ok(SpendState::Spent),
 			"pool" => Ok(SpendState::Pool),
 			"htlc-recv-unclaimed" => Ok(SpendState::HtlcRecvUnclaimed),
+			"ln-spent" => Ok(SpendState::LnSpent),
 			"round-forfeit" => Ok(SpendState::RoundForfeit),
 			"offboard-forfeit" => Ok(SpendState::OffboardForfeit),
 			"offboard-connector" => Ok(SpendState::OffboardConnector),

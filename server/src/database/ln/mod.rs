@@ -190,14 +190,16 @@ impl<'t> Tx<'t> {
 
 	/// Stores data after lightning payment start.
 	///
-	/// Creates a new payment attempt for the given invoice.
-	/// Errors if there is already an open attempt for the same payment hash.
+	/// Creates a new payment attempt for the given invoice and links the
+	/// HTLC-send vtxos that were committed to it. Errors if there is
+	/// already an open attempt for the same payment hash.
 	pub async fn store_lightning_payment_start(
 		&self,
 		node_id: LightningNodeId,
 		invoice: &Invoice,
 		amount: Amount,
 		sender_mailbox_id: Option<&MailboxIdentifier>,
+		htlc_vtxo_ids: &[VtxoId],
 	) -> anyhow::Result<()> {
 		let payment_hash = invoice.payment_hash();
 
@@ -241,6 +243,17 @@ impl<'t> Tx<'t> {
 
 		let payment_attempt_id: i64 = row.get("id");
 		let updated_at: DateTime<Local> = row.get("updated_at");
+
+		if !htlc_vtxo_ids.is_empty() {
+			let link_stmt = self.prepare("
+				INSERT INTO lightning_payment_attempt_htlc_vtxo
+					(lightning_payment_attempt_id, vtxo_id)
+				SELECT $1, unnest($2::text[]);
+			").await?;
+			let ids: Vec<String> = htlc_vtxo_ids.iter().map(|id| id.to_string()).collect();
+			self.execute(&link_stmt, &[&payment_attempt_id, &ids]).await
+				.context("failed to link htlc vtxos to payment attempt")?;
+		}
 
 		trace!("Stored lightning payment attempt {} with time {:#?}.",
 			payment_attempt_id,
@@ -742,6 +755,52 @@ impl<'t> Tx<'t> {
 			Some(row) => Ok(Some(u64::try_from(row.get::<_, i64>("id"))?)),
 			None => Ok(None),
 		}
+	}
+
+	/// Transition every currently-`spendable` HTLC-send vtxo linked to the
+	/// given payment hash's open attempts to `ln-spent`. Called when a lightning
+	/// send settles, so the vtxo is explicitly marked as consumed by a paid
+	/// invoice.
+	///
+	/// Returns the ids of the linked vtxos that were *not* spendable and so
+	/// were left untouched. An empty vec means every linked vtxo was spendable
+	/// and transitioned.
+	pub async fn mark_htlc_send_vtxos_ln_spent(
+		&self,
+		payment_hash: PaymentHash,
+	) -> anyhow::Result<Vec<VtxoId>> {
+		let stmt = self.prepare("
+			WITH found AS (
+				SELECT vtxo.vtxo_id, vtxo.spend_state
+				FROM vtxo
+				JOIN lightning_payment_attempt_htlc_vtxo link ON link.vtxo_id = vtxo.vtxo_id
+				JOIN lightning_payment_attempt lpa ON lpa.id = link.lightning_payment_attempt_id
+				WHERE lpa.payment_hash = $1
+				  AND lpa.status NOT IN ($2, $3)
+			),
+			updated AS (
+				UPDATE vtxo
+				SET spend_state = 'ln-spent', updated_at = NOW()
+				WHERE vtxo_id IN (SELECT vtxo_id FROM found WHERE spend_state = 'spendable')
+				RETURNING vtxo.vtxo_id
+			)
+			SELECT vtxo_id FROM found WHERE spend_state != 'spendable'
+		").await?;
+
+		let status_failed = LightningPaymentStatus::Failed;
+		let status_succeeded = LightningPaymentStatus::Succeeded;
+
+		let rows = self.query(&stmt, &[
+			&payment_hash.to_string(),
+			&status_failed,
+			&status_succeeded,
+		]).await
+			.context("failed to mark HTLC-send vtxos as ln-spent")?;
+
+		rows.iter()
+			.map(|row| VtxoId::from_str(row.get::<_, &str>("vtxo_id"))
+				.context("invalid vtxo_id in vtxo table"))
+			.collect()
 	}
 
 	/// Look up whether a payment hash has been settled.

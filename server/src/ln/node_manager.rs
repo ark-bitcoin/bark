@@ -47,12 +47,13 @@ use tokio::sync::{broadcast, Notify, mpsc};
 use tokio_stream::StreamExt;
 use tonic::transport::Uri;
 use tracing::{debug, error, info, trace, warn};
+use ark::VtxoId;
 use ark::lightning::{Bolt12Invoice, Bolt12InvoiceExt, Invoice, Offer, PaymentHash, PaymentStatus, Preimage};
 use ark::mailbox::MailboxIdentifier;
 
 use crate::Server;
 use crate::error::ContextExt;
-use crate::ln::cln::{ClnNodeInfo, ClnNodeOnlineState, NodeHandle, PaymentAttemptNotifier};
+use crate::ln::cln::{ClnNodeInfo, ClnNodeOnlineState, NodeHandle};
 use crate::ln::cln::hold::ClnHoldConfig;
 use crate::ln::cln::xpay::ClnXpayConfig;
 use crate::ln::settler::HtlcSettler;
@@ -64,6 +65,8 @@ use crate::database::ln::{
 	LightningNodeId, LightningHtlcSubscription, LightningHtlcSubscriptionStatus, LightningPaymentStatus,
 };
 use crate::telemetry;
+
+use super::payment_handler::PaymentAttemptHandler;
 
 /// Handle for the cln manager process.
 pub struct LightningManager {
@@ -93,8 +96,8 @@ pub struct LightningManager {
 }
 
 impl LightningManager {
-	fn notifier(&self) -> PaymentAttemptNotifier<'_> {
-		PaymentAttemptNotifier::new(&self.db, &self.mailbox_manager, &self.payment_update_tx)
+	fn payment_handler(&self) -> PaymentAttemptHandler<'_> {
+		PaymentAttemptHandler::new(&self.db, &self.mailbox_manager, &self.payment_update_tx)
 	}
 
 	/// Start the [LightningManager].
@@ -223,6 +226,7 @@ impl LightningManager {
 		max_routing_fee: Amount,
 		htlc_send_expiry_height: BlockHeight,
 		sender_mailbox_id: Option<MailboxIdentifier>,
+		htlc_vtxo_ids: Vec<VtxoId>,
 	) -> anyhow::Result<()> {
 		invoice.check_signature().context("invalid invoice signature")?;
 
@@ -234,6 +238,7 @@ impl LightningManager {
 			max_routing_fee,
 			htlc_send_expiry_height,
 			sender_mailbox_id.as_ref(),
+			&htlc_vtxo_ids,
 		).await {
 			error!("Error sending bolt11 payment for invoice: {:#}", e);
 		} else {
@@ -263,6 +268,7 @@ impl LightningManager {
 		max_routing_fee: Amount,
 		htlc_send_expiry_height: BlockHeight,
 		sender_mailbox_id: Option<&MailboxIdentifier>,
+		htlc_vtxo_ids: &[VtxoId],
 	) -> anyhow::Result<()> {
 		let payment_hash = invoice.payment_hash();
 		let node = self.active_node().context("no active cln node")?;
@@ -275,7 +281,7 @@ impl LightningManager {
 		);
 
 		self.db.write(async |t|
-			t.store_lightning_payment_start(node.id, &invoice, amount, sender_mailbox_id).await
+			t.store_lightning_payment_start(node.id, &invoice, amount, sender_mailbox_id, htlc_vtxo_ids).await
 		).await?;
 
 		// If there is an existing subscription, it's an intra-Ark lightning
@@ -290,12 +296,7 @@ impl LightningManager {
 					.read(async |t| t.get_open_lightning_payment_attempt_by_payment_hash(payment_hash).await).await?
 					.expect("we inserted a payment attempt");
 
-				self.notifier().update_lightning_payment_attempt_status(
-					&payment_attempt,
-					LightningPaymentStatus::Failed,
-					Some(&e.to_string()),
-					None,
-				).await?;
+				self.payment_handler().fail_payment_attempt(&payment_attempt, Some(&e.to_string())).await?;
 				return Err(e);
 			}
 
@@ -506,8 +507,12 @@ impl LightningManager {
 		if let Some(attempt) = attempt {
 			// NB: the xpay reconciliation loop may also post the mailbox notification
 			// for the same payment hash. The DB insert is idempotent (ON CONFLICT DO NOTHING).
-			self.notifier().verify_and_update_payment_attempt(
-				&attempt, LightningPaymentStatus::Succeeded, None, None, Some(preimage),
+			self.payment_handler().process_payment_attempt(
+				&self.settler, &attempt,
+				LightningPaymentStatus::Succeeded,
+				None,
+				None,
+				Some(preimage),
 			).await?;
 		} else {
 			// Settle the hold invoice on the node that created the

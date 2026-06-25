@@ -14,7 +14,6 @@
 //! shared snapshot.
 
 pub(crate) mod hold;
-mod notifier;
 pub(crate) mod xpay;
 
 use std::str::FromStr;
@@ -39,7 +38,6 @@ use crate::database::ln::LightningNodeId;
 use crate::telemetry;
 
 use self::hold::{ClnHold, ClnHoldConfig};
-pub(crate) use self::notifier::PaymentAttemptNotifier;
 use self::xpay::{ClnXpay, ClnXpayClient, ClnXpayConfig};
 
 type ClnGrpcClient = NodeClient<Channel>;
