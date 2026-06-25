@@ -1,3 +1,4 @@
+mod bip321;
 mod boards;
 mod core;
 mod exits;

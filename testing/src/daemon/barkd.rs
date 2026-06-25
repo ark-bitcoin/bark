@@ -18,9 +18,9 @@ use bark_json::cli::onchain::{Address, OnchainBalance};
 use bark_json::notifications::WalletNotification;
 use bark_json::primitives::{UtxoInfo, WalletTxInfo, WalletVtxoInfo};
 use bark_json::web::{
-	BarkNetwork, ConnectedResponse, CreateWalletRequest, EncodedVtxoResponse,
-	ExitStartResponse, FeeEstimateResponse, MailboxSyncResponse, OnchainFeeRatesResponse,
-	PendingRoundInfo, TipResponse,
+	BarkNetwork, Bip321UriRequest, Bip321UriResponse, ConnectedResponse, CreateWalletRequest,
+	EncodedVtxoResponse, ExitStartResponse, FeeEstimateResponse, MailboxSyncResponse,
+	OnchainFeeRatesResponse, PendingRoundInfo, TipResponse,
 };
 use bark_rest::auth::AuthToken;
 use bark_rest_client::apis::configuration::Configuration;
@@ -168,6 +168,29 @@ impl Barkd {
 		let resp = wallet_api::address(&config).await
 			.expect("failed to get barkd ark address");
 		resp.address
+	}
+
+	/// Build a BIP 321 unified payment URI bundling an Ark address, an
+	/// optional BOLT11 invoice (when `amount` is set), and an optional
+	/// on-chain address (when `onchain` is true). Set `uppercase` to request
+	/// an upper-cased URI for compact QR encoding.
+	pub async fn bip321_uri(
+		&self,
+		amount: Option<Amount>,
+		onchain: bool,
+		label: Option<String>,
+		message: Option<String>,
+		uppercase: bool,
+	) -> Bip321UriResponse {
+		let config = self.client_config();
+		let req = Bip321UriRequest {
+			amount_sat: amount.map(|a| a.to_sat()),
+			onchain: Some(onchain),
+			label,
+			message,
+		};
+		wallet_api::bip321_uri(&config, req, Some(uppercase)).await
+			.expect("failed to build barkd bip321 uri")
 	}
 
 	/// Request a short-lived websocket authentication ticket.
