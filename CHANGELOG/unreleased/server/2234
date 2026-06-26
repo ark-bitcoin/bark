@@ -1,0 +1,6 @@
+- Authenticate the `PostRecoveryVtxoIds` mailbox endpoint
+  Posts to a recovery mailbox can now carry a signed proof of mailbox
+  ownership, verified like the read path, so third parties can no longer
+  write to a mailbox they don't own. The authorization stays optional for
+  now to keep older clients working.
+  [#2234](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2234)

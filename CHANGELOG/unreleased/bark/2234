@@ -1,0 +1,4 @@
+- Sign recovery mailbox posts
+  `post_recovery_vtxo_ids` now proves ownership of the recovery mailbox so
+  the server can reject posts from anyone else.
+  [#2234](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2234)
