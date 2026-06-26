@@ -401,8 +401,20 @@ impl RoundState {
 			RoundFlowState::NonInteractivePending { unlock_hash } => {
 				match progress_delegated(wallet, &self.participation, unlock_hash).await {
 					Ok(HarkProgressResult::RoundPending) => Ok(RoundStatus::Pending),
+					// We don't lock inputs on delegated rounds, so if we don't find it,
+					// we just mark the refresh movement as failed
 					Ok(HarkProgressResult::RoundNotFound) => {
-						self.handle_round_not_found(wallet).await
+						info!("Server reports round participation not found (no forfeits sent)");
+						self.flow = RoundFlowState::Failed {
+							error: "server reports round participation not found".into(),
+						};
+						if let Some(movement_id) = self.movement_id {
+							wallet.inner.movements.finish_movement(movement_id, MovementStatus::Failed).await
+								.context("failed to mark refresh movement as failed")?;
+						}
+						Ok(RoundStatus::Failed {
+							error: "server reports round participation not found".into(),
+						})
 					},
 					Ok(HarkProgressResult::Ok { funding_tx, new_vtxos }) => {
 						let funding_txid = funding_tx.compute_txid();
@@ -545,27 +557,6 @@ impl RoundState {
 		}
 	}
 
-	/// Handle the case where the server reports our round participation as not found.
-	///
-	/// If we sent forfeit signatures (which only happens after the round was
-	/// confirmed), this is adversarial — trigger unilateral exit.
-	/// If we never sent forfeits, the server can't steal, so unlock the VTXOs
-	/// and verify with the server that they're still considered spendable.
-	async fn handle_round_not_found(
-		&mut self,
-		wallet: &Wallet,
-	) -> anyhow::Result<RoundStatus> {
-		info!("Server reports round participation not found (no forfeits sent)");
-		self.flow = RoundFlowState::Failed {
-			error: "server reports round participation not found".into(),
-		};
-		persist_round_failure(wallet, &self.participation, self.movement_id).await
-			.context("failed to persist round failure")?;
-
-		Ok(RoundStatus::Failed {
-			error: "server reports round participation not found".into(),
-		})
-	}
 }
 
 /// The state of the process flow of a round
@@ -1453,10 +1444,6 @@ impl Wallet {
 		};
 		let movement_id = movement.as_ref().map(|m| m.id());
 
-		let input_ids = participation.inputs.iter().map(|v| v.id()).collect::<Vec<_>>();
-		self.lock_vtxos(&input_ids, movement_id.map(|m| m.into())).await
-			.context("error locking input VTXOs")?;
-
 		match self.join_next_round_delegated_inner(participation, movement_id).await {
 			Ok(state) => {
 				if let Some(mut m) = movement {
@@ -1465,8 +1452,6 @@ impl Wallet {
 				Ok(state)
 			},
 			Err(e) => {
-				self.unlock_vtxos(&input_ids).await
-					.context("error unlocking input VTXOs")?;
 				if let Some(mut m) = movement {
 					m.fail().await.context("error marking movement as failed")?;
 				}

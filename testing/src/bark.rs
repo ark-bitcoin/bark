@@ -785,6 +785,13 @@ impl Bark {
 		self.run(["refresh", "--counterparty"]).await;
 	}
 
+	/// Request a delegated (non-interactive) refresh of all VTXOs without syncing
+	/// first. Returns once the participation has been submitted to the server;
+	/// the server completes the actual refresh in a later round.
+	pub async fn refresh_all_delegated_no_sync(&self) {
+		self.run(["refresh", "--all", "--delegated", "--no-sync"]).await;
+	}
+
 	pub async fn try_offboard_all(&self, address: impl fmt::Display) -> anyhow::Result<json::cli::OffboardResult> {
 		Ok(self.try_run_json(
 			["offboard", "--all", "--address", &address.to_string()],

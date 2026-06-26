@@ -3,6 +3,7 @@ use std::collections::HashSet;
 use anyhow::{Context, bail};
 
 use bitcoin::{Transaction, Txid};
+use tracing::debug;
 
 use ark::{ProtocolEncoding, ServerVtxo, VtxoId};
 use ark::vtxo::{Bare, Full};
@@ -522,6 +523,9 @@ async fn apply_vtxo_updates(
 	do_undo_round_updates(tx, &vu.round_unspends).await?;
 	do_claim_updates(tx, &vu.claims).await?;
 	do_register_updates(tx, &vu.registrations).await?;
+
+	invalidate_pending_participations_for_inputs(tx, &vu).await?;
+
 	Ok(())
 }
 
@@ -718,6 +722,27 @@ async fn do_register_updates(
 		UPDATE vtxo SET spend_state = 'spendable', updated_at = NOW()
 		WHERE vtxo_id = ANY($1::text[]) AND spend_state = 'unregistered'
 	", &[&ids]).await.context("failed to mark VTXOs as registered")?;
+	Ok(())
+}
+
+/// A spent input invalidates any pending delegated refresh that relies on
+/// it, so drop those participations now rather than failing them later at
+/// round time.
+///
+/// Participations already assigned to a round have round_id
+/// set and are left untouched.
+async fn invalidate_pending_participations_for_inputs(
+	tx: &tokio_postgres::Transaction<'_>,
+	vtxo_updates: &VtxoUpdates,
+) -> anyhow::Result<()> {
+	let spent_inputs = vtxo_updates.oor_spends.iter().map(|s| s.vtxo_id)
+		.chain(vtxo_updates.round_spends.iter().map(|s| s.vtxo_id))
+		.chain(vtxo_updates.offboard_spends.iter().map(|s| s.vtxo_id))
+		.collect::<Vec<_>>();
+	let dropped = super::query::delete_pending_participations_for_inputs(tx, &spent_inputs).await?;
+	if dropped > 0 {
+		debug!("Invalidated {} pending delegated round participation(s) whose inputs were spent", dropped);
+	}
 	Ok(())
 }
 
