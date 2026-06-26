@@ -930,6 +930,28 @@ impl Server {
 		Ok(())
 	}
 
+	/// Returns the subset of `vtxos` whose own funding output is already on
+	/// chain (confirmed or in the mempool) — i.e. that have been exited and so
+	/// can no longer be spent off-chain.
+	///
+	/// Unlike [Server::check_vtxos_not_exited] this reports *all* exited inputs
+	/// instead of failing on the first one.
+	pub async fn find_exited_vtxos<V: VtxoRef>(
+		&self,
+		vtxos: impl IntoIterator<Item = V>,
+	) -> anyhow::Result<Vec<VtxoId>> {
+		let mut exited = Vec::new();
+		for vtxo in vtxos {
+			let vtxo_id = vtxo.vtxo_id();
+			let txid = vtxo_id.to_point().txid;
+			match bcd::tx_status(&self.bitcoind, txid).await? {
+				TxStatus::Confirmed(_) | TxStatus::Mempool => exited.push(vtxo_id),
+				TxStatus::NotFound => {},
+			}
+		}
+		Ok(exited)
+	}
+
 	/// Unblind a [BlindedMailboxIdentifier]
 	pub fn unblind_mailbox_id(
 		&self,

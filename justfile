@@ -97,6 +97,7 @@ test-unit-codecov TEST="":
 		--exclude ark-testing --no-report {{TEST}}
 
 test-integration TEST="": ensure-build-bins docker-pull
+	RUST_MIN_STACK=33554432 \
 	cargo nextest run --no-fail-fast --profile {{NEXTEST_PROFILE}} --package ark-testing \
 		-E 'not binary(tor)' {{TEST}}
 alias int := test-integration
@@ -117,11 +118,11 @@ test-integration-bark-sdk-action-reentrancy TEST="": ensure-build-bins docker-pu
 		--package ark-testing --test bark-sdk {{TEST}}
 alias int-bark-sdk-action-reentrancy := test-integration-bark-sdk-action-reentrancy
 
-# run integration tests that exercise the bark Rust SDK directly.
 # Must not run under backward-compat mode (BARK_EXEC override has no effect
 # on tests linked against the current bark-wallet crate).
 test-integration-bark-sdk: ensure-build-bins docker-pull
-	cargo nextest run --no-fail-fast --profile {{NEXTEST_PROFILE}} --package ark-testing \
+	RUST_MIN_STACK=33554432 \
+		cargo nextest run --no-fail-fast --profile {{NEXTEST_PROFILE}} --package ark-testing \
 		--test bark-sdk
 alias int-bark-sdk := test-integration-bark-sdk
 
@@ -138,6 +139,7 @@ test-integration-core: ensure-build-bins docker-pull
 alias int-core := test-integration-core
 
 test-integration-prebuilt TEST="": docker-pull
+	RUST_MIN_STACK=33554432 \
 	cargo nextest run --archive-file {{CARGO_TARGET}}/ci/integration-tests.tar.zst {{TEST}}
 
 test-integration-bark-prebuilt: docker-pull
@@ -145,6 +147,7 @@ test-integration-bark-prebuilt: docker-pull
 		-E 'binary(bark) + binary(barkd)'
 
 test-integration-bark-sdk-prebuilt: docker-pull
+	RUST_MIN_STACK=33554432 \
 	cargo nextest run --archive-file {{CARGO_TARGET}}/ci/integration-tests.tar.zst \
 		-E 'binary(=bark-sdk)'
 

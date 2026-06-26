@@ -1,9 +1,11 @@
 
 use std::fmt;
+use std::borrow::Borrow;
 use std::error::Error as StdError;
 
 use anyhow::Context;
 
+use ark::VtxoId;
 
 /// An error type to add context to anyhow to indicate any form
 /// of incorrect user input.
@@ -70,6 +72,48 @@ impl fmt::Display for NotFound {
 
 impl StdError for NotFound {}
 
+/// An error indicating that one or more specific input VTXOs cannot be used,
+/// for instance because they have already been spent or exited. It carries the
+/// offending identifiers so that a client can drop exactly those inputs and
+/// retry the request without them.
+pub struct UnusableInputs {
+	ids: Vec<VtxoId>,
+}
+
+impl UnusableInputs {
+	pub fn new(
+		ids: impl IntoIterator<Item = impl Borrow<VtxoId>>,
+	) -> UnusableInputs {
+		UnusableInputs {
+			ids: ids.into_iter().map(|i| *i.borrow()).collect(),
+		}
+	}
+
+	pub fn identifiers(&self) -> &Vec<VtxoId> {
+		&self.ids
+	}
+}
+
+impl fmt::Debug for UnusableInputs {
+	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+		fmt::Display::fmt(self, f)
+	}
+}
+
+impl fmt::Display for UnusableInputs {
+	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+		f.write_str("unusable inputs: [")?;
+		for (i, vtxo) in self.ids.iter().enumerate() {
+			if i > 0 {
+				f.write_str(",")?;
+			}
+			write!(f, "{}", vtxo)?;
+		}
+		f.write_str("]")?;
+		Ok(())
+	}
+}
+
 
 /// Return an [mod@anyhow] error tagged with [BadArgument].
 macro_rules! badarg_err {
@@ -123,6 +167,12 @@ pub trait ContextExt<T, E>: Context<T, E> {
 		I: fmt::Display,
 		C: fmt::Display + Send + Sync + 'static,
 		F: FnOnce() -> C;
+
+	/// Tag an error with [UnusableInputs].
+	fn unusable_inputs<I, V>(self, ids: V) -> anyhow::Result<T>
+	where
+		V: IntoIterator<Item = I>,
+		I: Borrow<VtxoId>;
 }
 
 impl<R, T, E> ContextExt<T, E> for R
@@ -161,6 +211,15 @@ where
 		F: FnOnce() -> C,
 	{
 		self.with_context(|| NotFound::new(ids, f()))
+	}
+
+	/// Tag an error with [UnusableInputs].
+	fn unusable_inputs<I, V>(self, ids: V) -> anyhow::Result<T>
+	where
+		V: IntoIterator<Item = I>,
+		I: Borrow<VtxoId>,
+	{
+		self.context(UnusableInputs::new(ids))
 	}
 }
 

@@ -1,0 +1,15 @@
+- Maintenance refresh no longer gets stuck on a single unusable VTXO
+  Previously, one input the server rejected (e.g. spent server-side while the
+  wallet still considered it spendable) failed the whole atomic refresh batch on
+  every maintenance run, so healthy expiring VTXOs never refreshed and would
+  eventually become exit-only. Maintenance (both interactive and delegated) now
+  drops the inputs the server rejects and retries with the rest; the interactive
+  path re-submits to the same in-flight round attempt. Explicit, developer-initiated
+  refreshes still fail wholesale rather than silently dropping a caller's selection.
+  - **BREAKING:** `Wallet::maybe_schedule_maintenance_refresh` has been removed.
+    Interactive maintenance now actively joins the in-flight round attempt: the
+    daemon does so on the round Attempt event, and the blocking
+    `Wallet::maintenance_refresh` does so inline.
+  - Adds `Wallet::get_vtxos_to_refresh_with_excluded`, which selects refreshable
+    VTXOs while skipping a caller-supplied set (used to drop server-rejected inputs).
+  [#2217](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2217)

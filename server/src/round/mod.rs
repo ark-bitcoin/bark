@@ -377,10 +377,20 @@ impl CollectingPayments {
 		let mut ret  = Vec::with_capacity(inputs.len());
 		match srv.db.read(async |t| t.get_user_vtxos_by_id(&inputs).await).await {
 			Ok(vtxos) => {
-				// Check if the input vtxos exist, unspent and owned by user.
+				// Collect *every* unspendable input rather than bailing on the
+				// first, so the client learns all the ids it must drop in one go.
+				let mut unusable = Vec::new();
 				for v in vtxos {
-					v.check_spendable(chain_tip)?;
-					ret.push(v.vtxo);
+					if let Err(e) = v.check_spendable(chain_tip) {
+						debug!("round input vtxo {} is not spendable: {:#}", v.vtxo_id, e);
+						unusable.push(v.vtxo_id);
+					} else {
+						ret.push(v.vtxo);
+					}
+				}
+				if !unusable.is_empty() {
+					return badarg!("input vtxo(s) not spendable")
+						.unusable_inputs(unusable);
 				}
 				Ok(ret)
 			},
@@ -552,11 +562,14 @@ impl CollectingPayments {
 			return Err(e).context("amounts check failed");
 		}
 
-		if let Err(e) = srv.check_vtxos_not_exited(&input_vtxos).await {
+		let exited = srv.find_exited_vtxos(&input_vtxos).await
+			.context("error checking whether inputs were exited")?;
+		if !exited.is_empty() {
 			client_rslog!(RoundPaymentRegistrationFailed, self.round_step,
-				error: e.to_string(),
+				error: format!("input vtxo(s) already exited: {:?}", exited),
 			);
-			return Err(e).context("some vtxo was already exited");
+			return badarg!("input vtxo(s) already exited")
+				.unusable_inputs(exited);
 		}
 
 		// Finally, we are done
@@ -657,12 +670,19 @@ impl CollectingPayments {
 			));
 		}
 
-		if let Err(e) = srv.check_vtxos_not_exited(&input_vtxos).await {
+		let exited = match srv.find_exited_vtxos(&input_vtxos).await {
+			Ok(e) => e,
+			Err(e) => return Err(ProcessHarkParticipationError::BadParticipation(e)),
+		};
+		if !exited.is_empty() {
 			client_rslog!(RoundPaymentRegistrationFailed, self.round_step,
-				error: e.to_string(),
+				error: format!("input vtxo(s) already exited: {:?}", exited),
 			);
 			return Err(ProcessHarkParticipationError::BadParticipation(
-				e.context("some vtxo was already exited"),
+				ContextExt::<(), _>::unusable_inputs(
+					badarg!("input vtxo(s) already exited"),
+					exited,
+				).unwrap_err()
 			));
 		}
 
@@ -1813,6 +1833,28 @@ impl Server {
 		let unlock_hash = UnlockHash::hash(&unlock_preimage);
 
 		let chain_tip = self.chain_tip().height;
+
+		// Validate inputs up-front so the client gets a structured error listing
+		// every unusable input (spent or exited) and can drop them and retry.
+		let mut unusable = Vec::new();
+		for vtxo in &vtxos {
+			if let Err(e) = vtxo.check_spendable(chain_tip) {
+				debug!("delegated round input {} is not spendable: {:#}", vtxo.vtxo_id, e);
+				unusable.push(vtxo.vtxo_id);
+			}
+		}
+		for id in self.find_exited_vtxos(&input_ids).await
+			.context("error checking whether inputs were exited")?
+		{
+			if !unusable.contains(&id) {
+				unusable.push(id);
+			}
+		}
+		if !unusable.is_empty() {
+			return badarg!("input vtxo(s) unusable")
+				.unusable_inputs(unusable);
+		}
+
 		self.db.write(async |t| {
 			t.try_store_round_participation(chain_tip, unlock_preimage, &input_ids, &outputs).await
 		}).await?;

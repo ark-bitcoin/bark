@@ -341,12 +341,12 @@ pub use self::utils::time;
 
 use std::borrow::Cow;
 use std::collections::HashSet;
+use std::iter;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{bail, Context};
-use ark::rounds::RoundEvent;
 use bip39::Mnemonic;
 use bitcoin::{Amount, Network, OutPoint};
 use bitcoin::bip32::{self, ChildNumber, Fingerprint};
@@ -358,6 +358,7 @@ use tokio_stream::StreamExt;
 use ark::{ArkInfo, ProtocolEncoding, Vtxo, VtxoId, VtxoPolicy, VtxoRequest};
 use ark::address::VtxoDelivery;
 use ark::fees::{validate_and_subtract_fee_min_dust, VtxoFeeInfo};
+use ark::rounds::{RoundAttempt, RoundEvent};
 use ark::vtxo::{Full, PubkeyVtxoPolicy, VtxoRef};
 use ark::vtxo::policy::signing::VtxoSigner;
 use bitcoin_ext::{BlockHeight, P2TR_DUST, TxStatus};
@@ -378,6 +379,7 @@ use crate::persist::models::{RoundStateId, StoredRoundState, Unlocked};
 use crate::proxy::proxy_for_url;
 use crate::round::{RoundParticipation, RoundSecretNonces, RoundStatus};
 use crate::subsystem::RoundMovement;
+use crate::utils::rejected_vtxos_from_error;
 use crate::vtxo::{FilterVtxos, RefreshStrategy, VtxoFilter, VtxoStateKind};
 
 #[cfg(all(feature = "wasm-web", feature = "socks5-proxy"))]
@@ -1629,27 +1631,31 @@ impl Wallet {
 		Ok(())
 	}
 
-	/// Checks VTXOs that are due to be refreshed, and schedules an interactive refresh if any
+	/// Actively join the given in-flight round `attempt` with all VTXOs due for
+	/// maintenance refresh, dropping any input the server rejects as unusable and
+	/// re-submitting the rest to the *same* attempt (the server keeps its submit
+	/// window open after a rejection, so the corrected participation still lands
+	/// in this round).
 	///
-	/// This will include any VTXOs within the expiry threshold
-	/// ([Config::vtxo_refresh_expiry_threshold]) or those which
-	/// are uneconomical to exit due to onchain network conditions.
+	/// This is the shared core of interactive maintenance: the blocking
+	/// [Wallet::maintenance_refresh] calls it and then drives the round to
+	/// completion, while the daemon calls it on the round Attempt event and lets
+	/// [Wallet::progress_pending_rounds] carry the round forward. Mirrors
+	/// [Wallet::maybe_schedule_maintenance_refresh_delegated].
 	///
-	/// Returns a [RoundStateId] if a refresh is scheduled.
-	pub async fn maybe_schedule_maintenance_refresh(&self) -> anyhow::Result<Option<RoundStateId>> {
-		let vtxos = self.get_vtxos_to_refresh().await?;
-		if vtxos.len() == 0 {
-			return Ok(None);
-		}
-
-		let participation = match self.build_refresh_participation(vtxos).await? {
-			Some(participation) => participation,
-			None => return Ok(None),
-		};
-
-		info!("Scheduling maintenance refresh ({} vtxos)", participation.inputs.len());
-		let state = self.join_next_round(participation, Some(RoundMovement::Refresh)).await?;
-		Ok(Some(state.id()))
+	/// Returns the id of the round state we joined, or `None` if there was
+	/// nothing economical to refresh.
+	pub(crate) async fn join_round_for_maintenance_refresh(
+		&self,
+		attempt: &RoundAttempt,
+	) -> anyhow::Result<Option<RoundStateId>> {
+		self.maintenance_refresh_retry_loop(|part| async move {
+			info!("Joining round {} for maintenance refresh ({} vtxos)",
+				attempt.round_seq, part.inputs.len());
+			Ok(Some(self.join_attempt_interactive(
+				part, attempt, Some(RoundMovement::Refresh),
+			).await?.id()))
+		}).await
 	}
 
 	/// Checks VTXOs that are due to be refreshed, and schedules a delegated refresh if any
@@ -1662,19 +1668,54 @@ impl Wallet {
 	pub async fn maybe_schedule_maintenance_refresh_delegated(
 		&self,
 	) -> anyhow::Result<Option<RoundStateId>> {
-		let vtxos = self.get_vtxos_to_refresh().await?;
-		if vtxos.len() == 0 {
-			return Ok(None);
+		self.maintenance_refresh_retry_loop(|part| async move {
+			info!("Scheduling delegated maintenance refresh ({} vtxos)", part.inputs.len());
+			Ok(Some(self.join_next_round_delegated(part, Some(RoundMovement::Refresh)).await?.id()))
+		}).await
+	}
+
+	/// The retry loop shared by the interactive and delegated maintenance refreshes.
+	///
+	/// Selects the VTXOs due for refresh (minus any the server has already rejected
+	/// as unusable), runs `attempt_refresh` for them, and if it fails naming unusable
+	/// inputs, drops those and retries — up to 10 times. Both submission modes
+	/// validate inputs synchronously, so a rejection surfaces here rather than
+	/// poisoning the batch forever; `attempt_refresh` is the only part that differs.
+	async fn maintenance_refresh_retry_loop<F, Fut>(
+		&self,
+		attempt_refresh: F,
+	) -> anyhow::Result<Option<RoundStateId>>
+	where
+		F: Fn(RoundParticipation) -> Fut,
+		Fut: Future<Output = anyhow::Result<Option<RoundStateId>>>,
+	{
+		let mut excluded = HashSet::new();
+		for _ in 0..10 {
+			let vtxos = self.get_vtxos_to_refresh_with_excluded(excluded.iter().copied()).await?;
+			if vtxos.is_empty() {
+				return Ok(None);
+			}
+			let part = match self.build_refresh_participation(vtxos).await? {
+				Some(participation) => participation,
+				None => return Ok(None),
+			};
+
+			match attempt_refresh(part).await {
+				Ok(state_id) => return Ok(state_id),
+				Err(e) => {
+					let rejected = rejected_vtxos_from_error(&e).into_iter()
+						.filter(|id| !excluded.contains(id))
+						.collect::<Vec<_>>();
+					if rejected.is_empty() {
+						return Err(e);
+					}
+					warn!("Maintenance refresh rejected {} unusable input(s) ({:?}); \
+						retrying without them", rejected.len(), rejected);
+					excluded.extend(rejected);
+				},
+			}
 		}
-
-		let participation = match self.build_refresh_participation(vtxos).await? {
-			Some(participation) => participation,
-			None => return Ok(None),
-		};
-
-		info!("Scheduling delegated maintenance refresh ({} vtxos)", participation.inputs.len());
-		let state = self.join_next_round_delegated(participation, Some(RoundMovement::Refresh)).await?;
-		Ok(Some(state.id()))
+		bail!("Maintenance refresh failed after 10 retries");
 	}
 
 	/// Performs an interactive refresh of all VTXOs that are due to be refreshed, if any
@@ -1683,26 +1724,31 @@ impl Wallet {
 	/// ([Config::vtxo_refresh_expiry_threshold]) or those which
 	/// are uneconomical to exit due to onchain network conditions.
 	///
+	/// Waits for a round to start, joins it via [Wallet::join_round_for_maintenance_refresh]
+	/// (which drops any inputs the server rejects as unusable and retries within
+	/// the same attempt), then drives that round to completion.
+	///
 	/// Returns a [RoundStatus] if a refresh occurs.
 	pub async fn maintenance_refresh(&self) -> anyhow::Result<Option<RoundStatus>> {
-		let vtxos = self.get_vtxos_to_refresh().await?;
-		if vtxos.len() == 0 {
+		if self.get_vtxos_to_refresh().await?.is_empty() {
 			return Ok(None);
 		}
 
 		info!("Waiting for round to perform maintenance refresh...");
 		let mut events = self.subscribe_round_events().await?;
 		while let Some(event) = events.next().await {
-			match event {
-				Ok(RoundEvent::Attempt(a)) if a.attempt_seq == 0 => {
-					let vtxos = self.get_vtxos_to_refresh().await?;
-					if vtxos.len() == 0 {
-						return Ok(None);
-					}
-					debug!("Round {} started, triggering refresh", a.round_seq);
-					return self.refresh_vtxos(vtxos).await;
-				},
-				_ => {},
+			let event = event.context("error on round event stream")?;
+			if let RoundEvent::Attempt(a) = event && a.attempt_seq == 0 {
+				debug!("Round {} started, triggering maintenance refresh", a.round_seq);
+				let state_id = match self.join_round_for_maintenance_refresh(&a).await? {
+					Some(id) => id,
+					None => return Ok(None),
+				};
+				// We submitted up-front, so drive the (now ongoing) round to completion
+				// on this same event stream.
+				let state = self.lock_wait_round_state(state_id).await?
+					.context("maintenance refresh round state vanished after joining")?;
+				return Ok(Some(self.drive_round_state(state, &mut events).await?));
 			}
 		}
 		Ok(None)
@@ -1892,9 +1938,10 @@ impl Wallet {
 	/// additional output is also created.
 	///
 	/// Note: This assumes that the base refresh fee has already been paid.
-	async fn add_should_refresh_vtxos(
+	async fn add_should_refresh_vtxos<V: VtxoRef>(
 		&self,
 		participation: &mut RoundParticipation,
+		exclude: impl IntoIterator<Item = V>,
 	) -> anyhow::Result<()> {
 		// Get VTXOs that need and should be refreshed, then filter out any duplicates before
 		// adjusting the round participation.
@@ -1906,7 +1953,9 @@ impl Wallet {
 			return Ok(());
 		}
 
-		let excluded_ids = participation.inputs.iter().map(|v| v.vtxo_id())
+		let excluded_ids = participation.inputs.iter()
+			.map(|v| v.vtxo_id())
+			.chain(exclude.into_iter().map(|v| v.vtxo_id()))
 			.collect::<HashSet<_>>();
 		let mut total_amount = Amount::ZERO;
 		for i in (0..vtxos_to_refresh.len()).rev() {
@@ -2034,7 +2083,9 @@ impl Wallet {
 			None => return Ok(None),
 		};
 
-		if let Err(e) = self.add_should_refresh_vtxos(&mut participation).await {
+		if let Err(e) = self.add_should_refresh_vtxos(
+			&mut participation, iter::empty::<VtxoId>(),
+		).await {
 			warn!("Error trying to add additional VTXOs that should be refreshed: {:#}", e);
 		}
 
@@ -2055,7 +2106,7 @@ impl Wallet {
 			None => return Ok(None),
 		};
 
-		if let Err(e) = self.add_should_refresh_vtxos(&mut part).await {
+		if let Err(e) = self.add_should_refresh_vtxos(&mut part, iter::empty::<VtxoId>()).await {
 			warn!("Error trying to add additional VTXOs that should be refreshed: {:#}", e);
 		}
 
@@ -2070,6 +2121,21 @@ impl Wallet {
 			self.inner.chain.tip().await?,
 			self.inner.chain.fee_rates().await.fast,
 		)).await?;
+		Ok(vtxos)
+	}
+
+	/// Similar to [Wallet::get_vtxos_to_refresh] but it allows VTXOs to be excluded from the
+	/// result.
+	pub async fn get_vtxos_to_refresh_with_excluded<V: VtxoRef>(
+		&self,
+		exclude: impl IntoIterator<Item = V>,
+	) -> anyhow::Result<Vec<WalletVtxo>> {
+		let mut vtxos = self.get_vtxos_to_refresh().await?;
+		for v in exclude.into_iter() {
+			if let Some(index) = vtxos.iter().position(|vtxo| vtxo.id() == v.vtxo_id()) {
+				vtxos.swap_remove(index);
+			}
+		}
 		Ok(vtxos)
 	}
 
