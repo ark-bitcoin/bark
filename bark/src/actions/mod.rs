@@ -9,6 +9,7 @@
 
 pub mod lightning;
 pub mod arkoor_send;
+pub mod board;
 
 use std::time::Duration;
 
@@ -17,6 +18,7 @@ use server_rpc::StatusExt;
 
 use crate::{Wallet, WalletVtxo};
 use crate::actions::arkoor_send::ArkoorSend;
+use crate::actions::board::Board;
 use crate::actions::lightning::pay::LightningSend;
 use crate::actions::lightning::receive::LightningReceive;
 use crate::lock_manager::LockGuard;
@@ -34,6 +36,7 @@ pub enum WalletActionCheckpoint {
 	LightningSend(LightningSend),
 	LightningReceive(LightningReceive),
 	ArkoorSend(ArkoorSend),
+	Board(Board),
 }
 
 impl WalletActionCheckpoint {
@@ -42,6 +45,7 @@ impl WalletActionCheckpoint {
 			WalletActionCheckpoint::LightningSend(s) => s.id(),
 			WalletActionCheckpoint::LightningReceive(r) => r.id(),
 			WalletActionCheckpoint::ArkoorSend(s) => s.id(),
+			WalletActionCheckpoint::Board(s) => s.id(),
 		}
 	}
 
@@ -86,6 +90,20 @@ impl WalletActionCheckpoint {
 			_ => None,
 		}
 	}
+
+	pub fn as_board(&self) -> Option<&Board> {
+		match self {
+			WalletActionCheckpoint::Board(s) => Some(s),
+			_ => None,
+		}
+	}
+
+	pub fn into_board(self) -> Option<Board> {
+		match self {
+			WalletActionCheckpoint::Board(s) => Some(s),
+			_ => None,
+		}
+	}
 }
 
 impl From<LightningSend> for WalletActionCheckpoint {
@@ -103,6 +121,12 @@ impl From<LightningReceive> for WalletActionCheckpoint {
 impl From<ArkoorSend> for WalletActionCheckpoint {
 	fn from(s: ArkoorSend) -> Self {
 		WalletActionCheckpoint::ArkoorSend(s)
+	}
+}
+
+impl From<Board> for WalletActionCheckpoint {
+	fn from(s: Board) -> Self {
+		WalletActionCheckpoint::Board(s)
 	}
 }
 
