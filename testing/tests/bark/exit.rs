@@ -19,7 +19,9 @@ use bitcoin_ext::TaprootSpendInfoExt;
 use bitcoin_ext::rpc::BitcoinRpcExt;
 use server_rpc::protos::{self, lightning_payment_status};
 
-use ark_testing::{Bark, TestContext, btc, require_bark_version, sat, signed_sat};
+use ark_testing::{
+	Bark, TestContext, btc, require_bark_version, require_bitcoind_chain_source, sat, signed_sat,
+};
 use ark_testing::constants::{BOARD_CONFIRMATIONS, ROUND_CONFIRMATIONS};
 use ark_testing::daemon::captaind::{self, ArkClient};
 use ark_testing::exit::{complete_exit, progress_exit_until_awaiting_delta};
@@ -1376,4 +1378,67 @@ async fn exited_vtxo_is_not_spendable() {
 		.find(|m| m.subsystem.name == "bark.exit")
 		.expect("exit movement should exist");
 	assert_eq!(exit_movement.status, MovementStatus::Successful);
+}
+
+/// A wallet must detect when one of its spendable VTXOs has been exited on-chain without the
+/// wallet initiating the exit — e.g. the server's watchman progressing a shared tree, or a third
+/// party's unilateral exit — and route it into the claimable exit flow so the funds can be
+/// recovered.
+///
+/// Here a stale clone performs the on-chain exit; the original wallet never asked for it. A plain
+/// sync must notice the VTXO's funding tx is on-chain and start exiting it, after which the wallet
+/// can complete and claim it.
+#[tokio::test]
+async fn detect_and_claim_force_exited_vtxo() {
+	require_bark_version!(> "0.2.5");
+	require_bitcoind_chain_source!();
+
+	let ctx = TestContext::new("bark/detect_and_claim_force_exited_vtxo").await;
+	let srv = ctx.captaind("server").funded(btc(10)).create().await;
+	let bark = ctx.bark("bark", &srv).funded(sat(1_000_000)).create().await;
+
+	// Board and refresh into a round vtxo. Exiting it lands its point (the round-tree leaf
+	// output) on-chain, which is exactly what the detection looks for.
+	bark.board_and_confirm_and_register(&ctx, sat(300_000)).await;
+	ctx.refresh_all(&srv, &[&bark]).await;
+	ctx.generate_blocks(ROUND_CONFIRMATIONS).await;
+	bark.sync().await;
+	let before_exit = {
+		let vtxos = bark.vtxos().await;
+		assert_eq!(vtxos.len(), 1, "bark should hold one round vtxo");
+		assert!(matches!(vtxos[0].state, VtxoStateInfo::Spendable));
+		vtxos
+	};
+
+	// A stale clone exits the vtxo on-chain. The original `bark` never initiated this exit.
+	let evil = bark.full_clone("evil").await;
+	evil.start_exit_all().await;
+	progress_exit_until_awaiting_delta(&ctx, &evil).await;
+
+	// Before detection (no sync), the original still believes the vtxo is spendable.
+	assert!(bark.vtxos_no_sync().await.iter()
+			.all(|v| before_exit.contains(v) && v.state == VtxoStateInfo::Spendable),
+		"vtxo should still look spendable before detection",
+	);
+
+	// A plain sync must detect the on-chain exit and route the vtxo into the exit flow.
+	bark.sync().await;
+
+	// After detection, no spendable vtxos should exist.
+	let exits = bark.list_exits_no_sync().await;
+	assert!(exits.iter()
+		.all(|ex| before_exit.iter().any(|v| v.id == ex.vtxo_id)),
+		"exits should include the original VTXOs",
+	);
+	assert!(bark.vtxos_no_sync().await.is_empty(), "VTXOs shouldn't be spendable");
+
+	// Complete and claim the exit; the wallet recovers the force-exited funds on-chain. Claim to
+	// a bitcoind-owned address so we can assert the funds arrived via `getreceivedbyaddress`.
+	complete_exit(&ctx, &bark).await;
+	let address = ctx.bitcoind().get_new_address();
+	bark.claim_all_exits(address.clone()).await;
+	ctx.generate_blocks(1).await;
+
+	let balance = bark.onchain_balance().await;
+	assert_eq!(balance, sat(696_053), "wallet should have recovered the force-exited vtxos");
 }

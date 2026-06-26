@@ -173,6 +173,7 @@ impl ExitInner {
 	async fn start_exit_for_vtxos(
 		&mut self,
 		vtxos: &[impl Borrow<Vtxo<Bare>>],
+		skip_standardness_checks: bool,
 	) -> anyhow::Result<()> {
 		if vtxos.is_empty() {
 			return Ok(());
@@ -188,7 +189,7 @@ impl ExitInner {
 			}
 
 			// Pre-flight check: Prevent exiting dust, which causes "zombie" states
-			if vtxo.amount() < P2TR_DUST {
+			if !skip_standardness_checks && vtxo.amount() < P2TR_DUST {
 				return Err(ExitError::DustLimit {
 					vtxo: vtxo.amount(),
 					dust: P2TR_DUST,
@@ -381,6 +382,12 @@ impl Exit {
 		guard.exit_vtxos.iter().find(|ev| ev.id() == vtxo_id).cloned()
 	}
 
+	/// Returns the IDs of all active unilateral exits in this wallet.
+	pub async fn get_exit_vtxo_ids(&self) -> Vec<VtxoId> {
+		let guard = self.inner.read().await;
+		guard.exit_vtxos.iter().map(|ev| ev.id()).collect()
+	}
+
 	/// Returns clones of all known unilateral exits in this wallet.
 	pub async fn get_exit_vtxos(&self) -> Vec<ExitVtxo> {
 		let guard = self.inner.read().await;
@@ -476,7 +483,7 @@ impl Exit {
 			return Ok(());
 		}
 
-		guard.start_exit_for_vtxos(&eligible).await
+		guard.start_exit_for_vtxos(&eligible, false).await
 	}
 
 	/// Starts the unilateral exit process for the given VTXOs.
@@ -490,7 +497,19 @@ impl Exit {
 		vtxos: &[impl Borrow<Vtxo<Bare>>],
 	) -> anyhow::Result<()> {
 		let mut guard = self.inner.write().await;
-		guard.start_exit_for_vtxos(vtxos).await
+		guard.start_exit_for_vtxos(vtxos, false).await
+	}
+
+	/// Similar to [Exit::start_exit_for_vtxos], but it skips any dust/standardness checks.
+	///
+	/// This should only be used when you are sure that the VTXOs are already onchain, or you are
+	/// able to broadcast to a node which will accept non-standard transactions.
+	pub async fn start_exit_for_vtxos_including_non_standard(
+		&self,
+		vtxos: &[impl Borrow<Vtxo<Bare>>],
+	) -> anyhow::Result<()> {
+		let mut guard = self.inner.write().await;
+		guard.start_exit_for_vtxos(vtxos, true).await
 	}
 
 	/// Reset exit to an empty state. Should be called when dropping VTXOs
@@ -627,7 +646,7 @@ impl Exit {
 
 			let pre_state = exit.state().clone();
 			if let Err(e) = exit.progress(
-				wallet, &mut guard.tx_manager, false,
+				wallet, &mut guard.tx_manager, true,
 			).await {
 				error!("Error syncing exit for VTXO {}: {}", exit.id(), e);
 			}

@@ -351,6 +351,7 @@ use bip39::Mnemonic;
 use bitcoin::{Amount, Network, OutPoint};
 use bitcoin::bip32::{self, ChildNumber, Fingerprint};
 use bitcoin::secp256k1::{self, Keypair, PublicKey};
+use futures::stream::FuturesUnordered;
 use log::{debug, error, info, trace, warn};
 use tokio_stream::StreamExt;
 
@@ -359,7 +360,7 @@ use ark::address::VtxoDelivery;
 use ark::fees::{validate_and_subtract_fee_min_dust, VtxoFeeInfo};
 use ark::vtxo::{Full, PubkeyVtxoPolicy, VtxoRef};
 use ark::vtxo::policy::signing::VtxoSigner;
-use bitcoin_ext::{BlockHeight, P2TR_DUST};
+use bitcoin_ext::{BlockHeight, P2TR_DUST, TxStatus};
 use server_rpc::{protos, ServerConnection};
 use server_rpc::client::{ConnectError, CreateEndpointError};
 
@@ -700,6 +701,11 @@ struct WalletInner {
 
 	/// A handle to the currently running daemon, if any.
 	daemon: parking_lot::Mutex<Option<DaemonHandle>>,
+
+	/// The last chain tip at which we scanned spendable VTXOs for on-chain (force) exits.
+	/// The scan is skipped while the tip is unchanged, since a VTXO's on-chain status can
+	/// only change across blocks.
+	last_force_exit_scan_tip: tokio::sync::Mutex<Option<BlockHeight>>,
 
 	/// In-memory MuSig2 secret cosign nonces for in-flight round attempts.
 	/// See [`RoundSecretNonces`].
@@ -1148,6 +1154,7 @@ impl Wallet {
 		let ret = Wallet { inner: Arc::new(WalletInner {
 			config, db, lock_manager, seed, exit, movements, notifications, server, chain,
 			daemon: parking_lot::Mutex::new(None),
+			last_force_exit_scan_tip: tokio::sync::Mutex::new(None),
 			round_secret_nonces: RoundSecretNonces::new(),
 		})};
 
@@ -1705,8 +1712,7 @@ impl Wallet {
 	/// to [Wallet::maintenance] as it will not refresh VTXOs or sync the onchain wallet.
 	///
 	/// Notes:
-	/// - The exit system is not synced here. Call [Wallet::sync_exits] explicitly, or use
-	///   [Wallet::maintenance_with_onchain] for a full sync including onchain fee bumping.
+	/// - Exits are only synced if we detect onchain activity which has force-exited our VTXO.
 	pub async fn sync(&self) {
 		futures::join!(
 			async {
@@ -1750,6 +1756,11 @@ impl Wallet {
 				if let Err(e) = self.sync_pending_offboards().await {
 					warn!("Error syncing pending offboards: {:#}", e);
 				}
+			},
+			async {
+				if let Err(e) = self.sync_force_exited_vtxos().await {
+					warn!("Error scanning for on-chain-exited VTXOs: {:#}", e);
+				}
 			}
 		);
 	}
@@ -1761,6 +1772,73 @@ impl Wallet {
 	/// claimable or have been claimed.
 	pub async fn sync_exits(&self) -> anyhow::Result<()> {
 		self.exit_mgr().sync(&self).await?;
+		Ok(())
+	}
+
+	/// Detect spendable VTXOs that were exited on-chain without the user asking for it — e.g.
+	/// the server's watchman progressing a shared tree, or a third party's unilateral exit
+	/// dragging a parent on-chain — and route them into the unilateral-exit flow so the funds
+	/// can be claimed on-chain.
+	///
+	/// Such VTXOs are otherwise left `Spendable` by a normal sync even though the server now
+	/// rejects spending them, leaving the user stuck. We detect them by checking, on each new
+	/// chain tip, whether any spendable VTXO's own funding tx is already on-chain.
+	///
+	/// This is deliberately independent of the onchain wallet sync, since the onchain wallet
+	/// may be disabled. The caller must also ensure that the wallet state is up to date before
+	/// calling this.
+	pub async fn sync_force_exited_vtxos(&self) -> anyhow::Result<()> {
+		// A VTXO's on-chain status can only change across blocks, so only scan when the tip moves.
+		let tip = self.inner.chain.tip().await?;
+		let mut lock = self.inner.last_force_exit_scan_tip.lock().await;
+		if *lock == Some(tip) {
+			return Ok(());
+		}
+
+		// Skip VTXOs already being exited.
+		let exiting = self.exit_mgr().get_exit_vtxo_ids().await;
+		let vtxos = self.inner.db.get_vtxos_by_state(&[VtxoStateKind::Spendable]).await?
+			.into_iter()
+			.filter(|v| !exiting.contains(&v.vtxo.id()));
+
+		// Check each candidate's funding tx in parallel.
+		let mut checked = FuturesUnordered::new();
+		for wv in vtxos {
+			let chain = self.inner.chain.clone();
+			checked.push(async move {
+				let txid = wv.vtxo_id().to_point().txid;
+				let status = chain.tx_status(txid).await;
+				(wv, status)
+			});
+		}
+
+		let mut to_exit = Vec::new();
+		while let Some((vtxo, status)) = futures::StreamExt::next(&mut checked).await {
+			match status {
+				Ok(TxStatus::NotFound) => {},
+				Ok(_) => {
+					info!("VTXO {} was exited on-chain without us; routing it to a claimable exit",
+						vtxo.vtxo.id(),
+					);
+					to_exit.push(vtxo.vtxo);
+				},
+				Err(e) => warn!("Could not check on-chain status of VTXO {}: {:#}",
+					vtxo.vtxo.id(), e,
+				),
+			}
+		}
+
+		if !to_exit.is_empty() {
+			self.exit_mgr().start_exit_for_vtxos(&to_exit).await
+				.context("failed to start exit for on-chain-exited VTXOs")?;
+
+			*lock = Some(tip);
+			self.sync_exits().await
+				.context("failed to sync exits after starting new ones")?;
+		} else {
+			*lock = Some(tip);
+		}
+
 		Ok(())
 	}
 
