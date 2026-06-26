@@ -30,7 +30,7 @@ use bark::movement::{
 };
 use bark::persist::BarkPersister;
 use bark::persist::models::{
-	PaidInvoice, PendingBoard, StoredExit, StoredRoundState, Unlocked,
+	PaidInvoice, StoredExit, StoredRoundState, Unlocked,
 	RoundStateId, SerdeRoundState, PendingOffboard,
 };
 use bark::round::RoundState;
@@ -71,27 +71,6 @@ impl BarkPersister for Dummy {
 
 	async fn set_server_mailbox_pubkey(&self, _server_mailbox_pubkey: PublicKey) -> anyhow::Result<()> {
 		Ok(())
-	}
-
-	async fn store_pending_board(
-		&self,
-		_vtxo: &Vtxo<Full>,
-		_funding_tx: &Transaction,
-		_movement_id: MovementId,
-	) -> anyhow::Result<()> {
-		Ok(())
-	}
-
-	async fn remove_pending_board(&self, _vtxo_id: &VtxoId) -> anyhow::Result<()> {
-		Ok(())
-	}
-
-	async fn get_all_pending_board_ids(&self) -> anyhow::Result<Vec<VtxoId>> {
-		Ok(vec![])
-	}
-
-	async fn get_pending_board_by_vtxo_id(&self, _vtxo_id: VtxoId) -> anyhow::Result<Option<PendingBoard>> {
-		Ok(None)
 	}
 
 	async fn get_wallet_vtxo(&self, _id: VtxoId) -> anyhow::Result<Option<WalletVtxo>> {

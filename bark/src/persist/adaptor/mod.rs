@@ -71,7 +71,7 @@ use crate::movement::{
 };
 use crate::persist::BarkPersister;
 use crate::persist::models::{
-	PaidInvoice, PendingBoard, PendingOffboard,
+	PaidInvoice, PendingOffboard,
 	RoundStateId, SerdeExitChildTx, SerdeRoundState, SerdeVtxo, SerdeVtxoKey,
 	SettledLightningReceive, StoredExit, StoredRoundState, Unlocked, wallet_vtxo_from_full,
 };
@@ -538,55 +538,6 @@ impl <S: StorageAdaptor> BarkPersister for StorageAdaptorWrapper<S> {
 			);
 		}
 		Ok(ret)
-	}
-
-	async fn store_pending_board(
-		&self,
-		vtxo: &Vtxo<Full>,
-		funding_tx: &Transaction,
-		movement_id: MovementId,
-	) -> anyhow::Result<()> {
-		let pending_board = PendingBoard {
-			vtxos: vec![vtxo.id()],
-			amount: vtxo.amount(),
-			funding_tx: funding_tx.clone(),
-			movement_id,
-		};
-
-		let record = Record::from_data(
-			partition::PENDING_BOARD,
-			&vtxo.id().to_bytes(),
-			None,
-			&pending_board,
-		)?;
-
-		self.inner.write().await.put(record).await
-	}
-
-	async fn remove_pending_board(&self, vtxo_id: &VtxoId) -> anyhow::Result<()> {
-		self.inner.write().await.delete(partition::PENDING_BOARD, &vtxo_id.to_bytes()).await?;
-		Ok(())
-	}
-
-	async fn get_all_pending_board_ids(&self) -> anyhow::Result<Vec<VtxoId>> {
-		let records = self.inner.read().await.get_all(partition::PENDING_BOARD).await?;
-		records
-			.into_iter()
-			.map(|r| {
-				let board = r.to_data::<PendingBoard>()?;
-				Ok(board.vtxos.into_iter().next().context("empty vtxos")?)
-			})
-			.collect()
-	}
-
-	async fn get_pending_board_by_vtxo_id(
-		&self,
-		vtxo_id: VtxoId,
-	) -> anyhow::Result<Option<PendingBoard>> {
-		match self.inner.read().await.get(partition::PENDING_BOARD, &vtxo_id.to_bytes()).await? {
-			Some(record) => Ok(Some(record.to_data()?)),
-			None => Ok(None),
-		}
 	}
 
 	async fn store_round_state(&self, round_state: &RoundState) -> anyhow::Result<RoundStateId> {
