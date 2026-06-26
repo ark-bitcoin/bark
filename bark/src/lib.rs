@@ -584,7 +584,7 @@ impl WalletSeed {
 		Self::new_from_seed(network, &mnemonic.to_seed(""))
 	}
 
-	fn fingerprint(&self) -> Fingerprint {
+	pub fn fingerprint(&self) -> Fingerprint {
 		self.master.fingerprint(&SECP)
 	}
 
