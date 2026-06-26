@@ -277,7 +277,12 @@ async fn board_tx_rejects_dust_amount() {
 /// This will be workflow will be replicated by external wallets
 #[tokio::test]
 async fn board_tx_full_flow() {
-	require_bark_version!(> "0.1.4");
+	// Boarding through the library `board_tx` persists a `Board` wallet-action
+	// checkpoint. Pre-0.3.0 binaries don't know that checkpoint variant and abort
+	// their sync when they read it, so this new-library-writes / old-cli-reads
+	// flow only works from 0.3.0 on. The test still runs against the current build
+	// in the normal (non-compat) job.
+	require_bark_version!(>= "0.3.0");
 
 	const BOARD_AMOUNT: u64 = 90_000;
 	let ctx = TestContext::new("bark/board_tx_full_flow").await;

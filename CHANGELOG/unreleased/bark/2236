@@ -1,0 +1,12 @@
+- Make boarding crash-safe by driving it as a wallet action
+  Boarding now broadcasts, confirms, and registers under the same
+  checkpointed `WalletAction` framework as lightning and arkoor sends, so a
+  board survives a crash at any point and is re-driven on the next sync,
+  including re-broadcasting the funding tx if it drops from the mempool.
+  [#2236](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2236)
+  - in-flight boards are migrated from the legacy `bark_pending_board` table
+    into board action checkpoints; the table is retained (emptied) so a settled
+    wallet stays readable by older binaries. The public `board_tx`,
+    `board_funding_address`, `board_amount` and `board_all` APIs are unchanged.
+  - **BREAKING (downgrade):** a wallet with an in-flight board can no longer be
+    opened by pre-0.3.0 bark, which can't deserialize the board checkpoint.

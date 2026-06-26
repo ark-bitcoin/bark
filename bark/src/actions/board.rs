@@ -254,6 +254,7 @@ async fn run_register(wallet: &Wallet, board: &Board) -> anyhow::Result<()> {
 		error!("Failed to post recovery vtxo ID to server: {:#}", e);
 	}
 
+	// TODO(pc): Cancel any pending exits for the VTXO once we support doing so.
 	wallet.inner.movements.finish_movement(board.movement_id, MovementStatus::Successful).await
 		.context("failed to finalize board movement")?;
 

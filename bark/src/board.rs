@@ -2,20 +2,20 @@ use anyhow::Context;
 use bdk_esplora::esplora_client::Amount;
 use bitcoin::key::Keypair;
 use bitcoin::{Address, OutPoint, Psbt};
-use log::{debug, error, info, trace, warn};
+use log::{info, warn};
 
-use ark::{ProtocolEncoding, VtxoId};
 use ark::board::{BoardBuilder, BOARD_FUNDING_TX_VTXO_VOUT};
 use ark::fees::validate_and_subtract_fee;
-use bitcoin_ext::{BlockHeight, TxStatus};
+use bitcoin_ext::BlockHeight;
 use server_rpc::protos;
 
 use crate::{onchain, Wallet, WalletVtxo};
-use crate::movement::MovementStatus;
+use crate::actions::DriveMode;
+use crate::actions::board::{Board, Progress, board_action_id};
 use crate::movement::update::MovementUpdate;
 use crate::persist::models::PendingBoard;
 use crate::subsystem::{BoardMovement, Subsystem};
-use crate::vtxo::{VtxoState, VtxoStateKind};
+use crate::vtxo::VtxoStateKind;
 
 impl Wallet {
 	/// Board a `Vtxo` with the given amount.
@@ -40,14 +40,23 @@ impl Wallet {
 	}
 
 	pub async fn pending_boards(&self) -> anyhow::Result<Vec<PendingBoard>> {
-		let boarding_vtxo_ids = self.inner.db.get_all_pending_board_ids().await?;
-		let mut boards = Vec::with_capacity(boarding_vtxo_ids.len());
-		for vtxo_id in boarding_vtxo_ids {
-			let board = self.inner.db.get_pending_board_by_vtxo_id(vtxo_id).await?
-				.expect("id just retrieved from db");
-			boards.push(board);
-		}
-		Ok(boards)
+		Ok(self.boards_in_progress().await?
+			.into_iter()
+			.map(|b| PendingBoard {
+				funding_tx: b.funding_tx,
+				vtxos: vec![b.vtxo_id],
+				amount: b.amount,
+				movement_id: b.movement_id,
+			})
+			.collect())
+	}
+
+	/// Returns every in-progress board checkpoint.
+	async fn boards_in_progress(&self) -> anyhow::Result<Vec<Board>> {
+		Ok(self.inner.db.get_all_wallet_action_checkpoints().await?
+			.into_iter()
+			.filter_map(|cp| cp.into_board())
+			.collect())
 	}
 
 	/// Queries the database for any VTXO that is an unregistered board. There is a lag time between
@@ -55,14 +64,20 @@ impl Wallet {
 	///
 	/// See [ark::ArkInfo::required_board_confirmations] and [Wallet::sync_pending_boards].
 	pub async fn pending_board_vtxos(&self) -> anyhow::Result<Vec<WalletVtxo>> {
-		let vtxo_ids = self.pending_boards().await?.into_iter()
-			.flat_map(|b| b.vtxos.into_iter())
-			.collect::<Vec<_>>();
+		let boards = self.boards_in_progress().await?;
 
-		let mut vtxos = Vec::with_capacity(vtxo_ids.len());
-		for vtxo_id in vtxo_ids {
-			let vtxo = self.get_vtxo_by_id(vtxo_id).await
-				.expect("vtxo id just got retrieved from db");
+		let mut vtxos = Vec::with_capacity(boards.len());
+		for board in boards {
+			let vtxo_id = board.vtxo_id;
+			let vtxo = match self.get_vtxo_by_id(vtxo_id).await {
+				Ok(vtxo) => vtxo,
+				// `Broadcasting` hasn't stored its vtxo yet, so skip it; later
+				// states must have one, so a lookup error is real and propagates.
+				Err(e) => match board.progress {
+					Progress::Broadcasting { .. } => continue,
+					Progress::Confirming { .. } => return Err(e),
+				},
+			};
 			// We can silently filter out exited VTXOs, next time we sync they will be dropped from
 			// the pending list.
 			match vtxo.state.kind() {
@@ -78,79 +93,23 @@ impl Wallet {
 		Ok(vtxos)
 	}
 
-	/// Attempts to register all pendings boards with the Ark server. A board transaction must have
-	/// sufficient confirmations before it will be registered. For more details see
-	/// [ark::ArkInfo::required_board_confirmations].
+	/// Drives every in-progress board forward by one step or to its next park.
+	///
+	/// Each board is a [`Board`] wallet action that broadcasts the funding tx,
+	/// waits for [ark::ArkInfo::required_board_confirmations], registers with the
+	/// server, and salvages via exit near expiry. See [`crate::actions::board`].
 	pub async fn sync_pending_boards(&self) -> anyhow::Result<()> {
-		let (_, ark_info) = self.require_server().await?;
-		let current_height = self.inner.chain.tip().await?;
-		let unregistered_boards = self.pending_boards().await?;
-		let mut registered_boards = 0;
-
-		if unregistered_boards.is_empty() {
+		let pending = self.boards_in_progress().await?;
+		if pending.is_empty() {
 			return Ok(());
 		}
 
-		trace!("Attempting registration of sufficiently confirmed boards");
-
-		for board in unregistered_boards {
-			let [vtxo_id] = board.vtxos.try_into()
-				.map_err(|_| anyhow!("multiple board vtxos is not supported yet"))?;
-
-			// If we've kicked off an exit and it's progressed beyond the abortable stage,
-			// server-side registration can no longer succeed — the underlying outpoint is
-			// now committed to the exit chain. Drop the pending_board entry so we stop
-			// burning RPC calls on it.
-			let vtxo = self.get_vtxo_by_id(vtxo_id).await?;
-			if vtxo.state.kind() == VtxoStateKind::Exited {
-				debug!("Removing pending_board for exited VTXO {}", vtxo_id);
-				self.inner.db.remove_pending_board(&vtxo_id).await?;
-				self.inner.movements.finish_movement(
-					board.movement_id, MovementStatus::Failed,
-				).await?;
-				continue;
+		info!("Syncing {} pending boards", pending.len());
+		for board in pending {
+			let id = board.id();
+			if let Err(e) = self.drive_action(board, DriveMode::UntilParkOrDone).await {
+				warn!("Failed to sync board {}: {:#}", id, e);
 			}
-
-			let anchor = vtxo.chain_anchor();
-			let confs = match self.inner.chain.tx_status(anchor.txid).await {
-				Ok(TxStatus::Confirmed(block_ref)) => Some(current_height - (block_ref.height - 1)),
-				Ok(TxStatus::Mempool) => Some(0),
-				Ok(TxStatus::NotFound) => None,
-				Err(_) => None,
-			};
-
-			if let Some(confs) = confs {
-				if confs >= ark_info.required_board_confirmations as BlockHeight {
-					if let Err(e) = self.register_board(vtxo.id()).await {
-						warn!("Failed to register board {}: {:#}", vtxo.id(), e);
-					} else {
-						info!("Registered board {}", vtxo.id());
-						registered_boards += 1;
-						continue;
-					}
-				}
-			}
-
-			// Near expiry without registration — kick off an exit so the funds at least
-			// come back onchain, but keep the pending_board entry around so we keep
-			// retrying registration while the exit is still in its abortable
-			// Start/Processing window. If the server becomes available before the exit
-			// commits, `register_board` will succeed and tear down the entry; otherwise
-			// the top-of-loop check above will tear it down once the exit progresses.
-			if vtxo.expiry_height() < current_height + ark_info.required_board_confirmations as BlockHeight {
-				let is_exiting = self.exit_mgr().is_exiting(vtxo.id()).await;
-				if !is_exiting {
-					warn!("VTXO {} expired before its board was confirmed, marking VTXO for exit", vtxo.id());
-					self.inner.exit.start_exit_for_vtxos(&[vtxo.vtxo]).await?;
-					self.inner.movements.update_movement(
-						board.movement_id, MovementUpdate::new().exited_vtxo(vtxo_id),
-					).await?;
-				}
-			}
-		};
-
-		if registered_boards > 0 {
-			info!("Registered {registered_boards} sufficiently confirmed boards");
 		}
 		Ok(())
 	}
@@ -256,7 +215,10 @@ impl Wallet {
 				"invalid board cosignature received from server",
 			);
 
-		// Store vtxo first before we actually make the on-chain tx.
+		// Cosign and vtxo construction need the user keypair (and the funding
+		// PSBT came from the on-chain wallet), neither of which the action can
+		// reach. Do them here, then hand the rest of the lifecycle (store +
+		// broadcast + confirm + register) to a crash-safe wallet action.
 		let vtxo = builder.build_vtxo(&cosign_resp, &user_keypair)?;
 
 		let onchain_fee = board_psbt.fee()?;
@@ -270,54 +232,40 @@ impl Wallet {
 				.produced_vtxo(&vtxo)
 				.metadata(BoardMovement::metadata(utxo, onchain_fee)),
 		).await?;
-		self.store_locked_vtxos(
-			[&vtxo],
-			Some(crate::vtxo::VtxoLockHolder::Movement { id: movement_id }),
-		).await?;
 
 		let tx = board_psbt.extract_tx()?;
-		self.inner.db.store_pending_board(&vtxo, &tx, movement_id).await?;
+		let vtxo_id = vtxo.id();
+		// The board amount net of the board fee, i.e. the vtxo value. This is
+		// what `PendingBoard` has always reported (not the gross funding output).
+		let vtxo_amount = vtxo.amount();
+		let board = Board {
+			id: board_action_id(utxo),
+			funding_tx: tx,
+			vtxo_id,
+			amount: vtxo_amount,
+			movement_id,
+			progress: Progress::Broadcasting { signed_vtxo: vtxo },
+		};
 
-		trace!("Broadcasting board tx: {}", bitcoin::consensus::encode::serialize_hex(&tx));
-		self.inner.chain.broadcast_tx(&tx).await?;
+		// Persist the checkpoint before any vtxo lock so a crash between here and
+		// `drive_action` leaves something to resume (the action stores the vtxo
+		// and broadcasts), rather than an orphaned lock.
+		self.inner.db.upsert_wallet_action_checkpoint(&board.id, &board.clone().into()).await?;
 
-		info!("Board broadcasted");
-		Ok(self.inner.db.get_pending_board_by_vtxo_id(vtxo.id()).await?.expect("board should be stored"))
-	}
+		let pending = PendingBoard {
+			funding_tx: board.funding_tx.clone(),
+			vtxos: vec![vtxo_id],
+			amount: vtxo_amount,
+			movement_id,
+		};
 
-	/// Registers a board to the Ark server
-	async fn register_board(&self, vtxo_id: VtxoId) -> anyhow::Result<()> {
-		trace!("Attempting to register board {} to server", vtxo_id);
-		let (mut srv, _) = self.require_server().await?;
-
-		// Get the full vtxo (including the genesis chain) since we send the
-		// serialized bytes to the server.
-		let vtxo = self.inner.db.get_full_vtxo(vtxo_id).await?
-			.with_context(|| format!("VTXO doesn't exist: {}", vtxo_id))?;
-
-		// Register the vtxo with the server
-		srv.client.register_board_vtxo(protos::BoardVtxoRequest {
-			board_vtxo: vtxo.serialize(),
-		}).await.context("error registering board with the Ark server")?;
-
-		// Remember that we have stored the vtxo
-		// No need to complain if the vtxo is already registered
-		self.inner.db.update_vtxo_state_checked(
-			vtxo.id(), VtxoState::Spendable, &VtxoStateKind::UNSPENT_STATES,
-		).await?;
-
-		// Post vtxo ID to server for recovery (non-critical, just log errors)
-		if let Err(e) = self.post_recovery_vtxo_ids([vtxo.id()]).await {
-			error!("Failed to post recovery vtxo ID to server: {:#}", e);
+		// The checkpoint above is durable, so the board is accepted: sync will
+		// drive it to completion. The initial drive is best-effort, so don't
+		// propagate its error (a retry would fund a duplicate board).
+		match self.drive_action(board, DriveMode::UntilParkOrDone).await {
+			Ok(()) => info!("Board broadcasted"),
+			Err(e) => warn!("Initial board drive failed, sync will retry: {:#}", e),
 		}
-
-		let board = self.inner.db.get_pending_board_by_vtxo_id(vtxo.id()).await?
-			.context("pending board not found")?;
-
-		// TODO(pc): Cancel any pending exits for the VTXO once we support doing so.
-		self.inner.movements.finish_movement(board.movement_id, MovementStatus::Successful).await?;
-		self.inner.db.remove_pending_board(&vtxo.id()).await?;
-
-		Ok(())
+		Ok(pending)
 	}
 }
