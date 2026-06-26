@@ -1,7 +1,0 @@
-- Reject round participations that reference unusable input VTXOs
-  When a participation (interactive `submit_payment` or delegated
-  `submit_round_participation`) references inputs that are already spent or being
-  exited, the server now returns `InvalidArgument` listing every offending VTXO
-  id in the `identifiers` gRPC metadata, rather than failing the whole round
-  opaquely. Clients can then drop exactly those inputs and retry.
-  [#2217](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2217)

@@ -1,2 +1,0 @@
-- fix missing `exit_depth` field on VTXO listings
-  [#2225](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2225)

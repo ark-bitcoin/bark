@@ -1,9 +1,0 @@
-- Flag Arkade addresses as an unsupported payment option
-  `Wallet::parse_payment_request` now parses Arkade addresses (used directly or
-  in the `ark` parameter of a BIP 321 URI) into a `PaymentMethod::Custom` option
-  flagged with `InvalidArkAddress(ServerMismatch)`, instead of failing the
-  whole parse. This lets callers present the option and explain why it can't
-  be paid.
-  Adds a public `bark::payment_request::ArkAddressType` enum with `Bark` and
-  `Arkade` variants, used to distinguish the two address forms when parsing.
-  [#2220](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2220)
