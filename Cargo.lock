@@ -2635,9 +2635,9 @@ checksum = "92daf443525c4cce67b150400bc2316076100ce0b3686209eb8cf3c31612e6f0"
 
 [[package]]
 name = "lnurl-rs"
-version = "0.9.0"
+version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "41eacdd87b675792f7752f3dd0937a00241a504c3956c47f72986490662e1db4"
+checksum = "73a989342d2e9381c85d381898c3a925bad930958acd480fe0221f680c7856eb"
 dependencies = [
  "aes",
  "anyhow",
