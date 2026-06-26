@@ -1,6 +1,0 @@
-- Reject Arkade addresses with an explicit error
-  `bark send` now fails with "Ark address is for different server" when given
-  an Arkade address, instead of falling through to the generic "not a valid
-  destination" error. The destination help text now lists `ark addresses` in
-  place of `VTXO pubkeys`.
-  [#2220](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2220)

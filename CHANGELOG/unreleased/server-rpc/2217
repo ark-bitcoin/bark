@@ -1,3 +1,0 @@
-- Add `StatusExt::rejected_vtxos()` to extract the VTXO ids the server flagged as
-  unusable from a rejection's `identifiers` metadata
-  [#2217](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2217)

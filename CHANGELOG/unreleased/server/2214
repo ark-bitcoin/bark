@@ -1,8 +1,0 @@
-- Allow checkpointed Lightning-receive claims
-  The `claim_lightning_receive` handler now derives the arkoor checkpoint
-  requirement from the negotiated protocol version: clients speaking
-  `PROTOCOL_VERSION_LN_RECEIVE_CHECKPOINT` or later must claim with a
-  checkpoint, so the watchman stops at the checkpoint instead of force-exiting
-  the claimed leaf. Older clients keep claiming without checkpoints, so the
-  change stays backward compatible.
-  [#2214](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2214)
