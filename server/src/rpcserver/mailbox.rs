@@ -261,6 +261,20 @@ impl rpc::server::MailboxService for crate::Server {
 		let mailbox_id = MailboxIdentifier::deserialize(req.mailbox_id.as_slice())
 			.badarg("invalid mailbox id")?;
 
+		// Optional for backward compat; verified like the read path when present.
+		// TODO: make mandatory after 0.3.1, once all clients send it.
+		if let Some(auth_bytes) = req.authorization {
+			let auth = MailboxAuthorization::deserialize(auth_bytes.as_slice())
+				.badarg("invalid mailbox authorization")?;
+			if auth.mailbox() != mailbox_id {
+				self::badarg!("authorization doesn't match mailbox id");
+			}
+			check_auth_not_expired(&auth)?;
+			if !auth.verify() {
+				self::badarg!("invalid mailbox authorization signature");
+			}
+		}
+
 		let checkpoint = self.db.write(async |t| {
 			t.store_vtxo_ids_in_mailbox(
 				MailboxType::RecoveryVtxoId,
