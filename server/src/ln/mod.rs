@@ -160,11 +160,11 @@ impl Server {
 		mailbox_id: Option<ark::mailbox::MailboxIdentifier>,
 	) -> anyhow::Result<()> {
 		//TODO(stevenroose) validate vtxo generally (based on input)
-		let invoice_payment_hash = invoice.payment_hash();
+		let payment_hash = invoice.payment_hash();
 
 		let htlc_vtxos = self.db.read(async |t| t.get_user_vtxos_by_id(&htlc_vtxo_ids).await).await?;
 
-		slog!(LightningPaymentInitRequested, invoice_payment_hash, htlc_vtxo_ids: htlc_vtxo_ids.clone());
+		slog!(LightningPaymentInitRequested, payment_hash, htlc_vtxo_ids: htlc_vtxo_ids.clone());
 
 		let chain_tip = self.sync_manager.chain_tip().height;
 		let mut vtxos = vec![];
@@ -179,11 +179,11 @@ impl Server {
 				return badarg!("invalid server pubkey used");
 			}
 
-			let payment_hash = vtxo.policy().as_server_htlc_send()
+			let htlc_payment_hash = vtxo.policy().as_server_htlc_send()
 				.context("vtxo provided is not an outgoing htlc vtxo")?
 				.payment_hash;
 
-			if payment_hash != invoice_payment_hash {
+			if htlc_payment_hash != payment_hash {
 				return badarg!("htlc payment hash doesn't match invoice");
 			}
 
@@ -195,7 +195,7 @@ impl Server {
 		for htlc_vtxo in &vtxos {
 			let htlc = htlc_vtxo.policy().as_server_htlc_send()
 				.context("vtxo provided is not an outgoing htlc vtxo")?;
-			if htlc.payment_hash != invoice_payment_hash {
+			if htlc.payment_hash != payment_hash {
 				return badarg!("htlc payment hash doesn't match invoice");
 			}
 			min_expiry_height = cmp::min(min_expiry_height, htlc.htlc_expiry);
@@ -248,7 +248,7 @@ impl Server {
 			htlc_vtxo_ids,
 		).await?;
 
-		slog!(LightningPaymentInitiated, invoice_payment_hash, amount: payment_amount, fee,
+		slog!(LightningPaymentInitiated, payment_hash, amount: payment_amount, fee,
 			min_expiry: min_expiry_height,
 		);
 		Ok(())
@@ -307,12 +307,12 @@ impl Server {
 			.as_server_htlc_send()
 			.context("vtxo is not htlc send")?.clone();
 
-		let invoice_payment_hash = input_policy.payment_hash;
-		slog!(LightningPayHtlcsRevocationRequested, invoice_payment_hash,
+		let payment_hash = input_policy.payment_hash;
+		slog!(LightningPayHtlcsRevocationRequested, payment_hash,
 			htlc_vtxo_ids: htlc_vtxo_ids.clone(),
 		);
 
-		if let Some(preimage) = self.htlc_settler.is_settled(invoice_payment_hash).await? {
+		if let Some(preimage) = self.htlc_settler.is_settled(payment_hash).await? {
 			return badarg!("invoice has already been paid, preimage: {}", preimage);
 		}
 
@@ -328,7 +328,7 @@ impl Server {
 			.badarg("invalid cosign request")?;
 
 		let attempt = db.read(async |t|
-			t.get_latest_payment_attempt_by_payment_hash(invoice_payment_hash).await
+			t.get_latest_payment_attempt_by_payment_hash(payment_hash).await
 		).await?;
 
 		// If payment not found but input vtxos are found, we can allow revoke
@@ -340,7 +340,7 @@ impl Server {
 				},
 				_ if tip > input_policy.htlc_expiry => {
 					// Check one last time to see if it completed
-					let res = self.cln.get_payment_status(invoice_payment_hash, false).await;
+					let res = self.cln.get_payment_status(payment_hash, false).await;
 					if let Ok(PaymentStatus::Success(preimage)) = res {
 						return badarg!("This lightning payment has completed. preimage: {}",
 							preimage.as_hex());
@@ -366,19 +366,19 @@ impl Server {
 			// settlement path marks the attempt succeeded or spends the
 			// HTLC-send vtxos, so a preimage visible here means the payment
 			// completed: refunding the sender now would double-pay it.
-			if let Some(preimage) = t.get_htlc_settlement_by_payment_hash(invoice_payment_hash).await? {
+			if let Some(preimage) = t.get_htlc_settlement_by_payment_hash(payment_hash).await? {
 				return badarg!("invoice has already been paid, preimage: {}", preimage);
 			}
 
 			// For an intra-Ark payment the payee shares this payment hash via a
-			// receive subscription. The `is_settled` check above only catches a
+			// receive subscription. The settlement check above only catches a
 			// preimage that has already been recorded; it does NOT catch the
 			// window where the payee has been granted HTLC-recv vtxos but is
 			// withholding the claim (and thus the preimage). Atomically cancel
 			// the receive here so a later claim is refused, and bail if the
 			// receive is already committed (HtlcsReady/Settled) - otherwise the
 			// server would refund the sender AND pay the payee for one payment.
-			if let Some(status) = t.cancel_revocable_htlc_subscription(invoice_payment_hash).await? {
+			if let Some(status) = t.cancel_revocable_htlc_subscription(payment_hash).await? {
 				if matches!(status,
 					LightningHtlcSubscriptionStatus::HtlcsReady
 						| LightningHtlcSubscriptionStatus::Settled,
@@ -399,7 +399,7 @@ impl Server {
 		let builder = builder.server_cosign(self.server_key.leak_ref())
 			.context("Failed to sign")?;
 
-		slog!(LightningPayHtlcsRevoked, invoice_payment_hash, htlc_vtxo_ids, new_vtxo_ids);
+		slog!(LightningPayHtlcsRevoked, payment_hash, htlc_vtxo_ids, new_vtxo_ids);
 
 		Ok(builder.cosign_response())
 	}
