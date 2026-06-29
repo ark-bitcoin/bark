@@ -1,11 +1,11 @@
-use ark::VtxoId;
-use server_rpc::protos;
-
+use ark::{ProtocolEncoding, Vtxo, VtxoId};
+use ark::vtxo::Full;
 use ark_testing::{btc, require_bark_version, sat, TestContext};
 use ark_testing::constants::BOARD_CONFIRMATIONS;
-use ark_testing::daemon::captaind::{self, MailboxClient};
+use ark_testing::daemon::captaind::{self, ArkClient, MailboxClient};
 use bark_json::primitives::VtxoStateInfo;
 use bitcoin::Amount;
+use server_rpc::protos;
 
 use crate::helpers::wait_for_boards_synced;
 
@@ -576,4 +576,220 @@ async fn recovered_wallet_skips_unownable_vtxo() {
 	assert_eq!(after[0].vtxo.id, own_id, "recovered VTXO should be our own board");
 	assert!(!after.iter().any(|v| v.vtxo.id == foreign_id),
 		"unownable foreign VTXO must not be recovered");
+}
+
+/// Recovery skips a VTXO that fails validation.
+///
+/// A buggy or malicious server could return a VTXO whose owner key we can derive
+/// but whose signatures are invalid. Recovery must validate and skip it rather
+/// than import unspendable junk.
+#[tokio::test]
+async fn recovered_wallet_skips_invalid_vtxo() {
+	let ctx = TestContext::new("barkd/recovered_wallet_skips_invalid_vtxo").await;
+	let srv = ctx.captaind("server").funded(btc(10)).create().await;
+
+	let barkd = ctx.barkd("bark", &srv).boarded(sat(100_000)).create().await;
+	let mnemonic = barkd.mnemonic().await;
+
+	// Proxy get_vtxo to return our own board VTXO with an invalidated signature.
+	#[derive(Clone)]
+	struct ForgeVtxo;
+
+	#[async_trait::async_trait]
+	impl captaind::proxy::ArkRpcProxy for ForgeVtxo {
+		async fn get_vtxo(
+			&self, upstream: &mut ArkClient, req: protos::GetVtxoRequest,
+		) -> Result<protos::GetVtxoResponse, tonic::Status> {
+			let mut resp = upstream.get_vtxo(req).await?.into_inner();
+			let mut vtxo = Vtxo::<Full>::deserialize(&resp.vtxo).unwrap();
+			vtxo.invalidate_final_sig();
+			resp.vtxo = vtxo.serialize();
+			Ok(resp)
+		}
+	}
+
+	let proxy = srv.start_proxy_with_mailbox(ForgeVtxo, ()).await;
+
+	let recovered = ctx.barkd("bark_recovered", &srv)
+		.mnemonic(mnemonic)
+		.cfg({
+			let addr = proxy.address.clone();
+			move |c| c.server_address = addr
+		})
+		.create().await;
+	recovered.onchain_sync().await;
+	recovered.sync().await;
+
+	assert!(recovered.vtxos(Some(true)).await.is_empty(),
+		"recovery must skip a VTXO that fails validation");
+}
+
+/// Recovery tolerates an undecodable id in the recovery mailbox.
+///
+/// A corrupt or malformed mailbox entry must be skipped without derailing the
+/// rest of the scan.
+#[tokio::test]
+async fn recovered_wallet_tolerates_undecodable_vtxo_id() {
+	let ctx = TestContext::new("barkd/recovered_wallet_tolerates_undecodable_vtxo_id").await;
+	let srv = ctx.captaind("server").funded(btc(10)).create().await;
+
+	let barkd = ctx.barkd("bark", &srv).boarded(sat(100_000)).create().await;
+	let own_id = barkd.vtxos(None).await[0].vtxo.id;
+	let mnemonic = barkd.mnemonic().await;
+
+	// Inject a garbage (undecodable) vtxo id alongside the genuine ones.
+	#[derive(Clone)]
+	struct InjectGarbageId;
+
+	#[async_trait::async_trait]
+	impl captaind::proxy::MailboxRpcProxy for InjectGarbageId {
+		async fn read_mailbox(
+			&self, upstream: &mut MailboxClient, req: protos::mailbox_server::MailboxRequest,
+		) -> Result<protos::mailbox_server::MailboxMessages, tonic::Status> {
+			use protos::mailbox_server::{mailbox_message, MailboxMessage, RecoveryVtxoIdsMessage};
+
+			let mut resp = upstream.read_mailbox(req).await?.into_inner();
+			resp.messages.push(MailboxMessage {
+				message: Some(mailbox_message::Message::RecoveryVtxoIds(RecoveryVtxoIdsMessage {
+					vtxo_ids: vec![vec![0xde, 0xad, 0xbe, 0xef]],
+				})),
+				checkpoint: 0,
+			});
+			Ok(resp)
+		}
+	}
+
+	let proxy = srv.start_proxy_with_mailbox((), InjectGarbageId).await;
+
+	let recovered = ctx.barkd("bark_recovered", &srv)
+		.mnemonic(mnemonic)
+		.cfg({
+			let addr = proxy.address.clone();
+			move |c| c.server_address = addr
+		})
+		.create().await;
+	recovered.onchain_sync().await;
+	recovered.sync().await;
+
+	let after = recovered.vtxos(Some(true)).await;
+	assert_eq!(after.len(), 1, "the valid VTXO must still recover despite a garbage id");
+	assert_eq!(after[0].vtxo.id, own_id, "recovered VTXO should be the board");
+}
+
+/// Recovery reads a recovery mailbox that spans multiple pages.
+///
+/// With the server's page size forced to 1, two boarded VTXOs land on separate
+/// mailbox pages, exercising the `have_more` pagination loop.
+#[tokio::test]
+async fn recovered_wallet_reads_paginated_mailbox() {
+	let ctx = TestContext::new("barkd/recovered_wallet_reads_paginated_mailbox").await;
+	let srv = ctx.captaind("server")
+		.cfg(|c| c.max_read_mailbox_items = 1)
+		.funded(btc(10))
+		.create().await;
+
+	// Board twice so the recovery mailbox holds two ids (two pages at size 1).
+	let barkd = ctx.barkd("bark", &srv)
+		.boarded(sat(100_000))
+		.funded(sat(200_000))
+		.create().await;
+	barkd.onchain_sync().await;
+	barkd.board_amount(sat(100_000)).await;
+	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
+	barkd.wait_for_boards_synced().await;
+
+	let before = barkd.vtxos(None).await;
+	assert_eq!(before.len(), 2, "wallet should hold two board VTXOs");
+
+	let mnemonic = barkd.mnemonic().await;
+	let recovered = ctx.barkd("bark_recovered", &srv).mnemonic(mnemonic).create().await;
+	recovered.onchain_sync().await;
+	recovered.sync().await;
+
+	let after = recovered.vtxos(Some(true)).await;
+	assert_eq!(after.len(), 2, "both VTXOs must recover across mailbox pages");
+	for vtxo in before.iter() {
+		assert!(after.iter().any(|v| v.vtxo.id == vtxo.vtxo.id),
+			"recovered wallet should rediscover VTXO {:?}", vtxo.vtxo.id);
+	}
+}
+
+/// Recovery does not recover a VTXO whose key is beyond the gap limit.
+///
+/// The recipient advances its key index well past `STOP_GAP` (50) by minting
+/// many addresses, then receives into the last one. A freshly recovered wallet
+/// only scans `STOP_GAP` keys ahead of the last match, so this VTXO is out of
+/// reach and — by design — is not recovered.
+#[tokio::test]
+async fn recovered_wallet_skips_vtxo_beyond_gap_limit() {
+	let ctx = TestContext::new("barkd/recovered_wallet_skips_vtxo_beyond_gap_limit").await;
+	let srv = ctx.captaind("server").funded(btc(10)).create().await;
+
+	let sender = ctx.barkd("sender", &srv).boarded(sat(1_000_000)).create().await;
+	let recipient = ctx.barkd("recipient", &srv).create().await;
+
+	// Mint 60 addresses (> STOP_GAP of 50), each revealing a fresh key, then
+	// receive into the last (highest-index) one.
+	let mut dest = String::new();
+	for _ in 0..60 {
+		dest = recipient.ark_address().await;
+	}
+	sender.send(&dest, sat(50_000)).await;
+	recipient.sync().await;
+	assert_eq!(recipient.vtxos(None).await.len(), 1, "recipient should hold the received VTXO");
+
+	let mnemonic = recipient.mnemonic().await;
+	let recovered = ctx.barkd("recipient_recovered", &srv).mnemonic(mnemonic).create().await;
+	recovered.onchain_sync().await;
+	recovered.sync().await;
+
+	assert!(recovered.vtxos(Some(true)).await.is_empty(),
+		"a VTXO beyond the gap limit must not be recovered");
+}
+
+/// Recovery from the same seed is repeatable.
+///
+/// Recovery must be deterministic and leave no trace on the source wallet: two
+/// independent fresh wallets recovered from the same seed must rediscover the
+/// very same VTXO set. A second recovery that double-imported, ratcheted the key
+/// index, or otherwise diverged from the first would show up here.
+#[tokio::test]
+async fn recovered_wallet_recovery_is_repeatable() {
+	let ctx = TestContext::new("barkd/recovered_wallet_recovery_is_repeatable").await;
+	let srv = ctx.captaind("server").funded(btc(10)).create().await;
+
+	// Hold two board VTXOs so a divergent re-scan has something to get wrong.
+	let barkd = ctx.barkd("bark", &srv)
+		.boarded(sat(100_000))
+		.funded(sat(200_000))
+		.create().await;
+	barkd.onchain_sync().await;
+	barkd.board_amount(sat(100_000)).await;
+	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
+	barkd.wait_for_boards_synced().await;
+
+	let before = barkd.vtxos(None).await;
+	assert_eq!(before.len(), 2, "wallet should hold two board VTXOs");
+	let mnemonic = barkd.mnemonic().await;
+
+	// Recover the same seed into two independent fresh wallets.
+	let first = ctx.barkd("first_recovered", &srv).mnemonic(mnemonic.clone()).create().await;
+	first.onchain_sync().await;
+	first.sync().await;
+
+	let second = ctx.barkd("second_recovered", &srv).mnemonic(mnemonic).create().await;
+	second.onchain_sync().await;
+	second.sync().await;
+
+	let first_after = first.vtxos(Some(true)).await;
+	let second_after = second.vtxos(Some(true)).await;
+	assert_eq!(first_after.len(), before.len(), "first recovery should rediscover both VTXOs");
+	assert_eq!(second_after.len(), first_after.len(),
+		"a repeated recovery from the same seed must rediscover the same number of VTXOs");
+	for vtxo in before.iter() {
+		assert!(first_after.iter().any(|v| v.vtxo.id == vtxo.vtxo.id),
+			"first recovery should rediscover VTXO {:?}", vtxo.vtxo.id);
+		assert!(second_after.iter().any(|v| v.vtxo.id == vtxo.vtxo.id),
+			"repeated recovery should rediscover VTXO {:?}", vtxo.vtxo.id);
+	}
 }
