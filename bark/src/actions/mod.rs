@@ -24,7 +24,7 @@ use crate::actions::lightning::pay::LightningSend;
 use crate::actions::lightning::receive::LightningReceive;
 use crate::actions::offboard::Offboard;
 use crate::lock_manager::LockGuard;
-use crate::vtxo::{VtxoState, VtxoStateKind};
+use crate::vtxo::{VtxoState, VtxoStateKind, VtxoValidationError};
 
 pub(crate) const BASE_RETRY_BACKOFF: Duration = Duration::from_secs(1);
 
@@ -198,6 +198,8 @@ pub enum Advance<A> {
 pub enum AdvanceError {
 	#[error("An error occurred while communicating with the server: {0}")]
 	Server(tonic::Status),
+	#[error("An error occurred while validating a VTXO: {0}")]
+	Vtxo(VtxoValidationError),
 	#[error("An error occurred while processing the action: {0}")]
 	Other(#[from] anyhow::Error),
 }

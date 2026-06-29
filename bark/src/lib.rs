@@ -379,7 +379,7 @@ use crate::proxy::proxy_for_url;
 use crate::round::{RoundParticipation, RoundSecretNonces, RoundStatus};
 use crate::subsystem::RoundMovement;
 use crate::utils::rejected_vtxos_from_error;
-use crate::vtxo::{FilterVtxos, RefreshStrategy, VtxoFilter, VtxoStateKind};
+use crate::vtxo::{FilterVtxos, RefreshStrategy, VtxoFilter, VtxoStateKind, VtxoValidationError};
 use crate::vtxo::selection::{InputSelection, SelectedFeeInfos};
 
 #[cfg(all(feature = "wasm-web", feature = "socks5-proxy"))]
@@ -1330,17 +1330,12 @@ impl Wallet {
 	}
 
 	/// Fetches [Vtxo]'s funding transaction and validates the VTXO against it.
-	pub async fn validate_vtxo(&self, vtxo: &Vtxo<Full>) -> anyhow::Result<()> {
+	pub async fn validate_vtxo(&self, vtxo: &Vtxo<Full>) -> Result<(), VtxoValidationError> {
 		let tx = self.inner.chain.get_tx(&vtxo.chain_anchor().txid).await
-			.context("could not fetch chain tx")?;
+			.map_err(VtxoValidationError::Chain)?
+			.ok_or(VtxoValidationError::AnchorNotFound)?;
 
-		let tx = tx.with_context(|| {
-			format!("vtxo chain anchor not found for vtxo: {}", vtxo.chain_anchor().txid)
-		})?;
-
-		vtxo.validate(&tx)?;
-
-		Ok(())
+		vtxo.validate(&tx).map_err(VtxoValidationError::Invalid)
 	}
 
 	/// Manually import a VTXO into the wallet.

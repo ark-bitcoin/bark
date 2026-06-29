@@ -12,6 +12,16 @@ use ark::vtxo::{Full, VtxoRef};
 
 use crate::Wallet;
 
+#[derive(Debug, thiserror::Error)]
+pub enum VtxoValidationError {
+	#[error("chain error: {0}")]
+	Chain(anyhow::Error),
+	#[error("anchor not found")]
+	AnchorNotFound,
+	#[error("invalid: {0}")]
+	Invalid(#[from] ark::vtxo::VtxoValidationError),
+}
+
 impl Wallet {
 	/// Attempts to lock VTXOs with the given [VtxoId](ark::VtxoId) values.
 	///

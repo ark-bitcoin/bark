@@ -430,7 +430,7 @@ pub(crate) async fn request_lightning_send_htlcs(
 
 	let mut effective_balance = Amount::ZERO;
 	for vtxo in &htlc_vtxos {
-		wallet.validate_vtxo(vtxo).await?;
+		wallet.validate_vtxo(vtxo).await.map_err(AdvanceError::Vtxo)?;
 		effective_balance += vtxo.amount();
 	}
 	for change in &change_vtxos {
