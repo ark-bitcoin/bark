@@ -80,4 +80,6 @@ message PostRecoveryVtxoIdsRequest {
 	// The recovery mailbox ID
 	bytes mailbox_id = 1;
 	repeated bytes vtxo_ids = 2;
+	// Signed proof of mailbox ownership. Optional for now for backward compat.
+	optional bytes authorization = 3;
 }

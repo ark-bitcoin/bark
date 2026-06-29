@@ -541,8 +541,17 @@ impl Wallet {
 		let nb_vtxos = vtxo_ids.len();
 
 		let (mut srv, _) = self.require_server().await?;
+
+		// Prove ownership of the recovery mailbox; short validity is enough as
+		// it's consumed by this single request.
+		let expiry = chrono::Local::now() + std::time::Duration::from_secs(10);
+		let auth = MailboxAuthorization::new(&self.recovery_mailbox_keypair(), expiry);
 		let mailbox_id = self.recovery_mailbox_identifier().serialize();
-		let req = protos::mailbox_server::PostRecoveryVtxoIdsRequest { mailbox_id, vtxo_ids };
+		let req = protos::mailbox_server::PostRecoveryVtxoIdsRequest {
+			mailbox_id,
+			vtxo_ids,
+			authorization: Some(auth.serialize()),
+		};
 
 		srv.mailbox_client.post_recovery_vtxo_ids(req).await
 			.context("error posting recovery vtxo IDs to server")?;
