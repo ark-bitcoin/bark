@@ -16,6 +16,8 @@ use bark_rest::http::HeaderValue;
 use bark_rest::error::ContextExt;
 use bark_rest::auth::AuthToken;
 
+use bark::fs_perms;
+
 use bark_cli::VERSION_DIRTY;
 use bark_cli::log::init_logging;
 use bark_cli::wallet::{ConfigOpts, CreateOpts, create_wallet, open_wallet, read_mnemonic, AUTH_TOKEN_FILE};
@@ -218,18 +220,8 @@ fn load_auth_token(datadir: &PathBuf) -> anyhow::Result<Option<AuthToken>> {
 /// Write the auth token to the datadir.
 fn store_auth_token(datadir: &PathBuf, token: &AuthToken) -> anyhow::Result<()> {
 	let path = datadir.join(AUTH_TOKEN_FILE);
-	std::fs::write(&path, token.encode())
-		.with_context(|| format!("failed to write {}", path.display()))?;
-
-	#[cfg(unix)]
-	{
-		use std::os::unix::fs::PermissionsExt;
-		let perms = std::fs::Permissions::from_mode(0o600);
-		std::fs::set_permissions(&path, perms)
-			.with_context(|| format!("failed to set permissions on {}", path.display()))?;
-	}
-
-	Ok(())
+	// This also handles `secret refresh`, which overwrites an existing token.
+	fs_perms::write_atomic_owner_only(&path, token.encode().as_bytes())
 }
 
 /// Generate a random auth token and persist it to the datadir.
@@ -298,10 +290,18 @@ async fn main() -> anyhow::Result<()>{
 
 	let datadir = PathBuf::from_str(&cli.datadir).unwrap();
 
+	let datadir_existed = datadir.exists();
 	std::fs::create_dir_all(&datadir)
 		.with_context(|| format!("failed to create datadir {}", datadir.display()))?;
+	if !datadir_existed {
+		fs_perms::harden(&datadir, 0o700)?;
+	}
 
 	init_logging(cli.verbose, cli.quiet, &datadir);
+
+	if datadir_existed {
+		fs_perms::warn_if_loose(&datadir, 0o700);
+	}
 
 	// Handle subcommands that don't start the daemon.
 	if let Some(command) = &cli.command {
@@ -409,6 +409,8 @@ async fn main() -> anyhow::Result<()>{
 				// Wipe datadir
 				let _ = tokio::fs::remove_dir_all(&datadir).await.ok();
 				tokio::fs::create_dir_all(&datadir).await?;
+				// Lock it back to the owner.
+				fs_perms::harden(&datadir, 0o700)?;
 				Ok(())
 			})
 		}

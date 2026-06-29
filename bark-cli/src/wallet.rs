@@ -34,6 +34,7 @@ use std::str::FromStr;
 
 use anyhow::{Context, bail};
 use bark::chain::ChainSource;
+use bark::fs_perms;
 use bark::persist::adaptor::StorageAdaptorWrapper;
 use bitcoin::Network;
 use clap::Args;
@@ -228,9 +229,8 @@ impl ConfigOpts {
 		}
 
 		let path = path.as_ref();
-		std::fs::write(path, conf).with_context(|| format!(
-			"error writing new config file to {}", path.display(),
-		))?;
+
+		fs_perms::write_atomic_owner_only(path, conf.as_bytes())?;
 
 		// new let's try load it to make sure it's sane
 		Ok(Config::load(network, path).context("problematic config flags provided")?)
@@ -370,6 +370,8 @@ async fn try_create_wallet(
 
 	tokio::fs::create_dir_all(datadir).await.context("can't create dir")?;
 
+	fs_perms::harden(datadir, 0o700)?;
+
 	let config_path = datadir.join(CONFIG_FILE);
 	let has_config_args = opts.config != ConfigOpts::default();
 	let mut config = match (config_path.exists(), has_config_args) {
@@ -421,8 +423,10 @@ async fn try_create_wallet(
 	let is_new_wallet = opts.mnemonic.is_none();
 	let mnemonic = opts.mnemonic.unwrap_or_else(|| bip39::Mnemonic::generate(12).expect("12 is valid"));
 	let seed = mnemonic.to_seed("");
-	tokio::fs::write(datadir.join(MNEMONIC_FILE), mnemonic.to_string().as_bytes()).await
-		.context("failed to write mnemonic")?;
+
+	fs_perms::create_new_owner_only(
+		&datadir.join(MNEMONIC_FILE), mnemonic.to_string().as_bytes(),
+	)?;
 
 	// open db
 	let db: Arc<dyn BarkPersister + Send + Sync> = if opts.use_filestore {
@@ -431,7 +435,9 @@ async fn try_create_wallet(
 		Arc::new(StorageAdaptorWrapper::new(adaptor))
 	} else {
 		debug!("Using sqlite backend");
-		Arc::new(SqliteClient::open(datadir.join(DB_FILE))?)
+		let db = SqliteClient::open(datadir.join(DB_FILE))?;
+		fs_perms::harden(&datadir.join(DB_FILE), 0o600)?;
+		Arc::new(db)
 	};
 
 	let mut onchain = OnchainWallet::load_or_create(net.as_bitcoin(), seed, db.clone()).await?;
@@ -476,6 +482,11 @@ pub async fn open_wallet(
 	if !tokio::fs::try_exists(&mnemonic_path).await? {
 		return Ok(None);
 	}
+
+	// The backend db (sqlite or filestore) is checked by its adaptor on open.
+	fs_perms::warn_if_loose(datadir, 0o700);
+	fs_perms::warn_if_loose(&mnemonic_path, 0o600);
+	fs_perms::warn_if_loose(&datadir.join(CONFIG_FILE), 0o600);
 
 	let mnemonic_str = tokio::fs::read_to_string(&mnemonic_path).await
 		.with_context(|| format!("failed to read mnemonic file at {}", mnemonic_path.display()))?;

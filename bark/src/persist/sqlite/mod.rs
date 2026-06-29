@@ -59,6 +59,11 @@ impl SqliteClient {
 		let mut conn = rusqlite::Connection::open(&path)
 			.with_context(|| format!("Error connecting to database {}", path.display()))?;
 
+		// The db holds wallet state. New wallets are hardened at creation; for
+		// older or externally-created dbs we only warn rather than chmod on
+		// every open, which would override a deliberate setup.
+		crate::fs_perms::warn_if_loose(&path, 0o600);
+
 		let migrations = migrations::MigrationContext::new();
 		migrations.do_all_migrations(&mut conn)?;
 
