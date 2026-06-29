@@ -1,0 +1,5 @@
+- Add `Vtxo::check_standard` returning a descriptive `VtxoStandardnessError`
+  The new API pinpoints whether the chain has a sub-dust output, a
+  non-standard script, or which sibling along the genesis chain is at
+  fault. `Vtxo::is_standard` is retained as a thin `bool` wrapper.
+  [#2198](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2198)

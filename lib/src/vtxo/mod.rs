@@ -87,7 +87,7 @@ use bitcoin::hashes::{sha256, Hash};
 use bitcoin::secp256k1::{schnorr, PublicKey, XOnlyPublicKey};
 use bitcoin::taproot::TapTweakHash;
 
-use bitcoin_ext::{fee, BlockDelta, BlockHeight, TxOutExt};
+use bitcoin_ext::{fee, BlockDelta, BlockHeight, NonStandardOutput, TxOutExt};
 
 use crate::vtxo::policy::{check_block_delta, check_block_height, HarkForfeitVtxoPolicy};
 use crate::scripts;
@@ -110,6 +110,73 @@ const VTXO_NO_FEE_AMOUNT_VERSION: u16 = 1;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, thiserror::Error)]
 #[error("failed to parse vtxo id, must be 36 bytes")]
 pub struct VtxoIdParseError;
+
+/// Reason a [Vtxo] failed the [Vtxo::check_standard] check.
+///
+/// A VTXO is standard if and only if every output in its exit chain — its
+/// own output plus all sibling outputs of every exit transaction — uses a
+/// known script type *and* carries a value at or above that script's dust
+/// limit. Each variant identifies the first violation encountered.
+///
+/// Sibling-typed variants ([VtxoStandardnessError::DustSibling] and
+/// [VtxoStandardnessError::ScriptSibling]) locate the offending output by
+/// genesis item index plus the index inside that item's `other_outputs`
+/// list; with `item_count` they tell you how deep along the chain the
+/// problem sits.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum VtxoStandardnessError {
+	/// The VTXO's own output value is below the dust limit for its script
+	/// type, so the final exit transaction cannot be relayed.
+	#[error("the VTXO's own output is below the dust limit for its script type")]
+	Dusty,
+
+	/// A sibling output produced somewhere along the exit chain is below
+	/// the dust limit. The current VTXO can clear dust on its own and
+	/// still trip this variant — the exit transaction containing the
+	/// sub-dust sibling is the part that won't relay.
+	///
+	/// # Example: a small total dust-isolation can't rescue
+	///
+	/// Suppose Alice owns a 600-sat VTXO and pays Bob 200 sat. The
+	/// arkoor builder produces:
+	///
+	/// ```text
+	/// 600 sat  ->  200 sat   // Bob (sub-dust — below P2TR_DUST = 330)
+	///              400 sat   // Alice's change (above dust)
+	/// ```
+	///
+	/// Even when the builder is asked to apply dust isolation (see
+	/// [`ArkoorBuilder::new_with_checkpoint_isolate_dust`](crate::arkoor::ArkoorBuilder::new_with_checkpoint_isolate_dust)),
+	/// the total is too small to fix. An isolation output has to be
+	/// at least `P2TR_DUST` (330 sat) to clear the relay limit. Bob's
+	/// 200 sat already lives in the dust pool; to reach 330 the builder
+	/// would have to split Alice's change and pull another 130 sat into
+	/// the pool. That leaves 270 sat as the leftover piece of Alice's
+	/// change — still sub-dust. Splitting trades one sub-dust output
+	/// for two, so the builder falls through and emits the 200/400
+	/// outputs as-is.
+	#[error("dust sibling output at genesis item {item_idx}/{item_count}, output {output_idx}")]
+	DustSibling {
+		item_idx: usize,
+		item_count: usize,
+		output_idx: usize,
+	},
+
+	/// The VTXO's own output uses an unrecognised script type, or an
+	/// OP_RETURN longer than the 83-byte standardness ceiling.
+	#[error("the VTXO's own output uses a non-standard script type")]
+	Script,
+
+	/// A sibling output along the exit chain uses an unrecognised script
+	/// type (or an over-long OP_RETURN). Same locator semantics as
+	/// [VtxoStandardnessError::DustSibling].
+	#[error("non-standard script in sibling output at genesis item {item_idx}/{item_count}, output {output_idx}")]
+	ScriptSibling {
+		item_idx: usize,
+		item_count: usize,
+		output_idx: usize,
+	},
+}
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct VtxoId([u8; 36]);
@@ -592,9 +659,42 @@ impl<P: Policy> Vtxo<Full, P> {
 	/// - Its own output is standard
 	/// - all sibling outputs in the exit path are standard
 	/// - each part of the exit path should have a P2A output
+	///
+	/// See [Vtxo::check_standard] for a variant returning a descriptive
+	/// error instead of a bool.
 	pub fn is_standard(&self) -> bool {
-		self.txout().is_standard() && self.genesis.items.iter()
-			.all(|i| i.other_outputs.iter().all(|o| o.is_standard()))
+		self.check_standard().is_ok()
+	}
+
+	/// Like [Vtxo::is_standard] but returns a [VtxoStandardnessError]
+	/// describing the first standardness violation along the exit chain.
+	///
+	/// The check is short-circuited: it returns the *first* offending
+	/// output rather than enumerating every problem. The VTXO's own
+	/// output is checked before its siblings.
+	pub fn check_standard(&self) -> Result<(), VtxoStandardnessError> {
+		if let Err(kind) = self.txout().check_standard() {
+			return Err(match kind {
+				NonStandardOutput::Dust => VtxoStandardnessError::Dusty,
+				NonStandardOutput::Script => VtxoStandardnessError::Script,
+			});
+		}
+		let item_count = self.genesis.items.len();
+		for (item_idx, item) in self.genesis.items.iter().enumerate() {
+			for (output_idx, out) in item.other_outputs.iter().enumerate() {
+				if let Err(kind) = out.check_standard() {
+					return Err(match kind {
+						NonStandardOutput::Dust => VtxoStandardnessError::DustSibling {
+							item_idx, item_count, output_idx,
+						},
+						NonStandardOutput::Script => VtxoStandardnessError::ScriptSibling {
+							item_idx, item_count, output_idx,
+						},
+					});
+				}
+			}
+		}
+		Ok(())
 	}
 
 	/// Returns the "hArk" unlock hash if this is a hArk leaf VTXO
@@ -1508,6 +1608,125 @@ mod test {
 		check(&v.round1_vtxo);
 		check(&v.round2_vtxo);
 		check(&v.arkoor3_vtxo);
+	}
+
+	/// Build a minimal single-item [Vtxo<Full>] for standardness tests.
+	///
+	/// The genesis chain is one cosigned transition wide; callers control
+	/// the VTXO's own amount and the sibling outputs in that transition.
+	fn dummy_vtxo_with(amount: Amount, other_outputs: Vec<TxOut>) -> Vtxo<Full> {
+		Vtxo {
+			policy: VtxoPolicy::new_pubkey(DUMMY_USER_KEY.public_key()),
+			amount,
+			expiry_height: 101_010,
+			server_pubkey: DUMMY_SERVER_KEY.public_key(),
+			exit_delta: 2016,
+			anchor_point: OutPoint::new(Txid::from_slice(&[1u8; 32]).unwrap(), 1),
+			genesis: Full {
+				items: vec![GenesisItem {
+					transition: GenesisTransition::new_cosigned(
+						vec![DUMMY_USER_KEY.public_key()],
+						Some(schnorr::Signature::from_slice(&[2u8; 64]).unwrap()),
+					),
+					output_idx: 0,
+					other_outputs,
+					fee_amount: Amount::ZERO,
+				}],
+			},
+			point: OutPoint::new(Txid::from_slice(&[3u8; 32]).unwrap(), 3),
+		}
+	}
+
+	/// A valid P2TR script_pubkey usable as a sibling output.
+	fn dummy_p2tr_script() -> ScriptBuf {
+		VtxoPolicy::new_pubkey(DUMMY_USER_KEY.public_key())
+			.script_pubkey(DUMMY_SERVER_KEY.public_key(), 2016, 101_010)
+	}
+
+	#[test]
+	fn check_standard_accepts_real_vtxos() {
+		// The hand-rolled test vectors must all be standard so that
+		// regular VTXO use never falsely trips check_standard.
+		let v = &*VTXO_VECTORS;
+		assert_eq!(v.board_vtxo.check_standard(), Ok(()));
+		assert_eq!(v.arkoor_htlc_out_vtxo.check_standard(), Ok(()));
+		assert_eq!(v.arkoor2_vtxo.check_standard(), Ok(()));
+		assert_eq!(v.round1_vtxo.check_standard(), Ok(()));
+		assert_eq!(v.round2_vtxo.check_standard(), Ok(()));
+		assert_eq!(v.arkoor3_vtxo.check_standard(), Ok(()));
+		assert!(v.board_vtxo.is_standard());
+	}
+
+	#[test]
+	fn check_standard_dusty_own_output() {
+		// A VTXO whose own output is below P2TR_DUST is Dusty. The
+		// VtxoPolicy script is always P2TR, so the dust limit is 330 sat.
+		let vtxo = dummy_vtxo_with(Amount::from_sat(100), vec![]);
+		assert_eq!(vtxo.check_standard(), Err(VtxoStandardnessError::Dusty));
+		assert!(!vtxo.is_standard());
+	}
+
+	#[test]
+	fn check_standard_dust_sibling() {
+		// Own amount is fine, but a sub-dust P2TR sibling output along
+		// the exit chain should surface as DustSibling and point at the
+		// offending position.
+		let dust = TxOut {
+			value: Amount::from_sat(100),
+			script_pubkey: dummy_p2tr_script(),
+		};
+		let vtxo = dummy_vtxo_with(Amount::from_sat(10_000), vec![dust]);
+		assert_eq!(
+			vtxo.check_standard(),
+			Err(VtxoStandardnessError::DustSibling {
+				item_idx: 0,
+				item_count: 1,
+				output_idx: 0,
+			}),
+		);
+	}
+
+	#[test]
+	fn check_standard_script_sibling() {
+		// A sibling using an unrecognised script template (here just a
+		// pair of arbitrary bytes that match none of P2PKH/P2SH/P2WPKH/
+		// P2WSH/P2TR/OP_RETURN) trips ScriptSibling regardless of value.
+		let bad = TxOut {
+			value: Amount::from_sat(10_000),
+			script_pubkey: ScriptBuf::from_bytes(vec![0xab, 0xcd]),
+		};
+		let vtxo = dummy_vtxo_with(Amount::from_sat(10_000), vec![bad]);
+		assert_eq!(
+			vtxo.check_standard(),
+			Err(VtxoStandardnessError::ScriptSibling {
+				item_idx: 0,
+				item_count: 1,
+				output_idx: 0,
+			}),
+		);
+	}
+
+	#[test]
+	fn check_standard_dust_takes_priority_over_later_script_sibling() {
+		// The check short-circuits on the first violation: a sub-dust
+		// sibling earlier in the list wins over a bad-script one later.
+		let dust = TxOut {
+			value: Amount::from_sat(100),
+			script_pubkey: dummy_p2tr_script(),
+		};
+		let bad = TxOut {
+			value: Amount::from_sat(10_000),
+			script_pubkey: ScriptBuf::from_bytes(vec![0xab, 0xcd]),
+		};
+		let vtxo = dummy_vtxo_with(Amount::from_sat(10_000), vec![dust, bad]);
+		assert_eq!(
+			vtxo.check_standard(),
+			Err(VtxoStandardnessError::DustSibling {
+				item_idx: 0,
+				item_count: 1,
+				output_idx: 0,
+			}),
+		);
 	}
 
 	mod genesis_transition_encoding {

@@ -117,6 +117,13 @@ pub enum ExitError {
 	#[error("Missing VTXO Transaction: Couldn't find exit tx {txid}")]
 	MissingExitTransaction { #[cfg_attr(feature = "utoipa", schema(value_type = String))] txid: Txid },
 
+	#[error("Non-Standard VTXO {vtxo}: exit chain is not relayable: {error}")]
+	NonStandardVtxo {
+		#[cfg_attr(feature = "utoipa", schema(value_type = String))]
+		vtxo: VtxoId,
+		error: String,
+	},
+
 	#[error("Movement Registration Failure: {error}")]
 	MovementRegistrationFailure { error: String },
 
@@ -198,6 +205,9 @@ impl From<bark::exit::ExitError> for ExitError {
 			},
 			bark::exit::ExitError::MissingExitTransaction { txid } => {
 				ExitError::MissingExitTransaction { txid }
+			},
+			bark::exit::ExitError::NonStandardVtxo { vtxo, error } => {
+				ExitError::NonStandardVtxo { vtxo, error: error.to_string() }
 			},
 			bark::exit::ExitError::MovementRegistrationFailure { error } => {
 				ExitError::MovementRegistrationFailure { error }

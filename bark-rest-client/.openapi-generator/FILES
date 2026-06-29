@@ -57,6 +57,7 @@ docs/ExitErrorOneOf22.md
 docs/ExitErrorOneOf23.md
 docs/ExitErrorOneOf24.md
 docs/ExitErrorOneOf25.md
+docs/ExitErrorOneOf26.md
 docs/ExitErrorOneOf3.md
 docs/ExitErrorOneOf4.md
 docs/ExitErrorOneOf5.md
@@ -237,6 +238,7 @@ src/models/exit_error_one_of_22.rs
 src/models/exit_error_one_of_23.rs
 src/models/exit_error_one_of_24.rs
 src/models/exit_error_one_of_25.rs
+src/models/exit_error_one_of_26.rs
 src/models/exit_error_one_of_3.rs
 src/models/exit_error_one_of_4.rs
 src/models/exit_error_one_of_5.rs

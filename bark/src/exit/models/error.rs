@@ -3,6 +3,7 @@ use bitcoin::address::FromScriptError;
 use thiserror::Error;
 
 use ark::VtxoId;
+use ark::vtxo::VtxoStandardnessError;
 use bitcoin_ext::BlockHeight;
 
 use crate::chain::BroadcastError;
@@ -99,6 +100,12 @@ pub enum ExitError {
 
 	#[error("Missing VTXO Transaction: Couldn't find exit tx {txid}")]
 	MissingExitTransaction { txid: Txid },
+
+	#[error("Non-Standard VTXO {vtxo}: exit chain is not relayable: {error}")]
+	NonStandardVtxo {
+		vtxo: VtxoId,
+		error: VtxoStandardnessError,
+	},
 
 	#[error("Movement Registration Failure: {error}")]
 	MovementRegistrationFailure { error: String },
