@@ -269,7 +269,13 @@ run_fuzzing() {
                     echo "Warning: No corpus found for target '$target' at $corpus_dir" >&2
                 fi
             elif [ -d "$FUZZ_DIR/hfuzz_input/$target" ]; then
-                HFUZZ_RUN_ARGS="$HFUZZ_RUN_ARGS -f $FUZZ_DIR/hfuzz_input/$target/input"
+                # Seed honggfuzz's gitignored workspace corpus from the tracked,
+                # read-only seed dir. Do NOT point honggfuzz (-f) at hfuzz_input:
+                # it owns its -f dir and a `--minimize` (-M) pass rewrites it to
+                # hash-named units, deleting the committed seeds.
+                ws_input="$FUZZ_DIR/hfuzz_workspace/$target/input"
+                mkdir -p "$ws_input"
+                cp -n "$FUZZ_DIR/hfuzz_input/$target/input/"* "$ws_input/" 2>/dev/null || true
             fi
 
             export HFUZZ_RUN_ARGS
