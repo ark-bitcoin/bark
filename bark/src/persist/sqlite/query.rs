@@ -670,7 +670,21 @@ pub fn store_vtxo_key(
 	index: u32,
 	public_key: PublicKey
 ) -> anyhow::Result<()> {
-	let query = "INSERT INTO bark_vtxo_key (idx, public_key) VALUES (?1, ?2);";
+	// Recovery may re-store a key it already revealed (e.g. retry after a partial
+	// scan), so re-storing the same (idx, public_key) is a no-op. The same index
+	// under a *different* key is real corruption, so surface it.
+	let existing = conn.query_row(
+		"SELECT public_key FROM bark_vtxo_key WHERE idx = ?1",
+		[index.to_sql()?],
+		|row| row.get::<_, String>(0),
+	).optional()?;
+	if let Some(existing) = existing {
+		ensure!(existing == public_key.to_string(),
+			"vtxo key index {index} already stored under a different public key");
+		return Ok(());
+	}
+
+	let query = "INSERT INTO bark_vtxo_key (idx, public_key) VALUES (?1, ?2) ON CONFLICT DO NOTHING;";
 	let mut statement = conn.prepare(query)?;
 	statement.execute([index.to_sql()?, public_key.to_string().to_sql()?])?;
 	Ok(())
