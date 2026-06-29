@@ -489,6 +489,50 @@ impl<'t> Tx<'t> {
 		Ok(())
 	}
 
+	/// Cancel the latest receive subscription for `payment_hash` as part of
+	/// revoking the matching HTLC-send vtxos of an intra-Ark payment.
+	///
+	/// Only subscriptions still in a revocable state (`Created`/`Accepted`)
+	/// are canceled. The status the subscription had *before* this call is
+	/// returned (or `None` when no subscription exists, i.e. a plain outgoing
+	/// payment). When that status is `HtlcsReady` or `Settled` the row is left
+	/// untouched and the caller MUST refuse the revocation.
+	pub async fn cancel_revocable_htlc_subscription(
+		&self,
+		payment_hash: PaymentHash,
+	) -> anyhow::Result<Option<LightningHtlcSubscriptionStatus>> {
+		// The row is locked `FOR UPDATE` so this serializes against
+		// `prepare_lightning_claim`'s grant: the receive side cannot transition
+		// to `HtlcsReady` between our read and our cancel, and a concurrent grant
+		// blocks until we commit.
+		let select = self.prepare("
+			SELECT id, status FROM lightning_htlc_subscription
+			WHERE payment_hash = $1
+			ORDER BY created_at DESC
+			LIMIT 1
+			FOR UPDATE;
+		").await?;
+		let Some(row) = self.query_opt(&select, &[&payment_hash.to_string()]).await? else {
+			return Ok(None);
+		};
+
+		let id = row.get::<_, i64>("id");
+		let status = row.get::<_, LightningHtlcSubscriptionStatus>("status");
+
+		if matches!(status,
+			LightningHtlcSubscriptionStatus::Created | LightningHtlcSubscriptionStatus::Accepted,
+		) {
+			let update = self.prepare("
+				UPDATE lightning_htlc_subscription
+				SET status = 'canceled'::lightning_htlc_subscription_status, updated_at = NOW()
+				WHERE id = $1;
+			").await?;
+			self.execute(&update, &[&id]).await?;
+		}
+
+		Ok(Some(status))
+	}
+
 	/// Update the lightning receive with the HTLC VTXOs allocated
 	///
 	/// Sets the status to "htlcs-ready".

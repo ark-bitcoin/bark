@@ -358,7 +358,29 @@ impl Server {
 			.insert_oor_spent_vtxos(builder.build_unsigned_internal_vtxos())
 			.insert_unregistered_vtxos(builder.build_unsigned_vtxos().map(ServerVtxo::from))
 			.mark_vtxos_oor_spent(builder.input_spend_info());
-		self.db.write(async |t| t.execute_vtxo_tree_update(update).await).await?;
+		self.db.write(async |t| {
+			// For an intra-Ark payment the payee shares this payment hash via a
+			// receive subscription. The `is_settled` check above only catches a
+			// preimage that has already been recorded; it does NOT catch the
+			// window where the payee has been granted HTLC-recv vtxos but is
+			// withholding the claim (and thus the preimage). Atomically cancel
+			// the receive here so a later claim is refused, and bail if the
+			// receive is already committed (HtlcsReady/Settled) - otherwise the
+			// server would refund the sender AND pay the payee for one payment.
+			if let Some(status) = t.cancel_revocable_htlc_subscription(invoice_payment_hash).await? {
+				if matches!(status,
+					LightningHtlcSubscriptionStatus::HtlcsReady
+						| LightningHtlcSubscriptionStatus::Settled,
+				) {
+					return badarg!(
+						"invoice receive is already committed (status: {status}), \
+						cannot revoke: the payment can still be claimed",
+					);
+				}
+			}
+
+			t.execute_vtxo_tree_update(update).await
+		}).await?;
 
 		let new_vtxo_ids = builder.build_unsigned_vtxos().map(|v| v.id()).collect::<Vec<_>>();
 
