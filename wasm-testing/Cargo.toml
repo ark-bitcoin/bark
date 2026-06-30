@@ -7,9 +7,18 @@ edition = "2024"
 [[bin]]
 name = "wasm-test-suite"
 path = "src/bin/wasm_test_suite.rs"
+required-features = [ "bin" ]
 
 [features]
-default = ["dep:tokio", "dep:ark-testing"]
+
+bin = [
+	"dep:ark-testing",
+	"tokio/process",
+	"tokio/signal",
+	"tokio/macros",
+	"tokio/rt-multi-thread",
+]
+
 wasm = [
 	"bark-wallet/wasm-web",
 	"bark-wallet/indexed-db",
@@ -27,7 +36,7 @@ bark-server-rpc = { path = "../server-rpc", default-features = false }
 anyhow = { workspace = true, optional = true }
 bitcoin.workspace = true
 log.workspace = true
-tokio = { workspace = true, features = ["process", "signal", "macros", "rt-multi-thread"], optional = true }
+tokio = { workspace = true, features = [] }
 tokio-util.workspace = true
 gloo-net = { version = "0.6", default-features = false, features = ["http"], optional = true }
 wasm-bindgen-futures = { version = "0.4.56", optional = true }
