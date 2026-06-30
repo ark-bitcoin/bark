@@ -55,11 +55,6 @@ fn test_invoice() -> Invoice {
 	Invoice::Bolt11(test_bolt11())
 }
 
-// A separate hash for receive tests so send and receive don't share state.
-fn test_receive_payment_hash() -> PaymentHash {
-	PaymentHash::from_slice(&[0xabu8; 32]).unwrap()
-}
-
 fn test_preimage() -> Preimage {
 	Preimage::from_slice(&[3u8; 32]).unwrap()
 }
@@ -759,10 +754,6 @@ mod lightning {
 	use crate::movement::{MovementId, PaymentMethod};
 
 	pub async fn run<A: BarkPersister, B: BarkPersister>(a: &A, b: &B) {
-		test_lightning_receive_store_and_query(a, b).await;
-		test_lightning_receive_set_preimage_revealed(a, b).await;
-		test_lightning_receive_update(a, b).await;
-		test_lightning_receive_finish(a, b).await;
 		test_wallet_action_checkpoint_upsert_and_get(a, b).await;
 		test_wallet_action_checkpoint_upsert_replaces(a, b).await;
 		test_wallet_action_checkpoint_get_missing(a, b).await;
@@ -772,6 +763,9 @@ mod lightning {
 		test_paid_invoice_record_and_get(a, b).await;
 		test_paid_invoice_record_is_idempotent(a, b).await;
 		test_paid_invoice_get_missing(a, b).await;
+		test_settled_lightning_receive_record_and_get(a, b).await;
+		test_settled_lightning_receive_record_is_idempotent(a, b).await;
+		test_settled_lightning_receive_get_missing(a, b).await;
 	}
 
 	fn send_at_start() -> LightningSend {
@@ -977,89 +971,55 @@ mod lightning {
 		assert!(rb.is_none(), "missing hash returns None (b)");
 	}
 
-	async fn test_lightning_receive_store_and_query<A: BarkPersister, B: BarkPersister>(a: &A, b: &B) {
-		let hash = test_receive_payment_hash();
+	fn settled_receive_hash() -> PaymentHash {
+		PaymentHash::from_slice(&[0xefu8; 32]).unwrap()
+	}
+
+	async fn test_settled_lightning_receive_record_and_get<A: BarkPersister, B: BarkPersister>(a: &A, b: &B) {
+		let hash = settled_receive_hash();
 		let preimage = test_preimage();
+		let invoice = test_bolt11();
+		let amount = Amount::from_sat(12_345);
 
-		let ra = a.store_lightning_receive(hash, preimage, &test_bolt11(), 40).await;
-		let rb = b.store_lightning_receive(hash, preimage, &test_bolt11(), 40).await;
-		assert_eq!(ra.is_ok(), rb.is_ok(), "store_lightning_receive: ok/err mismatch");
+		a.record_settled_lightning_receive(hash, preimage, &invoice, amount).await.unwrap();
+		b.record_settled_lightning_receive(hash, preimage, &invoice, amount).await.unwrap();
 
-		let ra = a.fetch_lightning_receive_by_payment_hash(hash).await
-			.expect("a: fetch_lightning_receive_by_payment_hash");
-		let rb = b.fetch_lightning_receive_by_payment_hash(hash).await
-			.expect("b: fetch_lightning_receive_by_payment_hash");
-		assert_eq!(ra, rb, "fetch_lightning_receive_by_payment_hash mismatch");
-
-		let mut ra = a.get_all_pending_lightning_receives().await
-			.expect("a: get_all_pending_lightning_receives");
-		let mut rb = b.get_all_pending_lightning_receives().await
-			.expect("b: get_all_pending_lightning_receives");
-		ra.sort_by_key(|r| r.payment_hash);
-		rb.sort_by_key(|r| r.payment_hash);
-		assert_eq!(ra, rb, "get_all_pending_lightning_receives mismatch");
+		let ra = a.get_settled_lightning_receive(hash).await.expect("a: get").expect("a: present");
+		let rb = b.get_settled_lightning_receive(hash).await.expect("b: get").expect("b: present");
+		assert_eq!(ra.payment_hash, hash, "payment hash round-trip");
+		assert_eq!(ra.preimage, preimage, "preimage round-trip");
+		assert_eq!(ra.invoice, invoice, "invoice round-trip");
+		assert_eq!(ra.amount, amount, "amount round-trip");
+		assert_eq!(ra.payment_hash, rb.payment_hash, "settled receive round-trip mismatch");
+		assert_eq!(ra.amount, rb.amount, "settled receive amount mismatch");
 	}
 
-	async fn test_lightning_receive_set_preimage_revealed<A: BarkPersister, B: BarkPersister>(a: &A, b: &B) {
-		let hash = test_receive_payment_hash();
+	async fn test_settled_lightning_receive_record_is_idempotent<A: BarkPersister, B: BarkPersister>(a: &A, b: &B) {
+		let hash = settled_receive_hash();
+		let preimage = test_preimage();
+		let invoice = test_bolt11();
 
-		let ra = a.set_preimage_revealed(hash).await;
-		let rb = b.set_preimage_revealed(hash).await;
-		assert_eq!(ra.is_ok(), rb.is_ok(), "set_preimage_revealed: ok/err mismatch");
+		// A second record with a different amount must be a no-op: the
+		// original row wins.
+		let ra = a.record_settled_lightning_receive(hash, preimage, &invoice, Amount::from_sat(999)).await;
+		let rb = b.record_settled_lightning_receive(hash, preimage, &invoice, Amount::from_sat(999)).await;
+		assert!(ra.is_ok(), "second record on (a) should be a no-op");
+		assert!(rb.is_ok(), "second record on (b) should be a no-op");
 
-		// preimage_revealed_at is set internally; compare presence only
-		let ra = a.fetch_lightning_receive_by_payment_hash(hash).await
-			.expect("a: fetch after set_preimage_revealed");
-		let rb = b.fetch_lightning_receive_by_payment_hash(hash).await
-			.expect("b: fetch after set_preimage_revealed");
-		assert_eq!(
-			ra.as_ref().map(|r| r.preimage_revealed_at.is_some()),
-			rb.as_ref().map(|r| r.preimage_revealed_at.is_some()),
-			"preimage_revealed_at presence mismatch",
-		);
+		let ra = a.get_settled_lightning_receive(hash).await.unwrap().expect("a: row still present");
+		let rb = b.get_settled_lightning_receive(hash).await.unwrap().expect("b: row still present");
+		assert_eq!(ra.amount, Amount::from_sat(12_345), "original amount preserved (a)");
+		assert_eq!(rb.amount, Amount::from_sat(12_345), "original amount preserved (b)");
 	}
 
-	async fn test_lightning_receive_update<A: BarkPersister, B: BarkPersister>(a: &A, b: &B) {
-		let hash = test_receive_payment_hash();
-		let vtxo = &VTXO_VECTORS.round2_vtxo;
-		let time = test_time();
-
-		let id_a = a.create_new_movement(MovementStatus::Pending, &test_subsystem(), time).await
-			.expect("a: create_new_movement");
-		let id_b = b.create_new_movement(MovementStatus::Pending, &test_subsystem(), time).await
-			.expect("b: create_new_movement");
-		assert_eq!(id_a, id_b, "create_new_movement id mismatch");
-
-		let ra = a.update_lightning_receive(hash, &[vtxo.id()], id_a).await;
-		let rb = b.update_lightning_receive(hash, &[vtxo.id()], id_b).await;
-		assert_eq!(ra.is_ok(), rb.is_ok(), "update_lightning_receive: ok/err mismatch");
-
-		let ra = a.fetch_lightning_receive_by_payment_hash(hash).await
-			.expect("a: fetch after update_lightning_receive");
-		let rb = b.fetch_lightning_receive_by_payment_hash(hash).await
-			.expect("b: fetch after update_lightning_receive");
-		assert_eq!(
-			ra.as_ref().map(|r| r.movement_id),
-			rb.as_ref().map(|r| r.movement_id),
-			"movement_id mismatch after update_lightning_receive",
-		);
+	async fn test_settled_lightning_receive_get_missing<A: BarkPersister, B: BarkPersister>(a: &A, b: &B) {
+		let hash = PaymentHash::from_slice(&[0x66u8; 32]).unwrap();
+		let ra = a.get_settled_lightning_receive(hash).await.unwrap();
+		let rb = b.get_settled_lightning_receive(hash).await.unwrap();
+		assert!(ra.is_none(), "missing hash returns None (a)");
+		assert!(rb.is_none(), "missing hash returns None (b)");
 	}
 
-	async fn test_lightning_receive_finish<A: BarkPersister, B: BarkPersister>(a: &A, b: &B) {
-		let hash = test_receive_payment_hash();
-
-		let ra = a.finish_pending_lightning_receive(hash).await;
-		let rb = b.finish_pending_lightning_receive(hash).await;
-		assert_eq!(ra.is_ok(), rb.is_ok(), "finish_pending_lightning_receive: ok/err mismatch");
-
-		let mut ra = a.get_all_pending_lightning_receives().await
-			.expect("a: get_all_pending_lightning_receives after finish");
-		let mut rb = b.get_all_pending_lightning_receives().await
-			.expect("b: get_all_pending_lightning_receives after finish");
-		ra.sort_by_key(|r| r.payment_hash);
-		rb.sort_by_key(|r| r.payment_hash);
-		assert_eq!(ra, rb, "get_all_pending_lightning_receives after finish mismatch");
-	}
 }
 
 // ---------------------------------------------------------------------------

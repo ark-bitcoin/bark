@@ -1,0 +1,12 @@
+- Route lightning receive through the wallet-action driver
+  Inbound payments now use the same checkpointed machinery as arkoor sends, so a
+  receive resumes across restarts. Settled receives are recorded permanently,
+  keeping the preimage available for an HTLC-recv exit.
+  [#2148](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2148)
+  - **BREAKING:** `Wallet::bolt11_invoice` gains a `token: Option<String>`; the
+    claim-time token moved to invoice generation.
+  - **BREAKING:** `Wallet::try_claim_lightning_receive` drops its `token` arg.
+  - **BREAKING:** `lightning_receive_status` replaced by
+    `lightning_receive_state`, returning `LightningReceiveState`.
+  - **BREAKING:** removed `bark::persist::models::LightningReceive` (now at
+    `bark::actions::lightning::receive::LightningReceive`).

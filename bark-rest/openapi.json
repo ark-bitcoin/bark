@@ -4543,17 +4543,18 @@
       "LightningReceiveInfo": {
         "type": "object",
         "required": [
-          "amount_sat",
           "payment_hash",
-          "payment_preimage",
+          "state",
           "invoice",
+          "amount_sat",
+          "htlc_vtxo_ids",
           "htlc_vtxos"
         ],
         "properties": {
           "amount_sat": {
             "type": "integer",
             "format": "int64",
-            "description": "The amount of the lightning receive",
+            "description": "The amount of the lightning receive, if known.",
             "minimum": 0
           },
           "finished_at": {
@@ -4562,26 +4563,38 @@
               "null"
             ],
             "format": "date-time",
-            "description": "The timestamp at which the lightning receive was finished"
+            "description": "The timestamp at which the lightning receive was finished.",
+            "deprecated": true
+          },
+          "htlc_vtxo_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "IDs of the HTLC-recv VTXOs granted by the server, if any.\n\nEmpty until the inbound HTLC has been received and prepared."
           },
           "htlc_vtxos": {
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/WalletVtxoInfo"
             },
-            "description": "The HTLC VTXOs granted by the server for the lightning receive\n\nEmpty if the lightning HTLC has not yet been received by the server."
+            "description": "The HTLC VTXOs granted by the server for the lightning receive.",
+            "deprecated": true
           },
           "invoice": {
             "type": "string",
-            "description": "The invoice string"
+            "description": "The invoice string, if known."
           },
           "payment_hash": {
             "type": "string",
-            "description": "The payment hash linked to the lightning receive info"
+            "description": "The payment hash linked to the lightning receive"
           },
           "payment_preimage": {
-            "type": "string",
-            "description": "The payment preimage linked to the lightning receive info"
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The payment preimage, if known."
           },
           "preimage_revealed_at": {
             "type": [
@@ -4589,7 +4602,20 @@
               "null"
             ],
             "format": "date-time",
-            "description": "The timestamp at which the preimage was revealed"
+            "description": "The timestamp at which the preimage was revealed.",
+            "deprecated": true
+          },
+          "settled_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "The timestamp at which the receive settled, if it has."
+          },
+          "state": {
+            "type": "string",
+            "description": "Lifecycle phase of the receive: `awaiting-payment`, `htlcs-ready`,\n`preimage-revealed`, or `settled`."
           }
         }
       },

@@ -1,0 +1,6 @@
+- Reshape `LightningReceiveInfo` around the receive lifecycle
+  Adds an explicit `state` and `settled_at`, mirroring the send-side status.
+  [#2148](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2148)
+  - **BREAKING:** added `state: String`, `settled_at: Option<..>`; `htlc_vtxos`
+    replaced by `htlc_vtxo_ids`; `payment_preimage` now optional; removed
+    `preimage_revealed_at` and `finished_at`.

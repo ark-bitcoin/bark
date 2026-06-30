@@ -18,6 +18,7 @@ use server_rpc::StatusExt;
 use crate::{Wallet, WalletVtxo};
 use crate::actions::arkoor_send::ArkoorSend;
 use crate::actions::lightning::pay::LightningSend;
+use crate::actions::lightning::receive::LightningReceive;
 use crate::lock_manager::LockGuard;
 use crate::vtxo::{VtxoState, VtxoStateKind};
 
@@ -31,6 +32,7 @@ pub(crate) const BASE_RETRY_BACKOFF: Duration = Duration::from_secs(1);
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum WalletActionCheckpoint {
 	LightningSend(LightningSend),
+	LightningReceive(LightningReceive),
 	ArkoorSend(ArkoorSend),
 }
 
@@ -38,6 +40,7 @@ impl WalletActionCheckpoint {
 	pub fn id(&self) -> WalletActionId {
 		match self {
 			WalletActionCheckpoint::LightningSend(s) => s.id(),
+			WalletActionCheckpoint::LightningReceive(r) => r.id(),
 			WalletActionCheckpoint::ArkoorSend(s) => s.id(),
 		}
 	}
@@ -52,6 +55,20 @@ impl WalletActionCheckpoint {
 	pub fn into_lightning_send(self) -> Option<LightningSend> {
 		match self {
 			WalletActionCheckpoint::LightningSend(s) => Some(s),
+			_ => None,
+		}
+	}
+
+	pub fn as_lightning_receive(&self) -> Option<&LightningReceive> {
+		match self {
+			WalletActionCheckpoint::LightningReceive(r) => Some(r),
+			_ => None,
+		}
+	}
+
+	pub fn into_lightning_receive(self) -> Option<LightningReceive> {
+		match self {
+			WalletActionCheckpoint::LightningReceive(r) => Some(r),
 			_ => None,
 		}
 	}
@@ -74,6 +91,12 @@ impl WalletActionCheckpoint {
 impl From<LightningSend> for WalletActionCheckpoint {
 	fn from(s: LightningSend) -> Self {
 		WalletActionCheckpoint::LightningSend(s)
+	}
+}
+
+impl From<LightningReceive> for WalletActionCheckpoint {
+	fn from(r: LightningReceive) -> Self {
+		WalletActionCheckpoint::LightningReceive(r)
 	}
 }
 
@@ -386,7 +409,10 @@ impl Wallet {
 								tokio::time::sleep(delay).await;
 								action = state;
 							} else {
-								return Ok(());
+								return match error {
+									Some(error) => Err(error.into()),
+									None => Ok(()),
+								};
 							}
 						},
 					}

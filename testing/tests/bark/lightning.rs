@@ -8,6 +8,7 @@ use ark::VtxoId;
 use ark::lightning::{Invoice, PaymentHash};
 use ark::vtxo::VtxoPolicyKind;
 use ark_testing::context::LightningPaymentSetup;
+use bark::actions::lightning::receive::LightningReceiveState;
 use bark::lightning_invoice::Bolt11Invoice;
 use bark_json::movements::{MovementDestination, MovementStatus, PaymentMethod};
 use bark_json::primitives::VtxoStateInfo;
@@ -444,6 +445,9 @@ async fn bark_can_receive_lightning(
 	srv: &Captaind,
 	pay: impl AsyncFn(String),
 ) {
+	// LightningReceiveInfo changes between 0.2.5 and 0.2.6
+	require_bark_version!(> "0.2.5");
+
 	srv.wait_for_vtxopool(&ctx).await;
 
 	// Start a bark and create a VTXO to be able to board
@@ -459,8 +463,9 @@ async fn bark_can_receive_lightning(
 
 	let receives = bark.list_lightning_receives().await;
 	assert_eq!(receives.len(), 1);
-	assert_eq!(receives[0].invoice.to_string(), invoice_info.invoice);
-	assert!(receives[0].preimage_revealed_at.is_none());
+	assert_eq!(receives[0].invoice, invoice_info.invoice);
+	// Preimage hasn't been revealed yet: still awaiting payment.
+	assert_eq!(receives[0].state, "awaiting-payment");
 
 	tokio::join!(
 		pay(invoice_info.invoice.clone()),
@@ -555,6 +560,9 @@ async fn bark_can_receive_lightning_when_pool_spend_creates_subdust_output(
 	srv: &Captaind,
 	pay: impl AsyncFn(String),
 ) {
+	// LightningReceiveInfo changes between 0.2.5 and 0.2.6
+	require_bark_version!(> "0.2.5");
+
 	srv.wait_for_vtxopool(&ctx).await;
 
 	let bark = Arc::new(ctx.bark("bark", srv).funded(btc(3)).create().await);
@@ -598,6 +606,9 @@ async fn bark_check_lightning_receive_no_wait(
 	srv: &Captaind,
 	pay: impl AsyncFn(String),
 ) {
+	// LightningReceiveInfo changes between 0.2.5 and 0.2.6
+	require_bark_version!(> "0.2.5");
+
 	srv.wait_for_vtxopool(&ctx).await;
 
 	// Start a bark and create a VTXO to be able to board
@@ -629,7 +640,7 @@ async fn bark_check_lightning_receive_no_wait(
 					.wait(Duration::from_secs(10)).await.expect("should not fail");
 
 				if let Some(receive) = bark.lightning_receive_status(&invoice).await {
-					if receive.finished_at.is_some() {
+					if receive.state == "settled" {
 						success = true;
 						break;
 					}
@@ -967,6 +978,9 @@ async fn bark_sends_on_lightning_after_receiving_from_lightning(
 	srv: &Captaind,
 	pay: impl AsyncFn(String),
 ) {
+	// LightningReceiveInfo changes between 0.2.5 and 0.2.6
+	require_bark_version!(> "0.2.5");
+
 	// Start a bark and create a VTXO to be able to board
 	let bark = Arc::new(ctx.bark("bark", srv).funded(btc(3)).create().await);
 
@@ -1093,9 +1107,11 @@ async fn server_rejects_claim_receive_for_bad_vtxo_proof() {
 
 #[tokio::test]
 async fn server_allows_claim_receive_for_valid_token_but_not_for_invalid_or_used() {
+	require_bark_version!(> "0.2.5");
+
 	let ctx = TestContext::new("lightningd/server_allows_claim_receive_for_valid_token_but_not_for_invalid_or_used").await;
 
-	let lightning = ctx.new_lightning_setup("lightningd").await;
+	let lightning = Arc::new(ctx.new_lightning_setup("lightningd").await);
 
 	// Start a server with anti-dos enabled and link it to our cln installation
 	let srv = ctx.captaind("server").lightningd(&lightning.internal).cfg(|cfg| {
@@ -1116,30 +1132,39 @@ async fn server_allows_claim_receive_for_valid_token_but_not_for_invalid_or_used
 	// Start a bark and don't board anything
 	let bark = Arc::new(ctx.bark("bark1", &srv).funded(btc(3)).create().await);
 
-	let invoice_info_1 = bark.bolt11_invoice(btc(1)).await;
-	let invoice_info_2 = bark.bolt11_invoice(btc(1)).await;
+	let invoice_info_1 = bark.bolt11_invoice_with_token(btc(1), &token).await;
+	let invoice_info_2 = bark.bolt11_invoice_with_token(btc(1), "badtoken").await;
 	let invoice_1 = invoice_info_1.invoice.clone();
 	let invoice_2 = invoice_info_2.invoice.clone();
 
+	let cloned_ln = lightning.clone();
 	let _res = tokio::spawn(async move {
 		tokio::join!(
-			lightning.external.pay_bolt11(invoice_1),
-			lightning.external.pay_bolt11(invoice_2),
+			cloned_ln.external.pay_bolt11(invoice_1),
+			cloned_ln.external.pay_bolt11(invoice_2),
 		)
 	});
 
 	srv.wait_for_vtxopool(&ctx).await;
 
 	// First try claim with invalid token
-	let res = bark.try_lightning_receive_with_token(&invoice_info_1.invoice.clone(), "badtoken").await;
+	let res = bark.try_lightning_receive(&invoice_info_2.invoice.clone()).await;
 	assert!(res.is_err());
 	assert_eq!(bark.spendable_balance_no_sync().await, btc(0));
 	// Then claim with valid token
-	let res = bark.try_lightning_receive_with_token(&invoice_info_1.invoice, &token).await;
+	let res = bark.try_lightning_receive(&invoice_info_1.invoice).await;
 	assert!(res.is_ok());
 	assert_eq!(bark.spendable_balance_no_sync().await, btc(1));
+
 	// Claiming with token that has already been used should fail
-	let res = bark.try_lightning_receive_with_token(&invoice_info_2.invoice, &token).await;
+	let invoice_info_3 = bark.bolt11_invoice_with_token(btc(1), &token).await;
+
+	let invoice_3 = invoice_info_3.invoice.clone();
+	let _res = tokio::spawn(async move {
+		lightning.external.pay_bolt11(invoice_3).await
+	});
+
+	let res = bark.try_lightning_receive(&invoice_info_3.invoice).await;
 	assert!(res.is_err());
 	assert_eq!(bark.spendable_balance_no_sync().await, btc(1));
 }
@@ -1508,7 +1533,7 @@ async fn bark_cannot_cancel_lightning_receive_after_preimage_revealed() {
 
 	// The claim will fail because the proxy drops claim_lightning_receive,
 	// but set_preimage_revealed has already been called locally.
-	let _ = bark.try_lightning_receive(&invoice_info.invoice).await;
+	let _ = bark.try_lightning_receive(&invoice_info.invoice).try_wait_millis(10_000).await;
 
 	// Trying to cancel should fail because the preimage has been revealed
 	let err = bark.try_cancel_lightning_receive(&invoice_info.invoice).await.unwrap_err();
@@ -1647,11 +1672,18 @@ async fn bark_keeps_lightning_receive_pending_after_retry_budget_exhausted() {
 		"no exit should start without an explicit exit attempt");
 
 	let invoice = Invoice::from_str(&invoice_info.invoice).unwrap();
-	let receive = bark.client().await.lightning_receive_status(invoice.payment_hash()).await.unwrap()
-		.expect("the lightning receive should still be pending");
-	assert!(receive.preimage_revealed_at.is_some(),
-		"preimage should have been revealed before the claim failed");
-	assert!(receive.finished_at.is_none(), "the receive should not be finished");
+	let receive = match bark.client().await
+		.lightning_receive_state(invoice.payment_hash()).await
+		.expect("the lightning receive should still be pending")
+	{
+		LightningReceiveState::InProgress(receive) => receive,
+		LightningReceiveState::Settled(_) => {
+			panic!("the lightning receive should not be settled");
+		},
+	};
+
+	assert!(matches!(receive.progress, bark::actions::lightning::receive::Progress::PreimageRevealed(_)),
+		"the lightning receive should be in the preimage revealed state");
 }
 
 /// A transient claim failure should be absorbed by the retry budget and the

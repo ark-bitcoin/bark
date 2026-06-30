@@ -5,7 +5,6 @@
 //! so all that matters is that the code can compile. It doesn't have to run.
 //!
 
-use std::str::FromStr;
 
 #[cfg(feature = "onchain-bdk")]
 use bdk_wallet::ChangeSet;
@@ -20,7 +19,7 @@ use lightning_invoice::Bolt11Invoice;
 use ark::{ProtocolEncoding, Vtxo, VtxoId};
 use ark::vtxo::Full;
 use ark::lightning::{PaymentHash, Preimage};
-use bitcoin_ext::{BlockDelta, BlockRef};
+use bitcoin_ext::BlockRef;
 
 use bark::{WalletProperties, WalletVtxo};
 use bark::actions::{WalletActionCheckpoint, WalletActionId};
@@ -31,7 +30,7 @@ use bark::movement::{
 };
 use bark::persist::BarkPersister;
 use bark::persist::models::{
-	LightningReceive, PaidInvoice, PendingBoard, StoredExit, StoredRoundState, Unlocked,
+	PaidInvoice, PendingBoard, StoredExit, StoredRoundState, Unlocked,
 	RoundStateId, SerdeRoundState, PendingOffboard,
 };
 use bark::round::RoundState;
@@ -203,44 +202,21 @@ impl BarkPersister for Dummy {
 		Ok(None)
 	}
 
-	async fn store_lightning_receive(
+	async fn record_settled_lightning_receive(
 		&self,
 		_payment_hash: PaymentHash,
 		_preimage: Preimage,
 		_invoice: &Bolt11Invoice,
-		_htlc_recv_cltv_delta: BlockDelta,
+		_amount: bitcoin::Amount,
 	) -> anyhow::Result<()> {
 		Ok(())
 	}
 
-	async fn get_all_pending_lightning_receives(&self) -> anyhow::Result<Vec<LightningReceive>> {
-		Ok(Vec::<LightningReceive>::from([
-			dummy_lightning_receive(),
-		]))
-	}
-
-	async fn set_preimage_revealed(&self, _payment_hash: PaymentHash) -> anyhow::Result<()> {
-		Ok(())
-	}
-
-	async fn update_lightning_receive(
+	async fn get_settled_lightning_receive(
 		&self,
 		_payment_hash: PaymentHash,
-		_vtxo_ids: &[VtxoId],
-		_movement_id: MovementId,
-	) -> anyhow::Result<()> {
-		Ok(())
-	}
-
-	async fn fetch_lightning_receive_by_payment_hash(
-		&self,
-		_payment_hash: PaymentHash,
-	) -> anyhow::Result<Option<LightningReceive>> {
-		Ok(Some(dummy_lightning_receive()))
-	}
-
-	async fn finish_pending_lightning_receive(&self, _payment_hash: PaymentHash) -> anyhow::Result<()> {
-		Ok(())
+	) -> anyhow::Result<Option<bark::persist::models::SettledLightningReceive>> {
+		Ok(None)
 	}
 
 	async fn store_exit_vtxo_entry(&self, _exit: &StoredExit) -> anyhow::Result<()> {
@@ -384,19 +360,6 @@ impl BarkPersister for Dummy {
 		_vtxos: &[(&Vtxo<Full>, &VtxoState)],
 	) -> anyhow::Result<()> {
 		Ok(())
-	}
-}
-
-fn dummy_lightning_receive() -> LightningReceive {
-	LightningReceive {
-		payment_hash: PaymentHash::from_slice(&[]).unwrap(),
-		payment_preimage: Preimage::from_slice(&[]).unwrap(),
-		invoice: Bolt11Invoice::from_str("bob").unwrap(),
-		preimage_revealed_at: None,
-		htlc_vtxos: vec![],
-		htlc_recv_cltv_delta: 0,
-		movement_id: Some(MovementId::new(0)),
-		finished_at: None,
 	}
 }
 

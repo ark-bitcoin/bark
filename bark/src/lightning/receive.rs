@@ -1,740 +1,260 @@
-use std::str::FromStr;
-use std::time::Duration;
-
 use anyhow::Context;
-use ark::arkoor::package::ArkoorPackageBuilder;
-use bitcoin::{Amount, SignedAmount};
-use bitcoin::hex::DisplayHex;
+use bitcoin::Amount;
 use futures::StreamExt;
 use lightning_invoice::Bolt11Invoice;
-use log::{trace, debug, info, warn};
-
-use ark::{ProtocolEncoding, Vtxo, VtxoPolicy};
-use ark::attestations::{LightningReceiveAttestation};
-use ark::fees::validate_and_subtract_fee;
-use ark::lightning::{Bolt11InvoiceExt, PaymentHash, Preimage};
-use bitcoin_ext::{BlockDelta, BlockHeight};
+use log::{error, info, warn};
 use server_rpc::protos;
-use server_rpc::protos::prepare_lightning_receive_claim_request::LightningReceiveAntiDos;
 
-use crate::subsystem::{LightningMovement, LightningReceiveMovement, Subsystem};
-use crate::{Wallet, error};
-use crate::movement::{MovementDestination, MovementStatus};
+use ark::lightning::{Bolt11InvoiceExt, Preimage, PaymentHash};
+
+use crate::Wallet;
+use crate::actions::DriveMode;
+use crate::actions::lightning::receive::{
+	Htlcs, LightningReceive, LightningReceiveState, Progress,
+	ln_recv_action_id, start_lightning_receive
+};
+use crate::movement::MovementStatus;
 use crate::movement::update::MovementUpdate;
-use crate::persist::models::LightningReceive;
-
-const LIGHTNING_RECEIVE_LOCK_PREFIX: &str = "lightning_receive";
-
-/// Leniency delta to allow claim when blocks were mined between htlc
-/// receive and claim preparation
-const LIGHTNING_PREPARE_CLAIM_DELTA: BlockDelta = 2;
-
-/// Initial backoff between retries of a Lightning receive claim. Each
-/// successive retry doubles the wait, capped by [CLAIM_RETRY_BACKOFF_MAX].
-/// With the default 5 retries this gives ~60s of grace before we give up
-/// and exit on-chain, which is enough for a brief server restart.
-const CLAIM_RETRY_BACKOFF_INITIAL: Duration = Duration::from_secs(2);
-const CLAIM_RETRY_BACKOFF_MAX: Duration = Duration::from_secs(30);
-
-fn validate_bolt11_payment_hash(
-	invoice: &Bolt11Invoice,
-	expected_payment_hash: PaymentHash,
-) -> anyhow::Result<()> {
-	let invoice_payment_hash = PaymentHash::from(invoice);
-	ensure!(
-		invoice_payment_hash == expected_payment_hash,
-		"Ark server returned invoice with payment hash {}, expected {}",
-		invoice_payment_hash,
-		expected_payment_hash,
-	);
-
-	Ok(())
-}
 
 impl Wallet {
-	/// Fetches all pending lightning receives ordered from newest to oldest.
+	/// Returns every in-progress lightning receive checkpoint, newest first.
 	pub async fn pending_lightning_receives(&self) -> anyhow::Result<Vec<LightningReceive>> {
-		Ok(self.inner.db.get_all_pending_lightning_receives().await?)
+		let mut result = Vec::new();
+		for cp in self.inner.db.get_all_wallet_action_checkpoints().await? {
+			if let Some(recv) = cp.into_lightning_receive() {
+				result.push(recv);
+			}
+		}
+		Ok(result)
 	}
 
-	/// Calculates how much balance can currently be claimed via inbound lightning payments.
-	/// Invoices which have yet to be paid are not including in this.
+	/// Calculates how much balance can currently be claimed via inbound
+	/// lightning payments. Invoices that have not yet been paid (and so hold
+	/// no HTLC vtxos) are not included.
 	pub async fn claimable_lightning_receive_balance(&self) -> anyhow::Result<Amount> {
-		let receives = self.pending_lightning_receives().await?;
-
 		let mut total = Amount::ZERO;
-		for receive in receives {
-			total += receive.htlc_vtxos.iter().map(|v| v.amount()).sum::<Amount>();
+		for recv in self.pending_lightning_receives().await? {
+			let vtxo_ids = match &recv.progress {
+				Progress::AwaitingPayment => continue,
+				Progress::HtlcsReady(htlcs) => &htlcs.vtxo_ids,
+				Progress::PreimageRevealed(htlcs) => &htlcs.vtxo_ids,
+			};
+			for id in vtxo_ids {
+				total += self.get_vtxo_by_id(*id).await?.vtxo.amount();
+			}
 		}
-
 		Ok(total)
 	}
 
-	/// Create, store and return a [Bolt11Invoice] for offchain boarding.
+	/// Drives every pending lightning receive forward by one step (or to
+	/// completion if it's ready). Each action runs to its next park
+	/// independently; errors on one don't stop the others.
+	pub async fn sync_pending_lightning_receives(&self) -> anyhow::Result<()> {
+		let pending = self.pending_lightning_receives().await?;
+		if pending.is_empty() {
+			return Ok(());
+		}
+		info!("Syncing {} pending lightning receives", pending.len());
+		for recv in pending {
+			let id = recv.id();
+			if let Err(e) = self.drive_action(recv, DriveMode::UntilParkOrDone).await {
+				warn!("Failed to sync lightning receive {}: {:#}", id, e);
+			}
+		}
+		Ok(())
+	}
+
+	/// Fetches the current checkpoint for the given payment hash, if any.
+	pub async fn lightning_receive_checkpoint(&self, hash: PaymentHash)
+		-> anyhow::Result<Option<LightningReceive>>
+	{
+		Ok(self.inner.db.get_wallet_action_checkpoint(&ln_recv_action_id(hash)).await?
+			.and_then(|cp| cp.into_lightning_receive()))
+	}
+
+	/// Look up the preimage for a receive by payment hash, for witnessing
+	/// an on-chain exit of an HTLC-recv vtxo. Checks the permanent settled
+	/// record (written on both successful claim and exit) first, then any
+	/// in-progress checkpoint.
+	pub(crate) async fn lightning_receive_preimage(&self, hash: PaymentHash)
+		-> anyhow::Result<Option<Preimage>>
+	{
+		if let Some(settled) = self.inner.db.get_settled_lightning_receive(hash).await? {
+			return Ok(Some(settled.preimage));
+		}
+		if let Some(cp) = self.lightning_receive_checkpoint(hash).await? {
+			return Ok(Some(cp.payment_preimage));
+		}
+		Ok(None)
+	}
+
+	/// Triage a payment hash: settled, in-progress, or unknown.
+	pub async fn lightning_receive_state(&self, hash: PaymentHash)
+		-> anyhow::Result<LightningReceiveState>
+	{
+		if let Some(settled) = self.inner.db.get_settled_lightning_receive(hash).await? {
+			return Ok(LightningReceiveState::Settled(settled));
+		}
+		if let Some(cp) = self.lightning_receive_checkpoint(hash).await? {
+			return Ok(LightningReceiveState::InProgress(cp));
+		}
+		bail!("no pending lightning receive found for this payment hash");
+	}
+
+	/// Create, store and return a [`Bolt11Invoice`] for an incoming
+	/// lightning payment.
 	///
-	/// An optional `description` is embedded in the invoice as its memo. Note
-	/// that on retry for the same payment hash, the description of the
-	/// originally-generated invoice is preserved (the server returns the
-	/// previously-issued invoice).
+	/// This mints the invoice (and a fresh preimage) and persists an
+	/// `AwaitingPayment` checkpoint; it does not wait for payment. The
+	/// background sync (or an explicit [`Self::try_claim_lightning_receive`])
+	/// drives the receive once an inbound HTLC arrives.
+	///
+	/// An optional `description` is embedded as the invoice memo. An optional
+	/// `token` authenticates the later claim when the wallet owns no spendable
+	/// vtxo to prove ownership with.
 	pub async fn bolt11_invoice(
 		&self,
 		amount: Amount,
 		description: Option<String>,
+		token: Option<String>,
 	) -> anyhow::Result<Bolt11Invoice> {
-		if amount == Amount::ZERO {
-			bail!("Cannot create invoice for 0 sats (this would create an explicit 0 sat invoice, not an any-amount invoice)");
-		}
-
-		let (mut srv, ark_info) = self.require_server().await?;
-		let config = self.config();
-
-		// Calculate and validate lightning receive fees
-		let fee = ark_info.fees.lightning_receive.calculate(amount).context("fee overflowed")?;
-		validate_and_subtract_fee(amount, fee)?;
-
-		// User needs to enfore the following delta:
-		// - vtxo exit delta + htlc expiry delta (to give him time to exit the vtxo before htlc expires)
-		// - vtxo exit margin (to give him time to exit the vtxo before htlc expires)
-		// - htlc recv claim delta (to give him time to claim the htlc before it expires)
-		let requested_min_cltv_delta = ark_info.vtxo_exit_delta +
-			ark_info.htlc_expiry_delta +
-			config.vtxo_exit_margin +
-			config.htlc_recv_claim_delta +
-			LIGHTNING_PREPARE_CLAIM_DELTA;
-
-		if requested_min_cltv_delta > ark_info.max_user_invoice_cltv_delta {
-			bail!("HTLC CLTV delta ({}) is greater than Server's max HTLC recv CLTV delta: {}",
-				requested_min_cltv_delta,
-				ark_info.max_user_invoice_cltv_delta,
-			);
-		}
-
-		let preimage = Preimage::random();
-		let payment_hash = preimage.compute_payment_hash();
-		info!("Start bolt11 board with preimage / payment hash: {} / {}",
-			preimage.as_hex(), payment_hash.as_hex());
-
-		let mailbox_kp = self.inner.seed.to_mailbox_keypair();
-		let mailbox_id = ark::mailbox::MailboxIdentifier::from_pubkey(mailbox_kp.public_key());
-
-		let req = protos::StartLightningReceiveRequest {
-			payment_hash: payment_hash.to_vec(),
-			amount_sat: amount.to_sat(),
-			min_cltv_delta: requested_min_cltv_delta as u32,
-			mailbox_id: Some(mailbox_id.serialize()),
-			description,
-		};
-
-		let resp = srv.client.start_lightning_receive(req).await?.into_inner();
-		info!("Ark Server is ready to receive LN payment to invoice: {}.", resp.bolt11);
-
-		let invoice = Bolt11Invoice::from_str(&resp.bolt11)
-			.context("invalid bolt11 invoice returned by Ark server")?;
-		validate_bolt11_payment_hash(&invoice, payment_hash)?;
-
-		self.inner.db.store_lightning_receive(
-			payment_hash,
-			preimage,
-			&invoice,
-			requested_min_cltv_delta,
-		).await?;
-
-		Ok(invoice)
-	}
-
-	/// Fetches the status of a lightning receive for the given [PaymentHash].
-	pub async fn lightning_receive_status(
-		&self,
-		payment: impl Into<PaymentHash>,
-	) -> anyhow::Result<Option<LightningReceive>> {
-		Ok(self.inner.db.fetch_lightning_receive_by_payment_hash(payment.into()).await?)
-	}
-
-	/// Attempts to exit a [LightningReceive] for the given [PaymentHash]. This method is provided
-	/// for the rare situation where HTLCs were received, the preimage was revealed, but the HTLCs
-	/// can't be revoked.
-	///
-	/// Certain preconditions must be met for this method to succeed:
-	/// - The preimage must have been previously revealed
-	/// - The HTLC VTXOs must all be locked
-	pub async fn attempt_lightning_receive_exit(
-		&self,
-		payment: impl Into<PaymentHash>,
-	) -> anyhow::Result<()> {
-		let receive = self.inner.db.fetch_lightning_receive_by_payment_hash(payment.into()).await?
-			.context("no pending lightning receive found for payment hash")?;
-		if receive.preimage_revealed_at.is_none() {
-			bail!("preimage must be revealed before attempting to exit");
-		}
-		if receive.htlc_vtxos.is_empty() {
-			bail!("Nothing to exit, no htlcs have been created yet!");
-		}
-		self.exit_lightning_receive(&receive).await
-	}
-
-	/// Claim given incoming lightning payment.
-	///
-	/// This function reveals the preimage of the lightning payment in
-	/// exchange of getting pubkey VTXOs from HTLC ones
-	///
-	/// # Returns
-	///
-	/// Returns an `anyhow::Result<()>`, which is:
-	/// * `Ok(())` if the process completes successfully.
-	///   the receive object is also updated correctly
-	/// * `Err` if an error occurs at any stage of the operation.
-	///
-	/// # Remarks
-	///
-	/// * The list of HTLC VTXOs must have the hash lock clause matching the given
-	///   [PaymentHash].
-	/// * The preimage is revealed to the server before the cosign response is
-	///   received. If the call fails after that point, the server's
-	///   `claim_lightning_receive` is idempotent so this method can be retried
-	///   to obtain fresh cosign signatures.
-	async fn claim_lightning_receive(
-		&self,
-		receive: &mut LightningReceive,
-	) -> anyhow::Result<()> {
-		let movement_id = receive.movement_id
-			.context("No movement created for lightning receive")?;
-		let (mut srv, _) = self.require_server().await?;
-
-		// order inputs by vtxoid before we generate nonces, then hydrate
-		// to full so the arkoor builder has the genesis chain.
-		ensure!(!receive.htlc_vtxos.is_empty(), "no HTLC VTXOs set on record yet");
-		let mut input_ids = receive.htlc_vtxos.iter().map(|v| v.vtxo.id()).collect::<Vec<_>>();
-		input_ids.sort();
-		let inputs = self.inner.db.get_full_vtxos(&input_ids).await
-			.context("failed to hydrate htlc input vtxos")?;
-
-		let mut keypairs = Vec::with_capacity(inputs.len());
-		for v in &inputs {
-			keypairs.push(self.get_vtxo_key(v).await?);
-		}
-
-		// Claiming arkoor against preimage
-		let (claim_keypair, _) = self.derive_store_next_keypair().await?;
-		let receive_policy = VtxoPolicy::new_pubkey(claim_keypair.public_key());
-
-		trace!("ln arkoor builder params: inputs: {:?}; policy: {:?}", input_ids, receive_policy);
-		let builder = ArkoorPackageBuilder::new_claim_all_with_checkpoints(
-			inputs,
-			receive_policy.clone(),
-		).context("creating claim arkoor builder failed")?;
-		let builder = builder.generate_user_nonces(&keypairs)
-			.context("arkoor nonce generation for claim failed")?;
-
-		info!("Claiming arkoor against payment preimage");
-		self.inner.db.set_preimage_revealed(receive.payment_hash).await?;
-		// NB: also refresh the in-memory receive: if the claim fails from here
-		// on, the failure handling must see that the preimage has been
-		// revealed, or it would wrongly cancel the receive and mark the HTLC
-		// VTXOs as spent.
-		*receive = self.inner.db.fetch_lightning_receive_by_payment_hash(receive.payment_hash).await
-			.context("Database error")?
-			.context("Receive not found")?;
-		let package_cosign_request = protos::ArkoorPackageCosignRequest::from(
-			builder.cosign_request(),
-		);
-		let resp = srv.client.claim_lightning_receive(protos::ClaimLightningReceiveRequest {
-			payment_hash: receive.payment_hash.to_byte_array().to_vec(),
-			payment_preimage: receive.payment_preimage.to_vec(),
-			cosign_request: Some(package_cosign_request),
-		}).await?.into_inner();
-		let cosign_resp = resp.try_into().context("invalid cosign response")?;
-
-		let outputs = builder.user_cosign(&keypairs, cosign_resp)
-			.context("claim arkoor cosign failed with user response")?
-			.build_signed_vtxos();
-
-		// Register the claim output so it is spendable for any later flow.
-		self.register_vtxo_transactions_with_server(&outputs).await?;
-
-		let mut effective_balance = Amount::ZERO;
-		for vtxo in &outputs {
-			// NB: bailing here results in vtxos not being registered despite the
-			// preimage being revealed.  The server's claim_lightning_receive is
-			// idempotent, so bark can retry and obtain fresh cosign signatures,
-			// but if all retries fail the user will be forced to exit on-chain.
-			trace!("Validating Lightning receive claim VTXO {}: {}",
-				vtxo.id(), vtxo.serialize_hex(),
-			);
-			self.validate_vtxo(vtxo).await
-				.context("invalid arkoor from lightning receive")?;
-			effective_balance += vtxo.amount();
-		}
-
-		self.store_spendable_vtxos(&outputs).await?;
-		self.mark_vtxos_as_spent(&receive.htlc_vtxos).await?;
-
-		info!("Got arkoors from lightning: {}",
-			outputs.iter().map(|v| v.id().to_string()).collect::<Vec<_>>().join(", ")
-		);
-
-		self.inner.movements.finish_movement_with_update(
-			movement_id,
-			MovementStatus::Successful,
-			MovementUpdate::new()
-				.effective_balance(effective_balance.to_signed()?)
-				.produced_vtxos(&outputs)
-		).await?;
-
-		self.inner.db.finish_pending_lightning_receive(receive.payment_hash).await?;
-		*receive = self.inner.db.fetch_lightning_receive_by_payment_hash(receive.payment_hash).await
-			.context("Database error")?
-			.context("Receive not found")?;
-
-		Ok(())
-	}
-
-	async fn compute_lightning_receive_anti_dos(
-		&self,
-		payment_hash: PaymentHash,
-		token: Option<&str>,
-	) -> anyhow::Result<LightningReceiveAntiDos> {
-		Ok(if let Some(token) = token {
-			LightningReceiveAntiDos::Token(token.to_string())
-		} else {
-			// We get an existing VTXO as an anti-dos measure.
-			let vtxo = self.select_vtxos_to_cover(Amount::ONE_SAT).await
-				.and_then(|vtxos| vtxos.into_iter().next()
-					.context("have no spendable vtxo to prove ownership of")
-				)?;
-			let vtxo_keypair = self.get_vtxo_key(&vtxo).await.expect("owned vtxo should be in database");
-			let attestation = LightningReceiveAttestation::new(payment_hash, vtxo.id(), &vtxo_keypair);
-			LightningReceiveAntiDos::InputVtxo(protos::InputVtxo {
-				vtxo_id: vtxo.id().to_bytes().to_vec(),
-				attestation: attestation.serialize(),
-			})
-		})
-	}
-
-	/// Check for incoming lightning payment with the given [PaymentHash].
-	///
-	/// This function checks for an incoming lightning payment with the
-	/// given [PaymentHash] and returns the HTLC VTXOs that are associated
-	/// with it.
-	///
-	/// # Arguments
-	///
-	/// * `payment_hash` - The [PaymentHash] of the lightning payment
-	/// to check for.
-	/// * `wait` - Whether to wait for the payment to be initiated by the sender.
-	/// * `token` - An optional lightning receive token used to authenticate a lightning
-	/// receive when no spendable VTXOs are owned by this wallet.
-	///
-	/// # Returns
-	///
-	/// Returns an `anyhow::Result<Option<LightningReceive>>`, which is:
-	/// * `Ok(Some(lightning_receive))` if the payment was initiated by
-	///   the sender and the HTLC VTXOs were successfully prepared.
-	/// * `Ok(None)` if the payment was not initiated by the sender or
-	///   the payment was canceled by server.
-	/// * `Err` if an error occurs at any stage of the operation.
-	///
-	/// # Remarks
-	///
-	/// * The invoice must contain an explicit amount specified in milli-satoshis.
-	/// * The HTLC expiry height is calculated by adding the servers' HTLC expiry delta to the
-	///   current chain tip.
-	/// * The payment hash must be from an invoice previously generated using
-	///   [Wallet::bolt11_invoice].
-	async fn check_lightning_receive(
-		&self,
-		payment_hash: PaymentHash,
-		wait: bool,
-		token: Option<&str>,
-	) -> anyhow::Result<Option<LightningReceive>> {
-		let (mut srv, ark_info) = self.require_server().await?;
-		let current_height = self.inner.chain.tip().await?;
-
-		let mut receive = self.inner.db.fetch_lightning_receive_by_payment_hash(payment_hash).await?
-			.context("no pending lightning receive found for payment hash, might already be claimed")?;
-
-		// If we have already HTLC VTXOs stored, we can return them without asking the server
-		if !receive.htlc_vtxos.is_empty() {
-			return Ok(Some(receive))
-		}
-
-		trace!("Requesting updates for ln-receive to server with for wait={} and hash={}", wait, payment_hash);
-		let sub = srv.client.check_lightning_receive(protos::CheckLightningReceiveRequest {
-			hash: payment_hash.to_byte_array().to_vec(), wait,
-		}).await?.into_inner();
-
-
-		let status = protos::LightningReceiveStatus::try_from(sub.status)
-			.with_context(|| format!("unknown payment status: {}", sub.status))?;
-
-		debug!("Received status {:?} for {}", status, payment_hash);
-		match status {
-			// this is the good case
-			protos::LightningReceiveStatus::Accepted |
-			protos::LightningReceiveStatus::HtlcsReady => {},
-			protos::LightningReceiveStatus::Created => {
-				return Ok(None);
-			},
-			protos::LightningReceiveStatus::Settled => bail!("payment already settled"),
-			protos::LightningReceiveStatus::Canceled => {
-				warn!("payment was canceled. removing pending lightning receive");
-				self.handle_failed_lightning_receive(&receive).await?;
-				return Ok(None);
-			},
-		}
-
-		let lightning_receive_anti_dos = match self.compute_lightning_receive_anti_dos(
-			payment_hash, token,
-		).await {
-			Ok(anti_dos) => Some(anti_dos),
-			Err(e) => {
-				info!("Could not compute anti-dos: {e:#}. Trying without");
-				None
-			},
-		};
-
-		let htlc_recv_expiry = current_height + receive.htlc_recv_cltv_delta as BlockHeight;
-
-		let (next_keypair, _) = self.derive_store_next_keypair().await?;
-		let req = protos::PrepareLightningReceiveClaimRequest {
-			payment_hash: receive.payment_hash.to_vec(),
-			user_pubkey: next_keypair.public_key().serialize().to_vec(),
-			htlc_recv_expiry,
-			lightning_receive_anti_dos,
-		};
-		let res = srv.client.prepare_lightning_receive_claim(req).await
-			.context("error preparing lightning receive claim")?.into_inner();
-		let vtxos = res.htlc_vtxos.into_iter()
-			.map(|b| Vtxo::deserialize(&b))
-			.collect::<Result<Vec<_>, _>>()
-			.context("invalid htlc vtxos from server")?;
-
-		// sanity check the vtxos
-		let mut htlc_amount = Amount::ZERO;
-		for vtxo in &vtxos {
-			trace!("Received HTLC VTXO {} from server: {}", vtxo.id(), vtxo.serialize_hex());
-			self.validate_vtxo(vtxo).await
-				.context("received invalid HTLC VTXO from server")?;
-			htlc_amount += vtxo.amount();
-
-			if let VtxoPolicy::ServerHtlcRecv(p) = vtxo.policy() {
-				if p.payment_hash != receive.payment_hash {
-					bail!("invalid payment hash on HTLC VTXOs received from server: {}",
-						p.payment_hash,
-					);
-				}
-				if p.user_pubkey != next_keypair.public_key() {
-					bail!("invalid pubkey on HTLC VTXOs received from server: {}", p.user_pubkey);
-				}
-				if p.htlc_expiry < htlc_recv_expiry {
-					bail!("HTLC VTXO expiry height is less than requested: Requested {}, received {}", htlc_recv_expiry, p.htlc_expiry);
-				}
-			} else {
-				bail!("invalid HTLC VTXO policy: {:?}", vtxo.policy());
-			}
-		}
-
-		// Check that the sum exceeds the invoice amount; we can't entirely trust the
-		// server-reported payment amount, so if there is a discrepancy, we should fall back to
-		// checking the invoice amount.
-		let invoice_amount = receive.invoice.get_payment_amount(None)
-			.context("ln receive invoice should have amount")?;
-		let server_received_amount = res.receive.map(|r| Amount::from_sat(r.amount_sat));
-		let fee = {
-			let fee = server_received_amount
-				.and_then(|a| ark_info.fees.lightning_receive.calculate(a));
-			match (server_received_amount, fee) {
-				(Some(amount), Some(fee)) if htlc_amount + fee == amount => {
-					// If this is true then the server is telling the truth.
-					fee
-				},
-				_ => {
-					// We should verify against the invoice amount instead. Unfortunately, that
-					// means the fee value in the movement won't be entirely accurate, however, it's
-					// better to avoid rejecting payments when we have received enough to cover an
-					// invoice.
-					ark_info.fees.lightning_receive.calculate(invoice_amount)
-						.expect("we previously validated this")
-				}
-			}
-		};
-		let received = htlc_amount + fee;
-		ensure!(received >= invoice_amount,
-			"Server didn't return enough VTXOs to cover invoice amount"
-		);
-
-		let movement_id = if let Some(movement_id) = receive.movement_id {
-			movement_id
-		} else {
-			self.inner.movements.new_movement_with_update(
-				Subsystem::LIGHTNING_RECEIVE,
-				LightningReceiveMovement::Receive.to_string(),
-				MovementUpdate::new()
-					.intended_balance(invoice_amount.to_signed()?)
-					.effective_balance(htlc_amount.to_signed()?)
-					.fee(fee)
-					.metadata(LightningMovement::metadata(
-						receive.payment_hash, &vtxos, Some(receive.payment_preimage),
-					))
-					.received_on(
-						[MovementDestination::new(receive.invoice.clone().into(), received)],
-					),
-			).await?
-		};
-		self.store_locked_vtxos(
-			&vtxos,
-			Some(crate::vtxo::VtxoLockHolder::Movement { id: movement_id }),
-		).await?;
-
-		let vtxo_ids = vtxos.iter().map(|v| v.id()).collect::<Vec<_>>();
-		self.inner.db.update_lightning_receive(payment_hash, &vtxo_ids, movement_id).await?;
-
-		let mut wallet_vtxos = vec![];
-		for vtxo in vtxos {
-			let v =  self.inner.db.get_wallet_vtxo(vtxo.id()).await?
-				.context("Failed to get wallet VTXO for lightning receive")?;
-			wallet_vtxos.push(v);
-		}
-
-		receive.htlc_vtxos = wallet_vtxos;
-		receive.movement_id = Some(movement_id);
-
-		Ok(Some(receive))
-	}
-
-	/// Exit HTLC-recv VTXOs when preimage has been disclosed but the claim failed.
-	///
-	/// NOTE: Calling this function will always result in the HTLC VTXO being exited
-	/// regardless of the presence of the `preimage_revealed_at` field of
-	/// the `lightning_receive` struct.
-	async fn exit_lightning_receive(
-		&self,
-		lightning_receive: &LightningReceive,
-	) -> anyhow::Result<()> {
-		ensure!(!lightning_receive.htlc_vtxos.is_empty(), "no HTLC VTXOs to exit");
-		let vtxos = lightning_receive.htlc_vtxos.iter().map(|v| &v.vtxo).collect::<Vec<_>>();
-
-		info!("Exiting HTLC VTXOs for lightning_receive with payment hash {}", lightning_receive.payment_hash);
-		self.inner.exit.start_exit_for_vtxos(&vtxos).await?;
-
-		if let Some(movement_id) = lightning_receive.movement_id {
-			self.inner.movements.finish_movement_with_update(
-				movement_id,
-				MovementStatus::Failed,
-				MovementUpdate::new().exited_vtxos(vtxos),
-			).await?;
-		} else {
-			error!("movement id is missing but we disclosed preimage: {}", lightning_receive.payment_hash);
-		}
-
-		self.inner.db.finish_pending_lightning_receive(lightning_receive.payment_hash).await?;
-		Ok(())
-	}
-
-	pub(crate) async fn handle_failed_lightning_receive(
-		&self,
-		lightning_receive: &LightningReceive,
-	) -> anyhow::Result<()> {
-		let vtxos = &lightning_receive.htlc_vtxos;
-
-		let update_opt = match (vtxos.is_empty(), lightning_receive.preimage_revealed_at) {
-			(false, Some(_)) => {
-				// Preimage was disclosed but the claim failed: the HTLC VTXOs are
-				// still locked and need to be exited on-chain. We don't auto-exit
-				// anymore — leave the receive pending and let the caller decide
-				// when to call `attempt_lightning_receive_exit`.
-				return Ok(());
-			}
-			(false, None) => {
-				warn!("HTLC-recv VTXOs are about to expire, but preimage has not been disclosed yet. Canceling");
-				self.mark_vtxos_as_spent(vtxos).await?;
-				if let Some(movement_id) = lightning_receive.movement_id {
-					Some((
-						movement_id,
-						MovementUpdate::new()
-							.effective_balance(SignedAmount::ZERO),
-						MovementStatus::Canceled,
-					))
-				} else {
-					error!("movement id is missing but we got HTLC vtxos: {}", lightning_receive.payment_hash);
-					None
-				}
-			}
-			(true, Some(_)) => {
-				error!("No HTLC vtxos set on ln receive but preimage has been disclosed. Canceling");
-				lightning_receive.movement_id.map(|id| (id,
-					MovementUpdate::new()
-						.effective_balance(SignedAmount::ZERO),
-					MovementStatus::Canceled,
-				))
-			}
-			(true, None) => None,
-		};
-
-		if let Some((movement_id, update, status)) = update_opt {
-			self.inner.movements.finish_movement_with_update(movement_id, status, update).await?;
-		}
-
-		self.inner.db.finish_pending_lightning_receive(lightning_receive.payment_hash).await?;
-
-		Ok(())
+		let start = start_lightning_receive(self, amount, description, token).await?;
+		self.inner.db.upsert_wallet_action_checkpoint(&start.id(), &start.clone().into()).await?;
+		Ok(start.invoice.clone())
 	}
 
 	/// Cancel a pending lightning receive.
 	///
-	/// This asks the server to cancel the hold invoice. The server will
-	/// refuse if HTLC-recv vtxos have already been granted.
-	///
-	/// Bark additionally prevents cancellation when the preimage has
-	/// already been revealed, since revealing the preimage means the
-	/// sender's payment is in flight and cancelling would lose funds.
-	pub async fn cancel_lightning_receive(
-		&self,
-		payment_hash: PaymentHash,
-	) -> anyhow::Result<()> {
-		let receive = self.inner.db.fetch_lightning_receive_by_payment_hash(payment_hash).await?
+	/// Only valid before the server has granted HTLC-recv vtxos (i.e. while
+	/// the receive is still in [`Progress::AwaitingPayment`]): we ask the
+	/// server to cancel the hold invoice and drop our checkpoint. Once HTLCs
+	/// are granted the server has committed, so we refuse — the receive must
+	/// complete or be abandoned on its own near expiry.
+	pub async fn cancel_lightning_receive(&self, hash: PaymentHash) -> anyhow::Result<()> {
+		let key = ln_recv_action_id(hash);
+		// Don't fight a live drive of the same action.
+		let _guard = self.inner.lock_manager.try_lock(&key).await
+			.context("receive operation already in progress for this payment")?;
+
+		let recv = self.lightning_receive_checkpoint(hash).await?
 			.context("no pending lightning receive found for this payment hash")?;
 
-		if receive.preimage_revealed_at.is_some() {
-			bail!("cannot cancel: preimage has already been revealed");
+		match recv.progress {
+			Progress::AwaitingPayment => {
+				// Best-effort server cancel: an abandoned hold invoice just
+				// expires server-side, so don't fail the local cancel on error.
+				if let Ok((mut srv, _)) = self.require_server().await {
+					if let Err(e) = srv.client.cancel_lightning_receive(
+						protos::CancelLightningReceiveRequest { payment_hash: hash.to_vec() },
+					).await {
+						warn!("server did not cancel lightning receive {}: {}", hash, e);
+					}
+				}
+				self.stop_wallet_action(&key).await?;
+				Ok(())
+			},
+			Progress::HtlcsReady(_) => {
+				bail!("cannot cancel: HTLCs already granted; the receive will complete \
+					or be abandoned near expiry");
+			},
+			Progress::PreimageRevealed(_) => {
+				bail!("cannot cancel: preimage has already been revealed");
+			},
 		}
+	}
 
-		if receive.finished_at.is_some() {
-			bail!("lightning receive is already finished");
+	/// Fall back to exiting a stuck lightning receive's HTLC vtxos on-chain.
+	///
+	/// Once the preimage has been revealed, a failed claim leaves the receive
+	/// pending rather than auto-exiting (see [`Progress::PreimageRevealed`]).
+	/// This lets the caller explicitly publish the preimage on-chain by
+	/// exiting the HTLC vtxos, finishing the receive as failed.
+	///
+	/// Preconditions:
+	/// - the preimage must already have been revealed (the receive is in
+	///   [`Progress::PreimageRevealed`]);
+	/// - the HTLC vtxos must still be present.
+	pub async fn attempt_lightning_receive_exit(
+		&self,
+		payment: impl Into<PaymentHash>,
+	) -> anyhow::Result<()> {
+		let hash = payment.into();
+		let key = ln_recv_action_id(hash);
+		// Don't fight a live drive of the same action.
+		let _guard = self.inner.lock_manager.try_lock(&key).await
+			.context("receive operation already in progress for this payment")?;
+
+		let recv = self.lightning_receive_checkpoint(hash).await?
+			.context("no pending lightning receive found for this payment hash")?;
+
+		let htlcs = match &recv.progress {
+			Progress::PreimageRevealed(htlcs) => htlcs,
+			_ => bail!("preimage must be revealed before attempting to exit"),
+		};
+
+		self.exit_lightning_receive_htlcs(&recv, htlcs).await?;
+
+		// The receive is now terminal: release any locks and drop the
+		// checkpoint row.
+		self.stop_wallet_action(&key).await?;
+		Ok(())
+	}
+
+	/// Escalation: when the preimage has been revealed but the claim cannot
+	/// complete, exit the HTLC vtxos on-chain and finish the movement as
+	/// failed. Driven explicitly by the caller via
+	/// [`Wallet::attempt_lightning_receive_exit`]; the receive is never
+	/// auto-exited.
+	pub async fn exit_lightning_receive_htlcs(
+		&self,
+		recv: &LightningReceive,
+		htlcs: &Htlcs,
+	) -> anyhow::Result<()> {
+		warn!("Exiting HTLC VTXOs for lightning receive {}", recv.payment_hash);
+
+		let mut vtxos = Vec::with_capacity(htlcs.vtxo_ids.len());
+		for id in htlcs.vtxo_ids.iter() {
+			vtxos.push(self.get_vtxo_by_id(*id).await?.vtxo);
 		}
+		let vtxo_refs = vtxos.iter().collect::<Vec<_>>();
+		self.inner.exit.start_exit_for_vtxos(&vtxo_refs).await?;
 
-		let (mut srv, _) = self.require_server().await?;
-		srv.client.cancel_lightning_receive(protos::CancelLightningReceiveRequest {
-			payment_hash: payment_hash.to_vec(),
-		}).await.context("server refused cancellation")?;
+		self.inner.movements.finish_movement_with_update(
+			htlcs.movement_id,
+			MovementStatus::Failed,
+			MovementUpdate::new().exited_vtxos(vtxo_refs),
+		).await?;
 
-		// Clean up local state: mark htlc vtxos as spent and finish the receive
-		self.handle_failed_lightning_receive(&receive).await?;
+		// We only exit once the preimage has been revealed (Claiming phase), so
+		// record it permanently: the exit subsystem needs it to witness the
+		// on-chain HTLC-recv spend, possibly after this checkpoint is gone.
+		let amount = recv.invoice.get_payment_amount(None).unwrap_or(Amount::ZERO);
+		self.inner.db.record_settled_lightning_receive(
+			recv.payment_hash, recv.payment_preimage, &recv.invoice, amount,
+		).await?;
 
 		Ok(())
 	}
 
-	/// Check and claim a Lightning receive
-	///
-	/// This function checks for an incoming lightning payment with the given [PaymentHash]
-	/// and then claims the payment using returned HTLC VTXOs. If another task is
-	/// already claiming the same payment hash, returns the current receive state.
-	///
-	/// # Arguments
-	///
-	/// * `payment_hash` - The [PaymentHash] of the lightning payment
-	/// to check for.
-	/// * `wait` - Whether to wait for the payment to be received.
-	/// * `token` - An optional lightning receive token used to authenticate a lightning
-	/// receive when no spendable VTXOs are owned by this wallet.
-	///
-	/// # Returns
-	///
-	/// Returns an `anyhow::Result<LightningReceive>`, which is:
-	/// * `Ok(LightningReceive)` if the claim was completed, is awaiting HTLC
-	///   VTXOs, or another claim for the same payment hash is already in flight.
-	/// * `Err` if an error occurs at any stage of the operation.
-	///
-	/// # Remarks
-	///
-	/// * The payment hash must be from an invoice previously generated using
-	///   [Wallet::bolt11_invoice].
-	pub async fn try_claim_lightning_receive(
-		&self,
-		payment_hash: PaymentHash,
-		wait: bool,
-		token: Option<&str>,
-	) -> anyhow::Result<LightningReceive> {
-		trace!("Claiming lightning receive for payment hash: {}", payment_hash);
-
-		// Mark this payment as in-flight. If another task is already claiming
-		// the same payment hash, return the current receive state instead of
-		// starting a duplicate claim.
-		let key = format!("{}.{}", LIGHTNING_RECEIVE_LOCK_PREFIX, payment_hash);
-		let _guard = match self.inner.lock_manager.try_lock(&key).await {
-			Some(guard) => guard,
-			None => {
-				debug!("Receive operation already in progress for this payment");
-				return self.inner.db.fetch_lightning_receive_by_payment_hash(payment_hash).await?
-					.context("no receive for payment hash");
-			},
-		};
-
-		self.try_claim_lightning_receive_inner(payment_hash, wait, token).await
+	/// Drive a lightning receive forward (e.g. to claim an inbound payment).
+	/// `wait=true` keeps driving past parks until the action terminates.
+	/// Returns the current state.
+	pub async fn try_claim_lightning_receive(&self, hash: PaymentHash, wait: bool)
+		-> anyhow::Result<LightningReceiveState>
+	{
+		if let Some(recv) = self.lightning_receive_checkpoint(hash).await? {
+			let mode = if wait { DriveMode::UntilDone } else { DriveMode::UntilParkOrDone };
+			self.drive_action(recv, mode).await?;
+		}
+		self.lightning_receive_state(hash).await
 	}
 
-	/// Internal implementation of lightning receive claim after concurrency check.
-	async fn try_claim_lightning_receive_inner(
-		&self,
-		payment_hash: PaymentHash,
-		wait: bool,
-		token: Option<&str>,
-	) -> anyhow::Result<LightningReceive> {
-		// check_lightning_receive returns None if there is no incoming payment (yet)
-		// In that case we just return and don't try to claim
-		let mut receive = match self.check_lightning_receive(payment_hash, wait, token).await? {
-			Some(receive) => receive,
-			None => {
-				return self.inner.db.fetch_lightning_receive_by_payment_hash(payment_hash).await?
-					.context("No receive for payment_hash")
-			}
-		};
-
-		if receive.finished_at.is_some() {
-			return Ok(receive);
-		}
-
-		// No need to claim anything if there
-		// are no htlcs yet
-		if receive.htlc_vtxos.is_empty() {
-			return Ok(receive);
-		}
-
-		let mut retries_left = self.inner.config.lightning_receive_claim_retries;
-		let mut backoff = CLAIM_RETRY_BACKOFF_INITIAL;
-		let claim_result = loop {
-			match self.claim_lightning_receive(&mut receive).await {
-				Ok(()) => break Ok(()),
-				Err(e) if retries_left == 0 => break Err(e),
-				Err(e) => {
-					warn!(
-						"Error claiming lightning receive {} ({} retries left, retrying in {:?}): {:#}",
-						receive.payment_hash, retries_left, backoff, e,
-					);
-					retries_left -= 1;
-					tokio::time::sleep(backoff).await;
-					backoff = (backoff * 2).min(CLAIM_RETRY_BACKOFF_MAX);
-				}
-			}
-		};
-
-		match claim_result {
-			Ok(()) => Ok(receive),
-			Err(e) => {
-				error!("Failed to claim htlcs for payment_hash: {}", receive.payment_hash);
-				// We could be having temporary problems with the server. Instead of auto-exiting we
-				// should fall through to our normal error handling flow.
-				self.handle_failed_lightning_receive(&receive).await?;
-				Err(e)
-			}
-		}
-	}
-
-	/// Check and claim all opened Lightning receive
-	///
-	/// This function fetches all opened lightning receives and then
-	/// concurrently tries to check and claim them.
-	///
-	/// # Arguments
-	///
-	/// * `wait` - Whether to wait for each payment to be received.
-	///
-	/// # Returns
-	///
-	/// Returns an `anyhow::Result<()>`, which is:
-	/// * `Ok(Vec<LightningReceive>)` contains the successfully claimed receives, if at least one
-	/// claim succeeded, or an empty vector if no claim succeeded.
-	/// * `Err` if all claim attempts failed.
-	pub async fn try_claim_all_lightning_receives(&self, wait: bool) -> anyhow::Result<Vec<LightningReceive>> {
+	/// Drive every pending lightning receive forward, returning the resulting
+	/// state of each. Errors on individual receives are logged, not returned,
+	/// so one stuck receive doesn't block the others.
+	pub async fn try_claim_all_lightning_receives(&self, wait: bool)
+		-> anyhow::Result<Vec<LightningReceiveState>>
+	{
 		let pending = self.pending_lightning_receives().await?;
 		let total = pending.len();
 
@@ -744,7 +264,7 @@ impl Wallet {
 
 		let results: Vec<_> = tokio_stream::iter(pending)
 			.map(|rcv| async move {
-				self.try_claim_lightning_receive(rcv.invoice.into(), wait, None).await
+				self.try_claim_lightning_receive(rcv.invoice.into(), wait).await
 			})
 			.buffer_unordered(3)
 			.collect()
@@ -775,38 +295,5 @@ impl Wallet {
 		}
 
 		Ok(claimed)
-	}
-}
-
-#[cfg(test)]
-mod tests {
-	use super::*;
-
-	const TEST_INVOICE_STR: &str = "lntbs100u1p5j0x82sp5d0rwfh7tgrrlwsegy9rx3tzpt36cqwjqza5x4wvcjxjzscfaf6jspp5d8q7354dg3p8h0kywhqq5dq984r8f5en98hf9ln85ug0w8fx6hhsdqqcqzpc9qyysgqyk54v7tpzprxll7e0jyvtxcpgwttzk84wqsfjsqvcdtq47zt2wssxsmtjhz8dka62mdnf9jafhu3l4cpyfnsx449v4wstrwzzql2w5qqs8uh7p";
-
-	fn test_bolt11() -> Bolt11Invoice {
-		Bolt11Invoice::from_str(TEST_INVOICE_STR).expect("valid test invoice")
-	}
-
-	#[test]
-	fn validate_bolt11_payment_hash_accepts_matching_hash() {
-		let invoice = test_bolt11();
-		let payment_hash = PaymentHash::from(&invoice);
-
-		validate_bolt11_payment_hash(&invoice, payment_hash).unwrap();
-	}
-
-	#[test]
-	fn validate_bolt11_payment_hash_rejects_mismatched_hash() {
-		let invoice = test_bolt11();
-		let mismatched_payment_hash = PaymentHash::from_slice(&[0xabu8; 32]).unwrap();
-
-		let err = validate_bolt11_payment_hash(&invoice, mismatched_payment_hash)
-			.expect_err("mismatched payment hash should fail");
-
-		assert!(
-			err.to_string().contains("returned invoice with payment hash"),
-			"{err:?}",
-		);
 	}
 }

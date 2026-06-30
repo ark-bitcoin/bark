@@ -3,6 +3,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 
+use bark::actions::lightning::receive::LightningReceiveState;
 use bitcoin::{Address, Amount, FeeRate, OutPoint};
 use bitcoin::params::Params;
 use futures::FutureExt;
@@ -1141,7 +1142,7 @@ async fn bark_should_exit_a_htlc_recv_that_server_refuse_to_cosign() {
 			req: server_rpc::protos::ClaimLightningReceiveRequest,
 		) -> Result<server_rpc::protos::ArkoorPackageCosignResponse, tonic::Status> {
 			upstream.claim_lightning_receive(req).await?;
-			Err(tonic::Status::internal("Refused to finish bolt11 board"))
+			Err(tonic::Status::invalid_argument("Refused to finish bolt11 board"))
 		}
 	}
 
@@ -1176,11 +1177,18 @@ async fn bark_should_exit_a_htlc_recv_that_server_refuse_to_cosign() {
 
 	let invoice = Invoice::from_str(&invoice_info.invoice).unwrap();
 	let client = bark.client().await;
-	let receive = client.lightning_receive_status(invoice.payment_hash()).await.unwrap()
-		.expect("the lightning receive should still be pending");
-	assert!(receive.preimage_revealed_at.is_some(),
-		"preimage should have been revealed before the claim failed");
-	assert!(receive.finished_at.is_none(), "the receive should not be finished");
+	let receive = match client
+		.lightning_receive_state(invoice.payment_hash()).await
+		.expect("the lightning receive should be created")
+	{
+		LightningReceiveState::InProgress(receive) => receive,
+		LightningReceiveState::Settled(_) => {
+			panic!("the lightning receive should not be settled");
+		},
+	};
+
+	assert!(matches!(receive.progress, bark::actions::lightning::receive::Progress::PreimageRevealed(_)),
+		"the lightning receive should be in the preimage revealed state");
 
 	// Explicitly fall back to exiting the HTLC VTXOs on-chain.
 	client.attempt_lightning_receive_exit(invoice.payment_hash()).await.unwrap();

@@ -616,14 +616,14 @@ impl Server {
 				LightningReceiveAntiDos::InputVtxo(InputVtxo { vtxo_id, attestation }) => {
 					let vtxo_id = VtxoId::from_bytes(vtxo_id)?;
 					let attestation = LightningReceiveAttestation::from_bytes(attestation)
-						.context("invalid attestation")?;
+						.badarg("invalid attestation")?;
 
 					let vtxos = self.db.read(async |t| t.get_user_vtxos_by_id(&[vtxo_id]).await).await?;
 					let vtxo = vtxos.first().badarg("vtxo for proof not found")?;
 					let chain_tip = self.sync_manager.chain_tip().height;
-					vtxo.check_spendable(chain_tip)?;
+					vtxo.check_spendable(chain_tip).badarg("anti-dos proof vtxo not spendable")?;
 
-					attestation.verify(payment_hash, &vtxo.vtxo).context("vtxo attestation invalid")?;
+					attestation.verify(payment_hash, &vtxo.vtxo).badarg("vtxo attestation invalid")?;
 				},
 				LightningReceiveAntiDos::Token(token_string) => {
 					self.db.write(async |t| {
@@ -631,8 +631,10 @@ impl Server {
 							.expect("hardcoded api key is valid");
 						let api_key = t.get_integration_api_key_by_api_key(uuid).await?
 							.context("captaind integration api key not found")?;
-						let token = t.get_integration_token(&token_string).await?
-							.context("token not found")?;
+						let token = match t.get_integration_token(&token_string).await? {
+							Some(token) => token,
+							None => return not_found!([token_string], "token not found"),
+						};
 						if token.is_expired() {
 							return badarg!("token has expired");
 						}

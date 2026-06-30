@@ -63,7 +63,6 @@ use serde::{de::DeserializeOwned, Serialize};
 use ark::lightning::{PaymentHash, Preimage};
 use ark::{Vtxo, VtxoId};
 use ark::vtxo::Full;
-use bitcoin_ext::BlockDelta;
 
 use crate::actions::{WalletActionCheckpoint, WalletActionId};
 use crate::exit::ExitTxOrigin;
@@ -72,9 +71,9 @@ use crate::movement::{
 };
 use crate::persist::BarkPersister;
 use crate::persist::models::{
-	LightningReceive, PaidInvoice, PendingBoard, PendingOffboard,
-	RoundStateId, SerdeExitChildTx, SerdeRoundState, SerdeVtxo, SerdeVtxoKey, StoredExit,
-	StoredRoundState, Unlocked, wallet_vtxo_from_full,
+	PaidInvoice, PendingBoard, PendingOffboard,
+	RoundStateId, SerdeExitChildTx, SerdeRoundState, SerdeVtxo, SerdeVtxoKey,
+	SettledLightningReceive, StoredExit, StoredRoundState, Unlocked, wallet_vtxo_from_full,
 };
 use crate::round::RoundState;
 use crate::vtxo::{VtxoState, VtxoStateKind};
@@ -93,7 +92,11 @@ pub mod partition {
 	/// was used by the now-removed `bark_lightning_send`. Do not reuse.
 	#[allow(unused)]
 	pub const LEGACY_LIGHTNING_SEND: u8 = 7;
-	pub const LIGHTNING_RECEIVE: u8 = 8;
+	/// was used by the now-removed legacy `bark_pending_lightning_receive`.
+	/// Do not reuse. In-flight receives now live in WALLET_ACTION_CHECKPOINT
+	/// and settled ones in SETTLED_LIGHTNING_RECEIVE.
+	#[allow(unused)]
+	pub const LEGACY_LIGHTNING_RECEIVE: u8 = 8;
 	pub const EXIT_VTXO: u8 = 9;
 	pub const EXIT_CHILD_TX: u8 = 10;
 	pub const MAILBOX_CHECKPOINT: u8 = 11;
@@ -105,6 +108,9 @@ pub mod partition {
 	/// Permanent record of every settled outgoing lightning payment,
 	/// keyed by payment hash.
 	pub const PAID_INVOICE: u8 = 15;
+	/// Permanent record of every settled incoming lightning receive,
+	/// keyed by payment hash.
+	pub const SETTLED_LIGHTNING_RECEIVE: u8 = 16;
 
 	pub const LAST_IDS: u8 = u8::MAX;
 }
@@ -916,131 +922,42 @@ impl <S: StorageAdaptor> BarkPersister for StorageAdaptorWrapper<S> {
 		}
 	}
 
-	async fn store_lightning_receive(
+	async fn record_settled_lightning_receive(
 		&self,
 		payment_hash: PaymentHash,
 		preimage: Preimage,
 		invoice: &Bolt11Invoice,
-		htlc_recv_cltv_delta: BlockDelta,
+		amount: Amount,
 	) -> anyhow::Result<()> {
-		let lightning_receive = LightningReceive {
-			payment_hash,
-			payment_preimage: preimage,
-			invoice: invoice.clone(),
-			htlc_recv_cltv_delta,
-			htlc_vtxos: vec![],
-			movement_id: None,
-			finished_at: None,
-			preimage_revealed_at: None,
-		};
+		let key = payment_hash.to_byte_array();
 
-		let record = Record::from_data(
-			partition::LIGHTNING_RECEIVE,
-			&payment_hash.to_byte_array(),
-			None,
-			&lightning_receive,
-		)?;
-		self.inner.write().await.put(record).await
-	}
-
-	async fn get_all_pending_lightning_receives(&self) -> anyhow::Result<Vec<LightningReceive>> {
-		let records = self.inner.read().await
-			.get_all(partition::LIGHTNING_RECEIVE).await?;
-		records
-			.into_iter()
-			.filter_map(|r| {
-				let receive = r.to_data::<LightningReceive>().ok()?;
-				if receive.finished_at.is_none() {
-					Some(Ok(receive))
-				} else {
-					None
-				}
-			})
-			.collect()
-	}
-
-	async fn set_preimage_revealed(&self, payment_hash: PaymentHash) -> anyhow::Result<()> {
 		let mut lock = self.inner.write().await;
-
-		let pk = payment_hash.to_byte_array();
-		let record = lock.get(partition::LIGHTNING_RECEIVE, &pk).await?
-			.context("lightning receive not found")?;
-		let mut lightning_receive: LightningReceive = record.to_data()?;
-
-		lightning_receive.preimage_revealed_at = Some(Local::now());
-
-		let updated_record = Record::from_data(
-			partition::LIGHTNING_RECEIVE,
-			&pk,
-			None,
-			&lightning_receive,
-		)?;
-		lock.put(updated_record).await
-	}
-
-	async fn update_lightning_receive(
-		&self,
-		payment_hash: PaymentHash,
-		vtxo_ids: &[VtxoId],
-		movement_id: MovementId,
-	) -> anyhow::Result<()> {
-		let mut lock = self.inner.write().await;
-		let pk = payment_hash.to_byte_array();
-		let record = lock.get(partition::LIGHTNING_RECEIVE, &pk).await?
-			.context("lightning receive not found")?;
-		let mut lightning_receive: LightningReceive = record.to_data()?;
-
-		let mut htlc_vtxos = Vec::with_capacity(vtxo_ids.len());
-		for vtxo_id in vtxo_ids {
-			let vtxo = get_vtxo(&*lock, *vtxo_id).await?
-				.context("vtxo not found")?;
-			htlc_vtxos.push(vtxo.to_wallet_vtxo()?);
+		if lock.get(partition::SETTLED_LIGHTNING_RECEIVE, &key).await?.is_some() {
+			return Ok(());
 		}
-
-		lightning_receive.htlc_vtxos = htlc_vtxos;
-		lightning_receive.movement_id = Some(movement_id);
-
-		let updated_record = Record::from_data(
-			partition::LIGHTNING_RECEIVE,
-			&pk,
-			None,
-			&lightning_receive,
-		)?;
-		lock.put(updated_record).await
+		let settled = SettledLightningReceive {
+			payment_hash,
+			preimage,
+			invoice: invoice.clone(),
+			amount,
+			settled_at: chrono::Local::now(),
+		};
+		let record = Record::from_data(partition::SETTLED_LIGHTNING_RECEIVE, &key, None, &settled)?;
+		lock.put(record).await
 	}
 
-	async fn fetch_lightning_receive_by_payment_hash(
+	async fn get_settled_lightning_receive(
 		&self,
 		payment_hash: PaymentHash,
-	) -> anyhow::Result<Option<LightningReceive>> {
+	) -> anyhow::Result<Option<SettledLightningReceive>> {
 		match self.inner.read().await
-			.get(partition::LIGHTNING_RECEIVE, &payment_hash.to_byte_array()).await?
+			.get(partition::SETTLED_LIGHTNING_RECEIVE, &payment_hash.to_byte_array()).await?
 		{
 			Some(record) => Ok(Some(record.to_data()?)),
 			None => Ok(None),
 		}
 	}
 
-	async fn finish_pending_lightning_receive(
-		&self,
-		payment_hash: PaymentHash,
-	) -> anyhow::Result<()> {
-		let mut lock = self.inner.write().await;
-		let pk = payment_hash.to_byte_array();
-		let record = lock.get(partition::LIGHTNING_RECEIVE, &pk).await?
-			.context("lightning receive not found")?;
-		let mut lightning_receive: LightningReceive = record.to_data()?;
-
-		lightning_receive.finished_at = Some(Local::now());
-
-		let updated_record = Record::from_data(
-			partition::LIGHTNING_RECEIVE,
-			&pk,
-			None,
-			&lightning_receive,
-		)?;
-		lock.put(updated_record).await
-	}
 
 	async fn store_pending_offboard(&self, pending: &PendingOffboard) -> anyhow::Result<()> {
 		let record = Record::from_data(

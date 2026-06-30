@@ -616,6 +616,18 @@ impl Bark {
 			.expect("bolt11 invoice command failed")
 	}
 
+	pub async fn try_bolt11_invoice_with_token(&self, amount: Amount, token: &str) -> anyhow::Result<InvoiceInfo> {
+		let amount = amount.to_string();
+		let args: Vec<&str> = vec!["lightning", "invoice", &amount, "--verbose", "--token", token];
+		let res = self.try_run(args).await?;
+		Ok(serde_json::from_str(&res).expect("json error"))
+	}
+
+	pub async fn bolt11_invoice_with_token(&self, amount: Amount, token: &str) -> InvoiceInfo {
+		self.try_bolt11_invoice_with_token(amount, token).await
+			.expect("bolt11 invoice command failed")
+	}
+
 	pub async fn try_lightning_receive(&self, invoice: &str) -> anyhow::Result<()> {
 		self.try_run(["lightning", "claim", invoice, "--wait", "--verbose", "--no-sync"]).await?;
 		Ok(())
@@ -625,22 +637,8 @@ impl Bark {
 		self.try_lightning_receive(invoice).await.unwrap();
 	}
 
-	pub async fn try_lightning_receive_with_token(&self, invoice: &str, token: &str) -> anyhow::Result<()> {
-		self.try_run([
-			"lightning", "claim", invoice, "--token", token, "--wait", "--verbose", "--no-sync",
-		]).await?;
-		Ok(())
-	}
-
 	pub async fn try_lightning_receive_no_wait(&self, invoice: &str) -> anyhow::Result<()> {
 		self.try_run(["lightning", "claim", invoice, "--verbose", "--no-sync"]).await?;
-		Ok(())
-	}
-
-	pub async fn try_lightning_receive_with_token_no_wait(&self, invoice: &str, token: &str) -> anyhow::Result<()> {
-		self.try_run([
-			"lightning", "claim", invoice, "--token", token, "--verbose", "--no-sync",
-		]).await?;
 		Ok(())
 	}
 
@@ -686,7 +684,10 @@ impl Bark {
 		};
 		let res = self.run(args).await;
 		if res.is_empty() { return None; }
-		serde_json::from_str(&res).expect("json error")
+		let info = serde_json::from_str::<LightningReceiveInfo>(&res).expect("json error");
+		// The command now always emits a status; treat "unknown" as absent so
+		// callers keep the previous Option semantics.
+		if info.state == "unknown" { None } else { Some(info) }
 	}
 
 	pub async fn try_board(&self, amount: Amount) -> anyhow::Result<json::cli::PendingBoardInfo> {
