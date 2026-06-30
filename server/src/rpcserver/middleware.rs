@@ -10,7 +10,9 @@ use http::HeaderMap;
 use http_body::Body as HttpBody;
 use opentelemetry::KeyValue;
 use parking_lot::RwLock;
-use server_rpc::client::{ACCESS_TOKEN_HEADER, USER_AGENT_HEADER};
+#[allow(deprecated)]
+use server_rpc::client::ACCESS_TOKEN_HEADER;
+use server_rpc::client::USER_AGENT_HEADER;
 use server_rpc::lookup_grpc_method;
 use tonic::transport::server::TcpConnectInfo;
 use tower::{Layer, Service};
@@ -424,6 +426,7 @@ where
 		telemetry::add_grpc_in_progress(&attributes);
 
 		let start_time = Instant::now();
+		#[allow(deprecated)]
 		let grpc_span = info_span!(
 			telemetry::TRACE_GRPC,
 			otel.kind = "server",

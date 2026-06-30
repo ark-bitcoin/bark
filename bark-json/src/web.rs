@@ -107,7 +107,14 @@ pub struct CreateWalletRequest {
 	/// The Ark server to use for the wallet.
 	/// Optional when a config.toml already exists in the datadir.
 	pub ark_server: Option<String>,
-	/// An access token for a private Ark server
+	/// An access token for a private Ark server.
+	///
+	/// **Deprecated**: access tokens are no longer enforced by the server;
+	/// this field will be removed in a future release.
+	#[deprecated(
+		since = "0.2.4",
+		note = "access tokens are not enforced by the server; this field will be removed",
+	)]
 	pub ark_server_access_token: Option<String>,
 	/// The chain source to use for the wallet.
 	/// Optional when a config.toml already exists in the datadir.

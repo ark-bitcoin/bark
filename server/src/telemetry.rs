@@ -197,6 +197,10 @@ pub const SERVICE_VERSION: &str = opentelemetry_semantic_conventions::attribute:
 pub const RPC_SYSTEM: &str = opentelemetry_semantic_conventions::attribute::RPC_SYSTEM;
 pub const RPC_SERVICE: &str = opentelemetry_semantic_conventions::attribute::RPC_SERVICE;
 pub const RPC_METHOD: &str = opentelemetry_semantic_conventions::attribute::RPC_METHOD;
+#[deprecated(
+	since = "0.2.4",
+	note = "access tokens are not enforced by the server; this label will be removed",
+)]
 pub const RPC_ACCESS_TOKEN: &str = "rpc.access_token";
 /// Client implementation that issued the RPC, bucketed to a small allowlist
 /// to bound metric cardinality (see [crate::rpcserver::middleware::bucket_client]).

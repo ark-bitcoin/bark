@@ -1,4 +1,6 @@
 
+#![allow(deprecated)]
+
 use server_rpc::client::ACCESS_TOKEN_HEADER;
 
 use ark_testing::{require_bark_version, TestContext};

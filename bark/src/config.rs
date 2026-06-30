@@ -78,7 +78,11 @@ pub struct Config {
 	/// The address of your ark server.
 	pub server_address: String,
 
-	/// An access token used to access a private server
+	/// An access token used to access a private server.
+	#[deprecated(
+		since = "0.2.4",
+		note = "access tokens are not enforced by the server; this field will be removed",
+	)]
 	pub server_access_token: Option<String>,
 
 	/// Client identifier sent on every RPC to the Ark server (as the
@@ -197,6 +201,7 @@ impl Config {
 	///
 	/// The [Default::default] provides a sane default for mainnet
 	pub fn network_default(network: Network) -> Self {
+		#[allow(deprecated)]
 		let mut ret = Self {
 			server_address: "http://127.0.0.1:3535".to_owned(),
 			server_access_token: None,

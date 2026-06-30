@@ -138,6 +138,7 @@ impl Barkd {
 	/// `create_wallet` loads them from the file, mirroring the
 	/// `bark create` CLI pattern.
 	pub async fn create_wallet(&self) -> anyhow::Result<()> {
+		#[allow(deprecated)]
 		let req = CreateWalletRequest {
 			ark_server: None,
 			ark_server_access_token: None,

@@ -92,8 +92,9 @@ pub struct ConfigOpts {
 	#[arg(long)]
 	pub ark: Option<String>,
 
-	/// The access token for a private server
-	#[arg(long)]
+	/// [DEPRECATED] The access token for a private server.
+	/// Access tokens are no longer enforced by the server; this flag will be removed.
+	#[arg(long, hide = true)]
 	pub access_token: Option<String>,
 
 	/// The address of the Esplora HTTP server to use.

@@ -1202,8 +1202,11 @@ impl Wallet {
 			builder = builder.proxy(&proxy)
 		}
 
-		if let Some(ref token) = config.server_access_token {
-			builder = builder.access_token(token);
+		#[allow(deprecated)]
+		{
+			if let Some(ref token) = config.server_access_token {
+				builder = builder.access_token(token);
+			}
 		}
 
 		if let Some(ref ua) = config.user_agent {

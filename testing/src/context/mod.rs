@@ -540,6 +540,7 @@ impl TestContext {
 		srv: &dyn ToArkUrl,
 		bitcoind: Option<&Bitcoind>,
 	) -> bark::Config {
+		#[allow(deprecated)]
 		bark::Config {
 			server_address: srv.ark_url(),
 			server_access_token: None,

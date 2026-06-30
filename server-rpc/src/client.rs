@@ -55,6 +55,10 @@ compile_error!("the `socks5-proxy` feature is only usable in conjunction with `t
 
 
 /// The HTTP header used for private server access tokens
+#[deprecated(
+	since = "0.2.4",
+	note = "access tokens are not enforced by the server; this header will be removed",
+)]
 pub const ACCESS_TOKEN_HEADER: &str = "ark-access-token";
 /// The HTTP header used to identify the client implementation.
 ///
@@ -243,6 +247,10 @@ pub enum CreateEndpointError {
 pub enum ConnectError {
 	#[error("missing info '{0}' to connect")]
 	MissingInfo(&'static str),
+	#[deprecated(
+		since = "0.2.4",
+		note = "access tokens are not enforced by the server; this variant will be removed",
+	)]
 	#[error("invalid access token: {0}")]
 	InvalidAccessToken(#[source] InvalidMetadataValue),
 	#[error("invalid user agent: {0}")]
@@ -308,6 +316,7 @@ impl tonic::service::Interceptor for ArkServiceInterceptor {
 			req.set_pver(pver);
 		}
 		if let Some(ref access_token) = self.access_token {
+			#[allow(deprecated)]
 			req.metadata_mut().insert(ACCESS_TOKEN_HEADER, access_token.clone());
 		}
 		req.metadata_mut().insert(USER_AGENT_HEADER, self.user_agent.clone());
@@ -373,6 +382,10 @@ impl ServerConnectionBuilder {
 		self
 	}
 
+	#[deprecated(
+		since = "0.2.4",
+		note = "access tokens are not enforced by the server; this method will be removed",
+	)]
 	pub fn access_token(mut self, access_token: impl Into<String>) -> Self {
 		self.access_token = Some(access_token.into());
 		self
@@ -454,14 +467,14 @@ impl ServerConnection {
 			.unwrap_or_else(|| format!("bark/{}", env!("CARGO_PKG_VERSION")));
 		let user_agent: AsciiMetadataValue = user_agent.try_into()
 			.map_err(ConnectError::InvalidUserAgent)?;
-		let access_token = builder.access_token
-			.map(AsciiMetadataValue::try_from)
-			.transpose()
-			.map_err(ConnectError::InvalidAccessToken)?;
 
 		let mut interceptor = ArkServiceInterceptor {
 			pver: None,
-			access_token,
+			#[allow(deprecated)]
+			access_token: builder.access_token
+				.map(AsciiMetadataValue::try_from)
+				.transpose()
+				.map_err(ConnectError::InvalidAccessToken)?,
 			user_agent,
 		};
 
