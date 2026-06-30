@@ -153,7 +153,7 @@ impl rpc::server::BanAdminService for Server {
 		let banned_vtxos = banned.into_iter().map(|v| {
 			protos::BannedVtxo {
 				vtxo_id: v.vtxo_id.to_bytes().to_vec(),
-				banned_until_height: v.banned_until_height.unwrap_or(0),
+				banned_until_height: v.banned_until_height,
 			}
 		}).collect();
 		Ok(tonic::Response::new(protos::ListBannedVtxosResponse { banned_vtxos }))

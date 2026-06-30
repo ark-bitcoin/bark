@@ -343,6 +343,23 @@ impl TryFrom<Row> for VirtualTransaction<'static> {
 	}
 }
 
+pub struct BannedVtxo {
+	pub vtxo_id: VtxoId,
+	pub banned_until_height: BlockHeight,
+}
+
+impl TryFrom<Row> for BannedVtxo {
+	type Error = anyhow::Error;
+
+	fn try_from(row: Row) -> Result<Self, Self::Error> {
+		let vtxo_id = VtxoId::from_str(row.get::<_, &str>("vtxo_id"))?;
+		let banned_until_height = u32::try_from(row.get::<_, i32>("banned_until_height"))
+			.context("banned_until_height out of range for u32")?;
+
+		Ok(Self { vtxo_id, banned_until_height })
+	}
+}
+
 #[cfg(test)]
 mod test {
 	use super::*;
