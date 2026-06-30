@@ -331,20 +331,43 @@ impl<'t> Tx<'t> {
 			);
 		}
 
+		// Same state guard as do_round_forfeit_updates (tree.rs): only
+		// touch vtxos that finish_round already transitioned to 'spent'
+		// with spent_in_round set, and whose oor_spent_txid is unset or
+		// already equals this txid. The OR-equal arm keeps retries with
+		// the same forfeit batch idempotent; the rest catches vtxos in an
+		// unexpected state instead of silently overwriting oor_spent_txid
+		// the way the previous unconditional UPDATE would have.
 		let stmt = self.prepare_typed(
-			"UPDATE vtxo SET oor_spent_txid = u.txid, updated_at = NOW() \
-			FROM UNNEST($1::text[], $2::text[]) AS u(vtxo_id, txid) \
-			WHERE vtxo.vtxo_id = u.vtxo_id",
+			"UPDATE vtxo SET oor_spent_txid = u.txid, updated_at = NOW()
+			FROM UNNEST($1::text[], $2::text[]) AS u(vtxo_id, txid)
+			WHERE vtxo.vtxo_id = u.vtxo_id
+				AND vtxo.spend_state = 'spent'
+				AND vtxo.spent_in_round IS NOT NULL
+				AND (vtxo.oor_spent_txid IS NULL OR vtxo.oor_spent_txid = u.txid)",
 			&[Type::TEXT_ARRAY, Type::TEXT_ARRAY],
 		).await.context("error preparing vtxo query")?;
 		let rows_affected = self.execute(&stmt, &[
 			&vtxo_id_strs,
 			&txid_strs,
 		]).await.context("error executing vtxo query")?;
-		ensure!(rows_affected as usize == vtxo_ids.len(),
-			"corrupt db: expected {} vtxos updated, got {}",
-			vtxo_ids.len(), rows_affected,
-		);
+		if rows_affected as usize != vtxo_ids.len() {
+			let diag_stmt = self.prepare_typed(
+				"SELECT u.vtxo_id
+				FROM UNNEST($1::text[], $2::text[]) AS u(vtxo_id, txid)
+				LEFT JOIN vtxo v ON v.vtxo_id = u.vtxo_id
+				WHERE v.vtxo_id IS NULL
+					OR v.spend_state != 'spent'
+					OR v.spent_in_round IS NULL
+					OR (v.oor_spent_txid IS NOT NULL AND v.oor_spent_txid != u.txid)
+				LIMIT 1",
+				&[Type::TEXT_ARRAY, Type::TEXT_ARRAY],
+			).await.context("error preparing vtxo diagnostic query")?;
+			let bad = self.query_one(&diag_stmt, &[&vtxo_id_strs, &txid_strs]).await
+				.context("error finding bad vtxo")?;
+			let vtxo_id: &str = bad.get("vtxo_id");
+			return badarg!("vtxo not round-spent or already forfeited differently: {}", vtxo_id);
+		}
 
 		Ok(())
 	}

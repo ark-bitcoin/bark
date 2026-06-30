@@ -1184,24 +1184,37 @@ async fn set_forfeit_transactions_is_idempotent() {
 	};
 	db.write(async |t| t.try_store_round_participation(0, unlock_preimage, &input_vtxo_ids, std::iter::once(&output)).await).await.unwrap();
 
-	// `set_forfeit_transactions`'s join filters on `round_id IS NOT NULL`, so
-	// it only matches participations that have already been attached to a
-	// finalized round. In the real code path `finish_round` does that; here
-	// we short-circuit by inserting a stub round row and pointing the
-	// participation at it via raw SQL, so the test stays scoped to the query
-	// under test instead of dragging in a full round finalization.
+	// `set_forfeit_transactions` has two preconditions that `finish_round`
+	// would normally have established:
+	//   1. the participation is attached to a finalized round
+	//      (join filters on `round_part.round_id IS NOT NULL`);
+	//   2. each input vtxo is in `spend_state='spent'` with `spent_in_round`
+	//      set (state guard on the vtxo-side UPDATE, matching
+	//      `do_round_forfeit_updates` in tree.rs).
+	// We reproduce just that state with raw SQL: insert a stub round,
+	// point the participation at its funding txid, flip the input vtxos
+	// to spent. The test stays scoped to the query under test instead
+	// of dragging in a full round finalization.
 	// Note: `round_participation.round_id` is a TEXT column holding the
 	// funding txid, not the numeric `round.id`.
 	let funding_txid = dummy_tx(42).compute_txid();
+	let vtxo_id_strs: Vec<String> = input_vtxo_ids.iter().map(|id| id.to_string()).collect();
 	db.write(async |t| {
-		t.execute(
+		let row = t.query_one(
 			"INSERT INTO round (seq, funding_txid, funding_tx, signed_tree, expiry, created_at)
-			VALUES (0, $1, '\\x00', '\\x00', 1000, NOW())",
+			VALUES (0, $1, '\\x00', '\\x00', 1000, NOW())
+			RETURNING id",
 			&[&funding_txid.to_string()],
 		).await.unwrap();
+		let round_pk: i64 = row.get("id");
 		t.execute(
 			"UPDATE round_participation SET round_id = $1 WHERE unlock_hash = $2",
 			&[&funding_txid.to_string(), &unlock_hash.to_string()],
+		).await.unwrap();
+		t.execute(
+			"UPDATE vtxo SET spend_state = 'spent', spent_in_round = $1, updated_at = NOW()
+			 WHERE vtxo_id = ANY($2::text[])",
+			&[&round_pk, &vtxo_id_strs],
 		).await.unwrap();
 		Ok(())
 	}).await.unwrap();
@@ -1248,6 +1261,95 @@ async fn set_forfeit_transactions_is_idempotent() {
 		.expect("repeat call with same args should succeed");
 
 	assert_all_forfeited().await;
+
+	// Third call: retry with *different* forfeit txs for the same vtxos. The
+	// vtxo-side guard's `oor_spent_txid IS NULL OR = u.txid` predicate must
+	// reject the conflict instead of silently overwriting. The db.write
+	// transaction rolls back on the error, so the original forfeit txids
+	// must remain in place.
+	let conflicting_txs = [dummy_tx(200), dummy_tx(201), dummy_tx(202)];
+	let conflicting_txids = conflicting_txs.iter().map(|t| t.compute_txid()).collect::<Vec<_>>();
+	let err = db.write(async |t| {
+		t.set_forfeit_transactions(unlock_hash, &input_vtxo_ids, &conflicting_txs, &conflicting_txids).await
+	}).await.unwrap_err();
+	let err_chain = format!("{:#}", err);
+	assert!(
+		err_chain.contains("vtxo not round-spent or already forfeited differently"),
+		"expected state-guard diagnostic, got: {}", err_chain,
+	);
+
+	assert_all_forfeited().await;
+}
+
+/// `set_forfeit_transactions` must reject vtxos that have not been
+/// transitioned to `spend_state = 'spent'` with `spent_in_round` set.
+///
+/// In the real flow `finish_round` runs `do_round_spend_updates` before any
+/// participant submits a forfeit, so the state guard inside
+/// `set_forfeit_transactions` is always satisfied. This test exercises the
+/// negative path: we wire up a participation with a round_id but leave the
+/// input vtxos in their default `spendable` state, then expect the call to
+/// fail with the diagnostic that names the offending vtxo.
+#[tokio::test]
+async fn set_forfeit_transactions_rejects_non_round_spent_vtxo() {
+	let mut ctx = TestContext::new_minimal("postgresd/set_forfeit_transactions_rejects").await;
+	ctx.init_central_postgres().await;
+	let postgres_cfg = ctx.new_postgres(&ctx.test_name).await;
+
+	Db::create(&postgres_cfg).await.expect("Database created");
+	let db = Db::connect(&postgres_cfg).await.expect("Connected to database");
+
+	let vtxo = ServerVtxo::from(VTXO_VECTORS.board_vtxo.clone());
+	db.write(async |t| t.upsert_vtxos(&[vtxo.clone()]).await).await.unwrap();
+
+	let unlock_preimage: UnlockPreimage = [9u8; 32];
+	let unlock_hash = UnlockHash::hash(&unlock_preimage);
+
+	let output = StoredRoundOutput {
+		vtxo_request: VtxoRequest {
+			policy: VtxoPolicy::new_pubkey(VTXO_VECTORS.board_vtxo.user_pubkey()),
+			amount: bitcoin::Amount::from_sat(1000),
+		},
+		unblinded_mailbox_id: None,
+	};
+	db.write(async |t| t.try_store_round_participation(0, unlock_preimage, &[vtxo.id()], std::iter::once(&output)).await).await.unwrap();
+
+	// Attach the participation to a round, but deliberately skip the
+	// `vtxo.spend_state = 'spent'` / `spent_in_round` transition that
+	// `finish_round` would normally have done.
+	let funding_txid = dummy_tx(43).compute_txid();
+	db.write(async |t| {
+		t.execute(
+			"INSERT INTO round (seq, funding_txid, funding_tx, signed_tree, expiry, created_at)
+			VALUES (0, $1, '\\x00', '\\x00', 1000, NOW())",
+			&[&funding_txid.to_string()],
+		).await.unwrap();
+		t.execute(
+			"UPDATE round_participation SET round_id = $1 WHERE unlock_hash = $2",
+			&[&funding_txid.to_string(), &unlock_hash.to_string()],
+		).await.unwrap();
+		Ok(())
+	}).await.unwrap();
+
+	let forfeit_tx = dummy_tx(200);
+	let forfeit_txid = forfeit_tx.compute_txid();
+
+	let err = db.write(async |t| {
+		t.set_forfeit_transactions(unlock_hash, &[vtxo.id()], &[forfeit_tx], &[forfeit_txid]).await
+	}).await.unwrap_err();
+	let err_chain = format!("{:#}", err);
+	assert!(
+		err_chain.contains("vtxo not round-spent or already forfeited differently"),
+		"expected state-guard diagnostic, got: {}", err_chain,
+	);
+	assert!(
+		err_chain.contains(&vtxo.id().to_string()),
+		"diagnostic should name the offending vtxo, got: {}", err_chain,
+	);
+
+	// The vtxo row must be untouched by the failed call.
+	let state = db.read(async |t| t.get_user_vtxo_by_id(vtxo.id()).await).await.expect("vtxo exists");
+	assert!(state.oor_spent_txid.is_none(), "failed call must not write oor_spent_txid");
 }
 
 #[tokio::test]
