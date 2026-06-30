@@ -29,10 +29,16 @@ check:
 	cargo version
 	cargo check --all --tests --examples
 
+check-wasm-tests:
+	ARK_CONTROL_URL="" ARK_ESPLORA_URL="" ARK_SERVER_URL="" \
+		cargo check -p wasm-testing --tests \
+		--no-default-features --features wasm \
+		--target wasm32-unknown-unknown
+
 check-lib-arithmetic:
 	cargo clippy -p ark-lib --tests
 
-checks: prechecks check check-lib-arithmetic
+checks: prechecks check-lib-arithmetic check-wasm-tests check
 
 check-commits:
 	bash contrib/check-commits.sh
