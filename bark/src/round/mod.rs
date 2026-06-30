@@ -1304,7 +1304,7 @@ async fn update_funding_txid(
 
 /// In-memory store for MuSig2 secret cosign nonces used during round
 /// signing. Entries are keyed by the first cosign pubkey of each round
-/// attempt — that pubkey is freshly generated in [`start_attempt`],
+/// attempt — that pubkey is freshly generated in `start_attempt`,
 /// uniquely identifies the attempt within a process, and is reachable
 /// from the persisted `AttemptState::AwaitingUnsignedVtxoTree`.
 ///

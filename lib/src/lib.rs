@@ -83,7 +83,7 @@ pub struct ArkInfo {
 	/// Deprecated in favour of the dedicated `GetOffboardFeeRate` RPC.
 	/// This field is still populated for backwards compatibility with
 	/// older clients but may be stale; prefer
-	/// [`ServerConnection::offboard_feerate`] which calls the dedicated
+	/// `ServerConnection::offboard_feerate` which calls the dedicated
 	/// endpoint.
 	#[deprecated(since = "0.1.5", note = "use ServerConnection::offboard_feerate instead")]
 	pub offboard_feerate: FeeRate,

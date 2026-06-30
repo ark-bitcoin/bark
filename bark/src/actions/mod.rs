@@ -274,7 +274,7 @@ impl Wallet {
 	///
 	/// Cheap when nothing is held (no-op). Used as the cleanup hook by
 	/// the executor on `Advance::Done` and by manual cancellation via
-	/// [`Self::cancel_wallet_action`].
+	/// [`Self::stop_wallet_action`].
 	pub async fn release_action_locks(&self, action_id: &WalletActionId) -> anyhow::Result<()> {
 		let vtxos = self.get_vtxos_locked_by_action(action_id).await?;
 		if vtxos.is_empty() {

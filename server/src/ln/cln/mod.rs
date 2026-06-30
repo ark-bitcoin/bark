@@ -1,5 +1,5 @@
 //! CLN-specific node types: `ClnNodeInfo`, `ClnNodeOnlineState`, and the
-//! cloneable [`NodeHandle`] returned by the manager's node getters.
+//! cloneable `NodeHandle` returned by the manager's node getters.
 //!
 //! Each configured CLN node is tracked as a `ClnNodeInfo` with a state machine:
 //! `Offline ↔ Online ↔ Error`, where `Invalid` and `Disabled` are terminal states.

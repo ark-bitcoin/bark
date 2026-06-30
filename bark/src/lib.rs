@@ -815,36 +815,6 @@ struct WalletInner {
 /// 	}).await.unwrap();
 /// }
 /// ```
-
-
-///
-/// // There are two main ways to update the wallet, the primary is to use one of the maintenance
-/// // commands which will sync everything, refresh VTXOs and reconcile pending lightning payments.
-/// wallet.maintenance().await?;
-/// wallet.maintenance_with_onchain(&mut onchain_wallet).await?;
-///
-/// // Alternatively, you can use the fine-grained sync commands to sync individual parts of the
-/// // wallet state and use `maintenance_refresh` where necessary to refresh VTXOs.
-/// wallet.sync().await?;
-/// wallet.sync_pending_lightning_send_vtxos().await?;
-/// wallet.register_all_confirmed_boards(&mut onchain_wallet).await?;
-/// wallet.sync_exits().await?;
-/// wallet.maintenance_refresh().await?;
-///
-/// // Generate a new Ark address to receive funds via arkoor
-/// let addr = wallet.new_address().await?;
-///
-/// // Query balance and VTXOs
-/// let balance = wallet.balance()?;
-/// let vtxos = wallet.vtxos()?;
-///
-/// // Progress any unilateral exits, make sure to sync first
-/// wallet.exit_mgr().sync_no_progress().await?;
-/// wallet.exit_mgr().progress_exits_with_bdk(&wallet, &mut onchain_wallet, None).await?;
-///
-/// # Ok(())
-/// # }
-/// ```
 #[derive(Clone)]
 pub struct Wallet {
 	inner: Arc<WalletInner>,
@@ -1398,7 +1368,7 @@ impl Wallet {
 	/// [Wallet::get_vtxo_by_id] returns the bare form ([WalletVtxo] holds
 	/// [Vtxo<ark::vtxo::Bare>]). This method reads the genesis chain from the
 	/// database and reassembles the full VTXO. Use it from external SDK
-	/// callers that need the chain (e.g. to feed into [ArkoorPackageBuilder]
+	/// callers that need the chain (e.g. to feed into [ArkoorPackageBuilder](ark::arkoor::ArkoorPackageBuilder)
 	/// or [Wallet::register_vtxo_transactions_with_server]).
 	pub async fn get_full_vtxo(&self, vtxo_id: VtxoId) -> anyhow::Result<Vtxo<Full>> {
 		self.inner.db.get_full_vtxo(vtxo_id).await
@@ -1728,9 +1698,9 @@ impl Wallet {
 	/// ([Config::vtxo_refresh_expiry_threshold]) or those which
 	/// are uneconomical to exit due to onchain network conditions.
 	///
-	/// Waits for a round to start, joins it via [Wallet::join_round_for_maintenance_refresh]
-	/// (which drops any inputs the server rejects as unusable and retries within
-	/// the same attempt), then drives that round to completion.
+	/// Waits for a round to start, joins it, dropping any inputs the server rejects
+	/// as unusable and retries within the same attempt, then drives that round to
+	/// completion.
 	///
 	/// Returns a [RoundStatus] if a refresh occurs.
 	pub async fn maintenance_refresh(&self) -> anyhow::Result<Option<RoundStatus>> {

@@ -348,7 +348,7 @@ impl Bark {
 		self.try_parse_payment_request(payment_str).await.unwrap()
 	}
 
-	/// Estimate fees for all payment options in a [`PaymentRequest`].
+	/// Estimate fees for all payment options in a [`PaymentRequest`](bark::payment_request::PaymentRequest).
 	///
 	/// You can get a payment request from [`Self::parse_payment_request`].
 	pub async fn estimate_payment_fees(

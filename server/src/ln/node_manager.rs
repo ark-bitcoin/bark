@@ -14,7 +14,7 @@
 //! [`LightningManager`] is the public handle held by the rest of the server.
 //! `LightningManagerProcess` runs as a tokio task and is a pure supervisor:
 //! it reconnects offline nodes, watches monitor liveness, and republishes a
-//! snapshot of [`NodeHandle`]s for the currently-online nodes into a shared
+//! snapshot of `NodeHandle`s for the currently-online nodes into a shared
 //! `parking_lot::RwLock` whenever node state changes.
 //!
 //! Data-path operations (pay, generate/settle/cancel invoice, fetch bolt12)

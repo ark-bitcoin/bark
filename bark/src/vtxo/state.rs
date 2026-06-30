@@ -35,7 +35,7 @@ use crate::movement::MovementId;
 /// What kind of entity holds a [VtxoState::Locked] reservation.
 ///
 /// The wallet's invariant is "every vtxo lock is owned by exactly one
-/// operation." For subsystems modelled as a [WalletAction] (today: the
+/// operation." For subsystems modelled as a [crate::actions::WalletAction] (today: the
 /// lightning send), that's an `Action(id)`. For subsystems that still
 /// run pre-action machinery (round, offboard, board, lightning receive)
 /// the holder is the operation's movement, captured as
@@ -45,7 +45,7 @@ use crate::movement::MovementId;
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "kebab-case")]
 pub enum VtxoLockHolder {
-	/// A [WalletAction] checkpointed in `bark_wallet_action_checkpoint`.
+	/// A [crate::actions::WalletAction] checkpointed in `bark_wallet_action_checkpoint`.
 	Action { id: WalletActionId },
 	/// A pre-action subsystem (round, offboard, board, lightning
 	/// receive). The movement is used as a stable handle.
@@ -167,7 +167,7 @@ impl VtxoState {
 /// genesis-derived summaries that the wallet would otherwise have to load the full
 /// exit chain for.
 ///
-/// The wallet stores [Vtxo<Full>] on disk but listings, balance computations, coin
+/// The wallet stores `Vtxo<Full>` on disk but listings, balance computations, coin
 /// selection, and refresh-strategy checks all run against this bare representation
 /// to avoid the per-VTXO memory cost (tens of KB at high exit depths). When an
 /// operation actually needs the exit chain — unilateral exit, server registration,

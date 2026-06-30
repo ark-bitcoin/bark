@@ -14,8 +14,8 @@ impl Exit {
 	/// terminal state.
 	///
 	/// It calls [Exit::progress_exits], creates CPFP transactions via `onchain` for any
-	/// exits in [ExitTxStatus::AwaitingCpfpBroadcast], then calls [Exit::progress_exits]
-	/// again so those exits advance to [ExitTxStatus::AwaitingConfirmation].
+	/// exits in [crate::exit::ExitTxStatus::AwaitingCpfpBroadcast], then calls [Exit::progress_exits]
+	/// again so those exits advance to [crate::exit::ExitTxStatus::AwaitingConfirmation].
 	///
 	/// Callers with external or hardware wallets should use [Exit::exits_needing_cpfp]
 	/// and [Exit::provide_cpfp_tx] directly instead.

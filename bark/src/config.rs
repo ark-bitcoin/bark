@@ -253,7 +253,7 @@ impl Config {
 			.try_deserialize::<Config>().context("error parsing config")?)
 	}
 
-	/// Creates a [chain::ChainSource] instance to communicate with a chain
+	/// Creates a [crate::chain::ChainSource] instance to communicate with a chain
 	/// backend from this [Config].
 	pub fn chain_source(&self) -> anyhow::Result<ChainSourceSpec> {
 		if let Some(ref url) = self.esplora_address {

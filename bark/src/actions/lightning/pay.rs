@@ -7,7 +7,7 @@
 //! the fields the phase actually has.
 //!
 //! Transition functions take `&LightningSend` and return the new phase
-//! output. The [`WalletAction`](crate::actions::WalletAction) impl
+//! output. The [`WalletAction`] impl
 //! pattern-matches on progress and dispatches; persistence is the
 //! executor's job.
 
@@ -71,7 +71,7 @@ pub struct LightningSend {
 	pub htlc_expiry: BlockHeight,
 
 	/// Movement recording this payment, created up front in
-	/// [`start_lightning_send`] so re-driving `Start` reuses it rather than
+	/// `start_lightning_send` so re-driving `Start` reuses it rather than
 	/// creating a duplicate. `None` for checkpoints predating this field.
 	#[serde(default)]
 	pub movement_id: Option<MovementId>,

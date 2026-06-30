@@ -2,7 +2,7 @@
 //!
 //! This module provides two main capabilities:
 //!
-//! - **Parsing**: [`Wallet::parse_payment_details`] accepts any payment string
+//! - **Parsing**: [`Wallet::parse_payment_request`] accepts any payment string
 //!   the wallet understands (BIP 321 URIs, BOLT11 invoices, BOLT12 offers,
 //!   lightning addresses, output scripts, bitcoin addresses, ark addresses)
 //!   and returns structured [`PaymentRequest`] with per-method validation
