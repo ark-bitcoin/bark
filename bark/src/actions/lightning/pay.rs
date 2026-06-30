@@ -465,7 +465,7 @@ pub(crate) async fn request_lightning_send_htlcs(
 	};
 	wallet.store_locked_vtxos(
 		&htlc_vtxos,
-		Some(VtxoLockHolder::Movement { id: movement_id })
+		Some(VtxoLockHolder::Action { id: send.id() })
 	).await?;
 	wallet.mark_vtxos_as_spent(&send.input_vtxo_ids).await?;
 	wallet.store_spendable_vtxos(&change_vtxos).await?;
