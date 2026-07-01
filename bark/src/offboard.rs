@@ -175,10 +175,14 @@ impl Wallet {
 		vtxo_keys: &[Keypair],
 		req: &OffboardRequest,
 	) -> anyhow::Result<Transaction> {
+		let input_ids = vtxos.iter().map(|v| v.as_ref().id()).collect::<Vec<_>>();
+		if input_ids.len() > srv.ark_info().await.max_offboard_inputs {
+			bail!("too many offboard input VTXOs");
+		}
+
 		// Register VTXO transaction chains with server before offboarding
 		self.register_vtxo_transactions_with_server(&vtxos).await?;
 
-		let input_ids = vtxos.iter().map(|v| v.as_ref().id()).collect::<Vec<_>>();
 		let prep_resp = srv.client.prepare_offboard(protos::PrepareOffboardRequest {
 			offboard: Some(req.into()),
 			input_vtxo_ids: input_ids.iter()

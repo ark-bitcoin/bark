@@ -113,7 +113,9 @@ message ArkInfo {
 	FeeSchedule fees = 18;
 	uint32 max_vtxo_exit_depth = 19;
 
-	// last index: 19
+	uint32 max_offboard_inputs = 20;
+
+	// last index: 20
 }
 
 message OffboardFeeRateResponse {

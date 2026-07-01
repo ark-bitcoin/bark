@@ -88,6 +88,9 @@ pub struct ArkInfo {
 	#[deprecated(since = "0.1.5", note = "use ServerConnection::offboard_feerate instead")]
 	pub offboard_feerate: FeeRate,
 
+	/// The maximum number of inputs for an offboard
+	pub max_offboard_inputs: usize,
+
 	/// Indicates whether the Ark server requires clients to either
 	/// provide a VTXO ownership proof, or a lightning receive token
 	/// when preparing a lightning claim.
@@ -234,7 +237,7 @@ pub mod scripts {
 		for (input, sig) in tx.input.iter_mut().zip(sigs.iter()) {
 			assert!(input.witness.is_empty());
 			input.witness.push(&sig[..]);
-			debug_assert_eq!(TAPROOT_KEYSPEND_WEIGHT, input.witness.size());
+			debug_assert_eq!(TAPROOT_KEYSPEND_WEIGHT.to_wu(), input.witness.size() as u64);
 		}
 	}
 

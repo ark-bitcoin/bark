@@ -23,7 +23,7 @@ mod mbitcoin;
 
 use std::{fmt, str::FromStr};
 
-use bitcoin::{Amount, BlockHash};
+use bitcoin::{Amount, BlockHash, Weight};
 
 use serde_crate::ser::SerializeStruct;
 
@@ -57,7 +57,10 @@ pub const P2WSH_DUST_SAT: u64 = P2WSH_DUST_VB * 3;
 pub const P2WSH_DUST: Amount = Amount::from_sat(P2WSH_DUST_SAT);
 
 /// Witness weight of a taproot keyspend.
-pub const TAPROOT_KEYSPEND_WEIGHT: usize = 66;
+pub const TAPROOT_KEYSPEND_WEIGHT: Weight = Weight::from_wu(66);
+
+/// The maximum standard tx weight
+pub const MAX_TX_WEIGHT: Weight = Weight::from_wu(400_000);
 
 /// Type representing a block height in the bitcoin blockchain.
 pub type BlockHeight = u32;
