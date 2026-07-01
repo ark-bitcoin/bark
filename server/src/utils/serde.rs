@@ -211,6 +211,26 @@ pub mod duration {
 		}
 		d.deserialize_str(Visitor)
 	}
+
+	pub mod opt {
+		use super::*;
+
+		pub fn serialize<S: Serializer>(v: &Option<Duration>, s: S) -> Result<S::Ok, S::Error> {
+			match v {
+				Some(d) => super::serialize(d, s),
+				None => s.serialize_none(),
+			}
+		}
+
+		pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Option<Duration>, D::Error> {
+			match Option::<String>::deserialize(d)? {
+				Some(s) => humantime::parse_duration(&s)
+					.map(Some)
+					.map_err(serde::de::Error::custom),
+				None => Ok(None),
+			}
+		}
+	}
 }
 
 pub mod fee_rate {

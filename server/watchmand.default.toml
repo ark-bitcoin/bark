@@ -26,6 +26,19 @@ min_trusted_confs = 1
 # The name of your deployment used by OpenTelemetry
 otel_deployment_name = "my_regtest"
 
+###############
+# BLOCKLIST   #
+###############
+
+# Optional path to a file containing one bitcoin address per line.
+# See captaind.default.toml for more details.
+#bitcoin_address_blocklist = "/etc/watchmand/blocklist.txt"
+
+# How often the blocklist file is re-read from disk (default: 1h).
+# Only relevant if bitcoin_address_blocklist is set.
+#bitcoin_address_blocklist_refresh_interval = "1h"
+
+
 #############
 # watchman #
 ############

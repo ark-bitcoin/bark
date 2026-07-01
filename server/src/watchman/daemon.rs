@@ -228,7 +228,11 @@ impl Daemon {
 		let sync_height_watcher = sync_manager.sync_height_watcher();
 
 		if let Some(ref list) = bitcoin_address_blocklist {
-			list.start_auto_update_thread(rtmgr.clone(), Duration::from_secs(60*60));
+			list.start_auto_update_thread(
+			rtmgr.clone(),
+			cfg.bitcoin_address_blocklist_refresh_interval
+				.unwrap_or(crate::bitcoin_blocklist::DEFAULT_REFRESH_INTERVAL),
+		);
 		}
 
 		let watchman = Watchman::new(

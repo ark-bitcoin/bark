@@ -448,6 +448,7 @@ impl TestContext {
 				},
 			},
 			bitcoin_address_blocklist: None,
+			bitcoin_address_blocklist_refresh_interval: None,
 		}
 	}
 
@@ -500,6 +501,7 @@ impl TestContext {
 			htlc_settlement_poll_interval: Duration::from_secs(5),
 			admin_address: None,
 			bitcoin_address_blocklist: None,
+			bitcoin_address_blocklist_refresh_interval: None,
 		}
 	}
 

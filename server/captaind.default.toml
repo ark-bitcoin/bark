@@ -184,6 +184,20 @@ ln_max_fee_ppm = 900000
 #hold_invoice.client_key_path = "/etc/cln/chold/lient.key"
 
 
+###############
+# BLOCKLIST   #
+###############
+
+# Optional path to a file containing one bitcoin address per line.
+# Addresses in this file are blocked from being used for boards, offboards, or
+# sending money to our internal wallets.
+#bitcoin_address_blocklist = "/etc/captaind/blocklist.txt"
+
+# How often the blocklist file is re-read from disk (default: 1h).
+# Only relevant if bitcoin_address_blocklist is set.
+#bitcoin_address_blocklist_refresh_interval = "1h"
+
+
 #############
 # LIGHTNING #
 #############

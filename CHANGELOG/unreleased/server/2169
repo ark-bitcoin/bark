@@ -1,0 +1,4 @@
+- add config variable `bitcoin_address_blocklist_refresh_interval`
+  - specifies the interval at which the blocklist file is refreshed
+  - defaults to 1 hour
+  [#2169](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2169)
