@@ -31,6 +31,7 @@ use crate::WalletProperties;
 use crate::actions::{WalletActionCheckpoint, WalletActionId};
 use crate::exit::ExitTxOrigin;
 use crate::movement::{Movement, MovementId, MovementStatus, MovementSubsystem, PaymentMethod};
+use crate::movement::update::MovementUpdate;
 use crate::persist::{BarkPersister, RoundStateId, StoredRoundState, Unlocked};
 use crate::persist::models::{
 	PaidInvoice, PendingOffboard, SettledLightningReceive,
@@ -122,12 +123,37 @@ impl BarkPersister for SqliteClient {
 		status: MovementStatus,
 		subsystem: &MovementSubsystem,
 		time: DateTime<chrono::Local>,
+		action_id: Option<&str>,
 	) -> anyhow::Result<MovementId> {
 		let mut conn = self.connect()?;
 		let tx = conn.transaction()?;
-		let movement_id = query::create_new_movement(&tx, status, subsystem, time)?;
+		let movement_id = query::create_new_movement(&tx, status, subsystem, time, action_id)?;
 		tx.commit()?;
 		Ok(movement_id)
+	}
+
+	async fn get_or_create_movement_for_action(
+		&self,
+		subsystem: &MovementSubsystem,
+		time: DateTime<chrono::Local>,
+		action_id: &str,
+		update: MovementUpdate,
+	) -> anyhow::Result<(MovementId, bool)> {
+		let mut conn = self.connect()?;
+		let tx = conn.transaction()?;
+		let result = match query::get_movement_id_by_action(&tx, action_id)? {
+			Some(id) => (id, false),
+			None => {
+				let id = query::create_new_movement(
+					&tx, MovementStatus::Pending, subsystem, time, Some(action_id))?;
+				let mut movement = query::get_movement_by_id(&tx, id)?;
+				update.apply_to(&mut movement, time);
+				query::update_movement(&tx, &movement)?;
+				(id, true)
+			},
+		};
+		tx.commit()?;
+		Ok(result)
 	}
 
 	async fn update_movement(&self, movement: &Movement) -> anyhow::Result<()> {

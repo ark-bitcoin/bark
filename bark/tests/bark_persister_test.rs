@@ -28,6 +28,7 @@ use bark::movement::{
 	Movement, MovementDestination, MovementId, MovementStatus, MovementSubsystem,
 	MovementTimestamp, PaymentMethod,
 };
+use bark::movement::update::MovementUpdate;
 use bark::persist::BarkPersister;
 use bark::persist::models::{
 	PaidInvoice, StoredExit, StoredRoundState, Unlocked,
@@ -311,8 +312,19 @@ impl BarkPersister for Dummy {
 		_status: MovementStatus,
 		_subsystem: &MovementSubsystem,
 		_time: DateTime<Local>,
+		_action_id: Option<&str>,
 	) -> anyhow::Result<MovementId> {
 		Ok(MovementId::new(0))
+	}
+
+	async fn get_or_create_movement_for_action(
+		&self,
+		_subsystem: &MovementSubsystem,
+		_time: DateTime<Local>,
+		_action_id: &str,
+		_update: MovementUpdate,
+	) -> anyhow::Result<(MovementId, bool)> {
+		Ok((MovementId::new(0), true))
 	}
 
 	async fn update_movement(&self, _movement: &Movement) -> anyhow::Result<()> {

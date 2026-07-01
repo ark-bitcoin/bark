@@ -49,6 +49,7 @@ use crate::persist::models::{
 	StoredExit, StoredRoundState, Unlocked, PendingOffboard,
 };
 use crate::movement::{Movement, MovementId, MovementStatus, MovementSubsystem, PaymentMethod};
+use crate::movement::update::MovementUpdate;
 use crate::round::RoundState;
 use crate::vtxo::{VtxoState, VtxoStateKind, WalletVtxo};
 
@@ -185,7 +186,27 @@ pub trait BarkPersister: Send + Sync + 'static {
 		status: MovementStatus,
 		subsystem: &MovementSubsystem,
 		time: DateTime<chrono::Local>,
+		action_id: Option<&str>,
 	) -> anyhow::Result<MovementId>;
+
+	/// Atomically look up the movement owned by `action_id`, or create it and
+	/// apply `update` as its initial state, in a single transaction.
+	///
+	/// A movement created this way is indexed by `action_id`, so a re-driven
+	/// action step (crash recovery, an early wake, the reentrancy double-drive)
+	/// reuses its existing, already-initialized movement. Doing the lookup,
+	/// insert and initial update atomically means a re-drive never observes a
+	/// half-written movement and never inserts a duplicate.
+	///
+	/// Returns the movement id and whether it was newly created, so the caller
+	/// can dispatch the `created` notification exactly once.
+	async fn get_or_create_movement_for_action(
+		&self,
+		subsystem: &MovementSubsystem,
+		time: DateTime<chrono::Local>,
+		action_id: &str,
+		update: MovementUpdate,
+	) -> anyhow::Result<(MovementId, bool)>;
 
 	/// Persists the given movement state.
 	///
