@@ -11,14 +11,18 @@ Method | HTTP request | Description
 
 ## list
 
-> Vec<models::Movement> list()
+> Vec<models::Movement> list(r#type, value)
 Get wallet history
 
-Returns the full history of wallet movements ordered from newest to oldest. A movement represents any wallet operation that affects VTXOs—an arkoor send or receive, Lightning send or receive, board, offboard, or refresh. Each entry records which VTXOs were consumed and produced, the effective balance change (if any), fees paid, and the operation status.
+Returns the history of wallet movements ordered from newest to oldest. A movement represents any wallet operation that affects VTXOs—an arkoor send or receive, Lightning send or receive, board, offboard, or refresh. Each entry records which VTXOs were consumed and produced, the effective balance change (if any), fees paid, and the operation status. Supplying the `type` and `value` query parameters (together) restricts the result to movements involving that single payment method, such as all payments sent to one address.
 
 ### Parameters
 
-This endpoint does not need any parameter.
+
+Name | Type | Description  | Required | Notes
+------------- | ------------- | ------------- | ------------- | -------------
+**r#type** | Option<**String**> | Payment method type tag to filter by, e.g. `ark`, `bitcoin`, `output-script`, `invoice`, `offer`, `lightning-address`, `lnurl` or `custom`. Must be supplied together with `value`. |  |
+**value** | Option<**String**> | Payment method value to filter by, e.g. the destination address or invoice. Must be supplied together with `type`. |  |
 
 ### Return type
 

@@ -19,6 +19,7 @@ use super::{Error, configuration, ContentType};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum ListError {
+    Status400(models::BadRequestError),
     Status500(models::InternalServerError),
     UnknownValue(serde_json::Value),
 }
@@ -32,12 +33,21 @@ pub enum UpdateMetadataError {
 }
 
 
-/// Returns the full history of wallet movements ordered from newest to oldest. A movement represents any wallet operation that affects VTXOs—an arkoor send or receive, Lightning send or receive, board, offboard, or refresh. Each entry records which VTXOs were consumed and produced, the effective balance change (if any), fees paid, and the operation status.
-pub async fn list(configuration: &configuration::Configuration, ) -> Result<Vec<models::Movement>, Error<ListError>> {
+/// Returns the history of wallet movements ordered from newest to oldest. A movement represents any wallet operation that affects VTXOs—an arkoor send or receive, Lightning send or receive, board, offboard, or refresh. Each entry records which VTXOs were consumed and produced, the effective balance change (if any), fees paid, and the operation status. Supplying the `type` and `value` query parameters (together) restricts the result to movements involving that single payment method, such as all payments sent to one address.
+pub async fn list(configuration: &configuration::Configuration, r#type: Option<&str>, value: Option<&str>) -> Result<Vec<models::Movement>, Error<ListError>> {
+    // add a prefix to parameters to efficiently prevent name collisions
+    let p_query_type = r#type;
+    let p_query_value = value;
 
     let uri_str = format!("{}/api/v1/history", configuration.base_path);
     let mut req_builder = configuration.client.request(reqwest::Method::GET, &uri_str);
 
+    if let Some(ref param_value) = p_query_type {
+        req_builder = req_builder.query(&[("type", &param_value.to_string())]);
+    }
+    if let Some(ref param_value) = p_query_value {
+        req_builder = req_builder.query(&[("value", &param_value.to_string())]);
+    }
     if let Some(ref user_agent) = configuration.user_agent {
         req_builder = req_builder.header(reqwest::header::USER_AGENT, user_agent.clone());
     }

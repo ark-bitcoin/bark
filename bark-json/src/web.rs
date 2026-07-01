@@ -15,6 +15,24 @@ use utoipa::ToSchema;
 use crate::cli::RoundStatus;
 
 
+/// Query parameters for filtering wallet history by payment method.
+///
+/// Both fields are optional but must be supplied together: omit both to get the
+/// full history, or provide both to filter by a single payment method. The pair
+/// mirrors the serialized form of a payment method (its `type` tag and `value`).
+#[derive(Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "utoipa", derive(ToSchema))]
+pub struct HistoryQuery {
+	/// The payment method type tag to filter by, e.g. `ark`, `bitcoin`,
+	/// `output-script`, `invoice`, `offer`, `lightning-address`, `lnurl` or
+	/// `custom`. Must be provided together with `value`.
+	#[serde(rename = "type")]
+	pub method_type: Option<String>,
+	/// The payment method value to filter by, e.g. the destination address or
+	/// invoice. Must be provided together with `type`.
+	pub value: Option<String>,
+}
+
 /// Query parameters for fee estimates that only require an amount.
 #[derive(Serialize, Deserialize)]
 #[cfg_attr(feature = "utoipa", derive(ToSchema))]

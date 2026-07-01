@@ -199,7 +199,7 @@ async fn maintenance_refresh_skips_rejected_vtxo_barkd() {
 	// The recovery is recorded as two distinct refresh movements — a failed
 	// attempt that included the rejected input, and a successful one that
 	// dropped it — rather than a single movement mutated in place.
-	let refreshes = barkd.history().await.into_iter()
+	let refreshes = barkd.history(None, None).await.into_iter()
 		.filter(|m| m.subsystem.name == "bark.round" && m.subsystem.kind == "refresh")
 		.collect::<Vec<_>>();
 
