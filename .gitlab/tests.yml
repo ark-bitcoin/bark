@@ -435,6 +435,7 @@ bark-sdk-action-reentrancy:
     - export WATCHMAND_EXEC=${CI_PROJECT_DIR}/target/ci/watchmand
     - bash ./contrib/ci-run-test.sh test-integration-bark-sdk-prebuilt
 
+# REMINDER: update `tar-and-print-test-data` job when adding/removing compat jobs
 compat-bark-0.3.0:
   interruptible: true
   stage: test
@@ -470,6 +471,7 @@ compat-bark-0.3.0:
       --cache-dir "${CI_PROJECT_DIR}/.bark-release-cache")
     - bash ./contrib/ci-run-test.sh test-integration-bark-prebuilt
 
+# REMINDER: update `tar-and-print-test-data` job when adding/removing compat jobs
 compat-bark-0.2.4:
   interruptible: true
   stage: test
@@ -505,6 +507,7 @@ compat-bark-0.2.4:
       --cache-dir "${CI_PROJECT_DIR}/.bark-release-cache")
     - bash ./contrib/ci-run-test.sh test-integration-bark-prebuilt
 
+# REMINDER: update `tar-and-print-test-data` job when adding/removing compat jobs
 compat-bark-0.2.5:
   interruptible: true
   stage: test
@@ -561,9 +564,11 @@ tar-and-print-test-data:
       optional: true
     - job: bark-sdk-action-reentrancy
       optional: true
-    - job: compat-bark-0.1.4
+    - job: compat-bark-0.2.4
       optional: true
-    - job: compat-bark-0.2.0
+    - job: compat-bark-0.2.5
+      optional: true
+    - job: compat-bark-0.3.0
       optional: true
   script:
     - |
