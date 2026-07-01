@@ -10,6 +10,8 @@
 //!   and explicit include/exclude lists.
 //! - [RefreshStrategy]: Selects VTXOs that must or should be refreshed preemptively based on
 //!   depth, expiry proximity, and economic viability.
+//! - [inputs::InputSelection]: Parameters controlling which VTXOs may be selected as inputs to fund
+//!   a payment, such as an input limit and explicit exclusions.
 //!
 //! Usage examples
 //!
@@ -56,6 +58,10 @@
 //! - [Wallet::inround_vtxos_with]
 //!
 //! The intent is to allow users to filter VTXOs based on different parameters.
+
+mod inputs;
+
+pub use inputs::{FeeScheme, InputSelection, SelectedFeeInfos};
 
 use std::borrow::Borrow;
 use std::collections::HashSet;
