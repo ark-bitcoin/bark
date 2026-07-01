@@ -461,8 +461,12 @@ pub(crate) async fn prepare_lightning_receive_htlcs(
 		Some(VtxoLockHolder::Action { id: recv.id() }),
 	).await?;
 
+	// Sort for a deterministic checkpoint (the server may return them in any order).
+	let mut vtxo_ids = vtxos.iter().map(|v| v.id()).collect::<Vec<_>>();
+	vtxo_ids.sort();
+
 	Ok(Htlcs {
-		vtxo_ids: vtxos.iter().map(|v| v.id()).collect(),
+		vtxo_ids,
 		movement_id,
 	})
 }

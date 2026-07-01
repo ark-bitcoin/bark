@@ -477,8 +477,12 @@ pub(crate) async fn request_lightning_send_htlcs(
 			.metadata(LightningMovement::metadata(send.invoice.payment_hash(), &htlc_vtxos, None))
 	).await.context("failed to update lightning-send movement")?;
 
+	// Sort for a deterministic checkpoint across re-drives.
+	let mut vtxo_ids = htlc_vtxos.iter().map(|v| v.id()).collect::<Vec<_>>();
+	vtxo_ids.sort();
+
 	Ok(Htlcs {
-		vtxo_ids: htlc_vtxos.iter().map(|v| v.id()).collect(),
+		vtxo_ids,
 		mailbox_id: wallet.mailbox_identifier(),
 		movement_id,
 	})
