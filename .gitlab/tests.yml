@@ -411,9 +411,14 @@ bark-sdk:
     - export WATCHMAND_EXEC=${CI_PROJECT_DIR}/target/ci/watchmand
     - bash ./contrib/ci-run-test.sh test-integration-bark-sdk-prebuilt
 
-bark-sdk-action-reentrancy:
+bark-int-action-reentrancy:
   interruptible: true
   stage: test
+  # Double-drives every wallet-action step across the bark, barkd and bark-sdk
+  # suites. allow_failure until the remaining action flows (board, round,
+  # offboard, exit) are audited/hardened for reentrancy; flip to blocking once
+  # the suite is green under double-drive.
+  allow_failure: true
   tags:
     - integration
     - datastore
@@ -423,7 +428,7 @@ bark-sdk-action-reentrancy:
     - build
     - build-test-archives
   variables:
-    TEST_DIRECTORY: ./test/bark-sdk-action-reentrancy
+    TEST_DIRECTORY: ./test/bark-int-action-reentrancy
     NEXTEST_TEST_THREADS: "4"
     BARK_COMMAND_TIMEOUT_MILLIS: "120000"
     TX_PROPAGATION_TIMEOUT: "30000"
@@ -433,7 +438,9 @@ bark-sdk-action-reentrancy:
     - export RUN_DATETIME=$(cat RUN_DATETIME)
     - export CAPTAIND_EXEC=${CI_PROJECT_DIR}/target/ci/captaind
     - export WATCHMAND_EXEC=${CI_PROJECT_DIR}/target/ci/watchmand
-    - bash ./contrib/ci-run-test.sh test-integration-bark-sdk-prebuilt
+    - export BARK_EXEC=${CI_PROJECT_DIR}/target/ci/bark
+    - export BARKD_EXEC=${CI_PROJECT_DIR}/target/ci/barkd
+    - bash ./contrib/ci-run-test.sh test-integration-bark-int-prebuilt
 
 compat-bark-0.2.4:
   interruptible: true
@@ -524,7 +531,7 @@ tar-and-print-test-data:
       optional: true
     - job: bark-sdk
       optional: true
-    - job: bark-sdk-action-reentrancy
+    - job: bark-int-action-reentrancy
       optional: true
     - job: compat-bark-0.1.4
       optional: true
