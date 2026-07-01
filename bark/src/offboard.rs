@@ -22,7 +22,7 @@ use crate::movement::{MovementDestination, MovementStatus};
 use crate::persist::models::PendingOffboard;
 use crate::subsystem::{OffboardMovement, Subsystem};
 use crate::vtxo::{VtxoState, VtxoStateKind};
-
+use crate::vtxo::selection::InputSelection;
 
 impl Wallet {
 	/// Checks pending offboard transactions for confirmation status.
@@ -250,12 +250,16 @@ impl Wallet {
 
 		let (mut srv, ark) = self.require_server().await?;
 		let offboard_feerate = srv.offboard_feerate().await?;
+		let tip = self.inner.chain.tip().await?;
 
 		let destination_spk = destination.script_pubkey();
-		let (vtxos, fee) = self.select_vtxos_to_cover_with_fee(amount, |a, v| {
-			ark.fees.offboard.calculate(&destination_spk, a, offboard_feerate, v)
-				.ok_or_else(|| anyhow!("failed to calculate offboard fee for {}", a))
-		}).await?;
+		let (vtxos, fee) = InputSelection::new()
+			.max_inputs(srv.ark_info().await.max_offboard_inputs)
+			.fee_scheme(tip, |a, v| {
+				ark.fees.offboard.calculate(&destination_spk, a, offboard_feerate, v)
+					.ok_or_else(|| anyhow!("failed to calculate offboard fee for {}", a))
+			})
+			.select(self.spendable_vtxos().await?, amount)?;
 		let required_amount = amount + fee;
 
 		info!("We can only offboard whole VTXOs, so we will make an arkoor tx first...");

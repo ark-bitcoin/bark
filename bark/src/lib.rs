@@ -382,6 +382,7 @@ use crate::round::{RoundParticipation, RoundSecretNonces, RoundStatus};
 use crate::subsystem::RoundMovement;
 use crate::utils::rejected_vtxos_from_error;
 use crate::vtxo::{FilterVtxos, RefreshStrategy, VtxoFilter, VtxoStateKind};
+use crate::vtxo::selection::{InputSelection, SelectedFeeInfos};
 
 #[cfg(all(feature = "wasm-web", feature = "socks5-proxy"))]
 compile_error!("features `wasm-web` does not support feature `socks5-proxy");
@@ -2139,100 +2140,30 @@ impl Wallet {
 		Ok(first_expiry.map(|h| h.saturating_sub(self.inner.config.vtxo_refresh_expiry_threshold)))
 	}
 
-	/// Select several VTXOs to cover the provided amount
-	///
-	/// VTXOs are selected soonest-expiring-first.
-	///
-	/// Returns an error if amount cannot be reached.
-	async fn select_vtxos_to_cover(
+	/// Select any spendable VTXOs to cover the provided amount.
+	async fn select_any_vtxos_to_cover(
 		&self,
 		amount: Amount,
 	) -> anyhow::Result<Vec<WalletVtxo>> {
-		let mut vtxos = self.spendable_vtxos().await?;
-		self.sort_vtxos_for_selection(&mut vtxos);
-
-		let (last, _total_amount) = self.select_vtxos_inner(amount, &vtxos)?;
-		vtxos.truncate(last+1);
-		Ok(vtxos)
+		InputSelection::new().select(self.spendable_vtxos().await?, amount)
 	}
 
 	/// Determines which VTXOs to use for a fee-paying transaction where the fee is added on top of
 	/// the desired amount. E.g., a lightning payment, a send-onchain payment.
 	///
-	/// Returns a collection of VTXOs capable of covering the desired amount as well as the
-	/// calculated fee.
-	async fn select_vtxos_to_cover_with_fee<F>(
+	/// See [InputSelection::fee_scheme].
+	async fn select_any_vtxos_to_cover_with_fee<F>(
 		&self,
 		amount: Amount,
 		calc_fee: F,
 	) -> anyhow::Result<(Vec<WalletVtxo>, Amount)>
 	where
-		F: for<'a> Fn(
-			Amount, std::iter::Copied<std::slice::Iter<'a, VtxoFeeInfo>>,
-		) -> anyhow::Result<Amount>,
+		F: for<'a> Fn(Amount, SelectedFeeInfos<'a>) -> anyhow::Result<Amount>,
 	{
 		let tip = self.inner.chain.tip().await?;
-		let mut vtxos = self.spendable_vtxos().await?;
-		self.sort_vtxos_for_selection(&mut vtxos);
-
-		let fee_info = vtxos.iter()
-			.map(|v| VtxoFeeInfo::from_vtxo_and_tip(v, tip))
-			.collect::<Vec<_>>();
-
-		// We need to loop to find suitable inputs due to the VTXOs having a direct impact on
-		// how much we must pay in fees.
-		const MAX_ITERATIONS: usize = 100;
-		let mut fee = Amount::ZERO;
-		for _ in 0..MAX_ITERATIONS {
-			let required = amount.checked_add(fee)
-				.context("Amount + fee overflow")?;
-
-			let (last, vtxo_amount) = self.select_vtxos_inner(required, &vtxos)
-				.context("Could not find enough suitable VTXOs to cover payment + fees")?;
-			fee = calc_fee(amount, fee_info[..=last].iter().copied())?;
-
-			if amount + fee <= vtxo_amount {
-				trace!("Selected vtxos to cover amount + fee: amount = {}, fee = {}, total inputs = {}",
-					amount, fee, vtxo_amount,
-				);
-				vtxos.truncate(last+1);
-				return Ok((vtxos, fee));
-			}
-			trace!("VTXO sum of {} did not exceed amount {} and fee {}, iterating again",
-				vtxo_amount, amount, fee,
-			);
-		}
-		bail!("Fee calculation did not converge after maximum iterations")
-	}
-
-	/// Sorts the given `vtxos` in place ready for selection to cover funds.
-	fn sort_vtxos_for_selection(&self, vtxos: &mut Vec<WalletVtxo>) {
-		vtxos.sort_by_key(|v| v.expiry_height());
-	}
-
-	/// Iterates through the given `Vec` until either the given `amount` can be covered for a
-	/// payment or until the `Vec` is exhausted, at which point an error will be returned.
-	///
-	/// Returns the index of the last VTXO included in the selection, as well as the total amount of
-	/// the selected VTXOs.
-	fn select_vtxos_inner(
-		&self,
-		amount: Amount,
-		vtxos: &Vec<WalletVtxo>,
-	) -> anyhow::Result<(usize, Amount)> {
-		// Iterate over VTXOs until the required amount is reached
-		let mut total_amount = Amount::ZERO;
-		for (i, vtxo) in vtxos.iter().enumerate() {
-			total_amount += vtxo.amount();
-
-			if total_amount >= amount {
-				return Ok((i, total_amount))
-			}
-		}
-
-		bail!("Insufficient money available. Needed {} but {} is available",
-			amount, total_amount,
-		);
+		InputSelection::new()
+			.fee_scheme(tip, calc_fee)
+			.select(self.spendable_vtxos().await?, amount)
 	}
 
 	/// Starts a daemon for the wallet.
