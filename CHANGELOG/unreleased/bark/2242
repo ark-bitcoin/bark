@@ -1,0 +1,4 @@
+- Let the BIP 321 URI builder run from an async server
+  Adds `BarkExtension::ark` and makes `BarkBip321Uri` public.
+  [#2242](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2242)
+  - **BREAKING:** `BarkBip321UriBuilder::onchain_wallet` now requires `Send`.

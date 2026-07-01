@@ -1,0 +1,5 @@
+- Add `POST /wallet/bip321` to build a unified payment URI
+  Bundles an Ark address plus, on request, a BOLT11 invoice (when an amount is
+  given) and a fresh on-chain address into one `bitcoin:` URI. The `uppercase`
+  query param returns it upper-cased for compact QR encoding.
+  [#2242](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2242)

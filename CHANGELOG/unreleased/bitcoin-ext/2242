@@ -1,0 +1,4 @@
+- Add `AddressExt::is_uppercasable`
+  Reports whether an address uses case-insensitive bech32(m) and can be safely
+  upper-cased; base58 and unknown witness versions are treated as not.
+  [#2242](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2242)
