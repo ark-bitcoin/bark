@@ -11,29 +11,32 @@ use ark_testing::daemon::captaind::{self, ArkClient, Captaind};
 
 /// A captaind proxy that rejects any round submission — interactive
 /// (`submit_payment`) or delegated (`submit_round_participation`) — whose inputs
-/// include the armed `bad` vtxo, mimicking the real server: `InvalidArgument`
-/// carrying the offending id in the `identifiers` metadata. The id is shared and
-/// set *after* boarding (boards flow through while it's `None`), so we can board
-/// through the proxy and only then poison one input.
+/// include one of the armed `bad` vtxos, mimicking the real server:
+/// `InvalidArgument` carrying every offending id in the `identifiers` metadata.
+/// The list is shared and set *after* boarding (boards flow through while it's
+/// empty), so we can board through the proxy and only then poison inputs.
 #[derive(Clone)]
 struct RejectVtxoProxy {
-	bad: Arc<Mutex<Option<VtxoId>>>,
+	bad: Arc<Mutex<Vec<VtxoId>>>,
 }
 
 impl RejectVtxoProxy {
-	/// The rejection the real server returns for an unusable input.
-	fn rejection(bad: VtxoId) -> tonic::Status {
+	/// The rejection the real server returns, naming every unusable input in the
+	/// `identifiers` metadata (comma-separated).
+	fn rejection(bad: &[VtxoId]) -> tonic::Status {
+		let ids = bad.iter().map(|b| b.to_string()).collect::<Vec<_>>().join(",");
 		let mut status = tonic::Status::invalid_argument(
-			format!("input vtxo(s) not spendable: [{}]", bad),
+			format!("input vtxo(s) not spendable: [{}]", ids),
 		);
-		status.metadata_mut().insert("identifiers", bad.to_string().parse().unwrap());
+		status.metadata_mut().insert("identifiers", ids.parse().unwrap());
 		status
 	}
 
-	/// The armed bad vtxo if it appears in `inputs`, else `None`.
-	fn rejected(&self, inputs: &[protos::InputVtxo]) -> Option<VtxoId> {
-		let bad = (*self.bad.lock().unwrap())?;
-		inputs.iter().any(|i| i.vtxo_id == bad.to_bytes().to_vec()).then_some(bad)
+	/// The armed bad vtxos that appear in `inputs`.
+	fn rejected(&self, inputs: &[protos::InputVtxo]) -> Vec<VtxoId> {
+		self.bad.lock().unwrap().iter().copied()
+			.filter(|bad| inputs.iter().any(|i| i.vtxo_id == bad.to_bytes().to_vec()))
+			.collect()
 	}
 }
 
@@ -42,8 +45,9 @@ impl captaind::proxy::ArkRpcProxy for RejectVtxoProxy {
 	async fn submit_payment(
 		&self, upstream: &mut ArkClient, req: protos::SubmitPaymentRequest,
 	) -> Result<protos::SubmitPaymentResponse, tonic::Status> {
-		if let Some(bad) = self.rejected(&req.input_vtxos) {
-			return Err(Self::rejection(bad));
+		let bad = self.rejected(&req.input_vtxos);
+		if !bad.is_empty() {
+			return Err(Self::rejection(&bad));
 		}
 		Ok(upstream.submit_payment(req).await?.into_inner())
 	}
@@ -51,8 +55,9 @@ impl captaind::proxy::ArkRpcProxy for RejectVtxoProxy {
 	async fn submit_round_participation(
 		&self, upstream: &mut ArkClient, req: protos::RoundParticipationRequest,
 	) -> Result<protos::RoundParticipationResponse, tonic::Status> {
-		if let Some(bad) = self.rejected(&req.input_vtxos) {
-			return Err(Self::rejection(bad));
+		let bad = self.rejected(&req.input_vtxos);
+		if !bad.is_empty() {
+			return Err(Self::rejection(&bad));
 		}
 		Ok(upstream.submit_round_participation(req).await?.into_inner())
 	}
@@ -70,7 +75,7 @@ async fn setup_bark_sdk_with_rejected_vtxo(
 	ctx: &TestContext,
 	srv: &Captaind,
 ) -> (bark::Wallet, captaind::proxy::ArkRpcProxyServer, VtxoId, VtxoId) {
-	let bad = Arc::new(Mutex::new(None::<VtxoId>));
+	let bad = Arc::new(Mutex::new(Vec::<VtxoId>::new()));
 	let proxy = srv.start_proxy_no_mailbox(RejectVtxoProxy { bad: bad.clone() }).await;
 
 	let wallet = ctx.bark_sdk("bark", &proxy)
@@ -84,7 +89,7 @@ async fn setup_bark_sdk_with_rejected_vtxo(
 	let bad_id = vtxos.iter().min_by_key(|v| v.amount()).unwrap().id();
 	let good_id = vtxos.iter().max_by_key(|v| v.amount()).unwrap().id();
 
-	*bad.lock().unwrap() = Some(bad_id);
+	*bad.lock().unwrap() = vec![bad_id];
 	(wallet, proxy, bad_id, good_id)
 }
 
@@ -192,6 +197,41 @@ async fn manual_maintenance_refresh_drops_server_rejected_vtxo() {
 		untouched; final vtxos: {final_ids:?}");
 
 	assert_dropped_and_retried_movements(&wallet, bad_id, good_id).await;
+}
+
+/// When *every* VTXO due for refresh is rejected by the server as unusable, the
+/// delegated maintenance retry loop drops them all and is left with an empty
+/// batch. It must surface that as an error rather than silently reporting
+/// success (`Ok(None)`), so an operator whose wallet only holds unspendable
+/// inputs finds out instead of seeing maintenance quietly no-op forever.
+#[tokio::test]
+async fn maintenance_refresh_delegated_errors_when_all_inputs_unspendable() {
+	let ctx = TestContext::new("bark_sdk/maintenance_refresh_delegated_errors_when_all_inputs_unspendable").await;
+	let srv = ctx.captaind("server").funded(btc(1)).create().await;
+
+	let bad = Arc::new(Mutex::new(Vec::<VtxoId>::new()));
+	let proxy = srv.start_proxy_no_mailbox(RejectVtxoProxy { bad: bad.clone() }).await;
+
+	let wallet = ctx.bark_sdk("bark", &proxy)
+		.cfg(|c| c.daemon_manual_sync = true)
+		.boarded(sat(300_000))
+		.boarded(sat(400_000))
+		.create().await;
+
+	let vtxos = wallet.spendable_vtxos().await.expect("list vtxos");
+	assert_eq!(vtxos.len(), 2, "expected two boarded vtxos");
+
+	// Age both vtxos so they are due for refresh, then poison the whole batch.
+	ctx.generate_blocks(srv.config().vtxo_lifetime as u32).await;
+	*bad.lock().unwrap() = vtxos.iter().map(|v| v.id()).collect();
+
+	// The batch is submitted, every input is rejected and excluded, and the loop
+	// then finds nothing left to refresh — which must be an error, not `Ok(None)`.
+	let res = wallet.maybe_schedule_maintenance_refresh_delegated().await;
+	assert!(
+		res.is_err(),
+		"delegated maintenance must error when every input is rejected as unusable; got {res:?}",
+	);
 }
 
 /// A delegated maintenance refresh batch that includes a VTXO the server rejects
