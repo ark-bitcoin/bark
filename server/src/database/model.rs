@@ -168,7 +168,7 @@ impl<G, P: Policy> VtxoState<G, P> {
 		Ok(())
 	}
 
-	/// Like [check_spendable] but tolerates a vtxo that was already
+	/// Like [Self::check_spendable] but tolerates a vtxo that was already
 	/// OOR-spent by the same `oor_txid` (idempotent cosign retry).
 	pub fn check_spendable_for_oor(&self, chain_tip: BlockHeight, oor_txid: Txid) -> anyhow::Result<()> {
 		let idempotent = self.spend_state == SpendState::Spent

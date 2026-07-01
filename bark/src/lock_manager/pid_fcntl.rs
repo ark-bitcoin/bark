@@ -4,7 +4,7 @@
 //! Same shape as [`super::pid_flock::FlockPidLockManager`] — one
 //! OS-level lock on `<datadir>/LOCK` held for the manager's lifetime,
 //! all per-key locking delegated to an internal
-//! [`MemoryLockManager`](super::memory::MemoryLockManager). The only
+//! [`MemoryLockManager`]. The only
 //! difference is the OS primitive: this variant uses POSIX
 //! `fcntl(F_SETLK)` instead of `flock(2)`.
 //!

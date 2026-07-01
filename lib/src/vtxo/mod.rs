@@ -587,7 +587,7 @@ impl<P: Policy> Vtxo<Bare, P> {
 	/// Field-by-field copy mirroring the inverse of [Vtxo::into_bare]. The
 	/// VTXO's `point` is a deterministic checksum of the genesis chain, so a
 	/// caller passing a mismatched `genesis` would simply produce an invalid
-	/// VTXO; use [Vtxo::with_genesis_checked] when paranoia is warranted.
+	/// VTXO.
 	///
 	/// A [VtxoValidationError::MissingGenesisItems] will be returned if the provided `genesis`
 	/// contains no genesis transitions and the [Vtxo::point] and [Vtxo::chain_anchor] are not
@@ -743,9 +743,9 @@ impl<P: Policy> Vtxo<Full, P> {
 	/// Encode just the genesis chain.
 	///
 	/// The wire format is the same as the genesis section embedded inside a
-	/// full VTXO encoding at [VTXO_ENCODING_VERSION], so callers that already
-	/// store a [Vtxo<Bare>] alongside this blob can reassemble the full VTXO
-	/// via [Vtxo::<Bare>::decode_genesis] and [Vtxo::with_genesis].
+	/// full VTXO encoding at `VTXO_ENCODING_VERSION`, so callers that already
+	/// store a `Vtxo<Bare>` alongside this blob can reassemble the full VTXO
+	/// via [Vtxo::deserialize_with_genesis].
 	pub fn encode_genesis<W: io::Write + ?Sized>(
 		&self,
 		w: &mut W,

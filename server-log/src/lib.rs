@@ -150,7 +150,7 @@ impl tracing_core::field::Visit for SlogFlattenVisitor {
 /// This mirrors `tracing_subscriber::fmt().json()` (via the `json_subscriber`
 /// crate) but flattens the event fields to the top level ourselves so we can
 /// turn our structured logs' `slog_data_json` string field into a real,
-/// queryable `slog_data` JSON object (see [`SlogFlattenVisitor`]).
+/// queryable `slog_data` JSON object (see `SlogFlattenVisitor`).
 pub fn slog_json_layer<S, W>(make_writer: W) -> json_subscriber::fmt::Layer<S, W>
 where
 	S: tracing_core::Subscriber + for<'lookup> tracing_subscriber::registry::LookupSpan<'lookup>,

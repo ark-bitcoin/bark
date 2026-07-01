@@ -18,7 +18,7 @@ use crate::subsystem::{BoardMovement, Subsystem};
 use crate::vtxo::{VtxoState, VtxoStateKind};
 
 impl Wallet {
-	/// Board a `Vtxo` with the given amount.
+	/// Board a [ark::Vtxo] with the given amount.
 	///
 	/// NB we will spend a little more onchain to cover fees.
 	pub async fn board_amount(
@@ -30,7 +30,7 @@ impl Wallet {
 		self.board(onchain, Some(amount), user_keypair).await
 	}
 
-	/// Board a `Vtxo` with all the funds in your onchain wallet.
+	/// Board a [ark::Vtxo] with all the funds in your onchain wallet.
 	pub async fn board_all(
 		&self,
 		onchain: &mut dyn onchain::Board,
@@ -202,7 +202,7 @@ impl Wallet {
 		Ok((addr, expiry_height))
 	}
 
-	/// Board a [Vtxo] using a signed funding PSBT.
+	/// Board a [ark::Vtxo] using a signed funding PSBT.
 	///
 	/// The PSBT must be signed and send funds to the address returned by
 	/// [Wallet::board_funding_address] at output index [BOARD_FUNDING_TX_VTXO_VOUT].

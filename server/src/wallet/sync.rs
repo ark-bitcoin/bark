@@ -13,7 +13,7 @@ use crate::wallet::PersistedWallet;
 
 /// Implementation of [ChainEventListener] for wallets wrapped in [InstrumentedLock].
 ///
-/// This allows wallets to receive block events from the [SyncManager] and stay
+/// This allows wallets to receive block events from the [crate::sync::SyncManager] and stay
 /// in sync with the blockchain without needing to poll bitcoind independently.
 ///
 /// The implementation:

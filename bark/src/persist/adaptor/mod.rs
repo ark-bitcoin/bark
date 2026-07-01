@@ -103,7 +103,7 @@ pub mod partition {
 	pub const PENDING_OFFBOARD: u8 = 12;
 	/// An index table for payment method to movement
 	pub const MOVEMENT_PAYMENT_METHOD: u8 = 13;
-	/// Per-action checkpoint payloads keyed by [WalletActionId].
+	/// Per-action checkpoint payloads keyed by [crate::actions::WalletActionId].
 	pub const WALLET_ACTION_CHECKPOINT: u8 = 14;
 	/// Permanent record of every settled outgoing lightning payment,
 	/// keyed by payment hash.

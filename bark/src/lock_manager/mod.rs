@@ -28,7 +28,7 @@
 //! | [`MemoryLockManager`](memory::MemoryLockManager)         |   ✓   |   ✓   |  ✓  |    ✓    |    ✓    |      ✓       |
 //! | [`FlockPidLockManager`](pid_flock::FlockPidLockManager)  |   ✓   |   ✓   |     |    ✓    |    ✓    |              |
 //! | [`FcntlPidLockManager`](pid_fcntl::FcntlPidLockManager)  |   ✓   |   ✓   |  ✓  |    ✓    |         |              |
-//! | [`WebLockManager`](web_locks::WebLockManager)            |       |       |     |         |         |      ✓       |
+//! | `WebLockManager`                                         |       |       |     |         |         |      ✓       |
 //!
 //! # Safety scope
 //!
@@ -63,7 +63,7 @@
 //!   datadir may live on networked storage. One OS-level lock on
 //!   `<datadir>/LOCK` guarantees single-process exclusivity; per-key
 //!   locking is in-memory.
-//! - **Web (wasm32)** — only [`WebLockManager`](web_locks::WebLockManager)
+//! - **Web (wasm32)** — only `WebLockManager`
 //!   (which delegates to `navigator.locks`) is available. Prevents
 //!   concurrent access across same-origin tabs in the same browser;
 //!   gives no guarantees across different browsers or incognito
@@ -142,7 +142,7 @@ pub trait LockGuard: Send + Sync + std::fmt::Debug {}
 #[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
 pub trait LockManager: Send + Sync + std::fmt::Debug {
 	/// Try to acquire the named lock without waiting. Returns `None` if
-	/// it is already held, the key is rejected by [`validate_key`], or
+	/// it is already held, the key is rejected by `validate_key`, or
 	/// the backend cannot acquire the lock for any other reason.
 	async fn try_lock(&self, key: &str) -> Option<Box<dyn LockGuard>>;
 

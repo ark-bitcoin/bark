@@ -302,7 +302,7 @@ impl ExitInner {
 	}
 }
 
-/// Public handle to the exit subsystem. Wraps [ExitInner] in an [Arc<RwLock>] so all
+/// Public handle to the exit subsystem. Wraps `ExitInner` in an `Arc<RwLock>` so all
 /// locking is internal — callers never need to acquire the lock directly.
 pub struct Exit {
 	inner: Arc<tokio::sync::RwLock<ExitInner>>,

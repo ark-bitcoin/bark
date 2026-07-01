@@ -277,7 +277,7 @@ pub trait WalletExt: BorrowMut<Wallet> {
 	/// Mark the keys used in the outputs of this tx as unused
 	///
 	/// Used to replaced removed `cancel_tx` function as per suggestion:
-	/// https://github.com/bitcoindevkit/bdk_wallet/pull/393
+	/// <https://github.com/bitcoindevkit/bdk_wallet/pull/393>
 	fn mark_output_keys_unused(&mut self, tx: &Transaction) {
 		let wallet = self.borrow_mut();
 		for txout in &tx.output {
