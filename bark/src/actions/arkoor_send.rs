@@ -308,9 +308,11 @@ async fn run_cosign(wallet: &Wallet, send: &ArkoorSend) -> Result<Progress, Adva
 		.intended_and_effective_balance(neg_amount)
 		.consumed_vtxos(&arkoor.inputs)
 		.sent_to([MovementDestination::ark(send.destination.clone(), send.amount)]);
-	let movement_id = wallet.inner.movements.new_movement_with_update(
+
+	let movement_id = wallet.inner.movements.get_or_create_movement_with_action(
 		Subsystem::ARKOOR,
 		ArkoorMovement::Send.to_string(),
+		&send.id,
 		initial_update,
 	).await.context("failed to create arkoor movement")?;
 
