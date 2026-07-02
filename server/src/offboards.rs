@@ -73,7 +73,12 @@ impl Server {
 		tokio::spawn(async move {
 			let _worker = self.rtmgr.spawn("OffboardRetry");
 
-			let mut interval = tokio::time::interval(Duration::from_secs(30));
+			// Sweep at least as often as sessions can expire so that a short
+			// offboard_session_timeout keeps its resolution, but at most once
+			// a second.
+			let period = self.config.offboard_session_timeout
+				.clamp(Duration::from_secs(1), Duration::from_secs(30));
+			let mut interval = tokio::time::interval(period);
 			interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 			loop {
 				tokio::select! {
