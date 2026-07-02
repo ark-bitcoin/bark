@@ -1629,7 +1629,7 @@ impl Wallet {
 			Ok(Some(self.join_attempt_interactive(
 				part, attempt, Some(RoundMovement::Refresh),
 			).await?.id()))
-		}).await
+		}).await.context("failed to join round for maintenance refresh")
 	}
 
 	/// Checks VTXOs that are due to be refreshed, and schedules a delegated refresh if any
@@ -1645,7 +1645,7 @@ impl Wallet {
 		self.maintenance_refresh_retry_loop(|part| async move {
 			info!("Scheduling delegated maintenance refresh ({} vtxos)", part.inputs.len());
 			Ok(Some(self.join_next_round_delegated(part, Some(RoundMovement::Refresh)).await?.id()))
-		}).await
+		}).await.context("failed to schedule delegated maintenance refresh")
 	}
 
 	/// The retry loop shared by the interactive and delegated maintenance refreshes.
@@ -1666,8 +1666,18 @@ impl Wallet {
 		let mut excluded = HashSet::new();
 		for _ in 0..10 {
 			let vtxos = self.get_vtxos_to_refresh_with_excluded(excluded.iter().copied()).await?;
-			if vtxos.is_empty() {
-				return Ok(None);
+			match (vtxos.is_empty(), excluded.is_empty()) {
+				// Every VTXO due for refresh has been excluded as unusable by the server:
+				// there is nothing left to submit, so surface an error rather than
+				// silently reporting success.
+				(true, false) => {
+					warn!("no VTXOs to refresh after exclusions: {:?}", excluded);
+					bail!("no VTXOs to refresh after excluding: {:?}", excluded);
+				},
+				// Nothing was due for refresh in the first place.
+				(true, true) => return Ok(None),
+				// Still have VTXOs to submit (possibly after dropping some exclusions).
+				(false, _) => {},
 			}
 			let part = match self.build_refresh_participation(vtxos).await? {
 				Some(participation) => participation,

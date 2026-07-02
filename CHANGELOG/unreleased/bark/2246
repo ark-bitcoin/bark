@@ -1,0 +1,6 @@
+- Error when a maintenance refresh has no usable inputs
+  If every VTXO due for a maintenance refresh is rejected by the server as
+  unusable, the refresh now returns (and logs) an error instead of silently
+  reporting success, so a wallet holding only unspendable inputs surfaces the
+  problem rather than quietly no-op'ing forever.
+  [#2246](https://gitlab.com/ark-bitcoin/bark/-/merge_requests/2246)
