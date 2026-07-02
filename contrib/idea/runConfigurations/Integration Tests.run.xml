@@ -8,7 +8,6 @@
       <env name="BARKD_EXEC" value="../target/debug/barkd" />
       <env name="CAPTAIND_EXEC" value="../target/debug/captaind" />
       <env name="WATCHMAND_EXEC" value="../target/debug/watchmand" />
-      <env name="RUST_MIN_STACK" value="33554432" />
     </envs>
     <option name="emulateTerminal" value="true" />
     <option name="channel" value="DEFAULT" />

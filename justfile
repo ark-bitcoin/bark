@@ -97,7 +97,6 @@ test-unit-codecov TEST="":
 		--exclude ark-testing --no-report {{TEST}}
 
 test-integration TEST="": ensure-build-bins docker-pull
-	RUST_MIN_STACK=33554432 \
 	cargo nextest run --no-fail-fast --profile {{NEXTEST_PROFILE}} --package ark-testing \
 		-E 'not binary(tor)' {{TEST}}
 alias int := test-integration
@@ -108,12 +107,9 @@ test-integration-bark: ensure-build-bins docker-pull
 		--test bark --test barkd
 alias int-bark := test-integration-bark
 
-# RUST_MIN_STACK is bumped so a reentrancy failure surfaces as the assertion,
-# not a stack overflow (deep `advance` futures overflow the default stack in
-# local unoptimized builds).
 [doc("run the bark-sdk integration tests double-driving every action step to check reentrancy")]
 test-integration-bark-sdk-action-reentrancy TEST="": ensure-build-bins docker-pull
-	BARK_DOUBLE_DRIVE_ACTIONS=1 RUST_MIN_STACK=33554432 \
+	BARK_DOUBLE_DRIVE_ACTIONS=1 \
 		cargo nextest run --no-fail-fast --profile {{NEXTEST_PROFILE}} \
 		--package ark-testing --test bark-sdk {{TEST}}
 alias int-bark-sdk-action-reentrancy := test-integration-bark-sdk-action-reentrancy
@@ -121,8 +117,7 @@ alias int-bark-sdk-action-reentrancy := test-integration-bark-sdk-action-reentra
 # Must not run under backward-compat mode (BARK_EXEC override has no effect
 # on tests linked against the current bark-wallet crate).
 test-integration-bark-sdk: ensure-build-bins docker-pull
-	RUST_MIN_STACK=33554432 \
-		cargo nextest run --no-fail-fast --profile {{NEXTEST_PROFILE}} --package ark-testing \
+	cargo nextest run --no-fail-fast --profile {{NEXTEST_PROFILE}} --package ark-testing \
 		--test bark-sdk
 alias int-bark-sdk := test-integration-bark-sdk
 
@@ -139,7 +134,6 @@ test-integration-core: ensure-build-bins docker-pull
 alias int-core := test-integration-core
 
 test-integration-prebuilt TEST="": docker-pull
-	RUST_MIN_STACK=33554432 \
 	cargo nextest run --archive-file {{CARGO_TARGET}}/ci/integration-tests.tar.zst {{TEST}}
 
 test-integration-bark-prebuilt: docker-pull
@@ -147,7 +141,6 @@ test-integration-bark-prebuilt: docker-pull
 		-E 'binary(bark) + binary(barkd)'
 
 test-integration-bark-sdk-prebuilt: docker-pull
-	RUST_MIN_STACK=33554432 \
 	cargo nextest run --archive-file {{CARGO_TARGET}}/ci/integration-tests.tar.zst \
 		-E 'binary(=bark-sdk)'
 

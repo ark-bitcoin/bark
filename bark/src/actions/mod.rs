@@ -368,8 +368,6 @@ impl Wallet {
 	{
 		#[cfg(debug_assertions)]
 		if double_drive_actions() {
-			// Two deep `advance` runs back to back can overflow the default
-			// thread stack in debug; the runner bumps `RUST_MIN_STACK`.
 			let snapshot = action.clone();
 			let first = action.advance(self).await;
 			let second = snapshot.advance(self).await;
