@@ -469,7 +469,7 @@ async fn bark_can_receive_lightning(
 
 	tokio::join!(
 		pay(invoice_info.invoice.clone()),
-		bark.lightning_receive(&invoice_info.invoice).wait_millis(10_000),
+		bark.lightning_receive(&invoice_info.invoice).wait_millis(30_000),
 	);
 
 	let vtxos = bark.vtxos().await;
@@ -578,7 +578,7 @@ async fn bark_can_receive_lightning_when_pool_spend_creates_subdust_output(
 
 	tokio::join!(
 		pay(invoice_info.invoice.clone()),
-		bark.lightning_receive(&invoice_info.invoice).wait_millis(10_000),
+		bark.lightning_receive(&invoice_info.invoice).wait_millis(30_000),
 	);
 
 	// The receive must settle. Before the fix the claim errors out server-side
@@ -676,7 +676,7 @@ async fn bark_can_pay_ark_invoice(
 	let inv = invoice_info.invoice.clone();
 	tokio::join!(
 		pay(invoice_info.invoice.clone()),
-		cloned.lightning_receive(&inv).wait_millis(10_000),
+		cloned.lightning_receive(&inv).wait_millis(30_000),
 	);
 
 	let vtxos = bark.vtxos().await;
@@ -723,7 +723,7 @@ async fn bark_can_revoke_on_intra_ark_timeout_invoice_pay_failure() {
 	let cloned = bark_1.clone();
 	let cloned_invoice_info = invoice_info.clone();
 	tokio::spawn(async move {
-		cloned.lightning_receive(&cloned_invoice_info.invoice).wait_millis(10_000).await;
+		cloned.lightning_receive(&cloned_invoice_info.invoice).wait_millis(30_000).await;
 	});
 
 	bark_2.pay_lightning_wait(invoice_info.invoice, None).await;
@@ -1104,7 +1104,7 @@ async fn bark_sends_on_lightning_after_receiving_from_lightning(
 	let cloned_invoice_info = invoice_recv_info.clone();
 	tokio::join!(
 		pay(cloned_invoice_info.invoice),
-		bark.lightning_receive(&invoice_recv_info.invoice).wait_millis(10_000),
+		bark.lightning_receive(&invoice_recv_info.invoice).wait_millis(30_000),
 	);
 
 	assert_eq!(bark.spendable_balance().await, pay_amount);
@@ -1729,7 +1729,7 @@ async fn bark_can_receive_lightning_long_route() {
 
 	srv.wait_for_vtxopool(&ctx).await;
 
-	bark.lightning_receive(&invoice_info.invoice).wait_millis(10_000).await;
+	bark.lightning_receive(&invoice_info.invoice).wait_millis(30_000).await;
 	bolt11_pay.ready().await.unwrap();
 
 	assert_eq!(bark.spendable_balance().await, btc(8) + bolt11_amount);

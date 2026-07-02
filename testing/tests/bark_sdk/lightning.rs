@@ -75,8 +75,8 @@ async fn pay_hold_succeeds() {
 		payment_preimage: preimage.as_ref().to_vec(),
 	}).await.expect("settle hold invoice");
 
-	// The check_payment call returns promptly
-	let status = waiter.ready().await.expect("join waiter");
+	// ready()'s 2s bound is too tight under BARK_DOUBLE_DRIVE_ACTIONS: steps run twice and the send re-polls every 2s.
+	let status = waiter.wait_millis(10_000).await.expect("join waiter");
 	match &status {
 		Ok(LightningSendState::Paid(invoice)) => {
 			assert_eq!(invoice.payment_hash, payment_hash);
@@ -169,8 +169,8 @@ async fn pay_hold_with_near_expiry_inputs_succeeds() {
 		payment_preimage: preimage.as_ref().to_vec(),
 	}).await.expect("settle hold invoice");
 
-	// The check_payment call returns promptly
-	let status = waiter.ready().await.expect("join waiter");
+	// ready()'s 2s bound is too tight under BARK_DOUBLE_DRIVE_ACTIONS: steps run twice and the send re-polls every 2s.
+	let status = waiter.wait_millis(10_000).await.expect("join waiter");
 	match &status {
 		Ok(LightningSendState::Paid(invoice)) => {
 			assert_eq!(invoice.payment_hash, payment_hash);
@@ -256,10 +256,9 @@ async fn pay_hold_refused() {
 		payment_hash: payment_hash.as_ref().to_vec(),
 	}).await.expect("cancel hold invoice");
 
-	// The check_payment call returns promptly. On failure the
-	// LightningSend record is removed once revocation completes, so the
-	// state is Unknown.
-	let status = waiter.ready().await.expect("join waiter")
+	// On failure the LightningSend record is removed once revocation completes, so the state is
+	// Unknown. ready()'s 2s bound is too tight under BARK_DOUBLE_DRIVE_ACTIONS: steps run twice and the send re-polls every 2s.
+	let status = waiter.wait_millis(10_000).await.expect("join waiter")
 		.expect("waiting check errored");
 	assert_eq!(status, LightningSendState::Unknown);
 

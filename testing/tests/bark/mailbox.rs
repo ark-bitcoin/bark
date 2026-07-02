@@ -395,7 +395,7 @@ async fn recovery_mailbox_lightning_receive() {
 	srv.wait_for_vtxopool(&ctx).await;
 
 	// Claim the lightning receive
-	bark.lightning_receive(&invoice_info.invoice).wait_millis(10_000).await;
+	bark.lightning_receive(&invoice_info.invoice).wait_millis(30_000).await;
 
 	// Wait for payment to settle
 	res.await.unwrap();

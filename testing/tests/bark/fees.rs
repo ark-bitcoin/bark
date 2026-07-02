@@ -801,7 +801,7 @@ async fn lightning_receive_fee_deducted() {
 	});
 
 	srv.wait_for_vtxopool(&ctx).await;
-	bark.lightning_receive(&invoice_info.invoice).wait_millis(10_000).await;
+	bark.lightning_receive(&invoice_info.invoice).wait_millis(30_000).await;
 	res.ready().await.unwrap();
 
 	// Fee = base(500) + 1,000,000 * 10,000 / 1,000,000 = 500 + 10,000 = 10,500
