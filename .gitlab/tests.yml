@@ -415,10 +415,7 @@ bark-int-action-reentrancy:
   interruptible: true
   stage: test
   # Double-drives every wallet-action step across the bark, barkd and bark-sdk
-  # suites. allow_failure until the remaining action flows (board, round,
-  # offboard, exit) are audited/hardened for reentrancy; flip to blocking once
-  # the suite is green under double-drive.
-  allow_failure: true
+  # suites to check reentrancy.
   tags:
     - integration
     - datastore
