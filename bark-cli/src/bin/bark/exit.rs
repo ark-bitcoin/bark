@@ -30,6 +30,9 @@ pub enum ExitCommand {
 	/// Progress the exit until it completes
 	#[command()]
 	Progress(ProgressExitOpts),
+	/// Cancel a unilateral exit that hasn't broadcast its final transaction yet
+	#[command()]
+	Cancel(CancelExitOpts),
 	/// Claim exited VTXOs
 	#[command()]
 	Claim {
@@ -85,6 +88,12 @@ pub struct ListExitsOpts {
 }
 
 #[derive(clap::Args)]
+pub struct CancelExitOpts {
+	/// The VTXO whose unilateral exit should be canceled
+	vtxo: VtxoId,
+}
+
+#[derive(clap::Args)]
 pub struct StartExitOpts{
 	/// The ID of a VTXO to unilaterally exit, can be specified multiple times.
 	#[arg(long = "vtxo", value_name = "VTXO_ID")]
@@ -127,10 +136,24 @@ pub async fn execute_exit_command(
 		ExitCommand::Progress(opts) => {
 			progress_exit(opts, wallet, onchain).await
 		},
+		ExitCommand::Cancel(opts) => {
+			cancel_exit(opts, wallet).await
+		},
 		ExitCommand::Claim { destination, no_sync, vtxos, all } => {
 			claim_exits(destination, no_sync, vtxos, all, wallet, onchain).await
 		},
 	}
+}
+
+/// Cancels a unilateral exit while it's still in its abortable window. We deliberately don't sync
+/// or progress first: that could broadcast the exit transactions and defeat the cancellation.
+pub async fn cancel_exit(
+	args: CancelExitOpts,
+	wallet: &mut Wallet,
+) -> anyhow::Result<()> {
+	wallet.exit_mgr().cancel_exit(args.vtxo).await?;
+	info!("Canceled unilateral exit for VTXO {}", args.vtxo);
+	Ok(())
 }
 
 pub async fn get_exit_status(

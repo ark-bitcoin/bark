@@ -556,6 +556,15 @@ pub trait BarkPersister: Send + Sync + 'static {
 		states: &[ExitStateKind],
 	) -> anyhow::Result<Vec<StoredExit>>;
 
+	/// Fetch the exit entry for a single [Vtxo] ID, if any.
+	///
+	/// Returns:
+	/// - `Ok(Some(StoredExit))` if the VTXO has an exit entry, `Ok(None)` otherwise.
+	///
+	/// Errors:
+	/// - Returns an error if the query fails.
+	async fn get_exit_vtxo_entry(&self, id: &VtxoId) -> anyhow::Result<Option<StoredExit>>;
+
 	/// Store a child transaction related to an exit transaction.
 	///
 	/// Parameters:

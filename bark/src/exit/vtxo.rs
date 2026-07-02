@@ -14,6 +14,7 @@ use log::{debug, trace};
 
 use ark::{Vtxo, VtxoId};
 use ark::vtxo::{Bare, Full};
+use bitcoin_ext::BlockHeight;
 
 use crate::exit::models::{ExitError, ExitState};
 use crate::exit::progress::{ExitStateProgress, ProgressContext, ProgressStep};
@@ -194,6 +195,20 @@ impl ExitVtxo {
 		}
 		debug_assert!(false, "Exceeded maximum iterations for progressing VTXO {}", self.id());
 		Ok(())
+	}
+
+	/// Transitions this exit to the terminal-but-resumable [ExitState::Canceled] and persists it.
+	///
+	/// This only updates the exit's own state and history. The caller
+	/// ([crate::exit::Exit::cancel_exit]) is responsible for dropping the exit's transactions from
+	/// the transaction manager, finalizing the movement, and removing the exit from active
+	/// tracking.
+	pub async fn cancel(
+		&mut self,
+		tip: BlockHeight,
+		persister: &dyn BarkPersister,
+	) -> anyhow::Result<(), ExitError> {
+		self.update_state_if_newer(ExitState::new_canceled(tip), persister).await
 	}
 
 	pub async fn get_vtxo(&self, persister: &dyn BarkPersister) -> anyhow::Result<WalletVtxo, ExitError> {

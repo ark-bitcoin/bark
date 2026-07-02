@@ -1028,6 +1028,17 @@ mod exit {
 		rb.sort_by_key(|e| e.vtxo_id);
 		assert_eq!(ra, rb, "get_exit_vtxo_entries mismatch");
 
+		let ra = a.get_exit_vtxo_entry(&vtxo_id).await.expect("a: get_exit_vtxo_entry");
+		let rb = b.get_exit_vtxo_entry(&vtxo_id).await.expect("b: get_exit_vtxo_entry");
+		assert_eq!(ra, rb, "get_exit_vtxo_entry mismatch");
+		assert_eq!(ra.as_ref(), Some(&entry), "get_exit_vtxo_entry should return the stored entry");
+
+		let unknown_id = VtxoId::from_slice(&[0xffu8; 36]).unwrap();
+		let ra = a.get_exit_vtxo_entry(&unknown_id).await.expect("a: get_exit_vtxo_entry unknown");
+		let rb = b.get_exit_vtxo_entry(&unknown_id).await.expect("b: get_exit_vtxo_entry unknown");
+		assert_eq!(ra, rb, "get_exit_vtxo_entry unknown mismatch");
+		assert_eq!(ra, None, "get_exit_vtxo_entry should return None for an unknown VTXO");
+
 		let ra = a.remove_exit_vtxo_entry(&vtxo_id).await;
 		let rb = b.remove_exit_vtxo_entry(&vtxo_id).await;
 		assert_eq!(ra.is_ok(), rb.is_ok(), "remove_exit_vtxo_entry: ok/err mismatch");
@@ -1037,6 +1048,11 @@ mod exit {
 		ra.sort_by_key(|e| e.vtxo_id);
 		rb.sort_by_key(|e| e.vtxo_id);
 		assert_eq!(ra, rb, "get_exit_vtxo_entries after remove mismatch");
+
+		let ra = a.get_exit_vtxo_entry(&vtxo_id).await.expect("a: get_exit_vtxo_entry after remove");
+		let rb = b.get_exit_vtxo_entry(&vtxo_id).await.expect("b: get_exit_vtxo_entry after remove");
+		assert_eq!(ra, rb, "get_exit_vtxo_entry after remove mismatch");
+		assert_eq!(ra, None, "get_exit_vtxo_entry should return None after remove");
 	}
 
 	/// Persists a Processing state that touches every ExitTxStatus variant so any

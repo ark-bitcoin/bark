@@ -387,6 +387,11 @@ impl BarkPersister for SqliteClient {
 		query::get_exit_vtxo_entries_with_states(&conn, states)
 	}
 
+	async fn get_exit_vtxo_entry(&self, id: &VtxoId) -> anyhow::Result<Option<StoredExit>> {
+		let conn = self.connect()?;
+		query::get_exit_vtxo_entry(&conn, id)
+	}
+
 	async fn store_exit_child_tx(
 		&self,
 		exit_txid: Txid,

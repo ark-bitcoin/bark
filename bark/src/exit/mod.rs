@@ -586,6 +586,70 @@ impl Exit {
 		guard.start_exit_for_vtxos(vtxos, true).await
 	}
 
+	/// Cancels the unilateral exit for the given VTXO.
+	///
+	/// Only exits still in their abortable window can be canceled — i.e. before the *final* exit
+	/// transaction has been broadcast (see [ExitState::is_cancelable]); shared ancestor
+	/// transactions may already be on-chain. Because starting an exit never touches the VTXO,
+	/// there's nothing to undo on the VTXO side: it stays spendable and a fresh exit can be
+	/// started for it later.
+	///
+	/// Canceling an already-canceled exit is a no-op, so retries are safe.
+	///
+	/// # Errors
+	/// - [ExitError::NotExiting] if the VTXO never had an exit.
+	/// - [ExitError::CannotCancelExit] if the exit has progressed past its abortable window.
+	pub async fn cancel_exit(&self, vtxo_id: VtxoId) -> anyhow::Result<(), ExitError> {
+		let mut guard = self.inner.write().await;
+		let inner = &mut *guard;
+
+		let idx = match inner.exit_vtxos.iter().position(|ev| ev.id() == vtxo_id) {
+			Some(idx) => idx,
+			None => {
+				// Only live exits are in memory; check the store for a finished one.
+				let entry = inner.persister.get_exit_vtxo_entry(&vtxo_id).await
+					.map_err(|e| ExitError::InternalError { error: e.to_string() })?;
+				return match entry.map(|e| e.state.kind()) {
+					Some(ExitStateKind::Canceled) => Ok(()),
+					Some(kind) => Err(ExitError::CannotCancelExit { vtxo: vtxo_id, state: kind }),
+					None => Err(ExitError::NotExiting { vtxo: vtxo_id }),
+				};
+			},
+		};
+
+		if !inner.exit_vtxos[idx].state().is_cancelable() {
+			return Err(ExitError::CannotCancelExit {
+				vtxo: vtxo_id,
+				state: inner.exit_vtxos[idx].state().kind(),
+			});
+		}
+
+		let tip = inner.chain_source.tip().await
+			.map_err(|e| ExitError::TipRetrievalFailure { error: e.to_string() })?;
+
+		// Record the cancellation first, so it survives even if a later best-effort step fails.
+		inner.exit_vtxos[idx].cancel(tip, &*inner.persister).await?;
+
+		// Stop syncing this exit's transactions. Ancestor txs shared with sibling exits stay.
+		if let Some(txids) = inner.exit_vtxos[idx].txids() {
+			inner.tx_manager.untrack_vtxo_exits(&txids).await;
+		}
+
+		// Finalize the associated movement as Canceled (best-effort, like the other reconcilers).
+		if let Some(movement_id) = inner.exit_vtxos[idx].movement_id() {
+			if let Err(e) = inner.movement_manager
+				.finish_movement(movement_id, MovementStatus::Canceled).await
+			{
+				error!("Failed to finalize exit movement {} as Canceled: {:#}", movement_id, e);
+			}
+		}
+
+		// Drop it from the active set; the canceled row remains on disk for auditing.
+		inner.exit_vtxos.swap_remove(idx);
+		info!("Canceled unilateral exit for VTXO {}", vtxo_id);
+		Ok(())
+	}
+
 	/// Reset exit to an empty state. Should be called when dropping VTXOs
 	///
 	/// Note: _This method is **dangerous** and can lead to funds loss. Be cautious._

@@ -14,6 +14,8 @@ pub use self::states::{
 	ExitCanceledState,
 };
 
+use std::fmt;
+
 use ark::VtxoId;
 use bitcoin::Txid;
 
@@ -107,6 +109,12 @@ impl ExitStateKind {
 			ExitStateKind::VtxoAlreadySpent => "vtxo-already-spent",
 			ExitStateKind::Canceled => "canceled",
 		}
+	}
+}
+
+impl fmt::Display for ExitStateKind {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		f.write_str(self.as_str())
 	}
 }
 

@@ -804,6 +804,23 @@ pub fn get_exit_vtxo_entries(conn: &Connection) -> anyhow::Result<Vec<StoredExit
 	Ok(result)
 }
 
+pub fn get_exit_vtxo_entry(conn: &Connection, id: &VtxoId) -> anyhow::Result<Option<StoredExit>> {
+	let mut statement = conn.prepare(
+		"SELECT vtxo_id, state, history, movement_id FROM bark_exit_states WHERE vtxo_id = ?1;",
+	)?;
+	let mut rows = statement.query([id.to_string()])?;
+	if let Some(row) = rows.next()? {
+		let vtxo_id = VtxoId::from_str(&row.get::<usize, String>(0)?)?;
+		let state = serde_json::from_str::<ExitState>(&row.get::<usize, String>(1)?)?;
+		let history = serde_json::from_str::<Vec<ExitState>>(&row.get::<usize, String>(2)?)?;
+		let movement_id = row.get::<usize, Option<u32>>(3)?.map(MovementId::new);
+
+		Ok(Some(StoredExit { vtxo_id, state, history, movement_id }))
+	} else {
+		Ok(None)
+	}
+}
+
 pub fn get_exit_vtxo_entries_with_states(
 	conn: &Connection,
 	states: &[ExitStateKind],

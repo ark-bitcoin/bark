@@ -1022,6 +1022,13 @@ impl <S: StorageAdaptor> BarkPersister for StorageAdaptorWrapper<S> {
 			.collect()
 	}
 
+	async fn get_exit_vtxo_entry(&self, id: &VtxoId) -> anyhow::Result<Option<StoredExit>> {
+		match self.inner.read().await.get(partition::EXIT_VTXO, &id.to_bytes()).await? {
+			Some(record) => Ok(Some(record.to_data::<StoredExit>()?)),
+			None => Ok(None),
+		}
+	}
+
 	async fn store_exit_child_tx(
 		&self,
 		exit_txid: Txid,
