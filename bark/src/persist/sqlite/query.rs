@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::iter;
 use std::str::FromStr;
 
 use anyhow::{Context, ensure};
@@ -17,7 +18,7 @@ use ark::vtxo::Full;
 
 use crate::{VtxoId, WalletProperties};
 use crate::actions::{WalletActionCheckpoint, WalletActionId};
-use crate::exit::{ExitState, ExitTxOrigin};
+use crate::exit::{ExitState, ExitStateKind, ExitTxOrigin};
 use crate::movement::{Movement, MovementId, MovementStatus, MovementSubsystem, PaymentMethod};
 use crate::persist::{RoundStateId, StoredRoundState};
 use crate::persist::models::{
@@ -790,6 +791,36 @@ pub fn get_exit_vtxo_entries(conn: &Connection) -> anyhow::Result<Vec<StoredExit
 		"SELECT vtxo_id, state, history, movement_id FROM bark_exit_states;",
 	)?;
 	let mut rows = statement.query([])?;
+	let mut result = Vec::new();
+	while let Some(row) = rows.next()? {
+		let vtxo_id = VtxoId::from_str(&row.get::<usize, String>(0)?)?;
+		let state = serde_json::from_str::<ExitState>(&row.get::<usize, String>(1)?)?;
+		let history = serde_json::from_str::<Vec<ExitState>>(&row.get::<usize, String>(2)?)?;
+		let movement_id = row.get::<usize, Option<u32>>(3)?.map(MovementId::new);
+
+		result.push(StoredExit { vtxo_id, state, history, movement_id });
+	}
+
+	Ok(result)
+}
+
+pub fn get_exit_vtxo_entries_with_states(
+	conn: &Connection,
+	states: &[ExitStateKind],
+) -> anyhow::Result<Vec<StoredExit>> {
+	if states.is_empty() {
+		return Ok(Vec::new());
+	}
+
+	let placeholders = iter::repeat("?").take(states.len()).collect::<Vec<_>>().join(", ");
+	let sql = format!(
+		"SELECT vtxo_id, state, history, movement_id FROM bark_exit_states \
+		WHERE json_extract(state, '$.type') IN ({});",
+		placeholders,
+	);
+	let mut statement = conn.prepare(&sql)?;
+	let params = rusqlite::params_from_iter(states.iter().map(|s| s.as_str()));
+	let mut rows = statement.query(params)?;
 	let mut result = Vec::new();
 	while let Some(row) = rows.next()? {
 		let vtxo_id = VtxoId::from_str(&row.get::<usize, String>(0)?)?;

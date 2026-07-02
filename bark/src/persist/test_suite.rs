@@ -1006,6 +1006,7 @@ mod exit {
 		test_exit_vtxo_entry_roundtrip(a, b).await;
 		test_exit_processing_state_roundtrip(a, b).await;
 		test_exit_child_tx_roundtrip(a, b).await;
+		test_exit_entries_with_states(a, b).await;
 	}
 
 	async fn test_exit_vtxo_entry_roundtrip<A: BarkPersister, B: BarkPersister>(a: &A, b: &B) {
@@ -1102,6 +1103,59 @@ mod exit {
 
 		a.remove_exit_vtxo_entry(&vtxo_id).await.expect("a: remove processing entry");
 		b.remove_exit_vtxo_entry(&vtxo_id).await.expect("b: remove processing entry");
+	}
+
+	async fn test_exit_entries_with_states<A: BarkPersister, B: BarkPersister>(a: &A, b: &B) {
+		use crate::exit::ExitStateKind;
+
+		let start_id = VtxoId::from_slice(&[0xabu8; 36]).unwrap();
+		let canceled_id = VtxoId::from_slice(&[0xacu8; 36]).unwrap();
+		let entries = [
+			StoredExit {
+				vtxo_id: start_id,
+				state: ExitState::Start(crate::exit::ExitStartState { tip_height: 100 }),
+				history: vec![],
+				movement_id: None,
+			},
+			StoredExit {
+				vtxo_id: canceled_id,
+				state: ExitState::new_canceled(150),
+				history: vec![ExitState::Start(crate::exit::ExitStartState { tip_height: 100 })],
+				movement_id: None,
+			},
+		];
+		for entry in &entries {
+			a.store_exit_vtxo_entry(entry).await.expect("a: store entry");
+			b.store_exit_vtxo_entry(entry).await.expect("b: store entry");
+		}
+
+		let cases: &[(&str, &[ExitStateKind], &[VtxoId])] = &[
+			("canceled only", &[ExitStateKind::Canceled], &[canceled_id]),
+			("start only", &[ExitStateKind::Start], &[start_id]),
+			("both kinds", &[ExitStateKind::Start, ExitStateKind::Canceled], &[start_id, canceled_id]),
+			("no matching kind", &[ExitStateKind::Claimed], &[]),
+			("empty kind list", &[], &[]),
+		];
+		for (name, kinds, expected) in cases {
+			let mut ra = a.get_exit_vtxo_entries_with_states(kinds).await
+				.expect("a: get_exit_vtxo_entries_with_states");
+			let mut rb = b.get_exit_vtxo_entries_with_states(kinds).await
+				.expect("b: get_exit_vtxo_entries_with_states");
+			ra.sort_by_key(|e| e.vtxo_id);
+			rb.sort_by_key(|e| e.vtxo_id);
+			assert_eq!(ra, rb, "with_states mismatch between backends: {}", name);
+
+			let mut ids = ra.into_iter().map(|e| e.vtxo_id).collect::<Vec<_>>();
+			ids.sort();
+			let mut expected = expected.to_vec();
+			expected.sort();
+			assert_eq!(ids, expected, "with_states wrong entries: {}", name);
+		}
+
+		for entry in &entries {
+			a.remove_exit_vtxo_entry(&entry.vtxo_id).await.expect("a: remove entry");
+			b.remove_exit_vtxo_entry(&entry.vtxo_id).await.expect("b: remove entry");
+		}
 	}
 
 	async fn test_exit_child_tx_roundtrip<A: BarkPersister, B: BarkPersister>(a: &A, b: &B) {

@@ -21,7 +21,7 @@ pub enum ExitCommand {
 	/// Gets the current status for the given VTXO
 	#[command()]
 	Status(StatusExitOpts),
-	/// Lists every in-progress, completed and failed exit
+	/// Lists unilateral exits
 	#[command()]
 	List(ListExitsOpts),
 	/// To start an exit of a specific set of VTXO's or all offchain funds
@@ -73,6 +73,11 @@ pub struct ListExitsOpts {
 	/// Whether to include the exit transactions and their CPFP children
 	#[arg(long)]
 	transactions: bool,
+
+	/// Also include exits that reached a terminal state: claimed, aborted because the VTXO
+	/// was already spent, or canceled.
+	#[arg(long)]
+	include_finished: bool,
 
 	/// Skip syncing wallet
 	#[arg(long)]
@@ -163,8 +168,15 @@ pub async fn list_exits(
 		).await?.unwrap());
 	}
 
-	let statuses = statuses.into_iter()
+	let mut statuses = statuses.into_iter()
 		.map(ExitTransactionStatus::from).collect::<Vec<_>>();
+
+	if args.include_finished {
+		statuses.extend(
+			wallet.exit_mgr().list_finished(args.history, args.transactions).await?
+				.into_iter().map(ExitTransactionStatus::from),
+		);
+	}
 
 	output_json(&statuses);
 	Ok(())

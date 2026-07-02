@@ -123,8 +123,8 @@ pub use self::models::{
 	ExitCpfpRequest, ExitTransactionPackage, FeeInfo, RbfRequirement, TransactionInfo,
 	ChildTransactionInfo, ExitError, ExitState, ExitTx, ExitTxStatus, ExitTxOrigin, ExitStartState,
 	ExitProcessingState, ExitAwaitingDeltaState, ExitClaimableState, ExitClaimInProgressState,
-	ExitClaimedState, ExitVtxoAlreadySpentState, ExitCanceledState, ExitProgressStatus,
-	ExitTransactionStatus,
+	ExitClaimedState, ExitVtxoAlreadySpentState, ExitCanceledState, ExitStateKind,
+	ExitProgressStatus, ExitTransactionStatus,
 };
 pub use self::vtxo::ExitVtxo;
 
@@ -329,7 +329,10 @@ impl Exit {
 	pub(crate) async fn load(&self) -> anyhow::Result<()> {
 		let mut guard = self.inner.write().await;
 		let inner = &mut *guard;
-		let exit_vtxo_entries = inner.persister.get_exit_vtxo_entries().await?;
+
+		// Finished exits never progress again, so don't track them.
+		let exit_vtxo_entries = inner.persister
+			.get_exit_vtxo_entries_with_states(ExitStateKind::LIVE_STATES).await?;
 		inner.exit_vtxos.reserve(exit_vtxo_entries.len());
 
 		for entry in exit_vtxo_entries {
@@ -410,6 +413,56 @@ impl Exit {
 	pub async fn get_exit_vtxos(&self) -> Vec<ExitVtxo> {
 		let guard = self.inner.read().await;
 		guard.exit_vtxos.clone()
+	}
+
+	/// Returns statuses for exits in a terminal state: claimed, aborted because the VTXO was
+	/// already spent, or canceled.
+	pub async fn list_finished(
+		&self,
+		include_history: bool,
+		include_transactions: bool,
+	) -> anyhow::Result<Vec<ExitTransactionStatus>> {
+		let guard = self.inner.read().await;
+		let entries = guard.persister
+			.get_exit_vtxo_entries_with_states(ExitStateKind::FINISHED_STATES).await?;
+		let mut statuses = Vec::with_capacity(entries.len());
+		for entry in entries {
+			let transactions = {
+				let mut transactions = Vec::new();
+				if include_transactions {
+					let vtxo = guard.persister.get_full_vtxo(entry.vtxo_id).await
+						.context("failed to retrieve VTXO for exit")?
+						.with_context(|| format!("failed to retrieve VTXO for exit {}", entry.vtxo_id))?;
+					for tx in vtxo.transactions() {
+						let txid = tx.tx.compute_txid();
+						let child = guard.persister.get_exit_child_tx(txid).await
+							.context("failed to retrieve child tx for exit")?;
+						transactions.push(ExitTransactionPackage {
+							exit: TransactionInfo {
+								txid,
+								tx: tx.tx,
+							},
+							child: child.map(|(tx, origin)| ChildTransactionInfo {
+								origin,
+								info: TransactionInfo {
+									txid: tx.compute_txid(),
+									tx,
+								},
+								fee_info: None,
+							}),
+						});
+					}
+				}
+				transactions
+			};
+			statuses.push(ExitTransactionStatus {
+				vtxo_id: entry.vtxo_id,
+				state: entry.state,
+				history: if include_history { Some(entry.history) } else { None },
+				transactions,
+			});
+		}
+		Ok(statuses)
 	}
 
 	/// Returns whether a VTXO has an active or completed unilateral exit.
@@ -679,7 +732,6 @@ impl Exit {
 		guard.exit_vtxos = exit_vtxos;
 		Ok(())
 	}
-
 
 	/// Returns one [ExitCpfpRequest] for each exit transaction that needs a CPFP child.
 	///

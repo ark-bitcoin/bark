@@ -29,7 +29,7 @@ use ark::vtxo::Full;
 
 use crate::WalletProperties;
 use crate::actions::{WalletActionCheckpoint, WalletActionId};
-use crate::exit::ExitTxOrigin;
+use crate::exit::{ExitStateKind, ExitTxOrigin};
 use crate::movement::{Movement, MovementId, MovementStatus, MovementSubsystem, PaymentMethod};
 use crate::movement::update::MovementUpdate;
 use crate::persist::{BarkPersister, RoundStateId, StoredRoundState, Unlocked};
@@ -377,6 +377,14 @@ impl BarkPersister for SqliteClient {
 	async fn get_exit_vtxo_entries(&self) -> anyhow::Result<Vec<StoredExit>> {
 		let conn = self.connect()?;
 		query::get_exit_vtxo_entries(&conn)
+	}
+
+	async fn get_exit_vtxo_entries_with_states(
+		&self,
+		states: &[ExitStateKind],
+	) -> anyhow::Result<Vec<StoredExit>> {
+		let conn = self.connect()?;
+		query::get_exit_vtxo_entries_with_states(&conn, states)
 	}
 
 	async fn store_exit_child_tx(

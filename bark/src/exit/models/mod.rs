@@ -45,7 +45,86 @@ pub enum ExitState {
 	Canceled(ExitCanceledState),
 }
 
+/// A flat, data-free discriminator for [ExitState]. Useful for filtering exits by state without
+/// caring about the per-state payload — e.g.
+/// [crate::persist::BarkPersister::get_exit_vtxo_entries_with_states].
+///
+/// The serde representation matches [ExitState]'s `type` tag (kebab-case), so the two stay in sync.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ExitStateKind {
+	Start,
+	Processing,
+	AwaitingDelta,
+	Claimable,
+	ClaimInProgress,
+	Claimed,
+	VtxoAlreadySpent,
+	Canceled,
+}
+
+impl ExitStateKind {
+	/// List of all the different states.
+	pub const ALL: &[ExitStateKind] = &[
+		ExitStateKind::Start,
+		ExitStateKind::Processing,
+		ExitStateKind::AwaitingDelta,
+		ExitStateKind::Claimable,
+		ExitStateKind::ClaimInProgress,
+		ExitStateKind::Claimed,
+		ExitStateKind::VtxoAlreadySpent,
+		ExitStateKind::Canceled,
+	];
+
+	/// List of the states in which an exit is still live and actionable.
+	pub const LIVE_STATES: &[ExitStateKind] = &[
+		ExitStateKind::Start,
+		ExitStateKind::Processing,
+		ExitStateKind::AwaitingDelta,
+		ExitStateKind::Claimable,
+		ExitStateKind::ClaimInProgress,
+	];
+
+	/// List of the states in which an exit is finished and will never progress again. A canceled
+	/// exit's VTXO stays spendable, so a fresh exit can be started for it later.
+	pub const FINISHED_STATES: &[ExitStateKind] = &[
+		ExitStateKind::Claimed,
+		ExitStateKind::VtxoAlreadySpent,
+		ExitStateKind::Canceled,
+	];
+
+	/// The stable string tag for this kind. It matches [ExitState]'s serde `type` discriminator,
+	/// which is what's stored in the `state` JSON column — so it can be used directly to filter
+	/// rows (e.g. `json_extract(state, '$.type')`). Kept in sync with serde by a unit test.
+	pub fn as_str(&self) -> &'static str {
+		match self {
+			ExitStateKind::Start => "start",
+			ExitStateKind::Processing => "processing",
+			ExitStateKind::AwaitingDelta => "awaiting-delta",
+			ExitStateKind::Claimable => "claimable",
+			ExitStateKind::ClaimInProgress => "claim-in-progress",
+			ExitStateKind::Claimed => "claimed",
+			ExitStateKind::VtxoAlreadySpent => "vtxo-already-spent",
+			ExitStateKind::Canceled => "canceled",
+		}
+	}
+}
+
 impl ExitState {
+	/// Returns the data-free [ExitStateKind] discriminator for this state.
+	pub fn kind(&self) -> ExitStateKind {
+		match self {
+			ExitState::Start(_) => ExitStateKind::Start,
+			ExitState::Processing(_) => ExitStateKind::Processing,
+			ExitState::AwaitingDelta(_) => ExitStateKind::AwaitingDelta,
+			ExitState::Claimable(_) => ExitStateKind::Claimable,
+			ExitState::ClaimInProgress(_) => ExitStateKind::ClaimInProgress,
+			ExitState::Claimed(_) => ExitStateKind::Claimed,
+			ExitState::VtxoAlreadySpent(_) => ExitStateKind::VtxoAlreadySpent,
+			ExitState::Canceled(_) => ExitStateKind::Canceled,
+		}
+	}
+
 	pub fn new_start(tip: BlockHeight) -> Self {
 		ExitState::Start(ExitStartState { tip_height: tip })
 	}
@@ -145,6 +224,22 @@ impl ExitState {
 		}
 	}
 
+	/// Whether the exit is still in its abortable window and can be canceled by the user. This is
+	/// only possible until the final exit transaction is broadcast; ancestor transactions may
+	/// already be on-chain.
+	pub fn is_cancelable(&self) -> bool {
+		match self {
+			ExitState::Start(_) => true,
+			ExitState::Processing(s) => s.transactions.last().map_or(true, |tx| matches!(
+				tx.status,
+				ExitTxStatus::VerifyInputs
+				| ExitTxStatus::AwaitingInputConfirmation { .. }
+				| ExitTxStatus::AwaitingCpfpBroadcast,
+			)),
+			_ => false,
+		}
+	}
+
 	pub fn requires_confirmations(&self) -> bool {
 		match self {
 			ExitState::Processing(s) => {
@@ -220,4 +315,143 @@ pub struct ExitChildStatus {
 	pub status: TxStatus,
 	pub origin: ExitTxOrigin,
 	pub fee_info: Option<FeeInfo>,
+}
+
+#[cfg(test)]
+mod test {
+	use super::*;
+
+	use bitcoin::hashes::Hash;
+
+	fn txid(n: u8) -> Txid {
+		Txid::from_byte_array([n; 32])
+	}
+
+	fn tx(n: u8, status: ExitTxStatus) -> ExitTx {
+		ExitTx { txid: txid(n), status }
+	}
+
+	/// A status representing an exit tx that's been broadcast (its CPFP child is in the mempool).
+	fn broadcast() -> ExitTxStatus {
+		ExitTxStatus::AwaitingConfirmation { child_txid: txid(99), origin: ExitTxOrigin::Mempool }
+	}
+
+	/// One [ExitState] per variant, for tests that need to cover the whole enum.
+	fn all_states() -> [ExitState; 8] {
+		let block_ref = BlockRef { height: 1, hash: bitcoin::BlockHash::all_zeros() };
+		[
+			ExitState::new_start(1),
+			ExitState::new_processing(1, [txid(1)]),
+			ExitState::new_awaiting_delta(1, block_ref, 10),
+			ExitState::new_claimable(1, block_ref, Some(block_ref)),
+			ExitState::new_claim_in_progress(1, block_ref, txid(1)),
+			ExitState::new_claimed(1, txid(1), block_ref),
+			ExitState::new_vtxo_already_spent(1),
+			ExitState::new_canceled(1),
+		]
+	}
+
+	#[test]
+	fn is_cancelable_only_checks_the_final_tx() {
+		// Start is always cancellable — nothing has been built yet.
+		assert!(ExitState::new_start(100).is_cancelable());
+
+		// Processing with nothing broadcast.
+		assert!(ExitState::new_processing_from_transactions(100, vec![
+			tx(1, ExitTxStatus::VerifyInputs),
+			tx(2, ExitTxStatus::AwaitingCpfpBroadcast),
+		]).is_cancelable());
+
+		// Ancestors broadcast but the final (leaf) tx is not — still cancellable, since only the
+		// last transaction actually commits the VTXO on-chain.
+		assert!(ExitState::new_processing_from_transactions(100, vec![
+			tx(1, broadcast()),
+			tx(2, ExitTxStatus::AwaitingCpfpBroadcast),
+		]).is_cancelable());
+
+		// The final tx has been broadcast — no longer cancellable.
+		assert!(!ExitState::new_processing_from_transactions(100, vec![
+			tx(1, broadcast()),
+			tx(2, broadcast()),
+		]).is_cancelable());
+
+		// Terminal / post-broadcast states are never cancellable.
+		assert!(!ExitState::new_canceled(100).is_cancelable());
+		assert!(!ExitState::new_vtxo_already_spent(100).is_cancelable());
+	}
+
+	#[test]
+	fn exit_state_kind_tag_matches_serde() {
+		// ExitStateKind's serde tag must stay in lock-step with ExitState's `type` tag, since the
+		// SQL/default filter relies on them matching.
+		for state in all_states() {
+			let state_tag = serde_json::to_value(&state).unwrap()
+				.get("type").unwrap().as_str().unwrap().to_string();
+			let kind_tag = serde_json::to_value(state.kind()).unwrap()
+				.as_str().unwrap().to_string();
+			assert_eq!(state_tag, kind_tag, "tag mismatch for {:?}", state.kind());
+		}
+
+		// ExitStateKind::as_str backs the SQL `json_extract(state, '$.type')` filter, so it must
+		// equal the serde tag for every kind.
+		for &kind in ExitStateKind::ALL {
+			let serde_tag = serde_json::to_value(kind).unwrap().as_str().unwrap().to_string();
+			assert_eq!(kind.as_str(), serde_tag, "as_str mismatch for {:?}", kind);
+		}
+	}
+
+	#[test]
+	fn exit_state_kind_all_is_exhaustive() {
+		// When this match stops compiling, a variant was added: extend ALL, all_states(),
+		// and LIVE_STATES or FINISHED_STATES.
+		match ExitStateKind::Start {
+			ExitStateKind::Start => {},
+			ExitStateKind::Processing => {},
+			ExitStateKind::AwaitingDelta => {},
+			ExitStateKind::Claimable => {},
+			ExitStateKind::ClaimInProgress => {},
+			ExitStateKind::Claimed => {},
+			ExitStateKind::VtxoAlreadySpent => {},
+			ExitStateKind::Canceled => {},
+		}
+
+		// Every state's kind appears in ALL exactly once.
+		assert_eq!(ExitStateKind::ALL.len(), all_states().len());
+		for state in all_states() {
+			let count = ExitStateKind::ALL.iter().filter(|&&k| k == state.kind()).count();
+			assert_eq!(count, 1, "{:?} should appear exactly once in ALL", state.kind());
+		}
+	}
+
+	#[test]
+	fn exit_state_kind_live_and_finished_states_partition_all() {
+		// Every kind belongs to exactly one of LIVE_STATES and FINISHED_STATES.
+		for &kind in ExitStateKind::ALL {
+			let live = !matches!(
+				kind,
+				ExitStateKind::Claimed
+				| ExitStateKind::VtxoAlreadySpent
+				| ExitStateKind::Canceled,
+			);
+			assert_eq!(
+				ExitStateKind::LIVE_STATES.contains(&kind), live,
+				"LIVE_STATES membership wrong for {:?}", kind,
+			);
+			assert_eq!(
+				ExitStateKind::FINISHED_STATES.contains(&kind), !live,
+				"FINISHED_STATES membership wrong for {:?}", kind,
+			);
+		}
+
+		// Anything is_pending() must be live; the reverse doesn't hold since is_pending()
+		// excludes Claimable and ClaimInProgress.
+		for state in all_states() {
+			if state.is_pending() {
+				assert!(
+					ExitStateKind::LIVE_STATES.contains(&state.kind()),
+					"{:?} is_pending() but its kind is not in LIVE_STATES", state.kind(),
+				);
+			}
+		}
+	}
 }

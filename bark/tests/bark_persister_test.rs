@@ -23,7 +23,7 @@ use bitcoin_ext::BlockRef;
 
 use bark::{WalletProperties, WalletVtxo};
 use bark::actions::{WalletActionCheckpoint, WalletActionId};
-use bark::exit::{ExitState, ExitClaimableState, ExitTxOrigin};
+use bark::exit::{ExitState, ExitStateKind, ExitClaimableState, ExitTxOrigin};
 use bark::movement::{
 	Movement, MovementDestination, MovementId, MovementStatus, MovementSubsystem,
 	MovementTimestamp, PaymentMethod,
@@ -223,6 +223,14 @@ impl BarkPersister for Dummy {
 				movement_id: None,
 			}
 		]))
+	}
+
+	async fn get_exit_vtxo_entries_with_states(
+		&self,
+		states: &[ExitStateKind],
+	) -> anyhow::Result<Vec<StoredExit>> {
+		let entries = self.get_exit_vtxo_entries().await?;
+		Ok(entries.into_iter().filter(|e| states.contains(&e.state.kind())).collect())
 	}
 
 	async fn store_exit_child_tx(
